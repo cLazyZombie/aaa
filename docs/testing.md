@@ -570,3 +570,9 @@ L2 결함 검증은 이전 root 가져오기 생략, 재시작 전 applied 변�
 - 기존 reload keeper에 pause 상태의 reload/restart 예약과 멈춤 이유, 무Kill/무Spawn, resume 뒤 동일 후보 적용을 추가한다. 기존 상한 제거 keeper는 resume 전에 상한0 반영과 pause 보존을 함께 검사한다.
 - 기존 변환 인계 keeper는 변환 직후 첫 새 source 판정 전에 사건을 넣어 실제 전달 한 번·과거 무재전달을 검사한다. DB 표식 유무만으로 통과시키지 않는다. 옛 mission 사건 조건을 함께 실행하거나 새 cursor seed를 제거하면 실패해야 한다.
 - 웹12의 실제 특수 패널은 생략·옛 최대 정수·상한3/60을 읽어 무제한 분모 없음과 명시 N/M을 검사한다. 실제 CLI m13 임무의 list/show도 같은 규칙을 검사한다. 큰 수를 무제한 생성 예시로 쓰지 않는다. 시간 상한은 깨움별 작업에 붙이고 누적 작업은 분리한다.
+
+## 웹 배포 조회 카드 L4 A안(§8.293)
+
+- `cargo test -p aaa-host --lib rollout`: DB commit 뒤 변경 사건·표시용 자료만의 요약·재오픈, 종료 commit 직후 재시작·4가지 terminal 상태·중복 발행과 inbox 정리 뒤 재시작을 확인한다. DB owner는 실제 SQL trigger로 inbox 저장을 거부해 완료 정본만 남지 않는지 확인한다. 오류에 경로/PID를 섞어도 표시용 요약·실제 Reader inbox peek 응답에는 없고 정본에는 남는지, 옛 terminal에서 프로젝트/inbox를 재생성하지 않는지도 확인한다. `cargo test -p aaa-host --lib local_wire_excludes_web_only_rollout_notices`는 실제 front frame 전송에서 새 알림이 N-1 CLI에 닿지 않는지 확인한다. 운영 DB/프로세스를 건드리지 않는다.
+- `node web/e2e/web.e2e.mjs --spec 35-rollout`: 실제 Reader pairing/API/상태 WS를 쓰고 rollout 사건만 주입한다. 전송률→해당 단계 복구→재연결의 같은ID→복구 완료와 실패 구분·전체 오류/SHA·Reader 시작 거부·390px 폭·앱 안 알림 이동을 확인한다. reload 뒤 이미 선택한 패널 단추를 누르면 drawer가 닫히므로 현재 drawer를 여는 사건으로 이어 간다.
+- 변경 사건 누락·종료 중복 발행·정본과 inbox의 transaction 분리와 웹 사건 소비 누락을 각 owner에서 RED로 확인한 뒤 bytes 원복/GREEN을 확인한다. 같은 후보의 전체 ci-local·check-public·독립 read-only 검토를 마친다.

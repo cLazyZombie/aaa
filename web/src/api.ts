@@ -9,6 +9,7 @@ import type {
   NoticeView,
   Outcome,
   QuestionView,
+  RolloutCard,
   SharedPreferences,
   ThreadView,
 } from "./gen/proto";
@@ -246,6 +247,7 @@ export function watchEvents(
   onNotice: (n: NoticeView) => void = () => {},
   onReports: (unseen: number) => void = () => {},
   onAppBadge: (count: number) => void = () => {},
+  onRollout: (result: Outcome<RolloutCard | null>) => void = () => {},
 ): () => void {
   let ws: WebSocket | null = null;
   let stopped = false;
@@ -405,6 +407,7 @@ export function watchEvents(
       }
       else if (ev.ev === "reports") onReports(ev.unseen);
       else if (ev.ev === "app_badge") onAppBadge(ev.count);
+      else if (ev.ev === "rollout") onRollout(ev.result);
       else if (ev.ev === "chat_changed") tellChat(ev.pane, { changed: true });
       else if (ev.ev === "chat_watching") tellChat(ev.pane, { live: ev.live });
       else if (ev.ev === "pong" && probeIds.has(ev.id)) {

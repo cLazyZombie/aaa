@@ -452,6 +452,9 @@ pub struct QuestionView {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "snake_case")]
 pub enum NoticeKind {
+    /// 배포의 최종 성공/중단. 웹 앱 안 알림만 보낸다.
+    RolloutFinished,
+    RolloutFailed,
     /// 보는 화면 없이 agent의 턴이 끝났다(herdr `ToastKind::Finished`: 작업·질문에서 쉼으로, 안 봄)
     Finished,
     /// post 남용 한도에 걸린 출처가 음소거됐다. 앱 안에서만 알린다.

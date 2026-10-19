@@ -396,6 +396,7 @@ thread·평가자·임의 pane·웹 기기는 이 허용을 받지 않는다. �
    recovery_failed는 기록의 머신·단계·까닭/guard를 보존하고 사람에게 runbook의 정확 SHA 터미널 복구를 알린다.
    stopped는 설치 전/unchanged 중단이다. 진행 중 설치도 종료 뒤 복구하며 임의 start 재전송·최신 보관본 추정은 하지 않는다.
    감독자 설치·해제·start·stop은 사람이 한다.
+웹 머신 패널의 배포 카드는 Reader도 읽는다. 전체 ID/SHA·실패/복구 상태를 보이며 카드는 시작·중단을 보내지 않는다.
 배포 조회는 허용 철회 뒤에도 이 aaa의 배포 기록을 볼 수 있다. rollout 진행 중에는 개별 배포 시작을 거부한다.
 
 ## thread pane의 확인창

@@ -33,6 +33,7 @@ import { ListChecks, Settings } from "lucide-react";
 import { Icon } from "./icons";
 import { hasAgentMark } from "./herdr/AgentMark.tsx";
 import { Sidebar } from "./Sidebar";
+import type { RolloutSnapshot } from "./RolloutCard";
 import { needsYou, paneAgentStatus, rosterRows, shortPath, threadKey } from "./sidebarModel";
 import { useShortcuts } from "./herdr/shortcuts.ts";
 import type { AppActions, PaneControls } from "./actions";
@@ -313,6 +314,7 @@ function agentOf(p: PaneView | undefined, t?: ThreadView): string | null {
 
 function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; device: string; onSignedOut: () => void }) {
   const [machines, setMachines] = useState<MachineView[]>([]);
+  const [rollout, setRollout] = useState<RolloutSnapshot>(null);
   const [panes, setPanes] = useState<PaneView[]>([]);
   const [up, setUp] = useState(false);
   // host가 주는 웹 빌드(events 연결마다 온다): 이 페이지와 다르면 다시 열기 줄(plan §8.166)
@@ -547,6 +549,11 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
   // 모름)만 띄운다. 휴대폰 push는 없다. 새 보고는 위 thread 길이, 입력 필요는 질문 길이 맡는다. 기록하지 않는 사건이라 다시
   // 붙을 때 놓친 것을 읽지 않는다(참고 `seedStatuses`: 목록은 알리지 않는다)
   const noticeNews = (n: NoticeView) => {
+    if (n.kind === "rollout_finished" || n.kind === "rollout_failed") {
+      showDroplet({ target: "deployment", title: n.title, kind: n.kind === "rollout_finished" ? "done" : "blocked", machine: null, agent: null });
+      return;
+    }
+
     if (n.kind === "post_muted" || n.kind === "automation") {
       // 누르면 모든 thread(host는 프로젝트 하나, plan §8.291)
       showDroplet({ target: "threads", title: n.title, kind: n.kind === "automation" ? "done" : "blocked", machine: null, agent: null });
@@ -661,6 +668,7 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
           setReportsRev((n) => n + 1);
         },
         setAppBadge,
+        setRollout,
       ),
     [],
   );
@@ -1033,6 +1041,8 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
         <Sidebar
           panel={panel}
           machines={machines}
+          rollout={rollout}
+          connected={up}
           panes={panes}
           threads={shownThreads}
           selected={sel}
@@ -1215,7 +1225,11 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
       {/* 앱 안 알림(참고 Droplet): 누르면 그 pane·thread로 간다 */}
       <Droplet
         onOpen={(target) => {
-          location.hash = target;
+          if (target === "deployment") {
+            setPanel("machines");
+            setCollapsed(false);
+            if (!wideScreen) setDrawerOpen(true);
+          } else location.hash = target;
         }}
       />
     </div>

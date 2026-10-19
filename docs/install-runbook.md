@@ -299,3 +299,7 @@ L3는 모든 대상의 `rollout_recovery.v1`과 host/로컬 agent의 배포 전 
 `aaa thread start --repo`에는 그 머신의 경로만 준다. `mac-a:/srv/repo` 같은 `머신:경로`는 기록·번호를 만들기 전에 거부하며 `--machine mac-a --repo /srv/repo`로 나누라는 오류를 낸다. Windows 드라이브 경로(`C:/work/repo`)와 Unix 절대 경로 안의 콜론은 이 검사로 거부하지 않는다.
 
 `thread start`·`thread message`의 `--summary-file`은 시작·메시지 요청 전에 host와 같은 형식 검사로 확인한다. 틀린 요약은 `bad_request`로 거부하며 thread·메시지·Follow-ups를 만들지 않는다. 형식이 맞을 때만 원래 요청을 수행하고 요약을 저장한다.
+
+### 웹에서 배포 상태 보기(L4)
+
+머신 패널의 배포 카드는 연결된 Reader·Controller 모두 볼 수 있다. 전송/사전검사/교체/재접속과 복구를 따로 보며, 「배포 실패 · 복구 완료」는 배포 성공이 아니다. 단절 때 마지막 수신 상태임을 표시하고 다시 연결하면 host DB의 최신 기록을 받는다. 「검증 정보」의 전체 ID/후보·복구 SHA와 오류를 보존해 coordinator의 같은 ID 조회·정확 SHA 복구 절차로 이어 간다. 카드에서는 시작·중단·수동 되돌리기를 하지 않는다. 종료 결과는 앱 안과 coordinator inbox에만 알린다.

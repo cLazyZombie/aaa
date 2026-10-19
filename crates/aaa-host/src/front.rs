@@ -253,7 +253,7 @@ async fn serve_conn(host: Arc<Host>, tx: FrameTx, mut rx: impl FrontIn, conn: Co
                     },
                     n = notices.recv() => match n {
                         // 새 앱 전용 종류를 옛 CLI의 enum으로 보내지 않는다. CLI는 Welcome 경고를 읽는다.
-                        Ok(n) if n.kind == aaa_proto::NoticeKind::PostMuted => continue,
+                        Ok(n) if matches!(n.kind, aaa_proto::NoticeKind::PostMuted | aaa_proto::NoticeKind::RolloutFinished | aaa_proto::NoticeKind::RolloutFailed) => continue,
                         Ok(n) => FrontEvent::Notice(n),
                         Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => continue,
                         Err(_) => break,
@@ -444,6 +444,50 @@ impl OrderedInput {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn local_wire_excludes_web_only_rollout_notices() {
+        use aaa_proto::{NoticeKind, NoticeView};
+        let root = std::env::temp_dir().join(format!("aaa-local-notice-{}", aaa_common::util::new_id()));
+        let mut cfg = aaa_config::HostConfig::default();
+        cfg.projects.root = root.join("projects").to_string_lossy().into();
+        cfg.notify.web_push = false;
+        let h = Host::open(cfg, root.join("host")).unwrap();
+        let (client, server) = tokio::io::duplex(MAX_FRAME);
+        let (sr, sw) = tokio::io::split(server);
+        let front = h.new_front("cli".into());
+        let task = tokio::spawn(serve_conn(
+            h.clone(),
+            spawn_writer(sw, MAX_FRAME),
+            FrameRx::new(sr, MAX_FRAME),
+            Conn { role: DeviceRole::Local, actor: "local:cli".into(), front },
+        ));
+        let mut rx = FrameRx::new(client, MAX_FRAME);
+        assert!(matches!(rx.control::<FrontMsg>().await.unwrap(), FrontMsg::Event(FrontEvent::State { .. })));
+        for kind in [NoticeKind::RolloutFinished, NoticeKind::RolloutFailed, NoticeKind::Finished] {
+            h.send_notice(NoticeView {
+                kind,
+                pane: None,
+                machine: String::new(),
+                project: None,
+                thread: None,
+                title: "wire barrier".into(),
+                agent: None,
+                turn_ms: None,
+                long: true,
+                at_ms: 1,
+            });
+        }
+        let msg = tokio::time::timeout(Duration::from_secs(2), rx.control::<FrontMsg>()).await.unwrap().unwrap();
+        assert!(
+            matches!(msg, FrontMsg::Event(FrontEvent::Notice(NoticeView { kind: NoticeKind::Finished, .. }))),
+            "N-1 CLI가 모르는 웹 알림을 받았다: {msg:?}"
+        );
+        drop(rx);
+        task.await.unwrap().unwrap();
+        drop(h);
+        std::fs::remove_dir_all(root).unwrap();
+    }
 
     /// 같은 pane의 쌓인 입력은 손실 없이 한 번에 전송하고, resize·다른 pane을 넘어서 묶지 않는다.
     #[tokio::test]

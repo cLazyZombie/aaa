@@ -770,6 +770,7 @@ async fn events_loop(host: Arc<Host>, dev: String, role: DeviceRole, mut socket:
     let mut notices = host.notice_events.subscribe();
     let mut preferences = host.preferences.subscribe();
     let mut reports = host.reports_changed.subscribe();
+    let mut rollouts = host.rollout_changed.subscribe();
     let mut revoked = host.device_revoked.subscribe();
     let mut chat_notes = host.chat_notes();
     // 이 연결이 대화를 청한 pane(차이 목록 C3). 연결이 끝나면 그만둔다
@@ -781,6 +782,7 @@ async fn events_loop(host: Arc<Host>, dev: String, role: DeviceRole, mut socket:
     let mut send_preferences = true;
     // 보고서 안 본 수(활동 막대 배지, plan §8.256): 열 때와 목록이 바뀔 때
     let mut send_reports = true;
+    let mut send_rollout = true;
     let mut send_badge = true;
     let mut last_badge = None;
     let close_revoked = |mut socket: WebSocket| async move {
@@ -841,6 +843,18 @@ async fn events_loop(host: Arc<Host>, dev: String, role: DeviceRole, mut socket:
                 break;
             }
         }
+        if send_rollout {
+            send_rollout = false;
+            rollouts.borrow_and_update();
+            let result = match host.rollout_card() {
+                Ok(card) => Outcome::Ok(card),
+                Err(e) => Outcome::Err(e),
+            };
+            let text = serde_json::to_string(&FrontEvent::Rollout { result }).unwrap();
+            if socket.send(Message::Text(text.into())).await.is_err() {
+                break;
+            }
+        }
         if send_state {
             let ev = FrontEvent::State { machines: host.machine_views(), panes: host.pane_views(role) };
             if socket.send(Message::Text(serde_json::to_string(&ev).unwrap().into())).await.is_err() {
@@ -863,6 +877,7 @@ async fn events_loop(host: Arc<Host>, dev: String, role: DeviceRole, mut socket:
             r = changed.changed() => {
                 if r.is_err() { break }
                 send_state = true;
+                send_rollout = true;
             }
             q = questions.recv() => {
                 send_state = false;
@@ -909,6 +924,10 @@ async fn events_loop(host: Arc<Host>, dev: String, role: DeviceRole, mut socket:
                 if r.is_err() { break }
                 send_state = false;
                 send_preferences = true;
+            }
+            r = rollouts.changed() => {
+                if r.is_err() { break; }
+                send_rollout = true;
             }
             r = reports.changed() => {
                 if r.is_err() { break }

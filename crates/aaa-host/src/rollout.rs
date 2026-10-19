@@ -5,6 +5,7 @@ use aaa_proto::*;
 use sha2::{Digest, Sha256};
 use std::{path::Path, sync::Arc, time::Duration};
 
+mod card;
 mod recovery;
 const STEP_LIMIT_MS: u64 = 120_000;
 const RECOVERY_LIMIT_MS: u64 = 3 * STEP_LIMIT_MS;
@@ -154,10 +155,16 @@ impl Host {
     }
     fn save_rollout(&self, r: &mut RolloutView) -> Result<(), ErrorBody> {
         r.updated_ms = aaa_common::util::now_ms();
-        self.db
-            .set_meta(&format!("rollout:{}", r.id), &serde_json::to_string(r).map_err(internal)?)
+        let completion = card::completion_item(r);
+        let announced = self
+            .db
+            .save_rollout_record(&r.id, &serde_json::to_string(r).map_err(internal)?, completion.as_ref())
             .map_err(internal)?;
         self.flow_project(&r.project, "rollout_changed", None, r.id.clone());
+        self.rollout_changed.send_modify(|v| *v += 1);
+        if announced && let Some(item) = completion {
+            self.announce_rollout_finished(r, &item);
+        }
         Ok(())
     }
     pub(crate) fn rollout_busy(&self) -> Result<bool, ErrorBody> {
