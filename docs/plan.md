@@ -5381,7 +5381,6 @@ primary 근거:
   착지 때 최신 main의 §8.215 높이 조절과 통합했다. 같은 textarea·surface ref를 함께 써 한 줄 자동 높이와 첨부·터치 Enter를 보존한다.
 - **시험.** 웹 E2E 23, docs/testing.md 「대화 이미지와 Enter」. 실제 OS의 clipboard 권한·iOS 길게 누르기 메뉴는 실기 확인 범위이며
   headless 결과를 실기 확인으로 부르지 않는다.
-||||||| 854ecc00
 
 ### 8.220 배경 수 배지가 사라지는 순간의 웹 E2E 경쟁(10-19, t-0375)
 
