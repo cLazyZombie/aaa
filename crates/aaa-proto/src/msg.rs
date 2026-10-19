@@ -1572,7 +1572,7 @@ pub enum FrontRequest {
         #[serde(default)]
         dry_run: bool,
     },
-    /// 모든 프로젝트 폴더의 aaa 파일(coordinator 안내 AGENTS.md·CLAUDE.md 링크·uploads/·routines/pr-followup.md)을 본다.
+    /// 모든 프로젝트 폴더의 aaa 파일(coordinator 안내 AGENTS.md·uploads/·routines/pr-followup.md)을 본다.
     /// `fix`면 고친다: 표지 있는 AGENTS.md는 지금 안내로 다시 쓰고, 표지 없는 것은 `.before-aaa`로 옮겨 둔다
     /// (herdr-projects `doctor [--fix]`, FRONT_API 1.34)
     ProjectFiles {

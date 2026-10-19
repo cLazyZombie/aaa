@@ -3593,28 +3593,27 @@ coordinator 실기(10-18 00:58, iPhone 홈 화면 앱을 앞에 띄움, binary c
 - **표지 줄(참고 「Written by herdr-projects」, src/project.rs:559–566·602).** 안내 둘째 문단이 `aaa가 쓴 파일이다.`다. 바이트 일치로
   「고친 흔적」을 가리던 rename 규칙은 안내 글을 바꾸는 순간 모든 옛 프로젝트를 고친 것으로 보므로 표지로 바꿨다(`orch::GUIDE_MARK`).
 - **`aaa doctor files [--fix]`(FrontRequest `project_files`).** host가 모든 프로젝트(보관 포함, 참고 `list_slugs`)를 본다
-  (`orch::files_problems`, 참고 `priming_problems`): AGENTS.md가 없음·표지 있는데 지금 안내가 아님·표지 없음, CLAUDE.md가 AGENTS.md
-  링크가 아님, uploads/ 없음, routines/pr-followup.md 없음. 출력은 참고 줄 모양 `[ok  ]`·`[warn]`·`[FAIL] files <p>: …`이고 FAIL이
+  (`orch::files_problems`, 참고 `priming_problems`): AGENTS.md가 없음·표지 있는데 지금 안내가 아님·표지 없음,
+  uploads/ 없음, routines/pr-followup.md 없음. 출력은 참고 줄 모양 `[ok  ]`·`[warn]`·`[FAIL] files <p>: …`이고 FAIL이
   있을 때만 실패로 끝난다(참고 `healthy`). `--fix`는 고칠 것이 있는 프로젝트만 고친다(`orch::write_files`, 참고 `write_priming`).
-  - 표지 있는 AGENTS.md는 지금 안내로 다시 쓴다. 표지 없는 AGENTS.md(옛 aaa·사람이 쓴 것)와 링크가 아닌 CLAUDE.md는 `<이름>.before-aaa`로
+  - 표지 있는 AGENTS.md는 지금 안내로 다시 쓴다. 표지 없는 AGENTS.md(옛 aaa·사람이 쓴 것)는 `<이름>.before-aaa`로
     옮겨 두고 쓴다(참고 `.before-herdr-projects`). 안내 글을 고쳐 쓰려면 PROJECT.md·memory에 쓰라고 표지 문단이 말한다(참고도 AGENTS.md는
     생성물이다).
-  - 참고와 다름: 옮겨 둘 이름이 이미 있으면 참고는 AGENTS.md를 그냥 덮고 CLAUDE.md를 지운다(사람 글을 잃는다). aaa는 그 프로젝트를
+  - 참고와 다름: 옮겨 둘 이름이 이미 있으면 참고는 AGENTS.md를 그냥 덮는다(사람 글을 잃는다). aaa는 그 프로젝트를
     고치지 않고 FAIL로 알린다(사람이 둘을 합치거나 하나를 치운 뒤 다시).
   - 참고와 다름: 참고 AGENTS.md는 짧은 가리킴이고 안내 전문은 `skill` 명령이 binary에서 내므로 binary만 바꾸면 안내가 바뀐다. aaa는
     안내 전문이 AGENTS.md에 있어(§8.21) binary를 바꾼 뒤 `aaa doctor files --fix`를 한 번 돌려야 닿는다.
-  - CLAUDE.md 링크는 aaa에 없던 것이다. Claude Code는 AGENTS.md를 읽지 않으므로 claude coordinator가 안내를 저절로 읽지 못했다. 새 프로젝트
-    (`write_skeleton`, 옮기기 포함)도 링크를 만든다.
+  - coordinator 안내는 AGENTS.md만 만든다(새 프로젝트·옮기기 공통).
   - **운영 영향.** 지금까지 aaa가 만든 프로젝트의 AGENTS.md에는 표지가 없다. 첫 `--fix`가 그것을 `AGENTS.md.before-aaa`로 옮기고 새 안내를
     쓴다(사람이 고친 줄이 있으면 거기서 옮겨 온다). 도는 coordinator는 다음 세션부터 새 안내를 읽는다.
 - **계약.** FRONT_API 1.34. 처음에는 배포되지 않은 1.33에 더했으나 1.33(bdbd3f0)이 10-18 14:19에 배포돼 02a116b 선례대로 올렸다(coordinator 착지 지시). 배포된 1.33 front는 N-1로 그대로 붙고, 그 요청을 모르는 1.33 host는 오류로 답한다.
   보기만(`fix: false`)은 보기 권한으로도 된다.
-- **시험.** m13 `doctor_files_brings_the_coordinator_guide_to_existing_projects`: 새 프로젝트 안내에 옮긴 절 12개 글이 모두 있고 CLAUDE.md가
-  링크다. 있는 프로젝트 셋(표지 있는 옛 안내, 표지 없는 옛 aaa 안내 + 사람이 쓴 CLAUDE.md, 옮겨 둔 자리가 찬 것)에서 보기만은 바꾸지 않고
+- **시험.** m13 `doctor_files_brings_the_coordinator_guide_to_existing_projects`: 새 프로젝트 안내에 옮긴 절 12개 글이 모두 있고 정해진 파일만 만든다.
+  있는 프로젝트 셋(표지 있는 옛 안내, 표지 없는 옛 aaa 안내, 옮겨 둔 자리가 찬 것)에서 보기만은 바꾸지 않고
   `[warn]`, `--fix`는 낡은 안내를 지금 안내로·빠진 파일을 만들고, 사람 글은 `.before-aaa`에 그대로, 자리가 찬 것은 두 글 모두 그대로 FAIL,
   치운 뒤 두 번째 `--fix`는 나머지를 바꾸지 않는다. m13 `project_lifecycle` rename은 표지 있는 옛 판 안내도 새 이름의 지금 안내로 쓴다.
-  결함 심기 일곱(안내 절 하나 빼기, 표지 있는 낡은 안내 건너뛰기, 표지 검사 없이 덮기, 자리가 차도 덮기(참고 동작), 새 프로젝트 CLAUDE.md
-  링크 빼기, 보기만이 고침, rename 옛 바이트 일치 규칙) 모두 실패했다.
+  안내 절 누락·낡은 안내 갱신·사람 글 보존·보기만의 비변경·rename 갱신 회귀를 검사한다.
+  thread worktree·작업 폴더는 기존 m13 시험에서 생성 파일 목록도 확인한다.
 
 ### 8.185 다른 agent 작업 끝남을 웹 앱 안 알림으로(10-18, 차이 목록 306 N3·545 `o`)
 
@@ -4817,7 +4816,7 @@ primary 근거:
 - **새 규칙.** 사용자 요청에 따라 중간 착지·진행·PR 병합/리뷰·평가 결과는 push하지 않는다. thread 보고 첫 줄의 `[완료]`는 맡긴 일 전체와 확인의 끝, `[결정 필요]`·`[검수 대기]`·`[확인 필요]`는 인증·터미널 승인·GUI·사용자 결정처럼 직접 사람이 해야 하는 단계다. `[착지]`·`[진행 중]`과 표지 없는 옛 보고는 외부 완료 알림을 만들지 않는다. 확인창·시작 실패·세션 사라짐·머신 이상은 유지한다. 표지로 thread 묶음·진행률·자동 resolve를 바꾸지 않는다(D9).
 - **보고/화면 경계.** host가 회수 사본의 hash와 DB를 대조해 알림 의도를 읽고 ThreadView.report_attention(Front API 1.41)에 실어 웹의 새 보고 알림·재연결도 같은 판정을 쓴다. 착지 inbox는 §8.221대로 남긴다. 보낼 때 사본 의도를 다시 확인해 그 사이 진행 보고로 바뀌었거나 ack한 보고는 취소한다. 표지 아래의 PR 줄만 더 인정하며 옛 PR 첫 줄도 받는다. 작업 중에 표지를 먼저 받은 턴은 그 뒤 Finished 카드를 중복하지 않으며 다음 턴부터 다시 센다.
 - **coordinator 최소 경로.** 기존 출처·역할 검증 post를 확장한다. `aaa post <project> user --request --needs-user --topic user-action --title '확인 필요' --body-file <파일>`은 입력 필요, `aaa post <project> user --notice --topic task-complete --title '전체 완료' --body-file <파일>`은 작업 완료다. worker/evaluator의 user 목적지는 계속 거부한다. 이 항목은 seen으로 저장해 coordinator 자기 nudge를 막고, done은 사용자 응답/확인 뒤 명시적으로 처리한다. push/webhook에는 제목·본문 대신 고정 문구만 보내며 기기별 input/done 선택을 따른다. Web Push 사용 중 억제·mute·오류/머신 경로는 유지한다.
-- **시스템 안내.** coordinator AGENTS.md 생성문(CLAUDE.md는 같은 파일 참조), 공통 thread brief와 SessionStart 진행 hook 안내에 같은 규칙을 적는다. coordinator는 질문하며 멈추기 전에 Waiting for you 상태와 user 요청 post를 남긴다. 전체 완료 post는 맡긴 일 전체가 끝난 뒤 한 번이다. 기존 운영 지침 파일은 이 thread가 수정하지 않는다. 새 binary 반영 후 `aaa doctor files --fix`로 생성 안내를 반영한다.
+- **시스템 안내.** coordinator AGENTS.md 생성문, 공통 thread brief와 SessionStart 진행 hook 안내에 같은 규칙을 적는다. coordinator는 질문하며 멈추기 전에 Waiting for you 상태와 user 요청 post를 남긴다. 전체 완료 post는 맡긴 일 전체가 끝난 뒤 한 번이다. 기존 운영 지침 파일은 이 thread가 수정하지 않는다. 새 binary 반영 후 `aaa doctor files --fix`로 생성 안내를 반영한다.
 - **참고와 차이.** herdr-projects notify.rs의 Done/Request 구분, herdr-web-ui push.ts의 대기 중 상태 재검사·seedStatuses, t3code ThreadNotificationCoordinator.tsx의 completed/attention 구분을 따른다. 참고는 턴/검토 대기를 완료로도 알리지만, 이번 사용자가 정한 명시적 전체 완료/확인 필요 경계가 우선한다. pane의 앱 안 턴 끝남 카드(§8.185)는 휴대폰 push와 별개인 기존 경로다.
 - **검증.** 중간 착지 push 금지와 coordinator user 목적지 불가를 각각 수정 전 RED로 보존했다. host의 실제 사본·DB·inbox·알림 queue 시험은 adopt/worktree, 네 표지, hash 불일치·본문 위장·중복·ack·대기 중 보고 변경·기기 설정을 본다. 기존 post 출처 E2E에서 실제 coordinator pane의 두 CLI 명령도 검증한다. 끝낸 가짜 작업 보고는 새 규칙에 맞춰 완료 표지를 붙이고, 중간 작업 fixture는 유지한다.
 
