@@ -46,6 +46,7 @@ mod prompt;
 mod prompt_box;
 mod push;
 mod report_mark;
+mod resource;
 mod restore;
 mod rollout;
 mod routine;
@@ -400,6 +401,8 @@ pub struct Host {
     pub changed: tokio_watch::Sender<u64>,
     /// 보고서 목록이 바뀌었다(보내기·열기·지우기·thread 사본, plan §8.256). 웹 events가 안 본 수를 다시 보낸다
     pub reports_changed: tokio_watch::Sender<u64>,
+    /// EMFILE 중에는 파일을 더 열지 않고, ticker가 여유가 생긴 뒤 시스템 경고를 저장한다.
+    resource_exhausted: std::sync::atomic::AtomicBool,
     enroll: Mutex<Enroll>,
     pairing: Mutex<Pairing>,
     pub agent_listen: Mutex<Option<String>>,
@@ -688,6 +691,7 @@ impl Host {
             brief_loops: Mutex::new(HashSet::new()),
             thread_ops: Mutex::new(HashMap::new()),
             brief_claims: Mutex::new(HashSet::new()),
+            resource_exhausted: std::sync::atomic::AtomicBool::new(false),
             report_refresh: Mutex::new(HashMap::new()),
             restoring: Mutex::new(HashSet::new()),
             restore_tried: Mutex::new(HashSet::new()),

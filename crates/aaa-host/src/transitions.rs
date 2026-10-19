@@ -32,13 +32,10 @@ pub(crate) fn label(r: &ThreadRec) -> String {
 }
 
 /// 전이 note: pane이 없으면 pane closed, agent 상태가 없으면 no agent, 그 밖은 harness 상태(herdr-projects ticker).
-/// 보고 사본 실패는 aaa에만 있는 확인 필요 까닭이다.
-pub(crate) fn note(pane_exists: bool, agent: Option<&AgentStatus>, copy_failed: bool) -> String {
+/// 보고 사본 실패는 시스템 경고이므로 전이 까닭에 섞지 않는다.
+pub(crate) fn note(pane_exists: bool, agent: Option<&AgentStatus>) -> String {
     if !pane_exists {
         return "pane closed".into();
-    }
-    if copy_failed {
-        return "copy failed".into();
     }
     match agent.map(|a| a.activity) {
         None => "no agent",
@@ -204,8 +201,7 @@ impl Host {
             if r.last_group != Some(group) {
                 match r.last_group {
                     Some(_) => {
-                        let copy_failed = r.copy.as_deref() == Some("failed");
-                        change = Some(Transition { to: group, note: note(pane_exists, agent.as_ref(), copy_failed) });
+                        change = Some(Transition { to: group, note: note(pane_exists, agent.as_ref()) });
                     }
                     // 처음 본다(새 thread·host를 바꾼 직후): 전이가 아니다. 이미 있던 보고는 옛 방식으로 알렸으니
                     // 「새 보고」를 다시 내지 않는다.
@@ -515,10 +511,9 @@ mod tests {
     #[test]
     fn notes_and_events_follow_the_reference() {
         let q = agent(AgentActivity::Question);
-        assert_eq!(note(false, Some(&q), true), "pane closed");
-        assert_eq!(note(true, Some(&q), true), "copy failed");
-        assert_eq!(note(true, None, false), "no agent");
-        assert_eq!(note(true, Some(&q), false), "blocked");
+        assert_eq!(note(false, Some(&q)), "pane closed");
+        assert_eq!(note(true, None), "no agent");
+        assert_eq!(note(true, Some(&q)), "blocked");
         let t = |to, note: &str| Transition { to, note: note.into() };
         assert_eq!(transition_event(&t(ThreadGroup::WaitingOnYou, "blocked")), "blocked on a prompt");
         assert_eq!(transition_event(&t(ThreadGroup::WaitingOnYou, "pane closed")), "pane closed");

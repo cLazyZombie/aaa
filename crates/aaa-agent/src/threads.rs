@@ -442,7 +442,17 @@ pub fn collect(work_dir: &str, max_library_bytes: u64) -> Result<ReportSnapshot>
                     lazy_size: Some(meta.len()),
                 });
             } else {
-                match sha256_file(abs) {
+                // 계속 쓰는 로그도 manifest의 size와 같은 prefix를 해시한다.
+                let hash = (|| -> Result<String> {
+                    use std::io::Read;
+                    let mut file = std::fs::File::open(abs)?.take(meta.len());
+                    let mut digest = Sha256::new();
+                    if std::io::copy(&mut file, &mut digest)? != meta.len() {
+                        bail!("해시하는 동안 파일이 줄었다");
+                    }
+                    Ok(hex::encode(digest.finalize()))
+                })();
+                match hash {
                     Ok(sha256) => {
                         total += meta.len();
                         files.push(LibFile { path: rel, size: meta.len(), sha256 });

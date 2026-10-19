@@ -94,7 +94,16 @@ pub async fn start(host: &Arc<Host>) -> Result<()> {
     let listener = aaa_common::ipc::LocalListener::bind(&path).context("front socket")?;
     let host = host.clone();
     tokio::spawn(async move {
-        while let Ok((s, pid)) = listener.accept_peer().await {
+        loop {
+            let (s, pid) = match listener.accept_peer().await {
+                Ok(pair) => pair,
+                Err(e) => {
+                    host.resource_error("front accept", &e);
+                    tracing::warn!(error = %e, "front accept 실패");
+                    tokio::time::sleep(Duration::from_secs(1)).await;
+                    continue;
+                }
+            };
             let host = host.clone();
             tokio::spawn(async move {
                 if let Err(e) = serve(host, s, pid).await {

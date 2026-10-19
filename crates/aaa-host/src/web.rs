@@ -55,12 +55,48 @@ pub async fn start(host: &Arc<Host>) -> Result<()> {
     let h = host.clone();
     tokio::spawn(async move { h.refresh_publish().await });
     let app = router(host.clone());
+    let listener = ResourceListener { inner: listener, host: host.clone() };
     tokio::spawn(async move {
         if let Err(e) = axum::serve(listener, app).await {
             tracing::error!("웹 서버 끝: {e}");
         }
     });
     Ok(())
+}
+
+/// axum 기본 listener의 재시도(1초)를 유지하고 EMFILE을 시스템 inbox에도 남긴다.
+struct ResourceListener {
+    inner: tokio::net::TcpListener,
+    host: Arc<Host>,
+}
+impl axum::serve::Listener for ResourceListener {
+    type Io = tokio::net::TcpStream;
+    type Addr = std::net::SocketAddr;
+    async fn accept(&mut self) -> (Self::Io, Self::Addr) {
+        loop {
+            match self.inner.accept().await {
+                Ok(pair) => return pair,
+                Err(e)
+                    if matches!(
+                        e.kind(),
+                        std::io::ErrorKind::ConnectionRefused
+                            | std::io::ErrorKind::ConnectionAborted
+                            | std::io::ErrorKind::ConnectionReset
+                    ) =>
+                {
+                    continue;
+                }
+                Err(e) => {
+                    self.host.resource_error("web accept", &e);
+                    tracing::warn!(error = %e, "웹 연결 accept 실패");
+                    tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+                }
+            }
+        }
+    }
+    fn local_addr(&self) -> std::io::Result<Self::Addr> {
+        self.inner.local_addr()
+    }
 }
 
 pub fn router(host: Arc<Host>) -> Router {
