@@ -285,3 +285,5 @@ failed·interrupted·판/SHA 불일치면 진행을 멈추고 원인을 본다. 
 생성된 coordinator 안내는 binary 반영 뒤 `aaa doctor files --fix`로 갱신한다. 운영 설정·서비스의 변경은 이 코드의 시험·착지와 별도다.
 
 - 준비 응답을 잃어 host에 경로가 없는 실패도 resolve가 agent journal을 먼저 조회해 정리한다. 조회는 준비와 같은 lock에서 끝나므로 준비 뒤늦은 생성과 정리가 경합하지 않는다. `thread_journal.v1`이 없는 옛 agent에서는 확인 없이 resolve 완료하지 않고 갱신을 안내한다.
+
+구판 journal 없는 예상 자리가 남아 있으면 조회는 없음으로 확정하지 않고 명시적으로 거부한다. 변경 없는 자리는 안내한 `thread restart`가 소유권을 확인해 회수하고, 그 뒤 resolve하면 정리된다. 변경·다른 Git 신원은 기존대로 보존한다.

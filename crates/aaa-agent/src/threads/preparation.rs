@@ -86,7 +86,26 @@ pub async fn placement(
     let path = journal_key(cfg, project, thread);
     let lock = lock(&path);
     let _guard = lock.lock().await;
-    let Some(saved) = read::<Placement>(&path)? else { return Ok(None) };
+    let Some(saved) = read::<Placement>(&path)? else {
+        // 구판 준비에는 journal이 없다. 실제 자리를 보지 않고 없음으로 확정하면 다시 고아가 된다.
+        let expected = match kind {
+            ThreadKind::Worktree => {
+                let repo = PathBuf::from(repo.context("worktree의 repo가 없다")?);
+                let top = git(&repo, &["rev-parse", "--show-toplevel"], GIT_T).await.map(PathBuf::from).unwrap_or(repo);
+                cfg.work_root.join(top.file_name().context("repo 이름이 없다")?).join(format!("{project}-{thread}"))
+            }
+            ThreadKind::Dir => cfg.work_root.join(project).join(thread),
+            ThreadKind::Adopted => bail!("데려온 자리는 준비 기록으로 정리하지 않는다"),
+        };
+        match expected.symlink_metadata() {
+            Ok(_) => bail!(
+                "기록 없는 준비 자리가 있다: {}. `aaa thread restart {project} {thread}`로 소유권을 확인해 회수한 뒤 resolve한다",
+                expected.display()
+            ),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+            Err(e) => return Err(e.into()),
+        }
+    };
     let expected = match kind {
         ThreadKind::Worktree => {
             let repo = Path::new(repo.context("worktree의 repo가 없다")?);

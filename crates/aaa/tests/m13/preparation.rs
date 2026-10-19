@@ -211,17 +211,28 @@ fn configured_prepare_timeout_recovers_only_unchanged_worktree() {
     assert_eq!(v["cwd"], path_str(&cwd));
     assert_eq!(v["status"], "open");
 
-    // 응답을 잃은 두 번째 준비는 restart 없이 resolve해도 agent 자리를 회수해 정리해야 한다.
-    GitGate::enable(&w, "add");
-    let second = start_gated(&w);
-    let second = second["id"].as_str().unwrap();
-    let mut pending = gate.take("add");
-    w.wait_show("두 번째 준비 상한", second, |v| v["status"] == "failed");
-    assert_eq!(pending.read(&mut b).unwrap(), 0);
-    std::fs::remove_file(w.lab.root.join("gate-add")).unwrap();
-    let orphan = w.lab.root.join("workA/repo").join(format!("demo-{second}"));
-    assert!(orphan.is_dir());
-    let resolved = w.h.ok(&["thread", "resolve", "demo", second]);
-    assert!(!orphan.exists(), "응답을 잃은 준비도 resolve가 회수해 정리해야 한다: {resolved}");
-    assert_eq!(resolved["cwd"], path_str(&orphan));
+    // journal이 있는 새 준비와 journal 없는 구판 잔여 자리 모두 확인 없이 완료하지 않는다.
+    for legacy in [false, true] {
+        GitGate::enable(&w, "add");
+        let second = start_gated(&w);
+        let second = second["id"].as_str().unwrap();
+        let mut pending = gate.take("add");
+        w.wait_show("다음 준비 상한", second, |v| v["status"] == "failed");
+        assert_eq!(pending.read(&mut b).unwrap(), 0);
+        std::fs::remove_file(w.lab.root.join("gate-add")).unwrap();
+        let orphan = w.lab.root.join("workA/repo").join(format!("demo-{second}"));
+        assert!(orphan.is_dir());
+        if legacy {
+            std::fs::remove_file(w.lab.root.join("workA/.preparations").join(format!("demo-{second}.json"))).unwrap();
+            let e = w.h.json(&["thread", "resolve", "demo", second]).expect_err("구판 자리를 없다고 확정하지 않는다");
+            assert!(e.contains("기록 없는 준비 자리"), "{e}");
+            assert!(orphan.exists());
+            assert_eq!(w.show(second)["status"], "failed");
+            w.h.ok(&["thread", "restart", "demo", second]);
+            w.wait_show("구판 자리 회수 뒤 brief", second, |v| v["brief"] == "delivered");
+        }
+        let resolved = w.h.ok(&["thread", "resolve", "demo", second]);
+        assert!(!orphan.exists(), "응답을 잃은 준비도 resolve가 회수해 정리해야 한다: {resolved}");
+        assert_eq!(resolved["cwd"], path_str(&orphan));
+    }
 }

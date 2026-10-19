@@ -5370,3 +5370,5 @@ primary 근거:
 - 운영 host·agent 교체·재시작은 착지와 별도이며 이 thread에서는 하지 않는다.
 
 - finish 리뷰 보완: 준비 응답 유실 뒤 경로 없는 Failed를 곧바로 resolve하면 journal의 자리가 고아로 남던 경로를 수정했다. `thread_journal.v1`의 읽기 전용 `thread_placement`는 준비와 같은 lock을 기다린 뒤 project·thread·repo·branch·예상 경로가 맞는 기록만 반환한다. host는 이 경로를 저장하고 정리한다. 옛 agent에서 조회할 수 없으면 완료로 확정하지 않는다.
+
+구판 journal 없는 예상 자리가 남아 있으면 조회는 없음으로 확정하지 않고 명시적으로 거부한다. 변경 없는 자리는 안내한 `thread restart`가 소유권을 확인해 회수하고, 그 뒤 resolve하면 정리된다. 변경·다른 Git 신원은 기존대로 보존한다.
