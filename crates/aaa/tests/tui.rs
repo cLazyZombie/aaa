@@ -1908,15 +1908,33 @@ fn side_list_like_web() {
     pick(&mut tui, "▸ demo");
     tui.send(b" ");
     tui.wait_screen("제목 시험 전 펼침", |s| s.side_lines().iter().any(|l| l.contains("▾ demo")));
+    // 두 줄 스크롤의 7줄 스트레스 배치를 끝내고 새 thread가 보일 자리를 확보한다.
+    let divider = tui.screen.0.lock().unwrap().list_top() - 1;
+    tui.mouse(0, (divider, 7), false);
+    tui.mouse(32, (8, 7), false);
+    tui.mouse(0, (8, 7), true);
+    tui.wait_screen("제목 목록 높이", |s| s.side_lines()[8].starts_with("────"));
     let long_title =
         "한글제목: 프로젝트 목록의 긴 제목을 선택하면 한글 사이에 공백을 넣지 않고 전체를 확인한다. 끝표지END";
     let long_id = start(long_title)["id"].as_str().unwrap().to_string();
     tui.wait_screen("긴 제목 도착", |s| s.side_lines().iter().any(|l| l.contains(&long_id)));
     pick(&mut tui, &long_id);
-    tui.wait_text("선택 제목 미리 보기", |s| s.contains("선택 제목") && s.contains("한글제목:"));
+    tui.wait_text("선택 제목 미리 보기", |s| {
+        s.contains("선택 제목") && s.contains("한글제목:") && s.contains("끝표지END")
+    });
     shot(&tui, "panel-title-preview");
+    let title_ready = |s: &Screen| {
+        let text = s.text();
+        let body: String =
+            (6..24).map(|y| s.cells[y][8..82].iter().filter(|c| **c != '\0').collect::<String>()).collect();
+        text.contains("제목 전체 · esc 닫기")
+            && body.contains("끝표지END")
+            && text.contains("↑↓ PgUp/Dn Home/End · 1/1")
+            && s.cells[25][7] == '└'
+            && s.cells[25][82] == '┘'
+    };
     tui.send(b"i");
-    tui.wait_text("제목 전체", |s| s.contains("제목 전체 · esc 닫기") && s.contains("끝표지END"));
+    tui.wait_screen("제목 전체 렌더", title_ready);
     shot(&tui, "panel-title-full");
     tui.send(b"TITLE-LEAK\x1b[200~PASTE-LEAK\x1b[201~");
     tui.send(b"\x1b");
@@ -1925,13 +1943,13 @@ fn side_list_like_web() {
     // 미리 보기 누름과 목록 오른쪽 누름은 같은 읽기 창이다.
     let preview_y = tui.text().lines().position(|l| l.contains("선택 제목")).unwrap();
     tui.click((preview_y, SIDE as usize + 1));
-    tui.wait_text("미리 보기 누름", |s| s.contains("제목 전체 · esc 닫기") && s.contains("끝표지END"));
+    tui.wait_screen("미리 보기 누름", title_ready);
     tui.send(b"\x1b");
     tui.wait_text("다시 목록", |s| !s.contains("제목 전체 · esc 닫기"));
     let row = tui.selected().unwrap().0;
     tui.mouse(2, (row, 10), false);
     tui.mouse(2, (row, 10), true);
-    tui.wait_text("목록 오른쪽 누름", |s| s.contains("제목 전체 · esc 닫기") && s.contains("끝표지END"));
+    tui.wait_screen("목록 오른쪽 누름", title_ready);
     tui.send(b"\x1b");
     tui.wait_text("제목 창 닫음", |s| !s.contains("제목 전체 · esc 닫기"));
     tui.send(b"\x1b");
@@ -3563,9 +3581,10 @@ fn paste_and_image_drop_like_herdr() {
     tui.send("\x1b[200~나누기\x1b[201~".as_bytes());
     tui.wait_text("거름", |s| s.contains("좌우로 나누기") && !s.contains("목록 탐색"));
     tui.send(b"\x1b");
-    tui.wait_text("검색 끝", |s| s.contains("esc 닫기"));
+    tui.wait_text("검색 끝", |s| s.contains("esc 닫기") && s.contains("검색 / · 넘기기"));
     tui.send(b"\x1b");
-    tui.wait_text("닫힘", |s| !s.contains("prefix 모드"));
+    // 거른 목록에는 prefix 모드가 이미 없다. 검색 여부와 무관한 창 제목이 사라져야 닫힌 것이다.
+    tui.wait_text("단축키 창 닫힘", |s| !s.contains("단축키"));
     tui.cmd("c");
     tui.wait_text("새 탭 이름 창", |s| s.contains("새 탭") && s.contains("↵ 저장"));
     tui.send("\x1b[200~붙인\n탭\x1b[201~\r".as_bytes());
