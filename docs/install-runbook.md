@@ -303,3 +303,31 @@ L3는 모든 대상의 `rollout_recovery.v1`과 host/로컬 agent의 배포 전 
 ### 웹에서 배포 상태 보기(L4)
 
 머신 패널의 배포 카드는 연결된 Reader·Controller 모두 볼 수 있다. 전송/사전검사/교체/재접속과 복구를 따로 보며, 「배포 실패 · 복구 완료」는 배포 성공이 아니다. 단절 때 마지막 수신 상태임을 표시하고 다시 연결하면 host DB의 최신 기록을 받는다. 「검증 정보」의 전체 ID/후보·복구 SHA와 오류를 보존해 coordinator의 같은 ID 조회·정확 SHA 복구 절차로 이어 간다. 카드에서는 시작·중단·수동 되돌리기를 하지 않는다. 종료 결과는 앱 안과 coordinator inbox에만 알린다.
+
+## 12. 같은 Mac의 둘째 aaa(§8.294)
+
+지금 aaa(기본 인스턴스)는 그대로 두고, 이름 붙은 둘째 aaa를 같은 Mac에 띄운다. 예시 이름은 `work`다. binary는 같이 쓴다(`~/.local/bin/aaa`).
+
+```bash
+aaa --instance work init                                                    # ✋ 사람 터미널: 폴더·포트·홈
+aaa --instance work service install --role host --aaa ~/.local/bin/aaa      # ✋ dev.aaa.work.host
+aaa --instance work service install --role agent --aaa ~/.local/bin/aaa     # ✋ dev.aaa.work.agent
+aaa --instance work project create                                          # 프로젝트 이름 = work
+aaa --instance work web publish                                             # 다른 aaa가 쓰지 않는 tailnet 포트
+```
+
+- 폴더는 지금 자리 옆의 형제다: `~/.config/aaa-work`, `~/Library/Application Support/aaa-work`, `~/.aaa-work/projects`, 작업 root `~/aaa-work-work`, 로그 `~/Library/Logs/aaa-work/`.
+- init은 이 Mac의 다른 aaa가 쓰지 않는 포트 쌍(Agent link·웹)을 host.toml에 적는다. 다른 Mac은 4장처럼 그 Agent link 포트로 등록하고, 그 Mac의 인스턴스 agent.toml에 host를 적는다:
+  ```bash
+  aaa --instance work machine enroll --open 10m                              # host Mac: 등록 창
+  aaa --instance work agent enroll mac-a.example.ts.net:7432                 # 다른 Mac: 화면에 확인 코드가 나온다
+  aaa --instance work machine approve mac-b --code <코드>                    # host Mac: 그 코드로 승인
+  printf 'schema = 1\n[agent]\nhost = "mac-a.example.ts.net:7432"\n' > ~/.config/aaa-work/agent.toml   # 다른 Mac
+  aaa --instance work service install --role agent --aaa ~/.local/bin/aaa    # ✋ 다른 Mac
+  ```
+- 인스턴스 agent는 시작할 때 상태 폴더 아래 가장 긴 socket 경로가 104바이트 안에 드는지 본다. 사용자 이름이 긴 Mac에서 넘치면 더 짧은 인스턴스 이름을 쓴다.
+- pane 안 CLI·hook은 물려받은 `AAA_INSTANCE`로 자기 aaa에 간다. 밖에서 볼 때는 `aaa --instance work status`처럼 이름을 붙인다.
+- 웹 로그인 쿠키는 `__Host-aaa-work`라 같은 hostname의 기본 aaa 로그인을 덮지 않는다. 기기 pairing은 인스턴스마다 따로 한다(`aaa --instance work web pair`).
+- Codex hook은 binary를 같이 쓰면 그대로 둔다. hooks.json의 한 줄이 pane env로 자기 aaa를 찾는다.
+- 업그레이드: binary를 바꾼 뒤 restart는 인스턴스마다 한다(`aaa --instance work service restart --role host`, `--role agent`).
+- 사용량 표시는 같은 HOME의 Claude·Codex 로그인을 같이 본다.

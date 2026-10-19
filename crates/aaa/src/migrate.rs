@@ -150,7 +150,7 @@ pub fn run(json: bool, cmd: MigrateCmd) -> Result<ExitCode> {
                 Err(e) => anyhow::bail!("host 설정을 읽지 못했다:\n{}", e.render()),
             };
             let projects_root = if cfg.projects.root.is_empty() {
-                aaa_config::paths::home().join(".aaa").join("projects")
+                aaa_config::paths::projects_root_default()
             } else {
                 PathBuf::from(&cfg.projects.root)
             };

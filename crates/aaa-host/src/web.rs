@@ -398,11 +398,22 @@ async fn serve_view(
     res.body(Body::from_stream(body)).unwrap()
 }
 
+/// 장치 cookie 이름. cookie는 포트를 가리지 않아 같은 hostname의 두 인스턴스가 한 이름을 쓰면 서로의 로그인을 덮는다.
+/// 그래서 인스턴스는 이름에 꼬리를 단다(`__Host-aaa-work`, plan §8.294). 기본 인스턴스는 지금 이름 그대로다
+fn cookie_name(https: bool) -> String {
+    cookie_name_in(aaa_config::paths::instance().as_deref(), https)
+}
+
+fn cookie_name_in(instance: Option<&str>, https: bool) -> String {
+    let base = aaa_config::paths::named("aaa", instance);
+    if https { format!("__Host-{base}") } else { base }
+}
+
 /// 장치 cookie. HTTPS에서는 `__Host-aaa`만 본다: prefix 없는 `aaa`는 같은 이름의 다른 서비스(다른 포트)나
 /// 하위 경로가 심을 수 있다. `=`이 없는 등 깨진 항목은 건너뛴다(herdr-web-ui `parseCookies`: 남의 cookie 하나가
 /// 주인을 막지 않는다)
 fn cookie_token(h: &HeaderMap) -> Option<String> {
-    let name = if via_https(h) { "__Host-aaa" } else { "aaa" };
+    let name = cookie_name(via_https(h));
     for v in h.get_all(header::COOKIE) {
         let Ok(s) = v.to_str() else { continue };
         for part in s.split(';') {
@@ -475,10 +486,11 @@ async fn pair(State(host): State<Arc<Host>>, headers: HeaderMap, Json(b): Json<P
     match host.redeem_pairing(&b.code, &b.label) {
         Ok((token, role)) => {
             let secure = via_https(&headers);
+            let name = cookie_name(secure);
             let cookie = if secure {
-                format!("__Host-aaa={token}; Path=/; HttpOnly; Secure; SameSite=Strict; Max-Age=31536000")
+                format!("{name}={token}; Path=/; HttpOnly; Secure; SameSite=Strict; Max-Age=31536000")
             } else {
-                format!("aaa={token}; Path=/; HttpOnly; SameSite=Strict; Max-Age=31536000")
+                format!("{name}={token}; Path=/; HttpOnly; SameSite=Strict; Max-Age=31536000")
             };
             let mut res = Json(Outcome::Ok(serde_json::json!({ "role": role }))).into_response();
             res.headers_mut().insert(header::SET_COOKIE, HeaderValue::from_str(&cookie).unwrap());
@@ -493,10 +505,10 @@ async fn pair(State(host): State<Arc<Host>>, headers: HeaderMap, Json(b): Json<P
 async fn sign_out() -> Response {
     let mut res = StatusCode::NO_CONTENT.into_response();
     for c in [
-        "__Host-aaa=; Path=/; HttpOnly; Secure; SameSite=Strict; Max-Age=0",
-        "aaa=; Path=/; HttpOnly; SameSite=Strict; Max-Age=0",
+        format!("{}=; Path=/; HttpOnly; Secure; SameSite=Strict; Max-Age=0", cookie_name(true)),
+        format!("{}=; Path=/; HttpOnly; SameSite=Strict; Max-Age=0", cookie_name(false)),
     ] {
-        res.headers_mut().append(header::SET_COOKIE, HeaderValue::from_static(c));
+        res.headers_mut().append(header::SET_COOKIE, HeaderValue::from_str(&c).unwrap());
     }
     res
 }
@@ -2021,6 +2033,15 @@ mod guard_tests {
         l.0.db.set_meta("publish_port", "8443").unwrap();
         assert_ne!(code(&l.0, "GET", "/", PUBLIC, &[]).await, StatusCode::MISDIRECTED_REQUEST);
         assert_eq!(code(&l.0, "GET", "/", "mac-a.example.ts.net", &[]).await, StatusCode::MISDIRECTED_REQUEST);
+    }
+
+    /// 같은 hostname의 두 인스턴스가 서로의 로그인 cookie를 덮지 않는다. 기본 인스턴스는 지금 이름 그대로다
+    #[test]
+    fn instance_cookie_names() {
+        assert_eq!(cookie_name_in(None, true), "__Host-aaa");
+        assert_eq!(cookie_name_in(None, false), "aaa");
+        assert_eq!(cookie_name_in(Some("work"), true), "__Host-aaa-work");
+        assert_eq!(cookie_name_in(Some("work"), false), "aaa-work");
     }
 
     #[tokio::test]

@@ -20,11 +20,11 @@ pub fn validate(value: &str, allow_root: bool) -> Result<(), String> {
     Ok(())
 }
 
-/// 빈 root는 기존 기본값 그대로다. 명시한 root에는 다른 접미사를 붙이지 않는다.
+/// 빈 root는 기존 기본값 그대로다(인스턴스는 `~/aaa-work-<이름>`). 명시한 root에는 다른 접미사를 붙이지 않는다.
 pub fn resolve(value: &str, home: &Path) -> Result<PathBuf, String> {
     validate(value, false)?;
     let path = if value.is_empty() {
-        home.join("aaa-work")
+        home.join(crate::paths::instance_name("aaa-work"))
     } else if let Some(rest) = value.strip_prefix("~/") {
         home.join(rest)
     } else {

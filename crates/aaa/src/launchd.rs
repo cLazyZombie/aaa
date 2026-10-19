@@ -6,6 +6,8 @@
 //!   감독하므로 프로세스를 끝내면 다시 뜬다: 멈추기는 `bootout`(plist는 남아 다음 로그인에 뜬다), 띄우기는 `bootstrap`,
 //!   다시 띄우기는 `kickstart -k`다. 세션은 session host가 가져 이어진다.
 //! - launchd가 주는 PATH는 짧다(`/usr/bin:/bin:…`). 설치하는 셸의 PATH를 plist에 적어 `claude`·`codex`를 찾게 한다.
+//! - 인스턴스(plan §8.294)는 label `dev.aaa.<이름>.<role>`, 로그 `~/Library/Logs/aaa-<이름>/`이고 plist가 `AAA_INSTANCE`를 넘긴다.
+//!   기본 인스턴스는 지금 label·로그 그대로다(바꾸면 지금 서비스를 다시 설치해야 한다).
 
 use std::path::{Path, PathBuf};
 #[cfg(test)]
@@ -14,7 +16,19 @@ use std::process::Command;
 use anyhow::{Result, bail};
 
 pub fn label(role: &str) -> String {
-    format!("dev.aaa.{role}")
+    label_in(aaa_config::paths::instance().as_deref(), role)
+}
+
+fn label_in(instance: Option<&str>, role: &str) -> String {
+    match instance {
+        Some(name) => format!("dev.aaa.{name}.{role}"),
+        None => format!("dev.aaa.{role}"),
+    }
+}
+
+/// 사람에게 알리는 감독자 명령(`aaa --instance work service start --role agent`)
+fn service_cmd(sub: &str, role: &str) -> String {
+    format!("aaa{} service {sub} --role {role}", aaa_config::paths::instance_flag())
 }
 
 pub fn plist_path(role: &str) -> PathBuf {
@@ -26,7 +40,11 @@ pub fn default_launcher() -> PathBuf {
 }
 
 pub fn log_path(role: &str) -> PathBuf {
-    aaa_config::paths::home().join("Library/Logs/aaa").join(format!("{role}.log"))
+    log_path_in(&aaa_config::paths::home(), aaa_config::paths::instance().as_deref(), role)
+}
+
+fn log_path_in(home: &Path, instance: Option<&str>, role: &str) -> PathBuf {
+    home.join("Library/Logs").join(aaa_config::paths::named("aaa", instance)).join(format!("{role}.log"))
 }
 
 fn xml(s: &str) -> String {
@@ -74,9 +92,14 @@ pub fn plist(s: &Spec) -> String {
     out
 }
 
-/// 설치하는 셸에서 가져갈 환경
+/// 설치하는 셸에서 가져갈 환경. 인스턴스면 그 이름도 넘겨 launchd가 띄운 aaa가 같은 폴더를 본다
 pub fn captured_env() -> Vec<(String, String)> {
-    ["PATH", "LANG"].iter().filter_map(|k| std::env::var(k).ok().map(|v| (k.to_string(), v))).collect()
+    let mut env: Vec<(String, String)> =
+        ["PATH", "LANG"].iter().filter_map(|k| std::env::var(k).ok().map(|v| (k.to_string(), v))).collect();
+    if let Some(name) = aaa_config::paths::instance() {
+        env.push(("AAA_INSTANCE".into(), name));
+    }
+    env
 }
 
 fn uid() -> String {
@@ -149,9 +172,9 @@ pub fn install(s: &Spec, replace: bool) -> Result<String> {
             bail!("{what} 실행 파일이 없다(절대 경로): {}", p.display());
         }
     }
-    // 이름 변경(결정 18) 전 감독자가 남아 있으면 같은 port를 두고 다툰다
+    // 이름 변경(결정 18) 전 감독자가 남아 있으면 같은 port를 두고 다툰다. 인스턴스는 그 뒤에 생겨 옛 감독자가 없다
     let legacy = aaa_config::paths::home().join("Library/LaunchAgents").join(format!("dev.aa.{}.plist", s.role));
-    if legacy.exists() {
+    if aaa_config::paths::instance().is_none() && legacy.exists() {
         bail!(
             "옛 감독자가 있다: {}. 먼저 옛 실행 파일로 내린다: ~/.local/bin/aa service uninstall --role {}",
             legacy.display(),
@@ -190,9 +213,10 @@ fn installed(role: &str, what: &str) -> Result<PathBuf> {
     let p = plist_path(role);
     if !p.is_file() {
         bail!(
-            "{} 감독자가 설치되지 않았다: {} 없음. 먼저 `aaa service install --role {role}`",
+            "{} 감독자가 설치되지 않았다: {} 없음. 먼저 `{}`",
             label(role),
-            p.display()
+            p.display(),
+            service_cmd("install", role)
         );
     }
     Ok(p)
@@ -209,7 +233,7 @@ pub(crate) fn restart_authorized(role: &str) -> Result<String> {
 fn restart_with(role: &str, authorized: bool) -> Result<String> {
     installed(role, "다시 띄우기")?;
     if launchd_state(role)?.is_none() {
-        bail!("{} 감독자가 멈춰 있다. 띄우려면 `aaa service start --role {role}`", label(role));
+        bail!("{} 감독자가 멈춰 있다. 띄우려면 `{}`", label(role), service_cmd("start", role));
     }
     if !authorized {
         human_only(&format!("{} 다시 띄우기(세션은 이어진다)", label(role)))?;
@@ -234,8 +258,10 @@ pub fn stop(role: &str) -> Result<String> {
         bail!("launchctl bootout 실패: {}", text.trim());
     }
     Ok(format!(
-        "멈췄다: {}. 다시 띄우려면 `aaa service start --role {role}`(plist가 남아 다음 로그인 때도 뜬다. 아주 내리려면 `aaa service uninstall --role {role}`)\n",
-        label(role)
+        "멈췄다: {}. 다시 띄우려면 `{}`(plist가 남아 다음 로그인 때도 뜬다. 아주 내리려면 `{}`)\n",
+        label(role),
+        service_cmd("start", role),
+        service_cmd("uninstall", role)
     ))
 }
 
@@ -243,7 +269,7 @@ pub fn stop(role: &str) -> Result<String> {
 pub fn start(role: &str) -> Result<String> {
     let p = installed(role, "띄우기")?;
     if launchd_state(role)?.is_some() {
-        bail!("{} 감독자는 이미 올라가 있다. 다시 띄우려면 `aaa service restart --role {role}`", label(role));
+        bail!("{} 감독자는 이미 올라가 있다. 다시 띄우려면 `{}`", label(role), service_cmd("restart", role));
     }
     human_only(&format!("{} 띄우기", label(role)))?;
     let (ok, text) = launchctl(&["bootstrap", &format!("gui/{}", uid()), &p.to_string_lossy()])?;
@@ -270,6 +296,16 @@ pub fn uninstall(role: &str) -> Result<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// 기본 인스턴스의 label·로그는 지금 그대로다(바꾸면 지금 서비스를 다시 설치해야 한다)
+    #[test]
+    fn instance_labels_and_logs() {
+        let home = Path::new("/opt/example");
+        assert_eq!(label_in(None, "host"), "dev.aaa.host");
+        assert_eq!(log_path_in(home, None, "agent"), Path::new("/opt/example/Library/Logs/aaa/agent.log"));
+        assert_eq!(label_in(Some("work"), "host"), "dev.aaa.work.host");
+        assert_eq!(log_path_in(home, Some("work"), "agent"), Path::new("/opt/example/Library/Logs/aaa-work/agent.log"));
+    }
 
     #[test]
     fn plist_shape() {

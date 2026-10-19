@@ -25,6 +25,10 @@ struct Cli {
     /// 기계가 읽는 JSON으로 출력
     #[arg(long, global = true)]
     json: bool,
+    /// 인스턴스(기본: AAA_INSTANCE, 없으면 기본 인스턴스). 설정·상태·홈·작업 root·launchd label·웹 쿠키가 따로다(plan §8.294).
+    /// --config-dir·--state-dir와 그 env가 있으면 그 폴더가 이긴다
+    #[arg(long, global = true, value_name = "이름")]
+    instance: Option<String>,
     #[command(subcommand)]
     cmd: Cmd,
 }
@@ -148,6 +152,8 @@ enum Cmd {
         #[arg(long)]
         dry_run: bool,
     },
+    /// 같은 Mac에 둘째 aaa를 만든다: `aaa --instance <이름> init`(폴더·겹치지 않는 포트·홈, plan §8.294)
+    Init,
     /// 프로젝트 폴더(host)
     Project {
         #[command(subcommand)]
@@ -316,7 +322,8 @@ enum ProjectCmd {
     },
     /// 프로젝트 폴더를 만든다(PROJECT.md·MEMORY.md·TASKS.md …, herdr-projects `new`)
     Create {
-        name: String,
+        /// 이름(인스턴스에서는 생략하면 인스턴스 이름: worktree·branch의 내부 이름이 다른 인스턴스와 겹치지 않는다)
+        name: Option<String>,
         /// 프로젝트가 무엇을 위한 것인가(brief 머리에 들어간다)
         #[arg(long, default_value = "")]
         goal: String,
@@ -1406,6 +1413,16 @@ pub fn main() -> ExitCode {
             return ExitCode::FAILURE;
         }
     };
+    if let Some(name) = &cli.instance {
+        // 하위 프로세스(session host·pane 안 CLI·launchd가 띄운 aaa)도 같은 인스턴스를 본다
+        unsafe { std::env::set_var("AAA_INSTANCE", name) };
+    }
+    if let Some(name) = aaa_config::paths::instance()
+        && let Err(e) = aaa_config::paths::check_instance(&name)
+    {
+        eprintln!("aaa: {e}");
+        return ExitCode::from(2);
+    }
     if let Some(d) = &cli.config_dir {
         // 하위 프로세스(session host 등)도 같은 위치를 쓰게 한다.
         unsafe { std::env::set_var("AAA_CONFIG_DIR", d) };
@@ -1474,6 +1491,7 @@ fn run(cli: Cli) -> Result<ExitCode> {
         Cmd::Tab { cmd } => tab_cmd(cmd),
         Cmd::Workspace { cmd } => workspace_cmd(cmd),
         Cmd::Completion { shell } => completion(&shell),
+        Cmd::Init => crate::init::run(json),
         Cmd::Project { cmd } => project_cmd(json, cmd),
         Cmd::Set { key, value } => project_cmd(json, ProjectCmd::Set { project: project_or_here(None)?, key, value }),
         Cmd::Coordinator { cmd: CoordinatorCmd::Open { profile, new } } => {
@@ -2296,6 +2314,10 @@ fn parse_minutes(s: &str) -> Result<u32> {
 fn agent_cmd(a: AgentArgs) -> Result<ExitCode> {
     let cfg = load_or_exit(aaa_config::load_agent(&aaa_config::paths::config_dir()))?;
     let root = aaa_config::paths::state_dir();
+    // 인스턴스 폴더는 이름만큼 길다: 다른 Mac에서도 socket을 열 수 있는지 먼저 본다(plan §8.294)
+    if aaa_config::paths::instance().is_some() {
+        crate::init::socket_fits(&root)?;
+    }
     let state = root.join("agent");
     let ident = aaa_agent::identity::load_or_create(&state)?;
     let name = a
@@ -2309,7 +2331,12 @@ fn agent_cmd(a: AgentArgs) -> Result<ExitCode> {
         let name = n.unwrap_or(name);
         let pin = rt.block_on(aaa_agent::link::enroll(&state, &host, &ident.machine_id, &name))?;
         println!("등록됐다: {name} → {} (host fingerprint {}…)", pin.address, &pin.fingerprint[..16]);
-        println!("agent.toml의 [agent] host = \"{}\"로 두고 `aaa agent`를 실행한다", pin.address);
+        println!(
+            "{}의 [agent] host = \"{}\"로 두고 `aaa{} agent`를 실행한다",
+            aaa_config::paths::config_dir().join("agent.toml").display(),
+            pin.address,
+            aaa_config::paths::instance_flag()
+        );
         return Ok(ExitCode::SUCCESS);
     }
     let host = a
@@ -2319,8 +2346,12 @@ fn agent_cmd(a: AgentArgs) -> Result<ExitCode> {
     let target = if host == "local" {
         aaa_agent::link::Target::Local(root.join("host").join("agent.sock"))
     } else {
-        let pin = aaa_agent::identity::load_pin(&state)
-            .context("이 머신은 아직 등록되지 않았다: `aaa agent enroll <host:port>`")?;
+        let pin = aaa_agent::identity::load_pin(&state).with_context(|| {
+            format!(
+                "이 머신은 아직 등록되지 않았다: `aaa{} agent enroll <host:port>`",
+                aaa_config::paths::instance_flag()
+            )
+        })?;
         let id = aaa_common::tls::load_or_create(&state, "aaa-agent")?;
         aaa_agent::link::Target::Remote { addr: host.clone(), pin: pin.fingerprint, id }
     };
@@ -2453,6 +2484,9 @@ fn project_cmd(json: bool, cmd: ProjectCmd) -> Result<ExitCode> {
             front(json, FrontRequest::ProjectSweep { project, dry_run: false })
         }
         ProjectCmd::Create { name, goal, repos, thread_profile, coordinator_profile } => {
+            let Some(name) = name.or_else(aaa_config::paths::instance) else {
+                anyhow::bail!("프로젝트 이름이 필요하다: `aaa project create <이름>`");
+            };
             let repos = repos.iter().map(|r| local_repo_path(r)).collect();
             front(json, FrontRequest::ProjectCreate { name, goal, repos, thread_profile, coordinator_profile })
         }

@@ -5,7 +5,7 @@
 ## 웹
 
 - **목록**: 왼쪽 활동 막대(VS Code처럼)의 단추가 사이드바에 패널 하나를 보입니다. 같은 단추를 다시 누르면 사이드바가 접히고(`⌘⇧B`, Windows·Linux `Ctrl+Shift+B`), 고른 패널과 접힘은 기기마다 기억합니다. 휴대폰에서는 화면 머리의 「목록 열기」로 여는 drawer입니다.
-  - **작업**: 맨 위 coordinator, 그 아래 작업 공간(thread가 일하는 저장소 이름) 폴더마다 thread(모든 머신의 thread를 한 폴더에, 둘째 줄에 상태 말과 머신 이름, 첫 줄 끝에 배경 작업 수·계획 진행), 저장소 없는 thread의 「작업 폴더」, thread에 딸리지 않은 pane의 「기타」 묶음. 프로젝트가 둘 이상이면 그 위에 프로젝트 머리가 섭니다. thread 줄도 ⋯ 메뉴로 맨 위에 고정합니다. 배지는 확인 필요·검토 대기 thread와 답을 기다리는 agent 수입니다. 설정 → 모양 「폴더 안 정렬」에서 활동순(질문 먼저, 그다음 최근 바뀐 것)으로 바꿀 수 있습니다.
+  - **작업**: 맨 위 coordinator, 그 아래 작업 공간(thread가 일하는 저장소 이름) 폴더마다 thread(모든 머신의 thread를 한 폴더에, 둘째 줄에 상태 말과 머신 이름, 첫 줄 끝에 배경 작업 수·계획 진행), 저장소 없는 thread의 「작업 폴더」, thread에 딸리지 않은 pane의 「기타」 묶음. thread 줄도 ⋯ 메뉴로 맨 위에 고정합니다. 배지는 확인 필요·검토 대기 thread와 답을 기다리는 agent 수입니다. 설정 → 모양 「폴더 안 정렬」에서 활동순(질문 먼저, 그다음 최근 바뀐 것)으로 바꿀 수 있습니다.
   - **머신**: 머신마다 연결·끊김과 그 머신의 pane, 새 pane `+`.
   - **특수**: 임무와 사후 평가자(임무 thread는 여기에만 보입니다).
   - 그 아래 **보고서** 단추는 본문을 보고서 목록으로 바꾸고(다시 누르면 앞 화면), 맨 아래 톱니는 설정입니다.
@@ -33,6 +33,7 @@ host는 프로젝트 하나만 맡으므로 명령의 프로젝트 인자는 생
 
 | 명령 | 하는 일 |
 |---|---|
+| `aaa --instance <이름> <명령>` · `aaa --instance <이름> init` | 같은 Mac의 둘째 aaa를 쓰기(env `AAA_INSTANCE`도 같다, pane 안에서는 물려받는다) · 만들기(폴더·겹치지 않는 포트·홈, 사람이 터미널에서). 이름이 없으면 지금 aaa다([절차](install-runbook.md#12-같은-mac의-둘째-aaa8294)) |
 | `aaa machine list` | 머신 연결·디스크·이상 |
 | 웹 → 머신 → 배포 카드 | 최신 배포의 전송·단계·실패·복구를 Reader도 봅니다. 단절이면 마지막 수신 상태이며 재연결 뒤 최신 기록을 받습니다. 검증 정보에서 전체 ID/SHA를 봅니다. 카드에서는 배포를 시작하지 않습니다. |
 | `aaa service restart\|stop\|start --role host\|agent` | 감독자(launchd)로 다시 띄우기(업그레이드 뒤) · 멈추기 · 띄우기. 사람이 터미널에서(`yes`). restart는 아래 coordinator 배포 허용도 가능 |
@@ -44,7 +45,7 @@ host는 프로젝트 하나만 맡으므로 명령의 프로젝트 인자는 생
 | `aaa pane send-text <pane> "…"` · `aaa pane send-keys <pane> enter` | 글만 · 키만 보내기 |
 | `aaa pane wait-output <pane> --match "…" --timeout 30000` | 출력에 글이 나올 때까지 기다리기 |
 | `aaa question list` · `aaa question answer <id> yes` | 확인창 질문 보기·답하기 |
-| `aaa project create <p> --goal "…" --repo <경로>[@머신] --thread-profile codex` · `aaa context` | 프로젝트 만들기 · coordinator 요약(할 일·열린 thread·inbox). host는 보관하지 않은 프로젝트 하나만 맡는다: 둘째 만들기는 거부하고(§8.285), 둘 이상이면 다시 띄울 때 시작하지 않고 줄일 목록을 말한다(§8.283) |
+| `aaa project create <p> --goal "…" --repo <경로>[@머신] --thread-profile codex` · `aaa context` | 프로젝트 만들기 · coordinator 요약(할 일·열린 thread·inbox). host는 보관하지 않은 프로젝트 하나만 맡는다: 둘째 만들기는 거부하고(§8.285), 둘 이상이면 다시 띄울 때 시작하지 않고 줄일 목록을 말한다(§8.283). 인스턴스에서는 이름을 생략하면 인스턴스 이름이다(§8.294) |
 | `aaa set <key> <값>` | 설정 값 하나 바꾸기(aaa.toml, 없으면 project.toml: goal·thread_profile·coordinator_profile·max_parallel_threads·auto_resolve_days·repos.add·repos.remove, workspaces.add·remove도 같다) |
 | `aaa coordinator open [--profile 이름] [--new]` | coordinator 열기: 돌고 있으면 그 pane을 알리고, 없으면 host 머신에서 프로젝트 폴더로 띄워 workspace `<p>`의 탭 coordinator에 둠(profile 기본: project.toml → `aaa profile default coordinator` → claude) |
 | `aaa project pause\|resume\|archive\|unarchive <p>` | 멈추기(ticker·thread start 멈춤) · 보관(목록에서 숨기고 pane을 닫음) |
