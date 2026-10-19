@@ -38,7 +38,7 @@ export function ThreadPanel({
   t: ThreadView;
   role: DeviceRole;
   onBack: () => void;
-  /** 돌아갈 화면 이름(프로젝트 thread 보기에서 열었으면): 그때 「뒤로」는 넓은 화면에도 보인다 */
+  /** 돌아갈 화면 이름(모든 thread 화면에서 열었으면): 그때 「뒤로」는 넓은 화면에도 보인다 */
   backTo?: string;
   /** 그 thread의 agent pane이 돌고 있으면 터미널로(목록의 thread 줄과 같은 곳) */
   onOpenPane?: () => void;
@@ -77,7 +77,7 @@ export function ThreadPanel({
       <header className="term-head">
         <DrawerToggle />
         <HeadNote />
-        <button className={`back ghost icon${backTo ? " is-shown" : ""}`} onClick={onBack} aria-label={backTo ? `${backTo} 프로젝트로` : "목록으로"} data-testid="thread-back">
+        <button className={`back ghost icon${backTo ? " is-shown" : ""}`} onClick={onBack} aria-label={backTo ? `${backTo}로` : "목록으로"} data-testid="thread-back">
           <Icon name="back" />
         </button>
         <div className="term-title">

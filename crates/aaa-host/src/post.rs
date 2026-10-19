@@ -700,7 +700,7 @@ mod tests {
         assert_eq!(items[0].event, "post request for user");
         let alert =
             crate::notify::alert_text(&crate::notify::Place::Project("demo".into()), &items, &Default::default());
-        assert_eq!(alert.url, "/#project=demo");
+        assert_eq!(alert.url, "/#threads");
         assert_eq!(alert.lines, ["coordinator 사용자 결정 요청"]);
         assert!(crate::notify::pushes(&h.cfg.notify.item_kinds(), &items[0]));
         let mut done = input(92);

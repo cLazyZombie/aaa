@@ -45,7 +45,6 @@ export function ReportsPanel({ role, rev, onView }: { role: DeviceRole; rev: num
   const [reports, setReports] = useState<LibraryReport[] | null>(null);
   const [usage, setUsage] = useState<Extract<FrontResponse, { kind: "library_usage" }> | null>(null);
   const [problem, setProblem] = useState("");
-  const [project, setProject] = useState("");
   const [tab, setTab] = useState<Tab>("mine");
   const [opening, setOpening] = useState<string | null>(null);
   const [picked, setPicked] = useState<ReadonlySet<string>>(new Set());
@@ -90,7 +89,8 @@ export function ReportsPanel({ role, rev, onView }: { role: DeviceRole; rev: num
     void load();
   };
   const canEdit = role !== "reader";
-  const shown = (reports ?? []).filter((r) => !project || r.project === project);
+  // host는 프로젝트 하나라(plan §8.291) 프로젝트로 거르지 않는다
+  const shown = reports ?? [];
   const mine = shown.filter((r) => r.to_user);
   const work = shown.filter((r) => !r.to_user);
   const unseen = (reports ?? []).filter((r) => r.unseen).length;
@@ -109,10 +109,6 @@ export function ReportsPanel({ role, rev, onView }: { role: DeviceRole; rev: num
       {tabButton("work", "작업 보고", reports !== null && <span className="reports-count">{(reports ?? []).filter((r) => !r.to_user).length}</span>)}
     </div>
     <div className="reports-toolbar">
-      <label>프로젝트 <select aria-label="보고서 프로젝트" value={project} onChange={(e) => setProject(e.target.value)}>
-        <option value="">전체</option>
-        {[...new Set((reports ?? []).map((r) => r.project))].sort().map((p) => <option key={p}>{p}</option>)}
-      </select></label>
       <button className="ghost small" onClick={() => void load()}>새로고침</button>
     </div>
     {usage && <p className="muted" data-testid="reports-usage">합계 {storageSize(usage.size)} / {usage.max_size ? storageSize(usage.max_size) : "상한 꺼짐"}, 기한 {usage.max_days ? `${usage.max_days}일` : "꺼짐"}</p>}

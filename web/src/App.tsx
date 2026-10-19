@@ -29,7 +29,7 @@ import { SummaryButton } from "./ThreadSummary";
 import { ThreadPanel } from "./ThreadPanel";
 import { PromptCard } from "./PromptCard";
 import { ProjectThreads } from "./ProjectThreads";
-import { Folder, Settings } from "lucide-react";
+import { ListChecks, Settings } from "lucide-react";
 import { Icon } from "./icons";
 import { hasAgentMark } from "./herdr/AgentMark.tsx";
 import { Sidebar } from "./Sidebar";
@@ -258,24 +258,31 @@ function storeSelection(sel: string): void {
 }
 
 /**
- * 고른 것: `#pane=<id>`, `#thread=<project>/<id>`, 프로젝트 thread 보기 `#project=<name>`, 프로젝트 고르기 `#projects`,
- * 보고서 화면 `#reports`(목록)·`#report=<project>/<name>`(하나, plan §8.240)
+ * 고른 것: `#pane=<id>`, `#thread=<id>`, 모든 thread `#threads`, 보고서 화면 `#reports`(목록)·`#report=<project>/<name>`(하나,
+ * plan §8.240). host는 프로젝트 하나만 맡아(plan §8.291) 주소에 프로젝트가 없다. 옛 주소(이미 보낸 알림·저장한 링크)도 연다:
+ * `#thread=<project>/<id>`는 그대로 받고, 프로젝트 고르기 `#projects`·프로젝트 thread 보기 `#project=<name>`은 `#threads`로 바꾼다.
+ * 짧은 thread 주소는 thread 목록을 받은 뒤 내부 열쇠 `thread:<project>/<id>`로 바뀐다(App의 `sel` 정리).
  */
 function selectedFromHash(): string | null {
-  if (location.hash === "#projects") return "projects:";
+  if (location.hash === "#projects" || location.hash.startsWith("#project=")) history.replaceState(history.state, "", "#threads");
+  if (location.hash === "#threads") return "threads:";
   if (location.hash === "#reports") return "reports:";
   const r = /^#report=(.+)$/.exec(location.hash);
   if (r) return `reports:${decodeURIComponent(r[1])}`;
-  const m = /^#(pane|thread|project)=(.+)$/.exec(location.hash);
+  const m = /^#(pane|thread)=(.+)$/.exec(location.hash);
   return m ? `${m[1]}:${decodeURIComponent(m[2])}` : null;
 }
 
-/** 고른 것의 주소(selectedFromHash의 반대) */
+/** 고른 것의 주소(selectedFromHash의 반대). thread는 프로젝트 없이 `thread=<id>` */
 function hashOf(sel: string | null): string {
   if (sel === null) return "";
-  if (sel === "projects:") return "projects";
+  if (sel === "threads:") return "threads";
   if (sel === "reports:") return "reports";
   if (sel.startsWith("reports:")) return `report=${encodeURIComponent(sel.slice(8))}`;
+  if (sel.startsWith("thread:")) {
+    const key = sel.slice("thread:".length);
+    return `thread=${encodeURIComponent(key.slice(key.indexOf("/") + 1))}`;
+  }
   const at = sel.indexOf(":");
   return `${sel.slice(0, at)}=${encodeURIComponent(sel.slice(at + 1))}`;
 }
@@ -541,7 +548,8 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
   // 붙을 때 놓친 것을 읽지 않는다(참고 `seedStatuses`: 목록은 알리지 않는다)
   const noticeNews = (n: NoticeView) => {
     if (n.kind === "post_muted" || n.kind === "automation") {
-      showDroplet({ target: `project=${encodeURIComponent(n.project ?? "")}`, title: n.title, kind: n.kind === "automation" ? "done" : "blocked", machine: null, agent: null });
+      // 누르면 모든 thread(host는 프로젝트 하나, plan §8.291)
+      showDroplet({ target: "threads", title: n.title, kind: n.kind === "automation" ? "done" : "blocked", machine: null, agent: null });
       return;
     }
     if (n.kind !== "finished" || n.pane === null) return;
@@ -668,7 +676,7 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
     const r = await call({ op: "question_answer", id: q.id, choice: "", menu: menu.id, pick });
     if (r.kind === "question") putQuestion(r);
   };
-  // 프로젝트 thread 보기에서 연 보고는 「뒤로」가 그 프로젝트로 돌아간다(herdr-projects popup: detail에서 Esc는 목록으로).
+  // 모든 thread 화면에서 연 보고는 「뒤로」가 그 화면으로 돌아간다(herdr-projects popup: detail에서 Esc는 목록으로).
   // 그 thread를 연 주소 바꿈이 아닌 다른 이동(앱 안 알림·브라우저 뒤로·직접 친 주소)이면 돌아갈 곳을 잊는다
   const [backTo, setBackTo] = useState<string | null>(null);
   const openedHash = useRef<string | null>(null);
@@ -733,15 +741,23 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
     setAutoSelected(false);
     setDrawerOpen(false);
     setBackTo(from);
-    openedHash.current = `#thread=${encodeURIComponent(threadKey(t))}`;
+    openedHash.current = `#${hashOf(`thread:${threadKey(t)}`)}`;
     goHash(openedHash.current.slice(1));
     setSel(`thread:${threadKey(t)}`);
   };
-  const chooseProject = (name: string | null) => {
+  // 모든 thread(끝난 것까지, herdr-projects popup Threads). 프로젝트 고르기는 없다(host는 프로젝트 하나, plan §8.291)
+  const chooseThreads = () => {
     setDrawerOpen(false);
-    goHash(name === null ? "projects" : `project=${encodeURIComponent(name)}`);
-    setSel(name === null ? "projects:" : `project:${name}`);
+    goHash("threads");
+    setSel("threads:");
   };
+  // 짧은 thread 주소(`#thread=<id>`)는 thread 목록을 받으면 내부 열쇠로 바꾼다. 보관한 프로젝트의 thread는 고르지 않는다
+  useEffect(() => {
+    if (!sel?.startsWith("thread:") || sel.includes("/")) return;
+    const id = sel.slice("thread:".length);
+    const t = [...threads.values()].find((x) => x.id === id && x.project_status !== "archived");
+    if (t) setSel(`thread:${threadKey(t)}`);
+  }, [sel, threads]);
   // 보고서 화면(plan §8.240): 막대 「보고서」는 마지막으로 본 보고서 자리(목록이나 연 보고서)로, 보고서 화면에서 다시 누르면 그 앞
   // 화면으로 간다. 한 번 연 보고서 화면은 다른 화면으로 가도 그려 둔다(ReportsView): 돌아오면 연 보고서·굴린 자리가 그대로다
   const reportsShown = sel?.startsWith("reports:") === true;
@@ -908,11 +924,10 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
   }, [keepScreenOn, holdScreen, viewing]);
   // 파일 보기(결정 20 D7, herdr-web-ui useFileViewer): 휴대폰 뒤로가 닫도록 기록 한 칸이다
   const { viewing: fileViewing, openFile, closeFile } = useFileViewer();
-  // 목록은 열린 thread만(herdr-projects sidebar.rs), 프로젝트 thread 보기는 끝난 것까지(popup.rs Section::Threads).
+  // 목록은 열린 thread만(herdr-projects sidebar.rs), 모든 thread 화면은 끝난 것까지(popup.rs Section::Threads).
   // 보관한(지웠거나 이름을 바꾼) 프로젝트의 thread는 어디에도 보이지 않는다(참고 archive는 sidebar token을 지운다)
   const allThreads = [...threads.values()].filter((t) => t.role !== "evaluator" && t.project_status !== "archived");
   const shownThreads = allThreads.filter((t) => t.group !== "resolved");
-  const viewProject = sel === "projects:" ? null : sel?.startsWith("project:") ? sel.slice(8) : undefined;
   // pane → 그 pane에서 도는 thread(목록에서 pane 이름 대신 thread 제목을 보인다)
   const threadOfPane = new Map<string, ThreadView>();
   for (const t of threads.values()) if (t.pane) threadOfPane.set(t.pane, t);
@@ -940,7 +955,7 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
     view: paneView,
     toggleTheme: () => updateAppearance({ theme: resolvedTheme === "dark" ? "light" : "dark" }),
     openSettings: () => setSettingsOpen(true),
-    openProjects: () => chooseProject(null),
+    openThreads: chooseThreads,
     openReports: () => {
       if (!reportsShown) toggleReports();
     },
@@ -977,7 +992,7 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
 
   return (
     <DrawerContext.Provider value={drawer}>
-    <HeadContext.Provider value={{ more: <MoreMenu onProjects={() => chooseProject(null)} />, note: headNote }}>
+    <HeadContext.Provider value={{ more: <MoreMenu onThreads={chooseThreads} />, note: headNote }}>
     <div
       className={`app${collapsed ? " sidebar-collapsed" : ""}`}
       style={sidebarWidth === null ? undefined : ({ "--sidebar-user-w": `${sidebarWidth}px` } as CSSProperties)}
@@ -1026,7 +1041,7 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
           onPane={(id) => choose(id)}
           onThread={(t) => chooseThread(t)}
           onNewShell={newShell}
-          onProject={chooseProject}
+          onThreads={chooseThreads}
           missions={missions}
           evaluators={evaluators}
           onMissionsChanged={loadMissions}
@@ -1064,20 +1079,18 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
             key={threadKey(currentThread)}
             t={currentThread}
             role={role}
-            backTo={backTo?.startsWith("project:") ? backTo.slice(8) : undefined}
-            onBack={() => (backTo !== null && backTo.startsWith("project:") ? chooseProject(backTo.slice(8)) : choose(null))}
+            backTo={backTo === "threads:" ? "모든 thread" : undefined}
+            onBack={() => (backTo === "threads:" ? chooseThreads() : choose(null))}
             onOpenPane={
               currentThread.pane && panes.some((p) => p.id === currentThread.pane && p.state === "running") ? () => choose(currentThread.pane!) : undefined
             }
             onOpenFile={(path) => openFile({ path, pane: null, library: { project: currentThread.project, thread: currentThread.id } })}
             onOpenReportFile={role !== "reader" ? (path) => openFile({ path, pane: null, worktree: { project: currentThread.project, thread: currentThread.id } }) : undefined}
           />
-        ) : viewProject !== undefined ? (
+        ) : sel === "threads:" ? (
           <ProjectThreads
-            project={viewProject}
             threads={allThreads}
-            onProject={chooseProject}
-            onThread={(t) => chooseThread(t, `project:${t.project}`)}
+            onThread={(t) => chooseThread(t, "threads:")}
             onBack={() => choose(null)}
             onPane={canControl ? (id) => choose(id) : undefined}
           />
@@ -1215,7 +1228,7 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
  * 머리의 「더 보기」 메뉴(참고 App.tsx moreItems·header-more): 링크 복사와 「알림」(이 기기 상태를 말하고 누르면 켜고 끈다).
  * 알림이 꺼져 있으면 메뉴 단추에 점을 단다. 찾기·파일 보기 항목은 그 기능을 옮길 때 넣는다.
  */
-function MoreMenu({ onProjects }: { onProjects: () => void }) {
+function MoreMenu({ onThreads }: { onThreads: () => void }) {
   const alerts = useAlerts();
   const [open, setOpen] = useState(false);
   const [note, setNote] = useState<string | null>(null);
@@ -1326,17 +1339,17 @@ function MoreMenu({ onProjects }: { onProjects: () => void }) {
               <span className="more-hint">{alerts.bell.state}</span>
             </button>
           )}
-          {/* 프로젝트마다 모든 thread(끝난 것까지): herdr-projects popup(prefix+a)을 여는 자리. 참고 moreItems에 없는 항목이라 맨 끝 */}
+          {/* 모든 thread(끝난 것까지): herdr-projects popup(prefix+a)을 여는 자리. 참고 moreItems에 없는 항목이라 맨 끝 */}
           <button
             role="menuitem"
-            data-testid="projects-item"
+            data-testid="threads-item"
             onClick={() => {
               setOpen(false);
-              onProjects();
+              onThreads();
             }}
           >
-            <Folder className="i" aria-hidden="true" />
-            <span className="more-label">프로젝트</span>
+            <ListChecks className="i" aria-hidden="true" />
+            <span className="more-label">모든 thread</span>
           </button>
         </div>
       )}

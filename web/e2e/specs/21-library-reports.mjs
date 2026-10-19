@@ -108,7 +108,8 @@ export default async function ({ page }) {
     try { aaa("library", "publish", plain, "--project", "demo", "--name", "plain", "--to-user"); } catch (e) { refused = e.message; }
     if (!refused.includes("index.html") || aaa("library", "list").reports.some((r) => r.name === "plain")) throw new Error(`index.html 없는 사용자 보고서: ${refused}`);
     await page.setViewportSize({ width: 1280, height: 800 });
-    await page.getByTestId("reports-panel").getByRole("combobox", { name: "보고서 프로젝트" }).selectOption("");
+    // 프로젝트 고르기는 없다(host는 프로젝트 하나, plan §8.291)
+    if (await page.getByTestId("reports-panel").getByRole("combobox", { name: "보고서 프로젝트" }).count()) throw new Error("보고서 화면에 프로젝트 고르기가 남았다");
     await page.getByTestId("reports-tab-mine").click();
     // 앞 단계가 demo/page는 열었고(봄) demo/design은 보기 기기가 카드만 기다렸다(안 봄): 지금 1이다
     const before = unseen();
