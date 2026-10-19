@@ -27,6 +27,8 @@ export interface TerminalInputProps {
   onSend: (text: string) => false | Promise<true | string>;
   /** 빈 줄 보내기: Enter만. true: 보냄, false: 못 보냄(끊김), 글: 못 보낸 이유 */
   onEnter: () => boolean | string;
+  /** 빈 입력줄의 Ctrl+Enter는 host의 공통 판정으로 보낸다. 글이 있으면 이 입력줄에 줄바꿈이다. */
+  onCtrlEnter?: () => boolean | string;
   /** 입력줄이 focus를 얻음 */
   onFocus?: () => void;
   /** 「그림」 단추(aaa만) */
@@ -51,7 +53,7 @@ interface SendAttempt {
   textSend: boolean;
 }
 
-export function TerminalInput({ owner, connected, onSend, onEnter, onComposing, onFocus, onImage, onPaste }: TerminalInputProps) {
+export function TerminalInput({ owner, connected, onSend, onEnter, onCtrlEnter, onComposing, onFocus, onImage, onPaste }: TerminalInputProps) {
   const text = useSyncExternalStore(subscribeTerminalDraft, () => readTerminalDraft(owner));
   const setText = useCallback(
     (value: string | ((previous: string) => string)) => {
@@ -179,6 +181,21 @@ export function TerminalInput({ owner, connected, onSend, onEnter, onComposing, 
   const onKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>): void => {
     // Enter는 보내기, Shift+Enter는 줄바꿈. IME의 Enter(WebKit이 compositionend 뒤 229로 보내는 확정 Enter도)는 IME 것이다
     if (event.key !== "Enter" || event.shiftKey || event.nativeEvent.isComposing || event.nativeEvent.keyCode === 229) return;
+    if (event.ctrlKey && !event.altKey && !event.metaKey && onCtrlEnter) {
+      event.preventDefault();
+      if (!connected || sending || event.repeat) return;
+      const draft = readTerminalDraft(owner);
+      if (draft.length > 0) {
+        const element = event.currentTarget;
+        const start = element.selectionStart;
+        setText(`${draft.slice(0, start)}\n${draft.slice(element.selectionEnd)}`);
+        requestAnimationFrame(() => element.setSelectionRange(start + 1, start + 1));
+      } else {
+        const result = onCtrlEnter();
+        if (typeof result === "string") setNote(result);
+      }
+      return;
+    }
     event.preventDefault();
     send();
   };
