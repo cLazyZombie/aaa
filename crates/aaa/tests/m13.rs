@@ -6,6 +6,8 @@
 
 #![cfg(unix)]
 
+#[path = "m13/ci.rs"]
+mod ci;
 mod lab;
 #[path = "m13/preparation.rs"]
 mod preparation;

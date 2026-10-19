@@ -5450,3 +5450,14 @@ primary 근거:
 - **동작.** 누른 때 agent가 작업 중이면 빈 입력창 Ctrl+Enter의 보관함 길(`sendQueued(…, steer)`)과 같은 steer submit이다: host가 끝 키를 고른다(작업 중 Claude는 글 뒤 sendNow, Codex는 글 + Enter = 정식 steer). 쉬는 중이면 보통 보내기(글 + Enter)다. 잠금·전달 확인·멈춤·입력 진단(`received steer=true`, 같은 ID의 `ctrl_enter phase=submit` 선택 키와 화면 근거)은 Ctrl+Enter 길 그대로다.
 - **못 보낼 때 까닭(대기 말 단추와 맞춤).** 질문 중이면 단추를 끄고 보관함에 「질문에 답한 뒤 보낼 수 있습니다」를 조용히 보인다(글이 질문의 답으로 들어가지 않게). 다른 글을 보내는 중은 대기 말 단추와 같은 말(「보내는 중인 글이 전달된 뒤 누를 수 있습니다」), 끊김·빈 글도 title로만 둔다. pane 거절·전송 여부 모름은 그 줄에 경고 아이콘·까닭·「터미널 보기」를 두고 글은 보관함에 남는다. 연결이 끊겨 아무것도 보내지 않은 것은 지금처럼 까닭만 둔다. 규칙은 `steerQueued.ts` `heldSend`.
 - **검증.** 웹 유닛 `heldSend`(작업 중 steer·쉬면 보통, 질문 중 안내, 까닭 문구가 대기 말 단추와 같음). 웹 E2E 25 「이 기기 보관함 「지금 보내기」」: 작업 중 Claude는 `글\x18\x13`, Codex는 `글\r`, submit `steer=true`, 같은 ID의 `ctrl_enter phase=submit` 진단, submit을 가로채 거절하면 까닭·「터미널 보기」와 글이 남고 bytes 없음. 결함(단추가 steer 없이 보냄)을 심어 실패를 확인했다.
+
+### 8.274 착지 뒤 CI 조건부 조회와 실패 임무(10-19, t-0420)
+
+- 사용자 결정: 착지 thread는 main push 뒤 GitHub CI를 기다리지 않는다. host가 60초(운영 최소 30초)마다 예약하고 **host 머신 agent**가 기존 gh 로그인으로 읽는다. 조회 머신은 routine `machine`·`[projects] ci_machine`으로 바꿀 수 있다. 실패 분류 임무의 상주 머신은 조회 머신과 독립이다. 운영 등록·승인은 coordinator·사람 단계다.
+- 참고 herdr-projects `steps.rs`의 프로젝트별 폴링·Outage와 t3code `gitHubConditionalChecks.ts`의 ETag validator·쪽 넘김을 따른다. `ci.v1`을 알린 agent에만 `CiQuery`를 보내며 AGENT_LINK 1.5의 선택 기능으로 둔다. host는 gh·agent/session 내부에 의존하지 않는다.
+- `aaa-common::ci`가 GET 인자·HTTP 머리·응답 축약·SHA 판정을 소유한다. `gh api -i`의 304는 종료 코드 1이어도 정상이다. 목록은 event=push·per_page=30·exclude_pull_requests, 따라잡기는 created 창·100개씩 쪽 넘김이다. 빨강 때만 실패 jobs·로그·compare를 받는다. 인증 머리·GitHub 제목/본문은 전송하지 않으며 로그는 job당 32KiB·합계 128KiB 꼬리다.
+- routine `on="ci"`는 repo·branches·workflows·events·선택 mission을 받는다. command·schedule과 섞지 않는다. SHA의 알려진 push workflow가 모두 끝나면 한 번, 취소는 제외하고 재실행 통과는 따로 표시한다. 같은 실패 job·단계 집합은 앞 항목에 추가하고 새 깨움을 만들지 않는다. 끝나지 않은 SHA는 기본 60분에 ci_stuck이다.
+- DB meta에 ETag·workflow 마지막 번호·마지막 판정·SHA별 서명·내구 outbox를 저장한다. inbox는 고정 ID, flow는 meta key와 한 transaction, 임무 pending은 전달 key와 한 transaction으로 중복을 막는다. 재시작/단절 뒤 마지막 판정−10분 창을 쪽 넘겨 따라잡고, 이미 회복된 실패는 깨우지 않는다. 먼저 고친 착지는 CI 항목을 닫고 미전달 입력에 회복을 표시한다. 조회 실패는 기존 Outage 규칙을 재사용한다.
+- CI 실패는 inbox `ci`와 `ci_failed`, 초록은 기록 `ci_passed`, 회복은 `ci_fixed`다. owner의 thread flow에도 남기며 끝난 thread를 되살리지 않는다. 병합 첫 줄 끝 `병합: … (t-NNNN)`에서 번호만 뽑고 compare 범위를 함께 읽는다. 못 찾으면 주인 불명이다. 임무는 GitHub·rerun·수정·push·revert 없이 coordinator용 수리 brief 초안만 만든다. 하루 깨움 권장 상한은 20이다.
+- source 수집·판정은 `ci.rs`, 사건 발행은 `watch_event.rs::publish_watch_event`, 임무 전달은 `mission_data_input`으로 나눈다. 발행은 깨움 정책을 갖지 않는다. 추가 조건·동작의 문법은 별도 통합 설계에서 정하며 `on="git"`은 아직 구현하지 않는다.
+- 사람 단계와 예시는 [CI runbook](ci-watch.md), 경계 시험은 [testing](testing.md)의 CI 감시를 따른다.

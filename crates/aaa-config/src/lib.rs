@@ -329,6 +329,12 @@ pub struct ProjectsSection {
     pub outage_secs: u64,
     /// 열린 thread의 PR을 이만큼(초)마다 `gh`로 본다(herdr-projects `PR_INTERVAL_SECS`, §8.80). 보고가 새로 오면 바로 본다.
     pub pr_poll_secs: u64,
+    /// CI 조건부 조회 간격(최소 30초). 조회는 host 머신 agent가 기본이다.
+    pub ci_poll_secs: u64,
+    /// 끝나지 않은 push run을 ci_stuck으로 알릴 분 수.
+    pub ci_stuck_mins: u64,
+    /// CI 조회 머신. 비우면 host 머신의 agent이며 repo와 임무 머신과 독립이다.
+    pub ci_machine: Option<String>,
     /// brief 안내·메시지를 입력한 때부터 harness가 받았다고 알리기(hook이 없으면 Enter 뒤 화면 변화)까지 기다리는 시간
     /// (밀리초). 입력 상자를 그리는 harness는 이 안에서 친 글이 화면에 보이기를 기다린 뒤 Enter한다. 넘으면 전달
     /// 불명(unknown)이고 다시 보내지 않는다.
@@ -364,6 +370,9 @@ impl Default for ProjectsSection {
             nudge_quiet_secs: 10,
             outage_secs: 600,
             pr_poll_secs: 120,
+            ci_poll_secs: 60,
+            ci_stuck_mins: 60,
+            ci_machine: None,
             accept_wait_ms: 10_000,
             stop_wait_ms: 15_000,
             delivered_working_secs: 15,

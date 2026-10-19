@@ -773,6 +773,11 @@ pub enum AgentRequest {
     },
     /// PR 조회(§8.80, herdr-projects `pr.rs`). `cwd`(thread worktree)의 origin을 읽고 `gh`로 묻는다. host는 gh를 실행하지
     /// 않는다(결정 3). agent 기능 `pr.v1`이 있을 때만 보낸다.
+    /// ci.v1을 알린 agent에만 보낸다. host 프로세스는 gh를 실행하지 않는다.
+    CiQuery {
+        cwd: String,
+        query: crate::CiQuery,
+    },
     PrQuery {
         cwd: String,
         query: PrQuery,
@@ -868,6 +873,7 @@ pub enum AgentResponse {
         candidates: Vec<String>,
     },
     Pr(PrAnswer),
+    Ci(crate::CiAnswer),
     History(HistoryChunk),
 }
 

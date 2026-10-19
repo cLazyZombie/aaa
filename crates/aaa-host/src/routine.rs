@@ -131,6 +131,9 @@ struct Front {
     on: String,
     events: Vec<String>,
     mission: Option<String>,
+    repo: String,
+    branches: Vec<String>,
+    workflows: Vec<String>,
 }
 
 impl Default for Front {
@@ -143,6 +146,9 @@ impl Default for Front {
             on: String::new(),
             events: Vec::new(),
             mission: None,
+            repo: String::new(),
+            branches: vec![],
+            workflows: vec![],
         }
     }
 }
@@ -155,6 +161,15 @@ pub(crate) enum Trigger {
     Schedule(Schedule),
     /// `on = "pr"`과 받는 사건(적지 않으면 모두)
     Pr(Vec<String>),
+    Ci(CiTrigger),
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct CiTrigger {
+    pub repo: String,
+    pub branches: Vec<String>,
+    pub workflows: Vec<String>,
+    pub events: Vec<String>,
 }
 
 /// 새 프로젝트의 `routines/pr-followup.md`(herdr-projects project.rs `PR_FOLLOWUP_TEMPLATE`를 옮김)
@@ -206,12 +221,32 @@ fn parse_in(name: &str, text: &str, seconds: bool) -> Result<Routine, String> {
         .ok_or("닫는 `+++` 줄이 없다")?;
     let f: Front = toml::from_str(front).map_err(|e| format!("front matter: {}", e.message()))?;
     if let Some(n) = &f.mission
-        && (f.command.trim().is_empty() || !f.on.is_empty() || !valid_project(n))
+        && (!valid_project(n) || (f.on != "ci" && (f.command.trim().is_empty() || !f.on.is_empty())))
     {
         return Err("mission 목적지는 명령 일정 routine에만 둔다".into());
     }
     let (trigger, schedule_text) = match f.on.as_str() {
         "" => (Trigger::Schedule(parse_schedule(&f.schedule, seconds)?), f.schedule.trim().to_string()),
+        "ci" => {
+            if !f.command.trim().is_empty()
+                || !f.schedule.is_empty()
+                || f.repo.trim().is_empty()
+                || f.branches.is_empty()
+            {
+                return Err("ci routine에는 repo·branches가 필요하고 command·schedule은 받지 않는다".into());
+            }
+            if f.branches.iter().any(|b| b.trim().is_empty() || b.chars().any(char::is_control)) {
+                return Err("CI branch 형식이 아니다".into());
+            }
+            if f.events.iter().any(|e| !["failed", "stuck", "fixed", "passed"].contains(&e.as_str())) {
+                return Err("CI events는 failed·stuck·fixed·passed 중에서 쓴다".into());
+            }
+            let events = if f.events.is_empty() { vec!["failed".into()] } else { f.events.clone() };
+            (
+                Trigger::Ci(CiTrigger { repo: f.repo, branches: f.branches, workflows: f.workflows, events }),
+                "on ci".into(),
+            )
+        }
         "pr" => {
             if !f.command.trim().is_empty() {
                 return Err("`pr` routine은 thread에 글을 보낸다. `command`를 받지 않는다".into());
@@ -340,7 +375,7 @@ impl Host {
                     last_run_ms: st.last_run_ms,
                     next_run_ms: match &r.trigger {
                         Trigger::Schedule(s) => st.last_run_ms.filter(|_| r.enabled).map(|l| next_run(s, l, off)),
-                        Trigger::Pr(_) => None,
+                        Trigger::Pr(_) | Trigger::Ci(_) => None,
                     },
                     skipped: st.skipped,
                     no_coordinator: st.no_coordinator,

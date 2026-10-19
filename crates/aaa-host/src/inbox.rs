@@ -347,7 +347,7 @@ impl Host {
             let every = Duration::from_secs(me.cfg.projects.tick_secs.max(1));
             loop {
                 // 사후 평가자 묶음·PR 조회 때가 더 이르면 그때까지만 잔다
-                let sleep = [me.evaluator_next_due(), me.pr_next_due(), me.background_wait_due()]
+                let sleep = [me.evaluator_next_due(), me.pr_next_due(), me.ci_next_due(), me.background_wait_due()]
                     .into_iter()
                     .flatten()
                     .map(|d| d.saturating_duration_since(std::time::Instant::now()))
@@ -398,6 +398,7 @@ impl Host {
             let dir = Path::new(&p.path);
             self.routine_pass(&p.name, dir, self.coordinator_pane(dir).is_some());
             self.pr_tick(&p.name);
+            self.ci_tick(&p.name);
             self.nudge(&p.name, dir).await;
         }
         let keep = Duration::from_secs(self.cfg.projects.inbox_done_days * 86_400).as_millis() as u64;

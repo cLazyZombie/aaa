@@ -10,6 +10,7 @@ mod brief;
 mod brief_text;
 mod caller;
 mod chatwatch;
+mod ci;
 mod colors;
 mod coord;
 mod ctrl_enter;
@@ -55,6 +56,7 @@ mod transitions;
 mod trust_screen;
 pub mod usage;
 mod usage_limit;
+mod watch_event;
 pub mod web;
 
 use std::collections::{HashMap, HashSet, VecDeque};
@@ -471,6 +473,7 @@ pub struct Host {
     routine_running: Mutex<HashSet<String>>,
     /// PR 추적: 프로젝트별 마지막 조회·도는 중·`gh` 실패, `gh` 계정(pr.rs)
     pr: Mutex<pr::PrMemory>,
+    ci: Mutex<ci::Memory>,
     /// 결과물 보기 경로(`/v/<cap>/`) → 대상 thread
     view_caps: Mutex<HashMap<String, library::ViewCap>>,
     library_signing: std::sync::RwLock<library_links::SigningKey>,
@@ -656,6 +659,7 @@ impl Host {
             usage_limits: Mutex::new(HashMap::new()),
             routine_running: Mutex::new(HashSet::new()),
             pr: Mutex::new(pr::PrMemory::default()),
+            ci: Mutex::new(ci::Memory::default()),
             view_caps: Mutex::new(HashMap::new()),
             library_signing: std::sync::RwLock::new(library_signing),
             library_ops: std::sync::Mutex::new(()),

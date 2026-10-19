@@ -45,6 +45,11 @@ pub(crate) const THREAD_GUIDE: &str = "\
 - 아래 프로젝트 지침과 memory는 네가 하는 모든 일에 적용된다.
 - 프로젝트 memory를 고치지 않는다. 남길 만한 교훈은 보고의 `## Remember`에 적는다. 무엇을 남길지는 coordinator가 정한다.
 
+## 착지와 GitHub CI
+
+착지 병합 첫 줄은 `병합: <요약> (t-NNNN)`으로 끝낸다. 로컬 필수 검증과 main push 뒤 GitHub CI를 기다리지 않고 바로 보고한다.
+CI 확인은 host의 별도 감시가 맡는다. 실패 입력은 coordinator가 처리하고, 끝난 thread는 되살리지 않는다.
+
 ## 보고
 
 끝냈을 때, 그리고 사용자를 기다리며 멈출 때마다 위에 준 보고 경로에 보고를 쓴다. 사용자에게 줄 파일(문서·내보낸 파일·스크린샷)은 거기 준 library 폴더에 둔다.
