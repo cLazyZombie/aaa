@@ -2,7 +2,7 @@
 
 2026-10-19 사용자 결정으로 터미널 front를 삭제했다. 웹과 TUI의 동시 개발·유지보수 부담과 컴파일 시간을 줄이고 화면을 웹 UI로 모은다. host의 `aaa web status`에서 주소를 확인한다.
 
-보존점은 **annotated tag `tui-last`**다. 태그 객체는 `6e0ab176bf5daf9740821e560b094c0a1296be57`, 대상은 삭제 직전 main `2aafd4b8c9af6ff3682a8caf17126f721e539877`이다. 메시지는 「TUI 삭제 직전 마지막 판, 2026-10-19, 되살리려면 이 tag에서 가져온다」다. 착지 검증 뒤 main과 이 tag 하나만 명시적으로 push한다. 별도 보관 branch는 만들지 않는다. 삭제 커밋은 `5c00d6db747f98071a3041d85980ca68c5a6bce1`다.
+보존점은 **annotated tag `tui-last`**다. 태그 객체는 `6e0ab176bf5daf9740821e560b094c0a1296be57`, 대상은 삭제 직전 main `2aafd4b8c9af6ff3682a8caf17126f721e539877`이다. 메시지는 「TUI 삭제 직전 마지막 판, 2026-10-19, 되살리려면 이 tag에서 가져온다」다. 착지 검증 뒤 main과 이 tag 하나만 명시적으로 push한다. 별도 보관 branch는 만들지 않는다. 핵심 삭제 커밋은 `5c00d6db747f98071a3041d85980ca68c5a6bce1`, 잔여 견본·안내 정리는 `55d431d3770a0db733ef5194ace302979f0cc2aa`다.
 
 ## 삭제 범위
 
@@ -32,7 +32,7 @@ macOS arm64, Rust 1.99.0에서 `cargo build --workspace --all-targets --locked`�
 
 ## 복구
 
-이 tag는 과거 소스 보존점이며 실행 옵션이 아니다. 환경 변수로 다시 켜는 우회는 없다. 일부 경로를 가져오려면 별도 작업에서 `git restore --source tui-last -- crates/aaa-tui`처럼 복원한다. crate만으로 실행되지 않으므로 Cargo manifest·lock·설정·protocol·host·시험도 함께 복원·통합하고 당시 이후의 보안/웹 변경을 재검토한다. 전체 삭제를 되돌릴 때는 아래 삭제 커밋을 `git revert 5c00d6db747f98071a3041d85980ca68c5a6bce1`하고 같은 검증을 거친다. 현재 main에 통째로 과거 파일을 덮어쓰지 않는다.
+이 tag는 과거 소스 보존점이며 실행 옵션이 아니다. 환경 변수로 다시 켜는 우회는 없다. 일부 경로를 가져오려면 별도 작업에서 `git restore --source tui-last -- crates/aaa-tui`처럼 복원한다. crate만으로 실행되지 않으므로 Cargo manifest·lock·설정·protocol·host·시험도 함께 복원·통합하고 당시 이후의 보안/웹 변경을 재검토한다. 핵심 삭제를 되돌릴 때는 `git revert 5c00d6db747f98071a3041d85980ca68c5a6bce1`하고 같은 검증을 거친다. 견본·안내까지 되살릴 때는 잔여 정리 커밋 `55d431d3770a0db733ef5194ace302979f0cc2aa`도 함께 되돌린다. 현재 main에 통째로 과거 파일을 덮어쓰지 않는다.
 
 운영 host·agent는 이 소스 변경으로 자동 교체·재시작하지 않는다. 새 host 반영 전에는 옛 바이너리의 접속 차단이 적용되지 않는다. tag의 생성·공개와 host 배포는 착지·배포 절차에서 각각 확인한다.
 
