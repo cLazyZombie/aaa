@@ -26,7 +26,7 @@ install -m 755 target/release/aaa ~/.local/bin/aaa.new && mv ~/.local/bin/aaa.ne
 ```
 
 - 업그레이드는 9번(`aaa update`)이다. launcher 등록은 다시 하지 않는다(L1이 확인하는 것).
-- 공개 [GitHub release](https://github.com/cLazyZombie/aaa/releases)의 자기 OS·CPU 파일을 써도 된다. 받은 파일의 SHA-256을 같은 release의 `manifest.json`·`SHA256SUMS`와 맞춘 뒤 설치한다. 기존 설치의 갱신·최초 release 전환은 9번을 따른다.
+- 공개 [GitHub release](https://github.com/cLazyZombie/aaa/releases)의 자기 OS·CPU 파일을 써도 된다. 받은 파일의 SHA-256을 같은 release의 `manifest.json`·`SHA256SUMS`와 맞춘 뒤 설치한다(복붙 명령은 [README 「Mac에 설치」](../README.md#mac에-설치) 1). 기존 설치의 갱신·최초 release 전환은 9번을 따른다.
 - 로컬 빌드를 옮길 때는 같은 macOS·CPU의 다른 Mac에서 빌드해 `ssh <mac> 'cat > ~/aaa.new' < target/release/aaa`로 옮긴 뒤 그 Mac에서 `~/.local/bin/aaa update --from ~/aaa.new`로 바꾼다(처음 설치면 `install -m 755 ~/aaa.new ~/.local/bin/aaa.new && mv ~/.local/bin/aaa.new ~/.local/bin/aaa`). 옮긴 뒤 양쪽 `shasum -a 256`이 같은지 본다(`aaa update`가 앞 12자리를 보인다).
 - Claude hook은 실행마다 준다. Codex는 전역 hook을 설치한다(§8.201). **배포 뒤 각 Mac에서** 아래를 실행한다.
   ```bash
