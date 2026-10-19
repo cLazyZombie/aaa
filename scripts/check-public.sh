@@ -89,7 +89,7 @@ add 'token 형식' '(tskey-[a-z]+-[A-Za-z0-9]{6,}|gh[pousr]_[A-Za-z0-9]{20,}|sk-
 # 기기가 준 구독 주소의 끝은 그 기기로 push를 보내는 열쇠다. 시험의 짧은 가짜 주소(…/fcm/send/abc)는 걸리지 않는다
 add 'Web Push 구독 주소' '(fcm\.googleapis\.com/(fcm/send|wp)/|push\.services\.mozilla\.com/wpush/v[0-9]+/|web\.push\.apple\.com/|notify\.windows\.com(:[0-9]+)?/w/[?]token=)[A-Za-z0-9_%=:.-]{40,}' ''
 add 'tailnet 주소' '[A-Za-z0-9-]+\.ts\.net' '(example\.ts\.net|>\.ts\.net|[`*]\.ts\.net|이름\.ts\.net)'
-# agentSvgMarks.ts는 참고·LobeHub에서 옮긴 SVG path 숫자(점으로 이은 좌표)뿐이라 IP 검사에서만 뺀다(plan §8.56, Claude path §8.253)
+# agentSvgMarks.ts는 참고·LobeHub에서 옮긴 SVG path 숫자(점으로 이은 좌표)뿐이라 IP 검사에서만 뺀다(plan §8.56, Claude path §8.255)
 add 'IP 주소' '(^|[^0-9.])([0-9]{1,3}\.){3}[0-9]{1,3}([^0-9.]|$)' '(127\.0\.0\.1|0\.0\.0\.0|192\.0\.2\.|198\.51\.100\.|203\.0\.113\.|255\.255\.)' '^([0-9a-f]{40}:)?web/src/herdr/agentSvgMarks\.ts:'
 # Tailscale IPv6(fd7a:115c:a1e0::/48)의 기기 주소. 대역 표기와 MagicDNS 고정 주소만 허용한다
 add 'Tailscale IPv6 주소' '[fF][dD]7[aA]:115[cC]:[aA]1[eE]0::?[0-9a-fA-F]{1,4}' '(fd7a:115c:a1e0::/48|fd7a:115c:a1e0::53([^0-9a-fA-F:]|$))'

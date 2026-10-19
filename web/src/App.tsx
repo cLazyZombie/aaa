@@ -714,7 +714,7 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
   // 보고서 화면(plan §8.240): 막대 「보고서」는 마지막으로 본 보고서 자리(목록이나 연 보고서)로, 보고서 화면에서 다시 누르면 그 앞
   // 화면으로 간다. 한 번 연 보고서 화면은 다른 화면으로 가도 그려 둔다(ReportsView): 돌아오면 연 보고서·굴린 자리가 그대로다
   const reportsShown = sel?.startsWith("reports:") === true;
-  // 안 본 사용자 보고서 수와 목록이 다시 읽을 때(host `reports` 사건: 올림·열어 봄·지움, plan §8.254)
+  // 안 본 사용자 보고서 수와 목록이 다시 읽을 때(host `reports` 사건: 올림·열어 봄·지움, plan §8.256)
   const [unseenReports, setUnseenReports] = useState(0);
   const [reportsRev, setReportsRev] = useState(0);
   const [reportsAt, setReportsAt] = useState<string | null>(reportsShown ? sel : null);

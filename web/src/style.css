@@ -972,7 +972,7 @@ svg.i { width: 16px; height: 16px; flex-shrink: 0; fill: none; stroke: currentCo
 .report-heading strong { min-width: 0; overflow-wrap: anywhere; }
 .report-card p { margin: 6px 0; }
 .report-card .library-link { margin-top: 10px; }
-/* 두 탭(plan §8.254): 내 보고서(안 본 점·수)와 작업 보고(골라 지우기) */
+/* 두 탭(plan §8.256): 내 보고서(안 본 점·수)와 작업 보고(골라 지우기) */
 .reports-tabs { display: flex; margin-bottom: 12px; border-bottom: 1px solid var(--border); }
 .reports-tab { display: inline-flex; align-items: center; gap: 6px; height: 36px; padding: 0 14px; border: 0; border-bottom: 2px solid transparent; border-radius: 0; background: transparent; color: var(--text-dim); font-weight: 600; }
 .reports-tab:hover:not(:disabled) { background: transparent; color: var(--text); }

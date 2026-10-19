@@ -35,6 +35,7 @@ const FAKE_AGENT: &str = r#"#!/bin/sh
 printf 'fake> '
 while IFS= read -r line; do
   case "$line" in
+    exit-one) exit 1 ;;
     post-probe\ *) sh "${line#post-probe }"; echo post-probe-done ;;
     *brief.md*)
       path=$(printf '%s' "$line" | sed 's/를 읽고.*//')
@@ -685,8 +686,7 @@ fn worktree_thread_round_trip() {
 }
 
 /// 고친 worktree와 병합되지 않은 branch는 남긴다(force 없음). 허용되지 않은 profile은 거부한다.
-/// pane은 그 thread의 자리를 치웠을 때만 닫는다(herdr-projects threads.rs `clean`: worktree를 지우며 workspace를, tab 종류는
-/// tab을 닫는다). 남긴 worktree의 pane 줄은 남고(세션만 끝남), 작업 폴더 thread와 이미 지운 worktree(`worktree_gone`)는 닫는다.
+/// pane은 worktree 보존과 별개로 닫는다. 작업 폴더 thread와 이미 지운 worktree(`worktree_gone`)도 같다.
 /// 집에 다 오지 않은 worktree도 남긴다(`clean` `copy_complete`): `--discard-uncopied`면 지우고, `--skip-copy`는 사본 없이
 /// 끝내며 남긴다.
 #[test]
@@ -725,8 +725,8 @@ fn resolve_keeps_dirty_worktree_and_unmerged_branch() {
     let last = ev["events"].as_array().unwrap().last().unwrap().clone();
     assert_eq!(last["kind"], "thread_resolved");
     assert!(last["detail"].as_str().unwrap().contains("worktree 유지"), "{last}");
-    assert!(!last["detail"].as_str().unwrap().contains("pane을 닫았다"), "{last}");
-    wait_for("남긴 worktree의 세션 끝남", T, || (w.h.pane(&pane)["state"] != "running").then_some(()));
+    assert!(last["detail"].as_str().unwrap().contains("pane을 닫았다"), "{last}");
+    assert!(!w.h.ok(&["pane", "list"])["panes"].as_array().unwrap().iter().any(|p| p["id"] == pane));
 
     let listed = |p: &str| w.h.ok(&["pane", "list"])["panes"].as_array().unwrap().iter().any(|x| x["id"] == p);
     // 끝낸 항목은 그 thread의 thread_resolved 사건에서 읽는다(늦게 남는 brief_delivered가 마지막 사건일 수 있다, 위)
@@ -791,7 +791,7 @@ fn resolve_keeps_dirty_worktree_and_unmerged_branch() {
     assert!(detail.contains("worktree 유지") && detail.contains("마지막 사본에 집에 오지 않은 것이 있다"), "{detail}");
     assert!(detail.contains("집에 오지 않은 것: link: symlink"), "{detail}");
     assert!(pwork.join("library/out.txt").is_file(), "집에 다 오지 않은 worktree를 지웠다");
-    assert!(listed(&ppane), "남긴 worktree의 pane 줄은 남는다");
+    assert!(!listed(&ppane), "남긴 worktree의 pane도 닫는다");
     // 사람이 고르면 지운다
     let (xid, xpane, xwork) = partial("discard");
     let detail = resolved_with(&xid, &["--discard-uncopied"]);
@@ -2378,6 +2378,54 @@ fn closing_ended_sessions_does_not_wait_for_the_session_host_linger() {
     assert!(!ids.contains(&pane.as_str()) && !ids.contains(&shell.as_str()), "끝낸 pane이 남았다: {panes}");
 }
 
+/// resolve는 이미 exit 1로 끝난 pane도 목록과 layout에서 지운다. worktree 보존·adopt 여부와 독립적이다.
+#[test]
+fn resolve_removes_exited_panes_even_when_the_worktree_is_kept_or_adopted() {
+    let w = world();
+    let claude = w.scripts.join("claude");
+    std::fs::write(&claude, ADOPT_AGENT.replace("@BIN@", lab::BIN)).unwrap();
+    std::fs::set_permissions(&claude, std::os::unix::fs::PermissionsExt::from_mode(0o755)).unwrap();
+    for kind in ["dir", "worktree", "adopted"] {
+        let v = if kind == "adopted" {
+            let pane = w.h.new_pane(None, "labA", Some("adopt"), &[path_str(&claude)], Some(path_str(&w.repo)));
+            wait_for("adopt harness 준비", T, || {
+                w.h.pane(&pane)["agent"]["harness_session"].is_string().then_some(())
+            });
+            w.h.ok(&["thread", "adopt", "demo", "--pane", &pane, "--title", kind])
+        } else {
+            let task = w.task(&format!("{kind}.txt"), "dirty");
+            let mut args = vec!["--title", kind, "--profile", "fake", "--task-file", &task];
+            if kind == "worktree" {
+                args.extend_from_slice(&["--repo", path_str(&w.repo)]);
+            } else {
+                args.extend_from_slice(&["--kind", "dir"]);
+            }
+            w.start(&args)
+        };
+        let (id, pane) = (v["id"].as_str().unwrap(), v["pane"].as_str().unwrap());
+        w.wait_show("보고와 brief 전달", id, |v| v["report_hash"].is_string() && v["brief"] == "delivered");
+        // 신호 없이 자기 fixture를 정상 입력으로 종료한다. 종료 상태를 확인한 뒤에만 resolve한다.
+        w.h.ok(&["pane", "run", pane, "exit-one"]);
+        wait_for("exit 1", T, || {
+            let p = w.h.pane(pane);
+            (p["state"] == "exited" && p["code"] == 1).then_some(())
+        });
+        // pane 목록과 그 pane을 담은 layout을 함께 확인한다.
+        w.h.ok(&["pane", "move", pane, "--new-tab", "-w", "exited"]);
+        assert_eq!(w.h.ok(&["thread", "resolve", "demo", id])["status"], "resolved");
+        let panes = w.h.ok(&["pane", "list"]);
+        assert!(!panes["panes"].as_array().unwrap().iter().any(|p| p["id"] == pane), "{kind}: {panes}");
+        let layout = w.h.ok(&["workspace", "get", "exited"]);
+        assert!(!layout.to_string().contains(pane), "{kind}: {layout}");
+        let cwd = Path::new(v["cwd"].as_str().unwrap());
+        if kind == "worktree" {
+            assert_eq!(std::fs::read_to_string(cwd.join("dirty.txt")).unwrap(), "dirty\n");
+        } else if kind == "adopted" {
+            assert!(cwd.join(".git").exists(), "데려온 저장소는 남겨야 한다");
+        }
+    }
+}
+
 /// thread 범위(§8.25): 일반 thread 세션 안의 CLI는 보기만 되고, thread가 아닌 pane(사람의 셸) 안의 CLI는 그대로 조작한다
 #[test]
 fn worker_session_cli_is_read_only() {
@@ -2901,6 +2949,7 @@ draw
 while IFS= read -r buf; do
     st=''
     case "$buf" in
+      exit-one) exit 1 ;;
       *brief.md*)
         st=$(printf '\342\234\273 Working\342\200\246 (1s \302\267 esc to interrupt)\n_'); st=${st%_}
         draw
@@ -2921,7 +2970,7 @@ done
 /// 이미 띄운 agent pane을 thread로 데려온다(herdr-projects `thread adopt`, 4장 G #598): Claude·Codex가 아닌 pane·coordinator
 /// pane·빈 제목은 거부, 데려오면 pane의 폴더·repo·branch를 적고 brief를 안내해 보고를 받는다. 그 pane 안 CLI는 thread
 /// 범위(보기만)다. 같은 pane은 두 번 데려오지 않고, 다시 시작하지 않는다. 재부팅 뒤에는 사람이 띄운 pane처럼 대화를 이어
-/// 띄우고 thread가 새 pane을 따라간다. resolve는 pane을 끝내지 않는다. 기다림은 기록·출력·파일이다.
+/// 띄우고 thread가 새 pane을 따라간다. resolve는 pane만 닫고 폴더·branch는 남긴다. 기다림은 기록·출력·파일이다.
 #[test]
 fn thread_adopt_existing_pane() {
     let mut w = world();
@@ -2993,16 +3042,15 @@ fn thread_adopt_existing_pane() {
     let new = v["pane"].as_str().unwrap().to_string();
     w.h.wait_output(&new, &format!("args: --resume {sid}"), T);
     assert!(!w.kinds(0).contains(&"restore_failed".to_string()), "{:?}", w.kinds(0));
-    // resolve는 pane을 끝내지 않는다
+    // resolve는 새 pane을 닫되 사람이 쓰던 폴더·branch는 그대로 둔다
     let v = w.h.ok(&["thread", "resolve", "demo", &id]);
     assert_eq!(v["status"], "resolved", "{v}");
     let events = w.h.ok(&["events", "demo"])["events"].as_array().unwrap().clone();
     let last = events.iter().rev().find(|e| e["kind"] == "thread_resolved").unwrap();
-    assert!(last["detail"].as_str().unwrap().contains("pane은 그대로 둔다"), "{last}");
-    // resolve 뒤에도 pane은 입력을 받는다(끝냈으면 상태가 늦게 와도 입력이 거부되거나 답이 없다)
-    // 1회 쓰기여도 줄 경계로 읽어야 한다. PTY가 글/Enter를 같은 read로 묶는 것은 정상이다.
-    w.h.ok(&["pane", "run", &new, "still-here"]);
-    w.h.wait_output(&new, "got: still-here", T);
+    assert!(last["detail"].as_str().unwrap().contains("폴더·branch는 그대로 둔다"), "{last}");
+    assert!(!w.h.ok(&["pane", "list"])["panes"].as_array().unwrap().iter().any(|p| p["id"] == new));
+    assert_eq!(git(&repo, &["branch", "--show-current"]), "feature-x");
+    assert!(probe.is_file(), "사람이 쓰던 폴더의 파일은 남겨야 한다");
 }
 
 /// 셸 pane에서 친 Claude도 데려온다(참고는 herdr가 감지한 agent가 있는 pane이면 데려온다). 가짜 Claude는 hook을 부르지

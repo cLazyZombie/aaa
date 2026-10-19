@@ -1,4 +1,4 @@
-// 머신 패널 머리줄 오른쪽의 agent 수·CPU·MEM(plan §8.245, §8.254 사용자 결정 10-19 「1안」). 셋 다 lucide 아이콘(Bot·Cpu·MemoryStick)
+// 머신 패널 머리줄 오른쪽의 agent 수·CPU·MEM(plan §8.245, §8.256 사용자 결정 10-19 「1안」). 셋 다 lucide 아이콘(Bot·Cpu·MemoryStick)
 // + 숫자이고, CPU·MEM 아래에 2px 막대를 둔다(agent는 막대 자리만 비운다). 칸마다 title이 풀이한다. 값·높음 판정은 machineStats.ts다.
 import type { CSSProperties } from "react";
 import { Bot, Cpu, MemoryStick, type LucideIcon } from "lucide-react";

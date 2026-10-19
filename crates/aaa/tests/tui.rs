@@ -23,7 +23,7 @@ const T: Duration = Duration::from_secs(20);
 const COLS: u16 = 90;
 const WIDE: u16 = 130;
 const ROWS: u16 = 30;
-/// 펼친 사이드바 폭(구분선 포함, 시험 설정 `sidebar_width = 26`: herdr 기본. aaa 기본 36은 `sidebar_width_like_herdr`)과
+/// 펼친 사이드바 폭(구분선 포함, 시험 설정 `sidebar_width = 26`: herdr 기본. aaa 기본 48은 `sidebar_width_like_herdr`)과
 /// 접힌 compact 폭(4)
 const SIDE: u16 = 26;
 /// 보통 화면 pane 오른쪽 scrollbar 칸(`[tui] pane_scrollbars` 기본 켬, herdr `stable_scrollbar_gutter`): PTY가 그만큼 좁다
@@ -782,7 +782,7 @@ fn remote_attach_rides_the_web() {
     let url = format!("http://{web}");
     let w = h.ok(&["tab", "create", "--machine", "labA", "--label", "far", "--", "/bin/sh"]);
     let first = leaves(&w)[0].clone();
-    // 다른 기기: 제 설정·상태 폴더(기기 token은 여기 둔다). 설정이 없어 사이드바는 기본 폭(36)이다
+    // 다른 기기: 제 설정·상태 폴더(기기 token은 여기 둔다). 설정이 없어 사이드바는 기본 폭(48)이다
     let dev = lab.node("dev", None);
     let side = aaa_config::SIDEBAR_WIDTH;
     // 보고서용 화면 텍스트(`AAA_TUI_DUMP_REMOTE=폴더`)
@@ -1456,6 +1456,12 @@ fn side_list_like_web() {
             std::fs::create_dir_all(&dir).unwrap();
             std::fs::write(std::path::Path::new(&dir).join(format!("{name}.ansi")), &*raw.lock().unwrap()).unwrap();
             std::fs::write(std::path::Path::new(&dir).join(format!("{name}.txt")), tui.text()).unwrap();
+            let screen = tui.screen.0.lock().unwrap();
+            std::fs::write(
+                std::path::Path::new(&dir).join(format!("{name}.json")),
+                serde_json::json!({"cols": screen.cols, "rows": screen.cells.len()}).to_string(),
+            )
+            .unwrap();
         }
     };
     let mut lab = Lab::new();
@@ -1824,7 +1830,7 @@ fn side_list_like_web() {
     let mut reports = lab.follow("panel-reports", &h, "demo");
     std::fs::write(std::path::Path::new(&report_dir).join("report.md"), report).unwrap();
     reports.kind("report_ready", &alpha, T);
-    tui.click((27, 1));
+    tui.click((9, 1));
     tui.wait_text("보고서 목록", |s| s.contains("보고서 ·") && s.contains(&format!("demo/{alpha}")));
     tui.send(b"\r");
     tui.wait_text("보고서 본문", |s| s.contains("보고줄 000"));
@@ -1833,13 +1839,13 @@ fn side_list_like_web() {
     shot(&tui, "panel-reports");
     tui.send(b"REPORT-KEY-LEAK");
     tui.send(b"\x1b[200~REPORT-PASTE-LEAK\x1b[201~");
-    tui.click((27, 1));
+    tui.click((9, 1));
     tui.wait_text("보고서에서 pane 복귀", |s| !s.contains("보고서 ·"));
     tui.type_line("REPORT-BARRIER");
     h.wait_output(&expected, "REPORT-BARRIER", T);
     let output = h.screen(&expected);
     assert!(!output.contains("REPORT-KEY-LEAK") && !output.contains("REPORT-PASTE-LEAK"), "{output}");
-    tui.click((27, 1));
+    tui.click((9, 1));
     tui.wait_text("같은 보고서·굴림 유지", |s| s.lines().nth(3).is_some_and(|l| l.contains("보고줄 026")));
     tui.click((29, 1));
     tui.wait_text("막대 설정", |s| s.contains("▸ catppuccin ✓"));
@@ -1847,7 +1853,7 @@ fn side_list_like_web() {
     tui.wait_text("설정에서 보고서 복귀", |s| {
         !s.contains("▸ catppuccin ✓") && s.lines().nth(3).is_some_and(|l| l.contains("보고줄 026"))
     });
-    tui.click((27, 1));
+    tui.click((9, 1));
     tui.wait_text("pane 본문", |s| !s.contains("보고서 ·"));
 
     // 13) pane이 없는 임무도 패널 밖 공통 머리에서 보인다. 열기만으로 승인/시작하지 않는다.
@@ -1897,6 +1903,67 @@ fn side_list_like_web() {
     });
     tui.send(b"\x1b");
     tui.wait_text("접은 뒤 탐색 끝", |s| !s.contains(" NAVIGATE "));
+    // 15) 한글 thread 제목은 고르면 미리 보이고 i/마우스로 끝까지 읽는다. 열기·PTY 크기는 그대로다.
+    tui.cmd("w");
+    pick(&mut tui, "▸ demo");
+    tui.send(b" ");
+    tui.wait_screen("제목 시험 전 펼침", |s| s.side_lines().iter().any(|l| l.contains("▾ demo")));
+    // 두 줄 스크롤의 7줄 스트레스 배치를 끝내고 새 thread가 보일 자리를 확보한다.
+    let divider = tui.screen.0.lock().unwrap().list_top() - 1;
+    tui.mouse(0, (divider, 7), false);
+    tui.mouse(32, (8, 7), false);
+    tui.mouse(0, (8, 7), true);
+    tui.wait_screen("제목 목록 높이", |s| s.side_lines()[8].starts_with("────"));
+    let long_title =
+        "한글제목: 프로젝트 목록의 긴 제목을 선택하면 한글 사이에 공백을 넣지 않고 전체를 확인한다. 끝표지END";
+    let long_id = start(long_title)["id"].as_str().unwrap().to_string();
+    tui.wait_screen("긴 제목 도착", |s| s.side_lines().iter().any(|l| l.contains(&long_id)));
+    pick(&mut tui, &long_id);
+    tui.wait_text("선택 제목 미리 보기", |s| {
+        s.contains("선택 제목") && s.contains("한글제목:") && s.contains("끝표지END")
+    });
+    shot(&tui, "panel-title-preview");
+    let title_ready = |s: &Screen| {
+        let text = s.text();
+        let body: String =
+            (6..24).map(|y| s.cells[y][8..82].iter().filter(|c| **c != '\0').collect::<String>()).collect();
+        text.contains("제목 전체 · esc 닫기")
+            && body.contains("끝표지END")
+            && text.contains("↑↓ PgUp/Dn Home/End · 1/1")
+            && s.cells[25][7] == '└'
+            && s.cells[25][82] == '┘'
+    };
+    tui.send(b"i");
+    tui.wait_screen("제목 전체 렌더", title_ready);
+    shot(&tui, "panel-title-full");
+    tui.send(b"TITLE-LEAK\x1b[200~PASTE-LEAK\x1b[201~");
+    let title_closed = |s: &Screen| {
+        !s.text().contains("제목 전체 · esc 닫기")
+            && s.text().contains(" NAVIGATE ")
+            && s.selected().is_some_and(|(_, row)| row.contains(&long_id))
+            && s.cells[25][7] != '└'
+            && s.cells[25][82] != '┘'
+    };
+    tui.send(b"\x1b");
+    tui.wait_screen("제목만 닫히고 선택 복원", title_closed);
+    // 미리 보기 누름과 목록 오른쪽 누름은 같은 읽기 창이다.
+    let preview_y = tui.text().lines().position(|l| l.contains("선택 제목")).unwrap();
+    tui.click((preview_y, SIDE as usize + 1));
+    tui.wait_screen("미리 보기 누름", title_ready);
+    tui.send(b"\x1b");
+    tui.wait_screen("다시 목록", title_closed);
+    let row = tui.selected().unwrap().0;
+    tui.mouse(2, (row, 10), false);
+    tui.mouse(2, (row, 10), true);
+    tui.wait_screen("목록 오른쪽 누름", title_ready);
+    tui.send(b"\x1b");
+    tui.wait_screen("제목 창 닫음", title_closed);
+    tui.send(b"\x1b");
+    tui.wait_text("제목 탐색 끝", |s| !s.contains(" NAVIGATE "));
+    tui.type_line("TITLE-BARRIER");
+    h.wait_output(&coordinator, "TITLE-BARRIER", T);
+    let output = h.screen(&coordinator);
+    assert!(!output.contains("TITLE-LEAK") && !output.contains("PASTE-LEAK"), "{output}");
     tui.click((7, 1));
     tui.wait_screen("마지막 패널", |s| s.side_lines()[0].starts_with(" 에이전트"));
     tui.click((7, 1));
@@ -2233,7 +2300,7 @@ fn pane_osc52_reaches_front_clipboard() {
     assert!(tui.wait_exit());
 }
 
-/// 앱 선택 뒤 Ctrl+C도 pane 입력이 아니라 pane 본문 복사다. raw 관측기로 실제 키 누수를 본다.
+/// 앱이 OSC 52를 보내지 않아도 놓으면 복사한다. 이어 누른 Ctrl+C는 pane에 새지 않는다.
 #[test]
 fn reported_selection_copy_never_interrupts_pane() {
     for auto_copy in [false, true] {
@@ -2266,17 +2333,31 @@ while True:
         std::fs::write(&fixture, program).unwrap();
         h.ok(&["tab", "create", "--machine", "labA", "--", "python3", lab::path_str(&fixture)]);
         let copied = lab.root.join("copied.txt");
-        let mut tui = Tui::start_env(&h, &[("AAA_TEST_CLIPBOARD_TEXT", lab::path_str(&copied))]);
+        let native = std::env::var_os("AAA_CLIP_NATIVE").is_some();
+        let mut tui = if native {
+            Tui::start(&h)
+        } else {
+            Tui::start_env(&h, &[("AAA_TEST_CLIPBOARD_TEXT", lab::path_str(&copied))])
+        };
+        let read_copied = || {
+            if native {
+                arboard::Clipboard::new().unwrap().get_text().unwrap()
+            } else {
+                std::fs::read_to_string(&copied).unwrap_or_default()
+            }
+        };
         let at = tui.wait_find("alpha");
         tui.mouse(0, at, false);
         // pane 밖까지 끌어도 본문 좌표로 묶고 줄 끝 공백·사이드바·경계를 복사하지 않는다.
         tui.mouse(32, (at.0 + 1, COLS as usize - 1), false);
         tui.mouse(0, (at.0 + 1, COLS as usize - 1), true);
         tui.wait_text("앱 선택 울타리", |s| s.contains("app-selected"));
+        tui.wait_text("앱 OSC 없이 선택 자동 복사", |s| s.contains("클립보드에 복사했다"));
+        assert_eq!(read_copied(), "alpha\nbeta");
         tui.send(b"\x03!");
         tui.wait_text("키 처리 울타리", |s| s.contains("keys="));
         assert!(tui.text().contains("keys=21"), "Ctrl+C가 pane에 새었다: {}", tui.text());
-        assert_eq!(std::fs::read_to_string(&copied).unwrap_or_default(), "alpha\nbeta");
+        assert_eq!(read_copied(), "alpha\nbeta");
         tui.send(b"\x03!");
         tui.wait_text("선택 없는 Ctrl+C 보존", |s| s.contains("keys=0321"));
         tui.cmd("q");
@@ -2297,7 +2378,7 @@ fn selection_copy_never_enters_pane() {
                 r#"import os, tty
 
 tty.setraw(0)
-os.write(1, b"{modes}copy-42\r\n")
+os.write(1, b"{modes}copy-42\r\nnext\r\n")
 received = b""
 while True:
     byte = os.read(0, 1)
@@ -2314,15 +2395,33 @@ while True:
         .unwrap();
         h.ok(&["tab", "create", "--machine", "labA", "--", "python3", lab::path_str(&fixture)]);
         let copied = lab.root.join("copied.txt");
-        let mut tui = Tui::start_env(&h, &[("AAA_TEST_CLIPBOARD_TEXT", lab::path_str(&copied))]);
+        let native = std::env::var_os("AAA_CLIP_NATIVE").is_some();
+        let mut tui = if native {
+            Tui::start(&h)
+        } else {
+            Tui::start_env(&h, &[("AAA_TEST_CLIPBOARD_TEXT", lab::path_str(&copied))])
+        };
         let at = tui.wait_find("copy-42");
         // 마우스 보고를 켠 프로그램 위에서는 Shift로 고른다(Windows Terminal 관례).
         let shift = if reporting { 4 } else { 0 };
+        let end = (at.0 + 1, at.1 + 3);
         tui.mouse(shift, at, false);
-        tui.mouse(32 + shift, (at.0, at.1 + 6), false);
-        tui.mouse(shift, (at.0, at.1 + 6), true);
+        tui.mouse(32 + shift, end, false);
+        // 글자 끝까지만 칠하는 앱 선택과 달리, 중간 줄의 빈칸도 pane 끝까지 칠한다.
+        tui.wait_screen("터미널 셀 격자 선택", |s| {
+            let selected = s.bgs[at.0][at.1];
+            s.bgs[at.0][COLS as usize - 2] == selected
+                && s.bgs[end.0][end.1] == selected
+                && s.bgs[end.0][end.1 + 1] != selected
+        });
+        tui.mouse(shift, end, true);
         tui.wait_text("선택 자동 복사", |s| s.contains("클립보드에 복사했다"));
-        assert_eq!(std::fs::read_to_string(&copied).unwrap(), "copy-42");
+        let text = if native {
+            arboard::Clipboard::new().unwrap().get_text().unwrap()
+        } else {
+            std::fs::read_to_string(&copied).unwrap()
+        };
+        assert_eq!(text.replace("\r\n", "\n"), "copy-42\nnext");
         // 선택 뒤의 움직임도 pane으로 보내지 않는다. Ctrl+C의 Repeat·Release도 복사 키의 일부다.
         tui.mouse(35, at, false);
         tui.send(b"\x03\x1b[99;5:2u\x1b[99;5:3u!");
@@ -2330,15 +2429,17 @@ while True:
         // 선택이 없을 때의 Ctrl+C는 그대로 보낸다. 관측기는 raw라 신호를 발생시키지 않는다.
         tui.send(b"\x03!");
         tui.wait_text("선택 없는 Ctrl+C", |s| s.contains("received=0321"));
-        // 복사가 실패해도 Ctrl+Shift+C·반복은 pane에 보내지 않는다.
-        std::fs::remove_file(&copied).unwrap();
-        std::fs::create_dir(&copied).unwrap();
-        tui.mouse(shift, at, false);
-        tui.mouse(32 + shift, (at.0, at.1 + 6), false);
-        tui.mouse(shift, (at.0, at.1 + 6), true);
-        tui.wait_text("실패한 복사를 성공이라 하지 않음", |s| s.contains("복사하지 못했다"));
-        tui.send(b"\x1b[67;6u\x1b[67;6:2u\x1b[67;6:3u!");
-        tui.wait_text("복사 실패 뒤 입력 울타리", |s| s.matches("received=21").count() == 2);
+        // 실패 주입은 파일 sink에서만 한다. 실제 clipboard 시험은 위 성공 경로를 같은 TUI로 끝까지 본다.
+        if !native {
+            std::fs::remove_file(&copied).unwrap();
+            std::fs::create_dir(&copied).unwrap();
+            tui.mouse(shift, at, false);
+            tui.mouse(32 + shift, end, false);
+            tui.mouse(shift, end, true);
+            tui.wait_text("실패한 복사를 성공이라 하지 않음", |s| s.contains("복사하지 못했다"));
+            tui.send(b"\x1b[67;6u\x1b[67;6:2u\x1b[67;6:3u!");
+            tui.wait_text("복사 실패 뒤 입력 울타리", |s| s.matches("received=21").count() == 2);
+        }
         if let Ok(dir) = std::env::var("AAA_TUI_DUMP") {
             let name = if reporting { "copy-mouse-reporting" } else { "copy-plain" };
             std::fs::write(std::path::Path::new(&dir).join(format!("{name}.txt")), tui.text()).unwrap();
@@ -2467,7 +2568,7 @@ fn osc8_links_reach_the_outer_terminal_like_herdr() {
     tui.wait_screen("올려 본 링크", |s| s.link_runs() == [(docs.0, docs.1, "DOCS".to_string(), osc.clone())]);
 }
 
-/// 사이드바 폭(사용자 10-18 「herdr만큼 크게, 더 크게도, 테마를 바꿔도 리셋되지 않게」, plan §8.193): 기본 36칸(herdr 기본은
+/// 사이드바 폭(사용자 10-18 「herdr만큼 크게, 더 크게도, 테마를 바꿔도 리셋되지 않게」, plan §8.193): 기본 48칸(herdr 기본은
 /// 26, 사용자가 herdr에서 쓰는 폭), 경계를 끌면 72칸까지(`[tui] sidebar_max_width` 기본). 끌어 둔 폭은 설정 창에서 테마를
 /// 바꿔도(host.toml `[tui] theme`만 쓰고 다시 읽는다) 그대로이고, host 공유 설정 `tuiSidebarWidth`에 남아 다시 붙어도 그
 /// 폭으로 시작한다(herdr는 client 기기 파일 `client-shell/*.json`). 경계를 두 번 누르면 설정 폭으로 돌아가고 남긴 값을 지운다.
@@ -2486,6 +2587,16 @@ fn sidebar_width_like_herdr() {
     };
     // 보고서용 화면 텍스트(`AAA_TUI_DUMP=폴더`)
     let dump = |name: &str, tui: &Tui| {
+        if name == "1-default"
+            && let (Some(dir), Some(raw)) = (std::env::var_os("AAA_TUI_THEME_SHOTS"), &tui.recording)
+        {
+            std::fs::create_dir_all(&dir).unwrap();
+            let path = std::path::Path::new(&dir);
+            std::fs::write(path.join("panel-width48.ansi"), &*raw.lock().unwrap()).unwrap();
+            std::fs::write(path.join("panel-width48.txt"), tui.text()).unwrap();
+            std::fs::write(path.join("panel-width48.json"), serde_json::json!({"cols": W, "rows": ROWS}).to_string())
+                .unwrap();
+        }
         if let Ok(dir) = std::env::var("AAA_TUI_DUMP") {
             std::fs::write(std::path::Path::new(&dir).join(format!("{name}.txt")), tui.text()).unwrap();
         }
@@ -2493,10 +2604,10 @@ fn sidebar_width_like_herdr() {
     let mut tui = Tui::start_cols(&h, &[], W);
     tui.wait_text("셸", |s| s.contains('$'));
 
-    // 1) 기본 36칸
-    tui.wait_screen("기본 36칸", |s| side_width(s) == Some(36) && s.text().contains(" ▾ 기타"));
+    // 1) 기본 48칸
+    tui.wait_screen("기본 48칸", |s| side_width(s) == Some(48) && s.text().contains(" ▾ 기타"));
     dump("1-default", &tui);
-    hw.wait("pane 폭", |w| (w.pane(&one)?.cols == W - 36 - GUTTER).then_some(()));
+    hw.wait("pane 폭", |w| (w.pane(&one)?.cols == W - 48 - GUTTER).then_some(()));
 
     // 2) 경계를 끌어 키운다: 열 + 1, 72칸에서 멈춘다
     let drag = |tui: &mut Tui, from: usize, to: usize| {
@@ -2504,7 +2615,7 @@ fn sidebar_width_like_herdr() {
         tui.mouse(32, (10, to), false);
         tui.mouse(0, (10, to), true);
     };
-    drag(&mut tui, 35, 59);
+    drag(&mut tui, 47, 59);
     tui.wait_screen("60칸", |s| side_width(s) == Some(60));
     dump("2-dragged", &tui);
     drag(&mut tui, 59, 150);
@@ -2534,10 +2645,10 @@ fn sidebar_width_like_herdr() {
     dump("4-reattached", &tui);
     hw.wait("pane 폭 60", |w| (w.pane(&one)?.cols == W - 60 - GUTTER).then_some(()));
 
-    // 5) 경계를 두 번 누르면 설정 폭(기본 36)으로, 남긴 폭은 지운다(null)
+    // 5) 경계를 두 번 누르면 설정 폭(기본 48)으로, 남긴 폭은 지운다(null)
     tui.click((10, 59));
     tui.click((10, 59));
-    tui.wait_screen("설정 폭으로", |s| side_width(s) == Some(36));
+    tui.wait_screen("설정 폭으로", |s| side_width(s) == Some(48));
     width_kept(serde_json::Value::Null);
     tui.cmd("q");
     assert!(tui.wait_exit());
@@ -3510,9 +3621,10 @@ fn paste_and_image_drop_like_herdr() {
     tui.send("\x1b[200~나누기\x1b[201~".as_bytes());
     tui.wait_text("거름", |s| s.contains("좌우로 나누기") && !s.contains("목록 탐색"));
     tui.send(b"\x1b");
-    tui.wait_text("검색 끝", |s| s.contains("esc 닫기"));
+    tui.wait_text("검색 끝", |s| s.contains("esc 닫기") && s.contains("검색 / · 넘기기"));
     tui.send(b"\x1b");
-    tui.wait_text("닫힘", |s| !s.contains("prefix 모드"));
+    // 거른 목록에는 prefix 모드가 이미 없다. 검색 여부와 무관한 창 제목이 사라져야 닫힌 것이다.
+    tui.wait_text("단축키 창 닫힘", |s| !s.contains("단축키"));
     tui.cmd("c");
     tui.wait_text("새 탭 이름 창", |s| s.contains("새 탭") && s.contains("↵ 저장"));
     tui.send("\x1b[200~붙인\n탭\x1b[201~\r".as_bytes());

@@ -96,7 +96,8 @@ step_clipboard() {
   AAA_CLIP_NATIVE=1 "${run[@]+"${run[@]}"}" cargo test --locked --workspace native_clipboard_roundtrip -- --nocapture || return 1
   # TUI E2E는 Unix 전용이다
   [ "$OS" = windows ] && return 0
-  AAA_CLIP_NATIVE=1 "${run[@]+"${run[@]}"}" cargo test --locked -p aaa --test tui ctrl_v_pastes_clipboard_image -- --nocapture
+  AAA_CLIP_NATIVE=1 "${run[@]+"${run[@]}"}" cargo test --locked -p aaa --test tui ctrl_v_pastes_clipboard_image -- --nocapture || return 1
+  AAA_CLIP_NATIVE=1 "${run[@]+"${run[@]}"}" cargo test --locked -p aaa --test tui selection_copy -- --nocapture --test-threads=1
 }
 step_e2e() {
   local root newer

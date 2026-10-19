@@ -127,7 +127,7 @@ impl Host {
     }
 
     /// 보고서 하나의 host 사본을 지운다. 정리(prune)는 report.md 사본·thread 기록을 남기고(§8.212), 사용자 지우기는
-    /// `with_report`로 thread 보고 사본(`threads/<id>.md`)까지 지운다(§8.254). 실시간 등록 원본은 건드리지 않는다.
+    /// `with_report`로 thread 보고 사본(`threads/<id>.md`)까지 지운다(§8.256). 실시간 등록 원본은 건드리지 않는다.
     pub(crate) fn remove_report(
         &self,
         project: &str,

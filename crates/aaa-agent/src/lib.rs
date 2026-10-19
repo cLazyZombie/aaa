@@ -1187,7 +1187,11 @@ impl Agent {
                 return self.to_session(id, &session, SessionRequest::Unsubscribe).await;
             }
             AgentRequest::Input { session, data } => {
-                tracing::info!(request = %id, %session, bytes = data.0.len(), "pane 입력: agent 수신");
+                if data.0.starts_with(b"\x1b[<") {
+                    tracing::debug!(request = %id, %session, bytes = data.0.len(), "pane 입력: agent 수신");
+                } else {
+                    tracing::info!(request = %id, %session, bytes = data.0.len(), "pane 입력: agent 수신");
+                }
                 return self.to_session(id, &session, SessionRequest::Input { data }).await;
             }
             AgentRequest::Resize { session, cols, rows } => {

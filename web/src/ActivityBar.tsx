@@ -31,7 +31,7 @@ export function ActivityBar({
   /** 본문이 보고서 화면인가 */
   reports: boolean;
   onReports: () => void;
-  /** 열어 보지 않은 사용자 보고서 수(host `reports` 사건, plan §8.254) */
+  /** 열어 보지 않은 사용자 보고서 수(host `reports` 사건, plan §8.256) */
   unseenReports: number;
   /** host 연결 */
   up: boolean;

@@ -9,7 +9,7 @@ export default async function ({ page }) {
     const input = `${root}/reports`;
     fs.mkdirSync(input);
     fs.writeFileSync(`${input}/index.html`, "<!doctype html><html lang=ko><meta charset=utf-8><h1>첫 보고서</h1></html>");
-    // 사용자 보고서(--to-user, plan §8.254)는 「내 보고서」 탭의 카드다. import한 것은 「작업 보고」 탭이다
+    // 사용자 보고서(--to-user, plan §8.256)는 「내 보고서」 탭의 카드다. import한 것은 「작업 보고」 탭이다
     const link = aaa("library", "publish", input, "--project", "demo", "--name", "page", "--to-user");
     const live = aaa("library", "publish", input, "--project", "other", "--name", "design", "--live", "--to-user");
     const batch = `${root}/batch`;
@@ -99,7 +99,7 @@ export default async function ({ page }) {
     const prefixed=aaa("library","import",batch,"--project","demo","--prefix","archive-");
     if (!prefixed.reports.some((r) => r.name === "archive-t-0001") || prefixed.skipped.length !== 0) throw new Error("접두사를 붙인 이전 보고서 import");
   });
-  await step("사용자 보고서(plan §8.254): index.html이 없으면 거부, 막대·탭 안 봄 배지와 알림 post, 열면 봄, 다시 보내면 다시 안 봄, 카드 지우기는 확인 한 번", async () => {
+  await step("사용자 보고서(plan §8.256): index.html이 없으면 거부, 막대·탭 안 봄 배지와 알림 post, 열면 봄, 다시 보내면 다시 안 봄, 카드 지우기는 확인 한 번", async () => {
     const unseen = () => aaa("library", "list").reports.filter((r) => r.unseen).length;
     const badges = () => page.evaluate(() => [document.querySelector('[data-testid="activity-badge-reports"]')?.textContent ?? null, document.querySelector('[data-testid="reports-unseen"]')?.textContent ?? null]);
     const badgesAre = (n) => until(`안 봄 배지 ${n}`, async () => { const b = await badges(); return b[0] === (n ? String(n) : null) && b[1] === b[0]; });
@@ -156,7 +156,7 @@ export default async function ({ page }) {
     if (fs.existsSync(`${root}/projects/demo/library/weekly`)) throw new Error("host 사본이 남았다");
   });
 
-  await step("작업 보고(plan §8.254): 진행 중 thread의 사본은 고를 수 없고 host도 거부, resolve하면 풀린다, 끝난 것 모두 고르기·확인 한 번으로 모두 지운다", async () => {
+  await step("작업 보고(plan §8.256): 진행 중 thread의 사본은 고를 수 없고 host도 거부, resolve하면 풀린다, 끝난 것 모두 고르기·확인 한 번으로 모두 지운다", async () => {
     fs.writeFileSync(`${root}/task-reports.md`, "웹 보기");
     const t = aaa("thread", "start", "demo", "--title", "보고 정리", "--machine", "labA", "--profile", "fake", "--kind", "dir", "--task-file", `${root}/task-reports.md`);
     await until("thread 사본", () => aaa("library", "list", "--project", "demo").reports.some((r) => r.name === t.id));

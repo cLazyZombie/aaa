@@ -21,7 +21,7 @@ export interface AgentMarkProps {
 }
 
 // Claude는 LobeHub Icons `claude-color`(@lobehub/icons-static-svg 1.95.1 `icons/claude-color.svg`, MIT, web/src/herdr/README.md 고지)로
-// 바꿨다(사용자 요청 10-19, plan §8.253). 참고의 타일(주황 둥근 사각형 + 흰 별)은 없고 주황 별 하나다. 「모노」 표시에서는 글자색이 된다(AgentMark.css)
+// 바꿨다(사용자 요청 10-19, plan §8.255). 참고의 타일(주황 둥근 사각형 + 흰 별)은 없고 주황 별 하나다. 「모노」 표시에서는 글자색이 된다(AgentMark.css)
 function ClaudeMark({ size }: { size: number }) {
   return (
     <svg viewBox="0 0 24 24" width={size} height={size} role="img" aria-label="claude">

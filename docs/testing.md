@@ -162,7 +162,7 @@ web/e2e/specs/NN-기능.mjs  기능별 단계(01-http-pwa … 19-turn-alerts). e
 
 ## 특수 임무 시험(2단계, §8.205)
 
-`cargo test -p aaa-host -p aaa-agent mission`은 OS 프로세스나 신호를 새로 쓰지 않는다. 실제 host·DB·frame owner에 가짜 agent를 연결해 승인/적용 사본, 범위·debounce·예산, Kill 전 durable 표지·끝남 사건 뒤 새 대화, 막힘/끝남, mission post·쌍 한도, 무한대/철수 제안, 기존 사용량 값에 따른 입력/cursor 보존과 reset 뒤 재개, 옛 상대 무송신을 본다. agent에서는 상태 파일의 처리 셈·조각 이동/hash와 Claude SessionStart 포인터를 본다. 재부팅 중 pause 보존·reset 후보 profile 일치, 같은 repo 경로의 다른 머신 승인, DB 저장 실패 시 routine hash/입력 원자성과 reset·깨움 무전송도 검사한다. 기존 m13의 evaluator_flow·routines·reboot_resumes_threads와 웹 12의 「특수 임무」 단계는 같은 공식 전체 gate에 남긴다. 새로운 실제 Kill 시험은 만들지 않는다.
+`cargo test -p aaa-host -p aaa-agent mission`의 host 시험은 OS 프로세스나 신호를 새로 쓰지 않는다. agent의 Git 권한 keeper는 자기 임시 저장소의 Git 자식 명령만 실행하며 신호·sleep은 쓰지 않는다. 실제 host·DB·frame owner에 가짜 agent를 연결해 승인/적용 사본, 범위·debounce·예산, Kill 전 durable 표지·끝남 사건 뒤 새 대화, 막힘/끝남, mission post·쌍 한도, 무한대/철수 제안, 기존 사용량 값에 따른 입력/cursor 보존과 reset 뒤 재개, 옛 상대 무송신을 본다. agent에서는 상태 파일의 처리 셈·조각 이동/hash와 Claude SessionStart 포인터를 본다. 재부팅 중 pause 보존·reset 후보 profile 일치, 같은 repo 경로의 다른 머신 승인, DB 저장 실패 시 routine hash/입력 원자성과 reset·깨움 무전송도 검사한다. 기존 m13의 evaluator_flow·routines·reboot_resumes_threads와 웹 12의 「특수 임무」 단계는 같은 공식 전체 gate에 남긴다. 새로운 실제 Kill 시험은 만들지 않는다.
 
 ## Codex 신뢰·메시지 받음 회귀(§8.206)
 
@@ -267,3 +267,33 @@ local agent 재연결 중 배포 조회(§8.237): host `deploy::tests::coordinat
 ## 임무 입력 안내와 조회 권한(§8.246)
 
 기존 host `approved_start_attaches_mission_before_preparing_special_brief`, agent `mission_launch_scopes_permissions_for_both_harnesses`·`mission_settings_do_not_write_through_links`, proto `fill_brief_puts_the_machine_paths`가 입력이 없는 첫 prepare/rebrief의 inbox·자기 임무 문맥·실제 머신 경로로 채운 brief·정확한 목록 및 조회 규칙을 검사한다. 일반 thread에는 임무 권한을 남기지 않고, symlink inbox로 폴더 밖에 쓰지 않으며, 넓은 ls/find/aaa 허용을 넣지 않는다. 새 신호 시험·고정 sleep·production 시험 seam은 없다. `cargo test -p aaa-host -p aaa-agent mission`과 `cargo test -p aaa-proto fill_brief_puts_the_machine_paths` 뒤 공식 전체 gate를 실행한다.
+
+
+## 임무 빈 입력 우선과 자기 worktree Git 읽기(§8.251)
+
+- 기존 host 승인/brief keeper는 임무 본문 뒤에도 입력 우선 규칙이 와서 빈 입력일 때 즉시 턴을 끝내고,
+  초기화·참고 이력 조사·polling을 하지 않는 계약을 본다. 실제 모델의 지시 준수는 배포 뒤 운영 관찰로 확인한다.
+- 기존 agent launch keeper는 자기 worktree에 고정된 log/show/status 세 규칙과 일반 thread에 권한이 남지 않음을 본다.
+  proto keeper는 brief와 규칙의 같은 경로 quoting·옵션 종료 표지·잘못된 경로의 무허용을 확인한다.
+- agent `mission_git_reads_keep_option_and_index_boundaries`는 실제 Git과 공백·따옴표 경로에서
+  commit diff·blob·status 읽기를 실행한다. fsmonitor·textconv callback을 설정해 실행되지 않고 index 바이트도
+  그대로인지 본다. log/show 뒤 `--output`을 붙여도 쓰지 못해야 한다. 옵션 종료 표지를 제거한 변형이 이 쓰기 경계에서
+  실패한 뒤 원본으로 복원됐다. 소유한 임시 폴더만 쓰며 신호·고정 sleep·production 시험 seam은 없다.
+- 격리한 실제 Claude CLI(default permission mode)는 로컬 합성 provider가 돌려준 Bash 도구 호출을 처리한다.
+  인증·운영 설정을 사용하지 않고, 다른 허용 자료 폴더로 cwd가 바뀐 뒤 옛 cd+git의 trust 거절과 새 git -C 세 읽기의
+  무승인 성공을 구분한다. 이것은 권한 엔진 검증이며 실제 모델의 빈 입력 대기 판단을 대신하지 않는다.
+
+## TUI 선택 표시·Mac 복사·입력 지연(§8.253)
+
+- `cargo test --locked -p aaa-tui ready_motion_keeps_release_and_key_order`는 현재 도착한 이동만 모으고 놓기·복사 키를 원래 차례로 보존하는지, 아직 안 온 이동을 기다리지 않는지 검사한다. 이동 묶기를 제거한 변형에서 RED, bytes 복원 뒤 GREEN을 확인한다.
+- `cargo test --locked -p aaa-host front::tests::`의 `queued_input_batches_preserve_bytes_boundaries_and_receipts`는 실제 입력 큐에서 마우스 누름·끌기·뗌의 byte와 요청 ID를 보존하며 묶고, resize·다른 pane·64KiB/256요청 상한을 넘지 않는지 본다. `interactive_frames_bypass_batch_delay_without_unbounded_redraws`는 가상 시계로 입력 도중 이미 기다리던 화면도 즉시 나가는지, 16ms당 16회 예산·32ms 입력 창 뒤에는 출력을 묶는지 본다. 고정 sleep·실제 clipboard는 쓰지 않는다.
+- 기존 TUI keeper `reported_selection_copy_never_interrupts_pane`는 앱의 OSC 유무 두 경우에 놓을 때 복사하고, Ctrl+C가 pane으로 새지 않는지 본다. `selection_copy_never_enters_pane`는 일반 셸과 Shift 보고 pane에서 여러 줄의 빈칸까지 셀 격자로 칠하는지·복사 내용·키 누수·실패 알림을 본다. 파일 sink가 기본이며 `AAA_CLIP_NATIVE=1`이면 같은 PTY 경로에서 실제 clipboard를 읽는다. native 두 시험은 clipboard를 함께 쓰므로 `--test-threads=1`로 실행한다.
+- `scripts/ci-local.sh --native-clipboard`의 clipboard 단계가 위 두 keeper와 기존 이미지 roundtrip을 차례로 실행한다. 개발 머신에서 이 옵션을 켜려면 clipboard의 모든 item/type/data를 먼저 저장하고 종료 후 복원해야 한다. 사람의 clipboard를 덮는 일반 test 단계에서는 계속 파일 sink를 쓴다.
+- 회귀 변형: 입력 묶기 제거·입력 직후 렌더 우회 제거·빈 셀 선택 칠하기 제거를 각각 넣어 해당 keeper의 RED를 확인하고, 원본 bytes로 복원한 뒤 GREEN을 확인한다. 지연 측정은 새 binary·격리 host/agent·PTY에서 입력 byte를 쓴 시각부터 선택 셀 또는 앱의 실제 재그리기가 관측된 시각까지 잰다. herdr도 같은 fixture·셀 크기·관측 parser·전송 조건으로 비교하며, 로컬 셀 선택과 앱 마우스 선택을 별도 기록한다.
+
+- 착지 기준에 같은 m13 오류 대기의 수리가 먼저 포함됐다. 순간 화면 대신 report 종료값의 영구 기록을 확인하는 기준의 fixture를 유지한다.
+
+## resolve 뒤 종료된 pane 제거(§8.254)
+
+- m13 `resolve_removes_exited_panes_even_when_the_worktree_is_kept_or_adopted`가 실제 CLI→host→agent 경계에서 dir·dirty worktree·adopted pane을 입력으로 exit 1 종료한다. 종료 상태 확인 뒤 resolve하고 pane 목록·layout에서의 제거와 폴더 보존을 단언한다. 새 신호·고정 sleep·production 시험 seam은 없다.
+- 기존 `resolve_keeps_dirty_worktree_and_unmerged_branch`는 partial·skip-copy를 포함한 폴더/branch 보존과 별개로 pane을 닫는지 본다. `thread_adopt_existing_pane`은 복원된 살아 있는 pane도 닫고 원래 branch·파일은 남기는 경계를 본다. linger 시험은 기존대로 session host의 종료 유예를 기다리지 않는지 확인한다.

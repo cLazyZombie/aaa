@@ -352,7 +352,7 @@ function RowError({ rowKey }: { rowKey: string }) {
  * 머신 패널(plan §8.195·§8.240·§8.245): 목록이 프로젝트 먼저라 머신은 트리 단계가 아니다. 머신마다 머리 한 줄(이름·host·연결 점·CPU·MEM·+ 새 pane)과
  * 끊김·점검 이상 글만 둔다(참고 MachineSidebar 머리·machine-state). 그 머신의 줄은 프로젝트 패널에 머신 글자로 있다.
  */
-/** 에이전트 패널에 보이는 그 머신의 agent(머신 줄 agent 수도 같은 기준으로 센다, plan §8.254) */
+/** 에이전트 패널에 보이는 그 머신의 agent(머신 줄 agent 수도 같은 기준으로 센다, plan §8.256) */
 function machineAgents(props: SidebarProps, m: MachineView, threadOf: Map<string, ThreadView>) {
   return props.panes
     .filter((p) => p.machine_id === m.id && p.state === "running" && p.role !== "evaluator")
@@ -393,7 +393,7 @@ function MachineStrip(props: SidebarProps) {
                 )}
                 <span className={`machine-dot is-${online ? (problems ? "error" : "connected") : "disconnected"}`} title={online ? (problems ? "점검 이상" : "연결됨") : "끊김"} aria-hidden="true" />
               </div>
-              {/* agent·CPU·MEM(plan §8.245·§8.254): 연결 중일 때만 */}
+              {/* agent·CPU·MEM(plan §8.245·§8.256): 연결 중일 때만 */}
               {stats && (
                 <MachineMeters
                   stats={stats}
