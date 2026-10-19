@@ -97,6 +97,22 @@ fn restart_host(w: &mut World, tag: &str, next: &str) {
     wait_for("새 host 연결", T, || w.h.connected("labA").then_some(()));
 }
 
+// 짧은 상한은 실패를 의도한 단계에만 쓴다. 정상 회수의 Git 작업을 1초 성능 시험으로 만들지 않는다.
+fn prepare_timeout(w: &mut World, host: &mut String, seconds: u64) {
+    let config = w.h.cfg.join("host.toml");
+    let text = std::fs::read_to_string(&config)
+        .unwrap()
+        .lines()
+        .filter(|line| !line.starts_with("thread_prepare_timeout_secs ="))
+        .collect::<Vec<_>>()
+        .join("\n")
+        .replace("[host]", &format!("[host]\nthread_prepare_timeout_secs = {seconds}"));
+    std::fs::write(config, text).unwrap();
+    let next = format!("{host}-next");
+    restart_host(w, host, &next);
+    *host = next;
+}
+
 #[test]
 fn slow_prepare_and_cleanup_cross_old_fifteen_second_deadline() {
     let gate = GitGate::new();
@@ -184,10 +200,8 @@ fn interrupted_placement_and_resolve_resume_from_agent_records() {
 fn configured_prepare_timeout_recovers_only_unchanged_worktree() {
     let gate = GitGate::new();
     let mut w = gate.world();
-    let config = w.h.cfg.join("host.toml");
-    let text = std::fs::read_to_string(&config).unwrap().replace("[host]", "[host]\nthread_prepare_timeout_secs = 1");
-    std::fs::write(config, text).unwrap();
-    restart_host(&mut w, "host", "short-host");
+    let mut host = "host".to_string();
+    prepare_timeout(&mut w, &mut host, 1);
     GitGate::enable(&w, "add");
     let v = start_gated(&w);
     let id = v["id"].as_str().unwrap();
@@ -198,6 +212,7 @@ fn configured_prepare_timeout_recovers_only_unchanged_worktree() {
     let mut b = [0];
     assert_eq!(pending.read(&mut b).unwrap(), 0);
     std::fs::remove_file(w.lab.root.join("gate-add")).unwrap();
+    prepare_timeout(&mut w, &mut host, 600);
     let cwd = w.lab.root.join("workA/repo/demo-t-0001");
     let tracked = cwd.join("README.md");
     let original = std::fs::read(&tracked).unwrap();
@@ -213,6 +228,7 @@ fn configured_prepare_timeout_recovers_only_unchanged_worktree() {
 
     // journal이 있는 새 준비와 journal 없는 구판 잔여 자리 모두 확인 없이 완료하지 않는다.
     for legacy in [false, true] {
+        prepare_timeout(&mut w, &mut host, 1);
         GitGate::enable(&w, "add");
         let second = start_gated(&w);
         let second = second["id"].as_str().unwrap();
@@ -220,6 +236,7 @@ fn configured_prepare_timeout_recovers_only_unchanged_worktree() {
         w.wait_show("다음 준비 상한", second, |v| v["status"] == "failed");
         assert_eq!(pending.read(&mut b).unwrap(), 0);
         std::fs::remove_file(w.lab.root.join("gate-add")).unwrap();
+        prepare_timeout(&mut w, &mut host, 600);
         let orphan = w.lab.root.join("workA/repo").join(format!("demo-{second}"));
         assert!(orphan.is_dir());
         if legacy {
