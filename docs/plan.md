@@ -5509,3 +5509,12 @@ primary 근거:
 - **EMFILE 대응.** herdr `platform/macos.rs::raise_server_nofile_limit`을 따라 host·agent CLI는 runtime·listener를 만들기 전에 현재 프로세스의 soft를 `min(8192, hard)`까지 올린다. 이미 높은 soft·hard·시스템·launchd 설정은 바꾸지 않는다. Windows는 해당 없음. 시작 로그에 before·soft·hard를 남긴다.
 - **수용 복구·시스템 경고.** 웹 listener는 axum 기본 1초 재시도를 유지하며 EMFILE/ENFILE을 host에 알린다. Front·로컬/원격 Agent listener도 오류에서 끝나거나 busy loop하지 않고 같은 간격으로 재개한다. 소진 중에는 atomic 표지만 남기고 ticker가 파일 여유가 생긴 뒤 활성 프로젝트 inbox에 `system / file descriptors exhausted` 한 건을 남긴다(열린 경고 중복 억제). 복사 중 같은 OS 오류도 이 경고를 낸다. 사람 대기·외부 push로 바꾸지 않는다.
 - **자원 E2E.** `resource_limits`: 별도 자식 host/agent의 soft64에서 각각8192/hard512 승격, 웹384개×2회 후 실제 OS fd 회수, hard64의 진짜 EMFILE·Front accept 복구·경고1건. 부모 시험과 운영 프로세스의 한도는 고치지 않는다. 현재 연결 생명주기에서 누수는 관측되지 않아 임의로 정상 연결을 끊는 정책은 더하지 않았다.
+
+### 8.279 repo 머신의 Git head 감시와 사건 repo 거르기(10-19, t-0420 L2)
+
+- `on="git"`의 repo·branches·events·선택 mission을 받는다. 기본 60초에 host가 예약하고 git.v1 agent가 실제 ls-remote·필요한 객체 fetch·조상 판정·커밋 첫 줄/파일 수를 조회한다. GitHub API나 AI 호출은 없다. 작업 파일·ref·FETCH_HEAD는 바꾸지 않는다.
+- 첫 등록/없던 branch는 기준만 잡고, 변화는 pushed·forced·deleted로 구별한다. 공용 watch 상태·outage·내구 outbox·전달을 쓴다. 저장 revision으로 같은 head의 재시작 중복은 막고 이후 같은 SHA 쌍 변화는 새 사건으로 남긴다.
+- FlowEvent.repo를 선택 칸/DB 추가 열로 저장한다(FRONT_API 1.47). 임무 repos는 thread 사건이면 thread repo, thread 없는 사건이면 사건 repo를 쓴다. 이전 DB/기록의 repo는 없음이다. Git의 주인 보고는 기존 watch 발행 경계에서 연결한다.
+- 조회 머신은 routine machine으로 선택한다. 생략하면 host 등록 repo 우선, 없으면 유일한 repo 머신이다. GitHub CI 감시는 host 머신 agent 기본을 유지한다. [Git runbook](git-watch.md)과 [시험](testing.md)의 Git 감시를 따른다. 운영 파일 전환은 배포 뒤 coordinator가 맡는다.
+
+- L2 검토 수리: 꺼진 CI/Git 정의와 삭제한 프로젝트의 오래된 watch deadline을 source 활성 callback으로 제거한다. 지난 예약 때문에 ticker가 즉시 반복될 수 있는 경계를 실제 설정 전환 keeper의 RED로 확인했다. 활성 source의 주기/판정은 유지한다.

@@ -412,6 +412,7 @@ pub fn convert(inv: &Inventory, dest: &Dest, now_ms: u64) -> Result<Outcome> {
         out.copied_files
     );
     db.flow_insert(&FlowEvent {
+        repo: None,
         project: dest.project.clone(),
         seq: 0,
         at_ms: now_ms,

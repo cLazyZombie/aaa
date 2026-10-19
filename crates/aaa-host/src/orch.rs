@@ -995,6 +995,7 @@ impl Host {
     /// 흐름 사건을 기록하고 알린다
     pub(crate) fn flow(&self, r: &ThreadRec, kind: &str, evidence: Option<String>, detail: impl Into<String>) {
         self.flow_event(FlowEvent {
+            repo: None,
             project: r.project.clone(),
             seq: 0,
             at_ms: aaa_common::util::now_ms(),
@@ -1012,6 +1013,7 @@ impl Host {
     /// thread에 묶이지 않은 프로젝트 사건(평가 채택·보류 등)
     pub(crate) fn flow_project(&self, project: &str, kind: &str, evidence: Option<String>, detail: impl Into<String>) {
         self.flow_event(FlowEvent {
+            repo: None,
             project: project.to_string(),
             seq: 0,
             at_ms: aaa_common::util::now_ms(),

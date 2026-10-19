@@ -163,3 +163,26 @@ async fn fresh_saved_poll_still_catches_up_in_new_host() {
         "직전 poll이 1ms 전이어도 새 프로세스는 따라잡는다"
     );
 }
+
+#[tokio::test]
+async fn inactive_watch_sources_release_tick_deadlines() {
+    let lab = Lab::new(None);
+    let h = &lab.h;
+    let dir = h.project_dir("demo").unwrap();
+    let ci = include_str!("../../../../docs/examples/ci/ci-main.md");
+    let git = include_str!("../../../../docs/examples/git/git-main.md");
+    std::fs::write(dir.join("routines/ci-main.md"), ci).unwrap();
+    std::fs::write(dir.join("routines/git-main.md"), git).unwrap();
+    h.watch_finished("ci", "demo");
+    h.watch_finished("git", "demo");
+    assert!(h.ci_next_due().is_some());
+    assert!(h.git_next_due().is_some());
+    std::fs::write(dir.join("routines/git-main.md"), git.replace("enabled = true", "enabled = false")).unwrap();
+    assert!(h.git_next_due().is_none(), "비활성 Git 감시는 ticker 예약을 남기지 않는다");
+    assert!(h.ci_next_due().is_some(), "다른 source의 예약은 유지한다");
+    std::fs::write(dir.join("routines/ci-main.md"), ci.replace("enabled = true", "enabled = false")).unwrap();
+    assert!(h.ci_next_due().is_none());
+    h.watch_finished("ci", "demo");
+    std::fs::remove_file(dir.join("PROJECT.md")).unwrap();
+    assert!(h.ci_next_due().is_none(), "삭제한 프로젝트는 예약하지 않는다");
+}

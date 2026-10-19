@@ -5,6 +5,7 @@ pub mod caller;
 pub mod ci;
 pub mod conn;
 pub mod front;
+pub mod git_watch;
 pub mod ipc;
 pub mod pr;
 pub mod process;

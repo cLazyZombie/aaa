@@ -824,6 +824,7 @@ mod tests {
     #[test]
     fn batch_fits_frame() {
         let ev = |seq: u64| FlowEvent {
+            repo: None,
             project: "p".into(),
             seq,
             at_ms: seq,
@@ -877,6 +878,7 @@ mod tests {
     #[test]
     fn thread_times() {
         let ev = |seq: u64, kind: &str| FlowEvent {
+            repo: None,
             project: "p".into(),
             seq,
             at_ms: seq * 1000,

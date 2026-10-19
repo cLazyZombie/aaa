@@ -8,6 +8,8 @@
 
 #[path = "m13/ci.rs"]
 mod ci;
+#[path = "m13/git_watch.rs"]
+mod git_watch;
 mod lab;
 #[path = "m13/preparation.rs"]
 mod preparation;

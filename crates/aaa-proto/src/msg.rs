@@ -771,13 +771,17 @@ pub enum AgentRequest {
         #[serde(default)]
         uncopied: bool,
     },
-    /// PR 조회(§8.80, herdr-projects `pr.rs`). `cwd`(thread worktree)의 origin을 읽고 `gh`로 묻는다. host는 gh를 실행하지
-    /// 않는다(결정 3). agent 기능 `pr.v1`이 있을 때만 보낸다.
-    /// ci.v1을 알린 agent에만 보낸다. host 프로세스는 gh를 실행하지 않는다.
+    /// git.v1을 알린 repo 머신 agent만 origin head·변화 객체를 읽는다.
+    GitQuery {
+        cwd: String,
+        query: crate::GitQuery,
+    },
+    /// ci.v1을 알린 agent만 조건부 GitHub CI를 읽는다.
     CiQuery {
         cwd: String,
         query: crate::CiQuery,
     },
+    /// pr.v1을 알린 agent만 thread origin의 PR을 gh로 읽는다.
     PrQuery {
         cwd: String,
         query: PrQuery,
@@ -876,6 +880,7 @@ pub enum AgentResponse {
     },
     Pr(PrAnswer),
     Ci(crate::CiAnswer),
+    Git(crate::GitAnswer),
     History(HistoryChunk),
 }
 

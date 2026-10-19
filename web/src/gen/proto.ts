@@ -693,7 +693,11 @@ export type FlowEvent = { project: string, seq: number, at_ms: number, boot_id: 
 /**
  * thread_started·brief_delivered·brief_unknown·report_ready·review_acked·thread_resolved·thread_failed …
  */
-kind: string, thread: string | null, role: Role | null, profile: string | null, machine: string | null,
+kind: string, thread: string | null,
+/**
+ * thread 없는 감시 사건의 저장소. 옛 기록은 없음이다.
+ */
+repo: string | null, role: Role | null, profile: string | null, machine: string | null,
 /**
  * 근거 경로(host 프로젝트 폴더 기준, 예: `threads/t-0001.md`)
  */

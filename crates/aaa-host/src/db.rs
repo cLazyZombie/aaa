@@ -281,6 +281,10 @@ impl Db {
                endpoint TEXT PRIMARY KEY, p256dh TEXT NOT NULL, auth TEXT NOT NULL, device TEXT NOT NULL,
                created_at INTEGER NOT NULL);",
         )?;
+        // 감시 사건은 thread 없이 repo를 가진다. 옛 DB와 함께 읽는 추가 열이다.
+        if !conn.prepare("SELECT 1 FROM pragma_table_info('flow_events') WHERE name='repo'")?.exists([])? {
+            conn.execute("ALTER TABLE flow_events ADD COLUMN repo TEXT", [])?;
+        }
         // post 한도는 본문 정리 뒤에도 출처별로 남는다. 옛 행은 기존 한도로 유지한다.
         if !conn.prepare("SELECT 1 FROM pragma_table_info('posts') WHERE name='quota'")?.exists([])? {
             conn.execute("ALTER TABLE posts ADD COLUMN quota TEXT NOT NULL DEFAULT 'standard'", [])?;
@@ -633,8 +637,8 @@ impl Db {
                 r.get(0)
             })?;
         tx.execute(
-            "INSERT INTO flow_events(project,seq,at_ms,boot_id,kind,thread,role,profile,machine,evidence,detail)
-             VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11)",
+            "INSERT INTO flow_events(project,seq,at_ms,boot_id,kind,thread,role,profile,machine,evidence,detail,repo)
+             VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12)",
             params![
                 e.project,
                 seq,
@@ -646,7 +650,8 @@ impl Db {
                 e.profile,
                 e.machine,
                 e.evidence,
-                e.detail
+                e.detail,
+                e.repo
             ],
         )?;
         tx.commit()?;
@@ -664,8 +669,8 @@ impl Db {
                 r.get(0)
             })?;
         tx.execute(
-            "INSERT INTO flow_events(project,seq,at_ms,boot_id,kind,thread,role,profile,machine,evidence,detail)
-             VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11)",
+            "INSERT INTO flow_events(project,seq,at_ms,boot_id,kind,thread,role,profile,machine,evidence,detail,repo)
+             VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12)",
             params![
                 e.project,
                 seq,
@@ -677,7 +682,8 @@ impl Db {
                 e.profile,
                 e.machine,
                 e.evidence,
-                e.detail
+                e.detail,
+                e.repo
             ],
         )?;
         tx.execute("INSERT INTO meta(key,value) VALUES(?1,'1')", [key])?;
@@ -689,7 +695,7 @@ impl Db {
     pub fn flow_after(&self, project: Option<&str>, after: u64, limit: u32) -> Result<Vec<aaa_proto::FlowEvent>> {
         let c = self.conn.lock().unwrap();
         let mut st = c.prepare(
-            "SELECT project,seq,at_ms,boot_id,kind,thread,role,profile,machine,evidence,detail FROM flow_events
+            "SELECT project,seq,at_ms,boot_id,kind,thread,role,profile,machine,evidence,detail,repo FROM flow_events
              WHERE (?1 IS NULL OR project=?1) AND seq>?2 ORDER BY at_ms, project, seq LIMIT ?3",
         )?;
         let rows = st
@@ -711,6 +717,7 @@ impl Db {
             machine: r.get(8)?,
             evidence: r.get(9)?,
             detail: r.get(10)?,
+            repo: r.get(11)?,
         })
     }
 
@@ -718,7 +725,7 @@ impl Db {
     pub fn flow_of_thread(&self, project: &str, thread: &str) -> Result<Vec<aaa_proto::FlowEvent>> {
         let c = self.conn.lock().unwrap();
         let mut st = c.prepare(
-            "SELECT project,seq,at_ms,boot_id,kind,thread,role,profile,machine,evidence,detail FROM flow_events
+            "SELECT project,seq,at_ms,boot_id,kind,thread,role,profile,machine,evidence,detail,repo FROM flow_events
              WHERE project=?1 AND thread=?2 ORDER BY seq",
         )?;
         let rows = st.query_map(params![project, thread], Self::flow_from)?.collect::<rusqlite::Result<Vec<_>>>()?;
