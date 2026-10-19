@@ -5294,3 +5294,30 @@ primary 근거:
   - 다름: 단추는 ClipboardList와 글자 「요약」이다(t3code `SquareMenuIcon` Toggle 아이콘만). 사용자 결정 15:4x이고, 머리의 「보고」·「터미널」 단추와 같은 꼴이다.
   - 다름: 휴대폰은 아래 시트다. t3code는 thread details에 시트를 쓰지 않고 모든 폭에서 팝오버다. 사용자 결정 15:4x(데스크톱 팝오버 + 휴대폰 시트)를 따랐다. 시트 틀은 aaa의 다른 휴대폰 시트(RowMenu: 끌어내려 닫기·뒤로 가기)와 같다.
 - **검증.** host 유닛(절·칩·줄 긋기, 상한 거부, 표지 왕복과 손으로 지운 표지, Follow-ups 시각·첫 줄, 요약 뒤 지시 수, Decisions), brief 순서 유닛, m13(요약 없이 지시 2 → 표지 2, 틀린 형식 거부, 요약 쓰면 0·쓴 쪽 「사람」, 그 뒤 지시 1과 그 첫 줄, `start --summary-file`), 웹 유닛 `summaryCard.test.mjs`(카드 줄 고르기·Decisions 합치기·점·자리), 웹 E2E 28(점과 받은 지시 → 요약 쓰면 점 없음·접힌 절, 데스크톱 카드 6줄·줄바꿈 없음·자리·떠남·메뉴, 휴대폰은 hover 없음·시트). 결함 심기: hover 조건 빼기 → 28 휴대폰 단계 실패, `seen` 하나 덜 세기 → m13·28 실패(이것이 기억한 표지와 파일 표지가 다른 값을 쓰던 결함을 찾았다).
+### 8.260 에이전트 패널 저장소 폴더(10-19, t-0404)
+
+- **요청과 결정.** 사용자 「에이전트를 지금 하고있는 프로젝트에 따라 (aaa, rc) 폴더로 구분」, 「393에서 하고 있으니, 거기에 맞춰서 (같은 간격)」. 시안(t-0404 library, 안 A·B와 폴더 하나일 때 두 안)을 보고 사용자가 추천 안 A로 정했다(10-19 16:2x).
+  - 「프로젝트」는 aaa 프로젝트가 아니라 thread가 실제로 일하는 저장소다. 한 aaa 프로젝트 안에서도 thread마다 다르다.
+- **묶는 기준.** host가 thread 기록에 이미 남기는 저장소 경로(`ThreadRec.repo`: worktree thread는 시작할 때 고른 repo, 데려온 thread는 그 폴더의 git top)를 `ThreadView.repo`(선택, FRONT_API 1.44)로 웹에 준다. 웹은 마지막 폴더 이름으로 묶는다(`web/src/agentFolders.ts`).
+  - 머신마다 경로가 달라도 이름이 같으면 한 폴더다. 이름이 같은 다른 저장소(서로 다른 fork)도 합쳐진다.
+  - 저장소가 없는 줄은 끝의 「기타」 폴더다: 작업 폴더 thread, thread 아닌 agent pane(웹은 pane의 git top을 모른다), 옛 host의 thread.
+  - 저장소를 아는 줄이 하나도 없으면 폴더 없이 지금 목록 그대로다(옛 host, thread 없이 agent만 띄운 경우).
+  - front가 cwd 부모 폴더로 짐작하는 길은 쓰지 않는다. agent의 worktree 자리 관례(`<work_root>/<저장소 이름>/<project>-<thread>`)에 기대고 작업 폴더·데려온 thread에는 맞지 않는다.
+- **모양(안 A).**
+  - coordinator는 폴더 밖 맨 위다. 프로젝트 패널(§8.258)과 같은 보라 막대(`--coordinator`, 2px)를 줄 시작 1px에 단다. 둘째 줄은 상태 말 · 머신이다.
+  - 폴더는 이름순(자리가 활동에 따라 뛰지 않는다), 「기타」는 끝이다. 폴더 안 차례는 설정 「에이전트 정렬」 그대로다.
+  - 폴더 머리는 프로젝트 묶음 머리(`ProjectGroup`)와 같은 markup·class다: 폴더 아이콘·굵은 이름·묶음 셈(`projectLine`), 접으면 +n과 대표 상태 점, ⋯ 메뉴(접기·펼치기). 접힌 폴더도 고른 줄은 보인다. 접힘은 기기마다 `aaa:agent-folder-collapsed:<이름>`.
+  - 자식 agent 줄은 프로젝트 자식 줄과 같은 8px만 들인다.
+  - 폴더 안 줄의 둘째 줄은 왼쪽 상태 말(thread 줄과 같은 색), 오른쪽 머신이다. aaa 프로젝트가 둘 이상 섞일 때만 머신 앞에 프로젝트 이름. 「기타」의 thread 아닌 agent는 왼쪽에 폴더 경로.
+  - 폴더가 하나뿐이어도 머리를 남긴다(저장소 이름을 말하는 곳이다).
+  - 고정한 agent는 지금처럼 맨 위 고정 카드에 있고 폴더에서 빠진다. 고정 카드 줄의 둘째 줄은 그대로(종류·머신·자리)다.
+- **t3code와 다른 곳**(사용자 10-19 16:3x 「t3code 참고 부분은 그대로, 다른 곳만 이유」, 참고 `packages/client-runtime/src/state/projectGrouping.ts`·`apps/web/src/sidebarProjectGrouping.ts`·`uiStateStore.ts`, 1451e7cb2).
+  - 묶는 키: t3code는 저장소 정체(`repositoryIdentity`, git remote의 canonical key. 없으면 환경+경로)로 여러 환경의 같은 저장소를 논리 프로젝트 하나로 묶고, 이름은 저장소 이름이다. aaa는 저장소 경로의 마지막 폴더 이름이다. 이유: host가 아는 값이 경로뿐이다(remote는 agent가 그 머신에서 읽어야 해 agent link 칸이 더 든다). 사용자가 「aaa·rc 폴더」로 요청·승인했고, agent의 worktree 자리 관례도 이미 그 이름이다. 결과 차이: 이름이 같은 fork는 합쳐지고, 같은 저장소를 다른 폴더 이름으로 받으면 갈라진다. remote 정체로 바꾸는 일은 후속 후보다.
+  - 폴더 순서: t3code 기본은 `updated_at`(최근 활동순, `created_at`·`manual`을 고를 수 있다). aaa는 이름순이다. 이유: 시안의 결정표에서 사용자가 이름순을 골랐다(10-19 16:2x, 자리가 활동에 따라 뛰지 않게).
+  - 머리 모양·들여쓰기·⋯ 메뉴: aaa 목록은 herdr-web-ui class·CSS를 쓰고(Sidebar.tsx 머리 주석) 프로젝트 패널(§8.258)과 같게 했다. 이유: brief 「393에서 하고 있으니, 거기에 맞춰서(같은 간격)」.
+  - 접힘 저장은 t3code(`uiStateStore` `t3code:ui-state:v1`의 프로젝트별 펼침)처럼 기기별 localStorage다. 다르지 않다.
+- **검증.**
+  - m13 `worktree_thread_round_trip`: thread start·show의 `repo`가 고른 repo 경로. `remote_dir_thread_survives_host_restart`: 작업 폴더 thread는 칸이 없다.
+  - 웹 단위 `agentFolders.test.mjs`: 경로가 다른 같은 이름(Windows 경로 포함)은 한 폴더, coordinator 맨 위·이름순·「기타」 끝·폴더 안 받은 차례, 폴더 하나도 폴더, 저장소를 모르면 폴더 없음.
+  - E2E 12 「에이전트 패널 저장소 폴더」: 실제 git 저장소의 worktree thread와 작업 폴더 thread가 rcgame·「기타」 폴더에, 자식 줄 8px, 둘째 줄 상태 말·「프로젝트 · 머신」, 접으면 +1, 휴대폰 drawer에서 폴더 머리·줄의 ⋯이 목록 끝 여백 안.
+  - 결함 셋을 심어 실패를 확인했다. (a) host가 칸을 채우지 않음 → m13, (b) 폴더 이름순 정렬 없음 → 단위, (c) 자식 줄 8px 규칙 없음 → E2E 12.

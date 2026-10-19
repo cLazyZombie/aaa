@@ -2,6 +2,7 @@
 // 쓰는 화면·쓰는 기기에 따른 push 판정은 17-push-in-use, 멈춘 쓰는 화면은 18-push-stalled.
 // 혼자 돌리기: node web/e2e/web.e2e.mjs --spec 12-threads-push(새 실험실). 준비(host·agent·t1·첫 화면)는 lib/harness.mjs runSpec.
 // 단계는 앞 단계가 남긴 것(구독·demo·t-0001·t-0002)에 기댄다: 뒤 단계 하나만 골라(--grep) 돌리면 그것이 없다(--spec으로 파일을 돈다)
+import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import {
   root, aaa, until, domIs, hashIs, screenText, shot, pairPage, pushes, pushPort, pushOrigin, b64u, pushDevice, nextPush, pushKey,
@@ -1267,6 +1268,59 @@ export default async function ({ page }) {
     await domIs(page, "고르지 않은 coordinator는 접힘", () => document.querySelector('[data-testid="pane-coord-home coordinator"]') === null);
     await page.setViewportSize({ width: 1280, height: 800 });
     await head.locator(".project-select").click();
+  });
+
+  await step("에이전트 패널 저장소 폴더(사용자 결정 10-19 안 A, plan §8.260): worktree thread는 저장소 마지막 폴더 이름 폴더에, 저장소 없는 thread는 끝의 「기타」에. 폴더 머리는 프로젝트 머리 모양이고 자식 줄은 8px, 둘째 줄은 상태 말·머신, 접으면 +n", async () => {
+    // 저장소 이름이 폴더 이름이다(경로 앞부분은 머신마다 다르다)
+    const repo = `${root}/repos/rcgame`;
+    fs.mkdirSync(repo, { recursive: true });
+    const git = (...a) => execFileSync("git", ["-C", repo, ...a], { stdio: "ignore" });
+    git("init", "-q", "-b", "main");
+    git("-c", "user.name=e2e", "-c", "user.email=e2e@example.com", "commit", "-q", "--allow-empty", "-m", "init");
+    aaa("project", "create", "folders");
+    fs.writeFileSync(`${root}/folder-task.txt`, "noreport\n");
+    const start = (title, ...more) => aaa("thread", "start", "folders", "--title", title, "--profile", "fake", "--machine", "labA", ...more, "--task-file", `${root}/folder-task.txt`);
+    const inRepo = start("저장소 일", "--repo", repo);
+    const loose = start("폴더 일", "--kind", "dir");
+    if (inRepo.repo !== repo || loose.repo !== undefined) throw new Error(`thread repo 칸: ${inRepo.repo} · ${loose.repo}`);
+    await page.setViewportSize({ width: 1280, height: 800 });
+    await showPanel(page, "agents");
+    const row = (t) => `[data-testid="agents"] li.agent-item[data-pane="${t.pane}"]`;
+    await domIs(page, "두 thread 줄", ([a, b]) => document.querySelector(a) !== null && document.querySelector(b) !== null, [row(inRepo), row(loose)]);
+    const look = await page.evaluate(([a, b]) => {
+      const folderOf = (q) => document.querySelector(q).closest(".worktree-children")?.previousElementSibling?.dataset.testid;
+      const folders = [...document.querySelectorAll('[data-testid="agents"] .agent-folders > [data-testid^="agent-folder-"]')].map((el) => el.dataset.testid.slice(13));
+      const r = document.querySelector(a);
+      return {
+        folders,
+        repo: folderOf(a),
+        loose: folderOf(b),
+        indent: getComputedStyle(r.querySelector(".agent-row")).paddingLeft,
+        state: r.querySelector(".thread-place .thread-state")?.textContent,
+        machine: r.querySelector(".thread-place .thread-machine")?.textContent,
+      };
+    }, [row(inRepo), row(loose)]);
+    // 둘째 줄 오른쪽은 머신. 이 실험실은 aaa 프로젝트가 여럿 섞여(demo·folders …) 그 앞에 프로젝트 이름이 붙는다
+    // 다른 단계의 thread(작업 폴더)도 「기타」에 있으니 폴더는 rcgame 다음 「기타」 둘뿐이다
+    if (look.folders.join() !== "rcgame,기타" || look.repo !== "agent-folder-rcgame" || look.loose !== "agent-folder-기타") throw new Error(`저장소 폴더: ${JSON.stringify(look)}`);
+    if (look.indent !== "8px" || !/^(확인 필요|검토 대기|병합 중|작업 중|쉼)$/.test(look.state ?? "") || look.machine !== "folders · labA") throw new Error(`폴더 안 줄: ${JSON.stringify(look)}`);
+    await shot(page, "desktop-agent-folders");
+    const folder = page.getByTestId("agent-folder-rcgame");
+    await folder.locator(".project-select").click();
+    await domIs(page, "접힌 저장소 폴더", (q) => document.querySelector(q) === null, row(inRepo));
+    if ((await folder.locator(".workspace-fold-count").innerText()) !== "+1") throw new Error("접힌 폴더의 줄 수");
+    await folder.locator(".project-select").click();
+    await domIs(page, "펼친 저장소 폴더", (q) => document.querySelector(q) !== null, row(inRepo));
+    // 휴대폰(터치 기기) drawer: 폴더 머리와 줄의 ⋯이 목록 끝 여백 안에 선다
+    const ph = await pairPage(browser, aaa("web", "pair").code, { width: 390, height: 844 });
+    await ph.page.locator(".view [data-testid='drawer-toggle']").click();
+    await ph.page.locator("#workspace-drawer.is-open").waitFor();
+    await drawerSettled(ph.page);
+    await showPanel(ph.page, "agents");
+    await ph.page.locator(row(inRepo)).waitFor();
+    if (!(await rowEndsNearEdge(ph.page, "휴대폰 에이전트 폴더")).some((r) => r.name === "rcgame" && r.more)) throw new Error("휴대폰 폴더 머리에 ⋯이 없다");
+    await shot(ph.page, "phone-agent-folders");
+    await ph.page.context().close();
   });
 
 }
