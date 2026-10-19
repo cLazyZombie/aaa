@@ -574,6 +574,11 @@ fn luminance((r, g, b): (u8, u8, u8)) -> f32 {
     0.2126 * ch(r) + 0.7152 * ch(g) + 0.0722 * ch(b)
 }
 
+/// Windows Terminal의 선택 복사(Ctrl+C·Ctrl+Shift+C)와 macOS Cmd+C.
+pub(super) fn copy_key(mods: KeyModifiers, ch: Option<char>) -> bool {
+    matches!(ch, Some('c' | 'C')) && matches!(mods - KeyModifiers::SHIFT, KeyModifiers::CONTROL | KeyModifiers::SUPER)
+}
+
 impl App {
     /// 마우스 사건(herdr `handle_mouse`). 창이 열려 있으면 창이 먼저다.
     pub(crate) async fn on_mouse(&mut self, m: MouseEvent, tx: &mut FrontSender) -> Result<()> {
@@ -893,7 +898,7 @@ impl App {
         }
         let Some(b) = hits.pane_at(x, y).cloned() else { return Ok(()) };
         self.focus = Some(b.pane.clone());
-        if self.reporting(hits, x, y).is_some() {
+        if !mods.contains(KeyModifiers::SHIFT) && self.reporting(hits, x, y).is_some() {
             self.report_to(tx, &b, Report::Press(MouseButton::Left), x, y, mods).await?;
             self.drag = Some(Drag::Pane { pane: b.pane, button: MouseButton::Left });
             return Ok(());
@@ -1212,11 +1217,12 @@ impl App {
                 self.open_row(tx, row).await?;
             }
             Some(Drag::Select { pane, moved: true, .. }) => {
+                self.last_click = None;
                 if let Some(sel) = self.selection.clone().filter(|s| s.pane == pane)
                     && self.copy_on_select
                 {
                     self.copy_selection(tx, &sel).await?;
-                    self.selection = None;
+                    // 고른 글은 다음 키·누름까지 남긴다. 자동 복사 직후 Ctrl+C도 복사 키다.
                 }
             }
             _ => {}
@@ -1227,6 +1233,8 @@ impl App {
     /// 누르지 않은 움직임: 1003을 켠 pane에만(herdr `MouseEventKind::Moved`)
     async fn moved(&mut self, x: u16, y: u16, mods: KeyModifiers, hits: &Hits, tx: &mut FrontSender) -> Result<()> {
         if self.drag.is_none()
+            && self.selection.is_none()
+            && !mods.contains(KeyModifiers::SHIFT)
             && let Some(b) = self.reporting(hits, x, y)
         {
             self.report_to(tx, &b, Report::Move, x, y, mods).await?;
@@ -1372,8 +1380,12 @@ impl App {
             return;
         }
         match clip::copy_text(t) {
-            Ok(()) if truncated => self.set_message("클립보드에 복사했다(너무 길어 앞쪽만)"),
-            Ok(()) => self.set_message("클립보드에 복사했다"),
+            Ok(clip::CopyResult::Copied) if truncated => self.set_message("클립보드에 복사했다(너무 길어 앞쪽만)"),
+            Ok(clip::CopyResult::Copied) => self.set_message("클립보드에 복사했다"),
+            Ok(clip::CopyResult::Requested) if truncated => {
+                self.set_message("터미널에 복사 요청을 보냈다(너무 길어 앞쪽만)")
+            }
+            Ok(clip::CopyResult::Requested) => self.set_message("터미널에 복사 요청을 보냈다"),
             Err(e) => self.set_error(format!("복사하지 못했다: {e}")),
         }
     }
@@ -1386,8 +1398,10 @@ impl App {
         ch: Option<char>,
     ) -> Result<bool> {
         let Some(sel) = self.selection.take() else { return Ok(false) };
-        let copy = ch == Some('c') && (mods == KeyModifiers::CONTROL || mods == KeyModifiers::SUPER);
-        if copy && sel.until.is_none() {
+        let copy = copy_key(mods, ch);
+        if copy {
+            self.drag = None;
+            self.autoscroll = None;
             self.copy_selection(tx, &sel).await?;
         }
         Ok(copy)

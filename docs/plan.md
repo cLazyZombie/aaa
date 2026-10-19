@@ -5418,3 +5418,31 @@ primary 근거:
 - **참고 그대로 재사용.** herdr-web-ui aa624cb `components/RowMenu.tsx` 78~108은 body portal의 fixed 좌표를 EDGE=8 안에 보정하고 아래 공간이 부족하면 위에 둔다. 휴대폰은 같은 파일의 modal sheet를 쓴다. aaa에 이미 옮긴 공통 RowMenu를 임무에도 사용한다. t3code `components/ui/popover.tsx`의 Portal/Positioner·collisionAvoidance·available-width/height 제한과 목적이 같으며 새 위치 계산기나 의존성을 만들지 않는다.
 - **동작.** 긴 임무 배지는 목록 머리 안에서 말줄임하고 메뉴에는 전체 이름과 작업 셈을 보인다. 임무 보기·시작/멈춤/이어 가기·다시 읽기·승인 검토는 같은 API와 역할 검사를 유지한다. 공통 메뉴의 Esc·바깥 누름·focus 복귀·좁은 화면 취소 단추를 따른다. 운영 임무는 건드리지 않는다.
 - **검증.** 기존 웹 E2E 12 임무 발견/승인 경계를 확장했다. 세 화면에서 메뉴와 설명의 실제 글 조각, 모든 단추의 화면 경계와 hit target을 검사하고 실제 Controller 승인 저장·승인만으로 시작하지 않음도 본다. 수정 전 세 크기 모두 같은 이유로 RED이며 headless 전후 캡처를 보존한다. 서로 다른 크기는 새 탭에서 열어 이전 sheet의 퇴장 픽셀이 다음 캡처에 섞이지 않게 한다. 고정 sleep·timeout 연장·기대값 완화는 없다.
+
+### 8.225 Windows TUI 선택 복사와 pane 입력 경계(10-19, t-0378)
+
+- **원인.** `aaa-tui/clip.rs`는 arboard 쓰기가 실패해도 OSC 52를 stdout에 쓴 것만으로 성공을 알렸다.
+  arboard 3.7.0 `platform/windows.rs::Clipboard::open` → clipboard-win 5.4.1 `raw::open`은
+  `OpenClipboard(NULL)`이다. Microsoft `SetClipboardData` 계약은 이 소유자로 `EmptyClipboard` 뒤 쓰기가
+  실패한다고 명시한다. 또한 자동 복사 뒤 `selection=None`이 되어 이어 누른 Ctrl+C가 pane에 들어갔다.
+- **참고.** herdr 0.9.5 `platform/windows.rs::write_clipboard`의 `GetConsoleWindow` 소유자와
+  `GMEM_MOVEABLE` UTF-16 쓰기·실패 시 해제를 `clip_windows.rs`로 옮겼다(Apache-2.0).
+  Windows 로컬 실패는 오류로 알린다. SSH·WSL의 OSC 52는 수신 확인이 없어 「요청을 보냈다」로 알린다.
+  Windows의 로컬 VS Code 터미널도 native API를 쓴다.
+- **선택.** 마우스를 떼어 자동 복사한 뒤에도 선택을 다음 입력까지 남겨 Ctrl+C·Ctrl+Shift+C·Cmd+C를 복사로
+  처리한다. 실패한 복사도 그 키는 pane으로 보내지 않는다. 복사 키의 Repeat·Release를 소비한다.
+  crossterm 0.29 Windows `event/sys/windows/parse.rs`는 반복도 Press로 주므로 Windows는 Release까지 막는다.
+  드래그를 끝내면 double-click 후보를 지운다(herdr `shell/mouse.rs`의 `last_pane_click=None`).
+- **마우스.** 보고를 켠 프로그램에서도 Shift+끌기는 로컬 선택이고, 선택 중의 움직임 보고는 보내지 않는다.
+  Windows Terminal [선택 관례](https://learn.microsoft.com/windows/terminal/selection)와
+  t3code `terminal/ghostty/surface.ts::shouldReportTerminalMouse`의 Shift 선택을 따른다.
+  herdr `shell/mouse.rs`는 Shift도 무조건 보고하여 이 결함만 그대로 옮기지 않았다.
+  선택이 없을 때 Ctrl+C와 수정키 없는 프로그램 마우스 입력은 기존대로 보낸다.
+- **진단.** 당시 host 입력 기록은 bytes·request·session만 남겨 발신 front와 1바이트의 의미를 사후 확정할 수 없다.
+  앞으로 `PaneInput`은 `pane_front` span에 front id·label과 `ctrl-c`·`mouse-sgr`·`other`만 넣어
+  `request=cN` 전달/확인 로그와 함께 남긴다. 입력 내용은 저장하지 않는다.
+- **시험.** TUI PTY 회귀 두 개: OSC 52 요청을 성공이라 하지 않음, 선택 직후 Ctrl+C·반복과 Shift 선택·움직임·
+  Ctrl+Shift+C·쓰기 실패가 pane에 들어가지 않음. raw 관측기는 ISIG를 끄고 뒤따른 표지의 수신 bytes로 끝낸다.
+  기존 native clipboard CI 왕복 하나를 한글·이모지·여러 줄 텍스트 쓰기/읽기까지 넓혔다.
+  개발 머신의 실제 clipboard는 건드리지 않는다. xwin은 Windows 교차 빌드이고 Windows 실행 증거는 CI다.
+- 웹 steering과 TUI 여러 줄 Enter는 각각 별도 작업 범위다.

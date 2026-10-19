@@ -1911,6 +1911,88 @@ fn mouse_like_herdr() {
     tui.wait_screen("마우스 보고 끔", |s| ![1000, 1002, 1003, 1006].iter().any(|m| s.modes.contains(m)));
 }
 
+/// OSC 52는 터미널에 요청했을 뿐, 로컬 clipboard에 들어갔다고 확정하지 않는다.
+#[test]
+fn osc52_copy_reports_a_request() {
+    let mut lab = Lab::new();
+    let (h, _) = start(&mut lab);
+    h.ok(&["tab", "create", "--machine", "labA", "--", "/bin/sh"]);
+    // SSH 경로는 시스템 clipboard에 닿지 않는다.
+    let mut tui = Tui::start_env(&h, &[("SSH_TTY", "/dev/test-terminal")]);
+    tui.type_line("echo copy-$((42))");
+    let at = tui.wait_find("copy-42");
+    tui.mouse(0, at, false);
+    tui.mouse(32, (at.0, at.1 + 6), false);
+    tui.mouse(0, (at.0, at.1 + 6), true);
+    tui.wait_text("확인되지 않은 복사 요청", |s| s.contains("터미널에 복사 요청을 보냈다"));
+    tui.cmd("q");
+    assert!(tui.wait_exit());
+}
+
+/// raw 관측기는 ISIG를 끈다. Ctrl+C를 신호로 실행하지 않고, 복사 입력이 pane에 샜는지 bytes로 확인한다.
+#[test]
+fn selection_copy_never_enters_pane() {
+    for reporting in [false, true] {
+        let mut lab = Lab::new();
+        let (h, _) = start(&mut lab);
+        let fixture = lab.root.join("copy-input.py");
+        std::fs::write(
+            &fixture,
+            format!(
+                r#"import os, tty
+
+tty.setraw(0)
+os.write(1, b"{modes}copy-42\r\n")
+received = b""
+while True:
+    byte = os.read(0, 1)
+    if not byte:
+        break
+    received += byte
+    if byte == b"!":
+        os.write(1, b"\r\nreceived=" + received.hex().encode() + b"\r\n")
+        received = b""
+"#,
+                modes = if reporting { "\x1b[?1003h\x1b[?1006h" } else { "" }
+            ),
+        )
+        .unwrap();
+        h.ok(&["tab", "create", "--machine", "labA", "--", "python3", lab::path_str(&fixture)]);
+        let copied = lab.root.join("copied.txt");
+        let mut tui = Tui::start_env(&h, &[("AAA_TEST_CLIPBOARD_TEXT", lab::path_str(&copied))]);
+        let at = tui.wait_find("copy-42");
+        // 마우스 보고를 켠 프로그램 위에서는 Shift로 고른다(Windows Terminal 관례).
+        let shift = if reporting { 4 } else { 0 };
+        tui.mouse(shift, at, false);
+        tui.mouse(32 + shift, (at.0, at.1 + 6), false);
+        tui.mouse(shift, (at.0, at.1 + 6), true);
+        tui.wait_text("선택 자동 복사", |s| s.contains("클립보드에 복사했다"));
+        assert_eq!(std::fs::read_to_string(&copied).unwrap(), "copy-42");
+        // 선택 뒤의 움직임도 pane으로 보내지 않는다. Ctrl+C의 Repeat·Release도 복사 키의 일부다.
+        tui.mouse(35, at, false);
+        tui.send(b"\x03\x1b[99;5:2u\x1b[99;5:3u!");
+        tui.wait_text("복사 입력 울타리", |s| s.contains("received=21"));
+        // 선택이 없을 때의 Ctrl+C는 그대로 보낸다. 관측기는 raw라 신호를 발생시키지 않는다.
+        tui.send(b"\x03!");
+        tui.wait_text("선택 없는 Ctrl+C", |s| s.contains("received=0321"));
+        // 복사가 실패해도 Ctrl+Shift+C·반복은 pane에 보내지 않는다.
+        std::fs::remove_file(&copied).unwrap();
+        std::fs::create_dir(&copied).unwrap();
+        tui.mouse(shift, at, false);
+        tui.mouse(32 + shift, (at.0, at.1 + 6), false);
+        tui.mouse(shift, (at.0, at.1 + 6), true);
+        tui.wait_text("실패한 복사를 성공이라 하지 않음", |s| s.contains("복사하지 못했다"));
+        tui.send(b"\x1b[67;6u\x1b[67;6:2u\x1b[67;6:3u!");
+        tui.wait_text("복사 실패 뒤 입력 울타리", |s| s.matches("received=21").count() == 2);
+        if let Ok(dir) = std::env::var("AAA_TUI_DUMP") {
+            let name = if reporting { "copy-mouse-reporting" } else { "copy-plain" };
+            std::fs::write(std::path::Path::new(&dir).join(format!("{name}.txt")), tui.text()).unwrap();
+        }
+        tui.cmd("q");
+        assert!(tui.wait_exit());
+    }
+}
+
 /// 펼친 사이드바의 경계 열(`│`)로 잰 폭: 모든 줄에서 처음 나오는 `│`가 같은 열일 때(다 그린 화면)만
 fn side_width(s: &Screen) -> Option<usize> {
     let mut cols = s.cells.iter().map(|l| l.iter().position(|c| *c == '│'));

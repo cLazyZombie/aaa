@@ -427,6 +427,8 @@ struct App {
     drag: Option<mouse::Drag>,
     /// 고른 글(pane 화면 칸)
     selection: Option<mouse::Selection>,
+    /// 선택 복사로 소비한 키의 Repeat·Release도 pane으로 보내지 않는다(Windows key event).
+    selection_copy_held: bool,
     /// 끌어 고르다 가장자리에 닿아 기록을 넘기는 중
     autoscroll: Option<mouse::AutoScroll>,
     /// copy 모드(pane에 붙어 있다)
@@ -519,6 +521,7 @@ impl App {
             emitted: vec![],
             drag: None,
             selection: None,
+            selection_copy_held: false,
             autoscroll: None,
             copy: None,
             last_click: None,
@@ -688,7 +691,7 @@ impl App {
                 },
                 e = keys_in.next() => match e {
                     Some(Ok(e @ (Event::Key(_) | Event::Paste(_) | Event::Mouse(_)))) if self.waiting() => self.held.push(e),
-                    Some(Ok(Event::Key(k))) if k.kind != KeyEventKind::Release => { self.on_key(k, &mut tx).await?; dirty = true; }
+                    Some(Ok(Event::Key(k))) => { self.on_key(k, &mut tx).await?; dirty = true; }
                     // 그림만 든 clipboard를 붙이면 빈 붙여넣기로 오는 터미널이 있다
                     Some(Ok(Event::Paste(s))) => { self.on_paste(s, &mut tx).await?; dirty = true; }
                     Some(Ok(Event::Mouse(m))) => { self.on_mouse(m, &mut tx).await?; dirty = true; }
@@ -696,7 +699,6 @@ impl App {
                     // 돌아오면 크기를 다시 걸고, 다른 창에 있는 동안 미룬 입력기 바꾸기·되돌리기를 맞춘다
                     Some(Ok(Event::FocusGained)) => { self.focused = true; self.reclaim = true; self.sized.clear(); self.reconcile_ascii(); dirty = true; }
                     Some(Ok(Event::FocusLost)) => self.focused = false,
-                    Some(Ok(_)) => {}
                     Some(Err(e)) => return Err(e.into()),
                     None => return Ok(()),
                 },
@@ -757,7 +759,7 @@ impl App {
             // 포커스를 옮기거나 copy 커서가 온 뒤 붙잡아 둔 키를 차례대로(그 사이 새 요청이 다시 붙잡으면 남은 것은 그대로 둔다)
             while !self.waiting() && !self.held.is_empty() {
                 match self.held.remove(0) {
-                    Event::Key(k) if k.kind != KeyEventKind::Release => self.on_key(k, &mut tx).await?,
+                    Event::Key(k) => self.on_key(k, &mut tx).await?,
                     Event::Paste(s) => self.on_paste(s, &mut tx).await?,
                     Event::Mouse(m) => self.on_mouse(m, &mut tx).await?,
                     _ => {}
@@ -1693,9 +1695,27 @@ impl App {
     async fn on_key(&mut self, k: KeyEvent, tx: &mut FrontSender) -> Result<()> {
         let k = keys::altgr_text(k, cfg!(windows));
         let ch = if let KeyCode::Char(c) = k.code { Some(c) } else { None };
+        if k.kind == KeyEventKind::Release {
+            if mouse::copy_key(k.modifiers, ch) || matches!(ch, Some('c' | 'C')) {
+                self.selection_copy_held = false;
+            }
+            return Ok(());
+        }
+        // crossterm Windows는 자동 반복도 Press로 준다. 그 키의 Release까지 함께 소비한다.
+        if (k.kind == KeyEventKind::Repeat || cfg!(windows))
+            && self.selection_copy_held
+            && mouse::copy_key(k.modifiers, ch)
+        {
+            return Ok(());
+        }
+        if matches!(k.code, KeyCode::Modifier(_)) {
+            return Ok(());
+        }
+        self.selection_copy_held = false;
         // copy 모드 pane에서는 고르기가 copy 모드 것이다(herdr `copy_or_terminal_mode`)
         let in_copy = self.copy.as_ref().is_some_and(|c| self.focus.as_deref() == Some(c.pane.as_str()));
         if !in_copy && self.selection_key(tx, k.modifiers, ch).await? {
+            self.selection_copy_held = true;
             return Ok(());
         }
         let r = self.route_key(k, tx).await;
