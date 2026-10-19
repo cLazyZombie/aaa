@@ -5356,3 +5356,28 @@ primary 근거:
 - **수정.** 질문 목록의 `QuestionReload`와 같은 경계로 `ThreadReload`를 둔다. 목록 요청 중 받은 thread 사건을 응답 위에 덮고, 다음 연결이 시작한 뒤 돌아온 옛 요청은 버린다. 다시 연결할 때 보고 알림도 합쳐진 상태를 따른다. pane 이름·role·cwd로 thread 소속을 추측하지 않고 host의 project/id/pane 기록을 믿는다.
 - **참고.** herdr-projects `adopt.rs adopt`는 기존 pane ID를 thread에 저장하고 `threads.rs report_thread_tokens`·`sidebar.rs report_pane`이 프로젝트 metadata를 붙인다. herdr-web-ui `sidebarAgents.ts sidebarAgents`도 pane ID로 결합한다. t3code `packages/client-runtime/src/state/threads.ts`는 snapshotSequence·afterSequence로 옛 목록 위에 놓친 사건을 잇는다. aaa는 목록과 사건에 공통 sequence가 없어 요청 중 받은 사건을 보존하는 기존 질문 방식(§8.84)을 따른다.
 - **시험.** 별도 실험실의 실제 CLI adopt·HTTP 응답·WebSocket·headless 화면을 한 경계에서 확인한다. role 없는 pane의 thread 줄 하나 유지와 기타 중복 없음이 수정 전 실패하고 수정 후 통과했다. 고정 대기·운영 입력·소속 추측은 없다. HTTP 반영 횟수 표지는 기존 질문과 같은 진단 경계다.
+
+### 8.219 대화 사진 첨부·터치 Enter 줄바꿈(10-19)
+
+- **원인.** 배포 기준 `e1d57804`의 ChatComposer에는 paste/drop·첨부 단추가 없었다. 터미널의 파일 선택은 agent 세션 폴더에
+  저장하고 PTY에 경로부터 넣으므로 대화 초안과 프로젝트 uploads 계약을 만족하지 못했다. Enter 판정은 터치 기기를 가르지 않았다.
+- **참고 그대로 옮긴 동작.** herdr-web-ui `aa624cb` Composer.tsx `onPaste`(1032~1052)·`onDrop`(1054~1061)·`uploadImages`·첨부 미리보기:
+  clipboard items의 파일을 받아(글과 그림이 같이 있으면 대화에서는 그림), 먼저 저장하고 초안 앞에 `@경로 `를 넣는다. `compose.ts`
+  `imageMention`·`insertLeadingMention`과 `composerImageMime.ts`는 `web/src/herdr/`에 원문대로 옮겼다(MIT 고지는 README).
+  IME 조합 중이거나 글자 수 한도에 걸리면 온전한 경로를 넣을 때까지 전송을 막고, 삭제는 초안의 mention도 지운다.
+- **저장 API.** 참고 `src/lib/api.ts uploadPaneImage`·`server/index.ts /api/pane/image`·`server/paste.ts savePaneImage`처럼 저장과 전송을 분리한다.
+  aaa는 `POST /api/v1/panes/{id}/image`가 cookie·조작 권한·Origin을 확인하고 16MiB 원본 bytes를 받는다. 기존 signature 규칙
+  PNG·JPEG·GIF·WebP, 0600 저장을 유지한다. coordinator 판별은 기존 `Host::coordinator_panes`(host 머신·프로젝트 cwd)를 쓰고
+  그 프로젝트 `uploads/`에 저장한다. 다른 pane은 기존 AgentRequest::AttachWrite로 대상 머신 세션 첨부 폴더에 저장하고 hash를 확인한다.
+  경로를 PTY에 미리 넣지 않으며 보내기 때 기존 submit 경로로 보낸다. Front/Agent 프로토콜 변경은 없다(웹 전용 HTTP 경로 추가).
+- **참고와 다른 곳.** 참고는 cwd 아래 `.herdr-web-ui`에 저장하지만 프로젝트 uploads는 이번 사용자 요구다.
+  HTTP 본문은 참고의 base64 JSON 대신 원본 bytes로 보내고, 인증 뒤 읽는 상한을 적용한다. 동시 업로드는 기존 aaa 파일 전송처럼
+  순서대로 하며, 기존 16MiB·그림 형식 제한을 넓히지 않는다. herdr `2ecf19a`는 OS clipboard→파일 경로를 터미널에 넣는 길이고
+  herdr-projects `1f05c00`는 uploads 폴더 생성·doctor만 맡으므로 대화 첨부 UI는 herdr-web-ui를 따른다.
+- **터치 Enter.** t3code `4b1024da` `composer-logic.ts composerSubmissionIntentForKey`(39~51)는 mobile·IME·keyCode229에서 전송 의도를
+  만들지 않는다. aaa는 herdr-web-ui/기존 Term의 `(pointer: coarse)`를 터치 판별로 써 휴대폰·패드에서 Enter가 기본 줄바꿈을 하게 하고
+  보내기 단추로 전송한다. 데스크톱 Enter/Shift+Enter 및 enterSends 설정은 유지한다.
+- **범위 분담.** 높이·rows·자동 늘림은 별도 thread가 맡는다. 이 변경은 기본 rows 값을 바꾸거나 높이 조절 코드를 추가하지 않는다.
+  착지 때 최신 main의 §8.215 높이 조절과 통합했다. 같은 textarea·surface ref를 함께 써 한 줄 자동 높이와 첨부·터치 Enter를 보존한다.
+- **시험.** 웹 E2E 23, docs/testing.md 「대화 이미지와 Enter」. 실제 OS의 clipboard 권한·iOS 길게 누르기 메뉴는 실기 확인 범위이며
+  headless 결과를 실기 확인으로 부르지 않는다.

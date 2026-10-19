@@ -51,6 +51,67 @@ fn sniff(b: &[u8]) -> Option<&'static str> {
 }
 
 impl Host {
+    /// 대화 첨부(herdr-web-ui `savePaneImage`): 저장한 경로만 돌려준다. 입력은 Composer의 보내기 때 간다.
+    /// coordinator는 host의 프로젝트 uploads/, 나머지 pane은 대상 agent의 세션 첨부 폴더다.
+    pub(crate) async fn chat_image(
+        self: &Arc<Self>,
+        role: DeviceRole,
+        actor: &str,
+        pane: &str,
+        bytes: &[u8],
+    ) -> Result<String, ErrorBody> {
+        use sha2::{Digest, Sha256};
+        if !role.can_control() {
+            return Err(err(ErrorCode::Forbidden, "보기 권한으로는 붙여 넣을 수 없다"));
+        }
+        let (id, mid) = self.resolve_pane(pane)?;
+        self.check_running(&id)?;
+        if bytes.is_empty() || bytes.len() as u64 > MAX_BYTES {
+            return Err(err(ErrorCode::BadRequest, "그림은 1바이트부터 16MiB까지 붙여 넣는다"));
+        }
+        let ext = sniff(bytes).ok_or_else(|| err(ErrorCode::BadRequest, "PNG·JPEG·GIF·WebP 그림만 붙여 넣는다"))?;
+        let att = format!("{}.{ext}", hex::encode(rand::random::<[u8; 8]>()));
+        let project = self
+            .projects_all()
+            .into_iter()
+            .find(|p| self.coordinator_panes(std::path::Path::new(&p.path)).iter().any(|p| p.id == id));
+        let path = if let Some(project) = project {
+            let dir = self.project_dir(&project.name)?.join("uploads");
+            let path = dir.join(&att);
+            std::fs::create_dir_all(&dir)
+                .and_then(|_| aaa_common::util::write_private(&path, bytes))
+                .map_err(|e| err(ErrorCode::Internal, e.to_string()))?;
+            path.to_string_lossy().into_owned()
+        } else {
+            let conn = self.live_conn(&mid)?;
+            let mut saved = None;
+            for (i, chunk) in bytes.chunks(CHUNK).enumerate() {
+                let offset = i * CHUNK;
+                let response = conn
+                    .request(AgentRequest::AttachWrite {
+                        session: id.clone(),
+                        att: att.clone(),
+                        offset: offset as u64,
+                        data: B64(chunk.to_vec()),
+                        eof: offset + chunk.len() == bytes.len(),
+                    })
+                    .await?;
+                if let AgentResponse::Attached { path, sha256 } = response {
+                    if sha256 != hex::encode(Sha256::digest(bytes)) {
+                        return Err(err(ErrorCode::Internal, "저장한 그림의 sha256이 보낸 것과 다르다"));
+                    }
+                    saved = Some(path);
+                }
+            }
+            saved.ok_or_else(|| err(ErrorCode::Internal, "그림 저장 응답이 없다"))?
+        };
+        if actor.strip_prefix("device:").is_some_and(|d| self.is_revoked(d)) {
+            return Err(err(ErrorCode::Unauthorized, "기기가 폐기됐다"));
+        }
+        self.db.audit(actor, "chat_image", &format!("{id} {att} {} bytes", bytes.len()));
+        Ok(path)
+    }
+
     /// 조각 하나를 처리한다. 마지막 조각이면 저장 결과를 돌려준다. 실패하면 `up`을 비운다.
     #[allow(clippy::too_many_arguments)]
     pub(crate) async fn attach_chunk(

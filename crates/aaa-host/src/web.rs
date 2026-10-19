@@ -40,7 +40,7 @@ const OUTPUT_STALLED_REASON: &str = "terminal output consumer stalled";
 pub const DEVICE_REVOKED_CLOSE_CODE: u16 = 4401;
 const DEVICE_REVOKED_REASON: &str = "device revoked";
 
-const CSP: &str = "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; \
+const CSP: &str = "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; \
                    connect-src 'self'; font-src 'self' data:; frame-ancestors 'none'; base-uri 'none'; form-action 'self'";
 
 pub async fn start(host: &Arc<Host>) -> Result<()> {
@@ -78,6 +78,7 @@ pub fn router(host: Arc<Host>) -> Router {
         .route("/api/v1/diag/input", post(diag_input))
         .route("/api/v1/usage", get(usage_report))
         .route("/api/v1/panes/{id}/ws", get(pane_ws))
+        .route("/api/v1/panes/{id}/image", post(chat_image))
         .route("/v/{cap}/{*path}", get(view_file))
         .route("/v/{cap}/", get(view_root))
         .route("/v", get(|| async { StatusCode::NOT_FOUND }))
@@ -360,6 +361,39 @@ fn device(host: &Host, h: &HeaderMap) -> Option<(String, DeviceRole)> {
 fn unauthorized() -> Response {
     (StatusCode::UNAUTHORIZED, Json(Outcome::<()>::Err(ErrorBody::new(ErrorCode::Unauthorized, "pairing이 필요하다"))))
         .into_response()
+}
+
+/// 참고 `/api/pane/image`: 저장만 하고 경로를 돌려준다. Origin·cookie는 기존 웹 guard와 같다.
+/// 인증·권한을 확인한 뒤 본문을 읽으며, base64 대신 원본 bytes를 16MiB 한도로 받는다.
+async fn chat_image(State(host): State<Arc<Host>>, Path(pane): Path<String>, req: Request) -> Response {
+    let Some((id, role)) = device(&host, req.headers()) else { return unauthorized() };
+    if !role.can_control() {
+        return (
+            StatusCode::FORBIDDEN,
+            Json(Outcome::<()>::Err(ErrorBody::new(ErrorCode::Forbidden, "보기 권한으로는 붙여 넣을 수 없다"))),
+        )
+            .into_response();
+    }
+    let Ok(bytes) = axum::body::to_bytes(req.into_body(), 16 << 20).await else {
+        return (
+            StatusCode::PAYLOAD_TOO_LARGE,
+            Json(Outcome::<()>::Err(ErrorBody::new(ErrorCode::BadRequest, "그림은 16MiB까지 붙여 넣는다"))),
+        )
+            .into_response();
+    };
+    match host.chat_image(role, &format!("device:{id}"), &pane, &bytes).await {
+        Ok(path) => Json(Outcome::Ok(serde_json::json!({ "path": path }))).into_response(),
+        Err(e) => {
+            let status = match e.code {
+                ErrorCode::Forbidden => StatusCode::FORBIDDEN,
+                ErrorCode::Unauthorized => StatusCode::UNAUTHORIZED,
+                ErrorCode::NotFound => StatusCode::NOT_FOUND,
+                ErrorCode::Internal => StatusCode::INTERNAL_SERVER_ERROR,
+                _ => StatusCode::BAD_REQUEST,
+            };
+            (status, Json(Outcome::<()>::Err(e))).into_response()
+        }
+    }
 }
 
 #[derive(Deserialize)]

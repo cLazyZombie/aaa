@@ -3,6 +3,7 @@
 이 폴더의 `.ts` 파일은 [herdr-web-ui](https://github.com/devswha/herdr-web-ui) [고정 commit `aa624cb`](https://github.com/devswha/herdr-web-ui/tree/aa624cb56f550f9a7dd8bf4d59ed99ffc3921741)의 `src/lib/` 파일을 바꾸지 않고 옮긴 것이다(aaa는 참고 프로젝트 동작을 그대로 따른다).
 
 | 파일 | 하는 일 |
+| `composerImages.ts`·`composerImageMime.ts` | `compose.ts`의 imageMention·insertLeadingMention과 이미지 MIME 보완 원문. 대화 첨부를 초안에 온전히 넣는다(plan §8.219) |
 |---|---|
 | `terminalGlyphs.ts` | xterm DOM renderer가 칸보다 좁게 그린 글자(한글 등)를 키우고 칸 가운데 둔다. 조합 상자(`.composition-view`)의 글꼴 크기·자간·여백을 그 줄에 맞춘다(`fitView`). NFC, 아이콘 크기 |
 | `terminalBoxGlyphs.ts` | 선·블록 문자를 글꼴 대신 칸 크기 상자로 그린다 |
