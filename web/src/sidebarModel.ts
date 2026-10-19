@@ -36,6 +36,8 @@ export function prNumber(url: string | null | undefined): string | null {
  * 검토·병합 중의 사실은 따라가는 PR이 있으면 「PR #n」, 없으면 「보고」다.
  */
 export function stateLine(t: ThreadView, paneOpen: boolean, now: number): string {
+  if (t.status === "starting") return "준비 중";
+  if (t.cleanup_pending) return t.group === "waiting_on_you" ? "정리 확인 필요" : "정리 중";
   const a = t.agent ?? null;
   const pct = a?.percent != null && a.percent < 100 ? `~${a.percent}%` : null;
   let fact: string | null = null;

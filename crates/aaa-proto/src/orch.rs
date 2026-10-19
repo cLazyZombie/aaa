@@ -716,6 +716,10 @@ pub struct ThreadView {
     #[ts(optional)]
     pub mission: Option<String>,
     pub status: ThreadStatus,
+    /// 끝남 기록 뒤 아직 정리 응답을 확정하지 못했다. 같은 resolve로 이어간다.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub cleanup_pending: Option<bool>,
     pub group: ThreadGroup,
     pub brief: BriefState,
     pub pane: Option<String>,

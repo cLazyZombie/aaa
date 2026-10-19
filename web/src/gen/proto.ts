@@ -319,7 +319,11 @@ profile?: string,
 /**
  * coordinator가 돌아도 하나 더 띄운다
  */
-new?: boolean, } | { "op": "profiles", machine: string | null, } | { "op": "profile_resolve", name: string | null, } | { "op": "thread_start", project: string, title: string, machine: string | null,
+new?: boolean, } | { "op": "profiles", machine: string | null, } | { "op": "profile_resolve", name: string | null, } | { "op": "thread_start",
+/**
+ * 준비 완료를 기다리지 않고 Starting 기록을 돌려준다.
+ */
+background: boolean, project: string, title: string, machine: string | null,
 /**
  * 비면 `from_task`의 owner, 그다음 project.toml `thread_profile`(herdr-projects `thread_profile`)
  */
@@ -562,7 +566,11 @@ export type ThreadView = { project: string, id: string, title: string, machine: 
 /**
  * (FrontResponse 태그 `kind`와 겹치지 않게 이름을 달리한다)
  */
-thread_kind: ThreadKind, mission?: string, status: ThreadStatus, group: ThreadGroup, brief: BriefState, pane: string | null, cwd: string | null, work_dir: string | null, branch: string | null,
+thread_kind: ThreadKind, mission?: string, status: ThreadStatus,
+/**
+ * 끝남 기록 뒤 아직 정리 응답을 확정하지 못했다. 같은 resolve로 이어간다.
+ */
+cleanup_pending?: boolean, group: ThreadGroup, brief: BriefState, pane: string | null, cwd: string | null, work_dir: string | null, branch: string | null,
 /**
  * 추적하는 PR(§8.80)
  */

@@ -388,11 +388,22 @@ fn is_absolute_anywhere(p: &str) -> bool {
 pub struct HostSection {
     /// Agent link(TCP+TLS) listen 주소. 빈 문자열이면 원격 agent를 받지 않는다.
     pub agent_listen: String,
+    /// thread 자리 준비 요청의 상한(초). 큰 checkout·LFS를 기다린다.
+    pub thread_prepare_timeout_secs: u64,
+    /// thread 정리 요청의 상한(초).
+    pub thread_cleanup_timeout_secs: u64,
+    /// 보고 목록·파일 조각 읽기 요청의 상한(초).
+    pub file_request_timeout_secs: u64,
 }
 
 impl Default for HostSection {
     fn default() -> Self {
-        HostSection { agent_listen: "0.0.0.0:7430".into() }
+        HostSection {
+            agent_listen: "0.0.0.0:7430".into(),
+            thread_prepare_timeout_secs: 600,
+            thread_cleanup_timeout_secs: 600,
+            file_request_timeout_secs: 120,
+        }
     }
 }
 
@@ -589,6 +600,15 @@ fn key(parts: &[&str]) -> Vec<String> {
 
 fn validate_host(c: &HostConfig) -> Vec<Invalid> {
     let mut out = Vec::new();
+    for (name, value) in [
+        ("thread_prepare_timeout_secs", c.host.thread_prepare_timeout_secs),
+        ("thread_cleanup_timeout_secs", c.host.thread_cleanup_timeout_secs),
+        ("file_request_timeout_secs", c.host.file_request_timeout_secs),
+    ] {
+        if !(1..=86_400).contains(&value) {
+            out.push(Invalid { path: key(&["host", name]), message: "1~86400초(하루)여야 한다".into() });
+        }
+    }
     for (k, v) in [
         ("burst", u64::from(c.post.burst)),
         ("burst_secs", c.post.burst_secs),

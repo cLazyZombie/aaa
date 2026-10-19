@@ -195,3 +195,34 @@ fn library_retention_config_defaults_disable_and_reject_bad_values() {
         }
     }
 }
+
+/// 옛 설정은 10분 기본값을 쓰고, host.local.toml·검증·진단 위치도 기존 설정과 같다.
+#[test]
+fn agent_operation_timeouts_are_host_settings() {
+    let d = Dir::new("operation-timeouts");
+    let c = load_host(&d.0).unwrap().config;
+    assert_eq!((c.host.thread_prepare_timeout_secs, c.host.thread_cleanup_timeout_secs), (600, 600));
+    assert_eq!(c.host.file_request_timeout_secs, 120);
+    d.write("host.toml", "schema = 1\n[host]\nthread_prepare_timeout_secs = 900\nthread_cleanup_timeout_secs = 1200\nfile_request_timeout_secs = 180\n");
+    d.write("host.local.toml", "schema = 1\n[host]\nthread_prepare_timeout_secs = 1800\n");
+    let l = load_host(&d.0).unwrap();
+    assert!(l.warnings.is_empty(), "{:?}", l.warnings);
+    assert_eq!(
+        (
+            l.config.host.thread_prepare_timeout_secs,
+            l.config.host.thread_cleanup_timeout_secs,
+            l.config.host.file_request_timeout_secs
+        ),
+        (1800, 1200, 180)
+    );
+    for key in ["thread_prepare_timeout_secs", "thread_cleanup_timeout_secs", "file_request_timeout_secs"] {
+        for bad in ["0", "86401", "-1", "\"600\""] {
+            d.write("host.local.toml", &format!("schema = 1\n[host]\n{key} = {bad}\n"));
+            let e = load_host(&d.0).unwrap_err();
+            if matches!(bad, "0" | "86401") {
+                assert!(e.render().contains(key), "{}", e.render());
+            }
+            assert!(e.0.iter().any(|d| d.file.ends_with("host.local.toml") && d.line == 3), "{}", e.render());
+        }
+    }
+}

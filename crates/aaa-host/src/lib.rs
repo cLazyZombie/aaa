@@ -87,15 +87,30 @@ pub struct AgentConn {
     pub pending: Pending,
     pub generation: u64,
     seq: Arc<AtomicU64>,
+    timeouts: aaa_config::HostSection,
 }
 
 impl AgentConn {
     pub fn new(tx: FrameTx, generation: u64) -> Self {
-        AgentConn { tx, pending: Arc::new(Mutex::new(HashMap::new())), generation, seq: Arc::new(AtomicU64::new(0)) }
+        AgentConn {
+            tx,
+            pending: Arc::new(Mutex::new(HashMap::new())),
+            generation,
+            seq: Arc::new(AtomicU64::new(0)),
+            timeouts: Default::default(),
+        }
     }
 
     pub async fn request(&self, body: AgentRequest) -> Result<AgentResponse, ErrorBody> {
-        self.request_timeout(body, REQUEST_TIMEOUT).await
+        let wait = match &body {
+            AgentRequest::ThreadPrepare(_) => Duration::from_secs(self.timeouts.thread_prepare_timeout_secs),
+            AgentRequest::ThreadCleanup { .. } => Duration::from_secs(self.timeouts.thread_cleanup_timeout_secs),
+            AgentRequest::FileRead { .. } | AgentRequest::ReportCollect { .. } => {
+                Duration::from_secs(self.timeouts.file_request_timeout_secs)
+            }
+            _ => REQUEST_TIMEOUT,
+        };
+        self.request_timeout(body, wait).await
     }
 
     /// 오래 걸리는 요청(routine 명령 등)
@@ -479,6 +494,7 @@ pub struct Host {
     rec_lock: Mutex<()>,
     /// brief 배경 task가 도는 thread(`<project>/<thread>`, 하나만 돈다)
     brief_loops: Mutex<HashSet<String>>,
+    thread_ops: Mutex<HashMap<String, Arc<tokio::sync::Mutex<()>>>>,
     /// 지금 brief 한 걸음을 하는 thread(배경 task와 `thread brief`가 겹치지 않게, herdr-projects brief.rs `claim`)
     brief_claims: Mutex<HashSet<String>>,
     /// 보고를 다시 확인하는 중인 thread(`<project>/<thread>`)와 그동안 또 확인을 부탁받았는지. 묶음 셈(transitions.rs)은
@@ -642,6 +658,7 @@ impl Host {
             eval_decide_lock: Mutex::new(()),
             rec_lock: Mutex::new(()),
             brief_loops: Mutex::new(HashSet::new()),
+            thread_ops: Mutex::new(HashMap::new()),
             brief_claims: Mutex::new(HashSet::new()),
             report_refresh: Mutex::new(HashMap::new()),
             restoring: Mutex::new(HashSet::new()),
@@ -1220,7 +1237,18 @@ impl Host {
             }
             FrontRequest::Profiles { machine } => self.profiles(machine.as_deref()).await,
             FrontRequest::ProfileResolve { name } => self.profile_resolve(name.as_deref()),
-            FrontRequest::ThreadStart { project, title, machine, profile, kind, repo, base, task, from_task } => {
+            FrontRequest::ThreadStart {
+                project,
+                title,
+                machine,
+                profile,
+                kind,
+                repo,
+                base,
+                task,
+                from_task,
+                background,
+            } => {
                 // herdr-projects threads.rs `placement`: repo가 있으면 worktree, 없으면 repo 없는 작업 폴더
                 let kind = kind.unwrap_or(if repo.is_some() {
                     aaa_proto::ThreadKind::Worktree
@@ -1248,7 +1276,7 @@ impl Host {
                     a.machine =
                         a.repo.as_ref().and_then(|r| repos.into_iter().find(|x| &x.path == r)).and_then(|x| x.machine);
                 }
-                self.thread_start(a, actor).await.map(|mut v| {
+                self.thread_start_mode(a, actor, None, background).await.map(|mut v| {
                     v.warnings.extend(warning);
                     FrontResponse::Thread(v)
                 })

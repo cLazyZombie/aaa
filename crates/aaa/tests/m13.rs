@@ -7,6 +7,8 @@
 #![cfg(unix)]
 
 mod lab;
+#[path = "m13/preparation.rs"]
+mod preparation;
 
 use std::path::{Path, PathBuf};
 use std::process::Command;

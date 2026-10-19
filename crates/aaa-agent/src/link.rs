@@ -167,8 +167,8 @@ async fn session(agent: &Arc<Agent>, stream: LocalStream) -> Result<()> {
                 Ok(Ok(None)) => return Ok(()),
                 Ok(Ok(Some(Incoming::Terminal(_)))) => {}
                 Ok(Ok(Some(Incoming::Control(b)))) => match serde_json::from_slice::<LinkMsg>(&b) {
-                    Ok(LinkMsg::Req { id, body, .. }) => {
-                        tokio::spawn(agent.clone().handle(id, body));
+                    Ok(LinkMsg::Req { id, body, deadline_ms }) => {
+                        tokio::spawn(agent.clone().handle_deadline(id, body, deadline_ms, Some(tx.clone())));
                     }
                     Ok(LinkMsg::Ping { seq }) => {
                         let _ = tx.json(&LinkMsg::Pong { seq }).await;

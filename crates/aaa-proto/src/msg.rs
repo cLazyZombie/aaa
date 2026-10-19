@@ -1612,6 +1612,9 @@ pub enum FrontRequest {
         name: Option<String>,
     },
     ThreadStart {
+        /// 준비 완료를 기다리지 않고 Starting 기록을 돌려준다.
+        #[serde(default)]
+        background: bool,
         project: String,
         title: String,
         machine: Option<String>,
