@@ -289,6 +289,17 @@ impl Host {
                 st.harness_session = ev.harness_session.clone();
             }
             let next = next_activity(prev.as_ref(), &ev);
+            if matches!(
+                ev.kind.as_str(),
+                "turn_start" | "working" | "turn_end" | "idle" | "question" | "error" | "exited"
+            ) {
+                tracing::info!(
+                    machine = mid, pane = %ev.session, harness = %ev.harness, kind = %ev.kind,
+                    event_at_ms = ev.at_ms, previous = ?prev.as_ref().map(|a| a.activity),
+                    previous_since_ms = ?prev.as_ref().map(|a| a.since_ms), applied = ?next,
+                    "harness 상태: host 적용 판정"
+                );
+            }
             if ev.kind == "progress" {
                 st.percent = ev.percent;
                 st.progress = ev.message.clone();
