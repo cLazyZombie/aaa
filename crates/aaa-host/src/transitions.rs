@@ -1,7 +1,7 @@
 //! 묶음 전이와 thread 항목(herdr-projects ticker.rs `thread_pass`·steps.rs `write_thread_items`, plan §8.85).
 //!
 //! - ticker가 열린 thread마다 묶음을 다시 셈해 기록(`last_group`)과 견준다. 바뀌었으면 전이다.
-//! - 확인 필요·병합 중·쉼으로 바뀔 때만 `thread-state` 항목 한 건을 낸다. 확인 필요는 알림(push)도 간다.
+//! - 확인 필요·병합 중·쉼으로 바뀔 때만 `thread-state` 항목 한 건을 낸다. 앱 안 알림에 보이며 외부 푸시는 coordinator가 판단한다.
 //! - 「새 보고」 항목은 묶음이 검토 대기나 병합 중일 때 보고 hash당 한 번이다. 작업 중에 고쳐 쓴 보고는 항목을 만들지 않는다.
 //! - PR이 병합된 thread는 agent가 끝난 뒤 저절로 끝낸다(`resolve_merged_pass`, herdr-projects steps.rs `resolve_merged`).
 //! - 한 머신에 기록된 pane이 둘 이상이고 모두 사라졌으면(agent 재시작·재부팅) thread마다가 아니라 그 머신의 `session`
@@ -18,18 +18,6 @@ use crate::orch::{ResolveWhy, ThreadRec, WAITING, thread_group_with};
 
 /// 이 수 이상 기록된 pane이 한 머신에서 모두 사라지면 세션 한 건으로 알린다(herdr-projects `session_lost`)
 const SESSION_LOST_PANES: usize = 2;
-
-/// 알림(push·webhook)으로 내보내는 `thread-state` 사건. 참고는 확인 필요 전이와 새 보고에만 notifier를 부른다.
-/// 시작 실패(`not launched`)는 참고가 실패한 thread를 묶음 셈에서 빼서 알리지 않지만, 사람이 할 일이라 aaa는 알린다.
-pub(crate) const PUSH_EVENTS: [&str; 7] = [
-    "blocked on a prompt",
-    "pane closed",
-    "agent gone",
-    "waiting on you",
-    "new report",
-    "report needs user",
-    "not launched",
-];
 
 /// 묶음 하나의 바뀜(herdr-projects `Transition`)
 #[derive(Debug, Clone, PartialEq)]
@@ -426,21 +414,12 @@ mod tests {
                 h.db.thread_save("p", id, "open", &serde_json::to_string(&r).unwrap()).unwrap();
                 assert_eq!(h.thread_view(&r).report_attention, Some(attention));
                 assert!(h.new_report_item("p", &r));
-                let got = notifications.try_recv().expect("완료·확인 필요는 push 대상으로 보낸다");
-                assert_eq!(got.event, event);
-                let ready = h.still_news("p", vec![got.clone()]);
-                let place = crate::notify::Place::Project("p".into());
-                let titles = h.alert_titles(&place, &ready);
-                let push = crate::push::payload(&place, &ready, &titles);
-                let hook = crate::notify::notify_body("json", "", &place, &ready, &titles);
-                assert_eq!(push["body"], "명시적인 알림", "사건 이름 대신 보고 첫 줄을 보인다");
-                assert_eq!(hook["items"][0]["summary"], "명시적인 알림");
-                assert!(hook["text"].as_str().unwrap().ends_with("\n- 명시적인 알림"));
-                let only =
-                    crate::push::for_device(crate::db::Alerts { input: true, done: false }, std::slice::from_ref(&got));
-                assert_eq!(!only.is_empty(), attention == aaa_proto::ReportAttention::NeedsUser);
-                write(&mut r, "[진행 중] 다음 작업\n");
-                assert!(h.still_news("p", vec![got]).is_empty(), "대기 중 의미가 바뀐 보고는 보내지 않는다");
+                let items = h.inbox("p", true, true).unwrap().items;
+                assert!(items.iter().any(|i| i.subject == id && i.event == event), "앱 안 inbox에 보고가 남아야 한다");
+                assert!(
+                    notifications.try_recv().is_err(),
+                    "thread 완료·확인 필요 보고는 외부 푸시 대기열에 넣지 않는다"
+                );
             }
             write(&mut r, "[완료인 척] 표지 아님\n[완료] 본문\n");
             assert_eq!(h.thread_view(&r).report_attention, None);

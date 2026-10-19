@@ -415,7 +415,7 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
   };
 
   // 이 기기의 알림(plan §8.70): host가 알리는 종류(`notify.kinds`의 `thread-state`)에만 띄운다. 질문이 열리면 바로
-  // 「입력 필요」(host push는 30초 넘게 뜬 확인창만 보낸다), thread가 검토 대기가 된 새 보고는 「작업 완료」(host 「new report」
+  // 「입력 필요」, thread가 검토 대기가 된 새 보고는 「작업 완료」(외부 푸시는 coordinator 사용자 post만, host 「new report」
   // 항목과 같은 규칙: 검토 대기일 때 보고 hash당 한 번, 작업 중에 고쳐 쓴 보고는 아니다, plan §8.85).
   // 연결할 때 읽은 목록(처음 본 것)은 새 소식이 아니다.
   const alertKinds = useRef<Set<string> | null>(null);

@@ -207,7 +207,6 @@ impl Host {
     }
 
     pub(crate) fn inbox_publish(&self, item: &InboxItem) {
-        self.notify(item);
         let dir = self.inbox_dir(&item.project);
         if let Err(e) = std::fs::create_dir_all(&dir)
             .and_then(|_| std::fs::write(dir.join(format!("{}.md", item.id)), render_item(item)))
