@@ -192,7 +192,14 @@ impl Host {
                 continue;
             }
             let (pane_exists, agent) = self.thread_live(&r);
-            let group = thread_group_with(&r, pane_exists, agent.as_ref(), now, delivered_ms);
+            let group = thread_group_with(
+                &r,
+                pane_exists,
+                agent.as_ref(),
+                now,
+                delivered_ms,
+                (self.cfg.host.thread_prepare_timeout_secs + 60) * 1000,
+            );
             let mut change = None;
             if r.last_group != Some(group) {
                 match r.last_group {

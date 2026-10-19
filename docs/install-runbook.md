@@ -52,6 +52,9 @@ host Mac `~/.config/aaa/host.toml`(예시: `aaa config example host`)
 schema = 1
 [host]
 agent_listen = "0.0.0.0:7430"      # 다른 Mac의 agent가 붙는다(tailnet 안)
+thread_prepare_timeout_secs = 600  # 큰 checkout·LFS 준비: 기본 10분
+thread_cleanup_timeout_secs = 600  # worktree 정리: 기본 10분
+file_request_timeout_secs = 120    # 보고 목록·파일 조각 읽기: 기본 2분
 [web]
 listen = "127.0.0.1:7431"          # herdr-web-ui(7317)과 겹치지 않는 port
 [local_agent]
@@ -59,6 +62,11 @@ mode = "launchd"                   # 운영: host가 agent를 띄우지 않는�
 [projects]
 root = ""                          # 기본 ~/.aaa/projects. herdr-projects 폴더와 다른 곳
 ```
+
+- 위 요청 상한은 1~86400초이며 기존 `schema = 1` 설정과 `host.local.toml` 덮어쓰기를 따른다. `aaa config check`로 검사하고 다음 host 시작 때 적용한다. 현재 웹 설정은 UI 환경설정이며 host.toml 편집 화면은 없다.
+- coordinator는 `aaa thread start <p> … --background`로 바로 thread ID와 「준비 중」을 받는다. 준비·실패 결과는 `aaa thread show <p> <id>`·`aaa events <p> --follow`로 확인한다. 기본 호출은 예전처럼 세션 시작 결과까지 기다린다.
+- 연결이 끊겨도 agent가 준비를 마쳐 `<work_root>/.preparations/`에 기록한다. `thread restart`는 같은 repo·경로·branch·기준 commit의 변경 없는 자리를 이어 쓴다. 변경·다른 branch·소유권이 불명확한 자리면 보존하고 사람의 확인을 요구한다.
+- 정리 중에는 `thread show`에 「정리 중」이 보인다. 정리 응답 전에 끊겼다면 같은 `thread resolve`로 이어서 한다(처음의 보존·사본 선택을 유지). 완료 후에만 완료 사건·inbox를 남긴다. agent의 상태 폴더 `thread-cleanup/`에도 결과가 남는다. 미완료 정리를 마치기 전에는 `--reopen`을 거부한다.
 
 - thread가 쓸 profile·yolo·신뢰 창·routine 명령은 사람만 바꾸는 safety 설정이다. 파일을 고치지 말고 aaa 밖 터미널에서 명령으로 바꾼다(herdr-projects와 같다, plan §8.170):
   - `aaa safety show --global`·`aaa safety show <프로젝트>`: 지금 값과 출처
@@ -275,3 +283,7 @@ aaa update status <재시작-ID> --wait
 failed·interrupted·판/SHA 불일치면 진행을 멈추고 원인을 본다. `aaa update rollback --machine <문제 머신>`의 완료 → 해당 서비스 restart → 판/SHA·재연결을 확인한다. 중단된 update는 자동 재실행하지 않는다. agent restart 중 종료는 OS 잠금으로 확인한 이전 실행기 종료와 기대 SHA가 맞을 때만 복구 완료로 기록한다. 구판 host/agent는 새 API를 사용하지 않고 사람의 최초 반영 또는 터미널 복구를 안내한다.
 
 생성된 coordinator 안내는 binary 반영 뒤 `aaa doctor files --fix`로 갱신한다. 운영 설정·서비스의 변경은 이 코드의 시험·착지와 별도다.
+
+- 준비 응답을 잃어 host에 경로가 없는 실패도 resolve가 agent journal을 먼저 조회해 정리한다. 조회는 준비와 같은 lock에서 끝나므로 준비 뒤늦은 생성과 정리가 경합하지 않는다. `thread_journal.v1`이 없는 옛 agent에서는 확인 없이 resolve 완료하지 않고 갱신을 안내한다.
+
+구판 journal 없는 예상 자리가 남아 있으면 조회는 없음으로 확정하지 않고 명시적으로 거부한다. 변경 없는 자리는 안내한 `thread restart`가 소유권을 확인해 회수하고, 그 뒤 resolve하면 정리된다. 변경·다른 Git 신원은 기존대로 보존한다.

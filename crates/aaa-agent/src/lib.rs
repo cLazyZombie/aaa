@@ -1164,6 +1164,19 @@ impl Agent {
 
     /// host 요청 하나. 세션 요청은 pump로 넘기고(응답은 pump가 보낸다), 나머지는 여기서 답한다.
     pub async fn handle(self: Arc<Self>, id: String, body: AgentRequest) {
+        let reply = self.host.lock().unwrap().clone();
+        self.handle_deadline(id, body, None, reply).await;
+    }
+
+    /// 연결이 끊겨도 이 task는 끝까지 수행한다. 자리·정리 결과는 agent journal에 남긴다.
+    pub async fn handle_deadline(
+        self: Arc<Self>,
+        id: String,
+        body: AgentRequest,
+        deadline_ms: Option<u64>,
+        reply: Option<FrameTx>,
+    ) {
+        let wait = Duration::from_millis(deadline_ms.unwrap_or(600_000).clamp(1, 86_400_000));
         let direct: Result<AgentResponse, ErrorBody> = match body {
             AgentRequest::DeployStart { id: job, project, action } => {
                 return self.deploy_start(id, job, project, action).await;
@@ -1248,11 +1261,18 @@ impl Agent {
             AgentRequest::ThreadPrepare(p) => {
                 let cfg = self.threads_cfg.lock().unwrap().clone();
                 match cfg.fresh() {
-                    Ok(cfg) => threads::prepare(&cfg, p).await,
+                    Ok(cfg) => threads::prepare(&cfg, p, wait).await,
                     Err(e) => Err(e),
                 }
                 .map(AgentResponse::ThreadReady)
                 .map_err(|e| ErrorBody::new(ErrorCode::BadRequest, format!("{e:#}")))
+            }
+            AgentRequest::ThreadPlacement { project, thread, title, kind, repo } => {
+                let cfg = self.threads_cfg.lock().unwrap().clone();
+                threads::placement(&cfg, &project, &thread, &title, kind, repo.as_deref())
+                    .await
+                    .map(|placement| AgentResponse::ThreadPlacement { placement })
+                    .map_err(|e| ErrorBody::new(ErrorCode::BadRequest, format!("{e:#}")))
             }
             AgentRequest::ThreadAdopt(a) => self.thread_adopt(a).await,
             AgentRequest::ThreadWatch { thread, work_dir } => {
@@ -1370,13 +1390,15 @@ impl Agent {
                 Ok(AgentResponse::Done)
             }
             AgentRequest::ThreadCleanup { repo, cwd, branch, merged_head, keep_worktree, uncopied } => {
-                threads::cleanup(
+                threads::cleanup_recorded(
+                    &self.state,
                     repo.as_deref(),
                     &cwd,
                     branch.as_deref(),
                     merged_head.as_deref(),
                     keep_worktree,
                     uncopied,
+                    wait,
                 )
                 .await
                 .map(AgentResponse::Cleanup)
@@ -1387,7 +1409,9 @@ impl Agent {
                 .map(AgentResponse::Pr)
                 .map_err(|e| ErrorBody::new(ErrorCode::BadRequest, format!("{e:#}"))),
         };
-        self.send_host(&LinkMsg::Res { id, result: direct.into() }).await;
+        if let Some(reply) = reply {
+            let _ = reply.json(&LinkMsg::Res { id, result: direct.into() }).await;
+        }
     }
 
     /// 실행 중인 세션 폴더에 첨부 한 조각을 쓴다

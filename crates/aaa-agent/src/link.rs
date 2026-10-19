@@ -103,6 +103,7 @@ pub fn hello(agent: &Agent) -> AgentHello {
             "profiles.v2".into(),
             // host의 ResolvedProfile과 설치 harness 조회(Harnesses)를 받는다.
             "host_profiles.v1".into(),
+            "thread_journal.v1".into(),
             "launch_safety.v1".into(),
             "file.v1".into(),
             "profile.v1".into(),
@@ -167,8 +168,8 @@ async fn session(agent: &Arc<Agent>, stream: LocalStream) -> Result<()> {
                 Ok(Ok(None)) => return Ok(()),
                 Ok(Ok(Some(Incoming::Terminal(_)))) => {}
                 Ok(Ok(Some(Incoming::Control(b)))) => match serde_json::from_slice::<LinkMsg>(&b) {
-                    Ok(LinkMsg::Req { id, body, .. }) => {
-                        tokio::spawn(agent.clone().handle(id, body));
+                    Ok(LinkMsg::Req { id, body, deadline_ms }) => {
+                        tokio::spawn(agent.clone().handle_deadline(id, body, deadline_ms, Some(tx.clone())));
                     }
                     Ok(LinkMsg::Ping { seq }) => {
                         let _ = tx.json(&LinkMsg::Pong { seq }).await;

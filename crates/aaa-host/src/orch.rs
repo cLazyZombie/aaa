@@ -102,6 +102,11 @@ pub(crate) struct ThreadRec {
     /// resolve 때 남긴 worktree·branch(`project sweep`이 다시 정리한다). None은 모른다(이 필드 전에 끝난 thread)
     #[serde(default)]
     pub leftover: Option<crate::lifecycle::Leftover>,
+    /// resolve의 의도. 정리 응답을 저장하기 전에는 지우지 않는다(끊기면 같은 resolve로 이어간다).
+    #[serde(default)]
+    pub resolve_pending: Option<ResolveOpts>,
+    #[serde(default)]
+    pub prepare_started_ms: Option<u64>,
     pub created_at_ms: u64,
     pub updated_at_ms: u64,
 }
@@ -161,6 +166,8 @@ impl ThreadRec {
             eval_batches: 0,
             eval_last_batch_ms: None,
             leftover: None,
+            resolve_pending: None,
+            prepare_started_ms: Some(now),
             created_at_ms: now,
             updated_at_ms: now,
         }
@@ -176,7 +183,7 @@ pub(crate) enum ResolveWhy {
 }
 
 /// `thread resolve`의 고르기(herdr-projects `ResolveArgs`). 저절로 끝낼 때는 모두 끈 것이다(`resolve_after_copy`)
-#[derive(Debug, Clone, Copy, Default)]
+#[derive(Debug, Clone, Copy, Default, serde::Serialize, serde::Deserialize)]
 pub(crate) struct ResolveOpts {
     pub keep_worktree: bool,
     /// 마지막 사본 없이 끝낸다(worktree는 남긴다)
@@ -490,7 +497,7 @@ pub(crate) const WAITING: &str = "Waiting for you";
 /// 진행을 보고하는 agent의 새 보고는 `Done`일 때만 검토 대기다(5번 줄, plan §8.85).
 pub(crate) fn thread_group(r: &ThreadRec, pane_exists: bool, agent: Option<&AgentStatus>, now_ms: u64) -> ThreadGroup {
     let delivered_ms = aaa_config::ProjectsSection::default().delivered_working_secs * 1000;
-    thread_group_with(r, pane_exists, agent, now_ms, delivered_ms)
+    thread_group_with(r, pane_exists, agent, now_ms, delivered_ms, STARTING_TIMEOUT_MS)
 }
 
 /// `thread_group`과 같고, brief 뒤 작업 중으로 치는 시간(밀리초)을 설정에서 받는다(`thread_view`)
@@ -500,6 +507,7 @@ pub(crate) fn thread_group_with(
     agent: Option<&AgentStatus>,
     now_ms: u64,
     delivered_ms: u64,
+    starting_ms: u64,
 ) -> ThreadGroup {
     use AgentActivity as A;
     let state = agent.map(|a| a.activity);
@@ -515,12 +523,19 @@ pub(crate) fn thread_group_with(
             && now_ms.saturating_sub(a.progress_at_ms.unwrap_or(0)) < ACTIVITY_TTL_MS
     });
     // 1
+    if r.resolve_pending.is_some() {
+        return if r.error.as_deref().is_some_and(|e| e.starts_with("정리 미완료")) {
+            ThreadGroup::WaitingOnYou
+        } else {
+            ThreadGroup::Working
+        };
+    }
     if r.status == ThreadStatus::Resolved {
         return ThreadGroup::Resolved;
     }
     // 2
     if r.status == ThreadStatus::Starting {
-        return if now_ms.saturating_sub(r.created_at_ms) < STARTING_TIMEOUT_MS {
+        return if now_ms.saturating_sub(r.prepare_started_ms.unwrap_or(r.created_at_ms)) < starting_ms {
             ThreadGroup::Working
         } else {
             ThreadGroup::WaitingOnYou
@@ -899,7 +914,14 @@ impl Host {
     pub(crate) fn thread_view(&self, r: &ThreadRec) -> ThreadView {
         let (pane_exists, agent) = self.thread_live(r);
         let delivered_ms = self.cfg.projects.delivered_working_secs * 1000;
-        let group = thread_group_with(r, pane_exists, agent.as_ref(), aaa_common::util::now_ms(), delivered_ms);
+        let group = thread_group_with(
+            r,
+            pane_exists,
+            agent.as_ref(),
+            aaa_common::util::now_ms(),
+            delivered_ms,
+            (self.cfg.host.thread_prepare_timeout_secs + 60) * 1000,
+        );
         ThreadView {
             project: r.project.clone(),
             id: r.id.clone(),
@@ -910,6 +932,7 @@ impl Host {
             thread_kind: r.kind,
             mission: r.mission.as_ref().map(|m| m.name.clone()),
             status: r.status,
+            cleanup_pending: r.resolve_pending.is_some().then_some(true),
             group,
             brief: r.brief,
             pane: r.pane.clone(),
@@ -1293,15 +1316,36 @@ impl Host {
         })
     }
 
+    fn claim_thread(&self, project: &str, id: &str) -> Result<tokio::sync::OwnedMutexGuard<()>, ErrorBody> {
+        let lock = self
+            .thread_ops
+            .lock()
+            .unwrap()
+            .entry(format!("{project}/{id}"))
+            .or_insert_with(|| Arc::new(tokio::sync::Mutex::new(())))
+            .clone();
+        lock.try_lock_owned().map_err(|_| bad(format!("{id}는 준비·정리 작업 중이다. thread show로 상태를 본다")))
+    }
+
     /// thread 시작: 기록 → agent가 자리 만들기·profile 해석 → 세션 시작 → 보고 감시 → (배경) brief 안내
     pub(crate) async fn thread_start(self: &Arc<Self>, a: StartArgs, actor: &str) -> Result<ThreadView, ErrorBody> {
         self.thread_start_with_mission(a, actor, None).await
     }
     pub(crate) async fn thread_start_with_mission(
         self: &Arc<Self>,
+        a: StartArgs,
+        actor: &str,
+        mission: Option<crate::mission::MissionRun>,
+    ) -> Result<ThreadView, ErrorBody> {
+        self.thread_start_mode(a, actor, mission, false).await
+    }
+
+    pub(crate) async fn thread_start_mode(
+        self: &Arc<Self>,
         mut a: StartArgs,
         actor: &str,
         mission: Option<crate::mission::MissionRun>,
+        background: bool,
     ) -> Result<ThreadView, ErrorBody> {
         let dir = self.project_dir(&a.project)?;
         self.check_active(&a.project)?;
@@ -1348,29 +1392,40 @@ impl Host {
             })
             .map_err(internal)?;
         rec.id = id.clone();
+        let guard = self.claim_thread(&a.project, &id)?;
         self.db.audit(actor, "thread_start", &format!("{}/{id} {} @{}", a.project, a.profile, self.machine_name(&mid)));
         write_atomic(&dir.join("threads").join(format!("{id}.task.md")), a.task.as_bytes()).map_err(internal)?;
         let brief = self.brief(&dir, &rec, &a.task, false);
+        // 세션이 생기기 전에도 웹·coordinator가 준비 중인 thread를 볼 수 있어야 한다.
+        let _ = self.thread_events.send(self.thread_view(&rec));
         self.flow(&rec, "thread_started", Some(format!("threads/{id}.task.md")), rec.title.clone());
 
-        // 정리하지 않는다: `thread restart`가 다시 한다(herdr-projects threads.rs `start`). 기록은 늘 다시 읽어 고친다(ticker가
-        // 그 사이 쓴 `last_group`을 옛 값으로 덮지 않게).
-        if let Err(e) = self.place_and_launch(&conn, &mut rec, brief, resolved_profile, actor).await {
-            if let Ok(r) = self.update_rec(&rec.project, &rec.id, |r| {
-                r.status = ThreadStatus::Failed;
-                r.error = Some(e.message.clone());
-            }) {
-                rec = r;
+        let view = self.thread_view(&rec);
+        let host = self.clone();
+        let actor = actor.to_string();
+        // 별도 task가 소유하므로 CLI·웹 연결의 수명과 관계없이 기록까지 마친다.
+        let job = tokio::spawn(async move {
+            let _guard = guard;
+            if let Err(e) = host.place_and_launch(&conn, &mut rec, brief, resolved_profile, &actor).await {
+                if let Ok(r) = host.update_rec(&rec.project, &rec.id, |r| {
+                    r.status = ThreadStatus::Failed;
+                    r.error = Some(e.message.clone());
+                }) {
+                    rec = r;
+                }
+                host.flow(&rec, "thread_failed", None, e.message.clone());
+                return Err(ErrorBody {
+                    message: format!(
+                        "thread {}를 시작하지 못했다. `aaa thread restart {} {}`로 다시 한다: {}",
+                        rec.id, rec.project, rec.id, e.message
+                    ),
+                    ..e
+                });
             }
-            self.flow(&rec, "thread_failed", None, e.message.clone());
-            let why = format!(
-                "thread {id}를 시작하지 못했다. `aaa thread restart {} {id}`로 다시 한다: {}",
-                a.project, e.message
-            );
-            return Err(ErrorBody { message: why, ..e });
-        }
-        self.spawn_brief(&a.project, &id);
-        let mut view = self.thread_view(&rec);
+            host.spawn_brief(&rec.project, &rec.id);
+            Ok(host.thread_view(&rec))
+        });
+        let mut view = if background { view } else { job.await.map_err(internal)?? };
         view.warnings = warnings;
         Ok(view)
     }
@@ -1523,6 +1578,7 @@ impl Host {
         profile: Option<String>,
         actor: &str,
     ) -> Result<ThreadView, ErrorBody> {
+        let _guard = self.claim_thread(project, id)?;
         let mut rec = self.load(project, id)?;
         // 참고 threads.rs `restart`: 데려온 pane은 사람이 띄운 것이라 같은 것을 다시 띄울 방법을 모른다
         if rec.kind == ThreadKind::Adopted {
@@ -1541,6 +1597,10 @@ impl Host {
             .pane
             .as_deref()
             .is_some_and(|p| self.pane_view_of(p, aaa_proto::DeviceRole::Local).is_some_and(|v| v.state.is_running()));
+        // host가 재시작돼 준비 task가 없으면 agent journal에서 회수한다.
+        if rec.status == ThreadStatus::Starting {
+            rec.status = ThreadStatus::Failed;
+        }
         let plan = restart_plan(&rec, resume, running)?;
         if let Some(p) = &profile {
             if resume {
@@ -1576,9 +1636,21 @@ impl Host {
             };
             let resolved_profile =
                 Some(if let Some(m) = &rec.mission { crate::mission::safe_profile(p, &dir, &m.name) } else { p });
+            rec = self.update_rec(project, id, |r| {
+                r.status = ThreadStatus::Starting;
+                r.prepare_started_ms = Some(aaa_common::util::now_ms());
+                r.error = None;
+            })?;
             let brief = self.brief(&dir, &rec, &task, true);
             self.db.audit(actor, "thread_restart", &format!("{project}/{id} 자리부터{profile_note}"));
-            self.place_and_launch(&conn, &mut rec, brief, resolved_profile, actor).await?;
+            if let Err(e) = self.place_and_launch(&conn, &mut rec, brief, resolved_profile, actor).await {
+                let _ = self.update_rec(project, id, |r| {
+                    r.status = ThreadStatus::Failed;
+                    r.error = Some(e.message.clone());
+                });
+                self.flow(&rec, "thread_failed", None, e.message.clone());
+                return Err(e);
+            }
             self.flow(&rec, "thread_restarted", None, format!("자리부터 다시 만듦{profile_note}"));
             self.spawn_brief(project, id);
             return Ok(self.thread_view(&rec));
@@ -1898,12 +1970,46 @@ impl Host {
         why: ResolveWhy,
         actor: &str,
     ) -> Result<ThreadView, ErrorBody> {
-        let rec = self.load(project, id)?;
-        if rec.status == ThreadStatus::Resolved {
+        let _guard = self.claim_thread(project, id)?;
+        let mut rec = self.load(project, id)?;
+        if rec.status == ThreadStatus::Starting {
+            return Err(bad("준비 중에는 끝낼 수 없다. 준비 결과를 기다린다"));
+        }
+        if rec.status == ThreadStatus::Resolved && rec.resolve_pending.is_none() {
             return Ok(self.thread_view(&rec));
         }
+        let opts = rec.resolve_pending.unwrap_or(opts);
         let conn = self.live_conn(&rec.machine_id)?;
-        if !opts.skip_copy
+        if rec.cwd.is_none() && rec.status == ThreadStatus::Failed && rec.kind != ThreadKind::Adopted {
+            if !self.machine_feature(&rec.machine_id, "thread_journal.v1") {
+                return Err(bad(
+                    "준비 자리를 조회할 수 없는 agent다. agent를 갱신한 뒤 resolve한다(확인 없이 정리 완료로 두지 않는다)",
+                ));
+            }
+            match conn
+                .request(AgentRequest::ThreadPlacement {
+                    project: project.into(),
+                    thread: id.into(),
+                    title: rec.title.clone(),
+                    kind: rec.kind,
+                    repo: rec.repo.clone(),
+                })
+                .await?
+            {
+                AgentResponse::ThreadPlacement { placement: Some(place) } => {
+                    rec = self.update_rec(project, id, |r| {
+                        r.cwd = Some(place.cwd);
+                        r.work_dir = Some(place.work_dir);
+                        r.branch = place.branch;
+                        r.base = place.base;
+                    })?;
+                }
+                AgentResponse::ThreadPlacement { placement: None } => {}
+                other => return Err(internal(format!("준비 자리 응답이 아니다: {other:?}"))),
+            }
+        }
+        if rec.status != ThreadStatus::Resolved
+            && !opts.skip_copy
             && let Some(w) = &rec.work_dir
         {
             let has_report = matches!(
@@ -1924,6 +2030,8 @@ impl Host {
         }
         let rec = self.update_rec(project, id, |r| {
             r.status = ThreadStatus::Resolved;
+            r.resolve_pending = Some(opts);
+            r.error = Some("정리 중: 응답을 기록할 때까지 다시 resolve로 이어갈 수 있다".into());
             r.last_group = Some(ThreadGroup::Resolved);
             r.merged_seen_ms = None;
         })?;
@@ -1941,6 +2049,7 @@ impl Host {
         }
         let _ = conn.request(AgentRequest::ThreadUnwatch { thread: format!("{project}/{id}") }).await;
         let mut notes = Vec::new();
+        let mut cleanup_error = None;
         if adopted {
             notes.push("폴더·branch는 그대로 둔다(데려온 폴더는 사람 것)".to_string());
         }
@@ -1988,8 +2097,8 @@ impl Host {
                     ));
                     notes.extend(c.notes);
                 }
-                Ok(_) => {}
-                Err(e) => notes.push(format!("정리 실패: {}", e.message)),
+                Ok(other) => cleanup_error = Some(internal(format!("정리 응답이 아니다: {other:?}"))),
+                Err(e) => cleanup_error = Some(e),
             }
         }
         // pane 수명과 폴더 보존은 별개다. 이미 끝난 pane·남긴 worktree·adopted도 기록과 layout에서 지운다.
@@ -2013,6 +2122,15 @@ impl Host {
                 Err(e) => format!("pane을 닫지 못했다: {}", e.message),
             });
         }
+        if let Some(e) = cleanup_error {
+            let message = format!("정리 미완료: {}. `aaa thread resolve {project} {id}`로 이어서 한다", e.message);
+            let _ = self.update_rec(project, id, |r| r.error = Some(message.clone()));
+            return Err(ErrorBody { message, ..e });
+        }
+        self.update_rec(project, id, |r| {
+            r.resolve_pending = None;
+            r.error = None;
+        })?;
         self.flow(
             &rec,
             "thread_resolved",
@@ -2051,6 +2169,10 @@ impl Host {
         actor: &str,
     ) -> Result<ThreadView, ErrorBody> {
         let rec = self.load(project, id)?;
+        if rec.resolve_pending.is_some() {
+            return Err(bad("정리 미완료다. 먼저 같은 thread resolve로 마친다"));
+        }
+
         if rec.status != ThreadStatus::Resolved {
             return Err(bad(format!("{id}는 끝낸 thread가 아니다(지금 {})", rec.status.as_str())));
         }
@@ -2199,6 +2321,8 @@ mod tests {
             eval_inputs: vec![],
             eval_batches: 0,
             eval_last_batch_ms: None,
+            resolve_pending: None,
+            prepare_started_ms: None,
             leftover: None,
             created_at_ms: NOW - 3_600_000,
             updated_at_ms: NOW,
@@ -2357,7 +2481,7 @@ mod tests {
         let later = ThreadRec { delivered_at_ms: Some(NOW - 16_000), ..open_thread() };
         assert_eq!(g(&later, None), ThreadGroup::Idle);
         // 창 길이는 설정을 따른다(host.toml `[projects] delivered_working_secs`)
-        assert_eq!(thread_group_with(&t, true, None, NOW, 4_000), ThreadGroup::Idle);
+        assert_eq!(thread_group_with(&t, true, None, NOW, 4_000, STARTING_TIMEOUT_MS), ThreadGroup::Idle);
         // 새 보고가 오면 기다리지 않는다: 검토 대기, 확인하면 쉼
         let reported = with_report(t);
         assert_eq!(g(&reported, None), ThreadGroup::ReadyForReview);

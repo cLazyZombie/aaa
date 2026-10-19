@@ -968,7 +968,7 @@ function ThreadRow({ t, online, machine, twoLine, ...props }: SidebarProps & { t
             <span className="workspace-copy">
               <span className="workspace-name">{title}</span>
               <span className={`worktree-workspace-label thread-state is-${t.group}`} data-testid={`thread-state-${t.project}-${t.id}`}>
-                {GROUP_WORD[t.group] ?? t.group}
+                {t.status === "starting" ? "준비 중" : t.cleanup_pending ? "정리 중" : GROUP_WORD[t.group] ?? t.group}
               </span>
             </span>
           )}

@@ -5,6 +5,12 @@ schema = 1
 [host]
 # Agent link(TCP+TLS 1.3) listen 주소. 원격 agent가 여기로 연결한다. 빈 문자열이면 원격을 받지 않는다.
 agent_listen = "0.0.0.0:7430"
+# host→agent 요청 상한(초, 1~86400). 생략하면 준비·정리 10분, 보고 목록·파일 읽기 2분.
+# 준비의 fetch·checkout과 정리의 worktree remove에도 이 상한을 전달한다. 다른 짧은 요청은 15초다.
+thread_prepare_timeout_secs = 600
+thread_cleanup_timeout_secs = 600
+file_request_timeout_secs = 120
+
 
 [web]
 # host 웹은 loopback에서만 연다. 다른 기기에는 `aaa web publish`(tailscale serve HTTPS)로 연다.

@@ -523,6 +523,9 @@ enum ThreadCmd {
         /// TASKS.md의 task 제목. owner가 profile·machine 기본값이 되고 메모가 할 일에 붙는다.
         #[arg(long)]
         from_task: Option<String>,
+        /// 준비는 host 배경 작업으로 계속하고 바로 thread ID·준비 중 상태를 돌려준다
+        #[arg(long)]
+        background: bool,
         /// 시작한 뒤 작업 요약을 쓴다(`aaa thread summary --file`과 같다, `-`면 표준 입력)
         #[arg(long)]
         summary_file: Option<String>,
@@ -1315,6 +1318,7 @@ fn run(cli: Cli) -> Result<ExitCode> {
                     task_file,
                     from_task,
                     summary_file,
+                    background,
                 } => {
                     if from_task.is_none() && (title.is_none() || task_file.is_none()) {
                         anyhow::bail!("--title·--task-file이 필요하다(TASKS.md task로 시작하면 --from-task)");
@@ -1326,6 +1330,7 @@ fn run(cli: Cli) -> Result<ExitCode> {
                     let summary = summary_file.as_deref().map(|f| file_text(f, "요약 파일")).transpose()?;
                     let kind = kind.map(|k| if k == "dir" { ThreadKind::Dir } else { ThreadKind::Worktree });
                     let req = FrontRequest::ThreadStart {
+                        background,
                         project: project.clone(),
                         title: title.unwrap_or_default(),
                         machine,
@@ -2565,6 +2570,10 @@ fn task_text(file: Option<&str>) -> Result<String> {
 }
 
 fn render_thread(s: &mut String, t: &aaa_proto::ThreadView) {
+    if t.status == aaa_proto::ThreadStatus::Starting {
+        let _ = writeln!(s, "준비 중: {} (thread show·events에서 결과를 확인한다)", t.id);
+    }
+
     use std::fmt::Write as _;
     for w in &t.warnings {
         let _ = writeln!(s, "경고: {w}");

@@ -214,7 +214,8 @@ async fn serve(
     }))
     .await?;
     let generation = host.next_gen();
-    let conn = AgentConn::new(tx.clone(), generation);
+    let mut conn = AgentConn::new(tx.clone(), generation);
+    conn.timeouts = host.cfg.host.clone();
     let pending = conn.pending.clone();
     host.agent_connected(&hello, local, conn);
     if local {

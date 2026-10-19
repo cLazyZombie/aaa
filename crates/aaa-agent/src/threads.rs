@@ -19,6 +19,9 @@ use sha2::{Digest, Sha256};
 /// report.md 본문 상한(이보다 크면 회수하지 않는다)
 pub const MAX_REPORT_BYTES: u64 = 4 << 20;
 
+#[path = "threads/preparation.rs"]
+mod preparation;
+
 #[derive(Debug, Clone, Default)]
 pub struct ThreadsConfig {
     pub work_root: PathBuf,
@@ -156,7 +159,13 @@ pub fn resolve(name: &str, p: &Profile) -> Result<Launch> {
 pub(crate) async fn git(dir: &Path, args: &[&str], timeout: Duration) -> Result<String> {
     let out = tokio::time::timeout(
         timeout,
-        tokio::process::Command::new("git").arg("-C").arg(dir).args(args).stdin(std::process::Stdio::null()).output(),
+        tokio::process::Command::new("git")
+            .arg("-C")
+            .arg(dir)
+            .args(args)
+            .stdin(std::process::Stdio::null())
+            .kill_on_drop(true)
+            .output(),
     )
     .await
     .with_context(|| format!("git {} 시간 초과", args.join(" ")))?
@@ -183,7 +192,11 @@ async fn exclude_work_dirs(repo: &Path) -> Result<()> {
     Ok(())
 }
 
-pub async fn prepare(cfg: &ThreadsConfig, p: ThreadPrepare) -> Result<ThreadReady> {
+pub async fn prepare(cfg: &ThreadsConfig, p: ThreadPrepare, wait: Duration) -> Result<ThreadReady> {
+    preparation::prepare(cfg, p, wait).await
+}
+
+async fn prepare_inner(cfg: &ThreadsConfig, p: ThreadPrepare, wait: Duration) -> Result<ThreadReady> {
     if !valid_project(&p.project) || !valid_thread(&p.thread) {
         bail!("프로젝트·thread 이름 형식이 아니다: {} {}", p.project, p.thread);
     }
@@ -192,62 +205,7 @@ pub async fn prepare(cfg: &ThreadsConfig, p: ThreadPrepare) -> Result<ThreadRead
         None => with_safety(cfg, find_profile(cfg, &p.profile)?, p.safety.as_ref()),
     };
     let launch = resolve(&p.profile, &profile)?;
-    let (cwd, branch, base) = match p.kind {
-        ThreadKind::Worktree => {
-            let repo = PathBuf::from(p.repo.as_deref().context("worktree thread에는 repo 경로가 필요하다")?);
-            let top = PathBuf::from(git(&repo, &["rev-parse", "--show-toplevel"], GIT_T).await?);
-            let has_origin = git(&top, &["remote"], GIT_T).await?.lines().any(|l| l == "origin");
-            if has_origin {
-                // 원격이 늦어도 시작은 막지 않는다(로컬 ref로 진행)
-                if let Err(e) = git(&top, &["fetch", "--quiet", "origin"], Duration::from_secs(15)).await {
-                    tracing::warn!("fetch 실패(로컬 ref로 진행): {e:#}");
-                }
-            }
-            let base = match &p.base {
-                Some(b) => b.clone(),
-                None => match git(&top, &["rev-parse", "--abbrev-ref", "origin/HEAD"], GIT_T).await {
-                    Ok(b) if has_origin && !b.is_empty() && b != "origin/HEAD" => b,
-                    _ => match git(&top, &["symbolic-ref", "--short", "HEAD"], GIT_T).await {
-                        Ok(b) => b,
-                        Err(_) => git(&top, &["rev-parse", "HEAD"], GIT_T).await?,
-                    },
-                },
-            };
-            let s = slug(&p.title);
-            let branch = if s.is_empty() {
-                format!("aaa/{}/{}", p.project, p.thread)
-            } else {
-                format!("aaa/{}/{}-{s}", p.project, p.thread)
-            };
-            // herdr-projects `restart_plan` (b): 기록된 worktree가 없는데 branch가 있으면 반쯤 만든 것이다
-            if git(&top, &["rev-parse", "--verify", "--quiet", &format!("refs/heads/{branch}")], GIT_T).await.is_ok() {
-                bail!(
-                    "{}: 기록된 worktree가 없는데 branch `{branch}`가 이미 있다. 반쯤 만든 worktree는 사람이 봐야 한다: \
-                     `aaa thread resolve` 뒤 새 thread를 시작한다",
-                    p.thread
-                );
-            }
-            let name = top.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_else(|| "repo".into());
-            let path = cfg.work_root.join(name).join(format!("{}-{}", p.project, p.thread));
-            if path.exists() {
-                bail!("worktree 자리가 이미 있다: {}", path.display());
-            }
-            std::fs::create_dir_all(path.parent().unwrap())?;
-            let path_s = path.to_string_lossy().to_string();
-            git(&top, &["worktree", "add", "-b", &branch, &path_s, &base], Duration::from_secs(120)).await?;
-            exclude_work_dirs(&top).await?;
-            (path, Some(branch), Some(base))
-        }
-        ThreadKind::Dir => {
-            let path = cfg.work_root.join(&p.project).join(&p.thread);
-            if path.exists() {
-                bail!("작업 폴더가 이미 있다: {}", path.display());
-            }
-            std::fs::create_dir_all(&path)?;
-            (path, None, None)
-        }
-        ThreadKind::Adopted => bail!("데려온 thread는 자리를 만들지 않는다(`thread adopt`)"),
-    };
+    let (cwd, branch, base) = preparation::place(cfg, &p, wait).await?;
     let work_dir = cwd.join(".aaa").join(format!("{}-{}", p.project, p.thread));
     std::fs::create_dir_all(work_dir.join("library"))?;
     std::fs::write(
@@ -576,13 +534,16 @@ pub fn write_inbox(work_dir: &str, rel: &str, data: &[u8]) -> Result<()> {
 /// 있다) worktree가 지워졌을 때만 `delete_branch`로 지운다. `uncopied`(마지막 사본에 빠진 것이 있다)면 폴더가 남아 있는 한
 /// worktree를 남긴다: 작업 폴더(`.aaa/`)는 git이 무시하는 파일이라 force 없는 `worktree remove`도 지운다. host는 그때
 /// `keep_worktree`도 켜서 보낸다(옛 agent도 지우지 않게).
-pub async fn cleanup(
+pub use preparation::{cleanup_recorded, placement};
+
+async fn cleanup(
     repo: Option<&str>,
     cwd: &str,
     branch: Option<&str>,
     merged_head: Option<&str>,
     keep_worktree: bool,
     uncopied: bool,
+    wait: Duration,
 ) -> Result<Cleanup> {
     let mut c = Cleanup { worktree_removed: false, branch_deleted: false, notes: Vec::new() };
     let Some(repo) = repo else {
@@ -601,7 +562,7 @@ pub async fn cleanup(
     } else if uncopied {
         c.notes.push("worktree를 남겼다: 마지막 사본에 집에 오지 않은 것이 있다(`--discard-uncopied`면 지운다)".into());
     } else {
-        match git(&repo, &["worktree", "remove", cwd], Duration::from_secs(60)).await {
+        match git(&repo, &["worktree", "remove", cwd], wait).await {
             Ok(_) => c.worktree_removed = true,
             // force는 쓰지 않는다: 고친 파일이 있으면 남는다
             Err(e) => c.notes.push(format!("worktree를 남겼다: {e:#}")),
@@ -615,7 +576,10 @@ pub async fn cleanup(
                     c.branch_deleted = true;
                     c.notes.push(format!("branch {branch}를 지웠다(PR이 병합됐다)"));
                 }
-                Ok(false) => c.notes.push(format!("branch {branch}는 이미 지워졌다")),
+                Ok(false) => {
+                    c.branch_deleted = true;
+                    c.notes.push(format!("branch {branch}는 이미 지워졌다"));
+                }
                 Err(e) => c.notes.push(format!("branch {branch}를 남겼다: {e:#}")),
             },
             (None, _) => c.notes.push(format!("branch {branch}를 남겼다: PR이 병합되지 않았다")),

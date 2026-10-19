@@ -5360,3 +5360,15 @@ primary 근거:
   실제 JSONL의 사람 글·enqueue와 별도 수신 fingerprint를 쓴다. 운영 host·agent 교체는 착지 뒤 coordinator가 수행한다.
 
 - 실제 Codex steering 뒤 `<turn_aborted>` 내부 안내가 사람 말로 보이던 점도 고쳤다. 환경·시스템이 끼운 글과 같은 parser 경계에서 제외한다.
+
+### 8.265 thread 준비·정리의 긴 상한과 연결 유실 복구(10-19, t-0412)
+
+- 사용자 결정: 준비와 정리 기본 10분, host.toml 키로 조정. `[host] thread_prepare_timeout_secs = 600`, `thread_cleanup_timeout_secs = 600`, `file_request_timeout_secs = 120`(보고 목록·파일 조각). 모두 1~86400초. 나머지 짧은 op는 기존 15초, 명령·PR·배포처럼 이미 별도 상한인 호출은 그대로다.
+- 참고 herdr-projects 0.2.35 `threads.rs` `place_and_brief`는 placement 직후 기록하고 `clean`은 이미 없는 worktree를 이어 정리한다. aaa는 원격 agent의 연결과 작업 수명이 달라 agent journal을 먼저 쓴다. 준비는 연결이 끊겨도 마치며, 다시 요청하면 같은 자리에서 직렬화하고 journal·Git 신원을 대조한다. 변경 파일은 덮거나 force로 지우지 않는다. journal 이전의 고아도 정확한 예상 경로·repo·branch·기준 commit과 깨끗한 상태가 모두 맞으면 회수한다.
+- `thread start --background`는 Starting을 바로 돌려주고 host task가 세션 시작·실패 기록까지 마친다. 기본 동기 호출은 유지한다. `thread show`·웹은 「준비 중」, 묶음의 준비 확인 시한은 설정한 준비 상한+세션 시작 여유 60초다. host 재시작으로 task가 없어진 Starting은 restart로 회수한다.
+- resolve는 정리 의도를 먼저 저장한다. 연결 유실로 응답을 잃으면 Resolved여도 같은 resolve가 정리를 이어서 하며 완료 사건은 결과를 기록한 뒤 한 번만 낸다. 원래의 `keep_worktree`·`skip_copy`·`discard_uncopied`를 유지한다. agent 정리도 journal과 존재 여부로 재진입한다. 늦은 응답은 요청을 받은 연결로만 보낸다(다시 연결한 c0 응답에 섞지 않는다).
+- 운영 host·agent 교체·재시작은 착지와 별도이며 이 thread에서는 하지 않는다.
+
+- finish 리뷰 보완: 준비 응답 유실 뒤 경로 없는 Failed를 곧바로 resolve하면 journal의 자리가 고아로 남던 경로를 수정했다. `thread_journal.v1`의 읽기 전용 `thread_placement`는 준비와 같은 lock을 기다린 뒤 project·thread·repo·branch·예상 경로가 맞는 기록만 반환한다. host는 이 경로를 저장하고 정리한다. 옛 agent에서 조회할 수 없으면 완료로 확정하지 않는다.
+
+구판 journal 없는 예상 자리가 남아 있으면 조회는 없음으로 확정하지 않고 명시적으로 거부한다. 변경 없는 자리는 안내한 `thread restart`가 소유권을 확인해 회수하고, 그 뒤 resolve하면 정리된다. 변경·다른 Git 신원은 기존대로 보존한다.
