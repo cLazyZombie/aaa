@@ -1603,8 +1603,14 @@ impl Host {
                 self.check_running(&id)?;
                 let conn = self.live_conn(&mid)?;
                 self.lease_use(&id, f);
-                let data = aaa_proto::B64(self.ctrl_enter_data(&id));
-                conn.request(AgentRequest::Input { session: id, data }).await.map(|_| FrontResponse::Done)
+                let data = self.ctrl_enter_data(&id);
+                // steering할 수 없는 상태(입력 모름·쉬는 Codex 등)는 아무것도 보내지 않는다(plan §8.239 후속)
+                if data.is_empty() {
+                    return Ok(FrontResponse::Done);
+                }
+                conn.request(AgentRequest::Input { session: id, data: aaa_proto::B64(data) })
+                    .await
+                    .map(|_| FrontResponse::Done)
             }
             // herdr 서버가 client의 붙여넣기를 그 pane 모드대로 다시 감싸는 것과 같다(`KeyModes::paste`: 켰으면 감싸고 ESC는 뺀다)
             FrontRequest::PanePaste { pane, text } => {

@@ -28,6 +28,8 @@ pub(crate) const SHARED_SETTING_KEYS: &[&str] = &[
     "usageHidden",
     // aaa: 웹 목록 pane 줄 순서(참고는 herdr workspace 순서라 herdr 서버에 있다, plan §8.196)
     "paneOrder",
+    // aaa: 웹 사이드바 폭 px(참고 herdr-web-ui는 기기 localStorage, plan §8.257)
+    "sidebarWidth",
 ];
 pub(crate) const MAX_PINS: usize = 500;
 const MAX_PIN_LENGTH: usize = 300;
@@ -193,6 +195,16 @@ mod tests {
         assert_eq!(serde_json::from_str::<serde_json::Value>(&saved).unwrap(), want);
         // 다시 띄우면 저장된 문서에서 시작한다
         assert_eq!(doc(&parse(Some(&saved))), want);
+    }
+
+    /// 웹 사이드바 폭(plan §8.257)이 공유 이름으로 남고, 되돌림(null)도 그대로 든다
+    #[test]
+    fn keeps_the_web_sidebar_width() {
+        let store = Store::new(parse(None));
+        store.set(change(json!({ "settings": { "sidebarWidth": 360 } })), ok).unwrap();
+        assert_eq!(store.get().settings.get("sidebarWidth"), Some(&json!(360)));
+        store.set(change(json!({ "settings": { "sidebarWidth": null } })), ok).unwrap();
+        assert_eq!(store.get().settings.get("sidebarWidth"), Some(&json!(null)));
     }
 
     #[test]

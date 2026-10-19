@@ -58,7 +58,7 @@ import { fileUriPath, hyperlinkFilter, isWebLink, terminalFileLinkProvider } fro
 import { isAppShortcut } from "./herdr/shortcuts.ts";
 import { disposeAfterPendingFrame } from "./herdr/terminalDispose.ts";
 import { pasteText } from "./pasteText.ts";
-import { readTerminalDraft, writeTerminalDraft } from "./herdr/terminalDraft.ts";
+import { readTerminalDraft } from "./herdr/terminalDraft.ts";
 import type { PaneControls } from "./actions";
 import { lensesFor, pickedLens, rememberLens } from "./paneLens";
 import { WebLinksAddon } from "@xterm/addon-web-links";
@@ -462,21 +462,17 @@ export function TermView({
     deliver(data, { modifiedEnter });
   };
 
-  // 판정은 host의 detection 입력줄이 한다. 입력줄에 아직 보내지 않은 글이 있으면 그 줄에 줄바꿈을 넣는다.
-  const pressCtrlEnter = (): boolean | string => {
+  // steering 판정은 host의 detection 입력줄이 한다(plan §8.239 후속: 줄바꿈 없음, 줄바꿈은 Shift+Enter). 웹 입력창(입력줄·대화
+  // 입력창)에 글이 있으면 그 입력창이 Ctrl+Enter로 그 글을 steering으로 보낸다(`sendTerminalLine` steer, 사용자 10-19 15:3x).
+  // 여기는 빈 입력창·터미널·키 막대의 Ctrl+Enter다. 키 막대가 누른 Ctrl+Enter는 입력줄에 남은 글을 건드리지 않고 아무것도 보내지
+  // 않는다. 안내 줄은 없앴다(사용자 「어떻게 해라고 보여주는건 좀 과한것 같아」). `chat`: 대화 입력창이 불렀다(입력줄은 숨었다)
+  const pressCtrlEnter = (chat = false): boolean | string => {
     if (!canControlRef.current || readonlyRef.current || composingTermRef.current || commitPendingRef.current || lineComposingRef.current) return false;
     if (!draftIsEmpty(draftRef.current)) {
       setInputError(HELD_FIRST);
       return HELD_FIRST;
     }
-    if (inputLineRef.current) {
-      const owner = `${pane.machine}:${pane.id}`;
-      const line = readTerminalDraft(owner);
-      if (line.length > 0) {
-        writeTerminalDraft(owner, `${line}\n`);
-        return true;
-      }
-    }
+    if (!chat && inputLineRef.current && readTerminalDraft(`${pane.machine}:${pane.id}`).length > 0) return false;
     const ws = wsRef.current;
     if (!ws || ws.readyState !== WebSocket.OPEN) return false;
     autoFit.current(true);
@@ -758,36 +754,9 @@ export function TermView({
     window.addEventListener("mousemove", onMouseMove, { capture: true });
     window.addEventListener("blur", onWindowBlur);
     window.addEventListener("mouseup", onMouseUp);
-    // herdr client의 이미지 bridge: front 그림이 있으면 올리고, 없으면 원래 ^V를 보낸다.
-    // Mac Ctrl+V에는 paste 사건이 없으므로 키 동작 안에서 Async Clipboard를 읽는다. 텍스트 표현은 읽지 않는다.
-    let imagePastePending = false;
-    const imagePasteReady = () => !disposed && !readonlyRef.current && !chatViewRef.current && presentRef.current
-      && document.activeElement === term.textarea;
-    const pasteControlImage = async () => {
-      imagePastePending = true;
-      try {
-        if (typeof navigator.clipboard?.read !== "function") throw new Error("clipboard read 없음");
-        const items = await navigator.clipboard.read();
-        if (!imagePasteReady()) return;
-        const files: File[] = [];
-        for (const item of items) {
-          // 한 항목의 여러 표현은 그림 하나다. PNG를 우선하고 나머지는 기존 업로드의 형식 검사를 따른다.
-          const type = item.types.find((t) => t === "image/png") ?? item.types.find((t) => t.startsWith("image/"));
-          if (type) files.push(new File([await item.getType(type)], `clipboard.${type.slice(6)}`, { type }));
-        }
-        if (!imagePasteReady()) return;
-        setClipNote(null);
-        if (files.length > 0) uploadRef.current(files);
-        else deliver("\x16", { chord: true });
-      } catch {
-        if (!imagePasteReady()) return;
-        noteClipboard("그림을 읽지 못했다. 그림은 Cmd+V로 붙여 넣을 수 있다.");
-        deliver("\x16", { chord: true });
-      } finally {
-        imagePastePending = false;
-      }
-    };
-    // Windows·Linux: Ctrl+V는 브라우저 붙여넣기에 맡긴다. Mac 데스크톱의 수식 없는 Ctrl+V만 그림 bridge다.
+    // Ctrl+V는 브라우저 붙여넣기에 맡긴다(herdr-web-ui PaneTerminal 610~660, ^V를 pane에 보내지 않는다). Mac 그림은 Cmd+V의
+    // paste 사건이 기존 첨부로 보낸다: Ctrl+V에서 Async Clipboard를 읽던 것은 Safari 붙여넣기 확인 말풍선 때문에 없앴다(plan §8.232 후속).
+    // 선택이 있을 때 Ctrl+C는 복사한다(없으면 ^C)
     term.attachCustomKeyEventHandler((event) => {
       // 앱 단축키는 앱 몫이다(PaneTerminal 621줄): 창의 capture 처리기(herdr/shortcuts.ts useShortcuts)는 브라우저 기본만 막으므로
       // xterm이 그 키를 pane에 보내지 않게 먼저 거른다
@@ -833,15 +802,7 @@ export function TermView({
       }
       if (!event.ctrlKey || event.altKey || event.metaKey) return true;
       const key = clipboardKey(event.key, event.code);
-      if (key === "v") {
-        if (IS_MAC && navigator.maxTouchPoints === 0 && !event.shiftKey) {
-          event.preventDefault();
-          if (event.type === "keydown" && !event.repeat && !imagePastePending && imagePasteReady()
-              && !composingTermRef.current && !commitPendingRef.current && !event.isComposing && event.keyCode !== 229)
-            void pasteControlImage();
-        }
-        return false;
-      }
+      if (key === "v") return false;
       if (key === "c" && term.hasSelection()) {
         if (event.type === "keydown") {
           event.preventDefault();
@@ -882,7 +843,7 @@ export function TermView({
     const otherKeysSet = otherKeys("m");
     const otherKeysOff = otherKeys("n");
     // xterm.js는 Shift+Enter·Ctrl+Enter를 그냥 Enter로 친다: Shift+Enter는 Alt+Enter 줄바꿈으로, Ctrl+Enter는 host가
-    // 감지 입력줄로 정한다. macOS Cmd+⌫는 줄 지우기(Ctrl+U). onKey는 IME 확정 글 뒤, 그 키의 onData 바로 앞에 온다.
+    // 감지 입력줄로 steering을 정한다(줄바꿈 없음). macOS Cmd+⌫는 줄 지우기(Ctrl+U). onKey는 IME 확정 글 뒤, 그 키의 onData 바로 앞에 온다.
     let enterAs: string | null = null;
     let ctrlEnter = false;
     let ctrlEnterRepeat = false;
@@ -1767,7 +1728,9 @@ export function TermView({
   // 한 덩어리로 보내면 Codex는 붙여넣기로 보고 Enter를 줄바꿈으로 넣는다(실측). 여러 줄은 터미널 붙여넣기 모양이다:
   // 프로그램이 bracketed paste를 켰으면 감싸고, 줄바꿈은 CR로 바꾼다(xterm.js paste, 참고 `composerPayload`).
   // 그래야 Claude·Codex 입력창이 줄마다 제출하지 않고 한 덩어리로 받는다. 입력줄 글은 유지 키를 붙이지 않는다.
-  const sendTerminalLine = (value: string): false | Promise<true | string> => {
+  // `steer`: 입력창의 Ctrl+Enter다. host가 글 뒤 Enter 대신 steering 키를 고른다(작업 중인 Claude는 sendNow, 그 밖은 Enter).
+  // 잠금·전달 확인·멈춤은 보통 보내기와 같다(plan §8.247)
+  const sendTerminalLine = (value: string, steer = false): false | Promise<true | string> => {
     const term = termRef.current;
     const ws = wsRef.current;
     if (!term || readonlyRef.current || !ws || ws.readyState !== WebSocket.OPEN) return false;
@@ -1784,8 +1747,8 @@ export function TermView({
       if (term.modes.bracketedPasteMode) data = `\x1b[200~${data}\x1b[201~`;
     }
     const id = ++submitIdRef.current;
-    trace("submit", { id, data });
-    ws.send(JSON.stringify({ t: "submit", id, data } satisfies TermClientMsg));
+    trace("submit", { id, data, steer });
+    ws.send(JSON.stringify({ t: "submit", id, data, steer } satisfies TermClientMsg));
     term.scrollToBottom();
     // 확인되면 입력줄이 보낸 앞부분만 지운다(그 사이 친 글은 남는다). 거절이면 이유, 끊기거나 답이 없으면 확인 못 함
     return new Promise((resolve, reject) => {
@@ -2085,7 +2048,7 @@ export function TermView({
             onComposing={setLineComposing}
             onSend={sendTerminalLine}
             onEnter={pressEnter}
-            onCtrlEnter={pressCtrlEnter}
+            onCtrlEnter={() => pressCtrlEnter()}
             onFocus={() => autoFit.current(true)}
             onImage={() => fileRef.current?.click()}
             onPaste={(e) => {
@@ -2129,6 +2092,7 @@ export function TermView({
           messages={chatMessages}
           onInspect={() => setChatView(false)}
           onSend={sendTerminalLine}
+          onCtrlEnter={() => pressCtrlEnter(true)}
           onCancelSend={cancelSubmit}
           onSent={() => setChatSent((n) => n + 1)}
         />

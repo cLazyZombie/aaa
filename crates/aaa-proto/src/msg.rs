@@ -1444,7 +1444,7 @@ pub enum FrontRequest {
         pane: String,
         data: B64,
     },
-    /// 웹의 Ctrl+Enter. host가 감지 입력줄로 줄바꿈/steering을 정한다. 권한·입력 순서는 PaneInput과 같다.
+    /// 웹의 Ctrl+Enter. host가 감지 입력줄로 steering 키를 정한다(줄바꿈 없음, 작업 중일 때만, 모르면 보내지 않음). 권한·입력 순서는 PaneInput과 같다.
     PaneCtrlEnter {
         pane: String,
     },
@@ -2363,6 +2363,10 @@ pub enum TermClientMsg {
     Submit {
         id: u32,
         data: String,
+        /// 입력창의 Ctrl+Enter(사용자 10-19 15:3x, plan §8.239 후속): 글 뒤 Enter 대신 host가 steering 키를 고른다(작업 중인 Claude는
+        /// sendNow, 그 밖은 Enter). 옛 host는 이 칸을 버려 보통 보내기가 된다
+        #[serde(default)]
+        steer: bool,
     },
     /// 진행 중인 `Submit`을 멈춰 달라(plan §8.247): 전달 전에 막혔을 때 입력창이 빠져나가는 길이다.
     /// host는 submit을 기다리는 동안에도 이것은 바로 읽고 `SubmitCancelled`로 답한다(다른 frame은 submit 뒤 차례대로).

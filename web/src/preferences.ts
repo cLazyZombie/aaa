@@ -4,6 +4,7 @@
 // 참고 SHARED_SETTING_KEYS 가운데 aaa에 아직 없는 이름(language·agentMarks 등)은 host가 그대로 들고 있고 여기서는 읽지 않는다.
 import { SHARED_SETTING_KEYS, type PreferencesChange, type SharedPreferences, type SharedSettingKey } from "./herdr/preferences.ts";
 import { sanitizeAppearance, type Appearance } from "./theme.ts";
+import { parseSidebarWidth } from "./sidebarWidth.ts";
 
 /** 사용량 막대 설정(참고 settings.ts `showUsage`·`usageCount`·`usageGlance`·`usageOrder`·`usageHidden`) */
 export type UsageCount = "used" | "left";
@@ -76,6 +77,8 @@ export function sanitizeChatShared(raw: unknown): ChatShared {
  */
 export interface SidebarShared {
   paneOrder: string[];
+  /** 사람이 끈 사이드바 폭 px(sidebarWidth.ts). null이면 기본 폭 */
+  sidebarWidth: number | null;
 }
 export const PANE_ORDER_MAX = 500;
 const PANE_KEY_MAX = 300;
@@ -83,7 +86,7 @@ const PANE_KEY_MAX = 300;
 export function sanitizeSidebarShared(raw: unknown): SidebarShared {
   const r = raw && typeof raw === "object" && !Array.isArray(raw) ? (raw as Record<string, unknown>) : {};
   const keys = [...new Set(strings(r.paneOrder).filter((key) => key.length > 0 && key.length <= PANE_KEY_MAX))];
-  return { paneOrder: keys.slice(-PANE_ORDER_MAX) };
+  return { paneOrder: keys.slice(-PANE_ORDER_MAX), sidebarWidth: parseSidebarWidth(r.sidebarWidth) };
 }
 
 /** 보일 빠른 답(참고 `quickReplyButtons`): 빈 것은 뺀다 */
@@ -94,7 +97,7 @@ export function quickReplyButtons(settings: Pick<ChatShared, "quickReplies">): s
 /** aaa가 가진 공유 설정. 나머지(다크·라이트 짝 팔레트·상태 표시 등)는 참고처럼 기기 것이다(SETTING_SCOPE "device") */
 export type SharedLocal = Pick<Appearance, "theme" | "palette" | "sidebarRows" | "agentOrder"> & UsageSettings & ChatShared & SidebarShared;
 
-const LOCAL_KEYS = ["theme", "palette", "sidebarRows", "agentOrder", "showUsage", "usageCount", "usageGlance", "usageOrder", "usageHidden", "showThinking", "autoSendQueued", "quickReplies", "showQuickReplies", "paneOrder"] as const satisfies readonly (SharedSettingKey & keyof SharedLocal)[];
+const LOCAL_KEYS = ["theme", "palette", "sidebarRows", "agentOrder", "showUsage", "usageCount", "usageGlance", "usageOrder", "usageHidden", "showThinking", "autoSendQueued", "quickReplies", "showQuickReplies", "paneOrder", "sidebarWidth"] as const satisfies readonly (SharedSettingKey & keyof SharedLocal)[];
 
 /** 참고 `sanitizeSettings`: 읽을 수 있는 값만 남긴다. 모르는 이름은 결과에 없다 */
 export function sanitizeShared(raw: Record<string, unknown>): SharedLocal {

@@ -23,11 +23,11 @@ export interface TerminalInputProps {
   /** 입력줄 조합 중: 바로 입력으로 바꾸는 단추만 기다린다 */
   onComposing?: (active: boolean) => void;
   connected: boolean;
-  /** true: 보냄, 줄을 비운다. 글: 글을 두고 이유를 보인다. false: 못 보냄(끊김) */
-  onSend: (text: string) => false | Promise<true | string>;
+  /** true: 보냄, 줄을 비운다. 글: 글을 두고 이유를 보인다. false: 못 보냄(끊김). `steer`는 Ctrl+Enter로 보낸 글이다 */
+  onSend: (text: string, steer?: boolean) => false | Promise<true | string>;
   /** 빈 줄 보내기: Enter만. true: 보냄, false: 못 보냄(끊김), 글: 못 보낸 이유 */
   onEnter: () => boolean | string;
-  /** 빈 입력줄의 Ctrl+Enter는 host의 공통 판정으로 보낸다. 글이 있으면 이 입력줄에 줄바꿈이다. */
+  /** 빈 줄의 Ctrl+Enter는 host의 공통 steering 판정이다(줄바꿈 없음). 글: 못 보낸 이유. 글이 있는 줄은 그 글을 steering으로 보낸다 */
   onCtrlEnter?: () => boolean | string;
   /** 입력줄이 focus를 얻음 */
   onFocus?: () => void;
@@ -51,6 +51,8 @@ interface SendAttempt {
   deadline: number;
   /** 누를 때 줄에 글이 있었다: 확정이 비면 아무것도 보내지 않는다(Enter도 아니다) */
   textSend: boolean;
+  /** Ctrl+Enter로 누른 보내기(steering) */
+  steer: boolean;
 }
 
 export function TerminalInput({ owner, connected, onSend, onEnter, onCtrlEnter, onComposing, onFocus, onImage, onPaste }: TerminalInputProps) {
@@ -94,7 +96,7 @@ export function TerminalInput({ owner, connected, onSend, onEnter, onCtrlEnter, 
     clearPendingSend();
     setNote(DISCONNECTED);
   }, [clearPendingSend, connected]);
-  const sendRef = useRef<(deferred: boolean) => void>(() => {});
+  const sendRef = useRef<(deferred: boolean, steer?: boolean) => void>(() => {});
 
   /** 누른 때의 기한까지 확정을 기다린다. 그동안 「글자를 마치는 중…」 */
   const awaitCommit = useCallback((current: SendAttempt) => {
@@ -115,10 +117,11 @@ export function TerminalInput({ owner, connected, onSend, onEnter, onCtrlEnter, 
   }, []);
 
   const send = useCallback(
-    (deferred = false) => {
+    (deferred = false, ctrl = false) => {
       // 미룬 보내기는 아직 기다리는 누름에만 돈다: 끊김·기한·비운 줄이 거뒀다
       const current = attempt.current;
       if (deferred && current === null) return;
+      const steer = deferred ? current!.steer : ctrl;
       if (!connected || terminalDraftSending(owner)) {
         // 확정을 기다리던 보내기가 「글자를 마치는 중…」을 남기면 안 된다
         if (deferred) {
@@ -134,7 +137,7 @@ export function TerminalInput({ owner, connected, onSend, onEnter, onCtrlEnter, 
           return;
         }
         clearPendingSend();
-        const tapped: SendAttempt = { timer: null, deadline: Date.now() + COMMIT_WAIT_MS, textSend: readTerminalDraft(owner).length > 0 };
+        const tapped: SendAttempt = { timer: null, deadline: Date.now() + COMMIT_WAIT_MS, textSend: readTerminalDraft(owner).length > 0, steer };
         attempt.current = tapped;
         const element = box.current;
         if (element !== null && document.activeElement === element) {
@@ -157,7 +160,7 @@ export function TerminalInput({ owner, connected, onSend, onEnter, onCtrlEnter, 
         else if (!entered) setNote(DISCONNECTED);
         return;
       }
-      const sent = onSend(draft);
+      const sent = onSend(draft, steer);
       if (sent === false) {
         setNote(DISCONNECTED);
         return;
@@ -184,16 +187,14 @@ export function TerminalInput({ owner, connected, onSend, onEnter, onCtrlEnter, 
     if (event.ctrlKey && !event.altKey && !event.metaKey && onCtrlEnter) {
       event.preventDefault();
       if (!connected || sending || event.repeat) return;
-      const draft = readTerminalDraft(owner);
-      if (draft.length > 0) {
-        const element = event.currentTarget;
-        const start = element.selectionStart;
-        setText(`${draft.slice(0, start)}\n${draft.slice(element.selectionEnd)}`);
-        requestAnimationFrame(() => element.setSelectionRange(start + 1, start + 1));
-      } else {
-        const result = onCtrlEnter();
-        if (typeof result === "string") setNote(result);
+      // 줄바꿈은 Shift+Enter뿐이다(plan §8.239 후속). 글이 있으면 그 글을 steering으로 보낸다(사용자 10-19 15:3x): 보내기와 같은
+      // 길이고 host가 끝 키를 고른다(작업 중인 Claude는 sendNow, 그 밖은 Enter). 빈 줄은 host의 Ctrl+Enter 판정이다
+      if (readTerminalDraft(owner).length > 0) {
+        send(false, true);
+        return;
       }
+      const result = onCtrlEnter();
+      if (typeof result === "string") setNote(result);
       return;
     }
     event.preventDefault();

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import type {
   AgentActivity,
   DeviceRole,
@@ -12,8 +12,8 @@ import type {
   QuestionView,
   ThreadView,
 } from "./gen/proto";
-import { Missions } from "./Missions";
 import { ActivityBar } from "./ActivityBar";
+import { SidebarResizer } from "./SidebarResizer";
 import { PANEL_LABEL, revealPanel, storedCollapsed, storedPanel, storeSidebar, type SidebarPanel } from "./sidebarPanel";
 import { ReportsView, type ReportRef } from "./ReportsView";
 import { UpdateNotice } from "./UpdateNotice";
@@ -38,7 +38,7 @@ import type { AppActions, PaneControls } from "./actions";
 import { UsageMeters } from "./UsageMeters";
 import { SettingsDialog } from "./SettingsDialog";
 import { onSettingsHistory, recordSettings } from "./herdr/settingsHistory.ts";
-import { currentSidebarShared, useKeepScreenOn } from "./settings";
+import { currentSidebarShared, updateSidebarShared, useKeepScreenOn, useSidebarShared } from "./settings";
 import { useScreenWakeLock } from "./herdr/wakeLock.ts";
 import { justWoke, raiseAlert, unableSince, useAlerts, useAlertSoundUnlock } from "./alerts";
 import { Droplet } from "./herdr/Droplet.tsx";
@@ -52,6 +52,7 @@ import { useMediaQuery } from "./herdr/useMediaQuery.ts";
 import { watchDrawerSwipe } from "./herdr/edgeSwipe.ts";
 import { DrawerContext, DrawerToggle, HeadContext, HeadMore, HeadNote } from "./drawer";
 import { highMachines, HIGH_STAT } from "./machineStats";
+import { specialAttention } from "./specialModel";
 
 type Auth = { state: "loading" } | { state: "pair" } | { state: "in"; role: DeviceRole; device: string } | { state: "error"; msg: string };
 
@@ -375,7 +376,7 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
   const [threads, setThreads] = useState<Map<string, ThreadView>>(new Map());
   const [threadsSync, setThreadsSync] = useState(0);
   const threadReload = useRef(new ThreadReload());
-  // 사후 평가자: 목록에 섞지 않고 header badge로만 보인다(§8.13)
+  // 임무·사후 평가자: 목록에 섞지 않고 활동 막대 「특수」 패널에 보인다(§8.13, §8.258)
   const [missions, setMissions] = useState<MissionView[]>([]);
   const missionLoading = useRef(false);
   const missionReload = useRef(false);
@@ -924,14 +925,30 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
       label: "답을 기다림",
     },
     machines: { count: highMachines(machines), label: `CPU·MEM ${HIGH_STAT}% 넘음` },
+    special: { count: specialAttention(missions, evaluators, panes), label: "막힘·오류·승인 필요" },
   };
   // 넓은 창에서 접었으면 사이드바 칸이 없다(좁은 창은 drawer라 늘 칸이 있다)
   const sidebarShown = !wideScreen || !collapsed;
+  // 사이드바 폭(SidebarResizer, plan §8.257): 끄는 동안은 화면에만 두고 놓으면 공유 설정에 남긴다
+  const savedSidebarWidth = useSidebarShared().sidebarWidth;
+  const [draggedSidebarWidth, setDraggedSidebarWidth] = useState<number | null>(null);
+  const sidebarWidth = draggedSidebarWidth ?? savedSidebarWidth;
+  const resizeSidebar = (width: number | null, save: boolean) => {
+    if (!save) return setDraggedSidebarWidth(width);
+    updateSidebarShared({ sidebarWidth: width });
+    setDraggedSidebarWidth(null);
+  };
 
   return (
     <DrawerContext.Provider value={drawer}>
     <HeadContext.Provider value={{ more: <MoreMenu onProjects={() => chooseProject(null)} />, note: headNote }}>
-    <div className={`app${collapsed ? " sidebar-collapsed" : ""}`} data-questions-sync={questionsSync} data-threads-sync={threadsSync} data-sidebar={panel}>
+    <div
+      className={`app${collapsed ? " sidebar-collapsed" : ""}`}
+      style={sidebarWidth === null ? undefined : ({ "--sidebar-user-w": `${sidebarWidth}px` } as CSSProperties)}
+      data-questions-sync={questionsSync}
+      data-threads-sync={threadsSync}
+      data-sidebar={panel}
+    >
       <aside id="workspace-drawer" className={`list${drawerOpen ? " is-open" : ""}`}>
         <ActivityBar
           panel={panel}
@@ -950,10 +967,6 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
           <h2 className="list-title" data-testid="sidebar-title">{PANEL_LABEL[panel]}</h2>
           {role === "reader" && <span className="list-role">보기 권한</span>}
           <span className="spacer" />
-          <Missions missions={missions} role={role} onOpen={choose} onReload={loadMissions} />
-          {evaluators.map((v) => (
-            <EvaluatorBadge key={v.project} v={v} pane={panes.find((p) => p.id === v.thread.pane)} onOpen={choose} />
-          ))}
           <button
             className="ghost icon palette-button"
             data-testid="palette-open"
@@ -977,6 +990,9 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
           onThread={(t) => chooseThread(t)}
           onNewShell={newShell}
           onProject={chooseProject}
+          missions={missions}
+          evaluators={evaluators}
+          onMissionsChanged={loadMissions}
           banners={
             <>
               {!up && loaded && <div className="banner warn">host와 연결이 끊겼다. 다시 연결하는 중</div>}
@@ -987,6 +1003,7 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
         />
         <ListFoot />
         </div>
+        <SidebarResizer width={sidebarWidth} onResize={resizeSidebar} />
       </aside>
       {/* 닫혀도 페이지에 둔다: 그 위에서 시작한 쓸기가 drawer를 닫는다(참고 styles.css) */}
       <div className={`scrim${drawerOpen ? " is-open" : ""}`} aria-hidden="true" onClick={() => setDrawerOpen(false)} />
@@ -1355,21 +1372,3 @@ function ListFoot() {
   );
 }
 
-/** 사후 평가자 표시: 동작 상태와 정하지 않은 개선안 수. 누르면 평가자 pane을 연다(닫아도 배경에서 계속 돈다). */
-function EvaluatorBadge({ v, pane, onOpen }: { v: EvaluatorView; pane?: PaneView; onOpen: (id: string | null) => void }) {
-  const running = v.running && pane !== undefined;
-  const act = pane?.agent?.activity;
-  const state = !running ? "ended" : act === "question" ? "blocked" : act === "working" ? "working" : "idle";
-  const label = state === "ended" ? "세션 끝남" : state === "blocked" ? "막힘" : state === "working" ? "평가 중" : "대기";
-  return (
-    <button
-      className={`eval-badge ${state}`}
-      data-testid={`evaluator-${v.project}`}
-      title={`${v.project} 사후 평가자 ${v.thread.id} · ${label} · 받은 평가 ${v.evaluations} · 정하지 않은 개선안 ${v.undecided}`}
-      disabled={!v.thread.pane}
-      onClick={() => v.thread.pane && onOpen(v.thread.pane)}
-    >
-      특수 <span className="eval-dot">●</span> {v.undecided}
-    </button>
-  );
-}

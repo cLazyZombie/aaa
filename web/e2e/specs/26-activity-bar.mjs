@@ -1,5 +1,6 @@
 // 왼쪽 활동 막대(사용자 요청 10-19 「vs code 처럼 … 같은 버튼 한번 더 누르면 숨겨지고」, plan §8.240): 패널 바꾸기·다시 눌러 접기·
-// 기기별 기억·키보드·Mod+Shift+B·단축키·팔레트·알림이 연 줄의 패널·보고서 본문 화면·설정 톱니·휴대폰 drawer·막대와 바닥 줄 배치(§8.248).
+// 기기별 기억·키보드·Mod+Shift+B·단축키·팔레트·알림이 연 줄의 패널·보고서 본문 화면·설정 톱니·휴대폰 drawer·막대와 바닥 줄 배치(§8.248),
+// 사이드바 폭 손잡이(사용자 요청 10-19 「왼쪽 창 … 좌우 resize」, plan §8.257).
 import { root, aaa, step, browser, pairPage, claudeSh, claudeAsk, claudeIdle, waitOutput, domIs, hashIs, focusIs, inList, until, drawerSettled, shot, openSettings } from "../lib/harness.mjs";
 import fs from "node:fs";
 
@@ -62,11 +63,11 @@ export default async function () {
       await p.keyboard.press("Enter");
       await sidebarIs(p, { panel: "machines", collapsed: false }, "Enter로 머신");
       await p.keyboard.press("End");
-      await focusIs(p, "End 에이전트 단추", '[data-testid="activity-agents"]');
+      await focusIs(p, "End 특수 단추", '[data-testid="activity-special"]');
       await p.keyboard.press("Home");
       await focusIs(p, "Home 프로젝트 단추", '[data-testid="activity-projects"]');
       const tabStops = await p.evaluate(() => [...document.querySelectorAll('.activity-bar [role="tab"]')].map((e) => e.tabIndex).join(","));
-      if (tabStops !== "-1,0,-1") throw new Error(`Tab이 머무는 단추가 고른 패널 하나가 아니다: ${tabStops}`);
+      if (tabStops !== "-1,0,-1,-1") throw new Error(`Tab이 머무는 단추가 고른 패널 하나가 아니다: ${tabStops}`);
       // Mod+Shift+B(참고 toggle-sidebar): 터미널에 focus가 있어도 앱이 가져가 접고 편다
       await p.getByTestId("terminal").click();
       await p.keyboard.press("ControlOrMeta+Shift+B");
@@ -257,6 +258,76 @@ export default async function () {
     }
   });
 
+  await step("사이드바 폭(plan §8.257): 경계 손잡이를 끌면 활동 막대가 아닌 사이드바 칸만 넓어지고 본문이 그만큼 준다. 놓으면 host 공유 설정이라 다른 기기도 같은 폭이고, focus 뒤 ←→ 16px·Home·End, 두 번 누르면 기본 320px. 접힘·좁은 창(drawer)·터치 기기에는 손잡이가 없다", async () => {
+    const dev = await pairPage(browser, aaa("web", "pair").code, { width: 1280, height: 800 });
+    const other = await pairPage(browser, aaa("web", "pair").code, { width: 1280, height: 800 });
+    const p = dev.page;
+    const widths = (page) =>
+      page.evaluate(() => {
+        const w = (q) => Math.round(document.querySelector(q)?.getBoundingClientRect().width ?? -1);
+        const grip = document.querySelector('[data-testid="sidebar-resizer"]');
+        return { column: w("#sidebar-column"), bar: w(".activity-bar"), view: w(".view"), grip: grip ? getComputedStyle(grip).display : "없음", now: Number(grip?.getAttribute("aria-valuenow")) };
+      });
+    const columnIs = (page, want, what) => domIs(page, what, (want) => Math.round(document.getElementById("sidebar-column").getBoundingClientRect().width) === want, want);
+    try {
+      for (const page of [p, other.page]) await page.getByTestId("pane-t1").waitFor();
+      const start = await widths(p);
+      same(start, { column: 320, bar: 48, grip: "block", now: 320 }, "처음");
+      // 끌기: 손잡이 가운데를 잡고 오른쪽으로 80px
+      const box = await p.getByTestId("sidebar-resizer").boundingBox();
+      const x = box.x + box.width / 2;
+      const y = box.y + box.height / 2;
+      await p.mouse.move(x, y);
+      await p.mouse.down();
+      await p.mouse.move(x + 80, y, { steps: 4 });
+      await p.mouse.up();
+      await columnIs(p, 400, "끈 폭 400");
+      const dragged = await widths(p);
+      same(dragged, { bar: 48, view: start.view - 80 }, "끈 뒤 막대·본문");
+      // 놓으면 공유 설정: 다른 기기는 preferences 사건으로 같은 폭
+      await columnIs(other.page, 400, "다른 기기 폭 400");
+      await shot(p, "sidebar-resized");
+      // 키보드: focus 뒤 ←는 16px 좁게, End는 이 창의 최대(1280의 절반이 넘는 520), Home은 최소 240
+      await p.getByTestId("sidebar-resizer").focus();
+      await p.keyboard.press("ArrowLeft");
+      await columnIs(p, 384, "← 384");
+      await p.keyboard.press("End");
+      await columnIs(p, 520, "End 520");
+      await columnIs(other.page, 520, "다른 기기 End 520");
+      // 좁은 창(drawer)은 제 폭이고 손잡이가 없다
+      await p.setViewportSize({ width: 700, height: 800 });
+      const narrow = await widths(p);
+      if (narrow.grip !== "none" || narrow.column > 320) throw new Error(`좁은 창 ${JSON.stringify(narrow)}`);
+      await p.setViewportSize({ width: 1280, height: 800 });
+      await columnIs(p, 520, "넓은 창으로 돌아와 520");
+      await p.getByTestId("sidebar-resizer").focus();
+      await p.keyboard.press("Home");
+      await columnIs(p, 240, "Home 240");
+      // 접으면 칸과 함께 손잡이도 없다
+      await p.keyboard.press("ControlOrMeta+Shift+B");
+      await sidebarIs(p, { panel: "projects", collapsed: true }, "접힘");
+      same(await widths(p), { grip: "none" }, "접힘의 손잡이");
+      await p.keyboard.press("ControlOrMeta+Shift+B");
+      await sidebarIs(p, { panel: "projects", collapsed: false }, "펼침");
+      await columnIs(p, 240, "펴도 240");
+      // 두 번 누르면 기본 폭이고 공유 값도 지운다(다음 시험은 기본 폭)
+      await p.getByTestId("sidebar-resizer").dblclick();
+      await columnIs(p, 320, "두 번 눌러 기본 320");
+      await columnIs(other.page, 320, "다른 기기도 기본 320");
+      // 손가락이 주 입력인 넓은 창(가로 iPad)에도 손잡이가 없다: 경계 옆 입력창 띠 끌기가 폭 바꾸기가 된다(22 「iPad 입력창 끌기」)
+      const touch = (await pairPage(browser, aaa("web", "pair").code, { width: 1280, height: 800 }, { touch: true })).page;
+      try {
+        await touch.getByTestId("pane-t1").waitFor();
+        same(await widths(touch), { column: 320, grip: "none" }, "터치 넓은 창");
+      } finally {
+        await touch.context().close();
+      }
+    } finally {
+      await p.context().close();
+      await other.page.context().close();
+    }
+  });
+
   await step("막대·바닥 줄 배치(사용자 요청 10-19 「앱 설치는 설정 안으로, 보고서는 왼쪽 위로(에이전트 밑으로), 사용량은 오른쪽으로」): 보고서는 위 묶음의 에이전트 바로 밑(패널 tablist 밖), 아래 묶음은 설정만, 바닥 줄에 설치 단추 없이 사용량 칩이 오른쪽 끝, 데스크톱·좁은 창·휴대폰 세로·가로와 기본·GitHub Dark", async () => {
     const VIEWS = [
       ["desktop", { width: 1280, height: 800 }, false],
@@ -267,7 +338,8 @@ export default async function () {
     const layout = (p) =>
       p.evaluate(() => {
         const box = (s) => document.querySelector(s).getBoundingClientRect();
-        const agents = box('[data-testid="activity-agents"]');
+        // 보고서는 패널 단추 묶음 바로 밑: 「특수」(plan §8.258)가 에이전트 밑에 더해져 그 아래다
+        const agents = box('[data-testid="activity-special"]');
         const reports = box('[data-testid="activity-reports"]');
         const foot = document.querySelector(".list-foot");
         const footBox = foot.getBoundingClientRect();

@@ -1361,14 +1361,14 @@ async fn pane_session(
                         Ok(TermClientMsg::Resize { cols, rows }) if role.can_control() => {
                             Some(FrontRequest::PaneResize { pane: id.clone(), cols: cols.clamp(10, 500), rows: rows.clamp(3, 300) })
                         }
-                        Ok(TermClientMsg::Submit { id: sid, data }) => {
+                        Ok(TermClientMsg::Submit { id: sid, data, steer }) => {
                             let bytes = data.len();
-                            tracing::info!(pane = %id, front = %front.id, submit = sid, bytes, "웹 입력: submit 수신");
+                            tracing::info!(pane = %id, front = %front.id, submit = sid, bytes, steer, "웹 입력: submit 수신");
                             host.touch_device(dev, "입력");
                             // 글과 Enter를 쓰는 동안에도 이 submit의 멈춤은 바로 답한다(plan §8.247). 다른 frame은 뒤에 차례대로 둔다:
                             // 이 연결의 다음 입력은 Enter 뒤에 간다
                             let stage = AtomicU8::new(SUBMIT_BEFORE);
-                            let work = submit_work(host, role, &actor, front, dev, &id, sid, data, &stage);
+                            let work = submit_work(host, role, &actor, front, dev, &id, sid, data, steer, &stage);
                             tokio::pin!(work);
                             let mut reading = true;
                             let end = loop {
@@ -1403,7 +1403,7 @@ async fn pane_session(
                                 )),
                                 SubmitEnd::Done(r) => r,
                             };
-                            host.db.audit(&actor, "web_submit", &format!("pane={id} front={} submit={sid} bytes={bytes} ok={}", front.id, sent.is_ok()));
+                            host.db.audit(&actor, "web_submit", &format!("pane={id} front={} submit={sid} bytes={bytes} steer={steer} ok={}", front.id, sent.is_ok()));
                             let reply = TermServerMsg::Submitted { id: sid, ok: sent.is_ok(), message: sent.err().map(|e| e.message) };
                             if !out.msg(&reply) {
                                 tracing::warn!(pane = %id, front = %front.id, submit = sid, "웹 입력: 확인 응답 연결 닫힘");
@@ -1537,6 +1537,7 @@ async fn submit_work(
     pane: &str,
     sid: u32,
     data: String,
+    steer: bool,
     stage: &AtomicU8,
 ) -> SubmitEnd {
     let typed = |data: Vec<u8>| FrontRequest::PaneInput { pane: pane.to_string(), data: B64(data) };
@@ -1558,8 +1559,10 @@ async fn submit_work(
     if !advance_submit(stage, SUBMIT_TYPED, SUBMIT_ENTERING) {
         return SubmitEnd::Stopped(SubmitStage::NoEnter);
     }
-    let sent = host.call_from(role, actor, Some(front), typed(b"\r".to_vec())).await;
-    tracing::info!(pane, front = %front.id, submit = sid, ok = sent.is_ok(), code = ?sent.as_ref().err().map(|e| &e.code), phase = "enter", "웹 입력: agent 응답");
+    // Ctrl+Enter로 보낸 글: 작업 중인 Claude는 Enter 대신 sendNow로 지금 턴에 넣는다(그 밖은 Enter, plan §8.239 후속)
+    let enter = if steer { host.steer_submit_data(pane) } else { b"\r".to_vec() };
+    let sent = host.call_from(role, actor, Some(front), typed(enter)).await;
+    tracing::info!(pane, front = %front.id, submit = sid, ok = sent.is_ok(), code = ?sent.as_ref().err().map(|e| &e.code), phase = if steer { "steer" } else { "enter" }, "웹 입력: agent 응답");
     SubmitEnd::Done(sent.map(|_| ()))
 }
 

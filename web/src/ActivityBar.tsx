@@ -4,11 +4,12 @@
 // 고른다. 패널이 아닌 보고서(본문을 바꾼다)는 패널 단추 바로 밑의 보통 단추다(tablist 밖, 사용자 요청 10-19 「보고서는 왼쪽 위로(지금
 // 에이전트 밑으로)」). 설정(창)만 아래 묶음에 둔다(VS Code 아래 묶음 Accounts·Manage 자리).
 import { useRef, type KeyboardEvent, type ReactNode } from "react";
-import { Bot, Eye, FileText, Folders, Monitor, type LucideIcon } from "lucide-react";
+import { Bot, Eye, FileText, Folders, Monitor, Radar, type LucideIcon } from "lucide-react";
 import { PANEL_LABEL, PANELS, type SidebarPanel } from "./sidebarPanel";
 import "./ActivityBar.css";
 
-const PANEL_ICON: Record<SidebarPanel, LucideIcon> = { projects: Folders, machines: Monitor, agents: Bot };
+// 특수는 Radar: 늘 지켜보다 깨어나는 임무와 평가자, 에이전트(Bot)와 실루엣이 다르다(시안 t-0393, plan §8.258)
+const PANEL_ICON: Record<SidebarPanel, LucideIcon> = { projects: Folders, machines: Monitor, agents: Bot, special: Radar };
 
 export function ActivityBar({
   panel,

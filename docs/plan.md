@@ -4944,6 +4944,13 @@ primary 근거:
     실기를 증명하지는 않는다. 수정 전 이미지 경로 미수신 실패를 보존했고 수정 후 통과했다. 연속 첨부는 이전 배너가 아니라
     이번 PTY 경로를 받아 파일 bytes·화면을 대조한다. 새 production 시험 seam·고정 sleep은 없다.
   - **착지 순서.** ci-local·공개 검사 뒤 병합 준비만 보고하고 지정된 착지 창을 기다린다. 안내 소멸 운영 확인은 다음 배포 뒤 남는다.
+- **Ctrl+V 그림 읽기 되돌림(10-19 13:5x 사용자 「그럼 그냥 cmd+v로 통일. control+v는 없애」, t-0393).** 위 Mac Ctrl+V 읽기는
+  Safari가 키마다 「붙여넣기」 확인 말풍선을 띄웠다. 그래서 그 전 동작으로 되돌렸다: Ctrl+V는 어느 OS에서나 xterm에서 빼서 브라우저
+  붙여넣기에 맡기고(herdr-web-ui `PaneTerminal.tsx` 610~660 그대로) clipboard를 읽지도 ^V를 보내지도 않는다. Mac 그림은 Cmd+V의
+  paste 사건이 기존 첨부(업로드·서명/상한 검사·경로 삽입)로 보낸다. Windows·Linux Ctrl+V의 표준 paste, iPhone·iPad paste도 그대로다.
+  E2E 11의 같은 자리는 Mac Chrome·WebKit·Windows·iPad·iPhone에서 Ctrl+V(누름·꾹 누름)가 clipboard를 읽지 않고, 뒤따르는 글 paste가
+  PTY에 `^V` 없이 닿으며(같은 연결의 울타리), 그림 paste는 이번 경로·bytes로 닿는지 본다. Ctrl+V에서 clipboard를 읽거나 ^V를 보내는
+  변형은 각각 실패한다.
 
 ### 8.233 배포 실행기 잠금의 상속 FD 수명(10-19, t-0381 후속)
 
@@ -5002,6 +5009,39 @@ primary 근거:
 - 검증 owner: `ctrl_enter.rs` 유닛은 스타일·잘린 상자·여러 줄·현재 Codex 패널 판정을, 웹 `25-ctrl-enter.mjs`는 실제 host·agent·PTY의 bytes와 물리 키·모바일·입력줄·IME·반복 키를 본다. 기존 `03-keys.mjs`가 일반 프로그램의 modifyOtherKeys·Shift+Enter를 계속 확인한다. 기다림은 출력 표지·DOM·sentFrames 사건으로 끝낸다.
 
 - **최신 main 통합의 fixture 경계.** t-0383의 Codex 제목 `-c` 옵션이 뒤에 추가되어 마지막 두 argv를 읽던 E2E 가짜가 옵션을 모드·기록 파일로 오인했다. fixture 인자를 명시적 `--` 뒤에 두고 그 경계에서 읽어 harness 옵션 추가와 분리한다. 실제 Ctrl+Enter bytes·시한·기대값은 유지하며 실패 로그를 보존했다.
+
+- **후속: 줄바꿈 없이 steering만(10-19, t-0393).** 사용자 「control+enter 줄바꿈은 필수인거야? 스티어링만 남기고 싶어」. 위의 「글이 있거나 모르면 줄바꿈」을 바꾼다. Ctrl+Enter는 어떤 경우에도 줄바꿈을 넣지 않고, 줄바꿈은 Shift+Enter만이다. 입력 상자를 판정하지 못하면 아무것도 보내지 않는다. 글이 있을 때는 그 글을 steering으로 보내는 각 harness의 정식 키를 쓰고, 그런 키가 없으면 보내지 않는다. 판정은 `ctrl_enter.rs::ctrl_enter_keys` 한 곳이고 웹·TUI가 함께 쓴다. wire는 그대로이고 1.43 아래 뜻만 바뀐다.
+  - **정정: 작업 중에만(사용자 결정 10-19 15:1x).** harness pane의 Ctrl+Enter는 host가 아는 그 pane의 agent 상태가 작업 중일 때만 동작한다(목록의 「작업 중」과 같은 값). 쉬거나 상태를 모르면 글이 있어도 보내지 않는다. Claude는 화면에서도 입력 상자 바로 위(6줄 안)의 작업 상태 줄(`esc to interrupt)`로 끝남, herdr claude.toml의 working 표지)이 함께 보여야 한다. Codex는 원래 Working 줄을 화면에서 확인한다. `ctrl+x ctrl+s`와 Claude 자신의 `ctrl+enter`는 모두 `chat:sendNow`다. 글이 있으면 진행 중 턴을 끊고 지금 제출하고, 비었으면 대기 메시지를 지금 보낸다(`ctrl+x enter`는 queueSubmit, `ctrl+s`는 stash). 그래서 작업 중이고 detection과 색 사본이 같은 입력 상자를 보일 때만, 빈 입력·회색 추천문·글 모두 Ctrl+X → Ctrl+S다. 쉬는 중의 sendNow는 그냥 바로 제출이라 steering이 아니므로 보내지 않는다. 상자를 모르면 보내지 않는다.
+  - **Codex(rust-v0.163.0).** 작업 중 Enter는 글을 `pending_steers`에 넣는 steer다(`input_submission.rs` 228줄 `render_in_history = !agent_turn_running`, 543줄 push). 쉬는 중 Enter는 새 턴이라 steering이 아니다. Esc는 대기 steer를 즉시 보내고, Tab은 queue다. 그래서 다음처럼 둔다.
+    - Working 줄·footer·빈 아래 줄이 확인되고 대기 패널이 있으며, 입력이 비고(색 판정 Empty·커서 시작 칸)이면 Esc.
+    - Working 중 글이 있으면(색 판정 Typed) Enter.
+    - 쉬는 중, slash·`!` 목록이 footer를 덮은 화면, 패널이 아닌 글이 끼인 화면, 커서가 입력 줄을 벗어난 화면에서는 보내지 않는다.
+    - 결과로 작업 중 글을 쓰고 Ctrl+Enter를 두 번 누르면, 첫 번은 steer 대기열에 넣고 둘째(빈 입력 + 대기 패널)는 Esc로 지금 보낸다.
+    - 쉬는 Codex의 글은 보내지 않는다. 처음에는 쉬는 Claude의 글을 sendNow로 바로 제출했으나(Claude 자체 Ctrl+Enter와 같음) 사용자 정정으로 쉬는 Claude도 보내지 않는다. 두 harness가 같이 「작업 중에만」이다.
+  - **front.** 빈 웹 입력줄은 같은 요청이다. 글이 있는 웹 입력창은 아래 「웹 입력창 Ctrl+Enter」를 따른다. 처음에는 요청하지 않고 「보내기는 Enter, 줄바꿈은 Shift+Enter」 안내를 띄웠으나 15:3x 정정으로 없앴다. TUI 인코더는 Ctrl+Enter를 LF로 바꾸지 않는다. Front API 1.43 미만 host에는 보내지 않고 안내를 띄운다. harness가 없는 pane은 기존 Ctrl+Enter 인코딩 그대로다. TUI 쪽(인코더·1.43 미만 안내·TUI 시험)은 t-0401 TUI 삭제와 통합하며 삭제 쪽을 따라 버렸다.
+  - **정정: 웹 입력창 Ctrl+Enter(사용자 10-19 15:3x).** 사용자 「cotrol+enter누르면 웹 대화에서는 현재 입력이 있으면 바로 그걸 steering으로 보내는거지? 현재 입력이 있고, 이전 입력이 처리되지 않았으면 그걸 steering하고. … control-enter 눌면 어떻게 해라고 보여주는건 좀 과한것 같아.」 대화 입력창과 터미널 보기의 웹 입력줄(보내기 전 글을 이 기기에 두는 칸)이 같다. 글은 보내기와 같은 `submit`으로 가고 `steer: true`를 붙인다. host가 글을 친 뒤 Enter 대신 끝 키를 고른다(`ctrl_enter::steer_submit_keys`). 그래서 t-0392의 보내기 잠금·전달 확인·멈춤(§8.247)을 그대로 타고, 반영될 때까지 입력창이 잠긴다. 결정표는 다음과 같다.
+
+    | 입력창 | agent | 보내는 것 |
+    |---|---|---|
+    | 글 있음 | 작업 중 Claude(상태 + 상자 위 작업 줄 + 살아 있는 상자) | 글 → Ctrl+X Ctrl+S(sendNow: 지금 턴에 넣는다) |
+    | 글 있음 | 작업 중 Codex | 글 → Enter(작업 중 Enter가 `pending_steers` steer이고 바로 간다) |
+    | 글 있음 | 쉼 | 보통 보내기(글 → Enter). 웹이 쉼으로 보면 `steer`를 붙이지 않는다 |
+    | 글 있음 | 웹은 작업 중, host 화면은 확인 못 함 | 글 → Enter(다음 턴으로 줄 서는 보통 보내기. 글은 버리지 않는다) |
+    | 빈 대화 입력창 | 작업 중 | 대기 메시지를 지금 보낸다. 이 기기에 붙잡은 것(「대기 메시지 자동 전송」 끔)이 있으면 그 맨 앞을 `steer`로 보내고, 없으면 harness 대기열을 위 공통 판정으로 보낸다(Claude sendNow, Codex 대기 패널이면 Esc) |
+    | 빈 대화 입력창 | 쉼 | 아무것도 보내지 않는다 |
+    | 빈 웹 입력줄·터미널 직접 입력·키 막대 | | 위 공통 판정(작업 중에만) 그대로 |
+
+    - 작업 중 Ctrl+Enter 글은 「대기 메시지 자동 전송」을 꺼도 붙잡지 않는다. 지금 넣으라는 뜻이기 때문이다. Enter는 그대로 붙잡는다.
+    - 대화 입력창의 Ctrl+Enter는 보내기 설정(Enter·Cmd+Enter)과 터치 여부에 상관없다. Windows·Linux에서 「Cmd/Ctrl+Enter로 보내기」를 고른 사람의 Ctrl+Enter는 보내기였고, 이제는 steering 보내기다(쉬는 중이면 보내기와 같다). macOS Cmd+Enter는 그대로 보내기다.
+    - 키 막대의 Ctrl+Enter는 웹 입력줄에 남은 글을 건드리지 않고 아무것도 보내지 않는다(안내 없음).
+    - 「대기 메시지」를 두 곳으로 본 까닭: 화면의 「대기 메시지」 칸과 「지금 보내기」 단추는 이 기기에 붙잡은 글이다. 자동 전송이 켜진 기본값에서는 작업 중 보낸 글이 harness 대기열에 있다. 붙잡은 글은 아직 agent에 가지 않았으므로 먼저 보낸다.
+    - 사용자 말 「웹 대화」는 대화 입력창으로 받았다. 「Ctrl+Enter는 …」 안내는 웹 입력줄에만 떴으므로 그 칸도 같은 규칙으로 바꿨다. 「웹 터미널 안 입력줄」은 터미널 화면 속 agent 입력줄(직접 입력)로 받아 앞의 공통 판정 그대로 둔다.
+    - 옛 host는 `steer` 칸을 버려 보통 보내기가 된다(wire는 serde 기본값, 1.43 그대로).
+    - 검증: 유닛 `steered_text_ends_with_send_now_only_for_a_working_claude`(작업 중 Claude 글·빈 상자 → sendNow, 쉼·상태만 쉼·화면 작업 줄 없음·상자 모름 → Enter, Codex 대기 패널에서도 Enter, 모르는 harness → Enter). E2E 25 「대화 입력창 Ctrl+Enter」는 자동 전송을 끈 작업 중 Claude에서 Enter는 붙잡고 Ctrl+Enter 글은 `steer-1` + `\x18\x13`, 빈 입력창은 붙잡은 `held-1` + `\x18\x13` 뒤 대기 칸이 사라지고, 붙잡은 것이 없으면 `ctrl_enter` → `\x18\x13`을 본다. 쉬는 Claude 글은 `idle-1\r`(submit `steer` false), 쉬는 빈 입력창은 보내는 frame 없음, 작업 중 Codex 글은 `codex-1\r`, 전달 뒤 입력창이 비고 풀림, 「Ctrl+Enter」 안내 없음을 실제 PTY bytes와 보낸 frame으로 본다. 터치 단계는 웹 입력줄 글 → 글 + `\x18\x13`, 줄이 비고 안내 없음을 본다.
+    - 결함을 심어 실패를 확인했다. (l) host가 `steer`를 무시(늘 Enter), (m) Ctrl+Enter 글도 붙잡음, (q) 빈 입력창이 붙잡은 글을 건너뜀 → E2E 대화 입력창 단계(바이트 수 사건이 오지 않음). (n) 쉬는 중에도 `steer` → 같은 단계의 frame 비교. (o) 웹 입력줄 글을 보내지 않음(옛 안내 자리) → E2E 터치 단계. (p1) 화면 작업 줄 확인을 뺌, (p2) Codex에 공통 판정의 Esc를 씀 → 유닛.
+  - **검증.** `ctrl_enter.rs` 유닛 3개는 어느 판정에서도 줄바꿈 키가 없음, Claude 두 사본 일치, Codex 작업 중·쉼·패널·글·slash 목록을 본다. E2E 25는 Claude 글·빈·회색 → `\x18\x13`, 모름 → 무송신, Codex 대기 → `\x1b`, 작업 중 글 → `\r`, 쉼·이탈 → 무송신, 웹 입력줄 → 안내와 무전송을 실제 PTY bytes로 본다. 무송신은 같은 연결의 뒤따르는 입력 조각만 닿는지로 판정한다. TUI `ctrl_enter_uses_shared_host_request`와 `tests/tui.rs::modified_enter_uses_agent_newline`(모르는 화면 Ctrl+Enter 무송신, 뒤 글자가 울타리)도 맞췄다.
+    결함 넷을 심어 실패를 확인했다. (a) 모름에 Alt+Enter → 유닛 2개·E2E Claude 단계, (b) 웹 입력줄 줄바꿈 → E2E 터치 단계, (c) TUI 옛 host LF → TUI 시험, (d) 쉬는 Codex 글에 Enter → 유닛·E2E Codex 단계.
+    작업 중 정정: 유닛 `ctrl_enter_acts_only_while_the_agent_works`(쉬는 중 글·빈 입력, 상태만 쉼, 화면 작업 줄 없음, 먼 작업 줄, Codex 상태 쉼)와 E2E 25의 쉬는 Claude 탭(`ce-idle`, 빈 입력과 글 모두 무송신). E2E는 감지가 알린 목록 상태(`data-status`)를 사건으로 기다린 뒤 누른다. 결함 (f) 작업 중 조건을 통째로 뺌 → 유닛과 E2E Claude 단계, (g) 화면 작업 줄 확인만 뺌 → 유닛이 잡았다.
 
 ### 8.240 웹 왼쪽 활동 막대와 본문 보고서 화면(10-19, t-0390, VS Code식)
 
@@ -5188,3 +5228,47 @@ primary 근거:
 - **coordinator 안내.** doctor가 쓰는 안내에 「사용자에게 보고서 보내기」 절(`--to-user --title`)을 더했다(m13 `GUIDE_SECTIONS`).
 - **계약.** FRONT_API는 배포 전인 1.43에 더한다.
 - **검증.** host 유닛(안 봄 → 열면 봄 → 다시 보내면 안 봄, 진행 중 거부, 지우기가 행·링크·사본·보고 글을 지움). 웹 E2E 21에 두 단계: index.html 없는 `--to-user` 거부, 막대·탭 배지가 사건만으로 늘고 줄며, 알림 post, 열면 봄, 다시 보내면 안 봄, 카드 지우기 취소·확인 / 진행 중 thread 사본 고르기 막음·host 거부, resolve하면 풀림, 끝난 것 모두 고르기와 확인 한 번으로 작업 보고 전부가 host 사본·manifest까지 사라짐. E2E 27은 아이콘·막대 유무·agent 수가 에이전트 패널과 같음·칸 title을 본다. E2E 26은 `--to-user`로 올린다.
+
+### 8.257 웹 사이드바 칸 폭 끌기(10-19, t-0393)
+
+- **요청.** 사용자 「왼쪽 창 (project 내부 리스트 있고 한. 제일 왼쪽 아이콘 아니고) 좌우 resize 기능도 넣어줘.」 활동 막대가 아니라 그 오른쪽 사이드바 칸(`#sidebar-column`)의 폭이다.
+- **참고.** herdr-web-ui aa624cb `src/components/SidebarResizer.tsx`·`src/lib/sidebarWidth.ts`를 옮겼다(MIT, 고지는 원 파일 머리). t3code 4b1024da `useResizableWidth`는 끄는 동안 화면에만 두고 놓을 때 한 번 저장한다. 그 저장 시점을 따랐다.
+- **동작.**
+  - 손잡이는 칸 오른쪽 경계 안쪽 8px이고 `col-resize` 커서다. 가리키면 경계선이 진해지고, 잡거나 focus면 accent다.
+  - 폭은 240~520px이고 창 폭의 절반을 넘지 않는다(CSS `min(…, 50vw)`와 같은 규칙).
+  - 두 번 누르면 기본 폭(토큰 `--sidebar-w`)이다.
+  - focus 뒤 ←→는 16px, Home은 최소, End는 이 창의 최대다(`role="separator"`, aria-value*).
+  - 넓은 창(769px~)에서 펼쳤을 때만 보인다. 접으면 칸과 함께 숨고, 다시 펴면 고른 폭이다. 휴대폰·좁은 창의 drawer는 제 폭(88vw 한도)이다.
+  - 손가락이 주 입력인 기기(iPad 가로 등, `(hover: hover) and (pointer: fine)`이 아님)에는 손잡이가 없다. 처음에는 넓은 창이면 터치에도 보였다. 그때 ci-local E2E 22 「iPad 입력창 끌기」가 실패했다. 경계에서 4px 떨어진 입력창 띠를 끈 손가락이 터치 보정으로 손잡이에 붙어 사이드바 폭 바꾸기가 됐고, 문서 끌기 막음(`pageHold.ts`, §8.202)도 벗어났다. 참고 herdr-web-ui는 손잡이를 경계에 걸쳐 두어 같은 일이 난다.
+- **저장.** coordinator 지시대로 기존 host 공유 설정(preferences, §8.79)에 `sidebarWidth`(px, null은 기본 폭)를 둔다. 참고 둘은 기기 localStorage다. aaa는 다른 웹 공유 설정처럼 host에 두고(삭제된 TUI의 사이드바 폭 `tuiSidebarWidth`도 그랬다), 기기마다 다른 창 폭은 창 절반 한도가 받는다. host `prefs.rs`의 공유 이름에 더했다. 옛 host는 그 이름을 버린다(그때는 이 기기 사본만 남는다).
+- **검증.**
+  - 웹 단위 `sidebarWidth.test.mjs`: 한도, 키, 공유 값 읽기와 주고받기
+  - host `prefs::keeps_the_web_sidebar_width`
+  - E2E 26 「사이드바 폭」: 실제 끌기 80px로 칸만 넓어지고 본문이 준다. 다른 기기가 preferences 사건으로 같은 폭이 되는지는 그 화면 DOM으로 본다. ←·End·Home, 좁은 창·접힘·터치 넓은 창에 손잡이 없음, 두 번 눌러 기본 폭과 공유 값 지움을 본다.
+  - 결함 다섯을 심어 실패를 확인했다. (a) 놓아도 저장 안 함, (b) 접혀도 손잡이, (c) 좁은 창에도 손잡이, (d) 화살표 8px, (e) host가 이름을 버림 → 모두 E2E 26이 잡고, (d)는 단위, (e)는 host 단위도 잡았다. (k) 터치 기기에도 손잡이 → E2E 22 「iPad 입력창 끌기」(Chromium 띠 끌기 막음 12번 모두 false)와 26 「터치 넓은 창」이 잡았다.
+
+### 8.258 프로젝트 패널 들여쓰기·coordinator 구별·「특수」 패널(10-19, t-0393)
+
+- **요청과 결정.** 사용자 「projects 와 밑에 child 가 너무 tab … 조금만 띄워지게」, 「coordinator는 … 아이콘 하나」, 「구분 표현도」, 「색상도」, 「특수 에이전트도 저렇게 위에 보여주지 말고, 왼쪽 아이콘에 등록」. 시안(t-0393 library, 16안·특수 4안)을 보고 사용자가 정했다(10-19 15:0x).
+  - 들여쓰기 i2: 프로젝트 묶음 자식 줄을 8px만 들인다(지금 34px). 머신 패널의 worktree 한 단계는 그대로다.
+  - coordinator m2: 왼쪽 세로 막대 2px와 그 아래 dim 「thread n」 머리줄. 아이콘 열과 thread 줄 정렬은 그대로다. 머리줄은 coordinator와 thread가 함께 보일 때만 있다(접힌 묶음에는 없다).
+  - 막대 색 `--coordinator`는 상태색(빨강·파랑·초록·회색)과 그 팔레트의 accent·작업 중 색을 피해 팔레트마다 정했다.
+    - 기본 어두움 `#b99cf2`, 밝음 `#7a45c8`
+    - github-dark·dimmed `#bc8cff`, github-light `#8250df`(github-dark는 accent가 작업 중 파랑)
+    - charcoal 어두움 `#8db8c4`(작업 중이 분홍)
+    - catppuccin 어두움 `#fab387`, 밝음 `#c44d06`(accent가 보라)
+  - 특수: 목록 머리의 「특수 ●」 칩(임무·사후 평가자)을 없애고, 활동 막대 에이전트 아래에 Radar 단추 「특수」 패널을 둔다. 보고서 단추는 그 아래다(§8.248의 「에이전트 밑」이 「패널 단추 묶음 밑」이 된다).
+- **특수 패널.**
+  - 프로젝트 머리 아래 두 줄 줄이다. 이름 / 상태 말 · 깨움 오늘/한도 · (없으면) pane 없음이고, 오른쪽에 머신과 상태 점(pane이 없으면 빈 고리)이 있다.
+  - 앞 칸은 thread의 harness 표지다. thread가 없으면 점선 원, 평가자는 ScanEye.
+  - 줄을 누르면 pane이 돌면 그 pane, 없으면 임무 보기(차이·승인 상태)다. 시작·멈춤·이어 가기·다시 읽기·승인 검토는 ⋯ 메뉴(넓은 창은 오른쪽 클릭)에만 있다. 여는 것만으로 임무를 움직이지 않는다. 보기 권한이면 열기·보기만 있다.
+  - 메뉴 머리는 제목과 셈(일한 분·post 처리·입력)이다.
+- **배지.** 「특수」 배지는 사람이 볼 것만 센다: 막힘·오류·승인 필요 임무 + 확인창(질문)이 걸린 평가자. 정할 개선안·일함·멈춤·대기는 세지 않는다(`specialModel.ts`).
+- **TUI.** 사용자 결정(10-19 15:2x)으로 aaa TUI 개발을 잠정 중지해 TUI 쪽 구현·넘김은 하지 않았다. TUI 머리의 「특수 n」은 그대로다.
+- **검증.**
+  - 웹 단위 `specialModel.test.mjs`: 줄 색·첫 낱말, 평가자 상태, 배지 규칙
+  - E2E 12 「사후 평가자」: 특수 패널 줄, 확인창 없는 평가자는 배지 없음, 누르면 평가자 화면
+  - E2E 12 「특수 임무」: 휴대폰·좁은 창·데스크톱 메뉴가 화면 안, 줄 누름은 임무 보기일 뿐 시작 안 함, 승인 필요 배지 1 → 승인 뒤 없음
+  - E2E 12 「coordinator 프로젝트 소속」: 보라 막대 색·폭, coordinator·thread 줄 8px, 「thread 1」 머리줄
+  - E2E 26: 단추 넷의 roving tabindex·End, 보고서가 패널 단추 묶음 바로 밑
+  - 결함 셋을 심어 실패를 확인했다. (h) 정할 개선안도 배지에 셈 → 단위, (i) 들여쓰기 34px → E2E 12 coordinator 단계, (j) 「thread n」 머리줄 없음 → 같은 단계.

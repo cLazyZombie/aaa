@@ -2,10 +2,11 @@
 // VS Code는 workspace마다 기억하고 herdr-web-ui(aa624cb App.tsx 318~319줄 `sidebarCollapsed`)는 접힘을 주소(`sidebar=hidden`)에
 // 싣는다. aaa는 기기마다(brief: 마지막 패널·접힘은 기기별) localStorage에 둔다.
 
-export const PANELS = ["projects", "machines", "agents"] as const;
+export const PANELS = ["projects", "machines", "agents", "special"] as const;
 export type SidebarPanel = (typeof PANELS)[number];
 
-export const PANEL_LABEL: Record<SidebarPanel, string> = { projects: "프로젝트", machines: "머신", agents: "에이전트" };
+// 특수(임무·사후 평가자)는 사용자 결정 10-19로 목록 머리 칩에서 에이전트 아래 단추로 옮겼다(plan §8.258)
+export const PANEL_LABEL: Record<SidebarPanel, string> = { projects: "프로젝트", machines: "머신", agents: "에이전트", special: "특수" };
 
 const PANEL_KEY = "aaa:sidebar-panel";
 const COLLAPSED_KEY = "aaa:sidebar-collapsed";
