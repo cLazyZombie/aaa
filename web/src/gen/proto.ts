@@ -52,7 +52,12 @@ export type WorkspaceSummary = { name: string, tabs: number, panes: number, };
 
 export type ChatRole = "user" | "assistant" | "tool" | "thinking";
 
-export type ChatMessage = { role: ChatRole, text: string, };
+export type ChatMessage = { role: ChatRole, text: string,
+/**
+ * 사람 글이 harness 대기열에 있다(작업 중에 보내 아직 흡수되지 않음, Claude `queue-operation`). 기록 끝에 붙는다.
+ * 옛 agent는 보내지 않고 옛 front는 버린다(plan §8.247).
+ */
+pending: boolean, };
 
 export type ChatView = { pane: string, harness: string, messages: Array<ChatMessage>,
 /**
@@ -444,13 +449,15 @@ export type ClipboardOutcome = "copied" | "requested" | "failed";
 
 export type FrontEvent = { "ev": "state", machines: Array<MachineView>, panes: Array<PaneView>, } | { "ev": "workspace" } & Workspace | { "ev": "grid" } & GridFrame | { "ev": "clipboard", pane: string, text: string, } | { "ev": "flow" } & FlowEvent | { "ev": "thread" } & ThreadView | { "ev": "question" } & QuestionView | { "ev": "preferences" } & SharedPreferences | { "ev": "pong", id: number, } | { "ev": "web", build: string, } | { "ev": "notice" } & NoticeView | { "ev": "chat_changed", pane: string, signature: string, } | { "ev": "chat_watching", pane: string, live: boolean, };
 
+export type SubmitStage = "not_sent" | "no_enter" | "too_late";
+
 export type TermServerMsg = { "t": "snapshot", replay: B64, cols: number, rows: number, readonly: boolean, stream: number,
 /**
  * replay에 싣지 않은 앞 기록이 host에 더 있다: 위로 굴려 끝에 닿으면 `History`로 받아 온다(plan §8.67)
  */
-history_more: boolean, } | { "t": "history", id: number, data: B64, lines: number, more: boolean, found: boolean, } | { "t": "readonly", readonly: boolean, reason: string | null, } | { "t": "state", pane: PaneView, } | { "t": "front", id: string, } | { "t": "attached", path: string, inserted: boolean, note: string | null, } | { "t": "submitted", id: number, ok: boolean, message: string | null, } | { "t": "error" } & ErrorBody;
+history_more: boolean, } | { "t": "history", id: number, data: B64, lines: number, more: boolean, found: boolean, } | { "t": "readonly", readonly: boolean, reason: string | null, } | { "t": "state", pane: PaneView, } | { "t": "front", id: string, } | { "t": "attached", path: string, inserted: boolean, note: string | null, } | { "t": "submitted", id: number, ok: boolean, message: string | null, } | { "t": "submit_cancelled", id: number, stage: SubmitStage, } | { "t": "error" } & ErrorBody;
 
-export type TermClientMsg = { "t": "input", data: string, } | { "t": "ctrl_enter" } | { "t": "resize", cols: number, rows: number, } | { "t": "take" } | { "t": "release" } | { "t": "submit", id: number, data: string, } | { "t": "history", id: number, anchor: Array<string>, depth: number, } | { "t": "ack", stream: number, offset: number, } | { "t": "attach", offset: number, total: number, sha256: string, data: B64, } | { "t": "colors", fg: string, bg: string, };
+export type TermClientMsg = { "t": "input", data: string, } | { "t": "ctrl_enter" } | { "t": "resize", cols: number, rows: number, } | { "t": "take" } | { "t": "release" } | { "t": "submit", id: number, data: string, } | { "t": "submit_cancel", id: number, } | { "t": "history", id: number, anchor: Array<string>, depth: number, } | { "t": "ack", stream: number, offset: number, } | { "t": "attach", offset: number, total: number, sha256: string, data: B64, } | { "t": "colors", fg: string, bg: string, };
 
 export type EventsClientMsg = { "t": "presence", active: boolean,
 /**

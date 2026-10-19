@@ -1,5 +1,5 @@
 // 왼쪽 활동 막대(사용자 요청 10-19 「vs code 처럼 … 같은 버튼 한번 더 누르면 숨겨지고」, plan §8.240): 패널 바꾸기·다시 눌러 접기·
-// 기기별 기억·키보드·Mod+Shift+B·단축키·팔레트·알림이 연 줄의 패널·보고서 본문 화면·설정 톱니·휴대폰 drawer·막대와 바닥 줄 배치(§8.246).
+// 기기별 기억·키보드·Mod+Shift+B·단축키·팔레트·알림이 연 줄의 패널·보고서 본문 화면·설정 톱니·휴대폰 drawer·막대와 바닥 줄 배치(§8.248).
 import { root, aaa, step, browser, pairPage, claudeSh, claudeAsk, claudeIdle, waitOutput, domIs, hashIs, focusIs, inList, until, drawerSettled, shot, openSettings } from "../lib/harness.mjs";
 import fs from "node:fs";
 
