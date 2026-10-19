@@ -251,6 +251,43 @@ mod tests {
         assert_eq!(r.flatten().map(|r| r.kind), Some("working"));
     }
 
+    /// 10-19 운영: 애니메이션을 끈 Codex는 중간 설명을 내보내는 동안 Working 줄을 숨긴다.
+    /// 화면·OSC를 함께 읽는 기존 경계에서 설명 중 작업 유지와 용량 오류 뒤 Ready를 구분한다.
+    #[test]
+    fn codex_commentary_stream_stays_working_until_ready() {
+        let t0 = Instant::now();
+        let mut w = Watch::new(Harness::Codex, t0 - STARTUP_GRACE, true, t0);
+        assert!(w.due(t0).is_none());
+        let active = "Working (26s • esc to interrupt)\n\n› Ask Codex to do anything\n";
+        let streaming = "• 회귀 시험에서\n\n› Ask Codex to do anything\n";
+        let ready = "Selected model is at capacity\n\n› Ask Codex to do anything\n";
+        for (i, (screen, title, expected)) in [
+            (active, "Working | demo", Some("working")),
+            (streaming, "Working | demo", None),
+            (streaming, "Thinking | demo", None),
+            (streaming, "Waiting | demo", None),
+            (ready, "Ready | demo", Some("idle")),
+            (active, "Starting | demo", Some("working")),
+            (streaming, "Action Required | demo", Some("question")),
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            let now = t0 + POLL * (i as u32 + 1);
+            w.due(now).expect("앞 감지 응답 뒤 다음 요청");
+            let report = w.answer(
+                now,
+                Outcome::Ok(AgentResponse::Detect(DetectScreen {
+                    seq: i as u64,
+                    text: Some(screen.into()),
+                    osc_title: title.into(),
+                    osc_progress: String::new(),
+                })),
+            );
+            assert_eq!(report.map(|r| r.kind), expected, "{title}: {screen}");
+        }
+    }
+
     #[test]
     fn questions_carry_the_dialog_line_and_repeat_only_when_it_changes() {
         let t0 = Instant::now();

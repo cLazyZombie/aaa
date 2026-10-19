@@ -641,7 +641,8 @@ impl App {
     async fn run(mut self, terminal: &mut ratatui::DefaultTerminal, client: FrontClient) -> Result<()> {
         let (mut tx, mut rx) = client.split();
         let id = tx.send(FrontRequest::Workspace { name: Some(self.ws_name.clone()) }).await?;
-        self.pending.insert(id, Pending::Report("workspace 읽기"));
+        // 처음 붙을 때도 layout이 오기 전에는 포커스가 없다. 전환 때처럼 먼저 친 입력을 붙잡는다.
+        self.await_layout(&self.ws_name.clone(), id, Pending::Report("workspace 읽기"));
         let id = tx.send(FrontRequest::Workspaces).await?;
         self.pending.insert(id, Pending::Spaces);
         let id = tx.send(FrontRequest::Threads { project: None, role: None }).await?;
