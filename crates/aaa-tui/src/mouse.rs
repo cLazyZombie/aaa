@@ -110,6 +110,10 @@ pub struct Hits {
     pub sidebar: Option<Rect>,
     /// 목록 줄: 줄 칸과 그 줄
     pub rows: Vec<(Rect, Row)>,
+    /// 활동 막대·공통 머리의 동작, 특수 목록, 보고서 목록
+    pub activity: Vec<(Rect, usize)>,
+    pub special_rows: Vec<(Rect, usize)>,
+    pub report_rows: Vec<(Rect, usize)>,
     /// 펼친 목록의 첫 보이는 줄과 보이는 줄 수(휠로 민다)
     pub list_skip: usize,
     pub list_h: u16,
@@ -590,7 +594,38 @@ impl App {
         }
         let (x, y, mods) = (m.column, m.row, m.modifiers);
         let hits = self.hits.borrow().clone();
-        if m.kind == MouseEventKind::Down(MouseButton::Left) && self.link_press(m, &hits, tx).await? {
+        if !self.reports.shown
+            && m.kind == MouseEventKind::Down(MouseButton::Left)
+            && self.link_press(m, &hits, tx).await?
+        {
+            return Ok(());
+        }
+        if self.overlay.is_none()
+            && m.kind == MouseEventKind::Down(MouseButton::Left)
+            && let Some((_, at)) = hits.activity.iter().find(|(r, _)| contains(*r, x, y))
+        {
+            let at = *at;
+            if self.mode == Mode::Navigate && at < 5 {
+                self.activity_focus = Some(at);
+            }
+            self.activate_activity(at, tx).await?;
+            return Ok(());
+        }
+        if self.overlay.is_none()
+            && self.reports.shown
+            && contains(self.body(Rect { x: 0, y: 0, w: self.width, h: self.height }), x, y)
+        {
+            match m.kind {
+                MouseEventKind::Down(MouseButton::Left) => {
+                    if let Some((_, at)) = hits.report_rows.iter().find(|(r, _)| contains(*r, x, y)) {
+                        self.reports.selected = *at;
+                        self.open_report(tx).await?;
+                    }
+                }
+                MouseEventKind::ScrollDown => self.reports.scroll = self.reports.scroll.saturating_add(3),
+                MouseEventKind::ScrollUp => self.reports.scroll = self.reports.scroll.saturating_sub(3),
+                _ => {}
+            }
             return Ok(());
         }
         if self.overlay.is_some() {
@@ -708,6 +743,18 @@ impl App {
         }
         match m.kind {
             MouseEventKind::Down(MouseButton::Left) => match self.overlay.as_mut() {
+                Some(Overlay::Special(_)) => {
+                    if let Some((_, at)) = hits.special_rows.iter().find(|(r, _)| contains(*r, x, y)) {
+                        let pane = self.special_items().get(*at).and_then(|(_, p)| p.clone());
+                        if let Some(pane) = pane {
+                            self.overlay = None;
+                            self.reveal_panel(&pane);
+                            self.open_pane(tx, pane).await?;
+                        }
+                    } else if !hits.on(hits.popup, x, y) {
+                        self.overlay = None;
+                    }
+                }
                 Some(Overlay::Help(_)) => {
                     if !hits.on(hits.popup, x, y) {
                         self.overlay = None;
@@ -864,6 +911,10 @@ impl App {
             return Ok(());
         }
         if let Some(row) = hits.row_at(x, y) {
+            if matches!(row, Row::Project(_)) && hits.rows.iter().any(|(r, v)| v == row && x < r.x + 3) {
+                self.toggle_fold(row);
+                return Ok(());
+            }
             self.drag = Some(Drag::Row(row.clone()));
             return Ok(());
         }

@@ -30,6 +30,7 @@ pub enum Row {
     /// thread에 딸리지 않은 pane 묶음 머리(「기타」): 고르면 접고 편다
     Other,
     Pane(String),
+    Machine(String),
     Empty,
     /// spaces 구역의 workspace(이름)
     Space(String),
@@ -37,12 +38,12 @@ pub enum Row {
 
 impl Row {
     pub fn selectable(&self) -> bool {
-        matches!(self, Row::Thread(_) | Row::Project(_) | Row::Other | Row::Pane(_) | Row::Space(_))
+        matches!(self, Row::Thread(_) | Row::Project(_) | Row::Other | Row::Pane(_) | Row::Space(_) | Row::Machine(_))
     }
 
     /// 여는 줄(탐색 숫자 키가 세는 줄): 묶음 머리는 접기라 빼고 센다
     pub fn opens(&self) -> bool {
-        matches!(self, Row::Thread(_) | Row::Pane(_) | Row::Space(_))
+        matches!(self, Row::Thread(_) | Row::Pane(_) | Row::Space(_) | Row::Machine(_))
     }
 
     /// 누르면 고르는 줄: thread 둘째 줄은 그 thread
@@ -287,7 +288,7 @@ pub fn thread_dot(t: &ThreadView) -> Dot {
 }
 
 /// 점이 얼마나 급한가(herdr-web-ui `rollupStatus`: blocked > done > working > idle)
-fn urgency(d: Dot) -> u8 {
+pub(crate) fn urgency(d: Dot) -> u8 {
     match d {
         Dot::Blocked => 4,
         Dot::Done => 3,
@@ -661,6 +662,21 @@ fn line(row: &Row, v: &View, highlighted: bool, room: usize) -> Parts {
             }
             None => Parts::new(vec![], None),
         },
+        Row::Machine(id) => match v.machines.iter().find(|m| &m.id == id) {
+            Some(m) => Parts::new(
+                vec![(
+                    format!(
+                        " {} {}{} + 새 pane",
+                        if m.connection == Connection::Connected { "●" } else { "×" },
+                        m.name,
+                        if m.local { " [host]" } else { "" }
+                    ),
+                    name,
+                )],
+                None,
+            ),
+            None => Parts::new(vec![], None),
+        },
         Row::Empty => Parts::new(vec![("   pane 없음".into(), faint)], None),
         Row::Space(_) => Parts::new(vec![], None),
         // pane 줄: 상태 점, 제목(넘치면 먼저 줄인다), 「기타」 묶음이면 머신 이름, 오른쪽 배지
@@ -809,35 +825,6 @@ pub fn render_spaces_footer(buf: &mut Buffer, r: Rect, machine: Option<&str>, p:
         h: 1,
     });
     Some(Footer { new, machine, menu: Rect { x: r.x + r.w - menu, y, w: menu, h: 1 } })
-}
-
-/// agents 구역 머리(herdr `render_agent_panel_header`): 구분선 `─`(`surface_dim`), ` agents`(`overlay0` 굵게)와 오른쪽에
-/// 보기 이름. aaa 목록은 herdr-projects 기본 보기(`default_view` label 「projects」)에 해당해 accent 굵게 쓴다.
-/// 목록 칸(머리 세 줄 아래)을 준다.
-pub fn render_agents_header(buf: &mut Buffer, r: Rect, p: &Palette) -> Rect {
-    if r.h == 0 {
-        return Rect { h: 0, ..r };
-    }
-    buf.set_stringn(r.x, r.y, "─".repeat(r.w as usize), r.w as usize, Style::default().fg(p.surface_dim));
-    if r.h >= 2 {
-        buf.set_stringn(
-            r.x,
-            r.y + 1,
-            " agents",
-            r.w as usize,
-            Style::default().fg(p.overlay0).add_modifier(Modifier::BOLD),
-        );
-        let label = "projects";
-        let w = (unicode_width(label) as u16).min(r.w);
-        buf.set_stringn(
-            r.x + r.w - w,
-            r.y + 1,
-            label,
-            w as usize,
-            Style::default().fg(p.accent).add_modifier(Modifier::BOLD),
-        );
-    }
-    Rect { y: r.y + 3.min(r.h), h: r.h.saturating_sub(3), ..r }
 }
 
 /// 접힌 사이드바(herdr `render_collapsed_sidebar`): 고를 수 있는 thread·pane 줄마다 번호와 상태 점

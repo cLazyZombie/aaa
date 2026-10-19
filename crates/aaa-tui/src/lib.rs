@@ -16,6 +16,7 @@
 //!   Prefix(명령 키 하나, 시간 제한 없음, Esc·모르는 키는 취소) → `w`로 Navigate(목록 고르기·pane 포커스).
 //! - 탭은 herdr처럼: `c` 새 탭은 이름을 먼저 묻고(`prompt`), 이름표는 이름 또는 자리 번호(`tabs`), `T` 이름, `X` 닫기.
 
+mod activity;
 pub mod bind;
 mod cards;
 mod chrome;
@@ -39,6 +40,7 @@ use std::collections::{HashMap, HashSet};
 use std::process::ExitCode;
 use std::time::Duration;
 
+use activity::Panel;
 use bind::Action;
 use keys::Combo;
 
@@ -135,6 +137,7 @@ fn attach(rt: &tokio::runtime::Runtime, workspace: Option<String>, client: Front
         app.host_minor = host_minor;
         app.reader = reader;
         app.apply_config(&cfg);
+        app.load_activity();
         let r = app.run(&mut terminal, client).await;
         ratatui::restore();
         r
@@ -235,6 +238,9 @@ impl Grid {
 }
 
 enum Pending {
+    Reports,
+    LibraryReport,
+    Missions,
     /// 응답이 오면 오류만 보인다
     Report(&'static str),
     /// 입력·크기 오류는 상태 줄에 보인다
@@ -242,7 +248,10 @@ enum Pending {
     /// 새로 만든 pane에 포커스를 옮긴다(보낼 때 있던 pane들: 같은 layout 사건이 응답보다 먼저 와도 새 pane을 찾는다)
     Focus(HashSet<String>),
     /// 기록 편집기 pane을 열었다(`Focus`처럼 새 pane으로, 그 pane이 닫히면 `from`으로 돌아간다)
-    EditScrollback { before: HashSet<String>, from: String },
+    EditScrollback {
+        before: HashSet<String>,
+        from: String,
+    },
     /// 새 workspace를 만들었다: 응답이 오면 그 workspace로 가서 새 pane에 포커스
     NewSpace,
     /// 그림 붙여넣기 조각(몇 번째 붙여넣기인지)
@@ -252,7 +261,11 @@ enum Pending {
     /// copy 모드 낱말·문단 이동: 응답이 오면 커서를 그 자리로
     CopyMotion,
     /// copy 모드 찾기(찾은 글·방향·`n`·`N` 다시인지): 응답이 오면 현재 일치로
-    CopySearch { query: String, direction: aaa_proto::SearchDirection, repeat: bool },
+    CopySearch {
+        query: String,
+        direction: aaa_proto::SearchDirection,
+        repeat: bool,
+    },
     /// spaces 구역 workspace 목록: 응답이 오면 이름을 넣고 지금 것이 아닌 workspace의 layout을 읽는다
     Spaces,
     /// 다른 workspace의 layout(상태 점에 쓴다): 응답이 와도 지금 workspace로 바꾸지 않는다
@@ -260,7 +273,10 @@ enum Pending {
     /// host 공유 설정: 기억한 사이드바 배치를 쓴다
     Chrome,
     /// workspace 이름을 바꿨다(그 workspace를 보고 있었으면 보던 탭): 응답이 오면 새 이름으로 따라간다
-    RenameSpace { from: String, tab: Option<String> },
+    RenameSpace {
+        from: String,
+        tab: Option<String>,
+    },
     /// workspace를 닫았다: 응답이 오면 목록에서 빼고, 보고 있던 workspace면 남은 것으로 간다
     CloseSpace(String),
 }
@@ -282,6 +298,7 @@ enum Mode {
 
 /// 화면 위에 뜨는 창
 enum Overlay {
+    Special(usize),
     Help(Help),
     /// 이름 입력(새 탭·탭 이름)
     Rename(prompt::Rename),
@@ -302,6 +319,15 @@ struct Help {
 }
 
 struct App {
+    panel: Panel,
+    activity_focus: Option<usize>,
+    activity_path: Option<std::path::PathBuf>,
+    panel_tops: [Option<usize>; 3],
+    sidebar_pins: Vec<String>,
+    agent_by_activity: bool,
+    missions: Vec<aaa_proto::MissionView>,
+    mission_refresh: bool,
+    reports: activity::Reports,
     ws_name: String,
     /// prefix 키들(`[tui] prefix`)
     prefixes: Vec<Combo>,
@@ -446,6 +472,15 @@ struct App {
 impl App {
     fn new(ws_name: String, me: String) -> App {
         App {
+            panel: Panel::Projects,
+            activity_focus: None,
+            activity_path: None,
+            panel_tops: [None; 3],
+            sidebar_pins: vec![],
+            agent_by_activity: false,
+            missions: vec![],
+            mission_refresh: true,
+            reports: activity::Reports::default(),
             ws: Workspace { name: ws_name.clone(), tabs: vec![] },
             ws_name,
             prefixes: vec![keys::DEFAULT_PREFIX],
@@ -657,6 +692,11 @@ impl App {
         let mut minute = tokio::time::interval_at(tokio::time::Instant::now() + MINUTE, MINUTE);
         minute.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
         loop {
+            if self.mission_refresh && self.host_minor >= 38 {
+                self.mission_refresh = false;
+                let id = tx.send(FrontRequest::MissionList { project: None }).await?;
+                self.pending.insert(id, Pending::Missions);
+            }
             if dirty {
                 self.save_chrome(&mut tx).await?;
                 self.sync_capture();
@@ -792,7 +832,7 @@ impl App {
             None if self.mode == Mode::Copy => {
                 self.prompt_paste(&s);
             }
-            None if self.mode != Mode::Terminal => {}
+            None if self.mode != Mode::Terminal || self.reports.shown => {}
             None if s.is_empty() => {
                 self.paste_image(tx).await?;
             }
@@ -840,6 +880,7 @@ impl App {
                 self.pane_order = panes.iter().map(|p| p.id.clone()).collect();
                 self.panes = panes.into_iter().map(|p| (p.id.clone(), p)).collect();
             }
+            FrontMsg::Event(FrontEvent::Flow(f)) if f.kind.starts_with("mission_") => self.mission_refresh = true,
             FrontMsg::Event(FrontEvent::Thread(t)) => {
                 self.threads.insert(list::thread_key(&t), t);
             }
@@ -931,6 +972,16 @@ impl App {
                                 }
                             }
                         }
+                    }
+                    (Outcome::Ok(aaa_proto::FrontResponse::Missions { missions }), Some(Pending::Missions)) => {
+                        self.missions = missions
+                    }
+                    (Outcome::Ok(aaa_proto::FrontResponse::LibraryReports { reports }), Some(Pending::Reports)) => {
+                        self.reports.rows = reports;
+                        self.reports.selected = self.reports.selected.min(self.reports.rows.len().saturating_sub(1));
+                    }
+                    (Outcome::Ok(aaa_proto::FrontResponse::Library(v)), Some(Pending::LibraryReport)) => {
+                        self.reports.view = Some(v)
                     }
                     (Outcome::Ok(aaa_proto::FrontResponse::Threads { threads }), _) => {
                         self.threads = threads.into_iter().map(|t| (list::thread_key(&t), t)).collect();
@@ -1249,7 +1300,7 @@ impl App {
         let side = match (self.collapsed(), self.collapsed_mode) {
             (false, _) => self.side_width(),
             (true, aaa_config::SidebarCollapsedMode::Compact) => COMPACT_WIDTH,
-            (true, aaa_config::SidebarCollapsedMode::Hidden) => 0,
+            (true, aaa_config::SidebarCollapsedMode::Hidden) => COMPACT_WIDTH,
         }
         .min(area.w.saturating_sub(1));
         let main = Rect { x: area.x + side, w: area.w - side, ..area };
@@ -1268,8 +1319,7 @@ impl App {
     }
 
     fn list_rows(&self) -> Vec<list::Row> {
-        let panes: Vec<PaneView> = self.pane_order.iter().filter_map(|id| self.panes.get(id).cloned()).collect();
-        list::rows(&self.machines, &panes, &self.threads, &self.folded, self.focus.as_deref())
+        self.panel_rows()
     }
 
     /// 고른 줄의 자리(없어졌으면 지금 pane 줄이나 그 pane의 thread 줄, 그것도 없으면 첫 줄)
@@ -1305,6 +1355,7 @@ impl App {
         self.sidebar_collapsed = Some(collapsed);
         self.sidebar_collapsed_manual = true;
         self.remember_chrome("tuiSidebarCollapsed", collapsed.into());
+        self.remember_activity();
     }
 
     /// 끌어 바꾼 폭(herdr `set_sidebar_width_from_column`: 열 + 1을 한도로 묶는다). 남기기는 뗄 때 한다.
@@ -1372,6 +1423,10 @@ impl App {
 
     /// host가 기억한 사이드바 배치(herdr `ClientShellState::new`가 읽는 client 설정): 그동안 사용자가 바꾸지 않은 것만 쓴다
     fn apply_chrome(&mut self, doc: &aaa_proto::SharedPreferences) {
+        if let Some(pins) = &doc.pins {
+            self.sidebar_pins = pins.clone();
+        }
+        self.agent_by_activity = doc.settings.get("agentOrder").and_then(|v| v.as_str()) == Some("activity");
         let get = |k: &str| doc.settings.get(k);
         if !self.sidebar_width_manual
             && let Some(w) = get("tuiSidebarWidth").and_then(|v| v.as_u64()).and_then(|w| u16::try_from(w).ok())
@@ -1406,6 +1461,7 @@ impl App {
 
     /// 목록에서 고른 줄을 연다: pane이면 그 pane이 있는 탭으로(없으면 새 탭으로 넣는다), 묶음 머리면 접고 편다
     async fn open_row(&mut self, tx: &mut FrontSender, row: list::Row) -> Result<()> {
+        self.reports.shown = false;
         let pane = match row {
             list::Row::Pane(p) => p,
             list::Row::Thread(k) => match self.threads.get(&k).and_then(|t| t.pane.clone()) {
@@ -1416,7 +1472,27 @@ impl App {
                 }
             },
             list::Row::Space(name) => return self.switch_space(tx, name).await,
-            r @ (list::Row::Project(_) | list::Row::Other) => {
+            list::Row::Machine(id) => {
+                if !self.machines.iter().any(|m| m.id == id && m.connection == aaa_proto::Connection::Connected) {
+                    self.set_error("이 머신은 끊겨 있어 새 pane을 열 수 없다");
+                    return Ok(());
+                }
+                self.pick_machine(id);
+                return self.act(Action::NewTab, tx).await;
+            }
+            list::Row::Project(project) => {
+                if let Some(pane) = self
+                    .pane_order
+                    .iter()
+                    .filter_map(|id| self.panes.get(id))
+                    .find(|p| p.state.is_running() && p.coordinator_project.as_deref() == Some(project.as_str()))
+                {
+                    return self.open_pane(tx, pane.id.clone()).await;
+                }
+                self.toggle_fold(&list::Row::Project(project));
+                return Ok(());
+            }
+            r @ list::Row::Other => {
                 self.toggle_fold(&r);
                 return Ok(());
             }
@@ -1525,7 +1601,10 @@ impl App {
     async fn open_card(&mut self, tx: &mut FrontSender) -> Result<()> {
         let Some(card) = self.cards.take(tokio::time::Instant::now()) else { return Ok(()) };
         match card.pane {
-            Some(p) if self.panes.contains_key(&p) => self.open_pane(tx, p).await,
+            Some(p) if self.panes.contains_key(&p) => {
+                self.reveal_panel(&p);
+                self.open_pane(tx, p).await
+            }
             _ => Ok(()),
         }
     }
@@ -1715,15 +1794,23 @@ impl App {
         self.selection_copy_held = false;
         // copy 모드 pane에서는 고르기가 copy 모드 것이다(herdr `copy_or_terminal_mode`)
         let in_copy = self.copy.as_ref().is_some_and(|c| self.focus.as_deref() == Some(c.pane.as_str()));
-        if !in_copy && self.selection_key(tx, k.modifiers, ch).await? {
+        if !in_copy && !self.reports.shown && self.selection_key(tx, k.modifiers, ch).await? {
             self.selection_copy_held = true;
             return Ok(());
         }
+        let before = self.focus.clone();
+        let from_list = self.mode == Mode::Navigate;
         let r = self.route_key(k, tx).await;
         // 탭이 바뀌면 포커스를 그 탭으로
         let leaves = self.current_leaves();
         if !self.focus.as_ref().is_some_and(|f| leaves.contains(f)) {
             self.focus = leaves.first().cloned();
+        }
+        if !from_list
+            && self.focus != before
+            && let Some(pane) = self.focus.clone()
+        {
+            self.reveal_panel(&pane);
         }
         self.reconcile_ascii();
         r
@@ -1734,6 +1821,24 @@ impl App {
             return self.on_overlay_key(k, tx).await;
         }
         let c = keys::of(&k);
+        if self.reports.shown && self.mode == Mode::Terminal && !self.is_prefix(c) {
+            match c.code {
+                KeyCode::Esc => self.reports.shown = false,
+                KeyCode::Up => self.reports.selected = self.reports.selected.saturating_sub(1),
+                KeyCode::Down => {
+                    self.reports.selected = (self.reports.selected + 1).min(self.reports.rows.len().saturating_sub(1))
+                }
+                KeyCode::Enter => self.open_report(tx).await?,
+                KeyCode::PageDown => {
+                    self.reports.scroll = self.reports.scroll.saturating_add(self.height.saturating_sub(4))
+                }
+                KeyCode::PageUp => {
+                    self.reports.scroll = self.reports.scroll.saturating_sub(self.height.saturating_sub(4))
+                }
+                _ => {}
+            }
+            return Ok(());
+        }
         match self.mode {
             Mode::Terminal => {
                 if self.is_prefix(c) {
@@ -1802,12 +1907,36 @@ impl App {
         if c.code == KeyCode::Esc || self.is_prefix(c) {
             self.mode = Mode::Terminal;
             self.list_sel = None;
+            self.activity_focus = None;
+            return Ok(());
+        }
+        if c.code == KeyCode::BackTab {
+            self.activity_focus = Some(self.panel.index());
+            return Ok(());
+        }
+        if c.code == KeyCode::Char('s') && c.mods.is_empty() {
+            return self.activate_activity(5, tx).await;
+        }
+        if let Some(at) = self.activity_focus {
+            match c.code {
+                KeyCode::Up => self.activity_focus = Some(at.saturating_sub(1)),
+                KeyCode::Down => self.activity_focus = Some((at + 1).min(4)),
+                KeyCode::Home => self.activity_focus = Some(0),
+                KeyCode::End => self.activity_focus = Some(4),
+                KeyCode::Enter | KeyCode::Char(' ') => self.activate_activity(at, tx).await?,
+                KeyCode::Tab => self.activity_focus = None,
+                _ => {}
+            }
             return Ok(());
         }
         let rows = self.nav_rows();
         let i = self.list_index(&rows);
         if c.mods.is_empty() {
             match c.code {
+                KeyCode::Char(' ') if rows.get(i).and_then(list::Row::fold_key).is_some() => {
+                    self.toggle_fold(&rows[i]);
+                    return Ok(());
+                }
                 KeyCode::Up => {
                     self.list_sel = rows.get(list::step(&rows, i, false)).cloned();
                     self.list_top = None;
@@ -1862,6 +1991,29 @@ impl App {
     /// 창이 열려 있을 때의 키(herdr `route_overlay_key`)
     async fn on_overlay_key(&mut self, k: KeyEvent, tx: &mut FrontSender) -> Result<()> {
         match self.overlay.as_mut() {
+            Some(Overlay::Special(selected)) => {
+                let mut at = *selected;
+                let items = self.special_items();
+                match k.code {
+                    KeyCode::Esc => self.overlay = None,
+                    KeyCode::Up => at = at.saturating_sub(1),
+                    KeyCode::Down => at = (at + 1).min(items.len().saturating_sub(1)),
+                    KeyCode::Enter => {
+                        if let Some((_, Some(pane))) = items.get(at) {
+                            let pane = pane.clone();
+                            self.overlay = None;
+                            self.reveal_panel(&pane);
+                            self.open_pane(tx, pane).await?;
+                        } else {
+                            self.set_message("이 임무에는 실행 중인 pane이 없다");
+                        }
+                    }
+                    _ => {}
+                }
+                if let Some(Overlay::Special(n)) = &mut self.overlay {
+                    *n = at;
+                }
+            }
             Some(Overlay::Help(_)) => {
                 let area = Rect { x: 0, y: 0, w: self.width, h: self.height };
                 let prefixes = self.prefix_label();
@@ -2391,7 +2543,7 @@ impl App {
             if self.collapsed() {
                 self.render_compact(buf, sh.sidebar);
             } else {
-                self.render_sidebar(buf, sh.sidebar);
+                self.render_sidebar(buf, sh.sidebar, true);
             }
         }
         if sh.tab_bar.h > 0 {
@@ -2435,12 +2587,16 @@ impl App {
         }
         // 탐색 모드인데 사이드바가 펼쳐져 있지 않으면 펼친 목록을 pane 위에 띄운다(pane 크기는 그대로).
         // herdr는 접힌 칸의 번호만 강조한다: 이름을 보며 고를 수 있게 aaa는 띄운다(plan §8.73).
-        if self.mode == Mode::Navigate && (self.collapsed() || sh.sidebar.w == 0) {
+        if self.mode == Mode::Navigate && self.activity_focus.is_none() && (self.collapsed() || sh.sidebar.w == 0) {
             // pane 칸 위에만(접힌 칸·탭 막대·머리는 그대로), 모드 막대(pane 맨 아랫줄) 위까지
             let w = if sh.header.h > 0 { body.w } else { self.side_width().min(body.w) };
-            self.render_sidebar(buf, Rect { w, h: body.h.saturating_sub(1), ..body });
+            self.render_sidebar(buf, Rect { w, h: body.h.saturating_sub(1), ..body }, false);
             let mut hits = self.hits.borrow_mut();
             (hits.divider, hits.section_divider) = (None, None);
+        }
+        if self.reports.shown {
+            self.render_reports(buf, body);
+            cursor = None;
         }
         if let Some(bar) = self.render_mode_bar(buf, body)
             && cursor.is_some_and(|(_, y)| y == bar.y)
@@ -2456,6 +2612,12 @@ impl App {
         });
         let mut hits = self.hits.borrow_mut();
         match &self.overlay {
+            Some(Overlay::Special(n)) => {
+                hits.popup = help::popup(area, 76, 22);
+                drop(hits);
+                self.render_special(buf, area, *n);
+                return None;
+            }
             Some(Overlay::Menu(m)) => {
                 let (rect, rows) = mouse::render_menu(buf, area, m, p);
                 hits.popup = Some(rect);
@@ -2618,44 +2780,66 @@ impl App {
         }
     }
 
-    /// 펼친 사이드바(herdr `render_sidebar`): 바탕과 오른쪽 구분선, 위 ` spaces` 구역(workspace 줄), 아래 ` agents` 구역
-    /// (구분선·머리·목록), 맨 아래 오른쪽 접기 표시 `«`
-    fn render_sidebar(&self, buf: &mut Buffer, r: Rect) {
+    /// 활동 막대·공통 머리·spaces 아래에 고른 패널 하나를 그린다. workspace·compact는 herdr `render_sidebar`를 유지한다.
+    fn render_sidebar(&self, buf: &mut Buffer, r: Rect, activity: bool) {
         let p = &self.palette;
         sidebar_background(buf, r, p);
-        let content = Rect { w: r.w.saturating_sub(1), ..r };
-        // 자동 높이는 항목과 머리·빈 줄·footer만 쓰되 agents에 절반 이상을 남긴다.
-        // 경계를 직접 끌었거나 host에 비율을 남겼으면 그 비율이 우선이다.
-        let spaces = self.space_list();
-        let (mut top_h, _) = list::section_heights(content.h, self.sidebar_split);
-        if !self.sidebar_split_manual {
-            top_h = (spaces.len().saturating_add(3).min(u16::MAX as usize) as u16).min(content.h.div_ceil(2));
+        let offset = if activity { activity::WIDTH.min(r.w) } else { 0 };
+        if activity {
+            self.render_activity(buf, r, false);
         }
-        let rest_h = content.h - top_h;
-        let spaces_area = Rect { h: top_h, ..content };
-        let agents_area = Rect { y: content.y + top_h, h: rest_h, ..content };
+        let content = Rect { x: r.x + offset, w: r.w.saturating_sub(offset + 1), ..r };
+        self.render_panel_head(buf, content);
+        let head = 2.min(content.h);
+        let spaces = self.space_list();
+        let (boundary, _) = list::section_heights(content.h, self.sidebar_split);
+        let top_h = if self.sidebar_split_manual {
+            boundary.saturating_sub(head)
+        } else {
+            (spaces.len().saturating_add(3).min(u16::MAX as usize) as u16)
+                .min(content.h.div_ceil(2).saturating_sub(head))
+        };
+        let spaces_area = Rect { y: content.y + head, h: top_h, ..content };
+        let rest_h = content.h.saturating_sub(head + top_h);
+        let divider = content.y + head + top_h;
         let sel = match &self.list_sel {
             Some(list::Row::Space(n)) => Some(n.as_str()),
             _ => None,
         };
-        let navigating = self.mode == Mode::Navigate;
-        let placed_spaces =
-            list::render_spaces(buf, spaces_area, &spaces, &self.ws_name, sel, navigating, p, self.indicators);
-        // herdr: 마우스를 받을 때만 ` new`와 `menu`, 머신이 여럿이면 새 workspace를 열 머신 이름을 붙인다(없으면 로컬 agent)
-        let footer = self.mouse_capture.then(|| {
-            let id = self.target_machine().or_else(|| self.machines.iter().find(|m| m.local).map(|m| m.id.clone()));
-            let name = id.and_then(|id| self.machines.iter().find(|m| m.id == id)).map(|m| m.name.as_str());
-            list::render_spaces_footer(buf, spaces_area, name.filter(|_| self.machines.len() > 1), p)
-        });
-        let body = list::render_agents_header(buf, agents_area, p);
+        let placed_spaces = list::render_spaces(
+            buf,
+            spaces_area,
+            &spaces,
+            &self.ws_name,
+            sel,
+            self.mode == Mode::Navigate,
+            p,
+            self.indicators,
+        );
+        let footer = self
+            .mouse_capture
+            .then(|| {
+                let id = self.target_machine().or_else(|| self.machines.iter().find(|m| m.local).map(|m| m.id.clone()));
+                let name = id.and_then(|id| self.machines.iter().find(|m| m.id == id)).map(|m| m.name.as_str());
+                list::render_spaces_footer(buf, spaces_area, name.filter(|_| self.machines.len() > 1), p)
+            })
+            .flatten();
+        if rest_h > 0 {
+            buf.set_stringn(
+                content.x,
+                divider,
+                "─".repeat(content.w as usize),
+                content.w as usize,
+                Style::default().fg(p.surface_dim),
+            );
+        }
+        let body = Rect { y: divider + u16::from(rest_h > 0), h: rest_h.saturating_sub(1), ..content };
         let rows = self.list_rows();
         let mut hits = self.hits.borrow_mut();
         hits.sidebar = Some(r);
-        // herdr `sidebar_section_divider_rect`: 6줄 밑이면 없다(띄운 목록은 끌지 않는다)
         if content.h >= 6 && content.w > 0 && !self.collapsed() {
-            hits.section_divider = Some(Rect { y: content.y + top_h, h: 1, ..content });
+            hits.section_divider = Some(Rect { y: divider, h: 1, ..content });
         }
-        let footer = footer.flatten();
         hits.new_workspace = footer.map(|f| f.new);
         hits.pick_machine = footer.and_then(|f| f.machine);
         hits.global_menu = footer.map(|f| f.menu);
@@ -2663,14 +2847,12 @@ impl App {
             placed_spaces.into_iter().map(|(y, n)| (Rect { y, h: 1, ..content }, list::Row::Space(n))).collect();
         if body.h > 0 {
             let (placed, skip) = list::render(buf, body, &rows, &self.list_view(&rows));
-            // thread 둘째 줄을 누르면 그 thread
             hits.rows.extend(placed.into_iter().map(|(y, n)| (Rect { y, h: 1, ..body }, rows[n].target())));
             hits.list_skip = skip;
             hits.list_h = body.h;
         }
-        if r.w > 1 && r.h > 0 {
+        if r.w > offset + 1 && r.h > 0 {
             buf.set_string(r.x + r.w - 2, r.y + r.h - 1, "«", Style::default().fg(p.overlay0));
-            // herdr: 접기 `«`는 (오른쪽−2, 아래−1), 경계는 마지막 열(띄운 목록은 끌지 않는다)
             hits.toggle = Some(Rect { x: r.x + r.w - 2, y: r.y + r.h - 1, w: 1, h: 1 });
             if !self.collapsed() {
                 hits.divider = Some(Rect { x: r.x + r.w - 1, w: 1, ..r });
@@ -2678,19 +2860,23 @@ impl App {
         }
     }
 
-    /// 접힌 사이드바(herdr `render_collapsed_sidebar`): 번호와 상태 점, 맨 아래 가운데 `»`
+    /// compact의 pane 번호는 활동 단추 사이에 둔다. 숨김 모드도 활동 막대는 남긴다.
     fn render_compact(&self, buf: &mut Buffer, r: Rect) {
-        let p = &self.palette;
-        sidebar_background(buf, r, p);
-        let content = Rect { w: r.w.saturating_sub(1), h: r.h.saturating_sub(1), ..r };
-        let rows = self.list_rows();
-        let placed = list::render_compact(buf, content, &rows, &self.list_view(&rows));
+        self.render_activity(buf, r, true);
+        let content = Rect { y: r.y + 11.min(r.h), h: r.h.saturating_sub(16), w: r.w.saturating_sub(1), ..r };
+        let rows = self.project_rows();
+        let placed = if self.collapsed_mode == aaa_config::SidebarCollapsedMode::Compact {
+            list::render_compact(buf, content, &rows, &self.list_view(&rows))
+        } else {
+            vec![]
+        };
         let mut hits = self.hits.borrow_mut();
         hits.sidebar = Some(r);
         hits.rows = placed.into_iter().map(|(y, n)| (Rect { y, h: 1, ..content }, rows[n].clone())).collect();
-        if content.w > 0 && r.h > 0 {
-            buf.set_string(content.x + content.w / 2, r.y + r.h - 1, "»", Style::default().fg(p.overlay0));
-            hits.toggle = Some(Rect { x: content.x + content.w / 2, y: r.y + r.h - 1, w: 1, h: 1 });
+        if r.w > 1 && r.h > 5 {
+            let toggle = Rect { x: r.x + 1, y: r.y + r.h - 5, w: 1, h: 1 };
+            buf.set_string(toggle.x, toggle.y, "»", Style::default().fg(self.palette.overlay0));
+            hits.toggle = Some(toggle);
         }
     }
 
@@ -2839,6 +3025,15 @@ impl App {
         let s = |t: &str, st: Style| (t.to_string(), st);
         if let Some((e, _)) = &self.error {
             return Some(vec![s(" ERROR ", chip), (format!(" {e}"), base)]);
+        }
+        if self.mode == Mode::Navigate
+            && let Some(at) = self.activity_focus
+        {
+            let name = ["프로젝트", "머신", "에이전트", "보고서", "설정"].get(at).copied().unwrap_or("특수");
+            return Some(vec![
+                s(" ACTIVITY ", chip),
+                (format!(" {name} · ↑↓ Home End · Enter 선택 · Tab 목록 · s 특수 · Esc 돌아가기"), base),
+            ]);
         }
         let help = bind::rhs(Action::Help);
         match self.mode {
@@ -3365,27 +3560,27 @@ mod tests {
     fn section_split_drags_and_is_remembered() {
         let mut app = app_with_tabs(&[""]);
         let (lines, _) = draw(&app);
-        assert!(lines[4].starts_with(&"─".repeat(25)), "항목만큼: {}", lines.join("\n"));
-        assert_eq!(app.hits.borrow().section_divider, Some(r(0, 4, 25, 1)));
+        assert!(lines[6].contains(&"─".repeat(21)), "항목만큼: {}", lines.join("\n"));
+        assert_eq!(app.hits.borrow().section_divider, Some(r(4, 6, 21, 1)));
         // 큰 화면에서도 세 workspace는 머리·빈 줄·footer를 더한 여섯 줄이면 된다.
         app.spaces.insert("projects".into(), app.ws.clone());
         app.spaces.insert("shadow".into(), app.ws.clone());
         app.height = 80;
         let (lines, _) = draw(&app);
-        assert!(lines[6].starts_with(&"─".repeat(25)), "세 workspace: {}", lines.join("\n"));
+        assert!(lines[8].contains(&"─".repeat(21)), "세 workspace: {}", lines.join("\n"));
         // workspace가 많으면 agents에도 절반 이상을 남긴다.
         for i in 0..50 {
             app.spaces.insert(format!("space-{i}"), app.ws.clone());
         }
         let (lines, _) = draw(&app);
-        assert!(lines[40].starts_with(&"─".repeat(25)), "상한: {}", lines.join("\n"));
+        assert!(lines[40].contains(&"─".repeat(21)), "상한: {}", lines.join("\n"));
         app.spaces.clear();
         app.height = 30;
         draw(&app);
         let side = app.hits.borrow().sidebar;
         app.drag_section_to(21, side);
         let (lines, _) = draw(&app);
-        assert!(lines[21].starts_with(&"─".repeat(25)), "{}", lines.join("\n"));
+        assert!(lines[21].contains(&"─".repeat(21)), "{}", lines.join("\n"));
         assert!(app.chrome_unsaved.is_empty(), "끄는 동안은 남기지 않는다");
         app.section_drag_done();
         assert_eq!(app.chrome_unsaved.get("tuiSidebarSplit"), Some(&serde_json::json!(0.7f32)));
@@ -3393,7 +3588,7 @@ mod tests {
         app.drag_section_to(0, side);
         assert_eq!(app.sidebar_split, 0.1);
         let (lines, _) = draw(&app);
-        assert!(lines[3].starts_with(&"─".repeat(25)), "{}", lines.join("\n"));
+        assert!(lines[3].contains(&"─".repeat(21)), "{}", lines.join("\n"));
 
         let mut again = app_with_tabs(&[""]);
         let doc = aaa_proto::SharedPreferences {
@@ -3403,7 +3598,7 @@ mod tests {
         };
         again.apply_chrome(&doc);
         let (lines, _) = draw(&again);
-        assert!(lines[6].starts_with(&"─".repeat(25)), "{}", lines.join("\n"));
+        assert!(lines[6].contains(&"─".repeat(21)), "{}", lines.join("\n"));
     }
 
     /// 링크를 묻는 ctrl+누름(herdr `PaneLinkActivate`·`fallback_events`·`url_click_consumes_until_up`): 답이 올 때까지 그
@@ -3615,7 +3810,7 @@ mod tests {
         let (lines, _) = draw(&app);
         let top = &lines[0];
         // 사이드바 머리 ` spaces`·구분선 뒤 탭 막대에 "   1    " "  빌드  " "   3    "(사이 한 칸)
-        assert!(top.starts_with(" spaces"), "{top:?}");
+        assert!(top.contains("프로젝트"), "{top:?}");
         assert!(right_of_sidebar(top).starts_with("   1       빌드      3    "), "{top:?}");
         let area = Rect { x: 0, y: 0, w: 90, h: 30 };
         let mut buf = Buffer::empty(ratatui::layout::Rect::new(0, 0, 90, 30));
@@ -3863,8 +4058,8 @@ mod tests {
         };
         app.apply_config(&cfg);
         assert!(app.collapsed(), "다시 읽어도 사용자가 접은 그대로");
-        assert_eq!(app.shell(area).sidebar.w, 0);
-        assert_eq!(app.shell(area).panes, r(0, 1, 120, 29));
+        assert_eq!(app.shell(area).sidebar.w, 4, "숨김도 활동 막대는 남는다");
+        assert_eq!(app.shell(area).panes, r(4, 1, 116, 29));
         app.toggle_list();
         cfg.sidebar_width = 90;
         app.apply_config(&cfg);
@@ -3950,6 +4145,9 @@ mod tests {
     /// 접으면 번호와 상태 점, `»`. 탐색 모드면 접힌 채여도 펼친 목록을 pane 위에 띄운다.
     #[test]
     fn sidebar_like_herdr() {
+        fn panel(line: &str) -> String {
+            line.chars().skip(4).collect()
+        }
         let mut app = app_with_tabs(&[""]);
         app.focus = Some("p0".into());
         app.panes.insert("p0".into(), pane_view("p0", "m", "build"));
@@ -3957,32 +4155,50 @@ mod tests {
         app.machines = vec![machine("m", "mac-a")];
         let (lines, _) = draw(&app);
         let shown = lines.join("\n");
-        assert!(lines[0].starts_with(" spaces "), "{shown}");
-        assert!(lines[2].starts_with(" · main "), "{shown}");
-        assert!(lines[3].starts_with(" new "), "{shown}");
-        assert!(lines[4].starts_with(&"─".repeat(25)), "{shown}");
-        assert!(lines[5].starts_with(" agents") && lines[5].contains("projects│"), "{shown}");
-        // thread가 없으면 셸 pane은 「기타」 묶음에, 머신은 글자로(트리 단계가 아니다)
-        assert!(lines[7].starts_with(" ▾ 기타") && lines[7].contains("pane 1"), "{shown}");
+        assert!(lines[0].starts_with("aaa") && lines[0].contains("프로젝트"), "{shown}");
+        assert!(panel(&lines[1]).starts_with(" 특수 0"), "{shown}");
+        assert!(panel(&lines[2]).starts_with(" spaces"), "{shown}");
+        assert!(panel(&lines[4]).starts_with(" · main"), "{shown}");
+        assert!(panel(&lines[5]).starts_with(" new"), "{shown}");
+        assert!(panel(&lines[6]).starts_with(&"─".repeat(21)), "{shown}");
+        assert!(panel(&lines[7]).starts_with(" ▾ 기타") && lines[7].contains("pane 1"), "{shown}");
+        assert!(panel(&lines[8]).starts_with(" · build mac-a"), "{shown}");
         assert!(lines.iter().all(|l| at_col(l, 25) == Some('│')), "{shown}");
-        assert!(lines[8].starts_with(" · build mac-a"), "셸 pane은 unknown 점과 머신 이름: {shown}");
-        assert_eq!(lines[29].chars().nth(24), Some('«'), "{shown}");
-        app.toggle_list();
+        assert_eq!(at_col(&lines[29], 24), Some('«'));
+        // 패널은 하나만 보인다. 같은 단추는 접고 활동 막대와 compact 번호는 남는다.
+        app.choose_panel(Panel::Machines);
         let (lines, _) = draw(&app);
-        let shown = lines.join("\n");
-        assert!(lines[0].starts_with("1 ·│"), "{shown}");
-        assert_eq!(lines[29].chars().nth(1), Some('»'), "{shown}");
-        assert!(!shown.contains("mac-a"), "{shown}");
+        assert!(lines[0].contains("머신") && lines[7].contains("mac-a [host]"));
+        assert!(!lines.join("\n").contains("build"));
+        app.choose_panel(Panel::Machines);
+        let (lines, _) = draw(&app);
+        assert!(lines[0].starts_with("aaa│"));
+        assert!(lines[11].starts_with("1 ·│"));
+        assert_eq!(at_col(&lines[25], 1), Some('»'));
+        for y in [3, 5, 7] {
+            assert_ne!(at_col(&lines[y], 0), Some('▏'), "접으면 고른 단추가 없다");
+        }
+        app.choose_panel(Panel::Agents);
+        let (lines, _) = draw(&app);
+        assert!(lines[0].contains("에이전트") && panel(&lines[1]).contains("특수"));
+        assert!(!lines.join("\n").contains("build"), "일반 셸은 agent가 아니다");
+        app.choose_panel(Panel::Projects);
+        app.toggle_list();
         app.mode = Mode::Navigate;
         let (lines, _) = draw(&app);
-        let shown = lines.join("\n");
-        // 접힌 칸(4칸)과 탭 막대는 그대로, 그 오른쪽 아래 pane 칸에 펼친 목록(머리·`▾ 기타`·`«`), 모드 막대 위까지
-        assert!(lines[0].starts_with("1 ·│   1   "), "{shown}");
-        assert!(lines[1].starts_with("   │ spaces "), "{shown}");
-        assert!(lines[3].starts_with("   │ · main "), "{shown}");
-        assert!(lines.iter().any(|l| l.starts_with("   │ ▾ 기타")), "탐색이면 띄운다: {shown}");
-        assert_eq!(at_col(&lines[28], 28), Some('«'), "띄운 목록은 막대 위까지: {shown}");
-        assert!(lines[29].starts_with(" » │ NAVIGATE  esc 돌아가기"), "접힌 칸은 그대로, 막대는 pane 폭: {shown}");
+        assert!(panel(&lines[1]).starts_with(" 프로젝트"));
+        assert!(panel(&lines[3]).starts_with(" spaces"));
+        assert!(panel(&lines[5]).starts_with(" · main"));
+        assert!(lines.iter().any(|l| panel(l).starts_with(" ▾ 기타")));
+        assert_eq!(at_col(&lines[28], 28), Some('«'));
+        assert!(panel(&lines[29]).starts_with(" NAVIGATE"));
+        // 단축키·알림의 드러내기는 패널만 고르고, 접힘과 PTY 너비를 유지한다.
+        app.panel = Panel::Machines;
+        let before = app.shell(r(0, 0, 90, 30)).panes;
+        app.reveal_panel("p0");
+        assert_eq!(app.panel, Panel::Projects);
+        assert!(app.collapsed());
+        assert_eq!(app.shell(r(0, 0, 90, 30)).panes, before);
     }
 
     /// 새 탭·workspace를 여는 머신(herdr 활성 endpoint, 차이 목록 U8): 포커스 pane의 머신이고 고르면 그 머신(포커스가 그대로인
@@ -3997,16 +4213,16 @@ mod tests {
         let mut far = machine("n", "mac-b");
         far.local = false;
         app.machines = vec![machine("m", "mac-a"), far];
-        let footer = |app: &App| draw(app).0[3].clone();
+        let footer = |app: &App| draw(app).0[5].chars().skip(4).collect::<String>();
         assert_eq!(app.target_machine().as_deref(), Some("m"));
         assert!(footer(&app).starts_with(" new · mac-a "), "{}", footer(&app));
         app.pick_machine("n".into());
         assert_eq!(app.target_machine().as_deref(), Some("n"));
         assert!(footer(&app).starts_with(" new · mac-b "), "{}", footer(&app));
-        assert!(footer(&app).contains("         menu│"), "{}", footer(&app));
-        assert_eq!(app.hits.borrow().new_workspace, Some(Rect { x: 0, y: 3, w: 5, h: 1 }));
-        assert_eq!(app.hits.borrow().pick_machine, Some(Rect { x: 5, y: 3, w: 7, h: 1 }));
-        assert_eq!(app.hits.borrow().global_menu, Some(Rect { x: 19, y: 3, w: 6, h: 1 }));
+        assert!(footer(&app).contains("menu│"), "{}", footer(&app));
+        assert_eq!(app.hits.borrow().new_workspace, Some(Rect { x: 4, y: 5, w: 5, h: 1 }));
+        assert_eq!(app.hits.borrow().pick_machine, Some(Rect { x: 9, y: 5, w: 7, h: 1 }));
+        assert_eq!(app.hits.borrow().global_menu, Some(Rect { x: 19, y: 5, w: 6, h: 1 }));
         // 다음 붙은 머신으로 돈다: mac-b → mac-a → mac-b
         app.next_machine();
         assert!(footer(&app).starts_with(" new · mac-a "), "{}", footer(&app));
@@ -4034,7 +4250,7 @@ mod tests {
         assert!(footer(&app).starts_with(" new · mac-a "), "{}", footer(&app));
         app.machines.truncate(1);
         assert!(footer(&app).starts_with(" new    "), "{}", footer(&app));
-        assert_eq!(app.hits.borrow().new_workspace, Some(Rect { x: 0, y: 3, w: 5, h: 1 }));
+        assert_eq!(app.hits.borrow().new_workspace, Some(Rect { x: 4, y: 5, w: 5, h: 1 }));
         assert_eq!(app.hits.borrow().pick_machine, None);
         app.mouse_capture = false;
         assert!(!footer(&app).contains("new"), "{}", footer(&app));
