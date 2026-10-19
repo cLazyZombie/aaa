@@ -220,6 +220,8 @@ impl Host {
         self.db.project_forget(project).map_err(internal)?;
         // 같은 이름을 다시 만들어도 옛 앱 보기 경로가 새 thread 번호를 읽지 못한다.
         self.view_caps.lock().unwrap().retain(|_, cap| cap.project != project);
+        // 작업 요약 표지도: 같은 이름의 새 프로젝트 t-0001이 옛 기억을 쓰지 않게(plan §8.259)
+        self.summary_marks.lock().unwrap().retain(|(p, _), _| p != project);
         self.db.audit(actor, "project_delete", &format!("{project} → {}", target.display()));
         // 끝나지 않은 thread의 감시를 푼다(pane은 그대로, 참고도 닫지 않는다)
         for r in recs.iter().filter(|r| r.status != ThreadStatus::Resolved) {
@@ -338,6 +340,7 @@ impl Host {
                 crate::orch::write_atomic(&new_dir.join("AGENTS.md"), crate::orch::coordinator_guide(to).as_bytes());
         }
         self.db.audit(actor, "project_rename", &format!("{project} → {to}"));
+        self.summary_marks.lock().unwrap().retain(|(p, _), _| p != project && p != to);
         self.hide_threads(&old_recs);
         for j in self.db.threads(Some(to)).unwrap_or_default() {
             if let Ok(r) = serde_json::from_str::<ThreadRec>(&j) {

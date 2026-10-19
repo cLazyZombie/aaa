@@ -36,6 +36,7 @@ import { updateSidebarShared, useMedia, useSidebarShared } from "./settings";
 import { watchTouchReorder } from "./herdr/touchReorder.ts";
 import { placeBlock } from "./herdr/workspaceOrder.ts";
 import { activityOrder, GROUP_WORD, needsYou, paneAgentStatus, paneEnded, paneProblem, projectLine, roster, shortPath, stateLine, threadKey } from "./sidebarModel";
+import { useSummaryHover } from "./ThreadSummary";
 import "./herdr/primitives.css";
 import "./herdr/Sidebar.css";
 import "./herdr/AgentSidebar.css";
@@ -917,6 +918,8 @@ function ThreadRow({ t, online, machine, twoLine, ...props }: SidebarProps & { t
   const open = () => (paneOpen && pane ? props.onPane(pane.id) : props.onThread(t));
   const rows = useRows();
   const menuKey = `thread:${threadKey(t)}`;
+  // 작업 요약 hover 카드(마우스 기기만, plan §8.259): 줄의 title tooltip을 대신하고 ⋯ 메뉴가 열리면 숨는다
+  const hover = useSummaryHover(t, rows.menuKey === menuKey);
   // thread 줄은 그 agent pane을 연다: 보고와 그 프로젝트의 모든 thread는 메뉴에서
   const toggleMenu = (anchor: HTMLElement, point?: { x: number; y: number }, previousFocus?: HTMLElement | null) =>
     rows.toggleMenu({
@@ -939,7 +942,8 @@ function ThreadRow({ t, online, machine, twoLine, ...props }: SidebarProps & { t
           role="button"
           tabIndex={0}
           aria-current={selected ? "true" : undefined}
-          title={tooltip}
+          title={hover.enabled ? undefined : tooltip}
+          {...hover.handlers}
           data-testid={`thread-${t.project}-${t.id}`}
           onClick={open}
           onKeyDown={(e) => onRowKey(e, open)}
@@ -972,6 +976,7 @@ function ThreadRow({ t, online, machine, twoLine, ...props }: SidebarProps & { t
         </div>
         <RowMenuButton title={title} open={rows.menuKey === menuKey} onToggle={(anchor) => toggleMenu(anchor)} />
       </div>
+      {hover.card}
     </li>
   );
 }

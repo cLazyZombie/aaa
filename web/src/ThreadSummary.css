@@ -1,0 +1,229 @@
+/* thread 작업 요약(plan §8.259). 바탕·그림자는 herdr/RowMenu.css 팝오버(.menu)를 따른다. 줄마다 한 줄, 줄 사이를 띄워
+   훑어보기 쉽게 하고, 머리말은 굵게·아이콘·색으로 눈이 바로 가게 한다 */
+.summary-hover,
+.summary-pop {
+  position: fixed;
+  z-index: calc(var(--z-drawer) + 2);
+  background: var(--bg-elevated);
+  color: var(--text);
+  border-radius: var(--r-md, 8px);
+  box-shadow: var(--shadow-pop);
+  font-size: var(--fs-sm, 13px);
+  line-height: 1.45;
+}
+.summary-hover {
+  width: 320px;
+  padding: 12px 14px;
+  pointer-events: none;
+  transform-origin: left top;
+}
+/* t3code TooltipPopup: 나타날 때 scale .98·투명에서(150ms), 400ms 안에 옮긴 줄은 바로(data-instant) */
+.summary-hover:not(.is-instant),
+.summary-pop {
+  animation: summary-in 150ms ease-out;
+}
+@keyframes summary-in {
+  from { opacity: 0; transform: scale(0.98); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .summary-hover, .summary-pop { animation: none; }
+}
+.summary-pop {
+  width: min(400px, calc(100vw - 16px));
+  /* t3code ThreadDetailsCard popover: max-h calc(100dvh - 6.5rem) */
+  max-height: calc(100dvh - 6.5rem);
+  transform-origin: right top;
+  overflow-y: auto;
+  padding: 12px 14px 10px;
+}
+.summary-pop-head {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+.summary-pop-title {
+  flex: 1;
+  min-width: 0;
+  font-weight: 600;
+  color: var(--text-dim);
+  font-size: var(--fs-xs);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.summary-card,
+.summary-detail {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.summary-goal {
+  display: flex;
+  gap: 7px;
+  align-items: center;
+  margin: 0;
+  font-weight: 700;
+  color: var(--text-strong);
+  font-size: var(--fs-md, 14px);
+}
+.summary-goal svg { width: 15px; height: 15px; flex: none; color: var(--accent); }
+.summary-goal span,
+.summary-card .summary-now li,
+.summary-latest span {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+}
+.summary-goal.is-auto { font-weight: 600; color: var(--text); }
+.summary-origin { margin: -4px 0 0 22px; color: var(--text-dim); font-size: var(--fs-xs); }
+.summary-note { margin: -4px 0 0 22px; }
+.summary-now {
+  margin: 0;
+  padding: 0 0 0 22px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.summary-now li { list-style: none; position: relative; }
+.summary-now li::before {
+  content: "";
+  position: absolute;
+  left: -13px;
+  top: 0.62em;
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--status-working);
+}
+.summary-now li.summary-more::before { display: none; }
+.summary-more { color: var(--text-dim); font-size: var(--fs-xs); }
+.summary-latest {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  margin: 0;
+  color: var(--text);
+}
+.summary-latest svg { width: 14px; height: 14px; flex: none; color: var(--status-done); }
+.summary-latest span:first-of-type { flex: 1; }
+.summary-status {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 2px 0 0;
+  padding-top: 8px;
+  border-top: 1px solid var(--border);
+  font-size: var(--fs-xs);
+}
+.summary-status .thread-state { font-weight: 600; }
+.summary-warn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--notice);
+  font-weight: 600;
+}
+.summary-warn svg { width: 13px; height: 13px; }
+.summary-dim { color: var(--text-dim); font-size: var(--fs-xs); }
+.summary-chip {
+  flex: none;
+  padding: 0 5px;
+  border-radius: 4px;
+  font-size: var(--fs-2xs);
+  line-height: 17px;
+  white-space: nowrap;
+  background: var(--bg-hover);
+  color: var(--text-dim);
+}
+.summary-chip.is-user { color: var(--accent); background: var(--accent-tint); }
+.summary-chip.is-agent { color: var(--status-done); background: var(--status-done-tint); }
+.summary-block h4,
+.summary-fold > summary {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0 0 5px;
+  font-size: var(--fs-xs);
+  font-weight: 700;
+  color: var(--text-strong);
+}
+.summary-block h4 svg,
+.summary-fold > summary svg { width: 14px; height: 14px; color: var(--status-working); }
+.summary-folds { display: flex; flex-direction: column; gap: 2px; }
+.summary-fold > summary {
+  cursor: pointer;
+  list-style: none;
+  margin: 0;
+  padding: 5px 4px;
+  border-radius: 5px;
+}
+.summary-fold > summary::-webkit-details-marker { display: none; }
+.summary-fold > summary:hover { background: var(--bg-hover); }
+.summary-fold > summary::after {
+  content: "›";
+  margin-left: auto;
+  color: var(--text-dim);
+  transition: transform 0.12s;
+}
+.summary-fold[open] > summary::after { transform: rotate(90deg); }
+.summary-fold.is-warn > summary,
+.summary-fold.is-warn > summary svg { color: var(--notice); }
+.summary-count {
+  font-weight: 600;
+  color: var(--text-dim);
+  font-size: var(--fs-2xs);
+}
+.summary-fold ul {
+  margin: 2px 0 6px;
+  padding: 0 0 0 26px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.summary-fold li { display: flex; gap: 6px; align-items: baseline; }
+.summary-fold li .summary-text { flex: 1; min-width: 0; }
+li.is-dropped .summary-text { text-decoration: line-through; color: var(--text-dim); }
+.summary-foot {
+  margin: 2px 0 0;
+  padding-top: 6px;
+  border-top: 1px solid var(--border);
+  color: var(--text-dim);
+  font-size: var(--fs-2xs);
+}
+.summary-error { color: var(--status-blocked); margin: 0; }
+
+/* 머리 단추: 노란 점은 요약 뒤 지시가 있다는 뜻 */
+.summary-btn { position: relative; display: inline-flex; align-items: center; gap: 4px; }
+.summary-btn svg { width: 14px; height: 14px; }
+.summary-btn[aria-expanded="true"] { background: var(--bg-hover); color: var(--text-strong); }
+.summary-dot {
+  position: absolute;
+  top: 2px;
+  right: 2px;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--notice);
+}
+@media (max-width: 640px) {
+  .summary-btn-label { display: none; }
+}
+
+/* 휴대폰 시트(.modal-scrim .row-sheet 틀) */
+.summary-sheet { max-height: 82vh; display: flex; flex-direction: column; }
+.summary-sheet-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 16px 8px;
+  border-bottom: 1px solid var(--border);
+}
+.summary-sheet-head .row-sheet-title { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.summary-sheet-scroll {
+  overflow-y: auto;
+  padding: 12px 18px calc(20px + env(safe-area-inset-bottom));
+  font-size: var(--fs-md, 14px);
+  line-height: 1.5;
+}

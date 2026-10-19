@@ -46,6 +46,7 @@ mod report_mark;
 mod restore;
 mod routine;
 mod seen;
+mod summary;
 pub mod tailscale;
 mod tasks;
 mod text;
@@ -443,6 +444,8 @@ pub struct Host {
     nudge_box: Mutex<HashMap<String, (String, Instant)>>,
     /// task.md Follow-ups 덧붙이기는 한 번에 하나씩
     follow_up_lock: Mutex<()>,
+    /// thread 작업 요약 표지 재료(summary.rs): 목록이 매번 파일을 읽지 않게
+    summary_marks: summary::MarkMap,
     /// 지금 도는 routine 명령(`<project>/<name>`)
     routine_running: Mutex<HashSet<String>>,
     /// PR 추적: 프로젝트별 마지막 조회·도는 중·`gh` 실패, `gh` 계정(pr.rs)
@@ -620,6 +623,7 @@ impl Host {
             nudge_screens: Mutex::new(HashMap::new()),
             nudge_box: Mutex::new(HashMap::new()),
             follow_up_lock: Mutex::new(()),
+            summary_marks: Mutex::new(HashMap::new()),
             routine_running: Mutex::new(HashSet::new()),
             pr: Mutex::new(pr::PrMemory::default()),
             view_caps: Mutex::new(HashMap::new()),
@@ -1273,6 +1277,12 @@ impl Host {
             }
             FrontRequest::ThreadShow { project, thread } => {
                 self.thread_show(&project, &thread).map(FrontResponse::Thread)
+            }
+            FrontRequest::ThreadSummary { project, thread } => {
+                self.thread_summary(&project, &thread).map(FrontResponse::ThreadSummary)
+            }
+            FrontRequest::ThreadSummarySet { project, thread, text } => {
+                self.thread_summary_set(&project, &thread, &text, actor).map(FrontResponse::ThreadSummary)
             }
             FrontRequest::ThreadLibrary { project, thread } => self
                 .thread_library(&project, &thread, actor.strip_prefix("device:"), role.can_control())
