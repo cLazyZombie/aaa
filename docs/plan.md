@@ -5301,3 +5301,12 @@ primary 근거:
 - **참고와 차이.** herdr-web-ui `package.json patchedDependencies`·`scripts/build-xterm.ts`는 Bun이 패치한 소스를 TypeScript로 빌드한다. aaa는 npm을 써 자체 패치 적용기가 필요하다. t3code `package.json`·`patches/`도 확인했으나 같은 자체 적용기는 없다. Vite 구성이나 IME 동작은 바꾸지 않는다.
 - **최소 보호선.** `web/test/xterm-source.test.mjs`가 실제 파일 적용기를 LF/CRLF 네 조합으로 실행하고, 이미 바뀌어 문맥이 안 맞는 파일은 거부되는지 본다. 수정 전 CRLF patch에서 실패했고 수정 뒤 통과했다. 기존 CI 세 OS의 `web` 단계가 이 시험을 실행하므로 별도 Windows job을 늘리지 않는다.
 - **실험실.** aaa pane 안에서 전체 검사를 처음 실행하자 기존 시험 다섯 건이 운영 pane의 호출자·hook 환경을 물려받아 실패했다. `tests/lab Node::cmd`·사람 터미널 fixture는 실험실을 띄울 때 그 변수만 제거한다. 권한 시험은 자기 값을 명시해 주입한다. update 사본의 비터미널 검사도 세션 변수를 제거한다. 제품의 사람 전용·worker 권한 검사는 그대로다.
+
+### 8.214 작업 중 보낸 메시지의 chat 기록·전송 확인과 전달 진단(10-19, t-0375)
+
+- **실제 기록.** 작업 중 웹에서 보낸 요청 세 건이 Claude의 `queue-operation enqueue/remove`와 인간 `attachment.queued_command`로 모두 남았으나 aaa chat에는 없었다. `chat.rs claude_line`이 user·assistant만 읽던 것이 원인이다. 과거 전송 경로 로그가 없어 이 밖에 미도착한 메시지가 있었는지는 판정할 수 없다.
+- **참고 그대로.** herdr-web-ui `server/conversation.ts parseClaudeTranscript`의 queued_command 분기를 옮겼다. `commandMode = prompt`·`origin.kind = human`만 사람 말로 표시하고 enqueue/remove 장부는 중복하지 않는다. 배경 작업·peer·meta·sidechain은 그대로 숨긴다. t3code `Adapters/ClaudeAdapterV2.ts`는 SDK의 구조화된 turn 입력·첨부를 쓰므로 PTY transcript 판독에는 herdr-web-ui가 직접 대응한다. Codex의 실제 작업 중 입력은 `response_item.message role=user`이며 기존 판독기가 처리한다.
+- **화면.** submit 응답 뒤 입력창에 전송 확인을 표시한다. 대화 기록 반영과 모델의 처리 완료를 구분한다. 자동 전송을 끈 동안의 기존 기기별 보관·지금 보내기는 유지한다. onSend가 동기로 실패해도 보내는 중에 갇히지 않고 초안과 확인 불가 안내를 남긴다.
+- **진단.** host는 front·pane·submit 번호·바이트 수·글/Enter 응답·거부 코드·확인 연결 닫힘을 기록하고 `web_submit` audit를 남긴다. agent는 link 요청 번호·session·바이트 수, session host는 수신·PTY 쓰기 성공/실패를 남긴다. 본문·키 내용·token은 기록하지 않는다. session 응답은 입력 통로 접수이며 모델 수신 증거는 transcript다. 새 기록은 향후 전송부터 생긴다.
+- **D8 조사.** 감지 상태와 규칙을 debug에서 info로 올려 운영 로그에도 남긴다. 과거 false-idle 신고 시각에는 해당 규칙·프레임이 없어 직접 원인은 미확정이다. 나중 모델 용량 오류의 Ready 화면은 당시 원인으로 소급하지 않는다.
+- **시험.** 기존 chat 파일 tail 회귀에서 queued attachment 누락이 수정 전 실패했고 수정 후 통과한다. 웹 E2E 11의 실제 읽기·변화 push·입력 단계에서 작업 중 전송·한 번 표시·기기 보관·수신 확인·본문 없는 전달 기록을 본다. 확인 표시를 없앤 빌드가 실패하고 정본 복원 뒤 통과한다. 새 대기는 프로그램 수신 출력 사건을 쓴다. wire 판 변경은 없다.

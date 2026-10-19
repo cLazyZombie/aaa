@@ -125,10 +125,26 @@ fn msg(role: ChatRole, text: &str) -> Option<ChatMessage> {
 /// Claude 기록 한 줄 → 보일 줄(0개 이상, 순서대로)
 fn claude_line(v: &Value, thinking: bool) -> Vec<ChatMessage> {
     let ty = v.get("type").and_then(|t| t.as_str()).unwrap_or("");
-    if !matches!(ty, "user" | "assistant")
-        || v.get("isSidechain").and_then(|b| b.as_bool()) == Some(true)
+    if v.get("isSidechain").and_then(|b| b.as_bool()) == Some(true)
         || v.get("isMeta").and_then(|b| b.as_bool()) == Some(true)
     {
+        return vec![];
+    }
+    // herdr-web-ui conversation.ts parseClaudeTranscript: 작업 중에 흡수한 사람 입력은
+    // user가 아니라 queued_command attachment다. enqueue/remove는 같은 글의 장부라 싣지 않는다.
+    if ty == "attachment" {
+        let a = &v["attachment"];
+        if a["type"] == "queued_command" && a["commandMode"] == "prompt" && a["origin"]["kind"] == "human" {
+            return a["prompt"]
+                .as_str()
+                .filter(|s| !injected(s))
+                .and_then(|s| msg(ChatRole::User, s))
+                .into_iter()
+                .collect();
+        }
+        return vec![];
+    }
+    if !matches!(ty, "user" | "assistant") {
         return vec![];
     }
     let content = &v["message"]["content"];
@@ -314,6 +330,11 @@ mod tests {
             r#"{"type":"assistant","message":{"content":[{"type":"thinking","thinking":"속생각"},{"type":"text","text":"답을 쓴다"},{"type":"tool_use","name":"Bash","input":{"command":"cargo test\n  --all"}}]}}"#.into(),
             r#"{"type":"user","message":{"content":[{"type":"tool_result","content":"도구 결과 본문"}]}}"#.into(),
             r#"{"type":"assistant","message":{"content":[{"type":"text","text":"끝났다"}]}}"#.into(),
+            r#"{"type":"queue-operation","operation":"enqueue","content":"작업 중 추가 요청"}"#.into(),
+            r#"{"type":"queue-operation","operation":"remove","content":"작업 중 추가 요청","reason":"absorbed_mid_turn"}"#.into(),
+            r#"{"type":"attachment","attachment":{"type":"queued_command","commandMode":"prompt","origin":{"kind":"human"},"prompt":"작업 중 추가 요청"}}"#.into(),
+            r#"{"type":"attachment","attachment":{"type":"queued_command","commandMode":"task-notification","prompt":"배경 도구 알림"}}"#.into(),
+            r#"{"type":"attachment","attachment":{"type":"queued_command","commandMode":"prompt","origin":{"kind":"peer"},"prompt":"다른 agent 글"}}"#.into(),
         ]
         .join("\n")
             + "\n"
@@ -333,6 +354,7 @@ mod tests {
                 (ChatRole::Assistant, "답을 쓴다"),
                 (ChatRole::Tool, "Bash: cargo test --all"),
                 (ChatRole::Assistant, "끝났다"),
+                (ChatRole::User, "작업 중 추가 요청"),
             ]
         );
         assert!(!truncated);

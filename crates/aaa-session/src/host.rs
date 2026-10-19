@@ -244,6 +244,7 @@ impl State {
                 Ok(AgentResponse::Done)
             }
             SessionRequest::Input { data } => {
+                tracing::info!(session = %self.id, bytes = data.0.len(), exited = self.exit.is_some(), "pane 입력: session 수신");
                 if self.exit.is_some() {
                     Err(ErrorBody::new(ErrorCode::SessionExited, "세션이 끝났다"))
                 } else {
@@ -389,10 +390,15 @@ async fn run(dir: PathBuf) -> Result<()> {
         }
     });
     let (in_tx, in_rx) = std::sync::mpsc::channel::<Vec<u8>>();
+    let input_session = spec.id.clone();
     std::thread::spawn(move || {
         while let Ok(data) = in_rx.recv() {
-            if writer.write_all(&data).and_then(|_| writer.flush()).is_err() {
-                break;
+            match writer.write_all(&data).and_then(|_| writer.flush()) {
+                Ok(()) => tracing::info!(session = %input_session, bytes = data.len(), "pane 입력: PTY 쓰기 완료"),
+                Err(e) => {
+                    tracing::warn!(session = %input_session, bytes = data.len(), error = %e, "pane 입력: PTY 쓰기 실패");
+                    break;
+                }
             }
         }
     });
