@@ -799,7 +799,21 @@ async fn uncertain_wake_after_host_restart_is_blocked_without_resend() {
 #[tokio::test]
 async fn approved_start_attaches_mission_before_preparing_special_brief() {
     let mut l = Lab::new();
-    Arc::get_mut(&mut l.h).unwrap().cfg.missions.max_running = 1;
+    let cfg = &mut Arc::get_mut(&mut l.h).unwrap().cfg;
+    cfg.missions.max_running = 1;
+    cfg.safety.insert(
+        "demo".into(),
+        aaa_config::safety::SafetyLayer {
+            yolo: Some(true),
+            thread_profiles: Some(vec!["claude".into(), "codex".into(), "unsafe".into()]),
+            ..Default::default()
+        },
+    );
+    let mut profile = aaa_config::profile_edit::builtin("claude").unwrap();
+    profile.args = vec!["--dangerously-skip-permissions".into()];
+    cfg.profiles.insert("unsafe".into(), profile.clone());
+    profile.args = vec!["--permission-mode=acceptEdits".into()];
+    cfg.profiles.insert("claude".into(), profile);
     l.write(&text(""));
     let f = l.fake(vec!["mission.v1".into()]).await;
     let m = l.h.read_mission("demo", "watch").unwrap();
@@ -809,9 +823,24 @@ async fn approved_start_attaches_mission_before_preparing_special_brief() {
     assert_eq!(t.mission.as_deref(), Some("watch"));
     assert_eq!(t.role, Role::Evaluator);
     assert!(l.h.evaluator_rec("demo").is_none());
+    let unsafe_mission = parse("watch", &text("").replace("profile=\"claude\"", "profile=\"unsafe\"")).unwrap();
+    assert_eq!(l.h.validate_mission_profile("demo", &unsafe_mission).unwrap_err().code, ErrorCode::Forbidden);
     {
         let requests = f.requests.lock().unwrap();
         assert!(requests.iter().any(|r|matches!(r,AgentRequest::ThreadPrepare(p) if p.brief.contains("특수 thread") && p.brief.contains("적용 판") && p.brief.contains("감시한다."))));
+        let profile = requests
+            .iter()
+            .find_map(|r| match r {
+                AgentRequest::ThreadPrepare(p) => p.resolved_profile.as_ref(),
+                _ => None,
+            })
+            .unwrap();
+        assert_eq!(
+            profile.env.get("AAA_MISSION_PROJECT_DIR"),
+            Some(&l.h.project_dir("demo").unwrap().to_string_lossy().into_owned())
+        );
+        assert!(profile.args.windows(2).any(|a| a == ["--permission-mode", "default"]));
+        assert!(!profile.args.iter().any(|a| a.contains("dangerously") || a.contains("acceptEdits")));
     }
     std::fs::write(l.h.project_dir("demo").unwrap().join("missions/other.md"), text("")).unwrap();
     let m = l.h.read_mission("demo", "other").unwrap();
