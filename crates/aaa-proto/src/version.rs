@@ -96,6 +96,8 @@ pub const AGENT_LINK: Version = Version { major: 1, minor: 5 };
 // 같은 1.44에 ThreadView.repo(thread 저장소 경로, 선택, plan §8.260)를 더한다. 옛 host는 생략해 웹 에이전트 패널이 폴더 없이
 // 그리고, 옛 front는 버린다.
 // 같은 1.44에 로컬 DebugInput과 입력 진단 사건·submit trace/meta를 더한다. 웹은 host와 함께 갱신된다.
+// 같은 1.44에 ThreadView.limited_until_ms(사용량 한도가 풀리는 때, 선택, plan §8.267)를 더한다. 옛 host는 생략해 웹이 한도를
+// 보이지 않고, 옛 front는 버린다.
 // 1.45: 웹 터미널 대기 메시지 「지금 보내기」(`steer_queued` 요청·답, `front.steer_queued`, plan §8.270). 1.44가 배포돼 올린다.
 // 옛 host는 `front.steer_queued`를 보내지 않아 웹이 단추를 숨기고, 모르는 frame은 버린다. 옛 웹은 새 칸을 버린다.
 pub const FRONT_API: Version = Version { major: 1, minor: 45 };

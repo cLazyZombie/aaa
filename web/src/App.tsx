@@ -54,6 +54,8 @@ import { watchDrawerSwipe } from "./herdr/edgeSwipe.ts";
 import { DrawerContext, DrawerToggle, HeadContext, HeadMore, HeadNote } from "./drawer";
 import { highMachines, HIGH_STAT } from "./machineStats";
 import { specialAttention } from "./specialModel";
+import { ErrorBoundary } from "./ErrorBoundary";
+import { watchBadgeFocus } from "./faviconBadge";
 
 type Auth = { state: "loading" } | { state: "pair" } | { state: "in"; role: DeviceRole; device: string } | { state: "error"; msg: string };
 
@@ -472,6 +474,28 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
     });
     alertLate(replayFrom, q.project ?? null, q.thread ?? null, raise, told);
   };
+  // 사용량 한도가 다시 차오름(plan §8.267): 한도였던 thread의 표지가 풀리는 때가 지나 걷히면 「한도 풀림」으로 그 thread에. host는 같은
+  // 때에 coordinator inbox 항목을 만든다. 숫자가 내려가 일찍 걷힌 것은 알리지 않는다(host `reset_due`와 같다). 목록을 다시 읽을 때는
+  // 표지만 맞춘다(놓친 바뀜을 알리지 않는다). 저절로 잇지 않는다
+  const limitedUntil = useRef(new Map<string, number>());
+  const limitNews = (t: ThreadView) => {
+    const key = threadKey(t);
+    const until = limitedUntil.current.get(key);
+    if (t.limited_until_ms != null) return void limitedUntil.current.set(key, t.limited_until_ms);
+    limitedUntil.current.delete(key);
+    if (until === undefined || until > Date.now() || t.role === "evaluator") return;
+    const { sel, panes } = now.current;
+    raiseAlert({
+      kind: "reset",
+      target: `thread=${encodeURIComponent(key)}`,
+      late: justWoke(),
+      showing: sel === `thread:${key}` || (t.pane != null && sel === `pane:${t.pane}`),
+      title: t.title || t.id,
+      machine: null,
+      agent: agentOf(t.pane ? panes.find((x) => x.id === t.pane) : undefined, t),
+      notice: { title: `${t.project} · ${t.title || t.id}`, body: "사용량 한도 풀림(저절로 잇지 않았다)", tag: `aaa-${t.project}/${t.id}` },
+    });
+  };
   // seenReports: thread마다 알린(또는 처음 볼 때 이미 검토 대기였던) 보고 hash
   const reviewHash = (t: ThreadView) => (t.report_attention && t.report_hash !== t.acked_hash ? t.report_hash : null);
   const reportNews = (t: ThreadView, replayFrom: number | null = null) => {
@@ -602,6 +626,7 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
                     reportNews(t, down);
                   }
                 else for (const t of next.values()) seenReports.current.set(threadKey(t), reviewHash(t));
+                limitedUntil.current = new Map([...next.values()].flatMap((t) => (t.limited_until_ms != null ? [[threadKey(t), t.limited_until_ms]] : [])));
                 linkedOnce.current.threads = true;
                 setThreads(next);
                 setThreadsSync((n) => n + 1);
@@ -611,6 +636,7 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
         },
         (t) => {
           reportNews(t);
+          limitNews(t);
           putThread(t);
         },
         (p) => receivePreferences.current(p),
@@ -928,6 +954,8 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
     machines: { count: highMachines(machines), label: `CPU·MEM ${HIGH_STAT}% 넘음` },
     special: { count: specialAttention(missions, evaluators, panes), label: "막힘·오류·승인 필요" },
   };
+  // 탭 아이콘의 안 본 알림 수(faviconBadge.ts, plan §8.266): 창에 focus가 오면 지운다
+  useEffect(() => watchBadgeFocus(), []);
   // 넓은 창에서 접었으면 사이드바 칸이 없다(좁은 창은 drawer라 늘 칸이 있다)
   const sidebarShown = !wideScreen || !collapsed;
   // 사이드바 폭(SidebarResizer, plan §8.257): 끄는 동안은 화면에만 두고 놓으면 공유 설정에 남긴다
@@ -979,6 +1007,7 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
           </button>
         </header>
         {/* 패널(목록)만 굴러가고 머리와 바닥 줄(사용량)은 늘 제자리(herdr-web-ui MachineSidebar) */}
+        <ErrorBoundary area="목록" resetKeys={[panel]}>
         <Sidebar
           panel={panel}
           machines={machines}
@@ -1002,6 +1031,7 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
             </>
           }
         />
+        </ErrorBoundary>
         <ListFoot />
         </div>
         <SidebarResizer width={sidebarWidth} onResize={resizeSidebar} />
@@ -1010,6 +1040,8 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
       <div className={`scrim${drawerOpen ? " is-open" : ""}`} aria-hidden="true" onClick={() => setDrawerOpen(false)} />
       <main className="view">
         <UpdateNotice hostBuild={hostWeb} />
+        {/* 그리기 오류는 본문 자리에서 멈춘다(ErrorBoundary, plan §8.266): 다른 화면으로 가면 다시 그린다 */}
+        <ErrorBoundary area="본문" resetKeys={[sel, reportsShown]}>
         {/* 보고서 화면은 한 번 연 뒤 늘 그려 두고 숨긴다(ReportsView) */}
         {reportsAt !== null && (
           <ReportsView
@@ -1106,7 +1138,9 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
           </div>
           </>
         )}
+        </ErrorBoundary>
       </main>
+      <ErrorBoundary area="파일 보기" resetKeys={[fileViewing?.path, fileViewing?.pane]} onDismiss={closeFile}>
       {fileViewing?.pane && (
         <FileViewer key={`${fileViewing.pane} ${fileViewing.path}`} path={fileViewing.path} source={{ pane: fileViewing.pane }} onClose={closeFile} onOpen={(path) => openFile({ path, pane: fileViewing.pane })} />
       )}
@@ -1130,6 +1164,7 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
           onOpen={(path) => openFile({ path, pane: null, worktree: fileViewing.worktree })}
         />
       )}
+      </ErrorBoundary>
       {newPaneOn && (
         <NewSessionDialog
           machine={newPaneOn}
@@ -1140,6 +1175,7 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
           }}
         />
       )}
+      <ErrorBoundary area="명령 팔레트" resetKeys={[paletteOpen]} onDismiss={closePalette}>
       <CommandPalette
         open={paletteOpen}
         onClose={closePalette}
@@ -1155,6 +1191,7 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
         }}
         actions={paletteActions}
       />
+      </ErrorBoundary>
       {/* 앱 안 알림(참고 Droplet): 누르면 그 pane·thread로 간다 */}
       <Droplet
         onOpen={(target) => {
@@ -1357,7 +1394,11 @@ function SettingsGear({
       >
         <Settings aria-hidden="true" />
       </button>
-      {settingsOpen && <SettingsDialog onClose={closeSettings} role={role} device={device} onSignOut={signOutHere} />}
+      {settingsOpen && (
+        <ErrorBoundary area="설정" onDismiss={closeSettings}>
+          <SettingsDialog onClose={closeSettings} role={role} device={device} onSignOut={signOutHere} />
+        </ErrorBoundary>
+      )}
     </>
   );
 }

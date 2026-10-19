@@ -12,7 +12,8 @@
  * 턴 끝 알림(차이 목록 N3)과 함께 옮긴다(plan §8.70).
  */
 
-export type DropletKind = "blocked" | "done" | "ended";
+/** aaa: `reset`은 사용량 한도가 다시 차오름(plan §8.267) */
+export type DropletKind = "blocked" | "done" | "ended" | "reset";
 
 export interface DropletNotice {
   /** aaa: 보고서의 공개 링크 한 줄(조작 기기만). */

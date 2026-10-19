@@ -8,6 +8,7 @@
 // composer에 둔다. aaa chat 화면은 아직 읽기 전용이라 휴대폰에서 그림을 올릴 곳이 여기뿐이다).
 import { useCallback, useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore, type ClipboardEvent, type KeyboardEvent } from "react";
 import { Icon } from "./icons";
+import { hiddenNote, HIDDEN_ONLY, stripHidden } from "./hiddenChars";
 import {
   acknowledgeTerminalDraft,
   readTerminalDraft,
@@ -161,7 +162,13 @@ export function TerminalInput({ owner, connected, onSend, onEnter, onCtrlEnter, 
         else if (!entered) setNote(DISCONNECTED);
         return;
       }
-      const sent = onSend(draft, steer);
+      // 보이지 않는 문자는 빼고 보낸다(hiddenChars.ts, plan §8.266). 확인 뒤 지우는 앞부분은 친 그대로의 초안이다
+      const { text: clean, removed } = stripHidden(draft);
+      if (clean.trim() === "") {
+        setNote(HIDDEN_ONLY);
+        return;
+      }
+      const sent = onSend(clean, steer);
       if (sent === false) {
         setNote(DISCONNECTED);
         return;
@@ -170,8 +177,10 @@ export function TerminalInput({ owner, connected, onSend, onEnter, onCtrlEnter, 
       void sent
         .then((result) => {
           // 가는 동안 친 글은 남는다
-          if (result === true) acknowledgeTerminalDraft(owner);
-          else setNote(result);
+          if (result === true) {
+            acknowledgeTerminalDraft(owner);
+            if (removed > 0) setNote(hiddenNote(removed));
+          } else setNote(result);
         })
         .catch(() => setNote("확인하지 못했다. 다시 보내기 전에 터미널을 본다"))
         .finally(() => {

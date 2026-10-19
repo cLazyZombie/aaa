@@ -14,6 +14,8 @@
 // `isSendBusy`), host가 3초 동안 전달을 확인하지 않을 때만 ×(탈출구)가 된다. 누르면 host가 멈춘 단계를 답한다: 보내지 않음·
 // Enter 안 침·늦음. 답이 없으면 모름이다. 전달 뒤 10초 동안 증거가 없으면 경고판에서 사람이 잠금을 푼다.
 // Ctrl+Enter(사용자 10-19 15:3x, plan §8.239 후속)는 안내 없이 글을 steering으로 보낸다: 같은 보내기 길에 `steer`를 붙인다(`ctrlEnter`).
+// plan §8.266(t3code 참고): 작업 중이고 입력창이 비면 보내기 자리가 「중단」(Esc, 키 막대와 같은 길)이고, 빈 입력창의 ↑·↓는 이 대화
+// 기록의 사람 글을 다시 부르며(t3code composerPromptHistory.ts), 보내는 글의 보이지 않는 문자는 빼고 몇 개를 뺐는지 알린다(hiddenChars.ts).
 import {
   useCallback,
   useEffect,
@@ -23,13 +25,15 @@ import {
   useSyncExternalStore,
   type KeyboardEvent,
 } from "react";
-import { ArrowUp, Clock, ImagePlus, Info, LoaderCircle, TriangleAlert, X } from "lucide-react";
+import { ArrowUp, Clock, ImagePlus, Info, LoaderCircle, Square, TriangleAlert, X } from "lucide-react";
 import { uploadChatImage } from "./api";
 import type { ChatMessage, SubmitStage, InputTraceEvent, InputReceiptMethod, InputSubmitMeta } from "./gen/proto";
 import { imageMention, insertLeadingMention } from "./herdr/composerImages";
 import { normalizeComposerImageFile } from "./herdr/composerImageMime";
 import "./herdr/Composer.css";
 import { composerDrafts } from "./herdr/composerDraft.ts";
+import { caretOnVisualEdge, recallEntries, recallStep, type RecallPosition } from "./composerRecall";
+import { hiddenNote, HIDDEN_ONLY, stripHidden } from "./hiddenChars";
 import { messageQueues } from "./herdr/messageQueue.ts";
 import { holdPageRef } from "./pageHold";
 import { quickReplyButtons } from "./preferences";
@@ -128,6 +132,10 @@ export interface ChatComposerProps {
   onInspect: () => void;
   /** 보내는 중(잠김)인지 알린다: 그동안 대기 말 「지금 보내기」를 끈다(plan §8.270) */
   onBusy?: (busy: boolean) => void;
+  /** 작업 중인 agent를 멈춘다(Esc, 키 막대와 같은 길). 없으면 중단 단추가 없다 */
+  onInterrupt?: () => void;
+  /** agent가 확인창(질문·승인)을 띄웠다: ↑·↓로 보낸 글을 부르지 않는다 */
+  asking?: boolean;
 }
 
 export function ChatComposer({
@@ -148,6 +156,8 @@ export function ChatComposer({
   messages,
   onInspect,
   onBusy,
+  onInterrupt,
+  asking = false,
 }: ChatComposerProps) {
   const { autoSendQueued, quickReplies, showQuickReplies } = useChatShared();
   const enterSends = useTerminalToggle("enterSends");
@@ -479,17 +489,24 @@ export function ChatComposer({
 
   /** `steer`: Ctrl+Enter로 작업 중에 보낸다(지금 턴에 끼워 넣는다). 붙잡지 않는다 */
   const send = (given?: string, steer = false, ctrlEnter = false): void => {
-    const message = (given ?? textRef.current).trim();
-    if (message === "" || flightRef.current !== null || uploading || noRoom || composing || !connected) return;
+    const raw = (given ?? textRef.current).trim();
+    if (raw === "" || flightRef.current !== null || uploading || noRoom || composing || !connected) return;
+    // 보이지 않는 문자는 빼고 보낸다(plan §8.266). 보내짐 증거(기록의 같은 글)도 뺀 글로 맞춘다
+    const { text: cleaned, removed } = stripHidden(raw);
+    const message = cleaned.trim();
+    if (message === "") {
+      setNote({ text: HIDDEN_ONLY });
+      return;
+    }
     const sentAttachments = attachments;
     setNote(null);
+    recall.current = null;
     // 참고 composerSend: 작업 중이고 자동 전송이 꺼져 있으면 붙잡는다(hold, 설정으로 켜는 이 기기의 보관함)
     if (working && !autoSendQueued && !steer) {
       messageQueues.add(owner, message);
       if (given === undefined) { setText(""); clearAttachments(sentAttachments); }
-      return;
-    }
-    deliver({ text: message, source: given === undefined ? "box" : "reply", attachments: given === undefined ? sentAttachments : [], ctrlEnter, ...(steer ? { steer } : {}) });
+    } else deliver({ text: message, source: given === undefined ? "box" : "reply", attachments: given === undefined ? sentAttachments : [], ctrlEnter, ...(steer ? { steer } : {}) });
+    if (removed > 0) setNote({ text: hiddenNote(removed), quiet: true });
   };
   // Ctrl+Enter(사용자 10-19 15:3x, plan §8.239 후속): 안내 줄 없이 글을 steering으로 보낸다. 작업 중이면 지금 턴에 끼워 넣고
   // (host가 Claude는 sendNow, Codex는 Enter = steer 대기열을 고른다), 쉬는 중이면 보통 보내기(Enter)와 같다. 잠금·전달 확인·멈춤은
@@ -515,6 +532,26 @@ export function ChatComposer({
     }
   };
 
+  // 보낸 글 다시 부르기(t3code ChatComposer.tsx:4111 `navigatePromptHistory`, composerPromptHistory.ts, plan §8.266): 빈 입력창(이나
+  // 손대지 않은 다시 부른 글)에서 커서가 첫 보이는 줄이면 ↑는 이 대화 기록의 사람 글을 새 것부터 뒤로, 끝 줄이면 ↓는 앞으로, 가장 새 것
+  // 너머는 빈 칸이다. 부른 글은 커서를 끝에 둔다. 확인창(질문·승인)·첨부가 있으면 하지 않는다. 다른 곳: aaa는 보내는 중(flight)에도
+  // 입력창이 가는 글을 보여 주므로 그때도 하지 않는다
+  const recall = useRef<RecallPosition | null>(null);
+  const recallKey = (direction: "backward" | "forward", box: HTMLTextAreaElement): boolean => {
+    if (asking || flightRef.current !== null || attachmentsRef.current.length > 0) return false;
+    if (recall.current === null && textRef.current.length > 0) return false;
+    if (!caretOnVisualEdge(box, direction === "backward" ? "start" : "end")) return false;
+    const step = recallStep({ direction, entries: recallEntries(messagesRef.current ?? []), position: recall.current, currentPrompt: textRef.current });
+    if (!step) return false;
+    recall.current = step.position;
+    textRef.current = step.prompt;
+    setText(step.prompt);
+    setNote(null);
+    const at = step.prompt.length;
+    requestAnimationFrame(() => box.setSelectionRange(at, at));
+    return true;
+  };
+
   const onKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>): void => {
     if (event.key === "Escape" && flightRef.current?.phase === "stuck") {
       event.preventDefault();
@@ -525,6 +562,10 @@ export function ChatComposer({
     if (event.nativeEvent.isComposing || event.nativeEvent.keyCode === 229) {
       if (event.key === "Enter" && event.ctrlKey && !event.metaKey && !event.shiftKey && !event.altKey)
         onInputTrace(inputTraceId(), "ctrl_enter_blocked", "composing");
+      return;
+    }
+    if ((event.key === "ArrowUp" || event.key === "ArrowDown") && !event.shiftKey && !event.altKey && !event.metaKey && !event.ctrlKey) {
+      if (recallKey(event.key === "ArrowUp" ? "backward" : "forward", event.currentTarget)) event.preventDefault();
       return;
     }
     if (event.key !== "Enter") return;
@@ -544,10 +585,16 @@ export function ChatComposer({
     send();
   };
 
-  const sendQueued = (id: string, message: string, steer = false): void => {
+  const sendQueued = (id: string, raw: string, steer = false): void => {
+    const { text: message, removed } = stripHidden(raw);
+    if (message.trim() === "") {
+      setQueueError({ id, text: HIDDEN_ONLY });
+      return;
+    }
     if (flightRef.current !== null || !connected || !messageQueues.beginSend(owner, id)) return;
     setQueueError(null);
     deliver({ text: message, source: "queue", queueId: id, attachments: [], ...(steer ? { steer } : {}) });
+    if (removed > 0) setNote({ text: hiddenNote(removed), quiet: true });
   };
 
   const placeholder = connected
@@ -721,6 +768,7 @@ export function ChatComposer({
             }}
             onChange={(event) => {
               setText(event.target.value);
+              if (recall.current?.recalled !== event.target.value) recall.current = null;
               setNote(null);
             }}
           />
@@ -740,7 +788,20 @@ export function ChatComposer({
             </div>
           )}
           <div className="composer-controls composer-controls-right">
-            {flight?.phase === "stuck" ? (
+            {onInterrupt && working && !locked && connected && shown.trim() === "" && attachments.length === 0 ? (
+              // 작업 중 빈 입력창: 보내기 자리가 중단이다(t3code 「Interrupt」, plan §8.266). Esc 한 번이라 묻지 않는다
+              <button
+                type="button"
+                className="composer-action composer-interrupt"
+                aria-label="작업 중단(Esc)"
+                title="작업 중단 · Esc를 보낸다"
+                data-testid="chat-interrupt"
+                onPointerDown={(event) => event.preventDefault()}
+                onClick={onInterrupt}
+              >
+                <Square aria-hidden="true" />
+              </button>
+            ) : flight?.phase === "stuck" ? (
               // 탈출구: 전달 전에 막혔을 때만 보내기 자리에 나온다(취향 취소가 아니다)
               <button
                 type="button"

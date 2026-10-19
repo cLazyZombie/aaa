@@ -30,6 +30,22 @@
 .thread-state.is-ready_for_review,
 .thread-state.is-landing { color: var(--status-done); }
 .thread-state.is-working { color: var(--status-working); }
+/* 상태 말 색(sidebarModel `stateTone`, t3code Sidebar.logic.ts:1098 resolveThreadStatusPill 차례, plan §8.266): 묶음 말은 그대로 두고
+   더 급한 사실이 색을 정한다. 참고 색의 뜻을 herdr 상태 색 token으로: 확인창·확인 필요 빨강(참고 승인 amber·입력 indigo는 herdr에
+   한 색), 작업 중 파랑, 배경 대기 흐림(참고 「Waiting」 muted), 실패 빨강 굵게, 끝나고 안 봄 초록(참고 「Completed」 emerald) */
+.thread-state[data-tone="question"],
+.thread-state[data-tone="attention"] { color: var(--status-blocked); }
+.thread-state[data-tone="working"] { color: var(--status-working); }
+.thread-state[data-tone="background"] { color: var(--text-dim); }
+.thread-state[data-tone="failed"] { color: var(--status-blocked); font-weight: 600; }
+.thread-state[data-tone="unseen"] { color: var(--status-done); }
+/* 사용량 한도(plan §8.267): 참고 「Limited」는 실패(error)가 아니라 경고(warning) 색이다 */
+.thread-state[data-tone="limited"] { color: var(--warn); }
+.usage-limited { white-space: pre; }
+.usage-limited::before { content: " · "; }
+/* 작업 시간(WorkingDuration): 상태 말 뒤, 자리가 바뀌지 않게 고정폭 숫자(참고 tabular-nums) */
+.working-duration { font-variant-numeric: tabular-nums; white-space: pre; }
+.working-duration::before { content: " · "; }
 .project-place.is-need { color: var(--status-blocked); }
 /* 끊긴 머신의 줄: 흐리고 누를 수 없다(참고 machine-offline을 줄마다) */
 .workspace.is-offline { opacity: 0.5; }

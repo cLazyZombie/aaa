@@ -11,7 +11,7 @@
 // 마크다운/일반 텍스트 복사(`CopyButton`, 마우스면 올렸을 때). 참고와 다른 곳: 기록에 시각이 없어 시각은 없고, 접힘은 이 화면 안에서만 기억한다.
 // 문구는 참고 i18n.ko.ts.
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { ArrowUp, Check, ChevronDown, ChevronRight, Clock, Copy, LoaderCircle, TriangleAlert } from "lucide-react";
+import { ArrowDown, ArrowUp, Check, ChevronDown, ChevronRight, Clock, Copy, LoaderCircle, TriangleAlert } from "lucide-react";
 import { ApiError, call, watchChat } from "./api";
 import type { ChatMessage, ChatView } from "./gen/proto";
 import { useChatShared } from "./settings";
@@ -23,7 +23,7 @@ import { copyText } from "./herdr/clipboard.ts";
 import { shouldFoldUserMessage } from "./herdr/userMessageFold.ts";
 import { ConversationRefresh } from "./herdr/conversationRefresh.ts";
 import type { PendingSend } from "./ChatComposer";
-import { chatRowIds, chatScrollAnchor } from "./chatScroll";
+import { chatIsAtEnd, chatRowIds, chatScrollAnchor, readChatPosition, rememberChatPosition } from "./chatScroll";
 import { unwrapPasted } from "./pastedContent";
 import { steerLabel, type SteerState } from "./steerQueued";
 
@@ -31,6 +31,7 @@ import { steerLabel, type SteerState } from "./steerQueued";
 function chatRows(el: HTMLElement): NodeListOf<HTMLElement> {
   return el.querySelectorAll<HTMLElement>(":scope > .chat-transcript > :not(.chat-note):not(.banner)");
 }
+const SCROLL_KEYS = ["ArrowUp", "ArrowDown", "PageUp", "PageDown", "Home", "End", " "];
 
 /** 참고 `ThinkingRow`: 「생각」 머리만 보이고 누르면 펼친다 */
 function ThinkingRow({ text }: { text: string }) {
@@ -300,7 +301,34 @@ export function ChatPanel({
   const [chat, setChat] = useState<ChatView | null>(null);
   const [error, setError] = useState<string | null>(null);
   const list = useRef<HTMLDivElement>(null);
-  const atBottom = useRef(true);
+  // 굴림(plan §8.266, t3code ChatView.tsx:4004~4030·4443~4505, MessagesTimeline.tsx:871~955·1112~1141, chatScroll.ts):
+  // thread(pane)마다 읽던 자리를 기억한다. 끝을 따라가던 곳이면 끝으로, 아니면 기억한 줄의 그 거리로 돌아오고 「맨 아래로」 단추를
+  // 바로 보인다. 이 화면이 보낸 뒤(`readNow`)는 사용자 결정 §8.250대로 끝으로 간다(참고는 보낸 말을 위에 고정하는 anchoring-new-turn)
+  const [restoreFrom] = useState(() => {
+    const remembered = readChatPosition(pane);
+    return remembered?.atEnd === false ? remembered : null;
+  });
+  const restoring = useRef(restoreFrom !== null);
+  const cancelRestore = useRef<(() => void) | null>(null);
+  const atBottom = useRef(restoreFrom === null);
+  const [showJump, setShowJump] = useState(restoreFrom !== null);
+  // 단추는 늦게 보이고 바로 숨는다(참고 showScrollDebouncer 150ms: 자리를 잡는 동안 깜빡이지 않게)
+  const jumpTimer = useRef<number | null>(null);
+  const hideJump = () => {
+    if (jumpTimer.current !== null) window.clearTimeout(jumpTimer.current);
+    jumpTimer.current = null;
+    setShowJump(false);
+  };
+  const soonShowJump = () => {
+    if (jumpTimer.current !== null) return;
+    jumpTimer.current = window.setTimeout(() => {
+      jumpTimer.current = null;
+      setShowJump(true);
+    }, 150);
+  };
+  useEffect(() => () => {
+    if (jumpTimer.current !== null) window.clearTimeout(jumpTimer.current);
+  }, []);
   const { showThinking } = useChatShared();
   // 상태가 작업 중에 들고 나면 바로 읽는다(참고 ChatView 882~886줄)
   const [pollKey, setPollKey] = useState(0);
@@ -370,25 +398,105 @@ export function ChatPanel({
   rowIdsRef.current = rowIds;
   // 맨 아래가 아니면 보던 줄과 그 줄 안 거리를 지킨다(plan §8.262, t3code timelineScrollAnchoring `rowId`·`offsetWithinRow`):
   // 새 말·앞 자름·입력창 높이·폭이 바뀌어도 그리기 전에 그 줄을 같은 거리로 되돌린다. 브라우저 굴림 고정(overflow-anchor)은 끈다
-  // (iOS Safari에는 없고, 이것과 겹치면 두 번 옮긴다)
+  // (iOS Safari에는 없고, 이것과 겹치면 두 번 옮긴다). 같은 자리를 이 pane의 읽던 자리로도 기억한다(plan §8.266, 참고 MessagesTimeline
+  // handleScroll의 rememberTimelinePosition). 기억한 자리로 돌아가는 동안은 둘 다 쉰다
   const anchor = useRef<{ rowId: string; offsetWithinRow: number } | null>(null);
   const keepAnchor = (el: HTMLDivElement) => {
+    if (restoring.current) return;
     const rows = chatRows(el);
     const ids = rowIdsRef.current;
     if (rows.length !== ids.length) return;
     const base = el.getBoundingClientRect().top - el.scrollTop;
     const at = chatScrollAnchor(ids, Array.from(rows, (row) => row.getBoundingClientRect().top - base), el.scrollTop);
     anchor.current = at ? { rowId: at.rowId, offsetWithinRow: at.offsetWithinRow } : null;
+    if (at) rememberChatPosition(pane, { ...at, atEnd: chatIsAtEnd(el) }, atBottom.current);
   };
   const holdAnchor = (el: HTMLDivElement) => {
     const at = anchor.current;
-    if (at === null) return;
+    if (at === null || restoring.current) return;
     const index = rowIdsRef.current.indexOf(at.rowId);
     const row = index < 0 ? undefined : chatRows(el)[index];
     if (row === undefined) return;
     const top = row.getBoundingClientRect().top - el.getBoundingClientRect().top + el.scrollTop;
     el.scrollTop = top + at.offsetWithinRow;
   };
+  // 기억한 자리로(참고 MessagesTimeline 871~955줄): 기록을 처음 그린 뒤 그 줄 위 + 거리로 굴리고, 그림·글꼴로 높이가 바뀌어도
+  // 두 frame 동안 같을 때까지 맞춘다. 줄이 없어졌으면 굴림 거리로. 손이 굴리면(휠·끌기·누름·굴림 키) 그 자리에서 그친다
+  useLayoutEffect(() => {
+    const el = list.current;
+    if (el === null || !restoring.current || restoreFrom === null || chat === null) return;
+    let frame: number | null = null;
+    const finish = () => {
+      if (frame !== null) cancelAnimationFrame(frame);
+      frame = null;
+      restoring.current = false;
+      cancelRestore.current = null;
+      detach();
+      // 그친 자리가 보던 줄이 된다
+      keepAnchor(el);
+    };
+    const onKey = (event: globalThis.KeyboardEvent) => {
+      if (SCROLL_KEYS.includes(event.key) && !(event.target instanceof Element && event.target.closest("input, textarea, [contenteditable=true]"))) finish();
+    };
+    const detach = () => {
+      el.removeEventListener("wheel", finish);
+      el.removeEventListener("touchmove", finish);
+      el.removeEventListener("pointerdown", finish);
+      el.ownerDocument.removeEventListener("keydown", onKey);
+    };
+    el.addEventListener("wheel", finish, { passive: true });
+    el.addEventListener("touchmove", finish, { passive: true });
+    el.addEventListener("pointerdown", finish, { passive: true });
+    el.ownerDocument.addEventListener("keydown", onKey);
+    cancelRestore.current = finish;
+    const index = rowIdsRef.current.indexOf(restoreFrom.rowId);
+    const target = () => {
+      const row = index < 0 ? undefined : chatRows(el)[index];
+      if (row === undefined) return restoreFrom.scrollOffset;
+      const offset = el.scrollTop + row.getBoundingClientRect().top - el.getBoundingClientRect().top + restoreFrom.offsetWithinRow;
+      return Math.max(0, Math.min(offset, el.scrollHeight - el.clientHeight));
+    };
+    el.scrollTop = target();
+    if (index < 0) {
+      finish();
+      return;
+    }
+    let stableFrames = 0;
+    const reconcile = () => {
+      const offset = target();
+      if (Math.abs(el.scrollTop - offset) > 1) {
+        stableFrames = 0;
+        el.scrollTop = offset;
+      } else if (++stableFrames >= 2) {
+        finish();
+        return;
+      }
+      frame = requestAnimationFrame(reconcile);
+    };
+    frame = requestAnimationFrame(reconcile);
+    return () => {
+      if (frame !== null) cancelAnimationFrame(frame);
+      if (cancelRestore.current === finish) cancelRestore.current = null;
+      detach();
+    };
+  }, [chat, restoreFrom]);
+  /** 끝으로 가서 따라간다(참고 scrollToEnd). 단추는 부드럽게, 보낸 뒤는 바로 */
+  const scrollToEnd = (animated: boolean) => {
+    cancelRestore.current?.();
+    atBottom.current = true;
+    hideJump();
+    const el = list.current;
+    if (el !== null) el.scrollTo({ top: el.scrollHeight, behavior: animated ? "smooth" : "auto" });
+  };
+  // 이 화면이 보낸 뒤는 끝으로(사용자 결정 §8.250 「입력 보낸 뒤에는 맨 아래로」). 처음 값은 지난 보내기다
+  const sentSeen = useRef(readNow);
+  useLayoutEffect(() => {
+    if (readNow === sentSeen.current) return;
+    sentSeen.current = readNow;
+    scrollToEnd(false);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- 보낸 때만
+  }, [readNow]);
+
   // 맨 아래를 보고 있었으면 새 줄이 오면 따라 내려간다(그리기 전에, 참고 herdr-web-ui ChatView.tsx useLayoutEffect). 아니면 보던 줄을 지킨다
   useLayoutEffect(() => {
     const el = list.current;
@@ -432,8 +540,11 @@ export function ChatPanel({
           const el = e.currentTarget;
           const scrollingUp = el.scrollTop < lastScrollTop.current;
           lastScrollTop.current = el.scrollTop;
-          if (!atBottom.current || scrollingUp) atBottom.current = el.scrollHeight - el.scrollTop - el.clientHeight <= 48;
-          if (!atBottom.current) keepAnchor(el);
+          if (!atBottom.current || scrollingUp) atBottom.current = chatIsAtEnd(el);
+          // 끝이면 단추를 바로 숨기고, 따라가기를 놓았으면 늦게 보인다(참고 onIsAtEndChange)
+          if (chatIsAtEnd(el) || atBottom.current) hideJump();
+          else soonShowJump();
+          keepAnchor(el);
         }}
       >
         <div className="chat-transcript">
@@ -461,6 +572,15 @@ export function ChatPanel({
           ))}
           {chat && chat.messages.length === 0 && pending.length === 0 && !error && <p className="chat-note">아직 대화가 없다.</p>}
         </div>
+        {/* 「맨 아래로」(참고 ChatView.tsx:8074 「Scroll to end」): 대화 아래 가운데에 뜬다. 입력창 focus를 뺏지 않는다 */}
+        {showJump && (
+          <div className="chat-jump">
+            <button type="button" className="chat-jump-button" data-testid="chat-jump" onPointerDown={(e) => e.preventDefault()} onClick={() => scrollToEnd(true)}>
+              <ArrowDown aria-hidden="true" />
+              맨 아래로
+            </button>
+          </div>
+        )}
       </div>
     </OpenFileContext.Provider>
   );

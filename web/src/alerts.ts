@@ -11,6 +11,7 @@ import { pushTest } from "./api";
 import { ensurePushSubscription, pushSupported, removePushSubscription } from "./push";
 import { alertPrefs, alertSetting, setAlertSetting, useAlertSetting } from "./settings";
 import { beforeAlertSound } from "./silentMode";
+import { noteAlert } from "./faviconBadge";
 
 export type NotificationState = "unsupported" | "default" | "granted" | "denied";
 
@@ -251,6 +252,8 @@ export function raiseAlert(a: Alert): string {
   if (!alertSetting(a.kind === "blocked" ? "alertInput" : "alertDone")) return "종류 꺼짐";
   const visible = document.visibilityState === "visible";
   const did: string[] = [];
+  // 창에 focus가 없는 동안 알린 자리는 탭 아이콘 수로 센다(faviconBadge.ts, t3code onNotification)
+  noteAlert(a.notice.tag);
   // In-app alerts: only while the app is on screen, never for what is already in front of the user
   if (!alertSetting("alertInApp")) did.push("앱 안 꺼짐");
   else if (!visible) did.push("가려짐");
@@ -269,7 +272,7 @@ export function raiseAlert(a: Alert): string {
   else if (!visible && touchDevice()) did.push("가려진 휴대폰이라 소리 안 냄");
   else if (!canPlayAlertSound()) did.push("소리 못 냄(소리 문맥 멈춤)");
   else {
-    player().chime(JSON.stringify([a.target, a.kind]), a.kind as AlertSoundKind);
+    player().chime(JSON.stringify([a.target, a.kind]), (a.kind === "blocked" ? "blocked" : "done") satisfies AlertSoundKind);
     did.push("소리");
   }
   // Tab alerts: a device with a push subscription gets them from the host instead

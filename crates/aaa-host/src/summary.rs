@@ -12,7 +12,7 @@ use std::sync::Arc;
 use aaa_proto::{ErrorBody, FollowUpLine, SummaryEntry, SummaryMark, ThreadSummaryView};
 
 use crate::Host;
-use crate::orch::{bad, internal, write_atomic};
+use crate::orch::{internal, write_atomic};
 
 /// 요약 파일 상한(바이트). hover 카드는 훑어보는 것이라(10-19 사용자 「길면 안 된다」) 넘으면 거부한다
 pub(crate) const MAX_BYTES: usize = 1024;
@@ -390,7 +390,7 @@ impl Host {
         let rec = self.load(project, id)?;
         let dir = self.project_dir(project)?;
         let text = text.trim();
-        parse(text).map_err(|e| bad(format!("요약 형식: {e}\n형식:\n{FORMAT}")))?;
+        crate::validate_thread_summary(text)?;
         let by = self.summary_writer(project, actor);
         {
             // 지시 덧붙이기와 엇갈리지 않게(그 사이에 온 지시를 「본 것」으로 세지 않는다)

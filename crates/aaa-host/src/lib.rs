@@ -54,6 +54,7 @@ mod text;
 mod transitions;
 mod trust_screen;
 pub mod usage;
+mod usage_limit;
 pub mod web;
 
 use std::collections::{HashMap, HashSet, VecDeque};
@@ -464,6 +465,8 @@ pub struct Host {
     follow_up_lock: Mutex<()>,
     /// thread 작업 요약 표지 재료(summary.rs): 목록이 매번 파일을 읽지 않게
     summary_marks: summary::MarkMap,
+    /// thread의 사용량 한도가 풀리는 때(usage_limit.rs): ticker가 채우고 thread 보기가 읽는다
+    usage_limits: usage_limit::LimitMap,
     /// 지금 도는 routine 명령(`<project>/<name>`)
     routine_running: Mutex<HashSet<String>>,
     /// PR 추적: 프로젝트별 마지막 조회·도는 중·`gh` 실패, `gh` 계정(pr.rs)
@@ -531,6 +534,13 @@ pub(crate) fn respawn_name(info: &SessionInfo) -> String {
 
 fn err(code: ErrorCode, msg: impl Into<String>) -> ErrorBody {
     ErrorBody::new(code, msg)
+}
+
+/// CLI도 시작·전송 전에 host와 같은 요약 형식을 검사한다. 상태를 읽거나 쓰지 않는다.
+pub fn validate_thread_summary(text: &str) -> std::result::Result<(), ErrorBody> {
+    summary::parse(text.trim())
+        .map(|_| ())
+        .map_err(|e| err(ErrorCode::BadRequest, format!("요약 형식: {e}\n형식:\n{}", summary::FORMAT)))
 }
 
 impl Host {
@@ -643,6 +653,7 @@ impl Host {
             nudge_box: Mutex::new(HashMap::new()),
             follow_up_lock: Mutex::new(()),
             summary_marks: Mutex::new(HashMap::new()),
+            usage_limits: Mutex::new(HashMap::new()),
             routine_running: Mutex::new(HashSet::new()),
             pr: Mutex::new(pr::PrMemory::default()),
             view_caps: Mutex::new(HashMap::new()),

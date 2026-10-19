@@ -214,3 +214,42 @@ export function rosterRows(machines: readonly MachineView[], panes: readonly Pan
   for (const p of r.panes) if (online(p.machine_id)) rows.push({ open: { pane: p.id }, keys: [`pane:${p.id}`] });
   return rows;
 }
+
+/**
+ * thread 줄 상태 말의 색(data-tone, plan §8.266). t3code(MIT) `apps/web/src/components/Sidebar.logic.ts:1098`
+ * `resolveThreadStatusPill`(1451e7cb2)의 차례를 aaa 상태로 옮겼다: 승인·입력 대기 → 작업 중 → 배경 대기 → 실패(안 봄) → 끝남(안 봄).
+ * 다른 곳(aaa에만 있는 상태): 참고의 「Plan Ready」(사람이 할 일) 자리에 확인 필요·검토 대기·병합 중을 둔다. 승인과 입력 대기는 화면
+ * 감지(PTY)로는 같은 확인창이라 하나(question)다. 「연결 중」은 aaa 상태에 없다. 묶음 말(herdr-projects)은 그대로 두고 색만 정한다.
+ * 사용량 한도(plan §8.267, 참고 `Sidebar.logic.ts:939` 「limited」는 실패 자리)는 실패 다음이다: host가 말한 풀리는 때(`limited_until_ms`)가
+ * `now` 뒤일 때만이라 다시 차오르면 host가 다시 알리기 전에도 걷힌다.
+ */
+export type StateTone = "question" | "working" | "background" | "failed" | "limited" | "attention" | "review" | "unseen" | "idle";
+export function stateTone(t: ThreadView, pane: PaneView | undefined, now = Date.now()): StateTone {
+  const status = pane ? paneAgentStatus(pane) : undefined;
+  if (status === "blocked") return "question";
+  if (status === "working") return "working";
+  if (status === "waiting") return "background";
+  if (t.status === "failed") return "failed";
+  if (t.limited_until_ms != null && t.limited_until_ms > now) return "limited";
+  if (t.group === "waiting_on_you") return "attention";
+  if (t.group === "ready_for_review" || t.group === "landing") return "review";
+  if (status === "done") return "unseen";
+  return "idle";
+}
+
+/**
+ * 작업 시간의 시작(참고 Sidebar.tsx:2360~2367): 작업 중이면 그 턴이 시작된 때, 배경 대기면 턴이 끝난 때. 참고는 run 시작·끝 시각을
+ * 쓰고, aaa는 화면 감지가 상태를 바꾼 시각(`AgentStatus.since_ms`)이다
+ */
+export function workingStartedAt(tone: StateTone, pane: PaneView | undefined): number | null {
+  return (tone === "working" || tone === "background") && pane?.agent ? pane.agent.since_ms : null;
+}
+
+/** 참고 `formatWorkingDurationLabel`(Sidebar.logic.ts:1090): 60초 밑은 초, 60분 밑은 분, 그 위는 시간과 분 */
+export function formatWorkingDuration(elapsedMs: number): string {
+  const seconds = Number.isFinite(elapsedMs) ? Math.max(0, Math.floor(elapsedMs / 1000)) : 0;
+  if (seconds < 60) return `${seconds}초`;
+  const minutes = Math.floor(seconds / 60);
+  if (minutes < 60) return `${minutes}분`;
+  return `${Math.floor(minutes / 60)}시간 ${minutes % 60}분`;
+}

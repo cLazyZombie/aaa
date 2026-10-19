@@ -35,6 +35,11 @@ use sha2::{Digest, Sha256};
 
 pub const FRESH_MS: u64 = 5 * 60_000;
 pub const MIN_REFRESH_MS: u64 = 30_000;
+
+/// `MIN_REFRESH_MS`. `AAA_TEST_USAGE_REFRESH_MS`는 시험에서만 줄인다(웹 E2E 32: 가짜 구독 숫자를 바꾼 뒤 바로 다시 읽는다)
+fn min_refresh_ms() -> u64 {
+    std::env::var("AAA_TEST_USAGE_REFRESH_MS").ok().and_then(|v| v.parse().ok()).unwrap_or(MIN_REFRESH_MS)
+}
 /// 실패나 끝난 로그인 뒤: CLI의 다음 refresh를 곧 알아챌 만큼
 pub const RETRY_MS: u64 = 60_000;
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(15);
@@ -792,7 +797,7 @@ impl UsageService {
     async fn provider_pass(&self, id: UsageProviderId, st: &State, now: u64, refresh: bool) -> ProviderPass {
         let search = st.searches.get(&id);
         // 계정의 read_at은 구독의 것보다 늦지 않다: 억지 찾기는 계정마다 다시 물어도 된다
-        let forced = refresh && search.is_some_and(|s| now.saturating_sub(s.read_at) >= MIN_REFRESH_MS);
+        let forced = refresh && search.is_some_and(|s| now.saturating_sub(s.read_at) >= min_refresh_ms());
         if let Some(s) = search
             && now < s.next_at
             && !forced

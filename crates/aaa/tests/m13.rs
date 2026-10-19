@@ -1911,7 +1911,8 @@ fn auto_resolve_and_reopen() {
     w.h.ok(&["thread", "ack", "demo", &id]);
     w.h.ok(&["pane", "kill", &pane]);
     w.wait_show("쉼", &id, |v| v["group"] == "idle");
-    let v = w.wait_show("자동 resolve", &id, |v| v["status"] == "resolved");
+    // resolved 상태는 pane 정리 전에 저장한다. 완료 표시는 정리 응답까지 기록한 뒤 확인한다.
+    let v = w.wait_show("자동 resolve 완료", &id, |v| v["status"] == "resolved" && v["cleanup_pending"] != true);
     assert_eq!(v["group"], "resolved");
     // 상태는 pane 정리보다 먼저 저장한다. resolved를 봐도 inbox 추가는 아직일 수 있으므로,
     // auto_resolve_pass를 포함한 ticker의 완료 응답까지 기다린다(고정 지연으로 맞추지 않는다).
@@ -5230,4 +5231,52 @@ fn thread_start_rejects_machine_prefixed_repo_before_recording() {
     let started = w.start(&["--title", "valid", "--profile", "fake", "--repo", path_str(&repo), "--task-file", &task]);
     assert_eq!(started["id"], "t-0001", "거부한 시작은 번호도 쓰지 않는다");
     assert_eq!(started["status"], "open");
+}
+
+/// 요약 형식 오류는 start·message의 부작용 전에 거부한다. 고친 뒤 같은 메시지를 보내도 한 번만 간다.
+#[test]
+fn summary_file_is_validated_before_start_or_message() {
+    let w = world();
+    let task = w.task("summary-task.txt", "noreport");
+    let bad = w.task("invalid-summary.md", "## 지금\n- 목표 없음\n");
+    let good = w.task("valid-summary.md", "# 목표\n검증 뒤 한 번 보내기\n");
+    let start_error =
+        w.h.json(&[
+            "thread",
+            "start",
+            "demo",
+            "--title",
+            "invalid-summary",
+            "--profile",
+            "fake",
+            "--kind",
+            "dir",
+            "--task-file",
+            &task,
+            "--summary-file",
+            &bad,
+        ])
+        .expect_err("형식이 틀리면 시작하지 않는다");
+    let v = w.start(&["--title", "valid-summary", "--profile", "fake", "--kind", "dir", "--task-file", &task]);
+    let id = v["id"].as_str().unwrap();
+    let pane = v["pane"].as_str().unwrap();
+    w.wait_show("brief 완료", id, |v| v["brief"] == "delivered");
+    let task_path = w.projects.join("demo/threads").join(format!("{id}.task.md"));
+    let before = std::fs::read_to_string(&task_path).unwrap();
+    let error =
+        w.h.json(&["thread", "message", "demo", id, "--text", "summary-probe", "--summary-file", &bad])
+            .expect_err("형식이 틀리면 보내지 않는다");
+    assert!(error.contains("bad_request") && error.contains("요약 형식"), "{error}");
+    assert_eq!(std::fs::read_to_string(&task_path).unwrap(), before, "거부한 메시지를 Follow-ups에 남기지 않는다");
+    assert!(!w.kinds(0).iter().any(|k| k == "message_queued"), "거부한 메시지를 줄 세우지 않는다");
+    assert!(start_error.contains("요약 형식"), "{start_error}");
+    assert_eq!(w.h.ok(&["thread", "list", "demo"])["threads"].as_array().unwrap().len(), 1);
+    assert_eq!(id, "t-0001", "틀린 시작은 번호도 쓰지 않는다");
+    w.h.ok(&["thread", "message", "demo", id, "--text", "summary-probe", "--summary-file", &good]);
+    let screen = w.wait_screen(pane, "got: summary-probe");
+    assert_eq!(screen.matches("got: summary-probe").count(), 1, "{screen}");
+    assert_eq!(std::fs::read_to_string(task_path).unwrap().matches("\nsummary-probe\n").count(), 1);
+    let summary = w.h.ok(&["thread", "summary", "demo", id]);
+    assert_eq!(summary["goal"], "검증 뒤 한 번 보내기");
+    assert_eq!(summary["pending"], 0);
 }

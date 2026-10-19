@@ -555,6 +555,47 @@ svg.i { width: 16px; height: 16px; flex-shrink: 0; fill: none; stroke: currentCo
 @media (pointer: coarse) {
   .terminal-jump-bottom { width: var(--touch-target); height: var(--touch-target); }
 }
+/* 작업 중 빈 입력창의 중단(plan §8.266): t3code ComposerPrimaryActions.tsx:131 「Stop generation」처럼 빨간(destructive) 원에 흰 채운
+   네모. 보내기와 같은 자리·크기(herdr Composer.css `.composer-action` 원)라 모양만 바뀐다 */
+.composer-interrupt { --composer-action-fill: var(--status-blocked); color: #fff; }
+.composer-interrupt svg { fill: currentColor; }
+@media (hover: hover) {
+  .composer-interrupt:hover { filter: brightness(1.08); }
+}
+/* 대화의 「맨 아래로」(t3code ChatView.tsx:8074 `chat-scroll-to-bottom`, plan §8.266): 대화 칸 아래 가운데에 붙는다. 높이 없는 sticky
+   틀이라 내용 길이(끝 판정)를 바꾸지 않고, 단추는 틀 위로 솟는다. 모양은 터미널 「맨 아래로 이동」과 같은 알약 */
+.chat-jump {
+  position: sticky;
+  bottom: var(--space-2);
+  z-index: 2;
+  flex: none;
+  height: 0;
+  margin-top: calc(-1 * var(--space-2));
+  display: flex;
+  justify-content: center;
+  align-items: flex-end;
+  pointer-events: none;
+}
+.chat-jump-button {
+  pointer-events: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  height: var(--control-h);
+  padding: 0 var(--space-3);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-pill);
+  background: var(--bg-elevated);
+  color: var(--text);
+  box-shadow: var(--shadow-pop);
+  font-size: var(--fs-sm);
+  cursor: pointer;
+}
+.chat-jump-button:hover { background: var(--bg-hover); }
+.chat-jump-button svg { width: 16px; height: 16px; }
+@media (pointer: coarse) {
+  .chat-jump-button { height: var(--touch-target); }
+}
 /* 끝에 닿은 끌기는 문서로 넘기지 않는다(참고 ChatView.css `.chat-view` overscroll-behavior: contain) */
 .chat { flex: 1; min-height: 0; overflow: auto; overflow-anchor: none; overscroll-behavior: contain; padding: var(--space-4); display: flex; flex-direction: column; gap: var(--space-2); background: var(--bg); }
 .chat-note { margin: 0 0 var(--space-2); font-size: calc(var(--fs-xs) * var(--chat-scale, 1)); color: var(--text-dim); }
@@ -1054,3 +1095,36 @@ button.report-delete:hover:not(:disabled) { color: var(--danger-text); }
 .chat-pending-note svg { width: 12px; height: 12px; flex: none; margin-right: var(--space-1); vertical-align: -1px; }
 .chat-pending-note-text { min-width: 0; }
 .chat-pending-note.is-quiet { color: var(--text-dim); }
+
+/* 그리기 오류 자리(ErrorBoundary, plan §8.266): 깨진 부분의 칸을 채우고 나머지 화면은 그대로다. 겹쳐 뜨는 창(파일 보기·팔레트·설정)이면
+   그 창 자리 대신 화면 가운데 카드로 뜬다 */
+.render-error {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-2);
+  min-height: 12rem;
+  padding: var(--space-6) var(--space-4);
+  text-align: center;
+  color: var(--text-dim);
+  font-size: var(--fs-md);
+}
+.view > .render-error { flex: 1; }
+.app > .render-error {
+  position: fixed;
+  inset: auto var(--space-4) var(--space-6);
+  z-index: 60;
+  max-width: 32rem;
+  margin: 0 auto;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-pop);
+}
+.render-error > svg { width: var(--space-6); height: var(--space-6); color: var(--status-blocked); }
+.render-error-title { margin: 0; color: var(--text); font-weight: 600; }
+.render-error-detail { margin: 0; max-width: 36rem; font-size: var(--fs-sm); color: var(--status-blocked); overflow-wrap: anywhere; }
+.render-error-hint { margin: 0; max-width: 36rem; font-size: var(--fs-sm); }
+.render-error-actions { display: flex; flex-wrap: wrap; justify-content: center; gap: var(--space-2); margin-top: var(--space-2); }
+.render-error-actions .btn svg { width: var(--space-4); height: var(--space-4); color: inherit; }

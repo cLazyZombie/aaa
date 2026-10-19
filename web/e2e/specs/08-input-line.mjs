@@ -47,6 +47,8 @@ export default async function ({ ctl, page }) {
       const held = await page.locator(".terminal-banners").allInnerTexts();
       throw new Error(`${e.message}: 입력줄 ${JSON.stringify(await line.inputValue())} 켜짐 ${await line.isEnabled()}, 말 ${JSON.stringify(note)}, 띠 ${JSON.stringify(held)}`);
     });
+    // PTY 출력과 host 확인의 화면 처리는 별개다. 확인 처리로 보내기가 풀린 뒤 초안을 검사한다.
+    await until("보내기 확인 처리", () => page.getByRole("button", { name: /^터미널에.*보내기$/ }).isEnabled());
     if ((await page.getByLabel("보낼 글").inputValue()) !== "") throw new Error("보낸 뒤 글이 남았다");
     // 조합 중에 누른 보내기(herdr-web-ui scripts/terminal-input-regression.ts와 같은 네 경우)
     {
@@ -127,6 +129,7 @@ export default async function ({ ctl, page }) {
     await mbox.fill("휴대폰");
     await mbox.press("Enter");
     await until("휴대폰 Enter로 보냄", () => got().includes('GOT:"휴대폰"') && gots() >= n + 2);
+    await until("휴대폰 보내기 확인 처리", () => mob.page.getByRole("button", { name: /^터미널에.*보내기$/ }).isEnabled());
     if ((await mbox.inputValue()) !== "") throw new Error(`휴대폰 보낸 뒤 글이 남았다: ${JSON.stringify(await mbox.inputValue())}`);
     if (mob.errors.length) throw new Error(mob.errors.join("; "));
     await mob.page.context().close();

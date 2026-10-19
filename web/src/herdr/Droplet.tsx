@@ -158,7 +158,7 @@ export function Droplet({ onOpen }: { onOpen: (target: string) => void }) {
   };
 
   if (!current) return <div ref={probe} className="droplet-probe" aria-hidden="true" />;
-  const what = current.kind === "blocked" ? "입력 필요" : current.kind === "done" ? "작업 완료" : "터미널 종료됨";
+  const what = current.kind === "blocked" ? "입력 필요" : current.kind === "done" ? "작업 완료" : current.kind === "reset" ? "한도 풀림" : "터미널 종료됨";
   const detail = current.machine ? `${current.machine} · ${what}` : what;
   return (
     <div className="droplet" role="status" aria-live="polite" data-phase={phase} data-kind={current.kind} data-dragging={drag !== 0 ? "" : undefined} style={{ "--droplet-drag": `${drag}px`, "--droplet-top": `${top ?? 12}px`, ...(fit === null ? {} : { "--droplet-fit": `${fit}px` }), visibility: top === null ? "hidden" : "visible" } as CSSProperties} key={current.id}>
