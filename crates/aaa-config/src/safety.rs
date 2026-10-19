@@ -2,8 +2,10 @@
 //!
 //! - host.toml(·host.local.toml)의 `[safety.default]`(모든 프로젝트)와 `[safety."<프로젝트>"]`(그 프로젝트). 프로젝트 폴더
 //!   밖에 두어 coordinator가 고치지 못한다(§8.19). 바꾸기는 사람이 터미널에서만 한다(`aaa safety`, `aaa profile allow`).
-//! - 값마다 「프로젝트 표 → default 표 → 옛 자리 → 기본값」 차례로 정한다. 옛 자리는 host.toml `[projects] allow_profiles`·
-//!   `routine_commands`와 project.toml `start_threads`·`trust_screens`(프로젝트 폴더 안이라 출처에 드러낸다).
+//! - 값마다 「`[safety]` 표 → 프로젝트 표 → default 표 → 옛 자리 → 기본값」 차례로 정한다. `[safety]` 표 하나는 host가 프로젝트
+//!   하나만 맡은 뒤의 자리다(plan §8.288). 되돌리기(옛 binary)를 위해 호환 기간에는 `aaa safety`가 프로젝트 표에 쓴다.
+//!   옛 자리는 host.toml `[projects] allow_profiles`·`routine_commands`와 project.toml `start_threads`·`trust_screens`
+//!   (프로젝트 폴더 안이라 출처에 드러낸다).
 //! - host는 쓸 때마다 이 표만 느슨하게 다시 읽는다: 다른 절이 깨져도, 값 하나가 잘못돼도 그 값만 기본값으로 간다.
 //! - coordinator 쪽 값(`coordinator_profiles`·`coordinator_agent_args`, yolo의 coordinator 몫)은 `aaa project open`이 쓴다
 //!   (plan §8.180). aaa에 옛 자리가 없어 프로젝트 표 → default 표 → 기본값이다.
@@ -71,6 +73,66 @@ pub struct SafetyLayer {
     /// coordinator가 쓸 수 있는 profile. 없으면 모두
     #[serde(skip_serializing_if = "Option::is_none")]
     pub coordinator_profiles: Option<Vec<String>>,
+}
+
+/// host.toml `[safety]` 표 하나의 값(plan §8.288)이 [`crate::HostConfig::safety`]에서 쓰는 열쇠. 프로젝트 이름은 비지 않는다.
+pub const ONE_TABLE: &str = "";
+
+/// `[safety]`: 아래 표(`default`·`"<프로젝트>"`)와 표 하나의 값(`yolo = …`)이 섞인다. 값들은 [`ONE_TABLE`] 열쇠로 읽고 쓴다.
+pub mod tables {
+    use std::collections::BTreeMap;
+
+    use serde::de::Error as _;
+    use serde::ser::Error as _;
+    use serde::{Deserialize, Deserializer, Serialize, Serializer};
+
+    use super::{ONE_TABLE, SafetyLayer};
+
+    pub fn deserialize<'de, D: Deserializer<'de>>(d: D) -> Result<BTreeMap<String, SafetyLayer>, D::Error> {
+        let raw = BTreeMap::<String, serde_json::Value>::deserialize(d)?;
+        let (mut out, mut one) = (BTreeMap::new(), serde_json::Map::new());
+        for (k, v) in raw {
+            if v.is_object() {
+                out.insert(k, serde_json::from_value(v).map_err(D::Error::custom)?);
+            } else {
+                one.insert(k, v);
+            }
+        }
+        if !one.is_empty() {
+            out.insert(ONE_TABLE.into(), serde_json::from_value(one.into()).map_err(D::Error::custom)?);
+        }
+        Ok(out)
+    }
+
+    pub fn serialize<S: Serializer>(m: &BTreeMap<String, SafetyLayer>, s: S) -> Result<S::Ok, S::Error> {
+        let mut out = serde_json::Map::new();
+        for (k, l) in m {
+            match serde_json::to_value(l).map_err(S::Error::custom)? {
+                serde_json::Value::Object(values) if k.is_empty() => out.extend(values),
+                v => {
+                    out.insert(k.clone(), v);
+                }
+            }
+        }
+        out.serialize(s)
+    }
+}
+
+impl SafetyLayer {
+    /// 이 층의 값, 빠진 key는 `below`의 값(`[safety]` 표 하나 → 프로젝트 표처럼 위가 앞선다)
+    pub fn over(self, below: SafetyLayer) -> SafetyLayer {
+        SafetyLayer {
+            yolo: self.yolo.or(below.yolo),
+            start_threads: self.start_threads.or(below.start_threads),
+            trust_screens: self.trust_screens.or(below.trust_screens),
+            coordinator_agent_args: self.coordinator_agent_args.or(below.coordinator_agent_args),
+            thread_agent_args: self.thread_agent_args.or(below.thread_agent_args),
+            routine_commands: self.routine_commands.or(below.routine_commands),
+            coordinator_deploy: self.coordinator_deploy.or(below.coordinator_deploy),
+            thread_profiles: self.thread_profiles.or(below.thread_profiles),
+            coordinator_profiles: self.coordinator_profiles.or(below.coordinator_profiles),
+        }
+    }
 }
 
 /// 실제로 쓰는 값(참고 `Safety`)
@@ -333,6 +395,13 @@ pub fn has_key(text: &str, table: &str, key: &str) -> bool {
         .is_some_and(|d| d.get("safety").and_then(|s| s.get(table)).and_then(|t| t.get(key)).is_some())
 }
 
+/// 글에 `[safety] key`(표 하나, plan §8.288)가 있는가: 있으면 프로젝트 표(`[safety.<p>]`)를 고쳐도 닿지 않는다
+pub fn has_top_key(text: &str, key: &str) -> bool {
+    text.parse::<DocumentMut>()
+        .ok()
+        .is_some_and(|d| d.get("safety").and_then(|s| s.get(key)).is_some_and(|v| !v.is_table_like()))
+}
+
 /// host.toml·host.local.toml 글(뒤가 덮는다)에서 default 표와 그 프로젝트 표, 옛 `[projects]` 층, 버린 값의 경고.
 /// 값마다 따로 읽어 잘못된 값은 그 값만 버린다(기본값 쪽으로 간다).
 pub fn read_texts(texts: &[String], project: Option<&str>) -> (SafetyLayer, SafetyLayer, SafetyLayer, Vec<String>) {
@@ -348,10 +417,16 @@ pub fn read_texts(texts: &[String], project: Option<&str>) -> (SafetyLayer, Safe
             if let Some(d) = t.get(DEFAULT_TABLE).and_then(Item::as_table_like) {
                 overlay(&mut default, d, DEFAULT_TABLE, &mut warnings);
             }
-            if let Some(p) = project
-                && let Some(x) = t.get(p).and_then(Item::as_table_like)
-            {
-                overlay(&mut own, x, p, &mut warnings);
+            if let Some(p) = project {
+                if let Some(x) = t.get(p).and_then(Item::as_table_like) {
+                    overlay(&mut own, x, p, &mut warnings);
+                }
+                // `[safety]` 표 하나(host는 프로젝트 하나, plan §8.288): 그 프로젝트 표보다 앞선다. 아래 표(default·프로젝트)는 값이 아니다
+                let mut top = Table::new();
+                for (k, v) in t.iter().filter(|(_, v)| !v.is_table_like()) {
+                    top.insert(k, v.clone());
+                }
+                overlay(&mut own, &top, "", &mut warnings);
             }
         }
         if let Some(p) = doc.get("projects").and_then(Item::as_table_like) {
@@ -381,7 +456,8 @@ fn strings(item: &Item) -> Option<Vec<String>> {
 }
 
 fn overlay(layer: &mut SafetyLayer, t: &dyn toml_edit::TableLike, table: &str, warnings: &mut Vec<String>) {
-    let mut bad = |key: &str, why: &str| warnings.push(format!("[safety.{table}] {key}: {why}, 버리고 아래 층을 쓴다"));
+    let name = if table.is_empty() { "[safety]".to_string() } else { format!("[safety.{table}]") };
+    let mut bad = |key: &str, why: &str| warnings.push(format!("{name} {key}: {why}, 버리고 아래 층을 쓴다"));
     if let Some(v) = t.get("yolo") {
         match v.as_bool() {
             Some(b) => layer.yolo = Some(b),
@@ -591,6 +667,24 @@ mod tests {
         let demo = Layers { own: o, default: d, legacy: l }.resolve();
         assert!(demo.coordinator_profile_allowed("luna") && !demo.coordinator_profile_allowed("opus"));
         assert_eq!((demo.coordinator_agent_args, demo.thread_profiles), (s(&["--c"]), Some(s(&["opus"]))));
+    }
+
+    /// `[safety]` 표 하나(plan §8.288): 프로젝트 표보다 앞서고, 아래 표들은 값으로 읽지 않는다. 잘못된 값은 그 값만 버린다.
+    #[test]
+    fn one_safety_table_comes_before_the_project_table() {
+        let text = "[safety]\nyolo = false\ntrust_screens = \"coordinator\"\nstart_threads = \"later\"\n\n[safety.default]\nroutine_commands = true\n\n[safety.demo]\nyolo = true\nstart_threads = \"auto\"\nthread_profiles = [\"opus\"]\n";
+        let (d, o, l, w) = read_texts(&[text.into()], Some("demo"));
+        assert_eq!(w, vec!["[safety] start_threads: \"propose\"·\"auto\"여야 한다, 버리고 아래 층을 쓴다".to_string()]);
+        let demo = Layers { own: o, default: d.clone(), legacy: l }.resolve();
+        assert_eq!(
+            (demo.yolo, demo.start_threads.as_str(), demo.trust_screens.as_str()),
+            (false, "auto", "coordinator"),
+            "[safety]의 yolo가 프로젝트 표를 덮고, 버린 start_threads는 프로젝트 표 값이다"
+        );
+        assert!(demo.routine_commands && demo.thread_profiles == Some(s(&["opus"])));
+        // 모든 프로젝트 기본값(--global)에는 닿지 않는다
+        assert_eq!(read_texts(&[text.into()], None).1, SafetyLayer::default());
+        assert!(has_top_key(text, "yolo") && !has_top_key(text, "demo") && !has_top_key(HOST, "yolo"));
     }
 
     #[test]

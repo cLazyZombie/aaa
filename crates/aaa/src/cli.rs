@@ -2365,7 +2365,7 @@ fn routine_approve(json: bool, project: String, name: String) -> Result<ExitCode
     println!("    {}\n", r.command);
     if !r.commands_allowed {
         println!(
-            "지금은 safety routine_commands가 꺼져 있어, 승인해도 켜기 전에는 돌지 않는다(`aaa safety set {project} routine_commands on`).\n"
+            "지금은 safety routine_commands가 꺼져 있어, 승인해도 켜기 전에는 돌지 않는다(`aaa safety set routine_commands on`).\n"
         );
     }
     if crate::person::ask("승인하려면 routine 이름을 친다: ")? != name {
@@ -2463,7 +2463,7 @@ fn known_projects() -> Result<&'static [(String, bool)]> {
 
 /// 프로젝트 인자(plan §8.285): host는 프로젝트 하나만 맡으므로 생략하면 그 이름(내부 이름)이다. 옛 꼴로 그 이름을 주면
 /// 표준 오류에 한 줄 알리고 그대로 하고, 다른 이름이면 거부한다. 보관한 프로젝트·여럿이 남은 옛 상태의 이름은 그대로 받는다.
-fn project_or_here(given: Option<String>) -> Result<String> {
+pub(crate) fn project_or_here(given: Option<String>) -> Result<String> {
     let known = known_projects()?;
     let open: Vec<&str> = known.iter().filter(|(_, archived)| !archived).map(|(n, _)| n.as_str()).collect();
     match given {

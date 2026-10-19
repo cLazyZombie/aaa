@@ -243,7 +243,8 @@ impl crate::Host {
                 let get = |k: &str| c.safety.get(k).cloned().unwrap_or_default();
                 let legacy =
                     safety::legacy_host_layer(&c.projects.allow_profiles, &c.projects.routine_commands, project);
-                (get(safety::DEFAULT_TABLE), project.map(get).unwrap_or_default(), legacy, Vec::new())
+                let own = project.map(|p| get(safety::ONE_TABLE).over(get(p))).unwrap_or_default();
+                (get(safety::DEFAULT_TABLE), own, legacy, Vec::new())
             }
         };
         if let Some(p) = project {

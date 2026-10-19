@@ -620,9 +620,7 @@ impl Host {
                     let why = if self.routine_commands_allowed(project) {
                         "명령이 승인되지 않았다(승인 뒤 고쳐졌을 수 있다)".to_string()
                     } else {
-                        format!(
-                            "safety routine_commands가 꺼져 있다(사람이 `aaa safety set {project} routine_commands on`)"
-                        )
+                        "safety routine_commands가 꺼져 있다(사람이 `aaa safety set routine_commands on`)".to_string()
                     };
                     self.inbox_add(
                         project,

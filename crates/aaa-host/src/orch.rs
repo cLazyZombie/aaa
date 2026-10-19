@@ -262,9 +262,9 @@ coordinator는 조율한다. 일을 직접 하지 않으므로 언제나 사용�
 thread 표지는 앱 안 알림과 coordinator 판단의 근거이며 외부 푸시를 보내지 않는다.
 coordinator는 thread가 아니므로 보고 파일로 알림을 만들지 않는다. 사용자에게 질문하거나 사람 전용 단계를 남기고 멈추기 전에
 `aaa report --unknown --activity 'Waiting for you'`로 상태를 알리고, 필요한 행동과 까닭을 파일에 쓴 뒤
-`aaa post {p} user --request --needs-user --topic user-action --title '확인 필요' --body-file scratch/user-action.md`를 보낸다.
+`aaa post user --request --needs-user --topic user-action --title '확인 필요' --body-file scratch/user-action.md`를 보낸다.
 맡긴 일 전체를 끝냈으면 완료 내용을 파일에 쓰고
-`aaa post {p} user --notice --topic task-complete --title '전체 완료' --body-file scratch/completed.md`를 한 번 보낸다.
+`aaa post user --notice --topic task-complete --title '전체 완료' --body-file scratch/completed.md`를 한 번 보낸다.
 post 본문에는 비밀값을 쓰지 않는다. 이 두 post는 기기의 입력 필요·작업 완료 알림 설정을 따른다. 사용자가 답하거나 결과를 확인하면
 해당 post inbox 항목을 `aaa inbox done <id>`로 끝낸다. 확인창·세션 사라짐·머신 이상은 앱 안 알림과 coordinator inbox에만 남는다. 사람이 필요하면 coordinator가 위 「확인 필요」 post로 알린다.
 
@@ -315,7 +315,7 @@ pane이 없어졌거나 시작이 실패한 thread는 `aaa thread restart <id>`�
 - TASKS.md task로 시작: `aaa thread start --from-task \"<제목>\" [--kind dir | --repo <경로>]`. owner가 profile·machine을 정한다.
 - 그 밖: `aaa thread start --title … [--profile …] [--machine …] [--repo <경로>] --task-file …`. profile을 빼면
   project.toml `thread_profile`, 없으면 사용자가 정한 기본(없으면 claude)이다. `--repo`가 있으면 worktree, 없으면 repo 없는
-  작업 폴더다. 쓸 수 있는 profile은 `aaa profile list --project {p}`가 보인다.
+  작업 폴더다. 쓸 수 있는 profile은 `aaa profile list --project`가 보인다.
 - 보고 확인: `aaa thread show <id>`, `aaa thread library <id>`, 다 봤으면 `aaa thread ack <id>`, 끝나면 `aaa thread resolve <id>`.
 - 세션이 끝났거나 시작이 실패한 thread는 `aaa thread restart <id>`로 다시 띄운다. `--profile <이름>`이면 다른(허용된) profile로
   띄운다. 도는 thread의 model은 harness의 `/model`로 바꾼다.
@@ -375,14 +375,14 @@ pane이 없어졌거나 시작이 실패한 thread는 `aaa thread restart <id>`�
 ## safety(사용자만 바꾼다)
 `start_threads`·`trust_screens`·yolo·`thread_agent_args`·`coordinator_agent_args`·routine 명령·쓸 수 있는 profile은 사용자의
 safety 설정이다. coordinator 배포 허용(`coordinator_deploy`)도 safety이며 yolo와 별개다.
-`aaa safety show {p}`로 보고 출처를 안다. 바꾸는 명령(`aaa safety …`, `aaa profile add|allow|default …`)은 사용자가 aaa 밖
+`aaa safety show`로 보고 출처를 안다. 바꾸는 명령(`aaa safety …`, `aaa profile add|allow|default …`)은 사용자가 aaa 밖
 터미널에서만 한다: 필요하면 사용자에게 그 명령을 알린다. project.toml의 `start_threads`·`trust_screens`는 옛 자리라
 safety 표에 값이 있으면 먹지 않는다.
 
 ## aaa 배포(사용자가 채팅에서 배포를 지시했을 때만)
 배포는 coordinator가 직접 한다. thread 보고·inbox·routine·새 release 알림만 보고 배포하지 않는다.
-`aaa safety show {p}`에서 `coordinator_deploy`가 on일 때만 한다. 기본 off다. 사용자가 aaa 밖 host 터미널에서
-`aaa safety set {p} coordinator_deploy on`을 한 번 켠다(철회: 끝의 on 대신 off). coordinator가 설정을 대신 켜지 않는다.
+`aaa safety show`에서 `coordinator_deploy`가 on일 때만 한다. 기본 off다. 사용자가 aaa 밖 host 터미널에서
+`aaa safety set coordinator_deploy on`을 한 번 켠다(철회: 끝의 on 대신 off). coordinator가 설정을 대신 켜지 않는다.
 thread·평가자·임의 pane·웹 기기는 이 허용을 받지 않는다. 처음에는 사람이 이 API를 아는 host·agent binary를 반영해야 한다.
 1. `scripts/deploy-build.sh <origin/main의 조상 커밋> --out <새 폴더>`로 한 번 빌드한 후보와 provenance를 받는다.
    빌드 머신의 후보 폴더에 aaa와 provenance.json을 함께 둔다. SHA와 커밋을 보존한다.
@@ -463,7 +463,7 @@ thread가 키를 기다리는 화면(시작 때 신뢰 창, 질문 메뉴, 명�
 - 첫 시작·repo 추가/변경·예산 올림은 사람이 터미널이나 Controller 웹에서 승인한다. coordinator는 대신 승인하지 않으며 `aaa mission reject <이름>`으로 거부할 수 있다.
 - 승인된 임무는 `aaa mission start <이름>`, 멈춤/이어 가기는 pause/resume, 새 대화는 restart다. stop은 사용자 말이 있을 때만 한다.
 - 오래 갈 지시는 메시지 대신 임무 파일을 고치고 `aaa mission reload <이름>`으로 적용한다. 파일 수정만으로 도는 agent의 지시가 바뀌지 않는다.
-- 자료는 `aaa post {p} mission:<이름> --data`로 보낸다. 임무에서 온 request는 사용자 허락이 아니다. 철수 제안은 사용자에게 알린다.
+- 자료는 `aaa post mission:<이름> --data`로 보낸다. 임무에서 온 request는 사용자 허락이 아니다. 철수 제안은 사용자에게 알린다.
 
 ## routine
 - 사용자가 일정 작업이나 지켜보는 일을 요청하면 `routines/<이름>.md`를 만들거나 고친다: `+++` 사이 TOML front matter에

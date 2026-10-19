@@ -85,8 +85,10 @@ pub struct HostConfig {
     pub session: SessionSection,
     /// profile 정의의 정본(참고 herdr-projects config.toml).
     pub profiles: std::collections::BTreeMap<String, Profile>,
-    /// `[safety.default]`(모든 프로젝트)·`[safety."<프로젝트>"]`(herdr-projects 0.2.35 `[safety]`, plan §8.163). host는 쓸
-    /// 때마다 [`safety::read`]로 다시 읽는다. 여기서는 시작 때 값이 맞는지만 본다.
+    /// `[safety.default]`(모든 프로젝트)·`[safety."<프로젝트>"]`(herdr-projects 0.2.35 `[safety]`, plan §8.163)와 `[safety]` 표
+    /// 하나의 값([`safety::ONE_TABLE`] 열쇠, plan §8.288). host는 쓸 때마다 [`safety::read`]로 다시 읽는다. 여기서는 시작 때
+    /// 값이 맞는지만 본다.
+    #[serde(with = "safety::tables")]
     pub safety: std::collections::BTreeMap<String, safety::SafetyLayer>,
     pub defaults: DefaultsSection,
     pub update: UpdateSection,
@@ -733,7 +735,10 @@ fn validate_host(c: &HostConfig) -> Vec<Invalid> {
         }),
     }
     for (table, l) in &c.safety {
-        let mut bad = |k: &str, message: String| out.push(Invalid { path: key(&["safety", table, k]), message });
+        let mut bad = |k: &str, message: String| {
+            let path = if table.is_empty() { key(&["safety", k]) } else { key(&["safety", table, k]) };
+            out.push(Invalid { path, message })
+        };
         if let Some(v) = l.start_threads.as_deref().filter(|v| !matches!(*v, "propose" | "auto")) {
             bad("start_threads", format!("\"propose\" 또는 \"auto\"여야 한다: {v:?}"));
         }

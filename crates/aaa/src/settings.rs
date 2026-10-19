@@ -32,11 +32,12 @@ pub struct ProfileFields {
 
 #[derive(Subcommand)]
 pub enum ProfileCmd {
-    /// host의 profile(host.toml과 설치·로그인한 기본 profile claude·codex). --project면 그 프로젝트 기본값·허용 목록도
+    /// host의 profile(host.toml과 설치·로그인한 기본 profile claude·codex). --project면 프로젝트 기본값·허용 목록도
+    /// (이름을 생략하면 이 host의 프로젝트, plan §8.288)
     List {
         #[arg(long)]
         machine: Option<String>,
-        #[arg(long, value_name = "PROJECT")]
+        #[arg(long, value_name = "PROJECT", num_args = 0..=1, default_missing_value = "")]
         project: Option<String>,
         /// 이름만 한 줄에 하나
         #[arg(long, conflicts_with = "project")]
@@ -89,32 +90,29 @@ pub enum ProfileCmd {
     },
 }
 
+/// safety 명령의 대상은 생략하면 host가 맡은 프로젝트다(plan §8.288). 모든 프로젝트 기본값은 `--global`, 옛 꼴은 프로젝트 이름.
 #[derive(Subcommand)]
 pub enum SafetyCmd {
     /// 실제 safety 값과 출처, 바꾸는 방법
     Show {
-        /// 프로젝트, 또는 모든 프로젝트 기본값이면 --global
+        /// (생략하면 이 host의 프로젝트) 모든 프로젝트 기본값이면 --global, 옛 꼴은 프로젝트 이름
         #[arg(allow_hyphen_values = true)]
-        target: String,
+        target: Option<String>,
     },
     /// yolo를 켜거나 끈다: thread를 묻지 않고 시작하고 thread·coordinator를 harness 권한 건너뛰기 인자로 띄운다(사람이 터미널에서
-    /// y로만)
+    /// y로만). `aaa safety yolo [--global] on|off|default`
     Yolo {
-        #[arg(allow_hyphen_values = true)]
-        target: String,
-        /// on, off, default(모든 프로젝트 값을 따른다)
-        #[arg(value_parser = ["on", "off", "default"])]
-        state: String,
+        /// on, off, default(모든 프로젝트 값을 따른다). 앞에 --global이나 프로젝트(옛 꼴)를 줄 수 있다
+        #[arg(allow_hyphen_values = true, num_args = 1..=2, required = true)]
+        words: Vec<String>,
     },
-    /// safety 값 하나를 바꾼다(사람이 터미널에서 y로만)
+    /// safety 값 하나를 바꾼다(사람이 터미널에서 y로만). `aaa safety set [--global] <key> <값…>|default`
     Set {
-        #[arg(allow_hyphen_values = true)]
-        target: String,
-        /// yolo, start_threads, trust_screens, coordinator_agent_args, thread_agent_args, routine_commands
-        key: String,
-        /// 값(*_agent_args는 인자들, 없으면 빈 목록), 또는 default
-        #[arg(allow_hyphen_values = true, trailing_var_arg = true)]
-        value: Vec<String>,
+        /// key: yolo, start_threads, trust_screens, coordinator_agent_args, thread_agent_args, routine_commands,
+        /// coordinator_deploy. 그 뒤 값(*_agent_args는 인자들, 없으면 빈 목록) 또는 default. key 앞에 --global이나
+        /// 프로젝트(옛 꼴)를 줄 수 있다
+        #[arg(allow_hyphen_values = true, trailing_var_arg = true, required = true)]
+        words: Vec<String>,
     },
 }
 
@@ -141,6 +139,21 @@ impl Target {
             return Ok(Target::Global);
         }
         Ok(Target::Project { name: word.to_string(), dir: project_dir(word)? })
+    }
+
+    /// 대상을 생략했다: host가 맡은 프로젝트(host에 물어 보관 여부까지 본다, plan §8.288)
+    fn here() -> Result<Target> {
+        let name = crate::cli::project_or_here(None)
+            .context("safety 대상을 정하지 못했다: 프로젝트 이름이나 --global을 준다")?;
+        Target::parse(&name)
+    }
+
+    /// 생략할 수 있는 대상(`None`이면 [`Target::here`])
+    fn given(word: Option<&str>) -> Result<Target> {
+        match word {
+            Some(w) => Target::parse(w),
+            None => Target::here(),
+        }
     }
 
     fn table(&self) -> &str {
@@ -239,7 +252,7 @@ fn rows_json(rows: &[safety::Row]) -> serde_json::Value {
 pub fn safety_cmd(json: bool, cmd: SafetyCmd) -> Result<ExitCode> {
     match cmd {
         SafetyCmd::Show { target } => {
-            let target = Target::parse(&target)?;
+            let target = Target::given(target.as_deref())?;
             let (layers, warnings) = layers(&target);
             let rows = layers.rows(target.project().is_some());
             let eff = layers.resolve();
@@ -258,13 +271,28 @@ pub fn safety_cmd(json: bool, cmd: SafetyCmd) -> Result<ExitCode> {
             print!("{}", show_text(&target, &rows, &eff, &warnings));
             Ok(ExitCode::SUCCESS)
         }
-        SafetyCmd::Yolo { target, state } => {
-            let command = format!("aaa safety yolo {target} {state}");
-            set(json, &command, &target, "yolo", &[state])
+        SafetyCmd::Yolo { words } => {
+            let command = format!("aaa safety yolo {}", words.join(" "));
+            let (target, state) = match words.as_slice() {
+                [state] => (None, state.clone()),
+                [target, state] => (Some(target.as_str()), state.clone()),
+                _ => bail!("`aaa safety yolo [--global] on|off|default`"),
+            };
+            if !matches!(state.as_str(), "on" | "off" | "default") {
+                bail!("yolo는 on·off·default다, `{state}`가 아니다");
+            }
+            set(json, &command, target, "yolo", &[state])
         }
-        SafetyCmd::Set { target, key, value } => {
-            let command = format!("aaa safety set {target} {key} {}", value.join(" "));
-            set(json, command.trim_end(), &target, &key, &value)
+        SafetyCmd::Set { words } => {
+            let command = format!("aaa safety set {}", words.join(" "));
+            // 첫 낱말이 key면 대상을 생략한 새 꼴이다. 아니면 --global이나 프로젝트(옛 꼴)
+            let is_key = |w: &str| safety::KEYS.iter().any(|(k, _)| *k == w);
+            let (target, key, value) = match words.split_first() {
+                Some((key, value)) if is_key(key) => (None, key.clone(), value.to_vec()),
+                Some((target, [key, value @ ..])) => (Some(target.as_str()), key.clone(), value.to_vec()),
+                _ => bail!("`aaa safety set [--global] <key> <값…>|default`"),
+            };
+            set(json, command.trim_end(), target, &key, &value)
         }
     }
 }
@@ -295,9 +323,13 @@ fn show_text(target: &Target, rows: &[safety::Row], eff: &safety::Safety, warnin
     if eff.trust_screens == "coordinator" {
         out.push_str("지금 coordinator가 신뢰 창에 답할 수 있다: thread 자기 폴더의 것만 받아들이고 다른 경로는 사람에게 넘긴다.\n");
     }
-    let w = target.word();
+    // 이 host의 프로젝트는 대상을 생략한다(plan §8.288)
+    let w = match target {
+        Target::Global => "--global ",
+        Target::Project { .. } => "",
+    };
     out.push_str(&format!(
-        "\n바꾸기(사람이 aaa 세션 밖 터미널에서):\n  aaa safety yolo {w} on|off|default\n  aaa safety set {w} <key> <값>|default\n  aaa profile allow threads|coordinator <이름…>{}\n",
+        "\n바꾸기(사람이 aaa 세션 밖 터미널에서):\n  aaa safety yolo {w}on|off|default\n  aaa safety set {w}<key> <값>|default\n  aaa profile allow threads|coordinator <이름…>{}\n",
         target.project().map(|p| format!(" --project {p}")).unwrap_or_default()
     ));
     out.push_str(&format!("{}.\n", safety::RESTART_NOTE));
@@ -312,15 +344,26 @@ fn host_text() -> (PathBuf, String) {
     (path, text)
 }
 
-/// host.local.toml이 같은 key를 덮으면 알린다(고친 값이 닿지 않는다)
+/// host.local.toml이 같은 key를 덮거나, 프로젝트 표를 고칠 때 `[safety]` 표 하나(plan §8.288)에 같은 key가 있으면 알린다
+/// (고친 값이 닿지 않는다)
 fn shadowed(table: &str, key: &str) -> Option<String> {
-    let text = std::fs::read_to_string(config_dir().join("host.local.toml")).ok()?;
-    safety::has_key(&text, table, key).then_some(())?;
-    Some(format!("host.local.toml의 [safety.{table}] {key}가 이 값을 덮는다: 그 파일에서도 고친다"))
+    let read = |f: &str| std::fs::read_to_string(config_dir().join(f)).unwrap_or_default();
+    let local = read("host.local.toml");
+    if safety::has_key(&local, table, key) {
+        return Some(format!("host.local.toml의 [safety.{table}] {key}가 이 값을 덮는다: 그 파일에서도 고친다"));
+    }
+    if table == safety::DEFAULT_TABLE {
+        return None;
+    }
+    ["host.toml", "host.local.toml"].into_iter().find(|f| safety::has_top_key(&read(f), key)).map(|f| {
+        format!(
+            "{f}의 [safety] {key}가 이 값을 덮는다([safety] 표 하나가 프로젝트 표보다 앞선다): 그 줄을 지우거나 고친다"
+        )
+    })
 }
 
-fn set(json: bool, command: &str, target: &str, key: &str, words: &[String]) -> Result<ExitCode> {
-    let target = Target::parse(target)?;
+fn set(json: bool, command: &str, target: Option<&str>, key: &str, words: &[String]) -> Result<ExitCode> {
+    let target = Target::given(target)?;
     let item = safety::value_item(key, words).map_err(|e| anyhow::anyhow!(e))?;
     crate::person::require(&format!("`{command}`(safety 바꾸기)"))?;
     let row = |key: &str| layers(&target).0.rows(target.project().is_some()).into_iter().find(|r| r.key == key);
@@ -407,7 +450,8 @@ fn list(json: bool, machine: Option<String>, project: Option<String>, names: boo
         return Ok(ExitCode::SUCCESS);
     }
     let Some(project) = project else { return crate::cli::front_print(json, res) };
-    let target = Target::parse(&project)?;
+    let target = Target::given(Some(project.as_str()).filter(|p| !p.is_empty()))?;
+    let project = target.word().to_string();
     let eff = layers(&target).0.resolve();
     let default = default_thread_profile(&target);
     let coordinator = default_profile(&target, "coordinator_profile");
