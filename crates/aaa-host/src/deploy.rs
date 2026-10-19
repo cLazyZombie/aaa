@@ -70,9 +70,12 @@ impl Host {
         self.db.audit(actor, "deployment_start", &format!("project={project} machine={mid} job={id}"));
         let response = self.live_conn(&mid)?.request(AgentRequest::DeployStart { id, project, action }).await?;
         match response {
-            AgentResponse::Deployment { job } => {
-                Ok(FrontResponse::Deployment { machine: self.machine_name(&mid), job })
-            }
+            AgentResponse::Deployment { job, running_software, running_sha256 } => Ok(FrontResponse::Deployment {
+                machine: self.machine_name(&mid),
+                job,
+                running_software,
+                running_sha256,
+            }),
             _ => Err(err(ErrorCode::Internal, "배포 응답이 아니다")),
         }
     }
@@ -86,7 +89,20 @@ impl Host {
         let project = self
             .deployment_project(actor)
             .ok_or_else(|| err(ErrorCode::Forbidden, "배포 기록은 coordinator 세션에서 확인한다"))?;
-        let mid = self.resolve_machine(machine.as_deref())?;
+        let record = self
+            .db
+            .meta(&format!("deploy:{id}"))
+            .map_err(|e| err(ErrorCode::Internal, e.to_string()))?
+            .and_then(|s| serde_json::from_str::<serde_json::Value>(&s).ok())
+            .filter(|r| r["project"] == project)
+            .ok_or_else(|| err(ErrorCode::NotFound, "이 프로젝트의 배포 기록이 없다"))?;
+        let mid =
+            record["machine"].as_str().ok_or_else(|| err(ErrorCode::Internal, "배포 대상 기록이 없다"))?.to_string();
+        if let Some(machine) = machine
+            && self.resolve_machine(Some(&machine))? != mid
+        {
+            return Err(err(ErrorCode::BadRequest, "기록된 배포 대상과 다르다"));
+        }
         if !self.machine_feature(&mid, "deployment.v1") {
             return Err(err(
                 ErrorCode::BadRequest,
@@ -94,8 +110,13 @@ impl Host {
             ));
         }
         match self.live_conn(&mid)?.request(AgentRequest::DeployStatus { id }).await? {
-            AgentResponse::Deployment { job } if job.project == project => {
-                Ok(FrontResponse::Deployment { machine: self.machine_name(&mid), job })
+            AgentResponse::Deployment { job, running_software, running_sha256 } if job.project == project => {
+                Ok(FrontResponse::Deployment {
+                    machine: self.machine_name(&mid),
+                    job,
+                    running_software,
+                    running_sha256,
+                })
             }
             AgentResponse::Deployment { .. } => Err(err(ErrorCode::Forbidden, "다른 프로젝트의 배포 기록이다")),
             _ => Err(err(ErrorCode::Internal, "배포 응답이 아니다")),

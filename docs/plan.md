@@ -5418,3 +5418,14 @@ primary 근거:
 - **참고 그대로 재사용.** herdr-web-ui aa624cb `components/RowMenu.tsx` 78~108은 body portal의 fixed 좌표를 EDGE=8 안에 보정하고 아래 공간이 부족하면 위에 둔다. 휴대폰은 같은 파일의 modal sheet를 쓴다. aaa에 이미 옮긴 공통 RowMenu를 임무에도 사용한다. t3code `components/ui/popover.tsx`의 Portal/Positioner·collisionAvoidance·available-width/height 제한과 목적이 같으며 새 위치 계산기나 의존성을 만들지 않는다.
 - **동작.** 긴 임무 배지는 목록 머리 안에서 말줄임하고 메뉴에는 전체 이름과 작업 셈을 보인다. 임무 보기·시작/멈춤/이어 가기·다시 읽기·승인 검토는 같은 API와 역할 검사를 유지한다. 공통 메뉴의 Esc·바깥 누름·focus 복귀·좁은 화면 취소 단추를 따른다. 운영 임무는 건드리지 않는다.
 - **검증.** 기존 웹 E2E 12 임무 발견/승인 경계를 확장했다. 세 화면에서 메뉴와 설명의 실제 글 조각, 모든 단추의 화면 경계와 hit target을 검사하고 실제 Controller 승인 저장·승인만으로 시작하지 않음도 본다. 수정 전 세 크기 모두 같은 이유로 RED이며 headless 전후 캡처를 보존한다. 서로 다른 크기는 새 탭에서 열어 이전 sheet의 퇴장 픽셀이 다음 캡처에 섞이지 않게 한다. 고정 sleep·timeout 연장·기대값 완화는 없다.
+
+
+### 8.225 coordinator 배포 safety와 backend 재시작 뒤 확인(10-19, t-0381)
+
+- t-0375 ⑫ WIP 85068c7d를 이어받았다. 사람 전용 `update`·`rollback`·`service restart`에 host가 승인하는 별도 typed 경로를 더한다. `[safety.<project>] coordinator_deploy`는 기본 false이며 yolo·legacy와 독립이다. 사람의 기존 `aaa safety set <project> coordinator_deploy on|off`만 바꾼다.
+- host는 실제 socket peer PID로 확인한 열린 coordinator pane과 프로젝트를 확인하고 요청마다 safety를 읽는다. 자기 신고 session/client의 `@`는 배포 actor를 만들지 못한다. thread/adopt/평가자·웹 기기·임의 pane은 계속 거부한다. 권한 철회 뒤에도 자기 프로젝트의 기존 결과는 읽는다.
+- Front API 1.42와 선택 기능 `deployment.v1`을 더한다. backend crate 의존 방향은 그대로다. agent에 주입한 실행기는 기존 공개 release 검증·교체/보관/rollback을 재사용하며, 지속 agent가 시작 때 정한 파일 경로를 쓴다. service는 기존 launchd kickstart만 허용한다. 새 우회 flag·환경변수나 shell 실행 RPC는 없다.
+- agent의 프로세스 수명 OS 파일 잠금·원자 영구 기록과 host의 대상 기록으로 ID·작업·프로젝트를 결합한다. 같은 ID는 재실행하지 않고 충돌은 거부하며 머신당 하나만 실행한다. queued/running/completed/failed/interrupted를 보존한다. 응답 단절 뒤에는 같은 ID의 결과만 다시 조회한다. agent restart는 OS 잠금이 풀린 실행기와 기대 SHA가 맞을 때만 복구 완료, 중단 update는 자동 재실행하지 않는다.
+- 배포 상태 응답은 시작 시점에 고정한 running_software·running_sha256을 설치 파일 판/SHA와 별도로 보인다. 교체만으로 실행 이미지가 바뀌었다고 오인하지 않는다. coordinator 생성 안내에 사용자 채팅 지시 때만, host 먼저 → agent별 순차 교체·restart → 판/SHA/재연결/동일 pane 확인 → 문제 머신 rollback을 적었다. 최초 새 API 설치는 사람이 한다. `aaa doctor files --fix`로 기존 프로젝트 안내를 갱신한다.
+- 참고: herdr-projects 0.2.35 `safety.rs::set_cli`·`project.rs::load_safety`의 사람 전용 host 설정, herdr `update.rs::download_update/install_downloaded_update`의 SHA/원자 교체, t3code `McpSessionRegistry.ts::resolve`의 발급된 소속만 신뢰, `cloud/updateHandoff.ts::pendingUpdateHandoffExists`의 재시작 의도 기록을 확인했다. herdr-web-ui `server/herdr-update.ts::HerdrUpdater.start/run`·`src/components/UpdateControls.tsx`의 pane 밖 서버가 실행·실행 판과 설치 판 분리·동시 하나·실패 보존 방식을 따른다. 그 참고의 env 제거 우회 대신 aaa는 요청 출처와 사람의 safety를 확인한 typed executor를 쓴다. 참고에 없는 다중 머신 typed 배포·중복 방지 기록은 aaa의 host/agent 분리와 재시작 후 확인 요구 때문에 추가한다.
+- 시험: 기존 m13 한 경계를 확장했다. 실제 복사 binary의 원격 교체/rollback, 기본 off·허용/철회, 자기 신고 coordinator ID 위장의 RED→GREEN, env 없는 worker 차단, 격리 launchctl의 두 역할·실패 기록, 자기 backend 재시작 후 pane PID 지속을 본다. 고정 sleep·운영 서비스 변경은 없다. 단위 검사는 job 중복/충돌/복구 규칙, 기존 update E2E는 파일/릴리스 검증을 맡는다.

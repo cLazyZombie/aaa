@@ -805,6 +805,8 @@ pub struct PrAnswer {
 pub enum AgentResponse {
     Deployment {
         job: crate::DeployJob,
+        running_software: String,
+        running_sha256: String,
     },
     MissionInbox {
         pending: u32,
@@ -2214,6 +2216,8 @@ pub enum FrontResponse {
     Deployment {
         machine: String,
         job: crate::DeployJob,
+        running_software: String,
+        running_sha256: String,
     },
     Missions {
         missions: Vec<crate::MissionView>,

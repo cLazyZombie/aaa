@@ -1169,9 +1169,7 @@ impl Agent {
             AgentRequest::DeployStart { id: job, project, action } => {
                 return self.deploy_start(id, job, project, action).await;
             }
-            AgentRequest::DeployStatus { id } => {
-                self.deployments.status(&id).map(|job| AgentResponse::Deployment { job })
-            }
+            AgentRequest::DeployStatus { id } => self.deployments.status(&id).map(|job| self.deployments.response(job)),
             AgentRequest::PostAck { post_id, result } => {
                 self.post_ack(&post_id, result);
                 return;

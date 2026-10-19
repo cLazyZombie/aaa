@@ -3758,6 +3758,7 @@ const GUIDE_SECTIONS: &[&str] = &[
     "- 끝남·그만둠:",
     "- 보이기: 사용자가 task를 보자고 하면",
     "## 무엇이 누구 것인가",
+    "## aaa 배포(사용자가 채팅에서 배포를 지시했을 때만)",
     "사용자가 일정 작업이나 지켜보는 일을 요청하면 `routines/<이름>.md`를 만들거나 고친다",
 ];
 
@@ -4863,8 +4864,46 @@ fn coordinator_deployment_is_gated_and_survives_backend_restarts() {
     changed.extend_from_slice(b"aaa-deployment-test");
     std::fs::write(&candidate, &changed).unwrap();
     std::fs::set_permissions(&candidate, std::os::unix::fs::PermissionsExt::from_mode(0o755)).unwrap();
+    // launchd adapter도 같은 typed 경로로 본다. HOME·PATH는 이 실험실뿐이며 실제 서비스에는 닿지 않는다.
+    let service_home = w.lab.root.join("service-home");
+    let service_bin = w.lab.root.join("service-bin");
+    let service_log = w.lab.root.join("service-calls");
+    let service_fail = w.lab.root.join("service-fail");
+    let plist_dir = service_home.join("Library/LaunchAgents");
+    std::fs::create_dir_all(&plist_dir).unwrap();
+    std::fs::create_dir_all(&service_bin).unwrap();
+    for role in ["host", "agent"] {
+        std::fs::write(plist_dir.join(format!("dev.aaa.{role}.plist")), "<plist/>").unwrap();
+    }
+    let launchctl = service_bin.join("launchctl");
+    std::fs::write(
+        &launchctl,
+        r#"#!/bin/sh
+case "$1" in
+print) printf 'state = running\npid = 100\n' ;;
+kickstart) printf '%s\n' "$*" >> "$DEPLOY_SERVICE_LOG"
+           [ ! -f "$DEPLOY_SERVICE_FAIL" ] || { echo 'injected restart failure' >&2; exit 1; } ;;
+*) exit 1 ;;
+esac
+"#,
+    )
+    .unwrap();
+    std::fs::set_permissions(&launchctl, std::os::unix::fs::PermissionsExt::from_mode(0o755)).unwrap();
+    let service_path = format!("{}:{}", service_bin.display(), std::env::var("PATH").unwrap());
+    let service_env = [
+        ("HOME", service_home.to_str().unwrap()),
+        ("PATH", service_path.as_str()),
+        ("DEPLOY_SERVICE_LOG", service_log.to_str().unwrap()),
+        ("DEPLOY_SERVICE_FAIL", service_fail.to_str().unwrap()),
+    ];
+    w.lab.kill("agentA");
+    w.lab.spawn_env("agentA", &w.h, &["agent", "--host", "local", "--name", "labA"], &service_env);
     w.lab.kill("agentB");
-    w.lab.spawn_command("agentB-copy", b.cmd_bin(&exe, &["agent", "--host", &w.addr, "--name", "labB"]));
+    w.lab.spawn_command("agentB-copy", {
+        let mut cmd = b.cmd_bin(&exe, &["agent", "--host", &w.addr, "--name", "labB"]);
+        cmd.envs(service_env);
+        cmd
+    });
     wait_for("원격 사본 agent 연결", T, || {
         if !w.lab.log("agentB-copy").contains("host에 연결했다") {
             return None;
@@ -4885,7 +4924,7 @@ fn coordinator_deployment_is_gated_and_survives_backend_restarts() {
         let script = w.task(
             &format!("deploy-probe-{n}.sh"),
             &format!(
-                "'{}' --json {args} > '{}.out' 2> '{}.err'\nprintf '%s' \"$?\" > '{}.rc'\n",
+                "'{}' --json {args} > '{}.out' 2> '{}.err'\nprintf '%s' \"$?\" > '{}.rc'\nprintf 'deploy-finished-{n}\\n'\n",
                 lab::BIN,
                 prefix.display(),
                 prefix.display(),
@@ -4910,6 +4949,15 @@ fn coordinator_deployment_is_gated_and_survives_backend_restarts() {
     let enabled = w.h.in_terminal(&["safety", "set", "demo", "coordinator_deploy", "on"], &[("바꿀까?", "y")], T);
     assert!(enabled.contains("coordinator_deploy = on"), "{enabled}");
 
+    // 자기 신고한 coordinator ID로는 배포 권한을 얻지 못한다(peer PID가 밖이다).
+    let spoof =
+        w.h.cmd(&["update", "--machine", "labB", "--from", candidate.to_str().unwrap()])
+            .env("AAA_SESSION_ID", &pane)
+            .output()
+            .unwrap();
+    assert!(!spoof.status.success(), "자기 신고로 배포가 허용됐다: {spoof:?}");
+    assert!(String::from_utf8_lossy(&spoof.stderr).contains("coordinator만"), "{spoof:?}");
+
     let (rc, out, err) = probe(&w, &pane, &mut probe_number, &update);
     assert_eq!(rc, "0", "{out}\n{err}");
     let job: Value = serde_json::from_str(&out).unwrap();
@@ -4918,6 +4966,17 @@ fn coordinator_deployment_is_gated_and_survives_backend_restarts() {
     assert_eq!(rc, "0", "{out}\n{err}");
     assert_eq!(serde_json::from_str::<Value>(&out).unwrap()["job"]["state"], "completed");
     assert_eq!(std::fs::read(&exe).unwrap(), changed);
+    let updated: Value = serde_json::from_str(&out).unwrap();
+    let installed: Value = serde_json::from_str(updated["job"]["result"].as_str().unwrap()).unwrap();
+    use sha2::Digest as _;
+    assert_eq!(installed["sha256"], hex::encode(sha2::Sha256::digest(&changed)));
+    assert_eq!(installed["version"], env!("CARGO_PKG_VERSION"));
+    assert_eq!(
+        updated["running_sha256"],
+        hex::encode(sha2::Sha256::digest(&original)),
+        "교체만으로 실행 이미지가 바뀌지 않는다"
+    );
+
     // 같은 오래 사는 agent에서 rollback도 처음 정한 고정 경로를 써야 한다(Linux current_exe는 옛 inode를 가리킨다).
     let (rc, out, err) = probe(&w, &pane, &mut probe_number, "update rollback --machine labB");
     assert_eq!(rc, "0", "{out}\n{err}");
@@ -4954,6 +5013,38 @@ fn coordinator_deployment_is_gated_and_survives_backend_restarts() {
     assert!(std::fs::read_to_string(w.lab.root.join("deploy-worker-denied")).unwrap().contains("thread는 계속 막는다"));
     assert_eq!(std::fs::read(&exe).unwrap(), original);
 
+    if cfg!(target_os = "macos") {
+        for (role, target) in [("host", "labA"), ("agent", "labB")] {
+            let (rc, out, err) =
+                probe(&w, &pane, &mut probe_number, &format!("service restart --role {role} --machine {target}"));
+            assert_eq!(rc, "0", "{out}\n{err}");
+            let receipt: Value = serde_json::from_str(&out).unwrap();
+            let id = receipt["job"]["id"].as_str().unwrap();
+            // machine 생략도 host의 영구 대상 기록을 따른다.
+            let (rc, out, err) = probe(&w, &pane, &mut probe_number, &format!("update status {id} --wait"));
+            assert_eq!(rc, "0", "{out}\n{err}");
+            let receipt: Value = serde_json::from_str(&out).unwrap();
+            assert_eq!(receipt["machine"], target);
+            assert_eq!(receipt["job"]["state"], "completed");
+            assert!(receipt["job"]["result"].as_str().unwrap().contains(&format!("dev.aaa.{role}")));
+        }
+        let calls = std::fs::read_to_string(&service_log).unwrap();
+        assert_eq!(calls.lines().count(), 2, "{calls}");
+        assert!(calls.lines().all(|l| l.starts_with("kickstart -k gui/")), "{calls}");
+        assert!(calls.contains("/dev.aaa.host") && calls.contains("/dev.aaa.agent"), "{calls}");
+        std::fs::write(&service_fail, "fail").unwrap();
+        let (rc, out, err) = probe(&w, &pane, &mut probe_number, "service restart --role agent --machine labB");
+        assert_eq!(rc, "0", "{out}\n{err}");
+        let receipt: Value = serde_json::from_str(&out).unwrap();
+        let id = receipt["job"]["id"].as_str().unwrap();
+        let (rc, out, err) = probe(&w, &pane, &mut probe_number, &format!("update status {id} --wait"));
+        assert_eq!(rc, "1", "{out}\n{err}");
+        let receipt: Value = serde_json::from_str(&out).unwrap();
+        assert_eq!(receipt["job"]["state"], "failed");
+        assert!(receipt["job"]["result"].as_str().unwrap().contains("injected restart failure"));
+        assert_eq!(std::fs::read_to_string(&service_log).unwrap().lines().count(), 3, "실패를 다시 실행했다");
+    }
+
     // 사람이 설정을 철회하면 다음 요청부터 즉시 막는다. 이전 작업 조회는 계속 된다.
     let off = w.h.in_terminal(&["safety", "set", "demo", "coordinator_deploy", "off"], &[("바꿀까?", "y")], T);
     assert!(off.contains("coordinator_deploy = off"), "{off}");
@@ -4976,4 +5067,5 @@ fn coordinator_deployment_is_gated_and_survives_backend_restarts() {
         probe(&w, &pane, &mut probe_number, &format!("update status {rollback_id} --machine labB --wait"));
     assert_eq!(rc, "0", "재시작 후 같은 pane의 CLI: {out}\n{err}");
     assert_eq!(serde_json::from_str::<Value>(&out).unwrap()["job"]["state"], "completed");
+    eprintln!("재시작 뒤 같은 coordinator pane의 배포 조회: {out}");
 }

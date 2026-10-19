@@ -10,7 +10,9 @@ use std::{
 pub type Executor = fn(&Path, DeployAction) -> Result<String, String>;
 pub(crate) struct Manager {
     root: PathBuf,
+    _lease: std::fs::File,
     instance: String,
+    running_sha256: String,
     gate: Mutex<()>,
     executor: Mutex<Option<Executor>>,
 }
@@ -30,7 +32,22 @@ impl Manager {
     pub(crate) fn new(state: &Path, exe: &Path) -> anyhow::Result<Self> {
         let root = state.join("deployments");
         aaa_common::util::ensure_private_dir(&root)?;
-        let me = Self { root, instance: aaa_common::util::new_id(), gate: Mutex::new(()), executor: Mutex::new(None) };
+        // OS가 프로세스 종료 때 푸는 잠금이다. PID 재사용·재부팅으로 옛 작업을 살아 있다고 오인하지 않는다.
+        let lease = std::fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .create(true)
+            .truncate(false)
+            .open(root.join("executor.lock"))?;
+        lease.try_lock().map_err(|e| anyhow::anyhow!("같은 상태 폴더의 배포 실행기가 이미 살아 있다: {e}"))?;
+        let me = Self {
+            _lease: lease,
+            root,
+            instance: aaa_common::util::new_id(),
+            running_sha256: sha(exe).map_err(|e| anyhow::anyhow!(e.message))?,
+            gate: Mutex::new(()),
+            executor: Mutex::new(None),
+        };
         for entry in std::fs::read_dir(&me.root)? {
             let entry = entry?;
             let Some(id) = entry.path().file_stem().and_then(|s| s.to_str()).map(str::to_string) else {
@@ -43,9 +60,6 @@ impl Manager {
                 continue;
             };
             if !matches!(job.state, DeployState::Queued | DeployState::Running) {
-                continue;
-            }
-            if aaa_common::process::parent(job.executor_pid).is_some() {
                 continue;
             }
             let restarted = job.state == DeployState::Running
@@ -64,6 +78,13 @@ impl Manager {
             me.save(&job).map_err(|e| anyhow::anyhow!(e.message))?;
         }
         Ok(me)
+    }
+    pub(crate) fn response(&self, job: DeployJob) -> aaa_proto::AgentResponse {
+        aaa_proto::AgentResponse::Deployment {
+            job,
+            running_software: aaa_common::util::software(),
+            running_sha256: self.running_sha256.clone(),
+        }
     }
     fn path(&self, id: &str) -> Result<PathBuf, ErrorBody> {
         if !valid(id) {
@@ -167,7 +188,7 @@ impl Agent {
         let run = result.as_ref().ok().filter(|(_, run)| *run).map(|(job, _)| job.clone());
         self.send_host(&aaa_proto::LinkMsg::Res {
             id: request_id,
-            result: result.map(|(job, _)| aaa_proto::AgentResponse::Deployment { job }).into(),
+            result: result.map(|(job, _)| self.deployments.response(job)).into(),
         })
         .await;
         if let Some(job) = run {
@@ -187,7 +208,7 @@ mod tests {
         Ok(exe.display().to_string())
     }
     #[tokio::test]
-    async fn jobs_are_durable_once_and_reconcile_only_a_dead_executor() {
+    async fn jobs_are_durable_once_and_reconcile_only_after_the_executor_releases_its_lock() {
         let root = std::env::temp_dir().join(format!("aaa-deploy-{}", aaa_common::util::new_id()));
         std::fs::create_dir_all(&root).unwrap();
         let exe = root.join("aaa");
@@ -216,35 +237,28 @@ mod tests {
             .unwrap();
         restart.state = DeployState::Running;
         manager.save(&restart).unwrap();
-        let parallel = Manager::new(&root, &exe).unwrap();
-        assert_eq!(
-            parallel.status(&id).unwrap().state,
-            DeployState::Running,
-            "살아 있는 실행기를 재시작 완료로 오인했다"
-        );
-        let mut child = if cfg!(windows) {
-            std::process::Command::new("cmd").args(["/C", "exit", "0"]).spawn().unwrap()
-        } else {
-            std::process::Command::new("true").spawn().unwrap()
-        };
-        restart.executor_pid = child.id();
-        child.wait().unwrap();
-        manager.save(&restart).unwrap();
+        assert!(Manager::new(&root, &exe).is_err(), "살아 있는 실행기와 중복으로 열었다");
+        // PID는 여전히 살아 있어도 OS 잠금이 풀렸으면 실행기는 끝났다(PID 재사용에도 같다).
+        assert_eq!(restart.executor_pid, std::process::id());
+        drop(manager);
         let restored = Manager::new(&root, &exe).unwrap();
         assert_eq!(restored.status(&id).unwrap().state, DeployState::Completed);
         restart.expected_sha256 = "다른 파일".into();
-        manager.save(&restart).unwrap();
+        restored.save(&restart).unwrap();
+        drop(restored);
         let wrong = Manager::new(&root, &exe).unwrap();
         assert_eq!(wrong.status(&id).unwrap().state, DeployState::Interrupted);
         restart.action = DeployAction::Update { from: None, version: None, dry_run: false };
-        manager.save(&restart).unwrap();
+        wrong.save(&restart).unwrap();
+        drop(wrong);
         let interrupted = Manager::new(&root, &exe).unwrap();
         assert_eq!(
             interrupted.status(&id).unwrap().state,
             DeployState::Interrupted,
             "중단된 교체를 다시 실행하지 않는다"
         );
-        assert!(manager.status("../escape").is_err());
+        assert!(interrupted.status("../escape").is_err());
+        drop(interrupted);
         std::fs::remove_dir_all(root).unwrap();
     }
 }

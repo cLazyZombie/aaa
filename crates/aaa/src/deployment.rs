@@ -66,7 +66,9 @@ pub(crate) fn execute(exe: &std::path::Path, action: DeployAction) -> Result<Str
                 )?;
             }
             DeployAction::Restart { service } => {
-                return crate::launchd::restart_authorized(service.as_str());
+                let service_state = crate::launchd::restart_authorized(service.as_str())?;
+                let identity = crate::update::installed_identity(exe)?;
+                return Ok(serde_json::json!({"service": service_state, "installed": serde_json::from_str::<serde_json::Value>(&identity)?}).to_string());
             }
         }
         crate::update::installed_identity(exe)
@@ -86,7 +88,7 @@ pub(crate) fn status(json: bool, machine: Option<String>, id: String, wait: bool
         loop {
             let response = c.call(FrontRequest::DeployStatus { machine: machine.clone(), id: id.clone() }).await?;
             let (target, job) = match &response {
-                Ok(FrontResponse::Deployment { machine, job }) => (machine.clone(), job),
+                Ok(FrontResponse::Deployment { machine, job, .. }) => (machine.clone(), job),
                 _ => return crate::cli::front_print(json, response),
             };
             if !wait || !matches!(job.state, DeployState::Queued | DeployState::Running) {

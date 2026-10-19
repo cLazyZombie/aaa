@@ -169,10 +169,13 @@ async fn serve(host: Arc<Host>, s: aaa_common::ipc::LocalStream, pid: Option<u32
         (session, claimed_role)
     };
     // aaa 세션 안 CLI(coordinator·사람의 셸 pane)는 `@<세션>`을 붙인다: 사람만 하는 일(신뢰 창 답 등)을 가른다
+    // client·session은 자기 신고다. @를 actor 경계로 주입하거나 coordinator ID를 신고해도 권한을 얻지 않는다.
+    let client = client.replace('@', "%40");
     let actor = match (&sess, sess_role) {
         (Some(s), Some(r @ (aaa_proto::Role::Evaluator | aaa_proto::Role::Worker))) => format!("{}:{s}", r.as_str()),
         _ if caller == Caller::Detached => format!("detached:{client}"),
-        (Some(s), _) => format!("local:{client}@{s}"),
+        (Some(s), _) if caller == Caller::Pane(s.clone()) => format!("local:{client}@{s}"),
+        (Some(_), _) => format!("local:{client}@unverified"),
         _ => format!("local:{client}"),
     };
     serve_conn(host, tx, rx, Conn { role, view: DeviceRole::Local, actor, front, device: None }).await.map(|_| ())

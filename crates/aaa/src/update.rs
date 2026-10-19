@@ -5,7 +5,7 @@
 //!   manifest asset 위치는 §8.210. macOS는 기존 배포와 같은 ad-hoc 서명이며 고정 서명·서명 manifest는 없다.
 //! - 바꿀 자리는 지금 도는 실행 파일이다(herdr `current_exe`). 운영은 `~/.local/bin/aaa`로 친다(install-runbook 1번).
 //!   링크면 거부한다: 링크가 가리키는 파일(빌드 폴더일 수 있다)을 바꾸지 않는다.
-//! - 사람만(감독자 명령과 같은 문, `person.rs`): aaa 세션 안·터미널 아님은 거부하고 yes를 받는다. `--dry-run`은 바꾸지 않아 누구나.
+//! - 사람만(감독자 명령과 같은 문, `person.rs`): 일반 aaa 세션 안·터미널 아님은 거부하고 yes를 받는다. host가 승인한 coordinator 배포 실행기는 별도 typed 경로다. `--dry-run`은 바꾸지 않아 누구나.
 //! - 순서(plan §11 「교체」): 같은 폴더에 staging(`.aaa-update-<pid>.tmp`, herdr와 같은 자리라 rename이 원자적) →
 //!   self-check(주어진 파일을 실행해 `--version`이 `aaa x.y.z`, `config check`가 이 Mac 설정을 받는지) → version 고정 검사 →
 //!   지금 것을 `.aaa-old/`에 보관(hard link, 실행 파일 자리는 비지 않는다) → rename. 제자리 쓰기는 없다.
@@ -571,5 +571,5 @@ mod tests {
 
 /// 실행 중 이미지 판과 별개로, 지금 설치된 파일을 직접 검증한다.
 pub(crate) fn installed_identity(exe: &std::path::Path) -> Result<String> {
-    Ok(serde_json::json!({"version":self_check(&exe)?,"sha256":sha256(&exe)?}).to_string())
+    Ok(serde_json::json!({"version":self_check(exe)?,"sha256":sha256(exe)?}).to_string())
 }
