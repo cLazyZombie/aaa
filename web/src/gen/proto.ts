@@ -379,7 +379,15 @@ from_task: string | null, } | { "op": "thread_adopt", project: string, pane: str
 /**
  * 할 일. 비면 「하던 일을 이어 하되 이제 이 프로젝트 thread다」
  */
-task: string, } | { "op": "thread_next", project: string, thread: string, line: number | null, add: string | null, } | { "op": "context", project: string, peek: boolean, } | { "op": "assignable", project: string, check: string | null, } | { "op": "threads", project: string | null, role: Role | null, } | { "op": "thread_show", project: string, thread: string, } | { "op": "thread_library", project: string, thread: string, } | { "op": "library_link", project: string, thread: string, days: number | null, } | { "op": "library_links", project: string | null, } | { "op": "library_link_revoke", id: string, } | { "op": "library_publish", project: string, name: string, source: string, live: boolean, } | { "op": "library_import", project: string, source: string,
+task: string, } | { "op": "thread_next", project: string, thread: string, line: number | null, add: string | null, } | { "op": "context", project: string, peek: boolean, } | { "op": "assignable", project: string, check: string | null, } | { "op": "threads", project: string | null, role: Role | null, } | { "op": "thread_show", project: string, thread: string, } | { "op": "thread_library", project: string, thread: string, } | { "op": "library_link", project: string, thread: string, days: number | null, } | { "op": "library_links", project: string | null, } | { "op": "library_link_revoke", id: string, } | { "op": "library_publish", project: string, name: string, source: string, live: boolean,
+/**
+ * FRONT_API 1.43. 사용자에게 보내는 웹 보고서(index.html 필수, 「내 보고서」·안 봄·사용자 알림 post)
+ */
+to_user: boolean,
+/**
+ * FRONT_API 1.43. 「내 보고서」에 보일 제목(없으면 이름)
+ */
+title: string | null, } | { "op": "library_delete", reports: Array<LibraryRef>, } | { "op": "library_import", project: string, source: string,
 /**
  * 0.2의 t- 이름을 새 thread id와 구분해 가져올 때 쓴다.
  */
@@ -447,7 +455,7 @@ omitted_done: number, } | { "kind": "ticker", runs: bigint, } | { "kind": "routi
 
 export type ClipboardOutcome = "copied" | "requested" | "failed";
 
-export type FrontEvent = { "ev": "state", machines: Array<MachineView>, panes: Array<PaneView>, } | { "ev": "workspace" } & Workspace | { "ev": "grid" } & GridFrame | { "ev": "clipboard", pane: string, text: string, } | { "ev": "flow" } & FlowEvent | { "ev": "thread" } & ThreadView | { "ev": "question" } & QuestionView | { "ev": "preferences" } & SharedPreferences | { "ev": "pong", id: number, } | { "ev": "web", build: string, } | { "ev": "notice" } & NoticeView | { "ev": "chat_changed", pane: string, signature: string, } | { "ev": "chat_watching", pane: string, live: boolean, };
+export type FrontEvent = { "ev": "state", machines: Array<MachineView>, panes: Array<PaneView>, } | { "ev": "workspace" } & Workspace | { "ev": "grid" } & GridFrame | { "ev": "clipboard", pane: string, text: string, } | { "ev": "flow" } & FlowEvent | { "ev": "thread" } & ThreadView | { "ev": "question" } & QuestionView | { "ev": "preferences" } & SharedPreferences | { "ev": "pong", id: number, } | { "ev": "web", build: string, } | { "ev": "reports", unseen: number, } | { "ev": "notice" } & NoticeView | { "ev": "chat_changed", pane: string, signature: string, } | { "ev": "chat_watching", pane: string, live: boolean, };
 
 export type SubmitStage = "not_sent" | "no_enter" | "too_late";
 
@@ -836,7 +844,25 @@ export type LibraryReport = { project: string, name: string, size: number, updat
 /**
  * 읽기 실패·상한 초과도 목록에서 감추지 않는다.
  */
-problem: string | null, link: LinkView | null, };
+problem: string | null, link: LinkView | null,
+/**
+ * FRONT_API 1.43. coordinator가 사용자에게 보낸 웹 보고서(`library publish --to-user`, 「내 보고서」). 아니면 작업 보고다.
+ */
+to_user: boolean,
+/**
+ * FRONT_API 1.43. `--to-user`로 보낼 때 준 제목
+ */
+title?: string,
+/**
+ * FRONT_API 1.43. 사용자 보고서를 보낸(다시 보낸) 뒤 아직 열지 않았다
+ */
+unseen: boolean,
+/**
+ * FRONT_API 1.43. 끝나지 않은(resolve 전) thread의 사본이라 지울 수 없다
+ */
+busy: boolean, };
+
+export type LibraryRef = { project: string, name: string, };
 
 export type LibraryPrunePlan = { size: number, remaining_size: number, protected_size: number, max_size: number, max_days: number, candidates: Array<LibraryPruneEntry>, };
 

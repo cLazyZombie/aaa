@@ -9,7 +9,8 @@ use clap::{Args, Parser, Subcommand};
 use crate::service;
 use aaa_doctor as doctor;
 use aaa_proto::{
-    DeviceRole, FrontRequest, FrontResponse, LayoutChange, ProjectAction, ProjectStatus, Role, SplitDir, ThreadKind,
+    DeviceRole, FrontRequest, FrontResponse, LayoutChange, LibraryRef, ProjectAction, ProjectStatus, Role, SplitDir,
+    ThreadKind,
 };
 
 #[derive(Parser)]
@@ -903,6 +904,21 @@ enum LibraryCmd {
         /// 복사 없이 등록한 폴더에서 변경을 즉시 보여 준다(폴더만).
         #[arg(long)]
         live: bool,
+        /// 사용자에게 보내는 웹 보고서(맨 위 index.html 필수). 보고서 화면 「내 보고서」에 안 봄으로 뜨고 사용자 알림 post를 남긴다.
+        /// 다시 보내면 다시 안 봄이다.
+        #[arg(long)]
+        to_user: bool,
+        /// 「내 보고서」에 보일 제목(--to-user와 함께, 없으면 이름)
+        #[arg(long, requires = "to_user")]
+        title: Option<String>,
+    },
+    /// 보고서를 모든 곳에서 지운다(host 사본·목록·공유 링크·thread 보고 사본). 되돌릴 수 없다.
+    /// 끝나지 않은(resolve 전) thread의 보고가 있으면 아무것도 지우지 않는다.
+    Delete {
+        #[arg(long)]
+        project: String,
+        #[arg(required = true)]
+        names: Vec<String>,
     },
     /// 하위 폴더를 각각 가져온다. 충돌·상한 초과·symlink는 건너뛴 목록에 적는다.
     Import {
@@ -1423,9 +1439,17 @@ fn run(cli: Cli) -> Result<ExitCode> {
             match cmd {
                 LibraryCmd::Link { project, thread, days } => FrontRequest::LibraryLink { project, thread, days },
                 LibraryCmd::List { project } => FrontRequest::LibraryReports { project },
-                LibraryCmd::Publish { source, project, name, live } => {
-                    FrontRequest::LibraryPublish { source: absolute_source(&source)?, project, name, live }
-                }
+                LibraryCmd::Publish { source, project, name, live, to_user, title } => FrontRequest::LibraryPublish {
+                    source: absolute_source(&source)?,
+                    project,
+                    name,
+                    live,
+                    to_user,
+                    title,
+                },
+                LibraryCmd::Delete { project, names } => FrontRequest::LibraryDelete {
+                    reports: names.into_iter().map(|name| LibraryRef { project: project.clone(), name }).collect(),
+                },
                 LibraryCmd::Import { source, project, prefix } => {
                     FrontRequest::LibraryImport { source: absolute_source(&source)?, project, prefix }
                 }
@@ -3034,12 +3058,21 @@ fn render_front(r: &FrontResponse) -> String {
             for r in reports {
                 let _ = writeln!(
                     s,
-                    "{}/{}\t{}B\t갱신 {}{}{}",
+                    "{}/{}\t{}B\t갱신 {}{}{}{}",
                     r.project,
                     r.name,
                     r.size,
                     r.updated_at_ms,
                     if r.live { " · 실시간" } else { "" },
+                    if r.to_user {
+                        format!(
+                            " · 사용자 보고{}{}",
+                            r.title.as_ref().map(|t| format!("({t})")).unwrap_or_default(),
+                            if r.unseen { " · 안 봄" } else { "" }
+                        )
+                    } else {
+                        String::new()
+                    },
                     r.problem.as_ref().map(|p| format!(" · {p}")).unwrap_or_default()
                 );
                 if let Some(l) = &r.link {

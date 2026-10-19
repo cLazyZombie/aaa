@@ -2,7 +2,10 @@
 //! herdr-projects의 library 사본과 임시 폴더 교체, 기존 회수 상한·숨은 이름·symlink 규칙을 따른다.
 use std::path::Path;
 
-use aaa_proto::{ErrorBody, ErrorCode, FileKind, FrontResponse, LibraryFile, LibraryReport, LibrarySkip};
+use aaa_proto::{
+    ErrorBody, ErrorCode, FileKind, FrontResponse, LibraryFile, LibraryRef, LibraryReport, LibrarySkip, PostInput,
+    PostType,
+};
 
 use crate::db::LibraryReportRow;
 use crate::library::{manifest_path, safe_rel};
@@ -213,19 +216,85 @@ impl Host {
         Ok(self.manifest(dir, name))
     }
 
+    /// `to_user`는 사용자에게 보내는 웹 보고서다(Some(제목), plan §8.252): index.html이 있어야 하고, 안 봄으로 두며, 사용자 알림
+    /// post(topic `report`)를 같은 출처로 남긴다. 외부 푸시는 §8.249의 두 의도만이라 이 post는 앱 안 inbox·배지로만 알린다.
     pub(crate) fn library_publish(
         &self,
         project: &str,
         name: &str,
         source: &str,
         live: bool,
+        to_user: Option<Option<&str>>,
         actor: &str,
     ) -> Result<FrontResponse, ErrorBody> {
-        let _lock = self.library_ops.lock().unwrap();
-        self.publish_report(project, name, Path::new(source), live, false, actor)?;
-        Ok(FrontResponse::LibraryLink(self.library_link(project, name, None, actor)?))
+        let link = {
+            let _lock = self.library_ops.lock().unwrap();
+            self.publish_report(project, name, Path::new(source), live, false, to_user, actor)?;
+            self.library_link(project, name, None, actor)?
+        };
+        self.reports_bump();
+        if let Some(title) = to_user {
+            let title = title.unwrap_or(name);
+            let post = self.front_post(
+                project,
+                PostInput {
+                    post_id: hex::encode(rand::random::<[u8; 16]>()),
+                    to: "user".into(),
+                    post_type: PostType::Notice,
+                    topic: "report".into(),
+                    title: format!("새 보고서: {title}"),
+                    body: format!("보고서 화면 「내 보고서」에서 연다({project}/{name})."),
+                    needs_user: false,
+                    refs: vec![format!("library/{project}/{name}")],
+                },
+                actor,
+            )?;
+            if let aaa_proto::PostResult::Refused { reason, .. } = post {
+                // 보고서는 이미 보냈다(배지는 다시 안 봄). 24시간 안 같은 보고서를 다시 보내면 같은 글이라 알림을 겹쳐 남기지 않는다
+                tracing::info!("사용자 보고서 알림 post 남기지 않음: {reason}");
+            }
+        }
+        Ok(FrontResponse::LibraryLink(link))
     }
 
+    /// 보고서를 모든 곳에서 지운다(plan §8.252): 목록 행·공유 링크(DB에서 폐기)·앱 안 보기 경로·host 사본·파일 목록, thread 사본이면
+    /// 보고 사본(`threads/<id>.md`)까지. 실시간 등록은 등록만 지우고 원본 폴더는 건드리지 않는다. 끝나지 않은 thread의 사본이
+    /// 하나라도 있으면 아무것도 지우지 않는다(thread가 다음 보고 때 다시 만든다).
+    pub(crate) fn library_delete(&self, reports: &[LibraryRef], actor: &str) -> Result<FrontResponse, ErrorBody> {
+        if reports.is_empty() || reports.len() > 500 {
+            return Err(err(ErrorCode::BadRequest, "지울 보고서는 1~500개다"));
+        }
+        let _lock = self.library_ops.lock().unwrap();
+        let mut views = Vec::new();
+        for r in reports {
+            let dir = self.project_dir(&r.project)?;
+            if !safe_rel(&r.name)
+                || r.name.contains('/')
+                || (!manifest_path(&dir, &r.name).exists()
+                    && self.db.library_report(&r.project, &r.name).map_err(super::orch::internal)?.is_none())
+            {
+                return Err(err(ErrorCode::NotFound, format!("보고서가 없다: {}/{}", r.project, r.name)));
+            }
+            let v = self.report_view(&r.project, &r.name, false)?;
+            if v.busy {
+                return Err(err(
+                    ErrorCode::BadRequest,
+                    format!("끝나지 않은(resolve 전) thread의 보고는 지울 수 없다: {}/{}", r.project, r.name),
+                ));
+            }
+            views.push(v);
+        }
+        let mut removed = Vec::new();
+        let result = views.iter().try_for_each(|v| {
+            self.remove_report(&v.project, &v.name, true, actor, "library_delete")?;
+            removed.push(format!("{}/{}", v.project, v.name));
+            Ok(())
+        });
+        self.reports_bump();
+        result.map(|()| FrontResponse::LibraryPruned { removed })
+    }
+
+    #[allow(clippy::too_many_arguments)]
     fn publish_report(
         &self,
         project: &str,
@@ -233,6 +302,7 @@ impl Host {
         source: &Path,
         live: bool,
         no_replace: bool,
+        to_user: Option<Option<&str>>,
         actor: &str,
     ) -> Result<(), ErrorBody> {
         let dir = self.project_dir(project)?;
@@ -273,6 +343,22 @@ impl Host {
         } else {
             return Err(err(ErrorCode::BadRequest, "일반 파일이나 폴더만 가져온다"));
         };
+        let title = match to_user {
+            Some(t) => {
+                if !files.iter().any(|f| f.path == "index.html") {
+                    return Err(err(
+                        ErrorCode::BadRequest,
+                        "사용자 보고서(--to-user)는 맨 위에 index.html이 있는 웹 보고서여야 한다",
+                    ));
+                }
+                let t = t.map(|t| t.trim()).filter(|t| !t.is_empty());
+                if t.is_some_and(|t| t.chars().count() > 200 || t.chars().any(char::is_control)) {
+                    return Err(err(ErrorCode::BadRequest, "제목은 줄바꿈 없는 200자 이내다"));
+                }
+                t.map(str::to_string)
+            }
+            None => None,
+        };
         let library = dir.join("library");
         std::fs::create_dir_all(&library).map_err(io_error)?;
         let dest = library.join(name);
@@ -309,6 +395,7 @@ impl Host {
                 std::fs::rename(&dest, &backup).map_err(io_error)?;
             }
             let old_manifest = std::fs::read(&manifest).ok();
+            let now = aaa_common::util::now_ms();
             let commit = (|| {
                 std::fs::rename(&staging, &dest).map_err(io_error)?;
                 crate::orch::write_atomic(&manifest, &serde_json::to_vec(&files).unwrap()).map_err(io_error)?;
@@ -317,7 +404,12 @@ impl Host {
                         project: project.into(),
                         name: name.into(),
                         live: live.then(|| source.to_string_lossy().into_owned()),
-                        updated: aaa_common::util::now_ms(),
+                        updated: now,
+                        // 다시 보내면 다시 안 봄(사용자 결정 10-19). --to-user 없이 다시 올리면 작업 보고로 돌아간다
+                        to_user: to_user.is_some(),
+                        title: title.clone(),
+                        sent_at: to_user.is_some().then_some(now),
+                        seen_at: None,
                     })
                     .map_err(super::orch::internal)
             })();
@@ -383,7 +475,7 @@ impl Host {
                     return Err(err(ErrorCode::BadRequest, "숨은 이름은 가져오지 않는다"));
                 }
                 let target = format!("{prefix}{name}");
-                self.publish_report(project, &target, &e.path(), false, true, actor)?;
+                self.publish_report(project, &target, &e.path(), false, true, None, actor)?;
                 self.library_link(project, &target, None, actor)?;
                 self.report_view(project, &target, true)
             })();
@@ -410,15 +502,21 @@ impl Host {
             Ok(files) => (files.iter().filter(|f| !f.on_agent && safe_rel(&f.path)).map(|f| f.size).sum(), None),
             Err(e) => (0, Some(e.message)),
         };
-        Ok(LibraryReport {
+        let mut view = LibraryReport {
             project: project.into(),
             name: name.into(),
             size,
             updated_at_ms: updated,
-            live: row.is_some_and(|r| r.live.is_some()),
+            live: row.as_ref().is_some_and(|r| r.live.is_some()),
             problem,
             link: reveal.then(|| self.latest_library_link(project, name)).flatten(),
-        })
+            to_user: row.as_ref().is_some_and(|r| r.to_user),
+            title: row.as_ref().and_then(|r| r.title.clone()),
+            unseen: row.as_ref().is_some_and(|r| r.unseen()),
+            busy: false,
+        };
+        view.busy = self.protected_copy(&view);
+        Ok(view)
     }
 
     pub(crate) fn library_reports(&self, project: Option<&str>, reveal: bool) -> Result<Vec<LibraryReport>, ErrorBody> {

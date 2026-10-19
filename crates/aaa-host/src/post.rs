@@ -208,7 +208,9 @@ impl Host {
                         && ((input.post_type == PostType::Request && input.needs_user)
                             || (input.post_type == PostType::Notice
                                 && !input.needs_user
-                                && input.topic == "task-complete")))
+                                // report: 사용자 보고서를 보냈다(`library publish --to-user`, plan §8.252). 외부 푸시는 하지
+                                // 않는다(notify.rs는 두 의도만)
+                                && matches!(input.topic.as_str(), "task-complete" | "report"))))
             }
         };
         if !allowed {
