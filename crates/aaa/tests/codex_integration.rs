@@ -154,6 +154,19 @@ impl Home {
     fn run(&self, args: &[&str]) -> Output {
         self.cmd(&bin()).args(args).output().unwrap()
     }
+    fn moved_bin(&self) -> PathBuf {
+        let moved = self.0.join(if cfg!(windows) { "새 aaa ' $ tool.exe" } else { "새 aaa ' $ tool" });
+        // 부모가 복사본을 쓰면 병렬 시험의 fork가 쓰기 fd를 물려받아 exec가 ETXTBSY로 실패할 수 있다
+        // (rust-lang/rust#114554). 복사는 자식에서 끝내고 종료를 확인한다. 재시도·고정 대기는 없다.
+        #[cfg(unix)]
+        {
+            let out = Command::new("/bin/cp").arg(bin()).arg(&moved).output().unwrap();
+            assert!(out.status.success(), "시험용 실행 파일 복사 실패: {out:?}");
+        }
+        #[cfg(not(unix))]
+        std::fs::copy(bin(), &moved).unwrap();
+        moved
+    }
     fn hook_command(&self, command: &str) -> Command {
         #[cfg(windows)]
         {
@@ -235,8 +248,7 @@ fn install_move_and_remove_keep_foreign_hooks_notify_and_backups() {
     assert_eq!(h.read("config.toml"), cfg);
 
     // 실행 파일이 옮겨도 이전 명령만 제거한다. 공백·작은따옴표·$·유니코드 경로를 실제 실행한다.
-    let moved = h.0.join(if cfg!(windows) { "새 aaa ' $ tool.exe" } else { "새 aaa ' $ tool" });
-    std::fs::copy(bin(), &moved).unwrap();
+    let moved = h.moved_bin();
     let o = h.cmd(&moved).args(["--json", "integration", "install", "codex"]).output().unwrap();
     assert!(o.status.success(), "{}", String::from_utf8_lossy(&o.stderr));
     let mut v = h.hooks();
@@ -357,8 +369,7 @@ async fn codex_hook_cli_reaches_host_and_returns_guidance() {
     use std::time::Duration;
     let h = Home::new();
     // 인증된 경로도 특수 문자·한글이 있는 실행 파일에서 설치한 실제 명령을 쓴다.
-    let moved = h.0.join(if cfg!(windows) { "새 aaa ' $ tool.exe" } else { "새 aaa ' $ tool" });
-    std::fs::copy(bin(), &moved).unwrap();
+    let moved = h.moved_bin();
     let out = h.cmd(&moved).args(["--json", "integration", "install", "codex"]).output().unwrap();
     assert!(out.status.success(), "{out:?}");
     let installed = h.hooks()["hooks"]["SessionStart"][0]["hooks"][0]["command"].as_str().unwrap().to_string();
