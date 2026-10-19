@@ -312,7 +312,7 @@ impl Host {
     }
 
     /// 검토 대기·병합 중인 thread의 새 보고: 보고 hash당 한 번(herdr-projects `write_thread_items` Ready for review).
-    /// 계속 작업하는 thread의 착지·완료·사람 필요도 hash당 한 번 inbox에 남긴다. push는 완료·사람 필요만이다. 상태·진행률은 그대로다.
+    /// 계속 작업하는 thread의 착지·완료·확인 필요도 hash당 한 번 inbox에 남긴다. push는 완료·확인 필요만이다. 상태·진행률은 그대로다.
     /// 작업 중과 쉼을 오가는 같은 보고는 아무것도 만들지 않는다. 낸 항목은 앱 안 알림으로도 보낸다(notice.rs). 냈으면 true
     fn new_report_item(&self, project: &str, r: &ThreadRec) -> bool {
         if r.status != ThreadStatus::Open || r.report_hash.is_none() || r.report_hash == r.review_item_hash {
@@ -417,6 +417,7 @@ mod tests {
                 ("[완료]", aaa_proto::ReportAttention::Completed, "new report"),
                 ("[결정 필요]", aaa_proto::ReportAttention::NeedsUser, "report needs user"),
                 ("[검수 대기]", aaa_proto::ReportAttention::NeedsUser, "report needs user"),
+                ("[확인 필요]", aaa_proto::ReportAttention::NeedsUser, "report needs user"),
                 ("[사람 필요]", aaa_proto::ReportAttention::NeedsUser, "report needs user"),
             ] {
                 r = h.load("p", id).unwrap();
@@ -425,7 +426,7 @@ mod tests {
                 h.db.thread_save("p", id, "open", &serde_json::to_string(&r).unwrap()).unwrap();
                 assert_eq!(h.thread_view(&r).report_attention, Some(attention));
                 assert!(h.new_report_item("p", &r));
-                let got = notifications.try_recv().expect("완료·사람 필요는 push 대상으로 보낸다");
+                let got = notifications.try_recv().expect("완료·확인 필요는 push 대상으로 보낸다");
                 assert_eq!(got.event, event);
                 let ready = h.still_news("p", vec![got.clone()]);
                 let place = crate::notify::Place::Project("p".into());

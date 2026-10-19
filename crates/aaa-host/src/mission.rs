@@ -174,6 +174,8 @@ pub(crate) struct MissionRun {
     pub input_bytes: u64,
     pub resetting: bool,
     pub reset_requested: bool,
+    /// 명시한 restart만 확인창을 버릴 수 있다. reload·일정 reset과 구별하여 저장한다.
+    pub restart_requested: bool,
     pub reset_started_ms: Option<u64>,
     pub last_reset_ms: u64,
     pub last_schedule_ms: u64,
@@ -748,6 +750,7 @@ impl Host {
                 self.update_rec(p, &r.id, |r| {
                     let m = r.mission.as_mut().unwrap();
                     m.reset_requested = true;
+                    m.restart_requested = true;
                     if m.state == "끝남" || m.state == "막힘" {
                         m.state = "대기".into();
                     }
@@ -929,6 +932,9 @@ impl Host {
         let live = rec.pane.as_deref().and_then(|id| self.pane_view_of(id, aaa_proto::DeviceRole::Local));
         let agent = rec.pane.as_deref().and_then(|id| self.pane_agent(id));
         let mut run = rec.mission.clone().unwrap();
+        // 확인창의 명령을 승인하지 않고 세션을 교체한다. 자동 reset·reload와 초안 있는 idle에는 적용하지 않는다.
+        let restart_prompt = run.restart_requested
+            && (run.resetting || agent.as_ref().is_some_and(|a| a.activity == AgentActivity::Question));
         if day(now) != run.day {
             run.cap_days =
                 if run.wakes_today >= applied.def.max_wakes && day(now) == run.day + 1 { run.cap_days + 1 } else { 0 };
@@ -957,11 +963,11 @@ impl Host {
                 run.state = "대기".into();
             }
         }
-        if !run.resetting && rec.brief == BriefState::Unknown {
+        if !run.resetting && !restart_prompt && rec.brief == BriefState::Unknown {
             run.state = "막힘".into();
             self.inbox_once(p, "thread-state", &rec.id, "brief not delivered", "특수 임무 brief를 전달하지 못했다");
         }
-        if !run.resetting && agent.as_ref().is_some_and(|a| a.activity == AgentActivity::Question) {
+        if !run.resetting && !restart_prompt && agent.as_ref().is_some_and(|a| a.activity == AgentActivity::Question) {
             run.state = "막힘".into();
             self.inbox_once(p, "thread-state", &rec.id, "blocked on a prompt", "특수 임무가 확인창에 막혔다");
         }
@@ -1165,15 +1171,15 @@ impl Host {
                 .idle_since_ms
                 .is_some_and(|at| now.saturating_sub(at) >= self.cfg.missions.reset_idle_secs.saturating_mul(1000))
                 && (run.conversation_wakes == 0 || run.saw_working);
-            if !ended && !idle_ok {
+            if !ended && !idle_ok && !restart_prompt {
                 return Ok(());
             }
             if let Some(pane) = &rec.pane {
                 let lease = self.inner.lock().unwrap().panes.get(pane).and_then(|v| v.lease.clone());
-                if self.someone_sees(pane, lease.as_ref()) {
+                if !restart_prompt && self.someone_sees(pane, lease.as_ref()) {
                     return Ok(());
                 }
-                if !ended {
+                if !ended && !restart_prompt {
                     let screen = self
                         .screen(&rec.machine_id, pane)
                         .await
@@ -1356,6 +1362,7 @@ impl Host {
             let m = r.mission.as_mut().unwrap();
             m.resetting = false;
             m.reset_requested = false;
+            m.restart_requested = false;
             m.reset_new_pane = None;
             m.conversation_wakes = 0;
             m.saw_working = false;

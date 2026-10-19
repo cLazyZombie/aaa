@@ -8,9 +8,19 @@ use std::{
 };
 
 pub type Executor = fn(&Path, DeployAction) -> Result<String, String>;
+struct Lease(std::fs::File);
+impl Drop for Lease {
+    fn drop(&mut self) {
+        // File의 close만으로는 fork~exec 사이 자식이 공유하는 잠금이 남는다.
+        // 살아 있는 실행기의 소유권이 끝나는 여기서 공유 잠금을 명시적으로 해제한다.
+        if let Err(error) = self.0.unlock() {
+            tracing::error!(%error, "배포 실행기 잠금 해제 실패");
+        }
+    }
+}
 pub(crate) struct Manager {
     root: PathBuf,
-    lease: Mutex<Option<std::fs::File>>,
+    lease: Mutex<Option<Lease>>,
     instance: String,
     running_sha256: String,
     gate: Mutex<()>,
@@ -51,6 +61,7 @@ impl Manager {
             .truncate(false)
             .open(self.root.join("executor.lock"))?;
         lease.try_lock().map_err(|e| anyhow::anyhow!("같은 상태 폴더의 배포 실행기가 이미 살아 있다: {e}"))?;
+        let lease = Lease(lease);
         for entry in std::fs::read_dir(&self.root)? {
             let entry = entry?;
             let Some(id) = entry.path().file_stem().and_then(|s| s.to_str()).map(str::to_string) else {
@@ -246,10 +257,26 @@ mod tests {
         );
         // PID는 여전히 살아 있어도 OS 잠금이 풀렸으면 실행기는 끝났다(PID 재사용에도 같다).
         assert_eq!(restart.executor_pid, std::process::id());
+        // dup과 fork는 같은 OS 잠금을 공유한다. 병렬 spawn의 fork~exec 사이처럼
+        // 다른 FD가 남아 있어도 실행기 소유권이 끝나면 새 실행기가 복구할 수 있어야 한다.
+        let inherited_lease = {
+            let owner = manager.lease.lock().unwrap();
+            let lease = &owner.as_ref().unwrap().0;
+            #[cfg(unix)]
+            {
+                use std::os::fd::AsRawFd;
+                // SAFETY: 현재 소유한 유효 FD의 close-on-exec 플래그만 읽는다.
+                let flags = unsafe { libc::fcntl(lease.as_raw_fd(), libc::F_GETFD) };
+                assert!(flags >= 0);
+                assert_ne!(flags & libc::FD_CLOEXEC, 0, "exec 이전의 상속을 재현한다");
+            }
+            lease.try_clone().unwrap()
+        };
         drop(manager);
         let restored = Manager::new(&root, &exe).unwrap();
         restored.configure(&exe, execute).unwrap();
         assert_eq!(restored.status(&id).unwrap().state, DeployState::Completed);
+        drop(inherited_lease);
         restart.expected_sha256 = "다른 파일".into();
         restored.save(&restart).unwrap();
         drop(restored);

@@ -5403,13 +5403,13 @@ primary 근거:
 - 09:24:52 사건의 당시 프레임·감지 규칙은 여전히 없어 원인 확정이나 수정 완료로 보고하지 않는다. 운영 agent와 host 반영은 coordinator가 한다. 기존 옛 사건 거부 시험과 전체 검사를 사용하고, 로그 문구만 단언하는 새 시험은 만들지 않는다.
 
 
-### 8.223 완료·사람 필요에만 사용자 push(10-19, t-0375)
+### 8.223 완료·확인 필요에만 사용자 push(10-19, t-0375)
 
-- **새 규칙.** 사용자 요청에 따라 중간 착지·진행·PR 병합/리뷰·평가 결과는 push하지 않는다. thread 보고 첫 줄의 `[완료]`는 맡긴 일 전체와 확인의 끝, `[결정 필요]`·`[검수 대기]`·`[사람 필요]`는 인증·터미널 승인·GUI·사용자 결정처럼 직접 사람이 해야 하는 단계다. `[착지]`·`[진행 중]`과 표지 없는 옛 보고는 외부 완료 알림을 만들지 않는다. 확인창·시작 실패·세션 사라짐·머신 이상은 유지한다. 표지로 thread 묶음·진행률·자동 resolve를 바꾸지 않는다(D9).
+- **새 규칙.** 사용자 요청에 따라 중간 착지·진행·PR 병합/리뷰·평가 결과는 push하지 않는다. thread 보고 첫 줄의 `[완료]`는 맡긴 일 전체와 확인의 끝, `[결정 필요]`·`[검수 대기]`·`[확인 필요]`는 인증·터미널 승인·GUI·사용자 결정처럼 직접 사람이 해야 하는 단계다. `[착지]`·`[진행 중]`과 표지 없는 옛 보고는 외부 완료 알림을 만들지 않는다. 확인창·시작 실패·세션 사라짐·머신 이상은 유지한다. 표지로 thread 묶음·진행률·자동 resolve를 바꾸지 않는다(D9).
 - **보고/화면 경계.** host가 회수 사본의 hash와 DB를 대조해 알림 의도를 읽고 ThreadView.report_attention(Front API 1.41)에 실어 웹의 새 보고 알림·재연결도 같은 판정을 쓴다. 착지 inbox는 §8.221대로 남긴다. 보낼 때 사본 의도를 다시 확인해 그 사이 진행 보고로 바뀌었거나 ack한 보고는 취소한다. 표지 아래의 PR 줄만 더 인정하며 옛 PR 첫 줄도 받는다. 작업 중에 표지를 먼저 받은 턴은 그 뒤 Finished 카드를 중복하지 않으며 다음 턴부터 다시 센다.
-- **coordinator 최소 경로.** 기존 출처·역할 검증 post를 확장한다. `aaa post <project> user --request --needs-user --topic user-action --title '사람 필요' --body-file <파일>`은 입력 필요, `aaa post <project> user --notice --topic task-complete --title '전체 완료' --body-file <파일>`은 작업 완료다. worker/evaluator의 user 목적지는 계속 거부한다. 이 항목은 seen으로 저장해 coordinator 자기 nudge를 막고, done은 사용자 응답/확인 뒤 명시적으로 처리한다. push/webhook에는 제목·본문 대신 고정 문구만 보내며 기기별 input/done 선택을 따른다. Web Push 사용 중 억제·mute·오류/머신 경로는 유지한다.
+- **coordinator 최소 경로.** 기존 출처·역할 검증 post를 확장한다. `aaa post <project> user --request --needs-user --topic user-action --title '확인 필요' --body-file <파일>`은 입력 필요, `aaa post <project> user --notice --topic task-complete --title '전체 완료' --body-file <파일>`은 작업 완료다. worker/evaluator의 user 목적지는 계속 거부한다. 이 항목은 seen으로 저장해 coordinator 자기 nudge를 막고, done은 사용자 응답/확인 뒤 명시적으로 처리한다. push/webhook에는 제목·본문 대신 고정 문구만 보내며 기기별 input/done 선택을 따른다. Web Push 사용 중 억제·mute·오류/머신 경로는 유지한다.
 - **시스템 안내.** coordinator AGENTS.md 생성문(CLAUDE.md는 같은 파일 참조), 공통 thread brief와 SessionStart 진행 hook 안내에 같은 규칙을 적는다. coordinator는 질문하며 멈추기 전에 Waiting for you 상태와 user 요청 post를 남긴다. 전체 완료 post는 맡긴 일 전체가 끝난 뒤 한 번이다. 기존 운영 지침 파일은 이 thread가 수정하지 않는다. 새 binary 반영 후 `aaa doctor files --fix`로 생성 안내를 반영한다.
-- **참고와 차이.** herdr-projects notify.rs의 Done/Request 구분, herdr-web-ui push.ts의 대기 중 상태 재검사·seedStatuses, t3code ThreadNotificationCoordinator.tsx의 completed/attention 구분을 따른다. 참고는 턴/검토 대기를 완료로도 알리지만, 이번 사용자가 정한 명시적 전체 완료/사람 필요 경계가 우선한다. pane의 앱 안 턴 끝남 카드(§8.185)는 휴대폰 push와 별개인 기존 경로다.
+- **참고와 차이.** herdr-projects notify.rs의 Done/Request 구분, herdr-web-ui push.ts의 대기 중 상태 재검사·seedStatuses, t3code ThreadNotificationCoordinator.tsx의 completed/attention 구분을 따른다. 참고는 턴/검토 대기를 완료로도 알리지만, 이번 사용자가 정한 명시적 전체 완료/확인 필요 경계가 우선한다. pane의 앱 안 턴 끝남 카드(§8.185)는 휴대폰 push와 별개인 기존 경로다.
 - **검증.** 중간 착지 push 금지와 coordinator user 목적지 불가를 각각 수정 전 RED로 보존했다. host의 실제 사본·DB·inbox·알림 queue 시험은 adopt/worktree, 네 표지, hash 불일치·본문 위장·중복·ack·대기 중 보고 변경·기기 설정을 본다. 기존 post 출처 E2E에서 실제 coordinator pane의 두 CLI 명령도 검증한다. 끝낸 가짜 작업 보고는 새 규칙에 맞춰 완료 표지를 붙이고, 중간 작업 fixture는 유지한다.
 
 ### 8.224 임무 승인 메뉴의 화면 밖 잘림(10-19, t-0375)
@@ -5445,6 +5445,12 @@ primary 근거:
   Ctrl+Shift+C·쓰기 실패가 pane에 들어가지 않음. raw 관측기는 ISIG를 끄고 뒤따른 표지의 수신 bytes로 끝낸다.
   기존 native clipboard CI 왕복 하나를 한글·이모지·여러 줄 텍스트 쓰기/읽기까지 넓혔다.
   개발 머신의 실제 clipboard는 건드리지 않는다. xwin은 Windows 교차 빌드이고 Windows 실행 증거는 CI다.
+- **Windows CI 후속.** 첫 console 소유자 구현은 Windows CI 실제 텍스트 쓰기에서 실패했다(run 39189740640,
+  native_clipboard_roundtrip). 공개 annotation은 panic 위치만 남기고 API 오류 본문을 빼, 그 원인을 단정하지 않는다.
+  쓰는 스레드 소유의 message-only STATIC 창을 만들고 clipboard를 닫은 뒤 지우도록 고쳤다.
+  console 창이 없는 실행 환경에서도 NULL·남의 창에 기대지 않는 Microsoft clipboard owner 계약이다.
+  표시·전역 설정·별도 메시지 루프 없이 즉시 렌더링하고, 같은 native 왕복 시험의 기대를 유지한다.
+  다음 실패부터 API 오류도 기존 CI annotation에 담기도록 native 시험 진단을 보강했다.
 - 웹 steering과 TUI 여러 줄 Enter는 각각 별도 작업 범위다.
 
 ### 8.226 휴대폰 푸시 본문에 보고 첫 줄 요약(10-19, t-0379)
@@ -5500,6 +5506,87 @@ primary 근거:
 - TUI는 pane 기본색·ANSI 16색·빈 바탕까지 테마를 적용하고, 명시 RGB·확장 256색은 유지한다.
 - 웹의 빌드된 단축 hex(`#fff`)도 터미널 기본색 전달 protocol에서 6자리로 보낸다.
 - 기존 웹 공유 설정·TUI 설정 E2E를 넓혔다. 화면은 별도 실험실에서 headless로 캡처하며 운영 설정·프로세스는 바꾸지 않는다.
+### 8.232 사진만 보낸 입력의 자동완성·수신 확인과 대화 썸네일(10-19, t-0387)
+
+- **실제 기록·재현.** 운영 로그의 submit 5는 글 62바이트와 Enter 1바이트 모두 PTY 접수까지 성공했지만 턴이 시작되지 않았다.
+  별도 설정 폴더와 로컬의 응답하지 않는 API 주소를 쓴 실제 Claude Code 2.1.303에서도 마지막 `@경로`의 첫 Enter가 파일 선택으로
+  소비되어 입력창에 글이 남았다. 공백 뒤 Enter는 턴을 시작했다. Codex 0.163.0에서는 같은 입력의 Enter가 턴을 시작했다.
+  운영 설정·프로세스·실제 모델 API는 쓰지 않았다.
+- **참고.** herdr-web-ui `aa624cb` `server/index.ts closeMention`은 마지막 `@파일` 뒤에 공백을 넣어 자동완성을 닫는다.
+  Composer의 trim 뒤 Term의 제출 글에 이 규칙을 적용한다. 줄바꿈·IME·일반 Enter의 키 전송과 기존 글/Enter 간격은 그대로다.
+  Enter를 하나 더 보내거나 Escape로 작업을 끊지 않는다. herdr `api_helpers.rs encode_api_submission_parts`·`api/agents.rs`와
+  herdr-projects `threads.rs keys`의 글/Enter 분리도 대조했다. t3code는 SDK에 첨부를 구조화해 보내므로 PTY 자동완성이 없다.
+- **수신 확인.** PTY ACK는 「입력 전달됨 · 기록 확인 중」이다. 보낸 글과 같은 새 사용자 기록을 받으면 수신을 확인하고 안내를 지운다.
+  보내기 전의 같은 글·무관한 새 기록·agent의 작업 중 상태만으로 확인하지 않는다. 기록을 아직 읽지 못한 채 보냈으면 보수적으로
+  확인 불가로 둔다. 10초 뒤에도 확인되지 않으면 「아직 처리되지 않음」과 입력창 확인·보낸 글 복원을 보인다. 늦은 기록도 반영하며
+  자동 재전송은 없다. 새 초안이 있으면 복원 단추를 막아 보존한다. 수신 확인은 모델 처리 완료를 뜻하지 않는다.
+  참고 Composer의 `Not confirmed. Check the terminal before sending again` 안내와 t3code의 서버 사용자 기록을 기준으로 삼는
+  `ChatView.tsx serverVisibleTurnItems`를 따르되, aaa의 기존 읽기 API에는 제출 ID가 없어 같은 글의 출현 횟수 증가로 확인한다.
+- **그림 보기.** 경로 matcher가 `@/…`를 그대로 넘겨 상대 경로로 찾던 것이 파일 보기 실패의 원인이다. 파일 링크에서 절대·홈·점
+  상대 경로의 `@` 표시를 떼고 기존 `pane_file`로 연다. 같은 pane의 머신 agent가 canonical path와 `file_roots`를 검사하고,
+  30분 수명의 파일 하나 capability(`/f/…`)를 준다. 허용 범위·머신 선택·cookie 인증은 바꾸지 않는다.
+  herdr-web-ui `ChatView.tsx UserImages/ImageThumb`·`ChatView.css .chat-user-images`처럼 사용자 메시지의 `@그림`은 썸네일로
+  보이고 누르면 확대한다. t3code `MessagesTimeline.tsx`의 사용자 그림·`onImageExpand`도 대조했다. 확대는 aaa의 이미 있는
+  FileViewer를 재사용해 다운로드·새 탭·Back·닫기 뒤 focus 복귀도 같은 경계를 쓴다. reader는 기존대로 파일을 열지 않는다.
+- **검증 소유 경계.** 기존 웹 E2E 23을 넓혀 그림만 보내기, 실제 transcript push를 통한 수신·미확인·늦은 확인·같은 글 재전송,
+  새 초안 보존, 썸네일 잘림·확대·focus, 허용 밖·symlink·reader·미인증 읽기를 확인한다. 기존 네 브라우저/기기 첨부·Enter·IME
+  사례도 유지한다. 시간 창은 Playwright 시계로 넘기고 수신·화면·출력 사건으로 끝낸다. 새로운 시험 전용 production seam은 없다.
+  실험실에서 프로젝트 uploads만 추가로 허용하며 허용 밖 파일은 그대로 거부한다. 프로토콜 판 변경은 없다.
+
+- **통합 시험의 입력 프레이밍.** 전수 검증에서 기존 `thread_adopt_existing_pane`의 가짜 셸이 글과 Enter를 같은 `dd` 조각으로
+  받아 마지막 줄바꿈을 command substitution이 지웠다. PTY는 쓰기별 read 경계를 보장하지 않는다. adopt가 보는 것은 pane의
+  생존과 제출 뒤 응답이므로 가짜를 canonical 줄 읽기로 바꾸고, 기존 생존 검사는 글+Enter를 한 번 쓰는 `pane run`으로 강화했다.
+  실제 입력·기대 응답·시한을 바꾸지 않는다. 첫 실패의 실험실·로그를 보존한다.
+
+- **운영 확인 후속(10-19 12:0x, t-0387).** 배포판의 전송 안내가 사용자 기록 반영 뒤에도 남는 캡처를 확인했다.
+  §8.232의 첫 구현도 새 기록에서 문구만 수신 확인으로 바꾸고 계속 표시했다. herdr-web-ui Composer `settle`의 정상 성공 시
+  `setNote(null)`처럼, 새 사용자 기록을 확인하면 receipt를 비워 안내를 즉시 제거한다. 늦은 ACK는 빈 receipt를 새로 만들지 않는다.
+  기존 E2E 23의 수신 확인 경계를 강화해 새 사용자 기록이 실제로 보인 뒤 안내가 없어지는지, 미확인 뒤 늦은 반영과 즉시 반영
+  모두 확인한다. 보낸 글 복원·새 초안 보존·과거 같은 글의 오인 방지는 그대로다. 수정 전 안내 소멸 실패를 보존했다.
+
+### 8.233 배포 실행기 잠금의 상속 FD 수명(10-19, t-0381 후속)
+
+- **실패와 원인.** 다른 작업의 전체 gate에서 기존 durable job 시험이 실행기 drop 뒤 EWOULDBLOCK으로 실패했다. File close만 쓰면 fork/dup가 공유하는 flock 참조가 남아 잠금을 유지한다. 기존 시험의 실제 lease를 복제해 동일 configure 실패를 결정적으로 확인했다. 원본 FD는 이미 close-on-exec이며 이 플래그는 fork~exec 창을 막지 못한다. 원래 실패 실행의 상속 자식 PID까지 추적한 증거는 없으므로 특정 자식을 원인으로 단정하지 않는다.
+- **참고와 차이.** herdr-projects 0.2.35 `project.rs::ProjectLock/Project::lock`도 File close에 맡긴다. herdr `plugin_installations.rs::retain_startup_installation`은 소유권 전환 때 `File::unlock`을 명시한다. herdr의 integration/env 잠금, herdr-web-ui server와 t3code packages에서는 같은 fork 상속 해제 구현이 없었다. [Apple flock(2)](https://developer.apple.com/library/archive/documentation/System/Conceptual/ManPages_iPhoneOS/man2/flock.2.html)의 dup/fork 공유 잠금 계약에 따라 aaa의 실행기 소유권 끝에 명시적으로 unlock한다. 기존 close-on-exec도 유지한다.
+- **제품.** 잠금 획득 직후 private RAII Lease를 만들어 정상 drop과 journal 복구 오류 반환 모두에서 unlock한 뒤 File을 닫는다. 살아 있는 실행기의 배타 잠금, job 재실행 금지, 복구 SHA 판정은 그대로다. 잠금 해제 오류는 기록한다.
+- **검증.** 새 시험을 늘리지 않고 기존 durable job owner 시험에 공유 FD 보유를 더했다. 수정 전 EWOULDBLOCK RED → 수정 후 GREEN, unlock만 제거한 변형도 같은 위치 RED → 바이트 그대로 복원 후 GREEN을 확인한다. 시간 연장·재시도·시험 생략·새 자식/신호·production 시험 seam은 없다. 전체 ci-local과 공개 검사 후 착지한다. 운영 binary 반영은 배포 담당이 한다.
+
+### 8.234 확인 요청 표지 이름을 기존 문구와 통일(10-19, t-0379 후속)
+
+- **범위.** 오늘 §8.223이 추가한 「사람 필요」만 「확인 필요」로 고친다. 새 보고 안내는 `[확인 필요]`를 쓰며 옛 `[사람 필요]`는 입력 호환용으로 같은 `NeedsUser` 의미로 받는다. 표지 판정·보고 요약·보내기 직전 필터 모두 두 표지를 인정하고, 요약 없는 보고의 고정 문구와 웹 탭 알림은 새 이름만 쓴다.
+- **지침.** coordinator 생성 안내의 post 제목, 공통 thread brief, SessionStart 진행 안내를 새 이름으로 맞췄다. 기존 운영 안내 파일은 직접 고치지 않는다. binary 반영 뒤 `aaa doctor files --fix`로 생성 파일을 갱신한다.
+- **기존 상태와 구분.** `waiting_on_you`의 기존 「확인 필요」, `idle`의 「쉼」, 확인창·입력 대기 문구는 그대로다. 보고 표지는 `report_attention=needs_user`라는 알림 의도이며 thread group이나 idle 판정·진행률을 바꾸지 않는다. inbox 사건 이름과 저장된 옛 보고 원문도 이주하지 않는다. 기존 「사용자 결정 요청」 등 다른 문구는 변경 범위가 아니다.
+- **참고.** herdr-projects `src/notify.rs::Sound::Request`와 t3code `ThreadNotificationCoordinator.tsx`의 입력/완료 구분을 유지하며 한국어 이름만 사용자 보정대로 맞춘다. 공개 API·프로토콜 판 변경은 없다.
+- **검증.** 기존 실제 사본·DB·inbox·queue owner 표에 새 표지를 더했을 때 수정 전 `None` 대 `NeedsUser`로 실패했고 수정 후 신·구 표지 모두 통과했다. 기존 알림 문구 표는 요약 없는 보고에서 「확인 필요」를 검증한다. 이 문구를 옛 이름으로 되돌린 변형이 실패하는 것도 확인한다. 동일 계약의 새 E2E를 추가하지 않고 기존 웹/host 경계를 유지한다. binary 반영 필요.
+
+### 8.235 웹 굴림 막대: 얇고 흐리게, 목록 두 막대를 같은 x에(10-19, t-0389)
+
+- **운영 근거.** 사용자 Windows Edge 캡처(10-19): 사이드바 위 목록과 Agents 목록이 기본 막대(회색 트랙·위아래 화살표·굵은 막대)를 그려 존재감이 강했고, 두 막대의 x가 달랐다. 앱에 막대 규칙이 대화 입력칸(`scrollbar-width: thin`·`scrollbar-color`)밖에 없었다.
+- **모양.** 참고 t3code `apps/web/src/index.css` 「Scrollbar styling」(6px, 투명 트랙, 흐린 막대, hover 짙음)을 앱 공통 규칙으로 둔다(`style.css`). 막대 색은 테마 글색 `--text`를 14%(평소)·30%(그 영역에 마우스)·46%(막대를 잡음)로 섞어 모든 색상·밝기에서 같은 느낌이다. herdr-web-ui는 사이드바 막대를 꾸미지 않는다(대화 입력칸 `Composer.css`만 thin).
+- **브라우저 갈래(headless 실측).** Chromium 145·WebKit 26은 `scrollbar-width`·`scrollbar-color`가 있으면 `::-webkit-scrollbar` 꾸밈을 무시하고 기본 막대를 그린다(Windows Chromium은 화살표째). 그래서 두 표준 속성은 `@supports not selector(::-webkit-scrollbar)`(Firefox)에만 주고 Chromium·Safari는 `::-webkit-scrollbar`만 쓴다. 대화 입력칸의 참고 thin·색 지정도 지워 같은 규칙을 따른다(`scrollbar-gutter: stable`은 둠).
+- **hover로 또렷해짐.** `:hover::-webkit-scrollbar-thumb`만으로는 Chromium·WebKit이 영역에 마우스가 올라도 막대를 다시 그리지 않는다(실측: 영역 자신의 계산 값이 바뀌어야 다시 그림). 영역마다 `--scrollbar-thumb-now`를 두고 `:hover`가 그 값을 바꾼다. 휠로 굴릴 때는 마우스가 그 영역 위라 같이 또렷하다. 키보드로만 굴릴 때 또렷해지는 것은 JS 타이머가 필요해 넣지 않았다(평소 막대도 보인다).
+- **터치.** `(hover: hover) and (pointer: fine)`에서만 적용한다. 휴대폰·iPad 터치는 OS의 겹친 막대(굴릴 때만 보임)를 그대로 둔다. 그리지 않는 곳(터미널 기록·키 막대·칩 줄)의 `scrollbar-width: none`·`display: none`은 class 규칙이라 이 공통 규칙보다 이긴다. 터미널 기록(`.xterm-viewport`) 굴림은 바꾸지 않았다. 다른 화면 크기의 grid를 빌려 볼 때만 굴러가는 `.term-scroll[data-adopted-grid]`(마우스는 휠·막대로)는 이 규칙의 얇은 막대가 된다: 그때는 칸 수를 맞추지 않아 칸 계산에 영향이 없다(E2E 02·07·20 통과). 대화 입력칸의 `scrollbar-gutter: stable`은 참고 그대로 두어 마우스 기기에서 오른쪽 6px를 늘 비워 둔다(막대가 생겨도 글이 다시 줄바꿈되지 않게).
+- **두 막대의 x(참고와 다르게 둔 것).** 위 목록 `.machine-list`는 사이드바 양 끝까지 펴고 여백을 줄 안에 두는데, 참고 herdr-web-ui `AgentSidebar.css` `.agents-sidebar`는 묶음에 좌우 `--side-gutter`를 줘 Agents 굴림 영역(과 막대)이 12px 안쪽이었다(참고에도 같은 어긋남). aaa는 그 여백을 머리 단추(바깥 여백)와 굴림 영역(안쪽 여백)으로 옮겨 줄·머리 자리는 그대로 두고 두 굴림 영역을 같은 x에 세운다(`Sidebar.css`).
+- **프로젝트 화면.** `.project-threads`는 880px 기둥 자체가 굴림 영역이라 넓은 창에서 막대가 화면 가운데 쪽에 섰다. t3code `settingsLayout.tsx`(화면 폭 굴림 영역 안에 폭 제한 기둥)처럼 굴림 영역을 화면 폭으로 펴고 좌우 여백이 남는 폭을 나눠 갖게 했다(글 기둥 자리는 1400px 창에서 전후 436~1284px로 같다).
+- **회귀.** 웹 E2E 04 「목록 두 굴림 영역」: 위 목록과 Agents 목록이 둘 다 넘칠 때 두 굴림 영역의 left·right가 같다. 고치기 전 binary에서는 `left 0/12, right 319/307`로 실패했다. 막대의 색·폭은 headless 기본(`--hide-scrollbars`)에서 그려지지 않아 시험하지 않고 전후 캡처로 본다(`ignoreDefaultArgs`로 막대를 켠 실험실 캡처). Firefox는 이 머신에 Playwright Firefox가 없어 보지 못했고, macOS headless는 Windows 기본 막대를 흉내 내지 못해 고치기 전 Windows 모양은 사용자 캡처로 대신한다(꾸민 `::-webkit-scrollbar` 막대는 OS와 관계없이 같은 모양으로 그려진다).
+
+### 8.236 확인창에 막힌 임무의 명시적 재시작(10-19, t-0380 후속)
+
+- **운영 근거.** 배포 후 `mission restart` audit 두 건이 있으나 같은 임무 pane·harness 세션이 유지됐다. 읽기 전용 DB에서 `reset_requested=true`, `resetting=false`, `state=막힘`, `idle_since_ms=null`이며 기존 Claude settings에는 permissions가 없었다. 설정 생성 수정(§8.227)에 도달하기 전에 막힌 것이다. `--permission-mode default` 자체는 새 설정에서도 의도한 값이다.
+- **원인.** restart는 reset 요청을 저장하고 막힘을 대기로 돌리지만 다음 tick의 Question 판정이 다시 막힘으로 바꿔 조기 반환했다. 이를 넘겨도 idle 30초·보는 화면·빈 입력창 조건이 확인창 복구를 막았다. Kill 뒤 Exited 감지가 오면 보는 화면 조건에 다시 걸릴 수도 있었다.
+- **수정.** 내부 저장 필드 `restart_requested`로 명시한 restart와 reload·자동 reset을 구별한다(옛 기록은 false). 명시 restart의 Question 복구만 이 보호 조건을 넘겨 기존 `resetting 저장 → Kill 요청 → 끝남 사건 → 새 profile rebrief → fresh Spawn` 경로로 보낸다. 끝남을 기다리는 동안 복구 의도를 유지한다. 확인창에 yes/no·명령 입력을 보내지 않으며 임무를 stop/resolve하지 않는다. 일하는 대화·idle 초안·자동 reset·reload·pause·예산·사용량의 기존 보호는 유지한다. 완료 시 두 요청 표지를 지운다.
+- **참고.** herdr-projects 0.2.35 `threads.rs::restart`의 명시 재시작과 `prompt`의 blocked/초안 보호를 구별하는 방식을 따른다. herdr 0.9.5 `app/api/agents.rs`도 blocked agent의 prompt를 거부한다. 이 참고 버전과 t3code `orchestration-v2/Adapters/ClaudeAdapterV2.ts`에는 aaa 임무 reset과 같은 기능이 없어 자동 reset의 준비 조건을 그대로 명시 복구에 적용하지 않았다.
+- **회귀.** 실제 host·DB·frame와 가짜 agent로 확인창+보는 화면에서 수정 전 Kill 0건을 재현했다. 자동 reset·reload는 그대로 보존, 명시 restart는 Kill 1건 후 실제 harness Exited·SessionState 끝남 사건을 거쳐 새 pane을 만들고 최신 권한 profile을 전달한다. state.md·processed.txt·inbox·미처리 입력은 남는다. idle 초안/보는 화면까지 예외를 넓히는 변형도 실패한다. 새 신호 시험·고정 sleep·외부 프로세스는 없다.
+- **운영 전환.** 이 수정의 host binary를 반영한 뒤 coordinator가 `aaa mission restart projects rc-verify-watch`를 다시 한 번 실행한다. 옛 binary가 남긴 reset_requested만으로 새 복구 의도를 추정하지 않는다. stop이나 옛 명령 승인은 필요 없다. 같은 thread에서 새 pane·새 harness 세션·permissions.allow·추가 읽기 경로가 적용됐는지를 확인한다. 이 thread는 운영 restart·binary 교체를 실행하지 않았다.
+
+- 최신 main 통합 전체 검사에서 기존 `tui::tabs_like_herdr`가 실제 올바른 `작업 폴더` 경로를 찾지 못했다. 임시 경로 길이에 따라 공백이 pane 끝 칸에 오면 `Vt::rows_between`이 접힌 줄 끝의 실제 공백을 지운 것이 원인이다. 기대값·시한·시험을 바꾸지 않고 RecentUnwrapped의 soft-wrap 끝 공백만 보존했다. 기존 `recent_unwrapped_joins_soft_wrapped_rows`에 화면/기록 경계 사례를 더해 원인 실패(`abcd efgh` → `abcdefgh`)를 먼저 재현했다. 일반 Recent의 끝 공백 제거와 넓은 글자 spacer 규칙은 유지한다. 참고 herdr 0.9.5 `pane/terminal.rs`의 화면 텍스트 이음은 `soft_wrapped`일 때 `row_text` 전체를 보존한다(`history_read.rs`의 Windows fallback은 같은 trim을 하므로 따르지 않음). 이는 임무 수정과 별도 커밋으로 나눈 전체 gate 차단 결함의 최소 수리다.
+
+### 8.237 local agent 재연결 중 coordinator 배포 조회(10-19, t-0381 후속)
+
+- **실제 기록.** 배포 직후 local agent가 12:13:38.407~12:13:44.283 KST 동안 끊겼다. session host의 coordinator pane은 계속 살아 있었지만 사용자에게 배포 조회 Forbidden이 나왔고 재연결 뒤 같은 ID는 Completed였다. caller_of는 cached running pane PID로 소속을 찾았으나, deployment_project가 입력·열기용 running_coordinators → coordinator_panes의 Connected 조건을 재사용해 소속을 없앴다. CLI --wait도 첫 AgentDisconnected를 곧바로 오류 종료했다.
+- **참고.** herdr-projects 0.2.35 `coordinator.rs::is_coordinator/discover/live`는 프로젝트 cwd 소속과 관측한 live 기록을 둔다. herdr는 서버가 pane을 소유하지만 aaa는 session host가 backend 재시작을 견디므로 전송 연결과 pane 소속을 분리해야 한다. herdr-web-ui `server/herdr-update.ts::HerdrUpdater.status/run`의 실행 판·handoff 상태, t3code `cloud/updateHandoff.ts::pendingUpdateHandoffExists`의 명시적 handoff 기록도 대조했다. 네 참고에 같은 다중 backend 배포 CLI 대기는 없으며 aaa의 기존 Front State/Flow 사건을 쓴다.
+- **제품.** 배포 소속은 host가 canonical cwd·local 머신·harness/role로 이미 판정한 PaneView.coordinator_project와 running 상태를 쓴다. peer PID actor 검증과 thread/adopt 제외, 사람의 safety 확인은 유지한다. 입력 가능한 coordinator 목록은 그대로다. --wait는 AgentDisconnected만 재연결/배포 완료 사건 뒤 같은 DeployStatus ID로 재조회하며 DeployStart는 재전송하지 않는다. 머신 이름·ID·생략을 지원하고 nonwait·Forbidden 등 다른 오류는 즉시 반환한다.
+- **최소 회귀.** host owner는 실제 agent_disconnected와 caller_of·Front 요청에서 권한 유지/AgentDisconnected·위장/worker/device/일반 셸/끝난 pane 거부를 확인한다. CLI owner는 실제 Front IPC frame에서 단절 → Connected → 같은 ID 상태 조회 → Completed와 nonwait·Forbidden 즉시 종료를 본다. 기존 m13은 실제 backend 재시작과 pane 생존을 계속 맡는다. 둘은 권한과 전송 대기의 다른 계약이며 새 외부 프로세스·신호·시험용 production export·고정 sleep·시한 증가가 없다. 두 owner를 원래 제품으로 되돌린 변형 RED와 저장 바이트 복원 GREEN을 확인했다.
 
 ### 8.238 웹 왼쪽 활동 막대와 본문 보고서 화면(10-19, t-0390, VS Code식)
 

@@ -496,7 +496,7 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
         title: t.title || t.id,
         machine: null,
         agent: agentOf(t.pane ? panes.find((x) => x.id === t.pane) : undefined, t),
-        notice: { title: `${t.project} · ${t.title || t.id}`, body: `${kind === "input" ? "사람 필요" : "맡긴 일 완료"}${libraryUrl ? `\n보기: ${libraryUrl}` : ""}`, tag: `aaa-${t.project}/${t.id}` },
+        notice: { title: `${t.project} · ${t.title || t.id}`, body: `${kind === "input" ? "확인 필요" : "맡긴 일 완료"}${libraryUrl ? `\n보기: ${libraryUrl}` : ""}`, tag: `aaa-${t.project}/${t.id}` },
       });
       alertLate(replayFrom, t.project, t.id, raise, told);
     };
