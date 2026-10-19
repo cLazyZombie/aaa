@@ -4904,6 +4904,34 @@ printf 'complete-rc=%s\n' "$?" >> '{out}'
     let sent: Vec<_> = posts["posts"].as_array().unwrap().iter().filter(|p| p["to"] == "user").collect();
     assert_eq!(sent.len(), 2, "{posts}");
     assert!(sent.iter().all(|p| p["from"]["role"] == "coordinator" && p["from"]["thread"].is_null()), "{posts}");
+    // 앞의 셸은 inbox 수신 fixture다. Welcome 경고는 역할이 있는 실제 coordinator로 검사한다.
+    let opened = w.h.ok(&["project", "open", "demo", "--profile", "fake", "--new"]);
+    let coord = opened["pane"]["id"].as_str().unwrap().to_string();
+    w.wait_screen(&coord, "fake>");
+    let warning = w.lab.root.join("post-mute-warning");
+    let context = w.lab.root.join("post-mute-context");
+    let script = w.task(
+        "coordinator-mute.sh",
+        &format!(
+            r#"
+for n in 1 2 3 4 5 6; do
+  '{bin}' post demo user --request --needs-user --topic other-action --title "자료 $n" > /dev/null 2>&1
+done
+'{bin}' machine list > '{warning}' 2>&1
+'{bin}' context demo --peek > '{context}' 2>/dev/null
+printf 'post-mute-warning-done\n'
+"#,
+            bin = lab::BIN,
+            warning = warning.display(),
+            context = context.display()
+        ),
+    );
+    w.h.ok(&["pane", "run", &coord, &format!("post-probe {script}")]);
+    w.h.wait_output(&coord, "post-mute-warning-done", T);
+    let warning = std::fs::read_to_string(warning).unwrap();
+    assert!(warning.contains("post 음소거:") && warning.contains("aaa post unmute demo"), "{warning}");
+    let context = std::fs::read_to_string(context).unwrap();
+    assert!(context.starts_with("⚠ post 음소거:"), "{context}");
 }
 
 #[test]

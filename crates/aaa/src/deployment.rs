@@ -167,6 +167,7 @@ mod tests {
                     host_id: "host".into(),
                     role: DeviceRole::Local,
                     front: "f".into(),
+                    warnings: vec![],
                 })
                 .await
                 .unwrap();
