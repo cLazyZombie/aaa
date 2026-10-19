@@ -32,6 +32,12 @@ pub(crate) struct ThreadRec {
     pub kind: ThreadKind,
     #[serde(default)]
     pub mission: Option<crate::mission::MissionRun>,
+    #[serde(default)]
+    pub holds: Vec<String>,
+    #[serde(default)]
+    pub started_by: Option<String>,
+    #[serde(default)]
+    pub automation: Option<String>,
     pub repo: Option<String>,
     pub base: Option<String>,
     #[serde(default)]
@@ -139,6 +145,9 @@ impl ThreadRec {
             role,
             kind,
             mission: None,
+            holds: vec![],
+            started_by: None,
+            automation: None,
             repo: None,
             base: None,
             branch: None,
@@ -201,6 +210,7 @@ pub(crate) struct ResolveOpts {
 
 /// thread 시작 인자
 pub struct StartArgs {
+    pub holds: Vec<String>,
     pub project: String,
     pub title: String,
     pub machine: Option<String>,
@@ -961,6 +971,7 @@ impl Host {
             profile: r.profile.clone(),
             role: r.role,
             thread_kind: r.kind,
+            holds: r.holds.clone(),
             mission: r.mission.as_ref().map(|m| m.name.clone()),
             status: r.status,
             cleanup_pending: r.resolve_pending.is_some().then_some(true),
@@ -1018,6 +1029,7 @@ impl Host {
             boot_id: self.boot_id.clone(),
             kind: kind.to_string(),
             thread: Some(r.id.clone()),
+            actor: (kind == "thread_started").then(|| r.started_by.clone()).flatten(),
             role: Some(r.role),
             profile: Some(r.profile.clone()),
             machine: Some(self.machine_name(&r.machine_id)),
@@ -1036,6 +1048,7 @@ impl Host {
             boot_id: self.boot_id.clone(),
             kind: kind.to_string(),
             thread: None,
+            actor: None,
             role: None,
             profile: None,
             machine: None,
@@ -1375,13 +1388,38 @@ impl Host {
 
     pub(crate) async fn thread_start_mode(
         self: &Arc<Self>,
-        mut a: StartArgs,
+        a: StartArgs,
         actor: &str,
         mission: Option<crate::mission::MissionRun>,
         background: bool,
     ) -> Result<ThreadView, ErrorBody> {
+        self.thread_start_key(a, actor, mission, background, None, None).await
+    }
+    pub(crate) async fn thread_start_once(
+        self: &Arc<Self>,
+        a: StartArgs,
+        actor: &str,
+        key: &str,
+        rule: &str,
+    ) -> Result<ThreadView, ErrorBody> {
+        self.thread_start_key(a, actor, None, true, Some(key), Some(rule)).await
+    }
+    async fn thread_start_key(
+        self: &Arc<Self>,
+        mut a: StartArgs,
+        actor: &str,
+        mission: Option<crate::mission::MissionRun>,
+        background: bool,
+        start_key: Option<&str>,
+        rule: Option<&str>,
+    ) -> Result<ThreadView, ErrorBody> {
         let dir = self.project_dir(&a.project)?;
         self.check_active(&a.project)?;
+        if a.holds.iter().any(|h| !aaa_proto::valid_project(h)) {
+            return Err(bad("holds는 timing 같은 표지 이름 목록이어야 한다"));
+        }
+        a.holds.sort();
+        a.holds.dedup();
         if let Some((machine, path)) = a.repo.as_deref().and_then(|r| r.split_once(':'))
             && !machine.is_empty()
             && !(machine.len() == 1 && machine.as_bytes()[0].is_ascii_alphabetic())
@@ -1424,18 +1462,24 @@ impl Host {
         let now = aaa_common::util::now_ms();
         let mut rec = ThreadRec {
             mission,
+            holds: a.holds.clone(),
+            started_by: Some(actor.into()),
+            automation: rule.map(str::to_string),
             repo: a.repo.clone(),
             base: a.base.clone(),
             ..ThreadRec::starting(&a.project, a.title.trim(), &mid, &a.profile, a.role, a.kind, now)
         };
-        let id = self
+        let (id, created) = self
             .db
-            .thread_insert_next(&a.project, |id| {
+            .thread_insert_marked(&a.project, start_key, |id| {
                 let mut r = rec.clone();
                 r.id = id.to_string();
                 serde_json::to_string(&r).unwrap()
             })
             .map_err(internal)?;
+        if !created {
+            return self.thread_show(&a.project, &id);
+        }
         rec.id = id.clone();
         let guard = self.claim_thread(&a.project, &id)?;
         self.db.audit(actor, "thread_start", &format!("{}/{id} {} @{}", a.project, a.profile, self.machine_name(&mid)));

@@ -285,6 +285,9 @@ impl Db {
         if !conn.prepare("SELECT 1 FROM pragma_table_info('flow_events') WHERE name='repo'")?.exists([])? {
             conn.execute("ALTER TABLE flow_events ADD COLUMN repo TEXT", [])?;
         }
+        if !conn.prepare("SELECT 1 FROM pragma_table_info('flow_events') WHERE name='actor'")?.exists([])? {
+            conn.execute("ALTER TABLE flow_events ADD COLUMN actor TEXT", [])?;
+        }
         // post 한도는 본문 정리 뒤에도 출처별로 남는다. 옛 행은 기존 한도로 유지한다.
         if !conn.prepare("SELECT 1 FROM pragma_table_info('posts') WHERE name='quota'")?.exists([])? {
             conn.execute("ALTER TABLE posts ADD COLUMN quota TEXT NOT NULL DEFAULT 'standard'", [])?;
@@ -635,8 +638,22 @@ impl Db {
 
     /// 프로젝트의 다음 thread 번호(`t-0001`부터)를 잡고 기록을 넣는다. `make`는 ID를 받아 저장할 JSON을 만든다.
     pub fn thread_insert_next(&self, project: &str, make: impl FnOnce(&str) -> String) -> Result<String> {
+        self.thread_insert_marked(project, None, make).map(|(id, _)| id)
+    }
+    pub(crate) fn thread_insert_marked(
+        &self,
+        project: &str,
+        key: Option<&str>,
+        make: impl FnOnce(&str) -> String,
+    ) -> Result<(String, bool)> {
         let mut c = self.conn.lock().unwrap();
         let tx = c.transaction()?;
+        if let Some(key) = key
+            && let Some(id) =
+                tx.query_row("SELECT value FROM meta WHERE key=?1", [key], |r| r.get::<_, String>(0)).optional()?
+        {
+            return Ok((id, false));
+        }
         let max: Option<i64> =
             tx.query_row("SELECT MAX(CAST(SUBSTR(id, 3) AS INTEGER)) FROM threads WHERE project=?1", [project], |r| {
                 r.get(0)
@@ -646,8 +663,11 @@ impl Db {
             "INSERT INTO threads(project,id,status,data,updated_at) VALUES(?1,?2,'starting',?3,?4)",
             params![project, id, make(&id), aaa_common::util::now_ms() as i64],
         )?;
+        if let Some(key) = key {
+            tx.execute("INSERT INTO meta(key,value) VALUES(?1,?2)", params![key, id])?;
+        }
         tx.commit()?;
-        Ok(id)
+        Ok((id, true))
     }
 
     pub fn thread_save(&self, project: &str, id: &str, status: &str, data: &str) -> Result<()> {
@@ -695,8 +715,8 @@ impl Db {
                 r.get(0)
             })?;
         tx.execute(
-            "INSERT INTO flow_events(project,seq,at_ms,boot_id,kind,thread,role,profile,machine,evidence,detail,repo)
-             VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12)",
+            "INSERT INTO flow_events(project,seq,at_ms,boot_id,kind,thread,role,profile,machine,evidence,detail,repo,actor)
+             VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13)",
             params![
                 e.project,
                 seq,
@@ -709,7 +729,8 @@ impl Db {
                 e.machine,
                 e.evidence,
                 e.detail,
-                e.repo
+                e.repo,
+                e.actor
             ],
         )?;
         tx.commit()?;
@@ -727,8 +748,8 @@ impl Db {
                 r.get(0)
             })?;
         tx.execute(
-            "INSERT INTO flow_events(project,seq,at_ms,boot_id,kind,thread,role,profile,machine,evidence,detail,repo)
-             VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12)",
+            "INSERT INTO flow_events(project,seq,at_ms,boot_id,kind,thread,role,profile,machine,evidence,detail,repo,actor)
+             VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13)",
             params![
                 e.project,
                 seq,
@@ -741,7 +762,8 @@ impl Db {
                 e.machine,
                 e.evidence,
                 e.detail,
-                e.repo
+                e.repo,
+                e.actor
             ],
         )?;
         tx.execute("INSERT INTO meta(key,value) VALUES(?1,'1')", [key])?;
@@ -753,7 +775,7 @@ impl Db {
     pub fn flow_after(&self, project: Option<&str>, after: u64, limit: u32) -> Result<Vec<aaa_proto::FlowEvent>> {
         let c = self.conn.lock().unwrap();
         let mut st = c.prepare(
-            "SELECT project,seq,at_ms,boot_id,kind,thread,role,profile,machine,evidence,detail,repo FROM flow_events
+            "SELECT project,seq,at_ms,boot_id,kind,thread,role,profile,machine,evidence,detail,repo,actor FROM flow_events
              WHERE (?1 IS NULL OR project=?1) AND seq>?2 ORDER BY at_ms, project, seq LIMIT ?3",
         )?;
         let rows = st
@@ -776,6 +798,7 @@ impl Db {
             evidence: r.get(9)?,
             detail: r.get(10)?,
             repo: r.get(11)?,
+            actor: r.get(12)?,
         })
     }
 
@@ -783,7 +806,7 @@ impl Db {
     pub fn flow_of_thread(&self, project: &str, thread: &str) -> Result<Vec<aaa_proto::FlowEvent>> {
         let c = self.conn.lock().unwrap();
         let mut st = c.prepare(
-            "SELECT project,seq,at_ms,boot_id,kind,thread,role,profile,machine,evidence,detail,repo FROM flow_events
+            "SELECT project,seq,at_ms,boot_id,kind,thread,role,profile,machine,evidence,detail,repo,actor FROM flow_events
              WHERE project=?1 AND thread=?2 ORDER BY seq",
         )?;
         let rows = st.query_map(params![project, thread], Self::flow_from)?.collect::<rusqlite::Result<Vec<_>>>()?;

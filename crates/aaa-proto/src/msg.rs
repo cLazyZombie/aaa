@@ -1708,6 +1708,8 @@ pub enum FrontRequest {
         name: Option<String>,
     },
     ThreadStart {
+        #[serde(default)]
+        holds: Vec<String>,
         /// 준비 완료를 기다리지 않고 Starting 기록을 돌려준다.
         #[serde(default)]
         background: bool,

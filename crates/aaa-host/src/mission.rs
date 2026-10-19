@@ -933,6 +933,7 @@ impl Host {
         self.db.set_meta(&key(p, n, "applied"), &m.text).map_err(internal)?;
         let run = MissionRun::new(n, &m, self.db.flow_max(p).map_err(internal)?, util::now_ms());
         let a = StartArgs {
+            holds: vec![],
             project: p.into(),
             title: m.def.title.clone(),
             machine: m.def.machine.clone(),

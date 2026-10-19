@@ -644,6 +644,9 @@ enum ThreadCmd {
         /// (옛 꼴의 프로젝트, 생략한다)
         #[arg(hide = true)]
         project: Option<String>,
+        /// timing 같은 측정 표지(쉼표 구분). 그 머신의 자동화가 명시한 wait를 지킨다.
+        #[arg(long, value_delimiter = ',')]
+        holds: Vec<String>,
         /// 제목(--from-task면 비워도 된다)
         #[arg(long)]
         title: Option<String>,
@@ -1566,6 +1569,7 @@ fn run(cli: Cli) -> Result<ExitCode> {
             json,
             match cmd {
                 ThreadCmd::Start {
+                    holds,
                     project,
                     title,
                     machine,
@@ -1589,6 +1593,7 @@ fn run(cli: Cli) -> Result<ExitCode> {
                     let kind = kind.map(|k| if k == "dir" { ThreadKind::Dir } else { ThreadKind::Worktree });
                     let project = project_or_here(project)?;
                     let req = FrontRequest::ThreadStart {
+                        holds,
                         background,
                         project: project.clone(),
                         title: title.unwrap_or_default(),

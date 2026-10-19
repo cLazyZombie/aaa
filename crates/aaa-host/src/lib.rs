@@ -1297,6 +1297,7 @@ impl Host {
             FrontRequest::Profiles { machine } => self.profiles(machine.as_deref()).await,
             FrontRequest::ProfileResolve { name } => self.profile_resolve(name.as_deref()),
             FrontRequest::ThreadStart {
+                holds,
                 project,
                 title,
                 machine,
@@ -1315,6 +1316,7 @@ impl Host {
                     aaa_proto::ThreadKind::Dir
                 });
                 let mut a = orch::StartArgs {
+                    holds,
                     project,
                     title,
                     machine,

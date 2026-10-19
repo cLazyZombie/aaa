@@ -693,6 +693,7 @@ impl Host {
             task.push_str(&format!("\n\n## 더한 말\n\n{n}\n"));
         }
         let a = StartArgs {
+            holds: vec![],
             project: project.to_string(),
             title: EVALUATOR_TITLE.into(),
             machine,
@@ -824,6 +825,7 @@ mod tests {
     #[test]
     fn batch_fits_frame() {
         let ev = |seq: u64| FlowEvent {
+            actor: None,
             repo: None,
             project: "p".into(),
             seq,
@@ -878,6 +880,7 @@ mod tests {
     #[test]
     fn thread_times() {
         let ev = |seq: u64, kind: &str| FlowEvent {
+            actor: None,
             repo: None,
             project: "p".into(),
             seq,
