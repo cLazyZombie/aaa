@@ -5395,3 +5395,9 @@ primary 근거:
 - **수정.** 전체 작업 상태와 완료 보고 알림을 구분한다. 첫 줄이 명시적으로 `[착지]`인 회수 사본은 작업 중이어도 기존 new report 경로로 hash당 한 번 알린다. 일반 `[진행 중]` 보고는 계속 알리지 않는다. 파일과 DB hash가 같을 때만 인정해 사본 교체 중 엇갈린 기록을 알리지 않는다. 작업 중 상태·진행률·Done/auto-resolve 규칙과 pane의 소유권은 그대로다. 기존 사본도 hash가 같고 아직 알리지 않았다면 다음 tick에서 적용된다. 과거 6개 버전의 내용을 새 inbox로 복원하지는 않는다(그 버전별 사본이 현재 host에 없다).
 - **참고와 차이.** herdr-projects `steps.rs write_thread_items` 233~248도 검토 대기/병합 중을 요구한다. herdr-web-ui는 해당 프로젝트 metadata/상태를 표시하고 t3code `ThreadNotificationCoordinator.tsx`는 completed run을 알린다. 세 참고에는 계속 작업하는 한 thread의 여러 착지 보고에 해당하는 사건이 없다. 이번 사용자가 작업 중에도 6번의 착지 보고를 받아야 한다고 지적한 범위에서, 공통 brief에 이미 정한 `[착지]` 표지를 알림에만 사용한다. D9의 「보고 태그로 thread 상태를 정하지 않는다」는 유지한다.
 - **시험.** 실제 host DB·회수 사본·inbox 경계에서 adopted/worktree 모두 중간 보고 제외·착지 2개·hash별 중복 없음·ack 별개·작업 중 상태 유지·파일/DB hash 불일치 거부를 본다. 수정 전 adopted 착지 누락 RED→수정 후 GREEN(0.03초). hash 검사를 제거한 변형도 실패하고 정본을 복원했다. 이미 실제 회수 기록과 기존 adopt E2E가 전송 경계를 덮으므로 같은 시나리오의 E2E를 더 만들지 않는다.
+
+### 8.222 상태 감지 사건의 host 적용 판정 기록(10-19, t-0375, D8 후속 진단)
+
+- agent의 감지 상태·규칙 기록(§8.214)만으로는 host가 받은 상태를 적용했는지, 새 상태보다 오래돼 무시했는지 구분할 수 없다. host 수신 경계에서 pane·harness·사건 종류·사건 시각·직전 상태/시각·적용 상태(None이면 무시)를 info에 남긴다. 본문·token·화면 글은 기록하지 않는다.
+- herdr `pane/agent_detection.rs`·aaa `detect/state.rs`의 실제 감지·확인과 `harness.rs next_activity`의 옛 사건 거부는 유지한다. herdr는 한 프로세스 안의 감지라 이 분리된 host 적용 경계가 없다. aaa의 host/agent 구분 때문에 진단만 보강한다.
+- 09:24:52 사건의 당시 프레임·감지 규칙은 여전히 없어 원인 확정이나 수정 완료로 보고하지 않는다. 운영 agent와 host 반영은 coordinator가 한다. 기존 옛 사건 거부 시험과 전체 검사를 사용하고, 로그 문구만 단언하는 새 시험은 만들지 않는다.
