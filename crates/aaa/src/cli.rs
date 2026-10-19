@@ -2049,11 +2049,10 @@ fn agent_cmd(a: AgentArgs) -> Result<ExitCode> {
     rt.block_on(async move {
         let agent = aaa_agent::Agent::new(state, ident.machine_id, name, a.dev_mode, default_cwd)?;
         agent.configure_deployment(crate::deployment::execute)?;
-        let work_root = if cfg.agent.work_root.is_empty() {
-            aaa_config::paths::home().join("aaa-work")
-        } else {
-            PathBuf::from(&cfg.agent.work_root)
-        };
+        let home = aaa_config::paths::home();
+        let work_root = aaa_config::work_root::resolve(&cfg.agent.work_root, &home).map_err(anyhow::Error::msg)?;
+        let work_mount = aaa_config::work_root::mount(&cfg.agent.work_mount, &home).map_err(anyhow::Error::msg)?;
+        aaa_agent::work_root::initialize(&work_root, work_mount.as_deref())?;
         let file_roots: Vec<PathBuf> = if cfg.agent.file_roots.is_empty() {
             let mut v = vec![aaa_config::paths::home(), work_root.clone(), std::env::temp_dir()];
             v.extend(agent.default_cwd.as_ref().map(PathBuf::from));
@@ -2074,6 +2073,7 @@ fn agent_cmd(a: AgentArgs) -> Result<ExitCode> {
         agent.configure_file_roots(file_roots);
         agent.configure_threads(aaa_agent::threads::ThreadsConfig {
             work_root,
+            work_mount,
             exe: std::env::current_exe()?,
             profiles: cfg.profiles.clone(),
             harnesses: cfg.harnesses.clone(),

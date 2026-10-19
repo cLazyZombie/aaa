@@ -11,6 +11,9 @@ host = "local"
 default_cwd = ""
 # thread worktree·작업 폴더를 만드는 root(비우면 ~/aaa-work)
 work_root = ""
+# 반드시 연결되어 있어야 하는 mount 지점. macOS /Volumes/<볼륨>/…는 비워도 검사한다.
+# 예: work_root = "/Volumes/<disk>/aaa-work", work_mount = "/Volumes/<disk>"
+work_mount = ""
 
 [reconnect]
 max_backoff_s = 60

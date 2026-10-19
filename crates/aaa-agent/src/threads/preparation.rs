@@ -80,6 +80,7 @@ pub async fn placement(
     kind: ThreadKind,
     repo: Option<&str>,
 ) -> Result<Option<aaa_proto::ThreadPlacement>> {
+    cfg.check_path(&cfg.work_root)?;
     if !valid_project(project) || !valid_thread(thread) {
         bail!("프로젝트·thread 이름 형식이 아니다");
     }
@@ -132,6 +133,7 @@ pub async fn placement(
 }
 
 pub(super) async fn prepare(cfg: &ThreadsConfig, p: ThreadPrepare, wait: Duration) -> Result<ThreadReady> {
+    cfg.check_path(&cfg.work_root)?;
     if !valid_project(&p.project) || !valid_thread(&p.thread) {
         bail!("프로젝트·thread 이름 형식이 아니다");
     }
@@ -160,6 +162,7 @@ pub(super) async fn place(
             let branch = format!("aaa/{}/{}{}", p.project, p.thread, if s.is_empty() { s } else { format!("-{s}") });
             let name = top.file_name().context("repo 이름이 없다")?;
             let cwd = cfg.work_root.join(name).join(format!("{}-{}", p.project, p.thread));
+            cfg.check_path(&cwd)?;
             if let Some(old) = &old {
                 if old.repo.as_ref() != Some(&top) || old.cwd != cwd || old.branch.as_ref() != Some(&branch) {
                     bail!("준비 journal과 요청의 repo·자리·branch가 다르다. 사람이 확인해야 한다");
@@ -232,6 +235,7 @@ pub(super) async fn place(
         }
         ThreadKind::Dir => {
             let cwd = cfg.work_root.join(&p.project).join(&p.thread);
+            cfg.check_path(&cwd)?;
             let placement = match old {
                 Some(old) if old.repo.is_none() && old.cwd == cwd => old,
                 Some(_) => bail!("준비 journal과 작업 폴더가 다르다"),
