@@ -107,6 +107,9 @@ export default async function ({ ctl, page }) {
     await pop.waitFor();
     const claude = await pop.getByRole("region", { name: "Claude · me@example.com" }).innerText();
     for (const want of ["Max", "세션", "20%", "주간", "95%", "주간 · Sonnet", "40%", "뒤 초기화"]) if (!claude.includes(want)) bad.push(`펼친 Claude에 「${want}」가 없다: ${JSON.stringify(claude)}`);
+    // 한도 다섯 줄(Claude 셋·Codex 둘)을 펼쳐도 낮다(사용자 요청 10-19 「창의 높이가 높아」, plan §8.270: 289px → 237px)
+    const popHeight = await pop.evaluate((e) => e.getBoundingClientRect().height);
+    if (popHeight > 245) bad.push(`펼친 창 높이 ${popHeight}px`);
     if (shots) await dp.screenshot({ path: path.join(shots, "usage-popover.png") });
     // 설정: 남은 양, 세션
     const dlg = await openSettings(dp, "구독 사용량");

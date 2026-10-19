@@ -2357,6 +2357,9 @@ pub enum TermServerMsg {
     /// 이 WebSocket의 front ID(처음 한 번). pane.lease.front와 같으면 이 화면이 조작 중이다.
     Front {
         id: String,
+        /// 대기 메시지 「지금 보내기」(`SteerQueued`)를 안다(1.45). 옛 host는 이 칸이 없어 웹이 단추를 숨긴다
+        #[serde(default)]
+        steer_queued: bool,
     },
     /// 붙여 넣은 그림을 대상 머신에 저장했다. `inserted`면 harness 입력창에 경로를 넣었다(Enter는 보내지 않는다).
     Attached {
@@ -2375,7 +2378,35 @@ pub enum TermServerMsg {
         id: u32,
         stage: SubmitStage,
     },
+    /// `SteerQueued`의 답(plan §8.271). `sent`면 steering 키가 pane에 들어갔다(글이 실제로 읽혔는지는 대화 기록이 말한다).
+    /// 아니면 `reason`이 까닭이고, `Failed`의 `message`는 host 오류 글이다
+    SteerQueued {
+        id: u32,
+        sent: bool,
+        reason: Option<SteerRefusal>,
+        message: Option<String>,
+    },
     Error(ErrorBody),
+}
+
+/// 대기 메시지 「지금 보내기」를 하지 않은 까닭(`TermServerMsg::SteerQueued`, plan §8.271)
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+pub enum SteerRefusal {
+    /// agent가 작업 중이 아니다(대기 글은 곧 읽힌다)
+    NotWorking,
+    /// agent가 질문·확인창에 답을 기다린다
+    Question,
+    /// harness 입력창에 보내지 않은 글이 있다(steering 키가 그 글까지 보낸다)
+    Draft,
+    /// 화면에 대기 글이 없다(이미 읽혔을 수 있다)
+    NoQueue,
+    /// 입력 상자·작업 표시를 확인하지 못했다
+    UnknownScreen,
+    /// 대기 글을 지금 보내는 키가 없는 프로그램이다
+    Unsupported,
+    /// 보내다 실패했다(권한·pane 끝남·연결)
+    Failed,
 }
 
 /// 멈춘 submit이 어디까지 갔나(`SubmitCancelled`)
@@ -2429,6 +2460,13 @@ pub enum TermClientMsg {
         id: String,
         event: crate::InputTraceEvent,
         method: Option<crate::InputReceiptMethod>,
+    },
+    /// 대기 메시지 「지금 보내기」(plan §8.271): harness 대기열에 이미 있는 글을 지금 턴에 넣는 키만 보낸다(글은 다시 보내지
+    /// 않는다). host가 입력창이 비고 대기 글이 화면에 있을 때만 키를 고르고(Claude sendNow, Codex Esc) `SteerQueued`로 답한다
+    SteerQueued {
+        id: u32,
+        #[serde(default)]
+        trace: Option<String>,
     },
     /// 진행 중인 `Submit`을 멈춰 달라(plan §8.247): 전달 전에 막혔을 때 입력창이 빠져나가는 길이다.
     /// host는 submit을 기다리는 동안에도 이것은 바로 읽고 `SubmitCancelled`로 답한다(다른 frame은 submit 뒤 차례대로).

@@ -904,7 +904,7 @@ host 프로젝트 폴더 구성:
     - 쓰다 만 글은 머신·pane마다 이 기기(localStorage, 32,768자 상한)에 남는다. 보내는 동안 친 글은 남는다.
     - 연결이 끊겨도 입력줄은 쓸 수 있고 보내기만 막힌다.
   - 키 막대(§8.43, herdr-web-ui KeyBar): Esc·Tab·^C·Ctrl·Alt·Shift·Enter·↑↓←→. 터치 기기나 폭 768px 이하에서만 보인다. Ctrl·Alt·Shift는 유지 키다. 다시 누르거나 연결이 끊길 때까지 켜져 있다(래치). 휴대폰에서는 가로로 밀어 본다.
-- **견본 도구.** `web/e2e/showcase.mjs`는 host·agent 둘(로컬·원격 등록)과 셸·가짜 Claude(작업 중·입력 대기·질문)·thread 셋·평가자가 있는 상태를 만든다. 웹 화면 8가지(데스크톱 1920×1080·휴대폰 390×844 × 어두움·밝음)를 찍는다. 디자인 검수와 전후 비교에 쓴다. `AAA_BIN`으로 옛 binary를 줄 수 있다.
+- **견본 도구.** `web/e2e/showcase.mjs`는 host·agent 둘(로컬·원격 등록)과 셸·가짜 Claude(작업 중·입력 대기·질문)·thread 셋·평가자가 있는 상태를 만든다. 웹 화면 8가지(데스크톱 1920×1080·휴대폰 390×844 × 어두움·밝음)를 찍는다. 디자인 검수와 전후 비교에 쓴다. `AAA_BIN`으로 옛 binary를 줄 수 있다. `--readme docs/media`는 README 그림(데스크톱 질문·보고, 휴대폰 목록 PNG와 coordinator → thread → 보고 흐름 GIF)을 만든다. 영상은 Chrome screencast PNG를 ffmpeg로 묶는다(녹화 영상 VP8은 작은 색 글자가 바랜다). 저장소 파일 1MiB 한도(check-public) 안에 둔다(10-19 t-0413).
 - **PWA(M3, 10-17).** 휴대폰 홈 화면에 앱으로 둔다.
   - `web/public/manifest.webmanifest`(standalone, 시작 `/`)와 아이콘(192·512·maskable·apple-touch·favicon PNG)을 둔다. 아이콘은 견본 도구처럼 headless Chromium으로 한 번 그려 저장소에 넣었다.
   - manifest와 아이콘은 인증 없이 받는다(브라우저가 cookie 없이 가져간다). 비밀이 없다.
@@ -5397,6 +5397,43 @@ primary 근거:
 - **다시 차오를 때만 알림(사용자 결정).** 앞 셈에 한도였던 thread의 풀리는 때가 지나 표지가 걷히면(`reset_due`) coordinator inbox에 `usage`·`usage reset` 항목 하나를 만든다(`inbox_once`, 끝내지 않은 같은 항목이 있으면 다시 만들지 않는다). 웹은 같은 thread 사건의 바뀜(풀리는 때가 지난 걷힘)으로 앱 안 「한도 풀림」 droplet(`reset`, 끝남 색·소리, 「작업 완료」 설정을 따른다)을 띄운다. 숫자가 내려가 일찍 걷힌 것과 목록을 다시 읽을 때는 알리지 않는다. 웹은 「때가 지났다」를 그 기기 시계로 본다: 기기 시계가 host보다 늦으면 그 기기의 「한도 풀림」 droplet이 빠질 수 있다(coordinator inbox 항목은 host 시계라 그대로, 목록 색도 같은 차이만큼 늦게 걷힌다). 외부 push가 아니다(§8.249). `NoticeKind`에 종류를 더하지 않았다: 옛 CLI가 모르는 사건을 읽지 못한다. 참고와 다른 곳: 참고는 한도에 막힐 때 알리고(`ThreadNotificationCoordinator.tsx:141`) 다시 시작을 예약할 수 있다(`UsageLimitRecoveryBanner`). aaa는 사용자 결정대로 다시 차오를 때만 알리고 저절로 잇지 않는다.
 - **시험 고리.** `AAA_TEST_USAGE_REFRESH_MS`(시험에서만): 구독 숫자 억지 다시 읽기 간격(30초)을 줄인다.
 - **검증.** host 유닛 `usage_limit::tests`(다 찬 창의 때, 다시 차오른 뒤 없음, 99.9%·때 모름은 아님, 둘 다 차면 늦은 때, 모델 몫, 두 계정은 단정 안 함, 다시 차오름은 풀리는 때가 지났을 때만). 웹 유닛 `stateTone`(한도는 실패 다음, 풀리는 때 뒤 걷힘, 작업 중·확인창이 앞). 웹 E2E 32: harness가 claude인 가짜 profile thread에 가짜 구독 5시간 창 100%면 host 보기의 풀리는 때와 목록 줄 경고 색·남은 때, 숫자가 내려가면 걷힘. 10초 뒤 다시 차오르는 창이면 그 뒤 ticker에 걷히고 inbox 항목 하나(다음 ticker도 하나), 다른 pane을 보는 화면에 「한도 풀림」 droplet 하나. 결함 심기: 웹 한도 판정을 끄면 첫 단계, 한도 풀림 판정을 끄면 둘째 단계가 실패한다.
+
+### 8.268 Claude 내부 user 기록과 사람 발언 구분(10-19, t-0408 후속)
+
+- Claude Code2.1.303의 실제 JSONL은 백그라운드 종료 알림도 `type=user`로 남기되 `origin.kind=task-notification`으로 구별한다. peer 알림, `isMeta`, `isCompactSummary` 기록도 사람 발언이 아니다. 역할만 보고 사용자 말풍선이나 수신 확인으로 쓰지 않는다.
+- t3code `AgentSessionScanner`의 구조 필드 우선 필터와 ClaudeAdapter의 비사람 origin 구분을 따른다. `isSidechain`·`isMeta`·`isCompactSummary`·`isSynthetic`는 제외하고, origin이 있으면 human인 글만 사람으로 읽는다. 별도 시스템 줄은 추가하지 않는다.
+- human origin의 글은 XML 표지로 시작해도 원문과 수신 fingerprint를 보존한다. origin이 없는 옛 기록·대기열만 기존 표지 판별을 마지막 수단으로 쓴다. 붙여넣기 봉투를 걷어 내부 알림인지 추측하지 않는다.
+- user 문자열·text/image 블록·흡수된 queued_command·미흡수 enqueue가 같은 구분을 쓴다. 숨긴 queue 항목도 원문 식별과 자리는 보존해 remove/dequeue 순서를 바꾸지 않는다.
+- parser keeper와 실제 host·agent 웹 E2E에서 내부 알림 숨김, 같은 내용의 내부 알림이 receipt가 되지 않음, 사람이 보낸 동일 모양 글의 표시·잠금 해제를 고정한다.
+
+### 8.269 공유 설정의 전송 중 되돌리기와 빠른 답장(10-19, t-0408 후속·t-0413 실패 조사)
+
+- t-0413의 E2E11 실패는 yes submit이 없고 host 설정이 autoSendQueued=false·showQuickReplies=true로 남았다. 최초 응답 순서는 남지 않아 그 실행의 원인을 단정하지 않는다.
+- 별도 실제 host·agent 브라우저 E2E에서 끔 요청의 응답만 붙잡고 다시 켠 뒤 해제하면 같은 증상을 결정적으로 재현한다. 이전 기준값과 같아진 새 편집을 '변경 없음'으로 보아 늦은 끔 응답으로 덮던 제품 경쟁이다.
+- takePreferences는 전송 중인 설정·고정의 값과 현재 값을 비교해 그 이후 편집을 지킨다. 전송 중이 아니면 기존 baseline 비교, 이미 보낸 값과 같으면 다른 기기의 나중 쓰기를 받는 계약은 유지한다. 켬→끔 전송→켬도 늦은 응답 뒤 true를 다시 공유하며 빠른 답장이 실제 전송된다.
+- E2E11은 실제 HTTP 응답 gate와 다음 preferences_set 사건으로 순서를 고정한다. 요청 routing을 위해 이 단계만 service worker 없는 별도 기기를 쓴다. timeout·sleep·재시도를 늘리지 않으며 빠른 답장이 프로그램에 가야 한다는 기대는 유지한다.
+
+- HTTP 답만 유실되고 host 사건을 보관한 경우도 같은 전송 값으로 이후 편집을 판정한 뒤 inFlight를 비운다. E2E14는 실제 host 적용·events 수신 뒤 HTTP 응답만 abort해 이 경로를 고정한다.
+
+### 8.270 웹 사이드바 구독 사용량 펼친 창을 낮게(10-19, t-0416)
+
+- **요청.** 사용자 「왼쪽 밑에 남은 사용량 있는 창의 높이가 높아. 적당히 수정해.」 대상은 바닥 줄 칩을 누르면 뜨는 펼친 창(`.usage-popover`)이다. 바닥 줄 자체(데스크톱 49px, 휴대폰 61px, 칩 단추 `--control`·`--touch`)는 참고 herdr-web-ui sidebar-footer와 같아 그대로 둔다.
+- **참고와의 관계.** aaa의 `.usage-*`는 herdr-web-ui `UsageMeters.css`(aa624cb)와 같은 값이다. 참고는 다시 읽기 단추가 `.icon-button`(32px)이라 오히려 더 높다. 이번 줄임은 참고에서 의도해 벗어난 것이다. t3code는 사이드바 바닥에 「Usage」 단추만 두고 따로 화면을 연다.
+- **바꾼 것(정보는 같다).** 한도 줄은 `line-height: var(--lh-tight)`(12px × 1.5 → 1.2)에 이름과 막대 사이 2px(전 `--space-1`), 구독 안 간격 `--space-1`(전 `--space-2`), 창 아래 여백 `--space-2`(전 `--space-3`). 한도 줄 26px → 20.4px, Claude 묶음 130.5px → 101.7px, Codex 묶음 96.5px → 77.3px, 창 289px → 237px(−18%). 데스크톱 1280×800·휴대폰 390×844, 기본·GitHub Dark 모두 같은 값이다.
+- **더 줄이려면.** 초기화까지 남은 때를 막대 줄에 겹치거나 계정 줄을 빼야 한다. 보이는 정보를 바꾸므로 하지 않았다.
+- **검증.** 웹 E2E 06 「구독 사용량·설정」이 한도 다섯 줄을 펼친 창 높이가 245px 이하인지 본다. 바꾸기 전 CSS로는 289px로 실패했다. 26 「막대·바닥 줄 배치」는 바닥 줄이 그대로임을 본다.
+
+### 8.271 대기 메시지 「지금 보내기」(10-19, t-0417)
+
+- **무엇.** 작업 중에 보내 harness 대기열에 이미 있는 글(대기 말, §8.247)을 기다리지 않고 지금 읽게 한다. 대기 묶음의 맨 끝 말에 단추 하나(「지금 보내기」, 둘 이상이면 「N개 지금 보내기」, ArrowUp)를 둔다. 참고 herdr-web-ui `PendingMessages.tsx`의 문구·모양이다. 취소 단추는 없다(사용자 결정 10-19 20:5x: 추천안 1~5).
+- **글을 다시 보내지 않는다.** 글은 이미 harness 대기열에 있으므로 웹은 `steer_queued { id, trace }`만 보내고 host가 키를 고른다. Claude는 sendNow(Ctrl+X Ctrl+S, 빈 입력이면 대기열 전부를 보낸다), Codex는 Esc(대기 steering이 있으면 그것을 보낸다)다. 키가 대기열 전부를 보내므로 단추는 말마다가 아니라 묶음에 하나다.
+- **host 판정(`queued_steer_keys`).** agent가 작업 중이고, 질문이 없고, 입력 상자가 비었고, 대기 글이 화면에 보일 때만 쓴다. Claude는 입력 상자 위 20줄 안에 `… to send now` 줄(실측 2.1.303, fixture `claude-queued.ansi`), Codex는 `Messages to be submitted after next tool call` 패널의 `↳`와 입력 줄 처음의 커서다. 그 밖은 쓰지 않고 까닭을 답한다(`SteerRefusal`: `not_working`·`question`·`draft`·`no_queue`·`unknown_screen`·`unsupported`·`failed`). 보기 권한 기기는 판정 전에 `failed`다.
+- **Codex 쓰기 직전 재확인.** 판정과 PaneInput 쓰기 사이에 다른 기다림이 없어 Esc는 패널을 확인한 같은 mirror 상태에서 나간다. 남는 틈은 agent까지 가는 길이다: 그 사이 Codex가 대기 steer를 넘기면 Esc는 지금 도구 호출을 끊는 보통 중단이 된다(받아들인 위험).
+- **화면.** 작업 중에만 보이고, 질문 중이면 「질문에 답하면 대기 글이 이어서 읽힙니다」와 함께 꺼지며, 이 기기 글을 보내는 중(입력창 잠김)이면 잠깐 꺼진다. 누르면 「보내는 중…」, 답이 `sent`면 대기 말이 기록에서 빠질 때까지 기다리고(대화를 바로 다시 읽는다) 10초 지나도 그대로면 알린다. 거절·연결 끊김은 단추 아래 까닭 줄과 「터미널 보기」다. 터치 기기는 단추 높이 32px.
+- **옛 host.** `front.steer_queued`(FRONT_API 1.45)가 없으면 단추를 숨긴다. 옛 웹은 새 칸을 버린다.
+- **입력 진단.** 같은 trace에 `steer_queued`(고른 키 또는 거절 까닭, working·synced·커서·화면 근거·queue_hint), `steer_sent`, `steer_failed`를 남긴다. 글 본문은 남기지 않는다([입력 진단](input-debug.md)).
+- **실측.** Claude 2.1.303 sendNow는 하던 shell을 배경으로 돌리고(끊지 않음) 대기 글을 `remove reason=absorbed_mid_turn` + `attachment queued_command`로 흡수했다. Codex 0.163은 exec가 배경 터미널이면 작업 중 글을 거의 바로 넘겨(rollout에 바로 적힘) 패널이 잘 보이지 않는다: 그때 단추는 `no_queue`로 거절해 「이미 읽었을 수 있습니다」를 보인다.
+- **검증.** host 유닛 `ctrl_enter::tests`(실제 Claude 화면 두 fixture, Codex 패널·커서). 웹 유닛 `steerQueued.test.mjs`(보임·꺼짐, 개수 문구, 까닭 문구, 10초 알림). 웹 E2E 23(가짜 Claude 대기열 enqueue·sendNow 흡수, 단추 하나, 쓰던 글 거절과 bytes 없음, 옛 host 숨김, 휴대폰 크기, 가짜 Codex 패널 Esc 흡수와 패널 없는 거절, 입력 진단)과 25(감지 pane마다 frame을 넣어 bytes·까닭, 보기 기기 거절). 결함 셋을 심어 실패를 확인했다: host가 쓰던 글을 무시함(23·25 실패), 웹이 거절 답을 버림(23 실패), 모든 대기 말에 단추(23 실패).
 
 ### 8.272 착지 뒤 CI 조건부 조회와 실패 임무(10-19, t-0420)
 

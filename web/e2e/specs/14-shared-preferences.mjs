@@ -160,4 +160,51 @@ export default async function ({ ctl, page }) {
     }
   });
 
+
+  await step("설정 되돌리기: host 사건은 왔지만 이전 HTTP 응답만 유실돼도 다시 켠 자동 전송은 남아 다음 쓰기로 간다", async () => {
+    let offSeen = false;
+    const client = await pairPage(browser, aaa("web", "pair").code, { width: 1280, height: 800 }, {
+      serviceWorkers: "block",
+      onPage: p => p.on("websocket", ws => ws.on("framereceived", frame => {
+        if (typeof frame.payload !== "string") return;
+        try { const v = JSON.parse(frame.payload); if (v.ev === "preferences" && v.settings?.autoSendQueued === false) offSeen = true; } catch {}
+      })),
+    });
+    const p = client.page;
+    let release;
+    const gate = new Promise(resolve => { release = resolve; });
+    const hold = async route => {
+      const v = route.request().postDataJSON();
+      if (v?.op === "preferences_set" && v.settings?.autoSendQueued === false) {
+        await route.fetch(); // host에 실제 적용하고 events도 보내되 HTTP 답만 잃는다.
+        await gate;
+        await route.abort("failed");
+      } else await route.continue();
+    };
+    await p.route("**/api/v1/call", hold);
+    try {
+      const d = await openSettings(p, "채팅");
+      const toggle = d.getByRole("switch", { name: "대기 메시지 자동 전송" });
+      if (await toggle.getAttribute("aria-checked") !== "true") throw new Error("초기 자동 전송이 켜져 있지 않다");
+      await toggle.click();
+      await until("host의 끔 사건 수신", () => offSeen);
+      await toggle.click();
+      let resent;
+      p.on("request", r => { const v = r.url().endsWith("/api/v1/call") ? r.postDataJSON() : null; if (v?.op === "preferences_set" && v.settings?.autoSendQueued === true) resent = r; });
+      const failed = p.waitForEvent("requestfailed", r => r.url().endsWith("/api/v1/call") && r.postDataJSON()?.settings?.autoSendQueued === false);
+      release();
+      await failed;
+      await until("유실 응답 뒤 로컬 변경 처리", async () => !!resent || await toggle.getAttribute("aria-checked") !== "true");
+      if (await toggle.getAttribute("aria-checked") !== "true") throw new Error("유실된 끔 응답의 보관 사건이 새 켬을 덮었다");
+      const response = await resent.response();
+      const saved = await response.json();
+      if (saved.ok?.settings?.autoSendQueued !== true) throw new Error("되돌린 켬을 host에 다시 쓰지 못했다");
+      console.log('quick-reply-lost-response {"keptOn":true,"resentOn":true,"hostOn":true}');
+    } finally {
+      release();
+      await p.unroute("**/api/v1/call", hold);
+      await p.context().close();
+    }
+  });
+
 }

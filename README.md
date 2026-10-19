@@ -1,94 +1,142 @@
 # aaa
 
-**aaa = Any Agent, Anywhere.** 어느 머신의 어떤 agent든 한곳에서 다룹니다.
+**aaa = Any Agent, Anywhere.** 여러 Mac에서 도는 Claude Code·Codex를 한 화면에서 보고 움직입니다.
 
-여러 머신의 agent를 오케스트레이션하는 프로젝트입니다.
-CLI를 중심으로 tmux 같은 세션 관리와 웹 접근을 제공합니다.
+- **한 목록**: 모든 머신의 agent·터미널·thread가 상태(작업 중·질문·검토 대기·확인 필요)와 함께 한 목록에 모입니다.
+- **웹 터미널**: 브라우저나 휴대폰에서 바로 치고, agent의 확인창에는 카드로 답합니다.
+- **일 맡기기**: 프로젝트의 coordinator에게 말하면 일을 thread로 나눠 여러 머신에 맡기고, 끝나면 보고서가 옵니다.
+- **끊겨도 이어짐**: 세션은 각 머신이 지킵니다. 웹을 닫거나 서비스를 다시 띄워도 agent는 계속 돕니다.
 
-보고서 올리기·실시간 폴더·일괄 이전·정리는 [보고서 운영](docs/library.md)을 참고하세요.
+![coordinator에 일을 맡기면 다른 머신의 thread가 일하고 보고가 온다](docs/media/flow.gif)
 
-기획이 승인되어 구현을 진행하고 있습니다. [프로젝트 계획](docs/plan.md)을 참고하세요.
-
-- **host**: 중심 머신 1대. 목록·layout·thread·권한의 정본을 갖고 웹에 화면을 보낸다.
-- **agent**: 각 머신. 세션(PTY)을 띄우고 지킨다. host가 다시 시작해도 세션은 이어진다.
-- **front**: 웹. 상태를 갖지 않고 host하고만 말한다.
-
-## 설치
-
-macOS 기준 요약입니다. 순서·확인 기준은 [운영 설치 점검표](docs/install-runbook.md), 설계는 [계획 §10·§15](docs/plan.md)에 있습니다. 아래에서 머신 이름은 `mac-a`(host)·`mac-b`, 주소는 `example.ts.net` 예시입니다.
-
-1. **빌드하고 고정 경로에 둔다(각 Mac).** 처음에는 rename으로 둡니다. 업그레이드는 `aaa update`가 같은 폴더에서 새것을 검사한 뒤 바꾸고 옛것을 보관합니다(사람이 터미널에서 `yes`, 되돌리기는 `aaa update rollback`).
-
-   ```bash
-   cargo build --release -p aaa
-   install -m 755 target/release/aaa ~/.local/bin/aaa.new && mv ~/.local/bin/aaa.new ~/.local/bin/aaa   # 처음
-   ~/.local/bin/aaa update --from target/release/aaa                                                     # 업그레이드
-   ```
-
-2. **설정.** `aaa config example host`·`aaa config example agent`로 예시를 보고 `~/.config/aaa/`에 둡니다. `aaa config check`로 확인합니다.
-   - `host.toml`(host만): agent link listen(`0.0.0.0:7430`), 웹 listen(`127.0.0.1:<port>`), 프로젝트 폴더.
-   - `agent.toml`(각 Mac): host 주소(host Mac은 `"local"`, 다른 Mac은 `"mac-a.example.ts.net:7430"`), 작업 폴더와 필요한 `[harnesses.<종류>] command/env` 덮어쓰기. profile 정의는 host Mac의 `host.toml [profiles.<이름>]` 한 곳(`agent`·`model`·`effort`·`description`·`args`)에 둡니다. `claude`·`codex`는 기본 profile이며 더하려면 host 터미널에서 `aaa profile add`를 씁니다. yolo·쓸 수 있는 profile은 host에서 사람이 `aaa safety`·`aaa profile allow`로 정합니다(plan §8.170).
-3. **감독자 설치(사람이 직접, 각 Mac).** launchd를 바꾸므로 자기 터미널에서 `yes`를 입력합니다. host Mac은 host를 agent보다 먼저 설치합니다.
-
-   ```bash
-   ~/.local/bin/aaa service install --role host  --aaa ~/.local/bin/aaa   # host Mac만
-   ~/.local/bin/aaa service install --role agent --aaa ~/.local/bin/aaa   # 모든 Mac
-   ```
-
-4. **다른 Mac 등록.** host Mac에서 `aaa machine enroll --open 10m`을 실행합니다. 다른 Mac에서 `aaa agent enroll mac-a.example.ts.net:7430`을 실행하면 확인 코드가 나옵니다. host Mac에서 `aaa machine approve mac-b --code <코드>`로 승인합니다. 끝나면 `aaa machine list`에서 모두 「연결」인지 봅니다.
-5. **웹 공개와 pairing.** `aaa web publish`가 tailnet 안 HTTPS로 공개합니다(기존 `tailscale serve` 항목은 덮지 않습니다). `aaa web pair`가 주는 코드를 브라우저에 입력합니다. 보기만 할 기기는 `aaa web pair --reader`입니다.
-
-## 사용법
-
-### 웹
-
-- **목록**: 왼쪽에 프로젝트별 thread(모든 머신의 thread를 한 묶음에, 둘째 줄에 상태 말과 머신 이름)와 thread에 딸리지 않은 pane의 「기타」 묶음(줄마다 머신 이름), 그 아래 머신 칸(연결·끊김·새 pane)이 보입니다. 상태(작업 중·입력 대기·질문·검토 대기·확인 필요·쉼)와 질문 카드가 위에 뜹니다. 아래 「Agents」는 설정 → 모양 「에이전트 정렬」에서 활동순(질문 먼저, 그다음 최근 바뀐 것)으로 바꿀 수 있습니다.
-- **새 pane**: 머신 칸의 머신 이름 옆 `+`나 `⌘⇧O`(Windows·Linux `Ctrl+Shift+O`)로 창을 엽니다. 셸이나 그 머신 `agent.toml`의 profile, 폴더(절대 경로나 `~/…`, 최근 폴더), 이름을 고르고 「시작」합니다.
-- **터미널**: pane을 누르면 터미널이 열립니다. 직접 쳐도 되고, 아래 **입력 막대(composer)** 를 써도 됩니다.
-  - Enter는 보내기, Shift+Enter는 줄바꿈입니다. 휴대폰에서는 Enter가 줄바꿈이고 보내기는 단추입니다.
-  - Ctrl+Enter는 줄바꿈 없이 harness steering입니다. 입력 막대나 대화 입력창에 글이 있으면 그 글을 보냅니다. agent가 작업 중이면 지금 턴에 넣고(Claude는 글 뒤 Ctrl+X Ctrl+S, Codex는 글 뒤 Enter), 쉬는 중이면 보내기와 같습니다. 보내기처럼 반영될 때까지 입력창이 잠깁니다. 글이 없으면 작업 중일 때만 대기 메시지를 지금 보내고(Claude Ctrl+X Ctrl+S, Codex 대기 steer는 Esc), 쉬는 중이거나 입력 상자를 알아보지 못하면 아무것도 보내지 않습니다.
-  - 키 줄은 Esc·Tab·Ctrl·Alt·방향키 등입니다. 그림은 붙여 넣거나 끌어 놓습니다.
-- **크기와 입력(가져오기 없음)**: 보기 권한이 아니면 언제나 입력됩니다. PTY 크기는 「지금 쓰는 화면」이 정합니다. 입력하거나 터미널을 누르거나 창 focus를 얻은 화면이 자기 크기로 다시 겁니다. 탭이 1초 넘게 가려지면 놓습니다. 「화면에 맞추기」로 직접 맞출 수도 있습니다.
-- **대화**: Claude·Codex pane은 「대화」로 기록을 읽기 전용으로 봅니다. 휴대폰은 agent pane을 처음부터 대화로 엽니다(설정 → 채팅 「패널 기본 화면」). 「생각 표시」를 켜면 agent의 생각도 접힌 줄로 보입니다. 대화 아래 입력창에서 바로 보내고, 「대기 메시지 자동 전송」을 끄면 작업 중에 쓴 글은 「지금 보내기」까지 붙잡아 둡니다. 빠른 답장 칩도 켤 수 있습니다.
-- **알림 켜기**: 목록 아래 단추입니다. 기기 알림(Web Push)은 coordinator가 보낸 「확인 필요」·「전체 완료」 post만 받습니다. thread 질문·보고는 앱 안 알림으로 확인합니다. iPhone은 홈 화면 앱(Safari 공유 → 홈 화면에 추가)에서만 켤 수 있습니다.
-
-### 삭제된 기능: TUI
-
-2026-10-19부터 TUI 코드·의존성·전용 시험을 삭제했습니다. 화면은 웹 UI를 씁니다. host에서 `aaa web status`로 주소를 확인합니다. 옛 `aaa attach`와 TUI front 접속도 삭제 안내로 거절합니다.
-
-삭제 직전 main은 annotated tag `tui-last`로 보존합니다. 이유·삭제 커밋·복구 방법·삭제 목록은 [삭제 기록](docs/removed-tui.md)에 있습니다.
-
-### 자주 쓰는 CLI
-
-| 명령 | 하는 일 |
+| 질문에 웹에서 답하기 | thread 보고서 |
 |---|---|
-| `aaa machine list` | 머신 연결·디스크·이상 |
-| `aaa service restart\|stop\|start --role host\|agent` | 감독자(launchd)로 다시 띄우기(업그레이드 뒤) · 멈추기 · 띄우기. 사람이 터미널에서(`yes`). restart는 아래 coordinator 배포 허용도 가능 |
-| `aaa update --from <파일> [--dry-run]` · `aaa update rollback [이름]` · `aaa update list` | 지금 실행 파일을 주어진 빌드로 바꾸기(self-check·`[update] version` 고정 검사 뒤 rename, 옛것은 옆 `.aaa-old/`에 `[update] keep`개) · 보관한 것으로 되돌리기 · 보관 목록. 바꾸기·되돌리기는 사람이 터미널에서(`yes`), 도는 host·agent는 `aaa service restart`로 다시 띄웁니다. 사람이 `aaa safety set <프로젝트> coordinator_deploy on`을 켠 뒤 사용자 채팅 지시를 받은 coordinator는 `--machine`으로 update·rollback·restart를 직접 실행하고 `aaa update status <ID> --wait`로 확인합니다([절차](docs/install-runbook.md#coordinator가-요청받은-배포를-실행하기10-19)) |
-| `aaa pane list` · `aaa pane read <pane>` | pane 목록 · 최근 출력 글(`--source visible`이면 지금 화면) |
-| `aaa tab create --machine mac-b -- <명령>` | 새 탭에 새 pane |
-| `aaa pane run <pane> "…"` | 명령 실행(글 + Enter, 사람의 attach에 막히지 않음) |
-| `aaa pane send-text <pane> "…"` · `aaa pane send-keys <pane> enter` | 글만 · 키만 보내기 |
-| `aaa pane wait-output <pane> --match "…" --timeout 30000` | 출력에 글이 나올 때까지 기다리기 |
-| `aaa question list` · `aaa question answer <id> yes` | 확인창 질문 보기·답하기 |
-| `aaa project create <p> --goal "…" --repo <경로>[@머신] --thread-profile codex` · `aaa context <p>` | 프로젝트 만들기 · coordinator 요약(할 일·열린 thread·inbox) |
-| `aaa project set <p> <key> <값>` | project.toml 값 하나 바꾸기(goal·thread_profile·coordinator_profile·max_parallel_threads·auto_resolve_days·repos.add·repos.remove) |
-| `aaa project open <p> [--profile 이름] [--new]` | coordinator 열기: 돌고 있으면 그 pane을 알리고, 없으면 host 머신에서 프로젝트 폴더로 띄워 workspace `<p>`의 탭 coordinator에 둠(profile 기본: project.toml → `aaa profile default coordinator` → claude) |
-| `aaa project pause\|resume\|archive\|unarchive <p>` | 멈추기(ticker·thread start 멈춤) · 보관(목록에서 숨기고 pane을 닫음) |
-| `aaa project rename <p> <새 이름>` · `aaa project delete <p>` · `aaa project sweep <p>` | 이름 바꾸기 · 휴지통으로(worktree·branch는 그대로) · 끝난 thread가 남긴 worktree·병합된 branch 치우기 |
-| `aaa doctor files [--fix]` | 모든 프로젝트의 coordinator 안내(AGENTS.md)·uploads/·pr-followup routine 보기 · 낡은 안내를 지금 aaa 것으로 다시 쓰기(사람이 쓴 파일은 `.before-aaa`로 옮겨 둠) |
-| `aaa thread start <p> --title "…" --machine mac-b --profile codex --kind dir --task-file task.md` | thread 시작 |
-| `aaa thread adopt <p> --pane <ID> --title "…"` | 이미 띄운 Claude·Codex pane(셸에서 친 것은 감지된 뒤)을 thread로 데려오기(pane은 그대로, 다시 시작·resolve가 pane을 끝내지 않음) |
-| `aaa thread list <p>` · `aaa thread show <p> <id>` | thread 목록 · 보고·Next 보기 |
-| `aaa thread ack <p> <id>` · `aaa thread resolve <p> <id>` | 보고 확인 · 끝내기(worktree 정리) |
-| `aaa inbox list <p>` · `aaa inbox done <p> <id>` | 보고·질문·끊김 같은 놓치면 안 되는 항목 |
-| `aaa routine list <p>` · `aaa routine toggle <p> <이름> --off` | 일정 작업과 PR 사건 routine(`on = "pr"`: thread PR의 check 실패·리뷰에 thread로 글을 보낸다) |
+| ![Claude 확인창이 웹 카드로 뜬다](docs/media/question.png) | ![thread가 쓴 보고와 결과물](docs/media/report.png) |
 
-모든 명령은 `--json`으로 기계가 읽는 출력을 줍니다. `pane`·`tab`·`workspace`는 늘 JSON 한 줄이고, 실패하면 stderr에 `{"error":…}`를 쓰고 종료 코드 1입니다(herdr와 같다). 셸 완성은 `aaa completion zsh`(bash·fish·elvish·powershell)입니다. 자세한 것은 `aaa <명령> --help`입니다.
+<p align="center"><img src="docs/media/phone.png" width="300" alt="휴대폰에서 본 프로젝트·thread 목록"></p>
+
+> 화면은 가짜 머신(`mac-a`·`mac-b`)과 가짜 agent로 찍었습니다. 다시 찍기: `node web/e2e/showcase.mjs --readme docs/media`(아래 「개발」).
+
+## Mac에 설치
+
+Mac 한 대(**host Mac**)에 host와 agent를 두고, 다른 Mac은 agent만 더합니다. ✋ 표시는 사람이 직접 하는 단계입니다(GUI 설정이나 터미널에서 `yes` 입력). 순서와 확인 기준은 [운영 설치 점검표](docs/install-runbook.md)에 자세히 있습니다.
+
+**준비물**: [Tailscale](https://tailscale.com/download/mac)(로그인), Xcode Command Line Tools(`xcode-select --install`), 쓸 agent CLI(`claude`·`codex`, 로그인까지).
+
+### 1. aaa 받기
+
+공개 [release](https://github.com/cLazyZombie/aaa/releases)에서 받아 체크섬을 확인하고 `~/.local/bin/aaa`에 둡니다. Intel Mac은 `aaa-macos-aarch64`를 `aaa-macos-x86_64`로 바꿉니다.
+
+```bash
+cd ~/Downloads
+curl -fLO https://github.com/cLazyZombie/aaa/releases/latest/download/aaa-macos-aarch64
+curl -fLO https://github.com/cLazyZombie/aaa/releases/latest/download/SHA256SUMS
+grep ' aaa-macos-aarch64$' SHA256SUMS | shasum -a 256 -c     # 「OK」가 나와야 한다
+mkdir -p ~/.local/bin && install -m 755 aaa-macos-aarch64 ~/.local/bin/aaa
+~/.local/bin/aaa --version
+```
+
+명령은 늘 전체 경로 `~/.local/bin/aaa`로 칩니다(launchd·셸의 PATH에 기대지 않습니다).
+
+### 2. launcher 등록(한 번) ✋
+
+서비스는 작은 고정 launcher(`~/Applications/aaa-launcher.app`)가 띄웁니다. aaa를 바꿔도 이 등록은 다시 하지 않습니다.
+
+```bash
+git clone --depth 1 https://github.com/cLazyZombie/aaa ~/src/aaa
+bash ~/src/aaa/p0/launcher/install.sh
+```
+
+✋ **시스템 설정 → 개인정보 보호 및 보안**에서 `~/Applications/aaa-launcher.app`(홈 폴더 → 응용 프로그램)을 **개발자 도구**와 **전체 디스크 접근 권한** 두 목록에 「+」로 넣고 켭니다. 자세한 것은 [P0 절차서](docs/p0-runbook.md)에 있습니다.
+
+### 3. 설정
+
+```bash
+mkdir -p ~/.config/aaa
+~/.local/bin/aaa config example host | sed 's/^mode = "child"/mode = "launchd"/' > ~/.config/aaa/host.toml   # host Mac만
+~/.local/bin/aaa config example agent > ~/.config/aaa/agent.toml
+~/.local/bin/aaa config check
+```
+
+host의 `[local_agent] mode`를 `launchd`로 바꿔 agent는 따로 서비스로 띄웁니다. 나머지는 예시 그대로 써도 됩니다(값 설명은 예시 파일의 주석).
+
+### 4. 서비스 설치 ✋
+
+launchd에 등록하므로 자기 터미널에서 치고 `yes`를 입력합니다. host를 agent보다 먼저 설치합니다. macOS가 「백그라운드 항목이 추가됨」을 띄우면 허용합니다.
+
+```bash
+~/.local/bin/aaa service install --role host  --aaa ~/.local/bin/aaa   # host Mac만
+~/.local/bin/aaa service install --role agent --aaa ~/.local/bin/aaa
+~/.local/bin/aaa status                                                # 로컬 머신이 연결돼 있으면 된다
+```
+
+Codex를 쓰면 hook도 설치합니다. 새 Codex 세션의 Hooks 화면에서 aaa hook을 신뢰합니다(✋).
+
+```bash
+~/.local/bin/aaa integration install codex
+~/.local/bin/aaa doctor
+```
+
+### 5. 웹과 휴대폰
+
+```bash
+~/.local/bin/aaa web publish     # tailnet 안 HTTPS로 공개하고 주소를 보인다(기존 tailscale serve 항목은 건드리지 않는다)
+~/.local/bin/aaa web pair        # 1회용 코드. 보기만 할 기기는 --reader
+```
+
+✋ 브라우저나 휴대폰에서 그 주소를 열고 코드를 넣습니다. iPhone은 Safari 공유 → 「홈 화면에 추가」로 앱처럼 쓰고, 알림은 그 앱에서 켭니다.
+
+### 6. 다른 Mac 더하기
+
+다른 Mac에서 1·2단계를 하고, `agent.toml`만 만들어 host 주소를 적습니다(`mac-a`는 host Mac의 tailnet 이름).
+
+```bash
+mkdir -p ~/.config/aaa
+~/.local/bin/aaa config example agent | sed 's/^host = "local"/host = "mac-a.example.ts.net:7430"/' > ~/.config/aaa/agent.toml
+```
+
+그리고 agent 서비스를 설치하고(✋) host에 등록합니다.
+
+```bash
+~/.local/bin/aaa service install --role agent --aaa ~/.local/bin/aaa   # ✋ 새 Mac
+~/.local/bin/aaa machine enroll --open 10m                     # host Mac: 등록 창을 연다
+~/.local/bin/aaa agent enroll mac-a.example.ts.net:7430        # 새 Mac: 확인 코드가 나온다
+~/.local/bin/aaa machine approve mac-b --code <코드>           # host Mac: 새 Mac 이름과 그 코드로 승인
+~/.local/bin/aaa machine list                                  # host Mac: 모두 「연결」
+```
+
+### 업데이트
+
+✋ 각 Mac의 일반 터미널에서 새 release로 바꾸고(`yes`) 서비스를 다시 띄웁니다. host Mac부터, host → agent 순서입니다. 세션은 그대로 이어집니다.
+
+```bash
+~/.local/bin/aaa update                          # 최신 release를 받아 검사 뒤 교체(--dry-run이면 검사만)
+~/.local/bin/aaa service restart --role host     # host Mac만
+~/.local/bin/aaa service restart --role agent
+```
+
+되돌리기는 `aaa update rollback`입니다. 판 고정·여러 머신 순서는 [점검표 9](docs/install-runbook.md#9-업그레이드)에 있습니다.
+
+## 시작하기
+
+```bash
+~/.local/bin/aaa project create shop --repo ~/work/shop   # 프로젝트(저장소는 PATH 또는 PATH@머신)
+~/.local/bin/aaa project open shop                        # coordinator를 띄운다
+```
+
+웹 목록에서 coordinator를 열고 할 일을 말하면 됩니다. 웹 화면·단축키·CLI는 [사용법](docs/usage.md)에 있습니다.
+
+## 더 읽기
+
+- [사용법](docs/usage.md): 웹 화면, 자주 쓰는 CLI
+- [운영 설치 점검표](docs/install-runbook.md): 설치·업그레이드·되돌리기·coordinator 배포
+- [보고서 운영](docs/library.md): 보고서 올리기·실시간 폴더·정리
+- [프로젝트 계획](docs/plan.md): 구조(host·agent·front)와 설계 결정
+- [시험 쓰는 법](docs/testing.md)
 
 ## 개발
 
-CI(`.github/workflows/ci.yml`)와 같은 단계를 로컬에서 한 번에 돈다. 단계의 명령은 `scripts/ci-local.sh`에만 있고 CI도 이 스크립트를 단계별로 부른다(로컬과 CI의 명령이 어긋나지 않는다).
+CI(`.github/workflows/ci.yml`)와 같은 단계를 로컬에서 한 번에 돈다. 단계의 명령은 `scripts/ci-local.sh`에만 있고 CI도 이 스크립트를 단계별로 부른다.
 
 ```sh
 bash scripts/ci-local.sh                     # 전부: web fmt build clippy test e2e public
@@ -96,10 +144,14 @@ bash scripts/ci-local.sh --only test,e2e     # 고른 단계만
 bash scripts/ci-local.sh --skip e2e          # 빼고 전부
 ```
 
-- 끝에 단계마다 시작·끝 시각, 걸린 시간, 결과를 요약한다. 실패한 단계는 로그 위치를 보인다(기본 `target/ci-local/<시각>/<단계>.log`). 하나라도 실패하면 1로 끝난다. 실패를 다시 돌려 통과시키지 않는다.
-- web·fmt·build를 차례로 돈 뒤 서로 기대지 않는 `test`·`e2e`·`clippy`는 함께 돈다(test가 가장 긴 길이다). `--tee`이거나 그중 하나만 고르면 차례로 돈다.
-- `e2e`는 웹 E2E(Playwright Chromium·WebKit, 한글 IME 기록 재생 포함)다. Unix만이고 playwright를 전역 npm 모듈로 찾는다: `npm install -g playwright@1.59.1 && npx playwright@1.59.1 install chromium webkit`.
-- `public`은 공개 저장소 검사(`scripts/check-public.sh`)다. CI와 push 전 로컬에서 검사한다.
+- 끝에 단계마다 걸린 시간과 결과를 요약하고, 실패한 단계는 로그 위치(`target/ci-local/<시각>/<단계>.log`)를 보인다. 실패를 다시 돌려 통과시키지 않는다.
+- `e2e`는 웹 E2E(Playwright Chromium·WebKit)다. Unix만이고 playwright를 전역 npm 모듈로 찾는다: `npm install -g playwright@1.59.1 && npx playwright@1.59.1 install chromium webkit`.
+- `public`은 공개 저장소 검사(`scripts/check-public.sh`)다. push 전에 돈다. 저장소 파일은 1MiB를 넘지 못한다.
+- README 그림은 가짜 실험실로 다시 찍는다(ffmpeg 필요). 영상 폴더를 더 주면 mp4도 만든다.
+  ```sh
+  (cd web && npm run build) && cargo build -p aaa
+  NODE_PATH=$(npm root -g) node web/e2e/showcase.mjs --readme docs/media
+  ```
 
 ## 라이선스
 

@@ -130,6 +130,8 @@ export interface ChatComposerProps {
   messages: ChatMessage[] | null;
   /** 터미널 보기로(입력창에 글이 남았는지 본다) */
   onInspect: () => void;
+  /** 보내는 중(잠김)인지 알린다: 그동안 대기 말 「지금 보내기」를 끈다(plan §8.271) */
+  onBusy?: (busy: boolean) => void;
   /** 작업 중인 agent를 멈춘다(Esc, 키 막대와 같은 길). 없으면 중단 단추가 없다 */
   onInterrupt?: () => void;
   /** agent가 확인창(질문·승인)을 띄웠다: ↑·↓로 보낸 글을 부르지 않는다 */
@@ -153,6 +155,7 @@ export function ChatComposer({
   onSent,
   messages,
   onInspect,
+  onBusy,
   onInterrupt,
   asking = false,
 }: ChatComposerProps) {
@@ -173,6 +176,7 @@ export function ChatComposer({
   const flightRef = useRef(flight);
   flightRef.current = flight;
   const locked = flight !== null;
+  useEffect(() => onBusy?.(locked), [locked, onBusy]);
   // 가는 글은 초안에서 뺐어도 기록에 오를 때까지 입력창에 보인다
   const shown = flight?.source === "box" ? flight.text : text;
   const [note, setNote] = useState<Note | null>(null);
