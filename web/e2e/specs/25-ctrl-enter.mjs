@@ -1,4 +1,5 @@
 // Ctrl+Enter: host의 같은 감지 판정을 웹 하드웨어·터치 키가 사용한다. TUI는 PaneCtrlEnter 요청을 공유한다.
+// steering만 하고 줄바꿈은 넣지 않는다(사용자 10-19 「스티어링만 남기고 싶어」, plan §8.239 후속). 줄바꿈은 Shift+Enter다.
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import {
@@ -25,8 +26,11 @@ function draw() {
   let screen = 'received ' + count + '\r\n';
   if (mode.startsWith('pending')) screen += '• Working (2s • esc to interrupt)\r\n• Messages to be submitted after next tool call (press esc to interrupt and send immediately)\r\n  ↳ change course\r\n›\r\n\r\n  GPT-6.1 low · /workspace\r\n  ? for shortcuts\r\n';
   else if (mode === 'unknown') screen += '✻ Working… (1s · esc to interrupt)\r\ninput not visible\r\n';
+  // Codex 입력 줄(›, 화면 셋째 줄 또는 Working 줄 아래 둘째 줄)에 친 글을 그리고 커서를 글 끝에 둔다
+  else if (mode === 'working' || mode === 'idle') screen += (mode === 'working' ? '• Working (2s • esc to interrupt)\r\n' : '') + '› ' + draft + '\r\n\r\n  GPT-6.1 low · /workspace\r\n  ? for shortcuts\r\n';
   else screen += '────────────────────────\r\n❯ ' + (mode === 'grey' ? '\x1b[2mTry something\x1b[0m' : draft) + '\r\n────────────────────────\r\n  ? for shortcuts\r\n';
-  process.stdout.write('\x1b[2J\x1b[H' + screen + (mode === 'pending' ? '\x1b[5;3H' : ''));
+  const at = mode === 'pending' ? '\x1b[5;3H' : mode === 'working' ? '\x1b[3;' + (3 + draft.length) + 'H' : mode === 'idle' ? '\x1b[2;' + (3 + draft.length) + 'H' : '';
+  process.stdout.write('\x1b[2J\x1b[H' + screen + at);
 }
 process.stdout.write('\x1b[>4;2m');
 process.stdin.on('data', data => {
@@ -42,6 +46,7 @@ draw();
     for (const [name, harness, mode] of [
       ["ce-empty", "claude", "empty"], ["ce-text", "claude", "empty"],
       ["ce-grey", "claude", "grey"], ["ce-unknown", "claude", "unknown"], ["ce-codex", "codex", "pending"], ["ce-codex-away", "codex", "pending-away"],
+      ["ce-codex-typed", "codex", "working"], ["ce-codex-idle", "codex", "idle"],
     ]) {
       aaa("tab", "create", "--machine", "labA", "--label", name, "--cwd", directory, "--", `${directory}/${harness}`, "--", mode, `${directory}/${name}.bytes`);
       await waitOutput(name, "received 0");
@@ -63,28 +68,45 @@ draw();
     await waitOutput(name, `received ${before.length + Buffer.byteLength(expected)}`);
     assert.equal(received(name).subarray(before.length).toString(), expected);
   };
-  await step("Claude Ctrl+Enter: 글이 있으면 줄바꿈, 비면 Ctrl+X Ctrl+S, 회색 추천문은 빈 입력, 모름은 줄바꿈", async () => {
+  // 보내지 않았다: 같은 pane WebSocket의 뒤따르는 글자 하나만 닿았는지로 본다(host가 그 연결의 요청을 차례로 처리한다)
+  const expectNothing = async (pg, name, act) => {
+    const before = received(name);
+    await act();
+    await pg.keyboard.type("z");
+    await waitOutput(name, `received ${before.length + 1}`);
+    assert.equal(received(name).subarray(before.length).toString(), "z");
+  };
+  await step("Claude Ctrl+Enter: 글이 있든 비었든 sendNow(Ctrl+X Ctrl+S), 회색 추천문도 같고, 입력 상자를 모르면 보내지 않는다(줄바꿈 없음)", async () => {
     await open(page, "ce-text");
     await page.keyboard.type("draft");
     await waitOutput("ce-text", "❯ draft");
-    await expectKey(page, "ce-text", () => page.keyboard.press("Control+Enter"), "\x1b\r");
+    await expectKey(page, "ce-text", () => page.keyboard.press("Control+Enter"), "\x18\x13");
     await shot(page, "ctrl-enter-draft-desktop");
-    for (const [name, expected] of [["ce-empty", "\x18\x13"], ["ce-grey", "\x18\x13"], ["ce-unknown", "\x1b\r"]]) {
+    for (const name of ["ce-empty", "ce-grey"]) {
       await open(page, name);
-      await expectKey(page, name, () => page.keyboard.press("Control+Enter"), expected);
+      await expectKey(page, name, () => page.keyboard.press("Control+Enter"), "\x18\x13");
     }
+    await open(page, "ce-unknown");
+    await expectNothing(page, "ce-unknown", () => page.keyboard.press("Control+Enter"));
     await shot(page, "ctrl-enter-unknown-desktop");
   });
-  await step("Codex Ctrl+Enter: 현재 native steering 대기 패널의 빈 입력에서만 Esc", async () => {
+  await step("Codex Ctrl+Enter: 대기 steering 패널의 빈 입력은 Esc, 작업 중 친 글은 Enter(steer), 쉬는 중·커서가 입력 밖이면 보내지 않는다", async () => {
     await open(page, "ce-codex");
     await expectKey(page, "ce-codex", () => page.keyboard.press("Control+Enter"), "\x1b");
     const sent = await sentCount(page);
     await page.locator('.xterm-helper-textarea').evaluate(el => el.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', code: 'Enter', keyCode: 13, ctrlKey: true, repeat: true, bubbles: true })));
     assert.equal((await sentFrames(page, sent)).filter(f => ['input', 'ctrl_enter'].includes(f.t)).length, 0);
     await open(page, "ce-codex-away");
-    await expectKey(page, "ce-codex-away", () => page.keyboard.press("Control+Enter"), "\x1b\r");
+    await expectNothing(page, "ce-codex-away", () => page.keyboard.press("Control+Enter"));
+    for (const [name, expected] of [["ce-codex-typed", "\r"], ["ce-codex-idle", null]]) {
+      await open(page, name);
+      await page.keyboard.type("steer");
+      await waitOutput(name, "› steer");
+      if (expected) await expectKey(page, name, () => page.keyboard.press("Control+Enter"), expected);
+      else await expectNothing(page, name, () => page.keyboard.press("Control+Enter"));
+    }
   });
-  await step("터치 Ctrl+Enter도 같은 판정: Ctrl 래치+Enter, 입력줄 초안은 보내지 않고 줄바꿈, IME 확정은 steering하지 않음", async () => {
+  await step("터치 Ctrl+Enter도 같은 판정: Ctrl 래치+Enter, 입력줄 초안은 보내지도 줄을 바꾸지도 않고 알리며, IME 확정은 steering하지 않음", async () => {
     const mobile = (await pairPage(browser, aaa("web", "pair").code, { width: 390, height: 844 }, { touch: true, line: true })).page;
     await open(mobile, "ce-empty");
     const bar = mobile.locator('.key-bar');
@@ -95,7 +117,8 @@ draw();
     await line.fill("휴대폰 초안");
     const sent = await sentCount(mobile);
     await line.press("Control+Enter");
-    assert.equal(await line.inputValue(), "휴대폰 초안\n");
+    await mobile.locator(".terminal-input-note", { hasText: "줄바꿈은 Shift+Enter" }).waitFor();
+    assert.equal(await line.inputValue(), "휴대폰 초안");
     assert.equal((await sentFrames(mobile, sent)).filter(f => ['input', 'submit', 'ctrl_enter'].includes(f.t)).length, 0);
     await line.fill("");
     await expectKey(mobile, "ce-empty", () => line.press("Control+Enter"), "\x18\x13");

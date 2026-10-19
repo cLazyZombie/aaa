@@ -1798,11 +1798,13 @@ impl App {
         Ok(())
     }
 
-    /// 화면 판정은 host 한 곳에서 한다. TUI는 Ctrl+Enter 의도만 보낸다.
+    /// 화면 판정은 host 한 곳에서 한다. TUI는 Ctrl+Enter(steering) 의도만 보낸다. 줄바꿈은 Shift+Enter다(plan §8.242 후속).
     async fn ctrl_enter(&mut self, tx: &mut FrontSender) -> Result<()> {
         let Some(pane) = self.focus.clone() else { return Ok(()) };
         if self.host_minor < CTRL_ENTER_MINOR {
-            return self.input_to(tx, pane, b"\n".to_vec()).await;
+            // 옛 host는 공통 판정이 없다: 줄바꿈으로 대신하지 않고 보내지 않는다
+            self.set_message("host가 오래돼 Ctrl+Enter steering을 할 수 없다(줄바꿈은 Shift+Enter)");
+            return Ok(());
         }
         if self.refuse_reader() {
             return Ok(());
@@ -3662,7 +3664,7 @@ mod tests {
         std::fs::remove_dir_all(dir).unwrap();
     }
 
-    /// 실제 Front wire에서 Ctrl+Enter 의도와 구 host의 안전한 기본값을 본다.
+    /// 실제 Front wire에서 Ctrl+Enter 의도(1.43 host)와 구 host·reader의 무송신, Shift+Enter 줄바꿈을 본다.
     #[tokio::test]
     async fn ctrl_enter_uses_shared_host_request() {
         use aaa_common::{front, ipc};
@@ -3689,7 +3691,7 @@ mod tests {
                 .await
                 .unwrap();
             let mut requests = Vec::new();
-            for _ in 0..5 {
+            for _ in 0..4 {
                 let frame = read_frame(&mut stream, MAX_FRAME).await.unwrap().unwrap();
                 let FrontMsg::Req { body, .. } = serde_json::from_slice(&frame.payload).unwrap() else {
                     panic!("키 요청이 아니다")
@@ -3732,11 +3734,10 @@ mod tests {
         for req in &requests[..2] {
             assert!(matches!(req, FrontRequest::PaneCtrlEnter { pane } if pane == "pane"));
         }
-        for req in &requests[2..4] {
-            assert!(matches!(req, FrontRequest::PaneInput { pane, data } if pane == "pane" && data.0 == b"\n"));
-        }
-        // reader는 보내지 않고, 그 뒤 같은 writer의 실제 입력이 도착한 것으로 무송신을 판정한다.
-        assert!(matches!(&requests[4], FrontRequest::PaneInput { pane, data } if pane == "pane" && data.0 == b"x"));
+        // Shift+Enter만 줄바꿈이다
+        assert!(matches!(&requests[2], FrontRequest::PaneInput { pane, data } if pane == "pane" && data.0 == b"\n"));
+        // 옛 host의 Ctrl+Enter·reader는 보내지 않고, 그 뒤 같은 writer의 실제 입력이 도착한 것으로 무송신을 판정한다.
+        assert!(matches!(&requests[3], FrontRequest::PaneInput { pane, data } if pane == "pane" && data.0 == b"x"));
         std::fs::remove_dir_all(dir).unwrap();
     }
 

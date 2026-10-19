@@ -232,7 +232,7 @@ local agent 재연결 중 배포 조회(§8.237): host `deploy::tests::coordinat
 
 ### Ctrl+Enter 공통 판정
 
-`aaa-host/src/ctrl_enter.rs`의 유닛 시험이 입력 상자 스타일과 현재 steering 패널을 판정한다. `web/e2e/specs/25-ctrl-enter.mjs`는 실제 host·agent·PTY로 전달된 bytes를 출력 사건으로 확인하며 웹 물리 키·모바일 키 막대·입력줄·IME·반복 키의 연결을 본다. 셸 등 일반 프로그램의 키보드 모드는 기존 `03-keys.mjs`가 소유한다. TUI도 `FrontRequest::PaneCtrlEnter`를 사용해 같은 host 판정을 거친다.
+Ctrl+Enter는 steering만 하고 줄바꿈을 넣지 않는다(plan §8.239 후속). `aaa-host/src/ctrl_enter.rs`의 유닛 시험이 입력 상자 스타일과 현재 steering 패널, Codex 작업 중·쉼을 판정하고 어느 경우에도 줄바꿈 키가 나오지 않는지 본다. 「보내지 않음」은 E2E 25가 같은 pane 연결의 뒤따르는 입력을 울타리로 삼아 그 조각만 닿았는지로 확인한다. `web/e2e/specs/25-ctrl-enter.mjs`는 실제 host·agent·PTY로 전달된 bytes를 출력 사건으로 확인하며 웹 물리 키·모바일 키 막대·입력줄·IME·반복 키의 연결을 본다. 셸 등 일반 프로그램의 키보드 모드는 기존 `03-keys.mjs`가 소유한다. TUI도 `FrontRequest::PaneCtrlEnter`를 사용해 같은 host 판정을 거친다.
 
 ## Mac 웹 터미널 Ctrl+V(§8.232 후속)
 
@@ -247,9 +247,10 @@ local agent 재연결 중 배포 조회(§8.237): host `deploy::tests::coordinat
 ## TUI 확장 Enter와 Windows 붙여넣기(§8.242)
 
 - `cargo test --locked -p aaa --test tui modified_enter_uses_agent_newline`: 실제 crossterm 파서·TUI·host·agent·PTY에서
-  kitty CSI u와 xterm modifyOtherKeys Ctrl/Shift+Enter의 줄바꿈, 보통 Enter, 확장 키 모드 요청·종료 복원을 본다.
-  독립 raw PTY 관측기가 받은 bytes를 출력 사건으로 기다린다. 알려진 harness의 모르는 화면에서 Ctrl은 Alt+Enter, Shift는 LF다.
-- `aaa-tui::tests::ctrl_enter_uses_shared_host_request`는 실제 Front wire에서 공통 요청·구 host LF·reader 무송신·키 반복 억제를 본다.
+  kitty CSI u와 xterm modifyOtherKeys Ctrl/Shift+Enter, 보통 Enter, 확장 키 모드 요청·종료 복원을 본다.
+  독립 raw PTY 관측기가 받은 bytes를 출력 사건으로 기다린다. 알려진 harness의 모르는 화면에서 Ctrl은 아무것도 보내지 않고
+  (뒤따르는 글자가 울타리), Shift는 LF다.
+- `aaa-tui::tests::ctrl_enter_uses_shared_host_request`는 실제 Front wire에서 공통 요청·Shift+Enter LF·구 host와 reader의 무송신·키 반복 억제를 본다.
   입력줄 비움 판정·steering은 공통 host와 웹 E2E 25가 소유하며 TUI에 판정기를 중복하지 않는다.
 - 기존 `ctrl_v_pastes_clipboard_image`는 직접 Ctrl+V와 Windows Terminal의 빈 bracketed paste를 같은 경계에서 본다.
   실제 대상 파일의 pixels·따옴표 경로·Enter 없음·조각 업로드를 유지한다. 개발 머신 clipboard는 파일 fixture로 대체한다.

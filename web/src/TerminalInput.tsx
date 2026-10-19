@@ -27,7 +27,7 @@ export interface TerminalInputProps {
   onSend: (text: string) => false | Promise<true | string>;
   /** 빈 줄 보내기: Enter만. true: 보냄, false: 못 보냄(끊김), 글: 못 보낸 이유 */
   onEnter: () => boolean | string;
-  /** 빈 입력줄의 Ctrl+Enter는 host의 공통 판정으로 보낸다. 글이 있으면 이 입력줄에 줄바꿈이다. */
+  /** Ctrl+Enter는 host의 공통 steering 판정이다(줄바꿈 없음). 글이 있으면 그 까닭을 글로 돌려준다. */
   onCtrlEnter?: () => boolean | string;
   /** 입력줄이 focus를 얻음 */
   onFocus?: () => void;
@@ -184,16 +184,9 @@ export function TerminalInput({ owner, connected, onSend, onEnter, onCtrlEnter, 
     if (event.ctrlKey && !event.altKey && !event.metaKey && onCtrlEnter) {
       event.preventDefault();
       if (!connected || sending || event.repeat) return;
-      const draft = readTerminalDraft(owner);
-      if (draft.length > 0) {
-        const element = event.currentTarget;
-        const start = element.selectionStart;
-        setText(`${draft.slice(0, start)}\n${draft.slice(element.selectionEnd)}`);
-        requestAnimationFrame(() => element.setSelectionRange(start + 1, start + 1));
-      } else {
-        const result = onCtrlEnter();
-        if (typeof result === "string") setNote(result);
-      }
+      // 줄바꿈은 Shift+Enter뿐이다(plan §8.239 후속). 글이 있으면 Term이 보내지 않고 까닭을 돌려준다
+      const result = onCtrlEnter();
+      if (typeof result === "string") setNote(result);
       return;
     }
     event.preventDefault();

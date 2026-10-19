@@ -992,7 +992,8 @@ fn herdr_keys_and_modes() {
 }
 
 /// crossterm 파서 → TUI → host → agent → PTY의 실제 bytes. Ctrl/Shift+Enter는
-/// kitty CSI u·modifyOtherKeys 모두 Ctrl은 공통 host 판정(모르면 Alt+Enter), Shift는 LF, 보통 Enter는 CR이다.
+/// kitty CSI u·modifyOtherKeys 모두 Ctrl은 공통 host 판정(입력 상자를 모르면 아무것도 보내지 않는다, plan §8.239 후속),
+/// Shift는 LF, 보통 Enter는 CR이다. Ctrl+Enter 뒤의 글자가 울타리다: 무언가 보냈다면 그 사이에 끼어 보인다
 #[test]
 fn modified_enter_uses_agent_newline() {
     let mut lab = Lab::new();
@@ -1007,8 +1008,8 @@ try:
     tty.setraw(0)
     print('key-probe-ready', flush=True)
     data = b''
-    while len(data) < 11:
-        data += os.read(0, 11 - len(data))
+    while len(data) < 7:
+        data += os.read(0, 7 - len(data))
 finally:
     termios.tcsetattr(0, termios.TCSANOW, saved)
 print('key-bytes:' + data.hex(), flush=True)
@@ -1025,7 +1026,7 @@ input()
     tui.wait_text("키 수신 준비", |s| s.contains("key-probe-ready"));
     tui.send(b"a\x1b[13;5ub\x1b[13;2uc\x1b[27;5;13~d\x1b[27;2;13~\r");
     tui.wait_text("PTY가 받은 키", |s| s.contains("key-bytes:"));
-    assert!(tui.text().contains("key-bytes:611b0d620a631b0d640a0d"), "{}", tui.text());
+    assert!(tui.text().contains("key-bytes:61620a63640a0d"), "{}", tui.text());
     if let Some(path) = std::env::var_os("AAA_TUI_NEWLINE_DUMP") {
         std::fs::write(path, tui.text()).unwrap();
     }

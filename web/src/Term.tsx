@@ -58,7 +58,7 @@ import { fileUriPath, hyperlinkFilter, isWebLink, terminalFileLinkProvider } fro
 import { isAppShortcut } from "./herdr/shortcuts.ts";
 import { disposeAfterPendingFrame } from "./herdr/terminalDispose.ts";
 import { pasteText } from "./pasteText.ts";
-import { readTerminalDraft, writeTerminalDraft } from "./herdr/terminalDraft.ts";
+import { readTerminalDraft } from "./herdr/terminalDraft.ts";
 import type { PaneControls } from "./actions";
 import { lensesFor, pickedLens, rememberLens } from "./paneLens";
 import { WebLinksAddon } from "@xterm/addon-web-links";
@@ -84,6 +84,8 @@ const MAX_IMAGE = 16 << 20;
 const SUBMIT_TIMEOUT_MS = 90_000;
 /** 붙잡은 입력이 있는 동안 다른 입력을 거절하는 말(herdr-web-ui PaneTerminal 1375줄) */
 const HELD_FIRST = "보내지 않았다: 붙잡은 입력을 먼저 보내거나 버린다.";
+/** 입력줄에 글이 있을 때 Ctrl+Enter(plan §8.239 후속): steering은 agent 입력줄이 대상이다 */
+const CTRL_ENTER_LINE = "Ctrl+Enter는 agent 입력줄 steering이다. 보내기는 Enter, 줄바꿈은 Shift+Enter.";
 /** 이 탭을 지금 쓰는 중: 보이고 focus가 있다. 아니면 PTY 크기를 걸지 않는다. */
 const inUse = () => document.visibilityState === "visible" && document.hasFocus();
 /** 「터미널의 aaa와 같이 쓰기」: 다른 창으로 옮기고 이만큼 뒤 보기만 한다(herdr-web-ui PaneTerminal `RELEASE_AFTER_MS`) */
@@ -456,21 +458,15 @@ export function TermView({
     deliver(data, { modifiedEnter });
   };
 
-  // 판정은 host의 detection 입력줄이 한다. 입력줄에 아직 보내지 않은 글이 있으면 그 줄에 줄바꿈을 넣는다.
+  // steering 판정은 host의 detection 입력줄이 한다(plan §8.239 후속: 줄바꿈 없음, 줄바꿈은 Shift+Enter). 웹 입력줄에 아직 보내지 않은
+  // 글이 있으면 그 글은 pane 입력이 아니라 steering할 것이 없다: 보내지도 줄을 바꾸지도 않고 알린다.
   const pressCtrlEnter = (): boolean | string => {
     if (!canControlRef.current || readonlyRef.current || composingTermRef.current || commitPendingRef.current || lineComposingRef.current) return false;
     if (!draftIsEmpty(draftRef.current)) {
       setInputError(HELD_FIRST);
       return HELD_FIRST;
     }
-    if (inputLineRef.current) {
-      const owner = `${pane.machine}:${pane.id}`;
-      const line = readTerminalDraft(owner);
-      if (line.length > 0) {
-        writeTerminalDraft(owner, `${line}\n`);
-        return true;
-      }
-    }
+    if (inputLineRef.current && readTerminalDraft(`${pane.machine}:${pane.id}`).length > 0) return CTRL_ENTER_LINE;
     const ws = wsRef.current;
     if (!ws || ws.readyState !== WebSocket.OPEN) return false;
     autoFit.current(true);
@@ -841,7 +837,7 @@ export function TermView({
     const otherKeysSet = otherKeys("m");
     const otherKeysOff = otherKeys("n");
     // xterm.js는 Shift+Enter·Ctrl+Enter를 그냥 Enter로 친다: Shift+Enter는 Alt+Enter 줄바꿈으로, Ctrl+Enter는 host가
-    // 감지 입력줄로 정한다. macOS Cmd+⌫는 줄 지우기(Ctrl+U). onKey는 IME 확정 글 뒤, 그 키의 onData 바로 앞에 온다.
+    // 감지 입력줄로 steering을 정한다(줄바꿈 없음). macOS Cmd+⌫는 줄 지우기(Ctrl+U). onKey는 IME 확정 글 뒤, 그 키의 onData 바로 앞에 온다.
     let enterAs: string | null = null;
     let ctrlEnter = false;
     let ctrlEnterRepeat = false;
