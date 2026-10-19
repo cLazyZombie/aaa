@@ -747,7 +747,7 @@ mod tests {
         for payload in [
             crate::notify::notify_body("json", "", &place, std::slice::from_ref(&item), &titles),
             crate::notify::notify_body("telegram", "example", &place, std::slice::from_ref(&item), &titles),
-            crate::push::payload(&place, std::slice::from_ref(&item), &titles),
+            crate::push::payload(&place, std::slice::from_ref(&item), &titles, None),
         ] {
             let s = payload.to_string();
             assert!(

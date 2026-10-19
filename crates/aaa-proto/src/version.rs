@@ -103,6 +103,7 @@ pub const AGENT_LINK: Version = Version { major: 1, minor: 6 };
 // 1.45: 웹 터미널 대기 메시지 「지금 보내기」(`steer_queued` 요청·답, `front.steer_queued`, plan §8.271). 1.44가 배포돼 올린다.
 // 옛 host는 `front.steer_queued`를 보내지 않아 웹이 단추를 숨기고, 모르는 frame은 버린다. 옛 웹은 새 칸을 버린다.
 // 1.46: host rollout 시작·상태. agent rollout.v1은 SHA 고정 CheckedUpdate를 받는다.
+// 같은 1.46에 웹 전용 AppBadge 사건을 더한다. 옛 웹은 모르는 사건을 버린다.
 pub const FRONT_API: Version = Version { major: 1, minor: 46 };
 /// agent ↔ session host(내부). 세션이 몇 주 이어질 수 있으므로 이전 session host와 호환해야 한다.
 /// 1.1: `SessionRequest::Detect`(harness 상태 감지 입력). agent는 1.0 session host에 보내지 않고 `Screen`을 쓴다.

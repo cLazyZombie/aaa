@@ -175,6 +175,22 @@ self.addEventListener("fetch", (event) => {
   }
 });
 
+// 지연·순서가 바뀐 push로 이미 본 항목을 되살리지 않게, 가능하면 host 정본을 다시 읽는다.
+async function updateAppBadge(fallback) {
+  if (typeof self.navigator?.setAppBadge !== "function") return;
+  let count = fallback;
+  try {
+    const res = await fetch("/api/v1/app-badge", { credentials: "same-origin", cache: "no-store" });
+    if (res.status === 401) count = 0;
+    else if (res.ok) count = (await res.json()).ok;
+  } catch { /* offline이면 암호화 payload에 실린 수 */ }
+  if (!Number.isSafeInteger(count) || count < 0) return;
+  try {
+    if (count === 0) await self.navigator.clearAppBadge?.();
+    else await self.navigator.setAppBadge(count);
+  } catch { /* 배지 실패가 알림을 막지 않는다 */ }
+}
+
 // Web Push(host push.rs가 보낸다). 받으면 늘 알림을 띄운다(Safari는 조용한 push가 이어지면 구독을 없앤다).
 // 지금 보이는 aaa 창이 있으면 그 창이 이미 바뀐 것을 보이므로 소리·진동 없이 띄운다(herdr-web-ui sw.js push).
 self.addEventListener("push", (e) => {
@@ -186,17 +202,21 @@ self.addEventListener("push", (e) => {
   }
   e.waitUntil(
     (async () => {
+      const badge = updateAppBadge(d.app_badge);
       const wins = await self.clients.matchAll({ type: "window", includeUncontrolled: true });
       const watching = wins.some((c) => c.visibilityState === "visible");
-      await self.registration.showNotification(d.title || "aaa", {
-        body: d.body || "",
-        tag: d.tag || "aaa",
-        renotify: !watching,
-        silent: watching,
-        icon: "/icon-192.png?v=2",
-        badge: "/favicon-32.png?v=2",
-        data: { url: d.url || "/" },
-      });
+      await Promise.all([
+        badge,
+        self.registration.showNotification(d.title || "aaa", {
+          body: d.body || "",
+          tag: d.tag || "aaa",
+          renotify: !watching,
+          silent: watching,
+          icon: "/icon-192.png?v=2",
+          badge: "/favicon-32.png?v=2",
+          data: { url: d.url || "/" },
+        }),
+      ]);
     })(),
   );
 });

@@ -4,6 +4,7 @@
 //! - pane 화면은 agent(session host)가 정본이다. host는 마지막 화면 mirror를 가져 agent가 끊겨도 읽기 전용으로 보여 준다.
 
 mod adopt;
+mod app_badge;
 mod attach;
 mod bgwait;
 mod brief;

@@ -56,6 +56,7 @@ import { DrawerContext, DrawerToggle, HeadContext, HeadMore, HeadNote } from "./
 import { highMachines, HIGH_STAT } from "./machineStats";
 import { specialAttention } from "./specialModel";
 import { ErrorBoundary } from "./ErrorBoundary";
+import { setAppBadge } from "./appBadge";
 import { watchBadgeFocus } from "./faviconBadge";
 
 type Auth = { state: "loading" } | { state: "pair" } | { state: "in"; role: DeviceRole; device: string } | { state: "error"; msg: string };
@@ -651,6 +652,7 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
           setUnseenReports(unseen);
           setReportsRev((n) => n + 1);
         },
+        setAppBadge,
       ),
     [],
   );
