@@ -264,3 +264,13 @@ local agent 재연결 중 배포 조회(§8.237): host `deploy::tests::coordinat
 ## 임무 입력 안내와 조회 권한(§8.246)
 
 기존 host `approved_start_attaches_mission_before_preparing_special_brief`, agent `mission_launch_scopes_permissions_for_both_harnesses`·`mission_settings_do_not_write_through_links`, proto `fill_brief_puts_the_machine_paths`가 입력이 없는 첫 prepare/rebrief의 inbox·자기 임무 문맥·실제 머신 경로로 채운 brief·정확한 목록 및 조회 규칙을 검사한다. 일반 thread에는 임무 권한을 남기지 않고, symlink inbox로 폴더 밖에 쓰지 않으며, 넓은 ls/find/aaa 허용을 넣지 않는다. 새 신호 시험·고정 sleep·production 시험 seam은 없다. `cargo test -p aaa-host -p aaa-agent mission`과 `cargo test -p aaa-proto fill_brief_puts_the_machine_paths` 뒤 공식 전체 gate를 실행한다.
+
+## TUI 선택 표시·Mac 복사·입력 지연(§8.247)
+
+- `cargo test --locked -p aaa-tui ready_motion_keeps_release_and_key_order`는 현재 도착한 이동만 모으고 놓기·복사 키를 원래 차례로 보존하는지, 아직 안 온 이동을 기다리지 않는지 검사한다. 이동 묶기를 제거한 변형에서 RED, bytes 복원 뒤 GREEN을 확인한다.
+- `cargo test --locked -p aaa-host front::tests::`의 `queued_input_batches_preserve_bytes_boundaries_and_receipts`는 실제 입력 큐에서 마우스 누름·끌기·뗌의 byte와 요청 ID를 보존하며 묶고, resize·다른 pane·64KiB/256요청 상한을 넘지 않는지 본다. `interactive_frames_bypass_batch_delay_without_unbounded_redraws`는 가상 시계로 입력 도중 이미 기다리던 화면도 즉시 나가는지, 16ms당 16회 예산·32ms 입력 창 뒤에는 출력을 묶는지 본다. 고정 sleep·실제 clipboard는 쓰지 않는다.
+- 기존 TUI keeper `reported_selection_copy_never_interrupts_pane`는 앱의 OSC 유무 두 경우에 놓을 때 복사하고, Ctrl+C가 pane으로 새지 않는지 본다. `selection_copy_never_enters_pane`는 일반 셸과 Shift 보고 pane에서 여러 줄의 빈칸까지 셀 격자로 칠하는지·복사 내용·키 누수·실패 알림을 본다. 파일 sink가 기본이며 `AAA_CLIP_NATIVE=1`이면 같은 PTY 경로에서 실제 clipboard를 읽는다. native 두 시험은 clipboard를 함께 쓰므로 `--test-threads=1`로 실행한다.
+- `scripts/ci-local.sh --native-clipboard`의 clipboard 단계가 위 두 keeper와 기존 이미지 roundtrip을 차례로 실행한다. 개발 머신에서 이 옵션을 켜려면 clipboard의 모든 item/type/data를 먼저 저장하고 종료 후 복원해야 한다. 사람의 clipboard를 덮는 일반 test 단계에서는 계속 파일 sink를 쓴다.
+- 회귀 변형: 입력 묶기 제거·입력 직후 렌더 우회 제거·빈 셀 선택 칠하기 제거를 각각 넣어 해당 keeper의 RED를 확인하고, 원본 bytes로 복원한 뒤 GREEN을 확인한다. 지연 측정은 새 binary·격리 host/agent·PTY에서 입력 byte를 쓴 시각부터 선택 셀 또는 앱의 실제 재그리기가 관측된 시각까지 잰다. herdr도 같은 fixture·셀 크기·관측 parser·전송 조건으로 비교하며, 로컬 셀 선택과 앱 마우스 선택을 별도 기록한다.
+
+- 전체 gate에서 드러난 기존 `m13::thread_read_and_keys`의 보고 오류 대기는 fixture가 그 오류를 곧바로 지워 PTY read 조각에 따라 놓쳤다. fake Claude는 보고 진단을 권한 창 앞에 한 write로 함께 남긴다. 실제 오류 출력·화면 감지와 기존 단언은 유지하며 sleep·기대값·시한을 바꾸지 않는다.

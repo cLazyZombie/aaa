@@ -394,6 +394,9 @@ async fn run(dir: PathBuf) -> Result<()> {
     std::thread::spawn(move || {
         while let Ok(data) = in_rx.recv() {
             match writer.write_all(&data).and_then(|_| writer.flush()) {
+                Ok(()) if data.starts_with(b"\x1b[<") => {
+                    tracing::debug!(session = %input_session, bytes = data.len(), "pane 입력: PTY 쓰기 완료")
+                }
                 Ok(()) => tracing::info!(session = %input_session, bytes = data.len(), "pane 입력: PTY 쓰기 완료"),
                 Err(e) => {
                     tracing::warn!(session = %input_session, bytes = data.len(), error = %e, "pane 입력: PTY 쓰기 실패");

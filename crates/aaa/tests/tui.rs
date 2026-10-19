@@ -2233,7 +2233,7 @@ fn pane_osc52_reaches_front_clipboard() {
     assert!(tui.wait_exit());
 }
 
-/// 앱 선택 뒤 Ctrl+C도 pane 입력이 아니라 pane 본문 복사다. raw 관측기로 실제 키 누수를 본다.
+/// 앱이 OSC 52를 보내지 않아도 놓으면 복사한다. 이어 누른 Ctrl+C는 pane에 새지 않는다.
 #[test]
 fn reported_selection_copy_never_interrupts_pane() {
     for auto_copy in [false, true] {
@@ -2266,17 +2266,31 @@ while True:
         std::fs::write(&fixture, program).unwrap();
         h.ok(&["tab", "create", "--machine", "labA", "--", "python3", lab::path_str(&fixture)]);
         let copied = lab.root.join("copied.txt");
-        let mut tui = Tui::start_env(&h, &[("AAA_TEST_CLIPBOARD_TEXT", lab::path_str(&copied))]);
+        let native = std::env::var_os("AAA_CLIP_NATIVE").is_some();
+        let mut tui = if native {
+            Tui::start(&h)
+        } else {
+            Tui::start_env(&h, &[("AAA_TEST_CLIPBOARD_TEXT", lab::path_str(&copied))])
+        };
+        let read_copied = || {
+            if native {
+                arboard::Clipboard::new().unwrap().get_text().unwrap()
+            } else {
+                std::fs::read_to_string(&copied).unwrap_or_default()
+            }
+        };
         let at = tui.wait_find("alpha");
         tui.mouse(0, at, false);
         // pane 밖까지 끌어도 본문 좌표로 묶고 줄 끝 공백·사이드바·경계를 복사하지 않는다.
         tui.mouse(32, (at.0 + 1, COLS as usize - 1), false);
         tui.mouse(0, (at.0 + 1, COLS as usize - 1), true);
         tui.wait_text("앱 선택 울타리", |s| s.contains("app-selected"));
+        tui.wait_text("앱 OSC 없이 선택 자동 복사", |s| s.contains("클립보드에 복사했다"));
+        assert_eq!(read_copied(), "alpha\nbeta");
         tui.send(b"\x03!");
         tui.wait_text("키 처리 울타리", |s| s.contains("keys="));
         assert!(tui.text().contains("keys=21"), "Ctrl+C가 pane에 새었다: {}", tui.text());
-        assert_eq!(std::fs::read_to_string(&copied).unwrap_or_default(), "alpha\nbeta");
+        assert_eq!(read_copied(), "alpha\nbeta");
         tui.send(b"\x03!");
         tui.wait_text("선택 없는 Ctrl+C 보존", |s| s.contains("keys=0321"));
         tui.cmd("q");
@@ -2297,7 +2311,7 @@ fn selection_copy_never_enters_pane() {
                 r#"import os, tty
 
 tty.setraw(0)
-os.write(1, b"{modes}copy-42\r\n")
+os.write(1, b"{modes}copy-42\r\nnext\r\n")
 received = b""
 while True:
     byte = os.read(0, 1)
@@ -2314,15 +2328,33 @@ while True:
         .unwrap();
         h.ok(&["tab", "create", "--machine", "labA", "--", "python3", lab::path_str(&fixture)]);
         let copied = lab.root.join("copied.txt");
-        let mut tui = Tui::start_env(&h, &[("AAA_TEST_CLIPBOARD_TEXT", lab::path_str(&copied))]);
+        let native = std::env::var_os("AAA_CLIP_NATIVE").is_some();
+        let mut tui = if native {
+            Tui::start(&h)
+        } else {
+            Tui::start_env(&h, &[("AAA_TEST_CLIPBOARD_TEXT", lab::path_str(&copied))])
+        };
         let at = tui.wait_find("copy-42");
         // 마우스 보고를 켠 프로그램 위에서는 Shift로 고른다(Windows Terminal 관례).
         let shift = if reporting { 4 } else { 0 };
+        let end = (at.0 + 1, at.1 + 3);
         tui.mouse(shift, at, false);
-        tui.mouse(32 + shift, (at.0, at.1 + 6), false);
-        tui.mouse(shift, (at.0, at.1 + 6), true);
+        tui.mouse(32 + shift, end, false);
+        // 글자 끝까지만 칠하는 앱 선택과 달리, 중간 줄의 빈칸도 pane 끝까지 칠한다.
+        tui.wait_screen("터미널 셀 격자 선택", |s| {
+            let selected = s.bgs[at.0][at.1];
+            s.bgs[at.0][COLS as usize - 2] == selected
+                && s.bgs[end.0][end.1] == selected
+                && s.bgs[end.0][end.1 + 1] != selected
+        });
+        tui.mouse(shift, end, true);
         tui.wait_text("선택 자동 복사", |s| s.contains("클립보드에 복사했다"));
-        assert_eq!(std::fs::read_to_string(&copied).unwrap(), "copy-42");
+        let text = if native {
+            arboard::Clipboard::new().unwrap().get_text().unwrap()
+        } else {
+            std::fs::read_to_string(&copied).unwrap()
+        };
+        assert_eq!(text.replace("\r\n", "\n"), "copy-42\nnext");
         // 선택 뒤의 움직임도 pane으로 보내지 않는다. Ctrl+C의 Repeat·Release도 복사 키의 일부다.
         tui.mouse(35, at, false);
         tui.send(b"\x03\x1b[99;5:2u\x1b[99;5:3u!");
@@ -2330,15 +2362,17 @@ while True:
         // 선택이 없을 때의 Ctrl+C는 그대로 보낸다. 관측기는 raw라 신호를 발생시키지 않는다.
         tui.send(b"\x03!");
         tui.wait_text("선택 없는 Ctrl+C", |s| s.contains("received=0321"));
-        // 복사가 실패해도 Ctrl+Shift+C·반복은 pane에 보내지 않는다.
-        std::fs::remove_file(&copied).unwrap();
-        std::fs::create_dir(&copied).unwrap();
-        tui.mouse(shift, at, false);
-        tui.mouse(32 + shift, (at.0, at.1 + 6), false);
-        tui.mouse(shift, (at.0, at.1 + 6), true);
-        tui.wait_text("실패한 복사를 성공이라 하지 않음", |s| s.contains("복사하지 못했다"));
-        tui.send(b"\x1b[67;6u\x1b[67;6:2u\x1b[67;6:3u!");
-        tui.wait_text("복사 실패 뒤 입력 울타리", |s| s.matches("received=21").count() == 2);
+        // 실패 주입은 파일 sink에서만 한다. 실제 clipboard 시험은 위 성공 경로를 같은 TUI로 끝까지 본다.
+        if !native {
+            std::fs::remove_file(&copied).unwrap();
+            std::fs::create_dir(&copied).unwrap();
+            tui.mouse(shift, at, false);
+            tui.mouse(32 + shift, end, false);
+            tui.mouse(shift, end, true);
+            tui.wait_text("실패한 복사를 성공이라 하지 않음", |s| s.contains("복사하지 못했다"));
+            tui.send(b"\x1b[67;6u\x1b[67;6:2u\x1b[67;6:3u!");
+            tui.wait_text("복사 실패 뒤 입력 울타리", |s| s.matches("received=21").count() == 2);
+        }
         if let Ok(dir) = std::env::var("AAA_TUI_DUMP") {
             let name = if reporting { "copy-mouse-reporting" } else { "copy-plain" };
             std::fs::write(std::path::Path::new(&dir).join(format!("{name}.txt")), tui.text()).unwrap();

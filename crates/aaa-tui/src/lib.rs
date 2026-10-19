@@ -782,6 +782,7 @@ impl App {
             tx.send(identity()).await?;
         }
         let mut keys_in = EventStream::new();
+        let mut deferred_input = None;
         let mut dirty = true;
         // 목록 thread 둘째 줄 「n분 조용」이 화면에서 늘어나게 1분마다 다시 그린다(웹 `useMinute`)
         let mut minute = tokio::time::interval_at(tokio::time::Instant::now() + MINUTE, MINUTE);
@@ -831,12 +832,20 @@ impl App {
                     Some(m) => { self.on_msg(m); dirty = true; }
                     None => anyhow::bail!("{}", tx.ended().unwrap_or_else(|| "host 연결이 끊겼다".into())),
                 },
-                e = keys_in.next() => match e {
+                e = async { match deferred_input.take() {
+                    Some(event) => Some(event),
+                    None => keys_in.next().await,
+                }} => match e {
                     Some(Ok(e @ (Event::Key(_) | Event::Paste(_) | Event::Mouse(_)))) if self.waiting() => self.held.push(e),
                     Some(Ok(Event::Key(k))) => { self.on_key(k, &mut tx).await?; dirty = true; }
                     // 그림만 든 clipboard를 붙이면 빈 붙여넣기로 오는 터미널이 있다
                     Some(Ok(Event::Paste(s))) => { self.on_paste(s, &mut tx).await?; dirty = true; }
-                    Some(Ok(Event::Mouse(m))) => { self.on_mouse(m, &mut tx).await?; dirty = true; }
+                    Some(Ok(Event::Mouse(m))) => {
+                        let ready = mouse::ready_motion(&mut keys_in, m, &mut deferred_input).await;
+                        self.on_mouse(m, &mut tx).await?;
+                        for next in ready { self.on_mouse(next, &mut tx).await?; }
+                        dirty = true;
+                    }
                     Some(Ok(Event::Resize(..))) => { self.capture_on = None; dirty = true; }
                     // 돌아오면 크기를 다시 걸고, 다른 창에 있는 동안 미룬 입력기 바꾸기·되돌리기를 맞춘다
                     Some(Ok(Event::FocusGained)) => { self.focused = true; self.reclaim = true; self.sized.clear(); self.reconcile_ascii(); dirty = true; }

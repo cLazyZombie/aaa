@@ -158,12 +158,13 @@ menu() {
 }
 perm() {
   unspin
+  report_note=${2:-}; [ -z "$report_note" ] || report_note="$report_note$NL"
   menu " Bash command
 
    $1
    Run the tests
 
- Do you want to proceed?" 0 '1. Yes' '2. No, and tell Claude what to do differently (esc)' 'Esc to cancel · Tab to amend · ctrl+e to explain'
+ Do you want to proceed?" 0 '1. Yes' '2. No, and tell Claude what to do differently (esc)' 'Esc to cancel · Tab to amend · ctrl+e to explain' "$report_note"
   if [ "$pick" = '1. Yes' ]; then echo "allowed"; spin; else echo "denied"; fi
 }
 printf '\033[2J\033[H'
@@ -180,7 +181,9 @@ while :; do
   case "$line" in
     *brief.md*)
       dir=$(dirname "$(printf '%s' "$line" | sed 's/를 읽고.*//')")
-      spin; AAA_HOOK_SOCK="${REPORT_HOOK_SOCK:-$AAA_HOOK_SOCK}" "$AA" report --percent 40 --activity '권한 확인 중'; perm 'make test'
+      # 보고 진단을 unspin으로 지우면 PTY read 조각에 따라 wait-output이 그 줄을 놓친다.
+      # 오류와 권한 창을 한 write로 그려 둘을 모두 실제 감지 입력에 남긴다.
+      spin; report_note=$(AAA_HOOK_SOCK="${REPORT_HOOK_SOCK:-$AAA_HOOK_SOCK}" "$AA" report --percent 40 --activity '권한 확인 중' 2>&1); perm 'make test' "$report_note"
       [ "$pick" = cancel ] || printf '[진행 중] 권한 확인 뒤 계속\n\n## Report\n%s\n\n## Next\n- 확인\n' "$pick" > "$dir/report.md" ;;
     *late*)
       # 같은 확인창의 Notification이 답보다 늦게 온다(ci-local에서 경쟁으로 난 차례, plan §8.99). 진행 보고가 같은 agent
