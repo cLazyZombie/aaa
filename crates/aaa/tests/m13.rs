@@ -1968,13 +1968,15 @@ fn failed_threads_restart_from_the_place() {
 fn auto_resolve_and_reopen() {
     let w = world_with("tick_secs = 1\nauto_resolve_day_secs = 1\n");
     let dir = w.projects.join("demo");
-    std::fs::write(dir.join("project.toml"), "schema = 1\nauto_resolve_days = 2\n").unwrap();
+    std::fs::write(dir.join("project.toml"), "schema = 1\nauto_resolve_days = 0\n").unwrap();
     let v = w.start(&["--title", "a", "--profile", "fake", "--kind", "dir", "--task-file", &w.task("a.txt", "x")]);
     let (id, pane) = (v["id"].as_str().unwrap().to_string(), v["pane"].as_str().unwrap().to_string());
     w.wait_show("보고", &id, |v| v["report_hash"].is_string());
     w.h.ok(&["thread", "ack", "demo", &id]);
     w.h.ok(&["pane", "kill", &pane]);
     w.wait_show("쉼", &id, |v| v["group"] == "idle");
+    // kill 응답이 늦어도 관측할 idle이 먼저 자동 종료로 사라지지 않게, 확인한 뒤 실제 설정을 켠다.
+    std::fs::write(dir.join("project.toml"), "schema = 1\nauto_resolve_days = 2\n").unwrap();
     // resolved 상태는 pane 정리 전에 저장한다. 완료 표시는 정리 응답까지 기록한 뒤 확인한다.
     let v = w.wait_show("자동 resolve 완료", &id, |v| v["status"] == "resolved" && v["cleanup_pending"] != true);
     assert_eq!(v["group"], "resolved");

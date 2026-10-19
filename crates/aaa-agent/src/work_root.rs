@@ -4,6 +4,10 @@ use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result, bail};
 
+mod registry;
+pub(crate) use registry::{Lease, shared};
+pub use registry::{RootInfo, RootState, RootTransaction, activate, inspect};
+
 /// 존재하지 않는 마지막 조각도 실제 조상 기준으로 해석한다. 끊긴 symlink는 오류다.
 pub(crate) fn real_location(path: &Path) -> Result<PathBuf> {
     if !path.is_absolute() || path.components().any(|p| p == std::path::Component::ParentDir) {
@@ -229,3 +233,7 @@ mod tests {
         std::fs::remove_dir_all(lab).unwrap();
     }
 }
+
+#[cfg(all(test, unix))]
+#[path = "work_root/recovery_tests.rs"]
+mod recovery_tests;

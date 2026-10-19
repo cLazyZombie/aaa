@@ -2758,7 +2758,8 @@ coordinator 실기(10-18 00:58, iPhone 홈 화면 앱을 앞에 띄움, binary c
 - **끝낸 thread의 pane 닫기(hp threads.rs `clean`·`remove_worktree`).** 참고는 worktree를 지우며 그 workspace를, tab 종류는
   tab을 닫는다. aaa도 처음에는 worktree를 지웠을 때만 pane을 닫았다. §8.254부터 worktree 보존과 무관하게 모든 thread pane을
   닫는다(`pane close`와 같다: 끝나기를 기다려 layout과 기록에서 지운다). 이미 없는 worktree는 계속 지운 것으로 친다
-  (참고 `worktree_gone`, `git worktree prune`).
+  (참고 `worktree_gone`). t-0434부터는 빠진 외장의 다른 항목을 보존하도록 repo 전체 prune 대신 대상 worktree만 제거한다.
+  외장은 Git 잠금으로 자동 prune을 막고, aaa 소유 잠금만 내구 정리 의도 뒤 풀며 중단 때 복구한다.
 - **평가자(aaa에만 있다, §8.13).** 「착지는 바로 묶음」 사건은 `merge_landed` 대신 PR 병합 `pr_merged`(PR 추적이 `merged`를 보면 낸다)다.
   기본 `[evaluator] events`도 바꿨다. 옛 기록의 `merge_landed`는 시간 요약(`landed_ms`)에서 그대로 읽는다. project.toml에
   `merge_landed`를 적은 프로젝트는 그 사건이 더 오지 않으니 `pr_merged`로 바꾼다.

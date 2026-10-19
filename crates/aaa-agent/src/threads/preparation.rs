@@ -18,45 +18,12 @@ fn lock(path: &Path) -> Arc<OpLock> {
     lock
 }
 
-fn write<T: Serialize>(path: &Path, value: &T) -> Result<()> {
-    let dir = path.parent().context("journal 부모가 없다")?;
-    std::fs::create_dir_all(dir)?;
-    if dir.symlink_metadata()?.file_type().is_symlink() {
-        bail!("journal 폴더는 symlink일 수 없다");
-    }
-    aaa_common::util::ensure_private_dir(dir)?;
-    let tmp = dir.join(format!(".{}.tmp", aaa_common::util::new_id()));
-    let mut opts = std::fs::OpenOptions::new();
-    opts.write(true).create_new(true);
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::OpenOptionsExt;
-        opts.mode(0o600);
-    }
-    let mut file = opts.open(&tmp)?;
-    use std::io::Write;
-    file.write_all(&serde_json::to_vec(value)?)?;
-    file.sync_all()?;
-    drop(file);
-    // Windows에서도 기존 journal을 원자적으로 교체한다.
-    std::fs::rename(&tmp, path)?;
-    Ok(())
-}
-
-fn read<T: serde::de::DeserializeOwned>(path: &Path) -> Result<Option<T>> {
-    let m = match path.symlink_metadata() {
-        Ok(m) => m,
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
-        Err(e) => return Err(e.into()),
-    };
-    if !m.is_file() || m.len() > 4 << 20 {
-        bail!("journal은 4MiB 이하 일반 파일이어야 한다");
-    }
-    Ok(Some(serde_json::from_slice(&std::fs::read(path)?)?))
-}
+use crate::journal::{read, write};
 
 #[derive(Serialize, Deserialize)]
 struct Placement {
+    #[serde(default)]
+    root: Option<PathBuf>,
     repo: Option<PathBuf>,
     cwd: PathBuf,
     branch: Option<String>,
@@ -64,11 +31,71 @@ struct Placement {
     head: Option<String>,
     ready: Option<ThreadReady>,
 }
-fn journal_key(cfg: &ThreadsConfig, project: &str, thread: &str) -> PathBuf {
-    cfg.work_root.join(".preparations").join(format!("{project}-{thread}.json"))
+fn journal_key(cfg: &ThreadsConfig, project: &str, thread: &str) -> Result<PathBuf> {
+    Ok(cfg
+        .state_dir
+        .as_ref()
+        .context("준비 기록을 둘 agent 상태 폴더가 없다")?
+        .join("thread-preparations")
+        .join(format!("{project}-{thread}.json")))
 }
-fn journal(cfg: &ThreadsConfig, p: &ThreadPrepare) -> PathBuf {
+fn journal(cfg: &ThreadsConfig, p: &ThreadPrepare) -> Result<PathBuf> {
     journal_key(cfg, &p.project, &p.thread)
+}
+
+/// 구판 기록은 등록한 root의 정확한 경로 형태만 가져온다. 원본은 보존한다.
+pub(super) fn import_legacy(state: &Path, root: &crate::work_root::RootInfo) -> Result<usize> {
+    let dir = root.path.join(".preparations");
+    match dir.symlink_metadata() {
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(0),
+        Err(e) => return Err(e.into()),
+        Ok(m) if !m.is_dir() || m.file_type().is_symlink() => bail!("옛 준비 기록 폴더는 symlink일 수 없다"),
+        Ok(_) => {}
+    }
+    let mut imported = 0;
+    for entry in std::fs::read_dir(&dir)? {
+        let path = entry?.path();
+        if path.extension().and_then(|e| e.to_str()) != Some("json") {
+            continue;
+        }
+        let key = path.file_stem().and_then(|n| n.to_str()).context("옛 준비 기록 이름이 올바르지 않다")?;
+        let (project, number) = key.rsplit_once("-t-").context("옛 준비 기록 이름이 올바르지 않다")?;
+        let thread = format!("t-{number}");
+        if !valid_project(project) || !valid_thread(&thread) {
+            bail!("옛 준비 기록 이름이 올바르지 않다");
+        }
+        let mut saved: Placement = read(&path)?.context("옛 준비 기록이 없다")?;
+        let expected = match &saved.repo {
+            Some(repo) => root.path.join(repo.file_name().context("옛 repo 이름이 없다")?).join(key),
+            None => root.path.join(project).join(&thread),
+        };
+        if saved.cwd != expected || saved.root.as_ref().is_some_and(|r| r != &root.path) {
+            bail!("옛 준비 기록이 등록된 root 밖을 가리킨다: {key}");
+        }
+        root.check(&saved.cwd)?;
+        saved.root = Some(root.path.clone());
+        let target = state.join("thread-preparations").join(format!("{key}.json"));
+        if let Some(existing) = read::<Placement>(&target)? {
+            if serde_json::to_value(&existing)? != serde_json::to_value(&saved)? {
+                bail!("새 기록과 옛 준비 기록이 충돌한다: {key}");
+            }
+        } else {
+            write(&target, &saved)?;
+            imported += 1;
+        }
+    }
+    Ok(imported)
+}
+
+fn recorded_root(cfg: &ThreadsConfig, saved: &Placement) -> Result<PathBuf> {
+    let roots = cfg.known_roots()?;
+    let root = roots
+        .iter()
+        .find(|r| saved.root.as_ref().is_some_and(|p| p == &r.path))
+        .or_else(|| roots.iter().find(|r| saved.root.is_none() && saved.cwd.starts_with(&r.path)))
+        .context("준비 기록의 생성 root를 알 수 없다")?;
+    root.check(&saved.cwd)?;
+    Ok(root.path.clone())
 }
 
 /// 준비 응답을 잃은 resolve용. 생성자와 같은 lock을 기다린 뒤 소유권이 맞는 기록만 돌려준다.
@@ -80,33 +107,33 @@ pub async fn placement(
     kind: ThreadKind,
     repo: Option<&str>,
 ) -> Result<Option<aaa_proto::ThreadPlacement>> {
-    cfg.check_path(&cfg.work_root)?;
     if !valid_project(project) || !valid_thread(thread) {
         bail!("프로젝트·thread 이름 형식이 아니다");
     }
-    let path = journal_key(cfg, project, thread);
+    let _lease = cfg.lease()?;
+    let path = journal_key(cfg, project, thread)?;
     let lock = lock(&path);
     let _guard = lock.lock().await;
     let Some(saved) = read::<Placement>(&path)? else {
         // 구판 준비에는 journal이 없다. 실제 자리를 보지 않고 없음으로 확정하면 다시 고아가 된다.
-        let expected = match kind {
+        let relative = match kind {
             ThreadKind::Worktree => {
                 let repo = PathBuf::from(repo.context("worktree의 repo가 없다")?);
                 let top = git(&repo, &["rev-parse", "--show-toplevel"], GIT_T).await.map(PathBuf::from).unwrap_or(repo);
-                cfg.work_root.join(top.file_name().context("repo 이름이 없다")?).join(format!("{project}-{thread}"))
+                PathBuf::from(top.file_name().context("repo 이름이 없다")?).join(format!("{project}-{thread}"))
             }
-            ThreadKind::Dir => cfg.work_root.join(project).join(thread),
+            ThreadKind::Dir => PathBuf::from(project).join(thread),
             ThreadKind::Adopted => bail!("데려온 자리는 준비 기록으로 정리하지 않는다"),
         };
-        match expected.symlink_metadata() {
-            Ok(_) => bail!(
+        if let Some(expected) = find_existing(cfg, &relative)? {
+            bail!(
                 "기록 없는 준비 자리가 있다: {}. `aaa thread restart {project} {thread}`로 소유권을 확인해 회수한 뒤 resolve한다",
                 expected.display()
-            ),
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
-            Err(e) => return Err(e.into()),
+            );
         }
+        return Ok(None);
     };
+    let root = recorded_root(cfg, &saved)?;
     let expected = match kind {
         ThreadKind::Worktree => {
             let repo = Path::new(repo.context("worktree의 repo가 없다")?);
@@ -116,9 +143,9 @@ pub async fn placement(
             if saved.repo.as_ref() != Some(&top) || saved.branch.as_ref() != Some(&branch) {
                 bail!("준비 journal과 repo·branch가 다르다. 사람이 확인해야 한다");
             }
-            cfg.work_root.join(top.file_name().context("repo 이름이 없다")?).join(format!("{project}-{thread}"))
+            root.join(top.file_name().context("repo 이름이 없다")?).join(format!("{project}-{thread}"))
         }
-        ThreadKind::Dir if saved.repo.is_none() && saved.branch.is_none() => cfg.work_root.join(project).join(thread),
+        ThreadKind::Dir if saved.repo.is_none() && saved.branch.is_none() => root.join(project).join(thread),
         _ => bail!("준비 journal과 thread 종류가 다르다"),
     };
     if saved.cwd != expected {
@@ -133,11 +160,11 @@ pub async fn placement(
 }
 
 pub(super) async fn prepare(cfg: &ThreadsConfig, p: ThreadPrepare, wait: Duration) -> Result<ThreadReady> {
-    cfg.check_path(&cfg.work_root)?;
     if !valid_project(&p.project) || !valid_thread(&p.thread) {
         bail!("프로젝트·thread 이름 형식이 아니다");
     }
-    let path = journal(cfg, &p);
+    let _lease = cfg.lease()?;
+    let path = journal(cfg, &p)?;
     let lock = lock(&path);
     let _guard = lock.lock().await;
     let ready = super::prepare_inner(cfg, p, wait).await?;
@@ -152,8 +179,9 @@ pub(super) async fn place(
     p: &ThreadPrepare,
     wait: Duration,
 ) -> Result<(PathBuf, Option<String>, Option<String>)> {
-    let path = journal(cfg, p);
+    let path = journal(cfg, p)?;
     let mut old: Option<Placement> = read(&path)?;
+    let recorded = old.as_ref().map(|saved| recorded_root(cfg, saved)).transpose()?;
     let placement = match p.kind {
         ThreadKind::Worktree => {
             let repo = PathBuf::from(p.repo.as_deref().context("worktree thread에는 repo 경로가 필요하다")?);
@@ -161,7 +189,11 @@ pub(super) async fn place(
             let s = slug(&p.title);
             let branch = format!("aaa/{}/{}{}", p.project, p.thread, if s.is_empty() { s } else { format!("-{s}") });
             let name = top.file_name().context("repo 이름이 없다")?;
-            let cwd = cfg.work_root.join(name).join(format!("{}-{}", p.project, p.thread));
+            let relative = PathBuf::from(name).join(format!("{}-{}", p.project, p.thread));
+            let cwd = match &recorded {
+                Some(root) => root.join(&relative),
+                None => find_existing(cfg, &relative)?.unwrap_or_else(|| cfg.work_root.join(&relative)),
+            };
             cfg.check_path(&cwd)?;
             if let Some(old) = &old {
                 if old.repo.as_ref() != Some(&top) || old.cwd != cwd || old.branch.as_ref() != Some(&branch) {
@@ -198,6 +230,7 @@ pub(super) async fn place(
                         );
                     }
                     let placement = Placement {
+                        root: Some(cfg.root_for_path(&cwd)?.context("생성 root가 없다")?.path),
                         repo: Some(top.clone()),
                         cwd,
                         branch: Some(branch.clone()),
@@ -221,20 +254,33 @@ pub(super) async fn place(
                 std::fs::create_dir_all(placement.cwd.parent().unwrap())?;
                 let cwd = placement.cwd.to_string_lossy();
                 let head = placement.head.as_deref().context("준비 기준 commit이 없다")?;
+                let reason = cfg.lock_reason(&placement.cwd)?;
+                let mut args = vec!["worktree", "add"];
+                if let Some(reason) = &reason {
+                    args.extend(["--lock", "--reason", reason]);
+                }
                 if branch_exists {
                     let tip = git(&top, &["rev-parse", &format!("refs/heads/{branch}")], GIT_T).await?;
                     if tip != head {
                         bail!("준비 branch에 새 commit이 있다. 사람이 확인해야 한다");
                     }
-                    git(&top, &["worktree", "add", &cwd, &branch], wait).await?;
+                    args.extend([cwd.as_ref(), branch.as_str()]);
                 } else {
-                    git(&top, &["worktree", "add", "-b", &branch, &cwd, head], wait).await?;
+                    args.extend(["-b", &branch, &cwd, head]);
                 }
+                git(&top, &args, wait).await?;
             }
+            protect(cfg, &top, &placement.cwd).await?;
             placement
         }
         ThreadKind::Dir => {
-            let cwd = cfg.work_root.join(&p.project).join(&p.thread);
+            let relative = PathBuf::from(&p.project).join(&p.thread);
+            let cwd = recorded.as_ref().unwrap_or(&cfg.work_root).join(&relative);
+            if old.is_none()
+                && let Some(existing) = find_existing(cfg, &relative)?
+            {
+                bail!("작업 폴더가 이미 있다: {}", existing.display());
+            }
             cfg.check_path(&cwd)?;
             let placement = match old {
                 Some(old) if old.repo.is_none() && old.cwd == cwd => old,
@@ -243,7 +289,15 @@ pub(super) async fn place(
                     if cwd.exists() {
                         bail!("작업 폴더가 이미 있다: {}", cwd.display());
                     }
-                    let placement = Placement { repo: None, cwd, branch: None, base: None, head: None, ready: None };
+                    let placement = Placement {
+                        root: Some(cfg.work_root.clone()),
+                        repo: None,
+                        cwd,
+                        branch: None,
+                        base: None,
+                        head: None,
+                        ready: None,
+                    };
                     write(&path, &placement)?;
                     placement
                 }
@@ -254,6 +308,54 @@ pub(super) async fn place(
         ThreadKind::Adopted => bail!("데려온 thread는 자리를 만들지 않는다(`thread adopt`)"),
     };
     Ok((placement.cwd, placement.branch, placement.base))
+}
+
+/// 어느 옛 root도 읽지 못하면 '없음'으로 확정하지 않는다. 서로 다른 root의 중복도 보존한다.
+fn find_existing(cfg: &ThreadsConfig, relative: &Path) -> Result<Option<PathBuf>> {
+    let mut found = None;
+    for root in cfg.known_roots()? {
+        let cwd = root.path.join(relative);
+        root.check(&cwd)?;
+        match cwd.symlink_metadata() {
+            Ok(_) if found.is_some() => bail!("여러 작업 root에 같은 thread 자리가 있다. 사람이 확인해야 한다"),
+            Ok(_) => found = Some(cwd),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+            Err(e) => return Err(e.into()),
+        }
+    }
+    Ok(found)
+}
+
+pub(super) async fn worktree_lock(repo: &Path, cwd: &Path) -> Result<Option<Option<String>>> {
+    let expected = crate::work_root::real_location(cwd)?;
+    let list = git(repo, &["worktree", "list", "--porcelain", "-z"], GIT_T).await?;
+    for record in list.split("\0\0") {
+        let mut fields = record.split('\0');
+        if fields
+            .next()
+            .and_then(|s| s.strip_prefix("worktree "))
+            .map(|p| crate::work_root::real_location(Path::new(p)))
+            .transpose()?
+            .is_some_and(|p| p == expected)
+        {
+            return Ok(Some(fields.find_map(|s| {
+                if s == "locked" { Some(String::new()) } else { s.strip_prefix("locked ").map(Into::into) }
+            })));
+        }
+    }
+    Ok(None)
+}
+async fn protect(cfg: &ThreadsConfig, repo: &Path, cwd: &Path) -> Result<()> {
+    if let Some(reason) = cfg.lock_reason(cwd)? {
+        match worktree_lock(repo, cwd).await? {
+            Some(None) => {
+                git(repo, &["worktree", "lock", "--reason", &reason, &cwd.to_string_lossy()], GIT_T).await?;
+            }
+            Some(Some(_)) => {} // 사람의 잠금도 자동 prune을 막는다. 정리 때는 소유 잠금만 푼다.
+            None => bail!("준비한 worktree의 Git 등록이 없다"),
+        }
+    }
+    Ok(())
 }
 
 async fn check_worktree(p: &Placement) -> Result<()> {
@@ -277,6 +379,44 @@ async fn check_worktree(p: &Placement) -> Result<()> {
     Ok(())
 }
 
+/// 구판에서 가져온 외장 worktree도 agent가 다시 연결되기 전에 자동 prune으로부터 보호한다.
+pub async fn protect_recorded_worktrees(cfg: &ThreadsConfig) -> Result<()> {
+    let _lease = cfg.lease()?;
+    let dir = cfg.state_dir.as_ref().context("agent 상태 폴더가 없다")?.join("thread-preparations");
+    let entries = match std::fs::read_dir(&dir) {
+        Ok(entries) => entries,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(e) => return Err(e.into()),
+    };
+    for entry in entries {
+        let path = entry?.path();
+        if path.extension().and_then(|s| s.to_str()) != Some("json") {
+            continue;
+        }
+        let saved: Placement = read(&path)?.context("준비 journal이 없다")?;
+        let Some(repo) = &saved.repo else { continue };
+        if cfg.lock_reason(&saved.cwd)?.is_none() {
+            continue;
+        }
+        if let Err(e) = recorded_root(cfg, &saved) {
+            tracing::warn!(%e, "옛 작업 root의 Git 잠금 점검 보류");
+            continue;
+        }
+        if !saved.cwd.is_dir() {
+            continue;
+        }
+        // 실행 중 작업의 새 commit·dirty는 허용하되 다른 repo/branch를 차지하지 않는다.
+        let common = git(&saved.cwd, &["rev-parse", "--path-format=absolute", "--git-common-dir"], GIT_T).await?;
+        if common != git(repo, &["rev-parse", "--path-format=absolute", "--git-common-dir"], GIT_T).await?
+            || saved.branch.as_ref() != Some(&git(&saved.cwd, &["symbolic-ref", "--short", "HEAD"], GIT_T).await?)
+        {
+            bail!("준비 journal과 현재 worktree의 repo·branch가 다르다");
+        }
+        protect(cfg, repo, &saved.cwd).await?;
+    }
+    Ok(())
+}
+
 #[derive(Serialize, Deserialize, PartialEq, Eq)]
 struct CleanupInput {
     repo: Option<String>,
@@ -290,6 +430,9 @@ struct CleanupInput {
 struct CleanupRecord {
     input: CleanupInput,
     result: Option<aaa_proto::Cleanup>,
+    /// 이 의도를 먼저 내구화한 뒤 aaa 소유의 Git 잠금을 잠깐 푼다.
+    #[serde(default)]
+    relock: Option<String>,
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -303,6 +446,10 @@ pub async fn cleanup_recorded(
     uncopied: bool,
     wait: Duration,
 ) -> Result<Cleanup> {
+    let _lease = crate::work_root::shared(state)?;
+    let cfg = ThreadsConfig { state_dir: Some(state.into()), ..Default::default() };
+    cfg.check_path(Path::new(cwd))?;
+    let owned_lock = cfg.lock_reason(Path::new(cwd))?;
     let path = state.join("thread-cleanup").join(format!("{}.json", hex::encode(Sha256::digest(cwd.as_bytes()))));
     let lock = lock(&path);
     let _guard = lock.lock().await;
@@ -328,10 +475,59 @@ pub async fn cleanup_recorded(
     {
         return Ok(result);
     }
-    write(&path, &CleanupRecord { input, result: None })?;
-    let result = super::cleanup(repo, cwd, branch, merged_head, keep_worktree, uncopied, wait).await?;
+    if let Some(mut old) = read::<CleanupRecord>(&path)? {
+        restore_lock(state, &mut old).await?;
+    }
+    write(&path, &CleanupRecord { input, result: None, relock: owned_lock.clone() })?;
+    let result =
+        super::cleanup(repo, cwd, branch, merged_head, keep_worktree, uncopied, owned_lock.as_deref(), wait).await?;
     let mut record: CleanupRecord = read(&path)?.context("정리 journal이 없다")?;
+    restore_lock(state, &mut record).await?;
     record.result = Some(result.clone());
     write(&path, &record)?;
     Ok(result)
+}
+
+async fn restore_lock(state: &Path, record: &mut CleanupRecord) -> Result<()> {
+    let Some(reason) = &record.relock else { return Ok(()) };
+    let cfg = ThreadsConfig { state_dir: Some(state.into()), ..Default::default() };
+    let cwd = Path::new(&record.input.cwd);
+    cfg.check_path(cwd)?;
+    if cfg.lock_reason(cwd)?.as_ref() != Some(reason) {
+        bail!("정리 journal의 잠금 소유자가 다르다");
+    }
+    if let Some(repo) = &record.input.repo
+        && worktree_lock(Path::new(repo), cwd).await? == Some(None)
+    {
+        git(Path::new(repo), &["worktree", "lock", "--reason", reason, &record.input.cwd], GIT_T).await?;
+    }
+    record.relock = None;
+    Ok(())
+}
+
+/// 중단된 정리는 다시 실행하지 않는다. Git 잠금만 되살려 다음 resolve/sweep을 기다린다.
+pub async fn recover_cleanup_locks(state: &Path) -> Result<()> {
+    let _lease = crate::work_root::shared(state)?;
+    let dir = state.join("thread-cleanup");
+    let entries = match std::fs::read_dir(&dir) {
+        Ok(entries) => entries,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(e) => return Err(e.into()),
+    };
+    for entry in entries {
+        let path = entry?.path();
+        if path.extension().and_then(|s| s.to_str()) != Some("json") {
+            continue;
+        }
+        let mut record: CleanupRecord = read(&path)?.context("정리 journal이 없다")?;
+        if record.relock.is_none() {
+            continue;
+        }
+        match restore_lock(state, &mut record).await {
+            Ok(()) => write(&path, &record)?,
+            // 옛 볼륨이 빠졌다면 그 자리의 정리를 완료로 바꾸지 않는다.
+            Err(e) => tracing::warn!(%e, "중단한 정리의 Git 잠금 복구 보류"),
+        }
+    }
+    Ok(())
 }

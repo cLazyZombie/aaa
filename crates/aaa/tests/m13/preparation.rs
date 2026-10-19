@@ -165,9 +165,39 @@ fn interrupted_placement_and_resolve_resume_from_agent_records() {
     let registered = git(&w.repo, &["worktree", "list", "--porcelain"]);
     assert_eq!(registered.matches(path_str(&cwd)).count(), 1, "중복 자리 생성 금지: {registered}");
     let receipt: Value =
-        serde_json::from_slice(&std::fs::read(w.lab.root.join("workA/.preparations/demo-t-0001.json")).unwrap())
+        serde_json::from_slice(&std::fs::read(w.h.state.join("agent/thread-preparations/demo-t-0001.json")).unwrap())
             .unwrap();
     assert_eq!(receipt["ready"]["cwd"], path_str(&cwd));
+
+    // 같은 상태 폴더로 agent만 B에 다시 시작한다. 기존 세션·host DB의 A 경로는 옮기지 않는다.
+    w.lab.kill("agentA");
+    wait_for("이전 agent 연결 종료", T, || (!w.h.connected("labA")).then_some(()));
+    let next_root = w.lab.root.join("workB");
+    std::fs::write(w.h.cfg.join("agent.local.toml"), format!("schema = 1\n[agent]\nwork_root = {next_root:?}\n"))
+        .unwrap();
+    let real = Command::new("which").arg("git").output().unwrap();
+    assert!(real.status.success());
+    let real = String::from_utf8(real.stdout).unwrap();
+    let path = format!("{}:{}", w.lab.root.join("git-bin").display(), std::env::var("PATH").unwrap());
+    let gate_root = w.lab.root.to_string_lossy().to_string();
+    let address = gate.listener.local_addr().unwrap();
+    let gate_host = address.ip().to_string();
+    let gate_port = address.port().to_string();
+    w.lab.spawn_env(
+        "agentB",
+        &w.h,
+        &["agent", "--host", "local", "--name", "labA"],
+        &[
+            ("PATH", &path),
+            ("REAL_GIT", real.trim()),
+            ("GIT_GATE_ROOT", &gate_root),
+            ("GIT_GATE_HOST", &gate_host),
+            ("GIT_GATE_PORT", &gate_port),
+            ("CLAUDE_CODE_CHILD_SESSION", "1"),
+            ("CLAUDECODE", "1"),
+        ],
+    );
+    wait_for("B root agent 연결", T, || w.h.connected("labA").then_some(()));
 
     GitGate::enable(&w, "remove");
     let (_, _old_output) = w.lab.spawn_piped("resolve-old", &w.h, &["--json", "thread", "resolve", "demo", &id]);
@@ -193,6 +223,10 @@ fn interrupted_placement_and_resolve_resume_from_agent_records() {
     )
     .unwrap();
     assert!(record["result"].is_object(), "agent도 정리 결과를 기록했다: {record}");
+    let fresh = start_gated(&w);
+    let fresh_id = fresh["id"].as_str().unwrap();
+    let fresh = w.wait_show("새 thread는 B에 준비", fresh_id, |v| v["status"] == "open");
+    assert!(Path::new(fresh["cwd"].as_str().unwrap()).starts_with(next_root), "{fresh}");
 }
 
 /// 1초 host 설정이 실제 요청·Git deadline까지 전달된다. 응답을 잃은 완성 자리도 변경이 있으면 덮지 않는다.
@@ -240,7 +274,8 @@ fn configured_prepare_timeout_recovers_only_unchanged_worktree() {
         let orphan = w.lab.root.join("workA/repo").join(format!("demo-{second}"));
         assert!(orphan.is_dir());
         if legacy {
-            std::fs::remove_file(w.lab.root.join("workA/.preparations").join(format!("demo-{second}.json"))).unwrap();
+            std::fs::remove_file(w.h.state.join("agent/thread-preparations").join(format!("demo-{second}.json")))
+                .unwrap();
             let e = w.h.json(&["thread", "resolve", "demo", second]).expect_err("구판 자리를 없다고 확정하지 않는다");
             assert!(e.contains("기록 없는 준비 자리"), "{e}");
             assert!(orphan.exists());
