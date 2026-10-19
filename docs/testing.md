@@ -236,7 +236,7 @@ local agent 재연결 중 배포 조회(§8.237): host `deploy::tests::coordinat
 
 ## Mac 웹 터미널 Ctrl+V(§8.232 후속)
 
-기존 E2E 11의 「그림 붙여 넣기·끌어 놓기」가 소유한다. 실제 host·agent와 raw PTY에서 Mac Chrome·WebKit의 이미지 경로/bytes, 텍스트만·권한 거부·API 없음의 ^V, 읽는 중 반복의 단일 업로드를 본다. Windows platform의 Ctrl+V는 비동기 read를 호출하지 않고 기존 표준 text/image paste를 처리한다. iPhone·MacIntel iPad도 새 read 없이 기존 image paste를 유지한다. 페이지의 Clipboard API만 가짜여서 사람의 clipboard나 OS 권한 설정에 닿지 않는다. 실제 권한 창·Windows OS·휴대폰 실기를 보증하지 않는다. `--spec 11 --grep '그림 붙여 넣기'`로 좁게 돌린다. 연속 첨부는 실제 PTY가 받은 이번 경로를 대조해 이전 배너와 새 ACK를 섞지 않는다.
+기존 E2E 11의 「그림 붙여 넣기·끌어 놓기」가 소유한다. Ctrl+V는 어느 OS에서나 브라우저 붙여넣기 몫이다(그림 읽기는 사용자 결정으로 되돌렸다). 실제 host·agent와 raw PTY에서 Mac Chrome·WebKit·Windows·iPad·iPhone의 Ctrl+V(누름·꾹 누름)가 clipboard를 읽지 않고, 뒤따르는 표준 글 paste가 `^V` 없이 PTY에 닿으며(같은 연결 순서가 「보내지 않았다」의 울타리), 그림 paste는 이번 경로·bytes로 닿는지 본다. 페이지의 Clipboard API만 읽기 수를 세는 가짜여서 사람의 clipboard나 OS 권한 설정에 닿지 않는다. `--spec 11 --grep '그림 붙여 넣기'`로 좁게 돌린다.
 
 ## TUI pane 앱의 선택 복사
 

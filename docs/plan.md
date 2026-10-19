@@ -5571,6 +5571,13 @@ primary 근거:
     실기를 증명하지는 않는다. 수정 전 이미지 경로 미수신 실패를 보존했고 수정 후 통과했다. 연속 첨부는 이전 배너가 아니라
     이번 PTY 경로를 받아 파일 bytes·화면을 대조한다. 새 production 시험 seam·고정 sleep은 없다.
   - **착지 순서.** ci-local·공개 검사 뒤 병합 준비만 보고하고 지정된 착지 창을 기다린다. 안내 소멸 운영 확인은 다음 배포 뒤 남는다.
+- **Ctrl+V 그림 읽기 되돌림(10-19 13:5x 사용자 「그럼 그냥 cmd+v로 통일. control+v는 없애」, t-0393).** 위 Mac Ctrl+V 읽기는
+  Safari가 키마다 「붙여넣기」 확인 말풍선을 띄웠다. 그래서 그 전 동작으로 되돌렸다: Ctrl+V는 어느 OS에서나 xterm에서 빼서 브라우저
+  붙여넣기에 맡기고(herdr-web-ui `PaneTerminal.tsx` 610~660 그대로) clipboard를 읽지도 ^V를 보내지도 않는다. Mac 그림은 Cmd+V의
+  paste 사건이 기존 첨부(업로드·서명/상한 검사·경로 삽입)로 보낸다. Windows·Linux Ctrl+V의 표준 paste, iPhone·iPad paste도 그대로다.
+  E2E 11의 같은 자리는 Mac Chrome·WebKit·Windows·iPad·iPhone에서 Ctrl+V(누름·꾹 누름)가 clipboard를 읽지 않고, 뒤따르는 글 paste가
+  PTY에 `^V` 없이 닿으며(같은 연결의 울타리), 그림 paste는 이번 경로·bytes로 닿는지 본다. Ctrl+V에서 clipboard를 읽거나 ^V를 보내는
+  변형은 각각 실패한다.
 
 ### 8.233 배포 실행기 잠금의 상속 FD 수명(10-19, t-0381 후속)
 
