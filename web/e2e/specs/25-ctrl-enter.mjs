@@ -262,9 +262,9 @@ draw();
       if (!decided || !events.some((e) => e.id === decided.id && e.event === "steer_sent")) throw new Error(`보냄 진단이 같은 ID로 없다: ${keys}`);
     }
     await p.context().close();
-    // 보기 기기: 화면 판정 전에 거절하고 아무것도 쓰지 않는다
-    const reader = await pairPage(browser, aaa("web", "pair", "--reader").code, { width: 1100, height: 760 }, { wsRoute });
+    // 보기 기기: 화면 판정 전에 거절하고 아무것도 쓰지 않는다. 연결 표는 새 기기가 첫 화면 연결을 열기 전에 비운다
     conns.clear();
+    const reader = await pairPage(browser, aaa("web", "pair", "--reader").code, { width: 1100, height: 760 }, { wsRoute });
     await inList(reader.page, "pane-ce-modern");
     const before = received("ce-modern").length;
     const refused = await steerFrame("ce-modern");
