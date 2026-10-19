@@ -93,7 +93,13 @@ impl Host {
             Ok(Some(project)) => Ok(project),
             Ok(None) => Err(err(
                 ErrorCode::NotFound,
-                "이 host에는 아직 프로젝트가 없다: `aaa project create <이름>`으로 만들거나 프로젝트 이름을 준다",
+                // 인스턴스는 이름을 생략하면 인스턴스 이름으로 만든다(plan §8.294)
+                match aaa_config::paths::instance() {
+                    Some(name) => format!("이 host에는 아직 프로젝트가 없다: `aaa --instance {name} project create`로 만든다"),
+                    None => {
+                        "이 host에는 아직 프로젝트가 없다: `aaa project create <이름>`으로 만들거나 프로젝트 이름을 준다".into()
+                    }
+                },
             )),
             Err(names) => Err(err(ErrorCode::BadRequest, sole_project_refusal(&names))),
         }

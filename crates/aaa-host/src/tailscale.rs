@@ -239,6 +239,23 @@ mod tests {
         assert_eq!((p.serving, p.free_port), (None, Some(443)));
     }
 
+    /// 같은 Mac의 둘째 aaa(plan §8.294): 기본 인스턴스가 443을 7431로 쓰면 7433의 인스턴스는 그 주소를 제 것으로 보지 않고
+    /// 다음 후보를 고른다. 기본 인스턴스도 인스턴스의 8443을 제 것으로 보지 않는다
+    #[test]
+    fn another_instance_on_the_same_mac_keeps_its_port() {
+        let serve = r#"{"TCP":{"443":{"HTTPS":true},"8443":{"HTTPS":true}},"Web":{
+            "host1.example.ts.net:443":{"Handlers":{"/":{"Proxy":"http://127.0.0.1:7431"}}},
+            "host1.example.ts.net:8443":{"Handlers":{"/":{"Proxy":"http://127.0.0.1:7433"}}}}}"#;
+        let work = plan(Some(&out(serve)), 7433, CANDS);
+        assert_eq!(work.serving, Some(("https://host1.example.ts.net:8443".into(), 8443)));
+        let default = plan(Some(&out(serve)), 7431, CANDS);
+        assert_eq!(default.serving, Some(("https://host1.example.ts.net".into(), 443)));
+        let fresh = r#"{"TCP":{"443":{"HTTPS":true}},"Web":{
+            "host1.example.ts.net:443":{"Handlers":{"/":{"Proxy":"http://127.0.0.1:7431"}}}}}"#;
+        let p = plan(Some(&out(fresh)), 7433, CANDS);
+        assert_eq!((p.serving, p.free_port), (None, Some(8443)));
+    }
+
     #[test]
     fn all_candidates_taken() {
         let serve =

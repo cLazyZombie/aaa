@@ -278,7 +278,12 @@ fn short(sha: &str) -> &str {
     &sha[..12.min(sha.len())]
 }
 
-const RESTART: &str = "도는 host·agent는 옛 실행 파일로 계속 돈다. 새것으로 다시 띄우려면 ✋ `aaa service restart --role agent`(host Mac은 `--role host`도). 세션은 이어진다";
+fn restart_hint() -> String {
+    format!(
+        "도는 host·agent는 옛 실행 파일로 계속 돈다. 새것으로 다시 띄우려면 ✋ `aaa{} service restart --role agent`(host Mac은 `--role host`도). 세션은 이어진다",
+        aaa_config::paths::instance_flag()
+    )
+}
 
 /// self-check를 마친 바꿀 것
 struct Swap<'a> {
@@ -348,7 +353,7 @@ fn finish(json: bool, place: &Place, swap: Swap, dry_run: bool, keep: u32, appro
         for p in &pruned {
             println!("  보관 수({keep})를 넘어 지웠다: {}", p.display());
         }
-        println!("{RESTART}. 되돌리기: `aaa update rollback`");
+        println!("{}. 되돌리기: `aaa{} update rollback`", restart_hint(), aaa_config::paths::instance_flag());
     }
     Ok(ExitCode::SUCCESS)
 }

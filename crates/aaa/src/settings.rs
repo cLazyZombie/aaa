@@ -194,7 +194,7 @@ fn project_dir(name: &str) -> Result<PathBuf> {
     }
     let cfg = host_cfg()?;
     let root = if cfg.projects.root.is_empty() {
-        aaa_config::paths::home().join(".aaa").join("projects")
+        aaa_config::paths::projects_root_default()
     } else {
         PathBuf::from(&cfg.projects.root)
     };

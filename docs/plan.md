@@ -5682,3 +5682,34 @@ L4 후속(10-20 00시 사용자 관찰): 멈춤 상태의 후보 예약과 재�
 - **정본과 재연결.** FRONT1.53 웹 전용 Rollout 사건은 연결 처음과 DB 저장 뒤 최신 표시용 요약을 보낸다. actor·후보 원본 경로·실행기/PID·내부 작업 ID는 제외한다. agent 재접속으로 표시 이름이 바뀌어도 다시 보낸다. 웹은 마지막 요약을 그릴 뿐 진행기를 재개하지 않으며 단절 때 마지막 수신 상태임을 표시한다. 표시용 오류는 상태별 안전한 설명으로 한정하고 원본 오류는 coordinator 정본에 보존한다. 설명·SHA는 줄바꿈하며 생략하지 않는다.
 - **종료.** 종료 정본·coordinator inbox·발행 표지는 같은 DB transaction으로 저장한다. Reader도 읽는 inbox에는 ID/SHA와 안전한 안내만 넣고 raw 진단은 rollout 정본에만 보존한다. commit 뒤 투영/깨움과 앱 안 알림을 보낸다. host 재시작·동일 종료 재조회·inbox 정리 뒤에도 한 번만 알린다. commit 직후 재시작해도 내구 inbox는 남으며 transient 앱 알림은 재발행하지 않는다. 옛 terminal 정본을 새 종료로 소급하지 않는다. 외부 push/webhook을 호출하지 않는다. 새 웹 전용 알림을 N-1 CLI에도 보내지 않는다. 앱 안 알림을 누르면 보던 pane 주소를 유지하며 머신 패널 카드를 연다.
 - **시험.** 실제 DB의 요약/변경/재오픈, terminal commit 경계와 한 번 발행, inbox SQL 실패의 원자성은 host/DB owner가 소유한다. 웹 E2E35는 실제 Reader 세션·WS에 배포 사건만 주입해 진행/복구/재연결·조작 거부·전체 오류/SHA·휴대폰 폭·알림 이동을 본다. 실행기와 실제 실패 머신 복구는 L3 m13 owner를 유지한다.
+
+### 8.294 같은 Mac의 둘째 aaa: `--instance`(10-20, t-0429 S4)
+
+- **범위.** 프로젝트 단계 없애기의 S4다. 결정(10-19 「429는 추천대로」 8·9·10)대로 이름 하나(`--instance <이름>`·`AAA_INSTANCE`)가 한 aaa의 폴더·감독자·포트·쿠키·내부 이름을 모두 정한다. wire는 바꾸지 않는다(FRONT_API·AGENT_LINK 그대로).
+- **기본 인스턴스는 그대로.** 이름이 없으면 모든 경로·label·로그·쿠키·tag가 지금과 한 글자도 다르지 않다. 지금 운영은 옮길 것이 없다. 유닛이 파생 규칙을 이름 없음/있음 둘 다로 본다.
+- **폴더는 형제다.** 결정 문서 표의 `…/aaa/instances/<이름>` 대신 모든 기본 이름의 `aaa`를 `aaa-<이름>`으로 바꾼다:
+  - 설정 `~/.config/aaa-<이름>`, 상태 `~/Library/Application Support/aaa-<이름>`, 홈 `~/.aaa-<이름>/projects`, 작업 root(각 Mac 기본) `~/aaa-work-<이름>`, 로그 `~/Library/Logs/aaa-<이름>/`.
+  - 까닭 1: unix socket 경로는 104바이트가 한도다(가장 긴 것은 상태 폴더 아래 `agent/run/b<ID>.sock`). `/instances/`만 11자를 더 먹는다. 형제 폴더는 `-<이름>`만 는다.
+  - 까닭 2: `~/.aaa/<이름>`·`~/aaa-work/<이름>`은 기본 인스턴스의 프로젝트·저장소 폴더와 이름이 겹칠 수 있다. 형제 폴더는 겹치지 않는다.
+  - `--config-dir`·`--state-dir`와 `AAA_CONFIG_DIR`·`AAA_STATE_DIR`는 여전히 이긴다(실험실이 쓴다). 빈 값은 정하지 않은 것이다.
+- **이름.** 소문자로 시작하는 소문자·숫자·`-`, 16자 이하이고 `default`는 쓰지 않는다. CLI가 시작 때 거른다(종료 코드 2). 폴더·label·쿠키 이름에 그대로 들어가기 때문이다.
+- **환경으로 이어진다.** `--instance`는 `AAA_INSTANCE`를 심는다. session host·pane·launchd가 띄운 aaa가 모두 물려받아, pane 안 CLI·hook이 저절로 자기 인스턴스로 간다(hook은 이미 pane env의 socket으로 간다).
+- **launchd.** label은 `dev.aaa.<이름>.<role>`이고 plist가 `AAA_INSTANCE`를 넘긴다(설치하는 셸의 `PATH`·`LANG`과 같이). 기본 인스턴스의 label `dev.aaa.<role>`은 그대로다(바꾸면 지금 서비스를 다시 설치해야 한다).
+  - 배포·업데이트의 restart는 agent 프로세스의 인스턴스로 label을 고른다. 안내 명령에는 `--instance <이름>`이 붙는다.
+  - 옛 `dev.aa.*` 감독자 검사와 `aa` 폴더 옮기기 안내는 기본 인스턴스만 본다.
+- **웹 쿠키.** 쿠키는 포트를 가리지 않는다. 그래서 인스턴스는 `__Host-aaa-<이름>`(HTTP는 `aaa-<이름>`)을 쓴다. 같은 hostname의 두 aaa가 서로 로그아웃시키지 않는다. 기본은 `__Host-aaa` 그대로다.
+- **`aaa --instance <이름> init`.** 같은 Mac에 둘째 aaa를 만든다(사람 터미널에서만).
+  - dir env가 정해져 있거나, host.toml이 이미 있거나, socket 경로가 한도를 넘으면 거부한다.
+  - 기본 인스턴스의 홈에 같은 이름의 프로젝트가 있어도 거부한다. 그 이름이 worktree·branch의 내부 이름(`aaa/<이름>/t-…`)이라 같은 저장소에서 부딪히기 때문이다.
+  - 이 Mac의 다른 aaa host.toml(`~/.config/aaa*`)이 적지 않았고 지금 열 수 있는 포트 쌍(Agent link p, 웹 p+1)을 7432부터 고른다. host.toml(`[local_agent] mode = "launchd"`)과 홈을 만든 뒤, 감독자 설치·프로젝트 만들기·다른 Mac 등록·웹 공개 명령을 보인다.
+  - 감독자 설치와 등록은 하지 않는다.
+- **내부 이름.** 인스턴스에서는 `aaa project create`의 이름을 생략하면 인스턴스 이름이 된다. 빈 host의 안내도 그 명령이다.
+  - push tag는 `aaa-<프로젝트>`라 인스턴스에서는 저절로 `aaa-<이름>`이다. 두 aaa는 포트가 달라 origin(service worker)도 다르다. 그래서 tag 코드는 바꾸지 않았다(§8.291의 「S4에서 바꾼다」는 이렇게 끝났다).
+- **다른 Mac.** 머신마다 `aaa --instance <이름> agent enroll <host>:<포트>`로 따로 등록하고, 그 Mac의 `~/.config/aaa-<이름>/agent.toml`에 host를 적는다. 신뢰·SAS·agent 프로세스가 인스턴스마다 따로다.
+  - init을 돌리지 않는 그 Mac은 사용자 이름이 길 수 있다. 그래서 인스턴스 agent가 시작할 때 socket 길이를 다시 잰다.
+- **웹 공개.** `aaa web publish`는 이미 serve TCP가 쓰는 포트를 건너뛴다. 둘째 인스턴스는 다음 후보를 고르고, 다른 인스턴스의 proxy를 제 것으로 보지 않는다(유닛).
+- **Codex 연동은 그대로.** hooks.json의 한 줄(`'<exe>' hook --agent codex`)이 pane env로 자기 인스턴스를 찾는다. 결정 10대로 binary를 같이 쓰면 줄 하나로 충분하다.
+  - 인스턴스마다 줄을 두면 pane 하나의 hook이 두 번 돌아 사건이 겹친다.
+  - 다른 binary를 쓰면 마지막 설치가 이긴다. hook은 상태가 없어 동작은 같다.
+- **사용량.** HOME의 Claude·Codex 로그인을 같이 본다. 구독까지 나누려면 OS 사용자를 나눈다(결정 문서 3안).
+- **검증.** [testing](testing.md)의 「같은 Mac의 둘째 aaa(§8.294)」를 따른다.

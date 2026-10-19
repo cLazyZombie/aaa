@@ -727,7 +727,7 @@ pub(crate) fn write_atomic(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
 impl Host {
     pub(crate) fn projects_root(&self) -> PathBuf {
         if self.cfg.projects.root.is_empty() {
-            aaa_config::paths::home().join(".aaa").join("projects")
+            aaa_config::paths::projects_root_default()
         } else {
             PathBuf::from(&self.cfg.projects.root)
         }
