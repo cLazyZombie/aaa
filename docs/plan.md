@@ -5544,3 +5544,13 @@ primary 근거:
 - **참고와 차이.** herdr-projects 0.2.35 `project.rs::ProjectLock/Project::lock`도 File close에 맡긴다. herdr `plugin_installations.rs::retain_startup_installation`은 소유권 전환 때 `File::unlock`을 명시한다. herdr의 integration/env 잠금, herdr-web-ui server와 t3code packages에서는 같은 fork 상속 해제 구현이 없었다. [Apple flock(2)](https://developer.apple.com/library/archive/documentation/System/Conceptual/ManPages_iPhoneOS/man2/flock.2.html)의 dup/fork 공유 잠금 계약에 따라 aaa의 실행기 소유권 끝에 명시적으로 unlock한다. 기존 close-on-exec도 유지한다.
 - **제품.** 잠금 획득 직후 private RAII Lease를 만들어 정상 drop과 journal 복구 오류 반환 모두에서 unlock한 뒤 File을 닫는다. 살아 있는 실행기의 배타 잠금, job 재실행 금지, 복구 SHA 판정은 그대로다. 잠금 해제 오류는 기록한다.
 - **검증.** 새 시험을 늘리지 않고 기존 durable job owner 시험에 공유 FD 보유를 더했다. 수정 전 EWOULDBLOCK RED → 수정 후 GREEN, unlock만 제거한 변형도 같은 위치 RED → 바이트 그대로 복원 후 GREEN을 확인한다. 시간 연장·재시도·시험 생략·새 자식/신호·production 시험 seam은 없다. 전체 ci-local과 공개 검사 후 착지한다. 운영 binary 반영은 배포 담당이 한다.
+
+### 8.234 TUI spaces 자동 높이(10-19, t-0386, D안 1단계)
+
+- workspace 항목 수에 머리·빈 줄·footer 세 줄을 더한 높이를 쓴다. 최대 화면 절반까지만 쓰므로 세 workspace가 있는
+  80줄 화면에서는 spaces가 6줄을 쓰고 나머지가 agents에 돌아간다. 기존 반반 고정에서 생긴 큰 여백을 없앤다.
+- 구역 경계를 직접 끌거나 공유 설정 `tuiSidebarSplit`을 저장한 사용자는 그 비율을 유지한다. 탭·workspace·마우스·compact
+  동작과 저장 형식은 유지한다. 후속 단계는 thread 두 줄 단위 스크롤, 폭 48칸·선택 제목 전체 보기, t-0390 착지에 맞춘
+  Projects·Machines·Agents 패널과 패널 밖 특수 임무다.
+- 기존 렌더 keeper에서 작은 화면·큰 화면·다수 workspace 상한·저장 비율을 확인한다. 기존 PTY keeper에서 자동 경계를
+  실제 마우스로 끌고 재접속하여 저장 비율을 확인한다. 새 시험 전용 seam은 없다.
