@@ -18,8 +18,8 @@ fn add(plan: &mut Plan, root: &Path, file: String, text: String) -> Result<(), S
 }
 fn rule(plan: &mut Plan, root: &Path, name: &str, mut spec: File) -> Result<(), String> {
     let (text, external) = spec.action.texts();
-    if external.is_none() && text.as_ref().is_some_and(|s| s.len() > 4096) {
-        let body = text.clone().unwrap();
+    if external.is_none() && text.is_some_and(|s| s.len() > 4096) {
+        let body = text.unwrap();
         let path = format!("automations/{name}.md");
         add(plan, root, path.clone(), format!("{body}\n"))?;
         match &mut spec.action {
@@ -33,6 +33,11 @@ fn rule(plan: &mut Plan, root: &Path, name: &str, mut spec: File) -> Result<(), 
             }
             Action::Wake(a) => {
                 a.text = None;
+                a.text_file = Some(path)
+            }
+            Action::Start(a) => {
+                a.text = None;
+                a.brief_file = None;
                 a.text_file = Some(path)
             }
         }
@@ -51,7 +56,7 @@ fn rule(plan: &mut Plan, root: &Path, name: &str, mut spec: File) -> Result<(), 
         }
         _ => String::new(),
     };
-    if normalized.action.texts().0.as_deref().unwrap_or("") != expected_text {
+    if normalized.action.texts().0.unwrap_or("") != expected_text {
         return Err("변환한 글이 정규화 값과 다르다".into());
     }
     add(plan, root, format!("automations/{name}.toml"), serialized)

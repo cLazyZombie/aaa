@@ -8,6 +8,14 @@ use rusqlite::{Connection, OptionalExtension, params};
 
 pub const SCHEMA_VERSION: i64 = 1;
 
+pub(crate) struct StartAdmission {
+    pub machine: String,
+    pub holds: Vec<String>,
+    pub rule: String,
+    pub max_running: Option<u32>,
+    pub max_auto_threads: u32,
+}
+
 pub struct Db {
     conn: Mutex<Connection>,
 }
@@ -638,12 +646,13 @@ impl Db {
 
     /// 프로젝트의 다음 thread 번호(`t-0001`부터)를 잡고 기록을 넣는다. `make`는 ID를 받아 저장할 JSON을 만든다.
     pub fn thread_insert_next(&self, project: &str, make: impl FnOnce(&str) -> String) -> Result<String> {
-        self.thread_insert_marked(project, None, make).map(|(id, _)| id)
+        self.thread_insert_marked(project, None, None, make).map(|(id, _)| id)
     }
     pub(crate) fn thread_insert_marked(
         &self,
         project: &str,
         key: Option<&str>,
+        admission: Option<&StartAdmission>,
         make: impl FnOnce(&str) -> String,
     ) -> Result<(String, bool)> {
         let mut c = self.conn.lock().unwrap();
@@ -653,6 +662,37 @@ impl Db {
                 tx.query_row("SELECT value FROM meta WHERE key=?1", [key], |r| r.get::<_, String>(0)).optional()?
         {
             return Ok((id, false));
+        }
+        if let Some(policy) = admission {
+            let mut statement =
+                tx.prepare("SELECT id,data FROM threads WHERE project=?1 AND status IN ('open','starting')")?;
+            let active = statement
+                .query_map([project], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)))?
+                .collect::<rusqlite::Result<Vec<_>>>()?;
+            let mut rule_count = 0usize;
+            let mut auto_count = 0usize;
+            for (id, text) in active {
+                let value: serde_json::Value = serde_json::from_str(&text)?;
+                if value["machine_id"].as_str() == Some(policy.machine.as_str())
+                    && value["holds"].as_array().is_some_and(|holds| {
+                        holds.iter().filter_map(|h| h.as_str()).any(|h| policy.holds.iter().any(|want| want == h))
+                    })
+                {
+                    anyhow::bail!("start_wait: {}의 측정 표지({id})", policy.machine);
+                }
+                if let Some(name) = value["automation"].as_str() {
+                    auto_count += 1;
+                    rule_count += usize::from(name == policy.rule);
+                }
+            }
+            anyhow::ensure!(
+                !policy.max_running.filter(|cap| *cap > 0).is_some_and(|cap| rule_count >= cap as usize),
+                "start_wait: 명시한 규칙 동시 실행 상한"
+            );
+            anyhow::ensure!(
+                policy.max_auto_threads == 0 || auto_count < policy.max_auto_threads as usize,
+                "start_wait: 명시한 프로젝트 자동 thread 상한"
+            );
         }
         let max: Option<i64> =
             tx.query_row("SELECT MAX(CAST(SUBSTR(id, 3) AS INTEGER)) FROM threads WHERE project=?1", [project], |r| {

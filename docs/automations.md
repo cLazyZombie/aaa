@@ -24,7 +24,7 @@ aaa routine toggle demo ci-main --off
 3. 껐다 켤 때는 파일 diff가 enabled뿐인지 확인한다. 임무는 적용 사본 차이도 확인한다. 조회/임무 머신이나 인증을 이 화면이 바꾸지는 않는다.
 4. DB를 보존해 재시작하면 기록을 이어 읽는다. 고리 밖 상세 이력은 기존 flow·inbox에서 찾는다. 기록 삭제/초기화용 명령은 제공하지 않는다.
 
-FRONT_API 1.52는 변환 요청·규칙 제목·분리한 임무 본문을 더한다. agent wire는 바뀌지 않는다. 폼 편집·지금 실행은 아직 제공하지 않는다.
+FRONT_API 1.54는 자동 시작 범위 승인·holds·시작 actor를 더한다(1.52의 변환·분리 본문 포함). agent wire1.8은 바뀌지 않는다. 폼 편집·지금 실행은 아직 제공하지 않는다.
 
 임무의 「막힘」은 [막힘 이유와 복귀](mission-blocks.md)를 따른다. 확인창 해제는 기록하고 자동 복귀하지만 전달 모름은 자동으로 풀지 않는다.
 
@@ -54,7 +54,7 @@ batch = "1m"
 
 조건은 `on.schedule`(every 또는 daily·catch_up), `on.command`(every/daily·command·machine), `on.thread`(events·repos), `on.pr`(events), `on.ci`(repo·branches·workflows·events·machine), `on.git`(repo·branches·events·machine) 중 하나다. `on.thread`는 처음 읽을 때 현재 flow를 기준으로 잡고 이후 사건만 받는다. thread 없는 사건의 repos 필터는 사건 repo를 쓴다. 평가자/임무·post·메시지 등 자기 동작을 다시 깨우는 사건은 받지 않는다.
 
-동작은 `do.inbox`(coordinator 안내), `do.message`(thread="owner" 또는 t-NNNN), `do.wake`(mission) 중 하나다. 짧은 글은 `text = """…"""`, 긴 글은 `text_file = "automations/check.md"`로 쓴다. 두 칸을 함께 쓰면 오류다. 글 파일은 UTF-8·1MiB 이하·프로젝트 내부 상대 경로의 일반 파일이며 중간 폴더를 포함한 symlink·절대 경로·상위 경로 이동을 받지 않는다. 읽은 글은 입력과 함께 고정해, 대기 중 파일 변경이 이미 받은 동작을 바꾸지 않는다. command 자료는 자료임을 밝힌 fenced 본문으로 전달한다.
+동작은 `do.inbox`(coordinator 안내), `do.message`(thread="owner" 또는 t-NNNN), `do.wake`(mission), `do.start`(일반 Worker 시작) 중 하나다. 짧은 글은 `text = """…"""`, 긴 글은 `text_file = "automations/check.md"`로 쓴다. 두 칸을 함께 쓰면 오류다. 글 파일은 UTF-8·1MiB 이하·프로젝트 내부 상대 경로의 일반 파일이며 중간 폴더를 포함한 symlink·절대 경로·상위 경로 이동을 받지 않는다. inbox/message/wake의 글은 입력과 함께 고정한다. start는 고정한 승인 범위가 현재와 같을 때 현재 작업 본문을 쓰며 아래 L5 규칙을 따른다. command 자료는 자료임을 밝힌 fenced 본문으로 전달한다.
 
 `aaa automation schema`는 Rust 타입에서 만든 JSON Schema를 출력하고 `--mission`은 임무 스키마를 출력한다. 변환기는 각 폴더에 스키마도 둔다. 저장소 기준 산출물은 [automation.schema.json](automation.schema.json)·[mission.schema.json](mission.schema.json)이다. 호스트는 스키마의 구조 검사에 더해 일정·이름·파일 경계를 검사한다. 웹은 목록·기록·enabled만 편집하며 현재 칸별 폼 편집은 없다.
 
@@ -130,3 +130,38 @@ reload의 성공 응답은 후보 적용 예약을 수락했다는 뜻이다. �
 
 
 L4는 plan §8.290, FRONT_API1.52다. S1/S2의 한 프로젝트 계약을 따른다. `automation convert`의 프로젝트 인자는 생략하며 옛 명시 인자는 같은 프로젝트일 때만 호환한다. 원시 Front 요청도 project를 생략하면 host의 한 프로젝트를 쓴다. 프로젝트 설정은 기존 `aaa.toml` 우선·`project.toml` 호환 owner를 그대로 사용한다. agent 계약은 기준1.8에서 바꾸지 않는다.
+## 자동 thread 시작(L5)
+
+자동 시작은 일반 Worker thread를 만든다. 보고·착지·정리는 coordinator가 맡으며 운영 자동화의 전환은 배포 뒤 coordinator가 한다.
+
+```toml
+title = "새벽 점검"
+[on.schedule]
+daily = "03:00"
+catch_up = "once"
+[do.start]
+title = "점검 {date}"
+brief_file = "scratch/check-brief.md"
+repo = "app"
+profiles = ["reviewer", "builder"]
+profile_pick = "week-left"
+machines = ["mac-a", "mac-b"]
+machine_pick = "idlest"
+wait = ["timing"]
+```
+
+`repo`는 각 후보 머신에 등록한 저장소의 이름 또는 정확한 경로다. 머신마다 하나로 해석돼야 한다. 생략하면 일반 작업 폴더(Dir)를 만든다. `brief_file`·`text_file`·`text` 중 하나로 비지 않은 할 일을 준다. 파일은 프로젝트 폴더 안의 일반 파일이어야 하며 바깥 경로·symlink는 거부한다. 본문/제목의 `{machine}`·`{repo_path}`·`{date}`만 채운다. 조건 자료는 별도 인용 블록으로 붙인다.
+
+처음과 범위를 넓힐 때만 사람이 승인한다. `aaa routine list --json`의 start_scope와 start_approval_sha256를 검토한 뒤 aaa 세션 밖 터미널에서 `aaa automation approve check <검토한-hash>`를 실행하거나 Controller 웹 「자동화 → 승인 검토」에서 확인한다. 본 뒤 범위가 바뀌었으면 거부하고 다시 검토하라고 알린다. Reader는 읽기만 한다. hash는 정규화한 조건·일정/필터·명령 조회 머신·입력 저장소·해석된 시작 머신/저장소·profile에 묶인다. 주석·순서·본문·제목·선택 예산은 포함하지 않는다. 좁힌 대상/필터와 더 긴 every 주기는 기존 승인 ceiling 안에서 적용한다. 이미 쌓인 차례와 현재 범위가 다르면 그 차례는 취소한다. 본문만 바뀌면 승인 유지·inbox changed/diff 한 번으로 알린다.
+
+`safety.start_threads=propose`면 thread를 만들지 않고 「띄울 차례」 inbox 한 건을 남긴다. auto면 일반 thread의 profile·권한 설정을 그대로 쓴다. 승인 대기는 실행 횟수를 소비하지 않는다. 명령 조건의 조회 명령 승인은 기존 routine 승인과 별도다.
+
+`idlest`는 연결된 후보 가운데 Working thread 수, CPU 사용률, 목록 순서로 고른다. 모두 일하고 있어도 가장 덜 바쁜 곳을 고른다. `week-left`는 고른 머신이 host의 로컬 agent이고 모든 후보 profile의 host 로그인 주간 사용량을 확실히 비교할 수 있을 때 남은 양이 많은 것을 고른다. 원격 머신·여러 계정·읽기 실패·숫자 없음이면 사용 가능한 첫 profile이다. AI 요청을 만들지 않는다.
+
+측정 작업은 `aaa thread start --holds timing ...`으로 표지를 단다. 그 thread가 Starting/Open인 동안 같은 머신을 후보에서 제외한다. 모든 후보가 표지/연결/profile 때문에 막히면 입력과 까닭을 보존하고 기다린다. 표지 thread를 끝내면 다시 고른다. 동적으로 표지를 바꾸는 명령은 이 단계에 포함하지 않는다.
+
+횟수·간격·동시성·기다림 시간은 기본 제한이 없다. `[limits] max_running`·`max_per_day`·`min_gap`, host `[projects] max_auto_threads`, `do.start.wait_max`는 적었을 때만 사용하며 생략·0은 없음이다. 앞 자동 thread가 열려 있어도 다른 사건은 실행한다. 명시 wait_max를 넘으면 그 차례만 건너뛰고 inbox 한 번을 남긴다. usage 문턱·batch·dedupe는 유지한다.
+
+일정형은 coordinator pane 없이 실행하고, 같은 예정 차례는 한 번만 시작한다. 기다리는 동안 다음 일정은 catch_up once로 묶는다. thread 기록과 시작 key를 같은 DB transaction에 저장하고, 그 직전에도 holds/명시 동시 상한을 확인한다. 최종 전달 영수증 저장이 실패해도 내구 시작 key로 재생성을 막는다. 시작 후 실패한 thread는 일반 thread의 restart/정리 절차를 따른다. flow thread_started.actor는 routine:<이름>, 실행 기록에는 thread id가 남는다.
+
+확인: `aaa routine runs check`의 승인/holds/연결/profile/명시 상한 대기 까닭과 thread id를 본다. 기다림 중 파일 범위를 고쳤으면 이전 차례 취소 기록을 확인한다. DB/시작 key를 지워 재실행시키지 않는다.

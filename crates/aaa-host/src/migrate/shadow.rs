@@ -142,6 +142,9 @@ pub fn aaa_group(f: &Facts, now_s: i64) -> ThreadGroup {
     let now_ms = (now_s.max(0) as u64) * 1000;
     let rec = ThreadRec {
         mission: None,
+        holds: vec![],
+        started_by: None,
+        automation: None,
         project: String::new(),
         id: "t-0000".into(),
         title: String::new(),

@@ -5713,3 +5713,12 @@ L4 후속(10-20 00시 사용자 관찰): 멈춤 상태의 후보 예약과 재�
   - 다른 binary를 쓰면 마지막 설치가 이긴다. hook은 상태가 없어 동작은 같다.
 - **사용량.** HOME의 Claude·Codex 로그인을 같이 본다. 구독까지 나누려면 OS 사용자를 나눈다(결정 문서 3안).
 - **검증.** [testing](testing.md)의 「같은 Mac의 둘째 aaa(§8.294)」를 따른다.
+
+### 8.295 조건 → 일반 thread 시작(L5, 10-20, t-0420)
+
+- `do.start`는 일반 Worker를 기존 시작 경로로 띄운다. FRONT_API1.54, AGENT_LINK1.8 유지. `thread start --holds timing`은 host 표지이고, 같은 머신의 Starting/Open 표지를 명시 wait가 기다린다. thread 종료 때 표지도 끝난다. 동적 hold 명령은 선택 사항으로 남긴다.
+- 처음·넓힌 조건/필터·실제 조회/시작 머신/저장소·profile만 사람이 정규화 ceiling hash로 승인한다. CLI는 aaa 밖 터미널에서 검토한 hash, Controller는 범위 확인창을 쓴다. Reader는 승인할 수 없다. 본문/제목/예산은 제외하고 본문 변경은 diff 안내 한 번으로 남긴다. 범위·동작이 달라진 이전 입력은 취소한다.
+- 연결→Working 수→CPU→목록 순의 idlest, 확실히 비교 가능한 host 로컬 로그인 주간 사용량의 week-left를 쓴다. 모호한 계정/원격/실패는 첫 profile이다. 사용량 캐시만 읽으며 AI 요청은 없다. propose는 내구 inbox 제안만 남긴다.
+- 사용자 무제한 원칙이 설계 원안의 기본 하루1/동시1/앞 thread 열림/모두 바쁨 대기를 대신한다. 서로 다른 사건은 앞 자동 thread가 열려 있어도 실행한다. wait_max, limits.max_running, projects.max_auto_threads는 명시할 때만 쓰며 기본0/생략은 없음이다. usage·batch·dedupe는 유지한다.
+- thread와 사건 시작 key를 같은 transaction에 넣고 생성 직전 holds/명시 동시 상한을 다시 확인한다. 최종 영수증 실패 뒤 실제 inflight 재처리도 같은 thread 완료로 기록한다. 일정형은 coordinator pane 없이 돌고 poll 시각 대신 예정 차례 key를 써 cursor 저장 전 재시작도 중복을 막는다. 기다리는 동안의 다음 일정은 once로 모은다. flow actor는 routine:<이름>, 실행 기록은 thread id를 담는다.
+- 운영 전환/승인은 배포 뒤 coordinator가 한다. 형식·운영은 [자동화](automations.md), owner·두 agent·웹·회귀 변형은 [시험](testing.md)을 따른다.

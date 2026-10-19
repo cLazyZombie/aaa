@@ -209,6 +209,12 @@ pub(crate) struct ResolveOpts {
 }
 
 /// thread 시작 인자
+pub(crate) struct StartOrigin {
+    pub key: String,
+    pub rule: String,
+    pub admission: crate::db::StartAdmission,
+}
+
 pub struct StartArgs {
     pub holds: Vec<String>,
     pub project: String,
@@ -1393,16 +1399,15 @@ impl Host {
         mission: Option<crate::mission::MissionRun>,
         background: bool,
     ) -> Result<ThreadView, ErrorBody> {
-        self.thread_start_key(a, actor, mission, background, None, None).await
+        self.thread_start_key(a, actor, mission, background, None).await
     }
     pub(crate) async fn thread_start_once(
         self: &Arc<Self>,
         a: StartArgs,
         actor: &str,
-        key: &str,
-        rule: &str,
+        origin: &StartOrigin,
     ) -> Result<ThreadView, ErrorBody> {
-        self.thread_start_key(a, actor, None, true, Some(key), Some(rule)).await
+        self.thread_start_key(a, actor, None, true, Some(origin)).await
     }
     async fn thread_start_key(
         self: &Arc<Self>,
@@ -1410,8 +1415,7 @@ impl Host {
         actor: &str,
         mission: Option<crate::mission::MissionRun>,
         background: bool,
-        start_key: Option<&str>,
-        rule: Option<&str>,
+        origin: Option<&StartOrigin>,
     ) -> Result<ThreadView, ErrorBody> {
         let dir = self.project_dir(&a.project)?;
         self.check_active(&a.project)?;
@@ -1464,14 +1468,14 @@ impl Host {
             mission,
             holds: a.holds.clone(),
             started_by: Some(actor.into()),
-            automation: rule.map(str::to_string),
+            automation: origin.map(|o| o.rule.clone()),
             repo: a.repo.clone(),
             base: a.base.clone(),
             ..ThreadRec::starting(&a.project, a.title.trim(), &mid, &a.profile, a.role, a.kind, now)
         };
         let (id, created) = self
             .db
-            .thread_insert_marked(&a.project, start_key, |id| {
+            .thread_insert_marked(&a.project, origin.map(|o| o.key.as_str()), origin.map(|o| &o.admission), |id| {
                 let mut r = rec.clone();
                 r.id = id.to_string();
                 serde_json::to_string(&r).unwrap()
@@ -2434,6 +2438,9 @@ mod tests {
     fn open_thread() -> ThreadRec {
         ThreadRec {
             mission: None,
+            holds: vec![],
+            started_by: None,
+            automation: None,
             project: "p".into(),
             id: "t-0001".into(),
             title: "t".into(),

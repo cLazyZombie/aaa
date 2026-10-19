@@ -1044,6 +1044,12 @@ pub struct RoutineView {
     /// 지금 명령(머신 포함)이 승인돼 있다
     pub approved: bool,
     pub command_sha256: String,
+    #[serde(default)]
+    pub start_approval_sha256: Option<String>,
+    #[serde(default)]
+    pub start_approved: Option<bool>,
+    #[serde(default)]
+    pub start_scope: Option<String>,
     #[ts(type = "number | null")]
     pub last_run_ms: Option<u64>,
     #[ts(type = "number | null")]

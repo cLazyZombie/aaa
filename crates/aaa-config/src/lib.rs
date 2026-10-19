@@ -359,6 +359,8 @@ pub struct ProjectsSection {
     /// routine 명령을 실행해도 되는 프로젝트(`"*"`는 모두). 프로젝트 폴더는 agent가 고칠 수 있으므로 여기(host.toml)에 둔다.
     /// 옛 자리다: `[safety.*] routine_commands`가 있으면 그것이 먼저다(`aaa safety set`).
     pub routine_commands: Vec<String>,
+    /// 자동 시작으로 열린 thread 상한. 생략·0은 무제한이다.
+    pub max_auto_threads: u32,
 }
 
 impl Default for ProjectsSection {
@@ -386,6 +388,7 @@ impl Default for ProjectsSection {
             merge_grace_secs: 600,
             inbox_done_days: 30,
             routine_commands: Vec::new(),
+            max_auto_threads: 0,
         }
     }
 }

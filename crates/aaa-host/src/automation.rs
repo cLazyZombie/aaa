@@ -114,6 +114,7 @@ pub(crate) enum Action {
     Inbox(Inbox),
     Message(Message),
     Wake(Wake),
+    Start(Start),
 }
 
 #[derive(Debug, Default, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
@@ -152,6 +153,43 @@ pub(crate) struct Wake {
     pub text_file: Option<String>,
 }
 
+#[derive(Debug, Default, Clone, Copy, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "kebab-case")]
+pub(crate) enum ProfilePick {
+    #[default]
+    First,
+    WeekLeft,
+}
+#[derive(Debug, Default, Clone, Copy, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum MachinePick {
+    #[default]
+    Idlest,
+}
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct Start {
+    pub title: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub repo: Option<String>,
+    pub profiles: Vec<String>,
+    pub machines: Vec<String>,
+    #[serde(default)]
+    pub profile_pick: ProfilePick,
+    #[serde(default)]
+    pub machine_pick: MachinePick,
+    #[serde(default)]
+    pub wait: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none", deserialize_with = "optional_duration_value")]
+    pub wait_max: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub text: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub text_file: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub brief_file: Option<String>,
+}
+
 #[derive(Debug, Default, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(default, deny_unknown_fields)]
 pub(crate) struct Limits {
@@ -162,6 +200,8 @@ pub(crate) struct Limits {
     pub min_gap: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub max_per_day: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub max_running: Option<u32>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub usage_session_below: Option<f64>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -266,11 +306,12 @@ impl Scheduled {
     }
 }
 impl Action {
-    pub fn texts(&self) -> (&Option<String>, &Option<String>) {
+    pub fn texts(&self) -> (Option<&str>, Option<&str>) {
         match self {
-            Self::Inbox(a) => (&a.text, &a.text_file),
-            Self::Message(a) => (&a.text, &a.text_file),
-            Self::Wake(a) => (&a.text, &a.text_file),
+            Self::Inbox(a) => (a.text.as_deref(), a.text_file.as_deref()),
+            Self::Message(a) => (a.text.as_deref(), a.text_file.as_deref()),
+            Self::Wake(a) => (a.text.as_deref(), a.text_file.as_deref()),
+            Self::Start(a) => (a.text.as_deref(), a.brief_file.as_deref().or(a.text_file.as_deref())),
         }
     }
     pub fn set_text(&mut self, value: String) {
@@ -278,6 +319,10 @@ impl Action {
             Self::Inbox(a) => (&mut a.text, &mut a.text_file),
             Self::Message(a) => (&mut a.text, &mut a.text_file),
             Self::Wake(a) => (&mut a.text, &mut a.text_file),
+            Self::Start(a) => {
+                a.brief_file = None;
+                (&mut a.text, &mut a.text_file)
+            }
         };
         *text = Some(value);
         *file = None;
@@ -287,6 +332,7 @@ impl Action {
             Self::Inbox(_) => "do.inbox",
             Self::Message(_) => "do.message",
             Self::Wake(_) => "do.wake",
+            Self::Start(_) => "do.start",
         }
     }
     pub fn mission(&self) -> Option<&str> {
@@ -300,6 +346,7 @@ impl Action {
             Self::Inbox(_) => "coordinator 안내".into(),
             Self::Message(a) => format!("{} thread에 글", if a.thread == "owner" { "주인" } else { &a.thread }),
             Self::Wake(a) => format!("임무 {} 입력", a.mission),
+            Self::Start(a) => format!("새 thread · {}", a.title),
         }
     }
 }
@@ -320,17 +367,44 @@ pub(crate) fn parse_with(
     if !aaa_proto::valid_project(name) {
         return Err(bad("title", "자동화 이름 형식이 아니다"));
     }
+    let file_field =
+        if matches!(&spec.action, Action::Start(a) if a.brief_file.is_some()) { "brief_file" } else { "text_file" };
+    if matches!(&spec.action, Action::Start(a) if a.brief_file.is_some() && a.text_file.is_some()) {
+        return Err(bad("do.start.brief_file", "brief_file·text_file은 함께 쓸 수 없다"));
+    }
     let (inline, external) = spec.action.texts();
     if inline.is_some() && external.is_some() {
-        return Err(bad(&format!("{}.text_file", spec.action.field()), "text·text_file은 함께 쓸 수 없다"));
+        return Err(bad(&format!("{}.{file_field}", spec.action.field()), "text·text_file은 함께 쓸 수 없다"));
     }
     let prompt = match external {
-        Some(path) => read(path).map_err(|e| bad(&format!("{}.text_file", spec.action.field()), &e))?,
-        None => inline.clone().unwrap_or_default(),
+        Some(path) => read(path).map_err(|e| bad(&format!("{}.{file_field}", spec.action.field()), &e))?,
+        None => inline.unwrap_or_default().to_string(),
     }
     .trim()
     .to_string();
     spec.action.set_text(prompt.clone());
+    if let Action::Start(a) = &spec.action {
+        if a.title.trim().is_empty() {
+            return Err(bad("do.start.title", "제목이 비었다"));
+        }
+        if prompt.is_empty() {
+            return Err(bad("do.start.text", "text·text_file·brief_file 중 하나로 할 일을 준다"));
+        }
+        for (field, names) in [("profiles", &a.profiles), ("machines", &a.machines)] {
+            if names.is_empty() || names.iter().any(|n| n.trim().is_empty()) {
+                return Err(bad(&format!("do.start.{field}"), "비지 않은 이름 목록을 쓴다"));
+            }
+        }
+        if a.repo.as_ref().is_some_and(|s| s.trim().is_empty()) {
+            return Err(bad("do.start.repo", "repo가 비었다"));
+        }
+        if a.wait.iter().any(|n| !aaa_proto::valid_project(n)) {
+            return Err(bad("do.start.wait", "timing 같은 표지 이름 목록을 쓴다"));
+        }
+        if let Some(wait) = &a.wait_max {
+            duration_ms(wait).map_err(|e| bad("do.start.wait_max", &e))?;
+        }
+    }
     if let Action::Wake(a) = &spec.action
         && !aaa_proto::valid_project(&a.mission)
     {
@@ -352,7 +426,8 @@ pub(crate) fn parse_with(
             duration_ms(duration).map_err(|e| bad(&format!("limits.{field}"), &e))?;
         }
     }
-    spec.limits.max_per_day = spec.limits.max_per_day.filter(|n| *n > 0);
+    spec.limits.max_per_day = spec.limits.max_per_day.filter(|n| *n > 0 && *n < u32::MAX);
+    spec.limits.max_running = spec.limits.max_running.filter(|n| *n > 0 && *n < u32::MAX);
     for (field, value) in
         [("usage_session_below", spec.limits.usage_session_below), ("usage_week_below", spec.limits.usage_week_below)]
     {
@@ -465,9 +540,17 @@ pub(crate) fn schema() -> serde_json::Value {
         schema["$defs"][name]["oneOf"] = serde_json::json!([{"required":["every"],"not":{"required":["daily"]}},{"required":["daily"],"not":{"required":["every"]}}]);
     }
     schema["title"] = "AAA 자동화".into();
-    schema["$defs"]["Limits"]["properties"]["min_gap"] =
-        serde_json::json!({"anyOf":[{"type":"string"},{"const":0}],"description":"생략 또는0이면 제한 없음"});
+    for (name, field) in [("Limits", "min_gap"), ("Start", "wait_max")] {
+        schema["$defs"][name]["properties"][field] =
+            serde_json::json!({"anyOf":[{"type":"string"},{"const":0}],"description":"생략 또는0이면 제한 없음"});
+    }
     schema["$defs"]["Limits"]["properties"]["max_per_day"]["minimum"] = 0.into();
+    schema["$defs"]["Limits"]["properties"]["max_running"]["minimum"] = 0.into();
+    schema["$defs"]["Start"]["oneOf"] = serde_json::json!([
+        {"required":["text"],"not":{"anyOf":[{"required":["text_file"]},{"required":["brief_file"]}]}},
+        {"required":["text_file"],"not":{"anyOf":[{"required":["text"]},{"required":["brief_file"]}]}},
+        {"required":["brief_file"],"not":{"anyOf":[{"required":["text"]},{"required":["text_file"]}]}}
+    ]);
     for field in ["usage_session_below", "usage_week_below"] {
         schema["$defs"]["Limits"]["properties"][field]["minimum"] = 0.into();
         schema["$defs"]["Limits"]["properties"][field]["maximum"] = 100.into();

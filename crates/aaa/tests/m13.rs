@@ -6,6 +6,8 @@
 
 #![cfg(unix)]
 
+#[path = "m13/automation_start.rs"]
+mod automation_start;
 #[path = "m13/ci.rs"]
 mod ci;
 #[path = "m13/git_watch.rs"]

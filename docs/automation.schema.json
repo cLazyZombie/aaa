@@ -37,6 +37,18 @@
             "wake"
           ],
           "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "start": {
+              "$ref": "#/$defs/Start"
+            }
+          },
+          "required": [
+            "start"
+          ],
+          "type": "object"
         }
       ]
     },
@@ -295,6 +307,14 @@
             "null"
           ]
         },
+        "max_running": {
+          "format": "uint32",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
         "min_gap": {
           "anyOf": [
             {
@@ -326,6 +346,12 @@
         }
       },
       "type": "object"
+    },
+    "MachinePick": {
+      "enum": [
+        "idlest"
+      ],
+      "type": "string"
     },
     "Message": {
       "additionalProperties": false,
@@ -370,6 +396,13 @@
       },
       "type": "object"
     },
+    "ProfilePick": {
+      "enum": [
+        "first",
+        "week-left"
+      ],
+      "type": "string"
+    },
     "Scheduled": {
       "additionalProperties": false,
       "oneOf": [
@@ -412,6 +445,141 @@
           ]
         }
       },
+      "type": "object"
+    },
+    "Start": {
+      "additionalProperties": false,
+      "oneOf": [
+        {
+          "not": {
+            "anyOf": [
+              {
+                "required": [
+                  "text_file"
+                ]
+              },
+              {
+                "required": [
+                  "brief_file"
+                ]
+              }
+            ]
+          },
+          "required": [
+            "text"
+          ]
+        },
+        {
+          "not": {
+            "anyOf": [
+              {
+                "required": [
+                  "text"
+                ]
+              },
+              {
+                "required": [
+                  "brief_file"
+                ]
+              }
+            ]
+          },
+          "required": [
+            "text_file"
+          ]
+        },
+        {
+          "not": {
+            "anyOf": [
+              {
+                "required": [
+                  "text"
+                ]
+              },
+              {
+                "required": [
+                  "text_file"
+                ]
+              }
+            ]
+          },
+          "required": [
+            "brief_file"
+          ]
+        }
+      ],
+      "properties": {
+        "brief_file": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "machine_pick": {
+          "$ref": "#/$defs/MachinePick",
+          "default": "idlest"
+        },
+        "machines": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "profile_pick": {
+          "$ref": "#/$defs/ProfilePick",
+          "default": "first"
+        },
+        "profiles": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "repo": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "text": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "text_file": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "title": {
+          "type": "string"
+        },
+        "wait": {
+          "default": [],
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "wait_max": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "const": 0
+            }
+          ],
+          "description": "생략 또는0이면 제한 없음"
+        }
+      },
+      "required": [
+        "title",
+        "profiles",
+        "machines"
+      ],
       "type": "object"
     },
     "Threads": {

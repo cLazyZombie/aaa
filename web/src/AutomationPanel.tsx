@@ -1,6 +1,7 @@
-// 정의·승인·기록의 정본은 host. 이 패널은 목록 보기와 enabled 편집만 제공한다.
+// 정의·승인·기록의 정본은 host. 이 패널은 목록·enabled 편집·자동 시작 범위 승인을 제공한다.
 import { useCallback, useEffect, useRef, useState } from "react";
 import { call } from "./api";
+import { ConfirmDialog } from "./ConfirmDialog";
 import type { RoutineRun, RoutineView } from "./gen/proto";
 import "./AutomationPanel.css";
 
@@ -13,6 +14,7 @@ export function AutomationPanel({ canControl }: { canControl: boolean }) {
   const [rows, setRows] = useState<Array<{ project: string; rules: RoutineView[] }>>([]);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
+  const [approval,setApproval]=useState<{project:string;rule:RoutineView}|null>(null);
   const [loading, setLoading] = useState(true);
   const generation = useRef(0);
   const load = useCallback(async () => {
@@ -64,6 +66,7 @@ export function AutomationPanel({ canControl }: { canControl: boolean }) {
         {r.error ? <p role="alert">{r.error}</p> : <>
           {!r.enabled && <p>꺼짐</p>}
           {r.origin === "mission" && !r.approved && <p className="automation-approval">임무 승인 필요</p>}
+          {r.start_approved === false && <p className="automation-approval">자동 시작 승인 필요 {canControl && <button type="button" disabled={busy !== null} onClick={() => setApproval({project,rule:r})}>승인 검토</button>}</p>}
           {r.command && (!r.approved || !r.commands_allowed) && <p>{!r.approved ? "승인 필요" : "routine_commands 꺼짐"}</p>}
           <p>지난 {r.last_result ? <Result run={r.last_result} /> : "기록 없음"}</p>
           <p>다음: {r.enabled ? r.next_run_ms === null ? "사건 오면" : time(r.next_run_ms) : "꺼짐"} · 오늘 {r.today ?? "—"}{`/${r.max_per_day || "무제한"}`}</p>
@@ -75,5 +78,10 @@ export function AutomationPanel({ canControl }: { canControl: boolean }) {
         </details>
       </article>)}
     </section>)}
+    {approval && <ConfirmDialog title={`${approval.rule.title || approval.rule.name} 자동 시작 범위`} body={`${approval.rule.start_scope || ""}\n\n처음·넓힌 조건과 대상에만 승인합니다. 작업 본문과 선택 예산은 승인 범위에 포함하지 않습니다.`} confirmLabel="승인" onClose={() => setApproval(null)} onConfirm={async () => {
+      if (!approval.rule.start_approval_sha256) throw new Error("승인할 범위 hash가 없습니다.");
+      await call({op:"automation_approve",project:approval.project,name:approval.rule.name,approval_sha256:approval.rule.start_approval_sha256});
+      setApproval(null);await load();
+    }} />}
   </section>;
 }

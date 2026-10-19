@@ -115,7 +115,9 @@ pub const AGENT_LINK: Version = Version { major: 1, minor: 8 };
 // 1.51: rollout의 복구 중/복구 완료/복구 실패와 guard 영수증.
 // 1.52: 자동화/임무 TOML 변환, 후보 적용 대기, 깨움 작업 시간 보기.
 // 1.53: 웹 전용 rollout 조회 요약 사건과 배포 종료 앱 안 알림. 시작 권한은 그대로다.
-pub const FRONT_API: Version = Version { major: 1, minor: 53 };
+
+// 1.54: 자동 시작 승인 범위·thread holds·시작 actor.
+pub const FRONT_API: Version = Version { major: 1, minor: 54 };
 /// agent ↔ session host(내부). 세션이 몇 주 이어질 수 있으므로 이전 session host와 호환해야 한다.
 /// 1.1: `SessionRequest::Detect`(harness 상태 감지 입력). agent는 1.0 session host에 보내지 않고 `Screen`을 쓴다.
 /// 1.2: `SessionRequest::Colors`(색 질의에 답할 화면 색, plan §8.187). agent는 1.1 이하 session host에 보내지 않는다.
