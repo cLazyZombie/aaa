@@ -287,3 +287,5 @@ failed·interrupted·판/SHA 불일치면 진행을 멈추고 원인을 본다. 
 - 준비 응답을 잃어 host에 경로가 없는 실패도 resolve가 agent journal을 먼저 조회해 정리한다. 조회는 준비와 같은 lock에서 끝나므로 준비 뒤늦은 생성과 정리가 경합하지 않는다. `thread_journal.v1`이 없는 옛 agent에서는 확인 없이 resolve 완료하지 않고 갱신을 안내한다.
 
 구판 journal 없는 예상 자리가 남아 있으면 조회는 없음으로 확정하지 않고 명시적으로 거부한다. 변경 없는 자리는 안내한 `thread restart`가 소유권을 확인해 회수하고, 그 뒤 resolve하면 정리된다. 변경·다른 Git 신원은 기존대로 보존한다.
+
+`aaa thread start --repo`에는 그 머신의 경로만 준다. `mac-a:/srv/repo` 같은 `머신:경로`는 기록·번호를 만들기 전에 거부하며 `--machine mac-a --repo /srv/repo`로 나누라는 오류를 낸다. Windows 드라이브 경로(`C:/work/repo`)와 Unix 절대 경로 안의 콜론은 이 검사로 거부하지 않는다.

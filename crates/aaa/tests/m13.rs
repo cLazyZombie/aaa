@@ -5194,3 +5194,40 @@ esac
     assert_eq!(serde_json::from_str::<Value>(&out).unwrap()["job"]["state"], "completed");
     eprintln!("재시작 뒤 같은 coordinator pane의 배포 조회: {out}");
 }
+
+/// 머신:경로를 Git 경로로 보내면 실패한 thread를 만든다. host가 기록 전에 거부해야 한다.
+#[test]
+fn thread_start_rejects_machine_prefixed_repo_before_recording() {
+    let w = world();
+    let task = w.task("repo-form.txt", "noreport");
+    let mut errors = vec![];
+    for repo in ["mac-a:/srv/repo", r"mac-a:C:\work\repo"] {
+        errors.push(
+            w.h.json(&[
+                "thread",
+                "start",
+                "demo",
+                "--title",
+                "repo-form",
+                "--profile",
+                "fake",
+                "--repo",
+                repo,
+                "--task-file",
+                &task,
+            ])
+            .expect_err("머신을 경로에 넣으면 시작 전에 거부한다"),
+        );
+    }
+    assert!(
+        w.h.ok(&["thread", "list", "demo"])["threads"].as_array().unwrap().is_empty(),
+        "거부한 시작의 기록을 남기지 않는다"
+    );
+    assert!(errors.iter().all(|e| e.contains("--machine") && e.contains("--repo")), "{errors:?}");
+    // 절대 경로 안의 ':'는 Unix에서 유효한 이름이다. 같은 문자라는 이유로 거부하면 안 된다.
+    let repo = w.lab.root.join("repo:valid");
+    git(&w.lab.root, &["clone", "-q", path_str(&w.repo), path_str(&repo)]);
+    let started = w.start(&["--title", "valid", "--profile", "fake", "--repo", path_str(&repo), "--task-file", &task]);
+    assert_eq!(started["id"], "t-0001", "거부한 시작은 번호도 쓰지 않는다");
+    assert_eq!(started["status"], "open");
+}
