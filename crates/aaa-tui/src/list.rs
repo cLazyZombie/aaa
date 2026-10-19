@@ -121,10 +121,34 @@ pub fn rows(
             projects.push(&t.project);
         }
     }
+    let thread_panes: Vec<&str> = live.iter().filter_map(|t| t.pane.as_deref()).collect();
+    let coordinators: Vec<&PaneView> = panes
+        .iter()
+        .filter(|p| {
+            p.coordinator_project.is_some()
+                && p.role != Some(Role::Evaluator)
+                && !thread_panes.contains(&p.id.as_str())
+                && machines.iter().any(|m| m.id == p.machine_id)
+        })
+        .collect();
+    for p in &coordinators {
+        let project = p.coordinator_project.as_deref().unwrap();
+        if !projects.contains(&project) {
+            projects.push(project);
+        }
+    }
     for project in projects {
         let head = Row::Project(project.to_string());
         let shut = head.fold_key().is_some_and(|k| folded.contains(&k));
         out.push(head);
+        out.extend(
+            coordinators
+                .iter()
+                .filter(|p| {
+                    p.coordinator_project.as_deref() == Some(project) && (!shut || current == Some(p.id.as_str()))
+                })
+                .map(|p| Row::Pane(p.id.clone())),
+        );
         for t in live.iter().filter(|t| t.project == project) {
             if shut && (current.is_none() || t.pane.as_deref() != current) {
                 continue;
@@ -133,11 +157,13 @@ pub fn rows(
             out.push(Row::ThreadSub(thread_key(t)));
         }
     }
-    let thread_panes: Vec<&str> = live.iter().filter_map(|t| t.pane.as_deref()).collect();
     let mut loose: Vec<&PaneView> = vec![];
     for m in machines {
         loose.extend(panes.iter().filter(|p| {
-            p.machine_id == m.id && p.role != Some(Role::Evaluator) && !thread_panes.contains(&p.id.as_str())
+            p.machine_id == m.id
+                && p.role != Some(Role::Evaluator)
+                && !thread_panes.contains(&p.id.as_str())
+                && p.coordinator_project.is_none()
         }));
     }
     if !loose.is_empty() {
@@ -558,7 +584,11 @@ fn line(row: &Row, v: &View, highlighted: bool, room: usize) -> Parts {
             let n = v
                 .panes
                 .values()
-                .filter(|p| p.role != Some(Role::Evaluator) && v.machines.iter().any(|m| m.id == p.machine_id))
+                .filter(|p| {
+                    p.role != Some(Role::Evaluator)
+                        && p.coordinator_project.is_none()
+                        && v.machines.iter().any(|m| m.id == p.machine_id)
+                })
                 .filter(|p| !v.threads.values().any(|t| listed(t) && t.pane.as_deref() == Some(p.id.as_str())))
                 .count();
             Parts::new(head("기타"), Some((format!("pane {n}"), faint)))
@@ -903,6 +933,7 @@ mod tests {
             agent: None,
             label: None,
             restore_error: None,
+            coordinator_project: None,
             replaced: Vec::new(),
         }
     }
@@ -978,9 +1009,15 @@ mod tests {
             machine("m2", "mac-b", Connection::Connected),
             machine("m3", "mac-c", Connection::Disconnected),
         ];
+        let mut coordinator = pane("coord", "m1", Some(Role::Coordinator));
+        coordinator.coordinator_project = Some("demo".into());
+        let mut only = pane("only", "m1", Some(Role::Coordinator));
+        only.coordinator_project = Some("solo".into());
         let mut ended = pane("p4", "m2", None);
         ended.state = SessionState::Exited { code: Some(0) };
         let panes = [
+            coordinator,
+            only,
             pane("p1", "m1", Some(Role::Worker)),
             ended,
             pane("p2", "m1", None),
@@ -1006,13 +1043,14 @@ mod tests {
         let t = |k: &str| [Row::Thread(k.into()), Row::ThreadSub(k.into())];
         let open = HashSet::new();
         let want: Vec<Row> = [
-            vec![Row::Project("demo".into())],
+            vec![Row::Project("demo".into()), Row::Pane("coord".into())],
             t("demo/t-0002").to_vec(),
             t("demo/t-0003").to_vec(),
             t("demo/t-0007").to_vec(),
             t("demo/t-0001").to_vec(),
             vec![Row::Project("alpha".into())],
             t("alpha/t-0004").to_vec(),
+            vec![Row::Project("solo".into()), Row::Pane("only".into())],
             vec![Row::Other, Row::Pane("p2".into()), Row::Pane("p4".into()), Row::Pane("p5".into())],
             vec![Row::Header("특수".into()), Row::Pane("pe".into())],
         ]
@@ -1025,11 +1063,13 @@ mod tests {
             t("demo/t-0001").to_vec(),
             vec![Row::Project("alpha".into())],
             t("alpha/t-0004").to_vec(),
+            vec![Row::Project("solo".into()), Row::Pane("only".into())],
             vec![Row::Other],
             vec![Row::Header("특수".into()), Row::Pane("pe".into())],
         ]
         .concat();
         assert_eq!(rows(&machines, &panes, &threads, &folded, Some("p1")), want);
+        assert!(rows(&machines, &panes, &threads, &folded, Some("coord")).contains(&Row::Pane("coord".into())));
         assert!(rows(&machines, &panes, &threads, &folded, Some("p5")).contains(&Row::Pane("p5".into())));
         assert_eq!(rows(&machines, &[], &HashMap::new(), &open, None), vec![Row::Empty]);
     }
@@ -1313,6 +1353,7 @@ mod tests {
             })),
             label: None,
             restore_error: None,
+            coordinator_project: None,
             replaced: Vec::new(),
         };
         assert_eq!(pane_badge(&p, &pal, 40).unwrap().0, "작업 중 40% 1/3 배경2");

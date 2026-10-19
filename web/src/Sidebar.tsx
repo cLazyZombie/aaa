@@ -400,7 +400,7 @@ function Roster(props: SidebarProps) {
   const { pins } = useRows();
   const twoLine = appearance.sidebarRows === "two";
   const { paneOrder } = useSidebarShared();
-  const { threads, projects, panes, machineOf } = roster(props.machines, props.panes, props.threads, paneOrder);
+  const { threads, projects, coordinators, panes, machineOf } = roster(props.machines, props.panes, props.threads, paneOrder);
   const machineById = (id: string) => props.machines.find((m) => m.id === id);
   const online = (m: MachineView | undefined) => m?.connection === "connected";
   const [otherCollapsed, toggleOther] = useFold("aaa:other-collapsed");
@@ -497,7 +497,7 @@ function Roster(props: SidebarProps) {
     const m = machineById(p.machine_id);
     return <PaneRow key={p.id} {...props} online={online(m)} machine={m} pane={p} twoLine={twoLine} move={move} />;
   };
-  if (threads.length === 0 && panes.length === 0) {
+  if (projects.length === 0 && panes.length === 0) {
     return (
       <div className="machine-workspaces">
         <nav className="sidebar-list" aria-label="목록">
@@ -521,7 +521,7 @@ function Roster(props: SidebarProps) {
         )}
         <ul className="workspace-list">
           {projects.map((project) => (
-            <ProjectGroup key={project} {...props} project={project} pThreads={threads.filter((t) => t.project === project)} machineOf={machineOf} twoLine={twoLine} />
+            <ProjectGroup key={project} {...props} project={project} pThreads={threads.filter((t) => t.project === project)} coordinators={coordinators.filter((p) => p.coordinator_project === project)} machineOf={machineOf} twoLine={twoLine} />
           ))}
           {split.rest.length > 0 && (
             <>
@@ -606,9 +606,9 @@ function PaneRow({ pane: p, online, machine, twoLine, move, ...props }: SidebarP
   // 참고 workspace 메뉴(Sidebar.tsx `menuItems`) 차례: 고정 → 이름 바꾸기 → 닫기. 이름은 pane 이름(참고 PaneCanvas `itemsFor`의
   // 「Rename pane」·붙인 이름이 있을 때 「Clear pane name」). 끝난 pane은 닫는 대신 다시 열기·기록 지우기(aaa PaneResume·PaneForget)
   const items = (): RowMenuItem[] => [
-    pinned
+    ...(p.coordinator_project ? [] : [pinned
       ? { id: "unpin", label: "pane 고정 해제", icon: PinOff, run: () => rows.togglePin(pinKey, menuFrom.current) }
-      : { id: "pin", label: "pane 고정", icon: Pin, run: () => rows.togglePin(pinKey, menuFrom.current) },
+      : { id: "pin", label: "pane 고정", icon: Pin, run: () => rows.togglePin(pinKey, menuFrom.current) }]),
     ...(!props.canControl
       ? []
       : [
@@ -727,10 +727,11 @@ function PaneRow({ pane: p, online, machine, twoLine, move, ...props }: SidebarP
 function ProjectGroup({
   project,
   pThreads: threads,
+  coordinators,
   machineOf,
   twoLine,
   ...props
-}: SidebarProps & { project: string; pThreads: ThreadView[]; machineOf: (t: ThreadView) => MachineView | undefined; twoLine: boolean }) {
+}: SidebarProps & { project: string; pThreads: ThreadView[]; coordinators: PaneView[]; machineOf: (t: ThreadView) => MachineView | undefined; twoLine: boolean }) {
   // 프로젝트 하나에 묶음 하나(머신마다 나뉘지 않는다, plan §8.195)
   const [collapsed, toggle] = useFold(`aaa:project-collapsed:${project}`);
   const online = (t: ThreadView) => machineOf(t)?.connection === "connected";
@@ -739,9 +740,13 @@ function ProjectGroup({
   // 접힌 묶음도 고른 thread는 보인다(참고: 접힌 묶음은 열린 checkout을 보이고, 셈은 치운 것만)
   const isSel = (t: ThreadView) => props.selected === `thread:${threadKey(t)}` || (t.pane != null && props.selected === `pane:${t.pane}`);
   const shown = collapsed ? threads.filter(isSel) : threads;
-  const foldedCount = threads.length - shown.length;
+  const shownCoordinators = collapsed ? coordinators.filter((p) => props.selected === `pane:${p.id}`) : coordinators;
+  const foldedCount = threads.length + coordinators.length - shown.length - shownCoordinators.length;
   // 접힌 머리는 자식 상태까지 대표한다(참고 rollupStatus: blocked > done > working > waiting > idle)
-  const status = rollupStatus(threads.map((t) => (online(t) && t.pane ? (paneOf(t.pane) ? paneAgentStatus(paneOf(t.pane)!) : undefined) : undefined)));
+  const status = rollupStatus([
+    ...coordinators.map((p) => p.connection === "connected" ? paneAgentStatus(p) : undefined),
+    ...threads.map((t) => (online(t) && t.pane ? (paneOf(t.pane) ? paneAgentStatus(paneOf(t.pane)!) : undefined) : undefined)),
+  ]);
   const need = threads.some((t) => needsYou(t.group));
   const line = projectLine(
     threads.map((t) => t.group),
@@ -801,9 +806,12 @@ function ProjectGroup({
           <RowMenuButton title={project} open={rows.menuKey === menuKey} onToggle={(anchor) => toggleMenu(anchor)} />
         </div>
       </li>
-      {shown.length > 0 && (
+      {(shown.length > 0 || shownCoordinators.length > 0) && (
         <li className="worktree-children" id={contentsId}>
           <ul className="workspace-list">
+            {shownCoordinators.map((p) => (
+              <PaneRow key={p.id} {...props} pane={p} machine={props.machines.find((m) => m.id === p.machine_id)} online={p.connection === "connected"} twoLine={twoLine} />
+            ))}
             {shown.map((t) => (
               <ThreadRow key={threadKey(t)} {...props} online={online(t)} machine={machineOf(t)} t={t} twoLine={twoLine} />
             ))}
