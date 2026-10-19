@@ -51,9 +51,9 @@ export interface Size {
 
 /**
  * hover 카드 자리(t3code SidebarThreadTooltip: 줄 오른쪽, 위 끝 맞춤, 4px 띄움). 오른쪽이 모자라면 줄 왼쪽으로,
- * 아래가 모자라면 위로 민다. 화면 가장자리 8px은 남긴다.
+ * 아래가 모자라면 위로 민다. 화면 가장자리는 t3code tooltip.tsx `COLLISION_PADDING`(5px)만큼 남긴다.
  */
-export function hoverPlace(row: Box, card: Size, view: Size, gap = 4, edge = 8): { top: number; left: number } {
+export function hoverPlace(row: Box, card: Size, view: Size, gap = 4, edge = 5): { top: number; left: number } {
   let left = row.right + gap;
   if (left + card.width > view.width - edge) left = Math.max(edge, row.left - gap - card.width);
   const top = Math.max(edge, Math.min(row.top, view.height - edge - card.height));
@@ -61,7 +61,7 @@ export function hoverPlace(row: Box, card: Size, view: Size, gap = 4, edge = 8):
 }
 
 /** 머리 단추 팝오버 자리: 단추 아래, 오른쪽 끝 맞춤(RowMenu align end와 같다). 왼쪽이 모자라면 가장자리에 붙인다 */
-export function popoverPlace(button: Box, card: Size, view: Size, gap = 4, edge = 8): { top: number; left: number } {
+export function popoverPlace(button: Box, card: Size, view: Size, gap = 4, edge = 5): { top: number; left: number } {
   const left = Math.max(edge, Math.min(button.right - card.width, view.width - edge - card.width));
   return { top: button.bottom + gap, left };
 }

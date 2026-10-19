@@ -199,6 +199,8 @@ let lastClosed = 0;
 export function useSummaryHover(t: ThreadView, suppressed: boolean) {
   const mouse = useMediaQuery(HOVER_QUERY);
   const [anchor, setAnchor] = useState<HTMLElement | null>(null);
+  // 400ms 안에 다음 줄로 옮기면 지연·등장 효과 없이 바로(t3code Tooltip `timeout`·`data-instant`)
+  const [instant, setInstant] = useState(false);
   const timer = useRef<number | undefined>(undefined);
   const close = () => {
     window.clearTimeout(timer.current);
@@ -210,11 +212,14 @@ export function useSummaryHover(t: ThreadView, suppressed: boolean) {
   useEffect(() => () => window.clearTimeout(timer.current), []);
   useEffect(() => {
     if (!anchor) return;
-    // 굴리면 줄이 움직이므로 닫는다(t3code tooltip.tsx)
-    window.addEventListener("scroll", close, true);
+    // 굴리면 줄이 움직이므로 닫는다. 줄에 focus가 있으면 둔다(t3code tooltip.tsx `dismissUnfocused`)
+    const onScroll = () => {
+      if (!anchor.contains(document.activeElement)) close();
+    };
+    window.addEventListener("scroll", onScroll, true);
     window.addEventListener("resize", close);
     return () => {
-      window.removeEventListener("scroll", close, true);
+      window.removeEventListener("scroll", onScroll, true);
       window.removeEventListener("resize", close);
     };
   }, [anchor]);
@@ -225,25 +230,30 @@ export function useSummaryHover(t: ThreadView, suppressed: boolean) {
         onMouseEnter: (e: React.MouseEvent<HTMLElement>) => {
           const el = e.currentTarget;
           window.clearTimeout(timer.current);
-          timer.current = window.setTimeout(() => setAnchor(el), Date.now() - lastClosed < WARM_MS ? 0 : OPEN_MS);
+          const warm = Date.now() - lastClosed < WARM_MS;
+          timer.current = window.setTimeout(() => {
+            setInstant(warm);
+            setAnchor(el);
+          }, warm ? 0 : OPEN_MS);
         },
         onMouseLeave: close,
         onMouseDown: close,
       }
     : {};
-  const card = open && view ? <HoverCard anchor={anchor} t={t} v={view} /> : null;
+  const card = open && view ? <HoverCard anchor={anchor} t={t} v={view} instant={instant} /> : null;
   return { handlers, card, enabled: mouse };
 }
 
-function HoverCard({ anchor, t, v }: { anchor: HTMLElement; t: ThreadView; v: ThreadSummaryView }) {
+function HoverCard({ anchor, t, v, instant }: { anchor: HTMLElement; t: ThreadView; v: ThreadSummaryView; instant: boolean }) {
   const ref = useRef<HTMLDivElement>(null);
   const [place, setPlace] = useState<{ top: number; left: number } | null>(null);
   useLayoutEffect(() => {
-    const card = ref.current!.getBoundingClientRect();
+    // 크기는 offset으로 잰다: 등장 효과(scale .98)가 걸린 rect로 재면 자리가 어긋난다
+    const card = { width: ref.current!.offsetWidth, height: ref.current!.offsetHeight };
     setPlace(hoverPlace(anchor.getBoundingClientRect(), card, { width: innerWidth, height: innerHeight }));
   }, [anchor, v]);
   return createPortal(
-    <div ref={ref} className="summary-hover" role="tooltip" style={place ?? { visibility: "hidden", top: 0, left: 0 }} data-testid="summary-hover">
+    <div ref={ref} className={`summary-hover${instant ? " is-instant" : ""}`} role="tooltip" style={place ?? { visibility: "hidden", top: 0, left: 0 }} data-testid="summary-hover">
       <SummaryCard t={t} v={v} />
     </div>,
     document.body,
@@ -291,7 +301,7 @@ function SummaryPopover({ t, anchor, onClose }: { t: ThreadView; anchor: HTMLEle
   const [place, setPlace] = useState<{ top: number; left: number } | null>(null);
   // 자리는 단추 아래·폭으로만 정해진다(높이는 CSS max-height가 맡는다): 글이 늦게 와도 다시 잴 것이 없다
   useLayoutEffect(() => {
-    const card = ref.current!.getBoundingClientRect();
+    const card = { width: ref.current!.offsetWidth, height: ref.current!.offsetHeight };
     setPlace(popoverPlace(anchor.getBoundingClientRect(), card, { width: innerWidth, height: innerHeight }));
   }, [anchor]);
   useEffect(() => {

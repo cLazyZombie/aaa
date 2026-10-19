@@ -53,10 +53,10 @@ describe("카드 자리", () => {
   });
   it("오른쪽이 모자라면 줄 왼쪽, 아래가 모자라면 위로", () => {
     const p = hoverPlace({ top: 760, left: 1000, right: 1200, bottom: 790 }, card, view);
-    assert.deepEqual(p, { top: 800 - 8 - 160, left: 1000 - 4 - 320 });
+    assert.deepEqual(p, { top: 800 - 5 - 160, left: 1000 - 4 - 320 });
   });
   it("팝오버는 단추 아래 오른쪽 끝 맞춤, 화면 안", () => {
     assert.deepEqual(popoverPlace({ top: 10, left: 1100, right: 1180, bottom: 34 }, { width: 400, height: 300 }, view), { top: 38, left: 780 });
-    assert.equal(popoverPlace({ top: 10, left: 10, right: 60, bottom: 34 }, { width: 400, height: 300 }, view).left, 8);
+    assert.equal(popoverPlace({ top: 10, left: 10, right: 60, bottom: 34 }, { width: 400, height: 300 }, view).left, 5);
   });
 });

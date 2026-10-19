@@ -5282,4 +5282,15 @@ primary 근거:
 - **계약(FRONT_API 1.44).** `ThreadView.summary`(선택 `SummaryMark { at_ms, pending }`), `thread_summary`(보기 권한)·`thread_summary_set`(조작 권한) → `ThreadSummaryView`(파싱한 절, agent Decisions, 요약 시각·쓴 쪽, Follow-ups 수, 요약 뒤 지시 수와 마지막 3개 첫 줄, 요약 없을 때 할 일 첫 줄). host는 표지 재료(요약 시각·seen·Follow-ups 수)를 기억해 목록이 파일을 매번 읽지 않는다. 지시 덧붙이기와 요약 쓰기는 같은 잠금이다. CLI의 `--summary-file`은 앞 요청이 된 뒤 따로 보내므로 옛 host는 그 요청만 거절한다.
 - **안내.** coordinator 안내(AGENTS.md)에 「작업 요약(웹 카드)」 절(쓸 때·짧은 구·좋은 예/나쁜 예), 「그 밖의 메시지」에 `--summary-file` 한 줄. thread brief 보고 형식에 `## Decisions`. 다시 시작한 thread의 brief에는 할 일 앞에 「지금 범위(작업 요약)」가 들어간다. `aaa context`는 요약 뒤 지시가 있는 thread에 「요약 고칠 것」을 붙이고, `thread show`는 요약 표지를 한 줄 보인다.
 - **웹.** hover 카드(마우스 기기 `(hover: hover) and (pointer: fine)`만, 줄 title tooltip을 대신): 목표·지금 3줄·최근 바뀐 것(`## 바뀜` 맨 아래의 그어지지 않은 줄)·상태 한 줄, 줄마다 한 줄 말줄임, 폭 320. 굴림·창 크기·누름·⋯ 메뉴로 닫힌다. 머리 「요약」 단추(터미널 화면 「보고」 옆, 보고 화면 「터미널」 앞, 휴대폰은 아이콘만, 요약 뒤 지시가 있으면 노란 점): 데스크톱 팝오버(단추 아래 오른쪽 맞춤, 폭 400, 70vh), 휴대폰 아래 시트(RowMenu 시트 틀, 끌기·뒤로로 닫힘). 창은 목표·지금만 펼치고 정한 것(agent Decisions 포함)·바뀐 것·끝난 것·요약 뒤 지시는 접어 둔다. 옆 패널은 터미널 폭이 줄어 PTY 크기가 바뀌므로 쓰지 않는다.
+- **t3code 대조(사용자 10-19 16:3x 「t3code 소스를 그대로 따르고 다른 곳만 이유를」, 1451e7cb2).** 따른 것과 다른 것을 나눈다.
+  - 따른 것(hover 카드): `Sidebar.tsx` TooltipProvider의 delay 150·closeDelay 0·timeout 400, `SidebarThreadTooltip` 자리(side right·align start·sideOffset 4).
+  - 따른 것(tooltip 동작): `tooltip.tsx`의 가장자리 `COLLISION_PADDING` 5px, 굴리면 닫되 줄에 focus가 있으면 두기(`dismissUnfocused`), 누르면 닫힘, 줄 메뉴가 열리면 끔(`disabled={snoozeMenuOpen}`).
+  - 따른 것(등장과 팝오버): 등장 효과 scale .98·투명 150ms, 400ms 안에 옮긴 줄은 효과 없이(`data-instant`). 팝오버 최대 높이 `calc(100dvh - 6.5rem)`(`ThreadDetailsCard`), 오른쪽 끝 맞춤·아래.
+  - 다름: Base UI(`@base-ui/react`)를 들이지 않고 같은 규칙을 손으로 짰다(aaa 웹은 그 의존성이 없다). 그래서 창 크기가 바뀌면 자리를 다시 잡지 않고 닫는다.
+  - 다름: hover 카드는 폭 320 고정·목표 굵게·아이콘·색이다(t3code는 `max-w-80`·text-xs muted). 사용자 10-19 16:0x 「쉽고 빨리 읽을 수 있게」, 6줄 안 넘김(E2E 28이 본다).
+  - 다름: 줄 keyboard focus로는 카드가 열리지 않는다(Base UI tooltip은 focus로도 열린다). 마우스 기기에서는 줄 title을 빼므로 키보드 사용자는 「요약」 단추로 본다.
+  - 다름: 단추 창 폭 400이다(t3code `--thread-details-panel-width` 17.5rem=280). 30자 한국어 줄과 칩이 280에서는 잘린다. 자리는 머리 전체가 아니라 단추에 붙인다.
+  - 다름: t3code의 inline 모드(넓은 화면에서 채팅 열 옆 빈 자리에 카드를 띄워 둠)는 없다. 터미널이 폭 전체를 써 그 빈 자리가 없고, 옆 패널은 PTY 크기를 바꾼다.
+  - 다름: 단추는 ClipboardList와 글자 「요약」이다(t3code `SquareMenuIcon` Toggle 아이콘만). 사용자 결정 15:4x이고, 머리의 「보고」·「터미널」 단추와 같은 꼴이다.
+  - 다름: 휴대폰은 아래 시트다. t3code는 thread details에 시트를 쓰지 않고 모든 폭에서 팝오버다. 사용자 결정 15:4x(데스크톱 팝오버 + 휴대폰 시트)를 따랐다. 시트 틀은 aaa의 다른 휴대폰 시트(RowMenu: 끌어내려 닫기·뒤로 가기)와 같다.
 - **검증.** host 유닛(절·칩·줄 긋기, 상한 거부, 표지 왕복과 손으로 지운 표지, Follow-ups 시각·첫 줄, 요약 뒤 지시 수, Decisions), brief 순서 유닛, m13(요약 없이 지시 2 → 표지 2, 틀린 형식 거부, 요약 쓰면 0·쓴 쪽 「사람」, 그 뒤 지시 1과 그 첫 줄, `start --summary-file`), 웹 유닛 `summaryCard.test.mjs`(카드 줄 고르기·Decisions 합치기·점·자리), 웹 E2E 28(점과 받은 지시 → 요약 쓰면 점 없음·접힌 절, 데스크톱 카드 6줄·줄바꿈 없음·자리·떠남·메뉴, 휴대폰은 hover 없음·시트). 결함 심기: hover 조건 빼기 → 28 휴대폰 단계 실패, `seen` 하나 덜 세기 → m13·28 실패(이것이 기억한 표지와 파일 표지가 다른 값을 쓰던 결함을 찾았다).
