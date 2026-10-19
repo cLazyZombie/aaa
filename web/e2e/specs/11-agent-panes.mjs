@@ -856,14 +856,16 @@ export default async function ({ ctl, page }) {
     await box.fill("첫 메시지 c2");
     await box.press("Enter");
     await until("보낸 글이 프로그램에", async () => lines().includes("첫 메시지 c2"));
-    if ((await box.inputValue()) !== "") throw new Error("보낸 뒤 입력창이 비지 않았다");
-    await composer.getByTestId("chat-delivered").waitFor();
+    // 이 가짜 Claude는 기록 위치를 알리지 않는다: 기록 증거가 올 수 없으므로 host 전달이 보내짐이고 입력창이 풀린다(plan §8.247)
+    const sentOff = () => until("보낸 뒤 입력창이 빈다", async () =>
+      (await box.inputValue()) === "" && (await box.getAttribute("readonly")) === null && (await composer.getByTestId("chat-send-state").count()) === 0);
+    await sentOff();
     await page.getByTestId("agent-cmp1").and(page.locator('[data-status="working"]')).waitFor();
     await box.fill("작업 중에도 전달 c2");
     await box.press("Enter");
     await waitOutput("cmp1", "RECEIVED:작업 중에도 전달 c2");
     if (!lines().includes("작업 중에도 전달 c2")) throw new Error("작업 중 입력 유실");
-    await composer.getByTestId("chat-delivered").waitFor();
+    await sentOff();
     // 전달 단계는 식별자·바이트 수로 잇고 입력 본문은 host·agent·session log에 남기지 않는다.
     const cmp = aaa("pane", "get", "cmp1").id;
     for (const [file, marker] of [

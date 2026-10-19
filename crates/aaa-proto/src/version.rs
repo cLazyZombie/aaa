@@ -84,6 +84,9 @@ pub const AGENT_LINK: Version = Version { major: 1, minor: 5 };
 // TUI의 PaneCtrlEnter 소비자도 1.43부터 요청한다. 공통 요청 자체는 1.42 도중 추가되어 그 판에는 보내지 않는다(옛 TUI는 LF로 fallback했다).
 // 같은 1.43에서 PaneCtrlEnter의 뜻만 바꾼다(wire 그대로): 줄바꿈을 넣지 않고 steering만, 입력 상자를 모르면 보내지 않는다(plan §8.239 후속).
 // 같은 1.43에 MachineView.health의 CPU·메모리 칸(선택, §8.245)을 더한다. 옛 host는 생략하고 옛 front는 버린다.
+// 같은 1.43에 ChatMessage.pending(harness 대기열의 사람 글, plan §8.247)을 더한다. 옛 agent는 보내지 않고 옛 front는 버린다.
+// 같은 1.43에 웹 터미널 `submit_cancel`·`submit_cancelled`(전달 전 막힘의 탈출구, plan §8.247)를 더한다. 웹은 그 host가 주므로
+// 함께 바뀐다. 옛 host는 모르는 frame을 버리고, 새 웹은 답이 없으면 「전송 여부를 확인하지 못했습니다」로 둔다.
 pub const FRONT_API: Version = Version { major: 1, minor: 43 };
 /// agent ↔ session host(내부). 세션이 몇 주 이어질 수 있으므로 이전 session host와 호환해야 한다.
 /// 1.1: `SessionRequest::Detect`(harness 상태 감지 입력). agent는 1.0 session host에 보내지 않고 `Screen`을 쓴다.
