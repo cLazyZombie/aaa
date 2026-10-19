@@ -31,6 +31,8 @@ aaa --json debug input --thread t-0408 --since 1d
 | `ui / Failed` | 브라우저가 본 연결 단절·거절·확인 불가. 임의의 오류 본문은 저장하지 않음 |
 | `ctrl_enter` | 고른 키와 `working`, `question`, `synced`, 커서 위치, 현재 입력 상자·작업 표시의 근거 |
 | `ui / CtrlEnterBlocked` | 브라우저에서 붙잡은 초안·IME·읽기 전용·전송 잠금·첨부 업로드/용량 상태로 막음 |
+| `steer_queued` | 대기 메시지 「지금 보내기」(plan §8.270)의 host 판정: 고른 키 또는 거절 까닭(`reason=Some(Draft)` 등), `working`, `synced`, 커서, 화면 근거와 `queue_hint`. 보기 기기는 `role=readonly` |
+| `steer_sent` / `steer_failed` | 고른 키를 agent가 pane에 썼음 / 쓰기 실패 code |
 
 `Receipt` 시각은 브라우저가 기록에서 확인한 사건을 host가 받은 시각이다. 네트워크가 끊기거나 탭이 닫히면 그 이후
 UI 사건이 없을 수 있으므로, `delivered`만으로 `Receipt`나 `Unlocked`를 추정하지 않는다. 로그가 전송 재시도를 일으키지는 않는다.
@@ -50,5 +52,7 @@ stdout의 구조화된 `입력 사건` 줄은 종전 host 감독자의 로그 �
 옛 agent의 짧은 글은 기존 텍스트 비교로 계속 확인한다. 이미지의 마지막 `@경로` 뒤 자동완성을 닫는 공백은 바깥 공백으로 처리한다.
 
 WebCrypto를 제공하지 않는 연결은 진단 ID를 `getRandomValues`로 만들고 수신 확인은 기존 짧은 글 비교로 돌아간다. 큰 글의 전체 fingerprint 비교는 WebCrypto가 있는 연결에서 사용한다.
+
+대기 메시지 「지금 보내기」는 누름 하나가 ID 하나다. `steer_queued keys=["ctrl+x", "ctrl+s"] … queue_hint=true` 뒤 `steer_sent`면 보냈고, `steer_queued keys=[] reason=Some(Draft)`처럼 까닭만 있으면 아무것도 쓰지 않았다. 웹은 같은 까닭을 단추 아래에 보인다.
 
 글 있는 Ctrl+Enter도 같은 보내기 ID에 `ctrl_enter phase=submit`으로 실제 선택 키와 화면 근거를 남긴다. 쉬는 pane에서 보통 Enter로 보내는 경우도 포함한다. 연결이 끊겨 host에 닿지 못한 누름은 host 장부에 남길 수 없다.
