@@ -1711,7 +1711,9 @@ fn run(cli: Cli) -> Result<ExitCode> {
             if !aaa_agent::hooks::in_session() {
                 return Ok(ExitCode::SUCCESS);
             }
-            // harness를 막지 않는다: 무엇이 실패해도 종료 코드 0, 출력 없음
+            // 기본은 무음. AAA_LOG=debug로만 전송 실패 원인을 stderr에 남긴다.
+            init_log("off");
+            // harness를 막지 않는다: 무엇이 실패해도 종료 코드 0, 기본 출력 없음
             // 표준 출력은 agent가 돌려준 진행 안내 JSON 한 줄만이다(Claude Code는 JSON이 아니면 버린다)
             let body = match payload {
                 Some(p) => p,
@@ -1727,7 +1729,7 @@ fn run(cli: Cli) -> Result<ExitCode> {
                 match rt.block_on(aaa_agent::hooks::send(&agent, v)) {
                     Ok(Some(out)) => println!("{out}"),
                     Ok(None) => {}
-                    Err(_) => {}
+                    Err(error) => tracing::debug!("hook 전송 실패: {error:#}"),
                 }
             }
             Ok(ExitCode::SUCCESS)

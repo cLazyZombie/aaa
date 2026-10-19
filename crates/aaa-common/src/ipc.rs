@@ -115,7 +115,88 @@ pub async fn connect(path: &Path) -> io::Result<LocalStream> {
     }
     #[cfg(windows)]
     {
+        use std::time::Duration;
+
         use tokio::net::windows::named_pipe::ClientOptions;
-        Ok(Box::new(ClientOptions::new().open(pipe_name(path))?))
+        use tokio::time::{Instant, sleep_until};
+        use windows_sys::Win32::Foundation::ERROR_PIPE_BUSY;
+
+        let name = pipe_name(path);
+        // accept가 다음 인스턴스를 만들기 전의 BUSY만 기다린다. hook 전체의 3초 한도는 유지한다.
+        let deadline = Instant::now() + Duration::from_millis(250);
+        loop {
+            match ClientOptions::new().open(&name) {
+                Ok(stream) => return Ok(Box::new(stream)),
+                Err(error) if error.raw_os_error() == Some(ERROR_PIPE_BUSY as i32) && Instant::now() < deadline => {
+                    sleep_until((Instant::now() + Duration::from_millis(5)).min(deadline)).await;
+                }
+                Err(error) => return Err(error),
+            }
+        }
+    }
+}
+
+#[cfg(all(test, windows))]
+mod tests {
+    use super::*;
+    use std::future::{Future, poll_fn};
+    use std::task::Poll;
+    use std::time::Duration;
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    use windows_sys::Win32::Foundation::ERROR_PIPE_BUSY;
+
+    /// 실제 pipe를 점유해 BUSY를 만든다. 고정 sleep 없이 accept 사건으로 다음 연결을 푼다.
+    #[tokio::test]
+    async fn busy_connect_waits_for_accept_and_preserves_errors() {
+        let path = std::env::temp_dir().join(format!("aaa-busy-{}", ulid::Ulid::new()));
+        // BUSY가 아닌 오류는 첫 poll에서 그대로 돌려준다.
+        let mut missing = std::pin::pin!(connect(&path));
+        poll_fn(|cx| {
+            match missing.as_mut().poll(cx) {
+                Poll::Ready(Err(error)) => assert_eq!(error.kind(), io::ErrorKind::NotFound),
+                _ => panic!("없는 pipe 연결을 기다리거나 성공했다"),
+            }
+            Poll::Ready(())
+        })
+        .await;
+
+        let listener = LocalListener::bind(&path).unwrap();
+        let occupied = connect(&path).await.unwrap();
+        // 수정 전에도 231이 나오는 결정적 재현. 수정 뒤에도 계속 점유하면 3초 안에 같은 오류다.
+        let result = tokio::time::timeout(Duration::from_secs(3), connect(&path)).await.unwrap();
+        let error = result.err().expect("accept하지 않은 pipe의 두 번째 연결이 성공했다");
+        assert_eq!(error.raw_os_error(), Some(ERROR_PIPE_BUSY as i32));
+
+        let mut waiting = std::pin::pin!(connect(&path));
+        poll_fn(|cx| {
+            match waiting.as_mut().poll(cx) {
+                Poll::Pending => {}
+                Poll::Ready(Err(error)) => {
+                    assert_eq!(error.raw_os_error(), Some(ERROR_PIPE_BUSY as i32));
+                    panic!("BUSY를 그대로 반환했다: {error}");
+                }
+                Poll::Ready(Ok(_)) => panic!("점유된 pipe에 두 번째 연결이 바로 성공했다"),
+            }
+            Poll::Ready(())
+        })
+        .await;
+        let (accepted, pid) = listener.accept_peer().await.unwrap();
+        assert_eq!(pid, Some(std::process::id()));
+        drop((occupied, accepted));
+
+        tokio::time::timeout(Duration::from_secs(3), async {
+            let (client, server) = tokio::try_join!(waiting, listener.accept_peer())?;
+            let (mut server, pid) = server;
+            assert_eq!(pid, Some(std::process::id()));
+            let mut client = client;
+            client.write_all(b"hook").await?;
+            let mut bytes = [0; 4];
+            server.read_exact(&mut bytes).await?;
+            assert_eq!(&bytes, b"hook");
+            Ok::<(), io::Error>(())
+        })
+        .await
+        .unwrap()
+        .unwrap();
     }
 }
