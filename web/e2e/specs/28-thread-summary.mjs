@@ -2,7 +2,7 @@
 // thread 줄의 hover 카드(마우스 기기만, 6줄 안팎)와 thread 화면 머리 「요약」 단추(데스크톱 팝오버·휴대폰 아래 시트, 접힌 절).
 // 요약 뒤 지시는 단추 점과 접힌 절로 보인다. 휴대폰에는 hover 대안이 없다(사용자 결정).
 import fs from "node:fs";
-import { root, aaa, step, browser, pairPage, inList, domIs, until, shot } from "../lib/harness.mjs";
+import { root, aaa, step, browser, pairPage, inList, domIs, until, shot, claudeSh, claudeIdle, waitOutput } from "../lib/harness.mjs";
 
 const SUMMARY = `# 목표
 웹 왼쪽 패널 다듬기
@@ -107,6 +107,38 @@ export default async function ({ page }) {
     await row.click({ button: "right" });
     await page.getByTestId("summary-hover").waitFor({ state: "detached" });
     await page.keyboard.press("Escape");
+  });
+
+  await step("에이전트 패널: thread 줄에 같은 요약 카드, thread 없는 agent에는 카드 없음", async () => {
+    const pane = aaa("thread", "show", "demo", id).pane;
+    const plain = aaa("tab", "create", "--machine", "labA", "--label", "일반 agent", "--",
+      claudeSh, "-c", `stty -echo; ${claudeIdle}; echo summary-agent-ready; exec cat > /dev/null`).tabs.at(-1).root.pane;
+    await waitOutput(plain, "summary-agent-ready");
+    await page.getByTestId("activity-agents").click();
+    const row = page.locator(`[data-panel="agents"] [data-pane="${pane}"] .agent-select`);
+    const other = page.getByTestId("agent-row-일반 agent");
+    await other.waitFor();
+    // 가짜 시계로 hover 지연을 넘긴다. 요약 없는 줄이 카드를 예약하지 않는지도 같은 시간 창에서 본다.
+    await page.clock.install();
+    try {
+      await other.hover();
+      await page.clock.runFor(200);
+      if (await page.getByTestId("summary-hover").count()) throw new Error("thread 없는 agent에 빈 카드");
+      await row.hover();
+      await page.clock.runFor(200);
+      await shot(page, "agent-summary-hover");
+      await page.getByTestId("summary-hover").waitFor();
+      await domIs(page, "agent 요약 카드 자리", () => document.querySelector('[data-testid="summary-hover"]')?.style.visibility !== "hidden");
+      if (!(await cardOf(page)).text.includes("웹 왼쪽 패널 다듬기")) throw new Error("agent의 thread 대응이 다르다");
+      if (await row.getAttribute("title") !== null) throw new Error("agent에 title과 카드가 겹친다");
+      await shot(page, "agent-summary-hover");
+      await row.click({ button: "right" });
+      await page.getByTestId("summary-hover").waitFor({ state: "detached" });
+      await page.keyboard.press("Escape");
+    } finally {
+      await page.clock.resume();
+    }
+    await page.getByTestId("activity-projects").click();
   });
 
   await step("휴대폰: hover 카드 없이 thread 화면 머리 「요약」 단추(아이콘) → 아래 시트, 절은 접혀 있다", async () => {

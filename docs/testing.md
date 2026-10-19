@@ -330,3 +330,7 @@ preferences keeper는 전송 중 baseline 값으로 되돌린 설정·고정을 
 E2E14 「설정 되돌리기」는 host의 끔 events를 받은 뒤 HTTP 답만 유실시키고, 보관 문서를 반영할 때도 새 켬을 지켜 다음 켬 요청이 host에 적용되는지 본다.
 
 최신 main의 auto-resolve keeper는 status=resolved가 정리 시작 표지이며 cleanup_pending 동안 group=working인 계약을 따른다. cleanup_pending이 사라진 사건까지 기다린 뒤 기존 group=resolved와 inbox 단언을 검사한다. 상태값 기대나 기한은 바꾸지 않는다.
+
+## 에이전트 패널 작업 요약(t-0421)
+
+E2E28의 「에이전트 패널」은 실제 host·agent의 pane→thread 대응을 거쳐 프로젝트 패널과 같은 요약 카드를 여는지 본다. thread 없는 일반 agent에는 카드가 없고, 우클릭 메뉴를 열면 닫힌다. hover 지연은 브라우저 시계로 넘기며 고정 sleep은 없다. 기존 코드에서 카드가 나타나지 않는 RED를 확인한 뒤 같은 단계가 수리 후 통과했다. 휴대폰의 요약 단추·시트는 기존 단계가 맡는다.
