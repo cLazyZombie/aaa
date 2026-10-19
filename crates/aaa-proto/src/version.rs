@@ -109,7 +109,9 @@ pub const AGENT_LINK: Version = Version { major: 1, minor: 7 };
 // 1.47: thread 없는 감시 사건의 FlowEvent.repo(선택, 옛 기록 기본 없음).
 // 1.48: 자동화 결과·최근 기록·routine_runs, 임무 blocked_reason(agent wire 변화 없음).
 // 1.49: rollout source_machine과 전송 단계/bytes 진행. --from은 기존 미리 복사 경로다.
-pub const FRONT_API: Version = Version { major: 1, minor: 49 };
+// 1.50: 프로젝트를 받는 요청의 `project`를 생략할 수 있다(비면 host가 맡은 프로젝트 하나로 채운다)와 `Instance` 보기(plan §8.288).
+// 옛 host는 빈 `project`를 이름 형식 오류로 거절하므로 1.49 host에는 이름을 채워 보낸다(CLI는 계속 채운다).
+pub const FRONT_API: Version = Version { major: 1, minor: 50 };
 /// agent ↔ session host(내부). 세션이 몇 주 이어질 수 있으므로 이전 session host와 호환해야 한다.
 /// 1.1: `SessionRequest::Detect`(harness 상태 감지 입력). agent는 1.0 session host에 보내지 않고 `Screen`을 쓴다.
 /// 1.2: `SessionRequest::Colors`(색 질의에 답할 화면 색, plan §8.187). agent는 1.1 이하 session host에 보내지 않는다.

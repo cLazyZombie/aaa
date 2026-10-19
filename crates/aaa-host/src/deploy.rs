@@ -32,9 +32,7 @@ impl Host {
         if !self.safety(&p).coordinator_deploy {
             return Err(err(
                 ErrorCode::Forbidden,
-                format!(
-                    "coordinator 배포가 꺼져 있다. 사람이 aaa 밖 터미널에서 `aaa safety set {p} coordinator_deploy on`으로 허용한다"
-                ),
+                "coordinator 배포가 꺼져 있다. 사람이 aaa 밖 터미널에서 `aaa safety set coordinator_deploy on`으로 허용한다",
             ));
         }
         Ok(p)

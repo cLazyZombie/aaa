@@ -1,9 +1,11 @@
-//! 프로젝트 설정(`projects/<p>/project.toml`). herdr-projects 0.2.35 `project.rs` `Settings`(PROJECT.md front matter)와
+//! 프로젝트 설정(`projects/<p>/aaa.toml`, 없으면 옛 `project.toml`. plan §8.288). herdr-projects 0.2.35 `project.rs` `Settings`(PROJECT.md front matter)와
 //! `Safety`의 프로젝트 값 중 aaa가 쓰는 것을 한곳에서 읽는다(plan §8.77).
 //!
 //! - 값이 잘못된 key는 그 key만 기본값을 쓴다. 파일을 TOML로 읽지 못하면 모두 기본값이고, inbox `config-error`가 알린다.
 //! - `aaa project create`의 옵션과 `aaa project set`(herdr-projects `new`·`set`, 4장 G)이 host를 거쳐 이 파일을 쓴다
 //!   ([`set_in`], toml_edit라 다른 줄·주석은 그대로다). coordinator·사람이 직접 고쳐도 된다.
+//! - `aaa.toml`은 `[[repos]]` 대신 `[[workspaces]]`(같은 path·machine)라 쓴다. 두 파일 모두 두 이름을 읽는다. aaa는 aaa.toml을
+//!   스스로 만들지 않는다(되돌린 옛 binary는 project.toml만 읽는다): 사람이 옮기면 그 뒤로 aaa.toml만 읽고 쓴다.
 //! - `start_threads`·`trust_screens`는 옛 자리다: host.toml `[safety.*]`(사람만 고친다, plan §8.163)에 없을 때만 쓰고,
 //!   `aaa safety show`가 출처를 「project.toml(프로젝트 폴더 안)」으로 보인다.
 
@@ -62,7 +64,7 @@ impl Default for ProjectSettings {
 
 impl ProjectSettings {
     pub(crate) fn load(dir: &Path) -> ProjectSettings {
-        let table = std::fs::read_to_string(dir.join("project.toml"))
+        let table = std::fs::read_to_string(aaa_config::project_settings_file(dir))
             .ok()
             .and_then(|t| t.parse::<toml::Table>().ok())
             .unwrap_or_default();
@@ -79,7 +81,8 @@ impl ProjectSettings {
         let trust_screens = s("trust_screens")
             .filter(|v| matches!(v.as_str(), crate::trust_screen::USER | crate::trust_screen::COORDINATOR));
         let repos = t
-            .get("repos")
+            .get("workspaces")
+            .or_else(|| t.get("repos"))
             .and_then(|v| v.as_array())
             .map(|a| {
                 a.iter()
@@ -142,34 +145,52 @@ pub(crate) fn parse_repo_arg(arg: &str) -> Repo {
     Repo { path: arg.to_string(), machine: None }
 }
 
-/// `repos = [...]`(인라인 표)를 `[[repos]]`로 바꿔 더하고 뺄 수 있게 한다(herdr-projects `normalize_repos`)
-fn normalize_repos(doc: &mut toml_edit::DocumentMut) -> Result<(), String> {
+/// 저장소 목록 표 이름: aaa.toml은 `workspaces`, project.toml은 `repos`(plan §8.288)
+pub(crate) fn repos_table(path: &Path) -> &'static str {
+    if path.file_name().is_some_and(|n| n == "aaa.toml") { "workspaces" } else { "repos" }
+}
+
+/// `repos = [...]`(인라인 표)를 `[[repos]]`로 바꿔 더하고 뺄 수 있게 한다(herdr-projects `normalize_repos`). `table`은
+/// `repos`·`workspaces`
+fn normalize_repos(doc: &mut toml_edit::DocumentMut, table: &str) -> Result<(), String> {
     use toml_edit::{ArrayOfTables, Item};
-    let tables = match doc.get("repos") {
+    let tables = match doc.get(table) {
         None => Some(ArrayOfTables::new()),
         Some(Item::ArrayOfTables(_)) => None,
         Some(Item::Value(toml_edit::Value::Array(array))) => {
             let mut tables = ArrayOfTables::new();
             for v in array.iter() {
-                tables.push(v.as_inline_table().ok_or("`repos`의 항목은 표여야 한다")?.clone().into_table());
+                tables.push(v.as_inline_table().ok_or(format!("`{table}`의 항목은 표여야 한다"))?.clone().into_table());
             }
             Some(tables)
         }
-        Some(_) => return Err("`repos`는 표 목록이어야 한다".into()),
+        Some(_) => return Err(format!("`{table}`는 표 목록이어야 한다")),
     };
     if let Some(tables) = tables {
         // 표 목록은 일반 key 뒤에 와야 한다: 끝에 다시 넣는다
-        doc.remove("repos");
-        doc["repos"] = Item::ArrayOfTables(tables);
+        doc.remove(table);
+        doc[table] = Item::ArrayOfTables(tables);
     }
     Ok(())
 }
 
 /// project.toml 글에 값 하나를 바꾼다(herdr-projects `set_in`). 로컬 저장소 경로는 부르는 쪽이 정본 경로로 바꿔 준다.
 pub(crate) fn set_in(text: &str, key: &str, value: &str) -> Result<String, String> {
+    set_in_table(text, key, value, "repos")
+}
+
+/// 설정 글에 값 하나를 바꾼다. `repos`는 저장소 목록 표의 새 이름([`repos_table`])이고, 글에 이미 다른 이름의 목록이 있으면
+/// 그것을 고친다. `workspaces.add|remove`는 `repos.add|remove`와 같다.
+pub(crate) fn set_in_table(text: &str, key: &str, value: &str, repos: &str) -> Result<String, String> {
     use toml_edit::{Item, Table};
     let mut doc =
-        text.parse::<toml_edit::DocumentMut>().map_err(|e| format!("project.toml을 읽지 못한다: {}", e.message()))?;
+        text.parse::<toml_edit::DocumentMut>().map_err(|e| format!("설정 파일을 읽지 못한다: {}", e.message()))?;
+    let key = match key {
+        "workspaces.add" => "repos.add",
+        "workspaces.remove" => "repos.remove",
+        k => k,
+    };
+    let repos = ["workspaces", "repos"].into_iter().find(|t| doc.contains_key(t)).unwrap_or(repos);
     let value = value.trim();
     let number = |lo: i64| -> Result<i64, String> {
         value
@@ -191,8 +212,10 @@ pub(crate) fn set_in(text: &str, key: &str, value: &str) -> Result<String, Strin
             if want.path.is_empty() {
                 return Err("저장소 경로를 준다".into());
             }
-            normalize_repos(&mut doc)?;
-            let repos = doc["repos"].as_array_of_tables_mut().ok_or("`repos`는 [[repos]] 표여야 한다")?;
+            normalize_repos(&mut doc, repos)?;
+            let list = repos;
+            let repos =
+                doc[list].as_array_of_tables_mut().ok_or_else(|| format!("`{list}`는 [[{list}]] 표여야 한다"))?;
             let same = |t: &Table| {
                 t.get("path").and_then(Item::as_str) == Some(want.path.as_str())
                     && t.get("machine").and_then(Item::as_str) == want.machine.as_deref()
@@ -211,7 +234,7 @@ pub(crate) fn set_in(text: &str, key: &str, value: &str) -> Result<String, Strin
                 let before = repos.len();
                 repos.retain(|t| !same(t));
                 if repos.len() == before {
-                    return Err(format!("{value}는 project.toml `[[repos]]`에 없다"));
+                    return Err(format!("{value}는 `[[{list}]]`에 없다"));
                 }
             }
         }
@@ -243,7 +266,8 @@ impl crate::Host {
                 let get = |k: &str| c.safety.get(k).cloned().unwrap_or_default();
                 let legacy =
                     safety::legacy_host_layer(&c.projects.allow_profiles, &c.projects.routine_commands, project);
-                (get(safety::DEFAULT_TABLE), project.map(get).unwrap_or_default(), legacy, Vec::new())
+                let own = project.map(|p| get(safety::ONE_TABLE).over(get(p))).unwrap_or_default();
+                (get(safety::DEFAULT_TABLE), own, legacy, Vec::new())
             }
         };
         if let Some(p) = project {
@@ -355,5 +379,44 @@ mod tests {
         let s = ProjectSettings::from_table(&t.parse().unwrap());
         assert!(!s.nudge && s.mute, "{t}");
         assert!(set_in(&t, "mute", "maybe").unwrap_err().contains("true·false"));
+    }
+
+    /// `aaa.toml`(plan §8.288): 있으면 project.toml 대신 읽고 쓰며 저장소 목록은 `[[workspaces]]`다. aaa가 만들지는 않는다
+    #[test]
+    fn aaa_toml_comes_first_and_keeps_workspaces() {
+        let state = std::env::temp_dir().join(format!("aaa-settings-{}", aaa_common::util::new_id()));
+        let mut cfg = aaa_config::HostConfig::default();
+        cfg.projects.root = state.join("projects").display().to_string();
+        cfg.notify.web_push = false;
+        let h = crate::Host::open(cfg, state.clone()).unwrap();
+        h.project_create("demo", Default::default(), "test").unwrap();
+        let dir = h.project_dir("demo").unwrap();
+        h.project_set("demo", "goal", "옛 목표", "test").unwrap();
+        assert!(!dir.join("aaa.toml").exists(), "aaa는 aaa.toml을 만들지 않는다");
+        assert_eq!(h.settings("demo").goal, "옛 목표");
+        std::fs::write(
+            dir.join("aaa.toml"),
+            "schema = 1\ngoal = \"새 목표\"\n\n[[workspaces]]\npath = \"/work/app\"\n",
+        )
+        .unwrap();
+        let s = h.settings("demo");
+        assert_eq!((s.goal.as_str(), s.repos), ("새 목표", vec![Repo { path: "/work/app".into(), machine: None }]));
+        h.project_set("demo", "repos.add", "/work/lib@mac-b", "test").unwrap();
+        h.project_set("demo", "workspaces.remove", "/work/app", "test").unwrap();
+        h.project_set("demo", "max_parallel_threads", "3", "test").unwrap();
+        let new = std::fs::read_to_string(dir.join("aaa.toml")).unwrap();
+        assert!(
+            new.contains("[[workspaces]]\npath = \"/work/lib\"\nmachine = \"mac-b\"") && !new.contains("repos"),
+            "{new}"
+        );
+        let s = h.settings("demo");
+        assert_eq!((s.repos.len(), s.max_parallel_threads), (1, 3));
+        let old = std::fs::read_to_string(dir.join("project.toml")).unwrap();
+        assert!(old.contains("옛 목표") && !old.contains("max_parallel_threads"), "project.toml은 그대로: {old}");
+        // aaa.toml에 옛 이름 [[repos]]가 있으면 그것을 고친다
+        let t = set_in_table("[[repos]]\npath = \"/a\"\n", "repos.add", "/b", "workspaces").unwrap();
+        assert!(t.contains("[[repos]]\npath = \"/b\"") && !t.contains("workspaces"), "{t}");
+        drop(h);
+        std::fs::remove_dir_all(&state).unwrap();
     }
 }

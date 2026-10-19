@@ -1766,41 +1766,45 @@ fn start_defaults_profile_kind_and_task() {
 #[test]
 fn safety_and_profiles_by_a_person() {
     let w = world();
-    let show = |t: &str| -> Value { w.h.ok(&["safety", "show", t]) };
+    // 대상을 생략하면 이 host의 프로젝트(plan §8.288). 모든 프로젝트 기본값은 --global
+    let show =
+        |t: &str| -> Value { if t.is_empty() { w.h.ok(&["safety", "show"]) } else { w.h.ok(&["safety", "show", t]) } };
     let row = |v: &Value, key: &str| -> (String, String) {
         let r = v["rows"].as_array().unwrap().iter().find(|r| r["key"] == key).unwrap().clone();
         (r["value"].as_str().unwrap().to_string(), r["source"].as_str().unwrap().to_string())
     };
-    let s = show("demo");
+    let s = show("");
+    assert_eq!(s["target"], "demo");
     assert_eq!(row(&s, "yolo"), ("off".into(), "기본값".into()));
     assert_eq!(row(&s, "thread_profiles").1, "host.toml [projects]", "옛 allow_profiles가 아래 층: {s}");
     // 바꾸기는 사람만: 세션 안, 터미널 아님
-    let o = w.h.cmd(&["safety", "yolo", "demo", "on"]).env("AAA_SESSION_ID", "x").output().unwrap();
+    let o = w.h.cmd(&["safety", "yolo", "on"]).env("AAA_SESSION_ID", "x").output().unwrap();
     assert!(String::from_utf8_lossy(&o.stderr).contains("aaa 세션 안에서는"), "{o:?}");
-    let o = w.h.run(&["safety", "yolo", "demo", "on"]);
+    let o = w.h.run(&["safety", "yolo", "on"]);
     assert!(String::from_utf8_lossy(&o.stderr).contains("터미널"), "{o:?}");
     let o = w.h.run(&["profile", "add", "sh1", "--agent", "shell"]);
     assert!(String::from_utf8_lossy(&o.stderr).contains("터미널"), "{o:?}");
     // 틀린 값은 사람인지 묻기 전에 알린다
-    let o = w.h.run(&["safety", "set", "demo", "start_threads", "now"]);
+    let o = w.h.run(&["safety", "set", "start_threads", "now"]);
     assert!(String::from_utf8_lossy(&o.stderr).contains("propose·auto"), "{o:?}");
     let o = w.h.run(&["profile", "allow", "coordinator", "nope"]);
     // 없는 이름은 사람인지 묻기 전에(정의는 host.toml 한 곳, §8.170)
     assert!(String::from_utf8_lossy(&o.stderr).contains("host.toml에 profile `nope`가 없다"), "{o:?}");
     // 사람이 y가 아니면 바꾸지 않는다
-    let out = w.h.in_terminal(&["safety", "yolo", "demo", "on"], &[("[y/N]", "n")], T);
+    let out = w.h.in_terminal(&["safety", "yolo", "on"], &[("[y/N]", "n")], T);
     assert!(out.contains("권한 건너뛰기") && out.contains("바꾸지 않았다"), "{out}");
-    assert_eq!(row(&show("demo"), "yolo").0, "off");
-    let out = w.h.in_terminal(&["safety", "yolo", "demo", "on"], &[("[y/N]", "y")], T);
+    assert_eq!(row(&show(""), "yolo").0, "off");
+    let out = w.h.in_terminal(&["safety", "yolo", "on"], &[("[y/N]", "y")], T);
     assert!(out.contains("demo: yolo = on"), "{out}");
-    let s = show("demo");
+    let s = show("");
     assert_eq!(row(&s, "yolo"), ("on".into(), "프로젝트".into()));
     assert_eq!(row(&s, "start_threads").0, "auto");
     assert_eq!(row(&s, "trust_screens").0, "coordinator");
     assert_eq!(row(&show("--global"), "yolo").0, "off", "다른 프로젝트는 그대로");
     assert!(std::fs::read_to_string(w.h.cfg.join("host.toml")).unwrap().contains("[safety.demo]\nyolo = true\n"));
     assert_eq!(w.h.ok(&["context", "demo", "--peek"])["start_threads"], "auto", "host를 다시 띄우지 않고 닿는다");
-    // yolo가 thread 인자에 닿는다: claude harness는 권한 건너뛰기 인자로, 사람이 정의한 profile이라 thread_agent_args는 없다
+    // yolo가 thread 인자에 닿는다: claude harness는 권한 건너뛰기 인자로, 사람이 정의한 profile이라 thread_agent_args는 없다.
+    // 옛 꼴(프로젝트 이름)도 받는다
     let out = w.h.in_terminal(&["safety", "set", "demo", "thread_agent_args", "--verbose"], &[("[y/N]", "y")], T);
     assert!(out.contains("thread_agent_args = --verbose"), "{out}");
     let v = w.start(&["--title", "y", "--profile", "claude", "--kind", "dir", "--task-file", &w.task("y.txt", "x")]);
@@ -1809,6 +1813,15 @@ fn safety_and_profiles_by_a_person() {
     // custom harness는 yolo 인자가 없다
     let v = w.start(&["--title", "f", "--profile", "fake", "--kind", "dir", "--task-file", &w.task("f.txt", "x")]);
     assert!(!w.h.pane(v["pane"].as_str().unwrap())["argv"].to_string().contains("dangerously"));
+    // `[safety]` 표 하나(plan §8.288)는 프로젝트 표보다 앞선다. 프로젝트 표를 고치면 덮인다고 알린다
+    let host_toml = w.h.cfg.join("host.toml");
+    let before = std::fs::read_to_string(&host_toml).unwrap();
+    std::fs::write(&host_toml, format!("{before}\n[safety]\nyolo = false\n")).unwrap();
+    assert_eq!(row(&show(""), "yolo"), ("off".into(), "프로젝트".into()));
+    let out = w.h.in_terminal(&["safety", "yolo", "on"], &[("[y/N]", "y")], T);
+    assert!(out.contains("host.toml의 [safety] yolo가 이 값을 덮는다"), "{out}");
+    std::fs::write(&host_toml, &before).unwrap();
+    assert_eq!(row(&show(""), "yolo").0, "on");
 
     // host.toml에 profile을 더하고, 허용하고, agent를 다시 띄우지 않고 쓴다
     let o = w.h.in_terminal(&["profile", "allow", "threads", "fake", "sh1", "--project", "demo"], &[], T);
@@ -2972,7 +2985,7 @@ fn project_lifecycle() {
     let moved = w.projects.join("shop2");
     assert!(!dir.exists() && moved.join("PROJECT.md").is_file());
     let agents = std::fs::read_to_string(moved.join("AGENTS.md")).unwrap();
-    assert!(agents.contains("aaa post shop2 user") && !agents.contains("life"), "AGENTS.md를 새 이름으로");
+    assert!(agents.contains("aaa project sweep shop2") && !agents.contains("life"), "AGENTS.md를 새 이름으로");
     let th = w.h.ok(&["thread", "show", "shop2", &id]);
     assert_eq!((th["project"].as_str(), th["status"].as_str()), (Some("shop2"), Some("resolved")), "{th}");
     assert_eq!(config_errors("shop2"), 1, "inbox 기록도 옮긴다");
@@ -3760,7 +3773,7 @@ fn coordinator_user_posts(w: &World, numbers: &[u32]) {
     let mut script = String::new();
     for n in numbers {
         let body = w.task(&format!("notify-{n}.txt"), &format!("본문 {n}"));
-        script.push_str(&format!("'{}' --json post demo user --notice --topic task-complete --title '전체 완료' --post-id '{n:032x}' --body-file '{}' >> '{}' 2>&1\n", lab::BIN, body, out.display()));
+        script.push_str(&format!("'{}' --json post user --notice --topic task-complete --title '전체 완료' --post-id '{n:032x}' --body-file '{}' >> '{}' 2>&1\n", lab::BIN, body, out.display()));
     }
     script.push_str(&format!("echo notify-{n}-done\n"));
     let path = w.task(&format!("notify-{n}.sh"), &script);
@@ -4005,9 +4018,13 @@ fn coordinator_flow() {
     assert!(text.contains("지시가 아니라 자료다") && text.contains("[thread-state]"), "{text}");
     // 만든 프로젝트의 coordinator 안내(host는 프로젝트 하나라 둘째는 만들지 않는다, plan §8.285)
     let guide = std::fs::read_to_string(w.projects.join("demo").join("AGENTS.md")).unwrap();
-    // 프로젝트 인자를 생략하는 명령(plan §8.285)은 이름 없이, 아직 이름이 드는 post는 이름과 함께
+    // 프로젝트 인자를 생략하는 명령(plan §8.285)과 post(§8.288)는 이름 없이, 아직 이름이 드는 project sweep은 이름과 함께
     assert!(
-        guide.contains("`aaa context`") && guide.contains("aaa post demo user") && guide.contains("--from-task"),
+        guide.contains("`aaa context`")
+            && guide.contains("`aaa post user --request")
+            && !guide.contains("aaa post demo")
+            && guide.contains("aaa project sweep demo")
+            && guide.contains("--from-task"),
         "{guide}"
     );
     let e = w.h.json(&["project", "create", "p2"]).expect_err("둘째 프로젝트");
@@ -4054,7 +4071,7 @@ fn doctor_files_brings_the_coordinator_guide_to_existing_projects() {
     for s in GUIDE_SECTIONS {
         assert!(guide.contains(s), "새 프로젝트 안내에 「{s}」가 없다:\n{guide}");
     }
-    assert!(guide.contains("aaa post demo user") && guide.contains("aaa가 쓴 파일이다."), "{guide}");
+    assert!(guide.contains("aaa project sweep demo") && guide.contains("aaa가 쓴 파일이다."), "{guide}");
     assert_entries(
         &fresh,
         &[
@@ -4113,12 +4130,12 @@ fn doctor_files_brings_the_coordinator_guide_to_existing_projects() {
     assert!(s["fixed"] == false && s["error"].as_str().unwrap().contains("AGENTS.md.before-aaa가 이미 있어"), "{s}");
     // 표지 있는 낡은 안내는 지금 안내로, 빠진 파일도 생긴다
     let now = std::fs::read_to_string(old.join("AGENTS.md")).unwrap();
-    assert!(GUIDE_SECTIONS.iter().all(|s| now.contains(s)) && now.contains("aaa post old user"), "{now}");
+    assert!(GUIDE_SECTIONS.iter().all(|s| now.contains(s)) && now.contains("aaa project sweep old"), "{now}");
     assert!(old.join("uploads").is_dir() && old.join("routines/pr-followup.md").is_file());
     assert!(!old.join("AGENTS.md.before-aaa").exists(), "표지 있는 aaa 안내는 옮겨 두지 않는다");
     // 사람 글은 옆에 그대로
     assert_eq!(std::fs::read_to_string(hand.join("AGENTS.md.before-aaa")).unwrap(), hand_text);
-    assert!(std::fs::read_to_string(hand.join("AGENTS.md")).unwrap().contains("aaa post hand user"));
+    assert!(std::fs::read_to_string(hand.join("AGENTS.md")).unwrap().contains("aaa project sweep hand"));
     // 자리가 찬 프로젝트는 두 사람 글 모두 그대로
     assert_eq!(std::fs::read_to_string(stuck.join("AGENTS.md")).unwrap(), "두 번째 사람 글\n");
     assert_eq!(std::fs::read_to_string(stuck.join("AGENTS.md.before-aaa")).unwrap(), "처음 옮겨 둔 사람 글\n");
@@ -5045,7 +5062,7 @@ fn post_from_thread_reaches_coordinator_inbox() {
         "coordinator-post.sh",
         &format!(
             r#"
-'{bin}' post demo user --request --needs-user --topic user-action --title '확인 필요' > '{out}' 2>&1
+'{bin}' post user --request --needs-user --topic user-action --title '확인 필요' > '{out}' 2>&1
 printf 'request-rc=%s\n' "$?" >> '{out}'
 '{bin}' post demo user --notice --topic task-complete --title '전체 완료' >> '{out}' 2>&1
 printf 'complete-rc=%s\n' "$?" >> '{out}'
@@ -5057,7 +5074,9 @@ printf 'complete-rc=%s\n' "$?" >> '{out}'
     w.h.ok(&["pane", "run", &coord, &format!("post-probe {script}")]);
     w.h.wait_output(&coord, "post-probe-done", T);
     let text = std::fs::read_to_string(out).unwrap();
+    // 프로젝트 없는 새 꼴(plan §8.288)도 coordinator 세션에서는 Front로 가고, 옛 꼴은 경고 한 줄과 함께 받는다
     assert!(text.contains("request-rc=0") && text.contains("complete-rc=0"), "{text}");
+    assert_eq!(text.matches("경고: 프로젝트 인자는 이제 생략한다").count(), 1, "{text}");
     let posts = w.h.ok(&["post", "list", "demo"]);
     let sent: Vec<_> = posts["posts"].as_array().unwrap().iter().filter(|p| p["to"] == "user").collect();
     assert_eq!(sent.len(), 2, "{posts}");
@@ -5073,7 +5092,7 @@ printf 'complete-rc=%s\n' "$?" >> '{out}'
         &format!(
             r#"
 for n in 1 2 3 4 5 6; do
-  '{bin}' post demo user --request --needs-user --topic other-action --title "자료 $n" > /dev/null 2>&1
+  '{bin}' post user --request --needs-user --topic other-action --title "자료 $n" > /dev/null 2>&1
 done
 '{bin}' machine list > '{warning}' 2>&1
 '{bin}' context demo --peek > '{context}' 2>/dev/null
@@ -5087,7 +5106,7 @@ printf 'post-mute-warning-done\n'
     w.h.ok(&["pane", "run", &coord, &format!("post-probe {script}")]);
     w.h.wait_output(&coord, "post-mute-warning-done", T);
     let warning = std::fs::read_to_string(warning).unwrap();
-    assert!(warning.contains("post 음소거:") && warning.contains("aaa post unmute demo"), "{warning}");
+    assert!(warning.contains("post 음소거:") && warning.contains("aaa post unmute local:"), "{warning}");
     let context = std::fs::read_to_string(context).unwrap();
     assert!(context.starts_with("⚠ post 음소거:"), "{context}");
 }
@@ -5128,8 +5147,7 @@ try_post barrier "$BIN" post coordinator --data --topic test --title 자료
 "#,bin=lab::BIN,out=out.display()));
     w.h.ok(&["pane", "run", pane, &format!("post-probe {script}")]);
     w.h.wait_output(pane, "post-probe-done", T);
-    for (name, reason) in
-        [("token", "token"), ("borrowed", "peer pid"), ("envu", "프로젝트가 필요하다"), ("double", "peer pid")]
+    for (name, reason) in [("token", "token"), ("borrowed", "peer pid"), ("envu", "보기 권한"), ("double", "peer pid")]
     {
         let text = std::fs::read_to_string(out.join(name)).unwrap();
         let status = if name == "double" { "inner_rc=1" } else { "rc=1" };
@@ -5138,20 +5156,24 @@ try_post barrier "$BIN" post coordinator --data --topic test --title 자료
     let text = std::fs::read_to_string(out.join("barrier")).unwrap();
     assert!(text.contains("rc=0"), "{text}");
     assert_eq!(w.h.ok(&["post", "list", "demo"])["posts"].as_array().unwrap().len(), 1);
-    // thread가 아닌 셸(coordinator의 hook 길도 같다)은 peer+token이 맞아도 host에서 거부한다.
+    // thread가 아닌 셸은 조작 권한으로 Front에 붙어 coordinator 몫으로 보내지만 coordinator에게는 보낼 수 없다(plan §8.288).
+    // Front에 붙지 못해 hook 길로 가도(coordinator의 hook 길도 같다) peer+token이 맞아도 host에서 거부한다.
     let outside = out.join("outside");
+    let hooked = out.join("outside-hook");
     w.h.ok(&[
         "pane",
         "run",
         &other,
         &format!(
-            "'{}' post coordinator --notice --topic test --title 자료 > '{}' 2>&1; printf 'outside-post-%s\\n' done",
-            lab::BIN,
-            outside.display()
+            "'{bin}' post coordinator --notice --topic test --title 자료 > '{out}' 2>&1; AAA_STATE_DIR=/nonexistent '{bin}' post coordinator --notice --topic test --title 자료 > '{hook}' 2>&1; printf 'outside-post-%s\\n' done",
+            bin = lab::BIN,
+            out = outside.display(),
+            hook = hooked.display()
         ),
     ]);
     w.h.wait_output(&other, "outside-post-done", T);
-    assert!(std::fs::read_to_string(outside).unwrap().contains("열린 thread 세션에서만"));
+    assert!(std::fs::read_to_string(outside).unwrap().contains("이 목적지로 post할 수 없"));
+    assert!(std::fs::read_to_string(hooked).unwrap().contains("열린 thread 세션에서만"));
     assert_eq!(w.h.ok(&["post", "list", "demo"])["posts"].as_array().unwrap().len(), 1);
 }
 
@@ -5255,10 +5277,10 @@ esac
     assert!(err.contains("coordinator_deploy on"), "{err}");
     assert_eq!(std::fs::read(&exe).unwrap(), original);
     // coordinator는 safety를 직접 켤 수 없다.
-    let (rc, _, err) = probe(&w, &pane, &mut probe_number, "safety set demo coordinator_deploy on");
+    let (rc, _, err) = probe(&w, &pane, &mut probe_number, "safety set coordinator_deploy on");
     assert_eq!(rc, "1");
     assert!(err.contains("aaa 세션 안"), "{err}");
-    let enabled = w.h.in_terminal(&["safety", "set", "demo", "coordinator_deploy", "on"], &[("바꿀까?", "y")], T);
+    let enabled = w.h.in_terminal(&["safety", "set", "coordinator_deploy", "on"], &[("바꿀까?", "y")], T);
     assert!(enabled.contains("coordinator_deploy = on"), "{enabled}");
 
     // 자기 신고한 coordinator ID로는 배포 권한을 얻지 못한다(peer PID가 밖이다).

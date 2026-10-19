@@ -245,3 +245,27 @@ fn agent_operation_timeouts_are_host_settings() {
         }
     }
 }
+
+/// `[safety]` 표 하나의 값(plan §8.288)과 아래 표(`default`·프로젝트)가 같은 표에 섞여도 읽고, local이 덮으며, 틀린 값은 그 줄을 가리킨다
+#[test]
+fn one_safety_table_mixes_values_and_tables() {
+    let d = Dir::new("safety-one");
+    d.write(
+        "host.toml",
+        "schema = 1\n\n[safety]\nyolo = true\n\n[safety.default]\nroutine_commands = true\n\n[safety.demo]\nthread_profiles = [\"opus\"]\n",
+    )
+    .write("host.local.toml", "schema = 1\n\n[safety]\ntrust_screens = \"user\"\n");
+    let c = load_host(&d.0).unwrap().config;
+    let one = &c.safety[safety::ONE_TABLE];
+    assert_eq!((one.yolo, one.trust_screens.as_deref()), (Some(true), Some("user")));
+    assert_eq!(c.safety["default"].routine_commands, Some(true));
+    assert_eq!(c.safety["demo"].thread_profiles, Some(vec!["opus".to_string()]));
+    // 다시 쓰면 같은 모양이다(값은 [safety]에, 표는 그 아래)
+    let back: HostConfig = toml_edit::de::from_str(&toml_edit::ser::to_string(&c).unwrap()).unwrap();
+    assert_eq!(back.safety, c.safety);
+    d.write("host.local.toml", "schema = 1\n\n[safety]\nstart_threads = \"later\"\n");
+    let e = load_host(&d.0).unwrap_err();
+    let err = e.0.iter().find(|d| d.severity == Severity::Error).unwrap();
+    assert!(err.file.ends_with("host.local.toml") && err.line == 4, "{}", e.render());
+    assert!(err.message.contains("safety.start_threads"), "{}", err.message);
+}

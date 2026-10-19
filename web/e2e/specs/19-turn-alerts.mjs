@@ -95,7 +95,7 @@ export default async function ({ page }) {
       for (let n = round ? 7 : 1; n <= (round ? 9 : 6); n++) send(n);
       await until("post 음소거 알림", async () => (await drop.locator(".droplet-title").textContent()) === "mute-demo · post 음소거: local:cli");
       const context = aaa("context", "mute-demo", "--peek");
-      if (!context.post_warnings.some((w) => w.includes("aaa post unmute mute-demo local:cli"))) throw new Error(JSON.stringify(context));
+      if (!context.post_warnings.some((w) => w.includes("aaa post unmute local:cli"))) throw new Error(JSON.stringify(context));
       const rect = await drop.locator(".droplet-card").boundingBox();
       if (!rect || rect.x < 0 || rect.x + rect.width > width || rect.y < 0 || rect.y + rect.height > height) throw new Error(`알림이 화면 밖: ${JSON.stringify(rect)}`);
       await shot(page, round ? "phone-post-muted" : "desktop-post-muted");

@@ -1208,7 +1208,15 @@ impl Host {
                 format!("보기 권한으로는 조작할 수 없다{}", front::reader_reason(actor)),
             ));
         }
+        let mut req = req;
+        // 프로젝트를 생략한 요청(FRONT_API 1.50, plan §8.288): host가 맡은 프로젝트 하나로 채운다
+        if let Some(project) = req.project_mut()
+            && project.is_empty()
+        {
+            *project = self.instance_project()?;
+        }
         match req {
+            FrontRequest::Instance => Ok(FrontResponse::Instance { project: self.instance_view() }),
             FrontRequest::DebugInput { pane, thread, since_ms } => self.debug_input(pane, thread, since_ms),
             FrontRequest::RolloutStart { id, spec } => self.rollout_start(actor, id, spec).await,
             FrontRequest::RolloutStatus { id } => self.rollout_status(actor, id),

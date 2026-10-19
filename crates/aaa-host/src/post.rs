@@ -337,7 +337,7 @@ impl Host {
                         "post-muted",
                         &who,
                         "post muted",
-                        &format!("post 음소거: {who}. 해제: aaa post unmute {project} {who}"),
+                        &format!("post 음소거: {who}. 해제: aaa post unmute {who}"),
                     );
                     self.send_notice(aaa_proto::NoticeView {
                         kind: aaa_proto::NoticeKind::PostMuted,
@@ -436,7 +436,7 @@ impl Host {
             .into_iter()
             .map(|who| {
                 let who = clean(&who);
-                format!("post 음소거: {who} — aaa post unmute {project} {who} (coordinator 사용자 알림은 별도 한도)")
+                format!("post 음소거: {who} — aaa post unmute {who} (coordinator 사용자 알림은 별도 한도)")
             })
             .collect())
     }
@@ -912,7 +912,7 @@ mod tests {
         h.inbox_done("demo", &[], true, "local:cli").unwrap();
         let context = h.context("demo", true).await.unwrap();
         assert_eq!(context.post_warnings.len(), 1, "inbox done은 활성 mute를 지우지 않는다");
-        assert!(context.post_warnings[0].contains("aaa post unmute demo t-0001"));
+        assert!(context.post_warnings[0].contains("aaa post unmute t-0001"));
         h.post_unmute("demo", "t-0001", "local:cli").unwrap();
         assert!(h.context("demo", true).await.unwrap().post_warnings.is_empty());
         // 해제 후 다시 mute되면 새 사건과 새 inbox 항목으로 알린다.

@@ -1375,17 +1375,25 @@ pub enum FrontRequest {
         id: String,
     },
     Post {
+        #[serde(default)]
+        #[ts(optional, as = "Option<String>")]
         project: String,
         input: crate::PostInput,
     },
     PostStatus {
+        #[serde(default)]
+        #[ts(optional, as = "Option<String>")]
         project: String,
         post_id: String,
     },
     PostList {
+        #[serde(default)]
+        #[ts(optional, as = "Option<String>")]
         project: String,
     },
     PostUnmute {
+        #[serde(default)]
+        #[ts(optional, as = "Option<String>")]
         project: String,
         thread: String,
     },
@@ -1427,6 +1435,8 @@ pub enum FrontRequest {
     /// 보고서 안 파일 링크(plan §8.171): 그 thread의 머신에서 thread 작업 폴더(worktree) 기준으로 찾는다. 답은 `PaneFile`과
     /// 같다. 조작 기기만(`PaneFile`과 같다)
     ThreadFile {
+        #[serde(default)]
+        #[ts(optional, as = "Option<String>")]
         project: String,
         thread: String,
         path: String,
@@ -1610,6 +1620,8 @@ pub enum FrontRequest {
     },
     /// project.toml 값 하나를 바꾼다(herdr-projects `set`, FRONT_API 1.33). key는 `aaa project set --help`
     ProjectSet {
+        #[serde(default)]
+        #[ts(optional, as = "Option<String>")]
         project: String,
         key: String,
         value: String,
@@ -1620,6 +1632,8 @@ pub enum FrontRequest {
         #[ts(optional, as = "Option<bool>")]
         all: bool,
     },
+    /// 이 host가 맡은 프로젝트 하나(보관하지 않은 것, FRONT_API 1.50, plan §8.288). 아직 없으면 `project`가 없다
+    Instance,
     /// 멈추기·되살리기·보관·보관 풀기(herdr-projects `pause`·`resume`·`archive`·`unarchive`, FRONT_API 1.33)
     ProjectLifecycle {
         project: String,
@@ -1656,6 +1670,8 @@ pub enum FrontRequest {
     /// coordinator를 연다(herdr-projects `open`): 도는 coordinator가 있으면 그것을 알려 주고, 없으면(또는 `new`) host 머신에서
     /// 프로젝트 폴더를 작업 폴더로 profile을 띄워 프로젝트 이름 workspace의 새 탭에 둔다(FRONT_API 1.33)
     ProjectOpen {
+        #[serde(default)]
+        #[ts(optional, as = "Option<String>")]
         project: String,
         /// 안 주면 project.toml `coordinator_profile` → host.toml `[defaults] coordinator_profile` → claude
         #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -1678,6 +1694,8 @@ pub enum FrontRequest {
         /// 준비 완료를 기다리지 않고 Starting 기록을 돌려준다.
         #[serde(default)]
         background: bool,
+        #[serde(default)]
+        #[ts(optional, as = "Option<String>")]
         project: String,
         title: String,
         machine: Option<String>,
@@ -1697,6 +1715,8 @@ pub enum FrontRequest {
     /// 사람이 이미 띄운 agent pane(Claude·Codex)을 이 프로젝트의 thread로 기록하고 brief를 안내한다(herdr-projects
     /// `thread adopt`). pane은 그대로 두고 그 폴더에 작업 폴더를 만든다
     ThreadAdopt {
+        #[serde(default)]
+        #[ts(optional, as = "Option<String>")]
         project: String,
         pane: String,
         title: String,
@@ -1706,6 +1726,8 @@ pub enum FrontRequest {
     },
     /// thread의 Next 목록을 보이거나(`line`·`add` 없음), N번째 줄을 thread에 메시지로 보내거나, 줄을 더한다
     ThreadNext {
+        #[serde(default)]
+        #[ts(optional, as = "Option<String>")]
         project: String,
         thread: String,
         line: Option<u32>,
@@ -1713,12 +1735,16 @@ pub enum FrontRequest {
     },
     /// coordinator용 프로젝트 요약. 보인 inbox 항목은 「봤다」가 된다(`peek`이면 그대로).
     Context {
+        #[serde(default)]
+        #[ts(optional, as = "Option<String>")]
         project: String,
         #[serde(default)]
         peek: bool,
     },
     /// thread를 맡길 수 있는 owner 목록. `check`를 주면 그 owner를 TASKS.md에 써도 되는지 본다.
     Assignable {
+        #[serde(default)]
+        #[ts(optional, as = "Option<String>")]
         project: String,
         check: Option<String>,
     },
@@ -1729,27 +1755,37 @@ pub enum FrontRequest {
         role: Option<Role>,
     },
     ThreadShow {
+        #[serde(default)]
+        #[ts(optional, as = "Option<String>")]
         project: String,
         thread: String,
     },
     /// FRONT_API 1.44. thread 작업 요약(plan §8.259)
     ThreadSummary {
+        #[serde(default)]
+        #[ts(optional, as = "Option<String>")]
         project: String,
         thread: String,
     },
     /// FRONT_API 1.44. 작업 요약을 통째로 다시 쓴다(조작 권한, coordinator가 `thread summary --file`로)
     ThreadSummarySet {
+        #[serde(default)]
+        #[ts(optional, as = "Option<String>")]
         project: String,
         thread: String,
         text: String,
     },
     /// 보고서와 결과물 목록, 그리고 결과물을 볼 짧은 수명의 읽기 전용 경로
     ThreadLibrary {
+        #[serde(default)]
+        #[ts(optional, as = "Option<String>")]
         project: String,
         thread: String,
     },
     /// FRONT_API 1.36. 보고서별 링크 발급(유효한 링크는 재사용). 기본 30일, 조작 권한만.
     LibraryLink {
+        #[serde(default)]
+        #[ts(optional, as = "Option<String>")]
         project: String,
         thread: String,
         #[serde(default)]
@@ -1765,6 +1801,8 @@ pub enum FrontRequest {
     },
     /// FRONT_API 1.38. host 머신의 CLI만 로컬 파일을 읽는다. live는 복사 없이 등록한다.
     LibraryPublish {
+        #[serde(default)]
+        #[ts(optional, as = "Option<String>")]
         project: String,
         name: String,
         source: String,
@@ -1783,6 +1821,8 @@ pub enum FrontRequest {
         reports: Vec<LibraryRef>,
     },
     LibraryImport {
+        #[serde(default)]
+        #[ts(optional, as = "Option<String>")]
         project: String,
         source: String,
         /// 0.2의 t- 이름을 새 thread id와 구분해 가져올 때 쓴다.
@@ -1804,17 +1844,23 @@ pub enum FrontRequest {
         project: Option<String>,
     },
     LibraryOpen {
+        #[serde(default)]
+        #[ts(optional, as = "Option<String>")]
         project: String,
         name: String,
     },
     LibraryUsage,
     /// 지금 보고를 확인했다
     ThreadAck {
+        #[serde(default)]
+        #[ts(optional, as = "Option<String>")]
         project: String,
         thread: String,
     },
     /// 끝낸다: 마지막 사본(실패면 거부) → 세션 종료 → worktree 정리(force 없음). 사본에 빠진 것이 있으면 worktree를 남긴다
     ThreadResolve {
+        #[serde(default)]
+        #[ts(optional, as = "Option<String>")]
         project: String,
         thread: String,
         #[serde(default)]
@@ -1831,11 +1877,15 @@ pub enum FrontRequest {
     },
     /// thread agent를 멈춘다(Esc 한 번). 세션·작업 폴더는 그대로다
     ThreadStop {
+        #[serde(default)]
+        #[ts(optional, as = "Option<String>")]
         project: String,
         thread: String,
     },
     /// 끝난 thread 세션을 다시 띄운다. 기본은 task를 다시 읽어 새 brief로 새 대화, `resume`이면 저장된 대화를 잇는다
     ThreadRestart {
+        #[serde(default)]
+        #[ts(optional, as = "Option<String>")]
         project: String,
         thread: String,
         #[serde(default)]
@@ -1846,12 +1896,16 @@ pub enum FrontRequest {
     },
     /// 사람이 명시적으로 brief 안내를 다시 보낸다(자동 재전송은 하지 않는다)
     ThreadBrief {
+        #[serde(default)]
+        #[ts(optional, as = "Option<String>")]
         project: String,
         thread: String,
     },
     /// thread pane이 지금 보이는 것(신뢰 창·질문 메뉴·권한 확인창, herdr-projects `thread read`). `lines`면 보이는 화면 대신
     /// 기록 끝 N줄
     ThreadRead {
+        #[serde(default)]
+        #[ts(optional, as = "Option<String>")]
         project: String,
         thread: String,
         #[serde(default)]
@@ -1859,6 +1913,8 @@ pub enum FrontRequest {
     },
     /// thread pane이 보이는 것에 답한다(herdr-projects `thread keys`): `text`를 치고(Enter 없음) `keys`를 누른다
     ThreadKeys {
+        #[serde(default)]
+        #[ts(optional, as = "Option<String>")]
         project: String,
         thread: String,
         #[serde(default)]
@@ -1884,6 +1940,8 @@ pub enum FrontRequest {
     },
     /// thread agent에 메시지를 보낸다(전달을 모르면 다시 보내지 않는다)
     ThreadMessage {
+        #[serde(default)]
+        #[ts(optional, as = "Option<String>")]
         project: String,
         thread: String,
         text: String,
@@ -1901,6 +1959,8 @@ pub enum FrontRequest {
     },
     /// inbox. `peek`가 아니면 보인 항목을 「봤다」로 표시한다(처음 보는 항목만 coordinator에게 알린다)
     Inbox {
+        #[serde(default)]
+        #[ts(optional, as = "Option<String>")]
         project: String,
         #[serde(default)]
         all: bool,
@@ -1909,6 +1969,8 @@ pub enum FrontRequest {
     },
     /// inbox 항목을 끝낸다(`all`이면 끝내지 않은 것 모두)
     InboxDone {
+        #[serde(default)]
+        #[ts(optional, as = "Option<String>")]
         project: String,
         #[serde(default)]
         ids: Vec<String>,
@@ -1923,58 +1985,84 @@ pub enum FrontRequest {
         project: Option<String>,
     },
     MissionShow {
+        #[serde(default)]
+        #[ts(optional, as = "Option<String>")]
         project: String,
         name: String,
     },
     /// 사람만 승인한다. Controller 웹 기기에서도 가능하며 세션 안 연결은 거부한다.
     MissionApprove {
+        #[serde(default)]
+        #[ts(optional, as = "Option<String>")]
         project: String,
         name: String,
         approval_sha256: String,
     },
     MissionReject {
+        #[serde(default)]
+        #[ts(optional, as = "Option<String>")]
         project: String,
         name: String,
     },
     MissionStart {
+        #[serde(default)]
+        #[ts(optional, as = "Option<String>")]
         project: String,
         name: String,
     },
     MissionStop {
+        #[serde(default)]
+        #[ts(optional, as = "Option<String>")]
         project: String,
         name: String,
     },
     MissionPause {
+        #[serde(default)]
+        #[ts(optional, as = "Option<String>")]
         project: String,
         name: String,
     },
     MissionResume {
+        #[serde(default)]
+        #[ts(optional, as = "Option<String>")]
         project: String,
         name: String,
     },
     MissionReload {
+        #[serde(default)]
+        #[ts(optional, as = "Option<String>")]
         project: String,
         name: String,
     },
     MissionRestart {
+        #[serde(default)]
+        #[ts(optional, as = "Option<String>")]
         project: String,
         name: String,
     },
     MissionOpen {
+        #[serde(default)]
+        #[ts(optional, as = "Option<String>")]
         project: String,
         name: String,
     },
     /// routine 목록(`projects/<p>/routines/*.md`)과 상태
     Routines {
+        #[serde(default)]
+        #[ts(optional, as = "Option<String>")]
         project: String,
     },
     /// 최근 실행·건너뜀 기록, 최대 50건(Reader 가능).
     RoutineRuns {
+        #[serde(default)]
+        #[ts(optional, as = "Option<String>")]
         project: String,
         name: String,
     },
     /// routine 명령 승인. `command_sha256`은 사람이 본 명령(머신 포함)의 hash다. 파일이 그 사이 바뀌면 거부한다.
     RoutineApprove {
+        #[serde(default)]
+        #[ts(optional, as = "Option<String>")]
         project: String,
         name: String,
         command_sha256: String,
@@ -1982,6 +2070,8 @@ pub enum FrontRequest {
     /// routine 켜기·끄기(front matter `enabled`, herdr-projects `routine toggle`). `on`이 없으면 뒤집는다.
     /// 명령 승인은 그대로 필요하다.
     RoutineToggle {
+        #[serde(default)]
+        #[ts(optional, as = "Option<String>")]
         project: String,
         name: String,
         #[serde(default)]
@@ -1997,6 +2087,8 @@ pub enum FrontRequest {
     },
     /// 사후 평가자 지정(§8.13): 역할이 evaluator인 thread를 시작한다. 프로젝트당 하나다.
     EvaluatorAssign {
+        #[serde(default)]
+        #[ts(optional, as = "Option<String>")]
         project: String,
         profile: String,
         machine: Option<String>,
@@ -2013,20 +2105,28 @@ pub enum FrontRequest {
     },
     /// 사후 평가자를 끝낸다(평가자 thread resolve)
     EvaluatorUnassign {
+        #[serde(default)]
+        #[ts(optional, as = "Option<String>")]
         project: String,
     },
     /// 평가 기록 목록. 기본은 정하지 않은 개선안이 있는 것만
     Evaluations {
+        #[serde(default)]
+        #[ts(optional, as = "Option<String>")]
         project: String,
         #[serde(default)]
         all: bool,
     },
     EvaluationShow {
+        #[serde(default)]
+        #[ts(optional, as = "Option<String>")]
         project: String,
         id: String,
     },
     /// 개선안 채택·보류(평가 기록에 누가 언제 정했는지 남는다)
     EvaluationDecide {
+        #[serde(default)]
+        #[ts(optional, as = "Option<String>")]
         project: String,
         id: String,
         proposals: Vec<String>,
@@ -2037,6 +2137,63 @@ pub enum FrontRequest {
 }
 
 impl FrontRequest {
+    /// 프로젝트를 받는 요청의 프로젝트 칸(FRONT_API 1.50, plan §8.288). 비어 있으면(생략) host가 맡은 프로젝트로 채운다.
+    /// 프로젝트 자체를 바꾸는 요청(lifecycle·delete·rename·sweep)은 이름을 늘 받으므로 여기 없다.
+    pub fn project_mut(&mut self) -> Option<&mut String> {
+        match self {
+            FrontRequest::Post { project, .. }
+            | FrontRequest::PostStatus { project, .. }
+            | FrontRequest::PostList { project, .. }
+            | FrontRequest::PostUnmute { project, .. }
+            | FrontRequest::ThreadFile { project, .. }
+            | FrontRequest::ProjectSet { project, .. }
+            | FrontRequest::ProjectOpen { project, .. }
+            | FrontRequest::ThreadStart { project, .. }
+            | FrontRequest::ThreadAdopt { project, .. }
+            | FrontRequest::ThreadNext { project, .. }
+            | FrontRequest::Context { project, .. }
+            | FrontRequest::Assignable { project, .. }
+            | FrontRequest::ThreadShow { project, .. }
+            | FrontRequest::ThreadSummary { project, .. }
+            | FrontRequest::ThreadSummarySet { project, .. }
+            | FrontRequest::ThreadLibrary { project, .. }
+            | FrontRequest::LibraryLink { project, .. }
+            | FrontRequest::LibraryPublish { project, .. }
+            | FrontRequest::LibraryImport { project, .. }
+            | FrontRequest::LibraryOpen { project, .. }
+            | FrontRequest::ThreadAck { project, .. }
+            | FrontRequest::ThreadResolve { project, .. }
+            | FrontRequest::ThreadStop { project, .. }
+            | FrontRequest::ThreadRestart { project, .. }
+            | FrontRequest::ThreadBrief { project, .. }
+            | FrontRequest::ThreadRead { project, .. }
+            | FrontRequest::ThreadKeys { project, .. }
+            | FrontRequest::ThreadMessage { project, .. }
+            | FrontRequest::Inbox { project, .. }
+            | FrontRequest::InboxDone { project, .. }
+            | FrontRequest::MissionShow { project, .. }
+            | FrontRequest::MissionApprove { project, .. }
+            | FrontRequest::MissionReject { project, .. }
+            | FrontRequest::MissionStart { project, .. }
+            | FrontRequest::MissionStop { project, .. }
+            | FrontRequest::MissionPause { project, .. }
+            | FrontRequest::MissionResume { project, .. }
+            | FrontRequest::MissionReload { project, .. }
+            | FrontRequest::MissionRestart { project, .. }
+            | FrontRequest::MissionOpen { project, .. }
+            | FrontRequest::Routines { project, .. }
+            | FrontRequest::RoutineRuns { project, .. }
+            | FrontRequest::RoutineApprove { project, .. }
+            | FrontRequest::RoutineToggle { project, .. }
+            | FrontRequest::EvaluatorAssign { project, .. }
+            | FrontRequest::EvaluatorUnassign { project, .. }
+            | FrontRequest::Evaluations { project, .. }
+            | FrontRequest::EvaluationShow { project, .. }
+            | FrontRequest::EvaluationDecide { project, .. } => Some(project),
+            _ => None,
+        }
+    }
+
     /// 조작(controller) 권한이 필요한 요청인가
     pub fn needs_control(&self) -> bool {
         !matches!(
@@ -2048,6 +2205,7 @@ impl FrontRequest {
                 | FrontRequest::Machines
                 | FrontRequest::Panes { .. }
                 | FrontRequest::Projects { .. }
+                | FrontRequest::Instance
                 | FrontRequest::ProjectRename { dry_run: true, .. }
                 | FrontRequest::ProjectSweep { dry_run: true, .. }
                 | FrontRequest::ProjectFiles { fix: false }
@@ -2205,6 +2363,9 @@ pub enum FrontResponse {
     },
     Projects {
         projects: Vec<ProjectView>,
+    },
+    Instance {
+        project: Option<ProjectView>,
     },
     Project(ProjectView),
     ProjectChange(ProjectChange),
