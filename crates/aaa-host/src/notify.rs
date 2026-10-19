@@ -53,7 +53,7 @@ fn report_preview(report: &str) -> Option<String> {
     use regex::Regex;
     use std::sync::LazyLock;
     let mark = crate::report_mark::marker(report)?;
-    if !matches!(mark, "[완료]" | "[결정 필요]" | "[검수 대기]" | "[사람 필요]") {
+    if !matches!(mark, "[완료]" | "[결정 필요]" | "[검수 대기]" | "[확인 필요]" | "[사람 필요]") {
         return None;
     }
     let line = report.trim_start_matches('\u{feff}').lines().next()?.strip_prefix(mark)?.trim();
@@ -165,7 +165,7 @@ fn phrase(i: &InboxItem) -> Option<&'static str> {
         ("pr", "PR review activity") => "PR 리뷰 활동",
         ("post", "post request for user") => "사용자 결정 요청",
         ("post", "post completed") => "맡긴 일 완료",
-        ("thread-state", "report needs user") => "사람 필요",
+        ("thread-state", "report needs user") => "확인 필요",
         ("routine", "due") => "차례",
         ("routine", "output changed") => "출력 바뀜",
         ("routine", "failed") => "실행 못 함",
@@ -389,7 +389,7 @@ async fn read_head<S: tokio::io::AsyncRead + Unpin>(s: &mut S, buf: &mut Vec<u8>
     }
 }
 
-/// 밖으로 알릴 항목인가: 완료·사람 필요와 운영 이상만. 새 보고는 추가로 검증한 표지를 요구한다(`report_push`).
+/// 밖으로 알릴 항목인가: 완료·확인 필요와 운영 이상만. 새 보고는 추가로 검증한 표지를 요구한다(`report_push`).
 /// PR 병합·리뷰·중간 진행은 inbox에만 남긴다.
 pub(crate) fn pushes(kinds: &[String], i: &InboxItem) -> bool {
     kinds.iter().any(|k| k == &i.item_kind)
@@ -457,7 +457,8 @@ impl Host {
                     let mark = crate::report_mark::marker(&report)?;
                     if !matches!(
                         (i.event.as_str(), mark),
-                        ("new report", "[완료]") | ("report needs user", "[결정 필요]" | "[검수 대기]" | "[사람 필요]")
+                        ("new report", "[완료]")
+                            | ("report needs user", "[결정 필요]" | "[검수 대기]" | "[확인 필요]" | "[사람 필요]")
                     ) {
                         return None;
                     }
@@ -482,7 +483,7 @@ impl Host {
         out
     }
 
-    /// 검증한 사본의 완료·사람 필요 표지만 외부 알림으로 보낸다.
+    /// 검증한 사본의 완료·확인 필요 표지만 외부 알림으로 보낸다.
     fn report_push(&self, item: &InboxItem) -> bool {
         if item.item_kind != "thread-state" || !matches!(item.event.as_str(), "new report" | "report needs user") {
             return true;
@@ -685,7 +686,7 @@ mod tests {
                 "[숨김] 대신 [숨김] 확인".into(),
             ),
             (
-                "[사람 필요] src/notify.rs ~/work/report.md \\\\server\\share 확인".into(),
+                "[확인 필요] src/notify.rs ~/work/report.md \\\\server\\share 확인".into(),
                 "[숨김] [숨김] [숨김] 확인".into(),
             ),
             (
@@ -731,6 +732,7 @@ mod tests {
         };
         let cases = [
             (("thread-state", "t-0012", "new report"), "t-0012 보고 준비 · 휴대폰 알림", "보고 준비"),
+            (("thread-state", "t-0012", "report needs user"), "t-0012 확인 필요 · 휴대폰 알림", "확인 필요"),
             (("thread-state", "t-0013", "pane closed"), "t-0013 pane 닫힘", "pane 닫힘"),
             (("outage", "mac-1", "recovered"), "mac-1 다시 연결됨", "다시 연결됨"),
             (("outage", "mac-1", "down"), "mac-1 연결 끊김", "연결 끊김"),
