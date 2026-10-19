@@ -5569,3 +5569,13 @@ primary 근거:
 - **두 막대의 x(참고와 다르게 둔 것).** 위 목록 `.machine-list`는 사이드바 양 끝까지 펴고 여백을 줄 안에 두는데, 참고 herdr-web-ui `AgentSidebar.css` `.agents-sidebar`는 묶음에 좌우 `--side-gutter`를 줘 Agents 굴림 영역(과 막대)이 12px 안쪽이었다(참고에도 같은 어긋남). aaa는 그 여백을 머리 단추(바깥 여백)와 굴림 영역(안쪽 여백)으로 옮겨 줄·머리 자리는 그대로 두고 두 굴림 영역을 같은 x에 세운다(`Sidebar.css`).
 - **프로젝트 화면.** `.project-threads`는 880px 기둥 자체가 굴림 영역이라 넓은 창에서 막대가 화면 가운데 쪽에 섰다. t3code `settingsLayout.tsx`(화면 폭 굴림 영역 안에 폭 제한 기둥)처럼 굴림 영역을 화면 폭으로 펴고 좌우 여백이 남는 폭을 나눠 갖게 했다(글 기둥 자리는 1400px 창에서 전후 436~1284px로 같다).
 - **회귀.** 웹 E2E 04 「목록 두 굴림 영역」: 위 목록과 Agents 목록이 둘 다 넘칠 때 두 굴림 영역의 left·right가 같다. 고치기 전 binary에서는 `left 0/12, right 319/307`로 실패했다. 막대의 색·폭은 headless 기본(`--hide-scrollbars`)에서 그려지지 않아 시험하지 않고 전후 캡처로 본다(`ignoreDefaultArgs`로 막대를 켠 실험실 캡처). Firefox는 이 머신에 Playwright Firefox가 없어 보지 못했고, macOS headless는 Windows 기본 막대를 흉내 내지 못해 고치기 전 Windows 모양은 사용자 캡처로 대신한다(꾸민 `::-webkit-scrollbar` 막대는 OS와 관계없이 같은 모양으로 그려진다).
+
+### 8.236 TUI spaces 자동 높이(10-19, t-0386, D안 1단계)
+
+- workspace 항목 수에 머리·빈 줄·footer 세 줄을 더한 높이를 쓴다. 최대 화면 절반까지만 쓰므로 세 workspace가 있는
+  80줄 화면에서는 spaces가 6줄을 쓰고 나머지가 agents에 돌아간다. 기존 반반 고정에서 생긴 큰 여백을 없앤다.
+- 구역 경계를 직접 끌거나 공유 설정 `tuiSidebarSplit`을 저장한 사용자는 그 비율을 유지한다. 탭·workspace·마우스·compact
+  동작과 저장 형식은 유지한다. 후속 단계는 thread 두 줄 단위 스크롤, 폭 48칸·선택 제목 전체 보기, t-0390 착지에 맞춘
+  Projects·Machines·Agents 패널과 패널 밖 특수 임무다.
+- 기존 렌더 keeper에서 작은 화면·큰 화면·다수 workspace 상한·저장 비율을 확인한다. 기존 PTY keeper에서 자동 경계를
+  실제 마우스로 끌고 재접속하여 저장 비율을 확인한다. 새 시험 전용 seam은 없다.
