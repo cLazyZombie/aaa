@@ -5349,3 +5349,10 @@ primary 근거:
 - **수정.** 승인 화면에 프로젝트/임무를 함께 표시하고 확인 입력에 필요한 이름을 따옴표로 명시한다. 다르면 승인하지 않았다는 결과와 필요한 이름을 알린다. 임의로 친 입력은 오류에 되풀이하지 않는다.
 - **참고.** herdr-projects `routine.rs approve`의 이름 재입력과 aaa `routine_approve`의 확인 문을 유지한다. t3code의 turn 권한 처리와 달리 이 임무 승인은 aaa가 추가한 사람 전용 기능이라 질문 내용만 보강한다. 세션 안·비터미널 거부, 현재 해시 확인과 이름 일치는 그대로다.
 - **시험.** 꺼진 합성 임무와 임시 host에서 실제 CLI를 PTY로 실행해 잘못된 이름을 친다. 필요한 이름 안내·승인 안 됨·적용 사본 없음 계약이 수정 전 실패하고 수정 후 통과한다(0.27초). 임무를 실제로 승인하거나 깨우는 시험은 추가하지 않는다.
+
+### 8.218 adopt 사건 뒤 늦게 온 목록이 프로젝트 소속을 지우지 않는다(10-19, t-0375)
+
+- **재현.** pane의 role이 없는 실제 adopt 형태로, 처음 읽은 빈 thread HTTP 목록을 붙잡고 adopt의 WebSocket 사건을 먼저 받았다. 프로젝트 아래에 뜬 thread가 옛 목록 도착 뒤 사라지고 pane이 기타로 돌아갔다. headless 전후 화면을 남겼다. 운영에서 신고한 바로 그 요청 순서는 과거 네트워크 기록이 없어 확정하지 않는다.
+- **수정.** 질문 목록의 `QuestionReload`와 같은 경계로 `ThreadReload`를 둔다. 목록 요청 중 받은 thread 사건을 응답 위에 덮고, 다음 연결이 시작한 뒤 돌아온 옛 요청은 버린다. 다시 연결할 때 보고 알림도 합쳐진 상태를 따른다. pane 이름·role·cwd로 thread 소속을 추측하지 않고 host의 project/id/pane 기록을 믿는다.
+- **참고.** herdr-projects `adopt.rs adopt`는 기존 pane ID를 thread에 저장하고 `threads.rs report_thread_tokens`·`sidebar.rs report_pane`이 프로젝트 metadata를 붙인다. herdr-web-ui `sidebarAgents.ts sidebarAgents`도 pane ID로 결합한다. t3code `packages/client-runtime/src/state/threads.ts`는 snapshotSequence·afterSequence로 옛 목록 위에 놓친 사건을 잇는다. aaa는 목록과 사건에 공통 sequence가 없어 요청 중 받은 사건을 보존하는 기존 질문 방식(§8.84)을 따른다.
+- **시험.** 별도 실험실의 실제 CLI adopt·HTTP 응답·WebSocket·headless 화면을 한 경계에서 확인한다. role 없는 pane의 thread 줄 하나 유지와 기타 중복 없음이 수정 전 실패하고 수정 후 통과했다. 고정 대기·운영 입력·소속 추측은 없다. HTTP 반영 횟수 표지는 기존 질문과 같은 진단 경계다.
