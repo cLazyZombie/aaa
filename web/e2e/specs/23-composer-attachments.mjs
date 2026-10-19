@@ -183,10 +183,17 @@ while True:
     if (await box.inputValue() !== "같은 글 재전송") throw new Error("보낸 글을 복원하지 못했다");
     fs.appendFileSync(transcript, chatLine("같은 글 재전송"));
     await p.clock.resume();
-    await domIs(p, "늦은 기록 확인", () => document.querySelector('[data-testid="chat-delivered"]')?.getAttribute("data-state") === "confirmed");
-    await shot(p, "chat-input-confirmed");
+    await domIs(p, "보낸 글의 새 사용자 기록", () => [...document.querySelectorAll('[data-role="user"]')].filter((el) => el.textContent.trim() === "같은 글 재전송").length === 2);
+    await domIs(p, "기록 반영 뒤 안내 사라짐", () => document.querySelector('[data-testid="chat-delivered"]') === null);
+    await shot(p, "chat-input-reflected");
     if ((await sentFrames(p, before)).filter((f) => f.t === "submit").length !== 1 || await box.inputValue() !== "같은 글 재전송") throw new Error("확인 사건이 재전송하거나 초안을 지웠다");
     fs.unlinkSync(hold);
+    await box.fill("386 추천대로 해");
+    await submit(p);
+    await domIs(p, "즉시 반영된 사용자 메시지", () => [...document.querySelectorAll('[data-role="user"]')].some((el) => el.textContent.trim() === "386 추천대로 해"));
+    await domIs(p, "즉시 반영 뒤 안내 없음", () => document.querySelector('[data-testid="chat-delivered"]') === null);
+    await shot(p, "chat-input-reflected-immediate");
+    if ((await sentFrames(p, before)).filter((f) => f.t === "submit").length !== 2 || await box.inputValue() !== "") throw new Error("반영 확인이 글을 다시 보내거나 보낸 초안을 남겼다");
     await p.context().close();
   });
 
