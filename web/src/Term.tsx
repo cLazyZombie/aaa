@@ -729,7 +729,36 @@ export function TermView({
     window.addEventListener("mousemove", onMouseMove, { capture: true });
     window.addEventListener("blur", onWindowBlur);
     window.addEventListener("mouseup", onMouseUp);
-    // Windows·Linux: Ctrl+V는 브라우저 붙여넣기에 맡기고, 선택이 있을 때 Ctrl+C는 복사한다(없으면 ^C)
+    // herdr client의 이미지 bridge: front 그림이 있으면 올리고, 없으면 원래 ^V를 보낸다.
+    // Mac Ctrl+V에는 paste 사건이 없으므로 키 동작 안에서 Async Clipboard를 읽는다. 텍스트 표현은 읽지 않는다.
+    let imagePastePending = false;
+    const imagePasteReady = () => !disposed && !readonlyRef.current && !chatViewRef.current && presentRef.current
+      && document.activeElement === term.textarea;
+    const pasteControlImage = async () => {
+      imagePastePending = true;
+      try {
+        if (typeof navigator.clipboard?.read !== "function") throw new Error("clipboard read 없음");
+        const items = await navigator.clipboard.read();
+        if (!imagePasteReady()) return;
+        const files: File[] = [];
+        for (const item of items) {
+          // 한 항목의 여러 표현은 그림 하나다. PNG를 우선하고 나머지는 기존 업로드의 형식 검사를 따른다.
+          const type = item.types.find((t) => t === "image/png") ?? item.types.find((t) => t.startsWith("image/"));
+          if (type) files.push(new File([await item.getType(type)], `clipboard.${type.slice(6)}`, { type }));
+        }
+        if (!imagePasteReady()) return;
+        setClipNote(null);
+        if (files.length > 0) uploadRef.current(files);
+        else deliver("\x16", { chord: true });
+      } catch {
+        if (!imagePasteReady()) return;
+        noteClipboard("그림을 읽지 못했다. 그림은 Cmd+V로 붙여 넣을 수 있다.");
+        deliver("\x16", { chord: true });
+      } finally {
+        imagePastePending = false;
+      }
+    };
+    // Windows·Linux: Ctrl+V는 브라우저 붙여넣기에 맡긴다. Mac 데스크톱의 수식 없는 Ctrl+V만 그림 bridge다.
     term.attachCustomKeyEventHandler((event) => {
       // 앱 단축키는 앱 몫이다(PaneTerminal 621줄): 창의 capture 처리기(herdr/shortcuts.ts useShortcuts)는 브라우저 기본만 막으므로
       // xterm이 그 키를 pane에 보내지 않게 먼저 거른다
@@ -774,7 +803,15 @@ export function TermView({
       }
       if (!event.ctrlKey || event.altKey || event.metaKey) return true;
       const key = clipboardKey(event.key, event.code);
-      if (key === "v") return false;
+      if (key === "v") {
+        if (IS_MAC && navigator.maxTouchPoints === 0 && !event.shiftKey) {
+          event.preventDefault();
+          if (event.type === "keydown" && !event.repeat && !imagePastePending && imagePasteReady()
+              && !composingTermRef.current && !commitPendingRef.current && !event.isComposing && event.keyCode !== 229)
+            void pasteControlImage();
+        }
+        return false;
+      }
       if (key === "c" && term.hasSelection()) {
         if (event.type === "keydown") {
           event.preventDefault();

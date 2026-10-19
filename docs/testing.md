@@ -229,3 +229,7 @@ m13 `coordinator_deployment_is_gated_and_survives_backend_restarts`는 별도 �
 배포 실행기 수명 회귀(§8.233): 기존 `jobs_are_durable_once_and_reconcile_only_after_the_executor_releases_its_lock`에서 실제 잠금 File을 `try_clone`해 fork와 같은 잠금 참조를 남긴다. Unix에서는 원본 FD의 close-on-exec도 확인한다. 실행기가 살아 있으면 중복 configure는 실패하고, drop 뒤에는 복제 FD가 살아 있어도 새 실행기가 즉시 잠금과 journal 복구를 맡아야 한다. dup/fork는 같은 flock을 공유하므로 자식·신호·sleep 없이 병렬 spawn의 fork~exec 창을 결정적으로 재현한다. close-on-exec만으로는 exec 전 잠금 참조가 사라지지 않는다.
 
 local agent 재연결 중 배포 조회(§8.237): host `deploy::tests::coordinator_identity_survives_local_agent_disconnect`가 연결 상태와 독립적인 peer PID/pane 소속·권한 경계를 검사한다. CLI `deployment::tests::status_waits_for_reconnection_but_preserves_nonwait_and_forbidden_errors`는 Front IPC에서 AgentDisconnected 뒤 State 사건을 기다려 같은 ID만 조회하고, nonwait·Forbidden을 즉시 반환하는 경계를 검사한다. 머신 ID·생략을 포함한다. 고정 대기·새 자식·신호는 없으며, 기존 m13의 실제 재시작 검증을 대체하지 않는다.
+
+## Mac 웹 터미널 Ctrl+V(§8.232 후속)
+
+기존 E2E 11의 「그림 붙여 넣기·끌어 놓기」가 소유한다. 실제 host·agent와 raw PTY에서 Mac Chrome·WebKit의 이미지 경로/bytes, 텍스트만·권한 거부·API 없음의 ^V, 읽는 중 반복의 단일 업로드를 본다. Windows platform의 Ctrl+V는 비동기 read를 호출하지 않고 기존 표준 text/image paste를 처리한다. iPhone·MacIntel iPad도 새 read 없이 기존 image paste를 유지한다. 페이지의 Clipboard API만 가짜여서 사람의 clipboard나 OS 권한 설정에 닿지 않는다. 실제 권한 창·Windows OS·휴대폰 실기를 보증하지 않는다. `--spec 11 --grep '그림 붙여 넣기'`로 좁게 돌린다. 연속 첨부는 실제 PTY가 받은 이번 경로를 대조해 이전 배너와 새 ACK를 섞지 않는다.
