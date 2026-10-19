@@ -220,14 +220,17 @@ export function rosterRows(machines: readonly MachineView[], panes: readonly Pan
  * `resolveThreadStatusPill`(1451e7cb2)의 차례를 aaa 상태로 옮겼다: 승인·입력 대기 → 작업 중 → 배경 대기 → 실패(안 봄) → 끝남(안 봄).
  * 다른 곳(aaa에만 있는 상태): 참고의 「Plan Ready」(사람이 할 일) 자리에 확인 필요·검토 대기·병합 중을 둔다. 승인과 입력 대기는 화면
  * 감지(PTY)로는 같은 확인창이라 하나(question)다. 「연결 중」은 aaa 상태에 없다. 묶음 말(herdr-projects)은 그대로 두고 색만 정한다.
+ * 사용량 한도(plan §8.267, 참고 `Sidebar.logic.ts:939` 「limited」는 실패 자리)는 실패 다음이다: host가 말한 풀리는 때(`limited_until_ms`)가
+ * `now` 뒤일 때만이라 다시 차오르면 host가 다시 알리기 전에도 걷힌다.
  */
-export type StateTone = "question" | "working" | "background" | "failed" | "attention" | "review" | "unseen" | "idle";
-export function stateTone(t: ThreadView, pane: PaneView | undefined): StateTone {
+export type StateTone = "question" | "working" | "background" | "failed" | "limited" | "attention" | "review" | "unseen" | "idle";
+export function stateTone(t: ThreadView, pane: PaneView | undefined, now = Date.now()): StateTone {
   const status = pane ? paneAgentStatus(pane) : undefined;
   if (status === "blocked") return "question";
   if (status === "working") return "working";
   if (status === "waiting") return "background";
   if (t.status === "failed") return "failed";
+  if (t.limited_until_ms != null && t.limited_until_ms > now) return "limited";
   if (t.group === "waiting_on_you") return "attention";
   if (t.group === "ready_for_review" || t.group === "landing") return "review";
   if (status === "done") return "unseen";

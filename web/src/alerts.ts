@@ -272,7 +272,7 @@ export function raiseAlert(a: Alert): string {
   else if (!visible && touchDevice()) did.push("가려진 휴대폰이라 소리 안 냄");
   else if (!canPlayAlertSound()) did.push("소리 못 냄(소리 문맥 멈춤)");
   else {
-    player().chime(JSON.stringify([a.target, a.kind]), a.kind as AlertSoundKind);
+    player().chime(JSON.stringify([a.target, a.kind]), (a.kind === "blocked" ? "blocked" : "done") satisfies AlertSoundKind);
     did.push("소리");
   }
   // Tab alerts: a device with a push subscription gets them from the host instead

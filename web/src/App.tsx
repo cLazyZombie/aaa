@@ -474,6 +474,28 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
     });
     alertLate(replayFrom, q.project ?? null, q.thread ?? null, raise, told);
   };
+  // 사용량 한도가 다시 차오름(plan §8.267): 한도였던 thread의 표지가 풀리는 때가 지나 걷히면 「한도 풀림」으로 그 thread에. host는 같은
+  // 때에 coordinator inbox 항목을 만든다. 숫자가 내려가 일찍 걷힌 것은 알리지 않는다(host `reset_due`와 같다). 목록을 다시 읽을 때는
+  // 표지만 맞춘다(놓친 바뀜을 알리지 않는다). 저절로 잇지 않는다
+  const limitedUntil = useRef(new Map<string, number>());
+  const limitNews = (t: ThreadView) => {
+    const key = threadKey(t);
+    const until = limitedUntil.current.get(key);
+    if (t.limited_until_ms != null) return void limitedUntil.current.set(key, t.limited_until_ms);
+    limitedUntil.current.delete(key);
+    if (until === undefined || until > Date.now() || t.role === "evaluator") return;
+    const { sel, panes } = now.current;
+    raiseAlert({
+      kind: "reset",
+      target: `thread=${encodeURIComponent(key)}`,
+      late: justWoke(),
+      showing: sel === `thread:${key}` || (t.pane != null && sel === `pane:${t.pane}`),
+      title: t.title || t.id,
+      machine: null,
+      agent: agentOf(t.pane ? panes.find((x) => x.id === t.pane) : undefined, t),
+      notice: { title: `${t.project} · ${t.title || t.id}`, body: "사용량 한도 풀림(저절로 잇지 않았다)", tag: `aaa-${t.project}/${t.id}` },
+    });
+  };
   // seenReports: thread마다 알린(또는 처음 볼 때 이미 검토 대기였던) 보고 hash
   const reviewHash = (t: ThreadView) => (t.report_attention && t.report_hash !== t.acked_hash ? t.report_hash : null);
   const reportNews = (t: ThreadView, replayFrom: number | null = null) => {
@@ -604,6 +626,7 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
                     reportNews(t, down);
                   }
                 else for (const t of next.values()) seenReports.current.set(threadKey(t), reviewHash(t));
+                limitedUntil.current = new Map([...next.values()].flatMap((t) => (t.limited_until_ms != null ? [[threadKey(t), t.limited_until_ms]] : [])));
                 linkedOnce.current.threads = true;
                 setThreads(next);
                 setThreadsSync((n) => n + 1);
@@ -613,6 +636,7 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
         },
         (t) => {
           reportNews(t);
+          limitNews(t);
           putThread(t);
         },
         (p) => receivePreferences.current(p),

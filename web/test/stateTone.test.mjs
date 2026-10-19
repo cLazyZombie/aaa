@@ -24,6 +24,17 @@ describe("상태 말 색의 차례(참고 resolveThreadStatusPill)", () => {
     assert.equal(stateTone(thread("idle"), idle), "idle");
     assert.equal(stateTone(thread("resolved"), undefined), "idle");
   });
+  it("사용량 한도(참고 limited, 실패 자리)는 실패 다음이고 풀리는 때가 지나면 걷힌다", () => {
+    const limited = (group, until, status = "open") => ({ ...thread(group, status), limited_until_ms: until });
+    const idle = pane(agent("idle"));
+    assert.equal(stateTone(limited("waiting_on_you", 5000), idle, 4999), "limited");
+    assert.equal(stateTone(limited("idle", 5000), undefined, 4999), "limited");
+    assert.equal(stateTone(limited("waiting_on_you", 5000), idle, 5000), "attention");
+    assert.equal(stateTone(limited("idle", 5000, "failed"), idle, 0), "failed");
+    // 일하는 agent는 한도에 막히지 않았다: 사용량 숫자보다 화면이 앞이다
+    assert.equal(stateTone(limited("working", 5000), pane(agent("working")), 0), "working");
+    assert.equal(stateTone(limited("working", 5000), pane(agent("question")), 0), "question");
+  });
 });
 
 describe("작업 시간(참고 formatWorkingDurationLabel)", () => {

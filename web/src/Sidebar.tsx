@@ -37,6 +37,7 @@ import { watchTouchReorder } from "./herdr/touchReorder.ts";
 import { placeBlock } from "./herdr/workspaceOrder.ts";
 import { activityOrder, GROUP_WORD, needsYou, paneAgentStatus, paneEnded, paneProblem, projectLine, roster, shortPath, stateLine, stateTone, threadKey, workingStartedAt } from "./sidebarModel";
 import { useSummaryHover } from "./ThreadSummary";
+import { formatResetIn } from "./usage";
 import { WorkingDuration } from "./WorkingDuration";
 import "./herdr/primitives.css";
 import "./herdr/Sidebar.css";
@@ -904,6 +905,12 @@ function useMinute(): number {
   return now;
 }
 
+/** 사용량 한도 표지(참고 Sidebar.tsx:1691 「Limited」 경고 색, UsageLimitRecoveryBanner 「Resets …」): 다시 차오르기까지 남은 때 */
+function UsageLimited({ untilMs, now }: { untilMs: number; now: number }) {
+  const left = formatResetIn(new Date(untilMs).toISOString(), now);
+  return <span className="usage-limited" data-testid="usage-limited">{left ? `한도 · ${left} 뒤 리셋` : "한도"}</span>;
+}
+
 function ThreadRow({ t, online, machine, twoLine, ...props }: SidebarProps & { t: ThreadView; online: boolean; machine: MachineView | undefined; twoLine: boolean }) {
   const now = useMinute();
   const pane = t.pane ? props.panes.find((p) => p.id === t.pane) : undefined;
@@ -913,7 +920,9 @@ function ThreadRow({ t, online, machine, twoLine, ...props }: SidebarProps & { t
   // herdr-projects thread_display: 「id · 제목」
   const title = `${t.id} · ${t.title}`;
   const line = stateLine(t, paneOpen, now);
-  const tone = stateTone(t, paneOpen ? pane : undefined);
+  const tone = stateTone(t, paneOpen ? pane : undefined, now);
+  // 사용량 한도(plan §8.267): 상태 말 뒤에 다시 차오르기까지 남은 때
+  const limited = tone === "limited" && t.limited_until_ms != null ? <UsageLimited untilMs={t.limited_until_ms} now={now} /> : null;
   // 머신은 트리 단계가 아니라 둘째 줄 오른쪽 글자로(plan §8.195), 끊겼으면 「이름 끊김」
   const machineName = machine?.name ?? t.machine;
   const tooltip = [`${t.project}/${t.id}`, t.title, line, `${t.profile}@${machineName}`, t.branch].filter(Boolean).join("\n");
@@ -961,6 +970,7 @@ function ThreadRow({ t, online, machine, twoLine, ...props }: SidebarProps & { t
                 <span className={`thread-state is-${t.group}`} data-tone={tone} data-testid={`thread-state-${t.project}-${t.id}`}>
                   {line}
                   <WorkingDuration startedMs={workingStartedAt(tone, paneOpen ? pane : undefined)} />
+                  {limited}
                 </span>
                 <span className={`thread-machine${online ? "" : " is-offline"}`} data-testid={`thread-machine-${t.project}-${t.id}`}>
                   {online ? machineName : `${machineName} 끊김`}
@@ -973,6 +983,7 @@ function ThreadRow({ t, online, machine, twoLine, ...props }: SidebarProps & { t
               <span className={`worktree-workspace-label thread-state is-${t.group}`} data-tone={tone} data-testid={`thread-state-${t.project}-${t.id}`}>
                 {t.status === "starting" ? "준비 중" : t.cleanup_pending ? "정리 중" : GROUP_WORD[t.group] ?? t.group}
                 <WorkingDuration startedMs={workingStartedAt(tone, paneOpen ? pane : undefined)} />
+                {limited}
               </span>
             </span>
           )}

@@ -7,6 +7,9 @@
 //! - host 머신의 thread만이다: 사용량은 host 머신 CLI 로그인만 읽는다. 한 구독에 계정이 둘 이상이면 어느 것인지 단정하지 않는다.
 //! - ticker가 사용량을 새로 읽지 않는다(§8.45: client가 물을 때만). 웹이 사용량을 보이는 동안 숫자가 새로워진다.
 //!   오래된 숫자로 한도를 새로 알아채지 못할 수는 있어도, 다시 차오르는 때가 지나면 표지가 걷혀 잘못 남지 않는다.
+//! - 알림은 다시 차오를 때만이다(사용자 10-19 결정, 참고는 한도에 막힐 때 알린다 `ThreadNotificationCoordinator.tsx:141`).
+//!   coordinator inbox 항목 하나(`usage`·`usage reset`)이고, 웹은 같은 thread 사건의 바뀜으로 앱 안 알림을 띄운다. 외부 push는
+//!   아니다(§8.249). 저절로 잇지 않는다(참고 `UsageLimitRecoveryBanner`의 예약 다시 시작은 들이지 않았다).
 use std::collections::HashMap;
 use std::sync::Mutex;
 
@@ -40,6 +43,12 @@ pub(crate) fn limited_until(harness: &str, model: &str, report: &UsageReport, no
         .filter_map(|w| aaa_common::util::parse_iso(w.resets_at.as_deref()?))
         .filter(|until| *until > now)
         .max()
+}
+
+/// 표지가 걷힌 까닭이 다시 차오름인가: 앞 셈의 풀리는 때가 지났다. 숫자가 내려가 일찍 걷힌 것(다른 계정이 붙음·profile 바뀜도
+/// 같다)은 다시 차오름으로 단정하지 않는다
+fn reset_due(prev: Option<u64>, next: Option<u64>, now: u64) -> bool {
+    next.is_none() && prev.is_some_and(|until| until <= now)
 }
 
 /// 다 찬 창이 하나라도 있나: 없으면 thread마다 profile을 풀지 않는다
@@ -82,6 +91,18 @@ impl crate::Host {
             if prev != next {
                 tracing::debug!(project, thread = %r.id, ?next, "사용량 한도 표지");
                 let _ = self.thread_events.send(self.thread_view(r));
+            }
+            if reset_due(prev, next, now) && r.role != aaa_proto::Role::Evaluator {
+                self.inbox_once(
+                    project,
+                    "usage",
+                    &r.id,
+                    "usage reset",
+                    &format!(
+                        "사용량 한도가 풀렸다({}에 다시 차오름). 저절로 잇지 않았다: 이을지는 사람·coordinator가 정한다",
+                        aaa_common::util::utc_iso(prev.unwrap_or(now))
+                    ),
+                );
             }
         }
         self.usage_limits.lock().unwrap().retain(|k, _| k.0 != project || seen.contains(k));
@@ -161,6 +182,14 @@ mod tests {
         };
         assert_eq!(limited_until("claude", "claude-sonnet-5-5", &r, NOW), Some(NOW + 10));
         assert_eq!(limited_until("claude", "opus", &r, NOW), None);
+    }
+
+    #[test]
+    fn reset_only_when_the_reset_time_passed() {
+        assert!(reset_due(Some(NOW), None, NOW));
+        assert!(!reset_due(Some(NOW + 1), None, NOW));
+        assert!(!reset_due(Some(NOW), Some(NOW + 10), NOW));
+        assert!(!reset_due(None, None, NOW));
     }
 
     #[test]

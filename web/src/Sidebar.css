@@ -39,6 +39,10 @@
 .thread-state[data-tone="background"] { color: var(--text-dim); }
 .thread-state[data-tone="failed"] { color: var(--status-blocked); font-weight: 600; }
 .thread-state[data-tone="unseen"] { color: var(--status-done); }
+/* 사용량 한도(plan §8.267): 참고 「Limited」는 실패(error)가 아니라 경고(warning) 색이다 */
+.thread-state[data-tone="limited"] { color: var(--warn); }
+.usage-limited { white-space: pre; }
+.usage-limited::before { content: " · "; }
 /* 작업 시간(WorkingDuration): 상태 말 뒤, 자리가 바뀌지 않게 고정폭 숫자(참고 tabular-nums) */
 .working-duration { font-variant-numeric: tabular-nums; white-space: pre; }
 .working-duration::before { content: " · "; }

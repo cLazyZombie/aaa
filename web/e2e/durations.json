@@ -27,5 +27,6 @@
   "29-scroll-hold": 8,
   "30-thread-preparation": 2,
   "30-chat-reading": 7,
-  "31-render-guards": 11
+  "31-render-guards": 11,
+  "32-usage-limit": 14
 }

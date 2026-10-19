@@ -212,6 +212,8 @@
 .droplet[data-kind="blocked"] { --droplet-tone: var(--droplet-blocked); }
 .droplet[data-kind="done"] { --droplet-tone: var(--droplet-done); }
 .droplet[data-kind="ended"] { --droplet-tone: var(--droplet-text-dim); }
+/* aaa: 사용량 한도가 다시 차오름(plan §8.267). 다시 일할 수 있다는 소식이라 끝남과 같은 색 */
+.droplet[data-kind="reset"] { --droplet-tone: var(--droplet-done); }
 
 @media (max-width: 768px) {
   .droplet {
