@@ -2195,6 +2195,7 @@ export function TermView({
           touch={coarse}
           working={paneAgentStatus(pane) === "working"}
           asking={paneAgentStatus(pane) === "blocked"}
+          coordinator={pane.role === "coordinator"}
           onInterrupt={interruptAgent}
           messages={chatMessages}
           onInspect={() => setChatView(false)}

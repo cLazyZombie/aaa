@@ -5554,3 +5554,9 @@ primary 근거:
 - **알려진 틈.** S0과 S1 사이에 둘째 프로젝트를 만들면 지금 host는 돈다. 다음 재시작 때 목록을 말하고 뜨지 않는다.
 - **배포 조건.** 보관하지 않은 프로젝트가 하나일 때만 rollout한다. 운영은 m4-pilot·shadow·reports를 지워 `projects` 하나다. rollout의 host restart가 실패하면 host 기록의 이 거부 말을 본다.
 - **검증.** [testing](testing.md)의 「한 host 한 프로젝트 시작 검사」를 따른다.
+
+### 8.284 coordinator 입력창의 보라 테두리와 도는 빛(10-19, t-0437)
+
+- 사용자가 지금 치는 곳이 coordinator인지 몰라 실수했다(10-19 「일반 입력 창이 파란색이면 코디네이터 입력 창은 보라색으로」). 시안 5안 중 3안(2px 진보라 + 바깥 번짐, 맞은편 두 줄기 빛이 6초에 한 바퀴)을 골랐다. `pane.role === "coordinator"`인 대화 입력창(ChatComposer `coordinator`)만 달고 thread·특수 임무·일반 pane은 그대로다.
+- 색은 `--coordinator`·`--coordinator-glow` token(style.css, 색조 하나, 밝기만 어두움·밝음)이다. 포커스·잠김에도 보라를 지킨다. catppuccin은 포커스가 원래 mauve라 색이 비슷하고, 두께와 도는 빛이 가른다(사용자 결정: 그대로 둔다).
+- 빛은 둥근 고리 mask 안의 conic-gradient 정사각형을 `transform`으로만 돌린다(합성만 움직이고 JS 타이머 없음). 탭이 숨으면 `data-paused`로 멈추고(visibilitychange), 움직임 줄이기면 빛 없이 테두리만 남는다. 시험은 웹 E2E 22 「coordinator 입력창」(데스크톱 Chromium·iPhone WebKit).

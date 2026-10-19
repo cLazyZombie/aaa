@@ -2,7 +2,8 @@
 // 그대로 복사하지 못한 까닭: 참고는 api.ts·settings.ts·i18n·visibility를 부른다. aaa에 맞춰 그 import만 바꾸고
 // 문구를 한국어로 옮겼다(함수와 규칙은 같다). chat 입력칸의 `composerUsage`는 aaa에 chat 입력칸이 없어 뺐다.
 // 구독은 Claude·Codex 둘이다(사용자 요청 10-17, plan §8.49): PROVIDER_NAME·PROVIDER_MARK도 그 둘만 남았다.
-import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { usePageVisible } from "./pageVisible";
 import type { Outcome, ProviderUsage, UsageProviderId, UsageReport, UsageWindow, UsageWindowKind } from "./gen/proto";
 import type { UsageCount, UsageGlance } from "./settings";
 
@@ -118,17 +119,6 @@ async function fetchUsage(refresh: boolean): Promise<UsageReport> {
   const out = (await res.json()) as Outcome<UsageReport>;
   if ("err" in out) throw new Error(out.err.message);
   return out.ok;
-}
-
-/** 화면이 보이는지(참고 lib/visibility.ts usePageVisible) */
-function usePageVisible(): boolean {
-  return useSyncExternalStore(
-    useCallback((f: () => void) => {
-      document.addEventListener("visibilitychange", f);
-      return () => document.removeEventListener("visibilitychange", f);
-    }, []),
-    () => document.visibilityState === "visible",
-  );
 }
 
 export function useUsage(enabled: boolean) {

@@ -42,6 +42,7 @@ import { useChatShared, useTerminalToggle } from "./settings";
 import { useAppearance } from "./theme";
 import { receiptMethod, receiptHash, inputTraceId } from "./inputReceipt";
 import { heldSend } from "./steerQueued";
+import { usePageVisible } from "./pageVisible";
 
 /** 참고 `MAX_COMPOSER_CHARS` */
 const MAX_COMPOSER_CHARS = 100_000;
@@ -138,6 +139,8 @@ export interface ChatComposerProps {
   onInterrupt?: () => void;
   /** agent가 확인창(질문·승인)을 띄웠다: ↑·↓로 보낸 글을 부르지 않는다 */
   asking?: boolean;
+  /** coordinator pane의 입력창: 보라 테두리와 도는 빛으로 thread 입력창과 가른다(style.css `.composer-surface.is-coordinator`) */
+  coordinator?: boolean;
 }
 
 export function ChatComposer({
@@ -160,9 +163,12 @@ export function ChatComposer({
   onBusy,
   onInterrupt,
   asking = false,
+  coordinator = false,
 }: ChatComposerProps) {
   const { autoSendQueued, quickReplies, showQuickReplies } = useChatShared();
   const enterSends = useTerminalToggle("enterSends");
+  // 탭이 안 보이면 coordinator 테두리의 빛을 세운다(브라우저가 그리기를 멈추는 것에 기대지 않고 애니메이션 자체를 멈춘다)
+  const visible = usePageVisible();
   // 초안은 pane마다 localStorage에 둔다(참고 Composer.tsx `draftKey`): 다른 pane을 보거나 앱을 다시 열어도(새 웹) 남는다
   const draftKey = `herdr-web-ui:composer-draft:${owner}`;
   const { text } = useSyncExternalStore(composerDrafts.subscribe, () =>
@@ -739,7 +745,7 @@ export function ChatComposer({
           </div>
         )}
         {/* 보내는 동안은 상태 문장이 단추 옆 줄에 서야 해서 늘 두 줄 배치다 */}
-        <div ref={surfaceRef} data-lines={flight ? "more" : lines} className={`composer-surface${dragging ? " is-dragging" : ""}${locked ? " is-locked" : ""}`}
+        <div ref={surfaceRef} data-lines={flight ? "more" : lines} className={`composer-surface${coordinator ? " is-coordinator" : ""}${dragging ? " is-dragging" : ""}${locked ? " is-locked" : ""}`}
           onDragOver={(event) => {
             if (!event.dataTransfer.types.includes("Files")) return;
             event.preventDefault();
@@ -749,6 +755,7 @@ export function ChatComposer({
           onDragLeave={(event) => { if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setDragging(false); }}
           onDrop={(event) => { event.preventDefault(); setDragging(false); uploadImages(Array.from(event.dataTransfer.files)); }}
         >
+          {coordinator && <span className="composer-glow" aria-hidden="true" data-paused={visible ? undefined : ""} />}
           {attachments.length > 0 && <div className="composer-attachments" aria-label="첨부한 그림">
             {attachments.map((a) => <div className={`composer-attachment is-${a.state}`} key={a.id}>
               <img src={a.preview} alt={a.file.name} />

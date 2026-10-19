@@ -5,7 +5,7 @@
 // 혼자 돌리기: node web/e2e/web.e2e.mjs --spec 22-chat-surface(새 실험실). 준비(host·agent·t1·첫 화면)는 lib/harness.mjs runSpec.
 
 import fs from "node:fs";
-import { aaa, until, step, browser, webkit, pairPage, inList, openSettings, domIs, shot, shots, fakeViewport, softKeyboard, root, AA } from "../lib/harness.mjs";
+import { aaa, until, step, browser, webkit, pairPage, inList, openSettings, domIs, shot, shots, fakeViewport, softKeyboard, root, AA, waitOutput, paneHash } from "../lib/harness.mjs";
 import { pairDevice } from "../lib/devices.mjs";
 
 /** 긴 대화 기록을 가진 Claude pane(hook으로 기록 자리를 알린다, 11-agent-panes 「대화 기록」과 같은 길) */
@@ -436,6 +436,100 @@ export default async function () {
     if ((await at()).top !== reading.top) bad.push(`읽는 중에 새 답이 와서 끌어내렸다 ${reading.top} → ${(await at()).top}`);
     await p.context().close();
     aaa("pane", "kill", "stick1");
+    if (bad.length) throw new Error(bad.join("; "));
+  });
+
+  await step("coordinator 입력창(사용자 10-19 「코디네이터 입력 창은 보라색으로 테두리가 나오면」, t-0437 3안): coordinator pane의 대화 입력창만 보라 테두리이고 빛이 transform으로 돌며, 포커스에도 보라를 지킨다. thread·일반 pane 입력창은 그대로다. 탭이 숨으면 빛이 멈췄다 돌아오면 다시 돌고, 움직임 줄이기면 빛 없이 테두리만 남는다. 데스크톱(Chromium)·iPhone(WebKit)", async () => {
+    // coordinator: fake profile pane 안에서 Claude hook을 불러 대화 보기가 되게 한다(post-probe는 fake.sh가 그 pane에서 돌리는 script)
+    aaa("project", "create", "glow");
+    const coord = aaa("project", "open", "glow", "--profile", "fake").pane.id;
+    await waitOutput(coord, "fake>");
+    const dir = `${root}/claude/projects/-lab-glow`;
+    fs.mkdirSync(dir, { recursive: true });
+    const L = (o) => JSON.stringify(o) + "\n";
+    fs.writeFileSync(`${dir}/s1.jsonl`, L({ type: "user", message: { role: "user", content: "다음 일 맡겨 줘" } }) + L({ type: "assistant", message: { content: [{ type: "text", text: "thread를 시작했습니다." }] } }));
+    const hook = JSON.stringify({ hook_event_name: "SessionStart", session_id: "6e5d4c3b-2a19-4f08-8e7d-6c5b4a392817", source: "startup", transcript_path: `${dir}/s1.jsonl` });
+    fs.writeFileSync(`${dir}/hook.sh`, `'${AA}' hook --agent claude '${hook}'\nprintf 'glow-hooked\\n'\n`);
+    aaa("pane", "run", coord, `post-probe ${dir}/hook.sh`);
+    await waitOutput(coord, "glow-hooked");
+    chatPane("glow1", "3c2b1a09-8f7e-4d6c-9b5a-4f3e2d1c0ba0");
+    const look = (p) =>
+      p.evaluate(() => {
+        const s = document.querySelector('[data-testid="chat-composer"] .composer-surface');
+        const glow = s.querySelector(":scope > .composer-glow");
+        const spin = document.getAnimations().filter((a) => a.animationName === "coordinator-glow");
+        const probe = document.createElement("i");
+        probe.style.color = "var(--coordinator)";
+        document.body.append(probe);
+        const purple = getComputedStyle(probe).color;
+        probe.remove();
+        return {
+          coordinator: s.classList.contains("is-coordinator"),
+          border: getComputedStyle(s).borderTopColor,
+          purple,
+          glow: glow !== null,
+          paused: glow?.hasAttribute("data-paused") ?? null,
+          spin: spin.map((a) => a.playState),
+          props: [...new Set(spin.flatMap((a) => a.effect.getKeyframes().flatMap((k) => Object.keys(k).filter((x) => !["offset", "computedOffset", "easing", "composite"].includes(x)))))],
+        };
+      });
+    const open = async (p) => {
+      if ((await p.getByTestId("chat-composer").count()) === 0) await p.getByTestId("chat-toggle").click();
+      await p.getByTestId("chat-composer").waitFor();
+    };
+    const bad = [];
+    const wk = await webkit.launch();
+    try {
+      const plain = paneHash("glow1");
+      const pages = (hash) => [
+        ["desktop", async () => (await pairPage(browser, aaa("web", "pair").code, { width: 1280, height: 800 }, { hash })).page],
+        ["phone", async () => (await pairDevice(wk, aaa("web", "pair").code, "iphone", { hash })).page],
+      ];
+      for (const [name, make] of pages(`#pane=${encodeURIComponent(coord)}`)) {
+        const p = await make();
+        await open(p);
+        await domIs(p, "coordinator 입력창", () => document.querySelector('[data-testid="chat-composer"] .composer-surface.is-coordinator') !== null);
+        let got = await look(p);
+        if (got.border !== got.purple || !got.glow || got.paused || got.spin.join() !== "running" || got.props.join() !== "transform")
+          bad.push(`${name} coordinator ${JSON.stringify(got)}`);
+        const box = p.getByTestId("chat-composer").getByRole("textbox", { name: "메시지" });
+        await box.focus();
+        got = await look(p);
+        if (got.border !== got.purple) bad.push(`${name} 포커스에 보라가 아니다 ${JSON.stringify(got)}`);
+        await box.blur();
+        // 탭이 숨음: 브라우저의 visibilitychange를 흉내 낸다(headless 탭은 늘 보인다)
+        const hide = (hidden) => p.evaluate((hidden) => {
+          Object.defineProperty(document, "visibilityState", { configurable: true, get: () => (hidden ? "hidden" : "visible") });
+          document.dispatchEvent(new Event("visibilitychange"));
+        }, hidden);
+        await hide(true);
+        await domIs(p, "숨은 탭 표지", () => document.querySelector(".composer-glow")?.hasAttribute("data-paused"));
+        got = await look(p);
+        if (got.spin.join() !== "paused") bad.push(`${name} 숨은 탭에서 빛이 돈다 ${JSON.stringify(got)}`);
+        await hide(false);
+        await domIs(p, "보인 탭 표지", () => !document.querySelector(".composer-glow")?.hasAttribute("data-paused"));
+        got = await look(p);
+        if (got.spin.join() !== "running") bad.push(`${name} 다시 보여도 빛이 서 있다 ${JSON.stringify(got)}`);
+        await p.emulateMedia({ reducedMotion: "reduce" });
+        got = await look(p);
+        if (got.spin.length !== 0 || got.border !== got.purple) bad.push(`${name} 움직임 줄이기 ${JSON.stringify(got)}`);
+        await p.emulateMedia({ reducedMotion: "no-preference" });
+        // 촬영은 맨 끝에: shot(animations disabled)은 무한 애니메이션을 script로 다시 틀어, 그 뒤로는 CSS animation-play-state가 먹지 않는다
+        await shot(p, `coordinator-composer-${name}`);
+        await p.context().close();
+      }
+      // 일반 pane(thread와 같은 입력창): 보라도 빛도 없다
+      for (const [name, make] of pages(plain)) {
+        const p = await make();
+        await open(p);
+        const got = await look(p);
+        if (got.coordinator || got.glow || got.spin.length || got.border === got.purple) bad.push(`${name} 일반 pane ${JSON.stringify(got)}`);
+        await p.context().close();
+      }
+    } finally {
+      await wk.close();
+    }
+    aaa("pane", "kill", "glow1");
     if (bad.length) throw new Error(bad.join("; "));
   });
 }
