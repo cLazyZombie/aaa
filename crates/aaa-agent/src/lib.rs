@@ -1714,14 +1714,15 @@ mod tests {
     /// 없는 실행 파일에서 멈추므로 실제 harness·서비스·프로세스 신호는 쓰지 않는다.
     #[tokio::test]
     async fn codex_spawn_spec_stays_in_the_pane() {
+        let title = r#"tui.terminal_title=["run-state","activity","project-name"]"#;
         for (argv, expected) in [
-            (vec!["codex"], vec!["codex", "--no-daemon"]),
+            (vec!["codex"], vec!["codex", "--no-daemon", "-c", title]),
             (
                 vec!["C:\\tools\\codex.exe", "resume", "test-id"],
-                vec!["C:\\tools\\codex.exe", "--no-daemon", "resume", "test-id"],
+                vec!["C:\\tools\\codex.exe", "--no-daemon", "resume", "test-id", "-c", title],
             ),
-            (vec!["codex", "--no-daemon"], vec!["codex", "--no-daemon"]),
-            (vec!["codex", "--", "--no-daemon"], vec!["codex", "--no-daemon", "--", "--no-daemon"]),
+            (vec!["codex", "--no-daemon"], vec!["codex", "--no-daemon", "-c", title]),
+            (vec!["codex", "--", "--no-daemon"], vec!["codex", "--no-daemon", "-c", title, "--", "--no-daemon"]),
             (vec!["sh", "-c", "codex"], vec!["sh", "-c", "codex"]),
         ] {
             let state = std::env::temp_dir().join(format!("aaa-spawn-{}", util::new_id()));

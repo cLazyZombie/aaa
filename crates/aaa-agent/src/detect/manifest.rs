@@ -1,6 +1,7 @@
 //! 화면 감지 규칙 엔진. herdr 0.9.5 `src/detect/manifest.rs`(Apache-2.0, `LICENSE-herdr.txt`)를 옮겼다.
 //!
-//! 바꾼 것: 규칙은 저장소에 넣은 `manifests/*.toml`(herdr 0.9.5 그대로, 2026.10.11.1)만 쓴다. herdr의 원격 갱신·local
+//! 바꾼 것: 규칙은 저장소에 넣은 `manifests/*.toml`만 쓴다(herdr 0.9.5 기반, Codex run-state 제목 보완은 plan §8.225).
+//! herdr의 원격 갱신·local
 //! override·explain 출력은 옮기지 않았다(plan §8.3 「감지 규칙은 버전을 pin하고 원격에서 자동 갱신하지 않는다」).
 //! 맞은 규칙 ID를 결과에 함께 둔다(질문 종류를 정하고 진단에 쓴다).
 
