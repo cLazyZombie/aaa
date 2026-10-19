@@ -224,7 +224,7 @@ impl Host {
         }
     }
 
-    /// 흐름 사건 → inbox 항목. 보고·질문·사본 실패는 사건마다가 아니라 묶음 전이로 낸다(transitions.rs).
+    /// 흐름 사건 → inbox 항목. 보고·질문은 사건마다가 아니라 묶음 전이로 낸다. 사본 실패는 재수집 뒤 시스템 경고로 낸다(transitions.rs).
     /// 남은 것은 herdr-projects가 그때 바로 쓰는 항목이다: brief.rs `give_up`(brief not delivered), ticker.rs
     /// launch(not launched). 메시지 전달 모름은 aaa에만 있다(메시지를 대기열로 보낸다).
     pub(crate) fn inbox_from_flow(&self, e: &FlowEvent) {
@@ -384,6 +384,7 @@ impl Host {
         }
         // 멈추거나 보관한 프로젝트는 건너뛴다(herdr-projects ticker, plan §8.180)
         let projects = self.active_projects();
+        self.resource_warning_pass(&projects);
         let names: Vec<String> = projects.iter().map(|p| p.name.clone()).collect();
         self.check_outages(&names);
         self.check_health_items(&names);
@@ -392,6 +393,7 @@ impl Host {
             self.check_project_config(&p.name, Path::new(&p.path));
             self.check_old_decisions(&p.name, Path::new(&p.path));
             self.thread_pass(&p.name);
+            self.retry_report_copies(&p.name, aaa_common::util::now_ms());
             self.builtin_evaluator_state(&p.name);
             self.mission_pass(&p.name).await;
             self.usage_limit_pass(&p.name).await;

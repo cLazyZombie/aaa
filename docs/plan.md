@@ -1930,7 +1930,7 @@ coordinator 실기(10-18 00:58, iPhone 홈 화면 앱을 앞에 띄움, binary c
 ### 8.85 묶음 전이와 thread 항목을 herdr-projects대로: 전이 항목·새 보고 한 번·세션 끝남·resolve 차례(10-18, 차이 목록 3장 C7·C9·F2·F3·F4·F5·F6·F9·E10 일부, t-0334 결함 6·7)
 
 - **마지막 묶음 기록(C9, hp `src/ticker.rs` `thread_pass`).** thread 기록에 `last_group`·`review_item_hash`(참고 `last_group`·`last_review_item_hash`)를 둔다. ticker가 열린(시작 중 포함) worker thread의 묶음을 다시 세어 기록과 다르면 전이다.
-  - note는 참고대로 pane이 없으면 `pane closed`, agent 상태가 없으면 `no agent`, 그 밖은 harness 상태(확인창은 `blocked`)다. 보고 사본 실패는 aaa에만 있는 확인 필요라 `copy failed`다.
+  - note는 참고대로 pane이 없으면 `pane closed`, agent 상태가 없으면 `no agent`, 그 밖은 harness 상태(확인창은 `blocked`)다. 보고 사본 실패는 상태 전이가 아닌 시스템 오류다(§8.278).
   - 이 변경 전에 연 thread(기록 없음)는 처음 볼 때 전이가 아니다. 그때의 보고는 옛 방식으로 이미 알렸으니 새 보고로 치지 않는다. 새 thread는 시작할 때 「작업 중」을 적는다.
 - **언제 세나.** 참고는 15초 tick이다. aaa는 `tick_secs`에 더해 harness 상태·진행 보고·세션 끝남·보고 사본·ack·brief 상태가 바뀌면 바로 센다.
   - **사건이 보고보다 먼저 온다.** agent는 report.md를 1초마다 본다. 그래서 턴 끝·진행 보고·세션 끝남이 먼저 오면, 옛 보고로 셀 때 「쉼」 다음에 「새 보고」가 따로 오고 `Done` 직전의 중간 보고가 검토 대기가 된다. thread의 그런 사건이 오면 host는 agent에 report.md hash를 먼저 묻는다(library는 읽지 않는다). 바뀌었으면 사본을 받은 뒤 센다(`refresh_report`). 그동안 묶음 셈은 그 thread를 건너뛴다. 참고는 같은 tick 안에서 파일 hash를 읽는다(`fresh_hash`).
@@ -5498,3 +5498,14 @@ primary 근거:
 - host의 안 본 사용자 보고서와 처리 전 사용자 결정을 합산한다. 같은 pane의 질문/thread/미처리 확인 보고는 한 건, needs_user post는 요청마다 한 건이다. 다른 기기의 열람·처리도 공유한다. 웹은 연결·재연결과 사건에서 받은 수를 `setAppBadge`/`clearAppBadge`로 반영한다.
 - 기존 허용 Web Push에 수를 넣고 worker도 반영한다. 지연 push는 인증 API로 최신 수를 읽으며 offline은 payload를 쓴다. 배지 전용 외부 push는 없으므로 닫힌 다른 기기는 다음 허용 push나 실행 전까지 이전 수가 남을 수 있다.
 - favicon의 창별 알림 수/focus 지우기는 유지한다. 설치 앱의 아직 볼 일 수와 의미가 다르다. 고정 herdr-web-ui·t3code 웹 소스에는 같은 OS 배지 기능이 없어 공식 API를 쓴다. [지원 표·숫자 정의·실기기 절차](app-badging.md), [시험](testing.md#설치-앱-아이콘-배지)을 따른다.
+
+### 8.278 보고 복사 오류와 사람 대기의 분리(10-19)
+
+- 참고 herdr-projects `ticker::thread_pass`·`remote_pass`: harness 묶음과 복사 오류를 분리한다. 복사 실패로 `WaitingOnYou`·「사람이 필요하다」를 만들지 않는다. 이전 묶음을 보존하되 실제 확인창·명시한 사용자 대기는 그대로 센다.
+- 첫 실패는 새 manifest로 한 번 다시 받는다. 계속 실패하면 `report-copy-failed` 시스템 inbox 한 건만 남기고 ticker 간격마다 다시 수집한다. 연속 실패 수·다음 시각은 thread 기록에 저장하며 성공하면 초기화한다. 보고 hash가 더 바뀌지 않거나 host가 재시작해도 실패한 사본을 다시 받는다. 외부 푸시는 보내지 않는다.
+- library의 실행 중인 로그는 manifest 시점의 길이까지만 해시하고 그 길이까지만 받는다. 덧붙인 바이트는 다음 사본에 든다. prefix를 덮어쓰거나 줄인 파일은 크기·sha256 검증으로 거부하고 이전 사본을 보존한다. 해시 검증·timeout 상한을 약하게 하지 않는다.
+- 웹은 작업 묶음과 별도로 「보고·결과물 사본을 다시 받는 중」을 표시한다. 확인: host 유닛(재수집·경고 중복 억제·append 허용·rewrite 거부)과 `report_copy` 실제 host·CLI·가짜 Agent link E2E.
+
+- **EMFILE 대응.** herdr `platform/macos.rs::raise_server_nofile_limit`을 따라 host·agent CLI는 runtime·listener를 만들기 전에 현재 프로세스의 soft를 `min(8192, hard)`까지 올린다. 이미 높은 soft·hard·시스템·launchd 설정은 바꾸지 않는다. Windows는 해당 없음. 시작 로그에 before·soft·hard를 남긴다.
+- **수용 복구·시스템 경고.** 웹 listener는 axum 기본 1초 재시도를 유지하며 EMFILE/ENFILE을 host에 알린다. Front·로컬/원격 Agent listener도 오류에서 끝나거나 busy loop하지 않고 같은 간격으로 재개한다. 소진 중에는 atomic 표지만 남기고 ticker가 파일 여유가 생긴 뒤 활성 프로젝트 inbox에 `system / file descriptors exhausted` 한 건을 남긴다(열린 경고 중복 억제). 복사 중 같은 OS 오류도 이 경고를 낸다. 사람 대기·외부 push로 바꾸지 않는다.
+- **자원 E2E.** `resource_limits`: 별도 자식 host/agent의 soft64에서 각각8192/hard512 승격, 웹384개×2회 후 실제 OS fd 회수, hard64의 진짜 EMFILE·Front accept 복구·경고1건. 부모 시험과 운영 프로세스의 한도는 고치지 않는다. 현재 연결 생명주기에서 누수는 관측되지 않아 임의로 정상 연결을 끊는 정책은 더하지 않았다.
