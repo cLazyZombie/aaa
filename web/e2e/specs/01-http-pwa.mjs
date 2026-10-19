@@ -7,6 +7,33 @@ import path from "node:path";
 import { repo, aaa, until, shot, pairPage, base, step, webPort, browser, webkit } from "../lib/harness.mjs";
 
 export default async function ({ ctl, page }) {
+  await step("옛 TUI WebSocket 거절·웹 API 유지", async () => {
+    await page.evaluate(async () => {
+      for (const [client, minor] of [["tui", 42], ["tui@mac-a", 43], ["tui@mac-a", 0]]) {
+        await new Promise((resolve, reject) => {
+          const ws = new WebSocket(`${location.origin.replace(/^http/, "ws")}/api/v1/front`);
+          let received = false;
+          ws.onopen = () => ws.send(JSON.stringify({ t: "hello", proto: { major: 1, minor }, client }));
+          ws.onmessage = ({ data }) => {
+            received = true;
+            const m = JSON.parse(data);
+            ws.close();
+            if (m.t !== "reject" || m.code !== "unavailable" || !m.message?.includes("TUI는 삭제됐다")) {
+              reject(new Error(`옛 TUI 거절 안내: ${data}`));
+            } else resolve();
+          };
+          ws.onerror = () => reject(new Error("옛 TUI 연결에 거절 안내가 없다"));
+          ws.onclose = () => { if (!received) reject(new Error("거절 안내 전에 연결이 닫혔다")); };
+        });
+      }
+      const response = await fetch("/api/v1/call", {
+        method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ op: "status" }),
+      });
+      const result = await response.json();
+      if (response.status !== 200 || !result.ok) throw new Error(`웹 API 거절: ${JSON.stringify(result)}`);
+    });
+  });
+
   await step("인증 없는 요청·다른 Origin 거부", async () => {
     const r1 = await fetch(`${base}api/v1/call`, {
       method: "POST",

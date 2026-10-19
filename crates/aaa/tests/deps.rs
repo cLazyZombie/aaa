@@ -1,7 +1,6 @@
 //! 역할별 crate 의존 규칙(결정 13)을 `cargo metadata`로 검사한다. 일반·dev·build 의존을 모두 보고, workspace 안에서는
 //! 간접 의존까지 따라간다.
 //!
-//! - front(`aaa-tui`)는 host와 aaa-proto 계약으로만 말한다: `aaa-host`·`aaa-agent`·`aaa-session`에 의존하지 않는다.
 //! - `aaa-host`는 agent·session 내부에 의존하지 않고 Agent link(aaa-proto)로만 다룬다.
 //! - `aaa-agent`는 `aaa-session`을 쓴다. host·front에는 의존하지 않는다.
 //! - 공통 crate는 어떤 역할 crate에도 의존하지 않는다(역할 경계를 넘는 통로가 되지 않게).
@@ -13,16 +12,15 @@ use std::process::Command;
 
 use serde_json::Value;
 
-const ROLES: &[&str] = &["aaa-session", "aaa-agent", "aaa-host", "aaa-tui", "aaa"];
+const ROLES: &[&str] = &["aaa-session", "aaa-agent", "aaa-host", "aaa"];
 
 /// (crate, 의존하면 안 되는 crate)
 fn forbidden() -> Vec<(&'static str, Vec<&'static str>)> {
     let common = ROLES.to_vec();
     vec![
-        ("aaa-tui", vec!["aaa-host", "aaa-agent", "aaa-session", "aaa-doctor", "aaa-vt", "aaa"]),
-        ("aaa-host", vec!["aaa-agent", "aaa-session", "aaa-tui", "aaa"]),
-        ("aaa-agent", vec!["aaa-host", "aaa-tui", "aaa"]),
-        ("aaa-session", vec!["aaa-agent", "aaa-host", "aaa-tui", "aaa"]),
+        ("aaa-host", vec!["aaa-agent", "aaa-session", "aaa"]),
+        ("aaa-agent", vec!["aaa-host", "aaa"]),
+        ("aaa-session", vec!["aaa-agent", "aaa-host", "aaa"]),
         ("aaa-proto", common.clone()),
         ("aaa-config", common.clone()),
         ("aaa-common", common.clone()),
@@ -99,9 +97,9 @@ fn role_crates_keep_dependency_rules() {
 #[test]
 fn reachable_follows_indirect_edges() {
     let g: BTreeMap<String, BTreeSet<String>> =
-        [("aaa-tui", vec!["aaa-common"]), ("aaa-common", vec!["aaa-session"]), ("aaa-session", vec![])]
+        [("aaa-host", vec!["aaa-common"]), ("aaa-common", vec!["aaa-session"]), ("aaa-session", vec![])]
             .into_iter()
             .map(|(k, v)| (k.to_string(), v.into_iter().map(String::from).collect()))
             .collect();
-    assert_eq!(reachable(&g, "aaa-tui")["aaa-session"], ["aaa-tui", "aaa-common", "aaa-session"]);
+    assert_eq!(reachable(&g, "aaa-host")["aaa-session"], ["aaa-host", "aaa-common", "aaa-session"]);
 }

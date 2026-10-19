@@ -87,7 +87,6 @@ pub fn hello(agent: &Agent) -> AgentHello {
         // dir.v1: 폴더 보기 `DirList`(plan §8.148), file_in.v1: 정한 폴더 기준 찾기 `FileLocateIn`(보고서 안 파일 링크, plan §8.171)
         // profiles.v2: 옛 host의 이름 기반 요청. host_profiles.v1이면 host 정본과 머신별 덮어쓰기만 쓴다(plan §8.170),
         // launch_safety.v1: `ThreadPrepare.safety`·`ThreadRebrief.safety`(yolo·thread_agent_args)를 profile 인자에 더한다
-        // scrollback.v1: 기록을 편집기로 `ScrollbackWrite`·`ScrollbackRemove`(plan §8.176)
         // adopt.v1: `AgentRequest::ThreadAdopt`(사람이 띄운 agent 세션을 thread로 데려온다, plan §8.180)
         // term_colors.v1: `AgentRequest::TermColors`(색 질의에 답할 화면 색, plan §8.187)
         // chat_watch.v1: `AgentRequest::ChatWatch`와 `AgentEvent::ChatChanged`(대화 기록 변화 push, plan §8.191)
@@ -110,7 +109,6 @@ pub fn hello(agent: &Agent) -> AgentHello {
             "ask_anew.v1".into(),
             "dir.v1".into(),
             "file_in.v1".into(),
-            "scrollback.v1".into(),
             "adopt.v1".into(),
             "term_colors.v1".into(),
             "chat_watch.v1".into(),

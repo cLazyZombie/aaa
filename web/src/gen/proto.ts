@@ -178,7 +178,7 @@ export type LeaseView = {
  */
 front: string,
 /**
- * 사람이 읽는 이름(예: `tui@mac-a`, `웹(ab12)`)
+ * 사람이 읽는 이름(예: `웹(ab12)`)
  */
 label: string, };
 
@@ -228,60 +228,6 @@ zoomed: boolean, };
 export type Workspace = { name: string, tabs: Array<Tab>, };
 
 export type LayoutChange = { "do": "new_tab", machine: string | null, name: string | null, argv: Array<string>, cwd: string | null, cols: number | null, rows: number | null, label: string | null, from: string | null, } | { "do": "split", pane: string, dir: SplitDir, machine: string | null, argv: Array<string>, cwd: string | null, ratio: number | null, } | { "do": "add_tab", pane: string, } | { "do": "close", pane: string, kill: boolean, } | { "do": "resize", pane: string, direction: PaneDirection, amount: number | null, } | { "do": "rename_tab", tab: string, name: string, } | { "do": "close_tab", tab: string, } | { "do": "move_to_new_tab", pane: string, name: string | null, } | { "do": "zoom", pane: string, zoomed: boolean | null, } | { "do": "swap", pane: string, with: string, } | { "do": "split_ratio", tab: string, path: Array<boolean>, ratio: number, } | { "do": "move_tab", tab: string, index: number, };
-
-export type GridRun = {
-/**
- * 글자들. 넓은 글자(한글 등)는 두 칸을 차지하고 뒤 칸은 따로 적지 않는다.
- */
-t: string, fg: number, bg: number,
-/**
- * 1=굵게, 2=기울임, 4=밑줄, 8=반전
- */
-a: number, };
-
-export type GridLine = { row: number, runs: Array<GridRun>, };
-
-export type GridLink = { row: number, col: number, end: number, uri: string, };
-
-export type GridFrame = { pane: string, cols: number, rows: number, cursor_row: number, cursor_col: number, cursor_visible: boolean, full: boolean, lines: Array<GridLine>,
-/**
- * 그 pane 프로그램이 켠 모드(1.14부터, 옛 host는 기본값)
- */
-modes: PaneModes,
-/**
- * 이 구독이 보는 기록 위치(`PaneScroll`, 1.26부터, 옛 host는 맨 아래)
- */
-scroll: GridScroll,
-/**
- * 보이는 화면의 OSC 8 링크 칸 전부(1.36부터, 바뀐 줄만 보내는 frame에도 늘 전부). 옛 host는 없음
- */
-links?: Array<GridLink>, };
-
-export type PaneModes = { mouse: MouseMode, mouse_encoding: MouseEncoding,
-/**
- * alternate screen(`CSI ? 1049 h` 등)
- */
-alt_screen: boolean,
-/**
- * DECCKM(`CSI ? 1 h`): 화살표를 `ESC O x`로
- */
-app_cursor: boolean, };
-
-export type MouseMode = "none" | "press" | "press_release" | "button_motion" | "any_motion";
-
-export type MouseEncoding = "default" | "utf8" | "sgr";
-
-export type GridScroll = { offset: number, max: number, };
-
-export type ScrollBy = { "to": "up", lines: number, } | { "to": "down", lines: number, } | { "to": "bottom" } | { "to": "offset", lines: number, };
-
-export type TextPoint = { row: number, col: number, };
-
-export type TextRange = { start: TextPoint, end: TextPoint, };
-
-export type CopyMotion = "next_word_start" | "previous_word_start" | "next_word_end" | "next_big_word_start" | "previous_big_word_start" | "next_big_word_end" | "previous_paragraph" | "next_paragraph";
-
-export type SearchDirection = "forward" | "backward";
 
 export type PendingEnroll = { name: string, machine_id: string,
 /**
@@ -343,7 +289,7 @@ lines: number | null, format: ReadFormat, } | { "op": "pane_send_text", pane: st
 /**
  * 없으면 끝없이 기다린다(herdr와 같다)
  */
-timeout_ms: number | null, } | { "op": "pane_get", pane: string, } | { "op": "pane_close", pane: string, } | { "op": "workspaces" } | { "op": "workspace_close", name: string, } | { "op": "workspace_rename", name: string, to: string, } | { "op": "pane_resize", pane: string, cols: number, rows: number, } | { "op": "pane_kill", pane: string, } | { "op": "pane_input", pane: string, data: B64, } | { "op": "pane_ctrl_enter", pane: string, } | { "op": "front_identity", version: string, sha256: string | null, } | { "op": "pane_copy_report", pane: string, outcome: ClipboardOutcome, } | { "op": "pane_paste", pane: string, text: string, } | { "op": "pane_take", pane: string, } | { "op": "pane_release", pane: string, } | { "op": "pane_attach", pane: string, offset: number, total: number, sha256: string, data: B64, } | { "op": "pane_resume", pane: string, } | { "op": "pane_forget", pane: string, } | { "op": "pane_rename", pane: string, label: string | null, } | { "op": "pane_watch", pane: string, } | { "op": "pane_unwatch", pane: string, } | { "op": "pane_scroll", pane: string, by: ScrollBy, } | { "op": "pane_selection_read", pane: string, from: TextPoint, to: TextPoint, } | { "op": "pane_copy_motion", pane: string, cursor: TextPoint, motion: CopyMotion, } | { "op": "pane_edit_scrollback", workspace: string | null, pane: string, } | { "op": "pane_copy_search", pane: string, query: string, direction: SearchDirection, cursor: TextPoint, previous: TextRange | null, } | { "op": "pane_link", pane: string, at: TextPoint, } | { "op": "workspace", name: string | null, } | { "op": "layout_apply", workspace: string | null, change: LayoutChange, } | { "op": "enroll_open", minutes: number, } | { "op": "enroll_pending" } | { "op": "enroll_approve", name: string, code: string, } | { "op": "machine_revoke", name: string, } | { "op": "web_pair", role: DeviceRole, } | { "op": "devices" } | { "op": "device_rename", id: string, label: string, } | { "op": "device_revoke", id: string, } | { "op": "web_publish" } | { "op": "web_publish_off" } | { "op": "web_status" } | { "op": "project_create", name: string, goal: string,
+timeout_ms: number | null, } | { "op": "pane_get", pane: string, } | { "op": "pane_close", pane: string, } | { "op": "workspaces" } | { "op": "workspace_close", name: string, } | { "op": "workspace_rename", name: string, to: string, } | { "op": "pane_resize", pane: string, cols: number, rows: number, } | { "op": "pane_kill", pane: string, } | { "op": "pane_input", pane: string, data: B64, } | { "op": "pane_ctrl_enter", pane: string, } | { "op": "pane_paste", pane: string, text: string, } | { "op": "pane_take", pane: string, } | { "op": "pane_release", pane: string, } | { "op": "pane_attach", pane: string, offset: number, total: number, sha256: string, data: B64, } | { "op": "pane_resume", pane: string, } | { "op": "pane_forget", pane: string, } | { "op": "pane_rename", pane: string, label: string | null, } | { "op": "workspace", name: string | null, } | { "op": "layout_apply", workspace: string | null, change: LayoutChange, } | { "op": "enroll_open", minutes: number, } | { "op": "enroll_pending" } | { "op": "enroll_approve", name: string, code: string, } | { "op": "machine_revoke", name: string, } | { "op": "web_pair", role: DeviceRole, } | { "op": "devices" } | { "op": "device_rename", id: string, label: string, } | { "op": "device_revoke", id: string, } | { "op": "web_publish" } | { "op": "web_publish_off" } | { "op": "web_status" } | { "op": "project_create", name: string, goal: string,
 /**
  * `PATH` 또는 `PATH@MACHINE`(머신이 없으면 host 머신, 상대 경로는 CLI가 절대 경로로 바꿔 보낸다)
  */
@@ -431,7 +377,7 @@ message: MessageView | null, } | { "kind": "context" } & ProjectContext | { "kin
 /**
  * `check`가 통과했을 때 설명
  */
-valid: string | null, } | { "kind": "screen" } & ScreenText | { "kind": "read" } & ReadView | { "kind": "thread_pane" } & ThreadPaneView | { "kind": "output_matched", matched_line: string, read: ReadView, } | { "kind": "workspaces", workspaces: Array<WorkspaceSummary>, } | { "kind": "chat" } & ChatView | { "kind": "pane_file", info: FileInfo | null, candidates: Array<string>, url: string | null, } | { "kind": "pane_dir", listing: DirListing, } | { "kind": "pending", pending: Array<PendingEnroll>, } | { "kind": "pair_code", code: string, role: DeviceRole, expires_in_s: number, } | { "kind": "publish" } & PublishState | { "kind": "devices", devices: Array<DeviceView>, } | { "kind": "workspace" } & Workspace | { "kind": "done" } | { "kind": "selection", pane: string, text: string, truncated: boolean, } | { "kind": "link", pane: string, url: string | null, } | { "kind": "copy_cursor", pane: string, cursor: TextPoint, } | { "kind": "copy_search", pane: string, matches: Array<TextRange>, total: bigint, current: number | null, current_global: bigint | null, } | { "kind": "attached", path: string, inserted: boolean, note: string | null, } | { "kind": "projects", projects: Array<ProjectView>, } | { "kind": "project" } & ProjectView | { "kind": "project_change" } & ProjectChange | { "kind": "project_opened" } & ProjectOpened | { "kind": "project_files", checks: Array<ProjectFilesCheck>, } | { "kind": "profiles", machine: string, profiles: Array<ProfileView>, } | { "kind": "profile_resolved", profile: ProfileView, } | { "kind": "threads", threads: Array<ThreadView>, } | { "kind": "thread" } & ThreadView | { "kind": "events", events: Array<FlowEvent>, } | { "kind": "questions", questions: Array<QuestionView>, } | { "kind": "question" } & QuestionView | { "kind": "message" } & MessageView | { "kind": "inbox", items: Array<InboxItem>,
+valid: string | null, } | { "kind": "screen" } & ScreenText | { "kind": "read" } & ReadView | { "kind": "thread_pane" } & ThreadPaneView | { "kind": "output_matched", matched_line: string, read: ReadView, } | { "kind": "workspaces", workspaces: Array<WorkspaceSummary>, } | { "kind": "chat" } & ChatView | { "kind": "pane_file", info: FileInfo | null, candidates: Array<string>, url: string | null, } | { "kind": "pane_dir", listing: DirListing, } | { "kind": "pending", pending: Array<PendingEnroll>, } | { "kind": "pair_code", code: string, role: DeviceRole, expires_in_s: number, } | { "kind": "publish" } & PublishState | { "kind": "devices", devices: Array<DeviceView>, } | { "kind": "workspace" } & Workspace | { "kind": "done" } | { "kind": "attached", path: string, inserted: boolean, note: string | null, } | { "kind": "projects", projects: Array<ProjectView>, } | { "kind": "project" } & ProjectView | { "kind": "project_change" } & ProjectChange | { "kind": "project_opened" } & ProjectOpened | { "kind": "project_files", checks: Array<ProjectFilesCheck>, } | { "kind": "profiles", machine: string, profiles: Array<ProfileView>, } | { "kind": "profile_resolved", profile: ProfileView, } | { "kind": "threads", threads: Array<ThreadView>, } | { "kind": "thread" } & ThreadView | { "kind": "events", events: Array<FlowEvent>, } | { "kind": "questions", questions: Array<QuestionView>, } | { "kind": "question" } & QuestionView | { "kind": "message" } & MessageView | { "kind": "inbox", items: Array<InboxItem>,
 /**
  * `inbox_done`이 끝낸 항목 수(그때 `items`는 남은 항목). 목록 요청에는 없다.
  */
@@ -445,9 +391,7 @@ omitted_open: number,
  */
 omitted_done: number, } | { "kind": "ticker", runs: bigint, } | { "kind": "routines", routines: Array<RoutineView>, } | { "kind": "library" } & LibraryView | { "kind": "library_link" } & LinkView | { "kind": "library_reports", reports: Array<LibraryReport>, } | { "kind": "library_imported", reports: Array<LibraryReport>, skipped: Array<LibrarySkip>, } | { "kind": "library_pruned", removed: Array<string>, } | { "kind": "library_prune_preview" } & LibraryPrunePlan | { "kind": "library_rotated" } | { "kind": "library_usage", size: number, reports: number, live: number, problems: number, max_size: number, max_days: number, protected_size: number, } | { "kind": "library_links", links: Array<LinkView>, } | { "kind": "evaluators", evaluators: Array<EvaluatorView>, } | { "kind": "evaluations", evaluations: Array<EvaluationView>, } | { "kind": "evaluation" } & EvaluationView | { "kind": "preferences" } & SharedPreferences;
 
-export type ClipboardOutcome = "copied" | "requested" | "failed";
-
-export type FrontEvent = { "ev": "state", machines: Array<MachineView>, panes: Array<PaneView>, } | { "ev": "workspace" } & Workspace | { "ev": "grid" } & GridFrame | { "ev": "clipboard", pane: string, text: string, } | { "ev": "flow" } & FlowEvent | { "ev": "thread" } & ThreadView | { "ev": "question" } & QuestionView | { "ev": "preferences" } & SharedPreferences | { "ev": "pong", id: number, } | { "ev": "web", build: string, } | { "ev": "notice" } & NoticeView | { "ev": "chat_changed", pane: string, signature: string, } | { "ev": "chat_watching", pane: string, live: boolean, };
+export type FrontEvent = { "ev": "state", machines: Array<MachineView>, panes: Array<PaneView>, } | { "ev": "workspace" } & Workspace | { "ev": "flow" } & FlowEvent | { "ev": "thread" } & ThreadView | { "ev": "question" } & QuestionView | { "ev": "preferences" } & SharedPreferences | { "ev": "pong", id: number, } | { "ev": "web", build: string, } | { "ev": "notice" } & NoticeView | { "ev": "chat_changed", pane: string, signature: string, } | { "ev": "chat_watching", pane: string, live: boolean, };
 
 export type SubmitStage = "not_sent" | "no_enter" | "too_late";
 

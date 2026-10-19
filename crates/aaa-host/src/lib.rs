@@ -45,7 +45,6 @@ mod push;
 mod report_mark;
 mod restore;
 mod routine;
-mod scrollback;
 mod seen;
 pub mod tailscale;
 mod tasks;
@@ -200,11 +199,6 @@ pub enum OlderHistory {
 #[derive(Clone, Debug)]
 pub enum PaneEvent {
     Output(u64, Arc<Vec<u8>>),
-    /// 출력 당시 입력권 front에만 전달할 일회성 복사다.
-    Clipboard {
-        front: String,
-        text: String,
-    },
     /// 화면을 snapshot으로 다시 받아야 한다
     Reset,
     /// 상태(끊김·종료·크기)가 바뀌었다
@@ -268,7 +262,7 @@ fn exited_by_itself(old: &SessionInfo, new: &SessionInfo, kill_sent: bool) -> bo
 /// pane이 기억하는 대신한 옛 ID 수
 const REPLACED_KEEP: usize = 8;
 
-/// 대화형 front 연결(TUI의 UDS 연결, 웹 터미널 WebSocket 하나)
+/// 대화형 front 연결(로컬 front 연결, 웹 터미널 WebSocket 하나)
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct FrontRef {
     pub id: String,
@@ -276,7 +270,7 @@ pub struct FrontRef {
 }
 
 impl FrontRef {
-    /// 대화형 front(TUI·웹 터미널). 한 번 보내는 CLI는 아니다.
+    /// 대화형 front(웹 터미널). 한 번 보내는 CLI는 아니다.
     pub fn interactive(&self) -> bool {
         self.label != aaa_common::front::CLI_CLIENT
     }
@@ -384,7 +378,7 @@ pub struct Host {
     pub agent_listen: Mutex<Option<String>>,
     pub web_listen: Mutex<Option<String>>,
     workspaces: Mutex<HashMap<String, Workspace>>,
-    /// workspace가 바뀔 때(TUI가 구독한다)
+    /// workspace가 바뀔 때(front가 구독한다)
     pub layout_events: broadcast::Sender<Workspace>,
     front_seq: AtomicU64,
     /// 이 host 실행의 boot ID(흐름 사건에 같이 적는다)
@@ -488,8 +482,6 @@ pub struct Host {
     restoring: Mutex<HashSet<String>>,
     /// 이 host 실행에서 복원해 본 pane(한 번만 한다)
     restore_tried: Mutex<HashSet<String>>,
-    /// 기록 편집기 overlay pane(scrollback.rs). 메모리에만 둔다
-    overlays: Mutex<HashMap<String, scrollback::EditOverlay>>,
 }
 
 fn device_view(d: db::DeviceRow) -> aaa_proto::DeviceView {
@@ -646,7 +638,6 @@ impl Host {
             report_refresh: Mutex::new(HashMap::new()),
             restoring: Mutex::new(HashSet::new()),
             restore_tried: Mutex::new(HashSet::new()),
-            overlays: Mutex::new(HashMap::new()),
         }))
     }
 
@@ -746,9 +737,6 @@ impl Host {
         self.bump();
         for id in exited {
             self.spawn_close_exited(id, hello.machine_id.clone());
-        }
-        for s in hello.sessions.iter().filter(|s| !s.state.is_running()) {
-            self.overlay_ended(&s.id);
         }
         // host가 내려간 사이 끝났거나 지워진 이 머신 pane의 질문을 닫는다(agent가 세션을 모두 알렸다)
         let open = self.questions(false);
@@ -856,13 +844,6 @@ impl Host {
                 let data = c.data[(m.offset - c.offset) as usize..].to_vec();
                 let start = m.offset;
                 m.vt.feed(&data);
-                for text in m.vt.take_clipboard_writes() {
-                    if let Some(front) = &p.lease {
-                        tracing::info!(session = %c.session, front_id = %front.id, front = %front.label,
-                            bytes = text.len(), "pane OSC 52: 입력권 front로 전달");
-                        let _ = p.events.send(PaneEvent::Clipboard { front: front.id.clone(), text });
-                    }
-                }
                 m.offset = end;
                 let _ = p.events.send(PaneEvent::Output(start, Arc::new(data)));
                 None
@@ -909,7 +890,6 @@ impl Host {
         self.bump();
         if !info.state.is_running() {
             self.close_questions_of(&info.id);
-            self.overlay_ended(&info.id);
         }
         self.replay_harness(&info.id);
         // 끝난 세션은 thread 묶음을 바꾼다(transitions.rs): 다음 주기를 기다리지 않는다. 끝나기 직전에 쓴 보고를 먼저 본다.
@@ -1147,7 +1127,7 @@ impl Host {
         self.call_from(role, actor, None, req).await
     }
 
-    /// `front`는 대화형 연결(TUI·웹 터미널)일 때만 준다. 조작 lease는 이 연결에 묶인다.
+    /// `front`는 대화형 연결(웹 터미널)일 때만 준다. 조작 lease는 이 연결에 묶인다.
     pub async fn call_from(
         self: &Arc<Self>,
         role: DeviceRole,
@@ -1523,12 +1503,6 @@ impl Host {
             FrontRequest::PaneReadText { pane, source, lines, format } => {
                 self.pane_read_text(&pane, source, lines, format).await
             }
-            FrontRequest::PaneSelectionRead { pane, from, to } => self.pane_selection_read(&pane, from, to),
-            FrontRequest::PaneLink { pane, at } => self.pane_link(&pane, at),
-            FrontRequest::PaneCopyMotion { pane, cursor, motion } => self.pane_copy_motion(&pane, cursor, motion),
-            FrontRequest::PaneCopySearch { pane, query, direction, cursor, previous } => {
-                self.pane_copy_search(&pane, &query, direction, cursor, previous)
-            }
             FrontRequest::PaneSendText { pane, text } => self.pane_send_text(&pane, text, actor).await,
             FrontRequest::PaneSendKeys { pane, keys } => self.pane_send_keys(&pane, &keys, actor).await,
             FrontRequest::PaneSubmit { pane, text } => self.pane_submit(&pane, &text, actor).await,
@@ -1584,23 +1558,6 @@ impl Host {
                 )
                 .await
                 .map(|_| FrontResponse::Done)
-            }
-            FrontRequest::FrontIdentity { version, sha256 } => {
-                let f = front.ok_or_else(|| err(ErrorCode::BadRequest, "front 연결에서만 알린다"))?;
-                if version.len() > 128
-                    || !version.chars().all(|c| c.is_ascii_alphanumeric() || ".+- ".contains(c))
-                    || sha256.as_ref().is_some_and(|s| s.len() != 64 || !s.bytes().all(|c| c.is_ascii_hexdigit()))
-                {
-                    return Err(err(ErrorCode::BadRequest, "실행 파일 진단 형식이 아니다"));
-                }
-                tracing::info!(front_id = %f.id, front = %f.label, %version, ?sha256, "front 실행 파일(자기 신고)");
-                Ok(FrontResponse::Done)
-            }
-            FrontRequest::PaneCopyReport { pane, outcome } => {
-                let f = front.ok_or_else(|| err(ErrorCode::BadRequest, "대화형 front 연결에서만 알린다"))?;
-                let (id, _) = self.resolve_pane(&pane)?;
-                tracing::info!(session = %id, front_id = %f.id, front = %f.label, ?outcome, "front 복사 결과(자기 신고)");
-                Ok(FrontResponse::Done)
             }
             FrontRequest::PaneInput { pane, data } => {
                 let f = front.ok_or_else(|| {
@@ -1670,22 +1627,11 @@ impl Host {
                 Ok(FrontResponse::Done)
             }
             FrontRequest::PaneRename { pane, label } => self.rename(&pane, label, role, actor).await,
-            FrontRequest::PaneWatch { .. } | FrontRequest::PaneUnwatch { .. } | FrontRequest::PaneScroll { .. } => {
-                Err(err(ErrorCode::BadRequest, "화면 구독은 같은 머신 front 연결(aaa attach)에서만 쓴다"))
+            FrontRequest::PaneAttach { .. } => {
+                Err(err(ErrorCode::BadRequest, "그림 붙여넣기는 같은 머신 front 연결(aaa pane attach)에서만 쓴다"))
             }
-            // 받는 중인 첨부는 연결마다 하나라 front 연결 처리기(`front.rs`)가 직접 받는다
-            FrontRequest::PaneAttach { .. } => Err(err(
-                ErrorCode::BadRequest,
-                "그림 붙여넣기는 같은 머신 front 연결(aaa attach·aaa pane attach)에서만 쓴다",
-            )),
             FrontRequest::Workspace { name } => {
                 Ok(FrontResponse::Workspace(self.workspace(name.as_deref().unwrap_or(DEFAULT_WORKSPACE))))
-            }
-            FrontRequest::PaneEditScrollback { workspace, pane } => {
-                let name = workspace
-                    .or_else(|| self.workspace_of_pane(&pane))
-                    .unwrap_or_else(|| DEFAULT_WORKSPACE.to_string());
-                self.pane_edit_scrollback(&name, &pane, actor).await.map(FrontResponse::Workspace)
             }
             FrontRequest::LayoutApply { workspace, change } => {
                 // workspace를 주지 않으면 그 pane·탭이 든 workspace(없으면 main)
@@ -1813,11 +1759,7 @@ impl Host {
     // ───────────── 조작 lease(§4.5) ─────────────
 
     pub fn new_front(&self, label: String) -> FrontRef {
-        let front = FrontRef { id: format!("f{}", self.front_seq.fetch_add(1, Ordering::Relaxed) + 1), label };
-        if front.label.starts_with("tui@") {
-            tracing::info!(front_id = %front.id, front = %front.label, "TUI front 연결");
-        }
-        front
+        FrontRef { id: format!("f{}", self.front_seq.fetch_add(1, Ordering::Relaxed) + 1), label }
     }
 
     fn lease_set(&self, id: &str, to: Option<FrontRef>) {
@@ -1831,8 +1773,8 @@ impl Host {
             let _ = p.events.send(PaneEvent::State);
         }
         self.bump();
-        // TUI가 그 pane을 쓰기 시작했다: 봤다(herdr `mark_active_tab_seen`). 웹 화면은 presence로 센다(seen.rs)
-        if self.inner.lock().unwrap().panes.get(id).is_some_and(|p| self.someone_sees(id, p.lease.as_ref())) {
+        // 보는 웹 화면이 그 pane을 쓰기 시작하면 봤다(seen.rs).
+        if self.inner.lock().unwrap().panes.contains_key(id) && self.someone_sees(id) {
             self.mark_seen(&[id.to_string()]);
         }
     }
@@ -2370,7 +2312,7 @@ impl Host {
         out
     }
 
-    /// workspace를 닫는다: 그 안 pane을 끝내고(역할 있는 pane은 두고) layout을 지운다. 붙은 TUI에는 빈 workspace로 알린다.
+    /// workspace를 닫는다: 그 안 pane을 끝내고(역할 있는 pane은 두고) layout을 지운다. front에는 빈 workspace로 알린다.
     async fn workspace_close(self: &Arc<Self>, name: &str, actor: &str) -> Result<FrontResponse, ErrorBody> {
         let w = self
             .workspaces

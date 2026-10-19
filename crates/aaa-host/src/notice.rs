@@ -1,10 +1,10 @@
-//! 앱 안 알림(plan §8.185): 다른 agent의 턴이 끝났다·thread에 새 보고가 왔다를 front(TUI 카드·웹 Droplet)에 알린다.
+//! 앱 안 알림(plan §8.185): 다른 agent의 턴이 끝났다·thread에 새 보고가 왔다를 front(웹 Droplet)에 알린다.
 //! 휴대폰 push는 아니다: inbox 항목을 만들지 않으므로 notify.rs·push.rs가 보지 않는다.
 //!
 //! - 끝남(herdr 0.9.5 `src/app/actions.rs` 77~93 `is_background_completion_transition`: 작업·질문에서 쉼으로)은 그때 그 pane을
 //!   보는 화면이 없을 때만이다. herdr 화면은 `Finished`를 그 pane이 아직 「끝남(안 봄)」일 때만 띄운다
 //!   (`src/client/shell/notification_policy.rs` 319~370 `validate_state`, `src/app/api_helpers.rs` 100~102). aaa에서 그것은
-//!   `seen.rs`의 「봤음」이다(보는 웹 화면·TUI lease).
+//!   `seen.rs`의 「봤음」이다(보는 웹 화면).
 //! - 턴 길이는 작업·질문으로 들어선 때부터 잰다(herdr-web-ui `src/lib/droplet.ts` 82~92 `trackTurn`: 질문 동안도 턴이다).
 //!   host가 그 턴의 시작을 못 봤으면 모른다(null). 웹은 긴 턴(60초 이상이거나 모름, 같은 파일 33·42~47)만 띄운다.
 //! - thread pane의 끝남은 그 턴이 낸 보고 확인(orch.rs `refresh_report`)과 ticker의 묶음 셈이 끝날 때까지 미룬다. 같은 턴에

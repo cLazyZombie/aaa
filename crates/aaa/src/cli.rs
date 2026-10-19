@@ -59,7 +59,7 @@ enum Cmd {
         #[command(subcommand)]
         cmd: TabCmd,
     },
-    /// workspace(이름 있는 layout, `aaa attach -w`로 붙는다): 목록·만들기·이름·닫기(출력은 늘 JSON 한 줄)
+    /// workspace(이름 있는 layout): 목록·만들기·이름·닫기(출력은 늘 JSON 한 줄)
     Workspace {
         #[command(subcommand)]
         cmd: WorkspaceCmd,
@@ -69,7 +69,8 @@ enum Cmd {
         #[arg(value_parser = ["bash", "elvish", "fish", "powershell", "zsh"])]
         shell: String,
     },
-    /// TUI front: host의 workspace를 터미널에서 보고 조작한다(같은 머신, 또는 --remote로 다른 기기에서)
+    /// 삭제된 TUI: 웹 UI 주소는 host의 `aaa web status`로 확인한다
+    #[command(alias = "tui")]
     Attach {
         /// workspace 이름(기본 main)
         #[arg(long, short)]
@@ -408,7 +409,7 @@ enum EvaluatorCmd {
     },
     /// 평가자 상태: 실행 여부, 넘긴 사건 묶음, 받은 평가, 정하지 않은 개선안
     Status { project: Option<String> },
-    /// 평가자 화면을 TUI로 연다(workspace `eval-<project>`). 나가도 평가자는 배경에서 계속 돈다
+    /// 삭제된 평가자 TUI 열기. 웹 UI의 평가자 pane을 쓴다
     Open { project: String },
     /// 평가자를 끝낸다(평가자 thread resolve)
     Unassign { project: String },
@@ -779,7 +780,7 @@ enum PaneCmd {
         thinking: bool,
     },
     /// 그림 파일(PNG·JPEG·GIF·WebP)을 pane 머신의 세션 폴더에 올린다. harness 입력창이면 경로를 넣는다(Enter 없음).
-    /// clipboard가 없는 raw ssh 셸에서 쓴다. TUI(`aaa attach`)에서는 Ctrl+V가 같은 일을 한다.
+    /// raw ssh 셸에서 그림 파일을 pane에 첨부한다.
     Attach { pane: String, file: std::path::PathBuf },
     /// 세션만 끝낸다(layout 자리와 기록은 남아 `pane resume`으로 다시 띄울 수 있다)
     Kill { pane: String },
@@ -1361,29 +1362,9 @@ fn run(cli: Cli) -> Result<ExitCode> {
                 }
             },
         ),
-        Cmd::Attach { workspace, remote: None } => {
-            init_log("warn");
-            aaa_tui::run(workspace)
+        Cmd::Attach { .. } | Cmd::Evaluator { cmd: EvaluatorCmd::Open { .. } } => {
+            anyhow::bail!("{}", aaa_common::front::TUI_REMOVED)
         }
-        Cmd::Attach { workspace, remote: Some(url) } => {
-            let target = aaa_common::remote::Target::parse(&url)?;
-            init_log("warn");
-            aaa_tui::run_remote(workspace, &target, |why| {
-                // 기기 pairing은 사람이 한다: 코드는 host 사람이 낸다
-                crate::person::require("원격 TUI pairing")?;
-                println!("{why}.");
-                println!(
-                    "host에서 사람이 `aaa web pair`(보기만이면 `--reader`)로 낸 코드를 넣는다({}).",
-                    target.origin()
-                );
-                let code = crate::person::ask("pairing 코드: ")?;
-                if code.is_empty() {
-                    anyhow::bail!("pairing 코드가 비었다");
-                }
-                Ok(code)
-            })
-        }
-        Cmd::Evaluator { cmd: EvaluatorCmd::Open { project } } => evaluator_open(&project),
         Cmd::Evaluator { cmd } => front(
             json,
             match cmd {
@@ -2044,35 +2025,6 @@ fn routine_approve(json: bool, project: String, name: String) -> Result<ExitCode
         anyhow::bail!("이름이 다르다. 승인하지 않았다");
     }
     front(json, FrontRequest::RoutineApprove { project, name, command_sha256: r.command_sha256 })
-}
-
-/// 평가자 pane을 workspace `eval-<project>`에 두고 TUI로 연다(일반 attach와 lease 규칙이 같다)
-fn evaluator_open(project: &str) -> Result<ExitCode> {
-    let v = match front_call(FrontRequest::EvaluatorStatus { project: Some(project.to_string()) })? {
-        Ok(FrontResponse::Evaluators { evaluators }) => evaluators.into_iter().next(),
-        Ok(_) => None,
-        Err(e) => anyhow::bail!("{e}"),
-    };
-    let v = v.with_context(|| format!("{project}에 사후 평가자가 없다(aaa evaluator assign)"))?;
-    let pane = v.thread.pane.clone().context("평가자 세션이 없다")?;
-    if !v.running {
-        eprintln!("평가자 세션이 끝나 있다. 다시 띄우려면: aaa thread restart {project} {} --resume", v.thread.id);
-    }
-    let ws = format!("eval-{project}");
-    let have = match front_call(FrontRequest::Workspace { name: Some(ws.clone()) })? {
-        Ok(FrontResponse::Workspace(w)) => aaa_proto::layout::ws_contains(&w, &pane),
-        _ => false,
-    };
-    if !have
-        && let Err(e) = front_call(FrontRequest::LayoutApply {
-            workspace: Some(ws.clone()),
-            change: LayoutChange::AddTab { pane: pane.clone() },
-        })?
-    {
-        anyhow::bail!("{e}");
-    }
-    init_log("warn");
-    aaa_tui::run(Some(ws))
 }
 
 fn project_cmd(json: bool, cmd: ProjectCmd) -> Result<ExitCode> {
@@ -2847,14 +2799,6 @@ fn render_front(r: &FrontResponse) -> String {
             }
         }
         FrontResponse::Read(v) => s.push_str(&v.text),
-        FrontResponse::Selection { text, .. } => s.push_str(text),
-        FrontResponse::Link { url, .. } => s.push_str(url.as_deref().unwrap_or("")),
-        FrontResponse::CopyCursor { cursor, .. } => {
-            let _ = write!(s, "{}:{}", cursor.row, cursor.col);
-        }
-        FrontResponse::CopySearch { total, current_global, .. } => {
-            let _ = write!(s, "{}/{total}", current_global.map_or(0, |n| n + 1));
-        }
         FrontResponse::ThreadPane(v) => render_thread_pane(&mut s, v),
         FrontResponse::OutputMatched { matched_line, .. } => {
             let _ = writeln!(s, "{matched_line}");
@@ -3360,11 +3304,7 @@ fn mission_cmd(json: bool, cmd: MissionCmd) -> Result<ExitCode> {
         MissionCmd::Restart { project, name } => FrontRequest::MissionRestart { project, name },
         MissionCmd::Open { project, name } => {
             let res = front_call(FrontRequest::MissionOpen { project: project.clone(), name: name.clone() })?;
-            if res.is_err() || json {
-                return front_print(json, res);
-            }
-            init_log("warn");
-            return aaa_tui::run(Some(format!("mission-{project}-{name}")));
+            return front_print(json, res);
         }
         MissionCmd::Approve { project, name } => {
             crate::person::require("aaa mission approve")?;

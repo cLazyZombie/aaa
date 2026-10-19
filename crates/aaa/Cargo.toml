@@ -1,6 +1,6 @@
 [package]
 name = "aaa"
-description = "aaa 진입점: 한 실행 파일에서 역할(host·agent·session host·TUI·CLI)을 고르고 doctor를 연다"
+description = "aaa 진입점: 한 실행 파일에서 역할(host·agent·session host·CLI)을 고르고 doctor를 연다"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -18,7 +18,6 @@ aaa-doctor.workspace = true
 aaa-session.workspace = true
 aaa-agent.workspace = true
 aaa-host.workspace = true
-aaa-tui.workspace = true
 anyhow.workspace = true
 serde.workspace = true
 serde_json.workspace = true
@@ -45,9 +44,3 @@ objc2-service-management = "0.3"
 [dev-dependencies]
 libc.workspace = true
 portable-pty.workspace = true
-# TUI harness의 독립 관측 parser(production VT인 vt100과 다른 구현)
-vte = "0.15"
-unicode-width = "0.2"
-# TUI Ctrl+V 그림 E2E: 받은 PNG를 풀어 pixel을 보고, CI에서는 실제 clipboard에 쓴다
-png = "0.18"
-arboard = { version = "3", default-features = false, features = ["image-data"] }

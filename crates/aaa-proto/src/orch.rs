@@ -648,7 +648,7 @@ pub enum ThreadGroup {
 }
 
 impl ThreadGroup {
-    /// 사람이 읽는 이름(CLI·TUI·웹과 같은 말)
+    /// 사람이 읽는 이름(CLI·웹과 같은 말)
     pub fn label(self) -> &'static str {
         match self {
             ThreadGroup::WaitingOnYou => "확인 필요",
@@ -661,7 +661,7 @@ impl ThreadGroup {
     }
 
     /// 보이는 차례(herdr-projects `Group::rank`·`DISPLAY_ORDER`): 확인 필요 1 → 검토 2 → 병합 중 3 → 작업 4 → 쉼 5 → 끝남 6.
-    /// 목록(TUI·웹)·popup·overview가 같은 차례다. 묶음을 정하는 우선순위(host `group`)와는 따로다.
+    /// 목록(웹)·popup·overview가 같은 차례다. 묶음을 정하는 우선순위(host `group`)와는 따로다.
     pub fn rank(self) -> u8 {
         match self {
             ThreadGroup::WaitingOnYou => 1,
