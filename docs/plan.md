@@ -5445,6 +5445,12 @@ primary 근거:
   Ctrl+Shift+C·쓰기 실패가 pane에 들어가지 않음. raw 관측기는 ISIG를 끄고 뒤따른 표지의 수신 bytes로 끝낸다.
   기존 native clipboard CI 왕복 하나를 한글·이모지·여러 줄 텍스트 쓰기/읽기까지 넓혔다.
   개발 머신의 실제 clipboard는 건드리지 않는다. xwin은 Windows 교차 빌드이고 Windows 실행 증거는 CI다.
+- **Windows CI 후속.** 첫 console 소유자 구현은 Windows CI 실제 텍스트 쓰기에서 실패했다(run 39189740640,
+  native_clipboard_roundtrip). 공개 annotation은 panic 위치만 남기고 API 오류 본문을 빼, 그 원인을 단정하지 않는다.
+  쓰는 스레드 소유의 message-only STATIC 창을 만들고 clipboard를 닫은 뒤 지우도록 고쳤다.
+  console 창이 없는 실행 환경에서도 NULL·남의 창에 기대지 않는 Microsoft clipboard owner 계약이다.
+  표시·전역 설정·별도 메시지 루프 없이 즉시 렌더링하고, 같은 native 왕복 시험의 기대를 유지한다.
+  다음 실패부터 API 오류도 기존 CI annotation에 담기도록 native 시험 진단을 보강했다.
 - 웹 steering과 TUI 여러 줄 Enter는 각각 별도 작업 범위다.
 
 ### 8.226 휴대폰 푸시 본문에 보고 첫 줄 요약(10-19, t-0379)
