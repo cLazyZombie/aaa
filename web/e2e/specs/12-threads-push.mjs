@@ -544,7 +544,7 @@ export default async function ({ page }) {
       // 알림마다 소리를 보려면 앞 소리가 끝난 뒤에 다음 보고를 낸다
       if (chime) await until("앞 소리 끝", () => ap.evaluate(() => performance.now() / 1000 > (window.__chimeEnd ?? 0)));
       const before = aaa("thread", "show", "demo", t.id).report_hash;
-      fs.writeFileSync(`${work}/report.md`, `## Report\n- ${what} ${++n}\n`);
+      fs.writeFileSync(`${work}/report.md`, `[완료] 맡긴 일 끝\n\n## Report\n- ${what} ${++n}\n`);
       return await until(`${what} 보고`, () => {
         const h = aaa("thread", "show", "demo", t.id).report_hash;
         return h !== before && h;

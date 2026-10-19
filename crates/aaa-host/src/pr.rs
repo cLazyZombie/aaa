@@ -30,9 +30,16 @@ use crate::{AgentConn, Host, err};
 /// 보고 첫 줄의 `PR:` 값. 정확히 `https://github.com/<owner>/<repo>/pull/<number>`일 때만 받는다.
 /// `Err`는 `PR:` 줄이 있는데 받을 수 없을 때 inbox에 쓸 말이다.
 pub(crate) fn pr_line(report: &str) -> Result<Option<String>, String> {
-    let Some(first) = report.lines().next() else {
+    let mut lines = report.lines();
+    let Some(mut first) = lines.next() else {
         return Ok(None);
     };
+    if crate::report_mark::marker(first).is_some() {
+        let Some(next) = lines.next() else {
+            return Ok(None);
+        };
+        first = next;
+    }
     let Some(value) = first.strip_prefix("PR:") else {
         return Ok(None);
     };
@@ -40,7 +47,7 @@ pub(crate) fn pr_line(report: &str) -> Result<Option<String>, String> {
     if valid_pr_url(value) {
         Ok(Some(value.to_string()))
     } else {
-        Err("보고 첫 줄 `PR:`이 https://github.com/<owner>/<repo>/pull/<number> 꼴이 아니라 쓰지 않았다".into())
+        Err("보고 머리 `PR:`이 https://github.com/<owner>/<repo>/pull/<number> 꼴이 아니라 쓰지 않았다".into())
     }
 }
 
@@ -671,6 +678,11 @@ mod tests {
             pr_line("PR: https://github.com/o/r/pull/12\n## Report\n").unwrap().as_deref(),
             Some("https://github.com/o/r/pull/12")
         );
+        assert_eq!(
+            pr_line("[완료] 구현과 확인 끝\nPR: https://github.com/o/r/pull/12\n## Report").unwrap().as_deref(),
+            Some("https://github.com/o/r/pull/12")
+        );
+        assert_eq!(pr_line("[완료] 끝\n\nPR: https://github.com/o/r/pull/12").unwrap(), None);
         assert_eq!(pr_line("## Report\nPR: https://github.com/o/r/pull/1").unwrap(), None);
         assert_eq!(pr_line("").unwrap(), None);
         for bad in ["PR: http://github.com/o/r/pull/1", "PR: https://github.com/o/r/pull/1 --repo x", "PR: --web"] {

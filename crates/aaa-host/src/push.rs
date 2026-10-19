@@ -396,7 +396,13 @@ pub(crate) fn for_device(a: crate::db::Alerts, items: &[InboxItem]) -> Vec<Inbox
     items
         .iter()
         .filter(|i| match i.item_kind.as_str() {
-            "post" => a.input,
+            "post" => {
+                if i.event == "post completed" {
+                    a.done
+                } else {
+                    a.input
+                }
+            }
             "thread-state" => {
                 if i.event == "new report" {
                     a.done

@@ -1,0 +1,31 @@
+//! 보고 표지는 알림 의도만 나타낸다. thread 묶음과 진행률은 기존 규칙으로 셈한다.
+use crate::{Host, orch::ThreadRec};
+use aaa_proto::ReportAttention;
+use sha2::{Digest, Sha256};
+
+pub(crate) fn marker(report: &str) -> Option<&'static str> {
+    let first = report.trim_start_matches('\u{feff}').lines().next()?;
+    ["[완료]", "[결정 필요]", "[검수 대기]", "[사람 필요]", "[착지]", "[진행 중]"]
+        .into_iter()
+        .find(|m| first == *m || first.strip_prefix(m).is_some_and(|rest| rest.starts_with(char::is_whitespace)))
+}
+
+impl Host {
+    /// 사본 교체와 DB 갱신 사이의 다른 보고를 알림 의도로 읽지 않는다.
+    pub(crate) fn report_marker(&self, r: &ThreadRec) -> Option<&'static str> {
+        let dir = self.project_dir(&r.project).ok()?;
+        let bytes = std::fs::read(dir.join("threads").join(format!("{}.md", r.id))).ok()?;
+        if Some(hex::encode(Sha256::digest(&bytes))) != r.report_hash {
+            return None;
+        }
+        marker(std::str::from_utf8(&bytes).ok()?)
+    }
+
+    pub(crate) fn report_attention(&self, r: &ThreadRec) -> Option<ReportAttention> {
+        match self.report_marker(r) {
+            Some("[완료]") => Some(ReportAttention::Completed),
+            Some("[결정 필요]" | "[검수 대기]" | "[사람 필요]") => Some(ReportAttention::NeedsUser),
+            _ => None,
+        }
+    }
+}

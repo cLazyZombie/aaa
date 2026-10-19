@@ -40,6 +40,7 @@ mod project;
 mod prompt;
 mod prompt_box;
 mod push;
+mod report_mark;
 mod restore;
 mod routine;
 mod scrollback;

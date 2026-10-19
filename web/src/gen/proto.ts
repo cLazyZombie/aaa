@@ -555,6 +555,8 @@ export type BriefState = "pending" | "delivered" | "unknown";
 
 export type ThreadGroup = "waiting_on_you" | "ready_for_review" | "landing" | "working" | "idle" | "resolved";
 
+export type ReportAttention = "completed" | "needs_user";
+
 export type ThreadView = { project: string, id: string, title: string, machine: string, profile: string, role: Role,
 /**
  * (FrontResponse 태그 `kind`와 겹치지 않게 이름을 달리한다)
@@ -563,7 +565,7 @@ thread_kind: ThreadKind, mission?: string, status: ThreadStatus, group: ThreadGr
 /**
  * 추적하는 PR(§8.80)
  */
-pr: ThreadPr | null, report_hash: string | null, acked_hash: string | null,
+pr: ThreadPr | null, report_hash: string | null, report_attention?: ReportAttention, acked_hash: string | null,
 /**
  * report.md `## Next` 줄
  */

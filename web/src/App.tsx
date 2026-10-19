@@ -416,11 +416,12 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
     alertLate(replayFrom, q.project ?? null, q.thread ?? null, raise, told);
   };
   // seenReports: thread마다 알린(또는 처음 볼 때 이미 검토 대기였던) 보고 hash
-  const reviewHash = (t: ThreadView) => (t.group === "ready_for_review" ? t.report_hash : null);
+  const reviewHash = (t: ThreadView) => (t.report_attention && t.report_hash !== t.acked_hash ? t.report_hash : null);
   const reportNews = (t: ThreadView, replayFrom: number | null = null) => {
     const key = threadKey(t);
     const target = `thread=${encodeURIComponent(key)}`;
-    const told = (outcome: string) => tellAlert({ project: t.project, target, kind: "done", outcome });
+    const kind = t.report_attention === "needs_user" ? "input" : "done";
+    const told = (outcome: string) => tellAlert({ project: t.project, target, kind, outcome });
     if (!seenReports.current.has(key)) {
       seenReports.current.set(key, reviewHash(t));
       // 처음 보는 thread는 새 소식이 아니다. 검토 대기 보고면 무엇을 하지 않았는지 남긴다(목록을 읽기 전에 온 사건도 여기다)
@@ -435,12 +436,12 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
     const show = (libraryUrl: string | null) => {
       const { sel, panes } = now.current;
       const raise: Raise = (late) => raiseAlert({
-        kind: "done", target, late, libraryUrl,
+        kind: kind === "input" ? "blocked" : "done", target, late, libraryUrl,
         showing: sel === `thread:${key}`,
         title: t.title || t.id,
         machine: null,
         agent: agentOf(t.pane ? panes.find((x) => x.id === t.pane) : undefined, t),
-        notice: { title: `${t.project} · ${t.title || t.id}`, body: libraryUrl ? `보고 준비\n보기: ${libraryUrl}` : "보고 준비", tag: `aaa-${t.project}/${t.id}` },
+        notice: { title: `${t.project} · ${t.title || t.id}`, body: `${kind === "input" ? "사람 필요" : "맡긴 일 완료"}${libraryUrl ? `\n보기: ${libraryUrl}` : ""}`, tag: `aaa-${t.project}/${t.id}` },
       });
       alertLate(replayFrom, t.project, t.id, raise, told);
     };

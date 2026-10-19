@@ -49,7 +49,8 @@ pub(crate) const THREAD_GUIDE: &str = "\
 
 보고 형식:
 
-- pull request를 열었으면 첫 줄에 `PR: <url>`(선택). 주소는 `https://github.com/<owner>/<repo>/pull/<number>` 전체를 쓴다.
+- 첫 줄에 `[완료]`(맡긴 일 전체와 확인이 끝남), `[결정 필요]`·`[검수 대기]`·`[사람 필요]`(사람이 직접 해야 하는 단계), `[착지]`·`[진행 중]`(후속 작업 중) 중 하나와 요약을 쓴다.
+- pull request를 열었으면 표지 다음 줄에 `PR: <url>`(선택). 주소는 `https://github.com/<owner>/<repo>/pull/<number>` 전체를 쓴다.
 - `## Report` 절: 무엇을 했고, 무엇을 알아냈고, 무엇이 남았고, 사용자가 정해야 할 것은 무엇인가.
 - `## Next` 절(필수): 한 줄에 권하는 행동 하나, 명령형, 100자 이하(`PR을 병합한다`, `실패한 lint 검사를 고친다`, `X를 원하는지 확인한다`, `worktree와 branch를 지운다`). 사용자가 키를 눌러 그 줄을 너에게 돌려보내면 네가 네 도구로 직접 한다. 일이 착지한 뒤 하자고 할 정리도 넣는다. 목록이 비면 할 일이 없다는 뜻이다.
 - `## Remember` 절(선택): 앞으로의 thread에 남길 짧고 오래가는 교훈.
@@ -206,8 +207,8 @@ mod tests {
         assert!(brief.contains("gamma fact"));
         assert!(brief.contains("프로젝트 memory가 32000자를 넘어 넣지 않은 것: memory/b.md."));
         assert!(!brief.contains(&"x".repeat(100)));
-        // 상태 태그 첫 줄 규칙은 없다(D9)
-        assert!(!brief.contains("[진행 중]") && !brief.contains("[완료]"));
+        // 표지는 알림 의도에만 쓴다. thread 상태는 계속 harness·진행률로 정한다.
+        assert!(brief.contains("[진행 중]") && brief.contains("[완료]") && brief.contains("사람이 직접"));
         // 운영 설정은 thread에 가지 않는다
         for word in ["max_parallel_threads", "auto_resolve_days", "start_threads", "trust_screens", "thread_profile"] {
             assert!(!brief.contains(word), "{word}");
