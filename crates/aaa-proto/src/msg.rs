@@ -1101,6 +1101,11 @@ pub struct PaneView {
     pub rows: u16,
     pub lease: Option<LeaseView>,
     pub role: Option<Role>,
+    /// host 머신의 프로젝트 홈에서 도는 coordinator의 소속. host가 canonical cwd로 판정한다.
+    /// 옛 host는 보내지 않으며 front는 이름·경로로 소속을 추측하지 않는다.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub coordinator_project: Option<String>,
     /// harness 상태(hook을 보내는 agent 세션만)
     pub agent: Option<Box<AgentStatus>>,
     /// 사람이 붙인 이름이 있으면 그 이름(`name`과 같다). 웹 메뉴가 「이름 지우기」를 보일지 정한다.

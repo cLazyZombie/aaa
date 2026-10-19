@@ -77,6 +77,7 @@ pub const AGENT_LINK: Version = Version { major: 1, minor: 5 };
 /// 1.39: 임무 목록·승인·수명주기와 ThreadView.mission.
 /// 1.40: 보고서 사본 보관 한도·보호 용량과 정리 dry-run.
 // 1.41: ThreadView.report_attention（완료·사람 필요 표지）
+// 같은 1.41에 PaneView.coordinator_project(선택 소속)를 더한다. 옛 host는 생략하고 옛 front는 버린다.
 pub const FRONT_API: Version = Version { major: 1, minor: 41 };
 /// agent ↔ session host(내부). 세션이 몇 주 이어질 수 있으므로 이전 session host와 호환해야 한다.
 /// 1.1: `SessionRequest::Detect`(harness 상태 감지 입력). agent는 1.0 session host에 보내지 않고 `Screen`을 쓴다.
