@@ -52,7 +52,11 @@ export type WorkspaceSummary = { name: string, tabs: number, panes: number, };
 
 export type ChatRole = "user" | "assistant" | "tool" | "thinking";
 
-export type ChatMessage = { role: ChatRole, text: string,
+export type ChatMessage = {
+/**
+ * 기록 파일/byte/블록 위치. 옛 agent는 생략한다.
+ */
+id?: string, role: ChatRole, text: string,
 /**
  * 사람 글이 harness 대기열에 있다(작업 중에 보내 아직 흡수되지 않음, Claude `queue-operation`). 기록 끝에 붙는다.
  * 옛 agent는 보내지 않고 옛 front는 버린다(plan §8.247).
@@ -67,7 +71,15 @@ export type ChatView = { pane: string, harness: string, messages: Array<ChatMess
 /**
  * 기록이 더 길어 끝부분만 실었다
  */
-truncated: boolean, };
+truncated: boolean,
+/**
+ * chat_pages.v1: 이전 쪽 cursor, null이면 처음. history가 없으면 옛 agent다.
+ */
+before?: string,
+/**
+ * 경로를 드러내지 않는 파일 정체성. append에는 같다.
+ */
+history?: string, };
 
 export type InputTraceEvent = "receipt" | "preparing" | "ctrl_enter_blocked" | "unlocked" | "slow" | "unlock" | "cancel" | "failed" | "pending" | "stuck";
 
@@ -321,7 +333,11 @@ profile?: string, } | { "op": "pane_read", pane: string, } | { "op": "pane_chat"
 /**
  * 생각도 싣는다(웹 설정 「생각 표시」, plan §8.129)
  */
-thinking: boolean, } | { "op": "pane_file", pane: string, path: string, } | { "op": "thread_file", project?: string, thread: string, path: string, } | { "op": "pane_dir", pane: string, path: string, hidden: boolean, } | { "op": "pane_send", pane: string, data: B64, } | { "op": "pane_read_text", pane: string, source: ReadSource,
+thinking: boolean,
+/**
+ * 이전 응답의 before. 생략하면 최신 쪽, 옛 상대는 무시한다.
+ */
+before?: string, } | { "op": "pane_file", pane: string, path: string, } | { "op": "thread_file", project?: string, thread: string, path: string, } | { "op": "pane_dir", pane: string, path: string, hidden: boolean, } | { "op": "pane_send", pane: string, data: B64, } | { "op": "pane_read_text", pane: string, source: ReadSource,
 /**
  * 줄 수(기본: Recent 80줄, Visible은 화면 전부, 최대 1000)
  */

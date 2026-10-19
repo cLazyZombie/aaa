@@ -10,7 +10,7 @@
 // 말 둘레도 참고대로다(plan §8.182): 대화 기둥 폭(`.chat-transcript`), 긴 사람 말 접기(`UserMessage`, userMessageFold.ts), 사람 말 복사·답의
 // 마크다운/일반 텍스트 복사(`CopyButton`, 마우스면 올렸을 때). 참고와 다른 곳: 기록에 시각이 없어 시각은 없고, 접힘은 이 화면 안에서만 기억한다.
 // 문구는 참고 i18n.ko.ts.
-import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { ArrowDown, ArrowUp, Check, ChevronDown, ChevronRight, Clock, Copy, LoaderCircle, TriangleAlert } from "lucide-react";
 import { ApiError, call, watchChat } from "./api";
 import type { ChatMessage, ChatView } from "./gen/proto";
@@ -25,6 +25,8 @@ import { ConversationRefresh } from "./herdr/conversationRefresh.ts";
 import type { PendingSend } from "./ChatComposer";
 import { chatIsAtEnd, chatRowIds, chatScrollAnchor, readChatPosition, rememberChatPosition } from "./chatScroll";
 import { unwrapPasted } from "./pastedContent";
+import { ChatRow } from "./ChatRow";
+import { mergeChatPage } from "./chatPages";
 import { steerLabel, type SteerState } from "./steerQueued";
 
 /** 기록 줄 요소(말마다 하나, 끝에 대기 말). 머리 안내·경고는 줄이 아니다 */
@@ -299,7 +301,17 @@ export function ChatPanel({
 }) {
   const [chat, setChat] = useState<ChatView | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const chatRef = useRef<ChatView | null>(null);
+  const epoch = useRef(0);
+  const olderBusy = useRef(false);
+  const [olderState, setOlderState] = useState<"idle" | "loading" | "failed">("idle");
+  const commitPage = (page: ChatView, older = false) => {
+    const next = mergeChatPage(chatRef.current, page, older);
+    chatRef.current = next;
+    setChat(next);
+  };
   const list = useRef<HTMLDivElement>(null);
+  const touchY = useRef<number | null>(null);
   // 굴림(plan §8.266, t3code ChatView.tsx:4004~4030·4443~4505, MessagesTimeline.tsx:871~955·1112~1141, chatScroll.ts):
   // thread(pane)마다 읽던 자리를 기억한다. 끝을 따라가던 곳이면 끝으로, 아니면 기억한 줄의 그 거리로 돌아오고 「맨 아래로」 단추를
   // 바로 보인다. 이 화면이 보낸 뒤(`readNow`)는 사용자 결정 §8.250대로 끝으로 간다(참고는 보낸 말을 위에 고정하는 anchoring-new-turn)
@@ -308,6 +320,7 @@ export function ChatPanel({
     return remembered?.atEnd === false ? remembered : null;
   });
   const restoring = useRef(restoreFrom !== null);
+  const [positioning, setPositioning] = useState(restoreFrom !== null);
   const cancelRestore = useRef<(() => void) | null>(null);
   const atBottom = useRef(restoreFrom === null);
   // 자동 굴림도 실제 위치를 즉시 기억한다. 첫 scroll 사건이 손의 위 이동과 합쳐져도 방향을 놓치지 않는다.
@@ -343,12 +356,42 @@ export function ChatPanel({
   const [pushes, setPushes] = useState(false);
   useEffect(() => {
     let alive = true;
+    const generation = ++epoch.current;
+    chatRef.current = null;
+    setChat(null);
+    olderBusy.current = false;
+    setOlderState("idle");
     refresh.setRead(async () => {
       try {
         const r = await call({ op: "pane_chat", pane, thinking: showThinking });
         if (!alive) return;
         if (r.kind === "chat") {
-          setChat(r);
+          // 최신 쪽이 통째로 앞으로 이동했어도 사이 기록을 버리지 않는다(참고 ChatView gap fill).
+          const held = chatRef.current;
+          let newest: ChatView = r;
+          if (r.history && held?.history === r.history) {
+            const known = new Set(held.messages.flatMap((m) => m.id ? [m.id] : []));
+            let gap = r;
+            while (gap.before && !gap.messages.some((m) => m.id && known.has(m.id))) {
+              const previous = await call({ op: "pane_chat", pane, thinking: showThinking, before: gap.before });
+              if (!alive || epoch.current !== generation) return;
+              if (previous.kind !== "chat" || previous.history !== r.history) break;
+              if (previous.before === gap.before) throw new Error("앞 기록 위치가 전진하지 않습니다");
+              newest = mergeChatPage(newest, previous, true);
+              gap = previous;
+            }
+          }
+          // 앞 쪽을 읽다가 pane을 떠났다면 기억한 row까지 다시 채운 뒤 한 번에 복원한다.
+          if (restoring.current && restoreFrom?.rowId.startsWith(`${r.history}:`)) {
+            while (newest.before && !newest.messages.some((m) => m.id === restoreFrom.rowId)) {
+              const previous = await call({ op: "pane_chat", pane, thinking: showThinking, before: newest.before });
+              if (!alive || epoch.current !== generation) return;
+              if (previous.kind !== "chat" || previous.history !== r.history) break;
+              if (previous.before === newest.before) throw new Error("앞 기록 위치가 전진하지 않습니다");
+              newest = mergeChatPage(newest, previous, true);
+            }
+          }
+          commitPage(newest);
           onMessages?.(r.messages);
           setError(null);
         }
@@ -364,6 +407,7 @@ export function ChatPanel({
     });
     return () => {
       alive = false;
+      epoch.current++;
       unwatch();
       refresh.stop();
       refresh.setPushes(false);
@@ -374,6 +418,53 @@ export function ChatPanel({
   useEffect(() => {
     refresh.refresh();
   }, [pane, showThinking, pollKey, readNow, refresh]);
+
+  const loadOlder = async () => {
+    const before = chatRef.current?.before;
+    if (!before || !chatRef.current?.history || olderBusy.current) return;
+    const generation = epoch.current;
+    olderBusy.current = true;
+    // 화면보다 짧은 최신 쪽의 단추로 읽는 사람도 앞 쪽을 보려는 것이다.
+    atBottom.current = false;
+    setOlderState("loading");
+    try {
+      const response = await refresh.page(async () => {
+        if (epoch.current !== generation) throw new Error("이 대화 읽기는 끝났습니다");
+        return call({ op: "pane_chat", pane, thinking: showThinking, before });
+      });
+      if (epoch.current !== generation) return;
+      if (response.kind !== "chat" || !response.history) {
+        throw new Error("이 host는 앞 기록 읽기를 지원하지 않습니다");
+      }
+      if (response.history !== chatRef.current?.history) throw new Error("대화 기록이 바뀌었습니다. 대화를 다시 열어 주세요");
+      if (response.before === before) throw new Error("앞 기록 위치가 전진하지 않습니다");
+      const el = list.current;
+      if (el) {
+        keepAnchor(el);
+        const top = el.getBoundingClientRect().top;
+        const rows = Array.from(chatRows(el));
+        const index = rows.findIndex((row) => row.getBoundingClientRect().bottom > top);
+        const row = rows[index];
+        const rowId = rowIdsRef.current[index];
+        // 안내 아래 첫 줄은 viewport보다 아래일 수 있다. 그 음수 거리도 그대로 보존한다.
+        if (row && rowId) anchor.current = { rowId, offsetWithinRow: top - row.getBoundingClientRect().top };
+      }
+      commitPage(response, true);
+      setOlderState("idle");
+      setError(null);
+    } catch (e) {
+      if (epoch.current !== generation) return;
+      setOlderState("failed");
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      if (epoch.current === generation) olderBusy.current = false;
+    }
+  };
+  // 빈/도구 전용 쪽도 다음 cursor로 진행한다. 짧은 화면은 스크롤 사건이 없어도 앞 쪽을 채운다.
+  useEffect(() => {
+    const el = list.current;
+    if (el && el.scrollTop < 400 && (!atBottom.current || el.scrollHeight <= el.clientHeight) && olderState === "idle" && chat?.before) void loadOlder();
+  }, [chat, olderState]);
 
   // 줄 id(chatScroll.ts): React key이자 읽던 자리의 기준이다. 차례 번호를 key로 쓰면 agent가 기록 앞을 자를 때마다 같은 DOM에
   // 다음 말이 들어가 보던 화면이 밀린다(사용자 10-19 16:5x 「위를 보고 있으면 거기에 멈춰 있게」)
@@ -408,20 +499,40 @@ export function ChatPanel({
     const ids = rowIdsRef.current;
     if (rows.length !== ids.length) return;
     const base = el.getBoundingClientRect().top - el.scrollTop;
-    const at = chatScrollAnchor(ids, Array.from(rows, (row) => row.getBoundingClientRect().top - base), el.scrollTop);
+    const tops = Array.from(rows, (row) => row.getBoundingClientRect().top - base);
+    const at = chatScrollAnchor(ids, tops, el.scrollTop);
+    // 맨 위 안내를 읽을 때 첫 메시지까지의 빈 거리도 보존한다.
+    if (at && at.rowId === ids[0] && el.scrollTop < tops[0]!) at.offsetWithinRow = el.scrollTop - tops[0]!;
     anchor.current = at ? { rowId: at.rowId, offsetWithinRow: at.offsetWithinRow } : null;
-    if (at) rememberChatPosition(pane, { ...at, atEnd: chatIsAtEnd(el) }, atBottom.current);
+    if (at) rememberChatPosition(pane, { ...at, atEnd: atBottom.current || (chatIsAtEnd(el) && !el.style.getPropertyValue("--chat-tail-space")) }, atBottom.current);
   };
   const holdAnchor = (el: HTMLDivElement) => {
     const at = anchor.current;
     if (at === null || restoring.current) return;
+    // scroll 사건보다 먼저 ResizeObserver가 올 수 있다. 아직 반영 안 된 손의 이동을 덮지 않는다.
+    if (Math.abs(el.scrollTop - lastScrollTop.current) > 1) return;
     const index = rowIdsRef.current.indexOf(at.rowId);
     const row = index < 0 ? undefined : chatRows(el)[index];
     if (row === undefined) return;
     const top = row.getBoundingClientRect().top - el.getBoundingClientRect().top + el.scrollTop;
-    el.scrollTop = top + at.offsetWithinRow;
+    const target = top + at.offsetWithinRow;
+    // 짧은 최신 쪽 아래의 빈 자리도 읽던 화면이다(t3code anchored end space).
+    const extra = target - (el.scrollHeight - el.clientHeight);
+    if (extra > 0) {
+      const previous = parseFloat(el.style.getPropertyValue("--chat-tail-space")) || 0;
+      el.style.setProperty("--chat-tail-space", `${previous + extra}px`);
+    }
+    el.scrollTop = target;
     lastScrollTop.current = el.scrollTop;
   };
+  const resizeRow = useRef<() => void>(() => {});
+  resizeRow.current = () => {
+    const el = list.current;
+    if (!el || Math.abs(el.scrollTop - lastScrollTop.current) > 1) return;
+    if (atBottom.current) scrollToEnd(false);
+    else holdAnchor(el);
+  };
+  const onRowResize = useCallback(() => resizeRow.current(), []);
   // 기억한 자리로(참고 MessagesTimeline 871~955줄): 기록을 처음 그린 뒤 그 줄 위 + 거리로 굴리고, 그림·글꼴로 높이가 바뀌어도
   // 두 frame 동안 같을 때까지 맞춘다. 줄이 없어졌으면 굴림 거리로. 손이 굴리면(휠·끌기·누름·굴림 키) 그 자리에서 그친다
   useLayoutEffect(() => {
@@ -432,6 +543,7 @@ export function ChatPanel({
       if (frame !== null) cancelAnimationFrame(frame);
       frame = null;
       restoring.current = false;
+      setPositioning(false);
       cancelRestore.current = null;
       detach();
       // 그친 자리가 보던 줄이 된다
@@ -473,6 +585,9 @@ export function ChatPanel({
         lastScrollTop.current = el.scrollTop;
       } else if (++stableFrames >= 2) {
         finish();
+        // 추정 높이의 주변 줄이 늦게 mount돼도 저장한 row가 계속 기준이다.
+        anchor.current = { rowId: restoreFrom.rowId, offsetWithinRow: restoreFrom.offsetWithinRow };
+        rememberChatPosition(pane, { ...restoreFrom, scrollOffset: el.scrollTop }, false);
         return;
       }
       frame = requestAnimationFrame(reconcile);
@@ -491,6 +606,7 @@ export function ChatPanel({
     hideJump();
     const el = list.current;
     if (el !== null) {
+      el.style.removeProperty("--chat-tail-space");
       el.scrollTo({ top: el.scrollHeight, behavior: animated ? "smooth" : "auto" });
       lastScrollTop.current = el.scrollTop;
     }
@@ -507,8 +623,9 @@ export function ChatPanel({
   // 맨 아래를 보고 있었으면 새 줄이 오면 따라 내려간다(그리기 전에, 참고 herdr-web-ui ChatView.tsx useLayoutEffect). 아니면 보던 줄을 지킨다
   useLayoutEffect(() => {
     const el = list.current;
-    if (el === null) return;
+    if (el === null || Math.abs(el.scrollTop - lastScrollTop.current) > 1) return;
     if (atBottom.current) {
+      el.style.removeProperty("--chat-tail-space");
       el.scrollTop = el.scrollHeight;
       lastScrollTop.current = el.scrollTop;
     }
@@ -522,6 +639,7 @@ export function ChatPanel({
     if (el === null) return;
     let lane = "";
     const observer = new ResizeObserver((entries) => {
+      if (Math.abs(el.scrollTop - lastScrollTop.current) > 1) return;
       let follow = false;
       for (const entry of entries) {
         if (entry.target === el) { follow = true; continue; }
@@ -546,17 +664,45 @@ export function ChatPanel({
         className="chat"
         ref={list}
         data-testid="chat"
+        tabIndex={0}
+        onKeyDown={(e) => {
+          if (e.key === "End" && !(e.target instanceof Element && e.target.closest("input, textarea, [contenteditable=true]"))) {
+            e.preventDefault();
+            scrollToEnd(false);
+          }
+        }}
+        onWheel={(e) => {
+          if (e.deltaY > 0 && e.currentTarget.style.getPropertyValue("--chat-tail-space") && chatIsAtEnd(e.currentTarget)) scrollToEnd(false);
+        }}
+        onTouchStart={(e) => { touchY.current = e.touches[0]?.clientY ?? null; }}
+        onTouchMove={(e) => {
+          const next = e.touches[0]?.clientY;
+          if (next !== undefined && touchY.current !== null && next < touchY.current
+            && e.currentTarget.style.getPropertyValue("--chat-tail-space") && chatIsAtEnd(e.currentTarget)) scrollToEnd(false);
+          touchY.current = next ?? null;
+        }}
+        aria-busy={chat === null || positioning || olderState === "loading"}
         data-pushes={pushes}
         onScroll={(e) => {
           // 위로 굴린 손만 따라가기를 끈다: 아래로 가는 자동 굴림은 다음 잰 높이보다 먼저 올 수 있다(참고 ChatView.tsx onScroll)
           const el = e.currentTarget;
+          const manual = Math.abs(el.scrollTop - lastScrollTop.current) > 1;
           const scrollingUp = el.scrollTop < lastScrollTop.current;
           lastScrollTop.current = el.scrollTop;
-          if (!atBottom.current || scrollingUp) atBottom.current = chatIsAtEnd(el);
+          if (manual && (!atBottom.current || scrollingUp)) {
+            atBottom.current = chatIsAtEnd(el);
+            if (atBottom.current && el.style.getPropertyValue("--chat-tail-space")) {
+              el.style.removeProperty("--chat-tail-space");
+              el.scrollTop = el.scrollHeight;
+              lastScrollTop.current = el.scrollTop;
+            }
+          }
           // 끝이면 단추를 바로 숨기고, 따라가기를 놓았으면 늦게 보인다(참고 onIsAtEndChange)
-          if (chatIsAtEnd(el) || atBottom.current) hideJump();
+          if (atBottom.current) hideJump();
           else soonShowJump();
-          keepAnchor(el);
+          // holdAnchor가 낸 scroll은 읽던 줄을 바꾸지 않는다. 가상 row의 실측이 끝날 때까지 같은 줄을 잡는다.
+          if (manual || atBottom.current) keepAnchor(el);
+          if (el.scrollTop < 400 && olderState === "idle") void loadOlder();
         }}
       >
         <div className="chat-transcript">
@@ -564,9 +710,17 @@ export function ChatPanel({
             {chat?.harness === "codex" ? "Codex" : "Claude"}가 남긴 대화 기록이다. 도구 결과{showThinking ? "는" : "와 생각은"} 빼고 보인다.
             {chat?.truncated && " 앞부분은 생략했다."}
           </p>
+          <p className="chat-note" data-testid="chat-history-start">
+            {chat?.history && !chat.before ? "처음이다" : chat?.before ? (
+              <button type="button" className="chat-older" disabled={olderState === "loading"} onClick={() => void loadOlder()}>
+                {olderState === "loading" ? "앞 기록 불러오는 중…" : olderState === "failed" ? "앞 기록 다시 불러오기" : "앞 기록 더 보기"}
+              </button>
+            ) : chat?.truncated ? "앞 기록을 읽으려면 host와 agent를 갱신하세요." : null}
+          </p>
           {error && <div className="banner warn">{error}</div>}
-          {chat?.messages.map((m, i) =>
-            m.role === "thinking" ? (
+          {chat?.messages.map((m, i) => (
+            <ChatRow key={rowIds[i]} id={rowIds[i]!} role={m.role} virtual={chat.messages.length > 300} onResize={onRowResize}>
+            {m.role === "thinking" ? (
               <ThinkingRow key={rowIds[i]} text={m.text} />
             ) : m.role === "user" ? (
               <UserTurn key={rowIds[i]} text={unwrapPasted(m.text)} pane={pane} onOpenFile={onOpenFile} pending={m.pending ? { harness, steer: steerFor(`message-${i}`) } : undefined} />
@@ -576,8 +730,9 @@ export function ChatPanel({
               <div key={rowIds[i]} className={`chat-msg ${m.role}`} data-role={m.role}>
                 {linkFilePaths(m.text, onOpenFile ?? null)}
               </div>
-            ),
-          )}
+            )}
+            </ChatRow>
+          ))}
           {pending.map((p) => (
             <UserTurn key={`pending-${p.id}`} text={p.text} pane={pane} onOpenFile={onOpenFile}
               pending={{ harness, stale: p.stale, onDismiss: onDismissPending && (() => onDismissPending(p.id)), steer: steerFor(`pending-${p.id}`) }} />

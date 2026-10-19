@@ -1188,3 +1188,11 @@ button.report-delete:hover:not(:disabled) { color: var(--danger-text); }
 .render-error-hint { margin: 0; max-width: 36rem; font-size: var(--fs-sm); }
 .render-error-actions { display: flex; flex-wrap: wrap; justify-content: center; gap: var(--space-2); margin-top: var(--space-2); }
 .render-error-actions .btn svg { width: var(--space-4); height: var(--space-4); color: inherit; }
+
+/* t-0454: 화면 밖 본문을 비워도 row shell과 보던 자리는 유지한다. */
+.chat-row { width: 100%; flex-shrink: 0; }
+.chat-row-agent + .chat-row-user, .chat-row-assistant + .chat-row-user { margin-top: var(--space-5); }
+.chat-older { border: 0; padding: var(--space-2) 0; min-height: var(--touch); background: none; color: var(--text-dim); cursor: pointer; font: inherit; }
+.chat-older:disabled { cursor: progress; }
+
+.chat-transcript { padding-bottom: var(--chat-tail-space, 0px); }

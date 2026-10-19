@@ -1275,15 +1275,20 @@ impl Agent {
                 .and_then(|r| r.map_err(|e| ErrorBody::new(ErrorCode::NotFound, format!("{e:#}"))))
                 .map(|(data, eof)| AgentResponse::FileChunk { data: B64(data), eof })
             }
-            AgentRequest::Chat { harness, transcript, harness_session, thinking } => {
+            AgentRequest::Chat { harness, transcript, harness_session, thinking, before } => {
                 tokio::task::spawn_blocking(move || {
-                    chat::read(&harness, transcript.as_deref(), harness_session.as_deref(), thinking)
+                    chat::read(&harness, transcript.as_deref(), harness_session.as_deref(), thinking, before.as_deref())
                 })
                 .await
                 .map_err(|e| ErrorBody::new(ErrorCode::Internal, e.to_string()))
                 .and_then(|r| {
-                    r.map(|(messages, truncated)| AgentResponse::Chat { messages, truncated })
-                        .map_err(|e| ErrorBody::new(ErrorCode::NotFound, e))
+                    r.map(|page| AgentResponse::Chat {
+                        truncated: page.before.is_some(),
+                        messages: page.messages,
+                        before: page.before,
+                        history: Some(page.history),
+                    })
+                    .map_err(|e| ErrorBody::new(ErrorCode::NotFound, e))
                 })
             }
             AgentRequest::Harnesses => {

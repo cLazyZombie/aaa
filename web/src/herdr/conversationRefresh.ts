@@ -1,5 +1,5 @@
-// herdr-web-ui(aa624cb) `src/lib/conversationRefresh.ts`에서 앞 쪽 읽기 `page()`만 뺐다(aaa 대화 보기는 앞 쪽을 더 읽지 않고,
-// 그 몸의 `Promise.withResolvers`는 ES2022 lib에 없다). 나머지는 그대로다(차이 목록 C3, plan §8.191).
+// herdr-web-ui aa624cb `src/lib/conversationRefresh.ts`: 최신/이전 쪽 요청의 lane.
+// ES2022에서는 Promise.withResolvers 대신 Promise 생성자를 쓴다.
 
 /** With pushes, a lost one still gets a full conversation read. */
 const BACKSTOP_MS = 10_000;
@@ -59,6 +59,14 @@ export class ConversationRefresh {
     this.invalidated = true;
     this.clearTimer();
     void this.drain();
+  }
+
+  /** 최신 읽기 뒤에 이전 쪽을 시작한다. 다음 최신 읽기는 이전 쪽 전송을 기다리지 않는다. */
+  page<T>(read: () => Promise<T>): Promise<T> {
+    return new Promise<T>((resolve, reject) => {
+      this.pages.push(async () => { try { resolve(await read()); } catch (error) { reject(error); } });
+      void this.drain();
+    });
   }
 
   /** Hidden/unmounted readers leave no timer or pending refresh; an in-flight read finishes first. */
