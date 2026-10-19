@@ -9,6 +9,7 @@
 pub mod paths;
 pub mod profile_edit;
 pub mod safety;
+pub mod work_root;
 
 use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
@@ -527,6 +528,8 @@ pub struct AgentSection {
     pub default_cwd: String,
     /// thread worktree·작업 폴더를 만드는 root(기본: `~/aaa-work`)
     pub work_root: String,
+    /// 반드시 연결되어 있어야 하는 작업 볼륨의 mount 지점. macOS /Volumes 아래는 생략해도 검사한다.
+    pub work_mount: String,
     /// 웹 파일 보기(터미널의 파일 경로 링크)가 열 수 있는 폴더(§6.5 허용 폴더). 비우면 집·`work_root`·`default_cwd`·
     /// 임시 폴더다. 그 아래도 symlink를 따라간 실제 경로로 본다(plan §8.125)
     pub file_roots: Vec<String>,
@@ -766,6 +769,13 @@ fn validate_host(c: &HostConfig) -> Vec<Invalid> {
 
 fn validate_agent(c: &AgentConfig) -> Vec<Invalid> {
     let mut out = Vec::new();
+    for (name, value, allow_root) in
+        [("work_root", &c.agent.work_root, false), ("work_mount", &c.agent.work_mount, true)]
+    {
+        if let Err(message) = work_root::validate(value, allow_root) {
+            out.push(Invalid { path: key(&["agent", name]), message });
+        }
+    }
     let h = &c.agent.host;
     if !h.is_empty() && h != "local" {
         let ok =

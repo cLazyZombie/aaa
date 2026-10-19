@@ -23,6 +23,7 @@ mod plan;
 pub mod post;
 mod pr;
 pub mod threads;
+pub mod work_root;
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -1073,6 +1074,10 @@ impl Agent {
         {
             bail!("작업 폴더가 없다: {cwd}");
         }
+        if let Some(cwd) = &spec.cwd {
+            let cfg = self.threads_cfg.lock().unwrap().clone();
+            cfg.check_path(Path::new(cwd))?;
+        }
         // profile로 띄우기(웹 새 세션 창의 agent 고르기): thread처럼 profile을 argv·env로 풀고 상태 hook을 붙인다.
         // hook 설정 파일은 thread 작업 폴더 대신 이 세션 폴더에 둔다.
         if let Some(name) = spec.profile.clone() {
@@ -1335,11 +1340,18 @@ impl Agent {
                     .map_err(|e| ErrorBody::new(ErrorCode::BadRequest, format!("{e:#}")))
             }
             AgentRequest::RunCommand { project, cwd, command, timeout_ms } => {
-                let root = self.threads_cfg.lock().unwrap().work_root.clone();
-                command::run(&root, &project, cwd.as_deref(), &command, Duration::from_millis(timeout_ms))
-                    .await
-                    .map(AgentResponse::CommandRan)
-                    .map_err(|e| ErrorBody::new(ErrorCode::BadRequest, format!("{e:#}")))
+                let cfg = self.threads_cfg.lock().unwrap().clone();
+                command::run(
+                    &cfg.work_root,
+                    cfg.work_mount.as_deref(),
+                    &project,
+                    cwd.as_deref(),
+                    &command,
+                    Duration::from_millis(timeout_ms),
+                )
+                .await
+                .map(AgentResponse::CommandRan)
+                .map_err(|e| ErrorBody::new(ErrorCode::BadRequest, format!("{e:#}")))
             }
             AgentRequest::MissionStateList { work_dir } => {
                 if !*self.host_mission.lock().unwrap() {
@@ -1392,19 +1404,23 @@ impl Agent {
                 Ok(AgentResponse::Done)
             }
             AgentRequest::ThreadCleanup { repo, cwd, branch, merged_head, keep_worktree, uncopied } => {
-                threads::cleanup_recorded(
-                    &self.state,
-                    repo.as_deref(),
-                    &cwd,
-                    branch.as_deref(),
-                    merged_head.as_deref(),
-                    keep_worktree,
-                    uncopied,
-                    wait,
-                )
-                .await
-                .map(AgentResponse::Cleanup)
-                .map_err(|e| ErrorBody::new(ErrorCode::Internal, format!("{e:#}")))
+                let cfg = self.threads_cfg.lock().unwrap().clone();
+                match cfg.check_path(Path::new(&cwd)) {
+                    Err(e) => Err(ErrorBody::new(ErrorCode::Unavailable, format!("{e:#}"))),
+                    Ok(()) => threads::cleanup_recorded(
+                        &self.state,
+                        repo.as_deref(),
+                        &cwd,
+                        branch.as_deref(),
+                        merged_head.as_deref(),
+                        keep_worktree,
+                        uncopied,
+                        wait,
+                    )
+                    .await
+                    .map(AgentResponse::Cleanup)
+                    .map_err(|e| ErrorBody::new(ErrorCode::Internal, format!("{e:#}"))),
+                }
             }
             AgentRequest::GitQuery { cwd, query } => git_watch::query(&cwd, &query)
                 .await

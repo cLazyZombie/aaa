@@ -254,11 +254,18 @@ fn first_line(s: &str) -> String {
     s.lines().map(str::trim).find(|l| !l.is_empty()).unwrap_or("").chars().take(200).collect()
 }
 
-pub async fn collect(cfg: &HealthSection, work_root: &Path) -> MachineHealth {
-    // 작업 root가 아직 없으면 그 위 폴더(같은 디스크)를 본다
-    let probe = work_root.ancestors().find(|p| p.exists()).unwrap_or(Path::new("/"));
-    let d = disk(probe);
+pub async fn collect(cfg: &HealthSection, work_root: &Path, work_mount: Option<&Path>) -> MachineHealth {
     let mut problems = Vec::new();
+    let real = match crate::work_root::check(work_root, work_mount) {
+        Ok(real) => Some(real),
+        Err(e) => {
+            problems.push(HealthProblem { code: "work_root".into(), text: format!("{e:#}") });
+            None
+        }
+    };
+    // mount 검사가 통과한 디스크만 잰다. 없는 외장의 내장 상위 폴더를 대신 재지 않는다.
+    let probe = real.as_deref().and_then(|r| r.ancestors().find(|p| p.exists()));
+    let d = probe.and_then(disk);
     let mut warnings = Vec::new();
     if let Some((free, _)) = d
         && cfg.min_free_gb > 0
@@ -270,7 +277,7 @@ pub async fn collect(cfg: &HealthSection, work_root: &Path) -> MachineHealth {
                 "디스크 여유 {:.1}GB < {}GB({})",
                 free as f64 / (1u64 << 30) as f64,
                 cfg.min_free_gb,
-                probe.display()
+                probe.unwrap().display()
             ),
         });
     }
@@ -317,8 +324,8 @@ impl Agent {
         let (me, s) = (self.clone(), stats.clone());
         tokio::spawn(async move {
             loop {
-                let root = me.threads_cfg.lock().unwrap().work_root.clone();
-                let mut h = collect(&cfg, &root).await;
+                let threads = me.threads_cfg.lock().unwrap().clone();
+                let mut h = collect(&cfg, &threads.work_root, threads.work_mount.as_deref()).await;
                 s.lock().unwrap().fill(&mut h);
                 *me.health.lock().unwrap() = Some(h.clone());
                 me.send_health(h).await;
@@ -422,13 +429,13 @@ mod tests {
     async fn problems_from_disk_and_toolchain() {
         let mut cfg = HealthSection { every_s: 60, min_free_gb: 0, toolchain: Default::default() };
         cfg.toolchain.insert("ok".into(), vec!["/bin/sh".into(), "-c".into(), "echo 'tool 1.2'".into()]);
-        let h = collect(&cfg, Path::new("/nonexistent-aaa/work")).await;
+        let h = collect(&cfg, Path::new("/nonexistent-aaa/work"), None).await;
         assert!(h.problems.is_empty(), "{:?}", h.problems);
         assert_eq!(h.toolchain[0].version, "tool 1.2");
         assert!(h.disk_free_bytes.is_some() && h.load_x100.is_some());
         cfg.min_free_gb = 1 << 30; // 1EB
         cfg.toolchain.insert("bad".into(), vec!["/bin/sh".into(), "-c".into(), "echo nope >&2; exit 3".into()]);
-        let h = collect(&cfg, Path::new("/")).await;
+        let h = collect(&cfg, Path::new("/"), None).await;
         let all = h.problems.iter().map(|p| format!("{}={}", p.code, p.text)).collect::<Vec<_>>().join(" | ");
         assert!(all.contains("toolchain:bad=toolchain bad 실패") && all.contains("nope"), "{all}");
         assert!(all.contains("disk=디스크 여유"), "{all}");

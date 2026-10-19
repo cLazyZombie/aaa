@@ -290,6 +290,12 @@ impl Lab {
         let node = Node { cfg: dir.join("c"), state: dir.join("s") };
         std::fs::create_dir_all(&node.cfg).unwrap();
         std::fs::create_dir_all(&node.state).unwrap();
+        // agent 시작이 작업 root의 쓰기 점검도 한다. 설정 없는 실험실도 실제 HOME에 쓰지 않는다.
+        std::fs::write(
+            node.cfg.join("agent.toml"),
+            format!("schema = 1\n[agent]\nwork_root = {:?}\n", dir.join("work")),
+        )
+        .unwrap();
         // 시험 셸 prompt(`Node::cmd`의 `ENV`): 기계 hostname·rc와 상관없이 같다
         #[cfg(unix)]
         std::fs::write(node.cfg.join("shrc"), "PS1='$ '\n").unwrap();

@@ -35,7 +35,10 @@ export default async function () {
     const p = dev.page;
     try {
       await p.getByTestId("activity-bar").waitFor();
-      same(await sidebar(p), { panel: "projects", collapsed: false, column: "flex", selected: "activity-projects", title: "프로젝트" }, "처음");
+      same(await sidebar(p), { panel: "work", collapsed: false, column: "flex", selected: "activity-work", title: "작업" }, "처음");
+      // 예전 프로젝트·에이전트 두 패널은 「작업」 하나다(plan §8.280): L3 자동화를 더해 막대 패널 단추는 작업·머신·특수·자동화 넷
+      const tabs = await p.evaluate(() => [...document.querySelectorAll('.activity-bar [role="tab"]')].map((e) => e.dataset.testid).join(","));
+      if (tabs !== "activity-work,activity-machines,activity-special,activity-automations") throw new Error(`패널 단추: ${tabs}`);
       await p.getByTestId("pane-t1").waitFor();
       const viewWidth = () => p.evaluate(() => Math.round(document.querySelector(".view").getBoundingClientRect().width));
       const wide = await viewWidth();
@@ -44,28 +47,28 @@ export default async function () {
       await sidebarIs(p, { panel: "machines", collapsed: false }, "머신 패널");
       same(await sidebar(p), { selected: "activity-machines", title: "머신" }, "머신 패널");
       await p.getByTestId("machine-labA").waitFor();
-      await p.getByTestId("activity-agents").click();
-      await sidebarIs(p, { panel: "agents", collapsed: false }, "에이전트 패널");
+      await p.getByTestId("activity-special").click();
+      await sidebarIs(p, { panel: "special", collapsed: false }, "특수 패널");
       // 같은 단추를 다시 누르면 접힌다: 막대만 남고 본문이 사이드바 폭만큼 넓어진다
-      await p.getByTestId("activity-agents").click();
-      await sidebarIs(p, { panel: "agents", collapsed: true }, "접힘");
+      await p.getByTestId("activity-special").click();
+      await sidebarIs(p, { panel: "special", collapsed: true }, "접힘");
       same(await sidebar(p), { column: "none", selected: "" }, "접힘");
       if ((await viewWidth()) - wide !== 320) throw new Error(`접어도 본문 폭 ${wide} → ${await viewWidth()}`);
       await shot(p, "activity-collapsed");
       // 접힌 동안 다른 단추는 그 패널로 편다
-      await p.getByTestId("activity-projects").click();
-      await sidebarIs(p, { panel: "projects", collapsed: false }, "펼침");
+      await p.getByTestId("activity-work").click();
+      await sidebarIs(p, { panel: "work", collapsed: false }, "펼침");
       // 키보드(roving tabindex): ↑↓는 focus만 옮기고 Enter가 고른다, Home·End
-      await p.getByTestId("activity-projects").focus();
+      await p.getByTestId("activity-work").focus();
       await p.keyboard.press("ArrowDown");
       await focusIs(p, "↓ 머신 단추", '[data-testid="activity-machines"]');
-      same(await sidebar(p), { panel: "projects" }, "↓만으로는 바꾸지 않는다");
+      same(await sidebar(p), { panel: "work" }, "↓만으로는 바꾸지 않는다");
       await p.keyboard.press("Enter");
       await sidebarIs(p, { panel: "machines", collapsed: false }, "Enter로 머신");
       await p.keyboard.press("End");
       await focusIs(p, "End 자동화 단추", '[data-testid="activity-automations"]');
       await p.keyboard.press("Home");
-      await focusIs(p, "Home 프로젝트 단추", '[data-testid="activity-projects"]');
+      await focusIs(p, "Home 작업 단추", '[data-testid="activity-work"]');
       const tabStops = await p.evaluate(() => [...document.querySelectorAll('.activity-bar [role="tab"]')].map((e) => ({ id: e.dataset.testid, stop: e.tabIndex })));
       if (!tabStops.some((t) => t.id === "activity-machines") || tabStops.some((t) => t.stop !== (t.id === "activity-machines" ? 0 : -1))) throw new Error(`Tab이 머무는 단추가 고른 패널 하나가 아니다: ${JSON.stringify(tabStops)}`);
       // Mod+Shift+B(참고 toggle-sidebar): 터미널에 focus가 있어도 앱이 가져가 접고 편다
@@ -82,7 +85,7 @@ export default async function () {
       const other = await pairPage(browser, aaa("web", "pair").code, { width: 1280, height: 800 });
       try {
         await other.page.getByTestId("activity-bar").waitFor();
-        same(await sidebar(other.page), { panel: "projects", collapsed: false }, "다른 기기");
+        same(await sidebar(other.page), { panel: "work", collapsed: false }, "다른 기기");
       } finally {
         await other.page.context().close();
       }
@@ -91,7 +94,7 @@ export default async function () {
     }
   });
 
-  await step("열린 줄의 패널(VS Code explorer autoReveal): 단축키·팔레트·알림이 연 pane은 그 줄이 있는 패널로 바꾸고, 접어 둔 사이드바는 펴지 않으며, 목록 줄을 누르면 그대로다. 막대 배지는 답을 기다리는 agent 수", async () => {
+  await step("열린 줄의 패널(VS Code explorer autoReveal): 단축키·팔레트·알림이 연 pane은 그 줄이 있는 「작업」 패널로 바꾸고, 접어 둔 사이드바는 펴지 않으며, 목록 줄을 누르면 그대로다. 「작업」 배지는 확인 필요·검토 대기 thread와 답을 기다리는 agent 수(예전 두 배지의 합집합)", async () => {
     const ask = aaa("tab", "create", "--machine", "labA", "--label", "asker", "--", claudeSh, "-c", `stty -echo; ${claudeAsk("make test")}; echo ask-ready; exec cat > /dev/null`).tabs.at(-1).root.pane;
     const idle = aaa("tab", "create", "--machine", "labA", "--label", "calm", "--", claudeSh, "-c", `stty -echo; ${claudeIdle}; echo idle-ready; exec cat > /dev/null`).tabs.at(-1).root.pane;
     await waitOutput(ask, "ask-ready");
@@ -100,17 +103,17 @@ export default async function () {
     const p = dev.page;
     try {
       await p.getByTestId("pane-t1").waitFor();
-      await domIs(p, "에이전트 배지 1", () => document.querySelector('[data-testid="activity-badge-agents"]')?.textContent === "1");
-      const label = await p.getByTestId("activity-agents").getAttribute("aria-label");
-      if (label !== "에이전트, 답을 기다림 1") throw new Error(`배지 이름: ${label}`);
-      // 머신 패널에서 다음 패널(Mod+Shift+↓) → 그 줄이 있는 프로젝트 패널
+      await domIs(p, "작업 배지 1", () => document.querySelector('[data-testid="activity-badge-work"]')?.textContent === "1");
+      const label = await p.getByTestId("activity-work").getAttribute("aria-label");
+      if (label !== "작업, 확인 필요·검토 대기·답을 기다림 1") throw new Error(`배지 이름: ${label}`);
+      // 머신 패널에서 다음 패널(Mod+Shift+↓) → 그 줄이 있는 작업 패널
       await p.getByTestId("activity-machines").click();
       await sidebarIs(p, { panel: "machines", collapsed: false }, "머신 패널");
       await p.keyboard.press("ControlOrMeta+Shift+ArrowDown");
-      await sidebarIs(p, { panel: "projects", collapsed: false }, "단축키가 연 줄의 패널");
-      // 에이전트 패널: 팔레트로 agent pane을 열면 그대로, 셸이면 프로젝트로
-      await p.getByTestId("activity-agents").click();
-      await sidebarIs(p, { panel: "agents", collapsed: false }, "에이전트 패널");
+      await sidebarIs(p, { panel: "work", collapsed: false }, "단축키가 연 줄의 패널");
+      // 특수 패널에서 팔레트로 agent pane·셸을 열면 둘 다 작업 패널로(예전 에이전트 패널의 줄도 이 트리에 있다)
+      await p.getByTestId("activity-special").click();
+      await sidebarIs(p, { panel: "special", collapsed: false }, "특수 패널");
       const palette = async (query) => {
         await p.keyboard.press("ControlOrMeta+Shift+K");
         const box = p.getByTestId("command-palette");
@@ -124,23 +127,24 @@ export default async function () {
       };
       await palette("calm");
       await hashIs(p, `#pane=${encodeURIComponent(idle)}`);
-      same(await sidebar(p), { panel: "agents", collapsed: false }, "팔레트가 연 agent");
+      await sidebarIs(p, { panel: "work", collapsed: false }, "팔레트가 연 agent");
+      await p.getByTestId("activity-machines").click();
+      await sidebarIs(p, { panel: "machines", collapsed: false }, "머신 패널");
       await palette("t1");
-      await sidebarIs(p, { panel: "projects", collapsed: false }, "팔레트가 연 셸");
+      await sidebarIs(p, { panel: "work", collapsed: false }, "팔레트가 연 셸");
       // 앱 안 알림(Droplet)은 주소를 바꾼다: 머신 패널을 접어 둔 채면 펴지 않고 패널만 바꾼다(다음에 펴면 그 패널)
       await p.getByTestId("activity-machines").click();
       await p.getByTestId("activity-machines").click();
       await sidebarIs(p, { panel: "machines", collapsed: true }, "머신 패널 접음");
       await p.evaluate((id) => (location.hash = `pane=${encodeURIComponent(id)}`), ask);
-      await sidebarIs(p, { panel: "projects", collapsed: true }, "알림이 연 줄: 접힌 채 패널만");
-      // 목록 줄 누름은 그 패널 그대로(에이전트 패널의 agent 줄)
+      await sidebarIs(p, { panel: "work", collapsed: true }, "알림이 연 줄: 접힌 채 패널만");
+      // 목록 줄 누름은 그 패널 그대로(작업 패널 「기타」의 agent 줄)
       await p.keyboard.press("ControlOrMeta+Shift+B");
-      await p.getByTestId("activity-agents").click();
-      await sidebarIs(p, { panel: "agents", collapsed: false }, "에이전트 패널");
-      await p.getByTestId("agent-row-calm").click();
+      await sidebarIs(p, { panel: "work", collapsed: false }, "펼침");
+      await p.getByTestId("pane-calm").click();
       await hashIs(p, `#pane=${encodeURIComponent(idle)}`);
-      same(await sidebar(p), { panel: "agents" }, "목록 줄");
-      await shot(p, "activity-agents");
+      same(await sidebar(p), { panel: "work" }, "목록 줄");
+      await shot(p, "activity-work");
     } finally {
       await p.context().close();
       for (const id of [ask, idle]) aaa("pane", "kill", id);
@@ -305,10 +309,10 @@ export default async function () {
       await columnIs(p, 240, "Home 240");
       // 접으면 칸과 함께 손잡이도 없다
       await p.keyboard.press("ControlOrMeta+Shift+B");
-      await sidebarIs(p, { panel: "projects", collapsed: true }, "접힘");
+      await sidebarIs(p, { panel: "work", collapsed: true }, "접힘");
       same(await widths(p), { grip: "none" }, "접힘의 손잡이");
       await p.keyboard.press("ControlOrMeta+Shift+B");
-      await sidebarIs(p, { panel: "projects", collapsed: false }, "펼침");
+      await sidebarIs(p, { panel: "work", collapsed: false }, "펼침");
       await columnIs(p, 240, "펴도 240");
       // 두 번 누르면 기본 폭이고 공유 값도 지운다(다음 시험은 기본 폭)
       await p.getByTestId("sidebar-resizer").dblclick();
@@ -328,7 +332,7 @@ export default async function () {
     }
   });
 
-  await step("막대·바닥 줄 배치(사용자 요청 10-19 「앱 설치는 설정 안으로, 보고서는 왼쪽 위로(에이전트 밑으로), 사용량은 오른쪽으로」): 보고서는 위 묶음의 에이전트 바로 밑(패널 tablist 밖), 아래 묶음은 설정만, 바닥 줄에 설치 단추 없이 사용량 칩이 오른쪽 끝, 데스크톱·좁은 창·휴대폰 세로·가로와 기본·GitHub Dark", async () => {
+  await step("막대·바닥 줄 배치(사용자 요청 10-19 「앱 설치는 설정 안으로, 보고서는 왼쪽 위로(에이전트 밑으로), 사용량은 오른쪽으로」): 보고서는 위 묶음의 패널 단추(마지막 「특수」) 바로 밑(패널 tablist 밖), 아래 묶음은 설정만, 바닥 줄에 설치 단추 없이 사용량 칩이 오른쪽 끝, 데스크톱·좁은 창·휴대폰 세로·가로와 기본·GitHub Dark", async () => {
     const VIEWS = [
       ["desktop", { width: 1280, height: 800 }, false],
       ["narrow", { width: 700, height: 800 }, false],
@@ -338,15 +342,15 @@ export default async function () {
     const layout = (p) =>
       p.evaluate(() => {
         const box = (s) => document.querySelector(s).getBoundingClientRect();
-        // 보고서는 패널 단추 묶음 바로 밑: 「자동화」(plan §8.280)까지 더해진 묶음 아래다
-        const agents = box('[data-testid="activity-automations"]');
+        // 보고서는 패널 단추 묶음 바로 밑: 「자동화」(plan §8.281)까지 더해진 묶음 아래다
+        const special = box('[data-testid="activity-automations"]');
         const reports = box('[data-testid="activity-reports"]');
         const foot = document.querySelector(".list-foot");
         const footBox = foot.getBoundingClientRect();
         const strip = box('[data-testid="usage-strip"]');
         return {
-          reportsGap: Math.round(reports.top - agents.bottom),
-          reportsLeft: Math.round(reports.left - agents.left),
+          reportsGap: Math.round(reports.top - special.bottom),
+          reportsLeft: Math.round(reports.left - special.left),
           inTablist: document.querySelector('[role="tablist"] [data-testid="activity-reports"]') !== null,
           bottom: [...document.querySelectorAll(".activity-bottom [data-testid]")].map((e) => e.dataset.testid).join(","),
           footButtons: [...foot.querySelectorAll("button")].map((e) => e.dataset.testid ?? e.textContent.trim()).join(","),

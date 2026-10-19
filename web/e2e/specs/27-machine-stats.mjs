@@ -20,7 +20,7 @@ const meters = (p) =>
 const badge = (p) => p.evaluate(() => document.querySelector('[data-testid="activity-badge-machines"]')?.textContent ?? null);
 
 export default async function ({ page }) {
-  await step("머신 CPU·MEM: 실제 agent가 15초마다 잰 값이 머신 머리줄 오른쪽 아이콘·숫자·막대로 보이고, agent 수는 에이전트 패널 기준으로 세며 title이 풀이한다", async () => {
+  await step("머신 CPU·MEM: 실제 agent가 15초마다 잰 값이 머신 머리줄 오른쪽 아이콘·숫자·막대로 보이고, agent 수는 「작업」 트리의 agent 줄 기준으로 세며 title이 풀이한다", async () => {
     await showPanel(page, "machines");
     // CPU는 두 표본 사이 평균이라 첫 점검에는 없고 15초 표본부터 온다. 값만 바뀐 보고도 처음 생긴 값은 host가 화면에 보낸다
     const got = await until("CPU·MEM 값", async () => {
@@ -32,9 +32,11 @@ export default async function ({ page }) {
       if (n > 100 || got[k].fill !== `${n}%` || got[k].empty || !got[k].icon) throw new Error(`${k} 칸: ${JSON.stringify(got)}`);
     }
     if (got.c.title !== `CPU ${got.c.value}%` || got.m.title !== `메모리 ${got.m.value}%`) throw new Error(`칸 title: ${JSON.stringify(got)}`);
-    // agent 칸은 막대가 없고, 에이전트 패널에 보이는 labA agent 수와 같다(이 실험실의 셸 tab은 agent가 아니다)
-    await showPanel(page, "agents");
-    const listed = await page.evaluate(() => document.querySelectorAll('.agent-list [data-testid^="agent-row-"]').length);
+    // agent 칸은 막대가 없고, 「작업」 트리에 보이는 labA의 도는 agent 줄 수와 같다(이 실험실의 셸 tab은 agent가 아니다, plan §8.280)
+    await showPanel(page, "work");
+    const listed = await page.evaluate(
+      () => document.querySelectorAll('[data-panel="work"] li:is([data-pane], [data-thread]):not(.is-ended) > .workspace-header .sidebar-mark:not([data-agent="shell"])').length,
+    );
     await showPanel(page, "machines");
     const agents = (await meters(page)).a;
     if (agents.value !== String(listed) || agents.fill !== null || !agents.icon || agents.empty !== (listed === 0)) throw new Error(`agent 칸(패널 ${listed}): ${JSON.stringify(agents)}`);

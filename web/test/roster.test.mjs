@@ -39,6 +39,33 @@ describe("단축키 줄 차례", () => {
     assert.deepEqual(keys, ["pane:coord", "thread:p/t-1", "pane:only", "pane:shell"]);
   });
 
+  it("프로젝트 안은 coordinator → 작업 공간 폴더(저장소 이름순, 「작업 폴더」 끝) → 폴더 안 rank 차례(plan §8.280)", () => {
+    const repo = (t, r) => ({ ...t, repo: r });
+    const panes = [{ ...pane("coord"), coordinator_project: "p" }];
+    const threads = [
+      repo(thread("p", "t-1", "waiting_on_you"), "/w/rc"),
+      repo(thread("p", "t-2", "working"), "/w/aaa"),
+      thread("p", "t-3", "waiting_on_you"),
+      repo(thread("p", "t-4", "ready_for_review", null, 0), "/x/aaa"),
+    ];
+    const keys = rosterRows([ma], panes, threads).map((r) => r.keys[0]);
+    assert.deepEqual(keys, ["pane:coord", "thread:p/t-4", "thread:p/t-2", "thread:p/t-1", "thread:p/t-3"]);
+  });
+
+  it("임무 thread와 그 pane은 목록에 없다(특수 패널에만, 사용자 결정 10-19)", () => {
+    const threads = [thread("p", "t-1", "working", "w"), { ...thread("p", "t-2", "idle", "m"), mission: "ci-watch" }];
+    const keys = rosterRows([ma], [pane("w"), pane("m"), pane("shell")], threads).map((r) => r.keys[0]);
+    assert.deepEqual(keys, ["thread:p/t-1", "pane:shell"]);
+  });
+
+  it("폴더 안 활동순: 답을 기다리는 thread가 먼저, 그다음 상태가 최근 바뀐 것", () => {
+    const st = (activity, since_ms) => ({ agent: { activity, since_ms, seen: true } });
+    const panes = [{ ...pane("a"), ...st("idle", 30) }, { ...pane("b"), ...st("working", 50) }, { ...pane("c"), ...st("question", 10) }];
+    const threads = [thread("p", "t-1", "waiting_on_you", "a"), thread("p", "t-2", "working", "b"), thread("p", "t-3", "working", "c")];
+    assert.deepEqual(rosterRows([ma], panes, threads).map((r) => r.keys[0]), ["thread:p/t-1", "thread:p/t-2", "thread:p/t-3"]);
+    assert.deepEqual(rosterRows([ma], panes, threads, [], true).map((r) => r.keys[0]), ["thread:p/t-3", "thread:p/t-2", "thread:p/t-1"]);
+  });
+
   it("thread 줄은 agent pane이 돌면 그 pane을, 끝났으면 보고서를 연다. 골랐다고 보는 값은 thread와 pane 둘 다", () => {
     const rows = rosterRows([ma], [pane("a"), pane("b", "m1", "exited")], [thread("p", "t-1", "working", "a"), thread("p", "t-2", "working", "b")]);
     assert.deepEqual(rows[0], { open: { pane: "a" }, keys: ["thread:p/t-1", "pane:a"] });
