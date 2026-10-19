@@ -321,6 +321,8 @@ while True:
     await press(p);
     await waitOutput("composer", `CMP_RECEIVED_${++received}`);
     await domIs(p, "대기 말", () => [...document.querySelectorAll(".chat-msg.user.is-pending")].filter((el) => el.textContent.includes("작업 중 추가")).length === 1
+      && document.querySelector('[data-testid="chat-pending"]')?.textContent.includes("대기 중")
+      && !document.querySelector('[data-testid="chat-pending"]').textContent.includes("읽습니다")
       && document.querySelector('[aria-label="메시지"]').value === "" && !document.querySelector('[aria-label="메시지"]').readOnly);
     await shot(p, "chat-send-pending");
     fs.appendFileSync(transcript, [
@@ -385,7 +387,8 @@ while True:
     await press(p);
     await waitOutput(pane, "CDX_RECEIVED_1");
     await domIs(p, "Codex 대기 말", () => [...document.querySelectorAll(".chat-msg.user.is-pending")].some((el) => el.textContent.trim() === "코덱스 작업 중 추가")
-      && document.querySelector('[data-testid="chat-pending"]')?.textContent.includes("Codex")
+      && document.querySelector('[data-testid="chat-pending"]')?.textContent.includes("대기 중")
+      && !document.querySelector('[data-testid="chat-pending"]').textContent.includes("읽습니다")
       && document.querySelector('[aria-label="메시지"]').value === "" && !document.querySelector('[aria-label="메시지"]').readOnly);
     if (JSON.parse(fs.readFileSync(codexReceived, "utf8")).text !== "코덱스 작업 중 추가") throw new Error("Codex가 받은 글이 다르다");
     // Codex가 읽어 기록하면 대기 말이 보통 말이 된다
