@@ -421,7 +421,8 @@ process.stdin.resume();`;
     const dialog = page.getByRole("dialog", { name: "새 pane · labA" });
     const start = () => dialog.getByRole("button", { name: "시작", exact: true }).click();
     const hash = () => page.evaluate(() => decodeURIComponent(location.hash));
-    await page.getByTestId("machine-labA").getByRole("button", { name: "labA에 새 pane" }).click();
+    // + 단추는 머신 패널에 있다(활동 막대, plan §8.238): 숨은 패널 안은 접근성 트리에 없어 includeHidden으로 찾고 inList가 패널을 연다
+    await inList(page, page.getByTestId("machine-labA").getByRole("button", { name: "labA에 새 pane", includeHidden: true }));
     await dialog.waitFor();
     // 없는 폴더: agent가 거절한 글이 창 안에 보이고 창은 남는다(pane은 생기지 않는다)
     await dialog.getByRole("textbox", { name: "폴더" }).fill(`${root}/no-such-dir`);
@@ -440,7 +441,7 @@ process.stdin.resume();`;
     await until("셸 pane", () => (shell = panes().find((p) => p.name === path.basename(repo) && p.cwd === repo)) !== undefined);
     await until("셸 pane을 연다", async () => (await hash()) === `#pane=${shell.id}`);
     // profile agent: 이 머신 agent.toml의 fake, 최근 폴더 칩(방금 쓴 폴더), 이름
-    await page.getByTestId("machine-labA").getByRole("button", { name: "labA에 새 pane" }).click();
+    await inList(page, page.getByTestId("machine-labA").getByRole("button", { name: "labA에 새 pane", includeHidden: true }));
     await dialog.waitFor();
     await dialog.getByRole("combobox").click();
     await page.getByRole("option", { name: "fake" }).click();

@@ -1,7 +1,8 @@
 // 왼쪽 목록(herdr-web-ui MachineSidebar·Sidebar·AgentSidebar, aa624cb). 모양(class)과 CSS는 참고 것을 그대로 쓴다(herdr/*.css).
-// 구성(t-0352 시안 2안, plan §8.195): 프로젝트 머리(접기, 셈, 묶음 대표 상태) 아래 모든 머신의 thread 줄(둘째 줄 왼쪽 상태 말,
-// 오른쪽 머신 이름) → thread가 아닌 pane의 「기타」 묶음(줄에 머신 이름) → 머신 줄(이름·host·연결 점·+, 끊김·점검 글). 머신은 트리
-// 단계가 아니다. 그 아래 모든 머신의 「Agents」 구역, 맨 아래 바닥 줄(설정·사용량, App.tsx ListFoot).
+// 패널 셋(활동 막대가 하나를 고른다, plan §8.238): 「프로젝트」는 프로젝트 머리(접기, 셈, 묶음 대표 상태) 아래 모든 머신의 thread 줄
+// (둘째 줄 왼쪽 상태 말, 오른쪽 머신 이름, t-0352 시안 2안, plan §8.195) → thread가 아닌 pane의 「기타」 묶음(줄에 머신 이름).
+// 「머신」은 머신 줄(이름·host·연결 점·+, 끊김·점검 글), 「에이전트」는 모든 머신의 agent 목록. 머신은 트리 단계가 아니다.
+// 셋 다 늘 그려 두고 고르지 않은 것은 숨긴다(굴린 자리를 지킨다). 머리·띠·바닥 줄(사용량, App.tsx ListFoot)은 패널과 상관없다.
 // aaa에는 herdr workspace가 없다: 참고의 workspace 줄 자리에 pane 줄을, worktree 묶음 자리에 프로젝트 묶음을 둔다.
 // thread는 자기 줄 하나로만 보인다(L4, herdr-projects sidebar.rs: thread는 자기 agent 줄이고 이름이 「id · 제목」).
 import {
@@ -30,6 +31,7 @@ import { currentSidebarPins, setSidebarPins, sidebarPinKey, splitPinnedRows, sub
 import { AgentMark } from "./herdr/AgentMark.tsx";
 import { indicatorGlyph, knownStatus, rollupStatus, STATUS_WORD, type AgentStatus, type KnownStatus } from "./herdr/status.ts";
 import { useAppearance } from "./theme";
+import { PANEL_LABEL, type SidebarPanel } from "./sidebarPanel";
 import { updateSidebarShared, useMedia, useSidebarShared } from "./settings";
 import { watchTouchReorder } from "./herdr/touchReorder.ts";
 import { placeBlock } from "./herdr/workspaceOrder.ts";
@@ -247,6 +249,8 @@ export interface SidebarProps {
   onProject: (name: string) => void;
   /** 목록 위에 띄울 알림 띠(연결 끊김·오류) */
   banners?: ReactNode;
+  /** 보이는 패널(활동 막대) */
+  panel: SidebarPanel;
 }
 
 export function Sidebar(props: SidebarProps) {
@@ -287,12 +291,16 @@ export function Sidebar(props: SidebarProps) {
   };
   return (
     <RowsContext.Provider value={rows}>
-      <div className="list-body machine-list" aria-label="머신과 pane">
-        {props.banners}
+      {props.banners}
+      <div {...panelProps("projects", props.panel)} className="list-body machine-list sidebar-panel">
         <Roster {...props} />
+      </div>
+      <div {...panelProps("machines", props.panel)} className="sidebar-panel machines-panel">
         <MachineStrip {...props} />
       </div>
-      <AgentSection {...props} />
+      <div {...panelProps("agents", props.panel)} className="sidebar-panel agents-panel">
+        <AgentSection {...props} />
+      </div>
       {menu && <RowMenu anchor={menu.anchor} point={menu.point} restoreFocusTo={menu.previousFocus} title={menu.title} subtitle={menu.place} items={menu.items()} onClose={closeMenu} />}
       {confirm && (
         <ConfirmDialog
@@ -317,6 +325,17 @@ export function Sidebar(props: SidebarProps) {
   );
 }
 
+/** 활동 막대 단추가 여닫는 패널(VS Code는 tabpanel이 아닌 view container지만 단추가 tab이라 그 짝으로 둔다) */
+function panelProps(panel: SidebarPanel, shown: SidebarPanel) {
+  return {
+    id: `sidebar-panel-${panel}`,
+    role: "tabpanel",
+    "aria-labelledby": `activity-tab-${panel}`,
+    "data-panel": panel,
+    hidden: panel !== shown,
+  } as const;
+}
+
 /** 그 줄의 일이 실패했을 때 줄 아래 한 줄(참고 `sidebar-inline-error`) */
 function RowError({ rowKey }: { rowKey: string }) {
   const { error } = useRows();
@@ -328,13 +347,12 @@ function RowError({ rowKey }: { rowKey: string }) {
 }
 
 /**
- * 머신 줄들(plan §8.195): 목록이 프로젝트 먼저라 머신은 트리 단계가 아니다. 머신마다 머리 한 줄(이름·host·연결 점·+ 새 pane)과
- * 끊김·점검 이상 글만 목록 아래에 둔다(참고 MachineSidebar 머리·machine-state). 그 머신의 줄은 프로젝트·「기타」 묶음에 머신 글자로 있다.
+ * 머신 패널(plan §8.195·§8.238): 목록이 프로젝트 먼저라 머신은 트리 단계가 아니다. 머신마다 머리 한 줄(이름·host·연결 점·+ 새 pane)과
+ * 끊김·점검 이상 글만 둔다(참고 MachineSidebar 머리·machine-state). 그 머신의 줄은 프로젝트 패널에 머신 글자로 있다.
  */
 function MachineStrip(props: SidebarProps) {
   return (
-    <section className="machine-strip" aria-label="머신">
-      <p className="sidebar-section-label machine-strip-label">머신</p>
+    <section className="machine-strip" aria-label={PANEL_LABEL.machines}>
       {props.machines.map((m) => {
         const online = m.connection === "connected";
         const problems = online && m.problems.length > 0 ? m.problems.map((p) => p.text).join("\n") : null;
@@ -907,17 +925,13 @@ function ThreadRow({ t, online, machine, twoLine, ...props }: SidebarProps & { t
   );
 }
 
-/** 휴대폰 drawer 폭 아래에서는 Agents가 접힌 채 시작한다(참고 AgentSidebar `DRAWER_QUERY`) */
-const DRAWER_QUERY = "(max-width: 768px)";
-
 /**
- * 모든 머신의 살아 있는 agent를 한 목록으로(참고 AgentSidebar). 머신·프로젝트 접기와 상관없이 보인다.
+ * 에이전트 패널: 모든 머신의 살아 있는 agent를 한 목록으로(참고 AgentSidebar). 참고는 머신 목록 아래 접는 구역이고(휴대폰은 접힌 채
+ * 시작) aaa는 활동 막대의 패널 하나라 접기 단추가 없다(plan §8.238).
  * agent는 harness hook이 상태를 알리는 pane이나 agent 명령으로 뜬 pane이다(셸은 상태를 알려도 넣지 않는다).
  */
 function AgentSection(props: SidebarProps) {
-  const listId = useId();
   const shared = useRows();
-  const [collapsed, setCollapsed] = useState(() => window.matchMedia?.(DRAWER_QUERY).matches === true);
   const { appearance } = useAppearance();
   const threadOf = new Map<string, ThreadView>();
   for (const t of props.threads) if (t.pane) threadOf.set(t.pane, t);
@@ -1007,13 +1021,8 @@ function AgentSection(props: SidebarProps) {
     );
   };
   return (
-    <section className={`agents-sidebar${collapsed ? " is-collapsed" : ""}${rows.length === 0 ? " is-empty" : ""}`} aria-label="Agents" data-testid="agents">
-      <button type="button" className="agent-section-toggle sidebar-section-label" aria-expanded={!collapsed} aria-controls={listId} onClick={() => setCollapsed(!collapsed)}>
-        {collapsed ? <ChevronRight className="agent-section-caret" aria-hidden="true" /> : <ChevronDown className="agent-section-caret" aria-hidden="true" />}
-        <span>Agents</span>
-        {collapsed && rows.length > 0 && <span className="agent-section-count">{rows.length}</span>}
-      </button>
-      <div className="agent-list-contents" id={listId} hidden={collapsed}>
+    <section className={`agents-sidebar${rows.length === 0 ? " is-empty" : ""}`} aria-label={PANEL_LABEL.agents} data-testid="agents">
+      <div className="agent-list-contents">
         {rows.length === 0 ? (
           <p className="agent-empty" role="status">
             도는 agent 없음

@@ -29,9 +29,7 @@
 .project-place.is-need { color: var(--status-blocked); }
 /* 끊긴 머신의 줄: 흐리고 누를 수 없다(참고 machine-offline을 줄마다) */
 .workspace.is-offline { opacity: 0.5; }
-/* 머신 줄들은 목록 아래 조용한 머리 밑에 */
-.machine-strip { margin-top: var(--space-4); }
-.machine-strip-label { padding: 0 var(--side-gutter); color: var(--text-dim); font-size: var(--fs-xs); font-weight: var(--fw-semibold); }
+/* 머신 패널(plan §8.238): 패널 이름은 사이드바 머리가 말한다 */
 .machine-strip .machine-group + .machine-group { margin-top: 0; }
 
 /* ⋯ 단추가 보이는 곳(터치·좁은 창, 참고는 마우스 넓은 창에서만 ⋯을 숨긴다)에서는 ⋯을 줄 오른쪽 끝(목록 여백 안)에 둔다.

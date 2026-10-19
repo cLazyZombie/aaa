@@ -2,7 +2,7 @@
 // 혼자 돌리기: node web/e2e/web.e2e.mjs --spec 13-reconnect(새 실험실). 준비(host·agent·t1·첫 화면)는 lib/harness.mjs runSpec.
 
 import fs from "node:fs";
-import { aaa, start, stop, until, screenText, shot, base, step, root, killSessionHosts } from "../lib/harness.mjs";
+import { aaa, start, stop, until, screenText, shot, base, step, root, killSessionHosts, showPanel } from "../lib/harness.mjs";
 
 export default async function ({ ctl, page }) {
   await step("agent 끊김 → 읽기 전용 표시", async () => {
@@ -12,7 +12,9 @@ export default async function ({ ctl, page }) {
     );
     // 끊긴 머신은 머신 칸 이름 아래 「끊김」, 목록의 그 머신 줄들은 흐리고 누를 수 없다(herdr-web-ui MachineSidebar
     // machine-state·machine-offline·inert를 줄마다, plan §8.195: 목록은 머신으로 묶지 않는다)
+    await showPanel(page, "machines");
     await page.getByTestId("machine-labA").locator(".machine-state-word", { hasText: "끊김" }).waitFor();
+    await showPanel(page, "projects");
     const offline = page.locator(".machine-list li.is-offline[inert]");
     if (!(await offline.count())) throw new Error("끊긴 머신의 줄이 흐리게·누를 수 없게 되지 않았다");
     if ((await page.locator(".machine-list li:not(.is-offline)[data-pane]").count()) !== 0) throw new Error("끊긴 머신의 pane 줄이 흐려지지 않았다");
