@@ -2904,7 +2904,7 @@ fn project_open_follows_coordinator_safety() {
 /// 그 턴은 실제 Claude처럼 입력 상자 위에 「Working… esc to interrupt」를 다음 입력까지 그린다: hook이 없는 pane은 화면
 /// 감지의 작업 중이 받았다는 사건이다(없으면 host가 `accept_wait_ms`를 다 기다린다). `@BIN@`은 aaa 실행 파일이다.
 const ADOPT_AGENT: &str = r#"#!/bin/sh
-stty -icanon -echo min 1 time 0
+stty icanon -echo
 R=$(printf '%.0s\342\224\200' 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 22 23 24 25 26 27 28 29 30)
 log="args: $*
 "
@@ -2912,9 +2912,8 @@ log="args: $*
 buf=''; st=''
 draw() { printf '\033[2J\033[H%s%s%s\n\342\235\257 %s\n%s\n' "$log" "$st" "$R" "$buf" "$R"; }
 draw
-while :; do
-  c=$(dd bs=4096 count=1 2>/dev/null)
-  if [ -z "$c" ]; then
+while IFS= read -r buf; do
+    st=''
     case "$buf" in
       *brief.md*)
         st=$(printf '\342\234\273 Working\342\200\246 (1s \302\267 esc to interrupt)\n_'); st=${st%_}
@@ -2929,9 +2928,6 @@ while :; do
     log="$log$(printf 'got: %s' "$buf")
 "
     buf=''
-  else
-    buf="$buf$c"; st=''
-  fi
   draw
 done
 "#;
@@ -3018,8 +3014,8 @@ fn thread_adopt_existing_pane() {
     let last = events.iter().rev().find(|e| e["kind"] == "thread_resolved").unwrap();
     assert!(last["detail"].as_str().unwrap().contains("pane은 그대로 둔다"), "{last}");
     // resolve 뒤에도 pane은 입력을 받는다(끝냈으면 상태가 늦게 와도 입력이 거부되거나 답이 없다)
-    w.h.ok(&["pane", "send-text", &new, "still-here"]);
-    w.h.ok(&["pane", "send-keys", &new, "enter"]);
+    // 1회 쓰기여도 줄 경계로 읽어야 한다. PTY가 글/Enter를 같은 read로 묶는 것은 정상이다.
+    w.h.ok(&["pane", "run", &new, "still-here"]);
     w.h.wait_output(&new, "got: still-here", T);
 }
 

@@ -20,7 +20,7 @@ export function linksFilePaths(text: string): boolean {
 export function FilePathLink({ path, code, open }: { path: string; code: boolean; open: (path: string) => void }) {
   const label = code ? <code>{path}</code> : path;
   return (
-    <button type="button" className={`markdown-file${code ? " is-code" : ""}`} title={`${path} 열기`} onClick={() => open(path)}>
+    <button type="button" className={`markdown-file${code ? " is-code" : ""}`} title={`${path} 열기`} onClick={() => open(path.replace(/^@(?=\/|~\/|\.{1,2}\/)/, ""))}>
       {label}
     </button>
   );
