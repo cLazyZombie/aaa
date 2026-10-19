@@ -80,21 +80,49 @@ impl Host {
         data
     }
 
-    /// 웹 입력창이 Ctrl+Enter로 보낸 글(submit `steer`)의 마지막 키 bytes(`ctrl_enter::steer_submit_keys`). 작업 중인 Claude면
-    /// sendNow이고 그 밖은 Enter다. pane·화면 사본을 모르면 Enter, 곧 보통 보내기다.
-    pub(crate) fn steer_submit_data(&self, pane: &str) -> Vec<u8> {
-        let Ok((id, _)) = self.resolve_pane(pane) else { return b"\r".to_vec() };
+    /// 글 제출의 마지막 키. Ctrl+Enter는 같은 보내기 ID에 선택 키와 화면 근거도 남긴다.
+    /// `steer`가 아니면 현재 작업 상태와 관계없이 기존 보통 보내기(Enter)를 유지한다.
+    pub(crate) fn submit_key_data(&self, pane: &str, steer: bool, trace: Option<&str>) -> Vec<u8> {
+        if !steer && trace.is_none() {
+            return b"\r".to_vec();
+        }
         let mut inner = self.inner.lock().unwrap();
-        let Some(pane) = inner.panes.get_mut(&id) else { return b"\r".to_vec() };
-        let harness = pane.agent.as_ref().map(|a| a.harness.clone());
-        let working = pane.agent.as_ref().is_some_and(|a| a.activity == aaa_proto::AgentActivity::Working);
-        let Some(mirror) = pane.mirror.as_mut() else { return b"\r".to_vec() };
-        let colors = mirror.vt.read(ReadSource::Visible, None, ReadFormat::Ansi).text;
-        let live = if mirror.synced { mirror.vt.detection_text() } else { String::new() };
-        let keys = crate::ctrl_enter::steer_submit_keys(harness.as_deref(), &live, Some(&colors), working);
-        let modes = mirror.vt.modes();
-        let data: Vec<u8> = keys.iter().flat_map(|key| modes.key(key).unwrap_or_default()).collect();
-        if data.is_empty() { b"\r".to_vec() } else { data }
+        let (data, detail) = (|| {
+            let Some(pane) = inner.panes.get_mut(pane) else {
+                return (b"\r".to_vec(), "keys=[\"enter\"] reason=pane_missing".to_owned());
+            };
+            let harness = pane.agent.as_ref().map(|a| a.harness.as_str());
+            let working = pane.agent.as_ref().is_some_and(|a| a.activity == aaa_proto::AgentActivity::Working);
+            let Some(mirror) = pane.mirror.as_mut() else {
+                return (b"\r".to_vec(), format!("keys=[\"enter\"] working={working} reason=mirror_missing"));
+            };
+            let colors = mirror.vt.read(ReadSource::Visible, None, ReadFormat::Ansi).text;
+            let live = if mirror.synced { mirror.vt.detection_text() } else { String::new() };
+            let keys = if steer {
+                crate::ctrl_enter::steer_submit_keys(harness, &live, Some(&colors), working)
+            } else {
+                &["enter"]
+            };
+            let modes = mirror.vt.modes();
+            let data: Vec<u8> = if steer {
+                keys.iter().flat_map(|key| modes.key(key).unwrap_or_default()).collect()
+            } else {
+                b"\r".to_vec()
+            };
+            let fallback = data.is_empty();
+            let keys = if fallback { &["enter"][..] } else { keys };
+            let detail = format!(
+                "phase=submit keys={keys:?} steer={steer} working={working} synced={} fallback={fallback} {}",
+                mirror.synced,
+                crate::ctrl_enter::diagnostic(harness, &live, Some(&colors))
+            );
+            (if fallback { b"\r".to_vec() } else { data }, detail)
+        })();
+        drop(inner);
+        if let Some(trace) = trace {
+            self.input_event(pane, trace, "ctrl_enter", &detail);
+        }
+        data
     }
 
     /// 화면 사본에서 읽는다. 사본이 없으면 None.

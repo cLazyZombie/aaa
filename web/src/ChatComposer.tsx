@@ -66,6 +66,7 @@ interface Flight {
   source: "box" | "reply" | "queue";
   /** Ctrl+Enter로 작업 중에 보냈다: host가 Enter 대신 steering 키를 고른다(작업 중인 Claude는 sendNow) */
   steer?: boolean;
+  ctrlEnter?: boolean;
   queueId?: string;
   attachments: Attachment[];
   phase: Phase;
@@ -362,7 +363,7 @@ export function ChatComposer({
       f.before = messagesRef.current === null ? null : occurrences(f.text, messagesRef.current, f.hash);
       let sent: false | Promise<true | string>;
       try {
-        sent = onSend(f.text, f.steer, f.trace, { pasted: pasted.current, attachments: f.attachments.length });
+        sent = onSend(f.text, f.steer, f.trace, { pasted: pasted.current, attachments: f.attachments.length, ctrl_enter: f.ctrlEnter ?? f.steer ?? false });
       } catch {
         sent = false;
       }
@@ -473,7 +474,7 @@ export function ChatComposer({
   }, [pending, working]);
 
   /** `steer`: Ctrl+Enter로 작업 중에 보낸다(지금 턴에 끼워 넣는다). 붙잡지 않는다 */
-  const send = (given?: string, steer = false): void => {
+  const send = (given?: string, steer = false, ctrlEnter = false): void => {
     const message = (given ?? textRef.current).trim();
     if (message === "" || flightRef.current !== null || uploading || noRoom || composing || !connected) return;
     const sentAttachments = attachments;
@@ -484,16 +485,21 @@ export function ChatComposer({
       if (given === undefined) { setText(""); clearAttachments(sentAttachments); }
       return;
     }
-    deliver({ text: message, source: given === undefined ? "box" : "reply", attachments: given === undefined ? sentAttachments : [], ...(steer ? { steer } : {}) });
+    deliver({ text: message, source: given === undefined ? "box" : "reply", attachments: given === undefined ? sentAttachments : [], ctrlEnter, ...(steer ? { steer } : {}) });
   };
   // Ctrl+Enter(사용자 10-19 15:3x, plan §8.239 후속): 안내 줄 없이 글을 steering으로 보낸다. 작업 중이면 지금 턴에 끼워 넣고
   // (host가 Claude는 sendNow, Codex는 Enter = steer 대기열을 고른다), 쉬는 중이면 보통 보내기(Enter)와 같다. 잠금·전달 확인·멈춤은
   // 보내기와 같은 길이다. 빈 입력창: 작업 중이면 대기 메시지를 지금 보낸다. 이 기기에 붙잡은 것이 있으면 그 맨 앞을 steering으로,
   // 없으면 harness 대기열을 host 판정으로(Claude sendNow, Codex Esc) 보낸다. 쉬는 중이면 아무 일 없다
   const ctrlEnter = (): void => {
-    if (flightRef.current !== null || !connected) return;
+    const blocked = (reason: InputReceiptMethod) => onInputTrace(inputTraceId(), "ctrl_enter_blocked", reason);
+    if (flightRef.current !== null) { blocked("locked"); return; }
+    if (!connected) { blocked("connection"); return; }
     if (textRef.current.trim() !== "") {
-      send(undefined, workingRef.current);
+      if (composing) { blocked("composing"); return; }
+      if (uploading) { blocked("uploading"); return; }
+      if (noRoom) { blocked("no_room"); return; }
+      send(undefined, workingRef.current, true);
       return;
     }
     if (!workingRef.current) { onCtrlEnter(); return; }
@@ -512,8 +518,11 @@ export function ChatComposer({
       return;
     }
     // IME는 제 키를 갖는다. WebKit은 확정 Enter를 compositionend 뒤 229로 보낼 수 있다
-    if (event.nativeEvent.isComposing || event.nativeEvent.keyCode === 229)
+    if (event.nativeEvent.isComposing || event.nativeEvent.keyCode === 229) {
+      if (event.key === "Enter" && event.ctrlKey && !event.metaKey && !event.shiftKey && !event.altKey)
+        onInputTrace(inputTraceId(), "ctrl_enter_blocked", "composing");
       return;
+    }
     if (event.key !== "Enter") return;
     // Ctrl+Enter는 보내기 설정·터치와 상관없는 steering이다(macOS Cmd+Enter 보내기는 그대로). 줄을 바꾸지 않는다
     if (event.ctrlKey && !event.metaKey && !event.shiftKey && !event.altKey) {

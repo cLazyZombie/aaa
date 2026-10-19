@@ -467,12 +467,13 @@ export function TermView({
   // 입력창)에 글이 있으면 그 입력창이 Ctrl+Enter로 그 글을 steering으로 보낸다(`sendTerminalLine` steer, 사용자 10-19 15:3x).
   // 여기는 빈 입력창·터미널·키 막대의 Ctrl+Enter다. 키 막대가 누른 Ctrl+Enter는 입력줄에 남은 글을 건드리지 않고 아무것도 보내지
   // 않는다. 안내 줄은 없앴다(사용자 「어떻게 해라고 보여주는건 좀 과한것 같아」). `chat`: 대화 입력창이 불렀다(입력줄은 숨었다)
+  const blockedCtrlEnter = (method: InputReceiptMethod) => {
+    const ws = wsRef.current;
+    if (ws?.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ t: "input_trace", id: inputTraceId(), event: "ctrl_enter_blocked", method } satisfies TermClientMsg));
+  };
   const pressCtrlEnter = (chat = false): boolean | string => {
     const traceId = inputTraceId();
-    const blocked = (method: InputReceiptMethod) => {
-      const ws = wsRef.current;
-      if (ws?.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ t: "input_trace", id: traceId, event: "ctrl_enter_blocked", method } satisfies TermClientMsg));
-    };
+    const blocked = blockedCtrlEnter;
     if (!canControlRef.current || readonlyRef.current) { blocked("readonly"); return false; }
     if (composingTermRef.current || commitPendingRef.current || lineComposingRef.current) { blocked("composing"); return false; }
     if (!draftIsEmpty(draftRef.current)) {
@@ -1776,7 +1777,7 @@ export function TermView({
     }
     const id = ++submitIdRef.current;
     trace("submit", { id, data, steer });
-    ws.send(JSON.stringify({ t: "submit", id, data, steer, trace: traceId ?? null, meta: meta ?? { pasted: false, attachments: 0 } } satisfies TermClientMsg));
+    ws.send(JSON.stringify({ t: "submit", id, data, steer, trace: traceId ?? null, meta: meta ?? { pasted: false, attachments: 0, ctrl_enter: steer } } satisfies TermClientMsg));
     term.scrollToBottom();
     // 확인되면 입력줄이 보낸 앞부분만 지운다(그 사이 친 글은 남는다). 거절이면 이유, 끊기거나 답이 없으면 확인 못 함
     return new Promise((resolve, reject) => {
@@ -2081,6 +2082,7 @@ export function TermView({
             onSend={sendTerminalLine}
             onEnter={pressEnter}
             onCtrlEnter={() => pressCtrlEnter()}
+            onCtrlEnterBlocked={blockedCtrlEnter}
             onFocus={() => autoFit.current(true)}
             onImage={() => fileRef.current?.click()}
             onPaste={(e) => {

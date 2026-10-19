@@ -71,11 +71,11 @@ truncated: boolean, };
 
 export type InputTraceEvent = "receipt" | "preparing" | "ctrl_enter_blocked" | "unlocked" | "slow" | "unlock" | "cancel" | "failed" | "pending" | "stuck";
 
-export type InputReceiptMethod = "normal" | "pasted_content" | "queue_operation" | "codex_delivery" | "no_transcript" | "connection" | "rejected" | "unknown" | "held_draft" | "composing" | "readonly";
+export type InputReceiptMethod = "normal" | "pasted_content" | "queue_operation" | "codex_delivery" | "no_transcript" | "connection" | "rejected" | "unknown" | "held_draft" | "composing" | "readonly" | "locked" | "uploading" | "no_room";
 
 export type InputEvent = { at_ms: bigint, id: string, pane: string, thread: string | null, harness: string | null, working: boolean, event: string, detail: string, };
 
-export type InputSubmitMeta = { pasted: boolean, attachments: number, };
+export type InputSubmitMeta = { pasted: boolean, attachments: number, ctrl_enter: boolean, };
 
 export type ChatReceipt = { sha256: string, method: InputReceiptMethod, };
 

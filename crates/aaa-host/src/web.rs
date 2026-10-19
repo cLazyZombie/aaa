@@ -1388,7 +1388,7 @@ async fn pane_session(
                             // 글과 Enter를 쓰는 동안에도 이 submit의 멈춤은 바로 답한다(plan §8.247). 다른 frame은 뒤에 차례대로 둔다:
                             // 이 연결의 다음 입력은 Enter 뒤에 간다
                             let stage = AtomicU8::new(SUBMIT_BEFORE);
-                            let work = submit_work(host, role, &actor, front, dev, &id, sid, data, steer, &trace, &stage);
+                            let work = submit_work(host, role, &actor, front, dev, &id, sid, data, steer, meta.ctrl_enter || steer, &trace, &stage);
                             tokio::pin!(work);
                             let mut reading = true;
                             let end = loop {
@@ -1560,6 +1560,7 @@ async fn submit_work(
     sid: u32,
     data: String,
     steer: bool,
+    ctrl_enter: bool,
     trace: &str,
     stage: &AtomicU8,
 ) -> SubmitEnd {
@@ -1584,7 +1585,7 @@ async fn submit_work(
         return SubmitEnd::Stopped(SubmitStage::NoEnter);
     }
     // Ctrl+Enter로 보낸 글: 작업 중인 Claude는 Enter 대신 sendNow로 지금 턴에 넣는다(그 밖은 Enter, plan §8.239 후속)
-    let enter = if steer { host.steer_submit_data(pane) } else { b"\r".to_vec() };
+    let enter = host.submit_key_data(pane, steer, ctrl_enter.then_some(trace));
     let sent = host.call_from(role, actor, Some(front), typed(enter)).await;
     tracing::info!(pane, front = %front.id, submit = sid, ok = sent.is_ok(), code = ?sent.as_ref().err().map(|e| &e.code), phase = if steer { "steer" } else { "enter" }, "웹 입력: agent 응답");
     if sent.is_ok() {

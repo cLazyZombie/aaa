@@ -31,6 +31,9 @@ pub enum InputReceiptMethod {
     HeldDraft,
     Composing,
     Readonly,
+    Locked,
+    Uploading,
+    NoRoom,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
@@ -49,6 +52,8 @@ pub struct InputEvent {
 pub struct InputSubmitMeta {
     pub pasted: bool,
     pub attachments: u16,
+    #[serde(default)]
+    pub ctrl_enter: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]

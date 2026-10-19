@@ -1,6 +1,7 @@
 // 대화 첨부는 저장 → 초안의 @경로 → 보내기 → coordinator의 파일 읽기까지 실제 host·agent로 본다.
 // 참고: herdr-web-ui Composer(onPaste/onDrop/uploadImages), compose(imageMention/insertLeadingMention).
 import fs from "node:fs";
+import assert from "node:assert/strict";
 import crypto from "node:crypto";
 import { aaa, step, browser, webkit, pairPage, inList, domIs, root, repo, AA, procs, sentFrames, waitOutput, shot } from "../lib/harness.mjs";
 import { pairDevice } from "../lib/devices.mjs";
@@ -231,6 +232,10 @@ while True:
     await domIs(p, "다른 기기 메시지 기록", () => [...document.querySelectorAll('[data-role="user"]')].some((el) => el.textContent.trim() === "다른 기기 메시지"));
     await p.clock.runFor(SLOW_MS + 1);
     await phase("slow");
+    await box.press("Control+Enter");
+    await box.evaluate(el => el.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", ctrlKey: true, isComposing: true, keyCode: 229, bubbles: true })));
+    const blocked = (await sentFrames(p)).filter(f => f.t === "input_trace" && f.event === "ctrl_enter_blocked");
+    for (const reason of ["locked", "composing"]) assert.ok(blocked.some(f => f.method === reason), `대화 입력 Ctrl+Enter 차단 이유: ${reason}`);
     await shot(p, "chat-send-slow");
     if (await submits(before) !== 1) throw new Error("잠긴 동안 다시 보냈거나 다음 글을 보냈다");
     // 늦게라도 기록에 오르면 비우고 푼다
