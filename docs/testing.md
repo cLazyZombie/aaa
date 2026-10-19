@@ -282,3 +282,13 @@ local agent 재연결 중 배포 조회(§8.237): host `deploy::tests::coordinat
 - 격리한 실제 Claude CLI(default permission mode)는 로컬 합성 provider가 돌려준 Bash 도구 호출을 처리한다.
   인증·운영 설정을 사용하지 않고, 다른 허용 자료 폴더로 cwd가 바뀐 뒤 옛 cd+git의 trust 거절과 새 git -C 세 읽기의
   무승인 성공을 구분한다. 이것은 권한 엔진 검증이며 실제 모델의 빈 입력 대기 판단을 대신하지 않는다.
+
+## TUI 선택 표시·Mac 복사·입력 지연(§8.253)
+
+- `cargo test --locked -p aaa-tui ready_motion_keeps_release_and_key_order`는 현재 도착한 이동만 모으고 놓기·복사 키를 원래 차례로 보존하는지, 아직 안 온 이동을 기다리지 않는지 검사한다. 이동 묶기를 제거한 변형에서 RED, bytes 복원 뒤 GREEN을 확인한다.
+- `cargo test --locked -p aaa-host front::tests::`의 `queued_input_batches_preserve_bytes_boundaries_and_receipts`는 실제 입력 큐에서 마우스 누름·끌기·뗌의 byte와 요청 ID를 보존하며 묶고, resize·다른 pane·64KiB/256요청 상한을 넘지 않는지 본다. `interactive_frames_bypass_batch_delay_without_unbounded_redraws`는 가상 시계로 입력 도중 이미 기다리던 화면도 즉시 나가는지, 16ms당 16회 예산·32ms 입력 창 뒤에는 출력을 묶는지 본다. 고정 sleep·실제 clipboard는 쓰지 않는다.
+- 기존 TUI keeper `reported_selection_copy_never_interrupts_pane`는 앱의 OSC 유무 두 경우에 놓을 때 복사하고, Ctrl+C가 pane으로 새지 않는지 본다. `selection_copy_never_enters_pane`는 일반 셸과 Shift 보고 pane에서 여러 줄의 빈칸까지 셀 격자로 칠하는지·복사 내용·키 누수·실패 알림을 본다. 파일 sink가 기본이며 `AAA_CLIP_NATIVE=1`이면 같은 PTY 경로에서 실제 clipboard를 읽는다. native 두 시험은 clipboard를 함께 쓰므로 `--test-threads=1`로 실행한다.
+- `scripts/ci-local.sh --native-clipboard`의 clipboard 단계가 위 두 keeper와 기존 이미지 roundtrip을 차례로 실행한다. 개발 머신에서 이 옵션을 켜려면 clipboard의 모든 item/type/data를 먼저 저장하고 종료 후 복원해야 한다. 사람의 clipboard를 덮는 일반 test 단계에서는 계속 파일 sink를 쓴다.
+- 회귀 변형: 입력 묶기 제거·입력 직후 렌더 우회 제거·빈 셀 선택 칠하기 제거를 각각 넣어 해당 keeper의 RED를 확인하고, 원본 bytes로 복원한 뒤 GREEN을 확인한다. 지연 측정은 새 binary·격리 host/agent·PTY에서 입력 byte를 쓴 시각부터 선택 셀 또는 앱의 실제 재그리기가 관측된 시각까지 잰다. herdr도 같은 fixture·셀 크기·관측 parser·전송 조건으로 비교하며, 로컬 셀 선택과 앱 마우스 선택을 별도 기록한다.
+
+- 착지 기준에 같은 m13 오류 대기의 수리가 먼저 포함됐다. 순간 화면 대신 report 종료값의 영구 기록을 확인하는 기준의 fixture를 유지한다.

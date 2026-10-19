@@ -5926,3 +5926,12 @@ primary 근거:
 
 - **캡처 울타리.** 전체 제목은 뒤의 미리 보기에도 끝 표지가 있으므로 창 머리와 전체 화면의 끝 표지만으로 캡처하지 않는다.
   PTY keeper는 창 본문의 끝 표지·footer·마지막 테두리 셀을 확인한 뒤 기록한다. 닫을 때도 창 머리만 사라진 중간 렌더 대신 선택 id와 마지막 테두리의 사라짐까지 확인한다.
+
+
+### 8.253 Mac TUI 선택 복사와 입력 응답 지연(10-19, t-0397)
+
+- **원본 분기.** herdr 0.9.5 `client/shell/mouse.rs:2234`는 마우스 보고를 켠 pane의 왼쪽 누름·끌기·뗌을 앱에 보낸다. 보고가 꺼진 pane은 클라이언트의 `Selection`으로 고르고 셀 격자를 칠한다(`selection.rs`, `ui/panes.rs::render_selection`). 로컬 선택의 표시에는 host 응답이 필요 없으며, 복사할 때만 `PaneSelectionRead`로 기록을 읽는다. aaa도 이 분기를 유지한다. 앱이 그린 글자 단위 선택을 TUI의 셀 선택이라고 부르지 않는다. Shift를 누른 바깥 터미널 자체 선택은 여전히 TUI 밖의 동작이다. 임의의 Alt 전달 규칙이나 harness별 예외를 넣지 않는다.
+- **Mac 쓰기.** herdr `platform/macos.rs::write_clipboard`처럼 `/usr/bin/pbcopy`의 stdin에 UTF-8을 쓰고 종료 성공까지 기다린다. SSH·WSL 경로는 front가 있는 터미널에 OSC 52를 보낸다(`selection.rs::should_prefer_osc52`). native 성공만 Copied이며, OSC 요청은 Requested다. Windows의 유효한 창 소유자·UTF-16 쓰기는 §8.241을 유지한다.
+- **앱 자동 복사 보완.** aaa의 `copy_on_select`를 켰다면 앱이 OSC 52를 보내지 않는 선택도 놓을 때 복사한다. 앱이 이미 보낸 글이 있으면 그것을 쓰고, 없으면 기존의 pane 안 선택 범위를 `PaneSelectionRead`로 읽는다. 앱의 마우스 보고·표시 조건은 바꾸지 않는다. 이것은 herdr 원본과 다른 aaa 설정의 보장이다. §8.241의 선택 뒤 복사 키 보호도 유지한다. 새 누름은 지난 앱 복사 상태를 지운다.
+- **입력과 화면.** herdr `client/shell/input.rs::handle_raw_events`처럼 이미 도착한 연속 이동은 한 번 그리기 전에 함께 처리한다. 같은 종류·수정키의 이동만 최대 256개 묶고, 놓기·키·다른 사건은 다음 차례로 보존한다. EventStream을 잠깐 poll할 때도 현재 task의 waker를 써서 뒤늦은 입력이 잠들지 않게 한다. herdr `client/shell.rs::push_target_event`처럼 이미 쌓인 같은 pane의 연속 입력을 하나로 묶는다(최대 64KiB/256요청, 새 입력을 기다리지 않음). 모든 byte·요청별 응답과 크기 변경/다른 pane 경계를 보존한다. aaa agent 계약에는 응답이 있으므로 묶음 단위 확인은 남지만, 쌓인 마우스 사건마다 왕복하지 않는다. herdr `server/headless/render.rs`의 입력 직후 32ms 창·16ms당 16회 예산으로 응답 화면을 즉시 전달하고, 보통 출력은 16ms 동안 묶는다. 반복되는 SGR 마우스 성공 진단은 DEBUG로 낮추고, 일반 입력 전달의 INFO와 연결 끊김·timeout·쓰기 실패 진단은 유지한다.
+- **회귀.** 가상 시계의 입력 직후 표시/예산/보통 출력 대기와 입력 byte·경계·응답 묶음을 host에서 본다. 실제 PTY keeper는 빈칸까지 pane 끝으로 칠하는 여러 줄 셀 선택, OSC 없는 앱 자동 복사, 선택 뒤 Ctrl+C 누수 방지, native clipboard를 검사한다. Windows에도 같은 host·TUI 코드를 쓰며 OS별 native 경계는 공식 ci-local clipboard 단계가 본다.

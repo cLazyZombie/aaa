@@ -101,10 +101,14 @@ impl AgentConn {
     pub async fn request_timeout(&self, body: AgentRequest, wait: Duration) -> Result<AgentResponse, ErrorBody> {
         let id = format!("c{}", self.seq.fetch_add(1, Ordering::Relaxed));
         let input = match &body {
-            AgentRequest::Input { session, data } => Some((session.clone(), data.0.len())),
+            AgentRequest::Input { session, data } => {
+                Some((session.clone(), data.0.len(), data.0.starts_with(b"\x1b[<")))
+            }
             _ => None,
         };
-        if let Some((session, bytes)) = &input {
+        if let Some((session, bytes, true)) = &input {
+            tracing::debug!(request = %id, %session, bytes, "pane 입력: host 전달");
+        } else if let Some((session, bytes, _)) = &input {
             tracing::info!(request = %id, %session, bytes, "pane 입력: host 전달");
         }
         let (otx, orx) = oneshot::channel();
@@ -112,7 +116,7 @@ impl AgentConn {
         let msg = LinkMsg::Req { id: id.clone(), deadline_ms: Some(wait.as_millis() as u64), body };
         if self.tx.json(&msg).await.is_err() {
             self.pending.lock().unwrap().remove(&id);
-            if let Some((session, _)) = &input {
+            if let Some((session, _, _)) = &input {
                 tracing::warn!(request = %id, %session, "pane 입력: agent 연결 끊김");
             }
             return Err(ErrorBody::new(ErrorCode::AgentDisconnected, "agent 연결이 끊겼다"));
@@ -139,7 +143,9 @@ impl AgentConn {
                 Err(ErrorBody::new(ErrorCode::Timeout, "agent 응답 시간 초과"))
             }
         };
-        if let Some((session, bytes)) = &input {
+        if let Some((session, bytes, true)) = &input {
+            tracing::debug!(request = %id, %session, bytes, ok = result.is_ok(), "pane 입력: host 확인");
+        } else if let Some((session, bytes, _)) = &input {
             tracing::info!(request = %id, %session, bytes, ok = result.is_ok(), "pane 입력: host 확인");
         }
         result
