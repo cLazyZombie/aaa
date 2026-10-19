@@ -311,7 +311,7 @@ export function Sidebar(props: SidebarProps) {
       <div {...panelProps("agents", props.panel)} className="sidebar-panel agents-panel">
         <AgentSection {...props} />
       </div>
-      <div {...panelProps("special", props.panel)} className="list-body machine-list sidebar-panel special-panel">
+      <div {...panelProps("special", props.panel)} className="sidebar-panel special-panel">
         <SpecialSection {...props} />
       </div>
       {menu && <RowMenu anchor={menu.anchor} point={menu.point} restoreFocusTo={menu.previousFocus} title={menu.title} subtitle={menu.place} header={menu.header} items={menu.items()} onClose={closeMenu} />}

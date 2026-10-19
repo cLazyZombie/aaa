@@ -257,7 +257,7 @@ export default async function () {
     }
   });
 
-  await step("사이드바 폭(plan §8.255): 경계 손잡이를 끌면 활동 막대가 아닌 사이드바 칸만 넓어지고 본문이 그만큼 준다. 놓으면 host 공유 설정이라 다른 기기도 같은 폭이고, focus 뒤 ←→ 16px·Home·End, 두 번 누르면 기본 320px. 접힘·좁은 창(drawer)에는 손잡이가 없다", async () => {
+  await step("사이드바 폭(plan §8.255): 경계 손잡이를 끌면 활동 막대가 아닌 사이드바 칸만 넓어지고 본문이 그만큼 준다. 놓으면 host 공유 설정이라 다른 기기도 같은 폭이고, focus 뒤 ←→ 16px·Home·End, 두 번 누르면 기본 320px. 접힘·좁은 창(drawer)·터치 기기에는 손잡이가 없다", async () => {
     const dev = await pairPage(browser, aaa("web", "pair").code, { width: 1280, height: 800 });
     const other = await pairPage(browser, aaa("web", "pair").code, { width: 1280, height: 800 });
     const p = dev.page;
@@ -313,6 +313,14 @@ export default async function () {
       await p.getByTestId("sidebar-resizer").dblclick();
       await columnIs(p, 320, "두 번 눌러 기본 320");
       await columnIs(other.page, 320, "다른 기기도 기본 320");
+      // 손가락이 주 입력인 넓은 창(가로 iPad)에도 손잡이가 없다: 경계 옆 입력창 띠 끌기가 폭 바꾸기가 된다(22 「iPad 입력창 끌기」)
+      const touch = (await pairPage(browser, aaa("web", "pair").code, { width: 1280, height: 800 }, { touch: true })).page;
+      try {
+        await touch.getByTestId("pane-t1").waitFor();
+        same(await widths(touch), { column: 320, grip: "none" }, "터치 넓은 창");
+      } finally {
+        await touch.context().close();
+      }
     } finally {
       await p.context().close();
       await other.page.context().close();

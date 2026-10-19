@@ -300,9 +300,11 @@ svg.i { width: 16px; height: 16px; flex-shrink: 0; fill: none; stroke: currentCo
   .list { position: relative; }
   .list > .sidebar-shell { --sidebar-shown: min(var(--sidebar-user-w, var(--sidebar)), 50vw); flex-basis: var(--sidebar-shown); width: var(--sidebar-shown); }
 }
-/* 사이드바 오른쪽 경계 손잡이(herdr-web-ui SidebarResizer.css). .list가 넘침을 자르므로 경계 안쪽에 둔다. 넓은 창에서 펼쳤을 때만 */
+/* 사이드바 오른쪽 경계 손잡이(herdr-web-ui SidebarResizer.css). .list가 넘침을 자르므로 경계 안쪽에 둔다. 넓은 창에서 펼쳤을 때만.
+   손가락이 주 입력인 기기(iPad)에는 없다: 터치는 가까운 누를 것으로 끌려가서(Chromium 터치 보정) 경계 옆 입력창 띠를 끄는 손이
+   사이드바 폭 바꾸기가 되고 문서 끌기 막음(pageHold.ts)도 벗어난다(E2E 22 「iPad 입력창 끌기」) */
 .sidebar-resizer { display: none; }
-@media (min-width: 769px) {
+@media (min-width: 769px) and (hover: hover) and (pointer: fine) {
   .sidebar-resizer { display: block; position: absolute; top: 0; right: 0; bottom: 0; z-index: var(--z-banner); width: var(--space-2); cursor: col-resize; touch-action: none; }
   .app.sidebar-collapsed .sidebar-resizer { display: none; }
 }

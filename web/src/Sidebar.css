@@ -88,6 +88,8 @@
 }
 
 /* 특수 패널(plan §8.256): 프로젝트 머리 아래 사이드바 두 줄 줄. 상태 말·점 색은 thread 줄과 같은 뜻(막힘 빨강, 일함 파랑, 사람 차례 노랑) */
+/* 남은 높이를 갖고 굴러간다(목록 .list-body·.machine-list와 같은 꼴, 그 class는 다른 시험·규칙이 목록 하나로 찾으므로 쓰지 않는다) */
+.special-panel { position: relative; flex: 1 1 0; min-height: 0; padding: var(--space-2) var(--side-gutter) 0; overflow-y: auto; overscroll-behavior: contain; scroll-padding-bottom: var(--space-4); }
 .special-panel .workspace-header { min-height: var(--side-row-2); }
 .special-project + .special-project { margin-top: var(--space-3); }
 .special-project-head {
