@@ -3852,6 +3852,8 @@ fn coordinator_flow() {
 /// coordinator 안내에 옮긴 herdr-projects COORDINATOR.md 절(차이 목록 3장 G2, plan §8.184). 절마다 그 절에만 있는 글 하나
 const GUIDE_SECTIONS: &[&str] = &[
     "일을 직접 하지 않으므로 언제나 사용자에게 답할 수 있다",
+    "앞(foreground)에서 오래 기다리는 명령을 돌리지 않는다",
+    "기다릴 일은 aaa inbox 알림에 맡기거나, 수 초 안에 한 번만 확인하고 끝낸다",
     "## 새 프로젝트의 첫 턴",
     "--to-user --title",
     "지시는 사용자만, 채팅으로 한다",
