@@ -1238,9 +1238,11 @@ impl Host {
         let task = mission_task.as_deref().unwrap_or(task);
         let guide = if let Some(m) = &r.mission {
             crate::brief_text::SPECIAL_GUIDE
+                .replace("{input_gate}", crate::brief_text::MISSION_INPUT_GATE)
                 .replace("{work}", aaa_proto::BRIEF_WORK_DIR)
                 .replace("{exe}", aaa_proto::BRIEF_EXE)
                 .replace("{inbox_list}", aaa_proto::BRIEF_INBOX_LIST)
+                .replace("{git_reads}", aaa_proto::BRIEF_GIT_READS)
                 .replace("{project}", &r.project)
                 .replace("{mission}", &m.name)
                 .replace("{project_dir}", &dir.to_string_lossy())

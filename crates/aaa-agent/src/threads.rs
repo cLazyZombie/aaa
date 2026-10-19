@@ -1012,6 +1012,80 @@ pub fn mission_state_write(work_dir: &str, rel: &str, offset: u64, data: &[u8], 
 mod mission_tests {
     use super::*;
 
+    /// Git 자체에서 옵션 종료 경계와 fsmonitor·textconv·index 갱신 차단을 검증한다.
+    #[cfg(unix)]
+    #[test]
+    fn mission_git_reads_keep_option_and_index_boundaries() {
+        use std::os::unix::fs::PermissionsExt;
+        use std::process::Command;
+        let root = std::env::temp_dir().join(format!("aaa-mission-git-{}", aaa_common::util::new_id()));
+        let repo = root.join("repo 'quoted");
+        std::fs::create_dir_all(&repo).unwrap();
+        let empty = root.join("empty-config");
+        std::fs::write(&empty, "").unwrap();
+        let git = |args: &[&str]| {
+            let out = Command::new("git")
+                .arg("-c")
+                .arg("init.templateDir=")
+                .arg("-c")
+                .arg("core.hooksPath=/dev/null")
+                .args(args)
+                .current_dir(&repo)
+                .env("GIT_CONFIG_GLOBAL", &empty)
+                .env("GIT_CONFIG_NOSYSTEM", "1")
+                .output()
+                .unwrap();
+            assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+        };
+        git(&["init", "-q"]);
+        std::fs::write(repo.join("one.txt"), "one\n").unwrap();
+        git(&["add", "one.txt"]);
+        git(&["-c", "user.name=Test", "-c", "user.email=test@example.com", "commit", "-qm", "first"]);
+        let marker = root.join("callback-ran");
+        let callback = root.join("callback");
+        std::fs::write(&callback, format!("#!/bin/sh\ntouch '{}'\n", marker.display())).unwrap();
+        std::fs::set_permissions(&callback, std::fs::Permissions::from_mode(0o700)).unwrap();
+        for name in ["core.fsmonitor", "core.pager", "diff.external", "gpg.program"] {
+            git(&["config", name, callback.to_str().unwrap()]);
+        }
+        git(&["config", "diff.fixture.textconv", callback.to_str().unwrap()]);
+        std::fs::create_dir_all(repo.join(".git/info")).unwrap();
+        std::fs::write(repo.join(".git/info/attributes"), "*.txt diff=fixture\n").unwrap();
+        git(&["config", "log.showSignature", "true"]);
+        git(&["config", "core.untrackedCache", "true"]);
+        let index = std::fs::read(repo.join(".git/index")).unwrap();
+        let commands = aaa_proto::mission_git_read_commands(&repo.join(".aaa/demo-t-0001").to_string_lossy());
+        assert_eq!(commands.len(), 3);
+        for (i, command) in commands.iter().enumerate() {
+            let suffix = if i < 2 { " HEAD" } else { "" };
+            let run = |text: &str| {
+                Command::new("/bin/sh")
+                    .args(["-c", text])
+                    .env("GIT_CONFIG_GLOBAL", &empty)
+                    .env("GIT_CONFIG_NOSYSTEM", "1")
+                    .output()
+                    .unwrap()
+            };
+            let out = run(&format!("{command}{suffix}"));
+            assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+            if i == 1 {
+                assert!(String::from_utf8_lossy(&out.stdout).contains("+one"));
+                let blob = run(&format!("{command} HEAD:one.txt"));
+                assert!(blob.status.success());
+                assert_eq!(blob.stdout, b"one\n");
+            }
+            assert!(!marker.exists(), "읽기에서 외부 callback을 실행하면 안 된다");
+            assert_eq!(std::fs::read(repo.join(".git/index")).unwrap(), index);
+            if i < 2 {
+                let outside = root.join(format!("output-{i}"));
+                let out = run(&format!("{command} --output='{}' HEAD", outside.display()));
+                assert!(!outside.exists(), "옵션 종료 뒤 --output을 켜면 안 된다");
+                assert!(!out.status.success());
+            }
+        }
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
     /// 실행별 권한 계약: 임무만 보고·post·자료 읽기·자기 폴더 쓰기를 허용한다.
     #[test]
     fn mission_launch_scopes_permissions_for_both_harnesses() {
@@ -1064,6 +1138,19 @@ mod mission_tests {
                     v.as_str().is_some_and(|s| s.starts_with("Bash(find ") || s == "Bash(aaa *)" || s == "Bash(ls *)")
                 }));
                 assert!(allow.contains(&serde_json::json!("Bash(aaa post coordinator *)")));
+                let reads: Vec<_> =
+                    allow.iter().filter_map(|v| v.as_str()).filter(|s| s.starts_with("Bash(git -C ")).collect();
+                assert_eq!(reads.len(), 3, "자기 worktree의 log/show/status만 허용한다");
+                assert!(reads.iter().all(|s| s.contains(&root.join("repo").to_string_lossy().replace('\\', "/"))));
+                assert!(reads.iter().any(|s| {
+                    s.ends_with("log --no-ext-diff --no-textconv --oneline --max-count=100 --end-of-options *)")
+                }));
+                assert!(
+                    reads
+                        .iter()
+                        .any(|s| s.ends_with("show --no-ext-diff --no-textconv --format=fuller --end-of-options *)"))
+                );
+                assert!(reads.iter().any(|s| s.ends_with("status --short -- *)")));
                 let path = work.to_string_lossy().replace('\\', "/");
                 assert!(allow.contains(&serde_json::json!(format!("Edit(//{}/**)", path.trim_start_matches('/')))));
                 assert!(!allow.contains(&serde_json::json!("Bash")));

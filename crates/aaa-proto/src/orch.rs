@@ -799,16 +799,39 @@ pub const BRIEF_WORK_DIR: &str = "{{aaa:work_dir}}";
 pub const BRIEF_EXE: &str = "{{aaa:exe}}";
 /// 임무 inbox의 목록 조회 한 명령. agent가 채우는 경로와 allow-list가 같은 quoting을 쓴다.
 pub const BRIEF_INBOX_LIST: &str = "{{aaa:inbox_list}}";
+pub const BRIEF_GIT_READS: &str = "{{aaa:git_reads}}";
 
 pub fn mission_inbox_list_command(work_dir: &str) -> String {
     let path = format!("{}/inbox", work_dir.replace('\\', "/").trim_end_matches('/'));
     format!("ls -1 -- '{}'", path.replace('\'', "'\\''"))
 }
 
+/// 자기 worktree와 읽기 옵션을 고정한다. 가변 ref/path는 옵션 종료 표지 뒤에서만 받는다.
+pub fn mission_git_read_commands(work_dir: &str) -> Vec<String> {
+    let path = work_dir.replace('\\', "/");
+    let Some((cwd, leaf)) = path.rsplit_once("/.aaa/") else { return vec![] };
+    if cwd.is_empty() || leaf.is_empty() || leaf.contains('/') || cwd.contains('*') {
+        return vec![];
+    }
+    let git = format!(
+        "git -C '{}' --no-pager --no-optional-locks -c core.fsmonitor=false -c log.showSignature=false",
+        cwd.replace('\'', "'\\''")
+    );
+    vec![
+        format!("{git} log --no-ext-diff --no-textconv --oneline --max-count=100 --end-of-options"),
+        format!("{git} show --no-ext-diff --no-textconv --format=fuller --end-of-options"),
+        format!("{git} status --short --"),
+    ]
+}
+
 /// brief 자리를 채운다. 실행 파일 경로에 빈칸이 있으면 큰따옴표로 감싼다.
 pub fn fill_brief(brief: &str, work_dir: &str, exe: &str) -> String {
     let exe = if exe.contains(char::is_whitespace) { format!("\"{exe}\"") } else { exe.to_string() };
     brief
+        .replace(
+            BRIEF_GIT_READS,
+            &mission_git_read_commands(work_dir).iter().map(|s| format!("- `{s}`")).collect::<Vec<_>>().join("\n"),
+        )
         .replace(BRIEF_INBOX_LIST, &mission_inbox_list_command(work_dir))
         .replace(BRIEF_WORK_DIR, work_dir)
         .replace(BRIEF_EXE, &exe)
@@ -982,6 +1005,11 @@ mod tests {
         assert_eq!(fill_brief(BRIEF_EXE, "", r"C:\Program Files\aaa.exe"), r#""C:\Program Files\aaa.exe""#);
         assert_eq!(fill_brief(BRIEF_INBOX_LIST, "/work/it's a folder", ""), "ls -1 -- '/work/it'\\''s a folder/inbox'");
         assert_eq!(fill_brief(BRIEF_INBOX_LIST, r"C:\work dir\task", ""), "ls -1 -- 'C:/work dir/task/inbox'");
+        let reads = fill_brief(BRIEF_GIT_READS, "/work/it's a folder/.aaa/demo-t-0001", "");
+        assert!(reads.contains("git -C '/work/it'\\''s a folder' --no-pager --no-optional-locks"));
+        assert!(reads.contains("--end-of-options") && reads.contains("status --short --"));
+        assert!(mission_git_read_commands("/work/other").is_empty());
+        assert!(mission_git_read_commands("/work/*/.aaa/demo-t-0001").is_empty());
     }
 }
 

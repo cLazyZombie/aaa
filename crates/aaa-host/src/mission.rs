@@ -494,9 +494,10 @@ impl Host {
             pending.or_else(|| self.db.meta(&key(&r.project, &run.name, "applied")).ok().flatten()).unwrap_or_default();
         let rev = parse(&run.name, &text).map(|m| m.sha).unwrap_or_default();
         format!(
-            "# 임무 {} · 적용 판 {rev}\n\n{text}\n\n입력은 `{}/inbox/`에 온다. 폴더가 없거나 처리하지 않은 JSON이 없으면 정상적인 빈 입력이다. 다른 위치를 찾지 않고 대기한다.\n",
+            "# 임무 {} · 적용 판 {rev}\n\n{text}\n\n입력은 `{}/inbox/`에 온다. 폴더가 없거나 처리하지 않은 JSON이 없으면 정상적인 빈 입력이다. 다른 위치를 찾지 않고 대기한다.\n\n{}",
             run.name,
-            aaa_proto::BRIEF_WORK_DIR
+            aaa_proto::BRIEF_WORK_DIR,
+            crate::brief_text::MISSION_INPUT_GATE.replace("{work}", aaa_proto::BRIEF_WORK_DIR)
         )
     }
     pub(crate) fn mission_show(&self, p: &str, n: &str) -> Result<MissionView, ErrorBody> {
