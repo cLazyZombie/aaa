@@ -1641,6 +1641,59 @@ fn side_list_like_web() {
     tui.type_line("echo still-$((3*3))");
     tui.wait_text("포커스 그대로", |s| s.contains("still-9"));
     assert!(h.screen(&right).contains("still-9"), "포커스는 나눈 오른쪽 pane 그대로");
+
+    // 10) 긴 목록의 휠은 물리 줄이 아니라 두 줄 카드 하나씩 넘긴다. 실제 SGR 입력·렌더·hit 좌표를 함께 본다.
+    let gamma = start("gamma-job")["id"].as_str().unwrap().to_string();
+    tui.cmd("w");
+    pick(&mut tui, "▾ demo");
+    let titles = [(alpha.as_str(), "alpha-job"), (beta.as_str(), "beta-job"), (gamma.as_str(), "gamma-job")];
+    tui.wait_screen("세 thread pane까지 도착", |s| {
+        let lines = s.side_lines();
+        titles.iter().all(|(_, title)| {
+            lines.iter().position(|l| l.contains(title)).is_some_and(|i| {
+                lines.get(i + 1).is_some_and(|l| {
+                    if *title == "beta-job" {
+                        l.contains("pane 닫힘")
+                    } else {
+                        l.ends_with("labA") && !l.contains("pane 닫힘")
+                    }
+                })
+            })
+        })
+    });
+    let (divider, order) = {
+        let screen = tui.screen.0.lock().unwrap();
+        let lines = screen.side_lines();
+        let divider = lines.iter().position(|l| l.starts_with(&"─".repeat(20))).unwrap();
+        let order: Vec<_> = lines.iter().filter_map(|l| titles.iter().find(|(_, t)| l.contains(t)).copied()).collect();
+        (divider, order)
+    };
+    // 아래 구역에 프로젝트 머리와 thread 세 장이 꼭 맞는 일곱 줄을 남긴다.
+    tui.mouse(0, (divider, 3), false);
+    tui.mouse(32, (20, 3), false);
+    tui.mouse(0, (20, 3), true);
+    tui.wait_screen("일곱 줄 목록", |s| {
+        s.side_lines()[21].starts_with(" agents") && s.side_lines()[23].contains("▾ demo")
+    });
+    for (button, title) in [(65, order[0].1), (65, order[1].1), (64, order[0].1), (65, order[1].1)] {
+        tui.mouse(button, (24, 3), false);
+        tui.wait_screen("휠 한 번에 카드 하나", |s| {
+            let lines = s.side_lines();
+            lines[23].contains(title) && words.iter().any(|w| lines[24].trim_start().starts_with(w))
+        });
+    }
+    if let (Some(dir), Some(raw)) = (std::env::var_os("AAA_TUI_THEME_SHOTS"), &tui.recording) {
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(std::path::Path::new(&dir).join("two-line-scroll.ansi"), &*raw.lock().unwrap()).unwrap();
+        std::fs::write(std::path::Path::new(&dir).join("two-line-scroll.txt"), tui.text()).unwrap();
+    }
+    // 첫 카드는 앞에서 닫은 beta, 둘째는 실행 중인 gamma다. 상태 줄도 바로 위 제목의 pane을 연다.
+    let expected = h.ok(&["thread", "show", "demo", order[1].0])["pane"].as_str().unwrap().to_string();
+    tui.click((24, 3));
+    tui.wait_screen("thread pane 포커스", |s| {
+        !s.text().contains(" NAVIGATE ") && s.current().is_some_and(|l| l.contains(order[1].1))
+    });
+    hw.wait("둘째 줄의 thread 탭", |w| w.leaves().contains(&expected).then_some(()));
 }
 
 /// agents 구역의 지금 pane 줄에 적힌 머신(「기타」 pane 줄은 제목 뒤에 머신 이름, §8.195)

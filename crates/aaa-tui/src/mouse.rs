@@ -33,7 +33,7 @@ use tokio::time::Instant;
 
 use crate::bind::Action;
 use crate::chrome::{PaneBox, SplitHit};
-use crate::list::Row;
+use crate::list::{self, Row};
 use crate::theme::Palette;
 use crate::{
     App, DIVIDER_DOUBLE_CLICK, FrontSender, Mode, Overlay, Pending, clip, help, keys, open, scrollbar, unicode_width,
@@ -1242,7 +1242,7 @@ impl App {
         Ok(())
     }
 
-    /// 휠: 탭 막대는 앞·뒤 탭, 펼친 목록은 한 줄씩. pane 안쪽은 포커스를 옮기고 마우스 보고면 넘기고, 보고를 끈 alt 화면이면
+    /// 휠: 탭 막대는 앞·뒤 탭, 펼친 목록은 항목 하나씩(thread는 두 줄). pane 안쪽은 포커스를 옮기고 마우스 보고면 넘기고, 보고를 끈 alt 화면이면
     /// 화살표 하나, 아니면 이 화면의 기록을 넘긴다(herdr `apply_scroll`). herdr처럼 scrollbar 칸 위 휠은 아무것도 하지 않는다.
     async fn wheel(
         &mut self,
@@ -1269,9 +1269,7 @@ impl App {
         }
         if hits.on(hits.sidebar, x, y) {
             if hits.list_h > 0 {
-                let max = self.list_rows().len().saturating_sub(hits.list_h as usize);
-                let top = if down { hits.list_skip + 1 } else { hits.list_skip.saturating_sub(1) };
-                self.list_top = Some(top.min(max));
+                self.list_top = Some(list::scroll(&self.list_rows(), hits.list_skip, hits.list_h, down));
             }
             return Ok(());
         }

@@ -419,6 +419,35 @@ pub struct View<'a> {
     pub folded: &'a HashSet<String>,
 }
 
+/// 제목·상태 두 줄은 같은 항목이다. 목록이 바뀌어 저장된 top이 둘째 줄을 가리켜도 제목으로 맞춘다.
+fn item_start(rows: &[Row], n: usize) -> usize {
+    match (n.checked_sub(1).and_then(|p| rows.get(p)), rows.get(n)) {
+        (Some(Row::Thread(a)), Some(Row::ThreadSub(b))) if a == b => n - 1,
+        _ => n,
+    }
+}
+
+fn item_end(rows: &[Row], n: usize) -> usize {
+    match (rows.get(n), rows.get(n.saturating_add(1))) {
+        (Some(Row::Thread(a)), Some(Row::ThreadSub(b))) if a == b => n + 2,
+        _ => n.saturating_add(1),
+    }
+}
+
+fn scroll_limit(rows: &[Row], height: u16) -> usize {
+    let last = rows.len().saturating_sub(height as usize);
+    let start = item_start(rows, last);
+    // 두 줄 경계 때문에 아래 빈칸 한 줄을 허용한다. 한 줄 화면에서는 마지막 제목을 남긴다.
+    if height > 1 && start < last { last + 1 } else { start }
+}
+
+/// 휠 한 번에 항목 하나. thread는 두 줄, 묶음 머리·pane은 한 줄씩 넘긴다.
+pub fn scroll(rows: &[Row], top: usize, height: u16, down: bool) -> usize {
+    let top = item_start(rows, top.min(scroll_limit(rows, height)));
+    let next = if down { item_end(rows, top) } else { item_start(rows, top.saturating_sub(1)) };
+    item_start(rows, next.min(scroll_limit(rows, height)))
+}
+
 /// 줄들을 그리고 (줄 y, 줄 차례)들과 첫 보이는 줄을 준다(사이드바 바탕·구분선은 부르는 쪽).
 /// 줄이 넘치면 고른 줄이 보이게 내린다(휠로 민 자리가 있으면 그 자리).
 /// herdr 사이드바처럼 탐색 중 고른 줄은 `selection_bg`(없으면 `active_row_bg`), 지금 pane 줄은 `active_row_bg` 바탕이고
@@ -427,18 +456,25 @@ pub fn render(buf: &mut Buffer, r: Rect, rows: &[Row], v: &View) -> (Vec<(u16, u
     let p = v.pal;
     let selection = if p.selection_bg == Color::Reset { p.active_row_bg } else { p.selection_bg };
     let active = if v.focused && p.selection_bg == Color::Reset { p.sidebar_bg } else { p.active_row_bg };
-    // 고른 thread 줄은 둘째 줄까지 보이게
-    let sel_end = match v.sel {
-        Some(n) if matches!(rows.get(n + 1), Some(Row::ThreadSub(_))) => n + 2,
-        Some(n) => n + 1,
-        None => 0,
-    };
+    // 선택을 따라갈 때는 제목·상태가 모두 들어가는 항목 경계로 내린다.
+    let sel_end = v.sel.map_or(0, |n| {
+        let n = item_start(rows, n);
+        if r.h == 1 { n.saturating_add(1) } else { item_end(rows, n) }
+    });
     let skip = match v.top {
-        Some(t) => t.min(rows.len().saturating_sub(r.h as usize)),
-        None => sel_end.saturating_sub(r.h as usize),
+        Some(t) => item_start(rows, t.min(scroll_limit(rows, r.h))),
+        None => {
+            let top = sel_end.saturating_sub(r.h as usize);
+            if item_start(rows, top) < top { top + 1 } else { top }
+        }
     };
     let mut placed = Vec::new();
     for (n, row) in rows.iter().enumerate().skip(skip).take(r.h as usize) {
+        // 둘째 줄이 들어갈 자리가 없으면 다음 항목 전체를 다음 스크롤에 보인다.
+        // 한 줄뿐인 극소 화면에서는 상태 대신 제목을 우선한다.
+        if r.h > 1 && item_end(rows, n) > skip + r.h as usize {
+            break;
+        }
         let y = r.y + (n - skip) as u16;
         placed.push((y, n));
         let sel = v.focused && v.sel.and_then(|n| rows.get(n)).is_some_and(|s| *s == row.target());
@@ -1139,7 +1175,7 @@ mod tests {
         let list = rows(&machines, &panes.values().cloned().collect::<Vec<_>>(), &threads, &open, None);
         let pal = Palette::catppuccin();
         let sel = list.iter().position(|r| *r == Row::Thread("demo/t-0001".into())).unwrap();
-        let draw = |machines: &[MachineView], rows: &[Row], w: u16, sel: Option<usize>| {
+        let draw_at = |machines: &[MachineView], rows: &[Row], w: u16, h: u16, sel, top| {
             let v = View {
                 machines,
                 panes: &panes,
@@ -1147,15 +1183,47 @@ mod tests {
                 current: None,
                 sel,
                 focused: true,
-                top: None,
+                top,
                 pal: &pal,
                 style: StatusIndicators::Dots,
                 now_ms: 2_000,
                 folded: &open,
             };
-            let mut buf = Buffer::empty(ratatui::layout::Rect::new(0, 0, w, rows.len() as u16));
-            render(&mut buf, Rect { x: 0, y: 0, w, h: rows.len() as u16 }, rows, &v);
-            buf
+            let mut buf = Buffer::empty(ratatui::layout::Rect::new(0, 0, w, h));
+            let (placed, _) = render(&mut buf, Rect { x: 0, y: 0, w, h }, rows, &v);
+            (buf, placed)
+        };
+        // 선택을 따라 내려가도 상태 줄에서 시작하지 않는다. 휠로 옮긴 둘째 줄 위치도 제목에 붙인다.
+        for (h, selected, top, want) in [
+            (3, Some(sel), None, vec!["t-0001", "작업 중", ""]),
+            (3, None, Some(2), vec!["t-0002", "확인 필요", ""]),
+            (2, None, Some(usize::MAX), vec!["t-0001", "작업 중"]),
+            (1, Some(sel), None, vec!["t-0001"]),
+            (1, None, Some(usize::MAX), vec!["t-0001"]),
+            (4, None, Some(0), vec!["demo", "t-0002", "확인 필요", ""]),
+            (0, Some(sel), None, vec![]),
+        ] {
+            let (buf, placed) = draw_at(&machines, &list, 36, h, selected, top);
+            let got = shown(&buf, 36, h);
+            assert_eq!(placed.len(), want.iter().filter(|s| !s.is_empty()).count(), "빈칸에 hit 영역이 남았다");
+            for (line, needle) in got.iter().zip(want) {
+                if needle.is_empty() {
+                    assert!(line.is_empty(), "반쪽 thread가 남았다: {got:?}");
+                } else {
+                    assert!(line.contains(needle), "{h}줄 sel={selected:?} top={top:?}: {got:?}");
+                }
+            }
+            // 실제 그린 두 줄 모두 같은 thread를 연다(빈칸에는 hit 영역을 남기지 않는다).
+            for pair in placed.windows(2) {
+                let a = &list[pair[0].1];
+                let b = &list[pair[1].1];
+                if matches!(b, Row::ThreadSub(_)) {
+                    assert_eq!(a.target(), b.target());
+                }
+            }
+        }
+        let draw = |machines: &[MachineView], rows: &[Row], w: u16, sel| {
+            draw_at(machines, rows, w, rows.len() as u16, sel, None).0
         };
         let buf = draw(&machines, &list, 36, Some(sel));
         assert_eq!(
