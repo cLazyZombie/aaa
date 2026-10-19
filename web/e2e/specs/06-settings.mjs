@@ -358,7 +358,7 @@ export default async function ({ ctl, page }) {
     if (saved.density !== "compact" || saved.uiFontSize !== 20) bad.push(`저장 ${JSON.stringify(saved)}`);
     await dp.keyboard.press("Escape");
     await dp.reload();
-    await dp.getByTestId("machine-labA").waitFor();
+    await dp.getByTestId("machine-labA").waitFor({ state: "attached" });
     const again = await look(dp);
     if (again.density !== "compact" || again.body !== "20px") bad.push(`다시 연 뒤 ${JSON.stringify(again)}`);
     await dp.context().close();
@@ -394,7 +394,7 @@ export default async function ({ ctl, page }) {
     await pp.getByRole("dialog", { name: "설정" }).getByRole("tab", { name: "터미널" }).waitFor();
     await pp.goBack();
     await closed(pp);
-    if (pp.url() !== home || !(await pp.getByTestId("machine-labA").isVisible())) bad.push(`뒤로가 앱을 나갔다: ${pp.url()}`);
+    if (pp.url() !== home || !(await pp.locator("#sidebar-panel-projects").isVisible())) bad.push(`뒤로가 앱을 나갔다: ${pp.url()}`);
     await until("닫은 뒤 focus는 톱니", () => pp.evaluate(() => document.activeElement?.dataset.testid === "settings-open")).catch((e) => bad.push(e.message));
     // 조작 크기(390×844 터치): 쪽 줄은 --keybar-h, 머리·한 칸씩의 아이콘 단추는 --touch-target, 글 단추는 그 높이, 스위치는 48×40
     const sizes = (p, sel) =>

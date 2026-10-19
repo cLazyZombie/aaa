@@ -5611,3 +5611,23 @@ primary 근거:
 - 검증 owner: `ctrl_enter.rs` 유닛은 스타일·잘린 상자·여러 줄·현재 Codex 패널 판정을, 웹 `25-ctrl-enter.mjs`는 실제 host·agent·PTY의 bytes와 물리 키·모바일·입력줄·IME·반복 키를 본다. 기존 `03-keys.mjs`가 일반 프로그램의 modifyOtherKeys·Shift+Enter를 계속 확인한다. 기다림은 출력 표지·DOM·sentFrames 사건으로 끝낸다.
 
 - **최신 main 통합의 fixture 경계.** t-0383의 Codex 제목 `-c` 옵션이 뒤에 추가되어 마지막 두 argv를 읽던 E2E 가짜가 옵션을 모드·기록 파일로 오인했다. fixture 인자를 명시적 `--` 뒤에 두고 그 경계에서 읽어 harness 옵션 추가와 분리한다. 실제 Ctrl+Enter bytes·시한·기대값은 유지하며 실패 로그를 보존했다.
+
+### 8.240 웹 왼쪽 활동 막대와 본문 보고서 화면(10-19, t-0390, VS Code식)
+
+- **요청.** 사용자 「vs code 처럼, web ui에서 projects, machines, agents 이걸 왼쪽 버튼? 같은걸로 수정하고, 그거 누르면 나오는걸로 해줘. 같은 버튼 한번 더 누르면 숨겨지고」, 「설정도 거기에 넣어줘. 왼쪽 밑에」, 「보고서 거기에 넣고, 보고서 누르면 오른쪽 창이 보고서로 바뀌게」. TUI도 같은 패널 구조로 맞춘다(t-0386 D안).
+- **참고.** herdr-web-ui(aa624cb)와 t3code(4b1024da)에는 아이콘 막대가 없다. 넓은 창 사이드바 접기는 herdr-web-ui를 그대로 따른다: `App.tsx` 318~319줄 `sidebarCollapsed`, 1246~1249줄 `toggleSidebar`(768px 이하는 drawer, 위는 접기), `styles.css` 609·1570줄 `.app.sidebar-collapsed .sidebar { display: none }`, 단축키 `toggle-sidebar` Mod+Shift+B와 팔레트 「사이드바 토글」(i18n.ko.ts). 막대 자체는 VS Code activity bar를 따른다: 48px 세로 tablist, 고른 단추에만 왼쪽 선과 `aria-selected`·`aria-expanded`, 사이드바를 접으면 고른 단추가 없음, ↑↓·Home·End는 focus만(roving tabindex) Enter·Space가 고름, 아이콘 오른쪽 아래 수 배지, 아래 묶음은 패널이 아닌 동작.
+- **다르게 둔 것.** herdr-web-ui는 접힘을 주소(`sidebar=hidden`)에 싣는다. aaa는 brief대로 마지막 패널·접힘을 기기마다 localStorage(`aaa:sidebar-panel`·`aaa:sidebar-collapsed`, `web/src/sidebarPanel.ts`)에 둔다. 단축키·팔레트·알림·브라우저 이동으로 연 pane·thread는 그 줄이 있는 패널로 바꾸지만(VS Code `explorer.autoReveal`처럼 지금 패널에 있으면 그대로) 접어 둔 사이드바는 펴지 않고 휴대폰 drawer도 열지 않는다: VS Code도 숨긴 사이드바를 열지 않고, 펴면 터미널 폭(PTY 크기)이 바뀐다. 앱이 스스로 바꾼 주소(목록·단추·첫 고르기)는 드러내지 않는다(`ownHash`).
+- **배치.**
+
+  | 자리 | 무엇 |
+  |---|---|
+  | 막대 맨 위 | aaa 로고 + host 연결 점(끊기면 빨강), 보기 권한 기기는 눈 표시 |
+  | 막대 위 묶음 | 프로젝트(고정 줄 → 프로젝트 묶음 → 기타, 배지 = 확인 필요·검토 대기 thread) · 머신(머신 줄·+ 새 pane) · 에이전트(Agents 목록, 배지 = 답을 기다리는 agent) |
+  | 막대 아래 묶음 | 보고서(본문을 `#reports`·`#report=<프로젝트>/<이름>`으로, 다시 누르면 앞 화면) · 설정 톱니(설정 창) |
+  | 사이드바 머리(공통) | 패널 이름 · 특수 임무·평가자 배지 · 명령 팔레트 돋보기 |
+  | 사이드바 머리 아래·바닥 줄(공통) | 연결 끊김·오류 띠 / 앱 설치·구독 사용량 |
+
+  예전 바닥 줄의 「보고서」·「설정」 글 단추와 설정 안 「보고서」 쪽은 없앴다. Agents 구역의 접기 단추(참고 AgentSidebar, 휴대폰은 접힌 채 시작)는 패널이 되어 없앴다.
+- **보고서 화면.** 목록(`ReportsPanel`, 「열기」는 본문, 「새 창」은 예전 앱에서 열기)과 보고서 하나(`library_open`의 sandbox iframe, 없으면 보고 글·파일)다. 한 번 연 뒤에는 다른 화면으로 가도 그려 둔 채 `visibility: hidden`·`inert`로 숨긴다: 돌아오면 연 보고서·iframe 문서와 그 안 굴린 자리·목록 굴린 자리가 그대로다(display:none은 iframe 안 자리를 잃는다).
+- **휴대폰.** 768px 이하는 막대가 drawer 안 왼쪽 세로 막대다(drawer 폭 min(88vw, 48px + 사이드바)). 보이는 패널의 단추는 drawer를 닫고, 「보고서」는 drawer를 닫고 본문을 바꾼다. 가로 휴대폰(769px 이상)은 넓은 창 규칙이다.
+- **검증.** 웹 E2E 26(`26-activity-bar`, t-0384의 25와 겹치지 않게): 패널 바꾸기·다시 눌러 접기(본문 +320px)·키보드·Mod+Shift+B·새로 열어도 기기 기억·다른 기기는 기본값, 단축키·팔레트·알림이 연 줄의 패널과 접힌 채 유지·목록 줄은 그대로·배지, 보고서 화면 왕복에서 같은 iframe 문서·자리와 목록 자리, 설정 톱니, 휴대폰 drawer. 드러낼 때 펴기·보고서 화면을 떠날 때 지우기를 심으면 각각 실패한다. 03 단축키의 Mod+Shift+B는 이제 앱 몫이다. 21 보고서는 막대 「보고서」·본문 열기·새 창으로 바꿨다. 머신 줄이 머신 패널로 가서 02(머신 + 단추)·13(끊김 글)은 그 패널을 열고(`showPanel`·`inList`), 06·08·14는 「목록이 왔다」 표지를 붙음으로 본다. 03 「크기 되찾기」의 둘째 화면은 760→640px다(첫 화면 1100px의 터미널이 막대 48px만큼 좁아졌다). 04 「목록 두 굴림 영역」(§8.235)은 두 목록이 다른 패널이라 패널을 바꿔 가며 재고, 에이전트 패널이 높이를 다 가져 agent를 24개로 넘치게 한다. 그 여백 규칙을 빼면 여전히 실패한다. 고정 sleep은 없다.

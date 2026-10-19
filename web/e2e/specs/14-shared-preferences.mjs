@@ -32,7 +32,7 @@ export default async function ({ ctl, page }) {
     const close = (p) => p.keyboard.press("Escape");
     const a = (await pairPage(browser, aaa("web", "pair").code, { width: 1280, height: 800 })).page;
     const b = (await pairPage(browser, aaa("web", "pair").code, { width: 390, height: 844 })).page;
-    await a.getByTestId("machine-labA").waitFor();
+    await a.getByTestId("machine-labA").waitFor({ state: "attached" });
     await b.getByTestId("machine-labA").waitFor({ state: "attached" });
     // 여는 것만으로는 아무것도 쓰지 않는다
     const before = await held(a);

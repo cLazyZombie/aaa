@@ -205,7 +205,7 @@ export function loadRecent(read: (key: string) => string | null): string[] {
   }
 }
 
-export type SettingsPageId = "reports" | "appearance" | "chat" | "terminal" | "alerts" | "usage" | "shortcuts" | "devices";
+export type SettingsPageId = "appearance" | "chat" | "terminal" | "alerts" | "usage" | "shortcuts" | "devices";
 
 /** What the palette shows for one Settings page: its name and the words a user may look for it by. */
 export interface SettingsPageEntry {
@@ -222,7 +222,6 @@ export const SETTINGS_PAGE_ENTRIES: readonly SettingsPageEntry[] = [
   { id: "alerts", label: "알림", aliases: "알림 소리 푸시 벨 입력 필요 완료" },
   { id: "usage", label: "구독 사용량", aliases: "요금제 한도 할당량 미터" },
   { id: "shortcuts", label: "단축키", aliases: "키보드 키 단축키 바인딩" },
-  { id: "reports", label: "보고서", aliases: "보고서 결과물 library 공유 링크" },
   { id: "devices", label: "폰 및 기기", aliases: "휴대폰 설치 화면 켜짐 유지 앱" },
 ];
 
@@ -233,6 +232,9 @@ export const ACTION_ALIASES: Readonly<Record<string, string>> = {
   theme: "다크 라이트 모드 외관 색상",
   settings: "환경설정 옵션 구성",
   projects: "프로젝트 thread 끝남 보고",
+  // 보고서는 설정 쪽이었다가 활동 막대의 본문 화면이 됐다(plan §8.240): 예전 말로도 찾는다
+  reports: "보고서 결과물 library 공유 링크",
+  sidebar: "사이드바 목록 접기 펴기 숨기기 보이기 패널",
 };
 
 export interface SearchableRow<T> {
