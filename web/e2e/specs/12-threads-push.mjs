@@ -18,14 +18,14 @@ async function rowEndsNearEdge(p, what) {
     const shell = document.querySelector(".sidebar-shell");
     const px = (el, ...props) => props.reduce((sum, prop) => sum + parseFloat(getComputedStyle(el).getPropertyValue(prop)), 0);
     const edge = shell.getBoundingClientRect().right - px(shell, "border-right-width");
-    const shown = [...shell.querySelectorAll(".workspace-header, .agent-item")].filter((row) => row.getClientRects().length);
+    const shown = [...shell.querySelectorAll(".workspace-header")].filter((row) => row.getClientRects().length);
     return shown.map((row) => {
       const card = row.closest(".sidebar-pinned");
       const allowed = px(shell, "--side-gutter") + (card ? px(card, "padding-right", "border-right-width") : 0);
-      const more = row.querySelector(":scope > .workspace-actions .row-menu-toggle, :scope > .agent-actions .row-menu-toggle");
-      const end = more?.getClientRects().length ? more : row.querySelector(".sidebar-pane-meta, .agent-row-state");
+      const more = row.querySelector(":scope > .workspace-actions .row-menu-toggle");
+      const end = more?.getClientRects().length ? more : row.querySelector(".sidebar-pane-meta");
       const r = end.getBoundingClientRect();
-      return { name: row.querySelector(".workspace-name, .agent-title")?.textContent, more: end === more, gap: edge - r.right, allowed, width: r.width };
+      return { name: row.querySelector(".workspace-name")?.textContent, more: end === more, gap: edge - r.right, allowed, width: r.width };
     });
   });
   const bad = rows.filter((r) => r.gap > r.allowed + 0.5 || (r.more && r.width < 40));
@@ -722,7 +722,7 @@ export default async function ({ page }) {
     await until("t1 터미널", async () => (await screenText(page)).includes("t1-42"));
   });
 
-  await step("줄 메뉴(herdr-web-ui RowMenu·Sidebar menuItems·AgentSidebar, 차이 목록 2장 L9·L10): 데스크톱은 오른쪽 클릭·휴대폰은 ⋯ sheet, 고정은 맨 앞 카드로 가고 다른 기기에도(host 공유 문서), pane 닫기·기록 지우기는 확인 창, 끝난 pane은 다시 열기, 프로젝트 머리에서 프로젝트 thread 보기", async () => {
+  await step("줄 메뉴(herdr-web-ui RowMenu·Sidebar menuItems·AgentSidebar, 차이 목록 2장 L9·L10): 데스크톱은 오른쪽 클릭·휴대폰은 ⋯ sheet, 고정은 맨 앞 카드로 가고 다른 기기에도(host 공유 문서), pane 닫기·기록 지우기는 확인 창, 끝난 pane은 다시 열기, thread 줄에서 프로젝트 thread 보기", async () => {
     const pinWrote = (p) =>
       p.waitForResponse((r) => r.url().endsWith("/api/v1/call") && r.request().postDataJSON()?.op === "preferences_set").then((r) => r.request().postDataJSON());
     const opDone = (p, op) => p.waitForResponse((r) => r.url().endsWith("/api/v1/call") && r.request().postDataJSON()?.op === op);
@@ -832,9 +832,12 @@ export default async function ({ page }) {
     await forget.getByRole("button", { name: "지우기" }).click();
     await forgot;
     await domIs(page, "기록 지운 pane 줄 사라짐", () => !document.querySelector('[data-testid="pane-rowend"]'));
-    // 5. 프로젝트 머리: 프로젝트 thread 보기(끝난 것까지, plan §8.89)
-    await page.getByTestId("project-demo").locator(".workspace-header").click({ button: "right" });
-    if (JSON.stringify(await menuItems(page)) !== JSON.stringify(["프로젝트 thread 보기", "접기"])) throw new Error(`프로젝트 메뉴 ${await menuItems(page)}`);
+    // 5. thread 줄: 보고·고정·프로젝트 thread 보기(끝난 것까지, plan §8.89). 프로젝트가 하나면 머리 없이 그린다(plan §8.280)
+    // t-0001은 앞 단계에서 끝냈으니 아직 열린 demo thread(「알림 시험」, agent pane이 돈다)의 줄에서. 고정 열쇠는 그 pane
+    const other = aaa("thread", "list", "demo").threads.find((t) => t.id !== "t-0001" && t.role !== "evaluator").id;
+    if ((await page.locator(`li[data-thread="demo/${other}"]`).getAttribute("data-pin-key")) === null) throw new Error(`${other} 줄에 고정 열쇠(agent pane)가 없다`);
+    await page.getByTestId(`thread-demo-${other}`).click({ button: "right" });
+    if (JSON.stringify(await menuItems(page)) !== JSON.stringify(["보고", "고정", "프로젝트 thread 보기"])) throw new Error(`thread 메뉴 ${await menuItems(page)}`);
     const toDemo = hashIs(page, "#project=demo");
     await page.getByRole("menuitem", { name: "프로젝트 thread 보기" }).click();
     await toDemo;
@@ -843,7 +846,6 @@ export default async function ({ page }) {
     await page.getByTestId("project-thread-t-0001").click();
     await toReport;
     if ((await page.getByTestId("thread-back").getAttribute("aria-label")) !== "demo 프로젝트로") throw new Error("프로젝트에서 연 보고의 뒤로");
-    const other = aaa("thread", "list", "demo").threads.find((t) => t.id !== "t-0001" && t.role !== "evaluator").id;
     const toOther = hashIs(page, `#thread=demo%2F${other}`);
     await page.evaluate((h) => (location.hash = h), `#thread=demo%2F${other}`);
     await toOther;
@@ -852,10 +854,9 @@ export default async function ({ page }) {
     await until("t1 터미널", async () => (await screenText(page)).includes("t1-42"));
   });
 
-  await step("목록은 프로젝트 먼저(t-0352 2안, plan §8.195): thread는 머신 묶음 없이 프로젝트 머리 아래, 둘째 줄에 상태 말과 머신 이름, thread에 딸리지 않은 pane은 「기타」에 줄마다 머신 이름, 「기타」 머리로 접고 편다", async () => {
-    // 프로젝트 머리 둘째 줄은 묶음 셈(「확인 필요 1 · 검토 대기 1 · 작업 중 1」처럼, 셀 것이 없으면 「쉼」, sidebarModel projectLine)
-    const counts = await page.getByTestId("project-demo").locator(".project-place").innerText();
-    if (!/^(쉼|(확인 필요|검토 대기|작업 중|병합 중) \d+( · (검토 대기|작업 중|병합 중) \d+)*)$/.test(counts)) throw new Error(`demo 머리 셈: ${counts}`);
+  await step("목록은 프로젝트 먼저(t-0352 2안, plan §8.195·§8.280): thread는 머신 묶음 없이, 프로젝트가 하나면 머리 없이 맨 위에, 둘째 줄에 상태 말과 머신 이름, thread에 딸리지 않은 pane은 「기타」에 줄마다 머신 이름, 「기타」 머리로 접고 편다", async () => {
+    // 프로젝트가 demo 하나뿐이라 프로젝트 머리가 없다(머리 셈은 프로젝트가 여럿인 「heads」 단계에서 본다)
+    if (await page.getByTestId("project-demo").count()) throw new Error("프로젝트가 하나인데 프로젝트 머리가 있다");
     // thread 둘째 줄: 왼쪽 상태 말, 오른쪽 머신 이름. 머신 칸에는 줄이 없다
     const machines = await page.locator('[data-testid^="thread-machine-demo-"]').allInnerTexts();
     if (machines.length === 0 || machines.some((m) => m !== "labA")) throw new Error(`thread 줄 머신: ${machines}`);
@@ -1270,7 +1271,7 @@ export default async function ({ page }) {
     await head.locator(".project-select").click();
   });
 
-  await step("에이전트 패널 저장소 폴더(사용자 결정 10-19 안 A, plan §8.260): worktree thread는 저장소 마지막 폴더 이름 폴더에, 저장소 없는 thread는 끝의 「기타」에. 폴더 머리는 프로젝트 머리 모양이고 자식 줄은 8px, 둘째 줄은 상태 말·머신, 접으면 +n", async () => {
+  await step("「작업」 트리 작업 공간 폴더(사용자 결정 10-19 안 A, plan §8.260·§8.280): worktree thread는 저장소 마지막 폴더 이름 폴더에, 저장소 없는 thread는 끝의 「작업 폴더」에. 폴더 머리는 프로젝트 머리 모양이고(프로젝트가 여럿이라 그 안에) 자식 줄은 한 단계 더 8px, 둘째 줄은 상태 말·머신, 접으면 +n, 에이전트 패널은 없다", async () => {
     // 저장소 이름이 폴더 이름이다(경로 앞부분은 머신마다 다르다)
     const repo = `${root}/repos/rcgame`;
     fs.mkdirSync(repo, { recursive: true });
@@ -1284,42 +1285,47 @@ export default async function ({ page }) {
     const loose = start("폴더 일", "--kind", "dir");
     if (inRepo.repo !== repo || loose.repo !== undefined) throw new Error(`thread repo 칸: ${inRepo.repo} · ${loose.repo}`);
     await page.setViewportSize({ width: 1280, height: 800 });
-    await showPanel(page, "agents");
-    const row = (t) => `[data-testid="agents"] li.agent-item[data-pane="${t.pane}"]`;
+    await showPanel(page, "work");
+    if ((await page.getByTestId("activity-agents").count()) !== 0) throw new Error("에이전트 패널 단추가 남았다");
+    const row = (t) => `[data-panel="work"] li[data-thread="folders/${t.id}"]`;
     await domIs(page, "두 thread 줄", ([a, b]) => document.querySelector(a) !== null && document.querySelector(b) !== null, [row(inRepo), row(loose)]);
     const look = await page.evaluate(([a, b]) => {
       const folderOf = (q) => document.querySelector(q).closest(".worktree-children")?.previousElementSibling?.dataset.testid;
-      const folders = [...document.querySelectorAll('[data-testid="agents"] .agent-folders > [data-testid^="agent-folder-"]')].map((el) => el.dataset.testid.slice(13));
+      const project = document.querySelector('[data-testid="project-folders"]').nextElementSibling;
+      const folders = [...project.querySelectorAll('li[data-testid^="workspace-folder-"]')].map((el) => el.dataset.testid.slice(17));
       const r = document.querySelector(a);
+      const pad = (q) => parseFloat(getComputedStyle(q).paddingLeft);
       return {
         folders,
         repo: folderOf(a),
         loose: folderOf(b),
-        indent: getComputedStyle(r.querySelector(".agent-row")).paddingLeft,
+        // 폴더 머리는 프로젝트 자식(8px), 그 안 줄은 한 단계 더(16px)
+        head: pad(document.querySelector('[data-testid="workspace-folder-rcgame"] .workspace-header')),
+        indent: pad(r.querySelector(".workspace-header")),
         state: r.querySelector(".thread-place .thread-state")?.textContent,
         machine: r.querySelector(".thread-place .thread-machine")?.textContent,
       };
     }, [row(inRepo), row(loose)]);
-    // 둘째 줄 오른쪽은 머신. 이 실험실은 aaa 프로젝트가 여럿 섞여(demo·folders …) 그 앞에 프로젝트 이름이 붙는다
-    // 다른 단계의 thread(작업 폴더)도 「기타」에 있으니 폴더는 rcgame 다음 「기타」 둘뿐이다
-    if (look.folders.join() !== "rcgame,기타" || look.repo !== "agent-folder-rcgame" || look.loose !== "agent-folder-기타") throw new Error(`저장소 폴더: ${JSON.stringify(look)}`);
-    if (look.indent !== "8px" || !/^(확인 필요|검토 대기|병합 중|작업 중|쉼)$/.test(look.state ?? "") || look.machine !== "folders · labA") throw new Error(`폴더 안 줄: ${JSON.stringify(look)}`);
-    await shot(page, "desktop-agent-folders");
-    const folder = page.getByTestId("agent-folder-rcgame");
+    if (look.folders.join() !== "rcgame,작업 폴더" || look.repo !== "workspace-folder-rcgame" || look.loose !== "workspace-folder-작업 폴더") throw new Error(`작업 공간 폴더: ${JSON.stringify(look)}`);
+    if (look.head !== 8 || look.indent !== 16 || !/^(준비 중|확인 필요|검토 대기|병합 중|작업 중|쉼)/.test(look.state ?? "") || look.machine !== "labA") throw new Error(`폴더 안 줄: ${JSON.stringify(look)}`);
+    await shot(page, "desktop-workspace-folders");
+    const folder = page.getByTestId("workspace-folder-rcgame");
     await folder.locator(".project-select").click();
-    await domIs(page, "접힌 저장소 폴더", (q) => document.querySelector(q) === null, row(inRepo));
+    await domIs(page, "접힌 작업 공간 폴더", (q) => document.querySelector(q) === null, row(inRepo));
     if ((await folder.locator(".workspace-fold-count").innerText()) !== "+1") throw new Error("접힌 폴더의 줄 수");
+    // 접힘은 기기마다 새 이름으로 남는다
+    if ((await page.evaluate(() => localStorage.getItem("aaa:workspace-collapsed:rcgame"))) !== "1") throw new Error("폴더 접힘 기억");
     await folder.locator(".project-select").click();
-    await domIs(page, "펼친 저장소 폴더", (q) => document.querySelector(q) !== null, row(inRepo));
+    await domIs(page, "펼친 작업 공간 폴더", (q) => document.querySelector(q) !== null, row(inRepo));
     // 휴대폰(터치 기기) drawer: 폴더 머리와 줄의 ⋯이 목록 끝 여백 안에 선다
     const ph = await pairPage(browser, aaa("web", "pair").code, { width: 390, height: 844 });
     await ph.page.locator(".view [data-testid='drawer-toggle']").click();
     await ph.page.locator("#workspace-drawer.is-open").waitFor();
     await drawerSettled(ph.page);
-    await showPanel(ph.page, "agents");
+    await showPanel(ph.page, "work");
     await ph.page.locator(row(inRepo)).waitFor();
-    if (!(await rowEndsNearEdge(ph.page, "휴대폰 에이전트 폴더")).some((r) => r.name === "rcgame" && r.more)) throw new Error("휴대폰 폴더 머리에 ⋯이 없다");
-    await shot(ph.page, "phone-agent-folders");
+    if (!(await rowEndsNearEdge(ph.page, "휴대폰 작업 공간 폴더")).some((r) => r.name === "rcgame" && r.more)) throw new Error("휴대폰 폴더 머리에 ⋯이 없다");
+    await shot(ph.page, "phone-workspace-folders");
     await ph.page.context().close();
   });
 

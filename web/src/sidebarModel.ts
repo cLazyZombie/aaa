@@ -3,6 +3,7 @@
 // herdr-web-ui `lib/status.ts`(aa624cb, herdr/status.ts에 그대로 있다)·`components/Sidebar.tsx`·`AgentSidebar.tsx`.
 import type { MachineView, PaneView, ThreadGroup, ThreadView } from "./gen/proto";
 import { sidebarPinKey } from "./herdr/sidebarPins.ts";
+import { threadRepo, workFolders } from "./workFolders.ts";
 import type { AgentStatus } from "./herdr/status.ts";
 
 /** herdr-projects `Group::rank`: 확인 필요 1 → 검토 2 → 병합 중 3 → 작업 4 → 쉼 5 → 끝남 6. 모르는 묶음은 작업과 쉼 사이 */
@@ -118,15 +119,16 @@ export function paneAgentStatus(p: PaneView): AgentStatus | undefined {
 }
 
 /**
- * Agents 「활동순」(herdr-web-ui `src/lib/sidebarOrder.ts` `activityOrder`): blocked가 먼저, 그다음 가장 최근 상태 변화, 같으면
+ * 「활동순」(herdr-web-ui `src/lib/sidebarOrder.ts` `activityOrder`): blocked가 먼저, 그다음 가장 최근 상태 변화, 같으면
  * 받은 차례. 상태로 따로 순위를 매기지 않는다(참고: 메시지를 보낸 줄이 도는 동안 DONE 아래로 떨어졌다 끝나면 튀어 오르던 것을
  * 막는다). 최근은 참고의 herdr `state_change_seq` 자리에 host가 상태(activity)가 바뀔 때 적는 `AgentStatus.since_ms`를 쓴다.
+ * pane이 없는 줄(pane이 닫힌 thread)은 상태 변화가 없는 줄로 본다.
  */
-export function activityOrder<T>(rows: readonly T[], paneOf: (row: T) => PaneView): T[] {
+export function activityOrder<T>(rows: readonly T[], paneOf: (row: T) => PaneView | undefined): T[] {
   return rows
     .map((row, index) => {
       const pane = paneOf(row);
-      return { row, index, rank: paneAgentStatus(pane) === "blocked" ? 0 : 1, recent: pane.agent?.since_ms ?? -1 };
+      return { row, index, rank: pane && paneAgentStatus(pane) === "blocked" ? 0 : 1, recent: pane?.agent?.since_ms ?? -1 };
     })
     .sort((a, b) => a.rank - b.rank || b.recent - a.recent || a.index - b.index)
     .map((entry) => entry.row);
@@ -160,31 +162,51 @@ export function machineOfThread(t: ThreadView, machines: readonly MachineView[],
 
 export const threadKey = (t: Pick<ThreadView, "project" | "id">) => `${t.project}/${t.id}`;
 
+/** 「작업」 트리의 작업 공간 폴더 하나(plan §8.280): 프로젝트 안에서 thread가 일하는 저장소 이름. 저장소를 아는 thread가 하나도 없으면 이름 없이 하나 */
+export interface WorkFolder {
+  project: string;
+  /** 저장소 이름(마지막 폴더), 저장소 없는 thread는 「작업 폴더」. null이면 폴더 머리 없이 그린다 */
+  name: string | null;
+  threads: ThreadView[];
+}
+
 /**
- * 목록 전체의 줄 차례(t-0352 시안 2안, plan §8.195): 프로젝트를 먼저 묶고 머신은 줄에 글자로만 적는다. 모든 머신의 thread를
- * 묶음 rank·최근 바뀐 순으로 늘어놓고 처음 나온 프로젝트 차례로 묶는다(아는 머신의 thread만). 그다음 thread에 딸리지 않은 pane의
- * 「기타」 묶음: 사람이 옮긴 차례(공유 설정 `paneOrder`, plan §8.196)를 먼저, 옮긴 적 없는 pane은 머신 차례·host 차례로 그 뒤에.
- * 목록(Sidebar)·「이전·다음 패널」 단축키·명령 팔레트가 같이 쓴다. TUI `list::rows`와 같은 차례다(TUI는 `paneOrder`를 모른다).
+ * 목록 전체의 줄 차례(「작업」 트리, plan §8.280): 프로젝트를 먼저 묶고(프로젝트가 둘 이상일 때만 머리가 보인다) 그 안을 coordinator →
+ * 작업 공간 폴더(저장소 이름순, 「작업 폴더」 끝, plan §8.260) → 폴더 안 thread(묶음 rank·최근 바뀐 순, 또는 활동순)로 늘어놓는다.
+ * 머신은 줄에 글자로만 적는다(plan §8.195). 프로젝트 차례는 가장 앞 rank의 thread가 있는 프로젝트가 먼저다. 그다음 thread에 딸리지 않은
+ * pane의 「기타」 묶음: 사람이 옮긴 차례(공유 설정 `paneOrder`, plan §8.196)를 먼저, 옮긴 적 없는 pane은 머신 차례·host 차례로 그 뒤에.
+ * 임무 thread와 그 pane은 특수 패널에만 있다(사용자 결정 10-19). 목록(Sidebar)·「이전·다음 패널」 단축키·명령 팔레트가 같이 쓴다.
  */
-export function roster(machines: readonly MachineView[], panes: readonly PaneView[], threads: readonly ThreadView[], paneOrder: readonly string[] = []) {
+export function roster(machines: readonly MachineView[], panes: readonly PaneView[], threads: readonly ThreadView[], paneOrder: readonly string[] = [], byActivity = false) {
   const paneOf = (id: string) => panes.find((p) => p.id === id);
   const machineOf = (t: ThreadView) => machineOfThread(t, machines, paneOf);
-  const shown = sortThreads(threads.filter((t) => machineOf(t) !== undefined));
-  const threadPanes = new Set(shown.flatMap((t) => (t.pane ? [t.pane] : [])));
+  const missionPanes = new Set(threads.flatMap((t) => (t.mission && t.pane ? [t.pane] : [])));
+  const known = sortThreads(threads.filter((t) => !t.mission && machineOf(t) !== undefined));
+  const threadPanes = new Set(known.flatMap((t) => (t.pane ? [t.pane] : [])));
   const coordinators = panes.filter((p) => p.coordinator_project && p.role !== "evaluator" && !threadPanes.has(p.id) && machines.some((m) => m.id === p.machine_id));
   const coordinatorPanes = new Set(coordinators.map((p) => p.id));
   const rank = new Map(paneOrder.map((key, index) => [key, index]));
   const last = Number.MAX_SAFE_INTEGER;
   const loose = machines
-    .flatMap((m) => panes.filter((p) => p.machine_id === m.id && p.role !== "evaluator" && !threadPanes.has(p.id) && !coordinatorPanes.has(p.id)))
+    .flatMap((m) => panes.filter((p) => p.machine_id === m.id && p.role !== "evaluator" && !threadPanes.has(p.id) && !coordinatorPanes.has(p.id) && !missionPanes.has(p.id)))
     .map((p, index) => ({ p, index, rank: rank.get(sidebarPinKey(p.machine_id, p.id)) ?? last }))
     .sort((a, b) => a.rank - b.rank || a.index - b.index)
     .map((entry) => entry.p);
   // 프로젝트 묶음은 처음 나온 순서(가장 앞 rank의 thread가 있는 프로젝트가 먼저)
   const projects: string[] = [];
-  for (const t of shown) if (!projects.includes(t.project)) projects.push(t.project);
+  for (const t of known) if (!projects.includes(t.project)) projects.push(t.project);
   for (const p of coordinators) if (!projects.includes(p.coordinator_project!)) projects.push(p.coordinator_project!);
-  return { threads: shown, projects, coordinators, panes: loose, machineOf };
+  const folders: WorkFolder[] = [];
+  for (const project of projects) {
+    const mine = known.filter((t) => t.project === project);
+    // 폴더 안 「활동순」(설정 「폴더 안 정렬」): 그 thread의 agent pane으로
+    const ordered = byActivity ? activityOrder(mine, (t) => (t.pane ? paneOf(t.pane) : undefined)) : mine;
+    const grouped = workFolders(ordered, threadRepo);
+    if (grouped.folders.length > 0) for (const f of grouped.folders) folders.push({ project, name: f.name, threads: f.rows });
+    else if (grouped.flat.length > 0) folders.push({ project, name: null, threads: grouped.flat });
+  }
+  // thread는 보이는 차례(프로젝트 → 폴더 → 폴더 안)로
+  return { threads: folders.flatMap((f) => f.threads), folders, projects, coordinators, panes: loose, machineOf };
 }
 
 /** 목록 줄 하나: 누르면 여는 것과, 그 줄이 골랐다고 보는 선택 값들(thread 줄은 그 thread와 그 pane) */
@@ -198,8 +220,8 @@ export interface RosterRow {
  * 접힌 묶음 안의 줄도 센다. 끊긴 머신의 줄은 열 수 없어 뺀다. thread 줄은 그 agent pane이 돌면 pane을, 아니면 보고서를 연다
  * (ThreadRow와 같다).
  */
-export function rosterRows(machines: readonly MachineView[], panes: readonly PaneView[], threads: readonly ThreadView[], paneOrder: readonly string[] = []): RosterRow[] {
-  const r = roster(machines, panes, threads, paneOrder);
+export function rosterRows(machines: readonly MachineView[], panes: readonly PaneView[], threads: readonly ThreadView[], paneOrder: readonly string[] = [], byActivity = false): RosterRow[] {
+  const r = roster(machines, panes, threads, paneOrder, byActivity);
   const online = (id: string | undefined) => machines.some((m) => m.id === id && m.connection === "connected");
   const rows: RosterRow[] = [];
   for (const project of r.projects) {

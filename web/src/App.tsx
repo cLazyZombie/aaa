@@ -48,7 +48,7 @@ import { useFileViewer } from "./herdr/useFileViewer.ts";
 import { FileViewer } from "./FileViewer.tsx";
 import { NewSessionDialog } from "./NewSessionDialog";
 import { CommandPalette, type PaletteActions } from "./CommandPalette";
-import { updateAppearance, useAppearance } from "./theme";
+import { currentAppearance, updateAppearance, useAppearance } from "./theme";
 import { passingFolder, recentDirectories } from "./herdr/recent-directories.ts";
 import { useMediaQuery } from "./herdr/useMediaQuery.ts";
 import { watchDrawerSwipe } from "./herdr/edgeSwipe.ts";
@@ -689,13 +689,9 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
     if (target === null || !(target.startsWith("pane:") || target.startsWith("thread:"))) return;
     const { panes, threads, machines } = now.current;
     const listed = [...threads.values()].filter((t) => t.group !== "resolved" && t.role !== "evaluator" && t.project_status !== "archived");
-    const inProjects = rosterRows(machines, panes, listed, currentSidebarShared().paneOrder).some((r) => r.keys.includes(target));
-    const thread = target.startsWith("thread:") ? threads.get(target.slice(7)) : undefined;
-    const pane = target.startsWith("pane:") ? panes.find((p) => `pane:${p.id}` === target) : thread?.pane ? panes.find((p) => p.id === thread.pane) : undefined;
-    const owner = thread ?? (pane ? listed.find((t) => t.pane === pane.id) : undefined);
-    // 에이전트 패널의 줄(Sidebar AgentSection): 도는 agent pane, 평가자 빼고
-    const inAgents = pane !== undefined && pane.state === "running" && pane.role !== "evaluator" && agentOf(pane, owner) !== null;
-    setPanel((current) => revealPanel(current, inProjects, inAgents));
+    // 「작업」 트리의 줄(Sidebar Roster): 예전 에이전트 패널의 줄(도는 agent pane)도 모두 이 트리에 있다
+    const inWork = rosterRows(machines, panes, listed, currentSidebarShared().paneOrder).some((r) => r.keys.includes(target));
+    setPanel((current) => revealPanel(current, inWork));
   };
   const revealRef = useRef(reveal);
   revealRef.current = reveal;
@@ -808,7 +804,7 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
         // 목록 전체를 돈다. 끊긴 머신의 줄은 열 수 없다
         const { sel, panes, threads, machines } = now.current;
         const shown = [...threads.values()].filter((t) => t.group !== "resolved" && t.role !== "evaluator" && t.project_status !== "archived");
-        const rows = rosterRows(machines, panes, shown, currentSidebarShared().paneOrder);
+        const rows = rosterRows(machines, panes, shown, currentSidebarShared().paneOrder, currentAppearance().agentOrder === "activity");
         if (rows.length === 0) return;
         const index = rows.findIndex((r) => sel !== null && r.keys.includes(sel));
         const next = rows[(index + direction + rows.length) % rows.length];
@@ -873,7 +869,7 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
     // 목록 차례로 첫 줄(붙은 머신의 첫 thread·pane)
     const pickFirst = (auto: boolean) => {
       const shown = [...threads.values()].filter((t) => t.group !== "resolved" && t.role !== "evaluator");
-      const first = rosterRows(machines, panes, shown, currentSidebarShared().paneOrder)[0];
+      const first = rosterRows(machines, panes, shown, currentSidebarShared().paneOrder, currentAppearance().agentOrder === "activity")[0];
       if (!first) return;
       if ("pane" in first.open) choose(first.open.pane, auto);
       else chooseThread(first.open.thread);
@@ -952,12 +948,16 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
   };
 
   // 막대 단추의 배지(VS Code activity bar badge): 접었거나 다른 패널을 보는 동안에도 볼 일이 보인다
+  // 「작업」은 예전 프로젝트·에이전트 두 배지의 합집합이다(plan §8.280): 확인 필요·검토 대기 thread와, 그 밖에 답을 기다리는 agent pane.
+  // 임무 thread·pane은 트리에 없어 특수 배지가 센다
+  const missionPanes = new Set(shownThreads.flatMap((t) => (t.mission && t.pane ? [t.pane] : [])));
+  const needThreads = shownThreads.filter((t) => !t.mission && needsYou(t.group));
+  const needPanes = new Set(needThreads.flatMap((t) => (t.pane ? [t.pane] : [])));
+  const waitingAgents = panes.filter(
+    (p) => p.connection === "connected" && p.role !== "evaluator" && !missionPanes.has(p.id) && !needPanes.has(p.id) && paneAgentStatus(p) === "blocked" && agentOf(p, threadOfPane.get(p.id)) !== null,
+  );
   const badges = {
-    projects: { count: shownThreads.filter((t) => needsYou(t.group)).length, label: "확인 필요·검토 대기" },
-    agents: {
-      count: panes.filter((p) => p.connection === "connected" && p.role !== "evaluator" && paneAgentStatus(p) === "blocked" && agentOf(p, threadOfPane.get(p.id)) !== null).length,
-      label: "답을 기다림",
-    },
+    work: { count: needThreads.length + waitingAgents.length, label: "확인 필요·검토 대기·답을 기다림" },
     machines: { count: highMachines(machines), label: `CPU·MEM ${HIGH_STAT}% 넘음` },
     special: { count: specialAttention(missions, evaluators, panes), label: "막힘·오류·승인 필요" },
   };

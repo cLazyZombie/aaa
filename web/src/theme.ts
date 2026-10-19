@@ -175,6 +175,9 @@ function getSnapshot() {
   return snapshot;
 }
 
+/** 지금 모양 설정(React 밖: 단축키가 목록과 같은 차례를 밟을 때) */
+export const currentAppearance = (): Appearance => current;
+
 /** 지금 모양 설정과 실제로 그리는 테마·팔레트 */
 export function useAppearance() {
   return useSyncExternalStore(subscribe, getSnapshot);

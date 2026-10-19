@@ -75,14 +75,15 @@ export function AppearanceSettings() {
             ]}
           />
         </SettingsRow>
-        {/* 참고 SettingsDialog 「Agents order」(문구 i18n.ko.ts): aaa는 머신 목록 차례가 herdr workspace 차례 자리다 */}
-        <SettingsRow label="에이전트 정렬" description="활동순은 응답을 기다리는 에이전트를 맨 위에 두고, 그다음 가장 최근에 바뀐 순서로 놓습니다. 머신 목록의 순서는 바뀌지 않습니다" wide>
+        {/* 참고 SettingsDialog 「Agents order」(문구 i18n.ko.ts)를 「작업」 트리의 폴더 안 차례로(plan §8.280). 값 이름(workspace)은
+            공유 설정 호환으로 그대로 두고, 그 뜻은 목록 기본 차례(확인 필요 → 검토 → 병합 → 작업 → 쉼, herdr-projects rank)다 */}
+        <SettingsRow label="폴더 안 정렬" description="상태순은 확인 필요·검토 대기·병합 중·작업 중·쉼 차례로 놓습니다. 활동순은 응답을 기다리는 thread를 맨 위에 두고, 그다음 가장 최근에 바뀐 순서로 놓습니다. 폴더의 순서는 바뀌지 않습니다" wide>
           <Segmented
-            label="에이전트 정렬"
+            label="폴더 안 정렬"
             value={a.agentOrder}
             onChange={(agentOrder) => updateAppearance({ agentOrder })}
             options={[
-              { value: "workspace", label: "워크스페이스순" },
+              { value: "workspace", label: "상태순" },
               { value: "activity", label: "활동순" },
             ]}
           />

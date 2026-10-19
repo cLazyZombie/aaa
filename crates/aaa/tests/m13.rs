@@ -633,7 +633,7 @@ fn worktree_thread_round_trip() {
     ]);
     assert_eq!((v["id"].as_str(), v["status"].as_str()), (Some("t-0001"), Some("open")), "{v}");
     assert_eq!(v["branch"], "aaa/demo/t-0001-fix-the-bug");
-    // 웹 에이전트 패널이 저장소 폴더로 묶는 칸(plan §8.260): 시작할 때 고른 repo 경로 그대로
+    // 웹 「작업」 트리가 저장소 폴더로 묶는 칸(plan §8.260·§8.280): 시작할 때 고른 repo 경로 그대로
     assert_eq!(v["repo"].as_str(), Some(path_str(&w.repo)), "{v}");
     let cwd = PathBuf::from(v["cwd"].as_str().unwrap());
     assert_eq!(cwd, w.lab.root.join("workA").join("repo").join("demo-t-0001"));

@@ -1,10 +1,9 @@
-// 웹 E2E 앱 틀: 안전 영역·화면 켜짐 유지·앱 설치·agent 표시·목록 바닥 줄·목록 굴림 영역·명령 팔레트.
+// 웹 E2E 앱 틀: 안전 영역·화면 켜짐 유지·앱 설치·agent 표시·목록 바닥 줄·명령 팔레트.
 // 혼자 돌리기: node web/e2e/web.e2e.mjs --spec 04-app-shell(새 실험실). 준비(host·agent·t1·첫 화면)는 lib/harness.mjs runSpec.
 
-import fs from "node:fs";
 import {
   webkit, AA, sleep, aaa, until, screenText, shot, fakeViewport, softKeyboard, pairPage, step, browser,
-  openSettings, focusIs, inList, paneHash, base, root, showPanel,
+  openSettings, focusIs, inList, paneHash, base,
 } from "../lib/harness.mjs";
 
 export default async function ({ ctl, page }) {
@@ -315,35 +314,6 @@ export default async function ({ ctl, page }) {
     for (const name of many) aaa("pane", "kill", name);
     if (bad.length) throw new Error(bad.join("; "));
     console.log(`     휴대폰 바닥 줄 아래 ${ph.foot}px(보이는 높이 ${ph.view}), 목록 넘침 ${ph.over}px`);
-  });
-
-  await step("목록 두 굴림 영역(사용자 10-19 「projects와 agents의 스크롤바 위치가 달라」): 위 목록과 Agents 목록이 둘 다 넘칠 때 두 굴림 영역이 사이드바 같은 x에 서서 막대가 같은 자리에 온다", async () => {
-    // 참고 AgentSidebar.css는 Agents 묶음에 좌우 여백을 줘 그 굴림 영역(과 막대)이 위 목록보다 여백만큼 안쪽이었다(Sidebar.css).
-    // 둘은 활동 막대의 다른 패널이다(plan §8.240): 패널을 바꿔도 막대가 같은 x에 있는지 패널마다 잰다. 에이전트 패널은 사이드바
-    // 높이를 다 가져 넘치려면 agent가 24개 있어야 한다
-    const agent = `${root}/fakebin/claude`;
-    fs.mkdirSync(`${root}/fakebin`, { recursive: true });
-    fs.writeFileSync(agent, "#!/bin/sh\nexec /bin/sleep 600\n", { mode: 0o755 });
-    const names = [...Array.from({ length: 16 }, (_, i) => `lane${i + 1}`), ...Array.from({ length: 24 }, (_, i) => `lagent${i + 1}`)];
-    for (const name of names) aaa("tab", "create", "--machine", "labA", "--label", name, "--", ...(name.startsWith("lagent") ? [agent] : ["/bin/sleep", "600"]));
-    const desk = (await pairPage(browser, aaa("web", "pair").code, { width: 1100, height: 760 })).page;
-    await until("두 목록에 마지막 줄", async () => (await desk.getByTestId("pane-lane16").count()) === 1 && (await desk.locator(".agent-list .agent-item").count()) >= 24);
-    const lane = (s) =>
-      desk.evaluate((s) => {
-        const e = document.querySelector(s);
-        const r = e.getBoundingClientRect();
-        return { s, left: Math.round(r.left), right: Math.round(r.right), over: e.scrollHeight - e.clientHeight };
-      }, s);
-    const lanes = [];
-    for (const [panel, s] of [["projects", ".machine-list"], ["agents", ".agent-list-contents"]]) {
-      await showPanel(desk, panel);
-      lanes.push(await lane(s));
-    }
-    await desk.context().close();
-    for (const name of names) aaa("pane", "kill", name);
-    const [list, agents] = lanes;
-    if (list.over <= 0 || agents.over <= 0) throw new Error(`두 목록이 다 넘쳐야 시험이 된다: ${JSON.stringify(lanes)}`);
-    if (list.left !== agents.left || list.right !== agents.right) throw new Error(`두 굴림 영역의 x가 다르다: ${JSON.stringify(lanes)}`);
   });
 
   await step("명령 팔레트(herdr-web-ui CommandPalette.tsx, 차이 목록 L12): 머리 돋보기·Mod+Shift+K로 열고, 이름으로 찾아 Enter면 그 pane, 다시 열면 「최근」이 앞, `>`는 pane 없이 동작(「테마 전환」), 찾으면 설정 쪽(「터미널」은 그 쪽으로), 휴대폰엔 돋보기가 없다", async () => {
