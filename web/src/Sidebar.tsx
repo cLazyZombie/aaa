@@ -1020,90 +1020,9 @@ function AgentSection(props: SidebarProps) {
   const { coordinators, folders, flat } = agentFolders(split.rest, (r) => threadRepo(r.t), (r) => r.p.coordinator_project != null);
   // 폴더 안 줄은 폴더가 저장소를 말하니 둘째 줄이 상태 말(왼쪽, thread 줄과 같은 색)과 머신(오른쪽)이다. 프로젝트는 둘 이상 섞일 때만
   const severalProjects = new Set(split.rest.flatMap((r) => (r.t ? [r.t.project] : r.p.coordinator_project ? [r.p.coordinator_project] : []))).size > 1;
-  const agentItem = ({ m, p, t, agent }: (typeof rows)[number], inFolders = false) => {
-    const online = m.connection === "connected";
-    const selected = props.selected === `pane:${p.id}` || (t != null && props.selected === `thread:${threadKey(t)}`);
-    const title = t ? `${t.id} · ${t.title}` : p.name || p.argv.join(" ") || p.id.slice(0, 8);
-    const kind = p.agent?.harness ?? agent;
-    const place = t ? `${t.project}` : p.cwd ? shortPath(p.cwd) : null;
-    const context = [kind && kind.toLowerCase() !== agent.toLowerCase() && kind !== title ? kind : null, several ? m.name : null, place].filter(Boolean).join(" · ");
-    const coordinator = inFolders && p.coordinator_project != null;
-    const where = [severalProjects && t ? t.project : null, m.name].filter(Boolean).join(" · ");
-    const tooltip = [...new Set([p.id, title, context, p.cwd ? shortPath(p.cwd) : null, online ? null : "끊김"].filter(Boolean))].join("\n");
-    const pinKey = sidebarPinKey(m.id, p.id);
-    const pinned = shared.pins.includes(pinKey);
-    const menuKey = `agent:${pinKey}`;
-    let from: HTMLElement | null = null;
-    // 참고 AgentSidebar 메뉴는 고정·고정 해제 하나다
-    const toggleMenu = (anchor: HTMLElement, point?: { x: number; y: number }, previousFocus?: HTMLElement | null) => {
-      from = previousFocus === undefined ? anchor : previousFocus;
-      shared.toggleMenu({
-        key: menuKey,
-        anchor,
-        point,
-        previousFocus,
-        title,
-        place: context,
-        items: () => [
-          pinned
-            ? { id: "unpin", label: "에이전트 고정 해제", icon: PinOff, run: () => shared.togglePin(pinKey, from) }
-            : { id: "pin", label: "에이전트 고정", icon: Pin, run: () => shared.togglePin(pinKey, from) },
-        ],
-      });
-    };
-    return (
-      <li
-        key={p.id}
-        className={`agent-item${coordinator ? " is-coordinator" : ""}${selected ? " is-selected" : ""}${online ? "" : " is-offline"}`}
-        data-machine={m.id}
-        data-pane={p.id}
-        data-pin-key={pinKey}
-        onMouseDownCapture={keepFocusOnMenuPress}
-        onContextMenu={(e) => onRowContextMenu(e, toggleMenu)}
-      >
-        <button type="button" className="agent-select agent-row" disabled={!online} aria-current={selected ? "true" : undefined} title={tooltip} data-testid={`agent-row-${p.name || p.id}`} onClick={() => props.onPane(p.id)}>
-          <span className="sidebar-mark" aria-hidden="true">
-            <AgentMark agent={agent} size={18} />
-          </span>
-          <span className="agent-copy">
-            <span className="visually-hidden">{agent}: </span>
-            <span className="agent-title-line">
-              <span className="agent-title">{title}</span>
-              {pinned && <Pin className="sidebar-pin-mark" aria-hidden="true" />}
-            </span>
-            {inFolders ? (
-              <span className="agent-context thread-place">
-                {t ? (
-                  <span className={`thread-state is-${t.group}`}>{GROUP_WORD[t.group] ?? t.group}</span>
-                ) : coordinator ? (
-                  <span className="thread-state">{online ? STATUS_KO[knownStatus(paneAgentStatus(p))] : "끊김"}</span>
-                ) : (
-                  <span className="thread-state">{p.cwd ? shortPath(p.cwd) : kind}</span>
-                )}
-                <span className="thread-machine">{where}</span>
-              </span>
-            ) : (
-              context && <span className="agent-context">{context}</span>
-            )}
-          </span>
-          {online && (
-            <span className="agent-row-status">
-              <BackgroundBadge count={p.agent?.background} />
-              <PlanBadge plan={p.agent?.plan} />
-            </span>
-          )}
-          <span className="agent-row-state">
-            {online && paneProblem(p) ? <ProblemBadge reason={paneProblem(p)!} /> : <StatusBadge compact status={online ? paneAgentStatus(p) : undefined} />}
-          </span>
-        </button>
-        <div className="agent-actions">
-          <button type="button" className="sidebar-row-action row-menu-toggle" aria-label={`${title} 더보기`} aria-haspopup="menu" aria-expanded={shared.menuKey === menuKey} onClick={(e) => toggleMenu(e.currentTarget)}>
-            <Ellipsis aria-hidden="true" />
-          </button>
-        </div>
-      </li>
-    );
-  };
+  const agentItem = (r: AgentRow, inFolders = false) => (
+    <AgentItem key={r.p.id} {...props} r={r} inFolders={inFolders} several={several} severalProjects={severalProjects} />
+  );
   return (
     <section className={`agents-sidebar${rows.length === 0 ? " is-empty" : ""}`} aria-label={PANEL_LABEL.agents} data-testid="agents">
       <div className="agent-list-contents">
@@ -1135,6 +1054,95 @@ function AgentSection(props: SidebarProps) {
 }
 
 type AgentRow = { m: MachineView; p: PaneView; t: ThreadView | undefined; agent: string };
+
+/** 고정·폴더 안·일반 목록이 같은 thread 요약 hover를 쓴다. */
+function AgentItem({ r: { m, p, t, agent }, inFolders, several, severalProjects, ...props }: SidebarProps & { r: AgentRow; inFolders: boolean; several: boolean; severalProjects: boolean }) {
+  const shared = useRows();
+  const online = m.connection === "connected";
+  const selected = props.selected === `pane:${p.id}` || (t != null && props.selected === `thread:${threadKey(t)}`);
+  const title = t ? `${t.id} · ${t.title}` : p.name || p.argv.join(" ") || p.id.slice(0, 8);
+  const kind = p.agent?.harness ?? agent;
+  const place = t ? `${t.project}` : p.cwd ? shortPath(p.cwd) : null;
+  const context = [kind && kind.toLowerCase() !== agent.toLowerCase() && kind !== title ? kind : null, several ? m.name : null, place].filter(Boolean).join(" · ");
+  const coordinator = inFolders && p.coordinator_project != null;
+  const where = [severalProjects && t ? t.project : null, m.name].filter(Boolean).join(" · ");
+  const tooltip = [...new Set([p.id, title, context, p.cwd ? shortPath(p.cwd) : null, online ? null : "끊김"].filter(Boolean))].join("\n");
+  const pinKey = sidebarPinKey(m.id, p.id);
+  const pinned = shared.pins.includes(pinKey);
+  const menuKey = `agent:${pinKey}`;
+  const hover = useSummaryHover(t, shared.menuKey === menuKey);
+  let from: HTMLElement | null = null;
+  // 참고 AgentSidebar 메뉴는 고정·고정 해제 하나다
+  const toggleMenu = (anchor: HTMLElement, point?: { x: number; y: number }, previousFocus?: HTMLElement | null) => {
+    from = previousFocus === undefined ? anchor : previousFocus;
+    shared.toggleMenu({
+      key: menuKey,
+      anchor,
+      point,
+      previousFocus,
+      title,
+      place: context,
+      items: () => [
+        pinned
+          ? { id: "unpin", label: "에이전트 고정 해제", icon: PinOff, run: () => shared.togglePin(pinKey, from) }
+          : { id: "pin", label: "에이전트 고정", icon: Pin, run: () => shared.togglePin(pinKey, from) },
+      ],
+    });
+  };
+  return (
+    <li
+      key={p.id}
+      className={`agent-item${coordinator ? " is-coordinator" : ""}${selected ? " is-selected" : ""}${online ? "" : " is-offline"}`}
+      data-machine={m.id}
+      data-pane={p.id}
+      data-pin-key={pinKey}
+      onMouseDownCapture={keepFocusOnMenuPress}
+      onContextMenu={(e) => onRowContextMenu(e, toggleMenu)}
+    >
+      <button type="button" className="agent-select agent-row" disabled={!online} aria-current={selected ? "true" : undefined} title={hover.enabled ? undefined : tooltip} {...hover.handlers} data-testid={`agent-row-${p.name || p.id}`} onClick={() => props.onPane(p.id)}>
+        <span className="sidebar-mark" aria-hidden="true">
+          <AgentMark agent={agent} size={18} />
+        </span>
+        <span className="agent-copy">
+          <span className="visually-hidden">{agent}: </span>
+          <span className="agent-title-line">
+            <span className="agent-title">{title}</span>
+            {pinned && <Pin className="sidebar-pin-mark" aria-hidden="true" />}
+          </span>
+          {inFolders ? (
+            <span className="agent-context thread-place">
+              {t ? (
+                <span className={`thread-state is-${t.group}`}>{GROUP_WORD[t.group] ?? t.group}</span>
+              ) : coordinator ? (
+                <span className="thread-state">{online ? STATUS_KO[knownStatus(paneAgentStatus(p))] : "끊김"}</span>
+              ) : (
+                <span className="thread-state">{p.cwd ? shortPath(p.cwd) : kind}</span>
+              )}
+              <span className="thread-machine">{where}</span>
+            </span>
+          ) : (
+            context && <span className="agent-context">{context}</span>
+          )}
+        </span>
+        {online && (
+          <span className="agent-row-status">
+            <BackgroundBadge count={p.agent?.background} />
+            <PlanBadge plan={p.agent?.plan} />
+          </span>
+        )}
+        <span className="agent-row-state">
+          {online && paneProblem(p) ? <ProblemBadge reason={paneProblem(p)!} /> : <StatusBadge compact status={online ? paneAgentStatus(p) : undefined} />}
+        </span>
+      </button>
+      <div className="agent-actions">
+        <button type="button" className="sidebar-row-action row-menu-toggle" aria-label={`${title} 더보기`} aria-haspopup="menu" aria-expanded={shared.menuKey === menuKey} onClick={(e) => toggleMenu(e.currentTarget)}>
+          <Ellipsis aria-hidden="true" />
+        </button>
+      </div>
+      {hover.card}
+    </li>
+  );
+}
 
 /**
  * 저장소 폴더 하나(plan §8.260). 머리는 프로젝트 패널 묶음 머리(ProjectGroup)와 같은 모양·class라 자식 줄 들여쓰기(8px)·접힘 표시

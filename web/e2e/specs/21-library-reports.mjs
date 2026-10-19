@@ -1,6 +1,6 @@
 // 보고서 전체 목록은 CLI로 올린 host 사본·등록 폴더와 같은 정본을 본다. 기존 실험실의 자식 정리만 쓴다.
 import fs from "node:fs";
-import { root, aaa, base, browser, step, pairPage, inList, domIs, until, shot } from "../lib/harness.mjs";
+import { root, aaa, base, browser, webkit, step, pairPage, inList, domIs, until, shot } from "../lib/harness.mjs";
 
 export default async function ({ page }) {
   await step("보고서 전체 목록: publish·실시간·import, 활동 막대 「보고서」가 연 본문 화면(plan §8.240), 데스크톱·휴대폰의 열기·새 창·복사·폐기·새 링크", async () => {
@@ -154,6 +154,53 @@ export default async function ({ page }) {
     if (aaa("library", "list").reports.some((r) => r.name === "weekly")) throw new Error("지운 보고서가 목록에 있다");
     if ((await fetch(new URL(shared.base, base))).status === 200) throw new Error("지운 보고서의 공유 링크가 열린다");
     if (fs.existsSync(`${root}/projects/demo/library/weekly`)) throw new Error("host 사본이 남았다");
+  });
+
+  await step("보고서 링크 열람: 제목·공유 링크를 누르거나 인증 없는 Chromium·WebKit 탭에서 주소를 처음 열면 안 봄 배지와 마지막 열람이 바뀐다", async () => {
+    const input = `${root}/link-report`;
+    fs.mkdirSync(input);
+    fs.writeFileSync(`${input}/index.html`, "<!doctype html><html lang=ko><meta charset=utf-8><h1>링크로 읽기</h1></html>");
+    const before = aaa("library", "list").reports.filter((r) => r.unseen).length;
+    const publish = () => aaa("library", "publish", input, "--project", "demo", "--name", "link-report", "--to-user", "--title", "링크로 읽기");
+    const badgesAre = (n) => domIs(page, `링크 열람 배지 ${n}`, (n) => {
+      const want = n ? String(n) : null;
+      return (document.querySelector('[data-testid="activity-badge-reports"]')?.textContent ?? null) === want
+        && (document.querySelector('[data-testid="reports-unseen"]')?.textContent ?? null) === want;
+    }, n);
+    await page.getByTestId("reports-tab-mine").click();
+    const card = page.getByTestId("report-demo-link-report");
+    publish();
+    await badgesAre(before + 1);
+    await card.getByRole("link", { name: "링크로 읽기", exact: true }).click();
+    await page.frameLocator('[data-testid="report-frame"]').getByRole("heading", { name: "링크로 읽기" }).waitFor();
+    await page.getByTestId("report-back").click();
+    await badgesAre(before);
+    publish();
+    await badgesAre(before + 1);
+    const popup = page.waitForEvent("popup");
+    await card.getByRole("link", { name: "보고서 공유 링크" }).click();
+    const report = await popup;
+    try {
+      await report.getByRole("heading", { name: "링크로 읽기" }).waitFor();
+      await badgesAre(before);
+    } finally { await report.close(); }
+    const safari = await webkit.launch();
+    try {
+      for (const engine of [browser, safari]) {
+        const link = publish();
+        await badgesAre(before + 1);
+        // cookie도 앱 JS도 없는 새 기기. 최초 문서 GET을 host가 기록해야 한다.
+        const outside = await engine.newContext();
+        try {
+          const tab = await outside.newPage();
+          await tab.goto(new URL(link.base, base).href);
+          await tab.getByRole("heading", { name: "링크로 읽기" }).waitFor();
+          await badgesAre(before);
+          const saved = aaa("library", "list").reports.find((r) => r.name === "link-report");
+          if (saved.unseen || !saved.link.last_opened_at_ms) throw new Error(`외부 탭의 열람 누락: ${JSON.stringify(saved)}`);
+        } finally { await outside.close(); }
+      }
+    } finally { await safari.close(); }
   });
 
   await step("작업 보고(plan §8.256): 진행 중 thread의 사본은 고를 수 없고 host도 거부, resolve하면 풀린다, 끝난 것 모두 고르기·확인 한 번으로 모두 지운다", async () => {

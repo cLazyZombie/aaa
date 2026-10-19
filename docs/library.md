@@ -30,7 +30,11 @@ aaa library publish "<웹 보고서 폴더>" --project P --name weekly --to-user
 ```
 
 coordinator가 사용자에게 보여 줄 웹 보고서를 보낼 때 쓴다. 맨 위에 `index.html`이 없으면 거부한다. 제목(`--title`)은 줄바꿈 없는 200자 이내이며 없으면 `P/이름`으로 보인다.
-웹 보고서 화면의 「내 보고서」 탭에 카드로 들어가고, 열어 보기 전까지 「안 봄」으로 세어 활동 막대 「보고서」 단추와 탭에 수를 단다. 웹에서 열면(본문·새 창) 봄이 된다.
+웹 보고서 화면의 「내 보고서」 탭에 카드로 들어가고, 열어 보기 전까지 「안 봄」으로 세어 활동 막대 「보고서」 단추와 탭에 수를 단다.
+제목·공유 링크·열기·새 창 어느 길로 열어도 봄이 된다. 채팅·알림의 공유 주소(`/v/<token>/`)를 pairing하지 않은 브라우저에서
+바로 열어도 첫 문서 GET이 성공할 때 host가 기록한다. 안 봄 해제와 `library list`의 마지막 열람을 함께 기록하며 연결된 앱의 배지도 바뀐다.
+문서 탐색(`Sec-Fetch-Mode: navigate`, 목적지 `document`·`iframe`·`frame`)만 센다. HEAD·fetch·그림 요청·메타데이터 없는
+링크 미리보기·`Purpose`/`Sec-Purpose`/`X-Purpose`의 preview·prefetch·prerender·다운로드·실패 응답은 세지 않는다.
 같은 이름으로 다시 보내면 다시 안 봄이 된다. `--to-user` 없이 다시 올리면 「작업 보고」로 돌아간다.
 보낼 때 사용자 알림 post(`topic report`, 앱 안 알림만, 외부 푸시 없음)를 함께 남긴다. 같은 글은 24시간 안에 다시 남기지 않는다.
 `--to-user`가 없는 publish·import와 thread 사본(`t-NNNN`)은 「작업 보고」 탭이다.

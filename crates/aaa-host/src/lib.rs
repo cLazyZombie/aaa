@@ -1354,10 +1354,7 @@ impl Host {
                 .map(|reports| FrontResponse::LibraryReports { reports }),
             FrontRequest::LibraryOpen { project, name } => {
                 let view = self.report_library(&project, &name, actor.strip_prefix("device:"), role.can_control())?;
-                // 열면 봤다(사용자 결정 10-19, plan §8.256). 기록하지 못해도 열기는 막지 않는다
-                if self.db.library_report_seen(&project, &name, util::now_ms()).unwrap_or(false) {
-                    self.reports_bump();
-                }
+                self.library_opened(&project, &name);
                 Ok(FrontResponse::Library(view))
             }
             FrontRequest::LibraryUsage => self.library_usage(),

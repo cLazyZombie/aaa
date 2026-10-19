@@ -5435,7 +5435,23 @@ primary 근거:
 - **실측.** Claude 2.1.303 sendNow는 하던 shell을 배경으로 돌리고(끊지 않음) 대기 글을 `remove reason=absorbed_mid_turn` + `attachment queued_command`로 흡수했다. Codex 0.163은 exec가 배경 터미널이면 작업 중 글을 거의 바로 넘겨(rollout에 바로 적힘) 패널이 잘 보이지 않는다: 그때 단추는 `no_queue`로 거절해 「이미 읽었을 수 있습니다」를 보인다.
 - **검증.** host 유닛 `ctrl_enter::tests`(실제 Claude 화면 두 fixture, Codex 패널·커서). 웹 유닛 `steerQueued.test.mjs`(보임·꺼짐, 개수 문구, 까닭 문구, 10초 알림). 웹 E2E 23(가짜 Claude 대기열 enqueue·sendNow 흡수, 단추 하나, 쓰던 글 거절과 bytes 없음, 옛 host 숨김, 휴대폰 크기, 가짜 Codex 패널 Esc 흡수와 패널 없는 거절, 입력 진단)과 25(감지 pane마다 frame을 넣어 bytes·까닭, 보기 기기 거절). 결함 셋을 심어 실패를 확인했다: host가 쓰던 글을 무시함(23·25 실패), 웹이 거절 답을 버림(23 실패), 모든 대기 말에 단추(23 실패).
 
-### 8.272 착지 뒤 CI 조건부 조회와 실패 임무(10-19, t-0420)
+### 8.272 보고서 링크도 열면 봄으로 기록한다(10-19, t-0418)
+
+- 사용자 결정: 목록 제목·공유 링크, 채팅·앱 안 알림·post에 있는 공유 주소를 열어도 보고서를 본 것이다. 외부 브라우저의 첫 문서 GET에서 기록하므로 pairing·앱 JS에 의존하지 않는다.
+- 참고 확인: herdr-projects v0.2.35 `src/inbox.rs`의 `mark_seen`은 context에 보여 준 inbox 항목 기록이며 보고서 URL의 열람 기록이 아니다. 고정 herdr-web-ui `aa624cb`의 FileViewer·server에도 보고서 공유 URL과 안 봄 배지를 연결하는 같은 기능은 없다. aaa의 기존 host 기록을 확장한다.
+- 서명·파일 권한 확인은 기록하지 않는다. `/v/`가 성공 문서 응답을 준비한 뒤 브라우저 탐색(GET, Fetch Metadata의 navigate·document/iframe/frame)이면 같은 DB transaction으로 안 봄과 마지막 열람을 기록한다. 기존 API 열기도 이 기록을 쓴다. 안 봄이 바뀌면 기존 reports 사건으로 앱 배지를 갱신한다.
+- HEAD·fetch·그림·링크 미리보기·preview/prefetch/prerender 목적 요청·다운로드·실패 응답은 열람에서 제외한다. sandbox·서명 수명·폐기·Range 규칙은 유지한다. Fetch Metadata 없는 요청은 열람으로 판정하지 않는다.
+- 「내 보고서」 제목과 「작업 보고」 이름을 실제 링크로 만든다. 보통 클릭은 앱 본문에서 열고, 보조 키·가운데 단추는 브라우저의 새 탭 동작을 쓴다.
+- 검증: host HTTP 유닛 하나가 기록·제외 조건을 표로 확인한다. 웹 E2E 21은 제목·공유 링크 클릭, 인증 없는 Chromium·WebKit 탭의 주소 탐색과 실시간 배지를 확인한다. 운영 host·agent는 교체하지 않는다.
+
+### 8.273 이 기기 보관함 「지금 보내기」를 steer로(10-19, t-0417)
+
+- **요청.** 사용자 결정 10-19 19:36(t-0417 보고의 덤 제안 추천안): 「대기 메시지 자동 전송」을 끈 때 입력창 위 보관함(`composer-queue`)의 「지금 보내기」는 작업 중에도 글 + Enter로 보내 harness 대기열에 들어갈 뿐이었다. 이름대로 지금 읽히게 하고, §8.271 대기 말 「지금 보내기」와 같은 뜻이 되게 한다.
+- **동작.** 누른 때 agent가 작업 중이면 빈 입력창 Ctrl+Enter의 보관함 길(`sendQueued(…, steer)`)과 같은 steer submit이다: host가 끝 키를 고른다(작업 중 Claude는 글 뒤 sendNow, Codex는 글 + Enter = 정식 steer). 쉬는 중이면 보통 보내기(글 + Enter)다. 잠금·전달 확인·멈춤·입력 진단(`received steer=true`, 같은 ID의 `ctrl_enter phase=submit` 선택 키와 화면 근거)은 Ctrl+Enter 길 그대로다.
+- **못 보낼 때 까닭(대기 말 단추와 맞춤).** 질문 중이면 단추를 끄고 보관함에 「질문에 답한 뒤 보낼 수 있습니다」를 조용히 보인다(글이 질문의 답으로 들어가지 않게). 다른 글을 보내는 중은 대기 말 단추와 같은 말(「보내는 중인 글이 전달된 뒤 누를 수 있습니다」), 끊김·빈 글도 title로만 둔다. pane 거절·전송 여부 모름은 그 줄에 경고 아이콘·까닭·「터미널 보기」를 두고 글은 보관함에 남는다. 연결이 끊겨 아무것도 보내지 않은 것은 지금처럼 까닭만 둔다. 규칙은 `steerQueued.ts` `heldSend`.
+- **검증.** 웹 유닛 `heldSend`(작업 중 steer·쉬면 보통, 질문 중 안내, 까닭 문구가 대기 말 단추와 같음). 웹 E2E 25 「이 기기 보관함 「지금 보내기」」: 작업 중 Claude는 `글\x18\x13`, Codex는 `글\r`, submit `steer=true`, 같은 ID의 `ctrl_enter phase=submit` 진단, submit을 가로채 거절하면 까닭·「터미널 보기」와 글이 남고 bytes 없음. 결함(단추가 steer 없이 보냄)을 심어 실패를 확인했다.
+
+### 8.274 착지 뒤 CI 조건부 조회와 실패 임무(10-19, t-0420)
 
 - 사용자 결정: 착지 thread는 main push 뒤 GitHub CI를 기다리지 않는다. host가 60초(운영 최소 30초)마다 예약하고 **host 머신 agent**가 기존 gh 로그인으로 읽는다. 조회 머신은 routine `machine`·`[projects] ci_machine`으로 바꿀 수 있다. 실패 분류 임무의 상주 머신은 조회 머신과 독립이다. 운영 등록·승인은 coordinator·사람 단계다.
 - 참고 herdr-projects `steps.rs`의 프로젝트별 폴링·Outage와 t3code `gitHubConditionalChecks.ts`의 ETag validator·쪽 넘김을 따른다. `ci.v1`을 알린 agent에만 `CiQuery`를 보내며 AGENT_LINK 1.5의 선택 기능으로 둔다. host는 gh·agent/session 내부에 의존하지 않는다.
