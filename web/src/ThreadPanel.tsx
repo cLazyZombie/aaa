@@ -7,6 +7,7 @@ import { OpenFileContext } from "./herdr/filePaths.ts";
 import { DrawerToggle, HeadMore, HeadNote } from "./drawer";
 import { LIBRARY_SANDBOX } from "./FileViewer";
 import { LibraryLink } from "./LibraryLink";
+import { SummaryButton } from "./ThreadSummary";
 
 export const GROUP_LABEL: Record<string, string> = {
   waiting_on_you: "확인 필요",
@@ -90,6 +91,7 @@ export function ThreadPanel({
           {t.group === "working" && <span className="dot working" aria-hidden />}
           {GROUP_LABEL[t.group] ?? t.group}
         </span>
+        <SummaryButton t={t} />
         {onOpenPane && (
           <button className="ghost small" data-testid="open-terminal" onClick={onOpenPane}>
             <Icon name="shell" />

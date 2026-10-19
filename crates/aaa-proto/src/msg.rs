@@ -18,7 +18,7 @@ use crate::orch::{
     ProjectChange, ProjectContext, ProjectFilesCheck, ProjectOpened, ProjectView, QuestionView, ReportSnapshot, Role,
     RoutineView, ThreadAdopt, ThreadAdopted, ThreadKind, ThreadPrepare, ThreadReady, ThreadView,
 };
-use crate::orch::{EvaluationView, EvaluatorView, MenuPick, NoticeView};
+use crate::orch::{EvaluationView, EvaluatorView, MenuPick, NoticeView, ThreadSummaryView};
 
 use crate::version::Version;
 
@@ -1655,6 +1655,17 @@ pub enum FrontRequest {
         project: String,
         thread: String,
     },
+    /// FRONT_API 1.44. thread 작업 요약(plan §8.259)
+    ThreadSummary {
+        project: String,
+        thread: String,
+    },
+    /// FRONT_API 1.44. 작업 요약을 통째로 다시 쓴다(조작 권한, coordinator가 `thread summary --file`로)
+    ThreadSummarySet {
+        project: String,
+        thread: String,
+        text: String,
+    },
     /// 보고서와 결과물 목록, 그리고 결과물을 볼 짧은 수명의 읽기 전용 경로
     ThreadLibrary {
         project: String,
@@ -1963,6 +1974,7 @@ impl FrontRequest {
                 | FrontRequest::Threads { .. }
                 | FrontRequest::ThreadShow { .. }
                 | FrontRequest::ThreadLibrary { .. }
+                | FrontRequest::ThreadSummary { .. }
                 | FrontRequest::LibraryReports { .. }
                 | FrontRequest::LibraryOpen { .. }
                 | FrontRequest::LibraryUsage
@@ -2121,6 +2133,8 @@ pub enum FrontResponse {
         threads: Vec<ThreadView>,
     },
     Thread(ThreadView),
+    /// FRONT_API 1.44. thread 작업 요약
+    ThreadSummary(ThreadSummaryView),
     Events {
         events: Vec<FlowEvent>,
     },

@@ -749,6 +749,69 @@ pub struct ThreadView {
     #[serde(default, skip_serializing_if = "ProjectStatus::is_active")]
     #[ts(as = "Option<ProjectStatus>", optional)]
     pub project_status: ProjectStatus,
+    /// 작업 요약 표지(FRONT_API 1.44, plan §8.259): 요약을 쓴 때와 그 뒤 반영 안 된 지시 수. 옛 host는 생략한다
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub summary: Option<SummaryMark>,
+}
+
+/// thread 작업 요약 표지(plan §8.259). 줄·머리 단추가 요약을 읽지 않고 「낡았다」를 안다
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+pub struct SummaryMark {
+    /// 요약을 마지막으로 쓴 때. 요약 파일이 없으면 None
+    #[ts(type = "number | null")]
+    pub at_ms: Option<u64>,
+    /// 요약을 쓴 뒤 task.md Follow-ups에 쌓인 지시 수(요약이 없으면 Follow-ups 전부)
+    pub pending: u32,
+}
+
+/// 작업 요약의 한 줄: 앞의 「누가 언제」(`사용자 15:0x`)와 줄 긋기(`~~…~~`, 뒤에 뒤집혀 무효)
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+pub struct SummaryEntry {
+    /// 사용자·coordinator·agent
+    pub who: Option<String>,
+    /// 적힌 그대로의 시각(`15:0x`, `12:2x~14:5x`)
+    pub at: Option<String>,
+    pub text: String,
+    pub dropped: bool,
+}
+
+/// task.md Follow-ups 하나(첫 줄만)
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+pub struct FollowUpLine {
+    #[ts(type = "number | null")]
+    pub at_ms: Option<u64>,
+    pub text: String,
+}
+
+/// thread 작업 요약(`threads/<id>.summary.md`, plan §8.259). coordinator가 쓴 요약과 aaa가 붙인 것(agent 보고의
+/// `## Decisions`, 요약 뒤 지시, 요약이 없을 때 할 일 첫 줄)
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+pub struct ThreadSummaryView {
+    pub project: String,
+    pub thread: String,
+    /// 요약 파일 글(없으면 None)
+    pub text: Option<String>,
+    pub goal: Option<String>,
+    /// 목표가 바뀌었을 때 처음 시킨 것
+    pub origin: Option<String>,
+    pub now: Vec<String>,
+    pub decided: Vec<SummaryEntry>,
+    pub changed: Vec<SummaryEntry>,
+    pub done: Vec<String>,
+    /// thread 보고 `## Decisions` 줄(agent가 정한 것)
+    pub decisions: Vec<String>,
+    #[ts(type = "number | null")]
+    pub at_ms: Option<u64>,
+    /// 요약을 쓴 쪽(coordinator·사람)
+    pub by: Option<String>,
+    /// Follow-ups 전체 수
+    pub follow_ups: u32,
+    /// 요약 뒤 지시 수와 그 마지막 몇 개(요약이 없으면 Follow-ups 마지막 몇 개)
+    pub pending: u32,
+    pub pending_lines: Vec<FollowUpLine>,
+    /// 요약이 없을 때 보이는 할 일 첫 줄
+    pub task: Option<String>,
 }
 
 /// thread가 추적하는 PR: 보고 `PR:` 줄이나 branch로 찾은 주소와 마지막으로 본 상태(OPEN·MERGED·CLOSED)·리뷰 결정(§8.80)
@@ -783,11 +846,16 @@ pub struct FlowEvent {
 /// report.md `## Next` 절의 줄: 한 줄에 권하는 행동 하나, 목록 표시는 빼고 빈 줄은 버린다
 /// (herdr-projects `thread::next_lines`를 옮겼다). 첫 줄 상태 태그는 읽지 않는다(plan §8.78).
 pub fn next_lines(report: &str) -> Vec<String> {
+    section_lines(report, "Next")
+}
+
+/// report.md `## <name>` 절의 목록 줄(`next_lines`와 같은 규칙). `## Decisions`도 이것으로 읽는다(plan §8.259)
+pub fn section_lines(report: &str, name: &str) -> Vec<String> {
     let mut lines = Vec::new();
     let mut inside = false;
     for line in report.lines() {
-        if line.starts_with("## ") {
-            inside = line.trim() == "## Next";
+        if let Some(head) = line.strip_prefix("## ") {
+            inside = head.trim() == name;
             continue;
         }
         if !inside || line.starts_with('#') {

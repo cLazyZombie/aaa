@@ -27,6 +27,8 @@ pub(crate) struct BriefInput<'a> {
     pub memory_cap: usize,
     pub task: &'a str,
     pub restart: bool,
+    /// coordinator가 쓴 작업 요약(`threads/<id>.summary.md`, 표지 줄 뺀 글). 없으면 빈 글
+    pub summary: &'a str,
 }
 
 /// thread 규칙(herdr-projects `skill/THREAD.md`를 옮김). 「aaa에서」 두 줄은 aaa가 보고를 host로 복사하고
@@ -53,6 +55,7 @@ pub(crate) const THREAD_GUIDE: &str = "\
 - pull request를 열었으면 표지 다음 줄에 `PR: <url>`(선택). 주소는 `https://github.com/<owner>/<repo>/pull/<number>` 전체를 쓴다.
 - `## Report` 절: 무엇을 했고, 무엇을 알아냈고, 무엇이 남았고, 사용자가 정해야 할 것은 무엇인가.
 - `## Next` 절(필수): 한 줄에 권하는 행동 하나, 명령형, 100자 이하(`PR을 병합한다`, `실패한 lint 검사를 고친다`, `X를 원하는지 확인한다`, `worktree와 branch를 지운다`). 사용자가 키를 눌러 그 줄을 너에게 돌려보내면 네가 네 도구로 직접 한다. 일이 착지한 뒤 하자고 할 정리도 넣는다. 목록이 비면 할 일이 없다는 뜻이다.
+- `## Decisions` 절(선택): 네가 정한 것 중 사용자와 coordinator가 알아야 할 것, 3줄 이하. 웹 작업 요약 카드에 「agent」로 보인다. 쉬운 말의 짧은 구로 쓴다(한 줄 30자 안팎, 문장·ID·해시 나열 금지). 예: `- 마우스 보고 켠 앱엔 그대로 보냄`.
 - `## Remember` 절(선택): 앞으로의 thread에 남길 짧고 오래가는 교훈.
 
 보고는 매번 통째로 다시 써서 늘 지금 상태를 말하게 한다.
@@ -132,6 +135,11 @@ pub(crate) fn compose_brief(input: &BriefInput) -> String {
     }
     brief.push_str("\n# 진행 보고\n\n");
     brief.push_str(&progress_guidance(BRIEF_EXE));
+    if !input.summary.trim().is_empty() {
+        // 다시 시작한 thread가 지금 유효한 범위를 먼저 본다(plan §8.259)
+        brief.push_str("\n\n# 지금 범위(작업 요약)\n\ncoordinator가 정리한 지금 유효한 범위다. 할 일과 Follow-ups 원문은 아래에 있다. 요약보다 늦은 Follow-ups가 있으면 그것이 앞선다.\n\n");
+        brief.push_str(input.summary.trim());
+    }
     brief.push_str("\n\n# 할 일\n\n");
     brief.push_str(input.task.trim());
     brief.push_str(&format!(
@@ -215,6 +223,7 @@ mod tests {
             memory_cap: cap,
             task: "Do the thing.",
             restart: true,
+            summary: "# 목표\n지금 목표",
         };
         let brief = compose_brief(&input);
         let pos = |needle: &str| brief.find(needle).unwrap_or_else(|| panic!("없다 {needle}"));
@@ -231,6 +240,9 @@ mod tests {
         assert!(!brief.contains("결정 기록"), "결정은 memory에 있다(G9)");
         assert!(pos(&format!("`{BRIEF_EXE} report --percent 25")) < pos("Do the thing."));
         assert!(pos("Do the thing.") < pos("# 경로"));
+        // 작업 요약은 할 일 바로 앞(다시 시작한 thread가 지금 범위를 먼저 본다)
+        assert!(pos("# 진행 보고") < pos("# 지금 범위(작업 요약)"));
+        assert!(pos("지금 목표") < pos("# 할 일"));
         assert!(brief.ends_with(&format!(
             "# 경로\n\n- 보고: `{BRIEF_WORK_DIR}/report.md`\n- 사용자에게 줄 파일을 두는 library 폴더: `{BRIEF_WORK_DIR}/library`\n- 사용자가 준 파일(uploads): `/root/demo/uploads`\n"
         )));
@@ -254,9 +266,11 @@ mod tests {
             memory_files: &[],
             task: "t",
             restart: false,
+            summary: "",
             ..input
         });
         assert!(!fresh.contains("앞서 시도한 것"));
+        assert!(!fresh.contains("# 지금 범위"));
         assert!(
             fresh.starts_with("# 프로젝트\n\n- 프로젝트: `demo`\n- 목표: (정하지 않음)\n- 저장소: (없음)\n"),
             "{fresh}"

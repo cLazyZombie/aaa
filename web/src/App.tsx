@@ -25,6 +25,7 @@ import { usePreferencesSync } from "./preferencesSync";
 import { TermView } from "./Term";
 import { QuestionReload } from "./questionReload";
 import { ThreadReload } from "./threadReload";
+import { SummaryButton } from "./ThreadSummary";
 import { ThreadPanel } from "./ThreadPanel";
 import { PromptCard } from "./PromptCard";
 import { ProjectThreads } from "./ProjectThreads";
@@ -1062,6 +1063,8 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
                     보고
                   </button>
                 )}
+                {/* 작업 요약(plan §8.259): 데스크톱 팝오버, 휴대폰 아래 시트 */}
+                {threadOfPane.get(current.id) && <SummaryButton t={threadOfPane.get(current.id)!} />}
               </>
             }
             dock={

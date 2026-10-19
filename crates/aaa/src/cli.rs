@@ -505,6 +505,9 @@ enum ThreadCmd {
         /// TASKS.md의 task 제목. owner가 profile·machine 기본값이 되고 메모가 할 일에 붙는다.
         #[arg(long)]
         from_task: Option<String>,
+        /// 시작한 뒤 작업 요약을 쓴다(`aaa thread summary --file`과 같다, `-`면 표준 입력)
+        #[arg(long)]
+        summary_file: Option<String>,
     },
     /// 이미 띄운 Claude·Codex pane을 이 프로젝트의 thread로 기록하고 brief를 안내한다(herdr-projects `thread adopt`).
     /// pane은 그대로 두고 그 폴더에 작업 폴더를 만든다. 다시 시작(restart)은 하지 않고, resolve도 pane을 끝내지 않는다.
@@ -548,6 +551,19 @@ enum ThreadCmd {
     Show {
         project: String,
         thread: String,
+    },
+    /// 작업 요약(웹 hover 카드·「요약」 단추). --file이면 통째로 다시 쓴다(coordinator가 방향이 바뀔 때마다).
+    /// 쉬운 말의 짧은 구로 몇 줄만 쓴다. 형식:
+    ///
+    /// # 목표 / 목표 한 줄 / 처음: 처음 일(선택) / ## 지금 / - 할 것(3줄 이하) / ## 정함 / - 사용자 15:0x 정한 것 /
+    /// ## 바뀜 / - ~~사용자 14:0x 무효가 된 것~~ / - 사용자 14:1x 최근 바뀐 것(맨 아래) / ## 끝남 / - 끝난 일.
+    /// 한 줄 30자, 한 절 3줄, 전체 1KB까지
+    Summary {
+        project: String,
+        thread: String,
+        /// 요약 파일(`-`면 표준 입력)
+        #[arg(long)]
+        file: Option<String>,
     },
     /// 지금 보고를 확인했다
     Ack {
@@ -623,6 +639,9 @@ enum ThreadCmd {
         /// 보낼 글(--text-file과 둘 중 하나 필수)
         #[arg(long, required_unless_present = "text_file")]
         text: Option<String>,
+        /// 보낸 뒤 작업 요약을 다시 쓴다(방향이 바뀌는 말이면 함께, `aaa thread summary --file`과 같다)
+        #[arg(long)]
+        summary_file: Option<String>,
     },
 }
 
@@ -1263,14 +1282,29 @@ fn run(cli: Cli) -> Result<ExitCode> {
         Cmd::Thread { cmd } => front(
             json,
             match cmd {
-                ThreadCmd::Start { project, title, machine, profile, kind, repo, base, task_file, from_task } => {
+                ThreadCmd::Start {
+                    project,
+                    title,
+                    machine,
+                    profile,
+                    kind,
+                    repo,
+                    base,
+                    task_file,
+                    from_task,
+                    summary_file,
+                } => {
                     if from_task.is_none() && (title.is_none() || task_file.is_none()) {
                         anyhow::bail!("--title·--task-file이 필요하다(TASKS.md task로 시작하면 --from-task)");
                     }
+                    if task_file.as_deref() == Some("-") && summary_file.as_deref() == Some("-") {
+                        anyhow::bail!("--task-file과 --summary-file을 둘 다 표준 입력(-)으로 줄 수 없다");
+                    }
                     let task = task_text(task_file.as_deref())?;
+                    let summary = summary_file.as_deref().map(|f| file_text(f, "요약 파일")).transpose()?;
                     let kind = kind.map(|k| if k == "dir" { ThreadKind::Dir } else { ThreadKind::Worktree });
-                    FrontRequest::ThreadStart {
-                        project,
+                    let req = FrontRequest::ThreadStart {
+                        project: project.clone(),
                         title: title.unwrap_or_default(),
                         machine,
                         profile: profile.unwrap_or_default(),
@@ -1279,7 +1313,8 @@ fn run(cli: Cli) -> Result<ExitCode> {
                         base,
                         task,
                         from_task,
-                    }
+                    };
+                    return with_summary(json, req, project, None, summary);
                 }
                 ThreadCmd::Adopt { project, pane, title, task_file } => {
                     FrontRequest::ThreadAdopt { project, pane, title, task: task_text(task_file.as_deref())? }
@@ -1308,6 +1343,10 @@ fn run(cli: Cli) -> Result<ExitCode> {
                     FrontRequest::Threads { project, role: role.as_deref().and_then(aaa_proto::Role::parse) }
                 }
                 ThreadCmd::Show { project, thread } => FrontRequest::ThreadShow { project, thread },
+                ThreadCmd::Summary { project, thread, file: None } => FrontRequest::ThreadSummary { project, thread },
+                ThreadCmd::Summary { project, thread, file: Some(f) } => {
+                    FrontRequest::ThreadSummarySet { project, thread, text: file_text(&f, "요약 파일")? }
+                }
                 ThreadCmd::Library { project, thread } => FrontRequest::ThreadLibrary { project, thread },
                 ThreadCmd::Ack { project, thread } => FrontRequest::ThreadAck { project, thread },
                 ThreadCmd::Resolve { project, thread, keep_worktree, reopen, skip_copy, discard_uncopied } => {
@@ -1322,11 +1361,17 @@ fn run(cli: Cli) -> Result<ExitCode> {
                 ThreadCmd::Restart { project, thread, resume, profile } => {
                     FrontRequest::ThreadRestart { project, thread, resume, profile }
                 }
-                ThreadCmd::Message { project, thread, interrupt, text_file, text } => {
+                ThreadCmd::Message { project, thread, interrupt, text_file, text, summary_file } => {
+                    if text_file.as_deref() == Some("-") && summary_file.as_deref() == Some("-") {
+                        anyhow::bail!("--text-file과 --summary-file을 둘 다 표준 입력(-)으로 줄 수 없다");
+                    }
                     let text = text_arg(text, text_file)?;
+                    let summary = summary_file.as_deref().map(|f| file_text(f, "요약 파일")).transpose()?;
                     let mode =
                         if interrupt { aaa_proto::MessageMode::Interrupt } else { aaa_proto::MessageMode::Queue };
-                    FrontRequest::ThreadMessage { project, thread, text, mode }
+                    let req =
+                        FrontRequest::ThreadMessage { project: project.clone(), thread: thread.clone(), text, mode };
+                    return with_summary(json, req, project, Some(thread), summary);
                 }
             },
         ),
@@ -2444,6 +2489,47 @@ fn render_thread_pane(s: &mut String, v: &aaa_proto::ThreadPaneView) {
 }
 
 /// 할 일 파일(`-`면 표준 입력, 없으면 빈 글)
+/// 파일 글(`-`면 표준 입력)
+fn file_text(file: &str, what: &str) -> Result<String> {
+    if file == "-" {
+        let mut t = String::new();
+        std::io::Read::read_to_string(&mut std::io::stdin(), &mut t)?;
+        return Ok(t);
+    }
+    std::fs::read_to_string(file).with_context(|| format!("{what}: {file}"))
+}
+
+/// `thread start`·`thread message`의 `--summary-file`: 앞 요청이 된 뒤 작업 요약을 쓴다(plan §8.259). 앞 요청이 실패하면
+/// 요약을 쓰지 않는다. 요약을 따로 보내므로 요약을 모르는 옛 host(FRONT_API 1.43)는 그 요청만 거절한다
+fn with_summary(
+    json: bool,
+    req: FrontRequest,
+    project: String,
+    thread: Option<String>,
+    summary: Option<String>,
+) -> Result<ExitCode> {
+    let res = front_call(req)?;
+    let Some(text) = summary else { return front_print(json, res) };
+    let thread = match (&res, thread) {
+        (Ok(FrontResponse::Thread(v)), _) => v.id.clone(),
+        (Ok(_), Some(t)) => t,
+        _ => {
+            eprintln!("앞 요청이 되지 않아 작업 요약은 쓰지 않았다");
+            return front_print(json, res);
+        }
+    };
+    let code = front_print(json, res)?;
+    match front_call(FrontRequest::ThreadSummarySet { project, thread, text })? {
+        Ok(_) => {
+            if !json {
+                println!("작업 요약을 썼다");
+            }
+            Ok(code)
+        }
+        Err(e) => front_print(json, Err(e)),
+    }
+}
+
 fn task_text(file: Option<&str>) -> Result<String> {
     Ok(match file {
         None => String::new(),
@@ -2481,8 +2567,57 @@ fn render_thread(s: &mut String, t: &aaa_proto::ThreadView) {
         let review = pr.review.as_deref().map(|r| format!(", 리뷰 {r}")).unwrap_or_default();
         let _ = writeln!(s, "  PR {} ({}{review})", pr.url, pr.state.as_deref().unwrap_or("아직 보지 않음"));
     }
+    if let Some(m) = &t.summary {
+        let _ = writeln!(s, "  {}", summary_note(m));
+    }
     for n in &t.next {
         let _ = writeln!(s, "  - {n}");
+    }
+}
+
+/// thread 줄의 작업 요약 표지 한 마디
+fn summary_note(m: &aaa_proto::SummaryMark) -> String {
+    match (m.at_ms, m.pending) {
+        (None, 0) => "요약 없음".into(),
+        (None, n) => format!("요약 없음 · 지시 {n}개"),
+        (Some(at), 0) => format!("요약 {}", aaa_common::util::utc_text(at)),
+        (Some(at), n) => format!("요약 {} · 그 뒤 지시 {n}개 반영 안 됨", aaa_common::util::utc_text(at)),
+    }
+}
+
+/// `thread summary`: 요약 글 그대로와 aaa가 붙인 것(agent Decisions·요약 뒤 지시)
+fn render_summary(s: &mut String, v: &aaa_proto::ThreadSummaryView) {
+    use std::fmt::Write as _;
+    match &v.text {
+        Some(t) => {
+            let by = v.by.as_deref().unwrap_or("표지 없음(손으로 고친 파일)");
+            let at = v.at_ms.map(aaa_common::util::utc_text).unwrap_or_default();
+            let _ = writeln!(s, "{}/{} 작업 요약 · {by} {at}\n\n{t}", v.project, v.thread);
+        }
+        None => {
+            let _ = writeln!(
+                s,
+                "{}/{} 작업 요약 없음 — `aaa thread summary {} {} --file <파일>`로 쓴다. 할 일: {}",
+                v.project,
+                v.thread,
+                v.project,
+                v.thread,
+                v.task.as_deref().unwrap_or("-")
+            );
+        }
+    }
+    if !v.decisions.is_empty() {
+        let _ = writeln!(s, "\nagent가 정한 것(보고 ## Decisions):");
+        for d in &v.decisions {
+            let _ = writeln!(s, "- {d}");
+        }
+    }
+    if v.pending > 0 {
+        let _ = writeln!(s, "\n요약 뒤 지시 {}개(반영 안 됨, Follow-ups {}개 중):", v.pending, v.follow_ups);
+        for l in &v.pending_lines {
+            let at = l.at_ms.map(aaa_common::util::utc_text).unwrap_or_default();
+            let _ = writeln!(s, "- {at} {}", l.text);
+        }
     }
 }
 
@@ -2562,6 +2697,16 @@ fn render_context(s: &mut String, c: &aaa_proto::ProjectContext) {
     for t in &c.threads {
         let state = t.agent.as_ref().map(|a| format!(" · {:?}", a.activity)).unwrap_or_default();
         let _ = writeln!(s, "  {} {:?} {} {}@{}{state}", t.id, t.group, t.title, t.profile, t.machine);
+        // 요약이 낡았으면(요약 뒤 지시가 있거나 지시가 있는데 요약이 없다) 이 턴에 고친다
+        if let Some(m) = t.summary.as_ref().filter(|m| m.pending > 0) {
+            let _ = writeln!(
+                s,
+                "    요약 고칠 것: {} (aaa thread summary {} {} --file …)",
+                summary_note(m),
+                c.project,
+                t.id
+            );
+        }
         for l in &t.next {
             let _ = writeln!(s, "    next: {l}");
         }
@@ -2922,6 +3067,7 @@ fn render_front(r: &FrontResponse) -> String {
             }
         }
         FrontResponse::Thread(t) => render_thread(&mut s, t),
+        FrontResponse::ThreadSummary(v) => render_summary(&mut s, v),
         FrontResponse::Events { events } => {
             for e in events {
                 s.push_str(&render_event(e));

@@ -753,7 +753,21 @@ fn resolve_keeps_dirty_worktree_and_unmerged_branch() {
     let ready = |id: &str| w.wait_show("보고", id, |v| v["report_hash"].is_string() && v["brief"] == "delivered");
     let resolved = |id: &str| resolved_with(id, &[]);
     // 작업 폴더 thread는 늘 닫는다
-    let d = w.start(&["--title", "dir", "--profile", "fake", "--kind", "dir", "--task-file", &w.task("d.txt", "x")]);
+    // `--summary-file`: 시작한 뒤 작업 요약을 쓴다(plan §8.259). JSON 출력은 thread 한 줄 그대로다
+    let summary = w.task("d-summary.md", "# 목표\n작업 폴더 닫기\n");
+    let d = w.start(&[
+        "--title",
+        "dir",
+        "--profile",
+        "fake",
+        "--kind",
+        "dir",
+        "--task-file",
+        &w.task("d.txt", "x"),
+        "--summary-file",
+        &summary,
+    ]);
+    assert!(w.show(d["id"].as_str().unwrap())["summary"]["at_ms"].is_u64(), "요약을 쓰지 않았다");
     let (did, dpane) = (d["id"].as_str().unwrap().to_string(), d["pane"].as_str().unwrap().to_string());
     ready(&did);
     let detail = resolved(&did);
@@ -1310,9 +1324,29 @@ fn claude_thread_states_questions_and_messages() {
     let follow = task.split("\n## Follow-ups\n").nth(1).unwrap_or_else(|| panic!("Follow-ups가 없다: {task}"));
     assert!(follow.contains("\nslow one\n") && follow.find("slow one") < follow.find("second"), "{follow}");
 
+    // 작업 요약(plan §8.259): 요약 없이 지시가 쌓이면 표지가 그 수를 센다. 요약을 쓰면 0이 되고, 그 뒤 지시만 다시 센다
+    assert_eq!(w.show(&id)["summary"], serde_json::json!({ "at_ms": null, "pending": 2 }));
+    let bad = w.task("bad-summary.md", "## 지금\n- 목표 없음\n");
+    let e = w.h.json(&["thread", "summary", "demo", &id, "--file", &bad]).expect_err("목표 없는 요약");
+    assert!(e.contains("목표"), "{e}");
+    let good = w.task("summary.md", "# 목표\n흐름 시험\n## 지금\n- 메시지 두 개 보내기\n");
+    let v = w.h.ok(&["thread", "summary", "demo", &id, "--file", &good]);
+    assert_eq!(
+        (v["goal"].as_str(), v["pending"].as_u64(), v["by"].as_str()),
+        (Some("흐름 시험"), Some(0), Some("사람")),
+        "{v}"
+    );
+    let mark = w.show(&id)["summary"].clone();
+    assert!(mark["at_ms"].is_u64() && mark["pending"] == 0, "{mark}");
+
     // 답보다 늦게 온 같은 확인창의 짝 hook(PermissionRequest → 답 → Notification, ci-local에서 난 차례, plan §8.99)도 새
     // 질문을 열지 않는다. 진행 보고가 같은 연결로 그 뒤에 오므로, 그것이 보이면 늦은 Notification을 처리한 뒤다
     assert_eq!(w.message(&id, "late ask", false)["state"], "accepted");
+    // 요약 뒤에 보낸 지시는 「반영 안 됨」으로 세고 그 첫 줄을 보인다
+    let v = w.h.ok(&["thread", "summary", "demo", &id]);
+    assert_eq!(v["pending"], 1, "{v}");
+    assert_eq!(v["pending_lines"][0]["text"], "late ask", "{v}");
+    assert_eq!(w.show(&id)["summary"]["pending"], 1);
     let pl = open_question(&mut ev, &id, "permission", &[&p1.id]);
     let t = lab::now_ms();
     w.h.ok(&["question", "answer", &pl.id, "no"]);
@@ -3826,6 +3860,7 @@ const GUIDE_SECTIONS: &[&str] = &[
     "- 보이기: 사용자가 task를 보자고 하면",
     "## 무엇이 누구 것인가",
     "## aaa 배포(사용자가 채팅에서 배포를 지시했을 때만)",
+    "## 작업 요약(웹 카드)",
     "사용자가 일정 작업이나 지켜보는 일을 요청하면 `routines/<이름>.md`를 만들거나 고친다",
 ];
 

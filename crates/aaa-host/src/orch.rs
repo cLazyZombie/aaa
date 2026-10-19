@@ -305,6 +305,36 @@ pane이 없어졌거나 시작이 실패한 thread는 `aaa thread restart {p} <i
   보낸 글은 task 기록에 남아 다시 시작한 thread도 본다. 확인창이 떠 있으면 거부한다: 먼저 답한다.
   받았는지 모른다고 나오면 다시 보내지 말고 `aaa thread read`로 입력창을 본다. 남아 있으면 `aaa thread keys {p} <id> enter`.
   확인창 질문은 `aaa question list`·`aaa question answer`.
+  방향을 바꾸는 말(새 결정·취소·범위 추가)이면 `--summary-file`로 작업 요약도 함께 고친다(아래 「작업 요약」).
+
+## 작업 요약(웹 카드)
+웹은 thread 줄에 마우스를 올리거나 thread 화면의 「요약」 단추를 누르면 `threads/<id>.summary.md`를 보인다. 사용자가 순간
+훑어보는 카드다: 길면 안 된다. 쉽고 빨리 읽히게 쓴다.
+- 쓸 때: thread를 시작할 때(`aaa thread start … --summary-file <파일>`), 방향을 바꾸는 말을 보낼 때
+  (`aaa thread message {p} <id> --text … --summary-file <파일>`). 요약만 고치면 `aaa thread summary {p} <id> --file <파일>`.
+  착지 창·진행 확인 같은 말에는 고치지 않는다. 매번 통째로 다시 쓴다.
+- 지금 유효한 것만 쓴다. 쉬운 말의 짧은 구로 쓴다(한 줄 30자, 문장·내부 ID·해시·약어 나열 금지). 한 절은 3줄까지다.
+  뒤집힌 것은 `~~줄 긋기~~`로 두고, 가장 최근에 바뀐 것은 `## 바뀜` 맨 아래에 둔다(카드는 그 한 줄만 보인다).
+- 카드는 목표, 지금(3줄), 최근 바뀐 것 한 줄, 상태만 보인다. 정함·바뀜·끝남은 「요약」 단추를 눌러야 펼쳐진다.
+- `aaa context`에 「요약 고칠 것」으로 나온 thread(요약 뒤에 지시를 보냈거나 요약이 없다)는 그 턴에 고친다.
+
+좋은 예:
+```
+# 목표
+웹 왼쪽 패널 다듬기
+처음: 머신 CPU·MEM 표시
+## 지금
+- Ctrl+Enter는 작업 중에만 보냄
+- 패널 폭을 끌어서 바꾸기
+## 정함
+- 사용자 15:0x 들여쓰기 8px
+## 바뀜
+- ~~사용자 14:0x Ctrl+Enter 없앰~~
+- 사용자 15:1x 쉬는 중엔 안 보냄
+## 끝남
+- CPU·MEM 표시
+```
+나쁜 예: `- t-0386 착지(c73cb833) 뒤 후보 6a1fd1dc를 통합해 ci-local·check-public 통과 뒤 push` — 문장이고 ID·해시 나열이다.
 
 ## thread 보기와 요약
 - `aaa thread list {p}`·`aaa thread show {p} <id>`가 지금 상태와 함께 기록을 보인다(`--json`이면 Next 목록까지). 보고 사본은
@@ -429,7 +459,7 @@ thread가 키를 기다리는 화면(시작 때 신뢰 창, 질문 메뉴, 명�
 병합, force push, branch 지우기, worktree 지우기, thread 끝내기(`thread resolve`).
 ";
 
-fn bad(msg: impl Into<String>) -> ErrorBody {
+pub(crate) fn bad(msg: impl Into<String>) -> ErrorBody {
     err(ErrorCode::BadRequest, msg)
 }
 
@@ -898,6 +928,7 @@ impl Host {
             updated_at_ms: r.updated_at_ms,
             warnings: Vec::new(),
             project_status: self.project_status(&r.project),
+            summary: if r.id.is_empty() { None } else { self.summary_mark(&r.project, &r.id) },
         }
     }
 
@@ -1217,6 +1248,13 @@ impl Host {
                 Some((f.file_name()?.to_string_lossy().to_string(), text))
             })
             .collect();
+        // 작업 요약(plan §8.259): 표지 줄을 뺀 글. 특수 thread에는 쓰지 않는다
+        let summary = if r.mission.is_none() {
+            let file = read(&format!("threads/{}.summary.md", r.id));
+            crate::summary::split_meta(&file).1.trim().to_string()
+        } else {
+            String::new()
+        };
         let mission_task = r.mission.as_ref().map(|_| self.mission_task(r));
         let task = mission_task.as_deref().unwrap_or(task);
         let guide = if let Some(m) = &r.mission {
@@ -1248,6 +1286,7 @@ impl Host {
             memory_cap: self.cfg.projects.brief_memory_chars,
             task,
             restart,
+            summary: &summary,
         })
     }
 

@@ -936,7 +936,14 @@ impl Host {
             aaa_common::util::utc_text(aaa_common::util::now_ms()),
             text.trim()
         ));
-        crate::orch::write_atomic(&path, task.as_bytes())
+        crate::orch::write_atomic(&path, task.as_bytes())?;
+        // 작업 요약 표지: 요약 뒤 지시가 하나 늘었다(plan §8.259)
+        self.summary_follow_ups(project, id, &task);
+        drop(_guard);
+        if let Ok(r) = self.load(project, id) {
+            let _ = self.thread_events.send(self.thread_view(&r));
+        }
+        Ok(())
     }
 
     fn save_message(&self, m: &MessageView) {
