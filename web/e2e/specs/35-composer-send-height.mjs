@@ -7,7 +7,7 @@
 // 여러 줄을 보고, 보내는 동안 입력창에 그려진 글(글 칸·단추 밖)이 없는지 본다.
 // 혼자 돌리기: node web/e2e/web.e2e.mjs --spec 35-composer-send-height(새 실험실). 준비는 lib/harness.mjs runSpec.
 import fs from "node:fs";
-import { aaa, step, browser, webkit, pairPage, paneHash, domIs, root, AA, waitOutput, shots } from "../lib/harness.mjs";
+import { aaa, step, browser, webkit, pairPage, paneHash, domIs, root, AA, waitOutput, shots, procs } from "../lib/harness.mjs";
 import { pairDevice } from "../lib/devices.mjs";
 
 /** 받은 글(bracketed paste 밖의 CR이 제출)을 hold 파일이 없으면 바로 Claude 대화 기록에 적는 가짜 agent(23 composer.py의 줄인 꼴) */
@@ -34,6 +34,9 @@ while True:
             print('\\r\\nSEND_RECEIVED_'+str(count),flush=True)
         else: text+=b'\\n' if ch==b'\\r' else ch
 `;
+
+/** 웹 ChatComposer `STUCK_MS`: 전달 확인이 없어 ×(탈출구)를 보이는 때. Playwright 시계로 넘긴다(23과 같다) */
+const STUCK_MS = 3000;
 
 const userLine = (text) => JSON.stringify({ type: "user", message: { content: text } }) + "\n";
 
@@ -140,6 +143,8 @@ export default async function () {
           await p.getByTestId("chat-composer").waitFor();
           await domIs(p, "입력 가능", () => !document.querySelector('[aria-label="그림 첨부"]')?.disabled);
           if (kind === "coordinator") await domIs(p, "보라 입력창", () => document.querySelector(".composer-surface.is-coordinator") !== null);
+          // 시계는 흐르게 두고 3초 막힘 창만 넘긴다(23 「보내기 상태」와 같다)
+          await p.clock.install();
           const box = p.getByRole("textbox", { name: "메시지", exact: true });
           await box.click();
           const name = `${device} ${kind}`;
@@ -228,6 +233,32 @@ export default async function () {
           await cleared(p);
           const end = await heights(p);
           if (Math.abs(end.surface - single.surface) > 0.5) bad.push(`${name} 여러 줄 비워짐: ${end.surface}px ≠ 한 줄 ${single.surface}px`);
+
+          // 5) 전달 전 막힘: agent가 멈춰 3초 뒤 도는 단추가 ×로 바뀌어도 상자가 늘지 않는다. ×로 멈춘 뒤의 결과 띠는 상자 위 알림(그대로 둔 것)이다
+          await box.fill("막힌 한 줄 메시지");
+          rest = await heights(p);
+          const agent = procs.get("agent");
+          process.kill(agent.pid, "SIGSTOP");
+          try {
+            await record(p);
+            await send();
+            await state(p, "sending");
+            await p.clock.runFor(STUCK_MS + 1);
+            await state(p, "stuck");
+            await quiet("막힘");
+            await capture("stuck");
+            judge("막힘으로", await recorded(p), rest, await heights(p));
+            await p.getByRole("button", { name: "멈추고 글 돌려받기", exact: true }).click();
+            await state(p, "none");
+          } finally {
+            process.kill(agent.pid, "SIGCONT");
+          }
+          // 멈춘 submit의 글이 agent 입력에 남았을 수 있다: 다음 보내기와 붙어 간다. 그 글을 기록에 올려 비우고 다음 기기가 깨끗이 시작한다
+          await box.fill("정리");
+          await send();
+          await waitOutput(pane.id, `SEND_RECEIVED_${++received[kind]}`);
+          fs.appendFileSync(pane.transcript, userLine("정리"));
+          await cleared(p);
           await p.context().close();
         }
       }
