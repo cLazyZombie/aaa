@@ -266,12 +266,17 @@ impl App {
             4 => self.act(Action::Settings, tx).await?,
             5 => {
                 self.overlay = Some(Overlay::Special(0));
-                if self.host_at_least(38) {
-                    let id = tx.send(FrontRequest::MissionList { project: None }).await?;
-                    self.pending.insert(id, Pending::Missions);
-                }
+                self.request_missions(tx).await?;
             }
             _ => self.act(Action::Help, tx).await?,
+        }
+        Ok(())
+    }
+    /// 임무 목록은 Front 1.39부터다. 옛 host에서는 기존 평가자 pane만 공통 목록으로 보여 준다.
+    pub(crate) async fn request_missions(&mut self, tx: &mut FrontSender) -> Result<()> {
+        if self.host_minor >= 39 {
+            let id = tx.send(FrontRequest::MissionList { project: None }).await?;
+            self.pending.insert(id, Pending::Missions);
         }
         Ok(())
     }

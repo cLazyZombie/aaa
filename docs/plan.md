@@ -5751,3 +5751,12 @@ primary 근거:
 - **키 보존 확인.** 새 활동 막대의 진입은 F6이다. 기존 탐색 Shift+Tab을 가로채던 초기 구현을 실제 PTY의 이전 pane
   이동 RED로 잡아 고쳤다. 기존 Tab/Shift+Tab은 pane 정·역방향 이동, F6 뒤 화살표는 활동 단추 포커스만 이동한다.
   도움말에도 F6·s를 표시한다. 최종 소스로 전체 gate를 다시 검증한다.
+
+- **폭 저장 경합 수리.** 전체 gate에서 폭 기본값 복원 뒤 공유값이 60으로 돌아간 실패를 보존했다. 실험실 DB는 화면36·
+  저장60(revision5)이었고, host `front.rs::serve_conn`은 PreferencesSet을 독립 task로 처리해 앞 저장이 뒤에 끝날 수 있다.
+  herdr는 `client/shell/config.rs::persist_chrome_preferences`에서 표시 설정을 로컬에 쓰므로 이 wire 경합이 없다. aaa는
+  웹/참고 web-ui `preferencesSync.ts`의 inFlight 방식대로 TUI도 저장 한 개만 진행한다. 앞 응답까지 최신 변경을 모으고
+  응답 뒤 보내며, detach도 마지막 표시 설정 저장이 끝난 뒤 한다. backend 요청 처리와 API는 바꾸지 않는다.
+  기존 폭 keeper를 실제 Front wire까지 넓혀 앞 Ack 전 무송신(Status 울타리), Ack 뒤 마지막 null 저장을 검증한다.
+- **옛 host 경계.** 보고서 목록은 Front1.38, 임무 목록은1.39부터다. 시작/공통 특수 열기는 같은 임무 요청 경계를 쓴다.
+  Reader의 실제 wire에서 1.37/1.38/1.39를 검사해 옛 host에 모르는 요청을 보내지 않는다. 현재 host 동작은 유지한다.

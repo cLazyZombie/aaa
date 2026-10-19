@@ -351,6 +351,8 @@ enum Pending {
     SpaceLayout,
     /// host 공유 설정: 기억한 사이드바 배치를 쓴다
     Chrome,
+    /// host의 병렬 요청 처리로 저장 순서가 뒤집히지 않게 이 응답 뒤 다음 변경을 보낸다.
+    ChromeSave,
     /// workspace 이름을 바꿨다(그 workspace를 보고 있었으면 보던 탭): 응답이 오면 새 이름으로 따라간다
     RenameSpace {
         from: String,
@@ -785,10 +787,9 @@ impl App {
         let mut minute = tokio::time::interval_at(tokio::time::Instant::now() + MINUTE, MINUTE);
         minute.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
         loop {
-            if self.mission_refresh && self.host_minor >= 38 {
+            if self.mission_refresh {
                 self.mission_refresh = false;
-                let id = tx.send(FrontRequest::MissionList { project: None }).await?;
-                self.pending.insert(id, Pending::Missions);
+                self.request_missions(&mut tx).await?;
             }
             if dirty {
                 if self.host_at_least(43) && !self.reader {
@@ -822,7 +823,7 @@ impl App {
                 }
                 dirty = false;
             }
-            if self.quit {
+            if self.quit && self.chrome_unsaved.is_empty() && !self.saving_chrome() {
                 return Ok(());
             }
             tokio::select! {
@@ -1519,15 +1520,19 @@ impl App {
 
     /// 남길 사이드바 배치를 보낸다(바뀐 이름만: 다른 TUI가 남긴 다른 값을 덮지 않는다)
     async fn save_chrome(&mut self, tx: &mut FrontSender) -> Result<()> {
-        if self.chrome_unsaved.is_empty() {
+        if self.chrome_unsaved.is_empty() || self.saving_chrome() {
             return Ok(());
         }
         let settings = std::mem::take(&mut self.chrome_unsaved);
         if self.host_minor >= PREFERENCES_MINOR {
             let id = tx.send(FrontRequest::PreferencesSet { settings, pins: None }).await?;
-            self.pending.insert(id, Pending::Report("사이드바 배치 저장"));
+            self.pending.insert(id, Pending::ChromeSave);
         }
         Ok(())
+    }
+
+    fn saving_chrome(&self) -> bool {
+        self.pending.values().any(|p| matches!(p, Pending::ChromeSave))
     }
 
     /// host가 기억한 사이드바 배치(herdr `ClientShellState::new`가 읽는 client 설정): 그동안 사용자가 바꾸지 않은 것만 쓴다
@@ -3579,6 +3584,84 @@ fn find_in_direction(cur: Rect, dir: Dir, panes: &[(String, Rect)]) -> Option<St
 
 #[cfg(test)]
 mod tests {
+    async fn front_peer()
+    -> (std::path::PathBuf, aaa_common::ipc::LocalStream, FrontSender, tokio::sync::mpsc::UnboundedReceiver<FrontMsg>)
+    {
+        use aaa_proto::{DeviceRole, FrameKind, MAX_FRAME, read_frame, write_frame};
+        #[cfg(unix)]
+        let root = std::path::PathBuf::from("/tmp");
+        #[cfg(windows)]
+        let root = std::env::temp_dir();
+        let n = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos();
+        let dir = root.join(format!("atui-{}-{n}", std::process::id()));
+        aaa_common::util::ensure_private_dir(&dir).unwrap();
+        let listener = aaa_common::ipc::LocalListener::bind(&aaa_common::front::socket(&dir)).unwrap();
+        let (client, peer) = tokio::join!(FrontClient::connect_as(&dir, "tui"), async {
+            let mut peer = listener.accept().await.unwrap();
+            let hello = read_frame(&mut peer, MAX_FRAME).await.unwrap().unwrap();
+            assert!(matches!(serde_json::from_slice::<FrontMsg>(&hello.payload).unwrap(), FrontMsg::Hello { .. }));
+            let welcome = FrontMsg::Welcome {
+                proto: aaa_proto::FRONT_API,
+                host_id: "host".into(),
+                role: DeviceRole::Controller,
+                front: "tui".into(),
+            };
+            write_frame(&mut peer, FrameKind::Control, &serde_json::to_vec(&welcome).unwrap(), MAX_FRAME)
+                .await
+                .unwrap();
+            peer
+        });
+        let (tx, rx) = client.unwrap().split();
+        (dir, peer, tx, rx)
+    }
+
+    async fn front_request(peer: &mut aaa_common::ipc::LocalStream) -> (String, FrontRequest) {
+        let frame = tokio::time::timeout(Duration::from_secs(20), aaa_proto::read_frame(peer, aaa_proto::MAX_FRAME))
+            .await
+            .unwrap()
+            .unwrap()
+            .unwrap();
+        let FrontMsg::Req { id, body } = serde_json::from_slice(&frame.payload).unwrap() else {
+            panic!("요청이 아니다")
+        };
+        (id, body)
+    }
+
+    /// 1.38은 보고서 목록, 1.39는 임무 목록부터 안다. 같은 wire의 Status가 무송신의 울타리다.
+    #[tokio::test]
+    async fn sidebar_read_actions_respect_the_host_version() {
+        let (dir, mut peer, mut tx, rx) = front_peer().await;
+        for minor in [37, 38, 39] {
+            let mut app = App::new("main".into(), "tui".into());
+            app.host_minor = minor;
+            app.reader = true;
+            app.activate_activity(3, &mut tx).await.unwrap();
+            app.activate_activity(5, &mut tx).await.unwrap();
+        }
+        tx.send(FrontRequest::Status).await.unwrap();
+        let mut requests = Vec::new();
+        loop {
+            let (_, request) = front_request(&mut peer).await;
+            if matches!(request, FrontRequest::Status) {
+                break;
+            }
+            requests.push(request);
+        }
+        assert!(
+            matches!(
+                requests.as_slice(),
+                [
+                    FrontRequest::LibraryReports { .. },
+                    FrontRequest::LibraryReports { .. },
+                    FrontRequest::MissionList { .. }
+                ]
+            ),
+            "{requests:?}"
+        );
+        drop((peer, tx, rx));
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
     /// 실제 Front wire에서 Ctrl+Enter 의도와 구 host의 안전한 기본값을 본다.
     #[tokio::test]
     async fn ctrl_enter_uses_shared_host_request() {
@@ -4333,8 +4416,8 @@ mod tests {
     /// 사용자가 끌어 바꾼 폭은 설정을 다시 읽어도(설정 창의 테마 바꾸기도 이 길) 그대로다(herdr `reload_client_config`
     /// `sidebar_width_manual`). 끌기를 마치면 host 공유 설정에 남기고, 경계를 두 번 누르면 설정 폭으로 돌아가 남긴 것을 지운다.
     /// 다시 붙으면 host가 기억한 배치로 시작한다.
-    #[test]
-    fn dragged_sidebar_width_survives_a_theme_change_and_is_remembered() {
+    #[tokio::test]
+    async fn dragged_sidebar_width_survives_a_theme_change_and_is_remembered() {
         let mut app = App::new("main".into(), "me".into());
         let area = r(0, 0, 160, 30);
         app.apply_config(&aaa_config::TuiSection::default());
@@ -4380,6 +4463,38 @@ mod tests {
         reset.drag_sidebar_to(49, 0);
         reset.sidebar_drag_done();
         assert!(reset.chrome_unsaved.is_empty());
+        // Front 요청 처리 순서와 독립적으로 마지막 표시 설정이 남아야 한다. 앞 저장의 응답 전에 다음 저장은 보내지 않는다.
+        let (dir, mut peer, mut tx, rx) = front_peer().await;
+        let mut app = App::new("main".into(), "tui".into());
+        app.drag_sidebar_to(59, 0);
+        app.sidebar_drag_done();
+        app.save_chrome(&mut tx).await.unwrap();
+        let (first, request) = front_request(&mut peer).await;
+        assert!(matches!(request, FrontRequest::PreferencesSet { settings, .. } if settings["tuiSidebarWidth"] == 60));
+        app.reset_sidebar_width();
+        app.save_chrome(&mut tx).await.unwrap();
+        tx.send(FrontRequest::Status).await.unwrap();
+        assert!(matches!(front_request(&mut peer).await.1, FrontRequest::Status), "앞 저장 응답 전에 뒤 저장을 보냈다");
+        app.on_msg(FrontMsg::Res {
+            id: first,
+            result: Outcome::Ok(aaa_proto::FrontResponse::Preferences(doc(
+                serde_json::json!({ "tuiSidebarWidth": 60 }),
+            ))),
+        });
+        app.save_chrome(&mut tx).await.unwrap();
+        let (last, request) = front_request(&mut peer).await;
+        assert!(
+            matches!(request, FrontRequest::PreferencesSet { settings, .. } if settings["tuiSidebarWidth"].is_null())
+        );
+        app.on_msg(FrontMsg::Res {
+            id: last,
+            result: Outcome::Ok(aaa_proto::FrontResponse::Preferences(doc(
+                serde_json::json!({ "tuiSidebarWidth": null }),
+            ))),
+        });
+        assert!(app.chrome_unsaved.is_empty());
+        drop((peer, tx, rx));
+        std::fs::remove_dir_all(dir).unwrap();
     }
 
     /// 사이드바 모양(herdr `render_sidebar`·`render_collapsed_sidebar`): 위 ` spaces` 구역(빈 줄 뒤 workspace 줄), 30줄이면
