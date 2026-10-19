@@ -197,7 +197,6 @@ mod tests {
         assert_eq!(doc(&parse(Some(&saved))), want);
     }
 
-    #[test]
     /// 웹 사이드바 폭(plan §8.257)이 공유 이름으로 남고, 되돌림(null)도 그대로 든다
     #[test]
     fn keeps_the_web_sidebar_width() {
