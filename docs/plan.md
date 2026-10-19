@@ -5873,3 +5873,28 @@ primary 근거:
   - 맨 아래에서 입력창이 커져도 남은 거리 ≤1px, 새 답을 따라감.
   - 위로 올려 읽는 중에는 입력창이 커지거나 새 답이 와도 자리 그대로.
   - 옛 코드는 「마지막 172px가 가려졌다」, 읽는 중에도 따라가는 변형은 「자리가 바뀌었다·끌어내렸다」로 실패한다.
+
+
+### 8.251 임무의 빈 입력 즉시 대기와 자기 worktree Git 읽기(10-19, t-0380 후속)
+
+- **운영 원인.** 622c20d3의 새 세션은 자기 inbox와 mission show를 확인창 없이 읽었지만, 빈 입력을 확인하고도
+  임무 본문의 첫 참고 읽기 지시를 따라 이전 보고·Git 이력을 조사했다. 그 과정에서 cwd가 참고 폴더로 바뀌었고
+  자기 worktree로 cd한 뒤 git log를 실행해 Claude의 별도 cd+VCS trust 검사에 걸렸다. coordinator가 한 번 승인한 뒤
+  다음 확인창은 거절하고 임무를 pause했다. 이 수리는 운영 임무를 제어하거나 확인창에 답하지 않는다.
+- **입력 우선.** 공통 guide 첫머리와 적용된 임무 본문 뒤에 같은 입력 우선 규칙을 둔다. 미처리 JSON이 0이면 최소 진행
+  보고 외에 조사·초기화·state/history 준비를 하지 않고 현재 턴을 끝낸다. 새 입력 알림 전 polling도 금지한다.
+  미처리 입력이 있을 때만 그 판단에 필요한 참고·상태·저장소 이력을 읽는다. 승인된 임무 사본/hash는 바꾸지 않는다.
+- **Git 최소 범위.** agent가 자기 work_dir의 부모 worktree 경로를 넣어 log/show/status 세 명령만 만든다. brief에도 같은
+  생성 함수를 써서 cd 대신 git -C를 안내한다. 고정 옵션으로 pager·fsmonitor·서명 표시·외부 diff·textconv·선택적 index
+  쓰기를 끈다. 이 명령은 승인된 자기 저장소의 설정을 읽는다(status의 기존 clean filter까지 제거하는 sandbox는 아니다).
+  log/show는 --end-of-options 뒤 ref만, status는 -- 뒤 경로만 받는다. --output 등 가변 옵션을 허용하지
+  않으며 포괄 git·다른 저장소·쓰기·push 권한을 더하지 않는다. Codex는 기존 읽기 sandbox를 유지한다.
+- **참고.** herdr-projects 0.2.35 `src/thread.rs::brief_header/compose_brief`의 머신별 경로 치환을 계속 따른다.
+  같은 package의 SKILL/COORDINATOR는 범위 안 일회 승인 원칙이며 포괄 always-allow 방식이 아니다. herdr 0.9.5
+  `src/app/api/agents.rs`와 t3code `ClaudeAdapterV2.ts`에는 이 임무의 입력 우선·Git 범위 기능이 없다.
+  [Claude permissions](https://code.claude.com/docs/en/permissions)는 cd+VCS의 별도 확인과 Bash wildcard의 옵션 확장
+  위험을 명시한다. 그래서 cd 허용을 넓히지 않고 git -C와 Git 옵션 종료 경계를 함께 쓴다.
+- **검증.** 기존 host·agent·proto keeper 확장과 실제 Git 보안 keeper 한 개다. 빈 입력 규칙·Git 허용 누락을 수정 전
+  RED로 보존했고, 옵션 종료 표지를 뺀 변형은 실제 출력 파일 생성 단언에서 실패했다. 실제 Claude 2.1.303/default도
+  격리 config·로컬 합성 provider에서 옛 cd+git을 같은 trust 사유로 거절하고 새 git -C 읽기 셋은 실행했다.
+  실제 모델의 무인 대기는 host+agent binary 반영 뒤 coordinator가 resume/restart해 읽기 전용으로 재확인한다.
