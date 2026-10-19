@@ -5411,3 +5411,10 @@ primary 근거:
 - **시스템 안내.** coordinator AGENTS.md 생성문(CLAUDE.md는 같은 파일 참조), 공통 thread brief와 SessionStart 진행 hook 안내에 같은 규칙을 적는다. coordinator는 질문하며 멈추기 전에 Waiting for you 상태와 user 요청 post를 남긴다. 전체 완료 post는 맡긴 일 전체가 끝난 뒤 한 번이다. 기존 운영 지침 파일은 이 thread가 수정하지 않는다. 새 binary 반영 후 `aaa doctor files --fix`로 생성 안내를 반영한다.
 - **참고와 차이.** herdr-projects notify.rs의 Done/Request 구분, herdr-web-ui push.ts의 대기 중 상태 재검사·seedStatuses, t3code ThreadNotificationCoordinator.tsx의 completed/attention 구분을 따른다. 참고는 턴/검토 대기를 완료로도 알리지만, 이번 사용자가 정한 명시적 전체 완료/사람 필요 경계가 우선한다. pane의 앱 안 턴 끝남 카드(§8.185)는 휴대폰 push와 별개인 기존 경로다.
 - **검증.** 중간 착지 push 금지와 coordinator user 목적지 불가를 각각 수정 전 RED로 보존했다. host의 실제 사본·DB·inbox·알림 queue 시험은 adopt/worktree, 네 표지, hash 불일치·본문 위장·중복·ack·대기 중 보고 변경·기기 설정을 본다. 기존 post 출처 E2E에서 실제 coordinator pane의 두 CLI 명령도 검증한다. 끝낸 가짜 작업 보고는 새 규칙에 맞춰 완료 표지를 붙이고, 중간 작업 fixture는 유지한다.
+
+### 8.224 임무 승인 메뉴의 화면 밖 잘림(10-19, t-0375)
+
+- **재현.** 임무의 작은 details 너비에 `right: 0; width: min(360px, 90vw)`를 맞춰 왼쪽 경계를 확인하지 않았다. 실제 웹 headless에서 휴대폰 390px은 왼쪽 -40px, 좁은 창 500px은 -49px, 데스크톱 1280px은 -78px이다. 설명 앞부분과 첫 단추가 가려졌고 나머지 단추만 보였다.
+- **참고 그대로 재사용.** herdr-web-ui aa624cb `components/RowMenu.tsx` 78~108은 body portal의 fixed 좌표를 EDGE=8 안에 보정하고 아래 공간이 부족하면 위에 둔다. 휴대폰은 같은 파일의 modal sheet를 쓴다. aaa에 이미 옮긴 공통 RowMenu를 임무에도 사용한다. t3code `components/ui/popover.tsx`의 Portal/Positioner·collisionAvoidance·available-width/height 제한과 목적이 같으며 새 위치 계산기나 의존성을 만들지 않는다.
+- **동작.** 긴 임무 배지는 목록 머리 안에서 말줄임하고 메뉴에는 전체 이름과 작업 셈을 보인다. 임무 보기·시작/멈춤/이어 가기·다시 읽기·승인 검토는 같은 API와 역할 검사를 유지한다. 공통 메뉴의 Esc·바깥 누름·focus 복귀·좁은 화면 취소 단추를 따른다. 운영 임무는 건드리지 않는다.
+- **검증.** 기존 웹 E2E 12 임무 발견/승인 경계를 확장했다. 세 화면에서 메뉴와 설명의 실제 글 조각, 모든 단추의 화면 경계와 hit target을 검사하고 실제 Controller 승인 저장·승인만으로 시작하지 않음도 본다. 수정 전 세 크기 모두 같은 이유로 RED이며 headless 전후 캡처를 보존한다. 서로 다른 크기는 새 탭에서 열어 이전 sheet의 퇴장 픽셀이 다음 캡처에 섞이지 않게 한다. 고정 sleep·timeout 연장·기대값 완화는 없다.

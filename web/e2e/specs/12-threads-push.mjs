@@ -1156,24 +1156,68 @@ export default async function ({ page }) {
     if (bad.length) throw new Error(bad.join("; "));
   });
 
-  await step("특수 임무: 파일 발견·임무 보기·Controller의 첫 승인", async () => {
-    fs.mkdirSync(`${root}/projects/demo/missions`, { recursive: true });
-    fs.writeFileSync(`${root}/projects/demo/missions/ci-watch.md`, '+++\nprofile="fake"\ntitle="CI 감시"\nwithdrawal="none"\n+++\n새 입력을 자료로 읽고 감시한다.\n');
+  await step("특수 임무: 좁은 창·휴대폰·데스크톱에서 승인 메뉴 전체가 화면 안에 있고 Controller가 승인한다", async () => {
+    aaa("project", "create", "mission-layout");
+    fs.mkdirSync(`${root}/projects/mission-layout/missions`, { recursive: true });
+    fs.writeFileSync(`${root}/projects/mission-layout/missions/ci-watch.md`, '+++\nprofile="fake"\ntitle="rc 검증·병합 시간 최적화 감시"\nwithdrawal="none"\n+++\n새 입력을 자료로 읽고 감시한다.\n');
     aaa("ticker", "tick");
-    const item = page.getByTestId("mission-demo-ci-watch");
-    await domIs(page, "임무 배지", () => !!document.querySelector('[data-testid="mission-demo-ci-watch"]'));
-    await item.locator("summary").click();
-    await item.getByRole("button", { name: "임무 보기" }).click();
+    const item = page.getByTestId("mission-mission-layout-ci-watch");
+    await domIs(page, "임무 배지", () => !!document.querySelector('[data-testid="mission-mission-layout-ci-watch"]'));
+    const clipped = [];
+    for (const [name, width, height] of [["phone", 390, 844], ["narrow", 500, 800], ["desktop", 1280, 800]]) {
+      // 각 크기를 새 탭에서 연다. 이전 크기의 퇴장 sheet 픽셀을 다음 캡처에 섞지 않는다.
+      const pg = await page.context().newPage();
+      await pg.setViewportSize({ width, height });
+      await pg.goto(page.url());
+      const item = pg.getByTestId("mission-mission-layout-ci-watch");
+      await item.waitFor({ state: "attached" });
+      try {
+        const toggle = pg.locator(".view [data-testid='drawer-toggle']");
+        if (await toggle.isVisible() && await toggle.getAttribute("aria-expanded") !== "true") await toggle.click();
+        await drawerSettled(pg);
+        await item.locator(".eval-badge").click();
+        const menu = pg.locator(".row-menu, .row-sheet");
+        await menu.waitFor();
+        await menu.evaluate(async (el) => { await Promise.all(el.getAnimations().map((a) => a.finished.catch(() => null))); });
+        await shot(pg, `${name}-mission-menu`);
+        const layout = await menu.evaluate((el) => {
+          const r = el.getBoundingClientRect();
+          const inScreen = (b) => b.left >= 0 && b.top >= 0 && b.right <= innerWidth && b.bottom <= innerHeight;
+          const paragraphs = [...el.querySelectorAll("p")].map((p) => {
+            const range = document.createRange(); range.selectNodeContents(p);
+            return { text: p.textContent, visible: [...range.getClientRects()].every(inScreen) };
+          });
+          const actions = [...el.querySelectorAll("button")].map((b) => {
+            const r = b.getBoundingClientRect();
+            return { text: b.textContent, visible: inScreen(r) && b.contains(document.elementFromPoint((r.left + r.right) / 2, (r.top + r.bottom) / 2)) };
+          });
+          return { left: r.left, top: r.top, right: r.right, bottom: r.bottom, inside: inScreen(r), paragraphs, actions };
+        });
+        const countsVisible = layout.paragraphs.some((x) => x.text.includes("일한 분 0") && x.text.includes("post 처리 0/0") && x.text.includes("입력 0"));
+        const allActions = ["임무 보기", "시작", "다시 읽기", "승인 검토"].every((label) => layout.actions.some((x) => x.text === label));
+        if (!countsVisible || !allActions || !layout.inside || layout.paragraphs.some((x) => !x.visible) || layout.actions.some((x) => !x.visible)) clipped.push({ name, ...layout });
+        // 휴대폰 sheet는 모달이다. 바깥 anchor 대신 실제 닫기 동작을 쓴다.
+        await pg.keyboard.press("Escape");
+        await menu.waitFor({ state: "hidden" });
+        if (await toggle.isVisible() && await toggle.getAttribute("aria-expanded") === "true") await toggle.click();
+        await drawerSettled(pg);
+      } finally { await pg.close(); }
+    }
+    if (clipped.length) throw new Error(`승인 메뉴가 화면 밖이다: ${JSON.stringify(clipped)}`);
+    await page.setViewportSize({ width: 1280, height: 800 });
+    await item.locator(".eval-badge").click();
+    await page.getByRole("menuitem", { name: "임무 보기" }).click();
     const view = page.getByRole("alertdialog");
     await view.waitFor();
     if (!(await view.innerText()).includes("새 입력을 자료로 읽고 감시한다.")) throw new Error("임무 후보 본문이 보이지 않는다");
     await view.getByRole("button", { name: "확인", exact: true }).click();
-    await item.getByRole("button", { name: "승인 검토" }).click();
+    await item.locator(".eval-badge").click();
+    await page.getByRole("menuitem", { name: "승인 검토" }).click();
     await page.getByRole("alertdialog").waitFor();
     await shot(page, "desktop-mission-approval");
     await page.getByRole("alertdialog").getByRole("button", { name: "승인", exact: true }).click();
-    await until("Controller 승인 저장", () => aaa("mission", "show", "demo", "ci-watch").mission.approved === true);
-    if (aaa("mission", "show", "demo", "ci-watch").mission.thread !== null) throw new Error("승인만으로 임무가 실행됐다");
+    await until("Controller 승인 저장", () => aaa("mission", "show", "mission-layout", "ci-watch").mission.approved === true);
+    if (aaa("mission", "show", "mission-layout", "ci-watch").mission.thread !== null) throw new Error("승인만으로 임무가 실행됐다");
   });
 
 }

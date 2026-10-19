@@ -920,8 +920,10 @@ svg.i { width: 16px; height: 16px; flex-shrink: 0; fill: none; stroke: currentCo
 .report-card p { margin: 6px 0; }
 .report-card .library-link { margin-top: 10px; }
 
-.mission-menu { position: relative; }
-.mission-menu summary { cursor: pointer; list-style: none; }
-.mission-menu summary[data-state="막힘"], .mission-menu summary[data-state="멈춤"], .eval-badge.blocked { color: var(--warning, #c58b32); }
-.mission-actions { position: absolute; z-index: 40; right: 0; top: 100%; width: min(360px, 90vw); padding: 12px; background: var(--bg, #222); border: 1px solid var(--border, #555); border-radius: 8px; }
-.mission-actions button { margin: 4px; }
+/* 임무도 공통 RowMenu의 portal·화면 경계 보정·휴대폰 sheet를 쓴다. */
+.mission-menu { display: inline-flex; min-width: 0; max-width: 100%; }
+.mission-menu .eval-badge { display: block; text-align: left; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.mission-menu .eval-badge[data-state="막힘"], .mission-menu .eval-badge[data-state="멈춤"], .eval-badge.blocked { color: var(--warning, #c58b32); }
+.mission-summary { min-width: 0; overflow-wrap: anywhere; }
+.mission-summary strong { display: block; color: var(--text-strong); }
+.mission-summary p { margin: var(--space-1) 0 0; color: var(--text-dim); font-size: var(--fs-xs); }
