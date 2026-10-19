@@ -120,9 +120,15 @@ fn low_soft_limit_is_raised_for_host_and_agent_and_web_bursts_release_fds() {
     for _ in 0..2 {
         let mut burst = Burst::new(&addr, 384, true);
         burst.ready();
-        assert!(fd_count(pid) >= baseline + 384, "실제로 열린 연결로 256개 상한을 넘겨야 한다");
+        // 연결 수는 닫은 뒤 가라앉은 수와 견준다: 시작 직후 첫 ticker 같은 일이 잠깐 연 파일이 기준에 섞이면
+        // 기준과 견주는 셈이 모자라 보인다(여유 없는 단언이라 몇 개로도 실패한다)
+        let open = fd_count(pid);
         burst.close();
-        wait_for("연결 종료 뒤 OS fd 회수", T, || (fd_count(pid) <= baseline + 2).then_some(()));
+        let after = wait_for("연결 종료 뒤 OS fd 회수", T, || {
+            let n = fd_count(pid);
+            (n <= baseline + 2).then_some(n)
+        });
+        assert!(open >= after + 384, "실제로 열린 연결로 256개 상한을 넘겨야 한다: 열었을 때 {open}, 닫은 뒤 {after}");
     }
     node.ticks(1);
     assert!(!lab.log("host").contains("host 파일 한도 소진"));
