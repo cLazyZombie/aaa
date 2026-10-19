@@ -19,6 +19,9 @@ export type SteerState =
 
 export const STEER_IDLE: SteerState = { phase: "idle" };
 
+/** 다른 글을 보내는 중이라 잠깐 못 누르는 까닭. 대기 말 단추와 이 기기 보관함 단추가 같은 말을 쓴다 */
+export const STEER_BUSY = "보내는 중인 글이 전달된 뒤 누를 수 있습니다";
+
 /** 단추를 보일까. 쉬는 agent는 대기 글을 곧 읽으므로 숨기고, 질문 중·다른 글을 보내는 중이면 까닭과 함께 끈다.
  * `hint`는 단추 아래 안내다: 질문 중만 둔다(보내는 중은 0.3~0.5초라 줄이 깜박이지 않게 title로만) */
 export function steerAvailability(status: AgentStatus | undefined, busy: boolean): "hidden" | { blocked: string | null; hint: string | null } {
@@ -27,7 +30,31 @@ export function steerAvailability(status: AgentStatus | undefined, busy: boolean
     return { blocked: why, hint: why };
   }
   if (status !== "working") return "hidden";
-  return { blocked: busy ? "보내는 중인 글이 전달된 뒤 누를 수 있습니다" : null, hint: null };
+  return { blocked: busy ? STEER_BUSY : null, hint: null };
+}
+
+const HELD_STEER = {
+  claude: "기다리지 않고 지금 턴에 넣습니다. Claude가 하던 일을 끊을 수 있습니다 (Ctrl+Enter와 같음)",
+  codex: "기다리지 않고 지금 턴에 넣습니다. Codex는 다음 도구 호출 뒤 읽습니다 (Ctrl+Enter와 같음)",
+};
+
+/** 이 기기 보관함(composer-queue)의 「지금 보내기」(plan §8.273, 사용자 결정 10-19 19:36): 대기 말 단추와 같은 뜻이 되게 작업 중이면
+ * Ctrl+Enter처럼 steer로 보내 지금 턴에 넣고(`steer`), 쉬면 보통 보내기다. 못 누르는 까닭은 대기 말 단추와 같은 차례·말이다:
+ * 질문 중이면 끄고 단추 아래에 안내(`hint`, 글이 질문의 답으로 들어가지 않게), 끊김·다른 글을 보내는 중·빈 글은 title로만 */
+export function heldSend(o: { working: boolean; asking: boolean; connected: boolean; busy: boolean; empty: boolean; harness: "claude" | "codex" }): {
+  steer: boolean;
+  blocked: string | null;
+  hint: string | null;
+  title: string;
+} {
+  const steer = o.working;
+  const title = steer ? HELD_STEER[o.harness] : "보통 보내기와 같습니다";
+  if (o.asking) {
+    const why = "질문에 답한 뒤 보낼 수 있습니다";
+    return { steer, blocked: why, hint: why, title: why };
+  }
+  const blocked = !o.connected ? "연결되면 보낼 수 있습니다" : o.busy ? STEER_BUSY : o.empty ? "빈 메시지는 보낼 수 없습니다" : null;
+  return { steer, blocked, hint: null, title: blocked ?? title };
 }
 
 export function steerLabel(count: number): string {
