@@ -385,12 +385,13 @@ safety 표에 값이 있으면 먹지 않는다.
 `aaa safety set {p} coordinator_deploy on`을 한 번 켠다(철회: 끝의 on 대신 off). coordinator가 설정을 대신 켜지 않는다.
 thread·평가자·임의 pane·웹 기기는 이 허용을 받지 않는다. 처음에는 사람이 이 API를 아는 host·agent binary를 반영해야 한다.
 1. `scripts/deploy-build.sh <origin/main의 조상 커밋> --out <새 폴더>`로 한 번 빌드한 후보와 provenance를 받는다.
-   L1은 모든 대상 Mac의 같은 절대 경로에 그 파일을 미리 복사한다. SHA와 커밋을 보존한다.
-2. `aaa deploy start --from <절대 경로> --sha256 <SHA> --commit <40자리 커밋>`으로 한 번 시작한다.
-   host가 전체 사전 검사 뒤 host → 로컬 agent → 원격 agent를 순차 갱신하고 안내까지 갱신한다.
+   빌드 머신의 후보 폴더에 aaa와 provenance.json을 함께 둔다. SHA와 커밋을 보존한다.
+2. `aaa deploy start --file <빌드머신>:<후보폴더>/aaa --sha256 <SHA> --commit <40자리 커밋>`으로 한 번 시작한다.
+   host가 Agent link로 전체 전송·SHA/self-check를 끝낸 뒤 host → 로컬 agent → 원격 agent를 순차 갱신한다.
+   source/대상에 deploy_stage.v1이 필요하다. 미리 복사한 후보는 기존 --from을 쓸 수 있다.
 3. `aaa deploy status <rollout ID> --wait`로 확인한다. host 연결이 끊겨도 start를 다시 보내지 않는다.
    같은 ID의 조회가 재연결 뒤 이어진다. 판·SHA·새 프로세스 검증까지 done이어야 완료다.
-4. stopped면 다음 머신으로 가지 않는다. 기록의 머신·단계·까닭을 확인한다. L1에는 자동 rollback·host 감시가 없다.
+4. stopped면 다음 머신으로 가지 않는다. 기록의 머신·단계·까닭을 확인한다. L2에는 자동 rollback·host 감시가 없다.
    문제 머신만 기존 `aaa update rollback --machine <머신>` → 작업 ID 조회 → 해당 서비스 restart → 판/SHA·재연결로 복구한다.
    host가 돌아오지 않거나 구판 API가 되면 사람에게 터미널 복구를 알린다. 감독자 설치·해제·start·stop은 사람이 한다.
 배포 조회는 허용 철회 뒤에도 자기 프로젝트 기록을 볼 수 있다. rollout 진행 중에는 개별 배포 시작을 거부한다.

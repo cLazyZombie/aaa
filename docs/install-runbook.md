@@ -272,18 +272,20 @@ aaa safety set demo coordinator_deploy on
 
 ```sh
 scripts/deploy-build.sh <origin/main의-조상-커밋> --out /opt/aaa/candidate
-# L1: 출력 aaa를 대상 Mac 모두의 같은 절대 경로에 미리 복사한다.
-aaa deploy start --from /opt/aaa/candidate/aaa --sha256 <provenance.json의-SHA> --commit <40자리-커밋>
+# L2: 빌드 머신 mac-b의 출력 폴더에 aaa와 provenance.json을 함께 둔다.
+aaa deploy start --file mac-b:/opt/aaa/candidate/aaa --sha256 <provenance.json의-SHA> --commit <40자리-커밋>
 aaa deploy status <출력된-rollout-ID> --wait
 ```
+
+L2의 `--file`은 `<머신>:<절대 경로>/aaa` 또는 `<머신>:~/후보폴더/aaa`다. 파일명aaa와 옆 provenance.json의 SHA가 맞아야 하며 symlink·일반 파일이 아닌 입력·256MiB 초과는 거부한다. source와 모든 대상에 `deploy_stage.v1`이 있어야 한다. 첫 반영은 이 기능을 아는 host/agent를 기존 방식으로 설치한 뒤 한다. 기존 `--from <절대 경로>`는 같은 경로에 미리 둔 L1 후보로 유지된다. 전송은256KiB 조각 하나씩이며 모든 대상의 전송/SHA/self-check와 사전 검사가 끝나야 첫 교체를 한다. host 재시작/답 유실은 agent가 실제 저장한 길이를 조회해 같은 rollout의 offset부터 잇는다. 설치는 rollout ID로 자기 상태 폴더 후보만 해석한다. 완료 후 마지막 후보 하나를 보관하며 정리 실패는 로그에 남기고 다음 전송 때 다시 제한한다.
 
 `--machines` 생략/all은 등록된 전부, 쉼표 목록은 그 순서다. host 머신은 항상 맨 앞에 포함한다. 모든 대상의 SHA·self-check·version 고정 검사가 통과해야 첫 교체를 한다. host → host 머신 agent → 나머지 agent 순서이며 새 실행 판·SHA·새 프로세스를 확인한다. 기존 macOS launchd 감독자만 재시작한다. 최초 rollout API 반영은 아래 원시 명령을 쓰는 기존 절차로 한다. 설치·해제·start·stop과 시스템 설정은 사람이 한다.
 
 시작 전에 stderr에 출력된 rollout ID를 보존한다. 응답 단절은 성공이 아니며 start를 다시 보내지 않는다. 같은 ID의 status --wait는 host 재연결 뒤에도 조회만 한다. 단계별 작업 ID는 host DB에 먼저 저장되며 agent 기록이 없을 때만 같은 ID로 전송한다. 완료·실패 기록은 자동 재시도하지 않는다. 한 번에 rollout 하나만 실행하며 도중 개별 update/restart 요청은 거부한다.
 
-L1은 실패 시 다음 머신으로 가지 않고 stopped를 남긴다. **실패 머신 자동 rollback·host 감시는 L3에서 추가한다.** 문제 머신에 `aaa update rollback --machine <머신>` → 그 작업 ID `aaa update status <ID> --wait` → `aaa service restart --role agent --machine <머신>` → 판/SHA·재연결을 확인한다. host가 돌아오지 않으면 사람이 host 터미널에서 원시 update rollback과 service restart를 한다. 앞서 성공한 머신을 저절로 되돌리지 않는다. 구판 API로 되돌아갔으면 사람의 터미널 복구로 전환한다.
+L2는 실패 시 다음 머신으로 가지 않고 stopped를 남긴다. **실패 머신 자동 rollback·host 감시는 L3에서 추가한다.** 문제 머신에 `aaa update rollback --machine <머신>` → 그 작업 ID `aaa update status <ID> --wait` → `aaa service restart --role agent --machine <머신>` → 판/SHA·재연결을 확인한다. host가 돌아오지 않으면 사람이 host 터미널에서 원시 update rollback과 service restart를 한다. 앞서 성공한 머신을 저절로 되돌리지 않는다. 구판 API로 되돌아갔으면 사람의 터미널 복구로 전환한다.
 
-성공 끝에는 host가 coordinator 안내를 직접 갱신하고 그 결과를 rollout에 저장한다. 운영 배포는 구현 시험·착지와 별도다. L1의 시작 권한은 coordinator+safety뿐이며 사람 터미널 경로는 L5다.
+성공 끝에는 host가 coordinator 안내를 직접 갱신하고 그 결과를 rollout에 저장한다. 운영 배포는 구현 시험·착지와 별도다. L2의 시작 권한은 coordinator+safety뿐이며 사람 터미널 경로는 L5다.
 
 - 준비 응답을 잃어 host에 경로가 없는 실패도 resolve가 agent journal을 먼저 조회해 정리한다. 조회는 준비와 같은 lock에서 끝나므로 준비 뒤늦은 생성과 정리가 경합하지 않는다. `thread_journal.v1`이 없는 옛 agent에서는 확인 없이 resolve 완료하지 않고 갱신을 안내한다.
 

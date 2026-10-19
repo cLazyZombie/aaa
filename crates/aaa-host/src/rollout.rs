@@ -27,8 +27,12 @@ fn internal(e: impl std::fmt::Display) -> ErrorBody {
 fn valid_id(id: &str) -> bool {
     id.len() == 26 && id.bytes().all(|b| b.is_ascii_alphanumeric())
 }
-fn steps(machines: &[String]) -> Vec<RolloutStep> {
-    let mut order: Vec<_> = machines.iter().map(|m| (m, RolloutPhase::Preflight)).collect();
+fn steps(machines: &[String], transfer: bool) -> Vec<RolloutStep> {
+    let mut order = Vec::new();
+    if transfer {
+        order.extend(machines.iter().map(|m| (m, RolloutPhase::Transfer)));
+    }
+    order.extend(machines.iter().map(|m| (m, RolloutPhase::Preflight)));
     order.extend([
         (&machines[0], RolloutPhase::HostUpdate),
         (&machines[0], RolloutPhase::HostRestart),
@@ -47,11 +51,19 @@ fn steps(machines: &[String]) -> Vec<RolloutStep> {
             result: None,
             host_instance: None,
             started_ms: 0,
+            transferred_bytes: 0,
+            total_bytes: 0,
         })
         .collect()
 }
-fn action(spec: &RolloutSpec, phase: RolloutPhase) -> DeployAction {
+fn action(spec: &RolloutSpec, id: &str, phase: RolloutPhase) -> DeployAction {
     match phase {
+        RolloutPhase::Transfer => unreachable!("전송은 배포 작업을 실행하지 않는다"),
+        RolloutPhase::Preflight | RolloutPhase::HostUpdate | RolloutPhase::AgentUpdate
+            if spec.source_machine.is_some() =>
+        {
+            DeployAction::UpdateStaged { rollout: id.into(), dry_run: phase == RolloutPhase::Preflight }
+        }
         RolloutPhase::Preflight | RolloutPhase::HostUpdate | RolloutPhase::AgentUpdate => DeployAction::CheckedUpdate {
             from: spec.from.clone(),
             sha256: spec.sha256.clone(),
@@ -72,7 +84,7 @@ fn assess(
     let AgentResponse::Deployment { job, running_software, running_sha256, running_instance } = response else {
         return Err(internal("배포 응답이 아니다"));
     };
-    if job.id != step.job_id || job.project != r.project || job.action != action(&r.spec, step.phase) {
+    if job.id != step.job_id || job.project != r.project || job.action != action(&r.spec, &r.id, step.phase) {
         return Err(internal("배포 영수증이 기록한 요청과 다르다"));
     }
     match job.state {
@@ -83,6 +95,7 @@ fn assess(
         DeployState::Completed => {}
     }
     match step.phase {
+        RolloutPhase::Transfer => Err(internal("전송 단계에 배포 영수증이 왔다")),
         RolloutPhase::Preflight | RolloutPhase::HostUpdate | RolloutPhase::AgentUpdate => {
             let value: serde_json::Value =
                 serde_json::from_str(job.result.as_deref().unwrap_or("")).map_err(internal)?;
@@ -160,12 +173,20 @@ impl Host {
         if !valid_id(&id)
             || spec.sha256.len() != 64
             || !spec.sha256.bytes().all(|b| b.is_ascii_hexdigit())
-            || !Path::new(&spec.from).is_absolute()
+            || !(Path::new(&spec.from).is_absolute() || (spec.source_machine.is_some() && spec.from.starts_with("~/")))
             || spec.commit.as_ref().is_some_and(|c| c.len() != 40 || !c.bytes().all(|b| b.is_ascii_hexdigit()))
         {
             return Err(err(ErrorCode::BadRequest, "ID·절대 경로·SHA-256·커밋 형식을 확인한다"));
         }
         spec.sha256.make_ascii_lowercase();
+        if let Some(source) = &spec.source_machine {
+            let source = self.resolve_machine(Some(source))?;
+            self.live_conn(&source)?;
+            if !self.machine_feature(&source, "deploy_stage.v1") {
+                return Err(err(ErrorCode::UnsupportedVersion, "빌드 머신에 deploy_stage.v1이 필요하다"));
+            }
+            spec.source_machine = Some(source);
+        }
         let _gate = self.deployment_gate.lock().unwrap();
         // 같은 ID의 중복 시작은 기존 요청과 같을 때만 조회로 취급한다.
         if let Ok(old) = self.load_rollout(&id) {
@@ -210,6 +231,9 @@ impl Host {
             if !self.machine_feature(mid, "rollout.v1") {
                 return Err(err(ErrorCode::UnsupportedVersion, "먼저 rollout.v1을 아는 host·agent를 반영한다"));
             }
+            if spec.source_machine.is_some() && !self.machine_feature(mid, "deploy_stage.v1") {
+                return Err(err(ErrorCode::UnsupportedVersion, "전송 대상에 deploy_stage.v1이 필요하다"));
+            }
         }
         spec.machines = machines;
         let now = aaa_common::util::now_ms();
@@ -217,7 +241,7 @@ impl Host {
             id,
             project,
             actor: actor.into(),
-            steps: steps(&spec.machines),
+            steps: steps(&spec.machines, spec.source_machine.is_some()),
             spec,
             state: RolloutState::Running,
             cursor: 0,
@@ -283,7 +307,7 @@ impl Host {
                 r.steps[cursor].host_instance = Some(self.rollout_instance.clone());
                 self.save_rollout(&mut r)?;
             }
-            let step = &r.steps[cursor];
+            let step = r.steps[cursor].clone();
             if aaa_common::util::now_ms().saturating_sub(step.started_ms) >= STEP_LIMIT_MS {
                 r.error = Some(format!(
                     "무응답/옛 판: {} {:?} 단계 한도 초과. 같은 ID를 재실행하지 않는다",
@@ -296,10 +320,14 @@ impl Host {
             let notified = self.rollout_wake.notified();
             tokio::pin!(notified);
             notified.as_mut().enable();
-            let result = self.rollout_step(&r, step).await;
+            let result = if step.phase == RolloutPhase::Transfer {
+                self.transfer_candidate(&mut r, cursor).await
+            } else {
+                self.rollout_step(&r, &step).await
+            };
             match result {
                 Ok(Some(result)) => {
-                    if step.phase == RolloutPhase::Preflight && r.version.is_none() {
+                    if matches!(step.phase, RolloutPhase::Preflight | RolloutPhase::Transfer) && r.version.is_none() {
                         r.version = Some(result.clone());
                     }
                     r.steps[cursor].completed = true;
@@ -328,6 +356,23 @@ impl Host {
             }
             tokio::select! { _ = &mut notified => {}, _ = changes.changed() => {}, _ = tokio::time::sleep(Duration::from_millis(remaining)) => {} }
         }
+        if r.spec.source_machine.is_some() {
+            for mid in &r.spec.machines {
+                if let Ok(conn) = self.live_conn(mid)
+                    && let Err(e) = conn
+                        .request_timeout(
+                            AgentRequest::DeployStageClean {
+                                rollout: r.id.clone(),
+                                keep: r.state == RolloutState::Done,
+                            },
+                            Duration::from_secs(2),
+                        )
+                        .await
+                {
+                    tracing::warn!("rollout 후보 정리 실패: {}", e.message);
+                }
+            }
+        }
         Ok(())
     }
     async fn rollout_step(&self, r: &RolloutView, step: &RolloutStep) -> Result<Option<String>, ErrorBody> {
@@ -341,7 +386,7 @@ impl Host {
                 conn.request(AgentRequest::DeployStart {
                     id: step.job_id.clone(),
                     project: r.project.clone(),
-                    action: action(&r.spec, step.phase),
+                    action: action(&r.spec, &r.id, step.phase),
                 })
                 .await?
             }
@@ -349,6 +394,122 @@ impl Host {
         };
         assess(r, step, response, &self.rollout_instance, &self.running_sha256)
     }
+    async fn transfer_candidate(&self, r: &mut RolloutView, cursor: usize) -> Result<Option<String>, ErrorBody> {
+        let source = r.spec.source_machine.as_ref().ok_or_else(|| internal("빌드 머신 기록이 없다"))?.clone();
+        let target = r.steps[cursor].machine.clone();
+        // 새 host의 DB 머신에는 hello 전 기능 목록이 없다. 미연결을 기능 소멸로 확정하지 않는다.
+        self.live_conn(&source)?;
+        let dest = self.live_conn(&target)?;
+        for mid in [&source, &target] {
+            if !self.machine_feature(mid, "deploy_stage.v1") {
+                return Err(err(ErrorCode::UnsupportedVersion, "agent 전송 기능이 사라졌다"));
+            }
+        }
+        let initial = dest.request(AgentRequest::DeployStageStatus { rollout: r.id.clone() }).await;
+        let mut offset = match initial {
+            Ok(AgentResponse::DeployStage { stage }) => {
+                let version = stage_receipt(r, &stage)?;
+                r.steps[cursor].transferred_bytes = stage.offset;
+                r.steps[cursor].total_bytes = stage.total;
+                if version.is_some() {
+                    return Ok(version);
+                }
+                stage.offset
+            }
+            Err(e) if e.code == ErrorCode::NotFound => 0,
+            Err(e) => return Err(e),
+            _ => return Err(internal("전송 상태 응답이 아니다")),
+        };
+        loop {
+            if !self.safety(&r.project).coordinator_deploy {
+                return Err(err(ErrorCode::Forbidden, "coordinator 배포 허용이 철회됐다"));
+            }
+            let left =
+                r.steps[cursor].started_ms.saturating_add(STEP_LIMIT_MS).saturating_sub(aaa_common::util::now_ms());
+            if left == 0 {
+                return Err(err(ErrorCode::BadRequest, "전송 단계 한도 초과"));
+            }
+            let response = self
+                .live_conn(&source)?
+                .request(AgentRequest::DeployFetch {
+                    path: r.spec.from.clone(),
+                    offset,
+                    len: DEPLOY_CHUNK as u32,
+                    sha256: r.spec.sha256.clone(),
+                })
+                .await?;
+            let AgentResponse::DeployChunk { offset: got, data, eof, total } = response else {
+                return Err(internal("후보 조각 응답이 아니다"));
+            };
+            let next = offset.checked_add(data.0.len() as u64).ok_or_else(|| internal("전송 크기 넘침"))?;
+            if got != offset
+                || data.0.len() > DEPLOY_CHUNK
+                || total == 0
+                || total > DEPLOY_MAX_BYTES
+                || next > total
+                || eof != (next == total)
+                || (data.0.is_empty() && !eof)
+                || (r.steps[cursor].total_bytes != 0 && r.steps[cursor].total_bytes != total)
+            {
+                return Err(err(ErrorCode::BadRequest, "후보 전송 크기/offset 불일치"));
+            }
+            let left =
+                r.steps[cursor].started_ms.saturating_add(STEP_LIMIT_MS).saturating_sub(aaa_common::util::now_ms());
+            if left == 0 {
+                return Err(err(ErrorCode::BadRequest, "전송 단계 한도 초과"));
+            }
+            let reply = dest
+                .request_timeout(
+                    AgentRequest::DeployStage {
+                        rollout: r.id.clone(),
+                        project: r.project.clone(),
+                        offset,
+                        data,
+                        eof,
+                        sha256: r.spec.sha256.clone(),
+                        total,
+                    },
+                    Duration::from_millis(left),
+                )
+                .await?;
+            let AgentResponse::DeployStage { stage } = reply else {
+                return Err(internal("전송 영수증이 아니다"));
+            };
+            let version = stage_receipt(r, &stage)?;
+            if stage.offset != next || stage.total != total || stage.complete != eof {
+                return Err(err(ErrorCode::BadRequest, "조각 영수증 offset/EOF 불일치"));
+            }
+            r.steps[cursor].transferred_bytes = next;
+            r.steps[cursor].total_bytes = total;
+            self.save_rollout(r)?;
+            if version.is_some() {
+                return Ok(version);
+            }
+            offset = next;
+        }
+    }
+}
+fn stage_receipt(r: &RolloutView, stage: &DeployStageView) -> Result<Option<String>, ErrorBody> {
+    if stage.rollout != r.id
+        || stage.project != r.project
+        || stage.sha256 != r.spec.sha256
+        || stage.total == 0
+        || stage.total > DEPLOY_MAX_BYTES
+        || stage.offset > stage.total
+    {
+        return Err(err(ErrorCode::BadRequest, "전송 영수증 소속/SHA-256/크기 불일치"));
+    }
+    if !stage.complete {
+        return Ok(None);
+    }
+    let version = stage.version.as_ref().ok_or_else(|| internal("전송 self-check 판이 없다"))?;
+    if stage.offset != stage.total
+        || r.version.as_ref().is_some_and(|v| v != version)
+        || r.spec.commit.as_ref().is_some_and(|c| !version.ends_with(&format!("+{}", &c[..12])))
+    {
+        return Err(err(ErrorCode::BadRequest, "전송 후보 판/크기 불일치"));
+    }
+    Ok(Some(version.clone()))
 }
 
 #[cfg(test)]
@@ -361,12 +522,13 @@ mod tests {
             actor: "local:test@coordinator".into(),
             spec: RolloutSpec {
                 from: "/candidate/aaa".into(),
+                source_machine: None,
                 sha256: "a".repeat(64),
                 commit: None,
                 machines: vec!["host".into(), "remote".into()],
             },
             state: RolloutState::Running,
-            steps: steps(&["host".into(), "remote".into()]),
+            steps: steps(&["host".into(), "remote".into()], false),
             cursor: 0,
             version: Some(env!("CARGO_PKG_VERSION").into()),
             error: None,
@@ -380,7 +542,7 @@ mod tests {
             job: DeployJob {
                 id: step.job_id.clone(),
                 project: r.project.clone(),
-                action: action(&r.spec, step.phase),
+                action: action(&r.spec, &r.id, step.phase),
                 state,
                 instance: "old-agent".into(),
                 executor_pid: 1,
@@ -440,5 +602,39 @@ mod tests {
             }
             assert!(assess(&r, &step, wrong, "new-host", &r.spec.sha256).is_err());
         }
+    }
+    #[test]
+    fn staged_rollouts_transfer_every_target_before_preflight_and_validate_receipts() {
+        let mut r = record();
+        r.spec.source_machine = Some("builder".into());
+        r.steps = steps(&r.spec.machines, true);
+        assert_eq!(
+            r.steps.iter().take(4).map(|s| s.phase).collect::<Vec<_>>(),
+            vec![RolloutPhase::Transfer, RolloutPhase::Transfer, RolloutPhase::Preflight, RolloutPhase::Preflight]
+        );
+        let mut receipt = DeployStageView {
+            rollout: r.id.clone(),
+            project: r.project.clone(),
+            sha256: r.spec.sha256.clone(),
+            total: 10,
+            offset: 3,
+            complete: false,
+            version: None,
+        };
+        assert_eq!(stage_receipt(&r, &receipt).unwrap(), None);
+        receipt.complete = true;
+        receipt.version = r.version.clone();
+        assert!(stage_receipt(&r, &receipt).is_err());
+        receipt.offset = 10;
+        assert_eq!(stage_receipt(&r, &receipt).unwrap(), r.version);
+        receipt.project = "other".into();
+        assert!(stage_receipt(&r, &receipt).is_err());
+        receipt.project = r.project.clone();
+        receipt.sha256 = "b".repeat(64);
+        assert!(stage_receipt(&r, &receipt).is_err());
+        assert_eq!(
+            action(&r.spec, &r.id, RolloutPhase::HostUpdate),
+            DeployAction::UpdateStaged { rollout: r.id.clone(), dry_run: false }
+        );
     }
 }

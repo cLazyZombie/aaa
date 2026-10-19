@@ -6,10 +6,13 @@ use std::{process::ExitCode, time::Duration};
 
 #[derive(Subcommand)]
 pub(crate) enum DeployCmd {
-    /// 각 머신에 미리 복사한 같은 절대 경로의 후보로 시작한다
+    /// 빌드 머신의 후보를 전송하거나, 미리 복사한 경로로 시작한다
     Start {
-        #[arg(long)]
-        from: String,
+        #[arg(long, required_unless_present = "file", conflicts_with = "file")]
+        from: Option<String>,
+        /// 빌드 폴더의 aaa. 예: mac-b:/tmp/aaa-candidate/aaa (또는 mac-b:~/aaa-candidate/aaa)
+        #[arg(long, conflicts_with = "from")]
+        file: Option<String>,
         #[arg(long)]
         sha256: String,
         #[arg(long)]
@@ -30,12 +33,22 @@ pub(crate) fn run(json: bool, cmd: DeployCmd) -> Result<ExitCode> {
         use aaa_common::front::FrontClient;
         let state = aaa_config::paths::state_dir();
         match cmd {
-            DeployCmd::Start { from, sha256, commit, mut machines } => {
+            DeployCmd::Start { from, file, sha256, commit, mut machines } => {
+                let (from, source_machine) = match file {
+                    Some(file) => {
+                        let (machine, path) = file
+                            .split_once(':')
+                            .filter(|(m, p)| !m.is_empty() && !p.is_empty())
+                            .ok_or_else(|| anyhow::anyhow!("--file은 머신:후보폴더/aaa 형식이다"))?;
+                        (path.to_string(), Some(machine.to_string()))
+                    }
+                    None => (from.ok_or_else(|| anyhow::anyhow!("--file 또는 --from이 필요하다"))?, None),
+                };
                 if machines == ["all"] {
                     machines.clear();
                 }
                 let mut c = FrontClient::connect(&state).await?;
-                if c.proto.minor < 46 {
+                if c.proto.minor < if source_machine.is_some() { 49 } else { 46 } {
                     bail!("먼저 rollout API를 아는 host·agent를 반영한다");
                 }
                 let id = aaa_common::util::new_id();
@@ -44,8 +57,11 @@ pub(crate) fn run(json: bool, cmd: DeployCmd) -> Result<ExitCode> {
                 );
                 crate::cli::front_print(
                     json,
-                    c.call(FrontRequest::RolloutStart { id, spec: RolloutSpec { from, sha256, commit, machines } })
-                        .await?,
+                    c.call(FrontRequest::RolloutStart {
+                        id,
+                        spec: RolloutSpec { from, source_machine, sha256, commit, machines },
+                    })
+                    .await?,
                 )
             }
             DeployCmd::Status { id, wait } => {

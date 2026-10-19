@@ -95,6 +95,8 @@ pub fn hello(agent: &Agent) -> AgentHello {
             "deployment.v1".into(),
             #[cfg(target_os = "macos")]
             "rollout.v1".into(),
+            #[cfg(target_os = "macos")]
+            "deploy_stage.v1".into(),
             "post.v1".into(),
             "mission.v1".into(),
             "cwd.v1".into(),

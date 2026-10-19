@@ -401,15 +401,19 @@ settings: Record<string, unknown>,
  */
 pins?: Array<string>, };
 
-export type RolloutSpec = { from: string, sha256: string, commit: string | null, machines: Array<string>, };
+export type RolloutSpec = { from: string,
+/**
+ * Some이면 이 머신의 빌드 후보를 Agent link로 가져온다. None은 L1 미리 복사 경로다.
+ */
+source_machine?: string | null, sha256: string, commit: string | null, machines: Array<string>, };
 
-export type RolloutPhase = "preflight" | "host_update" | "host_restart" | "agent_update" | "agent_restart";
+export type RolloutPhase = "transfer" | "preflight" | "host_update" | "host_restart" | "agent_update" | "agent_restart";
 
 export type RolloutStep = { machine: string, phase: RolloutPhase, job_id: string, completed: boolean, result: string | null,
 /**
  * 재시작 전에 기록한 host instance. OS boot ID와 별개다.
  */
-host_instance: string | null, started_ms: number, };
+host_instance: string | null, started_ms: number, transferred_bytes: number, total_bytes: number, };
 
 export type RolloutState = "running" | "stopped" | "done";
 
@@ -576,7 +580,9 @@ export type ThreadStatus = "starting" | "open" | "failed" | "resolved";
 
 export type BriefState = "pending" | "delivered" | "unknown";
 
-export type DeployAction = { "action": "update", from: string | null, version: string | null, dry_run: boolean, } | { "action": "checked_update", from: string, sha256: string, dry_run: boolean, } | { "action": "rollback", name: string | null, dry_run: boolean, } | { "action": "restart", service: DeployService, };
+export type DeployAction = { "action": "update", from: string | null, version: string | null, dry_run: boolean, } | { "action": "checked_update", from: string, sha256: string, dry_run: boolean, } | { "action": "update_staged", rollout: string, dry_run: boolean, } | { "action": "rollback", name: string | null, dry_run: boolean, } | { "action": "restart", service: DeployService, };
+
+export type DeployStageView = { rollout: string, project: string, sha256: string, total: number, offset: number, complete: boolean, version: string | null, };
 
 export type DeployService = "host" | "agent";
 
