@@ -228,9 +228,11 @@ m13 `coordinator_deployment_is_gated_and_survives_backend_restarts`는 별도 �
 
 ## TUI 확장 Enter와 Windows 붙여넣기(§8.233)
 
-- `cargo test --locked -p aaa --test tui modified_enter_inserts_newline`: 실제 crossterm 파서·TUI·host·agent·PTY에서
+- `cargo test --locked -p aaa --test tui modified_enter_uses_agent_newline`: 실제 crossterm 파서·TUI·host·agent·PTY에서
   kitty CSI u와 xterm modifyOtherKeys Ctrl/Shift+Enter의 줄바꿈, 보통 Enter, 확장 키 모드 요청·종료 복원을 본다.
-  독립 raw PTY 관측기가 받은 bytes를 출력 사건으로 기다린다. 입력줄 비움 판정·steering owner와 별개로 키 전송 경계를 지킨다.
+  독립 raw PTY 관측기가 받은 bytes를 출력 사건으로 기다린다. 알려진 harness의 모르는 화면에서 Ctrl은 Alt+Enter, Shift는 LF다.
+- `aaa-tui::tests::ctrl_enter_uses_shared_host_request`는 실제 Front wire에서 공통 요청·구 host LF·reader 무송신·키 반복 억제를 본다.
+  입력줄 비움 판정·steering은 공통 host와 웹 E2E 25가 소유하며 TUI에 판정기를 중복하지 않는다.
 - 기존 `ctrl_v_pastes_clipboard_image`는 직접 Ctrl+V와 Windows Terminal의 빈 bracketed paste를 같은 경계에서 본다.
   실제 대상 파일의 pixels·따옴표 경로·Enter 없음·조각 업로드를 유지한다. 개발 머신 clipboard는 파일 fixture로 대체한다.
 - `cargo test --manifest-path vendor/crossterm/Cargo.toml --locked --lib aaa_`는 Windows 콘솔 표지의 UTF-16·빈 paste·
@@ -242,3 +244,5 @@ m13 `coordinator_deployment_is_gated_and_survives_backend_restarts`는 별도 �
 ### Ctrl+Enter 공통 판정
 
 `aaa-host/src/ctrl_enter.rs`의 유닛 시험이 입력 상자 스타일과 현재 steering 패널을 판정한다. `web/e2e/specs/25-ctrl-enter.mjs`는 실제 host·agent·PTY로 전달된 bytes를 출력 사건으로 확인하며 웹 물리 키·모바일 키 막대·입력줄·IME·반복 키의 연결을 본다. 셸 등 일반 프로그램의 키보드 모드는 기존 `03-keys.mjs`가 소유한다. TUI도 `FrontRequest::PaneCtrlEnter`를 사용해 같은 host 판정을 거친다.
+
+신호 금지 작업에서 E2E 25는 Ctrl+Enter 준비·Claude·Codex·터치 Ctrl+Enter 단계를 함께 고른다. 이 단계는 신호 동작을 시험하지 않고 공식 실험실의 자기 자식 정리만 쓴다.

@@ -60,7 +60,7 @@ host Mac 터미널에서 `aaa attach`(workspace 기본 `main`, 다른 것은 `-w
 - **왼쪽 목록**: herdr처럼 위는 workspace(` spaces`, 고르면 그 workspace로), 아래 ` agents`에 웹처럼 프로젝트 묶음(모든 머신의 thread를 한 묶음에, 머리 오른쪽에 「확인 필요 2 · 작업 중 1」 같은 셈, 확인 필요 → 검토 대기 → 작업 중 → 쉼 차례)과 thread 두 줄(「t-0001 제목」, 둘째 줄 왼쪽 상태 말·오른쪽 머신 이름), 맨 아래 thread에 딸리지 않은 pane의 「기타」 묶음(줄마다 머신 이름)이 보입니다. 묶음 머리를 고르고 Enter(또는 누르기)면 접고 폅니다. 새 탭·workspace를 열 머신은 탐색 `m`이나 맨 아랫줄 ` new · 머신`의 머신 이름을 눌러 다음 붙은 머신으로 돌립니다(pane이 없는 머신에 셸을 여는 길입니다). `prefix w`(탐색)에서 `↑↓`로 고르고 Enter면 그 pane을 탭으로 엽니다(이미 탭에 있으면 그 탭으로). `prefix b`로 접으면 번호와 상태 점만 든 4칸 열이 됩니다(`[tui] sidebar_start_collapsed`로 접은 채 시작).
 - 명령으로도 됩니다: 새 pane을 새 탭으로 `aaa tab create --machine mac-b -- <명령>`, 있는 pane을 다른 workspace의 새 탭으로 `aaa pane move <pane> --new-tab -w <이름>`, 나누기 `aaa pane split <pane> --direction right`.
 - 입력은 포커스 pane으로 바로 갑니다. 다른 화면(웹 등)이 쓰던 pane도 입력하면 이 화면 크기가 되고, 터미널 focus를 다시 얻어도 크기를 다시 겁니다.
-- **그림 붙여넣기**: Ctrl+V로 이 기기의 clipboard 그림을 pane 머신으로 보냅니다. Windows Terminal의 그림-only 붙여넣기도 받으며, 전송 뒤 경로만 넣고 Enter는 보내지 않습니다. Shift+Enter는 agent 입력창 줄바꿈입니다.
+- **그림 붙여넣기**: Ctrl+V로 이 기기의 clipboard 그림을 pane 머신으로 보냅니다. Windows Terminal의 그림-only 붙여넣기도 받으며, 전송 뒤 경로만 넣고 Enter는 보내지 않습니다. Shift+Enter는 agent 입력창 줄바꿈입니다. Ctrl+Enter는 입력줄에 글이 있거나 상태를 모르면 줄바꿈, 빈 입력이 확인되면 harness steering입니다.
 - **키는 herdr와 같습니다.** prefix(기본 `ctrl+b`) 다음 키 하나(시간 제한 없음, `Esc`나 모르는 키는 취소). `prefix ?`로 단축키 창(`/`로 검색)이 뜹니다.
 
 | 키 | 하는 일 |

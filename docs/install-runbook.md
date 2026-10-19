@@ -280,7 +280,7 @@ move "%USERPROFILE%\Downloads\aaa.exe" "%USERPROFILE%\.local\bin\aaa.exe"
 - 키 설정(`[tui]`)은 그 PC의 `%LOCALAPPDATA%\aaa\config\host.toml`이다. 없으면 기본값이다(prefix `ctrl+b`).
 - 터미널은 Windows Terminal을 권한다(conhost도 된다). 그 PC 터미널에서 다른 점:
   - Windows Terminal의 Ctrl+V·오른쪽 클릭은 bracketed paste 한 덩이로 받는다. 그림-only clipboard의 빈 붙여넣기도 받아 이 PC의 그림을 pane 머신으로 보낸다(Enter 없음). Windows Terminal 설정을 바꿀 필요가 없다.
-  - Ctrl+Enter와 Shift+Enter의 수정키를 보존한다. 줄바꿈은 agent 입력기가 받는 Ctrl+J로 보낸다. Ctrl+Enter의 입력줄 판정·steering은 웹과 같은 backend 계약을 따른다.
+  - Ctrl+Enter는 웹과 같은 host 판정으로 입력줄에 글이 있거나 모르면 줄바꿈, 빈 입력이 확인되면 harness steering을 한다. Front API 1.43 미만 host에서는 Ctrl+J로 줄을 바꾼다. Shift+Enter는 Ctrl+J 줄바꿈이다.
   - 한글은 터미널(IME)이 조합을 보여 주고 확정된 음절만 TUI로 온다. prefix 뒤 명령 키는 한국어 IME가 한글 상태면 영문으로 바꿨다가 되돌린다(`[tui] switch_ascii_input_source_in_prefix`).
   - AltGr 글자(유럽 배치 `@`·`{` 등)는 글자로 간다. 진짜 Ctrl+Alt 조합은 영문 글자와 Space만 남는다(Windows가 AltGr를 Ctrl+Alt로 알린다).
 - 기기를 지우려면 host에서 `aaa web revoke <기기>`. 그 PC의 열린 TUI는 「취소됐다」로 끝나고, 다음에 붙으면 token을 지우고 코드를 다시 묻는다.

@@ -5555,12 +5555,14 @@ primary 근거:
   `vendor/crossterm/AAA.md`). Windows 콘솔은 key-down/up·UTF-16·분할 표지·빈 paste를 복원하며,
   표지가 아닌 Escape는 원래 키로 돌려준다. Escape 구분 시한은 입력 프로토콜용이며 시험은 주어진 시계로 검사한다.
   Windows도 bracketed paste를 켜므로 Ctrl+V 그림은 기존 PNG 첨부 경로로 간다. 사용자 Terminal 설정은 바꾸지 않는다.
-  Unix는 kitty와 modifyOtherKeys를 요청하고 끝날 때 복원한다. Shift+Enter 및 판정을 모를 때의 안전한 줄바꿈 bytes는
+  Unix는 kitty와 modifyOtherKeys를 요청하고 끝날 때 복원한다. Shift+Enter와 구 host fallback은
   Claude의 공식 `chat:newline`과 Codex 0.163 `keymap.rs::editor.insert_newline`이 공통 지원하는 Ctrl+J(LF)다.
 - **사용자 추가 결정.** Ctrl+Enter의 최종 동작은 「agent 입력줄에 글이 있거나 알 수 없으면 줄바꿈, 비었으면 steering」이다.
   화면 판정·harness steering 키는 웹 작업의 공통 backend owner가 맡는다. 이 절의 입력 파서가 키를 보존한 뒤 TUI는
-  같은 backend 요청을 사용하며, TUI 안에 별도 입력줄 판정이나 harness 키 표를 만들지 않는다.
-- **검증.** 수정 전 Windows 키 인코더와 실제 PTY 경계가 실패했다. 수정 후 kitty/xterm 네 Enter의 LF 및 보통 Enter의 CR,
+  `PaneCtrlEnter` 요청을 사용하며, TUI 안에 별도 입력줄 판정이나 harness 키 표를 만들지 않는다.
+  Front API 1.43부터 요청하며 1.42 host에는 LF를 보낸다. 반복 키는 steering을 재실행하지 않고 reader는 전송하지 않는다.
+  공통 owner t-0384의 판정·키 선택 위치는 §8.234다. 공통 agent 줄바꿈은 Alt+Enter(ESC CR)다.
+- **검증.** 수정 전 Windows 키 인코더와 실제 PTY 경계가 실패했다. 수정 후 kitty/xterm Ctrl+Enter의 공통 요청·안전한 Alt+Enter와 Shift+Enter의 LF 및 보통 Enter의 CR,
   확장 키 모드 복원, 기존 Ctrl+V·빈 paste의 실제 PNG 저장을 검사했다. 빈 paste를 버리는 변형도 실패했다.
   Windows Rust target의 TUI·vendored parser 시험 교차 컴파일을 통과했다. Windows 실행은 CI 결과로 별도 확인한다.
   새 시험은 신호·실제 clipboard·고정 sleep을 쓰지 않는다.
@@ -5568,7 +5570,7 @@ primary 근거:
 - **종료 순서 검토.** 독립 리뷰에서 kitty 스택이 화면별이라는 점을 확인했다. 정상 종료는 alternate screen을 떠나기 전에 pop하고, panic hook도 ratatui의 화면 복원보다 먼저 한 번만 pop한다. 화면별 스택 E2E와 격리한 자식 프로세스의 panic hook 순서 시험이 수정 전 실패·수정 후 통과했다.
 
 
-### 8.232 입력줄 상태에 따른 Ctrl+Enter(10-19, t-0384, D1·D7 후속)
+### 8.234 입력줄 상태에 따른 Ctrl+Enter(10-19, t-0384, D1·D7 후속)
 
 사용자 결정: 웹 터미널과 TUI의 agent pane에서 입력줄에 글이 있으면 줄바꿈, 비었으면 harness steering을 한다. 감지로 판정하지 못하면 줄바꿈이다. front가 입력줄을 각각 읽지 않고 `FrontRequest::PaneCtrlEnter { pane }`로 host에 요청한다. TUI의 물리 키 연결은 t-0385가 맡는다.
 
