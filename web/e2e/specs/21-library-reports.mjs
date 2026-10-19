@@ -112,6 +112,7 @@ export default async function ({ page }) {
     await page.setViewportSize({ width: 1280, height: 800 });
     await page.getByTestId("reports-panel").getByRole("combobox", { name: "보고서 프로젝트" }).selectOption("");
     await page.getByTestId("reports-tab-mine").click();
+    // 앞 단계가 demo/page는 열었고(봄) other/design은 보기 기기가 카드만 기다렸다(안 봄): 지금 1이다
     const before = unseen();
     await badgesAre(before);
     const weekly = `${root}/weekly`;
@@ -172,6 +173,12 @@ export default async function ({ page }) {
       return rows.length > 1 && rows.every((r) => r.querySelector(".report-pick").checked === (r.dataset.busy === "false")) && !document.querySelector(`[data-testid="report-demo-${id}"] .report-pick`).checked;
     }, t.id);
     await shot(page, "reports-work-picked");
+    // 휴대폰 폭에서도 줄(고르기·이름·진행 중·크기·시각·단추 셋)이 패널을 넘지 않는다
+    await page.setViewportSize({ width: 390, height: 844 });
+    const narrow = await page.getByTestId("reports-panel").evaluate((p) => ({ right: p.getBoundingClientRect().right, width: innerWidth, overflow: p.scrollWidth > p.clientWidth + 1 }));
+    if (narrow.right > narrow.width + 1 || narrow.overflow) throw new Error(`작업 보고 폭 넘침 ${JSON.stringify(narrow)}`);
+    await shot(page, "reports-work-390");
+    await page.setViewportSize({ width: 1280, height: 800 });
     aaa("thread", "resolve", "demo", t.id, "--skip-copy");
     await domIs(page, "resolve하면 풀림", (id) => document.querySelector(`[data-testid="report-demo-${id}"]`)?.dataset.busy === "false", t.id);
     await row.locator(".report-pick").check();

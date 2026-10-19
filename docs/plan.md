@@ -5874,7 +5874,7 @@ primary 근거:
   - 위로 올려 읽는 중에는 입력창이 커지거나 새 답이 와도 자리 그대로.
   - 옛 코드는 「마지막 172px가 가려졌다」, 읽는 중에도 따라가는 변형은 「자리가 바뀌었다·끌어내렸다」로 실패한다.
 
-### 8.251 웹 Claude 표시를 LobeHub Icons `claude-color`로(10-19, t-0396)
+### 8.253 웹 Claude 표시를 LobeHub Icons `claude-color`로(10-19, t-0396)
 
 - **요청.** 사용자 「~/Downloads/claude-color.svg 이 파일을 현재 aaa에서 클로드 관련 이미지(project, agent, 사용량 등)에서 대체 가능해?」, 출처 https://lobehub.com/ko/icons/claude.
 - **출처·라이선스.** 받은 파일(1696B)은 npm `@lobehub/icons-static-svg` 1.95.1 `icons/claude-color.svg`와 바이트까지 같다. 패키지와 github.com/lobehub/lobe-icons는 MIT(Copyright (c) 2023 LobeHub)다. 이 저장소는 이미 `agentSvgMarks.ts` 때문에 그 MIT 전문을 `web/src/herdr/README.md`에 싣고 있어 같은 고지가 덮는다. 로고 자체는 Anthropic의 상표이며 aaa는 pane의 agent를 가리키는 데만 쓴다(README 상표 문장 그대로). 예전 표시는 herdr-web-ui(aa624cb)가 chatmux llm-logo-provider에서 옮긴 타일(주황 둥근 사각형 `#D77655` + 흰 별)이었다.
