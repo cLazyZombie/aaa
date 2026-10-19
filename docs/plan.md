@@ -6048,4 +6048,3 @@ primary 근거:
   - E2E 12 「coordinator 프로젝트 소속」: 보라 막대 색·폭, coordinator·thread 줄 8px, 「thread 1」 머리줄
   - E2E 26: 단추 넷의 roving tabindex·End, 보고서가 패널 단추 묶음 바로 밑
   - 결함 셋을 심어 실패를 확인했다. (h) 정할 개선안도 배지에 셈 → 단위, (i) 들여쓰기 34px → E2E 12 coordinator 단계, (j) 「thread n」 머리줄 없음 → 같은 단계.
-||||||| c594f12b
