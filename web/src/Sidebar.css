@@ -116,3 +116,18 @@
 .mission-summary { min-width: 0; overflow-wrap: anywhere; }
 .mission-summary strong { display: block; color: var(--text-strong); }
 .mission-summary p { margin: var(--space-1) 0 0; color: var(--text-dim); font-size: var(--fs-xs); }
+
+/* 에이전트 패널 저장소 폴더(사용자 결정 10-19 안 A, plan §8.260): 머리는 프로젝트 묶음 머리 그대로, 자식 agent 줄은 프로젝트 자식 줄과
+   같은 8px. coordinator는 폴더 밖 맨 위에서 프로젝트 패널과 같은 보라 막대를 줄 시작 1px에 단다 */
+.agent-folders .project-group + .worktree-children .agent-row { padding-left: var(--space-2); }
+.agent-item.is-coordinator::before {
+  content: "";
+  position: absolute;
+  left: 1px;
+  top: 7px;
+  bottom: 7px;
+  width: 2px;
+  border-radius: 1px;
+  background: var(--coordinator);
+}
+.agent-coordinators + .agent-folders { margin-top: var(--space-1); }

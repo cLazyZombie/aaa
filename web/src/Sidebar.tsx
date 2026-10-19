@@ -45,6 +45,7 @@ import "./Sidebar.css";
 import { MachineMeters } from "./MachineMeters";
 import { machineStats } from "./machineStats";
 import { evaluatorState, missionTone, missionWord, type SpecialTone } from "./specialModel";
+import { agentFolders, threadRepo } from "./agentFolders";
 
 /** 상태 말(참고 status.ts STATUS_WORD는 영어 대문자 낱말이다). 화면 낭독·tooltip에 쓴다 */
 const STATUS_KO: Record<KnownStatus, string> = {
@@ -1000,13 +1001,19 @@ function AgentSection(props: SidebarProps) {
   const split = splitPinnedRows(rows, shared.pins, (r) => sidebarPinKey(r.m.id, r.p.id));
   // 참고 agentContext: 이름이 아닌 말(종류)·머신(둘 이상일 때만)·자리. 같은 말을 두 번 하지 않는다
   const several = props.machines.length > 1;
-  const agentItem = ({ m, p, t, agent }: (typeof rows)[number]) => {
+  // 저장소 폴더(plan §8.260): coordinator는 폴더 밖 맨 위, 나머지는 thread 저장소 이름 폴더(이름순, 「기타」 끝). 고정 카드 줄은 빼고 묶는다
+  const { coordinators, folders, flat } = agentFolders(split.rest, (r) => threadRepo(r.t), (r) => r.p.coordinator_project != null);
+  // 폴더 안 줄은 폴더가 저장소를 말하니 둘째 줄이 상태 말(왼쪽, thread 줄과 같은 색)과 머신(오른쪽)이다. 프로젝트는 둘 이상 섞일 때만
+  const severalProjects = new Set(split.rest.flatMap((r) => (r.t ? [r.t.project] : r.p.coordinator_project ? [r.p.coordinator_project] : []))).size > 1;
+  const agentItem = ({ m, p, t, agent }: (typeof rows)[number], inFolders = false) => {
     const online = m.connection === "connected";
     const selected = props.selected === `pane:${p.id}` || (t != null && props.selected === `thread:${threadKey(t)}`);
     const title = t ? `${t.id} · ${t.title}` : p.name || p.argv.join(" ") || p.id.slice(0, 8);
     const kind = p.agent?.harness ?? agent;
     const place = t ? `${t.project}` : p.cwd ? shortPath(p.cwd) : null;
     const context = [kind && kind.toLowerCase() !== agent.toLowerCase() && kind !== title ? kind : null, several ? m.name : null, place].filter(Boolean).join(" · ");
+    const coordinator = inFolders && p.coordinator_project != null;
+    const where = [severalProjects && t ? t.project : null, m.name].filter(Boolean).join(" · ");
     const tooltip = [...new Set([p.id, title, context, p.cwd ? shortPath(p.cwd) : null, online ? null : "끊김"].filter(Boolean))].join("\n");
     const pinKey = sidebarPinKey(m.id, p.id);
     const pinned = shared.pins.includes(pinKey);
@@ -1032,7 +1039,7 @@ function AgentSection(props: SidebarProps) {
     return (
       <li
         key={p.id}
-        className={`agent-item${selected ? " is-selected" : ""}${online ? "" : " is-offline"}`}
+        className={`agent-item${coordinator ? " is-coordinator" : ""}${selected ? " is-selected" : ""}${online ? "" : " is-offline"}`}
         data-machine={m.id}
         data-pane={p.id}
         data-pin-key={pinKey}
@@ -1049,7 +1056,20 @@ function AgentSection(props: SidebarProps) {
               <span className="agent-title">{title}</span>
               {pinned && <Pin className="sidebar-pin-mark" aria-hidden="true" />}
             </span>
-            {context && <span className="agent-context">{context}</span>}
+            {inFolders ? (
+              <span className="agent-context thread-place">
+                {t ? (
+                  <span className={`thread-state is-${t.group}`}>{GROUP_WORD[t.group] ?? t.group}</span>
+                ) : coordinator ? (
+                  <span className="thread-state">{online ? STATUS_KO[knownStatus(paneAgentStatus(p))] : "끊김"}</span>
+                ) : (
+                  <span className="thread-state">{p.cwd ? shortPath(p.cwd) : kind}</span>
+                )}
+                <span className="thread-machine">{where}</span>
+              </span>
+            ) : (
+              context && <span className="agent-context">{context}</span>
+            )}
           </span>
           {online && (
             <span className="agent-row-status">
@@ -1080,14 +1100,95 @@ function AgentSection(props: SidebarProps) {
           <>
             {split.pinned.length > 0 && (
               <ul className="agent-list agent-list-pinned sidebar-pinned" aria-label="고정됨">
-                {split.pinned.map(agentItem)}
+                {split.pinned.map((r) => agentItem(r))}
               </ul>
             )}
-            {split.rest.length > 0 && <ul className="agent-list">{split.rest.map(agentItem)}</ul>}
+            {flat.length > 0 && <ul className="agent-list">{flat.map((r) => agentItem(r))}</ul>}
+            {coordinators.length > 0 && <ul className="agent-list agent-coordinators">{coordinators.map((r) => agentItem(r, true))}</ul>}
+            {folders.length > 0 && (
+              <ul className="workspace-list agent-folders">
+                {folders.map((f) => (
+                  <AgentFolderGroup key={f.name} name={f.name} rows={f.rows} selected={props.selected} agentItem={(r) => agentItem(r, true)} />
+                ))}
+              </ul>
+            )}
           </>
         )}
       </div>
     </section>
+  );
+}
+
+type AgentRow = { m: MachineView; p: PaneView; t: ThreadView | undefined; agent: string };
+
+/**
+ * 저장소 폴더 하나(plan §8.260). 머리는 프로젝트 패널 묶음 머리(ProjectGroup)와 같은 모양·class라 자식 줄 들여쓰기(8px)·접힘 표시
+ * (+n, 대표 상태 점)가 같은 규칙을 탄다. 접힌 폴더도 고른 줄은 보인다.
+ */
+function AgentFolderGroup({ name, rows, selected, agentItem }: { name: string; rows: AgentRow[]; selected: string | null; agentItem: (r: AgentRow) => ReactNode }) {
+  const [collapsed, toggle] = useFold(`aaa:agent-folder-collapsed:${name}`);
+  const contentsId = `${useId()}-agents`;
+  const isSel = (r: AgentRow) => selected === `pane:${r.p.id}` || (r.t != null && selected === `thread:${threadKey(r.t)}`);
+  const shown = collapsed ? rows.filter(isSel) : rows;
+  const foldedCount = rows.length - shown.length;
+  const status = rollupStatus(rows.map((r) => (r.m.connection === "connected" ? paneAgentStatus(r.p) : undefined)));
+  const threads = rows.flatMap((r) => (r.t ? [r.t] : []));
+  const need = threads.some((t) => needsYou(t.group));
+  const line = threads.length > 0 ? projectLine(threads.map((t) => t.group)) : `agent ${rows.length}`;
+  const label = collapsed ? `${name} 펼치기` : `${name} 접기`;
+  const twoLine = useAppearance().appearance.sidebarRows !== "one";
+  const rowsState = useRows();
+  const menuKey = `agent-folder:${name}`;
+  const toggleMenu = (anchor: HTMLElement, point?: { x: number; y: number }, previousFocus?: HTMLElement | null) =>
+    rowsState.toggleMenu({
+      key: menuKey,
+      anchor,
+      point,
+      previousFocus,
+      title: name,
+      place: line,
+      items: () => [{ id: "fold", label: collapsed ? "펼치기" : "접기", icon: collapsed ? ChevronRight : ChevronDown, run: toggle }],
+    });
+  const count = foldedCount > 0 && (
+    <span className="workspace-fold-count" aria-hidden="true">
+      +{foldedCount}
+    </span>
+  );
+  return (
+    <>
+      <li className={`workspace workspace-group pane-item project-group agent-folder${collapsed ? " is-collapsed" : ""}`} data-testid={`agent-folder-${name}`}>
+        <div className="workspace-header" onMouseDownCapture={keepFocusOnMenuPress} onContextMenu={(e) => onRowContextMenu(e, toggleMenu)}>
+          <button type="button" className="sidebar-row-action workspace-toggle" aria-label={label} title={label} aria-expanded={!collapsed} aria-controls={contentsId} onClick={toggle}>
+            {collapsed ? <Folder aria-hidden="true" /> : <FolderOpen aria-hidden="true" />}
+          </button>
+          <div className="pane-select workspace-select project-select" role="button" tabIndex={0} title={`${name} · ${line}`} onClick={toggle} onKeyDown={(e) => onRowKey(e, toggle)}>
+            {twoLine ? (
+              <span className="workspace-copy is-two-line">
+                <span className="workspace-line">
+                  <span className="workspace-name project-name">{name}</span>
+                  {count}
+                </span>
+                <span className={`workspace-place project-place${need ? " is-need" : ""}`}>{line}</span>
+              </span>
+            ) : (
+              <span className="workspace-copy">
+                <span className="workspace-name project-name">{name}</span>
+                {count}
+              </span>
+            )}
+            <span className="sidebar-pane-meta">
+              <StatusBadge compact status={collapsed ? status : undefined} testid={`agent-folder-state-${name}`} />
+            </span>
+          </div>
+          <RowMenuButton title={name} open={rowsState.menuKey === menuKey} onToggle={(anchor) => toggleMenu(anchor)} />
+        </div>
+      </li>
+      {shown.length > 0 && (
+        <li className="worktree-children" id={contentsId}>
+          <ul className="agent-list">{shown.map(agentItem)}</ul>
+        </li>
+      )}
+    </>
   );
 }
 

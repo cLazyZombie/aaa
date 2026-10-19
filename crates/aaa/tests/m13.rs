@@ -623,6 +623,8 @@ fn worktree_thread_round_trip() {
     ]);
     assert_eq!((v["id"].as_str(), v["status"].as_str()), (Some("t-0001"), Some("open")), "{v}");
     assert_eq!(v["branch"], "aaa/demo/t-0001-fix-the-bug");
+    // 웹 에이전트 패널이 저장소 폴더로 묶는 칸(plan §8.260): 시작할 때 고른 repo 경로 그대로
+    assert_eq!(v["repo"].as_str(), Some(path_str(&w.repo)), "{v}");
     let cwd = PathBuf::from(v["cwd"].as_str().unwrap());
     assert_eq!(cwd, w.lab.root.join("workA").join("repo").join("demo-t-0001"));
     assert!(cwd.join(".aaa/demo-t-0001/brief.md").is_file());
@@ -864,6 +866,8 @@ fn remote_dir_thread_survives_host_restart() {
     let id = v["id"].as_str().unwrap().to_string();
     assert_eq!(PathBuf::from(v["cwd"].as_str().unwrap()), w.lab.root.join("workB").join("demo").join(&id));
     assert_eq!(v["branch"], Value::Null);
+    // 작업 폴더 thread는 저장소가 없어 칸을 싣지 않는다(웹은 「기타」)
+    assert!(v.get("repo").is_none(), "{v}");
     // brief 받음 확인까지 기다린다: host를 내리기 전에 끝나지 않으면 새 host가 화면으로 확인해 사건이 하나 더 생긴다
     let v =
         w.wait_show("원격 보고·brief 받음", &id, |v| v["report_hash"].is_string() && v["brief"] == "delivered");

@@ -577,7 +577,12 @@ project_status?: ProjectStatus,
 /**
  * 작업 요약 표지(FRONT_API 1.44, plan §8.259): 요약을 쓴 때와 그 뒤 반영 안 된 지시 수. 옛 host는 생략한다
  */
-summary?: SummaryMark, };
+summary?: SummaryMark,
+/**
+ * thread가 일하는 저장소의 그 머신 경로(FRONT_API 1.44): worktree thread는 시작할 때 고른 repo, 데려온 thread는 그 폴더의
+ * git top. 작업 폴더 thread와 옛 기록은 없다. 웹 에이전트 패널이 마지막 폴더 이름으로 묶는다(머신마다 경로가 달라도 한 폴더)
+ */
+repo?: string, };
 
 export type ThreadPr = { url: string, state: string | null, review: string | null, };
 

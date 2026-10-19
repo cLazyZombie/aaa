@@ -753,6 +753,11 @@ pub struct ThreadView {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub summary: Option<SummaryMark>,
+    /// thread가 일하는 저장소의 그 머신 경로(FRONT_API 1.44): worktree thread는 시작할 때 고른 repo, 데려온 thread는 그 폴더의
+    /// git top. 작업 폴더 thread와 옛 기록은 없다. 웹 에이전트 패널이 마지막 폴더 이름으로 묶는다(머신마다 경로가 달라도 한 폴더)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub repo: Option<String>,
 }
 
 /// thread 작업 요약 표지(plan §8.259). 줄·머리 단추가 요약을 읽지 않고 「낡았다」를 안다

@@ -93,6 +93,8 @@ pub const AGENT_LINK: Version = Version { major: 1, minor: 5 };
 // 같은 1.43에 웹 터미널 `submit.steer`(웹 입력창 Ctrl+Enter, plan §8.239 후속)를 더한다. 옛 host는 그 칸을 버려 보통 보내기(Enter)다.
 // 1.44: thread 작업 요약(`thread_summary`·`thread_summary_set`, ThreadView.summary, plan §8.259). 1.43이 배포돼 올린다(1.43 front는
 // 새 칸을 버리고, 옛 host는 새 요청을 모르는 요청으로 거절한다: 웹은 그때 요약 단추에 오류를 보인다).
+// 같은 1.44에 ThreadView.repo(thread 저장소 경로, 선택, plan §8.260)를 더한다. 옛 host는 생략해 웹 에이전트 패널이 폴더 없이
+// 그리고, 옛 front는 버린다.
 pub const FRONT_API: Version = Version { major: 1, minor: 44 };
 /// agent ↔ session host(내부). 세션이 몇 주 이어질 수 있으므로 이전 session host와 호환해야 한다.
 /// 1.1: `SessionRequest::Detect`(harness 상태 감지 입력). agent는 1.0 session host에 보내지 않고 `Screen`을 쓴다.
