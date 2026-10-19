@@ -33,6 +33,12 @@ describe("단축키 줄 차례", () => {
     assert.deepEqual(keys([ma, { ...mb, connection: "disconnected" }], ["m2:b1"]), ["pane:p1", "pane:p2"]);
   });
 
+  it("host가 알린 coordinator는 프로젝트 맨 앞이고 thread 없는 프로젝트도 열 수 있다", () => {
+    const panes = [{ ...pane("coord"), coordinator_project: "p" }, { ...pane("only"), coordinator_project: "solo" }, pane("worker"), pane("shell")];
+    const keys = rosterRows([ma], panes, [thread("p", "t-1", "working", "worker")]).map((r) => r.keys[0]);
+    assert.deepEqual(keys, ["pane:coord", "thread:p/t-1", "pane:only", "pane:shell"]);
+  });
+
   it("thread 줄은 agent pane이 돌면 그 pane을, 끝났으면 보고서를 연다. 골랐다고 보는 값은 thread와 pane 둘 다", () => {
     const rows = rosterRows([ma], [pane("a"), pane("b", "m1", "exited")], [thread("p", "t-1", "working", "a"), thread("p", "t-2", "working", "b")]);
     assert.deepEqual(rows[0], { open: { pane: "a" }, keys: ["thread:p/t-1", "pane:a"] });

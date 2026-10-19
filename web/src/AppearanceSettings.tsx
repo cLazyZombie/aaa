@@ -11,12 +11,15 @@ function PaletteSelect({ id, value, onChange }: { id: string; value: Palette; on
       <option value="amber">앰버</option>
       <option value="charcoal">차콜</option>
       <option value="catppuccin">Catppuccin</option>
+      <option value="github-light">GitHub Light</option>
+      <option value="github-dark">GitHub Dark</option>
+      <option value="github-dark-dimmed">GitHub Dark Dimmed</option>
     </select>
   );
 }
 
 export function AppearanceSettings() {
-  const { appearance: a } = useAppearance();
+  const { appearance: a, resolvedPalette } = useAppearance();
   const uiSize = uiFontSize(a);
   return (
     <>
@@ -44,7 +47,10 @@ export function AppearanceSettings() {
           </>
         ) : (
           <SettingsRow label="색상" htmlFor="settings-palette">
-            <PaletteSelect id="settings-palette" value={a.palette} onChange={(palette) => updateAppearance({ palette })} />
+            <PaletteSelect id="settings-palette" value={resolvedPalette} onChange={(palette) => {
+                if (palette.startsWith("github-")) updateAppearance({ palette, theme: palette === "github-light" ? "light" : "dark" });
+                else updateAppearance({ palette });
+              }} />
           </SettingsRow>
         )}
         <SettingsRow label="밀도">

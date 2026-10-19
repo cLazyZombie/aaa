@@ -82,7 +82,8 @@ export function paletteTargets(machines: readonly MachineView[], panes: readonly
   const all = roster(machines, panes, threads, paneOrder);
   for (const m of machines) {
     if (m.connection !== "connected") continue;
-    for (const project of all.projects)
+    for (const project of all.projects) {
+      for (const p of all.coordinators.filter((p) => p.coordinator_project === project && p.machine_id === m.id)) addPane(p, project);
       for (const t of all.threads.filter((x) => x.project === project && all.machineOf(x)?.id === m.id)) {
         const pane = t.pane ? panes.find((p) => p.id === t.pane) : undefined;
         const running = pane?.state === "running";
@@ -103,21 +104,23 @@ export function paletteTargets(machines: readonly MachineView[], panes: readonly
           search: [t.id, t.title, t.project, t.profile, t.branch ?? "", pane ? paneTitle(pane) : "", pane?.cwd ?? "", pane?.agent?.harness ?? "", m.name],
         });
       }
-    for (const p of all.panes.filter((x) => x.machine_id === m.id)) {
+    }
+    for (const p of all.panes.filter((x) => x.machine_id === m.id)) addPane(p, null);
+    function addPane(p: PaneView, project: string | null) {
       const path = p.cwd ? shortPath(p.cwd) : "";
       targets.push({
         key: `pane:${p.id}`,
         keys: [`pane:${p.id}`],
         open: { pane: p.id },
         machine: m,
-        project: null,
+        project,
         title: paneTitle(p),
         place: [p.agent?.harness, path].filter(Boolean).join(" · "),
         path,
         status: knownStatus(paneAgentStatus(p)),
         pane: p,
         thread: undefined,
-        search: [p.label ?? "", p.name, p.argv.join(" "), p.cwd ?? "", p.agent?.harness ?? "", m.name],
+        search: [project ?? "", p.label ?? "", p.name, p.argv.join(" "), p.cwd ?? "", p.agent?.harness ?? "", m.name],
       });
     }
   }
