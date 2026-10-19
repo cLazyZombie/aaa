@@ -33,12 +33,61 @@ fn debounce(secs: u64) -> Duration {
 }
 
 /// post 글은 알림에 넣지 않는다(웹 push·webhook 공통).
-pub(crate) fn safe_summary(i: &InboxItem) -> &str {
+pub(crate) fn safe_summary(i: &InboxItem) -> String {
     if i.item_kind == "post" {
-        if i.event == "post completed" { "맡긴 일 완료" } else { "사용자 결정 요청" }
+        if i.event == "post completed" { "맡긴 일 완료" } else { "사용자 결정 요청" }.into()
+    } else if report_item(i) {
+        report_preview(&i.summary).unwrap_or_else(|| phrase(i).unwrap_or("보고 확인 필요").into())
     } else {
-        &i.summary
+        i.summary.clone()
     }
+}
+
+fn report_item(i: &InboxItem) -> bool {
+    i.item_kind == "thread-state" && matches!(i.event.as_str(), "new report" | "report needs user")
+}
+
+/// 첫 줄 표지 뒤 요약만 보낸다. 본문·PR·링크를 요약으로 끌어올리지 않는다. 공개 검사와 같은 종류의 경로·주소·키를
+/// 자르기 전에 가린다(잘린 token 조각도 보내지 않음). 알 수 없는 비밀값까지 판별하는 함수는 아니다.
+fn report_preview(report: &str) -> Option<String> {
+    use regex::Regex;
+    use std::sync::LazyLock;
+    let mark = crate::report_mark::marker(report)?;
+    if !matches!(mark, "[완료]" | "[결정 필요]" | "[검수 대기]" | "[사람 필요]") {
+        return None;
+    }
+    let line = report.trim_start_matches('\u{feff}').lines().next()?.strip_prefix(mark)?.trim();
+    // URL은 query의 token·사용자명까지, 경로는 Unix·Windows·상대 경로까지 함께 가린다.
+    // 이름이 붙은 비밀값·알려진 token·긴 식별자·지문은 공개 검사보다 보수적으로 숨긴다.
+    static PRIVATE: LazyLock<Regex> = LazyLock::new(|| {
+        Regex::new(concat!(
+            r"(?ix)",
+            r#"(?:https?|file|ssh)://[^\s<>`\"']+|"#,
+            r#"(?:[a-z]:[\\/]|\\\\|~/|/)[^\s<>`\"']+|"#,
+            r#"[a-z0-9_.-]+[/\\][a-z0-9_./\\-]+|"#,
+            r"[a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,}|",
+            r"[a-z0-9.-]+\.ts\.net|",
+            r"(?:[0-9]{1,3}\.){3}[0-9]{1,3}|",
+            r"(?:[a-f0-9]{0,4}:){2,}[a-f0-9:]+|",
+            r#"(?:token|password|passwd|secret|api[_-]?key)\s*[:=]\s*(?:\"[^\"]*\"|'[^']*'|[^\s,;]+)|"#,
+            r"(?:tskey-|gh[pousr]_|sk-|AKIA|xox[abpr]-)[a-z0-9_-]+|",
+            r"[0-9]{8,10}:AA[a-z0-9_-]+|",
+            r"[a-z0-9_+=-]{32,}"
+        ))
+        .expect("알림 비공개 값 정규식")
+    });
+    if line.contains("-----BEGIN") {
+        return None;
+    }
+    let clean = PRIVATE.replace_all(line, "[숨김]");
+    let clean: String = clean.chars().filter(|c| !c.is_control() || c.is_whitespace()).collect();
+    let clean = clean.split_whitespace().collect::<Vec<_>>().join(" ");
+    let mut chars = clean.chars();
+    let mut short: String = chars.by_ref().take(120).collect();
+    if chars.next().is_some() {
+        short.push('…');
+    }
+    (!short.is_empty()).then_some(short)
 }
 
 /// 알림이 가는 자리: 프로젝트 하나, 또는 머신 사건 묶음(그 사건을 쓴 프로젝트들). 머신 사건은 그 머신에 thread가 열린
@@ -139,7 +188,8 @@ fn alert_who(i: &InboxItem) -> String {
 /// 항목 한 줄(웹 push·webhook 공통): 「대상 사건 · thread 제목」(`t-0012 보고 준비 · 제목`, `mac-a 다시 연결됨`).
 /// `who`가 false면 알림 제목이 이미 그 대상을 말한다(thread 하나·머신 하나 자리): 사건만 쓴다. 고정 말이 없는 사건은 요약이다
 pub(crate) fn alert_line(i: &InboxItem, who: bool, titles: &HashMap<String, String>) -> String {
-    let Some(p) = phrase(i) else { return safe_summary(i).chars().take(120).collect() };
+    let preview = report_item(i).then(|| safe_summary(i));
+    let Some(p) = preview.as_deref().or_else(|| phrase(i)) else { return safe_summary(i).chars().take(120).collect() };
     if !who {
         return p.to_string();
     }
@@ -398,7 +448,24 @@ impl Host {
         if dropped > 0 {
             self.flow_project(project, "notify_skipped", None, format!("그 사이 답했거나 확인한 항목 {dropped}개"));
         }
-        keep
+        keep.into_iter()
+            .filter_map(|mut i| {
+                if report_item(&i) {
+                    // inbox 요약에는 사본 경로가 있다. 밖 알림용 사본에만 검증된 보고 첫 줄을 싣는다.
+                    let r = self.load(project, &i.subject).ok()?;
+                    let report = self.verified_report(&r)?;
+                    let mark = crate::report_mark::marker(&report)?;
+                    if !matches!(
+                        (i.event.as_str(), mark),
+                        ("new report", "[완료]") | ("report needs user", "[결정 필요]" | "[검수 대기]" | "[사람 필요]")
+                    ) {
+                        return None;
+                    }
+                    i.summary = report.lines().next()?.into();
+                }
+                Some(i)
+            })
+            .collect()
     }
 
     /// 알림 줄에 쓰는 thread 제목(thread·PR 항목의 대상). 읽지 못한 thread는 ID로 남는다
@@ -605,6 +672,51 @@ mod tests {
         assert_eq!((m["project"].clone(), m["text"].as_str()), (serde_json::Value::Null, Some("mac-a\n- 연결 끊김")));
         let many: Vec<_> = (0..100).map(|n| item(&format!("t-{n:04}"), "new report")).collect();
         assert!(notify_text(&demo, &many, &titles).chars().count() <= TEXT_CAP + 2);
+    }
+
+    /// 새로 밖에 싣는 보고 글만의 보호 경계. JSON 항목도 화면용 본문과 같은 요약을 써야 한다.
+    #[test]
+    fn report_preview_hides_private_values_before_shortening() {
+        let mut cases = vec![
+            ("[완료] 휴대폰 알림을 고쳤다\n본문은 보내지 않음".into(), "휴대폰 알림을 고쳤다".into()),
+            ("\u{feff}[검수 대기] 화면\t확인이  필요하다\r\n".into(), "화면 확인이 필요하다".into()),
+            (
+                "[결정 필요] /Users/me/work/report.md 대신 C:\\lab\\report.md 확인".into(),
+                "[숨김] 대신 [숨김] 확인".into(),
+            ),
+            (
+                "[사람 필요] src/notify.rs ~/work/report.md \\\\server\\share 확인".into(),
+                "[숨김] [숨김] [숨김] 확인".into(),
+            ),
+            (
+                "[완료] https://example.com/?token=hidden example.ts.net 192.0.2.10 user@example.com 확인".into(),
+                "[숨김] [숨김] [숨김] [숨김] 확인".into(),
+            ),
+            (
+                "[완료] token='quoted value' password=hidden api_key=hidden 확인".into(),
+                "[숨김] [숨김] [숨김] 확인".into(),
+            ),
+            ("[완료]\n본문의 비밀값은 올리지 않음".into(), "보고 준비".into()),
+            ("[착지] 중간 보고는 요약으로 올리지 않음".into(), "보고 준비".into()),
+            (format!("[완료] {}", "가".repeat(121)), format!("{}…", "가".repeat(120))),
+        ];
+        for prefix in ["ghp_", "sk-ant-", "tskey-auth-", "xoxb-", "AKIA", "123456789:AA", ""] {
+            cases.push((format!("[완료] 키 {prefix}{} 확인", "A".repeat(40)), "키 [숨김] 확인".into()));
+        }
+        // 잘라 낸 뒤에 가리면 긴 token의 앞부분만 알림에 남는다.
+        cases.push((format!("[완료] {}ghp_{}", "가".repeat(118), "x".repeat(40)), format!("{}[숨…", "가".repeat(118))));
+        for (report, want) in cases {
+            let mut i = item("t-0001", "new report");
+            i.summary = report;
+            let place = Place::Project("demo".into());
+            let titles = HashMap::new();
+            let items = [i];
+            let push = crate::push::payload(&place, &items, &titles);
+            let hook = notify_body("json", "", &place, &items, &titles);
+            assert_eq!(push["body"], want);
+            assert_eq!(hook["items"][0]["summary"], want);
+            assert_eq!(hook["text"], format!("demo · t-0001\n- {want}"));
+        }
     }
 
     /// 사건 한 줄은 고정 말로(영어 kind·event를 앞에 붙이지 않는다). 대상 이름 뒤에 붙는 말이라 조사가 없다: 받침을 알 수 없는
