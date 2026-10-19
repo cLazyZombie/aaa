@@ -5552,3 +5552,13 @@ primary 근거:
 - **기존 상태와 구분.** `waiting_on_you`의 기존 「확인 필요」, `idle`의 「쉼」, 확인창·입력 대기 문구는 그대로다. 보고 표지는 `report_attention=needs_user`라는 알림 의도이며 thread group이나 idle 판정·진행률을 바꾸지 않는다. inbox 사건 이름과 저장된 옛 보고 원문도 이주하지 않는다. 기존 「사용자 결정 요청」 등 다른 문구는 변경 범위가 아니다.
 - **참고.** herdr-projects `src/notify.rs::Sound::Request`와 t3code `ThreadNotificationCoordinator.tsx`의 입력/완료 구분을 유지하며 한국어 이름만 사용자 보정대로 맞춘다. 공개 API·프로토콜 판 변경은 없다.
 - **검증.** 기존 실제 사본·DB·inbox·queue owner 표에 새 표지를 더했을 때 수정 전 `None` 대 `NeedsUser`로 실패했고 수정 후 신·구 표지 모두 통과했다. 기존 알림 문구 표는 요약 없는 보고에서 「확인 필요」를 검증한다. 이 문구를 옛 이름으로 되돌린 변형이 실패하는 것도 확인한다. 동일 계약의 새 E2E를 추가하지 않고 기존 웹/host 경계를 유지한다. binary 반영 필요.
+
+### 8.235 TUI spaces 자동 높이(10-19, t-0386, D안 1단계)
+
+- workspace 항목 수에 머리·빈 줄·footer 세 줄을 더한 높이를 쓴다. 최대 화면 절반까지만 쓰므로 세 workspace가 있는
+  80줄 화면에서는 spaces가 6줄을 쓰고 나머지가 agents에 돌아간다. 기존 반반 고정에서 생긴 큰 여백을 없앤다.
+- 구역 경계를 직접 끌거나 공유 설정 `tuiSidebarSplit`을 저장한 사용자는 그 비율을 유지한다. 탭·workspace·마우스·compact
+  동작과 저장 형식은 유지한다. 후속 단계는 thread 두 줄 단위 스크롤, 폭 48칸·선택 제목 전체 보기, t-0390 착지에 맞춘
+  Projects·Machines·Agents 패널과 패널 밖 특수 임무다.
+- 기존 렌더 keeper에서 작은 화면·큰 화면·다수 workspace 상한·저장 비율을 확인한다. 기존 PTY keeper에서 자동 경계를
+  실제 마우스로 끌고 재접속하여 저장 비율을 확인한다. 새 시험 전용 seam은 없다.
