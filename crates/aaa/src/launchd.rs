@@ -8,9 +8,10 @@
 //! - launchd가 주는 PATH는 짧다(`/usr/bin:/bin:…`). 설치하는 셸의 PATH를 plist에 적어 `claude`·`codex`를 찾게 한다.
 
 use std::path::{Path, PathBuf};
+#[cfg(test)]
 use std::process::Command;
 
-use anyhow::{Context, Result, bail};
+use anyhow::{Result, bail};
 
 pub fn label(role: &str) -> String {
     format!("dev.aaa.{role}")
@@ -91,9 +92,7 @@ fn uid() -> String {
 }
 
 fn launchctl(args: &[&str]) -> Result<(bool, String)> {
-    let o = Command::new("launchctl").args(args).output().context("launchctl 실행")?;
-    let text = String::from_utf8_lossy(&o.stdout).into_owned() + &String::from_utf8_lossy(&o.stderr);
-    Ok((o.status.success(), text))
+    crate::update::run_limited(Path::new("launchctl"), args)
 }
 
 fn service_target(role: &str) -> String {

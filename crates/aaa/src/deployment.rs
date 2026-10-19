@@ -79,6 +79,7 @@ pub(crate) fn execute(exe: &std::path::Path, action: DeployAction) -> Result<Str
                     Some(exe.to_path_buf()),
                 )?;
             }
+            DeployAction::CheckedRollback { sha256 } => return crate::update::checked_rollback(exe, &sha256),
             DeployAction::Restart { service } => {
                 let service_state = crate::launchd::restart_authorized(service.as_str())?;
                 let identity = crate::update::installed_identity(exe)?;
@@ -88,6 +89,20 @@ pub(crate) fn execute(exe: &std::path::Path, action: DeployAction) -> Result<Str
         crate::update::installed_identity(exe)
     })();
     result.map_err(|e| format!("{e:#}"))
+}
+
+/// guard가 승인된 옛 사본을 보존하므로 일반 보관 정리와 독립적으로 복구한다.
+pub(crate) fn execute_recovery(
+    exe: &std::path::Path,
+    action: DeployAction,
+    pin: &std::path::Path,
+) -> Result<String, String> {
+    match action {
+        DeployAction::CheckedRollback { sha256 } => {
+            crate::update::checked_recovery(exe, &sha256, pin).map_err(|e| format!("{e:#}"))
+        }
+        action => execute(exe, action),
+    }
 }
 
 /// 사건을 기다린다. 재시작으로 연결이 끊기면 같은 ID의 결과 확인을 다시 요청하며, 작업 자체는 재실행하지 않는다.

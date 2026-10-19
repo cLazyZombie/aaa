@@ -218,6 +218,12 @@ async fn serve(
         register_local(&host, &hello, &tx).await?;
     }
     tx.json(&LinkMsg::Welcome(HostWelcome {
+        identity: hello.features.iter().any(|f| f == "rollout_recovery.v1").then(|| aaa_proto::RuntimeIdentity {
+            sha256: host.running_sha256.clone(),
+            software: aaa_common::util::software(),
+            instance: host.rollout_instance.clone(),
+            started_ms: host.rollout_started_ms,
+        }),
         proto: agreed,
         host_id: host.host_id.clone(),
         // harness_hello.v1: hello의 harness 사건을 읽는다(agent는 연결 뒤 다시 보내지 않는다, 재부팅 복원)
@@ -227,6 +233,7 @@ async fn serve(
             "harness_hello.v1".into(),
             "post.v1".into(),
             "mission.v1".into(),
+            "rollout_recovery.v1".into(),
         ],
     }))
     .await?;
@@ -284,6 +291,7 @@ async fn serve(
                         host.sync_chat_watches_if_wanted();
                     }
                     LinkMsg::Event(AgentEvent::DeploymentChanged { job }) => host.deployment_changed(&mid, job),
+                    LinkMsg::Event(AgentEvent::DeployGuardChanged { .. }) => host.rollout_wake.notify_one(),
                     LinkMsg::Event(AgentEvent::ChatChanged { key, signature }) => {
                         host.on_chat_changed(&mid, key, signature)
                     }

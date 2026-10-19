@@ -5,7 +5,9 @@ use aaa_proto::*;
 use sha2::{Digest, Sha256};
 use std::{path::Path, sync::Arc, time::Duration};
 
+mod recovery;
 const STEP_LIMIT_MS: u64 = 120_000;
+const RECOVERY_LIMIT_MS: u64 = 3 * STEP_LIMIT_MS;
 pub(crate) fn file_sha(path: &Path) -> anyhow::Result<String> {
     let mut f = std::fs::File::open(path)?;
     let mut h = Sha256::new();
@@ -53,6 +55,9 @@ fn steps(machines: &[String], transfer: bool) -> Vec<RolloutStep> {
             started_ms: 0,
             transferred_bytes: 0,
             total_bytes: 0,
+            baseline: None,
+            guard: None,
+            guard_ready: false,
         })
         .collect()
 }
@@ -81,7 +86,7 @@ fn assess(
     host_instance: &str,
     host_sha: &str,
 ) -> Result<Option<String>, ErrorBody> {
-    let AgentResponse::Deployment { job, running_software, running_sha256, running_instance } = response else {
+    let AgentResponse::Deployment { job, running_software, running_sha256, running_instance, .. } = response else {
         return Err(internal("배포 응답이 아니다"));
     };
     if job.id != step.job_id || job.project != r.project || job.action != action(&r.spec, &r.id, step.phase) {
@@ -159,7 +164,7 @@ impl Host {
         self.db
             .meta("rollout:active")
             .map_err(internal)?
-            .map(|id| self.load_rollout(&id).map(|r| r.state == RolloutState::Running))
+            .map(|id| self.load_rollout(&id).map(|r| recovery::active(r.state)))
             .transpose()
             .map(|r| r.unwrap_or(false))
     }
@@ -235,6 +240,11 @@ impl Host {
                 return Err(err(ErrorCode::UnsupportedVersion, "전송 대상에 deploy_stage.v1이 필요하다"));
             }
         }
+        for mid in &machines {
+            if !self.machine_feature(mid, "rollout_recovery.v1") {
+                return Err(err(ErrorCode::UnsupportedVersion, "먼저 독립 복구 감시를 아는 host·agent를 반영한다"));
+            }
+        }
         spec.machines = machines;
         let now = aaa_common::util::now_ms();
         let mut r = RolloutView {
@@ -248,6 +258,9 @@ impl Host {
             version: None,
             error: None,
             finish: None,
+            recovery_enabled: true,
+            recovery: None,
+            recovery_started_ms: 0,
             created_ms: now,
             updated_ms: now,
         };
@@ -283,78 +296,115 @@ impl Host {
         };
         let mut r = self.load_rollout(&id)?;
         let mut changes = self.changed.subscribe();
-        while r.state == RolloutState::Running {
-            if !self.safety(&r.project).coordinator_deploy {
-                r.error = Some("coordinator 배포 허용이 철회됐다".into());
-                r.state = RolloutState::Stopped;
-                self.save_rollout(&mut r)?;
-                break;
-            }
-            let cursor = r.cursor as usize;
-            if cursor == r.steps.len() {
-                let response = self.project_files(true, "rollout:finish");
-                let failed = matches!(&response, FrontResponse::ProjectFiles { checks } if checks.iter().any(|c| c.error.is_some()));
-                r.finish = Some(serde_json::to_string(&response).map_err(internal)?);
-                r.state = if failed { RolloutState::Stopped } else { RolloutState::Done };
-                if failed {
-                    r.error = Some("coordinator 안내 갱신 실패".into());
-                }
-                self.save_rollout(&mut r)?;
-                break;
-            }
-            if r.steps[cursor].started_ms == 0 {
-                r.steps[cursor].started_ms = aaa_common::util::now_ms();
-                r.steps[cursor].host_instance = Some(self.rollout_instance.clone());
-                self.save_rollout(&mut r)?;
-            }
-            let step = r.steps[cursor].clone();
-            if aaa_common::util::now_ms().saturating_sub(step.started_ms) >= STEP_LIMIT_MS {
-                r.error = Some(format!(
-                    "무응답/옛 판: {} {:?} 단계 한도 초과. 같은 ID를 재실행하지 않는다",
-                    step.machine, step.phase
-                ));
-                r.state = RolloutState::Stopped;
-                self.save_rollout(&mut r)?;
-                break;
-            }
+        while recovery::active(r.state) {
             let notified = self.rollout_wake.notified();
             tokio::pin!(notified);
             notified.as_mut().enable();
-            let result = if step.phase == RolloutPhase::Transfer {
-                self.transfer_candidate(&mut r, cursor).await
-            } else {
-                self.rollout_step(&r, &step).await
-            };
-            match result {
-                Ok(Some(result)) => {
-                    if matches!(step.phase, RolloutPhase::Preflight | RolloutPhase::Transfer) && r.version.is_none() {
-                        r.version = Some(result.clone());
+            let mut waiting_for_commit = false;
+            if r.state == RolloutState::Running {
+                match self.settle_rollout_guards(&mut r).await {
+                    Ok(ready) => waiting_for_commit = !ready,
+                    Err(e) if matches!(e.code, ErrorCode::AgentDisconnected | ErrorCode::Timeout) => {
+                        waiting_for_commit = true
                     }
-                    r.steps[cursor].completed = true;
-                    r.steps[cursor].result = Some(result);
-                    r.cursor += 1;
-                    self.save_rollout(&mut r)?;
-                    continue;
+                    Err(e) => {
+                        let cursor = (r.cursor as usize).min(r.steps.len().saturating_sub(1));
+                        self.stop_or_recover(&mut r, cursor, e.message).await?;
+                    }
                 }
-                Err(e) if !matches!(e.code, ErrorCode::AgentDisconnected | ErrorCode::Timeout) => {
-                    r.error = Some(e.message);
-                    r.state = RolloutState::Stopped;
+            }
+            if r.state == RolloutState::Recovering {
+                self.poll_rollout_recovery(&mut r).await?;
+            } else if !waiting_for_commit && r.state == RolloutState::Running {
+                let cursor = r.cursor as usize;
+                if cursor == r.steps.len() {
+                    let response = self.project_files(true, "rollout:finish");
+                    let failed = matches!(&response,FrontResponse::ProjectFiles {checks} if checks.iter().any(|c|c.error.is_some()));
+                    r.finish = Some(serde_json::to_string(&response).map_err(internal)?);
+                    r.state = if failed { RolloutState::Stopped } else { RolloutState::Done };
+                    if failed {
+                        r.error = Some("coordinator 안내 갱신 실패".into());
+                    }
                     self.save_rollout(&mut r)?;
                     break;
                 }
-                _ => {}
+                if !self.safety(&r.project).coordinator_deploy {
+                    self.stop_or_recover(&mut r, cursor, "coordinator 배포 허용이 철회됐다".into()).await?;
+                } else {
+                    if r.steps[cursor].started_ms == 0 {
+                        r.steps[cursor].started_ms = aaa_common::util::now_ms();
+                        r.steps[cursor].host_instance = Some(self.rollout_instance.clone());
+                        self.save_rollout(&mut r)?;
+                    }
+                    let step = r.steps[cursor].clone();
+                    if aaa_common::util::now_ms().saturating_sub(step.started_ms) >= STEP_LIMIT_MS {
+                        self.stop_or_recover(
+                            &mut r,
+                            cursor,
+                            format!("무응답/옛 판: {} {:?} 단계 한도 초과", step.machine, step.phase),
+                        )
+                        .await?;
+                    } else {
+                        let result = match self.prepare_rollout_guard(&mut r, cursor).await {
+                            Ok(()) => {
+                                if step.phase == RolloutPhase::Transfer {
+                                    self.transfer_candidate(&mut r, cursor).await
+                                } else {
+                                    self.rollout_step(&mut r, &step).await
+                                }
+                            }
+                            Err(e) => Err(e),
+                        };
+                        match result {
+                            Ok(Some(result)) => {
+                                if matches!(step.phase, RolloutPhase::Preflight | RolloutPhase::Transfer)
+                                    && r.version.is_none()
+                                {
+                                    r.version = Some(result.clone());
+                                }
+                                r.steps[cursor].completed = true;
+                                r.steps[cursor].result = Some(result);
+                                r.cursor += 1;
+                                self.save_rollout(&mut r)?;
+                                continue;
+                            }
+                            Err(e) if !matches!(e.code, ErrorCode::AgentDisconnected | ErrorCode::Timeout) => {
+                                self.stop_or_recover(&mut r, cursor, e.message).await?
+                            }
+                            _ => {}
+                        }
+                    }
+                }
             }
-            let remaining = step.started_ms.saturating_add(STEP_LIMIT_MS).saturating_sub(aaa_common::util::now_ms());
-            if remaining == 0 {
-                r.error = Some(format!(
-                    "무응답/옛 판: {} {:?} 단계 한도 초과. 같은 ID를 재실행하지 않는다",
-                    step.machine, step.phase
-                ));
-                r.state = RolloutState::Stopped;
-                self.save_rollout(&mut r)?;
+            if !recovery::active(r.state) {
                 break;
             }
-            tokio::select! { _ = &mut notified => {}, _ = changes.changed() => {}, _ = tokio::time::sleep(Duration::from_millis(remaining)) => {} }
+            let now = aaa_common::util::now_ms();
+            let deadline = if r.state == RolloutState::Recovering {
+                r.recovery_started_ms.saturating_add(RECOVERY_LIMIT_MS)
+            } else if let Some(step) = r.steps.get(r.cursor as usize).filter(|s| s.started_ms != 0) {
+                step.started_ms.saturating_add(STEP_LIMIT_MS)
+            } else {
+                r.steps
+                    .iter()
+                    .filter(|s| s.completed && s.guard.is_some())
+                    .map(|s| s.started_ms.saturating_add(STEP_LIMIT_MS))
+                    .max()
+                    .unwrap_or(now + STEP_LIMIT_MS)
+            };
+            let remaining = deadline.saturating_sub(now);
+            if remaining == 0 {
+                if r.state == RolloutState::Recovering {
+                    r.state = RolloutState::RecoveryFailed;
+                    r.error = Some("복구 영수증/옛 실행 신원 확인 한도 초과: 사람이 확인한다".into());
+                    self.save_rollout(&mut r)?;
+                    break;
+                }
+                let cursor = (r.cursor as usize).min(r.steps.len().saturating_sub(1));
+                self.stop_or_recover(&mut r, cursor, "재개/완료 확인 한도 초과".into()).await?;
+                continue;
+            }
+            tokio::select! { _=&mut notified=>{}, _=changes.changed()=>{}, _=tokio::time::sleep(Duration::from_millis(remaining))=>{} }
         }
         if r.spec.source_machine.is_some() {
             for mid in &r.spec.machines {
@@ -375,7 +425,7 @@ impl Host {
         }
         Ok(())
     }
-    async fn rollout_step(&self, r: &RolloutView, step: &RolloutStep) -> Result<Option<String>, ErrorBody> {
+    async fn rollout_step(&self, r: &mut RolloutView, step: &RolloutStep) -> Result<Option<String>, ErrorBody> {
         let conn = self.live_conn(&step.machine)?;
         if !self.machine_feature(&step.machine, "rollout.v1") {
             return Err(err(ErrorCode::UnsupportedVersion, "agent rollout 기능이 사라졌다"));
@@ -392,6 +442,32 @@ impl Host {
             }
             result => result?,
         };
+        if r.recovery_enabled
+            && step.phase == RolloutPhase::Preflight
+            && let AgentResponse::Deployment {
+                job,
+                running_software,
+                running_sha256,
+                running_instance,
+                running_started_ms,
+            } = &response
+            && job.state == DeployState::Completed
+        {
+            if running_sha256.len() != 64
+                || running_instance.is_empty()
+                || *running_started_ms == 0
+                || !running_software.starts_with("aaa ")
+            {
+                return Err(internal("배포 전 실행 신원이 없다"));
+            }
+            let cursor = r.cursor as usize;
+            r.steps[cursor].baseline = Some(RuntimeIdentity {
+                sha256: running_sha256.clone(),
+                software: running_software.clone(),
+                instance: running_instance.clone(),
+                started_ms: *running_started_ms,
+            });
+        }
         assess(r, step, response, &self.rollout_instance, &self.running_sha256)
     }
     async fn transfer_candidate(&self, r: &mut RolloutView, cursor: usize) -> Result<Option<String>, ErrorBody> {
@@ -515,7 +591,7 @@ fn stage_receipt(r: &RolloutView, stage: &DeployStageView) -> Result<Option<Stri
 #[cfg(test)]
 mod tests {
     use super::*;
-    fn record() -> RolloutView {
+    pub(super) fn record() -> RolloutView {
         RolloutView {
             id: aaa_common::util::new_id(),
             project: "demo".into(),
@@ -533,6 +609,9 @@ mod tests {
             version: Some(env!("CARGO_PKG_VERSION").into()),
             error: None,
             finish: None,
+            recovery_enabled: false,
+            recovery: None,
+            recovery_started_ms: 0,
             created_ms: 0,
             updated_ms: 0,
         }
@@ -554,6 +633,7 @@ mod tests {
             running_software: aaa_common::util::software(),
             running_sha256: sha.into(),
             running_instance: instance.into(),
+            running_started_ms: 1,
         }
     }
     #[test]

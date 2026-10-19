@@ -4091,7 +4091,7 @@ coordinator 실기(10-18 00:58, iPhone 홈 화면 앱을 앞에 띄움, binary c
   - session host 내부 프로토콜은 이전 session host와 호환해야 한다. 세션은 몇 주 이어질 수 있다.
 - **DB·설정:** DB는 expand/contract로 바꾼다. 이전 프로세스가 남아 있는 동안 설정 migrate를 미룬다.
 - **롤백:** 이전 산출물을 보관한다(개수는 TOML). DB 백업을 복원하고 `aaa update rollback`을 실행한다. 서명이나 다운로드가 실패하면 fallback 설치를 하지 않는다.
-- **지금(10-19, §8.282):** 커밋 후보는 `scripts/deploy-build.sh`로 한 번 만든다(origin/main 조상·격리 worktree·웹·커밋 판·provenance). `aaa deploy start --file <빌드머신>:<후보폴더>/aaa --sha256 <SHA>`가 Agent link로 전체 전송/SHA/self-check를 끝낸 뒤 host → 로컬 agent → 원격 agent 순서로 교체·재시작·실행 판/SHA를 확인한다. 기존 --from 미리 복사 경로도 유지한다. 실패 머신 자동 rollback·host 감시는 L3이며 L2는 중단한다.
+- **지금(10-19, §8.289):** 커밋 후보는 `scripts/deploy-build.sh`로 한 번 만든다(origin/main 조상·격리 worktree·웹·커밋 판·provenance). `aaa deploy start --file <빌드머신>:<후보폴더>/aaa --sha256 <SHA>`가 Agent link로 전체 전송/SHA/self-check를 끝낸 뒤 host → 로컬 agent → 원격 agent 순서로 교체·재시작·실행 판/SHA를 확인한다. 기존 --from 미리 복사 경로도 유지한다. 실패한 머신만 배포 전 SHA로 자동 rollback하며 검증된 옛 실행 파일에서 띄운 독립 감시가 host·agent 재시작 뒤에도 복구를 진행한다. 복구 중에는 다음 머신으로 가지 않으며 앞 머신은 유지한다. 옛 L1/L2 기록은 기존 중단 정책으로 읽는다.
 - **공개판(§8.210):** 공개 GitHub release의 `manifest.json`·OS/arch 실행 파일을 받는 `aaa update [--version <판>]`와 기존 `--from`·보관·rollback을 쓴다. SHA-256·self-check·version 고정 검사 뒤 같은 폴더 rename이다. macOS는 기존과 같은 ad-hoc 서명이며 서명 manifest·host가 agent로 보내기·DB 백업은 아직 없다.
 
 ## 12. 기술 스택 추천
@@ -5612,3 +5612,12 @@ primary 근거:
   - 옛 binary로 되돌릴 수 있게 aaa는 aaa.toml을 만들지 않는다. project.toml도 지우지 않고, `project create`도 project.toml을 쓴다. 사람이 옮기면 그 뒤로는 aaa.toml만 읽는다.
 - **안내.** `COORDINATOR_GUIDE`의 post·safety·profile·mission post에서도 프로젝트를 뺐다. 남은 `{p}`는 `project pause|resume|sweep`뿐이다. 배포 뒤 coordinator가 `aaa doctor files --fix`로 받는다.
 - **검증.** [testing](testing.md)의 「요청의 프로젝트 생략·safety 표 하나·aaa.toml」을 따른다.
+
+### 8.289 실패 머신 rollback과 독립 복구 감시 L3(10-19, t-0426)
+
+- **계약.** FRONT_API1.51, AGENT_LINK1.8(N-1=1.7), macOS `rollout_recovery.v1`. 새 rollout은 모든 대상의 기능과 host/로컬 agent의 배포 전 실행 SHA·판 일치를 요구한다. 옛 기록은 recovery_enabled=false 기본값으로 기존 정책을 유지한다. 최초 L3 반영은 설치된 FRONT1.50 L2 CLI/원시 배포로 하고 다음 rollout부터 새 정책이다.
+- **독립 감시.** 변경 전에 host DB에 baseline SHA·판·instance·시작시각, install/restart/rollback ID를 고정한다. agent는 검증된 배포 전 바이너리를 private 사본으로 보존하고 그 이미지의 별도 프로세스를 띄운다. agent가 띄운 실제 PID에만 bootstrap 승인하며 제어는 현재 agent PID와 private incarnation token을 함께 확인한다. OS lease로 같은 guard 중복 실행을 막고 상태 commit 뒤 알림을 보낸다. host가 없어도 복구하며 일반 old 보관 개수와 복구 사본은 독립이다.
+- **설치·확인.** 설치는 복구와 공유하는 replacement OS lease → BeginInstall 내구 ACK → 기존 CheckedUpdate 순서다. 재시작은 Activate ACK 뒤 감독자를 호출한다. 감시는 새 SHA/판/instance와 활성화 뒤 시작한 프로세스를 확인하고, host는 완료를 DB에 먼저 기록한 뒤 Commit의 VerifiedNew 영수증을 확인해야 다음 단계로 간다. 기존120초 primary 한도는 그대로다.
+- **실패.** 잘못된 판·SHA·무응답·설치가 진행 중인 단계의 safety 철회는 실패 머신만 Restoring→Restarting→AwaitingOld로 간다. 진행 중 설치는 같은 lease로 끝난 뒤 baseline을 복구하므로 늦은 rename이 복구를 덮지 않는다. 설치 시작 전이나 lease 뒤 끝까지 파일이 unchanged였으면 재시작 없이 stopped다. Cancel 실제 응답이 복구이면 Recovering을 유지한다. 복구 SHA는 baseline과 정확히 같은 private 사본만 쓰고 실패 설치를 실행하지 않는다. 자동으로 다른 보관본을 추정하지 않는다.
+- **복구 판정.** 역할별 복구 restart 요청 뒤 새 프로세스의 baseline SHA/판/instance/시작시각을 확인한다. host 머신 agent 복구는 공유 실행 파일이므로 host와 agent 둘을 되돌려 확인한다. 성공은 stopped_rolled_back(배포 자체는 실패), 실패·모호한 실행·복구 확인 한도는 recovery_failed와 수동 확인이다. 복구 중에도 rollout busy이며 새 배포·다음 머신은 금지다. ID/실행 전 플래그로 답 유실 때 재실행하지 않고 같은 상태를 읽는다. 복구 단계별120초/전체360초는 primary 재시도가 아닌 복구 상한이다. DB/설정 rollback은 하지 않는다.
+- **검증.** guard 전이·deadline·동일ID는 unit, 실제 파일의 정확 SHA/실패 설치 무실행은 update owner, CLI/TLS·독립 프로세스·remote/host/로컬 agent 실패와 host 재시작·설치 중 승인 철회는 기존 m13 keeper가 소유한다. [시험](testing.md)과 [운영 절차](install-runbook.md)를 따른다. 웹 카드는 L4, 사람 터미널 시작·자동화 제안은 L5다.

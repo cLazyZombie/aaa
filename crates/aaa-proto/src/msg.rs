@@ -504,6 +504,8 @@ pub struct HostWelcome {
     pub host_id: String,
     #[serde(default)]
     pub features: Vec<String>,
+    #[serde(default)]
+    pub identity: Option<crate::RuntimeIdentity>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -569,6 +571,13 @@ pub enum AgentRequest {
     DeployStageClean {
         rollout: String,
         keep: bool,
+    },
+    DeployGuardArm {
+        spec: crate::DeployGuardSpec,
+    },
+    DeployGuardControl {
+        id: String,
+        control: crate::DeployGuardControl,
     },
     /// deployment.v1: host가 coordinator 출처와 safety를 확인한 요청만 보낸다.
     DeployStart {
@@ -837,6 +846,9 @@ pub struct PrAnswer {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum AgentResponse {
+    DeployGuard {
+        guard: Box<crate::DeployGuardView>,
+    },
     DeployChunk {
         offset: u64,
         data: B64,
@@ -852,6 +864,8 @@ pub enum AgentResponse {
         running_sha256: String,
         #[serde(default)]
         running_instance: String,
+        #[serde(default)]
+        running_started_ms: u64,
     },
     MissionInbox {
         pending: u32,
@@ -932,6 +946,9 @@ pub struct CommandRan {
 pub enum AgentEvent {
     DeploymentChanged {
         job: crate::DeployJob,
+    },
+    DeployGuardChanged {
+        id: String,
     },
     /// post.v1: hook 판정에서 거부한 글의 메타데이터(본문·token 없음).
     PostRejected {

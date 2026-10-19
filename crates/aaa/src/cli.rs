@@ -47,6 +47,12 @@ enum Cmd {
     Host,
     /// agent backend 실행, 또는 host에 등록(enroll)
     Agent(AgentArgs),
+    /// (내부) agent가 승인한 독립 복구 감시. 직접 실행 경로/명령은 받지 않는다.
+    #[command(hide = true)]
+    DeploymentGuard {
+        #[arg(long)]
+        id: String,
+    },
     /// (내부) 세션 하나의 PTY를 소유하는 프로세스
     #[command(hide = true)]
     SessionHost {
@@ -1421,6 +1427,11 @@ fn run(cli: Cli) -> Result<ExitCode> {
             aaa_common::resource::raise_nofile_limit("agent");
             legacy_guard()?;
             agent_cmd(a)
+        }
+        Cmd::DeploymentGuard { id } => {
+            init_log("info");
+            runtime()?.block_on(aaa_agent::deployment_guard(&id, crate::deployment::execute_recovery))?;
+            Ok(ExitCode::SUCCESS)
         }
         Cmd::SessionHost { dir } => {
             init_log("info");
