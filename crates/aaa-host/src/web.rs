@@ -1260,7 +1260,7 @@ async fn pane_session(
     let started = std::time::Instant::now();
     let now = || started.elapsed().as_millis() as u64;
     let mut streams = 0;
-    if !out.msg(&TermServerMsg::Front { id: front.id.clone() }) {
+    if !out.msg(&TermServerMsg::Front { id: front.id.clone(), steer_queued: true }) {
         return;
     }
     let Some(mut window) = open_stream(&out, &mut streams, &mut attach, view.readonly, now()) else { return };
@@ -1433,6 +1433,17 @@ async fn pane_session(
                             }
                             None
                         }
+                        // 대기 메시지 「지금 보내기」(plan §8.271): 키만 보내고 답한다. submit 중이면 이 frame은 그 뒤(Enter 뒤)에 온다
+                        Ok(TermClientMsg::SteerQueued { id: sid, trace }) => {
+                            let trace = trace.filter(|t| crate::input_log::valid_trace(t)).unwrap_or_else(aaa_common::util::new_id);
+                            let trace = format!("{}:{trace}", front.id);
+                            host.touch_device(dev, "입력");
+                            let reply = steer_queued(host, role, &actor, front, &id, sid, &trace).await;
+                            if !out.msg(&reply) {
+                                break 'conn;
+                            }
+                            None
+                        }
                         // 진행 중인 submit이 없을 때의 멈춤: 이미 끝났다
                         Ok(TermClientMsg::SubmitCancel { id: cid }) => {
                             if !out.msg(&TermServerMsg::SubmitCancelled { id: cid, stage: SubmitStage::TooLate }) {
@@ -1504,6 +1515,49 @@ async fn pane_session(
                     break;
                 }
             }
+        }
+    }
+}
+
+/// 대기 메시지 「지금 보내기」 하나(plan §8.271). host 판정(`steer_queued_data`)이 고른 키를 바로 그 뒤에 쓴다: 판정과 쓰기 사이에
+/// 다른 기다림이 없어 Codex Esc는 패널을 확인한 같은 mirror 상태에서 나간다(남는 틈은 agent까지 가는 길뿐이다).
+/// 보기 권한은 판정 전에 거절한다. 보냄·거절·실패를 모두 입력 사건으로 남긴다(`steer_queued` 판정, `steer_sent`·`steer_failed`)
+async fn steer_queued(
+    host: &Arc<Host>,
+    role: DeviceRole,
+    actor: &str,
+    front: &FrontRef,
+    pane: &str,
+    sid: u32,
+    trace: &str,
+) -> TermServerMsg {
+    use aaa_proto::SteerRefusal;
+    let refused = |reason: SteerRefusal, message: Option<String>| TermServerMsg::SteerQueued {
+        id: sid,
+        sent: false,
+        reason: Some(reason),
+        message,
+    };
+    if !role.can_control() {
+        host.input_event(pane, trace, "steer_queued", "reason=Failed role=readonly");
+        return refused(SteerRefusal::Failed, Some("보기 권한 기기는 입력할 수 없다".into()));
+    }
+    let data = match host.steer_queued_data(pane, trace) {
+        Ok(data) => data,
+        Err(reason) => return refused(reason, None),
+    };
+    let sent = host
+        .call_from(role, actor, Some(front), FrontRequest::PaneInput { pane: pane.to_string(), data: B64(data) })
+        .await;
+    host.db.audit(actor, "web_steer_queued", &format!("pane={pane} front={} ok={}", front.id, sent.is_ok()));
+    match sent {
+        Ok(_) => {
+            host.input_event(pane, trace, "steer_sent", "agent_ack=true");
+            TermServerMsg::SteerQueued { id: sid, sent: true, reason: None, message: None }
+        }
+        Err(e) => {
+            host.input_event(pane, trace, "steer_failed", &format!("code={:?}", e.code));
+            refused(SteerRefusal::Failed, Some(e.message))
         }
     }
 }

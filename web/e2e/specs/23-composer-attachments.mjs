@@ -397,6 +397,204 @@ while True:
     aaa("pane", "kill", pane);
   });
 
+  // 대기 메시지 「지금 보내기」(plan §8.271)의 가짜 harness. 받은 bytes를 기록하고 머리 줄에 받은 수·대기 수·보낸 수를 그린다.
+  // Claude: 작업 중 Enter 글은 대기열(기록에 enqueue)이고 대기 글 아래 `ctrl+x ctrl+s to send now`(dim)를 그린다(실측 2.1.303).
+  //   빈 입력의 Ctrl+X Ctrl+S는 대기열 전부를 지금 보낸다(remove + queued_command). Ctrl+U는 입력을 비운다.
+  // Codex: 작업 중 Enter 글은 대기 steering 패널(↳)에 둔다. `-hidden` 표지가 있으면 패널 없이 받은 것으로 둔다(실측 0.163은
+  //   작업 중 글을 거의 바로 넘긴다). 빈 입력의 Esc는 패널의 글을 모두 rollout에 적는다
+  const steerProgram = String.raw`
+import fs from 'node:fs';
+import { spawnSync } from 'node:child_process';
+const separator = process.argv.indexOf('--', 2);
+const [kind, aa, record, session, file] = process.argv.slice(separator + 1);
+spawnSync(aa, ['hook', '--agent', kind, JSON.stringify({ hook_event_name: 'SessionStart', session_id: session, source: 'startup', transcript_path: record })], { stdio: 'ignore' });
+fs.writeFileSync(file, '');
+let draft = '', queue = [], count = 0, steered = 0, ctrlX = false;
+const write = (line) => fs.appendFileSync(record, JSON.stringify(line) + '\n');
+const said = (text) => kind === 'codex'
+  ? write({ type: 'response_item', payload: { type: 'message', role: 'user', content: [{ type: 'input_text', text }] } })
+  : write({ type: 'attachment', attachment: { type: 'queued_command', commandMode: 'prompt', origin: { kind: 'human' }, prompt: text } });
+function draw() {
+  let s = 'received ' + count + ' queued ' + queue.length + ' steered ' + steered + '\r\n';
+  if (kind === 'codex') {
+    s += '• Working (2s • esc to interrupt)\r\n';
+    if (queue.length) s += '• Messages to be submitted after next tool call (press esc to interrupt and send immediately)\r\n' + queue.map((q) => '  ↳ ' + q + '\r\n').join('');
+    const row = 3 + (queue.length ? 1 + queue.length : 0);
+    s += '› ' + draft + '\r\n\r\n  GPT-6.1 low · /workspace\r\n  ? for shortcuts\r\n\x1b[' + row + ';' + (3 + draft.length) + 'H';
+  } else {
+    for (const q of queue) s += '❯ ' + q + '\r\n  \x1b[2mctrl+x ctrl+s to send now\x1b[0m\r\n';
+    s += '✻ Working… (1s · esc to interrupt)\r\n\r\n────────────────────────\r\n❯ ' + (draft || (queue.length ? '\x1b[2mPress up to edit queued messages\x1b[0m' : '')) + '\r\n────────────────────────\r\n  ? for shortcuts\r\n';
+  }
+  process.stdout.write('\x1b[2J\x1b[H' + s);
+}
+function sendNow() {
+  if (draft !== '' || queue.length === 0) return;
+  for (const q of queue) {
+    if (kind === 'claude') write({ type: 'queue-operation', operation: 'remove', content: q, reason: 'absorbed_mid_turn' });
+    said(q);
+  }
+  queue = []; steered++;
+}
+process.stdin.setRawMode(true);
+process.stdin.on('data', (data) => {
+  fs.appendFileSync(file, data); count += data.length;
+  const text = data.toString().replaceAll('\x1b[200~', '').replaceAll('\x1b[201~', '');
+  if (text === '\x1b') { if (kind === 'codex') sendNow(); draw(); return; }
+  for (const ch of text) {
+    if (ch === '\x18') { ctrlX = true; continue; }
+    if (ch === '\x13' && ctrlX && kind === 'claude') sendNow();
+    else if (ch === '\x15') draft = '';
+    else if (ch === '\r') {
+      if (draft === '') continue;
+      if (kind === 'claude') write({ type: 'queue-operation', operation: 'enqueue', content: draft });
+      if (!fs.existsSync(file + '-hidden')) queue.push(draft);
+      draft = '';
+    } else if (ch >= ' ') draft += ch;
+    ctrlX = false;
+  }
+  draw();
+});
+draw();
+`;
+  const steerPane = async (kind, label, record, session) => {
+    const dir = `${root}/steer-${kind}`;
+    fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(`${dir}/${kind}`, `#!${process.execPath}\n${steerProgram}`, { mode: 0o755 });
+    aaa("tab", "create", "--machine", "labA", "--label", label, "--cwd", project, "--", `${dir}/${kind}`, "--", kind, AA, record, session, `${dir}/bytes`);
+    await waitOutput(label, "received 0 queued 0");
+    return { bytes: () => fs.readFileSync(`${dir}/bytes`), hide: (on) => on ? fs.writeFileSync(`${dir}/bytes-hidden`, "") : fs.unlinkSync(`${dir}/bytes-hidden`) };
+  };
+  const steerButtons = (p) => p.evaluate(() => {
+    const buttons = [...document.querySelectorAll('[data-testid="chat-pending-steer"]')];
+    const pending = [...document.querySelectorAll(".chat-turn-user")].filter((t) => t.querySelector(".chat-msg.user.is-pending"));
+    return { count: buttons.length, onLast: buttons.length === 1 && pending.at(-1)?.contains(buttons[0]), label: buttons[0]?.textContent ?? null, phase: buttons[0]?.dataset.phase ?? null, pending: pending.length };
+  });
+  const noteText = (p) => p.evaluate(() => document.querySelector('[data-testid="chat-pending-note"]')?.textContent ?? null);
+
+  await step("대기 메시지 「지금 보내기」(Claude): 대기 말 맨 끝에 단추 하나(N개), 터미널에 쓰던 글이 있으면 보내지 않고 까닭, 누르면 글을 다시 보내지 않고 sendNow 키만 보내 대기 말이 보통 말이 된다, 옛 host는 단추 없음, 입력 진단에 판정·보냄", async () => {
+    const record = `${root}/claude/projects/-lab-steer/steer.jsonl`;
+    fs.mkdirSync(`${root}/claude/projects/-lab-steer`, { recursive: true });
+    fs.writeFileSync(record, chatLine("스티어 첫 요청"));
+    const fake = await steerPane("claude", "steer-claude", record, "steer-claude");
+    const client = await pairPage(browser, aaa("web", "pair").code, { width: 1280, height: 800 });
+    const p = client.page;
+    await p.getByTestId("agent-steer-claude").and(p.locator('[data-status="working"]')).waitFor({ state: "attached" });
+    const box = await openChat(p, "steer-claude");
+    await domIs(p, "Claude 기록", () => [...document.querySelectorAll('[data-role="user"]')].some((el) => el.textContent.trim() === "스티어 첫 요청"));
+    for (const [i, text] of ["먼저 높이부터", "그리고 다크 테마도"].entries()) {
+      await box.fill(text);
+      await press(p);
+      await waitOutput("steer-claude", `queued ${i + 1}`);
+      await domIs(p, "대기 말과 입력창 풀림", ([n]) => document.querySelectorAll(".chat-msg.user.is-pending").length === n && !document.querySelector('[aria-label="메시지"]').readOnly, [i + 1]);
+    }
+    // 키가 대기열 전부를 보내므로 단추는 맨 끝 말 하나다
+    await domIs(p, "단추 하나", () => document.querySelectorAll('[data-testid="chat-pending-steer"]').length === 1);
+    assert.deepEqual(await steerButtons(p), { count: 1, onLast: true, label: "2개 지금 보내기", phase: "idle", pending: 2 });
+    await shot(p, "steer-queued-claude");
+    // 휴대폰: 손가락 크기 단추
+    const phone = await pairPage(browser, aaa("web", "pair").code, { width: 390, height: 844 }, { touch: true });
+    await openChat(phone.page, "steer-claude");
+    await domIs(phone.page, "휴대폰 단추", () => document.querySelector('[data-testid="chat-pending-steer"]')?.getBoundingClientRect().height >= 32);
+    await shot(phone.page, "steer-queued-claude-phone");
+    await phone.page.context().close();
+
+    // 터미널 입력창에 쓰던 글: sendNow가 그 글까지 보내므로 host가 거절하고 까닭을 답한다. 답은 쓰기 뒤에 오므로 답이 온 뒤 bytes가 그대로면 보내지 않았다
+    aaa("pane", "send-text", "steer-claude", "쓰던");
+    await waitOutput("steer-claude", "❯ 쓰던");
+    let before = fake.bytes().length;
+    await p.getByTestId("chat-pending-steer").click();
+    await domIs(p, "거절 까닭", () => document.querySelector('[data-testid="chat-pending-note"]')?.textContent.includes("터미널 입력창에 쓰던 글")
+      && document.querySelector('[data-testid="chat-pending-steer"]')?.dataset.phase === "failed" && !document.querySelector('[data-testid="chat-pending-steer"]').disabled);
+    assert.equal(fake.bytes().length, before, "거절했는데 키를 보냈다");
+    await shot(p, "steer-refused-draft");
+    aaa("pane", "send-keys", "steer-claude", "ctrl+u");
+    await waitOutput("steer-claude", "Press up to edit queued messages");
+
+    // 옛 host(front에 steer_queued가 없음): 대기 말은 그대로, 단추는 없다
+    const old = await pairPage(browser, aaa("web", "pair").code, { width: 1280, height: 800 }, {
+      wsRoute: [/\/api\/v1\/panes\/[^/]+\/ws/, (socket) => {
+        const server = socket.connectToServer();
+        server.onMessage((raw) => {
+          if (typeof raw === "string" && raw.includes('"t":"front"')) {
+            const m = JSON.parse(raw);
+            delete m.steer_queued;
+            socket.send(JSON.stringify(m));
+          } else socket.send(raw);
+        });
+        socket.onMessage((raw) => server.send(raw));
+      }],
+    });
+    await openChat(old.page, "steer-claude");
+    await domIs(old.page, "옛 host 대기 말", () => document.querySelectorAll(".chat-msg.user.is-pending").length === 2 && document.querySelector('[data-testid="chat-composer"]'));
+    if (await old.page.getByTestId("chat-pending-steer").count() !== 0) throw new Error("옛 host에 단추가 있다");
+    await old.page.context().close();
+
+    // 누름: 글을 다시 보내지 않고 sendNow(Ctrl+X Ctrl+S)만. 대기열 전부가 흡수되어 보통 말이 된다
+    before = fake.bytes().length;
+    await p.getByTestId("chat-pending-steer").click();
+    await waitOutput("steer-claude", "steered 1");
+    assert.equal(fake.bytes().subarray(before).toString(), "\x18\x13");
+    await domIs(p, "흡수 뒤 보통 말", () => !document.querySelector('[data-testid="chat-pending"]') && !document.querySelector('[data-testid="chat-pending-steer"]')
+      && !document.querySelector('[data-testid="chat-pending-note"]')
+      && ["먼저 높이부터", "그리고 다크 테마도"].every((t) => [...document.querySelectorAll('[data-role="user"]')].filter((el) => el.textContent.trim() === t).length === 1));
+    await shot(p, "steer-sent-claude");
+    const events = aaa("debug", "input", "--pane", "steer-claude", "--since", "1h").events;
+    if (!events.some((e) => e.event === "steer_queued" && e.detail.includes("reason=Some(Draft)"))) throw new Error("거절 판정 진단 없음");
+    const sent = events.find((e) => e.event === "steer_queued" && e.detail.includes('keys=["ctrl+x", "ctrl+s"]') && e.detail.includes("queue_hint=true"));
+    if (!sent || !events.some((e) => e.id === sent.id && e.event === "steer_sent")) throw new Error("보냄 판정·전달 진단이 같은 ID로 없다");
+    if (JSON.stringify(events).includes("먼저 높이부터")) throw new Error("진단에 사용자 글이 남았다");
+    if (client.errors.length) throw new Error(client.errors.join("; "));
+    await p.context().close();
+    aaa("pane", "kill", "steer-claude");
+  });
+
+  await step("대기 메시지 「지금 보내기」(Codex): 대기 steering 패널이 있으면 Esc만 보내 rollout에 오르고, 패널 없이 넘어간 글은 보내지 않고 까닭(이미 읽었을 수 있음)", async () => {
+    const thread = "00000000-0000-7000-8000-000000000417";
+    const rollout = `${root}/codex/sessions/2026/10/19/rollout-2026-10-19T00-00-01-${thread}.jsonl`;
+    fs.mkdirSync(`${root}/codex/sessions/2026/10/19`, { recursive: true });
+    fs.writeFileSync(rollout, JSON.stringify({ type: "response_item", payload: { type: "message", role: "user", content: [{ type: "input_text", text: "코덱스 스티어 첫 요청" }] } }) + "\n");
+    const fake = await steerPane("codex", "steer-codex", rollout, thread);
+    const client = await pairPage(browser, aaa("web", "pair").code, { width: 1280, height: 800 });
+    const p = client.page;
+    await p.getByTestId("agent-steer-codex").and(p.locator('[data-status="working"]')).waitFor({ state: "attached" });
+    const box = await openChat(p, "steer-codex");
+    await domIs(p, "Codex 기록", () => [...document.querySelectorAll('[data-role="user"]')].some((el) => el.textContent.trim() === "코덱스 스티어 첫 요청"));
+    await box.fill("코덱스 방향 바꿔");
+    await press(p);
+    await waitOutput("steer-codex", "↳ 코덱스 방향 바꿔");
+    await domIs(p, "Codex 단추", () => document.querySelector('[data-testid="chat-pending-steer"]')?.textContent === "지금 보내기");
+    await shot(p, "steer-queued-codex");
+    let before = fake.bytes().length;
+    await p.getByTestId("chat-pending-steer").click();
+    await waitOutput("steer-codex", "steered 1");
+    assert.equal(fake.bytes().subarray(before).toString(), "\x1b");
+    await domIs(p, "Codex 흡수 뒤 보통 말", () => !document.querySelector('[data-testid="chat-pending"]')
+      && [...document.querySelectorAll('[data-role="user"]')].some((el) => el.textContent.trim() === "코덱스 방향 바꿔"));
+
+    // 패널 없이 넘어간 글(실측 0.163): Esc는 그냥 중단이라 보내지 않는다
+    fake.hide(true);
+    await box.fill("이미 넘어간 글");
+    await press(p);
+    await waitOutput("steer-codex", "received");
+    await domIs(p, "숨은 대기 말 단추", () => [...document.querySelectorAll(".chat-msg.user.is-pending")].some((el) => el.textContent.trim() === "이미 넘어간 글")
+      && document.querySelector('[data-testid="chat-pending-steer"]'));
+    before = fake.bytes().length;
+    await p.getByTestId("chat-pending-steer").click();
+    await domIs(p, "패널 없음 까닭", () => document.querySelector('[data-testid="chat-pending-note"]')?.textContent.includes("Codex 화면에 대기 글이 보이지 않습니다"));
+    assert.equal(fake.bytes().length, before, "패널이 없는데 Esc를 보냈다");
+    await shot(p, "steer-refused-codex");
+    // Codex가 기록하면 대기 말과 까닭 줄이 함께 사라진다
+    fs.appendFileSync(rollout, JSON.stringify({ type: "response_item", payload: { type: "message", role: "user", content: [{ type: "input_text", text: "이미 넘어간 글" }] } }) + "\n");
+    await domIs(p, "흡수 뒤 까닭 줄 없음", () => !document.querySelector('[data-testid="chat-pending"]') && !document.querySelector('[data-testid="chat-pending-note"]'));
+    fake.hide(false);
+    const events = aaa("debug", "input", "--pane", "steer-codex", "--since", "1h").events;
+    if (!events.some((e) => e.event === "steer_queued" && e.detail.includes("reason=Some(NoQueue)"))) throw new Error("패널 없음 판정 진단 없음");
+    if (!events.some((e) => e.event === "steer_queued" && e.detail.includes('keys=["esc"]'))) throw new Error("Esc 판정 진단 없음");
+    if (client.errors.length) throw new Error(client.errors.join("; "));
+    await p.context().close();
+    aaa("pane", "kill", "steer-codex");
+  });
+
   await step("대화 이미지: Chrome·Safari·iPhone·iPad의 붙여넣기·드롭·파일 선택은 uploads에 저장하고 보내기로 coordinator가 읽는다", async () => {
     const png = fs.readFileSync(`${root}/pic.png`);
     const digest = crypto.createHash("sha256").update(png).digest("hex");

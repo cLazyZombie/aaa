@@ -15,6 +15,7 @@ import { ChatPanel } from "./Chat";
 import { inputTraceId } from "./inputReceipt";
 import { ChatComposer, type PendingSend } from "./ChatComposer";
 import { paneAgentStatus } from "./sidebarModel";
+import { refusalText, steerAvailability, steerSettled, STEER_IDLE, STEER_SLOW_MS, type SteerState } from "./steerQueued";
 import { onThemeChange, token } from "./theme";
 import { matchCompositionView } from "./compositionView";
 import { adjustTerminalGlyphs } from "./herdr/terminalGlyphs.ts";
@@ -200,6 +201,16 @@ export function TermView({
   const [chatMessages, setChatMessages] = useState<ChatMessage[] | null>(null);
   // 작업 중에 보내 harness 대기열에 들어간 글(대화 보기 끝의 대기 말). 터미널 보기로 갔다 와도 남게 이 pane 화면이 갖는다
   const [pendingSends, setPendingSends] = useState<PendingSend[]>([]);
+  // 대기 메시지 「지금 보내기」(plan §8.271): host가 안다고 알렸나(front.steer_queued, 1.45), 단추 상태, 대화 입력창이 보내는 중인가
+  const [steerKnown, setSteerKnown] = useState(false);
+  const [steer, setSteer] = useState<SteerState>(STEER_IDLE);
+  const [composerBusy, setComposerBusy] = useState(false);
+  // 대기 말 수(기록의 Claude 대기열 + 이 화면이 붙든 것, 기록에 없는 것 빼고): 보낸 뒤 줄면 끼워 넣어진 것이다
+  const pendingCount = (chatMessages?.filter((m) => m.pending).length ?? 0) + pendingSends.filter((p) => !p.stale).length;
+  const pendingCountRef = useRef(pendingCount);
+  pendingCountRef.current = pendingCount;
+  const agentNameRef = useRef("Claude");
+  agentNameRef.current = pane.agent?.harness === "codex" ? "Codex" : "Claude";
   const setChatView = (chat: boolean) => {
     const lens = chat ? "chat" : "terminal";
     rememberLens(lensKey, lens);
@@ -324,6 +335,9 @@ export function TermView({
   /** 멈춤 요청의 답(submit id → 단계, null은 답이 오지 않음) */
   const cancelsRef = useRef(new Map<number, (stage: SubmitStage | null) => void>());
   const submitIdRef = useRef(0);
+  /** 「지금 보내기」 답을 기다리는 것(id → 보낸 연결). 연결이 닫히면 확인 못 함이다 */
+  const steersRef = useRef(new Map<number, WebSocket>());
+  const steerIdRef = useRef(0);
   /** 올리는 중인 파일의 결과(attached·error·끊김)를 기다리는 것 */
   const attachWaitRef = useRef<(() => void) | null>(null);
   const attachDone = () => {
@@ -488,6 +502,34 @@ export function TermView({
     ws.send(JSON.stringify({ t: "ctrl_enter", trace: traceId } satisfies TermClientMsg));
     return true;
   };
+
+  // 대기 메시지 「지금 보내기」(plan §8.271): 글은 다시 보내지 않고 host에 키 판정을 청한다. 답(steer_queued)이 결과다
+  const pressSteer = () => {
+    const ws = wsRef.current;
+    if (!canControlRef.current || readonlyRef.current) return;
+    if (!ws || ws.readyState !== WebSocket.OPEN) {
+      setSteer({ phase: "failed", text: "연결되지 않아 보내지 않았습니다", inspect: false });
+      return;
+    }
+    const id = ++steerIdRef.current;
+    steersRef.current.set(id, ws);
+    setSteer({ phase: "sending", id });
+    ws.send(JSON.stringify({ t: "steer_queued", id, trace: inputTraceId() } satisfies TermClientMsg));
+  };
+  // 보낸 뒤: 대기 말이 줄면 끝, 10초 줄지 않으면 알린다. 대기 말이 모두 없어지면 지난 실패 줄도 지운다(다음 대기 말에 남지 않게)
+  useEffect(() => {
+    if (steer.phase === "sent") {
+      const settled = steerSettled(steer, pendingCount, Date.now());
+      if (settled !== steer) {
+        setSteer(settled);
+        return;
+      }
+      const timer = window.setTimeout(() => setSteer((s) => steerSettled(s, pendingCountRef.current, Date.now())), Math.max(0, steer.at + STEER_SLOW_MS - Date.now()));
+      return () => window.clearTimeout(timer);
+    }
+    if (steer.phase === "failed" && pendingCount === 0) setSteer(STEER_IDLE);
+  }, [steer, pendingCount]);
+  const steerOpen = steerKnown && canControl && !readonly ? steerAvailability(paneAgentStatus(pane), composerBusy) : "hidden";
 
   useEffect(() => {
     // 모든 기기가 설정한 크기(기본 13px)로 연다. 좁은 화면만 11px로 줄이던 것은 없앴다(herdr-web-ui와 같다)
@@ -1360,6 +1402,8 @@ export function TermView({
             break;
           case "front":
             setMe(msg.id);
+            // 옛 host(1.44 이하)는 이 칸이 없다: 단추를 숨긴다
+            setSteerKnown(msg.steer_queued === true);
             break;
           case "state":
             setLease(msg.pane.lease);
@@ -1388,6 +1432,16 @@ export function TermView({
             const waiting = submitsRef.current.get(msg.id);
             submitsRef.current.delete(msg.id);
             waiting?.done(msg.ok ? true : `보내지 못했다: ${msg.message ?? "pane이 받지 않았다"}`);
+            break;
+          }
+          case "steer_queued": {
+            if (!steersRef.current.delete(msg.id)) break;
+            const next: SteerState = msg.sent
+              ? { phase: "sent", at: Date.now(), before: pendingCountRef.current }
+              : { phase: "failed", ...refusalText(msg.reason, msg.message, agentNameRef.current) };
+            setSteer((s) => (s.phase === "sending" && s.id === msg.id ? next : s));
+            // 키가 들어갔다: 대화를 바로 다시 읽어 대기 말이 빠졌는지 본다
+            if (msg.sent) setChatSent((n) => n + 1);
             break;
           }
           case "submit_cancelled": {
@@ -1419,6 +1473,12 @@ export function TermView({
           cancelsRef.current.delete(id);
           answer(null);
         }
+        // 「지금 보내기」 답도 오지 않는다: 보냈는지 모른다
+        for (const [id, sent] of steersRef.current)
+          if (sent === ws) {
+            steersRef.current.delete(id);
+            setSteer((s) => (s.phase === "sending" && s.id === id ? { phase: "failed", ...refusalText(null, null, agentNameRef.current) } : s));
+          }
         readonlyRef.current = true;
         setReadonly(true);
         setLink("closed");
@@ -1999,7 +2059,8 @@ export function TermView({
       </header>
       {flowNotices && notices}
       {chatView && chatable && <ChatPanel pane={pane.id} status={paneAgentStatus(pane)} readNow={chatSent} onOpenFile={onOpenFile} onMessages={setChatMessages}
-        pending={pendingSends} harness={pane.agent?.harness === "codex" ? "codex" : "claude"} onDismissPending={(id) => setPendingSends((list) => list.filter((p) => p.id !== id))} />}
+        pending={pendingSends} harness={pane.agent?.harness === "codex" ? "codex" : "claude"} onDismissPending={(id) => setPendingSends((list) => list.filter((p) => p.id !== id))}
+        steer={steerOpen === "hidden" ? undefined : { state: steer, ...steerOpen, onSteer: pressSteer, onInspect: () => setChatView(false) }} />}
       {/* data-direct-typing: 바로 입력이면 xterm 칸도 화면 키보드를 올린다(herdr/viewport.ts가 본다) */}
       {/* 띠(끊김·권한·오류·그림·보기만·붙잡은 입력·보내지 못함·복사)는 터미널 위 오른쪽에 뜬다: 흐름에 넣으면 칸이 줄어 PTY 크기가 바뀐다(PaneTerminal.css .terminal-banners) */}
       <div className="term-stack" ref={stackRef} hidden={chatView && chatable}>
@@ -2145,6 +2206,7 @@ export function TermView({
           onCtrlEnter={() => pressCtrlEnter(true)}
           onCancelSend={cancelSubmit}
           onSent={() => setChatSent((n) => n + 1)}
+          onBusy={setComposerBusy}
         />
       )}
       {canControl && !stopped && !(chatView && chatable) && (

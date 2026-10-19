@@ -421,18 +421,24 @@ export type FrontEvent = { "ev": "state", machines: Array<MachineView>, panes: A
 
 export type SubmitStage = "not_sent" | "no_enter" | "too_late";
 
+export type SteerRefusal = "not_working" | "question" | "draft" | "no_queue" | "unknown_screen" | "unsupported" | "failed";
+
 export type TermServerMsg = { "t": "snapshot", replay: B64, cols: number, rows: number, readonly: boolean, stream: number,
 /**
  * replay에 싣지 않은 앞 기록이 host에 더 있다: 위로 굴려 끝에 닿으면 `History`로 받아 온다(plan §8.67)
  */
-history_more: boolean, } | { "t": "history", id: number, data: B64, lines: number, more: boolean, found: boolean, } | { "t": "readonly", readonly: boolean, reason: string | null, } | { "t": "state", pane: PaneView, } | { "t": "front", id: string, } | { "t": "attached", path: string, inserted: boolean, note: string | null, } | { "t": "submitted", id: number, ok: boolean, message: string | null, } | { "t": "submit_cancelled", id: number, stage: SubmitStage, } | { "t": "error" } & ErrorBody;
+history_more: boolean, } | { "t": "history", id: number, data: B64, lines: number, more: boolean, found: boolean, } | { "t": "readonly", readonly: boolean, reason: string | null, } | { "t": "state", pane: PaneView, } | { "t": "front", id: string,
+/**
+ * 대기 메시지 「지금 보내기」(`SteerQueued`)를 안다(1.45). 옛 host는 이 칸이 없어 웹이 단추를 숨긴다
+ */
+steer_queued: boolean, } | { "t": "attached", path: string, inserted: boolean, note: string | null, } | { "t": "submitted", id: number, ok: boolean, message: string | null, } | { "t": "submit_cancelled", id: number, stage: SubmitStage, } | { "t": "steer_queued", id: number, sent: boolean, reason: SteerRefusal | null, message: string | null, } | { "t": "error" } & ErrorBody;
 
 export type TermClientMsg = { "t": "input", data: string, } | { "t": "ctrl_enter", trace: string | null, } | { "t": "resize", cols: number, rows: number, } | { "t": "take" } | { "t": "release" } | { "t": "submit", id: number, data: string, trace: string | null, meta: InputSubmitMeta,
 /**
  * 입력창의 Ctrl+Enter(사용자 10-19 15:3x, plan §8.239 후속): 글 뒤 Enter 대신 host가 steering 키를 고른다(작업 중인 Claude는
  * sendNow, 그 밖은 Enter). 옛 host는 이 칸을 버려 보통 보내기가 된다
  */
-steer: boolean, } | { "t": "input_trace", id: string, event: InputTraceEvent, method: InputReceiptMethod | null, } | { "t": "submit_cancel", id: number, } | { "t": "history", id: number, anchor: Array<string>, depth: number, } | { "t": "ack", stream: number, offset: number, } | { "t": "attach", offset: number, total: number, sha256: string, data: B64, } | { "t": "colors", fg: string, bg: string, };
+steer: boolean, } | { "t": "input_trace", id: string, event: InputTraceEvent, method: InputReceiptMethod | null, } | { "t": "steer_queued", id: number, trace: string | null, } | { "t": "submit_cancel", id: number, } | { "t": "history", id: number, anchor: Array<string>, depth: number, } | { "t": "ack", stream: number, offset: number, } | { "t": "attach", offset: number, total: number, sha256: string, data: B64, } | { "t": "colors", fg: string, bg: string, };
 
 export type EventsClientMsg = { "t": "presence", active: boolean,
 /**

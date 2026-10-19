@@ -94,6 +94,7 @@ pub fn typescript_bindings() -> String {
         FrontResponse::decl(&cfg),
         FrontEvent::decl(&cfg),
         SubmitStage::decl(&cfg),
+        SteerRefusal::decl(&cfg),
         TermServerMsg::decl(&cfg),
         TermClientMsg::decl(&cfg),
         EventsClientMsg::decl(&cfg),

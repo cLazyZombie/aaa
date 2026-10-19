@@ -208,6 +208,75 @@ draw();
     await shot(page, "ctrl-enter-chat-desktop");
     await page.getByTestId("chat-toggle").click();
   });
+  await step("대기 메시지 「지금 보내기」 host 판정(plan §8.271): 글을 다시 보내지 않고 작업 중 빈 입력의 대기 표지(Claude `to send now` 줄, Codex steering 패널) 위에서만 키를 쓰고, 그 밖은 쓰지 않고 까닭을 답한다. 보기 기기는 보내지 못한다", async () => {
+    // pane WebSocket을 가로채 steer_queued frame을 넣고 답을 받는다(단추 화면은 spec 23). 연결은 주소의 pane id로 찾는다
+    const ids = Object.fromEntries(aaa("pane", "list").panes.map((p) => [p.name, p.id]));
+    const conns = new Map();
+    const waiting = new Map();
+    const wsRoute = [/\/api\/v1\/panes\/[^/]+\/ws/, (socket) => {
+      const pane = decodeURIComponent(new URL(socket.url()).pathname.split("/")[4]);
+      const server = socket.connectToServer();
+      const conn = { server, replies: new Map() };
+      server.onMessage((raw) => {
+        if (typeof raw === "string") {
+          const m = JSON.parse(raw);
+          if (m.t === "front") {
+            conns.set(pane, conn);
+            waiting.get(pane)?.(conn);
+          }
+          if (m.t === "steer_queued") conn.replies.get(m.id)?.(m);
+        }
+        socket.send(raw);
+      });
+      socket.onMessage((raw) => server.send(raw));
+    }];
+    const connOf = (name) => conns.get(ids[name]) ?? new Promise((resolve) => waiting.set(ids[name], resolve));
+    let next = 900;
+    const steerFrame = async (name) => {
+      const conn = await connOf(name);
+      const id = next++;
+      const reply = new Promise((resolve) => conn.replies.set(id, resolve));
+      conn.server.send(JSON.stringify({ t: "steer_queued", id, trace: `e2e-steer-${id}` }));
+      return reply;
+    };
+    const client = await pairPage(browser, aaa("web", "pair").code, { width: 1100, height: 760 }, { wsRoute });
+    const p = client.page;
+    for (const [name, expected] of [
+      ["ce-modern", { keys: "\x18\x13" }], ["ce-text", { reason: "draft" }], ["ce-grey", { reason: "no_queue" }],
+      ["ce-idle", { reason: "not_working" }], ["ce-unknown", { reason: "unknown_screen" }],
+      ["ce-codex", { keys: "\x1b" }], ["ce-codex-typed", { reason: "draft" }], ["ce-codex-idle", { reason: "not_working" }],
+      ["ce-codex-away", { reason: "unknown_screen" }],
+    ]) {
+      await open(p, name);
+      let reply;
+      if (expected.keys) await expectKey(p, name, async () => { reply = await steerFrame(name); }, expected.keys);
+      else await expectNothing(p, name, async () => { reply = await steerFrame(name); });
+      assert.deepEqual({ sent: reply.sent, reason: reply.reason ?? null }, { sent: !!expected.keys, reason: expected.reason ?? null }, name);
+    }
+    const events = aaa("debug", "input", "--since", "1h").events;
+    for (const reason of ["Draft", "NoQueue", "NotWorking", "UnknownScreen"]) {
+      if (!events.some((e) => e.event === "steer_queued" && e.detail.includes(`reason=Some(${reason})`))) throw new Error(`판정 진단 누락: ${reason}`);
+    }
+    for (const keys of ['["ctrl+x", "ctrl+s"]', '["esc"]']) {
+      const decided = events.find((e) => e.event === "steer_queued" && e.detail.includes(`keys=${keys}`));
+      if (!decided || !events.some((e) => e.id === decided.id && e.event === "steer_sent")) throw new Error(`보냄 진단이 같은 ID로 없다: ${keys}`);
+    }
+    await p.context().close();
+    // 보기 기기: 화면 판정 전에 거절하고 아무것도 쓰지 않는다. 연결 표는 새 기기가 첫 화면 연결을 열기 전에 비운다
+    conns.clear();
+    const reader = await pairPage(browser, aaa("web", "pair", "--reader").code, { width: 1100, height: 760 }, { wsRoute });
+    await inList(reader.page, "pane-ce-modern");
+    const before = received("ce-modern").length;
+    const refused = await steerFrame("ce-modern");
+    assert.equal(refused.sent, false);
+    assert.equal(refused.reason, "failed");
+    // 거절 답 뒤 CLI로 글자 하나를 보내 그 뒤 bytes가 그것뿐인지로 본다
+    aaa("pane", "send-keys", "ce-modern", "z");
+    await waitOutput("ce-modern", `received ${before + 1}`);
+    assert.equal(received("ce-modern").subarray(before).toString(), "z");
+    if (!aaa("debug", "input", "--pane", "ce-modern", "--since", "1h").events.some((e) => e.event === "steer_queued" && e.detail.includes("role=readonly"))) throw new Error("보기 기기 거절 진단 없음");
+    await reader.page.context().close();
+  });
   await step("터치 Ctrl+Enter도 같은 판정: Ctrl 래치+Enter, 입력줄 초안은 안내 줄 없이 그 글을 steering으로 보내고(작업 중 Claude는 글 뒤 sendNow), IME 확정은 steering하지 않음", async () => {
     const mobile = (await pairPage(browser, aaa("web", "pair").code, { width: 390, height: 844 }, { touch: true, line: true })).page;
     await open(mobile, "ce-empty");
