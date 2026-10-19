@@ -1965,7 +1965,9 @@ fn pane_cmd(json: bool, cmd: PaneCmd) -> Result<ExitCode> {
                 front_call(FrontRequest::PaneReadText { pane, source: read_source(&source), lines, format })?,
             );
         }
-        PaneCmd::Chat { pane, thinking } => return front(json, FrontRequest::PaneChat { pane, thinking }),
+        PaneCmd::Chat { pane, thinking } => {
+            return front(json, FrontRequest::PaneChat { pane, thinking, before: None });
+        }
         PaneCmd::Split { target, pane, current: _, direction, ratio, cwd, machine, workspace, argv } => {
             let pane = match target {
                 Some(t) => t,

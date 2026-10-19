@@ -121,6 +121,7 @@ pub fn hello(agent: &Agent) -> AgentHello {
             "adopt.v1".into(),
             "term_colors.v1".into(),
             "chat_watch.v1".into(),
+            "chat_pages.v1".into(),
         ],
         dev_mode: agent.dev_mode,
         selfcheck: agent.selfcheck.lock().unwrap().clone(),

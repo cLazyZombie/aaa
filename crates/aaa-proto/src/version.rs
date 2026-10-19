@@ -119,7 +119,8 @@ pub const AGENT_LINK: Version = Version { major: 1, minor: 8 };
 // 1.55: peer 판정/yes를 거치는 사람 터미널 rollout과 자동화의 배포 제안.
 // 1.56: 보고서를 낸 thread(`LibraryPublish.from_thread`, `LibraryReport.from_thread`·`LibraryView.from_thread`, 사용자 요청 10-20).
 // 옛 host는 요청 칸을 버려 경로·이름 추론도 하지 않고 답에서 생략해 웹이 번호 없이 그린다. 옛 front는 버린다.
-pub const FRONT_API: Version = Version { major: 1, minor: 56 };
+// 1.57: pane_chat 선택 before, ChatView before/history, ChatMessage id. chat_pages.v1 agent만 앞 쪽을 읽는다.
+pub const FRONT_API: Version = Version { major: 1, minor: 57 };
 /// agent ↔ session host(내부). 세션이 몇 주 이어질 수 있으므로 이전 session host와 호환해야 한다.
 /// 1.1: `SessionRequest::Detect`(harness 상태 감지 입력). agent는 1.0 session host에 보내지 않고 `Screen`을 쓴다.
 /// 1.2: `SessionRequest::Colors`(색 질의에 답할 화면 색, plan §8.187). agent는 1.1 이하 session host에 보내지 않는다.

@@ -1625,4 +1625,97 @@ mod tests {
         let ids: std::collections::HashSet<String> = (0..1000).map(|_| short_id("q")).collect();
         assert_eq!(ids.len(), 1000);
     }
+    /// host는 파일을 읽지 않는다. Reader의 같은 pane 권한/커서 중계와 구 agent 기능 경계를 소유한다.
+    #[tokio::test(start_paused = true)]
+    async fn chat_pages_relay_boundaries_without_reinterpreting_them_and_gate_old_agents() {
+        use aaa_common::conn::{FrameRx, spawn_writer};
+        use aaa_proto::{AgentResponse, ChatMessage, ChatRole, FrontRequest, FrontResponse, LinkMsg};
+        let (h, _tmp) = host_with_pane();
+        let (writer, reader) = tokio::io::duplex(65536);
+        let conn = crate::AgentConn::new(spawn_writer(writer, aaa_proto::MAX_FRAME), 1);
+        h.inner.lock().unwrap().machines.insert(
+            "m".into(),
+            crate::MachineRt {
+                name: "mac-a".into(),
+                local: true,
+                os: None,
+                boot_id: None,
+                dev_mode: true,
+                conn: Some(conn.clone()),
+                last_seen_ms: None,
+                health: None,
+                health_sent: None,
+                features: vec![],
+                agent_pid: None,
+                colors: None,
+            },
+        );
+        h.on_harness("m", codex_event("idle", 1));
+        let denied = h
+            .call(
+                crate::DeviceRole::Reader,
+                "test",
+                FrontRequest::PaneChat { pane: "s".into(), thinking: false, before: Some("older".into()) },
+            )
+            .await
+            .unwrap_err();
+        assert_eq!(denied.code, ErrorCode::UnsupportedVersion);
+        let fake = tokio::spawn(async move {
+            let mut rx = FrameRx::new(reader, aaa_proto::MAX_FRAME);
+            for (asked, cursor, history, text) in [
+                (None, None, None, "옛 agent"),
+                (None, Some("boundary"), Some("file"), "최신 쪽"),
+                (Some("boundary"), None, Some("file"), "첫 쪽"),
+                (None, Some("grown-boundary"), Some("file"), "파일이 자람"),
+            ] {
+                let LinkMsg::Req { id, body: AgentRequest::Chat { before, harness, .. }, .. } =
+                    rx.control::<LinkMsg>().await.unwrap()
+                else {
+                    panic!("chat 요청이 아니다")
+                };
+                assert_eq!(harness, "codex");
+                assert_eq!(before.as_deref(), asked);
+                let reply = AgentResponse::Chat {
+                    messages: vec![ChatMessage {
+                        id: history.map(|_| text.into()),
+                        role: ChatRole::Assistant,
+                        text: text.into(),
+                        pending: false,
+                        receipt: None,
+                    }],
+                    truncated: cursor.is_some(),
+                    before: cursor.map(str::to_string),
+                    history: history.map(str::to_string),
+                };
+                conn.pending.lock().unwrap().remove(&id).unwrap().send(aaa_proto::Outcome::Ok(reply)).unwrap();
+            }
+        });
+        for (index, (before, expected_cursor, expected_text)) in [
+            (None, None, "옛 agent"),
+            (None, Some("boundary"), "최신 쪽"),
+            (Some("boundary"), None, "첫 쪽"),
+            (None, Some("grown-boundary"), "파일이 자람"),
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            if index == 1 {
+                h.inner.lock().unwrap().machines.get_mut("m").unwrap().features.push("chat_pages.v1".into());
+            }
+            let response = h
+                .call(
+                    crate::DeviceRole::Reader,
+                    "test",
+                    FrontRequest::PaneChat { pane: "s".into(), thinking: false, before: before.map(str::to_string) },
+                )
+                .await
+                .unwrap();
+            let FrontResponse::Chat(view) = response else { panic!("chat 응답이 아니다") };
+            assert_eq!(view.before.as_deref(), expected_cursor);
+            assert_eq!(view.messages[0].text, expected_text);
+            assert_eq!(view.truncated, expected_cursor.is_some());
+            assert_eq!(view.history.as_deref(), if index == 0 { None } else { Some("file") });
+        }
+        fake.await.unwrap();
+    }
 }

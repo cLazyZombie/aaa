@@ -5,7 +5,7 @@
 //!   symlink는 실제 위치로 풀어 본다.
 //! - 터미널보다 많이 보이지 않는다: 도구 결과 본문·하위 agent(sidechain)·시스템이 끼운 글은 뺀다. 생각(thinking)은 웹 「생각 표시」를
 //!   켠 화면이 청할 때만 싣는다(herdr-web-ui `showThinking`, plan §8.129).
-//! - 기록은 커질 수 있다(요청 원문 줄이 크다). 뒤에서부터 1MiB씩 읽어 필요한 만큼만 고르고, 16MiB에서 멈춘다.
+//! - 기록은 byte/블록 cursor로 앞으로 읽는다(chat_pages). host는 별도 대화 사본을 보관하지 않는다.
 
 use std::io::{Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
@@ -13,13 +13,11 @@ use std::path::{Path, PathBuf};
 use aaa_proto::{ChatMessage, ChatRole};
 use serde_json::Value;
 
-/// 보낼 줄 수 상한
-const MAX_MESSAGES: usize = 150;
-/// 한 줄 글자 상한
+#[path = "chat_pages.rs"]
+mod pages;
+
 const MAX_CHARS: usize = 4000;
 const CHUNK: u64 = 1 << 20;
-/// 이만큼 읽어도 못 채우면 거기서 멈춘다
-const READ_CAP: u64 = 16 << 20;
 
 fn env_dir(name: &str) -> Option<PathBuf> {
     std::env::var_os(name).filter(|v| !v.is_empty()).map(PathBuf::from)
@@ -145,7 +143,7 @@ fn msg(role: ChatRole, text: &str) -> Option<ChatMessage> {
         }
     });
     let text = clip(text);
-    (!text.is_empty()).then_some(ChatMessage { role, text, pending: false, receipt })
+    (!text.is_empty()).then_some(ChatMessage { id: None, role, text, pending: false, receipt })
 }
 
 /// Claude 기록 한 줄 → 보일 줄(0개 이상, 순서대로)
@@ -255,42 +253,6 @@ fn codex_line(v: &Value, thinking: bool) -> Vec<ChatMessage> {
     }
 }
 
-/// 파일 끝에서부터 줄을 읽어 보일 줄을 고른다. (줄, 다 못 읽음)
-fn tail(path: &Path, parse: impl Fn(&Value) -> Vec<ChatMessage>) -> std::io::Result<(Vec<ChatMessage>, bool)> {
-    let mut f = std::fs::File::open(path)?;
-    let len = f.metadata()?.len();
-    let mut pos = len;
-    let mut carry: Vec<u8> = Vec::new();
-    let mut rev: Vec<ChatMessage> = Vec::new();
-    let take = |line: &[u8], rev: &mut Vec<ChatMessage>| {
-        if let Ok(v) = serde_json::from_slice::<Value>(line) {
-            rev.extend(parse(&v).into_iter().rev());
-        }
-    };
-    while pos > 0 && len - pos < READ_CAP && rev.len() < MAX_MESSAGES {
-        let start = pos.saturating_sub(CHUNK);
-        let mut buf = vec![0u8; (pos - start) as usize];
-        f.seek(SeekFrom::Start(start))?;
-        f.read_exact(&mut buf)?;
-        buf.extend_from_slice(&carry);
-        let mut parts: Vec<&[u8]> = buf.split(|b| *b == b'\n').collect();
-        // 맨 앞 조각은 이전 조각과 이어지는 줄일 수 있다(파일 맨 앞이 아니면 다음 번에 붙여 읽는다)
-        let first = if start > 0 { parts.remove(0).to_vec() } else { Vec::new() };
-        for line in parts.iter().rev() {
-            if !line.is_empty() {
-                take(line, &mut rev);
-            }
-        }
-        // 한 줄이 상한보다 크면 그 줄은 버린다
-        carry = if first.len() as u64 > READ_CAP { Vec::new() } else { first };
-        pos = start;
-    }
-    let truncated = pos > 0 || rev.len() > MAX_MESSAGES;
-    rev.truncate(MAX_MESSAGES);
-    rev.reverse();
-    Ok((rev, truncated))
-}
-
 /// Claude 대기열에 남은 사람 글(작업 중에 보내 아직 흡수되지 않은 것, plan §8.247). Claude Code는 작업 중에 받은 글을 바로
 /// `queue-operation enqueue`로 적고, 흡수하면 같은 글의 `remove`(absorbed_mid_turn)와 `queued_command`를, 한가할 때 바로 꺼내면
 /// 글 없는 `dequeue`(맨 앞)를 적는다. 그래서 끝 1MiB를 앞에서부터 읽어 대기열을 다시 세우고 남은 사람 글만 낸다(배경 작업
@@ -364,15 +326,16 @@ pub fn read(
     transcript: Option<&str>,
     harness_session: Option<&str>,
     thinking: bool,
-) -> Result<(Vec<ChatMessage>, bool), String> {
+    before: Option<&str>,
+) -> Result<pages::Page, String> {
     let path = path(harness, transcript, harness_session)?;
     let parse: LineParser = if harness == "codex" { codex_line } else { claude_line };
     let failed = |e: std::io::Error| format!("기록을 읽지 못했다: {}", e.kind());
-    let (mut messages, truncated) = tail(&path, |v| parse(v, thinking)).map_err(failed)?;
-    if harness == "claude" {
-        messages.extend(claude_pending(&path).map_err(failed)?);
+    let mut page = pages::read(&path, before, |v| parse(v, thinking))?;
+    if harness == "claude" && before.is_none() {
+        page.messages.extend(claude_pending(&path).map_err(failed)?);
     }
-    Ok((messages, truncated))
+    Ok(page)
 }
 
 /// 기록 파일이 바뀌었는지 보는 값(참고 conversation-monitor.ts `fileIdentity`): 장치·inode·크기·고친 시각. 없으면 `missing`
@@ -393,7 +356,7 @@ pub fn identity(path: &Path) -> String {
 mod tests {
     use super::*;
 
-    fn dir(tag: &str) -> PathBuf {
+    pub(super) fn dir(tag: &str) -> PathBuf {
         let d = std::env::temp_dir().join(format!("aaa-chat-{tag}-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&d);
         std::fs::create_dir_all(&d).unwrap();
@@ -427,7 +390,9 @@ mod tests {
         let root = dir("claude");
         let f = root.join("s.jsonl");
         std::fs::write(&f, claude_fixture()).unwrap();
-        let (m, truncated) = tail(&f, |v| claude_line(v, false)).unwrap();
+        let page = pages::read(&f, None, |v| claude_line(v, false)).unwrap();
+        let truncated = page.before.is_some();
+        let m = page.messages;
         let got: Vec<_> = m.iter().map(|x| (x.role, x.text.as_str())).collect();
         assert_eq!(
             got,
@@ -441,7 +406,7 @@ mod tests {
         );
         assert!(!truncated);
         // 「생각 표시」를 켠 화면이 청하면 생각도 제자리에
-        let (m, _) = tail(&f, |v| claude_line(v, true)).unwrap();
+        let m = pages::read(&f, None, |v| claude_line(v, true)).unwrap().messages;
         let got: Vec<_> = m.iter().map(|x| (x.role, x.text.as_str())).collect();
         assert_eq!(&got[1..3], [(ChatRole::Thinking, "속생각"), (ChatRole::Assistant, "답을 쓴다")]);
         std::fs::remove_dir_all(&root).unwrap();
@@ -534,8 +499,10 @@ mod tests {
         let f = root.join("s.jsonl");
         let line = r#"{"type":"assistant","message":{"content":[{"type":"text","text":"줄"}]}}"#;
         std::fs::write(&f, format!("{line}\n").repeat(400)).unwrap();
-        let (m, truncated) = tail(&f, |v| claude_line(v, false)).unwrap();
-        assert_eq!((m.len(), truncated), (MAX_MESSAGES, true));
+        let page = pages::read(&f, None, |v| claude_line(v, false)).unwrap();
+        let truncated = page.before.is_some();
+        let m = page.messages;
+        assert_eq!((m.len(), truncated), (150, true));
         std::fs::remove_dir_all(&root).unwrap();
     }
 

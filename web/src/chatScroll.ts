@@ -2,7 +2,7 @@
 // - 끝 판정 문턱 40px: `apps/web/src/components/chat/MessagesTimeline.logic.ts:324` `TIMELINE_FOLLOW_REARM_THRESHOLD_PX`·326줄 `resolveTimelineIsAtEnd`
 // - 기준 줄(지금 굴림 위치에 걸친 줄)과 그 줄 안 거리: `packages/client-runtime/src/work-log/scrollAnchor.ts` `resolveWorkGroupScrollAnchor`
 // - 자리 기억(최근 100 thread, 따라가는 중이면 끝으로 기억): `apps/web/src/components/chat/timelineScrollAnchoring.ts:143~179`
-// 다른 곳(aaa 구조): 기록 줄에 id가 없다(PTY agent의 대화 파일에서 읽고 agent가 끝 150개로 자른다). 줄 id는 말한 이·글이 같은 줄 가운데
+// 새 agent는 파일/byte/블록 ID를 보낸다(§8.298). ID가 없는 옛 agent의 fallback은 말한 이·글이 같은 줄 가운데
 // 끝에서 몇 번째인지와 글의 hash로 둔다: 앞이 잘려도 그대로고, 같은 글이 뒤에 또 붙을 때만 바뀌어 그때는 참고처럼 굴림 거리로 돌아간다.
 import type { ChatMessage } from "./gen/proto";
 
@@ -19,11 +19,12 @@ function hash(text: string): string {
 }
 
 /** 기록 줄마다 id(말한 이·같은 줄 가운데 끝에서 몇 번째·글 hash) */
-export function chatRowIds(messages: readonly Pick<ChatMessage, "role" | "text">[]): string[] {
+export function chatRowIds(messages: readonly Pick<ChatMessage, "role" | "text" | "id">[]): string[] {
   const seen = new Map<string, number>();
   const ids: string[] = [];
   for (let i = messages.length - 1; i >= 0; i--) {
     const m = messages[i]!;
+    if (m.id) { ids[i] = m.id; continue; }
     const key = `${m.role}:${m.text.length}:${hash(m.text)}`;
     const n = seen.get(key) ?? 0;
     seen.set(key, n + 1);

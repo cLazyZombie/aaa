@@ -1593,7 +1593,7 @@ impl Host {
                 self.thread_file(actor, &project, &thread, &path).await
             }
             FrontRequest::PaneDir { pane, path, hidden } => self.pane_dir(role, actor, &pane, &path, hidden).await,
-            FrontRequest::PaneChat { pane, thinking } => {
+            FrontRequest::PaneChat { pane, thinking, before } => {
                 let (id, mid) = self.resolve_pane(&pane)?;
                 // 보기 범위(§8.25)는 pane 보기와 같다
                 if self.pane_view_of(&id, role).is_none() {
@@ -1612,13 +1612,36 @@ impl Host {
                 if !matches!(harness.as_str(), "claude" | "codex") {
                     return Err(err(ErrorCode::NotFound, "대화 기록은 Claude·Codex pane만 볼 수 있다"));
                 }
+                let pages = self
+                    .inner
+                    .lock()
+                    .unwrap()
+                    .machines
+                    .get(&mid)
+                    .is_some_and(|m| m.features.iter().any(|f| f == "chat_pages.v1"));
+                if before.is_some() && !pages {
+                    return Err(err(ErrorCode::UnsupportedVersion, "이 agent는 앞 기록 읽기를 지원하지 않는다"));
+                }
                 let conn = self.live_conn(&mid)?;
                 match conn
-                    .request(AgentRequest::Chat { harness: harness.clone(), transcript, harness_session, thinking })
+                    .request(AgentRequest::Chat {
+                        harness: harness.clone(),
+                        transcript,
+                        harness_session,
+                        thinking,
+                        before,
+                    })
                     .await?
                 {
-                    AgentResponse::Chat { messages, truncated } => {
-                        Ok(FrontResponse::Chat(aaa_proto::ChatView { pane: id, harness, messages, truncated }))
+                    AgentResponse::Chat { messages, truncated, before, history } => {
+                        Ok(FrontResponse::Chat(aaa_proto::ChatView {
+                            pane: id,
+                            harness,
+                            messages,
+                            truncated,
+                            before,
+                            history,
+                        }))
                     }
                     other => Err(err(ErrorCode::Internal, format!("예상하지 못한 응답: {other:?}"))),
                 }

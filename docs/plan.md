@@ -997,12 +997,12 @@ Claude·Codex pane을 터미널 대신 대화 기록으로도 본다. 휴대폰�
 - **어디서 읽나.** agent가 그 머신의 기록 파일을 읽는다.
   - Claude: hook 사건의 `transcript_path`. host는 pane에만 기억하고 웹·로그·흐름 사건으로 내보내지 않는다(그 머신의 홈 경로다).
   - Codex: notify의 thread-id로 `sessions/YYYY/MM/DD/rollout-…-<thread-id>.jsonl`을 찾는다.
-- **무엇을 보이나.** 사람이 쓴 글, harness의 답, 도구 호출 한 줄(`Bash: cargo test`)이다. 생각(thinking)·도구 결과 본문·하위 agent(sidechain)·시스템이 끼운 글(`<system-reminder>` 등)은 뺀다. 터미널보다 많이 보이지 않게 하려는 것이다. 끝에서 150줄, 한 줄 4000자까지다. (10-18) 생각은 웹 설정 「생각 표시」를 켠 화면이 청하면 싣는다(§8.129, 참고 herdr-web-ui `showThinking`). 휴대폰은 agent pane을 대화로 연다(§8.128).
+- **무엇을 보이나.** 사람이 쓴 글, harness의 답, 도구 호출 한 줄(`Bash: cargo test`)이다. 생각(thinking)·도구 결과 본문·하위 agent(sidechain)·시스템이 끼운 글(`<system-reminder>` 등)은 뺀다. 터미널보다 많이 보이지 않게 하려는 것이다. 처음에는 끝에서 최대 150개를 읽고, 위로 굴리면 앞 쪽을 이어 읽는다(§8.298). 한 메시지 4000자 표시 상한은 유지한다. (10-18) 생각은 웹 설정 「생각 표시」를 켠 화면이 청하면 싣는다(§8.129, 참고 herdr-web-ui `showThinking`). 휴대폰은 agent pane을 대화로 연다(§8.128).
 - **보안.** hook은 세션 안에서 누구나 보낼 수 있어 경로를 믿지 않는다.
   - agent 자기 환경으로 정한 기록 폴더(`$CLAUDE_CONFIG_DIR`|`~/.claude`의 `projects/`, `$CODEX_HOME`|`~/.codex`의 `sessions/`) 안의 일반 `.jsonl` 파일만 읽는다. symlink는 실제 위치로 풀어 보고, FIFO·폴더는 거부한다.
   - Codex thread-id는 형식(36자 hex·`-`)을 먼저 본다.
   - 오류 글에 경로를 넣지 않는다.
-- **큰 기록.** Claude 기록에는 요청 원문 같은 큰 줄이 많다. 뒤에서부터 1MiB씩 읽어 필요한 만큼만 고르고 16MiB에서 멈춘다.
+- **큰 기록.** Claude 기록에는 요청 원문 같은 큰 줄이 많다. 64KiB chunk로 뒤에서 읽고 한 쪽은 150개/40,000자와 기본 16MiB 탐색 예산으로 보낸다(큰 단일 줄은 그 경계까지 완성한다). 다음 쪽은 그 경계부터 계속 읽으므로 누적 16MiB에서 멈추지 않는다(§8.298).
 - **호환.** hook 사건의 `transcript`는 없어도 되는 필드다. 옛 host는 무시하고, 옛 agent는 보내지 않는다(그때는 「아직 기록 위치를 알리지 않았다」).
 - **시험.**
   - agent 유닛: 합성 기록으로 거르기(3MiB 줄·sidechain·thinking·system-reminder·tool_result)와 끝부분 자르기, Codex 줄, 경로(밖·상대·`..`·확장자·밖을 가리키는 symlink·폴더·FIFO), thread-id를 본다.
@@ -5738,3 +5738,13 @@ L4 후속(10-20 00시 사용자 관찰): 멈춤 상태의 후보 예약과 재�
 - **특수 줄.** 임무·사후 평가자 줄 이름을 일반 thread 줄과 같은 조각(`ThreadName`, 「t-NNNN · 이름」)으로 그린다. 글꼴·크기·색이 같고, 좁으면 이름 끝이 잘리고 왼쪽 번호는 남는다. 번호는 새로 매기지 않는다: host가 임무·평가자를 시작할 때 `thread_insert_next`로 일반 thread와 같은 차례의 번호를 이미 붙인다. 한 번도 시작하지 않은 임무(`MissionView.thread` 없음)만 번호가 없고, 다시 시작해 새 thread가 되면 그 번호로 바뀐다(임무 보기는 가장 최근 thread). 번호를 미리 잡으면 일반 thread 차례에 빈 번호가 생긴다.
 - **보고서.** `LibraryPublish.from_thread`·`LibraryReport.from_thread`·`LibraryView.from_thread`(FRONT_API 1.56, 선택). `library_reports`에 `from_thread` 열을 `ALTER TABLE`로 더한다. publish 때 준 번호(그 프로젝트에 있어야 한다), 없으면 이름 → 원본 경로 뒤 성분부터 찾은 번호 중 그 프로젝트에 있는 첫 thread를 적는다(경로는 적지 않는다). 목록·열람은 적은 것, 없으면 이름에서 찾는다(thread 사본·import·기록 전 보고서). 웹은 이름 왼쪽에 번호 표지를 그리고, 근원을 모르면 그리지 않는다. 「작업 보고」의 thread 사본 줄(제목 없이 이름이 곧 번호)은 번호가 두 번 보이지 않게 표지를 뺀다(사용자 결정). 옛 host는 칸을 생략해 웹이 번호 없이 그린다.
 - **검증.** host `reports_name_the_thread_they_came_from`, 웹 E2E `36-thread-numbers`(데스크톱·휴대폰 폭에서 번호 글·잘림·가림·겹침·줄 넘침, 사본 줄 번호 한 번, 특수 줄 번호 모양이 일반 줄과 같음).
+
+### 8.298 대화 기록의 앞 쪽 읽기(10-20, t-0454)
+
+- **원천과 원인.** 터미널은 session host의 PTY/VT scrollback 10,000줄 중 처음 연결 때 최근 2,000줄을 replay하고 위에서 `older`를 청한다. 대화는 별개로 그 머신 agent가 Claude hook의 transcript 파일 또는 Codex thread-id의 rollout JSONL을 읽는다. host는 별도 대화 사본을 쌓지 않는다. 기존 agent의 끝 150개/16MiB와 웹의 전체 교체 때문에 터미널보다 훨씬 일찍 막혔다. 「host에 남은 처음」은 이 pane이 가리키는 기록 파일에서 보일 메시지의 처음이다. 파일 삭제 전 기록이나 새 세션으로 바꾸기 전 다른 파일을 복원하는 기능은 아니다.
+- **쪽.** `pane_chat.before` 생략은 최신 쪽, 응답의 `before` 문자열은 그 앞 쪽이다. `history`가 있고 `before`가 null이면 「처음이다」를 보인다. 400px 이내 위로 굴리거나 「앞 기록 더 보기」를 누르면 앞 쪽을 합친다. 도구 전용 구간의 빈 쪽도 다음 경계로 진행한다. 오류는 자동 재시도하지 않고 설명과 다시 불러오기 단추를 둔다. 「앞부분은 생략했다」는 앞 쪽이 남았을 때만 표시한다.
+- **안정성.** 파일 정체성과 byte/블록 cursor로 파일이 자라도 중복·누락 없이 읽는다. 쓰는 중인 마지막 미완성 줄은 최신 요청으로 넘긴다. 파일 교체/축소/동일 크기 덮어쓰기/agent 재시작은 다른 history로 구분한다. ID는 history/줄 byte 위치/블록 차례다. append로 최신 150개가 완전히 바뀌었으면 중간 쪽도 채운다. 최신 읽기와 이전 쪽 시작은 ConversationRefresh lane을 공유하고, 늦은 응답은 pane/생각 표시 세대로 거른다. 메타데이터 snapshot과 파일 revision 판정도 한 잠금 안에서 하여 동시 읽기를 파일 축소로 오인하지 않는다. 앞 쪽을 읽다 pane을 떠났으면 기억한 row까지 먼저 채운 뒤 복원한다.
+- **위치와 비용.** prepend 직전 보던 row ID와 viewport 안 좌표를 잡아 그리기 전에 복원한다. 안내 아래 첫 줄의 음수 거리도 유지한다. 자동 위치 보정의 scroll 사건은 기준 줄을 바꾸지 않는다. ResizeObserver가 아직 처리되지 않은 손의 이동을 덮지 않는다. 최신 쪽이 화면보다 짧으면 앞 쪽을 자동으로 채우고, prepend 뒤에도 읽던 줄 아래의 빈 자리를 보존하는 end space를 둔다. 끝을 보고 있을 때만 새 말을 따라간다. 즉시 End/보내기로 끝에 갔어도 pane별 따라가기 기억을 갱신한다. 300개를 넘으면 화면에서 1000px 이내 본문만 mount하고, 밖은 잰 높이의 row shell을 유지한다. 문자열·ID와 shell은 읽은 만큼 보관하되 Markdown/그림/본문 DOM은 화면 근처로 제한한다. 한 응답은 최대 150개/40,000자이고 한 메시지 4000자 표시 제한을 유지한다. raw 줄 전체를 복사하지 않고 먼저 작은 구조를 읽은 뒤 제외할 tool_result 블록을 할당 없이 건너뛰며 필요한 필드만 스트리밍하여 16MiB보다 큰 그림/도구 blob과 같은 줄의 메시지도 보존한다.
+- **호환.** FRONT_API 1.57의 선택 필드(before/history/id)다. 구 웹은 무시하고 구 요청은 생략한다. `chat_pages.v1`을 알린 agent만 앞 쪽 요청을 받는다. 구 host/agent에는 history가 없어 앞 쪽 요청을 보내지 않고 갱신 안내를 보인다. AGENT_LINK의 선택 기능이며 버전은 1.8 그대로다.
+- **참고 위치.** herdr-web-ui aa624cb `server/conversation.ts` ConversationPage/TranscriptStream의 파일 byte cursor, `src/components/ChatView.tsx:1030-1083,1199`의 400px 이전 쪽 요청/row key·좌표 보존과 구 bridge 판정, `src/lib/conversationRefresh.ts`의 page lane을 따른다. t3code 4b1024da `apps/web/src/components/chat/MessagesTimeline.tsx`와 timelineScrollAnchoring의 ID/줄 안 거리/가시 영역 렌더를 따른다. aaa는 기존 DOM 구조를 지키려고 같은 높이의 shell로 본문 mount를 제한한다. herdr v0.9.5 terminal scrollback과 herdr-projects v0.2.35 `src/herdr.rs:490`, `threads.rs:656`는 PTY 기록이며 별도 harness 대화 쪽 API는 없다.
+- **역할.** thread/coordinator/임무 pane은 모두 Term의 같은 ChatPanel과 pane_chat 경로를 쓴다. 별도 목록/권한 우회는 없다. 기존 기록 폴더·symlink·일반 파일 경계를 유지한다. cursor/오류/ID에는 실제 경로를 싣지 않는다.

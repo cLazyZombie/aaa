@@ -325,6 +325,10 @@ pub struct DetectScreen {
 /// harness 대화 기록 한 줄(§8.27, 읽기 전용). agent가 Claude·Codex 기록 파일에서 골라 낸다.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 pub struct ChatMessage {
+    /// 기록 파일/byte/블록 위치. 옛 agent는 생략한다.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub id: Option<String>,
     pub role: ChatRole,
     pub text: String,
     /// 사람 글이 harness 대기열에 있다(작업 중에 보내 아직 흡수되지 않음, Claude `queue-operation`). 기록 끝에 붙는다.
@@ -354,6 +358,14 @@ pub struct ChatView {
     pub messages: Vec<ChatMessage>,
     /// 기록이 더 길어 끝부분만 실었다
     pub truncated: bool,
+    /// chat_pages.v1: 이전 쪽 cursor, null이면 처음. history가 없으면 옛 agent다.
+    #[serde(default)]
+    #[ts(optional)]
+    pub before: Option<String>,
+    /// 경로를 드러내지 않는 파일 정체성. append에는 같다.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub history: Option<String>,
 }
 
 /// 파일 보기의 종류(herdr-web-ui `FileKind`, plan §8.125)
@@ -677,6 +689,9 @@ pub enum AgentRequest {
         /// 생각도 싣는다(plan §8.129). 옛 agent는 이 칸을 모르고 빼고 보낸다
         #[serde(default)]
         thinking: bool,
+        /// 이전 응답의 before. 생략하면 최신 쪽, 옛 상대는 무시한다.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        before: Option<String>,
     },
     /// 옛 host 호환: agent.toml에 정의된 profile 목록
     Profiles,
@@ -891,6 +906,10 @@ pub enum AgentResponse {
     Chat {
         messages: Vec<ChatMessage>,
         truncated: bool,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        before: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        history: Option<String>,
     },
     Profiles {
         profiles: Vec<ProfileView>,
@@ -1442,6 +1461,10 @@ pub enum FrontRequest {
         /// 생각도 싣는다(웹 설정 「생각 표시」, plan §8.129)
         #[serde(default)]
         thinking: bool,
+        /// 이전 응답의 before. 생략하면 최신 쪽, 옛 상대는 무시한다.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        #[ts(optional)]
+        before: Option<String>,
     },
     /// 파일 보기(plan §8.125, 결정 20 D7): pane이 지금 있는 폴더 기준으로 경로를 찾고, 찾았으면 짧은 수명의
     /// 읽기 경로(`url`)를 준다. 조작 기기만(참고도 보기 전용 기기는 403).
@@ -2891,7 +2914,7 @@ mod tests {
             !FrontRequest::ThreadRead { project: project.clone(), thread: thread.clone(), lines: None }.needs_control()
         );
         assert!(FrontRequest::ThreadKeys { project, thread, keys: vec!["enter".into()], text: None }.needs_control());
-        assert!(!FrontRequest::PaneChat { pane: "p".into(), thinking: false }.needs_control());
+        assert!(!FrontRequest::PaneChat { pane: "p".into(), thinking: false, before: None }.needs_control());
         // 파일 보기는 조작 기기만(herdr-web-ui도 보기 전용 기기는 fs/ 403)
         assert!(FrontRequest::PaneFile { pane: "p".into(), path: "a.txt".into() }.needs_control());
         assert!(
@@ -3001,5 +3024,42 @@ mod tests {
             serde_json::from_value::<FrontRequest>(v).unwrap(),
             FrontRequest::QuestionAnswer { pick: Some(MenuPick::Options { .. }), .. }
         ));
+    }
+    #[test]
+    fn chat_pages_keep_legacy_requests_and_responses_readable() {
+        #[derive(Deserialize)]
+        #[serde(tag = "op", rename_all = "snake_case")]
+        enum OldRequest {
+            PaneChat { pane: String, thinking: bool },
+        }
+        let old = r#"{"op":"pane_chat","pane":"p","thinking":false}"#;
+        let request: FrontRequest = serde_json::from_str(old).unwrap();
+        assert!(matches!(request, FrontRequest::PaneChat { before: None, .. }));
+        let new = FrontRequest::PaneChat { pane: "p".into(), thinking: true, before: Some("cursor".into()) };
+        let OldRequest::PaneChat { pane, thinking } =
+            serde_json::from_value(serde_json::to_value(new).unwrap()).unwrap();
+        assert_eq!(pane, "p");
+        assert!(thinking);
+        let old_reply =
+            r#"{"pane":"p","harness":"claude","messages":[{"role":"assistant","text":"答"}],"truncated":true}"#;
+        let legacy: ChatView = serde_json::from_str(old_reply).unwrap();
+        assert!(legacy.before.is_none() && legacy.history.is_none() && legacy.messages[0].id.is_none());
+        #[derive(Deserialize)]
+        struct OldView {
+            pane: String,
+            messages: Vec<OldMessage>,
+            truncated: bool,
+        }
+        #[derive(Deserialize)]
+        struct OldMessage {
+            text: String,
+        }
+        let new = ChatView { before: Some("cursor".into()), history: Some("file".into()), ..legacy };
+        let old: OldView = serde_json::from_value(serde_json::to_value(new).unwrap()).unwrap();
+        assert_eq!(old.pane, "p");
+        assert_eq!(old.messages[0].text, "答");
+        assert!(old.truncated);
+        let agent: AgentResponse = serde_json::from_str(r#"{"kind":"chat","messages":[],"truncated":true}"#).unwrap();
+        assert!(matches!(agent, AgentResponse::Chat { before: None, history: None, .. }));
     }
 }
