@@ -55,6 +55,8 @@ pub(crate) struct LibraryReportRow {
     /// 사용자 보고서로 보낸(다시 보낸) 때. 이보다 늦게 열었으면 봤다
     pub sent_at: Option<u64>,
     pub seen_at: Option<u64>,
+    /// 보고서를 낸 thread(`t-NNNN`, 사용자 요청 10-20). publish 때 정한다
+    pub from_thread: Option<String>,
 }
 
 impl LibraryReportRow {
@@ -123,7 +125,7 @@ impl Db {
             .lock()
             .unwrap()
             .query_row(
-                "SELECT live,updated,to_user,title,sent_at,seen_at FROM library_reports WHERE project=?1 AND name=?2",
+                "SELECT live,updated,to_user,title,sent_at,seen_at,from_thread FROM library_reports WHERE project=?1 AND name=?2",
                 params![project, name],
                 |r| {
                     Ok(LibraryReportRow {
@@ -135,6 +137,7 @@ impl Db {
                         title: r.get(3)?,
                         sent_at: r.get(4)?,
                         seen_at: r.get(5)?,
+                        from_thread: r.get(6)?,
                     })
                 },
             )
@@ -143,11 +146,11 @@ impl Db {
 
     pub(crate) fn library_report_put(&self, r: &LibraryReportRow) -> Result<()> {
         self.conn.lock().unwrap().execute(
-            "INSERT INTO library_reports(project,name,live,updated,to_user,title,sent_at,seen_at)
-             VALUES(?1,?2,?3,?4,?5,?6,?7,?8)
+            "INSERT INTO library_reports(project,name,live,updated,to_user,title,sent_at,seen_at,from_thread)
+             VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9)
              ON CONFLICT(project,name) DO UPDATE SET live=excluded.live,updated=excluded.updated,to_user=excluded.to_user,
-               title=excluded.title,sent_at=excluded.sent_at,seen_at=excluded.seen_at",
-            params![r.project, r.name, r.live, r.updated, r.to_user as i64, r.title, r.sent_at, r.seen_at],
+               title=excluded.title,sent_at=excluded.sent_at,seen_at=excluded.seen_at,from_thread=excluded.from_thread",
+            params![r.project, r.name, r.live, r.updated, r.to_user as i64, r.title, r.sent_at, r.seen_at, r.from_thread],
         )?;
         Ok(())
     }
@@ -324,6 +327,12 @@ impl Db {
                  ALTER TABLE library_reports ADD COLUMN sent_at INTEGER;
                  ALTER TABLE library_reports ADD COLUMN seen_at INTEGER;",
             )?;
+        }
+        // 보고서를 낸 thread(사용자 요청 10-20). 위와 같이 열만 더한다
+        let has_from_thread =
+            conn.prepare("SELECT 1 FROM pragma_table_info('library_reports') WHERE name='from_thread'")?.exists([])?;
+        if !has_from_thread {
+            conn.execute("ALTER TABLE library_reports ADD COLUMN from_thread TEXT", [])?;
         }
         let v: Option<String> =
             conn.query_row("SELECT value FROM meta WHERE key='schema'", [], |r| r.get(0)).optional()?;

@@ -944,6 +944,24 @@ function UsageLimited({ untilMs, now }: { untilMs: number; now: number }) {
   return <span className="usage-limited" data-testid="usage-limited">{left ? `한도 · ${left} 뒤 리셋` : "한도"}</span>;
 }
 
+/**
+ * 줄 이름 「id · 제목」(herdr-projects thread_display). 일반 thread 줄과 특수 줄(사용자 요청 10-20 「특수스레드도 번호 … 왼쪽에」)이 같은
+ * 조각을 써서 번호의 글꼴·색·폭이 같다. 줄이 좁으면 제목 끝이 잘리고 왼쪽 번호는 남는다. 번호가 없으면(시작 전 임무) 제목만.
+ */
+function ThreadName({ id, title }: { id: string | undefined; title: string }) {
+  return (
+    <span className="workspace-name">
+      {id && (
+        <>
+          <span className="thread-no" data-testid="thread-no">{id}</span>
+          {" · "}
+        </>
+      )}
+      {title}
+    </span>
+  );
+}
+
 function ThreadRow({ t, online, machine, twoLine, ...props }: SidebarProps & { t: ThreadView; online: boolean; machine: MachineView | undefined; twoLine: boolean }) {
   const now = useMinute();
   const pane = t.pane ? props.panes.find((p) => p.id === t.pane) : undefined;
@@ -1008,7 +1026,7 @@ function ThreadRow({ t, online, machine, twoLine, ...props }: SidebarProps & { t
           {twoLine ? (
             <span className="workspace-copy is-two-line">
               <span className="workspace-line">
-                <span className="workspace-name">{title}</span>
+                <ThreadName id={t.id} title={t.title} />
                 {pinned && <Pin className="sidebar-pin-mark" aria-hidden="true" />}
                 {online && paneOpen && <AgentCounts pane={pane} />}
               </span>
@@ -1025,7 +1043,7 @@ function ThreadRow({ t, online, machine, twoLine, ...props }: SidebarProps & { t
             </span>
           ) : (
             <span className="workspace-copy">
-              <span className="workspace-name">{title}</span>
+              <ThreadName id={t.id} title={t.title} />
               {pinned && <Pin className="sidebar-pin-mark" aria-hidden="true" />}
               {online && paneOpen && <AgentCounts pane={pane} />}
               <span className={`worktree-workspace-label thread-state is-${t.group}`} data-tone={tone} data-testid={`thread-state-${t.project}-${t.id}`}>
@@ -1117,6 +1135,7 @@ function SpecialSection({ missions, evaluators, panes, canControl, agentOf, onPa
                     rowKey={key}
                     testid={`mission-${m.project}-${m.name}`}
                     lead={t ? <RowMark agent={agent} /> : <span className="sidebar-mark" aria-hidden="true"><CircleDashed /></span>}
+                    thread={t?.id}
                     title={m.title}
                     tone={missionTone(m)}
                     facts={[missionWord(m), `깨움 ${missionCount(m.wakes_today, m.max_wakes)}`, ...(m.apply_wait ? [m.apply_wait] : []), ...(pane ? [] : ["pane 없음"])]}
@@ -1141,6 +1160,7 @@ function SpecialSection({ missions, evaluators, panes, canControl, agentOf, onPa
                     rowKey={key}
                     testid={`evaluator-${v.project}`}
                     lead={<span className="sidebar-mark" aria-hidden="true"><ScanEye /></span>}
+                    thread={v.thread.id}
                     title="사후 평가자"
                     tone={tone}
                     facts={[word, `정할 개선안 ${v.undecided}`, ...(pane ? [] : ["pane 없음"])]}
@@ -1174,11 +1194,15 @@ function SpecialSection({ missions, evaluators, panes, canControl, agentOf, onPa
   );
 }
 
-/** 특수 줄 하나: 사이드바 두 줄 줄 모양(이름 / 상태 말·사실, 오른쪽 머신)과 상태 점 */
-function SpecialRow({ rowKey, testid, lead, title, tone, facts, where, paneOpen, selected, summary, open, items }: {
+/**
+ * 특수 줄 하나: 사이드바 두 줄 줄 모양(번호 · 이름 / 상태 말·사실, 오른쪽 머신)과 상태 점. 번호는 임무·평가자 thread의 것이다:
+ * host가 시작할 때 일반 thread와 같은 차례로 붙이므로 따로 매기지 않고, 한 번도 시작하지 않은 임무만 번호가 없다.
+ */
+function SpecialRow({ rowKey, testid, lead, thread, title: name, tone, facts, where, paneOpen, selected, summary, open, items }: {
   rowKey: string;
   testid: string;
   lead: ReactNode;
+  thread: string | undefined;
   title: string;
   tone: SpecialTone;
   facts: string[];
@@ -1191,6 +1215,7 @@ function SpecialRow({ rowKey, testid, lead, title, tone, facts, where, paneOpen,
 }) {
   const rows = useRows();
   const line = facts.join(" · ");
+  const title = thread ? `${thread} · ${name}` : name;
   const toggleMenu = (anchor: HTMLElement, point?: { x: number; y: number }, previousFocus?: HTMLElement | null) =>
     rows.toggleMenu({
       key: rowKey,
@@ -1214,7 +1239,7 @@ function SpecialRow({ rowKey, testid, lead, title, tone, facts, where, paneOpen,
           {lead}
           <span className="workspace-copy is-two-line">
             <span className="workspace-line">
-              <span className="workspace-name">{title}</span>
+              <ThreadName id={thread} title={name} />
             </span>
             <span className="workspace-place thread-place">
               <span className={`special-state is-${tone}`}>{line}</span>

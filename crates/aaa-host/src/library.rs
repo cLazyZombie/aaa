@@ -264,6 +264,11 @@ impl Host {
             base: format!("/v/{cap}/"),
             expires_at_ms: aaa_common::util::now_ms() + VIEW_TTL.as_millis() as u64,
             link: reveal_link.then(|| self.latest_library_link(project, id)).flatten(),
+            from_thread: self.report_thread(
+                project,
+                id,
+                self.db.library_report(project, id).map_err(super::orch::internal)?.as_ref(),
+            ),
         })
     }
 

@@ -9,7 +9,7 @@ import { Icon } from "./icons";
 import { Markdown } from "./Markdown";
 import { DrawerToggle, HeadMore, HeadNote } from "./drawer";
 import { LIBRARY_SANDBOX } from "./FileViewer";
-import { ReportsPanel, openReportWindow } from "./ReportsPanel";
+import { ReportThread, ReportsPanel, openReportWindow } from "./ReportsPanel";
 import { formatBytes } from "./formatBytes";
 
 export type ReportRef = { project: string; name: string };
@@ -91,9 +91,12 @@ function ReportDetail({ report, onBack }: { report: ReportRef; onBack: () => voi
           <Icon name="back" />
         </button>
         <div className="term-title">
-          <strong>
-            {report.project}/{report.name}
-          </strong>
+          <span className="term-title-line">
+            <ReportThread id={lib?.from_thread} />
+            <strong>
+              {report.project}/{report.name}
+            </strong>
+          </span>
           {size !== null && <span className="muted">{formatBytes(size)} · 파일 {lib!.files.length}</span>}
         </div>
         <button className="ghost small" data-testid="report-window" onClick={() => void openReportWindow(report).catch((e: unknown) => setProblem(String(e)))}>

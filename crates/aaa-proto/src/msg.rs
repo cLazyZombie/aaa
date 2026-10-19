@@ -1833,6 +1833,10 @@ pub enum FrontRequest {
         /// FRONT_API 1.43. 「내 보고서」에 보일 제목(없으면 이름)
         #[serde(default)]
         title: Option<String>,
+        /// FRONT_API 1.56. 보고서를 낸 thread(`t-NNNN`). 없으면 host가 원본 경로·이름에서 그 프로젝트의 thread를 찾는다
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        #[ts(optional)]
+        from_thread: Option<String>,
     },
     /// FRONT_API 1.43. 보고서를 모든 곳에서 지운다(host 사본·목록·공유 링크·thread 보고 사본). 되돌리지 않는다.
     /// 끝나지 않은 thread의 사본이 하나라도 있으면 아무것도 지우지 않는다.

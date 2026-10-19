@@ -215,6 +215,10 @@ pub struct LibraryView {
     /// FRONT_API 1.36. 조작 권한에만 보이는 보고서 공유 링크. 앱 안 보기는 만료·폐기와 무관하다.
     #[serde(default)]
     pub link: Option<LinkView>,
+    /// FRONT_API 1.56. 보고서를 낸 thread(`LibraryReport.from_thread`와 같다). 열람 머리에 보인다
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub from_thread: Option<String>,
 }
 
 /// FRONT_API 1.36. 보고서 하나의 host 사본만 읽는 서명 링크(§8.197).
@@ -264,6 +268,10 @@ pub struct LibraryReport {
     /// FRONT_API 1.43. 끝나지 않은(resolve 전) thread의 사본이라 지울 수 없다
     #[serde(default)]
     pub busy: bool,
+    /// FRONT_API 1.56. 보고서를 낸 thread(`t-NNNN`, 사용자 요청 10-20). 근원을 모르면 없다
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub from_thread: Option<String>,
 }
 
 /// 보고서 하나(프로젝트·이름). FRONT_API 1.43 `LibraryDelete`

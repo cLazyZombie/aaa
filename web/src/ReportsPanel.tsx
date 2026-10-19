@@ -30,6 +30,14 @@ export async function openReportWindow(r: { project: string; name: string }): Pr
   }
 }
 
+/** 보고서를 낸 thread 번호(사용자 요청 10-20 「보고서에 항상 스레드 번호」): 이름 왼쪽. 근원을 모르는 보고서는 그리지 않는다 */
+export function ReportThread({ id }: { id: string | undefined }) {
+  return id ? <span className="report-tag report-thread" data-testid="report-thread">{id}</span> : null;
+}
+
+/** 목록 줄의 번호 표지. thread 사본처럼 보이는 이름이 곧 번호면 번호가 두 번 보이지 않게 뺀다 */
+const rowThread = (r: LibraryReport) => r.from_thread === r.name && !r.title ? undefined : r.from_thread;
+
 type Tab = "mine" | "work";
 
 const keyOf = (r: { project: string; name: string }) => `${r.project}/${r.name}`;
@@ -120,7 +128,7 @@ export function ReportsPanel({ role, rev, onView }: { role: DeviceRole; rev: num
         const key = keyOf(r);
         return <article className={`report-card report-mine${r.unseen ? " is-unseen" : ""}`} key={key} data-testid={`report-${r.project}-${r.name}`} data-unseen={r.unseen ? "true" : "false"}>
           <div className="report-heading">
-            <strong>{r.unseen && <span className="report-new-dot" role="img" aria-label="안 봄" />}{titleLink(r)}</strong>
+            <strong>{r.unseen && <span className="report-new-dot" role="img" aria-label="안 봄" />}<ReportThread id={r.from_thread} />{titleLink(r)}</strong>
             <span>{formatBytes(r.size)}{r.live ? " · 실시간" : ""}</span>
           </div>
           <p className="muted">{r.title ? `${key} · ` : ""}보냄 {when(r.updated_at_ms)}</p>
@@ -156,6 +164,7 @@ export function ReportsPanel({ role, rev, onView }: { role: DeviceRole; rev: num
                   if (e.target.checked) next.add(key); else next.delete(key);
                   return next;
                 })} />}
+              <ReportThread id={rowThread(r)} />
               {titleLink(r, "report-row-name")}
               {r.busy && <span className="report-tag is-busy">진행 중</span>}
               <span className="muted report-row-meta">{formatBytes(r.size)}{r.live ? " · 실시간" : ""} · {when(r.updated_at_ms)}</span>

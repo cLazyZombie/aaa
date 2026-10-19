@@ -787,8 +787,16 @@ mod tests {
         std::fs::create_dir(&source).unwrap();
         std::fs::write(source.join("index.html"), "<h1>보고</h1>").unwrap();
         let publish = |n| {
-            h.library_publish("demo", &format!("report-{n}"), source.to_str().unwrap(), false, Some(None), "local:cli")
-                .unwrap()
+            h.library_publish(
+                "demo",
+                &format!("report-{n}"),
+                source.to_str().unwrap(),
+                false,
+                Some(None),
+                None,
+                "local:cli",
+            )
+            .unwrap()
         };
         for n in 0..8 {
             publish(n);
