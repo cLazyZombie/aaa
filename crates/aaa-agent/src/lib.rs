@@ -7,6 +7,7 @@
 
 mod attach;
 mod chat;
+mod ci;
 mod command;
 mod cwd;
 pub mod deploy;
@@ -1404,6 +1405,10 @@ impl Agent {
                 .map(AgentResponse::Cleanup)
                 .map_err(|e| ErrorBody::new(ErrorCode::Internal, format!("{e:#}")))
             }
+            AgentRequest::CiQuery { cwd, query } => ci::query(&cwd, &query)
+                .await
+                .map(AgentResponse::Ci)
+                .map_err(|e| ErrorBody::new(ErrorCode::BadRequest, format!("{e:#}"))),
             AgentRequest::PrQuery { cwd, query } => pr::query(&cwd, &query)
                 .await
                 .map(AgentResponse::Pr)

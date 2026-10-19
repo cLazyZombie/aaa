@@ -38,7 +38,7 @@ pub async fn query(cwd: &str, q: &PrQuery) -> Result<PrAnswer> {
     Ok(PrAnswer { origin, out })
 }
 
-async fn origin(dir: &Path) -> String {
+pub(crate) async fn origin(dir: &Path) -> String {
     let out = tokio::time::timeout(
         GH_TIMEOUT,
         tokio::process::Command::new("git")

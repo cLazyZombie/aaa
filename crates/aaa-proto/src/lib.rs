@@ -1,5 +1,7 @@
 //! aaa의 경계 계약. Rust 타입이 정본이고 웹 TypeScript 타입은 여기서 생성한다(`web/src/gen/proto.ts`).
 
+pub mod ci;
+pub use ci::*;
 pub mod deploy;
 pub mod input;
 pub use deploy::*;

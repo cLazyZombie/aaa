@@ -2,6 +2,7 @@
 //! 전송(IPC·frame·TLS)·OS 유틸·Front API 클라이언트와, agent·host가 같은 규칙을 써야 하는 순수 함수(PR 주소·origin 해석)만 둔다(결정 13).
 
 pub mod caller;
+pub mod ci;
 pub mod conn;
 pub mod front;
 pub mod ipc;
