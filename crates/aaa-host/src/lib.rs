@@ -56,6 +56,7 @@ mod transitions;
 mod trust_screen;
 pub mod usage;
 mod usage_limit;
+mod watch;
 mod watch_event;
 pub mod web;
 
@@ -73,7 +74,7 @@ use aaa_proto::{
 };
 use anyhow::{Context, Result};
 use sha2::Digest;
-use tokio::sync::{broadcast, oneshot, watch};
+use tokio::sync::{broadcast, oneshot, watch as tokio_watch};
 
 use aaa_common::conn::FrameTx;
 use aaa_common::util;
@@ -394,9 +395,9 @@ pub struct Host {
     /// 실제로 listen한 웹 포트(설정이 `:0`이면 bind 뒤에 정해진다)
     pub web_port: std::sync::atomic::AtomicU16,
     inner: Mutex<Inner>,
-    pub changed: watch::Sender<u64>,
+    pub changed: tokio_watch::Sender<u64>,
     /// 보고서 목록이 바뀌었다(보내기·열기·지우기·thread 사본, plan §8.256). 웹 events가 안 본 수를 다시 보낸다
-    pub reports_changed: watch::Sender<u64>,
+    pub reports_changed: tokio_watch::Sender<u64>,
     enroll: Mutex<Enroll>,
     pairing: Mutex<Pairing>,
     pub agent_listen: Mutex<Option<String>>,
@@ -454,7 +455,7 @@ pub struct Host {
     tick_started: std::sync::atomic::AtomicU64,
     /// 이 host가 뜬 시각. auto-resolve는 이때부터도 잰다(herdr-projects ticker `started`: 오래 꺼져 있던 뒤 한꺼번에 끝내지 않는다)
     pub(crate) started_ms: u64,
-    tick_done: watch::Sender<u64>,
+    tick_done: tokio_watch::Sender<u64>,
     /// 머신별 끊김: 이 host 프로세스가 끊김을 처음 본 때와 알렸는지(inbox::Outage)
     outages: Mutex<HashMap<String, inbox::Outage>>,
     /// 머신별 마지막으로 알린 건강 이상(이어 붙인 글, 정상이면 빈 글)
@@ -473,7 +474,7 @@ pub struct Host {
     routine_running: Mutex<HashSet<String>>,
     /// PR 추적: 프로젝트별 마지막 조회·도는 중·`gh` 실패, `gh` 계정(pr.rs)
     pr: Mutex<pr::PrMemory>,
-    ci: Mutex<ci::Memory>,
+    watch: Mutex<watch::Memory>,
     /// 결과물 보기 경로(`/v/<cap>/`) → 대상 thread
     view_caps: Mutex<HashMap<String, library::ViewCap>>,
     library_signing: std::sync::RwLock<library_links::SigningKey>,
@@ -613,8 +614,8 @@ impl Host {
             dev_mode,
             web_port: std::sync::atomic::AtomicU16::new(web_port),
             inner: Mutex::new(Inner { machines, panes: HashMap::new(), generation: 0, colors: Default::default() }),
-            changed: watch::channel(0).0,
-            reports_changed: watch::channel(0).0,
+            changed: tokio_watch::channel(0).0,
+            reports_changed: tokio_watch::channel(0).0,
             enroll: Mutex::new(Enroll::default()),
             pairing: Mutex::new(Pairing::default()),
             agent_listen: Mutex::new(None),
@@ -649,7 +650,7 @@ impl Host {
             chat_sync: tokio::sync::Mutex::new(()),
             tick_started: std::sync::atomic::AtomicU64::new(0),
             started_ms: aaa_common::util::now_ms(),
-            tick_done: watch::channel(0).0,
+            tick_done: tokio_watch::channel(0).0,
             outages: Mutex::new(HashMap::new()),
             health_marks: Mutex::new(HashMap::new()),
             nudge_screens: Mutex::new(HashMap::new()),
@@ -659,7 +660,7 @@ impl Host {
             usage_limits: Mutex::new(HashMap::new()),
             routine_running: Mutex::new(HashSet::new()),
             pr: Mutex::new(pr::PrMemory::default()),
-            ci: Mutex::new(ci::Memory::default()),
+            watch: Mutex::new(watch::Memory::default()),
             view_caps: Mutex::new(HashMap::new()),
             library_signing: std::sync::RwLock::new(library_signing),
             library_ops: std::sync::Mutex::new(()),
