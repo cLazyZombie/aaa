@@ -1019,7 +1019,7 @@ mod mission_tests {
         let work = root.join("repo/.aaa/demo-t-0001");
         let project = root.join("projects/demo");
         std::fs::create_dir_all(&work).unwrap();
-        let cfg = ThreadsConfig { exe: "/opt/aaa".into(), ..Default::default() };
+        let cfg = ThreadsConfig { exe: "/opt/aaa tools/aaa".into(), ..Default::default() };
         for harness in ["claude", "codex"] {
             let mut profile = aaa_proto::ResolvedProfile {
                 harness: harness.into(),
@@ -1051,6 +1051,9 @@ mod mission_tests {
                 let allow = settings["permissions"]["allow"].as_array().expect("임무 허용 목록");
                 assert!(allow.contains(&serde_json::json!("Bash(aaa report *)")));
                 assert!(allow.contains(&serde_json::json!("Bash(aaa mission show demo watch --json)")));
+                assert!(
+                    allow.contains(&serde_json::json!(r#"Bash("/opt/aaa tools/aaa" mission show demo watch --json)"#))
+                );
                 assert!(allow.contains(&serde_json::json!("Bash(aaa mission --help)")));
                 assert!(allow.contains(&serde_json::json!("Bash(aaa --help)")));
                 assert!(allow.contains(&serde_json::json!(format!(

@@ -36,7 +36,12 @@ pub(super) fn queries(launch: &Launch, project: &Path) -> Result<Vec<Vec<String>
 pub(super) fn claude(settings: &mut Value, exe: &Path, work: &Path, project: &Path, queries: &[Vec<String>]) {
     let mut allow = vec![];
     allow.push(format!("Bash({})", aaa_proto::mission_inbox_list_command(&work.to_string_lossy())));
-    for command in ["aaa".to_string(), exe.to_string_lossy().into_owned(), shell_quote(exe)] {
+    for command in [
+        "aaa".to_string(),
+        exe.to_string_lossy().into_owned(),
+        shell_quote(exe),
+        aaa_proto::fill_brief(aaa_proto::BRIEF_EXE, "", &exe.to_string_lossy()),
+    ] {
         allow.push(format!("Bash({command} report *)"));
         allow.push(format!("Bash({command} post coordinator *)"));
         for query in queries {
