@@ -24,6 +24,7 @@ import { shouldFoldUserMessage } from "./herdr/userMessageFold.ts";
 import { ConversationRefresh } from "./herdr/conversationRefresh.ts";
 import type { PendingSend } from "./ChatComposer";
 import { chatRowIds, chatScrollAnchor } from "./chatScroll";
+import { unwrapPasted } from "./pastedContent";
 
 /** 기록 줄 요소(말마다 하나, 끝에 대기 말). 머리 안내·경고는 줄이 아니다 */
 function chatRows(el: HTMLElement): NodeListOf<HTMLElement> {
@@ -389,7 +390,7 @@ export function ChatPanel({
             m.role === "thinking" ? (
               <ThinkingRow key={rowIds[i]} text={m.text} />
             ) : m.role === "user" ? (
-              <UserTurn key={rowIds[i]} text={m.text} pane={pane} onOpenFile={onOpenFile} pending={m.pending ? { harness } : undefined} />
+              <UserTurn key={rowIds[i]} text={unwrapPasted(m.text)} pane={pane} onOpenFile={onOpenFile} pending={m.pending ? { harness } : undefined} />
             ) : m.role === "assistant" ? (
               <AgentTurn key={rowIds[i]} text={m.text} />
             ) : (

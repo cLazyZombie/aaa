@@ -121,12 +121,14 @@ export default async function ({ page }) {
     aaa("pane", "kill", "hold2");
   });
 
-  await step("휴대폰 폭(390px)에서도 대화 입력창·터미널 입력줄이 여러 줄로 커지면 보기는 그 위에서 끝난다(겹침 없음)", async () => {
+  await step("휴대폰 폭(390px)에서도 대화 입력창·터미널 입력줄이 여러 줄로 커지면 보기는 그 위에서 끝난다(겹침 없음). 기록의 붙여넣기 꼬리표는 걷고 안의 글만 보인다", async () => {
     const dir = `${root}/claude/projects/-lab-hold3`;
     fs.mkdirSync(dir, { recursive: true });
     const transcript = `${dir}/s1.jsonl`;
     let body = "";
     for (let i = 0; i < 20; i++) body += user(`질문 ${i}`) + answer(`답 ${i}\n\n${"긴 줄 ".repeat(30)}`);
+    // 웹 입력창 글은 Claude Code가 기록에 붙여넣기 꼬리표로 감싸 남긴다: 대화 보기는 안의 글만 보인다(pastedContent.ts)
+    body += user('<pasted_content id="7f06">\n붙여 넣은 글\n둘째 줄\n</pasted_content id="7f06">');
     fs.writeFileSync(transcript, body);
     aaa("tab", "create", "--machine", "labA", "--label", "hold3", "--", "/bin/sh", "-c", '"$0" hook --agent claude "$1"; exec cat', AA,
       JSON.stringify({ hook_event_name: "SessionStart", session_id: "0d4e5f6a-7b8c-4d9e-8f0a-1b2c3d4e5f6a", source: "startup", transcript_path: transcript }));
@@ -138,6 +140,8 @@ export default async function ({ page }) {
     await until("대화 단추", async () => (await toggle.count()) === 1);
     if ((await toggle.getAttribute("aria-pressed")) !== "true") await toggle.click();
     await until("대화 기록", async () => (await mobile.locator('[data-testid="chat"] .chat-msg').count()) >= 40);
+    const pasted = (await mobile.locator('[data-testid="chat"] .chat-msg.user').last().innerText()).trim();
+    if (pasted !== "붙여 넣은 글\n둘째 줄") throw new Error(`붙여넣기 꼬리표가 보인다: ${JSON.stringify(pasted)}`);
     await mobile.getByTestId("chat-composer").getByRole("textbox", { name: "메시지" }).fill("한 줄\n두 줄\n세 줄\n네 줄\n다섯 줄");
     await frame(mobile);
     const chat = await view(mobile);
