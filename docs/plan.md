@@ -5597,3 +5597,17 @@ primary 근거:
   Projects·Machines·Agents 패널과 패널 밖 특수 임무다.
 - 기존 렌더 keeper에서 작은 화면·큰 화면·다수 workspace 상한·저장 비율을 확인한다. 기존 PTY keeper에서 자동 경계를
   실제 마우스로 끌고 재접속하여 저장 비율을 확인한다. 새 시험 전용 seam은 없다.
+
+### 8.239 입력줄 상태에 따른 Ctrl+Enter(10-19, t-0384, D1·D7 후속)
+
+사용자 결정: 웹 터미널과 TUI의 agent pane에서 입력줄에 글이 있으면 줄바꿈, 비었으면 harness steering을 한다. 감지로 판정하지 못하면 줄바꿈이다. front가 입력줄을 각각 읽지 않고 `FrontRequest::PaneCtrlEnter { pane }`로 host에 요청한다. TUI의 물리 키 연결은 t-0385가 맡는다.
+
+- 공통 처리: `aaa-host/src/text.rs::Host::ctrl_enter_data` → `ctrl_enter.rs::ctrl_enter_keys`. mirror의 `Vt::detection_text`와 같은 mirror의 Visible ANSI를 함께 읽고 기존 `prompt_box.rs`(herdr-projects `src/prompt_box.rs`)의 Empty·Typed·Unknown 판정을 재사용한다. 확인창·사본 미동기화·상자 잘림·서로 다른 본문은 steering하지 않는다. 아직 감지 사건이 오지 않은 직접 실행 harness도 모름으로 처리한다.
+- Claude Code의 올바른 순서는 **Ctrl+X → Ctrl+S**다. Ctrl+S 단독은 초안 보관이다. 공식 interactive-mode·keybindings 문서와 설치본 2.1.303의 `chat:sendNow` 바인딩으로 확인했다. 회색 추천문은 dim·inverse 스타일로 구분하고 이미지·붙여넣기 placeholder는 내용으로 센다. NO_COLOR에서 추천문인지 알 수 없으면 줄바꿈이다.
+- Codex 0.163의 Ctrl+X·Ctrl+S는 같은 동작이 아니다. 참고 `herdr-web-ui/server/codex-steering.ts::codexSteeringPending`처럼 현재 Working·native 대기 안내·↳ 항목·빈 입력·footer가 확인될 때만 Esc로 대기 steering을 즉시 보낸다. 지난 패널·입력 아래 글·확인창·대기 메시지가 없는 화면에서는 줄바꿈이다. 일반 빈 입력에 Esc를 보내 작업을 취소하지 않는다. 여러 줄 초안의 경계를 알 수 없거나 커서가 입력 시작 칸을 벗어나도 줄바꿈이다.
+- 웹은 기존 `PaneTerminal.tsx::onModifiedEnter`의 IME 확정 뒤 onKey/onData 순서를 유지하되 `TermClientMsg::CtrlEnter`를 보낸다. 키 막대의 Ctrl 래치+Enter·저장한 Ctrl+Enter 조합·빈 입력줄도 같은 요청이다. 아직 보내지 않은 웹 입력줄의 글은 제출하지 않고 그 줄에 줄바꿈을 넣는다. 반복 keydown은 다시 steering하지 않는다.
+- 셸·vim 등 harness가 없는 pane은 기존 프로그램의 Ctrl+Enter 인코딩을 유지한다. 요청은 reader 제한과 대화형 입력 순서·lease 경로를 공유한다. 새 session IPC나 운영 agent 설정은 필요 없다.
+- 근거: herdr-web-ui `aa624cb` `server/prompt.ts::claudeInputEmpty/claudeInputDraft`, `src/components/PaneTerminal.tsx` onModifiedEnter·키 막대 경로; herdr 0.9.5 `src/detect/manifest.rs`의 입력 상자 영역과 `src/app/api_helpers.rs::encode_api_keys`; t3code `4b1024da` `ChatView.tsx`의 `thread.steerQueuedMessage`(provider 큐라 PTY 키로 대체하지 않음). 사용자 결정에 따라 기본 Ctrl+Enter를 입력줄 상태로 분기하는 부분만 참고의 고정 인코딩과 다르다.
+- 검증 owner: `ctrl_enter.rs` 유닛은 스타일·잘린 상자·여러 줄·현재 Codex 패널 판정을, 웹 `25-ctrl-enter.mjs`는 실제 host·agent·PTY의 bytes와 물리 키·모바일·입력줄·IME·반복 키를 본다. 기존 `03-keys.mjs`가 일반 프로그램의 modifyOtherKeys·Shift+Enter를 계속 확인한다. 기다림은 출력 표지·DOM·sentFrames 사건으로 끝낸다.
+
+- **최신 main 통합의 fixture 경계.** t-0383의 Codex 제목 `-c` 옵션이 뒤에 추가되어 마지막 두 argv를 읽던 E2E 가짜가 옵션을 모드·기록 파일로 오인했다. fixture 인자를 명시적 `--` 뒤에 두고 그 경계에서 읽어 harness 옵션 추가와 분리한다. 실제 Ctrl+Enter bytes·시한·기대값은 유지하며 실패 로그를 보존했다.
