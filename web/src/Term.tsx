@@ -127,7 +127,9 @@ function termTheme(): ITheme {
 
 /** 이 화면의 터미널 기본 색(`rrggbb`). session host가 프로그램의 색 질의(OSC 10/11)에 이 색으로 답한다(plan §8.187) */
 function termColors(): { fg: string; bg: string } {
-  return { fg: token("--term-fg").replace(/^#/, ""), bg: token("--term-bg").replace(/^#/, "") };
+  // CSS 빌드가 #ffffff를 #fff로 줄여도 protocol의 rrggbb 계약을 지킨다.
+  const hex = (name: string) => token(name).replace(/^#/, "").replace(/^([0-9a-f])([0-9a-f])([0-9a-f])$/i, "$1$1$2$2$3$3");
+  return { fg: hex("--term-fg"), bg: hex("--term-bg") };
 }
 
 export function TermView({

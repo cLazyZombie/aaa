@@ -3,6 +3,7 @@
 //! herdr(https://github.com/herdrdev/herdr, Apache License 2.0)의 코드를 옮겨 aaa에 맞게 고쳤다.
 
 use ratatui::style::Color;
+mod github;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Palette {
@@ -499,7 +500,11 @@ impl Palette {
 
     /// Resolve a theme by name. Returns None for unknown names.
     pub fn from_name(name: &str) -> Option<Self> {
-        match canonical_theme_name(name)? {
+        let name = canonical_theme_name(name)?;
+        if let Some(g) = github::theme(name) {
+            return Some(g.palette);
+        }
+        match name {
             "catppuccin" => Some(Self::catppuccin()),
             "catppuccin-latte" => Some(Self::catppuccin_latte()),
             "terminal" => Some(Self::terminal()),
@@ -550,6 +555,9 @@ pub const THEME_NAMES: &[&str] = &[
     "rose-pine",
     "rose-pine-dawn",
     "vesper",
+    "github-light",
+    "github-dark",
+    "github-dark-dimmed",
 ];
 
 pub fn canonical_theme_name(name: &str) -> Option<&'static str> {
@@ -572,6 +580,19 @@ pub fn canonical_theme_name(name: &str) -> Option<&'static str> {
         "rose-pine" | "rosepine" => Some("rose-pine"),
         "rose-pine-dawn" | "rosepine-dawn" | "dawn" => Some("rose-pine-dawn"),
         "vesper" => Some("vesper"),
+        "github" | "github-light" => Some("github-light"),
+        "github-dark" => Some("github-dark"),
+        "github-dimmed" | "github-dark-dimmed" | "dimmed" => Some("github-dark-dimmed"),
+        _ => None,
+    }
+}
+
+/// GitHub pane의 기본색·ANSI 16색. indexed 16~255와 명시 RGB는 프로그램이 지정한 그대로 둔다.
+pub fn terminal_color(name: &str, c: u32, foreground: bool) -> Option<Color> {
+    let g = github::theme(name)?;
+    match c >> 24 {
+        0 => Some(if foreground { g.palette.text } else { g.palette.panel_bg }),
+        1 if (c & 0xff) < 16 => Some(g.ansi[(c & 0xff) as usize]),
         _ => None,
     }
 }

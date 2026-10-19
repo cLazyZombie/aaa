@@ -5492,3 +5492,11 @@ primary 근거:
 - **검증.** Watch의 실제 Detect 응답 경계에 운영 화면의 최소 재현을 넣었다. 수정 전 중간 설명에서 idle 발생으로 RED, 수정 후 작업 유지·Ready의 idle·Action Required의 question을 검사한다. 기존 실행·재개·최종 spawn 시험은 제목 옵션·사용자 notify·wrapper·명시적 옵션·`--` 경계를 함께 확인한다. 고정 sleep·상태 polling·새 시험용 production seam은 없다.
 - **통합 검사에서 발견한 TUI 시작 입력 유실.** `osc52_copy_reports_a_request`는 TUI가 첫 layout을 받기 전에 입력해 `echo`의 첫 글자를 잃었다. 기존 TUI 시험처럼 이름 있는 탭과 pane을 그린 출력 사건(Condvar), host 입력권 사건을 기다린 뒤 입력한다. 제품도 최초 Workspace 요청을 단순 pending에만 넣어 포커스가 없는 동안 키를 버릴 수 있었다. 기존 `await_layout`에 등록해 workspace 전환과 같은 `focus_wait`·`held` 보류/재생 경로를 쓴다. herdr client의 `initial_host_input` 보존과 같은 목적이며 새 buffer·시험 전용 seam·고정 sleep은 없다. 초기 TTY 설정 이전 입력까지 보장한다는 뜻은 아니다. 사용자가 이 별도 실패도 직접 수리하도록 범위를 명시했다.
 - **운영 반영.** 새 agent binary로 새로 띄우거나 재개한 Codex부터 제목 설정이 적용된다. 이미 실행 중인 Codex는 host·agent만 다시 시작해도 argv가 바뀌지 않는다. 기존 세션의 재개 시점은 coordinator가 정한다. 운영 프로세스·설정·상태 폴더는 이 작업에서 수정하지 않았다.
+
+### 8.231 GitHub Light·Dark·Dark Dimmed 테마(10-19, t-0388)
+
+- 웹 색상과 TUI 설정에 같은 세 이름을 추가했다. 기본값·설정/공유 protocol은 그대로다.
+- 색 값은 GitHub 공식 Primer 7.10.0이다. 역할·참고 소스·가독성 보정은 [GitHub 테마](github-themes.md)에 적었다.
+- TUI는 pane 기본색·ANSI 16색·빈 바탕까지 테마를 적용하고, 명시 RGB·확장 256색은 유지한다.
+- 웹의 빌드된 단축 hex(`#fff`)도 터미널 기본색 전달 protocol에서 6자리로 보낸다.
+- 기존 웹 공유 설정·TUI 설정 E2E를 넓혔다. 화면은 별도 실험실에서 headless로 캡처하며 운영 설정·프로세스는 바꾸지 않는다.
