@@ -32,6 +32,8 @@ pub struct RootState {
     pub roots: Vec<RootInfo>,
     /// 마지막 agent 시작에 적용된 경로다. 프로세스가 지금 연결됐다는 증명은 아니다.
     pub applied: Option<PathBuf>,
+    #[serde(default)]
+    pub applied_mount: Option<PathBuf>,
 }
 
 pub fn inspect(state: &Path) -> Result<Option<RootState>> {
@@ -104,6 +106,7 @@ impl RootTransaction {
             owner: aaa_common::util::new_id(),
             roots: Vec::new(),
             applied: None,
+            applied_mount: None,
         });
         let tx = Self { state: state.into(), _lease: lease, data };
         // root 소유 표지를 만들기 전에 owner를 먼저 내구화한다. 중단 뒤에도 같은 소유자다.
@@ -173,6 +176,14 @@ impl RootTransaction {
         }
         Ok((self.data.roots[index].clone(), imported))
     }
+    /// 이 독점 잠금을 유지한 채 구판 외장 worktree를 보호하고 설정 저장을 준비한다.
+    pub async fn protect_worktrees(&self) -> Result<()> {
+        crate::threads::protect_recorded_worktrees_locked(&crate::threads::ThreadsConfig {
+            state_dir: Some(self.state.clone()),
+            ..Default::default()
+        })
+        .await
+    }
     fn check_owner(&self, owner: &RootOwner) -> Result<()> {
         if owner.schema != 1 || owner.owner != self.data.owner {
             bail!("다른 agent 인스턴스가 소유한 작업 root다");
@@ -182,6 +193,7 @@ impl RootTransaction {
     pub fn apply(&mut self, path: &Path, mount: Option<&Path>) -> Result<RootState> {
         self.register(path, mount)?;
         self.data.applied = Some(path.into());
+        self.data.applied_mount = self.data.roots.iter().find(|r| r.path == path).and_then(|r| r.mount.clone());
         self.save()?;
         Ok(self.data.clone())
     }
@@ -194,4 +206,25 @@ struct RootOwner {
 
 pub fn activate(state: &Path, path: &Path, mount: Option<&Path>) -> Result<RootState> {
     RootTransaction::open(state)?.apply(path, mount)
+}
+
+/// 설정을 바꾸거나 root를 등록하지 않는 CLI 사전 점검이다.
+pub fn probe(state: &Path, path: &Path, mount: Option<&Path>) -> Result<PathBuf> {
+    let saved = inspect(state)?;
+    let registered = saved.as_ref().and_then(|s| s.roots.iter().find(|r| r.path == path));
+    let mount = mount.or_else(|| registered.and_then(|r| r.mount.as_deref()));
+    if let Some(root) = registered {
+        root.check(path)?;
+    }
+    let real = check(path, mount)?;
+    if registered.is_some_and(|r| r.real_path != real) {
+        bail!("등록한 작업 root의 실제 경로가 바뀌었다");
+    }
+    if let Some(marker) = crate::journal::read::<RootOwner>(&path.join(".aaa-root-owner.json"))?
+        && (marker.schema != 1 || !saved.as_ref().is_some_and(|s| s.owner == marker.owner))
+    {
+        bail!("다른 agent 인스턴스가 소유한 작업 root다");
+    }
+    initialize(path, mount)?;
+    Ok(real)
 }

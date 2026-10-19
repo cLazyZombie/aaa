@@ -6,7 +6,7 @@ use anyhow::{Context, Result, bail};
 
 mod registry;
 pub(crate) use registry::{Lease, shared};
-pub use registry::{RootInfo, RootState, RootTransaction, activate, inspect};
+pub use registry::{RootInfo, RootState, RootTransaction, activate, inspect, probe};
 
 /// 존재하지 않는 마지막 조각도 실제 조상 기준으로 해석한다. 끊긴 symlink는 오류다.
 pub(crate) fn real_location(path: &Path) -> Result<PathBuf> {

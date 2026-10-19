@@ -382,6 +382,10 @@ async fn check_worktree(p: &Placement) -> Result<()> {
 /// 구판에서 가져온 외장 worktree도 agent가 다시 연결되기 전에 자동 prune으로부터 보호한다.
 pub async fn protect_recorded_worktrees(cfg: &ThreadsConfig) -> Result<()> {
     let _lease = cfg.lease()?;
+    protect_recorded_worktrees_locked(cfg).await
+}
+
+pub(crate) async fn protect_recorded_worktrees_locked(cfg: &ThreadsConfig) -> Result<()> {
     let dir = cfg.state_dir.as_ref().context("agent 상태 폴더가 없다")?.join("thread-preparations");
     let entries = match std::fs::read_dir(&dir) {
         Ok(entries) => entries,
