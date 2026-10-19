@@ -5531,3 +5531,12 @@ primary 근거:
   받아 마지막 줄바꿈을 command substitution이 지웠다. PTY는 쓰기별 read 경계를 보장하지 않는다. adopt가 보는 것은 pane의
   생존과 제출 뒤 응답이므로 가짜를 canonical 줄 읽기로 바꾸고, 기존 생존 검사는 글+Enter를 한 번 쓰는 `pane run`으로 강화했다.
   실제 입력·기대 응답·시한을 바꾸지 않는다. 첫 실패의 실험실·로그를 보존한다.
+
+### 8.233 확인창에 막힌 임무의 명시적 재시작(10-19, t-0380 후속)
+
+- **운영 근거.** 배포 후 `mission restart` audit 두 건이 있으나 같은 임무 pane·harness 세션이 유지됐다. 읽기 전용 DB에서 `reset_requested=true`, `resetting=false`, `state=막힘`, `idle_since_ms=null`이며 기존 Claude settings에는 permissions가 없었다. 설정 생성 수정(§8.227)에 도달하기 전에 막힌 것이다. `--permission-mode default` 자체는 새 설정에서도 의도한 값이다.
+- **원인.** restart는 reset 요청을 저장하고 막힘을 대기로 돌리지만 다음 tick의 Question 판정이 다시 막힘으로 바꿔 조기 반환했다. 이를 넘겨도 idle 30초·보는 화면·빈 입력창 조건이 확인창 복구를 막았다. Kill 뒤 Exited 감지가 오면 보는 화면 조건에 다시 걸릴 수도 있었다.
+- **수정.** 내부 저장 필드 `restart_requested`로 명시한 restart와 reload·자동 reset을 구별한다(옛 기록은 false). 명시 restart의 Question 복구만 이 보호 조건을 넘겨 기존 `resetting 저장 → Kill 요청 → 끝남 사건 → 새 profile rebrief → fresh Spawn` 경로로 보낸다. 끝남을 기다리는 동안 복구 의도를 유지한다. 확인창에 yes/no·명령 입력을 보내지 않으며 임무를 stop/resolve하지 않는다. 일하는 대화·idle 초안·자동 reset·reload·pause·예산·사용량의 기존 보호는 유지한다. 완료 시 두 요청 표지를 지운다.
+- **참고.** herdr-projects 0.2.35 `threads.rs::restart`의 명시 재시작과 `prompt`의 blocked/초안 보호를 구별하는 방식을 따른다. herdr 0.9.5 `app/api/agents.rs`도 blocked agent의 prompt를 거부한다. 이 참고 버전과 t3code `orchestration-v2/Adapters/ClaudeAdapterV2.ts`에는 aaa 임무 reset과 같은 기능이 없어 자동 reset의 준비 조건을 그대로 명시 복구에 적용하지 않았다.
+- **회귀.** 실제 host·DB·frame와 가짜 agent로 확인창+보는 화면에서 수정 전 Kill 0건을 재현했다. 자동 reset·reload는 그대로 보존, 명시 restart는 Kill 1건 후 실제 harness Exited·SessionState 끝남 사건을 거쳐 새 pane을 만들고 최신 권한 profile을 전달한다. state.md·processed.txt·inbox·미처리 입력은 남는다. idle 초안/보는 화면까지 예외를 넓히는 변형도 실패한다. 새 신호 시험·고정 sleep·외부 프로세스는 없다.
+- **운영 전환.** 이 수정의 host binary를 반영한 뒤 coordinator가 `aaa mission restart projects rc-verify-watch`를 다시 한 번 실행한다. 옛 binary가 남긴 reset_requested만으로 새 복구 의도를 추정하지 않는다. stop이나 옛 명령 승인은 필요 없다. 같은 thread에서 새 pane·새 harness 세션·permissions.allow·추가 읽기 경로가 적용됐는지를 확인한다. 이 thread는 운영 restart·binary 교체를 실행하지 않았다.
