@@ -3201,7 +3201,9 @@ fn render_front(r: &FrontResponse) -> String {
                 }
                 let off = if r.enabled { "" } else { " · 꺼짐" };
                 let when = |t: Option<u64>| t.map(aaa_common::util::utc_text).unwrap_or_else(|| "사건 오면".into());
-                let approval = if r.command.is_empty() {
+                let approval = if r.origin == "mission" && !r.approved {
+                    " · 임무 승인 필요"
+                } else if r.command.is_empty() {
                     ""
                 } else if !r.approved {
                     " · 승인 필요"

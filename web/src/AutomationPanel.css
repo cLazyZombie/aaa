@@ -14,3 +14,9 @@
 .automation-row ol { padding-left: 20px; }
 .automation-row li { margin: 8px 0; }
 .automation-heading button { min-height: 32px; }
+
+.automation-indicator { width: 7px; height: 7px; flex: 0 0 7px; border-radius: 50%; background: var(--text-dim); }
+.automation-row[data-status="done"] .automation-indicator { background: var(--status-done); }
+.automation-row[data-status="failed"] .automation-indicator { background: var(--status-blocked); }
+.automation-row[data-status="waiting"] .automation-indicator, .automation-row[data-status="skipped"] .automation-indicator { background: var(--notice); }
+.automation-approval { color: var(--notice); }

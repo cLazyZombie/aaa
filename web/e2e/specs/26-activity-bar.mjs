@@ -66,8 +66,8 @@ export default async function () {
       await focusIs(p, "End 자동화 단추", '[data-testid="activity-automations"]');
       await p.keyboard.press("Home");
       await focusIs(p, "Home 프로젝트 단추", '[data-testid="activity-projects"]');
-      const tabStops = await p.evaluate(() => [...document.querySelectorAll('.activity-bar [role="tab"]')].map((e) => e.tabIndex).join(","));
-      if (tabStops !== "-1,0,-1,-1") throw new Error(`Tab이 머무는 단추가 고른 패널 하나가 아니다: ${tabStops}`);
+      const tabStops = await p.evaluate(() => [...document.querySelectorAll('.activity-bar [role="tab"]')].map((e) => ({ id: e.dataset.testid, stop: e.tabIndex })));
+      if (!tabStops.some((t) => t.id === "activity-machines") || tabStops.some((t) => t.stop !== (t.id === "activity-machines" ? 0 : -1))) throw new Error(`Tab이 머무는 단추가 고른 패널 하나가 아니다: ${JSON.stringify(tabStops)}`);
       // Mod+Shift+B(참고 toggle-sidebar): 터미널에 focus가 있어도 앱이 가져가 접고 편다
       await p.getByTestId("terminal").click();
       await p.keyboard.press("ControlOrMeta+Shift+B");

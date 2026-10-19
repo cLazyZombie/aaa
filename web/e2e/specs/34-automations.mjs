@@ -21,6 +21,7 @@ export default async function ({ page }) {
     await domIs(page, "건너뜀 기록", () => document.querySelector('[data-testid="automation-auto-demo-check"]')?.textContent.includes("마지막 건너뜀: coordinator 없음"));
     const mission = page.getByTestId("automation-auto-demo-mission:watch");
     await mission.waitFor();
+    if (!(await mission.textContent()).includes("임무 승인 필요")) throw new Error("승인 전 임무 조건의 승인 필요 표시가 없다");
     if (!(await mission.textContent()).includes("임무 파일에서") || !(await mission.textContent()).includes("git_pushed")) throw new Error("임무 조건 출처가 없다");
     await row.locator("summary").click();
     await row.locator("ol li").first().waitFor();

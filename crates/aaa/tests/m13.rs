@@ -4298,8 +4298,8 @@ fn pr_followup() {
     assert_eq!(errors.len(), 1, "{errors:?}");
     assert_eq!(errors[0]["subject"], "broken");
     let list = String::from_utf8_lossy(&w.h.run(&["routine", "list", "demo"]).stdout).to_string();
-    assert!(list.contains("landing\ton pr: checks-failed, merged\tthread에 보냄 · 꺼짐\n"), "{list}");
-    assert!(list.contains("pr-followup\ton pr: checks-failed, review\tthread에 보냄\n"), "{list}");
+    assert!(list.contains("landing\ton pr: checks-failed, merged → 주인 thread에 글 · 꺼짐\t지난 기록 없음 · 다음 사건 오면 · 오늘 0 · 건너뜀 - · 출처 routine\n"), "{list}");
+    assert!(list.contains("pr-followup\ton pr: checks-failed, review → 주인 thread에 글\t지난 기록 없음 · 다음 사건 오면 · 오늘 0 · 건너뜀 - · 출처 routine\n"), "{list}");
 
     let task = w.task("pr.md", "PR을 연다");
     let id = w.start(&["--title", "PR", "--profile", "fake", "--repo", path_str(&w.repo), "--task-file", &task])["id"]
