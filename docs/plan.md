@@ -4091,6 +4091,7 @@ coordinator 실기(10-18 00:58, iPhone 홈 화면 앱을 앞에 띄움, binary c
   - session host 내부 프로토콜은 이전 session host와 호환해야 한다. 세션은 몇 주 이어질 수 있다.
 - **DB·설정:** DB는 expand/contract로 바꾼다. 이전 프로세스가 남아 있는 동안 설정 migrate를 미룬다.
 - **롤백:** 이전 산출물을 보관한다(개수는 TOML). DB 백업을 복원하고 `aaa update rollback`을 실행한다. 서명이나 다운로드가 실패하면 fallback 설치를 하지 않는다.
+- **사람·제안(10-20, §8.296):** 사람은 aaa 밖 host 터미널의 `aaa deploy start`에서 후보·SHA·대상을 읽고 정확히 yes로 시작한다. host는 실제 peer의 pane 소속과 제어 터미널을 확인한다. 사람 승인은 같은 rollout 재개에 보존되며 coordinator safety와 독립이다. 자동화의 `do="deploy"`는 main 커밋 수를 거른 뒤 제안과 빌드 안내만 저장한다.
 - **웹 조회(10-20, §8.293):** 머신 패널의 조회 카드에서 전송·단계·복구 결과·전체 SHA/ID를 본다. Reader도 읽으며 연결이 끊기면 마지막 수신 상태로 표시한다. 사용자 결정 A안으로 웹 시작 버튼·web_deploy safety는 만들지 않는다.
 - **지금(10-19, §8.289):** 커밋 후보는 `scripts/deploy-build.sh`로 한 번 만든다(origin/main 조상·격리 worktree·웹·커밋 판·provenance). `aaa deploy start --file <빌드머신>:<후보폴더>/aaa --sha256 <SHA>`가 Agent link로 전체 전송/SHA/self-check를 끝낸 뒤 host → 로컬 agent → 원격 agent 순서로 교체·재시작·실행 판/SHA를 확인한다. 기존 --from 미리 복사 경로도 유지한다. 실패한 머신만 배포 전 SHA로 자동 rollback하며 검증된 옛 실행 파일에서 띄운 독립 감시가 host·agent 재시작 뒤에도 복구를 진행한다. 복구 중에는 다음 머신으로 가지 않으며 앞 머신은 유지한다. 옛 L1/L2 기록은 기존 중단 정책으로 읽는다.
 - **공개판(§8.210):** 공개 GitHub release의 `manifest.json`·OS/arch 실행 파일을 받는 `aaa update [--version <판>]`와 기존 `--from`·보관·rollback을 쓴다. SHA-256·self-check·version 고정 검사 뒤 같은 폴더 rename이다. macOS는 기존과 같은 ad-hoc 서명이며 서명 manifest·host가 agent로 보내기·DB 백업은 아직 없다.
@@ -5722,3 +5723,11 @@ L4 후속(10-20 00시 사용자 관찰): 멈춤 상태의 후보 예약과 재�
 - 사용자 무제한 원칙이 설계 원안의 기본 하루1/동시1/앞 thread 열림/모두 바쁨 대기를 대신한다. 서로 다른 사건은 앞 자동 thread가 열려 있어도 실행한다. wait_max, limits.max_running, projects.max_auto_threads는 명시할 때만 쓰며 기본0/생략은 없음이다. usage·batch·dedupe는 유지한다.
 - thread와 사건 시작 key를 같은 transaction에 넣고 생성 직전 holds/명시 동시 상한을 다시 확인한다. 최종 영수증 실패 뒤 실제 inflight 재처리도 같은 thread 완료로 기록한다. 일정형은 coordinator pane 없이 돌고 poll 시각 대신 예정 차례 key를 써 cursor 저장 전 재시작도 중복을 막는다. 기다리는 동안의 다음 일정은 once로 모은다. flow actor는 routine:<이름>, 실행 기록은 thread id를 담는다.
 - 운영 전환/승인은 배포 뒤 coordinator가 한다. 형식·운영은 [자동화](automations.md), owner·두 agent·웹·회귀 변형은 [시험](testing.md)을 따른다.
+
+### 8.296 사람 터미널 rollout과 자동화 배포 제안 L5(10-20, t-0426)
+
+- **승인.** FRONT1.55. 배포 CLI 연결은 local agent의 pane 정본을 기다린 뒤 peer PID를 판정한다. host가 확인한 pane 밖 제어 터미널과 선언 세션 없음일 때만 `person:<peer PID>` 출처를 만든다. client 문자열은 이 namespace를 만들지 못한다. CLI는 기존 person::require(세션 환경·표준 입력 터미널)를 통과하고 후보·SHA·대상을 보인 뒤 정확히 yes를 받는다. coordinator는 기존 safety 경로다. 웹·thread·평가자·임의 pane·떼어 낸 CLI는 열지 않는다. 같은 OS 사용자 권한의 외부 PTY/직접 client를 신뢰하는 기존 person 경계이며 OS 보안 격리는 아니다.
+- **재개.** 사람 승인은 host가 저장한 actor에 보존한다. host/로컬 agent 재시작·전송 재개에서도 같은 ID/승인으로 이어 가며 coordinator safety를 대신 켜지 않는다. coordinator 시작은 매 단계/조각에서 기존 safety 철회를 따른다. 사람 terminal status도 같은 aaa 기록을 읽는다. 원시 단일 머신 DeployStart 권한은 넓히지 않는다.
+- **제안.** 현재 순수 TOML에 `do="deploy"`와 on.git(main 하나, pushed만)를 쓴다. limits.min_commits는 1~100(생략1), origin/main에 새로 포함된 커밋 수이며 merge와 그 안의 커밋을 포함한다. 최근 성공 rollout의 commit이 있으면 그 기준, 없으면 규칙 등록 head를 보존한다. 실패한 최신 rollout은 성공 기준을 덮지 않는다. origin 교체는 등록 기준을 새로 잡고 forced/deleted는 제안하지 않는다. 잘린 Git 목록100개는 최소100개로 센다.
+- **저장·실행.** 기존 source 내구 outbox·공통 queue·batch/min_gap/하루/usage limits를 쓴다. 제안에는 commit과 build 명령 안내를 inbox(deploy_proposal, proposed)에 원자 표지와 함께 저장한다. ACK 저장 실패·host 재시작·inbox prune 뒤 같은 제안을 되살리지 않는다. raw 경로/보고/커밋 제목을 Reader 본문에 복제하지 않는다. 실제 rollout은 후보와 SHA를 준비한 뒤 사람 yes 또는 사용자 지시의 coordinator start에서 만든다. 빌드·thread 시작·실제 배포를 자동으로 호출하지 않으며 외부 push도 없다.
+- **검증.** 공개 TOML/schema, 원자 제안/ACK 실패와 재시작, 실제 Git push/누적/성공 기준, 기존 두 머신 L3 keeper의 사람 yes·safety off·host 재시작/같은 IDs를 확인한다. 거부/변형 RED 원본·정확 복구와 전체 gate는 [testing](testing.md)에 따른다. 최초 L5 반영은 기존 coordinator 경로로 하고 FRONT1.55 host 이후 사람 경로를 쓴다.

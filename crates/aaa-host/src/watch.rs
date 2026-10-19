@@ -186,8 +186,22 @@ impl Host {
     ) -> Result<(), ErrorBody> {
         let mut waiting = Vec::new();
         while let Some(n) = s.outbox.first().cloned() {
+            let common_rule = if !n.routine.is_empty()
+                && !n.record_only
+                && n.skip_reason.is_none()
+                && (n.wake || policy.source == "git")
+            {
+                let dir = self.project_dir(p)?;
+                let (rules, _) = crate::routine::load_all(&dir);
+                Some(rules.into_iter().find(|r| r.name == n.routine).ok_or_else(|| {
+                    err(ErrorCode::BadRequest, "감시 규칙이 없거나 파일 오류다. source outbox를 보존한다")
+                })?)
+            } else {
+                None
+            };
+            let deploy = common_rule.as_ref().is_some_and(|r| matches!(r.action, crate::automation::Action::Deploy));
             let red = policy.alert_kinds.contains(&n.kind.as_str());
-            if red && !n.record_only {
+            if red && !n.record_only && !deploy {
                 let existing = n
                     .append
                     .as_ref()
@@ -244,19 +258,9 @@ impl Host {
                 passed.id.push_str(&format!("-{kind}"));
                 publish(&passed)?;
             }
-            let common = if !n.routine.is_empty()
-                && !n.record_only
-                && n.skip_reason.is_none()
-                && (n.wake || policy.source == "git")
-            {
-                let dir = self.project_dir(p)?;
-                let (rules, _) = crate::routine::load_all(&dir);
-                if let Some(rule) = rules.iter().find(|r| r.name == n.routine) {
-                    self.automation_submit(p, rule, &n.id, n.text.clone(), n.owners.first().cloned())?;
-                    true
-                } else {
-                    return Err(err(ErrorCode::BadRequest, "감시 규칙이 없거나 파일 오류다. source outbox를 보존한다"));
-                }
+            let common = if let Some(rule) = common_rule {
+                self.automation_submit(p, &rule, &n.id, n.text.clone(), n.owners.first().cloned())?;
+                true
             } else {
                 false
             };

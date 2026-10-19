@@ -1,4 +1,4 @@
-//! L1: 미리 복사한 파일의 SHA 고정, 모든 대상 사전 검사, host 먼저, 같은 ID로 재개.
+//! rollout: SHA 고정·모든 대상 사전 검사·host 먼저·같은 ID 재개. 사람/조정자 승인 출처를 보존한다.
 //! 참고: herdr handoff 세 분류, web-ui autoChain/current/failed, t3code pending 복구.
 use crate::{Host, err};
 use aaa_proto::*;
@@ -26,6 +26,9 @@ pub(crate) fn running_sha() -> anyhow::Result<String> {
 }
 fn internal(e: impl std::fmt::Display) -> ErrorBody {
     err(ErrorCode::Internal, e.to_string())
+}
+fn person(actor: &str) -> bool {
+    actor.strip_prefix("person:").and_then(|s| s.parse::<u32>().ok()).is_some_and(|pid| pid > 0)
 }
 fn valid_id(id: &str) -> bool {
     id.len() == 26 && id.bytes().all(|b| b.is_ascii_alphanumeric())
@@ -167,6 +170,23 @@ impl Host {
         }
         Ok(())
     }
+    fn rollout_permitted(&self, r: &RolloutView) -> bool {
+        person(&r.actor) || self.safety(&r.project).coordinator_deploy
+    }
+    /// 자동화 제안의 기준은 최근 성공한 커밋 기록이다. 실패한 새 rollout은 이 기준을 지우지 않는다.
+    pub(crate) fn rollout_deployed_commit(&self, project: &str) -> Result<Option<(String, String)>, ErrorBody> {
+        let mut records = Vec::new();
+        for id in self.db.meta_suffixes("rollout:").map_err(internal)?.into_iter().filter(|id| valid_id(id)) {
+            let r = self.load_rollout(&id)?;
+            if r.project == project && r.state == RolloutState::Done && r.spec.commit.is_some() {
+                records.push(r);
+            }
+        }
+        Ok(records
+            .into_iter()
+            .max_by_key(|r| (r.updated_ms, r.id.clone()))
+            .and_then(|r| r.spec.commit.map(|s| (r.id, s.to_ascii_lowercase()))))
+    }
     pub(crate) fn rollout_busy(&self) -> Result<bool, ErrorBody> {
         self.db
             .meta("rollout:active")
@@ -181,7 +201,7 @@ impl Host {
         id: String,
         mut spec: RolloutSpec,
     ) -> Result<FrontResponse, ErrorBody> {
-        let project = self.deployment_authorize(actor)?;
+        let project = if person(actor) { self.instance_project()? } else { self.deployment_authorize(actor)? };
         if !valid_id(&id)
             || spec.sha256.len() != 64
             || !spec.sha256.bytes().all(|b| b.is_ascii_hexdigit())
@@ -278,9 +298,12 @@ impl Host {
         Ok(FrontResponse::Rollout { rollout: r })
     }
     pub(crate) fn rollout_status(self: &Arc<Self>, actor: &str, id: String) -> Result<FrontResponse, ErrorBody> {
-        let project = self
-            .coordinator_project_of_actor(actor)
-            .ok_or_else(|| err(ErrorCode::Forbidden, "rollout은 coordinator 세션에서 조회한다"))?;
+        let project = if person(actor) {
+            self.instance_project()?
+        } else {
+            self.coordinator_project_of_actor(actor)
+                .ok_or_else(|| err(ErrorCode::Forbidden, "rollout은 사람 터미널 또는 coordinator 세션에서 조회한다"))?
+        };
         let r = self.load_rollout(&id)?;
         if r.project != project {
             return Err(err(ErrorCode::Forbidden, "다른 프로젝트의 rollout이다"));
@@ -335,7 +358,7 @@ impl Host {
                     self.save_rollout(&mut r)?;
                     break;
                 }
-                if !self.safety(&r.project).coordinator_deploy {
+                if !self.rollout_permitted(&r) {
                     self.stop_or_recover(&mut r, cursor, "coordinator 배포 허용이 철회됐다".into()).await?;
                 } else {
                     if r.steps[cursor].started_ms == 0 {
@@ -504,7 +527,7 @@ impl Host {
             _ => return Err(internal("전송 상태 응답이 아니다")),
         };
         loop {
-            if !self.safety(&r.project).coordinator_deploy {
+            if !self.rollout_permitted(r) {
                 return Err(err(ErrorCode::Forbidden, "coordinator 배포 허용이 철회됐다"));
             }
             let left =

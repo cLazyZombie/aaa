@@ -24,7 +24,7 @@ aaa routine toggle demo ci-main --off
 3. 껐다 켤 때는 파일 diff가 enabled뿐인지 확인한다. 임무는 적용 사본 차이도 확인한다. 조회/임무 머신이나 인증을 이 화면이 바꾸지는 않는다.
 4. DB를 보존해 재시작하면 기록을 이어 읽는다. 고리 밖 상세 이력은 기존 flow·inbox에서 찾는다. 기록 삭제/초기화용 명령은 제공하지 않는다.
 
-FRONT_API 1.54는 자동 시작 범위 승인·holds·시작 actor를 더한다(1.52의 변환·분리 본문 포함). agent wire1.8은 바뀌지 않는다. 폼 편집·지금 실행은 아직 제공하지 않는다.
+FRONT_API 1.55는 사람 터미널 rollout과 배포 제안을 더한다(1.54의 자동 시작 범위 승인·holds·시작 actor, 1.52의 변환·분리 본문 포함). agent wire1.8은 바뀌지 않는다. 폼 편집·지금 실행은 아직 제공하지 않는다.
 
 임무의 「막힘」은 [막힘 이유와 복귀](mission-blocks.md)를 따른다. 확인창 해제는 기록하고 자동 복귀하지만 전달 모름은 자동으로 풀지 않는다.
 
@@ -165,3 +165,22 @@ wait = ["timing"]
 일정형은 coordinator pane 없이 실행하고, 같은 예정 차례는 한 번만 시작한다. 기다리는 동안 다음 일정은 catch_up once로 묶는다. thread 기록과 시작 key를 같은 DB transaction에 저장하고, 그 직전에도 holds/명시 동시 상한을 확인한다. 최종 전달 영수증 저장이 실패해도 내구 시작 key로 재생성을 막는다. 시작 후 실패한 thread는 일반 thread의 restart/정리 절차를 따른다. flow thread_started.actor는 routine:<이름>, 실행 기록에는 thread id가 남는다.
 
 확인: `aaa routine runs check`의 승인/holds/연결/profile/명시 상한 대기 까닭과 thread id를 본다. 기다림 중 파일 범위를 고쳤으면 이전 차례 취소 기록을 확인한다. DB/시작 key를 지워 재실행시키지 않는다.
+
+## 배포는 제안까지만(L5)
+
+```toml
+do = "deploy"
+[on.git]
+repo = "aaa"
+branches = ["main"]
+[limits]
+min_commits = 10
+batch = "30m"
+max_per_day = 2
+```
+
+`automations/deploy.toml` 같은 현재 순수 TOML 파일에 둔다. main의 pushed만 받으며 다른 branch·forced/deleted·다른 조건은 거부한다. min_commits(생략1, 1~100)는 최근 성공 배포에 기록한 commit 뒤 origin/main에 포함된 새 커밋 수다(merge와 그 안의 커밋을 포함). 성공 commit 기록이 없으면 첫 등록 head를 기준으로 잡고 재시작에도 보존한다. commit을 지정하지 않은 성공 배포는 등록 기준을 바꾸지 않는다. origin을 교체하면 새 head에 등록 기준을 잡고 교체 전 성공 기록을 제외한다. 이 기준은 재시작에도 남으며 교체 뒤 새 성공 배포부터 다시 성공 commit을 쓴다.
+
+임계값 뒤 기존 queue/limits로 묶어 coordinator inbox에 proposed 제안을 만든다. commit과 `scripts/deploy-build.sh` 안내를 보며 사람이 빌드한 후보의 provenance/SHA를 확인한다. 그 뒤 사람이 aaa 밖 host 터미널에서 deploy start의 yes를 입력하거나 사용자 지시를 받은 coordinator가 기존 safety로 시작한다. 자동 빌드/thread 시작·배포는 없다. 제안은 앱 안에만 알리고, 읽고 정리한 항목을 ACK 실패·host 재시작으로 되살리지 않는다.
+
+임계값은 source가 새 head를 받을 때 판정한다. 이미 내구 큐에 받은 제안 자료는 이후 임계값 편집으로 ACK 재개가 막히지 않는다. batch/하루/사용량 실행 예산은 기존 공통 queue 규칙을 따른다.

@@ -139,7 +139,7 @@ async fn serve(host: Arc<Host>, s: aaa_common::ipc::LocalStream, pid: Option<u32
     // CLI가 알린 세션(`AAA_SESSION_ID`)은 권한을 줄이는 쪽으로만 쓴다(변수를 지우면 권한이 늘던 구멍, t-0340 감사).
     // rollout 대기는 host 시작 직후에도 접속한다. local hello의 pane 자료보다 먼저 신원을 고정하지 않는다.
     // 그 자료는 같은 inner lock에서 전부 들어오며, 연결이 끊겨도 보존된다. 권한은 이 뒤의 기존 peer PID 판정 그대로다.
-    if client == "deploy-wait" {
+    if matches!(client.as_str(), "deploy" | "deploy-wait") {
         let mut changes = host.changed.subscribe();
         if !host.local_machine_connected() {
             tracing::info!("배포 상태 조회: 로컬 agent 자료 기다림");
@@ -185,7 +185,14 @@ async fn serve(host: Arc<Host>, s: aaa_common::ipc::LocalStream, pid: Option<u32
     // aaa 세션 안 CLI(coordinator·사람의 셸 pane)는 `@<세션>`을 붙인다: 사람만 하는 일(신뢰 창 답 등)을 가른다
     // client·session은 자기 신고다. @를 actor 경계로 주입하거나 coordinator ID를 신고해도 권한을 얻지 않는다.
     let client = client.replace('@', "%40");
+    // 사람 배포 출처는 self-reported client/session이 아니라 실제 peer/pane/제어 터미널로 만든다.
+    // 다른 client는 항상 local: 아래에 있으므로 person: 이름을 위장할 수 없다.
+    let person = matches!(client.as_str(), "deploy" | "deploy-wait")
+        && caller == Caller::Outside
+        && sess.is_none()
+        && pid.is_some_and(|p| aaa_common::process::tty(p).is_some());
     let actor = match (&sess, sess_role) {
+        _ if person => format!("person:{}", pid.unwrap()),
         (Some(s), Some(r @ (aaa_proto::Role::Evaluator | aaa_proto::Role::Worker))) => format!("{}:{s}", r.as_str()),
         _ if caller == Caller::Detached => format!("detached:{client}"),
         (Some(s), _) if caller == Caller::Pane(s.clone()) => format!("local:{client}@{s}"),

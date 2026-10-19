@@ -192,3 +192,119 @@ fn git_push_mission_repo_filter_restart_force_delete_and_outage() {
     );
     assert_eq!(w.h.ok(&["mission", "show", "demo", "git-watch"])["mission"]["wakes_today"], 1);
 }
+
+#[test]
+fn deploy_proposals_count_main_commits_across_restart_and_success_without_installing() {
+    let mut w = world_with("tick_secs=1\ngit_poll_secs=1\npr_poll_secs=3600\n");
+    w.h.ok(&["project", "set", "demo", "repos.add", path_str(&w.repo)]);
+    let project = w.projects.join("demo");
+    std::fs::create_dir_all(project.join("automations")).unwrap();
+    std::fs::write(
+        project.join("automations/deploy.toml"),
+        "do='deploy'\n[on.git]\nrepo='repo'\nbranches=['main']\n[limits]\nmin_commits=2\n",
+    )
+    .unwrap();
+    let mid = w.h.machine("labA").unwrap()["id"].as_str().unwrap().to_string();
+    let key = format!(
+        "git:demo:{}",
+        hex::encode(Sha256::digest(format!("{mid}:{}", w.repo.canonicalize().unwrap().display()).as_bytes()))
+    );
+    let db = aaa_host::db::Db::open(&w.h.state.join("host/host.db")).unwrap();
+    let proposals = |w: &World| -> Vec<Value> {
+        w.h.ok(&["inbox", "list", "demo", "--all", "--peek"])["items"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|i| i["item_kind"] == "deploy_proposal")
+            .cloned()
+            .collect()
+    };
+    poll(&db, &key, 0);
+    quiet(&w, &db, &key);
+    assert!(proposals(&w).is_empty(), "등록 때는 기준만 잡는다");
+    let base = head(&w.repo);
+    let seed = w.lab.root.join("seed");
+    let origin = w.lab.root.join("origin.git");
+    let push = |n: u32| -> String {
+        std::fs::write(seed.join("deploy.txt"), format!("{n}\n")).unwrap();
+        git(&seed, &["add", "."]);
+        git(&seed, &["commit", "-qm", &format!("병합: private-deploy-subject {n} (t-0042)")]);
+        git(&seed, &["push", "-q", path_str(&origin), "HEAD:main"]);
+        head(&seed)
+    };
+    push(1);
+    quiet(&w, &db, &key);
+    assert!(proposals(&w).is_empty(), "두 커밋 전에는 제안하지 않는다");
+    w.lab.kill("host");
+    w.spawn_host("host2");
+    wait_for("재접속", T, || w.h.connected("labA").then_some(()));
+    std::fs::write(project.join("threads/t-0042.md"), "private-deploy-report").unwrap();
+    let first = push(2);
+    wait_for("두 커밋의 제안", T, || (proposals(&w).len() == 1).then_some(()));
+    let before = proposals(&w);
+    assert!(before[0]["body"].as_str().unwrap().contains(&first));
+    assert!(before[0]["body"].as_str().unwrap().contains("scripts/deploy-build.sh"));
+    assert_eq!(db.meta("rollout:active").unwrap(), None, "제안이 실제 rollout을 만들지 않는다");
+    quiet(&w, &db, &key);
+    let inbox = w.h.ok(&["inbox", "list", "demo", "--all", "--peek"]);
+    assert!(
+        !inbox["items"].as_array().unwrap().iter().any(|i| i["item_kind"] == "git"),
+        "제안 외의 Git 원문 항목을 만들지 않는다"
+    );
+    let all = format!("{}{}", inbox, serde_json::to_string(&git_events(&w)).unwrap());
+    for private in ["private-deploy-subject", "private-deploy-report", path_str(&w.repo)] {
+        assert!(!all.contains(private), "전체 inbox에 원문이 샜다: {private}: {all}");
+    }
+    assert_eq!(proposals(&w), before, "같은 head는 무음");
+    // 완료/실패 정본은 기존 L3 실행기 owner의 산출 형식이다. 실패한 최신 요청은 성공 기준을 덮지 않는다.
+    let now = aaa_common::util::now_ms();
+    for (state, commit, at) in [("done", first.as_str(), now), ("stopped", base.as_str(), now + 1)] {
+        let id = aaa_common::util::new_id();
+        let record = serde_json::json!({"id":id,"project":"demo","actor":"local:coordinator@fixture","spec":{"from":"/candidate/aaa","sha256":"a".repeat(64),"commit":commit,"machines":[]},"state":state,"steps":[],"cursor":0,"version":"0.1.2","error":null,"finish":null,"created_ms":at,"updated_ms":at});
+        db.start_rollout(&id, &record.to_string()).unwrap();
+    }
+    let active = db.meta("rollout:active").unwrap();
+    push(3);
+    quiet(&w, &db, &key);
+    assert_eq!(proposals(&w), before, "최근 성공 배포 뒤 한 커밋으로는 제안하지 않는다");
+    let second = push(4);
+    wait_for("다음 성공 기준의 두 커밋", T, || (proposals(&w).len() == 2).then_some(()));
+    assert!(proposals(&w).iter().any(|i| i["body"].as_str().unwrap().contains(&second)));
+    assert_eq!(db.meta("rollout:active").unwrap(), active, "제안이 배포 정본을 바꾸지 않는다");
+    // 실험실 bare ref를 직접 되감고 지워 forced/deleted 관측을 만든다. 실제 remote force push는 없다.
+    git(&origin, &["update-ref", "refs/heads/main", &base]);
+    quiet(&w, &db, &key);
+    assert_eq!(proposals(&w).len(), 2, "강제 이동은 배포 제안이 아니다");
+    git(&origin, &["update-ref", "-d", "refs/heads/main"]);
+    quiet(&w, &db, &key);
+    assert_eq!(proposals(&w).len(), 2, "삭제는 배포 제안이 아니다");
+    // 과거 성공 정본을 남긴 채 다른 history의 origin을 등록한다.
+    let other = w.lab.root.join("other");
+    std::fs::create_dir_all(&other).unwrap();
+    make_repo(&other);
+    git(&other.join("seed"), &["checkout", "-q", "--orphan", "separate"]);
+    std::fs::write(other.join("seed/README.md"), "different history\n").unwrap();
+    git(&other.join("seed"), &["add", "."]);
+    git(&other.join("seed"), &["commit", "-qm", "독립 origin 등록"]);
+    git(&other.join("seed"), &["push", "-q", path_str(&other.join("origin.git")), "HEAD:refs/heads/registration"]);
+    git(&other.join("origin.git"), &["update-ref", "refs/heads/main", &head(&other.join("seed"))]);
+    let other_origin = other.join("origin.git");
+    let other_seed = other.join("seed");
+    git(&w.repo, &["remote", "set-url", "origin", path_str(&other_origin)]);
+    quiet(&w, &db, &key);
+    w.lab.kill("host2");
+    w.spawn_host("host3");
+    wait_for("origin 교체 뒤 재접속", T, || w.h.connected("labA").then_some(()));
+    let push_other = |n: u32| {
+        std::fs::write(other_seed.join("other.txt"), format!("{n}\n")).unwrap();
+        git(&other_seed, &["add", "."]);
+        git(&other_seed, &["commit", "-qm", &format!("새 origin {n}")]);
+        git(&other_seed, &["push", "-q", path_str(&other_origin), "HEAD:main"]);
+    };
+    push_other(1);
+    quiet(&w, &db, &key);
+    assert_eq!(proposals(&w).len(), 2, "새 origin도 등록 뒤 한 커밋은 무음");
+    push_other(2);
+    wait_for("교체 origin의 두 커밋 제안", T, || (proposals(&w).len() == 3).then_some(()));
+    assert!(proposals(&w).iter().any(|i| i["body"].as_str().unwrap().contains(&head(&other_seed))));
+}
