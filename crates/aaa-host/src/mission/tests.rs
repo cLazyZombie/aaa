@@ -442,6 +442,102 @@ async fn mission_reset_kills_then_waits_for_end_before_fresh_spawn() {
         assert!(s.env.iter().any(|(k, v)| k == "AAA_MISSION_POINTER" && v.contains("brief.md")));
     }
 }
+
+/// 명시한 restart만 확인창을 버리고 새 대화를 만든다. 승인 답을 보내거나 자동 reset의 보호 문을 풀지 않는다.
+#[tokio::test]
+async fn explicit_restart_recovers_a_blocked_prompt_without_approving_it() {
+    for (activity, fixture, visible, recover) in [
+        (AgentActivity::Question, "permission", true, true),
+        (AgentActivity::Idle, "claude-draft.ansi", false, false),
+        (AgentActivity::Idle, "claude-empty.ansi", true, false),
+    ] {
+        let l = Lab::new();
+        let r = l.applied(&text("reset_after_wakes=1"));
+        let f = l.fake(vec!["mission.v1".into()]).await;
+        l.pane(activity);
+        let now = util::now_ms();
+        l.h.update_rec("demo", &r.id, |r| {
+            let m = r.mission.as_mut().unwrap();
+            m.conversation_wakes = 1;
+            m.saw_working = true;
+            m.idle_since_ms = (activity == AgentActivity::Idle).then_some(now - 30001);
+        })
+        .unwrap();
+        let screen = if fixture == "permission" {
+            std::fs::read_to_string(format!(
+                "{}/../aaa-agent/src/detect/fixtures/claude-bash-permission.txt",
+                env!("CARGO_MANIFEST_DIR")
+            ))
+            .unwrap()
+        } else {
+            std::fs::read_to_string(format!("{}/tests/fixtures/prompt_box/{fixture}", env!("CARGO_MANIFEST_DIR")))
+                .unwrap()
+        };
+        *f._screen.lock().unwrap() = screen;
+        if visible {
+            l.h.inner.lock().unwrap().panes.get_mut("s1").unwrap().lease =
+                Some(crate::FrontRef { id: "viewer".into(), label: "tui".into() });
+            l.h.view_draw("viewer", "s1", true);
+            assert!(l.h.someone_sees("s1", l.h.inner.lock().unwrap().panes.get("s1").unwrap().lease.as_ref()));
+        }
+        l.queue("demo", "watch", "r-preserved".into(), "routine", "보존할 입력".into()).unwrap();
+        let work = std::path::Path::new(r.work_dir.as_ref().unwrap());
+        std::fs::create_dir_all(work.join("inbox")).unwrap();
+        std::fs::write(work.join("state.md"), "앞 판단").unwrap();
+        std::fs::write(work.join("processed.txt"), "old.json\n").unwrap();
+        std::fs::write(work.join("inbox/preserved.json"), "자료").unwrap();
+        // 자동 reset과 reload는 확인창·초안·보는 화면을 저절로 버리지 않는다.
+        l.h.mission_tick("demo", "watch", now).await.unwrap();
+        l.h.mission_control("demo", "watch", "reload", "web:human").await.unwrap();
+        l.h.mission_tick("demo", "watch", now + 1).await.unwrap();
+        assert!(!f.requests.lock().unwrap().iter().any(|r| matches!(r, AgentRequest::Kill { .. })));
+        l.h.mission_control("demo", "watch", "restart", "web:human").await.unwrap();
+        l.h.mission_tick("demo", "watch", now + 2).await.unwrap();
+        let kills = f.requests.lock().unwrap().iter().filter(|r| matches!(r, AgentRequest::Kill { .. })).count();
+        assert_eq!(
+            kills,
+            usize::from(recover),
+            "{activity:?}·{fixture}·visible={visible}: restart가 확인창만 복구해야 한다"
+        );
+        if !recover {
+            continue;
+        }
+        assert!(l.h.mission_rec("demo", "watch").unwrap().mission.unwrap().resetting);
+        l.h.mission_tick("demo", "watch", now + 3).await.unwrap();
+        assert!(
+            !f.requests
+                .lock()
+                .unwrap()
+                .iter()
+                .any(|r| matches!(r, AgentRequest::Input { .. } | AgentRequest::Spawn(_)))
+        );
+        assert_eq!(f.requests.lock().unwrap().iter().filter(|r| matches!(r, AgentRequest::Kill { .. })).count(), 1);
+        // 종료 감지는 Question을 Exited로 바꿀 수 있다. 보는 화면은 아직 옛 pane을 그리고 있다.
+        l.h.on_harness(
+            "m",
+            serde_json::from_value(
+                serde_json::json!({"session":"s1","harness":"claude","kind":"exited","at_ms":now+4}),
+            )
+            .unwrap(),
+        );
+        let mut ended = info("s1");
+        ended.state = SessionState::Exited { code: None };
+        l.h.on_session("m", ended, false);
+        l.h.mission_tick("demo", "watch", now + 4).await.unwrap();
+        let restored = l.h.mission_rec("demo", "watch").unwrap();
+        assert_ne!(restored.pane, r.pane);
+        let run = restored.mission.unwrap();
+        assert!(!run.resetting && !run.reset_requested && !run.restart_requested);
+        assert!(run.pending.iter().any(|i| i.id == "r-preserved"));
+        assert_eq!(std::fs::read_to_string(work.join("state.md")).unwrap(), "앞 판단");
+        assert_eq!(std::fs::read_to_string(work.join("processed.txt")).unwrap(), "old.json\n");
+        assert_eq!(std::fs::read_to_string(work.join("inbox/preserved.json")).unwrap(), "자료");
+        let requests = f.requests.lock().unwrap();
+        assert!(requests.iter().any(|r| matches!(r, AgentRequest::ThreadRebrief { resolved_profile: Some(p), .. } if p.env.contains_key("AAA_MISSION_PROJECT_DIR"))));
+        let spawn = requests.iter().find_map(|r| if let AgentRequest::Spawn(s) = r { Some(s) } else { None }).unwrap();
+        assert!(!spawn.argv.iter().any(|a| a.contains("resume")));
+    }
+}
 #[tokio::test]
 async fn mission_blocked_ended_and_old_peer_are_visible() {
     let l = Lab::new();
