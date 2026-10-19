@@ -55,3 +55,7 @@ ci_stuck_mins = 60
 `aaa routine list <project>`, `aaa mission show <project> ci-watch`, `aaa inbox list <project> --peek`, `aaa events <project>`에서 감시 설정·깨움·결과를 본다. 첫날에는 하루 깨움 상한과 GitHub 사용량을 확인한다. 임무 대기는 AI 토큰을 쓰지 않는다. 304는 inbox·flow를 만들지 않는다.
 
 폴링을 끄려면 `aaa routine toggle <project> ci-main --off`, 임무만 멈추려면 `aaa mission pause <project> ci-watch`를 쓴다. 배포·운영 등록·사람 승인은 구현 검증과 별개다.
+
+## L1 공용 watch와 저장 상태 호환
+
+공용 `watch.rs`가 조회 실행 상태·첫 조회/단절 따라잡기 판단·outage·DB meta·outbox 전달을 맡고, `ci.rs`는 GitHub 조회와 CI 판정을 맡는다. 운영 파일·설정·승인 방법은 그대로다. 기존 `ci:` DB 문서는 같은 key와 최상위 필드로 읽고 쓴다. 업그레이드 전에 전달하지 못한 입력도 그대로 이어서 전달하며, 같은 `ci_input:` ID는 다시 넣지 않는다. 별도 변환·재승인·등록 작업은 없다.

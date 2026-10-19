@@ -5461,3 +5461,10 @@ primary 근거:
 - CI 실패는 inbox `ci`와 `ci_failed`, 초록은 기록 `ci_passed`, 회복은 `ci_fixed`다. owner의 thread flow에도 남기며 끝난 thread를 되살리지 않는다. 병합 첫 줄 끝 `병합: … (t-NNNN)`에서 번호만 뽑고 compare 범위를 함께 읽는다. 못 찾으면 주인 불명이다. 임무는 GitHub·rerun·수정·push·revert 없이 coordinator용 수리 brief 초안만 만든다. 하루 깨움 권장 상한은 20이다.
 - source 수집·판정은 `ci.rs`, 사건 발행은 `watch_event.rs::publish_watch_event`, 임무 전달은 `mission_data_input`으로 나눈다. 발행은 깨움 정책을 갖지 않는다. 추가 조건·동작의 문법은 별도 통합 설계에서 정하며 `on="git"`은 아직 구현하지 않는다.
 - 사람 단계와 예시는 [CI runbook](ci-watch.md), 경계 시험은 [testing](testing.md)의 CI 감시를 따른다.
+
+### 8.275 CI 감시에서 공용 watch를 추출한다(10-19, t-0420 L1)
+
+- 승인된 자동화 설계의 L1이다. CI의 SHA/workflow·실패 집합·로그 판정은 `ci.rs`에 두고, source별 실행 중/마지막 poll·프로세스 첫 조회·Outage·DB meta 상태·내구 outbox·전달은 `watch.rs`로 옮긴다.
+- 공용 상태는 source 고유 필드를 기존 JSON 최상위에 펼친다. `ci:` 저장 key, cursor, 미전달 입력, `ci_input:` 중복 방지 key, inbox·flow 이름, fixed→passed 기록과 회복 무깨움은 L0와 같다. CI 문법·wire·운영 설정 변경은 없다.
+- source는 전달 정책과 사건 발행/회복 callback을 준다. 공용 전달은 상태 선저장 뒤 항목마다 남은 outbox를 저장하며, 없는 임무 입력을 보존한다. 기존 source와 다음 source가 실행 시각을 섞지 않도록 runtime은 source별로 나눈다.
+- [CI runbook](ci-watch.md)의 상태 호환과 [testing](testing.md)의 공용 watch 검증을 따른다. Git 감시는 L2, 실행 기록과 새 정의 형식은 이후 별도 착지다.

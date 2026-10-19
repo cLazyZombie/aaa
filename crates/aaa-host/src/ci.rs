@@ -2,40 +2,40 @@
 //! 상태·전달 대기는 DB meta, inbox·flow·임무 입력은 내구 key로 중복을 막는다.
 use crate::{
     AgentConn, Host, err,
-    inbox::{Outage, OutageEvent},
     routine::{CiTrigger, Routine, Trigger},
+    watch::{Delivery, Notice},
 };
 use aaa_common::{
     ci::{self, Verdict},
     util,
 };
-use aaa_proto::{AgentRequest, AgentResponse, CiAnswer, CiQuery, CiRun, ErrorBody, ErrorCode, InboxItem};
+use aaa_proto::{AgentRequest, AgentResponse, CiAnswer, CiQuery, CiRun, ErrorBody, ErrorCode};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::{
-    collections::{BTreeMap, BTreeSet, HashMap, HashSet},
+    collections::{BTreeMap, BTreeSet},
     path::Path,
     sync::Arc,
     time::{Duration, Instant},
 };
 
-#[derive(Default)]
-pub(crate) struct Memory {
-    last: HashMap<String, Instant>,
-    running: HashSet<String>,
-    outages: HashMap<String, Outage>,
-    seen: HashSet<String>,
-}
+type State = crate::watch::State<SourceState>;
+const DELIVERY: Delivery = Delivery {
+    source: "ci",
+    label: "CI",
+    alert_kinds: &["failed", "stuck"],
+    recovered_kind: "fixed",
+    passed_after_recovery: Some("passed"),
+    missing_mission: "CI 대상 임무가 없다. 조회는 계속하고 실패 입력은 보존한다",
+};
 #[derive(Default, Serialize, Deserialize)]
 #[serde(default)]
-struct State {
+struct SourceState {
     etag: Option<String>,
-    last_poll_ms: u64,
     last_judged_ms: u64,
     workflow_numbers: BTreeMap<u64, u64>,
     runs: BTreeMap<u64, CiRun>,
     tracks: BTreeMap<String, Track>,
-    outbox: Vec<Notice>,
 }
 #[derive(Default, Serialize, Deserialize)]
 #[serde(default)]
@@ -45,20 +45,6 @@ struct Track {
     signatures: BTreeMap<String, String>,
     failures: BTreeSet<(String, Vec<String>)>,
     open: Option<String>,
-}
-#[derive(Clone, Serialize, Deserialize)]
-struct Notice {
-    id: String,
-    kind: String,
-    sha: String,
-    owners: Vec<String>,
-    text: String,
-    mission: Option<String>,
-    wake: bool,
-    record_only: bool,
-    append: Option<String>,
-    fixed: Option<String>,
-    at: u64,
 }
 fn internal(e: impl std::fmt::Display) -> ErrorBody {
     err(ErrorCode::Internal, e.to_string())
@@ -81,20 +67,15 @@ impl Host {
         Duration::from_secs(self.cfg.projects.ci_poll_secs.max(min))
     }
     pub(crate) fn ci_next_due(&self) -> Option<Instant> {
-        let m = self.ci.lock().unwrap();
-        m.last.iter().filter(|(p, _)| !m.running.contains(*p)).map(|(_, at)| *at + self.ci_every()).min()
+        self.watch_next_due("ci", self.ci_every())
     }
     pub(crate) fn ci_tick(self: &Arc<Self>, p: &str) {
         let Ok(dir) = self.project_dir(p) else { return };
         if !crate::routine::load_all(&dir).0.iter().any(|r| r.enabled && matches!(r.trigger, Trigger::Ci(_))) {
             return;
         }
-        {
-            let mut m = self.ci.lock().unwrap();
-            if m.running.contains(p) || m.last.get(p).is_some_and(|at| at.elapsed() < self.ci_every()) {
-                return;
-            }
-            m.running.insert(p.into());
+        if !self.watch_claim("ci", p, self.ci_every()) {
+            return;
         }
         let h = self.clone();
         let p = p.to_string();
@@ -104,36 +85,11 @@ impl Host {
             if tokio::spawn(async move { inner.ci_pass(&project).await }).await.is_err() {
                 tracing::error!(project=%p,"CI 조회 task panic. 다음 주기에 다시 본다");
             }
-            let mut m = h.ci.lock().unwrap();
-            m.running.remove(&p);
-            m.last.insert(p, Instant::now());
+            h.watch_finished("ci", &p);
         });
     }
     fn ci_outage(&self, p: &str, subject: &str, error: Option<&str>) {
-        let key = format!("{p}/{subject}");
-        let reported = self.outage_open(p, subject, "failing");
-        let event = self.ci.lock().unwrap().outages.entry(key).or_insert_with(|| Outage::resumed(reported)).record(
-            error.is_none(),
-            util::now_ms(),
-            self.cfg.projects.outage_secs.saturating_mul(1000),
-        );
-        match event {
-            Some(OutageEvent::Down) => {
-                self.inbox_once(
-                    p,
-                    "outage",
-                    subject,
-                    "failing",
-                    &format!("CI 조회가 계속 실패한다: {}", aaa_common::pr::sanitize(error.unwrap_or(""))),
-                );
-                self.flow_project(p, "ci_query_failing", None, subject);
-            }
-            Some(OutageEvent::Recovered) => {
-                self.inbox_finish_where(p, |i| i.item_kind == "outage" && i.subject == subject && i.event == "failing");
-                self.flow_project(p, "ci_query_recovered", None, subject);
-            }
-            None => {}
-        }
+        self.watch_outage(p, subject, error, &DELIVERY);
     }
     async fn ci_ask(&self, conn: &AgentConn, cwd: &str, q: CiQuery) -> Result<CiAnswer, ErrorBody> {
         match conn
@@ -189,27 +145,24 @@ impl Host {
     async fn ci_repo(&self, p: &str, mid: &str, cwd: &str, rules: &[Routine]) -> Result<(), ErrorBody> {
         let conn = self.live_conn(mid)?;
         let key = format!("ci:{p}:{}", hash(&format!("{mid}:{cwd}")));
-        let mut state: State = match self.db.meta(&key).map_err(internal)? {
-            Some(s) => serde_json::from_str(&s).map_err(internal)?,
-            None => State::default(),
-        };
+        let mut state: State = self.watch_state(&key)?;
         let now = util::now_ms();
-        let first = !self.ci.lock().unwrap().seen.contains(&key);
-        let catchup = state.last_poll_ms > 0
-            && (first || now.saturating_sub(state.last_poll_ms) > self.ci_every().as_millis() as u64 * 2);
-        let a = self.ci_ask(&conn, cwd, CiQuery::Runs { etag: state.etag.clone(), since: None, page: 1 }).await?;
+        let catchup = self.watch_catchup(&key, state.last_poll_ms, now, self.ci_every());
+        let a =
+            self.ci_ask(&conn, cwd, CiQuery::Runs { etag: state.source.etag.clone(), since: None, page: 1 }).await?;
         let mut runs = a.runs;
-        let etag = a.etag.or_else(|| state.etag.clone());
+        let etag = a.etag.or_else(|| state.source.etag.clone());
         // 시작·단절 뒤에는 304여도 따로 created 창을 쪽 넘겨 빠진 run을 받는다.
         if catchup || a.next {
             let anchor = state
+                .source
                 .runs
                 .values()
                 .filter(|r| r.status != "completed")
                 .map(|r| r.created_ms)
                 .filter(|t| *t > 0)
                 .min()
-                .unwrap_or(state.last_judged_ms.max(state.last_poll_ms.saturating_sub(86_400_000)));
+                .unwrap_or(state.source.last_judged_ms.max(state.last_poll_ms.saturating_sub(86_400_000)));
             let since = (state.last_poll_ms > 0).then(|| util::utc_iso(anchor.saturating_sub(600_000)));
             for page in 1..=ci::MAX_PAGES {
                 let a = self.ci_ask(&conn, cwd, CiQuery::Runs { etag: None, since: since.clone(), page }).await?;
@@ -224,23 +177,23 @@ impl Host {
             }
         }
         for r in runs {
-            state.workflow_numbers.entry(r.workflow).and_modify(|n| *n = (*n).max(r.number)).or_insert(r.number);
-            if state.runs.get(&r.id).is_none_or(|old| r.attempt >= old.attempt) {
-                state.runs.insert(r.id, r);
+            state.source.workflow_numbers.entry(r.workflow).and_modify(|n| *n = (*n).max(r.number)).or_insert(r.number);
+            if state.source.runs.get(&r.id).is_none_or(|old| r.attempt >= old.attempt) {
+                state.source.runs.insert(r.id, r);
             }
         }
         for rule in rules {
             self.ci_rule(p, &conn, cwd, rule, &mut state, now).await?;
         }
-        state.etag = etag;
+        state.source.etag = etag;
         state.last_poll_ms = now;
         // 이미 판정한 오래된 run만 버린다. 끝나지 않은 것은 창 밖에서도 보존한다.
-        if state.runs.len() > 2000 {
-            let keep: BTreeSet<_> = state.runs.values().rev().take(2000).map(|r| r.id).collect();
-            state.runs.retain(|id, r| keep.contains(id) || r.status != "completed");
+        if state.source.runs.len() > 2000 {
+            let keep: BTreeSet<_> = state.source.runs.values().rev().take(2000).map(|r| r.id).collect();
+            state.source.runs.retain(|id, r| keep.contains(id) || r.status != "completed");
         }
-        self.db.set_meta(&key, &serde_json::to_string(&state).map_err(internal)?).map_err(internal)?;
-        self.ci.lock().unwrap().seen.insert(key.clone());
+        self.watch_store(&key, &state)?;
+        self.watch_polled(&key);
         self.ci_drain(p, &key, &mut state)?;
         Ok(())
     }
@@ -257,9 +210,9 @@ impl Host {
         let Trigger::Ci(c) = &r.trigger else { return Ok(()) };
         for branch in &c.branches {
             let track_key = format!("{}:{}:{branch}", r.name, hash(&format!("{c:?}")));
-            let track = s.tracks.entry(track_key).or_default();
+            let track = s.source.tracks.entry(track_key).or_default();
             let mut groups: BTreeMap<String, Vec<CiRun>> = BTreeMap::new();
-            for run in s.runs.values().filter(|run| selected(run, c) && &run.branch == branch) {
+            for run in s.source.runs.values().filter(|run| selected(run, c) && &run.branch == branch) {
                 groups.entry(run.sha.clone()).or_default().push(run.clone());
             }
             let mut groups: Vec<_> = groups.into_iter().collect();
@@ -420,97 +373,13 @@ impl Host {
                         track.open = None;
                     }
                 }
-                s.last_judged_ms = s.last_judged_ms.max(at);
+                s.source.last_judged_ms = s.source.last_judged_ms.max(at);
             }
         }
         Ok(())
     }
     fn ci_drain(&self, p: &str, key: &str, s: &mut State) -> Result<(), ErrorBody> {
-        let mut waiting = Vec::new();
-        while let Some(n) = s.outbox.first().cloned() {
-            let red = matches!(n.kind.as_str(), "failed" | "stuck");
-            if red && !n.record_only {
-                let existing = n
-                    .append
-                    .as_ref()
-                    .and_then(|id| self.db.inbox_list(Some(p), true).ok()?.into_iter().find(|i| &i.id == id));
-                if let Some(mut item) = existing {
-                    if !item.body.contains(&n.id) {
-                        item.body.push_str(&format!("\n\n{}\n{}", n.id, n.text));
-                        // 항목은 반복 로그가 아니라 연속 실패 기록을 가진다. 전체는 최근 256KiB까지.
-                        if item.body.len() > 256 * 1024 {
-                            item.body = format!("{}\n{}", n.id, n.text);
-                        }
-                        self.db.inbox_put(&item).map_err(internal)?;
-                        self.inbox_publish(&item);
-                    }
-                } else {
-                    let item = InboxItem {
-                        id: n.id.clone(),
-                        project: p.into(),
-                        item_kind: "ci".into(),
-                        subject: n.owners.first().cloned().unwrap_or_else(|| "주인 불명".into()),
-                        event: format!("CI {}", n.kind),
-                        summary: format!("CI {} {}", n.kind, n.sha),
-                        body: format!("{}\n{}", n.id, n.text),
-                        done: false,
-                        seen: false,
-                        created_at_ms: n.at,
-                        done_at_ms: None,
-                    };
-                    if self.db.inbox_insert(&item).map_err(internal)? {
-                        self.inbox_publish(&item);
-                    }
-                }
-            }
-            if let Some(id) = &n.fixed {
-                if let Some(mut item) =
-                    self.db.inbox_list(Some(p), false).map_err(internal)?.into_iter().find(|i| &i.id == id)
-                {
-                    item.event = "CI fixed".into();
-                    item.summary = format!("CI fixed {}", n.sha);
-                    self.db.inbox_put(&item).map_err(internal)?;
-                    self.inbox_publish(&item);
-                }
-                self.inbox_finish_where(p, |i| &i.id == id);
-            }
-            if n.kind == "fixed" {
-                self.mission_ci_recovered(p, &n.text)?;
-            }
-            self.ci_publish(p, &n)?;
-            if n.kind == "fixed" {
-                let mut passed = n.clone();
-                passed.kind = "passed".into();
-                passed.id.push_str("-passed");
-                self.ci_publish(p, &passed)?;
-            }
-            if n.wake
-                && let Some(m) = &n.mission
-                && !self.mission_target_exists(p, m)
-            {
-                self.inbox_once(
-                    p,
-                    "config-error",
-                    m,
-                    "CI mission missing",
-                    "CI 대상 임무가 없다. 조회는 계속하고 실패 입력은 보존한다",
-                );
-                waiting.push(n.clone());
-            } else if n.wake
-                && let Some(m) = &n.mission
-            {
-                self.mission_data_input(p, m, &format!("ci_input:{p}:{}", n.id), &n.id, n.text.clone(), "ci")?;
-            }
-            s.outbox.remove(0);
-            let rest = std::mem::take(&mut s.outbox);
-            s.outbox = waiting.clone();
-            s.outbox.extend(rest.clone());
-            self.db.set_meta(key, &serde_json::to_string(s).map_err(internal)?).map_err(internal)?;
-            s.outbox = rest;
-        }
-        s.outbox = waiting;
-        self.db.set_meta(key, &serde_json::to_string(s).map_err(internal)?).map_err(internal)?;
-        Ok(())
+        self.watch_drain(p, key, s, &DELIVERY, |n| self.ci_publish(p, n), |n| self.mission_ci_recovered(p, &n.text))
     }
     fn ci_publish(&self, p: &str, n: &Notice) -> Result<(), ErrorBody> {
         let v: serde_json::Value = serde_json::from_str(&n.text).map_err(internal)?;

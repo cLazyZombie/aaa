@@ -123,3 +123,43 @@ fn ci_registration_rejects_mixed_commands_and_invalid_events() {
         assert!(crate::routine::parse("ci", &text).is_err());
     }
 }
+
+/// L0에서 쓰던 DB 문서를 새 공용 상태로 읽고 다시 써도 모든 cursor·미전달 입력이 남는다.
+#[tokio::test]
+async fn l0_saved_state_survives_watch_extraction() {
+    let lab = Lab::new(None);
+    let h = &lab.h;
+    let old = include_str!("l0-state.json");
+    let key = "ci:demo:legacy";
+    h.db.set_meta(key, old).unwrap();
+    let mut state: State = h.watch_state(key).unwrap();
+    assert_eq!(state.source.etag.as_deref(), Some("\"old-etag\""));
+    assert_eq!(state.outbox[0].id, "ci-pending");
+    h.watch_store(key, &state).unwrap();
+    let saved: serde_json::Value = serde_json::from_str(&h.db.meta(key).unwrap().unwrap()).unwrap();
+    assert_eq!(saved, serde_json::from_str::<serde_json::Value>(old).unwrap());
+    // 없는 임무의 입력은 새 틀을 거친 뒤에도 DB에 남아 다음 전달을 기다린다.
+    h.ci_drain("demo", key, &mut state).unwrap();
+    let saved: State = h.watch_state(key).unwrap();
+    assert_eq!(saved.outbox.len(), 1);
+    assert_eq!(saved.source.runs[&8].number, 42);
+    assert_eq!(saved.source.tracks["rule:main"].open.as_deref(), Some("ci-pending"));
+}
+
+/// 최근 poll이 저장돼도 새 host는 조건부 304 너머의 빠진 사건을 따라잡아야 한다.
+#[tokio::test]
+async fn fresh_saved_poll_still_catches_up_in_new_host() {
+    let lab = Lab::new(None);
+    let key = "ci:demo:restart";
+    let state = State { last_poll_ms: 1000, ..Default::default() };
+    lab.h.watch_store(key, &state).unwrap();
+    lab.h.watch_polled(key);
+    let every = Duration::from_secs(60);
+    assert!(!lab.h.watch_catchup(key, 1000, 1001, every));
+    let restarted = Host::open(lab.h.cfg.clone(), lab.root.join("host")).unwrap();
+    let saved: State = restarted.watch_state(key).unwrap();
+    assert!(
+        restarted.watch_catchup(key, saved.last_poll_ms, 1001, every),
+        "직전 poll이 1ms 전이어도 새 프로세스는 따라잡는다"
+    );
+}

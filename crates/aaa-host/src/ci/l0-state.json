@@ -1,0 +1,60 @@
+{
+  "etag": "\"old-etag\"",
+  "last_poll_ms": 1000,
+  "last_judged_ms": 900,
+  "workflow_numbers": {
+    "7": 42
+  },
+  "runs": {
+    "8": {
+      "id": 8,
+      "workflow": 7,
+      "name": "ci",
+      "number": 42,
+      "attempt": 1,
+      "branch": "main",
+      "sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "status": "completed",
+      "conclusion": "failure",
+      "created_ms": 900,
+      "owners": [
+        "t-0042"
+      ]
+    }
+  },
+  "tracks": {
+    "rule:main": {
+      "sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "at": 900,
+      "signatures": {
+        "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa": "run-signature:Failed"
+      },
+      "failures": [
+        [
+          "linux",
+          [
+            "test"
+          ]
+        ]
+      ],
+      "open": "ci-pending"
+    }
+  },
+  "outbox": [
+    {
+      "id": "ci-pending",
+      "kind": "failed",
+      "sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "owners": [
+        "t-0042"
+      ],
+      "text": "{\"source\":\"ci\",\"repo\":\"app\",\"branch\":\"main\"}",
+      "mission": "watch",
+      "wake": true,
+      "record_only": false,
+      "append": null,
+      "fixed": null,
+      "at": 1000
+    }
+  ]
+}
