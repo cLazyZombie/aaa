@@ -81,7 +81,27 @@ work_mount = "/Volumes/<disk>"
 외장 worktree는 Git 잠금으로 자동 prune을 막는다. 정리는 aaa 소유 잠금만 풀고 대상 worktree 하나만 제거한다.
 변경 파일·복사 누락·사람의 잠금이 있으면 남기며, 정리 중단 뒤에는 먼저 자기 잠금을 복구한다.
 다른 agent 상태 폴더가 같은 root를 쓰려 하면 소유 표지로 거부한다. 기본 파일 허용 폴더에는 이전 root도 포함한다
-(명시한 `file_roots`는 그대로 적용한다). 전용 전환 명령은 후속 단계이므로 운영 경로를 아직 바꾸지 않는다. 디스크를 강제로 분리하면 실행 중인 프로그램의 열린 파일까지 복구해 주지는 않는다.
+(명시한 `file_roots`는 그대로 적용한다). 로컬 전환은 다음 명령으로 준비한다. 디스크를 강제로 분리하면 실행 중인 프로그램의 열린 파일까지 복구해 주지는 않는다.
 
+
+```sh
+aaa work-root show
+aaa work-root check --path '/Volumes/<disk>/aaa-work' --mount '/Volumes/<disk>'
+aaa work-root set '/Volumes/<disk>/aaa-work' --mount '/Volumes/<disk>'
+```
+
+`show`는 다음 시작의 설정값·마지막 agent 시작 기록·이전 root와 재시작 필요 여부를 보여 준다.
+마지막 시작 기록은 지금 host와 연결됐다는 증명이 아니므로 연결도 따로 확인한다.
+`check`는 설정을 바꾸지 않고 실제 mount와 쓰기·읽기·삭제를 점검하며, 없는 작업 root는 만든다.
+`set`은 기존 root의 준비 기록을 먼저 가져오고 이전 root·소유권·외장 Git 잠금을 보존한 뒤
+`agent.local.toml`의 두 key만 원자적으로 저장한다. 주석·다른 설정은 유지한다.
+같은 명령을 다시 실행할 수 있고, 등록 완료 뒤 저장 전에 중단되어도 기존 설정과 원본 작업을 보존한다.
+읽기 전용·symlink·hardlink·잘못된 설정은 덮지 않으며, 준비 도중 다른 편집자가 바꾼 설정도 덮지 않는다.
+
+이 명령들은 이 머신의 `--config-dir`·`--state-dir`(또는 해당 환경 변수)을 사용하고 서비스를 재시작하지 않는다.
+새 요청을 잠깐 멈추고 진행 중 준비·정리의 종료를 확인한 뒤 `check` → `set` → `config check`를 실행한다.
+그 뒤 운영 담당자가 agent를 한 대씩 재시작하고 host의 연결과 새 thread의 실제 cwd를 확인한다.
+기존 pane·cwd·파일은 이동하지 않으며, 새 thread부터 변경한 경로를 사용한다.
+분리 중 실패한 resolve는 볼륨을 연결한 뒤 같은 `thread resolve`로 이어 간다. `project sweep`은 끝낸 thread가 남긴 자리용이다.
 
 웹 활동 막대 「자동화」의 조건·동작·실행 기록·토글은 [자동화 운영 확인](automations.md)을 본다.

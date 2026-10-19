@@ -10,6 +10,7 @@ mod rollout;
 mod service;
 mod settings;
 mod update;
+mod work_root;
 
 fn main() -> std::process::ExitCode {
     cli::main()

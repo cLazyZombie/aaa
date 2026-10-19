@@ -47,3 +47,27 @@ pub fn mount(value: &str, home: &Path) -> Result<Option<PathBuf>, String> {
     }
     Ok(Some(path.components().collect()))
 }
+
+/// agent.local.toml의 두 key만 바꾼다. 주석·다른 설정·기존 값의 주석을 보존한다.
+pub fn edit(text: &str, root: &str, mount: &str) -> Result<String, String> {
+    validate(root, false)?;
+    validate(mount, true)?;
+    use toml_edit::{DocumentMut, Item, Table};
+    let base = if text.trim().is_empty() { format!("schema = {}\n", crate::SCHEMA) } else { text.to_owned() };
+    let mut doc = base.parse::<DocumentMut>().map_err(|e| format!("agent.local.toml을 읽지 못했다: {e}"))?;
+    if !doc.contains_key("agent") {
+        doc["agent"] = Item::Table(Table::new());
+    }
+    let table = doc["agent"].as_table_like_mut().ok_or("agent.local.toml의 agent가 표가 아니다")?;
+    for (key, value) in [("work_root", root), ("work_mount", mount)] {
+        let mut next = toml_edit::Value::from(value);
+        if let Some(previous) = table.get(key).and_then(Item::as_value) {
+            *next.decor_mut() = previous.decor().clone();
+        }
+        table.insert(key, Item::Value(next));
+    }
+    let out = doc.to_string();
+    toml_edit::de::from_str::<crate::AgentConfig>(&out)
+        .map_err(|e| format!("agent.local.toml 형식이 올바르지 않다: {e}"))?;
+    Ok(out)
+}

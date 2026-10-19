@@ -38,6 +38,11 @@ enum Cmd {
     },
     /// 자료·알림·요청을 inbox에 남긴다. 기밀성 없음: 비밀값을 넣지 않는다
     Post(PostArgs),
+    /// 이 머신의 작업 root를 조회·점검·설정한다(서비스는 재시작하지 않는다)
+    WorkRoot {
+        #[command(subcommand)]
+        cmd: crate::work_root::Command,
+    },
     /// host backend 실행(보통 OS 감독자가 띄운다)
     Host,
     /// agent backend 실행, 또는 host에 등록(enroll)
@@ -1773,6 +1778,7 @@ fn run(cli: Cli) -> Result<ExitCode> {
         }
         Cmd::Service { cmd } => service_cmd(cmd, json),
         Cmd::Config { cmd } => config_cmd(cmd, json),
+        Cmd::WorkRoot { cmd } => crate::work_root::run(json, cmd),
         Cmd::Deploy { cmd } => crate::rollout::run(json, cmd),
         Cmd::Update { cmd: None, from, release_version, dry_run, machine } => {
             let action = aaa_proto::DeployAction::Update {
