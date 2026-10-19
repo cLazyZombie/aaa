@@ -5537,3 +5537,14 @@ primary 근거:
   받아 마지막 줄바꿈을 command substitution이 지웠다. PTY는 쓰기별 read 경계를 보장하지 않는다. adopt가 보는 것은 pane의
   생존과 제출 뒤 응답이므로 가짜를 canonical 줄 읽기로 바꾸고, 기존 생존 검사는 글+Enter를 한 번 쓰는 `pane run`으로 강화했다.
   실제 입력·기대 응답·시한을 바꾸지 않는다. 첫 실패의 실험실·로그를 보존한다.
+
+
+### 8.233 TUI spaces 자동 높이(10-19, t-0386, D안 1단계)
+
+- workspace 항목 수에 머리·빈 줄·footer 세 줄을 더한 높이를 쓴다. 최대 화면 절반까지만 쓰므로 세 workspace가 있는
+  80줄 화면에서는 spaces가 6줄을 쓰고 나머지가 agents에 돌아간다. 기존 반반 고정에서 생긴 큰 여백을 없앤다.
+- 구역 경계를 직접 끌거나 공유 설정 `tuiSidebarSplit`을 저장한 사용자는 그 비율을 유지한다. 탭·workspace·마우스·compact
+  동작과 저장 형식은 유지한다. 후속 단계는 thread 두 줄 단위 스크롤, 폭 48칸·선택 제목 전체 보기, t-0390 착지에 맞춘
+  Projects·Machines·Agents 패널과 패널 밖 특수 임무다.
+- 기존 렌더 keeper에서 작은 화면·큰 화면·다수 workspace 상한·저장 비율을 확인한다. 기존 PTY keeper에서 자동 경계를
+  실제 마우스로 끌고 재접속하여 저장 비율을 확인한다. 새 시험 전용 seam은 없다.

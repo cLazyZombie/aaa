@@ -2258,10 +2258,10 @@ fn workspace_keys_and_section_split_like_herdr() {
     });
     wait_for("닫은 workspace의 pane 끝남", T, || h.json(&["pane", "get", &side_pane]).is_err().then_some(()));
 
-    // 4) 구역 경계 줄(30줄이면 위에서 15째 줄)을 끌어 21째 줄로: 비율 0.7, host가 남긴다
+    // 4) workspace 하나면 spaces는 네 줄만 쓴다. 자동 경계를 끌면 비율 0.7로 바뀌고 host가 남긴다
     let divider = |s: &Screen, row: usize| s.side_lines().get(row).is_some_and(|l| l.starts_with(&"─".repeat(20)));
-    tui.wait_screen("반반", |s| divider(s, 15));
-    tui.mouse(0, (15, 3), false);
+    tui.wait_screen("항목만큼 자동 높이", |s| divider(s, 4));
+    tui.mouse(0, (4, 3), false);
     tui.mouse(32, (21, 3), false);
     tui.mouse(0, (21, 3), true);
     tui.wait_screen("21째 줄", |s| divider(s, 21));
