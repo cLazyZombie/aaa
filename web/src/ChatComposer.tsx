@@ -12,7 +12,7 @@ import {
   useSyncExternalStore,
   type KeyboardEvent,
 } from "react";
-import { ArrowUp, Clock, LoaderCircle, TriangleAlert, X } from "lucide-react";
+import { ArrowUp, Check, Clock, LoaderCircle, TriangleAlert, X } from "lucide-react";
 import "./herdr/Composer.css";
 import { composerDrafts } from "./herdr/composerDraft.ts";
 import { messageQueues } from "./herdr/messageQueue.ts";
@@ -60,6 +60,7 @@ export function ChatComposer({
   textRef.current = text;
   const [sending, setSending] = useState(false);
   const [note, setNote] = useState<string | null>(null);
+  const [delivered, setDelivered] = useState(false);
   const queued = useSyncExternalStore(messageQueues.subscribe, () =>
     messageQueues.read(owner),
   );
@@ -72,12 +73,14 @@ export function ChatComposer({
 
   /** 보내고 결과를 글로: null은 받음 */
   const deliver = async (message: string): Promise<string | null> => {
-    const sent = onSend(message);
-    if (sent === false)
-      return "전송하지 못했습니다. 다시 연결한 후 시도하세요.";
     try {
+      setDelivered(false);
+      const sent = onSend(message);
+      if (sent === false)
+        return "전송하지 못했습니다. 다시 연결한 후 시도하세요.";
       const result = await sent;
       if (result !== true) return result;
+      setDelivered(true);
       onSent();
       return null;
     } catch {
@@ -242,6 +245,12 @@ export function ChatComposer({
             <span className="composer-note-text">{note}</span>
           </div>
         )}
+        {note === null && delivered && (
+          <div className="composer-hint" role="status" data-testid="chat-delivered">
+            <Check size={14} aria-hidden="true" />
+            <span>입력을 보냈습니다. 대화 기록에 반영되기까지 잠시 걸릴 수 있습니다.</span>
+          </div>
+        )}
         <div className="composer-surface">
           <textarea
             className="composer-text"
@@ -258,6 +267,7 @@ export function ChatComposer({
             onChange={(event) => {
               setText(event.target.value);
               setNote(null);
+              setDelivered(false);
             }}
           />
           <div className="composer-controls composer-controls-right">

@@ -254,6 +254,13 @@ export default async function ({ ctl, page }) {
     fs.writeFileSync(`${root}/files/chat-note.md`, "# 대화 메모\n");
     fs.appendFileSync(tr, L({ type: "assistant", message: { content: [{ type: "text", text: `시험도 통과했다. 기록은 ${root}/files/chat-note.md 에 남겼다` }] } }));
     await until("새 줄", async () => (await roles()).length === 4);
+    // 작업 중 흡수된 메시지: 같은 글을 가진 queue 장부는 중복하지 않고 attachment가 한 번 보인다.
+    fs.appendFileSync(tr,
+      L({ type: "queue-operation", operation: "enqueue", content: "작업 중 추가 요청" }) +
+      L({ type: "queue-operation", operation: "remove", content: "작업 중 추가 요청", reason: "absorbed_mid_turn" }) +
+      L({ type: "attachment", attachment: { type: "queued_command", commandMode: "prompt", origin: { kind: "human" }, prompt: "작업 중 추가 요청" } }));
+    await chat.locator('[data-role="user"]').filter({ hasText: "작업 중 추가 요청" }).waitFor();
+    if ((await chat.locator('[data-role="user"]').filter({ hasText: "작업 중 추가 요청" }).count()) !== 1) throw new Error("작업 중 요청 중복");
     await shot(page, "desktop-chat");
     // 설정 「생각 표시」(herdr-web-ui showThinking, 차이 목록 C4): 켜면 생각이 제자리에 접힌 「생각」 줄로, 누르면 글
     const thinkingSetting = async (on) => {
@@ -269,7 +276,7 @@ export default async function ({ ctl, page }) {
     await until("생각 글", async () => (await chat.locator('[data-role="thinking"]').innerText()).includes("속생각"));
     await shot(page, "desktop-chat-thinking");
     await thinkingSetting(false);
-    await until("생각을 끄면 뺀다", async () => (await roles()).length === 4);
+    await until("생각을 끄면 뺀다", async () => (await roles()).length === 5);
     // 설정 「채팅 글자 크기」(herdr-web-ui chatFontSize·--chat-scale, 차이 목록 T4): 한 칸 크게 하면 답 줄 글자가 커지고, 작게 하면 돌아온다
     const answerPx = () => chat.locator('[data-role="assistant"] .markdown').first().evaluate((e) => parseFloat(getComputedStyle(e).fontSize));
     const before = await answerPx();
@@ -343,8 +350,8 @@ export default async function ({ ctl, page }) {
     // 긴 사람 말은 접혀 몇 줄만, 「전체 메시지 보기」로 펼치고 「접기」로 다시. 짧은 말에는 단추가 없다
     const long = Array.from({ length: 30 }, (_, i) => `요청 ${i + 1}째 줄`).join("\n");
     fs.appendFileSync(tr, L({ type: "user", message: { role: "user", content: long } }));
-    await until("긴 사람 말", async () => (await roles()).length === 5);
-    const bubble = chat.locator('[data-role="user"]').nth(1);
+    await until("긴 사람 말", async () => (await roles()).length === 6);
+    const bubble = chat.locator('[data-role="user"]').filter({ hasText: "요청 30째 줄" });
     const fold = async () =>
       bubble.evaluate((b) => {
         const body = b.querySelector(".chat-bubble-body");
@@ -363,7 +370,7 @@ export default async function ({ ctl, page }) {
     if (await page.getByTestId("terminal").isHidden()) throw new Error("터미널로 돌아가지 않았다");
     // CLI도 같은 기록을 본다
     const c = aaa("pane", "chat", "chat1");
-    if (c.messages.length !== 5 || c.harness !== "claude") throw new Error(JSON.stringify(c));
+    if (c.messages.length !== 6 || c.harness !== "claude") throw new Error(JSON.stringify(c));
     const ct = aaa("pane", "chat", "chat1", "--thinking");
     if (ct.messages[1]?.role !== "thinking" || ct.messages[1].text !== "속생각") throw new Error(JSON.stringify(ct));
     // 기록 폴더 밖을 가리키는 hook(세션 안 누구나 보낼 수 있다)은 읽지 않는다
@@ -787,7 +794,7 @@ export default async function ({ ctl, page }) {
     fs.writeFileSync(got, "");
     const lines = () => fs.readFileSync(got, "utf8").split("\n").filter(Boolean);
     aaa("tab", "create", "--machine", "labA", "--label", "cmp1", "--", claudeSh, "-c",
-      `stty -echo; ${claudeIdle}; read a; printf '%s\\n' "$a" >> ${got}; ${claudeWorking}; while read a; do printf '%s\\n' "$a" >> ${got}; done`);
+      `stty -echo; ${claudeIdle}; read a; printf '%s\\n' "$a" >> ${got}; ${claudeWorking}; while read a; do printf '%s\\n' "$a" >> ${got}; printf 'RECEIVED:%s\\n' "$a"; done`);
     await page.getByTestId("agent-cmp1").and(page.locator('[data-status="idle"]')).waitFor();
     await inList(page, "pane-cmp1");
     await page.getByTestId("chat-toggle").click();
@@ -797,7 +804,24 @@ export default async function ({ ctl, page }) {
     await box.press("Enter");
     await until("보낸 글이 프로그램에", async () => lines().includes("첫 메시지 c2"));
     if ((await box.inputValue()) !== "") throw new Error("보낸 뒤 입력창이 비지 않았다");
+    await composer.getByTestId("chat-delivered").waitFor();
     await page.getByTestId("agent-cmp1").and(page.locator('[data-status="working"]')).waitFor();
+    await box.fill("작업 중에도 전달 c2");
+    await box.press("Enter");
+    await waitOutput("cmp1", "RECEIVED:작업 중에도 전달 c2");
+    if (!lines().includes("작업 중에도 전달 c2")) throw new Error("작업 중 입력 유실");
+    await composer.getByTestId("chat-delivered").waitFor();
+    // 전달 단계는 식별자·바이트 수로 잇고 입력 본문은 host·agent·session log에 남기지 않는다.
+    const cmp = aaa("pane", "get", "cmp1").id;
+    for (const [file, marker] of [
+      [`${root}/host.log`, "웹 입력: submit 수신"],
+      [`${root}/agent.log`, "pane 입력: agent 수신"],
+      [`${root}/s/agent/sessions/${cmp}/session-host.log`, "pane 입력: PTY 쓰기 완료"],
+    ]) {
+      const log = fs.readFileSync(file, "utf8");
+      if (!log.includes(marker) || log.includes("작업 중에도 전달 c2")) throw new Error(`입력 전달 기록: ${file}`);
+    }
+    await shot(page, "desktop-chat-delivered");
     // 자동 전송을 끄면 작업 중에 쓴 글은 붙잡힌다
     const chatSettings = async (fn) => {
       const d = await openSettings(page, "채팅");
