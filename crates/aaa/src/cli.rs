@@ -2710,6 +2710,9 @@ fn assignable_line(owners: &[aaa_proto::OwnerChoice]) -> String {
 
 fn render_context(s: &mut String, c: &aaa_proto::ProjectContext) {
     use std::fmt::Write as _;
+    for w in &c.post_warnings {
+        let _ = writeln!(s, "⚠ {w}");
+    }
     let _ = writeln!(s, "프로젝트 {} ({})", c.project, c.path);
     let _ = writeln!(s, "thread 시작: start_threads={} (propose면 제안하고 승인을 기다린다)", c.start_threads);
     let _ = writeln!(s, "\nTasks(TASKS.md, coordinator만 고친다):");

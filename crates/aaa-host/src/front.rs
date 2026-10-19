@@ -147,7 +147,6 @@ async fn serve(host: Arc<Host>, s: aaa_common::ipc::LocalStream, pid: Option<u32
     let (found_role, claimed_role) = (found.as_deref().and_then(role_of), session.as_deref().and_then(role_of));
     let scoped = scoped_role(found_role) || scoped_role(claimed_role) || caller == Caller::Detached;
     let role = if scoped { DeviceRole::Reader } else { DeviceRole::Local };
-    tx.json(&FrontMsg::Welcome { proto: agreed, host_id: host.host_id.clone(), role, front: front.id.clone() }).await?;
     // 기록·판단에 쓸 세션: 좁은 쪽(thread)을 먼저, 그다음 판정한 pane, 그다음 알린 세션
     let (sess, sess_role) = if scoped_role(found_role) || (found.is_some() && !scoped_role(claimed_role)) {
         (found, found_role)
@@ -164,6 +163,20 @@ async fn serve(host: Arc<Host>, s: aaa_common::ipc::LocalStream, pid: Option<u32
         (Some(_), _) => format!("local:{client}@unverified"),
         _ => format!("local:{client}"),
     };
+    let warnings = host
+        .coordinator_project_of_actor(&actor)
+        .map(|p| host.post_warnings(&p))
+        .transpose()
+        .map_err(|e| anyhow::anyhow!(e.message))?
+        .unwrap_or_default();
+    tx.json(&FrontMsg::Welcome {
+        proto: agreed,
+        host_id: host.host_id.clone(),
+        role,
+        front: front.id.clone(),
+        warnings,
+    })
+    .await?;
     serve_conn(host, tx, rx, Conn { role, actor, front }).await.map(|_| ())
 }
 
@@ -210,6 +223,8 @@ async fn serve_conn(host: Arc<Host>, tx: FrameTx, mut rx: impl FrontIn, conn: Co
                         Err(_) => break,
                     },
                     n = notices.recv() => match n {
+                        // 새 앱 전용 종류를 옛 CLI의 enum으로 보내지 않는다. CLI는 Welcome 경고를 읽는다.
+                        Ok(n) if n.kind == aaa_proto::NoticeKind::PostMuted => continue,
                         Ok(n) => FrontEvent::Notice(n),
                         Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => continue,
                         Err(_) => break,

@@ -281,6 +281,10 @@ impl Db {
                endpoint TEXT PRIMARY KEY, p256dh TEXT NOT NULL, auth TEXT NOT NULL, device TEXT NOT NULL,
                created_at INTEGER NOT NULL);",
         )?;
+        // post 한도는 본문 정리 뒤에도 출처별로 남는다. 옛 행은 기존 한도로 유지한다.
+        if !conn.prepare("SELECT 1 FROM pragma_table_info('posts') WHERE name='quota'")?.exists([])? {
+            conn.execute("ALTER TABLE posts ADD COLUMN quota TEXT NOT NULL DEFAULT 'standard'", [])?;
+        }
         // 기기 이름(웹 설정 → 기기, herdr-web-ui devices.json `label`). 열만 더하므로 schema를 올리지 않는다: 옛 aaa도 이 DB를 연다
         let has_label = conn.prepare("SELECT 1 FROM pragma_table_info('devices') WHERE name='label'")?.exists([])?;
         if !has_label {
@@ -344,6 +348,13 @@ impl Db {
     pub fn meta(&self, key: &str) -> Result<Option<String>> {
         let c = self.conn.lock().unwrap();
         Ok(c.query_row("SELECT value FROM meta WHERE key=?1", [key], |r| r.get(0)).optional()?)
+    }
+
+    pub(crate) fn meta_suffixes(&self, prefix: &str) -> Result<Vec<String>> {
+        let c = self.conn.lock().unwrap();
+        let mut st =
+            c.prepare("SELECT substr(key, length(?1)+1) FROM meta WHERE substr(key,1,length(?1))=?1 ORDER BY key")?;
+        Ok(st.query_map([prefix], |r| r.get(0))?.collect::<rusqlite::Result<Vec<_>>>()?)
     }
 
     pub fn set_meta(&self, key: &str, value: &str) -> Result<()> {
@@ -1018,18 +1029,30 @@ pub(crate) struct PostRow {
     pub content_sha: String,
     pub created_ms: u64,
     pub result: aaa_proto::PostResult,
+    pub quota: String,
 }
 impl Db {
     pub(crate) fn post_row(&self, id: &str) -> Result<Option<PostRow>> {
         let c = self.conn.lock().unwrap();
         let row = c
             .query_row(
-                "SELECT project,sender,session,machine,content_sha,created_ms,result FROM posts WHERE post_id=?1",
+                "SELECT project,sender,session,machine,content_sha,created_ms,result,quota FROM posts WHERE post_id=?1",
                 [id],
-                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?, r.get(5)?, r.get::<_, String>(6)?)),
+                |r| {
+                    Ok((
+                        r.get(0)?,
+                        r.get(1)?,
+                        r.get(2)?,
+                        r.get(3)?,
+                        r.get(4)?,
+                        r.get(5)?,
+                        r.get::<_, String>(6)?,
+                        r.get(7)?,
+                    ))
+                },
             )
             .optional()?;
-        row.map(|(project, sender, session, machine, content_sha, created_ms, result)| {
+        row.map(|(project, sender, session, machine, content_sha, created_ms, result, quota)| {
             Ok(PostRow {
                 project,
                 sender,
@@ -1038,6 +1061,7 @@ impl Db {
                 content_sha,
                 created_ms,
                 result: serde_json::from_str(&result)?,
+                quota,
             })
         })
         .transpose()
@@ -1047,11 +1071,12 @@ impl Db {
         project: &str,
         sender: &str,
         after: u64,
+        quota: Option<&str>,
     ) -> Result<Vec<(String, u64, String, aaa_proto::PostResult)>> {
         let c = self.conn.lock().unwrap();
-        let mut st = c.prepare("SELECT post_id,created_ms,content_sha,result FROM posts WHERE project=?1 AND sender=?2 AND created_ms>=?3 ORDER BY seq")?;
+        let mut st = c.prepare("SELECT post_id,created_ms,content_sha,result FROM posts WHERE project=?1 AND sender=?2 AND created_ms>=?3 AND (?4 IS NULL OR quota=?4) ORDER BY seq")?;
         let rows = st
-            .query_map(params![project, sender, after], |r| {
+            .query_map(params![project, sender, after, quota], |r| {
                 Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get::<_, String>(3)?))
             })?
             .collect::<rusqlite::Result<Vec<_>>>()?;
@@ -1074,7 +1099,7 @@ impl Db {
     ) -> Result<()> {
         let mut c = self.conn.lock().unwrap();
         let tx = c.transaction()?;
-        tx.execute("INSERT INTO posts(post_id,project,sender,session,machine,content_sha,created_ms,result,data) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9)", params![post_id,row.project,row.sender,row.session,row.machine,row.content_sha,row.created_ms,serde_json::to_string(&row.result)?,env.map(serde_json::to_string).transpose()?])?;
+        tx.execute("INSERT INTO posts(post_id,project,sender,session,machine,content_sha,created_ms,result,data,quota) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10)", params![post_id,row.project,row.sender,row.session,row.machine,row.content_sha,row.created_ms,serde_json::to_string(&row.result)?,env.map(serde_json::to_string).transpose()?,row.quota])?;
         if let Some(i) = inbox {
             tx.execute(
                 "INSERT INTO inbox(id,project,kind,subject,event,done,created_at,data) VALUES(?1,?2,?3,?4,?5,0,?6,?7)",

@@ -2308,6 +2308,9 @@ pub enum FrontMsg {
         host_id: String,
         role: DeviceRole,
         front: String,
+        /// coordinator의 다음 CLI 연결에 보일 활성 post 음소거. 옛 host는 비어 있다.
+        #[serde(default)]
+        warnings: Vec<String>,
     },
     Reject(ErrorBody),
     Req {

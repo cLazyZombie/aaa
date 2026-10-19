@@ -157,7 +157,11 @@ export type OwnerChoice = { machine: string, connected: boolean,
  */
 profiles: Array<string>, };
 
-export type ProjectContext = { project: string, path: string,
+export type ProjectContext = {
+/**
+ * inbox를 끝내도 해제 전까지 남는 활성 post 음소거 경고
+ */
+post_warnings: Array<string>, project: string, path: string,
 /**
  * project.toml `start_threads`: propose(제안하고 승인을 기다린다) 또는 auto. aaa는 강제하지 않는다.
  */
@@ -751,7 +755,7 @@ body: string | null, options: Array<MenuOption>, multi_select: boolean,
  */
 custom_option_index: number | null, };
 
-export type NoticeKind = "finished" | "report";
+export type NoticeKind = "finished" | "post_muted" | "report";
 
 export type NoticeView = { kind: NoticeKind,
 /**

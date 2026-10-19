@@ -4407,7 +4407,14 @@ primary 근거:
 - **한도.** host.toml `[post]`: burst=3, burst_secs=60, hourly=6, daily=30, pair_hourly=10, mute_after=3.
   시간 창은 최근 60초·1시간·24시간이다. now를 인자로 받는 owner가 판정한다. 같은 출처의
   (목적지·종류·topic·정리한 제목·본문 sha)가 24시간 안 같으면 기존 ID와 함께 거부한다.
-  한 시간에 rate 거부 3번이면 muted로 저장하고 inbox 항목 한 번을 만든다. `aaa post unmute <p> <thread>`는 조작 권한이다.
+  일반 한도에서 한 시간에 rate 거부 3번이면 muted로 저장한다. `aaa post unmute <p> <출처>`는 조작 권한이다.
+  `library publish --to-user`가 내부에서 만드는 보고서 알림은 이 한도를 쓰지 않는다(topic 자기 신고로 면제되지 않는다).
+  해당 프로젝트 coordinator pane으로 검증된 `user-action` request·needs_user와 `task-complete` notice는 둘을 합쳐
+  최근 60초 30·1시간 60·24시간 300건의 별도 한도를 쓰며, 초과해도 자동 mute하지 않고 기존 mute에도 막히지 않는다.
+  일반 post와 별도 한도의 거부 횟수도 섞지 않는다. 모든 경로의 24시간 내용 중복·ID 재전송·크기·역할 검사는 유지한다.
+  한도 종류는 본문을 정리한 뒤에도 원장에 남는다. 옛 원장 행은 일반 한도로 유지하며 기존 mute를 자동 해제하지 않는다.
+  mute마다 inbox와 웹 앱 안 알림을 남긴다(외부 푸시 없음). 활성 mute는 inbox done·host 재시작과 무관하게
+  coordinator의 다음 CLI 연결 출력과 `aaa context` 맨 위에 해제 명령과 함께 남고, unmute하면 사라진다.
 - **Front.** Post·PostList·PostUnmute는 조작 권한, PostStatus는 Reader 자기 세션만이다.
   세션 밖 송신에는 프로젝트가 필수다. `mission:<name>` 계약은 열되 임무 전달은 2단계다(사용자 재확인).
   아직 없는 임무는 명확히 거부하고, pair_hourly는 2단계에서 coordinator→임무 전달에 적용한다.

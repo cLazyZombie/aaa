@@ -134,6 +134,23 @@ impl Host {
         self.store_post(&rec.project, sender, input, &actor, Some(&rec), util::now_ms())
     }
     pub(crate) fn front_post(&self, project: &str, input: PostInput, actor: &str) -> Result<PostResult, ErrorBody> {
+        self.front_post_origin(project, input, actor, false)
+    }
+    pub(crate) fn library_report_post(
+        &self,
+        project: &str,
+        input: PostInput,
+        actor: &str,
+    ) -> Result<PostResult, ErrorBody> {
+        self.front_post_origin(project, input, actor, true)
+    }
+    fn front_post_origin(
+        &self,
+        project: &str,
+        input: PostInput,
+        actor: &str,
+        library: bool,
+    ) -> Result<PostResult, ErrorBody> {
         if !aaa_proto::valid_project(project) {
             return Err(bad("프로젝트 이름 형식이 아니다"));
         }
@@ -144,7 +161,14 @@ impl Host {
             mission: None,
             machine: "host".into(),
             session: coordinator.then(|| actor.rsplit_once('@').unwrap().1.into()),
-            verified: if coordinator { "coordinator-pane" } else { "front-control" }.into(),
+            verified: if library {
+                "library-publish"
+            } else if coordinator {
+                "coordinator-pane"
+            } else {
+                "front-control"
+            }
+            .into(),
         };
         Ok(self.store_post(project, sender, input, actor, None, util::now_ms()))
     }
@@ -229,12 +253,24 @@ impl Host {
         {
             result = Some(refused("topic은 영문 소문자·숫자·- 1~40자다"));
         }
-        let recent = match self.db.post_recent(project, &who, now.saturating_sub(86400000)) {
+        // topic 자기 신고로 면제받지 않는다. library 경로와 host가 검증한 coordinator만 별도 한도다.
+        let quota = if sender.verified == "library-publish" {
+            "report"
+        } else if sender.verified == "coordinator-pane"
+            && input.to == "user"
+            && ((input.post_type == PostType::Notice && !input.needs_user && input.topic == "task-complete")
+                || (input.post_type == PostType::Request && input.needs_user && input.topic == "user-action"))
+        {
+            "user"
+        } else {
+            "standard"
+        };
+        let recent = match self.db.post_recent(project, &who, now.saturating_sub(86400000), None) {
             Ok(v) => v,
             Err(_) => return refused("post 원장을 읽지 못했다"),
         };
         let mute_key = format!("post_muted:{project}:{who}");
-        if result.is_none() && self.db.meta(&mute_key).ok().flatten().is_some() {
+        if result.is_none() && quota == "standard" && self.db.meta(&mute_key).ok().flatten().is_some() {
             result = Some(refused("muted: 조작 권한 aaa post unmute가 필요하다"));
         }
         if result.is_none() {
@@ -256,17 +292,23 @@ impl Host {
         {
             result = Some(refused("pair rate: 임무별 시간당 상한이다"));
         }
-        if result.is_none() && to_mission.is_none() {
+        if result.is_none() && to_mission.is_none() && quota != "report" {
+            let quota_recent = match self.db.post_recent(project, &who, now.saturating_sub(86400000), Some(quota)) {
+                Ok(v) => v,
+                Err(_) => return refused("post 원장을 읽지 못했다"),
+            };
+            // 두 사용자 의도를 합쳐 분당 30·시간당 60·하루 300건. 초과해도 자동 mute하지 않는다.
+            let (burst, hourly, daily, burst_secs) =
+                if quota == "user" { (30, 60, 300, 60) } else { (cfg.burst, cfg.hourly, cfg.daily, cfg.burst_secs) };
             let accepted: Vec<_> =
-                recent.iter().filter(|(_, _, _, r)| matches!(r, PostResult::Accepted { .. })).collect();
-            if accepted.len() >= cfg.daily as usize
-                || accepted.iter().filter(|(_, at, _, _)| now.saturating_sub(*at) < 3600000).count()
-                    >= cfg.hourly as usize
+                quota_recent.iter().filter(|(_, _, _, r)| matches!(r, PostResult::Accepted { .. })).collect();
+            if accepted.len() >= daily as usize
+                || accepted.iter().filter(|(_, at, _, _)| now.saturating_sub(*at) < 3600000).count() >= hourly as usize
                 || accepted
                     .iter()
-                    .filter(|(_, at, _, _)| now.saturating_sub(*at) < cfg.burst_secs.saturating_mul(1000))
+                    .filter(|(_, at, _, _)| now.saturating_sub(*at) < burst_secs.saturating_mul(1000))
                     .count()
-                    >= cfg.burst as usize
+                    >= burst as usize
             {
                 result = Some(refused("rate: 한 글로 묶거나 기다려라"));
                 let since = self
@@ -276,7 +318,7 @@ impl Host {
                     .flatten()
                     .and_then(|v| v.parse::<u64>().ok())
                     .unwrap_or(0);
-                let refusals = recent
+                let refusals = quota_recent
                     .iter()
                     .filter(|(_, at, _, r)| {
                         *at > since
@@ -285,12 +327,30 @@ impl Host {
                     })
                     .count()
                     + 1;
-                if refusals >= cfg.mute_after as usize {
+                if quota == "standard" && refusals >= cfg.mute_after as usize {
                     if self.db.set_meta(&mute_key, &now.to_string()).is_err() {
                         return refused("mute를 저장하지 못했다");
                     }
                     self.db.audit(actor, "post_mute", &detail);
-                    self.inbox_once(project, "post-muted", &who, "post muted", "post rate 거부가 누적되어 muted다");
+                    self.inbox_add(
+                        project,
+                        "post-muted",
+                        &who,
+                        "post muted",
+                        &format!("post 음소거: {who}. 해제: aaa post unmute {project} {who}"),
+                    );
+                    self.send_notice(aaa_proto::NoticeView {
+                        kind: aaa_proto::NoticeKind::PostMuted,
+                        pane: None,
+                        machine: "host".into(),
+                        project: Some(project.into()),
+                        thread: sender.thread.clone(),
+                        title: format!("{project} · post 음소거: {}", clean(&who)),
+                        agent: None,
+                        turn_ms: None,
+                        long: true,
+                        at_ms: now,
+                    });
                 }
             }
         }
@@ -338,6 +398,7 @@ impl Host {
             content_sha: hash,
             created_ms: now,
             result: result.clone(),
+            quota: quota.into(),
         };
         let audit = match &result {
             PostResult::Refused { reason, .. } => format!("{detail} reason={reason}"),
@@ -366,6 +427,18 @@ impl Host {
             self.evaluator_due(project, std::time::Duration::ZERO);
         }
         result
+    }
+    pub(crate) fn post_warnings(&self, project: &str) -> Result<Vec<String>, ErrorBody> {
+        Ok(self
+            .db
+            .meta_suffixes(&format!("post_muted:{project}:"))
+            .map_err(|e| bad(e.to_string()))?
+            .into_iter()
+            .map(|who| {
+                let who = clean(&who);
+                format!("post 음소거: {who} — aaa post unmute {project} {who} (coordinator 사용자 알림은 별도 한도)")
+            })
+            .collect())
     }
     pub(crate) fn post_status(&self, project: &str, id: &str, actor: &str) -> Result<PostResult, ErrorBody> {
         let row = self
@@ -474,6 +547,7 @@ mod tests {
         )
         .unwrap();
         assert!(matches!(put(&h,8,now+hour),PostResult::Refused { reason, .. } if reason.starts_with("muted:")));
+        assert_eq!(h.post_warnings("demo").unwrap().len(), 1, "재시작 뒤에도 활성 mute 경고");
         h.post_unmute("demo", "t-0001", "local:cli").unwrap();
         for n in 9..=11 {
             assert!(matches!(put(&h, n, now + 60000), PostResult::Accepted { .. }));
@@ -538,8 +612,7 @@ mod tests {
         assert_eq!(h.post_status("renamed", &input(1).post_id, "local:cli").unwrap(), accepted);
     }
 
-    #[tokio::test]
-    async fn coordinator_can_request_the_user_without_nudging_itself() {
+    fn coordinator_host() -> (Arc<Host>, Lab) {
         let (h, _lab) = host();
         h.project_create("demo", Default::default(), "test").unwrap();
         h.project_create("side", Default::default(), "test").unwrap();
@@ -580,6 +653,12 @@ mod tests {
             },
             false,
         );
+        (h, _lab)
+    }
+
+    #[tokio::test]
+    async fn coordinator_can_request_the_user_without_nudging_itself() {
+        let (h, _lab) = coordinator_host();
         let (tx, mut queue) = tokio::sync::mpsc::unbounded_channel();
         *h.notify_tx.lock().unwrap() = Some(tx);
         for (kind, event) in [
@@ -700,5 +779,152 @@ mod tests {
         assert!(h.post_status("demo", &input(1).post_id, "worker:s2").is_err());
         assert!(matches!(h.post_status("demo", &input(1).post_id, "worker:s1").unwrap(), PostResult::Accepted { .. }));
         assert!(matches!(h.receive_post("not-owner", "s1", input(30)), PostResult::Refused { .. }));
+    }
+    // 실제 publish를 통해 면제 출처를 만들며, 일반 post에서 topic만 report로 바꿔도 면제되지 않는다.
+    #[tokio::test]
+    async fn library_notifications_do_not_consume_post_rate() {
+        let (h, lab) = host();
+        h.project_create("demo", Default::default(), "test").unwrap();
+        let source = lab.0.join("web-report");
+        std::fs::create_dir(&source).unwrap();
+        std::fs::write(source.join("index.html"), "<h1>보고</h1>").unwrap();
+        let publish = |n| {
+            h.library_publish("demo", &format!("report-{n}"), source.to_str().unwrap(), false, Some(None), "local:cli")
+                .unwrap()
+        };
+        for n in 0..8 {
+            publish(n);
+        }
+        assert_eq!(h.db.post_list("demo").unwrap().len(), 8, "모든 보고서 알림은 일반 post rate를 소모하지 않는다");
+        let mut ordinary = input(200);
+        ordinary.to = "user".into();
+        for n in 200..203 {
+            ordinary.post_id = format!("{n:032x}");
+            ordinary.title = format!("일반 요청 {n}");
+            assert!(matches!(
+                h.front_post("demo", ordinary.clone(), "local:cli").unwrap(),
+                PostResult::Accepted { .. }
+            ));
+        }
+        for n in 203..206 {
+            ordinary.post_id = format!("{n:032x}");
+            ordinary.title = format!("일반 요청 {n}");
+            // report topic 자기 신고로 publish 면제에 들어가지 않는다.
+            ordinary.post_type = PostType::Notice;
+            ordinary.needs_user = false;
+            ordinary.topic = "report".into();
+            assert!(
+                matches!(h.front_post("demo", ordinary.clone(), "local:cli").unwrap(), PostResult::Refused { reason, .. } if reason.starts_with("rate:"))
+            );
+        }
+        publish(8);
+        assert_eq!(
+            h.db.post_list("demo").unwrap().iter().filter(|p| p.input.topic == "report").count(),
+            9,
+            "기존 음소거도 보고서 발행을 막지 않는다"
+        );
+        publish(8);
+        assert_eq!(
+            h.db.post_list("demo").unwrap().iter().filter(|p| p.input.topic == "report").count(),
+            9,
+            "24시간 중복 거부 유지"
+        );
+    }
+
+    #[tokio::test]
+    async fn coordinator_user_quota_never_auto_mutes_and_survives_standard_mute() {
+        let (h, _lab) = coordinator_host();
+        let actor = "local:cli@coord";
+        let make = |n: u32| {
+            let mut i = input(n);
+            i.to = "user".into();
+            if n.is_multiple_of(2) {
+                i.topic = "user-action".into();
+            } else {
+                i.topic = "task-complete".into();
+                i.post_type = PostType::Notice;
+                i.needs_user = false;
+            }
+            i
+        };
+        for n in 300..330 {
+            assert!(
+                matches!(h.front_post("demo", make(n), actor).unwrap(), PostResult::Accepted { .. }),
+                "사용자 알림 {n}"
+            );
+        }
+        let mut dupe = make(300);
+        dupe.post_id = format!("{:032x}", 999);
+        assert!(matches!(h.front_post("demo", dupe, actor).unwrap(), PostResult::Refused { existing: Some(_), .. }));
+        for n in 330..334 {
+            assert!(
+                matches!(h.front_post("demo", make(n), actor).unwrap(), PostResult::Refused { reason, .. } if reason.starts_with("rate:"))
+            );
+        }
+        let key = format!("post_muted:demo:{actor}");
+        assert!(h.db.meta(&key).unwrap().is_none(), "사용자 알림 한도 초과는 자동 mute하지 않는다");
+        let from =
+            h.db.post_list("demo").unwrap().into_iter().find(|p| p.from.verified == "coordinator-pane").unwrap().from;
+        let now = util::now_ms() + 60_000;
+        // 사용자 한도는 일반 coordinator post와도 별개다. 일반 한도 초과는 그대로 mute된다.
+        for n in 400..406 {
+            let mut i = make(n);
+            i.topic = "other-action".into();
+            i.post_type = PostType::Request;
+            i.needs_user = true;
+            let result = h.store_post("demo", from.clone(), i, actor, None, now);
+            if n < 403 {
+                assert!(matches!(result, PostResult::Accepted { .. }));
+            } else {
+                assert!(matches!(result, PostResult::Refused { reason, .. } if reason.starts_with("rate:")));
+            }
+        }
+        assert!(h.db.meta(&key).unwrap().is_some());
+        assert!(
+            matches!(h.store_post("demo", from.clone(), make(500), actor, None, now), PostResult::Accepted { .. }),
+            "기존 음소거와 무관하게 사용자 알림을 받는다"
+        );
+        // 두 번째 분의 29건으로 시간당 합계 60, 초과 거부 뒤 다음 시간에는 다시 받는다.
+        for n in 501..530 {
+            assert!(matches!(
+                h.store_post("demo", from.clone(), make(n), actor, None, now),
+                PostResult::Accepted { .. }
+            ));
+        }
+        assert!(
+            matches!(h.store_post("demo", from.clone(), make(530), actor, None, now+60_000), PostResult::Refused { reason, .. } if reason.starts_with("rate:"))
+        );
+        assert!(matches!(
+            h.store_post("demo", from, make(531), actor, None, now + 3_600_000),
+            PostResult::Accepted { .. }
+        ));
+    }
+
+    #[tokio::test]
+    async fn active_mute_warns_after_inbox_done_until_unmute() {
+        let (h, _lab) = host();
+        h.project_create("demo", Default::default(), "test").unwrap();
+        let mut notices = h.notice_events.subscribe();
+        let now = util::now_ms();
+        for n in 1..=6 {
+            put(&h, n, now);
+        }
+        assert_eq!(notices.try_recv().unwrap().kind, aaa_proto::NoticeKind::PostMuted);
+        assert!(notices.try_recv().is_err());
+        h.inbox_done("demo", &[], true, "local:cli").unwrap();
+        let context = h.context("demo", true).await.unwrap();
+        assert_eq!(context.post_warnings.len(), 1, "inbox done은 활성 mute를 지우지 않는다");
+        assert!(context.post_warnings[0].contains("aaa post unmute demo t-0001"));
+        h.post_unmute("demo", "t-0001", "local:cli").unwrap();
+        assert!(h.context("demo", true).await.unwrap().post_warnings.is_empty());
+        // 해제 후 다시 mute되면 새 사건과 새 inbox 항목으로 알린다.
+        for n in 7..=12 {
+            put(&h, n, now + 60_000);
+        }
+        assert_eq!(notices.try_recv().unwrap().kind, aaa_proto::NoticeKind::PostMuted);
+        assert_eq!(
+            h.db.inbox_list(Some("demo"), true).unwrap().iter().filter(|i| i.item_kind == "post-muted").count(),
+            2
+        );
     }
 }
