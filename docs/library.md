@@ -45,7 +45,7 @@ coordinator가 사용자에게 보여 줄 웹 보고서를 보낼 때 쓴다. �
 publish 때 `--thread t-0441`로 직접 줄 수 있고, 그 프로젝트에 없는 thread면 거부한다. 주지 않으면 host가 이름에 든 번호
 (`t-0441`·`t0441`, 앞뒤가 영숫자가 아닐 때)와 원본 경로의 뒤 성분부터(`…/library/t-0441`이 thread 폴더 `…-t-0441/…`보다 먼저)
 찾은 번호 중 **그 프로젝트에 실제로 있는 첫 thread**를 적는다. 원본 경로 자체는 적지 않는다. 같은 이름으로 다시 올리면 다시 정한다.
-thread 사본(`t-NNNN`)·import(`archive-t-0001`)와 이 기록 전에 올린 보고서는 이름에서 찾는다. 근원을 모르면 번호 없이 보인다.
+thread 사본(`t-NNNN`)·import(`archive-t-0001`)와 이 기록 전에 올린 보고서는 이름에서 찾는다. 근원을 모르면 번호 없이 보인다. 「작업 보고」의 thread 사본 줄은 이름이 곧 번호라 표지를 따로 달지 않는다.
 
 ```sh
 aaa library publish "<thread library 폴더>" --name weekly --to-user --title '주간 보고' --thread t-0441

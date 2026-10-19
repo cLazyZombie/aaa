@@ -49,7 +49,7 @@ function numberIn(row, mark, others) {
 
 export default async function ({ page }) {
   let thread;
-  await step("보고서 thread 번호: thread 사본·thread library에서 올린 사용자 보고서·--thread·접두사 붙인 import는 번호를, 근원 없는 보고서는 번호 없이", async () => {
+  await step("보고서 thread 번호: thread library에서 올린 사용자 보고서·--thread·접두사 붙인 import는 번호를, thread 사본 줄은 번호 한 번만, 근원 없는 보고서는 번호 없이", async () => {
     aaa("project", "create", "demo");
     fs.writeFileSync(`${root}/task-numbers.md`, "번호 보기");
     thread = aaa("thread", "start", "demo", "--title", "번호 보고", "--machine", "labA", "--profile", "fake", "--kind", "dir", "--task-file", `${root}/task-numbers.md`);
@@ -86,7 +86,13 @@ export default async function ({ page }) {
         await pg.getByTestId(`report-demo-${thread.id}`).waitFor();
         // 작업 보고 줄: 고르기·이름·진행 중·크기·단추와 겹치지 않는다
         const row = [".report-pick", ".report-row-name", ".report-tag.is-busy", ".report-row-meta", ".report-row-actions"];
-        for (const n of [thread.id, `old-${thread.id}`]) await check(pg, `${name} 작업 보고 ${n}`, pg.getByTestId(`report-demo-${n}`).locator(".report-row-main"), thread.id, row);
+        // thread 사본 줄은 이름이 곧 번호라 표지를 빼고 번호를 한 번만 보인다. 접두사 붙인 import는 표지를 단다
+        for (const [n, w] of [[thread.id, null], [`old-${thread.id}`, thread.id]]) {
+          const main = pg.getByTestId(`report-demo-${n}`).locator(".report-row-main");
+          await check(pg, `${name} 작업 보고 ${n}`, main, w, row);
+          const shown = (await main.innerText()).split(thread.id).length - 1;
+          if (n === thread.id && shown !== 1) bad.push({ where: `${name} 작업 보고 사본 줄`, want: "번호 한 번", shown });
+        }
         await shot(pg, `${name}-reports-work`);
         await pg.getByTestId("reports-tab-mine").click();
         await pg.getByTestId("report-demo-weekly").getByTestId("report-open").click();

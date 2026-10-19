@@ -35,6 +35,9 @@ export function ReportThread({ id }: { id: string | undefined }) {
   return id ? <span className="report-tag report-thread" data-testid="report-thread">{id}</span> : null;
 }
 
+/** 목록 줄의 번호 표지. thread 사본처럼 보이는 이름이 곧 번호면 번호가 두 번 보이지 않게 뺀다 */
+const rowThread = (r: LibraryReport) => r.from_thread === r.name && !r.title ? undefined : r.from_thread;
+
 type Tab = "mine" | "work";
 
 const keyOf = (r: { project: string; name: string }) => `${r.project}/${r.name}`;
@@ -161,7 +164,7 @@ export function ReportsPanel({ role, rev, onView }: { role: DeviceRole; rev: num
                   if (e.target.checked) next.add(key); else next.delete(key);
                   return next;
                 })} />}
-              <ReportThread id={r.from_thread} />
+              <ReportThread id={rowThread(r)} />
               {titleLink(r, "report-row-name")}
               {r.busy && <span className="report-tag is-busy">진행 중</span>}
               <span className="muted report-row-meta">{formatBytes(r.size)}{r.live ? " · 실시간" : ""} · {when(r.updated_at_ms)}</span>
