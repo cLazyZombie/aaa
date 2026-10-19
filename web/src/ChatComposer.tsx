@@ -3,6 +3,7 @@
 // 보내는 길은 터미널 입력줄과 같다(Term `sendTerminalLine`: 글 + Enter, 여러 줄은 bracketed paste). aaa는 host 대기열이 없어
 // 작업 중이어도 바로 입력하고 harness가 다음 턴으로 줄 세운다(plan §8.100) — 참고의 「턴이 끝나면 저절로 전송」 자리다.
 // 「대기 메시지 자동 전송」을 끄면 작업 중에 쓴 메시지는 이 기기에 붙잡혀(참고 messageQueue.ts) 「지금 보내기」를 누를 때 간다.
+// 그 「지금 보내기」는 작업 중이면 Ctrl+Enter처럼 steer로 보내 지금 턴에 넣는다(대기 말 「지금 보내기」와 같은 뜻, plan §8.272).
 // iPad에서 입력창을 끌면 화면이 통째로 따라가던 것은 pageHold.ts가 막는다(참고에 없음).
 // 글 칸 높이는 참고 `sizeTextarea`(글만큼, CSS 10줄에서 멈춤)다. 한 줄이면 보내기 단추를 같은 줄에 두는 것은 t3code `resting`
 // 배치(ChatComposer.tsx `isComposerResting`, useComposerMultilinePrompt.ts)이고, 데스크톱·긴 대화로 묶은 조건 없이 글만 본다(plan §8.215).
@@ -40,6 +41,7 @@ import { quickReplyButtons } from "./preferences";
 import { useChatShared, useTerminalToggle } from "./settings";
 import { useAppearance } from "./theme";
 import { receiptMethod, receiptHash, inputTraceId } from "./inputReceipt";
+import { heldSend } from "./steerQueued";
 
 /** 참고 `MAX_COMPOSER_CHARS` */
 const MAX_COMPOSER_CHARS = 100_000;
@@ -276,6 +278,8 @@ export function ChatComposer({
   const [queueError, setQueueError] = useState<{
     id: string;
     text: string;
+    /** 보냈는지 모른다·pane이 거절했다: 대기 말 단추처럼 「터미널 보기」를 준다 */
+    inspect?: boolean;
   } | null>(null);
   const replies = showQuickReplies ? quickReplyButtons({ quickReplies }) : [];
   const { appearance } = useAppearance();
@@ -346,7 +350,7 @@ export function ChatComposer({
     onInputTrace(f.trace, "failed", method);
     if (f.source === "queue" && f.queueId !== undefined) {
       messageQueues.endSend(owner, f.queueId);
-      setQueueError({ id: f.queueId, text: note.text });
+      setQueueError({ id: f.queueId, text: note.text, inspect: note.inspect || method === "rejected" });
       return;
     }
     // 보내기 시작에 비운 초안: 그 사이 다른 탭이 쓴 글이 있으면 그것을 둔다
@@ -627,8 +631,15 @@ export function ChatComposer({
               전에 메시지를 복사하세요.
             </p>
           )}
+          {asking && (
+            <p className="composer-queue-error is-quiet" role="status" data-testid="chat-queue-hint">
+              질문에 답한 뒤 보낼 수 있습니다
+            </p>
+          )}
           <ol className="composer-queue-list">
-            {queued.map((message, index) => (
+            {queued.map((message, index) => {
+              const held = heldSend({ working, asking, connected, busy: flight !== null, empty: message.text.trim().length === 0, harness });
+              return (
               <li className="composer-queue-item" key={message.id}>
                 <textarea
                   className="composer-queue-text"
@@ -645,12 +656,11 @@ export function ChatComposer({
                   <button
                     type="button"
                     className="composer-queue-send"
-                    disabled={
-                      !connected ||
-                      flight !== null ||
-                      message.text.trim().length === 0
-                    }
-                    onClick={() => sendQueued(message.id, message.text)}
+                    disabled={held.blocked !== null}
+                    title={held.title}
+                    data-steer={held.steer || undefined}
+                    // 작업 중이면 Ctrl+Enter와 같은 steer 보내기(누른 때의 상태로 고른다), 쉬면 보통 보내기
+                    onClick={() => sendQueued(message.id, message.text, workingRef.current)}
                   >
                     지금 보내기
                   </button>
@@ -666,12 +676,19 @@ export function ChatComposer({
                   </button>
                 </div>
                 {queueError?.id === message.id && (
-                  <p className="composer-queue-error" role="status">
-                    {queueError.text}
+                  <p className="composer-queue-error" role={queueError.inspect ? "alert" : "status"} data-testid="chat-queue-error">
+                    {queueError.inspect && <TriangleAlert aria-hidden="true" />}
+                    <span>{queueError.text}</span>
+                    {queueError.inspect && (
+                      <button type="button" className="chat-pending-dismiss" onClick={onInspect}>
+                        터미널 보기
+                      </button>
+                    )}
                   </p>
                 )}
               </li>
-            ))}
+              );
+            })}
           </ol>
         </section>
       )}

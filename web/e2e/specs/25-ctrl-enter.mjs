@@ -208,6 +208,87 @@ draw();
     await shot(page, "ctrl-enter-chat-desktop");
     await page.getByTestId("chat-toggle").click();
   });
+  await step("이 기기 보관함 「지금 보내기」(사용자 결정 10-19 19:36, plan §8.272): 대기 말 「지금 보내기」와 같은 뜻으로 작업 중이면 Ctrl+Enter처럼 steer로 보내 지금 턴에 넣는다(작업 중 Claude는 글 뒤 sendNow, Codex는 글 + Enter). 입력 진단은 Ctrl+Enter 길 그대로다. pane이 거절하면 보관함 줄에 까닭과 「터미널 보기」를 두고 글은 남는다", async () => {
+    const chat = async (pg, name) => {
+      await inList(pg, `pane-${name}`);
+      const toggle = pg.getByTestId("chat-toggle");
+      if (await toggle.getAttribute("aria-pressed") !== "true") await toggle.click();
+      const box = pg.getByTestId("chat-composer").getByRole("textbox", { name: "메시지" });
+      await box.waitFor();
+      return box;
+    };
+    const frames = async (pg, from) => (await sentFrames(pg, from))
+      .filter((f) => ["input", "submit", "ctrl_enter"].includes(f.t))
+      .map((f) => (f.t === "submit" ? `submit:${f.data}:${f.steer}` : f.t));
+    const autoSend = async () => {
+      const d = await openSettings(page, "채팅");
+      await d.getByRole("switch", { name: "대기 메시지 자동 전송" }).click();
+      await page.keyboard.press("Escape");
+      await d.waitFor({ state: "detached" });
+    };
+    // 작업 중에 붙잡아 「지금 보내기」를 누른다
+    const hold = async (pg, box, text) => {
+      await box.fill(text);
+      await box.press("Enter");
+      const queue = pg.getByTestId("chat-queue");
+      await domIs(pg, "보관함에 붙잡음", ([text]) => [...document.querySelectorAll('[data-testid="chat-queue"] textarea')].some((t) => t.value === text), [text]);
+      return queue.getByRole("button", { name: "지금 보내기" });
+    };
+    let box = await chat(page, "ce-text");
+    await autoSend();
+    try {
+      let send = await hold(page, box, "held-2");
+      assert.equal(await send.getAttribute("data-steer"), "true");
+      assert.match(await send.getAttribute("title"), /지금 턴에 넣습니다/);
+      let from = await sentCount(page);
+      await expectKey(page, "ce-text", () => send.click(), "held-2\x18\x13");
+      await page.getByTestId("chat-queue").waitFor({ state: "detached" });
+      assert.deepEqual(await frames(page, from), ["submit:held-2:true"]);
+      const events = aaa("debug", "input", "--pane", "ce-text").events;
+      const sent = events.filter((e) => e.event === "received" && e.detail.includes("steer=true")).at(-1);
+      assert.ok(sent && events.some((e) => e.id === sent.id && e.event === "ctrl_enter" && e.detail.includes("phase=submit") && e.detail.includes('keys=["ctrl+x", "ctrl+s"]')), "보관함 「지금 보내기」도 Ctrl+Enter와 같은 ID에 선택 키와 화면 근거를 남긴다");
+      // 작업 중 Codex: 글 + Enter(정식 steer)
+      box = await chat(page, "ce-codex-typed");
+      send = await hold(page, box, "held-c");
+      from = await sentCount(page);
+      await expectKey(page, "ce-codex-typed", () => send.click(), "held-c\r");
+      await page.getByTestId("chat-queue").waitFor({ state: "detached" });
+      assert.deepEqual(await frames(page, from), ["submit:held-c:true"]);
+
+      // pane이 거절: submit을 가로채 host 대신 거절을 답한다. 보관함 줄에 까닭과 「터미널 보기」, 글은 남는다
+      const rejecting = await pairPage(browser, aaa("web", "pair").code, { width: 1280, height: 800 }, {
+        wsRoute: [/\/api\/v1\/panes\/[^/]+\/ws/, (socket) => {
+          const server = socket.connectToServer();
+          server.onMessage((raw) => socket.send(raw));
+          socket.onMessage((raw) => {
+            const m = typeof raw === "string" ? JSON.parse(raw) : null;
+            if (m?.t === "submit") socket.send(JSON.stringify({ t: "submitted", id: m.id, ok: false, message: "pane이 받지 않았다" }));
+            else server.send(raw);
+          });
+        }],
+      });
+      const rp = rejecting.page;
+      const before = received("ce-text").length;
+      send = await hold(rp, await chat(rp, "ce-text"), "held-3");
+      await send.click();
+      await domIs(rp, "보관함 거절 까닭", () => {
+        const note = document.querySelector('[data-testid="chat-queue-error"]');
+        return note?.textContent.includes("보내지 못했다: pane이 받지 않았다") && note.querySelector("svg") && [...note.querySelectorAll("button")].some((b) => b.textContent === "터미널 보기")
+          && [...document.querySelectorAll('[data-testid="chat-queue"] textarea')].some((t) => t.value === "held-3");
+      });
+      await shot(rp, "held-send-rejected");
+      aaa("pane", "send-keys", "ce-text", "z");
+      await waitOutput("ce-text", `received ${before + 1}`);
+      assert.equal(received("ce-text").subarray(before).toString(), "z");
+      await rp.getByTestId("chat-queue-error").getByRole("button", { name: "터미널 보기" }).click();
+      await domIs(rp, "터미널 보기", () => document.querySelector('[data-testid="chat-toggle"]')?.getAttribute("aria-pressed") === "false");
+      if (rejecting.errors.length) throw new Error(rejecting.errors.join("; "));
+      await rp.context().close();
+    } finally {
+      await autoSend();
+    }
+    await page.getByTestId("chat-toggle").click();
+  });
   await step("대기 메시지 「지금 보내기」 host 판정(plan §8.271): 글을 다시 보내지 않고 작업 중 빈 입력의 대기 표지(Claude `to send now` 줄, Codex steering 패널) 위에서만 키를 쓰고, 그 밖은 쓰지 않고 까닭을 답한다. 보기 기기는 보내지 못한다", async () => {
     // pane WebSocket을 가로채 steer_queued frame을 넣고 답을 받는다(단추 화면은 spec 23). 연결은 주소의 pane id로 찾는다
     const ids = Object.fromEntries(aaa("pane", "list").panes.map((p) => [p.name, p.id]));

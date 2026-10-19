@@ -53,6 +53,8 @@ stdout의 구조화된 `입력 사건` 줄은 종전 host 감독자의 로그 �
 
 WebCrypto를 제공하지 않는 연결은 진단 ID를 `getRandomValues`로 만들고 수신 확인은 기존 짧은 글 비교로 돌아간다. 큰 글의 전체 fingerprint 비교는 WebCrypto가 있는 연결에서 사용한다.
 
+이 기기 보관함의 「지금 보내기」는 작업 중이면 Ctrl+Enter와 같은 steer submit이라 같은 사건(`received steer=true`, `ctrl_enter phase=submit`)이 남는다(plan §8.272).
+
 대기 메시지 「지금 보내기」는 누름 하나가 ID 하나다. `steer_queued keys=["ctrl+x", "ctrl+s"] … queue_hint=true` 뒤 `steer_sent`면 보냈고, `steer_queued keys=[] reason=Some(Draft)`처럼 까닭만 있으면 아무것도 쓰지 않았다. 웹은 같은 까닭을 단추 아래에 보인다.
 
 글 있는 Ctrl+Enter도 같은 보내기 ID에 `ctrl_enter phase=submit`으로 실제 선택 키와 화면 근거를 남긴다. 쉬는 pane에서 보통 Enter로 보내는 경우도 포함한다. 연결이 끊겨 host에 닿지 못한 누름은 host 장부에 남길 수 없다.
