@@ -14,7 +14,10 @@ export default async function ({ page }) {
   // 출력 표지를 wait-output으로 기다려 transport와 host의 화면 사본이 모두 처리된 뒤 검증한다.
   const program = String.raw`
 import fs from 'node:fs';
-const [mode, file] = process.argv.slice(-2);
+// agent가 앞에 붙이는 Codex 옵션과 fixture 인자를 --로 구분한다.
+const separator = process.argv.indexOf('--', 2);
+if (separator < 0) throw new Error('fixture arguments need --');
+const [mode, file] = process.argv.slice(separator + 1);
 let draft = '', count = 0;
 fs.writeFileSync(file, '');
 process.stdin.setRawMode(true);
@@ -40,7 +43,7 @@ draw();
       ["ce-empty", "claude", "empty"], ["ce-text", "claude", "empty"],
       ["ce-grey", "claude", "grey"], ["ce-unknown", "claude", "unknown"], ["ce-codex", "codex", "pending"], ["ce-codex-away", "codex", "pending-away"],
     ]) {
-      aaa("tab", "create", "--machine", "labA", "--label", name, "--cwd", directory, "--", `${directory}/${harness}`, mode, `${directory}/${name}.bytes`);
+      aaa("tab", "create", "--machine", "labA", "--label", name, "--cwd", directory, "--", `${directory}/${harness}`, "--", mode, `${directory}/${name}.bytes`);
       await waitOutput(name, "received 0");
       await page.getByTestId(`agent-${name}`).waitFor({ state: "attached" });
       assert.equal(aaa("pane", "list").panes.find(p => p.name === name)?.agent?.harness, harness);
