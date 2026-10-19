@@ -778,7 +778,7 @@ impl Vt {
             last.map(|l| l.max(cursor)).unwrap_or(total - 1)
         };
         let start = (end + 1).saturating_sub(lines);
-        let got = self.rows_between(start, end, ansi);
+        let got = self.rows_between(start, end, ansi, unwrap);
         let mut out: Vec<String> = Vec::with_capacity(got.len());
         let mut joining = false;
         for (text, wrapped) in got {
@@ -804,7 +804,7 @@ impl Vt {
     }
 
     /// 기록(0..기록 길이)과 화면(그 뒤)을 이은 줄 번호로 `start..=end` 줄과 그 줄이 다음 줄로 접혔는지
-    fn rows_between(&mut self, start: usize, end: usize, ansi: bool) -> Vec<(String, bool)> {
+    fn rows_between(&mut self, start: usize, end: usize, ansi: bool, unwrap: bool) -> Vec<(String, bool)> {
         let back = if self.parser.screen().alternate_screen() { 0 } else { self.history_len() };
         let screen = self.parser.screen_mut();
         let (rows, cols) = screen.size();
@@ -818,7 +818,16 @@ impl Vt {
             let texts: Vec<String> = if ansi {
                 screen.rows_formatted(0, cols).skip(first).take(take).map(ansi_row).collect()
             } else {
-                screen.rows(0, cols).skip(first).take(take).map(|l| l.trim_end().to_string()).collect()
+                screen
+                    .rows(0, cols)
+                    .skip(first)
+                    .take(take)
+                    .enumerate()
+                    .map(|(k, l)| {
+                        // 접힌 줄 끝의 실제 공백은 다음 줄과 이을 때 보존한다.
+                        if unwrap && screen.row_wrapped((first + k) as u16) { l } else { l.trim_end().to_string() }
+                    })
+                    .collect()
             };
             for (k, t) in texts.into_iter().enumerate() {
                 // 접혔거나 넓은 글자를 다음 줄로 내렸으면 다음 줄로 이어진다(`joins_next`). 창 맨 아래 줄의 다음 줄은 한 줄 내려 본다
@@ -2711,6 +2720,13 @@ mod tests {
         v.feed(b"abcdefgh\r\nxy");
         assert_eq!(read(&mut v, ReadSource::Recent, None).text, "abcde\nfgh\nxy\n");
         assert_eq!(read(&mut v, ReadSource::RecentUnwrapped, None).text, "abcdefgh\nxy\n");
+        // 실제 출력 공백이 접히는 경계에 있어도 지우지 않는다(경로의 공백 포함).
+        for rows in [2, 4] {
+            let mut spaced = Vt::new(rows, 5);
+            spaced.feed(b"abcd efgh\r\nx");
+            assert_eq!(read(&mut spaced, ReadSource::RecentUnwrapped, None).text, "abcd efgh\nx\n");
+            assert_eq!(read(&mut spaced, ReadSource::Recent, None).text, "abcd\nefgh\nx\n");
+        }
         // 접힌 줄이 기록과 화면에 걸쳐도 잇는다
         let mut w = Vt::new(2, 5);
         w.feed(b"0123456789AB\r\nz");
