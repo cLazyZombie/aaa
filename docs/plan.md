@@ -2962,9 +2962,8 @@ coordinator 실기(10-18 00:58, iPhone 홈 화면 앱을 앞에 띄움, binary c
   - 「사용자가 채팅에서 요청하지 않으면 하지 않는 것」: 병합, force push, branch 지우기, worktree 지우기, thread 끝내기(147줄).
     참고의 프로젝트 지우기·보관은 aaa에 그 명령이 없어 뺐다.
 - **끝낸 thread의 pane 닫기(hp threads.rs `clean`·`remove_worktree`).** 참고는 worktree를 지우며 그 workspace를, tab 종류는
-  tab을 닫는다. aaa는 세션만 끝내 끝난 pane 줄이 목록에 남았다(D11a 화면 견본에서 찾음). 이제 작업 폴더 thread는 늘, worktree
-  thread는 worktree를 지웠을 때 pane을 닫는다(`pane close`와 같다: 끝나기를 기다려 layout과 기록에서 지운다). worktree를 남기면
-  pane 줄도 남긴다(참고는 그 workspace를 연 채 둔다. aaa는 §8.14대로 세션은 끝낸다). 이미 없는 worktree는 지운 것으로 친다
+  tab을 닫는다. aaa도 처음에는 worktree를 지웠을 때만 pane을 닫았다. §8.252부터 worktree 보존과 무관하게 모든 thread pane을
+  닫는다(`pane close`와 같다: 끝나기를 기다려 layout과 기록에서 지운다). 이미 없는 worktree는 계속 지운 것으로 친다
   (참고 `worktree_gone`, `git worktree prune`).
 - **평가자(aaa에만 있다, §8.13).** 「착지는 바로 묶음」 사건은 `merge_landed` 대신 PR 병합 `pr_merged`(PR 추적이 `merged`를 보면 낸다)다.
   기본 `[evaluator] events`도 바꿨다. 옛 기록의 `merge_landed`는 시간 요약(`landed_ms`)에서 그대로 읽는다. project.toml에
@@ -3881,7 +3880,7 @@ coordinator 실기(10-18 00:58, iPhone 홈 화면 앱을 앞에 띄움, binary c
 - **thread adopt(#598).** `aaa thread adopt <p> --pane <ID> --title <글> [--task-file 파일|-]`(hp `adopt.rs` `adopt`, `crates/aaa-host/src/adopt.rs`). 이미 띄운 agent pane을 이 프로젝트의 thread(종류 `adopted`)로 적고 brief를 안내한다. pane은 그대로 두고 그 폴더에서 일한다.
   - 거부는 아무것도 만들기 전에(참고 `adoptable_agent`): 멈춘·보관한 프로젝트, 빈 제목, 없는·끝난 pane, Claude·Codex가 아닌 pane, 어느 프로젝트의 coordinator pane(폴더가 그 프로젝트 폴더), 이미 끝나지 않은 thread인 pane, adopt를 모르는 옛 agent.
   - 자리: 그 머신 agent가 세션이 **지금** 있는 폴더(앞 프로그램의 cwd, `follow_cwd` — 참고가 쓰는 herdr `agent.cwd`와 같은 뜻, 못 읽으면 띄운 폴더)에 `.aaa/<p>-<t>/`를 만들고 brief.md를 쓴다. git repo 안이면 `.aaa/`를 exclude에 넣고 repo top·지금 branch(떼어 낸 HEAD면 없음)를 적는다. host는 git을 실행하지 않는다. 할 일을 안 주면 참고 `DEFAULT_TASK`처럼 「하던 일을 이어 하되 이제 이 프로젝트 thread다」. 그다음은 다른 thread와 같다: 보고 감시, brief는 입력을 받을 수 있을 때(`spawn_brief`), 흐름 사건 `thread_started`(평가자 시작 시각).
-  - 다시 띄우지 않는다(참고 `restart`의 「adopt a new pane instead」): launch는 pane argv 그대로이고 이을 방법이 없다. resolve는 pane을 끝내지 않고 그 폴더도 정리하지 않는다(「pane은 그대로 둔다」, 참고 `Kind::Adopted => its pane was left alone`). 마지막 사본·감시 풀기는 같다. sweep은 worktree thread만 본다.
+  - 다시 띄우지 않는다(참고 `restart`의 「adopt a new pane instead」): launch는 pane argv 그대로이고 이을 방법이 없다. resolve는 §8.252부터 pane을 닫고 그 폴더·branch는 정리하지 않는다. 마지막 사본·감시 풀기는 같다. sweep은 worktree thread만 본다.
   - thread 범위: 사람이 띄운 pane은 띄울 때 역할이 없다. 그 pane이 끝나지 않은 thread면 그 역할(worker)로 본다(§8.164 판정의 역할 대체): 그 안 CLI는 보기만이다.
   - Claude·Codex인지: pane을 띄울 때 알린 harness, 없으면 실행 파일 이름(`aaa pane run -- claude`), 그것으로 모르면 agent가 감지해 알린 상태의 harness(셸 안에서 띄운 agent — 참고는 herdr가 감지한 agent가 있는 pane만 데려온다). 띄운 프로그램으로 정하는 것은 갓 띄운 pane이 아직 상태를 알리기 전에도 데려오게 한다.
   - 참고와 다름: (1) 셸 pane 안의 agent는 agent가 앞 프로세스로 감지한 뒤에만 데려온다(§8.110 Q21: 감지는 시작 유예 3초 뒤, 셸만 앞이면 거부). 참고는 herdr가 감지한 agent면 바로다. (2) 재부팅 복원·`aaa pane resume`이 새 pane으로 대신하면 thread가 새 pane을 따라간다(`replace_pane`): 데려온 pane은 사람이 띄운 pane과 같은 길(대화 ID를 알면 `--resume`, 모르면 중단으로 둠)로 잇고, thread restart 길(§8.111)로 가지 않는다. 참고는 herdr pane ID가 복원 뒤에도 같아 따로 할 일이 없다. (3) PR은 보고 `PR:` 줄로만 찾는다(branch로 찾기는 worktree thread만, 사람 checkout의 branch는 main일 수 있다). 참고는 종류와 상관없이 branch로도 찾는다.
@@ -5898,3 +5897,11 @@ primary 근거:
   RED로 보존했고, 옵션 종료 표지를 뺀 변형은 실제 출력 파일 생성 단언에서 실패했다. 실제 Claude 2.1.303/default도
   격리 config·로컬 합성 provider에서 옛 cd+git을 같은 trust 사유로 거절하고 새 git -C 읽기 셋은 실행했다.
   실제 모델의 무인 대기는 host+agent binary 반영 뒤 coordinator가 resume/restart해 읽기 전용으로 재확인한다.
+
+## 8.252 resolve의 pane 정리와 폴더 보존 분리(10-19)
+
+- **원인.** `thread_resolve`의 `place_gone` 조건이 dirty·보존 worktree의 종료된 pane을 남겼다. adopted는 pane 종료·사건 구독에서도 제외했다. 이미 exited인 일반 작업 폴더 pane은 기존에도 지웠다.
+- **동작.** 마지막 사본과 resolved 상태 저장 뒤, 살아 있는 pane에는 기존 Kill을 보내고 끝남 사건을 확인한다. 이미 끝난 pane은 Kill 없이 Forget으로 지운다. 종류와 worktree 삭제 여부에 관계없이 pane 목록과 모든 layout에서 뺀다.
+- **보존.** dirty·partial·skip-copy·keep-worktree, 미병합 branch의 기존 정리 규칙과 force 없는 삭제는 유지한다. adopted 폴더·branch도 그대로다. 보고·library 사본은 남는다.
+- **참고와 차이.** herdr-projects 0.2.35 `threads.rs::clean`은 workspace 닫기를 worktree 삭제에 묶고 `Kind::Adopted`를 남긴다. 이번 brief의 모든 thread pane 닫기 요구에 따라 그 예외를 없앴다. herdr 0.9.5 `app/actions.rs::handle_pane_died`, `app/api/panes.rs::close_pane`처럼 pane의 layout 제거까지 마친다.
+- **회귀.** m13의 실제 임시 host·agent에서 dir·dirty worktree·adopted fixture를 입력으로 exit 1 종료한 뒤 resolve한다. pane 목록·layout에서 사라지고 dirty 파일·adopted 저장소는 남아야 한다. 기존 dirty/partial 보존·살아 있는 adopted 복원 시험도 같은 동작으로 확인한다.

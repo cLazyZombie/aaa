@@ -282,3 +282,8 @@ local agent 재연결 중 배포 조회(§8.237): host `deploy::tests::coordinat
 - 격리한 실제 Claude CLI(default permission mode)는 로컬 합성 provider가 돌려준 Bash 도구 호출을 처리한다.
   인증·운영 설정을 사용하지 않고, 다른 허용 자료 폴더로 cwd가 바뀐 뒤 옛 cd+git의 trust 거절과 새 git -C 세 읽기의
   무승인 성공을 구분한다. 이것은 권한 엔진 검증이며 실제 모델의 빈 입력 대기 판단을 대신하지 않는다.
+
+## resolve 뒤 종료된 pane 제거(§8.252)
+
+- m13 `resolve_removes_exited_panes_even_when_the_worktree_is_kept_or_adopted`가 실제 CLI→host→agent 경계에서 dir·dirty worktree·adopted pane을 입력으로 exit 1 종료한다. 종료 상태 확인 뒤 resolve하고 pane 목록·layout에서의 제거와 폴더 보존을 단언한다. 새 신호·고정 sleep·production 시험 seam은 없다.
+- 기존 `resolve_keeps_dirty_worktree_and_unmerged_branch`는 partial·skip-copy를 포함한 폴더/branch 보존과 별개로 pane을 닫는지 본다. `thread_adopt_existing_pane`은 복원된 살아 있는 pane도 닫고 원래 branch·파일은 남기는 경계를 본다. linger 시험은 기존대로 session host의 종료 유예를 기다리지 않는지 확인한다.

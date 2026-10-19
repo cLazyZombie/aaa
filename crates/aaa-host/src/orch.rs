@@ -1901,11 +1901,11 @@ impl Host {
             r.merged_seen_ms = None;
         })?;
         self.db.audit(actor, "thread_resolve", &format!("{project}/{id}"));
-        // 데려온 pane은 사람 것이다(참고 threads.rs `cleanup`의 `Kind::Adopted`): 끝내지 않고, 그 폴더도 정리하지 않는다
+        // 데려온 폴더는 사람 것이다: pane은 닫되 그 폴더·branch는 정리하지 않는다.
         let adopted = rec.kind == ThreadKind::Adopted;
         // pane을 닫을 때 끝나기를 기다릴 사건 구독은 끝내기 전에 잡는다(그 사이 온 끝남을 놓치지 않는다)
-        let pane_rx = rec.pane.as_deref().filter(|_| !adopted).and_then(|p| self.pane_events(p).ok());
-        if let Some(pane) = rec.pane.as_ref().filter(|_| !adopted)
+        let pane_rx = rec.pane.as_deref().and_then(|p| self.pane_events(p).ok());
+        if let Some(pane) = rec.pane.as_ref()
             && self.pane_view_of(pane, aaa_proto::DeviceRole::Local).is_some_and(|p| p.state.is_running())
         {
             let _ = self.kill_session(&conn, pane).await;
@@ -1913,7 +1913,7 @@ impl Host {
         let _ = conn.request(AgentRequest::ThreadUnwatch { thread: format!("{project}/{id}") }).await;
         let mut notes = Vec::new();
         if adopted {
-            notes.push("pane은 그대로 둔다(데려온 pane은 사람 것)".to_string());
+            notes.push("폴더·branch는 그대로 둔다(데려온 폴더는 사람 것)".to_string());
         }
         // 집에 다 오지 않았으면 worktree를 남긴다(herdr-projects `clean` `copy_complete`): 사본에서 빠진 것(symlink·한도를
         // 넘은 파일)과 사본 없이 끝낸 작업 폴더(`.aaa/`)는 git이 무시하는 파일이라 force 없는 `worktree remove`도 지운다
@@ -1928,8 +1928,6 @@ impl Host {
                 format!("집에 오지 않은 것: {}", rec.copy_notes.join("; "))
             });
         }
-        // 그 thread의 자리가 치워졌나: 작업 폴더 thread는 늘, worktree thread는 worktree를 지웠을 때
-        let mut place_gone = rec.kind == ThreadKind::Dir;
         if let Some(cwd) = rec.cwd.as_ref().filter(|_| !adopted) {
             let repo = if rec.kind == ThreadKind::Worktree { rec.repo.clone() } else { None };
             let merged_head = if repo.is_some() { self.merged_head(project, &rec, &conn).await } else { None };
@@ -1946,7 +1944,6 @@ impl Host {
                 .await
             {
                 Ok(AgentResponse::Cleanup(c)) => {
-                    place_gone |= c.worktree_removed;
                     // 사람이 남기라고 한 worktree(--keep-worktree)·집에 다 오지 않아 남긴 worktree와 그 branch는 청소하지
                     // 않는다(참고 sweep `kept_worktree`, `clean` `copy_complete`)
                     let kept = opts.keep_worktree || uncopied;
@@ -1966,9 +1963,8 @@ impl Host {
                 Err(e) => notes.push(format!("정리 실패: {}", e.message)),
             }
         }
-        // 참고 `clean`은 worktree를 지우며 그 workspace를, tab 종류는 tab을 닫는다: 끝난 pane 줄을 목록에 남기지 않는다.
-        // worktree를 남기면 pane 줄도 남긴다(참고는 그 workspace를 연 채 둔다. aaa는 세션은 끝낸다, §8.14 resolve)
-        if place_gone && let Some(pane) = &rec.pane {
+        // pane 수명과 폴더 보존은 별개다. 이미 끝난 pane·남긴 worktree·adopted도 기록과 layout에서 지운다.
+        if let Some(pane) = &rec.pane {
             // 끝내기는 위에서 보냈다: 끝남을 기다려 layout과 기록에서 지운다(`pane close`의 뒷부분)
             let closed = match pane_rx {
                 None => Ok(false),
