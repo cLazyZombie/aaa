@@ -99,6 +99,7 @@ pub fn typescript_bindings() -> String {
         SharedPreferences::decl(&cfg),
         FrontResponse::decl(&cfg),
         FrontEvent::decl(&cfg),
+        SubmitStage::decl(&cfg),
         TermServerMsg::decl(&cfg),
         TermClientMsg::decl(&cfg),
         EventsClientMsg::decl(&cfg),

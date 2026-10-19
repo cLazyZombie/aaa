@@ -5597,3 +5597,43 @@ primary 근거:
   Projects·Machines·Agents 패널과 패널 밖 특수 임무다.
 - 기존 렌더 keeper에서 작은 화면·큰 화면·다수 workspace 상한·저장 비율을 확인한다. 기존 PTY keeper에서 자동 경계를
   실제 마우스로 끌고 재접속하여 저장 비율을 확인한다. 새 시험 전용 seam은 없다.
+
+### 8.239 웹 대화 보내기 상태: 보내질 때까지 잠금, 전달 전 막힘의 탈출구(10-19, t-0392)
+
+- **결정.** 보내기는 누르는 즉시 보낸다(유예 없음). 앞 글이 보내져야 입력창이 풀리고 다음 글을 쓸 수 있으며 웹에 여러 글을 쌓는
+  대기열은 두지 않는다. 잠긴 동안 글 칸은 readOnly로 글을 보이고 보내기 단추 자리에 도는 표시와 상태 문장을 둔다. 취소는 사용자
+  취향의 취소가 아니라 실제 전달 전에 막혔을 때 빠져나가는 길이다.
+- **「보내짐」 = agent 기록 증거.** `Submitted ok`(host가 pane에 글과 Enter를 씀)만으로는 풀지 않는다. Enter가 먹히는 경우가 있어서다
+  (§8.232). 한가할 때는 대화 기록의 사람 글이 증거다(같은 글의 개수가 보낸 때보다 늘었나, t-0387). Claude가 작업 중이면 기록의
+  `queue-operation enqueue`가 증거다. Claude Code는 작업 중에 받은 글을 대기열에 넣자마자 적는다(실측 447건 모두 즉시). 흡수까지는
+  중앙값 10초, p90 111초라서 흡수가 아니라 대기열 진입에서 푼다. agent `chat.rs::claude_pending`이 기록 끝 1MiB를 앞에서부터 읽어
+  대기열을 다시 세운다(`enqueue` 뒤에 넣음, `dequeue` 맨 앞을 꺼냄, `remove`는 글로 짝지음). 남은 글은 `ChatMessage.pending`으로 싣고
+  웹은 대화 끝에 점선 「대기」 말로 그린다. Codex rollout에는 대기 기록이 없다. 그래서 Codex가 작업 중일 때는 `Submitted ok`를
+  보내짐으로 보고 웹이 보낸 글을 대기 말로 둔다. 보낼 때 대화 기록을 읽지 못한 pane(Claude 첫 hook 전 등)도 증거가 올 수 없으므로
+  `Submitted ok`가 보내짐이다(E2E 11의 기록 없는 가짜 Claude가 이 경계를 지키고, 이 규칙 없이 「입력창이 비지 않았다」로 실패했다). 작업이 끝나고 10초가 지나도 기록에 오르지 않으면 「대화 기록에 없습니다」로 바꾸고
+  지우기를 준다.
+- **새 신호 B(FRONT_API 1.42).** 웹은 `submit_cancel{id}`를 보내고 host는 `submit_cancelled{id, stage}`로 그 submit이 어디까지
+  갔는지 답한다: `not_sent`(아무것도 쓰지 않음), `no_enter`(글은 썼고 Enter는 쓰지 않음), `too_late`(Enter를 쓰기 시작함·끝남·
+  없음). host `pane_session`은 submit을 쓰는 동안에도 같은 연결의 frame을 읽는다. 그 submit의 멈춤에는 바로 답하고, 다른 frame은
+  차례대로 미뤄 뒤에 처리한다. 일꾼과 멈춤은 `AtomicU8` 단계를 compare-exchange로 다투어 쓰기 직전에 하나만 이긴다. 멈춘 submit의
+  `Submitted`는 「멈춤」 실패다. 옛 host는 모르는 frame을 버린다. 그래서 웹은 2초 안에 답이 없거나 연결이 끊기면 「모름」으로 본다.
+- **화면.** 보낸 뒤 3초 동안 전달 확인(`Submitted`)이 없으면 도는 표시가 ×로 바뀐다(Esc도 같다). 평소 확인은 0.3~0.5초에 온다.
+  ×를 누른 결과에 따라 웹이 하는 일은 다음과 같다. `not_sent`면 「보내지 않았고 글은 그대로」라고 알리고 잠금을 푼다. `no_enter`면
+  「Enter를 보내지 않음」이라며 터미널을 확인하라고 한다. 「모름」이면 「전송 여부를 확인하지 못했습니다」라고 하고 터미널 보기를
+  준다. `too_late`면 다시 기다리는 상태로 돌아가고 ×를 다시 보이지 않는다. 확실할 때만 「보내지 않음」이라고 말한다. 전달된 뒤
+  10초가 지나도 증거가 없으면 「전달됨 · 10초 넘음」 알림에 터미널 보기와 잠금 풀기를 둔다. 잠금을 풀어도 이미 간 글은 되돌리지
+  않는다.
+- **참고.** herdr-web-ui `aa624cb` `src/components/Composer.tsx`: `send`/`settle`, 보내기 단추 `aria-busy`+`LoaderCircle`,
+  「Not confirmed. Check the terminal before sending again.」. `server/codex-steering.ts`는 Codex 작업 중 글을 화면으로 확인한다.
+  herdr-web-ui는 보내는 동안 입력을 잠그지 않는다. 사용자가 앞 글이 보내져야 다음 글을 쓴다고 정해서(위 결정) 따르지 않았다.
+  t3code `4b1024da` `ComposerPrimaryActions.tsx`는 `isSendBusy`일 때 Spinner를 보이고, `ChatView.logic.ts
+  hasServerAcknowledgedLocalDispatch`는 서버가 새 사용자 글을 보일 때까지 보내는 중을 유지한다. 이 둘이 「기록 증거까지 잠금」의
+  근거다. 두 참고에는 pane에 글과 Enter를 나눠 쓰는 단계가 없다. 그래서 전달 전 멈춤(신호 B)은 aaa host의 submit 단계에 맞춰
+  새로 만들었다.
+- **회귀.** host 유닛 `submit_tests::cancel_races_each_write`가 각 쓰기 앞에서 멈춤이 이기면 그 뒤 쓰기를 하지 않는지 본다.
+  agent 유닛 `claude_pending_queue`는 enqueue·dequeue·remove·주입 글 거르기를 본다. 웹 E2E 23의 두 단계는 실제 host·agent·tmux와
+  가짜 Claude·Codex로 확인한다. 기록 증거까지 잠기는지, Enter가 막히는지, 10초 알림·늦은 반영·잠금 풀기가 되는지 본다. agent를
+  SIGSTOP해 3초 × → `no_enter` → SIGCONT 뒤 다음 글이 「막힌 글다음 글」로 붙는지도 본다. Claude 대기열 대기 말이 흡수되는지,
+  Codex 작업 중 대기 말이 흡수되는지도 본다. 시간은 Playwright 시계로 넘기고 사건으로 끝낸다. 결함 네 가지를 심어 각각 실패를
+  확인했다: host 멈춤이 Enter를 막지 않음, 웹이 `Submitted`만으로 풂, Codex 경로 끔, agent가 대기열을 싣지 않음. 모두 원래대로
+  되돌린 뒤 통과했다.

@@ -119,7 +119,7 @@ fn injected(t: &str) -> bool {
 
 fn msg(role: ChatRole, text: &str) -> Option<ChatMessage> {
     let text = clip(text);
-    (!text.is_empty()).then_some(ChatMessage { role, text })
+    (!text.is_empty()).then_some(ChatMessage { role, text, pending: false })
 }
 
 /// Claude 기록 한 줄 → 보일 줄(0개 이상, 순서대로)
@@ -263,6 +263,53 @@ fn tail(path: &Path, parse: impl Fn(&Value) -> Vec<ChatMessage>) -> std::io::Res
     Ok((rev, truncated))
 }
 
+/// Claude 대기열에 남은 사람 글(작업 중에 보내 아직 흡수되지 않은 것, plan §8.239). Claude Code는 작업 중에 받은 글을 바로
+/// `queue-operation enqueue`로 적고, 흡수하면 같은 글의 `remove`(absorbed_mid_turn)와 `queued_command`를, 한가할 때 바로 꺼내면
+/// 글 없는 `dequeue`(맨 앞)를 적는다. 그래서 끝 1MiB를 앞에서부터 읽어 대기열을 다시 세우고 남은 사람 글만 낸다(배경 작업
+/// 알림·끼운 글은 뺀다). 그 앞에서 들어가 아직 남은 글은 놓친다: 웹은 보낸 글을 따로 기다린다.
+fn claude_pending(path: &Path) -> std::io::Result<Vec<ChatMessage>> {
+    let mut f = std::fs::File::open(path)?;
+    let start = f.metadata()?.len().saturating_sub(CHUNK);
+    f.seek(SeekFrom::Start(start))?;
+    let mut buf = Vec::new();
+    f.read_to_end(&mut buf)?;
+    let mut lines = buf.split(|b| *b == b'\n');
+    if start > 0 {
+        lines.next(); // 앞 줄의 뒷부분
+    }
+    // 글이 아닌 enqueue도 자리를 차지한다(dequeue가 맨 앞을 꺼낸다)
+    let mut queue: std::collections::VecDeque<Option<String>> = std::collections::VecDeque::new();
+    for line in lines {
+        if !line.windows(15).any(|w| w == b"queue-operation") {
+            continue;
+        }
+        let Ok(v) = serde_json::from_slice::<Value>(line) else { continue };
+        if v["type"] != "queue-operation" {
+            continue;
+        }
+        let content = v["content"].as_str();
+        match v["operation"].as_str() {
+            Some("enqueue") => queue.push_back(content.map(str::to_string)),
+            Some("dequeue") => {
+                queue.pop_front();
+            }
+            Some("remove") => {
+                if let Some(i) = queue.iter().position(|q| q.as_deref() == content) {
+                    queue.remove(i);
+                }
+            }
+            _ => {}
+        }
+    }
+    Ok(queue
+        .into_iter()
+        .flatten()
+        .filter(|c| !injected(c) && !c.trim_start().starts_with("<task-notification>"))
+        .filter_map(|c| msg(ChatRole::User, &c))
+        .map(|m| ChatMessage { pending: true, ..m })
+        .collect())
+}
+
 /// 기록 한 줄 → 보일 줄(둘째 인자: 생각도 싣는다)
 type LineParser = fn(&Value, bool) -> Vec<ChatMessage>;
 
@@ -290,7 +337,12 @@ pub fn read(
 ) -> Result<(Vec<ChatMessage>, bool), String> {
     let path = path(harness, transcript, harness_session)?;
     let parse: LineParser = if harness == "codex" { codex_line } else { claude_line };
-    tail(&path, |v| parse(v, thinking)).map_err(|e| format!("기록을 읽지 못했다: {}", e.kind()))
+    let failed = |e: std::io::Error| format!("기록을 읽지 못했다: {}", e.kind());
+    let (mut messages, truncated) = tail(&path, |v| parse(v, thinking)).map_err(failed)?;
+    if harness == "claude" {
+        messages.extend(claude_pending(&path).map_err(failed)?);
+    }
+    Ok((messages, truncated))
 }
 
 /// 기록 파일이 바뀌었는지 보는 값(참고 conversation-monitor.ts `fileIdentity`): 장치·inode·크기·고친 시각. 없으면 `missing`
@@ -362,6 +414,37 @@ mod tests {
         let (m, _) = tail(&f, |v| claude_line(v, true)).unwrap();
         let got: Vec<_> = m.iter().map(|x| (x.role, x.text.as_str())).collect();
         assert_eq!(&got[1..3], [(ChatRole::Thinking, "속생각"), (ChatRole::Assistant, "답을 쓴다")]);
+        std::fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn claude_pending_queue() {
+        let root = dir("pending");
+        let f = root.join("s.jsonl");
+        let op = |op: &str, content: Option<&str>| match content {
+            Some(c) => format!(r#"{{"type":"queue-operation","operation":"{op}","content":{}}}"#, serde_json::json!(c)),
+            None => format!(r#"{{"type":"queue-operation","operation":"{op}"}}"#),
+        };
+        let lines = [
+            // 한가할 때 보낸 글: 넣자마자 꺼낸다
+            op("enqueue", Some("바로 간 글")),
+            op("dequeue", None),
+            // 작업 중에 보내 흡수된 글
+            op("enqueue", Some("흡수된 글")),
+            op("remove", Some("흡수된 글")),
+            // 아직 남은 글 둘과 배경 작업 알림
+            op("enqueue", Some("<task-notification>\n<task-id>b1</task-id>")),
+            op("enqueue", Some("기다리는 글")),
+            op("enqueue", Some("기다리는 글 둘")),
+            // dequeue는 맨 앞(알림)을 꺼낸다
+            op("dequeue", None),
+        ];
+        std::fs::write(&f, lines.join("\n") + "\n").unwrap();
+        let got: Vec<_> = claude_pending(&f).unwrap().into_iter().map(|m| (m.role, m.text, m.pending)).collect();
+        assert_eq!(
+            got,
+            [(ChatRole::User, "기다리는 글".to_string(), true), (ChatRole::User, "기다리는 글 둘".to_string(), true)]
+        );
         std::fs::remove_dir_all(&root).unwrap();
     }
 

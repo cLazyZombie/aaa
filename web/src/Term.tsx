@@ -8,11 +8,11 @@ import { useCallback, useEffect, useLayoutEffect, useRef, useState, type Mutable
 import { Terminal, type ITheme } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import { SerializeAddon } from "@xterm/addon-serialize";
-import type { ChatMessage, DeviceRole, LeaseView, PaneView, TermClientMsg, TermServerMsg } from "./gen/proto";
+import type { ChatMessage, DeviceRole, LeaseView, PaneView, SubmitStage, TermClientMsg, TermServerMsg } from "./gen/proto";
 import { b64decode, b64encode, call, REVOKED_CLOSE_CODE, reportSignedOut, wsUrl } from "./api";
 import { Icon } from "./icons";
 import { ChatPanel } from "./Chat";
-import { ChatComposer } from "./ChatComposer";
+import { ChatComposer, type PendingSend } from "./ChatComposer";
 import { paneAgentStatus } from "./sidebarModel";
 import { onThemeChange, token } from "./theme";
 import { matchCompositionView } from "./compositionView";
@@ -82,6 +82,8 @@ const CHUNK = 512 * 1024;
 const MAX_IMAGE = 16 << 20;
 /** 답이 오지 않는 입력줄 보내기를 그만 기다리는 때(herdr-web-ui ws.ts `SUBMIT_TIMEOUT_MS`): 글은 입력줄에 남는다 */
 const SUBMIT_TIMEOUT_MS = 90_000;
+/** 멈춤 답을 기다리는 때: 이만큼 오지 않으면 연결이 죽은 것으로 보고 「모름」(plan §8.239) */
+const CANCEL_REPLY_MS = 2000;
 /** 붙잡은 입력이 있는 동안 다른 입력을 거절하는 말(herdr-web-ui PaneTerminal 1375줄) */
 const HELD_FIRST = "보내지 않았다: 붙잡은 입력을 먼저 보내거나 버린다.";
 /** 이 탭을 지금 쓰는 중: 보이고 focus가 있다. 아니면 PTY 크기를 걸지 않는다. */
@@ -195,6 +197,8 @@ export function TermView({
   // 대화 입력창이 보낸 수: 대화를 바로 다시 읽는다(Chat `readNow`)
   const [chatSent, setChatSent] = useState(0);
   const [chatMessages, setChatMessages] = useState<ChatMessage[] | null>(null);
+  // 작업 중에 보내 harness 대기열에 들어간 글(대화 보기 끝의 대기 말). 터미널 보기로 갔다 와도 남게 이 pane 화면이 갖는다
+  const [pendingSends, setPendingSends] = useState<PendingSend[]>([]);
   const setChatView = (chat: boolean) => {
     const lens = chat ? "chat" : "terminal";
     rememberLens(lensKey, lens);
@@ -316,6 +320,8 @@ export function TermView({
    * 그 글은 들어갔을 수도 있으므로 입력줄에 두고 터미널을 보게 한다.
    */
   const submitsRef = useRef(new Map<number, { ws: WebSocket; done: (result: true | string | null) => void }>());
+  /** 멈춤 요청의 답(submit id → 단계, null은 답이 오지 않음) */
+  const cancelsRef = useRef(new Map<number, (stage: SubmitStage | null) => void>());
   const submitIdRef = useRef(0);
   /** 올리는 중인 파일의 결과(attached·error·끊김)를 기다리는 것 */
   const attachWaitRef = useRef<(() => void) | null>(null);
@@ -1344,6 +1350,12 @@ export function TermView({
             waiting?.done(msg.ok ? true : `보내지 못했다: ${msg.message ?? "pane이 받지 않았다"}`);
             break;
           }
+          case "submit_cancelled": {
+            const answer = cancelsRef.current.get(msg.id);
+            cancelsRef.current.delete(msg.id);
+            answer?.(msg.stage);
+            break;
+          }
           case "error":
             setError(msg.message);
             setAttach((a) => (a?.text.startsWith("그림 보내는 중") ? null : a));
@@ -1362,6 +1374,11 @@ export function TermView({
             submitsRef.current.delete(id);
             waiting.done(null);
           }
+        // 멈춤 답도 오지 않는다: 모름
+        for (const [id, answer] of cancelsRef.current) {
+          cancelsRef.current.delete(id);
+          answer(null);
+        }
         readonlyRef.current = true;
         setReadonly(true);
         setLink("closed");
@@ -1715,6 +1732,32 @@ export function TermView({
       });
     });
   };
+  // 전달 전에 막힌 submit을 멈춘다(plan §8.239): 답을 기다리는 submit 중 마지막 것. 멈췄으면(보내지 않음·Enter 안 침)
+  // 그 submit을 끝내고 단계를 돌려준다. 기다리는 submit이 없으면 이미 답이 왔다(늦음), 답이 없으면 null(모름)
+  const cancelSubmit = (): Promise<SubmitStage | null> => {
+    const ws = wsRef.current;
+    const ids = [...submitsRef.current.keys()];
+    const id = ids.at(-1);
+    if (id === undefined) return Promise.resolve("too_late");
+    if (!ws || ws.readyState !== WebSocket.OPEN || submitsRef.current.get(id)?.ws !== ws) return Promise.resolve(null);
+    trace("submit_cancel", { id });
+    ws.send(JSON.stringify({ t: "submit_cancel", id } satisfies TermClientMsg));
+    return new Promise((resolve) => {
+      const timer = window.setTimeout(() => {
+        cancelsRef.current.delete(id);
+        resolve(null);
+      }, CANCEL_REPLY_MS);
+      cancelsRef.current.set(id, (stage) => {
+        window.clearTimeout(timer);
+        if (stage === "not_sent" || stage === "no_enter") {
+          const waiting = submitsRef.current.get(id);
+          submitsRef.current.delete(id);
+          waiting?.done(stage === "not_sent" ? "멈춤: 보내지 않았다" : "멈춤: Enter를 보내지 않았다");
+        }
+        resolve(stage);
+      });
+    });
+  };
   const pressEnter = (): boolean | string => {
     if (readonlyRef.current) return false;
     if (!draftIsEmpty(draftRef.current)) return HELD_FIRST;
@@ -1877,7 +1920,8 @@ export function TermView({
         <HeadMore />
       </header>
       {flowNotices && notices}
-      {chatView && chatable && <ChatPanel pane={pane.id} status={paneAgentStatus(pane)} readNow={chatSent} onOpenFile={onOpenFile} onMessages={setChatMessages} />}
+      {chatView && chatable && <ChatPanel pane={pane.id} status={paneAgentStatus(pane)} readNow={chatSent} onOpenFile={onOpenFile} onMessages={setChatMessages}
+        pending={pendingSends} harness={pane.agent?.harness === "codex" ? "codex" : "claude"} onDismissPending={(id) => setPendingSends((list) => list.filter((p) => p.id !== id))} />}
       {/* data-direct-typing: 바로 입력이면 xterm 칸도 화면 키보드를 올린다(herdr/viewport.ts가 본다) */}
       {/* 띠(끊김·권한·오류·그림·보기만·붙잡은 입력·보내지 못함·복사)는 터미널 위 오른쪽에 뜬다: 흐름에 넣으면 칸이 줄어 PTY 크기가 바뀐다(PaneTerminal.css .terminal-banners) */}
       <div className="term-stack" ref={stackRef} hidden={chatView && chatable}>
@@ -2002,6 +2046,9 @@ export function TermView({
           key={pane.id}
           owner={`${pane.machine_id}:${pane.id}`}
           agentLabel={pane.agent?.harness === "codex" ? "Codex" : "Claude"}
+          harness={pane.agent?.harness === "codex" ? "codex" : "claude"}
+          pending={pendingSends}
+          setPending={setPendingSends}
           connected={!locked}
           pane={pane.id}
           touch={coarse}
@@ -2009,6 +2056,7 @@ export function TermView({
           messages={chatMessages}
           onInspect={() => setChatView(false)}
           onSend={sendTerminalLine}
+          onCancelSend={cancelSubmit}
           onSent={() => setChatSent((n) => n + 1)}
         />
       )}

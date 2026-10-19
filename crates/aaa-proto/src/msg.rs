@@ -327,6 +327,10 @@ pub struct DetectScreen {
 pub struct ChatMessage {
     pub role: ChatRole,
     pub text: String,
+    /// 사람 글이 harness 대기열에 있다(작업 중에 보내 아직 흡수되지 않음, Claude `queue-operation`). 기록 끝에 붙는다.
+    /// 옛 agent는 보내지 않고 옛 front는 버린다(plan §8.239).
+    #[serde(default)]
+    pub pending: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
@@ -2540,7 +2544,24 @@ pub enum TermServerMsg {
         ok: bool,
         message: Option<String>,
     },
+    /// `SubmitCancel`의 답(plan §8.239): 그 submit이 어디서 멈췄나. 멈췄으면 뒤에 오는 `Submitted`는 실패다
+    SubmitCancelled {
+        id: u32,
+        stage: SubmitStage,
+    },
     Error(ErrorBody),
+}
+
+/// 멈춘 submit이 어디까지 갔나(`SubmitCancelled`)
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+pub enum SubmitStage {
+    /// pane에 아무것도 쓰지 않았고 쓰지 않는다
+    NotSent,
+    /// 글은 pane에 갔거나 가는 중이고 Enter는 보내지 않는다(harness 입력창에 글이 남을 수 있다)
+    NoEnter,
+    /// Enter까지 보냈거나 이미 끝난 submit이다: 멈추지 않는다
+    TooLate,
 }
 
 /// 웹 터미널 WebSocket에서 브라우저가 보내는 메시지
@@ -2563,6 +2584,11 @@ pub enum TermClientMsg {
     Submit {
         id: u32,
         data: String,
+    },
+    /// 진행 중인 `Submit`을 멈춰 달라(plan §8.239): 전달 전에 막혔을 때 입력창이 빠져나가는 길이다.
+    /// host는 submit을 기다리는 동안에도 이것은 바로 읽고 `SubmitCancelled`로 답한다(다른 frame은 submit 뒤 차례대로).
+    SubmitCancel {
+        id: u32,
     },
     /// 받은 기록보다 앞 덩어리를 달라(위로 굴려 끝에 가까워졌다). `anchor`는 받은 기록 맨 위 몇 줄의 글,
     /// `depth`는 그 첫 줄부터 맨 아래 줄까지의 줄 수(같은 글이 여러 곳이면 가까운 곳을 고른다)
