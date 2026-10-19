@@ -392,13 +392,13 @@ pub(crate) fn with_hooks(
 /// 공유 daemon은 pane의 AAA 환경·peer 계보를 잃는다(§8.2). resume 앞의 전역 옵션으로 준다.
 /// Codex는 commentary 출력 중 Working 줄을 숨긴다. 애니메이션과 별개인 run-state를 OSC 제목에 넣어 감지한다.
 pub(crate) fn ensure_codex_local(argv: &mut Vec<String>, command_len: usize) {
-    if !argv.iter().take_while(|a| a.as_str() != "--").any(|a| a == "--no-daemon") {
+    if !argv.iter().skip(command_len).take_while(|a| a.as_str() != "--").any(|a| a == "--no-daemon") {
         argv.insert(command_len, "--no-daemon".into());
     }
     // 사용자 파일은 고치지 않는다. 앞의 사용자 -c보다 나중에 두고, -- 뒤의 prompt에는 넣지 않는다.
     // launch/resume 준비와 최종 spawn에서 모두 지나므로 이미 끝에 붙인 옵션은 반복하지 않는다.
     let title = r#"tui.terminal_title=["run-state","activity","project-name"]"#;
-    let end = argv.iter().position(|a| a == "--").unwrap_or(argv.len());
+    let end = argv.iter().skip(command_len).position(|a| a == "--").map_or(argv.len(), |n| command_len + n);
     if end < 2 || argv[end - 2] != "-c" || argv[end - 1] != title {
         argv.splice(end..end, ["-c".into(), title.into()]);
     }
@@ -651,6 +651,7 @@ mod tests {
         for (command, args, notify) in [
             (vec![], vec![], None),
             (vec!["wrapper".into(), "codex".into()], vec![], None),
+            (vec!["env".into(), "--".into(), "codex".into()], vec![], None),
             (vec![], vec!["--no-daemon".into()], Some(r#"notify=["user-notify","fixed arg"]"#)),
             (vec![], vec!["-c".into(), "tui.terminal_title=[]".into()], None),
         ] {
