@@ -2526,7 +2526,7 @@ fn file_text(file: &str, what: &str) -> Result<String> {
     std::fs::read_to_string(file).with_context(|| format!("{what}: {file}"))
 }
 
-/// `thread start`·`thread message`의 `--summary-file`: 앞 요청이 된 뒤 작업 요약을 쓴다(plan §8.259). 앞 요청이 실패하면
+/// `thread start`·`thread message`의 `--summary-file`: 먼저 형식을 검사하고 앞 요청이 된 뒤 작업 요약을 쓴다(plan §8.259). 앞 요청이 실패하면
 /// 요약을 쓰지 않는다. 요약을 따로 보내므로 요약을 모르는 옛 host(FRONT_API 1.43)는 그 요청만 거절한다
 fn with_summary(
     json: bool,
@@ -2535,6 +2535,11 @@ fn with_summary(
     thread: Option<String>,
     summary: Option<String>,
 ) -> Result<ExitCode> {
+    if let Some(text) = &summary
+        && let Err(e) = aaa_host::validate_thread_summary(text)
+    {
+        return front_print(json, Err(e));
+    }
     let res = front_call(req)?;
     let Some(text) = summary else { return front_print(json, res) };
     let thread = match (&res, thread) {
