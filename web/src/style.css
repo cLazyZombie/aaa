@@ -556,7 +556,7 @@ svg.i { width: 16px; height: 16px; flex-shrink: 0; fill: none; stroke: currentCo
   .terminal-jump-bottom { width: var(--touch-target); height: var(--touch-target); }
 }
 /* 끝에 닿은 끌기는 문서로 넘기지 않는다(참고 ChatView.css `.chat-view` overscroll-behavior: contain) */
-.chat { flex: 1; min-height: 0; overflow: auto; overscroll-behavior: contain; padding: var(--space-4); display: flex; flex-direction: column; gap: var(--space-2); background: var(--bg); }
+.chat { flex: 1; min-height: 0; overflow: auto; overflow-anchor: none; overscroll-behavior: contain; padding: var(--space-4); display: flex; flex-direction: column; gap: var(--space-2); background: var(--bg); }
 .chat-note { margin: 0 0 var(--space-2); font-size: calc(var(--fs-xs) * var(--chat-scale, 1)); color: var(--text-dim); }
 /* 대화 글자는 설정 「채팅 글자 크기」를 따른다(참고 ChatView.css: 산문은 --fs-chat, 작은 글은 --fs-xs, 모두 × --chat-scale) */
 .chat-msg { max-width: min(760px, 92%); padding: var(--space-2) var(--space-3); border-radius: var(--r-lg); white-space: pre-wrap; overflow-wrap: anywhere; line-height: 1.55; font-size: calc(var(--fs-chat) * var(--chat-scale, 1)); }
@@ -629,20 +629,18 @@ svg.i { width: 16px; height: 16px; flex-shrink: 0; fill: none; stroke: currentCo
 .chat-msg.thinking .work-row-name { font-style: italic; color: var(--text-dim); font-weight: var(--fw-medium); }
 .chat-msg.thinking .work-thinking-text { padding: var(--space-1) var(--space-3) var(--space-2); white-space: pre-wrap; overflow-wrap: anywhere; color: var(--text-dim); font-size: calc(var(--fs-sm) * var(--chat-scale, 1)); line-height: 1.55; }
 
-/* 입력줄(herdr-web-ui TerminalInput.css). 흐름에는 한 줄 높이의 칸만 두고, 줄은 그 칸 아래끝에 매달려 위로
-   (그리드 마지막 줄 위로) 4줄까지 자란다. 그리드 높이가 PTY 크기라 높이가 바뀌면 그 pane을 보는 모든 기기의
-   크기가 바뀐다. 터미널 위끝까지만 자란다(--terminal-input-room, Term.tsx가 잰다): 그 뒤로는 줄 안에서 넘긴다. */
+/* 입력줄(herdr-web-ui TerminalInput.css). 참고는 흐름에 한 줄 높이의 칸만 두고 줄이 그리드 마지막 줄 위로 떠서 자랐다(그리드 높이가
+   PTY 크기라 높이가 바뀌면 그 pane을 보는 모든 기기의 크기가 바뀐다). aaa는 줄이 흐름 안에서 자라 터미널 칸이 그 위에서 끝난다(사용자
+   10-19 16:5x 「입력줄에 의해 지금 창이 가려지면 안 돼」, plan §8.262): PTY 크기는 그대로 두고(Term.tsx `inputHolds`, 키보드와 같은 길)
+   칸 안에서 커서 줄로 옮긴다. 4줄까지, 터미널 위끝까지만 자란다(--terminal-input-room, Term.tsx가 잰다): 그 뒤로는 줄 안에서 넘긴다. */
 .terminal-input-slot {
   position: relative;
   flex-shrink: 0;
   /* 한 줄일 때의 .terminal-input: 위 테두리·여백, 그리고 보내기 단추와 한 줄 입력칸 중 높은 것 */
-  height: calc(1px + var(--space-2) + max(var(--touch), 16px * 1.4 + 2 * var(--space-2) + 2px));
+  min-height: calc(1px + var(--space-2) + max(var(--touch), 16px * 1.4 + 2 * var(--space-2) + 2px));
 }
 .terminal-input {
-  position: absolute;
-  right: 0;
-  bottom: 0;
-  left: 0;
+  position: relative;
   z-index: 10; /* xterm 층 위(배너와 같다) */
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;

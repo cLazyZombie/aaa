@@ -23,6 +23,12 @@ import { copyText } from "./herdr/clipboard.ts";
 import { shouldFoldUserMessage } from "./herdr/userMessageFold.ts";
 import { ConversationRefresh } from "./herdr/conversationRefresh.ts";
 import type { PendingSend } from "./ChatComposer";
+import { chatRowIds, chatScrollAnchor } from "./chatScroll";
+
+/** 기록 줄 요소(말마다 하나, 끝에 대기 말). 머리 안내·경고는 줄이 아니다 */
+function chatRows(el: HTMLElement): NodeListOf<HTMLElement> {
+  return el.querySelectorAll<HTMLElement>(":scope > .chat-transcript > :not(.chat-note):not(.banner)");
+}
 
 /** 참고 `ThinkingRow`: 「생각」 머리만 보이고 누르면 펼친다 */
 function ThinkingRow({ text }: { text: string }) {
@@ -297,10 +303,41 @@ export function ChatPanel({
     refresh.refresh();
   }, [pane, showThinking, pollKey, readNow, refresh]);
 
-  // 맨 아래를 보고 있었으면 새 줄이 오면 따라 내려간다(그리기 전에, 참고 herdr-web-ui ChatView.tsx useLayoutEffect)
+  // 줄 id(chatScroll.ts): React key이자 읽던 자리의 기준이다. 차례 번호를 key로 쓰면 agent가 기록 앞을 자를 때마다 같은 DOM에
+  // 다음 말이 들어가 보던 화면이 밀린다(사용자 10-19 16:5x 「위를 보고 있으면 거기에 멈춰 있게」)
+  const rowIds = useMemo(
+    () => [...chatRowIds(chat?.messages ?? []), ...pending.map((p) => `pending:${p.id}`)],
+    [chat, pending],
+  );
+  const rowIdsRef = useRef(rowIds);
+  rowIdsRef.current = rowIds;
+  // 맨 아래가 아니면 보던 줄과 그 줄 안 거리를 지킨다(plan §8.262, t3code timelineScrollAnchoring `rowId`·`offsetWithinRow`):
+  // 새 말·앞 자름·입력창 높이·폭이 바뀌어도 그리기 전에 그 줄을 같은 거리로 되돌린다. 브라우저 굴림 고정(overflow-anchor)은 끈다
+  // (iOS Safari에는 없고, 이것과 겹치면 두 번 옮긴다)
+  const anchor = useRef<{ rowId: string; offsetWithinRow: number } | null>(null);
+  const keepAnchor = (el: HTMLDivElement) => {
+    const rows = chatRows(el);
+    const ids = rowIdsRef.current;
+    if (rows.length !== ids.length) return;
+    const base = el.getBoundingClientRect().top - el.scrollTop;
+    const at = chatScrollAnchor(ids, Array.from(rows, (row) => row.getBoundingClientRect().top - base), el.scrollTop);
+    anchor.current = at ? { rowId: at.rowId, offsetWithinRow: at.offsetWithinRow } : null;
+  };
+  const holdAnchor = (el: HTMLDivElement) => {
+    const at = anchor.current;
+    if (at === null) return;
+    const index = rowIdsRef.current.indexOf(at.rowId);
+    const row = index < 0 ? undefined : chatRows(el)[index];
+    if (row === undefined) return;
+    const top = row.getBoundingClientRect().top - el.getBoundingClientRect().top + el.scrollTop;
+    el.scrollTop = top + at.offsetWithinRow;
+  };
+  // 맨 아래를 보고 있었으면 새 줄이 오면 따라 내려간다(그리기 전에, 참고 herdr-web-ui ChatView.tsx useLayoutEffect). 아니면 보던 줄을 지킨다
   useLayoutEffect(() => {
     const el = list.current;
-    if (el && atBottom.current) el.scrollTop = el.scrollHeight;
+    if (el === null) return;
+    if (atBottom.current) el.scrollTop = el.scrollHeight;
+    else holdAnchor(el);
   }, [chat, pending]);
   // 입력창이 커지거나(여러 줄·보내기 상태·알림) 키보드가 오르거나 창이 좁아지면 보기가 굴림 사건 없이 줄어든다. 폭·글자가 바뀌어
   // 대화가 다시 접혀도 그렇다. 맨 아래를 보던 사람은 바로 맨 아래에 남는다. 높이만 는 것(접힌 말 펼침)은 손이 한 일이라 따라가지 않는다
@@ -318,6 +355,7 @@ export function ChatPanel({
         if (next !== lane) { lane = next; follow = true; }
       }
       if (follow && atBottom.current) el.scrollTop = el.scrollHeight;
+      else if (!atBottom.current) holdAnchor(el);
     });
     observer.observe(el);
     if (el.firstElementChild !== null) observer.observe(el.firstElementChild);
@@ -338,6 +376,7 @@ export function ChatPanel({
           const scrollingUp = el.scrollTop < lastScrollTop.current;
           lastScrollTop.current = el.scrollTop;
           if (!atBottom.current || scrollingUp) atBottom.current = el.scrollHeight - el.scrollTop - el.clientHeight <= 48;
+          if (!atBottom.current) keepAnchor(el);
         }}
       >
         <div className="chat-transcript">
@@ -348,13 +387,13 @@ export function ChatPanel({
           {error && <div className="banner warn">{error}</div>}
           {chat?.messages.map((m, i) =>
             m.role === "thinking" ? (
-              <ThinkingRow key={i} text={m.text} />
+              <ThinkingRow key={rowIds[i]} text={m.text} />
             ) : m.role === "user" ? (
-              <UserTurn key={i} text={m.text} pane={pane} onOpenFile={onOpenFile} pending={m.pending ? { harness } : undefined} />
+              <UserTurn key={rowIds[i]} text={m.text} pane={pane} onOpenFile={onOpenFile} pending={m.pending ? { harness } : undefined} />
             ) : m.role === "assistant" ? (
-              <AgentTurn key={i} text={m.text} />
+              <AgentTurn key={rowIds[i]} text={m.text} />
             ) : (
-              <div key={i} className={`chat-msg ${m.role}`} data-role={m.role}>
+              <div key={rowIds[i]} className={`chat-msg ${m.role}`} data-role={m.role}>
                 {linkFilePaths(m.text, onOpenFile ?? null)}
               </div>
             ),

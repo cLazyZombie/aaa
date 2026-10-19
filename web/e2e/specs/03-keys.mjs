@@ -2,7 +2,7 @@
 // 혼자 돌리기: node web/e2e/web.e2e.mjs --spec 03-keys(새 실험실). 준비(host·agent·t1·첫 화면)는 lib/harness.mjs runSpec.
 
 import {
-  root, sleep, aaa, waitOutput, until, screenText, shot, pairPage, steps, step, browser, openSettings, sentFrames, sentCount, sentText, inList,
+  root, sleep, aaa, waitOutput, until, domIs, screenText, shot, pairPage, steps, step, browser, openSettings, sentFrames, sentCount, sentText, inList,
 } from "../lib/harness.mjs";
 
 export default async function ({ ctl, page }) {
@@ -192,17 +192,23 @@ export default async function ({ ctl, page }) {
     await tp.locator('.key-bar .key[data-key="Escape"]').click();
     await until("Esc", () => since(n).join("") === "\x1b");
     if (!(await line.evaluate((el) => el === document.activeElement))) bad.push("키 막대 키가 입력줄의 focus를 가져갔다");
-    // 입력줄이 4줄까지 자라도 PTY 크기는 그대로다(그리드 위에 뜬다). 울타리는 자란 입력줄이 그려진 것(rows 4)이다: 그 뒤 잰
-    // 터미널 칸 높이가 그대로면 맞출 크기도 그대로다(boundingBox가 그 자리에서 배치를 계산한다). 그 사이 크기를 보내지도 않았다
+    // 입력줄이 4줄까지 자라도 PTY 크기는 그대로다. 터미널 칸은 입력줄 위에서 끝나 겹치지 않고(사용자 10-19 16:5x, plan §8.262)
+    // 그리드는 키보드처럼 붙잡힌다(data-fit input). 울타리는 자란 입력줄(rows 4)과 그 뒤 맞추기 판단(data-fit-pending이 걷힘)이다:
+    // 그 판단 안에서 크기를 보내므로 그 뒤 보낸 것이 없으면 보내지 않았다
     const before = size();
     const box0 = await tp.locator(".term-scroll").boundingBox();
     const k = await sentCount(tp);
     await line.fill("1\n2\n3\n4\n5\n6");
     await until("여섯 줄 입력줄 rows 4", async () => (await line.getAttribute("rows")) === "4").catch(async (e) => bad.push(`${e.message}: rows ${await line.getAttribute("rows")}`));
+    await domIs(tp, "입력줄이 붙잡은 맞추기 판단", () => {
+      const t = document.querySelector('[data-testid="terminal"]');
+      return t?.dataset.fit === "input" && !t.dataset.fitPending;
+    }).catch((e) => bad.push(e.message));
     const box1 = await tp.locator(".term-scroll").boundingBox();
+    const input1 = await tp.locator(".terminal-input").boundingBox();
     const resized = (await sentFrames(tp, k)).filter((f) => f.t === "resize");
-    if (size() !== before || Math.abs(box1.height - box0.height) > 0.5 || resized.length)
-      bad.push(`입력줄이 자라며 터미널이 줄었다: ${before} → ${size()}, 높이 ${box0.height} → ${box1.height}, 보낸 크기 ${JSON.stringify(resized)}`);
+    if (size() !== before || !(box1.height < box0.height) || box1.y + box1.height > input1.y + 0.5 || resized.length)
+      bad.push(`입력줄이 자란 뒤: PTY ${before} → ${size()}, 터미널 칸 높이 ${box0.height} → ${box1.height}(줄어야 한다), 칸 아래 ${box1.y + box1.height} · 입력줄 위 ${input1.y}, 보낸 크기 ${JSON.stringify(resized)}`);
     await line.fill("");
     // 입력줄 조합 중에는 ⌨만 회색이고 키 막대는 그대로다
     await line.dispatchEvent("compositionstart", { data: "" });
