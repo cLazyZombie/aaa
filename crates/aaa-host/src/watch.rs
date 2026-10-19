@@ -51,6 +51,10 @@ impl<'de, S: DeserializeOwned + Default> Deserialize<'de> for State<S> {
 #[derive(Clone, Serialize, Deserialize)]
 pub(crate) struct Notice {
     pub id: String,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub routine: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub skip_reason: Option<String>,
     pub kind: String,
     pub sha: String,
     pub owners: Vec<String>,
@@ -138,6 +142,16 @@ impl Host {
         );
         match event {
             Some(OutageEvent::Down) => {
+                if let Some(name) = subject.strip_prefix(&format!("{}:", policy.source)) {
+                    self.record_routine(
+                        p,
+                        name,
+                        &aaa_common::util::new_id(),
+                        "failed",
+                        &format!("조회 장애: {}", aaa_common::pr::sanitize(error.unwrap_or(""))),
+                        None,
+                    );
+                }
                 self.inbox_once(
                     p,
                     "outage",
@@ -152,6 +166,9 @@ impl Host {
                 self.flow_project(p, &format!("{}_query_failing", policy.source), None, subject);
             }
             Some(OutageEvent::Recovered) => {
+                if let Some(name) = subject.strip_prefix(&format!("{}:", policy.source)) {
+                    self.record_routine(p, name, &aaa_common::util::new_id(), "done", "조회 복구", None);
+                }
                 self.inbox_finish_where(p, |i| i.item_kind == "outage" && i.subject == subject && i.event == "failing");
                 self.flow_project(p, &format!("{}_query_recovered", policy.source), None, subject);
             }
@@ -250,6 +267,16 @@ impl Host {
                     n.text.clone(),
                     policy.source,
                 )?;
+            }
+            if !n.routine.is_empty() {
+                let (status, detail) = if waiting.iter().any(|w| w.id == n.id) {
+                    ("waiting", "대상 임무 없음".to_string())
+                } else if let Some(reason) = &n.skip_reason {
+                    ("skipped", reason.clone())
+                } else {
+                    ("done", format!("{} {}{}", policy.label, n.kind, if n.wake { " · 임무 입력" } else { "" }))
+                };
+                self.record_routine(p, &n.routine, &n.id, status, &detail, None);
             }
             s.outbox.remove(0);
             let rest = std::mem::take(&mut s.outbox);

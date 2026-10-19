@@ -7,7 +7,7 @@ use crate::{
 use aaa_common::util;
 use aaa_proto::{
     AgentActivity, AgentRequest, AgentResponse, BriefState, ErrorBody, ErrorCode, FrontResponse, MessageMode,
-    MissionView, Role, ThreadKind, ThreadStatus,
+    MissionBlockReason, MissionView, Role, ThreadKind, ThreadStatus,
 };
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -158,6 +158,7 @@ pub(crate) struct MissionRun {
     pub name: String,
     pub applied_sha: String,
     pub state: String,
+    pub blocked_reason: Option<MissionBlockReason>,
     pub paused: bool,
     pub cursor: u64,
     pub pending: Vec<Input>,
@@ -194,6 +195,20 @@ pub(crate) struct MissionRun {
     pub wake_boot: String,
 }
 impl MissionRun {
+    /// 이유 없는 구버전 막힘도 보수적으로 유지한다. pause 상태에서도 이유는 사라지지 않는다.
+    pub(crate) fn durable_block(&self) -> bool {
+        self.blocked_reason.is_some_and(|r| r != MissionBlockReason::Question)
+            || self.state == "막힘" && self.blocked_reason.is_none()
+    }
+    pub(crate) fn block(&mut self, reason: MissionBlockReason) -> bool {
+        if self.durable_block() {
+            return false;
+        }
+        let changed = self.blocked_reason != Some(reason);
+        self.blocked_reason = Some(reason);
+        self.state = "막힘".into();
+        changed
+    }
     fn new(name: &str, m: &Mission, cursor: u64, now: u64) -> Self {
         Self {
             name: name.into(),
@@ -250,6 +265,12 @@ fn merge_run(r: &mut ThreadRec, run: &MissionRun) {
         for i in &old.pending {
             if !next.pending.iter().any(|j| j.id == i.id) {
                 next.pending.push(i.clone());
+            }
+        }
+        if old.durable_block() {
+            next.blocked_reason = Some(old.blocked_reason.unwrap_or(MissionBlockReason::LegacyUnknown));
+            if !next.paused && next.state != "끝남" {
+                next.state = "막힘".into();
             }
         }
         next.saw_working |= old.saw_working;
@@ -530,6 +551,7 @@ impl Host {
             } else {
                 run.map(|r| r.state.clone()).unwrap_or_else(|| "승인 대기".into())
             },
+            blocked_reason: run.and_then(|r| r.blocked_reason),
             applied_sha: applied.as_ref().map(|m| m.sha.clone()),
             file_sha: file.as_ref().ok().map(|m| m.sha.clone()),
             approval_sha256: file.as_ref().ok().map(|m| m.approval.clone()).unwrap_or_default(),
@@ -555,6 +577,76 @@ impl Host {
             usage_wait_until_ms: run.and_then(|r| r.usage_wait_until_ms),
         })
     }
+    /// L3에서는 기존 임무 조건을 읽기만 한다. 공용 규칙으로 분리하는 것은 L4다.
+    pub(crate) fn mission_automation_views(&self, p: &str) -> Result<Vec<aaa_proto::RoutineView>, ErrorBody> {
+        let mut out = Vec::new();
+        for m in self.mission_list(Some(p))? {
+            let parsed = parse(&m.name, &m.file_text);
+            let (trigger, enabled, schedule) = match &parsed {
+                Ok(file) => {
+                    let d = &file.def;
+                    if d.events.is_empty() && d.schedule.is_none() {
+                        continue;
+                    }
+                    let mut bits = d.events.clone();
+                    if let Some(s) = &d.schedule {
+                        bits.push(s.clone());
+                    }
+                    if !d.repos.is_empty() {
+                        bits.push(format!("repos: {}", d.repos.join(", ")));
+                    }
+                    (bits.join(" · "), d.enabled, d.schedule.clone())
+                }
+                Err(_) => ("임무 조건 오류".into(), false, None),
+            };
+            let name = format!("mission:{}", m.name);
+            let history = self.routine_history(p, &name)?;
+            let mut v = aaa_proto::RoutineView {
+                name,
+                trigger,
+                action: format!("임무 {} 깨움{}", m.name, if m.stale { " · 적용 사본과 다름" } else { "" }),
+                origin: "mission".into(),
+                file: format!("missions/{}.md", m.name),
+                enabled,
+                schedule: schedule.clone().unwrap_or_default(),
+                approved: m.approved,
+                last_run_ms: history.last_result.as_ref().map(|r| r.at_ms),
+                next_run_ms: schedule.and_then(|s| {
+                    let rec = self.mission_rec(p, &m.name)?;
+                    let last = rec.mission?.last_schedule_ms;
+                    Some(next_run(&parse_schedule(&s, true).ok()?, last, &local_offset_secs))
+                }),
+                error: m.error,
+                ..Default::default()
+            };
+            history.fill(&mut v);
+            v.today = m.wakes_today;
+            v.max_per_day = Some(m.max_wakes);
+            out.push(v);
+        }
+        Ok(out)
+    }
+    pub(crate) fn mission_automation_toggle(
+        &self,
+        p: &str,
+        n: &str,
+        on: Option<bool>,
+        actor: &str,
+    ) -> Result<(), ErrorBody> {
+        if !aaa_proto::valid_project(n) {
+            return Err(bad("임무 이름 형식이 아니다"));
+        }
+        let file = self.read_mission(p, n)?;
+        let (edited, _) = crate::routine::edit_enabled(&file.text, on)?;
+        parse(n, &edited)?;
+        let path = self.project_dir(p)?.join("missions").join(format!("{n}.md"));
+        crate::orch::write_atomic(&path, edited.as_bytes()).map_err(internal)?;
+        self.db.audit(actor, "mission_rule_toggle", &format!("{p}/{n}"));
+        self.flow_project(p, "routine_toggled", Some(format!("missions/{n}.md")), format!("mission:{n}"));
+        self.tick_wake.notify_one();
+        Ok(())
+    }
+
     pub(crate) fn mission_list(&self, p: Option<&str>) -> Result<Vec<MissionView>, ErrorBody> {
         let projects = match p {
             Some(p) => vec![p.to_string()],
@@ -734,8 +826,18 @@ impl Host {
             "pause" | "resume" => {
                 self.update_rec(p, &r.id, |r| {
                     let m = r.mission.as_mut().unwrap();
+                    if m.state == "막힘" && m.blocked_reason.is_none() {
+                        m.blocked_reason = Some(MissionBlockReason::LegacyUnknown);
+                    }
                     m.paused = action == "pause";
-                    m.state = if action == "pause" { "멈춤" } else { "대기" }.into();
+                    m.state = if m.paused {
+                        "멈춤"
+                    } else if m.blocked_reason.is_some() {
+                        "막힘"
+                    } else {
+                        "대기"
+                    }
+                    .into();
                 })?;
             }
             "reload" => {
@@ -755,6 +857,7 @@ impl Host {
                     let m = r.mission.as_mut().unwrap();
                     m.reset_requested = true;
                     m.restart_requested = true;
+                    m.blocked_reason = None;
                     if m.state == "끝남" || m.state == "막힘" {
                         m.state = "대기".into();
                     }
@@ -893,8 +996,17 @@ impl Host {
             self.update_rec(p, &rec.id, |r| {
                 let m = r.mission.as_mut().unwrap();
                 m.wake_inflight = false;
+                m.blocked_reason = Some(MissionBlockReason::WakeUnknown);
                 m.state = "막힘".into();
             })?;
+            self.record_routine(
+                p,
+                &format!("mission:{n}"),
+                &format!("wake-unknown:{}", self.boot_id),
+                "waiting",
+                "막힘 · 재시작 중 깨움 모름",
+                Some(&rec.id),
+            );
             self.inbox_once(
                 p,
                 "thread-state",
@@ -968,6 +1080,27 @@ impl Host {
         let live = rec.pane.as_deref().and_then(|id| self.pane_view_of(id, aaa_proto::DeviceRole::Local));
         let agent = rec.pane.as_deref().and_then(|id| self.pane_agent(id));
         let mut run = rec.mission.clone().unwrap();
+        if run.state == "막힘" && run.blocked_reason.is_none() {
+            run.blocked_reason = Some(MissionBlockReason::LegacyUnknown);
+        }
+        // 확인창만 현재 화면에 따라 풀린다. 전달 모름·옛 이유 없음은 이 분기에 들지 않는다.
+        if run.blocked_reason == Some(MissionBlockReason::Question)
+            && let Some(activity @ (AgentActivity::Working | AgentActivity::Idle)) = agent.as_ref().map(|a| a.activity)
+        {
+            run.blocked_reason = None;
+            if !run.paused {
+                run.state = if activity == AgentActivity::Working { "일함" } else { "대기" }.into();
+            }
+            self.inbox_finish_where(p, |i| i.subject == rec.id && i.event == "blocked on a prompt");
+            self.record_routine(
+                p,
+                &format!("mission:{n}"),
+                &util::new_id(),
+                "done",
+                &format!("확인창 해제 · {}", run.state),
+                Some(&rec.id),
+            );
+        }
         // 확인창의 명령을 승인하지 않고 세션을 교체한다. 자동 reset·reload와 초안 있는 idle에는 적용하지 않는다.
         let restart_prompt = run.restart_requested
             && (run.resetting || agent.as_ref().is_some_and(|a| a.activity == AgentActivity::Question));
@@ -1000,11 +1133,29 @@ impl Host {
             }
         }
         if !run.resetting && !restart_prompt && rec.brief == BriefState::Unknown {
-            run.state = "막힘".into();
+            if run.block(MissionBlockReason::BriefUnknown) {
+                self.record_routine(
+                    p,
+                    &format!("mission:{n}"),
+                    &util::new_id(),
+                    "waiting",
+                    "막힘 · brief 전달 모름",
+                    Some(&rec.id),
+                );
+            }
             self.inbox_once(p, "thread-state", &rec.id, "brief not delivered", "특수 임무 brief를 전달하지 못했다");
         }
         if !run.resetting && !restart_prompt && agent.as_ref().is_some_and(|a| a.activity == AgentActivity::Question) {
-            run.state = "막힘".into();
+            if run.block(MissionBlockReason::Question) {
+                self.record_routine(
+                    p,
+                    &format!("mission:{n}"),
+                    &util::new_id(),
+                    "waiting",
+                    "막힘 · 확인창",
+                    Some(&rec.id),
+                );
+            }
             self.inbox_once(p, "thread-state", &rec.id, "blocked on a prompt", "특수 임무가 확인창에 막혔다");
         }
         if !run.resetting
@@ -1024,8 +1175,9 @@ impl Host {
         if run.paused || !applied.def.enabled && run.state != "일함" {
             run.state = "멈춤".into();
         }
-        self.update_rec(p, &rec.id, |r| merge_run(r, &run))?;
-        if matches!(run.state.as_str(), "멈춤" | "막힘" | "끝남") {
+        let saved = self.update_rec(p, &rec.id, |r| merge_run(r, &run))?;
+        run = saved.mission.unwrap();
+        if matches!(run.state.as_str(), "멈춤" | "막힘" | "끝남") || run.durable_block() {
             return Ok(());
         }
         if run.state == "일함" {
@@ -1038,6 +1190,16 @@ impl Host {
             let profile = self.resolved_profile(Some(p), &rec.machine_id, &rec.profile)?;
             let report = self.usage.cached().await;
             if let Some(until) = usage_until(&applied.def, &profile, &report, now) {
+                if run.usage_wait_until_ms != Some(until) {
+                    self.record_routine(
+                        p,
+                        &format!("mission:{n}"),
+                        &format!("usage:{until}"),
+                        "waiting",
+                        "사용량 문턱",
+                        Some(&rec.id),
+                    );
+                }
                 run.usage_wait_until_ms = Some(until);
                 run.state = "사용량 대기".into();
                 self.update_rec(p, &rec.id, |r| merge_run(r, &run))?;
@@ -1074,6 +1236,16 @@ impl Host {
             }
         }
         if run.wakes_today >= applied.def.max_wakes {
+            if run.state != "예산 대기" {
+                self.record_routine(
+                    p,
+                    &format!("mission:{n}"),
+                    &format!("cap:{}", run.day),
+                    "waiting",
+                    "하루 깨움 상한",
+                    Some(&rec.id),
+                );
+            }
             run.state = "예산 대기".into();
             self.update_rec(p, &rec.id, |r| merge_run(r, &run))?;
             self.inbox_once(p, "mission", n, "wake budget", "하루 깨움 상한이다. 입력을 보존하고 다음 날 재개한다");
@@ -1193,6 +1365,10 @@ impl Host {
             }
             merge_run(r, &run);
         })?;
+        run = rec.mission.clone().unwrap();
+        if run.durable_block() || run.state == "막힘" {
+            return Ok(());
+        }
         if pending_total(&run) > self.cfg.missions.max_pending as usize {
             self.inbox_once(p, "mission", n, "backlog", "처리하지 않은 입력이 상한을 넘었다. 깨우지 않는다");
             return Ok(());
@@ -1254,7 +1430,10 @@ impl Host {
                 run.resetting = true;
                 run.reset_started_ms = Some(now);
                 run.state = "다시 시작 중".into();
-                self.update_rec(p, &rec.id, |r| merge_run(r, &run))?;
+                let saved = self.update_rec(p, &rec.id, |r| merge_run(r, &run))?;
+                if saved.mission.as_ref().is_some_and(MissionRun::durable_block) {
+                    return Ok(());
+                }
                 self.flow(&rec, "mission_reset", None, run.applied_sha.clone());
                 self.db.audit("aaa:mission", "mission_reset", &format!("{p}/{n}"));
                 if !ended {
@@ -1324,9 +1503,17 @@ impl Host {
                 Err(e) => {
                     self.update_rec(p, &rec.id, |r| {
                         let m = r.mission.as_mut().unwrap();
-                        m.state = "막힘".into();
+                        m.block(MissionBlockReason::RestartFailed);
                         m.resetting = false;
                     })?;
+                    self.record_routine(
+                        p,
+                        &format!("mission:{n}"),
+                        &util::new_id(),
+                        "failed",
+                        &format!("막힘 · 다시 시작 실패: {}", e.message),
+                        Some(&rec.id),
+                    );
                     return Err(e);
                 }
             }
@@ -1361,8 +1548,13 @@ impl Host {
         let ids: Vec<_> = run.pending.iter().map(|i| i.id.clone()).collect();
         let bytes = run.pending.iter().map(|i| i.text.len() as u64).sum::<u64>();
         // 전달 모름도 재전송하지 않는다. durable 셈을 입력보다 먼저 저장한다.
+        let mut committed = false;
         self.update_rec(p, &rec.id, |r| {
             let m = r.mission.as_mut().unwrap();
+            if m.durable_block() || m.state == "막힘" {
+                return;
+            }
+            committed = true;
             m.pending.retain(|i| !ids.contains(&i.id));
             m.pending_since_ms = (!m.pending.is_empty()).then_some(now);
             m.last_wake_ms = Some(now);
@@ -1380,9 +1572,31 @@ impl Host {
             m.wake_inflight = true;
             m.wake_boot = self.boot_id.clone();
         })?;
+        if !committed {
+            return Ok(());
+        }
+        let history_id = format!("wake:{now}");
+        self.record_routine(
+            p,
+            &format!("mission:{n}"),
+            &history_id,
+            "done",
+            &format!("깨움 입력 {}건", ids.len()),
+            Some(&rec.id),
+        );
         self.flow(&rec, "mission_wake", None, format!("입력 {}건", ids.len()));
         if let Err(e) = self.thread_message(p, &rec.id, text, MessageMode::Queue, "aaa:mission").await {
-            self.update_rec(p, &rec.id, |r| r.mission.as_mut().unwrap().state = "막힘".into())?;
+            self.record_routine(
+                p,
+                &format!("mission:{n}"),
+                &history_id,
+                "failed",
+                &format!("깨움 전달 모름: {}", e.message),
+                Some(&rec.id),
+            );
+            self.update_rec(p, &rec.id, |r| {
+                r.mission.as_mut().unwrap().block(MissionBlockReason::MessageUnknown);
+            })?;
             self.inbox_once(p, "thread-state", &rec.id, "message not delivered", &e.message);
         }
         self.update_rec(p, &rec.id, |r| r.mission.as_mut().unwrap().wake_inflight = false)?;
@@ -1405,6 +1619,7 @@ impl Host {
             m.resetting = false;
             m.reset_requested = false;
             m.restart_requested = false;
+            m.blocked_reason = None;
             m.reset_new_pane = None;
             m.conversation_wakes = 0;
             m.saw_working = false;

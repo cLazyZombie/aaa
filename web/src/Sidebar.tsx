@@ -1,9 +1,9 @@
 // 왼쪽 목록(herdr-web-ui MachineSidebar·Sidebar·AgentSidebar, aa624cb). 모양(class)과 CSS는 참고 것을 그대로 쓴다(herdr/*.css).
-// 패널 셋(활동 막대가 하나를 고른다, plan §8.240·§8.258·§8.280): 「작업」은 coordinator → 작업 공간(저장소) 폴더 → thread 줄(둘째 줄 왼쪽
+// 패널 넷(활동 막대가 하나를 고른다, plan §8.240·§8.258·§8.280): 「작업」은 coordinator → 작업 공간(저장소) 폴더 → thread 줄(둘째 줄 왼쪽
 // 상태 말, 오른쪽 머신 이름, plan §8.195) → thread가 아닌 pane의 「기타」 묶음(줄에 머신 이름). 프로젝트가 둘 이상일 때만 프로젝트 머리가
 // 그 위에 선다. 예전 「에이전트」 패널(같은 pane을 저장소 폴더로 다시 보이던 것)은 이 트리로 합쳤다(사용자 결정 10-19 안 A).
-// 「머신」은 머신 줄(이름·host·연결 점·+, 끊김·점검 글), 「특수」는 임무·사후 평가자. 머신은 트리 단계가 아니다. 셋 다 늘 그려 두고
-// 고르지 않은 것은 숨긴다(굴린 자리를 지킨다). 머리·띠·바닥 줄(사용량, App.tsx ListFoot)은 패널과 상관없다.
+// 「머신」은 머신 줄(이름·host·연결 점·+, 끊김·점검 글), 「특수」는 임무·사후 평가자. 머신은 트리 단계가 아니다. 넷 다 늘 그려 두고
+// 「자동화」는 규칙·실행 기록을 보인다(plan §8.281). 고르지 않은 것은 숨긴다(굴린 자리를 지킨다). 머리·띠·바닥 줄(사용량, App.tsx ListFoot)은 패널과 상관없다.
 // aaa에는 herdr workspace가 없다: 참고의 workspace 줄 자리에 pane 줄을, worktree 묶음 자리에 프로젝트 묶음을 둔다.
 // thread는 자기 줄 하나로만 보인다(L4, herdr-projects sidebar.rs: thread는 자기 agent 줄이고 이름이 「id · 제목」).
 import {
@@ -45,6 +45,7 @@ import "./herdr/primitives.css";
 import "./herdr/Sidebar.css";
 import "./herdr/Machines.css";
 import "./Sidebar.css";
+import { AutomationPanel } from "./AutomationPanel";
 import { MachineMeters } from "./MachineMeters";
 import { machineStats } from "./machineStats";
 import { evaluatorState, missionTone, missionWord, type SpecialTone } from "./specialModel";
@@ -314,6 +315,9 @@ export function Sidebar(props: SidebarProps) {
       </div>
       <div {...panelProps("special", props.panel)} className="sidebar-panel special-panel">
         <SpecialSection {...props} />
+      </div>
+      <div {...panelProps("automations", props.panel)} className="sidebar-panel automations-panel">
+        {props.panel === "automations" && <AutomationPanel canControl={props.canControl} />}
       </div>
       {menu && <RowMenu anchor={menu.anchor} point={menu.point} restoreFocusTo={menu.previousFocus} title={menu.title} subtitle={menu.place} header={menu.header} items={menu.items()} onClose={closeMenu} />}
       {confirm && (

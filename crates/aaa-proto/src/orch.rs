@@ -994,10 +994,33 @@ pub struct InboxItem {
     pub done_at_ms: Option<u64>,
 }
 
-/// routine 하나(`projects/<p>/routines/<name>.md`, 0.2.35 계승)
+/// 자동화 한 차례의 결과. 사건 자료·명령 출력 본문은 넣지 않는다.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+pub struct RoutineRun {
+    pub id: String,
+    #[ts(type = "number")]
+    pub at_ms: u64,
+    /// done / skipped / waiting / failed
+    pub status: String,
+    pub detail: String,
+    pub thread: Option<String>,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(default)]
 pub struct RoutineView {
     pub name: String,
+    pub trigger: String,
+    pub action: String,
+    /// routine 또는 mission. mission:<이름>은 임무 파일의 조건 보기다.
+    pub origin: String,
+    pub file: String,
+    pub last_result: Option<RoutineRun>,
+    pub last_skip: Option<RoutineRun>,
+    pub today: u32,
+    pub max_per_day: Option<u32>,
+    /// 최근 순서, 최대 20건. 전체 50건은 routine_runs로 읽는다.
+    pub recent: Vec<RoutineRun>,
     /// `every 30m`·`daily 09:00`(파일에 적힌 글)
     pub schedule: String,
     /// 비면 안내만 하는 routine
@@ -1054,6 +1077,17 @@ pub fn slug(title: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// N-1 host의 wire 응답에는 L3 기록 필드가 없다.
+    #[test]
+    fn routine_view_reads_previous_front_response() {
+        let old = r#"{"name":"ping","schedule":"every 10m","command":"","machine":null,"enabled":true,"commands_allowed":false,"approved":false,"command_sha256":"","last_run_ms":1,"next_run_ms":600001,"skipped":2,"no_coordinator":0,"error":null}"#;
+        let view: RoutineView = serde_json::from_str(old).unwrap();
+        assert_eq!(view.name, "ping");
+        assert_eq!(view.schedule, "every 10m");
+        assert_eq!(view.next_run_ms, Some(600001));
+        assert!(view.recent.is_empty() && view.last_result.is_none());
+    }
 
     /// 응답·사건 enum 태그(`kind`·`ev`)와 안에 든 구조체 필드 이름이 겹치면 읽을 수 없다
     #[test]

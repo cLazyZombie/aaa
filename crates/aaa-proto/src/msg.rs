@@ -1936,7 +1936,12 @@ pub enum FrontRequest {
     Routines {
         project: String,
     },
-    /// routine 명령 승인. `command_sha256`은 사람이 본 명령(머신 포함)의 hash이고, 파일이 그 사이 바뀌었으면 거부한다.
+    /// 최근 실행·건너뜀 기록, 최대 50건(Reader 가능).
+    RoutineRuns {
+        project: String,
+        name: String,
+    },
+    /// routine 명령 승인. `command_sha256`은 사람이 본 명령(머신 포함)의 hash다. 파일이 그 사이 바뀌면 거부한다.
     RoutineApprove {
         project: String,
         name: String,
@@ -2033,6 +2038,7 @@ impl FrontRequest {
                 | FrontRequest::MissionList { .. }
                 | FrontRequest::MissionShow { .. }
                 | FrontRequest::Routines { .. }
+                | FrontRequest::RoutineRuns { .. }
                 | FrontRequest::ThreadRead { .. }
                 | FrontRequest::PaneRead { .. }
                 | FrontRequest::PaneReadText { .. }
@@ -2214,6 +2220,9 @@ pub enum FrontResponse {
     },
     Routines {
         routines: Vec<RoutineView>,
+    },
+    RoutineRuns {
+        runs: Vec<crate::RoutineRun>,
     },
     Library(LibraryView),
     LibraryLink(LinkView),

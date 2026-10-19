@@ -396,6 +396,11 @@ enum MissionCmd {
 
 #[derive(Subcommand)]
 enum RoutineCmd {
+    /// 최근 실행·건너뜀 기록(최대 50건, 최근 순서)
+    Runs {
+        project: String,
+        name: String,
+    },
     List {
         project: String,
     },
@@ -1298,6 +1303,9 @@ fn run(cli: Cli) -> Result<ExitCode> {
             "`aaa merge`는 없어졌다. aaa는 병합하지 않는다: 사용자가 병합하라고 하면 그 thread의 Next 줄을 \
              `aaa thread next <p> <id> --line N`으로 보내 thread가 PR을 병합한다. PR이 병합되면 aaa가 thread를 끝낸다"
         ),
+        Cmd::Routine { cmd: RoutineCmd::Runs { project, name } } => {
+            front(json, FrontRequest::RoutineRuns { project, name })
+        }
         Cmd::Routine { cmd: RoutineCmd::List { project } } => front(json, FrontRequest::Routines { project }),
         Cmd::Routine { cmd: RoutineCmd::Toggle { project, name, on, off } } => {
             let on = if on {
@@ -3192,31 +3200,45 @@ fn render_front(r: &FrontResponse) -> String {
                     continue;
                 }
                 let off = if r.enabled { "" } else { " · 꺼짐" };
-                // `on pr: …`은 일정이 아니라 PR 사건에 thread로 보낸다(herdr-projects `when_text`도 비운다)
-                if r.schedule.starts_with("on pr:") {
-                    let _ = writeln!(s, "{}\t{}\tthread에 보냄{off}", r.name, r.schedule);
-                    continue;
-                }
-                let when = |t: Option<u64>| t.map(aaa_common::util::utc_text).unwrap_or_else(|| "-".into());
-                let cmd = if r.command.is_empty() {
-                    "안내만".to_string()
+                let when = |t: Option<u64>| t.map(aaa_common::util::utc_text).unwrap_or_else(|| "사건 오면".into());
+                let approval = if r.origin == "mission" && !r.approved {
+                    " · 임무 승인 필요"
+                } else if r.command.is_empty() {
+                    ""
+                } else if !r.approved {
+                    " · 승인 필요"
+                } else if !r.commands_allowed {
+                    " · routine_commands 꺼짐"
                 } else {
-                    let ok = match (r.commands_allowed, r.approved) {
-                        (true, true) => "승인됨",
-                        (_, false) => "승인 필요",
-                        (false, true) => "host.toml에서 꺼짐",
-                    };
-                    format!("명령 {ok}@{}", r.machine.as_deref().unwrap_or("host"))
+                    " · 승인됨"
                 };
+                let result = r
+                    .last_result
+                    .as_ref()
+                    .map(|r| format!("{} {}", r.status, r.detail))
+                    .unwrap_or_else(|| "기록 없음".into());
+                let skip = r.last_skip.as_ref().map(|r| r.detail.as_str()).unwrap_or("-");
                 let _ = writeln!(
                     s,
-                    "{}\t{}\t{cmd}{off}\t지난 {} · 다음 {} · 건너뜀 {} · coordinator 없음 {}",
+                    "{}\t{} → {}{off}{approval}\t지난 {result} · 다음 {} · 오늘 {} · 건너뜀 {skip} · 출처 {}",
                     r.name,
-                    r.schedule,
-                    when(r.last_run_ms),
+                    if r.trigger.is_empty() { &r.schedule } else { &r.trigger },
+                    if r.action.is_empty() { "동작 정보 없음" } else { &r.action },
                     when(r.next_run_ms),
-                    r.skipped,
-                    r.no_coordinator
+                    r.today,
+                    r.origin
+                );
+            }
+        }
+        FrontResponse::RoutineRuns { runs } => {
+            for r in runs {
+                let _ = writeln!(
+                    s,
+                    "{}\t{}\t{}{}",
+                    aaa_common::util::utc_text(r.at_ms),
+                    r.status,
+                    r.detail,
+                    r.thread.as_ref().map(|t| format!(" · {t}")).unwrap_or_default()
                 );
             }
         }

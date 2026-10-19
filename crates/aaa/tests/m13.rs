@@ -1243,6 +1243,62 @@ fn progress_seen(ev: &mut Events, id: &str, text: &str) {
     });
 }
 
+/// 실제 가짜 Claude의 확인창→답→일함→Idle 뒤 routine 입력을 임무가 한 번만 받는다.
+#[test]
+fn mission_question_answer_recovers_and_delivers_accumulated_input_once() {
+    let w = world_with("tick_secs=1\nroutine_commands=[\"demo\"]\n");
+    let project = w.projects.join("demo");
+    std::fs::create_dir_all(project.join("missions")).unwrap();
+    std::fs::write(project.join("missions/question-watch.md"), "+++\nprofile=\"claude\"\nmachine=\"labA\"\nbatch_s=0\nmin_gap=\"1s\"\nreset_after_wakes=3\nwithdrawal=\"none\"\n+++\n확인창 뒤 자료를 읽는다.\n").unwrap();
+    let approved = w.h.in_terminal(
+        &["mission", "approve", "demo", "question-watch"],
+        &[("그대로 입력한다:", "question-watch")],
+        T,
+    );
+    assert!(!approved.contains("일치하지"), "{approved}");
+    let mut ev = Events::connect(&w.h);
+    let started = w.h.ok(&["mission", "start", "demo", "question-watch"]);
+    let id = started["mission"]["thread"]["id"].as_str().unwrap();
+    let pane = started["mission"]["thread"]["pane"].as_str().unwrap();
+    let trust = open_question(&mut ev, id, "trust", &[]);
+    w.h.ok(&["question", "answer", &trust.id, "yes"]);
+    let permission = open_question(&mut ev, id, "permission", &[]);
+    wait_for("임무 확인창 사유", T, || {
+        let m = w.h.ok(&["mission", "show", "demo", "question-watch"]);
+        (m["mission"]["state"] == "막힘" && m["mission"]["blocked_reason"] == "question").then_some(())
+    });
+    std::fs::write(
+        project.join("routines/input.md"),
+        "+++\nschedule=\"every 1s\"\ncommand=\"printf one\"\nmission=\"question-watch\"\n+++\n입력 자료\n",
+    )
+    .unwrap();
+    w.h.in_terminal(&["routine", "approve", "demo", "input"], &[("이름을 친다", "input")], T);
+    wait_for("확인창 중 내구 입력", T, || {
+        let m = w.h.ok(&["mission", "show", "demo", "question-watch"]);
+        (m["mission"]["pending"] == 1 && m["mission"]["wakes_today"] == 0).then_some(())
+    });
+    w.h.ok(&["routine", "toggle", "demo", "input", "--off"]);
+    w.h.ok(&["question", "answer", &permission.id, "yes"]);
+    wait_for("확인창 해제 뒤 일함", T, || {
+        let m = w.h.ok(&["mission", "show", "demo", "question-watch"]);
+        (m["mission"]["state"] == "일함" && m["mission"]["blocked_reason"].is_null()).then_some(())
+    });
+    finish_turn(&w, pane);
+    wait_for("누적 입력 한 번 깨움", T, || {
+        (w.h.ok(&["mission", "show", "demo", "question-watch"])["mission"]["wakes_today"] == 1).then_some(())
+    });
+    w.h.wait_output(pane, "got: [aaa 임무 question-watch]", T);
+    let work = PathBuf::from(started["mission"]["thread"]["work_dir"].as_str().unwrap());
+    assert_eq!(std::fs::read_dir(work.join("inbox")).unwrap().count(), 1);
+    w.h.ticks(2);
+    assert_eq!(w.h.ok(&["mission", "show", "demo", "question-watch"])["mission"]["wakes_today"], 1);
+    let history = w.h.ok(&["routine", "runs", "demo", "mission:question-watch"]);
+    assert!(history["runs"].as_array().unwrap().iter().any(|r| r["detail"] == "막힘 · 확인창"));
+    assert!(
+        history["runs"].as_array().unwrap().iter().any(|r| r["detail"].as_str().unwrap().starts_with("확인창 해제"))
+    );
+}
+
 /// 화면으로 아는 harness 상태(herdr 0.9.5 감지, plan §8.110), 확인창 질문의 원격 응답, 메시지 queue·interrupt(§8.3~8.5).
 /// 기다림은 모두 host가 밀어 주는 사건(thread 기록·질문·흐름)으로 끝난다.
 #[test]
@@ -3322,6 +3378,9 @@ fn routines() {
 
     // coordinator가 없으면 돌지 않고 센다(밀린 실행도 쌓지 않는다)
     wait_for("coordinator 없음", T, || (routine("ping")["no_coordinator"].as_u64() >= Some(2)).then_some(()));
+    assert_eq!(routine("ping")["last_skip"]["detail"], "coordinator 없음");
+    let history = w.h.ok(&["routine", "runs", "demo", "ping"]);
+    assert_eq!(history["runs"][0]["status"], "skipped");
     assert!(items("routine", "ping").is_empty() && items("routine-approval", "cmd").is_empty());
     assert!(items("config-error", "pr").is_empty());
     assert_eq!(
@@ -3338,6 +3397,7 @@ fn routines() {
     let ping = wait_for("ping 항목", T, || items("routine", "ping").into_iter().next());
     assert_eq!((ping["event"].as_str(), ping["body"].as_str()), (Some("due"), Some("상태를 확인한다")));
     wait_for("ping 건너뜀", T, || (routine("ping")["skipped"].as_u64() >= Some(2)).then_some(()));
+    assert_eq!(routine("ping")["last_skip"]["detail"], "처리하지 않은 안내가 있음");
     assert_eq!(items("routine", "ping").len(), 1);
     // 승인 전에는 실행하지 않고, 같은 명령에는 「승인 필요」를 한 번만 남긴다
     wait_for("승인 필요", T, || items("routine-approval", "cmd").into_iter().next());
@@ -3352,6 +3412,7 @@ fn routines() {
     }
     assert_eq!(items("routine-approval", "cmd").len(), 1);
     assert!(items("routine", "cmd").is_empty());
+    assert_eq!(routine("cmd")["last_skip"]["detail"], "명령 승인 필요");
 
     // 승인: aaa 세션 안이거나 터미널이 아니면 거부한다
     let mut c = w.h.cmd(&["routine", "approve", "demo", "cmd"]);
@@ -4239,8 +4300,8 @@ fn pr_followup() {
     assert_eq!(errors.len(), 1, "{errors:?}");
     assert_eq!(errors[0]["subject"], "broken");
     let list = String::from_utf8_lossy(&w.h.run(&["routine", "list", "demo"]).stdout).to_string();
-    assert!(list.contains("landing\ton pr: checks-failed, merged\tthread에 보냄 · 꺼짐\n"), "{list}");
-    assert!(list.contains("pr-followup\ton pr: checks-failed, review\tthread에 보냄\n"), "{list}");
+    assert!(list.contains("landing\ton pr: checks-failed, merged → 주인 thread에 글 · 꺼짐\t지난 기록 없음 · 다음 사건 오면 · 오늘 0 · 건너뜀 - · 출처 routine\n"), "{list}");
+    assert!(list.contains("pr-followup\ton pr: checks-failed, review → 주인 thread에 글\t지난 기록 없음 · 다음 사건 오면 · 오늘 0 · 건너뜀 - · 출처 routine\n"), "{list}");
 
     let task = w.task("pr.md", "PR을 연다");
     let id = w.start(&["--title", "PR", "--profile", "fake", "--repo", path_str(&w.repo), "--task-file", &task])["id"]

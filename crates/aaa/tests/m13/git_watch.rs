@@ -130,11 +130,23 @@ fn git_push_mission_repo_filter_restart_force_delete_and_outage() {
     assert_eq!(std::fs::read(w.repo.join(".git/FETCH_HEAD")).ok(), fetch_head);
     quiet(&w, &db, &key);
     assert_eq!(git_events(&w).len(), 1, "변화 없으면 새 사건 없음");
+    let delivery_runs = |w: &World| -> Vec<Value> {
+        w.h.ok(&["routine", "runs", "demo", "git-main"])["runs"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|r| r["id"].as_str().unwrap().starts_with("git-"))
+            .cloned()
+            .collect()
+    };
+    let history = delivery_runs(&w);
+    assert_eq!(history.len(), 1);
     w.lab.kill("host");
     w.spawn_host("host2");
     wait_for("재연결", T, || (w.h.connected("labA") && w.h.connected("labB")).then_some(()));
     quiet(&w, &db, &key);
     assert_eq!(git_events(&w).len(), 1, "재시작 뒤 같은 SHA는 무음");
+    assert_eq!(delivery_runs(&w), history);
     assert_eq!(w.h.ok(&["mission", "show", "demo", "git-watch"])["mission"]["wakes_today"], 1);
     git(&seed, &["reset", "--hard", &base]);
     std::fs::write(seed.join("forced.txt"), "force\n").unwrap();

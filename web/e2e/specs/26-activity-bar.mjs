@@ -36,9 +36,9 @@ export default async function () {
     try {
       await p.getByTestId("activity-bar").waitFor();
       same(await sidebar(p), { panel: "work", collapsed: false, column: "flex", selected: "activity-work", title: "작업" }, "처음");
-      // 예전 프로젝트·에이전트 두 패널은 「작업」 하나다(plan §8.280): 막대 패널 단추는 작업·머신·특수 셋
+      // 예전 프로젝트·에이전트 두 패널은 「작업」 하나다(plan §8.280): L3 자동화를 더해 막대 패널 단추는 작업·머신·특수·자동화 넷
       const tabs = await p.evaluate(() => [...document.querySelectorAll('.activity-bar [role="tab"]')].map((e) => e.dataset.testid).join(","));
-      if (tabs !== "activity-work,activity-machines,activity-special") throw new Error(`패널 단추: ${tabs}`);
+      if (tabs !== "activity-work,activity-machines,activity-special,activity-automations") throw new Error(`패널 단추: ${tabs}`);
       await p.getByTestId("pane-t1").waitFor();
       const viewWidth = () => p.evaluate(() => Math.round(document.querySelector(".view").getBoundingClientRect().width));
       const wide = await viewWidth();
@@ -66,11 +66,11 @@ export default async function () {
       await p.keyboard.press("Enter");
       await sidebarIs(p, { panel: "machines", collapsed: false }, "Enter로 머신");
       await p.keyboard.press("End");
-      await focusIs(p, "End 특수 단추", '[data-testid="activity-special"]');
+      await focusIs(p, "End 자동화 단추", '[data-testid="activity-automations"]');
       await p.keyboard.press("Home");
       await focusIs(p, "Home 작업 단추", '[data-testid="activity-work"]');
-      const tabStops = await p.evaluate(() => [...document.querySelectorAll('.activity-bar [role="tab"]')].map((e) => e.tabIndex).join(","));
-      if (tabStops !== "-1,0,-1") throw new Error(`Tab이 머무는 단추가 고른 패널 하나가 아니다: ${tabStops}`);
+      const tabStops = await p.evaluate(() => [...document.querySelectorAll('.activity-bar [role="tab"]')].map((e) => ({ id: e.dataset.testid, stop: e.tabIndex })));
+      if (!tabStops.some((t) => t.id === "activity-machines") || tabStops.some((t) => t.stop !== (t.id === "activity-machines" ? 0 : -1))) throw new Error(`Tab이 머무는 단추가 고른 패널 하나가 아니다: ${JSON.stringify(tabStops)}`);
       // Mod+Shift+B(참고 toggle-sidebar): 터미널에 focus가 있어도 앱이 가져가 접고 편다
       await p.getByTestId("terminal").click();
       await p.keyboard.press("ControlOrMeta+Shift+B");
@@ -342,8 +342,8 @@ export default async function () {
     const layout = (p) =>
       p.evaluate(() => {
         const box = (s) => document.querySelector(s).getBoundingClientRect();
-        // 보고서는 패널 단추 묶음 바로 밑: 마지막 패널 단추가 「특수」(plan §8.258·§8.280)다
-        const special = box('[data-testid="activity-special"]');
+        // 보고서는 패널 단추 묶음 바로 밑: 「자동화」(plan §8.281)까지 더해진 묶음 아래다
+        const special = box('[data-testid="activity-automations"]');
         const reports = box('[data-testid="activity-reports"]');
         const foot = document.querySelector(".list-foot");
         const footBox = foot.getBoundingClientRect();

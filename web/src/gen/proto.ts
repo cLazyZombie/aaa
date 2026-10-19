@@ -279,7 +279,9 @@ last_seen_ms: number | null, };
 
 export type HostStatus = { host_id: string, software: string, proto: Version, dev_mode: boolean, agent_listen: string | null, web_listen: string | null, machines: Array<MachineView>, };
 
-export type MissionView = { project: string, name: string, title: string, thread: ThreadView | null, state: string, applied_sha: string | null, file_sha: string | null, approval_sha256: string, approved: boolean, stale: boolean, file_text: string, applied_text: string, diff: string, error: string | null, wakes_today: number, max_wakes: number, work_minutes: bigint, input_bytes: bigint, posts: number, handled_posts: number, pending: number, next_reset_ms: number | null, usage_wait_until_ms: number | null, };
+export type MissionView = { project: string, name: string, title: string, thread: ThreadView | null, state: string, blocked_reason: MissionBlockReason | null, applied_sha: string | null, file_sha: string | null, approval_sha256: string, approved: boolean, stale: boolean, file_text: string, applied_text: string, diff: string, error: string | null, wakes_today: number, max_wakes: number, work_minutes: bigint, input_bytes: bigint, posts: number, handled_posts: number, pending: number, next_reset_ms: number | null, usage_wait_until_ms: number | null, };
+
+export type MissionBlockReason = "question" | "message_unknown" | "wake_unknown" | "brief_unknown" | "restart_failed" | "legacy_unknown";
 
 export type PostType = "notice" | "data" | "request";
 
@@ -375,7 +377,7 @@ discard_uncopied: boolean, } | { "op": "thread_stop", project: string, thread: s
 /**
  * 이 profile로 새 대화를 띄운다(herdr-projects `thread restart --profile`). `resume`과 함께 쓰지 않는다
  */
-profile: string | null, } | { "op": "thread_brief", project: string, thread: string, } | { "op": "thread_read", project: string, thread: string, lines: number | null, } | { "op": "thread_keys", project: string, thread: string, keys: Array<string>, text: string | null, } | { "op": "questions", all: boolean, } | { "op": "question_answer", id: string, choice: string, menu: string | null, pick: MenuPick | null, } | { "op": "thread_message", project: string, thread: string, text: string, mode: MessageMode, } | { "op": "preferences" } | { "op": "preferences_set", settings: Record<string, unknown>, pins: Array<string> | null, } | { "op": "inbox", project: string, all: boolean, peek: boolean, } | { "op": "inbox_done", project: string, ids: Array<string>, all: boolean, } | { "op": "ticker_tick" } | { "op": "mission_list", project: string | null, } | { "op": "mission_show", project: string, name: string, } | { "op": "mission_approve", project: string, name: string, approval_sha256: string, } | { "op": "mission_reject", project: string, name: string, } | { "op": "mission_start", project: string, name: string, } | { "op": "mission_stop", project: string, name: string, } | { "op": "mission_pause", project: string, name: string, } | { "op": "mission_resume", project: string, name: string, } | { "op": "mission_reload", project: string, name: string, } | { "op": "mission_restart", project: string, name: string, } | { "op": "mission_open", project: string, name: string, } | { "op": "routines", project: string, } | { "op": "routine_approve", project: string, name: string, command_sha256: string, } | { "op": "routine_toggle", project: string, name: string, on: boolean | null, } | { "op": "events", project: string | null, after: bigint, limit: number | null, } | { "op": "evaluator_assign", project: string, profile: string, machine: string | null,
+profile: string | null, } | { "op": "thread_brief", project: string, thread: string, } | { "op": "thread_read", project: string, thread: string, lines: number | null, } | { "op": "thread_keys", project: string, thread: string, keys: Array<string>, text: string | null, } | { "op": "questions", all: boolean, } | { "op": "question_answer", id: string, choice: string, menu: string | null, pick: MenuPick | null, } | { "op": "thread_message", project: string, thread: string, text: string, mode: MessageMode, } | { "op": "preferences" } | { "op": "preferences_set", settings: Record<string, unknown>, pins: Array<string> | null, } | { "op": "inbox", project: string, all: boolean, peek: boolean, } | { "op": "inbox_done", project: string, ids: Array<string>, all: boolean, } | { "op": "ticker_tick" } | { "op": "mission_list", project: string | null, } | { "op": "mission_show", project: string, name: string, } | { "op": "mission_approve", project: string, name: string, approval_sha256: string, } | { "op": "mission_reject", project: string, name: string, } | { "op": "mission_start", project: string, name: string, } | { "op": "mission_stop", project: string, name: string, } | { "op": "mission_pause", project: string, name: string, } | { "op": "mission_resume", project: string, name: string, } | { "op": "mission_reload", project: string, name: string, } | { "op": "mission_restart", project: string, name: string, } | { "op": "mission_open", project: string, name: string, } | { "op": "routines", project: string, } | { "op": "routine_runs", project: string, name: string, } | { "op": "routine_approve", project: string, name: string, command_sha256: string, } | { "op": "routine_toggle", project: string, name: string, on: boolean | null, } | { "op": "events", project: string | null, after: bigint, limit: number | null, } | { "op": "evaluator_assign", project: string, profile: string, machine: string | null,
 /**
  * 개선을 직접 고칠 repo(없으면 repo 없는 작업 폴더)
  */
@@ -433,7 +435,7 @@ omitted_open: number,
 /**
  * 응답 크기 한도로 싣지 못한 끝낸 항목 수(`all`, 실은 것은 최근 것부터다)
  */
-omitted_done: number, } | { "kind": "ticker", runs: bigint, } | { "kind": "routines", routines: Array<RoutineView>, } | { "kind": "library" } & LibraryView | { "kind": "library_link" } & LinkView | { "kind": "library_reports", reports: Array<LibraryReport>, } | { "kind": "library_imported", reports: Array<LibraryReport>, skipped: Array<LibrarySkip>, } | { "kind": "library_pruned", removed: Array<string>, } | { "kind": "library_prune_preview" } & LibraryPrunePlan | { "kind": "library_rotated" } | { "kind": "library_usage", size: number, reports: number, live: number, problems: number, max_size: number, max_days: number, protected_size: number, } | { "kind": "library_links", links: Array<LinkView>, } | { "kind": "evaluators", evaluators: Array<EvaluatorView>, } | { "kind": "evaluations", evaluations: Array<EvaluationView>, } | { "kind": "evaluation" } & EvaluationView | { "kind": "preferences" } & SharedPreferences;
+omitted_done: number, } | { "kind": "ticker", runs: bigint, } | { "kind": "routines", routines: Array<RoutineView>, } | { "kind": "routine_runs", runs: Array<RoutineRun>, } | { "kind": "library" } & LibraryView | { "kind": "library_link" } & LinkView | { "kind": "library_reports", reports: Array<LibraryReport>, } | { "kind": "library_imported", reports: Array<LibraryReport>, skipped: Array<LibrarySkip>, } | { "kind": "library_pruned", removed: Array<string>, } | { "kind": "library_prune_preview" } & LibraryPrunePlan | { "kind": "library_rotated" } | { "kind": "library_usage", size: number, reports: number, live: number, problems: number, max_size: number, max_days: number, protected_size: number, } | { "kind": "library_links", links: Array<LinkView>, } | { "kind": "evaluators", evaluators: Array<EvaluatorView>, } | { "kind": "evaluations", evaluations: Array<EvaluationView>, } | { "kind": "evaluation" } & EvaluationView | { "kind": "preferences" } & SharedPreferences;
 
 export type FrontEvent = { "ev": "state", machines: Array<MachineView>, panes: Array<PaneView>, } | { "ev": "workspace" } & Workspace | { "ev": "flow" } & FlowEvent | { "ev": "thread" } & ThreadView | { "ev": "question" } & QuestionView | { "ev": "preferences" } & SharedPreferences | { "ev": "pong", id: number, } | { "ev": "web", build: string, } | { "ev": "reports", unseen: number, } | { "ev": "app_badge", count: number, } | { "ev": "notice" } & NoticeView | { "ev": "chat_changed", pane: string, signature: string, } | { "ev": "chat_watching", pane: string, live: boolean, };
 
@@ -837,7 +839,15 @@ body: string, done: boolean,
  */
 seen: boolean, created_at_ms: number, done_at_ms: number | null, };
 
-export type RoutineView = { name: string,
+export type RoutineView = { name: string, trigger: string, action: string,
+/**
+ * routine 또는 mission. mission:<이름>은 임무 파일의 조건 보기다.
+ */
+origin: string, file: string, last_result: RoutineRun | null, last_skip: RoutineRun | null, today: number, max_per_day: number | null,
+/**
+ * 최근 순서, 최대 20건. 전체 50건은 routine_runs로 읽는다.
+ */
+recent: Array<RoutineRun>,
 /**
  * `every 30m`·`daily 09:00`(파일에 적힌 글)
  */
@@ -870,6 +880,12 @@ no_coordinator: number,
  * 파일을 읽지 못했다
  */
 error: string | null, };
+
+export type RoutineRun = { id: string, at_ms: number,
+/**
+ * done / skipped / waiting / failed
+ */
+status: string, detail: string, thread: string | null, };
 
 export type LibraryFile = {
 /**

@@ -1,6 +1,6 @@
 // 특수 agent 패널(사용자 결정 10-19 「특수 에이전트도 … 왼쪽 아이콘에 등록」, plan §8.258): 임무·사후 평가자 줄의 상태와
 // 활동 막대 배지. 배지는 사람이 볼 것만 센다: 막힘·오류·승인 필요 임무와 확인창이 걸린 평가자.
-import type { EvaluatorView, MissionView, PaneView } from "./gen/proto";
+import type { EvaluatorView, MissionView, PaneView, MissionBlockReason } from "./gen/proto";
 
 /** 줄 색: 막힘(빨강)·일함(파랑)·사람 차례(승인, 노랑)·그 밖(회색) */
 export type SpecialTone = "blocked" | "working" | "need" | "quiet";
@@ -14,7 +14,9 @@ export function missionTone(m: MissionView): SpecialTone {
 /** 둘째 줄 첫 낱말: 오류·승인 필요가 host 상태 낱말보다 먼저 */
 export function missionWord(m: MissionView): string {
   if (m.error) return "오류";
-  return m.approved ? m.state : "승인 필요";
+  const reasons: Record<MissionBlockReason, string> = { question: "확인창", message_unknown: "입력 전달 모름", wake_unknown: "재시작 중 깨움 모름", brief_unknown: "brief 전달 모름", restart_failed: "다시 시작 실패", legacy_unknown: "이유 모름" };
+  if (!m.approved) return "승인 필요";
+  return m.state === "막힘" && m.blocked_reason ? `막힘 · ${reasons[m.blocked_reason]}` : m.state;
 }
 
 /** 평가자 pane의 확인창(질문) */

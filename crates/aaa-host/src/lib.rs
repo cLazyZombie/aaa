@@ -51,6 +51,7 @@ mod resource;
 mod restore;
 mod rollout;
 mod routine;
+mod routine_runs;
 mod seen;
 mod summary;
 pub mod tailscale;
@@ -1487,6 +1488,9 @@ impl Host {
             FrontRequest::MissionOpen { project, name } => self.mission_control(&project, &name, "open", actor).await,
             FrontRequest::Routines { project } => {
                 self.routines(&project).map(|routines| FrontResponse::Routines { routines })
+            }
+            FrontRequest::RoutineRuns { project, name } => {
+                self.routine_runs(&project, &name).map(|runs| FrontResponse::RoutineRuns { runs })
             }
             FrontRequest::RoutineToggle { project, name, on } => {
                 self.routine_toggle(&project, &name, on, actor).map(|routines| FrontResponse::Routines { routines })

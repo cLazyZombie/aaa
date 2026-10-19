@@ -154,6 +154,16 @@ fn ci_conditional_failure_mission_restart_catchup_and_outage() {
         1,
         "처리하지 않은 최초 입력 한 건 외의 새 CI 입력이 없어야 한다"
     );
+    let delivery_runs = |w: &World| -> Vec<Value> {
+        w.h.ok(&["routine", "runs", "demo", "ci-main"])["runs"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|r| r["id"].as_str().unwrap().starts_with("ci-"))
+            .cloned()
+            .collect()
+    };
+    let history = delivery_runs(&w);
     // host 재시작: 같은 SHA는 항목·깨움을 늘리지 않고 created 창을 쪽 넘겨 따라잡는다.
     w.lab.kill("host");
     w.spawn_host("host2");
@@ -173,6 +183,7 @@ fn ci_conditional_failure_mission_restart_catchup_and_outage() {
             .iter()
             .any(|a| a.as_str().is_some_and(|s| s.contains("created=") && s.contains("page=2")))
     }));
+    assert_eq!(delivery_runs(&w), history, "재시작 뒤 같은 전달 기록도 늘지 않는다");
     // 같은 실패 집합은 앞 항목에 추가되며 새 wake는 없다.
     write_runs(&stub, "same", vec![run(3, 'c', "failure"), run(2, 'b', "failure")]);
     phase(&stub, "same");
@@ -185,6 +196,7 @@ fn ci_conditional_failure_mission_restart_catchup_and_outage() {
         1,
         "처리하지 않은 최초 입력 한 건 외의 새 CI 입력이 없어야 한다"
     );
+    assert_eq!(w.h.ok(&["routine", "runs", "demo", "ci-main"])["runs"][0]["detail"], "같은 실패 집합");
     // 꺼진 사이 실패→회복을 함께 받으면 새 깨움 없이 앞 CI 항목을 닫는다.
     w.lab.kill("host2");
     write_runs(&stub, "fixed", vec![run(5, 'e', "success"), run(4, 'd', "failure"), run(3, 'c', "failure")]);
