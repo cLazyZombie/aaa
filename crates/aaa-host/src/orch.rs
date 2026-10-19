@@ -955,6 +955,7 @@ impl Host {
             project_status: self.project_status(&r.project),
             summary: if r.id.is_empty() { None } else { self.summary_mark(&r.project, &r.id) },
             repo: r.repo.clone(),
+            limited_until_ms: self.usage_limit(&r.project, &r.id),
         }
     }
 
