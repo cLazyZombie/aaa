@@ -1,6 +1,6 @@
-//! 붙여 넣은 그림(§8.20 M1-4 웹, §8.28 M3 TUI·CLI).
+//! 붙여 넣은 그림(§8.20 M1-4 웹, §8.28 M3 CLI).
 //!
-//! - 브라우저는 pane WebSocket, TUI·CLI는 Front API(`PaneAttach`)로 512KiB 조각을 보낸다. 조각마다 조작 권한을 확인하고(그 front가 지금 쓰는 화면이 된다),
+//! - 브라우저는 pane WebSocket, CLI는 Front API(`PaneAttach`)로 512KiB 조각을 보낸다. 조각마다 조작 권한을 확인하고(그 front가 지금 쓰는 화면이 된다),
 //!   host에 모으지 않고 바로 대상 머신 agent로 넘긴다(그 사이 화면 출력이 끼어든다).
 //! - 첫 조각의 signature로 PNG·JPEG·GIF·WebP만 받고, 이름은 host가 정한다. agent는 세션 폴더에 0600으로 쓴다.
 //! - 다 받으면 sha256을 대조하고 그 pane에 경로를 셸 따옴표로 감싸 뒤에 빈칸 하나를 붙여 넣는다(herdr-web-ui·herdr처럼

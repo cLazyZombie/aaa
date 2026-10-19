@@ -475,10 +475,10 @@ async fn explicit_restart_recovers_a_blocked_prompt_without_approving_it() {
         };
         *f._screen.lock().unwrap() = screen;
         if visible {
-            l.h.inner.lock().unwrap().panes.get_mut("s1").unwrap().lease =
-                Some(crate::FrontRef { id: "viewer".into(), label: "tui".into() });
-            l.h.view_draw("viewer", "s1", true);
-            assert!(l.h.someone_sees("s1", l.h.inner.lock().unwrap().panes.get("s1").unwrap().lease.as_ref()));
+            let conn = l.h.conn_open("viewer");
+            l.h.view_presence(conn, "viewer", true);
+            l.h.view_term("web-viewer", "viewer", Some("s1"));
+            assert!(l.h.someone_sees("s1"));
         }
         l.queue("demo", "watch", "r-preserved".into(), "routine", "보존할 입력".into()).unwrap();
         let work = std::path::Path::new(r.work_dir.as_ref().unwrap());

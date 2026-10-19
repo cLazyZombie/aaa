@@ -3,10 +3,7 @@
 //! 기획서는 ghostty-vt를 1순위로 두었지만 빌드에 Zig 0.16이 필요해 M1-1은 순수 Rust `vt100`을 쓴다.
 //! 이 adapter 뒤에서 엔진을 바꿀 수 있게 front·host 쪽은 replay bytes와 글자 화면만 본다.
 
-use aaa_proto::{GridRun, MouseEncoding, MouseMode, PaneModes, ReadFormat, ReadSource, ScreenText, TermColors};
-
-pub mod copy;
-mod link;
+use aaa_proto::{ReadFormat, ReadSource, ScreenText, TermColors};
 
 pub struct Vt {
     parser: vt100::Parser<Modes>,
@@ -17,17 +14,10 @@ pub struct Vt {
 struct Modes {
     /// modifyOtherKeys 단계(`CSI > 4 ; n m`). Claude Code는 2를 요청하고 Ctrl+Enter를 `CSI 27;5;13~`로 받는다.
     modify_other_keys: u16,
-    /// 이번 feed의 OSC 52 쓰기. 화면 replay와 별개인 일회성 client 효과다.
-    clipboard: Vec<String>,
     /// harness 상태 감지에 쓰는 마지막 OSC 0/2 제목과 OSC 9 진행 payload(herdr `AgentOscStateTracker`, pane/osc.rs 494~565).
     /// Claude·Codex는 제목 앞 spinner로 작업 중을 알린다. 빈 제목은 지운다.
     osc_title: Option<String>,
     osc_progress: Option<String>,
-    /// OSC 8 링크 구간(vt100은 칸에 링크를 담지 않는다, [`link`]). normal 화면 구간의 줄은 「버린 줄 + 절대 줄」인 전역 줄이다.
-    links: link::Links,
-    /// 기록이 가득해 맨 앞에서 버린 줄 수(전역 줄의 바탕)와, 세는 중이면 그 feed 앞의 기록 줄 수([`Vt::feed`])
-    dropped: usize,
-    counting: Option<usize>,
 }
 
 /// herdr `AGENT_OSC_MAX_CHARS`: 제목은 프로그램이 정한 글이라 길이를 묶는다
@@ -43,72 +33,18 @@ impl Modes {
         let title = sanitize_osc(payload);
         self.osc_title = (!title.is_empty()).then_some(title);
     }
-
-    /// OSC 8을 열거나(빈 uri면) 닫는다. 자리는 지금 커서의 전역 자리다(alt 화면은 화면 줄).
-    fn hyperlink(&mut self, screen: &mut vt100::Screen, uri: &[u8]) {
-        let uri: String =
-            String::from_utf8_lossy(uri).chars().filter(|c| !c.is_control()).take(link::MAX_URI_CHARS).collect();
-        let alt = screen.alternate_screen();
-        let base = if alt { 0 } else { self.dropped_now(screen) };
-        let back = screen_back(screen);
-        let (r, c) = screen.cursor_position();
-        let end = (back + usize::from(r), c);
-        self.links.osc(&uri, alt, (base + end.0, c), |start| {
-            // 연 뒤 기록 맨 앞으로 밀려 버려진 구간은 남기지 않는다
-            let start = (start.0.checked_sub(base)?, start.1);
-            Some(span_text(screen, back, start, end))
-        });
-    }
-
-    /// 지금까지 버린 줄 수. feed 중이면 이 feed에서 버린 줄도 센다: 기록 위치를 1에 두고 시작하면 vt100은 줄을 기록에 넣을
-    /// 때마다 위치를 1 올리므로(기록 길이까지) 넣은 줄 수 − 늘어난 기록 = 버린 줄이다.
-    fn dropped_now(&self, screen: &mut vt100::Screen) -> usize {
-        match self.counting {
-            Some(len0) if len0 > 0 => {
-                let pushed = screen.scrollback().saturating_sub(1);
-                let len = screen_back(screen);
-                self.dropped + (pushed + len0).saturating_sub(len)
-            }
-            _ => self.dropped,
-        }
-    }
 }
 
-const MAX_CLIPBOARD_BYTES: usize = 64 << 10;
-const MAX_CLIPBOARD_WRITES: usize = 8;
-
 impl vt100::Callbacks for Modes {
-    fn copy_to_clipboard(&mut self, _: &mut vt100::Screen, _: &[u8], data: &[u8]) {
-        use base64::Engine;
-        // 제어 frame 상한 안에 든다(JSON escape 최악 6배). 질의·잘못된 UTF-8·NUL은 전달하지 않는다.
-        if data.len() > MAX_CLIPBOARD_BYTES.div_ceil(3) * 4 || self.clipboard.len() >= MAX_CLIPBOARD_WRITES {
-            return;
-        }
-        let Ok(bytes) = base64::engine::general_purpose::STANDARD.decode(data) else { return };
-        let Ok(text) = String::from_utf8(bytes) else { return };
-        if text.len() <= MAX_CLIPBOARD_BYTES && !text.contains('\0') {
-            self.clipboard.push(text);
-        }
-    }
-
     fn set_window_title(&mut self, _: &mut vt100::Screen, title: &[u8]) {
         self.title(title);
     }
 
     /// vt100(vte)은 OSC 본문을 `;`마다 나눈다. herdr는 첫 `;`에서만 나누므로(`parse_agent_osc_body`) 나머지를 다시 잇는다:
     /// `;`가 든 제목과 OSC 9 진행(`9;4;3;` → `4;3;`)이 여기로 온다.
-    fn unhandled_osc(&mut self, screen: &mut vt100::Screen, params: &[&[u8]]) {
+    fn unhandled_osc(&mut self, _: &mut vt100::Screen, params: &[&[u8]]) {
         let [command, rest @ ..] = params else { return };
         if rest.is_empty() {
-            return;
-        }
-        // `OSC 8 ; params ; uri`: uri의 `;`도 나뉘어 온다
-        if *command == b"8" {
-            if let [_, uri @ ..] = rest
-                && !uri.is_empty()
-            {
-                self.hyperlink(screen, &uri.join(&b';'));
-            }
             return;
         }
         let payload = rest.join(&b';');
@@ -158,81 +94,17 @@ impl Vt {
         Vt { parser: vt100::Parser::new_with_callbacks(rows.max(1), cols.max(1), SCROLLBACK, Modes::default()) }
     }
 
-    /// 화면 사본에 넣는다. 버린 줄을 세려고(`count_start`) alt 화면 전환 자리에서 나눠 넣는다: vt100은 alt 화면에 들어갈 때
-    /// normal 화면의 기록 위치를 0으로 돌려(`enter_alternate_grid`) 그 앞에서 넣은 줄의 셈이 사라진다.
+    /// 화면 사본에 넣는다. 웹에는 원래 출력 bytes를 전달한다.
     pub fn feed(&mut self, bytes: &[u8]) {
-        self.parser.callbacks_mut().clipboard.clear();
-        let mut from = 0;
-        for cut in alt_switch_cuts(bytes).into_iter().chain([bytes.len()]) {
-            self.count_start();
-            self.parser.process(&bytes[from..cut]);
-            self.count_end();
-            from = cut;
-        }
+        self.parser.process(bytes);
     }
 
-    /// 바로 앞 feed에서 완료된 OSC 52 쓰기만 한 번 꺼낸다. replay를 먹인 호출자는 꺼내지 않는다.
-    pub fn take_clipboard_writes(&mut self) -> Vec<String> {
-        std::mem::take(&mut self.parser.callbacks_mut().clipboard)
-    }
-
-    /// 버린 줄 세기를 연다(`Modes::dropped_now`). 기록 위치는 읽을 때만 옮기고 늘 0으로 두므로 feed 동안 1에 두어도 다른 읽기와
-    /// 겹치지 않는다. alt 화면이면 세지 않는다(그동안 normal 기록은 늘지 않는다).
-    fn count_start(&mut self) {
-        if self.parser.callbacks().counting.is_some() {
-            return;
-        }
-        let screen = self.parser.screen_mut();
-        if screen.alternate_screen() {
-            return;
-        }
-        let len = screen_back(screen);
-        if len > 0 {
-            screen.set_scrollback(1);
-        }
-        self.parser.callbacks_mut().counting = Some(len);
-    }
-
-    /// 버린 줄을 더하고 기록 위치를 0으로 되돌린다. alt 화면에 들어가는 자리 앞에서 나눠 넣으므로 alt 화면에서 끝나면 그 조각은
-    /// alt 화면에서 시작했거나 sequence가 feed 사이에 끊긴 것이다: 셈을 버린다(vt100이 normal 위치를 이미 0으로 돌렸다).
-    fn count_end(&mut self) {
-        let screen = self.parser.screen_mut();
-        if screen.alternate_screen() {
-            self.parser.callbacks_mut().counting = None;
-            return;
-        }
-        let offset = screen.scrollback();
-        let len = screen_back(screen);
-        screen.set_scrollback(0);
-        let m = self.parser.callbacks_mut();
-        let Some(len0) = m.counting.take() else { return };
-        // 빈 기록에서 시작했으면 세지 못했다: 한 번에 기록을 다 채웠으면 버린 줄을 모르니 남긴 구간을 버린다. 가득 찬 기록에서
-        // 위치가 기록 길이에 닿았으면(한 번에 기록 전부를 넘게 밀었을 수 있다) 마찬가지다.
-        if len == SCROLLBACK && (len0 == 0 || offset >= len) {
-            m.links.clear_normal();
-        }
-        if len0 > 0 {
-            m.dropped += (offset.saturating_sub(1) + len0).saturating_sub(len);
-        }
-    }
-
-    /// 크기를 바꾼다. xterm처럼 폭을 먼저, 줄 수를 그다음 바꾼다.
-    /// - 폭이 바뀌면 기록과 화면을 새 폭으로 다시 접는다(reflow). vt100 `set_size`는 폭이 줄면 줄 끝을 버려, 휴대폰이 좁게 쥐었다
-    ///   놓으면 넓은 화면에서 줄 오른쪽이 비었다(coordinator 10-18, t-0330 발견). herdr는 ghostty가 다시 접는다(src/pane.rs 110줄).
-    /// - 줄 수만 바뀌어도 화면에 접힌 줄이 있으면 다시 쓴다: vt100 `set_size`는 보이는 줄의 이음 표시를 지워(`Row::resize`) 휴대폰
-    ///   키보드가 열렸다 닫히기만 해도 나중에 넓힐 때 그 줄이 펴지지 않았다.
-    /// - 줄이 줄면 커서 아래 줄을 먼저 버리고, 그래도 커서 줄이 새 높이 밖이면 그만큼 위 줄을 기록으로 올린다. vt100 `set_size`는
-    ///   아래 줄을 잘라 버려(커서 줄과 프롬프트가 사라진다) xterm·herdr(ghostty)와 달랐다(plan §8.59).
     pub fn resize(&mut self, rows: u16, cols: u16) {
         let (rows, cols) = (rows.max(1), cols.max(1));
         let (old_rows, old_cols) = self.parser.screen().size();
         if (rows, cols) == (old_rows, old_cols) {
             return;
         }
-        // 다시 접거나 줄을 올리면 남긴 링크 자리가 맞지 않는다. 다시 접으면 새 parser라 버린 줄 세기도 새로 한다.
-        let m = self.parser.callbacks_mut();
-        m.links.clear();
-        m.counting = None;
         let screen = self.parser.screen_mut();
         let alt = screen.alternate_screen();
         let rewrap = if cols != old_cols {
@@ -396,328 +268,6 @@ impl Vt {
         Some(Older { data, lines: lines.len(), more: i > 0 })
     }
 
-    /// 한 줄을 같은 모양 글자 묶음으로(TUI front가 칸에 그린다). 넓은 글자의 뒤 칸은 건너뛴다.
-    pub fn grid_row(&self, row: u16) -> Vec<GridRun> {
-        let screen = self.parser.screen();
-        let (_, cols) = screen.size();
-        let mut runs: Vec<GridRun> = Vec::new();
-        for col in 0..cols {
-            let Some(cell) = screen.cell(row, col) else { continue };
-            if cell.is_wide_continuation() {
-                continue;
-            }
-            let t = if cell.has_contents() { cell.contents() } else { " " };
-            let a = u8::from(cell.bold())
-                | (u8::from(cell.italic()) << 1)
-                | (u8::from(cell.underline()) << 2)
-                | (u8::from(cell.inverse()) << 3);
-            let (fg, bg) = (color(cell.fgcolor()), color(cell.bgcolor()));
-            match runs.last_mut() {
-                Some(r) if r.fg == fg && r.bg == bg && r.a == a => r.t.push_str(t),
-                _ => runs.push(GridRun { t: t.to_string(), fg, bg, a }),
-            }
-        }
-        // 줄 끝의 기본 모양 공백은 보내지 않는다
-        if let Some(r) = runs.last_mut()
-            && r.fg == 0
-            && r.bg == 0
-            && r.a == 0
-        {
-            let trimmed = r.t.trim_end_matches(' ').len();
-            r.t.truncate(trimmed);
-            if r.t.is_empty() {
-                runs.pop();
-            }
-        }
-        runs
-    }
-
-    /// 맨 아래에서 `offset`줄 올라간 자리의 화면 줄과 normal screen 기록 줄 수(TUI 휠 기록 넘기기, herdr `scroll_up`).
-    /// alt 화면이면 기록이 없다(지금 화면, 0). 기록 위치는 읽고 바로 되돌린다(다른 읽기는 늘 지금 화면을 본다).
-    pub fn grid_rows_at(&mut self, offset: usize) -> (Vec<Vec<GridRun>>, usize) {
-        let (rows, _) = self.parser.screen().size();
-        if self.parser.screen().alternate_screen() {
-            return ((0..rows).map(|r| self.grid_row(r)).collect(), 0);
-        }
-        let max = self.history_len();
-        self.parser.screen_mut().set_scrollback(offset.min(max));
-        let lines = (0..rows).map(|r| self.grid_row(r)).collect();
-        self.parser.screen_mut().set_scrollback(0);
-        (lines, max)
-    }
-
-    /// 고른 글(herdr `PaneSelectionRead` → ghostty `read_text_screen`). 줄 번호는 기록 맨 앞 줄이 0이고 화면 줄이 그 뒤에
-    /// 잇는다(alt 화면이면 화면 줄만). `from`·`to`는 읽는 차례와 상관없고 끝 칸까지 넣는다. 화면 폭에서 접힌 줄은 줄바꿈 없이
-    /// 잇고, 접히지 않은 줄은 끝 공백을 뺀다. `max_bytes`를 넘으면 앞쪽만 두고 `true`.
-    pub fn selection_text(&mut self, from: (usize, u16), to: (usize, u16), max_bytes: usize) -> (String, bool) {
-        let ((r1, c1), (r2, c2)) = if from <= to { (from, to) } else { (to, from) };
-        let back = if self.parser.screen().alternate_screen() { 0 } else { self.history_len() };
-        let screen = self.parser.screen_mut();
-        let (rows, cols) = screen.size();
-        let last = back + usize::from(rows) - 1;
-        if r1 > last {
-            return (String::new(), false);
-        }
-        let r2 = r2.min(last);
-        let mut out = String::new();
-        let mut truncated = false;
-        for i in r1..=r2 {
-            // 기록 줄 i를 맨 위에 두려면 위로 (back - i)줄 올린다. 화면 줄이면 올리지 않는다.
-            let (offset, row) = if i < back { (back - i, 0) } else { (0, i - back) };
-            screen.set_scrollback(offset);
-            let start = if i == r1 { c1.min(cols) } else { 0 };
-            let end = if i == r2 { c2.saturating_add(1).min(cols) } else { cols };
-            let mut t = screen.rows(start, end.saturating_sub(start)).nth(row).unwrap_or_default();
-            let wrapped = screen.row_wrapped(row as u16);
-            if !wrapped || i == r2 {
-                t.truncate(t.trim_end().len());
-            }
-            if out.len() + t.len() + 1 > max_bytes {
-                truncated = true;
-                if out.ends_with('\n') {
-                    out.pop();
-                }
-                break;
-            }
-            out.push_str(&t);
-            if i < r2 && !wrapped {
-                out.push('\n');
-            }
-        }
-        screen.set_scrollback(0);
-        (out, truncated)
-    }
-
-    /// copy 모드 낱말·문단 이동(herdr `pane.copy_motion`). 갈 곳이 없으면 커서 그대로, 문단 이동은 칸을 지킨다.
-    pub fn copy_motion(&mut self, cursor: copy::Point, m: copy::Motion) -> copy::Point {
-        let total = self.total_rows();
-        if cursor.0 >= total {
-            return cursor;
-        }
-        match m {
-            copy::Motion::PreviousParagraph | copy::Motion::NextParagraph => {
-                // herdr `paragraph_motion_target`: 999줄 안의 바로 위·아래 빈 줄(이어진 빈 줄도 한 줄씩)
-                let reach = total.min(1000) - 1;
-                let up = m == copy::Motion::PreviousParagraph;
-                let (lo, hi) = if up {
-                    if cursor.0 == 0 {
-                        return cursor;
-                    }
-                    (cursor.0.saturating_sub(reach), cursor.0 - 1)
-                } else {
-                    if cursor.0 + 1 >= total {
-                        return cursor;
-                    }
-                    (cursor.0 + 1, (cursor.0 + reach).min(total - 1))
-                };
-                let rows = self.text_rows(lo, hi);
-                let at = if up { rows.iter().rposition(copy::is_blank) } else { rows.iter().position(copy::is_blank) };
-                at.map_or(cursor, |k| (lo + k, cursor.1))
-            }
-            _ => self.word_motion(cursor, m, total).unwrap_or(cursor),
-        }
-    }
-
-    /// herdr `word_motion_target`: 64줄 창에서 찾고, 못 찾았거나 낱말이 창 끝 너머로 이어질 수 있으면 창을 두 배로
-    fn word_motion(&mut self, cursor: copy::Point, m: copy::Motion, total: usize) -> Option<copy::Point> {
-        let mut window = 64usize;
-        loop {
-            let (start, end) = if m.backward() {
-                (cursor.0.saturating_sub(window - 1), cursor.0)
-            } else {
-                (cursor.0, (cursor.0 + window - 1).min(total - 1))
-            };
-            // 뒤로 갈 때는 창 바로 위 줄이 접혔는지(낱말이 위로 이어지는가)도 본다
-            let lead = m.backward() && start > 0;
-            let read = self.text_rows(if lead { start - 1 } else { start }, end);
-            let (above_wrapped, rows) = if lead { (read[0].wrapped, &read[1..]) } else { (false, &read[..]) };
-            let target = copy::word_target(rows, start, cursor, m);
-            let more = match target {
-                None => true,
-                Some(t) if m.backward() => t.0 == start && above_wrapped,
-                Some(t) if m.word_end() => {
-                    rows.last().is_some_and(|r| r.wrapped && r.cells.last().is_some_and(|c| (end, c.col) == t))
-                }
-                Some(_) => false,
-            };
-            let edge = if m.backward() { start == 0 } else { end + 1 >= total };
-            if !more || edge {
-                return target;
-            }
-            window *= 2;
-        }
-    }
-
-    /// copy 모드 찾기(herdr `pane.copy_search`): 기록과 화면 전체에서 `query`를 찾아 커서(`previous`가 있으면 그 범위) 다음
-    /// 일치와 그 언저리 `keep`개를 준다
-    pub fn copy_search(
-        &mut self,
-        query: &str,
-        forward: bool,
-        cursor: copy::Point,
-        previous: Option<copy::Range>,
-        keep: usize,
-    ) -> copy::Found {
-        let Some(m) = copy::Matcher::new(query) else { return copy::Found::default() };
-        let total = self.total_rows();
-        let (mut lines, mut all) = (copy::Lines::default(), Vec::new());
-        let mut i = 0;
-        while i < total {
-            let end = (i + 255).min(total - 1);
-            for (k, r) in self.text_rows(i, end).iter().enumerate() {
-                lines.push_row(i + k, r, &m, &mut all);
-            }
-            i = end + 1;
-        }
-        lines.finish(&m, &mut all);
-        copy::pick(all, forward, cursor, previous, keep)
-    }
-
-    /// 기록과 화면을 이은 줄 수(alt 화면이면 화면 줄 수)
-    fn total_rows(&mut self) -> usize {
-        let back = self.history_rows();
-        back + usize::from(self.parser.screen().size().0)
-    }
-
-    /// 절대 줄 `start..=end`의 칸(넓은 글자 뒤 칸은 뺀다)과 접힘
-    fn text_rows(&mut self, start: usize, end: usize) -> Vec<copy::Row> {
-        let back = self.history_rows();
-        text_cells(self.parser.screen_mut(), back, start, end)
-    }
-
-    /// 절대 자리 `at`(기록 맨 앞이 0)을 누르면 열 링크(herdr `pane.link.activate`): 그 칸을 덮는 OSC 8 링크의 uri, 없으면
-    /// 그 칸을 포함한 공백 사이 낱말(접힌 줄을 잇는다) 안의 http(s) URL. 여는 것은 http·https만이다([`link`]).
-    pub fn link_at(&mut self, at: (usize, u16)) -> Option<String> {
-        let alt = self.parser.screen().alternate_screen();
-        let back = self.history_rows();
-        let rows = usize::from(self.parser.screen().size().0);
-        if at.0 >= back + rows {
-            return None;
-        }
-        if let Some(uri) = self.osc8_at(at, alt, back) {
-            return link::safe_web_url(&uri).then_some(uri);
-        }
-        self.text_url_at(at, back + rows)
-    }
-
-    /// `at`을 덮는 OSC 8 구간의 uri(새것부터). 그 자리 글이 남긴 글과 다르면(덮어썼으면) 링크가 아니다.
-    fn osc8_at(&mut self, at: (usize, u16), alt: bool, back: usize) -> Option<String> {
-        self.live_spans(alt, back, at.0, at.0)
-            .into_iter()
-            .rev()
-            .find(|(s, e, _)| *s <= at && at < *e)
-            .map(|(_, _, uri)| uri)
-    }
-
-    /// 절대 줄 `lo..=hi`에 걸친 OSC 8 구간(오래된 것부터): 절대 자리 (시작, 끝)과 uri. 남긴 글이 그 자리 글과 같은 것만이다.
-    fn live_spans(&mut self, alt: bool, back: usize, lo: usize, hi: usize) -> Vec<LiveSpan> {
-        let m = self.parser.callbacks();
-        let base = if alt { 0 } else { m.dropped };
-        // host 전역 lock 안에서 frame마다 부르므로 줄 범위로 먼저 거른 뒤 복제한다
-        let spans: Vec<link::Span> = m
-            .links
-            .spans
-            .iter()
-            .filter(|s| s.alt == alt && s.end.0 >= base + lo && s.start.0 <= base + hi)
-            .cloned()
-            .collect();
-        let screen = self.parser.screen_mut();
-        let mut out = Vec::new();
-        for span in spans {
-            let (Some(s0), Some(e0)) = (span.start.0.checked_sub(base), span.end.0.checked_sub(base)) else { continue };
-            let (start, end) = ((s0, span.start.1), (e0, span.end.1));
-            if e0 < lo || s0 > hi || span_text(screen, back, start, end) != span.text {
-                continue;
-            }
-            out.push((start, end, span.uri));
-        }
-        out
-    }
-
-    /// 기록 위치 `offset`(맨 아래에서 올라간 줄)에서 보이는 화면의 OSC 8 링크 칸: (화면 줄, 시작 칸, 끝 칸(넣지 않음), uri).
-    /// 겹치면 새 구간이 앞선다. host가 grid frame에 실어 front가 바깥 터미널에 다시 내보낸다(herdr `visible_hyperlinks`).
-    pub fn visible_links(&mut self, offset: usize) -> Vec<aaa_proto::GridLink> {
-        let alt = self.parser.screen().alternate_screen();
-        let (rows, cols) = self.parser.screen().size();
-        let back = self.history_rows();
-        let top = back - offset.min(back);
-        let (h, w) = (usize::from(rows), usize::from(cols));
-        let mut cells: Vec<Option<usize>> = vec![None; h * w];
-        let spans = self.live_spans(alt, back, top, top + h - 1);
-        for (k, (start, end, _)) in spans.iter().enumerate() {
-            for r in start.0.max(top)..=end.0.min(top + h - 1) {
-                let from = if r == start.0 { usize::from(start.1) } else { 0 };
-                let to = if r == end.0 { usize::from(end.1) } else { w };
-                for c in from..to.min(w) {
-                    cells[(r - top) * w + c] = Some(k);
-                }
-            }
-        }
-        let mut out = Vec::new();
-        for r in 0..h {
-            let mut c = 0;
-            while c < w {
-                let Some(k) = cells[r * w + c] else {
-                    c += 1;
-                    continue;
-                };
-                let from = c;
-                while c < w && cells[r * w + c] == Some(k) {
-                    c += 1;
-                }
-                out.push(aaa_proto::GridLink {
-                    row: r as u16,
-                    col: from as u16,
-                    end: c as u16,
-                    uri: spans[k].2.clone(),
-                });
-            }
-        }
-        out
-    }
-
-    /// `at`을 포함한 접힌 줄 묶음에서 그 칸을 덮는 http(s) URL
-    fn text_url_at(&mut self, at: (usize, u16), total: usize) -> Option<String> {
-        let cols = usize::from(self.parser.screen().size().1);
-        let reach = link::MAX_TOKEN_CELLS / cols.max(1) + 1;
-        let lo = at.0.saturating_sub(reach);
-        let hi = (at.0 + reach).min(total - 1);
-        let rows = self.text_rows(lo, hi);
-        // 누른 줄이 든 접힌 묶음: 앞 줄이 접혔으면 위로, 이 줄이 접혔으면 아래로 잇는다
-        let k = at.0 - lo;
-        let mut first = k;
-        while first > 0 && rows[first - 1].wrapped {
-            first -= 1;
-        }
-        let mut last = k;
-        while last + 1 < rows.len() && rows[last].wrapped {
-            last += 1;
-        }
-        let mut cells = Vec::new();
-        let mut clicked = None;
-        for (i, row) in rows[first..=last].iter().enumerate() {
-            let n = row.cells.len();
-            for (j, c) in row.cells.iter().enumerate() {
-                // 넓은 글자가 다음 줄로 넘어가며 남긴 접힌 줄 끝 빈 칸(copy `Row::spacer`)은 낱말을 끊지 않는다
-                if row.wrapped && j + 1 == n && c.text.is_empty() {
-                    continue;
-                }
-                if first + i == k && (c.col..=c.end_col).contains(&at.1) {
-                    clicked = Some(cells.len());
-                }
-                let ch = c.text.chars().next().unwrap_or(' ');
-                cells.push(link::TextCell { ch, text: if c.text.is_empty() { " ".into() } else { c.text.clone() } });
-            }
-        }
-        link::url_at(&cells, clicked?)
-    }
-
-    /// normal screen 기록 줄 수(alt 화면이면 0)
-    pub fn history_rows(&mut self) -> usize {
-        if self.parser.screen().alternate_screen() { 0 } else { self.history_len() }
-    }
-
-    /// (줄, 칸, 보이는가)
     pub fn cursor(&self) -> (u16, u16, bool) {
         let screen = self.parser.screen();
         let (r, c) = screen.cursor_position();
@@ -881,27 +431,6 @@ impl Vt {
             application_cursor: s.application_cursor(),
             bracketed_paste: s.bracketed_paste(),
             modify_other_keys: self.parser.callbacks().modify_other_keys,
-        }
-    }
-
-    /// 화면에 실어 보내는 모드(TUI가 마우스를 넘기고 휠·화살표를 고른다). vt100은 1015(urxvt)·1016(SGR 픽셀)을 모른다.
-    pub fn pane_modes(&self) -> PaneModes {
-        let s = self.parser.screen();
-        PaneModes {
-            mouse: match s.mouse_protocol_mode() {
-                vt100::MouseProtocolMode::None => MouseMode::None,
-                vt100::MouseProtocolMode::Press => MouseMode::Press,
-                vt100::MouseProtocolMode::PressRelease => MouseMode::PressRelease,
-                vt100::MouseProtocolMode::ButtonMotion => MouseMode::ButtonMotion,
-                vt100::MouseProtocolMode::AnyMotion => MouseMode::AnyMotion,
-            },
-            mouse_encoding: match s.mouse_protocol_encoding() {
-                vt100::MouseProtocolEncoding::Default => MouseEncoding::Default,
-                vt100::MouseProtocolEncoding::Utf8 => MouseEncoding::Utf8,
-                vt100::MouseProtocolEncoding::Sgr => MouseEncoding::Sgr,
-            },
-            alt_screen: s.alternate_screen(),
-            app_cursor: s.application_cursor(),
         }
     }
 
@@ -1183,93 +712,6 @@ fn encode_key(key: Key, m: Mods, modes: &KeyModes) -> Vec<u8> {
 /// 위 줄을 기록으로 올린다(plan §8.59).
 /// 절대 줄 `start..=end`의 칸(넓은 글자 뒤 칸은 뺀다)과 접힘. `back`은 기록 줄 수(alt 화면이면 0). 화면 높이씩 기록을 올려
 /// 읽고 읽기 전 위치(feed 밖이면 맨 아래, feed 안 콜백이면 버린 줄 세기 위치)로 되돌린다.
-fn text_cells(screen: &mut vt100::Screen, back: usize, start: usize, end: usize) -> Vec<copy::Row> {
-    let was = screen.scrollback();
-    let (rows, cols) = screen.size();
-    let total = back + usize::from(rows);
-    if start >= total || start > end {
-        return vec![];
-    }
-    let end = end.min(total - 1);
-    let mut out = Vec::with_capacity(end + 1 - start);
-    let mut i = start;
-    while i <= end {
-        let (offset, first) = if i < back { (back - i, 0) } else { (0, i - back) };
-        screen.set_scrollback(offset);
-        let take = (usize::from(rows) - first).min(end + 1 - i);
-        for k in 0..take {
-            let r = (first + k) as u16;
-            let mut cells = Vec::with_capacity(usize::from(cols));
-            for c in 0..cols {
-                let Some(cell) = screen.cell(r, c) else { continue };
-                if cell.is_wide_continuation() {
-                    continue;
-                }
-                let end_col = if cell.is_wide() { (c + 1).min(cols - 1) } else { c };
-                cells.push(copy::Cell { col: c, end_col, text: cell.contents().to_string() });
-            }
-            out.push(copy::Row { cells, wrapped: screen.row_wrapped(r) });
-        }
-        i += take;
-    }
-    screen.set_scrollback(was);
-    out
-}
-
-/// 지금 화면에서 확인한 OSC 8 구간: 절대 자리 (시작, 끝(넣지 않음))과 uri
-type LiveSpan = ((usize, u16), (usize, u16), String);
-
-/// alt 화면 전환(`CSI ? 47·1047·1049 h·l`)에서 나눌 자리: 들어가기는 sequence 앞, 나오기는 뒤
-fn alt_switch_cuts(bytes: &[u8]) -> Vec<usize> {
-    let mut cuts = Vec::new();
-    let mut i = 0;
-    while let Some(k) = bytes[i..].windows(3).position(|w| w == b"\x1b[?") {
-        let start = i + k;
-        let mut j = start + 3;
-        while j < bytes.len() && (bytes[j].is_ascii_digit() || bytes[j] == b';') {
-            j += 1;
-        }
-        i = start + 3;
-        let Some(&end) = bytes.get(j) else { break };
-        let alt = bytes[start + 3..j].split(|b| *b == b';').any(|p| matches!(p, b"47" | b"1047" | b"1049"));
-        match end {
-            b'h' if alt => cuts.push(start),
-            b'l' if alt => cuts.push(j + 1),
-            _ => {}
-        }
-    }
-    cuts.retain(|c| *c > 0 && *c < bytes.len());
-    cuts.dedup();
-    cuts
-}
-
-/// 기록 줄 수(alt 화면이면 0). 콜백 안에서도 읽게 화면만 받는다.
-fn screen_back(screen: &mut vt100::Screen) -> usize {
-    if screen.alternate_screen() {
-        return 0;
-    }
-    let was = screen.scrollback();
-    screen.set_scrollback(usize::MAX);
-    let n = screen.scrollback();
-    screen.set_scrollback(was);
-    n
-}
-
-/// 절대 자리 `start`부터 `end` 앞까지의 글(빈 칸은 공백). OSC 8 구간을 남길 때와 찾을 때 같은 글인지 견준다.
-fn span_text(screen: &mut vt100::Screen, back: usize, start: (usize, u16), end: (usize, u16)) -> String {
-    let mut out = String::new();
-    for (k, row) in text_cells(screen, back, start.0, end.0).iter().enumerate() {
-        let r = start.0 + k;
-        for c in &row.cells {
-            if (r == start.0 && c.col < start.1) || (r == end.0 && c.col >= end.1) {
-                continue;
-            }
-            out.push_str(if c.text.is_empty() { " " } else { &c.text });
-        }
-    }
-    out
-}
-
 fn resize_grid<C: vt100::Callbacks>(parser: &mut vt100::Parser<C>, rows: u16, cols: u16) {
     let (old_rows, _) = parser.screen().size();
     let (cursor_row, cursor_col) = parser.screen().cursor_position();
@@ -1779,14 +1221,6 @@ fn history_row(s: &vt100::Screen, r: u16, cols: u16, joins: bool, out: &mut Vec<
     out.extend_from_slice(if joins { b"\x1b[m" } else { b"\x1b[m\r\n" });
 }
 
-fn color(c: vt100::Color) -> u32 {
-    match c {
-        vt100::Color::Default => 0,
-        vt100::Color::Idx(i) => 0x0100_0000 | u32::from(i),
-        vt100::Color::Rgb(r, g, b) => 0x0200_0000 | (u32::from(r) << 16) | (u32::from(g) << 8) | u32::from(b),
-    }
-}
-
 /// 프로그램이 터미널에 묻는 것 중 session host가 답하는 것(답은 herdr 0.9.5의 ghostty와 같다)
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Query {
@@ -2068,18 +1502,6 @@ mod width_cases;
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn grid_runs_group_styles_and_skip_wide_continuation() {
-        let mut v = Vt::new(3, 20);
-        v.feed("a한\x1b[1;31mB\x1b[0m  ".as_bytes());
-        let row = v.grid_row(0);
-        assert_eq!(row.len(), 2);
-        assert_eq!((row[0].t.as_str(), row[0].fg, row[0].a), ("a한", 0, 0));
-        assert_eq!((row[1].t.as_str(), row[1].fg, row[1].a), ("B", 0x0100_0001, 1));
-        assert!(v.grid_row(1).is_empty());
-        assert_eq!(v.cursor(), (0, 6, true));
-    }
 
     /// `ScreenText.ansi`는 `read`의 Visible·Ansi와 같은 글이다(prompt_box가 흐린 placeholder를 가른다)
     #[test]
@@ -2447,252 +1869,6 @@ mod tests {
         }
     }
 
-    /// 기록 위치에서 읽은 줄(herdr `scroll_up`), 끝에서 멈춤, 읽은 뒤 지금 화면 그대로, alt 화면은 기록 없음
-    #[test]
-    fn grid_rows_at_scrollback_offset() {
-        let mut v = Vt::new(3, 10);
-        for i in 1..=8 {
-            v.feed(format!("{i}\r\n").as_bytes());
-        }
-        let text = |rows: Vec<Vec<GridRun>>| {
-            rows.iter().map(|r| r.iter().map(|g| g.t.as_str()).collect::<String>()).collect::<Vec<_>>()
-        };
-        let (now, max) = v.grid_rows_at(0);
-        assert_eq!((text(now), max), (vec!["7".to_string(), "8".into(), String::new()], 6));
-        assert_eq!(text(v.grid_rows_at(2).0), ["5", "6", "7"]);
-        assert_eq!(text(v.grid_rows_at(99).0), ["1", "2", "3"]);
-        assert_eq!(text(v.grid_rows_at(0).0), ["7", "8", ""]);
-        assert_eq!(v.grid_row(0)[0].t, "7");
-        v.feed(b"\x1b[?1049hA");
-        let (alt, max) = v.grid_rows_at(5);
-        assert_eq!((text(alt)[0].as_str(), max), ("A", 0));
-    }
-
-    /// 누른 칸의 링크(herdr `pane.link.activate`): 글 속 http(s) URL은 끝 문장 부호와 짝 없는 괄호를 빼고, 접힌 줄은 이어
-    /// 어느 줄을 눌러도 같은 URL, URL 밖·http(s)가 아닌 주소는 없다
-    #[test]
-    fn link_at_finds_text_urls_like_herdr() {
-        let mut v = Vt::new(4, 40);
-        v.feed(b"see https://example.com/a(b)c. [d](http://x.example/y),\r\n");
-        assert_eq!(v.link_at((0, 10)).as_deref(), Some("https://example.com/a(b)c"));
-        assert_eq!(v.link_at((0, 29)), None, "뺀 끝 점");
-        assert_eq!(v.link_at((0, 1)), None);
-        assert_eq!(v.link_at((0, 40 - 3)).as_deref(), Some("http://x.example/y"));
-        let mut v = Vt::new(4, 20);
-        v.feed(b"go https://example.com/long/path ok\r\nfile:///tmp/x");
-        // 0줄 "go https://example.c", 1줄 "om/long/path ok"
-        assert_eq!(v.link_at((1, 2)).as_deref(), Some("https://example.com/long/path"));
-        assert_eq!(v.link_at((0, 5)).as_deref(), Some("https://example.com/long/path"));
-        assert_eq!(v.link_at((1, 14)), None);
-        assert_eq!(v.link_at((2, 3)), None);
-        assert_eq!(v.link_at((9, 0)), None, "화면 밖");
-    }
-
-    /// OSC 8 링크: 그 칸들만 uri, 기록으로 올라가도 그대로, 덮어쓰면 링크가 아니다, http(s)가 아닌 uri는 열지 않는다(글
-    /// URL로 돌아가지도 않는다), 크기가 바뀌면 버린다, alt 화면의 링크는 alt 화면에서만
-    #[test]
-    fn link_at_follows_osc8_hyperlinks() {
-        let mut v = Vt::new(3, 20);
-        v.feed(b"ab\x1b]8;;https://a.example/x;y\x1b\\docs\x1b]8;;\x1b\\ t\r\n");
-        assert_eq!(v.link_at((0, 2)).as_deref(), Some("https://a.example/x;y"));
-        assert_eq!(v.link_at((0, 5)).as_deref(), Some("https://a.example/x;y"));
-        assert_eq!(v.link_at((0, 6)), None);
-        assert_eq!(v.link_at((0, 1)), None);
-        v.feed(b"\x1b]8;id=1;file:///etc/https://b.example\x07https://b.example\x1b]8;;\x07\r\n");
-        assert_eq!(v.link_at((1, 3)), None, "file:// uri");
-        for _ in 0..5 {
-            v.feed(b"x\r\n");
-        }
-        assert_eq!(v.history_rows(), 5);
-        assert_eq!(v.link_at((0, 3)).as_deref(), Some("https://a.example/x;y"), "기록으로 올라간 링크");
-        // 접혀 두 줄에 걸친 링크
-        v.feed(b"0123456789012345\x1b]8;;https://c.example\x1b\\abcdefgh\x1b]8;;\x1b\\\r\n");
-        let row = v.history_rows() + 3 - 3;
-        assert_eq!(v.link_at((row, 18)).as_deref(), Some("https://c.example"));
-        assert_eq!(v.link_at((row + 1, 3)).as_deref(), Some("https://c.example"));
-        assert_eq!(v.link_at((row + 1, 4)), None);
-        // 덮어쓴 칸
-        v.feed(b"\x1b]8;;https://d.example\x1b\\here\x1b]8;;\x1b\\\rHERE");
-        let row = v.history_rows() + 2;
-        assert_eq!(v.link_at((row, 1)), None);
-        v.feed(b"\r\x1b]8;;https://d.example\x1b\\here\x1b]8;;\x1b\\");
-        assert_eq!(v.link_at((row, 1)).as_deref(), Some("https://d.example"));
-        let mut alt = Vt::new(3, 20);
-        alt.feed(b"\x1b[?1049h\x1b]8;;https://e.example\x1b\\alt\x1b]8;;\x1b\\");
-        assert_eq!(alt.link_at((0, 1)).as_deref(), Some("https://e.example"));
-        alt.feed(b"\x1b[?1049lalt");
-        assert_eq!(alt.link_at((0, 1)), None, "normal 화면의 같은 글");
-        v.resize(3, 30);
-        assert_eq!(v.link_at((row, 1)), None, "크기가 바뀌면 버린다");
-    }
-
-    /// 보이는 화면의 OSC 8 칸(host가 grid frame에 싣는다): 줄마다 나누고, 겹치면 새 링크, 기록 위치를 올리면 그 화면의 칸,
-    /// 덮어쓴 칸은 없다, alt 화면은 그 화면 링크만
-    #[test]
-    fn visible_links_for_the_view() {
-        let link = |row, col, end, uri: &str| aaa_proto::GridLink { row, col, end, uri: uri.into() };
-        let mut v = Vt::new(3, 10);
-        // 0줄 "ab " 뒤 3칸부터 접혀 1줄 2칸까지, 그 안 0줄 5~6칸("23")을 새 링크가 같은 글로 덮는다
-        v.feed(b"ab \x1b]8;;https://a\x1b\\0123456789\x1b]8;;\x1b\\");
-        v.feed(b"\x1b[A\r\x1b[5C\x1b]8;;https://b\x1b\\23\x1b]8;;\x1b\\\x1b[B");
-        assert_eq!(
-            v.visible_links(0),
-            [
-                link(0, 3, 5, "https://a"),
-                link(0, 5, 7, "https://b"),
-                link(0, 7, 10, "https://a"),
-                link(1, 0, 3, "https://a")
-            ]
-        );
-        v.feed(b"\r\n\r\n\r\nzz");
-        // 두 줄이 기록으로 올라갔다: 맨 아래 화면에는 없고, 두 줄 올려 보면 그 자리
-        assert_eq!(v.visible_links(0), []);
-        assert_eq!(v.visible_links(2)[0], link(0, 3, 5, "https://a"));
-        // 덮어쓰면 없다, alt 화면은 그 화면 링크만
-        let mut w = Vt::new(3, 10);
-        w.feed(b"\x1b]8;;https://c\x1b\\cc\x1b]8;;\x1b\\\rXX");
-        assert_eq!(w.visible_links(0), []);
-        w.feed(b"\r\x1b]8;;https://c\x1b\\cc\x1b]8;;\x1b\\\x1b[?1049h");
-        assert_eq!(w.visible_links(0), []);
-        w.feed(b"\x1b]8;;https://d\x1b\\d\x1b]8;;\x1b\\");
-        assert_eq!(w.visible_links(0), [link(0, 0, 1, "https://d")]);
-        w.feed(b"\x1b[?1049l");
-        assert_eq!(w.visible_links(0), [link(0, 0, 2, "https://c")]);
-    }
-
-    /// alt 화면 전환에서 나눌 자리: 들어가기 앞·나오기 뒤, 다른 모드·끊긴 sequence는 그대로
-    #[test]
-    fn splits_feeds_at_alt_screen_switches() {
-        assert_eq!(alt_switch_cuts(b"ab\x1b[?1049hcd\x1b[?1049lef"), [2, 20]);
-        assert_eq!(alt_switch_cuts(b"a\x1b[?25;47hb\x1b[?1047l"), [1]);
-        assert_eq!(alt_switch_cuts(b"\x1b[?1049h"), Vec::<usize>::new());
-        assert_eq!(alt_switch_cuts(b"a\x1b[?2004hb\x1b[?10"), Vec::<usize>::new());
-    }
-
-    /// 기록이 가득하면 맨 앞 줄을 버리며 올려 절대 줄이 그대로인 채 글이 위로 밀린다: 버린 줄을 세어(feed 동안 기록 위치를 1에
-    /// 두면 vt100이 넣은 줄마다 올린다) 같은 글·다른 uri 링크도 제 주소를 찾는다. 한 feed가 기록을 넘게 밀면 버린 줄을 몰라 버린다.
-    /// 한 feed 안에서 alt 화면에 들어가고 나와도(그 자리에서 나눠 넣는다) 센다. alt 화면 동안 replay는 normal 화면을 맨 아래로 그린다.
-    #[test]
-    fn link_at_survives_a_full_history() {
-        let mut v = Vt::new(3, 20);
-        for i in 0..SCROLLBACK + 5 {
-            v.feed(format!("{i}\r\n").as_bytes());
-        }
-        assert_eq!(v.history_rows(), SCROLLBACK);
-        v.feed(b"\x1b]8;;https://f.example\x1b\\link\x1b]8;;\x1b\\\r\n");
-        let row = SCROLLBACK + 1;
-        assert_eq!(v.link_at((row, 1)).as_deref(), Some("https://f.example"));
-        // 한 feed 안에서 연 뒤 밀리고 닫혀도(같은 feed의 버린 줄도 센다)
-        v.feed(b"\x1b]8;;https://g1.example\x1b\\same\x1b]8;;\x1b\\\r\ny\r\n\x1b]8;;https://g2.example\x1b\\same\x1b]8;;\x1b\\\r\n");
-        for _ in 0..4 {
-            v.feed(b"y\r\n");
-        }
-        assert_eq!(v.history_rows(), SCROLLBACK);
-        // f는 g1·y·g2·y 넷으로 일곱 줄 밀렸다. g1은 f 아래 첫 줄, g2는 그 두 줄 아래
-        assert_eq!(v.link_at((row - 7, 1)).as_deref(), Some("https://f.example"));
-        assert_eq!(v.selection_text((row - 6, 0), (row - 4, 3), 64).0, "same\ny\nsame");
-        assert_eq!(v.link_at((row - 6, 1)).as_deref(), Some("https://g1.example"));
-        assert_eq!(v.link_at((row - 4, 1)).as_deref(), Some("https://g2.example"));
-        assert_eq!(v.link_at((row, 1)), None);
-        // alt 화면에 들어가기 앞에 넣은 줄도 센다
-        v.feed(b"y\r\nz\r\n\x1b[?1049halt");
-        let mut w = Vt::new(3, 20);
-        w.feed(&v.replay());
-        w.feed(b"\x1b[?1049l");
-        assert_eq!(w.text("p").lines, ["y", "z", ""], "기록 위치 1에서 그리면 [y, y, z]");
-        v.feed(b"\x1b[?1049ly\r\n\x1b[?1049hA\x1b[?1049l");
-        // y·z·y 세 줄 더 밀렸다(alt 화면에서 나온 뒤 넣은 줄도)
-        assert_eq!(v.link_at((row - 10, 1)).as_deref(), Some("https://f.example"));
-        assert_eq!(v.link_at((row - 9, 1)).as_deref(), Some("https://g1.example"));
-        assert_eq!(v.link_at((row - 7, 1)).as_deref(), Some("https://g2.example"));
-        // 한 feed가 기록 전부를 넘게 밀면 버린 줄을 모른다: 남긴 구간을 버린다
-        let flood: String = (0..SCROLLBACK + 10).map(|i| format!("{i}\r\n")).collect();
-        v.feed(flood.as_bytes());
-        assert!(v.parser.callbacks().links.spans.is_empty());
-    }
-
-    /// 고른 글: 기록과 화면에 걸친 범위, 끝 칸 포함, 거꾸로 고른 범위, 접힌 줄 잇기, 끝을 넘으면 마지막 줄까지, 크기 상한,
-    /// 읽은 뒤 지금 화면 그대로, alt 화면은 화면 줄만
-    #[test]
-    fn selection_text_spans_history() {
-        let mut v = Vt::new(3, 10);
-        for i in 1..=8 {
-            v.feed(format!("line{i}\r\n").as_bytes());
-        }
-        // 기록 1..6(줄 0..5), 화면 7·8·빈 줄(줄 6..8)
-        assert_eq!(
-            v.selection_text((1, 2), (6, 3), usize::MAX),
-            ("ne2\nline3\nline4\nline5\nline6\nline".into(), false)
-        );
-        assert_eq!(v.selection_text((6, 3), (1, 2), usize::MAX).0, "ne2\nline3\nline4\nline5\nline6\nline");
-        assert_eq!(v.selection_text((7, 0), (99, 9), usize::MAX).0, "line8\n");
-        assert_eq!(v.selection_text((0, 0), (5, 9), 12), ("line1\nline2".into(), true));
-        assert_eq!(v.grid_row(0)[0].t, "line7");
-        // 접힌 줄은 줄바꿈 없이(앞 글자 공백도 그대로)
-        v.feed(b"abcdefghij  klm\r\n");
-        let n = v.history_rows() + 3;
-        assert_eq!(v.selection_text((n - 3, 0), (n - 2, 9), usize::MAX).0, "abcdefghij  klm");
-        v.feed(b"\x1b[?1049h\x1b[HA\r\nB");
-        assert_eq!(v.selection_text((0, 0), (1, 9), usize::MAX).0, "A\nB");
-    }
-
-    /// copy 모드 이동·찾기는 기록까지 보고(줄 번호는 기록 맨 앞이 0), 읽은 뒤 화면은 맨 아래 그대로
-    #[test]
-    fn copy_motion_and_search_span_history() {
-        use copy::Motion::*;
-        let mut v = Vt::new(3, 10);
-        v.feed(b"alpha beta\r\n\r\ngamma\r\ndelta\r\n");
-        // 줄 0 alpha beta, 1 빈 줄(기록), 2 gamma, 3 delta, 4 빈 줄(화면)
-        assert_eq!(v.history_rows(), 2);
-        assert_eq!(v.copy_motion((2, 3), PreviousParagraph), (1, 3));
-        assert_eq!(v.copy_motion((0, 3), NextParagraph), (1, 3));
-        assert_eq!(v.copy_motion((0, 0), PreviousParagraph), (0, 0));
-        assert_eq!(v.copy_motion((0, 6), NextWordStart), (2, 0));
-        assert_eq!(v.copy_motion((2, 0), PreviousWordStart), (0, 6));
-        assert_eq!(v.copy_motion((3, 0), NextWordStart), (3, 0));
-        let f = v.copy_search("a", true, (0, 4), None, 1024);
-        assert_eq!((f.total, f.current_global, f.matches[2]), (6, Some(2), ((0, 9), (0, 9))));
-        assert_eq!(v.copy_search("A", true, (0, 0), None, 1024).total, 0);
-        assert_eq!(v.grid_row(0)[0].t, "gamma");
-
-        // 접혀 100줄을 넘는 낱말: 64줄 창으로 못 끝내면 넓혀 끝까지 간다
-        let mut v = Vt::new(5, 4);
-        let mut long = b"x ".to_vec();
-        long.extend(std::iter::repeat_n(b'a', 400));
-        long.extend(b" y\r\n");
-        v.feed(&long);
-        assert_eq!(v.copy_motion((0, 0), NextWordStart), (0, 2));
-        assert_eq!(v.copy_motion((0, 2), NextWordEnd), (100, 1));
-        assert_eq!(v.copy_motion((100, 1), PreviousWordStart), (0, 2));
-        assert_eq!(v.copy_motion((50, 0), NextBigWordStart), (100, 3));
-    }
-
-    #[test]
-    fn pane_modes_follow_the_program() {
-        let mut v = Vt::new(5, 20);
-        assert_eq!(v.pane_modes(), PaneModes::default());
-        v.feed(b"\x1b[?1049h\x1b[?1h\x1b[?1002h\x1b[?1006h");
-        assert_eq!(
-            v.pane_modes(),
-            PaneModes {
-                mouse: MouseMode::ButtonMotion,
-                mouse_encoding: MouseEncoding::Sgr,
-                alt_screen: true,
-                app_cursor: true
-            }
-        );
-        v.feed(b"\x1b[?1002l\x1b[?1003h\x1b[?1006l\x1b[?1005h\x1b[?1049l\x1b[?1l");
-        assert_eq!(
-            v.pane_modes(),
-            PaneModes {
-                mouse: MouseMode::AnyMotion,
-                mouse_encoding: MouseEncoding::Utf8,
-                alt_screen: false,
-                app_cursor: false
-            }
-        );
-    }
-
     #[test]
     fn replay_says_modify_other_keys_again() {
         let mut v = Vt::new(5, 20);
@@ -2857,27 +2033,6 @@ mod tests {
         assert_eq!(v.modes(), KeyModes::default());
         v.feed(b"\x1b[?1h\x1b[?2004h\x1b[>4;2m");
         assert_eq!(v.modes(), KeyModes { application_cursor: true, bracketed_paste: true, modify_other_keys: 2 });
-    }
-
-    /// VT streaming callback 경계: BEL/ST, chunk 분할, 질의·잘못된 데이터와 크기 제한.
-    #[test]
-    fn clipboard_effects_are_live_bounded_and_drained_once() {
-        use base64::Engine;
-        let mut v = Vt::new(10, 40);
-        v.feed(b"\x1b]52;c;Y29w");
-        assert!(v.take_clipboard_writes().is_empty());
-        v.feed(b"eS00Mg==\x07\x1b]52;p;7ZWc6riA\x1b\\");
-        assert_eq!(v.take_clipboard_writes(), ["copy-42", "한글"]);
-        assert!(v.take_clipboard_writes().is_empty());
-        v.feed(b"\x1b]52;c;?\x07\x1b]52;c;bad=padding\x07\x1b]52;c;/w==\x07\x1b]52;c;AA==\x07");
-        assert!(v.take_clipboard_writes().is_empty());
-        let too_big = base64::engine::general_purpose::STANDARD.encode(vec![b'x'; (64 << 10) + 1]);
-        v.feed(format!("\x1b]52;c;{too_big}\x07").as_bytes());
-        assert!(v.take_clipboard_writes().is_empty());
-        v.feed(b"\x1b]52;c;Y29weS00Mg==\x07");
-        // replay/화면 전용 호출자가 효과를 꺼내지 않아도 다음 feed에 묵은 효과를 섞지 않는다.
-        v.feed(b"next output");
-        assert!(v.take_clipboard_writes().is_empty());
     }
 
     /// herdr pane/osc.rs `AgentOscStateTracker`: 마지막 OSC 0/2 제목·OSC 9 진행. `;`가 든 제목, 빈 제목(지움), 제어 문자,

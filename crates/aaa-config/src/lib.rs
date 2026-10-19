@@ -9,7 +9,6 @@
 pub mod paths;
 pub mod profile_edit;
 pub mod safety;
-pub mod tui_edit;
 
 use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
@@ -77,7 +76,6 @@ pub struct HostConfig {
     pub host: HostSection,
     pub web: WebSection,
     pub local_agent: LocalAgentSection,
-    pub tui: TuiSection,
     pub terminal: TerminalSection,
     pub projects: ProjectsSection,
     pub notify: NotifySection,
@@ -272,7 +270,6 @@ impl Default for HostConfig {
             host: HostSection::default(),
             web: WebSection::default(),
             local_agent: LocalAgentSection::default(),
-            tui: TuiSection::default(),
             terminal: TerminalSection::default(),
             projects: ProjectsSection::default(),
             notify: NotifySection::default(),
@@ -378,158 +375,12 @@ impl Default for ProjectsSection {
     }
 }
 
-/// TUI front(`aaa attach`). host 머신에서 실행하므로 host.toml에 둔다. 키 이름과 기본값은 herdr 0.9.5 `[keys]`를 따른다.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(default)]
-pub struct TuiSection {
-    /// 명령 prefix 키. herdr 형식(`ctrl+b`, 여러 개면 배열 `["ctrl+b", "ctrl+a"]`). 예전 `C-b` 형식도 읽는다.
-    pub prefix: KeyList,
-    /// prefix·탐색·크기·copy 모드 동안 입력기가 한글 등(영문 아님)이면 영문 입력기로 바꾸고, 모드가 끝나면 되돌린다
-    /// (macOS·Windows 한국어 IME, ssh 밖). herdr `[experimental] switch_ascii_input_source_in_prefix`와 같은 이름이다.
-    /// herdr는 기본 끔이지만 사용자 요청이라 기본 켬이다(plan 결정 20 D12).
-    pub switch_ascii_input_source_in_prefix: bool,
-    /// 예전 이름(`prefix_ascii`). 적혀 있으면 위 값 대신 쓴다.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub prefix_ascii: Option<bool>,
-    /// prefix 뒤 두벌식 자모(ㅊ 등)를 같은 자리 영문 키(c 등)로 읽는다(기본 켬, 결정 20 D12). 입력기를 바꾸기 전에 들어온 키·ssh·다른 OS용.
-    pub prefix_jamo_keys: bool,
-    /// 새 탭(`prefix c`)을 만들기 전에 이름을 묻는다(herdr `[ui] prompt_new_tab_name`, 기본 켬)
-    pub prompt_new_tab_name: bool,
-    /// 마지막 탭·마지막 pane을 닫기 전에 묻는다(herdr `[ui] confirm_close`, 기본 켬)
-    pub confirm_close: bool,
-    /// 왼쪽 목록 폭(구분선 포함, herdr `[ui] sidebar_width`). 기본은 48(10-19 D안): 활동 막대와 한글 제목 자리를 함께 확보한다.
-    /// herdr 기본은 26이며, aaa의 이전 기본은 36이었다. 사용자가 끌어 바꾼 폭은 host 공유 설정에 남아 이 값보다 앞선다.
-    pub sidebar_width: u16,
-    /// 끌어 바꿀 수 있는 폭의 아래·위 한도(herdr `[ui] sidebar_min_width`·`sidebar_max_width`). 위 한도 기본은 72로 herdr
-    /// 기본 36보다 넓다(사용자 「더 크게도」). 아래가 위보다 크면 TUI가 알리고 기본 한도를 쓴다(herdr `validated_sidebar_bounds`)
-    pub sidebar_min_width: u16,
-    pub sidebar_max_width: u16,
-    /// 접힌 채 시작(herdr `[ui] sidebar_start_collapsed`, 기본 펼침)
-    pub sidebar_start_collapsed: bool,
-    /// 접으면: `compact`는 번호와 상태 점만 든 4칸 열, `hidden`은 없앤다(herdr `[ui] sidebar_collapsed_mode`)
-    pub sidebar_collapsed_mode: SidebarCollapsedMode,
-    /// 이 폭(칸) 이하면 목록·탭 줄 대신 두 줄 머리(herdr `[ui] mobile_width_threshold` 64)
-    pub mobile_width_threshold: u16,
-    /// 색 테마 이름(herdr `[theme] name`, 기본 `catppuccin`). 모르는 이름이면 TUI가 오류 막대로 알리고 기본을 쓴다.
-    pub theme: String,
-    /// pane 테두리(herdr `[ui] pane_borders`): `auto`(기본)는 pane이 둘 이상인 탭만 pane마다 상자를 두르고,
-    /// `always`는 하나여도, `off`는 테두리 없이 빈 칸 하나로 띄운다. 테두리만큼 PTY 크기가 준다.
-    pub pane_borders: PaneBorders,
-    /// TUI가 마우스를 받는다(herdr `[ui] mouse_capture`, 기본 켬): 탭·사이드바·pane 누르기, 휠, 끌어 고르기.
-    /// 켜면 터미널 자체의 끌어 고르기 대신 TUI가 고르고 복사한다.
-    pub mouse_capture: bool,
-    /// 끌어 고른 글을 떼는 때 복사한다(herdr `[ui] copy_on_select`, 기본 켬). 끄면 고른 채 두고 ctrl+c·cmd+c로 복사한다.
-    pub copy_on_select: bool,
-    /// 보통 화면 pane에서 휠 한 칸에 넘기는 기록 줄 수(herdr `[ui] mouse_scroll_lines`, 기본 3, 1 이상)
-    pub mouse_scroll_lines: u16,
-    /// 보통 화면 pane의 오른쪽 1칸에 기록 scrollbar(herdr `[ui] pane_scrollbars`, 기본 켬). 그 칸만큼 PTY가 좁고,
-    /// alt 화면(vim 등)에서는 칸을 돌려준다.
-    pub pane_scrollbars: bool,
-    /// 상태 표시(herdr `[ui] status_indicators`): `dots`(기본)는 색 점 `● ○ ·`, `symbols`는 상태마다 다른 기호 `× ◐ ✓ ○ ·`
-    pub status_indicators: StatusIndicators,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum PaneBorders {
-    #[default]
-    Auto,
-    Always,
-    Off,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum StatusIndicators {
-    #[default]
-    Dots,
-    Symbols,
-}
-
-impl StatusIndicators {
-    /// 설정 글(`[tui] status_indicators` 값)
-    pub fn as_str(self) -> &'static str {
-        match self {
-            StatusIndicators::Dots => "dots",
-            StatusIndicators::Symbols => "symbols",
-        }
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum SidebarCollapsedMode {
-    #[default]
-    Compact,
-    Hidden,
-}
-
-/// `[tui] sidebar_width` 기본(위 `TuiSection::sidebar_width`)
-pub const SIDEBAR_WIDTH: u16 = 48;
-/// `[tui] sidebar_min_width`·`sidebar_max_width` 기본. 설정이 거꾸로면 이것을 쓴다
-pub const SIDEBAR_BOUNDS: (u16, u16) = (18, 72);
-
-impl TuiSection {
-    /// 펼친 목록 폭의 한도(herdr `validated_sidebar_bounds`): 아래가 위보다 크면 None
-    pub fn sidebar_bounds(&self) -> Option<(u16, u16)> {
-        (self.sidebar_min_width <= self.sidebar_max_width).then_some((self.sidebar_min_width, self.sidebar_max_width))
-    }
-
-    /// prefix 동안 영문 입력기로 바꾸나(예전 이름 `prefix_ascii`가 있으면 그 값)
-    pub fn switch_ascii(&self) -> bool {
-        self.prefix_ascii.unwrap_or(self.switch_ascii_input_source_in_prefix)
-    }
-}
-
-impl Default for TuiSection {
-    fn default() -> Self {
-        TuiSection {
-            prefix: KeyList::One("ctrl+b".into()),
-            switch_ascii_input_source_in_prefix: true,
-            prefix_ascii: None,
-            prefix_jamo_keys: true,
-            prompt_new_tab_name: true,
-            confirm_close: true,
-            sidebar_width: SIDEBAR_WIDTH,
-            sidebar_min_width: SIDEBAR_BOUNDS.0,
-            sidebar_max_width: SIDEBAR_BOUNDS.1,
-            sidebar_start_collapsed: false,
-            sidebar_collapsed_mode: SidebarCollapsedMode::Compact,
-            mobile_width_threshold: 64,
-            theme: "catppuccin".into(),
-            pane_borders: PaneBorders::Auto,
-            mouse_capture: true,
-            copy_on_select: true,
-            mouse_scroll_lines: 3,
-            pane_scrollbars: true,
-            status_indicators: StatusIndicators::Dots,
-        }
-    }
-}
-
 /// 어느 OS 머신의 절대 경로인가(`/…`, `C:\…`·`C:/…`, `\\server\…`). 새 pane은 다른 OS 머신에 뜰 수 있다.
 fn is_absolute_anywhere(p: &str) -> bool {
     let b = p.as_bytes();
     p.starts_with('/')
         || p.starts_with("\\\\")
         || (b.len() >= 3 && b[0].is_ascii_alphabetic() && b[1] == b':' && (b[2] == b'\\' || b[2] == b'/'))
-}
-
-/// 키 하나 또는 여러 개(herdr 설정의 키 값과 같다)
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(untagged)]
-pub enum KeyList {
-    One(String),
-    Many(Vec<String>),
-}
-
-impl KeyList {
-    pub fn values(&self) -> Vec<&str> {
-        match self {
-            KeyList::One(s) => vec![s.as_str()],
-            KeyList::Many(v) => v.iter().map(String::as_str).collect(),
-        }
-    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

@@ -122,7 +122,7 @@ impl Host {
                 if others > 0 { format!("(그 밖에 {others}개)") } else { String::new() }
             )];
             if !workspace.is_empty() {
-                notes.push(format!("TUI: `aaa attach -w {workspace}`"));
+                notes.push("웹 UI: host에서 `aaa web status`로 주소를 확인한다".into());
             }
             return Ok(FrontResponse::ProjectOpened(Box::new(ProjectOpened {
                 project: view,
@@ -174,7 +174,7 @@ impl Host {
         if !running.is_empty() {
             notes.push(format!("그 밖에 도는 coordinator {}개", running.len()));
         }
-        notes.push(format!("TUI: `aaa attach -w {project}`"));
+        notes.push("웹 UI: host에서 `aaa web status`로 주소를 확인한다".into());
         Ok(FrontResponse::ProjectOpened(Box::new(ProjectOpened {
             project: view,
             pane,

@@ -6,18 +6,15 @@
 #   bash scripts/ci-local.sh --only test,e2e       고른 단계만
 #   bash scripts/ci-local.sh --skip e2e            빼고 전부
 #   bash scripts/ci-local.sh --logs DIR            로그 폴더(기본 target/ci-local/<시각>)
-#   bash scripts/ci-local.sh --native-clipboard    clipboard 단계를 이 머신의 실제 clipboard로 돈다
 #   bash scripts/ci-local.sh --tee                 단계 출력을 로그와 함께 화면에도 낸다(CI가 쓴다)
 #
-# 단계: web fmt build clippy test clipboard e2e public. web·fmt·build를 차례로 돈 뒤 서로 기대지 않는 test·e2e·clippy를
-# 함께 띄우고(test가 가장 긴 길이라 먼저), 끝나면 clipboard·public. --tee(CI)거나 그 셋 중 하나만 돌면 차례로 돈다(출력이 섞이지 않게).
+# 단계: web fmt build clippy test e2e public. web·fmt·build를 차례로 돈 뒤 서로 기대지 않는 test·e2e·clippy를
+# 함께 띄우고(test가 가장 긴 길이라 먼저), 끝나면 public. --tee(CI)거나 그 셋 중 하나만 돌면 차례로 돈다(출력이 섞이지 않게).
 #   web        웹 front 빌드(npm ci·build)와 순수 규칙 유닛 시험(npm test, node --test). host 실행 파일에 들어간다
 #   fmt        cargo fmt --all --check
 #   build      cargo build --workspace --all-targets --locked
 #   clippy     cargo clippy --workspace --all-targets --locked --keep-going -- -D warnings
 #   test       cargo test --workspace --locked --no-fail-fast
-#   clipboard  실제 시스템 clipboard 시험(§8.28). 사람의 clipboard를 덮어쓰므로 AAA_CLIP_NATIVE=1(CI)이나
-#              --native-clipboard일 때만 돈다. 아니면 「건너뜀」으로 요약에 남긴다. Linux는 xvfb-run 위에서.
 #   e2e        웹 E2E(web/e2e/web.e2e.mjs, Playwright Chromium·WebKit, 한글 IME 기록 재생 포함). Unix만.
 #              playwright는 전역 npm 모듈로 찾는다(NODE_PATH=$(npm root -g)).
 #              spec 파일은 worker 여러 개가 함께 돈다(core 8개마다 셋, 많아야 6). AAA_E2E_WORKERS=1이면 차례로.
@@ -31,14 +28,13 @@
 # 이 스크립트는 자식 프로세스에 신호를 보내지 않는다(각 명령이 끝나기를 기다린다. 함께 띄운 단계는 모두 끝날 때까지 wait).
 set -uo pipefail
 
-ALL="web fmt build clippy test clipboard e2e public"
+ALL="web fmt build clippy test e2e public"
 cd "$(dirname "$0")/.." || exit 2
 ROOT=$(pwd)
 
 ONLY=""
 SKIP=""
 LOGS=""
-NATIVE_CLIP="${AAA_CLIP_NATIVE:-}"
 TEE=""
 usage() { sed -n '2,28p' "$0" | sed 's/^# \{0,1\}//'; }
 while [ $# -gt 0 ]; do
@@ -49,7 +45,6 @@ while [ $# -gt 0 ]; do
     --skip=*) SKIP=$(echo "${1#*=}" | tr ',' ' '); shift ;;
     --logs) LOGS="${2:-}"; shift 2 ;;
     --logs=*) LOGS="${1#*=}"; shift ;;
-    --native-clipboard) NATIVE_CLIP=1; shift ;;
     --tee) TEE=1; shift ;;
     -h|--help) usage; exit 0 ;;
     *) echo "모르는 인자: $1" >&2; usage >&2; exit 2 ;;
@@ -83,21 +78,9 @@ step_build() { cargo build --workspace --all-targets --locked; }
 # 한 crate가 실패해도 나머지를 모두 본다: 아니면 cargo가 새 unit을 띄우지 않아 뒤 crate의 오류가 로그에 없다(10-18 windows: process.rs
 # unused import가 9eeced3 뒤 main CI에서 clip.rs dead code를 가렸다)
 step_clippy() { cargo clippy --workspace --all-targets --locked --keep-going -- -D warnings; }
-# 한 binary가 실패해도 나머지를 모두 돈다: fail-fast면 앞 binary(예: tests/tui.rs) 실패가 뒤 crate 유닛 시험을 돌지 않게 해, main이 빨간 동안 그 결과가 어느 run에도 없다
+# 한 binary가 실패해도 나머지를 모두 돈다: fail-fast면 앞 binary 실패가 뒤 crate 유닛 시험을 돌지 않게 해, main이 빨간 동안 그 결과가 어느 run에도 없다
 step_test() {
   cargo test --workspace --locked --no-fail-fast || return 1
-  # vendored crossterm의 Windows paste 입력기 회귀(운영 콘솔·clipboard·OS 신호 없음).
-  cargo test --manifest-path vendor/crossterm/Cargo.toml --locked --lib aaa_ -- --nocapture
-}
-step_clipboard() {
-  local run=()
-  [ "$OS" = linux ] && run=(xvfb-run -a)
-  # -p aaa-tui만 고르면 의존 crate의 feature 조합이 test 단계(--workspace)와 달라 다시 컴파일한다. test 단계와 같은 선택에 이름만 거른다
-  AAA_CLIP_NATIVE=1 "${run[@]+"${run[@]}"}" cargo test --locked --workspace native_clipboard_roundtrip -- --nocapture || return 1
-  # TUI E2E는 Unix 전용이다
-  [ "$OS" = windows ] && return 0
-  AAA_CLIP_NATIVE=1 "${run[@]+"${run[@]}"}" cargo test --locked -p aaa --test tui ctrl_v_pastes_clipboard_image -- --nocapture || return 1
-  AAA_CLIP_NATIVE=1 "${run[@]+"${run[@]}"}" cargo test --locked -p aaa --test tui selection_copy -- --nocapture --test-threads=1
 }
 step_e2e() {
   local root newer
@@ -127,10 +110,6 @@ skip_reason() {
   case "$1" in
     build) [ "$(result_of web)" = FAIL ] && echo "앞 단계 실패(web)" ;;
     clippy|test) broken build && echo "앞 단계 실패(build)" ;;
-    clipboard)
-      if broken build; then echo "앞 단계 실패(build)"
-      elif [ -z "$NATIVE_CLIP" ]; then echo "사람의 clipboard를 덮어쓴다(--native-clipboard나 AAA_CLIP_NATIVE=1로 켠다)"
-      fi ;;
     e2e)
       if [ "$OS" = windows ]; then echo "Unix만(웹 E2E)"
       elif broken web || broken build; then echo "앞 단계 실패(web·build)"
@@ -223,7 +202,7 @@ else
   wait
   for s in $go; do collect "$s"; done
 fi
-for s in clipboard public; do
+for s in public; do
   skipped "$s" || { run_step "$s"; collect "$s"; }
 done
 

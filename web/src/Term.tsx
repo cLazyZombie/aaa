@@ -88,7 +88,7 @@ const CANCEL_REPLY_MS = 2000;
 const HELD_FIRST = "보내지 않았다: 붙잡은 입력을 먼저 보내거나 버린다.";
 /** 이 탭을 지금 쓰는 중: 보이고 focus가 있다. 아니면 PTY 크기를 걸지 않는다. */
 const inUse = () => document.visibilityState === "visible" && document.hasFocus();
-/** 「터미널의 aaa와 같이 쓰기」: 다른 창으로 옮기고 이만큼 뒤 보기만 한다(herdr-web-ui PaneTerminal `RELEASE_AFTER_MS`) */
+/** 「다른 웹 화면과 같이 쓰기」: 다른 창으로 옮기고 이만큼 뒤 보기만 한다(herdr-web-ui PaneTerminal `RELEASE_AFTER_MS`) */
 const RELEASE_AFTER_MS = 1000;
 
 /**
@@ -292,7 +292,7 @@ export function TermView({
       setResuming(false);
     }
   };
-  // 다른 창을 쓰는 동안 보기만 한다(설정 「터미널의 aaa와 같이 쓰기」, herdr-web-ui PaneTerminal 288~297·1725~1918줄 `released`).
+  // 다른 창을 쓰는 동안 보기만 한다(설정 「다른 웹 화면과 같이 쓰기」, herdr-web-ui PaneTerminal 288~297·1725~1918줄 `released`).
   // 크기를 놓고 이 화면은 PTY 크기 그대로 그린다. 이 탭을 누르거나 focus가 돌아오면 다시 입력하고 크기를 건다.
   const releasedRef = useRef(false);
   const [released, setReleasedState] = useState(false);
@@ -1650,7 +1650,7 @@ export function TermView({
   }, [terminalFontFamily, pane.id]);
   // focus를 얻거나 다시 보이면 이 화면 크기를 다시 건다. 가려지면 바로 크기를 놓는다(herdr-web-ui PaneTerminal 1831~1842줄
   // `keepSize(hidden)`: 숨은 문서는 서버 grid를 놓고 연결은 둔다). 보이는 채 focus만 잃으면 그대로 둔다.
-  // 설정 「터미널의 aaa와 같이 쓰기」(`releasePaneAway`, 기본 꺼짐)를 켜면 다른 창으로 옮기고 1초 뒤 크기를 놓고 보기만 한다
+  // 설정 「다른 웹 화면과 같이 쓰기」(`releasePaneAway`, 기본 꺼짐)를 켜면 다른 창으로 옮기고 1초 뒤 크기를 놓고 보기만 한다
   // (참고 `leave`·`release`). 참고는 attach를 떼고 보기 전용 구독(watch)으로 바꾼다. aaa는 한 연결이 출력을 계속 받고 크기만 놓으면
   // 같은 일이 된다(크기는 host lease, 보기는 그 연결). 그래서 host에 새 구독을 두지 않았다.
   // 돌아오면(focus, 이 화면 누르기·치기) 보기를 풀고 크기를 건다(참고 `back`·`reclaim`).

@@ -1,6 +1,6 @@
 # GitHub 테마
 
-웹 설정 → 모양 → 색상과 TUI `[tui] theme`에서 같은 이름을 쓴다.
+웹 설정 → 모양 → 색상에서 고른다. 기본 테마는 amber다.
 
 | 표시 이름 | 저장 이름 | 기본 바탕 |
 |---|---|---|
@@ -10,8 +10,6 @@
 
 웹에서 고르면 이름의 밝기도 함께 고른다. 이후 밝기 단추·시스템 설정은 기존처럼 동작한다. Light의 어두운 짝은 Dark,
 Dark·Dimmed의 밝은 짝은 Light다. 시스템 설정의 밝음·어두움 팔레트도 같은 규칙을 쓴다. host 공유 설정과 기기 저장 형식은 그대로다.
-TUI 이름은 herdr의 소문자·하이픈 규칙을 따른다. `github`는 Light, `github-dimmed`·`dimmed`는 Dark Dimmed 별칭이다.
-기본 테마(웹 amber, TUI catppuccin)는 그대로다.
 
 ## 출처와 색 역할
 
@@ -27,20 +25,16 @@ TUI 이름은 herdr의 소문자·하이픈 규칙을 따른다. `github`는 Lig
   그 두 참고에는 GitHub 팔레트가 없다. t3code `apps/web/src/vscodeThemeImport.ts`는 외부 VS Code 테마의 밝기 짝을 묶으며,
   `vscodeThemeImport.test.ts`의 GitHub 이름·Dimmed 사례를 참고했다. 이번에는 외부 테마 가져오기 기능은 추가하지 않는다.
 
-웹 `github-themes.css`와 TUI `theme/github.rs`는 같은 값을 각 frontend의 색 역할에 연결한다.
 표면은 canvas.default/subtle, 주 글자는 fg.default, 보조 글자는 fg.muted, 강조·작업 중은 accent,
-확인 필요·오류는 danger, 완료는 success, 작업 중 TUI 점·주의는 attention이다. 코드 색은 prettylights.syntax다.
+확인 필요·오류는 danger, 완료는 success, 주의는 attention이다. 웹은 `github-themes.css`를 쓴다.
 
 작은 글자의 가독성을 위해 주 글자·보조 글자·강조·상태색은 기본·판·hover 바탕 모두에서 대비 4.5:1 이상인
 같은 Primer 색 계열의 가장 가까운 밝기로 보정했다. ANSI 16색도 기본 터미널 바탕과 4.5:1 이상으로 보정했다.
 밝은 테마의 white/bright white는 어두운 회색이다. Dimmed의 보조 글자는 hover 위 대비를 위해 fg.default까지 밝힌다.
 이것이 원본과 다르게 둔 이유다. 명시 RGB와 ANSI 256색 중 16~255는 프로그램이 지정한 값을 유지한다.
-TUI 기본색·16색과 빈 pane 바탕도 GitHub 팔레트를 사용하므로 바깥 터미널의 밝기에 좌우되지 않는다.
 
 ## 확인
 
-기존 웹 `14-shared-preferences` 설정 E2E를 넓혀 세 이름 선택·host 저장·다시 열기·휴대폰/데스크톱의
-실제 CSS 토큰과 텍스트 대비를 확인한다. 기존 TUI `settings_like_herdr`는 선택·미리 보기·저장·pane 바탕을 확인한다.
-`AAA_TUI_THEME_SHOTS`를 지정하면 시험 지원 코드가 실제 PTY 출력만 `.ansi`로 보존한다(제품 설정은 아님).
-headless 터미널 재생 캡처는 macOS Menlo와 Windows Terminal 기본 Cascadia Mono 기준이다.
-이는 macOS에서 실제 TUI 출력의 글꼴·색 표현을 비교하는 자료이며 Windows ConPTY 실행 증거는 별도 플랫폼 CI가 담당한다.
+웹 `14-shared-preferences` E2E에서 세 이름 선택·host 저장·다시 열기와 휴대폰·데스크톱 표시를 확인한다.
+
+TUI 테마 구현은 2026-10-19 삭제했다. 보존 tag `tui-last`와 복구 방법은 [삭제 기록](removed-tui.md)을 본다.

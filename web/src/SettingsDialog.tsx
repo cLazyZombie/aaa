@@ -567,12 +567,12 @@ function TerminalPage({ keyBarButtonRef, onEditKeyBar }: { keyBarButtonRef: RefO
         >
           <Toggle label="패널에서 클립보드로 복사" checked={paneClipboard} onChange={(on) => setTerminalToggle("paneClipboard", on)} />
         </SettingsRow>
-        {/* 참고 「터미널의 herdr와 같이 쓰기」: herdr 창 자리에 aaa TUI(`aaa attach`)를 넣은 문구 */}
+        {/* herdr-web-ui releasePaneAway: 다른 웹 화면이 패널 크기를 유지하게 한다. */}
         <SettingsRow
-          label="터미널의 aaa와 같이 쓰기"
-          description="이 컴퓨터의 터미널 창에서도 aaa를 띄워 쓴다면 켜세요. 다른 창으로 옮기고 1초가 지나면 이 탭은 패널을 보기만 해서, 터미널 창이 패널을 이 창 크기가 아닌 자기 크기로 유지합니다. 다시 입력하려면 탭을 클릭하세요. 보는 동안 패널은 터미널 창 크기로 그려져 이 창을 다 채우지 않을 수 있습니다."
+          label="다른 웹 화면과 같이 쓰기"
+          description="같은 패널을 다른 기기나 브라우저 창에서도 쓴다면 켜세요. 다른 창으로 옮기고 1초가 지나면 이 탭은 크기 조절을 놓고 보기만 합니다. 다른 웹 화면이 자기 크기를 유지할 수 있습니다. 다시 조작하려면 패널을 클릭하세요. 보는 동안 패널이 이 창을 다 채우지 않을 수 있습니다."
         >
-          <Toggle label="터미널의 aaa와 같이 쓰기" checked={releasePaneAway} onChange={(on) => setTerminalToggle("releasePaneAway", on)} />
+          <Toggle label="다른 웹 화면과 같이 쓰기" checked={releasePaneAway} onChange={(on) => setTerminalToggle("releasePaneAway", on)} />
         </SettingsRow>
       </SettingsGroup>
       {/* aaa: 실기 입력 사건 기록(inputTrace.ts, plan §8.82). 참고에는 이런 진단이 없어 그 기록이 보는 터미널 쪽 맨 끝에 둔다 */}

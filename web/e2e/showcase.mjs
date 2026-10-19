@@ -275,31 +275,6 @@ try {
       await ctx.close();
     }
   }
-  // TUI(aaa attach)를 웹 터미널 안에서 찍는다: workspace demo = [claude-api │ 질문 중인 Claude] 탭 + build 탭
-  const paneId = (n) => aaa("pane", "list").panes.find((p) => p.name === n).id;
-  aaa("pane", "move", paneId("claude-api"), "--new-tab", "-w", "demo");
-  aaa("pane", "split", paneId("claude-api"), "-w", "demo", "--direction", "right", "--machine", "mac-b", "--", `${root}/bin/claude`, "question");
-  aaa("pane", "move", paneId("build"), "--new-tab", "-w", "demo");
-  aaa("tab", "create", "--machine", "mac-a", "--label", "tui", "--cols", "150", "--rows", "40", "--",
-    "/usr/bin/env", `AAA_CONFIG_DIR=${root}/c`, `AAA_STATE_DIR=${root}/s`, "TERM=xterm-256color", AA, "attach", "-w", "demo");
-  for (const scheme of ["dark", "light"]) {
-    const ctx = await browser.newContext({ viewport: { width: 1920, height: 1080 }, colorScheme: scheme });
-    await ctx.addInitScript((theme) => localStorage.setItem("aaa:appearance", JSON.stringify({ theme })), scheme);
-    const page = await ctx.newPage();
-    await page.goto(base);
-    await page.getByLabel("페어링 코드").fill(aaa("web", "pair").code);
-    await page.getByRole("button", { name: "이 기기 페어링" }).click();
-    await page.getByTestId("pane-tui").click();
-    await until("TUI", async () => {
-      const t = await page.locator(".xterm-rows").innerText();
-      return t.includes("1:") && t.includes("2:") && t.includes("proceed");
-    });
-    await sleep(600);
-    const f = path.join(out, `${prefix}-desktop-tui-${scheme}.png`);
-    await page.screenshot({ path: f });
-    shots.push(f);
-    await ctx.close();
-  }
   console.log(shots.join("\n"));
   ok = true;
 } finally {
