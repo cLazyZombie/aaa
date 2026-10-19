@@ -209,7 +209,7 @@ impl Host {
                 }
             }
             ProjectStatus::Active if current == ProjectStatus::Archived => {
-                notes.push(format!("coordinator는 `aaa project open {project}`로 연다"));
+                notes.push("coordinator는 `aaa coordinator open`으로 연다".to_string());
             }
             ProjectStatus::Active => {}
         }

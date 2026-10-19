@@ -5560,3 +5560,20 @@ primary 근거:
 - 사용자가 지금 치는 곳이 coordinator인지 몰라 실수했다(10-19 「일반 입력 창이 파란색이면 코디네이터 입력 창은 보라색으로」). 시안 5안 중 3안(2px 진보라 + 바깥 번짐, 맞은편 두 줄기 빛이 6초에 한 바퀴)을 골랐다. `pane.role === "coordinator"`인 대화 입력창(ChatComposer `coordinator`)만 달고 thread·특수 임무·일반 pane은 그대로다.
 - 색은 `--coordinator`·`--coordinator-glow` token(style.css, 색조 하나, 밝기만 어두움·밝음)이다. 포커스·잠김에도 보라를 지킨다. catppuccin은 포커스가 원래 mauve라 색이 비슷하고, 두께와 도는 빛이 가른다(사용자 결정: 그대로 둔다).
 - 빛은 둥근 고리 mask 안의 conic-gradient 정사각형을 `transform`으로만 돌린다(합성만 움직이고 JS 타이머 없음). 탭이 숨으면 `data-paused`로 멈추고(visibilitychange), 움직임 줄이기면 빛 없이 테두리만 남는다. 시험은 웹 E2E 22 「coordinator 입력창」(데스크톱 Chromium·iPhone WebKit).
+
+### 8.285 프로젝트 인자 없는 CLI와 둘째 프로젝트 거부(10-19, t-0429 S1)
+
+- **범위.** 프로젝트 단계 없애기의 S1이다. S0(§8.283)의 시작 검사에 더해 `project create`가 둘째를 거부한다. CLI는 프로젝트 인자를 생략하고 coordinator 안내도 그 꼴로 쓴다. host·wire(FRONT_API)·저장 이름은 바꾸지 않는다. 요청의 `project`를 선택으로 바꾸는 것은 S2다.
+- **CLI.** 프로젝트 인자를 받던 thread·inbox·routine·mission·evaluator·evaluation·library·context·assignable 명령은 생략하면 host가 맡은 하나를 쓴다. CLI가 `project list --all`을 한 번 물어 채운다.
+  - 옛 꼴 `<프로젝트> <대상>`은 숨긴 둘째 위치 인자로 받는다. 같은 이름이면 표준 오류에 「경고:」 한 줄을 남기고 그대로 하고, 다른 이름이면 거부한다.
+  - 보관한 프로젝트나 여럿이 남은 옛 상태의 이름은 그대로 받는다.
+  - 뒤에 여러 값이 오는 명령(`thread keys`·`inbox done`·`evaluation adopt|hold`)은 첫 값이 host가 아는 프로젝트 이름일 때만 옛 꼴로 본다.
+  - 새 꼴 `aaa set <key> <값>`·`aaa coordinator open`을 더한다. `project set`·`project open`은 그대로 받는다.
+  - 경고는 표준 오류에만 쓴다(JSON 출력은 그대로).
+- **아직 프로젝트를 받는 것.** `post <p> user`는 세션 안에서 프로젝트를 생략하면 thread의 hook 길로 가서 coordinator 검증이 달라지므로 S2까지 둔다. `safety <target>`·`profile --project`도 S2([safety] 한 표)까지, `project pause|resume|sweep|archive|delete|rename`도 S5까지 둔다.
+- **만들기 거부.** `Orch::project_create`는 보관하지 않은 프로젝트가 있으면 거부한다(이름 검사 뒤, 폴더를 만들기 전). 이미 있는 것을 보관하면 새로 만들 수 있다. `migrate import`는 이 길을 거치지 않는다.
+- **같은 초의 삭제.** 지우고 다시 만든 같은 이름을 같은 초에 또 지우면 휴지통 이름이 겹쳐 실패했다. 뒤에 수를 붙인다.
+- **안내.** `COORDINATOR_GUIDE`의 명령에서 생략할 수 있는 프로젝트 인자를 뺐다(post·safety·profile·project pause|sweep은 남는다). 운영 프로젝트 AGENTS.md에는 aaa 표지가 있으므로 배포 뒤 coordinator가 `aaa doctor files --fix`로 새 안내를 받는다.
+  - 「프로젝트」라는 말을 「작업 공간」·「aaa」로 바꾸는 것은 웹 이름과 함께 S3에서 한다. thread brief에는 프로젝트 인자가 든 명령이 없다.
+- **웹.** 프로젝트가 하나라 웹의 프로젝트 머리(`ProjectGroup`)는 그려지지 않는다. S3에서 뺀다.
+- **검증.** [testing](testing.md)의 「프로젝트 인자 없는 CLI」를 따른다.

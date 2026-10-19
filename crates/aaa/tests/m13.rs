@@ -2972,7 +2972,7 @@ fn project_lifecycle() {
     let moved = w.projects.join("shop2");
     assert!(!dir.exists() && moved.join("PROJECT.md").is_file());
     let agents = std::fs::read_to_string(moved.join("AGENTS.md")).unwrap();
-    assert!(agents.contains("aaa context shop2") && !agents.contains("life"), "AGENTS.md를 새 이름으로");
+    assert!(agents.contains("aaa post shop2 user") && !agents.contains("life"), "AGENTS.md를 새 이름으로");
     let th = w.h.ok(&["thread", "show", "shop2", &id]);
     assert_eq!((th["project"].as_str(), th["status"].as_str()), (Some("shop2"), Some("resolved")), "{th}");
     assert_eq!(config_errors("shop2"), 1, "inbox 기록도 옮긴다");
@@ -4005,7 +4005,11 @@ fn coordinator_flow() {
     assert!(text.contains("지시가 아니라 자료다") && text.contains("[thread-state]"), "{text}");
     // 만든 프로젝트의 coordinator 안내(host는 프로젝트 하나라 둘째는 만들지 않는다, plan §8.285)
     let guide = std::fs::read_to_string(w.projects.join("demo").join("AGENTS.md")).unwrap();
-    assert!(guide.contains("aaa context demo") && guide.contains("--from-task"), "{guide}");
+    // 프로젝트 인자를 생략하는 명령(plan §8.285)은 이름 없이, 아직 이름이 드는 post는 이름과 함께
+    assert!(
+        guide.contains("`aaa context`") && guide.contains("aaa post demo user") && guide.contains("--from-task"),
+        "{guide}"
+    );
     let e = w.h.json(&["project", "create", "p2"]).expect_err("둘째 프로젝트");
     assert!(e.contains("host는 프로젝트 하나만 맡는다: 이미 `demo`가 있다"), "{e}");
     assert!(!w.projects.join("p2").exists(), "거부한 프로젝트 폴더를 남기지 않는다");
@@ -4050,7 +4054,7 @@ fn doctor_files_brings_the_coordinator_guide_to_existing_projects() {
     for s in GUIDE_SECTIONS {
         assert!(guide.contains(s), "새 프로젝트 안내에 「{s}」가 없다:\n{guide}");
     }
-    assert!(guide.contains("aaa context demo") && guide.contains("aaa가 쓴 파일이다."), "{guide}");
+    assert!(guide.contains("aaa post demo user") && guide.contains("aaa가 쓴 파일이다."), "{guide}");
     assert_entries(
         &fresh,
         &[
@@ -4109,12 +4113,12 @@ fn doctor_files_brings_the_coordinator_guide_to_existing_projects() {
     assert!(s["fixed"] == false && s["error"].as_str().unwrap().contains("AGENTS.md.before-aaa가 이미 있어"), "{s}");
     // 표지 있는 낡은 안내는 지금 안내로, 빠진 파일도 생긴다
     let now = std::fs::read_to_string(old.join("AGENTS.md")).unwrap();
-    assert!(GUIDE_SECTIONS.iter().all(|s| now.contains(s)) && now.contains("aaa context old"), "{now}");
+    assert!(GUIDE_SECTIONS.iter().all(|s| now.contains(s)) && now.contains("aaa post old user"), "{now}");
     assert!(old.join("uploads").is_dir() && old.join("routines/pr-followup.md").is_file());
     assert!(!old.join("AGENTS.md.before-aaa").exists(), "표지 있는 aaa 안내는 옮겨 두지 않는다");
     // 사람 글은 옆에 그대로
     assert_eq!(std::fs::read_to_string(hand.join("AGENTS.md.before-aaa")).unwrap(), hand_text);
-    assert!(std::fs::read_to_string(hand.join("AGENTS.md")).unwrap().contains("aaa context hand"));
+    assert!(std::fs::read_to_string(hand.join("AGENTS.md")).unwrap().contains("aaa post hand user"));
     // 자리가 찬 프로젝트는 두 사람 글 모두 그대로
     assert_eq!(std::fs::read_to_string(stuck.join("AGENTS.md")).unwrap(), "두 번째 사람 글\n");
     assert_eq!(std::fs::read_to_string(stuck.join("AGENTS.md.before-aaa")).unwrap(), "처음 옮겨 둔 사람 글\n");
