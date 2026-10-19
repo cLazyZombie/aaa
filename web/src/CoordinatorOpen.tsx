@@ -1,5 +1,5 @@
-// 프로젝트 화면 머리의 「coordinator」(herdr-projects popup Threads `c` → `profile_picker("Start or focus a coordinator with")` →
-// `open <p> --profile <고른 것>`, plan §8.180). 고르기 목록은 host 머신 profile 가운데 safety `coordinator_profiles`가 허용한
+// 모든 thread 화면 머리의 「coordinator」(herdr-projects popup Threads `c` → `profile_picker("Start or focus a coordinator with")` →
+// `open <p> --profile <고른 것>`, plan §8.180). 프로젝트는 host가 맡은 하나라 보내지 않는다(host가 채운다, plan §8.288·§8.291). 고르기 목록은 host 머신 profile 가운데 safety `coordinator_profiles`가 허용한
 // 것이고(참고 `usable`) 프로젝트 기본 coordinator profile이 맨 위다. 고르면 host가 도는 coordinator를 알리거나 띄우고 그 pane을 연다.
 // 목록과 허용·기본값은 단추를 누를 때 받는다: agent.toml·로그인한 harness·safety는 화면을 연 뒤에도 바뀐다.
 // 거부(허용 목록·보관·없는 profile)는 host가 하고 그 글을 머리 아래 줄(onError)에 보인다.
@@ -10,11 +10,9 @@ import { RowMenu, type RowMenuItem } from "./RowMenu";
 import { AgentMark } from "./herdr/AgentMark.tsx";
 
 export function CoordinatorOpen({
-  project,
   onPane,
   onError,
 }: {
-  project: string;
   onPane: (id: string) => void;
   onError: (message: string | null) => void;
 }) {
@@ -27,7 +25,7 @@ export function CoordinatorOpen({
     setBusy(true);
     onError(null);
     try {
-      const r = await call({ op: "project_open", project, profile });
+      const r = await call({ op: "project_open", profile });
       if (r.kind === "project_opened") onPane(r.pane.id);
     } catch (e) {
       fail(e);
@@ -46,9 +44,9 @@ export function CoordinatorOpen({
     onError(null);
     try {
       // 프로젝트 폴더는 host 머신에 있다: machine을 비우면 host가 로컬 agent에 묻는다
-      const [r, ps] = await Promise.all([call({ op: "profiles", machine: null }), call({ op: "projects", all: true })]);
+      const [r, inst] = await Promise.all([call({ op: "profiles", machine: null }), call({ op: "instance" })]);
       const all = r.kind === "profiles" ? r.profiles : [];
-      const view = ps.kind === "projects" ? ps.projects.find((p) => p.name === project) : undefined;
+      const view = inst.kind === "instance" ? (inst.project ?? undefined) : undefined;
       const allowed = view?.coordinator_profiles;
       const usable = all.filter((p) => !allowed || allowed.includes(p.name));
       const first = view?.coordinator_profile ?? "";
@@ -56,7 +54,7 @@ export function CoordinatorOpen({
       if (usable.length === 0) {
         onError(
           allowed
-            ? `${project}의 coordinator에 허용된 profile이 host 머신에 없다(허용: ${allowed.join(", ") || "없음"}). 사람이 \`aaa profile allow coordinator <이름> --project ${project}\`로 정한다`
+            ? `coordinator에 허용된 profile이 host 머신에 없다(허용: ${allowed.join(", ") || "없음"}). 사람이 \`aaa profile allow coordinator <이름> --project ${view?.name ?? ""}\`로 정한다`
             : "host 머신에 profile이 없다. 사람이 `aaa profile add`로 더한다",
         );
         return;

@@ -50,7 +50,7 @@ export function ReportsView({
           <HeadNote />
           <div className="term-title">
             <strong>보고서</strong>
-            <span className="muted">모든 프로젝트의 보고서와 공유 링크</span>
+            <span className="muted">보고서와 공유 링크</span>
           </div>
           <HeadMore />
         </header>

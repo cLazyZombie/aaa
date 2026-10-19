@@ -100,7 +100,7 @@ export default async function ({ page }) {
       if (!rect || rect.x < 0 || rect.x + rect.width > width || rect.y < 0 || rect.y + rect.height > height) throw new Error(`알림이 화면 밖: ${JSON.stringify(rect)}`);
       await shot(page, round ? "phone-post-muted" : "desktop-post-muted");
       await drop.locator(".droplet-card").click();
-      await until("프로젝트로 이동", async () => (await page.evaluate(() => location.hash)) === "#project=mute-demo");
+      await until("모든 thread로 이동", async () => (await page.evaluate(() => location.hash)) === "#threads");
       await until("알림 닫힘", async () => (await drop.count()) === 0);
     }
   });

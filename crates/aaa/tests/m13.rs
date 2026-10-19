@@ -639,7 +639,7 @@ fn worktree_thread_round_trip() {
     assert_eq!(cwd, w.lab.root.join("workA").join("repo").join("demo-t-0001"));
     assert!(cwd.join(".aaa/demo-t-0001/brief.md").is_file());
     let brief = std::fs::read_to_string(cwd.join(".aaa/demo-t-0001/brief.md")).unwrap();
-    assert!(brief.contains("X-42") && brief.contains("# thread brief") && brief.contains("# 프로젝트 지침"), "{brief}");
+    assert!(brief.contains("X-42") && brief.contains("# thread brief") && brief.contains("# 지침"), "{brief}");
     // 작업 폴더·aaa 실행 파일 자리는 agent가 그 머신 값으로 채웠다(plan §8.78)
     let work = cwd.join(".aaa/demo-t-0001");
     assert!(brief.contains(&format!("- 보고: `{}/report.md`", work.display())), "{brief}");
@@ -1700,10 +1700,7 @@ fn memory_and_restart() {
     let brief = std::fs::read_to_string(&brief_path).unwrap();
     // 다시 시작 안내는 thread 규칙 다음, 프로젝트 지침 앞이다(herdr-projects `compose_brief`)
     let at = |n: &str| brief.find(n).unwrap_or_else(|| panic!("{n} 없음: {brief}"));
-    assert!(
-        at("# thread brief") < at("**이 일을 앞서 시도한 것이")
-            && at("**이 일을 앞서 시도한 것이") < at("# 프로젝트 지침")
-    );
+    assert!(at("# thread brief") < at("**이 일을 앞서 시도한 것이") && at("**이 일을 앞서 시도한 것이") < at("# 지침"));
     assert!(brief.contains("API는 v3로 바꾼다") && !brief.contains("v2"), "{brief}");
     let v = w.wait_show("다시 안내", &id, |v| v["brief"] == "delivered");
     // hook이 없는 harness는 일하는지 알 수 없다: 방금 안내를 받은 thread는 작업 중이다(herdr-projects ticker `delivered`,
@@ -4085,7 +4082,7 @@ const GUIDE_SECTIONS: &[&str] = &[
     "일을 직접 하지 않으므로 언제나 사용자에게 답할 수 있다",
     "앞(foreground)에서 오래 기다리는 명령을 돌리지 않는다",
     "기다릴 일은 aaa inbox 알림에 맡기거나, 수 초 안에 한 번만 확인하고 끝낸다",
-    "## 새 프로젝트의 첫 턴",
+    "## 첫 턴",
     "--to-user --title",
     "지시는 사용자만, 채팅으로 한다",
     "## 메시지마다 세 가지 중 하나",

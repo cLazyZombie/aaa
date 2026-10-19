@@ -1,10 +1,10 @@
-// 프로젝트의 모든 thread(끝난 것까지). herdr-projects `popup.rs` `build`(Section::Threads)·`thread_line`·`group_color`(1f05c00)를 웹으로 옮겼다:
-// 사이드바는 열린 thread만 보이고(sidebar.rs `recorded_groups`), 프로젝트 하나를 고르면 묶음마다 머리 「묶음 (n)」 아래 줄을 보이며
-// 끝난 thread는 맨 아래 「끝남」 묶음에 흐리게 둔다. 「/」 거르기는 popup처럼 이름(id·제목)에 든 글로 고른다. 줄을 고르면 보고(popup detail).
-// 프로젝트 고르기(popup 첫 화면, projects_in_scope)도 같은 화면이다: 프로젝트마다 열린 묶음 줄(project_line)과 끝난 수.
-// 프로젝트 머리의 「coordinator」는 popup Threads의 `c`(CoordinatorOpen.tsx).
+// 모든 thread(끝난 것까지, `#threads`). herdr-projects `popup.rs` `build`(Section::Threads)·`thread_line`·`group_color`(1f05c00)를 웹으로
+// 옮겼다: 사이드바는 열린 thread만 보이고(sidebar.rs `recorded_groups`), 이 화면은 묶음마다 머리 「묶음 (n)」 아래 줄을 보이며 끝난 thread는
+// 맨 아래 「끝남」 묶음에 흐리게 둔다. 「/」 거르기는 popup처럼 이름(id·제목)에 든 글로 고른다. 줄을 고르면 보고(popup detail).
+// host는 프로젝트 하나만 맡아(plan §8.291) popup 첫 화면의 프로젝트 고르기는 없다. 머리의 「coordinator」는 popup Threads의 `c`
+// (CoordinatorOpen.tsx).
 import { useEffect, useState, type ReactNode } from "react";
-import { ArrowLeft, ChevronRight, Folder, Search } from "lucide-react";
+import { ArrowLeft, ChevronRight, Search } from "lucide-react";
 import { call } from "./api";
 import type { ProjectView, ThreadView } from "./gen/proto";
 import { GROUP_WORD, groupRank, projectLine, stateLine, threadKey } from "./sidebarModel";
@@ -36,40 +36,29 @@ function Filter({ value, onChange, label }: { value: string; onChange: (v: strin
 }
 
 export function ProjectThreads({
-  project,
   threads,
-  onProject,
   onThread,
   onBack,
   onPane,
 }: {
-  /** null이면 프로젝트 고르기 */
-  project: string | null;
   /** 평가자를 뺀 모든 thread(끝난 것까지) */
   threads: ThreadView[];
-  onProject: (name: string | null) => void;
   onThread: (t: ThreadView) => void;
   onBack: () => void;
   /** 「coordinator」가 연 pane으로 간다. 없으면(보기 권한) 단추가 없다 */
   onPane?: (id: string) => void;
 }) {
-  const [projects, setProjects] = useState<ProjectView[] | null>(null);
+  // host가 맡은 프로젝트 하나(`instance`, FRONT_API 1.50): 멈춤 표시와 coordinator 열기에 쓴다
+  const [instance, setInstance] = useState<ProjectView | null>(null);
   const [filter, setFilter] = useState("");
   const [error, setError] = useState<string | null>(null);
   useEffect(() => {
-    setFilter("");
-    setError(null);
-  }, [project]);
-  useEffect(() => {
     let live = true;
-    // 보관한 프로젝트도 받아 thread 기록에서 나온 이름까지 숨긴다(참고 popup은 보관한 것을 빼고 보인다)
-    call({ op: "projects", all: true }).then(
+    call({ op: "instance" }).then(
       (r) => {
-        if (live && r.kind === "projects") setProjects(r.projects);
+        if (live && r.kind === "instance") setInstance(r.project);
       },
-      () => {
-        if (live) setProjects([]);
-      },
+      () => {},
     );
     return () => {
       live = false;
@@ -77,54 +66,8 @@ export function ProjectThreads({
   }, []);
   const needle = filter.trim().toLowerCase();
   const now = Date.now();
-
-  if (project === null) {
-    // 프로젝트 이름: host가 아는 프로젝트와 thread가 있는 프로젝트(옮겨 온 기록만 있는 것도)
-    const archived = new Set((projects ?? []).filter((p) => p.status === "archived").map((p) => p.name));
-    const paused = new Set([...(projects ?? []).filter((p) => p.status === "paused").map((p) => p.name), ...threads.filter((t) => t.project_status === "paused").map((t) => t.project)]);
-    const names = [...new Set([...(projects ?? []).map((p) => p.name), ...threads.map((t) => t.project)])].filter((n) => !archived.has(n)).sort();
-    const shown = names.filter((n) => matches(needle, n));
-    return (
-      <section className="project-threads" aria-label="프로젝트" data-testid="projects">
-        <header className="project-threads-head">
-          <DrawerToggle />
-        <button type="button" className="icon-button" aria-label="닫기" title="닫기" onClick={onBack}>
-            <ArrowLeft aria-hidden="true" />
-          </button>
-          <h2 className="project-threads-title">프로젝트</h2>
-          <HeadMore />
-        </header>
-        <Filter value={filter} onChange={setFilter} label="프로젝트 거르기" />
-        <ul className="project-threads-list">
-          {shown.map((name) => {
-            const mine = threads.filter((t) => t.project === name);
-            const open = mine.filter((t) => t.group !== "resolved");
-            const done = mine.length - open.length;
-            return (
-              <li key={name}>
-                <button type="button" className="project-threads-row" data-testid={`project-open-${name}`} onClick={() => onProject(name)}>
-                  <Folder className="project-threads-mark" aria-hidden="true" />
-                  <span className="project-threads-copy">
-                    <span className="project-threads-name">{name}</span>
-                    <span className="project-threads-facts">{[projectLine(open.map((t) => t.group), paused.has(name)), done > 0 ? `끝남 ${done}` : null].filter(Boolean).join(" · ")}</span>
-                  </span>
-                  <ChevronRight className="project-threads-go" aria-hidden="true" />
-                </button>
-              </li>
-            );
-          })}
-          {projects !== null && shown.length === 0 && (
-            <li className="project-threads-empty" role="status">
-              {names.length === 0 ? "프로젝트 없음" : "맞는 프로젝트 없음"}
-            </li>
-          )}
-        </ul>
-      </section>
-    );
-  }
-
-  const mine = threads.filter((t) => t.project === project && matches(needle, t.id, t.title));
-  const all = threads.filter((t) => t.project === project);
+  // 프로젝트는 하나다(plan §8.291): 옮겨 온 기록만 있는 다른 이름의 thread가 남았으면 그것도 보인다
+  const mine = threads.filter((t) => matches(needle, t.id, t.title));
   const groups = DISPLAY_ORDER.map((g) => ({
     g,
     rows: mine.filter((t) => t.group === g).sort((a, b) => b.updated_at_ms - a.updated_at_ms),
@@ -134,25 +77,23 @@ export function ProjectThreads({
   const other = mine.filter((t) => !known.has(t.group)).sort((a, b) => groupRank(a.group) - groupRank(b.group));
   return (
     <ProjectBody
-      project={project}
       line={projectLine(
-        all.filter((t) => t.group !== "resolved").map((t) => t.group),
-        all.some((t) => t.project_status === "paused") || (projects ?? []).some((p) => p.name === project && p.status === "paused"),
+        threads.filter((t) => t.group !== "resolved").map((t) => t.group),
+        threads.some((t) => t.project_status === "paused") || instance?.status === "paused",
       )}
       groups={other.length > 0 ? [...groups, { g: "other", rows: other }] : groups}
-      empty={all.length === 0 ? "thread 없음" : mine.length === 0 ? "맞는 thread 없음" : null}
-      filter={<Filter value={filter} onChange={setFilter} label={`${project} thread 거르기`} />}
+      empty={threads.length === 0 ? "thread 없음" : mine.length === 0 ? "맞는 thread 없음" : null}
+      filter={<Filter value={filter} onChange={setFilter} label="thread 거르기" />}
       now={now}
       onThread={onThread}
-      onBack={() => onProject(null)}
-      coordinator={onPane && <CoordinatorOpen project={project} onPane={onPane} onError={setError} />}
+      onBack={onBack}
+      coordinator={onPane && <CoordinatorOpen onPane={onPane} onError={setError} />}
       error={error}
     />
   );
 }
 
 function ProjectBody({
-  project,
   line,
   groups,
   empty,
@@ -163,7 +104,6 @@ function ProjectBody({
   coordinator,
   error,
 }: {
-  project: string;
   line: string;
   groups: { g: string; rows: ThreadView[] }[];
   empty: string | null;
@@ -175,14 +115,14 @@ function ProjectBody({
   error: string | null;
 }) {
   return (
-    <section className="project-threads" aria-label={`${project} thread`} data-testid={`project-threads-${project}`}>
+    <section className="project-threads" aria-label="모든 thread" data-testid="all-threads">
       <header className="project-threads-head">
         <DrawerToggle />
-        <button type="button" className="icon-button" aria-label="프로젝트 목록" title="프로젝트 목록" onClick={onBack}>
+        <button type="button" className="icon-button" aria-label="닫기" title="닫기" onClick={onBack}>
           <ArrowLeft aria-hidden="true" />
         </button>
         <span className="project-threads-heading">
-          <h2 className="project-threads-title">{project}</h2>
+          <h2 className="project-threads-title">모든 thread</h2>
           <span className="project-threads-facts">{line}</span>
         </span>
         {coordinator}

@@ -49,7 +49,8 @@ export interface PaletteActions {
   view: "chat" | "terminal" | null;
   toggleTheme: () => void;
   openSettings: (page?: SettingsPageId) => void;
-  openProjects: () => void;
+  /** 모든 thread(끝난 것까지, `#threads`) */
+  openThreads: () => void;
   /** 본문 보고서 화면(활동 막대 「보고서」, plan §8.240) */
   openReports: () => void;
   /** 사이드바 접기·펴기(휴대폰은 목록 drawer, 참고 CommandPalette `sidebar`) */
@@ -186,8 +187,8 @@ export function CommandPalette({ open, onClose, machines, panes, threads, select
     // 참고 「Toggle sidebar」(i18n.ko.ts 「사이드바 토글」)
     { id: "sidebar", label: "사이드바 토글", icon: PanelLeft, shortcut: "toggle-sidebar", run: actions.toggleSidebar },
     { id: "reports", label: "보고서", icon: FileText, run: actions.openReports },
-    // aaa 머리 「더 보기 → 프로젝트」(끝난 thread까지)
-    { id: "projects", label: "프로젝트 thread 보기", icon: ListChecks, run: actions.openProjects },
+    // aaa 머리 「더 보기 → 모든 thread」(끝난 thread까지)
+    { id: "threads", label: "모든 thread", icon: ListChecks, run: actions.openThreads },
   ], [actions]);
 
   // Settings pages are found by a query only, and open on the page itself: the dialog reads the request as it mounts

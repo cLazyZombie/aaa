@@ -214,11 +214,11 @@ export default async function () {
       listHead: Math.round(document.querySelector(".list-head").getBoundingClientRect().height),
     }));
     same(drawer, { top: drawer.head, head: 52 + 59, listHead: 52 }, "drawer 자리");
-    // 머리줄이 없는 프로젝트 화면도 맨 위의 ≡를 상태 막대 아래에 둔다
-    await ph.evaluate(() => (location.hash = "#projects"));
-    await ph.getByTestId("projects").waitFor();
-    const projectsToggle = await ph.getByTestId("projects").locator(".drawer-toggle").evaluate((e) => Math.round(e.getBoundingClientRect().top));
-    if (projectsToggle < 59) throw new Error(`프로젝트 화면 ≡ 위 ${projectsToggle} < 상태 막대 59`);
+    // 머리줄이 없는 모든 thread 화면도 맨 위의 ≡를 상태 막대 아래에 둔다
+    await ph.evaluate(() => (location.hash = "#threads"));
+    await ph.getByTestId("all-threads").waitFor();
+    const threadsToggle = await ph.getByTestId("all-threads").locator(".drawer-toggle").evaluate((e) => Math.round(e.getBoundingClientRect().top));
+    if (threadsToggle < 59) throw new Error(`모든 thread 화면 ≡ 위 ${threadsToggle} < 상태 막대 59`);
     await cdp.send("Emulation.setSafeAreaInsetsOverride", { insets: {} });
     if (app.errors.length) throw new Error(`화면 오류: ${app.errors.join("; ")}`);
     await app.page.context().close();

@@ -5643,3 +5643,28 @@ L4 후속(10-20 00시 사용자 관찰): 멈춤 상태의 후보 예약과 재�
 
 
 - **L4 착지 통합(10-20).** 기준4fde50aa의 S1/S2·CLI 별도 스택·rollout 복구를 보존한다. API는 기준1.51 다음1.52, L4 절은8.290이다. 새 convert CLI/Front는 프로젝트 생략과 옛 같은 이름 호환을 따르고, 웹12 추가 fixture도 기존 단일 demo 프로젝트를 쓴다. TS는 통합 Rust 정본에서 다시 만든다.
+
+### 8.291 웹의 프로젝트 층 없애기(10-20, t-0429 S3)
+
+- **범위.** 프로젝트 단계 없애기의 S3다. S3a(§8.280)가 「작업」 트리를 만들었고, S2(§8.288)가 요청의 프로젝트 생략과 `Instance`를 더했다. 이 단계는 웹에서 프로젝트를 고르는 자리를 모두 뺀다. wire는 바꾸지 않는다(FRONT_API 1.50 그대로).
+- **모든 thread.** 프로젝트 고르기(`#projects`)와 프로젝트 thread 보기(`#project=<p>`)를 「모든 thread」(`#threads`) 하나로 합쳤다.
+  - 더 보기·thread 줄 메뉴·명령 팔레트의 「프로젝트 thread 보기」는 「모든 thread」다. 팔레트는 예전 말로도 찾는다.
+  - 화면 머리의 멈춤 표시와 coordinator 열기는 `instance`를 쓴다. coordinator 열기는 `project_open`에 프로젝트를 보내지 않는다(host가 채운다).
+  - 보고를 열고 「뒤로」를 누르면 모든 thread로 돌아온다.
+  - 옛 주소 `#projects`·`#project=<p>`(이미 보낸 push·저장한 링크)는 `#threads`로 바꿔 연다.
+- **짧은 thread 주소.** 앱이 고른 thread는 `#thread=<id>`다. thread 목록을 받으면 내부 열쇠 `<p>/<id>`로 바뀐다(보관한 프로젝트의 thread는 고르지 않는다).
+  - 옛 `#thread=<p>/<id>`도 그대로 연다.
+  - 앱 안 알림·탭 알림의 자리(`thread=<p>/<id>`)는 host 흐름 기록의 alert target과 같은 글이라 그대로 둔다.
+- **host push.** coordinator post 묶음의 URL은 `/#threads`이고, thread 하나의 URL은 `/#thread=<id>`다. tag `aaa-<p>`는 인스턴스 이름이 생기는 S4에서 바꾼다. post 음소거 앱 안 알림도 모든 thread를 연다.
+- **사이드바.** 프로젝트가 여럿일 때만 그리던 프로젝트 머리(`ProjectGroup`, 접힘 `aaa:project-collapsed:*`)를 지웠다. 옮겨 온 기록만 있는 다른 이름이 남으면 그 트리를 차례로 잇는다. 특수 패널의 프로젝트 머리도 지웠다.
+  - 저장소를 아는 thread가 없을 때(옛 host) coordinator와 thread를 나누는 「thread n」 머리줄은 남긴다. 그때 폴더 머리가 없어 그 줄이 유일한 나눔이기 때문이다(시안의 「없앤다」와 다르다).
+- **보고서.** 보고서 화면의 프로젝트 고르기를 지웠다. 머리 글은 「보고서와 공유 링크」다.
+- **낱말.** 안내·brief의 「프로젝트」는 「aaa」로 바꾸거나(전체를 뜻할 때) 뺐다(꾸밈말일 때). 「작업 공간」은 쓰지 않는다: S3a가 이미 저장소 폴더를 「작업 공간 폴더」라 부른다.
+  - coordinator 안내: 머리 `# aaa coordinator`, `## 첫 턴`, `## 설정`.
+  - thread brief: 머리 `# aaa`·`- 이름:`, `# 지침`·`# memory`. 저장소가 없는 일의 폴더는 「aaa 홈 폴더가 아니라 네 thread 폴더」다.
+  - 진행 보고 안내(SessionStart hook과 brief가 같이 쓴다)도 `post user …`로 바꿨다. 새 프로젝트 PROJECT.md 뼈대는 「지침을 여기에 쓴다」다.
+  - 임무 brief의 `mission show <p> <m> --json`은 그대로 둔다: agent가 임무 권한 허용 목록에 그 글자 그대로 넣는다(agent wire를 바꾸지 않는다).
+  - 표지 있는 운영 AGENTS.md는 배포 뒤 `aaa doctor files --fix`가 새 글로 바꾼다.
+- **그대로 둔 것.** 자동화 패널(t-0420)은 프로젝트마다 routine을 묻는 그대로 둔다(그 일의 L4·L5가 새 모양으로 바꾼다).
+- **검증.** [testing](testing.md)의 「웹의 프로젝트 층 없애기」를 따른다.
+
