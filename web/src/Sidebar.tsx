@@ -35,8 +35,9 @@ import { PANEL_LABEL, type SidebarPanel } from "./sidebarPanel";
 import { updateSidebarShared, useMedia, useSidebarShared } from "./settings";
 import { watchTouchReorder } from "./herdr/touchReorder.ts";
 import { placeBlock } from "./herdr/workspaceOrder.ts";
-import { activityOrder, GROUP_WORD, needsYou, paneAgentStatus, paneEnded, paneProblem, projectLine, roster, shortPath, stateLine, threadKey } from "./sidebarModel";
+import { activityOrder, GROUP_WORD, needsYou, paneAgentStatus, paneEnded, paneProblem, projectLine, roster, shortPath, stateLine, stateTone, threadKey, workingStartedAt } from "./sidebarModel";
 import { useSummaryHover } from "./ThreadSummary";
+import { WorkingDuration } from "./WorkingDuration";
 import "./herdr/primitives.css";
 import "./herdr/Sidebar.css";
 import "./herdr/AgentSidebar.css";
@@ -912,6 +913,7 @@ function ThreadRow({ t, online, machine, twoLine, ...props }: SidebarProps & { t
   // herdr-projects thread_display: 「id · 제목」
   const title = `${t.id} · ${t.title}`;
   const line = stateLine(t, paneOpen, now);
+  const tone = stateTone(t, paneOpen ? pane : undefined);
   // 머신은 트리 단계가 아니라 둘째 줄 오른쪽 글자로(plan §8.195), 끊겼으면 「이름 끊김」
   const machineName = machine?.name ?? t.machine;
   const tooltip = [`${t.project}/${t.id}`, t.title, line, `${t.profile}@${machineName}`, t.branch].filter(Boolean).join("\n");
@@ -956,8 +958,9 @@ function ThreadRow({ t, online, machine, twoLine, ...props }: SidebarProps & { t
                 <span className="workspace-name">{title}</span>
               </span>
               <span className="workspace-place thread-place">
-                <span className={`thread-state is-${t.group}`} data-testid={`thread-state-${t.project}-${t.id}`}>
+                <span className={`thread-state is-${t.group}`} data-tone={tone} data-testid={`thread-state-${t.project}-${t.id}`}>
                   {line}
+                  <WorkingDuration startedMs={workingStartedAt(tone, paneOpen ? pane : undefined)} />
                 </span>
                 <span className={`thread-machine${online ? "" : " is-offline"}`} data-testid={`thread-machine-${t.project}-${t.id}`}>
                   {online ? machineName : `${machineName} 끊김`}
@@ -967,8 +970,9 @@ function ThreadRow({ t, online, machine, twoLine, ...props }: SidebarProps & { t
           ) : (
             <span className="workspace-copy">
               <span className="workspace-name">{title}</span>
-              <span className={`worktree-workspace-label thread-state is-${t.group}`} data-testid={`thread-state-${t.project}-${t.id}`}>
+              <span className={`worktree-workspace-label thread-state is-${t.group}`} data-tone={tone} data-testid={`thread-state-${t.project}-${t.id}`}>
                 {t.status === "starting" ? "준비 중" : t.cleanup_pending ? "정리 중" : GROUP_WORD[t.group] ?? t.group}
+                <WorkingDuration startedMs={workingStartedAt(tone, paneOpen ? pane : undefined)} />
               </span>
             </span>
           )}

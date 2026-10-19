@@ -1746,6 +1746,16 @@ export function TermView({
     // 입력줄이면 키보드는 입력줄 것이다: 키를 눌러도 터미널로 옮기지 않는다
     if (!inputLineRef.current) term.focus();
   };
+  // 대화 입력창의 중단 단추(t3code ComposerPrimaryActions.tsx:131·264, plan §8.266): 키 막대의 Esc와 같은 길이다. 다만 유지 키를
+  // 잇지 않고(눌러 둔 Ctrl이 Esc를 다른 키로 바꾸지 않게) 입력창에 있는 focus를 터미널로 옮기지 않는다
+  const interruptAgent = () => {
+    const term = termRef.current;
+    if (!term || composingTermRef.current || commitPendingRef.current) return;
+    const seq = keyBarInputSequence("Escape", term.modes.applicationCursorKeysMode);
+    if (seq === null) return;
+    autoFit.current(true);
+    deliver(seq);
+  };
   const toggleModifier = (modifier: keyof StickyModifiers) => {
     if (composingTermRef.current) return;
     setModifiers((m) => ({ ...m, [modifier]: !m[modifier] }));
@@ -2123,6 +2133,8 @@ export function TermView({
           pane={pane.id}
           touch={coarse}
           working={paneAgentStatus(pane) === "working"}
+          asking={paneAgentStatus(pane) === "blocked"}
+          onInterrupt={interruptAgent}
           messages={chatMessages}
           onInspect={() => setChatView(false)}
           onSend={sendTerminalLine}

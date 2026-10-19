@@ -54,6 +54,8 @@ import { watchDrawerSwipe } from "./herdr/edgeSwipe.ts";
 import { DrawerContext, DrawerToggle, HeadContext, HeadMore, HeadNote } from "./drawer";
 import { highMachines, HIGH_STAT } from "./machineStats";
 import { specialAttention } from "./specialModel";
+import { ErrorBoundary } from "./ErrorBoundary";
+import { watchBadgeFocus } from "./faviconBadge";
 
 type Auth = { state: "loading" } | { state: "pair" } | { state: "in"; role: DeviceRole; device: string } | { state: "error"; msg: string };
 
@@ -928,6 +930,8 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
     machines: { count: highMachines(machines), label: `CPU·MEM ${HIGH_STAT}% 넘음` },
     special: { count: specialAttention(missions, evaluators, panes), label: "막힘·오류·승인 필요" },
   };
+  // 탭 아이콘의 안 본 알림 수(faviconBadge.ts, plan §8.266): 창에 focus가 오면 지운다
+  useEffect(() => watchBadgeFocus(), []);
   // 넓은 창에서 접었으면 사이드바 칸이 없다(좁은 창은 drawer라 늘 칸이 있다)
   const sidebarShown = !wideScreen || !collapsed;
   // 사이드바 폭(SidebarResizer, plan §8.257): 끄는 동안은 화면에만 두고 놓으면 공유 설정에 남긴다
@@ -979,6 +983,7 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
           </button>
         </header>
         {/* 패널(목록)만 굴러가고 머리와 바닥 줄(사용량)은 늘 제자리(herdr-web-ui MachineSidebar) */}
+        <ErrorBoundary area="목록" resetKeys={[panel]}>
         <Sidebar
           panel={panel}
           machines={machines}
@@ -1002,6 +1007,7 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
             </>
           }
         />
+        </ErrorBoundary>
         <ListFoot />
         </div>
         <SidebarResizer width={sidebarWidth} onResize={resizeSidebar} />
@@ -1010,6 +1016,8 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
       <div className={`scrim${drawerOpen ? " is-open" : ""}`} aria-hidden="true" onClick={() => setDrawerOpen(false)} />
       <main className="view">
         <UpdateNotice hostBuild={hostWeb} />
+        {/* 그리기 오류는 본문 자리에서 멈춘다(ErrorBoundary, plan §8.266): 다른 화면으로 가면 다시 그린다 */}
+        <ErrorBoundary area="본문" resetKeys={[sel, reportsShown]}>
         {/* 보고서 화면은 한 번 연 뒤 늘 그려 두고 숨긴다(ReportsView) */}
         {reportsAt !== null && (
           <ReportsView
@@ -1106,7 +1114,9 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
           </div>
           </>
         )}
+        </ErrorBoundary>
       </main>
+      <ErrorBoundary area="파일 보기" resetKeys={[fileViewing?.path, fileViewing?.pane]} onDismiss={closeFile}>
       {fileViewing?.pane && (
         <FileViewer key={`${fileViewing.pane} ${fileViewing.path}`} path={fileViewing.path} source={{ pane: fileViewing.pane }} onClose={closeFile} onOpen={(path) => openFile({ path, pane: fileViewing.pane })} />
       )}
@@ -1130,6 +1140,7 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
           onOpen={(path) => openFile({ path, pane: null, worktree: fileViewing.worktree })}
         />
       )}
+      </ErrorBoundary>
       {newPaneOn && (
         <NewSessionDialog
           machine={newPaneOn}
@@ -1140,6 +1151,7 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
           }}
         />
       )}
+      <ErrorBoundary area="명령 팔레트" resetKeys={[paletteOpen]} onDismiss={closePalette}>
       <CommandPalette
         open={paletteOpen}
         onClose={closePalette}
@@ -1155,6 +1167,7 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
         }}
         actions={paletteActions}
       />
+      </ErrorBoundary>
       {/* 앱 안 알림(참고 Droplet): 누르면 그 pane·thread로 간다 */}
       <Droplet
         onOpen={(target) => {
@@ -1357,7 +1370,11 @@ function SettingsGear({
       >
         <Settings aria-hidden="true" />
       </button>
-      {settingsOpen && <SettingsDialog onClose={closeSettings} role={role} device={device} onSignOut={signOutHere} />}
+      {settingsOpen && (
+        <ErrorBoundary area="설정" onDismiss={closeSettings}>
+          <SettingsDialog onClose={closeSettings} role={role} device={device} onSignOut={signOutHere} />
+        </ErrorBoundary>
+      )}
     </>
   );
 }
