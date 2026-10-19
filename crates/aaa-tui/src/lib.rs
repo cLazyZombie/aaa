@@ -68,6 +68,8 @@ const DIVIDER_DOUBLE_CLICK: Duration = Duration::from_millis(350);
 /// host 공유 설정(`preferences`·`preferences_set`)을 아는 Front API minor. 그 요청은 1.5 판 중에 더해졌다(모르는 요청은 연결을
 /// 끊으므로 그 뒤 판에만 보낸다)
 const PREFERENCES_MINOR: u16 = 6;
+/// 입력줄 판정·steering 공통 요청을 아는 host. 옛 host에는 안전한 Ctrl+J만 보낸다.
+const CTRL_ENTER_MINOR: u16 = 43;
 /// 좁은 화면 머리의 오른쪽 단추 폭(herdr `MOBILE_BUTTON_WIDTH`)
 const MOBILE_BUTTON_WIDTH: u16 = 10;
 /// 탭 막대 오른쪽 조각을 두려면 이름표 자리가 이만큼 남아야 한다(herdr `MIN_TAB_STRIP_WIDTH` = 8 + 3 + 3×2)
@@ -494,6 +496,8 @@ struct App {
     selection: Option<mouse::Selection>,
     /// 선택 복사로 소비한 키의 Repeat·Release도 pane으로 보내지 않는다(Windows key event).
     selection_copy_held: bool,
+    /// Windows의 Press 자동 반복과 kitty Repeat가 steering을 연타하지 않게 한다.
+    ctrl_enter_held: bool,
     /// 끌어 고르다 가장자리에 닿아 기록을 넘기는 중
     autoscroll: Option<mouse::AutoScroll>,
     /// copy 모드(pane에 붙어 있다)
@@ -587,6 +591,7 @@ impl App {
             drag: None,
             selection: None,
             selection_copy_held: false,
+            ctrl_enter_held: false,
             autoscroll: None,
             copy: None,
             last_click: None,
@@ -764,7 +769,10 @@ impl App {
                     Some(Ok(Event::Resize(..))) => { self.capture_on = None; dirty = true; }
                     // 돌아오면 크기를 다시 걸고, 다른 창에 있는 동안 미룬 입력기 바꾸기·되돌리기를 맞춘다
                     Some(Ok(Event::FocusGained)) => { self.focused = true; self.reclaim = true; self.sized.clear(); self.reconcile_ascii(); dirty = true; }
-                    Some(Ok(Event::FocusLost)) => self.focused = false,
+                    Some(Ok(Event::FocusLost)) => {
+                        self.focused = false;
+                        self.ctrl_enter_held = false;
+                    },
                     Some(Err(e)) => return Err(e.into()),
                     None => return Ok(()),
                 },
@@ -1670,6 +1678,22 @@ impl App {
         Ok(())
     }
 
+    /// 화면 판정은 host 한 곳에서 한다. TUI는 Ctrl+Enter 의도만 보낸다.
+    async fn ctrl_enter(&mut self, tx: &mut FrontSender) -> Result<()> {
+        let Some(pane) = self.focus.clone() else { return Ok(()) };
+        if self.host_minor < CTRL_ENTER_MINOR {
+            return self.input_to(tx, pane, b"\n".to_vec()).await;
+        }
+        if self.refuse_reader() {
+            return Ok(());
+        }
+        self.scroll_bottom(tx, &pane).await?;
+        self.message = None;
+        let id = tx.send(FrontRequest::PaneCtrlEnter { pane }).await?;
+        self.pending.insert(id, Pending::Input);
+        Ok(())
+    }
+
     /// clipboard에 그림이 있으면 포커스 pane으로 올리고 true. 없으면 아무것도 보내지 않고 false.
     async fn paste_image(&mut self, tx: &mut FrontSender) -> Result<bool> {
         if self.focus.is_none() {
@@ -1762,10 +1786,21 @@ impl App {
         let k = keys::altgr_text(k, cfg!(windows));
         let ch = if let KeyCode::Char(c) = k.code { Some(c) } else { None };
         if k.kind == KeyEventKind::Release {
+            if k.code == KeyCode::Enter {
+                self.ctrl_enter_held = false;
+            }
             if mouse::copy_key(k.modifiers, ch) || matches!(ch, Some('c' | 'C')) {
                 self.selection_copy_held = false;
             }
             return Ok(());
+        }
+        if keys::of(&k) == Combo::new(KeyCode::Enter, KeyModifiers::CONTROL) {
+            if k.kind == KeyEventKind::Repeat || cfg!(windows) && self.ctrl_enter_held {
+                return Ok(());
+            }
+            self.ctrl_enter_held = true;
+        } else if !matches!(k.code, KeyCode::Modifier(_)) {
+            self.ctrl_enter_held = false;
         }
         // crossterm Windows는 자동 반복도 Press로 준다. 그 키의 Release까지 함께 소비한다.
         if (k.kind == KeyEventKind::Repeat || cfg!(windows))
@@ -1807,6 +1842,9 @@ impl App {
                 }
                 if c == Combo::new(KeyCode::Char('v'), KeyModifiers::CONTROL) && self.paste_image(tx).await? {
                     return Ok(());
+                }
+                if c == Combo::new(KeyCode::Enter, KeyModifiers::CONTROL) {
+                    return self.ctrl_enter(tx).await;
                 }
                 // 화살표는 프로그램이 DECCKM을 켰으면 `ESC O x`(herdr·xterm)
                 let app_cursor =
@@ -3297,6 +3335,84 @@ fn find_in_direction(cur: Rect, dir: Dir, panes: &[(String, Rect)]) -> Option<St
 
 #[cfg(test)]
 mod tests {
+    /// 실제 Front wire에서 Ctrl+Enter 의도와 구 host의 안전한 기본값을 본다.
+    #[tokio::test]
+    async fn ctrl_enter_uses_shared_host_request() {
+        use aaa_common::{front, ipc};
+        use aaa_proto::{DeviceRole, FrameKind, MAX_FRAME, Version, read_frame, write_frame};
+        #[cfg(unix)]
+        let temp = std::path::PathBuf::from("/tmp");
+        #[cfg(windows)]
+        let temp = std::env::temp_dir();
+        let unique = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos();
+        let dir = temp.join(format!("aaa-ctrl-{}-{unique}", std::process::id()));
+        aaa_common::util::ensure_private_dir(&dir).unwrap();
+        let listener = ipc::LocalListener::bind(&front::socket(&dir)).unwrap();
+        let server = tokio::spawn(async move {
+            let mut stream = listener.accept().await.unwrap();
+            let hello = read_frame(&mut stream, MAX_FRAME).await.unwrap().unwrap();
+            assert!(matches!(serde_json::from_slice::<FrontMsg>(&hello.payload).unwrap(), FrontMsg::Hello { .. }));
+            let welcome = FrontMsg::Welcome {
+                proto: Version { major: 1, minor: 43 },
+                host_id: "host".into(),
+                role: DeviceRole::Controller,
+                front: "tui".into(),
+            };
+            write_frame(&mut stream, FrameKind::Control, &serde_json::to_vec(&welcome).unwrap(), MAX_FRAME)
+                .await
+                .unwrap();
+            let mut requests = Vec::new();
+            for _ in 0..5 {
+                let frame = read_frame(&mut stream, MAX_FRAME).await.unwrap().unwrap();
+                let FrontMsg::Req { body, .. } = serde_json::from_slice(&frame.payload).unwrap() else {
+                    panic!("키 요청이 아니다")
+                };
+                requests.push(body);
+            }
+            requests
+        });
+        let client = FrontClient::connect_as(&dir, "tui").await.unwrap();
+        let (mut tx, _rx) = client.split();
+        for (minor, code, mods, reader) in [
+            (43, KeyCode::Enter, KeyModifiers::CONTROL, false),
+            (43, KeyCode::Enter, KeyModifiers::SHIFT, false),
+            (42, KeyCode::Enter, KeyModifiers::CONTROL, false),
+            (43, KeyCode::Enter, KeyModifiers::CONTROL, true),
+            (43, KeyCode::Char('x'), KeyModifiers::NONE, false),
+        ] {
+            let mut app = App::new("main".into(), "tui".into());
+            app.ws.tabs.push(aaa_proto::Tab {
+                id: "tab".into(),
+                name: "input".into(),
+                zoomed: false,
+                root: aaa_proto::LayoutNode::Pane { pane: "pane".into() },
+            });
+            app.focus = Some("pane".into());
+            app.host_minor = minor;
+            app.reader = reader;
+            app.on_key(KeyEvent::new(code, mods), &mut tx).await.unwrap();
+            if minor == 43 && code == KeyCode::Enter && mods == KeyModifiers::CONTROL && !reader {
+                app.on_key(KeyEvent::new_with_kind(code, mods, KeyEventKind::Repeat), &mut tx).await.unwrap();
+                #[cfg(windows)]
+                app.on_key(KeyEvent::new(code, mods), &mut tx).await.unwrap();
+                app.on_key(KeyEvent::new_with_kind(code, KeyModifiers::NONE, KeyEventKind::Release), &mut tx)
+                    .await
+                    .unwrap();
+                app.on_key(KeyEvent::new(code, mods), &mut tx).await.unwrap();
+            }
+        }
+        let requests = tokio::time::timeout(Duration::from_secs(20), server).await.unwrap().unwrap();
+        for req in &requests[..2] {
+            assert!(matches!(req, FrontRequest::PaneCtrlEnter { pane } if pane == "pane"));
+        }
+        for req in &requests[2..4] {
+            assert!(matches!(req, FrontRequest::PaneInput { pane, data } if pane == "pane" && data.0 == b"\n"));
+        }
+        // reader는 보내지 않고, 그 뒤 같은 writer의 실제 입력이 도착한 것으로 무송신을 판정한다.
+        assert!(matches!(&requests[4], FrontRequest::PaneInput { pane, data } if pane == "pane" && data.0 == b"x"));
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
     /// 프로세스 전체 panic hook을 쓰므로 자식 시험 프로세스 하나에 격리한다.
     #[cfg(unix)]
     #[test]
