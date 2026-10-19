@@ -130,6 +130,30 @@ while True:
     await p.context().close();
   });
 
+  await step("Claude 내부 알림은 사용자 말·수신 확인에서 제외하고 사람이 같은 모양을 보낸 글은 보존한다", async () => {
+    const client = await pairPage(browser, aaa("web", "pair").code, { width: 390, height: 844 });
+    const p = client.page;
+    const box = await openChat(p);
+    await domIs(p, "기존 기록 준비", () => document.querySelector('[data-role="user"]')?.textContent.includes("같은 글 재전송"));
+    const before = await p.locator('[data-role="user"]').count();
+    const text = "<task-notification><task-id>task-1</task-id><status>completed</status><summary>사람이 인용한 알림 예시</summary></task-notification>";
+    fs.writeFileSync(hold, "hold");
+    await box.fill(text);
+    await press(p);
+    await waitOutput("composer", `CMP_RECEIVED_${++received}`);
+    fs.appendFileSync(transcript, JSON.stringify({ type: "user", origin: { kind: "task-notification", producer: "session-task" }, message: { role: "user", content: text } }) + "\n"
+      + JSON.stringify({ type: "assistant", message: { content: [{ type: "text", text: "알림 경계 확인" }] } }) + "\n");
+    await domIs(p, "내부 알림 뒤 기록 갱신", () => [...document.querySelectorAll('[data-role="assistant"]')].some(el => el.textContent.includes("알림 경계 확인")));
+    assert.equal(await p.locator('[data-role="user"]').count(), before, "비사람 알림은 사용자 말풍선에서 제외");
+    assert.ok(await box.evaluate(el => el.readOnly), "같은 내용의 내부 알림으로 입력 잠금을 풀지 않는다");
+    fs.appendFileSync(transcript, JSON.stringify({ type: "user", origin: { kind: "human" }, message: { role: "user", content: text } }) + "\n");
+    await domIs(p, "사람이 보낸 알림 예시 수신", () => document.querySelector('[aria-label="메시지"]').value === "" && !document.querySelector('[aria-label="메시지"]').readOnly);
+    assert.equal(await p.locator('[data-role="user"]').count(), before + 1);
+    await shot(p, "claude-internal-notification-literal-mobile");
+    fs.unlinkSync(hold);
+    await p.context().close();
+  });
+
   await step("그림만 보내기: 마지막 @경로의 자동완성을 닫고 한 번 제출한다", async () => {
     const client = await pairPage(browser, aaa("web", "pair").code, { width: 1280, height: 800 });
     const box = await openChat(client.page);

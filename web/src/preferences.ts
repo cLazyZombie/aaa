@@ -159,8 +159,9 @@ export function takePreferences(base: Baseline, local: Local, remote: SharedPref
     if (!(key in remote.settings)) continue;
     const value = remote.settings[key];
     if (!same((sanitizeShared({ ...held, [key]: value }) as unknown as Record<string, unknown>)[key], value)) continue;
-    const sent = inFlight !== null && key in inFlight.settings && same(inFlight.settings[key], held[key]);
-    const edited = !same(held[key], base.settings[key]) && !sent;
+    // 전송 중이면 그 값 이후의 편집을 지킨다. 기준값으로 되돌린 편집도 새 변경이다(켬→끔 전송→켬).
+    const reference = inFlight !== null && key in inFlight.settings ? inFlight.settings[key] : base.settings[key];
+    const edited = !same(held[key], reference);
     settings[key] = value;
     if (force || !edited) patch[key] = value;
   }
@@ -168,8 +169,7 @@ export function takePreferences(base: Baseline, local: Local, remote: SharedPref
   if (remote.pins !== undefined) {
     if (base.pins === null && !force) pins = [...remote.pins, ...local.pins.filter((pin) => !remote.pins!.includes(pin))];
     else {
-      const sent = inFlight?.pins !== undefined && same(inFlight.pins, local.pins);
-      const edited = !same(local.pins, base.pins) && !sent;
+      const edited = !same(local.pins, inFlight?.pins ?? base.pins);
       if (force || !edited) pins = [...remote.pins];
     }
   }

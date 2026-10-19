@@ -90,10 +90,11 @@ export function usePreferencesSync(enabled: boolean): (preferences: SharedPrefer
 
   // 변경이 답을 받았거나 잃었다: 그동안 온 것을 이제 읽는다(더 옛 문서는 revision으로 버린다)
   const settled = useCallback(() => {
-    inFlight.current = null;
     const arrived = held.current;
     held.current = null;
+    // HTTP 답을 잃어도 보관한 host 문서는 이 전송에 대한 답이다. 이후 편집을 판정한 뒤 비운다.
     if (arrived !== null) absorb(arrived);
+    inFlight.current = null;
   }, [absorb]);
 
   useEffect(() => {

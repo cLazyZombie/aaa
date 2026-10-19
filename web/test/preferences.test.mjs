@@ -59,6 +59,15 @@ describe("공유 설정 동기화", () => {
     assert.equal(preferencesChange(overtaken.base, { settings: { ...light, theme: "dark" }, pins: [] }), null);
   });
 
+  it("설정을 보내는 동안 원래 값으로 되돌려도 늦은 이전 응답이 덮지 않는다", () => {
+    const inFlight = { settings: { autoSendQueued: false }, pins: ["b"] };
+    const local = { settings: DEFAULT, pins: ["a"] };
+    const taken = takePreferences(base(DEFAULT, ["a"]), local, { revision: 2, settings: { autoSendQueued: false, palette: "catppuccin" }, pins: ["b"] }, inFlight);
+    assert.deepEqual(taken.patch, { palette: "catppuccin" });
+    assert.equal(taken.pins, null);
+    assert.deepEqual(preferencesChange(taken.base, { settings: { ...DEFAULT, ...taken.patch }, pins: local.pins }), { settings: { autoSendQueued: true }, pins: ["a"] });
+  });
+
   it("읽지 못하는 값(모르는 값·aaa에 없는 설정)은 두고, 제 것을 되돌려 보내지 않는다", () => {
     const remote = { revision: 1, settings: { theme: "purple", agentMarks: "yes", showThinking: "yes", palette: "catppuccin" } };
     const taken = takePreferences(base(DEFAULT, null), { settings: DEFAULT, pins: [] }, remote, null);
