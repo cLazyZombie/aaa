@@ -293,7 +293,7 @@ export type PostSender = { thread: string | null, role: Role, mission: string | 
 
 export type PostEnvelope = { id: string, project: string, from: PostSender, caused_by: Array<string>, body_sha256: string, created_ms: number, state: string, post_id: string, to: string, post_type: PostType, topic: string, title: string, body: string, needs_user: boolean, refs: Array<string>, };
 
-export type FrontRequest = { "op": "debug_input", pane: string | null, thread: string | null, since_ms: bigint, } | { "op": "rollout_start", id: string, spec: RolloutSpec, } | { "op": "rollout_status", id: string, } | { "op": "deploy_context" } | { "op": "deploy_start", machine: string | null, id: string, action: DeployAction, } | { "op": "deploy_status", machine: string | null, id: string, } | { "op": "post", project: string, input: PostInput, } | { "op": "post_status", project: string, post_id: string, } | { "op": "post_list", project: string, } | { "op": "post_unmute", project: string, thread: string, } | { "op": "status" } | { "op": "machines" } | { "op": "panes", role: Role | null, } | { "op": "pane_run", machine: string | null, name: string | null, argv: Array<string>, cwd: string | null, cols: number | null, rows: number | null,
+export type FrontRequest = { "op": "debug_input", pane: string | null, thread: string | null, since_ms: bigint, } | { "op": "rollout_start", id: string, spec: RolloutSpec, } | { "op": "rollout_status", id: string, } | { "op": "deploy_context" } | { "op": "deploy_start", machine: string | null, id: string, action: DeployAction, } | { "op": "deploy_status", machine: string | null, id: string, } | { "op": "post", project?: string, input: PostInput, } | { "op": "post_status", project?: string, post_id: string, } | { "op": "post_list", project?: string, } | { "op": "post_unmute", project?: string, thread: string, } | { "op": "status" } | { "op": "machines" } | { "op": "panes", role: Role | null, } | { "op": "pane_run", machine: string | null, name: string | null, argv: Array<string>, cwd: string | null, cols: number | null, rows: number | null,
 /**
  * host 정본 profile로 harness를 띄운다(`argv`는 비운다, herdr-web-ui 새 세션의 agent 고르기)
  */
@@ -301,7 +301,7 @@ profile?: string, } | { "op": "pane_read", pane: string, } | { "op": "pane_chat"
 /**
  * 생각도 싣는다(웹 설정 「생각 표시」, plan §8.129)
  */
-thinking: boolean, } | { "op": "pane_file", pane: string, path: string, } | { "op": "thread_file", project: string, thread: string, path: string, } | { "op": "pane_dir", pane: string, path: string, hidden: boolean, } | { "op": "pane_send", pane: string, data: B64, } | { "op": "pane_read_text", pane: string, source: ReadSource,
+thinking: boolean, } | { "op": "pane_file", pane: string, path: string, } | { "op": "thread_file", project?: string, thread: string, path: string, } | { "op": "pane_dir", pane: string, path: string, hidden: boolean, } | { "op": "pane_send", pane: string, data: B64, } | { "op": "pane_read_text", pane: string, source: ReadSource,
 /**
  * 줄 수(기본: Recent 80줄, Visible은 화면 전부, 최대 1000)
  */
@@ -313,11 +313,11 @@ timeout_ms: number | null, } | { "op": "pane_get", pane: string, } | { "op": "pa
 /**
  * `PATH` 또는 `PATH@MACHINE`(머신이 없으면 host 머신, 상대 경로는 CLI가 절대 경로로 바꿔 보낸다)
  */
-repos: Array<string>, thread_profile: string | null, coordinator_profile: string | null, } | { "op": "project_set", project: string, key: string, value: string, } | { "op": "projects", all?: boolean, } | { "op": "project_lifecycle", project: string, action: ProjectAction, } | { "op": "project_delete", project: string,
+repos: Array<string>, thread_profile: string | null, coordinator_profile: string | null, } | { "op": "project_set", project?: string, key: string, value: string, } | { "op": "projects", all?: boolean, } | { "op": "instance" } | { "op": "project_lifecycle", project: string, action: ProjectAction, } | { "op": "project_delete", project: string,
 /**
  * 살아 있는 pane이 있어도
  */
-force: boolean, } | { "op": "project_rename", project: string, to: string, dry_run: boolean, } | { "op": "project_sweep", project: string, dry_run: boolean, } | { "op": "project_files", fix: boolean, } | { "op": "project_open", project: string,
+force: boolean, } | { "op": "project_rename", project: string, to: string, dry_run: boolean, } | { "op": "project_sweep", project: string, dry_run: boolean, } | { "op": "project_files", fix: boolean, } | { "op": "project_open", project?: string,
 /**
  * 안 주면 project.toml `coordinator_profile` → host.toml `[defaults] coordinator_profile` → claude
  */
@@ -329,7 +329,7 @@ new?: boolean, } | { "op": "profiles", machine: string | null, } | { "op": "prof
 /**
  * 준비 완료를 기다리지 않고 Starting 기록을 돌려준다.
  */
-background: boolean, project: string, title: string, machine: string | null,
+background: boolean, project?: string, title: string, machine: string | null,
 /**
  * 비면 `from_task`의 owner, 그다음 project.toml `thread_profile`(herdr-projects `thread_profile`)
  */
@@ -345,11 +345,11 @@ task: string,
 /**
  * TASKS.md의 task 제목(대소문자 무시). owner가 profile·machine의 기본값이 되고, 메모가 할 일에 붙는다.
  */
-from_task: string | null, } | { "op": "thread_adopt", project: string, pane: string, title: string,
+from_task: string | null, } | { "op": "thread_adopt", project?: string, pane: string, title: string,
 /**
  * 할 일. 비면 「하던 일을 이어 하되 이제 이 프로젝트 thread다」
  */
-task: string, } | { "op": "thread_next", project: string, thread: string, line: number | null, add: string | null, } | { "op": "context", project: string, peek: boolean, } | { "op": "assignable", project: string, check: string | null, } | { "op": "threads", project: string | null, role: Role | null, } | { "op": "thread_show", project: string, thread: string, } | { "op": "thread_summary", project: string, thread: string, } | { "op": "thread_summary_set", project: string, thread: string, text: string, } | { "op": "thread_library", project: string, thread: string, } | { "op": "library_link", project: string, thread: string, days: number | null, } | { "op": "library_links", project: string | null, } | { "op": "library_link_revoke", id: string, } | { "op": "library_publish", project: string, name: string, source: string, live: boolean,
+task: string, } | { "op": "thread_next", project?: string, thread: string, line: number | null, add: string | null, } | { "op": "context", project?: string, peek: boolean, } | { "op": "assignable", project?: string, check: string | null, } | { "op": "threads", project: string | null, role: Role | null, } | { "op": "thread_show", project?: string, thread: string, } | { "op": "thread_summary", project?: string, thread: string, } | { "op": "thread_summary_set", project?: string, thread: string, text: string, } | { "op": "thread_library", project?: string, thread: string, } | { "op": "library_link", project?: string, thread: string, days: number | null, } | { "op": "library_links", project: string | null, } | { "op": "library_link_revoke", id: string, } | { "op": "library_publish", project?: string, name: string, source: string, live: boolean,
 /**
  * FRONT_API 1.43. 사용자에게 보내는 웹 보고서(index.html 필수, 「내 보고서」·안 봄·사용자 알림 post)
  */
@@ -357,11 +357,11 @@ to_user: boolean,
 /**
  * FRONT_API 1.43. 「내 보고서」에 보일 제목(없으면 이름)
  */
-title: string | null, } | { "op": "library_delete", reports: Array<LibraryRef>, } | { "op": "library_import", project: string, source: string,
+title: string | null, } | { "op": "library_delete", reports: Array<LibraryRef>, } | { "op": "library_import", project?: string, source: string,
 /**
  * 0.2의 t- 이름을 새 thread id와 구분해 가져올 때 쓴다.
  */
-prefix: string, } | { "op": "library_prune", project: string | null, older_than_days: number, } | { "op": "library_prune_preview", project: string | null, older_than_days: number | null, } | { "op": "library_rotate" } | { "op": "library_reports", project: string | null, } | { "op": "library_open", project: string, name: string, } | { "op": "library_usage" } | { "op": "thread_ack", project: string, thread: string, } | { "op": "thread_resolve", project: string, thread: string, keep_worktree: boolean,
+prefix: string, } | { "op": "library_prune", project: string | null, older_than_days: number, } | { "op": "library_prune_preview", project: string | null, older_than_days: number | null, } | { "op": "library_rotate" } | { "op": "library_reports", project: string | null, } | { "op": "library_open", project?: string, name: string, } | { "op": "library_usage" } | { "op": "thread_ack", project?: string, thread: string, } | { "op": "thread_resolve", project?: string, thread: string, keep_worktree: boolean,
 /**
  * 끝낸 thread를 다시 연다(herdr-projects `thread resolve --reopen`). 아무것도 띄우지 않는다
  */
@@ -373,11 +373,11 @@ skip_copy: boolean,
 /**
  * 집에 다 오지 않았어도 worktree를 지운다(herdr-projects `--discard-uncopied`)
  */
-discard_uncopied: boolean, } | { "op": "thread_stop", project: string, thread: string, } | { "op": "thread_restart", project: string, thread: string, resume: boolean,
+discard_uncopied: boolean, } | { "op": "thread_stop", project?: string, thread: string, } | { "op": "thread_restart", project?: string, thread: string, resume: boolean,
 /**
  * 이 profile로 새 대화를 띄운다(herdr-projects `thread restart --profile`). `resume`과 함께 쓰지 않는다
  */
-profile: string | null, } | { "op": "thread_brief", project: string, thread: string, } | { "op": "thread_read", project: string, thread: string, lines: number | null, } | { "op": "thread_keys", project: string, thread: string, keys: Array<string>, text: string | null, } | { "op": "questions", all: boolean, } | { "op": "question_answer", id: string, choice: string, menu: string | null, pick: MenuPick | null, } | { "op": "thread_message", project: string, thread: string, text: string, mode: MessageMode, } | { "op": "preferences" } | { "op": "preferences_set", settings: Record<string, unknown>, pins: Array<string> | null, } | { "op": "inbox", project: string, all: boolean, peek: boolean, } | { "op": "inbox_done", project: string, ids: Array<string>, all: boolean, } | { "op": "ticker_tick" } | { "op": "mission_list", project: string | null, } | { "op": "mission_show", project: string, name: string, } | { "op": "mission_approve", project: string, name: string, approval_sha256: string, } | { "op": "mission_reject", project: string, name: string, } | { "op": "mission_start", project: string, name: string, } | { "op": "mission_stop", project: string, name: string, } | { "op": "mission_pause", project: string, name: string, } | { "op": "mission_resume", project: string, name: string, } | { "op": "mission_reload", project: string, name: string, } | { "op": "mission_restart", project: string, name: string, } | { "op": "mission_open", project: string, name: string, } | { "op": "routines", project: string, } | { "op": "routine_runs", project: string, name: string, } | { "op": "routine_approve", project: string, name: string, command_sha256: string, } | { "op": "routine_toggle", project: string, name: string, on: boolean | null, } | { "op": "events", project: string | null, after: bigint, limit: number | null, } | { "op": "evaluator_assign", project: string, profile: string, machine: string | null,
+profile: string | null, } | { "op": "thread_brief", project?: string, thread: string, } | { "op": "thread_read", project?: string, thread: string, lines: number | null, } | { "op": "thread_keys", project?: string, thread: string, keys: Array<string>, text: string | null, } | { "op": "questions", all: boolean, } | { "op": "question_answer", id: string, choice: string, menu: string | null, pick: MenuPick | null, } | { "op": "thread_message", project?: string, thread: string, text: string, mode: MessageMode, } | { "op": "preferences" } | { "op": "preferences_set", settings: Record<string, unknown>, pins: Array<string> | null, } | { "op": "inbox", project?: string, all: boolean, peek: boolean, } | { "op": "inbox_done", project?: string, ids: Array<string>, all: boolean, } | { "op": "ticker_tick" } | { "op": "mission_list", project: string | null, } | { "op": "mission_show", project?: string, name: string, } | { "op": "mission_approve", project?: string, name: string, approval_sha256: string, } | { "op": "mission_reject", project?: string, name: string, } | { "op": "mission_start", project?: string, name: string, } | { "op": "mission_stop", project?: string, name: string, } | { "op": "mission_pause", project?: string, name: string, } | { "op": "mission_resume", project?: string, name: string, } | { "op": "mission_reload", project?: string, name: string, } | { "op": "mission_restart", project?: string, name: string, } | { "op": "mission_open", project?: string, name: string, } | { "op": "routines", project?: string, } | { "op": "routine_runs", project?: string, name: string, } | { "op": "routine_approve", project?: string, name: string, command_sha256: string, } | { "op": "routine_toggle", project?: string, name: string, on: boolean | null, } | { "op": "events", project: string | null, after: bigint, limit: number | null, } | { "op": "evaluator_assign", project?: string, profile: string, machine: string | null,
 /**
  * 개선을 직접 고칠 repo(없으면 repo 없는 작업 폴더)
  */
@@ -385,7 +385,7 @@ repo: string | null,
 /**
  * 평가자에게 더할 말(brief 끝에 붙는다)
  */
-note: string | null, } | { "op": "evaluator_status", project: string | null, } | { "op": "evaluator_unassign", project: string, } | { "op": "evaluations", project: string, all: boolean, } | { "op": "evaluation_show", project: string, id: string, } | { "op": "evaluation_decide", project: string, id: string, proposals: Array<string>, adopt: boolean, note: string | null, };
+note: string | null, } | { "op": "evaluator_status", project: string | null, } | { "op": "evaluator_unassign", project?: string, } | { "op": "evaluations", project?: string, all: boolean, } | { "op": "evaluation_show", project?: string, id: string, } | { "op": "evaluation_decide", project?: string, id: string, proposals: Array<string>, adopt: boolean, note: string | null, };
 
 export type SharedPreferences = {
 /**
@@ -427,7 +427,7 @@ message: MessageView | null, } | { "kind": "context" } & ProjectContext | { "kin
 /**
  * `check`가 통과했을 때 설명
  */
-valid: string | null, } | { "kind": "screen" } & ScreenText | { "kind": "read" } & ReadView | { "kind": "thread_pane" } & ThreadPaneView | { "kind": "output_matched", matched_line: string, read: ReadView, } | { "kind": "workspaces", workspaces: Array<WorkspaceSummary>, } | { "kind": "chat" } & ChatView | { "kind": "pane_file", info: FileInfo | null, candidates: Array<string>, url: string | null, } | { "kind": "pane_dir", listing: DirListing, } | { "kind": "pending", pending: Array<PendingEnroll>, } | { "kind": "pair_code", code: string, role: DeviceRole, expires_in_s: number, } | { "kind": "publish" } & PublishState | { "kind": "devices", devices: Array<DeviceView>, } | { "kind": "workspace" } & Workspace | { "kind": "done" } | { "kind": "attached", path: string, inserted: boolean, note: string | null, } | { "kind": "projects", projects: Array<ProjectView>, } | { "kind": "project" } & ProjectView | { "kind": "project_change" } & ProjectChange | { "kind": "project_opened" } & ProjectOpened | { "kind": "project_files", checks: Array<ProjectFilesCheck>, } | { "kind": "profiles", machine: string, profiles: Array<ProfileView>, } | { "kind": "profile_resolved", profile: ProfileView, } | { "kind": "threads", threads: Array<ThreadView>, } | { "kind": "thread" } & ThreadView | { "kind": "thread_summary" } & ThreadSummaryView | { "kind": "events", events: Array<FlowEvent>, } | { "kind": "questions", questions: Array<QuestionView>, } | { "kind": "question" } & QuestionView | { "kind": "message" } & MessageView | { "kind": "inbox", items: Array<InboxItem>,
+valid: string | null, } | { "kind": "screen" } & ScreenText | { "kind": "read" } & ReadView | { "kind": "thread_pane" } & ThreadPaneView | { "kind": "output_matched", matched_line: string, read: ReadView, } | { "kind": "workspaces", workspaces: Array<WorkspaceSummary>, } | { "kind": "chat" } & ChatView | { "kind": "pane_file", info: FileInfo | null, candidates: Array<string>, url: string | null, } | { "kind": "pane_dir", listing: DirListing, } | { "kind": "pending", pending: Array<PendingEnroll>, } | { "kind": "pair_code", code: string, role: DeviceRole, expires_in_s: number, } | { "kind": "publish" } & PublishState | { "kind": "devices", devices: Array<DeviceView>, } | { "kind": "workspace" } & Workspace | { "kind": "done" } | { "kind": "attached", path: string, inserted: boolean, note: string | null, } | { "kind": "projects", projects: Array<ProjectView>, } | { "kind": "instance", project: ProjectView | null, } | { "kind": "project" } & ProjectView | { "kind": "project_change" } & ProjectChange | { "kind": "project_opened" } & ProjectOpened | { "kind": "project_files", checks: Array<ProjectFilesCheck>, } | { "kind": "profiles", machine: string, profiles: Array<ProfileView>, } | { "kind": "profile_resolved", profile: ProfileView, } | { "kind": "threads", threads: Array<ThreadView>, } | { "kind": "thread" } & ThreadView | { "kind": "thread_summary" } & ThreadSummaryView | { "kind": "events", events: Array<FlowEvent>, } | { "kind": "questions", questions: Array<QuestionView>, } | { "kind": "question" } & QuestionView | { "kind": "message" } & MessageView | { "kind": "inbox", items: Array<InboxItem>,
 /**
  * `inbox_done`이 끝낸 항목 수(그때 `items`는 남은 항목). 목록 요청에는 없다.
  */

@@ -21,7 +21,7 @@ use std::sync::Arc;
 
 use aaa_proto::{
     AgentRequest, AgentResponse, ErrorBody, ErrorCode, FrontResponse, ProjectAction, ProjectChange, ProjectFilesCheck,
-    ProjectStatus, ThreadKind, ThreadStatus, valid_project,
+    ProjectStatus, ProjectView, ThreadKind, ThreadStatus, valid_project,
 };
 
 use crate::orch::{ThreadRec, internal};
@@ -85,6 +85,24 @@ impl Host {
             })
             .collect();
         sole_project(&all)
+    }
+
+    /// 프로젝트를 생략한 요청이 쓸 이름(plan §8.288): 이 host가 맡은 하나
+    pub(crate) fn instance_project(&self) -> Result<String, ErrorBody> {
+        match self.sole_project() {
+            Ok(Some(project)) => Ok(project),
+            Ok(None) => Err(err(
+                ErrorCode::NotFound,
+                "이 host에는 아직 프로젝트가 없다: `aaa project create <이름>`으로 만들거나 프로젝트 이름을 준다",
+            )),
+            Err(names) => Err(err(ErrorCode::BadRequest, sole_project_refusal(&names))),
+        }
+    }
+
+    /// `Instance` 보기(FRONT_API 1.50): 이 host가 맡은 프로젝트
+    pub(crate) fn instance_view(&self) -> Option<ProjectView> {
+        let project = self.sole_project().ok().flatten()?;
+        self.project_dir(&project).ok().map(|dir| self.project_view(&project, &dir))
     }
 
     pub(crate) fn project_status(&self, project: &str) -> ProjectStatus {
@@ -562,6 +580,39 @@ mod tests {
             h.project_delete("demo", false, "test").await.unwrap();
         }
         assert_eq!(std::fs::read_dir(state.join("projects/.trash")).unwrap().count(), 2);
+        drop(h);
+        std::fs::remove_dir_all(&state).unwrap();
+    }
+
+    /// 프로젝트를 생략한 요청(FRONT_API 1.50, plan §8.288): host가 맡은 하나로 채우고, 아직 없으면 그렇게 말한다
+    #[tokio::test]
+    async fn omitted_project_is_the_one_this_host_keeps() {
+        use aaa_proto::{DeviceRole, FrontRequest};
+        let state = std::env::temp_dir().join(format!("aaa-instance-{}", aaa_common::util::new_id()));
+        let mut cfg = aaa_config::HostConfig::default();
+        cfg.projects.root = state.join("projects").display().to_string();
+        cfg.notify.web_push = false;
+        let h = Arc::new(Host::open(cfg, state.clone()).unwrap());
+        let omitted: FrontRequest = serde_json::from_str(r#"{"op":"context"}"#).unwrap();
+        assert_eq!(omitted, FrontRequest::Context { project: String::new(), peek: false });
+        let e = h.call(DeviceRole::Local, "test", omitted.clone()).await.unwrap_err();
+        assert!(e.code == ErrorCode::NotFound && e.message.contains("아직 프로젝트가 없다"), "{e:?}");
+        assert_eq!(
+            h.call(DeviceRole::Local, "test", FrontRequest::Instance).await,
+            Ok(FrontResponse::Instance { project: None })
+        );
+        h.project_create("demo", Default::default(), "test").unwrap();
+        let Ok(FrontResponse::Context(c)) = h.call(DeviceRole::Local, "test", omitted).await else { panic!("context") };
+        assert_eq!(c.project, "demo");
+        let Ok(FrontResponse::Instance { project: Some(p) }) =
+            h.call(DeviceRole::Local, "test", FrontRequest::Instance).await
+        else {
+            panic!("instance")
+        };
+        assert_eq!((p.name.as_str(), p.status), ("demo", ProjectStatus::Active));
+        // 이름을 주면 그대로 쓴다(보관한 프로젝트·옛 front)
+        let named = FrontRequest::Context { project: "other".into(), peek: true };
+        assert_eq!(h.call(DeviceRole::Local, "test", named).await.unwrap_err().code, ErrorCode::NotFound);
         drop(h);
         std::fs::remove_dir_all(&state).unwrap();
     }

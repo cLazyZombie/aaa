@@ -5045,7 +5045,7 @@ fn post_from_thread_reaches_coordinator_inbox() {
         "coordinator-post.sh",
         &format!(
             r#"
-'{bin}' post demo user --request --needs-user --topic user-action --title '확인 필요' > '{out}' 2>&1
+'{bin}' post user --request --needs-user --topic user-action --title '확인 필요' > '{out}' 2>&1
 printf 'request-rc=%s\n' "$?" >> '{out}'
 '{bin}' post demo user --notice --topic task-complete --title '전체 완료' >> '{out}' 2>&1
 printf 'complete-rc=%s\n' "$?" >> '{out}'
@@ -5057,7 +5057,9 @@ printf 'complete-rc=%s\n' "$?" >> '{out}'
     w.h.ok(&["pane", "run", &coord, &format!("post-probe {script}")]);
     w.h.wait_output(&coord, "post-probe-done", T);
     let text = std::fs::read_to_string(out).unwrap();
+    // 프로젝트 없는 새 꼴(plan §8.288)도 coordinator 세션에서는 Front로 가고, 옛 꼴은 경고 한 줄과 함께 받는다
     assert!(text.contains("request-rc=0") && text.contains("complete-rc=0"), "{text}");
+    assert_eq!(text.matches("경고: 프로젝트 인자는 이제 생략한다").count(), 1, "{text}");
     let posts = w.h.ok(&["post", "list", "demo"]);
     let sent: Vec<_> = posts["posts"].as_array().unwrap().iter().filter(|p| p["to"] == "user").collect();
     assert_eq!(sent.len(), 2, "{posts}");

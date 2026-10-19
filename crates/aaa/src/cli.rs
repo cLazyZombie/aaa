@@ -580,7 +580,7 @@ enum EvaluationCmd {
 
 #[derive(Args)]
 struct PostArgs {
-    /// 목적지(coordinator·mission:<이름>) 또는 status·list·unmute. 세션 밖에서는 앞에 프로젝트를 준다
+    /// 목적지(user·coordinator·mission:<이름>) 또는 status·list·unmute. 프로젝트는 생략한다(옛 꼴은 앞에 프로젝트)
     first: String,
     second: Option<String>,
     third: Option<String>,
@@ -2689,20 +2689,18 @@ fn post_front_call(
 fn post_cmd(json: bool, a: PostArgs) -> Result<ExitCode> {
     use aaa_proto::{PostInput, PostResult, PostType};
     let session = std::env::var_os(aaa_agent::hooks::ENV_SESSION).is_some();
-    if matches!(a.first.as_str(), "list" | "unmute") {
-        let project = a.second.context("프로젝트가 필요하다")?;
-        return front(
-            json,
-            if a.first == "list" {
-                FrontRequest::PostList { project }
-            } else {
-                FrontRequest::PostUnmute { project, thread: a.third.context("thread가 필요하다")? }
-            },
-        );
+    if a.first == "list" {
+        anyhow::ensure!(a.third.is_none(), "post 인자가 너무 많다");
+        return front(json, FrontRequest::PostList { project: project_or_here(a.second)? });
+    }
+    if a.first == "unmute" {
+        let (project, thread) = on_target(a.second.context("thread가 필요하다")?, a.third)?;
+        return front(json, FrontRequest::PostUnmute { project, thread });
     }
     let rt = runtime()?;
-    let explicit_project = if a.first == "status" { a.third.is_some() } else { a.second.is_some() };
-    let mut control = if session && explicit_project {
+    // 세션 안: 조작 권한으로 붙으면(coordinator·사람의 셸 pane) Front로, 보기 권한(thread pane)이면 hook으로 보낸다.
+    // 프로젝트는 생략한다(plan §8.288): Front 길이면 host가 맡은 하나를 채운다
+    let mut control = if session {
         rt.block_on(aaa_common::front::FrontClient::connect(&aaa_config::paths::state_dir()))
             .ok()
             .filter(|c| c.role.can_control())
@@ -2715,12 +2713,8 @@ fn post_cmd(json: bool, a: PostArgs) -> Result<ExitCode> {
             let id = a.third.or(a.second).context("post ID가 필요하다")?;
             rt.block_on(aaa_agent::post::send(serde_json::json!({"status":id})))?
         } else {
-            let project = a.second.context("프로젝트가 필요하다")?;
-            match post_front_call(
-                &rt,
-                &mut control,
-                FrontRequest::PostStatus { project, post_id: a.third.context("post ID가 필요하다")? },
-            )? {
+            let (project, post_id) = on_target(a.second.context("post ID가 필요하다")?, a.third)?;
+            match post_front_call(&rt, &mut control, FrontRequest::PostStatus { project, post_id })? {
                 Ok(FrontResponse::Post { result }) => result,
                 Ok(_) => anyhow::bail!("post 응답이 아니다"),
                 Err(e) => anyhow::bail!("{}", e.message),
@@ -2756,7 +2750,7 @@ fn post_cmd(json: bool, a: PostArgs) -> Result<ExitCode> {
         if use_hook {
             rt.block_on(aaa_agent::post::send(serde_json::to_value(input)?))?
         } else {
-            let project = project.context("세션 밖 post는 프로젝트가 필요하다")?;
+            let project = project_or_here(project)?;
             match post_front_call(&rt, &mut control, FrontRequest::Post { project, input })? {
                 Ok(FrontResponse::Post { result }) => result,
                 Ok(_) => anyhow::bail!("post 응답이 아니다"),
@@ -3372,6 +3366,14 @@ fn render_front(r: &FrontResponse) -> String {
                 let _ = writeln!(s, "{}\t{}\tthread {}\t{}", p.name, status_word(p.status), p.threads, p.path);
             }
         }
+        FrontResponse::Instance { project } => match project {
+            Some(p) => {
+                let _ = writeln!(s, "{}\t{}\tthread {}\t{}", p.name, status_word(p.status), p.threads, p.path);
+            }
+            None => {
+                let _ = writeln!(s, "프로젝트가 아직 없다(`aaa project create <이름>`)");
+            }
+        },
         FrontResponse::Project(p) => {
             let _ = writeln!(s, "{}\t{}", p.name, p.path);
         }
