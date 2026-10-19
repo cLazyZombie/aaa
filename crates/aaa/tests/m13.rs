@@ -180,7 +180,8 @@ while :; do
   case "$line" in
     *brief.md*)
       dir=$(dirname "$(printf '%s' "$line" | sed 's/를 읽고.*//')")
-      spin; AAA_HOOK_SOCK="${REPORT_HOOK_SOCK:-$AAA_HOOK_SOCK}" "$AA" report --percent 40 --activity '권한 확인 중'; perm 'make test'
+      spin; AAA_HOOK_SOCK="${REPORT_HOOK_SOCK:-$AAA_HOOK_SOCK}" "$AA" report --percent 40 --activity '권한 확인 중'
+      printf '%s\n' "$?" > "$dir/progress-exit"; perm 'make test'
       [ "$pick" = cancel ] || printf '[진행 중] 권한 확인 뒤 계속\n\n## Report\n%s\n\n## Next\n- 확인\n' "$pick" > "$dir/report.md" ;;
     *late*)
       # 같은 확인창의 Notification이 답보다 늦게 온다(ci-local에서 경쟁으로 난 차례, plan §8.99). 진행 보고가 같은 agent
@@ -1483,8 +1484,10 @@ fn thread_read_and_keys() {
     );
     w.h.ok(&["question", "answer", &q.id, "yes"]);
     // 권한 확인창: 보고 Enter로 답한다(기본 선택 Yes). 질문은 화면 감지가 그려진 창을 보고 연다(창보다 먼저 오는 hook이 없다)
-    w.h.wait_output(&pane, "aaa:", T);
     open_question(&mut ev, &id, "permission", &[]);
+    // 진단은 unspin이 지운다. 권한 창이 뜬 뒤 실제 report 실패의 영구 기록을 확인한다.
+    let exit = std::fs::read_to_string(PathBuf::from(v["work_dir"].as_str().unwrap()).join("progress-exit")).unwrap();
+    assert_ne!(exit.trim().parse::<i32>().unwrap(), 0, "보고 실패 뒤 권한 창을 검사한다");
     let r = w.h.ok(&["thread", "read", "demo", &id]);
     assert!(r["read"]["text"].as_str().unwrap().contains("make test"), "{r}");
     assert_eq!((r["agent"].as_str(), r["read"]["source"].as_str()), (Some("question"), Some("visible")), "{r}");
