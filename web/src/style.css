@@ -60,6 +60,36 @@
 }
 
 /*
+ * 굴러가는 목록·대화·창의 세로 막대(사용자 10-19 「존재감이 강해, 화살표·배경 필요 없어」): 얇은 막대만, 화살표·트랙 바탕 없이.
+ * 평소엔 흐리고, 그 영역에 마우스를 올리면(휠로 굴릴 때도 마우스는 그 위다) 또렷해지며, 막대를 잡으면 더 짙다.
+ * 참고 t3code index.css 「Scrollbar styling」(6px·투명 트랙·흐린 막대·hover 짙음)을 따르고 색은 테마 글색에서 섞는다(새 색 없음).
+ * Chromium(Edge)·Safari는 scrollbar-width·scrollbar-color가 있으면 ::-webkit-scrollbar를 무시하고 기본 막대(Windows는 화살표째)를
+ * 그리므로 두 표준 속성은 ::-webkit-scrollbar가 없는 Firefox에만 준다. 터치 기기는 OS의 겹친 막대(굴릴 때만 보임)를 그대로 둔다.
+ * 그리지 않는 곳(터미널 기록·키 막대·칩 줄)의 `scrollbar-width: none`·`::-webkit-scrollbar { display: none }`은 class 규칙이라 이보다 이긴다.
+ */
+:root {
+  --scrollbar-size: 6px;
+  --scrollbar-thumb: color-mix(in srgb, var(--text) 14%, transparent);
+  --scrollbar-thumb-shown: color-mix(in srgb, var(--text) 30%, transparent);
+  --scrollbar-thumb-held: color-mix(in srgb, var(--text) 46%, transparent);
+}
+@media (hover: hover) and (pointer: fine) {
+  /* 영역마다 지금 막대 색. `:hover::-webkit-scrollbar-thumb`만으로는 Chromium·Safari가 영역에 마우스가 올라도 막대를 다시 그리지
+     않는다(headless 실측): 영역 자신의 값이 바뀌어야 다시 그린다 */
+  * { --scrollbar-thumb-now: var(--scrollbar-thumb); }
+  :hover { --scrollbar-thumb-now: var(--scrollbar-thumb-shown); }
+  ::-webkit-scrollbar { width: var(--scrollbar-size); height: var(--scrollbar-size); }
+  ::-webkit-scrollbar-track,
+  ::-webkit-scrollbar-corner { background: transparent; }
+  ::-webkit-scrollbar-thumb { background: var(--scrollbar-thumb-now); border-radius: var(--radius-pill); }
+  ::-webkit-scrollbar-thumb:hover,
+  ::-webkit-scrollbar-thumb:active { background: var(--scrollbar-thumb-held); }
+  @supports not selector(::-webkit-scrollbar) {
+    * { scrollbar-width: thin; scrollbar-color: var(--scrollbar-thumb-now) transparent; }
+  }
+}
+
+/*
  * 터미널 16색. 참고는 xterm 기본 16색을 쓰는데(settings.ts terminalTheme은 바탕·글·커서·고른 곳만), 그 흰색·노랑은 밝은 바탕에서
  * 읽히지 않는다. 그래서 aaa는 어두움·밝음마다 16색을 둔다(참고와 다르게 둔 것, plan §8.71).
  */
