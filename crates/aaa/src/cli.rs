@@ -3309,9 +3309,15 @@ fn mission_cmd(json: bool, cmd: MissionCmd) -> Result<ExitCode> {
                 Ok(FrontResponse::Mission { mission }) => mission,
                 other => return front_print(json, other),
             };
-            println!("{}\n첫 시작·repo·예산 올림 승인 대상 hash {}", m.file_text, m.approval_sha256);
-            if crate::person::ask("승인하려면 임무 이름을 친다: ")? != name {
-                anyhow::bail!("임무 이름이 다르다");
+            println!(
+                "임무 {project}/{name}\n{}\n첫 시작·repo·예산 올림 승인 대상 hash {}",
+                m.file_text, m.approval_sha256
+            );
+            if crate::person::ask(&format!("승인하려면 임무 이름 {name:?}를 그대로 입력한다: "))? != name
+            {
+                anyhow::bail!(
+                    "임무 이름 확인이 일치하지 않아 승인하지 않았다. 확인 입력에는 {name:?}를 그대로 입력해야 한다"
+                );
             }
             FrontRequest::MissionApprove { project, name, approval_sha256: m.approval_sha256 }
         }
