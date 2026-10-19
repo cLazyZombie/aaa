@@ -41,6 +41,8 @@ import "./herdr/Sidebar.css";
 import "./herdr/AgentSidebar.css";
 import "./herdr/Machines.css";
 import "./Sidebar.css";
+import { MachineMeters } from "./MachineMeters";
+import { machineStats } from "./machineStats";
 
 /** 상태 말(참고 status.ts STATUS_WORD는 영어 대문자 낱말이다). 화면 낭독·tooltip에 쓴다 */
 const STATUS_KO: Record<KnownStatus, string> = {
@@ -347,7 +349,7 @@ function RowError({ rowKey }: { rowKey: string }) {
 }
 
 /**
- * 머신 패널(plan §8.195·§8.240): 목록이 프로젝트 먼저라 머신은 트리 단계가 아니다. 머신마다 머리 한 줄(이름·host·연결 점·+ 새 pane)과
+ * 머신 패널(plan §8.195·§8.240·§8.243): 목록이 프로젝트 먼저라 머신은 트리 단계가 아니다. 머신마다 머리 한 줄(이름·host·연결 점·CPU·MEM·+ 새 pane)과
  * 끊김·점검 이상 글만 둔다(참고 MachineSidebar 머리·machine-state). 그 머신의 줄은 프로젝트 패널에 머신 글자로 있다.
  */
 function MachineStrip(props: SidebarProps) {
@@ -356,6 +358,7 @@ function MachineStrip(props: SidebarProps) {
       {props.machines.map((m) => {
         const online = m.connection === "connected";
         const problems = online && m.problems.length > 0 ? m.problems.map((p) => p.text).join("\n") : null;
+        const stats = machineStats(m);
         return (
           <section key={m.id} className={`machine-group${online ? "" : " is-offline"}`} aria-label={`머신 ${m.name}`} data-testid={`machine-${m.name}`}>
             <header className="machine-header">
@@ -371,6 +374,8 @@ function MachineStrip(props: SidebarProps) {
                 )}
                 <span className={`machine-dot is-${online ? (problems ? "error" : "connected") : "disconnected"}`} title={online ? (problems ? "점검 이상" : "연결됨") : "끊김"} aria-hidden="true" />
               </div>
+              {/* CPU·MEM(plan §8.243): 연결 중일 때만 */}
+              {stats && <MachineMeters stats={stats} name={m.name} />}
               {props.canControl && (
                 <button
                   type="button"

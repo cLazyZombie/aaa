@@ -25,6 +25,7 @@ impl std::fmt::Display for Version {
 /// `Post`·`PostRejected`·`PostAck`는 post.v1을 양쪽이 알렸을 때만 쓴다(§8.199).
 /// 1.5 host의 N-1은 1.4다. 1.3 agent는 먼저 1.4 이상으로 갱신해야 한다.
 // 1.5: 특수 임무. mission.v1을 알린 상대에만 임무 세션을 만든다.
+// 같은 1.5에 MachineHealth `cpu_pct`·`mem_used_bytes`·`mem_total_bytes`(선택, §8.243)를 더한다. 옛 agent는 보내지 않고 옛 host는 버린다.
 pub const AGENT_LINK: Version = Version { major: 1, minor: 5 };
 /// front ↔ host. 1.4: CLI pane·tab·workspace(plan §8.75), 1.5: 새 탭 이름(`NewTab.label`)·cwd 따라가기(`NewTab.from`)(plan §8.76),
 /// 1.6: `routine_toggle`·`ThreadView.pr`(plan §8.80), 1.7: `devices`·`device_rename`·`device_revoke`, 웹 기기의 `web_pair`(plan §8.81),
@@ -81,6 +82,7 @@ pub const AGENT_LINK: Version = Version { major: 1, minor: 5 };
 // 같은 1.42에 PaneView.coordinator_project(선택 소속)를 더한다. 옛 host는 생략하고 옛 front는 버린다.
 // 1.43: live pane OSC 52를 입력권 TUI front로 전달(Clipboard 사건).
 // TUI의 PaneCtrlEnter 소비자도 1.43부터 요청한다. 공통 요청 자체는 1.42 도중 추가되어 그 판에는 LF로 fallback한다.
+// 같은 1.43에 MachineView.health의 CPU·메모리 칸(선택, §8.243)을 더한다. 옛 host는 생략하고 옛 front는 버린다.
 pub const FRONT_API: Version = Version { major: 1, minor: 43 };
 /// agent ↔ session host(내부). 세션이 몇 주 이어질 수 있으므로 이전 session host와 호환해야 한다.
 /// 1.1: `SessionRequest::Detect`(harness 상태 감지 입력). agent는 1.0 session host에 보내지 않고 `Screen`을 쓴다.

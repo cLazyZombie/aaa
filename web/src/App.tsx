@@ -52,6 +52,7 @@ import { passingFolder, recentDirectories } from "./herdr/recent-directories.ts"
 import { useMediaQuery } from "./herdr/useMediaQuery.ts";
 import { watchDrawerSwipe } from "./herdr/edgeSwipe.ts";
 import { DrawerContext, DrawerToggle, HeadContext, HeadMore, HeadNote } from "./drawer";
+import { highMachines, HIGH_STAT } from "./machineStats";
 
 type Auth = { state: "loading" } | { state: "pair" } | { state: "in"; role: DeviceRole; device: string } | { state: "error"; msg: string };
 
@@ -916,6 +917,7 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
       count: panes.filter((p) => p.connection === "connected" && p.role !== "evaluator" && paneAgentStatus(p) === "blocked" && agentOf(p, threadOfPane.get(p.id)) !== null).length,
       label: "답을 기다림",
     },
+    machines: { count: highMachines(machines), label: `CPU·MEM ${HIGH_STAT}% 넘음` },
   };
   // 넓은 창에서 접었으면 사이드바 칸이 없다(좁은 창은 drawer라 늘 칸이 있다)
   const sidebarShown = !wideScreen || !collapsed;

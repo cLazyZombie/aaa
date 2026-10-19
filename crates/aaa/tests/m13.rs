@@ -3673,6 +3673,15 @@ fn machine_health() {
     let items = wait_for("inbox 회복 항목", T, || Some(health(&w)).filter(|v| v.len() == 2));
     assert_eq!(items[1].0, "ok", "{items:?}");
     w.h.ok(&["tab", "create", "--machine", "labA", "--", "/bin/sh"]);
+
+    // CPU·메모리(§8.243): CPU는 두 표본 사이 평균이라 둘째 보고부터 오고, `machine list`에 보인다
+    let m = wait_for("CPU 표본", T, || w.h.machine("labA").filter(|m| m["health"]["cpu_pct"].is_u64()));
+    let h = &m["health"];
+    assert!(h["cpu_pct"].as_u64().unwrap() <= 100, "{m}");
+    assert!(h["mem_used_bytes"].as_u64().unwrap() <= h["mem_total_bytes"].as_u64().unwrap(), "{m}");
+    let list = String::from_utf8_lossy(&w.h.run(&["machine", "list"]).stdout).to_string();
+    let line = list.lines().find(|l| l.starts_with("labA")).unwrap_or_default();
+    assert!(line.contains("\tCPU ") && line.contains("% · MEM ") && line.contains("% · 디스크 여유"), "{list}");
 }
 
 /// coordinator 일 흐름(부록 A): TASKS.md owner로 thread 시작, assignable 확인, Next 목록·보내기, context 요약.

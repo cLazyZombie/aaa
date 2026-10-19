@@ -92,6 +92,14 @@ disk_free_bytes: number | null, disk_total_bytes: number | null,
  */
 load_x100: number | null, cpus: number,
 /**
+ * 직전 표본부터의 CPU 사용률(0~100, 모든 코어 평균). 옛 agent는 보내지 않는다
+ */
+cpu_pct?: number,
+/**
+ * 사용 메모리와 전체 바이트. 사용 = macOS 앱(internal−purgeable)+wired+압축, Linux 전체−MemAvailable, Windows 전체−ullAvailPhys
+ */
+mem_used_bytes?: number, mem_total_bytes?: number,
+/**
  * 전원에 연결됐는가(배터리가 없는 머신은 true, 알 수 없으면 None)
  */
 on_ac: boolean | null, toolchain: Array<ToolCheck>,

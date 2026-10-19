@@ -2521,13 +2521,21 @@ fn state_label(s: &aaa_proto::SessionState) -> String {
     }
 }
 
-/// 머신 건강 한 칸: 이상이면 그 이유, 아니면 디스크 여유·부하·주의
+/// 머신 건강 한 칸: 이상이면 그 이유, 아니면 CPU·MEM(연결 중일 때만, 끊겼으면 오래된 값이다)·디스크 여유·부하·주의
 fn health_text(m: &aaa_proto::MachineView) -> String {
     if !m.problems.is_empty() {
         return format!("\t이상: {}", m.problems.iter().map(|p| p.text.as_str()).collect::<Vec<_>>().join("; "));
     }
     let Some(h) = &m.health else { return String::new() };
     let mut parts = Vec::new();
+    if m.connection == aaa_proto::Connection::Connected {
+        if let Some(cpu) = h.cpu_pct {
+            parts.push(format!("CPU {cpu}%"));
+        }
+        if let (Some(used), Some(total)) = (h.mem_used_bytes, h.mem_total_bytes.filter(|t| *t > 0)) {
+            parts.push(format!("MEM {:.0}%", used as f64 * 100.0 / total as f64));
+        }
+    }
     if let Some(free) = h.disk_free_bytes {
         parts.push(format!("디스크 여유 {:.0}GB", free as f64 / (1u64 << 30) as f64));
     }
