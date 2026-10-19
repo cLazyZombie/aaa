@@ -26,6 +26,20 @@ pub(crate) struct WindowsEventSource {
 }
 
 impl WindowsEventSource {
+    fn take_ready(&mut self) -> Option<Event> {
+        while let Some(item) = self.paste.ready.pop_front() {
+            match item {
+                Item::Paste(text) => return Some(Event::Paste(text)),
+                Item::Key(record) => {
+                    if let Some(event) = handle_key_event(record, &mut self.surrogate_buffer) {
+                        return Some(event);
+                    }
+                }
+            }
+        }
+        None
+    }
+
     pub(crate) fn new() -> std::io::Result<WindowsEventSource> {
         let console = Console::from(Handle::current_in_handle()?);
         Ok(WindowsEventSource {
@@ -49,16 +63,8 @@ impl EventSource for WindowsEventSource {
 
         loop {
             self.paste.expire(Instant::now());
-            if let Some(item) = self.paste.ready.pop_front() {
-                match item {
-                    Item::Paste(text) => return Ok(Some(InternalEvent::Event(Event::Paste(text)))),
-                    Item::Key(record) => {
-                        if let Some(event) = handle_key_event(record, &mut self.surrogate_buffer) {
-                            return Ok(Some(InternalEvent::Event(event)));
-                        }
-                    }
-                }
-                continue;
+            if let Some(event) = self.take_ready() {
+                return Ok(Some(InternalEvent::Event(event)));
             }
             let wait = match (poll_timeout.leftover(), self.paste.wait(Instant::now())) {
                 (Some(a), Some(b)) => Some(a.min(b)),
@@ -77,7 +83,8 @@ impl EventSource for WindowsEventSource {
                                 record.control_key_state.has_state(0x1f),
                                 Instant::now(),
                             )?;
-                            None
+                            // poll(Some(Duration::ZERO))도 이미 읽은 키/paste는 즉시 반환한다.
+                            self.take_ready()
                         }
                         InputRecord::MouseEvent(record) => {
                             let mouse_event = handle_mouse_event(record, &self.mouse_buttons_pressed);
