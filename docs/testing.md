@@ -221,3 +221,14 @@ web/e2e/specs/NN-기능.mjs  기능별 단계(01-http-pwa … 19-turn-alerts). e
 - `notify::tests::report_preview_hides_private_values_before_shortening`은 경로·주소·키를 자르기 전에 가리는 계약과 JSON summary에 원문이 새지 않는 경계를 본다. `push::tests::payloads`는 실제 암호문에 제목·JSON escape를 포함해 4096바이트 이내인지 본다.
 - 웹 E2E 12의 기존 Web Push 준비·보고서·보고 요약 단계는 실제 암호문을 복호화해 첫 줄 요약과 클릭 목적지를 확인한다. 신호 금지 작업은 공식 ci-local의 Rust 전체 test를 제외하고 `AAA_E2E_ONLY='^(Web Push:|thread 보고서·결과물:|확인창 질문:|Codex 폴더 신뢰:|보고서 전체 목록:)'`로 고른다. 이 단계에는 신호 동작 시험이 없으며 실험실이 직접 띄운 자식 PID 정리만 허용한다. `m13::notify_webhook`은 pane kill을 시험하므로 이 제한 아래에서는 컴파일만 확인한다.
 - iOS의 `from <앱 이름>`과 Android/브라우저의 출처 줄 배치는 플랫폼 소유 UI다. headless 시험은 service worker에 전달한 title/body와 목적지를 확인하며 실기 OS 창의 줄 수를 증명하지 않는다.
+
+## TUI 확장 Enter와 Windows 붙여넣기(§8.228)
+
+- `cargo test --locked -p aaa --test tui modified_enter_inserts_newline`: 실제 crossterm 파서·TUI·host·agent·PTY에서
+  kitty CSI u와 xterm modifyOtherKeys Ctrl/Shift+Enter의 줄바꿈, 보통 Enter, 확장 키 모드 요청·종료 복원을 본다.
+  독립 raw PTY 관측기가 받은 bytes를 출력 사건으로 기다린다. 입력줄 비움 판정·steering owner와 별개로 키 전송 경계를 지킨다.
+- 기존 `ctrl_v_pastes_clipboard_image`는 직접 Ctrl+V와 Windows Terminal의 빈 bracketed paste를 같은 경계에서 본다.
+  실제 대상 파일의 pixels·따옴표 경로·Enter 없음·조각 업로드를 유지한다. 개발 머신 clipboard는 파일 fixture로 대체한다.
+- `cargo test --manifest-path vendor/crossterm/Cargo.toml --locked --lib aaa_`는 Windows 콘솔 표지의 UTF-16·빈 paste·
+  key-up·단독 Escape·잘못된 표지를 세 OS에서 본다. Windows에서는 native KEY_EVENT_RECORD의 수정 Enter·합성 제어키도 본다.
+  공식 ci-local test 단계에 포함되어 있으며 OS 프로세스·clipboard·신호를 쓰지 않는다.

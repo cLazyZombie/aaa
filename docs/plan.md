@@ -5465,3 +5465,29 @@ primary 근거:
 - **참고.** herdr-projects 0.2.35 `profiles.rs::launch_args`·`setup.rs`의 실행 인자/설정 주입, herdr 0.9.5 `integration/claude_settings.rs`의 기존 hook 보존을 따른다. 이 버전들에는 evaluator/special 최소 권한 구현이 없었다. herdr-web-ui server와 t3code `orchestration-v2/Adapters/{ClaudeAdapterV2,CodexAdapterV2}.ts`도 확인했다. t3code는 SDK/turn의 permissionMode·allowedTools·approvalPolicy·sandboxPolicy를 전달하므로 aaa의 CLI 실행에는 harness 공식 설정으로 대응한다.
 - **설정 근거.** [Claude permissions](https://code.claude.com/docs/en/permissions), [Codex config](https://developers.openai.com/codex/config-reference), [Codex rules](https://developers.openai.com/codex/rules). 설치된 Codex 0.163에서 생성한 config layer가 활성이고, 자기 폴더 쓰기·자료 읽기 통과, 바깥 쓰기·통신 거부, report/post만 명령 규칙에 맞는 것을 확인했다. 실제 모델 실행과 운영 임무 재시작은 배포 뒤 coordinator가 한다.
 - **회귀.** 기존 host 임무 시작 시험에 허용 범위 전달을 추가하고 agent 실행 설정 시험은 일반 thread와 launch/resume의 경계를 본다. 수정 전 허용 목록 누락으로 실패, host 전달을 빼는 변형도 실패했다. 설정 파일 링크 우회 시험은 원자 교체를 일반 쓰기로 바꾸면 실패했다. 고정 sleep·신호 시험은 추가하지 않았다.
+
+### 8.228 TUI 확장 Enter와 Windows Terminal 그림 붙여넣기(10-19, t-0385)
+
+- **원인.** TUI는 모든 Enter를 CR로 만들어 수정키를 버렸고, Unix 바깥 터미널에 확장 키도 요청하지 않았다.
+  crossterm 0.29는 kitty CSI u는 읽지만 xterm modifyOtherKeys의 `CSI 27;modifier;Unicode~`는 버렸다.
+  Windows에서는 bracketed paste를 일부러 끄고 있었다. Windows Terminal은 Ctrl+V를 자신의 paste로 처리하고,
+  그림-only clipboard의 빈 입력은 bracketed paste를 요청한 앱에만 알린다. 과거 입력 로그는 bytes 개수만 있어
+  특정 운영 키를 소급 확정할 수 없으며, 수정 전 PTY 재현에서는 modifyOtherKeys 두 키가 도착하지 않았다.
+- **참고.** herdr 0.9.5 `client/terminal_setup.rs`의 확장 키 요청·종료 복원과
+  `input/model.rs::ime_compatible_keyboard_enhancement_flags`를 따른다. 모든 글자를 escape로 바꾸는 flag는 켜지 않는다.
+  Windows 입력은 `client/input/windows_vti.rs`의 콘솔 key record→붙여넣기 복원을 따른다.
+  t3code는 웹 composer이므로 OS 터미널 입력 파서에 해당하는 경로는 없다.
+  그림-only paste 근거는 Microsoft Terminal `TerminalPage::_PasteFromClipboardHandler`다.
+- **수리.** crossterm 0.29를 MIT 고지와 함께 vendor에 두고 위 두 입력 파서를 보완했다(변경 목록은
+  `vendor/crossterm/AAA.md`). Windows 콘솔은 key-down/up·UTF-16·분할 표지·빈 paste를 복원하며,
+  표지가 아닌 Escape는 원래 키로 돌려준다. Escape 구분 시한은 입력 프로토콜용이며 시험은 주어진 시계로 검사한다.
+  Windows도 bracketed paste를 켜므로 Ctrl+V 그림은 기존 PNG 첨부 경로로 간다. 사용자 Terminal 설정은 바꾸지 않는다.
+  Unix는 kitty와 modifyOtherKeys를 요청하고 끝날 때 복원한다. Shift+Enter 및 판정을 모를 때의 안전한 줄바꿈 bytes는
+  Claude의 공식 `chat:newline`과 Codex 0.163 `keymap.rs::editor.insert_newline`이 공통 지원하는 Ctrl+J(LF)다.
+- **사용자 추가 결정.** Ctrl+Enter의 최종 동작은 「agent 입력줄에 글이 있거나 알 수 없으면 줄바꿈, 비었으면 steering」이다.
+  화면 판정·harness steering 키는 웹 작업의 공통 backend owner가 맡는다. 이 절의 입력 파서가 키를 보존한 뒤 TUI는
+  같은 backend 요청을 사용하며, TUI 안에 별도 입력줄 판정이나 harness 키 표를 만들지 않는다.
+- **검증.** 수정 전 Windows 키 인코더와 실제 PTY 경계가 실패했다. 수정 후 kitty/xterm 네 Enter의 LF 및 보통 Enter의 CR,
+  확장 키 모드 복원, 기존 Ctrl+V·빈 paste의 실제 PNG 저장을 검사했다. 빈 paste를 버리는 변형도 실패했다.
+  Windows Rust target의 TUI·vendored parser 시험 교차 컴파일을 통과했다. Windows 실행은 CI 결과로 별도 확인한다.
+  새 시험은 신호·실제 clipboard·고정 sleep을 쓰지 않는다.
