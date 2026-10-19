@@ -1267,6 +1267,13 @@ impl Agent {
                 .map(AgentResponse::ThreadReady)
                 .map_err(|e| ErrorBody::new(ErrorCode::BadRequest, format!("{e:#}")))
             }
+            AgentRequest::ThreadPlacement { project, thread, title, kind, repo } => {
+                let cfg = self.threads_cfg.lock().unwrap().clone();
+                threads::placement(&cfg, &project, &thread, &title, kind, repo.as_deref())
+                    .await
+                    .map(|placement| AgentResponse::ThreadPlacement { placement })
+                    .map_err(|e| ErrorBody::new(ErrorCode::BadRequest, format!("{e:#}")))
+            }
             AgentRequest::ThreadAdopt(a) => self.thread_adopt(a).await,
             AgentRequest::ThreadWatch { thread, work_dir } => {
                 // 감시 key는 `<project>/<thread>`다(thread 번호는 프로젝트마다 다시 센다)

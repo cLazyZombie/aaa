@@ -283,3 +283,5 @@ aaa update status <재시작-ID> --wait
 failed·interrupted·판/SHA 불일치면 진행을 멈추고 원인을 본다. `aaa update rollback --machine <문제 머신>`의 완료 → 해당 서비스 restart → 판/SHA·재연결을 확인한다. 중단된 update는 자동 재실행하지 않는다. agent restart 중 종료는 OS 잠금으로 확인한 이전 실행기 종료와 기대 SHA가 맞을 때만 복구 완료로 기록한다. 구판 host/agent는 새 API를 사용하지 않고 사람의 최초 반영 또는 터미널 복구를 안내한다.
 
 생성된 coordinator 안내는 binary 반영 뒤 `aaa doctor files --fix`로 갱신한다. 운영 설정·서비스의 변경은 이 코드의 시험·착지와 별도다.
+
+- 준비 응답을 잃어 host에 경로가 없는 실패도 resolve가 agent journal을 먼저 조회해 정리한다. 조회는 준비와 같은 lock에서 끝나므로 준비 뒤늦은 생성과 정리가 경합하지 않는다. `thread_journal.v1`이 없는 옛 agent에서는 확인 없이 resolve 완료하지 않고 갱신을 안내한다.

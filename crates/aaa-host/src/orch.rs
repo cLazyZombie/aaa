@@ -1971,7 +1971,7 @@ impl Host {
         actor: &str,
     ) -> Result<ThreadView, ErrorBody> {
         let _guard = self.claim_thread(project, id)?;
-        let rec = self.load(project, id)?;
+        let mut rec = self.load(project, id)?;
         if rec.status == ThreadStatus::Starting {
             return Err(bad("준비 중에는 끝낼 수 없다. 준비 결과를 기다린다"));
         }
@@ -1980,6 +1980,34 @@ impl Host {
         }
         let opts = rec.resolve_pending.unwrap_or(opts);
         let conn = self.live_conn(&rec.machine_id)?;
+        if rec.cwd.is_none() && rec.status == ThreadStatus::Failed && rec.kind != ThreadKind::Adopted {
+            if !self.machine_feature(&rec.machine_id, "thread_journal.v1") {
+                return Err(bad(
+                    "준비 자리를 조회할 수 없는 agent다. agent를 갱신한 뒤 resolve한다(확인 없이 정리 완료로 두지 않는다)",
+                ));
+            }
+            match conn
+                .request(AgentRequest::ThreadPlacement {
+                    project: project.into(),
+                    thread: id.into(),
+                    title: rec.title.clone(),
+                    kind: rec.kind,
+                    repo: rec.repo.clone(),
+                })
+                .await?
+            {
+                AgentResponse::ThreadPlacement { placement: Some(place) } => {
+                    rec = self.update_rec(project, id, |r| {
+                        r.cwd = Some(place.cwd);
+                        r.work_dir = Some(place.work_dir);
+                        r.branch = place.branch;
+                        r.base = place.base;
+                    })?;
+                }
+                AgentResponse::ThreadPlacement { placement: None } => {}
+                other => return Err(internal(format!("준비 자리 응답이 아니다: {other:?}"))),
+            }
+        }
         if rec.status != ThreadStatus::Resolved
             && !opts.skip_copy
             && let Some(w) = &rec.work_dir

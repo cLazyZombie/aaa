@@ -103,7 +103,9 @@ impl AgentConn {
 
     pub async fn request(&self, body: AgentRequest) -> Result<AgentResponse, ErrorBody> {
         let wait = match &body {
-            AgentRequest::ThreadPrepare(_) => Duration::from_secs(self.timeouts.thread_prepare_timeout_secs),
+            AgentRequest::ThreadPrepare(_) | AgentRequest::ThreadPlacement { .. } => {
+                Duration::from_secs(self.timeouts.thread_prepare_timeout_secs)
+            }
             AgentRequest::ThreadCleanup { .. } => Duration::from_secs(self.timeouts.thread_cleanup_timeout_secs),
             AgentRequest::FileRead { .. } | AgentRequest::ReportCollect { .. } => {
                 Duration::from_secs(self.timeouts.file_request_timeout_secs)

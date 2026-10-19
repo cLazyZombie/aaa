@@ -534,7 +534,7 @@ pub fn write_inbox(work_dir: &str, rel: &str, data: &[u8]) -> Result<()> {
 /// 있다) worktree가 지워졌을 때만 `delete_branch`로 지운다. `uncopied`(마지막 사본에 빠진 것이 있다)면 폴더가 남아 있는 한
 /// worktree를 남긴다: 작업 폴더(`.aaa/`)는 git이 무시하는 파일이라 force 없는 `worktree remove`도 지운다. host는 그때
 /// `keep_worktree`도 켜서 보낸다(옛 agent도 지우지 않게).
-pub use preparation::cleanup_recorded;
+pub use preparation::{cleanup_recorded, placement};
 
 async fn cleanup(
     repo: Option<&str>,

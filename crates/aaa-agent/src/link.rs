@@ -103,6 +103,7 @@ pub fn hello(agent: &Agent) -> AgentHello {
             "profiles.v2".into(),
             // host의 ResolvedProfile과 설치 harness 조회(Harnesses)를 받는다.
             "host_profiles.v1".into(),
+            "thread_journal.v1".into(),
             "launch_safety.v1".into(),
             "file.v1".into(),
             "profile.v1".into(),

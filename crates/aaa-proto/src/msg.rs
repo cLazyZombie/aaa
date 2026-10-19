@@ -16,7 +16,7 @@ use crate::orch::{
     AgentStatus, Cleanup, FlowEvent, HarnessEvent, InboxItem, Launch, LibraryPrunePlan, LibraryRef, LibraryReport,
     LibrarySkip, LibraryView, LinkView, MessageMode, MessageView, OwnerChoice, ProfileView, ProjectAction,
     ProjectChange, ProjectContext, ProjectFilesCheck, ProjectOpened, ProjectView, QuestionView, ReportSnapshot, Role,
-    RoutineView, ThreadAdopt, ThreadAdopted, ThreadKind, ThreadPrepare, ThreadReady, ThreadView,
+    RoutineView, ThreadAdopt, ThreadAdopted, ThreadKind, ThreadPlacement, ThreadPrepare, ThreadReady, ThreadView,
 };
 use crate::orch::{EvaluationView, EvaluatorView, MenuPick, NoticeView, ThreadSummaryView};
 
@@ -652,6 +652,14 @@ pub enum AgentRequest {
     Harnesses,
     /// thread 자리(worktree 또는 작업 폴더)를 만들고 brief.md를 쓰고 profile을 해석한다
     ThreadPrepare(ThreadPrepare),
+    /// thread_journal.v1: 준비와 같은 lock에서 기록된 자리를 조회한다(새 자리는 만들지 않는다).
+    ThreadPlacement {
+        project: String,
+        thread: String,
+        title: String,
+        kind: ThreadKind,
+        repo: Option<String>,
+    },
     /// 사람이 띄운 agent 세션을 thread로 데려온다: 그 세션의 지금 폴더에 작업 폴더·brief.md를 만든다(`thread adopt`).
     /// agent 기능 `adopt.v1`이 있을 때만 보낸다(옛 agent는 모르는 요청에 연결을 끊는다)
     ThreadAdopt(ThreadAdopt),
@@ -831,6 +839,9 @@ pub enum AgentResponse {
         profiles: Vec<ProfileView>,
     },
     ThreadReady(ThreadReady),
+    ThreadPlacement {
+        placement: Option<ThreadPlacement>,
+    },
     ThreadAdopted(ThreadAdopted),
     Report(ReportSnapshot),
     FileChunk {

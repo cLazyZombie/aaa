@@ -64,8 +64,52 @@ struct Placement {
     head: Option<String>,
     ready: Option<ThreadReady>,
 }
+fn journal_key(cfg: &ThreadsConfig, project: &str, thread: &str) -> PathBuf {
+    cfg.work_root.join(".preparations").join(format!("{project}-{thread}.json"))
+}
 fn journal(cfg: &ThreadsConfig, p: &ThreadPrepare) -> PathBuf {
-    cfg.work_root.join(".preparations").join(format!("{}-{}.json", p.project, p.thread))
+    journal_key(cfg, &p.project, &p.thread)
+}
+
+/// 준비 응답을 잃은 resolve용. 생성자와 같은 lock을 기다린 뒤 소유권이 맞는 기록만 돌려준다.
+pub async fn placement(
+    cfg: &ThreadsConfig,
+    project: &str,
+    thread: &str,
+    title: &str,
+    kind: ThreadKind,
+    repo: Option<&str>,
+) -> Result<Option<aaa_proto::ThreadPlacement>> {
+    if !valid_project(project) || !valid_thread(thread) {
+        bail!("프로젝트·thread 이름 형식이 아니다");
+    }
+    let path = journal_key(cfg, project, thread);
+    let lock = lock(&path);
+    let _guard = lock.lock().await;
+    let Some(saved) = read::<Placement>(&path)? else { return Ok(None) };
+    let expected = match kind {
+        ThreadKind::Worktree => {
+            let repo = Path::new(repo.context("worktree의 repo가 없다")?);
+            let top = PathBuf::from(git(repo, &["rev-parse", "--show-toplevel"], GIT_T).await?);
+            let slug = slug(title);
+            let branch = format!("aaa/{project}/{thread}{}", if slug.is_empty() { slug } else { format!("-{slug}") });
+            if saved.repo.as_ref() != Some(&top) || saved.branch.as_ref() != Some(&branch) {
+                bail!("준비 journal과 repo·branch가 다르다. 사람이 확인해야 한다");
+            }
+            cfg.work_root.join(top.file_name().context("repo 이름이 없다")?).join(format!("{project}-{thread}"))
+        }
+        ThreadKind::Dir if saved.repo.is_none() && saved.branch.is_none() => cfg.work_root.join(project).join(thread),
+        _ => bail!("준비 journal과 thread 종류가 다르다"),
+    };
+    if saved.cwd != expected {
+        bail!("준비 journal의 자리가 다르다");
+    }
+    Ok(Some(aaa_proto::ThreadPlacement {
+        cwd: saved.cwd.to_string_lossy().into(),
+        work_dir: saved.cwd.join(".aaa").join(format!("{project}-{thread}")).to_string_lossy().into(),
+        branch: saved.branch,
+        base: saved.base,
+    }))
 }
 
 pub(super) async fn prepare(cfg: &ThreadsConfig, p: ThreadPrepare, wait: Duration) -> Result<ThreadReady> {

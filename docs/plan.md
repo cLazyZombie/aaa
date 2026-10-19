@@ -5368,3 +5368,5 @@ primary 근거:
 - `thread start --background`는 Starting을 바로 돌려주고 host task가 세션 시작·실패 기록까지 마친다. 기본 동기 호출은 유지한다. `thread show`·웹은 「준비 중」, 묶음의 준비 확인 시한은 설정한 준비 상한+세션 시작 여유 60초다. host 재시작으로 task가 없어진 Starting은 restart로 회수한다.
 - resolve는 정리 의도를 먼저 저장한다. 연결 유실로 응답을 잃으면 Resolved여도 같은 resolve가 정리를 이어서 하며 완료 사건은 결과를 기록한 뒤 한 번만 낸다. 원래의 `keep_worktree`·`skip_copy`·`discard_uncopied`를 유지한다. agent 정리도 journal과 존재 여부로 재진입한다. 늦은 응답은 요청을 받은 연결로만 보낸다(다시 연결한 c0 응답에 섞지 않는다).
 - 운영 host·agent 교체·재시작은 착지와 별도이며 이 thread에서는 하지 않는다.
+
+- finish 리뷰 보완: 준비 응답 유실 뒤 경로 없는 Failed를 곧바로 resolve하면 journal의 자리가 고아로 남던 경로를 수정했다. `thread_journal.v1`의 읽기 전용 `thread_placement`는 준비와 같은 lock을 기다린 뒤 project·thread·repo·branch·예상 경로가 맞는 기록만 반환한다. host는 이 경로를 저장하고 정리한다. 옛 agent에서 조회할 수 없으면 완료로 확정하지 않는다.

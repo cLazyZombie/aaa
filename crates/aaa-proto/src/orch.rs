@@ -136,6 +136,15 @@ pub struct ThreadReady {
     pub launch: Launch,
 }
 
+/// agent journal에서 회수한 자리. 아직 launch를 만들지 못한 준비도 정리에 넘길 수 있다.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ThreadPlacement {
+    pub cwd: String,
+    pub work_dir: String,
+    pub branch: Option<String>,
+    pub base: Option<String>,
+}
+
 /// 사람이 띄운 agent pane을 thread로 데려온다(`thread adopt`): 그 세션이 지금 있는 폴더에 작업 폴더를 만들고 brief.md를 쓴다
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ThreadAdopt {
