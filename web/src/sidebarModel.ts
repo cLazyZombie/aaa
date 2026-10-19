@@ -169,17 +169,20 @@ export function roster(machines: readonly MachineView[], panes: readonly PaneVie
   const machineOf = (t: ThreadView) => machineOfThread(t, machines, paneOf);
   const shown = sortThreads(threads.filter((t) => machineOf(t) !== undefined));
   const threadPanes = new Set(shown.flatMap((t) => (t.pane ? [t.pane] : [])));
+  const coordinators = panes.filter((p) => p.coordinator_project && p.role !== "evaluator" && !threadPanes.has(p.id) && machines.some((m) => m.id === p.machine_id));
+  const coordinatorPanes = new Set(coordinators.map((p) => p.id));
   const rank = new Map(paneOrder.map((key, index) => [key, index]));
   const last = Number.MAX_SAFE_INTEGER;
   const loose = machines
-    .flatMap((m) => panes.filter((p) => p.machine_id === m.id && p.role !== "evaluator" && !threadPanes.has(p.id)))
+    .flatMap((m) => panes.filter((p) => p.machine_id === m.id && p.role !== "evaluator" && !threadPanes.has(p.id) && !coordinatorPanes.has(p.id)))
     .map((p, index) => ({ p, index, rank: rank.get(sidebarPinKey(p.machine_id, p.id)) ?? last }))
     .sort((a, b) => a.rank - b.rank || a.index - b.index)
     .map((entry) => entry.p);
   // 프로젝트 묶음은 처음 나온 순서(가장 앞 rank의 thread가 있는 프로젝트가 먼저)
   const projects: string[] = [];
   for (const t of shown) if (!projects.includes(t.project)) projects.push(t.project);
-  return { threads: shown, projects, panes: loose, machineOf };
+  for (const p of coordinators) if (!projects.includes(p.coordinator_project!)) projects.push(p.coordinator_project!);
+  return { threads: shown, projects, coordinators, panes: loose, machineOf };
 }
 
 /** 목록 줄 하나: 누르면 여는 것과, 그 줄이 골랐다고 보는 선택 값들(thread 줄은 그 thread와 그 pane) */
@@ -197,12 +200,15 @@ export function rosterRows(machines: readonly MachineView[], panes: readonly Pan
   const r = roster(machines, panes, threads, paneOrder);
   const online = (id: string | undefined) => machines.some((m) => m.id === id && m.connection === "connected");
   const rows: RosterRow[] = [];
-  for (const project of r.projects)
+  for (const project of r.projects) {
+    for (const p of r.coordinators.filter((p) => p.coordinator_project === project))
+      if (online(p.machine_id)) rows.push({ open: { pane: p.id }, keys: [`pane:${p.id}`] });
     for (const t of r.threads.filter((x) => x.project === project)) {
       if (!online(r.machineOf(t)?.id)) continue;
       const pane = t.pane ? panes.find((p) => p.id === t.pane) : undefined;
       rows.push({ open: pane?.state === "running" ? { pane: pane.id } : { thread: t }, keys: [`thread:${threadKey(t)}`, ...(pane ? [`pane:${pane.id}`] : [])] });
     }
+  }
   for (const p of r.panes) if (online(p.machine_id)) rows.push({ open: { pane: p.id }, keys: [`pane:${p.id}`] });
   return rows;
 }

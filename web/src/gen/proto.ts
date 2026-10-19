@@ -175,6 +175,11 @@ export type PaneView = { id: string, machine_id: string, machine: string, name: 
  */
 readonly: boolean, cols: number, rows: number, lease: LeaseView | null, role: Role | null,
 /**
+ * host 머신의 프로젝트 홈에서 도는 coordinator의 소속. host가 canonical cwd로 판정한다.
+ * 옛 host는 보내지 않으며 front는 이름·경로로 소속을 추측하지 않는다.
+ */
+coordinator_project?: string,
+/**
  * harness 상태(hook을 보내는 agent 세션만)
  */
 agent: AgentStatus | null,

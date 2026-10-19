@@ -783,18 +783,21 @@ impl Host {
     }
 
     pub(crate) fn projects_all(&self) -> Vec<ProjectView> {
+        self.project_directories().into_iter().map(|(name, dir)| self.project_view(&name, &dir)).collect()
+    }
+
+    pub(crate) fn project_directories(&self) -> Vec<(String, PathBuf)> {
         let root = self.projects_root();
-        let mut out: Vec<ProjectView> = std::fs::read_dir(&root)
+        let mut out: Vec<_> = std::fs::read_dir(&root)
             .into_iter()
             .flatten()
             .filter_map(|e| e.ok())
             .filter_map(|e| {
                 let name = e.file_name().to_string_lossy().to_string();
-                (valid_project(&name) && e.path().join("PROJECT.md").is_file())
-                    .then(|| self.project_view(&name, &e.path()))
+                (valid_project(&name) && e.path().join("PROJECT.md").is_file()).then(|| (name, e.path()))
             })
             .collect();
-        out.sort_by(|a, b| a.name.cmp(&b.name));
+        out.sort_by(|a, b| a.0.cmp(&b.0));
         out
     }
 

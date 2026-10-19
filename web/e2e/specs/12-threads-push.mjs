@@ -1220,4 +1220,32 @@ export default async function ({ page }) {
     if (aaa("mission", "show", "mission-layout", "ci-watch").mission.thread !== null) throw new Error("승인만으로 임무가 실행됐다");
   });
 
+
+  await step("coordinator 프로젝트 소속: thread가 없는 프로젝트도 host 소속으로 묶고 좁은 목록에 한 번만 보인다", async () => {
+    aaa("project", "create", "coord-home");
+    const opened = aaa("project", "open", "coord-home", "--profile", "fake");
+    if (!opened.started) throw new Error("coordinator를 새로 열지 않았다");
+    const row = page.getByTestId("pane-coord-home coordinator");
+    await page.setViewportSize({ width: 1280, height: 800 });
+    await inList(page, row);
+    await shot(page, "desktop-coordinator-project");
+    await page.setViewportSize({ width: 390, height: 844 });
+    await page.locator(".view [data-testid='drawer-toggle']").click();
+    await drawerSettled(page);
+    await shot(page, "phone-coordinator-project");
+    const membership = await row.evaluate((el) => ({
+      project: el.closest(".worktree-children")?.previousElementSibling?.getAttribute("data-project"),
+      copies: document.querySelectorAll('[data-testid="pane-coord-home coordinator"]').length,
+    }));
+    if (membership.project !== "coord-home" || membership.copies !== 1) throw new Error(`coordinator 프로젝트 소속: ${JSON.stringify(membership)}`);
+    // 접힌 프로젝트도 지금 고른 coordinator는 남기고, 다른 pane을 고르면 숨긴다.
+    const head = page.getByTestId("project-coord-home");
+    await head.locator(".project-select").click();
+    await domIs(page, "접힌 프로젝트의 현재 coordinator", () => document.querySelector('[data-testid="project-coord-home"].is-collapsed') !== null && document.querySelector('[data-testid="pane-coord-home coordinator"]') !== null);
+    await inList(page, "pane-t1");
+    await domIs(page, "고르지 않은 coordinator는 접힘", () => document.querySelector('[data-testid="pane-coord-home coordinator"]') === null);
+    await page.setViewportSize({ width: 1280, height: 800 });
+    await head.locator(".project-select").click();
+  });
+
 }

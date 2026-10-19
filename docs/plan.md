@@ -5446,3 +5446,10 @@ primary 근거:
   기존 native clipboard CI 왕복 하나를 한글·이모지·여러 줄 텍스트 쓰기/읽기까지 넓혔다.
   개발 머신의 실제 clipboard는 건드리지 않는다. xwin은 Windows 교차 빌드이고 Windows 실행 증거는 CI다.
 - 웹 steering과 TUI 여러 줄 Enter는 각각 별도 작업 범위다.
+
+### 8.226 coordinator pane도 프로젝트 소속으로 묶는다(10-19, t-0382, 차이 목록 L1·L4)
+
+- **실제 기록과 재현.** 운영 host의 pane 목록에서 coordinator는 연결된 host 머신의 실행 중 pane이며 coordinator 역할과 프로젝트 홈 cwd를 갖고 있었다. host 로그도 같은 pane의 입력 전달·확인을 기록했다. thread 목록에는 coordinator가 없다. 웹 `roster`는 thread의 project만 모아 나머지 pane을 전부 기타로 보내므로, adopt 목록 경쟁(§8.218)과 별개로 항상 소속이 빠졌다. 새 소스로 빌드한 실험실에서 thread가 없는 프로젝트를 실제 CLI로 열어 같은 실패와 1280/390px 전후 화면을 확인했다.
+- **참고.** herdr-projects 0.2.35 `coordinator.rs is_coordinator`·`report_tokens`, `sidebar.rs report_pane`, `grouping.rs`는 프로젝트 홈 coordinator에도 project metadata를 붙여 같은 프로젝트 묶음에 둔다. herdr-web-ui `lib/sidebarAgents.ts sidebarAgents`는 pane ID로 그 pane의 상태를 결합한다. herdr 0.9.5의 metadata/token grouping 경계와 t3code `packages/client-runtime/src/state/projectGrouping.ts deriveLogicalProjectKeyFromSettings`의 명시적인 소속 key도 확인했다.
+- **수정.** host가 등록된 프로젝트 홈의 canonical cwd와 host 머신·agent 여부를 판정해 `PaneView.coordinator_project`를 보낸다. 일반 셸·같은 경로의 원격 agent·보관된 프로젝트는 제외한다. 선택 칸이라 옛 host/front와 호환된다. 웹은 소속 이름을 추측하지 않고 그 필드만 사용하며 프로젝트 맨 앞에 coordinator를 한 번 둔다. thread가 없어도 프로젝트를 만들고 접기·현재 줄 유지·상태 집계에 포함한다. 단축키·팔레트·TUI도 같은 차례를 따른다. coordinator는 프로젝트 고정 소속이므로 기타 pane의 이동·별도 고정 메뉴를 주지 않는다. thread 상태 셈은 기존대로 thread만 센다.
+- **검증.** 기존 project-open 통합 시험에 host 소속 전달·일반 셸 제외·같은 cwd의 실제 원격 profile 제외를 더하고, 기존 TUI/단축키 차례 시험을 확장했다. 웹 E2E 12에 준비가 독립적인 coordinator 소속 단계를 더했다. 수정 전 실제 소속 실패를 보존하고, 소속 누락·원격 머신 혼입 변형에서도 keeper가 실패하는 것을 확인한다. 고정 sleep·새 production 시험 seam은 없다. 운영 binary 교체는 배포 담당이 한다.

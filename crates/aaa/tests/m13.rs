@@ -3063,11 +3063,13 @@ fn thread_adopt_claude_started_in_a_shell() {
 /// 없는 profile·보관한 프로젝트는 아무것도 만들지 않는다. 기다림은 pane 기록이다.
 #[test]
 fn project_open_starts_or_shows_the_coordinator() {
-    let w = world();
+    let mut w = world();
+    w.add_remote();
     let dir = std::fs::canonicalize(w.projects.join("demo")).unwrap();
     let tabs =
         |ws: &str| -> Vec<Value> { w.h.ok(&["workspace", "get", ws])["tabs"].as_array().cloned().unwrap_or_default() };
-    w.h.new_pane(None, "labA", Some("사람 셸"), &["/bin/sh"], Some(path_str(&dir)));
+    let shell = w.h.new_pane(None, "labA", Some("사람 셸"), &["/bin/sh"], Some(path_str(&dir)));
+    assert!(w.h.pane(&shell)["coordinator_project"].is_null());
     let e = w.h.json(&["project", "open", "demo", "--profile", "nope"]).expect_err("없는 profile");
     assert!(e.contains("profile `nope`"), "{e}");
     assert!(tabs("demo").is_empty(), "없는 profile이면 workspace를 만들지 않는다");
@@ -3080,6 +3082,7 @@ fn project_open_starts_or_shows_the_coordinator() {
         "{v}"
     );
     let pane = v["pane"]["id"].as_str().unwrap().to_string();
+    assert_eq!(v["pane"]["coordinator_project"], "demo", "{v}");
     assert_eq!(std::fs::canonicalize(v["pane"]["cwd"].as_str().unwrap()).unwrap(), dir, "{v}");
     assert_eq!(
         (v["pane"]["role"].as_str(), v["pane"]["name"].as_str()),
@@ -3091,6 +3094,26 @@ fn project_open_starts_or_shows_the_coordinator() {
     let t = tabs("demo");
     assert!(t.len() == 1 && t[0]["name"] == "coordinator" && t[0]["root"].to_string().contains(&pane), "{t:?}");
     wait_for("coordinator 상태(hook)", T, || (w.h.pane(&pane)["agent"]["harness"] == "claude").then_some(()));
+    // 같은 cwd의 원격 agent도 실제 profile로 띄워 다른 guard 때문에 통과하지 않게 한다.
+    let rt = tokio::runtime::Builder::new_multi_thread().worker_threads(2).enable_all().build().unwrap();
+    rt.block_on(async {
+        use aaa_common::front::FrontClient;
+        use aaa_proto::{FrontRequest, FrontResponse};
+        let mut client = FrontClient::connect_as(&w.h.state, "coordinator-membership").await.unwrap();
+        let request = FrontRequest::PaneRun {
+            machine: Some("labB".into()),
+            name: Some("demo coordinator".into()),
+            argv: vec![],
+            cwd: Some(path_str(&dir).into()),
+            cols: None,
+            rows: None,
+            profile: Some("claude".into()),
+        };
+        match client.call(request).await.unwrap().unwrap() {
+            FrontResponse::Pane(remote) => assert!(remote.coordinator_project.is_none(), "{remote:?}"),
+            other => panic!("원격 profile 띄우기: {other:?}"),
+        }
+    });
 
     // 돌고 있으면 그것을 알리고 아무것도 만들지 않는다. 없는 profile은 돌아도 거부한다(참고는 profile부터 푼다)
     let e = w.h.json(&["project", "open", "demo", "--profile", "nope"]).expect_err("돌아도 없는 profile은 거부");
