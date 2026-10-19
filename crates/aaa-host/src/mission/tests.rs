@@ -1621,19 +1621,15 @@ async fn conversion_hands_legacy_cursor_to_rule_before_new_events_without_double
     let cursor = l.h.load("demo", &r.id).unwrap().mission.unwrap().cursor;
     let files = l.h.automation_convert("demo", "coordinator").await.unwrap();
     assert!(files.iter().any(|f| f == "automations/watch-events.toml"));
-    let state: serde_json::Value =
-        serde_json::from_str(&l.h.db.meta("automation:demo:watch-events").unwrap().unwrap()).unwrap();
-    assert_eq!(state["cursor"].as_u64(), Some(cursor), "옛 적용 사본의 cursor부터 이어받는다");
+    let seeded: Option<serde_json::Value> =
+        l.h.db.meta("automation:demo:watch-events").unwrap().map(|s| serde_json::from_str(&s)).transpose().unwrap();
     assert_eq!(
         l.h.applied("demo", "watch").unwrap().def.events,
         ["thread_failed"],
         "resident 적용 사본은 reset 전까지 그대로다"
     );
-    l.h.automation_pass("demo").await;
-    assert!(
-        l.h.load("demo", &r.id).unwrap().mission.unwrap().pending.is_empty(),
-        "과거 사건을 새 규칙으로 다시 전달하지 않는다"
-    );
+    // 첫 새 source 판정 전에 온 사건도 잃지 않아야 한다. 초기 baseline으로 넘기면 안 된다.
+    l.pane(AgentActivity::Idle);
     l.h.flow_project("demo", "thread_failed", None, "after conversion");
     l.h.mission_tick("demo", "watch", now + 1).await.unwrap();
     assert!(
@@ -1642,7 +1638,12 @@ async fn conversion_hands_legacy_cursor_to_rule_before_new_events_without_double
     );
     l.h.automation_pass("demo").await;
     let after = l.h.load("demo", &r.id).unwrap().mission.unwrap();
-    assert_eq!(after.pending.len(), 1);
+    assert_eq!(after.pending.len(), 1, "변환 직후 첫 판정 전 새 사건을 한 번 전달하고 과거 사건은 다시 보내지 않는다");
+    assert_eq!(
+        seeded.as_ref().and_then(|s| s["cursor"].as_u64()),
+        Some(cursor),
+        "변환 순간에도 cursor를 내구 저장한다"
+    );
     assert!(after.pending[0].text.contains("after conversion"));
     l.h.automation_pass("demo").await;
     assert_eq!(l.h.load("demo", &r.id).unwrap().mission.unwrap().pending.len(), 1);
@@ -1702,6 +1703,11 @@ fn omitted_and_zero_mission_budgets_are_unlimited_and_not_approval_scope() {
         ),
     )
     .unwrap();
+    let sentinel =
+        parse("watch", &body.replace("profile='fake'", "profile='fake'\nmax_wakes=4294967295\nmax_minutes=4294967295"))
+            .unwrap();
+    assert_eq!(sentinel.def.max_wakes, 0, "옛 거대한 상한 표기는 무제한으로 이행한다");
+    assert_eq!(sentinel.def.max_minutes, 0);
     assert_eq!(limited.def.max_wakes, 12);
     assert_eq!(limited.def.max_minutes, 60);
     assert!(!ready(&limited, &pending, now));
@@ -1728,9 +1734,16 @@ async fn removing_explicit_budget_resumes_once_without_approval_or_default_backl
     .unwrap();
     l.queue("demo", "watch", "fresh".into(), "events", "보존한 입력".into()).unwrap();
     let unlimited = text("max_wakes=0\nmax_minutes=0\nwithdrawal='none'").replace("min_gap=\"1m\"", "min_gap=0");
+    l.h.mission_control("demo", "watch", "pause", "web:human").await.unwrap();
     l.write(&unlimited);
     assert!(l.h.mission_show("demo", "watch").unwrap().approved);
     l.h.mission_tick("demo", "watch", now).await.unwrap();
+    let paused = l.h.mission_show("demo", "watch").unwrap();
+    assert_eq!(paused.max_wakes, 0, "사용자가 resume하기 전에도 파일의 예산 값은 반영한다");
+    assert_eq!(paused.state, "멈춤", "상한 완화가 사람의 pause를 무시하지 않는다");
+    assert_eq!(l.h.load("demo", &r.id).unwrap().mission.unwrap().wakes_today, 1);
+    l.h.mission_control("demo", "watch", "resume", "web:human").await.unwrap();
+    l.h.mission_tick("demo", "watch", now + 1).await.unwrap();
     let run = l.h.load("demo", &r.id).unwrap().mission.unwrap();
     assert_eq!(run.wakes_today, 2, "명시 상한 제거와 기본 backlog 무제한을 반영해 보존 입력을 깨운다");
     assert_ne!(run.state, "예산 대기");
@@ -1779,7 +1792,18 @@ async fn approved_reload_at_explicit_day_cap_reaches_the_candidate_after_session
     l.write(&candidate);
     let file = l.h.read_mission("demo", "watch").unwrap();
     assert!(l.h.mission_show("demo", "watch").unwrap().approved);
+    l.h.mission_control("demo", "watch", "pause", "web:human").await.unwrap();
     let response = l.h.mission_control("demo", "watch", "reload", "web:human").await.unwrap();
+    let FrontResponse::Mission { mission: paused } = response else { panic!("임무 응답") };
+    assert!(paused.apply_wait.as_deref().is_some_and(|why| why.contains("멈춤·꺼짐")));
+    l.h.mission_tick("demo", "watch", now).await.unwrap();
+    l.h.mission_control("demo", "watch", "restart", "web:human").await.unwrap();
+    l.h.mission_tick("demo", "watch", now).await.unwrap();
+    assert!(
+        !f.requests.lock().unwrap().iter().any(|r| matches!(r, AgentRequest::Kill { .. } | AgentRequest::Spawn(_))),
+        "reload/restart가 사람 pause를 우회하지 않는다"
+    );
+    let response = l.h.mission_control("demo", "watch", "resume", "web:human").await.unwrap();
     let FrontResponse::Mission { mission: queued } = response else { panic!("임무 응답") };
     assert_eq!(queued.pending_sha.as_deref(), Some(file.sha.as_str()));
     assert!(queued.apply_wait.as_deref().is_some_and(|why| why.contains("현재 작업이 끝난 뒤")));
@@ -1812,4 +1836,81 @@ async fn approved_reload_at_explicit_day_cap_reaches_the_candidate_after_session
     assert!(!view.stale);
     assert!(view.pending_sha.is_none() && view.apply_wait.is_none(), "적용 완료하면 예약과 대기 표시를 지운다");
     assert!(l.h.mission_task(&l.h.load("demo", &r.id).unwrap()).contains("새 후보를 적용한다."));
+}
+
+#[tokio::test]
+async fn resumed_mission_time_budget_counts_work_in_the_wake_not_elapsed_wall_time() {
+    let l = Lab::new();
+    let r = l.applied(&text("max_minutes=60\nwithdrawal='none'"));
+    let _fake = l.fake(vec!["mission.v1".into()]).await;
+    l.pane(AgentActivity::Working);
+    let now = util::now_ms();
+    l.h.update_rec("demo", &r.id, |r| {
+        let m = r.mission.as_mut().unwrap();
+        m.state = "멈춤".into();
+        m.paused = true;
+        m.work_ms = 19 * 60000;
+        m.last_wake_ms = Some(now.saturating_sub(2 * 3600000));
+        m.wakes_today = 0;
+        m.last_reset_ms = now;
+    })
+    .unwrap();
+    l.h.mission_control("demo", "watch", "resume", "web:human").await.unwrap();
+    l.h.mission_tick("demo", "watch", now).await.unwrap();
+    let notices = || {
+        l.h.db
+            .inbox_list(Some("demo"), true)
+            .unwrap()
+            .into_iter()
+            .filter(|i| i.event == "time budget")
+            .collect::<Vec<_>>()
+    };
+    assert!(notices().is_empty(), "이전 깨움의 대기·멈춤 경과는 작업 19분을 60분 초과로 만들지 않는다");
+    l.h.mission_tick("demo", "watch", now + 59 * 60000).await.unwrap();
+    assert!(notices().is_empty(), "새로 관찰한 깨움 작업 59분은 60분 이하이다");
+    l.h.mission_control("demo", "watch", "pause", "web:human").await.unwrap();
+    l.h.mission_tick("demo", "watch", now + 120 * 60000).await.unwrap();
+    assert!(notices().is_empty(), "멈춤 시간에는 작업 시간을 늘리거나 상한을 알리지 않는다");
+    l.h.mission_control("demo", "watch", "resume", "web:human").await.unwrap();
+    l.h.mission_tick("demo", "watch", now + 120 * 60000 + 1).await.unwrap();
+    assert!(notices().is_empty(), "resume은 멈춤 시간을 작업으로 바꾸지 않는다");
+    l.h.mission_tick("demo", "watch", now + 122 * 60000 + 1).await.unwrap();
+    assert_eq!(notices().len(), 1, "실제 관찰 작업 61분은 명시한 60분 상한을 한 번 알린다");
+    let first = notices().remove(0);
+    l.h.inbox_done("demo", &[first.id], false, "coordinator").unwrap();
+    l.h.mission_tick("demo", "watch", now + 123 * 60000 + 1).await.unwrap();
+    assert_eq!(notices().len(), 1, "같은 깨움의 시간 안내는 done 뒤 반복하지 않는다");
+    // 별도 임무의 실제 새 입력 전달을 검사한다. frame owner의 실제 시계와 같은 시각에서 시작한다.
+    let l = Lab::new();
+    let r = l.applied(&text("max_minutes=60\nwithdrawal='none'"));
+    let _next_fake = l.fake(vec!["mission.v1".into()]).await;
+    let next = util::now_ms();
+    l.h.update_rec("demo", &r.id, |r| {
+        let m = r.mission.as_mut().unwrap();
+        m.last_wake_ms = Some(next - 2 * 3600000);
+        m.wake_work_ms = Some(61 * 60000);
+        m.work_ms = 80 * 60000;
+    })
+    .unwrap();
+    let notices = || {
+        l.h.db
+            .inbox_list(Some("demo"), true)
+            .unwrap()
+            .into_iter()
+            .filter(|i| i.event == "time budget")
+            .collect::<Vec<_>>()
+    };
+    l.pane(AgentActivity::Idle);
+    l.queue("demo", "watch", "next-wake".into(), "events", "다음 작업".into()).unwrap();
+    l.h.mission_tick("demo", "watch", next).await.unwrap();
+    let run = l.h.load("demo", &r.id).unwrap().mission.unwrap();
+    assert_eq!(run.wakes_today, 1);
+    assert_eq!(run.last_wake_ms, Some(next));
+    assert_eq!(run.wake_work_ms, Some(0), "실제 새 입력 전달은 깨움별 작업 셈을 초기화한다");
+    l.pane(AgentActivity::Working);
+    l.h.mission_tick("demo", "watch", next + 1).await.unwrap();
+    l.h.mission_tick("demo", "watch", next + 59 * 60000).await.unwrap();
+    assert!(notices().is_empty(), "새 깨움에는 이전 작업 61분을 더하지 않는다");
+    l.h.mission_tick("demo", "watch", next + 61 * 60000 + 1).await.unwrap();
+    assert_eq!(notices().len(), 1, "새 깨움의 실제 작업 상한은 따로 한 번 알린다");
 }

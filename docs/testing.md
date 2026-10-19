@@ -550,3 +550,11 @@ L2 결함 검증은 이전 root 가져오기 생략, 재시작 전 applied 변�
 
 - 자정 경계 회귀: 기존 mission_debounce 예산 시험은 23:59대 now+60001이 다음 날짜가 되어 같은 날 상한 기대가 실패했다. 첫 로그를 보존하고 그 시험의 논리 시각·reset 기준을 다음 날 정오에 고정해 같은 예산 날짜의 간격·범위·상한을 검사한다. 날짜 초기화는 별도 notice/day keeper가 계속 소유한다. 기대값이나 시한을 늘리지 않는다.
 - 과거 최소 execpolicy 검증은 manual 모드의 증거다. 사용자23:5x 뒤에는 추가 allow-list와 실행 문맥만 유지하고 실제 승인/sandbox 모드는 일반 thread safety 결과가 정본이다. 임무만 push가 harness에서 막힌다고 가정하지 않으며 금지는 임무 지침에 남는다.
+
+
+### L4 재개·시간 상한·무제한 표시 후속
+
+- `resumed_mission_time_budget_counts_work_in_the_wake_not_elapsed_wall_time`은 실제 host·DB와 frame owner에서 누적19분/옛 깨움2시간/오늘 깨움0 재개를 검사한다. 경과 시간식은 첫 무알림 단언 RED여야 한다. 관찰 작업59분 무음→멈춤 시간 제외→61분 한 번 안내→done 뒤 무반복과 별도 실제 새 입력의 깨움별 셈 초기화를 검사한다. 실제 input hook과 논리 시각을 섞지 않도록 새 전달 사례는 새 임무의 실제 시각에서 시작한다.
+- 기존 reload keeper에 pause 상태의 reload/restart 예약과 멈춤 이유, 무Kill/무Spawn, resume 뒤 동일 후보 적용을 추가한다. 기존 상한 제거 keeper는 resume 전에 상한0 반영과 pause 보존을 함께 검사한다.
+- 기존 변환 인계 keeper는 변환 직후 첫 새 source 판정 전에 사건을 넣어 실제 전달 한 번·과거 무재전달을 검사한다. DB 표식 유무만으로 통과시키지 않는다. 옛 mission 사건 조건을 함께 실행하거나 새 cursor seed를 제거하면 실패해야 한다.
+- 웹12의 실제 특수 패널은 생략·옛 최대 정수·상한3/60을 읽어 무제한 분모 없음과 명시 N/M을 검사한다. 실제 CLI m13 임무의 list/show도 같은 규칙을 검사한다. 큰 수를 무제한 생성 예시로 쓰지 않는다. 시간 상한은 깨움별 작업에 붙이고 누적 작업은 분리한다.

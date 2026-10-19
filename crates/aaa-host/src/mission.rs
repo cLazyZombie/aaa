@@ -109,6 +109,12 @@ fn parse(name: &str, text: &str) -> Result<Mission, ErrorBody> {
     let rest = text.strip_prefix("+++\n").ok_or_else(|| bad("`+++` 줄로 시작해야 한다"))?;
     let (front, body) = rest.split_once("\n+++\n").ok_or_else(|| bad("닫는 `+++` 줄이 없다"))?;
     let mut d: Definition = toml::from_str(front).map_err(internal)?;
+    if d.max_wakes == u32::MAX {
+        d.max_wakes = 0;
+    }
+    if d.max_minutes == u32::MAX {
+        d.max_minutes = 0;
+    }
     if d.title.is_empty() {
         d.title = name.into();
     }
@@ -176,6 +182,10 @@ pub(crate) struct MissionRun {
     pub conversation_wakes: u32,
     pub last_wake_ms: Option<u64>,
     pub work_ms: u64,
+    /// 마지막 깨움에서 관찰한 작업만 센다. 구판의 경과 시간으로 소급 추정하지 않는다.
+    pub wake_work_ms: Option<u64>,
+    pub work_boot: String,
+    pub time_budget_notified_for: Option<u64>,
     pub working_since_ms: Option<u64>,
     pub idle_since_ms: Option<u64>,
     pub saw_working: bool,
@@ -215,6 +225,27 @@ impl MissionRun {
         self.blocked_reason = Some(reason);
         self.state = "막힘".into();
         changed
+    }
+    pub(crate) fn observe_work(&mut self, activity: Option<aaa_proto::AgentActivity>, now: u64, boot: &str) {
+        if self.work_boot != boot {
+            // host가 보지 못한 중단 시간은 작업으로 추정하지 않는다.
+            self.working_since_ms = None;
+            self.work_boot = boot.into();
+        }
+        if let Some(at) = self.working_since_ms.take().filter(|_| !self.paused) {
+            let elapsed = now.saturating_sub(at);
+            self.work_ms = self.work_ms.saturating_add(elapsed);
+            if self.last_wake_ms.is_some() {
+                self.wake_work_ms = Some(self.wake_work_ms.unwrap_or(0).saturating_add(elapsed));
+            }
+        }
+        if activity == Some(aaa_proto::AgentActivity::Working) {
+            self.saw_working = true;
+            self.working_since_ms = (!self.paused).then_some(now);
+            self.idle_since_ms = None;
+        } else if activity == Some(aaa_proto::AgentActivity::Idle) {
+            self.idle_since_ms.get_or_insert(now);
+        }
     }
     fn new(name: &str, m: &Mission, cursor: u64, now: u64) -> Self {
         Self {
@@ -256,6 +287,9 @@ fn merge_run(r: &mut ThreadRec, run: &MissionRun) {
         }
         next.saw_working |= old.saw_working;
         next.work_ms = next.work_ms.max(old.work_ms);
+        if next.last_wake_ms == old.last_wake_ms {
+            next.wake_work_ms = next.wake_work_ms.max(old.wake_work_ms);
+        }
         next.posts = old.posts;
         next.handled_posts = old.handled_posts;
         next.last_handled_ms = old.last_handled_ms;
@@ -634,6 +668,8 @@ impl Host {
             wakes_today: run.map(|r| r.wakes_today).unwrap_or(0),
             max_wakes: def.def.max_wakes,
             work_minutes: run.map(|r| r.work_ms / 60000).unwrap_or(0),
+            max_minutes: def.def.max_minutes,
+            wake_work_minutes: run.and_then(|r| r.wake_work_ms).unwrap_or(0) / 60000,
             input_bytes: run.map(|r| r.input_bytes).unwrap_or(0),
             posts: run.map(|r| r.posts).unwrap_or(0),
             handled_posts: run.map(|r| r.handled_posts).unwrap_or(0),
@@ -937,6 +973,7 @@ impl Host {
                         m.blocked_reason = Some(MissionBlockReason::LegacyUnknown);
                     }
                     m.paused = action == "pause";
+                    m.working_since_ms = None;
                     m.state = if m.paused {
                         "멈춤"
                     } else if m.blocked_reason.is_some() {
@@ -1198,6 +1235,7 @@ impl Host {
             _ => {}
         }
         if self.conn_of(&rec.machine_id).is_none() {
+            self.update_rec(p, &rec.id, |r| r.mission.as_mut().unwrap().working_since_ms = None)?;
             return Ok(());
         }
         let live = rec.pane.as_deref().and_then(|id| self.pane_view_of(id, aaa_proto::DeviceRole::Local));
@@ -1244,22 +1282,19 @@ impl Host {
                 run.state = "대기".into();
             }
         }
-        if let Some(at) = run.working_since_ms.take() {
-            run.work_ms += now.saturating_sub(at);
-        }
+        run.observe_work(agent.as_ref().map(|a| a.activity), now, &self.boot_id);
         if agent.as_ref().is_some_and(|a| a.activity == AgentActivity::Working) {
-            run.working_since_ms = Some(now);
-            run.idle_since_ms = None;
-            run.saw_working = true;
             if !matches!(run.state.as_str(), "멈춤" | "예산 대기" | "사용량 대기" | "막힘") {
                 run.state = "일함".into();
             }
-            if applied.def.max_minutes > 0
-                && run
-                    .last_wake_ms
-                    .is_some_and(|at| now.saturating_sub(at) > u64::from(applied.def.max_minutes) * 60000)
+            if !run.paused
+                && applied.def.max_minutes > 0
+                && run.last_wake_ms.is_some()
+                && run.time_budget_notified_for != run.last_wake_ms
+                && run.wake_work_ms.unwrap_or(0) > u64::from(applied.def.max_minutes) * 60000
             {
                 self.inbox_once(p, "mission", n, "time budget", "임무 깨움의 작업 시간이 상한을 넘었다");
+                run.time_budget_notified_for = run.last_wake_ms;
             }
         } else if agent.as_ref().is_some_and(|a| a.activity == AgentActivity::Idle) {
             run.idle_since_ms.get_or_insert(now);
@@ -1432,7 +1467,7 @@ impl Host {
         let wanted =
             crate::automation::Threads { events: applied.def.events.clone(), repos: applied.def.repos.clone() };
         let (target, events) = self.automation_flow_events(p, run.cursor, &wanted)?;
-        if !events.is_empty() {
+        if legacy_conditions && !events.is_empty() {
             let id = format!("e-{:012}-{:012}", events.first().unwrap().seq, events.last().unwrap().seq);
             if !inputs.iter().any(|i| i.id == id) {
                 let mut reports = serde_json::Map::new();
@@ -1730,6 +1765,9 @@ impl Host {
             m.pending.retain(|i| !ids.contains(&i.id));
             m.pending_since_ms = (!m.pending.is_empty()).then_some(now);
             m.last_wake_ms = Some(now);
+            m.wake_work_ms = Some(0);
+            m.working_since_ms = None;
+            m.time_budget_notified_for = None;
             m.wakes_today = m.wakes_today.saturating_add(1);
             m.conversation_wakes = m.conversation_wakes.saturating_add(1);
             m.input_bytes += bytes;
@@ -1795,6 +1833,9 @@ impl Host {
             m.blocked_reason = None;
             m.reset_new_pane = None;
             m.conversation_wakes = 0;
+            m.working_since_ms = None;
+            m.wake_work_ms = Some(0);
+            m.time_budget_notified_for = m.last_wake_ms;
             m.saw_working = false;
             m.last_reset_ms = now;
             m.idle_since_ms = None;

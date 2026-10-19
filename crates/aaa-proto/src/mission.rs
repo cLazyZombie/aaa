@@ -46,7 +46,12 @@ pub struct MissionView {
     pub wakes_today: u32,
     /// 0이면 하루 깨움 상한이 없다.
     pub max_wakes: u32,
+    /// 누적 작업 분. 깨움당 시간 제한은 wake_work_minutes에 적용한다.
     pub work_minutes: u64,
+    #[serde(default)]
+    pub max_minutes: u32,
+    #[serde(default)]
+    pub wake_work_minutes: u64,
     pub input_bytes: u64,
     pub posts: u32,
     pub handled_posts: u32,

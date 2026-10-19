@@ -48,7 +48,7 @@ import "./Sidebar.css";
 import { AutomationPanel } from "./AutomationPanel";
 import { MachineMeters } from "./MachineMeters";
 import { machineStats } from "./machineStats";
-import { evaluatorState, missionTone, missionWord, type SpecialTone } from "./specialModel";
+import { missionCount, missionWork, evaluatorState, missionTone, missionWord, type SpecialTone } from "./specialModel";
 
 /** 상태 말(참고 status.ts STATUS_WORD는 영어 대문자 낱말이다). 화면 낭독·tooltip에 쓴다 */
 const STATUS_KO: Record<KnownStatus, string> = {
@@ -1192,11 +1192,11 @@ function SpecialSection({ missions, evaluators, panes, canControl, agentOf, onPa
                     lead={t ? <RowMark agent={agent} /> : <span className="sidebar-mark" aria-hidden="true"><CircleDashed /></span>}
                     title={m.title}
                     tone={missionTone(m)}
-                    facts={[missionWord(m), `깨움 ${m.wakes_today}/${m.max_wakes || "무제한"}`, ...(m.apply_wait ? [m.apply_wait] : []), ...(pane ? [] : ["pane 없음"])]}
+                    facts={[missionWord(m), `깨움 ${missionCount(m.wakes_today, m.max_wakes)}`, ...(m.apply_wait ? [m.apply_wait] : []), ...(pane ? [] : ["pane 없음"])]}
                     where={t?.machine ?? ""}
                     paneOpen={pane !== undefined}
                     selected={pane !== undefined && selected === `pane:${pane.id}`}
-                    summary={`${m.project}${m.pending_sha ? ` · 예약 판 ${m.pending_sha}` : ""} · 일한 분 ${m.work_minutes} · post 처리 ${m.handled_posts}/${m.posts} · 입력 ${m.pending}`}
+                    summary={`${m.project}${m.pending_sha ? ` · 예약 판 ${m.pending_sha}` : ""} · ${missionWork(m)} · post 처리 ${m.handled_posts}/${m.posts} · 입력 ${m.pending}`}
                     open={() => (pane ? onPane(pane.id) : setShow(m))}
                     items={items}
                   />

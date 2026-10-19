@@ -1383,8 +1383,15 @@ fn with_cli_stack<T: Send + 'static>(build: impl FnOnce() -> T + Send + 'static)
         .map(|thread| thread.join().unwrap_or_else(|panic| std::panic::resume_unwind(panic)))
 }
 
-fn mission_cap(value: u32) -> String {
-    if value == 0 { "무제한".into() } else { value.to_string() }
+fn mission_count(value: u64, cap: u32) -> String {
+    if cap == 0 || cap == u32::MAX { value.to_string() } else { format!("{value}/{cap}") }
+}
+fn mission_work(m: &aaa_proto::MissionView) -> String {
+    let mut text = format!("일한 분 {}", m.work_minutes);
+    if m.max_minutes > 0 && m.max_minutes < u32::MAX {
+        text.push_str(&format!(" · 깨움 작업 {}분", mission_count(m.wake_work_minutes, m.max_minutes)));
+    }
+    text
 }
 
 pub fn main() -> ExitCode {
@@ -3116,11 +3123,10 @@ fn render_context(s: &mut String, c: &aaa_proto::ProjectContext) {
     for m in &c.missions {
         let _ = writeln!(
             s,
-            "특수 {}: {} · 깨움 {}/{} · 입력 {} · post 처리 {}/{}",
+            "특수 {}: {} · 깨움 {} · 입력 {} · post 처리 {}/{}",
             m.name,
             m.state,
-            m.wakes_today,
-            mission_cap(m.max_wakes),
+            mission_count(m.wakes_today.into(), m.max_wakes),
             m.pending,
             m.handled_posts,
             m.posts
@@ -3513,14 +3519,13 @@ fn render_front(r: &FrontResponse) -> String {
         FrontResponse::Missions { missions } => {
             for m in missions {
                 s.push_str(&format!(
-                    "{}/{} · {} · {} · 깨움 {}/{} · 일한 분 {} · post {}/{} · 입력 {}\n",
+                    "{}/{} · {} · {} · 깨움 {} · {} · post {}/{} · 입력 {}\n",
                     m.project,
                     m.name,
                     m.title,
                     m.state,
-                    m.wakes_today,
-                    mission_cap(m.max_wakes),
-                    m.work_minutes,
+                    mission_count(m.wakes_today.into(), m.max_wakes),
+                    mission_work(m),
                     m.handled_posts,
                     m.posts,
                     m.pending
@@ -3538,7 +3543,7 @@ fn render_front(r: &FrontResponse) -> String {
                 let _ = writeln!(s, "후보 판과 적용 판이 같다");
             }
             s.push_str(&format!("차이:\n{}\n", m.diff));
-            s.push_str(&format!("{}/{} · {}\n적용 판: {} · 파일 판: {} · 승인: {}\n오늘 깨움 {}/{} · 일한 분 {} · 묶음 {}바이트 · post 처리 {}/{} · 입력 {}\n다음 reset {:?} · 사용량 대기 {:?}\n\n적용 사본:\n{}\n후보 파일:\n{}",m.project,m.name,m.state,m.applied_sha.as_deref().unwrap_or("없음"),m.file_sha.as_deref().unwrap_or("없음"),m.approved,m.wakes_today,mission_cap(m.max_wakes),m.work_minutes,m.input_bytes,m.handled_posts,m.posts,m.pending,m.next_reset_ms,m.usage_wait_until_ms,m.applied_text,m.file_text));
+            s.push_str(&format!("{}/{} · {}\n적용 판: {} · 파일 판: {} · 승인: {}\n오늘 깨움 {} · {} · 묶음 {}바이트 · post 처리 {}/{} · 입력 {}\n다음 reset {:?} · 사용량 대기 {:?}\n\n적용 사본:\n{}\n후보 파일:\n{}",m.project,m.name,m.state,m.applied_sha.as_deref().unwrap_or("없음"),m.file_sha.as_deref().unwrap_or("없음"),m.approved,mission_count(m.wakes_today.into(),m.max_wakes),mission_work(m),m.input_bytes,m.handled_posts,m.posts,m.pending,m.next_reset_ms,m.usage_wait_until_ms,m.applied_text,m.file_text));
             if !m.applied_brief_text.is_empty() {
                 s.push_str(&format!("\n적용 brief_file:\n{}\n", m.applied_brief_text));
             }

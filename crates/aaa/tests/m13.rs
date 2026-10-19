@@ -1315,7 +1315,15 @@ fn mission_question_answer_recovers_and_delivers_accumulated_input_once() {
     assert_eq!(view["mission"]["stale"], true);
     let human_show = w.h.run(&["mission", "show", "demo", "question-watch"]);
     let text = String::from_utf8_lossy(&human_show.stdout);
-    assert!(text.contains("현재 작업이 끝난 뒤") && text.contains("무제한"), "{text}");
+    assert!(text.contains("현재 작업이 끝난 뒤"), "{text}");
+    let counts = text.lines().find(|s| s.starts_with("오늘 깨움 ")).unwrap();
+    assert!(
+        counts.contains("오늘 깨움 1 · 일한 분 ") && !counts.contains("무제한") && !counts.contains("깨움 1/"),
+        "{counts}"
+    );
+    let list = w.h.run(&["mission", "list", "demo"]);
+    let list = String::from_utf8_lossy(&list.stdout);
+    assert!(list.lines().any(|s| s.contains("question-watch") && s.contains("깨움 1 · 일한 분 ")), "{list}");
 }
 
 /// 화면으로 아는 harness 상태(herdr 0.9.5 감지, plan §8.110), 확인창 질문의 원격 응답, 메시지 queue·interrupt(§8.3~8.5).
