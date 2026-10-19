@@ -1,5 +1,5 @@
 // 앱 동작(herdr-web-ui src/lib/actions.ts `AppActions`·`PaneControls` 가운데 단축키가 부르는 것). App이 하나를 만들어
-// 단축키(herdr/shortcuts.ts `useShortcuts`)에 준다. aaa에 그 화면이 없는 동작(찾기·사이드바 접기·탭·나누기)은 단축키를 끈 채로 두므로(settings.ts `AAA_SHORTCUTS`) 불리지 않는다.
+// 단축키(herdr/shortcuts.ts `useShortcuts`)에 준다. aaa에 그 화면이 없는 동작(찾기·탭·나누기)은 단축키를 끈 채로 두므로(settings.ts `AAA_SHORTCUTS`) 불리지 않는다.
 
 /** 고른 pane의 입력과 기록(참고 PaneControls). 보이는 TermView가 단다 */
 export interface PaneControls {

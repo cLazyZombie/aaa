@@ -4,7 +4,7 @@
 // 다른 곳: 참고의 묶음은 workspace, aaa는 머신 안 프로젝트와 pane 묶음이다(palette.ts). 참고의 탭·나누기·확대·사이드바·PC 추가·
 // 알림 켜기·파일·폴더 찾아보기·plugin 동작·worktree branch는 aaa에 그 화면이나 API가 없어 뺐다. plan §8.132.
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ComponentType, type FocusEvent as ReactFocusEvent, type KeyboardEvent as ReactKeyboardEvent, type MouseEvent as ReactMouseEvent } from "react";
-import { ListChecks, MessageSquarePlus, Settings, SunMoon, SwitchCamera, X } from "lucide-react";
+import { FileText, ListChecks, MessageSquarePlus, PanelLeft, Settings, SunMoon, SwitchCamera, X } from "lucide-react";
 
 import "./herdr/CommandPalette.css";
 
@@ -50,6 +50,10 @@ export interface PaletteActions {
   toggleTheme: () => void;
   openSettings: (page?: SettingsPageId) => void;
   openProjects: () => void;
+  /** 본문 보고서 화면(활동 막대 「보고서」, plan §8.240) */
+  openReports: () => void;
+  /** 사이드바 접기·펴기(휴대폰은 목록 drawer, 참고 CommandPalette `sidebar`) */
+  toggleSidebar: () => void;
 }
 
 interface CommandPaletteProps {
@@ -179,6 +183,9 @@ export function CommandPalette({ open, onClose, machines, panes, threads, select
     ...(actions.toggleView ? [{ id: "view", label: actions.view === "chat" ? "터미널로 전환" : "채팅으로 전환", icon: SwitchCamera, shortcut: "toggle-view", run: actions.toggleView }] satisfies PaletteAction[] : []),
     { id: "theme", label: "테마 전환", icon: SunMoon, run: actions.toggleTheme },
     { id: "settings", label: "설정", icon: Settings, shortcut: "settings", run: () => actions.openSettings() },
+    // 참고 「Toggle sidebar」(i18n.ko.ts 「사이드바 토글」)
+    { id: "sidebar", label: "사이드바 토글", icon: PanelLeft, shortcut: "toggle-sidebar", run: actions.toggleSidebar },
+    { id: "reports", label: "보고서", icon: FileText, run: actions.openReports },
     // aaa 머리 「더 보기 → 프로젝트」(끝난 thread까지)
     { id: "projects", label: "프로젝트 thread 보기", icon: ListChecks, run: actions.openProjects },
   ], [actions]);

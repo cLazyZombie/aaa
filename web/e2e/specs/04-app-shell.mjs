@@ -4,7 +4,7 @@
 import fs from "node:fs";
 import {
   webkit, AA, sleep, aaa, until, screenText, shot, fakeViewport, softKeyboard, pairPage, step, browser,
-  openSettings, focusIs, inList, paneHash, base, root,
+  openSettings, focusIs, inList, paneHash, base, root, showPanel,
 } from "../lib/harness.mjs";
 
 export default async function ({ ctl, page }) {
@@ -316,21 +316,27 @@ export default async function ({ ctl, page }) {
   });
 
   await step("목록 두 굴림 영역(사용자 10-19 「projects와 agents의 스크롤바 위치가 달라」): 위 목록과 Agents 목록이 둘 다 넘칠 때 두 굴림 영역이 사이드바 같은 x에 서서 막대가 같은 자리에 온다", async () => {
-    // 참고 AgentSidebar.css는 Agents 묶음에 좌우 여백을 줘 그 굴림 영역(과 막대)이 위 목록보다 여백만큼 안쪽이었다(Sidebar.css)
+    // 참고 AgentSidebar.css는 Agents 묶음에 좌우 여백을 줘 그 굴림 영역(과 막대)이 위 목록보다 여백만큼 안쪽이었다(Sidebar.css).
+    // 둘은 활동 막대의 다른 패널이다(plan §8.240): 패널을 바꿔도 막대가 같은 x에 있는지 패널마다 잰다. 에이전트 패널은 사이드바
+    // 높이를 다 가져 넘치려면 agent가 24개 있어야 한다
     const agent = `${root}/fakebin/claude`;
     fs.mkdirSync(`${root}/fakebin`, { recursive: true });
     fs.writeFileSync(agent, "#!/bin/sh\nexec /bin/sleep 600\n", { mode: 0o755 });
-    const names = [...Array.from({ length: 16 }, (_, i) => `lane${i + 1}`), ...Array.from({ length: 12 }, (_, i) => `lagent${i + 1}`)];
+    const names = [...Array.from({ length: 16 }, (_, i) => `lane${i + 1}`), ...Array.from({ length: 24 }, (_, i) => `lagent${i + 1}`)];
     for (const name of names) aaa("tab", "create", "--machine", "labA", "--label", name, "--", ...(name.startsWith("lagent") ? [agent] : ["/bin/sleep", "600"]));
     const desk = (await pairPage(browser, aaa("web", "pair").code, { width: 1100, height: 760 })).page;
-    await until("두 목록에 마지막 줄", async () => (await desk.getByTestId("pane-lane16").count()) === 1 && (await desk.locator(".agent-list .agent-item").count()) >= 12);
-    const lanes = await desk.evaluate(() =>
-      [".machine-list", ".agent-list-contents"].map((s) => {
+    await until("두 목록에 마지막 줄", async () => (await desk.getByTestId("pane-lane16").count()) === 1 && (await desk.locator(".agent-list .agent-item").count()) >= 24);
+    const lane = (s) =>
+      desk.evaluate((s) => {
         const e = document.querySelector(s);
         const r = e.getBoundingClientRect();
         return { s, left: Math.round(r.left), right: Math.round(r.right), over: e.scrollHeight - e.clientHeight };
-      }),
-    );
+      }, s);
+    const lanes = [];
+    for (const [panel, s] of [["projects", ".machine-list"], ["agents", ".agent-list-contents"]]) {
+      await showPanel(desk, panel);
+      lanes.push(await lane(s));
+    }
     await desk.context().close();
     for (const name of names) aaa("pane", "kill", name);
     const [list, agents] = lanes;

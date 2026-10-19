@@ -21,7 +21,6 @@ import { keyboardHoldsGrid, keyboardUp } from "./herdr/keyboard.ts";
 import { attachTrace, trace } from "./inputTrace";
 import {
   clipboardKey,
-  ctrlEnterSequence,
   hasModifiers,
   keyFromData,
   modifyOtherKeysLevel,
@@ -59,6 +58,7 @@ import { fileUriPath, hyperlinkFilter, isWebLink, terminalFileLinkProvider } fro
 import { isAppShortcut } from "./herdr/shortcuts.ts";
 import { disposeAfterPendingFrame } from "./herdr/terminalDispose.ts";
 import { pasteText } from "./pasteText.ts";
+import { readTerminalDraft, writeTerminalDraft } from "./herdr/terminalDraft.ts";
 import type { PaneControls } from "./actions";
 import { lensesFor, pickedLens, rememberLens } from "./paneLens";
 import { WebLinksAddon } from "@xterm/addon-web-links";
@@ -449,10 +449,33 @@ export function TermView({
     if (hasModifiers(m) && !pastingRef.current && !composingTermRef.current && !commitPendingRef.current) {
       const key = keyFromData(data);
       const chord = key !== null ? terminalChord(key, m) : null;
+      if (chord === "ctrl+enter") return void pressCtrlEnter();
       const seq = chord !== null ? chordSequence(chord, chordCtx()) : null;
       if (seq !== null) return deliver(seq, { chord: true });
     }
     deliver(data, { modifiedEnter });
+  };
+
+  // 판정은 host의 detection 입력줄이 한다. 입력줄에 아직 보내지 않은 글이 있으면 그 줄에 줄바꿈을 넣는다.
+  const pressCtrlEnter = (): boolean | string => {
+    if (!canControlRef.current || readonlyRef.current || composingTermRef.current || commitPendingRef.current || lineComposingRef.current) return false;
+    if (!draftIsEmpty(draftRef.current)) {
+      setInputError(HELD_FIRST);
+      return HELD_FIRST;
+    }
+    if (inputLineRef.current) {
+      const owner = `${pane.machine}:${pane.id}`;
+      const line = readTerminalDraft(owner);
+      if (line.length > 0) {
+        writeTerminalDraft(owner, `${line}\n`);
+        return true;
+      }
+    }
+    const ws = wsRef.current;
+    if (!ws || ws.readyState !== WebSocket.OPEN) return false;
+    autoFit.current(true);
+    ws.send(JSON.stringify({ t: "ctrl_enter" } satisfies TermClientMsg));
+    return true;
   };
 
   useEffect(() => {
@@ -766,6 +789,7 @@ export function TermView({
         if (chord !== null && !clipboard) {
           if (event.type === "keydown") {
             event.preventDefault();
+            if (chord === "ctrl+enter") { if (!event.repeat) pressCtrlEnter(); return false; }
             const seq = chordSequence(chord, chordCtx());
             if (seq !== null) deliver(seq, { chord: true });
           }
@@ -814,17 +838,20 @@ export function TermView({
       });
     const otherKeysSet = otherKeys("m");
     const otherKeysOff = otherKeys("n");
-    // xterm.js는 Shift+Enter·Ctrl+Enter를 그냥 Enter로 친다: Shift+Enter는 Alt+Enter 줄바꿈으로, Ctrl+Enter는 프로그램이
-    // 요청한 형식으로 바꾼다. macOS Cmd+⌫는 줄 지우기(Ctrl+U). onKey는 IME 확정 글 뒤, 그 키의 onData 바로 앞에 온다.
+    // xterm.js는 Shift+Enter·Ctrl+Enter를 그냥 Enter로 친다: Shift+Enter는 Alt+Enter 줄바꿈으로, Ctrl+Enter는 host가
+    // 감지 입력줄로 정한다. macOS Cmd+⌫는 줄 지우기(Ctrl+U). onKey는 IME 확정 글 뒤, 그 키의 onData 바로 앞에 온다.
     let enterAs: string | null = null;
+    let ctrlEnter = false;
+    let ctrlEnterRepeat = false;
     let commandBackspace = false;
     const keySub = term.onKey(({ key, domEvent: event }) => {
       enterAs = null;
+      ctrlEnter = false;
       commandBackspace = false;
       if (event.isComposing || event.keyCode === 229) return;
       if (key === "\r" && event.key === "Enter" && !event.altKey && !event.metaKey) {
         if (event.shiftKey && !event.ctrlKey) enterAs = "\x1b\r";
-        else if (event.ctrlKey && !event.shiftKey) enterAs = ctrlEnterSequence(otherKeysRef.current);
+        else if (event.ctrlKey && !event.shiftKey) { ctrlEnter = true; ctrlEnterRepeat = event.repeat; }
       }
       commandBackspace =
         isMac && key === "\x7f" && event.key === "Backspace" && event.metaKey && !event.ctrlKey && !event.altKey && !event.shiftKey;
@@ -1077,6 +1104,12 @@ export function TermView({
     termRef.current = term;
     fitRef.current = fit;
     const dataSub = term.onData((data) => {
+      if (ctrlEnter && data === "\r") {
+        ctrlEnter = false;
+        remap(data);
+        if (!ctrlEnterRepeat) pressCtrlEnter();
+        return;
+      }
       // Shift·Ctrl+Enter는 바꾸기 전에 가린다: 바뀐 꼴에는 줄바꿈이 없을 수 있다(PaneTerminal 1345~1347줄)
       const modifiedEnter = enterAs !== null && data === "\r";
       fromTerminal(remap(data), modifiedEnter);
@@ -1657,6 +1690,7 @@ export function TermView({
     const active = item.modifiers ?? modifiersRef.current;
     const modified = (item.key !== "ctrl-c" || item.modifiers !== undefined) && (hasModifiers(active) || item.modifiers !== undefined);
     const chord = modified ? terminalChord(item.key, active) : null;
+    if (chord === "ctrl+enter") { pressCtrlEnter(); return; }
     const seq =
       (modified ? navigationSequence(item.key, active) : null) ??
       (chord !== null ? chordSequence(chord, chordCtx()) : null) ??
@@ -1721,6 +1755,7 @@ export function TermView({
     autoFit.current(true);
     const m = modifiersRef.current;
     const chord = hasModifiers(m) ? terminalChord("Enter", m) : null;
+    if (chord === "ctrl+enter") return pressCtrlEnter();
     input((chord !== null ? chordSequence(chord, chordCtx()) : null) ?? "\r");
     termRef.current?.scrollToBottom();
     return true;
@@ -1969,6 +2004,7 @@ export function TermView({
             onComposing={setLineComposing}
             onSend={sendTerminalLine}
             onEnter={pressEnter}
+            onCtrlEnter={pressCtrlEnter}
             onFocus={() => autoFit.current(true)}
             onImage={() => fileRef.current?.click()}
             onPaste={(e) => {

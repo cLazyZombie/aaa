@@ -474,9 +474,10 @@ export default async function ({ ctl, page }) {
     await until("돌아온 화면(읽기 전)", async () => (await screenText(sp)).includes("keys>"));
     await sp.getByTestId("terminal").click();
 
-    // aaa에 없는 동작(찾기·사이드바)의 키는 앱이 가져가지 않는다. 있는 동작은 가져간다(새 워크스페이스 Mod+Shift+O는
-    // aaa 「새 pane」 창이라 02-terminal 「새 pane」 단계가 연다. 명령 팔레트 Mod+Shift+K는 04 「명령 팔레트」 단계가 쓴다: 연 창은 닫는다)
-    for (const key of ["F", "B"]) if (await taken({ key, code: `Key${key}`, ctrlKey: true, shiftKey: true })) throw new Error(`aaa에 없는 Mod+Shift+${key}를 앱이 가져갔다`);
+    // aaa에 없는 동작(찾기)의 키는 앱이 가져가지 않는다. 있는 동작은 가져간다(새 워크스페이스 Mod+Shift+O는
+    // aaa 「새 pane」 창이라 02-terminal 「새 pane」 단계가 연다. 명령 팔레트 Mod+Shift+K는 04 「명령 팔레트」 단계가 쓴다: 연 창은 닫는다.
+    // 사이드바 토글 Mod+Shift+B는 활동 막대가 생겨 aaa에도 있다: 25 「활동 막대」 단계가 접고 편다)
+    if (await taken({ key: "F", code: "KeyF", ctrlKey: true, shiftKey: true })) throw new Error("aaa에 없는 Mod+Shift+F를 앱이 가져갔다");
     if (!(await taken({ key: "K", code: "KeyK", ctrlKey: true, shiftKey: true }))) throw new Error("Mod+Shift+K(명령 팔레트)를 앱이 가져가지 않았다");
     await sp.getByTestId("command-palette").waitFor();
     await sp.keyboard.press("Escape");
@@ -642,7 +643,8 @@ export default async function ({ ctl, page }) {
     const leaked = after(n).filter(([, kind, v]) => kind === "GOT" && v.includes("\u001b[<"));
     if (leaked.length) throw new Error(`끌기가 프로그램에 갔다: ${JSON.stringify(leaked)}`);
     // 다른 화면이 크기를 가져간 뒤 이 화면에서 키를 치면, 키보다 먼저 이 화면 크기를 건다(첫 글의 답이 이 grid로 그려진다)
-    const sp = (await pairPage(browser, aaa("web", "pair").code, { width: 760, height: 560 })).page;
+    // 첫 화면(1100)의 터미널은 사이드바·활동 막대를 뺀 폭이다: 둘째 화면은 그보다 좁아야 한다
+    const sp = (await pairPage(browser, aaa("web", "pair").code, { width: 640, height: 560 })).page;
     await inList(sp, "pane-mouseapp");
     await until("mouse 화면(둘째)", async () => (await screenText(sp)).includes("pick-this-word"));
     const pcols = () => aaa("pane", "list").panes.find((x) => x.name === "mouseapp").cols;

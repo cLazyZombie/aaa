@@ -3,7 +3,7 @@ import fs from "node:fs";
 import { root, aaa, base, browser, step, pairPage, inList, domIs, shot } from "../lib/harness.mjs";
 
 export default async function ({ page }) {
-  await step("보고서 전체 목록: publish·실시간·import, 데스크톱·휴대폰의 열기·복사·폐기·새 링크", async () => {
+  await step("보고서 전체 목록: publish·실시간·import, 활동 막대 「보고서」가 연 본문 화면(plan §8.240), 데스크톱·휴대폰의 열기·새 창·복사·폐기·새 링크", async () => {
     aaa("project", "create", "demo");
     aaa("project", "create", "other");
     const input = `${root}/reports`;
@@ -31,7 +31,7 @@ export default async function ({ page }) {
     fs.writeFileSync(`${input}/index.html`, "<!doctype html><html lang=ko><meta charset=utf-8><h1>최신 보고서</h1></html>");
     aaa("library", "publish", input, "--project", "demo", "--name", "page");
     if (!(await (await fetch(new URL(live.base, base))).text()).includes("최신 보고서")) throw new Error("등록 폴더 변경을 반영하지 않았다");
-    await inList(page, "reports-open");
+    await inList(page, "activity-reports");
     const panel = page.getByTestId("reports-panel");
     await panel.waitFor();
     await domIs(page, "보고서 전체 목록 준비", () => document.querySelector('[data-testid="reports-panel"]')?.dataset.status === "ready");
@@ -57,12 +57,17 @@ export default async function ({ page }) {
       if (bounds.right > bounds.width + 1 || bounds.overflow) throw new Error(`보고서 목록 폭 넘침 ${JSON.stringify(bounds)}`);
       await shot(page, `reports-${width}`);
     }
-    // 폐기한 링크는 401이어도 pairing한 앱의 「앱에서 열기」는 계속 열려야 한다.
+    // 폐기한 링크는 401이어도 pairing한 앱의 「열기」(본문)·「새 창」은 계속 열려야 한다.
     await row.getByRole("button", { name: "링크 폐기" }).click();
     await domIs(page, "보고서 목록 폐기 반영", () => document.querySelector('[data-testid="report-demo-page"] [data-testid="library-link"]')?.dataset.state === "revoked");
     if ((await fetch(new URL(link.base, base))).status !== 401) throw new Error("폐기 뒤 옛 링크가 열린다");
+    await row.getByRole("button", { name: "열기", exact: true }).click();
+    await page.frameLocator('[data-testid="report-frame"]').getByRole("heading", { name: "최신 보고서" }).waitFor();
+    if ((await page.evaluate(() => location.hash)) !== "#report=demo%2Fpage") throw new Error(`연 보고서 주소: ${await page.evaluate(() => location.hash)}`);
+    await page.getByTestId("report-back").click();
+    await panel.waitFor();
     const opened = page.waitForEvent("popup");
-    await row.getByRole("button", { name: "앱에서 열기" }).click();
+    await row.getByRole("button", { name: "새 창", exact: true }).click();
     const report = await opened;
     try { await report.getByRole("heading", { name: "최신 보고서" }).waitFor(); }
     finally { await report.close(); }
@@ -81,10 +86,10 @@ export default async function ({ page }) {
     const readerCode = aaa("web", "pair", "--reader").code;
     const reader = await pairPage(browser, readerCode, { width: 390, height: 844 });
     try {
-      await inList(reader.page, "reports-open");
+      await inList(reader.page, "activity-reports");
       await reader.page.getByTestId("report-other-design").waitFor();
       if (await reader.page.getByTestId("library-link").count() !== 0) throw new Error("보기 기기에 공유 링크 조작을 보였다");
-      await reader.page.getByTestId("report-other-design").getByRole("button", { name: "앱에서 열기" }).waitFor();
+      await reader.page.getByTestId("report-other-design").getByRole("button", { name: "새 창", exact: true }).waitFor();
     } finally { await reader.page.context().close(); }
     const prefixed=aaa("library","import",batch,"--project","demo","--prefix","archive-");
     if (!prefixed.reports.some((r) => r.name === "archive-t-0001") || prefixed.skipped.length !== 0) throw new Error("접두사를 붙인 이전 보고서 import");
