@@ -1,5 +1,7 @@
 # aaa 기획
 
+> 2026-10-19: TUI 전용 구현·시험·설명 절을 삭제했다. 보존 tag는 `tui-last`다. [삭제 이유와 복구 방법](removed-tui.md)을 본다. 남은 공유 설계의 과거 TUI 언급은 기능 제공 안내가 아니다.
+
 2026-10-16 · **기획 승인(결정 8), 구현 진행 중.** 독립 검토(로컬 `.coordinator/review.md`), 사용자 결정 1~8, coordinator 운영 경험 10항목을 반영했다. 「정할 것」 1~8은 모두 추천안으로 정했다(§16). 개발자 도구 문제는 아직 해결되지 않았다(P0).
 
 - 고정 버전의 소스 분석: [소스 분석](source-analysis.md)
@@ -8,7 +10,7 @@
 
 ## 결론
 
-1. **구조는 3층이다.** front(TUI·CLI·웹 브라우저), host backend(`aaa host`, 중심 macOS), agent backend(`aaa agent`, 각 머신의 Windows·macOS·Linux)로 나눈다. front는 상태 없는 얇은 client이며 host하고만 통신한다. host는 host 역할만 한다. host 머신에서 도는 agent도 별도 agent backend가 다룬다.
+1. **구조는 3층이다.** front(CLI·웹 브라우저), host backend(`aaa host`, 중심 macOS), agent backend(`aaa agent`, 각 머신의 Windows·macOS·Linux)로 나눈다. front는 상태 없는 얇은 client이며 host하고만 통신한다. host는 host 역할만 한다. host 머신에서 도는 agent도 별도 agent backend가 다룬다.
 2. **연결은 설정 주소로 맺는다.** agent backend가 TOML에 적힌 host 주소:포트로 TCP+TLS 1.3 연결을 연다(상호 고정 키). SSH와 tailnet 기능에는 의존하지 않는다. Tailscale은 host 웹을 HTTPS로 공개하는 `tailscale serve`에만 쓴다.
 3. **개발자 도구 등록은 한 번이다(결정 14).** 등록 대상은 **다시 빌드하지 않는 작은 launcher(`aaa-launcher.app`) 하나**이고, 제품 실행 파일은 `aaa` 하나다. 설치 때 launcher를 한 번 등록한다(개발자 도구·전체 디스크 접근). GUI 로그인 세션의 LaunchAgent가 launcher를 띄우고, launcher가 그때의 `aaa`를 자식으로 띄워 책임 프로세스가 된다. `aaa`는 자유롭게 다시 빌드·교체한다. host는 agent backend를 직접 띄우지 않고 OS에 기동을 요청한다. **아직 실측하지 않았다**(launcher 등록 한 번 뒤 재부팅 없이 확인한다).
 4. **MVP는 지금 운영(세 Mac, herdr 0.9.5 + projects 0.2.35)을 대체하는 범위다.**
@@ -103,12 +105,12 @@
 | thread | 종류: worktree·tab·checkout·adopt·repo 없는 task dir. 그 밖에 profile, brief, 보고, 검토·ack·resolve | 로컬과 원격에서 기능이 같다. report가 검토 대기로 보존된다 |
 | 여러 머신 | enrollment, 상태, 능력, profile, 단절·복귀, 머신 건강 | 단절 중 thread를 failed/done으로 오판하지 않는다. 이상이 바로 보인다 |
 | 상태 사건·알림 | agent backend가 harness 화면을 herdr 0.9.5 규칙으로 감지해 작업 중·idle·질문·끝남을 사건으로 보낸다(결정 20 D8, §8.110). coordinator·front는 구독한다 | ~~화면 긁기로 상태를 추정하지 않는다~~ → 상태는 버전을 고정한 참고 감지 규칙으로만 정하고, 받는 쪽은 사건으로 따라간다(다시 읽지 않는다). 막히면 즉시 알림이 온다 |
-| 확인창 원격 응답 | 폴더 신뢰·권한 확인 같은 확인창을 구조화된 질문으로 올린다 | 웹·TUI·coordinator가 원격에서 답한다. 자동 승인은 기본 금지 |
+| 확인창 원격 응답 | 폴더 신뢰·권한 확인 같은 확인창을 구조화된 질문으로 올린다 | 웹·coordinator가 원격에서 답한다. 자동 승인은 기본 금지 |
 | 메시지 | 즉시 끼어들기와 다음 턴 대기열을 나눈다. 수신 확인과 기록을 남긴다 | 특수문자가 깨지지 않는다. 받았는지 화면을 다시 읽지 않는다 |
 | 세션 | 이름 있는 session, workspace/tab/pane, split·resize·scrollback, 여러 front, detach/attach | front 종료·네트워크 끊김·host 재시작으로 pane이 죽지 않는다 |
 | 복원·갱신 | 실행 중 pane 재attach, launch/resume spec, 재부팅 뒤 resume | model·effort·권한·daemon 금지 인자가 유지된다. 실행 중이던 build는 interrupted로 남는다 |
 | 웹·모바일 | HTTPS 주소의 terminal·보고서·inbox·질문, 모바일 입력·한글 IME, push 알림 | 다른 기기에서 결과물을 바로 본다. 보기 권한으로는 조작할 수 없다 |
-| 이미지 붙여넣기 | TUI·웹 Ctrl+V → front → host → 대상 agent 머신 파일 → agent 입력 | Claude·Codex가 **자기 머신의 실제 이미지 파일**을 읽는다 |
+| 이미지 붙여넣기 | 웹 Ctrl+V → front → host → 대상 agent 머신 파일 → agent 입력 | Claude·Codex가 **자기 머신의 실제 이미지 파일**을 읽는다 |
 | 결과물 | report·library를 host가 받아 HTTPS로 보여 준다. 큰 결과물은 지연 전송한다 | 175MB·5GB 결과물도 잃지 않고 볼 수 있다 |
 | 병합 | 병합 대기열(순번·사건·훅), 정리 | 병합 사이에 다시 통합하는 비용이 줄어든다 |
 | 운영·진단 | `doctor`, 계보·서명·키체인·첫 실행 지연 자가 보고, 동시 작업 한도 | 빠르지만 키체인이 잠긴 상태도 실패로 보인다 |
@@ -120,7 +122,6 @@
 aaa host / aaa agent                      역할 실행(보통 OS 감독자가 띄움)
 aaa machine enroll --open 10m            host에서 등록 창 열기
 aaa agent enroll <host:port>             agent 머신에서 등록
-aaa session attach [--machine M] <name>  TUI front
 aaa pane run|send-text|send-keys|read|wait-output   herdr 0.9.5 이름(§8.75). 새 pane은 aaa tab create·pane split
 aaa thread start --machine M --profile P --task-file F
 aaa thread message <id> --queue|--interrupt --text-file F
@@ -142,7 +143,7 @@ aaa doctor / aaa config check / aaa config migrate
 ```mermaid
 flowchart LR
   subgraph FRONT[front · 상태 없는 얇은 client]
-    TUI[aaa TUI · CLI]
+    CLI[aaa CLI]
     BR[웹 브라우저 · React · xterm.js]
   end
   subgraph HOSTM[중심 머신 · macOS]
@@ -161,14 +162,14 @@ flowchart LR
     RS[aaa session-host · PTY / ConPTY · VT]
     RA --> RS
   end
-  TUI -- Front API · 같은 머신 UDS · 다른 기기는 웹 HTTPS·WS --> H
+  CLI -- Front API · 같은 머신 UDS --> H
   BR -- HTTPS --> TS
   RA -- Agent link · TCP+TLS 1.3 · agent가 연결 --> H
 ```
 
 | 프로세스(역할) | 위치 | 소유하는 것 | 띄우는 주체 |
 |---|---|---|---|
-| `aaa` TUI·CLI (front) | 아무 기기 | 화면 viewport와 입력 중인 초안(저장 안 함) | 사용자 |
+| `aaa` CLI (front) | 아무 기기 | 화면 viewport와 입력 중인 초안(저장 안 함) | 사용자 |
 | 웹 (front) | 브라우저 | 같음 | 사용자 |
 | `aaa host` | 중심 Mac 1대 | 정본 목록·spec·thread·inbox·routine·결정 기록, lease·권한, Front API, 웹 | macOS gui 도메인 LaunchAgent(KeepAlive) |
 | `aaa agent` | 모든 agent 머신(중심 Mac 포함) | 머신 API, session host 감독, 파일·attachment 저장, 상태 사건, 머신 건강 | OS 감독자(macOS LaunchAgent, Windows 로그온 예약 작업, Linux systemd user) |
@@ -189,10 +190,9 @@ flowchart LR
 | `aaa-session` | session host·PTY·출력 ring·세션 파일 | proto, common, vt |
 | `aaa-agent` | agent backend·Agent link agent 쪽 | proto, config, common, session, doctor |
 | `aaa-host` | host backend·Front API 서버·웹 서버·Tailscale·SQLite | proto, config, common, vt |
-| `aaa-tui` | TUI front(`aaa attach`) | proto, config, common |
 | `aaa` | 진입점: CLI·역할 선택·OS 감독자 등록 | 모두 |
 
-- front(`aaa-tui`, `web/`)는 `aaa-proto` 계약으로만 host와 말한다. `aaa-host`는 agent·session을 Agent link로만 다룬다.
+- front(`web/`)는 `aaa-proto` 계약으로만 host와 말한다. `aaa-host`는 agent·session을 Agent link로만 다룬다.
 - 공통 crate(`aaa-common`·`aaa-vt`·`aaa-doctor`)는 역할 crate에 의존하지 않는다.
 - `crates/aaa/tests/deps.rs`가 `cargo metadata`로 금지 의존(간접 포함)을 찾는다.
 - 결정 13 원안은 doctor를 진입점 `aaa`에 두었다. 그런데 agent 자가 점검도 같은 측정을 써서, 측정 라이브러리만 `aaa-doctor`로 뺐다. `aaa doctor` 명령은 그대로 `aaa`에 있다.
@@ -216,7 +216,7 @@ flowchart LR
 
 | 경계 | 계약 | transport | 인증 | 재연결 | 버전 |
 |---|---|---|---|---|---|
-| front ↔ host | Front API | 같은 머신 UDS, 다른 기기 TUI·브라우저는 HTTPS(serve) → `127.0.0.1` HTTP·WS(§6.2) | UDS peer UID(peer pid로 어느 pane 안인지 판정, §8.164) + 장치 token, 장치 키 pairing, 웹 pairing cookie | cursor로 재구독, 보존 범위 밖이면 snapshot | major.minor, hello 협상 |
+| front ↔ host | Front API | 같은 머신 UDS, 브라우저는 HTTPS(serve) → `127.0.0.1` HTTP·WS(§6.2) | UDS peer UID(peer pid로 어느 pane 안인지 판정, §8.164) + 장치 token, 장치 키 pairing, 웹 pairing cookie | cursor로 재구독, 보존 범위 밖이면 snapshot | major.minor, hello 협상 |
 | host ↔ agent | Agent link | 로컬은 UDS, 원격은 TCP+TLS 1.3. 연결은 agent가 연다 | 상호 고정 키(자체 서명 인증서 fingerprint pinning) | backoff+jitter, outbox 재전송, command ID로 결과 조회 | major.minor, host가 agent N-1 minor 지원 |
 | agent ↔ session host | Session IPC(내부) | 세션별 UDS/Named Pipe | peer UID/SID + 세션 token | agent 재시작 뒤 registry로 재접속 | 내부 버전. 이전 session host와 호환 |
 | agent pane ↔ agent | Hook IPC | UDS/Named Pipe | 세션·boot ID에 한정한 token | 없음(bounded JSON 한 건) | hook 버전 |
@@ -263,27 +263,22 @@ Front API와 Agent link는 서로 다른 계약이다. 둘 다 다음 원칙을 
 ### 4.5 터미널 plane과 얇은 front
 
 - **VT 정본은 session host에 있다**(VT adapter). M1-1 구현은 순수 Rust `vt100` 0.16을 adapter 뒤에 둔다. ghostty-vt는 빌드에 Zig 0.16이 필요해 구현 Mac·CI에 바로 쓸 수 없었다(§12, 위험 표).
-- **화면 형식은 front 종류마다 hello에서 협상한다.**
-  - TUI: cell grid snapshot + diff(herdr와 같은 얇은 방식)
+- **웹 화면은 raw stream과 snapshot을 쓴다.**
   - 웹: raw byte stream + 재접속용 snapshot
   - 웹 snapshot은 VT 재생 문자열로 만든다. M1-1 확인: `vt100`의 상태 재생(`ESC[H ESC[2J` + 화면 상태)으로 만들고, 그 뒤 byte는 출력 offset으로 이어 붙인다. 느린 구독자·offset 틈은 snapshot을 다시 보낸다.
-- **TUI가 갖는 것:** layout 합성, 입력, 로컬 viewport·scroll 위치뿐이다. 저장 상태는 없다.
-  - M1-2 구현: `aaa attach [-w workspace]`(설계 예시의 `aaa session attach`를 줄였다). workspace layout(탭·나누기 트리)은 host가 SQLite에 두고 바뀌면 연결된 front에 알린다. TUI는 보이는 pane만 grid를 구독한다(33ms 간격, 바뀐 줄만).
-  - 키는 herdr 0.9.5 기본 키와 모드를 따른다(§8.73). prefix(`[tui] prefix`, 기본 `ctrl+b`) 뒤 명령 키 하나: `c` 새 탭, `v`·`-` 나누기, `h/j/k/l`·`Tab`·`Shift+Tab` 포커스, `n`·`p`·숫자 탭, `x` 닫기, `b` 목록, `w` 탐색 모드, `o` 알림 카드의 pane(§8.185), `?` 단축키, `Shift+R` 설정 다시 읽기, `q` 나가기. prefix 두 번은 prefix 키를 그대로 보낸다. 시간 제한은 없고 Esc·모르는 키는 취소한다. 입력기 전환(§8.34)은 herdr처럼 기본 끔이다.
-  - 다른 front가 지금 쓰는 pane은 PTY 크기 그대로 왼쪽 위에 맞춰 그리고 칸 밖은 자른다. 입력하거나 터미널 focus를 다시 얻으면 그 칸 크기로 맞추면서 이 화면이 지금 쓰는 화면이 된다(§8.33). lease가 빈 pane에 포커스해도 같다.
 - **여러 front의 화면과 크기**
   - front마다 viewport는 독립이지만, 실제 PTY 크기는 「지금 쓰는 화면」(lease)이 정한다. lease는 host가 둔다.
   - **lease 규칙(M1-2 구현, 10-17 herdr 모델로 바꿈 §8.33).**
-    - lease는 대화형 front 연결 하나(TUI의 Front 연결, 웹 터미널 WebSocket 하나)에 묶인다. 연결이 끝나거나 놓으면(`release`) 풀리고, host가 재시작해도 풀린다. 시간 만료는 없다.
+    - lease는 대화형 front 연결 하나(웹 터미널 WebSocket 하나)에 묶인다. 연결이 끝나거나 놓으면(`release`) 풀리고, host가 재시작해도 풀린다. 시간 만료는 없다.
     - ~~다른 연결이 갖고 있으면 `lease_held`로 거부하고 명시적으로 가져온다~~ → 대화형 입력·크기·그림은 거부하지 않는다. 보낸 연결이 지금 쓰는 화면이 된다(마지막 입력이 이긴다). 이전 화면에는 상태 변경으로 보인다.
     - 크기는 「쓰는 중인」 front만 건다: 지금 쓰는 화면이거나 아무도 쓰지 않을 때, focus를 다시 얻었을 때, 입력했을 때. 보이지 않거나 focus가 없는 front는 걸지 않는다.
     - 한 번 보내는 CLI(`pane resize`·`pane attach`)는 지금 쓰는 화면이 되지 않는다. `pane resize`는 아무도 쓰지 않을 때만 된다.
-    - **한 front 연결에서 pane을 바꾸는 요청(입력·전송·크기·가져오기·놓기·종료)은 받은 순서대로 처리한다.** TUI는 키마다 응답을 기다리지 않고 보낸다. 그래서 host가 동시에 처리하면 키 순서가 뒤바뀌었다(M1-2 CI에서 발견). 조회 요청은 동시에 처리한다.
+    - **한 front 연결에서 pane을 바꾸는 요청(입력·전송·크기·가져오기·놓기·종료)은 받은 순서대로 처리한다.** front는 키마다 응답을 기다리지 않고 보낸다. 그래서 host가 동시에 처리하면 키 순서가 뒤바뀌었다(M1-2 CI에서 발견). 조회 요청은 동시에 처리한다.
     - **한 번 보내는 API 입력(`pane run`·`pane send-text`·`pane send-keys`)은 lease 대상이 아니다.** coordinator·스크립트의 전송이 사람의 attach에 막히지 않게 하려는 것이다. 감사 기록에는 남는다. M1-3 메시지 API(§8.5)와 질문 응답(§8.4)은 이 위에서 자기 규칙(interrupt·queue, generation·lease 재확인)을 더한다.
-    - M1-1에서는 웹이 PTY 크기를 그대로 보여 주고 「화면에 맞추기」를 눌렀을 때만 resize했다. M1-2부터는 그것도 lease 보유자만 한다. 10-17부터 웹도 TUI와 같이 자동으로 맞추고(§8.30), 같은 날 명시적 가져오기를 없앴다(§8.33).
+    - M1-1에서는 웹이 PTY 크기를 그대로 보여 주고 「화면에 맞추기」를 눌렀을 때만 resize했다. M1-2부터는 그것도 lease 보유자만 한다. 10-17부터 웹도 자동으로 맞추고(§8.30), 같은 날 명시적 가져오기를 없앴다(§8.33).
   - 보기(observe) front는 입력도 resize도 할 수 없다.
   - 느린 front는 bounded queue가 차면 snapshot으로 재동기화하며, 전체 agent를 무기한 backpressure하지 않는다.
-  - TUI와 웹이 섞여도 같은 규칙이다.
+  - 웹이 섞여도 같은 규칙이다.
   - 출력 로그·scrollback 상한과 frame 상한·rate limit은 설정 정책이다.
 
 ## 5. 세 OS agent backend
@@ -337,13 +332,6 @@ Front API와 Agent link는 서로 다른 계약이다. 둘 다 다음 원칙을 
 ### 6.2 Front 연결
 
 - **같은 머신:** 0700 디렉터리의 UDS를 쓰고 peer UID와 장치 token을 확인한다. agent pane 안에서 실행한 CLI는 host가 연결한 프로세스(peer pid의 조상·세션)로 어느 pane 안인지 판정하고 그 pane의 역할로 범위를 정한다. 일반 thread와 사후 평가자(§8.13)는 보기 권한이다. 처음 적은 「세션·역할 범위 token」은 두지 않았다(§8.25 세션 역할, §8.164 host 판정).
-- **다른 기기의 TUI(10-18 coordinator 답, 차이 목록 4장 A 「다른 머신에서 TUI 붙기」 지금 497줄):** 웹 길을 그대로 탄다. 새 listener·인증서·TCP+TLS front는 두지 않는다(처음 적은 「TCP+TLS로 붙는다」를 바꿨다).
-  - 주소: §6.3이 공개한 host 웹 HTTPS 주소(`aaa web publish`, 예: `https://mac-a.example.ts.net:8443`). TLS는 그 주소의 인증서(tailscale serve)가 맡고 TUI는 webpki 루트로 확인한다(처음 적은 OS 신뢰 저장소를 바꿨다, §8.181).
-  - 입장: 웹과 같은 장치 pairing. host에서 사람이 `aaa web pair`(보기만이면 `--reader`)로 코드를 내고, 그 기기 TUI가 처음 붙을 때 그 코드를 `POST /api/v1/pair`에 내 장치 token을 받는다. token은 그 기기 상태 폴더에 주소마다 0600으로 둔다(브라우저의 `__Host-aaa` cookie와 같은 값, 같은 기기 기록, 목록·취소는 `aaa web devices`·`aaa web revoke`). 역할(reader/controller)은 그 장치 기록이 정하고 host가 요청마다 판정한다(§6.4).
-  - 통신: 웹 listener의 WebSocket 하나 `GET /api/v1/front`에 같은 머신 socket의 Front API를 그대로 싣는다(글 메시지 하나가 제어 frame 하나, 화면은 cell grid 사건 `Grid`, §8.181). 웹 화면의 끝점 셋(`/api/v1/call`·`events`·`panes/{id}/ws`)을 쓰지 않는 까닭: pane WebSocket은 화면 bytes라 TUI가 VT를 돌려야 하는데 front는 `aaa-vt`에 의존하지 않는다(`cargo test -p aaa --test deps`). TUI는 비브라우저지만 웹 규칙을 그대로 지난다: Host·Origin을 그 공개 주소로 보내고(§8.116 허용 목록), cookie 헤더로 token을 보낸다(HTTPS면 `__Host-aaa`).
-  - 명령: herdr `--remote <ssh-target>`의 aaa 꼴 `aaa attach --remote <웹 주소> [-w <workspace>]`. 키 설정은 그 기기 것이다(herdr `--remote-keybindings` 기본 `local`과 같음).
-  - 참고와 다름: herdr는 SSH 너머 서버에 붙는다. aaa는 SSH를 쓰지 않는다(결정 6). 웹과 TUI가 한 입장·권한 모델을 쓴다.
-  - 지금: 있다(§8.181). TLS는 OS 신뢰 저장소 대신 webpki 루트로 확인한다(host의 다른 client와 같은 rustls·ring, tailscale serve 인증서는 Let's Encrypt라 든다). `http://`는 host 머신 loopback(`127.0.0.1:<포트>`)만 받는다.
 - **브라우저:** §6.3의 HTTPS 주소로 붙는다.
 
 ### 6.3 host 웹 HTTPS 공개 — aaa가 Tailscale을 아는 유일한 곳
@@ -754,7 +742,7 @@ host 프로젝트 폴더 구성:
   - 안 본 항목이 남아 있으면 새 항목이 올 때 다시 나열된다(herdr-projects와 같다). 「봤다」는 `aaa inbox list`(`--peek` 아님)와 `aaa context`(`--peek` 아님)가 보인 항목에 단다(10-17, 차이 목록 G3·F8).
   - 전달은 메시지와 같은 send_prompt다(선택 창이 열려 있으면 입력하지 않음). 받았는지 몰라도(unknown) 같은 묶음은 다시 보내지 않는다(§8.5 a). 흐름 사건은 `nudge_sent`다.
 - **닫힌 질문(실제 시험 뒤 결정):** 질문에 답했거나 harness가 넘어가 질문이 닫히면, 그 질문의 `question` 항목은 끝낸 것으로 둔다(기록은 `inbox/done/`에 남는다). 실제 시험에서 이미 답한 질문이 알림마다 「question」으로 섞였기 때문이다.
-- **아직:** 웹·TUI의 inbox 화면, 머신 이상(건강) 항목.
+- **아직:** 웹의 inbox 화면, 머신 이상(건강) 항목.
 
 ### 8.18 M1-3d 구현 결정(10-16): 병합 대기열 순번, 동시 thread 한도, 미룬 것
 
@@ -916,13 +904,7 @@ host 프로젝트 폴더 구성:
     - 쓰다 만 글은 머신·pane마다 이 기기(localStorage, 32,768자 상한)에 남는다. 보내는 동안 친 글은 남는다.
     - 연결이 끊겨도 입력줄은 쓸 수 있고 보내기만 막힌다.
   - 키 막대(§8.43, herdr-web-ui KeyBar): Esc·Tab·^C·Ctrl·Alt·Shift·Enter·↑↓←→. 터치 기기나 폭 768px 이하에서만 보인다. Ctrl·Alt·Shift는 유지 키다. 다시 누르거나 연결이 끊길 때까지 켜져 있다(래치). 휴대폰에서는 가로로 밀어 본다.
-- **TUI.** 칸 크기는 그대로 둔다. 테두리를 두르지 않아 PTY 크기가 줄지 않는다. → §8.92(묶음 3b)에서 herdr대로 나눈 탭은 pane마다 테두리 상자를 둘러 PTY가 테두리만큼 준다(`[tui] pane_borders = "off"`면 테두리 없음).
-  - 탭 줄은 이름표·workspace·탭(지금 탭은 강조색 바탕)으로 짜고, 오른쪽에 열린 질문 수를 둔다.
-  - 포커스 pane과 맞닿은 구분선만 강조색으로 그린다. → §8.92에서 포커스 pane 상자만 강조색.
-  - 상태 줄은 색 조각(머신·pane·상태색 글·조작 중·평가자)으로 짜고, 오른쪽에 prefix 도움말을 둔다. → §8.92에서 herdr 배치·팔레트로 바꿨다(상태 줄 없음).
-  - pane 표시는 상태 색(질문 빨강, 끊김·중단 호박, 종료 회색)을 따른다.
-  - 색은 256색 번호이고, 색 바탕 위 글자는 굵게 써도 밝아지지 않게 256색 검정(16)을 쓴다.
-- **견본 도구.** `web/e2e/showcase.mjs`는 host·agent 둘(로컬·원격 등록)과 셸·가짜 Claude(작업 중·입력 대기·질문)·thread 셋·평가자가 있는 상태를 만든다. 웹 화면 8가지(데스크톱 1920×1080·휴대폰 390×844 × 어두움·밝음)와 TUI(`aaa attach`를 웹 터미널로)를 찍는다. 디자인 검수와 전후 비교에 쓴다. `AAA_BIN`으로 옛 binary를 줄 수 있다.
+- **견본 도구.** `web/e2e/showcase.mjs`는 host·agent 둘(로컬·원격 등록)과 셸·가짜 Claude(작업 중·입력 대기·질문)·thread 셋·평가자가 있는 상태를 만든다. 웹 화면 8가지(데스크톱 1920×1080·휴대폰 390×844 × 어두움·밝음)를 찍는다. 디자인 검수와 전후 비교에 쓴다. `AAA_BIN`으로 옛 binary를 줄 수 있다.
 - **PWA(M3, 10-17).** 휴대폰 홈 화면에 앱으로 둔다.
   - `web/public/manifest.webmanifest`(standalone, 시작 `/`)와 아이콘(192·512·maskable·apple-touch·favicon PNG)을 둔다. 아이콘은 견본 도구처럼 headless Chromium으로 한 번 그려 저장소에 넣었다.
   - manifest와 아이콘은 인증 없이 받는다(브라우저가 cookie 없이 가져간다). 비밀이 없다.
@@ -1026,38 +1008,6 @@ Claude·Codex pane을 터미널 대신 대화 기록으로도 본다. 휴대폰�
   - agent 유닛: 합성 기록으로 거르기(3MiB 줄·sidechain·thinking·system-reminder·tool_result)와 끝부분 자르기, Codex 줄, 경로(밖·상대·`..`·확장자·밖을 가리키는 symlink·폴더·FIFO), thread-id를 본다.
   - 웹 E2E: 실험실 안 `CLAUDE_CONFIG_DIR`에 기록을 두고 hook으로 알린다. 사람·답·도구 줄만 보이고, 빼야 할 글은 없다. 새 줄을 따라가고 터미널로 돌아간다. CLI도 같다. 기록 폴더 밖을 가리키는 hook은 「기록 폴더 밖」으로 거부하고 내용을 내보내지 않는다.
 - **남는 한계.** Claude·Codex 기록 형식은 공개 규격이 아니다. 바뀌면 모르는 줄은 조용히 빠진다(오류로 멈추지 않는다). 실제 Codex 기록 왕복은 사용량 때문에 자동 시험이 없다.
-
-### 8.28 M3 TUI Ctrl+V와 front clipboard(10-17)
-
-로드맵의 「Windows·Linux front clipboard」는 TUI의 Ctrl+V 그림 붙여넣기를 뜻한다. 그런데 TUI에는 macOS를 포함해 clipboard 읽기가 아예 없었다(M1-4에서 미룸, §8.20). 그래서 세 OS를 한 번에 만든다.
-
-- **누르는 것.** `aaa attach`에서 prefix 없이 Ctrl+V를 누른다. 그림만 든 clipboard를 붙이면 빈 붙여넣기(bracketed paste)를 보내는 터미널이 있어 그것도 받는다.
-  - clipboard에 그림이 없거나 clipboard를 열지 못하면(ssh 셸·desktop 없음) 원래 키 0x16을 그대로 보낸다. 이때 상태 줄에는 아무것도 띄우지 않는다. Claude Code 같은 harness가 Ctrl+V를 직접 쓰기 때문이다.
-- **읽는 것.** arboard 3.7을 쓴다.
-  - macOS는 NSPasteboard, Windows는 clipboard(PNG·CF_DIBV5·CF_DIB), Linux는 X11이다.
-  - 순수 Rust(X11은 x11rb)다. 새로 들어온 crate 가운데 C 라이브러리를 링크하는 것(`links`)은 없다. 그래서 Linux 빌드에 X11·Wayland 개발 파일이 필요 없다. §8.20에서 걱정한 점은 생기지 않았다.
-  - arboard는 RGBA를 돌려준다. 그래서 front가 PNG로 다시 만든다. 원래 형식과 색 profile은 남지 않는다.
-- **보내는 길.** Front API에 `PaneAttach{pane, offset, total, sha256, data}` 조각 요청을 더했다. 응답은 `Attached{path, inserted, note}`다. 웹 터미널 WebSocket의 `Attach`와 규칙이 같다.
-  - 512KiB 조각(`ATTACH_CHUNK`)으로 나누고, 마지막 조각에서 sha256을 대조한다.
-  - host의 `attach_chunk`가 그대로 처리한다. 그 안에서 서명으로 형식을 보고(PNG·JPEG·GIF·WebP), 16MiB 상한과 lease를 확인한다. harness 입력창이면 경로를 넣고(Enter 없음), 아니면 저장만 한다.
-  - 받는 중인 첨부는 front 연결마다 하나다. 키 입력과 같은 순서 큐로 처리해 조각과 키가 섞이지 않는다.
-  - 앞 조각이 실패하면 남은 조각은 거부한다. TUI는 그 거부를 한 번만 알린다.
-- **raw ssh 셸.** 사용자 PC의 clipboard가 없다. 그래서 `aaa pane attach <pane> <파일>`로 파일을 올린다. 같은 요청을 쓴다.
-- **시험.**
-  - 유닛: PNG 만들기와 풀기 왕복, 크기 불일치 거부.
-  - TUI E2E(`tui.rs`): 다음을 본다.
-    - 그림이 없으면 Ctrl+V가 원래 키다(lnext를 끈 `cat -v`가 `^V`를 보인다).
-    - 그림이 있으면 대상 세션 폴더에 PNG가 생기고, 풀어 본 pixel이 같다. 셸 pane에는 경로가 들어가지 않는다.
-    - `aaa pane attach`: 1.2MB 여러 조각이 bytes 그대로 저장된다. 그림이 아니면 거부한다. ~~TUI가 조작 중이면 lease로 거부한다~~ → 10-17부터 한 번 보내는 CLI는 지금 쓰는 화면을 바꾸지 않고 그대로 저장한다(§8.33).
-  - **clipboard 바꿔치기.** 개발 Mac에서 사람의 clipboard를 덮어쓰지 않으려고, E2E는 `AAA_TEST_CLIPBOARD_PNG` 파일을 clipboard 대신 읽는다. 실제 clipboard는 CI 단계 「clipboard(실제)」가 `AAA_CLIP_NATIVE=1`로 확인한다.
-    - 세 OS 모두 arboard로 시스템 clipboard에 그림을 쓰고 읽는다. Linux는 Xvfb 위에서 한다.
-    - macOS·Linux는 같은 TUI E2E를 실제 clipboard로 한 번 더 돈다.
-    - 이 값을 켰는데 clipboard를 열지 못하면 실패다(건너뛰지 않는다).
-- **남는 한계.**
-  - Windows의 TUI E2E는 없다. `tui.rs`가 Unix PTY 전용이라 Windows는 clipboard 읽기 왕복만 본다.
-  - Wayland 전용 세션(XWayland 없음)은 읽지 못한다. arboard의 Wayland 기능을 켜지 않았다. 그때는 Ctrl+V가 원래 키로 가고, 파일 첨부 명령이나 웹을 쓴다.
-  - 외부 터미널이 그림 파일 경로를 글로 붙이는 경우(§9 「입력 호환」)는 아직 올리지 않는다. 경로를 일부러 붙인 것과 구분할 수 없어 글 그대로 보낸다.
-  - 실제 Claude·Codex 입력창에 넣는 길은 웹과 같은 host 코드다. 웹 E2E의 harness pane 단계가 그것을 본다.
 
 ### 8.29 다시 띄워도 harness 상태 유지(10-17, 운영 업그레이드에서 찾음)
 
@@ -1170,33 +1120,6 @@ Claude·Codex pane을 터미널 대신 대화 기록으로도 본다. 휴대폰�
   - m12 `lease_between_fronts`: 다른 front 입력이 바로 되고 lease가 옮겨 간다. CLI resize는 쓰는 중 거부, `release`는 자기 것만 놓는다, 연결이 끝나면 풀린다.
   - TUI harness `lease_conflict_with_another_front`: 다른 front가 쓰던 pane에 바로 입력되고 칸 크기로 맞춘다. 다른 front가 다시 쓴 뒤 `ESC [ I`(focus 얻음)면 크기를 다시 건다. `ESC [ O` 동안은 lease가 비어도 크기를 걸지 않는다. `prefix t`도 된다.
   - 웹 E2E 「두 controller」: 열기만 해서는 바꾸지 않는다. 입력하면 바로 들어가고 그 화면 크기가 된다. 번갈아 입력하면 크기가 바뀐다. window focus면 다시 건다. 가려진 화면은 1초 뒤 놓고 남은 화면이 맞춘다.
-
-### 8.34 TUI prefix 뒤 명령 키를 영문 입력기로(10-17, 사용자 요청)
-
-- **요청.** 한글 입력기로 `Ctrl+B` 다음 명령 키(`c` 등)를 누르면 자모가 들어가 명령이 안 된다. prefix를 받으면 영문 입력기로 바꾸고, 끝나면 되돌린다.
-- **구현(`aaa-tui::input_source`, macOS Text Input Sources).**
-  - prefix를 받으면, 지금 입력기가 영문 자판 배치(`TISTypeKeyboardLayout`이면서 ASCII 가능)가 아닐 때 `TISCopyCurrentASCIICapableKeyboardLayoutInputSource`(ABC 등 사용자의 영문 배치)를 고른다.
-    - 두벌식 같은 입력기도 macOS는 ASCII 가능으로 보고한다. 그래서 종류(자판 배치인지)까지 본다.
-  - 명령 키를 처리한 뒤, 취소, 시간 초과(3초), TUI 종료·오류·panic에 원래 입력기로 되돌린다(값이 사라질 때 되돌리는 guard).
-  - 지속 설정이 아니라 지금 입력기만 바꾼다. ssh 세션(`SSH_CONNECTION`·`SSH_CLIENT`·`SSH_TTY`)에서는 바꾸지 않는다(그 Mac의 입력기는 앞에 앉은 기기의 것이 아니다).
-  - 설정 `[tui] prefix_ascii`(기본 켬)로 끈다. → §8.73에서 herdr 이름 `switch_ascii_input_source_in_prefix`로 바꿨다(기본 켬 그대로, 예전 이름도 읽는다).
-- **보조: 자모 해석.** prefix 뒤 두벌식 자모는 같은 자리 영문 키로 읽는다(ㅊ=c, ㅅ=t, ㅌ=x, ㅇ=d, ㄱ=r, ㅜ=n, ㅔ=p, ㅐ=o, 쌍자음·ㅒ·ㅖ는 Shift 자리). 바꾸기 전에 들어온 키, ssh·다른 OS를 위한 것이다.
-- **시험.**
-  - 유닛: 자모 → 키, ssh 판정.
-  - TUI harness: prefix 뒤 `ㅊ`로 새 탭. 시험 설정은 입력기 전환을 꺼(`switch_ascii_input_source_in_prefix = false`) 사용자 입력기를 건드리지 않는다.
-  - macOS 실제 입력기(`AAA_IME_NATIVE=1`, 개발 Mac에서 짧게, 단언이 실패해도 처음 입력기로 돌려 둔다): ABC → 두벌식 → prefix 영문 `com.apple.keylayout.ABC` → 되돌림 두벌식 → 처음 ABC. 약 0.4초다.
-
-### 8.35 TUI 왼쪽 목록(10-17, 사용자 요청)
-
-- **요청.** TUI에서도 웹처럼 프로젝트 thread와 머신별 pane을 보고 연다. 웹 왼쪽 목록과 같은 모양, 접기·펴기, 목록과 pane 사이 포커스 이동, 좁은 터미널은 접힌 채 시작.
-- **구현(`aaa-tui::list`).**
-  - 순서는 웹과 같다: 끝나지 않은 thread(평가자 제외, 최근 바뀐 순, 상태 묶음 배지·%) → 머신마다 연결 표시, 「+ 새 셸」(연결된 머신만), pane(평가자 제외, 상태 배지). → §8.158에서 웹 L1대로 머신 아래 프로젝트 머리와 thread 두 줄(묶음 rank 순)로 바꿨다.
-  - 자료는 host의 `State`(머신·pane 순서)와 시작할 때 읽는 `Threads`, 그 뒤 `Thread` 사건뿐이다. TUI는 저장하지 않는다(새 thread는 사건으로 따라온다).
-  - 폭 32칸 + 구분선. 터미널 폭이 100칸 이상이면 펼친 채, 그보다 좁으면 접힌 채 시작한다. 목록이 보이면 pane 칸은 그만큼 좁아지고 크기도 그 폭으로 건다. → §8.92에서 herdr대로 26칸(구분선 포함)·늘 펼친 채 시작·접으면 4칸 compact로 바꿨다.
-  - 키: `prefix s` 펴기·접기(펴면 목록으로 포커스), `prefix Tab` 목록 ↔ pane. 목록에서는 `↑↓`·`j/k` 고르기, `Enter` 열기, `Esc`·`Tab` pane으로. prefix는 목록에서도 그대로다. → §8.73에서 herdr대로 `prefix b` 펴기·접기(포커스 그대로)와 `prefix w` 탐색 모드로 바꿨다.
-  - 열기: pane·thread 줄은 그 pane이 있는 탭으로 가고, 탭에 없으면 새 탭으로 넣는다(`AddTab`). 「+ 새 셸」은 그 머신 기본 셸을 새 탭으로 띄운다. → §8.177에서 「+ 새 셸」 줄을 빼고 머신 머리를 골라 새 탭·workspace를 그 머신에 열게 했다.
-  - 고른 줄은 색과 함께 `▸`로 표시한다(색이 없는 터미널). → §8.92에서 herdr대로 `selection_bg` 바탕만 쓴다.
-- **시험(TUI harness `side_list_like_web`).** 130칸에서 펼침과 pane 폭(130−33), 두 번째 thread가 사건으로 보임, 탭에 없는 pane·thread·이미 있는 pane·새 셸 열기, Esc, `prefix s` 접으면 전체 폭, 90칸은 접힌 채 시작하고 `prefix s`로 펼침. 다른 TUI 시험은 90칸(접힘)으로 돈다.
 
 ### 8.36 웹 한글 IME를 herdr-web-ui 방식으로(10-17, 사용자 지시)
 
@@ -1444,7 +1367,7 @@ Claude·Codex pane을 터미널 대신 대화 기록으로도 본다. 휴대폰�
   - 클립보드에 글이 있으면 글이다(그림이 같이 있어도). 파일만 있을 때 그 파일 전부를 올린다. 전에는 그림이 있으면 그림이 먼저였다.
   - 파일 여러 개를 붙여 넣거나 끌어 놓으면 놓은 순서대로 하나씩 올린다(겹쳐 놓아도 그 순서). 한 묶음에 상한을 넘는 것이 있으면 아무것도 올리지 않는다. 「그림」 단추도 여러 개를 고른다.
   - 글을 끌어 놓으면 붙여 넣는다(Enter 없음, 유지 키 안 붙음). 입력할 수 없으면 끌어 놓기를 받지 않는다(`dropEffect` none).
-  - **경로는 셸에도 넣는다**(D7). 셸 따옴표로 감싸고 뒤에 빈칸 하나(`'경로' `), Enter는 없다. harness든 셸이든 그 프로그램이 bracketed paste를 켰으면 감싸고, 아니면 친 글처럼 넣는다(herdr-web-ui는 xterm `paste`로 넣는다. host는 §8.75부터 pane mirror에서 모드를 안다, §8.80 끝). TUI·CLI 첨부도 같은 host 길이라 셸에 넣는다(herdr도 그렇다).
+  - **경로는 셸에도 넣는다**(D7). 셸 따옴표로 감싸고 뒤에 빈칸 하나(`'경로' `), Enter는 없다. harness든 셸이든 그 프로그램이 bracketed paste를 켰으면 감싸고, 아니면 친 글처럼 넣는다(herdr-web-ui는 xterm `paste`로 넣는다. host는 §8.75부터 pane mirror에서 모드를 안다, §8.80 끝). CLI 첨부도 같은 host 길이라 셸에 넣는다(herdr도 그렇다).
 - **다른 곳.**
   - 확인창·선택 창이 떠 있는 harness pane에는 넣지 않는다. 붙여 넣은 글이 그 답으로 읽힐 수 있다(참고에는 이 막기가 없다).
   - **그림만 받는다(PNG·JPEG·GIF·WebP, 16MiB).** 참고는 아무 파일이나 이름을 다듬어 저장한다(32MiB). §9의 형식 규칙(signature로 확인)이라 결정 없이 넓히지 않았다. 다른 파일은 host가 「PNG·JPEG·GIF·WebP 그림만」으로 거절한다.
@@ -1783,40 +1706,13 @@ Claude·Codex pane을 터미널 대신 대화 기록으로도 본다. 휴대폰�
 
 - **규칙은 herdr 0.9.5 것이다**(`src/app/actions.rs` `apply_pane_state_change`·`is_background_completion_transition`·`mark_active_tab_seen`, `src/pane/state.rs` `PaneState::seen`).
   - 쉼이 아닌 상태가 되면 봤다. 작업·질문에서 쉼으로 끝날 때 그 pane을 보는 화면이 있으면 봤고, 없으면 안 봤다(「끝남」). 그 밖의 쉼(시작 뒤 쉼)은 앞 값을 둔다. 그 pane을 보는 화면이 생기면 봤다.
-  - host가 `AgentStatus.seen`(기본 true)으로 기록하고 웹·TUI에 보인다. 웹 목록은 안 본 쉼을 herdr `done`(초록 점, 「끝남(안 봄)」)으로 그린다(§8.71 상태 칸).
+  - host가 `AgentStatus.seen`(기본 true)으로 기록하고 웹에 보인다. 웹 목록은 안 본 쉼을 herdr `done`(초록 점, 「끝남(안 봄)」)으로 그린다(§8.71 상태 칸).
 - **「보는 화면」**(`crates/aaa-host/src/seen.rs`).
   - herdr는 「지금 보이는 탭이고 바깥 터미널에 focus가 있다」다. aaa 웹은 그 pane 터미널 연결이 열려 있고, 그 기기의 events 연결이 「쓰는 화면」(보이고 focus, `presence`, §8.69)일 때다. 가려진 탭은 lease를 놓을 뿐 연결을 두므로(§8.50) 「보는 중」은 presence가 정한다.
   - TUI는 그 pane의 lease를 쥐었을 때다(TUI는 그 pane을 앞에 두고 입력·크기를 건다).
   - 다르게 둔 것: herdr-web-ui는 웹에서 pane을 열어도 herdr의 seen을 바꾸지 않는다(웹 터미널은 herdr TUI client가 아니어서 `outer_terminal_focus`가 없다. `focusPane`은 나눈 화면에서만 부른다). 웹으로만 보는 사람에게는 「끝남」이 지워지지 않으므로 aaa는 웹 화면도 보는 화면으로 센다.
 - **시험.** host 유닛 `seen`: 끝나는 전이와 보는 화면, 쓰는 기기의 연 pane만 본다. 웹 E2E 「끝남(안 봄)」: 다른 pane을 보는 동안 끝나면 초록 점과 말, 열면 사라짐, 보는 동안 끝난 턴은 남지 않음, 가려진 동안 끝나면 끝남이고 다시 쓰는 화면이 되면 사라짐. 턴의 시작·끝은 시험이 pane에 줄을 보내 정하고(hook), 기다림은 상태 칸의 `data-status`로 끝낸다.
 
-### 8.73 TUI 키와 모드를 herdr대로(10-18, 차이 목록 4장 B·C, D12 「참고대로」)
-
-- **참고(herdr 0.9.5).** 기본 키 `src/config/model.rs` `KeysConfig::default`, 모드 `src/client/shell/input.rs` `route_key`·`route_navigate_key`, 모드 막대 `src/client/shell/render.rs` `render_mode_bar`, 단축키 창 `src/client/shell/overlays.rs` `render_help_overlay`·`src/input/keybind_help.rs`, 키 이름 `src/config/keybinds.rs` `parse_key_combo`·`format_key_combo`, 방향 포커스 `src/layout.rs` `find_in_direction`, 입력기 `src/client/shell/input_source.rs`·`src/platform/windows.rs`.
-- **모드(`aaa-tui` `Mode`).**
-  - Terminal: 키는 포커스 pane으로 간다. prefix 키면 Prefix로.
-  - Prefix: 다음 키 하나가 명령이다. 시간 제한이 없다(예전 3초를 뺐다). Esc와 모르는 키는 아무것도 보내지 않고 취소한다. prefix를 한 번 더 누르면 그 키를 pane에 보낸다.
-  - Navigate(`prefix w`): `↑↓` 목록 고르기, `Enter` 열기, `1`~`9` 목록 n번째 열기, `h/j/k/l`·`←→`·`Tab`·`Shift+Tab` pane 포커스(탐색은 이어진다), 다른 prefix 명령은 하고 탐색을 끝낸다. Esc·prefix는 취소. 목록이 접혀 있으면 pane 위에 띄워 보인다(pane 크기는 그대로).
-  - 예전 「목록 포커스」(`prefix Tab` 목록 ↔ pane, 목록에서 `j/k`)는 탐색 모드로 바뀌었다.
-- **키(herdr 기본값).** `c` 새 탭, `v` 오른쪽에 나누기(split_vertical), `-` 아래에 나누기(split_horizontal), `x` pane 닫기, `h/j/k/l` 방향 포커스, `Tab`·`Shift+Tab` pane 차례로, `n`·`p`·`1`~`9` 탭, `b` 목록 펴기·접기(포커스는 그대로), `w` 탐색, `o` 알림 카드의 pane으로(§8.185, 옛 「질문이 열린 pane을 차례로」를 바꿈), `?` 단축키 창, `Shift+R` `[tui]` 설정 다시 읽기, `q` 나가기.
-  - 없앤 키: `d`(→ `q`), `%`·`|`(→ `v`), `"`(→ `-`), 화살표(→ `h/j/k/l`, 화살표는 탐색 모드), `o` 다음 pane(→ `Tab`), `s`(herdr는 설정 창 자리), `t` 이 화면 크기로(§8.33으로 이미 자동), `r` 재개.
-  - `r` 재개를 없앤 이유: herdr에는 재개 키가 없다(복원 때 자동). 자동 이어가기는 세션·CLI thread 몫이다(D12). 그때까지 중단 pane의 표시는 다시 띄우는 명령(`aaa pane resume <id 앞 8자>`)을 보인다. `r`은 herdr처럼 크기 모드 자리다(다음 묶음).
-  - `Shift+R`은 TUI가 `[tui]`를 다시 읽는 데까지다. herdr는 서버 설정도 다시 읽는다. host 쪽 `aaa config reload`는 CLI thread 몫이다.
-- **설정 `[tui]`(host.toml).**
-  - `prefix`: herdr 형식 `"ctrl+b"`, 여러 개면 배열. 예전 `C-b`도 읽는다. 읽지 못한 값은 빼고, 남는 것이 없으면 `ctrl+b`로 두고 ERROR 막대로 알린다(herdr `parse_prefix_keys`).
-  - `switch_ascii_input_source_in_prefix`(기본 켬, herdr 이름): Prefix·Navigate 모드와 단축키 창 동안 영문 입력기. 예전 이름 `prefix_ascii`가 적혀 있으면 그 값을 쓴다.
-  - `prefix_jamo_keys`(기본 켬): prefix 뒤 두벌식 자모를 같은 자리 영문 키로 읽는다.
-  - 두 기능은 사용자 요청이라 결정 20(D12)대로 기본 켬이고 설정으로 끈다. herdr는 입력기 전환이 기본 끔(`[experimental]`)이고 자모 해석은 없다. 처음에는 brief를 따라 기본 끔으로 착지했다가(a161f16), coordinator가 정본을 decisions.md로 바로잡아 기본 켬으로 되돌렸다(10-18).
-  - 입력기 전환 범위와 미루기는 herdr `reconcile_input_source`대로다: 모드가 끝나면 되돌리고, 터미널 focus가 없는 동안은 바꾸지도 되돌리지도 않고 돌아온 뒤 맞춘다.
-  - Windows: 앞 창 자판이 한국어이고 IME가 한글이면 `VK_HANGUL`을 `SendInput`으로 눌러 영문으로 바꾸고, 같은 창이 앞에 있고 아직 영문이면 되돌린다(herdr와 같다. IME 상태 읽기는 `WM_IME_CONTROL`/`IMC_GETOPENSTATUS`, 200ms 한도). 다른 언어 IME는 건드리지 않는다.
-  - kitty keyboard `REPORT_ALTERNATE_KEYS`로 기본 배치 키를 읽는 일(herdr `src/input/parse.rs`)은 crossterm 0.29가 그 값을 `KeyEvent`에 싣지 않아 하지 못한다. herdr도 prefix 뒤 일반 키는 글자 그대로 읽으므로, 한글 입력기에서는 입력기 전환이나 자모 해석을 켠다.
-- **화면.** prefix·탐색 모드와 오류는 herdr 모드 막대로 보인다: ` PREFIX ` + `esc 취소 · ctrl+b prefix 보내기 · w 목록 탐색 · ? 단축키`, ` NAVIGATE ` + `esc 돌아가기 · ↑/↓ 목록 · enter 열기 · tab pane · ? 단축키`, ` ERROR ` + 글(5초). 상태 줄 오른쪽의 prefix 안내는 뺐다(herdr에는 없다). 상태 줄 자체를 없애는 일은 사이드바 묶음과 함께 한다(→ §8.92).
-  - 단축키 창: 가운데 76×22 테두리 창, 묶음(전체·탐색·목록/탭·pane)마다 `prefix+키`와 설명, `/` 검색(키·설명), `j/k/↑↓/pgup/pgdn` 넘기기, Esc·Enter 닫기, 넘칠 때 scrollbar.
-- **시험.**
-  - 유닛: 키 이름 읽기·쓰기(`ctrl+b`·`shift+tab`·`minus`·예전 `C-g`), 터미널 키 맞추기(Shift 글자·기호·BackTab), prefix 두 번 bytes, herdr 기본 키 표와 없앤 키, 단축키 거르기, 자모는 설정을 켰을 때만, 방향 포커스(겹침·가운데), 설정 `[tui]`(배열·기본 켬·끄기·예전 `prefix_ascii`), Windows 한/영 키는 한국어만.
-  - TUI harness `herdr_keys_and_modes`: PREFIX 막대와 Esc·모르는 키 취소(셸에 가지 않음), prefix 두 번 = `^B`, `v`·`-`·`h/j/k/l`·`Tab`·`Shift+Tab`로 입력이 간 pane(`o`는 §8.185 `agent_cards_like_herdr`), `x`, 단축키 창(넘기기·검색·닫기), `Shift+R`로 prefix를 `ctrl+a`로 바꾸기와 읽지 못한 값의 ERROR 막대.
-  - 다른 TUI 시험도 새 키로 바꿨다(`q` 나가기, `v` 나누기, `w` 탐색과 `↑↓`, `b` 접기, 재개는 CLI).
-  - harness의 기다림은 시간이 아니라 사건이다: 화면은 bytes가 올 때마다 깨우고(Condvar), host 상태는 Front 연결의 Workspace·State 사건을 받는다. `cmd`는 PREFIX 막대가 보인 뒤 명령 키를 보낸다.
 ### 8.75 CLI 이름·출력을 herdr 0.9.5에 맞춘다: pane·tab·workspace·completion(10-18, 차이 목록 4장 F)
 
 - **이름(herdr `src/cli/pane.rs`·`tab.rs`·`workspace.rs`·`completion.rs`).** 옛 이름(`pane send`·`ws show|tab|split|add|close`·`pane run --machine`)은 남기지 않는다(herdr에 별칭이 없다). 저장소 안에서 쓰던 곳(cargo 시험·웹 E2E·showcase·README·runbook·평가자 안내)을 모두 바꿨다.
@@ -1841,7 +1737,7 @@ Claude·Codex pane을 터미널 대신 대화 기록으로도 본다. 휴대폰�
   - 사본이 아직 없으면(붙자마자) `pane read`는 agent의 보이는 화면을 주고 `source: visible`이라고 밝힌다.
   - aaa에만 있는 `pane kill|resume|forget|attach|chat`은 그대로 둔다. `pane read --source detection`은 화면 감지(D8) 뒤에 뒀다(§8.110).
 - **pilot(t-0334) 뒤 맞춘 것.** `thread list [<프로젝트>]`는 herdr-projects `thread list <slug>`(src/cli.rs `ThreadCommand::List`)처럼 위치 인자다. 옛 `-p/--project`는 없앴다. 같은 꼴이던 `events`도 위치 인자로 바꿔 프로젝트를 받는 명령은 모두 위치 인자다. 생략하면 모든 프로젝트를 보인다(aaa 확장). 끝난 thread도 늘 보이고 group은 「끝남」이다(hp `threads::rows`가 resolved도 낸다). 그래서 hp처럼 `--all`은 두지 않는다. `inbox done`은 끝낸 수를 말한다(hp src/cli.rs:703 `{moved} item(s) moved to inbox/done`). 응답 `inbox`에 `done`(끝낸 수)이 붙고 `items`는 남은 항목이다(Front API 1.4 안의 선택 필드라 옛 client는 무시한다).
-- **계약.** Front API 1.4(새 요청 `pane_read_text`·`pane_send_text`·`pane_send_keys`·`pane_submit`·`pane_wait_output`·`pane_get`·`pane_close`·`workspaces`·`workspace_close`·`workspace_rename`, layout 변경 `resize`·`rename_tab`·`close_tab`·`move_to_new_tab`, `split.ratio`, `new_tab.cols/rows`). 옛 요청(`pane_run` 띄우기·`pane_send` bytes·`pane_resize` PTY)은 웹·TUI가 그대로 쓴다. 새 CLI가 옛 host에 보내면 모르는 요청 오류로 끝난다(이름이 같은 요청이 뜻을 바꾸지 않는다).
+- **계약.** Front API 1.4(새 요청 `pane_read_text`·`pane_send_text`·`pane_send_keys`·`pane_submit`·`pane_wait_output`·`pane_get`·`pane_close`·`workspaces`·`workspace_close`·`workspace_rename`, layout 변경 `resize`·`rename_tab`·`close_tab`·`move_to_new_tab`, `split.ratio`, `new_tab.cols/rows`). 옛 요청(`pane_run` 띄우기·`pane_send` bytes·`pane_resize` PTY)은 웹가 그대로 쓴다. 새 CLI가 옛 host에 보내면 모르는 요청 오류로 끝난다(이름이 같은 요청이 뜻을 바꾸지 않는다).
 - **시험.** m12 `herdr_pane_input_read_and_wait`: 받은 bytes를 16진수로 보이는 고정 프로그램으로 `pane run` 감싸기, `send-text` 그대로, `send-keys` DECCKM·모르는 키면 아무것도 안 보냄, `read` 글·JSON·recent 범위, `wait-output` 정규식·시한(설정 값), stderr 오류 JSON·종료 1·사용법 종료 2. m12 `herdr_tab_workspace_and_layout`: split 비율, resize 가장자리·한계, move --new-tab, tab list·get·rename·close(기록 지움), workspace list·rename(겹치는 이름 거부)·get·close, completion zsh·bash. VT 유닛: recent 범위·unwrapped·키 인코딩·모드. 기다림은 모두 출력·상태 사건으로 끝난다.
 
 ### 8.74 M4 이전 도구: inventory·import·shadow(10-18, plan §15)
@@ -1862,32 +1758,6 @@ Claude·Codex pane을 터미널 대신 대화 기록으로도 본다. 휴대폰�
 - **수집은 해석하지 않는다.** 수집 스크립트는 운영 읽기 명령의 출력을 그대로 tick 폴더에 둔다. 분석기 결함이 몇 시간치 수집을 버리지 않게 한다. `aaa inbox list`는 `--peek`로만 부른다(아니면 「봤다」를 찍는다).
 - **수집은 실패를 숨기지 않는다.** 원격·로컬 명령을 `set -o pipefail`로 돌린다. 10-18 shadow에서 운영 binary가 바뀌어 `thread list -p`가 없어졌는데, 화면 캡처는 파이프 끝 명령 값만 남아 `.rc` 0이었다(5 tick 화면이 빔).
 - **G4는 분류 안 된 차이만 센다.** 다른 줄마다 까닭을 붙이고(`shadow::reason`), plan에 정한 차이(예: §8.85 진행 보고 agent의 중간 보고)는 「까닭 있는 차이」다. 요약과 CLI는 다름을 「까닭 있는 차이 · 분류 안 됨」으로 나눠 적는다. 10-18 최종(7시간 46분, 판정 720줄): 다름 53은 모두 §8.85, 분류 안 됨 0.
-
-### 8.76 TUI 탭: 새 탭 이름·cwd 따라가기·탭 닫기·이름을 herdr대로(10-18, 차이 목록 4장 C)
-
-- **참고(herdr 0.9.5).** 새 탭 창 `src/client/shell/overlay_input.rs` `open_new_tab_overlay`·`save_rename_overlay`·`request_tab_close`·`request_pane_close`, 창 모양 `src/client/shell/overlays.rs` `render_rename_overlay`(56×7)·`render_confirm_close_overlay`(64×6)·`row`·`button`, 입력 칸 `src/client/shell/text_editor.rs`, 탭 줄 `src/client/shell/tabs.rs` `render_tab_bar`·`centered_tab_scroll`·`max_tab_scroll`, 탭 이름 `src/workspace.rs` `tab_display_name`, 새 pane cwd `src/app/creation.rs` `resolve_new_terminal_cwd`·`src/pane.rs` `follow_cwd`·`foreground_cwd`, 플랫폼 `src/platform/{macos,linux,windows}.rs` `process_cwd`·`foreground_process_group_id`·`pane_process_cwd`, 입력기 범위 `src/client/shell/input_source.rs` `wants_ascii_input`.
-- **새 탭(`prefix c`).**
-  - `[tui] prompt_new_tab_name`(기본 켬)이면 가운데 「새 탭」 창이 뜬다. 입력 칸에는 자리 번호(탭 수+1)가 들어 있고, 치면 그 글이 번호를 갈아 쓴다(replace on type). `↵ 저장`·`^c 지우기`·`esc 취소`.
-  - 저장 규칙(herdr `save_rename_overlay`): 다듬은 글이 비었거나 기본 번호 그대로면 이름 없는 탭(번호로 보임), 아니면 그 이름. Esc는 탭을 만들지 않는다. 끄면 바로 이름 없는 탭.
-  - 입력 칸은 herdr `TextEditor`를 옮겼다: 글자 묶음(grapheme) 단위 커서, `←→`·`Home/End`·`Alt+←→` 단어, emacs 키(`ctrl+a/e/b/f/k/u/w/y`, `alt+b/f/d`), 폭보다 길면 커서가 보이게 민다. 한글 이름을 치도록 이 창 동안은 입력기를 영문으로 바꾸지 않는다(`wants_ascii_input`).
-- **새 pane cwd.** host.toml `[terminal] new_cwd`(기본 `"follow"`, `"home"`, 절대 경로). follow면 새 탭은 포커스 pane, 나누기는 나눈 pane의 지금 cwd에서 연다.
-  - 지금 cwd는 agent가 읽는다(새 요청 `AgentRequest::Cwd`, agent 기능 `cwd.v1`): PTY 앞쪽 프로세스 그룹 leader의 cwd가 절대 경로이고 폴더면 그것, 아니면 셸(자식) cwd. macOS `proc_pidinfo`(`PROC_PIDTBSDINFO`의 `e_tpgid`, `PROC_PIDVNODEPATHINFO`), Linux `/proc/<pid>/stat`의 tpgid와 `/proc/<pid>/cwd`, Windows는 PEB의 `CurrentDirectory`(32비트 프로세스는 PEB32)와 Scoop shim이 띄운 자식 셸(Toolhelp).
-  - `cwd.v1`이 없는 옛 agent, 다른 머신 pane, 끝난 pane이면 그 pane을 띄운 cwd로 연다. 요청에 cwd를 주면 그것이 먼저다.
-  - herdr의 OSC 7(셸이 알리는 cwd) 추적은 하지 않는다: 프로세스에서 읽는 값으로 충분하고, 원격 머신 경로를 host가 해석할 필요가 없다.
-  - `"current"`처럼 뜻이 없는 값은 설정 검사에서 거른다(`"follow"`·`"home"`·절대 경로만).
-- **탭 줄.** ` aaa ` + workspace 이름 + 탭 이름표. 이름표는 붙인 이름 또는 자리 번호, 폭은 글자 폭+4(최소 8), 사이 한 칸. 지금 탭은 강조색 바탕(이름을 붙였으면 굵게), 다른 탭은 회색 바탕(이름 없는 탭은 흐리게). 넘치면 지금 탭이 가운데 오게 밀고 가려진 쪽 끝에 `…`. 예전 `1:이름` 모양은 뺐다. herdr의 `+` 새 탭 단추와 마우스는 마우스 묶음에서 한다.
-- **탭 이름(`prefix Shift+T`)·닫기(`prefix Shift+X`).**
-  - 이름 창은 지금 이름(없으면 번호)을 담고 연다. 이름이 없던 탭을 번호 그대로 저장하면 바꾸지 않는다. 비워 저장하면 이름을 지운다(번호로 돌아간다).
-  - 닫기는 탭의 pane과 세션을 끝낸다(thread·coordinator처럼 역할이 있는 pane은 §8.75대로 layout에서만 뺀다). `[tui] confirm_close`(기본 켬)이면 마지막 탭을 닫을 때와 마지막 탭의 마지막 pane을 `x`로 닫을 때만 빨간 확인 창(「마지막 탭을 닫을까?」, workspace와 pane 수, `↵ 닫기`·`esc 취소`)을 띄운다. herdr처럼 다른 탭이 남는 닫기는 묻지 않는다.
-  - host 요청은 §8.75가 CLI `tab rename`·`tab close`로 먼저 넣은 `LayoutChange::RenameTab`·`CloseTab`(FRONT_API 1.4)을 같이 쓴다. 1.4보다 옛 host에는 보내지 않고 「host를 새 aaa로 다시 띄워야 한다」를 보인다(모르는 요청은 연결을 끊는다).
-- **포커스를 옮기는 layout 요청 뒤 입력 잡아 두기.** `v`·`-`·새 탭 뒤 바로 친 글이 옛 pane으로 가던 일을 막는다. TUI는 그 요청의 응답이 올 때까지 키·붙여넣기를 잡아 두고, 응답으로 포커스를 새 pane으로 옮긴 뒤 차례대로 보낸다(herdr는 서버가 같은 순서로 처리해 생기지 않는다). Workspace 사건이 응답보다 먼저 와도 새 pane은 요청 전 pane들과 비교해 찾는다.
-- **host 요청 바뀜(FRONT_API 1.5).** `LayoutChange::NewTab`에 `label`(새 탭 이름)과 `from`(cwd를 따라갈 pane)을 더했다(둘 다 없어도 된다). 1.4 host는 두 필드를 모르고 지나간다(탭은 이름 없이, 띄운 cwd 기본값으로 열린다).
-  - CLI `aaa tab create --label`은 herdr처럼 탭 이름이 된다(`src/app/api/tabs.rs` `handle_tab_create`). §8.75가 정한 pane 이름도 같게 둔다(예전 이름표 `1:이름`이 보이던 값).
-  - herdr `tab create`는 cwd를 주지 않으면 그 workspace의 포커스 pane을 따라간다. aaa host는 포커스를 모르므로(front마다 다르다) CLI로 만든 탭은 `from`이 없어 머신 기본 위치에서 연다.
-- **확인하지 못한 것.** Linux·Windows의 cwd 읽기는 이 머신에 그 target이 없어 소스(std, windows-sys 0.60.2 서명)를 읽어 맞췄다. GitHub CI가 컴파일한다.
-- **시험.**
-  - 유닛: 입력 칸(갈아 쓰기, emacs 키와 yank, 글자 묶음·넓은 글자와 보이는 자리), 탭 이름표 폭·넘칠 때 가운데·꼬리, 탭 줄과 두 창을 버퍼에 그려 자리·색 확인(56×7 가운데, 단추 줄, 커서 자리), 이름 창 동안 입력기 그대로, 옛 host 막기, 설정(`new_cwd` 값 검사, 두 `[tui]` 기본 켬), agent `follow_cwd`(PTY 셸이 `cd`한 폴더).
-  - TUI harness `tabs_like_herdr`: 셸이 `cd`한 폴더(한글·빈칸 이름)에서 `v` 뒤 바로 친 명령이 새 pane에 가고 cwd가 따라감, `c` 이름 창으로 「빌드」 탭과 cwd, Esc 취소, `T` 이름 바꾸기·빈 저장, `X`로 탭과 세션 닫기, 마지막 탭 확인 창(Esc 유지, Enter로 모두 닫기).
 
 ### 8.77 brief 준비 판정·다시 보내기를 herdr-projects대로, 입력창 읽기(10-18, 차이 목록 3장 A9·A10·C6, 결정 D10 「참고대로」)
 
@@ -2144,49 +2014,6 @@ coordinator 실기(10-18 00:58, iPhone 홈 화면 앱을 앞에 띄움, binary c
 - **참고대로.** herdr-web-ui `src/components/PromptCard.tsx`: 누르는 동안 카드 `aria-busy`, 선택지 `disabled={pending}`, 오류는 카드 안 `role="alert"`. 카드가 사라진 뒤 온 답은 아무것도 바꾸지 않는다(`shown`). 모양은 `PromptCard.css` `[aria-busy="true"]` 선택지 흐림, `.prompt-card-error` 색.
 - **시험.** 웹 E2E 「확인창 답이 실패하면 카드 안에 보인다」: 휴대폰 제어 화면에서 「Esc to cancel」 없는 확인창에 「예」 → 누른 순간 `aria-busy=true`·선택지 막힘 → host 오류 답 → 카드 안 alert(「터미널에서 직접 답한다」)·선택지 풀림(`phone-question-error`). 기다림은 그 요청의 답과 MutationObserver다.
 
-### 8.91 TUI pane 모드: 크기 모드·zoom·자리 바꾸기를 herdr대로(10-18, 차이 목록 4장 C)
-
-- **참고(herdr 0.9.5).** 크기 모드 `src/client/shell/input.rs` `route_resize_key`, 막대 `src/client/shell/render.rs` `render_mode_bar`(RESIZE는 mauve), 크기 `src/layout.rs` `resize_focused`·`resize_pane`, zoom `src/app/actions.rs` `apply_pane_zoom`·`src/workspace/tab.rs`(나누기·닫기·옮기기에서 `zoomed = false`)·`src/ui/panes.rs`(zoom이면 포커스 pane 하나를 칸 전체로)·`src/client/shell/tabs.rs` `tab_label`(` Z`), 자리 바꾸기 `src/app/api/panes.rs` `handle_pane_swap`·`src/layout.rs` `swap_panes`, 키 `src/config/model.rs`(`prefix+r`·`prefix+z`·`prefix+shift+h/j/k/l`).
-- **크기 모드(`prefix r`).** RESIZE 막대(` RESIZE `  `h/l 너비  j/k 높이  esc 끝`). `h/j/k/l`·화살표마다 포커스 pane 가장자리를 5% 옮긴다: 그 방향 가장자리의 나눔, 없으면 반대쪽 가장자리의 나눔(§8.75 `LayoutChange::Resize`, 비율 10%~90%). Esc·Enter·`r`로 끝, 다른 키는 무시(pane에 가지 않는다). 모드 동안 입력기 전환 범위에 든다.
-- **zoom(`prefix z`).** host 탭에 `zoomed`를 둔다(herdr처럼 탭 상태라 다시 붙어도 남는다). 크게 보이는 pane은 front마다 그 front의 포커스 pane이다(herdr는 탭의 포커스 pane, aaa는 포커스가 front마다 다르다). zoom 중에도 `h/j/k/l`·`Tab`은 나눈 칸으로 이웃을 찾고, 옮긴 pane이 크게 보인다. 칸 전체 크기로 PTY 크기를 건다(가려진 pane은 크기를 그대로 둔다). 탭 이름표에 ` Z`. pane이 하나뿐인 탭은 그대로, 나누기·pane 닫기·옮기기로 탭 pane이 바뀌면 풀린다.
-- **자리 바꾸기(`prefix shift+h/j/k/l`).** 포커스와 같은 방향 찾기(`find_in_direction`)로 이웃을 고르고, 두 잎의 pane만 바꾼다(칸과 비율은 그대로). 포커스는 옮긴 pane을 따라간다. host 요청은 herdr `pane swap`의 source·target 꼴(`LayoutChange::Swap { pane, with }`)이다: 방향 이웃은 칸을 아는 front가 찾는다(host는 front마다 다른 화면 크기를 모른다). herdr 단축키 창에는 자리 바꾸기 줄이 없지만 aaa는 넣었다(기본 키가 있어 찾을 수 있게).
-- **host 요청(FRONT_API 1.10).** `LayoutChange::Zoom { pane, zoomed }`(없으면 뒤집기)·`Swap { pane, with }`, `Tab.zoomed`(없으면 false). TUI는 크기 모드를 1.4(§8.75 `Resize`)부터, zoom·자리 바꾸기를 1.10부터 보내고 옛 host면 「host를 새 aaa로 다시 띄워야 한다」를 보인다. CLI `pane zoom`·`pane swap`은 CLI thread 몫이다(요청은 있다).
-- **시험.**
-  - 유닛: `layout::swap`(잎만 바뀌고 칸 그대로), pane이 빠진 탭은 zoom 풀림, 키 표(`z`·`r`·`shift+h/l`), zoom 그리기(포커스 pane이 칸 전체·구분선 없음·` Z`·zoom 중 방향 포커스), RESIZE 막대(mauve), 옛 host 막기(1.9이면 zoom 안 보냄).
-  - TUI harness `pane_modes_like_herdr`: `r` 막대와 `l` 두 번에 비율 500→550→600·왼쪽 PTY가 넓어짐·Esc 뒤 키는 pane으로, `z` host zoom·이름표 `1 Z`·포커스 pane만 보임·칸 전체 크기, zoom 중 `h`로 왼쪽이 크게, `z` 풀기, `L` 자리 바꿈(비율 그대로, 포커스가 따라가 입력이 옮긴 pane으로), zoom 중 나누면 풀림.
-
-### 8.92 TUI 화면을 herdr대로: 배치·팔레트·사이드바·탭 막대·모드 막대·창(10-18, 사용자 지시 「tui도 ui 미려하게, 최소 herdr-projects 정도」, 차이 목록 2장 U3·4장 E)
-
-- **참고(herdr 0.9.5).**
-  - 배치 `src/client/shell/config.rs` `layout`, 그리기 `render.rs` `render_shell`·`render_mode_bar`·`render_sidebar_background`.
-  - 사이드바 `sidebar.rs` `render_sidebar`·`render_collapsed_sidebar`·`render_workspace_rows`·`workspace_selection_background`·`workspace_active_background`, 머신 줄 `endpoint_sidebar.rs` `render_endpoint_row`, agent 줄 `agent_sidebar.rs` `render_agent_row`.
-  - 탭 막대 `tabs.rs` `render_tab_bar`·`render_tab_bar_status`, 좁은 화면 `mobile.rs` `render_mobile_header`·`render_agent_summary`, 알림 `notifications.rs` `render_notification_card`, 창 `overlays.rs`(단축키·이름·닫기 확인), 나눔선 색 `src/ui/panes.rs`.
-  - 팔레트 `src/app/state.rs` `Palette`(테마 18개)·`src/config/theme.rs` `THEME_NAMES`·`canonical_theme_name`. 옮긴 `aaa-tui/src/theme.rs` 머리에 herdr Apache-2.0 출처를 적었다.
-- **배치.** 65칸 이상이면 왼쪽 사이드바가 온 높이(폭 26, 구분선 포함, 18~36으로 묶음), 그 오른쪽 맨 윗줄이 탭 막대, 나머지가 pane이다. 상태 줄은 없다. 64칸 이하면 사이드바·탭 막대 대신 두 줄 머리다. PTY 크기는 이 pane 칸으로 건다(90×30이면 64×29).
-- **팔레트.** herdr 테마 18개를 그대로 옮겼다. `[tui] theme`(기본 `catppuccin`, herdr 기본과 같음). 모르는 이름은 ERROR 막대로 알리고 기본을 쓴다. 256색 번호 상수(§8.27 무렵)는 없앴다.
-- **사이드바(펼침).** `sidebar_bg` 바탕, 오른쪽 `│`(`surface_dim`), 머리 ` <workspace>`(`overlay0` 굵게, herdr ` spaces` 자리), 빈 줄, 목록, 맨 아래 오른쪽 `«`.
-  - 줄: thread·pane은 ` <상태 점> <이름>`(→ §8.158에서 thread는 「id · 제목」 두 줄)(herdr `state_icon` + 이름, 점은 working 노랑 `●`·blocked 빨강 `●`·done 청록 `●`·idle 초록 `○`·셸 등 `·`), 오른쪽에 상태 글. 머신은 ` ▾ <이름>`(`text` 굵게)과 붙은 원격 머신 초록 `●`·끊긴 머신 노랑 `◐ 끊김`(herdr `render_endpoint_row`).
-  - 이름은 `subtext0`, 지금 pane 줄은 `active_row_bg` 바탕에 `text` 굵게. 탐색 중 고른 줄은 `selection_bg` 바탕(없는 테마면 `active_row_bg`)이다. `▸` 표시는 뺐다(herdr는 바탕색만).
-  - 사후 평가자 pane은 상태 줄 대신 목록 맨 아래 「평가」 묶음에 보인다.
-- **사이드바(접힘).** `[tui] sidebar_collapsed_mode = "compact"`(기본)면 4칸 열에 thread·pane마다 번호와 상태 점, 맨 아래 가운데 `»`. `"hidden"`이면 없다. `[tui] sidebar_start_collapsed`(기본 끔)로 접힌 채 시작한다. herdr처럼 터미널 폭으로는 접지 않는다.
-- **탐색 모드(`prefix w`).** 펼쳐져 있으면 그 목록에서 고른다. 접혀 있거나 좁은 화면이면 펼친 목록을 pane 칸 위에 띄운다(접힌 칸·탭 막대·머리는 그대로, 모드 막대 위 줄까지, pane 크기는 그대로). herdr는 접힌 칸의 번호만 강조한다: aaa는 이름을 보며 고르게 띄운다(§8.73 그대로).
-- **탭 막대.** `panel_bg` 줄에 이름표(지금 탭 accent 바탕·`panel_bg` 글자, 붙인 이름이면 굵게, 다른 탭 `surface0` 바탕에 붙인 이름 `overlay1`·자동 이름 `overlay0`, 넘치면 `…` `overlay0`). 앞에 있던 ` aaa `·workspace 이름 조각은 뺐다(workspace 이름은 사이드바 머리).
-  - 오른쪽 끝은 herdr `tab_bar_right` 자리: 열린 질문 수 ` ● 질문 n `(빨강 바탕), 다른 화면이 포커스 pane 크기를 쥐면 `<화면> 크기`(peach). 이름표 자리가 17칸(herdr `MIN_TAB_STRIP_WIDTH`) 밑으로 줄면 오른쪽 조각을 뺀다. 「이 화면 크기」는 보이지 않는다(평소 상태라).
-  - `+` 새 탭·`<` `>` 넘기기 단추는 마우스 묶음에서 넣는다(herdr도 마우스를 켰을 때만 그린다).
-- **모드 막대·알림.** herdr처럼 평소에는 없고, prefix·탐색·크기 모드와 오류 때 pane 맨 아랫줄에 겹친다(바탕 `panel_bg`, 글 `overlay0`, 키 accent 굵게, 모드 이름 accent 바탕(RESIZE는 mauve)). 커서가 그 줄이면 숨긴다. 알림(설정 다시 읽음·그림 경로 넣음 등, 5초)은 오른쪽 위 테두리 카드(`overlay0` 테두리, `●`와 굵은 글).
-- **좁은 화면(64칸 이하).** herdr 머리 두 줄: 첫 줄 가장 급한 상태 점·workspace·`탭 <이름> · i/n`, 둘째 줄 agent 요약(`◉ n 질문 · n 작업 중 · n 대기`, 첫 조각만 그 색, 없으면 「agent 없음」·「모두 대기」), 오른쪽 10칸 `목록` 단추 자리(질문이 있으면 빨강 `●`).
-- **창.** 단축키·이름·닫기 확인 창은 묶음 1·2a의 herdr 모양에 색만 팔레트로(테두리 accent·확인은 red, 바탕 `panel_bg`, 입력 칸·단추 `surface0`).
-- **pane 표시.** 끊김·중단·질문·종료 badge(aaa에만 있음)는 팔레트 색. `P` pane 이름(herdr `rename_pane`)은 host 요청이 필요해 다음 묶음이다.
-- **pane 테두리(묶음 3b).** herdr `src/ui/panes.rs` `apply_pane_chrome`·`zoomed_pane_borders`·`render_pane_borders`·`line_touches_pane`·`render_pane_border_titles`·`pane_border_title`, `src/layout.rs` `split_rect`를 `aaa-tui/src/chrome.rs`로 옮겼다(§8.23 「테두리를 두르지 않아 PTY 크기가 줄지 않는다」(결정 16)보다 뒤인 사용자 지시 「herdr 수준」을 따른다).
-  - `[tui] pane_borders`(herdr 이름·값): `auto`(기본)는 pane이 둘 이상인 탭만 pane마다 온 상자를 두른다(zoom이어도 상자 하나). `always`는 하나여도, `off`는 테두리 없이 오른쪽·아래 이웃 쪽에 빈 칸 하나(herdr `pane_gaps`, 선 없음).
-  - 나누기는 herdr `split_rect`: 나눔 칸 없이 첫 쪽이 `round(길이 × 비율)`. 상자끼리 붙는다(`┐┌`). PTY 크기는 테두리 안쪽(90×30에서 반반이면 30×27 둘). 방향 포커스·자리 바꾸기는 바깥 상자로 찾는다.
-  - 포커스 pane 자기 테두리 칸은 accent, 나머지 `overlay0`. 위 테두리 x+1에 제목 ` <이름> `(폭−4로 `…` 자름, 포커스면 accent 굵게, 아니면 `overlay0`). 제목은 붙인 pane 이름이다(thread pane `project/id`, `tab create --label`). 이름을 주지 않아 agent가 채운 기본 이름(명령 파일 이름·`shell`)이면 제목이 없다. herdr는 agent 제목·사람이 붙인 이름을 쓰고 agent 이름은 설정(`show_agent_labels_on_pane_borders`, 기본 끔)으로만 보인다.
-  - 모드 막대는 pane 칸 맨 아랫줄(나눈 탭이면 아래 테두리)에 겹친다.
-- **설정(`[tui]`).** `sidebar_width = 26`, `sidebar_start_collapsed = false`, `sidebar_collapsed_mode = "compact"`(`"hidden"`), `mobile_width_threshold = 64`, `theme = "catppuccin"`, `pane_borders = "auto"`(`"always"`·`"off"`). 접힘·폭 기억(herdr는 기기 파일)은 TUI 무상태 원칙대로 host 공유 설정(§8.79 t-0329)에 이름을 더하는 일로 남긴다. → §8.193에서 기본 폭 36·한도 18~72·기억(host 공유 설정 `tuiSidebar*`).
-- **시험.**
-  - 유닛: 배치(90칸 펼침 26·탭 막대·pane, compact 4, hidden 0, 폭 묶기 18~36, 64칸 머리 두 줄, 시작 접힘), 사이드바 모양(머리·`│`·`▾ 머신`·`·` 셸 점·`«`, compact `1 ·│`·`»`, 접힌 채 탐색이면 펼친 목록이 막대 위까지), 탭 이름표 색(팔레트), 모드 막대(평소 없음·PREFIX·RESIZE mauve·ERROR), 모르는 테마·`terminal` 테마, 알림 카드, 좁은 화면 머리.
-  - 유닛(3b): 테두리 배치(하나면 없음, 둘이면 상자·반올림, zoom 상자, always, off 빈 칸), 붙은 상자 모양·포커스 색·제목 자르기(넓은 글자), zoom 상자, 붙인 이름만 제목.
-  - TUI harness: 화면 관측기가 SGR 바탕색을 따라 사이드바의 고른 줄(`selection_bg`)·지금 줄(`active_row_bg`)을 찾는다. 나눈 두 pane 폭 합은 칸 폭 − 4(상자 테두리). 모든 시험이 펼친 사이드바(26칸) 배치로 돈다(pane 64×29). `side_list_like_web`은 compact 접기(130−4), 90칸에서 펼친 채 시작, 좌우로 나눈 두 pane 글이 탐색 중에도 보임(펼침·접힘), 접힌 채 탐색하면 띄운 목록과 pane 크기 그대로.
 ### 8.93 웹 터미널 띠·맨 아래로·같이 쓰기·끌기 중 휠·패널 클립보드를 herdr-web-ui대로(10-18, 차이 목록 1장 나머지, D7)
 
 - **띠는 모두 터미널 위에 뜬다(PaneTerminal 2747~2826줄 `.terminal-banners`).** §8.48 뒤에도 끊김·권한·오류·그림 띠는 터미널 위 흐름에 있었다. 띠가 나고 들 때마다 터미널 칸이 줄었다 늘어 PTY 크기가 바뀌었다(그림을 붙여 넣으면 그 띠 높이만큼 줄 수가 줄었다). 이제 터미널 화면에서는 모든 띠가 `.terminal-banners`(터미널 위 오른쪽, 칸 크기와 상관없음)에 있다. 대화 보기는 grid가 없고 크기도 놓았으므로 거기서는 전처럼 흐름에 둔다(참고도 대화 lens는 ChatView가 그 안에서 말한다).
@@ -2215,18 +2042,6 @@ coordinator 실기(10-18 00:58, iPhone 홈 화면 앱을 앞에 띄움, binary c
 - **다른 곳.** 참고의 「대화 / 터미널 전환」은 모든 pane의 보기를 바꾼다. aaa는 대화 기록이 있는 pane(Claude·Codex)만 대화 보기가 있어 거기서만 바뀐다. 「음성 입력(누르고 있기)」 줄은 aaa에 음성 입력이 없어 보이지 않는다.
 - **잇달아 넘기기에서 찾은 것(참고 `src/lib/terminalDispose.ts`를 옮김).** 단축키로 pane을 빨리 넘기면 page error 「Cannot read properties of undefined (reading 'dimensions')」가 났다(웹 E2E 세 판 중 한 판, 격리 반복 두 판째). stack은 xterm `Viewport.reset`의 `requestAnimationFrame(() => this.syncScrollArea())`였다. snapshot마다 쓰는 RIS(`\x1bc`)로 xterm이 다음 frame에 renderer 크기를 읽기로 하는데, 그 frame 전에 pane이 내려가 `term.dispose()`가 renderer를 치웠다. 참고는 이미 `disposeAfterPendingFrame`(걸어 둔 frame 다음, 그 뒤 task에서 치움, PaneTerminal 1982줄)으로 풀었다. 그대로 옮기고 참고 유닛 시험도 옮겼다(`web/test/terminalDispose.test.mjs`). 웹 E2E 「앱 단축키」는 frame을 잡아 두고 다음 pane이 snapshot을 읽은 것(ACK)을 본 뒤 되돌아와 frame을 놓아, 이 순서를 늘 만든다. 고치기 전 판은 세 번 모두 실패, 고친 판은 다섯 번 모두 통과(격리 사본).
 - **시험.** 웹 유닛 `web/test/roster.test.mjs`(줄 차례: 프로젝트 묶음의 thread, 그다음 pane, thread 줄이 여는 것). 웹 E2E 「앱 단축키」는 새는 키가 보이는 Linux 화면(Ctrl+Shift)에서 본다. macOS xterm은 ⌘ 조합 화살표를 pane에 보내지 않아 새도 보이지 않는다(첫 판이 「끈 키는 터미널로」에서 멈춰 알았다). Ctrl+Shift+↓는 목록에서 바로 아래 줄로, ↑는 돌아오고, 그 뒤 친 z만 pane에 간다(새면 `ESC[1;6B`가 먼저 온다), aaa에 없는 Ctrl+Shift+K·F·B·O는 앱이 가져가지 않고 Ctrl+Shift+E는 가져간다, Ctrl+Shift+E로 터미널 focus, Ctrl+Shift+PgUp은 한 화면(줄 수 − 1) 위·PgDn은 맨 아래이고 pane에 아무것도 안 가며 alternate screen에는 `ESC[5~`·`ESC[6~`, 설정에서 「다음 패널」을 끄면 Ctrl+Shift+↓가 pane에 `ESC[1;6B`로 가고, 기록한 Ctrl+Shift+L이 다음 패널이 되며, 초기화하면 저장값이 지워진다. 맥 platform 휴대폰·iPad 화면에서 ⌘⇧,가 설정을 열고, 단축키 줄이 설정 칸 안에 든다. 변형 확인: 터미널 거르기(`isAppShortcut`)를 빼면 xterm도 Shift+PageUp으로 한 화면 굴려 두 화면이 된다(「한 화면 위」 실패). 옮기는 화살표는 거르기가 없어도 새지 않는다: 창 capture 처리기가 고른 pane을 바꾸면 React가 그 처리기 뒤 microtask에서 그 터미널을 내려 xterm이 키를 받지 못한다. 목록에 없는 동작을 켜 두면 Ctrl+Shift+K를 앱이 가져가고, 한 화면을 줄 수만큼 굴리면·방향을 거꾸로 하면 각 검사가 실패한다.
-
-### 8.95 TUI 마우스를 herdr대로(1): 누르기·휠·끌어 고르기(10-18, 사용자 지시 「tui에서도 마우스 잘 동작해야해」, 차이 목록 4장 D)
-
-- **참고(herdr 0.9.5).** `src/client/shell/mouse.rs` `handle_mouse`(맞히기 순서·누름/뗌·끌기·휠), `tabs.rs` `render_tab_bar`(` + `·` < ` ` > `), `word_selection.rs`, `src/ui/panes.rs` `automatic_selection_style`, `src/selection.rs`(clipboard·OSC 52), `client/terminal_setup.rs` `set_mouse_capture`. 옮긴 `aaa-tui/src/mouse.rs` 머리에 Apache-2.0 출처를 적었다.
-- **켜기.** `[tui] mouse_capture = true`(herdr 기본)면 crossterm `EnableMouseCapture`(1000·1002·1003·1015·1006)를 걸고, 터미널 크기가 바뀌면 다시 건다. 설정을 다시 읽으면 따른다. 끝날 때(panic도) 끈다. 켜면 터미널 자체의 끌어 고르기 대신 TUI가 고른다.
-- **탭 막대.** 이름표를 누르고 그 이름표에서 떼면 그 탭. 휠은 앞·뒤 탭. 끝에 ` + `(새 탭, 이름 창), 넘치면(17칸 이상일 때) 앞 ` < `·뒤 ` > `(넘긴 자리는 지키고 지금 탭이 바뀌면 다시 가운데로). 마우스를 끄면 단추가 없다(herdr).
-- **사이드바.** 줄을 누르고 같은 줄에서 떼면 연다(탐색 중이면 탐색도 끝). `«`(오른쪽−2, 아래−1)·`»`(compact 가운데 아랫줄)는 접기·펴기. 펼친 사이드바의 마지막 열(경계)을 끌면 폭 = 열 + 1(18~36). 휠은 목록을 한 줄씩 민다(키로 고르면 다시 고른 줄을 따른다). 좁은 화면 머리의 `목록` 단추는 탐색 모드를 켜고 끈다.
-- **pane.** 누르면(테두리 포함) 포커스, 휠은 포커스만 옮긴다. 안쪽을 누른 칸에서 벗어나 끌면 보이는 화면 글을 고르고(밖으로 끌면 가장자리로 묶음), 떼는 때 복사한다(`[tui] copy_on_select`, 기본 켬). 끄면 고른 채 두고 ctrl+c·cmd+c로 복사, 다른 키는 지우고 그대로 처리한다. 350ms 안에 같은 칸 근처를 두 번 누르면 낱말(빈칸·따옴표·괄호·`,;|`로 가르고 URL·경로는 한 낱말)을 복사하고 0.5초 보인다. 고른 칸 색은 herdr처럼 `panel_bg`를 흰색(어두운 테마)·검정 쪽으로 28% 섞고 글은 대비가 큰 쪽.
-- **복사.** 이 기기 시스템 clipboard에 쓴다. ssh·WSL·VS Code 터미널이거나 clipboard를 못 열면 OSC 52(`ESC ] 52 ; c ; <base64> BEL`). 알림 카드 「클립보드에 복사했다」. 시험은 `AAA_TEST_CLIPBOARD_TEXT=<파일>`로 사람의 clipboard 대신 파일에 쓴다.
-- **창.** 이름 창은 저장·지우기 단추, 닫기 확인은 닫기 단추만 하고 그 밖(안쪽 포함)을 누르면 취소하고 닫는다. 단축키 창은 밖을 누를 때만 닫고 휠로 3줄씩 민다(herdr).
-- **다음 묶음(3d-2, host 요청 필요).** 마우스 보고를 켠 프로그램(vim·htop 등)에 누름·휠을 넘기기(화면 장면에 그 pane의 마우스 모드), alt 화면 휠을 화살표로, 나눔 경계 끌기(비율 바로 정하기), 탭 끌어 옮기기, 오른쪽 누름 메뉴(탭 닫기 등). 기록 넘기기 휠은 copy 모드 묶음. → §8.106(오른쪽 누름 메뉴는 3d-3)
-- **시험.** 유닛: 고른 글(넓은 글자 두 칸·끝 빈칸), 낱말 경계, 선택 색, 탭 막대 단추 자리(` + `·` < ` ` > `·넘긴 자리 지키기·17칸 밑), 그린 자리(이름표·` + `·`«`·경계). TUI harness `mouse_like_herdr`: SGR 마우스(`CSI < b ; x ; y M/m`)로 보고 켬, 이름표 누르기·휠, ` + `·이름 창 밖 누르기, 단축키 창 안·밖, 사이드바 줄·`«`/`»`·경계 끌기(32, 36에서 멈춤), pane 누르기 포커스, 끌어 고르기·두 번 누름 복사(파일), 나가면 보고 끔.
 
 ### 8.96 웹 E2E를 기능별 파일로(10-18, 사용자 「e2e testability가 중요해」, t-0338)
 
@@ -2410,27 +2225,6 @@ coordinator 실기(10-18 00:58, iPhone 홈 화면 앱을 앞에 띄움, binary c
   - 시험(웹 E2E 07 「앞 기록 reset 직후 scroll」): 짧은 줄 2600줄 pane에서 앞 기록을 받을 때 덮개가 떨어지는 순간(MutationObserver, 다음 frame 전) scrollTop 0의 scroll 사건을 보낸다. 붙인 뒤 `data-view-top`이 숫자이고, 줄이 그려지고, 덮개가 없고, 키를 치면 새 출력이 보인다. 패치를 빼면 `view-top`이 NaN으로 남아 실패함을 확인했다.
   - 「앞 기록 빠른 휠」(QA 1바퀴와 같은 줄·휠 40번, 8번)은 회귀 시험으로 둔다.
 
-### 8.106 TUI 마우스를 herdr대로(2): 프로그램에 넘기기·나눔 경계 끌기·탭 끌어 옮기기(10-18, 사용자 지시 「tui에서도 마우스 잘 동작해야해」, 차이 목록 4장 D, FRONT_API 1.14)
-
-- **참고(herdr 0.9.5).** `src/client/shell/mouse.rs`(보고 pane에 누름 넘기기 `push_pane_mouse_event`·`pane_mouse_position`, 나눔 끌기 `pane_split_ratio`·33ms, 탭 끌기 `tab_drop_index_at`), `src/client/shell/tabs.rs` `tab_drop_indicator_x`, `src/server/client_shell.rs` `split_hit_rect`, `src/layout.rs` `collect_splits`·`set_ratio_at`, `src/workspace.rs` `move_tab`, `src/app/api/layouts.rs` `handle_layout_set_split_ratio`, `src/app/api/tabs.rs` `handle_tab_move`, `src/server/pane_input.rs` `apply_scroll`, `src/pane.rs` `encode_alternate_scroll`. 마우스 보고 bytes는 herdr가 ghostty 인코더를 쓰므로 xterm 규칙대로 새로 썼다.
-- **proto(FRONT_API 1.14).** `GridFrame.modes`(`PaneModes`): 마우스 보고 모드(none·press 9·press_release 1000·button_motion 1002·any_motion 1003), 인코딩(default·utf8 1005·sgr 1006), `alt_screen`, `app_cursor`(DECCKM). host는 pane 화면 사본(aaa-vt)에서 읽고, 모드만 바뀌어도 한 장 보내도록 커서 hash 위 비트에 접는다. 옛 host는 보내지 않아 기본값(넘기기 없음, 3d-1과 같음). `LayoutChange::SplitRatio { tab, path, ratio }`(herdr `layout.set_split_ratio`: path는 탭 뿌리에서 false = a, ratio는 천분율 100..=900, 그 자리에 나눔이 없으면 NotFound), `LayoutChange::MoveTab { tab, index }`(herdr `tab.move`의 insert_index, 0..=탭 수). 옛 host에는 보내지 않고 「host를 새 aaa로 다시 띄워야 한다」를 보인다.
-- **넘기기.** 보고를 켠 pane의 안쪽을 누르면 포커스를 옮기고 누름을 넘기며, 뗄 때까지 그 pane이 끌기·뗌을 받는다(밖으로 나가도, 좌표는 안쪽 0부터 왼쪽·위로만 묶음). 가운데·오른쪽 누름도 넘긴다. 1003이면 누르지 않은 움직임도. 인코딩은 X10 바이트(223칸까지), UTF-8(2015칸까지), SGR(`CSI < b ; x ; y M/m`, 뗌은 그 버튼에 `m`), 수정키 shift 4·alt 8·ctrl 16(9 모드는 수정키 없음). 보고 pane에서는 끌어 고르기·두 번 누름 낱말이 없다(herdr).
-- **pane 휠.** 안쪽 휠은 포커스를 옮기고, 보고 pane이면 휠 보고(64·65), 보고를 끈 alt 화면이면 화살표 하나(DECCKM이면 `ESC O A/B`), 보통 화면이면 아직 아무것도 보내지 않는다(기록 넘기기는 copy 모드 묶음).
-- **화살표 키.** 프로그램이 DECCKM을 켰으면 수정키 없는 화살표를 `ESC O x`로 보낸다(xterm·herdr, aaa-vt `KeyModes::key`와 같다). 예전 TUI는 늘 `ESC [ x`였다.
-- **나눔 경계 끌기.** 테두리를 두르면 맞닿은 두 선(`pos-1`·`pos`), `off`면 그 빈 칸이 누를 자리다(바깥 나눔이 먼저, zoom이면 없음). 누른 칸과 경계의 차이를 지키며 비율 = (포인터 + 차이 − 원점) / 길이(0.1~0.9)를 천분율로 반올림해(1000칸보다 좁으면 `split_rect`가 그 칸을 되돌린다) 33ms마다, 뗄 때 마지막 값과 다르면 한 번 더 보낸다. 포커스는 그대로.
-- **탭 끌어 옮기기.** 이름표를 누른 칸에서 한 칸 넘게 끌면 넣을 자리(이름표 가운데보다 왼쪽이면 그 앞, ` < `·` > `는 맨 앞·맨 끝)에 accent `│`를 두고, 떼면 `MoveTab`. 그 자리에서 떼면 예전처럼 그 탭. 보던 탭은 탭 id로 따라간다(다른 화면이 탭 차례를 바꿔도 그대로).
-- **다른 점.** vt100(aaa-vt)은 1015(urxvt)·1016(SGR 픽셀)·1007(alternate scroll 끄기)을 모른다: 1015·1016만 켠 프로그램에는 기본 인코딩으로 넘기고, 보고를 끈 alt 화면의 휠은 늘 화살표다. herdr는 서버가 사건을 받아 그때 모드로 인코딩한다. aaa는 TUI가 받은 화면 장면의 모드로 인코딩하므로 프로그램이 모드를 바꾼 바로 뒤(다음 장면이 오기 전) 사건은 옛 모드로 갈 수 있다.
-- **다음 묶음(3d-3).** 오른쪽 누름 메뉴(탭·pane 닫기·이름 바꾸기 등). herdr 탭 막대에는 닫기 단추가 없어 마우스 탭 닫기는 그 메뉴다. → §8.107
-- **시험.** 유닛: 보고 인코딩(모드별 받는 사건·X10 223칸·UTF-8·SGR 뗌·수정키), 나눔 비율(차이·묶음·`split_rect` 반올림), 탭 넣을 자리·표시 열, 나눔 누를 자리(테두리·off·zoom), proto `set_ratio_at`·`move_tab`, aaa-vt `pane_modes`, 화살표 DECCKM. TUI harness `mouse_reaches_programs_like_herdr`: `cat -v`로 SGR 누름·뗌·휠이 pane에 닿음, alt 화면 휠 → `ESC [ B`·`ESC [ A`, DECCKM이면 휠·키 모두 `ESC O A`, `┐┌`를 10칸 끌면 왼쪽 안쪽 30 → 40칸, 이름표를 끌면 `│`가 보이고 떼면 탭 차례(host도) `b c prog`, 보던 탭에 남음.
-
-### 8.107 TUI 마우스를 herdr대로(3): 오른쪽 누름 메뉴(10-18, 사용자 지시 「tui에서도 마우스 잘 동작해야해」, 차이 목록 4장 D)
-
-- **참고(herdr 0.9.5).** `src/client/shell/context_menu.rs`(`items`·`move_context_menu_selection`·`activate_context_menu_item`·탭·pane 동작), `src/client/shell/overlays.rs` `render_context_menu`, `src/client/shell/mouse.rs`(오른쪽 누름 차례·메뉴 위 움직임·누름), `src/client/shell/overlay_input.rs`(메뉴 키). host 요청은 새로 없다.
-- **여는 자리.** 오른쪽 누름: 「오른쪽 누름을 pane에 보내기」를 켠 마우스 보고 pane의 안쪽이면(수정키 없음) 프로그램에 넘긴다. 아니면 탭 이름표는 탭 메뉴, pane(테두리 포함)은 pane 메뉴. 메뉴는 누른 자리에 띄우고 화면 밖이면 안으로 민다. 사이드바 줄 메뉴(herdr workspace 메뉴: 이름·닫기·worktree)는 없다(aaa 목록 줄은 thread·머신·pane이다).
-- **항목.** 탭: 새 탭·이름 바꾸기·닫기(그 탭으로 옮긴 뒤 prefix 키와 같은 동작, 새 탭 이름 창·마지막 탭 닫기 확인 그대로). pane: (포커스가 다른 pane이면) 포커스 pane과 자리 바꾸기(뒤 포커스는 그 pane), 오른쪽으로 나누기·아래로 나누기·크게 보기·pane 닫기(그 pane에 포커스를 두고 키와 같은 동작), 오른쪽 누름을 pane에 보내기 / 오른쪽 누름은 aaa 메뉴로. pane 이름 바꾸기·지우기는 `P` pane 이름 묶음에서.
-- **고르기.** 위·아래(끝에서 멈춤)·Enter, 움직이면 그 줄, 줄을 누르면 그 항목, 밖을 누르거나 Esc면 닫는다. 다른 키는 버린다. 모양은 herdr처럼 폭 = 가장 긴 항목 + 4(14 이상), accent 테두리·`panel_bg`, 고른 줄은 accent 바탕 굵게.
-- **다른 점.** 「오른쪽 누름을 pane에 보내기」는 이 화면에만 둔다(herdr는 서버 pane 상태 `right_click_passthrough`). TUI는 상태를 갖지 않는 front라 host에 두려면 pane 설정 요청이 필요하다. herdr `right_click_passthrough_modifier`(수정키를 누르면 넘김) 설정은 옮기지 않았다. 3d-2에서는 보고 pane에 오른쪽 누름을 늘 넘겼는데, herdr처럼 메뉴가 먼저로 바꿨다.
-- **시험.** 유닛 `menu_like_herdr`(항목·끝에서 멈춤·폭·화면 안으로·고른 줄 색). TUI harness `context_menu_like_herdr`: 탭 메뉴 Esc, 아래·Enter로 탭 이름 창, pane 메뉴에서 움직여 「아래로 나누기」 Enter, 위 pane 메뉴의 자리 바꾸기, 밖 누르기로 닫기, 보고 pane은 메뉴가 먼저이고 「오른쪽 누름을 pane에 보내기」 뒤 `cat -v`가 오른쪽 누름(`ESC [ < 2 ;`)을 받는다.
 ### 8.108 보고 표 칸의 한글 낱말·떠날 때 공유 설정 보내기(10-18, QA t-0337 Q9·Q11)
 
 - **Q9 표 칸.** 휴대폰 보고 표 칸에서 한글이 음절마다 끊겼다(「경/우」). 참고 `ChatView.css`는 칸을 `overflow-wrap: normal`로 두어 「칸은 가장 긴 낱말보다 좁아지지 않고, 자리가 없으면 표가 그 칸 안에서 굴러간다」를 뜻했지만, 한글은 낱말 안 음절 사이에서도 줄을 바꿀 수 있어 그 뜻이 서지 않았다. `.markdown th, .markdown td { word-break: keep-all }`을 `web/src/style.css`에 둔다(옮긴 `herdr/Markdown.css`는 그대로). 시험: 웹 E2E 「thread 보고서·결과물」(`specs/12-threads-push.mjs`)의 휴대폰 폭에서 표 칸의 한글 낱말마다 그려진 줄이 하나인지(Range `getClientRects`). 고침 없이 돌리면 「음절」이 갈려 떨어진다.
@@ -2440,7 +2234,7 @@ coordinator 실기(10-18 00:58, iPhone 홈 화면 앱을 앞에 띄움, binary c
 
 - **뜻.** herdr `pane rename <pane> <label>|--clear`(`src/cli/pane.rs` `pane_rename`, 낱말 여럿은 띄어 이음)와 `manual_label`(`app/mod.rs` 시험 `pane_rename_request_sets_and_clears_manual_label`): 사람이 붙인 이름이 띄울 때 이름 위에 서고, 지우면 띄울 때 이름으로 돌아간다. 웹은 herdr-web-ui `PaneCanvas.tsx` `PaneRename`(이름 창, 칸에 focus·전체 선택, 최대 80자, 빈 값 저장은 지움)과 메뉴 「Rename pane」·붙인 이름이 있을 때만 「Clear pane name」.
 - **정본은 agent.** 이름은 agent 세션 기록 `spec.json`의 새 칸 `label`이다(`SpecFile::name()`은 label, 없으면 `spec.name`). session host는 띄울 때 읽은 spec만 알고 이전 판은 label을 모르며, 몇 주 이어지는 session host는 모르는 요청에 연결을 끊는다(`aaa-session/src/host.rs` Req 해석 실패 → break). 그래서 session IPC는 바꾸지 않고 agent가 label 표(`labels`)를 들고 session host가 보낸 정보(Welcome·Updated)와 끝난 세션의 정보(`offline_info`, pump가 쥔 옛 spec 포함)에 덮는다. agent가 다시 떠도 `recover`가 spec.json에서 읽는다.
-- **계약.** `FrontRequest::PaneRename { pane, label }`(FRONT_API 1.15, 조작 권한), `AgentRequest::Rename { session, label }`(agent 기능 `rename.v1`; `cwd.v1`처럼 AGENT_LINK는 그대로, host가 보내기 전에 거른다 — 옛 agent면 「agent binary 반영 필요」 오류), `SessionInfo.label`·`PaneView.label`(없으면 생략, `name`은 늘 보이는 이름이라 이름으로 찾기·TUI·웹은 그대로). 한도는 `aaa_proto::MAX_PANE_LABEL_CHARS`(80, 참고 `maxLength`), 제어 문자 거부, 앞뒤 공백 뗌, 빈 값은 지움.
+- **계약.** `FrontRequest::PaneRename { pane, label }`(FRONT_API 1.15, 조작 권한), `AgentRequest::Rename { session, label }`(agent 기능 `rename.v1`; `cwd.v1`처럼 AGENT_LINK는 그대로, host가 보내기 전에 거른다 — 옛 agent면 「agent binary 반영 필요」 오류), `SessionInfo.label`·`PaneView.label`(없으면 생략, `name`은 늘 보이는 이름이라 이름으로 찾기·웹은 그대로). 한도는 `aaa_proto::MAX_PANE_LABEL_CHARS`(80, 참고 `maxLength`), 제어 문자 거부, 앞뒤 공백 뗌, 빈 값은 지움.
 - **다시 열기.** `pane resume`은 보이는 이름으로 새 spec을 띄우므로 붙인 이름이 이어진다(새 세션에서는 그것이 띄울 때 이름이 되어 지워도 남는다 — herdr는 resume이 없다).
 - **웹.** pane 줄 메뉴 차례는 참고 workspace 메뉴대로 고정 → 이름 바꾸기 → (이름 지우기) → 닫기. 창은 `web/src/PaneRename.tsx`, 모양 `herdr/PaneRename.css`(참고 그대로 + 이름 글자를 칸 위에 두는 aaa 한 줄).
 - **TUI.** herdr의 `prefix+shift+p` 이름 바꾸기는 TUI 몫(t-0330)으로 남긴다. 요청은 이 절의 `pane_rename`을 쓰면 된다.
@@ -2541,7 +2335,7 @@ coordinator 실기(10-18 00:58, iPhone 홈 화면 앱을 앞에 띄움, binary c
   - 셸 pane(argv가 비었거나 셸 이름 + 선택지만): 저장한 cwd에서 같은 셸을 새로 띄워 layout 자리를 바꾸고 옛 기록을 지운다(herdr `src/persist/restore.rs:65`: pane마다 저장한 cwd에서 새 셸).
   - 그 셸에서 Claude·Codex가 돌았고 harness 세션 ID를 알면 새 셸에 `claude --resume <id>`·`codex resume <id>`와 CR을 친다(herdr `src/app/agent_resume.rs` `start_pending_agent_resume`, `src/agent_resume.rs` `plan`). harness를 바로 띄운 pane(argv 첫 낱말이 claude·codex)은 원래 argv(실행 파일 경로, aaa hook 설정 `--settings`·`-c notify=…`, model)를 두고 대화 인자만 바꿔 띄운다(`resume_in_place`: claude `--session-id <x>` → `--resume <id>`, codex는 실행 파일 뒤 `resume <id>`). herdr는 pane이 늘 셸이라 맨 명령을 치지만, aaa pane은 harness 자체일 수 있어 맨 명령으로 띄우면 hook 설정을 잃는다. 같은 harness 세션은 한 번만 잇는다(herdr `dedupe_key`). 셸에 치는 ID는 UUID 꼴만 받는다(herdr `validate_resume_argv`보다 좁다, §8.112).
   - thread pane: `thread restart --resume`과 같은 길로 저장한 대화를 잇는다(brief 안내 없음). brief를 받기 전이었으면 이을 것이 없어 새로 띄우고 brief를 다시 보낸다. 대화 ID로 잇지 못하는 harness(custom 등)는 같은 명령을 다시 돌리면 하던 일을 잃은 채 기다리므로 사람에게 넘긴다: 흐름 사건 `restore_failed`, inbox `session`·`restore failed`(「`aaa thread restart <p> <id>`가 새 대화로 띄운다」). 성공은 흐름 사건 `session_restored`.
-  - 그 밖의 프로그램 pane은 다시 실행하지 않는다(재부팅마다 배포 같은 명령이 다시 돌면 안 된다). 중단으로 남고 TUI·웹이 `aaa pane resume <id>`를 보인다. herdr pane은 늘 셸이라 이 경우가 없다.
+  - 그 밖의 프로그램 pane은 다시 실행하지 않는다(재부팅마다 배포 같은 명령이 다시 돌면 안 된다). 중단으로 남고 웹이 `aaa pane resume <id>`를 보인다. herdr pane은 늘 셸이라 이 경우가 없다.
   - 다시 띄우지 못하면(저장한 폴더가 없어짐 등) 중단으로 남고 까닭을 `PaneView.restore_error`로 보인다(herdr `restore_error`, herdr-web-ui `RestoreErrorBadge`). TUI 중단 띠와 웹 사이드바 경고에 붙는다. 웹에서 그 pane을 열면 터미널 대신 경고·「이 pane을 되살리지 못했다」·까닭을 보이고 연결 띠·키 막대는 없다(herdr-web-ui `PaneTerminal` `is-restore-error`: 참고는 그 pane에 붙지 않는다. aaa는 옛 화면 위를 칠한다).
   - 사람이 붙인 pane 이름(§8.109)은 다시 띄운 pane이 잇는다(herdr `src/persist/restore.rs` `set_manual_label`). 셸·프로그램·thread pane 모두 layout 자리를 바꾸기 전에 새 세션에 붙인다(`replace_pane`, 이름의 정본은 agent `spec.json`). `pane resume`도 같은 길이다. 다시 띄울 때 이름은 비워 agent가 명령으로 짓게 한다: 붙인 이름을 지우면 명령 이름(`sh` 등)으로 돌아간다. 처음 띄울 때 준 이름(`--name`)으로는 돌아가지 않는다. agent가 `name`을 붙인 이름으로 덮어 알려 host가 처음 이름을 모르기 때문이다(그 이름을 그대로 주면 지워도 붙인 이름이 남는다).
 - **설정(herdr `[session]` 이름·기본값 그대로).** host.toml `[session] resume_agents_on_restore = true`, `startup_per_agent_delay_ms = 100`(이어가기 사이 간격, herdr `start_pending_agent_resumes`). 끄면 셸은 되살리고 대화는 잇지 않는다(셸 안의 agent는 빈 셸로, harness pane과 thread는 중단으로).
@@ -2606,7 +2400,7 @@ coordinator 실기(10-18 00:58, iPhone 홈 화면 앱을 앞에 띄움, binary c
     기록과 `PR found at resolve` 항목에 남긴다.
   - **바뀐 것:** 전에는 기준(`origin/main`)의 조상인 branch를 지웠다. 부록 표(「merge된 branch만 삭제 — 그대로」)대로 PR 기준으로
     바꿨다. PR 없이 로컬 병합으로 착지한 branch는 남는다(사용자가 지운다).
-- **화면.** TUI·웹·CLI 말은 「병합 중」. TUI 점은 검토 대기와 같고 글자색은 hp popup `group_color`처럼 초록이다. 웹 줄의 사실은
+- **화면.** 웹·CLI 말은 「병합 중」. TUI 점은 검토 대기와 같고 글자색은 hp popup `group_color`처럼 초록이다. 웹 줄의 사실은
   hp `state_line`대로 「PR #n」(따라가는 PR이 없으면 「보고」). shadow 비교(§15)의 Landing 차이 분류 두 줄은 이제 같아서 뺐다.
 - **계약.** ThreadGroup `landing`(FRONT_API 1.17, 재부팅 복원 1.16 뒤). 옛 TUI(1.16 이하)는 `landing`을 읽지 못하므로 host와 함께 바꾼다.
   agent 쪽 `ThreadCleanup.merged_head`(`base`는 보내지 않는다)와 `PrQuery::OpenOwn`(기능 `pr.v2`)은 AGENT_LINK를 올리지 않았다:
@@ -2664,7 +2458,7 @@ coordinator 실기(10-18 00:58, iPhone 홈 화면 앱을 앞에 띄움, binary c
 - **pairing 기다림(A2).** 전에는 전역 카운터가 성공할 때만 0이 되고 30초부터 64분까지 잠갔으며, 새 코드도 막았다. 이제 10분 창 안의 실패만 세고, 5번까지는 기다리지 않으며, 그 뒤로는 마지막 실패부터 1초·2초·4초… 60초까지 기다린다(참고 `server/auth.ts` `AUTH_FAILURE_BUDGET`·`AUTH_BACKOFF_MS`·`AUTH_BACKOFF_MAX_MS`·`SHARED_WINDOW_MS`). 코드를 만들면(CLI `aaa web pair`나 controller 기기) 기다림이 풀린다. 코드 하나로 5번 틀리면 그 코드를 버리는 것은 그대로다.
   - 다르게 둔 것: 참고는 주소(X-Forwarded-For)마다 따로 센다. aaa는 하나로 센다. 코드는 한 번에 하나이고 주인만 만들 수 있어 주소를 나눌 이득이 적고, 새 코드가 기다림을 풀어 주인이 막히지 않는다.
 - **cookie(A4·A5).** `=`이 없는 등 깨진 항목은 건너뛴다(참고 `parseCookies`). HTTPS에서는 `__Host-aaa`만, loopback HTTP에서는 `aaa`만 장치 cookie로 본다.
-- **보기 경로(A7).** `/v/<cap>/`는 받은 웹 기기에 묶인다. 그 기기를 폐기하면 바로 401이다(전에는 최대 2시간 더 읽었다). CLI·TUI가 받은 경로는 기기와 무관하다.
+- **보기 경로(A7).** `/v/<cap>/`는 받은 웹 기기에 묶인다. 그 기기를 폐기하면 바로 401이다(전에는 최대 2시간 더 읽었다). CLI가 받은 경로는 기기와 무관하다.
 - **API는 저장하지 않는다(A10).** `/api/` 답에 `Cache-Control: no-store`(이미 둔 답은 그대로).
 - **시험(결함 심기).** `web.rs` `guard_tests`는 router를 그대로 부른다(`tower::ServiceExt::oneshot`, dev-dependency, axum이 이미 쓰는 판). Host 다른 포트·포트 없음·localhost → 421, Origin 다른 포트·포트 없음·http·남의 주소 → 403(WS upgrade 포함), 443은 포트 없이, 공개 전 loopback만, 깨진 cookie·HTTPS의 prefix 없는 cookie, API no-store를 본다. `lib.rs` pairing 시험은 기다림 2·4·8·16·32·60초에서 멈춤, 10분 뒤 잊음, 새 코드가 풀음, 폐기한 기기의 보기 경로 401을 본다. 고치기 전 결함 10가지(이름만 비교 2·localhost·새 코드가 안 풂·창 없음·상한 없음·cookie 포기·prefix 없는 cookie·보기 경로·no-store)를 하나씩 되심으면 이 시험이 모두 실패하는 것을 확인했다.
 - **폐기와 진행 중 작업(A9).** 입력줄 보내기는 글을 친 뒤 300ms 기다렸다 Enter를 친다. 그 사이 폐기된 기기의 Enter는 보내지 않고 4401로 닫는다. 그림 업로드는 마지막 조각을 agent가 쓴 뒤 경로를 넣기 직전에 폐기를 다시 본다(§6.4). 참고 t3code `SessionStore.awaitInvalidation`(await 뒤 다시 확인). 시험: 웹 E2E `05-devices` 「폐기와 보내던 Enter」(그 실험실 host만 `AAA_TEST_SUBMIT_GAP_MS=4000`, 글이 들어간 것을 보고 폐기 → 연결 닫힘 → 이어 친 글이 같은 줄에 붙음). 검사를 빼면 이 단계가 실패하는 것을 확인했다. 업로드 쪽은 마지막 조각을 쓰는 틈을 시험이 붙잡을 수 없어 코드로만 확인했다.
@@ -2745,7 +2539,7 @@ coordinator 실기(10-18 00:58, iPhone 홈 화면 앱을 앞에 띄움, binary c
 
 ### 8.122 폭이 바뀌면 화면을 다시 접는다(reflow, 10-18, coordinator 범위 추가·t-0330 발견, 차이 목록 1장 G 일부)
 
-- **증상.** vt100 0.16 `set_size`는 폭이 줄면 줄 끝을 버리고, 다시 넓혀도 돌아오지 않는다. 휴대폰·좁은 화면이 pane 크기를 쥐었다 놓으면 넓은 화면(늦게 붙은 웹·TUI·`aaa pane read`)에서 줄이 오른쪽부터 비었다. host의 pane 화면(mirror)과 session host 화면이 둘 다 aaa-vt라 웹·TUI가 다 그랬다. 붙어 있던 xterm은 제 버퍼를 스스로 다시 접어 멀쩡해 보였다.
+- **증상.** vt100 0.16 `set_size`는 폭이 줄면 줄 끝을 버리고, 다시 넓혀도 돌아오지 않는다. 휴대폰·좁은 화면이 pane 크기를 쥐었다 놓으면 넓은 화면(늦게 붙은 웹·`aaa pane read`)에서 줄이 오른쪽부터 비었다. host의 pane 화면(mirror)과 session host 화면이 둘 다 aaa-vt라 웹가 다 그랬다. 붙어 있던 xterm은 제 버퍼를 스스로 다시 접어 멀쩡해 보였다.
 - **참고.** herdr는 ghostty가 폭 변경 때 다시 접는다(`src/pane.rs` 110~118줄 「Herdr reflows too」). 그래서 pane env에 `fish_handle_reflow=0`을 건다(fish가 스스로 다시 그리지 않게, 겹쳐 그리면 프롬프트가 붙는다). aaa도 같이 건다. 물려받은 값이 있으면 두고, spec env가 이긴다(`apply_pane_terminal_env`와 같다).
 - **다시 접기(`aaa-vt` `Vt::resize`·`rewrap`).**
   - 기록과 화면을 논리 줄로 읽는다. 접힌 줄과, 넓은 글자가 끝 칸 하나에 들지 않아 다음 줄로 내려간 줄(vt100 `col_wrap`은 이 경우 이음 표시를 두지 않는다, tmux와 같다. ghostty는 spacer 칸으로 둔다)을 잇는다.
@@ -2761,7 +2555,7 @@ coordinator 실기(10-18 00:58, iPhone 홈 화면 앱을 앞에 띄움, binary c
   - aaa-vt 유닛: 줄였다 넓히기, 접힌 줄 펴기, 기록도 다시 접기, 색, 넓은 글자 다시 잇기, clear 뒤 맨 위 프롬프트, 줄 가운데 커서, 커서 아래 글, alternate screen 밑 normal screen, 입력 모드, 사이 빈 줄, 그대로일 때, 폭·줄 수 함께, 줄 수만(+alternate screen 아래), 커서 아래 행 버리기, 기록·화면 replay의 이음, 넓은 글자 내린 줄 잇기 읽기.
   - TUI E2E `narrow_claim_then_release_keeps_line_ends`: 다른 front가 30칸으로 쥐었다 놓고 TUI가 되찾으면 49자 줄이 한 줄로 돌아오고 `pane read`도 같다. 셸에 `fish_handle_reflow=0`이 보인다. 시험 실험실은 물려받은 `fish_handle_reflow`를 뺀다(herdr pane 안에서 돌리면 물려받아, 빼기 전에는 fish env를 지운 변형도 통과했다).
   - 웹 E2E 「폭이 줄었다 넓어지면 다시 접는다」(07): 휴대폰(45칸)이 쥔 동안 host 화면을 이으면 원래 줄(긴 줄·접히는 줄·넓은 글자 줄), 넓은 화면(116칸)이 늦게 붙으면 화면에 줄 끝까지, iPad도.
-  - 변형 확인: reflow를 빼면 유닛 8개·TUI·웹(휴대폰 단계)이 실패, replay 화면을 옛 `state_formatted`로 두면 유닛과 웹(늦게 붙은 웹)이 실패, 읽기의 넓은 글자 잇기를 빼면 유닛과 웹이 실패, 줄 수만 바뀔 때 다시 쓰기를 빼면 유닛 셋, 기록 이음을 빼면 유닛, fish env를 빼면 TUI가 실패.
+  - 변형 확인: reflow를 빼면 유닛 8개·웹(휴대폰 단계)이 실패, replay 화면을 옛 `state_formatted`로 두면 유닛과 웹(늦게 붙은 웹)이 실패, 읽기의 넓은 글자 잇기를 빼면 유닛과 웹이 실패, 줄 수만 바뀔 때 다시 쓰기를 빼면 유닛 셋, 기록 이음을 빼면 유닛, fish env를 빼면 TUI가 실패.
 - **이 묶음이 아닌 것.** 캡처에 보이는 휴대폰·iPad 끝 열 반쯤 잘림과 「gh p / ecks」(t-0333)는 웹 열 수 계산 쪽이다(다음 묶음).
 
 ### 8.123 붙여 넣는 글의 ESC를 뺀다(10-18, t-0340 보안 감사)
@@ -2946,7 +2740,7 @@ coordinator 실기(10-18 00:58, iPhone 홈 화면 앱을 앞에 띄움, binary c
 - **고침.** host가 그 프로젝트(gh)·머신을 처음 볼 때, 앞 host가 연 실패 항목(`outage`/`gh`/`failing`, `outage`/<머신>/`down`)이 아직 열려 있으면 알린 것으로 시작한다(`Outage::resumed`). 그러면 돌아오면 회복을 한 번 쓰고, 이어 끊겨도 실패를 다시 쓰지 않는다. 시작 시각은 여전히 새 host가 처음 본 때다(다시 띄운 직후 아직 붙지 않은 머신을 끊김으로 세지 않는다).
 - 시험: `m13` `remote_dir_thread_survives_host_restart` 끝(알린 끊김 중 host를 다시 띄우고 머신이 돌아오면 recovered 1, down 1). 이어받지 않는 결함 심기는 「outage recovered」 기다림에서 실패한다. 단위 시험 `short_outages_write_nothing_and_long_ones_write_one_item_each_way` 끝.
 
-### 8.135 병합을 herdr-projects대로(2): 병합 대기열·`merge land`를 없앰, coordinator 안내 「병합」, 집에 다 오지 않은 worktree는 남김, TUI 목록 차례(10-18, D11, 차이 목록 4장 I·D #556, 3장 C1·E10 일부·E12)
+### 8.135 병합을 herdr-projects대로(2): 병합 대기열·`merge land`를 없앰, coordinator 안내 「병합」, 집에 다 오지 않은 worktree는 남김(10-18, D11, 차이 목록 4장 I·D #556, 3장 C1·E10 일부·E12)
 
 - **없앤 것(4장 I 「누가 병합하나」「병합 대기열 순번」, hp README 121줄·COORDINATOR.md 72·147줄).** 참고 플러그인은 병합·push를
   하지 않고 대기열도 없다. aaa도 `aaa merge enqueue|list|done|drop|land`(§8.8·§8.24), host `merge.rs`, agent 병합 단계(`merge.rs`),
@@ -3054,18 +2848,6 @@ coordinator 실기(10-18 00:58, iPhone 홈 화면 앱을 앞에 띄움, binary c
 - **m13(t-0327).** m13 host도 300으로 띄운다(`spawn_host`, 다시 띄운 host도 같다). 다만 확인 뒤 바로 쉼을 보는 두 시험(`worktree_thread_round_trip`·`memory_and_restart`)은 기본 3초로 둔다. 가짜 agent는 brief를 읽자마자 보고를 쓴다. 멈춤을 줄이면 agent가 1초마다 보는 보고가 host의 받음 확인(Enter 뒤 화면 보기)보다 먼저 올 수 있고, 그러면 `delivered_report`가 그 보고가 되어 확인 뒤에도 창(`delivered_working_secs`) 동안 작업 중이다(제품 모서리, coordinator에 알림). 보고만 기다리고 brief 받음을 단언하던 세 곳은 둘 다 기다리게 고쳤다(기본값에서도 보고 감시 위상에 기대던 경쟁). 가장 긴 시험은 25.5초에서 20.1초, m13은 약 50초에서 42초다. 멈춤을 0으로 심어도 옛 m13·새 m13 모두 통과한다: 멈춤 자체를 보는 시험은 전부터 없다.
 - **지운 것.** 15파일 71단계를 단계마다 무엇을 보나·중복(다른 단계·Rust·웹 유닛)·결함 이력·기능이 남았나로 훑어 단계 여섯을 지우고 스물아홉 곳에서 단언 일부를 뺐다. 기준: 없어진·바뀐 기능, 같은 동작을 다른 시험이 이미 봄, 결과가 아니라 구현 세부(문구·class·저장 꼴), 잡을 길이 없음. 보안·사용자 결정 규칙(쓰는 기기·알림·입력기·iOS)·과거 결함 재발 막기·휴대폰에서 보이는 결과는 남겼다. 표(파일·단계·이유·대신 보는 곳)는 t-0338 report 「지운 단계 표」.
 - **시험.** 지운 판을 worker 4로 세 번(73초씩), 3으로 두 번(88초씩), 전체 묶음 둘을 동시에 worker 4씩 두 번(실험실 여덟, 73~74초) 돌려 모두 통과했고, 파일마다 시간은 차례로 돌 때와 같았다(함께 돌아도 느려지지 않음). 4보다 늘려도 벽시계는 가장 긴 12에 걸린다. 일부러 실패하는 spec을 함께 돌리면 입구가 종료 코드 1·FAIL 줄·실험실을 남긴다. 숫자와 부하는 t-0338 report.
-
-### 8.139 TUI에서 pane 폭만 바뀌면 그 pane이 빈다(10-18, QA t-0337 Q23)
-
-- **증상.** 사이드바를 접거나 펴거나, 나눔 비율이 바뀌거나, `prefix w`로 높이는 같고 폭만 다른 pane으로 옮기면 그 pane의 앞 출력이 빈칸이 된다. 그 뒤에 바뀐 줄(새 프롬프트 등)만 보인다. `d6bb95c`에서도 재현된다.
-- **원인.** host는 pane마다 front에 보낸 줄 hash를 기억해 바뀐 줄만 보낸다(`watch_grid`). 전체를 다시 보내는 것은 줄 수가 바뀔 때뿐이었다. TUI(`Grid::apply`)는 크기가 바뀐 장면을 받으면 grid를 비우고 온 줄만 채운다. 그래서 폭만 바뀌면 내용이 같아 다시 오지 않은 줄이 비었다.
-- **고침(herdr처럼 크기가 바뀐 pane은 통째로).**
-  - host: 보낸 것에 크기(줄 수·폭)를 함께 기억한다. 크기가 바뀌면 모든 줄을 `full`로 보낸다(`changed_rows`).
-  - TUI: `full`이 아닌 장면은 온 줄만 바꾸고 나머지 줄은 둔다. 보내지 않은 줄은 host가 보기에 그대로이기 때문이다. 그래서 고치기 전 host에 붙어도 비지 않는다. host를 다시 띄우기 전에도 새 `aaa attach`면 고쳐진다.
-- **시험.**
-  - TUI E2E `width_only_change_redraws_the_pane`(약 0.5초): 셸 출력 두 줄 뒤 사이드바를 접고(폭 64→86) 펴서(86→64) 앞 출력이 남는지 본다. 바뀐 뒤 친 표지 줄이 보인 다음에 본다(그 뒤 장면까지 왔다).
-  - 유닛: host `size_changes_resend_every_row`(한 줄 바뀜·폭만 바뀜·줄 수 바뀜·커서만), TUI `width_only_frames_keep_unsent_rows`.
-  - 결함 심기: host 폭 비교를 빼면 host 유닛이, TUI가 크기 바뀌면 비우게 하면 TUI 유닛이, 둘 다(고치기 전)면 E2E도 실패한다. 한쪽만 되돌리면 다른 쪽 고침이 E2E를 지킨다.
 
 ### 8.140 대화 보기 머리줄: iPhone 홈 화면 앱 위 가장자리 흐림과 둘째 줄 겹침(10-18, 사용자 실기 09:17 「위쪽 흐려지는건 어쩔수없는건가?」)
 
@@ -3197,39 +2979,6 @@ coordinator 실기(10-18 00:58, iPhone 홈 화면 앱을 앞에 띄움, binary c
   - 결함 심기: 첫 화면 끄기·기억 끄기·drawer `height:auto` 빼기를 하나씩 넣으면 그 단계가 실패한다.
   - 다른 시험은 목록 안의 것을 `inList`(harness: 닫힌 drawer면 열고 누름, 닫히는 중이면 움직임이 끝난 뒤 봄)로 누른다. 특정 pane을 첫 화면으로 여는 시험은 주소(`pairPage({hash: paneHash(name)})`)로 연다. 첫 화면이 열자마자 붙는 WebSocket을 듣는 시험은 `onPage`로 먼저 듣는다.
 
-### 8.147 TUI 붙여넣기와 그림 파일 끌어놓기(10-18, 차이 목록 E 「그림 파일 끌어놓기」, FRONT_API 1.23)
-
-- **참고.** herdr client는 바깥 터미널의 bracketed paste(2004)를 켠다(`client/terminal_setup.rs` `EnableBracketedPaste`).
-  - 터미널에 파일을 끌어 놓으면 터미널은 그 경로를 붙여 넣는다. 그 글이 그림 파일 하나의 경로면 herdr는 파일을 그림으로 서버에 보낸다(`client/mod.rs` 866~875줄, `clipboard_images.rs` `image_path_from_terminal_drop`).
-  - 판정: 한 줄(끝 줄바꿈은 뺀다), 같은 따옴표로 감쌌으면 벗기고, unix는 `\ ` 같은 escape를 푼다. 절대 경로·그림 확장자·보통 파일·비지 않음·16MiB 안이어야 한다. 아니면 글로 붙인다.
-  - 서버는 붙여 넣은 글을 그 pane 프로그램이 켠 2004대로 다시 감싼다.
-- **aaa에 없던 것.** aaa TUI는 바깥 터미널의 2004를 켜지 않았다(main도).
-  - 붙여넣기가 낱 키로 왔다. 여러 줄 글의 줄바꿈은 Enter가 되어 셸·harness가 줄마다 실행했다.
-  - pane 프로그램이 켠 2004로 감싸지 않았고, 글 안의 ESC도 그대로 갔다. 웹은 `pasteText.ts`가 뺀다(t-0340 보안 감사).
-  - §8.28의 「빈 붙여넣기도 그림으로 받는다」도 실제로는 오지 않았다. 이제 온다.
-- **옮긴 것.**
-  - TUI는 시작할 때 2004를 켜고 끝날 때(오류·panic 포함) 끈다.
-  - 붙여 넣은 글은 새 요청 `pane_paste {pane, text}`로 보낸다. host가 그 pane 모드대로 감싸고 ESC·C1 CSI를 뺀다(`KeyModes::paste`). 차례·lease는 키 입력(`pane_input`)과 같다.
-  - 1.23 전 host에는 전처럼 친 글(`pane_input`)로 보낸다. 모르는 요청은 연결을 끊기 때문이다.
-  - 끌어놓기 판정은 herdr 규칙 그대로다(`clip::dropped_image`). 그림이면 Ctrl+V 그림과 같은 길로 올리고 셸 줄에 따옴표 경로를 넣는다(§8.28·§8.51).
-  - 붙여넣기가 가는 곳은 herdr `handle_raw_events`·`insert_overlay_text`대로다. 이름 창은 이름에, 검색 중인 단축키 창은 검색어에 넣는다(줄바꿈은 빈칸). 다른 창이 떴거나 Terminal 모드가 아니면(prefix·탐색·크기) 버린다. pane과 그림은 그 밖에서만이다. 전에는 창이 없으면 prefix 모드에서도 pane에 갔고, 단축키 검색 붙여넣기는 버렸다(2004를 안 켜 낱 키로 올 때는 검색어에 들어갔다).
-- **참고와 다른 것.**
-  - herdr는 원격 client(`--remote`)일 때만 끌어놓기를 본다. aaa TUI는 늘 agent 머신과 떨어진 front라 늘 본다. Ctrl+V 그림과 같은 판단이다(차이 목록 E 「Ctrl+V 그림」).
-  - bmp는 그림으로 보지 않고 글로 붙인다. aaa host는 PNG·JPEG·GIF·WebP만 받는다(§9 형식 규칙).
-  - **Windows(3 OS).** herdr는 Windows 콘솔에서 VT 입력을 켜고 제 해석기(`client/input/windows_vti.rs`, 4,471줄)로 붙여넣기를 받는다. aaa TUI는 crossterm 입력을 쓴다. crossterm은 Windows에서 붙여넣기 사건을 주지 않고, 2004를 켜면 표지가 낱 키로 pane에 들어간다. 그래서 Windows에서는 2004를 켜지 않는다. 붙여넣기는 전처럼 낱 키이고 끌어놓기는 없다. VT 입력 해석기를 옮기는 일은 따로 남긴다.
-- **시험.**
-  - 유닛 `clip::` 넷(herdr `remote_image_file_drop_bridge_*`): 절대 경로, 따옴표와 끝 줄바꿈, `\ ` escape, 그림이 아닌 것(상대 경로·그림 아닌 확장자·여러 줄·빈 글·bmp·폴더·빈 파일·상한 넘음과 상한 딱).
-  - 유닛 `pastes_go_to_the_host_to_wrap_and_old_hosts_get_typed_text`: 1.23 host에는 `pane_paste`, 1.22 host에는 `pane_input`.
-  - TUI E2E `paste_and_image_drop_like_herdr`(약 1초):
-    - 바깥 터미널 2004를 켜고, 나가면 끈다.
-    - 2004를 안 켠 프로그램(`cat -v`)에는 감싸지 않고 ESC를 뺀다. 그림 아닌 절대 경로·상대 그림 경로·없는 그림 경로는 글 그대로다.
-    - 2004를 켠 프로그램에는 `^[[200~…^[[201~`로 감싸고 안의 ESC는 뺀다.
-    - 빈칸을 `\ `로 escape한 그림 경로를 붙이면 첨부 하나가 생긴다. pixel이 같고, 셸 줄에 따옴표 경로가 들어가며 실행하지 않는다.
-    - prefix 모드의 붙여넣기는 pane에 가지 않는다. 검색 중인 단축키 창에 붙이면 거르고, 새 탭 이름 창에 붙인 `붙인\n탭`은 `붙인 탭`이 된다.
-  - 변형 확인: 열다섯 모두 실패한다. 끌어놓기 판정 끔, bmp 허용, txt 허용, 상대 경로 허용, escape 안 풂, host가 안 감쌈, host가 늘 감쌈, ESC 안 뺌, 옛 host 대체 없음, 2004 안 켬, 2004 안 끔, 크기 상한 없음, 단축키 검색 붙여넣기 버림, prefix 모드도 pane에, 이름 창 붙여넣기 버림.
-  - 시험 경합 고침(10-18 미리 병합 ci-local): 둘째 단계 마지막에 cat을 다시 띄우고 화면 지움만 기다린 뒤 ^C를 보냈다. ^C가 셸의 `clear`와 `cat` 사이에 닿으면 cat이 남아 셋째 단계 명령 줄을 읽었다. 이제 ^C는 표지가 cat을 지나온 뒤에만 보내고 마지막에는 cat을 다시 띄우지 않는다. `clear`와 `cat` 사이에 ^C를 무시하는 1초를 넣으면 옛 구조는 같은 꼴로 실패하고 새 구조는 통과한다.
-  - 둘째 경합(10-18 착지 창 미리 병합 ci-local): 붙여 넣은 줄을 cat이 되돌리기 전에 표지 줄을 쳐서, 그 tty 메아리(TUI가 「e」·「nd-a」로 나눠 보냄) 사이에 cat 출력이 끼어 표지가 한 번만 보였다. 표지 줄을 없애고, 붙여 넣은 줄이 두 번(메아리와 cat 출력) 보인 뒤에 단언하고 다음 글을 친다. 기다리는 조각(`two`·경로·`31my`)은 감싸기·ESC 빼기가 틀려도 나오므로 틀리면 기다림이 아니라 단언이 실패한다. 옛 구조에 표지를 둘로 나눠 치고 cat을 0.3초 늦추면 같은 문구로 실패하고, 새 구조는 cat을 늦춰도 통과한다.
-
 ### 8.148 파일 보기의 폴더 보기(10-18, 차이 목록 1장 「파일 경로 누르면 파일 보기」 나머지, 1J #205, FRONT_API 1.24)
 
 - **참고.** herdr-web-ui 파일 보기는 받은 경로가 파일이 아니면(404) 같은 경로를 폴더로 읽어 본다. 폴더면 폴더 목록(`DirectoryBrowser`)을 그린다(`FileViewer.tsx` 186~197·281줄). 서버는 `server/directories.ts` `listDirectories`다.
@@ -3307,81 +3056,6 @@ coordinator 실기(10-18 00:58, iPhone 홈 화면 앱을 앞에 띄움, binary c
     알림 뒤 배지 없음, 남은 단계를 끝내면 `3/3`·`is-done`. 결함 심기: agent가 알림을 무시하게 바꾸면 「20000ms 안에 배경 하나이 되지
     않았다: "2"」로 실패함을 확인했다.
 
-### 8.152 TUI 탭 막대는 사람이 볼 thread 수를 보인다(10-18, 차이 목록 4장 D 「확인 필요」 수 표시, coordinator 지시 「참고대로」)
-
-- **참고.** herdr-projects는 탭 줄에 `projects: N need you`를 띄운다(`needs-you --line`, sidebar.rs `needs_you_line`). N은 활성
-  프로젝트의 열린 thread 가운데 묶음이 확인 필요(WaitingOnYou)나 검토(ReadyForReview)인 수(`needs_you`)다. 없으면 아무것도 없다.
-  고르는 곳은 `prefix+a` popup이다.
-- **aaa가 달랐던 것.** TUI 탭 막대 오른쪽(herdr `tab_bar_right` 자리)이 질문이 열린 pane 수 ` ● 질문 n `이었다(§8.92).
-- **고침.** 같은 자리·같은 모양(빨강 바탕 굵게)에 ` ● 확인 필요 n `: host가 보낸 ThreadView 묶음이 확인 필요·검토인 thread 수.
-  없으면 그리지 않는다. 참고의 popup 대신 탐색 목록(prefix w)을 쓴다: thread 줄이 이미 확인 필요부터 선다(§8.127·herdr-projects
-  `DISPLAY_ORDER`). thread가 아닌 pane의 질문은 이제 탭 막대에서 세지 않고 사이드바 줄 상태(질문)로만 보인다. 질문 pane으로
-  가는 키(`OpenNotificationTarget`)는 그대로다. 참고의 「ticker가 멈췄으면 그리지 않음」은 aaa host가 묶음을 늘 다시 세므로 없다.
-- **계약 변화 없음.**
-- **시험.** TUI `side_list_like_web`: thread를 시작한 뒤에는 수가 없고, 그 thread의 pane을 보고 없이 닫으면(확인 필요) 탭 막대에
-  ` ● 확인 필요 1 `. 결함 심기: 옛 규칙(질문 pane 수)으로 되돌리면 「20s 안에 확인 필요 수이 되지 않았다」로 실패했다.
-  `attach_draws_layout_and_detach_keeps_sessions`는 thread가 아닌 pane의 질문이 탭 막대에 수를 띄우지 않는지 본다.
-
-### 8.153 TUI 휠 기록 넘기기(herdr `apply_scroll`)(10-18, 사용자 지시 「tui에서도 마우스 잘 동작해야해」, 차이 목록 4장 D 마우스 줄 「휠로 scrollback」, FRONT_API 1.26)
-
-- **참고(herdr 0.9.5).** `src/server/pane_input.rs` `apply_scroll`(보고 pane → 휠 보고, alt 화면 → 화살표, 아니면 `scroll_up`·`scroll_down`을 `mouse_scroll_lines`줄)과 키·글·붙여넣기·마우스 보고 전 `scroll_reset`(누르지 않은 움직임 보고는 그대로), `src/pane/terminal.rs` `ScrollMetrics`, `[ui] mouse_scroll_lines`(기본 3). 기본 TUI 화면은 PageUp·PageDown을 프로그램에 보낸다(`apply_client_terminal_input_events`의 `host_page_keys`가 false, host 기록 넘기기는 `herdr attach`만).
-- **proto(FRONT_API 1.26).** `FrontRequest::PaneScroll { pane, by }`(`ScrollBy`: `up`·`down`(lines)·`bottom`·`offset`(맨 아래에서 lines)): 이 연결의 `PaneWatch` 구독이 보는 기록 위치만 옮긴다. 프로그램에는 아무것도 가지 않고, 구독이 없으면 NotFound. `GridFrame.scroll`(`GridScroll { offset, max }`, 옛 host는 0).
-- **host.** 구독마다 기록 위치를 두고, 장면을 만들 때 pane 화면 사본(aaa-vt `grid_rows_at`)에서 그 위치의 줄을 읽고 같은 잠금 안에서 되돌린다(다른 읽기·웹 snapshot은 늘 지금 화면을 본다). 올라가 있는 동안 기록이 늘면 그만큼 더 올라 보던 줄을 지킨다(ghostty viewport 고정과 같음, 기록 상한에서 앞을 버리면 지키지 못한다). 기록보다 크면 묶고, alt 화면은 기록 0. 올라가 있는 동안 커서를 숨긴다. 모드나 기록 위치만 바뀌어도 한 장 보낸다(커서·모드·위치 hash).
-- **TUI.** 보통 화면(마우스 보고 끔·alt 화면 아님) pane의 휠은 `[tui] mouse_scroll_lines`(기본 3)줄씩 위·아래. 그 pane에 키·글·붙여넣기·그림·마우스 보고를 보내기 전에 올라가 있었으면 맨 아래로 돌린다(누르지 않은 움직임 보고는 그대로). 옛 host(1.25 이하)에서는 「host를 새 aaa로 다시 띄워야 한다」를 보인다.
-- **다른 점.** 기록 위치는 화면(front 연결)마다 둔다. herdr는 pane마다 서버에 하나라 모든 client가 같이 움직인다. aaa는 여러 기기가 한 pane을 보므로 한 화면이 넘겨도 다른 화면은 그대로이고, 맨 아래로 돌리기도 그 화면이 입력을 보낼 때만이다(다른 화면·CLI 입력은 위치를 그대로 둔다).
-- **다음 묶음(5a-2).** pane scrollbar(herdr `pane_scrollbars`: 보통 화면에서 오른쪽 1칸 gutter, PTY가 1칸 좁아짐, 누르기·끌기). 그전에는 올라가 있다는 표시가 숨은 커서뿐이다. → §8.155
-- **시험.** 유닛: aaa-vt `grid_rows_at_scrollback_offset`(위치·끝에서 멈춤·되돌림·alt 화면), host `grid_view_keeps_the_lines_it_shows`(끝에서 멈춤·보던 줄 고정·묶기·맨 아래 따라감), 설정 `mouse_scroll_lines`. TUI harness `wheel_scrolls_history_like_herdr`: `seq 1 200` 뒤 휠 위 한 칸이면 170..198, 올라간 동안 CLI `pane run`의 출력 6줄이 와도 보던 줄을 지켜 한 칸 더 올리면 167..195, 휠 아래 네 칸이면 맨 아래, 올라간 채 치면 맨 아래로 돌아와 친 글이 보임, 올라간 채 붙여 넣어도(bracketed paste, §8.147 `PanePaste`) 맨 아래로(main 4474e43 병합 때 더함, `paste_text`의 맨 아래로를 빼는 결함을 심으면 실패).
-
-### 8.154 TUI pane 이름 바꾸기(herdr `rename_pane`)(10-18, 차이 목록 4장 C, §8.109가 남긴 TUI 몫)
-
-- **참고(herdr 0.9.5).** `src/config/model.rs` `rename_pane`(`prefix+shift+p`), `src/client/shell/overlay_input.rs` `open_rename_pane_overlay`(붙인 이름이 있으면 그 이름, 없으면 빈 칸 `TextEditor::new(label, label.is_none())`)·`save_rename_overlay`(pane은 늘 보냄), `src/client/shell/context_menu.rs`(pane 메뉴 맨 앞 「Rename pane」, `has_manual_label`이면 「Clear pane name」), `src/input/keybind_help.rs`(「close pane」 뒤 「rename pane」).
-- **TUI.** `prefix shift+p`는 포커스 pane의 이름 창(제목 「pane 이름 바꾸기」), Enter면 host `pane_rename`(§8.109, 비우면 host가 지워 띄울 때 이름). pane 메뉴 맨 앞 「pane 이름 바꾸기」(그 pane의 창, 포커스는 그대로)와 붙인 이름(`PaneView.label`)이 있을 때만 「pane 이름 지우기」(바로 지움). 단축키 창은 「pane 닫기」 뒤. 옛 host(1.14 이하)는 「host를 새 aaa로 다시 띄워야 한다」.
-- **시험.** 유닛: 키 `shift+p`, 메뉴 항목 차례(이름 바꾸기 → 지우기 → 자리 바꾸기 …)·높이. TUI harness `pane_rename_like_herdr`: `prefix P` 창에서 붙이면 host label·사이드바 이름, 메뉴 「pane 이름 지우기」로 지우면 띄울 때 이름, 지운 뒤 메뉴에는 지우기가 없고 「pane 이름 바꾸기」가 창을 연다.
-
-### 8.155 TUI pane scrollbar(herdr `pane_scrollbars`)(10-18, 사용자 지시 「tui에서도 마우스 잘 동작해야해」, 차이 목록 4장 D 마우스 줄 「scrollbar」)
-
-- **참고(herdr 0.9.5).** `src/ui/panes.rs` `terminal_inner_rect_for`(`pane_scrollbars`이고 alt 화면이 아니고 폭이 4보다 크면 오른쪽 1칸을 scrollbar 칸으로 빼고 PTY도 그만큼 좁다, `stable_scrollbar_gutter`: 기록이 없어도 칸은 비워 둔다), `src/ui/scrollbar.rs`(`ScrollMetrics`, thumb 길이 = 화면 줄 × 트랙 / (기록 + 화면 줄) 반올림·1 이상, 트랙 `▕`, thumb 포커스 `▐`(overlay1)·아니면 `▕`(overlay0), 트랙 색 포커스 overlay0·아니면 surface_dim), `src/client/shell/mouse.rs`(맞히기 차례 scrollbar → 나눔 경계 → pane, 누르면 그 pane에 포커스, thumb 위면 잡은 줄을 지키며 끌기, 아니면 thumb 가운데가 그 줄로 뛰기, 끄는 동안 33ms마다 바뀐 위치만), `[ui] pane_scrollbars`(기본 켬).
-- **TUI.** herdr대로 보통 화면 pane의 오른쪽 1칸을 scrollbar 칸으로 빼고(PTY가 1칸 좁다), alt 화면(vim 등)에 들어가면 칸을 돌려줘 PTY가 넓어졌다가 나오면 다시 좁아진다. 기록이 있을 때만 그 칸에 트랙과 thumb를 그린다(위치는 §8.153 `GridFrame.scroll`). 누르기·끌기는 `PaneScroll { by: offset }`(§8.153, 이 화면만)으로 보내고, 끄는 동안은 나눔 경계 끌기와 같이 33ms마다 바뀐 위치만, 뗄 때 마지막 위치를 보낸다. `[tui] pane_scrollbars = false`면 칸을 빼지 않는다(그때는 PTY가 칸 전체). 기록 위치를 모르는 옛 host(1.25 이하)에서는 기록이 0이라 트랙을 그리지 않는다(칸은 비워 둔다).
-- **다른 점.** 없음(herdr 기본값과 같이 켬). PTY가 1칸 좁아지는 것은 herdr와 같은 값이고, 바꾸려면 `pane_scrollbars = false`.
-- **시험.** 유닛: `scrollbar` `thumb_and_offsets_like_herdr`(thumb 길이·위치, 맨 위·맨 아래 누르기, 잡기·끌기, 그리기 색), 설정 `pane_scrollbars`. TUI harness `pane_scrollbar_like_herdr`: PTY 폭이 칸 − 1, `seq 1 200` 뒤 트랙 `▕`과 맨 아래 thumb `▐`, 트랙 맨 위 누르기면 맨 위(명령 줄 다음 `1`), thumb를 잡아 아래 끝까지 끌고 떼면 맨 아래, alt 화면이면 PTY가 칸 전체로 넓어졌다가 나오면 다시 좁아짐. 다른 harness 시험의 PTY 폭 기대값도 1칸 좁혔다(`GUTTER`).
-
-### 8.156 TUI 끌어 고르기를 기록까지(herdr selection autoscroll·`PaneSelectionRead`)(10-18, 사용자 지시 「tui에서도 마우스 잘 동작해야해」, 차이 목록 4장 D 마우스 줄 「끌어 선택·자동 스크롤」, FRONT_API 1.27)
-
-- **참고(herdr 0.9.5).** `src/selection.rs`(고른 범위는 기록 맨 앞 줄이 0인 절대 줄 번호, 화면 맨 위 줄 = 기록 줄 수 − 맨 아래에서 올라간 줄 수), `src/client/shell/mouse.rs`(끌기가 pane 위·아래 밖이면 그 거리 × 3줄(3~15)을 바로 넘기고, 가장자리 줄 포함 그쪽에 있는 동안 `SELECTION_AUTOSCROLL_INTERVAL` 30ms마다 한 줄씩 더, 더 넘길 수 없거나 끌기가 끝나거나 pane 칸이 바뀌면 멈춤, 고른 끝은 화면 frame을 기다리지 않고 보낸 위치로 잡음. 끄는 중 휠은 `mouse_scroll_lines`줄 넘기며 고른 끝을 다시 잡고 pane에 넘기지 않음 `scroll_in_progress_selection`), `src/app/api/panes.rs` `PaneSelectionRead`(고른 글은 서버가 화면 사본에서 기록까지 읽는다, client는 기록 글을 갖지 않는다).
-- **proto(FRONT_API 1.27).** `TextPoint { row, col }`(row는 기록 맨 앞 줄이 0, alt 화면은 화면 줄만), `FrontRequest::PaneSelectionRead { pane, from, to }`(읽기 전용, 차례 상관없음, 끝 칸 포함) → `FrontResponse::Selection { pane, text, truncated }`.
-- **host·vt.** aaa-vt `selection_text`: 기록 위치를 잠깐 옮겨 줄마다 칸 범위의 글을 읽고 되돌린다(`grid_rows_at`과 같은 잠금 안). 화면 폭에서 접힌 줄은 줄바꿈 없이 잇고, 접히지 않은 줄은 끝 공백을 뺀다. 응답이 front frame(`MAX_FRAME` 1MiB)에 들게 512KiB에서 앞쪽만 두고 `truncated`.
-- **TUI.** 고른 범위(`Selection`)를 기록 줄 번호로 두어 휠로 넘겨도 고른 글을 따라 칠한다. 끌기·가장자리 자동 넘기기·끄는 중 휠은 herdr 값 그대로(`PaneScroll { by: offset }`, §8.153). 떼면(또는 `copy_on_select`를 끈 채 ctrl+c·cmd+c, 두 번 누름 낱말) host에 `PaneSelectionRead`를 보내고 응답 글을 복사한다(너무 길면 「앞쪽만」 알림). 옛 host(1.26 이하)면 이 화면에 보이는 줄만 바로 복사한다.
-- **다른 점.** 기록이 상한(`SCROLLBACK` 10,000줄)에 차서 앞 줄을 버리기 시작하면 줄 번호가 밀려, 그 사이 고른 글이 몇 줄 어긋날 수 있다(herdr도 고른 글 읽기는 `content_revision`을 보지 않는다). 512KiB 상한은 aaa만(front frame 한도). 고르는 동안 새 출력으로 host가 보던 줄을 지키려 위치를 올리면, 다음 끌기가 보낸 위치로 되돌린다(herdr도 고르는 동안 자기 위치를 쓴다).
-- **시험.** 유닛: aaa-vt `selection_text_spans_history`(기록·화면 걸침, 끝 칸, 거꾸로, 접힌 줄, 끝 넘김, 상한, 읽은 뒤 그대로, alt 화면), TUI `selection_text_by_columns`(기록 줄 번호로 칠하기·`view_top`·`edge_lines`). TUI harness `drag_select_scrolls_history_like_herdr`: `seq 1 200` 뒤 「182」를 누르고 탭 막대로 끌어 잡고 있으면 맨 위 줄이 150 이하까지 올라가고, 떼면 누를 때 화면에 없던 줄(160 등)부터 181과 「1」까지 이어진 숫자로 복사, 「w-6」을 누르고 끈 채 휠 위 한 칸이면 고른 끝이 세 줄 위 「199」로 가 네 줄 복사·셸에는 아무것도 가지 않음.
-
-### 8.157 TUI copy 모드(herdr `copy_mode`, `prefix [`)(10-18, 차이 목록 4장 C 「복사 모드·scrollback 편집기」 중 copy 모드)
-
-- **참고(herdr 0.9.5).** `src/config/model.rs` `copy_mode`(`prefix+[`), `src/client/shell/copy_mode.rs`(`enter_copy_mode`: 커서는 pane 안에 보이는 터미널 커서, 없으면 맨 아래 줄 첫 칸, 끌어 고른 글은 지움. `route_copy_mode_key`: h/j/k/l·화살표 한 칸, PageUp·PageDown·ctrl+b/f 한 쪽(화면 줄 − 2, 2줄 이하면 1), ctrl+u/d 반 쪽, `g` 기록 맨 앞 줄·`G` 화면 끝 줄, `0`·Home 첫 칸, `$`·End 마지막 글자 칸, `^` 첫 빈칸 아닌 칸, `v`·space 글자 단위·`V` 줄 단위 고르기(다시 누르면 그 자리에서 다시 시작, 글자 단위는 움직여야 보임), `y`·Enter 복사하고 나가기, `q` 그냥 나가기, Esc는 고르기가 있으면 지우기만·없으면 나가기, prefix는 prefix 모드로 갔다가 copy 모드로 돌아옴. `reveal_copy_cursor`: 커서가 화면 밖이면 그 줄이 맨 위·맨 아래에 오게 넘김. `exit_copy_mode`: 들어올 때의 기록 위치로 되돌림), `src/client/shell/input.rs` `copy_or_terminal_mode`(copy 모드는 pane에 붙어 있어 포커스가 떠나면 Terminal, 돌아오면 Copy), `src/client/shell/render.rs` 막대(` COPY `·`h/j/k/l`·`v/space`·`y/enter`·`q/esc`, 고르는 중이면 `esc` 지우기·`q` 끝), 커서 칸은 accent 바탕 굵게(터미널 커서는 숨김), `src/client/shell/input_source.rs`(copy 모드도 ASCII 입력기 범위).
-- **TUI.** 위 키와 막대·커서를 그대로 옮겼다(`copy.rs`). 커서·고르기는 기록 줄 번호(§8.156)로 두고, 화면 위치는 이 화면의 기록 위치(`PaneScroll { by: offset }`, §8.153)로 옮긴다. 보낸 위치는 frame을 기다리지 않고 셈하고, 올라가 있는 동안 host가 보던 줄을 지키려 위치를 올리면 같이 올린다(끌어 고르기의 보낸 위치도). 복사는 끌어 고르기와 같이 host가 기록까지 읽는다(`PaneSelectionRead`, §8.156). copy 모드에서는 붙여넣기를 pane에 보내지 않고, 끌어 고르기 뒤 ctrl+c 복사 키도 보지 않는다. 그 pane의 alt 화면이 바뀌면 고르기를 지운다. 단축키 창 「pane 이름 바꾸기」 뒤에 「copy 모드」.
-- **다른 점.** `$`·`^`는 herdr는 서버에 묻고(`PaneCopyMotion`), aaa는 보낸 위치를 따라온 화면 frame의 그 줄에서 찾는다(frame이 아직 따라오지 않았으면 아무것도 하지 않는다, 사람이 치는 빠르기에서는 늘 따라와 있다). 일치를 지우는 때: herdr는 화면 내용 번호(content revision)가 바뀌면 지우고, aaa frame에는 그 번호가 없어 기록이 늘거나 alt 화면이나 pane 크기가 바뀐 때 지운다(기록이 늘지 않고 화면 안에서만 다시 그린 출력은 칠한 자리가 남을 수 있다). 크기는 처음에 빠뜨렸다가 뒤에 더했다: 크기가 바뀌면 줄이 잘리거나 다시 그려져 칠한 자리가 어긋난다(유닛 `search_matches_clear_when_the_pane_resizes`, 크기 조건을 빼는 결함을 심으면 실패). 찾기 답을 기다리는 동안 `y`·Enter를 미뤘다 복사하는 herdr `copy_after_search`는 따로 두지 않았다: 키를 모두 붙잡아 답 뒤에 처리하니 같다. `prefix e`(기록을 편집기로)는 §8.176.
-- **낱말·문단 이동(5b-3, FRONT_API 1.27에 함께).** herdr처럼 host가 화면 사본의 기록까지 보고 정한다: `PaneCopyMotion { pane, cursor, motion }` → `CopyCursor`. herdr `src/copy_mode.rs`대로 칸마다 낱말 갈래(빈칸·문장 부호·글자, 큰 낱말은 빈칸과 나머지)를 두고, 줄 끝 강제 줄바꿈은 빈칸, 넘침 줄바꿈은 잇는다(문장 부호는 ASCII만). 찾는 범위는 커서 둘레 64줄에서 시작해 갈 곳이 없으면 두 배로 넓힌다. 문단(`{`·`}`)은 999줄 안의 첫 빈 줄로, 칸은 그대로. 갈 곳이 없으면 그대로 답한다. TUI는 `w b e W B E { }`로 묻고, 답이 올 때까지 키·붙여넣기·마우스를 붙잡아(새 pane 포커스와 같은 `held`) 다음 키가 옮긴 자리에서 잇는다. 막대는 `h/j/k/l w/b/e`. - **찾기(5b-3).** `PaneCopySearch { query, direction, cursor, previous }` → `CopySearch { matches, total, current, current_global }`(herdr: 글자 그대로, 큰 글자가 있으면 대소문자를 가림, 넘침 줄은 이어 찾음, 앞으로는 커서 뒤에서 시작하는 첫 일치·뒤로는 커서 앞에서 끝나는 마지막 일치, 끝에서 돌아감, 최대 1024개·query 4096바이트). TUI는 herdr `src/client/shell/copy_mode.rs`·`render.rs`·`composition.rs`대로: `/` 앞으로·`?` 뒤로 입력 줄(막대 자리에 ` COPY ` 다음 `/`·`?`, 입력 칸은 `text`·`panel_bg`, 커서 칸 뒤집기, 50칸 이상이면 「enter 찾기  esc 취소」, 입력 줄이 열린 동안은 prefix도 그 줄로, 붙여넣기도 그 줄로, 입력기는 영문으로 바꾸지 않음), Enter면 찾고 Esc면 닫는다. 답이 오면 현재 일치 시작으로 커서를 옮겨 막대 위까지 보이게 넘긴다. `n` 같은 방향·`N` 반대(커서가 현재 일치 시작이면 그 다음부터). 나머지 일치는 `surface1` 바탕, 고른 글을 칠한 뒤 현재 일치는 accent 바탕 굵게. 막대는 herdr처럼 `h/j/k/l w/b/e { }` 이동·`/ ?` 찾기·`n/N` 다시 ` n/m`(찾았으나 없으면 0/0)·고르기·복사·끝, 찾은 글이나 고르기가 있으면 Esc는 둘 다 지우기(커서는 둔다).
-- **시험.** 유닛: `copy_mode_helpers_like_herdr`(쪽 줄 수, 명령 글자, 줄 첫·끝 칸, 줄 단위 범위), 키 `[`. TUI harness `copy_mode_like_herdr`: `seq 1 200` 뒤 `prefix [`·`kkk0v`·`jy`면 「198\n1」 복사하고 나감, `g`면 기록 맨 앞(명령 줄), `Vjj`·Enter면 세 줄 복사하고 맨 아래로 돌아옴, PageUp이면 27줄 위(맨 위 146), `q`면 맨 아래, 셸에는 아무것도 가지 않음. 나갈 때 되돌리기를 빼는 결함을 심으면 실패한다. 5b-3: aaa-vt `word_motions_like_herdr`·`search_like_herdr`·`copy_motion_and_search_span_history`(기록에 걸친 이동·찾기), harness `printf 'one two-three four'` 줄에서 `k0vwwey`면 「one two-three」. 답을 기다리며 키를 붙잡지 않는 결함은 이 머신에서는 harness가 잡지 못한다(답이 키 사이에 먼저 온다). 찾기: 막대가 다 보이게 130칸에서 `?19` Enter면 「12/12」, 현재 일치(199)는 accent·나머지(198)는 surface1 바탕, `n` 「11/12」, `N` 「12/12」, Esc는 찾기만 지움, 이어 `?19\rnvey`면 「197」. 칠하기를 빼거나 찾은 자리로 커서를 옮기지 않는 결함을 심으면 실패한다.
-
-### 8.158 TUI 사이드바 thread 줄을 웹 L1·herdr-projects대로(10-18, 사용자 지시 「tui도 ui 미려하게, 최소 herdr-projects 정도」, 차이 목록 2장 L1·U4~U6)
-
-- **참고.** 웹 목록(§8.71, `web/src/Sidebar.tsx` `MachineGroup`·`ProjectGroup`·`ThreadRow`, `web/src/sidebarModel.ts` `machineRoster`·`threadMachine`·`sortThreads`·`stateLine`·`projectLine`)과 herdr-projects 사이드바(`thread_display` 「id · 제목」, `state_line`, `project_line`, `Group::rank`).
-- **TUI(`aaa-tui::list`).**
-  - 맨 위 「Thread n」 묶음을 없애고 웹처럼 머신마다: 머리 ` ▾ 이름`, 「+ 새 셸」(→ §8.177에서 뺐다), 그 머신의 프로젝트 머리(처음 나온 차례, 굵은 이름, 오른쪽에 그 머신 이 프로젝트 thread 셈 「확인 필요 n · 작업 중 n」, 없으면 「쉼」, 확인 필요가 있으면 빨강), 그 아래 thread 두 줄, 그다음 thread에 딸리지 않은 pane. 맨 아래 「평가」는 그대로다.
-  - thread의 머신은 pane이 있으면 pane의 머신, 없으면 thread 머신 이름·ID(웹 `threadMachine`). thread pane은 pane 줄로 다시 나오지 않는다. 끝난·평가자 thread는 빠진다.
-  - 차례는 묶음 rank(확인 필요 → 검토 대기 → 작업 중 → 쉼) 다음 최근 바뀐 순(웹 `sortThreads`).
-  - 첫 줄 `   <상태 점> t-0001 · 제목`(점은 thread 묶음 점과 그 pane 상태 점 중 급한 쪽(herdr-web-ui `rollupStatus` 차례: 확인창 > 끝남 > 작업 > 쉼). herdr-projects 줄은 herdr가 pane agent 상태로 그리는 `state_icon`, 웹 thread 줄은 오른쪽 `PaneState`다. 그래서 확인창은 묶음이 확인 필요로 바뀌는 30초 전에도 빨강이고, 확인 필요 thread는 harness가 쉬어도 초록이 되지 않는다), 둘째 줄 `     <상태 말>`(묶음 색): 묶음 말과 사실 하나. 확인 필요는 pane 닫힘·실패·확인창·~n%, 검토 대기는 보고, 작업 중은 5분 안에 보고한 진행률 ~n%(100은 빼고) 아니면 보고·변경 뒤 5분이 지나면 「n분 조용」. 「n분 조용」이 늘어나게 1분마다 다시 그린다.
-  - 오른쪽 글이 이름 자리를 먹으면(26칸에서 「확인 필요 2 · 작업 중 1」) ` · ` 단위로 뒤를 덜어 낸다.
-  - 둘째 줄은 고르지 않는다. 탐색 ↑↓는 건너뛰고, 누르면 그 thread, 고른·지금 thread는 두 줄을 같이 칠하고, 고른 thread가 아래 끝이면 둘째 줄까지 보이게 내린다. 지금 pane이 thread pane이면 그 thread 줄을 고른 줄로 삼는다.
-  - 접힌 compact 열은 그대로(thread·pane마다 번호와 점, 차례는 위 목록 차례).
-- **구역 나누기(U4, 10-18).** herdr `src/client/shell/sidebar.rs` `render_sidebar`·`src/ui/sidebar.rs` `expanded_sidebar_sections`·`agent_sidebar.rs` `render_agent_panel_header`대로 펼친 사이드바를 두 구역으로 나눈다.
-  - 위 spaces 구역(높이는 herdr `sidebar_section_heights`: 6줄 밑이면 반씩, 아니면 비율 0.5에 위·아래 3줄 이상): ` spaces`(overlay0 굵게)와 빈 줄, workspace마다 ` <점> 이름`(점은 그 workspace pane들 중 가장 급한 상태, 지금 workspace는 `active_row_bg`·이름 `text` 굵게, 다른 것은 `subtext0`), 맨 아랫줄은 비운다. 차례는 host `workspace_summaries`처럼 기본 workspace 먼저, 그다음 이름 차례.
-  - 아래 agents 구역: 구분선 `─`(`surface_dim`), ` agents`(overlay0 굵게)와 오른쪽 `projects`(herdr-projects 기본 보기 이름, accent 굵게), 빈 줄, 그 아래 위 목록(머신·프로젝트·thread·pane).
-  - workspace 목록은 시작할 때 `Workspaces` 한 번과 그 layout(`Workspace`)을 읽고, 그 뒤 workspace 사건(host는 닫거나 이름을 바꾼 workspace를 탭 없는 사건으로 알린다)으로 맞춘다.
-  - 탐색(`prefix w`)은 herdr처럼 지금 workspace 줄에서 시작한다. ↑↓는 workspace 줄 다음 agents 목록까지 이어 돌고(herdr는 workspace만, agents는 누르기만: aaa는 목록을 키로도 연다, §8.73), workspace 줄에서 Enter면 그 workspace로 바꾼다(포커스는 front마다라 그 workspace의 첫 pane). 숫자 1~9는 탐색 줄 차례라 workspace 줄이 먼저 온다(herdr `SwitchWorkspace`). workspace 줄을 누르면 바꾼다.
-  - 아직 없음: 구역 경계 끌기(`sidebar_section_split`), ` new` 줄(→ §8.177)·`menu`(설정 화면과 함께), workspace 끌어 옮기기·묶음 접기, spaces 구역 따로 휠. 접힌 compact 열은 그대로 agents 목록이다(herdr는 workspace 번호).
-- **다른 점.** thread 줄 점은 herdr-projects처럼 pane 상태만 쓰지 않고 묶음과 급한 쪽을 쓴다(점 하나에 웹의 두 표시를 담는다). 웹은 프로젝트 머리가 두 줄(이름, 셈)이고 접기·메뉴가 있다. TUI는 26칸이라 한 줄(오른쪽에 셈)이고 접기·메뉴는 다음 묶음이다. herdr-projects는 프로젝트 → rank → id 차례로 늘어놓지만 웹 차례(처음 나온 프로젝트, 같은 rank는 최근 바뀐 것 먼저)를 따른다(웹과 TUI가 같은 차례).
-- **시험.** 유닛: `rows_group_threads_by_machine_and_project_like_web`(머신·프로젝트 묶음, rank·최근 순, pane 머신 우선, thread pane 빼기, 끝난·평가자 빼기, 끊긴 머신 「pane 없음」), `state_line_like_herdr_projects`, `thread_rows_render_two_lines_like_herdr_projects`(줄 글·색·고른 두 줄 바탕, 작업 중 thread의 pane에 확인창이면 빨강 점, 25칸에서 셈을 덜어 이름이 남음). TUI harness `side_list_like_web`: 머신 머리 → 새 셸 → `demo` → 「t-000n · alpha-job」과 묶음 말로 시작하는 둘째 줄, thread pane은 한 번만, 새 thread는 같은 프로젝트 머리 아래. U4: lib.rs `sidebar_like_herdr`(머리 ` spaces`, 셋째 줄 ` · main`, 16째 줄 구분선, ` agents`…`projects`, 19째 줄 머신), harness `side_list_like_web` 7b단계(두 구역, 탐색은 지금 workspace 줄에서, scratch 골라 Enter면 탭 loose 하나·포커스 loose, main으로 돌아옴). 전환해도 workspace 이름을 바꾸지 않는 결함을 심으면 실패한다.
-
 ### 8.159 시험 셸 prompt를 기계와 상관없이(10-18, coordinator 「`pane_modes_like_herdr` 간헐 실패」, t-0327 판정)
 
 - **증상.** GitHub macOS(cdef86c·ccbabcb·a492d41)에서 TUI `pane_modes_like_herdr`가 「둘 다」(zoom을 푼 뒤)를 20초 기다리다 실패했다. 오른쪽(나눈) pane에 `right-9`가 없고, runner hostname(48자)이 24칸에서 접힌 prompt 줄만 있었다. 다음 run은 통과했다(간헐). ci-local에서는 나지 않았다.
@@ -3446,7 +3120,7 @@ coordinator 실기(10-18 00:58, iPhone 홈 화면 앱을 앞에 띄움, binary c
   - `profile list --project P`(그 프로젝트의 thread 기본값·허용 목록), `--names`(이름만).
 - **바꾸기는 사람만.** `aaa safety yolo|set`, `aaa profile add|edit|remove|allow|default`는 aaa 세션 밖(`AAA_SESSION_ID`·`AAA_HOOK_SOCK` 없음)이고 표준 입력이 터미널일 때만 한다. safety는 지금 값을 보이고 `[y/N]`에 y를 쳐야 한다(yolo를 켤 때는 무엇이 바뀌는지 먼저 말한다). routine 승인·launchd 설치와 같은 문 하나(`crates/aaa/src/person.rs`)를 쓴다(전에는 둘이 따로 같은 검사를 했다). 참고는 「터미널인가」만 본다: 참고 coordinator의 셸 도구는 터미널 없이 돌지만, aaa pane은 터미널이라 세션 안도 막는다. host.local.toml이 같은 key를 덮으면 고친 뒤 알린다.
   - 남는 한계: host 머신에서 도는 coordinator가 셸로 host.toml을 직접 고치거나 aaa 밖에서 PTY를 열어 명령을 치는 것까지는 막지 못한다(참고도 「a terminal faked by an agent is not stopped by this」). 그 머신 사용자 권한 안의 일이다.
-- **신뢰 창 답(구멍 막음).** `trust_screens = user`인데 aaa 세션 안 CLI(coordinator)가 `aaa question answer`로 thread pane의 신뢰 창에 답할 수 있었다(`thread keys`·메시지는 막고 있었다). 이제 세션 안 CLI(actor `local:<client>@<세션>`)면 화면이 신뢰 창일 때 거부한다. 웹·TUI·세션 밖 터미널(사람)은 그대로 답한다.
+- **신뢰 창 답(구멍 막음).** `trust_screens = user`인데 aaa 세션 안 CLI(coordinator)가 `aaa question answer`로 thread pane의 신뢰 창에 답할 수 있었다(`thread keys`·메시지는 막고 있었다). 이제 세션 안 CLI(actor `local:<client>@<세션>`)면 화면이 신뢰 창일 때 거부한다. 웹·세션 밖 터미널(사람)은 그대로 답한다.
 - **yolo·thread_agent_args가 thread 인자에 닿는 길.** host는 profile의 harness를 모른다(agent가 그 머신 agent.toml에서 푼다). 그래서 host는 `ThreadPrepare.safety`·`ThreadRebrief.safety`(`LaunchSafety { yolo, thread_agent_args, default_profile }`)를 보내고 agent가 profile을 푼 뒤 붙인다(`threads.rs` `with_safety`): 프로젝트 기본 profile과 같은 harness의 기본 profile이면 `thread_agent_args`를 앞에(참고 `profiles::launch_args`, issue #45: claude 인자로 codex가 뜨지 않게, 사람이 정의한 profile은 제 인자를 쓴다), yolo면 harness의 권한 건너뛰기 인자를 뒤에(참고 `Safety::launch_args`, 이미 있으면 한 번만). argv와 resume argv가 같은 인자를 쓴다. shell·custom은 yolo 인자가 없어 그대로 묻는다. agent feature `launch_safety.v1`. 그 기능이 없는 옛 agent 머신에 yolo나 `thread_agent_args`가 켜져 있으면 조용히 빼지 않고 thread start·restart를 거부한다(갱신하거나 끄라는 말).
 - **restart.** 새 대화 restart(`--resume` 없음)는 profile을 그 머신 agent.toml에서 다시 풀고 허용 목록을 다시 본다(참고 ticker `launch`: 그 사이 지우거나 막은 profile은 뜨지 않고 바꾼 yolo·인자가 닿는다). 전에는 profile을 주지 않으면 저장한 argv를 썼다. 옛 agent는 전처럼 저장한 argv를 쓴다. 아무것도 만들지 못하고 실패한 thread를 자리부터 다시 만드는 restart(§8.142)도 허용 목록을 다시 보고 safety를 함께 보낸다(병합 때 `place_and_launch`에 넣었다).
   - 참고와 다름: `restart --resume`과 재부팅 복원은 저장한 resume argv를 쓰므로 그 뒤 바꾼 yolo가 닿지 않는다(시작할 때 들어간 인자는 유지된다). 대화 ID를 잇는 argv를 다시 지으려면 harness마다 인자 자리를 알아야 해 미뤘다. `safety show`·바꾼 뒤 알림(「이미 도는 thread는 다시 띄울 때까지 옛 인자」)이 같은 뜻이다.
@@ -3578,7 +3252,7 @@ coordinator 실기(10-18 00:58, iPhone 홈 화면 앱을 앞에 띄움, binary c
 
 - **참고.** herdr-web-ui는 화면 문구를 `t("…")` 표(`src/lib/i18n.ts`, `i18n.ko.ts` 등)로 빼고 설정 「모양」에서 시스템(브라우저 따름)·영어·
   중국어·일본어·한국어를 고른다(`SettingsDialog.tsx`, 공유 설정 `language`).
-- **결정.** aaa 웹·TUI 화면은 한국어로 고정한다. 다국어는 하지 않고, 배포 계획 때 다시 본다. 결정 20 D5의 「다국어는 한국어 먼저(구조만
+- **결정.** aaa 웹 화면은 한국어로 고정한다. 다국어는 하지 않고, 배포 계획 때 다시 본다. 결정 20 D5의 「다국어는 한국어 먼저(구조만
   참고)」를 이것으로 좁힌다. 참고와 다르게 둔 것이다.
 - **지금 모양.** 옮긴 문구는 참고 `i18n.ko.ts`의 한국어를 코드에 바로 쓴다(`t()` 표를 두지 않는다). 설정 「모양」에 언어 칸이 없다.
   host가 들고 있는 공유 설정의 `language`(참고 브라우저가 쓴 것)는 읽지 않는다(`preferences.ts`). `index.html`은 `lang="ko"`.
@@ -3670,7 +3344,7 @@ coordinator 실기(10-18 00:58, iPhone 홈 화면 앱을 앞에 띄움, binary c
   - 여러 질문 form은 host가 탭을 돌지 않는다: 답이 간 뒤 남은 창(다음 탭·검토)은 agent 화면 감지가 새 질문으로 알리고(`ask_anew.v1`,
     plan §8.110) 그 질문에 새 `menu`가 붙는다.
   - 웹 `PromptCard.tsx`(참고 그리기, 문구는 i18n.ko)·`herdr/PromptCard.css`(그대로). 카드는 지금 자리(pane 아래 dock, Q1)에 둔다.
-    앱 `button` 기본(고정 높이·한 줄)은 선택지 줄에서 되돌린다. `menu`가 없는 질문은 예·아니오 카드 그대로다. CLI·TUI는 예·아니오
+    앱 `button` 기본(고정 높이·한 줄)은 선택지 줄에서 되돌린다. `menu`가 없는 질문은 예·아니오 카드 그대로다. CLI는 예·아니오
     그대로다(`aaa question answer <id> yes|no`).
 - **계약.** FRONT_API 1.32(§8.171과 한 번에 착지해 묶음): `QuestionView.menu`(`QuestionMenu`·`MenuOption`), `question_answer`의 `menu`·`pick`(`MenuPick`). 옛 front의
   예·아니오 답과 옛 host의 질문(menu 없음)은 그대로 읽는다. 새 오류 코드는 두지 않았다(바뀐 창은 BadRequest와 까닭, 옛 CLI가 모르는
@@ -3767,27 +3441,6 @@ coordinator 실기(10-18 00:58, iPhone 홈 화면 앱을 앞에 띄움, binary c
     - 유닛 하나: 시한에 받은 것을 버림.
   - 고지 모으기에서 worker 빌드 쪽을 빼도 시험은 통과한다. 재어 보니 지금 worker 빌드가 그린 패키지는 모두 주 빌드에도 있다(Shiki 문법은 주 빌드의 따로 받는 조각이다). worker 묶음도 따로 실려 나가므로 worker만 쓰는 패키지가 생길 때를 위해 둔다.
 
-### 8.176 TUI 기록을 편집기로(herdr `prefix e` `edit_scrollback`)(10-18, coordinator 결정 「(가) herdr대로 — agent가 그 pane 기록을 그 머신 임시 파일로 쓰고 같은 머신에 편집기 overlay pane을 띄운다(임시 파일은 끝나면 지움, 경로는 agent 허용 root 정책 안)」, 차이 목록 4장 C 「복사 모드·scrollback 편집기」 중 편집기, FRONT_API 1.32)
-
-- **참고(herdr 0.9.5).** `src/config/model.rs` `edit_scrollback`(`prefix+e`, 단축키 창 panes 묶음 rename pane 다음). `src/app/custom_commands.rs` `open_focused_scrollback_in_editor`: 포커스 pane 기록 전체(`recent_unwrapped_text_snapshot(usize::MAX)`)를 서버 머신 임시 폴더에 `herdr-scrollback-*.txt`(새 파일만, 0600)로 쓰고 `src/platform/*.rs` `scrollback_editor_argv`(unix `/bin/sh -c 'scrollback_file=…; eval "${EDITOR:-vi} \"$scrollback_file\""; status=$?; rm -f "$scrollback_file"; exit $status'`, Windows `VISUAL` → `EDITOR` → `notepad.exe` 뒤에 경로)로 `spawn_overlay_argv_command`: 포커스 pane을 좌우로 나눠 새 pane, 그 탭 zoom, 새 pane에 포커스, `OverlayPaneState { previous_focus, previous_zoomed, temp_files }`, 알림 「opened scrollback」. pane이 끝나면 `src/app/api.rs` `restore_overlay_after_exit`: 임시 파일을 지우고, overlay에 포커스가 있었으면 전 포커스와 `previous_zoomed`로, 아니면 끝날 때의 zoom 그대로.
-- **aaa.** pane은 agent 머신에 있으니 파일과 편집기도 그 머신이다.
-  - Front `PaneEditScrollback { workspace, pane }` → `Workspace`(FRONT_API 1.32, 조작 권한. 같은 1.32 배포에 더하고 minor를 올리지 않는다: §8.171·§8.172가 1.31 front를 그대로 붙이려 묶은 minor라서다. 그 요청을 모르는 1.32 host는 오류로 답해 TUI가 「기록을 편집기로 열지 못했다: …」를 보인다). host는 화면 사본의 기록 전체(aaa-vt `Vt::unwrapped_all`: 줄 상한 없이, 접힌 줄은 잇는다)를 그 머신 agent에 512KiB 조각으로 보낸다(`ScrollbackWrite { name, offset, data, eof }`).
-  - agent는 임시 폴더(`std::env::temp_dir()`, 검사는 그 실제 경로로)가 `[agent] file_roots` 안일 때만 그 폴더에 `aaa-scrollback-<name>.txt`로 쓴다(Windows 실제 경로의 `\\?\` 접두가 편집기 명령에 가지 않게 쓰는 경로는 실제 경로로 바꾸지 않는다): 이름은 host가 정한 hex 16자, 새 파일만, 0600, 쓴 길이와 다른 위치는 거절, 64MiB 상한. 마지막 조각에 경로와 편집기 명령(herdr 그대로, agent OS 기준)을 돌려준다. agent 기능 `scrollback.v1`이 없으면 host는 「agent를 새 aaa로」로 거절한다. AGENT_LINK는 올리지 않았다(올리면 운영 agent 1.3이 끊긴다).
-  - host는 그 명령으로 그 pane을 좌우로 나눠(cwd는 나누기와 같이 `[terminal] new_cwd`) 새 pane을 띄우고 탭을 zoom해 한 번 저장한다. 편집기 pane 표시(머신·workspace·탭·나누기 전 zoom·파일 이름)는 host 메모리에만 둔다.
-  - 그 pane이 실행 중이 아니게 되면(끝남·`pane close`·session host 유실·재부팅, `on_session`과 agent 다시 붙기) layout에서 빼고 zoom을 정해 한 번 저장한 뒤(layout 사건 하나), 기록을 지우고(`forget`) `ScrollbackRemove { name }`(이미 없으면 그대로)로 파일을 지운다. 프로그램 pane(`sh -c`)이라 셸 exit 닫기(§8.143)와 재부팅 복원(4장 A)에는 들지 않는다.
-  - zoom: 끝날 때도 zoom이었으면 나누기 전 값으로(빼면 풀리니 나누기 전이 zoom일 때만 다시 켠다), 사람이 그 사이 풀었으면 그대로.
-  - TUI: `prefix e`(단축키 창 「pane 이름 바꾸기」 다음 「기록을 편집기로」). 답이 올 때까지 키를 붙잡고(새 pane 포커스와 같은 `held`) 새 pane에 포커스, 알림 「기록을 편집기로 열었다」. 편집기 pane이 빠질 때 그 pane에 포커스가 있었으면 연 pane으로 돌아간다.
-- **다른 점.**
-  - 기록은 host 화면 사본이 가진 만큼이다: 상한 10,000줄(`aaa_vt::SCROLLBACK`), host를 다시 띄운 뒤에는 구독 snapshot의 최근 2000줄부터(session IPC를 바꾸지 않으려고 session host 기록까지 읽지 않는다). herdr는 서버 pane 기록 전체.
-  - 편집기는 그 머신 agent가 받은 환경의 `EDITOR`다. launchd 등으로 띄운 agent는 `EDITOR`가 없을 수 있어 `vi`가 뜬다.
-  - zoom 되돌리기: herdr는 overlay에 포커스가 있었는지로 가르고, host는 front마다의 포커스를 모르니 끝날 때의 zoom으로 가른다(포커스가 있던 보통 경우 결과가 같다). 편집기 pane을 `prefix x`로 닫으면 닫기가 zoom을 먼저 풀어, 나누기 전이 zoom이어도 다시 켜지 않는다.
-  - host를 다시 띄우면 표시를 잊는다: 편집기 pane은 끝난 화면이 남는 프로그램 pane이 된다(사람이 닫는다). agent가 세션 기록을 잃고 다시 붙어도(hello에 그 세션이 없음) 표시와 layout 자리가 남는다(다른 pane과 같은 모서리). unix 명령은 스스로 파일을 지우지만 끝내기로 끝났으면 파일이 남는다. 조각을 쓰다 agent 연결이 끊겨도 쓰다 만 파일이 남는다(그 머신 임시 폴더 정리에 맡긴다).
-  - 감사 기록 `pane_run`에는 편집기 명령(임시 파일 경로, 예: `/tmp/aaa-scrollback-0123456789abcdef.txt`)이 남는다. 기록 내용은 어디에도 남기지 않고, 경로도 로그(tracing)에는 쓰지 않는다.
-- **시험.**
-  - 유닛: agent `chunks_names_and_remove`(조각·위치 어긋남·이름 형식·덮어쓰기 거절·0600·지우기 두 번·빈 기록), `unix_editor_runs_in_the_pane_shell`·`windows_editor_from_env_or_notepad`(herdr 시험 셋, Windows 명령 줄 낱말), `scrollback_stays_inside_file_roots`(허용 폴더 밖이면 Forbidden), aaa-vt `unwrapped_all_reads_the_whole_history`(읽기 상한보다 긴 기록을 처음부터), host `zoom_comes_back_only_if_it_was_zoomed_before_and_still_at_exit`, 키 `e`.
-  - TUI harness `edit_scrollback_like_herdr`: agent `EDITOR`는 받은 경로를 적고 내용을 보인 뒤 Enter를 기다리는 스크립트, `TMPDIR`는 실험실. `seq 1 200` 뒤 `prefix e`면 편집기 pane·` Z`·알림, 파일은 실험실 임시 폴더의 `aaa-scrollback-*.txt`(0600)에 1~200. Enter면 닫히고 zoom이 풀리고 연 pane으로 돌아오고 파일이 없다. `prefix x`로 닫으면 host가 파일을 지운다. 나누기 전 zoom이면 다시 zoom, 사람이 풀었으면 그대로.
-  - 처음에는 `pane read`와 같은 읽기를 써 최근 80줄만 갔다(harness가 잡아 `unwrapped_all`을 더했다). 결함 심기: 닫지 않기·host 지우기 빼기·zoom 되돌리기 빼기·끝날 때 zoom을 보지 않기는 각각 그 단계에서 실패한다. 포커스 되돌리기(`overlay_back`)는 빼도 이 시험이 잡지 못한다: 편집기 pane이 연 pane 바로 뒤에 들어가, 빠질 때의 대체 규칙(앞 pane)도 연 pane으로 간다.
-
 ### 8.177 「+ 새 셸」 줄 대신 고른 머신에 새 workspace·탭(herdr endpoint 줄·spaces ` new`)(10-18, 차이 목록 2장 U8 #344, coordinator 「이어서 U8」)
 
 - **참고(herdr 0.9.5).**
@@ -3811,30 +3464,6 @@ coordinator 실기(10-18 00:58, iPhone 홈 화면 앱을 앞에 띄움, binary c
   - 유닛: `new_workspace_answer_enters_it`(답이 오면 그 workspace·새 pane, 실패면 「새 workspace를 만들지 못했다: …」), `new_workspace_machine_like_herdr_endpoint`(포커스 머신, 고르면 그 머신과 footer 이름·누를 칸 12칸, 포커스가 바뀌면 풀림, 끊긴 머신은 오류, 포커스가 없으면 로컬, 머신 하나면 ` new` 5칸, 마우스를 받지 않으면 없음), `sidebar_like_herdr` 15째 줄 ` new`, `step_skips_headers_and_stops_at_ends`(머신 머리도 고른다), 키 `shift+n`.
   - TUI harness `new_workspace_on_picked_machine_like_herdr`: 실험실 원격 agent labB를 pane 없이 등록한다. 「새 셸」 글이 없고 ` new · labA`다. labB 머리를 누르면 ` new · labB`, ` new`를 누르면 labB에 `workspace`가 생겨 그리로 가고 그 셸에 입력이 간다. 탐색 Enter로 labA를 고르고 `prefix shift+n`이면 `workspace-2`가 labA에 생긴다. labB를 고르고 `prefix c`면 새 탭이 labB에 생긴다. labA를 고른 뒤 탭 1을 거쳐 탭 2로 오면 다시 labB다. `side_list_like_web` 6단계는 「+ 새 셸」 대신 머신 머리 Enter 뒤 `prefix c`다.
   - 결함 심기: 고른 머신 무시(「labB를 고름」), 새 workspace만 포커스 머신(「새 workspace」), 포커스가 바뀌어도 고른 것 유지(「탭 2」)는 각각 그 단계에서 실패한다.
-
-### 8.178 TUI 설정 창과 전체 메뉴(herdr `prefix s`·spaces `menu`)(10-18, 차이 목록 4C 설정 화면 #542, coordinator 「이어서 U8 → 4C」)
-
-- **참고(herdr 0.9.5).**
-  - `src/config/model.rs` `settings`(`prefix+s`, 단축키 창 global 묶음 keybinds 다음). `src/client/shell/settings.rs`: 구역 theme·indicators·sound·toasts·integrations, 열면 지금 테마를 고른 채, 테마 구역 ↑↓는 바로 입혀 보기(`preview_selected_theme`), Esc는 연 때의 테마로 되돌리고 닫기, Tab·→·l·shift+Tab·←·h 구역(끝에서 돈다), Enter·space 적용(`apply_settings_choice`): 테마는 쓰고 닫고, 나머지는 쓰고 창을 둔다. 쓰기는 `src/config/write.rs` `write_edit`(설정 파일의 그 key만 고침) 뒤 client 설정 다시 읽기와 서버 `ServerReloadConfig`.
-  - `settings_overlay.rs` `render_settings_overlay`: 가운데 76×22, ` settings` 굵게, 구역 이름표(지금 구역 accent 바탕 굵게, 나머지 overlay1), `─` 구분선, 고르는 줄(고른 줄 accent 바탕 굵게 `▸`, 지금 테마 ` ✓`), 아래 ` ↑↓ select  tab section`, ` ↵ apply `·` esc close ` 단추. indicators 줄은 「color dots  ● ● ● ○ ·」·「distinct symbols  × ◐ ✓ ○ ·」(`src/client/shell.rs` `status_icon`).
-  - 마우스(`mouse.rs`): 구역 이름표는 그 구역, 줄은 고르기(테마는 미리 보기, 나머지는 바로 적용), apply 단추, close 단추·창 밖은 되돌리고 닫기.
-  - 전체 메뉴(`global_menu.rs`·`overlays.rs` `render_global_menu`): spaces 맨 아랫줄 오른쪽 `menu`(마우스를 받을 때, 누를 칸 6칸), 항목 settings·keybinds·reload config·(새 판이 있으면 what's new)·detach, `menu` 오른쪽 끝에 맞춰 그 위에, 폭은 가장 긴 항목 + 4, 움직이면 고르고 누르면 하기, 밖을 누르면 닫기, ↑↓·Enter·Esc.
-- **aaa(TUI만, proto는 그대로).**
-  - `prefix s` 설정 창(단축키 창 「전체」 묶음 「단축키」 다음 「설정」). 구역은 테마·상태 표시 둘. 글은 이름 창과 같이 한국어(` 설정`, ` ↑↓ 고르기  tab 구역`, ` ↵ 적용 `·` esc 닫기 `). 키·마우스는 herdr대로.
-  - 저장은 host.toml `[tui]`(`theme`, 새 `status_indicators = "dots"|"symbols"`)다. TUI가 이미 읽는 그 파일이 herdr 설정 파일 자리다(TUI는 host와 같은 머신·설정 폴더에서 돈다). `aaa_config::tui_edit::set`이 그 key만 고치고(주석·차례·다른 표 그대로, 빈 파일이면 `schema = 1`부터, 고친 글이 다시 읽히는지 확인) 임시 파일 뒤 rename으로 쓴다. host는 `[tui]`를 읽지 않아 host 다시 읽기는 없다.
-  - 쓴 뒤 host.toml·host.local.toml을 다시 읽어 입힌다. host.local.toml이 같은 key를 덮어 값이 그대로면 오류 막대 「host.local.toml의 [tui] <key>가 덮고 있어 바뀌지 않았다」. 쓰지 못하면 창을 둔 채 「설정을 저장하지 못했다: …」.
-  - 상태 표시 `symbols`면 상태 점(사이드바 줄·spaces·접힌 열·좁은 화면 머리)이 확인 대기 `×`·작업 `◐`·끝남 `✓`·쉼 `○`·모름 `·`이다.
-  - spaces 맨 아랫줄 오른쪽 `menu`(§8.177 ` new`와 같은 줄, 마우스를 받을 때만): 전체 메뉴 설정·단축키·설정 다시 읽기·나가기(오른쪽 누름 메뉴와 같은 틀).
-- **다른 점.**
-  - sound·toasts·integrations 구역은 뺐다: aaa TUI에는 배경 상태 소리, 알림 전달 방식(herdr 안·터미널·시스템), harness 연동 설치가 없다. 전체 메뉴의 what's new(새 판 알림)도 없다.
-  - 다른 TUI(같은 host에 붙은 다른 `aaa attach`)는 바뀐 설정을 모른다(`prefix shift+r`로 읽는다). herdr는 서버 다시 읽기가 모든 client에 간다. 웹 테마(공유 설정 §8.79 `theme`·`palette`)와는 따로다.
-  - host.toml을 사람이 편집기로 연 채 저장하면 그 편집기의 사본이 TUI가 쓴 값을 덮을 수 있다(herdr 설정 파일도 같다).
-  - 같은 순간 `aaa profile`·`aaa safety`가 host.toml을 쓰면 한쪽 변경이 진다(둘 다 임시 파일 → rename이라 파일은 온전하다). host 프로세스는 host.toml을 쓰지 않는다.
-  - 좁은 화면 두 줄 머리와 접힌 compact 열에는 `menu`가 없다(herdr도 펼친 spaces 구역에만).
-- **시험.**
-  - 유닛: aaa-config `tui_edit` `keeps_the_rest_and_starts_an_empty_file_with_schema`(주석·다른 key 그대로, 빈 파일 `schema = 1`, 쓴 뒤 읽힘, 받지 않는 값 거절), 설정 `status_indicators`, list `indicators_like_herdr`(두 모양 다섯 상태), lib `settings_like_herdr`(창 글·구역 이름표·`▸`·`✓`·미리 보기·구역 바꾸기·되돌리기), `new_workspace_machine_like_herdr_endpoint`에 `menu` 칸, mouse `menu_like_herdr`에 전체 메뉴 항목·자리, 키 `s`.
-  - TUI harness `settings_like_herdr`: 이름이 claude인 셸에 Claude 확인창을 그려 확인 대기 pane을 만든다. `prefix s` → `▸ catppuccin ✓`, `jj`면 탭 막대 바탕이 terminal(터미널 기본)로, Esc면 catppuccin으로 돌아오고 host.toml에 theme가 없다. 다시 `jj` Enter면 닫히고 host.toml에 `theme = "terminal"`(실험실 다른 줄 그대로). 상태 표시 구역에서 기호를 고르면 창은 그대로·`status_indicators = "symbols"`·확인 대기 점 `×`. `menu`를 누르고 Enter면 설정 창. host.local.toml에 theme를 두고 적용하면 덮음 알림. `new_workspace_on_picked_machine_like_herdr`는 footer 비교에서 `menu`를 뺀다.
-  - 결함 심기: 되돌리기 빼기(「되돌림」), 쓰기 빼기(「적용」), 덮음 확인 빼기(「덮음 알림」), 상태 점에 설정 모양을 넘기지 않기(「기호」)는 각각 그 단계에서 실패한다.
 
 ### 8.179 대화의 사람·답 말을 Markdown으로(10-18, §8.171 남은 것, herdr-web-ui ChatView 「참고대로」)
 
@@ -3909,19 +3538,6 @@ coordinator 실기(10-18 00:58, iPhone 홈 화면 앱을 앞에 띄움, binary c
   - 웹 E2E spec 12 「coordinator 열기」: 허용 목록에 host 머신 profile이 없으면 메뉴 없이 그 말, 기본 profile이 첫 항목 「fake 기본」, 메뉴를 연 뒤 허용 목록을 바꾸면 host `forbidden` 글이 머리 아래에 서고 화면은 그대로, 고르면 그 pane 주소로 가 화면에 fake가 뜨고 host 기록은 역할 coordinator 하나, 뒤로 가서 다시 고르면 띄우지 않고 같은 pane, 휴대폰 폭은 표지 16px 단추·옆 밀림 없음·아래 sheet. 심은 결함 둘(허용 목록 거르기 빼기, 도는 coordinator면 pane으로 안 감)이 실패했다. 휴대폰 단추 표지가 8px로 눌린 것(뒤에 묶인 `.btn` padding)도 이 시험이 찾았다.
   - 웹 E2E 그림(`shot`)은 Playwright `animations: "disabled"`로 찍는다: 창 폭을 바꾼 바로 뒤 drawer가 미끄러지는 중을 찍던 휴대폰 그림(`phone-project-threads` 등)이 끝난 모습이 된다.
 
-### 8.181 다른 기기 TUI: 웹 WebSocket 위 Front API(10-18, 차이 목록 4장 A #495, 지금 497줄)
-
-- **명령.** `aaa attach --remote <웹 주소> [-w <workspace>]`(herdr `--remote <ssh-target>`의 aaa 꼴). 주소는 `aaa web publish`의 https 주소이고 scheme이 없으면 https다. `http://`는 host 머신 loopback(`127.0.0.1:<포트>`)만 받는다: 장치 token을 다른 기기로 평문으로 보내지 않는다(연결 전에 거부).
-- **입장.** 이 기기 상태 폴더 `remote/<scheme>-<이름>-<포트>.token`(0600, 폴더 0700)에 장치 token이 없거나 host가 받지 않으면(401) 사람에게 pairing 코드를 묻는다(`person::require`: aaa 세션 안·터미널 아님 거부). host 사람이 `aaa web pair`(보기만이면 `--reader`)로 낸 코드를 `POST /api/v1/pair`에 내고 `Set-Cookie`의 token을 둔다. 기기 이름은 「aaa TUI · <이 기기>」(host `aaa web devices`). 받지 않는 token은 지우고 다시 묻는다. 새로 받은 token도 거부되면 멈춘다.
-- **통신.** host 웹 listener에 `GET /api/v1/front`(WebSocket)를 더했다(새 listener·인증서 없음). 글 메시지 하나가 같은 머신 socket의 제어 frame 하나다: Hello·Welcome·요청·응답·사건(`Grid` cell grid diff 포함)이 그대로다. host는 같은 머신 연결과 같은 처리(`front::serve_conn`)를 탄다. 다른 것은 신원뿐이다: 권한과 목록·화면의 보기 전용 표시는 그 기기 역할(reader/controller), actor는 웹 `call`과 같은 `device:<id>`, 다른 기기가 알린 aaa 세션은 쓰지 않는다. 기기를 취소하면 4401로 닫고(웹 화면과 같은 code) TUI는 「이 기기가 host에서 취소됐다」로 끝난다.
-- **살아 있는지.** host는 상태 사건 연결처럼 15초마다 ping하고 45초 동안 아무것도 받지 못하면 연결을 버린다(잠든 노트북의 반쯤 열린 연결이 「지금 쓰는 화면」을 쥐고 있지 않게). TUI는 60초 동안 아무것도 오지 않으면 「host 웹이 답하지 않는다」로 끝난다. 키 하나하나가 바로 가게 TCP Nagle을 끈다. 느린 망에서는 cell grid가 바뀐 줄만 묶어 보내므로(초당 30장 상한) 밀린 화면이 쌓이지 않는다.
-- **보기 기기.** Welcome의 역할이 Reader면 TUI는 탭 막대 오른쪽에 「보기 전용」(웹의 보기 전용 표시와 같은 자리 뜻)을 보이고, pane 크기를 걸지 않으며(host가 거부한다), 친 글·붙여넣기·그림은 보내지 않고 오류 막대로 알린다. thread 세션 안에서 연 같은 머신 TUI(Reader)도 같다. layout 바꾸기는 host가 거부한 말이 오류 막대에 선다.
-- **키·설정.** 이 기기의 `[tui]`(host.toml이 없으면 기본값). herdr `--remote-keybindings` 기본 `local`과 같다.
-- **웹 「보는 화면」.** push 거르기의 presence는 보내지 않는다: 같은 머신 TUI와 같다.
-- **참고와 다름.** (1) herdr는 SSH 너머 서버에 붙고 서버가 없으면 띄운다: aaa는 SSH를 쓰지 않고(결정 6) host를 띄우지 않는다. (2) 계획에 적은 OS 신뢰 저장소 대신 webpki 루트(새 crate 없이 host의 다른 client와 같은 길). (3) 계획에 적은 웹 끝점 셋 대신 `/api/v1/front` 하나(front의 `aaa-vt` 의존 금지). (4) herdr는 원격 client 쪽 키 설정을 고를 수 있다(`--remote-keybindings remote`): aaa는 이 기기 설정만 쓴다.
-- **계약.** Front API 메시지는 그대로라 FRONT_API를 올리지 않는다. 옛 host(`/api/v1/front` 없음)에는 「host가 원격 front를 받지 않았다(HTTP …). 옛 host면 host binary를 새로 바꾼다」로 멈춘다. `FrontClient.role`(Welcome의 역할)은 Rust client 쪽 값이다.
-- **시험(결함 심기로 확인).** TUI harness `remote_attach_rides_the_web`: 실험실 웹 loopback에 다른 기기 상태 폴더로 붙는다. 다른 이름의 http는 연결 전 거부, 처음에는 코드를 묻고 붙으면 탭·사이드바·이 화면 칸 크기의 lease·입력이 pane에, token 0600, host 기기 목록에 조작 기기 하나, 나갔다 lease가 풀린 뒤 다시 붙으면 묻지 않음. 보기 기기는 「보기 전용」이고, 조작 기기 입력이 따라 보일 때 오류 막대가 비어 있으며(붙으며 크기를 걸었다면 host 거부가 서 있다, 한 연결 안 차례) 친 글은 pane에 가지 않는다. 조작 기기를 취소하면 그 화면이 까닭과 함께 실패로 끝나고, 다시 붙으면 token을 지우고 다시 묻는다. 심은 결함 여섯(host가 기기 역할을 무시·취소를 무시, TUI가 거부된 token을 남김·보기 기기가 크기를 걺·친 글을 보냄, http를 아무 이름에나)이 모두 실패했다. 화면 관측기는 이제 alt 화면(`CSI ? 1049 h/l`)을 실제 터미널처럼 따로 둔다: TUI 앞에 찍힌 pairing 물음이 TUI 화면에 섞이지 않고, 끝난 뒤 글은 보통 화면에 선다. 유닛: `remote::targets`(주소·Host·Origin·cookie 이름·token 파일 이름), `token_file_is_private`, `tls_checks_the_certificate`(그 인증서를 믿는 루트로는 pairing·SNI·Host·Origin, webpki 루트로는 자체 서명 거부). host `origin_must_match_the_whole_origin`에 `/api/v1/front`.
-
 ### 8.182 대화 말 둘레: 기둥 폭·긴 사람 말 접기·말마다 복사(10-18, §8.179 옮기지 않은 것, herdr-web-ui ChatView 「참고대로」)
 
 - **참고.** herdr-web-ui(aa624cb) `ChatView.tsx`·`ChatView.css`: 대화는 `--chat-w`까지의 가운데 기둥이다. 긴 사람 말(12줄·900자 넘음,
@@ -3977,30 +3593,29 @@ coordinator 실기(10-18 00:58, iPhone 홈 화면 앱을 앞에 띄움, binary c
 - **표지 줄(참고 「Written by herdr-projects」, src/project.rs:559–566·602).** 안내 둘째 문단이 `aaa가 쓴 파일이다.`다. 바이트 일치로
   「고친 흔적」을 가리던 rename 규칙은 안내 글을 바꾸는 순간 모든 옛 프로젝트를 고친 것으로 보므로 표지로 바꿨다(`orch::GUIDE_MARK`).
 - **`aaa doctor files [--fix]`(FrontRequest `project_files`).** host가 모든 프로젝트(보관 포함, 참고 `list_slugs`)를 본다
-  (`orch::files_problems`, 참고 `priming_problems`): AGENTS.md가 없음·표지 있는데 지금 안내가 아님·표지 없음, CLAUDE.md가 AGENTS.md
-  링크가 아님, uploads/ 없음, routines/pr-followup.md 없음. 출력은 참고 줄 모양 `[ok  ]`·`[warn]`·`[FAIL] files <p>: …`이고 FAIL이
+  (`orch::files_problems`, 참고 `priming_problems`): AGENTS.md가 없음·표지 있는데 지금 안내가 아님·표지 없음,
+  uploads/ 없음, routines/pr-followup.md 없음. 출력은 참고 줄 모양 `[ok  ]`·`[warn]`·`[FAIL] files <p>: …`이고 FAIL이
   있을 때만 실패로 끝난다(참고 `healthy`). `--fix`는 고칠 것이 있는 프로젝트만 고친다(`orch::write_files`, 참고 `write_priming`).
-  - 표지 있는 AGENTS.md는 지금 안내로 다시 쓴다. 표지 없는 AGENTS.md(옛 aaa·사람이 쓴 것)와 링크가 아닌 CLAUDE.md는 `<이름>.before-aaa`로
+  - 표지 있는 AGENTS.md는 지금 안내로 다시 쓴다. 표지 없는 AGENTS.md(옛 aaa·사람이 쓴 것)는 `<이름>.before-aaa`로
     옮겨 두고 쓴다(참고 `.before-herdr-projects`). 안내 글을 고쳐 쓰려면 PROJECT.md·memory에 쓰라고 표지 문단이 말한다(참고도 AGENTS.md는
     생성물이다).
-  - 참고와 다름: 옮겨 둘 이름이 이미 있으면 참고는 AGENTS.md를 그냥 덮고 CLAUDE.md를 지운다(사람 글을 잃는다). aaa는 그 프로젝트를
+  - 참고와 다름: 옮겨 둘 이름이 이미 있으면 참고는 AGENTS.md를 그냥 덮는다(사람 글을 잃는다). aaa는 그 프로젝트를
     고치지 않고 FAIL로 알린다(사람이 둘을 합치거나 하나를 치운 뒤 다시).
   - 참고와 다름: 참고 AGENTS.md는 짧은 가리킴이고 안내 전문은 `skill` 명령이 binary에서 내므로 binary만 바꾸면 안내가 바뀐다. aaa는
     안내 전문이 AGENTS.md에 있어(§8.21) binary를 바꾼 뒤 `aaa doctor files --fix`를 한 번 돌려야 닿는다.
-  - CLAUDE.md 링크는 aaa에 없던 것이다. Claude Code는 AGENTS.md를 읽지 않으므로 claude coordinator가 안내를 저절로 읽지 못했다. 새 프로젝트
-    (`write_skeleton`, 옮기기 포함)도 링크를 만든다.
+  - coordinator 안내는 AGENTS.md만 만든다(새 프로젝트·옮기기 공통).
   - **운영 영향.** 지금까지 aaa가 만든 프로젝트의 AGENTS.md에는 표지가 없다. 첫 `--fix`가 그것을 `AGENTS.md.before-aaa`로 옮기고 새 안내를
     쓴다(사람이 고친 줄이 있으면 거기서 옮겨 온다). 도는 coordinator는 다음 세션부터 새 안내를 읽는다.
 - **계약.** FRONT_API 1.34. 처음에는 배포되지 않은 1.33에 더했으나 1.33(bdbd3f0)이 10-18 14:19에 배포돼 02a116b 선례대로 올렸다(coordinator 착지 지시). 배포된 1.33 front는 N-1로 그대로 붙고, 그 요청을 모르는 1.33 host는 오류로 답한다.
   보기만(`fix: false`)은 보기 권한으로도 된다.
-- **시험.** m13 `doctor_files_brings_the_coordinator_guide_to_existing_projects`: 새 프로젝트 안내에 옮긴 절 12개 글이 모두 있고 CLAUDE.md가
-  링크다. 있는 프로젝트 셋(표지 있는 옛 안내, 표지 없는 옛 aaa 안내 + 사람이 쓴 CLAUDE.md, 옮겨 둔 자리가 찬 것)에서 보기만은 바꾸지 않고
+- **시험.** m13 `doctor_files_brings_the_coordinator_guide_to_existing_projects`: 새 프로젝트 안내에 옮긴 절 12개 글이 모두 있고 정해진 파일만 만든다.
+  있는 프로젝트 셋(표지 있는 옛 안내, 표지 없는 옛 aaa 안내, 옮겨 둔 자리가 찬 것)에서 보기만은 바꾸지 않고
   `[warn]`, `--fix`는 낡은 안내를 지금 안내로·빠진 파일을 만들고, 사람 글은 `.before-aaa`에 그대로, 자리가 찬 것은 두 글 모두 그대로 FAIL,
   치운 뒤 두 번째 `--fix`는 나머지를 바꾸지 않는다. m13 `project_lifecycle` rename은 표지 있는 옛 판 안내도 새 이름의 지금 안내로 쓴다.
-  결함 심기 일곱(안내 절 하나 빼기, 표지 있는 낡은 안내 건너뛰기, 표지 검사 없이 덮기, 자리가 차도 덮기(참고 동작), 새 프로젝트 CLAUDE.md
-  링크 빼기, 보기만이 고침, rename 옛 바이트 일치 규칙) 모두 실패했다.
+  안내 절 누락·낡은 안내 갱신·사람 글 보존·보기만의 비변경·rename 갱신 회귀를 검사한다.
+  thread worktree·작업 폴더는 기존 m13 시험에서 생성 파일 목록도 확인한다.
 
-### 8.185 다른 agent 작업 끝남을 TUI·웹 앱 안 알림으로(10-18, 차이 목록 306 N3·545 `o`)
+### 8.185 다른 agent 작업 끝남을 웹 앱 안 알림으로(10-18, 차이 목록 306 N3·545 `o`)
 
 - **결정(사용자 10-18 14:2x).** 다른 agent 작업이 끝나면 TUI 앱 안 알림과 웹 앱 안 알림으로 알린다. 휴대폰 push는 지금처럼 「입력 필요」·
   thread 「작업 완료(새 보고)」뿐이다. TUI는 herdr식 agent 알림 카드를 두고 `prefix o`는 그 카드의 pane으로 간다.
@@ -4178,15 +3793,6 @@ coordinator 실기(10-18 00:58, iPhone 홈 화면 앱을 앞에 띄움, binary c
   `a_rest_that_waits_on_background_work_is_still_the_turn`. 결함 심기 셋(웹이 무시, host가 내지 않음, 유예 없음)과 알림 둘(BG를 쉼으로 봄,
   턴 안 사람 입력이 턴을 끊음) 모두 실패.
 
-### 8.190 TUI thread 상태 말의 PR 번호(10-18, 차이 목록 2장 L3 241줄 TUI 몫, t-0345 recount (b))
-
-- **참고.** herdr-projects `state_line`: 검토 대기·병합 중 thread의 사실은 따라가는 PR이 있으면 「PR #n」(`pr_number`, 주소 끝 숫자), 없으면 보고.
-  웹 `stateLine`은 이미 같다(e27de52·25ef559).
-- **aaa가 달랐던 것.** TUI `list.rs` `state_line`은 검토·병합 중이면 늘 「보고」였다.
-- **고침.** `pr_number`(웹 `prNumber`와 같은 규칙: 마지막 `/` 뒤가 숫자만일 때)로 「PR #n」, 아니면 「보고」.
-- **시험.** TUI 유닛 `state_line_like_herdr_projects`에 PR 있는 검토 대기·병합 중과 번호로 끝나지 않는 주소. 결함 심기(늘 「보고」)는
-  `검토 대기 · 보고 ≠ 검토 대기 · PR #42`로 실패.
-
 ### 8.191 대화 기록 변화 push(10-18, 차이 목록 3장 C3 278줄, t-0345 recount (b), coordinator 「참고대로」)
 
 - **참고.** herdr-web-ui(aa624cb): 대화 보기가 그 pane에 관심을 알리면(`conversation-watch`) 서버가 그 pane의 기록 파일만 250ms마다 stat하고
@@ -4213,138 +3819,12 @@ coordinator 실기(10-18 00:58, iPhone 홈 화면 앱을 앞에 띄움, binary c
   단계에는 시한 `STEP_LIMIT_MS` 120초(가장 긴 spec 전체가 41초)를 두었다. 옛 순서로 다시 돌리면 20초 만에 「목록 서랍 움직임 끝(다음 frame)이
   되지 않았다(페이지가 답하지 않음)」로 실패한다. 단계는 시계를 대화를 연 뒤에 멈춘다.
 
-### 8.192 Windows에서 접속만 하는 TUI(10-18, 사용자 「1번 진행해」, §8.181의 Windows 쪽)
-
-- **범위.** agent가 없는 Windows PC(x86_64, Tailscale)에서 `aaa.exe attach --remote <host 웹 주소>`로 붙기만 한다. 실행 파일은
-  `%USERPROFILE%\.local\bin\aaa.exe`(Mac `~/.local/bin/aaa`와 같은 자리), 바꾸기는 `aaa update --from <파일>`(§8.180). Windows agent·host·
-  감지(Q21)는 범위 밖이다. 절차는 install-runbook 11번.
-- **빌드.** Mac에서 `cargo xwin build --release -p aaa --target x86_64-pc-windows-msvc`(rustup target·cargo-xwin, 사용자 수준 도구).
-  CI windows runner와 같은 msvc target이다. C 런타임은 정적으로 넣는다(`.cargo/config.toml` `crt-static`, herdr 0.9.5
-  `.cargo/config.toml`과 같다): 처음 빌드는 `VCRUNTIME140.dll`·`api-ms-win-crt-*`를 들여 VC++ 재배포 패키지가 없는 PC에서 돌지 않을 수 있었다.
-- **token 파일 권한(Windows ACL).** 전에는 Unix에만 0700·0600을 걸고 Windows는 `%LOCALAPPDATA%`가 물려주는 DACL(상속, Administrators
-  포함) 그대로였다. herdr 0.9.5 `src/platform/windows.rs`의 SDDL을 따른다: `remote/` 폴더는 `create_remote_private_dir`(:745-766)의
-  `D:P(A;OICI;GA;;;SY)(A;OICI;GA;;;OW)`에서 OW만 계정 SID로 바꾼 것(herdr는 새 폴더만 만들지만 aaa는 있던 폴더를 다시 쓴다: 관리자 권한
-  터미널에서 처음 만든 폴더는 소유자가 Administrators라 OW면 나중의 일반 권한 실행이 DACL을 다시 걸지 못한다, finish 리뷰), token 파일은 `create_config_temporary`·`user_security_descriptor`(:82-131·:307-349)처럼
-  `D:P(A;;GA;;;SY)(A;;GA;;;<계정 SID>)`로 `CreateFileW`(CREATE_NEW)에서 처음부터 만든다(만든 뒤 바꾸지 않는다, Unix와 같은 원칙). 폴더는
-  이미 있으면 `SetFileSecurityW`로 그렇게 바꾼다(Unix가 늘 0700을 거는 것과 같다).
-- **`aaa update` Windows.** 전에는 「아직 macOS·Linux만」으로 거부했다. 거부를 빼고 Mac과 같은 순서(같은 폴더 staging → self-check →
-  hard link 보관 → rename)를 쓴다. 처음에는 「도는 exe는 덮지 못한다」고 보고 지금 것을 옮긴 뒤 바꾸는 Windows 길을 따로 넣었으나, Windows
-  CI에서 도는 exe 자리에 바로 rename하는 길(결함으로 심은 것)도 시험이 통과해 그 가정이 틀렸음을 보았다(std rename이 POSIX 방식으로 바꾼다).
-  따로 길을 두지 않고 시험만 남겼다. herdr Windows 갱신은 release 폴더마다 풀고 junction·사용자 PATH를 바꾸는 `distribution/install.ps1`이다:
-  aaa는 고정 경로 하나라 따르지 않았다(참고와 다름).
-- **키(Windows 콘솔).** crossterm 0.29 Windows 입력(`event/sys/windows/parse.rs`)은 콘솔 레코드를 읽는다: 왼쪽·오른쪽 수정키를 합치고, Ctrl
-  글자는 `ToUnicodeEx`로 기본 배치 글자를 찾아 CONTROL과 주며(prefix `ctrl+b`가 맞는다), AltGr는 Ctrl+Alt로 온다. 그대로면 독일 배치 AltGr+Q
-  `@`가 NUL에 ESC를 붙여 갔다. herdr `windows_vti.rs` `windows_record_modifiers`(:1576-1590, 「글자 키의 AltGr는 글자 shift」)처럼
-  Ctrl+Alt의 기호·숫자·비영문 글자는 글자로 둔다(`keys::altgr_text`). crossterm이 왼쪽·오른쪽을 가르지 않아 진짜 Ctrl+Alt는 영문 글자와 Space만
-  남는다. 놓기(Release)는 이미 거른다. 한글은 터미널 IME가 조합하고 확정된 음절이 글자 하나로 온다. prefix 뒤 한/영 바꾸기는 §8.73대로다.
-- **참고와 다름(남김).** herdr는 Windows 클라이언트 입력을 `ENABLE_VIRTUAL_TERMINAL_INPUT`으로 켜고 VT 바이트를 직접 푼다
-  (`src/client/terminal_setup.rs`·`src/client/input/windows_vti.rs`, 4천 줄 넘음): bracketed paste·마우스 VT 보고가 그 길에서 온다. aaa는
-  crossterm 콘솔 입력 그대로라 Windows에서 붙여넣기는 낱 키로 가고(여러 줄은 줄마다 Enter, README 붙여넣기 줄), 마우스는 콘솔 레코드다.
-  VT 입력 길은 따로 일로 남긴다.
-- **그대로인 것(코드로 확인).** 상태·설정 폴더는 `%LOCALAPPDATA%\aaa\state`·`\config`(roaming `%APPDATA%` 아님, `aaa-config/src/paths.rs`),
-  HOME은 `USERPROFILE`. TLS는 webpki 루트·SNI(그 PC의 신뢰 저장소를 보지 않는다, §8.181). 크기 바뀜은 ratatui가 창 크기를 다시 읽는다
-  (crossterm `Resize`는 다시 그리기만). focus 사건은 콘솔이 늘 준다. 터미널 색 물음(OSC 10/11)은 보내지 않는다.
-- **시험.** 유닛 `remote::admit_pairs_keeps_and_forgets_tokens`(모든 OS, 가짜 host 웹 http 127.0.0.1: 처음엔 묻고 pairing·token 두기·Host·
-  Origin·cookie, 다음엔 묻지 않음, 401이면 지우고 다시 묻기, 새 token도 거부되면 지운 채 멈춤, 틀린 코드 401, 4401 취소), `keys::
-  windows_console_keys_table`(crossterm Windows 꼴 → bytes 표, prefix), Windows만 `remote::token_file_is_private`(파일·폴더 DACL을 SDDL로
-  읽어 `D:P`·SYSTEM과 계정만, 계정은 SDDL 별칭 꼴로 견준다 — CI runner는 내장 Administrator라 `LA`로 나온다),
-  `update::replaces_a_running_exe`(시험 binary 사본을 띄워 둔 채 바꾼다), 모든 OS `update::every_os_takes_update_and_rollback`(Windows 거부가 돌아오면 실패). 결함 심기: 로컬 넷(AltGr 정규화 빼기, 거부 token 안 지움, token 안 둠
-  — 시험의 묻기 한도로 끝없는 고리 대신 실패, Origin 안 보냄) 모두 실패. Windows CI(심은 branch): token을 상속 DACL로 만들면 `D:P`가 없어 실패.
-- **실기(10-18).** 그 PC(Windows 11 x64, 기본 셸 cmd)에 ssh로 `aaa.exe`를 두고 `--version`·`attach --help`·`update --dry-run`·`update list`,
-  ssh pty로 보기 전용 pairing → TUI 「보기 전용」 → 창 크기 바꿈(ConPTY `CSI 8;50;140t` 뒤 다시 그림) → prefix q → 다시 붙을 때 묻지 않음을
-  보았다. `icacls`로 폴더 SYSTEM·OWNER RIGHTS(그때 판, 지금은 계정 SID), 파일 SYSTEM·그 계정만(상속 없음). 사람 자판·IME·마우스 점검은 사용자 몫으로 남겼다.
-
-### 8.193 TUI 사이드바 폭: 기본 36·더 넓게·테마를 바꿔도 그대로·다시 붙어도 그대로, 구역 비율, workspace 이름·닫기 키(10-18, 사용자 사진 둘, 다시 세기 341 U3·546)
-
-- **요청(사용자 10-18 15:21).** 「왼쪽 창이 기본값이 작다. herdr만큼 크게, 더 크게도 가능하게. 지금 테마를 바꾸면 키운 왼쪽 창이 리셋된다.
-  테마는 테마만.」
-- **herdr 근거.** herdr 0.9.5 기본은 aaa와 같다: `sidebar_width = 26`, `sidebar_min_width = 18`, `sidebar_max_width = 36`(`src/config/model.rs`
-  1201–1203, 한도는 설정으로 바꾸고 거꾸로면 거부 `validated_sidebar_bounds` 303). 사용자의 herdr가 넓은 것은 경계를 끌어 둔 폭(36, 한도
-  끝)을 client가 기억해서다(`src/client/shell/preferences.rs` `ClientChromePreferences.sidebar_width`, 상태 폴더 `client-shell/local-<socket
-  해시>.json`). 끌기는 열 + 1을 한도로 묶고 사용자 값으로 표시한다(`mouse.rs` 8–22 `set_sidebar_width_from_column`), 끌기를 마치면 남기고
-  (`mouse.rs` 2036–2037), 경계를 350ms 안에 두 번 누르면 설정 폭으로 돌아가 남긴 값을 지운다(1952–1965). 설정을 다시 읽어도 사용자가 끈
-  폭이면 두고(`config.rs` 86–88 `reload_client_config`), 시작할 때 기억한 폭이 설정보다 앞선다(`state.rs` 1010–1049). 접기도 같다
-  (`actions.rs` 13–20 `ToggleSidebar` → `sidebar_collapsed_manual`).
-- **원인(aaa).** TUI `apply_config`가 다시 읽을 때마다 폭을 `[tui] sidebar_width`로 덮었다. 설정 창은 고른 테마를 host.toml `[tui] theme`
-  하나만 고쳐 쓰고(`tui_edit::set_in`, toml_edit라 다른 key·주석은 남는다) 이 함수로 다시 읽으므로 끌어 키운 폭이 기본으로 돌아갔다. 쓰기가 다른
-  key를 지운 것은 아니다. 끈 폭은 어디에도 남지 않아 다시 붙으면 늘 26이었다.
-- **고침.**
-  - 기본 폭 36, 한도 18~72(`[tui] sidebar_min_width`·`sidebar_max_width`, herdr 이름). **herdr 기본(26·36)과 다르다**: 사용자가 herdr에서
-    쓰는 폭을 기본으로, 그보다 넓게도 끌 수 있게 했다. 한도가 거꾸로면 오류 막대로 알리고 기본 한도를 쓴다. 화면 폭 − 1을 넘지 않는다(herdr).
-  - 사용자가 끈 폭·접기는 「사용자 값」이다(herdr `*_manual`). 다시 읽기(테마 바꾸기·`prefix shift+r`)는 사용자 값을 두고 설정 폭은 경계 두 번
-    누르기로 돌아갈 값으로만 쓴다. 폭을 바꾼 누름은 두 번 누르기의 첫 번이 아니다(herdr는 끈 뒤 350ms 안에 다시 잡으면 되돌린다).
-  - 기억은 host 공유 설정 문서(§8.79)에 둔다: `tuiSidebarWidth`·`tuiSidebarCollapsed`(값이 null이면 되돌림). front는 상태를 갖지 않는다는
-    원칙이라 herdr의 client 기기 파일 대신이다. TUI는 붙을 때 `preferences`를 읽어 그동안 사용자가 바꾸지 않은 값을 쓰고, 바뀐 이름만
-    `preferences_set`으로 보낸다(다른 TUI가 남긴 다른 값을 덮지 않는다). 같은 host의 TUI들이 한 값을 나눈다(herdr는 같은 endpoint의 client가
-    한 파일을 나눈다). 보기 권한 기기는 남기지 않는다. 웹은 이 이름을 읽지 않는다.
-  - Front API는 그대로다(요청·응답이 이미 있다). host가 받는 공유 이름에 `TUI_SETTING_KEYS`를 더했다: 옛 host는 이 이름을 버리므로 기억만 되지
-    않는다. 공유 설정 요청은 FRONT_API 1.5 판 중에 생겨 TUI는 host minor 6 이상에만 보낸다.
-- **구역 비율(다시 세기 341 나머지).** spaces·agents 구역 경계 줄(herdr `sidebar_section_divider_rect`, 6줄 밑이면 없다)을 끌면 비율 =
-  (그 줄 − 사이드바 위) / 사이드바 높이, 0.1~0.9(herdr `set_sidebar_section_from_row`), 두 구역은 3줄 넘게(`section_heights`). 끌기를 마치면
-  `tuiSidebarSplit`에 남고 다시 붙으면 그 비율이다(herdr `sidebar_section_split`, 유한한 값만).
-- **머신 묶음 접기 기억(341 나머지)은 하지 않았다.** aaa TUI에는 머신 묶음 접기 자체가 없고(머신 머리 줄은 늘 `▾`), 머신 머리 줄은 agents 목록
-  그리기 안에 있어 그 목록을 맡은 다른 작업(t-0352)과 겹친다(coordinator 범위 조정). herdr는 spaces 쪽 worktree·endpoint 묶음을 접고
-  `collapsed_groups`·`remote_collapsed_groups`로 기억한다.
-- **workspace 이름·닫기(다시 세기 546).** herdr 기본 키 `prefix shift+w`(`rename workspace`)·`prefix shift+d`(`close workspace`, `src/main.rs`
-  158–159, `actions.rs` 103–114). 대상은 탐색 중 spaces 줄을 골랐으면 그 workspace, 아니면 지금 workspace(`workspace_action_id`). 이름 창은 지금
-  이름으로 시작하고 비었거나 그대로면 보내지 않는다. 닫기는 `confirm_close`면 늘 묻는다(`request_workspace_close`, 「workspace를 닫을까?」·
-  `<이름> — pane n개`). host `workspace_rename`·`workspace_close`(이미 있는 요청, Front API 그대로). 지금 workspace의 이름을 바꾸면 host가 옛
-  이름의 빈 layout을 먼저 보내므로 보던 탭을 id로 되찾고, 닫으면 남은 첫 workspace(기본 workspace 먼저)로 간다. 같은 workspace를 보던 다른
-  TUI는 이름이 바뀌면 빈 옛 이름에 남는다(host가 새 이름의 layout 사건을 보내지 않는다, 이번에 고치지 않음).
-- **CI 고침(10-18, macos-15 7f89baac에서 `workspace_keys_and_section_split_like_herdr`가 `$ ho side-$((7*6))`로 실패).** spaces 줄을
-  누르면 `switch_space`가 아는 layout으로 바로 들어가는데, 목록 답이 넣은 빈 자리표시뿐이고 그 workspace layout 미리 읽기 답이 아직이면 포커스
-  pane이 없다. 사이드바는 이미 그 workspace를 지금 줄로 그려, 그 사이 친 글자(`e`·`c`)가 버려지고 layout 답 뒤 글자만 들어갔다(사람도 누르자마자
-  치면 잃는다). 그래서 지금 workspace인데 포커스 pane이 없으면 그 layout 읽기 답이 올 때까지 키·붙여넣기·마우스를 붙잡는다(새 pane 포커스와 같은
-  `focus_wait`). 지금 workspace를 닫아 layout을 모르는 남은 workspace로 갈 때도 같다. 재현: host가 side 답을 400ms 늦추게 심으면 고치기 전은
-  실패, 고친 뒤는 통과(심은 늦춤은 되돌림). 유닛 `switching_to_an_unread_workspace_holds_keys_until_its_layout`.
-- **시험.** 유닛: 배치(기본 36·한도 72·설정 한도·거꾸로면 알림·화면 폭 − 1), 끈 폭이 테마 바꾸기·설정 폭 바꾸기에 남음·두 번 누르기·접기 남김·
-  다시 붙어 기억한 값·null·보기 권한(`dragged_sidebar_width_survives_a_theme_change_and_is_remembered`), host 공유 이름. TUI E2E
-  `sidebar_width_like_herdr`(160칸: 기본 36, 끌어 60·72에서 멈춤, 설정 창 테마 바꾼 화면에서 60·host.toml에 폭 없음, 나갔다 붙어도 60,
-  두 번 누르면 36·남긴 값 null), `side_list_like_web` 8b(접기 기억), `workspace_keys_and_section_split_like_herdr`(spaces 줄로 간 workspace
-  이름 바꾸기·닫기 확인 창 Esc·Enter 뒤 main으로·그 pane 끝남, 구역 경계 끌기·다시 붙어도 그 비율), 유닛 `section_split_drags_and_is_remembered`·
-  `workspace_rename_and_close_like_herdr`. 다른 TUI 시험은 시험 설정 `sidebar_width = 26`(herdr 기본)으로 그린다.
-  결함 심기: 다시 읽기 가드를 빼면 유닛·E2E 3단계, 시작 때 읽기를 빼면 E2E 4단계, 읽은 값을 사용자 값으로 두지 않으면 유닛이 실패한다. 구역 비율을 0.5로 그리면 유닛·E2E, 이름을 바꾼 뒤 보던 탭을 되찾지 않으면 유닛, 닫은
-  뒤 남은 workspace로 가지 않으면 유닛·E2E가 실패한다.
-
-### 8.194 TUI 링크 열기: ctrl+누름(10-18, 사용자 「herdr에서 alt를 누른 채 링크를 누르면 웹페이지가 열린다」, coordinator 다음 일)
-
-- **herdr 경로(0.9.5).** client가 **ctrl**+왼쪽 누름이 pane 안쪽이면(터미널 모드, 창 없음, 마우스 받기) 서버에 `pane.link.activate`를 묻는다
-  (`src/client/shell/mouse.rs` 947–997). 서버는 그 칸의 OSC 8 링크 uri, 없으면 그 칸을 포함한 공백 사이 낱말(접힌 줄 포함, 8192칸)의 http(s)
-  URL을 찾는다(`crates/ghostty-vt` `viewport_link_selection`, `src/app/actions.rs` 1044–1235 `url_from_link_target`·`url_span_at_column`·
-  `trim_url_edges`: 끝의 `" ' ` . , ; : ! ?`와 짝 없는 `) ] }`를 뺀다). **여는 것은 client 기기다**(`shell_runtime.rs` 49–56
-  `OpenSafeWebUrl`, http·https만 `safe_web_url`): macOS `open`, Linux `xdg-open`, Windows `ShellExecuteW` "open"(`src/platform/*` `open_url`).
-  답을 기다리는 동안 그 누름의 왼쪽 끌기·놓기를 모으고(`fallback_events`), 링크가 아니거나 오류면 모은 사건을 보통 누름으로 다시 넣는다
-  (`ReplayMouse`, 그동안은 링크를 묻지 않는다 `replaying_url_click`). 열었으면 남은 끌기·놓기를 놓을 때까지 버린다(`url_click_consumes_until_up`).
-  수정키는 ctrl뿐이다(SGR 16, `raw_input.rs` 1620–1628). 사용자가 말한 alt는 herdr 소스로는 설명되지 않는다(WezTerm 기본 설정도 alt+누름을
-  마우스 보고 앱에 넘긴다).
-- **aaa.** herdr 소스와 같이 ctrl+누름만 링크를 묻는다(사용자 결정 10-18 16:5x). alt+누름은 전처럼 pane 프로그램에 그대로 간다. 링크가
-  아니면 보통 누름으로 다시 넣으므로 링크가 아닌 칸의 ctrl+누름도 지금처럼 pane 프로그램에 간다. TUI는 그 칸의 절대 자리(`view_top` + 줄)로 `PaneLink { pane, at }`을 묻고 host가 화면 사본(`aaa-vt`)에서 찾아 `Link { url }`로
-  답한다. 여는 것은 TUI가 도는 기기다(원격 Windows TUI면 그 Windows의 `ShellExecuteW`). FRONT_API 1.35로 올렸고(1.34는 배포됨, N-1 규칙),
-  TUI는 1.35 이상 host에만 묻는다(옛 host에는 ctrl+누름이 지금처럼 보통 누름이다). 보기 권한 기기도 물을 수 있다(읽기만 한다).
-- **OSC 8을 담는 법.** vt100은 칸에 링크를 담지 않는다(ghostty는 칸마다 담는다). 그래서 OSC 8을 열고 닫을 때 커서의 절대 자리와 그 사이 글을
-  남기고(최근 512개, 64줄 넘게 걸치면 버림, uri 4096자), 찾을 때 그 자리의 지금 글이 남긴 글과 같을 때만 링크로 친다(덮어쓴 칸은 링크가
-  아니다). 기록이 가득하면(10,000줄) 맨 앞 줄을 버리며 절대 줄이 그대로인 채 글이 위로 밀린다: 처음에는 남긴 줄보다 위에서 같은 칸·같은
-  글을 찾았고, §8.198에서 버린 줄을 정확히 세는 것으로 바꿨다.
-  크기가 바뀌면(다시 접기) 남긴 자리를 버린다. http(s)가 아닌 OSC 8 uri는 열지 않고 글 속 URL로 돌아가지도 않는다(herdr).
-- **한계.** OSC 8 구간은 512개까지라 Ink처럼 frame마다 OSC 8을 다시 내는 프로그램이면 기록 속 OSC 8 링크가 빨리 밀려난다(글 속 URL은
-  그대로 찾는다). 한 번에 한 링크만 묻는다: 답 전의 두 번째 ctrl+누름은 보통 누름이다(herdr는 여럿을 묻는다).
-- **하지 않은 것(herdr에는 있다).** 바깥 터미널로 OSC 8 다시 내보내기는 사용자가 먼저 써 보게 다음 commit으로 미뤘다(→ §8.198).
-  ctrl+움직임 밑줄(`link_hover.rs`), 누른 뒤
-  화면이 바뀌었으면 거절하는 `content_revision`. host가 다시 떠 화면 사본을 replay로 다시 만들면 그 전 OSC 8 링크는 없다(글 속 URL은 찾는다).
-  웹은 이미 xterm `WebLinksAddon`으로 연다.
-- **시험.** 유닛: herdr URL 경우(괄호 짝·끝 점·`[docs](…)`·`file://`·끝에서 뺀 칸), 접힌 줄 어느 줄을 눌러도 같은 URL, OSC 8(그 칸만·기록으로
-  올라가도·접혀 두 줄·덮어쓰면 아님·`file://` uri·alt 화면·크기 바꿈), 가득 찬 기록에서 밀린 링크·같은 글 다른 uri 둘은 못 찾음, 구간 512개 상한, TUI 누름 모으기·다시
-  넣기·pane이 바뀌면 버리기(`link_press_replays_a_plain_press_like_herdr`). TUI E2E `link_click_like_herdr`(브라우저 대신 `AAA_TEST_OPEN_URL`
-  파일): OSC 8 글 ctrl+누르고 끌기 → uri, 글 속 URL alt+누름은 열지 않고 ctrl+누름 → 끝 점·짝 없는 괄호 뺀 주소, 연 누름은 고르지 않음, 링크 아닌 칸 ctrl+끌기는
-  골라 복사, 마우스 보고 프로그램에는 ctrl(16)·alt(8) 표시 그대로. 결함 심기: OSC 8 무시·끝 점 안 뺌(유닛·E2E), 덮어쓴 글 확인 안 함·가득 찬 기록
-  밀림 무시·가득 찬 기록에서 첫 일치로 정함(유닛), alt도 받음(E2E), 다시 넣지 않음(유닛·E2E), 연 뒤 놓기까지 안 삼킴·끌기 안 모음(유닛)이 모두 실패한다.
-
 ### 8.195 목록을 프로젝트 먼저로, 「사람 차례」 → 「확인 필요」(10-18, t-0352, 사용자 결정 2안)
 
 - **요청.** TUI 왼쪽 agents 구역과 웹 목록이 머신 → 프로젝트 → thread로 묶여 같은 프로젝트가 머신마다 흩어졌다. 프로젝트(사용자 말로
   workspace)로 먼저 묶고 머신은 글자로만 둔다. 시안 세 안(`.herdr-project/projects-t-0352/library/`) 가운데 사용자가 **2안**을 골랐다:
   thread 첫 줄은 번호·제목(넓게), 둘째 줄 왼쪽 상태 말·오른쪽 머신 이름, thread에 딸리지 않은 pane은 「기타」 한 묶음에 줄마다 머신 이름.
-- **말 바꾸기.** 「사람 차례」를 모든 곳(TUI·웹 프로젝트 머리 셈, thread 상태 말, 탭 막대·thread 화면 칩, host 알림·inbox 문구, 설정 설명,
+- **말 바꾸기.** 「사람 차례」를 모든 곳(웹 프로젝트 머리 셈, thread 상태 말, 탭 막대·thread 화면 칩, host 알림·inbox 문구, 설정 설명,
   README·문서, 시험 기대 글)에서 「확인 필요」로 바꿨다(예: 머리 `shadow   확인 필요 2`, 둘째 줄 `확인 필요 · 확인창   mac-a`). 묶음 이름
   (`waiting_on_you`·`WaitingOnYou`)과 testid는 그대로다.
 - **TUI(`aaa-tui::list`).**
@@ -4448,78 +3928,6 @@ coordinator 실기(10-18 00:58, iPhone 홈 화면 앱을 앞에 띄움, binary c
   프로젝트 이름 변경은 링크 대상도 같은 transaction으로 옮기고, 삭제는 링크 행도 지워 이름 재사용 때 새 보고서를 읽지 못하게 한다.
 - **남은 범위.** publish·import·prune·rotate·웹 전체 목록·별도 port·판 보존은 2단계 이후다.
   실제 iOS 텔레그램 안 브라우저에서 링크 하나로 여는 확인은 기기에서 따로 한다.
-### 8.198 TUI: OSC 8 링크를 바깥 터미널로 다시 내보내기(10-18, coordinator 「render_ansi.rs 616-699대로」)
-
-- **까닭.** 사용자 터미널이 pane의 OSC 8 링크를 링크로 알아야 그 터미널 방식(밑줄·누르기)으로 열 수 있다. herdr는 그렇게 한다:
-  서버가 보이는 칸의 OSC 8 링크(`src/pane/terminal.rs` 2782 `ghostty_visible_hyperlinks`, `src/server/headless/render.rs` 789)를 frame
-  칸(`CellData.hyperlink` → `FrameData.hyperlinks`)에 싣고, client가 바깥 터미널에 쓸 때 칸마다 바뀌면 `ESC ] 8 ; ; uri ST`를 열고 닫는다
-  (`src/protocol/render_ansi.rs` 616–699·905–990 `write_hyperlink_if_changed`·`close_hyperlink`, 매 frame 처음에 닫고 시작, uri의 제어
-  문자는 뺀다). 글 속 URL은 내보내지 않는다(OSC 8 칸만).
-- **host.** grid frame에 보이는 화면(그 구독의 기록 위치)의 링크 칸 `GridFrame.links`(줄·시작 칸·끝 칸·uri, 겹치면 새 링크)를 늘 전부
-  싣는다(바뀐 줄만 보내는 frame에도). 링크 칸만 바뀌어도 한 장 보낸다(커서·모드 hash에 넣는다). FRONT_API **1.36**(1.35는 배포됨): 옛 front는
-  모르는 칸을 버리고, 옛 host는 싣지 않아 TUI가 링크 없이 그린다.
-- **TUI.** ratatui는 OSC 8을 모르고 바뀐 칸만 쓴다. 그래서 pane을 그리며 링크 칸과 그 글자를 적고, 다 그린 뒤 글자가 그대로인 칸(창·메뉴·
-  알림이 덮지 않은 칸)만 uri마다 `OSC 8` 열기 → 칸 다시 쓰기(그 칸 모양 그대로) → 닫기로 덧쓴다(`hyperlink.rs`). 동기 출력(`?2026`) 안에서
-  커서를 숨기고 `ESC 7`·`ESC 8`로 커서·모양을 되돌린다. 앞에서 링크로 쓴 칸이 이제 링크가 아니면 링크 없이 다시 써 바깥 터미널에 남은 링크를
-  지운다(글자가 같아 ratatui가 다시 쓰지 않는 경우). 넓은 글자 뒤 칸은 쓰지 않는다. VT를 못 쓰는 옛 Windows 콘솔에서는 건너뛴다.
-- **버린 줄 세기(§8.194 고침).** vt100은 기록 위치가 0보다 크면 줄을 기록에 넣을 때마다 위치를 1 올린다(기록 길이까지). 그래서 feed 동안
-  위치를 1에 두면 「넣은 줄 − 늘어난 기록 = 버린 줄」을 정확히 센다. normal 화면 OSC 8 구간은 「버린 줄 + 절대 줄」인 전역 줄로 남겨, 가득 찬
-  기록에서도 같은 글·다른 uri 링크가 제 자리를 지킨다(전에는 위에서 찾고 둘이면 포기). vt100은 alt 화면에 들어갈 때 normal 기록 위치를 0으로
-  돌리므로(`enter_alternate_grid`) feed를 alt 화면 전환(`CSI ? 47·1047·1049 h·l`)에서 나눠 넣는다(들어가기는 앞, 나오기는 뒤). 한 feed가
-  기록을 넘게 밀었거나 빈 기록에서 한 번에 다 채웠으면 버린 줄을 몰라 normal 구간을 버린다. 콜백 안 읽기는 그 위치를 되돌린다.
-- **한계.** 링크 칸은 남긴 글로 확인하므로, 같은 글을 OSC 8 없이 그 자리에 다시 쓰면 여전히 링크로 본다(vt100이 칸에 링크를 담지 않는다).
-  링크 칸이 많은 화면은 그릴 때마다 그 칸을 다시 쓴다(동기 출력 안이라 깜빡이지 않는다). ctrl+움직임 밑줄은 아직 없다.
-- **시험.** vt 유닛 `visible_links_for_the_view`(줄마다 나눔·겹치면 새 링크·기록 위치·덮어쓰기·alt 화면), `link_at_survives_a_full_history`
-  (가득 찬 기록에서 같은 글·다른 uri 둘이 제 주소, 한 feed에서 연 뒤 밀리고 닫힘, alt 화면을 오가는 feed, 기록을 넘게 민 feed는 버림, alt 화면
-  동안 replay), `splits_feeds_at_alt_screen_switches`. TUI 유닛 `hyperlink::collects_uncovered_link_cells`·`emits_osc8_around_link_cells`.
-  TUI E2E `osc8_links_reach_the_outer_terminal_like_herdr`(시험 터미널이 OSC 8 칸을 기록한다): OSC 8 칸만 바깥 링크(글 속 URL은 아님), 커서가
-  프롬프트로 돌아옴, 기록으로 올라가면 없음, 휠로 올려 보면 그 자리. 결함 심기: TUI가 내보내지 않음·host가 싣지 않음·기록 위치 무시(E2E),
-  커서 안 되돌림(유닛·E2E), 덮인 칸도 씀·앞 링크 칸 안 지움(유닛), 버린 줄 안 셈·alt 전환에서 안 나눔(유닛)이 모두 실패한다.
-
-## 9. 이미지 붙여넣기 (front → host → agent)
-
-herdr 0.9.5는 원격 endpoint에서 client의 clipboard 이미지 bytes를 대상 서버 temp 파일로 보내고, 그 절대 경로를 pane에 붙인다. 웹 UI는 브라우저 file을 대상 머신 `<cwd>/.herdr-web-ui/`에 저장하고 `@path`를 넣는다. 확인한 코드와 차이는 [소스 분석](source-analysis.md#이미지-붙여넣기-소스-확인)에 있다.
-
-aaa의 원칙:
-- local과 remote를 같은 attachment API로 다룬다.
-- **이미지 bytes를 front에서 host를 거쳐 실제 agent 머신으로 옮긴다.** 그 머신에서 읽을 수 있는 파일을 만든 뒤 입력을 전달한다.
-- agent 머신에는 GUI·clipboard·X11/Wayland가 필요 없다.
-- 원격 agent의 clipboard를 읽지 않는다. front 기기의 경로 문자열만 보내지도 않는다.
-
-```mermaid
-flowchart LR
-  T[TUI front · Ctrl+V · front 기기 clipboard] --> H[host · Front API attachment stream]
-  B[웹 front · paste event · Blob] --> S[tailscale serve HTTPS] --> H
-  H --> A[대상 agent backend · Agent link chunks]
-  A --> F[검증 · 원자적 저장 · 대상 머신 파일]
-  F --> R[길이 · SHA256 · native path receipt]
-  R --> H
-  H --> P[대상 재검증 · Claude/Codex 입력 adapter]
-  P --> I[agent가 파일을 읽어 이미지로 소비]
-```
-
-| 단계 | 동작·계약 |
-|---|---|
-| TUI 수집 | 명시적 Ctrl+V(또는 빈 bracketed paste)에서 front 자신의 clipboard를 읽는다. macOS는 NSPasteboard 이미지 → PNG, Windows는 PNG/CF_DIBV5/CF_DIB, Linux desktop은 X11/Wayland다. arboard로 한다(§8.28, Wayland 전용 세션은 아직 아님) |
-| 입력 호환 | 이미지가 있으면 중복 Ctrl+V byte와 텍스트 paste를 소비하고 image intent 하나를 만든다. 없으면 기존 text·raw-key 동작을 보존한다. 외부 터미널이 이미지 파일 경로를 붙이면 그 로컬 파일을 업로드한다 |
-| raw SSH 셸의 한계 | 단순 `ssh host` 셸은 사용자 PC의 clipboard를 제공하지 않는다. 기본 경로는 사용자 기기에서 실행한 aaa TUI front다. raw 셸에서는 파일 첨부 명령이나 웹을 안내한다 |
-| 웹 수집 | terminal 영역과 composer의 user paste event에서 `clipboardData.items/files`의 Blob을 받는다. 이미지와 plain text를 함께 draft에 보존하고 중복 paste를 막는다. 파일 선택·drop도 같은 API로 받는다 |
-| 대상 고정 | paste 순간 machine·session·terminal generation·agent identity·lease·front 권한을 intent에 고정한다. 업로드 중에 pane을 바꿔도 새 pane에 넣지 않는다. 실제 삽입 직전에 다시 검증한다 |
-| 전송 | front → host: Front API의 bounded binary chunk(웹은 streaming Blob body). host → agent: Agent link chunk. host는 **저장하지 않고 통과 전송**한다(bounded buffer). agent가 끊겨 있으면 바로 실패하고 draft는 유지한다. base64 거대 JSON과 scp 문자열은 쓰지 않는다. 길이·SHA256·offset을 검증한 뒤 agent가 원자적으로 commit하고 receipt를 반환한다 |
-| 대상 경로 | `.aaa/<project>-<thread>/attachments/<attachment_id>.png`. 일반 세션은 session 범위 경로다. Windows agent는 Windows 절대 경로를, Unix agent는 그 머신의 POSIX 경로를 돌려준다. cwd를 모르거나 쓸 수 없으면 명시 오류를 낸다 |
-| agent 전달 | adapter가 harness별로 검증한 이미지 참조 형식으로 바꾼다. 모든 agent에 `@path`나 POSIX quote 하나를 강제하지 않는다. 업로드 완료와 실제 입력 접수는 따로 본다. 확인창·선택 창에는 경로를 넣지 않는다. 일반 shell에도 따옴표 경로를 넣는다(10-17 결정 20 D7, §8.51) |
-| 전송 의도 | Ctrl+V는 첨부일 뿐 자동 Enter가 아니다. 업로드가 끝나지 않았으면 Send를 보류한다. pane별 순서와 paste barrier로 경로보다 Enter가 먼저 가지 않게 한다 |
-| 재연결 | 미완료 전송은 offset으로 재개할 수 있다. commit 뒤 응답이 유실되면 같은 ID로 receipt를 조회한다. 입력 직후 유실은 `delivery_unknown` 규칙을 따른다(§8.5 a) |
-| 보관 | 파일 수명을 front 연결에 묶지 않는다. session·thread가 참조하는 동안 보존하고, 참조가 끝나고 보존 기한이 지난 것만 정리한다. 이미지 내용은 로그·보고·git에 넣지 않는다 |
-
-추가 규칙:
-- **크기:** 기본 상한은 파일당 16MiB다. 넘으면 연결을 끊지 않고 명시 오류를 내며 draft를 유지한다. herdr는 이 경우 client 연결을 끊는데, 그 동작은 가져오지 않는다.
-- **형식:** PNG/JPEG가 필수다. 실제 signature·decode·pixel·memory 상한·quota를 확인한다.
-- **권한:** Unix는 0700/0600, Windows는 사용자 SID ACL이다. symlink·junction·path traversal은 거부한다.
-- **책임:** 파일 생성·경로 인용·정리 책임은 대상 agent backend에 있다. front는 목적지 절대 경로를 지정할 수 없다.
-
-## 10. 개발자 도구·속도 해결 계획
-
 ### 10.1 합격 기준과 「한 번 등록」 목록
 
 사용자 합격 기준은 다섯 가지다. 이를 완화한 우회책은 채택하지 않는다.
@@ -4858,7 +4266,7 @@ primary 근거:
 | 3 | 「재부팅 직후」 범위 | GUI 로그인 뒤(터미널 없이 ssh·웹 우선) / FileVault·GUI 로그인 전까지 포함 | **GUI 로그인 뒤.** 로그인 전은 키체인 무잠김을 보장할 수 없고 자동 unlock도 쓰지 않는다 |
 | 4 | 웹 입장 | aaa pairing·token만 / Tailscale-User-Login 헤더로 본인 기기 자동 입장 허용 | **aaa pairing만**(결정 6, 헤더 위조 위험) |
 | 5 | 자동 이어가기 기본값 | 꺼짐 + profile·project별 opt-in / 켜짐 | **꺼짐 + opt-in** |
-| 6 | AGENTS.md에 구조 원칙 한 줄 추가 | 추가 / 안 함 | **추가 권장.** 초안: 「backend(Rust)와 frontend(TUI·웹)를 분리한다. frontend는 상태를 갖지 않고 host backend하고만 통신하며, host backend가 각 머신의 agent backend와 통신한다.」 사용자가 정한 파일이라 승인 전에는 바꾸지 않았다 |
+| 6 | AGENTS.md에 구조 원칙 한 줄 추가 | 추가 / 안 함 | **추가 권장.** 초안: 「backend(Rust)와 frontend(웹)를 분리한다. frontend는 상태를 갖지 않고 host backend하고만 통신하며, host backend가 각 머신의 agent backend와 통신한다.」 사용자가 정한 파일이라 승인 전에는 바꾸지 않았다 |
 | 7 | Linux linger | 설치 때 `loginctl enable-linger` 승인 / foreground 감독만 | **linger 승인**(SSH 로그아웃 뒤에도 세션 유지) |
 | 8 | Windows 로그온 전 agent | 사용자 로그온 예약 작업 / 시스템 서비스 | **사용자 로그온.** Session 0은 사용자 자격 증명과 다르다 |
 
@@ -4909,7 +4317,7 @@ primary 근거:
 | routine(every·daily·`on = "pr"`, 명령 digest 승인, `routine_commands`, coordinator 없으면 skipped, `sh -c` 60초) | 그대로 의미 유지, 실행은 agent backend(§8.9). `on = "pr"`은 M3 | M1-3 |
 | nudge(미확인 묶음 hash당 1회, `herdr agent prompt`, 입력창 비었을 때) | 그대로(§8.5) | M1-3 |
 | progress 보고(`report --percent`), hook 5개 harness | 상태 사건 `progress` + adapter(Claude·Codex 먼저, 나머지 후속) | M1-3 / M3 |
-| sidebar·overview·focus·needs-you·popup | TUI·웹 표시 | M1-2 / M3 |
+| sidebar·overview·focus·needs-you·popup | 웹 표시 | M1-2 / M3 |
 | TASKS.md `(profile@machine)` 소유, `assignable`, `context` | 그대로 + `--from-task` 중복 방지(§8.21) | M1 마무리(완료) |
 | safety·yolo `launch_args`, `start_threads` propose/auto | host.toml `[safety.*]`(yolo·start_threads·trust_screens·thread_agent_args·routine_commands·thread_profiles, §8.163). 옛 자리(project.toml·`[projects]`)는 아래 층 | 10-18 참고대로(§8.163) |
 | `threads/<id>.task.md` Follow-ups, `<id>.next.md` | thread 기록에 포함, restart 때 다시 읽기 | M1-3 |
@@ -5408,7 +4816,7 @@ primary 근거:
 - **새 규칙.** 사용자 요청에 따라 중간 착지·진행·PR 병합/리뷰·평가 결과는 push하지 않는다. thread 보고 첫 줄의 `[완료]`는 맡긴 일 전체와 확인의 끝, `[결정 필요]`·`[검수 대기]`·`[확인 필요]`는 인증·터미널 승인·GUI·사용자 결정처럼 직접 사람이 해야 하는 단계다. `[착지]`·`[진행 중]`과 표지 없는 옛 보고는 외부 완료 알림을 만들지 않는다. 확인창·시작 실패·세션 사라짐·머신 이상은 유지한다. 표지로 thread 묶음·진행률·자동 resolve를 바꾸지 않는다(D9).
 - **보고/화면 경계.** host가 회수 사본의 hash와 DB를 대조해 알림 의도를 읽고 ThreadView.report_attention(Front API 1.41)에 실어 웹의 새 보고 알림·재연결도 같은 판정을 쓴다. 착지 inbox는 §8.221대로 남긴다. 보낼 때 사본 의도를 다시 확인해 그 사이 진행 보고로 바뀌었거나 ack한 보고는 취소한다. 표지 아래의 PR 줄만 더 인정하며 옛 PR 첫 줄도 받는다. 작업 중에 표지를 먼저 받은 턴은 그 뒤 Finished 카드를 중복하지 않으며 다음 턴부터 다시 센다.
 - **coordinator 최소 경로.** 기존 출처·역할 검증 post를 확장한다. `aaa post <project> user --request --needs-user --topic user-action --title '확인 필요' --body-file <파일>`은 입력 필요, `aaa post <project> user --notice --topic task-complete --title '전체 완료' --body-file <파일>`은 작업 완료다. worker/evaluator의 user 목적지는 계속 거부한다. 이 항목은 seen으로 저장해 coordinator 자기 nudge를 막고, done은 사용자 응답/확인 뒤 명시적으로 처리한다. push/webhook에는 제목·본문 대신 고정 문구만 보내며 기기별 input/done 선택을 따른다. Web Push 사용 중 억제·mute·오류/머신 경로는 유지한다.
-- **시스템 안내.** coordinator AGENTS.md 생성문(CLAUDE.md는 같은 파일 참조), 공통 thread brief와 SessionStart 진행 hook 안내에 같은 규칙을 적는다. coordinator는 질문하며 멈추기 전에 Waiting for you 상태와 user 요청 post를 남긴다. 전체 완료 post는 맡긴 일 전체가 끝난 뒤 한 번이다. 기존 운영 지침 파일은 이 thread가 수정하지 않는다. 새 binary 반영 후 `aaa doctor files --fix`로 생성 안내를 반영한다.
+- **시스템 안내.** coordinator AGENTS.md 생성문, 공통 thread brief와 SessionStart 진행 hook 안내에 같은 규칙을 적는다. coordinator는 질문하며 멈추기 전에 Waiting for you 상태와 user 요청 post를 남긴다. 전체 완료 post는 맡긴 일 전체가 끝난 뒤 한 번이다. 기존 운영 지침 파일은 이 thread가 수정하지 않는다. 새 binary 반영 후 `aaa doctor files --fix`로 생성 안내를 반영한다.
 - **참고와 차이.** herdr-projects notify.rs의 Done/Request 구분, herdr-web-ui push.ts의 대기 중 상태 재검사·seedStatuses, t3code ThreadNotificationCoordinator.tsx의 completed/attention 구분을 따른다. 참고는 턴/검토 대기를 완료로도 알리지만, 이번 사용자가 정한 명시적 전체 완료/확인 필요 경계가 우선한다. pane의 앱 안 턴 끝남 카드(§8.185)는 휴대폰 push와 별개인 기존 경로다.
 - **검증.** 중간 착지 push 금지와 coordinator user 목적지 불가를 각각 수정 전 RED로 보존했다. host의 실제 사본·DB·inbox·알림 queue 시험은 adopt/worktree, 네 표지, hash 불일치·본문 위장·중복·ack·대기 중 보고 변경·기기 설정을 본다. 기존 post 출처 E2E에서 실제 coordinator pane의 두 CLI 명령도 검증한다. 끝낸 가짜 작업 보고는 새 규칙에 맞춰 완료 표지를 붙이고, 중간 작업 fixture는 유지한다.
 
@@ -5418,40 +4826,6 @@ primary 근거:
 - **참고 그대로 재사용.** herdr-web-ui aa624cb `components/RowMenu.tsx` 78~108은 body portal의 fixed 좌표를 EDGE=8 안에 보정하고 아래 공간이 부족하면 위에 둔다. 휴대폰은 같은 파일의 modal sheet를 쓴다. aaa에 이미 옮긴 공통 RowMenu를 임무에도 사용한다. t3code `components/ui/popover.tsx`의 Portal/Positioner·collisionAvoidance·available-width/height 제한과 목적이 같으며 새 위치 계산기나 의존성을 만들지 않는다.
 - **동작.** 긴 임무 배지는 목록 머리 안에서 말줄임하고 메뉴에는 전체 이름과 작업 셈을 보인다. 임무 보기·시작/멈춤/이어 가기·다시 읽기·승인 검토는 같은 API와 역할 검사를 유지한다. 공통 메뉴의 Esc·바깥 누름·focus 복귀·좁은 화면 취소 단추를 따른다. 운영 임무는 건드리지 않는다.
 - **검증.** 기존 웹 E2E 12 임무 발견/승인 경계를 확장했다. 세 화면에서 메뉴와 설명의 실제 글 조각, 모든 단추의 화면 경계와 hit target을 검사하고 실제 Controller 승인 저장·승인만으로 시작하지 않음도 본다. 수정 전 세 크기 모두 같은 이유로 RED이며 headless 전후 캡처를 보존한다. 서로 다른 크기는 새 탭에서 열어 이전 sheet의 퇴장 픽셀이 다음 캡처에 섞이지 않게 한다. 고정 sleep·timeout 연장·기대값 완화는 없다.
-
-### 8.225 Windows TUI 선택 복사와 pane 입력 경계(10-19, t-0378)
-
-- **원인.** `aaa-tui/clip.rs`는 arboard 쓰기가 실패해도 OSC 52를 stdout에 쓴 것만으로 성공을 알렸다.
-  arboard 3.7.0 `platform/windows.rs::Clipboard::open` → clipboard-win 5.4.1 `raw::open`은
-  `OpenClipboard(NULL)`이다. Microsoft `SetClipboardData` 계약은 이 소유자로 `EmptyClipboard` 뒤 쓰기가
-  실패한다고 명시한다. 또한 자동 복사 뒤 `selection=None`이 되어 이어 누른 Ctrl+C가 pane에 들어갔다.
-- **참고.** herdr 0.9.5 `platform/windows.rs::write_clipboard`의 `GetConsoleWindow` 소유자와
-  `GMEM_MOVEABLE` UTF-16 쓰기·실패 시 해제를 `clip_windows.rs`로 옮겼다(Apache-2.0).
-  Windows 로컬 실패는 오류로 알린다. SSH·WSL의 OSC 52는 수신 확인이 없어 「요청을 보냈다」로 알린다.
-  Windows의 로컬 VS Code 터미널도 native API를 쓴다.
-- **선택.** 마우스를 떼어 자동 복사한 뒤에도 선택을 다음 입력까지 남겨 Ctrl+C·Ctrl+Shift+C·Cmd+C를 복사로
-  처리한다. 실패한 복사도 그 키는 pane으로 보내지 않는다. 복사 키의 Repeat·Release를 소비한다.
-  crossterm 0.29 Windows `event/sys/windows/parse.rs`는 반복도 Press로 주므로 Windows는 Release까지 막는다.
-  드래그를 끝내면 double-click 후보를 지운다(herdr `shell/mouse.rs`의 `last_pane_click=None`).
-- **마우스.** 보고를 켠 프로그램에서도 Shift+끌기는 로컬 선택이고, 선택 중의 움직임 보고는 보내지 않는다.
-  Windows Terminal [선택 관례](https://learn.microsoft.com/windows/terminal/selection)와
-  t3code `terminal/ghostty/surface.ts::shouldReportTerminalMouse`의 Shift 선택을 따른다.
-  herdr `shell/mouse.rs`는 Shift도 무조건 보고하여 이 결함만 그대로 옮기지 않았다.
-  선택이 없을 때 Ctrl+C와 수정키 없는 프로그램 마우스 입력은 기존대로 보낸다.
-- **진단.** 당시 host 입력 기록은 bytes·request·session만 남겨 발신 front와 1바이트의 의미를 사후 확정할 수 없다.
-  앞으로 `PaneInput`은 `pane_front` span에 front id·label과 `ctrl-c`·`mouse-sgr`·`other`만 넣어
-  `request=cN` 전달/확인 로그와 함께 남긴다. 입력 내용은 저장하지 않는다.
-- **시험.** TUI PTY 회귀 두 개: OSC 52 요청을 성공이라 하지 않음, 선택 직후 Ctrl+C·반복과 Shift 선택·움직임·
-  Ctrl+Shift+C·쓰기 실패가 pane에 들어가지 않음. raw 관측기는 ISIG를 끄고 뒤따른 표지의 수신 bytes로 끝낸다.
-  기존 native clipboard CI 왕복 하나를 한글·이모지·여러 줄 텍스트 쓰기/읽기까지 넓혔다.
-  개발 머신의 실제 clipboard는 건드리지 않는다. xwin은 Windows 교차 빌드이고 Windows 실행 증거는 CI다.
-- **Windows CI 후속.** 첫 console 소유자 구현은 Windows CI 실제 텍스트 쓰기에서 실패했다(run 39189740640,
-  native_clipboard_roundtrip). 공개 annotation은 panic 위치만 남기고 API 오류 본문을 빼, 그 원인을 단정하지 않는다.
-  쓰는 스레드 소유의 message-only STATIC 창을 만들고 clipboard를 닫은 뒤 지우도록 고쳤다.
-  console 창이 없는 실행 환경에서도 NULL·남의 창에 기대지 않는 Microsoft clipboard owner 계약이다.
-  표시·전역 설정·별도 메시지 루프 없이 즉시 렌더링하고, 같은 native 왕복 시험의 기대를 유지한다.
-  다음 실패부터 API 오류도 기존 CI annotation에 담기도록 native 시험 진단을 보강했다.
-- 웹 steering과 TUI 여러 줄 Enter는 각각 별도 작업 범위다.
 
 ### 8.226 휴대폰 푸시 본문에 보고 첫 줄 요약(10-19, t-0379)
 
@@ -5622,16 +4996,6 @@ primary 근거:
 - **제품.** 배포 소속은 host가 canonical cwd·local 머신·harness/role로 이미 판정한 PaneView.coordinator_project와 running 상태를 쓴다. peer PID actor 검증과 thread/adopt 제외, 사람의 safety 확인은 유지한다. 입력 가능한 coordinator 목록은 그대로다. --wait는 AgentDisconnected만 재연결/배포 완료 사건 뒤 같은 DeployStatus ID로 재조회하며 DeployStart는 재전송하지 않는다. 머신 이름·ID·생략을 지원하고 nonwait·Forbidden 등 다른 오류는 즉시 반환한다.
 - **최소 회귀.** host owner는 실제 agent_disconnected와 caller_of·Front 요청에서 권한 유지/AgentDisconnected·위장/worker/device/일반 셸/끝난 pane 거부를 확인한다. CLI owner는 실제 Front IPC frame에서 단절 → Connected → 같은 ID 상태 조회 → Completed와 nonwait·Forbidden 즉시 종료를 본다. 기존 m13은 실제 backend 재시작과 pane 생존을 계속 맡는다. 둘은 권한과 전송 대기의 다른 계약이며 새 외부 프로세스·신호·시험용 production export·고정 sleep·시한 증가가 없다. 두 owner를 원래 제품으로 되돌린 변형 RED와 저장 바이트 복원 GREEN을 확인했다.
 
-### 8.238 TUI spaces 자동 높이(10-19, t-0386, D안 1단계)
-
-- workspace 항목 수에 머리·빈 줄·footer 세 줄을 더한 높이를 쓴다. 최대 화면 절반까지만 쓰므로 세 workspace가 있는
-  80줄 화면에서는 spaces가 6줄을 쓰고 나머지가 agents에 돌아간다. 기존 반반 고정에서 생긴 큰 여백을 없앤다.
-- 구역 경계를 직접 끌거나 공유 설정 `tuiSidebarSplit`을 저장한 사용자는 그 비율을 유지한다. 탭·workspace·마우스·compact
-  동작과 저장 형식은 유지한다. 후속 단계는 thread 두 줄 단위 스크롤, 폭 48칸·선택 제목 전체 보기, t-0390 착지에 맞춘
-  Projects·Machines·Agents 패널과 패널 밖 특수 임무다.
-- 기존 렌더 keeper에서 작은 화면·큰 화면·다수 workspace 상한·저장 비율을 확인한다. 기존 PTY keeper에서 자동 경계를
-  실제 마우스로 끌고 재접속하여 저장 비율을 확인한다. 새 시험 전용 seam은 없다.
-
 ### 8.239 입력줄 상태에 따른 Ctrl+Enter(10-19, t-0384, D1·D7 후속)
 
 사용자 결정: 웹 터미널과 TUI의 agent pane에서 입력줄에 글이 있으면 줄바꿈, 비었으면 harness steering을 한다. 감지로 판정하지 못하면 줄바꿈이다. front가 입력줄을 각각 읽지 않고 `FrontRequest::PaneCtrlEnter { pane }`로 host에 요청한다. TUI의 물리 키 연결은 t-0385가 맡는다.
@@ -5654,7 +5018,7 @@ primary 근거:
     - 쉬는 중, slash·`!` 목록이 footer를 덮은 화면, 패널이 아닌 글이 끼인 화면, 커서가 입력 줄을 벗어난 화면에서는 보내지 않는다.
     - 결과로 작업 중 글을 쓰고 Ctrl+Enter를 두 번 누르면, 첫 번은 steer 대기열에 넣고 둘째(빈 입력 + 대기 패널)는 Esc로 지금 보낸다.
     - 쉬는 Codex의 글은 보내지 않는다. 처음에는 쉬는 Claude의 글을 sendNow로 바로 제출했으나(Claude 자체 Ctrl+Enter와 같음) 사용자 정정으로 쉬는 Claude도 보내지 않는다. 두 harness가 같이 「작업 중에만」이다.
-  - **front.** 빈 웹 입력줄은 같은 요청이다. 글이 있는 웹 입력창은 아래 「웹 입력창 Ctrl+Enter」를 따른다. 처음에는 요청하지 않고 「보내기는 Enter, 줄바꿈은 Shift+Enter」 안내를 띄웠으나 15:3x 정정으로 없앴다. TUI 인코더는 Ctrl+Enter를 LF로 바꾸지 않는다. Front API 1.43 미만 host에는 보내지 않고 안내를 띄운다. harness가 없는 pane은 기존 Ctrl+Enter 인코딩 그대로다.
+  - **front.** 빈 웹 입력줄은 같은 요청이다. 글이 있는 웹 입력창은 아래 「웹 입력창 Ctrl+Enter」를 따른다. 처음에는 요청하지 않고 「보내기는 Enter, 줄바꿈은 Shift+Enter」 안내를 띄웠으나 15:3x 정정으로 없앴다. TUI 인코더는 Ctrl+Enter를 LF로 바꾸지 않는다. Front API 1.43 미만 host에는 보내지 않고 안내를 띄운다. harness가 없는 pane은 기존 Ctrl+Enter 인코딩 그대로다. TUI 쪽(인코더·1.43 미만 안내·TUI 시험)은 t-0401 TUI 삭제와 통합하며 삭제 쪽을 따라 버렸다.
   - **정정: 웹 입력창 Ctrl+Enter(사용자 10-19 15:3x).** 사용자 「cotrol+enter누르면 웹 대화에서는 현재 입력이 있으면 바로 그걸 steering으로 보내는거지? 현재 입력이 있고, 이전 입력이 처리되지 않았으면 그걸 steering하고. … control-enter 눌면 어떻게 해라고 보여주는건 좀 과한것 같아.」 대화 입력창과 터미널 보기의 웹 입력줄(보내기 전 글을 이 기기에 두는 칸)이 같다. 글은 보내기와 같은 `submit`으로 가고 `steer: true`를 붙인다. host가 글을 친 뒤 Enter 대신 끝 키를 고른다(`ctrl_enter::steer_submit_keys`). 그래서 t-0392의 보내기 잠금·전달 확인·멈춤(§8.247)을 그대로 타고, 반영될 때까지 입력창이 잠긴다. 결정표는 다음과 같다.
 
     | 입력창 | agent | 보내는 것 |
@@ -5698,109 +5062,6 @@ primary 근거:
 - **보고서 화면.** 목록(`ReportsPanel`, 「열기」는 본문, 「새 창」은 예전 앱에서 열기)과 보고서 하나(`library_open`의 sandbox iframe, 없으면 보고 글·파일)다. 한 번 연 뒤에는 다른 화면으로 가도 그려 둔 채 `visibility: hidden`·`inert`로 숨긴다: 돌아오면 연 보고서·iframe 문서와 그 안 굴린 자리·목록 굴린 자리가 그대로다(display:none은 iframe 안 자리를 잃는다).
 - **휴대폰.** 768px 이하는 막대가 drawer 안 왼쪽 세로 막대다(drawer 폭 min(88vw, 48px + 사이드바)). 보이는 패널의 단추는 drawer를 닫고, 「보고서」는 drawer를 닫고 본문을 바꾼다. 가로 휴대폰(769px 이상)은 넓은 창 규칙이다.
 - **검증.** 웹 E2E 26(`26-activity-bar`, t-0384의 25와 겹치지 않게): 패널 바꾸기·다시 눌러 접기(본문 +320px)·키보드·Mod+Shift+B·새로 열어도 기기 기억·다른 기기는 기본값, 단축키·팔레트·알림이 연 줄의 패널과 접힌 채 유지·목록 줄은 그대로·배지, 보고서 화면 왕복에서 같은 iframe 문서·자리와 목록 자리, 설정 톱니, 휴대폰 drawer. 드러낼 때 펴기·보고서 화면을 떠날 때 지우기를 심으면 각각 실패한다. 03 단축키의 Mod+Shift+B는 이제 앱 몫이다. 21 보고서는 막대 「보고서」·본문 열기·새 창으로 바꿨다. 머신 줄이 머신 패널로 가서 02(머신 + 단추)·13(끊김 글)은 그 패널을 열고(`showPanel`·`inList`), 06·08·14는 「목록이 왔다」 표지를 붙음으로 본다. 03 「크기 되찾기」의 둘째 화면은 760→640px다(첫 화면 1100px의 터미널이 막대 48px만큼 좁아졌다). 04 「목록 두 굴림 영역」(§8.235)은 두 목록이 다른 패널이라 패널을 바꿔 가며 재고, 에이전트 패널이 높이를 다 가져 agent를 24개로 넘치게 한다. 그 여백 규칙을 빼면 여전히 실패한다. 고정 sleep은 없다.
-
-### 8.241 TUI 앱 선택의 OSC 52 전달과 복사 키 보호(10-19, t-0391)
-
-- **누락 경계.** 마우스 보고 앱(Codex·Claude)의 일반 끌기는 herdr처럼 앱에 전달한다. 앱의 OSC 52는 vt100 callback에서 끝나던 누락을 고쳐 host mirror가 live 효과로 꺼내고, 출력 당시 입력권을 가진 조작 front 한 곳으로만 전달한다. 셀 화면만 받는 TUI도 기존 `clip::copy_text`로 로컬 clipboard에 쓴다. replay·관찰 화면·reader·다른 pane·focus를 잃은 TUI에는 복사 효과를 실행하지 않는다.
-- **경계·자료.** pane 내부 좌표로 범위를 기억하고 앱 선택 뒤 Ctrl+C·Ctrl+Shift+C·Cmd+C는 pane 본문 복사로 처리한다. 앱의 OSC 52가 이미 있으면 그 정확한 글을 쓴다. 없으면 host의 `PaneSelectionRead`로 inner 범위만 읽고 줄 끝 공백을 뺀다. copy 키의 반복·Release 보호와 선택 없는 Ctrl+C 전달을 유지한다. 앱 mouse 보고 자체와 휠·오른쪽 메뉴를 바꾸지 않는다.
-- **한도·수명.** VT callback은 완료된 BEL/ST OSC의 base64·UTF-8만 받고 질의·NUL·잘못된 데이터는 버린다. 한 글 64KiB·한 feed 최대 8개로 제어 frame 한도 안에 묶는다. 매 feed의 일회성 효과만 꺼내며 snapshot이나 재접속으로 다시 실행하지 않는다.
-- **성공·진단.** native 쓰기 성공만 「클립보드에 복사했다」, 확인 없는 OSC 출력은 「터미널에 복사 요청을 보냈다」, 실패는 오류다. Windows native 쓰기는 기존 자기 thread의 message-only 창·UTF-16·메모리 소유권 경로를 유지한다. TUI는 연결 뒤 판과 실제 실행 파일 SHA256을 host 진단에 한 번 알린다. 화면 이름에는 섞지 않는다. host에는 복사 결과 종류(Copied/Requested/Failed, front 자기 신고)와 OSC 전달의 front ID·길이만 남기며 본문은 기록하지 않는다.
-- **프로토콜·배포.** FRONT_API 1.43 `Clipboard` 사건·`PaneCopyReport`·`FrontIdentity`를 더한다. 1.42 front에는 새 사건을 보내지 않고 1.42 host에는 새 진단을 보내지 않는다. native Windows 왕복은 기존 windows-2025 CI가 담당하며 개발 기기·사용자 PC clipboard를 덮는 검사는 켜지 않는다. host와 PC TUI binary 반영이 모두 필요하다.
-- **참고.** herdr 0.9.5 `pane/terminal.rs:1423`·`pane.rs:2614`·`server/headless/notifications.rs:334`·`client/clipboard_forwarding.rs:9`·`selection.rs:363`의 live 효과→foreground client→native 쓰기 흐름을 따른다. herdr-projects popup의 경로 복사와 web-ui 붙여넣기는 이 경계의 owner가 아니다. t3code `surface.ts::shouldReportTerminalMouse`·선택 trim 규칙도 대조했다.
-- **Windows Terminal Shift 제약.** [Microsoft Selection 문서](https://learn.microsoft.com/en-us/windows/terminal/selection)의 Shift+끌기는 VT 입력 대신 바깥 터미널 자체 화면 선택이다. sidebar·pane 경계가 그 바깥 화면에 포함되며 aaa/herdr가 좌표를 받지 못한다. aaa에 도달한 선택의 pane 제한과 이 바깥 선택을 구분한다. 시스템·터미널 프로필 변경이나 clipboard 사후 가공으로 우회하지 않는다. 사용자 승인(10-19)에 따라 일반 끌기의 OSC 52→로컬 native와 앱 선택 뒤 Ctrl+C의 pane 본문 복사를 Windows 기준 동작으로 한다. Shift+끌기는 플랫폼 제약으로 남긴다.
-- **회귀.** `pane_osc52_reaches_front_clipboard`는 실제 pane 출력→host→TUI→기존 파일 sink와 재접속 무복사를 본다(수정 전 빈 clipboard RED, 다른 front로 broadcast하는 변형도 전송 큐의 Pong 울타리 owner 시험에서 RED). `reported_selection_copy_never_interrupts_pane`는 raw 관측기에서 mouse 앱의 일반 선택·OSC 유무·pane 밖 끌기·Ctrl+C 누수·선택 없는 Ctrl+C를 본다(수정 전 keys=0321 RED). 기존 local/Shift 선택·복사 실패·반복/Release 보호 시험을 유지한다. 새 VT 유닛 시험은 chunk 분할·BEL/ST·질의/형식 거부·한도를 본다.
-
-### 8.242 TUI 확장 Enter와 Windows Terminal 그림 붙여넣기(10-19, t-0385)
-
-- **원인.** TUI는 모든 Enter를 CR로 만들어 수정키를 버렸고, Unix 바깥 터미널에 확장 키도 요청하지 않았다.
-  crossterm 0.29는 kitty CSI u는 읽지만 xterm modifyOtherKeys의 `CSI 27;modifier;Unicode~`는 버렸다.
-  Windows에서는 bracketed paste를 일부러 끄고 있었다. Windows Terminal은 Ctrl+V를 자신의 paste로 처리하고,
-  그림-only clipboard의 빈 입력은 bracketed paste를 요청한 앱에만 알린다. 과거 입력 로그는 bytes 개수만 있어
-  특정 운영 키를 소급 확정할 수 없으며, 수정 전 PTY 재현에서는 modifyOtherKeys 두 키가 도착하지 않았다.
-- **참고.** herdr 0.9.5 `client/terminal_setup.rs`의 확장 키 요청·종료 복원과
-  `input/model.rs::ime_compatible_keyboard_enhancement_flags`를 따른다. 모든 글자를 escape로 바꾸는 flag는 켜지 않는다.
-  Windows 입력은 `client/input/windows_vti.rs`의 콘솔 key record→붙여넣기 복원을 따른다.
-  t3code는 웹 composer이므로 OS 터미널 입력 파서에 해당하는 경로는 없다.
-  그림-only paste 근거는 Microsoft Terminal `TerminalPage::_PasteFromClipboardHandler`다.
-- **수리.** crossterm 0.29를 MIT 고지와 함께 vendor에 두고 위 두 입력 파서를 보완했다(변경 목록은
-  `vendor/crossterm/AAA.md`). Windows 콘솔은 key-down/up·UTF-16·분할 표지·빈 paste를 복원하며,
-  표지가 아닌 Escape는 원래 키로 돌려준다. Escape 구분 시한은 입력 프로토콜용이며 시험은 주어진 시계로 검사한다.
-  Windows도 bracketed paste를 켜므로 Ctrl+V 그림은 기존 PNG 첨부 경로로 간다. 사용자 Terminal 설정은 바꾸지 않는다.
-  Unix는 kitty와 modifyOtherKeys를 요청하고 끝날 때 복원한다. Shift+Enter와 구 host fallback은
-  Claude의 공식 `chat:newline`과 Codex 0.163 `keymap.rs::editor.insert_newline`이 공통 지원하는 Ctrl+J(LF)다.
-- **사용자 추가 결정.** Ctrl+Enter의 최종 동작은 「agent 입력줄에 글이 있거나 알 수 없으면 줄바꿈, 비었으면 steering」이다.
-  화면 판정·harness steering 키는 웹 작업의 공통 backend owner가 맡는다. 이 절의 입력 파서가 키를 보존한 뒤 TUI는
-  `PaneCtrlEnter` 요청을 사용하며, TUI 안에 별도 입력줄 판정이나 harness 키 표를 만들지 않는다.
-  Front API 1.43부터 요청하며 1.42 host에는 LF를 보낸다. 반복 키는 steering을 재실행하지 않고 reader는 전송하지 않는다.
-  공통 owner t-0384의 판정·키 선택 위치는 §8.239다. 공통 agent 줄바꿈은 Alt+Enter(ESC CR)다.
-  - 후속(t-0393, §8.239 「줄바꿈 없이 steering만」): Ctrl+Enter는 줄바꿈을 넣지 않는다. 모르면 보내지 않고, 1.43 미만 host에는 LF 대신 안내만 띄운다.
-- **검증.** 수정 전 Windows 키 인코더와 실제 PTY 경계가 실패했다. 수정 후 kitty/xterm Ctrl+Enter의 공통 요청·안전한 Alt+Enter와 Shift+Enter의 LF 및 보통 Enter의 CR,
-  확장 키 모드 복원, 기존 Ctrl+V·빈 paste의 실제 PNG 저장을 검사했다. 빈 paste를 버리는 변형도 실패했다.
-  Windows Rust target의 TUI·vendored parser 시험 교차 컴파일을 통과했다. Windows 실행은 CI 결과로 별도 확인한다.
-  새 시험은 신호·실제 clipboard·고정 sleep을 쓰지 않는다.
-
-- **종료 순서 검토.** 독립 리뷰에서 kitty 스택이 화면별이라는 점을 확인했다. 정상 종료는 alternate screen을 떠나기 전에 pop하고, panic hook도 ratatui의 화면 복원보다 먼저 한 번만 pop한다. 화면별 스택 E2E와 격리한 자식 프로세스의 panic hook 순서 시험이 수정 전 실패·수정 후 통과했다.
-
-- **기존 TUI 카드 시험의 불필요 입력(t-0385).** 최신 통합의 카드 시험 끝에서 TUI `x`+Enter와 CLI `go`가 서로 다른 연결로 겹쳐 `x` → `go\n` → Enter 순으로 도착했다. 줄 단위 fixture가 `xgo`를 받아 작업 상태가 되지 않았다. 카드 없는 `prefix o` 뒤 focus/lease 보존은 이미 화면과 host 사건으로 확인하므로 검증하지도 않던 `type_line("x")` 한 줄을 제거했다. 실제 카드·focus·알림 단언·시한·제품 코드는 유지한다. 실패 로그와 두 연결의 순서를 보고에 보존한다.
-
-### 8.243 TUI thread 두 줄 단위 스크롤(10-19, t-0386, D안 2단계)
-
-- **원인.** 목록의 물리 줄 skip과 휠 ±1줄이 상태 줄에서 시작하거나 제목만 맨 아래 남겼다. herdr-projects 0.2.35
-  `sidebar.rs::agent_card`의 제목·상태 묶음을 aaa의 두 줄 계약으로 유지하고, t3code `Sidebar.tsx`의 항목 단위 탐색처럼
-  스크롤도 항목 경계를 쓴다. 한글 셀 폭·행 템플릿·상태 말·정렬 순서는 바꾸지 않는다.
-- **동작.** thread는 제목·상태 두 줄, 묶음 머리·pane은 한 줄씩 넘긴다. 선택을 따라갈 때도 두 줄이 모두 들어가는 경계로
-  내리고, 남은 한 줄에 다음 제목만 그리지 않는다. 목록 갱신 뒤 오래된 top이 상태 줄을 가리키면 제목으로 맞춘다.
-  극소 한 줄 화면은 상태보다 제목을 우선한다. 상태 줄 클릭은 같은 thread를 열고 compact·탭·workspace 동작은 유지한다.
-- **검증 경계.** 기존 두 줄 렌더 keeper에 0~4줄 viewport·선택·명시 top·끝 경계를 더한다. 실제 PTY keeper에는 기존
-  닫힌 thread와 실행 중 thread를 사용해 SGR 휠 아래·아래·위·아래, 스크롤 뒤 상태 줄 클릭을 더한다. 같은 fixture 준비를
-  재사용하고 새 production 시험 seam·새 신호 시험·고정 sleep은 없다. 제목만 도착한 새 thread는 실행 pane 반영을 기다린다.
-- **범위.** 폭48·선택 제목 전체 보기는 후속 단계다. 두 줄 스크롤은 먼저 구현·전체 검증했고, 사용자 착지 창에서
-  웹 기준 패널 단계와 함께 최신 main에 통합한다.
-
-### 8.244 TUI 활동 막대·패널 경계와 coordinator 연결(10-19, t-0386, D안 3단계)
-
-- **기준.** 웹 착지 8c143c0f의 `ActivityBar.tsx`·`sidebarPanel.ts::revealPanel`·`Sidebar.tsx`와 t-0390 확정 표를
-  따른다. 순서는 프로젝트·머신·에이전트, 막대 아래는 본문을 바꾸는 보고서·설정 창이다. 같은 패널 단추를 다시 누르면
-  접고 활동 막대는 남긴다. 패널별 목록 굴린 자리를 유지하며 단축키·알림의 드러내기는 접힘을 풀거나 PTY 크기를 바꾸지 않는다.
-- **내용.** 프로젝트는 고정 → 프로젝트(coordinator·thread) → 기타, 머신은 연결·host 표시·새 pane·점검 문제,
-  에이전트는 살아 있는 agent(평가자 제외)·고정/정렬 설정을 쓴다. 질문 agent와 확인 필요·검토 대기 thread 수는 각 막대
-  배지다. 특수 임무·평가자는 모든 패널의 공통 머리 배지와 별도 목록에 있다. pane이 없는 임무도 보이고 열기로 시작/승인하지
-  않는다. 프로젝트 머리 Enter/제목 클릭은 실행 중 coordinator를 열며 Space/왼쪽 화살표 클릭은 접는다.
-- **TUI 보존·대응.** herdr `render_sidebar`·`render_collapsed_sidebar`의 workspace·compact 번호·탭·마우스를 남긴다.
-  4칸 막대에서 P/M/A가 세 패널, R이 보고서, 톱니가 설정, S가 공통 특수 목록이다. 탐색 모드 F6으로 막대에 가며
-  화살표·Home/End는 포커스만, Enter/Space는 선택, Tab은 목록, s는 특수 목록이다. 기존 Tab/Shift+Tab의 pane 정·역방향 이동은 유지한다.
-  마지막 패널·접힘은 기기의 state `tui-sidebar.json` 표시 설정이다. 기존 host 공유 접힘은 이전값으로 읽되 기기값이 우선한다.
-  spaces는 공통 머리 아래 자동 높이, 직접 끈 구역 경계는 기존 비율로 유지한다.
-- **터미널 차이.** 보고서는 Front `LibraryReports`/`LibraryOpen`으로 읽는 thread 보고 글·결과물 목록이다. 웹 HTML iframe을
-  TUI에 넣지 않으며 문서·스크롤을 상태로 유지한다. 읽는 동안 키·붙여넣기·마우스가 뒤 pane으로 새지 않는다. 머리의 ?는
-  기존 단축키 검색 창이다. 연결이 끊긴 attach는 기존 연결 종료 처리를 유지한다. 앱 설치·웹 구독 사용량은 TUI에 없는 기능이다.
-- **검증 경계.** 기존 사이드바 렌더 keeper가 패널 경계·이름·차례·compact·드러내기의 PTY 폭 보존을 맡고, 기존 PTY 목록
-  keeper가 실제 SGR 패널 전환·접기·화살표와 Enter·패널별 굴림 복원·기기 기억·보고서 왕복과 입력 차단·특수 목록·coordinator
-  연결을 맡는다. 공용 fixture를 확장하고 새 신호 시험·고정 sleep·시험 전용 production seam은 없다. 기존 mouse drag 검사의
-  열 번호는 한글 패널 머리 도입 뒤 문자열 글자 번호가 아닌 터미널 셀로 읽는다. 폭26 fixture의 말줄임은 상태·pane 입력 표지로
-  함께 검증한다. 기본 폭48과 선택 제목 전체 보기는 다음 단계다.
-
-- **회귀 검증.** 드러낼 때 접힘을 푸는 변형은 사이드바 keeper의 접힘 보존 단언에서, 보고서 단추마다 스크롤을 0으로
-  만드는 변형은 PTY keeper의 보고서 왕복 단언에서 실패했다. 두 변형은 저장 바이트로 복원하고 GREEN을 확인한다.
-
-- **웹 정렬 대조 수리.** 첫 통합본 전체 gate(216초) 뒤 source 대조에서 활동순의 상태별 우선순위 차이를 발견했다.
-  웹 `sidebarModel.ts::activityOrder`대로 질문 우선·최근 `since_ms`·동률은 받은 차례로 맞추고 고정이 앞서는 것을 유지한다.
-  웹 `App.tsx::agentOf`·`herdr/AgentMark.tsx`의 알려진 명령도 hook/thread 없이 인식하며 대소문자는 구분하지 않는다.
-  기존 사이드바 keeper에서 옛 정렬과 알려진 명령 누락 RED를 확인한 뒤 고쳤다. 기준 3503e963의 Ctrl+Enter·Windows paste·
-  pane 복사는 보존하며 최종 소스로 전체 gate를 다시 검증한다.
-
-- **키 보존 확인.** 새 활동 막대의 진입은 F6이다. 기존 탐색 Shift+Tab을 가로채던 초기 구현을 실제 PTY의 이전 pane
-  이동 RED로 잡아 고쳤다. 기존 Tab/Shift+Tab은 pane 정·역방향 이동, F6 뒤 화살표는 활동 단추 포커스만 이동한다.
-  도움말에도 F6·s를 표시한다. 최종 소스로 전체 gate를 다시 검증한다.
-
-- **폭 저장 경합 수리.** 전체 gate에서 폭 기본값 복원 뒤 공유값이 60으로 돌아간 실패를 보존했다. 실험실 DB는 화면36·
-  저장60(revision5)이었고, host `front.rs::serve_conn`은 PreferencesSet을 독립 task로 처리해 앞 저장이 뒤에 끝날 수 있다.
-  herdr는 `client/shell/config.rs::persist_chrome_preferences`에서 표시 설정을 로컬에 쓰므로 이 wire 경합이 없다. aaa는
-  웹/참고 web-ui `preferencesSync.ts`의 inFlight 방식대로 TUI도 저장 한 개만 진행한다. 앞 응답까지 최신 변경을 모으고
-  응답 뒤 보내며, detach도 마지막 표시 설정 저장이 끝난 뒤 한다. backend 요청 처리와 API는 바꾸지 않는다.
-  기존 폭 keeper를 실제 Front wire까지 넓혀 앞 Ack 전 무송신(Status 울타리), Ack 뒤 마지막 null 저장을 검증한다.
-- **옛 host 경계.** 보고서 목록은 Front1.38, 임무 목록은1.39부터다. 시작/공통 특수 열기는 같은 임무 요청 경계를 쓴다.
-  Reader의 실제 wire에서 1.37/1.38/1.39를 검사해 옛 host에 모르는 요청을 보내지 않는다. 현재 host 동작은 유지한다.
 
 ### 8.245 웹 머신 패널의 CPU %·MEM %(10-19, t-0393)
 
@@ -5939,43 +5200,6 @@ primary 근거:
   격리 config·로컬 합성 provider에서 옛 cd+git을 같은 trust 사유로 거절하고 새 git -C 읽기 셋은 실행했다.
   실제 모델의 무인 대기는 host+agent binary 반영 뒤 coordinator가 resume/restart해 읽기 전용으로 재확인한다.
 
-### 8.252 TUI 기본 폭48·선택 제목 전체 보기(10-19, t-0386, D안 4단계)
-
-- **사용자 결정.** D안의 기본 폭48칸(활동 막대·경계 포함)을 적용한다. 기존 설정·끌어 둔 수동 폭은 그대로 두고,
-  경계 두 번 누름으로 설정 기본값에 돌아갈 때48을 쓴다. 한글은2셀 그대로이며 문자열에 공백을 넣지 않는다.
-- **제목 기준.** 웹 `Sidebar.tsx::PaneRow`·herdr-web-ui `components/AgentSidebar.tsx`는 잘린 줄에도 전체 제목을
-  `title` tooltip으로 보존한다. herdr0.9.5 client와 t3code `ThreadHoverCard.tsx`도 조사했으나 TUI에서 제목 끝까지 읽는
-  해당 기능은 없고 t3code 카드 머리도 truncate다. 승인된 전체 보기 결정을 TUI의 기존 `help::popup/panel` 방식으로 옮긴다.
-  탐색 중 고른 pane/thread 제목은 오른쪽 본문 아래 최대3줄로 미리 보고, `i`·미리 보기 누름·목록 오른쪽 누름으로
-  읽기 전용 전체 창을 연다. ↑↓·PgUp/Dn·Home/End·휠로 끝까지 읽고 Esc/Enter/q로 닫는다. 선택·탭·PTY 칸은 보존한다.
-  창은 grapheme과 셀 폭으로 감싸 CJK·결합 문자·ZWJ emoji를 쪼개지 않으며, 제어 문자는 공백으로 표시한다.
-- **후속 웹 배치 지시.** 10-19 사용자 전달에 따라 위 활동 묶음은 프로젝트→머신→에이전트→보고서, 아래는 설정이다.
-  특수 임무는 공통 머리·탐색 s에 둔다. 접힌 막대에 별도 S를 넣지 않는다. 웹 후속 착지77696d70의 ActivityBar와 §8.248을 기준0527d0a7 통합 때 대조했다. 보고서는 에이전트 밑, 아래는 설정만으로 일치한다.
-- **검증 owner.** 기존 config 기본값 keeper·폭/설정 복원 keeper·실제 PTY `side_list_like_web`를 넓혔다. 새 App 경계
-  keeper는 전체 창의 Unicode·긴 제목 끝·작은 화면/compact·선택/PTY 보존·실제 Front Status 울타리 뒤 무입력을 본다.
-  PTY는 한글 thread 제목의 미리 보기·키/마우스 열기·선택 복귀·pane의 뒤따르는 출력 표지 뒤 키/붙여넣기 무누출을 본다.
-  기본36과 미구현 i에서 의도한 RED를 확인했다. 기본36·보고서 아래 배치·End 무동작 변형은 각 keeper가 실패했고,
-  제품 파일의 저장 바이트를 복원했다. 신호·clipboard·고정 sleep·시험 전용 제품 seam은 더하지 않는다.
-- **착지 조건.** 이 단계는 준비 뒤 `[병합 준비됨]`으로 보고하며 다음 창 전에는 push하지 않는다. 새 창과 앞 thread 해시를
-  받으면 최신 main에 통합해 전체 ci-local·별도 공개 검사를 통과시킨다. binary 반영은 배포 담당이 한다.
-
-- **전체 gate의 대기 오류 수리.** 기존 붙여넣기 PTY 시험에서 나누기로 거른 도움말 뒤 `!prefix 모드`로 창 닫힘을
-  기다렸다. 그 문구는 검색으로 이미 사라져 다음 prefix를 창이 열린 동안 보낼 수 있었다. 실제 실패 화면은 도움말을
-  띄운 채 PREFIX를 기다렸다. 검색이 끝난 footer를 확인한 뒤 검색 여부와 무관한 창 제목이 사라진 렌더를 기다린다. 붙여넣기·그림·검색·이름·종료의
-  기존 단언과 시한은 유지하고, 실패 증거를 보존한 뒤 전체 gate를 다시 검증한다.
-
-- **캡처 울타리.** 전체 제목은 뒤의 미리 보기에도 끝 표지가 있으므로 창 머리와 전체 화면의 끝 표지만으로 캡처하지 않는다.
-  PTY keeper는 창 본문의 끝 표지·footer·마지막 테두리 셀을 확인한 뒤 기록한다. 닫을 때도 창 머리만 사라진 중간 렌더 대신 선택 id와 마지막 테두리의 사라짐까지 확인한다.
-
-
-### 8.253 Mac TUI 선택 복사와 입력 응답 지연(10-19, t-0397)
-
-- **원본 분기.** herdr 0.9.5 `client/shell/mouse.rs:2234`는 마우스 보고를 켠 pane의 왼쪽 누름·끌기·뗌을 앱에 보낸다. 보고가 꺼진 pane은 클라이언트의 `Selection`으로 고르고 셀 격자를 칠한다(`selection.rs`, `ui/panes.rs::render_selection`). 로컬 선택의 표시에는 host 응답이 필요 없으며, 복사할 때만 `PaneSelectionRead`로 기록을 읽는다. aaa도 이 분기를 유지한다. 앱이 그린 글자 단위 선택을 TUI의 셀 선택이라고 부르지 않는다. Shift를 누른 바깥 터미널 자체 선택은 여전히 TUI 밖의 동작이다. 임의의 Alt 전달 규칙이나 harness별 예외를 넣지 않는다.
-- **Mac 쓰기.** herdr `platform/macos.rs::write_clipboard`처럼 `/usr/bin/pbcopy`의 stdin에 UTF-8을 쓰고 종료 성공까지 기다린다. SSH·WSL 경로는 front가 있는 터미널에 OSC 52를 보낸다(`selection.rs::should_prefer_osc52`). native 성공만 Copied이며, OSC 요청은 Requested다. Windows의 유효한 창 소유자·UTF-16 쓰기는 §8.241을 유지한다.
-- **앱 자동 복사 보완.** aaa의 `copy_on_select`를 켰다면 앱이 OSC 52를 보내지 않는 선택도 놓을 때 복사한다. 앱이 이미 보낸 글이 있으면 그것을 쓰고, 없으면 기존의 pane 안 선택 범위를 `PaneSelectionRead`로 읽는다. 앱의 마우스 보고·표시 조건은 바꾸지 않는다. 이것은 herdr 원본과 다른 aaa 설정의 보장이다. §8.241의 선택 뒤 복사 키 보호도 유지한다. 새 누름은 지난 앱 복사 상태를 지운다.
-- **입력과 화면.** herdr `client/shell/input.rs::handle_raw_events`처럼 이미 도착한 연속 이동은 한 번 그리기 전에 함께 처리한다. 같은 종류·수정키의 이동만 최대 256개 묶고, 놓기·키·다른 사건은 다음 차례로 보존한다. EventStream을 잠깐 poll할 때도 현재 task의 waker를 써서 뒤늦은 입력이 잠들지 않게 한다. herdr `client/shell.rs::push_target_event`처럼 이미 쌓인 같은 pane의 연속 입력을 하나로 묶는다(최대 64KiB/256요청, 새 입력을 기다리지 않음). 모든 byte·요청별 응답과 크기 변경/다른 pane 경계를 보존한다. aaa agent 계약에는 응답이 있으므로 묶음 단위 확인은 남지만, 쌓인 마우스 사건마다 왕복하지 않는다. herdr `server/headless/render.rs`의 입력 직후 32ms 창·16ms당 16회 예산으로 응답 화면을 즉시 전달하고, 보통 출력은 16ms 동안 묶는다. 반복되는 SGR 마우스 성공 진단은 DEBUG로 낮추고, 일반 입력 전달의 INFO와 연결 끊김·timeout·쓰기 실패 진단은 유지한다.
-- **회귀.** 가상 시계의 입력 직후 표시/예산/보통 출력 대기와 입력 byte·경계·응답 묶음을 host에서 본다. 실제 PTY keeper는 빈칸까지 pane 끝으로 칠하는 여러 줄 셀 선택, OSC 없는 앱 자동 복사, 선택 뒤 Ctrl+C 누수 방지, native clipboard를 검사한다. Windows에도 같은 host·TUI 코드를 쓰며 OS별 native 경계는 공식 ci-local clipboard 단계가 본다.
-
 ### 8.254 resolve의 pane 정리와 폴더 보존 분리(10-19)
 
 - **원인.** `thread_resolve`의 `place_gone` 조건이 dirty·보존 worktree의 종료된 pane을 남겼다. adopted는 pane 종료·사건 구독에서도 제외했다. 이미 exited인 일반 작업 폴더 pane은 기존에도 지웠다.
@@ -6016,7 +5240,7 @@ primary 근거:
   - focus 뒤 ←→는 16px, Home은 최소, End는 이 창의 최대다(`role="separator"`, aria-value*).
   - 넓은 창(769px~)에서 펼쳤을 때만 보인다. 접으면 칸과 함께 숨고, 다시 펴면 고른 폭이다. 휴대폰·좁은 창의 drawer는 제 폭(88vw 한도)이다.
   - 손가락이 주 입력인 기기(iPad 가로 등, `(hover: hover) and (pointer: fine)`이 아님)에는 손잡이가 없다. 처음에는 넓은 창이면 터치에도 보였다. 그때 ci-local E2E 22 「iPad 입력창 끌기」가 실패했다. 경계에서 4px 떨어진 입력창 띠를 끈 손가락이 터치 보정으로 손잡이에 붙어 사이드바 폭 바꾸기가 됐고, 문서 끌기 막음(`pageHold.ts`, §8.202)도 벗어났다. 참고 herdr-web-ui는 손잡이를 경계에 걸쳐 두어 같은 일이 난다.
-- **저장.** coordinator 지시대로 기존 host 공유 설정(preferences, §8.79)에 `sidebarWidth`(px, null은 기본 폭)를 둔다. 참고 둘은 기기 localStorage다. aaa는 TUI 사이드바 폭(`tuiSidebarWidth`, 칸 수)처럼 host에 두고, 기기마다 다른 창 폭은 창 절반 한도가 받는다. host `prefs.rs`의 공유 이름에 더했다. 옛 host는 그 이름을 버린다(그때는 이 기기 사본만 남는다).
+- **저장.** coordinator 지시대로 기존 host 공유 설정(preferences, §8.79)에 `sidebarWidth`(px, null은 기본 폭)를 둔다. 참고 둘은 기기 localStorage다. aaa는 다른 웹 공유 설정처럼 host에 두고(삭제된 TUI의 사이드바 폭 `tuiSidebarWidth`도 그랬다), 기기마다 다른 창 폭은 창 절반 한도가 받는다. host `prefs.rs`의 공유 이름에 더했다. 옛 host는 그 이름을 버린다(그때는 이 기기 사본만 남는다).
 - **검증.**
   - 웹 단위 `sidebarWidth.test.mjs`: 한도, 키, 공유 값 읽기와 주고받기
   - host `prefs::keeps_the_web_sidebar_width`

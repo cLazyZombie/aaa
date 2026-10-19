@@ -582,27 +582,11 @@ pub(crate) fn write_skeleton(dir: &Path, name: &str, project_md: &str) -> std::i
     put("TASKS.md", "# Tasks\n\n## Backlog\n")?;
     put("project.toml", "schema = 1\n")?;
     put("AGENTS.md", &coordinator_guide(name))?;
-    if std::fs::symlink_metadata(dir.join("CLAUDE.md")).is_err() {
-        link_claude(dir)?;
-    }
     put("PROJECT.md", project_md)
 }
 
-/// 표지 없는 AGENTS.md·CLAUDE.md를 옮겨 두는 이름 끝(herdr-projects `.before-herdr-projects`)
+/// 표지 없는 AGENTS.md를 옮겨 두는 이름 끝(herdr-projects `.before-herdr-projects`)
 const KEPT: &str = ".before-aaa";
-
-/// Claude Code는 AGENTS.md를 읽지 않는다: CLAUDE.md를 AGENTS.md로 가는 상대 symlink로 둔다(herdr-projects `write_priming`)
-fn link_claude(dir: &Path) -> std::io::Result<()> {
-    #[cfg(unix)]
-    std::os::unix::fs::symlink("AGENTS.md", dir.join("CLAUDE.md"))?;
-    #[cfg(not(unix))]
-    let _ = dir;
-    Ok(())
-}
-
-fn claude_linked(dir: &Path) -> bool {
-    !cfg!(unix) || std::fs::read_link(dir.join("CLAUDE.md")).is_ok_and(|t| t == Path::new("AGENTS.md"))
-}
 
 /// 프로젝트 폴더의 aaa 파일에서 고칠 것(herdr-projects `priming_problems`). 빈 목록이면 맞다.
 /// AGENTS.md는 표지가 있으면 지금 안내와 같아야 하고, 표지가 없으면(옛 aaa·사람이 쓴 것) 옆에 옮겨 둘 것이다.
@@ -617,9 +601,6 @@ pub(crate) fn files_problems(dir: &Path, name: &str) -> Vec<String> {
                 .push(format!("AGENTS.md에 aaa 표지가 없다(옛 aaa나 사람이 쓴 것): AGENTS.md{KEPT}로 옮겨 둔다")),
         },
     }
-    if !claude_linked(dir) {
-        problems.push("CLAUDE.md가 AGENTS.md 링크가 아니다".into());
-    }
     if !dir.join("uploads").is_dir() {
         problems.push("uploads/가 없다".into());
     }
@@ -630,7 +611,7 @@ pub(crate) fn files_problems(dir: &Path, name: &str) -> Vec<String> {
 }
 
 /// `files_problems`가 본 것을 고친다(herdr-projects `write_priming`, `doctor --fix`). 몇 번 불러도 같다.
-/// 사람이 쓴 AGENTS.md·CLAUDE.md는 덮지 않고 `<이름>.before-aaa`로 옮겨 둔다. 그 이름이 이미 있으면 옮기지 못하니 고치지
+/// 사람이 쓴 AGENTS.md는 덮지 않고 `<이름>.before-aaa`로 옮겨 둔다. 그 이름이 이미 있으면 옮기지 못하니 고치지
 /// 않고 오류로 알린다(참고는 그때 덮는다: 사람 글을 잃지 않게 aaa는 멈춘다).
 pub(crate) fn write_files(dir: &Path, name: &str) -> std::io::Result<()> {
     let agents = dir.join("AGENTS.md");
@@ -646,13 +627,6 @@ pub(crate) fn write_files(dir: &Path, name: &str) -> std::io::Result<()> {
         }
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => write_atomic(&agents, guide.as_bytes())?,
         Err(e) => return Err(e),
-    }
-    if !claude_linked(dir) {
-        let claude = dir.join("CLAUDE.md");
-        if std::fs::symlink_metadata(&claude).is_ok() {
-            keep_aside(&claude)?;
-        }
-        link_claude(dir)?;
     }
     std::fs::create_dir_all(dir.join("uploads"))?;
     let followup = dir.join(crate::routine::PR_FOLLOWUP);

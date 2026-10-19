@@ -48,7 +48,7 @@ fn code(r: Result<FrontResponse, aaa_proto::ErrorBody>) -> Option<ErrorCode> {
     r.err().map(|e| e.code)
 }
 
-/// 두 대화형 front(TUI 두 개를 흉내 낸 Front 연결)가 같은 pane을 쓴다(§8.33, herdr와 같은 모델).
+/// 두 대화형 front(웹 화면 두 개를 흉내 낸 Front 연결)가 같은 pane을 쓴다(§8.33, herdr와 같은 모델).
 /// 거부는 없다: 입력·크기를 보낸 front가 「지금 쓰는 화면」(lease)이 되고, 마지막 입력이 이긴다.
 #[test]
 fn lease_between_fronts() {
@@ -56,14 +56,14 @@ fn lease_between_fronts() {
     let h = start(&mut lab);
     let id = h.new_pane(None, "labA", Some("t1"), &["/bin/sh"], None);
     rt().block_on(async {
-        let mut a = FrontClient::connect_as(&h.state, "tui-a").await.unwrap();
-        let mut b = FrontClient::connect_as(&h.state, "tui-b").await.unwrap();
+        let mut a = FrontClient::connect_as(&h.state, "web-a").await.unwrap();
+        let mut b = FrontClient::connect_as(&h.state, "web-b").await.unwrap();
         assert_ne!(a.front, b.front);
 
         // 처음 입력한 front가 지금 쓰는 화면이 된다
         assert_eq!(code(a.call(input(&id, "echo a-$((1+1))")).await.unwrap()), None);
         assert_eq!(h.pane(&id)["lease"]["front"], a.front.as_str());
-        assert_eq!(h.pane(&id)["lease"]["label"], "tui-a");
+        assert_eq!(h.pane(&id)["lease"]["label"], "web-a");
 
         // 다른 front도 바로 입력된다(가져오기 없이). 그 front가 지금 쓰는 화면이 된다
         assert_eq!(code(b.call(input(&id, "echo b-$((4+4))")).await.unwrap()), None);
@@ -144,49 +144,6 @@ fn layout_is_host_state_and_survives_restart() {
     // 없는 pane을 나누면 거부
     let e = h.json(&["pane", "split", "ZZZZZZZZ", "--direction", "right"]).expect_err("없는 pane");
     assert!(e.contains("not_found"), "{e}");
-}
-
-/// TUI용 화면 구독: 처음에는 전체, 그다음에는 바뀐 줄만 온다.
-#[test]
-fn grid_watch_sends_full_then_changed_rows() {
-    let mut lab = Lab::new();
-    let h = start(&mut lab);
-    let id = h.new_pane(None, "labA", None, &["/bin/sh"], None);
-    h.ok(&["pane", "pty-size", &id, "40", "6"]);
-    h.ok(&["pane", "run", &id, "echo first-$((1+1))"]);
-    h.wait_output(&id, "first-2", T);
-    rt().block_on(async {
-        let mut c = FrontClient::connect_as(&h.state, "grid").await.unwrap();
-        assert_eq!(code(c.call(FrontRequest::PaneWatch { pane: id.clone() }).await.unwrap()), None);
-        let text = |f: &aaa_proto::GridFrame| -> String {
-            f.lines
-                .iter()
-                .map(|l| l.runs.iter().map(|r| r.t.as_str()).collect::<String>())
-                .collect::<Vec<_>>()
-                .join("\n")
-        };
-        let mut next_grid = async || loop {
-            match tokio::time::timeout(T, c.next()).await.expect("grid frame").unwrap() {
-                Some(FrontMsg::Event(FrontEvent::Grid(f))) => return f,
-                Some(_) => continue,
-                None => panic!("연결이 끊겼다"),
-            }
-        };
-        let full = next_grid().await;
-        assert!(full.full && full.cols == 40 && full.rows == 6, "{full:?}");
-        assert_eq!(full.lines.len(), 6);
-        assert!(text(&full).contains("first-2"));
-        // 다른 경로(API)로 입력하면 바뀐 줄만 온다
-        h.ok(&["pane", "run", &id, "echo second-$((2+2))"]);
-        let mut got = String::new();
-        while !got.contains("second-4") {
-            let f = next_grid().await;
-            assert!(!f.full, "바뀐 줄만 와야 한다");
-            assert!(f.lines.len() < 6, "모든 줄이 왔다: {f:?}");
-            got.push_str(&text(&f));
-        }
-        assert!(!got.contains("first-2"), "바뀌지 않은 줄이 다시 왔다: {got}");
-    });
 }
 
 /// 가짜 claude: 받은 인자를 보이고, SessionStart hook으로 harness 세션 ID(`--resume`·`--session-id` 뒤, 없으면
@@ -610,7 +567,7 @@ fn shell_exit_closes_its_pane_tab_and_workspace() {
     assert_eq!(tabs(&hw), [vec![a], vec![k], vec![p]]);
 }
 
-/// 한 front 연결에서 응답을 기다리지 않고 보낸 키 입력은 보낸 순서대로 PTY에 들어간다(TUI가 키마다 보낸다).
+/// 한 front 연결에서 응답을 기다리지 않고 보낸 키 입력은 보낸 순서대로 PTY에 들어간다.
 #[test]
 fn inputs_from_one_front_keep_order() {
     let mut lab = Lab::new();
@@ -618,16 +575,17 @@ fn inputs_from_one_front_keep_order() {
     let id = h.new_pane(None, "labA", None, &["/bin/sh"], None);
     let line = "echo ordered-abcdefghijklmnopqrstuvwxyz-0123456789-$((40+2))\r";
     rt().block_on(async {
-        let c = FrontClient::connect_as(&h.state, "keys").await.unwrap();
-        let (mut tx, mut rx) = c.split();
+        let mut c = FrontClient::connect_as(&h.state, "keys").await.unwrap();
         let mut ids = Vec::new();
         for b in line.bytes() {
-            ids.push(tx.send(FrontRequest::PaneInput { pane: id.clone(), data: B64(vec![b]) }).await.unwrap());
+            ids.push(c.send(FrontRequest::PaneInput { pane: id.clone(), data: B64(vec![b]) }).await.unwrap());
         }
         // 응답이 모두 올 때까지 기다린다(모두 성공해야 한다)
         let mut left: std::collections::HashSet<String> = ids.into_iter().collect();
         while !left.is_empty() {
-            if let FrontMsg::Res { id, result } = tokio::time::timeout(T, rx.recv()).await.expect("응답").unwrap() {
+            if let FrontMsg::Res { id, result } =
+                tokio::time::timeout(T, c.next()).await.expect("응답").unwrap().unwrap()
+            {
                 assert!(matches!(result, aaa_proto::Outcome::Ok(_)), "{result:?}");
                 left.remove(&id);
             }

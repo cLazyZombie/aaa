@@ -1,4 +1,4 @@
-# Windows 실행 파일에 C 런타임을 정적으로 넣는다(herdr 0.9.5 `.cargo/config.toml`과 같다): agent가 없는 접속 전용 PC에
-# VC++ 재배포 패키지(VCRUNTIME140.dll)가 없어도 `aaa.exe` 하나로 돈다(docs/install-runbook.md 「Windows에서 접속만」)
+# Windows 실행 파일에 C 런타임을 정적으로 넣는다(herdr 0.9.5 `.cargo/config.toml`과 같다): Windows agent 머신에
+# VC++ 재배포 패키지(VCRUNTIME140.dll)가 없어도 `aaa.exe` 하나로 돈다(단일 실행 파일 배포)
 [target.x86_64-pc-windows-msvc]
 rustflags = ["-C", "target-feature=+crt-static"]

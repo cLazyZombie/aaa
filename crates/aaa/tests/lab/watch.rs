@@ -1,5 +1,5 @@
 //! host 상태를 사건으로 보는 시험 도구: Front 연결 하나가 받는 Workspace·State 사건을 쌓고, 조건이 될 때까지 다음
-//! 사건을 기다린다(polling하지 않는다). tui.rs의 `HostWatch`와 같은 꼴이다.
+//! 사건을 기다린다(polling하지 않는다). CLI와 웹 시험에서 함께 쓴다.
 
 use std::time::{Duration, Instant};
 
@@ -21,13 +21,15 @@ impl HostWatch {
     pub fn new(node: &Node, timeout: Duration) -> HostWatch {
         let rt = tokio::runtime::Builder::new_multi_thread().worker_threads(1).enable_all().build().unwrap();
         let rx = rt.block_on(async {
-            let c = aaa_common::front::FrontClient::connect_as(&node.state, "test-watch").await.unwrap();
-            let (mut tx, rx) = c.split();
-            tx.send(FrontRequest::Workspace { name: None }).await.unwrap();
-            // 보내는 쪽을 닫지 않게 task에 둔다(연결이 살아 있어야 사건이 온다)
+            let mut c = aaa_common::front::FrontClient::connect_as(&node.state, "test-watch").await.unwrap();
+            c.send(FrontRequest::Workspace { name: None }).await.unwrap();
+            let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
             tokio::spawn(async move {
-                let _keep = tx;
-                std::future::pending::<()>().await
+                while let Ok(Some(message)) = c.next().await {
+                    if tx.send(message).is_err() {
+                        break;
+                    }
+                }
             });
             rx
         });

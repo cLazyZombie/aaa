@@ -1,4 +1,4 @@
-//! Ctrl+Enter 공통 판정(웹·TUI). host mirror의 detection 입력줄과 같은 화면 ANSI를 읽는다.
+//! Ctrl+Enter 공통 판정(웹). host mirror의 detection 입력줄과 같은 화면 ANSI를 읽는다.
 //! herdr-web-ui aa624cb `server/prompt.ts` claudeInputEmpty와 `server/codex-steering.ts`를 옮겼다.
 //! 스타일 판독은 기존 herdr-projects 입력 상자 판정기(prompt_box.rs)를 재사용한다.
 //! 바꾼 점(사용자 10-19 「control+enter 줄바꿈은 필수인거야? 스티어링만 남기고 싶어」, plan §8.239 후속): Ctrl+Enter는

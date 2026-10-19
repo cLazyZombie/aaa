@@ -141,15 +141,6 @@ jobs:
         env:
           RUST_TEST_THREADS: "8"
         run: bash scripts/ci-local.sh --only test --logs . --tee
-      # 실제 시스템 clipboard(§8.28): 그림을 쓰고 TUI front가 Ctrl+V로 읽어 대상 세션 폴더까지 가는지 본다.
-      # 개발 Mac에서는 사람의 clipboard를 덮어쓰므로 CI에서만 켠다. Linux는 Xvfb 위 X11, Windows는 TUI E2E(Unix 전용) 없이 읽기만.
-      - name: clipboard(실제)
-        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
-        env:
-          AAA_CLIP_NATIVE: "1"
-        run: |
-          if [ "$RUNNER_OS" = Linux ]; then sudo apt-get update -qq && sudo apt-get install -y --no-install-recommends xvfb >/dev/null; fi
-          bash scripts/ci-local.sh --only clipboard --logs . --tee
       # 공개 저장소 검사(push 전 로컬 검사의 안전망): 추적 파일과 이번 push(before..after)·PR(base..)의 커밋 메시지·author.
       # 새 branch의 첫 push(created, before는 0뿐)는 origin/main 이후를 본다. 기준을 찾지 못하면 실패한다(CI에서는 건너뛰지 않는다).
       # private-words·세션 기록이 없어 실제 이름·실제 세션 id는 보지 않는다(push 전 로컬 검사의 몫).
@@ -174,11 +165,11 @@ jobs:
             grep -nE -A8 "^error|^warning" "$f" | head -80 | annotate "$f"
           done
           # 테스트 실패 본문(진단 출력 포함)
-          for f in test.log clipboard.log; do
+          for f in test.log; do
             [ -f "$f" ] && awk '/^failures:/{p=1} p{print} /^test result: FAILED/{p=0}' "$f" | annotate "$f"
           done
           # 단계 한도로 멈춘 시험: 어느 binary(Running 줄)의 어느 시험이 끝나지 않았는지(libtest가 60초 넘으면 알린다)
-          for f in test.log clipboard.log; do
+          for f in test.log; do
             [ -f "$f" ] && grep -q 'has been running for over' "$f" && grep -E '^ +Running |has been running for over' "$f" | tail -20 | annotate "$f: 끝나지 않은 시험"
           done
           # 실험실: 남겨진 host·agent 로그와 세션 폴더(session-host.log, exit.json, meta.json)

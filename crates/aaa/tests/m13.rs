@@ -595,6 +595,15 @@ impl World {
     }
 }
 
+/// 생성 폴더의 파일 계약: 안내 별칭 등 예정하지 않은 파일도 잡는다.
+fn assert_entries(dir: &Path, expected: &[&str]) {
+    let mut names: Vec<_> = std::fs::read_dir(dir).unwrap().map(|e| e.unwrap().file_name()).collect();
+    names.sort();
+    let mut expected: Vec<_> = expected.iter().map(std::ffi::OsString::from).collect();
+    expected.sort();
+    assert_eq!(names, expected, "{}의 생성 파일 목록", dir.display());
+}
+
 /// worktree thread 한 바퀴: 시작 → brief 안내 → 보고·library 사본 → ack → resolve(PR이 없으니 branch는 남긴다)
 #[test]
 fn worktree_thread_round_trip() {
@@ -630,6 +639,8 @@ fn worktree_thread_round_trip() {
     let v = w.wait_show("보고 사본·brief 받음", "t-0001", |v| {
         v["report_hash"].is_string() && v["brief"] == "delivered"
     });
+    assert_entries(&cwd, &[".git", ".aaa", "README.md"]);
+    assert_entries(&work, &["brief.md", "report.md", "library"]);
     assert_eq!(v["next"], serde_json::json!(["결과 확인", "다음 단계"]));
     assert_eq!(v["group"], "ready_for_review");
     // symlink는 복사하지 않아 사본은 partial이다
@@ -843,6 +854,9 @@ fn remote_dir_thread_survives_host_restart() {
     let v =
         w.wait_show("원격 보고·brief 받음", &id, |v| v["report_hash"].is_string() && v["brief"] == "delivered");
     assert_eq!(v["machine"], "labB");
+    let cwd = PathBuf::from(v["cwd"].as_str().unwrap());
+    assert_entries(&cwd, &[".aaa"]);
+    assert_entries(&cwd.join(".aaa").join(format!("demo-{id}")), &["brief.md", "report.md", "library"]);
     assert!(std::fs::read_to_string(w.projects.join("demo/threads").join(format!("{id}.md"))).unwrap().contains("R-7"));
     let pane = v["pane"].as_str().unwrap().to_string();
     // thread 세션은 worker 역할이다
@@ -3821,8 +3835,8 @@ fn files_check(v: &Value, project: &str) -> Value {
 }
 
 /// coordinator 안내(AGENTS.md)가 새 프로젝트와 있는 프로젝트에 닿는다(herdr-projects `doctor --fix`·`write_priming`, plan §8.184):
-/// 새 프로젝트는 옮긴 절을 모두 갖고 CLAUDE.md가 AGENTS.md 링크다. 있는 프로젝트는 `aaa doctor files`가 고칠 것을 보이기만 하고,
-/// `--fix`가 aaa 표지 있는 낡은 안내를 다시 쓴다. 표지 없는 글(옛 aaa·사람이 쓴 것)과 사람이 쓴 CLAUDE.md는 덮지 않고
+/// 새 프로젝트는 정해진 파일만 만들고 안내에 옮긴 절을 모두 갖는다. 있는 프로젝트는 `aaa doctor files`가 고칠 것을 보이기만 하고,
+/// `--fix`가 aaa 표지 있는 낡은 안내를 다시 쓴다. 표지 없는 AGENTS.md(옛 aaa·사람이 쓴 것)는 덮지 않고
 /// `.before-aaa`로 옮겨 두며, 이미 옮겨 둔 것이 있으면 고치지 않고 실패한다. 두 번째 `--fix`는 아무것도 바꾸지 않는다.
 #[test]
 fn doctor_files_brings_the_coordinator_guide_to_existing_projects() {
@@ -3835,13 +3849,28 @@ fn doctor_files_brings_the_coordinator_guide_to_existing_projects() {
         assert!(guide.contains(s), "새 프로젝트 안내에 「{s}」가 없다:\n{guide}");
     }
     assert!(guide.contains("aaa context fresh") && guide.contains("aaa가 쓴 파일이다."), "{guide}");
-    assert_eq!(std::fs::read_link(fresh.join("CLAUDE.md")).unwrap(), Path::new("AGENTS.md"));
+    assert_entries(
+        &fresh,
+        &[
+            "AGENTS.md",
+            "MEMORY.md",
+            "TASKS.md",
+            "PROJECT.md",
+            "project.toml",
+            "memory",
+            "routines",
+            "threads",
+            "library",
+            "inbox",
+            "uploads",
+        ],
+    );
     let v = w.h.ok(&["doctor", "files"]);
     for p in ["demo", "fresh"] {
         assert_eq!(files_check(&v, p)["problems"], serde_json::json!([]), "{v}");
     }
 
-    // 있는 프로젝트 셋: 표지 있는 낡은 안내(old), 표지 없는 옛 aaa 안내와 사람이 쓴 CLAUDE.md(hand), 옮겨 둔 것이 이미 있음(stuck)
+    // 있는 프로젝트 셋: 표지 있는 낡은 안내(old), 표지 없는 옛 aaa 안내(hand), 옮겨 둔 것이 이미 있음(stuck)
     let make = |name: &str, agents: &str| -> PathBuf {
         let d = w.projects.join(name);
         std::fs::create_dir_all(d.join("routines")).unwrap();
@@ -3854,7 +3883,6 @@ fn doctor_files_brings_the_coordinator_guide_to_existing_projects() {
     let hand_text =
         "# 프로젝트 coordinator\n\n이 폴더를 cwd로 쓰는 agent가 이 프로젝트의 coordinator다.\n\n사람이 더한 줄\n";
     let hand = make("hand", hand_text);
-    std::fs::write(hand.join("CLAUDE.md"), "사람이 쓴 CLAUDE.md\n").unwrap();
     let stuck = make("stuck", "두 번째 사람 글\n");
     std::fs::write(stuck.join("AGENTS.md.before-aaa"), "처음 옮겨 둔 사람 글\n").unwrap();
 
@@ -3862,10 +3890,7 @@ fn doctor_files_brings_the_coordinator_guide_to_existing_projects() {
     let v = w.h.ok(&["doctor", "files"]);
     let problems = |v: &Value, p: &str| files_check(v, p)["problems"].to_string();
     let o = problems(&v, "old");
-    assert!(
-        o.contains("지금 aaa의 coordinator 안내가 아니다") && o.contains("CLAUDE.md") && o.contains("uploads/"),
-        "{o}"
-    );
+    assert!(o.contains("지금 aaa의 coordinator 안내가 아니다") && o.contains("uploads/"), "{o}");
     assert!(o.contains("pr-followup"), "{o}");
     assert!(problems(&v, "hand").contains("aaa 표지가 없다"), "{v}");
     assert_eq!(std::fs::read_to_string(old.join("AGENTS.md")).unwrap(), stale);
@@ -3886,13 +3911,10 @@ fn doctor_files_brings_the_coordinator_guide_to_existing_projects() {
     let now = std::fs::read_to_string(old.join("AGENTS.md")).unwrap();
     assert!(GUIDE_SECTIONS.iter().all(|s| now.contains(s)) && now.contains("aaa context old"), "{now}");
     assert!(old.join("uploads").is_dir() && old.join("routines/pr-followup.md").is_file());
-    assert_eq!(std::fs::read_link(old.join("CLAUDE.md")).unwrap(), Path::new("AGENTS.md"));
     assert!(!old.join("AGENTS.md.before-aaa").exists(), "표지 있는 aaa 안내는 옮겨 두지 않는다");
     // 사람 글은 옆에 그대로
     assert_eq!(std::fs::read_to_string(hand.join("AGENTS.md.before-aaa")).unwrap(), hand_text);
-    assert_eq!(std::fs::read_to_string(hand.join("CLAUDE.md.before-aaa")).unwrap(), "사람이 쓴 CLAUDE.md\n");
     assert!(std::fs::read_to_string(hand.join("AGENTS.md")).unwrap().contains("aaa context hand"));
-    assert_eq!(std::fs::read_link(hand.join("CLAUDE.md")).unwrap(), Path::new("AGENTS.md"));
     // 자리가 찬 프로젝트는 두 사람 글 모두 그대로
     assert_eq!(std::fs::read_to_string(stuck.join("AGENTS.md")).unwrap(), "두 번째 사람 글\n");
     assert_eq!(std::fs::read_to_string(stuck.join("AGENTS.md.before-aaa")).unwrap(), "처음 옮겨 둔 사람 글\n");

@@ -127,84 +127,17 @@ fn profiles_are_checked() {
     assert!(load_agent(&d.0).unwrap_err().render().contains("profiles.x.harness"));
 }
 
-/// `[tui]`: herdr 형식 prefix(하나·배열), 입력기 전환·자모 해석은 사용자 요청대로 기본 켬(결정 20 D12, 끌 수 있다),
-/// 예전 이름 `prefix_ascii`도 읽는다
-#[test]
-fn tui_keys_like_herdr() {
-    let d = Dir::new("tui");
-    let t = load_host(&d.0).unwrap().config.tui;
-    assert_eq!(t.prefix.values(), ["ctrl+b"]);
-    assert!(t.switch_ascii() && t.prefix_jamo_keys);
-
-    d.write(
-        "host.toml",
-        "schema = 1\n[tui]\nprefix = [\"ctrl+a\", \"ctrl+g\"]\nswitch_ascii_input_source_in_prefix = false\n",
-    );
-    let l = load_host(&d.0).unwrap();
-    assert!(l.warnings.is_empty(), "{:?}", l.warnings);
-    assert_eq!(l.config.tui.prefix.values(), ["ctrl+a", "ctrl+g"]);
-    assert!(l.config.tui.prefix_jamo_keys && !l.config.tui.switch_ascii());
-
-    // 예전 설정(`C-b`, prefix_ascii = false)을 그대로 둔 사용자는 계속 꺼진다
-    d.write("host.toml", "schema = 1\n[tui]\nprefix = \"C-b\"\nprefix_ascii = false\n");
-    let l = load_host(&d.0).unwrap();
-    assert!(l.warnings.is_empty(), "{:?}", l.warnings);
-    assert!(!l.config.tui.switch_ascii());
-    d.write("host.toml", "schema = 1\n[tui]\nprefix_jamo_keys = false\n");
-    let t = load_host(&d.0).unwrap().config.tui;
-    assert!(!t.prefix_jamo_keys && t.switch_ascii());
-}
-
-/// herdr `[ui]` 사이드바: 폭(aaa 기본 48, herdr 26)·한도 18~72(herdr 18~36, 설정으로 바꾼다), 펼친 채 시작, 접으면 compact,
-/// 64칸 이하는 머리줄
-#[test]
-fn sidebar_like_herdr() {
-    let d = Dir::new("sidebar");
-    let t = load_host(&d.0).unwrap().config.tui;
-    assert_eq!((t.sidebar_width, t.sidebar_start_collapsed, t.mobile_width_threshold), (48, false, 64));
-    assert_eq!(t.sidebar_bounds(), Some((18, 72)));
-    assert_eq!(t.sidebar_collapsed_mode, crate::SidebarCollapsedMode::Compact);
-    assert_eq!(t.theme, "catppuccin");
-    assert_eq!(t.pane_borders, crate::PaneBorders::Auto);
-    assert!(t.mouse_capture && t.copy_on_select);
-    assert_eq!(t.mouse_scroll_lines, 3);
-    assert!(t.pane_scrollbars);
-    assert_eq!(t.status_indicators, crate::StatusIndicators::Dots);
-    d.write("host.toml", "schema = 1\n[tui]\nsidebar_width = 30\nsidebar_min_width = 12\nsidebar_max_width = 80\nsidebar_start_collapsed = true\nsidebar_collapsed_mode = \"hidden\"\ntheme = \"terminal\"\npane_borders = \"off\"\nmouse_capture = false\ncopy_on_select = false\nmouse_scroll_lines = 5\npane_scrollbars = false\nstatus_indicators = \"symbols\"\n");
-    let t = load_host(&d.0).unwrap().config.tui;
-    assert_eq!((t.sidebar_width, t.sidebar_start_collapsed), (30, true));
-    assert_eq!(t.sidebar_bounds(), Some((12, 80)));
-    let inverted = crate::TuiSection { sidebar_min_width: 50, sidebar_max_width: 30, ..Default::default() };
-    assert_eq!(inverted.sidebar_bounds(), None, "거꾸로 된 한도(herdr validated_sidebar_bounds)");
-    assert_eq!(t.theme, "terminal");
-    assert_eq!(t.sidebar_collapsed_mode, crate::SidebarCollapsedMode::Hidden);
-    assert_eq!(t.pane_borders, crate::PaneBorders::Off);
-    assert!(!t.mouse_capture && !t.copy_on_select);
-    assert_eq!(t.mouse_scroll_lines, 5);
-    assert!(!t.pane_scrollbars);
-    assert_eq!(t.status_indicators, crate::StatusIndicators::Symbols);
-    d.write("host.toml", "schema = 1\n[tui]\nsidebar_collapsed_mode = \"tiny\"\n");
-    assert!(load_host(&d.0).is_err(), "모르는 접기 방식은 거부한다");
-    d.write("host.toml", "schema = 1\n[tui]\npane_borders = \"never\"\n");
-    assert!(load_host(&d.0).is_err(), "모르는 테두리 방식은 거부한다");
-}
-
 /// herdr `[ui] prompt_new_tab_name`·`confirm_close`(기본 켬)과 `[terminal] new_cwd`(기본 follow)
 #[test]
-fn new_tab_prompt_and_new_cwd_like_herdr() {
+fn new_cwd_like_herdr() {
     let d = Dir::new("newcwd");
     let c = load_host(&d.0).unwrap().config;
-    assert!(c.tui.prompt_new_tab_name && c.tui.confirm_close);
     assert_eq!(c.terminal.new_cwd, "follow");
     // TOML 리터럴 문자열('…')이라 역슬래시가 그대로 값이 된다
     for ok in ["home", "/srv/work", r"C:\work", "D:/w", r"\\nas\share"] {
-        d.write(
-            "host.toml",
-            &format!("schema = 1\n[terminal]\nnew_cwd = '{ok}'\n[tui]\nprompt_new_tab_name = false\n"),
-        );
+        d.write("host.toml", &format!("schema = 1\n[terminal]\nnew_cwd = '{ok}'\n"));
         let l = load_host(&d.0).unwrap();
         assert_eq!(l.config.terminal.new_cwd, ok);
-        assert!(!l.config.tui.prompt_new_tab_name);
     }
     // herdr의 "current"(서버 프로세스 위치)와 상대 경로는 받지 않는다
     for bad in ["current", "work", "~/w"] {

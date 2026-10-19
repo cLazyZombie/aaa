@@ -1179,8 +1179,7 @@ impl Host {
                 return Ok(());
             }
             if let Some(pane) = &rec.pane {
-                let lease = self.inner.lock().unwrap().panes.get(pane).and_then(|v| v.lease.clone());
-                if !restart_prompt && self.someone_sees(pane, lease.as_ref()) {
+                if !restart_prompt && self.someone_sees(pane) {
                     return Ok(());
                 }
                 if !ended && !restart_prompt {

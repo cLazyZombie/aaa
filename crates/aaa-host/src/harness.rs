@@ -344,7 +344,7 @@ impl Host {
                     st.since_ms = ev.at_ms;
                 }
                 let was = prev.as_ref().map(|x| x.activity);
-                let sees = self.someone_sees(&ev.session, p.lease.as_ref());
+                let sees = self.someone_sees(&ev.session);
                 st.seen = crate::seen::seen_after(was, a, st.seen, sees);
                 st.activity = a;
                 st.message = ev.message.clone();

@@ -28,13 +28,9 @@ pub(crate) const SHARED_SETTING_KEYS: &[&str] = &[
     "usageHidden",
     // aaa: 웹 목록 pane 줄 순서(참고는 herdr workspace 순서라 herdr 서버에 있다, plan §8.196)
     "paneOrder",
-    // aaa: 웹 사이드바 폭 px(참고 herdr-web-ui는 기기 localStorage, plan §8.257). TUI는 칸 수라 `tuiSidebarWidth`를 따로 쓴다
+    // aaa: 웹 사이드바 폭 px(참고 herdr-web-ui는 기기 localStorage, plan §8.257)
     "sidebarWidth",
 ];
-/// TUI 사이드바 배치(plan §8.193): 사용자가 끌거나 접은 값만 있다. herdr는 client 기기 파일(`client-shell/*.json`
-/// `sidebar_width`·`sidebar_section_split`·`sidebar_collapsed`)에 두지만 aaa front는 상태를 갖지 않아 host에 둔다(plan §8.92
-/// 설정 절). 값이 null이면 사용자가 되돌린 것이다(설정값을 쓴다). 웹은 이 이름을 읽지 않는다
-pub(crate) const TUI_SETTING_KEYS: &[&str] = &["tuiSidebarWidth", "tuiSidebarSplit", "tuiSidebarCollapsed"];
 pub(crate) const MAX_PINS: usize = 500;
 const MAX_PIN_LENGTH: usize = 300;
 /// 공유 값은 몇 낱말이나 짧은 목록이다: 변경 하나와 그것이 만드는 문서 전체가 작게 남는다
@@ -62,7 +58,7 @@ pub(crate) fn change_body(
             ));
         }
     }
-    let known = |k: &str| SHARED_SETTING_KEYS.contains(&k) || TUI_SETTING_KEYS.contains(&k);
+    let known = |k: &str| SHARED_SETTING_KEYS.contains(&k);
     let settings = settings.into_iter().filter(|(k, _)| known(k)).collect();
     let pins = pins.map(|p| {
         let mut seen = std::collections::HashSet::new();
@@ -202,32 +198,14 @@ mod tests {
     }
 
     #[test]
-    fn keeps_the_tui_sidebar_names_too() {
-        let store = Store::new(parse(None));
-        let doc = store
-            .set(
-                change(json!({ "settings": { "tuiSidebarWidth": 48, "tuiSidebarCollapsed": null, "tuiOther": 1 } })),
-                ok,
-            )
-            .unwrap();
-        assert_eq!(
-            doc.settings,
-            change(json!({ "settings": { "tuiSidebarWidth": 48, "tuiSidebarCollapsed": null } })).settings
-        );
-        // 웹이 제 설정을 바꿔도 TUI 값은 남는다
-        store.set(change(json!({ "settings": { "theme": "dark" } })), ok).unwrap();
-        assert_eq!(store.get().settings.get("tuiSidebarWidth"), Some(&json!(48)));
-    }
-
-    /// 웹 사이드바 폭(plan §8.257)은 TUI 칸 수와 다른 이름으로 함께 남고, 되돌림(null)도 그대로 든다
+    /// 웹 사이드바 폭(plan §8.257)이 공유 이름으로 남고, 되돌림(null)도 그대로 든다
     #[test]
     fn keeps_the_web_sidebar_width() {
         let store = Store::new(parse(None));
-        store.set(change(json!({ "settings": { "sidebarWidth": 360, "tuiSidebarWidth": 48 } })), ok).unwrap();
+        store.set(change(json!({ "settings": { "sidebarWidth": 360 } })), ok).unwrap();
         assert_eq!(store.get().settings.get("sidebarWidth"), Some(&json!(360)));
         store.set(change(json!({ "settings": { "sidebarWidth": null } })), ok).unwrap();
         assert_eq!(store.get().settings.get("sidebarWidth"), Some(&json!(null)));
-        assert_eq!(store.get().settings.get("tuiSidebarWidth"), Some(&json!(48)));
     }
 
     #[test]

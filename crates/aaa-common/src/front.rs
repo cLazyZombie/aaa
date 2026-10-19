@@ -1,10 +1,9 @@
-//! Front API 클라이언트. CLI와 TUI(`aaa attach`)가 같은 머신 경로(UDS·Named Pipe)로 쓰고, 다른 기기 TUI
-//! (`aaa attach --remote`)는 같은 메시지를 host 웹 WebSocket으로 보낸다(`remote`, plan §6.2).
+//! Front API 클라이언트(UDS·Named Pipe).
+//! CLI는 host의 같은 머신 socket으로만 연결한다.
 //! front는 host 내부에 의존하지 않고 이 계약(aaa-proto)으로만 host와 말한다(결정 13).
 
 use std::collections::VecDeque;
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use aaa_proto::{
@@ -20,10 +19,9 @@ pub fn socket(state_root: &Path) -> PathBuf {
     state_root.join("host").join("front.sock")
 }
 
-/// host에서 오는 쪽: 같은 머신 socket의 frame 또는 웹 WebSocket의 글 메시지
+/// host에서 오는 같은 머신 socket의 frame
 enum Inbound {
     Local(FrameRx<tokio::io::ReadHalf<crate::ipc::LocalStream>>),
-    Remote(crate::remote::WsIn),
 }
 
 impl Inbound {
@@ -37,7 +35,6 @@ impl Inbound {
                     Some(Incoming::Terminal(_)) => continue,
                 }
             },
-            Inbound::Remote(ws) => ws.next().await,
         }
     }
 
@@ -47,7 +44,7 @@ impl Inbound {
     }
 }
 
-/// CLI·TUI 쪽 클라이언트. 요청 응답을 기다리는 동안 온 사건은 모아 둔다.
+/// CLI 쪽 클라이언트. 요청 응답을 기다리는 동안 온 사건은 모아 둔다.
 pub struct FrontClient {
     tx: FrameTx,
     rx: Inbound,
@@ -61,7 +58,10 @@ pub struct FrontClient {
     pub role: DeviceRole,
 }
 
-/// 한 번 보내고 끝나는 CLI 연결의 이름. 대화형 front(TUI·웹)와 달리 「지금 쓰는 화면」이 되지 않는다.
+/// 삭제된 TUI를 실행하거나 옛 바이너리가 접속할 때의 안내.
+pub const TUI_REMOVED: &str = "TUI는 삭제됐다. 웹 UI를 쓴다. host에서 `aaa web status`로 주소를 확인한다.";
+
+/// 한 번 보내고 끝나는 CLI 연결의 이름. 대화형 front(웹)와 달리 「지금 쓰는 화면」이 되지 않는다.
 pub const CLI_CLIENT: &str = "cli";
 
 impl FrontClient {
@@ -80,13 +80,6 @@ impl FrontClient {
         // aaa 세션 안에서 실행했으면 그 세션을 알린다(사후 평가자 세션은 보기만 한다, §8.13)
         let session = std::env::var("AAA_SESSION_ID").ok().filter(|s| !s.is_empty());
         Self::hello(tx, rx, client, session).await
-    }
-
-    /// 다른 기기에서 host 웹으로 붙는다(plan §6.2). `token`은 pairing으로 받은 장치 token이고, host가 받지 않으면
-    /// `remote::Unauthorized` 오류다(새로 pairing한다). 이 기기의 aaa 세션은 그 host의 세션이 아니라 알리지 않는다.
-    pub async fn connect_remote(target: &crate::remote::Target, token: &str, client: &str) -> Result<FrontClient> {
-        let (tx, rx) = crate::remote::connect(target, token).await?;
-        Self::hello(tx, Inbound::Remote(rx), client, None).await
     }
 
     async fn hello(tx: FrameTx, mut rx: Inbound, client: &str, session: Option<String>) -> Result<FrontClient> {
@@ -118,37 +111,6 @@ impl FrontClient {
         Ok(id)
     }
 
-    /// 보내는 쪽과 받는 쪽으로 나눈다. 받기는 task가 하므로 select!에서 기다려도 frame이 잘리지 않는다.
-    /// 받는 쪽이 끝난 까닭(기기 취소·무응답)은 `FrontSender::ended`가 준다.
-    pub fn split(self) -> (FrontSender, tokio::sync::mpsc::UnboundedReceiver<FrontMsg>) {
-        let (etx, erx) = tokio::sync::mpsc::unbounded_channel();
-        for e in self.events {
-            let _ = etx.send(FrontMsg::Event(e));
-        }
-        let mut rx = self.rx;
-        let ended = Arc::new(Mutex::new(None));
-        let why = ended.clone();
-        tokio::spawn(async move {
-            loop {
-                match rx.next().await {
-                    Ok(Some(b)) => {
-                        if let Ok(msg) = serde_json::from_slice::<FrontMsg>(&b)
-                            && etx.send(msg).is_err()
-                        {
-                            break;
-                        }
-                    }
-                    Ok(None) => break,
-                    Err(e) => {
-                        *why.lock().unwrap() = Some(format!("{e:#}"));
-                        break;
-                    }
-                }
-            }
-        });
-        (FrontSender { tx: self.tx, seq: self.seq, front: self.front, ended }, erx)
-    }
-
     /// 다음 메시지(사건 또는 응답). 모아 둔 사건을 먼저 준다. 연결이 끝나면 None.
     pub async fn next(&mut self) -> Result<Option<FrontMsg>> {
         if let Some(e) = self.events.pop_front() {
@@ -161,29 +123,7 @@ impl FrontClient {
     }
 }
 
-/// `FrontClient::split`의 보내는 쪽
-pub struct FrontSender {
-    tx: FrameTx,
-    seq: u64,
-    pub front: String,
-    ended: Arc<Mutex<Option<String>>>,
-}
-
-impl FrontSender {
-    /// 받는 쪽이 오류로 끝났으면 그 까닭(원격 연결의 기기 취소·무응답 등). 그냥 닫혔으면 None
-    pub fn ended(&self) -> Option<String> {
-        self.ended.lock().unwrap().clone()
-    }
-
-    pub async fn send(&mut self, body: FrontRequest) -> Result<String> {
-        self.seq += 1;
-        let id = format!("q{}", self.seq);
-        self.tx.json(&FrontMsg::Req { id: id.clone(), body }).await?;
-        Ok(id)
-    }
-}
-
-/// 그림 한 개를 `PaneAttach` 조각 요청들로 나눈다(TUI Ctrl+V·`aaa pane attach`). 차례대로 보낸다.
+/// 그림 한 개를 `aaa pane attach` 조각 요청들로 나눈다. 차례대로 보낸다.
 pub fn attach_requests(pane: &str, bytes: &[u8]) -> Vec<FrontRequest> {
     use sha2::Digest;
     let sha256 = hex::encode(sha2::Sha256::digest(bytes));
