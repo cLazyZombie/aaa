@@ -13,7 +13,7 @@ use std::path::{Path, PathBuf};
 
 /// 고른 글을 front 기기 clipboard에(herdr `copy_to_clipboard`, src/selection.rs). ssh·WSL·VS Code 터미널이면 OSC 52
 /// (`ESC ] 52 ; c ; <base64> BEL`, 수신 확인 없는 요청), 아니면 시스템 clipboard.
-/// Windows 로컬 쓰기는 유효한 console 창 소유자를 지정하며, 실패는 OSC 52로 감추지 않는다.
+/// Windows 로컬 쓰기는 유효한 자기 창 소유자를 지정하며, 실패는 OSC 52로 감추지 않는다.
 /// 시험용 `AAA_TEST_CLIPBOARD_TEXT=<파일>`: 사람의 clipboard 대신 그 파일에 쓴다.
 #[derive(Debug, PartialEq, Eq)]
 pub enum CopyResult {
@@ -278,7 +278,12 @@ mod tests {
         assert!(std::env::var_os("AAA_TEST_CLIPBOARD_TEXT").is_none());
         // 읽기와 달리 쓰기는 유효한 창 소유자가 필요하다. Windows CI에서도 선택 복사와 같은 경로를 탄다.
         let text = "선택 복사 한글 😀\nsecond line";
-        native_text(text).expect("선택한 글 쓰기");
+        let written = native_text(text);
+        if let Err(e) = &written {
+            // --nocapture인 CI도 실패 요약 annotation에서 실제 API 오류를 보게 한다.
+            eprintln!("error: 선택한 글 쓰기: {e}");
+        }
+        written.expect("선택한 글 쓰기");
         let got = arboard::Clipboard::new().unwrap().get_text().expect("선택한 글 읽기");
         assert_eq!(got.replace("\r\n", "\n"), text);
     }
