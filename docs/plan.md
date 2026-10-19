@@ -5418,3 +5418,30 @@ primary 근거:
 - **참고 그대로 재사용.** herdr-web-ui aa624cb `components/RowMenu.tsx` 78~108은 body portal의 fixed 좌표를 EDGE=8 안에 보정하고 아래 공간이 부족하면 위에 둔다. 휴대폰은 같은 파일의 modal sheet를 쓴다. aaa에 이미 옮긴 공통 RowMenu를 임무에도 사용한다. t3code `components/ui/popover.tsx`의 Portal/Positioner·collisionAvoidance·available-width/height 제한과 목적이 같으며 새 위치 계산기나 의존성을 만들지 않는다.
 - **동작.** 긴 임무 배지는 목록 머리 안에서 말줄임하고 메뉴에는 전체 이름과 작업 셈을 보인다. 임무 보기·시작/멈춤/이어 가기·다시 읽기·승인 검토는 같은 API와 역할 검사를 유지한다. 공통 메뉴의 Esc·바깥 누름·focus 복귀·좁은 화면 취소 단추를 따른다. 운영 임무는 건드리지 않는다.
 - **검증.** 기존 웹 E2E 12 임무 발견/승인 경계를 확장했다. 세 화면에서 메뉴와 설명의 실제 글 조각, 모든 단추의 화면 경계와 hit target을 검사하고 실제 Controller 승인 저장·승인만으로 시작하지 않음도 본다. 수정 전 세 크기 모두 같은 이유로 RED이며 headless 전후 캡처를 보존한다. 서로 다른 크기는 새 탭에서 열어 이전 sheet의 퇴장 픽셀이 다음 캡처에 섞이지 않게 한다. 고정 sleep·timeout 연장·기대값 완화는 없다.
+
+### 8.225 사진만 보낸 입력의 자동완성·수신 확인과 대화 썸네일(10-19, t-0387)
+
+- **실제 기록·재현.** 운영 로그의 submit 5는 글 62바이트와 Enter 1바이트 모두 PTY 접수까지 성공했지만 턴이 시작되지 않았다.
+  별도 설정 폴더와 로컬의 응답하지 않는 API 주소를 쓴 실제 Claude Code 2.1.303에서도 마지막 `@경로`의 첫 Enter가 파일 선택으로
+  소비되어 입력창에 글이 남았다. 공백 뒤 Enter는 턴을 시작했다. Codex 0.163.0에서는 같은 입력의 Enter가 턴을 시작했다.
+  운영 설정·프로세스·실제 모델 API는 쓰지 않았다.
+- **참고.** herdr-web-ui `aa624cb` `server/index.ts closeMention`은 마지막 `@파일` 뒤에 공백을 넣어 자동완성을 닫는다.
+  Composer의 trim 뒤 Term의 제출 글에 이 규칙을 적용한다. 줄바꿈·IME·일반 Enter의 키 전송과 기존 글/Enter 간격은 그대로다.
+  Enter를 하나 더 보내거나 Escape로 작업을 끊지 않는다. herdr `api_helpers.rs encode_api_submission_parts`·`api/agents.rs`와
+  herdr-projects `threads.rs keys`의 글/Enter 분리도 대조했다. t3code는 SDK에 첨부를 구조화해 보내므로 PTY 자동완성이 없다.
+- **수신 확인.** PTY ACK는 「입력 전달됨 · 기록 확인 중」이다. 보낸 글과 같은 새 사용자 기록을 받으면 수신 확인으로 바꾼다.
+  보내기 전의 같은 글·무관한 새 기록·agent의 작업 중 상태만으로 확인하지 않는다. 기록을 아직 읽지 못한 채 보냈으면 보수적으로
+  확인 불가로 둔다. 10초 뒤에도 확인되지 않으면 「아직 처리되지 않음」과 입력창 확인·보낸 글 복원을 보인다. 늦은 기록도 반영하며
+  자동 재전송은 없다. 새 초안이 있으면 복원 단추를 막아 보존한다. 수신 확인은 모델 처리 완료를 뜻하지 않는다.
+  참고 Composer의 `Not confirmed. Check the terminal before sending again` 안내와 t3code의 서버 사용자 기록을 기준으로 삼는
+  `ChatView.tsx serverVisibleTurnItems`를 따르되, aaa의 기존 읽기 API에는 제출 ID가 없어 같은 글의 출현 횟수 증가로 확인한다.
+- **그림 보기.** 경로 matcher가 `@/…`를 그대로 넘겨 상대 경로로 찾던 것이 파일 보기 실패의 원인이다. 파일 링크에서 절대·홈·점
+  상대 경로의 `@` 표시를 떼고 기존 `pane_file`로 연다. 같은 pane의 머신 agent가 canonical path와 `file_roots`를 검사하고,
+  30분 수명의 파일 하나 capability(`/f/…`)를 준다. 허용 범위·머신 선택·cookie 인증은 바꾸지 않는다.
+  herdr-web-ui `ChatView.tsx UserImages/ImageThumb`·`ChatView.css .chat-user-images`처럼 사용자 메시지의 `@그림`은 썸네일로
+  보이고 누르면 확대한다. t3code `MessagesTimeline.tsx`의 사용자 그림·`onImageExpand`도 대조했다. 확대는 aaa의 이미 있는
+  FileViewer를 재사용해 다운로드·새 탭·Back·닫기 뒤 focus 복귀도 같은 경계를 쓴다. reader는 기존대로 파일을 열지 않는다.
+- **검증 소유 경계.** 기존 웹 E2E 23을 넓혀 그림만 보내기, 실제 transcript push를 통한 수신·미확인·늦은 확인·같은 글 재전송,
+  새 초안 보존, 썸네일 잘림·확대·focus, 허용 밖·symlink·reader·미인증 읽기를 확인한다. 기존 네 브라우저/기기 첨부·Enter·IME
+  사례도 유지한다. 시간 창은 Playwright 시계로 넘기고 수신·화면·출력 사건으로 끝낸다. 새로운 시험 전용 production seam은 없다.
+  실험실에서 프로젝트 uploads만 추가로 허용하며 허용 밖 파일은 그대로 거부한다. 프로토콜 판 변경은 없다.

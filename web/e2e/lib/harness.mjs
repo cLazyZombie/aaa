@@ -872,9 +872,10 @@ done
 // 폴더는 허용 폴더가 되지 않으므로 미리 만든다
 fs.mkdirSync(`${root}/files`, { recursive: true });
 fs.mkdirSync(`${root}/work`, { recursive: true });
+fs.mkdirSync(`${root}/projects`, { recursive: true });
 fs.writeFileSync(
   `${root}/c/agent.toml`,
-  `schema = 1\n[agent]\nwork_root = "${root}/work"\nfile_roots = ["${root}/files", "${root}/work"]\n`,
+  `schema = 1\n[agent]\nwork_root = "${root}/work"\nfile_roots = ["${root}/files", "${root}/work", "${root}/projects"]\n`,
 );
 fs.appendFileSync(`${root}/c/host.toml`, `\n[profiles.fake]\nagent = "custom"\ncommand = ["/bin/sh", "${root}/fake.sh"]\n`);
 // bracketed paste를 켜는 입력창: 받은 조각을 JSON으로 그대로 보인다(composer 여러 줄·Enter 시험)
