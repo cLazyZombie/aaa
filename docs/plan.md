@@ -5174,3 +5174,24 @@ primary 근거:
 - **보존.** dirty·partial·skip-copy·keep-worktree, 미병합 branch의 기존 정리 규칙과 force 없는 삭제는 유지한다. adopted 폴더·branch도 그대로다. 보고·library 사본은 남는다.
 - **참고와 차이.** herdr-projects 0.2.35 `threads.rs::clean`은 workspace 닫기를 worktree 삭제에 묶고 `Kind::Adopted`를 남긴다. 이번 brief의 모든 thread pane 닫기 요구에 따라 그 예외를 없앴다. herdr 0.9.5 `app/actions.rs::handle_pane_died`, `app/api/panes.rs::close_pane`처럼 pane의 layout 제거까지 마친다.
 - **회귀.** m13의 실제 임시 host·agent에서 dir·dirty worktree·adopted fixture를 입력으로 exit 1 종료한 뒤 resolve한다. pane 목록·layout에서 사라지고 dirty 파일·adopted 저장소는 남아야 한다. 기존 dirty/partial 보존·살아 있는 adopted 복원 시험도 같은 동작으로 확인한다.
+
+### 8.255 웹 Claude 표시를 LobeHub Icons `claude-color`로(10-19, t-0396)
+
+- **요청.** 사용자 「~/Downloads/claude-color.svg 이 파일을 현재 aaa에서 클로드 관련 이미지(project, agent, 사용량 등)에서 대체 가능해?」, 출처 https://lobehub.com/ko/icons/claude.
+- **출처·라이선스.** 받은 파일(1696B)은 npm `@lobehub/icons-static-svg` 1.95.1 `icons/claude-color.svg`와 바이트까지 같다. 패키지와 github.com/lobehub/lobe-icons는 MIT(Copyright (c) 2023 LobeHub)다. 이 저장소는 이미 `agentSvgMarks.ts` 때문에 그 MIT 전문을 `web/src/herdr/README.md`에 싣고 있어 같은 고지가 덮는다. 로고 자체는 Anthropic의 상표이며 aaa는 pane의 agent를 가리키는 데만 쓴다(README 상표 문장 그대로). 예전 표시는 herdr-web-ui(aa624cb)가 chatmux llm-logo-provider에서 옮긴 타일(주황 둥근 사각형 `#D77655` + 흰 별)이었다.
+- **자리.** Claude 그림은 모두 `herdr/AgentMark.tsx`의 `ClaudeMark` 하나에서 나온다: 목록 줄(프로젝트·기타·에이전트 카드, 18px), 터미널 머리(18px), 구독 사용량 칩(14px)과 펼친 창·설정 「구독 사용량」(16px), 명령 팔레트, 새 세션 agent 고르기·coordinator 열기(16px), 알림 방울(22px). 앱 아이콘·favicon(`web/public/icon.svg`)은 aaa 자체 그림이라 Claude와 무관하다. TUI는 그림이 아니라 글자다.
+- **바꾼 것.** `ClaudeMark`를 viewBox `0 0 24 24`, 경로·색(`#D97757`) 그대로의 별 하나로 바꿨다. 타일이 없어 Codex 매듭처럼 맨 그림이다. 경로에 `agent-mark-glyph`를 달아 설정 「agent 표시 → 모노」에서는 예전처럼 글자색이 된다.
+- **검증.** 웹 E2E 04 「agent 표시」가 Claude 줄의 타일 없음·별 색 `#D97757`·viewBox를 본다(예전 판에서 실패). 기본·GitHub Dark, 1x·2x·휴대폰 3x 전후 캡처로 14px 칩까지 알아볼 수 있음을 봤다.
+
+### 8.256 사용자 보고서·보고서 두 탭·모든 곳 지우기와 머신 줄 agent 수(10-19, t-0396)
+
+- **요청.** 머신 줄에 agent 수를 보이자는 요청의 시안에서 사용자가 B안(머신 줄 오른쪽) + CPU·MEM도 같은 아이콘 모양을 골랐고, 그 1안(아이콘 + 숫자, CPU·MEM 아래 2px 막대)을 「추천으로」 정했다. 보고서 화면 시안에서는 「봤다 = 열면」, 「지우기 = 모든 곳에서 영구, 확인 한 번」, 「사용자 보고 = coordinator가 보낸 웹페이지」, 나누기는 A안 두 탭(내 보고서·작업 보고, 일괄 지우기는 작업 보고만, 안 본 수 배지는 막대 단추와 탭)을 정했다. 사용자 보고 표시는 최소 안 `aaa library publish … --to-user [--title …]`이다.
+- **머신 줄.** `MachineMeters`가 lucide `Bot`·`Cpu`·`MemoryStick`(12px) + 숫자를 그리고 CPU·MEM만 2px 막대를 둔다. agent 수는 에이전트 패널과 같은 기준(그 머신의 running pane 중 평가자가 아니고 agent로 보이는 것, `Sidebar` `machineAgents` 공유)이다. 90% 이상 빨강, 옛 agent의 「—」와 agent 0은 흐리게, 끊긴 머신은 셋 다 그리지 않는다. 칸마다 title(`agent N · 일하는 중 W · 답 기다림 Q`, `CPU N%`, `메모리 N%`), 묶음 title은 그 둘을 줄로 잇는다.
+- **사용자 보고서.** `LibraryPublish`에 `to_user`·`title`(선택, serde 기본값)을 더했다. host 보고서 행(SQLite `library_reports`)에 `to_user`·`title`·`sent_at`·`seen_at` 칸을 `ALTER TABLE`로 더한다(옛 행은 작업 보고). `--to-user`는 맨 위 `index.html`이 없으면 거부하고, 제목은 줄바꿈 없는 200자 이내다. 보낼 때마다 `sent_at`을 새로 적고 `seen_at`을 지워 다시 안 봄이 된다. `--to-user` 없이 다시 올리면 작업 보고로 돌아간다. 보낸 뒤 사용자 알림 post(Notice, topic `report`, refs `library/P/이름`)를 남긴다. 사용자 Notice topic은 `task-complete`와 `report`이고, 외부 푸시는 t-0395 규칙대로 사용자 행동(request·needs_user)과 작업 완료뿐이라 `report`는 앱 안에만 보인다. post가 거부돼도(24시간 중복 등) publish는 성공하고 info로 남긴다.
+- **봤다.** `LibraryOpen`(웹 본문·새 창이 부르는 요청)이 사용자 보고서를 `seen_at = now`로 적는다(best-effort). 단일 사용자 체계라 보기 기기에서 연 것도 봄이다. `LibraryReport`에 `to_user`·`title`·`unseen`·`busy`를 실었다.
+- **안 본 수 사건.** host `reports_changed`(watch)를 publish·thread 사본 회수·열어 봄·지우기·thread resolve·reopen 때 올리고, 웹 사건 WebSocket이 `FrontEvent::Reports { unseen }`을 처음 한 번과 바뀔 때마다 보낸다(TUI front에는 보내지 않는다). 웹은 막대 「보고서」 단추 배지(`activity-badge-reports`, 이름 「보고서, 안 본 보고서 N」)를 달고, 보고서 목록을 다시 읽는다.
+- **지우기.** 새 요청 `LibraryDelete { reports }`(control, 1~500개). 하나라도 끝나지 않은 thread의 사본(`protected_copy`: `t-` 이름이고 thread가 resolve 전이거나 없음)이면 모두 거부한다. 아니면 각각 DB 행(공유 링크 폐기 포함)·보기 cap·host 사본·manifest를 지우고, thread 사본이면 회수한 `threads/t-NNNN.md`까지 지운다(자동 정리와 달리 보고 글도 지운다). 되돌리기는 없다. CLI `aaa library delete --project P 이름…`.
+- **보고서 화면.** `ReportsPanel`이 두 탭이다. 「내 보고서」는 to_user 카드(안 봄 점·제목·`P/이름 · 보냄 시각`·열기·새 창·지우기·공유 링크), 탭에 안 본 수. 「작업 보고」는 한 줄씩(고르기 칸·이름·진행 중 표·크기·시각·열기·새 창·「공유 링크」를 눌러 폄), 위에 「N개 선택 · 크기」·「끝난 것 모두 고르기」·「지우기」. 지우기는 공통 `ConfirmDialog` 한 번이다. Reader에는 지우기·고르기가 없다.
+- **coordinator 안내.** doctor가 쓰는 안내에 「사용자에게 보고서 보내기」 절(`--to-user --title`)을 더했다(m13 `GUIDE_SECTIONS`).
+- **계약.** FRONT_API는 배포 전인 1.43에 더한다.
+- **검증.** host 유닛(안 봄 → 열면 봄 → 다시 보내면 안 봄, 진행 중 거부, 지우기가 행·링크·사본·보고 글을 지움). 웹 E2E 21에 두 단계: index.html 없는 `--to-user` 거부, 막대·탭 배지가 사건만으로 늘고 줄며, 알림 post, 열면 봄, 다시 보내면 안 봄, 카드 지우기 취소·확인 / 진행 중 thread 사본 고르기 막음·host 거부, resolve하면 풀림, 끝난 것 모두 고르기와 확인 한 번으로 작업 보고 전부가 host 사본·manifest까지 사라짐. E2E 27은 아이콘·막대 유무·agent 수가 에이전트 패널과 같음·칸 title을 본다. E2E 26은 `--to-user`로 올린다.

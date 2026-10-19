@@ -35,12 +35,25 @@ fn library_link_row(r: &rusqlite::Row<'_>) -> rusqlite::Result<LibraryLinkRow> {
     })
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub(crate) struct LibraryReportRow {
     pub project: String,
     pub name: String,
     pub live: Option<String>,
     pub updated: u64,
+    /// 사용자에게 보낸 웹 보고서(`--to-user`, plan §8.256)
+    pub to_user: bool,
+    pub title: Option<String>,
+    /// 사용자 보고서로 보낸(다시 보낸) 때. 이보다 늦게 열었으면 봤다
+    pub sent_at: Option<u64>,
+    pub seen_at: Option<u64>,
+}
+
+impl LibraryReportRow {
+    /// 사용자 보고서를 보낸 뒤 아직 열지 않았다
+    pub(crate) fn unseen(&self) -> bool {
+        self.to_user && self.seen_at.is_none_or(|s| self.sent_at.is_some_and(|t| s < t))
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -102,7 +115,7 @@ impl Db {
             .lock()
             .unwrap()
             .query_row(
-                "SELECT live,updated FROM library_reports WHERE project=?1 AND name=?2",
+                "SELECT live,updated,to_user,title,sent_at,seen_at FROM library_reports WHERE project=?1 AND name=?2",
                 params![project, name],
                 |r| {
                     Ok(LibraryReportRow {
@@ -110,6 +123,10 @@ impl Db {
                         name: name.into(),
                         live: r.get(0)?,
                         updated: r.get(1)?,
+                        to_user: r.get::<_, i64>(2)? != 0,
+                        title: r.get(3)?,
+                        sent_at: r.get(4)?,
+                        seen_at: r.get(5)?,
                     })
                 },
             )
@@ -118,11 +135,31 @@ impl Db {
 
     pub(crate) fn library_report_put(&self, r: &LibraryReportRow) -> Result<()> {
         self.conn.lock().unwrap().execute(
-            "INSERT INTO library_reports(project,name,live,updated) VALUES(?1,?2,?3,?4)
-             ON CONFLICT(project,name) DO UPDATE SET live=excluded.live,updated=excluded.updated",
-            params![r.project, r.name, r.live, r.updated],
+            "INSERT INTO library_reports(project,name,live,updated,to_user,title,sent_at,seen_at)
+             VALUES(?1,?2,?3,?4,?5,?6,?7,?8)
+             ON CONFLICT(project,name) DO UPDATE SET live=excluded.live,updated=excluded.updated,to_user=excluded.to_user,
+               title=excluded.title,sent_at=excluded.sent_at,seen_at=excluded.seen_at",
+            params![r.project, r.name, r.live, r.updated, r.to_user as i64, r.title, r.sent_at, r.seen_at],
         )?;
         Ok(())
+    }
+
+    /// 사용자 보고서를 열었다. 바뀌었으면(처음 열었거나 다시 보낸 뒤) true
+    pub(crate) fn library_report_seen(&self, project: &str, name: &str, now: u64) -> Result<bool> {
+        Ok(self.conn.lock().unwrap().execute(
+            "UPDATE library_reports SET seen_at=?3 WHERE project=?1 AND name=?2 AND to_user=1
+               AND (seen_at IS NULL OR seen_at < sent_at)",
+            params![project, name, now],
+        )? > 0)
+    }
+
+    /// 열지 않은 사용자 보고서 수(활동 막대 보고서 배지)
+    pub(crate) fn library_unseen_count(&self) -> Result<u32> {
+        Ok(self.conn.lock().unwrap().query_row(
+            "SELECT COUNT(*) FROM library_reports WHERE to_user=1 AND (seen_at IS NULL OR seen_at < sent_at)",
+            [],
+            |r| r.get(0),
+        )?)
     }
 
     pub(crate) fn library_report_remove(&self, project: &str, name: &str) -> Result<()> {
@@ -255,6 +292,17 @@ impl Db {
             conn.execute_batch(
                 "ALTER TABLE push_subs ADD COLUMN alert_input INTEGER NOT NULL DEFAULT 1;
                  ALTER TABLE push_subs ADD COLUMN alert_done INTEGER NOT NULL DEFAULT 1;",
+            )?;
+        }
+        // 사용자 보고서(plan §8.256). 위와 같이 열만 더한다
+        let has_to_user =
+            conn.prepare("SELECT 1 FROM pragma_table_info('library_reports') WHERE name='to_user'")?.exists([])?;
+        if !has_to_user {
+            conn.execute_batch(
+                "ALTER TABLE library_reports ADD COLUMN to_user INTEGER NOT NULL DEFAULT 0;
+                 ALTER TABLE library_reports ADD COLUMN title TEXT;
+                 ALTER TABLE library_reports ADD COLUMN sent_at INTEGER;
+                 ALTER TABLE library_reports ADD COLUMN seen_at INTEGER;",
             )?;
         }
         let v: Option<String> =

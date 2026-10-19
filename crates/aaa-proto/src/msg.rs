@@ -13,10 +13,10 @@ use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use ts_rs::TS;
 
 use crate::orch::{
-    AgentStatus, Cleanup, FlowEvent, HarnessEvent, InboxItem, Launch, LibraryPrunePlan, LibraryReport, LibrarySkip,
-    LibraryView, LinkView, MessageMode, MessageView, OwnerChoice, ProfileView, ProjectAction, ProjectChange,
-    ProjectContext, ProjectFilesCheck, ProjectOpened, ProjectView, QuestionView, ReportSnapshot, Role, RoutineView,
-    ThreadAdopt, ThreadAdopted, ThreadKind, ThreadPrepare, ThreadReady, ThreadView,
+    AgentStatus, Cleanup, FlowEvent, HarnessEvent, InboxItem, Launch, LibraryPrunePlan, LibraryRef, LibraryReport,
+    LibrarySkip, LibraryView, LinkView, MessageMode, MessageView, OwnerChoice, ProfileView, ProjectAction,
+    ProjectChange, ProjectContext, ProjectFilesCheck, ProjectOpened, ProjectView, QuestionView, ReportSnapshot, Role,
+    RoutineView, ThreadAdopt, ThreadAdopted, ThreadKind, ThreadPrepare, ThreadReady, ThreadView,
 };
 use crate::orch::{EvaluationView, EvaluatorView, MenuPick, NoticeView};
 
@@ -1682,6 +1682,17 @@ pub enum FrontRequest {
         source: String,
         #[serde(default)]
         live: bool,
+        /// FRONT_API 1.43. 사용자에게 보내는 웹 보고서(index.html 필수, 「내 보고서」·안 봄·사용자 알림 post)
+        #[serde(default)]
+        to_user: bool,
+        /// FRONT_API 1.43. 「내 보고서」에 보일 제목(없으면 이름)
+        #[serde(default)]
+        title: Option<String>,
+    },
+    /// FRONT_API 1.43. 보고서를 모든 곳에서 지운다(host 사본·목록·공유 링크·thread 보고 사본). 되돌리지 않는다.
+    /// 끝나지 않은 thread의 사본이 하나라도 있으면 아무것도 지우지 않는다.
+    LibraryDelete {
+        reports: Vec<LibraryRef>,
     },
     LibraryImport {
         project: String,
@@ -2218,6 +2229,9 @@ pub enum FrontEvent {
     /// host가 주는 웹 빌드(주 묶음 파일 이름, 예 `index-BsC_6E06`). 웹 events 연결이 열릴 때마다 온다. 제 빌드와 다르면 웹은
     /// 「다시 열기」 줄을 띄운다(배포 뒤 홈 화면 앱이 옛 웹을 계속 돌리는 문제, herdr-web-ui `reloadReason` "updated", plan §8.166)
     Web { build: String },
+    /// FRONT_API 1.43. 보고서 목록이 바뀌었다(보내기·열기·지우기·thread 사본). 웹 events 연결에만, 열 때와 바뀔 때 보낸다.
+    /// `unseen`은 열지 않은 사용자 보고서 수(활동 막대 보고서 배지)
+    Reports { unseen: u32 },
     /// 앱 안 알림(웹 Droplet, plan §8.185). 기록하지 않는다: 놓친 알림은 다시 오지 않는다(FRONT_API 1.34,
     /// 옛 front는 모르는 사건을 버린다)
     Notice(NoticeView),

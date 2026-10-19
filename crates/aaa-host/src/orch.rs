@@ -252,6 +252,13 @@ coordinator는 thread가 아니므로 보고 파일로 알림을 만들지 않�
 post 본문에는 비밀값을 쓰지 않는다. 이 두 post는 기기의 입력 필요·작업 완료 알림 설정을 따른다. 사용자가 답하거나 결과를 확인하면
 해당 post inbox 항목을 `aaa inbox done {p} <id>`로 끝낸다. 확인창·세션 사라짐·머신 이상은 앱 안 알림과 coordinator inbox에만 남는다. 사람이 필요하면 coordinator가 위 「확인 필요」 post로 알린다.
 
+## 사용자에게 보고서 보내기
+사용자에게 웹 보고서(맨 위에 index.html이 있는 폴더)를 보여 줄 때는
+`aaa library publish <폴더> --project {p} --name <이름> --to-user --title '<제목>'`로 보낸다. 웹 보고서 화면 「내 보고서」와
+활동 막대 배지에 안 봄으로 뜨고, 사용자 알림 post(topic report)가 함께 남는다. 같은 이름으로 다시 보내면 다시 안 봄이다.
+index.html이 없으면 거절한다. thread가 낸 보고(t-NNNN 사본)는 「작업 보고」에 따로 있으니 그대로 다시 보내지 않는다:
+사용자에게 보일 것만 골라 `--to-user`로 보낸다. 이 알림은 앱 안에만 뜨고 밖 푸시는 위 두 post만 보낸다.
+
 ## 새 프로젝트의 첫 턴
 TASKS.md가 비어 있고 thread가 없으면 이것만 한다: goal을 한 줄로 다시 말하고, 범위에 든 repo와 머신을 늘어놓고(goal과
 repos는 project.toml에 있다), 첫 일을 묻는다. 요청받기 전에는 아무것도 제안하지 않는다.
@@ -1787,6 +1794,10 @@ impl Host {
             std::fs::rename(&tmp, &dest).map_err(internal)?;
             crate::library::write_manifest(&dir, id, &snap).map_err(internal)?;
             let changed = !same_files || std::fs::read(crate::library::manifest_path(&dir, id)).ok() != old_manifest;
+            if changed || old_manifest.is_none() {
+                // 보고서 화면 「작업 보고」(plan §8.256)
+                self.reports_bump();
+            }
             let skipped: Vec<String> = snap.skipped.iter().map(|s| format!("{}: {}", s.path, s.reason)).collect();
             let copy = if skipped.is_empty() { "complete" } else { "partial" };
             Ok(Some((snap.hash, skipped, copy.to_string(), snap.report.0, changed)))
@@ -1901,6 +1912,8 @@ impl Host {
             r.merged_seen_ms = None;
         })?;
         self.db.audit(actor, "thread_resolve", &format!("{project}/{id}"));
+        // 그 사본이 「진행 중」(지울 수 없음)에서 풀린다: 보고서 화면이 다시 읽는다(plan §8.256)
+        self.reports_bump();
         // 데려온 폴더는 사람 것이다: pane은 닫되 그 폴더·branch는 정리하지 않는다.
         let adopted = rec.kind == ThreadKind::Adopted;
         // pane을 닫을 때 끝나기를 기다릴 사건 구독은 끝내기 전에 잡는다(그 사이 온 끝남을 놓치지 않는다)
@@ -2032,6 +2045,7 @@ impl Host {
             r.merged_seen_ms = None;
         })?;
         self.db.audit(actor, "thread_reopen", &format!("{project}/{id}"));
+        self.reports_bump();
         self.flow(&rec, "thread_reopened", None, "다시 열었다(아무것도 띄우지 않았다)");
         let mut view = self.thread_view(&rec);
         view.warnings

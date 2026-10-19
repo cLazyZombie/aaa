@@ -242,6 +242,26 @@ pub struct LibraryReport {
     /// 읽기 실패·상한 초과도 목록에서 감추지 않는다.
     pub problem: Option<String>,
     pub link: Option<LinkView>,
+    /// FRONT_API 1.43. coordinator가 사용자에게 보낸 웹 보고서(`library publish --to-user`, 「내 보고서」). 아니면 작업 보고다.
+    #[serde(default)]
+    pub to_user: bool,
+    /// FRONT_API 1.43. `--to-user`로 보낼 때 준 제목
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub title: Option<String>,
+    /// FRONT_API 1.43. 사용자 보고서를 보낸(다시 보낸) 뒤 아직 열지 않았다
+    #[serde(default)]
+    pub unseen: bool,
+    /// FRONT_API 1.43. 끝나지 않은(resolve 전) thread의 사본이라 지울 수 없다
+    #[serde(default)]
+    pub busy: bool,
+}
+
+/// 보고서 하나(프로젝트·이름). FRONT_API 1.43 `LibraryDelete`
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+pub struct LibraryRef {
+    pub project: String,
+    pub name: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]

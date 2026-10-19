@@ -20,12 +20,15 @@ export function ReportsView({
   shown,
   open,
   role,
+  rev,
   onOpen,
 }: {
   shown: boolean;
   /** 연 보고서(없으면 목록) */
   open: ReportRef | null;
   role: DeviceRole;
+  /** host가 보고서 목록이 바뀌었다고 알린 횟수(다시 읽는다) */
+  rev: number;
   /** 보고서 하나를 연다·목록으로(주소를 바꾼다) */
   onOpen: (report: ReportRef | null) => void;
 }) {
@@ -53,7 +56,7 @@ export function ReportsView({
         </header>
         <div className="thread-body" ref={listScroll} data-testid="reports-scroll">
           <div className="thread-col">
-            <ReportsPanel role={role} onView={openReport} />
+            <ReportsPanel role={role} rev={rev} onView={openReport} />
           </div>
         </div>
       </div>
