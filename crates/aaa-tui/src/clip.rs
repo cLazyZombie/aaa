@@ -12,24 +12,37 @@
 use std::path::{Path, PathBuf};
 
 /// 고른 글을 front 기기 clipboard에(herdr `copy_to_clipboard`, src/selection.rs). ssh·WSL·VS Code 터미널이면 OSC 52
-/// (`ESC ] 52 ; c ; <base64> BEL`, 그 터미널이 자기 기기 clipboard에 쓴다), 아니면 시스템 clipboard(못 열면 OSC 52).
+/// (`ESC ] 52 ; c ; <base64> BEL`, 수신 확인 없는 요청), 아니면 시스템 clipboard.
+/// Windows 로컬 쓰기는 유효한 console 창 소유자를 지정하며, 실패는 OSC 52로 감추지 않는다.
 /// 시험용 `AAA_TEST_CLIPBOARD_TEXT=<파일>`: 사람의 clipboard 대신 그 파일에 쓴다.
-pub fn copy_text(text: &str) -> Result<(), String> {
+#[derive(Debug, PartialEq, Eq)]
+pub enum CopyResult {
+    Copied,
+    Requested,
+}
+
+pub fn copy_text(text: &str) -> Result<CopyResult, String> {
     if let Some(p) = std::env::var_os("AAA_TEST_CLIPBOARD_TEXT") {
-        return std::fs::write(p, text).map_err(|e| e.to_string());
+        return std::fs::write(p, text).map(|()| CopyResult::Copied).map_err(|e| e.to_string());
     }
     let env = |k: &str| std::env::var_os(k).is_some();
     let remote = env("SSH_CONNECTION")
         || env("SSH_TTY")
         || env("WSL_DISTRO_NAME")
-        || std::env::var("TERM_PROGRAM").is_ok_and(|t| t == "vscode");
-    if !remote && native_text(text).is_ok() {
-        return Ok(());
+        || (!cfg!(windows) && std::env::var("TERM_PROGRAM").is_ok_and(|t| t == "vscode"));
+    if !remote {
+        match native_text(text) {
+            Ok(()) => return Ok(CopyResult::Copied),
+            // Windows Terminal·conhost의 OSC 52 지원에 기대어 실패를 숨기지 않는다.
+            Err(e) if cfg!(windows) => return Err(e),
+            Err(_) => {}
+        }
     }
-    osc52(text)
+    osc52(text).map(|()| CopyResult::Requested)
 }
 
 /// 시스템 clipboard. Linux X11은 쓴 연결이 살아 있어야 다른 앱이 읽으므로 연결을 들고 있는다.
+#[cfg(not(windows))]
 fn native_text(text: &str) -> Result<(), String> {
     static CLIP: std::sync::Mutex<Option<arboard::Clipboard>> = std::sync::Mutex::new(None);
     let mut c = CLIP.lock().map_err(|e| e.to_string())?;
@@ -38,6 +51,12 @@ fn native_text(text: &str) -> Result<(), String> {
     }
     c.as_mut().map_or(Err("clipboard 없음".into()), |c| c.set_text(text).map_err(|e| e.to_string()))
 }
+
+#[cfg(windows)]
+#[path = "clip_windows.rs"]
+mod windows;
+#[cfg(windows)]
+use windows::native_text;
 
 fn osc52(text: &str) -> Result<(), String> {
     use base64::Engine;
@@ -256,5 +275,11 @@ mod tests {
         let got = image_png().expect("clipboard 그림을 읽지 못했다");
         assert_eq!(decode(&got), (3, 2, rgba));
         drop(c);
+        assert!(std::env::var_os("AAA_TEST_CLIPBOARD_TEXT").is_none());
+        // 읽기와 달리 쓰기는 유효한 창 소유자가 필요하다. Windows CI에서도 선택 복사와 같은 경로를 탄다.
+        let text = "선택 복사 한글 😀\nsecond line";
+        native_text(text).expect("선택한 글 쓰기");
+        let got = arboard::Clipboard::new().unwrap().get_text().expect("선택한 글 읽기");
+        assert_eq!(got.replace("\r\n", "\n"), text);
     }
 }

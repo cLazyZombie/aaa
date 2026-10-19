@@ -1529,7 +1529,20 @@ impl Host {
                 self.check_running(&id)?;
                 let conn = self.live_conn(&mid)?;
                 self.lease_use(&id, f);
-                conn.request(AgentRequest::Input { session: id, data }).await.map(|_| FrontResponse::Done)
+                // 입력 내용은 기록하지 않고, 복사 사고를 식별할 종류와 front 출처만 request=cN 로그에 묶는다.
+                let input_kind = if data.0 == [3] {
+                    "ctrl-c"
+                } else if data.0.starts_with(b"\x1b[<") {
+                    "mouse-sgr"
+                } else {
+                    "other"
+                };
+                tracing::Instrument::instrument(
+                    conn.request(AgentRequest::Input { session: id, data }),
+                    tracing::info_span!("pane_front", front_id = %f.id, front = %f.label, input_kind),
+                )
+                .await
+                .map(|_| FrontResponse::Done)
             }
             // herdr 서버가 client의 붙여넣기를 그 pane 모드대로 다시 감싸는 것과 같다(`KeyModes::paste`: 켰으면 감싸고 ESC는 뺀다)
             FrontRequest::PanePaste { pane, text } => {
