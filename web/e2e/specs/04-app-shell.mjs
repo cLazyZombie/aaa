@@ -205,7 +205,7 @@ export default async function ({ ctl, page }) {
     await sp.context().close();
   });
 
-  await step("agent 표시(herdr-web-ui AgentMark·Sidebar rowMark·App context-title, 사용자 요청 10-17): 목록 줄과 터미널 머리에 Claude는 주황 타일 별, Codex는 매듭, 셸은 터미널 표시", async () => {
+  await step("agent 표시(herdr-web-ui AgentMark·Sidebar rowMark·App context-title, 사용자 요청 10-17): 목록 줄과 터미널 머리에 Claude는 주황 별(LobeHub claude-color, 사용자 요청 10-19), Codex는 매듭, 셸은 터미널 표시", async () => {
     // 세션 ID hook으로 harness를 알린 pane(Claude SessionStart·Codex notify)과 셸(t1)
     const idHook = { claude: '{"hook_event_name":"SessionStart","session_id":"m1","source":"startup"}', codex: '{"type":"agent-turn-complete","thread-id":"m2"}' };
     for (const [name, agent] of [["markc", "claude"], ["markx", "codex"]])
@@ -220,13 +220,15 @@ export default async function ({ ctl, page }) {
           agent: m.dataset.agent,
           cls: a?.className ?? null,
           label: svg?.getAttribute("aria-label") ?? null,
-          tile: a?.querySelector(".agent-mark-tile")?.getAttribute("fill") ?? null,
+          tile: a?.querySelector(".agent-mark-tile") !== null,
+          glyph: a?.querySelector(".agent-mark-glyph")?.getAttribute("fill") ?? null,
+          box: svg?.getAttribute("viewBox") ?? null,
           shell: svg?.classList.contains("lucide-terminal") ?? false,
         };
       });
     const bad = [];
     const c = await markOf("markc");
-    if (c.cls !== "agent-mark claude is-brand" || c.label !== "claude" || c.tile !== "#D77655") bad.push(`Claude 줄 ${JSON.stringify(c)}`);
+    if (c.cls !== "agent-mark claude is-brand" || c.label !== "claude" || c.tile || c.glyph !== "#D97757" || c.box !== "0 0 24 24") bad.push(`Claude 줄 ${JSON.stringify(c)}`);
     const x = await markOf("markx");
     if (x.cls !== "agent-mark codex" || x.label !== "codex") bad.push(`Codex 줄 ${JSON.stringify(x)}`);
     // 셸은 agent 표시가 아니라 터미널 표시(참고 Sidebar.tsx rowMark: lucide Terminal)

@@ -5828,3 +5828,12 @@ primary 근거:
 - **사용량.** 바닥 줄(`.foot-row`)을 `justify-content: flex-end`로 칩을 오른쪽 끝에 붙인다. 펼친 창(`.usage-popover`)은 줄 폭 그대로다.
 - **TUI(t-0386).** 활동 막대가 웹을 따르면 보고서 칸은 에이전트 칸 밑, 아래 묶음은 설정만이다. TUI 사이드바 바닥에는 설치 줄이 없고, 구독 사용량을 바닥에 둔다면 오른쪽 정렬이다.
 - **검증.** 웹 E2E 26 「막대·바닥 줄 배치」가 데스크톱 1280·좁은 창 700(drawer)·휴대폰 390×844·가로 844×390에서 기본·GitHub Dark로 보고서 단추가 에이전트 단추 바로 밑(tablist 밖), 아래 묶음이 설정만, 바닥 줄 단추가 사용량 하나, 칩 오른쪽 끝이 줄 안쪽 오른쪽 끝임을 재고 찍는다. 바꾸기 전 판에서 여덟 화면 모두 실패했다(보고서가 아래 묶음, 설치 단추, 칩 왼쪽). 04 「앱 설치」는 설정 줄만 본다: 데스크톱의 신호 없음·신호·거절·설치됨, iPhone·iPad 안내, 홈 화면 앱 「설치됨」, 어느 화면에도 설정 밖 설치 단추가 없음.
+
+### 8.249 웹 Claude 표시를 LobeHub Icons `claude-color`로(10-19, t-0396)
+
+- **요청.** 사용자 「~/Downloads/claude-color.svg 이 파일을 현재 aaa에서 클로드 관련 이미지(project, agent, 사용량 등)에서 대체 가능해?」, 출처 https://lobehub.com/ko/icons/claude.
+- **출처·라이선스.** 받은 파일(1696B)은 npm `@lobehub/icons-static-svg` 1.95.1 `icons/claude-color.svg`와 바이트까지 같다. 패키지와 github.com/lobehub/lobe-icons는 MIT(Copyright (c) 2023 LobeHub)다. 이 저장소는 이미 `agentSvgMarks.ts` 때문에 그 MIT 전문을 `web/src/herdr/README.md`에 싣고 있어 같은 고지가 덮는다. 로고 자체는 Anthropic의 상표이며 aaa는 pane의 agent를 가리키는 데만 쓴다(README 상표 문장 그대로). 예전 표시는 herdr-web-ui(aa624cb)가 chatmux llm-logo-provider에서 옮긴 타일(주황 둥근 사각형 `#D77655` + 흰 별)이었다.
+- **자리.** Claude 그림은 모두 `herdr/AgentMark.tsx`의 `ClaudeMark` 하나에서 나온다: 목록 줄(프로젝트·기타·에이전트 카드, 18px), 터미널 머리(18px), 구독 사용량 칩(14px)과 펼친 창·설정 「구독 사용량」(16px), 명령 팔레트, 새 세션 agent 고르기·coordinator 열기(16px), 알림 방울(22px). 앱 아이콘·favicon(`web/public/icon.svg`)은 aaa 자체 그림이라 Claude와 무관하다. TUI는 그림이 아니라 글자다.
+- **바꾼 것.** `ClaudeMark`를 viewBox `0 0 24 24`, 경로·색(`#D97757`) 그대로의 별 하나로 바꿨다. 타일이 없어 Codex 매듭처럼 맨 그림이다. 경로에 `agent-mark-glyph`를 달아 설정 「agent 표시 → 모노」에서는 예전처럼 글자색이 된다.
+- **검증.** 웹 E2E 04 「agent 표시」가 Claude 줄의 타일 없음·별 색 `#D97757`·viewBox를 본다(예전 판에서 실패). 기본·GitHub Dark, 1x·2x·휴대폰 3x 전후 캡처로 14px 칩까지 알아볼 수 있음을 봤다.
+
