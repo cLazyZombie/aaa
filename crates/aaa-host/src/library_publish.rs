@@ -22,6 +22,27 @@ fn name_ok(name: &str) -> bool {
             && matches!(name.as_bytes()[3], b'1'..=b'9'))
 }
 
+/// 글에 든 thread 번호(`t-0448`·`t0448`, 숫자 4자리 이상)를 `t-0448` 꼴로. 앞뒤가 영숫자면 낱말 안이라 세지 않는다
+/// (`projects-t-0448`·`old-t-0001`·`t0441-report`는 센다, `art-0448`·`t-0448a`는 세지 않는다).
+fn thread_numbers(s: &str) -> Vec<String> {
+    let b = s.as_bytes();
+    let mut out = Vec::new();
+    let mut i = 0;
+    while i < b.len() {
+        if b[i] == b't' && (i == 0 || !b[i - 1].is_ascii_alphanumeric()) {
+            let start = i + 1 + usize::from(b.get(i + 1) == Some(&b'-'));
+            let end = start + b[start..].iter().take_while(|c| c.is_ascii_digit()).count();
+            if end - start >= 4 && b.get(end).is_none_or(|c| !c.is_ascii_alphanumeric()) {
+                out.push(format!("t-{}", &s[start..end]));
+                i = end;
+                continue;
+            }
+        }
+        i += 1;
+    }
+    out
+}
+
 fn io_error(_: std::io::Error) -> ErrorBody {
     // 개인 경로를 API 오류·로그로 내보내지 않는다.
     err(ErrorCode::Unavailable, "보고서 파일을 읽거나 쓸 수 없다")
@@ -218,6 +239,7 @@ impl Host {
 
     /// `to_user`는 사용자에게 보내는 웹 보고서다(Some(제목), plan §8.256): index.html이 있어야 하고, 안 봄으로 두며, 사용자 알림
     /// post(topic `report`)를 같은 출처로 남긴다. 외부 푸시는 §8.249의 두 의도만이라 이 post는 앱 안 inbox·배지로만 알린다.
+    #[allow(clippy::too_many_arguments)]
     pub(crate) fn library_publish(
         &self,
         project: &str,
@@ -225,11 +247,12 @@ impl Host {
         source: &str,
         live: bool,
         to_user: Option<Option<&str>>,
+        from_thread: Option<&str>,
         actor: &str,
     ) -> Result<FrontResponse, ErrorBody> {
         let link = {
             let _lock = self.library_ops.lock().unwrap();
-            self.publish_report(project, name, Path::new(source), live, false, to_user, actor)?;
+            self.publish_report(project, name, Path::new(source), live, false, to_user, from_thread, actor)?;
             self.library_link(project, name, None, actor)?
         };
         self.reports_bump();
@@ -294,6 +317,41 @@ impl Host {
         result.map(|()| FrontResponse::LibraryPruned { removed })
     }
 
+    /// 보고서를 낸 thread(사용자 요청 10-20): 준 번호(그 프로젝트에 있어야 한다), 없으면 이름과 원본 경로의 뒤 성분부터
+    /// (`…/library/t-0448`이 thread 폴더 `projects-t-0448/…`보다 먼저) 찾은 번호 중 그 프로젝트에 있는 첫 thread. 없으면 근원 없음.
+    fn origin_thread(
+        &self,
+        project: &str,
+        given: Option<&str>,
+        name: &str,
+        source: &Path,
+    ) -> Result<Option<String>, ErrorBody> {
+        let known = |t: &str| self.db.thread_get(project, t).map(|r| r.is_some()).map_err(super::orch::internal);
+        if let Some(t) = given {
+            if thread_numbers(t) != [t] {
+                return Err(err(ErrorCode::BadRequest, "thread 번호는 t-0001 꼴이다"));
+            }
+            if !known(t)? {
+                return Err(err(ErrorCode::NotFound, format!("{project} 프로젝트에 thread {t}가 없다")));
+            }
+            return Ok(Some(t.into()));
+        }
+        let parts = source.iter().rev().filter_map(|c| c.to_str());
+        for t in std::iter::once(name).chain(parts).flat_map(thread_numbers) {
+            if known(&t)? {
+                return Ok(Some(t));
+            }
+        }
+        Ok(None)
+    }
+
+    /// 목록·열람에 보일 근원 thread: publish 때 적은 것, 없으면 이름에 든 그 프로젝트의 thread(thread 사본 `t-NNNN`, 기록 전에 올린 것)
+    pub(crate) fn report_thread(&self, project: &str, name: &str, row: Option<&LibraryReportRow>) -> Option<String> {
+        row.and_then(|r| r.from_thread.clone()).or_else(|| {
+            thread_numbers(name).into_iter().find(|t| self.db.thread_get(project, t).ok().flatten().is_some())
+        })
+    }
+
     #[allow(clippy::too_many_arguments)]
     fn publish_report(
         &self,
@@ -303,6 +361,7 @@ impl Host {
         live: bool,
         no_replace: bool,
         to_user: Option<Option<&str>>,
+        from_thread: Option<&str>,
         actor: &str,
     ) -> Result<(), ErrorBody> {
         let dir = self.project_dir(project)?;
@@ -322,6 +381,7 @@ impl Host {
             return Err(err(ErrorCode::BadRequest, "실시간 등록은 폴더만 된다"));
         }
         let source = std::fs::canonicalize(source).map_err(io_error)?;
+        let from_thread = self.origin_thread(project, from_thread, name, &source)?;
         let files = if m.is_dir() {
             scan(&source, self.library_limit())?
         } else if m.is_file() {
@@ -410,6 +470,7 @@ impl Host {
                         title: title.clone(),
                         sent_at: to_user.is_some().then_some(now),
                         seen_at: None,
+                        from_thread: from_thread.clone(),
                     })
                     .map_err(super::orch::internal)
             })();
@@ -475,7 +536,7 @@ impl Host {
                     return Err(err(ErrorCode::BadRequest, "숨은 이름은 가져오지 않는다"));
                 }
                 let target = format!("{prefix}{name}");
-                self.publish_report(project, &target, &e.path(), false, true, None, actor)?;
+                self.publish_report(project, &target, &e.path(), false, true, None, None, actor)?;
                 self.library_link(project, &target, None, actor)?;
                 self.report_view(project, &target, true)
             })();
@@ -514,6 +575,7 @@ impl Host {
             title: row.as_ref().and_then(|r| r.title.clone()),
             unseen: row.as_ref().is_some_and(|r| r.unseen()),
             busy: false,
+            from_thread: self.report_thread(project, name, row.as_ref()),
         };
         view.busy = self.protected_copy(&view);
         Ok(view)

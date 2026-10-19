@@ -1125,6 +1125,10 @@ enum LibraryCmd {
         /// 「내 보고서」에 보일 제목(--to-user와 함께, 없으면 이름)
         #[arg(long, requires = "to_user")]
         title: Option<String>,
+        /// 보고서를 낸 thread(t-0001). 없으면 host가 이름·원본 경로(예: library/t-0001)에 든 이 프로젝트의 thread를 쓴다.
+        /// 보고서 화면이 이 번호를 보인다.
+        #[arg(long = "thread", value_name = "THREAD")]
+        from_thread: Option<String>,
     },
     /// 보고서를 모든 곳에서 지운다(host 사본·목록·공유 링크·thread 보고 사본). 되돌릴 수 없다.
     /// 끝나지 않은(resolve 전) thread의 보고가 있으면 아무것도 지우지 않는다.
@@ -1807,14 +1811,17 @@ fn run(cli: Cli) -> Result<ExitCode> {
                     FrontRequest::LibraryLink { project, thread, days }
                 }
                 LibraryCmd::List { project } => FrontRequest::LibraryReports { project },
-                LibraryCmd::Publish { source, project, name, live, to_user, title } => FrontRequest::LibraryPublish {
-                    source: absolute_source(&source)?,
-                    project: project_or_here(project)?,
-                    name,
-                    live,
-                    to_user,
-                    title,
-                },
+                LibraryCmd::Publish { source, project, name, live, to_user, title, from_thread } => {
+                    FrontRequest::LibraryPublish {
+                        source: absolute_source(&source)?,
+                        project: project_or_here(project)?,
+                        name,
+                        live,
+                        to_user,
+                        title,
+                        from_thread,
+                    }
+                }
                 LibraryCmd::Delete { project, names } => {
                     let project = project_or_here(project)?;
                     FrontRequest::LibraryDelete {
@@ -3677,7 +3684,7 @@ fn render_front(r: &FrontResponse) -> String {
             for r in reports {
                 let _ = writeln!(
                     s,
-                    "{}/{}\t{}B\t갱신 {}{}{}{}",
+                    "{}/{}\t{}B\t갱신 {}{}{}{}{}",
                     r.project,
                     r.name,
                     r.size,
@@ -3692,6 +3699,7 @@ fn render_front(r: &FrontResponse) -> String {
                     } else {
                         String::new()
                     },
+                    r.from_thread.as_ref().map(|t| format!(" · {t}")).unwrap_or_default(),
                     r.problem.as_ref().map(|p| format!(" · {p}")).unwrap_or_default()
                 );
                 if let Some(l) = &r.link {

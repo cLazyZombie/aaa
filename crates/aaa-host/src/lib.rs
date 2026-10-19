@@ -1379,9 +1379,9 @@ impl Host {
             FrontRequest::ThreadLibrary { project, thread } => self
                 .thread_library(&project, &thread, actor.strip_prefix("device:"), role.can_control())
                 .map(FrontResponse::Library),
-            FrontRequest::LibraryPublish { project, name, source, live, to_user, title } => {
+            FrontRequest::LibraryPublish { project, name, source, live, to_user, title, from_thread } => {
                 let to_user = to_user.then_some(title.as_deref());
-                self.library_publish(&project, &name, &source, live, to_user, actor)
+                self.library_publish(&project, &name, &source, live, to_user, from_thread.as_deref(), actor)
             }
             FrontRequest::LibraryDelete { reports } => self.library_delete(&reports, actor),
             FrontRequest::LibraryImport { project, source, prefix } => {

@@ -5731,3 +5731,10 @@ L4 후속(10-20 00시 사용자 관찰): 멈춤 상태의 후보 예약과 재�
 - **제안.** 현재 순수 TOML에 `do="deploy"`와 on.git(main 하나, pushed만)를 쓴다. limits.min_commits는 1~100(생략1), origin/main에 새로 포함된 커밋 수이며 merge와 그 안의 커밋을 포함한다. 최근 성공 rollout의 commit이 있으면 그 기준, 없으면 규칙 등록 head를 보존한다. 실패한 최신 rollout은 성공 기준을 덮지 않는다. origin 교체는 등록 기준을 새로 잡고 forced/deleted는 제안하지 않는다. 잘린 Git 목록100개는 최소100개로 센다.
 - **저장·실행.** 기존 source 내구 outbox·공통 queue·batch/min_gap/하루/usage limits를 쓴다. 제안에는 commit과 build 명령 안내를 inbox(deploy_proposal, proposed)에 원자 표지와 함께 저장한다. ACK 저장 실패·host 재시작·inbox prune 뒤 같은 제안을 되살리지 않는다. raw 경로/보고/커밋 제목을 Reader 본문에 복제하지 않는다. 실제 rollout은 후보와 SHA를 준비한 뒤 사람 yes 또는 사용자 지시의 coordinator start에서 만든다. 빌드·thread 시작·실제 배포를 자동으로 호출하지 않으며 외부 push도 없다.
 - **검증.** 공개 TOML/schema, 원자 제안/ACK 실패와 재시작, 실제 Git push/누적/성공 기준, 기존 두 머신 L3 keeper의 사람 yes·safety off·host 재시작/같은 IDs를 확인한다. 거부/변형 RED 원본·정확 복구와 전체 gate는 [testing](testing.md)에 따른다. 최초 L5 반영은 기존 coordinator 경로로 하고 FRONT1.55 host 이후 사람 경로를 쓴다.
+
+### 8.297 보고서·특수 줄의 thread 번호(10-20, t-0448)
+
+- **요청.** 사용자 「보고서에 항상 스레드 번호 적어. 그리고 특수스레드도 번호 부여하고 적어 (왼쪽에)」.
+- **특수 줄.** 임무·사후 평가자 줄 이름을 일반 thread 줄과 같은 조각(`ThreadName`, 「t-NNNN · 이름」)으로 그린다. 글꼴·크기·색이 같고, 좁으면 이름 끝이 잘리고 왼쪽 번호는 남는다. 번호는 새로 매기지 않는다: host가 임무·평가자를 시작할 때 `thread_insert_next`로 일반 thread와 같은 차례의 번호를 이미 붙인다. 한 번도 시작하지 않은 임무(`MissionView.thread` 없음)만 번호가 없고, 다시 시작해 새 thread가 되면 그 번호로 바뀐다(임무 보기는 가장 최근 thread). 번호를 미리 잡으면 일반 thread 차례에 빈 번호가 생긴다.
+- **보고서.** `LibraryPublish.from_thread`·`LibraryReport.from_thread`·`LibraryView.from_thread`(FRONT_API 1.56, 선택). `library_reports`에 `from_thread` 열을 `ALTER TABLE`로 더한다. publish 때 준 번호(그 프로젝트에 있어야 한다), 없으면 이름 → 원본 경로 뒤 성분부터 찾은 번호 중 그 프로젝트에 있는 첫 thread를 적는다(경로는 적지 않는다). 목록·열람은 적은 것, 없으면 이름에서 찾는다(thread 사본·import·기록 전 보고서). 웹은 이름 왼쪽에 번호 표지를 그리고, 근원을 모르면 그리지 않는다. 옛 host는 칸을 생략해 웹이 번호 없이 그린다.
+- **검증.** host `reports_name_the_thread_they_came_from`, 웹 E2E 35(데스크톱·휴대폰 폭에서 번호 글·잘림·가림·겹침·줄 넘침, 특수 줄 번호 모양이 일반 줄과 같음).

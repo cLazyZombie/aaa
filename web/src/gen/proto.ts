@@ -377,7 +377,11 @@ to_user: boolean,
 /**
  * FRONT_API 1.43. 「내 보고서」에 보일 제목(없으면 이름)
  */
-title: string | null, } | { "op": "library_delete", reports: Array<LibraryRef>, } | { "op": "library_import", project?: string, source: string,
+title: string | null,
+/**
+ * FRONT_API 1.56. 보고서를 낸 thread(`t-NNNN`). 없으면 host가 원본 경로·이름에서 그 프로젝트의 thread를 찾는다
+ */
+from_thread?: string, } | { "op": "library_delete", reports: Array<LibraryRef>, } | { "op": "library_import", project?: string, source: string,
 /**
  * 0.2의 t- 이름을 새 thread id와 구분해 가져올 때 쓴다.
  */
@@ -957,7 +961,11 @@ report: string | null, files: Array<LibraryFile>, base: string, expires_at_ms: n
 /**
  * FRONT_API 1.36. 조작 권한에만 보이는 보고서 공유 링크. 앱 안 보기는 만료·폐기와 무관하다.
  */
-link: LinkView | null, };
+link: LinkView | null,
+/**
+ * FRONT_API 1.56. 보고서를 낸 thread(`LibraryReport.from_thread`와 같다). 열람 머리에 보인다
+ */
+from_thread?: string, };
 
 export type LinkView = { id: string, project: string, thread: string, base: string,
 /**
@@ -989,7 +997,11 @@ unseen: boolean,
 /**
  * FRONT_API 1.43. 끝나지 않은(resolve 전) thread의 사본이라 지울 수 없다
  */
-busy: boolean, };
+busy: boolean,
+/**
+ * FRONT_API 1.56. 보고서를 낸 thread(`t-NNNN`, 사용자 요청 10-20). 근원을 모르면 없다
+ */
+from_thread?: string, };
 
 export type LibraryRef = { project: string, name: string, };
 

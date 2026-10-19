@@ -293,6 +293,7 @@ mod tests {
             live,
             to_user: false,
             title: None,
+            from_thread: None,
         };
         let FrontResponse::LibraryLink(link) = lab.h.call(DeviceRole::Local, "test", req).await.unwrap() else {
             panic!("발급 응답")
@@ -319,7 +320,10 @@ mod tests {
         assert!(!lab.h.project_dir("demo").unwrap().join("library/page/.env").exists());
         std::fs::File::create(source.join("large.bin")).unwrap().set_len(201 * 1024 * 1024).unwrap();
         assert_eq!(
-            lab.h.library_publish("demo", "page", source.to_str().unwrap(), false, None, "test").unwrap_err().code,
+            lab.h
+                .library_publish("demo", "page", source.to_str().unwrap(), false, None, None, "test")
+                .unwrap_err()
+                .code,
             ErrorCode::TooLarge
         );
         assert_eq!(
@@ -334,7 +338,7 @@ mod tests {
         assert_eq!(get(&lab.h, &format!("{}image.png", link.base), None).await.2, b"image");
         for name in ["t-0001", "../escape", ".secret", "a/b"] {
             assert!(
-                lab.h.library_publish("demo", name, file.to_str().unwrap(), false, None, "test").is_err(),
+                lab.h.library_publish("demo", name, file.to_str().unwrap(), false, None, None, "test").is_err(),
                 "{name}"
             );
         }
@@ -382,7 +386,7 @@ mod tests {
         ];
         for (name, method, path, mode, dest, extra, opened, status) in cases {
             let FrontResponse::LibraryLink(link) =
-                lab.h.library_publish("demo", name, source.to_str().unwrap(), false, Some(None), "test").unwrap()
+                lab.h.library_publish("demo", name, source.to_str().unwrap(), false, Some(None), None, "test").unwrap()
             else {
                 panic!("링크 응답")
             };
@@ -410,6 +414,55 @@ mod tests {
         }
     }
 
+    /// 보고서를 낸 thread(사용자 요청 10-20): 준 번호 > 이름 > 원본 경로의 뒤 성분부터, 그 프로젝트에 있는 thread만 근원이다.
+    /// 다시 올리면 다시 정하고, thread 사본·import는 이름에서 찾는다. 열람(`LibraryView`)도 같은 번호를 싣는다.
+    #[test]
+    fn reports_name_the_thread_they_came_from() {
+        let lab = Lab::new();
+        lab.report("t-0001", &[("index.html", b"one", false)]);
+        lab.report("t-0002", &[("index.html", b"two", false)]);
+        let page = |rel: &str| {
+            let d = lab.state.join(rel);
+            std::fs::create_dir_all(&d).unwrap();
+            std::fs::write(d.join("index.html"), b"<h1>page</h1>").unwrap();
+            d
+        };
+        let publish = |name: &str, src: &Path, given: Option<&str>| {
+            lab.h.library_publish("demo", name, src.to_str().unwrap(), false, None, given, "test")
+        };
+        let from = |name: &str| {
+            let r = lab.h.library_reports(Some("demo"), false).unwrap().into_iter().find(|r| r.name == name).unwrap();
+            r.from_thread
+        };
+        // coordinator가 thread library를 옮겨 둔 폴더(뒤 성분)가 thread worktree 폴더보다 먼저다
+        let moved = page("projects-t-0002/.aaa/projects-t-0002/library/t-0001");
+        publish("weekly", &moved, None).unwrap();
+        assert_eq!(from("weekly").as_deref(), Some("t-0001"));
+        publish("t0002-review", &moved, None).unwrap();
+        assert_eq!(from("t0002-review").as_deref(), Some("t-0002"), "이름이 경로보다 먼저, t0002 꼴도");
+        // 없는 thread·낱말 안의 번호는 근원이 아니다
+        publish("art-0001", &page("work/t-0009/part-0001"), None).unwrap();
+        assert_eq!(from("art-0001"), None);
+        // 준 번호가 먼저이고 그 프로젝트에 있어야 한다
+        publish("weekly", &moved, Some("t-0002")).unwrap();
+        assert_eq!(from("weekly").as_deref(), Some("t-0002"));
+        assert_eq!(publish("weekly", &moved, Some("t-0009")).unwrap_err().code, ErrorCode::NotFound);
+        assert_eq!(publish("weekly", &moved, Some("0001")).unwrap_err().code, ErrorCode::BadRequest);
+        assert_eq!(from("weekly").as_deref(), Some("t-0002"), "거절하면 전 기록 그대로");
+        publish("weekly", &page("work/plain"), None).unwrap();
+        assert_eq!(from("weekly"), None, "다시 올리면 다시 정한다");
+        // thread 사본(DB 행 없음)과 접두사 붙인 import
+        assert_eq!(from("t-0001").as_deref(), Some("t-0001"));
+        page("batch/t-0002");
+        lab.h.library_import("demo", lab.state.join("batch").to_str().unwrap(), "old-", "test").unwrap();
+        assert_eq!(from("old-t-0002").as_deref(), Some("t-0002"));
+        assert_eq!(
+            lab.h.report_library("demo", "t0002-review", None, false).unwrap().from_thread.as_deref(),
+            Some("t-0002")
+        );
+        assert_eq!(lab.h.report_library("demo", "weekly", None, false).unwrap().from_thread, None);
+    }
+
     /// 사용자 보고서(plan §8.256): index.html이 있어야 보내고, 보내면 안 봄·알림 post, 열면 봄, 다시 보내면 다시 안 봄,
     /// --to-user 없이 다시 올리면 작업 보고. 지우기는 끝나지 않은 thread가 하나라도 있으면 아무것도 지우지 않고, 아니면 사본·목록·
     /// thread 보고 사본·공유 링크를 모두 끝낸다. 보기 권한은 지우지 못한다.
@@ -425,7 +478,7 @@ mod tests {
         std::fs::create_dir(&bare).unwrap();
         std::fs::write(bare.join("notes.md"), b"notes").unwrap();
         let send = |name: &str, src: &Path, title: Option<&str>| {
-            lab.h.library_publish("demo", name, src.to_str().unwrap(), false, Some(title), "test")
+            lab.h.library_publish("demo", name, src.to_str().unwrap(), false, Some(title), None, "test")
         };
         assert_eq!(send("bare", &bare, None).unwrap_err().code, ErrorCode::BadRequest, "index.html 없는 사용자 보고서");
         assert!(view("bare").is_none() && !dir.join("library/bare").exists(), "거절하면 아무것도 남기지 않는다");
@@ -456,7 +509,7 @@ mod tests {
         send("week", &page, None).unwrap();
         let w = view("week").unwrap();
         assert!(w.unseen && w.title.is_none(), "다시 보내면 다시 안 봄: {w:?}");
-        lab.h.library_publish("demo", "week", page.to_str().unwrap(), false, None, "test").unwrap();
+        lab.h.library_publish("demo", "week", page.to_str().unwrap(), false, None, None, "test").unwrap();
         let w = view("week").unwrap();
         assert!(!w.to_user && !w.unseen && lab.h.db.library_unseen_count().unwrap() == 0, "작업 보고로: {w:?}");
 
@@ -715,7 +768,7 @@ mod tests {
         let live = lab.state.join("live-source");
         std::fs::create_dir(&live).unwrap();
         std::fs::write(live.join("index.html"), vec![b'x'; 900_000]).unwrap();
-        lab.h.library_publish("demo", "live", live.to_str().unwrap(), true, None, "test").unwrap();
+        lab.h.library_publish("demo", "live", live.to_str().unwrap(), true, None, None, "test").unwrap();
         lab.h.library_retention_pass_at(RETENTION_NOW).unwrap();
         assert!(!gone.exists());
         assert!(active.exists() && newest.exists() && live.join("index.html").exists());
@@ -820,6 +873,7 @@ mod tests {
             live: false,
             to_user: false,
             title: None,
+            from_thread: None,
         };
         for role in [DeviceRole::Controller, DeviceRole::Reader] {
             for req in [

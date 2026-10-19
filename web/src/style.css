@@ -1061,6 +1061,9 @@ button.report-delete:hover:not(:disabled) { color: var(--danger-text); }
 .report-row-actions { display: inline-flex; gap: 2px; }
 .report-tag { padding: 1px 6px; border: 1px solid var(--border-strong); border-radius: 4px; color: var(--text-dim); font-size: var(--fs-2xs); white-space: nowrap; }
 .report-tag.is-busy { border-color: var(--status-working); color: var(--status-working); }
+/* 보고서를 낸 thread 번호(사용자 요청 10-20): 이름 왼쪽, 줄어들지 않는다 */
+.report-thread { flex: none; display: inline-block; margin-right: 6px; font-family: var(--font-mono); font-weight: 500; font-variant-numeric: tabular-nums; line-height: 1.4; vertical-align: 1px; }
+.report-row-main .report-thread, .term-title .report-thread { margin-right: 0; vertical-align: baseline; }
 .report-row p { margin: 4px 0; }
 .report-row .library-link { margin: 6px 0 8px; }
 
