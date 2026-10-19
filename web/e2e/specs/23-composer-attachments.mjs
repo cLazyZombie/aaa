@@ -2,10 +2,14 @@
 // 참고: herdr-web-ui Composer(onPaste/onDrop/uploadImages), compose(imageMention/insertLeadingMention).
 import fs from "node:fs";
 import crypto from "node:crypto";
-import { aaa, step, browser, webkit, pairPage, inList, domIs, root, AA, sentFrames, waitOutput, shot } from "../lib/harness.mjs";
+import { aaa, step, browser, webkit, pairPage, inList, domIs, root, repo, AA, procs, sentFrames, waitOutput, shot } from "../lib/harness.mjs";
 import { pairDevice } from "../lib/devices.mjs";
 
-export const labEnv = { AAA_TEST_DETECT_GRACE_MS: "0" };
+// CODEX_HOME: agent가 Codex 대화 기록을 읽는 폴더(실험실 안, 실제 ~/.codex는 건드리지 않는다)
+export const labEnv = { AAA_TEST_DETECT_GRACE_MS: "0", CODEX_HOME: `${root}/codex` };
+/** 웹 ChatComposer `STUCK_MS`·`SLOW_MS`: 전달 확인이 없어 탈출구를 보이는 때, 전달 뒤 보내짐 증거를 기다리는 때. Playwright 시계로 넘긴다 */
+const STUCK_MS = 3000;
+const SLOW_MS = 10_000;
 
 async function openChat(p, label = "composer") {
   await inList(p, `pane-${label}`);
@@ -67,9 +71,13 @@ while True:
             paths=re.findall(r'@([^\\s]+)',message)
             images=[{'path':p,'sha256':hashlib.sha256(open(p,'rb').read()).hexdigest()} for p in paths]
             open(sys.argv[2],'w').write(json.dumps({'text':message,'images':images},ensure_ascii=False))
+            hook=lambda event: subprocess.run([sys.argv[1],'hook','--agent','claude',json.dumps({'hook_event_name':event,'session_id':'composer'})],check=True,stdout=subprocess.DEVNULL)
+            # hold: Claude가 받지 못한 것처럼(기록·hook 없음). -queue: 작업 중이라 대기열에 넣는다(Claude는 넣자마자 적는다)
             if not os.path.exists(sys.argv[4]):
-                with open(sys.argv[3],'a') as f: f.write(json.dumps({'type':'user','message':{'content':message}},ensure_ascii=False)+'\\n')
-            subprocess.run([sys.argv[1],'hook','--agent','claude',json.dumps({'hook_event_name':'UserPromptSubmit','session_id':'composer'})],check=True,stdout=subprocess.DEVNULL)
+                queue=os.path.exists(sys.argv[4]+'-queue')
+                line={'type':'queue-operation','operation':'enqueue','content':message} if queue else {'type':'user','message':{'content':message}}
+                with open(sys.argv[3],'a') as f: f.write(json.dumps(line,ensure_ascii=False)+'\\n')
+                if not queue: hook('UserPromptSubmit')
             print('\\r\\nCMP_RECEIVED_'+str(count),flush=True)
         else: text+=b'\\n' if ch==b'\\r' else ch
 `);
@@ -79,8 +87,9 @@ while True:
   }, { always: true });
 
   let received = 0;
+  const press = (p) => p.getByRole("button", { name: "메시지 보내기", exact: true }).click();
   const submit = async (p) => {
-    await p.getByRole("button", { name: "메시지 보내기", exact: true }).click();
+    await press(p);
     await waitOutput("composer", `CMP_RECEIVED_${++received}`);
     await domIs(p, "전송 완료", () => document.querySelector('[aria-label="메시지"]').value === "");
     return JSON.parse(fs.readFileSync(receipts, "utf8"));
@@ -155,46 +164,169 @@ while True:
     await reader.page.context().close();
   });
 
-  await step("처리 확인: PTY 접수·기록 수신을 구분하고 미확인·늦은 확인·같은 글 재전송을 안전하게 안내한다", async () => {
+  await step("보내기 상태: 보내짐(기록 증거)까지 잠금, 3초 막힘의 탈출구는 Enter를 막는다, 오래 걸림·늦은 확인·잠금 풀기, 작업 중 대기 말", async () => {
     const client = await pairPage(browser, aaa("web", "pair").code, { width: 1280, height: 800 });
     const p = client.page;
     const box = await openChat(p);
     await domIs(p, "기존 같은 글 기록", () => document.querySelector('[data-role="user"]')?.textContent.includes("같은 글 재전송"));
-    fs.writeFileSync(hold, "hold");
-    // Node의 현재 시각은 CDP 왕복 중 과거가 될 수 있다. 제출 전에 고정한 가상 시각으로 멈춘다.
-    await p.clock.install({ time: new Date("2030-01-01T00:00:00Z") });
-    await p.clock.pauseAt(new Date("2030-01-02T00:00:00Z"));
-    await box.fill("같은 글 재전송");
+    // 시계는 흐르게 두고(기록 다시 읽기의 타이머도 돈다) 3초·10초 창만 넘긴다
+    await p.clock.install();
+    const phase = (want) => domIs(p, `보내기 단계 ${want}`, (want) => (document.querySelector('[data-testid="chat-send-state"]')?.dataset.state ?? "none") === want, want);
+    const readOnly = () => box.evaluate((el) => el.readOnly);
+    const submits = async (from) => (await sentFrames(p, from)).filter((f) => f.t === "submit").length;
+    const users = (text) => p.evaluate((text) => [...document.querySelectorAll('[data-role="user"]')].filter((el) => el.textContent.trim() === text).length, text);
     const before = (await sentFrames(p)).length;
-    await submit(p);
-    await domIs(p, "기록 확인 대기", () => document.querySelector('[data-testid="chat-delivered"]')?.getAttribute("data-state") === "waiting");
-    await box.fill("새 초안은 보존");
-    // unrelated transcript activity and an older identical message are not this send's receipt.
+
+    // 바로 보낸다. agent가 받은 기록이 올 때까지 글이 잠긴 채 남고 단추는 도는 표시다. 다른 기록·옛 같은 글은 증거가 아니다
+    fs.writeFileSync(hold, "hold");
+    await box.fill("같은 글 재전송");
+    await press(p);
+    await waitOutput("composer", `CMP_RECEIVED_${++received}`);
+    await phase("sent");
+    if (await box.inputValue() !== "같은 글 재전송" || !await readOnly()) throw new Error("전달된 글이 보내짐 전에 사라졌거나 풀렸다");
+    if (!await p.getByRole("button", { name: "보내는 중 · 취소할 수 없음", exact: true }).isDisabled()) throw new Error("전달 뒤에 단추를 누를 수 있다");
+    await shot(p, "chat-send-sent");
+    // 앞 글이 보내지기 전에는 다음 글을 보내지 않는다(웹 대기열 없음)
+    await box.press("Enter");
+    // 가는 글은 초안에 없다: 같은 pane을 새로 열어도 보통 초안으로 돌아오지 않는다
+    const again = await p.context().newPage();
+    await again.goto(p.url());
+    if (await (await openChat(again)).inputValue() !== "") throw new Error("전달 중인 글이 다른 탭 초안으로 돌아왔다");
+    await again.close();
     fs.appendFileSync(transcript, chatLine("다른 기기 메시지"));
-    await p.clock.runFor(10_001);
-    await domIs(p, "아직 처리되지 않음", () => document.querySelector('[data-testid="chat-delivered"]')?.getAttribute("data-state") === "unconfirmed");
-    await shot(p, "chat-input-unconfirmed");
-    if (!(await p.getByTestId("chat-delivered").innerText()).includes("아직 처리되지 않음")) throw new Error("미처리 안내가 없다");
-    if ((await sentFrames(p, before)).filter((f) => f.t === "submit").length !== 1) throw new Error("미확인 입력을 자동 재전송했다");
-    const restore = p.getByRole("button", { name: "보낸 글 복원", exact: true });
-    if (!await restore.isDisabled() || await box.inputValue() !== "새 초안은 보존") throw new Error("미확인 안내가 새 초안을 덮었다");
-    await box.fill("");
-    await restore.click();
-    if (await box.inputValue() !== "같은 글 재전송") throw new Error("보낸 글을 복원하지 못했다");
+    await domIs(p, "다른 기기 메시지 기록", () => [...document.querySelectorAll('[data-role="user"]')].some((el) => el.textContent.trim() === "다른 기기 메시지"));
+    await p.clock.runFor(SLOW_MS + 1);
+    await phase("slow");
+    await shot(p, "chat-send-slow");
+    if (await submits(before) !== 1) throw new Error("잠긴 동안 다시 보냈거나 다음 글을 보냈다");
+    // 늦게라도 기록에 오르면 비우고 푼다
     fs.appendFileSync(transcript, chatLine("같은 글 재전송"));
-    await p.clock.resume();
-    await domIs(p, "보낸 글의 새 사용자 기록", () => [...document.querySelectorAll('[data-role="user"]')].filter((el) => el.textContent.trim() === "같은 글 재전송").length === 2);
-    await domIs(p, "기록 반영 뒤 안내 사라짐", () => document.querySelector('[data-testid="chat-delivered"]') === null);
-    await shot(p, "chat-input-reflected");
-    if ((await sentFrames(p, before)).filter((f) => f.t === "submit").length !== 1 || await box.inputValue() !== "같은 글 재전송") throw new Error("확인 사건이 재전송하거나 초안을 지웠다");
+    await phase("none");
+    if (await users("같은 글 재전송") !== 2 || await box.inputValue() !== "" || await readOnly()) throw new Error("늦은 반영 뒤 비우고 풀지 않았다");
+
+    // 오래 걸림에서 잠금 풀기: 갔을 수 있는 글을 고칠 수 있게 돌려준다(다시 보내지 않는다)
+    await box.fill("먹힌 글");
+    await press(p);
+    await waitOutput("composer", `CMP_RECEIVED_${++received}`);
+    await phase("sent");
+    await p.clock.runFor(SLOW_MS + 1);
+    await phase("slow");
+    await p.getByRole("button", { name: "잠금 풀기", exact: true }).click();
+    await phase("none");
+    if (await box.inputValue() !== "먹힌 글" || await readOnly() || await submits(before) !== 2) throw new Error("잠금 풀기가 글을 돌려주지 않았거나 다시 보냈다");
     fs.unlinkSync(hold);
+
+    // 바로 반영: 기록에 오르면 비우고 푼다. 안내 줄은 없다
     await box.fill("386 추천대로 해");
     await submit(p);
-    await domIs(p, "즉시 반영된 사용자 메시지", () => [...document.querySelectorAll('[data-role="user"]')].some((el) => el.textContent.trim() === "386 추천대로 해"));
-    await domIs(p, "즉시 반영 뒤 안내 없음", () => document.querySelector('[data-testid="chat-delivered"]') === null);
-    await shot(p, "chat-input-reflected-immediate");
-    if ((await sentFrames(p, before)).filter((f) => f.t === "submit").length !== 2 || await box.inputValue() !== "") throw new Error("반영 확인이 글을 다시 보내거나 보낸 초안을 남겼다");
+    await phase("none");
+    if (await users("386 추천대로 해") !== 1 || await readOnly() || await submits(before) !== 3) throw new Error("즉시 반영이 다르다");
+    await shot(p, "chat-send-reflected");
+
+    // 전달 전에 막힘: agent가 멈춰 글 요청이 돌아오지 않는다. 3초 뒤에만 탈출구가 나오고, 누르면 host가 Enter를 보내지 않는다
+    const agent = procs.get("agent");
+    process.kill(agent.pid, "SIGSTOP");
+    try {
+      await box.fill("막힌 글");
+      await press(p);
+      await phase("sending");
+      if (await p.getByRole("button", { name: "멈추고 글 돌려받기", exact: true }).count() !== 0) throw new Error("3초 전에 탈출구가 보였다");
+      await p.clock.runFor(STUCK_MS + 1);
+      await phase("stuck");
+      await shot(p, "chat-send-stuck");
+      await p.getByRole("button", { name: "멈추고 글 돌려받기", exact: true }).click();
+      await phase("none");
+    } finally {
+      process.kill(agent.pid, "SIGCONT");
+    }
+    if (!(await p.getByTestId("chat-note").innerText()).includes("Enter를 보내지 않음") || await box.inputValue() !== "막힌 글" || await readOnly()) throw new Error("탈출구가 글을 돌려주지 않았거나 단계를 말하지 않았다");
+    await shot(p, "chat-send-stopped");
+    // 멈춘 글은 agent 입력창에만 남고 제출되지 않았다: 다음 글이 그 뒤에 붙어 한 번에 간다(Enter가 갔다면 따로 왔다)
+    await box.fill("다음 글");
+    await press(p);
+    await waitOutput("composer", `CMP_RECEIVED_${++received}`);
+    const got = JSON.parse(fs.readFileSync(receipts, "utf8"));
+    if (got.text !== "막힌 글다음 글") throw new Error(`멈춘 submit의 Enter가 갔다: ${JSON.stringify(got)}`);
+    await p.clock.runFor(SLOW_MS + 1);
+    await phase("slow");
+    await p.getByRole("button", { name: "잠금 풀기", exact: true }).click();
+    await box.fill("");
+
+    // Claude 작업 중: 대기열 줄이 보내짐이다. 풀고 대화 끝 점선 대기 말, 흡수되면 보통 말
+    fs.writeFileSync(`${hold}-queue`, "");
+    await box.fill("작업 중 추가");
+    await press(p);
+    await waitOutput("composer", `CMP_RECEIVED_${++received}`);
+    await domIs(p, "대기 말", () => [...document.querySelectorAll(".chat-msg.user.is-pending")].filter((el) => el.textContent.trim() === "작업 중 추가").length === 1
+      && document.querySelector('[aria-label="메시지"]').value === "" && !document.querySelector('[aria-label="메시지"]').readOnly);
+    await shot(p, "chat-send-pending");
+    fs.appendFileSync(transcript, [
+      { type: "queue-operation", operation: "remove", content: "작업 중 추가", reason: "absorbed_mid_turn" },
+      { type: "attachment", attachment: { type: "queued_command", commandMode: "prompt", origin: { kind: "human" }, prompt: "작업 중 추가" } },
+    ].map((l) => JSON.stringify(l) + "\n").join(""));
+    await domIs(p, "흡수 뒤 보통 말", () => !document.querySelector('[data-testid="chat-pending"]')
+      && [...document.querySelectorAll('[data-role="user"]')].some((el) => el.textContent.trim() === "작업 중 추가"));
+    fs.unlinkSync(`${hold}-queue`);
+    if (client.errors.length) throw new Error(client.errors.join("; "));
     await p.context().close();
+  });
+
+  await step("보내기 상태(Codex 작업 중): 기록에 대기를 남기지 않으므로 host 전달이 보내짐이고 대화 끝 대기 말로 기다린다", async () => {
+    const thread = "00000000-0000-7000-8000-000000000392";
+    const rollout = `${root}/codex/sessions/2026/10/19/rollout-2026-10-19T00-00-00-${thread}.jsonl`;
+    const codexReceived = `${root}/codex-received.json`;
+    const said = (text) => JSON.stringify({ type: "response_item", payload: { type: "message", role: "user", content: [{ type: "input_text", text }] } }) + "\n";
+    fs.mkdirSync(`${root}/codex/sessions/2026/10/19`, { recursive: true });
+    fs.writeFileSync(rollout, said("코덱스 첫 요청"));
+    fs.mkdirSync(`${root}/bin`, { recursive: true });
+    // aaa는 Codex 실행에 --no-daemon을 붙인다(spec 11의 Codex fixture와 같다)
+    fs.writeFileSync(`${root}/bin/codex`, "#!/bin/sh\n[ \"${1-}\" = --no-daemon ] && shift\nexec /bin/sh \"$@\"\n", { mode: 0o755 });
+    // 작업 중 화면(감지 fixture)을 늘 다시 그린다. 받은 글은 기록하지 않는다(Codex는 다음 도구 호출 뒤 읽을 때 적는다)
+    fs.writeFileSync(`${root}/codex.py`, `import os, sys, json, subprocess
+screen=open(sys.argv[2]).read().replace('\\n','\\r\\n')
+def draw(extra=''):
+    sys.stdout.write('\\033[2J\\033[H\\033[?2004h'+extra+screen); sys.stdout.flush()
+subprocess.run([sys.argv[1],'hook','--agent','codex',json.dumps({'hook_event_name':'SessionStart','session_id':sys.argv[3]})],check=True,stdout=subprocess.DEVNULL)
+draw()
+buf=b''; text=b''; depth=0; count=0
+while True:
+    chunk=os.read(0, 4096)
+    if not chunk: break
+    buf+=chunk
+    while buf:
+        if buf.startswith(b'\\x1b'):
+            if len(buf)<6: break
+            if buf[:6] in (b'\\x1b[200~',b'\\x1b[201~'):
+                depth += 1 if buf[:6]==b'\\x1b[200~' else -1
+                buf=buf[6:]; continue
+        ch=buf[:1]; buf=buf[1:]
+        if ch==b'\\r' and depth==0:
+            count+=1; open(sys.argv[4],'w').write(json.dumps({'text':text.decode()},ensure_ascii=False)); text=b''
+            draw('CDX_RECEIVED_'+str(count)+'\\r\\n')
+        else: text+=b'\\n' if ch==b'\\r' else ch
+`);
+    const pane = aaa("tab", "create", "--machine", "labA", "--label", "codex-chat", "--cwd", project, "--", `${root}/bin/codex`, "-c",
+      `stty raw -echo; exec python3 "$1" "$0" "$2" "$3" "$4"`, AA, `${root}/codex.py`, `${repo}/crates/aaa-agent/src/detect/fixtures/codex-working.txt`, thread, codexReceived).tabs.at(-1).root.pane;
+    await waitOutput(pane, "esc to interrupt");
+    const client = await pairPage(browser, aaa("web", "pair").code, { width: 1280, height: 800 });
+    const p = client.page;
+    await p.getByTestId("agent-codex-chat").and(p.locator('[data-status="working"]')).waitFor({ state: "attached" });
+    const box = await openChat(p, "codex-chat");
+    await domIs(p, "Codex 기록", () => [...document.querySelectorAll('[data-role="user"]')].some((el) => el.textContent.trim() === "코덱스 첫 요청"));
+    await box.fill("코덱스 작업 중 추가");
+    await press(p);
+    await waitOutput(pane, "CDX_RECEIVED_1");
+    await domIs(p, "Codex 대기 말", () => [...document.querySelectorAll(".chat-msg.user.is-pending")].some((el) => el.textContent.trim() === "코덱스 작업 중 추가")
+      && document.querySelector('[data-testid="chat-pending"]')?.textContent.includes("Codex")
+      && document.querySelector('[aria-label="메시지"]').value === "" && !document.querySelector('[aria-label="메시지"]').readOnly);
+    if (JSON.parse(fs.readFileSync(codexReceived, "utf8")).text !== "코덱스 작업 중 추가") throw new Error("Codex가 받은 글이 다르다");
+    // Codex가 읽어 기록하면 대기 말이 보통 말이 된다
+    fs.appendFileSync(rollout, said("코덱스 작업 중 추가"));
+    await domIs(p, "Codex 흡수 뒤 보통 말", () => !document.querySelector('[data-testid="chat-pending"]')
+      && [...document.querySelectorAll('[data-role="user"]')].some((el) => el.textContent.trim() === "코덱스 작업 중 추가"));
+    if (client.errors.length) throw new Error(client.errors.join("; "));
+    await p.context().close();
+    aaa("pane", "kill", pane);
   });
 
   await step("대화 이미지: Chrome·Safari·iPhone·iPad의 붙여넣기·드롭·파일 선택은 uploads에 저장하고 보내기로 coordinator가 읽는다", async () => {

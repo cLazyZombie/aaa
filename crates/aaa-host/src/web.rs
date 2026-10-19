@@ -8,11 +8,11 @@
 
 use std::collections::HashSet;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicU8, AtomicU64, Ordering};
 
 use aaa_proto::{
-    B64, DeviceRole, ErrorBody, ErrorCode, EventsClientMsg, FrontEvent, FrontRequest, Outcome, TermClientMsg,
-    TermServerMsg,
+    B64, DeviceRole, ErrorBody, ErrorCode, EventsClientMsg, FrontEvent, FrontRequest, Outcome, SubmitStage,
+    TermClientMsg, TermServerMsg,
 };
 use anyhow::{Context, Result};
 use axum::body::Body;
@@ -1324,7 +1324,9 @@ async fn pane_session(
         out.revoked();
         return;
     }
-    loop {
+    // submit을 기다리는 동안 받아 둔 frame(차례대로 먼저 읽는다)
+    let mut later: std::collections::VecDeque<Option<Result<Message, axum::Error>>> = std::collections::VecDeque::new();
+    'conn: loop {
         let verdict = if acks {
             window.check(out.buffered(), now())
         } else {
@@ -1388,7 +1390,7 @@ async fn pane_session(
                     window = w;
                 }
             }
-            m = stream.next() => {
+            m = async { match later.pop_front() { Some(m) => m, None => stream.next().await } } => {
                 // 취소 사건보다 먼저 와 있던 입력도 받지 않는다(§6.4 「대기 중인 입력에도 바로」)
                 if host.is_revoked(dev) {
                     out.revoked();
@@ -1412,28 +1414,57 @@ async fn pane_session(
                         Ok(TermClientMsg::Submit { id: sid, data }) => {
                             let bytes = data.len();
                             tracing::info!(pane = %id, front = %front.id, submit = sid, bytes, "웹 입력: submit 수신");
-                            // 글, 잠깐 뒤 Enter(한 덩어리로 보내면 Codex가 붙여넣기로 보고 Enter를 줄바꿈으로 넣는다).
-                            // 이 연결의 다음 입력은 Enter 뒤에 간다. 답은 둘 다 pane에 들어간 뒤다.
                             host.touch_device(dev, "입력");
-                            let typed = |data: Vec<u8>| FrontRequest::PaneInput { pane: id.clone(), data: B64(data) };
-                            let mut sent = host.call_from(role, &actor, Some(front), typed(data.into_bytes())).await;
-                            tracing::info!(pane = %id, front = %front.id, submit = sid, ok = sent.is_ok(), code = ?sent.as_ref().err().map(|e| &e.code), phase = "text", "웹 입력: agent 응답");
-                            if sent.is_ok() {
-                                crate::text::submission_gap().await;
-                                // 기다리는 동안 폐기된 기기의 Enter는 보내지 않는다(t-0340 감사 A9, t3code `awaitInvalidation`)
-                                if host.is_revoked(dev) {
+                            // 글과 Enter를 쓰는 동안에도 이 submit의 멈춤은 바로 답한다(plan §8.247). 다른 frame은 뒤에 차례대로 둔다:
+                            // 이 연결의 다음 입력은 Enter 뒤에 간다
+                            let stage = AtomicU8::new(SUBMIT_BEFORE);
+                            let work = submit_work(host, role, &actor, front, dev, &id, sid, data, &stage);
+                            tokio::pin!(work);
+                            let mut reading = true;
+                            let end = loop {
+                                tokio::select! {
+                                    biased;
+                                    end = &mut work => break end,
+                                    m = stream.next(), if reading => {
+                                        if let Some(Ok(Message::Text(t))) = &m
+                                            && let Ok(TermClientMsg::SubmitCancel { id: cid }) = serde_json::from_str::<TermClientMsg>(t)
+                                        {
+                                            let answer = if cid == sid { cancel_submit(&stage) } else { SubmitStage::TooLate };
+                                            tracing::info!(pane = %id, front = %front.id, submit = cid, ?answer, "웹 입력: 멈춤");
+                                            if !out.msg(&TermServerMsg::SubmitCancelled { id: cid, stage: answer }) {
+                                                reading = false;
+                                            }
+                                            continue;
+                                        }
+                                        reading = !matches!(m, Some(Ok(Message::Close(_))) | None | Some(Err(_)));
+                                        later.push_back(m);
+                                    }
+                                }
+                            };
+                            let sent = match end {
+                                SubmitEnd::Revoked => {
                                     tracing::warn!(pane = %id, front = %front.id, submit = sid, "웹 입력: 기기 폐기로 Enter 취소");
                                     out.revoked();
-                                    break;
+                                    break 'conn;
                                 }
-                                sent = host.call_from(role, &actor, Some(front), typed(b"\r".to_vec())).await;
-                                tracing::info!(pane = %id, front = %front.id, submit = sid, ok = sent.is_ok(), code = ?sent.as_ref().err().map(|e| &e.code), phase = "enter", "웹 입력: agent 응답");
-                            }
+                                SubmitEnd::Stopped(at) => Err(ErrorBody::new(
+                                    ErrorCode::BadRequest,
+                                    if at == SubmitStage::NotSent { "멈춤: 보내지 않았다" } else { "멈춤: Enter를 보내지 않았다" },
+                                )),
+                                SubmitEnd::Done(r) => r,
+                            };
                             host.db.audit(&actor, "web_submit", &format!("pane={id} front={} submit={sid} bytes={bytes} ok={}", front.id, sent.is_ok()));
                             let reply = TermServerMsg::Submitted { id: sid, ok: sent.is_ok(), message: sent.err().map(|e| e.message) };
                             if !out.msg(&reply) {
                                 tracing::warn!(pane = %id, front = %front.id, submit = sid, "웹 입력: 확인 응답 연결 닫힘");
-                                break;
+                                break 'conn;
+                            }
+                            None
+                        }
+                        // 진행 중인 submit이 없을 때의 멈춤: 이미 끝났다
+                        Ok(TermClientMsg::SubmitCancel { id: cid }) => {
+                            if !out.msg(&TermServerMsg::SubmitCancelled { id: cid, stage: SubmitStage::TooLate }) {
+                                break 'conn;
                             }
                             None
                         }
@@ -1503,6 +1534,83 @@ async fn pane_session(
             }
         }
     }
+}
+
+/// submit 하나의 단계(plan §8.247). 일꾼과 멈춤이 compare-exchange로 다투어 둘 중 하나만 이긴다:
+/// 멈춤이 이기면 일꾼은 그 다음 쓰기를 하지 않는다
+const SUBMIT_BEFORE: u8 = 0;
+const SUBMIT_TYPING: u8 = 1;
+const SUBMIT_TYPED: u8 = 2;
+const SUBMIT_ENTERING: u8 = 3;
+const SUBMIT_STOPPED_BEFORE: u8 = 4;
+const SUBMIT_STOPPED_NO_ENTER: u8 = 5;
+
+enum SubmitEnd {
+    Done(Result<(), ErrorBody>),
+    Stopped(SubmitStage),
+    /// 기다리는 동안 기기가 폐기됐다: Enter를 보내지 않고 연결을 닫는다(t-0340 감사 A9, t3code `awaitInvalidation`)
+    Revoked,
+}
+
+/// 멈춤 요청: 아직 아무것도 쓰지 않았으면 쓰지 않고, 글을 쓰는 중이거나 썼으면 Enter를 보내지 않는다. Enter를 보내기
+/// 시작했으면 늦었다. 같은 submit을 두 번 멈추면 처음 답을 다시 준다
+fn cancel_submit(stage: &AtomicU8) -> SubmitStage {
+    loop {
+        let now = stage.load(Ordering::SeqCst);
+        let (next, answer) = match now {
+            SUBMIT_BEFORE => (SUBMIT_STOPPED_BEFORE, SubmitStage::NotSent),
+            SUBMIT_TYPING | SUBMIT_TYPED => (SUBMIT_STOPPED_NO_ENTER, SubmitStage::NoEnter),
+            SUBMIT_STOPPED_BEFORE => return SubmitStage::NotSent,
+            SUBMIT_STOPPED_NO_ENTER => return SubmitStage::NoEnter,
+            _ => return SubmitStage::TooLate,
+        };
+        if stage.compare_exchange(now, next, Ordering::SeqCst, Ordering::SeqCst).is_ok() {
+            return answer;
+        }
+    }
+}
+
+/// 일꾼이 다음 단계로 간다. 멈춤이 먼저 이겼으면 false(그 쓰기를 하지 않는다)
+fn advance_submit(stage: &AtomicU8, from: u8, to: u8) -> bool {
+    stage.compare_exchange(from, to, Ordering::SeqCst, Ordering::SeqCst).is_ok()
+}
+
+/// 글, 잠깐 뒤 Enter(한 덩어리로 보내면 Codex가 붙여넣기로 보고 Enter를 줄바꿈으로 넣는다). 답은 둘 다 pane에 들어간 뒤다.
+/// 쓰기마다 그 앞에서 멈춤을 본다: 막힌 agent에 간 글 요청은 거둘 수 없지만 Enter는 보내지 않는다
+#[allow(clippy::too_many_arguments)]
+async fn submit_work(
+    host: &Arc<Host>,
+    role: DeviceRole,
+    actor: &str,
+    front: &FrontRef,
+    dev: &str,
+    pane: &str,
+    sid: u32,
+    data: String,
+    stage: &AtomicU8,
+) -> SubmitEnd {
+    let typed = |data: Vec<u8>| FrontRequest::PaneInput { pane: pane.to_string(), data: B64(data) };
+    if !advance_submit(stage, SUBMIT_BEFORE, SUBMIT_TYPING) {
+        return SubmitEnd::Stopped(SubmitStage::NotSent);
+    }
+    let sent = host.call_from(role, actor, Some(front), typed(data.into_bytes())).await;
+    tracing::info!(pane, front = %front.id, submit = sid, ok = sent.is_ok(), code = ?sent.as_ref().err().map(|e| &e.code), phase = "text", "웹 입력: agent 응답");
+    if let Err(e) = sent {
+        return SubmitEnd::Done(Err(e));
+    }
+    if !advance_submit(stage, SUBMIT_TYPING, SUBMIT_TYPED) {
+        return SubmitEnd::Stopped(SubmitStage::NoEnter);
+    }
+    crate::text::submission_gap().await;
+    if host.is_revoked(dev) {
+        return SubmitEnd::Revoked;
+    }
+    if !advance_submit(stage, SUBMIT_TYPED, SUBMIT_ENTERING) {
+        return SubmitEnd::Stopped(SubmitStage::NoEnter);
+    }
+    let sent = host.call_from(role, actor, Some(front), typed(b"\r".to_vec())).await;
+    tracing::info!(pane, front = %front.id, submit = sid, ok = sent.is_ok(), code = ?sent.as_ref().err().map(|e| &e.code), phase = "enter", "웹 입력: agent 응답");
+    SubmitEnd::Done(sent.map(|_| ()))
 }
 
 /// 웹 자산의 Content-Type. 확장자는 마지막 경로 조각에서만 본다(`fonts/meslotendard-0.3.1/LICENSE`의 버전 점을
@@ -1808,5 +1916,40 @@ mod guard_tests {
                 "{path}"
             );
         }
+    }
+}
+
+#[cfg(test)]
+mod submit_tests {
+    use super::*;
+
+    /// 멈춤과 일꾼은 단계마다 하나만 이긴다: 쓰기 전 멈춤은 아무것도 쓰지 않고, 글을 쓰는 중·쓴 뒤 멈춤은 Enter를 막고,
+    /// Enter를 보내기 시작한 뒤 멈춤은 늦다(plan §8.247)
+    #[test]
+    fn cancel_races_each_write() {
+        let stage = AtomicU8::new(SUBMIT_BEFORE);
+        assert_eq!(cancel_submit(&stage), SubmitStage::NotSent);
+        assert!(!advance_submit(&stage, SUBMIT_BEFORE, SUBMIT_TYPING), "멈춘 submit이 글을 썼다");
+        assert_eq!(cancel_submit(&stage), SubmitStage::NotSent, "두 번째 멈춤은 처음 답");
+
+        for typed in [SUBMIT_TYPING, SUBMIT_TYPED] {
+            let stage = AtomicU8::new(SUBMIT_BEFORE);
+            assert!(advance_submit(&stage, SUBMIT_BEFORE, SUBMIT_TYPING));
+            if typed == SUBMIT_TYPED {
+                assert!(advance_submit(&stage, SUBMIT_TYPING, SUBMIT_TYPED));
+            }
+            assert_eq!(cancel_submit(&stage), SubmitStage::NoEnter);
+            assert!(!advance_submit(&stage, SUBMIT_TYPING, SUBMIT_TYPED));
+            assert!(!advance_submit(&stage, SUBMIT_TYPED, SUBMIT_ENTERING), "멈춘 submit이 Enter를 보냈다");
+        }
+
+        let stage = AtomicU8::new(SUBMIT_BEFORE);
+        for (from, to) in
+            [(SUBMIT_BEFORE, SUBMIT_TYPING), (SUBMIT_TYPING, SUBMIT_TYPED), (SUBMIT_TYPED, SUBMIT_ENTERING)]
+        {
+            assert!(advance_submit(&stage, from, to));
+        }
+        assert_eq!(cancel_submit(&stage), SubmitStage::TooLate);
+        assert_eq!(stage.load(Ordering::SeqCst), SUBMIT_ENTERING, "늦은 멈춤이 단계를 바꿨다");
     }
 }
