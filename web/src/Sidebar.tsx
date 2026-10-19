@@ -363,13 +363,32 @@ function RowError({ rowKey }: { rowKey: string }) {
  * 머신 패널(plan §8.195·§8.240·§8.245): 목록이 프로젝트 먼저라 머신은 트리 단계가 아니다. 머신마다 머리 한 줄(이름·host·연결 점·CPU·MEM·+ 새 pane)과
  * 끊김·점검 이상 글만 둔다(참고 MachineSidebar 머리·machine-state). 그 머신의 줄은 프로젝트 패널에 머신 글자로 있다.
  */
+/** 에이전트 패널에 보이는 그 머신의 agent(머신 줄 agent 수도 같은 기준으로 센다, plan §8.256) */
+function machineAgents(props: SidebarProps, m: MachineView, threadOf: Map<string, ThreadView>) {
+  return props.panes
+    .filter((p) => p.machine_id === m.id && p.state === "running" && p.role !== "evaluator")
+    .flatMap((p) => {
+      const t = threadOf.get(p.id);
+      const agent = props.agentOf(p, t);
+      return agent !== null ? [{ m, p, t, agent }] : [];
+    });
+}
+
+function threadsByPane(threads: ThreadView[]) {
+  const threadOf = new Map<string, ThreadView>();
+  for (const t of threads) if (t.pane) threadOf.set(t.pane, t);
+  return threadOf;
+}
+
 function MachineStrip(props: SidebarProps) {
+  const threadOf = threadsByPane(props.threads);
   return (
     <section className="machine-strip" aria-label={PANEL_LABEL.machines}>
       {props.machines.map((m) => {
         const online = m.connection === "connected";
         const problems = online && m.problems.length > 0 ? m.problems.map((p) => p.text).join("\n") : null;
         const stats = machineStats(m);
+        const agents = machineAgents(props, m, threadOf);
         return (
           <section key={m.id} className={`machine-group${online ? "" : " is-offline"}`} aria-label={`머신 ${m.name}`} data-testid={`machine-${m.name}`}>
             <header className="machine-header">
@@ -385,8 +404,18 @@ function MachineStrip(props: SidebarProps) {
                 )}
                 <span className={`machine-dot is-${online ? (problems ? "error" : "connected") : "disconnected"}`} title={online ? (problems ? "점검 이상" : "연결됨") : "끊김"} aria-hidden="true" />
               </div>
-              {/* CPU·MEM(plan §8.245): 연결 중일 때만 */}
-              {stats && <MachineMeters stats={stats} name={m.name} />}
+              {/* agent·CPU·MEM(plan §8.245·§8.256): 연결 중일 때만 */}
+              {stats && (
+                <MachineMeters
+                  stats={stats}
+                  name={m.name}
+                  agents={{
+                    count: agents.length,
+                    working: agents.filter((r) => r.p.agent?.activity === "working").length,
+                    waiting: agents.filter((r) => r.p.agent?.activity === "question").length,
+                  }}
+                />
+              )}
               {props.canControl && (
                 <button
                   type="button"
@@ -955,18 +984,11 @@ function ThreadRow({ t, online, machine, twoLine, ...props }: SidebarProps & { t
 function AgentSection(props: SidebarProps) {
   const shared = useRows();
   const { appearance } = useAppearance();
-  const threadOf = new Map<string, ThreadView>();
-  for (const t of props.threads) if (t.pane) threadOf.set(t.pane, t);
+  const threadOf = threadsByPane(props.threads);
   // 설정 「에이전트 정렬」: 머신 목록 차례, 또는 머신마다 활동순(참고 AgentSidebar `byActivity`, 각 PC 안에서)
   const byActivity = appearance.agentOrder === "activity";
   const rows = props.machines.flatMap((m) => {
-    const agents = props.panes
-      .filter((p) => p.machine_id === m.id && p.state === "running" && p.role !== "evaluator")
-      .flatMap((p) => {
-        const t = threadOf.get(p.id);
-        const agent = props.agentOf(p, t);
-        return agent !== null ? [{ m, p, t, agent }] : [];
-      });
+    const agents = machineAgents(props, m, threadOf);
     return byActivity ? activityOrder(agents, (r) => r.p) : agents;
   });
   // 고정한 agent는 맨 앞 카드에(참고 AgentSidebar `splitPinnedRows`)

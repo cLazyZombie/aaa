@@ -152,7 +152,8 @@ export default async function () {
     const dir = `${root}/rv-report`;
     fs.mkdirSync(dir, { recursive: true });
     fs.writeFileSync(`${dir}/index.html`, `<!doctype html><meta charset=utf-8><h1>긴 보고서</h1>${Array.from({ length: 200 }, (_, i) => `<p>줄 ${i}</p>`).join("")}`);
-    for (let i = 0; i < 14; i++) aaa("library", "publish", dir, "--project", "rv", "--name", `r${String(i).padStart(2, "0")}`);
+    // 「내 보고서」 탭의 카드(plan §8.256)
+    for (let i = 0; i < 14; i++) aaa("library", "publish", dir, "--project", "rv", "--name", `r${String(i).padStart(2, "0")}`, "--to-user");
     const dev = await pairPage(browser, aaa("web", "pair").code, { width: 1280, height: 800 });
     const p = dev.page;
     try {

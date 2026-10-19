@@ -1,11 +1,11 @@
-/* 머신 CPU %·MEM %(MachineMeters.tsx, plan §8.245). 구독 사용량 칩(style.css .usage-chip)과 같은 값 + 아래 2px 막대.
+/* 머신 agent 수·CPU %·MEM %(MachineMeters.tsx, plan §8.245·§8.256). 12px lucide 아이콘 + 숫자, CPU·MEM은 아래 2px 막대.
    색은 aaa token만: 평소 흐린 막대, 90% 넘으면 막힘 빨강 */
 .machine-meters { display: inline-flex; flex: none; gap: var(--space-2); margin-left: var(--space-2); }
 .machine-meter {
   position: relative;
   display: inline-flex;
-  align-items: baseline;
-  gap: 2px;
+  align-items: center;
+  gap: 3px;
   height: 18px;
   padding: 2px 2px 4px;
   font-family: var(--font-mono);
@@ -14,8 +14,9 @@
   line-height: 1;
   white-space: nowrap;
 }
-.machine-meter-label { color: var(--text-dim); }
+.machine-meter > svg { flex: none; width: 12px; height: 12px; color: var(--text-dim); stroke-width: 1.75; }
 .machine-meter-value { min-width: 2ch; color: var(--text); text-align: right; }
+.machine-meter[data-stat="agents"] .machine-meter-value { min-width: 1ch; }
 .machine-meter-bar {
   position: absolute;
   right: 2px;
@@ -26,6 +27,6 @@
   background: linear-gradient(to right, var(--text-dim) var(--fill), var(--border-strong) var(--fill));
 }
 .machine-meter.is-high .machine-meter-value,
-.machine-meter.is-high .machine-meter-label { color: var(--status-blocked); }
+.machine-meter.is-high > svg { color: var(--status-blocked); }
 .machine-meter.is-high .machine-meter-bar { background: linear-gradient(to right, var(--status-blocked) var(--fill), var(--border-strong) var(--fill)); }
-.machine-meter.is-empty { opacity: 0.55; }
+.machine-meter.is-empty { opacity: 0.5; }
