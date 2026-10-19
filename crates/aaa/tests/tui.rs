@@ -57,6 +57,7 @@ sidebar_width = 26
 struct Screen {
     /// 바깥 터미널이 요청받은 확장 키 모드(kitty·xterm).
     keyboard: Vec<u16>,
+    left_keyboard: Vec<u16>,
     modify_other_keys: u16,
     /// 켜 둔 DEC 개인 모드(`CSI ? n h`): 마우스 보고(1000·1002·1003·1006) 등
     modes: std::collections::BTreeSet<u16>,
@@ -83,12 +84,14 @@ struct Saved {
     links: Vec<Vec<Option<String>>>,
     row: usize,
     col: usize,
+    keyboard: Vec<u16>,
 }
 
 impl Screen {
     fn new(cols: u16) -> Screen {
         Screen {
-            keyboard: Vec::new(),
+            keyboard: vec![8],
+            left_keyboard: Vec::new(),
             modify_other_keys: 0,
             modes: Default::default(),
             cells: vec![vec![' '; cols as usize]; ROWS as usize],
@@ -309,11 +312,13 @@ impl vte::Perform for Screen {
                     let cells = std::mem::replace(&mut self.cells, blank.0);
                     let bgs = std::mem::replace(&mut self.bgs, blank.1);
                     let links = std::mem::replace(&mut self.links, vec![vec![None; self.cols]; ROWS as usize]);
-                    self.main = Some(Saved { cells, bgs, links, row: self.row, col: self.col });
+                    let keyboard = std::mem::take(&mut self.keyboard);
+                    self.main = Some(Saved { cells, bgs, links, row: self.row, col: self.col, keyboard });
                 } else if m == 1049
                     && action == 'l'
-                    && let Some(Saved { cells, bgs, links, row, col }) = self.main.take()
+                    && let Some(Saved { cells, bgs, links, row, col, keyboard }) = self.main.take()
                 {
+                    self.left_keyboard = std::mem::replace(&mut self.keyboard, keyboard);
                     (self.cells, self.bgs, self.links, self.row, self.col) = (cells, bgs, links, row, col);
                 }
             }
@@ -1019,7 +1024,9 @@ input()
     });
     tui.cmd("q");
     assert!(tui.wait_exit());
-    tui.wait_screen("확장 키 모드 복원", |s| s.keyboard.is_empty() && s.modify_other_keys == 0);
+    tui.wait_screen("확장 키 모드 복원", |s| {
+        s.keyboard == [8] && s.left_keyboard.is_empty() && s.modify_other_keys == 0
+    });
 }
 
 /// agent 알림 카드(herdr 0.9.5 `notification_policy.rs`·`render_notification_card`, plan §8.185): 보는 화면 없이 다른 agent의
