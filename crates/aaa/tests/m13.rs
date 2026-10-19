@@ -3531,8 +3531,8 @@ fn notify_webhook() {
     assert!(made[0] < made[1], "{body}");
     // 글은 웹 push와 같은 꼴: 제목은 프로젝트 이름만, 줄마다 「thread 사건 · thread 제목」(영어 사건을 붙이지 않는다, plan §8.209)
     let text = v["text"].as_str().unwrap();
-    assert!(text.starts_with(&format!("demo\n- {first} 보고 준비 · n")), "{body}");
-    assert!(text.contains("\n- t-0001 보고 준비 · n1") && text.contains("\n- t-0002 보고 준비 · n2"), "{body}");
+    assert!(text.starts_with(&format!("demo\n- {first} 맡긴 일 끝 · n")), "{body}");
+    assert!(text.contains("\n- t-0001 맡긴 일 끝 · n1") && text.contains("\n- t-0002 맡긴 일 끝 · n2"), "{body}");
     wait_for("notify_sent", T, || w.kinds(0).contains(&"notify_sent".to_string()).then_some(()));
     // 보고 없이 쉬던 thread의 세션이 끝나면 확인 필요(pane closed)라 알린다. 쉼(idle)은 알리지 않는다.
     // 받는 쪽이 실패하면 기록만 하고 다시 보내지 않는다.
