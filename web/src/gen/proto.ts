@@ -604,7 +604,12 @@ summary?: SummaryMark,
  * thread가 일하는 저장소의 그 머신 경로(FRONT_API 1.44): worktree thread는 시작할 때 고른 repo, 데려온 thread는 그 폴더의
  * git top. 작업 폴더 thread와 옛 기록은 없다. 웹 에이전트 패널이 마지막 폴더 이름으로 묶는다(머신마다 경로가 달라도 한 폴더)
  */
-repo?: string, };
+repo?: string,
+/**
+ * 사용량 한도(FRONT_API 1.44, plan §8.267): 이 thread harness의 구독 창이 다 찼으면 그 창이 다시 차오르는 때(ms).
+ * host 머신의 thread이고 그 구독에 계정이 하나일 때만 안다. 다 차지 않았거나 모르면 생략한다
+ */
+limited_until_ms?: number, };
 
 export type ThreadPr = { url: string, state: string | null, review: string | null, };
 

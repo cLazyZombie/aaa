@@ -96,6 +96,8 @@ pub const AGENT_LINK: Version = Version { major: 1, minor: 5 };
 // 같은 1.44에 ThreadView.repo(thread 저장소 경로, 선택, plan §8.260)를 더한다. 옛 host는 생략해 웹 에이전트 패널이 폴더 없이
 // 그리고, 옛 front는 버린다.
 // 같은 1.44에 로컬 DebugInput과 입력 진단 사건·submit trace/meta를 더한다. 웹은 host와 함께 갱신된다.
+// 같은 1.44에 ThreadView.limited_until_ms(사용량 한도가 풀리는 때, 선택, plan §8.267)를 더한다. 옛 host는 생략해 웹이 한도를
+// 보이지 않고, 옛 front는 버린다.
 pub const FRONT_API: Version = Version { major: 1, minor: 44 };
 /// agent ↔ session host(내부). 세션이 몇 주 이어질 수 있으므로 이전 session host와 호환해야 한다.
 /// 1.1: `SessionRequest::Detect`(harness 상태 감지 입력). agent는 1.0 session host에 보내지 않고 `Screen`을 쓴다.
