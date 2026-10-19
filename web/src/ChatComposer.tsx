@@ -16,7 +16,7 @@ import {
   useSyncExternalStore,
   type KeyboardEvent,
 } from "react";
-import { ArrowUp, Check, Clock, ImagePlus, LoaderCircle, TriangleAlert, X } from "lucide-react";
+import { ArrowUp, Clock, ImagePlus, LoaderCircle, TriangleAlert, X } from "lucide-react";
 import { uploadChatImage } from "./api";
 import type { ChatMessage } from "./gen/proto";
 import { imageMention, insertLeadingMention } from "./herdr/composerImages";
@@ -168,13 +168,13 @@ export function ChatComposer({
     for (const a of sent) { removed.current.add(a.id); URL.revokeObjectURL(a.preview); }
     setAttachments((current) => current.filter((a) => !removed.current.has(a.id)));
   };
-  const [receipt, setReceipt] = useState<{ id: number; text: string; before: number | null; state: "sending" | "waiting" | "unconfirmed" | "confirmed" } | null>(null);
+  const [receipt, setReceipt] = useState<{ id: number; text: string; before: number | null; state: "sending" | "waiting" | "unconfirmed" } | null>(null);
   const receiptSequence = useRef(0);
   const occurrences = (text: string) => (messages ?? []).filter((m) => m.role === "user" && m.text.trim() === text.trim()).length;
-  // 접수 ACK는 PTY 쓰기일 뿐이다. 같은 글이 새로 기록됐을 때만 harness 수신으로 표시한다.
+  // 접수 ACK는 PTY 쓰기일 뿐이다. 같은 글의 새 기록을 확인하면 안내를 즉시 지운다(참고 성공 시 setNote(null)).
   useEffect(() => {
-    if (receipt && receipt.before !== null && receipt.state !== "confirmed" && occurrences(receipt.text) > receipt.before)
-      setReceipt({ ...receipt, state: "confirmed" });
+    if (receipt && receipt.before !== null && occurrences(receipt.text) > receipt.before)
+      setReceipt(null);
   }, [messages, receipt]);
   useEffect(() => {
     if (receipt?.state !== "waiting") return;
@@ -422,9 +422,8 @@ export function ChatComposer({
         )}
         {note === null && receipt && receipt.state !== "sending" && (
           <div className="composer-hint" role="status" data-testid="chat-delivered" data-state={receipt.state}>
-            {receipt.state === "confirmed" ? <Check size={14} aria-hidden="true" /> : <Clock size={14} aria-hidden="true" />}
-            <span>{receipt.state === "confirmed" ? "대화 기록에서 수신을 확인했습니다. 처리 완료 여부는 응답에서 확인하세요."
-              : receipt.state === "waiting" ? "입력 전달됨 · 대화 기록에서 수신을 확인하는 중입니다."
+            <Clock size={14} aria-hidden="true" />
+            <span>{receipt.state === "waiting" ? "입력 전달됨 · 대화 기록에서 수신을 확인하는 중입니다."
                 : "아직 처리되지 않음 · 대화 기록에서 수신을 확인하지 못했습니다. 터미널 입력창을 확인한 뒤 다시 보내세요."}</span>
             {receipt.state === "unconfirmed" && <div className="composer-receipt-actions">
               <button type="button" className="btn btn-ghost" onClick={onInspect}>입력창 확인</button>
