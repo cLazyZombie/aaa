@@ -830,13 +830,14 @@ host 프로젝트 폴더 구성:
 - **보고:** agent가 `[health] every_s`(기본 60초)마다 재서 `AgentEvent::Health`로 보낸다. host가 `health.v1`을 알렸을 때만 보낸다(이전 host와 호환). 다시 붙으면 마지막 보고를 바로 보낸다.
   - 디스크: 작업 root가 있는 디스크의 여유·전체(`statvfs`). 작업 root가 아직 없으면 있는 위 폴더를 본다.
   - 부하: 1분 평균(`getloadavg`)과 CPU 수. 판정에는 쓰지 않고 보이기만 한다.
+  - CPU %·메모리: 점검 사이 15초마다 따로 잰다(§8.245). 판정에는 쓰지 않는다.
   - 전원: macOS `pmset -g batt`, Linux `/sys/class/power_supply`. 배터리 전원은 주의(warning)로만 보인다.
   - toolchain: agent.toml `[health.toolchain]`의 명령(이름 = argv)을 10초 상한으로 실행하고 출력 첫 줄을 버전으로 보인다. agent.toml은 그 머신 사용자가 쓰는 파일이라 profile 명령과 같은 신뢰로 본다.
   - 시계: host가 보고의 agent 시각과 자기 시각의 차이를 잰다. 60초 넘게 어긋나면 이상이다.
   - 계보·첫 실행 지연·키체인은 시작 때 자가 점검(selfcheck)이 이미 보낸다. boot ID·재부팅은 boot fencing이 맡는다.
 - **이상(새 세션 거부):** 디스크 여유가 `min_free_gb`(기본 5GB)보다 적다, toolchain 명령 실패, 시계 차이. 연결 중인 머신만 보고(끊김은 `outage`), 첫 보고 전에는 막지 않는다. `pane run`·resume·`thread start`·`restart`가 이유와 함께 거부된다. 이미 도는 세션은 건드리지 않는다.
 - **알림:** 이상의 **종류**(`disk`·`toolchain:<이름>`·`clock`)가 생기거나 바뀌거나 풀리면 그 머신에 열린 thread가 있는 프로젝트 inbox에 `health` 항목(`problem`·`ok`)을 남긴다. 값(디스크 여유 GB 등)만 바뀐 것은 새 항목이 아니다(처음에는 설명 글로 비교해 디스크 여유가 0.1GB 바뀔 때마다 항목이 생겼다. E2E가 4번에 1번꼴로 잡았다). 알림 webhook 기본 종류에 `health`를 더했다.
-- **보기:** `aaa status`·`aaa machine list`에 이상 이유 또는 디스크 여유·부하·주의, 웹 머신 줄에 「점검 이상」 표시와 이유.
+- **보기:** `aaa status`·`aaa machine list`에 이상 이유 또는 (CPU·MEM·)디스크 여유·부하·주의, 웹 머신 줄에 「점검 이상」 표시와 이유(CPU·MEM 막대는 §8.245).
 - **남는 한계:** 마지막으로 알린 이상 종류는 host 메모리에만 둔다. host를 다시 시작하면 같은 이상이 이어져도 `problem` 항목이 한 번 더 생긴다.
 
 **coordinator 일 흐름(부록 A의 M1 마무리 항목, 0.2.35 의미)**
@@ -1675,7 +1676,7 @@ Claude·Codex pane을 터미널 대신 대화 기록으로도 본다. 휴대폰�
 
 - **전에는.** 브라우저가 설치 신호(`beforeinstallprompt`)를 보낼 때만 목록 바닥에 「홈 화면에 설치」를 보였다. iOS Safari·데스크톱 Safari·Firefox는 그 신호가 없다. 그래서 단추가 없었고, iOS 안내는 알림 문맥에만 있었다.
 - **참고대로(`src/lib/install.ts` → `web/src/herdr/install.ts`).** `t("…")` 문구만 참고 `i18n.ko.ts`의 한국어로 바꿨고 나머지는 그대로다.
-  - 홈 화면 앱(`display-mode: standalone`·iOS `navigator.standalone`)이 아니거나 설치되지 않았으면, 목록 바닥에 「앱 설치」가 늘 있다(참고 MachineSidebar 41~43줄).
+  - 홈 화면 앱(`display-mode: standalone`·iOS `navigator.standalone`)이 아니거나 설치되지 않았으면, 목록 바닥에 「앱 설치」가 늘 있다(참고 MachineSidebar 41~43줄). **§8.248(10-19)에서 이 단추를 없애고 설정 「설치」 줄만 남겼다.**
   - 신호가 있으면 누를 때 브라우저 설치 창을 띄운다. 신호가 없으면 누를 때 이 브라우저의 방법을 펼친다(`installHelp`). 안내는 iPhone·iPad(Mac UA라 터치 점 수로 가림), HTTPS 아님, 데스크톱 Firefox, Android, 데스크톱 Safari, 나머지(주소창 아이콘)로 나뉜다.
   - 설정 「휴대폰」에 「설치」 줄을 둔다. 설치됐으면 「설치됨」을 보인다. 신호가 있으면 「앱 설치」 단추를, 없으면 같은 안내를 보인다(참고 SettingsDialog 844~846줄).
   - 거절하면 그 신호는 다 쓴 것이라 안내로 돌아간다. `appinstalled`가 오면 단추가 숨는다.
@@ -5649,10 +5650,10 @@ primary 근거:
   | 자리 | 무엇 |
   |---|---|
   | 막대 맨 위 | aaa 로고 + host 연결 점(끊기면 빨강), 보기 권한 기기는 눈 표시 |
-  | 막대 위 묶음 | 프로젝트(고정 줄 → 프로젝트 묶음 → 기타, 배지 = 확인 필요·검토 대기 thread) · 머신(머신 줄·+ 새 pane) · 에이전트(Agents 목록, 배지 = 답을 기다리는 agent) |
-  | 막대 아래 묶음 | 보고서(본문을 `#reports`·`#report=<프로젝트>/<이름>`으로, 다시 누르면 앞 화면) · 설정 톱니(설정 창) |
+  | 막대 위 묶음 | 프로젝트(고정 줄 → 프로젝트 묶음 → 기타, 배지 = 확인 필요·검토 대기 thread) · 머신(머신 줄·+ 새 pane) · 에이전트(Agents 목록, 배지 = 답을 기다리는 agent) · 보고서(패널 tablist 밖 보통 단추, 본문을 `#reports`·`#report=<프로젝트>/<이름>`으로, 다시 누르면 앞 화면, §8.248) |
+  | 막대 아래 묶음 | 설정 톱니(설정 창) |
   | 사이드바 머리(공통) | 패널 이름 · 특수 임무·평가자 배지 · 명령 팔레트 돋보기 |
-  | 사이드바 머리 아래·바닥 줄(공통) | 연결 끊김·오류 띠 / 앱 설치·구독 사용량 |
+  | 사이드바 머리 아래·바닥 줄(공통) | 연결 끊김·오류 띠 / 구독 사용량(오른쪽 끝, 앱 설치는 설정 「폰 및 기기 → 설치」, §8.248) |
 
   예전 바닥 줄의 「보고서」·「설정」 글 단추와 설정 안 「보고서」 쪽은 없앴다. Agents 구역의 접기 단추(참고 AgentSidebar, 휴대폰은 접힌 채 시작)는 패널이 되어 없앴다.
 - **보고서 화면.** 목록(`ReportsPanel`, 「열기」는 본문, 「새 창」은 예전 앱에서 열기)과 보고서 하나(`library_open`의 sandbox iframe, 없으면 보고 글·파일)다. 한 번 연 뒤에는 다른 화면으로 가도 그려 둔 채 `visibility: hidden`·`inert`로 숨긴다: 돌아오면 연 보고서·iframe 문서와 그 안 굴린 자리·목록 굴린 자리가 그대로다(display:none은 iframe 안 자리를 잃는다).
@@ -5702,7 +5703,133 @@ primary 근거:
 
 - **기존 TUI 카드 시험의 불필요 입력(t-0385).** 최신 통합의 카드 시험 끝에서 TUI `x`+Enter와 CLI `go`가 서로 다른 연결로 겹쳐 `x` → `go\n` → Enter 순으로 도착했다. 줄 단위 fixture가 `xgo`를 받아 작업 상태가 되지 않았다. 카드 없는 `prefix o` 뒤 focus/lease 보존은 이미 화면과 host 사건으로 확인하므로 검증하지도 않던 `type_line("x")` 한 줄을 제거했다. 실제 카드·focus·알림 단언·시한·제품 코드는 유지한다. 실패 로그와 두 연결의 순서를 보고에 보존한다.
 
-### 8.243 외부 푸시는 해당 프로젝트 coordinator 사용자 post만(10-19, t-0395)
+### 8.243 TUI thread 두 줄 단위 스크롤(10-19, t-0386, D안 2단계)
+
+- **원인.** 목록의 물리 줄 skip과 휠 ±1줄이 상태 줄에서 시작하거나 제목만 맨 아래 남겼다. herdr-projects 0.2.35
+  `sidebar.rs::agent_card`의 제목·상태 묶음을 aaa의 두 줄 계약으로 유지하고, t3code `Sidebar.tsx`의 항목 단위 탐색처럼
+  스크롤도 항목 경계를 쓴다. 한글 셀 폭·행 템플릿·상태 말·정렬 순서는 바꾸지 않는다.
+- **동작.** thread는 제목·상태 두 줄, 묶음 머리·pane은 한 줄씩 넘긴다. 선택을 따라갈 때도 두 줄이 모두 들어가는 경계로
+  내리고, 남은 한 줄에 다음 제목만 그리지 않는다. 목록 갱신 뒤 오래된 top이 상태 줄을 가리키면 제목으로 맞춘다.
+  극소 한 줄 화면은 상태보다 제목을 우선한다. 상태 줄 클릭은 같은 thread를 열고 compact·탭·workspace 동작은 유지한다.
+- **검증 경계.** 기존 두 줄 렌더 keeper에 0~4줄 viewport·선택·명시 top·끝 경계를 더한다. 실제 PTY keeper에는 기존
+  닫힌 thread와 실행 중 thread를 사용해 SGR 휠 아래·아래·위·아래, 스크롤 뒤 상태 줄 클릭을 더한다. 같은 fixture 준비를
+  재사용하고 새 production 시험 seam·새 신호 시험·고정 sleep은 없다. 제목만 도착한 새 thread는 실행 pane 반영을 기다린다.
+- **범위.** 폭48·선택 제목 전체 보기는 후속 단계다. 두 줄 스크롤은 먼저 구현·전체 검증했고, 사용자 착지 창에서
+  웹 기준 패널 단계와 함께 최신 main에 통합한다.
+
+### 8.244 TUI 활동 막대·패널 경계와 coordinator 연결(10-19, t-0386, D안 3단계)
+
+- **기준.** 웹 착지 8c143c0f의 `ActivityBar.tsx`·`sidebarPanel.ts::revealPanel`·`Sidebar.tsx`와 t-0390 확정 표를
+  따른다. 순서는 프로젝트·머신·에이전트, 막대 아래는 본문을 바꾸는 보고서·설정 창이다. 같은 패널 단추를 다시 누르면
+  접고 활동 막대는 남긴다. 패널별 목록 굴린 자리를 유지하며 단축키·알림의 드러내기는 접힘을 풀거나 PTY 크기를 바꾸지 않는다.
+- **내용.** 프로젝트는 고정 → 프로젝트(coordinator·thread) → 기타, 머신은 연결·host 표시·새 pane·점검 문제,
+  에이전트는 살아 있는 agent(평가자 제외)·고정/정렬 설정을 쓴다. 질문 agent와 확인 필요·검토 대기 thread 수는 각 막대
+  배지다. 특수 임무·평가자는 모든 패널의 공통 머리 배지와 별도 목록에 있다. pane이 없는 임무도 보이고 열기로 시작/승인하지
+  않는다. 프로젝트 머리 Enter/제목 클릭은 실행 중 coordinator를 열며 Space/왼쪽 화살표 클릭은 접는다.
+- **TUI 보존·대응.** herdr `render_sidebar`·`render_collapsed_sidebar`의 workspace·compact 번호·탭·마우스를 남긴다.
+  4칸 막대에서 P/M/A가 세 패널, R이 보고서, 톱니가 설정, S가 공통 특수 목록이다. 탐색 모드 F6으로 막대에 가며
+  화살표·Home/End는 포커스만, Enter/Space는 선택, Tab은 목록, s는 특수 목록이다. 기존 Tab/Shift+Tab의 pane 정·역방향 이동은 유지한다.
+  마지막 패널·접힘은 기기의 state `tui-sidebar.json` 표시 설정이다. 기존 host 공유 접힘은 이전값으로 읽되 기기값이 우선한다.
+  spaces는 공통 머리 아래 자동 높이, 직접 끈 구역 경계는 기존 비율로 유지한다.
+- **터미널 차이.** 보고서는 Front `LibraryReports`/`LibraryOpen`으로 읽는 thread 보고 글·결과물 목록이다. 웹 HTML iframe을
+  TUI에 넣지 않으며 문서·스크롤을 상태로 유지한다. 읽는 동안 키·붙여넣기·마우스가 뒤 pane으로 새지 않는다. 머리의 ?는
+  기존 단축키 검색 창이다. 연결이 끊긴 attach는 기존 연결 종료 처리를 유지한다. 앱 설치·웹 구독 사용량은 TUI에 없는 기능이다.
+- **검증 경계.** 기존 사이드바 렌더 keeper가 패널 경계·이름·차례·compact·드러내기의 PTY 폭 보존을 맡고, 기존 PTY 목록
+  keeper가 실제 SGR 패널 전환·접기·화살표와 Enter·패널별 굴림 복원·기기 기억·보고서 왕복과 입력 차단·특수 목록·coordinator
+  연결을 맡는다. 공용 fixture를 확장하고 새 신호 시험·고정 sleep·시험 전용 production seam은 없다. 기존 mouse drag 검사의
+  열 번호는 한글 패널 머리 도입 뒤 문자열 글자 번호가 아닌 터미널 셀로 읽는다. 폭26 fixture의 말줄임은 상태·pane 입력 표지로
+  함께 검증한다. 기본 폭48과 선택 제목 전체 보기는 다음 단계다.
+
+- **회귀 검증.** 드러낼 때 접힘을 푸는 변형은 사이드바 keeper의 접힘 보존 단언에서, 보고서 단추마다 스크롤을 0으로
+  만드는 변형은 PTY keeper의 보고서 왕복 단언에서 실패했다. 두 변형은 저장 바이트로 복원하고 GREEN을 확인한다.
+
+- **웹 정렬 대조 수리.** 첫 통합본 전체 gate(216초) 뒤 source 대조에서 활동순의 상태별 우선순위 차이를 발견했다.
+  웹 `sidebarModel.ts::activityOrder`대로 질문 우선·최근 `since_ms`·동률은 받은 차례로 맞추고 고정이 앞서는 것을 유지한다.
+  웹 `App.tsx::agentOf`·`herdr/AgentMark.tsx`의 알려진 명령도 hook/thread 없이 인식하며 대소문자는 구분하지 않는다.
+  기존 사이드바 keeper에서 옛 정렬과 알려진 명령 누락 RED를 확인한 뒤 고쳤다. 기준 3503e963의 Ctrl+Enter·Windows paste·
+  pane 복사는 보존하며 최종 소스로 전체 gate를 다시 검증한다.
+
+- **키 보존 확인.** 새 활동 막대의 진입은 F6이다. 기존 탐색 Shift+Tab을 가로채던 초기 구현을 실제 PTY의 이전 pane
+  이동 RED로 잡아 고쳤다. 기존 Tab/Shift+Tab은 pane 정·역방향 이동, F6 뒤 화살표는 활동 단추 포커스만 이동한다.
+  도움말에도 F6·s를 표시한다. 최종 소스로 전체 gate를 다시 검증한다.
+
+- **폭 저장 경합 수리.** 전체 gate에서 폭 기본값 복원 뒤 공유값이 60으로 돌아간 실패를 보존했다. 실험실 DB는 화면36·
+  저장60(revision5)이었고, host `front.rs::serve_conn`은 PreferencesSet을 독립 task로 처리해 앞 저장이 뒤에 끝날 수 있다.
+  herdr는 `client/shell/config.rs::persist_chrome_preferences`에서 표시 설정을 로컬에 쓰므로 이 wire 경합이 없다. aaa는
+  웹/참고 web-ui `preferencesSync.ts`의 inFlight 방식대로 TUI도 저장 한 개만 진행한다. 앞 응답까지 최신 변경을 모으고
+  응답 뒤 보내며, detach도 마지막 표시 설정 저장이 끝난 뒤 한다. backend 요청 처리와 API는 바꾸지 않는다.
+  기존 폭 keeper를 실제 Front wire까지 넓혀 앞 Ack 전 무송신(Status 울타리), Ack 뒤 마지막 null 저장을 검증한다.
+- **옛 host 경계.** 보고서 목록은 Front1.38, 임무 목록은1.39부터다. 시작/공통 특수 열기는 같은 임무 요청 경계를 쓴다.
+  Reader의 실제 wire에서 1.37/1.38/1.39를 검사해 옛 host에 모르는 요청을 보내지 않는다. 현재 host 동작은 유지한다.
+
+### 8.245 웹 머신 패널의 CPU %·MEM %(10-19, t-0393)
+
+- **요청.** 사용자 「웹 UI에 머신에 cpu %, mem % 를 보여줄수 있어? 간략하게」. 시안 세 안(이름 아래 숫자 한 줄·머리줄 오른쪽 작은 막대 둘·높을 때만 빨간 글) 가운데 「추천대로」 B안과 접힌 막대 배지, 빨강 90%만, 15초 표본·바뀔 때만 방송, MEM은 Activity Monitor식으로 정했다. `aaa machine list`에도 넣고 TUI 머신 패널은 후속이다(t-0386이 패널 배치를 맞추는 중).
+- **참고.** t3code(4b1024da) `apps/server/src/resourceTelemetry/HostResources.ts`가 같은 값을 잰다: CPU는 누적 tick 차이, macOS 메모리는 `vm_stat`의 free+inactive+speculative를 가용으로, Linux는 MemAvailable. herdr·herdr-web-ui·herdr-projects에는 이런 표시가 없다. 막대 모양은 aaa의 구독 사용량 칩(herdr-web-ui `UsageMeters`를 옮긴 `usage-chip`: 값 + 아래 2px 막대, 높으면 빨강)을 따른다.
+- **값.** agent(`aaa-agent` health.rs)가 잰다. CPU %는 직전 표본부터의 평균(1 − Δ쉼/Δ전체)이고, 첫 표본과 1초 안에 잇달아 온 표본은 앞 값을 둔다. macOS `host_statistics(HOST_CPU_LOAD_INFO)`, Linux `/proc/stat`(iowait도 쉼), Windows `GetSystemTimes`(kernel이 idle을 포함). 메모리 「사용」은 macOS Activity Monitor 「사용된 메모리」와 같은 앱(internal − purgeable)+wired+압축(`host_statistics64(HOST_VM_INFO64)`, `hw.memsize`), Linux MemTotal − MemAvailable, Windows ullTotalPhys − ullAvailPhys다. 파일 캐시는 가용이고 압축은 사용이다. **t3code와 다르게 둔 것**: 같은 순간 64GB Mac에서 t3code식은 56%, Activity Monitor식은 75%였다. t3code식은 익명 inactive까지 가용으로 세어, 사용자가 Mac에서 보는 숫자와 어긋난다. 호출은 0.4µs이고 libc(mach)·windows-sys에 이미 있는 것만 써 새 의존성이 없다.
+- **주기와 전달.** 점검(`[health] every_s`, 기본 60초)은 toolchain 명령까지 돌리므로 줄이지 않는다. 점검이 15초보다 드물면 agent가 사이에 15초마다 마지막 점검을 복사해 CPU·메모리·부하·잰 때만 바꿔 같은 `Health` 사건으로 보낸다(이상 판정은 점검 그대로). host는 받은 보고를 늘 기억하되 front에 목록을 다시 보내는(`bump`) 것은 첫 보고, 값 칸(잰 때·CPU·메모리·부하·디스크 여유) 말고 바뀐 것, 시계 이상이 생기거나 풀림, CPU·MEM이 반올림 2%p 넘게 움직임, 마지막으로 보낸 지 60초가 지났을 때뿐이다. 이상 판정 ticker도 값만 바뀐 보고에는 깨우지 않는다. 운영 host 목록 한 번이 약 10KB라 머신 3대 × 15초를 다 보내면 열린 화면마다 분당 120KB였다.
+- **판.** `MachineHealth`에 `cpu_pct`·`mem_used_bytes`·`mem_total_bytes`를 선택 칸(`serde(default, skip_serializing_if)`·`ts(optional)`)으로 더하고 AGENT_LINK 1.5·FRONT_API 1.43을 올리지 않는다. 옛 agent 머신은 「—」이고, 옛 host·front는 모르는 칸을 버린다.
+- **화면.** 머신 패널 머리줄 오른쪽(+ 앞)에 `C 23`·`M 75`와 2px 막대(`MachineMeters.tsx`, 규칙은 `machineStats.ts`). 90% 이상인 칸은 빨강(`--status-blocked`). title·aria-label이 `CPU 23% · 메모리 48.1GB / 64.0GB 사용(75%) · 부하 8.73/16 · 7초 전`으로 푼다. 끊긴 머신은 값이 오래돼 그리지 않고 「끊김」 글만 둔다. 접힌 사이드바에는 머신 줄이 없으므로 활동 막대 머신 단추에 CPU나 MEM이 90% 넘은 연결 중 머신 수를 배지로 단다(프로젝트·에이전트 배지와 같은 자리). `aaa machine list`는 연결 중인 머신의 건강 칸 앞에 `CPU 23% · MEM 75%`를 붙인다.
+- **검증.** agent 단위: tick→% 순수 함수(같은 표본·되감김·쉼>전체는 없음), 1초 창 안의 표본은 다시 읽지 않음(`now` 인자), `/proc` 글 해석, 이 OS의 실제 값. host 단위: 2%p·60초·이상·주의·시계 경계. m13 `machine_health` 끝에 실제 agent 값과 `machine list` 글. 웹 단위 `machineStats.test.mjs`. 웹 E2E 27(`27-machine-stats`): 실제 agent가 기본 주기(15초 표본)로 보낸 값이 막대·title로 보이고, state 사건에 값을 끼운 화면에서 90% 빨강·접힌 막대 배지·옛 agent 「—」·끊긴 머신은 높은 값이어도 그리지 않음. 끊김 숨김·배지 계산·host의 값 보내기·agent의 15초 표본을 하나씩 빼면 각각 실패한다. 고정 sleep은 없다. Windows 표본 함수는 windows-sys 0.60으로 교차 컴파일만 확인했다(실행은 CI).
+
+### 8.246 특수 임무의 입력 위치와 최소 조회 권한(10-19, t-0380 재후속)
+
+- **운영 원인.** 3503e963 배포 뒤 13:29:35~36의 reset→reloaded, 새 pane·새 Claude session과 새 settings 적용은 확인했다. 이후 첫 입력이 없어 work_dir/inbox가 존재하지 않는데 SPECIAL_GUIDE와 mission_task가 `inbox/`만 안내했다. 세션 cwd와 work_dir가 달라 모델이 프로젝트 루트 ls/find, help/status 탐색으로 넘어갔다. 기존 최소 목록은 report·post만 알아 필요한 조회에도 질문했다. coordinator가 읽기만 한 명령을 세 번 일회 승인한 뒤 임무를 pause했다. 이 후속은 운영 상태를 바꾸지 않는다.
+- **입력 계약.** agent가 임무 prepare/rebrief 때 자기 work_dir의 inbox를 미리 만든다(기존 파일 보존, symlink/파일 거부, Unix 새 폴더 0700). brief에는 입력·processed.txt·state.md의 절대 경로, 없거나 미처리 JSON이 없으면 정상 대기, 새 입력 알림 때만 확인, 프로젝트 루트/다른 inbox 탐색 금지를 넣는다. 깨움 줄도 실제 work_dir/inbox를 가리킨다. 기존 threads/library/missions 자료는 정확한 host 경로와 직접 파일 읽기를 안내한다.
+- **최소 명령.** Claude allow-list에는 자기 inbox의 `ls -1 -- '<정확한 경로>'` 한 명령, `aaa --help`, `aaa mission --help`, `aaa mission show <자기 프로젝트> <자기 임무> --json`만 더한다. 실행 파일 이름·절대 경로·인용 경로 변형은 기존 보고 규칙과 같다. 임무 이름은 host의 검증된 문맥을 env로 전달하고 agent가 이름 형식을 재검사한다. Codex execpolicy도 같은 help/자기 조회를 받는다. ls는 기존 읽기 sandbox 안에서 실행한다. 포괄 ls/find/aaa, 전역 status, 다른 임무 조회·제어, 외부 쓰기·push 권한은 추가하지 않는다. additionalDirectories 세 개와 승인 모드는 그대로다.
+- **정확한 명령 생성.** 기존 fill_brief의 머신별 placeholder 방식에 inbox 목록 명령을 더해 brief와 allow-list가 같은 quoting을 쓴다. 공백·작은따옴표와 Windows 경로 구분자를 기존 proto 시험에서 검사한다. 새 공개 요청/응답이나 DB schema는 없다. 새 host와 agent를 함께 배포해야 한다.
+- **참고.** herdr-projects 0.2.35 `src/thread.rs::brief_header`의 머신별 report/library 절대 경로와 `compose_brief`의 실행 파일 치환, aaa가 옮긴 평가자 `evaluator.rs::EVALUATOR_GUIDE`의 work/inbox 절대 경로를 따른다. herdr 0.9.5 `src/app/api/agents.rs`와 t3code `apps/server/src/orchestration-v2/Adapters/ClaudeAdapterV2.ts`에는 aaa 특수 임무 입력 파일의 대응 기능이 없다. [Claude 공식 permissions](https://code.claude.com/docs/en/permissions)의 정확한 Bash 명령 규칙과 읽기 작업 디렉터리 규칙을 확인했다. 전역 우회·hook 자동 승인을 넣지 않는다.
+- **회귀·한계.** 기존 agent mission launch·host approved start·proto fill_brief 시험을 확장했다. 수정 전 빈 inbox 미생성, brief의 입력 절대 경로 누락, 목록 명령 미허용을 각각 RED로 보존했다. 기존 symlink 시험에 inbox도 포함했다. 실제 Codex execpolicy에서 자기 조회/help 허용, 다른 프로젝트·임무·pause·push·합성 shell 비허용을 확인했다. 격리 Claude print 시도는 로그인 없음으로 API 호출 0·도구 실행 0에서 끝나 실제 권한 실행 PASS로 세지 않는다(인증/키체인 변경 없음). 실제 임무는 pause 상태로 보존하며 배포 뒤 coordinator가 재검증한다.
+### 8.247 웹 대화 보내기 상태: 보내질 때까지 잠금, 전달 전 막힘의 탈출구(10-19, t-0392)
+
+- **결정.** 보내기는 누르는 즉시 보낸다(유예 없음). 앞 글이 보내져야 입력창이 풀리고 다음 글을 쓸 수 있으며 웹에 여러 글을 쌓는
+  대기열은 두지 않는다. 잠긴 동안 글 칸은 readOnly로 글을 보이고 보내기 단추 자리에 도는 표시와 상태 문장을 둔다. 취소는 사용자
+  취향의 취소가 아니라 실제 전달 전에 막혔을 때 빠져나가는 길이다.
+- **「보내짐」 = agent 기록 증거.** `Submitted ok`(host가 pane에 글과 Enter를 씀)만으로는 풀지 않는다. Enter가 먹히는 경우가 있어서다
+  (§8.232). 한가할 때는 대화 기록의 사람 글이 증거다(같은 글의 개수가 보낸 때보다 늘었나, t-0387). Claude가 작업 중이면 기록의
+  `queue-operation enqueue`가 증거다. Claude Code는 작업 중에 받은 글을 대기열에 넣자마자 적는다(실측 447건 모두 즉시). 흡수까지는
+  중앙값 10초, p90 111초라서 흡수가 아니라 대기열 진입에서 푼다. agent `chat.rs::claude_pending`이 기록 끝 1MiB를 앞에서부터 읽어
+  대기열을 다시 세운다(`enqueue` 뒤에 넣음, `dequeue` 맨 앞을 꺼냄, `remove`는 글로 짝지음). 남은 글은 `ChatMessage.pending`으로 싣고
+  웹은 대화 끝에 점선 「대기」 말로 그린다. Codex rollout에는 대기 기록이 없다. 그래서 Codex가 작업 중일 때는 `Submitted ok`를
+  보내짐으로 보고 웹이 보낸 글을 대기 말로 둔다. 보낼 때 대화 기록을 읽지 못한 pane(Claude 첫 hook 전 등)도 증거가 올 수 없으므로
+  `Submitted ok`가 보내짐이다(E2E 11의 기록 없는 가짜 Claude가 이 경계를 지키고, 이 규칙 없이 「입력창이 비지 않았다」로 실패했다). 작업이 끝나고 10초가 지나도 기록에 오르지 않으면 「대화 기록에 없습니다」로 바꾸고
+  지우기를 준다.
+- **새 신호 B(FRONT_API 1.42).** 웹은 `submit_cancel{id}`를 보내고 host는 `submit_cancelled{id, stage}`로 그 submit이 어디까지
+  갔는지 답한다: `not_sent`(아무것도 쓰지 않음), `no_enter`(글은 썼고 Enter는 쓰지 않음), `too_late`(Enter를 쓰기 시작함·끝남·
+  없음). host `pane_session`은 submit을 쓰는 동안에도 같은 연결의 frame을 읽는다. 그 submit의 멈춤에는 바로 답하고, 다른 frame은
+  차례대로 미뤄 뒤에 처리한다. 일꾼과 멈춤은 `AtomicU8` 단계를 compare-exchange로 다투어 쓰기 직전에 하나만 이긴다. 멈춘 submit의
+  `Submitted`는 「멈춤」 실패다. 옛 host는 모르는 frame을 버린다. 그래서 웹은 2초 안에 답이 없거나 연결이 끊기면 「모름」으로 본다.
+- **화면.** 보낸 뒤 3초 동안 전달 확인(`Submitted`)이 없으면 도는 표시가 ×로 바뀐다(Esc도 같다). 평소 확인은 0.3~0.5초에 온다.
+  ×를 누른 결과에 따라 웹이 하는 일은 다음과 같다. `not_sent`면 「보내지 않았고 글은 그대로」라고 알리고 잠금을 푼다. `no_enter`면
+  「Enter를 보내지 않음」이라며 터미널을 확인하라고 한다. 「모름」이면 「전송 여부를 확인하지 못했습니다」라고 하고 터미널 보기를
+  준다. `too_late`면 다시 기다리는 상태로 돌아가고 ×를 다시 보이지 않는다. 확실할 때만 「보내지 않음」이라고 말한다. 전달된 뒤
+  10초가 지나도 증거가 없으면 「전달됨 · 10초 넘음」 알림에 터미널 보기와 잠금 풀기를 둔다. 잠금을 풀어도 이미 간 글은 되돌리지
+  않는다.
+- **참고.** herdr-web-ui `aa624cb` `src/components/Composer.tsx`: `send`/`settle`, 보내기 단추 `aria-busy`+`LoaderCircle`,
+  「Not confirmed. Check the terminal before sending again.」. `server/codex-steering.ts`는 Codex 작업 중 글을 화면으로 확인한다.
+  herdr-web-ui는 보내는 동안 입력을 잠그지 않는다. 사용자가 앞 글이 보내져야 다음 글을 쓴다고 정해서(위 결정) 따르지 않았다.
+  t3code `4b1024da` `ComposerPrimaryActions.tsx`는 `isSendBusy`일 때 Spinner를 보이고, `ChatView.logic.ts
+  hasServerAcknowledgedLocalDispatch`는 서버가 새 사용자 글을 보일 때까지 보내는 중을 유지한다. 이 둘이 「기록 증거까지 잠금」의
+  근거다. 두 참고에는 pane에 글과 Enter를 나눠 쓰는 단계가 없다. 그래서 전달 전 멈춤(신호 B)은 aaa host의 submit 단계에 맞춰
+  새로 만들었다.
+- **회귀.** host 유닛 `submit_tests::cancel_races_each_write`가 각 쓰기 앞에서 멈춤이 이기면 그 뒤 쓰기를 하지 않는지 본다.
+  agent 유닛 `claude_pending_queue`는 enqueue·dequeue·remove·주입 글 거르기를 본다. 웹 E2E 23의 두 단계는 실제 host·agent·tmux와
+  가짜 Claude·Codex로 확인한다. 기록 증거까지 잠기는지, Enter가 막히는지, 10초 알림·늦은 반영·잠금 풀기가 되는지 본다. agent를
+  SIGSTOP해 3초 × → `no_enter` → SIGCONT 뒤 다음 글이 「막힌 글다음 글」로 붙는지도 본다. Claude 대기열 대기 말이 흡수되는지,
+  Codex 작업 중 대기 말이 흡수되는지도 본다. 시간은 Playwright 시계로 넘기고 사건으로 끝낸다. 결함 네 가지를 심어 각각 실패를
+  확인했다: host 멈춤이 Enter를 막지 않음, 웹이 `Submitted`만으로 풂, Codex 경로 끔, agent가 대기열을 싣지 않음. 모두 원래대로
+  되돌린 뒤 통과했다.
+
+### 8.248 웹 활동 막대의 보고서 자리와 사이드바 바닥 줄(10-19, t-0396)
+
+- **요청.** 사용자 「여기에 앱 설치는 설정 안으로 옮기고, 보고서는 왼쪽 위로 옯겨. (지금 에이전트 밑으로). 그리고, 사용량은 오른쪽으로 붙여.」(캡처: 막대 아래 묶음의 보고서·설정, 바닥 줄 「앱 설치」와 왼쪽에 붙은 Claude·Codex 칩).
+- **배치.** 막대 위 묶음은 프로젝트 → 머신 → 에이전트 → 보고서, 아래 묶음은 설정 톱니만이다(§8.240 표). 보고서는 패널이 아니라 본문을 바꾸는 단추라 `role="tablist"` 밖, 에이전트 단추 바로 밑의 보통 단추(`aria-pressed`)로 둔다: ↑↓·Home·End는 패널 tab 셋 사이만 돌고 보고서는 Tab 차례로 닿는다. 누르면 본문이 보고서 화면, 다시 누르면 앞 화면, 휴대폰은 drawer를 닫는 동작은 그대로다. VS Code도 위 묶음에 고정 view 단추를 두고 아래 묶음은 Accounts·Manage만 둔다.
+- **앱 설치.** 사이드바 바닥의 「앱 설치」 단추와 펼침 안내를 없앴다. 설정 「폰 및 기기 → 설치」 줄이 이미 같은 조건을 보인다(§8.68: 설치됐으면 「설치됨」, 신호가 있으면 「앱 설치」 단추, 없으면 이 브라우저의 방법). 참고 herdr-web-ui도 설정 「휴대폰」의 같은 줄을 둔다.
+- **사용량.** 바닥 줄(`.foot-row`)을 `justify-content: flex-end`로 칩을 오른쪽 끝에 붙인다. 펼친 창(`.usage-popover`)은 줄 폭 그대로다.
+- **TUI(t-0386).** 활동 막대가 웹을 따르면 보고서 칸은 에이전트 칸 밑, 아래 묶음은 설정만이다. TUI 사이드바 바닥에는 설치 줄이 없고, 구독 사용량을 바닥에 둔다면 오른쪽 정렬이다.
+- **검증.** 웹 E2E 26 「막대·바닥 줄 배치」가 데스크톱 1280·좁은 창 700(drawer)·휴대폰 390×844·가로 844×390에서 기본·GitHub Dark로 보고서 단추가 에이전트 단추 바로 밑(tablist 밖), 아래 묶음이 설정만, 바닥 줄 단추가 사용량 하나, 칩 오른쪽 끝이 줄 안쪽 오른쪽 끝임을 재고 찍는다. 바꾸기 전 판에서 여덟 화면 모두 실패했다(보고서가 아래 묶음, 설치 단추, 칩 왼쪽). 04 「앱 설치」는 설정 줄만 본다: 데스크톱의 신호 없음·신호·거절·설치됨, iPhone·iPad 안내, 홈 화면 앱 「설치됨」, 어느 화면에도 설정 밖 설치 단추가 없음.
+
+### 8.249 외부 푸시는 해당 프로젝트 coordinator 사용자 post만(10-19, t-0395)
 
 - **사용자 결정.** 앱 안 알림은 thread 보고·상태·확인창·세션·머신 사건을 계속 보인다. 외부 Web Push와 webhook은
   host가 해당 프로젝트 coordinator pane으로 검증한 사용자 post만 보낸다. thread의 `[완료]`·`[확인 필요]` 표지는

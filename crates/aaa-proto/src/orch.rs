@@ -797,11 +797,21 @@ pub fn next_lines(report: &str) -> Vec<String> {
 pub const BRIEF_WORK_DIR: &str = "{{aaa:work_dir}}";
 /// 그 머신 aaa 실행 파일(진행 보고 명령)
 pub const BRIEF_EXE: &str = "{{aaa:exe}}";
+/// 임무 inbox의 목록 조회 한 명령. agent가 채우는 경로와 allow-list가 같은 quoting을 쓴다.
+pub const BRIEF_INBOX_LIST: &str = "{{aaa:inbox_list}}";
+
+pub fn mission_inbox_list_command(work_dir: &str) -> String {
+    let path = format!("{}/inbox", work_dir.replace('\\', "/").trim_end_matches('/'));
+    format!("ls -1 -- '{}'", path.replace('\'', "'\\''"))
+}
 
 /// brief 자리를 채운다. 실행 파일 경로에 빈칸이 있으면 큰따옴표로 감싼다.
 pub fn fill_brief(brief: &str, work_dir: &str, exe: &str) -> String {
     let exe = if exe.contains(char::is_whitespace) { format!("\"{exe}\"") } else { exe.to_string() };
-    brief.replace(BRIEF_WORK_DIR, work_dir).replace(BRIEF_EXE, &exe)
+    brief
+        .replace(BRIEF_INBOX_LIST, &mission_inbox_list_command(work_dir))
+        .replace(BRIEF_WORK_DIR, work_dir)
+        .replace(BRIEF_EXE, &exe)
 }
 
 /// 진행 보고 안내(herdr-projects `progress::guidance`를 옮김). thread brief(host)와 Claude SessionStart hook의 안내(agent)가
@@ -970,6 +980,8 @@ mod tests {
             "`/w/.aaa/p-t-0001/report.md` `/opt/aaa report --unknown`"
         );
         assert_eq!(fill_brief(BRIEF_EXE, "", r"C:\Program Files\aaa.exe"), r#""C:\Program Files\aaa.exe""#);
+        assert_eq!(fill_brief(BRIEF_INBOX_LIST, "/work/it's a folder", ""), "ls -1 -- '/work/it'\\''s a folder/inbox'");
+        assert_eq!(fill_brief(BRIEF_INBOX_LIST, r"C:\work dir\task", ""), "ls -1 -- 'C:/work dir/task/inbox'");
     }
 }
 

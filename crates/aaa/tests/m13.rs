@@ -109,8 +109,9 @@ box() { printf '%s\n\342\235\257 \n%s\n  ? for shortcuts' "$RULE" "$RULE"; }
 # 입력 대기: 커서를 입력 상자 「❯ 」 뒤에 둔다. Enter 뒤(커서는 상자 아래 선)에는 상자를 지운다.
 prompt() { stty echo; box; printf '\033[2A\r\033[2C'; }
 taken() { printf '\033[2A\r\033[J'; }
-spin() { printf '\342\234\273 Working\342\200\246 (1s \302\267 esc to interrupt)\n'; box; }
-unspin() { printf '\033[4A\r\033[J'; }
+# 진행 보고가 실패해 진단 줄이 추가되어도 spinner를 그리기 전 자리부터 지운다.
+spin() { printf '\0337\342\234\273 Working\342\200\246 (1s \302\267 esc to interrupt)\n'; box; }
+unspin() { printf '\0338\033[J'; }
 # 일하는 동안 친 글은 Claude처럼 입력 상자에 보인다(커서는 상자 아래 안내 줄 첫 칸)
 shown() { printf '\033[2A\r\342\235\257 %s\033[K\033[2B\r' "$typed"; }
 interrupted() { printf '  \342\216\277  Interrupted \302\267 What should Claude do instead?\n'; }
@@ -179,7 +180,7 @@ while :; do
   case "$line" in
     *brief.md*)
       dir=$(dirname "$(printf '%s' "$line" | sed 's/를 읽고.*//')")
-      spin; "$AA" report --percent 40 --activity '권한 확인 중'; perm 'make test'
+      spin; AAA_HOOK_SOCK="${REPORT_HOOK_SOCK:-$AAA_HOOK_SOCK}" "$AA" report --percent 40 --activity '권한 확인 중'; perm 'make test'
       [ "$pick" = cancel ] || printf '[진행 중] 권한 확인 뒤 계속\n\n## Report\n%s\n\n## Next\n- 확인\n' "$pick" > "$dir/report.md" ;;
     *late*)
       # 같은 확인창의 Notification이 답보다 늦게 온다(ci-local에서 경쟁으로 난 차례, plan §8.99). 진행 보고가 같은 agent
@@ -1439,7 +1440,10 @@ fn claude_thread_states_questions_and_messages() {
 /// `trust_screens = user`(기본)면 신뢰 창에는 키를 보내지 않는다. 세션이 끝났으면 거부한다.
 #[test]
 fn thread_read_and_keys() {
-    let w = world();
+    // 진행 보고 실패의 진단도 PTY에 나온다. 그 출력 뒤 그린 권한 창을 실제 화면 감지가 찾아야 한다.
+    let w = world_setup("", false, |root| {
+        vec![("REPORT_HOOK_SOCK".into(), root.join("missing-hook.sock").to_string_lossy().into_owned())]
+    });
     let mut ev = Events::connect(&w.h);
     let v = w.start(&["--title", "keys", "--profile", "claude", "--kind", "dir", "--task-file", &w.task("k.txt", "x")]);
     let id = v["id"].as_str().unwrap().to_string();
@@ -1479,6 +1483,7 @@ fn thread_read_and_keys() {
     );
     w.h.ok(&["question", "answer", &q.id, "yes"]);
     // 권한 확인창: 보고 Enter로 답한다(기본 선택 Yes). 질문은 화면 감지가 그려진 창을 보고 연다(창보다 먼저 오는 hook이 없다)
+    w.h.wait_output(&pane, "aaa:", T);
     open_question(&mut ev, &id, "permission", &[]);
     let r = w.h.ok(&["thread", "read", "demo", &id]);
     assert!(r["read"]["text"].as_str().unwrap().contains("make test"), "{r}");
@@ -3641,6 +3646,15 @@ fn machine_health() {
     let items = wait_for("inbox 회복 항목", T, || Some(health(&w)).filter(|v| v.len() == 2));
     assert_eq!(items[1].0, "ok", "{items:?}");
     w.h.ok(&["tab", "create", "--machine", "labA", "--", "/bin/sh"]);
+
+    // CPU·메모리(§8.245): CPU는 두 표본 사이 평균이라 둘째 보고부터 오고, `machine list`에 보인다
+    let m = wait_for("CPU 표본", T, || w.h.machine("labA").filter(|m| m["health"]["cpu_pct"].is_u64()));
+    let h = &m["health"];
+    assert!(h["cpu_pct"].as_u64().unwrap() <= 100, "{m}");
+    assert!(h["mem_used_bytes"].as_u64().unwrap() <= h["mem_total_bytes"].as_u64().unwrap(), "{m}");
+    let list = String::from_utf8_lossy(&w.h.run(&["machine", "list"]).stdout).to_string();
+    let line = list.lines().find(|l| l.starts_with("labA")).unwrap_or_default();
+    assert!(line.contains("\tCPU ") && line.contains("% · MEM ") && line.contains("% · 디스크 여유"), "{list}");
 }
 
 /// coordinator 일 흐름(부록 A): TASKS.md owner로 thread 시작, assignable 확인, Next 목록·보내기, context 요약.

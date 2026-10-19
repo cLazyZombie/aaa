@@ -924,6 +924,18 @@ async fn approved_start_attaches_mission_before_preparing_special_brief() {
     {
         let requests = f.requests.lock().unwrap();
         assert!(requests.iter().any(|r|matches!(r,AgentRequest::ThreadPrepare(p) if p.brief.contains("특수 thread") && p.brief.contains("적용 판") && p.brief.contains("감시한다."))));
+        let brief = requests
+            .iter()
+            .find_map(|r| match r {
+                AgentRequest::ThreadPrepare(p) => Some(&p.brief),
+                _ => None,
+            })
+            .unwrap();
+        let brief = aaa_proto::fill_brief(brief, "/work/repo/.aaa/demo-t-0001", "/opt/aaa");
+        assert!(brief.contains("/work/repo/.aaa/demo-t-0001/inbox/"), "입력 위치는 cwd가 아닌 자기 작업 폴더다");
+        assert!(brief.contains("/opt/aaa mission show demo watch --json"));
+        assert!(brief.contains("ls -1 -- '/work/repo/.aaa/demo-t-0001/inbox'") && brief.contains("Read"));
+        assert!(brief.contains("없어도 정상") && brief.contains("프로젝트 루트를 탐색하지 않는다"));
         let profile = requests
             .iter()
             .find_map(|r| match r {
@@ -935,6 +947,7 @@ async fn approved_start_attaches_mission_before_preparing_special_brief() {
             profile.env.get("AAA_MISSION_PROJECT_DIR"),
             Some(&l.h.project_dir("demo").unwrap().to_string_lossy().into_owned())
         );
+        assert_eq!(profile.env.get("AAA_MISSION_NAME").map(String::as_str), Some("watch"));
         assert!(profile.args.windows(2).any(|a| a == ["--permission-mode", "default"]));
         assert!(!profile.args.iter().any(|a| a.contains("dangerously") || a.contains("acceptEdits")));
     }

@@ -100,6 +100,7 @@ pub fn typescript_bindings() -> String {
         FrontResponse::decl(&cfg),
         ClipboardOutcome::decl(&cfg),
         FrontEvent::decl(&cfg),
+        SubmitStage::decl(&cfg),
         TermServerMsg::decl(&cfg),
         TermClientMsg::decl(&cfg),
         EventsClientMsg::decl(&cfg),

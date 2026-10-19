@@ -1238,8 +1238,14 @@ impl Host {
             .collect();
         let mission_task = r.mission.as_ref().map(|_| self.mission_task(r));
         let task = mission_task.as_deref().unwrap_or(task);
-        let guide = if r.mission.is_some() {
-            crate::brief_text::SPECIAL_GUIDE.replace("{work}", aaa_proto::BRIEF_WORK_DIR)
+        let guide = if let Some(m) = &r.mission {
+            crate::brief_text::SPECIAL_GUIDE
+                .replace("{work}", aaa_proto::BRIEF_WORK_DIR)
+                .replace("{exe}", aaa_proto::BRIEF_EXE)
+                .replace("{inbox_list}", aaa_proto::BRIEF_INBOX_LIST)
+                .replace("{project}", &r.project)
+                .replace("{mission}", &m.name)
+                .replace("{project_dir}", &dir.to_string_lossy())
         } else if r.role == Role::Evaluator {
             crate::evaluator::EVALUATOR_GUIDE.replace("{work}", aaa_proto::BRIEF_WORK_DIR)
         } else {
@@ -1299,7 +1305,7 @@ impl Host {
             self.resolved_profile(Some(&a.project), &mid, &a.profile)?
         };
         let resolved_profile =
-            Some(if mission.is_some() { crate::mission::safe_profile(profile, &dir) } else { profile });
+            Some(if let Some(m) = &mission { crate::mission::safe_profile(profile, &dir, &m.name) } else { profile });
         let warnings = self.parallel_warning(&a.project).into_iter().collect::<Vec<_>>();
         let now = aaa_common::util::now_ms();
         let mut rec = ThreadRec {
@@ -1543,7 +1549,8 @@ impl Host {
             } else {
                 self.resolved_profile(Some(project), &rec.machine_id, &rec.profile)?
             };
-            let resolved_profile = Some(if rec.mission.is_some() { crate::mission::safe_profile(p, &dir) } else { p });
+            let resolved_profile =
+                Some(if let Some(m) = &rec.mission { crate::mission::safe_profile(p, &dir, &m.name) } else { p });
             let brief = self.brief(&dir, &rec, &task, true);
             self.db.audit(actor, "thread_restart", &format!("{project}/{id} 자리부터{profile_note}"));
             self.place_and_launch(&conn, &mut rec, brief, resolved_profile, actor).await?;
@@ -1587,7 +1594,8 @@ impl Host {
             } else {
                 self.resolved_profile(Some(project), &rec.machine_id, &again)?
             };
-            let resolved_profile = Some(if rec.mission.is_some() { crate::mission::safe_profile(p, &dir) } else { p });
+            let resolved_profile =
+                Some(if let Some(m) = &rec.mission { crate::mission::safe_profile(p, &dir, &m.name) } else { p });
             let safety = None;
             let relaunched = match conn
                 .request(AgentRequest::ThreadRebrief {

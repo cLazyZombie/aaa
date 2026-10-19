@@ -262,3 +262,7 @@ local agent 재연결 중 배포 조회(§8.237): host `deploy::tests::coordinat
 - `cargo test --locked -p aaa-tui keyboard_cleanup_precedes_panic_restore`는 자식 시험 프로세스에 panic hook을 격리해 keyboard pop이 화면 복원보다 먼저 한 번만 실행되는지 본다. 위 PTY 시험은 main/alternate 키 스택을 따로 유지하고 원래 main 모드가 보존되는지도 본다.
 
 신호 금지 작업에서 E2E 25는 Ctrl+Enter 준비·Claude·Codex·터치 Ctrl+Enter 단계를 함께 고른다. 이 단계는 신호 동작을 시험하지 않고 공식 실험실의 자기 자식 정리만 쓴다.
+
+## 임무 입력 안내와 조회 권한(§8.246)
+
+기존 host `approved_start_attaches_mission_before_preparing_special_brief`, agent `mission_launch_scopes_permissions_for_both_harnesses`·`mission_settings_do_not_write_through_links`, proto `fill_brief_puts_the_machine_paths`가 입력이 없는 첫 prepare/rebrief의 inbox·자기 임무 문맥·실제 머신 경로로 채운 brief·정확한 목록 및 조회 규칙을 검사한다. 일반 thread에는 임무 권한을 남기지 않고, symlink inbox로 폴더 밖에 쓰지 않으며, 넓은 ls/find/aaa 허용을 넣지 않는다. 새 신호 시험·고정 sleep·production 시험 seam은 없다. `cargo test -p aaa-host -p aaa-agent mission`과 `cargo test -p aaa-proto fill_brief_puts_the_machine_paths` 뒤 공식 전체 gate를 실행한다.

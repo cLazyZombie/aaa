@@ -38,7 +38,6 @@ import type { AppActions, PaneControls } from "./actions";
 import { UsageMeters } from "./UsageMeters";
 import { SettingsDialog } from "./SettingsDialog";
 import { onSettingsHistory, recordSettings } from "./herdr/settingsHistory.ts";
-import { useInstallPrompt } from "./herdr/install";
 import { currentSidebarShared, useKeepScreenOn } from "./settings";
 import { useScreenWakeLock } from "./herdr/wakeLock.ts";
 import { justWoke, raiseAlert, unableSince, useAlerts, useAlertSoundUnlock } from "./alerts";
@@ -52,6 +51,7 @@ import { passingFolder, recentDirectories } from "./herdr/recent-directories.ts"
 import { useMediaQuery } from "./herdr/useMediaQuery.ts";
 import { watchDrawerSwipe } from "./herdr/edgeSwipe.ts";
 import { DrawerContext, DrawerToggle, HeadContext, HeadMore, HeadNote } from "./drawer";
+import { highMachines, HIGH_STAT } from "./machineStats";
 
 type Auth = { state: "loading" } | { state: "pair" } | { state: "in"; role: DeviceRole; device: string } | { state: "error"; msg: string };
 
@@ -916,6 +916,7 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
       count: panes.filter((p) => p.connection === "connected" && p.role !== "evaluator" && paneAgentStatus(p) === "blocked" && agentOf(p, threadOfPane.get(p.id)) !== null).length,
       label: "답을 기다림",
     },
+    machines: { count: highMachines(machines), label: `CPU·MEM ${HIGH_STAT}% 넘음` },
   };
   // 넓은 창에서 접었으면 사이드바 칸이 없다(좁은 창은 drawer라 늘 칸이 있다)
   const sidebarShown = !wideScreen || !collapsed;
@@ -1332,33 +1333,11 @@ function SettingsGear({
   );
 }
 
-/** 사이드바 바닥 줄(모든 패널 공통): 홈 화면에 설치(PWA)와 구독 사용량. 설치 단추는 설치 전엔 늘 보인다(참고 MachineSidebar).
- * 설정·보고서는 활동 막대에, 알림은 머리 「더 보기」 메뉴에, 입력 기록(실기 키보드 진단)은 설정 「진단」에 있다 */
+/** 사이드바 바닥 줄(모든 패널 공통): 구독 사용량, 오른쪽 끝에 붙는다(사용자 요청 10-19 「사용량은 오른쪽으로 붙여」).
+ * 설정·보고서는 활동 막대에, 앱 설치(PWA)는 설정 「폰 및 기기」에, 알림은 머리 「더 보기」 메뉴에, 입력 기록(실기 키보드 진단)은 설정 「진단」에 있다 */
 function ListFoot() {
-  const { canInstall, installed, install, help } = useInstallPrompt();
-  const [installHelpOpen, setInstallHelpOpen] = useState(false);
   return (
     <div className="list-foot">
-      {/* 참고 MachineSidebar 41~43줄: 설치 신호가 없는 브라우저(iOS, HTTP)는 누르면 방법을 펼친다(문구는 참고 i18n.ko.ts) */}
-      {!installed && (
-        <button
-          className="ghost"
-          data-testid="install-app"
-          aria-expanded={canInstall ? undefined : installHelpOpen}
-          onClick={() => {
-            if (canInstall) void install();
-            else setInstallHelpOpen(!installHelpOpen);
-          }}
-        >
-          <Icon name="download" />
-          앱 설치
-        </button>
-      )}
-      {!installed && !canInstall && installHelpOpen && (
-        <p className="foot-msg" role="status" data-testid="install-help">
-          {help}
-        </p>
-      )}
       {/* 구독 사용량(herdr-web-ui MachineSidebar sidebar-footer-row. 그 옆 설정은 활동 막대 톱니로 옮겼다) */}
       <div className="foot-row">
         <UsageMeters />
