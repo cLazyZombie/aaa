@@ -186,7 +186,11 @@ pub(crate) fn alert_text(place: &Place, items: &[InboxItem], titles: &HashMap<St
                 None => AlertText {
                     title: project.clone(),
                     lines: lines(true),
-                    url: "/".into(),
+                    url: if items.iter().all(|i| i.item_kind == "post" && i.subject == "coordinator") {
+                        format!("/#project={}", crate::push::url_escape(project))
+                    } else {
+                        "/".into()
+                    },
                     tag: format!("aaa-{project}"),
                 },
             }

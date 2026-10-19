@@ -126,6 +126,13 @@ impl Host {
 
     /// thread의 새 보고(host 「new report」 항목과 같은 때, herdr-projects steps.rs 244 「review · new report」)
     pub(crate) fn report_notice(&self, project: &str, r: &ThreadRec) {
+        // 표지는 작업 중에도 올 수 있다. 그 턴이 나중에 끝나도 같은 결과를 Finished로 한 번 더 알리지 않는다.
+        if let Some(pane) = r.pane.as_deref()
+            && let Some(p) = self.inner.lock().unwrap().panes.get_mut(pane)
+            && in_turn(p.alert)
+        {
+            p.turn_reported = true;
+        }
         self.send_notice(NoticeView {
             kind: NoticeKind::Report,
             pane: r.pane.clone(),

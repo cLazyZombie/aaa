@@ -312,7 +312,7 @@ impl Host {
             id: format!("{}-post-{id}", util::utc_compact(now)),
             project: project.into(),
             item_kind: "post".into(),
-            subject: who.clone(),
+            subject: if env.input.to == "user" { "coordinator".into() } else { who.clone() },
             event: if env.input.needs_user {
                 "post request for user".into()
             } else if env.input.to == "user" {
@@ -546,6 +546,10 @@ mod tests {
         assert_eq!(items.len(), 1);
         assert!(items[0].seen, "coordinator가 자기 요청으로 다시 nudge되지 않는다");
         assert_eq!(items[0].event, "post request for user");
+        let alert =
+            crate::notify::alert_text(&crate::notify::Place::Project("demo".into()), &items, &Default::default());
+        assert_eq!(alert.url, "/#project=demo");
+        assert_eq!(alert.lines, ["coordinator 사용자 결정 요청"]);
         assert!(crate::notify::pushes(&h.cfg.notify.item_kinds(), &items[0]));
         let mut done = input(92);
         done.to = "user".into();

@@ -218,6 +218,8 @@ struct PaneRt {
     agent: Option<aaa_proto::AgentStatus>,
     /// 지금 턴이 시작된 때(작업·질문으로 들어선 harness 시각, notice.rs `turn_from`). 턴 밖이거나 시작을 못 봤으면 None
     turn_from: Option<u64>,
+    /// 이 턴에서 완료·사람 필요 보고를 이미 알렸으면 턴 끝남 카드를 중복하지 않는다.
+    turn_reported: bool,
     /// 알림이 마지막으로 본 상태(notice.rs `alert_activity`: BG로 기다리는 쉼은 작업 중). 턴의 시작·끝은 이것이 바뀔 때다
     alert: Option<aaa_proto::AgentActivity>,
     /// 지금 막힘(harness 상태 질문)에서 질문에 답했다. 상태가 질문에서 넘어가면 지운다: 늦게 온 질문 사건이 답한 질문을
@@ -698,6 +700,7 @@ impl Host {
                     lease: None,
                     agent: None,
                     turn_from: None,
+                    turn_reported: false,
                     alert: None,
                     transcript: None,
                     answered: false,
@@ -855,6 +858,7 @@ impl Host {
                 lease: None,
                 agent: None,
                 turn_from: None,
+                turn_reported: false,
                 alert: None,
                 transcript: None,
                 answered: false,

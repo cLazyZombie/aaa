@@ -254,6 +254,7 @@ impl Host {
                 self.bgwait.lock().unwrap().forget(&ev.session);
                 p.agent = None;
                 p.turn_from = None;
+                p.turn_reported = false;
                 p.alert = None;
                 p.answered = false;
                 p.transcript = None;
@@ -380,7 +381,10 @@ impl Host {
                 now_alert
             };
             if was_alert != Some(now_alert) {
-                if crate::notice::finished(was_alert, now_alert, st.seen) {
+                if !crate::notice::in_turn(was_alert) && crate::notice::in_turn(Some(now_alert)) {
+                    p.turn_reported = false;
+                }
+                if !p.turn_reported && crate::notice::finished(was_alert, now_alert, st.seen) {
                     let turn_ms = p.turn_from.map(|from| ev.at_ms.saturating_sub(from));
                     finished = Some(crate::notice::finish_notice(&ev.session, p, &st, turn_ms));
                 }

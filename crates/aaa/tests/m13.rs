@@ -2335,8 +2335,8 @@ fn turn_end_notices_follow_reports() {
     let (i2, n2) = notice(&mut ev, i1 + 1, "새 보고");
     assert_eq!(n2.kind, NoticeKind::Report, "같은 턴의 끝남이 새 보고보다 먼저 왔다: {n2:?}");
     assert_eq!((n2.thread.as_deref(), n2.title.as_str()), (Some(id.as_str()), "알림"));
-    let shown = w.show(&id);
-    assert_eq!(shown["group"], "ready_for_review", "{shown}");
+    // 표지 알림은 묶음과 별개다. 보고 파일이 먼저 오면 아직 작업 중일 수 있으므로 실제 턴 끝 사건을 기다린다.
+    w.wait_show("Done 턴의 검토 대기", &id, |t| t["group"] == "ready_for_review");
 
     // 알림은 inbox 항목을 만들지 않는다(push·webhook은 inbox 항목에서만 나간다, notify.rs): 3)의 끝남 앞뒤로 항목이 같다
     let items = |w: &World| w.h.ok(&["inbox", "list", "demo", "--all", "--peek"])["items"].clone();
