@@ -12,6 +12,7 @@ mod caller;
 mod chatwatch;
 mod colors;
 mod coord;
+mod ctrl_enter;
 pub mod db;
 mod deploy;
 mod evaluator;
@@ -1583,6 +1584,15 @@ impl Host {
                 )
                 .await
                 .map(|_| FrontResponse::Done)
+            }
+            FrontRequest::PaneCtrlEnter { pane } => {
+                let f = front.ok_or_else(|| err(ErrorCode::BadRequest, "대화형 front 연결에서만 쓴다"))?;
+                let (id, mid) = self.resolve_pane(&pane)?;
+                self.check_running(&id)?;
+                let conn = self.live_conn(&mid)?;
+                self.lease_use(&id, f);
+                let data = aaa_proto::B64(self.ctrl_enter_data(&id));
+                conn.request(AgentRequest::Input { session: id, data }).await.map(|_| FrontResponse::Done)
             }
             // herdr 서버가 client의 붙여넣기를 그 pane 모드대로 다시 감싸는 것과 같다(`KeyModes::paste`: 켰으면 감싸고 ESC는 뺀다)
             FrontRequest::PanePaste { pane, text } => {

@@ -238,3 +238,7 @@ m13 `coordinator_deployment_is_gated_and_survives_backend_restarts`는 별도 �
   공식 ci-local test 단계에 포함되어 있으며 OS 프로세스·clipboard·신호를 쓰지 않는다.
 
 - `cargo test --locked -p aaa-tui keyboard_cleanup_precedes_panic_restore`는 자식 시험 프로세스에 panic hook을 격리해 keyboard pop이 화면 복원보다 먼저 한 번만 실행되는지 본다. 위 PTY 시험은 main/alternate 키 스택을 따로 유지하고 원래 main 모드가 보존되는지도 본다.
+
+### Ctrl+Enter 공통 판정
+
+`aaa-host/src/ctrl_enter.rs`의 유닛 시험이 입력 상자 스타일과 현재 steering 패널을 판정한다. `web/e2e/specs/25-ctrl-enter.mjs`는 실제 host·agent·PTY로 전달된 bytes를 출력 사건으로 확인하며 웹 물리 키·모바일 키 막대·입력줄·IME·반복 키의 연결을 본다. 셸 등 일반 프로그램의 키보드 모드는 기존 `03-keys.mjs`가 소유한다. TUI도 `FrontRequest::PaneCtrlEnter`를 사용해 같은 host 판정을 거친다.

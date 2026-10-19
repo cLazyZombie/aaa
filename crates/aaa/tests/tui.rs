@@ -991,22 +991,23 @@ fn herdr_keys_and_modes() {
 }
 
 /// crossterm 파서 → TUI → host → agent → PTY의 실제 bytes. Ctrl/Shift+Enter는
-/// kitty CSI u와 xterm modifyOtherKeys 어느 쪽으로 와도 Ctrl+J(LF), 보통 Enter는 CR이다.
+/// kitty CSI u·modifyOtherKeys 모두 Ctrl은 공통 host 판정(모르면 Alt+Enter), Shift는 LF, 보통 Enter는 CR이다.
 #[test]
-fn modified_enter_inserts_newline() {
+fn modified_enter_uses_agent_newline() {
     let mut lab = Lab::new();
     let (h, mut hw) = start(&mut lab);
-    let probe = lab.root.join("keys.py");
+    let probe = lab.root.join("claude");
     std::fs::write(
         &probe,
-        r#"import os, termios, tty
+        r#"#!/usr/bin/env python3
+import os, termios, tty
 saved = termios.tcgetattr(0)
 try:
     tty.setraw(0)
     print('key-probe-ready', flush=True)
     data = b''
-    while len(data) < 9:
-        data += os.read(0, 9 - len(data))
+    while len(data) < 11:
+        data += os.read(0, 11 - len(data))
 finally:
     termios.tcsetattr(0, termios.TCSANOW, saved)
 print('key-bytes:' + data.hex(), flush=True)
@@ -1014,15 +1015,16 @@ input()
 "#,
     )
     .unwrap();
-    let w =
-        h.ok(&["tab", "create", "--machine", "labA", "--label", "newline", "--", "python3", probe.to_str().unwrap()]);
+    use std::os::unix::fs::PermissionsExt;
+    std::fs::set_permissions(&probe, std::fs::Permissions::from_mode(0o755)).unwrap();
+    let w = h.ok(&["tab", "create", "--machine", "labA", "--label", "newline", "--", probe.to_str().unwrap()]);
     let pane = leaves(&w)[0].clone();
     let mut tui = Tui::start(&h);
     hw.wait("TUI 크기", |w| w.held_by(&pane, "tui@").then_some(()));
     tui.wait_text("키 수신 준비", |s| s.contains("key-probe-ready"));
     tui.send(b"a\x1b[13;5ub\x1b[13;2uc\x1b[27;5;13~d\x1b[27;2;13~\r");
     tui.wait_text("PTY가 받은 키", |s| s.contains("key-bytes:"));
-    assert!(tui.text().contains("key-bytes:610a620a630a640a0d"), "{}", tui.text());
+    assert!(tui.text().contains("key-bytes:611b0d620a631b0d640a0d"), "{}", tui.text());
     if let Some(path) = std::env::var_os("AAA_TUI_NEWLINE_DUMP") {
         std::fs::write(path, tui.text()).unwrap();
     }
