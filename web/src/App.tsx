@@ -38,7 +38,6 @@ import type { AppActions, PaneControls } from "./actions";
 import { UsageMeters } from "./UsageMeters";
 import { SettingsDialog } from "./SettingsDialog";
 import { onSettingsHistory, recordSettings } from "./herdr/settingsHistory.ts";
-import { useInstallPrompt } from "./herdr/install";
 import { currentSidebarShared, useKeepScreenOn } from "./settings";
 import { useScreenWakeLock } from "./herdr/wakeLock.ts";
 import { justWoke, raiseAlert, unableSince, useAlerts, useAlertSoundUnlock } from "./alerts";
@@ -416,7 +415,7 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
   };
 
   // 이 기기의 알림(plan §8.70): host가 알리는 종류(`notify.kinds`의 `thread-state`)에만 띄운다. 질문이 열리면 바로
-  // 「입력 필요」(host push는 30초 넘게 뜬 확인창만 보낸다), thread가 검토 대기가 된 새 보고는 「작업 완료」(host 「new report」
+  // 「입력 필요」, thread가 검토 대기가 된 새 보고는 「작업 완료」(외부 푸시는 coordinator 사용자 post만, host 「new report」
   // 항목과 같은 규칙: 검토 대기일 때 보고 hash당 한 번, 작업 중에 고쳐 쓴 보고는 아니다, plan §8.85).
   // 연결할 때 읽은 목록(처음 본 것)은 새 소식이 아니다.
   const alertKinds = useRef<Set<string> | null>(null);
@@ -1334,33 +1333,11 @@ function SettingsGear({
   );
 }
 
-/** 사이드바 바닥 줄(모든 패널 공통): 홈 화면에 설치(PWA)와 구독 사용량. 설치 단추는 설치 전엔 늘 보인다(참고 MachineSidebar).
- * 설정·보고서는 활동 막대에, 알림은 머리 「더 보기」 메뉴에, 입력 기록(실기 키보드 진단)은 설정 「진단」에 있다 */
+/** 사이드바 바닥 줄(모든 패널 공통): 구독 사용량, 오른쪽 끝에 붙는다(사용자 요청 10-19 「사용량은 오른쪽으로 붙여」).
+ * 설정·보고서는 활동 막대에, 앱 설치(PWA)는 설정 「폰 및 기기」에, 알림은 머리 「더 보기」 메뉴에, 입력 기록(실기 키보드 진단)은 설정 「진단」에 있다 */
 function ListFoot() {
-  const { canInstall, installed, install, help } = useInstallPrompt();
-  const [installHelpOpen, setInstallHelpOpen] = useState(false);
   return (
     <div className="list-foot">
-      {/* 참고 MachineSidebar 41~43줄: 설치 신호가 없는 브라우저(iOS, HTTP)는 누르면 방법을 펼친다(문구는 참고 i18n.ko.ts) */}
-      {!installed && (
-        <button
-          className="ghost"
-          data-testid="install-app"
-          aria-expanded={canInstall ? undefined : installHelpOpen}
-          onClick={() => {
-            if (canInstall) void install();
-            else setInstallHelpOpen(!installHelpOpen);
-          }}
-        >
-          <Icon name="download" />
-          앱 설치
-        </button>
-      )}
-      {!installed && !canInstall && installHelpOpen && (
-        <p className="foot-msg" role="status" data-testid="install-help">
-          {help}
-        </p>
-      )}
       {/* 구독 사용량(herdr-web-ui MachineSidebar sidebar-footer-row. 그 옆 설정은 활동 막대 톱니로 옮겼다) */}
       <div className="foot-row">
         <UsageMeters />

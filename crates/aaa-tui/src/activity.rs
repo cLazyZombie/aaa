@@ -319,9 +319,8 @@ impl App {
             (if compact_height { 2 } else { 3 }, "P", project_count),
             (if compact_height { 3 } else { 5 }, "M", 0),
             (if compact_height { 4 } else { 7 }, "A", agent_count),
-            (r.h.saturating_sub(3), "R", 0),
+            (if compact_height { 5 } else { 9 }, "R", 0),
             (r.h.saturating_sub(1), "⚙", 0),
-            (9, "S", self.special_items().len()),
         ];
         if compact && bar.w == WIDTH {
             for y in bar.y..bar.y + bar.h {
@@ -330,7 +329,7 @@ impl App {
         }
         let mut hits = self.hits.borrow_mut();
         for (at, (dy, label, count)) in controls.into_iter().enumerate() {
-            if dy >= r.h || (at >= 3 && dy <= if compact_height { 4 } else { 7 }) || (at == 5 && r.h < 14) {
+            if dy >= r.h || (at == 4 && dy <= if compact_height { 5 } else { 9 }) {
                 continue;
             }
             let y = r.y + dy;

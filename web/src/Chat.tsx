@@ -11,7 +11,7 @@
 // 마크다운/일반 텍스트 복사(`CopyButton`, 마우스면 올렸을 때). 참고와 다른 곳: 기록에 시각이 없어 시각은 없고, 접힘은 이 화면 안에서만 기억한다.
 // 문구는 참고 i18n.ko.ts.
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { Check, ChevronDown, ChevronRight, Copy } from "lucide-react";
+import { Check, ChevronDown, ChevronRight, Clock, Copy, TriangleAlert } from "lucide-react";
 import { ApiError, call, watchChat } from "./api";
 import type { ChatMessage, ChatView } from "./gen/proto";
 import { useChatShared } from "./settings";
@@ -22,6 +22,7 @@ import { OpenFileContext } from "./herdr/filePaths.ts";
 import { copyText } from "./herdr/clipboard.ts";
 import { shouldFoldUserMessage } from "./herdr/userMessageFold.ts";
 import { ConversationRefresh } from "./herdr/conversationRefresh.ts";
+import type { PendingSend } from "./ChatComposer";
 
 /** 참고 `ThinkingRow`: 「생각」 머리만 보이고 누르면 펼친다 */
 function ThinkingRow({ text }: { text: string }) {
@@ -90,7 +91,7 @@ function useCopyResult() {
 }
 
 /** 참고 `UserMessage`: 긴 말은 몇 줄만 보이고 「전체 메시지 보기」로 펼친다. 잘린 곳은 흐리게 */
-function UserMessage({ text }: { text: string }) {
+function UserMessage({ text, pending = false }: { text: string; pending?: boolean }) {
   const canFold = useMemo(() => shouldFoldUserMessage(text), [text]);
   const [open, setOpen] = useState(false);
   const capped = canFold && !open;
@@ -123,7 +124,7 @@ function UserMessage({ text }: { text: string }) {
     if (node && view && node.getBoundingClientRect().top < view.getBoundingClientRect().top) node.scrollIntoView({ block: "start" });
   }, [open]);
   return (
-    <div ref={card} className={`chat-msg user chat-bubble${capped ? " is-capped" : ""}${clipped ? " is-folded" : ""}`} data-role="user">
+    <div ref={card} className={`chat-msg user chat-bubble${capped ? " is-capped" : ""}${clipped ? " is-folded" : ""}${pending ? " is-pending" : ""}`} data-role="user">
       <div ref={body} className="chat-bubble-body">
         <Markdown>{text}</Markdown>
       </div>
@@ -138,18 +139,37 @@ function UserMessage({ text }: { text: string }) {
   );
 }
 
+/** 대기 말(작업 중에 보내 harness 대기열에 있는 글, plan §8.247)의 밑줄: 언제 읽히는지, 기록에 없으면 터미널을 보라고 */
+interface Pending {
+  harness: "claude" | "codex";
+  stale?: boolean;
+  onDismiss?: () => void;
+}
+
+function PendingTag({ harness, stale, onDismiss }: Pending) {
+  return (
+    <div className={`chat-pending-tag${stale ? " is-stale" : ""}`} data-testid="chat-pending" data-stale={stale || undefined}>
+      {stale ? <TriangleAlert aria-hidden="true" /> : <Clock aria-hidden="true" />}
+      <span>{stale ? "대화 기록에 없습니다 · 터미널 입력창을 확인하세요"
+        : harness === "codex" ? "대기 중 · 다음 도구 호출 뒤 Codex가 읽습니다" : "대기 중 · Claude가 하던 일 사이에 읽습니다"}</span>
+      {stale && onDismiss && <button type="button" className="chat-pending-dismiss" onClick={onDismiss}>지우기</button>}
+    </div>
+  );
+}
+
 /** 사람 말: 카드와 그 복사(마우스면 카드 옆, 터치면 아래) */
-function UserTurn({ text, pane, onOpenFile }: { text: string; pane: string; onOpenFile?: (path: string) => void }) {
+function UserTurn({ text, pane, onOpenFile, pending }: { text: string; pane: string; onOpenFile?: (path: string) => void; pending?: Pending }) {
   const { note, onResult } = useCopyResult();
   return (
     <article className="chat-turn chat-turn-user">
       {onOpenFile && <UserImages pane={pane} text={text} onOpenFile={onOpenFile} />}
       <div className="chat-user-row">
-        <UserMessage text={text} />
+        <UserMessage text={text} pending={pending !== undefined} />
         <div className="chat-turn-meta">
           <CopyButton text={text} label="메시지 복사" onResult={onResult} />
         </div>
       </div>
+      {pending && <PendingTag {...pending} />}
       {note}
     </article>
   );
@@ -213,6 +233,9 @@ export function ChatPanel({
   readNow = 0,
   onOpenFile,
   onMessages,
+  pending = [],
+  harness = "claude",
+  onDismissPending,
 }: {
   pane: string;
   status?: AgentStatus;
@@ -220,6 +243,10 @@ export function ChatPanel({
   /** 글 속 파일 경로를 연다(조작 기기만) */
   onOpenFile?: (path: string) => void;
   onMessages?: (messages: ChatMessage[]) => void;
+  /** 이 화면이 작업 중에 보내 아직 기록에 없는 글(ChatComposer): 기록 끝에 대기 말로 */
+  pending?: PendingSend[];
+  harness?: "claude" | "codex";
+  onDismissPending?: (id: number) => void;
 }) {
   const [chat, setChat] = useState<ChatView | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -270,11 +297,33 @@ export function ChatPanel({
     refresh.refresh();
   }, [pane, showThinking, pollKey, readNow, refresh]);
 
-  // 맨 아래를 보고 있었으면 새 줄이 오면 따라 내려간다
-  useEffect(() => {
+  // 맨 아래를 보고 있었으면 새 줄이 오면 따라 내려간다(그리기 전에, 참고 herdr-web-ui ChatView.tsx useLayoutEffect)
+  useLayoutEffect(() => {
     const el = list.current;
     if (el && atBottom.current) el.scrollTop = el.scrollHeight;
-  }, [chat]);
+  }, [chat, pending]);
+  // 입력창이 커지거나(여러 줄·보내기 상태·알림) 키보드가 오르거나 창이 좁아지면 보기가 굴림 사건 없이 줄어든다. 폭·글자가 바뀌어
+  // 대화가 다시 접혀도 그렇다. 맨 아래를 보던 사람은 바로 맨 아래에 남는다. 높이만 는 것(접힌 말 펼침)은 손이 한 일이라 따라가지 않는다
+  // (참고 herdr-web-ui `aa624cb` ChatView.tsx ResizeObserver, plan §8.250)
+  useEffect(() => {
+    const el = list.current;
+    if (el === null) return;
+    let lane = "";
+    const observer = new ResizeObserver((entries) => {
+      let follow = false;
+      for (const entry of entries) {
+        if (entry.target === el) { follow = true; continue; }
+        const style = getComputedStyle(entry.target);
+        const next = `${entry.contentRect.width}|${style.fontSize}|${style.fontFamily}`;
+        if (next !== lane) { lane = next; follow = true; }
+      }
+      if (follow && atBottom.current) el.scrollTop = el.scrollHeight;
+    });
+    observer.observe(el);
+    if (el.firstElementChild !== null) observer.observe(el.firstElementChild);
+    return () => observer.disconnect();
+  }, []);
+  const lastScrollTop = useRef(0);
 
   return (
     <OpenFileContext.Provider value={onOpenFile ?? null}>
@@ -284,8 +333,11 @@ export function ChatPanel({
         data-testid="chat"
         data-pushes={pushes}
         onScroll={(e) => {
+          // 위로 굴린 손만 따라가기를 끈다: 아래로 가는 자동 굴림은 다음 잰 높이보다 먼저 올 수 있다(참고 ChatView.tsx onScroll)
           const el = e.currentTarget;
-          atBottom.current = el.scrollHeight - el.scrollTop - el.clientHeight < 40;
+          const scrollingUp = el.scrollTop < lastScrollTop.current;
+          lastScrollTop.current = el.scrollTop;
+          if (!atBottom.current || scrollingUp) atBottom.current = el.scrollHeight - el.scrollTop - el.clientHeight <= 48;
         }}
       >
         <div className="chat-transcript">
@@ -298,7 +350,7 @@ export function ChatPanel({
             m.role === "thinking" ? (
               <ThinkingRow key={i} text={m.text} />
             ) : m.role === "user" ? (
-              <UserTurn key={i} text={m.text} pane={pane} onOpenFile={onOpenFile} />
+              <UserTurn key={i} text={m.text} pane={pane} onOpenFile={onOpenFile} pending={m.pending ? { harness } : undefined} />
             ) : m.role === "assistant" ? (
               <AgentTurn key={i} text={m.text} />
             ) : (
@@ -307,7 +359,11 @@ export function ChatPanel({
               </div>
             ),
           )}
-          {chat && chat.messages.length === 0 && !error && <p className="chat-note">아직 대화가 없다.</p>}
+          {pending.map((p) => (
+            <UserTurn key={`pending-${p.id}`} text={p.text} pane={pane} onOpenFile={onOpenFile}
+              pending={{ harness, stale: p.stale, onDismiss: onDismissPending && (() => onDismissPending(p.id)) }} />
+          ))}
+          {chat && chat.messages.length === 0 && pending.length === 0 && !error && <p className="chat-note">아직 대화가 없다.</p>}
         </div>
       </div>
     </OpenFileContext.Provider>

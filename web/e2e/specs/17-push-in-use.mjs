@@ -6,7 +6,7 @@ import fs from "node:fs";
 import http from "node:http";
 import {
   root, aaa, until, pairPage, pushes, pushDevice, nextPush, pushKey, base, step, browser, openSettings, waitOutput, setInUse, inList,
-  pushInUse, pushWho, pushLab,
+  pushInUse, pushWho, pushLab, coordinatorPost,
 } from "../lib/harness.mjs";
 
 // 알림 묶음 100ms(실험실 설정 1초, notify.rs debounce): push 판정마다 1초를 기다렸다. 설정 1초 길은 12가 돈다
@@ -85,16 +85,18 @@ export default async function ({ page }) {
     await until("다시 열 때 다시 등록", () => bellPush());
     if ((await pp.evaluate(() => window.__pushLog.join(","))) !== "") throw new Error(`다시 등록이 구독을 바꿨다: ${await pp.evaluate(() => window.__pushLog.join(","))}`);
     await until("휴대폰을 봄", async () => (await pushInUse(page)) === 1);
-    const work = (title) => {
+    const work = async (title) => {
       fs.writeFileSync(`${root}/task-${title}.md`, title);
       const t = aaa("thread", "start", "demo", "--title", title, "--machine", "labA", "--profile", "fake", "--kind", "dir", "--task-file", `${root}/task-${title}.md`);
       const hash = until(`${title} 보고`, () => aaa("thread", "show", "demo", t.id).report_hash);
+      await hash;
+      await coordinatorPost();
       return { t, hash };
     };
     const seen = (hash) => until("보고 사건 받음", () => pp.evaluate((h) => window.__pushLog.includes(`thr ${h.slice(0, 6)}`), hash));
     // (2) 보는 동안: host는 보내지 않고(push_skipped) 이 화면에 앱 안 알림이 하나 내려온다
     const skippedBefore = aaa("events", "demo").events.filter((e) => e.kind === "push_skipped").length;
-    const a = work("휴대폰으로 보는 중");
+    const a = await work("휴대폰으로 보는 중");
     await seen(await a.hash);
     await until("보내지 않음 기록", () => aaa("events", "demo").events.filter((e) => e.kind === "push_skipped").length > skippedBefore);
     await until("보는 동안 앱 안 알림", async () => (await pp.locator(".droplet-title").allInnerTexts()).includes("휴대폰으로 보는 중"));
@@ -110,9 +112,9 @@ export default async function ({ page }) {
       document.dispatchEvent(new Event("visibilitychange"));
     });
     await until("가려진 휴대폰", async () => (await pushInUse(page)) === 0);
-    const b = work("휴대폰을 닫은 동안");
+    const b = await work("휴대폰을 닫은 동안");
     const { msg } = await nextPush(dev, start, "가려진 동안 push");
-    if (msg.title !== "demo · 휴대폰을 닫은 동안" || msg.tag !== `aaa-demo/${b.t.id}`) throw new Error(JSON.stringify(msg));
+    if (msg.title !== "demo" || msg.tag !== "aaa-demo" || msg.body !== "coordinator 맡긴 일 완료") throw new Error(JSON.stringify(msg));
     await seen(await b.hash);
     await pp.evaluate(() => new Promise((r) => setTimeout(r)));
     if ((await pp.locator(".droplet").count()) !== 0) throw new Error("가려진 동안 앱 안 알림이 내려왔다");
@@ -169,15 +171,18 @@ export default async function ({ page }) {
     const skips = () => aaa("events", "demo").events.filter((e) => e.kind === "push_skipped");
     const devicePushes = (from) => pushes.slice(from).filter((x) => !x.path.startsWith("/gone/"));
     let n = 0;
-    const work = (title) => {
+    const work = async (title) => {
       fs.writeFileSync(`${root}/task-dead-${++n}.md`, title);
-      return aaa("thread", "start", "demo", "--title", title, "--machine", "labA", "--profile", "fake", "--kind", "dir", "--task-file", `${root}/task-dead-${n}.md`);
+      const t = aaa("thread", "start", "demo", "--title", title, "--machine", "labA", "--profile", "fake", "--kind", "dir", "--task-file", `${root}/task-dead-${n}.md`);
+      await until(`${title} 보고`, () => aaa("thread", "show", "demo", t.id).report_hash);
+      await coordinatorPost();
+      return t;
     };
     const ts = [];
     // (1) A(본 화면)가 쓰는 동안: 어느 기기에도 push가 없고(참고 inUse는 모든 기기), 보이기만 하는 B에는 앱 안 알림이 내려온다
     let from = pushes.length;
     let k = skips().length;
-    ts.push(work("두 기기 A 쓰는 중"));
+    ts.push(await work("두 기기 A 쓰는 중"));
     const s1 = await until("A 때문에 보내지 않음", () => skips().slice(k)[0]);
     if (!/^쓰는 기기 [0-9A-Za-z]{1,7} · 쓰는 화면 1개\(기기 [0-9A-Za-z]{1,7}\) · 항목 1개 · 근거: 쓰는 기기 /.test(s1.detail)) throw new Error(`push_skipped ${s1.detail}`);
     await until("보이기만 하는 B의 앱 안 알림", async () => (await bp.locator(".droplet-title").allInnerTexts()).includes("두 기기 A 쓰는 중"));
@@ -198,7 +203,7 @@ export default async function ({ page }) {
     await until("B만 쓰는 화면", async () => (await pushInUse(page)) === 1 && (await bp.evaluate(() => document.hasFocus())));
     await bp.evaluate(() => window.__freezeEvents());
     k = skips().length;
-    ts.push(work("죽은 연결 동안"));
+    ts.push(await work("죽은 연결 동안"));
     await until("죽은 B 때문에 보내지 않음", () => skips().slice(k)[0]);
     await until("B가 그 사건을 받지 못함", () => bp.evaluate(() => window.__evSock.some((e) => e.startsWith("dropped") && e.includes('"thread"'))));
     // 웹: 망이 바뀌거나(online) 다시 보이면 ping하고, 그 pong이 두 번 오지 않으면 끊고 바로 다시 붙는다
@@ -212,7 +217,7 @@ export default async function ({ page }) {
     await until("놓친 보고 알림 닫힘", async () => (await bp.locator(".droplet").count()) === 0);
     done();
     k = skips().length;
-    ts.push(work("다시 붙은 뒤"));
+    ts.push(await work("다시 붙은 뒤"));
     await until("다시 붙은 B의 앱 안 알림", async () => (await bp.locator(".droplet-title").allInnerTexts()).includes("다시 붙은 뒤"));
     await until("다시 붙은 B 때문에 보내지 않음", () => skips().slice(k)[0]);
     // 10초 넘게 가려졌다가 다시 보이면 묻지 않고 바로 새로 붙는다(t3code application-active-reconnect). 시계만 앞으로 돌린다
@@ -285,9 +290,11 @@ export default async function ({ page }) {
     const devicePushes = (from) => pushes.slice(from).filter((x) => !x.path.startsWith("/gone/"));
     const ts = [];
     let n = 0;
-    const work = (title) => {
+    const work = async (title) => {
       fs.writeFileSync(`${root}/task-user-${++n}.md`, title);
       ts.push(aaa("thread", "start", "demo", "--title", title, "--machine", "labA", "--profile", "fake", "--kind", "dir", "--task-file", `${root}/task-user-${n}.md`));
+      await until(`${title} 보고`, () => aaa("thread", "show", "demo", ts.at(-1).id).report_hash);
+      await coordinatorPost();
     };
     const done = () => {
       while (ts.length) aaa("thread", "resolve", "demo", ts.shift().id);
@@ -314,7 +321,7 @@ export default async function ({ page }) {
     let from = pushes.length;
     let k = skips().length;
     let m = sents().length;
-    work("쓰는 기기 B가 안 볼 때");
+    await work("쓰는 기기 B가 안 볼 때");
     await until("push 보냄", () => sents().length > m);
     if (skips().length !== k) throw new Error(`B가 안 보는데 건너뜀: ${JSON.stringify(skips().slice(k))}`);
     await until("기기 push", () => devicePushes(from).length >= 1);
@@ -327,7 +334,7 @@ export default async function ({ page }) {
     await until("B 쓰는 화면", async () => (await pushInUse(page)) === 2 && (await pushWho(bp)).you);
     from = pushes.length;
     k = skips().length;
-    work("쓰는 기기 B가 볼 때");
+    await work("쓰는 기기 B가 볼 때");
     const s2 = await until("B 때문에 건너뜀", () => skips().slice(k)[0]);
     const bId = (await pushWho(bp)).user;
     if (!s2.detail.startsWith(`쓰는 기기 ${bId} · 쓰는 화면 2개`)) throw new Error(`push_skipped ${s2.detail}(B ${bId})`);
@@ -344,7 +351,7 @@ export default async function ({ page }) {
     from = pushes.length;
     k = skips().length;
     m = sents().length;
-    work("쓰는 기기 B가 가려진 뒤");
+    await work("쓰는 기기 B가 가려진 뒤");
     await until("가려진 뒤 push 보냄", () => sents().length > m);
     if (skips().length !== k) throw new Error(`B가 가려졌는데 건너뜀: ${JSON.stringify(skips().slice(k))}`);
     await until("가려진 뒤 기기 push", () => devicePushes(from).length >= 1);
@@ -357,7 +364,7 @@ export default async function ({ page }) {
     await waitOutput("who", "a1");
     await until("A가 다시 쓰는 기기", () => pushWho(page).then((w) => w.you));
     k = skips().length;
-    work("쓰는 기기 A");
+    await work("쓰는 기기 A");
     const s3 = await until("A 때문에 건너뜀", () => skips().slice(k)[0]);
     const aId = (await pushWho(page)).user;
     // 기기 이름은 기기 ID(ULID)의 뒤 무작위 7자다: 앞 7자(시각)는 약 33초 안에 짝지은 두 기기가 같았다(t-0338 report
@@ -447,6 +454,7 @@ export default async function ({ page }) {
       ts.push(t);
       const hash = await until(`${title} 보고`, () => aaa("thread", "show", "demo", t.id).report_hash);
       await until(`${title} 보고 사건 받음`, () => pp.evaluate((h) => window.__pushLog.includes(`thr ${h.slice(0, 6)}`), hash));
+      await coordinatorPost();
       return t;
     };
     await doneSwitch(false);
@@ -472,9 +480,9 @@ export default async function ({ page }) {
     await doneSwitch(true);
     await hide(true);
     await until("다시 가려진 휴대폰", async () => (await pushInUse(page)) === 0);
-    const t = await work("완료 알림 다시 켬");
+    await work("완료 알림 다시 켬");
     const { msg } = await nextPush(dev, start, "다시 켠 뒤 push");
-    if (msg.tag !== `aaa-demo/${t.id}`) throw new Error(JSON.stringify(msg));
+    if (msg.tag !== "aaa-demo") throw new Error(JSON.stringify(msg));
     if (toDev(start).length !== 1) throw new Error(`이 기기에 push ${toDev(start).length}건`);
     if (phone.errors.length) throw new Error(`페이지 오류: ${phone.errors.join("; ")}`);
     await pp.context().close();

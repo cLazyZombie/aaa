@@ -49,7 +49,7 @@ macOS 기준 요약입니다. 순서·확인 기준은 [운영 설치 점검표]
   - 키 줄은 Esc·Tab·Ctrl·Alt·방향키 등입니다. 그림은 붙여 넣거나 끌어 놓습니다.
 - **크기와 입력(가져오기 없음)**: 보기 권한이 아니면 언제나 입력됩니다. PTY 크기는 「지금 쓰는 화면」이 정합니다. 입력하거나 터미널을 누르거나 창 focus를 얻은 화면이 자기 크기로 다시 겁니다. 탭이 1초 넘게 가려지면 놓습니다. 「화면에 맞추기」로 직접 맞출 수도 있습니다.
 - **대화**: Claude·Codex pane은 「대화」로 기록을 읽기 전용으로 봅니다. 휴대폰은 agent pane을 처음부터 대화로 엽니다(설정 → 채팅 「패널 기본 화면」). 「생각 표시」를 켜면 agent의 생각도 접힌 줄로 보입니다. 대화 아래 입력창에서 바로 보내고, 「대기 메시지 자동 전송」을 끄면 작업 중에 쓴 글은 「지금 보내기」까지 붙잡아 둡니다. 빠른 답장 칩도 켤 수 있습니다.
-- **알림 켜기**: 목록 아래 단추입니다. 질문·보고가 기기 알림(Web Push)으로 옵니다. iPhone은 홈 화면 앱(Safari 공유 → 홈 화면에 추가)에서만 켤 수 있습니다.
+- **알림 켜기**: 목록 아래 단추입니다. 기기 알림(Web Push)은 coordinator가 보낸 「확인 필요」·「전체 완료」 post만 받습니다. thread 질문·보고는 앱 안 알림으로 확인합니다. iPhone은 홈 화면 앱(Safari 공유 → 홈 화면에 추가)에서만 켤 수 있습니다.
 
 ### TUI(`aaa attach`)
 
@@ -101,7 +101,7 @@ host Mac 터미널에서 `aaa attach`(workspace 기본 `main`, 다른 것은 `-w
   prefix_jamo_keys = true                       # prefix 뒤 두벌식 자모(ㅊ)를 같은 자리 키(c)로 읽기
   prompt_new_tab_name = true                    # prefix c에서 이름 창을 띄우기
   confirm_close = true                          # 마지막 탭·마지막 pane을 닫을 때 묻기
-  sidebar_width = 36                            # 사이드바 폭(끌어 바꾼 폭은 host가 기억해 이 값보다 앞선다)
+  sidebar_width = 48                            # 사이드바 폭(끌어 바꾼 폭은 host가 기억해 이 값보다 앞선다)
   sidebar_min_width = 18                        # 끌어 바꿀 수 있는 폭의 아래·위 한도
   sidebar_max_width = 72
   sidebar_start_collapsed = false               # 접힌 채 시작
