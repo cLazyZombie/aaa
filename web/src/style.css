@@ -1072,8 +1072,8 @@ button.report-delete:hover:not(:disabled) { color: var(--danger-text); }
 .chat-user-image img, .chat-user-image > span { display: block; width: min(9rem, 38vw); height: 7rem; }
 .chat-user-image img { object-fit: cover; }
 .chat-user-image > span { white-space: normal; padding: var(--space-2); box-sizing: border-box; overflow-wrap: anywhere; font-size: var(--fs-xs); }
-/* 보내기 상태(plan §8.247, ChatComposer). 잠긴 글 칸은 글을 그대로 두고 흐리게(readOnly), 상태 문장은 참고 상태 줄 자리
-   (.composer-status[data-hint]), 둥근 단추 하나가 보내기·진행(.composer-send[aria-busy])·막혔을 때의 탈출구(Stop과 같은 원)를 맡는다 */
+/* 보내기 상태(plan §8.247·§8.292, ChatComposer). 잠긴 글 칸은 글을 그대로 두고 흐리게(readOnly), 상태 글은 그리지 않고(화면 읽기용
+   .visually-hidden), 둥근 단추 하나가 보내기·진행(.composer-send[aria-busy])·막혔을 때의 탈출구(Stop과 같은 원)를 맡는다 */
 .composer-surface.is-locked { background: color-mix(in srgb, var(--bg-elevated) 70%, var(--bg)); }
 .composer-surface.is-locked:focus-within { border-color: var(--border); }
 .composer-surface.is-locked > .composer-text { color: var(--text-dim); cursor: default; }
@@ -1122,9 +1122,6 @@ button.report-delete:hover:not(:disabled) { color: var(--danger-text); }
 @media (prefers-reduced-motion: reduce) {
   .composer-glow { display: none; }
 }
-.composer-status.is-send-state { justify-content: flex-end; gap: var(--space-2); white-space: normal; }
-.composer-status.is-send-state svg { width: 14px; height: 14px; flex: none; }
-.composer-status .is-strong { color: var(--text); font-weight: var(--fw-medium); }
 .composer-cancel { --composer-action-fill: var(--text-strong); color: var(--bg); }
 @media (hover: hover) { .composer-cancel:hover:not(:disabled) { --composer-action-fill: var(--status-blocked); } }
 .composer-send[aria-busy="true"]:disabled { opacity: 1; cursor: progress; }

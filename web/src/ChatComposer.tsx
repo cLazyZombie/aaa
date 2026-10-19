@@ -12,7 +12,9 @@
 // disabled는 focus를 잃어 휴대폰 자판이 닫힌다, 참고 Composer.tsx 1272~1274줄). 앞 글이 보내져야 다음 글을 쓴다(웹 대기열 없음).
 // 보내짐은 agent가 받은 기록 증거다: 대화 기록에 같은 새 사람 글(Claude는 작업 중이면 대기열 줄이 그것이다), 기록에 대기를 남기지
 // 않는 Codex가 작업 중이면 host의 전달(글+Enter)이다. 그때는 대화 끝에 대기 말로 남긴다. 둥근 단추는 도는 표시이고(t3code
-// `isSendBusy`), host가 3초 동안 전달을 확인하지 않을 때만 ×(탈출구)가 된다. 누르면 host가 멈춘 단계를 답한다: 보내지 않음·
+// `isSendBusy`), host가 3초 동안 전달을 확인하지 않을 때만 ×(탈출구)가 된다. 보내는 동안 입력창에 상태 글은 그리지 않는다(사용자
+// 10-20 「입력창에 다른 메세지 다 빼」, plan §8.292): 단계는 도는 단추·×·흐린 글 칸이 보이고, 글은 화면 읽기용으로만 둔다. 그래서
+// 한 줄 배치가 보내는 동안에도 그대로다(높이가 늘었다 줄지 않는다). ×를 누르면 host가 멈춘 단계를 답한다: 보내지 않음·
 // Enter 안 침·늦음. 답이 없으면 모름이다. 전달 뒤 10초 동안 증거가 없으면 경고판에서 사람이 잠금을 푼다.
 // Ctrl+Enter(사용자 10-19 15:3x, plan §8.239 후속)는 안내 없이 글을 steering으로 보낸다: 같은 보내기 길에 `steer`를 붙인다(`ctrlEnter`).
 // plan §8.266(t3code 참고): 작업 중이고 입력창이 비면 보내기 자리가 「중단」(Esc, 키 막대와 같은 길)이고, 빈 입력창의 ↑·↓는 이 대화
@@ -744,8 +746,8 @@ export function ChatComposer({
             </span>
           </div>
         )}
-        {/* 보내는 동안은 상태 문장이 단추 옆 줄에 서야 해서 늘 두 줄 배치다 */}
-        <div ref={surfaceRef} data-lines={flight ? "more" : lines} className={`composer-surface${coordinator ? " is-coordinator" : ""}${dragging ? " is-dragging" : ""}${locked ? " is-locked" : ""}`}
+        {/* 보내는 동안에도 글이 정한 배치 그대로다: 상태는 단추가 보이고 상태 글은 그리지 않는다(plan §8.292) */}
+        <div ref={surfaceRef} data-lines={lines} className={`composer-surface${coordinator ? " is-coordinator" : ""}${dragging ? " is-dragging" : ""}${locked ? " is-locked" : ""}`}
           onDragOver={(event) => {
             if (!event.dataTransfer.types.includes("Files")) return;
             event.preventDefault();
@@ -802,13 +804,14 @@ export function ChatComposer({
             <button type="button" className="icon-button" aria-label="그림 첨부" title="그림 첨부" disabled={!connected || uploading || locked}
               onPointerDown={(event) => event.preventDefault()} onClick={() => picker.current?.click()}><ImagePlus aria-hidden="true" /></button>
           </div>
+          {/* 화면 읽기용 단계 글(그리지 않는다, 배치 밖): 화면에는 단추(도는 표시·×)와 흐린 글 칸이 단계를 보인다 */}
           {flight && (
-            <div className="composer-status is-send-state" data-hint="" role="status" data-testid="chat-send-state" data-state={flight.phase}>
-              {flight.phase === "sending" ? <span><span className="is-strong">보내는 중</span> · 전달을 확인하는 중</span>
-                : flight.phase === "stuck" ? <span><span className="is-strong">전달 확인이 늦습니다</span> · ×로 멈추고 글 돌려받기</span>
-                : flight.phase === "stopping" ? <span><span className="is-strong">멈추는 중…</span></span>
-                : flight.phase === "sent" ? <span><span className="is-strong">전달됨</span> · 대화에 오르면 풀립니다 · 취소할 수 없음</span>
-                : <span><span className="is-strong">전달됨 · 10초 넘음</span> · 취소할 수 없음</span>}
+            <div className="visually-hidden" role="status" data-testid="chat-send-state" data-state={flight.phase}>
+              {flight.phase === "sending" ? "보내는 중 · 전달을 확인하는 중"
+                : flight.phase === "stuck" ? "전달 확인이 늦습니다 · ×로 멈추고 글 돌려받기"
+                : flight.phase === "stopping" ? "멈추는 중…"
+                : flight.phase === "sent" ? "전달됨 · 대화에 오르면 풀립니다 · 취소할 수 없음"
+                : "전달됨 · 10초 넘음 · 취소할 수 없음"}
             </div>
           )}
           <div className="composer-controls composer-controls-right">
