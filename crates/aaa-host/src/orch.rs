@@ -1349,6 +1349,15 @@ impl Host {
     ) -> Result<ThreadView, ErrorBody> {
         let dir = self.project_dir(&a.project)?;
         self.check_active(&a.project)?;
+        if let Some((machine, path)) = a.repo.as_deref().and_then(|r| r.split_once(':'))
+            && !machine.is_empty()
+            && !(machine.len() == 1 && machine.as_bytes()[0].is_ascii_alphabetic())
+            && machine.chars().all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.'))
+        {
+            return Err(bad(format!(
+                "--repo에는 머신:경로를 쓸 수 없다. `--machine {machine} --repo {path}`처럼 머신과 경로를 나눈다"
+            )));
+        }
         if a.title.trim().is_empty() {
             return Err(bad("제목이 비었다"));
         }
