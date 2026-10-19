@@ -5335,3 +5335,10 @@ primary 근거:
   `data-lines` 표지로 기다려 본다. 한 줄이면 단추와 글 칸 가운데가 1px 안이고 겹치지 않으며 글 칸이 굴러가지 않는다. 여러 줄이면 단추가 글 칸 밑이고
   높이가 그 줄 수(한도에서 멈춰 굴러감)다. 내내 focus가 글 칸에 있고 상자 아래끝이 같으며 표지는 입력마다 한 번만 바뀐다(`more,one,more,one`).
   고치기 전 빌드에서 세 기기 모두 한 줄 표지·단추 가운데·겹침·높이로 실패했다.
+
+### 8.216 Codex thread keys의 글·Enter 분리(10-19, t-0375)
+
+- **원인.** Ready인 Codex에 `thread keys --text … enter`가 글과 Enter를 연달아 넣어, Codex의 paste 판정 창 안에 Enter가 들어갔다. 기존 thread message는 이미 300ms를 띄웠다.
+- **수정.** 글 뒤 키가 있으면 현재 터미널 모드의 paste로 글을 보내고 간격 뒤 키를 쓴다. 글만 주는 명령·키만 주는 명령은 그대로다. 키 이름을 모두 먼저 확인해 잘못된 키 때문에 글만 남기지 않는다. 간격 중 새로 뜬 신뢰 창은 다시 확인해 Enter로 승인하지 않는다.
+- **참고와 차이.** herdr-projects `threads.rs keys`는 `agent_send_text` 다음 `agent_send_keys`, herdr `api/panes.rs handle_pane_send_input`은 바이트를 붙여 쓴다. 같은 문제가 생길 수 있어 herdr `api/agents.rs AGENT_PROMPT_SUBMIT_DELAY`·`encode_api_submission_parts`의 300ms·paste 분리를 따른다. aaa의 기존 thread message·웹 submit도 이 간격을 공유한다. t3code의 SDK turn 제출에는 PTY paste 판정 창이 없다.
+- **시험.** 실제 Agent link 경계와 Tokio 가상 시계로 paste 꺼짐/켜짐 모두 글·Enter 바이트, 300ms 이상 분리, 새 신뢰 창에서는 Enter 없음까지 본다. 수정 전 간격 0으로 실패했다. 신뢰 창 재검사를 없앤 변형도 실패했고 정본을 복원했다. 실제 시간을 자는 시험·재전송은 없다.
