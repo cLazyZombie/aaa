@@ -26,7 +26,7 @@ use crate::{Host, err};
 pub(crate) const COMMAND_TIMEOUT: Duration = Duration::from_secs(60);
 const OUTPUT_CAP_CHARS: usize = 4_000;
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub(crate) enum Schedule {
     /// 초
     Every(u64),
@@ -79,14 +79,19 @@ fn daily_at(local_day: i64, h: u32, m: u32, near_utc: i64, off: Offset) -> i64 {
 /// 지난 실행 뒤 지금 돌 차례인가.
 /// daily는 지금 이전의 가장 가까운 HH:MM이 지난 실행보다 뒤면 돌 차례다(여러 번 놓쳐도 한 번만 돈다).
 pub(crate) fn is_due(s: &Schedule, last_ms: u64, now_ms: u64, off: Offset) -> bool {
+    due_at(s, last_ms, now_ms, off).is_some()
+}
+
+/// 실제 poll 시각과 독립인 예정 차례. source cursor 저장 전 재시작해도 같은 key를 쓴다.
+fn due_at(s: &Schedule, last_ms: u64, now_ms: u64, off: Offset) -> Option<u64> {
     match s {
-        Schedule::Every(secs) => now_ms.saturating_sub(last_ms) >= secs * 1000,
+        Schedule::Every(secs) => last_ms.checked_add(secs.checked_mul(1000)?).filter(|at| *at <= now_ms),
         Schedule::Daily(h, m) => {
             let now = (now_ms / 1000) as i64;
             let day = (now + off(now)).div_euclid(86_400) * 86_400;
             let today = daily_at(day, *h, *m, now, off);
             let latest = if today <= now { today } else { daily_at(day - 86_400, *h, *m, now - 86_400, off) };
-            ((last_ms / 1000) as i64) < latest
+            (latest >= 0).then(|| latest as u64 * 1000).filter(|at| *at > last_ms)
         }
     }
 }
@@ -156,7 +161,7 @@ impl Default for Front {
 /// `pr` routine이 받는 PR 사건(herdr-projects `PR_EVENTS`)
 pub(crate) const PR_EVENTS: [&str; 4] = ["opened", "checks-failed", "review", "merged"];
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub(crate) enum Trigger {
     Thread(crate::automation::Threads),
     Schedule(Schedule),
@@ -166,7 +171,7 @@ pub(crate) enum Trigger {
     Git(GitTrigger),
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub(crate) struct CiTrigger {
     pub repo: String,
     pub branches: Vec<String>,
@@ -174,7 +179,7 @@ pub(crate) struct CiTrigger {
     pub events: Vec<String>,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub(crate) struct GitTrigger {
     pub repo: String,
     pub branches: Vec<String>,
@@ -510,6 +515,15 @@ impl Host {
                     error: None,
                     ..Default::default()
                 };
+                match self.automation_start_approval(project, r) {
+                    Ok(Some((sha, approved))) => {
+                        view.start_approval_sha256 = Some(sha);
+                        view.start_approved = Some(approved);
+                        view.start_scope = self.automation_start_scope_text(project, r).ok().flatten();
+                    }
+                    Err(e) => view.error = Some(e.message),
+                    _ => {}
+                }
                 match self.routine_history(project, &r.name) {
                     Ok(h) => h.fill(&mut view),
                     Err(e) => view.error = Some(e.message),
@@ -656,7 +670,12 @@ impl Host {
                 continue;
             }
             st.last_run_ms = Some(now);
-            let run_id = format!("schedule:{now}");
+            let planned = if matches!(r.action, crate::automation::Action::Start(_)) {
+                due_at(schedule, last, now, off).unwrap_or(now)
+            } else {
+                now
+            };
+            let run_id = format!("schedule:{planned}");
             if let Some(n) = &r.mission
                 && !self.mission_target_exists(project, n)
             {
@@ -672,7 +691,7 @@ impl Host {
                 continue;
             }
             if !coordinator
-                && !matches!(r.action, crate::automation::Action::Message(_))
+                && !matches!(r.action, crate::automation::Action::Message(_) | crate::automation::Action::Start(_))
                 && !r.mission.as_ref().is_some_and(|n| self.mission_target_exists(project, n))
             {
                 st.no_coordinator += 1;
@@ -682,19 +701,23 @@ impl Host {
             }
             st.no_coordinator = 0;
             if r.command.is_empty() {
-                let waiting = self
-                    .db
-                    .inbox_list(Some(project), false)
-                    .unwrap_or_default()
-                    .iter()
-                    .any(|i| i.item_kind == "routine" && i.subject == r.name);
+                let waiting = !matches!(r.action, crate::automation::Action::Start(_))
+                    && self
+                        .db
+                        .inbox_list(Some(project), false)
+                        .unwrap_or_default()
+                        .iter()
+                        .any(|i| i.item_kind == "routine" && i.subject == r.name);
                 if waiting {
                     st.skipped += 1;
                     self.record_routine(project, &r.name, &run_id, "skipped", "처리하지 않은 안내가 있음", None);
                 } else {
                     st.skipped = 0;
-                    if let Err(e) = self.automation_submit(project, &r, &run_id, String::new(), None) {
+                    if let Err(e) = self.automation_submit_at(project, &r, &run_id, String::new(), None, planned) {
                         self.record_routine(project, &r.name, &run_id, "failed", &e.message, None);
+                        if matches!(r.action, crate::automation::Action::Start(_)) {
+                            continue;
+                        }
                     }
                 }
                 self.save_routine_state(project, &r.name, &st);
@@ -841,6 +864,8 @@ mod tests {
         assert!(!is_due(&d, day, day + 10 * H, kst));
         // 여러 날 놓쳐도 한 번(지난 실행이 가장 가까운 09:00 뒤가 되면 끝)
         assert!(is_due(&d, day - 72 * H, day + H, kst));
+        assert_eq!(due_at(&d, day - 72 * H, day + H, kst), Some(day));
+        assert_eq!(due_at(&d, day + H, day + 2 * H, kst), None);
         assert!(!is_due(&d, day + H, day + 2 * H, kst));
         assert_eq!(next_run(&d, day, kst), day + 24 * H);
         assert_eq!(next_run(&d, day - H, kst), day);

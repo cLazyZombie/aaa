@@ -153,10 +153,37 @@ fn public_schema_artifacts_match_rust_types_and_exclusive_tables() {
     }
     let rule = schema();
     assert_eq!(rule["$defs"]["Condition"]["oneOf"].as_array().unwrap().len(), 6);
-    assert_eq!(rule["$defs"]["Action"]["oneOf"].as_array().unwrap().len(), 3);
+    assert_eq!(rule["$defs"]["Action"]["oneOf"].as_array().unwrap().len(), 4);
     assert_eq!(rule["$defs"]["Inbox"]["not"]["required"], serde_json::json!(["text", "text_file"]));
 }
 
 fn convert(root: &std::path::Path) -> Result<Vec<String>, String> {
     super::convert::apply(root, super::convert::prepare(root)?)
+}
+
+#[test]
+fn start_toml_captures_safe_brief_and_rejects_ambiguous_or_outside_files() {
+    let p = Project::new();
+    p.write("scratch/nightly.md", "대상 {machine}의 {repo_path}를 검사한다.\n");
+    let raw = "[on.schedule]\nevery='10m'\n\n[do.start]\ntitle='점검 {date}'\nrepo='app'\nprofiles=['reviewer','helper']\nmachines=['mac-a','mac-b']\nbrief_file='scratch/nightly.md'\nwait=['timing']\n";
+    let rule = parse(&p.0, "nightly", raw);
+    assert!(rule.is_ok(), "do.start의 안전한 외부 brief와 명시 대기는 유효하다: {:?}", rule.err());
+    let rule = rule.unwrap();
+    let action = serde_json::to_value(&rule.action).unwrap();
+    assert_eq!(action["start"]["repo"], "app");
+    assert_eq!(action["start"]["profiles"], serde_json::json!(["reviewer", "helper"]));
+    assert_eq!(action["start"]["text"], "대상 {machine}의 {repo_path}를 검사한다.");
+    let zero = parse(&p.0, "nightly", &format!("{raw}wait_max=0\n[limits]\nmax_running=0\n")).unwrap();
+    let Action::Start(a) = zero.action else { panic!() };
+    assert_eq!(a.wait_max.as_deref(), Some("0m"));
+    assert_eq!(zero.limits.max_running, None);
+    for (bad, field) in [
+        (raw.replace("scratch/nightly.md", "../outside.md"), "do.start.brief_file"),
+        (format!("{raw}text='다른 본문'\n"), "do.start.brief_file"),
+        (raw.replace("profiles=['reviewer','helper']", "profiles=[]"), "do.start.profiles"),
+        (raw.replace("machines=['mac-a','mac-b']", "machines=[]"), "do.start.machines"),
+    ] {
+        let why = parse(&p.0, "nightly", &bad).unwrap_err();
+        assert!(why.starts_with("automations/nightly.toml:") && why.contains(field), "{why}");
+    }
 }

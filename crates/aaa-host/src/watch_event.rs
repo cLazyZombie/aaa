@@ -18,6 +18,7 @@ impl Host {
         let _order = self.flow_order.lock().unwrap_or_else(|p| p.into_inner());
         for owner in std::iter::once(None).chain(event.owners.iter().map(Some)) {
             let mut flow = FlowEvent {
+                actor: None,
                 project: project.into(),
                 seq: 0,
                 at_ms: event.at_ms,

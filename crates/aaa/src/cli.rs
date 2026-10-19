@@ -497,6 +497,8 @@ enum MissionCmd {
 
 #[derive(Subcommand)]
 enum AutomationCmd {
+    /// 처음·넓힌 자동 시작 범위를 본 hash로 승인한다(사람의 aaa 밖 터미널)
+    Approve { name: String, approval_sha256: String },
     /// 옛 파일을 검증 뒤 TOML로 옮기고 원본은 .converted/에 보존한다
     Convert { project: Option<String> },
     /// Rust 정본 타입에서 JSON Schema를 출력한다
@@ -644,6 +646,9 @@ enum ThreadCmd {
         /// (옛 꼴의 프로젝트, 생략한다)
         #[arg(hide = true)]
         project: Option<String>,
+        /// timing 같은 측정 표지(쉼표 구분). 그 머신의 자동화가 명시한 wait를 지킨다.
+        #[arg(long, value_delimiter = ',')]
+        holds: Vec<String>,
         /// 제목(--from-task면 비워도 된다)
         #[arg(long)]
         title: Option<String>,
@@ -1530,6 +1535,10 @@ fn run(cli: Cli) -> Result<ExitCode> {
             "`aaa merge`는 없어졌다. aaa는 병합하지 않는다: 사용자가 병합하라고 하면 그 thread의 Next 줄을 \
              `aaa thread next <id> --line N`으로 보내 thread가 PR을 병합한다. PR이 병합되면 aaa가 thread를 끝낸다"
         ),
+        Cmd::Automation { cmd: AutomationCmd::Approve { name, approval_sha256 } } => {
+            crate::person::require("aaa automation approve")?;
+            front(json, FrontRequest::AutomationApprove { project: project_or_here(None)?, name, approval_sha256 })
+        }
         Cmd::Automation { cmd: AutomationCmd::Convert { project } } => {
             front(json, FrontRequest::AutomationConvert { project: project_or_here(project)? })
         }
@@ -1566,6 +1575,7 @@ fn run(cli: Cli) -> Result<ExitCode> {
             json,
             match cmd {
                 ThreadCmd::Start {
+                    holds,
                     project,
                     title,
                     machine,
@@ -1589,6 +1599,7 @@ fn run(cli: Cli) -> Result<ExitCode> {
                     let kind = kind.map(|k| if k == "dir" { ThreadKind::Dir } else { ThreadKind::Worktree });
                     let project = project_or_here(project)?;
                     let req = FrontRequest::ThreadStart {
+                        holds,
                         background,
                         project: project.clone(),
                         title: title.unwrap_or_default(),
@@ -3590,6 +3601,19 @@ fn render_front(r: &FrontResponse) -> String {
                 s.push_str("routine이 없다\n");
             }
             for r in routines {
+                if let Some(sha) = &r.start_approval_sha256 {
+                    let _ = writeln!(
+                        s,
+                        "자동 시작 {}: {} · 범위 hash {}",
+                        r.name,
+                        if r.start_approved == Some(true) { "승인됨" } else { "사람 승인 필요" },
+                        sha
+                    );
+                    if let Some(scope) = &r.start_scope {
+                        let _ = writeln!(s, "{scope}");
+                    }
+                }
+
                 if let Some(e) = &r.error {
                     let _ = writeln!(s, "{}\t쓸 수 없음: {e}", r.name);
                     continue;

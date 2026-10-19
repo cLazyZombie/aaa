@@ -14,6 +14,7 @@ pub fn automation_schema() -> String {
 pub fn mission_schema() -> String {
     serde_json::to_string_pretty(&mission::files::schema()).expect("schema serialize")
 }
+mod auto_start;
 mod automation;
 mod bgwait;
 mod brief;
@@ -1297,6 +1298,7 @@ impl Host {
             FrontRequest::Profiles { machine } => self.profiles(machine.as_deref()).await,
             FrontRequest::ProfileResolve { name } => self.profile_resolve(name.as_deref()),
             FrontRequest::ThreadStart {
+                holds,
                 project,
                 title,
                 machine,
@@ -1315,6 +1317,7 @@ impl Host {
                     aaa_proto::ThreadKind::Dir
                 });
                 let mut a = orch::StartArgs {
+                    holds,
                     project,
                     title,
                     machine,
@@ -1512,6 +1515,9 @@ impl Host {
             FrontRequest::Routines { project } => {
                 self.routines(&project).map(|routines| FrontResponse::Routines { routines })
             }
+            FrontRequest::AutomationApprove { project, name, approval_sha256 } => self
+                .automation_approve(&project, &name, &approval_sha256, actor)
+                .map(|routines| FrontResponse::Routines { routines }),
             FrontRequest::AutomationConvert { project } => {
                 self.automation_convert(&project, actor).await.map(|files| FrontResponse::AutomationConverted { files })
             }

@@ -728,6 +728,9 @@ pub struct ThreadView {
     pub role: Role,
     /// (FrontResponse 태그 `kind`와 겹치지 않게 이름을 달리한다)
     pub thread_kind: ThreadKind,
+    /// 명시한 실행 대기 표지. timing이면 그 머신의 측정이 끝날 때까지 자동 시작이 기다릴 수 있다.
+    #[serde(default)]
+    pub holds: Vec<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub mission: Option<String>,
@@ -867,6 +870,8 @@ pub struct FlowEvent {
     /// thread 없는 감시 사건의 저장소. 옛 기록은 없음이다.
     #[serde(default)]
     pub repo: Option<String>,
+    #[serde(default)]
+    pub actor: Option<String>,
     pub role: Option<Role>,
     pub profile: Option<String>,
     pub machine: Option<String>,
@@ -1039,6 +1044,12 @@ pub struct RoutineView {
     /// 지금 명령(머신 포함)이 승인돼 있다
     pub approved: bool,
     pub command_sha256: String,
+    #[serde(default)]
+    pub start_approval_sha256: Option<String>,
+    #[serde(default)]
+    pub start_approved: Option<bool>,
+    #[serde(default)]
+    pub start_scope: Option<String>,
     #[ts(type = "number | null")]
     pub last_run_ms: Option<u64>,
     #[ts(type = "number | null")]

@@ -92,4 +92,32 @@ export default async function ({ page }) {
     await shot(page,"automations-toml-desktop");
   });
 
+  await step("자동 시작 승인: Controller는 정규화 범위를 확인하고 Reader는 승인할 수 없다", async () => {
+    const machine=aaa("machine","list").machines.find(m=>m.connection==="connected").name;
+    const path=`${root}/projects/auto-demo/automations/start.toml`;
+    fs.writeFileSync(path,`enabled=false\n[on.schedule]\nevery="10m"\n[do.start]\ntitle="주기 점검"\ntext="자료 확인"\nprofiles=["fake"]\nmachines=[${JSON.stringify(machine)}]\nwait=["timing"]\n`);
+    await page.getByRole("button",{name:"다시 읽기",exact:true}).click();
+    const row=page.getByTestId("automation-auto-demo-start");
+    await row.getByRole("button",{name:"승인 검토",exact:true}).waitFor();
+    const current=aaa("routine","list").routines.find(r=>r.name==="start");
+    const dev=await pairPage(browser,aaa("web","pair","--reader").code,{width:1280,height:800});
+    try {
+      await dev.page.getByTestId("activity-automations").click();
+      const reader=dev.page.getByTestId("automation-auto-demo-start");
+      await reader.waitFor();
+      if(await reader.getByRole("button",{name:"승인 검토",exact:true}).count()) throw new Error("Reader 승인 단추가 있다");
+      const result=await dev.page.evaluate(async sha=>(await fetch("/api/v1/call",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({op:"automation_approve",project:"auto-demo",name:"start",approval_sha256:sha})})).json(),current.start_approval_sha256);
+      if(result.err?.code!=="forbidden") throw new Error(`Reader 승인 ${JSON.stringify(result)}`);
+    } finally {await dev.page.context().close();}
+    await row.getByRole("button",{name:"승인 검토",exact:true}).click();
+    const dialog=page.getByRole("alertdialog");
+    await dialog.waitFor();
+    if(!(await dialog.textContent()).includes(machine)||!(await dialog.textContent()).includes("claude") && !(await dialog.textContent()).includes("fake")) throw new Error("대상 범위가 보이지 않는다");
+    await shot(page,"automations-start-scope");
+    await dialog.getByRole("button",{name:"승인",exact:true}).click();
+    await dialog.waitFor({state:"hidden"});
+    await domIs(page,"자동 시작 범위 승인 반영",()=>!document.querySelector('[data-testid="automation-auto-demo-start"]')?.textContent.includes("자동 시작 승인 필요"));
+    if(aaa("routine","list").routines.find(r=>r.name==="start").start_approved!==true) throw new Error("승인이 내구 저장되지 않았다");
+  });
+
 }

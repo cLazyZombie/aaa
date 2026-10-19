@@ -120,6 +120,9 @@ pub(crate) fn thread_rec(
     let created = aaa_common::util::parse_iso(&t.created).unwrap_or(now_ms);
     ThreadRec {
         mission: None,
+        holds: vec![],
+        started_by: None,
+        automation: None,
         project: project.to_string(),
         id: t.id.clone(),
         title: t.title.clone(),
@@ -412,6 +415,7 @@ pub fn convert(inv: &Inventory, dest: &Dest, now_ms: u64) -> Result<Outcome> {
         out.copied_files
     );
     db.flow_insert(&FlowEvent {
+        actor: None,
         repo: None,
         project: dest.project.clone(),
         seq: 0,

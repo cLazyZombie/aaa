@@ -53,7 +53,11 @@ impl Lab {
         self.h.db.thread_import("demo", &r.id, "open", &serde_json::to_string(&r).unwrap()).unwrap();
         r
     }
-    async fn fake(&self, mut features: Vec<String>) -> Fake {
+    async fn fake(&self, features: Vec<String>) -> Fake {
+        self.fake_on("m", "mac-a", features).await
+    }
+    async fn fake_on(&self, mid: &str, name: &str, mut features: Vec<String>) -> Fake {
+        let machine = mid.to_string();
         features.push("host_profiles.v1".into());
         let (a, b) = tokio::io::duplex(2 << 20);
         let (ar, aw) = tokio::io::split(a);
@@ -157,7 +161,7 @@ impl Lab {
                     }
                     AgentRequest::Input { session, data } => {
                         if data.0 == b"\r" || data.0 == b"\n" {
-                            h.on_harness("m",serde_json::from_value(serde_json::json!({"session":session,"harness":"claude","kind":"working","at_ms":util::now_ms()})).unwrap());
+                            h.on_harness(&machine,serde_json::from_value(serde_json::json!({"session":session,"harness":"claude","kind":"working","at_ms":util::now_ms()})).unwrap());
                         } else {
                             let mut s = shown.lock().unwrap();
                             *s = format!("{}\n{}", String::from_utf8_lossy(&data.0), *s);
@@ -189,7 +193,12 @@ impl Lab {
                     }),
                     AgentRequest::Spawn(spec) => {
                         spawns += 1;
-                        let mut s = info(&format!("new{spawns}"));
+                        let mut s = info(&if machine == "m" {
+                            format!("new{spawns}")
+                        } else {
+                            format!("{machine}-new{spawns}")
+                        });
+                        s.role = spec.role;
                         s.argv = spec.argv;
                         AgentResponse::Session(s)
                     }
@@ -203,8 +212,8 @@ impl Lab {
         self.h.agent_connected(
             &AgentHello {
                 proto: AGENT_LINK,
-                machine_id: "m".into(),
-                machine_name: "mac-a".into(),
+                machine_id: mid.into(),
+                machine_name: name.into(),
                 boot_id: "boot".into(),
                 os: "test".into(),
                 arch: "test".into(),
@@ -215,7 +224,7 @@ impl Lab {
                 sessions: vec![],
                 harness: vec![],
             },
-            true,
+            mid == "m",
             conn,
         );
         Fake { requests, inbox_names, _screen: screen, fault, handle }
@@ -1914,3 +1923,6 @@ async fn resumed_mission_time_budget_counts_work_in_the_wake_not_elapsed_wall_ti
     l.h.mission_tick("demo", "watch", next + 61 * 60000 + 1).await.unwrap();
     assert_eq!(notices().len(), 1, "새 깨움의 실제 작업 상한은 따로 한 번 알린다");
 }
+
+#[path = "tests/start.rs"]
+mod start;

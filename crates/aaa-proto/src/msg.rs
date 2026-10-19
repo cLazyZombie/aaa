@@ -1708,6 +1708,8 @@ pub enum FrontRequest {
         name: Option<String>,
     },
     ThreadStart {
+        #[serde(default)]
+        holds: Vec<String>,
         /// 준비 완료를 기다리지 않고 Starting 기록을 돌려준다.
         #[serde(default)]
         background: bool,
@@ -2070,6 +2072,13 @@ pub enum FrontRequest {
         project: String,
     },
     /// 옛 routine·임무 파일을 값 검증 뒤 순수 TOML로 변환한다(Controller).
+    AutomationApprove {
+        #[serde(default)]
+        #[ts(optional, as = "Option<String>")]
+        project: String,
+        name: String,
+        approval_sha256: String,
+    },
     AutomationConvert {
         #[serde(default)]
         #[ts(optional, as = "Option<String>")]
@@ -2207,6 +2216,7 @@ impl FrontRequest {
             | FrontRequest::Routines { project, .. }
             | FrontRequest::RoutineRuns { project, .. }
             | FrontRequest::RoutineApprove { project, .. }
+            | FrontRequest::AutomationApprove { project, .. }
             | FrontRequest::AutomationConvert { project, .. }
             | FrontRequest::RoutineToggle { project, .. }
             | FrontRequest::EvaluatorAssign { project, .. }

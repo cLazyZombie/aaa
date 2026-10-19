@@ -26,7 +26,7 @@ fn sha(s: &str) -> String {
 fn key(p: &str, n: &str, kind: &str) -> String {
     format!("mission_{kind}:{p}:{n}")
 }
-fn fenced(s: &str) -> String {
+pub(crate) fn fenced(s: &str) -> String {
     let n = s.split(|c| c != '`').map(str::len).max().unwrap_or(0);
     let fence = "`".repeat(n.max(2) + 1);
     format!("{fence}text\n{s}\n{fence}")
@@ -338,7 +338,7 @@ fn usage_until(
 fn pending_total(r: &MissionRun) -> usize {
     r.inbox_pending as usize + r.pending.iter().filter(|i| !r.inbox_names.contains(&format!("{}.json", i.id))).count()
 }
-fn text_diff(old: &str, new: &str) -> String {
+pub(crate) fn text_diff(old: &str, new: &str) -> String {
     if old == new {
         return String::new();
     }
@@ -933,6 +933,7 @@ impl Host {
         self.db.set_meta(&key(p, n, "applied"), &m.text).map_err(internal)?;
         let run = MissionRun::new(n, &m, self.db.flow_max(p).map_err(internal)?, util::now_ms());
         let a = StartArgs {
+            holds: vec![],
             project: p.into(),
             title: m.def.title.clone(),
             machine: m.def.machine.clone(),
@@ -1514,6 +1515,7 @@ impl Host {
                         body: text,
                         action: hidden.action.clone(),
                         source: "events".into(),
+                        start_scope: None,
                     },
                 )?;
             }
@@ -1537,6 +1539,7 @@ impl Host {
                     body,
                     action: hidden.action.clone(),
                     source: "schedule".into(),
+                    start_scope: None,
                 },
             )?;
             run.last_schedule_ms = now;
