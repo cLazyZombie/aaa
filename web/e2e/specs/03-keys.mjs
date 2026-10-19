@@ -605,16 +605,6 @@ export default async function ({ ctl, page }) {
       window.addEventListener("copy", (e) => window.__copied.push(e.clipboardData?.getData("text/plain") ?? ""));
     };
     const dp = (await pairPage(browser, aaa("web", "pair").code, { width: 1100, height: 700 }, { platform: "MacIntel", init: clip })).page;
-    // 이 화면이 WebSocket에 쓴 글 frame(보낸 순서를 본다)
-    const frames = [];
-    dp.on("websocket", (ws) =>
-      ws.on("framesent", (f) => {
-        if (typeof f.payload !== "string") return;
-        try {
-          frames.push(JSON.parse(f.payload));
-        } catch {}
-      }),
-    );
     await inList(dp, "pane-mouseapp");
     await until("mouse 화면", async () => (await screenText(dp)).includes("pick-this-word"));
     const cell = async (col, row) => {
@@ -659,14 +649,16 @@ export default async function ({ ctl, page }) {
     await sp.getByTestId("terminal").click();
     await until("둘째 화면 크기", () => pcols() < dcols);
     await sleep(500);
-    // 보낸 순서는 이 화면이 WebSocket에 쓴 순서로 본다(프로그램 쪽은 SIGWINCH와 입력 읽기의 순서가 정해지지 않는다)
-    const mark = frames.length;
+    // 보낸 순서는 이 화면이 WebSocket에 쓴 순서로 본다(프로그램 쪽은 SIGWINCH와 입력 읽기의 순서가 정해지지 않는다).
+    // 화면 안 기록(sentFrames, init script)으로 읽는다: 연 뒤에 단 Playwright framesent는 그 전에 열린 WebSocket을 놓친다
+    const mark = await sentCount(dp);
     n = lastSeq();
     await dp.keyboard.press("z");
     await until("z 받음", () => after(n).some(([, k, v]) => k === "GOT" && v === "z"));
     await until("크기 되찾음", () => pcols() === dcols);
-    const order = frames.slice(mark).filter((f) => f.t === "resize" || (f.t === "input" && f.data === "z")).map((f) => f.t);
-    if (order[0] !== "resize" || !order.includes("input")) throw new Error(`보낸 순서 ${JSON.stringify(frames.slice(mark))}`);
+    const frames = await sentFrames(dp, mark);
+    const order = frames.filter((f) => f.t === "resize" || (f.t === "input" && f.data === "z")).map((f) => f.t);
+    if (order[0] !== "resize" || !order.includes("input")) throw new Error(`보낸 순서 ${JSON.stringify(frames)}`);
     await sp.context().close();
     await dp.context().close();
     aaa("pane", "kill", "mouseapp");
