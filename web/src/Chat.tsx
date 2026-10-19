@@ -179,8 +179,7 @@ function PendingTag({ harness, stale, onDismiss, steer }: Pending) {
     <>
       <div className={`chat-pending-tag${stale ? " is-stale" : ""}`} data-testid="chat-pending" data-stale={stale || undefined}>
         {stale ? <TriangleAlert aria-hidden="true" /> : <Clock aria-hidden="true" />}
-        <span>{stale ? "대화 기록에 없습니다 · 터미널 입력창을 확인하세요"
-          : harness === "codex" ? "대기 중 · 다음 도구 호출 뒤 Codex가 읽습니다" : "대기 중 · Claude가 하던 일 사이에 읽습니다"}</span>
+        <span>{stale ? "대화 기록에 없습니다 · 터미널 입력창을 확인하세요" : "대기 중"}</span>
         {stale && onDismiss && <button type="button" className="chat-pending-dismiss" onClick={onDismiss}>지우기</button>}
         {steer && (
           // 글을 다시 보내지 않고 host가 고른 키만 보낸다(Claude sendNow, Codex Esc). 그 키는 대기열 전부를 보낸다

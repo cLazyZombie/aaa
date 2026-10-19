@@ -1930,7 +1930,7 @@ coordinator 실기(10-18 00:58, iPhone 홈 화면 앱을 앞에 띄움, binary c
 ### 8.85 묶음 전이와 thread 항목을 herdr-projects대로: 전이 항목·새 보고 한 번·세션 끝남·resolve 차례(10-18, 차이 목록 3장 C7·C9·F2·F3·F4·F5·F6·F9·E10 일부, t-0334 결함 6·7)
 
 - **마지막 묶음 기록(C9, hp `src/ticker.rs` `thread_pass`).** thread 기록에 `last_group`·`review_item_hash`(참고 `last_group`·`last_review_item_hash`)를 둔다. ticker가 열린(시작 중 포함) worker thread의 묶음을 다시 세어 기록과 다르면 전이다.
-  - note는 참고대로 pane이 없으면 `pane closed`, agent 상태가 없으면 `no agent`, 그 밖은 harness 상태(확인창은 `blocked`)다. 보고 사본 실패는 aaa에만 있는 확인 필요라 `copy failed`다.
+  - note는 참고대로 pane이 없으면 `pane closed`, agent 상태가 없으면 `no agent`, 그 밖은 harness 상태(확인창은 `blocked`)다. 보고 사본 실패는 상태 전이가 아닌 시스템 오류다(§8.278).
   - 이 변경 전에 연 thread(기록 없음)는 처음 볼 때 전이가 아니다. 그때의 보고는 옛 방식으로 이미 알렸으니 새 보고로 치지 않는다. 새 thread는 시작할 때 「작업 중」을 적는다.
 - **언제 세나.** 참고는 15초 tick이다. aaa는 `tick_secs`에 더해 harness 상태·진행 보고·세션 끝남·보고 사본·ack·brief 상태가 바뀌면 바로 센다.
   - **사건이 보고보다 먼저 온다.** agent는 report.md를 1초마다 본다. 그래서 턴 끝·진행 보고·세션 끝남이 먼저 오면, 옛 보고로 셀 때 「쉼」 다음에 「새 보고」가 따로 오고 `Done` 직전의 중간 보고가 검토 대기가 된다. thread의 그런 사건이 오면 host는 agent에 report.md hash를 먼저 묻는다(library는 읽지 않는다). 바뀌었으면 사본을 받은 뒤 센다(`refresh_report`). 그동안 묶음 셈은 그 thread를 건너뛴다. 참고는 같은 tick 안에서 파일 hash를 읽는다(`fresh_hash`).
@@ -4090,7 +4090,8 @@ coordinator 실기(10-18 00:58, iPhone 홈 화면 앱을 앞에 띄움, binary c
   - session host 내부 프로토콜은 이전 session host와 호환해야 한다. 세션은 몇 주 이어질 수 있다.
 - **DB·설정:** DB는 expand/contract로 바꾼다. 이전 프로세스가 남아 있는 동안 설정 migrate를 미룬다.
 - **롤백:** 이전 산출물을 보관한다(개수는 TOML). DB 백업을 복원하고 `aaa update rollback`을 실행한다. 서명이나 다운로드가 실패하면 fallback 설치를 하지 않는다.
-- **지금(10-18, §8.210):** 공개 GitHub release의 `manifest.json`·OS/arch 실행 파일을 받는 `aaa update [--version <판>]`와 기존 `--from`·보관·rollback을 쓴다. SHA-256·self-check·version 고정 검사 뒤 같은 폴더 rename이다. macOS는 기존과 같은 ad-hoc 서명이며 서명 manifest·host가 agent로 보내기·DB 백업은 아직 없다.
+- **지금(10-19, §8.276):** 커밋 빌드는 `scripts/deploy-build.sh`로 한 번 만든다(origin/main 조상, 깨끗한 worktree, 웹 포함, `+<커밋>` 판, provenance.json). `aaa deploy start --from <절대 경로> --sha256 <SHA>`가 host DB의 rollout으로 여러 Mac을 순차 갱신한다. L1은 각 머신에 같은 경로의 후보가 미리 있어야 한다. 모든 대상 SHA·dry-run → host 교체·재시작·실행 판/SHA → 로컬 agent → 원격 agent → coordinator 안내 갱신 순서다. 자동 rollback·host 감시는 L3이며 L1 실패는 멈춘다.
+- **공개판(§8.210):** 공개 GitHub release의 `manifest.json`·OS/arch 실행 파일을 받는 `aaa update [--version <판>]`와 기존 `--from`·보관·rollback을 쓴다. SHA-256·self-check·version 고정 검사 뒤 같은 폴더 rename이다. macOS는 기존과 같은 ad-hoc 서명이며 서명 manifest·host가 agent로 보내기·DB 백업은 아직 없다.
 
 ## 12. 기술 스택 추천
 
@@ -4407,7 +4408,14 @@ primary 근거:
 - **한도.** host.toml `[post]`: burst=3, burst_secs=60, hourly=6, daily=30, pair_hourly=10, mute_after=3.
   시간 창은 최근 60초·1시간·24시간이다. now를 인자로 받는 owner가 판정한다. 같은 출처의
   (목적지·종류·topic·정리한 제목·본문 sha)가 24시간 안 같으면 기존 ID와 함께 거부한다.
-  한 시간에 rate 거부 3번이면 muted로 저장하고 inbox 항목 한 번을 만든다. `aaa post unmute <p> <thread>`는 조작 권한이다.
+  일반 한도에서 한 시간에 rate 거부 3번이면 muted로 저장한다. `aaa post unmute <p> <출처>`는 조작 권한이다.
+  `library publish --to-user`가 내부에서 만드는 보고서 알림은 이 한도를 쓰지 않는다(topic 자기 신고로 면제되지 않는다).
+  해당 프로젝트 coordinator pane으로 검증된 `user-action` request·needs_user와 `task-complete` notice는 둘을 합쳐
+  최근 60초 30·1시간 60·24시간 300건의 별도 한도를 쓰며, 초과해도 자동 mute하지 않고 기존 mute에도 막히지 않는다.
+  일반 post와 별도 한도의 거부 횟수도 섞지 않는다. 모든 경로의 24시간 내용 중복·ID 재전송·크기·역할 검사는 유지한다.
+  한도 종류는 본문을 정리한 뒤에도 원장에 남는다. 옛 원장 행은 일반 한도로 유지하며 기존 mute를 자동 해제하지 않는다.
+  mute마다 inbox와 웹 앱 안 알림을 남긴다(외부 푸시 없음). 활성 mute는 inbox done·host 재시작과 무관하게
+  coordinator의 다음 CLI 연결 출력과 `aaa context` 맨 위에 해제 명령과 함께 남고, unmute하면 사라진다.
 - **Front.** Post·PostList·PostUnmute는 조작 권한, PostStatus는 Reader 자기 세션만이다.
   세션 밖 송신에는 프로젝트가 필수다. `mission:<name>` 계약은 열되 임무 전달은 2단계다(사용자 재확인).
   아직 없는 임무는 명확히 거부하고, pair_hourly는 2단계에서 coordinator→임무 전달에 적용한다.
@@ -5469,11 +5477,44 @@ primary 근거:
 - source는 전달 정책과 사건 발행/회복 callback을 준다. 공용 전달은 상태 선저장 뒤 항목마다 남은 outbox를 저장하며, 없는 임무 입력을 보존한다. 기존 source와 다음 source가 실행 시각을 섞지 않도록 runtime은 source별로 나눈다.
 - [CI runbook](ci-watch.md)의 상태 호환과 [testing](testing.md)의 공용 watch 검증을 따른다. Git 감시는 L2, 실행 기록과 새 정의 형식은 이후 별도 착지다.
 
-### 8.276 repo 머신의 Git head 감시와 사건 repo 거르기(10-19, t-0420 L2)
+### 8.276 배포 자동화 L0·L1(10-19, t-0426)
+
+- **범위.** `scripts/deploy-build.sh <commit> --out <새 폴더>`와 `aaa deploy start|status`를 먼저 넣는다. 원본 t-0424의 상태 기계를 따른다. 이번 brief의 단계 순서에 따라 사람 터미널 경로는 L5, Agent link 전송은 L2, 실패 머신 자동 rollback·host 감시는 L3, 웹 카드는 L4다. L1은 사용자 채팅 지시를 받은 coordinator + 기존 safety만 시작할 수 있다. thread·worker·평가자·웹·터미널 밖 호출의 승인 범위는 넓히지 않는다.
+- **빌드.** origin/main을 fetch하고 조상 커밋만 받는다. 격리 detached worktree의 npm ci/build 뒤 `AAA_BUILD_SALT=<12자리 커밋> cargo build --release --locked -p aaa --bin aaa`를 한 번 한다. 출력은 실행 파일과 커밋·origin/main·SHA·판·도구 판·UTC 시각을 담은 provenance.json이다. 실제 머신 이름·빌드 절대 경로는 넣지 않는다. 실패한 출력 폴더는 덮어쓰지 않는다. `--version`과 running_software가 같은 `aaa x.y.z+<커밋>`을 말한다. version 고정은 기본 x.y.z와 대조한다.
+- **정본.** host DB meta `rollout:<id>`에 요청자·프로젝트·커밋(주어졌을 때)·파일 경로·기대 SHA·머신 순서·단계별 job ID/영수증·커서·오류·finish 결과를 둔다. `rollout:active`와 첫 기록은 한 transaction으로 저장한다. 한 번에 rollout 하나만 실행하며 그동안 개별 배포 시작도 거부한다.
+- **순서.** host 머신을 항상 첫 대상으로 넣고 나머지는 명시한 순서로 고정한다(all은 머신 ID 정렬). 모든 대상 `CheckedUpdate{dry_run:true}`를 끝낸 뒤 host 파일 교체 → host restart → host 머신 agent restart → 원격 각각 교체/restart 순서다. CheckedUpdate는 staging 사본의 SHA를 self-check보다 먼저 확인한다. 실제 교체 때도 다시 확인하므로 사전 검사 후 파일이 바뀌면 멈춘다.
+- **재개.** job ID와 시작 시각/host instance를 먼저 기록한다. agent 상태를 먼저 조회하고 NotFound일 때만 같은 ID의 시작을 보낸다. 새 host는 미완 기록을 읽고 같은 ID를 조회한다. 중단/실패 영수증은 보존하며 다시 실행하지 않는다. CLI `status <id> --wait`도 host 재연결 뒤 같은 ID만 조회한다.
+- **판정.** queued/running은 사건을 기다린다. completed라도 요청·프로젝트·ID가 맞고 설치 SHA/판이 같아야 진행한다. host restart는 새 host instance의 시작 때 계산한 SHA·실행 판, agent restart는 새 실행기 instance의 실행 SHA·판을 확인한다. 옛 판은 멈춤, 무응답은 단계 시작부터 120초에 멈춤이다. 재시작 명령의 exit 0만으로 완료하지 않는다. 기본 macOS 감독자만 지원하므로 rollout.v1은 macOS agent만 광고한다.
+- **끝.** host가 doctor files --fix와 같은 안내 갱신을 직접 하고 결과를 저장한 뒤 done으로 바꾼다. 실패는 stopped + 머신/단계/까닭을 남기며 다음 머신으로 가지 않는다. safety 철회 뒤에도 조회는 가능하지만 새 단계는 멈춘다. L1은 자동 rollback하지 않으며 원시 update rollback/service restart로 사람이 복구한다.
+- **계약.** FRONT_API 1.46, AGENT_LINK 1.6, agent `rollout.v1`. 첫 운영 반영은 coordinator가 기존 배포 절차로 한다. DB schema와 crate 의존 경계는 바꾸지 않는다.
+
+
+### 요약 상세 창 지시 전문(10-19, t-0426 사용자 후속)
+
+사용자가 「요약이 다 안 보일 때가 있다(밑에 …). 다 보여 주거나 메시지를 줄여라」고 요청했다. 상세 창의 「요약 뒤 지시」는 host에서 60자로 자르던 것을 없애고 여러 줄 본문을 보존한다. 상세 목표·지시도 줄바꿈하며 긴 본문은 기존 창 안에서 스크롤한다. 짧은 hover 카드와 최근 지시 개수 규칙은 유지한다. source keeper와 기존 E2E 28이 긴 지시의 마지막 문구까지 읽는지 본다.
+
+### 8.277 설치 앱 아이콘의 공통 배지(10-19, t-0428)
+
+- host의 안 본 사용자 보고서와 처리 전 사용자 결정을 합산한다. 같은 pane의 질문/thread/미처리 확인 보고는 한 건, needs_user post는 요청마다 한 건이다. 다른 기기의 열람·처리도 공유한다. 웹은 연결·재연결과 사건에서 받은 수를 `setAppBadge`/`clearAppBadge`로 반영한다.
+- 기존 허용 Web Push에 수를 넣고 worker도 반영한다. 지연 push는 인증 API로 최신 수를 읽으며 offline은 payload를 쓴다. 배지 전용 외부 push는 없으므로 닫힌 다른 기기는 다음 허용 push나 실행 전까지 이전 수가 남을 수 있다.
+- favicon의 창별 알림 수/focus 지우기는 유지한다. 설치 앱의 아직 볼 일 수와 의미가 다르다. 고정 herdr-web-ui·t3code 웹 소스에는 같은 OS 배지 기능이 없어 공식 API를 쓴다. [지원 표·숫자 정의·실기기 절차](app-badging.md), [시험](testing.md#설치-앱-아이콘-배지)을 따른다.
+
+### 8.278 보고 복사 오류와 사람 대기의 분리(10-19)
+
+- 참고 herdr-projects `ticker::thread_pass`·`remote_pass`: harness 묶음과 복사 오류를 분리한다. 복사 실패로 `WaitingOnYou`·「사람이 필요하다」를 만들지 않는다. 이전 묶음을 보존하되 실제 확인창·명시한 사용자 대기는 그대로 센다.
+- 첫 실패는 새 manifest로 한 번 다시 받는다. 계속 실패하면 `report-copy-failed` 시스템 inbox 한 건만 남기고 ticker 간격마다 다시 수집한다. 연속 실패 수·다음 시각은 thread 기록에 저장하며 성공하면 초기화한다. 보고 hash가 더 바뀌지 않거나 host가 재시작해도 실패한 사본을 다시 받는다. 외부 푸시는 보내지 않는다.
+- library의 실행 중인 로그는 manifest 시점의 길이까지만 해시하고 그 길이까지만 받는다. 덧붙인 바이트는 다음 사본에 든다. prefix를 덮어쓰거나 줄인 파일은 크기·sha256 검증으로 거부하고 이전 사본을 보존한다. 해시 검증·timeout 상한을 약하게 하지 않는다.
+- 웹은 작업 묶음과 별도로 「보고·결과물 사본을 다시 받는 중」을 표시한다. 확인: host 유닛(재수집·경고 중복 억제·append 허용·rewrite 거부)과 `report_copy` 실제 host·CLI·가짜 Agent link E2E.
+
+- **EMFILE 대응.** herdr `platform/macos.rs::raise_server_nofile_limit`을 따라 host·agent CLI는 runtime·listener를 만들기 전에 현재 프로세스의 soft를 `min(8192, hard)`까지 올린다. 이미 높은 soft·hard·시스템·launchd 설정은 바꾸지 않는다. Windows는 해당 없음. 시작 로그에 before·soft·hard를 남긴다.
+- **수용 복구·시스템 경고.** 웹 listener는 axum 기본 1초 재시도를 유지하며 EMFILE/ENFILE을 host에 알린다. Front·로컬/원격 Agent listener도 오류에서 끝나거나 busy loop하지 않고 같은 간격으로 재개한다. 소진 중에는 atomic 표지만 남기고 ticker가 파일 여유가 생긴 뒤 활성 프로젝트 inbox에 `system / file descriptors exhausted` 한 건을 남긴다(열린 경고 중복 억제). 복사 중 같은 OS 오류도 이 경고를 낸다. 사람 대기·외부 push로 바꾸지 않는다.
+- **자원 E2E.** `resource_limits`: 별도 자식 host/agent의 soft64에서 각각8192/hard512 승격, 웹384개×2회 후 실제 OS fd 회수, hard64의 진짜 EMFILE·Front accept 복구·경고1건. 부모 시험과 운영 프로세스의 한도는 고치지 않는다. 현재 연결 생명주기에서 누수는 관측되지 않아 임의로 정상 연결을 끊는 정책은 더하지 않았다.
+
+### 8.279 repo 머신의 Git head 감시와 사건 repo 거르기(10-19, t-0420 L2)
 
 - `on="git"`의 repo·branches·events·선택 mission을 받는다. 기본 60초에 host가 예약하고 git.v1 agent가 실제 ls-remote·필요한 객체 fetch·조상 판정·커밋 첫 줄/파일 수를 조회한다. GitHub API나 AI 호출은 없다. 작업 파일·ref·FETCH_HEAD는 바꾸지 않는다.
 - 첫 등록/없던 branch는 기준만 잡고, 변화는 pushed·forced·deleted로 구별한다. 공용 watch 상태·outage·내구 outbox·전달을 쓴다. 저장 revision으로 같은 head의 재시작 중복은 막고 이후 같은 SHA 쌍 변화는 새 사건으로 남긴다.
-- FlowEvent.repo를 선택 칸/DB 추가 열로 저장한다(FRONT_API 1.46). 임무 repos는 thread 사건이면 thread repo, thread 없는 사건이면 사건 repo를 쓴다. 이전 DB/기록의 repo는 없음이다. Git의 주인 보고는 기존 watch 발행 경계에서 연결한다.
+- FlowEvent.repo를 선택 칸/DB 추가 열로 저장한다(FRONT_API 1.47). 임무 repos는 thread 사건이면 thread repo, thread 없는 사건이면 사건 repo를 쓴다. 이전 DB/기록의 repo는 없음이다. Git의 주인 보고는 기존 watch 발행 경계에서 연결한다.
 - 조회 머신은 routine machine으로 선택한다. 생략하면 host 등록 repo 우선, 없으면 유일한 repo 머신이다. GitHub CI 감시는 host 머신 agent 기본을 유지한다. [Git runbook](git-watch.md)과 [시험](testing.md)의 Git 감시를 따른다. 운영 파일 전환은 배포 뒤 coordinator가 맡는다.
 
 - L2 검토 수리: 꺼진 CI/Git 정의와 삭제한 프로젝트의 오래된 watch deadline을 source 활성 callback으로 제거한다. 지난 예약 때문에 ticker가 즉시 반복될 수 있는 경계를 실제 설정 전환 keeper의 RED로 확인했다. 활성 source의 주기/판정은 유지한다.

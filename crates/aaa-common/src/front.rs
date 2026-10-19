@@ -85,7 +85,12 @@ impl FrontClient {
     async fn hello(tx: FrameTx, mut rx: Inbound, client: &str, session: Option<String>) -> Result<FrontClient> {
         tx.json(&FrontMsg::Hello { proto: FRONT_API, client: client.into(), session }).await?;
         let (front, proto, role) = match tokio::time::timeout(Duration::from_secs(10), rx.control()).await?? {
-            FrontMsg::Welcome { front, proto, role, .. } => (front, proto, role),
+            FrontMsg::Welcome { front, proto, role, warnings, .. } => {
+                for w in warnings {
+                    eprintln!("⚠ {w}");
+                }
+                (front, proto, role)
+            }
             FrontMsg::Reject(e) => bail!("host가 거부했다: {e}"),
             other => bail!("예상하지 못한 응답: {other:?}"),
         };

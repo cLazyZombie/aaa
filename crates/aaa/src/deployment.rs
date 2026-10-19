@@ -54,7 +54,20 @@ pub(crate) fn execute(exe: &std::path::Path, action: DeployAction) -> Result<Str
                     dry_run,
                     crate::update::Approval::Coordinator,
                     Some(exe.to_path_buf()),
+                    None,
                 )?;
+            }
+            DeployAction::CheckedUpdate { from, sha256, dry_run } => {
+                // 검증한 staging 영수증을 쓴다. 원본 경로를 다시 실행하지 않는다.
+                return crate::update::update_approved(
+                    true,
+                    Some(from.into()),
+                    None,
+                    dry_run,
+                    crate::update::Approval::Coordinator,
+                    Some(exe.to_path_buf()),
+                    Some(&sha256),
+                );
             }
             DeployAction::Rollback { name, dry_run } => {
                 crate::update::rollback_approved(
@@ -167,6 +180,7 @@ mod tests {
                     host_id: "host".into(),
                     role: DeviceRole::Local,
                     front: "f".into(),
+                    warnings: vec![],
                 })
                 .await
                 .unwrap();

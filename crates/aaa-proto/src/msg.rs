@@ -818,6 +818,8 @@ pub enum AgentResponse {
         job: crate::DeployJob,
         running_software: String,
         running_sha256: String,
+        #[serde(default)]
+        running_instance: String,
     },
     MissionInbox {
         pending: u32,
@@ -1322,6 +1324,13 @@ pub enum FrontRequest {
         pane: Option<String>,
         thread: Option<String>,
         since_ms: u64,
+    },
+    RolloutStart {
+        id: String,
+        spec: crate::RolloutSpec,
+    },
+    RolloutStatus {
+        id: String,
     },
     DeployContext,
     DeployStart {
@@ -2073,6 +2082,9 @@ pub enum FrontResponse {
         session: bool,
         allowed: bool,
     },
+    Rollout {
+        rollout: crate::RolloutView,
+    },
     Deployment {
         machine: String,
         job: crate::DeployJob,
@@ -2286,6 +2298,8 @@ pub enum FrontEvent {
     /// FRONT_API 1.43. 보고서 목록이 바뀌었다(보내기·열기·지우기·thread 사본). 웹 events 연결에만, 열 때와 바뀔 때 보낸다.
     /// `unseen`은 열지 않은 사용자 보고서 수(활동 막대 보고서 배지)
     Reports { unseen: u32 },
+    /// 설치 앱 아이콘의 host 공통 수. 웹 events 연결에서 처음과 값이 바뀔 때만 보낸다.
+    AppBadge { count: u32 },
     /// 앱 안 알림(웹 Droplet, plan §8.185). 기록하지 않는다: 놓친 알림은 다시 오지 않는다(FRONT_API 1.34,
     /// 옛 front는 모르는 사건을 버린다)
     Notice(NoticeView),
@@ -2313,6 +2327,9 @@ pub enum FrontMsg {
         host_id: String,
         role: DeviceRole,
         front: String,
+        /// coordinator의 다음 CLI 연결에 보일 활성 post 음소거. 옛 host는 비어 있다.
+        #[serde(default)]
+        warnings: Vec<String>,
     },
     Reject(ErrorBody),
     Req {

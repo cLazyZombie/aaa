@@ -4,7 +4,7 @@ use std::path::PathBuf;
 use std::process::ExitCode;
 
 use anyhow::{Context, Result};
-use clap::{Args, Parser, Subcommand};
+use clap::{Args, CommandFactory, FromArgMatches, Parser, Subcommand};
 
 use crate::service;
 use aaa_doctor as doctor;
@@ -55,6 +55,11 @@ enum Cmd {
     },
     /// host 상태
     Status,
+    /// 여러 머신의 배포를 host부터 차례로 진행한다(coordinator safety 필요)
+    Deploy {
+        #[command(subcommand)]
+        cmd: crate::rollout::DeployCmd,
+    },
     /// pane: 읽기·입력·나누기·닫기(herdr `pane` 명령과 같은 이름. 출력은 늘 JSON 한 줄)
     Pane {
         #[command(subcommand)]
@@ -1208,7 +1213,9 @@ enum ConfigCmd {
 }
 
 pub fn main() -> ExitCode {
-    let cli = Cli::parse();
+    let version: &'static str =
+        Box::leak(aaa_common::util::software().trim_start_matches("aaa ").to_string().into_boxed_str());
+    let cli = Cli::from_arg_matches(&Cli::command().version(version).get_matches()).unwrap();
     if let Some(d) = &cli.config_dir {
         // 하위 프로세스(session host 등)도 같은 위치를 쓰게 한다.
         unsafe { std::env::set_var("AAA_CONFIG_DIR", d) };
@@ -1246,6 +1253,7 @@ fn run(cli: Cli) -> Result<ExitCode> {
     match cli.cmd {
         Cmd::Host => {
             init_log("info");
+            aaa_common::resource::raise_nofile_limit("host");
             legacy_guard()?;
             let cfg = load_or_exit(aaa_config::load_host(&aaa_config::paths::config_dir()))?;
             runtime()?.block_on(aaa_host::run(cfg, aaa_config::paths::state_dir()))?;
@@ -1253,6 +1261,7 @@ fn run(cli: Cli) -> Result<ExitCode> {
         }
         Cmd::Agent(a) => {
             init_log("info");
+            aaa_common::resource::raise_nofile_limit("agent");
             legacy_guard()?;
             agent_cmd(a)
         }
@@ -1554,6 +1563,7 @@ fn run(cli: Cli) -> Result<ExitCode> {
         }
         Cmd::Service { cmd } => service_cmd(cmd, json),
         Cmd::Config { cmd } => config_cmd(cmd, json),
+        Cmd::Deploy { cmd } => crate::rollout::run(json, cmd),
         Cmd::Update { cmd: None, from, release_version, dry_run, machine } => {
             let action = aaa_proto::DeployAction::Update {
                 from: from.as_ref().map(|p| p.to_string_lossy().into()),
@@ -2710,6 +2720,9 @@ fn assignable_line(owners: &[aaa_proto::OwnerChoice]) -> String {
 
 fn render_context(s: &mut String, c: &aaa_proto::ProjectContext) {
     use std::fmt::Write as _;
+    for w in &c.post_warnings {
+        let _ = writeln!(s, "⚠ {w}");
+    }
     let _ = writeln!(s, "프로젝트 {} ({})", c.project, c.path);
     let _ = writeln!(s, "thread 시작: start_threads={} (propose면 제안하고 승인을 기다린다)", c.start_threads);
     let _ = writeln!(s, "\nTasks(TASKS.md, coordinator만 고친다):");
@@ -2861,6 +2874,17 @@ fn render_front(r: &FrontResponse) -> String {
         }
     };
     match r {
+        FrontResponse::Rollout { rollout } => {
+            let _ = writeln!(
+                s,
+                "{} {:?}: {}/{} · {}",
+                rollout.id,
+                rollout.state,
+                rollout.cursor,
+                rollout.steps.len(),
+                rollout.error.as_deref().unwrap_or("")
+            );
+        }
         FrontResponse::DeployContext { project, session, allowed } => {
             let _ = writeln!(s, "coordinator {:?} · 세션 {session} · 배포 허용 {allowed}", project);
         }

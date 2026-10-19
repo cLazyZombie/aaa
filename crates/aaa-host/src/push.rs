@@ -192,6 +192,7 @@ pub(crate) fn payload(
     place: &crate::notify::Place,
     items: &[InboxItem],
     titles: &HashMap<String, String>,
+    app_badge: Option<u32>,
 ) -> serde_json::Value {
     let t = crate::notify::alert_text(place, items, titles);
     let title = t.title.split_whitespace().collect::<Vec<_>>().join(" ");
@@ -201,6 +202,9 @@ pub(crate) fn payload(
         title.push('…');
     }
     let mut p = serde_json::json!({ "title": title, "body": "", "url": t.url, "tag": t.tag });
+    if let Some(count) = app_badge {
+        p["app_badge"] = count.into();
+    }
     // 프로젝트·머신·thread 이름은 짧은 ASCII 식별자다. 제목도 줄였으므로 나머지는 본문에 쓴다.
     let cap = BODY_CAP.min(4096usize.saturating_sub(103 + p.to_string().len()));
     let mut body = String::new();
@@ -342,7 +346,8 @@ impl Host {
                 chose_not += 1;
                 continue;
             }
-            let body = payload(place, &mine, titles).to_string();
+            // 기존 coordinator 사용자 post만 보낸다. 배지 전용 조용한 push는 만들지 않는다.
+            let body = payload(place, &mine, titles, self.app_badge_count().ok()).to_string();
             match self.push_one(s, body.as_bytes()).await {
                 Sent::Ok => {
                     ok += 1;
@@ -595,7 +600,7 @@ mod tests {
         let demo = Place::Project("demo".into());
         let titles: HashMap<String, String> = [("t-0001".to_string(), "웹 결과물".to_string())].into();
         // 한 thread: 제목은 「프로젝트 · thread 제목」, 자리는 그 thread, 본문은 사건만(제목이 대상을 말한다)
-        let p = payload(&demo, &[q("t-0001"), item("t-0001", "thread-state", "new report")], &titles);
+        let p = payload(&demo, &[q("t-0001"), item("t-0001", "thread-state", "new report")], &titles, Some(u32::MAX));
         assert_eq!(p["url"], "/#thread=demo%2Ft-0001");
         assert_eq!(
             (p["title"].as_str(), p["tag"].as_str(), p["body"].as_str()),
@@ -603,10 +608,10 @@ mod tests {
         );
         // 제목이 없거나 비면 thread ID
         let blank: HashMap<String, String> = [("t-0001".to_string(), "  ".to_string())].into();
-        assert_eq!(payload(&demo, &[q("t-0001")], &blank)["title"], "demo · t-0001");
-        assert_eq!(payload(&demo, &[q("t-0001")], &HashMap::new())["title"], "demo · t-0001");
+        assert_eq!(payload(&demo, &[q("t-0001")], &blank, Some(u32::MAX))["title"], "demo · t-0001");
+        assert_eq!(payload(&demo, &[q("t-0001")], &HashMap::new(), Some(u32::MAX))["title"], "demo · t-0001");
         // 섞이면 프로젝트 한 자리: 제목은 프로젝트 이름만(앱 이름 aaa를 붙이지 않는다), 줄마다 「대상 사건 · thread 제목」
-        let p = payload(&demo, &[q("t-0001"), item("t-0002", "thread-state", "new report")], &titles);
+        let p = payload(&demo, &[q("t-0001"), item("t-0002", "thread-state", "new report")], &titles, Some(u32::MAX));
         assert_eq!(
             (p["url"].as_str(), p["title"].as_str(), p["tag"].as_str(), p["body"].as_str()),
             (
@@ -618,7 +623,7 @@ mod tests {
         );
         // 머신 사건: 머신 하나면 그 이름이 제목이고 본문은 사건만, 여럿이면 「머신」과 줄마다 그 머신
         let machines = Place::Machines(vec!["demo".into(), "side".into()]);
-        let p = payload(&machines, &[item("mac-a", "outage", "recovered")], &HashMap::new());
+        let p = payload(&machines, &[item("mac-a", "outage", "recovered")], &HashMap::new(), Some(u32::MAX));
         assert_eq!(
             (p["url"].as_str(), p["title"].as_str(), p["tag"].as_str(), p["body"].as_str()),
             (Some("/"), Some("mac-a"), Some("aaa-machine-mac-a"), Some("다시 연결됨"))
@@ -627,18 +632,19 @@ mod tests {
             &machines,
             &[item("mac-a", "outage", "recovered"), item("mac-b", "outage", "down")],
             &HashMap::new(),
+            Some(u32::MAX),
         );
         assert_eq!(
             (p["title"].as_str(), p["tag"].as_str(), p["body"].as_str()),
             (Some("머신"), Some("aaa-machines"), Some("mac-a 다시 연결됨\nmac-b 연결 끊김"))
         );
         let many: Vec<_> = (0..200).map(|n| q(&format!("t-{n:04}"))).collect();
-        assert!(payload(&demo, &many, &HashMap::new())["body"].as_str().unwrap().len() <= BODY_CAP + 3);
+        assert!(payload(&demo, &many, &HashMap::new(), Some(u32::MAX))["body"].as_str().unwrap().len() <= BODY_CAP + 3);
         // JSON escape·제목·tag·URL과 암호화 머리까지 한 통(4096바이트)에 들어야 한다.
         let mut report = item("t-0001", "thread-state", "new report");
         report.summary = format!("[완료] {}", "\"\\".repeat(60));
         let titles = [("t-0001".into(), "\"\\\n".repeat(1000))].into();
-        let p = payload(&demo, &vec![report; 30], &titles).to_string();
+        let p = payload(&demo, &vec![report; 30], &titles, Some(u32::MAX)).to_string();
         assert!(seal(&[0; 16], &[0; 12], &[0; 16], &[0; 65], p.as_bytes()).unwrap().len() <= 4096);
     }
 }

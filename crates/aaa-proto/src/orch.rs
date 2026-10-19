@@ -454,6 +454,8 @@ pub struct QuestionView {
 pub enum NoticeKind {
     /// 보는 화면 없이 agent의 턴이 끝났다(herdr `ToastKind::Finished`: 작업·질문에서 쉼으로, 안 봄)
     Finished,
+    /// post 남용 한도에 걸린 출처가 음소거됐다. 앱 안에서만 알린다.
+    PostMuted,
     /// thread의 새 보고(herdr-projects 「review · new report」 알림, host 「new report」 항목과 같은 때)
     Report,
 }
@@ -1154,6 +1156,9 @@ pub struct OwnerChoice {
 /// coordinator가 매 턴 처음 보는 프로젝트 요약(0.2.35 `context`)
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 pub struct ProjectContext {
+    /// inbox를 끝내도 해제 전까지 남는 활성 post 음소거 경고
+    #[serde(default)]
+    pub post_warnings: Vec<String>,
     pub project: String,
     pub path: String,
     /// project.toml `start_threads`: propose(제안하고 승인을 기다린다) 또는 auto. aaa는 강제하지 않는다.

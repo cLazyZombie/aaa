@@ -70,6 +70,11 @@ pub(crate) struct ThreadRec {
     pub next: Vec<String>,
     #[serde(default)]
     pub copy: Option<String>,
+    /// 연속 실패 수와 다음 자동 회수 시각. 성공하면 지우고, 두 번째 실패에 시스템 경고를 한 번 낸다.
+    #[serde(default)]
+    pub copy_failures: u32,
+    #[serde(default)]
+    pub copy_retry_at_ms: u64,
     /// 마지막 사본에서 옮기지 못한 library 파일과 까닭(「새 보고」 항목에 붙인다)
     #[serde(default)]
     pub copy_notes: Vec<String>,
@@ -153,6 +158,8 @@ impl ThreadRec {
             acked_hash: None,
             next: vec![],
             copy: None,
+            copy_failures: 0,
+            copy_retry_at_ms: 0,
             copy_notes: vec![],
             // 시작 중은 작업 중이다(`thread_group` 2번 줄). 처음 셈을 기다리지 않고 적어, 첫 셈 전에 온 보고도 새 보고다.
             last_group: Some(ThreadGroup::Working),
@@ -377,19 +384,16 @@ safety 표에 값이 있으면 먹지 않는다.
 `aaa safety show {p}`에서 `coordinator_deploy`가 on일 때만 한다. 기본 off다. 사용자가 aaa 밖 host 터미널에서
 `aaa safety set {p} coordinator_deploy on`을 한 번 켠다(철회: 끝의 on 대신 off). coordinator가 설정을 대신 켜지 않는다.
 thread·평가자·임의 pane·웹 기기는 이 허용을 받지 않는다. 처음에는 사람이 이 API를 아는 host·agent binary를 반영해야 한다.
-1. `aaa status`·`aaa machine list`로 현재 판·연결을 기록한다. 대상마다 보관본과 되돌릴 판을 확인한다.
-2. host 머신부터 `aaa update --machine <host 머신> --version <판>` 또는 `--from <그 머신의 절대 경로>`로 바꾼다.
-   공개 release의 SHA-256·self-check·version 고정 검사를 유지한다. `--from`은 파일 전송이 아니므로 대상에 준비된 파일만 쓴다.
-   명령이 출력한 배포 ID로 `aaa update status <id> --wait`가 completed인지 보고 결과의 판·SHA를 확인한다.
-3. `aaa service restart --role host --machine <host 머신>`으로 host를 먼저 다시 띄운다. 연결이 끊겨도 시작 명령은
-   다시 보내지 않는다. 같은 coordinator pane이 이어진 뒤 `aaa status`와 같은 배포 ID의 상태를 확인한다.
-4. host 머신 agent, 나머지 agent들을 하나씩 update → 배포 ID 확인 → `aaa service restart --role agent --machine <머신>`
-   순서로 한다. 매번 `aaa machine list`의 재연결과 `aaa update status <id>`의 running_software·running_sha256와 자기 coordinator pane 지속을 확인하고 다음 머신으로 간다.
-   restart는 기존 macOS 감독자의 재시작만 한다. 감독자 설치·해제·start·stop·시스템 설정은 사람이 한다.
-5. failed·interrupted·판/SHA 불일치가 나오면 다음 머신으로 진행하지 않는다. 같은 시작 요청을 재전송하지 않고 기록을 본다.
-   문제 머신에 `aaa update rollback --machine <머신>`을 한 번 요청하고 그 ID의 완료 → 해당 서비스 재시작 → 판·SHA·재연결을
-   확인한다. API를 모르는 구판으로 되돌렸거나 host가 돌아오지 않으면 사람에게 터미널 복구 명령을 알린다.
-배포 상태 조회는 허용 철회 뒤에도 자기 프로젝트의 기록을 볼 수 있다. 응답 단절은 성공이 아니다. 같은 ID를 조회한다.
+1. `scripts/deploy-build.sh <origin/main의 조상 커밋> --out <새 폴더>`로 한 번 빌드한 후보와 provenance를 받는다.
+   L1은 모든 대상 Mac의 같은 절대 경로에 그 파일을 미리 복사한다. SHA와 커밋을 보존한다.
+2. `aaa deploy start --from <절대 경로> --sha256 <SHA> --commit <40자리 커밋>`으로 한 번 시작한다.
+   host가 전체 사전 검사 뒤 host → 로컬 agent → 원격 agent를 순차 갱신하고 안내까지 갱신한다.
+3. `aaa deploy status <rollout ID> --wait`로 확인한다. host 연결이 끊겨도 start를 다시 보내지 않는다.
+   같은 ID의 조회가 재연결 뒤 이어진다. 판·SHA·새 프로세스 검증까지 done이어야 완료다.
+4. stopped면 다음 머신으로 가지 않는다. 기록의 머신·단계·까닭을 확인한다. L1에는 자동 rollback·host 감시가 없다.
+   문제 머신만 기존 `aaa update rollback --machine <머신>` → 작업 ID 조회 → 해당 서비스 restart → 판/SHA·재연결로 복구한다.
+   host가 돌아오지 않거나 구판 API가 되면 사람에게 터미널 복구를 알린다. 감독자 설치·해제·start·stop은 사람이 한다.
+배포 조회는 허용 철회 뒤에도 자기 프로젝트 기록을 볼 수 있다. rollout 진행 중에는 개별 배포 시작을 거부한다.
 
 ## thread pane의 확인창
 thread가 키를 기다리는 화면(시작 때 신뢰 창, 질문 메뉴, 명령·편집 권한 확인창)에 멈출 수 있다. 사용자가 pane에 가지 않게
@@ -498,7 +502,7 @@ pub(crate) const WAITING: &str = "Waiting for you";
 
 /// thread 묶음. 위에서부터 처음 맞는 줄이 이긴다. herdr-projects `thread::group()`(src/thread.rs)을 옮겼다.
 /// prompt_pending은 brief `Pending`, brief_stuck은 `Unknown`(aaa는 다시 보내지 않는다), harness 상태는 pane agent 활동,
-/// blocked는 `Question`이다. 다른 점: 보고 사본 실패는 확인 필요로 둔다(aaa는 보고를 host로 복사한다).
+/// blocked는 `Question`이다. 보고 사본 실패는 시스템 오류이며 harness 상태와 분리한다.
 /// 보고 내용(첫 줄 태그)으로는 묶음을 정하지 않는다(D9, plan §8.78).
 /// 진행을 보고하는 agent의 새 보고는 `Done`일 때만 검토 대기다(5번 줄, plan §8.85).
 pub(crate) fn thread_group(r: &ThreadRec, pane_exists: bool, agent: Option<&AgentStatus>, now_ms: u64) -> ThreadGroup {
@@ -551,16 +555,21 @@ pub(crate) fn thread_group_with(
     let ready = matches!(state, Some(A::Started | A::Idle));
     let stuck_launch =
         prompt_pending && (r.brief == BriefState::Unknown || (state.is_some() && !ready && state_ms >= NOT_READY_MS));
-    if r.status == ThreadStatus::Failed
-        || (!pane_exists && !has_report)
-        || stuck_launch
-        || r.copy.as_deref() == Some("failed")
-    {
+    if r.status == ThreadStatus::Failed || (!pane_exists && !has_report) || stuck_launch {
         return ThreadGroup::WaitingOnYou;
     }
     // 4: 확인창이 떠 있거나, agent가 사람을 기다린다고 알렸다
     if (state == Some(A::Question) && state_ms >= BLOCKED_DEBOUNCE_MS) || self_waiting {
         return ThreadGroup::WaitingOnYou;
+    }
+    // 사본을 못 읽어도 마지막으로 알던 묶음을 보존한다. 실제 작업·확인창 사건은 위·아래에서 그대로 센다.
+    // 옛 버전이 copy failed로 만든 WaitingOnYou는 다시 live 상태로 셈해 오표시를 회복한다.
+    if r.copy.as_deref() == Some("failed")
+        && state != Some(A::Working)
+        && !self_working
+        && let Some(group) = r.last_group.filter(|g| *g != ThreadGroup::WaitingOnYou)
+    {
+        return group;
     }
     // 5: PR과 보고. 열리고 승인된 PR은 병합 중이다. harness가 일하는 중이면 보고보다 작업 중이 이긴다(도중에 쓴 보고는
     //    결과가 아니다). 진행을 보고하는 agent는 끝을 스스로 말한다: `Done`(100)만 끝이다(herdr-projects steps.rs
@@ -1808,7 +1817,17 @@ impl Host {
         });
     }
 
-    /// agent에 지금 report.md hash를 묻고(library는 읽지 않는다) 받은 것과 다르면 사본을 받는다
+    /// 실패한 회수는 report hash가 더 바뀌지 않아도 다음 ticker에서 다시 한다. 연결이 없으면 건너뛴다.
+    pub(crate) fn retry_report_copies(self: &Arc<Self>, project: &str, now: u64) {
+        for r in self.open_threads(project) {
+            if r.copy.as_deref() == Some("failed") && r.copy_retry_at_ms <= now && self.live_conn(&r.machine_id).is_ok()
+            {
+                self.refresh_report(project, &r.id);
+            }
+        }
+    }
+
+    /// agent에 지금 report.md hash를 묻고(library는 읽지 않는다) 받은 것과 다르거나 앞 회수가 실패했으면 받는다
     async fn collect_if_changed(self: &Arc<Self>, project: &str, id: &str) {
         let Ok(rec) = self.load(project, id) else { return };
         let (Some(work_dir), Ok(conn)) = (rec.work_dir.clone(), self.live_conn(&rec.machine_id)) else { return };
@@ -1816,19 +1835,65 @@ impl Host {
             return;
         }
         let probe = conn.request(AgentRequest::ReportCollect { work_dir, max_library_bytes: 0 }).await;
-        if !matches!(&probe, Ok(AgentResponse::Report(s)) if Some(&s.hash) != rec.report_hash.as_ref()) {
+        if rec.copy.as_deref() != Some("failed")
+            && !matches!(&probe, Ok(AgentResponse::Report(s)) if Some(&s.hash) != rec.report_hash.as_ref())
+        {
             return;
         }
         let _guard = self.collect_lock.lock().await;
-        if let Err(e) = self.collect(project, id, false).await {
-            tracing::warn!(thread = %id, "보고 사본 실패: {}", e.message);
+        // 한 번의 일시 오류는 바로 새 manifest로 다시 받는다. 계속 실패하면 ticker 간격으로 재수집한다.
+        for _ in 0..2 {
+            match self.collect(project, id, false).await {
+                Ok(()) => break,
+                Err(e) => tracing::warn!(thread = %id, "보고 사본 실패: {}", e.message),
+            }
         }
     }
 
-    /// report.md와 library를 받아 host 프로젝트 폴더에 둔다. 실패하면 hash를 바꾸지 않는다(다음 변화·정리 때 다시 한다).
+    /// report.md와 library를 받아 host 프로젝트 폴더에 둔다. 실패하면 hash·마지막 사본을 보존하고 자동 재수집한다.
     /// `last`(resolve의 마지막 사본)는 보고가 그대로여도 library를 다시 받는다. 보고 뒤에 바뀐 결과물이 옛 사본으로
     /// 남지 않게 한다(herdr-projects threads.rs `final_copy`가 늘 `copy_home_*`로 library까지 다시 복사하는 것과 같다).
     async fn collect(self: &Arc<Self>, project: &str, id: &str, last: bool) -> Result<(), ErrorBody> {
+        // FileRead뿐 아니라 manifest·보고 사본을 host에 저장하다 실패해도 같은 재수집 경로를 쓴다.
+        match self.collect_snapshot(project, id, last).await {
+            Ok(()) => Ok(()),
+            Err(e) => {
+                // 전송 프로토콜은 io 오류를 문자열로 보존한다. host 저장·agent 응답의 EMFILE도 경고한다.
+                #[cfg(unix)]
+                let nofile = e.message.contains("Too many open files")
+                    && (e.message.contains(&format!("os error {}", libc::EMFILE))
+                        || e.message.contains(&format!("os error {}", libc::ENFILE)));
+                #[cfg(not(unix))]
+                let nofile = false;
+                if nofile {
+                    self.mark_resource_exhausted("report copy");
+                }
+                let rec = self.update_rec(project, id, |r| {
+                    r.copy = Some("failed".into());
+                    r.copy_failures = r.copy_failures.saturating_add(1);
+                    r.copy_retry_at_ms = aaa_common::util::now_ms().saturating_add(self.cfg.projects.tick_secs * 1000);
+                    r.copy_notes = vec![e.message.clone()];
+                })?;
+                self.flow(&rec, "copy_failed", None, e.message.clone());
+                if rec.copy_failures == 2 && !nofile {
+                    self.inbox_add_body(
+                        project,
+                        "report-copy-failed",
+                        id,
+                        "copy failed",
+                        &format!(
+                            "{}: 보고·결과물 사본을 받지 못했다. 마지막 상태를 유지하고 자동으로 다시 받는다",
+                            crate::transitions::label(&rec)
+                        ),
+                        &e.message,
+                    );
+                }
+                Err(e)
+            }
+        }
+    }
+
+    async fn collect_snapshot(self: &Arc<Self>, project: &str, id: &str, last: bool) -> Result<(), ErrorBody> {
         let rec = self.load(project, id)?;
         let dir = self.project_dir(project)?;
         let work_dir = rec.work_dir.clone().ok_or_else(|| bad("작업 폴더가 없다"))?;
@@ -1862,24 +1927,29 @@ impl Host {
                     }
                     std::fs::create_dir_all(target.parent().unwrap()).map_err(internal)?;
                     let mut out = Vec::with_capacity(f.size as usize);
-                    loop {
+                    // manifest가 해시한 길이만 받는다. 실행 중인 로그의 뒤쪽 append를 섞지 않는다.
+                    while (out.len() as u64) < f.size {
+                        let ask = (f.size - out.len() as u64).min(512 * 1024) as u32;
                         let r = conn
                             .request(AgentRequest::FileRead {
                                 work_dir: work_dir.clone(),
                                 path: f.path.clone(),
                                 offset: out.len() as u64,
-                                len: 512 * 1024,
+                                len: ask,
                             })
                             .await?;
                         let AgentResponse::FileChunk { data, eof } = r else {
                             return Err(internal("예상하지 못한 응답"));
                         };
+                        if data.0.len() > ask as usize {
+                            return Err(internal("요청 범위를 넘는 library 응답"));
+                        }
                         out.extend_from_slice(&data.0);
                         if eof || data.0.is_empty() {
                             break;
                         }
                     }
-                    if hex::encode(sha2::Sha256::digest(&out)) != f.sha256 {
+                    if out.len() as u64 != f.size || hex::encode(sha2::Sha256::digest(&out)) != f.sha256 {
                         return Err(internal(format!("{}: 받는 동안 바뀌었다(hash 다름)", f.path)));
                     }
                     std::fs::write(&target, &out).map_err(internal)?;
@@ -1919,6 +1989,8 @@ impl Host {
                 if rec.report_hash.as_ref() == Some(&hash) && rec.copy.as_deref() != Some("failed") {
                     let rec = self.update_rec(project, id, |r| {
                         r.copy = Some(copy.clone());
+                        r.copy_failures = 0;
+                        r.copy_retry_at_ms = 0;
                         r.copy_notes = skipped.clone();
                     })?;
                     if !changed {
@@ -1939,6 +2011,8 @@ impl Host {
                     r.report_changed_ms = Some(aaa_common::util::now_ms());
                     r.next = next;
                     r.copy = Some(copy.clone());
+                    r.copy_failures = 0;
+                    r.copy_retry_at_ms = 0;
                     r.copy_notes = skipped.clone();
                 })?;
                 let mut detail = format!("사본 {copy}");
@@ -1955,11 +2029,7 @@ impl Host {
                 self.tick_wake.notify_one();
                 Ok(())
             }
-            Err(e) => {
-                let rec = self.update_rec(project, id, |r| r.copy = Some("failed".into()))?;
-                self.flow(&rec, "copy_failed", None, e.message.clone());
-                Err(e)
-            }
+            Err(e) => Err(e),
         }
     }
 
@@ -2328,6 +2398,8 @@ mod tests {
             acked_hash: None,
             next: Vec::new(),
             copy: None,
+            copy_failures: 0,
+            copy_retry_at_ms: 0,
             copy_notes: Vec::new(),
             last_group: None,
             review_item_hash: None,
@@ -2430,7 +2502,12 @@ mod tests {
         assert_eq!(g(&open_thread(), Some(agent(Question, 30))), ThreadGroup::WaitingOnYou);
 
         let copy = ThreadRec { copy: Some("failed".into()), ..open_thread() };
-        assert_eq!(g(&copy, Some(agent(Working, 0))), ThreadGroup::WaitingOnYou);
+        assert_eq!(g(&copy, Some(agent(Working, 0))), ThreadGroup::Working);
+        let copy = ThreadRec { last_group: Some(ThreadGroup::Working), ..copy };
+        assert_eq!(g(&copy, Some(agent(Idle, 100))), ThreadGroup::Working);
+        assert_eq!(g(&copy, Some(agent(Question, 30))), ThreadGroup::WaitingOnYou);
+        let legacy = ThreadRec { last_group: Some(ThreadGroup::WaitingOnYou), ..copy };
+        assert_eq!(g(&legacy, Some(agent(Working, 0))), ThreadGroup::Working);
     }
 
     #[test]
@@ -2553,3 +2630,7 @@ mod tests {
         assert_eq!(g(&t, Some(agent(Idle, 0))), ThreadGroup::ReadyForReview);
     }
 }
+
+#[cfg(test)]
+#[path = "orch/report_tests.rs"]
+mod report_tests;

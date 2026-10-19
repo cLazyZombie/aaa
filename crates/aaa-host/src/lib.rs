@@ -4,6 +4,7 @@
 //! - pane 화면은 agent(session host)가 정본이다. host는 마지막 화면 mirror를 가져 agent가 끊겨도 읽기 전용으로 보여 준다.
 
 mod adopt;
+mod app_badge;
 mod attach;
 mod bgwait;
 mod brief;
@@ -46,7 +47,9 @@ mod prompt;
 mod prompt_box;
 mod push;
 mod report_mark;
+mod resource;
 mod restore;
+mod rollout;
 mod routine;
 mod seen;
 mod summary;
@@ -399,6 +402,8 @@ pub struct Host {
     pub changed: tokio_watch::Sender<u64>,
     /// 보고서 목록이 바뀌었다(보내기·열기·지우기·thread 사본, plan §8.256). 웹 events가 안 본 수를 다시 보낸다
     pub reports_changed: tokio_watch::Sender<u64>,
+    /// EMFILE 중에는 파일을 더 열지 않고, ticker가 여유가 생긴 뒤 시스템 경고를 저장한다.
+    resource_exhausted: std::sync::atomic::AtomicBool,
     enroll: Mutex<Enroll>,
     pairing: Mutex<Pairing>,
     pub agent_listen: Mutex<Option<String>>,
@@ -414,6 +419,10 @@ pub struct Host {
     /// 새 흐름 사건(연결된 front에 알린다). 보내는 차례는 seq 차례다(`flow_order`)
     pub(crate) post_gate: std::sync::Mutex<()>,
     deployment_gate: std::sync::Mutex<()>,
+    rollout_gate: tokio::sync::Mutex<()>,
+    rollout_wake: tokio::sync::Notify,
+    rollout_instance: String,
+    running_sha256: String,
     mission_locks: Mutex<HashMap<String, Arc<tokio::sync::Mutex<()>>>>,
     mission_start_lock: tokio::sync::Mutex<()>,
     pub flow_events: broadcast::Sender<aaa_proto::FlowEvent>,
@@ -633,6 +642,10 @@ impl Host {
             question_events: broadcast::channel(256).0,
             post_gate: std::sync::Mutex::new(()),
             deployment_gate: std::sync::Mutex::new(()),
+            rollout_gate: tokio::sync::Mutex::new(()),
+            rollout_wake: tokio::sync::Notify::new(),
+            rollout_instance: util::new_id(),
+            running_sha256: rollout::running_sha()?,
             mission_locks: Mutex::new(HashMap::new()),
             mission_start_lock: tokio::sync::Mutex::new(()),
             notice_events: broadcast::channel(64).0,
@@ -679,6 +692,7 @@ impl Host {
             brief_loops: Mutex::new(HashSet::new()),
             thread_ops: Mutex::new(HashMap::new()),
             brief_claims: Mutex::new(HashSet::new()),
+            resource_exhausted: std::sync::atomic::AtomicBool::new(false),
             report_refresh: Mutex::new(HashMap::new()),
             restoring: Mutex::new(HashSet::new()),
             restore_tried: Mutex::new(HashSet::new()),
@@ -1195,6 +1209,8 @@ impl Host {
         }
         match req {
             FrontRequest::DebugInput { pane, thread, since_ms } => self.debug_input(pane, thread, since_ms),
+            FrontRequest::RolloutStart { id, spec } => self.rollout_start(actor, id, spec).await,
+            FrontRequest::RolloutStatus { id } => self.rollout_status(actor, id),
             FrontRequest::DeployContext => Ok(self.deployment_context(actor)),
             FrontRequest::DeployStart { machine, id, action } => {
                 self.deployment_start(actor, machine, id, action).await
@@ -2783,6 +2799,7 @@ pub async fn run(cfg: HostConfig, state_root: PathBuf) -> Result<()> {
     link::start(&host).await?;
     front::start(&host).await?;
     web::start(&host).await?;
+    host.resume_rollout();
     host.start_ticker();
     host.start_notifier();
     if host.cfg.local_agent.mode == LocalAgentMode::Child {

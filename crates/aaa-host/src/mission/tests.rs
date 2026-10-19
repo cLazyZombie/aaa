@@ -570,7 +570,13 @@ async fn mission_blocked_ended_and_old_peer_are_visible() {
     let before = f.requests.lock().unwrap().len();
     assert!(l.h.mission_tick("demo", "watch", util::now_ms()).await.unwrap_err().message.contains("mission.v1"));
     assert_eq!(f.requests.lock().unwrap().len(), before, "옛 상대에는 새 link 요청을 보내지 않는다");
-    assert!(negotiate(AGENT_LINK, Version { major: 1, minor: 4 }).is_ok());
+    // API minor가 바뀌어도 N-1까지만 허용한다. feature가 없는 상대의 무전송 단언은 위에 유지한다.
+    let previous = Version { major: AGENT_LINK.major, minor: AGENT_LINK.minor - 1 };
+    assert_eq!(negotiate(AGENT_LINK, previous), Ok(previous));
+    assert!(matches!(
+        negotiate(AGENT_LINK, Version { minor: previous.minor - 1, ..previous }),
+        Err(aaa_proto::NegotiateError::PeerTooOld { .. })
+    ));
 }
 #[test]
 fn usage_threshold_is_model_specific_and_expires_at_reset() {

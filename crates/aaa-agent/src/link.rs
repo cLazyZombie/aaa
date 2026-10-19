@@ -93,6 +93,8 @@ pub fn hello(agent: &Agent) -> AgentHello {
         features: vec![
             "terminal.v1".into(),
             "deployment.v1".into(),
+            #[cfg(target_os = "macos")]
+            "rollout.v1".into(),
             "post.v1".into(),
             "mission.v1".into(),
             "cwd.v1".into(),
