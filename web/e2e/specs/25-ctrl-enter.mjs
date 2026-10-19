@@ -208,7 +208,7 @@ draw();
     await shot(page, "ctrl-enter-chat-desktop");
     await page.getByTestId("chat-toggle").click();
   });
-  await step("대기 메시지 「지금 보내기」 host 판정(plan §8.270): 글을 다시 보내지 않고 작업 중 빈 입력의 대기 표지(Claude `to send now` 줄, Codex steering 패널) 위에서만 키를 쓰고, 그 밖은 쓰지 않고 까닭을 답한다. 보기 기기는 보내지 못한다", async () => {
+  await step("대기 메시지 「지금 보내기」 host 판정(plan §8.271): 글을 다시 보내지 않고 작업 중 빈 입력의 대기 표지(Claude `to send now` 줄, Codex steering 패널) 위에서만 키를 쓰고, 그 밖은 쓰지 않고 까닭을 답한다. 보기 기기는 보내지 못한다", async () => {
     // pane WebSocket을 가로채 steer_queued frame을 넣고 답을 받는다(단추 화면은 spec 23). 연결은 주소의 pane id로 찾는다
     const ids = Object.fromEntries(aaa("pane", "list").panes.map((p) => [p.name, p.id]));
     const conns = new Map();

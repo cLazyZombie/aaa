@@ -80,7 +80,7 @@ impl Host {
         data
     }
 
-    /// 대기 메시지 「지금 보내기」의 키(plan §8.270). `ctrl_enter_data`와 같은 mirror·상태를 읽되 `queued_steer_keys`의 좁은 판정을 쓴다.
+    /// 대기 메시지 「지금 보내기」의 키(plan §8.271). `ctrl_enter_data`와 같은 mirror·상태를 읽되 `queued_steer_keys`의 좁은 판정을 쓴다.
     /// 판정과 까닭은 입력 사건(`steer_queued`)으로 남긴다. 호출한 쪽은 이 결과를 받자마자 쓴다(그 사이 다른 판정·기다림 없음).
     pub(crate) fn steer_queued_data(&self, id: &str, trace: &str) -> Result<Vec<u8>, aaa_proto::SteerRefusal> {
         use aaa_proto::SteerRefusal;

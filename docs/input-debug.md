@@ -31,7 +31,7 @@ aaa --json debug input --thread t-0408 --since 1d
 | `ui / Failed` | 브라우저가 본 연결 단절·거절·확인 불가. 임의의 오류 본문은 저장하지 않음 |
 | `ctrl_enter` | 고른 키와 `working`, `question`, `synced`, 커서 위치, 현재 입력 상자·작업 표시의 근거 |
 | `ui / CtrlEnterBlocked` | 브라우저에서 붙잡은 초안·IME·읽기 전용·전송 잠금·첨부 업로드/용량 상태로 막음 |
-| `steer_queued` | 대기 메시지 「지금 보내기」(plan §8.270)의 host 판정: 고른 키 또는 거절 까닭(`reason=Some(Draft)` 등), `working`, `synced`, 커서, 화면 근거와 `queue_hint`. 보기 기기는 `role=readonly` |
+| `steer_queued` | 대기 메시지 「지금 보내기」(plan §8.271)의 host 판정: 고른 키 또는 거절 까닭(`reason=Some(Draft)` 등), `working`, `synced`, 커서, 화면 근거와 `queue_hint`. 보기 기기는 `role=readonly` |
 | `steer_sent` / `steer_failed` | 고른 키를 agent가 pane에 썼음 / 쓰기 실패 code |
 
 `Receipt` 시각은 브라우저가 기록에서 확인한 사건을 host가 받은 시각이다. 네트워크가 끊기거나 탭이 닫히면 그 이후

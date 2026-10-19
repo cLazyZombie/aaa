@@ -2372,7 +2372,7 @@ pub enum TermServerMsg {
         id: u32,
         stage: SubmitStage,
     },
-    /// `SteerQueued`의 답(plan §8.270). `sent`면 steering 키가 pane에 들어갔다(글이 실제로 읽혔는지는 대화 기록이 말한다).
+    /// `SteerQueued`의 답(plan §8.271). `sent`면 steering 키가 pane에 들어갔다(글이 실제로 읽혔는지는 대화 기록이 말한다).
     /// 아니면 `reason`이 까닭이고, `Failed`의 `message`는 host 오류 글이다
     SteerQueued {
         id: u32,
@@ -2383,7 +2383,7 @@ pub enum TermServerMsg {
     Error(ErrorBody),
 }
 
-/// 대기 메시지 「지금 보내기」를 하지 않은 까닭(`TermServerMsg::SteerQueued`, plan §8.270)
+/// 대기 메시지 「지금 보내기」를 하지 않은 까닭(`TermServerMsg::SteerQueued`, plan §8.271)
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "snake_case")]
 pub enum SteerRefusal {
@@ -2455,7 +2455,7 @@ pub enum TermClientMsg {
         event: crate::InputTraceEvent,
         method: Option<crate::InputReceiptMethod>,
     },
-    /// 대기 메시지 「지금 보내기」(plan §8.270): harness 대기열에 이미 있는 글을 지금 턴에 넣는 키만 보낸다(글은 다시 보내지
+    /// 대기 메시지 「지금 보내기」(plan §8.271): harness 대기열에 이미 있는 글을 지금 턴에 넣는 키만 보낸다(글은 다시 보내지
     /// 않는다). host가 입력창이 비고 대기 글이 화면에 있을 때만 키를 고르고(Claude sendNow, Codex Esc) `SteerQueued`로 답한다
     SteerQueued {
         id: u32,

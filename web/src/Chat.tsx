@@ -153,7 +153,7 @@ interface Pending {
   harness: "claude" | "codex";
   stale?: boolean;
   onDismiss?: () => void;
-  /** 대기 묶음 맨 끝 말에만: 「지금 보내기」(plan §8.270) */
+  /** 대기 묶음 맨 끝 말에만: 「지금 보내기」(plan §8.271) */
   steer?: SteerView;
 }
 
@@ -295,7 +295,7 @@ export function ChatPanel({
   pending?: PendingSend[];
   harness?: "claude" | "codex";
   onDismissPending?: (id: number) => void;
-  /** 대기 메시지 「지금 보내기」(plan §8.270). 없으면 단추를 그리지 않는다(쉬는 agent·보기 권한·옛 host) */
+  /** 대기 메시지 「지금 보내기」(plan §8.271). 없으면 단추를 그리지 않는다(쉬는 agent·보기 권한·옛 host) */
   steer?: Omit<SteerView, "count">;
 }) {
   const [chat, setChat] = useState<ChatView | null>(null);

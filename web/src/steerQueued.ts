@@ -1,4 +1,4 @@
-// 대기 메시지 「지금 보내기」(plan §8.270)의 화면 규칙. 대기 말(harness 대기열에 이미 있는 글) 맨 끝에 단추 하나를 둔다.
+// 대기 메시지 「지금 보내기」(plan §8.271)의 화면 규칙. 대기 말(harness 대기열에 이미 있는 글) 맨 끝에 단추 하나를 둔다.
 // 참고 herdr-web-ui PendingMessages.tsx(57-76행, ArrowUp + 「지금 보내기」, 보내는 중 aria-busy)와 PaneTerminal.tsx `actOnPending`
 // (터미널 draft면 held_input 거절, 서버가 sent를 알리면 줄을 지운다). aaa는 글을 다시 보내지 않고 host가 고른 키만 보낸다
 // (Claude sendNow, Codex Esc). 그 키는 대기열 전부를 보내므로 단추는 묶음에 하나다. React·브라우저를 쓰지 않아 node 시험이 부른다.

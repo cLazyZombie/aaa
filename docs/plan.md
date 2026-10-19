@@ -904,7 +904,7 @@ host 프로젝트 폴더 구성:
     - 쓰다 만 글은 머신·pane마다 이 기기(localStorage, 32,768자 상한)에 남는다. 보내는 동안 친 글은 남는다.
     - 연결이 끊겨도 입력줄은 쓸 수 있고 보내기만 막힌다.
   - 키 막대(§8.43, herdr-web-ui KeyBar): Esc·Tab·^C·Ctrl·Alt·Shift·Enter·↑↓←→. 터치 기기나 폭 768px 이하에서만 보인다. Ctrl·Alt·Shift는 유지 키다. 다시 누르거나 연결이 끊길 때까지 켜져 있다(래치). 휴대폰에서는 가로로 밀어 본다.
-- **견본 도구.** `web/e2e/showcase.mjs`는 host·agent 둘(로컬·원격 등록)과 셸·가짜 Claude(작업 중·입력 대기·질문)·thread 셋·평가자가 있는 상태를 만든다. 웹 화면 8가지(데스크톱 1920×1080·휴대폰 390×844 × 어두움·밝음)를 찍는다. 디자인 검수와 전후 비교에 쓴다. `AAA_BIN`으로 옛 binary를 줄 수 있다.
+- **견본 도구.** `web/e2e/showcase.mjs`는 host·agent 둘(로컬·원격 등록)과 셸·가짜 Claude(작업 중·입력 대기·질문)·thread 셋·평가자가 있는 상태를 만든다. 웹 화면 8가지(데스크톱 1920×1080·휴대폰 390×844 × 어두움·밝음)를 찍는다. 디자인 검수와 전후 비교에 쓴다. `AAA_BIN`으로 옛 binary를 줄 수 있다. `--readme docs/media`는 README 그림(데스크톱 질문·보고, 휴대폰 목록 PNG와 coordinator → thread → 보고 흐름 GIF)을 만든다. 영상은 Chrome screencast PNG를 ffmpeg로 묶는다(녹화 영상 VP8은 작은 색 글자가 바랜다). 저장소 파일 1MiB 한도(check-public) 안에 둔다(10-19 t-0413).
 - **PWA(M3, 10-17).** 휴대폰 홈 화면에 앱으로 둔다.
   - `web/public/manifest.webmanifest`(standalone, 시작 `/`)와 아이콘(192·512·maskable·apple-touch·favicon PNG)을 둔다. 아이콘은 견본 도구처럼 headless Chromium으로 한 번 그려 저장소에 넣었다.
   - manifest와 아이콘은 인증 없이 받는다(브라우저가 cookie 없이 가져간다). 비밀이 없다.
@@ -5415,7 +5415,15 @@ primary 근거:
 
 - HTTP 답만 유실되고 host 사건을 보관한 경우도 같은 전송 값으로 이후 편집을 판정한 뒤 inFlight를 비운다. E2E14는 실제 host 적용·events 수신 뒤 HTTP 응답만 abort해 이 경로를 고정한다.
 
-### 8.270 대기 메시지 「지금 보내기」(10-19, t-0417)
+### 8.270 웹 사이드바 구독 사용량 펼친 창을 낮게(10-19, t-0416)
+
+- **요청.** 사용자 「왼쪽 밑에 남은 사용량 있는 창의 높이가 높아. 적당히 수정해.」 대상은 바닥 줄 칩을 누르면 뜨는 펼친 창(`.usage-popover`)이다. 바닥 줄 자체(데스크톱 49px, 휴대폰 61px, 칩 단추 `--control`·`--touch`)는 참고 herdr-web-ui sidebar-footer와 같아 그대로 둔다.
+- **참고와의 관계.** aaa의 `.usage-*`는 herdr-web-ui `UsageMeters.css`(aa624cb)와 같은 값이다. 참고는 다시 읽기 단추가 `.icon-button`(32px)이라 오히려 더 높다. 이번 줄임은 참고에서 의도해 벗어난 것이다. t3code는 사이드바 바닥에 「Usage」 단추만 두고 따로 화면을 연다.
+- **바꾼 것(정보는 같다).** 한도 줄은 `line-height: var(--lh-tight)`(12px × 1.5 → 1.2)에 이름과 막대 사이 2px(전 `--space-1`), 구독 안 간격 `--space-1`(전 `--space-2`), 창 아래 여백 `--space-2`(전 `--space-3`). 한도 줄 26px → 20.4px, Claude 묶음 130.5px → 101.7px, Codex 묶음 96.5px → 77.3px, 창 289px → 237px(−18%). 데스크톱 1280×800·휴대폰 390×844, 기본·GitHub Dark 모두 같은 값이다.
+- **더 줄이려면.** 초기화까지 남은 때를 막대 줄에 겹치거나 계정 줄을 빼야 한다. 보이는 정보를 바꾸므로 하지 않았다.
+- **검증.** 웹 E2E 06 「구독 사용량·설정」이 한도 다섯 줄을 펼친 창 높이가 245px 이하인지 본다. 바꾸기 전 CSS로는 289px로 실패했다. 26 「막대·바닥 줄 배치」는 바닥 줄이 그대로임을 본다.
+
+### 8.271 대기 메시지 「지금 보내기」(10-19, t-0417)
 
 - **무엇.** 작업 중에 보내 harness 대기열에 이미 있는 글(대기 말, §8.247)을 기다리지 않고 지금 읽게 한다. 대기 묶음의 맨 끝 말에 단추 하나(「지금 보내기」, 둘 이상이면 「N개 지금 보내기」, ArrowUp)를 둔다. 참고 herdr-web-ui `PendingMessages.tsx`의 문구·모양이다. 취소 단추는 없다(사용자 결정 10-19 20:5x: 추천안 1~5).
 - **글을 다시 보내지 않는다.** 글은 이미 harness 대기열에 있으므로 웹은 `steer_queued { id, trace }`만 보내고 host가 키를 고른다. Claude는 sendNow(Ctrl+X Ctrl+S, 빈 입력이면 대기열 전부를 보낸다), Codex는 Esc(대기 steering이 있으면 그것을 보낸다)다. 키가 대기열 전부를 보내므로 단추는 말마다가 아니라 묶음에 하나다.

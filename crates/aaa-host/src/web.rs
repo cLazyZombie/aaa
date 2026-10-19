@@ -1433,7 +1433,7 @@ async fn pane_session(
                             }
                             None
                         }
-                        // 대기 메시지 「지금 보내기」(plan §8.270): 키만 보내고 답한다. submit 중이면 이 frame은 그 뒤(Enter 뒤)에 온다
+                        // 대기 메시지 「지금 보내기」(plan §8.271): 키만 보내고 답한다. submit 중이면 이 frame은 그 뒤(Enter 뒤)에 온다
                         Ok(TermClientMsg::SteerQueued { id: sid, trace }) => {
                             let trace = trace.filter(|t| crate::input_log::valid_trace(t)).unwrap_or_else(aaa_common::util::new_id);
                             let trace = format!("{}:{trace}", front.id);
@@ -1519,7 +1519,7 @@ async fn pane_session(
     }
 }
 
-/// 대기 메시지 「지금 보내기」 하나(plan §8.270). host 판정(`steer_queued_data`)이 고른 키를 바로 그 뒤에 쓴다: 판정과 쓰기 사이에
+/// 대기 메시지 「지금 보내기」 하나(plan §8.271). host 판정(`steer_queued_data`)이 고른 키를 바로 그 뒤에 쓴다: 판정과 쓰기 사이에
 /// 다른 기다림이 없어 Codex Esc는 패널을 확인한 같은 mirror 상태에서 나간다(남는 틈은 agent까지 가는 길뿐이다).
 /// 보기 권한은 판정 전에 거절한다. 보냄·거절·실패를 모두 입력 사건으로 남긴다(`steer_queued` 판정, `steer_sent`·`steer_failed`)
 async fn steer_queued(

@@ -130,7 +130,7 @@ export interface ChatComposerProps {
   messages: ChatMessage[] | null;
   /** 터미널 보기로(입력창에 글이 남았는지 본다) */
   onInspect: () => void;
-  /** 보내는 중(잠김)인지 알린다: 그동안 대기 말 「지금 보내기」를 끈다(plan §8.270) */
+  /** 보내는 중(잠김)인지 알린다: 그동안 대기 말 「지금 보내기」를 끈다(plan §8.271) */
   onBusy?: (busy: boolean) => void;
   /** 작업 중인 agent를 멈춘다(Esc, 키 막대와 같은 길). 없으면 중단 단추가 없다 */
   onInterrupt?: () => void;

@@ -397,7 +397,7 @@ while True:
     aaa("pane", "kill", pane);
   });
 
-  // 대기 메시지 「지금 보내기」(plan §8.270)의 가짜 harness. 받은 bytes를 기록하고 머리 줄에 받은 수·대기 수·보낸 수를 그린다.
+  // 대기 메시지 「지금 보내기」(plan §8.271)의 가짜 harness. 받은 bytes를 기록하고 머리 줄에 받은 수·대기 수·보낸 수를 그린다.
   // Claude: 작업 중 Enter 글은 대기열(기록에 enqueue)이고 대기 글 아래 `ctrl+x ctrl+s to send now`(dim)를 그린다(실측 2.1.303).
   //   빈 입력의 Ctrl+X Ctrl+S는 대기열 전부를 지금 보낸다(remove + queued_command). Ctrl+U는 입력을 비운다.
   // Codex: 작업 중 Enter 글은 대기 steering 패널(↳)에 둔다. `-hidden` 표지가 있으면 패널 없이 받은 것으로 둔다(실측 0.163은

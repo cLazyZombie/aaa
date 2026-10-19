@@ -1,9 +1,12 @@
 // 화면 견본(디자인 비교·검수용): 실제 aaa host와 agent 둘(mac-a 로컬, mac-b 원격 등록)을 띄워
 // 셸·가짜 Claude(작업 중·입력 대기·질문)·thread(검토 대기·작업 중·확인 필요)·사후 평가자가 있는 상태를 만들고,
-// 같은 화면을 데스크톱 1920×1080·휴대폰 390×844, 어두움·밝음으로 찍는다.
+// 같은 화면을 데스크톱 1920×1080·패드 820×1180·휴대폰 390×844, 어두움·밝음으로 찍는다.
+// `--readme`면 README 그림(docs/media)을 만든다: 데스크톱 질문·보고, 휴대폰 목록 PNG 셋과 흐름 영상
+// (coordinator에 글 보내기 → thread 진행 → 보고) GIF 하나. 영상은 ffmpeg가 있어야 하고, 영상 폴더를 주면 mp4도 둔다.
 //
 // 실행(저장소 루트): (cd web && npm run build) && cargo build -p aaa
 //                    NODE_PATH=$(npm root -g) node web/e2e/showcase.mjs <스크린샷 폴더> [접두사]
+//                    NODE_PATH=$(npm root -g) node web/e2e/showcase.mjs --readme docs/media [영상 폴더]
 // 끝나면 띄운 프로세스를 PID로 끝내고 실험실 폴더를 지운다.
 
 import { spawn, execFileSync } from "node:child_process";
@@ -18,12 +21,16 @@ const { chromium } = require("playwright");
 
 const repo = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
 const AA = process.env.AAA_BIN ?? path.join(repo, "target/debug/aaa");
-const out = process.argv[2];
-const prefix = process.argv[3] ?? "aaa";
+const readme = process.argv[2] === "--readme";
+const [out, extra] = process.argv.slice(readme ? 3 : 2);
+const prefix = readme ? "" : (extra ?? "aaa");
 if (!out) throw new Error("스크린샷 폴더를 준다");
+if (readme) execFileSync("ffmpeg", ["-version"], { stdio: "ignore" });
 fs.mkdirSync(out, { recursive: true });
 const root = `/tmp/aas-${process.pid}`;
-const envA = { ...process.env, AAA_CONFIG_DIR: `${root}/c`, AAA_STATE_DIR: `${root}/s`, RUST_LOG: "aaa=warn" };
+// 구독 사용량은 빈 실험실 집에서 읽는다(host usage.rs 시험 고리): 찍는 Mac의 실제 사용량이 화면에 나오지 않는다.
+// brief를 치기 전 화면 멈춤(3초)은 시험처럼 줄인다: 영상에서 thread가 바로 일을 시작한다
+const envA = { ...process.env, AAA_CONFIG_DIR: `${root}/c`, AAA_STATE_DIR: `${root}/s`, AAA_USAGE_HOME: `${root}/usagehome`, AAA_TEST_BRIEF_SETTLE_MS: "300", RUST_LOG: "aaa=warn" };
 const envB = { ...process.env, AAA_CONFIG_DIR: `${root}/cb`, AAA_STATE_DIR: `${root}/sb`, RUST_LOG: "aaa=warn" };
 const procs = new Map();
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -81,7 +88,7 @@ function killSessionHosts(state) {
 }
 
 fs.rmSync(root, { recursive: true, force: true });
-for (const d of ["c", "s", "cb", "sb", "work", "workb"]) fs.mkdirSync(`${root}/${d}`, { recursive: true });
+for (const d of ["c", "s", "cb", "sb", "work", "workb", "usagehome"]) fs.mkdirSync(`${root}/${d}`, { recursive: true });
 const webPort = await freePort();
 const agentPort = await freePort();
 fs.writeFileSync(
@@ -103,12 +110,21 @@ while IFS= read -r line; do
       printf '\\033[36m● brief를 읽었다\\033[0m\\n'
       case "$task" in
         *오래*) printf '\\033[2m  · 시험을 돌리는 중…\\033[0m\\n' ;;
+        *천천히*)
+          "$AA" report --percent 20 --activity '코드 읽기'
+          printf '\\033[2m  · src/orders/export.rs를 읽는 중…\\033[0m\\n'
+          sleep 2
+          "$AA" report --percent 70 --activity '변경 시험'
+          printf '\\033[2m  · cargo test -p shop-api: 12 passed\\033[0m\\n'
+          sleep 2
+          "$AA" report --percent 100 --activity '보고'
+          printf '## Report\\n주문 내역을 **CSV로 내보내기**를 더했다.\\n\\n- 주소: \\140GET /orders/export.csv\\140\\n- 기간·상태로 거르기\\n- 확인: 시험 12개 통과\\n\\n## Next\\n- 결과를 확인하고 병합하기\\n' > "$dir/report.md" ;;
         *결정*)
           "$AA" report --percent 50 --activity 'Waiting for you'
           printf '## Report\\n로그인 저장 방식을 정해야 한다.\\n\\n- 쿠키 세션: 서버 상태가 필요하다\\n- JWT: 폐기가 어렵다\\n\\n## Next\\n- 쿠키 세션으로 정하기(추천)\\n' > "$dir/report.md" ;;
         *)
           mkdir -p "$dir/library"
-          printf '<!doctype html><meta charset=utf-8><body style="font-family:sans-serif;padding:24px"><h1>성능 보고</h1><p>p95 <b>182ms → 64ms</b></p></body>' > "$dir/library/index.html"
+          printf '<!doctype html><meta charset=utf-8><body style="font-family:sans-serif;padding:24px;background:#1f1d1a;color:#eee"><h1>성능 보고</h1><p>p95 지연(ms)</p><p>전 <span style="display:inline-block;width:70%%;height:14px;background:#d9775a"></span> 182</p><p>후 <span style="display:inline-block;width:25%%;height:14px;background:#7cb87a"></span> 64</p></body>' > "$dir/library/index.html"
           printf '## Report\\n결제 API의 **p95 지연**을 182ms에서 64ms로 줄였다.\\n\\n- 원인: 주문마다 \\140SELECT\\140을 다시 했다\\n- 고침: 요청 안에서 한 번만 읽는다\\n- 확인: 부하 시험 3회\\n\\n## Next\\n- 결과를 확인하고 병합하기\\n- 캐시 만료 시간 정하기\\n' > "$dir/report.md" ;;
       esac
       ;;
@@ -160,8 +176,238 @@ fs.writeFileSync(`${root}/cb/agent.toml`, agentToml(`${root}/workb`));
 
 fs.appendFileSync(`${root}/c/host.toml`, `\n[profiles.claude-opus]\nagent = "custom"\ncommand = ["/bin/sh", "${root}/fake.sh"]\ndescription = "견본"\n[profiles.claude-opus.env]\nAA = "${AA}"\n`);
 
+// 가짜 coordinator(README 영상): 사람이 보낸 글을 받으면 그 일을 mac-b의 thread로 맡긴다(천천히 일하고 보고하는 가짜 thread)
+fs.writeFileSync(`${root}/t4.md`, "천천히 일하고 보고");
+fs.writeFileSync(
+  `${root}/coord.sh`,
+  `#!/bin/sh
+printf '\\033[38;5;216m✻\\033[0m \\033[1mcoordinator\\033[0m · shop\\n\\n\\033[2m❯\\033[0m '
+while IFS= read -r line; do
+  case "$line" in
+    *CSV*)
+      printf '\\n\\033[38;5;111m⏺\\033[0m mac-b에 thread를 맡긴다: \\033[1m주문 내역 CSV 내보내기\\033[0m\\n'
+      "$AA" thread start shop --title "주문 내역 CSV 내보내기" --machine mac-b --profile claude-opus --kind dir --task-file "${root}/t4.md" > /dev/null
+      printf '  ⎿  시작했다. 보고가 오면 알린다.\\n\\n' ;;
+  esac
+  printf '\\033[2m❯\\033[0m '
+done
+`,
+);
+fs.appendFileSync(`${root}/c/host.toml`, `\n[profiles.coordinator]\nagent = "custom"\ncommand = ["/bin/sh", "${root}/coord.sh"]\ndescription = "견본 coordinator"\n[profiles.coordinator.env]\nAA = "${AA}"\n`);
+
 const base = `http://127.0.0.1:${webPort}/`;
 const browser = await chromium.launch();
+
+/** 새 화면. 테마는 설정이 정한다(기본 어두움, herdr-web-ui settings.ts): 밝음 견본은 설정 값을 넣고 연다. line이면 입력줄(composer)을 쓴다 */
+async function openPage({ width, height, kind, scheme = "dark", line = false }) {
+  const touch = kind !== "desktop";
+  const ctx = await browser.newContext({
+    viewport: { width, height },
+    deviceScaleFactor: touch ? 2 : 1,
+    isMobile: kind === "phone",
+    hasTouch: touch,
+    colorScheme: scheme,
+  });
+  await ctx.addInitScript(
+    ([theme, line]) => {
+      localStorage.setItem("aaa:appearance", JSON.stringify({ theme }));
+      if (line) localStorage.setItem("aaa:terminal-input-mode", "line");
+    },
+    [scheme, line],
+  );
+  const page = await ctx.newPage();
+  await page.goto(base);
+  // 넣은 터미널 글꼴을 먼저 받아 둔다(늦게 받으면 터미널이 다른 글꼴로 찍힌다, harness pairPage와 같다)
+  await page.evaluate(() => Promise.all([400, 700].map((w) => document.fonts.load(`${w} 13px "Meslotendard Web"`))));
+  return { ctx, page };
+}
+
+async function pair(page) {
+  await page.getByLabel("페어링 코드").fill(aaa("web", "pair").code);
+  await page.getByRole("button", { name: "이 기기 페어링" }).click();
+  // 붙어서 목록을 받았다(좁은 창은 목록이 닫힌 drawer 안이라 보이지 않는다)
+  await page.getByTestId("machine-mac-a").waitFor({ state: "attached" });
+}
+
+/** 목록 drawer의 움직임이 끝났다. nextFrame이면 방금 누른 것이 시작한 움직임까지 본다(harness drawerSettled) */
+function drawerSettled(page, nextFrame = false) {
+  return page.evaluate(async (nextFrame) => {
+    if (nextFrame) await new Promise((r) => requestAnimationFrame(() => r()));
+    await Promise.all((document.getElementById("workspace-drawer")?.getAnimations() ?? []).map((a) => a.finished.catch(() => null)));
+  }, nextFrame);
+}
+
+/** 좁은 화면(768px 이하)은 목록이 pane 위의 drawer다(web/src/drawer.tsx): 닫혀 있으면 화면 머리의 「목록 열기」로 연다 */
+async function openDrawer(page) {
+  await drawerSettled(page);
+  const toggle = page.locator(".view [data-testid='drawer-toggle']");
+  if ((await toggle.isVisible()) && (await toggle.getAttribute("aria-expanded")) !== "true") {
+    await toggle.click();
+    await page.locator("#workspace-drawer.is-open").waitFor();
+    await drawerSettled(page, true);
+  }
+}
+
+/** 목록 안의 줄을 누른다(harness inList의 drawer 부분). 줄을 고르면 drawer가 닫히며 미끄러지므로 끝날 때까지 기다린다 */
+async function inList(page, item) {
+  if (typeof item === "string") item = page.getByTestId(item);
+  await item.waitFor({ state: "attached" });
+  await openDrawer(page);
+  await item.click();
+  await drawerSettled(page, true);
+}
+
+const termHas = (page, text) => until(`터미널에 ${text}`, async () => (await page.locator(".xterm-rows").innerText()).includes(text));
+
+/** thread 줄은 그 agent pane을 연다(차이 목록 L4): 보고서는 터미널 머리의 「보고」로 */
+async function openReport(page, id, text) {
+  await inList(page, `thread-shop-${id}`);
+  const report = page.getByTestId("open-report");
+  await Promise.race([page.getByTestId("report").waitFor(), report.waitFor()]);
+  if (await report.isVisible()) await report.click();
+  await until("보고", async () => (await page.getByTestId("report").innerText()).includes(text));
+}
+
+/** 디자인 검수용 견본: 데스크톱·패드·휴대폰 × 어두움·밝음 */
+async function designShots(t1) {
+  const shots = [];
+  for (const scheme of ["dark", "light"]) {
+    for (const [width, height, kind] of [
+      [1920, 1080, "desktop"],
+      [820, 1180, "pad"],
+      [390, 844, "phone"],
+    ]) {
+      const { ctx, page } = await openPage({ width, height, kind, scheme });
+      const shot = async (name) => {
+        await sleep(400);
+        const f = path.join(out, `${prefix}-${kind}-${name}-${scheme}.png`);
+        await page.screenshot({ path: f });
+        shots.push(f);
+      };
+      await shot("pair");
+      await pair(page);
+      if (kind === "phone") {
+        await openDrawer(page);
+        await shot("list");
+      }
+      await inList(page, "pane-claude-api");
+      await termHas(page, "Claude");
+      await shot("terminal");
+      if (kind !== "phone") {
+        await inList(page, "pane-claude-infra");
+        await termHas(page, "proceed");
+        await shot("question");
+      }
+      await openReport(page, t1, "p95");
+      await shot("thread");
+      await ctx.close();
+    }
+  }
+  return shots;
+}
+
+/** README 그림(docs/media): 데스크톱 질문·보고, 휴대폰 목록, 흐름 영상 */
+async function readmeMedia(t1) {
+  const files = [];
+  const save = async (page, name) => {
+    const f = path.join(out, name);
+    await page.screenshot({ path: f });
+    files.push(f);
+  };
+  {
+    // 여러 머신의 agent와 thread를 한 목록에, Claude의 확인창은 웹 카드로 답한다
+    const { ctx, page } = await openPage({ width: 1440, height: 900, kind: "desktop" });
+    await pair(page);
+    await inList(page, "pane-claude-infra");
+    await termHas(page, "proceed");
+    await page.locator(".prompt-card").waitFor();
+    await save(page, "question.png");
+    await openReport(page, t1, "p95");
+    await save(page, "report.png");
+    await ctx.close();
+  }
+  {
+    // 휴대폰: 같은 목록(프로젝트·thread 상태). 뒤에 열린 pane은 Claude 터미널로 둔다(처음 화면은 coordinator)
+    const { ctx, page } = await openPage({ width: 390, height: 844, kind: "phone" });
+    await pair(page);
+    await inList(page, "pane-claude-api");
+    await termHas(page, "Claude");
+    await openDrawer(page);
+    await save(page, "phone.png");
+    await ctx.close();
+  }
+  files.push(...(await flowVideo()));
+  return files;
+}
+
+/** 흐름 영상: coordinator에 글 보내기 → mac-b thread가 일하며 진행을 알림 → 보고 도착 → 보고 열기 */
+async function flowVideo() {
+  const [width, height] = [1024, 640];
+  const { ctx, page } = await openPage({ width, height, kind: "desktop", line: true });
+  await pair(page);
+  await inList(page, page.locator("#sidebar-column .pane-item.is-coordinator").first());
+  await termHas(page, "coordinator");
+  const input = page.getByLabel("보낼 글");
+  await input.waitFor();
+  // 화면이 바뀔 때마다 Chrome이 주는 PNG(screencast): 녹화 영상(VP8·yuv420)은 작은 색 글자의 색이 바랜다
+  const cdp = await ctx.newCDPSession(page);
+  const frames = [];
+  cdp.on("Page.screencastFrame", ({ data, metadata, sessionId }) => {
+    frames.push({ t: metadata.timestamp, data });
+    cdp.send("Page.screencastFrameAck", { sessionId }).catch(() => {});
+  });
+  await cdp.send("Page.startScreencast", { format: "png", maxWidth: width, maxHeight: height });
+  // fixed wait: 영상 박자(보는 사람이 첫 화면을 볼 시간)
+  await sleep(1200);
+  await input.click();
+  await input.pressSequentially("주문 내역을 CSV로 내보내는 기능을 만들어 줘", { delay: 60 });
+  // fixed wait: 영상 박자(친 글을 읽을 시간)
+  await sleep(600);
+  await input.press("Enter");
+  const t4 = await until("새 thread", () => aaa("thread", "list", "shop").threads.find((t) => t.title === "주문 내역 CSV 내보내기"));
+  await until("보고 회수", () => aaa("thread", "show", "shop", t4.id).report_hash, 30_000);
+  await until("검토 대기", async () => (await page.getByTestId(`thread-state-shop-${t4.id}`).innerText()).includes("검토"));
+  // fixed wait: 영상 박자(목록의 「검토 대기」를 볼 시간)
+  await sleep(1200);
+  await openReport(page, t4.id, "CSV");
+  // fixed wait: 영상 박자(보고를 읽을 시간)
+  await sleep(3000);
+  await cdp.send("Page.stopScreencast");
+  const end = Date.now() / 1000;
+  await ctx.close();
+  if (frames.length < 2) throw new Error(`screencast 화면이 ${frames.length}개뿐이다`);
+  // 화면마다 다음 화면까지 보인다(concat의 duration). 마지막 화면은 끝 시각까지
+  const dir = `${root}/frames`;
+  fs.mkdirSync(dir, { recursive: true });
+  const list = ["ffconcat version 1.0"];
+  frames.forEach((f, i) => {
+    const file = `${dir}/${String(i).padStart(5, "0")}.png`;
+    fs.writeFileSync(file, Buffer.from(f.data, "base64"));
+    list.push(`file '${file}'`, `duration ${((frames[i + 1]?.t ?? end) - f.t).toFixed(3)}`);
+  });
+  list.push(`file '${dir}/${String(frames.length - 1).padStart(5, "0")}.png'`);
+  fs.writeFileSync(`${dir}/list.ffconcat`, list.join("\n") + "\n");
+  const input_ = ["-y", "-loglevel", "error", "-f", "concat", "-safe", "0", "-i", `${dir}/list.ffconcat`];
+  // GIF: 저장소 파일은 1MiB 아래여야 한다(scripts/check-public.sh). 화면이 바뀐 때만 frame을 두고(vfr) 바뀐 곳만 다시 그린다
+  const gif = path.join(out, "flow.gif");
+  execFileSync("ffmpeg", [
+    ...input_,
+    "-vf",
+    "split[a][b];[a]palettegen=max_colors=128[p];[b][p]paletteuse=dither=none:diff_mode=rectangle",
+    "-fps_mode",
+    "vfr",
+    gif,
+  ]);
+  const made = [gif];
+  if (extra) {
+    fs.mkdirSync(extra, { recursive: true });
+    const mp4 = path.join(extra, "flow.mp4");
+    execFileSync("ffmpeg", [...input_, "-vf", "fps=30", "-c:v", "libx264", "-pix_fmt", "yuv420p", "-crf", "20", "-movflags", "+faststart", mp4]);
+    made.push(mp4);
+  }
+  return made;
+}
+
 let ok = false;
 try {
   start("host", envA, "host");
@@ -211,70 +457,12 @@ try {
   aaa("thread", "start", "shop", "--title", "로그인 세션 저장 방식", "--machine", "mac-b", "--profile", "claude-opus",
     "--kind", "dir", "--task-file", task("t3.md", "결정이 필요한 일"));
   aaa("evaluator", "assign", "shop", "--profile", "claude-opus", "--machine", "mac-a");
+  if (readme) aaa("project", "open", "shop", "--profile", "coordinator");
   await until("보고 회수", () => aaa("thread", "show", "shop", t1.id).report_hash, 30_000);
   await until("질문", () => aaa("question", "list").questions.length > 0, 30_000);
   await sleep(1500);
 
-  const shots = [];
-  for (const scheme of ["dark", "light"]) {
-    for (const [w, h, kind] of [
-      [1920, 1080, "desktop"],
-      [820, 1180, "pad"],
-      [390, 844, "phone"],
-    ]) {
-      const phone = kind === "phone";
-      const touch = kind !== "desktop";
-      const ctx = await browser.newContext({
-        viewport: { width: w, height: h },
-        deviceScaleFactor: touch ? 2 : 1,
-        isMobile: phone,
-        hasTouch: touch,
-        colorScheme: scheme,
-      });
-      // 테마는 설정이 정한다(기본 어두움, herdr-web-ui settings.ts): 밝음 견본은 설정 값을 넣고 연다
-      await ctx.addInitScript((theme) => localStorage.setItem("aaa:appearance", JSON.stringify({ theme })), scheme);
-      const page = await ctx.newPage();
-      // thread 줄은 그 agent pane을 연다(차이 목록 L4): 보고서는 터미널 머리의 「보고」로
-      const openReport = async (id) => {
-        await page.getByTestId(`thread-shop-${id}`).click();
-        const report = page.getByTestId("open-report");
-        await Promise.race([page.getByTestId("report").waitFor(), report.waitFor()]);
-        if (await report.isVisible()) await report.click();
-        await until("보고", async () => (await page.getByTestId("report").innerText()).includes("p95"));
-      };
-      const shot = async (name) => {
-        await sleep(400);
-        const f = path.join(out, `${prefix}-${kind}-${name}-${scheme}.png`);
-        await page.screenshot({ path: f });
-        shots.push(f);
-      };
-      await page.goto(base);
-      await shot("pair");
-      await page.getByLabel("페어링 코드").fill(aaa("web", "pair").code);
-      await page.getByRole("button", { name: "이 기기 페어링" }).click();
-      await page.getByTestId("machine-mac-a").waitFor();
-      if (!phone) {
-        await page.getByTestId("pane-claude-api").click();
-        await until("터미널", async () => (await page.locator(".xterm-rows").innerText()).includes("Claude"));
-        await shot("terminal");
-        await page.getByTestId("pane-claude-infra").click();
-        await until("질문 화면", async () => (await page.locator(".xterm-rows").innerText()).includes("proceed"));
-        await shot("question");
-        await openReport(t1.id);
-        await shot("thread");
-      } else {
-        await shot("list");
-        await page.getByTestId("pane-claude-api").click();
-        await until("터미널", async () => (await page.locator(".xterm-rows").innerText()).includes("Claude"));
-        await shot("terminal");
-        await page.goBack().catch(() => {});
-        await page.goto(base);
-        await openReport(t1.id);
-        await shot("thread");
-      }
-      await ctx.close();
-    }
-  }
+  const shots = readme ? await readmeMedia(t1.id) : await designShots(t1.id);
   console.log(shots.join("\n"));
   ok = true;
 } finally {

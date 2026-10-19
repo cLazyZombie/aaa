@@ -201,7 +201,7 @@ export function TermView({
   const [chatMessages, setChatMessages] = useState<ChatMessage[] | null>(null);
   // 작업 중에 보내 harness 대기열에 들어간 글(대화 보기 끝의 대기 말). 터미널 보기로 갔다 와도 남게 이 pane 화면이 갖는다
   const [pendingSends, setPendingSends] = useState<PendingSend[]>([]);
-  // 대기 메시지 「지금 보내기」(plan §8.270): host가 안다고 알렸나(front.steer_queued, 1.45), 단추 상태, 대화 입력창이 보내는 중인가
+  // 대기 메시지 「지금 보내기」(plan §8.271): host가 안다고 알렸나(front.steer_queued, 1.45), 단추 상태, 대화 입력창이 보내는 중인가
   const [steerKnown, setSteerKnown] = useState(false);
   const [steer, setSteer] = useState<SteerState>(STEER_IDLE);
   const [composerBusy, setComposerBusy] = useState(false);
@@ -503,7 +503,7 @@ export function TermView({
     return true;
   };
 
-  // 대기 메시지 「지금 보내기」(plan §8.270): 글은 다시 보내지 않고 host에 키 판정을 청한다. 답(steer_queued)이 결과다
+  // 대기 메시지 「지금 보내기」(plan §8.271): 글은 다시 보내지 않고 host에 키 판정을 청한다. 답(steer_queued)이 결과다
   const pressSteer = () => {
     const ws = wsRef.current;
     if (!canControlRef.current || readonlyRef.current) return;
