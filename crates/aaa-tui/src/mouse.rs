@@ -33,7 +33,7 @@ use tokio::time::Instant;
 
 use crate::bind::Action;
 use crate::chrome::{PaneBox, SplitHit};
-use crate::list::Row;
+use crate::list::{self, Row};
 use crate::theme::Palette;
 use crate::{
     App, DIVIDER_DOUBLE_CLICK, FrontSender, Mode, Overlay, Pending, clip, help, keys, open, scrollbar, unicode_width,
@@ -110,6 +110,10 @@ pub struct Hits {
     pub sidebar: Option<Rect>,
     /// 목록 줄: 줄 칸과 그 줄
     pub rows: Vec<(Rect, Row)>,
+    /// 활동 막대·공통 머리의 동작, 특수 목록, 보고서 목록
+    pub activity: Vec<(Rect, usize)>,
+    pub special_rows: Vec<(Rect, usize)>,
+    pub report_rows: Vec<(Rect, usize)>,
     /// 펼친 목록의 첫 보이는 줄과 보이는 줄 수(휠로 민다)
     pub list_skip: usize,
     pub list_h: u16,
@@ -594,7 +598,38 @@ impl App {
         }
         let (x, y, mods) = (m.column, m.row, m.modifiers);
         let hits = self.hits.borrow().clone();
-        if m.kind == MouseEventKind::Down(MouseButton::Left) && self.link_press(m, &hits, tx).await? {
+        if !self.reports.shown
+            && m.kind == MouseEventKind::Down(MouseButton::Left)
+            && self.link_press(m, &hits, tx).await?
+        {
+            return Ok(());
+        }
+        if self.overlay.is_none()
+            && m.kind == MouseEventKind::Down(MouseButton::Left)
+            && let Some((_, at)) = hits.activity.iter().find(|(r, _)| contains(*r, x, y))
+        {
+            let at = *at;
+            if self.mode == Mode::Navigate && at < 5 {
+                self.activity_focus = Some(at);
+            }
+            self.activate_activity(at, tx).await?;
+            return Ok(());
+        }
+        if self.overlay.is_none()
+            && self.reports.shown
+            && contains(self.body(Rect { x: 0, y: 0, w: self.width, h: self.height }), x, y)
+        {
+            match m.kind {
+                MouseEventKind::Down(MouseButton::Left) => {
+                    if let Some((_, at)) = hits.report_rows.iter().find(|(r, _)| contains(*r, x, y)) {
+                        self.reports.selected = *at;
+                        self.open_report(tx).await?;
+                    }
+                }
+                MouseEventKind::ScrollDown => self.reports.scroll = self.reports.scroll.saturating_add(3),
+                MouseEventKind::ScrollUp => self.reports.scroll = self.reports.scroll.saturating_sub(3),
+                _ => {}
+            }
             return Ok(());
         }
         if self.overlay.is_some() {
@@ -712,6 +747,18 @@ impl App {
         }
         match m.kind {
             MouseEventKind::Down(MouseButton::Left) => match self.overlay.as_mut() {
+                Some(Overlay::Special(_)) => {
+                    if let Some((_, at)) = hits.special_rows.iter().find(|(r, _)| contains(*r, x, y)) {
+                        let pane = self.special_items().get(*at).and_then(|(_, p)| p.clone());
+                        if let Some(pane) = pane {
+                            self.overlay = None;
+                            self.reveal_panel(&pane);
+                            self.open_pane(tx, pane).await?;
+                        }
+                    } else if !hits.on(hits.popup, x, y) {
+                        self.overlay = None;
+                    }
+                }
                 Some(Overlay::Help(_)) => {
                     if !hits.on(hits.popup, x, y) {
                         self.overlay = None;
@@ -869,6 +916,10 @@ impl App {
             return Ok(());
         }
         if let Some(row) = hits.row_at(x, y) {
+            if matches!(row, Row::Project(_)) && hits.rows.iter().any(|(r, v)| v == row && x < r.x + 3) {
+                self.toggle_fold(row);
+                return Ok(());
+            }
             self.drag = Some(Drag::Row(row.clone()));
             return Ok(());
         }
@@ -1260,7 +1311,7 @@ impl App {
         Ok(())
     }
 
-    /// 휠: 탭 막대는 앞·뒤 탭, 펼친 목록은 한 줄씩. pane 안쪽은 포커스를 옮기고 마우스 보고면 넘기고, 보고를 끈 alt 화면이면
+    /// 휠: 탭 막대는 앞·뒤 탭, 펼친 목록은 항목 하나씩(thread는 두 줄). pane 안쪽은 포커스를 옮기고 마우스 보고면 넘기고, 보고를 끈 alt 화면이면
     /// 화살표 하나, 아니면 이 화면의 기록을 넘긴다(herdr `apply_scroll`). herdr처럼 scrollbar 칸 위 휠은 아무것도 하지 않는다.
     async fn wheel(
         &mut self,
@@ -1287,9 +1338,7 @@ impl App {
         }
         if hits.on(hits.sidebar, x, y) {
             if hits.list_h > 0 {
-                let max = self.list_rows().len().saturating_sub(hits.list_h as usize);
-                let top = if down { hits.list_skip + 1 } else { hits.list_skip.saturating_sub(1) };
-                self.list_top = Some(top.min(max));
+                self.list_top = Some(list::scroll(&self.list_rows(), hits.list_skip, hits.list_h, down));
             }
             return Ok(());
         }
