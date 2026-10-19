@@ -5468,3 +5468,10 @@ primary 근거:
 - 공용 상태는 source 고유 필드를 기존 JSON 최상위에 펼친다. `ci:` 저장 key, cursor, 미전달 입력, `ci_input:` 중복 방지 key, inbox·flow 이름, fixed→passed 기록과 회복 무깨움은 L0와 같다. CI 문법·wire·운영 설정 변경은 없다.
 - source는 전달 정책과 사건 발행/회복 callback을 준다. 공용 전달은 상태 선저장 뒤 항목마다 남은 outbox를 저장하며, 없는 임무 입력을 보존한다. 기존 source와 다음 source가 실행 시각을 섞지 않도록 runtime은 source별로 나눈다.
 - [CI runbook](ci-watch.md)의 상태 호환과 [testing](testing.md)의 공용 watch 검증을 따른다. Git 감시는 L2, 실행 기록과 새 정의 형식은 이후 별도 착지다.
+
+### 8.276 repo 머신의 Git head 감시와 사건 repo 거르기(10-19, t-0420 L2)
+
+- `on="git"`의 repo·branches·events·선택 mission을 받는다. 기본 60초에 host가 예약하고 git.v1 agent가 실제 ls-remote·필요한 객체 fetch·조상 판정·커밋 첫 줄/파일 수를 조회한다. GitHub API나 AI 호출은 없다. 작업 파일·ref·FETCH_HEAD는 바꾸지 않는다.
+- 첫 등록/없던 branch는 기준만 잡고, 변화는 pushed·forced·deleted로 구별한다. 공용 watch 상태·outage·내구 outbox·전달을 쓴다. 저장 revision으로 같은 head의 재시작 중복은 막고 이후 같은 SHA 쌍 변화는 새 사건으로 남긴다.
+- FlowEvent.repo를 선택 칸/DB 추가 열로 저장한다(FRONT_API 1.46). 임무 repos는 thread 사건이면 thread repo, thread 없는 사건이면 사건 repo를 쓴다. 이전 DB/기록의 repo는 없음이다. Git의 주인 보고는 기존 watch 발행 경계에서 연결한다.
+- 조회 머신은 routine machine으로 선택한다. 생략하면 host 등록 repo 우선, 없으면 유일한 repo 머신이다. GitHub CI 감시는 host 머신 agent 기본을 유지한다. [Git runbook](git-watch.md)과 [시험](testing.md)의 Git 감시를 따른다. 운영 파일 전환은 배포 뒤 coordinator가 맡는다.

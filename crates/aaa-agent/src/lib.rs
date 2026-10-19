@@ -13,6 +13,7 @@ mod cwd;
 pub mod deploy;
 pub mod detect;
 mod files;
+mod git_watch;
 mod health;
 pub mod hooks;
 pub mod identity;
@@ -1405,6 +1406,10 @@ impl Agent {
                 .map(AgentResponse::Cleanup)
                 .map_err(|e| ErrorBody::new(ErrorCode::Internal, format!("{e:#}")))
             }
+            AgentRequest::GitQuery { cwd, query } => git_watch::query(&cwd, &query)
+                .await
+                .map(AgentResponse::Git)
+                .map_err(|e| ErrorBody::new(ErrorCode::BadRequest, format!("{e:#}"))),
             AgentRequest::CiQuery { cwd, query } => ci::query(&cwd, &query)
                 .await
                 .map(AgentResponse::Ci)

@@ -331,6 +331,8 @@ pub struct ProjectsSection {
     pub pr_poll_secs: u64,
     /// CI 조건부 조회 간격(최소 30초). 조회는 host 머신 agent가 기본이다.
     pub ci_poll_secs: u64,
+    /// Git head 조회 주기(기본 60초, 운영 최소 30초).
+    pub git_poll_secs: u64,
     /// 끝나지 않은 push run을 ci_stuck으로 알릴 분 수.
     pub ci_stuck_mins: u64,
     /// CI 조회 머신. 비우면 host 머신의 agent이며 repo와 임무 머신과 독립이다.
@@ -371,6 +373,7 @@ impl Default for ProjectsSection {
             outage_secs: 600,
             pr_poll_secs: 120,
             ci_poll_secs: 60,
+            git_poll_secs: 60,
             ci_stuck_mins: 60,
             ci_machine: None,
             accept_wait_ms: 10_000,

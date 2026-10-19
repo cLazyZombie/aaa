@@ -8,6 +8,7 @@ pub(crate) struct Event<'a> {
     pub kind: &'a str,
     pub at_ms: u64,
     pub owners: &'a [String],
+    pub repo: Option<&'a str>,
     pub detail: String,
 }
 impl Host {
@@ -23,6 +24,7 @@ impl Host {
                 boot_id: self.boot_id.clone(),
                 kind: event.kind.into(),
                 thread: owner.cloned(),
+                repo: event.repo.map(str::to_string),
                 role: None,
                 profile: None,
                 machine: None,

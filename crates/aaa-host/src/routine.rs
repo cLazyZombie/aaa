@@ -162,6 +162,7 @@ pub(crate) enum Trigger {
     /// `on = "pr"`과 받는 사건(적지 않으면 모두)
     Pr(Vec<String>),
     Ci(CiTrigger),
+    Git(GitTrigger),
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -169,6 +170,13 @@ pub(crate) struct CiTrigger {
     pub repo: String,
     pub branches: Vec<String>,
     pub workflows: Vec<String>,
+    pub events: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct GitTrigger {
+    pub repo: String,
+    pub branches: Vec<String>,
     pub events: Vec<String>,
 }
 
@@ -221,12 +229,29 @@ fn parse_in(name: &str, text: &str, seconds: bool) -> Result<Routine, String> {
         .ok_or("닫는 `+++` 줄이 없다")?;
     let f: Front = toml::from_str(front).map_err(|e| format!("front matter: {}", e.message()))?;
     if let Some(n) = &f.mission
-        && (!valid_project(n) || (f.on != "ci" && (f.command.trim().is_empty() || !f.on.is_empty())))
+        && (!valid_project(n)
+            || (!["ci", "git"].contains(&f.on.as_str()) && (f.command.trim().is_empty() || !f.on.is_empty())))
     {
         return Err("mission 목적지는 명령 일정 routine에만 둔다".into());
     }
     let (trigger, schedule_text) = match f.on.as_str() {
         "" => (Trigger::Schedule(parse_schedule(&f.schedule, seconds)?), f.schedule.trim().to_string()),
+        "git" => {
+            if !f.command.trim().is_empty()
+                || !f.schedule.is_empty()
+                || f.repo.trim().is_empty()
+                || !f.workflows.is_empty()
+            {
+                return Err("git routine에는 repo·branches가 필요하고 command·schedule·workflows는 받지 않는다".into());
+            }
+            aaa_common::git_watch::validate_branches(&f.branches).map_err(|e| e.to_string())?;
+            if f.events.iter().any(|e| !["pushed", "forced", "deleted"].contains(&e.as_str())) {
+                return Err("Git events는 pushed·forced·deleted 중에서 쓴다".into());
+            }
+            let events =
+                if f.events.is_empty() { vec!["pushed".into(), "forced".into(), "deleted".into()] } else { f.events };
+            (Trigger::Git(GitTrigger { repo: f.repo, branches: f.branches, events }), "on git".into())
+        }
         "ci" => {
             if !f.command.trim().is_empty()
                 || !f.schedule.is_empty()
@@ -375,7 +400,7 @@ impl Host {
                     last_run_ms: st.last_run_ms,
                     next_run_ms: match &r.trigger {
                         Trigger::Schedule(s) => st.last_run_ms.filter(|_| r.enabled).map(|l| next_run(s, l, off)),
-                        Trigger::Pr(_) | Trigger::Ci(_) => None,
+                        Trigger::Pr(_) | Trigger::Ci(_) | Trigger::Git(_) => None,
                     },
                     skipped: st.skipped,
                     no_coordinator: st.no_coordinator,

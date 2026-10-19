@@ -24,6 +24,7 @@ impl std::fmt::Display for Version {
 /// `AgentRequest::ThreadAdopt`(agent 기능 `adopt.v1`이 있을 때만 보낸다, §8.180).
 /// `Post`·`PostRejected`·`PostAck`는 post.v1을 양쪽이 알렸을 때만 쓴다(§8.199).
 /// 1.5 host의 N-1은 1.4다. 1.3 agent는 먼저 1.4 이상으로 갱신해야 한다.
+// git.v1: repo 머신 agent의 head/변화 조회를 이 기능을 알린 상대에만 보낸다.
 // ci.v1: 조건부 GitHub CI 조회는 이 기능을 알린 agent에만 보낸다(같은 1.5).
 // 1.5: 특수 임무. mission.v1을 알린 상대에만 임무 세션을 만든다.
 // 같은 1.5에 MachineHealth `cpu_pct`·`mem_used_bytes`·`mem_total_bytes`(선택, §8.245)를 더한다. 옛 agent는 보내지 않고 옛 host는 버린다.
@@ -101,7 +102,8 @@ pub const AGENT_LINK: Version = Version { major: 1, minor: 5 };
 // 보이지 않고, 옛 front는 버린다.
 // 1.45: 웹 터미널 대기 메시지 「지금 보내기」(`steer_queued` 요청·답, `front.steer_queued`, plan §8.271). 1.44가 배포돼 올린다.
 // 옛 host는 `front.steer_queued`를 보내지 않아 웹이 단추를 숨기고, 모르는 frame은 버린다. 옛 웹은 새 칸을 버린다.
-pub const FRONT_API: Version = Version { major: 1, minor: 45 };
+// 1.46: thread 없는 감시 사건의 FlowEvent.repo(선택, 옛 기록 기본 없음).
+pub const FRONT_API: Version = Version { major: 1, minor: 46 };
 /// agent ↔ session host(내부). 세션이 몇 주 이어질 수 있으므로 이전 session host와 호환해야 한다.
 /// 1.1: `SessionRequest::Detect`(harness 상태 감지 입력). agent는 1.0 session host에 보내지 않고 `Screen`을 쓴다.
 /// 1.2: `SessionRequest::Colors`(색 질의에 답할 화면 색, plan §8.187). agent는 1.1 이하 session host에 보내지 않는다.

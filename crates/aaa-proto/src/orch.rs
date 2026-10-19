@@ -857,6 +857,9 @@ pub struct FlowEvent {
     /// thread_started·brief_delivered·brief_unknown·report_ready·review_acked·thread_resolved·thread_failed …
     pub kind: String,
     pub thread: Option<String>,
+    /// thread 없는 감시 사건의 저장소. 옛 기록은 없음이다.
+    #[serde(default)]
+    pub repo: Option<String>,
     pub role: Option<Role>,
     pub profile: Option<String>,
     pub machine: Option<String>,

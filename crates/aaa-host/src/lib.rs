@@ -19,6 +19,7 @@ mod deploy;
 mod evaluator;
 mod files;
 pub mod front;
+mod git_watch;
 mod harness;
 mod health;
 mod http;

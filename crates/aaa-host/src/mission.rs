@@ -1119,11 +1119,17 @@ impl Host {
             .filter(|e| e.role != Some(Role::Evaluator) && applied.def.events.contains(&e.kind))
             .filter(|e| {
                 applied.def.repos.is_empty()
-                    || e.thread.as_ref().and_then(|id| self.load(p, id).ok()).and_then(|r| r.repo).is_some_and(|repo| {
-                        applied.def.repos.iter().any(|want| {
-                            want == &repo || std::path::Path::new(&repo).file_name().is_some_and(|n| n == want.as_str())
+                    || e.thread
+                        .as_ref()
+                        .and_then(|id| self.load(p, id).ok())
+                        .and_then(|r| r.repo)
+                        .or_else(|| e.thread.is_none().then(|| e.repo.clone()).flatten())
+                        .is_some_and(|repo| {
+                            applied.def.repos.iter().any(|want| {
+                                want == &repo
+                                    || std::path::Path::new(&repo).file_name().is_some_and(|n| n == want.as_str())
+                            })
                         })
-                    })
             })
             .collect();
         if !events.is_empty() {
