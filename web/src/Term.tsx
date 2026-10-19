@@ -8,10 +8,11 @@ import { useCallback, useEffect, useLayoutEffect, useRef, useState, type Mutable
 import { Terminal, type ITheme } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import { SerializeAddon } from "@xterm/addon-serialize";
-import type { ChatMessage, DeviceRole, LeaseView, PaneView, SubmitStage, TermClientMsg, TermServerMsg } from "./gen/proto";
+import type { ChatMessage, DeviceRole, LeaseView, PaneView, SubmitStage, InputSubmitMeta, InputReceiptMethod, TermClientMsg, TermServerMsg } from "./gen/proto";
 import { b64decode, b64encode, call, REVOKED_CLOSE_CODE, reportSignedOut, wsUrl } from "./api";
 import { Icon } from "./icons";
 import { ChatPanel } from "./Chat";
+import { inputTraceId } from "./inputReceipt";
 import { ChatComposer, type PendingSend } from "./ChatComposer";
 import { paneAgentStatus } from "./sidebarModel";
 import { onThemeChange, token } from "./theme";
@@ -467,16 +468,23 @@ export function TermView({
   // 여기는 빈 입력창·터미널·키 막대의 Ctrl+Enter다. 키 막대가 누른 Ctrl+Enter는 입력줄에 남은 글을 건드리지 않고 아무것도 보내지
   // 않는다. 안내 줄은 없앴다(사용자 「어떻게 해라고 보여주는건 좀 과한것 같아」). `chat`: 대화 입력창이 불렀다(입력줄은 숨었다)
   const pressCtrlEnter = (chat = false): boolean | string => {
-    if (!canControlRef.current || readonlyRef.current || composingTermRef.current || commitPendingRef.current || lineComposingRef.current) return false;
+    const traceId = inputTraceId();
+    const blocked = (method: InputReceiptMethod) => {
+      const ws = wsRef.current;
+      if (ws?.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ t: "input_trace", id: traceId, event: "ctrl_enter_blocked", method } satisfies TermClientMsg));
+    };
+    if (!canControlRef.current || readonlyRef.current) { blocked("readonly"); return false; }
+    if (composingTermRef.current || commitPendingRef.current || lineComposingRef.current) { blocked("composing"); return false; }
     if (!draftIsEmpty(draftRef.current)) {
+      blocked("held_draft");
       setInputError(HELD_FIRST);
       return HELD_FIRST;
     }
-    if (!chat && inputLineRef.current && readTerminalDraft(`${pane.machine}:${pane.id}`).length > 0) return false;
+    if (!chat && inputLineRef.current && readTerminalDraft(`${pane.machine}:${pane.id}`).length > 0) { blocked("held_draft"); return false; }
     const ws = wsRef.current;
     if (!ws || ws.readyState !== WebSocket.OPEN) return false;
     autoFit.current(true);
-    ws.send(JSON.stringify({ t: "ctrl_enter" } satisfies TermClientMsg));
+    ws.send(JSON.stringify({ t: "ctrl_enter", trace: traceId } satisfies TermClientMsg));
     return true;
   };
 
@@ -1750,7 +1758,7 @@ export function TermView({
   // 그래야 Claude·Codex 입력창이 줄마다 제출하지 않고 한 덩어리로 받는다. 입력줄 글은 유지 키를 붙이지 않는다.
   // `steer`: 입력창의 Ctrl+Enter다. host가 글 뒤 Enter 대신 steering 키를 고른다(작업 중인 Claude는 sendNow, 그 밖은 Enter).
   // 잠금·전달 확인·멈춤은 보통 보내기와 같다(plan §8.247)
-  const sendTerminalLine = (value: string, steer = false): false | Promise<true | string> => {
+  const sendTerminalLine = (value: string, steer = false, traceId?: string, meta?: InputSubmitMeta): false | Promise<true | string> => {
     const term = termRef.current;
     const ws = wsRef.current;
     if (!term || readonlyRef.current || !ws || ws.readyState !== WebSocket.OPEN) return false;
@@ -1768,7 +1776,7 @@ export function TermView({
     }
     const id = ++submitIdRef.current;
     trace("submit", { id, data, steer });
-    ws.send(JSON.stringify({ t: "submit", id, data, steer } satisfies TermClientMsg));
+    ws.send(JSON.stringify({ t: "submit", id, data, steer, trace: traceId ?? null, meta: meta ?? { pasted: false, attachments: 0 } } satisfies TermClientMsg));
     term.scrollToBottom();
     // 확인되면 입력줄이 보낸 앞부분만 지운다(그 사이 친 글은 남는다). 거절이면 이유, 끊기거나 답이 없으면 확인 못 함
     return new Promise((resolve, reject) => {
@@ -2116,6 +2124,10 @@ export function TermView({
           messages={chatMessages}
           onInspect={() => setChatView(false)}
           onSend={sendTerminalLine}
+          onInputTrace={(id, event, method) => {
+            const ws = wsRef.current;
+            if (ws?.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ t: "input_trace", id, event, method: method ?? null } satisfies TermClientMsg));
+          }}
           onCtrlEnter={() => pressCtrlEnter(true)}
           onCancelSend={cancelSubmit}
           onSent={() => setChatSent((n) => n + 1)}

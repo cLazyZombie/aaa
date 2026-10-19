@@ -8,5 +8,8 @@ const WRAPPED = /^<pasted_content id="([\w-]+)">\r?\n?([\s\S]*?)\r?\n?<\/pasted_
 /** 꼬리표가 글 전체를 감쌌으면 안의 글, 아니면 그대로 */
 export function unwrapPasted(text: string): string {
   const m = WRAPPED.exec(text.trim());
-  return m ? m[2]! : text;
+  if (!m) return text;
+  // 같은 id의 별도 봉투 둘을 하나의 전체 봉투로 오인하지 않는다(수신 확인도 이 함수를 쓴다).
+  if (m[2]!.includes(`</pasted_content id="${m[1]}">`) || m[2]!.includes(`<pasted_content id="${m[1]}">`)) return text;
+  return m[2]!;
 }

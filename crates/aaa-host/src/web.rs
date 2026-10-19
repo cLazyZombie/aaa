@@ -1253,6 +1253,7 @@ async fn pane_session(
     let mut upload: Option<crate::attach::Upload> = None;
     // 첨부가 실패하면 그 첨부의 남은 조각은 오류 없이 버린다(다음 첨부는 offset 0으로 시작한다)
     let mut upload_failed = false;
+    let mut input_traces = std::collections::HashMap::<String, u8>::new();
     let Some(view) = host.pane_view_of(&id, role) else { return };
     let (sink, mut stream) = socket.split();
     let out = Outbox::new(sink);
@@ -1357,18 +1358,37 @@ async fn pane_session(
                             None
                         }
                         Ok(TermClientMsg::Input { data }) => Some(FrontRequest::PaneInput { pane: id.clone(), data: B64(data.into_bytes()) }),
-                        Ok(TermClientMsg::CtrlEnter) => Some(FrontRequest::PaneCtrlEnter { pane: id.clone() }),
+                        Ok(TermClientMsg::CtrlEnter { trace }) => {
+                            let trace = trace.filter(|t| crate::input_log::valid_trace(t)).unwrap_or_else(aaa_common::util::new_id);
+                            Some(FrontRequest::PaneCtrlEnter { pane: id.clone(), trace: Some(format!("{}:{trace}", front.id)) })
+                        },
                         Ok(TermClientMsg::Resize { cols, rows }) if role.can_control() => {
                             Some(FrontRequest::PaneResize { pane: id.clone(), cols: cols.clamp(10, 500), rows: rows.clamp(3, 300) })
                         }
-                        Ok(TermClientMsg::Submit { id: sid, data, steer }) => {
+                        Ok(TermClientMsg::InputTrace { id: trace, event, method }) => {
+                            if role.can_control() && crate::input_log::valid_trace(&trace)
+                                && matches!(event, aaa_proto::InputTraceEvent::CtrlEnterBlocked | aaa_proto::InputTraceEvent::Preparing) && input_traces.len() < 128 {
+                                input_traces.entry(trace.clone()).or_insert(0);
+                            }
+                            if role.can_control() && let Some(count) = input_traces.get_mut(&trace) && *count < 16 {
+                                *count += 1;
+                                host.input_event(&id, &format!("{}:{trace}", front.id), "ui", &format!("event={event:?} method={method:?}"));
+                            }
+                            None
+                        }
+                        Ok(TermClientMsg::Submit { id: sid, data, steer, trace, meta }) => {
                             let bytes = data.len();
+                            let trace = trace.filter(|t| crate::input_log::valid_trace(t)).unwrap_or_else(|| sid.to_string());
+                            if input_traces.len() >= 128 { input_traces.clear(); }
+                            input_traces.insert(trace.clone(), 0);
+                            let trace = format!("{}:{trace}", front.id);
+                            host.input_event(&id, &trace, "received", &format!("{} pasted_source={} attachments={}", crate::input_log::submit_meta(&data, steer), meta.pasted, meta.attachments));
                             tracing::info!(pane = %id, front = %front.id, submit = sid, bytes, steer, "웹 입력: submit 수신");
                             host.touch_device(dev, "입력");
                             // 글과 Enter를 쓰는 동안에도 이 submit의 멈춤은 바로 답한다(plan §8.247). 다른 frame은 뒤에 차례대로 둔다:
                             // 이 연결의 다음 입력은 Enter 뒤에 간다
                             let stage = AtomicU8::new(SUBMIT_BEFORE);
-                            let work = submit_work(host, role, &actor, front, dev, &id, sid, data, steer, &stage);
+                            let work = submit_work(host, role, &actor, front, dev, &id, sid, data, steer, &trace, &stage);
                             tokio::pin!(work);
                             let mut reading = true;
                             let end = loop {
@@ -1380,6 +1400,7 @@ async fn pane_session(
                                             && let Ok(TermClientMsg::SubmitCancel { id: cid }) = serde_json::from_str::<TermClientMsg>(t)
                                         {
                                             let answer = if cid == sid { cancel_submit(&stage) } else { SubmitStage::TooLate };
+                                            host.input_event(&id, &trace, "cancel", &format!("stage={answer:?}"));
                                             tracing::info!(pane = %id, front = %front.id, submit = cid, ?answer, "웹 입력: 멈춤");
                                             if !out.msg(&TermServerMsg::SubmitCancelled { id: cid, stage: answer }) {
                                                 reading = false;
@@ -1404,6 +1425,7 @@ async fn pane_session(
                                 SubmitEnd::Done(r) => r,
                             };
                             host.db.audit(&actor, "web_submit", &format!("pane={id} front={} submit={sid} bytes={bytes} steer={steer} ok={}", front.id, sent.is_ok()));
+                            host.input_event(&id, &trace, if sent.is_ok() { "delivered" } else { "failed" }, &format!("code={:?}", sent.as_ref().err().map(|e| &e.code)));
                             let reply = TermServerMsg::Submitted { id: sid, ok: sent.is_ok(), message: sent.err().map(|e| e.message) };
                             if !out.msg(&reply) {
                                 tracing::warn!(pane = %id, front = %front.id, submit = sid, "웹 입력: 확인 응답 연결 닫힘");
@@ -1538,6 +1560,7 @@ async fn submit_work(
     sid: u32,
     data: String,
     steer: bool,
+    trace: &str,
     stage: &AtomicU8,
 ) -> SubmitEnd {
     let typed = |data: Vec<u8>| FrontRequest::PaneInput { pane: pane.to_string(), data: B64(data) };
@@ -1549,6 +1572,7 @@ async fn submit_work(
     if let Err(e) = sent {
         return SubmitEnd::Done(Err(e));
     }
+    host.input_event(pane, trace, "written_text", "agent_ack=true");
     if !advance_submit(stage, SUBMIT_TYPING, SUBMIT_TYPED) {
         return SubmitEnd::Stopped(SubmitStage::NoEnter);
     }
@@ -1563,6 +1587,9 @@ async fn submit_work(
     let enter = if steer { host.steer_submit_data(pane) } else { b"\r".to_vec() };
     let sent = host.call_from(role, actor, Some(front), typed(enter)).await;
     tracing::info!(pane, front = %front.id, submit = sid, ok = sent.is_ok(), code = ?sent.as_ref().err().map(|e| &e.code), phase = if steer { "steer" } else { "enter" }, "웹 입력: agent 응답");
+    if sent.is_ok() {
+        host.input_event(pane, trace, "written_submit", if steer { "steer=true" } else { "key=enter" });
+    }
     SubmitEnd::Done(sent.map(|_| ()))
 }
 

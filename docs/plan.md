@@ -5344,3 +5344,19 @@ primary 근거:
 - **유입·판정.** `git blame`상 두 Codex 시험의 `std::fs::copy`는 `a408d979`(10-18)에 들어왔다. 시험 파일 전체가 `89005aac`(t-0400)·`2a701540`(t-0404)·`50f06755`에서 동일하다. 최근 세 착지가 만든 문구 계약 회귀가 아니라 기존 시험 준비의 간헐 실패다. [Rust #114554](https://github.com/rust-lang/rust/issues/114554)의 쓰기 fd 상속 경쟁과 맞는 경로지만, 이번 runner 로그에는 fd를 물려받은 PID가 없어 정확한 fork 순서는 확정하지 않는다.
 - **수정.** 두 시험이 `Home::moved_bin`을 함께 쓴다. Unix에서는 `/bin/cp` 자식이 복사하고 부모는 종료를 확인한 뒤 실행한다. 부모가 복사본을 쓰기 모드로 열지 않아 병렬 fork가 그 fd를 물려받을 수 없다. Windows의 기존 파일 복사는 유지한다. 실행 파일 독립 사본·특수 문자 경로·실제 설치·hook 실행·보안 단언은 그대로다. production 코드·재시도·고정 대기·시험 직렬화는 추가하지 않는다.
 - **검증 경계.** 기존 `codex_integration` 전체와 ci-local·공개 검사를 실행한다. 수정 전 실패 근거는 실제 Ubuntu job 로그다. macOS 로컬 성공만으로 Linux 원인 재현·해결을 입증했다고 하지 않는다. 수정 후보의 실제 Linux 검증은 별도로 남긴다.
+
+### 8.264 웹 입력 수신 확인·Ctrl+Enter와 사건 진단(10-19, t-0408)
+
+- 수신 확인도 대화 보기의 공용 `unwrapPasted`를 쓴다. 전체 같은-ID 봉투만 걷고 enqueue를 새 사람 글로 확인해 잠금을 푼다.
+  표시 상한 4,000자 뒤에도 수신을 확인하도록 agent가 자르기 전 사람 글의 SHA-256·봉투 여부를 선택 필드로 싣는다.
+  옛 agent의 짧은 글 비교와 진짜 기록이 없는 10초 경고는 유지한다. 같은 앞부분의 다른 긴 글은 확인이 아니다.
+- Claude 2.1.303은 작업 표시를 입력 아래 footer에 두고 붙여넣기 직후에는 toast로 가린다. host는 현재 footer 또는 입력 바로 위
+  spinner(agent manifest의 `live_turn_working`과 같은 패턴)를 본다. host 작업 상태·현재 입력 상자·질문 차단 검사는 함께 필요하다.
+  빈 입력은 sendNow(Ctrl+X Ctrl+S), 작업 중 Codex의 대기 steer는 Esc다. 쉬는 빈 입력은 키를 보내지 않되 판정은 기록한다.
+- 자동 입력 장부는 글 전문 없이 하나의 보내기 ID로 전달·수신 방법·잠금·경고·취소·실패를 잇는다. Ctrl+Enter는 고른 키나
+  거절 근거를 남긴다. 로컬 `aaa debug input --pane/--thread --since`로 조회하며 기존 입력 진단과 같은 20MiB 예산에
+  30일·10,000행 순환을 더한다. 자세한 계약은 [입력 진단](input-debug.md), 시험은 [testing](testing.md)에 있다.
+- t3code의 구조화된 세션 전송과 달리 AAA는 CLI PTY를 제어하므로, provider 응답·턴 완료를 전송 영수증으로 추정하지 않는다.
+  실제 JSONL의 사람 글·enqueue와 별도 수신 fingerprint를 쓴다. 운영 host·agent 교체는 착지 뒤 coordinator가 수행한다.
+
+- 실제 Codex steering 뒤 `<turn_aborted>` 내부 안내가 사람 말로 보이던 점도 고쳤다. 환경·시스템이 끼운 글과 같은 parser 경계에서 제외한다.

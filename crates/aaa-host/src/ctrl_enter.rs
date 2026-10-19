@@ -35,7 +35,7 @@ use std::sync::OnceLock;
 /// `cursor_home`: Codex 커서가 입력 줄 시작 칸에 있다(빈 입력 판정에만 쓴다).
 /// `working`: host가 아는 그 pane의 agent 상태가 작업 중이다(사람이 목록에서 보는 「작업 중」과 같다). 아니거나 모르면 보내지 않는다.
 ///
-/// - Claude Code: 작업 중이고(상태와 입력 상자 위 `esc to interrupt` 상태 줄이 함께) 살아 있는 입력 상자가 확인되면 비었든 글이
+/// - Claude Code: 작업 중이고(상태와 현재 footer·spinner 작업 표시가 함께) 살아 있는 입력 상자가 확인되면 비었든 글이
 ///   있든 `chat:sendNow`(Ctrl+X Ctrl+S). 2.1.303 기본 바인딩은 `ctrl+x ctrl+s`·`ctrl+enter`가 모두 sendNow이고, 처리기는 글(붙여넣기
 ///   포함)이 있으면 그 글을 지금 보내고(진행 중 턴을 끊는다) 비었으면 대기 메시지를 지금 보낸다. 쉬는 중의 sendNow는 그냥 제출이라
 ///   steering이 아니므로 보내지 않는다. 상자가 없으면(확인창·`/model` 등 다른 화면의 Ctrl+S는 다른 뜻) 보내지 않는다.
@@ -67,7 +67,7 @@ pub(crate) fn ctrl_enter_keys(
 }
 
 /// 웹 입력창(대화 입력창·터미널 입력줄)이 Ctrl+Enter로 보낸 글의 마지막 키(사용자 10-19 15:3x, plan §8.239 후속). host는 글을 친 뒤
-/// Enter 대신 이것을 보낸다. 위 판정과 같은 조건으로 Claude가 작업 중이면 sendNow(Ctrl+X Ctrl+S)다. 상태와 `esc to interrupt` 상태 줄이
+/// Enter 대신 이것을 보낸다. 위 판정과 같은 조건으로 Claude가 작업 중이면 sendNow(Ctrl+X Ctrl+S)다. 상태와 현재 화면의 작업 표시가
 /// 함께 있고 입력 상자가 살아 있어야 하며, 그러면 진행 중 턴에 그 글을 지금 넣는다. 그 밖은 Enter, 곧 보통 보내기다.
 /// Codex는 작업 중 Enter가 정식 steering이다(`pending_steers`). 위 판정의 Esc는 빈 입력에서만 뜻이 있고 글이 있으면 쓰지 않는다.
 /// 쉬는 agent는 사용자 결정대로 보통 보내기다. 작업 중인지 모르면(web은 작업 중으로 보았지만 화면이 확인하지 않음)
@@ -83,6 +83,23 @@ pub(crate) fn steer_submit_keys(
             &["ctrl+x", "ctrl+s"]
         }
         _ => &["enter"],
+    }
+}
+
+pub(crate) fn diagnostic(harness: Option<&str>, live: &str, colors: Option<&str>) -> String {
+    match harness {
+        Some("claude") => {
+            format!(
+                "working_line={} working_source={} input_live={}",
+                claude_working_line(live),
+                claude_working_source(live),
+                claude_input_live(live, colors)
+            )
+        }
+        Some("codex") => {
+            format!("state={:?} draft={:?}", codex_state(live), colors.map(|c| prompt_box::check("codex", c)))
+        }
+        _ => "unsupported_or_plain=true".to_string(),
     }
 }
 
@@ -110,14 +127,38 @@ fn claude_input_live(live: &str, colors: Option<&str>) -> bool {
 /// 입력 상자 바로 위(대기 메시지 몇 줄을 넘어) Claude 작업 상태 줄 `✻ Working… (1s · esc to interrupt)`이 있다.
 /// herdr claude.toml의 working 표지(`esc to interrupt`)와 같다. 상자를 모르면 false
 fn claude_working_line(live: &str) -> bool {
+    claude_working_source(live) != "none"
+}
+
+fn claude_working_source(live: &str) -> &'static str {
     let lines: Vec<&str> = live.lines().map(str::trim_end).collect();
     let rule = |line: &&str| {
         let t = line.trim();
         t.starts_with("───") || (!t.is_empty() && t.chars().all(|c| c == '─'))
     };
-    let Some(bottom) = lines.iter().rposition(rule) else { return false };
-    let Some(top) = lines[..bottom].iter().rposition(rule) else { return false };
-    lines[top.saturating_sub(6)..top].iter().any(|line| line.trim_end().ends_with("esc to interrupt)"))
+    let Some(bottom) = lines.iter().rposition(rule) else { return "none" };
+    let Some(top) = lines[..bottom].iter().rposition(rule) else { return "none" };
+    // 2.1.303은 spinner에는 시간·interrupt 안내를 두지 않고 입력 상자 아래 footer에 둔다.
+    // 입력 상자 뒤의 현재 footer만 읽는다(위 scrollback의 지난 작업 안내는 증거가 아니다).
+    if lines[bottom + 1..]
+        .iter()
+        .take(3)
+        .any(|line| line.trim().split('·').any(|part| part.trim() == "esc to interrupt"))
+    {
+        return "footer";
+    }
+    if lines[top.saturating_sub(6)..top].iter().any(|line| line.trim_end().ends_with("esc to interrupt)")) {
+        return "legacy";
+    }
+    // paste toast가 footer를 가린 때도 현재 spinner는 남는다. agent manifest의 live_turn_working과 같다.
+    static SPINNER: OnceLock<Regex> = OnceLock::new();
+    let spinner = SPINNER.get_or_init(|| {
+        Regex::new(
+            r"^\s*[\x{002A}\x{00B7}\x{2722}\x{2733}\x{2736}\x{273B}\x{273D}]\s+\S.*…(?:\s+\(\d+[smh](?:\s|·)|\s*$)",
+        )
+        .unwrap()
+    });
+    if lines[top.saturating_sub(6)..top].iter().any(|line| spinner.is_match(line)) { "spinner" } else { "none" }
 }
 
 const STEERING_HINT: &str =
@@ -177,9 +218,17 @@ mod tests {
 
     #[test]
     fn ctrl_enter_steers_and_never_inserts_a_newline() {
+        // 실제 2.1.303 pane: spinner에는 안내가 없고 입력 아래 footer에 있다.
+        let modern = "❯ queued message\n  ctrl+x ctrl+s to send now\n✻ Shimmying…\n\n────────────────────\n❯ Press up to edit queued messages\n────────────────────\n  ⏸ manual mode on · esc to interrupt · ← for agents\n";
         for (harness, screen, expected) in [
             (None, EMPTY, &["ctrl+enter"][..]),
             (Some("claude"), EMPTY, &["ctrl+x", "ctrl+s"][..]),
+            (Some("claude"), modern, &["ctrl+x", "ctrl+s"][..]),
+            (
+                Some("claude"),
+                &modern.replace("⏸ manual mode on · esc to interrupt · ← for agents", "paste again to expand"),
+                &["ctrl+x", "ctrl+s"][..],
+            ),
             // 글이 있어도 sendNow: Claude가 그 글을 지금 보낸다
             (Some("claude"), TEXT, &["ctrl+x", "ctrl+s"][..]),
             (Some("claude"), "❯\n────────────────────\n", NONE),

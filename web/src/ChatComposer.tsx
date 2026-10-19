@@ -25,7 +25,7 @@ import {
 } from "react";
 import { ArrowUp, Clock, ImagePlus, Info, LoaderCircle, TriangleAlert, X } from "lucide-react";
 import { uploadChatImage } from "./api";
-import type { ChatMessage, SubmitStage } from "./gen/proto";
+import type { ChatMessage, SubmitStage, InputTraceEvent, InputReceiptMethod, InputSubmitMeta } from "./gen/proto";
 import { imageMention, insertLeadingMention } from "./herdr/composerImages";
 import { normalizeComposerImageFile } from "./herdr/composerImageMime";
 import "./herdr/Composer.css";
@@ -35,6 +35,7 @@ import { holdPageRef } from "./pageHold";
 import { quickReplyButtons } from "./preferences";
 import { useChatShared, useTerminalToggle } from "./settings";
 import { useAppearance } from "./theme";
+import { receiptMethod, receiptHash, inputTraceId } from "./inputReceipt";
 
 /** 참고 `MAX_COMPOSER_CHARS` */
 const MAX_COMPOSER_CHARS = 100_000;
@@ -46,6 +47,8 @@ const SLOW_MS = 10_000;
  * `stale`: 그 harness가 이미 적었어야 할 때가 지났는데 기록에 없다(Enter가 먹혔을 수 있다) */
 export interface PendingSend {
   id: number;
+  trace?: string;
+  hash?: string;
   text: string;
   /** 보낼 때 기록에 있던 같은 글 수(기록을 아직 못 읽었으면 null: 확인하지 못한다) */
   before: number | null;
@@ -56,6 +59,8 @@ export interface PendingSend {
 type Phase = "sending" | "stuck" | "stopping" | "sent" | "slow";
 interface Flight {
   id: number;
+  trace: string;
+  hash?: string;
   text: string;
   /** 입력창 글·빠른 답장·이 기기 대기 메시지 */
   source: "box" | "reply" | "queue";
@@ -109,9 +114,10 @@ export interface ChatComposerProps {
   pending: PendingSend[];
   setPending: (update: (list: PendingSend[]) => PendingSend[]) => void;
   /** 글 + Enter를 보낸다(`steer`면 Enter 대신 host가 고른 steering 키). false는 보내지 못함(끊김), 약속은 true(받음)·글(거절 이유) */
-  onSend: (text: string, steer?: boolean) => false | Promise<true | string>;
+  onSend: (text: string, steer?: boolean, trace?: string, meta?: InputSubmitMeta) => false | Promise<true | string>;
   /** 빈 입력창의 Ctrl+Enter: host의 공통 판정(작업 중인 Claude는 대기 메시지를 지금 보내기, Codex 대기 steering은 Esc) */
   onCtrlEnter: () => boolean | string;
+  onInputTrace: (id: string, event: InputTraceEvent, method?: InputReceiptMethod) => void;
   /** 가장 최근 submit을 멈춘다(탈출구). 단계, null은 답이 없음(모름) */
   onCancelSend: () => Promise<SubmitStage | null>;
   /** 보낸 뒤: 대화를 바로 다시 읽는다(참고 「every send」 읽기) */
@@ -133,6 +139,7 @@ export function ChatComposer({
   setPending,
   onSend,
   onCtrlEnter,
+  onInputTrace,
   onCancelSend,
   onSent,
   messages,
@@ -162,6 +169,7 @@ export function ChatComposer({
   messagesRef.current = messages;
   const workingRef = useRef(working);
   workingRef.current = working;
+  const pasted = useRef(false);
   const picker = useRef<HTMLInputElement>(null);
   const [composing, setComposing] = useState(false);
   const [dragging, setDragging] = useState(false);
@@ -242,11 +250,11 @@ export function ChatComposer({
   const flightSequence = useRef(0);
   /** 멈춤 답을 기다리는 동안 온 전달 답 */
   const answered = useRef<{ id: number; result: true | string | null } | null>(null);
-  const occurrences = (text: string, list = messagesRef.current) =>
-    (list ?? []).filter((m) => m.role === "user" && m.text.trim() === text.trim()).length;
+  const occurrences = (text: string, list = messagesRef.current, hash?: string) =>
+    (list ?? []).filter((m) => receiptMethod(text, m, hash) !== null).length;
   /** 기록에 이 글의 새 사람 글이 보인다(같은 글의 출현 횟수가 늘었다, t-0387) */
-  const seen = (item: { text: string; before: number | null }, list = messagesRef.current) =>
-    item.before !== null && occurrences(item.text, list) > item.before;
+  const seen = (item: { text: string; hash?: string; before: number | null }, list = messagesRef.current) =>
+    item.before !== null && occurrences(item.text, list, item.hash) > item.before;
   const queued = useSyncExternalStore(messageQueues.subscribe, () =>
     messageQueues.read(owner),
   );
@@ -310,13 +318,17 @@ export function ChatComposer({
     return true;
   };
   /** 기록에 올랐거나 harness 대기열에 들어갔다: 입력창은 이미 비었고 첨부를 놓는다 */
-  const settle = (f: Flight): void => {
+  const settle = (f: Flight, fallback?: InputReceiptMethod): void => {
     if (!finish(f)) return;
-    if (f.source === "box") clearAttachments(f.attachments);
+    const method = seen(f) ? [...(messagesRef.current ?? [])].reverse().map((m) => receiptMethod(f.text, m, f.hash)).find((m) => m !== null) : fallback;
+    if (method) onInputTrace(f.trace, "receipt", method);
+    onInputTrace(f.trace, "unlocked");
+    if (f.source === "box") { clearAttachments(f.attachments); pasted.current = false; }
   };
   /** 가지 않았거나 갔는지 모른다: 글을 입력창(대기 메시지는 그 칸)에 돌려놓고 까닭을 말한다 */
-  const fail = (f: Flight, note: Note): void => {
+  const fail = (f: Flight, note: Note, method: InputReceiptMethod = "unknown"): void => {
     if (!finish(f)) return;
+    onInputTrace(f.trace, "failed", method);
     if (f.source === "queue" && f.queueId !== undefined) {
       messageQueues.endSend(owner, f.queueId);
       setQueueError({ id: f.queueId, text: note.text });
@@ -332,45 +344,52 @@ export function ChatComposer({
     const next: Flight = { ...current, ...more, phase, at: Date.now() };
     flightRef.current = next;
     setFlight(next);
+    if (phase === "slow" || phase === "stuck") onInputTrace(f.trace, phase);
   };
   /** 바로 보낸다. 보내짐까지 입력창은 잠긴다 */
-  const deliver = (given: Omit<Flight, "id" | "phase" | "at" | "before">): void => {
+  const deliver = (given: Omit<Flight, "id" | "trace" | "phase" | "at" | "before">): void => {
     setNote(null);
-    const f: Flight = { ...given, id: ++flightSequence.current, phase: "sending", at: Date.now(), before: messagesRef.current === null ? null : occurrences(given.text) };
+    const f: Flight = { ...given, id: ++flightSequence.current, trace: inputTraceId(), phase: "sending", at: Date.now(), before: messagesRef.current === null ? null : occurrences(given.text) };
     flightRef.current = f;
     setFlight(f);
     // 가는 글은 초안에 두지 않는다: 잠긴 채 새로 읽어도 같은 글이 보통 초안으로 돌아와 두 번 가지 않는다
     if (f.source === "box") setText("");
+    onInputTrace(f.trace, "preparing");
     const again = f.source === "queue" ? undefined : () => send(f.source === "reply" ? f.text : undefined, f.steer);
-    let sent: false | Promise<true | string>;
-    try {
-      sent = onSend(f.text, f.steer);
-    } catch {
-      sent = false;
-    }
-    if (sent === false) {
-      fail(f, { text: "보내지 못했습니다: 연결이 끊겼습니다. 아무것도 보내지 않았고 글은 그대로 있습니다.", retry: again });
-      return;
-    }
-    sent.then((result) => {
+    void (async () => {
+      f.hash = await receiptHash(f.text);
       if (flightRef.current?.id !== f.id) return;
-      // 멈춤 답을 기다리는 동안 온 전달 답: 멈춤이 늦었으면 그때 이어 받는다
-      if (flightRef.current.phase === "stopping") { answered.current = { id: f.id, result }; return; }
-      answer(f, result, again);
-    }, () => {
-      if (flightRef.current?.id !== f.id) return;
-      if (flightRef.current.phase === "stopping") { answered.current = { id: f.id, result: null }; return; }
-      answer(f, null, again);
-    });
+      f.before = messagesRef.current === null ? null : occurrences(f.text, messagesRef.current, f.hash);
+      let sent: false | Promise<true | string>;
+      try {
+        sent = onSend(f.text, f.steer, f.trace, { pasted: pasted.current, attachments: f.attachments.length });
+      } catch {
+        sent = false;
+      }
+      if (sent === false) {
+        fail(f, { text: "보내지 못했습니다: 연결이 끊겼습니다. 아무것도 보내지 않았고 글은 그대로 있습니다.", retry: again });
+        return;
+      }
+      sent.then((result) => {
+        if (flightRef.current?.id !== f.id) return;
+        // 멈춤 답을 기다리는 동안 온 전달 답: 멈춤이 늦었으면 그때 이어 받는다
+        if (flightRef.current.phase === "stopping") { answered.current = { id: f.id, result }; return; }
+        answer(f, result, again);
+      }, () => {
+        if (flightRef.current?.id !== f.id) return;
+        if (flightRef.current.phase === "stopping") { answered.current = { id: f.id, result: null }; return; }
+        answer(f, null, again);
+      });
+    })().catch(() => fail(f, { text: "수신 확인을 준비하지 못했습니다. 글은 보내지 않았습니다." }, "unknown"));
   };
   /** 전달 답: true는 글과 Enter가 pane에 들어갔다, 글은 거절 이유, null은 끊기거나 답이 없어 모른다 */
   const answer = (f: Flight, result: true | string | null, again?: () => void): void => {
     if (result === null) {
-      fail(f, { text: "전송 여부를 확인하지 못했습니다. 다시 보내기 전에 터미널을 확인하세요.", inspect: true });
+      fail(f, { text: "전송 여부를 확인하지 못했습니다. 다시 보내기 전에 터미널을 확인하세요.", inspect: true }, "connection");
       return;
     }
     if (result !== true) {
-      fail(f, { text: result, retry: again });
+      fail(f, { text: result, retry: again }, "rejected");
       return;
     }
     onSent();
@@ -379,17 +398,19 @@ export function ChatComposer({
         messageQueues.endSend(owner, f.queueId);
       }
       // 보낼 때 대화 기록을 읽지 못했으면(Claude 첫 hook 전 등) 기록 증거가 올 수 없다: host의 전달이 보내짐이다
-      if (seen(f) || f.before === null) settle(f);
+      if (seen(f) || f.before === null) settle(f, f.before === null ? "no_transcript" : undefined);
       else if (harness === "codex" && workingRef.current) {
         // Codex는 작업 중에 받은 글을 다음 도구 호출 뒤 읽을 때에야 기록한다: host의 전달이 보내짐이고 대화 끝 대기 말로 기다린다
-        setPending((list) => [...list, { id: f.id, text: f.text, before: f.before, at: Date.now(), stale: false }]);
-        settle(f);
+        setPending((list) => [...list, { id: f.id, trace: f.trace, hash: f.hash, text: f.text, before: f.before, at: Date.now(), stale: false }]);
+        onInputTrace(f.trace, "pending", "codex_delivery");
+        settle(f, "codex_delivery");
     } else step(f, "sent");
   };
   /** 탈출구: 전달 전에 막힌 보내기를 멈추고 글을 돌려받는다. host가 확실히 말할 때만 「보내지 않음」 */
   const escape = (): void => {
     const f = flightRef.current;
     if (f?.phase !== "stuck") return;
+    onInputTrace(f.trace, "cancel");
     step(f, "stopping");
     void onCancelSend().then((stage) => {
       const late = answered.current?.id === f.id ? answered.current : null;
@@ -412,6 +433,7 @@ export function ChatComposer({
   const unlock = (): void => {
     const f = flightRef.current;
     if (f === null || !finish(f)) return;
+    onInputTrace(f.trace, "unlock");
     if (f.source === "box") composerDrafts.set(draftKey, (current) => current === "" ? f.text : current);
     textareaRef.current?.focus();
   };
@@ -428,6 +450,10 @@ export function ChatComposer({
   // 기록에 같은 새 사람 글이 보이면(늦게라도) 비우고 푼다. 대기 말도 기록에 오른 것은 지운다
   useEffect(() => {
     if (flight && (flight.phase === "sent" || flight.phase === "slow") && seen(flight, messages)) settle(flight);
+    for (const p of pending.filter((p) => p.trace && seen(p, messages))) {
+      const method = [...(messages ?? [])].reverse().map((m) => receiptMethod(p.text, m, p.hash)).find((m) => m !== null);
+      onInputTrace(p.trace!, "receipt", method ?? undefined);
+    }
     if (pending.some((p) => seen(p, messages))) setPending((list) => list.filter((p) => !seen(p, messages)));
   }, [messages, flight, pending]);
   // 대기 말(Codex 작업 중)이 기록에 없을 때: 작업이 끝나고 10초 뒤에도 없으면 Enter가 먹혔을 수 있다
@@ -439,6 +465,8 @@ export function ChatComposer({
     const next = Math.min(...pending.filter((p) => !p.stale).map(due));
     if (!Number.isFinite(next)) return;
     const timer = window.setTimeout(() => {
+      for (const p of pending.filter((p) => !p.stale && due(p) <= Date.now()))
+        if (p.trace) onInputTrace(p.trace, "slow", "unknown");
       setPending((list) => list.map((p) => !p.stale && due(p) <= Date.now() ? { ...p, stale: true } : p));
     }, Math.max(0, next - Date.now()));
     return () => window.clearTimeout(timer);
@@ -468,10 +496,13 @@ export function ChatComposer({
       send(undefined, workingRef.current);
       return;
     }
-    if (!workingRef.current) return;
+    if (!workingRef.current) { onCtrlEnter(); return; }
     const first = messageQueues.read(owner).find((m) => m.text.trim() !== "" && !messageQueues.isSending(m.id));
     if (first) sendQueued(first.id, first.text, true);
-    else onCtrlEnter();
+    else {
+      const result = onCtrlEnter();
+      if (typeof result === "string") setNote({ text: result });
+    }
   };
 
   const onKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>): void => {
@@ -669,6 +700,7 @@ export function ChatComposer({
             onCompositionStart={() => setComposing(true)}
             onCompositionEnd={() => setComposing(false)}
             onPaste={(event) => {
+              pasted.current = true;
               const images = Array.from(event.clipboardData.items).filter((item) => item.kind === "file").map((item) => item.getAsFile()).filter((file): file is File => file !== null);
               if (images.length === 0) return;
               event.preventDefault();

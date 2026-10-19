@@ -331,6 +331,9 @@ pub struct ChatMessage {
     /// 옛 agent는 보내지 않고 옛 front는 버린다(plan §8.247).
     #[serde(default)]
     pub pending: bool,
+    /// 표시 상한으로 자르기 전의 사람 글. 옛 agent에는 없으므로 짧은 글 비교로 돌아간다.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub receipt: Option<crate::ChatReceipt>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
@@ -1292,6 +1295,12 @@ pub struct HostStatus {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(tag = "op", rename_all = "snake_case")]
 pub enum FrontRequest {
+    /// 로컬 입력 진단. 본문·화면을 담지 않는다.
+    DebugInput {
+        pane: Option<String>,
+        thread: Option<String>,
+        since_ms: u64,
+    },
     DeployContext,
     DeployStart {
         machine: Option<String>,
@@ -1447,6 +1456,8 @@ pub enum FrontRequest {
     /// 웹의 Ctrl+Enter. host가 감지 입력줄로 steering 키를 정한다(줄바꿈 없음, 작업 중일 때만, 모르면 보내지 않음). 권한·입력 순서는 PaneInput과 같다.
     PaneCtrlEnter {
         pane: String,
+        #[serde(default)]
+        trace: Option<String>,
     },
     /// 대화형 붙여넣기(herdr client가 서버로 넘기는 붙여넣기와 같은 형식).
     /// host가 그 프로그램이 켠 bracketed paste대로 감싸고 ESC·C1 CSI를 뺀다(`KeyModes::paste`). lease는 `PaneInput`과 같다.
@@ -2009,7 +2020,8 @@ impl FrontRequest {
     pub fn local_only(&self) -> bool {
         matches!(
             self,
-            FrontRequest::EnrollOpen { .. }
+            FrontRequest::DebugInput { .. }
+                | FrontRequest::EnrollOpen { .. }
                 | FrontRequest::EnrollPending
                 | FrontRequest::EnrollApprove { .. }
                 | FrontRequest::MachineRevoke { .. }
@@ -2028,6 +2040,9 @@ impl FrontRequest {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum FrontResponse {
+    InputEvents {
+        events: Vec<crate::InputEvent>,
+    },
     DeployContext {
         project: Option<String>,
         session: bool,
@@ -2363,7 +2378,10 @@ pub enum TermClientMsg {
         data: String,
     },
     /// front에서 입력줄을 추측하지 않고 host의 공통 Ctrl+Enter 판정을 쓴다.
-    CtrlEnter,
+    CtrlEnter {
+        #[serde(default)]
+        trace: Option<String>,
+    },
     Resize {
         cols: u16,
         rows: u16,
@@ -2377,10 +2395,20 @@ pub enum TermClientMsg {
     Submit {
         id: u32,
         data: String,
+        #[serde(default)]
+        trace: Option<String>,
+        #[serde(default)]
+        meta: crate::InputSubmitMeta,
         /// 입력창의 Ctrl+Enter(사용자 10-19 15:3x, plan §8.239 후속): 글 뒤 Enter 대신 host가 steering 키를 고른다(작업 중인 Claude는
         /// sendNow, 그 밖은 Enter). 옛 host는 이 칸을 버려 보통 보내기가 된다
         #[serde(default)]
         steer: bool,
+    },
+    /// 같은 WebSocket에서 받은 submit의 UI 사건. 원문·임의의 실패 문자열은 받지 않는다.
+    InputTrace {
+        id: String,
+        event: crate::InputTraceEvent,
+        method: Option<crate::InputReceiptMethod>,
     },
     /// 진행 중인 `Submit`을 멈춰 달라(plan §8.247): 전달 전에 막혔을 때 입력창이 빠져나가는 길이다.
     /// host는 submit을 기다리는 동안에도 이것은 바로 읽고 `SubmitCancelled`로 답한다(다른 frame은 submit 뒤 차례대로).

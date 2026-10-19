@@ -109,6 +109,7 @@ fn injected(t: &str) -> bool {
         "<local-command-",
         "<user-prompt-submit-hook>",
         "<environment_context>",
+        "<turn_aborted>",
         "<user_instructions>",
         "<permissions",
         "Caveat:",
@@ -118,8 +119,20 @@ fn injected(t: &str) -> bool {
 }
 
 fn msg(role: ChatRole, text: &str) -> Option<ChatMessage> {
+    let receipt = (role == ChatRole::User).then(|| {
+        use sha2::{Digest, Sha256};
+        let canonical = aaa_proto::input::receipt_text(text);
+        aaa_proto::ChatReceipt {
+            sha256: format!("{:x}", Sha256::digest(canonical.as_bytes())),
+            method: if canonical != text.replace("\r\n", "\n").replace('\r', "\n").trim() {
+                aaa_proto::InputReceiptMethod::PastedContent
+            } else {
+                aaa_proto::InputReceiptMethod::Normal
+            },
+        }
+    });
     let text = clip(text);
-    (!text.is_empty()).then_some(ChatMessage { role, text, pending: false })
+    (!text.is_empty()).then_some(ChatMessage { role, text, pending: false, receipt })
 }
 
 /// Claude 기록 한 줄 → 보일 줄(0개 이상, 순서대로)
@@ -467,8 +480,9 @@ mod tests {
         let call = r#"{"type":"response_item","payload":{"type":"function_call","name":"shell","arguments":"{\"command\":[\"bash\",\"-lc\",\"ls\"]}"}}"#;
         let think = r#"{"type":"response_item","payload":{"type":"reasoning","summary":[{"type":"summary_text","text":"목록부터 본다"}],"encrypted_content":"gAAA"}}"#;
         let out = r#"{"type":"response_item","payload":{"type":"message","role":"assistant","content":[{"type":"output_text","text":"했다"}]}}"#;
+        let interrupted = r#"{"type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"<turn_aborted>\nThe user interrupted the previous turn on purpose.\n</turn_aborted>"}]}}"#;
         let lines = |thinking: bool| -> Vec<_> {
-            [user, env, dev, think, call, out]
+            [user, env, interrupted, dev, think, call, out]
                 .iter()
                 .flat_map(|l| codex_line(&serde_json::from_str(l).unwrap(), thinking))
                 .map(|m| (m.role, m.text))

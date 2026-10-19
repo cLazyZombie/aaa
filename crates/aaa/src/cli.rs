@@ -48,6 +48,11 @@ enum Cmd {
         #[arg(long)]
         dir: PathBuf,
     },
+    /// host 입력 사건 진단(로컬에서만, 원문 없음)
+    Debug {
+        #[command(subcommand)]
+        cmd: DebugCmd,
+    },
     /// host 상태
     Status,
     /// pane: 읽기·입력·나누기·닫기(herdr `pane` 명령과 같은 이름. 출력은 늘 JSON 한 줄)
@@ -241,6 +246,19 @@ enum Cmd {
     Migrate {
         #[command(subcommand)]
         cmd: crate::migrate::MigrateCmd,
+    },
+}
+
+#[derive(clap::Subcommand)]
+enum DebugCmd {
+    /// 최근 입력 사건을 시간순으로 본다. --since는 10m·2h·1d 또는 Unix milliseconds
+    Input {
+        #[arg(long)]
+        pane: Option<String>,
+        #[arg(long)]
+        thread: Option<String>,
+        #[arg(long, default_value = "1h")]
+        since: String,
     },
 }
 
@@ -1239,6 +1257,10 @@ fn run(cli: Cli) -> Result<ExitCode> {
             init_log("info");
             aaa_session::host::main(dir)?;
             Ok(ExitCode::SUCCESS)
+        }
+        Cmd::Debug { cmd: DebugCmd::Input { pane, thread, since } } => {
+            let since_ms = debug_since(&since)?;
+            front(json, FrontRequest::DebugInput { pane, thread, since_ms })
         }
         Cmd::Status => front(json, FrontRequest::Status),
         Cmd::Pane { cmd } => pane_cmd(json, cmd),
@@ -2985,6 +3007,22 @@ fn render_front(r: &FrontResponse) -> String {
                 let _ = writeln!(s, "탭 {}\t{}", i + 1, render_node(&t.root));
             }
         }
+        FrontResponse::InputEvents { events } => {
+            s.push_str("시각(UTC)\t보내기 ID\tpane\tharness/작업 중\t사건\t상세\n");
+            for e in events {
+                let _ = writeln!(
+                    s,
+                    "{}\t{}\t{}\t{}/{}\t{}\t{}",
+                    aaa_common::util::utc_iso(e.at_ms),
+                    e.id,
+                    e.pane,
+                    e.harness.as_deref().unwrap_or("?"),
+                    e.working,
+                    e.event,
+                    e.detail
+                );
+            }
+        }
         FrontResponse::Done => s.push_str("완료\n"),
         FrontResponse::Projects { projects } => {
             if projects.is_empty() {
@@ -3506,6 +3544,23 @@ fn mission_cmd(json: bool, cmd: MissionCmd) -> Result<ExitCode> {
         }
     };
     front(json, req)
+}
+
+fn debug_since(value: &str) -> Result<u64> {
+    if let Some((digits, unit)) = value.char_indices().last().map(|(i, c)| (&value[..i], c)) {
+        let factor = match unit {
+            'm' => Some(60_000u64),
+            'h' => Some(3_600_000),
+            'd' => Some(86_400_000),
+            _ => None,
+        };
+        if let Some(factor) = factor {
+            let span =
+                digits.parse::<u64>()?.checked_mul(factor).ok_or_else(|| anyhow::anyhow!("--since 범위를 넘었다"))?;
+            return Ok(aaa_common::util::now_ms().saturating_sub(span));
+        }
+    }
+    Ok(value.parse()?)
 }
 
 #[cfg(test)]

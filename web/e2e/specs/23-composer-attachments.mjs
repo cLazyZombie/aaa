@@ -75,7 +75,8 @@ while True:
             # hold: Claude가 받지 못한 것처럼(기록·hook 없음). -queue: 작업 중이라 대기열에 넣는다(Claude는 넣자마자 적는다)
             if not os.path.exists(sys.argv[4]):
                 queue=os.path.exists(sys.argv[4]+'-queue')
-                line={'type':'queue-operation','operation':'enqueue','content':message} if queue else {'type':'user','message':{'content':message}}
+                recorded='<pasted_content id="local_408">\\n'+message+'\\n</pasted_content id="local_408">' if '\\n' in message else message
+                line={'type':'queue-operation','operation':'enqueue','content':recorded} if queue else {'type':'user','message':{'content':recorded}}
                 with open(sys.argv[3],'a') as f: f.write(json.dumps(line,ensure_ascii=False)+'\\n')
                 if not queue: hook('UserPromptSubmit')
             print('\\r\\nCMP_RECEIVED_'+str(count),flush=True)
@@ -94,6 +95,39 @@ while True:
     await domIs(p, "전송 완료", () => document.querySelector('[aria-label="메시지"]').value === "");
     return JSON.parse(fs.readFileSync(receipts, "utf8"));
   };
+
+  await step("WebCrypto 없는 연결도 짧은 글은 기존 수신 비교로 보낸다", async () => {
+    const client = await pairPage(browser, aaa("web", "pair").code, { width: 1280, height: 800 });
+    const p = client.page;
+    const box = await openChat(p);
+    await p.evaluate(() => {
+      Object.defineProperty(crypto, "subtle", { value: undefined });
+      Object.defineProperty(crypto, "randomUUID", { value: undefined });
+    });
+    await box.fill("짧은 호환 입력");
+    await submit(p);
+    if (client.errors.length) throw new Error(client.errors.join("; "));
+    await p.context().close();
+  });
+
+  await step("긴 글 수신: 4천 자 표시 상한 뒤에도 입력 잠금이 풀리고 같은 앞부분의 다른 글은 확인이 아니다", async () => {
+    const client = await pairPage(browser, aaa("web", "pair").code, { width: 1280, height: 800 });
+    const p = client.page;
+    const box = await openChat(p);
+    await domIs(p, "기존 기록 준비", () => document.querySelector('[data-role="user"]')?.textContent.includes("같은 글 재전송"));
+    const message = "긴 합성 글 ".repeat(700) + "진짜 끝";
+    await box.fill(message);
+    fs.writeFileSync(hold, "hold");
+    await press(p);
+    await waitOutput("composer", `CMP_RECEIVED_${++received}`);
+    fs.appendFileSync(transcript, chatLine(message.slice(0, -4) + "다른 끝"));
+    await domIs(p, "다른 긴 글은 확인 아님", () => [...document.querySelectorAll('[data-role="user"]')].some((el) => el.textContent.includes("긴 합성 글")));
+    if (!await box.evaluate((el) => el.readOnly)) throw new Error("같은 앞부분만으로 잠금을 풀었다");
+    fs.appendFileSync(transcript, chatLine(message));
+    await domIs(p, "긴 글도 온전한 수신 확인", () => document.querySelector('[aria-label="메시지"]').value === "" && !document.querySelector('[aria-label="메시지"]').readOnly);
+    fs.unlinkSync(hold);
+    await p.context().close();
+  });
 
   await step("그림만 보내기: 마지막 @경로의 자동완성을 닫고 한 번 제출한다", async () => {
     const client = await pairPage(browser, aaa("web", "pair").code, { width: 1280, height: 800 });
@@ -254,19 +288,24 @@ while True:
 
     // Claude 작업 중: 대기열 줄이 보내짐이다. 풀고 대화 끝 점선 대기 말, 흡수되면 보통 말
     fs.writeFileSync(`${hold}-queue`, "");
-    await box.fill("작업 중 추가");
+    await box.fill("작업 중 추가\n두 번째 줄");
     await press(p);
     await waitOutput("composer", `CMP_RECEIVED_${++received}`);
-    await domIs(p, "대기 말", () => [...document.querySelectorAll(".chat-msg.user.is-pending")].filter((el) => el.textContent.trim() === "작업 중 추가").length === 1
+    await domIs(p, "대기 말", () => [...document.querySelectorAll(".chat-msg.user.is-pending")].filter((el) => el.textContent.includes("작업 중 추가")).length === 1
       && document.querySelector('[aria-label="메시지"]').value === "" && !document.querySelector('[aria-label="메시지"]').readOnly);
     await shot(p, "chat-send-pending");
     fs.appendFileSync(transcript, [
-      { type: "queue-operation", operation: "remove", content: "작업 중 추가", reason: "absorbed_mid_turn" },
-      { type: "attachment", attachment: { type: "queued_command", commandMode: "prompt", origin: { kind: "human" }, prompt: "작업 중 추가" } },
+      { type: "queue-operation", operation: "remove", content: '<pasted_content id="local_408">\n작업 중 추가\n두 번째 줄\n</pasted_content id="local_408">', reason: "absorbed_mid_turn" },
+      { type: "attachment", attachment: { type: "queued_command", commandMode: "prompt", origin: { kind: "human" }, prompt: '<pasted_content id="local_408">\n작업 중 추가\n두 번째 줄\n</pasted_content id="local_408">' } },
     ].map((l) => JSON.stringify(l) + "\n").join(""));
     await domIs(p, "흡수 뒤 보통 말", () => !document.querySelector('[data-testid="chat-pending"]')
-      && [...document.querySelectorAll('[data-role="user"]')].some((el) => el.textContent.trim() === "작업 중 추가"));
+      && [...document.querySelectorAll('[data-role="user"]')].some((el) => el.textContent.includes("작업 중 추가")));
     fs.unlinkSync(`${hold}-queue`);
+    const events = aaa("debug", "input", "--pane", "composer", "--since", "1h").events;
+    const queuedReceipt = events.find((e) => e.event === "ui" && e.detail.includes("QueueOperation"));
+    if (!queuedReceipt || !events.some((e) => e.id === queuedReceipt.id && e.event === "received" && e.detail.includes("multiline=true"))) throw new Error("여러 줄 대기 수신 진단이 같은 ID로 이어지지 않았다");
+    for (const stage of ["Slow", "Unlock", "Cancel", "Unlocked"]) if (!events.some((e) => e.event === "ui" && e.detail.includes(`event=${stage}`))) throw new Error(`입력 진단 사건 누락: ${stage}`);
+    if (JSON.stringify(events).includes("작업 중 추가") || JSON.stringify(events).includes("먹힌 글")) throw new Error("진단에 사용자 글이 남았다");
     if (client.errors.length) throw new Error(client.errors.join("; "));
     await p.context().close();
   });

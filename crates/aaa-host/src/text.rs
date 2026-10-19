@@ -35,8 +35,8 @@ fn match_output(text: &str, matcher: &OutputMatch, regex: Option<&regex::Regex>)
 
 impl Host {
     /// 웹의 Ctrl+Enter(steering, 줄바꿈 없음). detection과 색을 같은 mirror에서 읽어 회색 suggestion과 초안을 구별한다.
-    /// 비었으면 보내지 않는다.
-    pub(crate) fn ctrl_enter_data(&self, id: &str) -> Vec<u8> {
+    /// 빈 입력도 현재 작업과 대기 메시지가 확인되면 보낸다. 쉬거나 입력 상태를 모르면 키를 보내지 않는다.
+    pub(crate) fn ctrl_enter_data(&self, id: &str, trace: Option<&str>) -> Vec<u8> {
         let mut inner = self.inner.lock().unwrap();
         let Some(pane) = inner.panes.get_mut(id) else {
             return Vec::new();
@@ -67,8 +67,17 @@ impl Host {
         let live =
             if blocked || !mirror.synced || codex_row_elsewhere { String::new() } else { mirror.vt.detection_text() };
         let keys = crate::ctrl_enter::ctrl_enter_keys(harness, &live, Some(&colors), cursor_home, working);
+        let detail = format!(
+            "keys={keys:?} working={working} question={blocked} synced={} cursor_home={cursor_home} cursor_elsewhere={codex_row_elsewhere} {}",
+            mirror.synced,
+            crate::ctrl_enter::diagnostic(harness, &live, Some(&colors))
+        );
         let modes = mirror.vt.modes();
-        keys.iter().flat_map(|key| modes.key(key).unwrap_or_default()).collect()
+        let data = keys.iter().flat_map(|key| modes.key(key).unwrap_or_default()).collect();
+        drop(inner);
+        let trace = trace.map(str::to_owned).unwrap_or_else(|| format!("ctrl-{}", aaa_common::util::new_id()));
+        self.input_event(id, &trace, "ctrl_enter", &detail);
+        data
     }
 
     /// 웹 입력창이 Ctrl+Enter로 보낸 글(submit `steer`)의 마지막 키 bytes(`ctrl_enter::steer_submit_keys`). 작업 중인 Claude면
