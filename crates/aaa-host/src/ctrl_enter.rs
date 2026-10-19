@@ -28,6 +28,7 @@
 //! SOFTWARE.
 
 use crate::prompt_box::{self, Draft};
+use aaa_proto::SteerRefusal;
 use regex::Regex;
 use std::sync::OnceLock;
 
@@ -86,14 +87,74 @@ pub(crate) fn steer_submit_keys(
     }
 }
 
+/// 대기 메시지 「지금 보내기」(plan §8.270). harness 대기열에 이미 있는 글을 지금 턴에 넣는 키만 고른다(글은 다시 보내지 않는다).
+/// 빈 입력 Ctrl+Enter와 같은 키지만 더 좁다. 입력창에 보내지 않은 글이 있으면 그 키가 그 글까지 보내므로 거절하고, 대기 글이
+/// 화면에 보여야 한다(없으면 「보냄」이 거짓이다). herdr-web-ui `actOnPending`이 터미널 draft를 `held_input`으로 거절하는 것과 같다.
+///
+/// - Claude Code 2.1.303: 대기 글 아래에 늘 `<sendNow 키> to send now`(dim) 줄을 그린다(`$_e`, 실측 fixture `claude-queued.ansi`).
+///   빈 입력 sendNow는 대기열 전부를 지금 보낸다: 돌던 도구는 끊지 않고 배경으로 옮기거나(실측) 턴을 끊는다.
+///   대기열이 비면 아무 일도 하지 않는다(`nothing_to_send`). 입력창의 「Press up to edit queued messages」는 처음 몇 번만 나와 쓰지 않는다.
+/// - Codex 0.163: 대기 steering 패널이 있고 입력이 빌 때만 Esc. Esc는 pending_steers가 있으면 턴을 끊고 전부 보내지만, 비면 그냥
+///   중단이다(`chatwidget/interaction.rs` 247-259). 그래서 패널을 이 판정(쓰기 직전, 같은 mirror)에서 확인한다.
+pub(crate) fn queued_steer_keys(
+    harness: Option<&str>,
+    live: &str,
+    colors: Option<&str>,
+    cursor_home: bool,
+    working: bool,
+) -> Result<&'static [&'static str], SteerRefusal> {
+    match harness {
+        Some("claude" | "codex") if !working => Err(SteerRefusal::NotWorking),
+        Some("claude") => {
+            if !(claude_working_line(live) && claude_input_live(live, colors)) {
+                return Err(SteerRefusal::UnknownScreen);
+            }
+            match colors.map(|ansi| prompt_box::check("claude", ansi)) {
+                Some(Draft::Empty) => {}
+                Some(Draft::Typed) => return Err(SteerRefusal::Draft),
+                _ => return Err(SteerRefusal::UnknownScreen),
+            }
+            if claude_queue_hint(live) { Ok(&["ctrl+x", "ctrl+s"]) } else { Err(SteerRefusal::NoQueue) }
+        }
+        Some("codex") => {
+            let draft = colors.map(|ansi| prompt_box::check("codex", ansi));
+            match codex_state(live) {
+                None => Err(SteerRefusal::UnknownScreen),
+                Some(Codex { typed: true, .. }) => Err(SteerRefusal::Draft),
+                _ if draft == Some(Draft::Typed) => Err(SteerRefusal::Draft),
+                Some(Codex { pending: false, .. }) => Err(SteerRefusal::NoQueue),
+                Some(_) if cursor_home && draft == Some(Draft::Empty) => Ok(&["esc"]),
+                Some(_) => Err(SteerRefusal::UnknownScreen),
+            }
+        }
+        _ => Err(SteerRefusal::Unsupported),
+    }
+}
+
+/// Claude 입력 상자 위(대기 글 자리)에 `… to send now` 줄이 있다. 보낸 뒤에는 그 자리를 다시 그려 사라진다(실측 `claude-queue-sent.ansi`)
+fn claude_queue_hint(live: &str) -> bool {
+    let lines: Vec<&str> = live.lines().map(str::trim_end).collect();
+    let rule = |line: &&str| {
+        let t = line.trim();
+        t.starts_with("───") || (!t.is_empty() && t.chars().all(|c| c == '─'))
+    };
+    let Some(bottom) = lines.iter().rposition(rule) else { return false };
+    let Some(top) = lines[..bottom].iter().rposition(rule) else { return false };
+    lines[top.saturating_sub(20)..top].iter().any(|line| {
+        let t = line.trim();
+        t.ends_with(" to send now") && t.len() > " to send now".len()
+    })
+}
+
 pub(crate) fn diagnostic(harness: Option<&str>, live: &str, colors: Option<&str>) -> String {
     match harness {
         Some("claude") => {
             format!(
-                "working_line={} working_source={} input_live={}",
+                "working_line={} working_source={} input_live={} queue_hint={}",
                 claude_working_line(live),
                 claude_working_source(live),
-                claude_input_live(live, colors)
+                claude_input_live(live, colors),
+                claude_queue_hint(live)
             )
         }
         Some("codex") => {
@@ -323,6 +384,70 @@ mod tests {
             let ansi = EMPTY.replace("❯", &format!("❯ {content}"));
             let live = prompt_box::plain(&ansi);
             assert_eq!(ctrl_enter_keys(Some("claude"), &live, Some(&ansi), true, true), ["ctrl+x", "ctrl+s"]);
+        }
+    }
+
+    // 실제 Claude Code 2.1.303 화면(tmux capture -e, 10-19 t-0417): 작업 중 대기 글 하나 / 빈 입력 sendNow로 보낸 직후
+    const CLAUDE_QUEUED: &str = include_str!("../tests/fixtures/prompt_box/claude-queued.ansi");
+    const CLAUDE_QUEUE_SENT: &str = include_str!("../tests/fixtures/prompt_box/claude-queue-sent.ansi");
+
+    fn queued(
+        harness: &str,
+        ansi: &str,
+        cursor_home: bool,
+        working: bool,
+    ) -> Result<&'static [&'static str], SteerRefusal> {
+        queued_steer_keys(Some(harness), &prompt_box::plain(ansi), Some(ansi), cursor_home, working)
+    }
+
+    #[test]
+    fn queued_steer_sends_claude_send_now_only_for_an_empty_box_over_a_visible_queue() {
+        assert_eq!(queued("claude", CLAUDE_QUEUED, true, true), Ok(&["ctrl+x", "ctrl+s"][..]));
+        assert_eq!(queued("claude", CLAUDE_QUEUED, true, false), Err(SteerRefusal::NotWorking));
+        // 보낸 뒤: 작업 중이고 상자는 비었지만 대기 글이 없다(sendNow는 아무 일도 하지 않으니 「보냄」이라 하지 않는다)
+        assert_eq!(queued("claude", CLAUDE_QUEUE_SENT, true, true), Err(SteerRefusal::NoQueue));
+        // 터미널에서 쓰던 글이 있으면 sendNow가 그 글까지 보낸다: 거절
+        let placeholder = "❯\u{a0}\x1b[2m\x1b[39mPress up to edit queued messages\x1b[0m";
+        assert!(CLAUDE_QUEUED.contains(placeholder));
+        let typed = CLAUDE_QUEUED.replace(placeholder, "❯ 쓰던 글");
+        assert_eq!(queued("claude", &typed, true, true), Err(SteerRefusal::Draft));
+        // 색이 없으면(NO_COLOR) 자리표시인지 알 수 없다: 글로 보고 거절한다
+        let plain = prompt_box::plain(CLAUDE_QUEUED);
+        assert_eq!(queued("claude", &plain, true, true), Err(SteerRefusal::Draft));
+        // 상자를 모름(확인창 등)·작업 표시 없음
+        assert_eq!(queued("claude", "tool output\n", true, true), Err(SteerRefusal::UnknownScreen));
+        let idle = CLAUDE_QUEUED.replace("Beboppin'…", "Beboppin'").replace("(38s · ↓", "38s ↓");
+        assert_eq!(queued("claude", &idle, true, true), Err(SteerRefusal::UnknownScreen), "작업 줄이 없다");
+        // 지난 작업 안내가 아니라 상자 위 대기 자리의 줄만 증거다
+        let far = CLAUDE_QUEUED.replace("ctrl+x ctrl+s to send now", "");
+        assert_eq!(queued("claude", &far, true, true), Err(SteerRefusal::NoQueue));
+        // 같은 화면의 Ctrl+Enter 판정은 그대로다(빈 입력 sendNow)
+        let live = prompt_box::plain(CLAUDE_QUEUED);
+        assert_eq!(ctrl_enter_keys(Some("claude"), &live, Some(CLAUDE_QUEUED), true, true), ["ctrl+x", "ctrl+s"]);
+    }
+
+    #[test]
+    fn queued_steer_sends_codex_esc_only_over_the_pending_panel() {
+        let pending = codex("›", true, true);
+        assert_eq!(queued("codex", &pending, true, true), Ok(&["esc"][..]));
+        // 패널이 없으면 Esc는 그냥 중단이다: 보내지 않는다(실측 0.163은 작업 중 글을 거의 바로 넘겨 패널이 짧게만 보인다)
+        assert_eq!(queued("codex", &codex("›", false, true), true, true), Err(SteerRefusal::NoQueue));
+        assert_eq!(queued("codex", &codex("› 방향 바꿔", true, true), false, true), Err(SteerRefusal::Draft));
+        assert_eq!(queued("codex", &pending, true, false), Err(SteerRefusal::NotWorking));
+        assert_eq!(
+            queued("codex", &pending, false, true),
+            Err(SteerRefusal::UnknownScreen),
+            "커서가 입력 시작이 아니다"
+        );
+        assert_eq!(
+            queued("codex", &format!("{pending}Do you want to proceed?\n"), true, true),
+            Err(SteerRefusal::UnknownScreen)
+        );
+        for harness in [None, Some("other")] {
+            assert_eq!(
+                queued_steer_keys(harness, &pending, Some(&pending), true, true),
+                Err(SteerRefusal::Unsupported)
+            );
         }
     }
 

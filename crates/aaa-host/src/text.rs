@@ -80,6 +80,57 @@ impl Host {
         data
     }
 
+    /// 대기 메시지 「지금 보내기」의 키(plan §8.270). `ctrl_enter_data`와 같은 mirror·상태를 읽되 `queued_steer_keys`의 좁은 판정을 쓴다.
+    /// 판정과 까닭은 입력 사건(`steer_queued`)으로 남긴다. 호출한 쪽은 이 결과를 받자마자 쓴다(그 사이 다른 판정·기다림 없음).
+    pub(crate) fn steer_queued_data(&self, id: &str, trace: &str) -> Result<Vec<u8>, aaa_proto::SteerRefusal> {
+        use aaa_proto::SteerRefusal;
+        let mut inner = self.inner.lock().unwrap();
+        let (result, detail) = (|| {
+            let Some(pane) = inner.panes.get_mut(id) else {
+                return (Err(SteerRefusal::Failed), "reason=pane_missing".to_owned());
+            };
+            let harness = pane.agent.as_ref().map(|a| a.harness.as_str());
+            let question = pane.agent.as_ref().is_some_and(|a| a.activity == aaa_proto::AgentActivity::Question);
+            let working = pane.agent.as_ref().is_some_and(|a| a.activity == aaa_proto::AgentActivity::Working);
+            if question {
+                return (Err(SteerRefusal::Question), format!("harness={harness:?} question=true"));
+            }
+            let Some(mirror) = pane.mirror.as_mut() else {
+                return (Err(SteerRefusal::UnknownScreen), format!("harness={harness:?} reason=mirror_missing"));
+            };
+            let colors = mirror.vt.read(ReadSource::Visible, None, ReadFormat::Ansi).text;
+            let (codex_row_elsewhere, cursor_home) = if harness == Some("codex") {
+                let plain = crate::prompt_box::plain(&colors);
+                let lines: Vec<&str> = plain.lines().collect();
+                let prompt_row = lines.iter().rposition(|line| line.trim_start().starts_with('›'));
+                let (row, col, _) = mirror.vt.cursor();
+                (prompt_row != Some(usize::from(row)), col <= 2)
+            } else {
+                (false, false)
+            };
+            let live = if !mirror.synced || codex_row_elsewhere { String::new() } else { mirror.vt.detection_text() };
+            let keys = crate::ctrl_enter::queued_steer_keys(harness, &live, Some(&colors), cursor_home, working);
+            let modes = mirror.vt.modes();
+            let result =
+                keys.map(|keys| keys.iter().flat_map(|key| modes.key(key).unwrap_or_default()).collect::<Vec<u8>>());
+            let detail = format!(
+                "keys={:?} reason={:?} working={working} synced={} cursor_home={cursor_home} cursor_elsewhere={codex_row_elsewhere} {}",
+                keys.unwrap_or_default(),
+                keys.err(),
+                mirror.synced,
+                crate::ctrl_enter::diagnostic(harness, &live, Some(&colors))
+            );
+            match result {
+                // 키를 이 pane 모드로 바꾸지 못했다(있을 수 없는 키 이름): 보내지 않는다
+                Ok(data) if data.is_empty() => (Err(SteerRefusal::Unsupported), detail),
+                other => (other, detail),
+            }
+        })();
+        drop(inner);
+        self.input_event(id, trace, "steer_queued", &detail);
+        result
+    }
+
     /// 글 제출의 마지막 키. Ctrl+Enter는 같은 보내기 ID에 선택 키와 화면 근거도 남긴다.
     /// `steer`가 아니면 현재 작업 상태와 관계없이 기존 보통 보내기(Enter)를 유지한다.
     pub(crate) fn submit_key_data(&self, pane: &str, steer: bool, trace: Option<&str>) -> Vec<u8> {
