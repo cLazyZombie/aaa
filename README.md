@@ -101,7 +101,7 @@ host Mac 터미널에서 `aaa attach`(workspace 기본 `main`, 다른 것은 `-w
   prefix_jamo_keys = true                       # prefix 뒤 두벌식 자모(ㅊ)를 같은 자리 키(c)로 읽기
   prompt_new_tab_name = true                    # prefix c에서 이름 창을 띄우기
   confirm_close = true                          # 마지막 탭·마지막 pane을 닫을 때 묻기
-  sidebar_width = 36                            # 사이드바 폭(끌어 바꾼 폭은 host가 기억해 이 값보다 앞선다)
+  sidebar_width = 48                            # 사이드바 폭(끌어 바꾼 폭은 host가 기억해 이 값보다 앞선다)
   sidebar_min_width = 18                        # 끌어 바꿀 수 있는 폭의 아래·위 한도
   sidebar_max_width = 72
   sidebar_start_collapsed = false               # 접힌 채 시작

@@ -396,8 +396,8 @@ pub struct TuiSection {
     pub prompt_new_tab_name: bool,
     /// 마지막 탭·마지막 pane을 닫기 전에 묻는다(herdr `[ui] confirm_close`, 기본 켬)
     pub confirm_close: bool,
-    /// 왼쪽 목록 폭(구분선 포함, herdr `[ui] sidebar_width`). 기본은 36: herdr 기본은 26이지만 사용자가 herdr에서 끌어 쓰는
-    /// 폭(36)을 기본으로 해 달라고 했다(10-18). 사용자가 끌어 바꾼 폭은 host 공유 설정에 남아 이 값보다 앞선다.
+    /// 왼쪽 목록 폭(구분선 포함, herdr `[ui] sidebar_width`). 기본은 48(10-19 D안): 활동 막대와 한글 제목 자리를 함께 확보한다.
+    /// herdr 기본은 26이며, aaa의 이전 기본은 36이었다. 사용자가 끌어 바꾼 폭은 host 공유 설정에 남아 이 값보다 앞선다.
     pub sidebar_width: u16,
     /// 끌어 바꿀 수 있는 폭의 아래·위 한도(herdr `[ui] sidebar_min_width`·`sidebar_max_width`). 위 한도 기본은 72로 herdr
     /// 기본 36보다 넓다(사용자 「더 크게도」). 아래가 위보다 크면 TUI가 알리고 기본 한도를 쓴다(herdr `validated_sidebar_bounds`)
@@ -464,7 +464,7 @@ pub enum SidebarCollapsedMode {
 }
 
 /// `[tui] sidebar_width` 기본(위 `TuiSection::sidebar_width`)
-pub const SIDEBAR_WIDTH: u16 = 36;
+pub const SIDEBAR_WIDTH: u16 = 48;
 /// `[tui] sidebar_min_width`·`sidebar_max_width` 기본. 설정이 거꾸로면 이것을 쓴다
 pub const SIDEBAR_BOUNDS: (u16, u16) = (18, 72);
 

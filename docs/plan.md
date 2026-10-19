@@ -5760,3 +5760,23 @@ primary 근거:
   기존 폭 keeper를 실제 Front wire까지 넓혀 앞 Ack 전 무송신(Status 울타리), Ack 뒤 마지막 null 저장을 검증한다.
 - **옛 host 경계.** 보고서 목록은 Front1.38, 임무 목록은1.39부터다. 시작/공통 특수 열기는 같은 임무 요청 경계를 쓴다.
   Reader의 실제 wire에서 1.37/1.38/1.39를 검사해 옛 host에 모르는 요청을 보내지 않는다. 현재 host 동작은 유지한다.
+
+### 8.245 TUI 기본 폭48·선택 제목 전체 보기(10-19, t-0386, D안 4단계)
+
+- **사용자 결정.** D안의 기본 폭48칸(활동 막대·경계 포함)을 적용한다. 기존 설정·끌어 둔 수동 폭은 그대로 두고,
+  경계 두 번 누름으로 설정 기본값에 돌아갈 때48을 쓴다. 한글은2셀 그대로이며 문자열에 공백을 넣지 않는다.
+- **제목 기준.** 웹 `Sidebar.tsx::PaneRow`·herdr-web-ui `components/AgentSidebar.tsx`는 잘린 줄에도 전체 제목을
+  `title` tooltip으로 보존한다. herdr0.9.5 client와 t3code `ThreadHoverCard.tsx`도 조사했으나 TUI에서 제목 끝까지 읽는
+  해당 기능은 없고 t3code 카드 머리도 truncate다. 승인된 전체 보기 결정을 TUI의 기존 `help::popup/panel` 방식으로 옮긴다.
+  탐색 중 고른 pane/thread 제목은 오른쪽 본문 아래 최대3줄로 미리 보고, `i`·미리 보기 누름·목록 오른쪽 누름으로
+  읽기 전용 전체 창을 연다. ↑↓·PgUp/Dn·Home/End·휠로 끝까지 읽고 Esc/Enter/q로 닫는다. 선택·탭·PTY 칸은 보존한다.
+  창은 grapheme과 셀 폭으로 감싸 CJK·결합 문자·ZWJ emoji를 쪼개지 않으며, 제어 문자는 공백으로 표시한다.
+- **후속 웹 배치 지시.** 10-19 사용자 전달에 따라 위 활동 묶음은 프로젝트→머신→에이전트→보고서, 아래는 설정이다.
+  특수 임무는 공통 머리·탐색 s에 둔다. 접힌 막대에 별도 S를 넣지 않는다. 웹 후속 착지 해시는 통보 뒤 대조한다.
+- **검증 owner.** 기존 config 기본값 keeper·폭/설정 복원 keeper·실제 PTY `side_list_like_web`를 넓혔다. 새 App 경계
+  keeper는 전체 창의 Unicode·긴 제목 끝·작은 화면/compact·선택/PTY 보존·실제 Front Status 울타리 뒤 무입력을 본다.
+  PTY는 한글 thread 제목의 미리 보기·키/마우스 열기·선택 복귀·pane의 뒤따르는 출력 표지 뒤 키/붙여넣기 무누출을 본다.
+  기본36과 미구현 i에서 의도한 RED를 확인했다. 기본36·보고서 아래 배치·End 무동작 변형은 각 keeper가 실패했고,
+  제품 파일의 저장 바이트를 복원했다. 신호·clipboard·고정 sleep·시험 전용 제품 seam은 더하지 않는다.
+- **착지 조건.** 이 단계는 준비 뒤 `[병합 준비됨]`으로 보고하며 다음 창 전에는 push하지 않는다. 새 창과 앞 thread 해시를
+  받으면 최신 main에 통합해 전체 ci-local·별도 공개 검사를 통과시킨다. binary 반영은 배포 담당이 한다.

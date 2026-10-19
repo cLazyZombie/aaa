@@ -125,6 +125,7 @@ pub fn help_groups(prefixes: &str) -> Vec<Group> {
                 ("tab / shift+tab".into(), "pane 차례로"),
                 ("F6".into(), "활동 막대(화살표 포커스·Enter 선택)"),
                 ("s".into(), "특수 임무·평가자"),
+                ("i / 목록 오른쪽 누름".into(), "제목 전체 보기(↑↓·PgUp/Dn·Home/End, Esc 닫기)"),
                 ("enter".into(), "고른 줄 열기(묶음 머리는 접기·펴기)"),
                 ("1..9".into(), "목록 n번째 열기(묶음 머리는 빼고 센다)"),
                 ("m".into(), "새 탭·workspace를 열 머신 바꾸기"),

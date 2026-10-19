@@ -114,6 +114,7 @@ pub struct Hits {
     pub activity: Vec<(Rect, usize)>,
     pub special_rows: Vec<(Rect, usize)>,
     pub report_rows: Vec<(Rect, usize)>,
+    pub title_preview: Option<Rect>,
     /// 펼친 목록의 첫 보이는 줄과 보이는 줄 수(휠로 민다)
     pub list_skip: usize,
     pub list_h: u16,
@@ -598,6 +599,20 @@ impl App {
         }
         let (x, y, mods) = (m.column, m.row, m.modifiers);
         let hits = self.hits.borrow().clone();
+        if self.overlay.is_none() {
+            if hits.on(hits.title_preview, x, y) {
+                if m.kind == MouseEventKind::Down(MouseButton::Left) {
+                    self.show_selected_title();
+                }
+                return Ok(());
+            }
+            if m.kind == MouseEventKind::Down(MouseButton::Right)
+                && let Some(text) = hits.row_at(x, y).and_then(|r| self.row_title(r))
+            {
+                self.show_title(text);
+                return Ok(());
+            }
+        }
         if !self.reports.shown
             && m.kind == MouseEventKind::Down(MouseButton::Left)
             && self.link_press(m, &hits, tx).await?
@@ -759,7 +774,7 @@ impl App {
                         self.overlay = None;
                     }
                 }
-                Some(Overlay::Help(_)) => {
+                Some(Overlay::Title(_)) | Some(Overlay::Help(_)) => {
                     if !hits.on(hits.popup, x, y) {
                         self.overlay = None;
                     }
@@ -806,6 +821,9 @@ impl App {
             MouseEventKind::ScrollUp | MouseEventKind::ScrollDown => {
                 let area = Rect { x: 0, y: 0, w: self.width, h: self.height };
                 let prefixes = self.prefix_label();
+                if let Some(Overlay::Title(v)) = self.overlay.as_mut() {
+                    v.key(if m.kind == MouseEventKind::ScrollDown { KeyCode::Down } else { KeyCode::Up }, area);
+                }
                 if let Some(Overlay::Help(h)) = self.overlay.as_mut() {
                     let max = help::max_scroll(area, &prefixes, &h.query);
                     h.scroll = if m.kind == MouseEventKind::ScrollDown {
