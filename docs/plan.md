@@ -5587,3 +5587,13 @@ primary 근거:
 - **참고.** herdr-projects 0.2.35 `coordinator.rs::is_coordinator/discover/live`는 프로젝트 cwd 소속과 관측한 live 기록을 둔다. herdr는 서버가 pane을 소유하지만 aaa는 session host가 backend 재시작을 견디므로 전송 연결과 pane 소속을 분리해야 한다. herdr-web-ui `server/herdr-update.ts::HerdrUpdater.status/run`의 실행 판·handoff 상태, t3code `cloud/updateHandoff.ts::pendingUpdateHandoffExists`의 명시적 handoff 기록도 대조했다. 네 참고에 같은 다중 backend 배포 CLI 대기는 없으며 aaa의 기존 Front State/Flow 사건을 쓴다.
 - **제품.** 배포 소속은 host가 canonical cwd·local 머신·harness/role로 이미 판정한 PaneView.coordinator_project와 running 상태를 쓴다. peer PID actor 검증과 thread/adopt 제외, 사람의 safety 확인은 유지한다. 입력 가능한 coordinator 목록은 그대로다. --wait는 AgentDisconnected만 재연결/배포 완료 사건 뒤 같은 DeployStatus ID로 재조회하며 DeployStart는 재전송하지 않는다. 머신 이름·ID·생략을 지원하고 nonwait·Forbidden 등 다른 오류는 즉시 반환한다.
 - **최소 회귀.** host owner는 실제 agent_disconnected와 caller_of·Front 요청에서 권한 유지/AgentDisconnected·위장/worker/device/일반 셸/끝난 pane 거부를 확인한다. CLI owner는 실제 Front IPC frame에서 단절 → Connected → 같은 ID 상태 조회 → Completed와 nonwait·Forbidden 즉시 종료를 본다. 기존 m13은 실제 backend 재시작과 pane 생존을 계속 맡는다. 둘은 권한과 전송 대기의 다른 계약이며 새 외부 프로세스·신호·시험용 production export·고정 sleep·시한 증가가 없다. 두 owner를 원래 제품으로 되돌린 변형 RED와 저장 바이트 복원 GREEN을 확인했다.
+
+### 8.238 TUI spaces 자동 높이(10-19, t-0386, D안 1단계)
+
+- workspace 항목 수에 머리·빈 줄·footer 세 줄을 더한 높이를 쓴다. 최대 화면 절반까지만 쓰므로 세 workspace가 있는
+  80줄 화면에서는 spaces가 6줄을 쓰고 나머지가 agents에 돌아간다. 기존 반반 고정에서 생긴 큰 여백을 없앤다.
+- 구역 경계를 직접 끌거나 공유 설정 `tuiSidebarSplit`을 저장한 사용자는 그 비율을 유지한다. 탭·workspace·마우스·compact
+  동작과 저장 형식은 유지한다. 후속 단계는 thread 두 줄 단위 스크롤, 폭 48칸·선택 제목 전체 보기, t-0390 착지에 맞춘
+  Projects·Machines·Agents 패널과 패널 밖 특수 임무다.
+- 기존 렌더 keeper에서 작은 화면·큰 화면·다수 workspace 상한·저장 비율을 확인한다. 기존 PTY keeper에서 자동 경계를
+  실제 마우스로 끌고 재접속하여 저장 비율을 확인한다. 새 시험 전용 seam은 없다.
