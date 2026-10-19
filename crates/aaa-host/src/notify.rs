@@ -34,7 +34,11 @@ fn debounce(secs: u64) -> Duration {
 
 /// post 글은 알림에 넣지 않는다(웹 push·webhook 공통).
 pub(crate) fn safe_summary(i: &InboxItem) -> &str {
-    if i.item_kind == "post" { "사용자 결정 요청" } else { &i.summary }
+    if i.item_kind == "post" {
+        if i.event == "post completed" { "맡긴 일 완료" } else { "사용자 결정 요청" }
+    } else {
+        &i.summary
+    }
 }
 
 /// 알림이 가는 자리: 프로젝트 하나, 또는 머신 사건 묶음(그 사건을 쓴 프로젝트들). 머신 사건은 그 머신에 thread가 열린
@@ -111,6 +115,8 @@ fn phrase(i: &InboxItem) -> Option<&'static str> {
         ("pr", "PR checks failing") => "PR check 실패",
         ("pr", "PR review activity") => "PR 리뷰 활동",
         ("post", "post request for user") => "사용자 결정 요청",
+        ("post", "post completed") => "맡긴 일 완료",
+        ("thread-state", "report needs user") => "사람 필요",
         ("routine", "due") => "차례",
         ("routine", "output changed") => "출력 바뀜",
         ("routine", "failed") => "실행 못 함",
@@ -329,14 +335,15 @@ async fn read_head<S: tokio::io::AsyncRead + Unpin>(s: &mut S, buf: &mut Vec<u8>
     }
 }
 
-/// 밖으로 알릴 항목인가: 고른 종류(`notify.item_kinds`)이고, thread 항목이면 사람이 할 일(`PUSH_EVENTS`), PR 항목이면
-/// 병합·check 실패·리뷰 활동이다(herdr-projects steps.rs `pull_requests`의 notifier.send)
+/// 밖으로 알릴 항목인가: 완료·사람 필요와 운영 이상만. 새 보고는 추가로 검증한 표지를 요구한다(`report_push`).
+/// PR 병합·리뷰·중간 진행은 inbox에만 남긴다.
 pub(crate) fn pushes(kinds: &[String], i: &InboxItem) -> bool {
     kinds.iter().any(|k| k == &i.item_kind)
         && match i.item_kind.as_str() {
-            "post" => i.event == "post request for user",
+            "post" => matches!(i.event.as_str(), "post request for user" | "post completed"),
             "thread-state" => crate::transitions::PUSH_EVENTS.contains(&i.event.as_str()),
-            "pr" => matches!(i.event.as_str(), "PR merged" | "PR checks failing" | "PR review activity"),
+            "pr" | "evaluation" => false,
+            "routine" => matches!(i.event.as_str(), "routine approval required" | "routine failed"),
             _ => true,
         }
 }
@@ -365,7 +372,7 @@ pub(crate) fn news(
 
 impl Host {
     /// 보내기 직전에 다시 본 항목(`news`). 읽지 못하면 그대로 보낸다(알림을 잃지 않는 쪽).
-    fn still_news(&self, project: &str, items: Vec<InboxItem>) -> Vec<InboxItem> {
+    pub(crate) fn still_news(&self, project: &str, items: Vec<InboxItem>) -> Vec<InboxItem> {
         let open: HashSet<String> = match self.db.inbox_list(Some(project), false) {
             Ok(v) => v.into_iter().map(|i| i.id).collect(),
             Err(e) => {
@@ -378,8 +385,8 @@ impl Host {
                 return false;
             }
             let Ok(r) = self.load(project, &i.subject) else { return false };
-            if i.event == "new report" {
-                return r.report_hash.is_some() && r.report_hash == r.acked_hash;
+            if matches!(i.event.as_str(), "new report" | "report needs user") {
+                return !self.report_push(i) || r.report_hash == r.acked_hash;
             }
             self.thread_view(&r).group != aaa_proto::ThreadGroup::WaitingOnYou
         };
@@ -404,9 +411,26 @@ impl Host {
         out
     }
 
-    /// inbox 항목을 알림 대기열에 넣는다(설정에서 켜고 고른 것만 `pushes`, 프로젝트 mute면 오류·머신 이상만 `muted`)
+    /// 검증한 사본의 완료·사람 필요 표지만 외부 알림으로 보낸다.
+    fn report_push(&self, item: &InboxItem) -> bool {
+        if item.item_kind != "thread-state" || !matches!(item.event.as_str(), "new report" | "report needs user") {
+            return true;
+        }
+        let Ok(r) = self.load(&item.project, &item.subject) else {
+            return false;
+        };
+        let want = if item.event == "new report" {
+            aaa_proto::ReportAttention::Completed
+        } else {
+            aaa_proto::ReportAttention::NeedsUser
+        };
+        self.report_attention(&r) == Some(want)
+    }
+
+    /// 설정·보고 의도·mute를 통과한 항목만 알림 대기열에 넣는다.
     pub(crate) fn notify(&self, item: &InboxItem) {
-        if pushes(&self.cfg.notify.item_kinds(), item)
+        if self.report_push(item)
+            && pushes(&self.cfg.notify.item_kinds(), item)
             && !muted(self.settings(&item.project).mute, item)
             && let Some(tx) = self.notify_tx.lock().unwrap().as_ref()
         {
@@ -549,7 +573,7 @@ mod tests {
         assert!(!pushes(&kinds, &s) && pushes(&all, &s));
         let mut pr = item("t-0001", "PR merged");
         pr.item_kind = "pr".into();
-        assert!(pushes(&all, &pr));
+        assert!(!pushes(&all, &pr), "PR 병합은 맡긴 일 전체의 완료가 아니다");
         pr.event = "PR opened".into();
         assert!(!pushes(&all, &pr));
     }
@@ -737,13 +761,11 @@ mod tests {
         for p in ["demo", "side"] {
             assert_eq!(h.db.inbox_list(Some(p), false).unwrap().len(), 1, "{p}");
         }
-        h.inbox_add("demo", "thread-state", "t-0009", "new report", "보고");
+        h.inbox_add("demo", "outage", "gh", "failed", "점검");
         let next = tokio::time::timeout(Duration::from_secs(10), rx.recv()).await.unwrap().unwrap();
-        assert_eq!(
-            (next["project"].as_str(), next["text"].as_str()),
-            (Some("demo"), Some("demo · t-0009\n- 보고 준비")),
-            "{next}"
-        );
+        assert_eq!(next["project"], "demo", "{next}");
+        assert_eq!(next["items"].as_array().unwrap().len(), 1, "앞 머신 알림이 중복됐다: {next}");
+        assert_eq!(next["items"][0]["subject"], "gh");
         drop(h);
         let _ = std::fs::remove_dir_all(&state);
     }

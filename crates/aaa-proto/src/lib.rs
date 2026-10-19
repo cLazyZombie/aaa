@@ -115,6 +115,7 @@ pub fn typescript_bindings() -> String {
         ThreadStatus::decl(&cfg),
         BriefState::decl(&cfg),
         ThreadGroup::decl(&cfg),
+        ReportAttention::decl(&cfg),
         ThreadView::decl(&cfg),
         ThreadPr::decl(&cfg),
         FlowEvent::decl(&cfg),

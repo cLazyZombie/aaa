@@ -5401,3 +5401,13 @@ primary 근거:
 - agent의 감지 상태·규칙 기록(§8.214)만으로는 host가 받은 상태를 적용했는지, 새 상태보다 오래돼 무시했는지 구분할 수 없다. host 수신 경계에서 pane·harness·사건 종류·사건 시각·직전 상태/시각·적용 상태(None이면 무시)를 info에 남긴다. 본문·token·화면 글은 기록하지 않는다.
 - herdr `pane/agent_detection.rs`·aaa `detect/state.rs`의 실제 감지·확인과 `harness.rs next_activity`의 옛 사건 거부는 유지한다. herdr는 한 프로세스 안의 감지라 이 분리된 host 적용 경계가 없다. aaa의 host/agent 구분 때문에 진단만 보강한다.
 - 09:24:52 사건의 당시 프레임·감지 규칙은 여전히 없어 원인 확정이나 수정 완료로 보고하지 않는다. 운영 agent와 host 반영은 coordinator가 한다. 기존 옛 사건 거부 시험과 전체 검사를 사용하고, 로그 문구만 단언하는 새 시험은 만들지 않는다.
+
+
+### 8.223 완료·사람 필요에만 사용자 push(10-19, t-0375)
+
+- **새 규칙.** 사용자 요청에 따라 중간 착지·진행·PR 병합/리뷰·평가 결과는 push하지 않는다. thread 보고 첫 줄의 `[완료]`는 맡긴 일 전체와 확인의 끝, `[결정 필요]`·`[검수 대기]`·`[사람 필요]`는 인증·터미널 승인·GUI·사용자 결정처럼 직접 사람이 해야 하는 단계다. `[착지]`·`[진행 중]`과 표지 없는 옛 보고는 외부 완료 알림을 만들지 않는다. 확인창·시작 실패·세션 사라짐·머신 이상은 유지한다. 표지로 thread 묶음·진행률·자동 resolve를 바꾸지 않는다(D9).
+- **보고/화면 경계.** host가 회수 사본의 hash와 DB를 대조해 알림 의도를 읽고 ThreadView.report_attention(Front API 1.41)에 실어 웹의 새 보고 알림·재연결도 같은 판정을 쓴다. 착지 inbox는 §8.221대로 남긴다. 보낼 때 사본 의도를 다시 확인해 그 사이 진행 보고로 바뀌었거나 ack한 보고는 취소한다. 표지 아래의 PR 줄만 더 인정하며 옛 PR 첫 줄도 받는다.
+- **coordinator 최소 경로.** 기존 출처·역할 검증 post를 확장한다. `aaa post <project> user --request --needs-user --topic user-action --title '사람 필요' --body-file <파일>`은 입력 필요, `aaa post <project> user --notice --topic task-complete --title '전체 완료' --body-file <파일>`은 작업 완료다. worker/evaluator의 user 목적지는 계속 거부한다. 이 항목은 seen으로 저장해 coordinator 자기 nudge를 막고, done은 사용자 응답/확인 뒤 명시적으로 처리한다. push/webhook에는 제목·본문 대신 고정 문구만 보내며 기기별 input/done 선택을 따른다. Web Push 사용 중 억제·mute·오류/머신 경로는 유지한다.
+- **시스템 안내.** coordinator AGENTS.md 생성문(CLAUDE.md는 같은 파일 참조), 공통 thread brief와 SessionStart 진행 hook 안내에 같은 규칙을 적는다. coordinator는 질문하며 멈추기 전에 Waiting for you 상태와 user 요청 post를 남긴다. 전체 완료 post는 맡긴 일 전체가 끝난 뒤 한 번이다. 기존 운영 지침 파일은 이 thread가 수정하지 않는다. 새 binary 반영 후 `aaa doctor files --fix`로 생성 안내를 반영한다.
+- **참고와 차이.** herdr-projects notify.rs의 Done/Request 구분, herdr-web-ui push.ts의 대기 중 상태 재검사·seedStatuses, t3code ThreadNotificationCoordinator.tsx의 completed/attention 구분을 따른다. 참고는 턴/검토 대기를 완료로도 알리지만, 이번 사용자가 정한 명시적 전체 완료/사람 필요 경계가 우선한다. pane의 앱 안 턴 끝남 카드(§8.185)는 휴대폰 push와 별개인 기존 경로다.
+- **검증.** 중간 착지 push 금지와 coordinator user 목적지 불가를 각각 수정 전 RED로 보존했다. host의 실제 사본·DB·inbox·알림 queue 시험은 adopt/worktree, 네 표지, hash 불일치·본문 위장·중복·ack·대기 중 보고 변경·기기 설정을 본다. 기존 post 출처 E2E에서 실제 coordinator pane의 두 CLI 명령도 검증한다. 끝낸 가짜 작업 보고는 새 규칙에 맞춰 완료 표지를 붙이고, 중간 작업 fixture는 유지한다.

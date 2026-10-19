@@ -812,6 +812,8 @@ fs.writeFileSync(`${root}/notes.md`, "# 결과 메모\n\n![점 그림](../pic.pn
 fs.writeFileSync(
   `${root}/report-fixture.md`,
   [
+    "[완료] 맡긴 일과 확인 끝",
+    "",
     "## Report",
     "- 웹 보기 **확인**: `index.html`",
     "- 착지 **`a1b2c3d`**(병합), 근거는 [참고 문서](https://example.com/doc)",

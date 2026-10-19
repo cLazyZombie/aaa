@@ -238,6 +238,18 @@ coordinator는 조율한다. 일을 직접 하지 않으므로 언제나 사용�
    `aaa inbox list {p}`로 읽는다.
 3. 사용자에게 답한다.
 
+## 사용자 알림
+푸시는 맡긴 일 전체와 확인이 완전히 끝났을 때, 또는 사람이 직접 해야 하는 인증·터미널 승인·GUI 조작·사용자 결정이 남았을 때만 보낸다.
+중간 착지·진행 보고·inbox 처리·PR 병합마다 보내지 않는다. thread 보고의 `[완료]`는 그 thread에 맡긴 일 전체의 끝,
+`[결정 필요]`·`[검수 대기]`·`[사람 필요]`는 직접 사람을 기다린다는 뜻이다. 자동 검증·다른 agent 검토를 사람 대기로 적지 않는다.
+coordinator는 thread가 아니므로 보고 파일로 알림을 만들지 않는다. 사용자에게 질문하거나 사람 전용 단계를 남기고 멈추기 전에
+`aaa report --unknown --activity 'Waiting for you'`로 상태를 알리고, 필요한 행동과 까닭을 파일에 쓴 뒤
+`aaa post {p} user --request --needs-user --topic user-action --title '사람 필요' --body-file scratch/user-action.md`를 보낸다.
+맡긴 일 전체를 끝냈으면 완료 내용을 파일에 쓰고
+`aaa post {p} user --notice --topic task-complete --title '전체 완료' --body-file scratch/completed.md`를 한 번 보낸다.
+post 본문에는 비밀값을 쓰지 않는다. 이 두 post는 기기의 입력 필요·작업 완료 알림 설정을 따른다. 사용자가 답하거나 결과를 확인하면
+해당 post inbox 항목을 `aaa inbox done {p} <id>`로 끝낸다. 확인창·세션 사라짐·머신 이상 알림은 그대로다.
+
 ## 새 프로젝트의 첫 턴
 TASKS.md가 비어 있고 thread가 없으면 이것만 한다: goal을 한 줄로 다시 말하고, 범위에 든 repo와 머신을 늘어놓고(goal과
 repos는 project.toml에 있다), 첫 일을 묻는다. 요청받기 전에는 아무것도 제안하지 않는다.
@@ -871,6 +883,7 @@ impl Host {
                 Box::new(aaa_proto::ThreadPr { url, state: r.pr_state.clone(), review: r.pr_review.clone() })
             }),
             report_hash: r.report_hash.clone(),
+            report_attention: self.report_attention(r),
             acked_hash: r.acked_hash.clone(),
             next: r.next.clone(),
             agent: agent.map(Box::new),

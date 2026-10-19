@@ -21,8 +21,15 @@ const SESSION_LOST_PANES: usize = 2;
 
 /// 알림(push·webhook)으로 내보내는 `thread-state` 사건. 참고는 확인 필요 전이와 새 보고에만 notifier를 부른다.
 /// 시작 실패(`not launched`)는 참고가 실패한 thread를 묶음 셈에서 빼서 알리지 않지만, 사람이 할 일이라 aaa는 알린다.
-pub(crate) const PUSH_EVENTS: [&str; 6] =
-    ["blocked on a prompt", "pane closed", "agent gone", "waiting on you", "new report", "not launched"];
+pub(crate) const PUSH_EVENTS: [&str; 7] = [
+    "blocked on a prompt",
+    "pane closed",
+    "agent gone",
+    "waiting on you",
+    "new report",
+    "report needs user",
+    "not launched",
+];
 
 /// 묶음 하나의 바뀜(herdr-projects `Transition`)
 #[derive(Debug, Clone, PartialEq)]
@@ -305,28 +312,18 @@ impl Host {
     }
 
     /// 검토 대기·병합 중인 thread의 새 보고: 보고 hash당 한 번(herdr-projects `write_thread_items` Ready for review).
-    /// 계속 작업하는 thread의 명시적인 [착지] 보고도 hash당 한 번 알린다. 상태·진행률은 그대로다.
+    /// 계속 작업하는 thread의 착지·완료·사람 필요도 hash당 한 번 inbox에 남긴다. push는 완료·사람 필요만이다. 상태·진행률은 그대로다.
     /// 작업 중과 쉼을 오가는 같은 보고는 아무것도 만들지 않는다. 낸 항목은 앱 안 알림으로도 보낸다(notice.rs). 냈으면 true
     fn new_report_item(&self, project: &str, r: &ThreadRec) -> bool {
         if r.status != ThreadStatus::Open || r.report_hash.is_none() || r.report_hash == r.review_item_hash {
             return false;
         }
-        if !matches!(r.last_group, Some(ThreadGroup::ReadyForReview | ThreadGroup::Landing)) {
-            // 상시 수리처럼 한 thread가 여러 번 착지한다. 전체 Done만 기다리면 이 결과가 coordinator에 안 간다.
-            // 사본과 기록 hash가 같은지 확인한다: 다음 사본을 쓰고 DB를 바꾸는 사이의 파일은 아직 이 보고가 아니다.
-            use sha2::Digest;
-            let Some(report) = self
-                .project_dir(project)
-                .ok()
-                .and_then(|dir| std::fs::read(dir.join("threads").join(format!("{}.md", r.id))).ok())
-            else {
-                return false;
-            };
-            if !report.starts_with("[착지]".as_bytes())
-                || Some(hex::encode(sha2::Sha256::digest(&report))) != r.report_hash
-            {
-                return false;
-            }
+        let attention = self.report_attention(r);
+        if !matches!(r.last_group, Some(ThreadGroup::ReadyForReview | ThreadGroup::Landing))
+            && attention.is_none()
+            && self.report_marker(r) != Some("[착지]")
+        {
+            return false;
         }
         let short: String = r.report_hash.as_deref().unwrap_or_default().chars().take(12).collect();
         let mut summary = format!("{}: 새 보고 threads/{}.md(보고 {short})", label(r), r.id);
@@ -337,8 +334,12 @@ impl Host {
         if self.update_rec(project, &r.id, |x| x.review_item_hash = hash).is_err() {
             return false;
         }
-        self.inbox_add(project, "thread-state", &r.id, "new report", &summary);
-        self.report_notice(project, r);
+        let event =
+            if attention == Some(aaa_proto::ReportAttention::NeedsUser) { "report needs user" } else { "new report" };
+        self.inbox_add(project, "thread-state", &r.id, event, &summary);
+        if attention.is_some() {
+            self.report_notice(project, r);
+        }
         true
     }
 
@@ -380,6 +381,8 @@ mod tests {
         cfg.projects.root = root.join("projects").to_string_lossy().into();
         cfg.notify.web_push = false;
         let h = Host::open(cfg, root.join("host")).unwrap();
+        let (tx, mut notifications) = tokio::sync::mpsc::unbounded_channel();
+        *h.notify_tx.lock().unwrap() = Some(tx);
         h.project_create("p", Default::default(), "local:cli").unwrap();
         let dir = h.project_dir("p").unwrap().join("threads");
         std::fs::create_dir_all(&dir).unwrap();
@@ -388,12 +391,13 @@ mod tests {
             r.id = id.into();
             r.kind = kind;
             r.last_group = Some(ThreadGroup::Working);
+            h.db.thread_import("p", id, "open", &serde_json::to_string(&r).unwrap()).unwrap();
             let write = |r: &mut ThreadRec, body: &str| {
                 std::fs::write(dir.join(format!("{id}.md")), body).unwrap();
                 r.report_hash = Some(hex::encode(sha2::Sha256::digest(body)));
                 // 사람이 이미 사본을 읽고 ack해도 inbox 기록은 hash당 한 번 남아야 한다.
                 r.acked_hash = r.report_hash.clone();
-                h.db.thread_import("p", id, "open", &serde_json::to_string(r).unwrap()).unwrap();
+                h.db.thread_save("p", id, "open", &serde_json::to_string(r).unwrap()).unwrap();
             };
             write(&mut r, "[진행 중] 검증 중\n\n## Report\n중간\n");
             assert!(!h.new_report_item("p", &r));
@@ -401,6 +405,7 @@ mod tests {
             assert!(!h.new_report_item("p", &r), "다른 hash의 사본을 이 보고로 알렸다");
             write(&mut r, "[착지] 1234abcd 첫 변경\n\n## Report\n후속 작업 중\n");
             assert!(h.new_report_item("p", &r), "{kind:?}: 작업 중 착지가 inbox에서 빠졌다");
+            assert!(notifications.try_recv().is_err(), "중간 착지는 inbox에만 남고 push하지 않는다");
             r = h.load("p", id).unwrap();
             assert_eq!(r.last_group, Some(ThreadGroup::Working));
             assert!(!h.new_report_item("p", &r), "같은 hash의 중복 알림");
@@ -408,6 +413,29 @@ mod tests {
             assert!(h.new_report_item("p", &r));
             let items = h.inbox("p", true, true).unwrap().items;
             assert_eq!(items.iter().filter(|i| i.subject == id && i.event == "new report").count(), 2);
+            for (mark, attention, event) in [
+                ("[완료]", aaa_proto::ReportAttention::Completed, "new report"),
+                ("[결정 필요]", aaa_proto::ReportAttention::NeedsUser, "report needs user"),
+                ("[검수 대기]", aaa_proto::ReportAttention::NeedsUser, "report needs user"),
+                ("[사람 필요]", aaa_proto::ReportAttention::NeedsUser, "report needs user"),
+            ] {
+                r = h.load("p", id).unwrap();
+                write(&mut r, &format!("{mark} 명시적인 알림\n## Report\n결과\n"));
+                r.acked_hash = None;
+                h.db.thread_save("p", id, "open", &serde_json::to_string(&r).unwrap()).unwrap();
+                assert_eq!(h.thread_view(&r).report_attention, Some(attention));
+                assert!(h.new_report_item("p", &r));
+                let got = notifications.try_recv().expect("완료·사람 필요는 push 대상으로 보낸다");
+                assert_eq!(got.event, event);
+                let only =
+                    crate::push::for_device(crate::db::Alerts { input: true, done: false }, std::slice::from_ref(&got));
+                assert_eq!(!only.is_empty(), attention == aaa_proto::ReportAttention::NeedsUser);
+                write(&mut r, "[진행 중] 다음 작업\n");
+                assert!(h.still_news("p", vec![got]).is_empty(), "대기 중 의미가 바뀐 보고는 보내지 않는다");
+            }
+            write(&mut r, "[완료인 척] 표지 아님\n[완료] 본문\n");
+            assert_eq!(h.thread_view(&r).report_attention, None);
+            assert!(!h.new_report_item("p", &r));
         }
         drop(h);
         std::fs::remove_dir_all(root).unwrap();

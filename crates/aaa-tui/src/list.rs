@@ -933,6 +933,7 @@ mod tests {
             branch: None,
             pr: None,
             report_hash: None,
+            report_attention: None,
             acked_hash: None,
             next: vec![],
             copy: None,

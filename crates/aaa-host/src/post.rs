@@ -200,7 +200,15 @@ impl Host {
                     && !input.needs_user
                     && self.mission_target_exists(project, n)
             }
-            None => input.to == "coordinator" && sender.role != Role::Coordinator,
+            None => {
+                (input.to == "coordinator" && sender.role != Role::Coordinator)
+                    || (input.to == "user"
+                        && sender.role == Role::Coordinator
+                        && ((input.post_type == PostType::Request && input.needs_user)
+                            || (input.post_type == PostType::Notice
+                                && !input.needs_user
+                                && input.topic == "task-complete")))
+            }
         };
         if !allowed {
             result = Some(refused("이 역할은 이 목적지로 post할 수 없거나 열린 임무가 없다"));
@@ -307,13 +315,15 @@ impl Host {
             subject: who.clone(),
             event: if env.input.needs_user {
                 "post request for user".into()
+            } else if env.input.to == "user" {
+                "post completed".into()
             } else {
                 format!("post {}", kind(&env.input.post_type))
             },
             summary: format!("{who} {}: 「{}」", kind(&env.input.post_type), env.input.title),
             body: body(&env),
             done: false,
-            seen: false,
+            seen: env.input.to == "user",
             created_at_ms: now,
             done_at_ms: None,
         });
@@ -522,6 +532,39 @@ mod tests {
         h.db.project_rename("demo", "renamed", |s| s.into()).unwrap();
         assert!(h.post_status("demo", &input(1).post_id, "local:cli").is_err());
         assert_eq!(h.post_status("renamed", &input(1).post_id, "local:cli").unwrap(), accepted);
+    }
+
+    #[test]
+    fn coordinator_can_request_the_user_without_nudging_itself() {
+        let (h, _lab) = host();
+        let mut i = input(90);
+        i.to = "user".into();
+        assert!(matches!(h.store_post("demo", sender(), i.clone(), "worker:s1", None, 1), PostResult::Refused { .. }));
+        i.post_id = format!("{:032x}", 91);
+        assert!(matches!(h.front_post("demo", i, "local:cli").unwrap(), PostResult::Accepted { .. }));
+        let items = h.db.inbox_list(Some("demo"), false).unwrap();
+        assert_eq!(items.len(), 1);
+        assert!(items[0].seen, "coordinator가 자기 요청으로 다시 nudge되지 않는다");
+        assert_eq!(items[0].event, "post request for user");
+        assert!(crate::notify::pushes(&h.cfg.notify.item_kinds(), &items[0]));
+        let mut done = input(92);
+        done.to = "user".into();
+        done.post_type = PostType::Notice;
+        done.needs_user = false;
+        // progress를 완료로 잘못 보내지 못하게 목적을 명시한다.
+        assert!(matches!(h.front_post("demo", done.clone(), "local:cli").unwrap(), PostResult::Refused { .. }));
+        done.post_id = format!("{:032x}", 93);
+        done.topic = "task-complete".into();
+        assert!(matches!(h.front_post("demo", done, "local:cli").unwrap(), PostResult::Accepted { .. }));
+        let items = h.db.inbox_list(Some("demo"), false).unwrap();
+        let completed = items.iter().find(|i| i.event == "post completed").unwrap();
+        assert!(completed.seen);
+        assert_eq!(crate::notify::safe_summary(completed), "맡긴 일 완료");
+        assert!(
+            crate::push::for_device(crate::db::Alerts { input: true, done: false }, std::slice::from_ref(completed))
+                .is_empty()
+        );
+        assert_eq!(crate::push::for_device(crate::db::Alerts { input: false, done: true }, &items).len(), 1);
     }
 
     #[test]

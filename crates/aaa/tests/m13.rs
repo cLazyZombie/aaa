@@ -64,7 +64,7 @@ while IFS= read -r line; do
       case "$task" in
         *dirty*) echo dirty > dirty.txt ;;
       esac
-      printf '## Report\n%s\n\n## Next\n- 결과 확인\n- 다음 단계\n' "$task" > "$dir/report.md.tmp"
+      printf '[완료] 맡긴 일 끝\n\n## Report\n%s\n\n## Next\n- 결과 확인\n- 다음 단계\n' "$task" > "$dir/report.md.tmp"
       mv "$dir/report.md.tmp" "$dir/report.md"
       echo "done"
       ;;
@@ -180,7 +180,7 @@ while :; do
     *brief.md*)
       dir=$(dirname "$(printf '%s' "$line" | sed 's/를 읽고.*//')")
       spin; "$AA" report --percent 40 --activity '권한 확인 중'; perm 'make test'
-      [ "$pick" = cancel ] || printf '## Report\n%s\n\n## Next\n- 확인\n' "$pick" > "$dir/report.md" ;;
+      [ "$pick" = cancel ] || printf '[진행 중] 권한 확인 뒤 계속\n\n## Report\n%s\n\n## Next\n- 확인\n' "$pick" > "$dir/report.md" ;;
     *late*)
       # 같은 확인창의 Notification이 답보다 늦게 온다(ci-local에서 경쟁으로 난 차례, plan §8.99). 진행 보고가 같은 agent
       # 연결로 그 뒤를 잇는다
@@ -205,7 +205,7 @@ while :; do
     # 일하는 동안(키 하나를 받은 뒤: 시험이 작업 중을 본 뒤 보낸다) 끝낸 보고를 쓰고 `Done`을 알린 턴(턴은 시험이 끝낸다).
     # 그 턴이 끝나면 검토 대기의 새 보고다
     *finale*)
-      spin; key; printf '## Report\nfinale\n\n## Next\n- 병합\n' > "$dir/report.md"; "$AA" report --percent 100 --activity Done ;;
+      spin; key; printf '[완료] 전체 끝\n\n## Report\nfinale\n\n## Next\n- 병합\n' > "$dir/report.md"; "$AA" report --percent 100 --activity Done ;;
     *) printf 'got: %s\n' "$line"; spin ;;
   esac
   if [ "$pick" = cancel ]; then interrupted; else turn; fi
@@ -330,7 +330,7 @@ done
 "#;
 
 /// 프로젝트 폴더를 cwd로 쓰는 coordinator(hook 없음). 입력창은 Claude처럼 「❯ 」다.
-const COORD_AGENT: &str = "#!/bin/sh\nprintf '\\342\\235\\257 '\nwhile IFS= read -r line; do\n  echo \"got: $line\"\n  printf '\\342\\235\\257 '\ndone\n";
+const COORD_AGENT: &str = "#!/bin/sh\nprintf '\\342\\235\\257 '\nwhile IFS= read -r line; do\n  case \"$line\" in post-probe\\ *) sh \"${line#post-probe }\"; echo post-probe-done ;; esac\n  echo \"got: $line\"\n  printf '\\342\\235\\257 '\ndone\n";
 
 /// `extra`는 `[projects]`에 덧붙인다. `web`이면 웹을 loopback 임의 port로 연다.
 fn host_toml(projects: &Path, extra: &str, web: bool) -> String {
@@ -620,7 +620,7 @@ fn worktree_thread_round_trip() {
     let work = cwd.join(".aaa/demo-t-0001");
     assert!(brief.contains(&format!("- 보고: `{}/report.md`", work.display())), "{brief}");
     assert!(brief.contains(&format!("`{} report --percent 25", lab::BIN)), "{brief}");
-    assert!(!brief.contains("{{aaa:") && !brief.contains("[진행 중]"), "{brief}");
+    assert!(!brief.contains("{{aaa:") && brief.contains("[진행 중]") && brief.contains("[완료]"), "{brief}");
     assert!(w.projects.join("demo/threads/t-0001.task.md").is_file());
 
     // 보고 사본과 brief 받음 확인은 따로 온다(agent의 보고 감시와 host의 Enter 뒤 화면 보기): 둘 다 기다린다
@@ -4760,6 +4760,28 @@ fn post_from_thread_reaches_coordinator_inbox() {
         let screen = w.h.screen(&coord);
         assert!(!screen.contains("PAYLOAD"), "{screen}");
     }
+    let out = w.lab.root.join("coordinator-post-out");
+    let script = w.task(
+        "coordinator-post.sh",
+        &format!(
+            r#"
+'{bin}' post demo user --request --needs-user --topic user-action --title '사람 필요' > '{out}' 2>&1
+printf 'request-rc=%s\n' "$?" >> '{out}'
+'{bin}' post demo user --notice --topic task-complete --title '전체 완료' >> '{out}' 2>&1
+printf 'complete-rc=%s\n' "$?" >> '{out}'
+"#,
+            bin = lab::BIN,
+            out = out.display()
+        ),
+    );
+    w.h.ok(&["pane", "run", &coord, &format!("post-probe {script}")]);
+    w.h.wait_output(&coord, "post-probe-done", T);
+    let text = std::fs::read_to_string(out).unwrap();
+    assert!(text.contains("request-rc=0") && text.contains("complete-rc=0"), "{text}");
+    let posts = w.h.ok(&["post", "list", "demo"]);
+    let sent: Vec<_> = posts["posts"].as_array().unwrap().iter().filter(|p| p["to"] == "user").collect();
+    assert_eq!(sent.len(), 2, "{posts}");
+    assert!(sent.iter().all(|p| p["from"]["role"] == "coordinator" && p["from"]["thread"].is_null()), "{posts}");
 }
 
 #[test]
