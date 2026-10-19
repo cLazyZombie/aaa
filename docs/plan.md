@@ -5553,8 +5553,19 @@ primary 근거:
 - **참고.** herdr-projects `src/notify.rs::Sound::Request`와 t3code `ThreadNotificationCoordinator.tsx`의 입력/완료 구분을 유지하며 한국어 이름만 사용자 보정대로 맞춘다. 공개 API·프로토콜 판 변경은 없다.
 - **검증.** 기존 실제 사본·DB·inbox·queue owner 표에 새 표지를 더했을 때 수정 전 `None` 대 `NeedsUser`로 실패했고 수정 후 신·구 표지 모두 통과했다. 기존 알림 문구 표는 요약 없는 보고에서 「확인 필요」를 검증한다. 이 문구를 옛 이름으로 되돌린 변형이 실패하는 것도 확인한다. 동일 계약의 새 E2E를 추가하지 않고 기존 웹/host 경계를 유지한다. binary 반영 필요.
 
+### 8.235 웹 굴림 막대: 얇고 흐리게, 목록 두 막대를 같은 x에(10-19, t-0389)
 
-### 8.235 TUI 확장 Enter와 Windows Terminal 그림 붙여넣기(10-19, t-0385)
+- **운영 근거.** 사용자 Windows Edge 캡처(10-19): 사이드바 위 목록과 Agents 목록이 기본 막대(회색 트랙·위아래 화살표·굵은 막대)를 그려 존재감이 강했고, 두 막대의 x가 달랐다. 앱에 막대 규칙이 대화 입력칸(`scrollbar-width: thin`·`scrollbar-color`)밖에 없었다.
+- **모양.** 참고 t3code `apps/web/src/index.css` 「Scrollbar styling」(6px, 투명 트랙, 흐린 막대, hover 짙음)을 앱 공통 규칙으로 둔다(`style.css`). 막대 색은 테마 글색 `--text`를 14%(평소)·30%(그 영역에 마우스)·46%(막대를 잡음)로 섞어 모든 색상·밝기에서 같은 느낌이다. herdr-web-ui는 사이드바 막대를 꾸미지 않는다(대화 입력칸 `Composer.css`만 thin).
+- **브라우저 갈래(headless 실측).** Chromium 145·WebKit 26은 `scrollbar-width`·`scrollbar-color`가 있으면 `::-webkit-scrollbar` 꾸밈을 무시하고 기본 막대를 그린다(Windows Chromium은 화살표째). 그래서 두 표준 속성은 `@supports not selector(::-webkit-scrollbar)`(Firefox)에만 주고 Chromium·Safari는 `::-webkit-scrollbar`만 쓴다. 대화 입력칸의 참고 thin·색 지정도 지워 같은 규칙을 따른다(`scrollbar-gutter: stable`은 둠).
+- **hover로 또렷해짐.** `:hover::-webkit-scrollbar-thumb`만으로는 Chromium·WebKit이 영역에 마우스가 올라도 막대를 다시 그리지 않는다(실측: 영역 자신의 계산 값이 바뀌어야 다시 그림). 영역마다 `--scrollbar-thumb-now`를 두고 `:hover`가 그 값을 바꾼다. 휠로 굴릴 때는 마우스가 그 영역 위라 같이 또렷하다. 키보드로만 굴릴 때 또렷해지는 것은 JS 타이머가 필요해 넣지 않았다(평소 막대도 보인다).
+- **터치.** `(hover: hover) and (pointer: fine)`에서만 적용한다. 휴대폰·iPad 터치는 OS의 겹친 막대(굴릴 때만 보임)를 그대로 둔다. 그리지 않는 곳(터미널 기록·키 막대·칩 줄)의 `scrollbar-width: none`·`display: none`은 class 규칙이라 이 공통 규칙보다 이긴다. 터미널 기록(`.xterm-viewport`) 굴림은 바꾸지 않았다. 다른 화면 크기의 grid를 빌려 볼 때만 굴러가는 `.term-scroll[data-adopted-grid]`(마우스는 휠·막대로)는 이 규칙의 얇은 막대가 된다: 그때는 칸 수를 맞추지 않아 칸 계산에 영향이 없다(E2E 02·07·20 통과). 대화 입력칸의 `scrollbar-gutter: stable`은 참고 그대로 두어 마우스 기기에서 오른쪽 6px를 늘 비워 둔다(막대가 생겨도 글이 다시 줄바꿈되지 않게).
+- **두 막대의 x(참고와 다르게 둔 것).** 위 목록 `.machine-list`는 사이드바 양 끝까지 펴고 여백을 줄 안에 두는데, 참고 herdr-web-ui `AgentSidebar.css` `.agents-sidebar`는 묶음에 좌우 `--side-gutter`를 줘 Agents 굴림 영역(과 막대)이 12px 안쪽이었다(참고에도 같은 어긋남). aaa는 그 여백을 머리 단추(바깥 여백)와 굴림 영역(안쪽 여백)으로 옮겨 줄·머리 자리는 그대로 두고 두 굴림 영역을 같은 x에 세운다(`Sidebar.css`).
+- **프로젝트 화면.** `.project-threads`는 880px 기둥 자체가 굴림 영역이라 넓은 창에서 막대가 화면 가운데 쪽에 섰다. t3code `settingsLayout.tsx`(화면 폭 굴림 영역 안에 폭 제한 기둥)처럼 굴림 영역을 화면 폭으로 펴고 좌우 여백이 남는 폭을 나눠 갖게 했다(글 기둥 자리는 1400px 창에서 전후 436~1284px로 같다).
+- **회귀.** 웹 E2E 04 「목록 두 굴림 영역」: 위 목록과 Agents 목록이 둘 다 넘칠 때 두 굴림 영역의 left·right가 같다. 고치기 전 binary에서는 `left 0/12, right 319/307`로 실패했다. 막대의 색·폭은 headless 기본(`--hide-scrollbars`)에서 그려지지 않아 시험하지 않고 전후 캡처로 본다(`ignoreDefaultArgs`로 막대를 켠 실험실 캡처). Firefox는 이 머신에 Playwright Firefox가 없어 보지 못했고, macOS headless는 Windows 기본 막대를 흉내 내지 못해 고치기 전 Windows 모양은 사용자 캡처로 대신한다(꾸민 `::-webkit-scrollbar` 막대는 OS와 관계없이 같은 모양으로 그려진다).
+
+
+### 8.236 TUI 확장 Enter와 Windows Terminal 그림 붙여넣기(10-19, t-0385)
 
 - **원인.** TUI는 모든 Enter를 CR로 만들어 수정키를 버렸고, Unix 바깥 터미널에 확장 키도 요청하지 않았다.
   crossterm 0.29는 kitty CSI u는 읽지만 xterm modifyOtherKeys의 `CSI 27;modifier;Unicode~`는 버렸다.
@@ -5576,7 +5587,7 @@ primary 근거:
   화면 판정·harness steering 키는 웹 작업의 공통 backend owner가 맡는다. 이 절의 입력 파서가 키를 보존한 뒤 TUI는
   `PaneCtrlEnter` 요청을 사용하며, TUI 안에 별도 입력줄 판정이나 harness 키 표를 만들지 않는다.
   Front API 1.43부터 요청하며 1.42 host에는 LF를 보낸다. 반복 키는 steering을 재실행하지 않고 reader는 전송하지 않는다.
-  공통 owner t-0384의 판정·키 선택 위치는 §8.236다. 공통 agent 줄바꿈은 Alt+Enter(ESC CR)다.
+  공통 owner t-0384의 판정·키 선택 위치는 §8.237다. 공통 agent 줄바꿈은 Alt+Enter(ESC CR)다.
 - **검증.** 수정 전 Windows 키 인코더와 실제 PTY 경계가 실패했다. 수정 후 kitty/xterm Ctrl+Enter의 공통 요청·안전한 Alt+Enter와 Shift+Enter의 LF 및 보통 Enter의 CR,
   확장 키 모드 복원, 기존 Ctrl+V·빈 paste의 실제 PNG 저장을 검사했다. 빈 paste를 버리는 변형도 실패했다.
   Windows Rust target의 TUI·vendored parser 시험 교차 컴파일을 통과했다. Windows 실행은 CI 결과로 별도 확인한다.
@@ -5585,7 +5596,7 @@ primary 근거:
 - **종료 순서 검토.** 독립 리뷰에서 kitty 스택이 화면별이라는 점을 확인했다. 정상 종료는 alternate screen을 떠나기 전에 pop하고, panic hook도 ratatui의 화면 복원보다 먼저 한 번만 pop한다. 화면별 스택 E2E와 격리한 자식 프로세스의 panic hook 순서 시험이 수정 전 실패·수정 후 통과했다.
 
 
-### 8.236 입력줄 상태에 따른 Ctrl+Enter(10-19, t-0384, D1·D7 후속)
+### 8.237 입력줄 상태에 따른 Ctrl+Enter(10-19, t-0384, D1·D7 후속)
 
 사용자 결정: 웹 터미널과 TUI의 agent pane에서 입력줄에 글이 있으면 줄바꿈, 비었으면 harness steering을 한다. 감지로 판정하지 못하면 줄바꿈이다. front가 입력줄을 각각 읽지 않고 `FrontRequest::PaneCtrlEnter { pane }`로 host에 요청한다. TUI의 물리 키 연결은 t-0385가 맡는다.
 

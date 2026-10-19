@@ -1,11 +1,11 @@
 /* 프로젝트 thread 화면(ProjectThreads.tsx, herdr-projects popup Threads). 색·크기는 herdr-web-ui token만 쓴다.
    줄 모양은 참고 목록 줄(Sidebar.css workspace-select)처럼 두 줄: 이름, 그 아래 흐린 사실. 끝난 thread는 popup DarkGrey처럼 흐리다. */
 .project-threads {
+  /* 굴림 영역은 화면 폭 전체(막대가 화면 오른쪽 끝, 목록·대화와 같다), 글 기둥은 가운데 880px: 좌우 여백이 남는 폭을 나눠 갖는다
+     (참고 t3code settingsLayout: 화면 폭 굴림 영역 안에 폭 제한 기둥) */
   width: 100%;
-  max-width: 880px;
-  margin: 0 auto;
   /* 위는 상태 막대 밑부터 그리는 홈 화면 앱의 안전 영역을 비킨다(머리줄과 같다, plan §8.183) */
-  padding: calc(var(--space-4) + env(safe-area-inset-top, 0px)) var(--space-4) max(var(--space-6), env(safe-area-inset-bottom));
+  padding: calc(var(--space-4) + env(safe-area-inset-top, 0px)) max(var(--space-4), calc((100% - 880px) / 2 + var(--space-4))) max(var(--space-6), env(safe-area-inset-bottom));
   overflow-y: auto;
   min-height: 0;
   height: 100%;
