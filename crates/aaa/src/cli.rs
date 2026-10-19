@@ -3220,8 +3220,8 @@ fn render_front(r: &FrontResponse) -> String {
                     s,
                     "{}\t{} → {}{off}{approval}\t지난 {result} · 다음 {} · 오늘 {} · 건너뜀 {skip} · 출처 {}",
                     r.name,
-                    r.trigger,
-                    r.action,
+                    if r.trigger.is_empty() { &r.schedule } else { &r.trigger },
+                    if r.action.is_empty() { "동작 정보 없음" } else { &r.action },
                     when(r.next_run_ms),
                     r.today,
                     r.origin

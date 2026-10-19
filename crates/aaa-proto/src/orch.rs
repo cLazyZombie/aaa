@@ -1007,6 +1007,7 @@ pub struct RoutineRun {
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(default)]
 pub struct RoutineView {
     pub name: String,
     pub trigger: String,
@@ -1076,6 +1077,17 @@ pub fn slug(title: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// N-1 host의 wire 응답에는 L3 기록 필드가 없다.
+    #[test]
+    fn routine_view_reads_previous_front_response() {
+        let old = r#"{"name":"ping","schedule":"every 10m","command":"","machine":null,"enabled":true,"commands_allowed":false,"approved":false,"command_sha256":"","last_run_ms":1,"next_run_ms":600001,"skipped":2,"no_coordinator":0,"error":null}"#;
+        let view: RoutineView = serde_json::from_str(old).unwrap();
+        assert_eq!(view.name, "ping");
+        assert_eq!(view.schedule, "every 10m");
+        assert_eq!(view.next_run_ms, Some(600001));
+        assert!(view.recent.is_empty() && view.last_result.is_none());
+    }
 
     /// 응답·사건 enum 태그(`kind`·`ev`)와 안에 든 구조체 필드 이름이 겹치면 읽을 수 없다
     #[test]

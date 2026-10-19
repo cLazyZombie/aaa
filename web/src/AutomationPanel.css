@@ -1,5 +1,5 @@
 .automations-panel { display: flex; flex: 1 1 0; flex-direction: column; min-height: 0; }
-.automations { overflow-y: auto; min-height: 0; padding: 12px; flex: 1; overflow-wrap: anywhere; }
+.automations { overflow-y: auto; overscroll-behavior: contain; min-height: 0; padding: 12px; flex: 1; overflow-wrap: anywhere; }
 .automation-tools, .automation-heading { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .automation-tools > button, .automation-heading > button { margin-left: auto; }
 .automations h3 { font-size: 13px; margin: 18px 0 8px; }

@@ -57,20 +57,20 @@ export function AutomationPanel({ canControl }: { canControl: boolean }) {
       <h3>{project} · {rules.length}개</h3>
       {rules.map((r) => <article className="automation-row" key={r.name} data-testid={`automation-${project}-${r.name}`} data-status={!r.enabled ? "off" : r.error ? "failed" : r.last_result?.status ?? "ready"}>
         <div className="automation-heading"><strong>{r.name.replace(/^mission:/, "")}</strong>{r.origin === "mission" && <span>임무 파일에서</span>}
-          <button type="button" role="switch" aria-checked={r.enabled} aria-label={`${project}/${r.name} 켜기`} disabled={!canControl || busy !== null || r.error !== null} onClick={() => void toggle(project, r)}>{r.enabled ? "켬" : "끔"}</button>
+          <button type="button" role="switch" aria-checked={r.enabled} aria-label={`${project}/${r.name} 켜기`} disabled={!canControl || busy !== null || r.error != null} onClick={() => void toggle(project, r)}>{r.enabled ? "켬" : "끔"}</button>
         </div>
-        <p className="automation-summary">{r.trigger} → {r.action}</p>
+        <p className="automation-summary">{r.trigger || r.schedule} → {r.action || "동작 정보 없음"}</p>
         {r.origin === "mission" && <p>임무 파일의 켜짐 상태입니다. 적용 사본이 다르면 특수 패널에서 다시 읽기를 확인하세요.</p>}
         {r.error ? <p role="alert">{r.error}</p> : <>
           {!r.enabled && <p>꺼짐</p>}
           {r.command && (!r.approved || !r.commands_allowed) && <p>{!r.approved ? "승인 필요" : "routine_commands 꺼짐"}</p>}
           <p>지난 {r.last_result ? <Result run={r.last_result} /> : "기록 없음"}</p>
-          <p>다음: {r.enabled ? r.next_run_ms === null ? "사건 오면" : time(r.next_run_ms) : "꺼짐"} · 오늘 {r.today}{r.max_per_day !== null && `/${r.max_per_day}`}</p>
+          <p>다음: {r.enabled ? r.next_run_ms === null ? "사건 오면" : time(r.next_run_ms) : "꺼짐"} · 오늘 {r.today ?? "—"}{r.max_per_day != null && `/${r.max_per_day}`}</p>
           {r.last_skip && <p className="automation-skip">마지막 건너뜀: {r.last_skip.detail}</p>}
         </>}
-        <details><summary>최근 기록 ({Math.min(r.recent.length, 20)})</summary>
-          <p className="automation-file">{r.file}</p>
-          <ol>{r.recent.slice(0, 20).map((run) => <li key={run.id}><Result run={run} /></li>)}</ol>
+        <details><summary>최근 기록 ({Math.min((r.recent ?? []).length, 20)})</summary>
+          <p className="automation-file">{r.file || `routines/${r.name}.md`}</p>
+          <ol>{(r.recent ?? []).slice(0, 20).map((run) => <li key={run.id}><Result run={run} /></li>)}</ol>
         </details>
       </article>)}
     </section>)}
