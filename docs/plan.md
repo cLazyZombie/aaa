@@ -5509,3 +5509,8 @@ primary 근거:
   새 초안 보존, 썸네일 잘림·확대·focus, 허용 밖·symlink·reader·미인증 읽기를 확인한다. 기존 네 브라우저/기기 첨부·Enter·IME
   사례도 유지한다. 시간 창은 Playwright 시계로 넘기고 수신·화면·출력 사건으로 끝낸다. 새로운 시험 전용 production seam은 없다.
   실험실에서 프로젝트 uploads만 추가로 허용하며 허용 밖 파일은 그대로 거부한다. 프로토콜 판 변경은 없다.
+
+- **통합 시험의 입력 프레이밍.** 전수 검증에서 기존 `thread_adopt_existing_pane`의 가짜 셸이 글과 Enter를 같은 `dd` 조각으로
+  받아 마지막 줄바꿈을 command substitution이 지웠다. PTY는 쓰기별 read 경계를 보장하지 않는다. adopt가 보는 것은 pane의
+  생존과 제출 뒤 응답이므로 가짜를 canonical 줄 읽기로 바꾸고, 기존 생존 검사는 글+Enter를 한 번 쓰는 `pane run`으로 강화했다.
+  실제 입력·기대 응답·시한을 바꾸지 않는다. 첫 실패의 실험실·로그를 보존한다.
