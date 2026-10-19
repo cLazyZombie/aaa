@@ -11,8 +11,8 @@
 //!   연다). DB의 project 열·thread 기록·meta와 폴더, aaa 표지가 있는 AGENTS.md를 바꾼다.
 //! - 청소는 끝난 worktree thread가 resolve 때 남긴 worktree·branch(`ThreadRec.leftover`)를 그 머신 agent에 다시 정리하게 한다
 //!   (force 없음, 병합된 branch만). 참고는 저장소의 `hp/<slug>/` worktree를 직접 훑지만 aaa worktree는 thread 머신에 있다.
-//! - 파일 점검(`aaa doctor files [--fix]`, 참고 `doctor`의 `files <slug>`)은 모든 프로젝트의 AGENTS.md(coordinator 안내)·CLAUDE.md
-//!   링크·uploads/·routines/pr-followup.md를 보고, `--fix`면 고친다(`orch::write_files`). 있는 프로젝트에 새 안내가 닿는 길이다.
+//! - 파일 점검(`aaa doctor files [--fix]`, 참고 `doctor`의 `files <slug>`)은 모든 프로젝트의 AGENTS.md(coordinator 안내)·
+//!   uploads/·routines/pr-followup.md를 보고, `--fix`면 고친다(`orch::write_files`). 있는 프로젝트에 새 안내가 닿는 길이다.
 
 use std::path::Path;
 use std::sync::Arc;

@@ -545,7 +545,7 @@ export type ProjectChange = { project: ProjectView, notes: Array<string>, };
 
 export type ProjectFilesCheck = { project: string,
 /**
- * 본 때 고칠 것(AGENTS.md·CLAUDE.md 링크·uploads/·routines/pr-followup.md). 비면 맞다
+ * 본 때 고칠 것(AGENTS.md·uploads/·routines/pr-followup.md). 비면 맞다
  */
 problems: Array<string>,
 /**

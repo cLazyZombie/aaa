@@ -1045,10 +1045,10 @@ enum DoctorCmd {
     },
     /// 결과 JSON 여러 개를 한 표로
     Summary { files: Vec<PathBuf> },
-    /// 모든 프로젝트 폴더의 aaa 파일(coordinator 안내 AGENTS.md·CLAUDE.md 링크·uploads/·routines/pr-followup.md)을 host에서 본다
+    /// 모든 프로젝트 폴더의 aaa 파일(coordinator 안내 AGENTS.md·uploads/·routines/pr-followup.md)을 host에서 본다
     /// (herdr-projects `doctor`). 안내가 낡았으면 `--fix`가 지금 aaa의 것으로 다시 쓴다
     Files {
-        /// 고친다: aaa 표지가 있는 AGENTS.md는 다시 쓰고, 표지 없는 AGENTS.md·CLAUDE.md는 `<이름>.before-aaa`로 옮겨 둔다
+        /// 고친다: aaa 표지가 있는 AGENTS.md는 다시 쓰고, 표지 없는 AGENTS.md는 `<이름>.before-aaa`로 옮겨 둔다
         #[arg(long)]
         fix: bool,
     },
@@ -2930,7 +2930,7 @@ fn render_front(r: &FrontResponse) -> String {
                     (None, true, _) => format!("[ok  ] files {}: 고쳤다: {problems}", c.project),
                     (None, false, true) => {
                         format!(
-                            "[ok  ] files {}: AGENTS.md(coordinator 안내)·CLAUDE.md 링크·uploads/·pr-followup routine이 맞다",
+                            "[ok  ] files {}: AGENTS.md(coordinator 안내)·uploads/·pr-followup routine이 맞다",
                             c.project
                         )
                     }
