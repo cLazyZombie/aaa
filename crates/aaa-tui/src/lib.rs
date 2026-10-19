@@ -3491,6 +3491,7 @@ mod tests {
             agent: None,
             label: None,
             restore_error: None,
+            coordinator_project: None,
             replaced: Vec::new(),
         }
     }

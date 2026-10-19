@@ -933,9 +933,30 @@ impl Host {
         v
     }
 
-    fn pane_view(i: &Inner, id: &str, p: &PaneRt, role: DeviceRole) -> PaneView {
+    fn pane_view(
+        i: &Inner,
+        id: &str,
+        p: &PaneRt,
+        role: DeviceRole,
+        projects: &[(String, std::path::PathBuf)],
+    ) -> PaneView {
         let m = i.machines.get(&p.machine_id);
         let connected = m.is_some_and(|m| m.conn.is_some());
+        // herdr-projects coordinator::is_coordinator + report_tokens: host 머신의 프로젝트 홈 agent만 소속을 붙인다.
+        // role 없는 기존 agent도 포함하지만, 같은 경로의 원격 pane·사람 셸은 coordinator가 아니다.
+        let coordinator_project = if m.is_some_and(|m| m.local)
+            && (p.info.role == Some(aaa_proto::Role::Coordinator)
+                || p.agent.is_some()
+                || crate::adopt::harness_of(p.info.harness.as_deref(), &p.info.argv).is_some())
+        {
+            p.info
+                .cwd
+                .as_deref()
+                .and_then(|cwd| std::fs::canonicalize(cwd).ok())
+                .and_then(|cwd| projects.iter().find(|(_, dir)| *dir == cwd).map(|(name, _)| name.clone()))
+        } else {
+            None
+        };
         PaneView {
             id: id.to_string(),
             machine_id: p.machine_id.clone(),
@@ -950,6 +971,7 @@ impl Host {
             rows: p.info.rows,
             lease: p.lease.as_ref().map(|l| LeaseView { front: l.id.clone(), label: l.label.clone() }),
             role: p.info.role,
+            coordinator_project,
             agent: p.agent.clone().map(Box::new),
             label: p.info.label.clone(),
             restore_error: p.restore_error.clone(),
@@ -958,8 +980,9 @@ impl Host {
     }
 
     pub fn pane_views(&self, role: DeviceRole) -> Vec<PaneView> {
+        let projects = self.coordinator_projects();
         let i = self.inner.lock().unwrap();
-        let mut v: Vec<_> = i.panes.iter().map(|(id, p)| Self::pane_view(&i, id, p, role)).collect();
+        let mut v: Vec<_> = i.panes.iter().map(|(id, p)| Self::pane_view(&i, id, p, role, &projects)).collect();
         // 처음 띄운 차례(ULID): 재개·재부팅 복원으로 새 ID가 되어도 처음 ID 자리에 남는다(목록이 옮겨 다니지 않는다)
         let first = |p: &PaneView| p.replaced.first().cloned().unwrap_or_else(|| p.id.clone());
         v.sort_by(|a, b| a.machine.cmp(&b.machine).then_with(|| first(a).cmp(&first(b))));
@@ -967,8 +990,17 @@ impl Host {
     }
 
     pub fn pane_view_of(&self, id: &str, role: DeviceRole) -> Option<PaneView> {
+        let projects = self.coordinator_projects();
         let i = self.inner.lock().unwrap();
-        i.panes.get(id).map(|p| Self::pane_view(&i, id, p, role))
+        i.panes.get(id).map(|p| Self::pane_view(&i, id, p, role, &projects))
+    }
+
+    fn coordinator_projects(&self) -> Vec<(String, std::path::PathBuf)> {
+        self.project_directories()
+            .into_iter()
+            .filter(|(name, _)| self.project_status(name) != aaa_proto::ProjectStatus::Archived)
+            .filter_map(|(name, dir)| std::fs::canonicalize(dir).ok().map(|dir| (name, dir)))
+            .collect()
     }
 
     /// 웹 터미널 attach: 사건 구독과 snapshot을 같은 잠금 안에서 잡아 빈틈이 없게 한다.
