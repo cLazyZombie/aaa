@@ -215,7 +215,8 @@ pub struct NotifySection {
     pub format: String,
     /// format이 telegram일 때 받을 chat
     pub telegram_chat_id: String,
-    /// 알릴 inbox 항목 종류(`item_kinds`가 옛 이름을 바꿔 읽는다). `thread-state`는 확인 필요·새 보고·시작 실패만 보낸다
+    /// 알림 종류 허용 목록(`item_kinds`가 옛 이름을 바꿔 읽는다). 외부 푸시는 검증된 coordinator 사용자 post만이며,
+    /// `post`를 빼면 끈다. 다른 종류를 추가해도 외부 푸시 범위는 넓어지지 않는다. 앱 안 알림의 기존 thread-state 선택은 유지한다
     pub kinds: Vec<String>,
     /// 이 시간(초) 동안 모아 프로젝트마다 한 번에 보낸다(질문이 몰려도 한 통)
     pub debounce_secs: u64,

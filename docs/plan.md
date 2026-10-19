@@ -5829,11 +5829,55 @@ primary 근거:
 - **TUI(t-0386).** 활동 막대가 웹을 따르면 보고서 칸은 에이전트 칸 밑, 아래 묶음은 설정만이다. TUI 사이드바 바닥에는 설치 줄이 없고, 구독 사용량을 바닥에 둔다면 오른쪽 정렬이다.
 - **검증.** 웹 E2E 26 「막대·바닥 줄 배치」가 데스크톱 1280·좁은 창 700(drawer)·휴대폰 390×844·가로 844×390에서 기본·GitHub Dark로 보고서 단추가 에이전트 단추 바로 밑(tablist 밖), 아래 묶음이 설정만, 바닥 줄 단추가 사용량 하나, 칩 오른쪽 끝이 줄 안쪽 오른쪽 끝임을 재고 찍는다. 바꾸기 전 판에서 여덟 화면 모두 실패했다(보고서가 아래 묶음, 설치 단추, 칩 왼쪽). 04 「앱 설치」는 설정 줄만 본다: 데스크톱의 신호 없음·신호·거절·설치됨, iPhone·iPad 안내, 홈 화면 앱 「설치됨」, 어느 화면에도 설정 밖 설치 단추가 없음.
 
-### 8.249 웹 Claude 표시를 LobeHub Icons `claude-color`로(10-19, t-0396)
+### 8.249 외부 푸시는 해당 프로젝트 coordinator 사용자 post만(10-19, t-0395)
+
+- **사용자 결정.** 앱 안 알림은 thread 보고·상태·확인창·세션·머신 사건을 계속 보인다. 외부 Web Push와 webhook은
+  host가 해당 프로젝트 coordinator pane으로 검증한 사용자 post만 보낸다. thread의 `[완료]`·`[확인 필요]` 표지는
+  앱 안 알림과 coordinator 판단의 근거다. 시스템 사건도 coordinator가 inbox로 받고 사람이 필요할 때 post로 알린다.
+  §8.223의 오류·머신 외부 알림 유지와 §8.226의 thread 보고 요약 푸시를 이 결정으로 대체한다.
+- **출처 경계.** Front의 peer PID로 판정한 actor pane과 host 정본 `coordinator_project`를 배포와 공통으로 확인한다.
+  thread/adopt·임무·임의 pane·다른 프로젝트 coordinator·웹·밖 CLI는 외부 푸시 출처가 아니다. post에는 host 판정인
+  `verified = coordinator-pane`과 세션을 저장한다. 기존 `front-control`은 조작 권한만 뜻하며 푸시 권한이 아니다.
+  일반 inbox 발행은 외부 알림 대기열을 건드리지 않고, post 저장 뒤 검증한 봉투로만 대기열에 넣는다.
+- **두 의도.** `user --request --needs-user --topic user-action`은 「확인 필요」,
+  `user --notice --topic task-complete`은 「전체 완료」다. 그 외 post는 앱 안에 남는다.
+  post 글·제목은 외부 본문으로 싣지 않고 기존 고정 문구를 유지한다. debounce·done 제거·프로젝트 mute·기기별
+  input/done·쓰는 화면 억제·실패 시 재전송 없음도 유지한다.
+- **설정.** `[notify].kinds`의 기존 기본값·옛 이름 변환은 호환성을 위해 유지한다. `post`를 빼면 외부 알림을 끄며,
+  다른 종류를 추가해도 위 출처 범위를 넓힐 수 없다. 앱 안 알림의 기존 `thread-state` 선택은 유지한다. `post`의 유무는 thread 앱 안 알림을 바꾸지 않는다.
+- **참고 대조.** herdr-projects 0.2.35 `src/notify.rs::Notifier::send`는 coordinator의 herdr socket을 전달 경로로 쓰지만
+  thread·오류 사건을 외부 알림으로 보낸다. herdr-web-ui `aa624cb`의 `server/push.ts::onStatus/onEnded`도 pane 상태가
+  푸시 원인이며 inUse·기기 설정으로 거른다. t3code `4b1024da`의 `packages/provider-core/src/server/notification.ts`는
+  subagent·command·monitor·delegated_task 출처를 구조화하고, `docs/user/mobile-notifications.md`는 agent 완료·실패·승인·입력
+  사건의 모바일 전달을 설명한다. 출처를 host에서 정하고 앱 알림과 전달 정책을 나누는 점은 따르되, coordinator post만
+  푸시하는 범위는 이번 사용자 결정이라 세 참고와 다르게 둔다.
+- **확인.** 기존 report 전이 시험이 완료·사람 필요 표지의 inbox 유지와 외부 대기열 비움을 함께 본다. post 시험은
+  올바른 coordinator 두 의도와 위장·다른 프로젝트·웹·밖 CLI·다른 topic을 비교한다. 실제 CLI webhook과 웹 푸시
+  E2E는 coordinator pane의 자식 CLI로 발송하고 thread 앱 안 알림이 별개로 유지되는지 확인한다.
+### 8.250 웹 대화 맨 아래 붙음: 굴림 사건 없이 줄어든 보기(10-19, t-0392 후속)
+
+- **실제 재현.** 맨 아래를 보던 대화가 끝까지 보이지 않는다(사용자 14:0x, 배포판 `3503e963`, 긴 답의 마지막 줄이 입력창 밑에 걸림).
+  실제 host·agent와 긴 기록으로 늦은 높이 변화를 하나씩 재봤다. 아래까지 남은 거리는 다음과 같았다.
+  - 입력창이 여섯 줄로 커지면 172px. 보내기 상태 줄이 붙으면 52px.
+  - 긴 답(Bash 줄 여러 개, 목록, code block)이 붙거나 입력창이 줄면 0.
+  - 웹 글꼴을 붙잡은 채 열기는 이 Mac에 글꼴이 깔려 있어 요청이 없었고 재현하지 못했다.
+- **원인.** 대화는 기록이 바뀔 때만(effect) 맨 아래로 갔다. 입력창이 커지면(여러 줄, 보내기 상태, 알림, `3503e963`의 receipt 안내) 대화 보기가
+  굴림 사건 없이 줄어든다. 그래서 따라가지 않았다. 휴대폰 키보드와 좁아진 창도 같은 길이다. `3503e963`의 굴림 코드는 이 판과 같다.
+- **수정(참고 herdr-web-ui `aa624cb` `ChatView.tsx`).**
+  - 새 줄은 그리기 전에(`useLayoutEffect`) 맨 아래로 간다.
+  - `ResizeObserver`가 대화 보기 자체의 크기 변화, 기둥의 폭·글자 크기·글꼴 변화를 보고 맨 아래를 보던 사람을 바로 맨 아래에 둔다.
+    높이만 는 것(접힌 말 펼침)은 손이 한 일이라 따라가지 않는다.
+  - 굴림 사건에서는 위로 굴린 손만 따라가기를 끈다(남은 거리 48px까지 맨 아래로 본다).
+  - 참고의 `useFacesArrived`(늦게 온 글꼴로 다시 접힘)는 재현하지 못해 옮기지 않았다.
+- **회귀.** E2E 22 「대화 맨 아래 붙음」은 실제 host·agent, 기록에 붙는 답, 실제 휠로 본다.
+  - 맨 아래에서 입력창이 커져도 남은 거리 ≤1px, 새 답을 따라감.
+  - 위로 올려 읽는 중에는 입력창이 커지거나 새 답이 와도 자리 그대로.
+  - 옛 코드는 「마지막 172px가 가려졌다」, 읽는 중에도 따라가는 변형은 「자리가 바뀌었다·끌어내렸다」로 실패한다.
+
+### 8.251 웹 Claude 표시를 LobeHub Icons `claude-color`로(10-19, t-0396)
 
 - **요청.** 사용자 「~/Downloads/claude-color.svg 이 파일을 현재 aaa에서 클로드 관련 이미지(project, agent, 사용량 등)에서 대체 가능해?」, 출처 https://lobehub.com/ko/icons/claude.
 - **출처·라이선스.** 받은 파일(1696B)은 npm `@lobehub/icons-static-svg` 1.95.1 `icons/claude-color.svg`와 바이트까지 같다. 패키지와 github.com/lobehub/lobe-icons는 MIT(Copyright (c) 2023 LobeHub)다. 이 저장소는 이미 `agentSvgMarks.ts` 때문에 그 MIT 전문을 `web/src/herdr/README.md`에 싣고 있어 같은 고지가 덮는다. 로고 자체는 Anthropic의 상표이며 aaa는 pane의 agent를 가리키는 데만 쓴다(README 상표 문장 그대로). 예전 표시는 herdr-web-ui(aa624cb)가 chatmux llm-logo-provider에서 옮긴 타일(주황 둥근 사각형 `#D77655` + 흰 별)이었다.
 - **자리.** Claude 그림은 모두 `herdr/AgentMark.tsx`의 `ClaudeMark` 하나에서 나온다: 목록 줄(프로젝트·기타·에이전트 카드, 18px), 터미널 머리(18px), 구독 사용량 칩(14px)과 펼친 창·설정 「구독 사용량」(16px), 명령 팔레트, 새 세션 agent 고르기·coordinator 열기(16px), 알림 방울(22px). 앱 아이콘·favicon(`web/public/icon.svg`)은 aaa 자체 그림이라 Claude와 무관하다. TUI는 그림이 아니라 글자다.
 - **바꾼 것.** `ClaudeMark`를 viewBox `0 0 24 24`, 경로·색(`#D97757`) 그대로의 별 하나로 바꿨다. 타일이 없어 Codex 매듭처럼 맨 그림이다. 경로에 `agent-mark-glyph`를 달아 설정 「agent 표시 → 모노」에서는 예전처럼 글자색이 된다.
 - **검증.** 웹 E2E 04 「agent 표시」가 Claude 줄의 타일 없음·별 색 `#D97757`·viewBox를 본다(예전 판에서 실패). 기본·GitHub Dark, 1x·2x·휴대폰 3x 전후 캡처로 14px 칩까지 알아볼 수 있음을 봤다.
-

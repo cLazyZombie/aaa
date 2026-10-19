@@ -1,5 +1,5 @@
 // 이 기기의 알림(plan §8.70, herdr-web-ui App.tsx 알림 부분·lib/notifications.ts·Droplet·alertSound).
-// host가 Web Push로 보내는 것과 같은 사건에 띄운다: 질문이 열림(입력 필요), thread의 새 보고(작업 완료).
+// 앱 안에는 질문이 열림(입력 필요)·thread의 새 보고(작업 완료)를 계속 띄운다. 외부 Web Push는 coordinator 사용자 post만이다.
 // - 앱 안(Droplet): 앱이 보일 때 위에서 내려온다. 그 자리를 이미 보고 있으면 띄우지 않는다.
 // - 소리: 앱 탭이 열려 있으면(가려져도) 울린다. 탭이 여럿이면 한 탭만 울린다(alertTurns).
 // - 탭 알림: 이 기기에 push 구독이 없고 탭이 가려졌을 때만 브라우저 알림으로(구독이 있으면 host가 보낸다).

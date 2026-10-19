@@ -137,13 +137,14 @@ impl Host {
         if !aaa_proto::valid_project(project) {
             return Err(bad("프로젝트 이름 형식이 아니다"));
         }
+        let coordinator = self.coordinator_project_of_actor(actor).as_deref() == Some(project);
         let sender = PostSender {
             thread: None,
             role: Role::Coordinator,
             mission: None,
             machine: "host".into(),
-            session: None,
-            verified: "front-control".into(),
+            session: coordinator.then(|| actor.rsplit_once('@').unwrap().1.into()),
+            verified: if coordinator { "coordinator-pane" } else { "front-control" }.into(),
         };
         Ok(self.store_post(project, sender, input, actor, None, util::now_ms()))
     }
@@ -349,6 +350,7 @@ impl Host {
         }
         if let Some(i) = item {
             self.inbox_publish(&i);
+            self.notify_post(&i, &env);
         }
         if let Some(rec) = rec {
             if accepted && rec.mission.is_some() {
@@ -534,15 +536,86 @@ mod tests {
         assert_eq!(h.post_status("renamed", &input(1).post_id, "local:cli").unwrap(), accepted);
     }
 
-    #[test]
-    fn coordinator_can_request_the_user_without_nudging_itself() {
+    #[tokio::test]
+    async fn coordinator_can_request_the_user_without_nudging_itself() {
         let (h, _lab) = host();
+        h.project_create("demo", Default::default(), "test").unwrap();
+        h.project_create("side", Default::default(), "test").unwrap();
+        h.agent_connected(
+            &aaa_proto::AgentHello {
+                proto: aaa_proto::AGENT_LINK,
+                machine_id: "m".into(),
+                machine_name: "mac-a".into(),
+                boot_id: "boot".into(),
+                os: "test".into(),
+                arch: "test".into(),
+                software: "test".into(),
+                features: vec![],
+                dev_mode: true,
+                selfcheck: None,
+                sessions: vec![],
+                harness: vec![],
+            },
+            true,
+            crate::AgentConn::new(aaa_common::conn::spawn_writer(tokio::io::sink(), aaa_proto::MAX_FRAME), 1),
+        );
+        h.on_session(
+            "m",
+            aaa_proto::SessionInfo {
+                id: "coord".into(),
+                name: "coordinator".into(),
+                argv: vec!["codex".into()],
+                cwd: Some(h.project_dir("demo").unwrap().to_string_lossy().into()),
+                pid: Some(std::process::id()),
+                started_at_ms: 0,
+                boot_id: "boot".into(),
+                cols: 80,
+                rows: 24,
+                state: aaa_proto::SessionState::Running,
+                role: Some(Role::Coordinator),
+                label: None,
+                harness: Some("codex".into()),
+            },
+            false,
+        );
+        let (tx, mut queue) = tokio::sync::mpsc::unbounded_channel();
+        *h.notify_tx.lock().unwrap() = Some(tx);
+        for (kind, event) in [
+            ("outage", "down"),
+            ("session", "sessions ended"),
+            ("health", "problem"),
+            ("thread-state", "blocked on a prompt"),
+        ] {
+            h.inbox_add("demo", kind, "mac-a", event, "시스템 알림");
+        }
+        assert!(queue.try_recv().is_err(), "시스템 항목도 앱 안에만 남긴다");
+        for (n, project, actor) in [
+            (80, "demo", "local:cli"),
+            (81, "demo", "local:cli@unverified"),
+            (82, "demo", "device:phone"),
+            (83, "side", "local:cli@coord"),
+            (84, "demo", "worker:coord"),
+        ] {
+            let mut i = input(n);
+            i.to = "user".into();
+            i.topic = "user-action".into();
+            assert!(matches!(h.front_post(project, i, actor).unwrap(), PostResult::Accepted { .. }));
+            assert!(queue.try_recv().is_err(), "해당 프로젝트 coordinator가 아닌 {actor}는 푸시하지 않는다");
+        }
+        // 다른 topic의 request는 앱 안에 남지만 푸시 의도를 나타내지 않는다.
+        let mut other = input(85);
+        other.to = "user".into();
+        assert!(matches!(h.front_post("demo", other, "local:cli@coord").unwrap(), PostResult::Accepted { .. }));
+        assert!(queue.try_recv().is_err());
         let mut i = input(90);
         i.to = "user".into();
+        i.topic = "user-action".into();
         assert!(matches!(h.store_post("demo", sender(), i.clone(), "worker:s1", None, 1), PostResult::Refused { .. }));
         i.post_id = format!("{:032x}", 91);
-        assert!(matches!(h.front_post("demo", i, "local:cli").unwrap(), PostResult::Accepted { .. }));
+        assert!(matches!(h.front_post("demo", i, "local:cli@coord").unwrap(), PostResult::Accepted { .. }));
         let items = h.db.inbox_list(Some("demo"), false).unwrap();
+        let queued = queue.try_recv().expect("프로젝트 coordinator의 확인 필요 post는 푸시한다");
+        let items: Vec<_> = items.into_iter().filter(|i| i.id == queued.id).collect();
         assert_eq!(items.len(), 1);
         assert!(items[0].seen, "coordinator가 자기 요청으로 다시 nudge되지 않는다");
         assert_eq!(items[0].event, "post request for user");
@@ -559,16 +632,21 @@ mod tests {
         assert!(matches!(h.front_post("demo", done.clone(), "local:cli").unwrap(), PostResult::Refused { .. }));
         done.post_id = format!("{:032x}", 93);
         done.topic = "task-complete".into();
-        assert!(matches!(h.front_post("demo", done, "local:cli").unwrap(), PostResult::Accepted { .. }));
+        assert!(matches!(h.front_post("demo", done, "local:cli@coord").unwrap(), PostResult::Accepted { .. }));
         let items = h.db.inbox_list(Some("demo"), false).unwrap();
         let completed = items.iter().find(|i| i.event == "post completed").unwrap();
         assert!(completed.seen);
+        assert_eq!(queue.try_recv().unwrap().id, completed.id);
+        assert!(queue.try_recv().is_err());
         assert_eq!(crate::notify::safe_summary(completed), "맡긴 일 완료");
         assert!(
             crate::push::for_device(crate::db::Alerts { input: true, done: false }, std::slice::from_ref(completed))
                 .is_empty()
         );
-        assert_eq!(crate::push::for_device(crate::db::Alerts { input: false, done: true }, &items).len(), 1);
+        assert_eq!(
+            crate::push::for_device(crate::db::Alerts { input: false, done: true }, &[queued, completed.clone()]).len(),
+            1
+        );
     }
 
     #[test]
@@ -599,7 +677,10 @@ mod tests {
         let mut no_user = item.clone();
         no_user.event = "post data".into();
         assert!(!crate::notify::pushes(&["post".into()], &no_user));
-        assert!(crate::notify::pushes(&["post".into()], &item));
+        assert!(
+            !crate::notify::pushes(&["post".into()], &item),
+            "thread가 coordinator에게 보낸 요청은 앱 안에만 남는다"
+        );
         assert!(
             crate::push::for_device(crate::db::Alerts { input: false, done: true }, std::slice::from_ref(&item))
                 .is_empty()
