@@ -292,3 +292,8 @@ local agent 재연결 중 배포 조회(§8.237): host `deploy::tests::coordinat
 - 회귀 변형: 입력 묶기 제거·입력 직후 렌더 우회 제거·빈 셀 선택 칠하기 제거를 각각 넣어 해당 keeper의 RED를 확인하고, 원본 bytes로 복원한 뒤 GREEN을 확인한다. 지연 측정은 새 binary·격리 host/agent·PTY에서 입력 byte를 쓴 시각부터 선택 셀 또는 앱의 실제 재그리기가 관측된 시각까지 잰다. herdr도 같은 fixture·셀 크기·관측 parser·전송 조건으로 비교하며, 로컬 셀 선택과 앱 마우스 선택을 별도 기록한다.
 
 - 착지 기준에 같은 m13 오류 대기의 수리가 먼저 포함됐다. 순간 화면 대신 report 종료값의 영구 기록을 확인하는 기준의 fixture를 유지한다.
+
+## resolve 뒤 종료된 pane 제거(§8.254)
+
+- m13 `resolve_removes_exited_panes_even_when_the_worktree_is_kept_or_adopted`가 실제 CLI→host→agent 경계에서 dir·dirty worktree·adopted pane을 입력으로 exit 1 종료한다. 종료 상태 확인 뒤 resolve하고 pane 목록·layout에서의 제거와 폴더 보존을 단언한다. 새 신호·고정 sleep·production 시험 seam은 없다.
+- 기존 `resolve_keeps_dirty_worktree_and_unmerged_branch`는 partial·skip-copy를 포함한 폴더/branch 보존과 별개로 pane을 닫는지 본다. `thread_adopt_existing_pane`은 복원된 살아 있는 pane도 닫고 원래 branch·파일은 남기는 경계를 본다. linger 시험은 기존대로 session host의 종료 유예를 기다리지 않는지 확인한다.
