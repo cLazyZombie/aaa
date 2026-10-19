@@ -235,10 +235,10 @@ fn screen_regions_extract_structure_without_classifying_agent_state() {
 
 #[test]
 fn bundled_manifests_parse_and_validate() {
-    for h in [Harness::Claude, Harness::Codex] {
+    // Claude는 herdr 0.9.5 정본, Codex는 run-state 제목을 읽는 운영 회귀 보완판이다.
+    for (h, version) in [(Harness::Claude, "2026.10.11.1"), (Harness::Codex, "2026.10.19.1")] {
         let loaded = bundled(h);
-        // herdr 0.9.5가 쓰는 판(설치본 `herdr agent explain`의 manifest_version)과 같아야 한다
-        assert_eq!(loaded.version(), Some("2026.10.11.1"), "{}", h.label());
+        assert_eq!(loaded.version(), Some(version), "{}", h.label());
     }
     // 이름이 다른 규칙 파일은 받지 않는다(claude.toml에는 alias "claude-code"가 있다)
     assert!(load(CLAUDE, Harness::Codex).is_err());

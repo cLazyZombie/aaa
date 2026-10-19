@@ -5484,8 +5484,46 @@ primary 근거:
 
 - **통합 시험 준비 경계.** 함께 착지한 OSC 52 시험이 attach 시작 직후 첫 입력을 보내 `echo`의 첫 글자가 빠진 기록을 보존했다. 복사 동작·기대값은 바꾸지 않고 기존 TUI 시험과 같은 첫 셸 화면/host 입력권 사건 뒤에 입력하게 한다. 고정 대기나 재시도로 넘기지 않는다.
 
+### 8.230 Codex 중간 설명 출력 중 idle 오표시(10-19, t-0383, D8 운영 회귀)
 
-### 8.230 입력줄 상태에 따른 Ctrl+Enter(10-19, t-0384, D1·D7 후속)
+- **실제 기록.** 진단 반영 이후 세 agent 로그와 host 적용 로그를 대조했다. 11:16:22 KST의 working→idle 상태 사건을 읽기 전용으로 구독해 즉시 감지 화면을 확보했다. 화면은 중간 설명 `• 회귀 시험에서`를 출력하며 Working 줄이 없었다. 같은 Codex 턴에는 시작 뒤 종료 사건이 없었다. 감지는 osc_title_idle, host는 그 idle을 그대로 적용했다. 원래 09:24:52 사건은 당시 프레임이 없어 이 원인으로 소급 확정하지 않는다.
+- **원인·참고.** 해당 세션은 animations=false이며 실제 OSC 제목에는 작업 표시가 없고 OSC progress도 비었다. herdr 0.9.5 `src/detect/manifests/codex.toml`의 일반 제목 idle 규칙과 `pane/agent_detection.rs`의 visible_idle 즉시 적용도 같은 구멍이 있다. Codex [rust-v0.163.0 chatwidget.rs](https://github.com/openai/codex/blob/rust-v0.163.0/codex-rs/tui/src/chatwidget.rs)는 commentary streaming 중 상태 줄을 숨긴다. 같은 판 `chatwidget/status_surfaces.rs`의 `run_state_status_text`는 애니메이션과 별개로 Starting/Working/Thinking/Waiting/Ready를 제공한다. herdr-web-ui `server/pane-status.ts`는 감지 결과를 소비하며, t3code `CodexAdapterV2.ts`는 명시적 turn 사건을 쓴다. D8대로 hook·transcript를 상태 정본으로 바꾸지 않고 기존 OSC 제목 감지를 보완한다.
+- **수리·차이.** aaa가 띄우는 Codex의 실행·재개·저장된 spec 재실행에 세션 한정 `-c tui.terminal_title=["run-state","activity","project-name"]`를 준다. 사용자 파일·notify·animations는 고치지 않는다. activity도 포함해 기존 Action Required 제목을 유지한다. 사용자 CLI의 앞선 제목 설정보다 나중에, `--` prompt 앞에 한 번만 둔다. Codex manifest는 2026.10.19.1로 기록하고 명시적 실행 상태를 기존 osc_title_working에서 읽는다. herdr의 나머지 감지·idle 확인 시간·host 전이는 유지한다.
+- **검증.** Watch의 실제 Detect 응답 경계에 운영 화면의 최소 재현을 넣었다. 수정 전 중간 설명에서 idle 발생으로 RED, 수정 후 작업 유지·Ready의 idle·Action Required의 question을 검사한다. 기존 실행·재개·최종 spawn 시험은 제목 옵션·사용자 notify·wrapper·명시적 옵션·`--` 경계를 함께 확인한다. 고정 sleep·상태 polling·새 시험용 production seam은 없다.
+- **통합 검사에서 발견한 TUI 시작 입력 유실.** `osc52_copy_reports_a_request`는 TUI가 첫 layout을 받기 전에 입력해 `echo`의 첫 글자를 잃었다. 기존 TUI 시험처럼 이름 있는 탭과 pane을 그린 출력 사건(Condvar), host 입력권 사건을 기다린 뒤 입력한다. 제품도 최초 Workspace 요청을 단순 pending에만 넣어 포커스가 없는 동안 키를 버릴 수 있었다. 기존 `await_layout`에 등록해 workspace 전환과 같은 `focus_wait`·`held` 보류/재생 경로를 쓴다. herdr client의 `initial_host_input` 보존과 같은 목적이며 새 buffer·시험 전용 seam·고정 sleep은 없다. 초기 TTY 설정 이전 입력까지 보장한다는 뜻은 아니다. 사용자가 이 별도 실패도 직접 수리하도록 범위를 명시했다.
+- **운영 반영.** 새 agent binary로 새로 띄우거나 재개한 Codex부터 제목 설정이 적용된다. 이미 실행 중인 Codex는 host·agent만 다시 시작해도 argv가 바뀌지 않는다. 기존 세션의 재개 시점은 coordinator가 정한다. 운영 프로세스·설정·상태 폴더는 이 작업에서 수정하지 않았다.
+
+
+### 8.231 TUI 확장 Enter와 Windows Terminal 그림 붙여넣기(10-19, t-0385)
+
+- **원인.** TUI는 모든 Enter를 CR로 만들어 수정키를 버렸고, Unix 바깥 터미널에 확장 키도 요청하지 않았다.
+  crossterm 0.29는 kitty CSI u는 읽지만 xterm modifyOtherKeys의 `CSI 27;modifier;Unicode~`는 버렸다.
+  Windows에서는 bracketed paste를 일부러 끄고 있었다. Windows Terminal은 Ctrl+V를 자신의 paste로 처리하고,
+  그림-only clipboard의 빈 입력은 bracketed paste를 요청한 앱에만 알린다. 과거 입력 로그는 bytes 개수만 있어
+  특정 운영 키를 소급 확정할 수 없으며, 수정 전 PTY 재현에서는 modifyOtherKeys 두 키가 도착하지 않았다.
+- **참고.** herdr 0.9.5 `client/terminal_setup.rs`의 확장 키 요청·종료 복원과
+  `input/model.rs::ime_compatible_keyboard_enhancement_flags`를 따른다. 모든 글자를 escape로 바꾸는 flag는 켜지 않는다.
+  Windows 입력은 `client/input/windows_vti.rs`의 콘솔 key record→붙여넣기 복원을 따른다.
+  t3code는 웹 composer이므로 OS 터미널 입력 파서에 해당하는 경로는 없다.
+  그림-only paste 근거는 Microsoft Terminal `TerminalPage::_PasteFromClipboardHandler`다.
+- **수리.** crossterm 0.29를 MIT 고지와 함께 vendor에 두고 위 두 입력 파서를 보완했다(변경 목록은
+  `vendor/crossterm/AAA.md`). Windows 콘솔은 key-down/up·UTF-16·분할 표지·빈 paste를 복원하며,
+  표지가 아닌 Escape는 원래 키로 돌려준다. Escape 구분 시한은 입력 프로토콜용이며 시험은 주어진 시계로 검사한다.
+  Windows도 bracketed paste를 켜므로 Ctrl+V 그림은 기존 PNG 첨부 경로로 간다. 사용자 Terminal 설정은 바꾸지 않는다.
+  Unix는 kitty와 modifyOtherKeys를 요청하고 끝날 때 복원한다. Shift+Enter 및 판정을 모를 때의 안전한 줄바꿈 bytes는
+  Claude의 공식 `chat:newline`과 Codex 0.163 `keymap.rs::editor.insert_newline`이 공통 지원하는 Ctrl+J(LF)다.
+- **사용자 추가 결정.** Ctrl+Enter의 최종 동작은 「agent 입력줄에 글이 있거나 알 수 없으면 줄바꿈, 비었으면 steering」이다.
+  화면 판정·harness steering 키는 웹 작업의 공통 backend owner가 맡는다. 이 절의 입력 파서가 키를 보존한 뒤 TUI는
+  같은 backend 요청을 사용하며, TUI 안에 별도 입력줄 판정이나 harness 키 표를 만들지 않는다.
+- **검증.** 수정 전 Windows 키 인코더와 실제 PTY 경계가 실패했다. 수정 후 kitty/xterm 네 Enter의 LF 및 보통 Enter의 CR,
+  확장 키 모드 복원, 기존 Ctrl+V·빈 paste의 실제 PNG 저장을 검사했다. 빈 paste를 버리는 변형도 실패했다.
+  Windows Rust target의 TUI·vendored parser 시험 교차 컴파일을 통과했다. Windows 실행은 CI 결과로 별도 확인한다.
+  새 시험은 신호·실제 clipboard·고정 sleep을 쓰지 않는다.
+
+- **종료 순서 검토.** 독립 리뷰에서 kitty 스택이 화면별이라는 점을 확인했다. 정상 종료는 alternate screen을 떠나기 전에 pop하고, panic hook도 ratatui의 화면 복원보다 먼저 한 번만 pop한다. 화면별 스택 E2E와 격리한 자식 프로세스의 panic hook 순서 시험이 수정 전 실패·수정 후 통과했다.
+
+
+### 8.232 입력줄 상태에 따른 Ctrl+Enter(10-19, t-0384, D1·D7 후속)
 
 사용자 결정: 웹 터미널과 TUI의 agent pane에서 입력줄에 글이 있으면 줄바꿈, 비었으면 harness steering을 한다. 감지로 판정하지 못하면 줄바꿈이다. front가 입력줄을 각각 읽지 않고 `FrontRequest::PaneCtrlEnter { pane }`로 host에 요청한다. TUI의 물리 키 연결은 t-0385가 맡는다.
 

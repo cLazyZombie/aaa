@@ -128,6 +128,7 @@ fn attach(rt: &tokio::runtime::Runtime, workspace: Option<String>, client: Front
         let _focus = FocusReport::on();
         // 붙여넣기를 한 덩이로 받는다(herdr client `EnableBracketedPaste`): 끌어 놓은 파일 경로와 여러 줄 글을 낱 키와 가른다
         let _paste = BracketedPaste::on();
+        let keyboard = KeyboardReport::on();
         // 마우스 보고는 App이 설정대로 켠다. 끝날 때(panic도) 끈다.
         let _mouse = MouseOff;
         let mut app =
@@ -136,6 +137,7 @@ fn attach(rt: &tokio::runtime::Runtime, workspace: Option<String>, client: Front
         app.reader = reader;
         app.apply_config(&cfg);
         let r = app.run(&mut terminal, client).await;
+        keyboard.off();
         ratatui::restore();
         r
     })?;
@@ -170,21 +172,84 @@ fn paste_request(host_minor: u16, pane: String, text: String) -> FrontRequest {
 }
 
 /// 바깥 터미널의 bracketed paste(`CSI ? 2004 h`)를 켜고, 이 값이 사라질 때(정상·오류·panic 종료) 끈다.
-/// Windows 콘솔은 crossterm이 붙여넣기를 사건으로 주지 않는다(표지가 낱 키로 와 pane에 들어간다): 켜지 않는다.
+/// Windows 콘솔의 표지도 vendored crossterm이 Paste로 복원한다.
 struct BracketedPaste;
 
 impl BracketedPaste {
     fn on() -> BracketedPaste {
-        #[cfg(not(windows))]
-        let _ = crossterm::execute!(std::io::stdout(), crossterm::event::EnableBracketedPaste);
+        if outer_vt() {
+            let _ = crossterm::execute!(std::io::stdout(), crossterm::event::EnableBracketedPaste);
+        }
         BracketedPaste
     }
 }
 
 impl Drop for BracketedPaste {
     fn drop(&mut self) {
+        if outer_vt() {
+            let _ = crossterm::execute!(std::io::stdout(), crossterm::event::DisableBracketedPaste);
+        }
+    }
+}
+
+/// herdr terminal_setup·ime_compatible_keyboard_enhancement_flags: Unix의 수정 Enter를
+/// 구분하고 IME는 일반 글자로 둔다. Windows는 원래 콘솔 KEY_EVENT_RECORD의 수정키를 쓴다.
+struct KeyboardReport {
+    #[cfg(not(windows))]
+    restored: std::sync::Arc<std::sync::atomic::AtomicBool>,
+}
+
+impl KeyboardReport {
+    fn on() -> Self {
+        let report = Self {
+            #[cfg(not(windows))]
+            restored: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
+        };
         #[cfg(not(windows))]
-        let _ = crossterm::execute!(std::io::stdout(), crossterm::event::DisableBracketedPaste);
+        {
+            use crossterm::event::{KeyboardEnhancementFlags as F, PushKeyboardEnhancementFlags};
+            use std::io::Write;
+            let mut out = std::io::stdout();
+            let _ = out.write_all(b"\x1b[>4;2m");
+            let _ = crossterm::execute!(
+                out,
+                PushKeyboardEnhancementFlags(
+                    F::DISAMBIGUATE_ESCAPE_CODES | F::REPORT_EVENT_TYPES | F::REPORT_ALTERNATE_KEYS
+                )
+            );
+        }
+        #[cfg(not(windows))]
+        {
+            // ratatui의 panic hook은 unwind 전에 화면을 복원한다. 그 hook보다 먼저
+            // 같은 화면의 keyboard stack을 한 번만 pop한다.
+            let previous = std::panic::take_hook();
+            let cleanup = Self { restored: report.restored.clone() };
+            std::panic::set_hook(Box::new(move |info| {
+                cleanup.off();
+                previous(info);
+            }));
+        }
+        report
+    }
+
+    fn off(&self) {
+        #[cfg(not(windows))]
+        {
+            if self.restored.swap(true, std::sync::atomic::Ordering::AcqRel) {
+                return;
+            }
+            use std::io::Write;
+            let mut out = std::io::stdout();
+            let _ = crossterm::execute!(out, crossterm::event::PopKeyboardEnhancementFlags);
+            let _ = out.write_all(b"\x1b[>4;0m");
+            let _ = out.flush();
+        }
+    }
+}
+
+impl Drop for KeyboardReport {
+    fn drop(&mut self) {
+        self.off();
     }
 }
 
@@ -641,7 +706,8 @@ impl App {
     async fn run(mut self, terminal: &mut ratatui::DefaultTerminal, client: FrontClient) -> Result<()> {
         let (mut tx, mut rx) = client.split();
         let id = tx.send(FrontRequest::Workspace { name: Some(self.ws_name.clone()) }).await?;
-        self.pending.insert(id, Pending::Report("workspace 읽기"));
+        // 처음 붙을 때도 layout이 오기 전에는 포커스가 없다. 전환 때처럼 먼저 친 입력을 붙잡는다.
+        self.await_layout(&self.ws_name.clone(), id, Pending::Report("workspace 읽기"));
         let id = tx.send(FrontRequest::Workspaces).await?;
         self.pending.insert(id, Pending::Spaces);
         let id = tx.send(FrontRequest::Threads { project: None, role: None }).await?;
@@ -3231,6 +3297,29 @@ fn find_in_direction(cur: Rect, dir: Dir, panes: &[(String, Rect)]) -> Option<St
 
 #[cfg(test)]
 mod tests {
+    /// 프로세스 전체 panic hook을 쓰므로 자식 시험 프로세스 하나에 격리한다.
+    #[cfg(unix)]
+    #[test]
+    fn keyboard_cleanup_precedes_panic_restore() {
+        if std::env::var_os("AAA_TEST_KEYBOARD_PANIC_CHILD").is_some() {
+            std::panic::set_hook(Box::new(|_| {
+                let _ = crossterm::execute!(std::io::stdout(), crossterm::terminal::LeaveAlternateScreen);
+            }));
+            let _keyboard = super::KeyboardReport::on();
+            panic!("keyboard cleanup probe");
+        }
+        let out = std::process::Command::new(std::env::current_exe().unwrap())
+            .args(["--exact", "tests::keyboard_cleanup_precedes_panic_restore", "--nocapture"])
+            .env("AAA_TEST_KEYBOARD_PANIC_CHILD", "1")
+            .output()
+            .unwrap();
+        assert!(!out.status.success(), "panic 자식이 성공했다");
+        let stdout = String::from_utf8(out.stdout).unwrap();
+        let pop = stdout.find("\x1b[<1u").expect("keyboard pop이 없다");
+        let leave = stdout.find("\x1b[?1049l").expect("panic 화면 복원이 없다");
+        assert!(pop < leave, "화면을 떠난 뒤 키 모드를 지웠다: {stdout:?}");
+    }
+
     use super::*;
 
     fn r(x: u16, y: u16, w: u16, h: u16) -> Rect {

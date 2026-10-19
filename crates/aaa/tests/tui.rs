@@ -55,6 +55,10 @@ sidebar_width = 26
 /// 바탕색은 herdr처럼 색으로만 보이는 사이드바의 고른 줄·지금 줄을 찾는 데 쓴다. 링크 칸은 실제 터미널처럼 OSC 8이 열린
 /// 동안 찍은 칸이 그 uri를 갖고, 열리지 않은 채 찍거나 지운 칸은 잃는다.
 struct Screen {
+    /// 바깥 터미널이 요청받은 확장 키 모드(kitty·xterm).
+    keyboard: Vec<u16>,
+    left_keyboard: Vec<u16>,
+    modify_other_keys: u16,
     /// 켜 둔 DEC 개인 모드(`CSI ? n h`): 마우스 보고(1000·1002·1003·1006) 등
     modes: std::collections::BTreeSet<u16>,
     cells: Vec<Vec<char>>,
@@ -80,11 +84,15 @@ struct Saved {
     links: Vec<Vec<Option<String>>>,
     row: usize,
     col: usize,
+    keyboard: Vec<u16>,
 }
 
 impl Screen {
     fn new(cols: u16) -> Screen {
         Screen {
+            keyboard: vec![8],
+            left_keyboard: Vec::new(),
+            modify_other_keys: 0,
             modes: Default::default(),
             cells: vec![vec![' '; cols as usize]; ROWS as usize],
             bgs: vec![vec![0; cols as usize]; ROWS as usize],
@@ -281,6 +289,17 @@ impl vte::Perform for Screen {
     }
 
     fn csi_dispatch(&mut self, params: &vte::Params, inter: &[u8], _ignore: bool, action: char) {
+        let first = params.iter().next().map_or(0, |p| p[0]);
+        match (inter, action) {
+            (b">", 'u') => self.keyboard.push(first),
+            (b"<", 'u') => {
+                self.keyboard.pop();
+            }
+            (b">", 'm') if first == 4 => {
+                self.modify_other_keys = params.iter().nth(1).map_or(0, |p| p[0]);
+            }
+            _ => {}
+        }
         if inter == b"?" && matches!(action, 'h' | 'l') {
             for m in params.iter().map(|x| x[0]) {
                 if action == 'h' {
@@ -293,11 +312,13 @@ impl vte::Perform for Screen {
                     let cells = std::mem::replace(&mut self.cells, blank.0);
                     let bgs = std::mem::replace(&mut self.bgs, blank.1);
                     let links = std::mem::replace(&mut self.links, vec![vec![None; self.cols]; ROWS as usize]);
-                    self.main = Some(Saved { cells, bgs, links, row: self.row, col: self.col });
+                    let keyboard = std::mem::take(&mut self.keyboard);
+                    self.main = Some(Saved { cells, bgs, links, row: self.row, col: self.col, keyboard });
                 } else if m == 1049
                     && action == 'l'
-                    && let Some(Saved { cells, bgs, links, row, col }) = self.main.take()
+                    && let Some(Saved { cells, bgs, links, row, col, keyboard }) = self.main.take()
                 {
+                    self.left_keyboard = std::mem::replace(&mut self.keyboard, keyboard);
                     (self.cells, self.bgs, self.links, self.row, self.col) = (cells, bgs, links, row, col);
                 }
             }
@@ -960,6 +981,52 @@ fn herdr_keys_and_modes() {
     tui.wait_text("기본 prefix", |s| s.contains(" PREFIX ") && s.contains("ctrl+b prefix 보내기"));
     tui.send(b"q");
     assert!(tui.wait_exit());
+}
+
+/// crossterm 파서 → TUI → host → agent → PTY의 실제 bytes. Ctrl/Shift+Enter는
+/// kitty CSI u와 xterm modifyOtherKeys 어느 쪽으로 와도 Ctrl+J(LF), 보통 Enter는 CR이다.
+#[test]
+fn modified_enter_inserts_newline() {
+    let mut lab = Lab::new();
+    let (h, mut hw) = start(&mut lab);
+    let probe = lab.root.join("keys.py");
+    std::fs::write(
+        &probe,
+        r#"import os, termios, tty
+saved = termios.tcgetattr(0)
+try:
+    tty.setraw(0)
+    print('key-probe-ready', flush=True)
+    data = b''
+    while len(data) < 9:
+        data += os.read(0, 9 - len(data))
+finally:
+    termios.tcsetattr(0, termios.TCSANOW, saved)
+print('key-bytes:' + data.hex(), flush=True)
+input()
+"#,
+    )
+    .unwrap();
+    let w =
+        h.ok(&["tab", "create", "--machine", "labA", "--label", "newline", "--", "python3", probe.to_str().unwrap()]);
+    let pane = leaves(&w)[0].clone();
+    let mut tui = Tui::start(&h);
+    hw.wait("TUI 크기", |w| w.held_by(&pane, "tui@").then_some(()));
+    tui.wait_text("키 수신 준비", |s| s.contains("key-probe-ready"));
+    tui.send(b"a\x1b[13;5ub\x1b[13;2uc\x1b[27;5;13~d\x1b[27;2;13~\r");
+    tui.wait_text("PTY가 받은 키", |s| s.contains("key-bytes:"));
+    assert!(tui.text().contains("key-bytes:610a620a630a640a0d"), "{}", tui.text());
+    if let Some(path) = std::env::var_os("AAA_TUI_NEWLINE_DUMP") {
+        std::fs::write(path, tui.text()).unwrap();
+    }
+    tui.wait_screen("확장 키 모드 요청", |s| {
+        s.keyboard.last().is_some_and(|f| f & 1 != 0 && f & 8 == 0) && s.modify_other_keys == 2
+    });
+    tui.cmd("q");
+    assert!(tui.wait_exit());
+    tui.wait_screen("확장 키 모드 복원", |s| {
+        s.keyboard == [8] && s.left_keyboard.is_empty() && s.modify_other_keys == 0
+    });
 }
 
 /// agent 알림 카드(herdr 0.9.5 `notification_policy.rs`·`render_notification_card`, plan §8.185): 보는 화면 없이 다른 agent의
@@ -1916,12 +1983,12 @@ fn mouse_like_herdr() {
 fn osc52_copy_reports_a_request() {
     let mut lab = Lab::new();
     let (h, mut hw) = start(&mut lab);
-    let ws = h.ok(&["tab", "create", "--machine", "labA", "--", "/bin/sh"]);
+    let ws = h.ok(&["tab", "create", "--machine", "labA", "--label", "copy", "--", "/bin/sh"]);
     let pane = leaves(&ws)[0].clone();
     // SSH 경로는 시스템 clipboard에 닿지 않는다.
     let mut tui = Tui::start_env(&h, &[("SSH_TTY", "/dev/test-terminal")]);
-    // 첫 입력은 attach의 셸 화면과 입력권 사건 뒤에 보낸다(다른 TUI 입력 시험과 같은 경계).
-    tui.wait_text("셸 첫 화면", |s| tab_chips(s) == ["1"] && s.contains('$'));
+    // 다른 TUI 입력 시험처럼 첫 셸 화면과 host 입력권 사건 뒤에 입력한다.
+    tui.wait_text("첫 화면", |s| tab_chips(s) == ["copy"] && s.contains(" · copy labA") && s.contains('$'));
     hw.wait("이 화면 입력권", |w| w.held_by(&pane, "tui@").then_some(()));
     tui.type_line("echo copy-$((42))");
     let at = tui.wait_find("copy-42");
@@ -2986,20 +3053,25 @@ fn ctrl_v_pastes_clipboard_image() {
         Some(c) => c.set_image(arboard::ImageData { width: 3, height: 2, bytes: rgba.as_slice().into() }).unwrap(),
         None => std::fs::write(&fake, encode_rgba(3, 2, &rgba)).unwrap(),
     }
-    tui.type_line("clear; echo cleared-$((2+2))");
-    tui.wait_text("화면 지움", |s| s.contains("cleared-4"));
-    tui.send(b"\x16");
-    tui.wait_text("경로 표시", |s| s.contains("그림 경로를 넣었다"));
-    let files = attachments(&h.state);
-    assert_eq!(files.len(), 1, "{files:?}");
-    assert!(files[0].extension().is_some_and(|e| e == "png"), "{files:?}");
-    assert_eq!(decode_rgba(&std::fs::read(&files[0]).unwrap()), (3, 2, rgba.clone()), "대상 머신 그림의 pixel");
-    let line: String = h.screen(&id).replace('\n', "");
-    let quoted = format!("'{}' ", files[0].display());
-    assert!(line.contains(quoted.trim_end()), "셸 줄에 따옴표 경로가 없다: {line}");
-    // Enter가 없었으니 셸은 실행하지 않았다. 그 줄을 지운다.
-    assert!(!line.contains("Permission denied") && !line.contains("not found"), "{line}");
-    tui.send(b"\x15");
+    for (index, trigger) in [b"\x16".as_slice(), b"\x1b[200~\x1b[201~"].into_iter().enumerate() {
+        let before = attachments(&h.state);
+        tui.type_line(&format!("clear; echo cleared-$((4+{index}))"));
+        let marker = format!("cleared-{}", 4 + index);
+        tui.wait_text("화면 지움", |s| s.contains(&marker));
+        // Windows Terminal의 그림-only Ctrl+V는 빈 bracketed paste다. 직접 온 Ctrl+V도 유지한다.
+        tui.send(trigger);
+        tui.wait_text("경로 표시", |s| s.contains("그림 경로를 넣었다"));
+        let files = attachments(&h.state);
+        assert_eq!(files.len(), before.len() + 1, "{files:?}");
+        let file = files.iter().find(|p| !before.contains(p)).unwrap();
+        assert!(file.extension().is_some_and(|e| e == "png"), "{files:?}");
+        assert_eq!(decode_rgba(&std::fs::read(file).unwrap()), (3, 2, rgba.clone()), "대상 머신 그림의 pixel");
+        let line: String = h.screen(&id).replace('\n', "");
+        let quoted = format!("'{}' ", file.display());
+        assert!(line.contains(quoted.trim_end()), "셸 줄에 따옴표 경로가 없다: {line}");
+        assert!(!line.contains("Permission denied") && !line.contains("not found"), "{line}");
+        tui.send(b"\x15");
+    }
     drop(clip);
 
     // 3) 여러 조각(1.2MB)을 `aaa pane attach`로 올린다. TUI가 쓰는 중이어도 되고, 한 번 보내는 CLI라
@@ -3022,7 +3094,7 @@ fn ctrl_v_pastes_clipboard_image() {
     let r: serde_json::Value =
         serde_json::from_str(&h.json(&["pane", "attach", &id, txt.to_str().unwrap()]).unwrap_err()).unwrap();
     assert!(r["error"]["message"].as_str().is_some_and(|m| m.contains("PNG·JPEG·GIF·WebP")), "{r}");
-    assert_eq!(attachments(&h.state).len(), 2);
+    assert_eq!(attachments(&h.state).len(), 3);
 }
 
 /// 붙여넣기와 그림 파일 끌어놓기(차이 목록 4E, herdr client `EnableBracketedPaste`·`read_image_file_from_terminal_drop`,

@@ -226,6 +226,19 @@ web/e2e/specs/NN-기능.mjs  기능별 단계(01-http-pwa … 19-turn-alerts). e
 
 m13 `coordinator_deployment_is_gated_and_survives_backend_restarts`는 별도 실행 파일 사본과 TLS agent에서 기본 차단·사람의 safety 허용/철회·coordinator ID 위장·env를 지운 worker 차단·실제 교체/rollback·host/자기 agent 재시작 뒤 동일 pane PID와 결과 조회를 확인한다. probe는 파일 기록 뒤 고유 출력 표지로 끝낸다. macOS에서는 격리 HOME/PATH의 launchctl 모형으로 typed host/원격 agent restart와 실패의 영구 기록을 확인한다. 운영 launchd에는 닿지 않는다. agent `deploy::tests`는 같은 ID 중복·동시 작업·다른 요청 충돌·중단 복구/실행기 중복 잠금/SHA 불일치를 담당한다. 기존 update E2E가 public release hash·self-check·pin·rename을 계속 소유한다.
 
+## TUI 확장 Enter와 Windows 붙여넣기(§8.231)
+
+- `cargo test --locked -p aaa --test tui modified_enter_inserts_newline`: 실제 crossterm 파서·TUI·host·agent·PTY에서
+  kitty CSI u와 xterm modifyOtherKeys Ctrl/Shift+Enter의 줄바꿈, 보통 Enter, 확장 키 모드 요청·종료 복원을 본다.
+  독립 raw PTY 관측기가 받은 bytes를 출력 사건으로 기다린다. 입력줄 비움 판정·steering owner와 별개로 키 전송 경계를 지킨다.
+- 기존 `ctrl_v_pastes_clipboard_image`는 직접 Ctrl+V와 Windows Terminal의 빈 bracketed paste를 같은 경계에서 본다.
+  실제 대상 파일의 pixels·따옴표 경로·Enter 없음·조각 업로드를 유지한다. 개발 머신 clipboard는 파일 fixture로 대체한다.
+- `cargo test --manifest-path vendor/crossterm/Cargo.toml --locked --lib aaa_`는 Windows 콘솔 표지의 UTF-16·빈 paste·
+  key-up·단독 Escape·잘못된 표지를 세 OS에서 본다. Windows에서는 native KEY_EVENT_RECORD의 수정 Enter·합성 제어키도 본다.
+  공식 ci-local test 단계에 포함되어 있으며 OS 프로세스·clipboard·신호를 쓰지 않는다.
+
+- `cargo test --locked -p aaa-tui keyboard_cleanup_precedes_panic_restore`는 자식 시험 프로세스에 panic hook을 격리해 keyboard pop이 화면 복원보다 먼저 한 번만 실행되는지 본다. 위 PTY 시험은 main/alternate 키 스택을 따로 유지하고 원래 main 모드가 보존되는지도 본다.
+
 ### Ctrl+Enter 공통 판정
 
 `aaa-host/src/ctrl_enter.rs`의 유닛 시험이 입력 상자 스타일과 현재 steering 패널을 판정한다. `web/e2e/specs/25-ctrl-enter.mjs`는 실제 host·agent·PTY로 전달된 bytes를 출력 사건으로 확인하며 웹 물리 키·모바일 키 막대·입력줄·IME·반복 키의 연결을 본다. 셸 등 일반 프로그램의 키보드 모드는 기존 `03-keys.mjs`가 소유한다. TUI도 `FrontRequest::PaneCtrlEnter`를 사용해 같은 host 판정을 거친다.
