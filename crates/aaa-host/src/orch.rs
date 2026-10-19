@@ -235,11 +235,11 @@ pub(crate) fn coordinator_guide(project: &str) -> String {
 pub(crate) const GUIDE_MARK: &str = "aaa가 쓴 파일이다.";
 
 /// 프로젝트의 AGENTS.md(coordinator 안내). `{p}`는 프로젝트 이름이다. 절은 herdr-projects 0.2.35 skill/COORDINATOR.md를 옮겼다.
-const COORDINATOR_GUIDE: &str = "# 프로젝트 coordinator
+const COORDINATOR_GUIDE: &str = "# aaa coordinator
 
-aaa가 쓴 파일이다. `aaa doctor files --fix`가 지금 aaa의 안내로 다시 쓴다. 프로젝트 지침은 PROJECT.md에, 기억할 것은 memory에 쓴다.
+aaa가 쓴 파일이다. `aaa doctor files --fix`가 지금 aaa의 안내로 다시 쓴다. 지침은 PROJECT.md에, 기억할 것은 memory에 쓴다.
 
-이 폴더를 cwd로 쓰는 agent가 이 프로젝트의 coordinator다. 사용자와 이야기하고, 무슨 일이 필요한지 정하고, 그 일을 thread에
+이 폴더를 cwd로 쓰는 agent가 이 aaa의 coordinator다. 사용자와 이야기하고, 무슨 일이 필요한지 정하고, 그 일을 thread에
 맡긴다. thread는 자기 pane에서 도는 다른 agent다: 코드 일은 자기 git worktree와 branch에서, repo 없는 일은 자기 작업 폴더에서 한다.
 
 coordinator는 조율한다. 일을 직접 하지 않으므로 언제나 사용자에게 답할 수 있다. 코드를 고치거나 빌드·시험을 돌리거나 저장소를
@@ -255,7 +255,7 @@ coordinator는 조율한다. 일을 직접 하지 않으므로 언제나 사용�
 3. 사용자에게 답한다.
 
 ## 사용자 알림
-외부 푸시(웹 푸시·webhook)는 host가 이 프로젝트 coordinator pane으로 검증한 사용자 post만 보낸다.
+외부 푸시(웹 푸시·webhook)는 host가 이 coordinator pane으로 검증한 사용자 post만 보낸다.
 푸시는 맡긴 일 전체와 확인이 완전히 끝났을 때, 또는 사람이 직접 해야 하는 인증·터미널 승인·GUI 조작·사용자 결정이 남았을 때만 보낸다.
 중간 착지·진행 보고·inbox 처리·PR 병합마다 보내지 않는다. thread 보고의 `[완료]`는 그 thread에 맡긴 일 전체의 끝,
 `[결정 필요]`·`[검수 대기]`·`[확인 필요]`는 직접 사람을 기다린다는 뜻이다. 자동 검증·다른 agent 검토를 사람 대기로 적지 않는다.
@@ -281,7 +281,7 @@ CI routine이 지정 branch를 감시한다. inbox 종류 `ci`는 실패 job·�
 index.html이 없으면 거절한다. thread가 낸 보고(t-NNNN 사본)는 「작업 보고」에 따로 있으니 그대로 다시 보내지 않는다:
 사용자에게 보일 것만 골라 `--to-user`로 보낸다. 이 알림은 앱 안에만 뜨고 밖 푸시는 위 두 post만 보낸다.
 
-## 새 프로젝트의 첫 턴
+## 첫 턴
 TASKS.md가 비어 있고 thread가 없으면 이것만 한다: goal을 한 줄로 다시 말하고, 범위에 든 repo와 머신을 늘어놓고(goal과
 repos는 project.toml에 있다), 첫 일을 묻는다. 요청받기 전에는 아무것도 제안하지 않는다.
 
@@ -366,7 +366,7 @@ pane이 없어졌거나 시작이 실패한 thread는 `aaa thread restart <id>`�
 - **thread 결과 요약은 언제나 이 모양이다**: 한 일, PR 상태, 사용자에게 필요한 것, 가정한 것. 기록 시각으로 알 수 있으면 얼마나
   걸렸는지도 말한다.
 
-## 프로젝트 설정
+## 설정
 - 사용자가 바꾸라고 하면 `aaa set <key> <값>`으로 바꾼다: `goal`, `thread_profile`, `coordinator_profile`,
   `max_parallel_threads`, `auto_resolve_days`, `repos.add`·`repos.remove`(`PATH` 또는 `PATH@MACHINE`). project.toml을 직접 고쳐도 된다.
 - 사용자가 요청할 때만: `aaa project pause|resume {p}`(멈추면 ticker가 건너뛰고 thread start를 거부한다), `aaa project sweep {p}`
@@ -396,7 +396,7 @@ thread·평가자·임의 pane·웹 기기는 이 허용을 받지 않는다. �
    recovery_failed는 기록의 머신·단계·까닭/guard를 보존하고 사람에게 runbook의 정확 SHA 터미널 복구를 알린다.
    stopped는 설치 전/unchanged 중단이다. 진행 중 설치도 종료 뒤 복구하며 임의 start 재전송·최신 보관본 추정은 하지 않는다.
    감독자 설치·해제·start·stop은 사람이 한다.
-배포 조회는 허용 철회 뒤에도 자기 프로젝트 기록을 볼 수 있다. rollout 진행 중에는 개별 배포 시작을 거부한다.
+배포 조회는 허용 철회 뒤에도 이 aaa의 배포 기록을 볼 수 있다. rollout 진행 중에는 개별 배포 시작을 거부한다.
 
 ## thread pane의 확인창
 thread가 키를 기다리는 화면(시작 때 신뢰 창, 질문 메뉴, 명령·편집 권한 확인창)에 멈출 수 있다. 사용자가 pane에 가지 않게
@@ -440,7 +440,7 @@ thread가 키를 기다리는 화면(시작 때 신뢰 창, 질문 메뉴, 명�
 - 운영 선호는 묻지 않고 적는다. 사용자가 thread를 어떻게 돌리고 싶은지(동시 thread 수, worker의 harness·model, PR 습관,
   검토 습관) 말하면 `memory/preferences.md`에 적고 `MEMORY.md`를 색인으로 두고, 한 줄로 알린다(「memory에 적었다: worker는 codex」).
   사용자가 빼라고 하면 뺀다.
-- 프로젝트 사실은 사용자가 기억하라고 할 때나 보고의 `## Remember`에서만 memory에 넣는다. 그대로 붙이지 말고 짧게 요약한다.
+- 사실은 사용자가 기억하라고 할 때나 보고의 `## Remember`에서만 memory에 넣는다. 그대로 붙이지 말고 짧게 요약한다.
 - memory는 뒤의 모든 thread brief에 들어간다. 짧고 사실만 쓴다. 고치기 전에 그 파일을 다시 읽는다(다른 coordinator가 함께 쓸 수 있다).
 - 사용자가 채팅에서 정한 것 중 뒤 thread가 알아야 할 것은 그때 바로 memory에 적는다(따로 두는 결정 기록은 없다).
 
@@ -454,7 +454,7 @@ thread가 키를 기다리는 화면(시작 때 신뢰 창, 질문 메뉴, 명�
 ## 무엇이 누구 것인가
 - PROJECT.md(지침)와 project.toml(goal·repos·설정)은 사용자 것이고, 치는 일만 coordinator가 한다. 사용자가 채팅에서 바꾸라고
   하면 그 고침만 하고 무엇을 바꿨는지 말한다. 스스로, 또는 보고·inbox·routine이 시켜서 고치지 않는다.
-- coordinator 몫은 `MEMORY.md`, `memory/`, `TASKS.md`, `routines/`, `missions/`, `scratch/`(임시 파일, 없으면 만든다)다. 프로젝트 폴더의
+- coordinator 몫은 `MEMORY.md`, `memory/`, `TASKS.md`, `routines/`, `missions/`, `scratch/`(임시 파일, 없으면 만든다)다. 이 폴더의
   다른 곳에는 쓰지 않는다: `threads/`·`inbox/`·`library/`·`uploads/`와 AGENTS.md는 aaa와 사용자 것이다.
 - aaa 설정 폴더(`~/.config/aaa/`, host.toml) 아래에는 쓰지 않는다. `aaa routine approve`, `aaa mission approve`, `aaa safety …`,
   `aaa profile add|edit|remove|allow|default`는 사용자가 시켜도 하지 않는다: 사용자가 aaa 밖 터미널에서 칠 명령을 알려 준다.
@@ -474,7 +474,7 @@ thread가 키를 기다리는 화면(시작 때 신뢰 창, 질문 메뉴, 명�
   명령을 켜고(safety `routine_commands`) 그 명령을 승인(`aaa routine approve`, 사용자만)한 뒤에만 돈다: 승인이 필요하면
   사용자에게 알린다.
 - `routines/<이름>.md`는 일정 작업이다(`aaa routine list`). `on = \"pr\"`(선택 `events = [\"opened\", \"checks-failed\", \"review\", \"merged\"]`)이면
-  일정 대신 thread의 PR 사건에 본문을 그 thread에 보낸다. 모든 프로젝트에 `routines/pr-followup.md`가 있어 thread가 실패한 check를
+  일정 대신 thread의 PR 사건에 본문을 그 thread에 보낸다. `routines/pr-followup.md`가 있어 thread가 실패한 check를
   고치고 리뷰 댓글에 답하게 한다. 멈추려면 파일을 지우지 말고 `enabled = false`로 둔다.
 
 ## 사용자가 채팅에서 요청하지 않으면 하지 않는 것
@@ -813,7 +813,7 @@ impl Host {
             write_atomic(&followup, crate::routine::PR_FOLLOWUP_TEMPLATE.as_bytes()).map_err(internal)?;
         }
         write_atomic(&dir.join("project.toml"), toml.as_bytes()).map_err(internal)?;
-        write_skeleton(&dir, name, &format!("# {name}\n\n프로젝트 지침을 여기에 쓴다.\n")).map_err(internal)?;
+        write_skeleton(&dir, name, &format!("# {name}\n\n지침을 여기에 쓴다.\n")).map_err(internal)?;
         self.db.audit(actor, "project_create", name);
         Ok(FrontResponse::Project(self.project_view(name, &dir)))
     }

@@ -1111,7 +1111,7 @@ async fn approved_start_attaches_mission_before_preparing_special_brief() {
         assert!(brief.contains("/work/repo/.aaa/demo-t-0001/inbox/"), "입력 위치는 cwd가 아닌 자기 작업 폴더다");
         assert!(brief.contains("/opt/aaa mission show demo watch --json"));
         assert!(brief.contains("ls -1 -- '/work/repo/.aaa/demo-t-0001/inbox'") && brief.contains("Read"));
-        assert!(brief.contains("없어도 정상") && brief.contains("프로젝트 루트를 탐색하지 않는다"));
+        assert!(brief.contains("없어도 정상") && brief.contains("aaa 홈 폴더를 탐색하지 않는다"));
         assert!(brief.contains("미처리 JSON이 0개면") && brief.contains("현재 턴을 끝낸다"));
         let gate = brief.rfind("## 입력 우선 실행 순서").expect("본문 뒤에도 빈 입력 분기가 있어야 한다");
         assert!(gate > brief.find("감시한다.").unwrap());

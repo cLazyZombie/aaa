@@ -396,6 +396,7 @@ E2E28은 실제 host·agent의 pane→thread 대응을 거쳐, ⋯ 메뉴로 고
   - push: coordinator 완료 push URL은 `/#threads`다.
 - E2E 15: 모든 thread 화면의 ≡ 자리. E2E 19: post 음소거 앱 안 알림은 `#threads`로 간다. E2E 21: 보고서 화면에 프로젝트 고르기가 없다.
 - host 유닛: push `payload`의 thread URL `/#thread=t-0001`, post 알림 URL `/#threads`.
+- 낱말: brief 유닛(`# aaa`·`- 이름:`·memory 넘침 말), 임무 brief 유닛(「aaa 홈 폴더를 탐색하지 않는다」), m13 `worktree_thread_round_trip`·`memory_and_restart`(`# 지침`)·`coordinator_flow`·`doctor_files_brings_the_coordinator_guide_to_existing_projects`(`## 첫 턴`).
 
 ## E2E03 보낸 순서는 화면 안 기록으로
 
