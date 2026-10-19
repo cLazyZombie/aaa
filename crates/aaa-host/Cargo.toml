@@ -35,6 +35,7 @@ regex = "1"
 axum = { version = "0.8", features = ["ws"] }
 
 [dev-dependencies]
+tokio = { workspace = true, features = ["test-util"] }
 # router를 그대로 부르는 입구 시험(`ServiceExt::oneshot`). axum이 이미 쓰는 판·기능이다
 tower = { version = "0.5", features = ["util"] }
 

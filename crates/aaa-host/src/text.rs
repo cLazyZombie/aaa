@@ -25,6 +25,13 @@ pub(crate) const SELECTION_MAX_BYTES: usize = aaa_proto::MAX_FRAME / 2;
 const SEARCH_MAX_QUERY_BYTES: usize = 4096;
 const SEARCH_MAX_MATCHES: usize = 1024;
 
+/// herdr agent prompt의 AGENT_PROMPT_SUBMIT_DELAY. Codex가 글·paste 끝을 처리하기 전에 Enter가
+/// 도착하면 Enter를 paste 안 줄바꿈으로 삼는다. 웹·thread message·keys가 같은 간격을 쓴다.
+pub(crate) async fn submission_gap() {
+    let ms = std::env::var("AAA_TEST_SUBMIT_GAP_MS").ok().and_then(|v| v.parse::<u64>().ok()).unwrap_or(300);
+    tokio::time::sleep(Duration::from_millis(ms)).await;
+}
+
 fn point(p: TextPoint) -> copy::Point {
     (p.row as usize, p.col)
 }
@@ -248,19 +255,37 @@ impl Host {
         }
         let (rec, pid, mid) = self.thread_pane(project, id)?;
         let agent = self.pane_agent(&pid).map(|a| a.activity);
-        if self.trust_screens(project) == crate::trust_screen::USER {
-            let kind = rec.launch.as_ref().map(|l| l.harness.clone()).unwrap_or_default();
-            let screen = self
-                .screen(&mid, &pid)
-                .await
-                .ok_or_else(|| err(ErrorCode::Unavailable, format!("{id}의 pane 화면을 읽지 못해 보내지 않는다")))?;
-            if let Some(phrase) = crate::trust_screen::detect(&kind, &screen.ansi) {
-                return Err(err(ErrorCode::BadRequest, crate::trust_screen::refusal(project, id, &pid, phrase, true)));
+        let check_trust = || async {
+            if self.trust_screens(project) == crate::trust_screen::USER {
+                let kind = rec.launch.as_ref().map(|l| l.harness.clone()).unwrap_or_default();
+                let screen = self.screen(&mid, &pid).await.ok_or_else(|| {
+                    err(ErrorCode::Unavailable, format!("{id}의 pane 화면을 읽지 못해 보내지 않는다"))
+                })?;
+                if let Some(phrase) = crate::trust_screen::detect(&kind, &screen.ansi) {
+                    return Err(err(
+                        ErrorCode::BadRequest,
+                        crate::trust_screen::refusal(project, id, &pid, phrase, true),
+                    ));
+                }
             }
+            Ok(())
+        };
+        check_trust().await?;
+        // 모르는 키 때문에 앞부분 글만 입력되는 일을 막는다(herdr encode_api_keys).
+        let modes = self.key_modes(&pid);
+        for k in keys {
+            modes.key(k).ok_or_else(|| err(ErrorCode::BadRequest, format!("모르는 키: {k}")))?;
         }
         let typed = text.as_deref().map_or(0, |t| t.chars().count() as u32);
         if let Some(t) = text {
-            self.pane_send_text(&pid, t, actor).await?;
+            if keys.is_empty() {
+                self.pane_send_text(&pid, t, actor).await?;
+            } else {
+                self.pane_input_bytes(&pid, &mid, modes.paste(&t)).await?;
+                submission_gap().await;
+                // 새 간격 중에 뜬 폴더 신뢰 창을 뒤따르는 Enter로 승인하지 않는다.
+                check_trust().await?;
+            }
         }
         if !keys.is_empty() {
             self.pane_send_keys(&pid, keys, actor).await?;

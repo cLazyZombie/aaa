@@ -825,7 +825,7 @@ impl Host {
                 .await
                 .map_err(|e| after(e.message))?;
         }
-        tokio::time::sleep(Duration::from_millis(300)).await;
+        crate::text::submission_gap().await;
         // 치는 동안 뜬 확인창(t-0340 보안 감사): Enter가 사람이 보지 않은 선택지(권한 창의 기본은 「Yes」)를 고른다.
         // Enter 바로 전에 화면과 harness 상태를 다시 본다. 친 글은 남으니 받았는지 모르는 것으로 둔다(다시 보내지 않는다).
         // 입력 상자에 친 글을 보이는 harness(hook·화면 감지가 있는 Claude 등)는 그 검사를 프로그램이 친 글을 읽은 뒤(화면이
@@ -1316,6 +1316,101 @@ mod tests {
             transcript: None,
             plan: None,
             background: None,
+        }
+    }
+
+    /// thread keys의 글+Enter는 Codex의 paste 판정 창을 넘긴 뒤 제출한다.
+    /// 가상 시계와 실제 Agent link 경계로 바이트·순서를 본다(실제 시간을 재지 않는다).
+    #[tokio::test(start_paused = true)]
+    async fn thread_keys_separates_paste_from_enter() {
+        use aaa_common::conn::{FrameRx, spawn_writer};
+        use aaa_proto::{AgentResponse, LinkMsg, Role, Snapshot, ThreadKind};
+        for (paste, trust_after_text) in [(false, false), (true, false), (true, true)] {
+            let (h, _tmp) = host_with_pane();
+            h.project_create("demo", Default::default(), "test").unwrap();
+            let mut r = ThreadRec::starting("demo", "입력", "m", "codex", Role::Worker, ThreadKind::Dir, 1);
+            r.id = "t-0001".into();
+            r.pane = Some("s".into());
+            r.status = ThreadStatus::Open;
+            r.brief = BriefState::Delivered;
+            h.db.thread_import("demo", &r.id, "open", &serde_json::to_string(&r).unwrap()).unwrap();
+            h.on_subscribed(
+                "s",
+                Some(Snapshot {
+                    session: "s".into(),
+                    offset: 0,
+                    cols: 80,
+                    rows: 24,
+                    replay: B64(if paste { b"\x1b[?2004h".to_vec() } else { vec![] }),
+                    history_more: false,
+                }),
+                0,
+            );
+            let (writer, reader) = tokio::io::duplex(65536);
+            let conn = crate::AgentConn::new(spawn_writer(writer, aaa_proto::MAX_FRAME), 1);
+            h.inner.lock().unwrap().machines.insert(
+                "m".into(),
+                crate::MachineRt {
+                    name: "mac-a".into(),
+                    local: true,
+                    os: None,
+                    boot_id: None,
+                    dev_mode: true,
+                    conn: Some(conn.clone()),
+                    last_seen_ms: None,
+                    health: None,
+                    features: vec![],
+                    agent_pid: None,
+                    colors: None,
+                },
+            );
+            let seen = Arc::new(std::sync::Mutex::new(Vec::new()));
+            let captured = seen.clone();
+            let fake = tokio::spawn(async move {
+                let mut rx = FrameRx::new(reader, aaa_proto::MAX_FRAME);
+                while let Ok(LinkMsg::Req { id, body, .. }) = rx.control::<LinkMsg>().await {
+                    let reply = match body {
+                        AgentRequest::Screen { .. } => {
+                            let screen = if trust_after_text && !captured.lock().unwrap().is_empty() {
+                                "Trust this folder?\n› 1. Trust and continue\n  2. Open restricted"
+                            } else {
+                                "› Ready"
+                            };
+                            AgentResponse::Screen(aaa_proto::ScreenText {
+                                session: "s".into(),
+                                cols: 80,
+                                rows: 24,
+                                lines: lines(screen),
+                                cursor_row: 0,
+                                cursor_col: 0,
+                                ansi: screen.into(),
+                            })
+                        }
+                        AgentRequest::Input { data, .. } => {
+                            captured.lock().unwrap().push((tokio::time::Instant::now(), data.0));
+                            AgentResponse::Done
+                        }
+                        _ => AgentResponse::Done,
+                    };
+                    if let Some(tx) = conn.pending.lock().unwrap().remove(&id) {
+                        tx.send(aaa_proto::Outcome::Ok(reply)).unwrap();
+                    }
+                }
+            });
+            let result = h.thread_keys("demo", &r.id, &["enter".into()], Some("이어서 계속하라".into()), "test").await;
+            fake.abort();
+            let got = seen.lock().unwrap();
+            if trust_after_text {
+                assert!(result.unwrap_err().message.contains("trust_screen"));
+                assert_eq!(got.len(), 1, "치는 동안 뜬 신뢰 창에 Enter를 보내면 안 된다");
+                continue;
+            }
+            result.unwrap();
+            assert_eq!(got.len(), 2);
+            assert!(got[1].0.duration_since(got[0].0) >= Duration::from_millis(300), "Enter가 paste 판정 창 안에 갔다");
+            let expected = if paste { "\x1b[200~이어서 계속하라\x1b[201~" } else { "이어서 계속하라" };
+            assert_eq!(got[0].1, expected.as_bytes());
+            assert_eq!(got[1].1, b"\r");
         }
     }
 

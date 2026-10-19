@@ -5310,3 +5310,10 @@ primary 근거:
 - **진단.** host는 front·pane·submit 번호·바이트 수·글/Enter 응답·거부 코드·확인 연결 닫힘을 기록하고 `web_submit` audit를 남긴다. agent는 link 요청 번호·session·바이트 수, session host는 수신·PTY 쓰기 성공/실패를 남긴다. 본문·키 내용·token은 기록하지 않는다. session 응답은 입력 통로 접수이며 모델 수신 증거는 transcript다. 새 기록은 향후 전송부터 생긴다.
 - **D8 조사.** 감지 상태와 규칙을 debug에서 info로 올려 운영 로그에도 남긴다. 과거 false-idle 신고 시각에는 해당 규칙·프레임이 없어 직접 원인은 미확정이다. 나중 모델 용량 오류의 Ready 화면은 당시 원인으로 소급하지 않는다.
 - **시험.** 기존 chat 파일 tail 회귀에서 queued attachment 누락이 수정 전 실패했고 수정 후 통과한다. 웹 E2E 11의 실제 읽기·변화 push·입력 단계에서 작업 중 전송·한 번 표시·기기 보관·수신 확인·본문 없는 전달 기록을 본다. 확인 표시를 없앤 빌드가 실패하고 정본 복원 뒤 통과한다. 새 대기는 프로그램 수신 출력 사건을 쓴다. wire 판 변경은 없다.
+
+### 8.215 Codex thread keys의 글·Enter 분리(10-19, t-0375)
+
+- **원인.** Ready인 Codex에 `thread keys --text … enter`가 글과 Enter를 연달아 넣어, Codex의 paste 판정 창 안에 Enter가 들어갔다. 기존 thread message는 이미 300ms를 띄웠다.
+- **수정.** 글 뒤 키가 있으면 현재 터미널 모드의 paste로 글을 보내고 간격 뒤 키를 쓴다. 글만 주는 명령·키만 주는 명령은 그대로다. 키 이름을 모두 먼저 확인해 잘못된 키 때문에 글만 남기지 않는다. 간격 중 새로 뜬 신뢰 창은 다시 확인해 Enter로 승인하지 않는다.
+- **참고와 차이.** herdr-projects `threads.rs keys`는 `agent_send_text` 다음 `agent_send_keys`, herdr `api/panes.rs handle_pane_send_input`은 바이트를 붙여 쓴다. 같은 문제가 생길 수 있어 herdr `api/agents.rs AGENT_PROMPT_SUBMIT_DELAY`·`encode_api_submission_parts`의 300ms·paste 분리를 따른다. aaa의 기존 thread message·웹 submit도 이 간격을 공유한다. t3code의 SDK turn 제출에는 PTY paste 판정 창이 없다.
+- **시험.** 실제 Agent link 경계와 Tokio 가상 시계로 paste 꺼짐/켜짐 모두 글·Enter 바이트, 300ms 이상 분리, 새 신뢰 창에서는 Enter 없음까지 본다. 수정 전 간격 0으로 실패했다. 신뢰 창 재검사를 없앤 변형도 실패했고 정본을 복원했다. 실제 시간을 자는 시험·재전송은 없다.
