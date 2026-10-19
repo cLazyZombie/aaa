@@ -5552,3 +5552,12 @@ primary 근거:
 - **기존 상태와 구분.** `waiting_on_you`의 기존 「확인 필요」, `idle`의 「쉼」, 확인창·입력 대기 문구는 그대로다. 보고 표지는 `report_attention=needs_user`라는 알림 의도이며 thread group이나 idle 판정·진행률을 바꾸지 않는다. inbox 사건 이름과 저장된 옛 보고 원문도 이주하지 않는다. 기존 「사용자 결정 요청」 등 다른 문구는 변경 범위가 아니다.
 - **참고.** herdr-projects `src/notify.rs::Sound::Request`와 t3code `ThreadNotificationCoordinator.tsx`의 입력/완료 구분을 유지하며 한국어 이름만 사용자 보정대로 맞춘다. 공개 API·프로토콜 판 변경은 없다.
 - **검증.** 기존 실제 사본·DB·inbox·queue owner 표에 새 표지를 더했을 때 수정 전 `None` 대 `NeedsUser`로 실패했고 수정 후 신·구 표지 모두 통과했다. 기존 알림 문구 표는 요약 없는 보고에서 「확인 필요」를 검증한다. 이 문구를 옛 이름으로 되돌린 변형이 실패하는 것도 확인한다. 동일 계약의 새 E2E를 추가하지 않고 기존 웹/host 경계를 유지한다. binary 반영 필요.
+
+### 8.235 확인창에 막힌 임무의 명시적 재시작(10-19, t-0380 후속)
+
+- **운영 근거.** 배포 후 `mission restart` audit 두 건이 있으나 같은 임무 pane·harness 세션이 유지됐다. 읽기 전용 DB에서 `reset_requested=true`, `resetting=false`, `state=막힘`, `idle_since_ms=null`이며 기존 Claude settings에는 permissions가 없었다. 설정 생성 수정(§8.227)에 도달하기 전에 막힌 것이다. `--permission-mode default` 자체는 새 설정에서도 의도한 값이다.
+- **원인.** restart는 reset 요청을 저장하고 막힘을 대기로 돌리지만 다음 tick의 Question 판정이 다시 막힘으로 바꿔 조기 반환했다. 이를 넘겨도 idle 30초·보는 화면·빈 입력창 조건이 확인창 복구를 막았다. Kill 뒤 Exited 감지가 오면 보는 화면 조건에 다시 걸릴 수도 있었다.
+- **수정.** 내부 저장 필드 `restart_requested`로 명시한 restart와 reload·자동 reset을 구별한다(옛 기록은 false). 명시 restart의 Question 복구만 이 보호 조건을 넘겨 기존 `resetting 저장 → Kill 요청 → 끝남 사건 → 새 profile rebrief → fresh Spawn` 경로로 보낸다. 끝남을 기다리는 동안 복구 의도를 유지한다. 확인창에 yes/no·명령 입력을 보내지 않으며 임무를 stop/resolve하지 않는다. 일하는 대화·idle 초안·자동 reset·reload·pause·예산·사용량의 기존 보호는 유지한다. 완료 시 두 요청 표지를 지운다.
+- **참고.** herdr-projects 0.2.35 `threads.rs::restart`의 명시 재시작과 `prompt`의 blocked/초안 보호를 구별하는 방식을 따른다. herdr 0.9.5 `app/api/agents.rs`도 blocked agent의 prompt를 거부한다. 이 참고 버전과 t3code `orchestration-v2/Adapters/ClaudeAdapterV2.ts`에는 aaa 임무 reset과 같은 기능이 없어 자동 reset의 준비 조건을 그대로 명시 복구에 적용하지 않았다.
+- **회귀.** 실제 host·DB·frame와 가짜 agent로 확인창+보는 화면에서 수정 전 Kill 0건을 재현했다. 자동 reset·reload는 그대로 보존, 명시 restart는 Kill 1건 후 실제 harness Exited·SessionState 끝남 사건을 거쳐 새 pane을 만들고 최신 권한 profile을 전달한다. state.md·processed.txt·inbox·미처리 입력은 남는다. idle 초안/보는 화면까지 예외를 넓히는 변형도 실패한다. 새 신호 시험·고정 sleep·외부 프로세스는 없다.
+- **운영 전환.** 이 수정의 host binary를 반영한 뒤 coordinator가 `aaa mission restart projects rc-verify-watch`를 다시 한 번 실행한다. 옛 binary가 남긴 reset_requested만으로 새 복구 의도를 추정하지 않는다. stop이나 옛 명령 승인은 필요 없다. 같은 thread에서 새 pane·새 harness 세션·permissions.allow·추가 읽기 경로가 적용됐는지를 확인한다. 이 thread는 운영 restart·binary 교체를 실행하지 않았다.
