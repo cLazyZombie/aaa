@@ -42,6 +42,19 @@ pub fn yolo_flags(harness: &str) -> Option<&'static [&'static str]> {
     }
 }
 
+/// [`SafetyLayer`]가 읽는 key
+const LAYER_KEYS: [&str; 9] = [
+    "yolo",
+    "start_threads",
+    "trust_screens",
+    "coordinator_agent_args",
+    "thread_agent_args",
+    "routine_commands",
+    "coordinator_deploy",
+    "thread_profiles",
+    "coordinator_profiles",
+];
+
 /// `[safety.*]` 표 하나, 적힌 그대로. 빠진 key는 아래 층을 따른다.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
@@ -457,6 +470,10 @@ fn strings(item: &Item) -> Option<Vec<String>> {
 
 fn overlay(layer: &mut SafetyLayer, t: &dyn toml_edit::TableLike, table: &str, warnings: &mut Vec<String>) {
     let name = if table.is_empty() { "[safety]".to_string() } else { format!("[safety.{table}]") };
+    // host.toml을 읽을 때는 `[safety]`를 값과 표로 나눠 읽어 모르는 key를 알리지 못한다(`tables`): 여기서 알린다
+    for (key, _) in t.iter().filter(|(k, _)| !LAYER_KEYS.contains(k)) {
+        warnings.push(format!("{name} {key}: 모르는 key라 버린다"));
+    }
     let mut bad = |key: &str, why: &str| warnings.push(format!("{name} {key}: {why}, 버리고 아래 층을 쓴다"));
     if let Some(v) = t.get("yolo") {
         match v.as_bool() {
@@ -672,9 +689,15 @@ mod tests {
     /// `[safety]` 표 하나(plan §8.288): 프로젝트 표보다 앞서고, 아래 표들은 값으로 읽지 않는다. 잘못된 값은 그 값만 버린다.
     #[test]
     fn one_safety_table_comes_before_the_project_table() {
-        let text = "[safety]\nyolo = false\ntrust_screens = \"coordinator\"\nstart_threads = \"later\"\n\n[safety.default]\nroutine_commands = true\n\n[safety.demo]\nyolo = true\nstart_threads = \"auto\"\nthread_profiles = [\"opus\"]\n";
+        let text = "[safety]\nyolo = false\ntrust_screens = \"coordinator\"\nstart_threads = \"later\"\n\n[safety.default]\nroutine_commands = true\n\n[safety.demo]\nyolo = true\nstart_threads = \"auto\"\nthread_profiles = [\"opus\"]\ncolour = 1\n";
         let (d, o, l, w) = read_texts(&[text.into()], Some("demo"));
-        assert_eq!(w, vec!["[safety] start_threads: \"propose\"·\"auto\"여야 한다, 버리고 아래 층을 쓴다".to_string()]);
+        assert_eq!(
+            w,
+            vec![
+                "[safety.demo] colour: 모르는 key라 버린다".to_string(),
+                "[safety] start_threads: \"propose\"·\"auto\"여야 한다, 버리고 아래 층을 쓴다".to_string()
+            ]
+        );
         let demo = Layers { own: o, default: d.clone(), legacy: l }.resolve();
         assert_eq!(
             (demo.yolo, demo.start_threads.as_str(), demo.trust_screens.as_str()),

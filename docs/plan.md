@@ -5602,8 +5602,9 @@ primary 근거:
 - **safety.**
   - 읽기 차례는 `[safety]` 표 하나의 값 → `[safety."<p>"]` → `[safety.default]` → 옛 자리다.
   - host.toml의 `[safety]`에는 값과 아래 표가 섞인다. `HostConfig.safety`는 값을 `ONE_TABLE`(빈 열쇠)로 읽고 쓴다.
+  - host.toml을 읽을 때 `[safety]`를 값과 표로 나눠 읽으므로, 그 안의 모르는 key는 시작 때 위치와 함께 경고되지 않는다. 대신 `aaa safety show`가 「모르는 key라 버린다」로 알린다.
   - 되돌리기 때문에 `aaa safety`는 호환 기간 동안 프로젝트 표에 쓴다. 옛 binary는 `[safety]`의 값을 읽지 못해 host.toml 전체를 거부한다. 프로젝트 표를 고칠 때 `[safety]` 같은 key가 덮으면 알린다.
-  - `aaa safety show|yolo|set`은 대상을 생략하면 host가 맡은 프로젝트를 쓴다. 이를 위해 host에 묻는다. `--global`과 옛 꼴 이름도 받는다.
+  - `aaa safety show|yolo|set`은 대상을 생략하면 host가 맡은 프로젝트를 쓴다. 이를 위해 host에 묻는다. `--global`과 옛 꼴 이름도 받는다. 옛 꼴 이름은 host 없이 폴더로 확인하므로 다른 명령과 달리 경고 줄을 남기지 않는다.
   - `set`은 첫 낱말이 key면 대상을 생략한 것으로 본다. `profile list --project`는 이름을 생략할 수 있다. `profile allow`의 `--project`가 없으면 지금처럼 모든 프로젝트 기본값이다.
 - **aaa.toml.**
   - 홈에 `aaa.toml`이 있으면 project.toml 대신 그것을 읽고 쓴다(`aaa_config::project_settings_file`). 프로젝트 설정·평가자·설정 오류 inbox·`safety show`가 이 파일을 쓴다.

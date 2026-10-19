@@ -1078,7 +1078,7 @@ async function coordinatorPost() {
   const file = `${root}/post-${id}`;
   const quote = (s) => `'${s.replaceAll("'", "'\\''")}'`;
   fs.writeFileSync(`${file}.body`, id);
-  fs.writeFileSync(`${file}.sh`, `${quote(AA)} --json post demo user --notice --topic task-complete --title '전체 완료' --body-file ${quote(`${file}.body`)} --post-id ${id} > ${quote(`${file}.out`)} 2>&1\nprintf 'post-${id}-done\\n'\n`);
+  fs.writeFileSync(`${file}.sh`, `${quote(AA)} --json post user --notice --topic task-complete --title '전체 완료' --body-file ${quote(`${file}.body`)} --post-id ${id} > ${quote(`${file}.out`)} 2>&1\nprintf 'post-${id}-done\\n'\n`);
   aaa("pane", "run", coord, `post-probe ${file}.sh`);
   await waitOutput(coord, `post-${id}-done`);
   const result = JSON.parse(fs.readFileSync(`${file}.out`, "utf8"));

@@ -3773,7 +3773,7 @@ fn coordinator_user_posts(w: &World, numbers: &[u32]) {
     let mut script = String::new();
     for n in numbers {
         let body = w.task(&format!("notify-{n}.txt"), &format!("본문 {n}"));
-        script.push_str(&format!("'{}' --json post demo user --notice --topic task-complete --title '전체 완료' --post-id '{n:032x}' --body-file '{}' >> '{}' 2>&1\n", lab::BIN, body, out.display()));
+        script.push_str(&format!("'{}' --json post user --notice --topic task-complete --title '전체 완료' --post-id '{n:032x}' --body-file '{}' >> '{}' 2>&1\n", lab::BIN, body, out.display()));
     }
     script.push_str(&format!("echo notify-{n}-done\n"));
     let path = w.task(&format!("notify-{n}.sh"), &script);
@@ -5147,8 +5147,7 @@ try_post barrier "$BIN" post coordinator --data --topic test --title 자료
 "#,bin=lab::BIN,out=out.display()));
     w.h.ok(&["pane", "run", pane, &format!("post-probe {script}")]);
     w.h.wait_output(pane, "post-probe-done", T);
-    for (name, reason) in
-        [("token", "token"), ("borrowed", "peer pid"), ("envu", "프로젝트가 필요하다"), ("double", "peer pid")]
+    for (name, reason) in [("token", "token"), ("borrowed", "peer pid"), ("envu", "보기 권한"), ("double", "peer pid")]
     {
         let text = std::fs::read_to_string(out.join(name)).unwrap();
         let status = if name == "double" { "inner_rc=1" } else { "rc=1" };
@@ -5157,20 +5156,24 @@ try_post barrier "$BIN" post coordinator --data --topic test --title 자료
     let text = std::fs::read_to_string(out.join("barrier")).unwrap();
     assert!(text.contains("rc=0"), "{text}");
     assert_eq!(w.h.ok(&["post", "list", "demo"])["posts"].as_array().unwrap().len(), 1);
-    // thread가 아닌 셸(coordinator의 hook 길도 같다)은 peer+token이 맞아도 host에서 거부한다.
+    // thread가 아닌 셸은 조작 권한으로 Front에 붙어 coordinator 몫으로 보내지만 coordinator에게는 보낼 수 없다(plan §8.288).
+    // Front에 붙지 못해 hook 길로 가도(coordinator의 hook 길도 같다) peer+token이 맞아도 host에서 거부한다.
     let outside = out.join("outside");
+    let hooked = out.join("outside-hook");
     w.h.ok(&[
         "pane",
         "run",
         &other,
         &format!(
-            "'{}' post coordinator --notice --topic test --title 자료 > '{}' 2>&1; printf 'outside-post-%s\\n' done",
-            lab::BIN,
-            outside.display()
+            "'{bin}' post coordinator --notice --topic test --title 자료 > '{out}' 2>&1; AAA_STATE_DIR=/nonexistent '{bin}' post coordinator --notice --topic test --title 자료 > '{hook}' 2>&1; printf 'outside-post-%s\\n' done",
+            bin = lab::BIN,
+            out = outside.display(),
+            hook = hooked.display()
         ),
     ]);
     w.h.wait_output(&other, "outside-post-done", T);
-    assert!(std::fs::read_to_string(outside).unwrap().contains("열린 thread 세션에서만"));
+    assert!(std::fs::read_to_string(outside).unwrap().contains("이 목적지로 post할 수 없"));
+    assert!(std::fs::read_to_string(hooked).unwrap().contains("열린 thread 세션에서만"));
     assert_eq!(w.h.ok(&["post", "list", "demo"])["posts"].as_array().unwrap().len(), 1);
 }
 
