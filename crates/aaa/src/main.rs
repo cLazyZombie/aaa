@@ -6,6 +6,7 @@ mod integration;
 mod launchd;
 mod migrate;
 mod person;
+mod rollout;
 mod service;
 mod settings;
 mod update;

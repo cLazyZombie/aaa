@@ -128,6 +128,26 @@ async fn serve(host: Arc<Host>, s: aaa_common::ipc::LocalStream, pid: Option<u32
     // thread 세션 안의 CLI는 보기만 한다(§8.25): 일반 thread(worker)와 사후 평가자는 다른 thread·pane에 지시하지 않는다(§8.13).
     // coordinator와 thread가 아닌 pane(사람의 셸)은 그대로다. 어느 pane 안인지는 host가 연결한 프로세스로 정한다(plan §8.164):
     // CLI가 알린 세션(`AAA_SESSION_ID`)은 권한을 줄이는 쪽으로만 쓴다(변수를 지우면 권한이 늘던 구멍, t-0340 감사).
+    // rollout 대기는 host 시작 직후에도 접속한다. local hello의 pane 자료보다 먼저 신원을 고정하지 않는다.
+    // 그 자료는 같은 inner lock에서 전부 들어오며, 연결이 끊겨도 보존된다. 권한은 이 뒤의 기존 peer PID 판정 그대로다.
+    if client == "deploy-wait" {
+        let mut changes = host.changed.subscribe();
+        if !host.local_machine_connected() {
+            tracing::info!("배포 상태 조회: 로컬 agent 자료 기다림");
+        }
+        let ready = tokio::time::timeout(Duration::from_secs(120), async {
+            while !host.local_machine_connected() {
+                changes.changed().await?;
+            }
+            Ok::<_, anyhow::Error>(())
+        })
+        .await;
+        if !matches!(ready, Ok(Ok(()))) {
+            tx.json(&FrontMsg::Reject(ErrorBody::new(ErrorCode::Unavailable, "로컬 agent 자료가 준비되지 않았다")))
+                .await?;
+            return Ok(());
+        }
+    }
     let caller = host.caller_of(pid);
     let found = match &caller {
         Caller::Pane(p) => Some(p.clone()),

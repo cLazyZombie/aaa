@@ -110,7 +110,7 @@ pub fn new_id() -> String {
     ulid::Ulid::new().to_string()
 }
 
-/// 빌드 구분값. P0 업그레이드 모의에서 `AAA_BUILD_SALT`로 바꿔 「다시 빌드한 실행 파일」을 만든다.
+/// 커밋 빌드·P0 업그레이드 모의의 구분값. `AAA_BUILD_SALT`로 바꿔 「다시 빌드한 실행 파일」을 만든다.
 pub const BUILD_SALT: &str = match option_env!("AAA_BUILD_SALT") {
     Some(s) => s,
     None => "",

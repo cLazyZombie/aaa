@@ -345,6 +345,15 @@ impl Db {
         Ok(())
     }
 
+    pub fn start_rollout(&self, id: &str, record: &str) -> Result<()> {
+        let mut c = self.conn.lock().unwrap();
+        let tx = c.transaction()?;
+        tx.execute("INSERT INTO meta(key,value) VALUES(?1,?2)", [format!("rollout:{id}"), record.to_string()])?;
+        tx.execute("INSERT INTO meta(key,value) VALUES('rollout:active',?1) ON CONFLICT(key) DO UPDATE SET value=excluded.value", [id])?;
+        tx.commit()?;
+        Ok(())
+    }
+
     pub fn meta(&self, key: &str) -> Result<Option<String>> {
         let c = self.conn.lock().unwrap();
         Ok(c.query_row("SELECT value FROM meta WHERE key=?1", [key], |r| r.get(0)).optional()?)

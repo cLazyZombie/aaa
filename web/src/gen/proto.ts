@@ -291,7 +291,7 @@ export type PostSender = { thread: string | null, role: Role, mission: string | 
 
 export type PostEnvelope = { id: string, project: string, from: PostSender, caused_by: Array<string>, body_sha256: string, created_ms: number, state: string, post_id: string, to: string, post_type: PostType, topic: string, title: string, body: string, needs_user: boolean, refs: Array<string>, };
 
-export type FrontRequest = { "op": "debug_input", pane: string | null, thread: string | null, since_ms: bigint, } | { "op": "deploy_context" } | { "op": "deploy_start", machine: string | null, id: string, action: DeployAction, } | { "op": "deploy_status", machine: string | null, id: string, } | { "op": "post", project: string, input: PostInput, } | { "op": "post_status", project: string, post_id: string, } | { "op": "post_list", project: string, } | { "op": "post_unmute", project: string, thread: string, } | { "op": "status" } | { "op": "machines" } | { "op": "panes", role: Role | null, } | { "op": "pane_run", machine: string | null, name: string | null, argv: Array<string>, cwd: string | null, cols: number | null, rows: number | null,
+export type FrontRequest = { "op": "debug_input", pane: string | null, thread: string | null, since_ms: bigint, } | { "op": "rollout_start", id: string, spec: RolloutSpec, } | { "op": "rollout_status", id: string, } | { "op": "deploy_context" } | { "op": "deploy_start", machine: string | null, id: string, action: DeployAction, } | { "op": "deploy_status", machine: string | null, id: string, } | { "op": "post", project: string, input: PostInput, } | { "op": "post_status", project: string, post_id: string, } | { "op": "post_list", project: string, } | { "op": "post_unmute", project: string, thread: string, } | { "op": "status" } | { "op": "machines" } | { "op": "panes", role: Role | null, } | { "op": "pane_run", machine: string | null, name: string | null, argv: Array<string>, cwd: string | null, cols: number | null, rows: number | null,
 /**
  * host 정본 profile로 harness를 띄운다(`argv`는 비운다, herdr-web-ui 새 세션의 agent 고르기)
  */
@@ -399,7 +399,21 @@ settings: Record<string, unknown>,
  */
 pins?: Array<string>, };
 
-export type FrontResponse = { "kind": "input_events", events: Array<InputEvent>, } | { "kind": "deploy_context", project: string | null, session: boolean, allowed: boolean, } | { "kind": "deployment", machine: string, job: DeployJob, running_software: string, running_sha256: string, } | { "kind": "missions", missions: Array<MissionView>, } | { "kind": "mission", mission: MissionView, } | { "kind": "post", result: PostResult, } | { "kind": "posts", posts: Array<PostEnvelope>, } | { "kind": "status" } & HostStatus | { "kind": "machines", machines: Array<MachineView>, } | { "kind": "panes", panes: Array<PaneView>, } | { "kind": "pane" } & PaneView | { "kind": "next", lines: Array<string>,
+export type RolloutSpec = { from: string, sha256: string, commit: string | null, machines: Array<string>, };
+
+export type RolloutPhase = "preflight" | "host_update" | "host_restart" | "agent_update" | "agent_restart";
+
+export type RolloutStep = { machine: string, phase: RolloutPhase, job_id: string, completed: boolean, result: string | null,
+/**
+ * 재시작 전에 기록한 host instance. OS boot ID와 별개다.
+ */
+host_instance: string | null, started_ms: number, };
+
+export type RolloutState = "running" | "stopped" | "done";
+
+export type RolloutView = { id: string, project: string, actor: string, spec: RolloutSpec, state: RolloutState, steps: Array<RolloutStep>, cursor: number, version: string | null, error: string | null, finish: string | null, created_ms: number, updated_ms: number, };
+
+export type FrontResponse = { "kind": "input_events", events: Array<InputEvent>, } | { "kind": "deploy_context", project: string | null, session: boolean, allowed: boolean, } | { "kind": "rollout", rollout: RolloutView, } | { "kind": "deployment", machine: string, job: DeployJob, running_software: string, running_sha256: string, } | { "kind": "missions", missions: Array<MissionView>, } | { "kind": "mission", mission: MissionView, } | { "kind": "post", result: PostResult, } | { "kind": "posts", posts: Array<PostEnvelope>, } | { "kind": "status" } & HostStatus | { "kind": "machines", machines: Array<MachineView>, } | { "kind": "panes", panes: Array<PaneView>, } | { "kind": "pane" } & PaneView | { "kind": "next", lines: Array<string>,
 /**
  * `line`으로 보낸 메시지
  */
@@ -560,7 +574,7 @@ export type ThreadStatus = "starting" | "open" | "failed" | "resolved";
 
 export type BriefState = "pending" | "delivered" | "unknown";
 
-export type DeployAction = { "action": "update", from: string | null, version: string | null, dry_run: boolean, } | { "action": "rollback", name: string | null, dry_run: boolean, } | { "action": "restart", service: DeployService, };
+export type DeployAction = { "action": "update", from: string | null, version: string | null, dry_run: boolean, } | { "action": "checked_update", from: string, sha256: string, dry_run: boolean, } | { "action": "rollback", name: string | null, dry_run: boolean, } | { "action": "restart", service: DeployService, };
 
 export type DeployService = "host" | "agent";
 

@@ -93,6 +93,8 @@ fn manifest_selects_platform_from_http() {
     let m = fetch_manifest(&url).unwrap();
     let mac = m.select("macos", "aarch64", "0.1.0", None).unwrap().unwrap();
     let win = m.select("windows", "x86_64", "0.1.0", Some("0.2.0")).unwrap().unwrap();
+    assert_eq!(m.select("macos", "aarch64", "0.1.0+abc123", None).unwrap().unwrap().version, "0.2.0");
+    assert_eq!(m.select("macos", "aarch64", "0.3.0+abc123", Some("0.2.0")).unwrap().unwrap().version, "0.2.0");
     assert!(mac.asset.url.ends_with("/aaa-macos-aarch64"));
     assert_eq!(mac.asset.sha256, digest(b"mac"));
     assert!(win.asset.url.ends_with("/aaa-windows-x86_64.exe"));
