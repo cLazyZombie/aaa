@@ -396,7 +396,8 @@ export default async function ({ page }) {
   await step("Web Push: coordinator 전체 완료가 기기에 오고 프로젝트로 연다, 버려진 구독(410)은 지운다(차이 목록 N6)", async () => {
     const { msg } = await nextPush(pushDev, pushFrom, "보고 알림");
     // thread 보고를 먼저 만들었어도 외부로 받은 첫 알림은 coordinator post다.
-    if (msg.title !== "demo" || msg.tag !== "aaa-demo" || msg.body !== "coordinator 맡긴 일 완료" || msg.url !== "/#project=demo") {
+    // URL은 모든 thread(plan §8.291). 옛 `/#project=demo`도 웹이 그 화면으로 연다
+    if (msg.title !== "demo" || msg.tag !== "aaa-demo" || msg.body !== "coordinator 맡긴 일 완료" || msg.url !== "/#threads") {
       throw new Error(JSON.stringify(msg));
     }
     await until("410 구독 정리", async () =>
@@ -652,24 +653,20 @@ export default async function ({ page }) {
     aaa("thread", "ack", "demo", t.id);
   });
 
-  await step("끝난 thread 보기(herdr-projects popup.rs Section::Threads, 차이 목록 2장 L3·3장 C1): 끝낸 thread는 목록에서 빠지고 「더 보기 → 프로젝트」에서 묶음마다 보이며 끝남은 맨 아래 흐리게, 거르기, 고르면 보고, 뒤로는 그 프로젝트", async () => {
+  await step("끝난 thread 보기(herdr-projects popup.rs Section::Threads, 차이 목록 2장 L3·3장 C1, plan §8.291): 끝낸 thread는 목록에서 빠지고 「더 보기 → 모든 thread」(#threads)에서 묶음마다 보이며 끝남은 맨 아래 흐리게, 거르기, 고르면 보고(짧은 주소 #thread=<id>), 뒤로는 모든 thread, 옛 주소 #projects·#project=demo도 그 화면", async () => {
     const $ = (id) => `[data-testid="${id}"]`;
     if ((await page.locator($("thread-demo-t-0001")).count()) !== 1) throw new Error("t-0001이 목록에 없다");
     aaa("thread", "resolve", "demo", "t-0001");
     await domIs(page, "끝낸 thread가 목록에서 빠짐(sidebar.rs)", (q) => !document.querySelector(q), $("thread-demo-t-0001"));
     // 앞 단계들도 demo thread를 끝낸다: 끝난 수는 host가 말하는 그대로
     const ended = aaa("thread", "list", "demo").threads.filter((t) => t.group === "resolved").length;
-    // 프로젝트 고르기(popup 첫 화면): 프로젝트마다 열린 묶음 줄과 끝난 수
+    // 프로젝트 고르기는 없다(host는 프로젝트 하나): 더 보기가 바로 모든 thread를 연다
     await page.getByTestId("more").click();
-    const toProjects = hashIs(page, "#projects");
-    await page.getByTestId("projects-item").click();
-    await toProjects;
-    await domIs(page, "demo 줄의 끝난 수", ([q, n]) => document.querySelector(q)?.textContent.includes(`끝남 ${n}`), [$("project-open-demo"), ended]);
-    const toDemo = hashIs(page, "#project=demo");
-    await page.getByTestId("project-open-demo").click();
-    await toDemo;
-    const view = page.getByTestId("project-threads-demo");
-    await domIs(page, "끝남 묶음", (q) => document.querySelector(q) !== null, `${$("project-threads-demo")} ${$("project-group-resolved")}`);
+    const toThreads = hashIs(page, "#threads");
+    await page.getByTestId("threads-item").click();
+    await toThreads;
+    const view = page.getByTestId("all-threads");
+    await domIs(page, "끝남 묶음", (q) => document.querySelector(q) !== null, `${$("all-threads")} ${$("project-group-resolved")}`);
     const done = view.getByTestId("project-group-resolved");
     if ((await done.locator("h3").innerText()) !== `끝남 (${ended})`) throw new Error(`끝남 ${ended}: ${await done.innerHTML()}`);
     // 묶음은 popup DISPLAY_ORDER대로, 끝남은 맨 아래
@@ -689,41 +686,44 @@ export default async function ({ page }) {
     if (dim[0] !== dim[1] || dim[2] !== "t-0001 · 웹 결과물") throw new Error(`끝난 줄 ${JSON.stringify(dim)}`);
     await shot(page, "desktop-project-threads");
     // popup 「/」 거르기처럼 이름(id·제목)에 든 글로 고른다
-    const rows = `${$("project-threads-demo")} [data-testid^=project-thread-]`;
+    const rows = `${$("all-threads")} [data-testid^=project-thread-]`;
     const all = await page.locator(rows).count();
     const filter = view.getByRole("searchbox");
     await filter.fill("웹 결과");
     await domIs(page, "거른 줄 하나", (q) => document.querySelectorAll(q).length === 1, rows);
     await filter.fill("없는 이름");
-    await domIs(page, "맞는 것 없음", (q) => document.querySelector(q)?.textContent === "맞는 thread 없음", `${$("project-threads-demo")} [role=status]`);
+    await domIs(page, "맞는 것 없음", (q) => document.querySelector(q)?.textContent === "맞는 thread 없음", `${$("all-threads")} [role=status]`);
     await filter.fill("");
     await domIs(page, "거르기 풂", ([q, n]) => document.querySelectorAll(q).length === n, [rows, all]);
-    // 고르면 보고(popup detail), 뒤로는 그 프로젝트(popup: detail에서 목록으로)
-    const toReport = hashIs(page, "#thread=demo%2Ft-0001");
+    // 고르면 보고(popup detail, 주소는 프로젝트 없이), 뒤로는 모든 thread(popup: detail에서 목록으로)
+    const toReport = hashIs(page, "#thread=t-0001");
     await r.click();
     await toReport;
     await domIs(page, "끝난 thread 보고", (q) => document.querySelector(q)?.textContent === "확인", `${$("report")} .markdown strong`);
-    const back = hashIs(page, "#project=demo");
+    if ((await page.getByTestId("thread-back").getAttribute("aria-label")) !== "모든 thread로") throw new Error("뒤로 이름");
+    const back = hashIs(page, "#threads");
     await page.getByTestId("thread-back").click();
     await back;
+    // 옛 주소(이미 보낸 알림·저장한 링크)도 같은 화면이고 주소는 #threads로 바뀐다
+    for (const old of ["#projects", "#project=demo"]) {
+      await page.evaluate((h) => (location.hash = h), old);
+      await until(`옛 주소 ${old}`, async () => (await page.evaluate(() => location.hash)) === "#threads" && (await view.count()) === 1);
+    }
     // 휴대폰 폭: 목록 대신 이 화면, 옆으로 밀리지 않는다
     await page.setViewportSize({ width: 390, height: 844 });
-    await domIs(page, "휴대폰 폭 프로젝트 보기", (q) => document.querySelector(q)?.getBoundingClientRect().width > 0, $("project-threads-demo"));
+    await domIs(page, "휴대폰 폭 모든 thread", (q) => document.querySelector(q)?.getBoundingClientRect().width > 0, $("all-threads"));
     const wide = await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
     if (wide > 0) throw new Error(`휴대폰 폭에서 화면이 ${wide}px 옆으로 밀린다`);
     await shot(page, "phone-project-threads");
-    const toPicker = hashIs(page, "#projects");
-    await view.getByRole("button", { name: "프로젝트 목록" }).click();
-    await toPicker;
     const closed = hashIs(page, "");
-    await page.getByTestId("projects").getByRole("button", { name: "닫기" }).click();
+    await view.getByRole("button", { name: "닫기" }).click();
     await closed;
     await page.setViewportSize({ width: 1280, height: 800 });
     await inList(page, "pane-t1");
     await until("t1 터미널", async () => (await screenText(page)).includes("t1-42"));
   });
 
-  await step("줄 메뉴(herdr-web-ui RowMenu·Sidebar menuItems·AgentSidebar, 차이 목록 2장 L9·L10): 데스크톱은 오른쪽 클릭·휴대폰은 ⋯ sheet, 고정은 맨 앞 카드로 가고 다른 기기에도(host 공유 문서), pane 닫기·기록 지우기는 확인 창, 끝난 pane은 다시 열기, thread 줄에서 프로젝트 thread 보기", async () => {
+  await step("줄 메뉴(herdr-web-ui RowMenu·Sidebar menuItems·AgentSidebar, 차이 목록 2장 L9·L10): 데스크톱은 오른쪽 클릭·휴대폰은 ⋯ sheet, 고정은 맨 앞 카드로 가고 다른 기기에도(host 공유 문서), pane 닫기·기록 지우기는 확인 창, 끝난 pane은 다시 열기, thread 줄에서 모든 thread", async () => {
     const pinWrote = (p) =>
       p.waitForResponse((r) => r.url().endsWith("/api/v1/call") && r.request().postDataJSON()?.op === "preferences_set").then((r) => r.request().postDataJSON());
     const opDone = (p, op) => p.waitForResponse((r) => r.url().endsWith("/api/v1/call") && r.request().postDataJSON()?.op === op);
@@ -833,23 +833,24 @@ export default async function ({ page }) {
     await forget.getByRole("button", { name: "지우기" }).click();
     await forgot;
     await domIs(page, "기록 지운 pane 줄 사라짐", () => !document.querySelector('[data-testid="pane-rowend"]'));
-    // 5. thread 줄: 보고·고정·프로젝트 thread 보기(끝난 것까지, plan §8.89). 프로젝트가 하나면 머리 없이 그린다(plan §8.280)
+    // 5. thread 줄: 보고·고정·모든 thread(끝난 것까지, plan §8.89·§8.291). 프로젝트 머리는 없다
     // t-0001은 앞 단계에서 끝냈으니 아직 열린 demo thread(「알림 시험」, agent pane이 돈다)의 줄에서. 고정 열쇠는 그 pane
     const other = aaa("thread", "list", "demo").threads.find((t) => t.id !== "t-0001" && t.role !== "evaluator").id;
     if ((await page.locator(`li[data-thread="demo/${other}"]`).getAttribute("data-pin-key")) === null) throw new Error(`${other} 줄에 고정 열쇠(agent pane)가 없다`);
     await page.getByTestId(`thread-demo-${other}`).click({ button: "right" });
-    if (JSON.stringify(await menuItems(page)) !== JSON.stringify(["보고", "고정", "프로젝트 thread 보기"])) throw new Error(`thread 메뉴 ${await menuItems(page)}`);
-    const toDemo = hashIs(page, "#project=demo");
-    await page.getByRole("menuitem", { name: "프로젝트 thread 보기" }).click();
-    await toDemo;
-    // 프로젝트에서 연 보고의 「뒤로」는 그 프로젝트, 다른 길(앱 안 알림·주소)로 간 thread는 목록으로
-    const toReport = hashIs(page, "#thread=demo%2Ft-0001");
+    if (JSON.stringify(await menuItems(page)) !== JSON.stringify(["보고", "고정", "모든 thread"])) throw new Error(`thread 메뉴 ${await menuItems(page)}`);
+    const toThreads = hashIs(page, "#threads");
+    await page.getByRole("menuitem", { name: "모든 thread" }).click();
+    await toThreads;
+    // 모든 thread에서 연 보고의 「뒤로」는 그 화면, 다른 길(앱 안 알림·주소)로 간 thread는 목록으로. 짧은 주소(#thread=<id>)로도 간다
+    const toReport = hashIs(page, "#thread=t-0001");
     await page.getByTestId("project-thread-t-0001").click();
     await toReport;
-    if ((await page.getByTestId("thread-back").getAttribute("aria-label")) !== "demo 프로젝트로") throw new Error("프로젝트에서 연 보고의 뒤로");
-    const toOther = hashIs(page, `#thread=demo%2F${other}`);
-    await page.evaluate((h) => (location.hash = h), `#thread=demo%2F${other}`);
+    if ((await page.getByTestId("thread-back").getAttribute("aria-label")) !== "모든 thread로") throw new Error("모든 thread에서 연 보고의 뒤로");
+    const toOther = hashIs(page, `#thread=${other}`);
+    await page.evaluate((h) => (location.hash = h), `#thread=${other}`);
     await toOther;
+    await domIs(page, "짧은 주소로 연 보고", (id) => document.querySelector('[data-testid="thread-view"]')?.textContent.includes(id), other);
     await domIs(page, "다른 길로 간 보고의 뒤로는 목록", () => document.querySelector('[data-testid="thread-back"]')?.getAttribute("aria-label") === "목록으로");
     await inList(page, "pane-t1");
     await until("t1 터미널", async () => (await screenText(page)).includes("t1-42"));
@@ -972,28 +973,30 @@ export default async function ({ page }) {
     await until("t1 터미널", async () => (await screenText(page)).includes("t1-42"));
   });
 
-  await step("프로젝트 멈춤(herdr-projects sidebar.rs project_line 「paused」, 차이 목록 4장 G #592): 멈추면 프로젝트 고르기가 「멈춤」, 되살리면 돌아온다. host는 프로젝트 하나라(plan §8.285) 보관·삭제는 m13 project_lifecycle이 본다", async () => {
-    const $ = (id) => `[data-testid="${id}"]`;
-    const picker = async () => {
+  await step("프로젝트 멈춤(herdr-projects sidebar.rs project_line 「paused」, 차이 목록 4장 G #592): 멈추면 모든 thread 머리가 「멈춤」, 되살리면 돌아온다. host는 프로젝트 하나라(plan §8.285) 보관·삭제는 m13 project_lifecycle이 본다", async () => {
+    // 머리 둘째 줄(묶음 셈 또는 「멈춤」): 멈춤은 host `instance`가 말한다(plan §8.291)
+    const facts = '[data-testid="all-threads"] .project-threads-heading .project-threads-facts';
+    const threadsScreen = async () => {
       await page.getByTestId("more").click();
-      const toProjects = hashIs(page, "#projects");
-      await page.getByTestId("projects-item").click();
-      await toProjects;
+      const toThreads = hashIs(page, "#threads");
+      await page.getByTestId("threads-item").click();
+      await toThreads;
     };
+    const close = () => page.getByTestId("all-threads").getByRole("button", { name: "닫기" }).click();
     aaa("project", "pause", "demo");
-    await picker();
-    await domIs(page, "프로젝트 고르기의 멈춤", (q) => document.querySelector(q)?.textContent.includes("멈춤"), $("project-open-demo"));
+    await threadsScreen();
+    await domIs(page, "모든 thread 머리의 멈춤", (q) => document.querySelector(q)?.textContent.includes("멈춤"), facts);
     await shot(page, "desktop-project-paused");
-    await page.getByTestId("projects").getByRole("button", { name: "닫기" }).click();
+    await close();
     aaa("project", "resume", "demo");
-    await picker();
-    await domIs(page, "되살린 프로젝트", (q) => document.querySelector(q) !== null && !document.querySelector(q).textContent.includes("멈춤"), $("project-open-demo"));
-    await page.getByTestId("projects").getByRole("button", { name: "닫기" }).click();
+    await threadsScreen();
+    await domIs(page, "되살린 프로젝트", (q) => document.querySelector(q) !== null && !document.querySelector(q).textContent.includes("멈춤"), facts);
+    await close();
     await page.getByTestId("pane-t1").click();
     await until("t1 터미널", async () => (await screenText(page)).includes("t1-42"));
   });
 
-  await step("coordinator 열기(herdr-projects popup.rs Threads `c` → profile_picker, 차이 목록 4장 G #592): 프로젝트 머리 「coordinator」가 host 머신 profile 가운데 허용한 것을 기본부터 보이고, 고르면 띄워 그 pane을 열며 도는 것이 있으면 그것을 연다. 허용 목록 밖은 고를 것이 없다고 말하고, 고르는 사이 막히면 host 거부 글을 보인다", async () => {
+  await step("coordinator 열기(herdr-projects popup.rs Threads `c` → profile_picker, 차이 목록 4장 G #592): 모든 thread 머리 「coordinator」가 host 머신 profile 가운데 허용한 것을 기본부터 보이고, 고르면 띄워 그 pane을 열며 도는 것이 있으면 그것을 연다. 허용 목록 밖은 고를 것이 없다고 말하고, 고르는 사이 막히면 host 거부 글을 보인다", async () => {
     const $ = (id) => `[data-testid="${id}"]`;
     const toml = `${root}/c/host.toml`;
     const plain = fs.readFileSync(toml, "utf8");
@@ -1004,12 +1007,9 @@ export default async function ({ page }) {
       page.waitForResponse((r) => r.url().endsWith("/api/v1/call") && r.request().postDataJSON()?.op === "project_open").then((r) => r.json());
     const toDemoScreen = async () => {
       await page.getByTestId("more").click();
-      const toProjects = hashIs(page, "#projects");
-      await page.getByTestId("projects-item").click();
-      await toProjects;
-      const toDemo = hashIs(page, "#project=demo");
-      await page.getByTestId("project-open-demo").click();
-      await toDemo;
+      const toThreads = hashIs(page, "#threads");
+      await page.getByTestId("threads-item").click();
+      await toThreads;
     };
     const button = page.getByTestId("project-coordinator");
     const fake = page.getByRole("menuitem", { name: /^fake/ });
@@ -1033,7 +1033,7 @@ export default async function ({ page }) {
     await fake.click();
     if ((await refused).err?.code !== "forbidden") throw new Error(`거부가 아니다: ${JSON.stringify(await refused)}`);
     await domIs(page, "host 거부 글", (q) => document.querySelector(q)?.textContent.includes("coordinator에 허용되지 않았다"), $("project-coordinator-error"));
-    if ((await page.evaluate(() => location.hash)) !== "#project=demo") throw new Error("거부됐는데 화면이 바뀌었다");
+    if ((await page.evaluate(() => location.hash)) !== "#threads") throw new Error("거부됐는데 화면이 바뀌었다");
     fs.writeFileSync(toml, plain);
     // 3. 띄우기: 그 pane을 열고, host 기록은 역할 coordinator·이름 「demo coordinator」, workspace demo의 탭 coordinator
     await button.click();
@@ -1047,8 +1047,8 @@ export default async function ({ page }) {
     if (JSON.stringify(mine().map((x) => [x.id, x.role])) !== JSON.stringify([[one.pane.id, "coordinator"]])) throw new Error(`pane ${JSON.stringify(mine())}`);
     await inList(page, "pane-demo coordinator");
     await shot(page, "desktop-coordinator-pane");
-    // 4. 도는 것이 있으면 띄우지 않고 그 pane(뒤로 가기는 프로젝트 화면)
-    const back = hashIs(page, "#project=demo");
+    // 4. 도는 것이 있으면 띄우지 않고 그 pane(뒤로 가기는 모든 thread)
+    const back = hashIs(page, "#threads");
     await page.goBack();
     await back;
     await button.click();
@@ -1060,7 +1060,7 @@ export default async function ({ page }) {
     if (mine().length !== 1) throw new Error(`coordinator가 늘었다: ${JSON.stringify(mine())}`);
     // 5. 휴대폰 폭: 단추는 표지만, 머리가 옆으로 밀리지 않고 고르기는 아래 sheet
     await page.setViewportSize({ width: 390, height: 844 });
-    const back2 = hashIs(page, "#project=demo");
+    const back2 = hashIs(page, "#threads");
     await page.goBack();
     await back2;
     // 표지는 16px 그대로(단추 padding에 눌리지 않는다)
@@ -1075,10 +1075,7 @@ export default async function ({ page }) {
     await domIs(page, "sheet 닫힘", () => !document.querySelector('[role="dialog"]'));
     await page.setViewportSize({ width: 1280, height: 800 });
     aaa("pane", "close", one.pane.id);
-    const toPicker = hashIs(page, "#projects");
-    await page.getByRole("button", { name: "프로젝트 목록" }).click();
-    await toPicker;
-    await page.getByTestId("projects").getByRole("button", { name: "닫기" }).click();
+    await page.getByTestId("all-threads").getByRole("button", { name: "닫기" }).click();
     await page.getByTestId("pane-t1").click();
     await until("t1 터미널", async () => (await screenText(page)).includes("t1-42"));
   });
@@ -1169,6 +1166,32 @@ export default async function ({ page }) {
     await until("Controller 승인 저장", () => aaa("mission", "show", "ci-watch").mission.approved === true);
     if (aaa("mission", "show", "ci-watch").mission.thread !== null) throw new Error("승인만으로 임무가 실행됐다");
     await domIs(page, "승인 뒤 배지 없음", () => document.querySelector('[data-testid="activity-badge-special"]') === null);
+    // 실제 임무 파일 → host 정규화 → 특수 패널. 생략·옛 무제한 표기·명시 상한을 함께 본다.
+    for (const [name, limits] of [["legacy-unlimited", "max_wakes=4294967295\nmax_minutes=4294967295\n"], ["limited", "max_wakes=3\nmax_minutes=60\n"]]) {
+      fs.writeFileSync(`${root}/projects/demo/missions/${name}.md`, `+++\nprofile="fake"\n${limits}+++\n감시 자료를 읽는다.\n`);
+    }
+    aaa("ticker", "tick");
+    for (const [name, wake, time] of [["ci-watch", "깨움 0", "일한 분 0"], ["legacy-unlimited", "깨움 0", "일한 분 0"], ["limited", "깨움 0/3", "깨움 작업 0/60분"]]) {
+      const row = page.getByTestId(`mission-demo-${name}`);
+      await row.waitFor();
+      const text = await row.textContent();
+      if (!text.includes(wake)) throw new Error(`임무 횟수 표시 ${name}: ${text}`);
+      if (name !== "limited" && (/깨움 0\//.test(text) || text.includes("무제한") || text.includes("4294967295"))) throw new Error(`무제한의 분모를 표시했다: ${text}`);
+      // 작업 요약은 줄 메뉴에 표시한다. 줄의 숨은 구현이 아니라 실제 사용자 표시를 연다.
+      await row.locator(".workspace-header").click({ button: "right" });
+      const menu = page.locator(".row-menu, .row-sheet");
+      await menu.waitFor();
+      const summary = await menu.textContent();
+      if (!summary.includes(time)) throw new Error(`임무 시간 표시 ${name}: ${summary}`);
+      if (name !== "limited" && (summary.includes("깨움 작업") || summary.includes("4294967295") || summary.includes("무제한"))) throw new Error(`무제한의 시간 분모를 표시했다: ${summary}`);
+      await shot(page, `desktop-mission-counts-${name}`);
+      await page.keyboard.press("Escape");
+      await menu.waitFor({ state: "hidden" });
+    }
+    if (aaa("mission", "show", "legacy-unlimited").mission.max_wakes !== 0) throw new Error("옛 최대 정수 상한이 정규화되지 않았다");
+    await shot(page, "desktop-mission-counts");
+    for (const name of ["legacy-unlimited", "limited"]) fs.unlinkSync(`${root}/projects/demo/missions/${name}.md`);
+    aaa("ticker", "tick");
   });
 
 

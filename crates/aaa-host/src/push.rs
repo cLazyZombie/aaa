@@ -601,7 +601,7 @@ mod tests {
         let titles: HashMap<String, String> = [("t-0001".to_string(), "웹 결과물".to_string())].into();
         // 한 thread: 제목은 「프로젝트 · thread 제목」, 자리는 그 thread, 본문은 사건만(제목이 대상을 말한다)
         let p = payload(&demo, &[q("t-0001"), item("t-0001", "thread-state", "new report")], &titles, Some(u32::MAX));
-        assert_eq!(p["url"], "/#thread=demo%2Ft-0001");
+        assert_eq!(p["url"], "/#thread=t-0001");
         assert_eq!(
             (p["title"].as_str(), p["tag"].as_str(), p["body"].as_str()),
             (Some("demo · 웹 결과물"), Some("aaa-demo/t-0001"), Some("확인창 응답 기다림\n보고 준비"))

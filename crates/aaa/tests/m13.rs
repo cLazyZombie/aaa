@@ -639,7 +639,7 @@ fn worktree_thread_round_trip() {
     assert_eq!(cwd, w.lab.root.join("workA").join("repo").join("demo-t-0001"));
     assert!(cwd.join(".aaa/demo-t-0001/brief.md").is_file());
     let brief = std::fs::read_to_string(cwd.join(".aaa/demo-t-0001/brief.md")).unwrap();
-    assert!(brief.contains("X-42") && brief.contains("# thread brief") && brief.contains("# 프로젝트 지침"), "{brief}");
+    assert!(brief.contains("X-42") && brief.contains("# thread brief") && brief.contains("# 지침"), "{brief}");
     // 작업 폴더·aaa 실행 파일 자리는 agent가 그 머신 값으로 채웠다(plan §8.78)
     let work = cwd.join(".aaa/demo-t-0001");
     assert!(brief.contains(&format!("- 보고: `{}/report.md`", work.display())), "{brief}");
@@ -1297,6 +1297,33 @@ fn mission_question_answer_recovers_and_delivers_accumulated_input_once() {
     assert!(
         history["runs"].as_array().unwrap().iter().any(|r| r["detail"].as_str().unwrap().starts_with("확인창 해제"))
     );
+    // 실제 plain CLI도 요청 수락과 작업 중 적용 대기를 구분한다.
+    wait_for("깨움 뒤 일함", T, || {
+        (w.h.ok(&["mission", "show", "question-watch"])["mission"]["state"] == "일함").then_some(())
+    });
+    let file = project.join("missions/question-watch.md");
+    let original = std::fs::read_to_string(&file).unwrap();
+    let old_sha = w.h.ok(&["mission", "show", "question-watch"])["mission"]["applied_sha"].clone();
+    std::fs::write(&file, format!("{original}본문만 더한 후보.\n")).unwrap();
+    let output = w.h.run(&["mission", "reload", "question-watch"]);
+    assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+    let text = String::from_utf8_lossy(&output.stdout);
+    assert!(text.contains("적용 대기") && text.contains("예약 판") && text.contains("현재 작업이 끝난 뒤"), "{text}");
+    let view = w.h.ok(&["mission", "show", "question-watch"]);
+    assert_eq!(view["mission"]["applied_sha"], old_sha);
+    assert_eq!(view["mission"]["pending_sha"], view["mission"]["file_sha"]);
+    assert_eq!(view["mission"]["stale"], true);
+    let human_show = w.h.run(&["mission", "show", "question-watch"]);
+    let text = String::from_utf8_lossy(&human_show.stdout);
+    assert!(text.contains("현재 작업이 끝난 뒤"), "{text}");
+    let counts = text.lines().find(|s| s.starts_with("오늘 깨움 ")).unwrap();
+    assert!(
+        counts.contains("오늘 깨움 1 · 일한 분 ") && !counts.contains("무제한") && !counts.contains("깨움 1/"),
+        "{counts}"
+    );
+    let list = w.h.run(&["mission", "list"]);
+    let list = String::from_utf8_lossy(&list.stdout);
+    assert!(list.lines().any(|s| s.contains("question-watch") && s.contains("깨움 1 · 일한 분 ")), "{list}");
 }
 
 /// 화면으로 아는 harness 상태(herdr 0.9.5 감지, plan §8.110), 확인창 질문의 원격 응답, 메시지 queue·interrupt(§8.3~8.5).
@@ -1673,10 +1700,7 @@ fn memory_and_restart() {
     let brief = std::fs::read_to_string(&brief_path).unwrap();
     // 다시 시작 안내는 thread 규칙 다음, 프로젝트 지침 앞이다(herdr-projects `compose_brief`)
     let at = |n: &str| brief.find(n).unwrap_or_else(|| panic!("{n} 없음: {brief}"));
-    assert!(
-        at("# thread brief") < at("**이 일을 앞서 시도한 것이")
-            && at("**이 일을 앞서 시도한 것이") < at("# 프로젝트 지침")
-    );
+    assert!(at("# thread brief") < at("**이 일을 앞서 시도한 것이") && at("**이 일을 앞서 시도한 것이") < at("# 지침"));
     assert!(brief.contains("API는 v3로 바꾼다") && !brief.contains("v2"), "{brief}");
     let v = w.wait_show("다시 안내", &id, |v| v["brief"] == "delivered");
     // hook이 없는 harness는 일하는지 알 수 없다: 방금 안내를 받은 thread는 작업 중이다(herdr-projects ticker `delivered`,
@@ -3581,6 +3605,27 @@ fn routines() {
     let ran = w.kinds(0).iter().filter(|k| *k == "routine_ran").count();
     assert!(ran >= 3, "{:?}", w.kinds(0));
     assert!(w.kinds(0).contains(&"routine_approved".to_string()));
+
+    // 실제 새 파일 읽기 경계: 변환해도 승인 값과 원격 agent의 다음 실행을 이어받는다.
+    std::fs::remove_file(dir.join("routines/slack.md")).unwrap(); // 위에서 검증한 깨진 예시만 제거한다.
+    let approval = routine("far")["command_sha256"].as_str().expect("명령 승인 hash").to_string();
+    let far_runs = || {
+        w.h.ok(&["events", "demo"])["events"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|e| e["kind"] == "routine_ran" && e["detail"].as_str().is_some_and(|d| d.starts_with("far: ")))
+            .count()
+    };
+    let before = far_runs();
+    let converted = w.h.ok(&["automation", "convert", "demo"]);
+    assert!(converted["files"].as_array().unwrap().iter().any(|f| f == "automations/far.toml"));
+    assert!(!dir.join("routines/far.md").exists());
+    assert_eq!(routine("far")["file"], "automations/far.toml");
+    assert_eq!(routine("far")["command_sha256"], approval);
+    assert_eq!(routine("far")["approved"], true);
+    wait_for("새 TOML 원격 명령 두 차례", T, || (far_runs() >= before + 2).then_some(()));
+    assert_eq!(items("routine", "far").len(), 1, "변환과 같은 출력은 안내를 다시 만들지 않는다");
 }
 
 /// HTTP/1.1 GET 한 번(Connection: close). (상태, 머리글 소문자, 본문)
@@ -4037,7 +4082,7 @@ const GUIDE_SECTIONS: &[&str] = &[
     "일을 직접 하지 않으므로 언제나 사용자에게 답할 수 있다",
     "앞(foreground)에서 오래 기다리는 명령을 돌리지 않는다",
     "기다릴 일은 aaa inbox 알림에 맡기거나, 수 초 안에 한 번만 확인하고 끝낸다",
-    "## 새 프로젝트의 첫 턴",
+    "## 첫 턴",
     "--to-user --title",
     "지시는 사용자만, 채팅으로 한다",
     "## 메시지마다 세 가지 중 하나",

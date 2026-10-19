@@ -244,7 +244,24 @@ impl Host {
                 passed.id.push_str(&format!("-{kind}"));
                 publish(&passed)?;
             }
-            if n.wake
+            let common = if !n.routine.is_empty()
+                && !n.record_only
+                && n.skip_reason.is_none()
+                && (n.wake || policy.source == "git")
+            {
+                let dir = self.project_dir(p)?;
+                let (rules, _) = crate::routine::load_all(&dir);
+                if let Some(rule) = rules.iter().find(|r| r.name == n.routine) {
+                    self.automation_submit(p, rule, &n.id, n.text.clone(), n.owners.first().cloned())?;
+                    true
+                } else {
+                    return Err(err(ErrorCode::BadRequest, "감시 규칙이 없거나 파일 오류다. source outbox를 보존한다"));
+                }
+            } else {
+                false
+            };
+            if !common
+                && n.wake
                 && let Some(m) = &n.mission
                 && !self.mission_target_exists(p, m)
             {
@@ -256,7 +273,8 @@ impl Host {
                     policy.missing_mission,
                 );
                 waiting.push(n.clone());
-            } else if n.wake
+            } else if !common
+                && n.wake
                 && let Some(m) = &n.mission
             {
                 self.mission_data_input(

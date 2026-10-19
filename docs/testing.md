@@ -339,7 +339,7 @@ E2E28은 실제 host·agent의 pane→thread 대응을 거쳐, ⋯ 메뉴로 고
 ## 「작업」 패널 통합(§8.280)
 
 - 웹 유닛 `roster`: 프로젝트 안 coordinator → 작업 공간 폴더(이름순, 「작업 폴더」 끝) → 폴더 안 rank 차례, 임무 thread·그 pane 제외, 「폴더 안 정렬」 활동순. `workFolders`·`sidebarPanel`(옛 `projects`·`agents` 저장값 → `work`, 드러내기)도 같이 본다.
-- E2E26은 막대 단추 셋(작업·머신·특수)과 「작업」 배지(확인 필요·검토 대기 thread + 답을 기다리는 agent pane의 합집합), E2E12는 프로젝트가 하나일 때 머리 없이 그리고 thread 줄 메뉴(보고·고정·프로젝트 thread 보기)와 프로젝트가 여럿일 때 프로젝트 머리 안 폴더 들여쓰기, E2E11은 줄 끝 배경 작업 수·계획 n/m, E2E27은 머신 칸 agent 수가 트리의 도는 agent 줄 수와 같음을 본다.
+- E2E26은 막대 단추 셋(작업·머신·특수)과 「작업」 배지(확인 필요·검토 대기 thread + 답을 기다리는 agent pane의 합집합), E2E12는 프로젝트가 하나일 때 머리 없이 그리고 thread 줄 메뉴(보고·고정·프로젝트 thread 보기, §8.291부터 「모든 thread」)와 프로젝트가 여럿일 때 프로젝트 머리 안 폴더 들여쓰기, E2E11은 줄 끝 배경 작업 수·계획 n/m, E2E27은 머신 칸 agent 수가 트리의 도는 agent 줄 수와 같음을 본다.
 
 ## 한 host 한 프로젝트 시작 검사(§8.283)
 
@@ -385,6 +385,18 @@ E2E28은 실제 host·agent의 pane→thread 대응을 거쳐, ⋯ 메뉴로 고
   - 옛 이름 `[[repos]]`가 있는 글은 그 목록을 고친다.
   - 쓰기 자리를 project.toml로 되돌린 결함을 심어 실패를 확인했다.
 - 안내: m13 `coordinator_flow`·`doctor_files_brings_the_coordinator_guide_to_existing_projects`·`project_lifecycle`이 `aaa post user`와 남은 `aaa project sweep <p>`를 본다.
+
+## 웹의 프로젝트 층 없애기(§8.291)
+
+- E2E 12:
+  - 「끝난 thread 보기」: 더 보기 → 모든 thread(`#threads`)로 간다. 묶음·거르기를 보고, 고르면 짧은 주소 `#thread=t-0001`이 된다. 뒤로 이름은 「모든 thread로」이고 뒤로 가면 `#threads`다. 옛 `#projects`·`#project=demo`도 그 화면을 열고 주소가 `#threads`로 바뀐다.
+  - 옛 주소 바꾸기를 뺀 결함을 심어(웹을 다시 빌드하고 host binary도 다시 만든 뒤) 이 단계가 실패하는 것을 확인했다.
+  - 줄 메뉴: thread 줄 메뉴는 「보고·고정·모든 thread」다. 짧은 주소 `#thread=<id>`로도 보고를 연다.
+  - 멈춤은 모든 thread 머리 둘째 줄의 「멈춤」으로 본다. coordinator 열기는 모든 thread 머리에서 하고, 뒤로 가기는 `#threads`다.
+  - push: coordinator 완료 push URL은 `/#threads`다.
+- E2E 15: 모든 thread 화면의 ≡ 자리. E2E 19: post 음소거 앱 안 알림은 `#threads`로 간다. E2E 21: 보고서 화면에 프로젝트 고르기가 없다.
+- host 유닛: push `payload`의 thread URL `/#thread=t-0001`, post 알림 URL `/#threads`.
+- 낱말: brief 유닛(`# aaa`·`- 이름:`·memory 넘침 말), 임무 brief 유닛(「aaa 홈 폴더를 탐색하지 않는다」), m13 `worktree_thread_round_trip`·`memory_and_restart`(`# 지침`)·`coordinator_flow`·`doctor_files_brings_the_coordinator_guide_to_existing_projects`(`## 첫 턴`).
 
 ## E2E03 보낸 순서는 화면 안 기록으로
 
@@ -523,3 +535,38 @@ L2 결함 검증은 이전 root 가져오기 생략, 재시작 전 applied 변�
 - 기존 macOS m13 rollout keeper는 정상 L2 경계 뒤 unchanged SHA 실패의 무재시작을 유지한다. remote가 옛 바이너리로 잘못 돌아오면 독립 PID가 살아 복구하고, 복구 중 host를 다시 띄워도 같은 IDs/실패 머신만 유지한다. host 실패는 host만 복구하며, 로컬 agent 실패는 공유 파일의 host/agent 둘을 복구한다. 복구 전 뜬 옛 프로세스는 완료로 세지 않는다. private token을 아는 다른 peer PID와 bootstrap 없는 내부 CLI도 거부한다.
 - 실제 설치 config check는 시험 소유 Unix socket으로 멈춘다. safety 철회→Recovering→gate 해제→늦은 rename 뒤 baseline 복구→새 old host를 확인한다. self-check30초·primary120초와 기존30초 사건 대기 상한을 늘리지 않는다. 독립 guard는 기록 PID와 실제 실험실 명령 경로를 함께 확인해 Lab이 회수한다.
 - 새 복구 ID·실행 SHA 누락·실패 뒤 다음 단계 진행의 필수 변형과 설치 중 취소/새 프로세스 확인 변형을 RED로 확인하고 정확 bytes 복구 뒤 GREEN/전체 ci-local·check-public을 실행한다. 독립 최종 read-only 리뷰는 같은 후보에서 한다.
+
+
+## 순수 TOML·공통 자동화(L4)
+
+- host automation keeper는 옛/새 형식의 같은 조건·동작·명령 승인 값, 동명 양쪽 차단, 잘못된 키/둘 이상의 조건·글 칸, Unicode 위치 오류, 최종/중간 symlink 거부를 확인한다. 스키마는 Rust 생성값과 고정 산출물을 비교한다.
+- 변환은 긴 글·원본 보존·임무 조건 분리·동등성·이름 충돌 전체 무변경·재실행 무음을 확인한다. 실제 host 변환은 옛 mission cursor를 새 조건에 넘기고 변환 뒤 사건을 한 번 받는지 본다. 예산/간격/usage keeper와 실제 DB 재오픈은 pending·하루 횟수 보존을 검사한다. SQLite 저장 실패는 source hash/cursor나 통지 표식만 먼저 전진시키지 않아야 한다.
+- 기존 routine·PR·CI/Git·임무 m13을 유지한다. source에서 공통 큐로 인계한 뒤 실제 action pass의 자료 보존·한 번 전달을 관찰한다. CI 회복이 지연된 실패 대기를 취소하는 회귀를 포함한다. 웹 E2E34는 CLI 변환→실제 목록 출처 변경·새 파일 enabled만 편집·Reader의 변환 차단도 확인한다.
+- 운영 상한 안내 회귀는 실제 mission_tick→12/12 안내→done→논리90/180/270초 tick→완료 기록 정리→DB 재오픈을 거쳐 같은 날 무안내를 확인한다. 다음 날 예산 초기화 때 무안내, 다시 상한 도달 때 한 번, 구판 완료 항목 이행도 검사한다. 임무가 아닌 helper 호출만으로 반복 결함을 검사하지 않는다.
+- 결함 심기는 당일 표식 제거와 알림보다 표식 먼저 쓰기를 독립 적용해 각각 done 뒤 1→2와 DB 실패 확정 단언 RED를 확인하고 원본 bytes/mtime 복구 뒤 PASS한다. 다른 변형도 승인 정규화·동명 차단·공통 상한·변환 인계 경계에서 기존 keeper가 실제 실패해야 한다. 원래 실패 증거를 보존하고 최종 ci-local·check-public은 복구 뒤 수행한다.
+
+
+### L4 기본 제한 없음(사용자23:3x)
+
+- 생략/0인 임무와 공통 규칙이 기본12/20 상한으로 막히는 첫 RED를 보존한 뒤 무제한을 확인한다. 숫자0 최소 간격도 받는다. 명시한 옛 양수 상한·사용량 대기는 유지한다.
+- 실제 임무를 상한 대기·기존 inbox51건으로 만들고 파일의 상한/간격을 없앤다. repo 재승인 없이 같은 tick에 보존 입력 한 번 깨움, 2시간 뒤 시간/철수 안내 없음, 기본 host 동시 상한 없이 승인 임무3개 시작을 검사한다. 낮은 frame의 text+Enter는 한 번 깨움의 두 요청이므로 고정 깨움 본문을 센다.
+- 이전 예산 증가 승인 거부 기대는 새 사용자 원칙으로 바꾼다. 실제 repo 경로 변경의 승인 거부·명시 거절 상태에서 재시작 전 Kill 없음은 유지한다. host max_pending을 공유하던 사후 평가자의 0도 무제한으로 읽어, 설정 변경이 전달을 전부 막지 않는지 기존 회귀로 확인한다.
+
+
+### L4 운영 reload·임무 권한 후속
+
+- 명시 하루 상한1/1에서도 승인된 동일 상한 새 본문의 reload가 Kill→종료 확인→새 후보 적용으로 이어지는지 본다. 수리 전 cap의 앞선 return으로 Kill0(기대1) RED를 보존한다. Working 때는 적용 예약과 이유를 즉시 보이고, 실제 작업 종료·안전한 Idle 전에는 Kill/새 대화가 없어야 한다. 예약 뒤 다른 파일 판·pause/확인창/초안/보는 화면도 구분한다.
+- 사용자의23:5x 결정에 따라 이전 manual 강제 기대를 교체한다. 기존 host 승인 start와 reset frame 시험은 실제 ThreadPrepare/ThreadRebrief의 profile args가 일반 thread safety 결과와 같은지 검사한다. agent launch keeper는 Claude/Codex 각각 yolo off/on, launch/resume argv, hook/자기 문맥/일반 thread 분리/링크 쓰기 거부를 유지한다. 강제 manual 또는 bypass 차단이 남아 있으면 RED여야 한다.
+- 운영 파일·승인 기록·현재 pane은 사용하지 않는다. 가짜 frame owner와 임시 작업 폴더에서만 인자를 확인한다.
+
+
+- 자정 경계 회귀: 기존 mission_debounce 예산 시험은 23:59대 now+60001이 다음 날짜가 되어 같은 날 상한 기대가 실패했다. 첫 로그를 보존하고 그 시험의 논리 시각·reset 기준을 다음 날 정오에 고정해 같은 예산 날짜의 간격·범위·상한을 검사한다. 날짜 초기화는 별도 notice/day keeper가 계속 소유한다. 기대값이나 시한을 늘리지 않는다.
+- 과거 최소 execpolicy 검증은 manual 모드의 증거다. 사용자23:5x 뒤에는 추가 allow-list와 실행 문맥만 유지하고 실제 승인/sandbox 모드는 일반 thread safety 결과가 정본이다. 임무만 push가 harness에서 막힌다고 가정하지 않으며 금지는 임무 지침에 남는다.
+
+
+### L4 재개·시간 상한·무제한 표시 후속
+
+- `resumed_mission_time_budget_counts_work_in_the_wake_not_elapsed_wall_time`은 실제 host·DB와 frame owner에서 누적19분/옛 깨움2시간/오늘 깨움0 재개를 검사한다. 경과 시간식은 첫 무알림 단언 RED여야 한다. 관찰 작업59분 무음→멈춤 시간 제외→61분 한 번 안내→done 뒤 무반복과 별도 실제 새 입력의 깨움별 셈 초기화를 검사한다. 실제 input hook과 논리 시각을 섞지 않도록 새 전달 사례는 새 임무의 실제 시각에서 시작한다.
+- 기존 reload keeper에 pause 상태의 reload/restart 예약과 멈춤 이유, 무Kill/무Spawn, resume 뒤 동일 후보 적용을 추가한다. 기존 상한 제거 keeper는 resume 전에 상한0 반영과 pause 보존을 함께 검사한다.
+- 기존 변환 인계 keeper는 변환 직후 첫 새 source 판정 전에 사건을 넣어 실제 전달 한 번·과거 무재전달을 검사한다. DB 표식 유무만으로 통과시키지 않는다. 옛 mission 사건 조건을 함께 실행하거나 새 cursor seed를 제거하면 실패해야 한다.
+- 웹12의 실제 특수 패널은 생략·옛 최대 정수·상한3/60을 읽어 무제한 분모 없음과 명시 N/M을 검사한다. 실제 CLI m13 임무의 list/show도 같은 규칙을 검사한다. 큰 수를 무제한 생성 예시로 쓰지 않는다. 시간 상한은 깨움별 작업에 붙이고 누적 작업은 분리한다.

@@ -78,7 +78,7 @@ async fn durable_outbox_replay_deduplicates_inbox_flow_and_mission_pending() {
         kind: "failed".into(),
         sha: "a".repeat(40),
         owners: vec!["t-0042".into()],
-        text: serde_json::json!({"source":"ci","repo":"aaa","branch":"main","already_recovered":false}).to_string(),
+        text: serde_json::json!({"source":"ci","repo":"aaa","branch":"main","already_recovered":false,"reports":{"t-0042":"보고 본문"}}).to_string(),
         mission: Some("watch".into()),
         wake: true,
         record_only: false,
@@ -87,17 +87,29 @@ async fn durable_outbox_replay_deduplicates_inbox_flow_and_mission_pending() {
         at: util::now_ms(),
     };
     let mut s = State { outbox: vec![n.clone()], ..Default::default() };
+    assert!(h.ci_drain("demo", "ci:demo:test", &mut s).is_err());
+    assert_eq!(s.outbox.len(), 1, "정의가 없으면 source outbox를 보존한다");
+    std::fs::create_dir_all(h.project_dir("demo").unwrap().join("automations")).unwrap();
+    std::fs::write(
+        h.project_dir("demo").unwrap().join("automations/ci-main.toml"),
+        "[on.ci]\nrepo='aaa'\nbranches=['main']\n[do.wake]\nmission='watch'\ntext='확인 메모'\nreports=false\n",
+    )
+    .unwrap();
     h.ci_drain("demo", "ci:demo:test", &mut s).unwrap();
-    assert_eq!(s.outbox.len(), 1, "대상 임무가 없어도 전달 입력은 보존한다");
+    assert!(s.outbox.is_empty(), "공통 내구 큐에 인계한 뒤 source를 비운다");
+    h.automation_pass("demo").await;
+    let saved = h.db.meta("automation:demo:ci-main").unwrap().unwrap();
+    assert!(saved.contains("ci-proof"), "없는 임무의 입력은 공통 큐에 보존한다");
     let mut r = ThreadRec::starting("demo", "감시", "m", "cheap", Role::Evaluator, ThreadKind::Dir, util::now_ms());
     r.id = "t-0001".into();
     r.status = ThreadStatus::Open;
     r.mission = Some(MissionRun { name: "watch".into(), ..Default::default() });
     h.db.thread_import("demo", &r.id, "open", &serde_json::to_string(&r).unwrap()).unwrap();
-    h.ci_drain("demo", "ci:demo:test", &mut s).unwrap();
-    assert!(s.outbox.is_empty());
+    h.automation_pass("demo").await;
     s.outbox.push(n);
     h.ci_drain("demo", "ci:demo:test", &mut s).unwrap();
+    h.automation_pass("demo").await;
+    assert!(s.outbox.is_empty());
     assert_eq!(h.db.inbox_list(Some("demo"), true).unwrap().iter().filter(|i| i.item_kind == "ci").count(), 1);
     assert_eq!(
         h.db.flow_after(Some("demo"), 0, 100).unwrap().iter().filter(|e| e.kind == "ci_failed").count(),
@@ -105,12 +117,16 @@ async fn durable_outbox_replay_deduplicates_inbox_flow_and_mission_pending() {
         "프로젝트와 owner 이력 각각 한 번"
     );
     let history = h.routine_history("demo", "ci-main").unwrap();
-    assert_eq!(history.runs.len(), 1);
+    let delivered: Vec<_> = history.runs.iter().filter(|r| r.id == "ci-proof").collect();
+    assert_eq!(delivered.len(), 1, "실패한 전달 기록과 별개로 사건은 한 번 완료한다");
     assert_eq!(history.today, 1);
-    assert_eq!(history.runs[0].status, "done");
+    assert_eq!(delivered[0].status, "done");
     let pending = h.mission_rec("demo", "watch").unwrap().mission.unwrap().pending;
     assert_eq!(pending.len(), 1);
     assert_eq!(pending[0].source, "ci");
+    let delivered: serde_json::Value = serde_json::from_str(&pending[0].text).unwrap();
+    assert_eq!(delivered["memo"], "확인 메모", "단일 사건에도 동작의 메모를 붙인다");
+    assert!(delivered.get("reports").is_none(), "reports=false는 임무 입력의 보고 사본을 뺀다");
     h.mission_ci_recovered("demo", r#"{"repo":"aaa","branch":"main","sha":"fixed"}"#).unwrap();
     let pending = h.mission_rec("demo", "watch").unwrap().mission.unwrap().pending;
     assert_eq!(pending.len(), 1);
@@ -191,4 +207,87 @@ async fn inactive_watch_sources_release_tick_deadlines() {
     h.watch_finished("ci", "demo");
     std::fs::remove_file(dir.join("PROJECT.md")).unwrap();
     assert!(h.ci_next_due().is_none(), "삭제한 프로젝트는 예약하지 않는다");
+}
+
+#[tokio::test]
+async fn recovery_cancels_failure_still_waiting_in_rule_batch() {
+    let lab = Lab::new(None);
+    let dir = lab.h.project_dir("demo").unwrap();
+    let r = crate::automation::parse(
+        &dir,
+        "check",
+        "[on.ci]\nrepo='app'\nbranches=['main']\n[do.wake]\nmission='watch'\n[limits]\nbatch='1m'\n",
+    )
+    .unwrap();
+    lab.h
+        .automation_submit(
+            "demo",
+            &r,
+            "ci-red",
+            serde_json::json!({"source":"ci","repo":"app","branch":"main","result":"failed"}).to_string(),
+            None,
+        )
+        .unwrap();
+    let (a, _b) = tokio::io::duplex(1024);
+    let (_, write) = tokio::io::split(a);
+    let conn = AgentConn::new(spawn_writer(write, MAX_FRAME), 1);
+    let now = util::now_ms();
+    let mut state = State::default();
+    state.source.runs.insert(
+        1,
+        CiRun {
+            id: 1,
+            branch: "main".into(),
+            sha: "a".repeat(40),
+            status: "completed".into(),
+            conclusion: "success".into(),
+            created_ms: now,
+            ..Default::default()
+        },
+    );
+    lab.h.ci_rule("demo", &conn, "/work/app", &r, &mut state, now).await.unwrap();
+    let saved: serde_json::Value =
+        serde_json::from_str(&lab.h.db.meta("automation:demo:check").unwrap().unwrap()).unwrap();
+    assert!(saved["pending"].as_array().unwrap().is_empty(), "이미 회복한 CI 실패는 batch 뒤에 늦게 전달하지 않는다");
+    lab.h.automation_submit("demo", &r, "ci-red", "same delivery replay".into(), None).unwrap();
+    lab.h.automation_drain_at("demo", &r, now + 60000).await.unwrap();
+    assert_eq!(lab.h.automation_count("demo", "check").unwrap(), 0);
+}
+
+#[tokio::test]
+async fn selected_ci_pass_in_toml_reaches_the_shared_action_once() {
+    let lab = Lab::new(None);
+    let dir = lab.h.project_dir("demo").unwrap();
+    std::fs::create_dir_all(dir.join("automations")).unwrap();
+    let text = "[on.ci]\nrepo='app'\nbranches=['main']\nevents=['passed']\n[do.inbox]\ntext='CI 통과 확인'\n";
+    std::fs::write(dir.join("automations/green.toml"), text).unwrap();
+    let r = crate::automation::parse(&dir, "green", text).unwrap();
+    let (a, _b) = tokio::io::duplex(1024);
+    let (_, write) = tokio::io::split(a);
+    let conn = AgentConn::new(spawn_writer(write, MAX_FRAME), 1);
+    let now = util::now_ms();
+    let mut state = State::default();
+    state.source.runs.insert(
+        1,
+        CiRun {
+            id: 1,
+            branch: "main".into(),
+            sha: "a".repeat(40),
+            status: "completed".into(),
+            conclusion: "success".into(),
+            created_ms: now,
+            ..Default::default()
+        },
+    );
+    lab.h.ci_rule("demo", &conn, "/work/app", &r, &mut state, now).await.unwrap();
+    lab.h.ci_drain("demo", "ci:demo:green", &mut state).unwrap();
+    lab.h.automation_pass("demo").await;
+    lab.h.automation_pass("demo").await;
+    let inbox = lab.h.db.inbox_list(Some("demo"), true).unwrap();
+    assert_eq!(
+        inbox.iter().filter(|i| i.item_kind == "routine" && i.subject == "green").count(),
+        1,
+        "새 형식의 명시 passed 조건도 공통 동작을 실행한다"
+    );
+    assert_eq!(lab.h.automation_count("demo", "green").unwrap(), 1);
 }

@@ -6,6 +6,15 @@
 mod adopt;
 mod app_badge;
 mod attach;
+/// 자동화 정본 타입의 편집기용 JSON Schema. host 상태를 읽지 않는다.
+pub fn automation_schema() -> String {
+    serde_json::to_string_pretty(&automation::schema()).expect("schema serialize")
+}
+/// 임무 TOML 파일의 편집기용 JSON Schema.
+pub fn mission_schema() -> String {
+    serde_json::to_string_pretty(&mission::files::schema()).expect("schema serialize")
+}
+mod automation;
 mod bgwait;
 mod brief;
 mod brief_text;
@@ -484,6 +493,7 @@ pub struct Host {
     usage_limits: usage_limit::LimitMap,
     /// 지금 도는 routine 명령(`<project>/<name>`)
     routine_running: Mutex<HashSet<String>>,
+    automation_sources: tokio::sync::Mutex<()>,
     /// PR 추적: 프로젝트별 마지막 조회·도는 중·`gh` 실패, `gh` 계정(pr.rs)
     pr: Mutex<pr::PrMemory>,
     watch: Mutex<watch::Memory>,
@@ -676,6 +686,7 @@ impl Host {
             summary_marks: Mutex::new(HashMap::new()),
             usage_limits: Mutex::new(HashMap::new()),
             routine_running: Mutex::new(HashSet::new()),
+            automation_sources: tokio::sync::Mutex::new(()),
             pr: Mutex::new(pr::PrMemory::default()),
             watch: Mutex::new(watch::Memory::default()),
             view_caps: Mutex::new(HashMap::new()),
@@ -1498,6 +1509,9 @@ impl Host {
             FrontRequest::MissionOpen { project, name } => self.mission_control(&project, &name, "open", actor).await,
             FrontRequest::Routines { project } => {
                 self.routines(&project).map(|routines| FrontResponse::Routines { routines })
+            }
+            FrontRequest::AutomationConvert { project } => {
+                self.automation_convert(&project, actor).await.map(|files| FrontResponse::AutomationConverted { files })
             }
             FrontRequest::RoutineRuns { project, name } => {
                 self.routine_runs(&project, &name).map(|runs| FrontResponse::RoutineRuns { runs })

@@ -14,6 +14,9 @@ aaa-vt.workspace = true
 anyhow.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+# 정본 Rust 파일 타입에서 편집기·웹이 공유할 JSON Schema를 생성한다.
+schemars = "1.2.3"
+serde_path_to_error = "0.1"
 tokio.workspace = true
 base64.workspace = true
 ring.workspace = true

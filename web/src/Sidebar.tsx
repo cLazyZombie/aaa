@@ -48,7 +48,7 @@ import "./Sidebar.css";
 import { AutomationPanel } from "./AutomationPanel";
 import { MachineMeters } from "./MachineMeters";
 import { machineStats } from "./machineStats";
-import { evaluatorState, missionTone, missionWord, type SpecialTone } from "./specialModel";
+import { missionCount, missionWork, evaluatorState, missionTone, missionWord, type SpecialTone } from "./specialModel";
 
 /** 상태 말(참고 status.ts STATUS_WORD는 영어 대문자 낱말이다). 화면 낭독·tooltip에 쓴다 */
 const STATUS_KO: Record<KnownStatus, string> = {
@@ -256,8 +256,8 @@ export interface SidebarProps {
   onPane: (id: string) => void;
   onThread: (t: ThreadView) => void;
   onNewShell: (m: MachineView) => void;
-  /** 그 프로젝트의 모든 thread(끝난 것까지) 화면 */
-  onProject: (name: string) => void;
+  /** 모든 thread(끝난 것까지) 화면 */
+  onThreads: () => void;
   /** 목록 위에 띄울 알림 띠(연결 끊김·오류) */
   banners?: ReactNode;
   /** 보이는 패널(활동 막대) */
@@ -599,14 +599,10 @@ function Roster(props: SidebarProps) {
           </ul>
         )}
         <ul className="workspace-list">
-          {/* 프로젝트가 하나면 머리 없이 그 안만(사용자 결정 10-19: aaa는 프로젝트 하나), 둘 이상이 남아 있는 동안은 프로젝트 머리 아래 */}
-          {projects.length === 1 ? (
-            <WorkTree {...props} project={projects[0]} folders={shownFolders.filter((f) => f.project === projects[0])} coordinators={coordinators} machineOf={machineOf} twoLine={twoLine} />
-          ) : (
-            projects.map((project) => (
-              <ProjectGroup key={project} {...props} project={project} folders={shownFolders.filter((f) => f.project === project)} coordinators={coordinators.filter((p) => p.coordinator_project === project)} machineOf={machineOf} twoLine={twoLine} />
-            ))
-          )}
+          {/* 프로젝트 머리는 없다(host는 프로젝트 하나, plan §8.291): 옮겨 온 기록만 있는 다른 이름이 남았으면 그 안을 차례로 잇는다 */}
+          {projects.map((project) => (
+            <WorkTree key={project} {...props} project={project} folders={shownFolders.filter((f) => f.project === project)} coordinators={projects.length === 1 ? coordinators : coordinators.filter((p) => p.coordinator_project === project)} machineOf={machineOf} twoLine={twoLine} />
+          ))}
           {split.rest.length > 0 && (
             <>
               <li className={`workspace workspace-group pane-item project-group other-group${otherCollapsed ? " is-collapsed" : ""}`} data-testid="other-group">
@@ -823,75 +819,6 @@ function PaneRow({ pane: p, online, machine, twoLine, move, ...props }: SidebarP
 
 type TreeProps = SidebarProps & { project: string; folders: WorkFolder[]; coordinators: PaneView[]; machineOf: (t: ThreadView) => MachineView | undefined; twoLine: boolean };
 
-/**
- * 프로젝트 머리(프로젝트가 둘 이상 남아 있는 동안만, plan §8.280). 접기·셈·묶음 대표 상태·⋯(프로젝트 thread 보기, 접기). 그 안은 WorkTree다.
- */
-function ProjectGroup({ project, folders, coordinators, machineOf, twoLine, ...props }: TreeProps) {
-  // 프로젝트 하나에 묶음 하나(머신마다 나뉘지 않는다, plan §8.195)
-  const [collapsed, toggle] = useFold(`aaa:project-collapsed:${project}`);
-  const threads = folders.flatMap((f) => f.threads);
-  const online = (t: ThreadView) => machineOf(t)?.connection === "connected";
-  const contentsId = `${useId()}-threads`;
-  const paneOf = (id: string) => props.panes.find((p) => p.id === id);
-  // 접힌 묶음도 고른 thread는 보인다(참고: 접힌 묶음은 열린 checkout을 보이고, 셈은 치운 것만)
-  const isSel = (t: ThreadView) => props.selected === `thread:${threadKey(t)}` || (t.pane != null && props.selected === `pane:${t.pane}`);
-  const shownFolders = collapsed ? folders.map((f) => ({ ...f, threads: f.threads.filter(isSel) })).filter((f) => f.threads.length > 0) : folders;
-  const shownCoordinators = collapsed ? coordinators.filter((p) => props.selected === `pane:${p.id}`) : coordinators;
-  const foldedCount = threads.length + coordinators.length - shownFolders.reduce((n, f) => n + f.threads.length, 0) - shownCoordinators.length;
-  // 접힌 머리는 자식 상태까지 대표한다(참고 rollupStatus: blocked > done > working > waiting > idle)
-  const status = rollupStatus([
-    ...coordinators.map((p) => (p.connection === "connected" ? paneAgentStatus(p) : undefined)),
-    ...threads.map((t) => (online(t) && t.pane ? (paneOf(t.pane) ? paneAgentStatus(paneOf(t.pane)!) : undefined) : undefined)),
-  ]);
-  const need = threads.some((t) => needsYou(t.group));
-  const line = projectLine(
-    threads.map((t) => t.group),
-    threads.some((t) => t.project_status === "paused"),
-  );
-  const label = collapsed ? `${project} thread 펼치기` : `${project} thread 접기`;
-  const rows = useRows();
-  const menuKey = `project:${project}`;
-  // 참고 worktree 묶음 메뉴의 접기·펼치기, 그리고 끝난 것까지 보는 프로젝트 화면(herdr-projects popup, plan §8.89)
-  const toggleMenu = (anchor: HTMLElement, point?: { x: number; y: number }, previousFocus?: HTMLElement | null) =>
-    rows.toggleMenu({
-      key: menuKey,
-      anchor,
-      point,
-      previousFocus,
-      title: project,
-      place: line,
-      items: () => [
-        { id: "threads", label: "프로젝트 thread 보기", icon: ListChecks, run: () => props.onProject(project) },
-        { id: "fold", label: collapsed ? "펼치기" : "접기", icon: collapsed ? ChevronRight : ChevronDown, run: toggle },
-      ],
-    });
-  return (
-    <>
-      <li className={`workspace workspace-group pane-item project-group${collapsed ? " is-collapsed" : ""}`} data-project={project} data-testid={`project-${project}`}>
-        <div className="workspace-header" onMouseDownCapture={keepFocusOnMenuPress} onContextMenu={(e) => onRowContextMenu(e, toggleMenu)}>
-          <button type="button" className="sidebar-row-action workspace-toggle" aria-label={label} title={label} aria-expanded={!collapsed} aria-controls={contentsId} onClick={toggle}>
-            {collapsed ? <Folder aria-hidden="true" /> : <FolderOpen aria-hidden="true" />}
-          </button>
-          <div className="pane-select workspace-select project-select" role="button" tabIndex={0} title={`${project} · ${line}`} onClick={toggle} onKeyDown={(e) => onRowKey(e, toggle)}>
-            <GroupCopy name={project} folded={foldedCount} line={line} need={need} twoLine={twoLine} />
-            <span className="sidebar-pane-meta">
-              <StatusBadge compact status={collapsed ? status : undefined} testid={`project-state-${project}`} />
-            </span>
-          </div>
-          <RowMenuButton title={project} open={rows.menuKey === menuKey} onToggle={(anchor) => toggleMenu(anchor)} />
-        </div>
-      </li>
-      {(shownFolders.length > 0 || shownCoordinators.length > 0) && (
-        <li className="worktree-children" id={contentsId}>
-          <ul className="workspace-list">
-            <WorkTree {...props} project={project} folders={shownFolders} coordinators={shownCoordinators} machineOf={machineOf} twoLine={twoLine} />
-          </ul>
-        </li>
-      )}
-    </>
-  );
-}
-
 /** 묶음 머리의 이름·접힌 수(+n)·둘째 줄 셈(확인 필요가 있으면 빨강) */
 function GroupCopy({ name, folded, line, need, twoLine }: { name: string; folded: number; line: string; need: boolean; twoLine: boolean }) {
   const count = folded > 0 && (
@@ -1038,7 +965,7 @@ function ThreadRow({ t, online, machine, twoLine, ...props }: SidebarProps & { t
   const menuFrom = useRef<HTMLElement | null>(null);
   // 작업 요약 hover 카드(마우스 기기만, plan §8.259): 줄의 title tooltip을 대신하고 ⋯ 메뉴가 열리면 숨는다
   const hover = useSummaryHover(t, rows.menuKey === menuKey);
-  // thread 줄은 그 agent pane을 연다: 보고·고정·그 프로젝트의 모든 thread는 메뉴에서
+  // thread 줄은 그 agent pane을 연다: 보고·고정·모든 thread는 메뉴에서
   const toggleMenu = (anchor: HTMLElement, point?: { x: number; y: number }, previousFocus?: HTMLElement | null) => {
     menuFrom.current = previousFocus === undefined ? anchor : previousFocus;
     rows.toggleMenu({
@@ -1055,7 +982,7 @@ function ThreadRow({ t, online, machine, twoLine, ...props }: SidebarProps & { t
           : [pinned
             ? { id: "unpin", label: "고정 해제", icon: PinOff, run: () => rows.togglePin(pinKey, menuFrom.current) }
             : { id: "pin", label: "고정", icon: Pin, run: () => rows.togglePin(pinKey, menuFrom.current) }]),
-        { id: "threads", label: "프로젝트 thread 보기", icon: ListChecks, run: () => props.onProject(t.project) },
+        { id: "threads", label: "모든 thread", icon: ListChecks, run: props.onThreads },
       ],
     });
   };
@@ -1115,7 +1042,7 @@ function ThreadRow({ t, online, machine, twoLine, ...props }: SidebarProps & { t
 }
 
 /**
- * 특수 패널(사용자 결정 10-19, plan §8.258): 임무·사후 평가자를 프로젝트별 두 줄 줄로. 예전에는 목록 머리의 「특수 ●」 칩이었다.
+ * 특수 패널(사용자 결정 10-19, plan §8.258): 임무·사후 평가자를 두 줄 줄로(프로젝트 머리는 없다, plan §8.291). 예전에는 목록 머리의 「특수 ●」 칩이었다.
  * 줄을 누르면 pane이 돌면 그 pane, 없으면 임무 보기(차이·승인 상태)다. 시작·멈춤·다시 읽기·승인 검토는 ⋯ 메뉴(넓은 창은 오른쪽 클릭)에만
  * 있다: 여는 것만으로 임무를 움직이지 않는다. 보기 권한이면 열기·보기만.
  */
@@ -1135,11 +1062,7 @@ function SpecialSection({ missions, evaluators, panes, canControl, agentOf, onPa
   return (
     <>
       {projects.map((project) => (
-        <section key={project} className="special-project" aria-label={`${project} 특수`}>
-          <h3 className="special-project-head">
-            <Folder aria-hidden="true" />
-            {project}
-          </h3>
+        <section key={project} className="special-project" aria-label="특수">
           <ul className="workspace-list">
             {missions
               .filter((m) => m.project === project)
@@ -1170,7 +1093,7 @@ function SpecialSection({ missions, evaluators, panes, canControl, agentOf, onPa
                                 run: () =>
                                   rows.ask({
                                     title: `${m.title} · 임무 승인`,
-                                    body: `첫 시작·repo·예산 올림을 승인한다.\n승인 hash ${m.approval_sha256}\n\n${m.file_text}`,
+                                    body: `첫 시작·repo 추가/변경을 승인한다.\n승인 hash ${m.approval_sha256}\n\n${m.file_text}${m.brief_text ? `\n\nbrief_file\n${m.brief_text}` : ""}`,
                                     action: "승인",
                                     run: async () => {
                                       await call({ op: "mission_approve", project: m.project, name: m.name, approval_sha256: m.approval_sha256 });
@@ -1192,11 +1115,11 @@ function SpecialSection({ missions, evaluators, panes, canControl, agentOf, onPa
                     lead={t ? <RowMark agent={agent} /> : <span className="sidebar-mark" aria-hidden="true"><CircleDashed /></span>}
                     title={m.title}
                     tone={missionTone(m)}
-                    facts={[missionWord(m), `깨움 ${m.wakes_today}/${m.max_wakes}`, ...(pane ? [] : ["pane 없음"])]}
+                    facts={[missionWord(m), `깨움 ${missionCount(m.wakes_today, m.max_wakes)}`, ...(m.apply_wait ? [m.apply_wait] : []), ...(pane ? [] : ["pane 없음"])]}
                     where={t?.machine ?? ""}
                     paneOpen={pane !== undefined}
                     selected={pane !== undefined && selected === `pane:${pane.id}`}
-                    summary={`${m.project} · 일한 분 ${m.work_minutes} · post 처리 ${m.handled_posts}/${m.posts} · 입력 ${m.pending}`}
+                    summary={`${m.project}${m.pending_sha ? ` · 예약 판 ${m.pending_sha}` : ""} · ${missionWork(m)} · post 처리 ${m.handled_posts}/${m.posts} · 입력 ${m.pending}`}
                     open={() => (pane ? onPane(pane.id) : setShow(m))}
                     items={items}
                   />
@@ -1237,7 +1160,7 @@ function SpecialSection({ missions, evaluators, panes, canControl, agentOf, onPa
       {show && (
         <ConfirmDialog
           title={`${show.title} · ${missionWord(show)}`}
-          body={`적용 판 ${show.applied_sha ?? "없음"} · 파일 판 ${show.file_sha ?? "없음"}\n승인 ${show.approved ? "됨" : "필요"}\n다음 reset ${show.next_reset_ms ? new Date(show.next_reset_ms).toLocaleString() : "없음"}\n사용량 대기 ${show.usage_wait_until_ms ? new Date(show.usage_wait_until_ms).toLocaleString() : "없음"}\n\n차이\n${show.diff || "없음"}\n\n적용 사본\n${show.applied_text}\n\n후보 파일\n${show.file_text}${show.error ? `\n오류: ${show.error}` : ""}`}
+          body={`적용 판 ${show.applied_sha ?? "없음"} · 파일 판 ${show.file_sha ?? "없음"}\n승인 ${show.approved ? "됨" : "필요"}\n예약 판 ${show.pending_sha ?? "없음"}\n적용 ${show.apply_wait ?? "후보 판과 적용 판이 같다"}\n다음 reset ${show.next_reset_ms ? new Date(show.next_reset_ms).toLocaleString() : "없음"}\n사용량 대기 ${show.usage_wait_until_ms ? new Date(show.usage_wait_until_ms).toLocaleString() : "없음"}\n\n차이\n${show.diff || "없음"}\n\n적용 사본\n${show.applied_text}${show.applied_brief_text ? `\n\nbrief_file\n${show.applied_brief_text}` : ""}\n\n후보 파일\n${show.file_text}${show.brief_text ? `\n\nbrief_file\n${show.brief_text}` : ""}${show.error ? `\n오류: ${show.error}` : ""}`}
           confirmLabel="확인"
           onConfirm={async () => setShow(null)}
           onClose={() => setShow(null)}

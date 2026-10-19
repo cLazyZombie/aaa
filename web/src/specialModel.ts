@@ -35,3 +35,11 @@ export function evaluatorState(v: EvaluatorView, panes: readonly PaneView[]): { 
 export function specialAttention(missions: readonly MissionView[], evaluators: readonly EvaluatorView[], panes: readonly PaneView[]): number {
   return missions.filter((m) => missionTone(m) === "blocked" || missionTone(m) === "need").length + evaluators.filter((v) => evaluatorAsks(v, panes)).length;
 }
+
+/** 무제한은 분모를 숨긴다. 옛 호스트의 u32::MAX도 호환한다. */
+export function missionCount(value: number | bigint, cap = 0): string {
+  return cap > 0 && cap < 4294967295 ? `${value}/${cap}` : String(value);
+}
+export function missionWork(m: MissionView): string {
+  return `일한 분 ${m.work_minutes}${m.max_minutes > 0 && m.max_minutes < 4294967295 ? ` · 깨움 작업 ${missionCount(m.wake_work_minutes, m.max_minutes)}분` : ""}`;
+}

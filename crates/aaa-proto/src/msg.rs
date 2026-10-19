@@ -2069,6 +2069,12 @@ pub enum FrontRequest {
         #[ts(optional, as = "Option<String>")]
         project: String,
     },
+    /// 옛 routine·임무 파일을 값 검증 뒤 순수 TOML로 변환한다(Controller).
+    AutomationConvert {
+        #[serde(default)]
+        #[ts(optional, as = "Option<String>")]
+        project: String,
+    },
     /// 최근 실행·건너뜀 기록, 최대 50건(Reader 가능).
     RoutineRuns {
         #[serde(default)]
@@ -2201,6 +2207,7 @@ impl FrontRequest {
             | FrontRequest::Routines { project, .. }
             | FrontRequest::RoutineRuns { project, .. }
             | FrontRequest::RoutineApprove { project, .. }
+            | FrontRequest::AutomationConvert { project, .. }
             | FrontRequest::RoutineToggle { project, .. }
             | FrontRequest::EvaluatorAssign { project, .. }
             | FrontRequest::EvaluatorUnassign { project, .. }
@@ -2430,6 +2437,9 @@ pub enum FrontResponse {
     },
     Routines {
         routines: Vec<RoutineView>,
+    },
+    AutomationConverted {
+        files: Vec<String>,
     },
     RoutineRuns {
         runs: Vec<crate::RoutineRun>,

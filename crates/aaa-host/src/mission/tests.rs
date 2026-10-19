@@ -296,7 +296,6 @@ fn mission_definition_rejects_loops_and_bad_limits() {
         "events=[\"message_accepted\"]",
         "events=[\"routine_ran\"]",
         "events=[\"evaluator_batch\"]",
-        "max_wakes=0",
         "usage_week_below=101",
         "withdrawal=\"forever\"",
         "typo=true",
@@ -321,10 +320,7 @@ async fn mission_start_needs_person_approval_and_reload_uses_snapshot() {
     let r = l.applied(&text(""));
     let old = l.h.mission_task(&r);
     l.write(&text("max_wakes=13"));
-    assert_eq!(
-        l.h.mission_control("demo", "watch", "reload", "local:cli@s2").await.unwrap_err().code,
-        ErrorCode::Forbidden
-    );
+    assert!(l.h.mission_show("demo", "watch").unwrap().approved, "예산 증가는 재승인 대상이 아니다");
     assert_eq!(l.h.mission_task(&r), old, "파일 수정만으로 지시가 바뀌지 않는다");
     l.write(&text("max_wakes=5"));
     assert!(l.h.mission_show("demo", "watch").unwrap().approved, "줄이기는 자유다");
@@ -389,6 +385,15 @@ async fn mission_post_delivers_once_and_pair_hourly_is_independent() {
 async fn mission_debounce_budget_scoping_and_background_exclusion() {
     let l = Lab::new();
     let mut r = l.applied(&text("events=[\"thread_failed\"]\nrepos=[\"repo-a\"]\nmax_wakes=1"));
+    // 날짜 reset과 별개인 같은 예산 날짜의 범위/간격/상한 계약이다.
+    let actual = util::now_ms();
+    let now = (((day(actual) + 1) * 86400 + 12 * 3600 - local_offset_secs((actual / 1000) as i64)) * 1000) as u64;
+    let m = r.mission.as_mut().unwrap();
+    m.day = day(now);
+    m.last_reset_ms = now;
+    m.last_schedule_ms = now;
+    m.started_ms = now;
+    assert_eq!(day(now), day(now + 60001));
     r.repo = Some("repo-a".into());
     l.h.db.thread_save("demo", &r.id, "open", &serde_json::to_string(&r).unwrap()).unwrap();
     let f = l.fake(vec!["mission.v1".into()]).await;
@@ -399,7 +404,6 @@ async fn mission_debounce_budget_scoping_and_background_exclusion() {
     l.h.db.thread_import("demo", &worker.id, "open", &serde_json::to_string(&worker).unwrap()).unwrap();
     l.h.flow(&worker, "thread_failed", None, "범위 밖");
     l.h.flow(&r, "thread_failed", None, "배경 사건");
-    let now = util::now_ms();
     l.h.mission_tick("demo", "watch", now).await.unwrap();
     assert_eq!(l.h.mission_rec("demo", "watch").unwrap().mission.unwrap().wakes_today, 0);
     worker.repo = Some("repo-a".into());
@@ -424,7 +428,15 @@ async fn mission_debounce_budget_scoping_and_background_exclusion() {
 }
 #[tokio::test]
 async fn mission_reset_kills_then_waits_for_end_before_fresh_spawn() {
-    let l = Lab::new();
+    let mut l = Lab::new();
+    Arc::get_mut(&mut l.h).unwrap().cfg.safety.insert(
+        "demo".into(),
+        aaa_config::safety::SafetyLayer {
+            yolo: Some(true),
+            thread_agent_args: Some(vec!["--verbose".into()]),
+            ..Default::default()
+        },
+    );
     let r = l.applied(&text("reset_after_wakes=1"));
     let f = l.fake(vec!["mission.v1".into()]).await;
     l.pane(AgentActivity::Idle);
@@ -458,6 +470,18 @@ async fn mission_reset_kills_then_waits_for_end_before_fresh_spawn() {
     let rebrief = got.iter().position(|r| matches!(r, AgentRequest::ThreadRebrief { .. })).unwrap();
     let spawn = got.iter().position(|r| matches!(r, AgentRequest::Spawn(_))).unwrap();
     assert!(kill < rebrief && rebrief < spawn);
+    let args = got
+        .iter()
+        .find_map(|r| match r {
+            AgentRequest::ThreadRebrief { resolved_profile: Some(p), .. } => Some(&p.args),
+            _ => None,
+        })
+        .unwrap();
+    assert_eq!(
+        args,
+        &l.h.resolved_profile(Some("demo"), "m", "claude").unwrap().args,
+        "restart도 일반 thread의 safety 인자를 쓴다"
+    );
     if let AgentRequest::Spawn(s) = &got[spawn] {
         assert!(!s.argv.iter().any(|a| a.contains("resume")));
         assert!(s.env.iter().any(|(k, v)| k == "AAA_MISSION_POINTER" && v.contains("brief.md")));
@@ -811,7 +835,9 @@ async fn usage_wait_preserves_cursor_and_inputs_then_resumes_at_reset() {
 async fn infinite_mission_and_withdrawal_criteria_have_distinct_behavior() {
     for (withdrawal, expected) in [("none", false), ("criteria", true)] {
         let l = Lab::new();
-        let r = l.applied(&text(&format!("withdrawal=\"{withdrawal}\"\nmax_wakes=1")));
+        let r = l.applied(&text(&format!(
+            "withdrawal=\"{withdrawal}\"\nmax_wakes=1\nretire_cap_days=3\nretire_no_posts_days=7"
+        )));
         let _f = l.fake(vec!["mission.v1".into()]).await;
         l.pane(AgentActivity::Idle);
         let now = util::now_ms();
@@ -982,7 +1008,7 @@ async fn reset_publication_recovers_after_spawn_without_killing_the_new_pane() {
 }
 
 #[tokio::test]
-async fn reductions_remain_approved_before_start_and_invalid_reload_does_not_kill() {
+async fn budget_changes_remain_approved_before_start_and_rejected_reload_does_not_kill() {
     let l = Lab::new();
     l.write(&text("max_wakes=20"));
     let m = l.h.read_mission("demo", "watch").unwrap();
@@ -1000,6 +1026,8 @@ async fn reductions_remain_approved_before_start_and_invalid_reload_does_not_kil
         m.idle_since_ms = Some(now - 30001);
     })
     .unwrap();
+    let candidate = l.h.mission_candidate("demo", "watch", &text("max_wakes=30")).unwrap();
+    l.h.db.set_meta(&key("demo", "watch", "rejected"), &candidate.approval).unwrap();
     l.h.db.set_meta(&key("demo", "watch", "reload"), &text("max_wakes=30")).unwrap();
     assert_eq!(l.h.mission_tick("demo", "watch", now).await.unwrap_err().code, ErrorCode::Forbidden);
     assert!(
@@ -1045,6 +1073,7 @@ async fn approved_start_attaches_mission_before_preparing_special_brief() {
         "demo".into(),
         aaa_config::safety::SafetyLayer {
             yolo: Some(true),
+            thread_agent_args: Some(vec!["--verbose".into()]),
             thread_profiles: Some(vec!["claude".into(), "codex".into(), "unsafe".into()]),
             ..Default::default()
         },
@@ -1064,7 +1093,10 @@ async fn approved_start_attaches_mission_before_preparing_special_brief() {
     assert_eq!(t.role, Role::Evaluator);
     assert!(l.h.evaluator_rec("demo").is_none());
     let unsafe_mission = parse("watch", &text("").replace("profile=\"claude\"", "profile=\"unsafe\"")).unwrap();
-    assert_eq!(l.h.validate_mission_profile("demo", &unsafe_mission).unwrap_err().code, ErrorCode::Forbidden);
+    assert!(
+        l.h.validate_mission_profile("demo", &unsafe_mission).is_ok(),
+        "일반 thread에서 허용한 인자는 임무에도 쓴다"
+    );
     {
         let requests = f.requests.lock().unwrap();
         assert!(requests.iter().any(|r|matches!(r,AgentRequest::ThreadPrepare(p) if p.brief.contains("특수 thread") && p.brief.contains("적용 판") && p.brief.contains("감시한다."))));
@@ -1079,7 +1111,7 @@ async fn approved_start_attaches_mission_before_preparing_special_brief() {
         assert!(brief.contains("/work/repo/.aaa/demo-t-0001/inbox/"), "입력 위치는 cwd가 아닌 자기 작업 폴더다");
         assert!(brief.contains("/opt/aaa mission show demo watch --json"));
         assert!(brief.contains("ls -1 -- '/work/repo/.aaa/demo-t-0001/inbox'") && brief.contains("Read"));
-        assert!(brief.contains("없어도 정상") && brief.contains("프로젝트 루트를 탐색하지 않는다"));
+        assert!(brief.contains("없어도 정상") && brief.contains("aaa 홈 폴더를 탐색하지 않는다"));
         assert!(brief.contains("미처리 JSON이 0개면") && brief.contains("현재 턴을 끝낸다"));
         let gate = brief.rfind("## 입력 우선 실행 순서").expect("본문 뒤에도 빈 입력 분기가 있어야 한다");
         assert!(gate > brief.find("감시한다.").unwrap());
@@ -1096,8 +1128,12 @@ async fn approved_start_attaches_mission_before_preparing_special_brief() {
             Some(&l.h.project_dir("demo").unwrap().to_string_lossy().into_owned())
         );
         assert_eq!(profile.env.get("AAA_MISSION_NAME").map(String::as_str), Some("watch"));
-        assert!(profile.args.windows(2).any(|a| a == ["--permission-mode", "default"]));
-        assert!(!profile.args.iter().any(|a| a.contains("dangerously") || a.contains("acceptEdits")));
+        assert_eq!(profile.args, l.h.resolved_profile(Some("demo"), "m", "claude").unwrap().args);
+        assert!(profile.args.iter().any(|a| a == "--dangerously-skip-permissions"));
+        assert!(
+            profile.args.iter().any(|a| a.contains("acceptEdits")),
+            "사용자 profile의 인자를 manual 모드로 덮지 않는다"
+        );
     }
     std::fs::write(l.h.project_dir("demo").unwrap().join("missions/other.md"), text("")).unwrap();
     let m = l.h.read_mission("demo", "other").unwrap();
@@ -1299,7 +1335,7 @@ async fn review_regression_reset_reboot_uses_frozen_profile() {
 }
 
 #[tokio::test]
-async fn review_regression_routine_hash_and_input_commit_together() {
+async fn review_regression_routine_output_survives_failed_mission_delivery_in_durable_queue() {
     let mut l = Lab::new();
     Arc::get_mut(&mut l.h).unwrap().cfg.projects.routine_commands.push("demo".into());
     let r = l.applied(&text(""));
@@ -1332,10 +1368,16 @@ async fn review_regression_routine_hash_and_input_commit_together() {
         })
         .await
         .unwrap();
+        l.h.automation_pass("demo").await;
         if attempt == 0 {
+            assert!(l.h.load("demo", &r.id).unwrap().mission.unwrap().pending.is_empty());
+            let queued: serde_json::Value =
+                serde_json::from_str(&l.h.db.meta("automation:demo:scan").unwrap().unwrap()).unwrap();
+            assert!(queued["source_hashes"]["command"].is_string(), "출력 기준과 대기 자료는 같은 transaction이다");
+            assert_eq!(queued["inflight"]["events"].as_array().unwrap().len(), 1);
             assert!(
-                l.h.db.meta("routine_out:demo:scan").unwrap().is_none(),
-                "입력을 저장하지 못했으면 출력 hash도 확정하지 않는다"
+                queued["inflight"]["events"][0]["body"].as_str().unwrap().contains("같은 결과"),
+                "임무 저장 실패에도 자료를 보존한다"
             );
             c.execute_batch("DROP TRIGGER interrupt_input;").unwrap();
         }
@@ -1344,6 +1386,8 @@ async fn review_regression_routine_hash_and_input_commit_together() {
     assert_eq!(run.pending.len(), 1);
     assert_eq!(run.pending[0].source, "routine");
     assert!(run.pending[0].text.contains("같은 결과"));
+    l.h.automation_pass("demo").await;
+    assert_eq!(l.h.load("demo", &r.id).unwrap().mission.unwrap().pending.len(), 1, "재전달하지 않는다");
 }
 
 async fn failed_durable_transition(reset: bool) {
@@ -1385,4 +1429,488 @@ async fn durable_reset_write_failure_never_sends_kill() {
 #[tokio::test]
 async fn durable_wake_write_failure_never_sends_input() {
     failed_durable_transition(false).await;
+}
+
+#[test]
+fn toml_mission_keeps_scope_approval_and_snapshots_its_external_brief() {
+    let l = Lab::new();
+    let dir = l.h.project_dir("demo").unwrap();
+    std::fs::create_dir_all(dir.join("missions")).unwrap();
+    let raw = "title='감시'\nprofile='fake'\nbrief_file='missions/watch.md'\n[limits]\nmin_gap='10m'\nmax_wakes=12\nmax_minutes=60\n[reset]\ndaily='05:00'\nafter_wakes=6\n";
+    std::fs::write(dir.join("missions/watch.toml"), raw).unwrap();
+    std::fs::write(dir.join("missions/watch.md"), "자료를 확인한다.\n").unwrap();
+    let new = l.h.read_mission("demo", "watch").unwrap();
+    let old =
+        l.h.mission_candidate("demo", "watch", "+++\ntitle='감시'\nprofile='fake'\n+++\n자료를 확인한다.\n").unwrap();
+    assert_eq!(new.approval, old.approval);
+    assert_eq!(new.body, old.body);
+    assert_eq!(new.file_text, raw);
+    assert_ne!(new.sha, old.sha);
+    assert_eq!(files::names(&dir), vec!["watch"]);
+    l.h.db.set_meta(&key("demo", "watch", "applied"), &new.text).unwrap();
+    std::fs::write(dir.join("missions/watch.md"), "바뀐 자료\n").unwrap();
+    let view = l.h.mission_show("demo", "watch").unwrap();
+    assert!(view.stale && view.diff.contains("brief_file:") && view.diff.contains("바뀐 자료"));
+    assert_eq!(view.applied_brief_text, "자료를 확인한다.");
+    assert_eq!(view.brief_text, "바뀐 자료");
+    assert_eq!(parse("watch", &new.text).unwrap().body, "자료를 확인한다.", "적용 사본은 바뀐 파일을 다시 읽지 않는다");
+    assert_ne!(l.h.read_mission("demo", "watch").unwrap().sha, new.sha);
+    std::fs::write(dir.join("missions/watch.md"), "+++\nprofile='fake'\n+++\n옛 임무\n").unwrap();
+    assert!(l.h.read_mission("demo", "watch").unwrap_err().message.contains("같은 이름"));
+}
+
+#[tokio::test]
+async fn thread_rule_day_cap_and_pending_cursor_survive_host_reopen() {
+    let l = Lab::new();
+    let r = l.applied(&text(""));
+    let dir = l.h.project_dir("demo").unwrap();
+    std::fs::create_dir_all(dir.join("automations")).unwrap();
+    let rule = "[on.thread]\nevents=['thread_failed']\n[do.wake]\nmission='watch'\n[limits]\nmax_per_day=1\n";
+    std::fs::write(dir.join("automations/flow.toml"), rule).unwrap();
+    l.h.automation_pass("demo").await;
+    l.h.flow_project("demo", "thread_failed", None, "first");
+    l.h.automation_pass("demo").await;
+    assert_eq!(l.h.load("demo", &r.id).unwrap().mission.unwrap().pending.len(), 1);
+    l.h.flow_project("demo", "thread_failed", None, "second");
+    l.h.automation_pass("demo").await;
+    assert_eq!(
+        l.h.load("demo", &r.id).unwrap().mission.unwrap().pending.len(),
+        1,
+        "하루 상한 뒤 입력은 아직 전달하지 않는다"
+    );
+    let restored = Host::open(l.h.cfg.clone(), l.h.state.clone()).unwrap();
+    restored.automation_pass("demo").await;
+    assert_eq!(
+        restored.load("demo", &r.id).unwrap().mission.unwrap().pending.len(),
+        1,
+        "재시작도 상한·cursor를 지킨다"
+    );
+    let state: serde_json::Value =
+        serde_json::from_str(&restored.db.meta("automation:demo:flow").unwrap().unwrap()).unwrap();
+    assert_eq!(state["count"], 1);
+    assert_eq!(state["pending"].as_array().unwrap().len(), 1);
+    std::fs::write(dir.join("automations/flow.toml"), rule.replace("max_per_day=1", "max_per_day=2")).unwrap();
+    restored.automation_pass("demo").await;
+    restored.automation_pass("demo").await;
+    assert_eq!(
+        restored.load("demo", &r.id).unwrap().mission.unwrap().pending.len(),
+        2,
+        "보존한 두 번째 입력만 한 번 전달한다"
+    );
+}
+
+#[test]
+fn command_output_baseline_and_waiting_data_commit_atomically() {
+    let l = Lab::new();
+    let r = crate::routine::parse("read", "+++\nschedule='every 1m'\ncommand='fake-read'\n+++\n").unwrap();
+    let c = rusqlite::Connection::open(l.h.state.join("host.db")).unwrap();
+    c.execute_batch("CREATE TRIGGER interrupt_auto BEFORE INSERT ON meta WHEN NEW.key='automation:demo:read' BEGIN SELECT RAISE(FAIL,'queue unavailable'); END;").unwrap();
+    assert!(l.h.automation_changed("demo", &r, "output-a", "data-a".into()).is_err());
+    assert!(l.h.db.meta("automation:demo:read").unwrap().is_none());
+    c.execute_batch("DROP TRIGGER interrupt_auto;").unwrap();
+    assert!(l.h.automation_changed("demo", &r, "output-a", "data-a".into()).unwrap());
+    assert!(!l.h.automation_changed("demo", &r, "output-a", "data-a".into()).unwrap());
+    let state: serde_json::Value =
+        serde_json::from_str(&l.h.db.meta("automation:demo:read").unwrap().unwrap()).unwrap();
+    assert_eq!(state["source_hashes"]["command"], "output-a");
+    assert_eq!(state["pending"].as_array().unwrap().len(), 1);
+    assert_eq!(state["pending"][0]["body"], "data-a");
+}
+
+#[tokio::test]
+async fn wake_budget_notice_is_once_per_budget_day_after_done() {
+    let mut l = Lab::new();
+    let r = l.applied(&text("max_wakes=12\nwithdrawal=\"none\""));
+    let _fake = l.fake(vec!["mission.v1".into()]).await;
+    l.pane(AgentActivity::Idle);
+    let now = util::now_ms();
+    l.h.update_rec("demo", &r.id, |r| {
+        let m = r.mission.as_mut().unwrap();
+        m.wakes_today = 12;
+        m.day = day(now);
+    })
+    .unwrap();
+    l.h.mission_tick("demo", "watch", now).await.unwrap();
+    let notices = |h: &Host| {
+        h.db.inbox_list(Some("demo"), true)
+            .unwrap()
+            .into_iter()
+            .filter(|i| i.item_kind == "mission" && i.subject == "watch" && i.event == "wake budget")
+            .collect::<Vec<_>>()
+    };
+    let first = notices(&l.h);
+    assert_eq!(first.len(), 1);
+    l.h.inbox_done("demo", &[first[0].id.clone()], false, "coordinator").unwrap();
+    for at in [now + 90000, now + 180000, now + 270000] {
+        l.h.mission_tick("demo", "watch", at).await.unwrap();
+    }
+    assert_eq!(notices(&l.h).len(), 1, "done은 당일 상한 알림을 다시 여는 명령이 아니다");
+    l.h.db.inbox_prune(now + 86400000).unwrap();
+    assert!(notices(&l.h).is_empty());
+    l.h = Host::open(l.h.cfg.clone(), l.h.state.clone()).unwrap();
+    let _restored_fake = l.fake(vec!["mission.v1".into()]).await;
+    l.pane(AgentActivity::Idle);
+    l.h.mission_tick("demo", "watch", now + 360000).await.unwrap();
+    assert!(notices(&l.h).is_empty(), "done 항목을 정리하고 host를 다시 열어도 당일 안내는 다시 만들지 않는다");
+    let tomorrow = now + 86400000;
+    // 이 keeper는 예산 날짜만 전진한다. 별도 검증한 대화 reset은 같은 순간에 예약하지 않는다.
+    l.h.update_rec("demo", &r.id, |r| r.mission.as_mut().unwrap().last_reset_ms = tomorrow).unwrap();
+    l.h.mission_tick("demo", "watch", tomorrow).await.unwrap();
+    assert!(notices(&l.h).is_empty(), "다음 날 예산이 풀리면 상한 안내를 만들지 않는다");
+    l.h.update_rec("demo", &r.id, |r| {
+        let m = r.mission.as_mut().unwrap();
+        m.wakes_today = 12;
+        m.day = day(tomorrow);
+    })
+    .unwrap();
+    l.h.mission_tick("demo", "watch", tomorrow + 1).await.unwrap();
+    assert_eq!(notices(&l.h).len(), 1, "다음 예산 날짜의 상한 도달은 한 번 새로 알린다");
+    let today = notices(&l.h);
+    l.h.inbox_done("demo", &[today[0].id.clone()], false, "coordinator").unwrap();
+    l.h.mission_tick("demo", "watch", tomorrow + 90000).await.unwrap();
+    assert_eq!(notices(&l.h).len(), 1);
+}
+
+#[test]
+fn budget_notice_migrates_done_records_and_failed_insert_does_not_mark_the_day() {
+    let l = Lab::new();
+    let now = util::now_ms();
+    let today = day(now);
+    let c = rusqlite::Connection::open(l.h.state.join("host.db")).unwrap();
+    c.execute_batch("CREATE TRIGGER interrupt_notice BEFORE INSERT ON inbox WHEN NEW.event='wake budget' BEGIN SELECT RAISE(FAIL,'notice unavailable'); END;").unwrap();
+    assert!(l.h.mission_budget_notice("demo", "watch", today, now).is_err());
+    assert!(
+        l.h.db.meta(&key("demo", "watch", "wake_budget_notice")).unwrap().is_none(),
+        "알림 저장 실패 때 당일을 알렸다고 확정하면 안 된다"
+    );
+    c.execute_batch("DROP TRIGGER interrupt_notice;").unwrap();
+    let old = aaa_proto::InboxItem {
+        id: "old-budget-notice".into(),
+        project: "demo".into(),
+        item_kind: "mission".into(),
+        subject: "watch".into(),
+        event: "wake budget".into(),
+        summary: "old".into(),
+        body: String::new(),
+        done: true,
+        seen: true,
+        created_at_ms: now,
+        done_at_ms: Some(now),
+    };
+    l.h.db.inbox_insert(&old).unwrap();
+    l.h.mission_budget_notice("demo", "watch", today, now).unwrap();
+    assert_eq!(
+        l.h.db.inbox_list(Some("demo"), true).unwrap().iter().filter(|i| i.event == "wake budget").count(),
+        1,
+        "구판의 당일 완료 항목도 이미 알린 것으로 인정한다"
+    );
+    l.h.db.inbox_prune(now + 86400000).unwrap();
+    l.h.mission_budget_notice("demo", "watch", today, now + 1).unwrap();
+    assert!(!l.h.db.inbox_open_exists("demo", "mission", "watch", "wake budget").unwrap());
+}
+
+#[tokio::test]
+async fn conversion_hands_legacy_cursor_to_rule_before_new_events_without_double_intake() {
+    let l = Lab::new();
+    let r = l.applied(&text("events=[\"thread_failed\"]\nwithdrawal=\"none\""));
+    let _fake = l.fake(vec!["mission.v1".into()]).await;
+    l.pane(AgentActivity::Idle);
+    let now = util::now_ms();
+    l.h.flow_project("demo", "thread_failed", None, "before conversion");
+    l.h.mission_tick("demo", "watch", now).await.unwrap();
+    let cursor = l.h.load("demo", &r.id).unwrap().mission.unwrap().cursor;
+    let files = l.h.automation_convert("demo", "coordinator").await.unwrap();
+    assert!(files.iter().any(|f| f == "automations/watch-events.toml"));
+    let seeded: Option<serde_json::Value> =
+        l.h.db.meta("automation:demo:watch-events").unwrap().map(|s| serde_json::from_str(&s)).transpose().unwrap();
+    assert_eq!(
+        l.h.applied("demo", "watch").unwrap().def.events,
+        ["thread_failed"],
+        "resident 적용 사본은 reset 전까지 그대로다"
+    );
+    // 첫 새 source 판정 전에 온 사건도 잃지 않아야 한다. 초기 baseline으로 넘기면 안 된다.
+    l.pane(AgentActivity::Idle);
+    l.h.flow_project("demo", "thread_failed", None, "after conversion");
+    l.h.mission_tick("demo", "watch", now + 1).await.unwrap();
+    assert!(
+        l.h.load("demo", &r.id).unwrap().mission.unwrap().pending.is_empty(),
+        "TOML 임무의 옛 적용 조건은 새 규칙과 함께 실행하지 않는다"
+    );
+    l.h.automation_pass("demo").await;
+    let after = l.h.load("demo", &r.id).unwrap().mission.unwrap();
+    assert_eq!(after.pending.len(), 1, "변환 직후 첫 판정 전 새 사건을 한 번 전달하고 과거 사건은 다시 보내지 않는다");
+    assert_eq!(
+        seeded.as_ref().and_then(|s| s["cursor"].as_u64()),
+        Some(cursor),
+        "변환 순간에도 cursor를 내구 저장한다"
+    );
+    assert!(after.pending[0].text.contains("after conversion"));
+    l.h.automation_pass("demo").await;
+    assert_eq!(l.h.load("demo", &r.id).unwrap().mission.unwrap().pending.len(), 1);
+}
+
+#[tokio::test]
+async fn inbox_rule_notifies_only_when_selected_and_never_sends_external_push() {
+    let l = Lab::new();
+    let dir = l.h.project_dir("demo").unwrap();
+    std::fs::create_dir_all(dir.join("automations")).unwrap();
+    let rule = "[on.thread]\nevents=['thread_failed']\n[do.inbox]\ntext='규칙 안내'\nnotify=false\n";
+    std::fs::write(dir.join("automations/notice.toml"), rule).unwrap();
+    let mut notices = l.h.notice_events.subscribe();
+    let (tx, mut external) = tokio::sync::mpsc::unbounded_channel();
+    *l.h.notify_tx.lock().unwrap() = Some(tx);
+    l.h.automation_pass("demo").await;
+    l.h.flow_project("demo", "thread_failed", None, "silent");
+    l.h.automation_pass("demo").await;
+    assert!(notices.try_recv().is_err());
+    assert_eq!(l.h.db.inbox_list(Some("demo"), true).unwrap().len(), 1);
+    std::fs::write(dir.join("automations/notice.toml"), rule.replace("notify=false", "notify=true")).unwrap();
+    l.h.flow_project("demo", "thread_failed", None, "visible");
+    l.h.automation_pass("demo").await;
+    let notice = notices.try_recv().expect("notify=true는 실제 공통 전달 뒤 앱 안 알림을 보낸다");
+    assert_eq!(serde_json::to_value(notice.kind).unwrap(), "automation");
+    assert_eq!(notice.project.as_deref(), Some("demo"));
+    assert_eq!(l.h.db.inbox_list(Some("demo"), true).unwrap().len(), 2);
+    l.h.automation_pass("demo").await;
+    assert!(notices.try_recv().is_err(), "같은 전달 알림을 다시 보내지 않는다");
+    assert!(external.try_recv().is_err(), "규칙은 외부 push 경로에 넣지 않는다");
+}
+
+#[test]
+fn omitted_and_zero_mission_budgets_are_unlimited_and_not_approval_scope() {
+    let body = "+++\nprofile='fake'\n+++\n자료를 확인한다.\n";
+    let unlimited = parse("watch", body).unwrap();
+    assert_eq!(unlimited.def.max_wakes, 0);
+    assert_eq!(unlimited.def.max_minutes, 0);
+    assert_eq!(unlimited.def.min_gap, "0m");
+    assert_eq!(unlimited.def.retire_cap_days, 0);
+    let now = util::now_ms();
+    let pending = MissionRun { pending_since_ms: Some(now), last_wake_ms: Some(now), ..Default::default() };
+    let mut zero = parse(
+        "watch",
+        &body.replace(
+            "profile='fake'",
+            "profile='fake'\nbatch_s=0\nmax_wakes=0\nmax_minutes=0\nmin_gap=0\nretire_cap_days=0",
+        ),
+    )
+    .unwrap();
+    assert!(ready(&zero, &pending, now));
+    let limited = parse(
+        "watch",
+        &body.replace(
+            "profile='fake'",
+            "profile='fake'\nmax_wakes=12\nmax_minutes=60\nmin_gap='10m'\nretire_cap_days=3",
+        ),
+    )
+    .unwrap();
+    let sentinel =
+        parse("watch", &body.replace("profile='fake'", "profile='fake'\nmax_wakes=4294967295\nmax_minutes=4294967295"))
+            .unwrap();
+    assert_eq!(sentinel.def.max_wakes, 0, "옛 거대한 상한 표기는 무제한으로 이행한다");
+    assert_eq!(sentinel.def.max_minutes, 0);
+    assert_eq!(limited.def.max_wakes, 12);
+    assert_eq!(limited.def.max_minutes, 60);
+    assert!(!ready(&limited, &pending, now));
+    assert_eq!(zero.approval, limited.approval, "횟수·시간 예산은 승인 범위가 아니다");
+    zero.def.repo = Some("other".into());
+    assert!(widening(&unlimited.def, &zero.def), "repo 추가는 여전히 범위를 넓힌다");
+}
+
+#[tokio::test]
+async fn removing_explicit_budget_resumes_once_without_approval_or_default_backlog_cap() {
+    let l = Lab::new();
+    let r = l.applied(&text("max_wakes=1\nwithdrawal='none'"));
+    let f = l.fake(vec!["mission.v1".into()]).await;
+    l.pane(AgentActivity::Idle);
+    let now = util::now_ms();
+    *f.inbox_names.lock().unwrap() = (0..51).map(|n| format!("old-{n}.json")).collect();
+    l.h.update_rec("demo", &r.id, |r| {
+        let m = r.mission.as_mut().unwrap();
+        m.wakes_today = 1;
+        m.day = day(now);
+        m.last_wake_ms = Some(now);
+        m.state = "예산 대기".into();
+    })
+    .unwrap();
+    l.queue("demo", "watch", "fresh".into(), "events", "보존한 입력".into()).unwrap();
+    let unlimited = text("max_wakes=0\nmax_minutes=0\nwithdrawal='none'").replace("min_gap=\"1m\"", "min_gap=0");
+    l.h.mission_control("demo", "watch", "pause", "web:human").await.unwrap();
+    l.write(&unlimited);
+    assert!(l.h.mission_show("demo", "watch").unwrap().approved);
+    l.h.mission_tick("demo", "watch", now).await.unwrap();
+    let paused = l.h.mission_show("demo", "watch").unwrap();
+    assert_eq!(paused.max_wakes, 0, "사용자가 resume하기 전에도 파일의 예산 값은 반영한다");
+    assert_eq!(paused.state, "멈춤", "상한 완화가 사람의 pause를 무시하지 않는다");
+    assert_eq!(l.h.load("demo", &r.id).unwrap().mission.unwrap().wakes_today, 1);
+    l.h.mission_control("demo", "watch", "resume", "web:human").await.unwrap();
+    l.h.mission_tick("demo", "watch", now + 1).await.unwrap();
+    let run = l.h.load("demo", &r.id).unwrap().mission.unwrap();
+    assert_eq!(run.wakes_today, 2, "명시 상한 제거와 기본 backlog 무제한을 반영해 보존 입력을 깨운다");
+    assert_ne!(run.state, "예산 대기");
+    assert_eq!(l.h.mission_show("demo", "watch").unwrap().max_wakes, 0);
+    l.pane(AgentActivity::Working);
+    l.h.mission_tick("demo", "watch", now + 2 * 60 * 60 * 1000).await.unwrap();
+    assert!(
+        !l.h.db
+            .inbox_list(Some("demo"), true)
+            .unwrap()
+            .iter()
+            .any(|i| matches!(i.event.as_str(), "wake budget" | "time budget" | "withdrawal suggested"))
+    );
+    assert_eq!(f.requests.lock().unwrap().iter().filter(|r|matches!(r,AgentRequest::Input{data,..} if String::from_utf8_lossy(&data.0).contains("[aaa 임무 watch]"))).count(), 1);
+}
+
+#[tokio::test]
+async fn omitted_host_mission_concurrency_has_no_default_ceiling() {
+    let l = Lab::new();
+    let _f = l.fake(vec!["mission.v1".into()]).await;
+    for name in ["one", "two", "three"] {
+        std::fs::write(l.h.project_dir("demo").unwrap().join(format!("missions/{name}.md")), text("")).unwrap();
+        let m = l.h.read_mission("demo", name).unwrap();
+        l.h.mission_approve("demo", name, &m.approval, "web:human").unwrap();
+        assert!(l.h.mission_start("demo", name, "web:human").await.unwrap().thread.is_some());
+    }
+}
+
+#[tokio::test]
+async fn approved_reload_at_explicit_day_cap_reaches_the_candidate_after_session_end() {
+    let l = Lab::new();
+    let r = l.applied(&text("max_wakes=1\nwithdrawal='none'"));
+    let f = l.fake(vec!["mission.v1".into()]).await;
+    l.pane(AgentActivity::Working);
+    let now = util::now_ms();
+    l.h.update_rec("demo", &r.id, |r| {
+        let m = r.mission.as_mut().unwrap();
+        m.wakes_today = 1;
+        m.day = day(now);
+        m.state = "예산 대기".into();
+        m.idle_since_ms = Some(now - 30001);
+        m.saw_working = true;
+    })
+    .unwrap();
+    let candidate = text("max_wakes=1\nwithdrawal='none'").replace("감시한다.", "새 후보를 적용한다.");
+    l.write(&candidate);
+    let file = l.h.read_mission("demo", "watch").unwrap();
+    assert!(l.h.mission_show("demo", "watch").unwrap().approved);
+    l.h.mission_control("demo", "watch", "pause", "web:human").await.unwrap();
+    let response = l.h.mission_control("demo", "watch", "reload", "web:human").await.unwrap();
+    let FrontResponse::Mission { mission: paused } = response else { panic!("임무 응답") };
+    assert!(paused.apply_wait.as_deref().is_some_and(|why| why.contains("멈춤·꺼짐")));
+    l.h.mission_tick("demo", "watch", now).await.unwrap();
+    l.h.mission_control("demo", "watch", "restart", "web:human").await.unwrap();
+    l.h.mission_tick("demo", "watch", now).await.unwrap();
+    assert!(
+        !f.requests.lock().unwrap().iter().any(|r| matches!(r, AgentRequest::Kill { .. } | AgentRequest::Spawn(_))),
+        "reload/restart가 사람 pause를 우회하지 않는다"
+    );
+    let response = l.h.mission_control("demo", "watch", "resume", "web:human").await.unwrap();
+    let FrontResponse::Mission { mission: queued } = response else { panic!("임무 응답") };
+    assert_eq!(queued.pending_sha.as_deref(), Some(file.sha.as_str()));
+    assert!(queued.apply_wait.as_deref().is_some_and(|why| why.contains("현재 작업이 끝난 뒤")));
+    l.h.mission_tick("demo", "watch", now).await.unwrap();
+    assert!(
+        !f.requests.lock().unwrap().iter().any(|r| matches!(r, AgentRequest::Kill { .. } | AgentRequest::Spawn(_)))
+    );
+    l.write(&candidate.replace("새 후보를 적용한다.", "그 뒤 바뀐 파일"));
+    assert!(
+        l.h.mission_show("demo", "watch")
+            .unwrap()
+            .apply_wait
+            .as_deref()
+            .is_some_and(|why| why.contains("예약 판과 현재 파일 판이 다르다"))
+    );
+    l.write(&candidate);
+    l.pane(AgentActivity::Idle);
+    l.h.update_rec("demo", &r.id, |r| r.mission.as_mut().unwrap().idle_since_ms = Some(now - 30001)).unwrap();
+    l.h.mission_tick("demo", "watch", now + 1).await.unwrap();
+    assert_eq!(
+        f.requests.lock().unwrap().iter().filter(|r| matches!(r, AgentRequest::Kill { .. })).count(),
+        1,
+        "명시 상한은 승인된 후보의 문맥 reset을 막지 않는다"
+    );
+    assert!(!f.requests.lock().unwrap().iter().any(|r| matches!(r, AgentRequest::Spawn(_))));
+    l.h.inner.lock().unwrap().panes.get_mut("s1").unwrap().info.state = SessionState::Exited { code: Some(0) };
+    l.h.mission_tick("demo", "watch", now + 2).await.unwrap();
+    let view = l.h.mission_show("demo", "watch").unwrap();
+    assert_eq!(view.applied_sha.as_deref(), Some(file.sha.as_str()));
+    assert!(!view.stale);
+    assert!(view.pending_sha.is_none() && view.apply_wait.is_none(), "적용 완료하면 예약과 대기 표시를 지운다");
+    assert!(l.h.mission_task(&l.h.load("demo", &r.id).unwrap()).contains("새 후보를 적용한다."));
+}
+
+#[tokio::test]
+async fn resumed_mission_time_budget_counts_work_in_the_wake_not_elapsed_wall_time() {
+    let l = Lab::new();
+    let r = l.applied(&text("max_minutes=60\nwithdrawal='none'"));
+    let _fake = l.fake(vec!["mission.v1".into()]).await;
+    l.pane(AgentActivity::Working);
+    let now = util::now_ms();
+    l.h.update_rec("demo", &r.id, |r| {
+        let m = r.mission.as_mut().unwrap();
+        m.state = "멈춤".into();
+        m.paused = true;
+        m.work_ms = 19 * 60000;
+        m.last_wake_ms = Some(now.saturating_sub(2 * 3600000));
+        m.wakes_today = 0;
+        m.last_reset_ms = now;
+    })
+    .unwrap();
+    l.h.mission_control("demo", "watch", "resume", "web:human").await.unwrap();
+    l.h.mission_tick("demo", "watch", now).await.unwrap();
+    let notices = || {
+        l.h.db
+            .inbox_list(Some("demo"), true)
+            .unwrap()
+            .into_iter()
+            .filter(|i| i.event == "time budget")
+            .collect::<Vec<_>>()
+    };
+    assert!(notices().is_empty(), "이전 깨움의 대기·멈춤 경과는 작업 19분을 60분 초과로 만들지 않는다");
+    l.h.mission_tick("demo", "watch", now + 59 * 60000).await.unwrap();
+    assert!(notices().is_empty(), "새로 관찰한 깨움 작업 59분은 60분 이하이다");
+    l.h.mission_control("demo", "watch", "pause", "web:human").await.unwrap();
+    l.h.mission_tick("demo", "watch", now + 120 * 60000).await.unwrap();
+    assert!(notices().is_empty(), "멈춤 시간에는 작업 시간을 늘리거나 상한을 알리지 않는다");
+    l.h.mission_control("demo", "watch", "resume", "web:human").await.unwrap();
+    l.h.mission_tick("demo", "watch", now + 120 * 60000 + 1).await.unwrap();
+    assert!(notices().is_empty(), "resume은 멈춤 시간을 작업으로 바꾸지 않는다");
+    l.h.mission_tick("demo", "watch", now + 122 * 60000 + 1).await.unwrap();
+    assert_eq!(notices().len(), 1, "실제 관찰 작업 61분은 명시한 60분 상한을 한 번 알린다");
+    let first = notices().remove(0);
+    l.h.inbox_done("demo", &[first.id], false, "coordinator").unwrap();
+    l.h.mission_tick("demo", "watch", now + 123 * 60000 + 1).await.unwrap();
+    assert_eq!(notices().len(), 1, "같은 깨움의 시간 안내는 done 뒤 반복하지 않는다");
+    // 별도 임무의 실제 새 입력 전달을 검사한다. frame owner의 실제 시계와 같은 시각에서 시작한다.
+    let l = Lab::new();
+    let r = l.applied(&text("max_minutes=60\nwithdrawal='none'"));
+    let _next_fake = l.fake(vec!["mission.v1".into()]).await;
+    let next = util::now_ms();
+    l.h.update_rec("demo", &r.id, |r| {
+        let m = r.mission.as_mut().unwrap();
+        m.last_wake_ms = Some(next - 2 * 3600000);
+        m.wake_work_ms = Some(61 * 60000);
+        m.work_ms = 80 * 60000;
+    })
+    .unwrap();
+    let notices = || {
+        l.h.db
+            .inbox_list(Some("demo"), true)
+            .unwrap()
+            .into_iter()
+            .filter(|i| i.event == "time budget")
+            .collect::<Vec<_>>()
+    };
+    l.pane(AgentActivity::Idle);
+    l.queue("demo", "watch", "next-wake".into(), "events", "다음 작업".into()).unwrap();
+    l.h.mission_tick("demo", "watch", next).await.unwrap();
+    let run = l.h.load("demo", &r.id).unwrap().mission.unwrap();
+    assert_eq!(run.wakes_today, 1);
+    assert_eq!(run.last_wake_ms, Some(next));
+    assert_eq!(run.wake_work_ms, Some(0), "실제 새 입력 전달은 깨움별 작업 셈을 초기화한다");
+    l.pane(AgentActivity::Working);
+    l.h.mission_tick("demo", "watch", next + 1).await.unwrap();
+    l.h.mission_tick("demo", "watch", next + 59 * 60000).await.unwrap();
+    assert!(notices().is_empty(), "새 깨움에는 이전 작업 61분을 더하지 않는다");
+    l.h.mission_tick("demo", "watch", next + 61 * 60000 + 1).await.unwrap();
+    assert_eq!(notices().len(), 1, "새 깨움의 실제 작업 상한은 따로 한 번 알린다");
 }

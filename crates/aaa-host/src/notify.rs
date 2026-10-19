@@ -229,14 +229,15 @@ pub(crate) fn alert_text(place: &Place, items: &[InboxItem], titles: &HashMap<St
                         titles.get(t).map(|s| s.trim()).filter(|s| !s.is_empty()).unwrap_or(t)
                     ),
                     lines: lines(false),
-                    url: format!("/#thread={}", crate::push::url_escape(&format!("{project}/{t}"))),
+                    // 웹 주소에는 프로젝트가 없다(host는 프로젝트 하나, plan §8.291). 옛 `#thread=<p>/<id>`도 웹이 연다
+                    url: format!("/#thread={}", crate::push::url_escape(t)),
                     tag: format!("aaa-{project}/{t}"),
                 },
                 None => AlertText {
                     title: project.clone(),
                     lines: lines(true),
                     url: if items.iter().all(|i| i.item_kind == "post" && i.subject == "coordinator") {
-                        format!("/#project={}", crate::push::url_escape(project))
+                        "/#threads".into()
                     } else {
                         "/".into()
                     },

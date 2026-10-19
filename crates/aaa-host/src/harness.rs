@@ -405,16 +405,8 @@ impl Host {
                 let now = aaa_common::util::now_ms();
                 let _ = self.update_rec(&r.project, &r.id, |r| {
                     let m = r.mission.as_mut().unwrap();
-                    if activity == Some(AgentActivity::Working) {
-                        m.saw_working = true;
-                        m.working_since_ms.get_or_insert(now);
-                        m.idle_since_ms = None;
-                    }
-                    if activity == Some(AgentActivity::Idle) {
-                        if let Some(at) = m.working_since_ms.take() {
-                            m.work_ms += now.saturating_sub(at);
-                        }
-                        m.idle_since_ms.get_or_insert(now);
+                    if activity.is_some() {
+                        m.observe_work(activity, now, &self.boot_id);
                     }
                 });
             }
