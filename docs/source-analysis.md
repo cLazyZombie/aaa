@@ -192,7 +192,7 @@ aa는 마지막 행만 가져오지 않는다. serve가 loopback으로 proxy하�
 | 계층 | herdr 0.9.5 | projects 0.2.35 | web-ui 0.4.10 | aa 추천 |
 |---|---|---|---|---|
 | 언어·실행 | Rust, Tokio+threads | Rust, 동기 명령·ticker | Bun TS + Node sidecar | Rust 단일 실행 파일(역할 host·agent·session-host), TS 웹 front |
-| 터미널 | portable-pty vendor, ghostty-vt, Ratatui/Crossterm | herdr CLI 호출 | xterm.js, node-pty, Windows mirror | portable-pty+플랫폼 adapter, ghostty-vt adapter, Ratatui, xterm.js |
+| 터미널 | portable-pty vendor, ghostty-vt, Ratatui/Crossterm | herdr CLI 호출 | xterm.js, node-pty, Windows mirror | portable-pty+플랫폼 adapter, ghostty-vt adapter, xterm.js(2026-10-19 TUI 삭제로 Ratatui 추천 철회) |
 | 연결 | local socket/pipe, JSON API, binary client, SSH | herdr --machine + ssh/scp/rsync | HTTP/WS, SSH bridge, relay | Front API(front ↔ host)와 Agent link(agent가 host에 TCP+TLS 1.3로 연결, 상호 고정 키). SSH·tailnet 비의존 |
 | 상태 | JSON snapshot/history | Markdown/TOML/JSON+lock | 파일 기반 기기·환경설정, transcript store 읽기 | SQLite 상태·event outbox + Markdown 문맥·보고 |
 | 웹 | 자체 서버 없음 | popup/sidebar | React 19, Vite, Bun.serve | React/Vite/xterm.js + Rust Axum |

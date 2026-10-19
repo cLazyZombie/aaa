@@ -14,7 +14,7 @@
 | 무엇 | 위치 | 실행 |
 |---|---|---|
 | 순수 규칙·판정(Rust) | 소스 옆 `#[cfg(test)]` | `cargo test -p <crate>` |
-| 여러 프로세스(host·agent·session·CLI·TUI) | `crates/aaa/tests/*.rs` + 실험실 `crates/aaa/tests/lab/mod.rs` | `cargo test -p aaa --test m13 <이름>` |
+| 여러 프로세스(host·agent·session·CLI) | `crates/aaa/tests/*.rs` + 실험실 `crates/aaa/tests/lab/mod.rs` | `cargo test -p aaa --test m13 <이름>` |
 | 웹 순수 규칙 | `web/test/*.test.mjs`(`node --test`) | `cd web && npm test` |
 | 웹 화면(실제 host·agent + Playwright) | `web/e2e/specs/NN-기능.mjs` + `web/e2e/lib/harness.mjs`(아래 「웹 E2E」) | `node web/e2e/web.e2e.mjs [--spec 07]` |
 
@@ -235,34 +235,11 @@ local agent 재연결 중 배포 조회(§8.237): host `deploy::tests::coordinat
 
 ### Ctrl+Enter 공통 판정
 
-`aaa-host/src/ctrl_enter.rs`의 유닛 시험이 입력 상자 스타일과 현재 steering 패널을 판정한다. `web/e2e/specs/25-ctrl-enter.mjs`는 실제 host·agent·PTY로 전달된 bytes를 출력 사건으로 확인하며 웹 물리 키·모바일 키 막대·입력줄·IME·반복 키의 연결을 본다. 셸 등 일반 프로그램의 키보드 모드는 기존 `03-keys.mjs`가 소유한다. TUI도 `FrontRequest::PaneCtrlEnter`를 사용해 같은 host 판정을 거친다.
+`aaa-host/src/ctrl_enter.rs`의 유닛 시험이 입력 상자 스타일과 현재 steering 패널을 판정한다. `web/e2e/specs/25-ctrl-enter.mjs`는 실제 host·agent·PTY로 전달된 bytes를 출력 사건으로 확인하며 웹 물리 키·모바일 키 막대·입력줄·IME·반복 키의 연결을 본다. 셸 등 일반 프로그램의 키보드 모드는 기존 `03-keys.mjs`가 소유한다.
 
 ## Mac 웹 터미널 Ctrl+V(§8.232 후속)
 
 기존 E2E 11의 「그림 붙여 넣기·끌어 놓기」가 소유한다. 실제 host·agent와 raw PTY에서 Mac Chrome·WebKit의 이미지 경로/bytes, 텍스트만·권한 거부·API 없음의 ^V, 읽는 중 반복의 단일 업로드를 본다. Windows platform의 Ctrl+V는 비동기 read를 호출하지 않고 기존 표준 text/image paste를 처리한다. iPhone·MacIntel iPad도 새 read 없이 기존 image paste를 유지한다. 페이지의 Clipboard API만 가짜여서 사람의 clipboard나 OS 권한 설정에 닿지 않는다. 실제 권한 창·Windows OS·휴대폰 실기를 보증하지 않는다. `--spec 11 --grep '그림 붙여 넣기'`로 좁게 돌린다. 연속 첨부는 실제 PTY가 받은 이번 경로를 대조해 이전 배너와 새 ACK를 섞지 않는다.
-
-## TUI pane 앱의 선택 복사
-
-`cargo test -p aaa --test tui`의 `pane_osc52_reaches_front_clipboard`는 pane이 낸 OSC 52를 입력권 TUI의 파일 sink에서 확인하고, 재접속에는 복사하지 않는지 본다. 다른 화면·reader/옛 판의 무복사는 host `clipboard_effect_targets_one_front_before_the_fence`가 실제 전송 큐의 Pong 울타리로 확인한다. `reported_selection_copy_never_interrupts_pane`는 마우스 보고 앱의 일반 끌기 뒤 Ctrl+C가 pane에 `03`으로 새지 않는지 raw 관측기로 확인한다. 시스템 clipboard는 사용하지 않는다. VT의 chunk 분할·잘못된 payload·크기 한도는 `aaa-vt::clipboard_effects_are_live_bounded_and_drained_once`, Windows native UTF-16 왕복은 기존 `AAA_CLIP_NATIVE=1` CI가 맡는다. Windows Terminal 자체가 가로채는 Shift 선택은 headless SGR 입력으로 증명할 수 없으며, [공식 동작](https://learn.microsoft.com/en-us/windows/terminal/selection)과 실제 터미널 확인을 구분한다.
-
-사용자 승인(10-19)에 따라 Windows 본문 복사의 기준은 일반 끌기(OSC 52 → 로컬 native)와 앱 선택 뒤 Ctrl+C(pane 본문 복사, 앱 중단 없음)다. Windows Terminal 자체 Shift+끌기는 플랫폼 제약으로 남긴다.
-
-## TUI 확장 Enter와 Windows 붙여넣기(§8.242)
-
-- `cargo test --locked -p aaa --test tui modified_enter_uses_agent_newline`: 실제 crossterm 파서·TUI·host·agent·PTY에서
-  kitty CSI u와 xterm modifyOtherKeys Ctrl/Shift+Enter의 줄바꿈, 보통 Enter, 확장 키 모드 요청·종료 복원을 본다.
-  독립 raw PTY 관측기가 받은 bytes를 출력 사건으로 기다린다. 알려진 harness의 모르는 화면에서 Ctrl은 Alt+Enter, Shift는 LF다.
-- `aaa-tui::tests::ctrl_enter_uses_shared_host_request`는 실제 Front wire에서 공통 요청·구 host LF·reader 무송신·키 반복 억제를 본다.
-  입력줄 비움 판정·steering은 공통 host와 웹 E2E 25가 소유하며 TUI에 판정기를 중복하지 않는다.
-- 기존 `ctrl_v_pastes_clipboard_image`는 직접 Ctrl+V와 Windows Terminal의 빈 bracketed paste를 같은 경계에서 본다.
-  실제 대상 파일의 pixels·따옴표 경로·Enter 없음·조각 업로드를 유지한다. 개발 머신 clipboard는 파일 fixture로 대체한다.
-- `cargo test --manifest-path vendor/crossterm/Cargo.toml --locked --lib aaa_`는 Windows 콘솔 표지의 UTF-16·빈 paste·
-  key-up·단독 Escape·잘못된 표지를 세 OS에서 본다. Windows에서는 native KEY_EVENT_RECORD의 수정 Enter·합성 제어키도 본다.
-  공식 ci-local test 단계에 포함되어 있으며 OS 프로세스·clipboard·신호를 쓰지 않는다.
-
-- `cargo test --locked -p aaa-tui keyboard_cleanup_precedes_panic_restore`는 자식 시험 프로세스에 panic hook을 격리해 keyboard pop이 화면 복원보다 먼저 한 번만 실행되는지 본다. 위 PTY 시험은 main/alternate 키 스택을 따로 유지하고 원래 main 모드가 보존되는지도 본다.
-
-신호 금지 작업에서 E2E 25는 Ctrl+Enter 준비·Claude·Codex·터치 Ctrl+Enter 단계를 함께 고른다. 이 단계는 신호 동작을 시험하지 않고 공식 실험실의 자기 자식 정리만 쓴다.
 
 ## 임무 입력 안내와 조회 권한(§8.246)
 
@@ -283,17 +260,13 @@ local agent 재연결 중 배포 조회(§8.237): host `deploy::tests::coordinat
   인증·운영 설정을 사용하지 않고, 다른 허용 자료 폴더로 cwd가 바뀐 뒤 옛 cd+git의 trust 거절과 새 git -C 세 읽기의
   무승인 성공을 구분한다. 이것은 권한 엔진 검증이며 실제 모델의 빈 입력 대기 판단을 대신하지 않는다.
 
-## TUI 선택 표시·Mac 복사·입력 지연(§8.253)
-
-- `cargo test --locked -p aaa-tui ready_motion_keeps_release_and_key_order`는 현재 도착한 이동만 모으고 놓기·복사 키를 원래 차례로 보존하는지, 아직 안 온 이동을 기다리지 않는지 검사한다. 이동 묶기를 제거한 변형에서 RED, bytes 복원 뒤 GREEN을 확인한다.
-- `cargo test --locked -p aaa-host front::tests::`의 `queued_input_batches_preserve_bytes_boundaries_and_receipts`는 실제 입력 큐에서 마우스 누름·끌기·뗌의 byte와 요청 ID를 보존하며 묶고, resize·다른 pane·64KiB/256요청 상한을 넘지 않는지 본다. `interactive_frames_bypass_batch_delay_without_unbounded_redraws`는 가상 시계로 입력 도중 이미 기다리던 화면도 즉시 나가는지, 16ms당 16회 예산·32ms 입력 창 뒤에는 출력을 묶는지 본다. 고정 sleep·실제 clipboard는 쓰지 않는다.
-- 기존 TUI keeper `reported_selection_copy_never_interrupts_pane`는 앱의 OSC 유무 두 경우에 놓을 때 복사하고, Ctrl+C가 pane으로 새지 않는지 본다. `selection_copy_never_enters_pane`는 일반 셸과 Shift 보고 pane에서 여러 줄의 빈칸까지 셀 격자로 칠하는지·복사 내용·키 누수·실패 알림을 본다. 파일 sink가 기본이며 `AAA_CLIP_NATIVE=1`이면 같은 PTY 경로에서 실제 clipboard를 읽는다. native 두 시험은 clipboard를 함께 쓰므로 `--test-threads=1`로 실행한다.
-- `scripts/ci-local.sh --native-clipboard`의 clipboard 단계가 위 두 keeper와 기존 이미지 roundtrip을 차례로 실행한다. 개발 머신에서 이 옵션을 켜려면 clipboard의 모든 item/type/data를 먼저 저장하고 종료 후 복원해야 한다. 사람의 clipboard를 덮는 일반 test 단계에서는 계속 파일 sink를 쓴다.
-- 회귀 변형: 입력 묶기 제거·입력 직후 렌더 우회 제거·빈 셀 선택 칠하기 제거를 각각 넣어 해당 keeper의 RED를 확인하고, 원본 bytes로 복원한 뒤 GREEN을 확인한다. 지연 측정은 새 binary·격리 host/agent·PTY에서 입력 byte를 쓴 시각부터 선택 셀 또는 앱의 실제 재그리기가 관측된 시각까지 잰다. herdr도 같은 fixture·셀 크기·관측 parser·전송 조건으로 비교하며, 로컬 셀 선택과 앱 마우스 선택을 별도 기록한다.
-
-- 착지 기준에 같은 m13 오류 대기의 수리가 먼저 포함됐다. 순간 화면 대신 report 종료값의 영구 기록을 확인하는 기준의 fixture를 유지한다.
-
 ## resolve 뒤 종료된 pane 제거(§8.254)
 
 - m13 `resolve_removes_exited_panes_even_when_the_worktree_is_kept_or_adopted`가 실제 CLI→host→agent 경계에서 dir·dirty worktree·adopted pane을 입력으로 exit 1 종료한다. 종료 상태 확인 뒤 resolve하고 pane 목록·layout에서의 제거와 폴더 보존을 단언한다. 새 신호·고정 sleep·production 시험 seam은 없다.
 - 기존 `resolve_keeps_dirty_worktree_and_unmerged_branch`는 partial·skip-copy를 포함한 폴더/branch 보존과 별개로 pane을 닫는지 본다. `thread_adopt_existing_pane`은 복원된 살아 있는 pane도 닫고 원래 branch·파일은 남기는 경계를 본다. linger 시험은 기존대로 session host의 종료 유예를 기다리지 않는지 확인한다.
+
+## 삭제된 TUI의 접속 거절
+
+`cargo test -p aaa --test tui_removed`는 host 없는 로컬 `attach`·`tui`·`evaluator open`이 삭제 안내와 실패 코드로 끝나는지, 실제 host socket이 옛 `tui`·`tui@…` hello를 거절하고 CLI 상태 조회를 계속 받는지 본다. 웹 E2E 01의 「옛 TUI WebSocket 거절·웹 API 유지」는 인증한 브라우저에서 옛 `/api/v1/front`에 접속해 분명한 Reject frame을 받고 일반 웹 API가 정상인지 본다. 웹 터미널·Ctrl+Enter·입출력 회귀는 기존 웹 E2E와 host·CLI 시험이 계속 맡는다.
+
+TUI PTY·native clipboard·vendored crossterm 검사는 코드와 함께 제거했다. 목록과 보존 tag `tui-last`는 [삭제 기록](removed-tui.md)에 있다.

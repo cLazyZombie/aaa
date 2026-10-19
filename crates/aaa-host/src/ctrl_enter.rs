@@ -1,4 +1,4 @@
-//! Ctrl+Enter 공통 판정(웹·TUI). host mirror의 detection 입력줄과 같은 화면 ANSI를 읽는다.
+//! Ctrl+Enter 공통 판정(웹). host mirror의 detection 입력줄과 같은 화면 ANSI를 읽는다.
 //! herdr-web-ui aa624cb `server/prompt.ts` claudeInputEmpty와 `server/codex-steering.ts`를 옮겼다.
 //! 스타일 판독은 기존 herdr-projects 입력 상자 판정기(prompt_box.rs)를 재사용한다.
 //! 바꾼 점: NO_COLOR 추천문을 빈 입력으로 추정하지 않는다. 모르면 줄바꿈이다.

@@ -316,9 +316,9 @@ process.stdin.resume();`;
     // 3) focus를 얻은 화면이 크기를 다시 건다(입력 없이)
     await page.evaluate(() => window.dispatchEvent(new Event("focus")));
     await until("focus 얻은 화면 크기", () => t1size() === held && holder() === first);
-    // 3b) 「터미널의 aaa와 같이 쓰기」(herdr-web-ui releasePaneAway, 기본 꺼짐): 켜면 다른 창으로 옮기고 1초 뒤 크기를 놓고
+    // 3b) 「다른 웹 화면과 같이 쓰기」(herdr-web-ui releasePaneAway, 기본 꺼짐): 켜면 다른 창으로 옮기고 1초 뒤 크기를 놓고
     // 보기만 한다(띠). 남은 화면이 크기를 되찾고, 이 화면을 누르면 다시 이 화면 크기다
-    await (await openSettings(op, "터미널")).getByRole("switch", { name: "터미널의 aaa와 같이 쓰기" }).click();
+    await (await openSettings(op, "터미널")).getByRole("switch", { name: "다른 웹 화면과 같이 쓰기" }).click();
     await op.keyboard.press("Escape");
     await op.getByLabel("보낼 글").fill("echo away");
     await op.getByRole("button", { name: "보내기" }).click();

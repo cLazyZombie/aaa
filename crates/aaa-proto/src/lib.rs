@@ -25,7 +25,7 @@ pub use version::{
 };
 
 /// Agent link heartbeat: 양쪽이 이 간격으로 ping하고, 이만큼 아무것도 못 받으면 끊는다.
-/// 붙여 넣은 그림 한 조각 상한(Agent link frame 1MiB 안에 base64로 들어간다). 웹·TUI·CLI 첨부가 같이 쓴다.
+/// 붙여 넣은 그림 한 조각 상한(Agent link frame 1MiB 안에 base64로 들어간다). 웹·CLI 첨부가 같이 쓴다.
 pub const ATTACH_CHUNK: usize = 512 * 1024;
 
 pub const LINK_PING_EVERY: std::time::Duration = std::time::Duration::from_secs(15);
@@ -72,19 +72,6 @@ pub fn typescript_bindings() -> String {
         Tab::decl(&cfg),
         Workspace::decl(&cfg),
         LayoutChange::decl(&cfg),
-        GridRun::decl(&cfg),
-        GridLine::decl(&cfg),
-        GridLink::decl(&cfg),
-        GridFrame::decl(&cfg),
-        PaneModes::decl(&cfg),
-        MouseMode::decl(&cfg),
-        MouseEncoding::decl(&cfg),
-        GridScroll::decl(&cfg),
-        ScrollBy::decl(&cfg),
-        TextPoint::decl(&cfg),
-        TextRange::decl(&cfg),
-        CopyMotion::decl(&cfg),
-        SearchDirection::decl(&cfg),
         PendingEnroll::decl(&cfg),
         PublishState::decl(&cfg),
         DeviceView::decl(&cfg),
@@ -98,7 +85,6 @@ pub fn typescript_bindings() -> String {
         FrontRequest::decl(&cfg),
         SharedPreferences::decl(&cfg),
         FrontResponse::decl(&cfg),
-        ClipboardOutcome::decl(&cfg),
         FrontEvent::decl(&cfg),
         SubmitStage::decl(&cfg),
         TermServerMsg::decl(&cfg),

@@ -2,7 +2,7 @@
 //!
 //! - Agent link: host ↔ agent backend (`LinkMsg`)
 //! - Session IPC: agent backend ↔ session host (`SessionMsg`)
-//! - Front API: front(CLI·TUI·웹) ↔ host (`FrontMsg`, 웹은 `FrontRequest`를 HTTP로 투영)
+//! - Front API: front(CLI·웹) ↔ host (`FrontMsg`, 웹은 `FrontRequest`를 HTTP로 투영)
 //!
 //! 모르는 선택 필드는 무시한다(serde 기본). 필수 필드가 없거나 모르는 메시지 종류는 오류다.
 
@@ -713,19 +713,6 @@ pub enum AgentRequest {
         data: B64,
         eof: bool,
     },
-    /// pane 기록 한 조각을 이 머신 임시 폴더의 `aaa-scrollback-<name>.txt`에 쓴다(herdr `prefix e`, plan §8.176). `name`은 host가
-    /// 정한 hex 16자다. `offset`은 지금까지 쓴 길이와 같아야 하고, `eof`면 경로와 그 파일을 여는 편집기 명령을 돌려준다.
-    /// agent 기능 `scrollback.v1`이 있을 때만 보낸다.
-    ScrollbackWrite {
-        name: String,
-        offset: u64,
-        data: B64,
-        eof: bool,
-    },
-    /// `ScrollbackWrite`로 쓴 파일을 지운다(편집기 pane이 끝났다). 이미 없으면 그대로 끝난다.
-    ScrollbackRemove {
-        name: String,
-    },
     /// 화면의 터미널 기본 색이 바뀌었다(plan §8.187). agent는 모든 session host에 알리고 새 세션에 실은 뒤 답한다.
     /// agent 기능 `term_colors.v1`이 있을 때만 보낸다.
     TermColors(TermColors),
@@ -854,11 +841,6 @@ pub enum AgentResponse {
     Attached {
         path: String,
         sha256: String,
-    },
-    /// 기록 파일을 다 썼다(그 머신 절대 경로와 그 파일을 여는 편집기 명령)
-    Scrollback {
-        path: String,
-        argv: Vec<String>,
     },
     /// 세션이 지금 있는 폴더(읽지 못하면 None)
     Cwd {
@@ -1112,7 +1094,7 @@ pub struct ToolCheck {
 pub struct LeaseView {
     /// 보유한 front 연결 ID(front는 Welcome·attach 때 받은 자기 ID와 비교한다)
     pub front: String,
-    /// 사람이 읽는 이름(예: `tui@mac-a`, `웹(ab12)`)
+    /// 사람이 읽는 이름(예: `웹(ab12)`)
     pub label: String,
 }
 
@@ -1257,160 +1239,6 @@ pub enum LayoutChange {
     SplitRatio { tab: String, path: Vec<bool>, ratio: u16 },
     /// 탭을 `index` 앞으로 옮긴다(herdr `tab.move`의 `insert_index`: 0..=탭 수, 옮기기 전 차례로 센다)
     MoveTab { tab: String, index: u16 },
-}
-
-// ───────────────────────── TUI 화면(cell grid, §4.5) ─────────────────────────
-
-/// 같은 모양 글자 묶음. 색은 0=기본, 0x0100_00nn=팔레트 nn, 0x0200_rrggbb=RGB.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
-pub struct GridRun {
-    /// 글자들. 넓은 글자(한글 등)는 두 칸을 차지하고 뒤 칸은 따로 적지 않는다.
-    pub t: String,
-    pub fg: u32,
-    pub bg: u32,
-    /// 1=굵게, 2=기울임, 4=밑줄, 8=반전
-    pub a: u8,
-}
-
-/// 보이는 화면의 OSC 8 링크 칸(1.36부터): 줄, 시작 칸, 끝 칸(넣지 않음), uri. front가 바깥 터미널에 OSC 8로 다시
-/// 내보낸다(herdr `visible_hyperlinks`·`render_ansi.rs` `write_hyperlink_if_changed`).
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
-pub struct GridLink {
-    pub row: u16,
-    pub col: u16,
-    pub end: u16,
-    pub uri: String,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
-pub struct GridLine {
-    pub row: u16,
-    pub runs: Vec<GridRun>,
-}
-
-/// pane 화면 한 장면. `full`이면 모든 줄, 아니면 바뀐 줄만 들어 있다(없는 줄은 그대로).
-/// host는 크기(줄 수나 폭)가 바뀌면 `full`로 보낸다. 고치기 전 host는 폭만 바뀌면 바뀐 줄만 보냈다(QA t-0337 Q23).
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
-pub struct GridFrame {
-    pub pane: String,
-    pub cols: u16,
-    pub rows: u16,
-    pub cursor_row: u16,
-    pub cursor_col: u16,
-    pub cursor_visible: bool,
-    pub full: bool,
-    pub lines: Vec<GridLine>,
-    /// 그 pane 프로그램이 켠 모드(1.14부터, 옛 host는 기본값)
-    #[serde(default)]
-    pub modes: PaneModes,
-    /// 이 구독이 보는 기록 위치(`PaneScroll`, 1.26부터, 옛 host는 맨 아래)
-    #[serde(default)]
-    pub scroll: GridScroll,
-    /// 보이는 화면의 OSC 8 링크 칸 전부(1.36부터, 바뀐 줄만 보내는 frame에도 늘 전부). 옛 host는 없음
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub links: Vec<GridLink>,
-}
-
-/// 이 화면이 보는 기록 위치(herdr `ScrollMetrics`). `offset`은 맨 아래에서 올라간 줄 수, `max`는 기록 줄 수(alt 화면이면 0).
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, TS)]
-pub struct GridScroll {
-    pub offset: u32,
-    pub max: u32,
-}
-
-/// 기록 위치 옮기기(herdr `scroll_up`·`scroll_down`·`scroll_reset`·`set_scroll_offset_from_bottom`)
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
-#[serde(tag = "to", rename_all = "snake_case")]
-pub enum ScrollBy {
-    Up {
-        lines: u32,
-    },
-    Down {
-        lines: u32,
-    },
-    /// 맨 아래(지금 화면)로
-    Bottom,
-    /// 맨 아래에서 `lines`줄 위로
-    Offset {
-        lines: u32,
-    },
-}
-
-/// pane 화면 사본의 글 자리(herdr `PaneTextPoint`). `row`는 기록 맨 앞 줄이 0이고 화면 줄이 그 뒤에 잇는 줄 번호
-/// (alt 화면이면 화면 줄만), `col`은 칸. `GridScroll`로 보면 화면 맨 위 줄은 `max - offset`이다.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, TS)]
-pub struct TextPoint {
-    pub row: u32,
-    pub col: u16,
-}
-
-/// 글 범위(시작, 끝 칸 포함. 넓은 글자 끝은 머리 칸 + 1)(herdr `PaneTextRange`)
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, TS)]
-pub struct TextRange {
-    pub start: TextPoint,
-    pub end: TextPoint,
-}
-
-/// copy 모드 낱말·문단 이동(herdr `PaneCopyMotion`에서 줄 끝·첫 글자 빼고: TUI가 화면 frame에서 정한다)
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
-#[serde(rename_all = "snake_case")]
-pub enum CopyMotion {
-    NextWordStart,
-    PreviousWordStart,
-    NextWordEnd,
-    NextBigWordStart,
-    PreviousBigWordStart,
-    NextBigWordEnd,
-    PreviousParagraph,
-    NextParagraph,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
-#[serde(rename_all = "snake_case")]
-pub enum SearchDirection {
-    Forward,
-    Backward,
-}
-
-/// pane 프로그램이 켠 터미널 모드. TUI가 마우스를 넘기고 휠·화살표를 고를 때 쓴다(herdr `wheel_routing`)
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, TS)]
-pub struct PaneModes {
-    #[serde(default)]
-    pub mouse: MouseMode,
-    #[serde(default)]
-    pub mouse_encoding: MouseEncoding,
-    /// alternate screen(`CSI ? 1049 h` 등)
-    #[serde(default)]
-    pub alt_screen: bool,
-    /// DECCKM(`CSI ? 1 h`): 화살표를 `ESC O x`로
-    #[serde(default)]
-    pub app_cursor: bool,
-}
-
-/// 마우스 보고 모드(xterm `CSI ? 9/1000/1002/1003 h`)
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, TS)]
-#[serde(rename_all = "snake_case")]
-pub enum MouseMode {
-    #[default]
-    None,
-    /// 9: 누름만
-    Press,
-    /// 1000: 누름·뗌·휠
-    PressRelease,
-    /// 1002: 누른 채 움직임도
-    ButtonMotion,
-    /// 1003: 모든 움직임
-    AnyMotion,
-}
-
-/// 마우스 보고 인코딩(기본 X10 바이트, `CSI ? 1005 h` UTF-8, `CSI ? 1006 h` SGR)
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, TS)]
-#[serde(rename_all = "snake_case")]
-pub enum MouseEncoding {
-    #[default]
-    Default,
-    Utf8,
-    Sgr,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
@@ -1610,27 +1438,17 @@ pub enum FrontRequest {
     PaneKill {
         pane: String,
     },
-    /// 대화형 입력(TUI·웹 터미널). 조작 lease를 확인하고, 비어 있으면 이 연결이 갖는다.
+    /// 대화형 입력(웹 터미널). 조작 lease를 확인하고, 비어 있으면 이 연결이 갖는다.
     /// 한 번 보내는 `PaneSend`(CLI·API)는 lease 대상이 아니다(§4.5).
     PaneInput {
         pane: String,
         data: B64,
     },
-    /// 웹·TUI의 Ctrl+Enter. host가 감지 입력줄로 줄바꿈/steering을 정한다. 권한·입력 순서는 PaneInput과 같다.
+    /// 웹의 Ctrl+Enter. host가 감지 입력줄로 줄바꿈/steering을 정한다. 권한·입력 순서는 PaneInput과 같다.
     PaneCtrlEnter {
         pane: String,
     },
-    /// front가 알리는 실행 파일 진단. 신원·권한 근거가 아니며 입력권을 옮기지 않는다(FRONT_API 1.43).
-    FrontIdentity {
-        version: String,
-        sha256: Option<String>,
-    },
-    /// 로컬 복사 결과 진단. 알린 결과일 뿐이며 입력권을 옮기지 않는다(FRONT_API 1.43).
-    PaneCopyReport {
-        pane: String,
-        outcome: ClipboardOutcome,
-    },
-    /// 대화형 붙여넣기(TUI가 바깥 터미널의 bracketed paste로 받은 글, herdr client가 서버로 넘기는 붙여넣기).
+    /// 대화형 붙여넣기(herdr client가 서버로 넘기는 붙여넣기와 같은 형식).
     /// host가 그 프로그램이 켠 bracketed paste대로 감싸고 ESC·C1 CSI를 뺀다(`KeyModes::paste`). lease는 `PaneInput`과 같다.
     PanePaste {
         pane: String,
@@ -1643,7 +1461,7 @@ pub enum FrontRequest {
     PaneRelease {
         pane: String,
     },
-    /// 붙여 넣은 그림 한 조각(TUI Ctrl+V·`aaa pane attach`, 최대 512KiB). 웹 `TermClientMsg::Attach`와 같은 규칙이다:
+    /// 붙여 넣은 그림 한 조각(`aaa pane attach`, 최대 512KiB). 웹 `TermClientMsg::Attach`와 같은 규칙이다:
     /// `offset` 0이 새 첨부의 시작이고, 마지막 조각에서 `sha256`(파일 전체)을 확인한다. 받는 중인 첨부는 연결마다 하나다.
     PaneAttach {
         pane: String,
@@ -1666,54 +1484,6 @@ pub enum FrontRequest {
     PaneRename {
         pane: String,
         label: Option<String>,
-    },
-    /// 이 연결로 pane 화면(cell grid)을 보낸다. 같은 머신 front 연결(UDS)에서만 쓴다.
-    PaneWatch {
-        pane: String,
-    },
-    PaneUnwatch {
-        pane: String,
-    },
-    /// 이 연결이 `PaneWatch`로 보는 pane 화면의 기록 위치를 옮긴다(이 화면만, plan §8.153). 프로그램에는 아무것도 가지 않는다.
-    PaneScroll {
-        pane: String,
-        by: ScrollBy,
-    },
-    /// 고른 글을 읽는다(herdr `PaneSelectionRead`, 1.27부터): `from`·`to`(차례 상관없음, 끝 칸 포함) 사이의 글을 화면 사본의
-    /// 기록까지 읽는다. 접힌 줄은 줄바꿈 없이 잇는다(plan §8.156).
-    PaneSelectionRead {
-        pane: String,
-        from: TextPoint,
-        to: TextPoint,
-    },
-    /// copy 모드 낱말·문단 이동 자리(herdr `PaneCopyMotion`, 1.27부터): 화면 사본의 기록까지 보고 `cursor`에서 옮긴 자리를
-    /// `CopyCursor`로 답한다. 갈 곳이 없으면 그대로.
-    PaneCopyMotion {
-        pane: String,
-        cursor: TextPoint,
-        motion: CopyMotion,
-    },
-    /// pane 기록을 그 머신 편집기로 연다(herdr `prefix e` `edit_scrollback`, 1.32부터, plan §8.176): 그 머신 agent가 화면 사본의
-    /// 기록을 임시 파일로 쓰고, host가 그 pane을 나눠 편집기 pane을 띄운 뒤 탭을 zoom한다. 편집기 pane이 끝나면 host가 그
-    /// pane을 닫고 파일을 지우고 zoom을 되돌린다. `Workspace`로 답한다.
-    PaneEditScrollback {
-        workspace: Option<String>,
-        pane: String,
-    },
-    /// copy 모드 찾기(herdr `PaneCopySearch`, 1.27부터): 글자 그대로, 큰 글자가 있으면 대소문자를 가린다. `previous`(앞 일치)가
-    /// 있으면 그 다음부터. `CopySearch`로 답한다.
-    PaneCopySearch {
-        pane: String,
-        query: String,
-        direction: SearchDirection,
-        cursor: TextPoint,
-        previous: Option<TextRange>,
-    },
-    /// 누른 칸의 링크(herdr `pane.link.activate`, 1.35부터, plan §8.194): 화면 사본에서 그 칸을 덮는 OSC 8 링크, 없으면 그
-    /// 칸을 포함한 낱말의 http(s) URL을 `Link`로 답한다. 여는 것은 TUI가 도는 기기다. 모르는 옛 host는 오류로 답한다.
-    PaneLink {
-        pane: String,
-        at: TextPoint,
     },
     Workspace {
         name: Option<String>,
@@ -2213,14 +1983,6 @@ impl FrontRequest {
                 | FrontRequest::Workspaces
                 | FrontRequest::PaneGet { .. }
                 | FrontRequest::PaneChat { .. }
-                | FrontRequest::FrontIdentity { .. }
-                | FrontRequest::PaneWatch { .. }
-                | FrontRequest::PaneUnwatch { .. }
-                | FrontRequest::PaneScroll { .. }
-                | FrontRequest::PaneSelectionRead { .. }
-                | FrontRequest::PaneCopyMotion { .. }
-                | FrontRequest::PaneCopySearch { .. }
-                | FrontRequest::PaneLink { .. }
                 | FrontRequest::Workspace { .. }
                 | FrontRequest::WebStatus
                 | FrontRequest::Devices
@@ -2333,30 +2095,6 @@ pub enum FrontResponse {
     },
     Workspace(Workspace),
     Done,
-    /// `PaneSelectionRead`: 고른 글. 한 frame에 들게 앞쪽만 두었으면 `truncated`
-    Selection {
-        pane: String,
-        text: String,
-        truncated: bool,
-    },
-    /// `PaneLink`: 열 http(s) 주소(링크가 아니면 없음)
-    Link {
-        pane: String,
-        url: Option<String>,
-    },
-    /// `PaneCopyMotion`: 옮긴 자리
-    CopyCursor {
-        pane: String,
-        cursor: TextPoint,
-    },
-    /// `PaneCopySearch`: 현재 일치 언저리(최대 1024개)와 전체 수, 그 안의 현재·전체에서의 현재(못 찾았으면 없음)
-    CopySearch {
-        pane: String,
-        matches: Vec<TextRange>,
-        total: u64,
-        current: Option<u32>,
-        current_global: Option<u64>,
-    },
     /// 붙여 넣은 그림을 대상 머신에 저장했다(`PaneAttach` 마지막 조각). `inserted`면 harness 입력창에 경로를 넣었다.
     Attached {
         path: String,
@@ -2471,14 +2209,6 @@ pub struct SharedPreferences {
 }
 
 /// front가 알리는 복사 결과. 본문·clipboard 내용·OS 오류 문자열은 host로 보내지 않는다.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
-#[serde(rename_all = "snake_case")]
-pub enum ClipboardOutcome {
-    Copied,
-    Requested,
-    Failed,
-}
-
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(tag = "ev", rename_all = "snake_case")]
 pub enum FrontEvent {
@@ -2486,10 +2216,6 @@ pub enum FrontEvent {
     State { machines: Vec<MachineView>, panes: Vec<PaneView> },
     /// workspace layout이 바뀌었다
     Workspace(Workspace),
-    /// PaneWatch로 구독한 화면
-    Grid(GridFrame),
-    /// live pane 앱의 OSC 52. 입력권을 가진 조작 front 한 곳에만 보내며 replay하지 않는다(FRONT_API 1.43).
-    Clipboard { pane: String, text: String },
     /// 흐름 사건(새로 기록될 때). 놓쳤으면 `Events`로 cursor부터 다시 읽는다.
     Flow(FlowEvent),
     /// thread 기록이 바뀌었다
@@ -2506,7 +2232,7 @@ pub enum FrontEvent {
     /// FRONT_API 1.43. 보고서 목록이 바뀌었다(보내기·열기·지우기·thread 사본). 웹 events 연결에만, 열 때와 바뀔 때 보낸다.
     /// `unseen`은 열지 않은 사용자 보고서 수(활동 막대 보고서 배지)
     Reports { unseen: u32 },
-    /// 앱 안 알림(TUI 카드·웹 Droplet, plan §8.185). 기록하지 않는다: 놓친 알림은 다시 오지 않는다(FRONT_API 1.34,
+    /// 앱 안 알림(웹 Droplet, plan §8.185). 기록하지 않는다: 놓친 알림은 다시 오지 않는다(FRONT_API 1.34,
     /// 옛 front는 모르는 사건을 버린다)
     Notice(NoticeView),
     /// `chat_watch`로 청한 pane의 대화 기록이 바뀌었다(herdr-web-ui `conversation-changed`). 웹은 대화를 다시 읽는다.
