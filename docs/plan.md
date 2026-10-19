@@ -5342,3 +5342,10 @@ primary 근거:
 - **수정.** 글 뒤 키가 있으면 현재 터미널 모드의 paste로 글을 보내고 간격 뒤 키를 쓴다. 글만 주는 명령·키만 주는 명령은 그대로다. 키 이름을 모두 먼저 확인해 잘못된 키 때문에 글만 남기지 않는다. 간격 중 새로 뜬 신뢰 창은 다시 확인해 Enter로 승인하지 않는다.
 - **참고와 차이.** herdr-projects `threads.rs keys`는 `agent_send_text` 다음 `agent_send_keys`, herdr `api/panes.rs handle_pane_send_input`은 바이트를 붙여 쓴다. 같은 문제가 생길 수 있어 herdr `api/agents.rs AGENT_PROMPT_SUBMIT_DELAY`·`encode_api_submission_parts`의 300ms·paste 분리를 따른다. aaa의 기존 thread message·웹 submit도 이 간격을 공유한다. t3code의 SDK turn 제출에는 PTY paste 판정 창이 없다.
 - **시험.** 실제 Agent link 경계와 Tokio 가상 시계로 paste 꺼짐/켜짐 모두 글·Enter 바이트, 300ms 이상 분리, 새 신뢰 창에서는 Enter 없음까지 본다. 수정 전 간격 0으로 실패했다. 신뢰 창 재검사를 없앤 변형도 실패했고 정본을 복원했다. 실제 시간을 자는 시험·재전송은 없다.
+
+### 8.217 mission approve의 확인 입력 안내(10-19, t-0375)
+
+- **실제 사본 재현.** 프로젝트 설정과 임무 파일을 임시 config/state host·agent에 복사했다. `repo = rc` 후보는 정상으로 해석된다. 확인 입력에 다른 이름을 쓰면 「임무 이름이 다르다」가 재현됐다. 당시 사용자가 친 확인 입력은 남지 않아 원래 사건을 같은 원인으로 확정하지 않는다. 운영 임무 파일·승인은 바꾸지 않았다.
+- **수정.** 승인 화면에 프로젝트/임무를 함께 표시하고 확인 입력에 필요한 이름을 따옴표로 명시한다. 다르면 승인하지 않았다는 결과와 필요한 이름을 알린다. 임의로 친 입력은 오류에 되풀이하지 않는다.
+- **참고.** herdr-projects `routine.rs approve`의 이름 재입력과 aaa `routine_approve`의 확인 문을 유지한다. t3code의 turn 권한 처리와 달리 이 임무 승인은 aaa가 추가한 사람 전용 기능이라 질문 내용만 보강한다. 세션 안·비터미널 거부, 현재 해시 확인과 이름 일치는 그대로다.
+- **시험.** 꺼진 합성 임무와 임시 host에서 실제 CLI를 PTY로 실행해 잘못된 이름을 친다. 필요한 이름 안내·승인 안 됨·적용 사본 없음 계약이 수정 전 실패하고 수정 후 통과한다(0.27초). 임무를 실제로 승인하거나 깨우는 시험은 추가하지 않는다.

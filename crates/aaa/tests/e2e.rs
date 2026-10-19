@@ -32,6 +32,30 @@ listen = ""
 mode = "none"
 "#;
 
+/// 잘못 친 승인 확인에는 승인 대상과 입력해야 할 이름이 보여야 하고 승인 상태는 남지 않는다.
+/// 운영 임무 대신 꺼진 합성 임무와 임시 host만 쓴다.
+#[test]
+fn mission_approval_explains_the_expected_name_without_approving() {
+    let mut lab = Lab::new();
+    let config = format!("{LOCAL_ONLY}\n[projects]\nroot = {:?}\n", lab.root.join("projects"));
+    let h = lab.node("h", Some(&config));
+    lab.spawn("host", &h, &["host"]);
+    wait_for("host 준비", T, || h.json(&["status"]).ok());
+    h.ok(&["project", "create", "demo"]);
+    let missions = lab.root.join("projects/demo/missions");
+    std::fs::create_dir_all(&missions).unwrap();
+    std::fs::write(
+        missions.join("watch.md"),
+        "+++\ntitle = \"감시\"\nenabled = false\nprofile = \"fixture\"\n+++\n\n관찰한다.\n",
+    )
+    .unwrap();
+    let out = h.in_terminal(&["mission", "approve", "demo", "watch"], &[("승인하려면 임무 이름", "wrong")], T);
+    assert!(out.contains("demo/watch") && out.contains("\"watch\"") && out.contains("승인하지 않았다"), "{out}");
+    let m = h.ok(&["mission", "show", "demo", "watch"]);
+    assert_eq!(m["mission"]["approved"], false);
+    assert!(m["mission"]["applied_sha"].is_null());
+}
+
 /// 쉬고 있는 가짜 Claude: SessionStart hook(대화 기록 위치)과 진행 보고를 내고 입력 상자를 그린 채 기다린다.
 /// `$1`은 aaa 실행 파일, `$2`는 hook JSON이다.
 const IDLE_CLAUDE: &str = r#"#!/bin/sh
