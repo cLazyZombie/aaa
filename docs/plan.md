@@ -5446,3 +5446,11 @@ primary 근거:
   기존 native clipboard CI 왕복 하나를 한글·이모지·여러 줄 텍스트 쓰기/읽기까지 넓혔다.
   개발 머신의 실제 clipboard는 건드리지 않는다. xwin은 Windows 교차 빌드이고 Windows 실행 증거는 CI다.
 - 웹 steering과 TUI 여러 줄 Enter는 각각 별도 작업 범위다.
+
+### 8.226 Codex 중간 설명 출력 중 idle 오표시(10-19, t-0383, D8 운영 회귀)
+
+- **실제 기록.** 진단 반영 이후 세 agent 로그와 host 적용 로그를 대조했다. 11:16:22 KST의 working→idle 상태 사건을 읽기 전용으로 구독해 즉시 감지 화면을 확보했다. 화면은 중간 설명 `• 회귀 시험에서`를 출력하며 Working 줄이 없었다. 같은 Codex 턴에는 시작 뒤 종료 사건이 없었다. 감지는 osc_title_idle, host는 그 idle을 그대로 적용했다. 원래 09:24:52 사건은 당시 프레임이 없어 이 원인으로 소급 확정하지 않는다.
+- **원인·참고.** 해당 세션은 animations=false이며 실제 OSC 제목에는 작업 표시가 없고 OSC progress도 비었다. herdr 0.9.5 `src/detect/manifests/codex.toml`의 일반 제목 idle 규칙과 `pane/agent_detection.rs`의 visible_idle 즉시 적용도 같은 구멍이 있다. Codex [rust-v0.163.0 chatwidget.rs](https://github.com/openai/codex/blob/rust-v0.163.0/codex-rs/tui/src/chatwidget.rs)는 commentary streaming 중 상태 줄을 숨긴다. 같은 판 `chatwidget/status_surfaces.rs`의 `run_state_status_text`는 애니메이션과 별개로 Starting/Working/Thinking/Waiting/Ready를 제공한다. herdr-web-ui `server/pane-status.ts`는 감지 결과를 소비하며, t3code `CodexAdapterV2.ts`는 명시적 turn 사건을 쓴다. D8대로 hook·transcript를 상태 정본으로 바꾸지 않고 기존 OSC 제목 감지를 보완한다.
+- **수리·차이.** aaa가 띄우는 Codex의 실행·재개·저장된 spec 재실행에 세션 한정 `-c tui.terminal_title=["run-state","activity","project-name"]`를 준다. 사용자 파일·notify·animations는 고치지 않는다. activity도 포함해 기존 Action Required 제목을 유지한다. 사용자 CLI의 앞선 제목 설정보다 나중에, `--` prompt 앞에 한 번만 둔다. Codex manifest는 2026.10.19.1로 기록하고 명시적 실행 상태를 기존 osc_title_working에서 읽는다. herdr의 나머지 감지·idle 확인 시간·host 전이는 유지한다.
+- **검증.** Watch의 실제 Detect 응답 경계에 운영 화면의 최소 재현을 넣었다. 수정 전 중간 설명에서 idle 발생으로 RED, 수정 후 작업 유지·Ready의 idle·Action Required의 question을 검사한다. 기존 실행·재개·최종 spawn 시험은 제목 옵션·사용자 notify·wrapper·명시적 옵션·`--` 경계를 함께 확인한다. 고정 sleep·상태 polling·새 시험용 production seam은 없다.
+- **운영 반영.** 새 agent binary로 새로 띄우거나 재개한 Codex부터 제목 설정이 적용된다. 이미 실행 중인 Codex는 host·agent만 다시 시작해도 argv가 바뀌지 않는다. 기존 세션의 재개 시점은 coordinator가 정한다. 운영 프로세스·설정·상태 폴더는 이 작업에서 수정하지 않았다.

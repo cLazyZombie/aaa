@@ -1,7 +1,8 @@
 //! harness 상태의 화면 감지(결정 20 D8, plan §8.110). herdr 0.9.5처럼 화면 끝과 OSC 제목·진행으로 Claude·Codex 상태를 정한다.
 //!
 //! - 규칙 엔진은 herdr `src/detect/manifest.rs`, 규칙은 herdr `src/detect/manifests/{claude,codex}.toml`(Apache-2.0,
-//!   `LICENSE-herdr.txt`)을 그대로 옮겼다. 상태 전이(언제 알리나)는 herdr `src/pane/agent_detection.rs`(`state.rs`)다.
+//!   `LICENSE-herdr.txt`)을 옮겼다(Codex run-state 제목 보완은 plan §8.226). 상태 전이(언제 알리나)는 herdr
+//!   `src/pane/agent_detection.rs`(`state.rs`)다.
 //! - hook은 herdr처럼 harness 세션 ID(SessionStart)를 잇는 데만 쓴다. 상태는 이 모듈만 낸다.
 
 pub mod foreground;
