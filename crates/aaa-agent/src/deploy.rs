@@ -10,7 +10,7 @@ use std::{
 pub type Executor = fn(&Path, DeployAction) -> Result<String, String>;
 pub(crate) struct Manager {
     root: PathBuf,
-    _lease: std::fs::File,
+    lease: Mutex<Option<std::fs::File>>,
     instance: String,
     running_sha256: String,
     gate: Mutex<()>,
@@ -32,23 +32,26 @@ impl Manager {
     pub(crate) fn new(state: &Path, exe: &Path) -> anyhow::Result<Self> {
         let root = state.join("deployments");
         aaa_common::util::ensure_private_dir(&root)?;
-        // OS가 프로세스 종료 때 푸는 잠금이다. PID 재사용·재부팅으로 옛 작업을 살아 있다고 오인하지 않는다.
+        Ok(Self {
+            root,
+            instance: aaa_common::util::new_id(),
+            running_sha256: sha(exe).map_err(|e| anyhow::anyhow!(e.message))?,
+            lease: Mutex::new(None),
+            gate: Mutex::new(()),
+            executor: Mutex::new(None),
+        })
+    }
+    fn configure(&self, exe: &Path, executor: Executor) -> anyhow::Result<()> {
+        // 배포를 실제 실행하는 프로세스만 잠근다. PID 재사용·재부팅은 OS 잠금 수명에 영향을 주지 않는다.
+        let mut owner = self.lease.lock().unwrap();
         let lease = std::fs::OpenOptions::new()
             .read(true)
             .write(true)
             .create(true)
             .truncate(false)
-            .open(root.join("executor.lock"))?;
+            .open(self.root.join("executor.lock"))?;
         lease.try_lock().map_err(|e| anyhow::anyhow!("같은 상태 폴더의 배포 실행기가 이미 살아 있다: {e}"))?;
-        let me = Self {
-            _lease: lease,
-            root,
-            instance: aaa_common::util::new_id(),
-            running_sha256: sha(exe).map_err(|e| anyhow::anyhow!(e.message))?,
-            gate: Mutex::new(()),
-            executor: Mutex::new(None),
-        };
-        for entry in std::fs::read_dir(&me.root)? {
+        for entry in std::fs::read_dir(&self.root)? {
             let entry = entry?;
             let Some(id) = entry.path().file_stem().and_then(|s| s.to_str()).map(str::to_string) else {
                 continue;
@@ -56,7 +59,7 @@ impl Manager {
             if !valid(&id) {
                 continue;
             }
-            let Ok(mut job) = me.status(&id) else {
+            let Ok(mut job) = self.status(&id) else {
                 continue;
             };
             if !matches!(job.state, DeployState::Queued | DeployState::Running) {
@@ -75,9 +78,11 @@ impl Manager {
                 .into(),
             );
             job.updated_ms = aaa_common::util::now_ms();
-            me.save(&job).map_err(|e| anyhow::anyhow!(e.message))?;
+            self.save(&job).map_err(|e| anyhow::anyhow!(e.message))?;
         }
-        Ok(me)
+        *owner = Some(lease);
+        *self.executor.lock().unwrap() = Some(executor);
+        Ok(())
     }
     pub(crate) fn response(&self, job: DeployJob) -> aaa_proto::AgentResponse {
         aaa_proto::AgentResponse::Deployment {
@@ -157,9 +162,7 @@ impl Manager {
             tracing::error!(job=%job.id, "배포 실행 전 기록 실패: {}", e.message);
             return None;
         }
-        let Some(execute) = *self.executor.lock().unwrap() else {
-            return None;
-        };
+        let execute = (*self.executor.lock().unwrap())?;
         let action = job.action.clone();
         let result =
             tokio::task::spawn_blocking(move || execute(&exe, action)).await.map_err(|e| e.to_string()).and_then(|r| r);
@@ -174,8 +177,8 @@ impl Manager {
     }
 }
 impl Agent {
-    pub fn configure_deployment(&self, executor: Executor) {
-        *self.deployments.executor.lock().unwrap() = Some(executor);
+    pub fn configure_deployment(&self, executor: Executor) -> anyhow::Result<()> {
+        self.deployments.configure(&self.exe, executor)
     }
     pub(crate) async fn deploy_start(
         self: Arc<Self>,
@@ -214,7 +217,7 @@ mod tests {
         let exe = root.join("aaa");
         std::fs::write(&exe, b"original").unwrap();
         let manager = Manager::new(&root, &exe).unwrap();
-        *manager.executor.lock().unwrap() = Some(execute);
+        manager.configure(&exe, execute).unwrap();
         let id = aaa_common::util::new_id();
         let action = DeployAction::Update { from: Some("candidate".into()), version: None, dry_run: false };
         let (job, run) = manager.prepare(&exe, id.clone(), "demo".into(), action.clone()).unwrap();
@@ -237,21 +240,27 @@ mod tests {
             .unwrap();
         restart.state = DeployState::Running;
         manager.save(&restart).unwrap();
-        assert!(Manager::new(&root, &exe).is_err(), "살아 있는 실행기와 중복으로 열었다");
+        assert!(
+            Manager::new(&root, &exe).unwrap().configure(&exe, execute).is_err(),
+            "살아 있는 실행기와 중복으로 열었다"
+        );
         // PID는 여전히 살아 있어도 OS 잠금이 풀렸으면 실행기는 끝났다(PID 재사용에도 같다).
         assert_eq!(restart.executor_pid, std::process::id());
         drop(manager);
         let restored = Manager::new(&root, &exe).unwrap();
+        restored.configure(&exe, execute).unwrap();
         assert_eq!(restored.status(&id).unwrap().state, DeployState::Completed);
         restart.expected_sha256 = "다른 파일".into();
         restored.save(&restart).unwrap();
         drop(restored);
         let wrong = Manager::new(&root, &exe).unwrap();
+        wrong.configure(&exe, execute).unwrap();
         assert_eq!(wrong.status(&id).unwrap().state, DeployState::Interrupted);
         restart.action = DeployAction::Update { from: None, version: None, dry_run: false };
         wrong.save(&restart).unwrap();
         drop(wrong);
         let interrupted = Manager::new(&root, &exe).unwrap();
+        interrupted.configure(&exe, execute).unwrap();
         assert_eq!(
             interrupted.status(&id).unwrap().state,
             DeployState::Interrupted,

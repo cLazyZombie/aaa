@@ -396,7 +396,7 @@ pub(crate) fn update_approved(
                     "version": current_version, "release_version": manifest.version})
                 );
             } else {
-                println!("이미 최신판이다(aaa {} · release {}): 바꾸지 않았다", &current_version, manifest.version);
+                println!("이미 최신판이다(aaa {} · release {}): 바꾸지 않았다", current_version, manifest.version);
             }
             return Ok(ExitCode::SUCCESS);
         };
@@ -473,6 +473,11 @@ pub fn list(json: bool) -> Result<ExitCode> {
         println!("  {n}  aaa {v} · sha256 {}{}", short(s), if *s == cur { " · 지금과 같음" } else { "" });
     }
     Ok(ExitCode::SUCCESS)
+}
+
+/// 실행 중 이미지 판과 별개로, 지금 설치된 파일을 직접 검증한다.
+pub(crate) fn installed_identity(exe: &std::path::Path) -> Result<String> {
+    Ok(serde_json::json!({"version":self_check(exe)?,"sha256":sha256(exe)?}).to_string())
 }
 
 #[cfg(test)]
@@ -567,9 +572,4 @@ mod tests {
         assert_eq!(kept_version(Path::new("/x/.aaa-old/aaa-20261018T120500Z-0.1.0")), "0.1.0");
         assert_eq!(kept_version(Path::new("/x/.aaa-old/aaa-20261018T120500Z2-1.2.3")), "1.2.3");
     }
-}
-
-/// 실행 중 이미지 판과 별개로, 지금 설치된 파일을 직접 검증한다.
-pub(crate) fn installed_identity(exe: &std::path::Path) -> Result<String> {
-    Ok(serde_json::json!({"version":self_check(exe)?,"sha256":sha256(exe)?}).to_string())
 }

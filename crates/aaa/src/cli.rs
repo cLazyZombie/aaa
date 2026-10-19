@@ -1961,7 +1961,7 @@ fn agent_cmd(a: AgentArgs) -> Result<ExitCode> {
         .or_else(|| std::env::var("HOME").ok().or_else(|| std::env::var("USERPROFILE").ok()));
     rt.block_on(async move {
         let agent = aaa_agent::Agent::new(state, ident.machine_id, name, a.dev_mode, default_cwd)?;
-        agent.configure_deployment(crate::deployment::execute);
+        agent.configure_deployment(crate::deployment::execute)?;
         let work_root = if cfg.agent.work_root.is_empty() {
             aaa_config::paths::home().join("aaa-work")
         } else {
