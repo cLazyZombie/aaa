@@ -1997,6 +1997,8 @@ export function TermView({
           owner={`${pane.machine_id}:${pane.id}`}
           agentLabel={pane.agent?.harness === "codex" ? "Codex" : "Claude"}
           connected={!locked}
+          pane={pane.id}
+          touch={coarse}
           working={paneAgentStatus(pane) === "working"}
           onSend={sendTerminalLine}
           onSent={() => setChatSent((n) => n + 1)}

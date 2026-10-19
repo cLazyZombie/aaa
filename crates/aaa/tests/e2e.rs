@@ -489,6 +489,8 @@ fn update_replaces_keeps_and_rolls_back() {
         .args(["update", "--from", &s(&new1)])
         .env("AAA_CONFIG_DIR", &h.cfg)
         .env("AAA_STATE_DIR", &h.state)
+        .env_remove("AAA_SESSION_ID")
+        .env_remove("AAA_HOOK_SOCK")
         .stdin(std::process::Stdio::null())
         .output()
         .unwrap();

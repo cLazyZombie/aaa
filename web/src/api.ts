@@ -77,6 +77,15 @@ export async function signOut(): Promise<void> {
 }
 export const call = (req: FrontRequest, keepalive = false) => post<FrontResponse>("/api/v1/call", req, keepalive);
 
+/** herdr-web-ui uploadPaneImage: 저장된 경로는 초안에 넣고, 보내기 전에는 pane에 입력하지 않는다. */
+export async function uploadChatImage(pane: string, image: File): Promise<string> {
+  if (image.size === 0 || image.size > 16 * 1024 * 1024) throw new Error("그림은 1바이트부터 16MiB까지 붙여 넣습니다.");
+  const response = await fetch(`/api/v1/panes/${encodeURIComponent(pane)}/image`, {
+    method: "POST", body: image, credentials: "same-origin",
+  });
+  return (await unwrap<{ path: string }>(response)).path;
+}
+
 /** 이 host의 웹 화면들이 함께 쓰는 설정과 고정(plan §8.79, herdr-web-ui api.ts `fetchPreferences`·`savePreferences`) */
 export async function loadPreferences(): Promise<SharedPreferences> {
   const r = await call({ op: "preferences" });

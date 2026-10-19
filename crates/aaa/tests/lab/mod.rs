@@ -41,6 +41,9 @@ impl Node {
             .env("AAA_TEST_BUILTINS", "")
             // routine `every <N>s`: host가 시험에서만 받는다
             .env("AAA_TEST_ROUTINE_SECONDS", "1")
+            // 실험실 CLI는 바깥 aaa pane의 신원이 아니다. 세션 안 동작은 각 시험이 env로 명시한다.
+            .env_remove("AAA_SESSION_ID")
+            .env_remove("AAA_HOOK_SOCK")
             .env_remove("NO_COLOR")
             // herdr pane 안에서 돌리면 물려받는다(herdr가 pane마다 건다). CI와 같게 빼서 aaa가 거는지 본다
             .env_remove("fish_handle_reflow")

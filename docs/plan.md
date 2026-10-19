@@ -5293,3 +5293,28 @@ primary 근거:
   배포 때 host·CLI·웹을 함께 새 판으로 바꾸고 첫 자동 정리 전 dry-run 예상치를 확인한다.
 - **시험:** 주입한 now와 임시 사본으로 기한·오래된 순·보호·보호 초과 알림·꺼짐·6시간 경계·쓰기 없는 미리 보기를 본다.
   기존 보고서 E2E에 doctor·CLI dry-run·웹 합계/한도 표시를 더한다. 고정 sleep·새 신호 시험은 없다.
+
+### 8.212 대화 사진 첨부·터치 Enter 줄바꿈(10-19)
+
+- **원인.** 배포 기준 `e1d57804`의 ChatComposer에는 paste/drop·첨부 단추가 없었다. 터미널의 파일 선택은 agent 세션 폴더에
+  저장하고 PTY에 경로부터 넣으므로 대화 초안과 프로젝트 uploads 계약을 만족하지 못했다. Enter 판정은 터치 기기를 가르지 않았다.
+- **참고 그대로 옮긴 동작.** herdr-web-ui `aa624cb` Composer.tsx `onPaste`(1032~1052)·`onDrop`(1054~1061)·`uploadImages`·첨부 미리보기:
+  clipboard items의 파일을 받아(글과 그림이 같이 있으면 대화에서는 그림), 먼저 저장하고 초안 앞에 `@경로 `를 넣는다. `compose.ts`
+  `imageMention`·`insertLeadingMention`과 `composerImageMime.ts`는 `web/src/herdr/`에 원문대로 옮겼다(MIT 고지는 README).
+  IME 조합 중이거나 글자 수 한도에 걸리면 온전한 경로를 넣을 때까지 전송을 막고, 삭제는 초안의 mention도 지운다.
+- **저장 API.** 참고 `src/lib/api.ts uploadPaneImage`·`server/index.ts /api/pane/image`·`server/paste.ts savePaneImage`처럼 저장과 전송을 분리한다.
+  aaa는 `POST /api/v1/panes/{id}/image`가 cookie·조작 권한·Origin을 확인하고 16MiB 원본 bytes를 받는다. 기존 signature 규칙
+  PNG·JPEG·GIF·WebP, 0600 저장을 유지한다. coordinator 판별은 기존 `Host::coordinator_panes`(host 머신·프로젝트 cwd)를 쓰고
+  그 프로젝트 `uploads/`에 저장한다. 다른 pane은 기존 AgentRequest::AttachWrite로 대상 머신 세션 첨부 폴더에 저장하고 hash를 확인한다.
+  경로를 PTY에 미리 넣지 않으며 보내기 때 기존 submit 경로로 보낸다. Front/Agent 프로토콜 변경은 없다(웹 전용 HTTP 경로 추가).
+- **참고와 다른 곳.** 참고는 cwd 아래 `.herdr-web-ui`에 저장하지만 프로젝트 uploads는 이번 사용자 요구다.
+  HTTP 본문은 참고의 base64 JSON 대신 원본 bytes로 보내고, 인증 뒤 읽는 상한을 적용한다. 동시 업로드는 기존 aaa 파일 전송처럼
+  순서대로 하며, 기존 16MiB·그림 형식 제한을 넓히지 않는다. herdr `2ecf19a`는 OS clipboard→파일 경로를 터미널에 넣는 길이고
+  herdr-projects `1f05c00`는 uploads 폴더 생성·doctor만 맡으므로 대화 첨부 UI는 herdr-web-ui를 따른다.
+- **터치 Enter.** t3code `4b1024da` `composer-logic.ts composerSubmissionIntentForKey`(39~51)는 mobile·IME·keyCode229에서 전송 의도를
+  만들지 않는다. aaa는 herdr-web-ui/기존 Term의 `(pointer: coarse)`를 터치 판별로 써 휴대폰·패드에서 Enter가 기본 줄바꿈을 하게 하고
+  보내기 단추로 전송한다. 데스크톱 Enter/Shift+Enter 및 enterSends 설정은 유지한다.
+- **범위 분담.** 높이·rows·자동 늘림은 별도 thread가 맡는다. 이 변경은 기본 rows 값을 바꾸거나 높이 조절 코드를 추가하지 않는다.
+  착지 지시 뒤 최신 origin/main과 통합해 같은 ChatComposer 파일의 양쪽 의도를 보존한다.
+- **시험.** 웹 E2E 23, docs/testing.md 「대화 이미지와 Enter」. 실제 OS의 clipboard 권한·iOS 길게 누르기 메뉴는 실기 확인 범위이며
+  headless 결과를 실기 확인으로 부르지 않는다.
