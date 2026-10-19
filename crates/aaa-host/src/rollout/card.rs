@@ -73,7 +73,11 @@ pub(super) fn completion_item(r: &RolloutView) -> Option<InboxItem> {
         subject: r.id.clone(),
         event: "rollout finished".into(),
         summary: format!("{state} · {}", r.id.get(..8).unwrap_or(&r.id)),
-        body: format!("rollout: {}\nSHA-256: {}\n{}", r.id, r.spec.sha256, r.error.as_deref().unwrap_or("")),
+        // inbox peek는 Reader도 읽는다. 원본 진단은 rollout 정본에만 보존한다.
+        body: format!(
+            "rollout: {}\nSHA-256: {}\n자세한 결과는 coordinator의 배포 기록에서 확인하세요.",
+            r.id, r.spec.sha256
+        ),
         done: false,
         seen: false,
         created_at_ms: aaa_common::util::now_ms(),
@@ -140,12 +144,16 @@ mod tests {
     #[tokio::test]
     async fn terminal_commit_recovery_emits_one_durable_inbox_and_app_notice() {
         let (h, cfg, root) = lab();
+        std::fs::create_dir_all(root.join("projects/demo")).unwrap();
+        std::fs::write(root.join("projects/demo/PROJECT.md"), "# demo\n").unwrap();
         let mut notices = h.notice_events.subscribe();
         for state in
             [RolloutState::Done, RolloutState::Stopped, RolloutState::StoppedRolledBack, RolloutState::RecoveryFailed]
         {
             let mut r = crate::rollout::tests::record();
             r.state = state;
+            r.error =
+                Some("staging /private/reader-install-marker/.aaa-update-987654.tmp: self-check pid-marker".into());
             r.cursor = if state == RolloutState::Done { r.steps.len() as u32 } else { 6 };
             for step in r.steps.iter_mut().take(r.cursor as usize) {
                 step.completed = true;
@@ -163,6 +171,23 @@ mod tests {
             assert_eq!(items[0].subject, r.id);
             assert_eq!(items[0].item_kind, "rollout", "외부 사용자 post 알림과 구분한다");
             assert!(items[0].body.contains(&r.spec.sha256));
+            let response = h
+                .call(
+                    DeviceRole::Reader,
+                    "web:reader",
+                    FrontRequest::Inbox { project: r.project.clone(), all: true, peek: true },
+                )
+                .await
+                .unwrap();
+            let FrontResponse::Inbox { items: reader_items, .. } = response else {
+                panic!("Reader inbox 응답이 아니다")
+            };
+            assert_eq!(reader_items.len(), 1);
+            let wire = serde_json::to_string(&reader_items).unwrap();
+            for private in ["reader-install-marker", "987654", "pid-marker"] {
+                assert!(!wire.contains(private), "Reader inbox로 원문 진단이 우회 노출됐다: {private}");
+            }
+            assert_eq!(h.load_rollout(&r.id).unwrap().error, r.error, "coordinator 정본은 원문을 보존한다");
             h.save_rollout(&mut r).unwrap();
             h.drive_rollout().await.unwrap();
             assert!(notices.try_recv().is_err(), "같은 종료를 두 번 알리면 안 된다");
