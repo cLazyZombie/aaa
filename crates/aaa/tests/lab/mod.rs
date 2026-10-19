@@ -32,7 +32,11 @@ pub struct Node {
 
 impl Node {
     pub fn cmd(&self, args: &[&str]) -> Command {
-        let mut c = Command::new(BIN);
+        self.cmd_bin(Path::new(BIN), args)
+    }
+    /// 업데이트 경계 시험은 공용 binary 대신 실험실 사본을 실행한다.
+    pub fn cmd_bin(&self, bin: &Path, args: &[&str]) -> Command {
+        let mut c = Command::new(bin);
         c.args(args)
             .env("AAA_CONFIG_DIR", &self.cfg)
             .env("AAA_STATE_DIR", &self.state)
@@ -300,11 +304,14 @@ impl Lab {
     }
 
     pub fn spawn_env(&mut self, tag: &str, node: &Node, args: &[&str], env: &[(&str, &str)]) -> u32 {
-        let log = std::fs::File::create(self.root.join(format!("{tag}.log"))).unwrap();
         let mut cmd = node.cmd(args);
         for (k, v) in env {
             cmd.env(k, v);
         }
+        self.spawn_command(tag, cmd)
+    }
+    pub fn spawn_command(&mut self, tag: &str, mut cmd: Command) -> u32 {
+        let log = std::fs::File::create(self.root.join(format!("{tag}.log"))).unwrap();
         let child = cmd.stdout(log.try_clone().unwrap()).stderr(log).spawn().expect("spawn");
         let pid = child.id();
         self.procs.push((tag.to_string(), child));

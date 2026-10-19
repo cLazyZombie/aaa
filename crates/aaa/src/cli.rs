@@ -107,11 +107,14 @@ enum Cmd {
         cmd: ConfigCmd,
     },
     /// 공개 GitHub release(기본 최신판) 또는 --from 파일로 바꾼다. SHA-256·self-check·version 고정 검사 뒤
-    /// rename하고 옛것은 rollback으로 되돌린다. 실제 교체는 사람만
+    /// rename하고 옛것은 rollback으로 되돌린다. 실제 교체는 사람 또는 safety로 허용한 coordinator만
     #[command(args_conflicts_with_subcommands = true)]
     Update {
         #[command(subcommand)]
         cmd: Option<UpdateCmd>,
+        /// coordinator 배포 대상 머신. --from은 그 머신의 파일이다.
+        #[arg(long)]
+        machine: Option<String>,
         /// 새 실행 파일(같은 OS·CPU로 빌드한 aaa)
         #[arg(long, value_name = "파일")]
         from: Option<PathBuf>,
@@ -1095,6 +1098,8 @@ enum ServiceCmd {
     Restart {
         #[arg(long, value_parser = ["host", "agent"])]
         role: String,
+        #[arg(long)]
+        machine: Option<String>,
     },
     /// 감독자에서 내린다(launchctl bootout, herdr `server stop`). plist는 남아 다음 로그인에 뜬다. 사람이 터미널에서 직접 한다.
     Stop {
@@ -1110,8 +1115,18 @@ enum ServiceCmd {
 
 #[derive(Subcommand)]
 enum UpdateCmd {
-    /// 보관한 옛 실행 파일로 되돌린다(이름이 없으면 지금과 다른 가장 새 것). 사람만
+    /// coordinator 배포 작업 기록. 재시작으로 응답을 잃어도 같은 ID를 확인한다.
+    Status {
+        id: String,
+        #[arg(long)]
+        wait: bool,
+        #[arg(long)]
+        machine: Option<String>,
+    },
+    /// 보관한 옛 실행 파일로 되돌린다(이름이 없으면 지금과 다른 가장 새 것)
     Rollback {
+        #[arg(long)]
+        machine: Option<String>,
         /// `aaa update list`의 이름
         name: Option<String>,
         /// 검사만 하고 바꾸지 않는다(누구나)
@@ -1460,13 +1475,35 @@ fn run(cli: Cli) -> Result<ExitCode> {
             }
             Ok(ExitCode::SUCCESS)
         }
-        Cmd::Service { cmd } => service_cmd(cmd),
+        Cmd::Service { cmd } => service_cmd(cmd, json),
         Cmd::Config { cmd } => config_cmd(cmd, json),
-        Cmd::Update { cmd: None, from, release_version, dry_run } => {
+        Cmd::Update { cmd: None, from, release_version, dry_run, machine } => {
+            let action = aaa_proto::DeployAction::Update {
+                from: from.as_ref().map(|p| p.to_string_lossy().into()),
+                version: release_version.clone(),
+                dry_run,
+            };
+            if (!dry_run || machine.is_some())
+                && let Some(code) = crate::deployment::route(json, machine, action)?
+            {
+                return Ok(code);
+            }
             crate::update::update(json, from, release_version, dry_run)
         }
-        Cmd::Update { cmd: Some(UpdateCmd::Rollback { name, dry_run }), .. } => {
+        Cmd::Update { cmd: Some(UpdateCmd::Rollback { name, dry_run, machine }), .. } => {
+            if (!dry_run || machine.is_some())
+                && let Some(code) = crate::deployment::route(
+                    json,
+                    machine,
+                    aaa_proto::DeployAction::Rollback { name: name.clone(), dry_run },
+                )?
+            {
+                return Ok(code);
+            }
             crate::update::rollback(json, name, dry_run)
+        }
+        Cmd::Update { cmd: Some(UpdateCmd::Status { id, wait, machine }), .. } => {
+            crate::deployment::status(json, machine, id, wait)
         }
         Cmd::Update { cmd: Some(UpdateCmd::List), .. } => crate::update::list(json),
     }
@@ -1924,6 +1961,7 @@ fn agent_cmd(a: AgentArgs) -> Result<ExitCode> {
         .or_else(|| std::env::var("HOME").ok().or_else(|| std::env::var("USERPROFILE").ok()));
     rt.block_on(async move {
         let agent = aaa_agent::Agent::new(state, ident.machine_id, name, a.dev_mode, default_cwd)?;
+        agent.configure_deployment(crate::deployment::execute)?;
         let work_root = if cfg.agent.work_root.is_empty() {
             aaa_config::paths::home().join("aaa-work")
         } else {
@@ -2658,6 +2696,18 @@ fn render_front(r: &FrontResponse) -> String {
         }
     };
     match r {
+        FrontResponse::DeployContext { project, session, allowed } => {
+            let _ = writeln!(s, "coordinator {:?} · 세션 {session} · 배포 허용 {allowed}", project);
+        }
+        FrontResponse::Deployment { machine, job, running_software, running_sha256 } => {
+            let _ = writeln!(
+                s,
+                "배포 {} · {machine} · {:?}\n실행 중 {running_software} · SHA-256 {running_sha256}\n{}",
+                job.id,
+                job.state,
+                job.result.as_deref().unwrap_or("기록에서 실행 결과를 확인한다")
+            );
+        }
         FrontResponse::Status(h) => {
             let _ = writeln!(
                 s,
@@ -3190,7 +3240,7 @@ fn launchd_spec(role: String, aaa: Option<PathBuf>, launcher: Option<PathBuf>) -
     })
 }
 
-fn service_cmd(cmd: ServiceCmd) -> Result<ExitCode> {
+fn service_cmd(cmd: ServiceCmd, json: bool) -> Result<ExitCode> {
     match cmd {
         ServiceCmd::Plan { label } => print!("{}", service::plan(&label)?),
         ServiceCmd::Register { label } => println!("{label}: {}", service::register(&label)?),
@@ -3204,7 +3254,13 @@ fn service_cmd(cmd: ServiceCmd) -> Result<ExitCode> {
             print!("{}", crate::launchd::install(&launchd_spec(role, aaa, launcher)?, replace)?)
         }
         ServiceCmd::Uninstall { role } => print!("{}", crate::launchd::uninstall(&role)?),
-        ServiceCmd::Restart { role } => print!("{}", crate::launchd::restart(&role)?),
+        ServiceCmd::Restart { role, machine } => {
+            let service = if role == "host" { aaa_proto::DeployService::Host } else { aaa_proto::DeployService::Agent };
+            if let Some(code) = crate::deployment::route(json, machine, aaa_proto::DeployAction::Restart { service })? {
+                return Ok(code);
+            }
+            print!("{}", crate::launchd::restart(&role)?);
+        }
         ServiceCmd::Stop { role } => print!("{}", crate::launchd::stop(&role)?),
         ServiceCmd::Start { role } => print!("{}", crate::launchd::start(&role)?),
     }

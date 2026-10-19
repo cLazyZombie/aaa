@@ -345,7 +345,12 @@ fn set(json: bool, command: &str, target: &str, key: &str, words: &[String]) -> 
     if json {
         println!("{}", serde_json::json!({ "target": target.word(), "key": key, "value": shown, "warning": warn }));
     } else {
-        println!("{}: {key} = {shown}. {}", target.label(), safety::RESTART_NOTE);
+        let note = if key == "coordinator_deploy" {
+            "다음 배포 요청부터 즉시 적용한다. thread는 계속 막는다. 사용자가 채팅에서 배포를 지시했을 때만 쓴다"
+        } else {
+            safety::RESTART_NOTE
+        };
+        println!("{}: {key} = {shown}. {note}", target.label());
         if let Some(w) = warn {
             println!("경고: {w}");
         }

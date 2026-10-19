@@ -17,13 +17,14 @@ use toml_edit::{Array, DocumentMut, Item, Table};
 pub const DEFAULT_TABLE: &str = "default";
 
 /// `aaa safety set`이 받는 key와 값(참고 `KEYS`)
-pub const KEYS: [(&str, &str); 6] = [
+pub const KEYS: [(&str, &str); 7] = [
     ("yolo", "on/off"),
     ("start_threads", "propose/auto"),
     ("trust_screens", "coordinator/user"),
     ("coordinator_agent_args", "인자"),
     ("thread_agent_args", "인자"),
     ("routine_commands", "on/off"),
+    ("coordinator_deploy", "on/off"),
 ];
 
 /// 바꾼 뒤 알리는 말(참고 `RESTART_NOTE`)
@@ -61,6 +62,9 @@ pub struct SafetyLayer {
     /// routine 명령을 실행해도 되는가(그래도 명령마다 사람 승인이 필요하다, §8.19). yolo와 따로다
     #[serde(skip_serializing_if = "Option::is_none")]
     pub routine_commands: Option<bool>,
+    /// 사용자가 채팅으로 지시한 coordinator 배포만 허용한다. yolo와 별개이며 기본은 false다.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub coordinator_deploy: Option<bool>,
     /// thread가 쓸 수 있는 profile. 없으면 모두
     #[serde(skip_serializing_if = "Option::is_none")]
     pub thread_profiles: Option<Vec<String>>,
@@ -78,6 +82,7 @@ pub struct Safety {
     pub coordinator_agent_args: Vec<String>,
     pub thread_agent_args: Vec<String>,
     pub routine_commands: bool,
+    pub coordinator_deploy: bool,
     /// `None`이면 모든 profile
     pub thread_profiles: Option<Vec<String>>,
     /// `None`이면 모든 profile
@@ -156,6 +161,7 @@ impl Layers {
                 .or_else(|| l.thread_agent_args.clone())
                 .unwrap_or_default(),
             routine_commands: o.routine_commands.or(d.routine_commands).or(l.routine_commands).unwrap_or(false),
+            coordinator_deploy: o.coordinator_deploy.or(d.coordinator_deploy).unwrap_or(false),
             thread_profiles: o
                 .thread_profiles
                 .clone()
@@ -232,6 +238,12 @@ impl Layers {
                     LEGACY_HOST,
                 ),
                 note: String::new(),
+            },
+            Row {
+                key: "coordinator_deploy",
+                value: on_off(s.coordinator_deploy),
+                source: src(o.coordinator_deploy.is_some(), d.coordinator_deploy.is_some(), false, ""),
+                note: "사용자가 채팅으로 지시한 배포만".into(),
             },
             Row {
                 key: "thread_profiles",
@@ -376,6 +388,12 @@ fn overlay(layer: &mut SafetyLayer, t: &dyn toml_edit::TableLike, table: &str, w
             None => bad("yolo", "true·false여야 한다"),
         }
     }
+    if let Some(v) = t.get("coordinator_deploy") {
+        match v.as_bool() {
+            Some(b) => layer.coordinator_deploy = Some(b),
+            None => bad("coordinator_deploy", "true·false여야 한다"),
+        }
+    }
     if let Some(v) = t.get("routine_commands") {
         match v.as_bool() {
             Some(b) => layer.routine_commands = Some(b),
@@ -430,7 +448,7 @@ pub fn value_item(key: &str, words: &[String]) -> Result<Option<Item>, String> {
         _ => Err(format!("`{key}`는 값 하나를 받는다")),
     };
     Ok(Some(match key {
-        "yolo" | "routine_commands" => toml_edit::value(on_off(one()?)?),
+        "yolo" | "routine_commands" | "coordinator_deploy" => toml_edit::value(on_off(one()?)?),
         "start_threads" => match one()? {
             v @ ("propose" | "auto") => toml_edit::value(v),
             other => return Err(format!("start_threads는 propose·auto다, `{other}`가 아니다")),
@@ -612,6 +630,29 @@ mod tests {
             (by("coordinator_profiles").text(), by("coordinator_profiles").source),
             ("모든 profile".to_string(), "기본값")
         );
+    }
+
+    /// 배포 허용은 yolo와 독립이고 host 바깥 safety 층에서만 온다.
+    #[test]
+    fn coordinator_deployment_is_opt_in_and_can_be_revoked() {
+        let resolve_rows = |text: &str| {
+            let (d, o, l, w) = read_texts(&[text.into()], Some("demo"));
+            assert!(w.is_empty(), "{w:?}");
+            Layers { own: o, default: d, legacy: l }
+                .rows(true)
+                .into_iter()
+                .find(|r| r.key == "coordinator_deploy")
+                .unwrap()
+                .value
+        };
+        let on = set_in(HOST, "default", "coordinator_deploy", value_item("coordinator_deploy", &s(&["on"])).unwrap())
+            .unwrap();
+        assert_eq!(resolve_rows(HOST), "off", "yolo는 배포를 허용하지 않는다");
+        assert_eq!(resolve_rows(&on), "on");
+        let off =
+            set_in(&on, "demo", "coordinator_deploy", value_item("coordinator_deploy", &s(&["off"])).unwrap()).unwrap();
+        assert_eq!(resolve_rows(&off), "off", "프로젝트에서 즉시 철회한다");
+        assert!(legacy_project_layer("coordinator_deploy = true").coordinator_deploy.is_none());
     }
 
     #[test]
