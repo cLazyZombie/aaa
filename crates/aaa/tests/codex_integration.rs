@@ -308,6 +308,28 @@ fn foreign_or_incomplete_session_hooks_are_silent() {
             assert!(o.status.success() && o.stdout.is_empty() && o.stderr.is_empty(), "{missing}: {o:?}");
         }
     }
+    // 전송 실패도 harness를 막지 않는다. 원인은 명시적으로 켠 진단에서만 남긴다.
+    for debug in [false, true] {
+        let mut command = h.cmd(&bin());
+        command
+            .args(["hook", "--agent", "codex", r#"{"hook_event_name":"SessionStart","diagnostic":"payload-marker"}"#])
+            .env("AAA_SESSION_ID", "s1")
+            .env("AAA_HOOK_SOCK", h.0.join("missing.sock"))
+            .env("AAA_HOOK_TOKEN", "token-marker")
+            .env_remove("AAA_LOG");
+        if debug {
+            command.env("AAA_LOG", "debug");
+        }
+        let out = command.output().unwrap();
+        assert!(out.status.success() && out.stdout.is_empty(), "{out:?}");
+        let stderr = String::from_utf8(out.stderr).unwrap();
+        if debug {
+            assert!(stderr.contains("hook 전송 실패") && stderr.contains("os error"), "{stderr}");
+            assert!(!stderr.contains("token-marker") && !stderr.contains("payload-marker"), "{stderr}");
+        } else {
+            assert!(stderr.is_empty(), "{stderr}");
+        }
+    }
     assert!(h.files().is_empty());
 }
 
