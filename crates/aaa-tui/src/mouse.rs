@@ -26,7 +26,7 @@ use aaa_proto::{
     FrontRequest, GridRun, GridScroll, LayoutChange, MouseEncoding, MouseMode, PaneModes, ScrollBy, SplitDir, TextPoint,
 };
 use anyhow::Result;
-use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
+use crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
 use ratatui::buffer::Buffer;
 use ratatui::style::{Color, Modifier, Style};
 use tokio::time::Instant;
@@ -67,6 +67,42 @@ pub const WORD_SHOWN: Duration = Duration::from_millis(500);
 pub const SPLIT_SEND: Duration = Duration::from_millis(33);
 /// 끌어 고르다 가장자리에 닿았을 때 한 줄씩 넘기는 사이(herdr `SELECTION_AUTOSCROLL_INTERVAL`)
 pub const SELECTION_AUTOSCROLL: Duration = Duration::from_millis(30);
+
+/// herdr `handle_raw_events`: 이미 도착한 연속 이동은 다음 그리기 전 함께 처리한다. 새 사건을 기다리지 않고,
+/// 놓기·키·수정키 변경은 다음 차례로 보존한다. poll은 현재 task의 waker를 써서 EventStream의 다음 입력도 깨운다.
+pub(crate) async fn ready_motion<S>(
+    input: &mut S,
+    first: MouseEvent,
+    deferred: &mut Option<std::io::Result<Event>>,
+) -> Vec<MouseEvent>
+where
+    S: futures_util::Stream<Item = std::io::Result<Event>> + Unpin,
+{
+    use std::task::Poll;
+    let mut ready = Vec::new();
+    if !matches!(first.kind, MouseEventKind::Drag(_) | MouseEventKind::Moved) {
+        return ready;
+    }
+    // 받기·그리기도 굶지 않게 한 번에 최대 256개(첫 사건 포함).
+    while ready.len() < 255 {
+        let next = std::future::poll_fn(|cx| match std::pin::Pin::new(&mut *input).poll_next(cx) {
+            Poll::Ready(event) => Poll::Ready(event),
+            Poll::Pending => Poll::Ready(None),
+        })
+        .await;
+        match next {
+            Some(Ok(Event::Mouse(next))) if next.kind == first.kind && next.modifiers == first.modifiers => {
+                ready.push(next)
+            }
+            Some(other) => {
+                *deferred = Some(other);
+                break;
+            }
+            None => break,
+        }
+    }
+    ready
+}
 
 /// pane 밖으로 `d`줄 끌었을 때 바로 넘기는 줄 수(herdr `selection_edge_scroll_lines`)
 pub fn edge_lines(d: u16) -> i64 {
@@ -114,6 +150,7 @@ pub struct Hits {
     pub activity: Vec<(Rect, usize)>,
     pub special_rows: Vec<(Rect, usize)>,
     pub report_rows: Vec<(Rect, usize)>,
+    pub title_preview: Option<Rect>,
     /// 펼친 목록의 첫 보이는 줄과 보이는 줄 수(휠로 민다)
     pub list_skip: usize,
     pub list_h: u16,
@@ -598,6 +635,20 @@ impl App {
         }
         let (x, y, mods) = (m.column, m.row, m.modifiers);
         let hits = self.hits.borrow().clone();
+        if self.overlay.is_none() {
+            if hits.on(hits.title_preview, x, y) {
+                if m.kind == MouseEventKind::Down(MouseButton::Left) {
+                    self.show_selected_title();
+                }
+                return Ok(());
+            }
+            if m.kind == MouseEventKind::Down(MouseButton::Right)
+                && let Some(text) = hits.row_at(x, y).and_then(|r| self.row_title(r))
+            {
+                self.show_title(text);
+                return Ok(());
+            }
+        }
         if !self.reports.shown
             && m.kind == MouseEventKind::Down(MouseButton::Left)
             && self.link_press(m, &hits, tx).await?
@@ -759,7 +810,7 @@ impl App {
                         self.overlay = None;
                     }
                 }
-                Some(Overlay::Help(_)) => {
+                Some(Overlay::Title(_)) | Some(Overlay::Help(_)) => {
                     if !hits.on(hits.popup, x, y) {
                         self.overlay = None;
                     }
@@ -806,6 +857,9 @@ impl App {
             MouseEventKind::ScrollUp | MouseEventKind::ScrollDown => {
                 let area = Rect { x: 0, y: 0, w: self.width, h: self.height };
                 let prefixes = self.prefix_label();
+                if let Some(Overlay::Title(v)) = self.overlay.as_mut() {
+                    v.key(if m.kind == MouseEventKind::ScrollDown { KeyCode::Down } else { KeyCode::Up }, area);
+                }
                 if let Some(Overlay::Help(h)) = self.overlay.as_mut() {
                     let max = help::max_scroll(area, &prefixes, &h.query);
                     h.scroll = if m.kind == MouseEventKind::ScrollDown {
@@ -1246,6 +1300,17 @@ impl App {
                 if let Some(b) = hits.panes.iter().find(|b| b.pane == pane).cloned() {
                     self.report_to(tx, &b, Report::Release(button), x, y, mods).await?;
                 }
+                // 앱 마우스 선택은 OSC 52를 보내지 않을 수도 있다. TUI의 자동 복사 설정은
+                // 그 앱의 clipboard 구현과 무관하게 지킨다. 앱이 준 글이 있으면 그것이 정본이다.
+                if button == MouseButton::Left && self.copy_on_select {
+                    if let Some((_, text)) = self.app_copy.clone().filter(|(p, _)| *p == pane) {
+                        self.copied(&text, false);
+                    } else if let Some(sel) =
+                        self.reported_selection.clone().filter(|s| s.pane == pane && s.anchor != s.head)
+                    {
+                        self.copy_selection(tx, &sel).await?;
+                    }
+                }
             }
             // 끄는 동안 마지막으로 보낸 값과 다르면 뗀 자리 값을 보낸다
             Some(Drag::Scrollbar { pane, grab, sent, .. }) => {
@@ -1502,6 +1567,38 @@ impl App {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// 이동은 모두 보존하며 놓기/복사 키를 다음 순서로 넘긴다. 아직 안 온 사건을 기다리지 않는다.
+    #[tokio::test]
+    async fn ready_motion_keeps_release_and_key_order() {
+        use futures_util::StreamExt;
+        for kind in [MouseEventKind::Moved, MouseEventKind::Drag(MouseButton::Left)] {
+            let mouse = |kind, x| MouseEvent { kind, column: x, row: 1, modifiers: KeyModifiers::NONE };
+            let first = mouse(kind, 1);
+            let up = mouse(MouseEventKind::Up(MouseButton::Left), 3);
+            let copy = KeyEvent::new(KeyCode::Char('c'), KeyModifiers::CONTROL);
+            let mut input = futures_util::stream::iter([
+                Ok(Event::Mouse(mouse(kind, 2))),
+                Ok(Event::Mouse(mouse(kind, 3))),
+                Ok(Event::Mouse(up)),
+                Ok(Event::Key(copy)),
+            ]);
+            let mut deferred = None;
+            assert_eq!(ready_motion(&mut input, first, &mut deferred).await, [mouse(kind, 2), mouse(kind, 3)]);
+            assert!(matches!(deferred, Some(Ok(Event::Mouse(m))) if m == up));
+            assert!(matches!(input.next().await, Some(Ok(Event::Key(k))) if k == copy));
+        }
+        let mut pending = futures_util::stream::pending();
+        let first = MouseEvent { kind: MouseEventKind::Moved, column: 1, row: 1, modifiers: KeyModifiers::NONE };
+        let mut deferred = None;
+        let ready = ready_motion(&mut pending, first, &mut deferred);
+        tokio::pin!(ready);
+        tokio::select! {
+            biased;
+            batch = ready => assert!(batch.is_empty()),
+            _ = std::future::ready(()) => panic!("아직 오지 않은 이동을 기다렸다"),
+        }
+    }
 
     fn runs(s: &str) -> Vec<GridRun> {
         vec![GridRun { t: s.into(), fg: 0, bg: 0, a: 0 }]

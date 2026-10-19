@@ -41,8 +41,33 @@ pub fn copy_text(text: &str) -> Result<CopyResult, String> {
     osc52(text).map(|()| CopyResult::Requested)
 }
 
+/// herdr 0.9.5 `platform/macos.rs::write_clipboard`: pbcopy가 끝난 뒤에만 성공이다.
+#[cfg(target_os = "macos")]
+fn native_text(text: &str) -> Result<(), String> {
+    use std::io::Write;
+    use std::process::{Command, Stdio};
+    let mut child = Command::new("/usr/bin/pbcopy")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::null())
+        .stderr(Stdio::piped())
+        .spawn()
+        .map_err(|e| e.to_string())?;
+    let written = child
+        .stdin
+        .take()
+        .ok_or_else(|| "pbcopy stdin 없음".to_string())
+        .and_then(|mut input| input.write_all(text.as_bytes()).map_err(|e| e.to_string()));
+    let output = child.wait_with_output().map_err(|e| e.to_string())?;
+    written?;
+    if output.status.success() {
+        Ok(())
+    } else {
+        Err(format!("pbcopy 실패({}): {}", output.status, String::from_utf8_lossy(&output.stderr).trim()))
+    }
+}
+
 /// 시스템 clipboard. Linux X11은 쓴 연결이 살아 있어야 다른 앱이 읽으므로 연결을 들고 있는다.
-#[cfg(not(windows))]
+#[cfg(not(any(windows, target_os = "macos")))]
 fn native_text(text: &str) -> Result<(), String> {
     static CLIP: std::sync::Mutex<Option<arboard::Clipboard>> = std::sync::Mutex::new(None);
     let mut c = CLIP.lock().map_err(|e| e.to_string())?;

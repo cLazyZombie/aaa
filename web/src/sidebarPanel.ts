@@ -5,7 +5,7 @@
 export const PANELS = ["projects", "machines", "agents", "special"] as const;
 export type SidebarPanel = (typeof PANELS)[number];
 
-// 특수(임무·사후 평가자)는 사용자 결정 10-19로 목록 머리 칩에서 에이전트 아래 단추로 옮겼다(plan §8.249)
+// 특수(임무·사후 평가자)는 사용자 결정 10-19로 목록 머리 칩에서 에이전트 아래 단추로 옮겼다(plan §8.256)
 export const PANEL_LABEL: Record<SidebarPanel, string> = { projects: "프로젝트", machines: "머신", agents: "에이전트", special: "특수" };
 
 const PANEL_KEY = "aaa:sidebar-panel";

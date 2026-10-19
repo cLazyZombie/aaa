@@ -1,10 +1,9 @@
-//! 알림 webhook(§8.7, M1-4)과 Web Push(§8.26, `push.rs`). inbox 항목 가운데 사람이 봐야 할 것(확인 필요·새 보고·시작 실패·
-//! 세션 끝남·머신 단절)을 밖으로 보낸다. thread 항목은 herdr-projects가 notifier를 부르는 사건만 보낸다(transitions.rs
-//! `PUSH_EVENTS`): 쉼·resolved·전달 모름은 inbox에만 둔다.
+//! 알림 webhook과 Web Push. host가 해당 프로젝트 coordinator pane으로 검증한 사용자 post만 밖으로 보낸다.
+//! thread 보고·확인창·세션·머신 사건은 앱 안 알림과 coordinator inbox에 남긴다.
 //!
-//! - `debounce_secs` 동안 모아 프로젝트마다 한 통으로 보낸다. 여러 thread가 잇달아 바뀌어도 한 통이다.
-//! - 보내기 직전에 다시 본다(herdr-web-ui push.ts 「기다리는 동안 바뀌면 보내지 않는다」): 그 사이 끝낸 항목, 이미 확인(ack)한
-//!   보고, 확인 필요가 끝난 thread(확인창에 답함)의 항목은 뺀다. 남은 것이 없으면 보내지 않는다.
+//! - `debounce_secs` 동안 모아 프로젝트마다 한 통으로 보낸다.
+//! - 보내기 직전에 다시 본다(herdr-web-ui push.ts 「기다리는 동안 바뀌면 보내지 않는다」): 그 사이 끝낸 post 항목은
+//!   뺀다. 남은 것이 없으면 보내지 않는다.
 //! - 실패하면 다시 보내지 않는다(알림 폭주를 막는다). 실패가 이어지는 동안 경고는 한 번만 남긴다.
 //! - 주소에는 봇 token 같은 비밀값이 들어갈 수 있다. 로그·흐름 사건·오류에는 주소를 넣지 않는다.
 //! - https는 webpki 루트 인증서로 검증한다. http는 설정 검증에서 loopback만 허용한다(시험용).
@@ -389,17 +388,13 @@ async fn read_head<S: tokio::io::AsyncRead + Unpin>(s: &mut S, buf: &mut Vec<u8>
     }
 }
 
-/// 밖으로 알릴 항목인가: 완료·확인 필요와 운영 이상만. 새 보고는 추가로 검증한 표지를 요구한다(`report_push`).
-/// PR 병합·리뷰·중간 진행은 inbox에만 남긴다.
+/// 설정은 외부 알림을 좁힐 수만 있다. thread·시스템 종류를 추가해도 푸시 출처 범위는 넓어지지 않는다.
+/// 이 판정에 더해 `notify_post`가 host가 검증한 post 봉투를 요구한다.
 pub(crate) fn pushes(kinds: &[String], i: &InboxItem) -> bool {
-    kinds.iter().any(|k| k == &i.item_kind)
-        && match i.item_kind.as_str() {
-            "post" => matches!(i.event.as_str(), "post request for user" | "post completed"),
-            "thread-state" => crate::transitions::PUSH_EVENTS.contains(&i.event.as_str()),
-            "pr" | "evaluation" => false,
-            "routine" => matches!(i.event.as_str(), "routine approval required" | "routine failed"),
-            _ => true,
-        }
+    kinds.iter().any(|k| k == "post")
+        && i.item_kind == "post"
+        && i.subject == "coordinator"
+        && matches!(i.event.as_str(), "post request for user" | "post completed")
 }
 
 /// 프로젝트 `mute`(herdr-projects notify.rs 「mute = true silences everything but errors」, 차이 목록 N10)에도 나가는 종류:
@@ -434,39 +429,11 @@ impl Host {
                 return items;
             }
         };
-        let stale = |i: &InboxItem| {
-            if i.item_kind != "thread-state" {
-                return false;
-            }
-            let Ok(r) = self.load(project, &i.subject) else { return false };
-            if matches!(i.event.as_str(), "new report" | "report needs user") {
-                return !self.report_push(i) || r.report_hash == r.acked_hash;
-            }
-            self.thread_view(&r).group != aaa_proto::ThreadGroup::WaitingOnYou
-        };
-        let (keep, dropped) = news(items, &open, stale);
+        let (keep, dropped) = news(items, &open, |_| false);
         if dropped > 0 {
             self.flow_project(project, "notify_skipped", None, format!("그 사이 답했거나 확인한 항목 {dropped}개"));
         }
-        keep.into_iter()
-            .filter_map(|mut i| {
-                if report_item(&i) {
-                    // inbox 요약에는 사본 경로가 있다. 밖 알림용 사본에만 검증된 보고 첫 줄을 싣는다.
-                    let r = self.load(project, &i.subject).ok()?;
-                    let report = self.verified_report(&r)?;
-                    let mark = crate::report_mark::marker(&report)?;
-                    if !matches!(
-                        (i.event.as_str(), mark),
-                        ("new report", "[완료]")
-                            | ("report needs user", "[결정 필요]" | "[검수 대기]" | "[확인 필요]" | "[사람 필요]")
-                    ) {
-                        return None;
-                    }
-                    i.summary = report.lines().next()?.into();
-                }
-                Some(i)
-            })
-            .collect()
+        keep
     }
 
     /// 알림 줄에 쓰는 thread 제목(thread·PR 항목의 대상). 읽지 못한 thread는 ID로 남는다
@@ -483,25 +450,22 @@ impl Host {
         out
     }
 
-    /// 검증한 사본의 완료·확인 필요 표지만 외부 알림으로 보낸다.
-    fn report_push(&self, item: &InboxItem) -> bool {
-        if item.item_kind != "thread-state" || !matches!(item.event.as_str(), "new report" | "report needs user") {
-            return true;
-        }
-        let Ok(r) = self.load(&item.project, &item.subject) else {
-            return false;
+    /// inbox 발행과 별개인 외부 알림 경계. post 저장 owner만 host가 정한 출처 봉투를 넘긴다.
+    pub(crate) fn notify_post(&self, item: &InboxItem, post: &aaa_proto::PostEnvelope) {
+        let input = &post.input;
+        let intent = match input.post_type {
+            aaa_proto::PostType::Request => input.needs_user && input.topic == "user-action",
+            aaa_proto::PostType::Notice => !input.needs_user && input.topic == "task-complete",
+            aaa_proto::PostType::Data => false,
         };
-        let want = if item.event == "new report" {
-            aaa_proto::ReportAttention::Completed
-        } else {
-            aaa_proto::ReportAttention::NeedsUser
-        };
-        self.report_attention(&r) == Some(want)
-    }
-
-    /// 설정·보고 의도·mute를 통과한 항목만 알림 대기열에 넣는다.
-    pub(crate) fn notify(&self, item: &InboxItem) {
-        if self.report_push(item)
+        if post.project == item.project
+            && post.from.role == aaa_proto::Role::Coordinator
+            && post.from.thread.is_none()
+            && post.from.mission.is_none()
+            && post.from.session.is_some()
+            && post.from.verified == "coordinator-pane"
+            && input.to == "user"
+            && intent
             && pushes(&self.cfg.notify.item_kinds(), item)
             && !muted(self.settings(&item.project).mute, item)
             && let Some(tx) = self.notify_tx.lock().unwrap().as_ref()
@@ -624,30 +588,34 @@ mod tests {
         }
     }
 
-    /// 옛 종류 이름도 thread 항목을 고르고, thread 항목은 사람이 할 일만 나간다
+    /// kinds를 넓혀도 thread 보고·확인창·세션·머신 사건을 외부로 보낼 수 없다.
     #[test]
-    fn pushes_needs_you_and_new_reports_only() {
-        let old = aaa_config::NotifySection {
-            kinds: ["report", "question", "outage"].map(String::from).to_vec(),
-            ..Default::default()
-        };
-        let kinds = old.item_kinds();
-        assert_eq!(kinds, ["thread-state", "outage"]);
-        for e in ["blocked on a prompt", "pane closed", "agent gone", "waiting on you", "new report", "not launched"] {
-            assert!(pushes(&kinds, &item("t-0001", e)), "{e}");
+    fn pushes_coordinator_user_posts_only() {
+        let kinds =
+            ["post", "thread-state", "session", "outage", "health", "routine", "config-error"].map(String::from);
+        for kind in &kinds {
+            for event in [
+                "new report",
+                "report needs user",
+                "blocked on a prompt",
+                "pane closed",
+                "down",
+                "sessions ended",
+                "routine failed",
+                "post request for user",
+                "post completed",
+            ] {
+                let mut i = item("t-0001", event);
+                i.item_kind = kind.clone();
+                assert!(!pushes(&kinds, &i), "{kind} {event}");
+                i.subject = "coordinator".into();
+                assert_eq!(
+                    pushes(&kinds, &i),
+                    kind == "post" && matches!(event, "post request for user" | "post completed")
+                );
+                assert!(!pushes(&[], &i));
+            }
         }
-        for e in ["idle", "resolved", "brief not delivered", "message not delivered"] {
-            assert!(!pushes(&kinds, &item("t-0001", e)), "{e}");
-        }
-        let mut s = item("mac-a", "sessions ended");
-        s.item_kind = "session".into();
-        let all = aaa_config::NotifySection::default().item_kinds();
-        assert!(!pushes(&kinds, &s) && pushes(&all, &s));
-        let mut pr = item("t-0001", "PR merged");
-        pr.item_kind = "pr".into();
-        assert!(!pushes(&all, &pr), "PR 병합은 맡긴 일 전체의 완료가 아니다");
-        pr.event = "PR opened".into();
-        assert!(!pushes(&all, &pr));
     }
 
     #[test]
@@ -814,78 +782,6 @@ mod tests {
         let t = std::time::Instant::now();
         let code = post("https://web.push.apple.com/aaa-probe-invalid", b"{}").await.unwrap();
         assert!((400..500).contains(&code) && t.elapsed() < Duration::from_secs(5), "{code} {:?}", t.elapsed());
-    }
-
-    /// 받은 webhook 요청 본문(JSON)을 차례로 넘기는 loopback 서버
-    async fn hook_server() -> (String, mpsc::UnboundedReceiver<serde_json::Value>) {
-        let l = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let url = format!("http://{}/hook", l.local_addr().unwrap());
-        let (tx, rx) = mpsc::unbounded_channel();
-        tokio::spawn(async move {
-            while let Ok((mut s, _)) = l.accept().await {
-                let mut req = Vec::new();
-                let mut b = [0u8; 4096];
-                // 머리 뒤 Content-Length만큼 읽는다
-                let body = loop {
-                    let n = s.read(&mut b).await.unwrap();
-                    if n == 0 {
-                        return;
-                    }
-                    req.extend_from_slice(&b[..n]);
-                    let text = String::from_utf8_lossy(&req).to_string();
-                    if let Some((head, body)) = text.split_once("\r\n\r\n") {
-                        let len: usize = head
-                            .lines()
-                            .find_map(|l| l.strip_prefix("Content-Length: "))
-                            .and_then(|v| v.trim().parse().ok())
-                            .unwrap();
-                        if body.len() >= len {
-                            break body.to_string();
-                        }
-                    }
-                };
-                s.write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n").await.unwrap();
-                let _ = tx.send(serde_json::from_str(&body).unwrap());
-            }
-        });
-        (url, rx)
-    }
-
-    /// 머신 사건은 그 머신에 thread가 열린 프로젝트마다 inbox 항목이 생기지만(프로젝트마다 그대로 남는다) 밖 알림은 한 통이다.
-    /// 「한 통뿐」은 뒤따르는 알림(울타리)이 다음 요청인 것으로 본다: 프로젝트마다 보냈다면 둘째 프로젝트 것이 먼저 온다
-    #[tokio::test]
-    async fn machine_event_goes_out_once_across_projects() {
-        let (url, mut rx) = hook_server().await;
-        let state = std::env::temp_dir().join(format!("aaa-notify-once-{}", aaa_common::util::new_id()));
-        let mut cfg = aaa_config::HostConfig::default();
-        cfg.notify.web_push = false;
-        cfg.notify.webhook = url;
-        // 모으는 창 0: 이 시험의 항목은 notifier task가 돌기 전에 모두 대기열에 있다(current_thread runtime)
-        cfg.notify.debounce_secs = 0;
-        cfg.projects.root = state.join("projects").display().to_string();
-        let h = Host::open(cfg, state.clone()).unwrap();
-        for p in ["demo", "side"] {
-            h.project_create(p, Default::default(), "test").unwrap();
-        }
-        h.start_notifier();
-        for p in ["demo", "side"] {
-            h.inbox_add(p, "outage", "mac-a", "recovered", "머신 mac-a: 다시 연결됐다");
-        }
-        let got = tokio::time::timeout(Duration::from_secs(10), rx.recv()).await.unwrap().unwrap();
-        assert_eq!(got["project"], serde_json::Value::Null, "{got}");
-        assert_eq!(got["text"], "mac-a\n- 다시 연결됨", "{got}");
-        assert_eq!(got["items"].as_array().unwrap().len(), 1, "{got}");
-        // 두 프로젝트의 inbox 항목은 그대로다
-        for p in ["demo", "side"] {
-            assert_eq!(h.db.inbox_list(Some(p), false).unwrap().len(), 1, "{p}");
-        }
-        h.inbox_add("demo", "outage", "gh", "failed", "점검");
-        let next = tokio::time::timeout(Duration::from_secs(10), rx.recv()).await.unwrap().unwrap();
-        assert_eq!(next["project"], "demo", "{next}");
-        assert_eq!(next["items"].as_array().unwrap().len(), 1, "앞 머신 알림이 중복됐다: {next}");
-        assert_eq!(next["items"][0]["subject"], "gh");
-        drop(h);
-        let _ = std::fs::remove_dir_all(&state);
     }
 
     /// 응답 뒤 연결을 닫지 않는 서버(Apple push 실측)에서도 상태 코드를 바로 돌려준다

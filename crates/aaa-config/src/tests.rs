@@ -155,13 +155,13 @@ fn tui_keys_like_herdr() {
     assert!(!t.prefix_jamo_keys && t.switch_ascii());
 }
 
-/// herdr `[ui]` 사이드바: 폭(aaa 기본 36, herdr 26)·한도 18~72(herdr 18~36, 설정으로 바꾼다), 펼친 채 시작, 접으면 compact,
+/// herdr `[ui]` 사이드바: 폭(aaa 기본 48, herdr 26)·한도 18~72(herdr 18~36, 설정으로 바꾼다), 펼친 채 시작, 접으면 compact,
 /// 64칸 이하는 머리줄
 #[test]
 fn sidebar_like_herdr() {
     let d = Dir::new("sidebar");
     let t = load_host(&d.0).unwrap().config.tui;
-    assert_eq!((t.sidebar_width, t.sidebar_start_collapsed, t.mobile_width_threshold), (36, false, 64));
+    assert_eq!((t.sidebar_width, t.sidebar_start_collapsed, t.mobile_width_threshold), (48, false, 64));
     assert_eq!(t.sidebar_bounds(), Some((18, 72)));
     assert_eq!(t.sidebar_collapsed_mode, crate::SidebarCollapsedMode::Compact);
     assert_eq!(t.theme, "catppuccin");

@@ -2,7 +2,7 @@
 use crate::{Host, err};
 use aaa_proto::{AgentRequest, AgentResponse, DeployAction, ErrorBody, ErrorCode, FrontResponse};
 impl Host {
-    fn deployment_project(&self, actor: &str) -> Option<String> {
+    pub(crate) fn coordinator_project_of_actor(&self, actor: &str) -> Option<String> {
         let pane = actor.strip_prefix("local:")?.rsplit_once('@')?.1;
         // thread adopt는 pane에 role이 없어도 thread 기록이 우선한다.
         if self.thread_of_pane(pane).is_some() {
@@ -14,7 +14,7 @@ impl Host {
         pane.state.is_running().then_some(pane.coordinator_project).flatten()
     }
     pub(crate) fn deployment_context(&self, actor: &str) -> FrontResponse {
-        let project = self.deployment_project(actor);
+        let project = self.coordinator_project_of_actor(actor);
         let allowed = project.as_deref().is_some_and(|p| self.safety(p).coordinator_deploy);
         let session = actor.contains('@')
             || actor.starts_with("worker:")
@@ -23,7 +23,7 @@ impl Host {
         FrontResponse::DeployContext { project, session, allowed }
     }
     fn deployment_authorize(&self, actor: &str) -> Result<String, ErrorBody> {
-        let p = self.deployment_project(actor).ok_or_else(|| {
+        let p = self.coordinator_project_of_actor(actor).ok_or_else(|| {
             err(
                 ErrorCode::Forbidden,
                 "배포는 이 프로젝트의 coordinator 세션에서만 요청한다. thread·임의 pane·웹 기기는 허용하지 않는다",
@@ -87,7 +87,7 @@ impl Host {
     ) -> Result<FrontResponse, ErrorBody> {
         // 상태도 자기 coordinator 범위에서 본다. 실행 허용 철회 뒤에도 결과는 확인할 수 있다.
         let project = self
-            .deployment_project(actor)
+            .coordinator_project_of_actor(actor)
             .ok_or_else(|| err(ErrorCode::Forbidden, "배포 기록은 coordinator 세션에서 확인한다"))?;
         let record = self
             .db

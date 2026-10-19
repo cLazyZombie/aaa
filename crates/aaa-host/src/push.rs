@@ -8,8 +8,7 @@
 //! - 404·410이면 브라우저가 구독을 버린 것이라 지운다. 다른 실패는 다시 보내지 않는다(webhook과 같다).
 //! - 웹 화면을 지금 쓰고 있으면(어느 기기든 보이고 focus가 있으면, events WS `presence`) 어느 기기에도 보내지 않는다
 //!   (herdr-web-ui push.ts `inUse`). 보낼 때 묻는다. 시험 알림과 webhook(텔레그램)은 이와 상관없다.
-//! - 알림 한 자리는 thread 하나다(새 것이 옛 것을 바꾼다, herdr-web-ui `paneNotificationTag`). 여러 thread 항목이
-//!   섞이면 프로젝트 한 자리다. 머신 사건은 프로젝트와 따로 한 번 알린다(머신 자리, notify.rs `Place`).
+//! - coordinator 사용자 post는 프로젝트 한 자리다(새 것이 옛 것을 바꾼다). thread 보고·머신 사건은 외부로 보내지 않는다.
 //! - 제목·본문은 webhook과 같은 함수(notify.rs `alert_text`)가 짓는다. 앱 이름(aaa)은 제목에 붙이지 않는다.
 
 use std::collections::{HashMap, VecDeque};
@@ -404,7 +403,7 @@ impl PushedLog {
 }
 
 /// 기기가 고른 알림 종류(N3)에 드는 항목. thread 항목만 가른다: 새 보고는 「작업 완료」, 나머지(질문·확인창·기다림·시작 실패)는
-/// 「입력 필요」. PR·머신·routine 같은 다른 종류는 host 설정(`notify.kinds`)대로 모든 기기에 간다(참고에 없는 aaa 항목)
+/// 「입력 필요」. 자동 외부 전달은 coordinator 사용자 post만이며, 그 앞의 출처 경계는 notify.rs가 지킨다.
 pub(crate) fn for_device(a: crate::db::Alerts, items: &[InboxItem]) -> Vec<InboxItem> {
     items
         .iter()

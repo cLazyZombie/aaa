@@ -51,7 +51,7 @@
   }
 }
 
-/* 프로젝트 묶음 자식 줄은 조금만 들인다(사용자 결정 10-19 「조금만 띄워지게」 i2, plan §8.249). 참고의 worktree 한 단계(--side-box)는
+/* 프로젝트 묶음 자식 줄은 조금만 들인다(사용자 결정 10-19 「조금만 띄워지게」 i2, plan §8.256). 참고의 worktree 한 단계(--side-box)는
    머신 패널의 묶음이 그대로 쓴다 */
 .project-group + .worktree-children .workspace-header { padding-left: var(--space-2); }
 
@@ -87,7 +87,7 @@
   letter-spacing: 0.02em;
 }
 
-/* 특수 패널(plan §8.249): 프로젝트 머리 아래 사이드바 두 줄 줄. 상태 말·점 색은 thread 줄과 같은 뜻(막힘 빨강, 일함 파랑, 사람 차례 노랑) */
+/* 특수 패널(plan §8.256): 프로젝트 머리 아래 사이드바 두 줄 줄. 상태 말·점 색은 thread 줄과 같은 뜻(막힘 빨강, 일함 파랑, 사람 차례 노랑) */
 .special-panel .workspace-header { min-height: var(--side-row-2); }
 .special-project + .special-project { margin-top: var(--space-3); }
 .special-project-head {

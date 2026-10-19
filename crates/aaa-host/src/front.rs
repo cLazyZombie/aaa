@@ -20,8 +20,8 @@ use super::{Host, PaneEvent};
 use crate::caller::Caller;
 use aaa_common::conn::{FrameRx, FrameTx, Incoming, spawn_writer};
 
-/// 화면 frame 사이 최소 간격(초당 약 30장)
-const GRID_INTERVAL: Duration = Duration::from_millis(33);
+/// 보통 출력 묶기 간격(herdr `MIN_RENDER_INTERVAL`, 초당 약 60장). 입력 응답은 아래 예산 안에서 바로 보낸다.
+const GRID_INTERVAL: Duration = Duration::from_millis(16);
 
 /// 응답 frame(JSON). frame 상한(`MAX_FRAME`)을 넘는 응답은 `too_large` 오류로 바꾼다. 그대로 보내면 쓰기 task가
 /// 연결을 닫아 front는 까닭 없이 끊긴다(t-0334 pilot 결함 2: 끝낸 inbox가 많을 때 `inbox list --all`).
@@ -292,14 +292,15 @@ async fn serve_conn(host: Arc<Host>, tx: FrameTx, mut rx: impl FrontIn, conn: Co
     };
     // pane을 바꾸는 요청(입력·크기·가져오기 등)은 받은 순서대로 하나씩 처리한다. TUI는 키마다 응답을 기다리지 않고
     // 보내므로, 동시에 처리하면 키 순서가 뒤바뀐다. 조회 같은 나머지 요청은 동시에 처리한다.
-    let (ordered_tx, mut ordered_rx) = tokio::sync::mpsc::unbounded_channel::<(String, FrontRequest)>();
+    let (ordered_tx, ordered_rx) = tokio::sync::mpsc::unbounded_channel::<(String, FrontRequest)>();
     let ordered_task = {
         let (host, tx, actor, front) = (host.clone(), tx.clone(), actor.clone(), front.clone());
         tokio::spawn(async move {
             // 받는 중인 그림(웹 터미널 WebSocket과 같은 규칙). 실패한 첨부의 남은 조각은 응답만 하고 버린다.
             let mut upload: Option<crate::attach::Upload> = None;
             let mut upload_failed = false;
-            while let Some((id, body)) = ordered_rx.recv().await {
+            let mut ordered = OrderedInput::new(ordered_rx);
+            while let Some((ids, body)) = ordered.next().await {
                 let result = match body {
                     FrontRequest::PaneAttach { offset, .. } if offset != 0 && upload_failed => {
                         Err(ErrorBody::new(ErrorCode::BadRequest, "앞 조각이 실패한 첨부다"))
@@ -316,8 +317,10 @@ async fn serve_conn(host: Arc<Host>, tx: FrameTx, mut rx: impl FrontIn, conn: Co
                     }
                     body => host.call_from(role, &actor, Some(&front), body).await,
                 };
-                if tx.control(res_frame(id, result)).await.is_err() {
-                    break;
+                for id in ids {
+                    if tx.control(res_frame(id, result.clone())).await.is_err() {
+                        return;
+                    }
                 }
             }
         })
@@ -417,6 +420,12 @@ async fn serve_conn(host: Arc<Host>, tx: FrameTx, mut rx: impl FrontIn, conn: Co
                 | FrontRequest::PaneAttach { .. }
                 | FrontRequest::PaneRelease { .. }
                 | FrontRequest::PaneKill { .. }) => {
+                    if role != DeviceRole::Reader
+                        && let FrontRequest::PaneInput { pane, .. } = &body
+                        && let Some((_, ctl)) = watches.get(pane)
+                    {
+                        ctl.note_input();
+                    }
                     let _ = ordered_tx.send((id, body));
                 }
                 body => {
@@ -479,6 +488,93 @@ fn read_req(b: &[u8]) -> Result<ReqFrame, serde_json::Error> {
 struct ScrollCtl {
     pending: std::sync::Mutex<Vec<ScrollBy>>,
     wake: tokio::sync::Notify,
+    input: std::sync::Mutex<Option<tokio::time::Instant>>,
+    input_wake: tokio::sync::Notify,
+}
+
+/// herdr `push_target_event`: 이미 받은 같은 pane의 입력만 한 번에 쓴다. 입력·크기 변경 순서는 그대로이며,
+/// agent 확인을 기다리는 동안 쌓인 마우스 사건마다 왕복을 하나씩 더하지 않는다. 새 입력을 기다려 묶지는 않는다.
+struct OrderedInput {
+    rx: tokio::sync::mpsc::UnboundedReceiver<(String, FrontRequest)>,
+    held: Option<(String, FrontRequest)>,
+}
+
+impl OrderedInput {
+    fn new(rx: tokio::sync::mpsc::UnboundedReceiver<(String, FrontRequest)>) -> Self {
+        Self { rx, held: None }
+    }
+
+    async fn next(&mut self) -> Option<(Vec<String>, FrontRequest)> {
+        let (id, mut body) = match self.held.take() {
+            Some(req) => req,
+            None => self.rx.recv().await?,
+        };
+        let mut ids = vec![id];
+        if let FrontRequest::PaneInput { pane, data } = &mut body {
+            // frame 상한보다 충분히 작게 묶는다. 너무 큰 붙여넣기도 다음 요청을 삼키지 않는다.
+            while data.0.len() < 64 * 1024 && ids.len() < 256 {
+                let Ok((id, next)) = self.rx.try_recv() else { break };
+                match next {
+                    FrontRequest::PaneInput { pane: p, data: d }
+                        if p == *pane && data.0.len() + d.0.len() <= 64 * 1024 =>
+                    {
+                        data.0.extend(d.0);
+                        ids.push(id);
+                    }
+                    other => {
+                        self.held = Some((id, other));
+                        break;
+                    }
+                }
+            }
+        }
+        Some((ids, body))
+    }
+}
+
+/// herdr headless `note_interactive_input`·`can_render_interactive`와 같은 입력 직후 렌더 창/예산.
+/// 보통 출력은 계속 묶지만, 방금 입력한 화면의 응답에는 묶기 간격을 무조건 더하지 않는다.
+impl ScrollCtl {
+    fn note_input(&self) {
+        *self.input.lock().unwrap() = Some(tokio::time::Instant::now());
+        self.input_wake.notify_one();
+    }
+
+    async fn wait_frame(&self, budget: &mut InteractiveFrames) {
+        let deadline = tokio::time::Instant::now() + GRID_INTERVAL;
+        loop {
+            let now = tokio::time::Instant::now();
+            let recent =
+                self.input.lock().unwrap().is_some_and(|at| now.duration_since(at) < Duration::from_millis(32));
+            if recent && budget.take(now) {
+                return;
+            }
+            tokio::select! {
+                _ = tokio::time::sleep_until(deadline) => return,
+                _ = self.input_wake.notified() => {},
+            }
+        }
+    }
+}
+
+#[derive(Default)]
+struct InteractiveFrames {
+    epoch: Option<(tokio::time::Instant, u8)>,
+}
+
+impl InteractiveFrames {
+    fn take(&mut self, now: tokio::time::Instant) -> bool {
+        let (epoch, used) = self.epoch.get_or_insert((now, 0));
+        if now.duration_since(*epoch) >= Duration::from_millis(16) {
+            *epoch = now;
+            *used = 0;
+        }
+        if *used == 16 {
+            return false;
+        }
+        *used += 1;
+        true
+    }
 }
 
 /// 구독이 보는 기록 위치: 맨 아래에서 올라간 줄 수와 직전에 본 기록 줄 수
@@ -515,6 +611,7 @@ async fn watch_grid(host: Arc<Host>, pane: String, tx: FrameTx, ctl: Arc<ScrollC
     let mut sent: Vec<u64> = Vec::new();
     let mut full = true;
     let mut view = GridView::default();
+    let mut budget = InteractiveFrames::default();
     loop {
         let ops = std::mem::take(&mut *ctl.pending.lock().unwrap());
         if let Some(frame) = host.grid_frame(&pane, &mut sent, full, &mut view, &ops) {
@@ -537,7 +634,7 @@ async fn watch_grid(host: Arc<Host>, pane: String, tx: FrameTx, ctl: Arc<ScrollC
             },
             _ = ctl.wake.notified() => {}
         }
-        tokio::time::sleep(GRID_INTERVAL).await;
+        ctl.wait_frame(&mut budget).await;
         loop {
             match rx.try_recv() {
                 Err(TryRecvError::Lagged(_)) => full = true,
@@ -676,6 +773,99 @@ fn changed_rows(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// 같은 pane의 쌓인 입력은 손실 없이 한 번에 전송하고, resize·다른 pane을 넘어서 묶지 않는다.
+    #[tokio::test]
+    async fn queued_input_batches_preserve_bytes_boundaries_and_receipts() {
+        let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
+        let input = |pane: &str, data: &[u8]| FrontRequest::PaneInput {
+            pane: pane.into(),
+            data: aaa_proto::B64(data.to_vec()),
+        };
+        for (id, req) in [
+            ("press", input("p", b"\x1b[<0;1;1M")),
+            ("drag", input("p", b"\x1b[<32;8;2M")),
+            ("up", input("p", b"\x1b[<0;8;2m")),
+            ("resize", FrontRequest::PaneResize { pane: "p".into(), cols: 90, rows: 30 }),
+            ("key", input("p", b"x")),
+            ("other", input("q", b"y")),
+            ("full", input("q", &vec![b'z'; 64 * 1024])),
+            ("tail", input("q", b"!")),
+        ] {
+            tx.send((id.into(), req)).unwrap();
+        }
+        drop(tx);
+        let mut ordered = OrderedInput::new(rx);
+        let (ids, req) = ordered.next().await.unwrap();
+        assert_eq!(ids, ["press", "drag", "up"]);
+        assert_eq!(req, input("p", b"\x1b[<0;1;1M\x1b[<32;8;2M\x1b[<0;8;2m"));
+        let (ids, req) = ordered.next().await.unwrap();
+        assert_eq!(ids, ["resize"]);
+        assert!(matches!(req, FrontRequest::PaneResize { .. }));
+        for (id, pane, text) in [
+            ("key", "p", b"x".as_slice()),
+            ("other", "q", b"y"),
+            ("full", "q", &vec![b'z'; 64 * 1024]),
+            ("tail", "q", b"!"),
+        ] {
+            assert_eq!(ordered.next().await, Some((vec![id.into()], input(pane, text))));
+        }
+        assert!(ordered.next().await.is_none());
+
+        // 빈 입력도 유효한 요청이다. byte 상한만으로는 그 입력을 끝없이 모을 수 있으므로 요청 수도 묶는다.
+        let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
+        for n in 0..300 {
+            tx.send((n.to_string(), input("p", b""))).unwrap();
+        }
+        drop(tx);
+        let mut ordered = OrderedInput::new(rx);
+        let (first, req) = ordered.next().await.unwrap();
+        assert_eq!(first.len(), 256);
+        assert_eq!(req, input("p", b""));
+        let (last, req) = ordered.next().await.unwrap();
+        assert_eq!(last.len(), 44);
+        assert_eq!(
+            first.into_iter().chain(last).collect::<Vec<_>>(),
+            (0..300).map(|n| n.to_string()).collect::<Vec<_>>()
+        );
+        assert_eq!(req, input("p", b""));
+        assert!(ordered.next().await.is_none());
+    }
+
+    /// 입력 응답은 즉시 표시하고, 작업 출력·입력 직후 렌더 예산 초과는 계속 묶는다. 시계만 가상이다.
+    #[tokio::test(start_paused = true)]
+    async fn interactive_frames_bypass_batch_delay_without_unbounded_redraws() {
+        let ctl = ScrollCtl::default();
+        let mut frames = InteractiveFrames::default();
+        let start = tokio::time::Instant::now();
+        ctl.wait_frame(&mut frames).await;
+        assert_eq!(start.elapsed(), GRID_INTERVAL);
+
+        // 이미 출력 묶기를 기다리는 중에 입력해도 같은 창을 기다리지 않는다.
+        let now = tokio::time::Instant::now();
+        {
+            let pending = ctl.wait_frame(&mut frames);
+            tokio::pin!(pending);
+            tokio::select! {
+                biased;
+                _ = &mut pending => panic!("보통 출력은 묶어야 한다"),
+                _ = std::future::ready(()) => {},
+            }
+            ctl.note_input();
+            pending.await;
+        }
+        assert_eq!(now.elapsed(), Duration::ZERO);
+        for _ in 1..16 {
+            ctl.wait_frame(&mut frames).await;
+        }
+        assert_eq!(now.elapsed(), Duration::ZERO);
+        ctl.wait_frame(&mut frames).await;
+        assert_eq!(now.elapsed(), GRID_INTERVAL, "연속 출력은 예산을 넘으면 묶는다");
+        tokio::time::advance(Duration::from_millis(32).saturating_sub(now.elapsed())).await;
+        let now = tokio::time::Instant::now();
+        ctl.wait_frame(&mut frames).await;
+        assert_eq!(now.elapsed(), GRID_INTERVAL, "32ms 입력 창 밖이면 보통 출력이다");
+    }
 
     /// 실제 전송 큐의 뒤따르는 Pong이 울타리다. 다른 front·reader/옛 판에는 복사가 한 건도 없어야 한다.
     #[tokio::test]

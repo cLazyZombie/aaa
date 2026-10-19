@@ -1,13 +1,14 @@
 // 왼쪽 활동 막대(사용자 요청 10-19 「vs code 처럼 … 같은 버튼 한번 더 누르면 숨겨지고」, plan §8.240). 참고 소스(herdr-web-ui·t3code)에
 // 이런 막대가 없어 VS Code activity bar를 따른다: 세로 tablist(`aria-orientation="vertical"`), 고른 패널의 단추에만 왼쪽 선과
 // aria-selected·aria-expanded, 사이드바를 접으면 고른 단추가 없다. ↑↓·Home·End는 단추 사이 focus만 옮기고(roving tabindex) Enter·Space가
-// 고른다. 패널이 아닌 보고서(본문을 바꾼다)와 설정(창)은 아래 묶음의 보통 단추다(VS Code 아래 묶음 Accounts·Manage 자리).
+// 고른다. 패널이 아닌 보고서(본문을 바꾼다)는 패널 단추 바로 밑의 보통 단추다(tablist 밖, 사용자 요청 10-19 「보고서는 왼쪽 위로(지금
+// 에이전트 밑으로)」). 설정(창)만 아래 묶음에 둔다(VS Code 아래 묶음 Accounts·Manage 자리).
 import { useRef, type KeyboardEvent, type ReactNode } from "react";
 import { Bot, Eye, FileText, Folders, Monitor, Radar, type LucideIcon } from "lucide-react";
 import { PANEL_LABEL, PANELS, type SidebarPanel } from "./sidebarPanel";
 import "./ActivityBar.css";
 
-// 특수는 Radar: 늘 지켜보다 깨어나는 임무와 평가자, 에이전트(Bot)와 실루엣이 다르다(시안 t-0393, plan §8.249)
+// 특수는 Radar: 늘 지켜보다 깨어나는 임무와 평가자, 에이전트(Bot)와 실루엣이 다르다(시안 t-0393, plan §8.256)
 const PANEL_ICON: Record<SidebarPanel, LucideIcon> = { projects: Folders, machines: Monitor, agents: Bot, special: Radar };
 
 export function ActivityBar({
@@ -92,20 +93,18 @@ export function ActivityBar({
           );
         })}
       </div>
-      <div className="activity-group activity-bottom">
-        <button
-          type="button"
-          className={`activity-item${reports ? " is-active" : ""}`}
-          aria-pressed={reports}
-          aria-label="보고서"
-          title="보고서"
-          data-testid="activity-reports"
-          onClick={onReports}
-        >
-          <FileText aria-hidden="true" />
-        </button>
-        {settings}
-      </div>
+      <button
+        type="button"
+        className={`activity-item${reports ? " is-active" : ""}`}
+        aria-pressed={reports}
+        aria-label="보고서"
+        title="보고서"
+        data-testid="activity-reports"
+        onClick={onReports}
+      >
+        <FileText aria-hidden="true" />
+      </button>
+      <div className="activity-group activity-bottom">{settings}</div>
     </nav>
   );
 }

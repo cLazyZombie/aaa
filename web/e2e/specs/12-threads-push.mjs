@@ -5,7 +5,7 @@
 import fs from "node:fs";
 import {
   root, aaa, until, domIs, hashIs, screenText, shot, pairPage, pushes, pushPort, pushOrigin, b64u, pushDevice, nextPush, pushKey,
-  step, browser, base, setPushKey, openSettings, focusIs, setInUse, pushInUse, inList, showPanel, drawerSettled,
+  step, browser, base, setPushKey, openSettings, focusIs, setInUse, pushInUse, coordinatorPost, inList, showPanel, drawerSettled,
 } from "../lib/harness.mjs";
 
 /**
@@ -228,8 +228,9 @@ export default async function ({ page }) {
     if (split.length) throw new Error(`휴대폰 폭 표 칸에서 한글 낱말이 갈렸다: ${split.join(", ")}`);
     await shot(page, "phone-report-markdown");
     await page.setViewportSize({ width: 1280, height: 800 });
-    // 알림을 보내기 전에 확인하면 그 알림은 빠진다(plan §8.69): 다음 단계가 볼 보고 알림이 나간 뒤에 확인한다
-    await until("보고 알림 보냄", () => pushes.slice(pushFrom).some((x) => x.path === new URL(pushDev.json.endpoint).pathname));
+    // thread 보고는 앱 안에 남는다. 외부 알림은 별도로 coordinator가 판단한 사용자 post다.
+    await coordinatorPost();
+    await until("coordinator 알림 보냄", () => pushes.slice(pushFrom).some((x) => x.path === new URL(pushDev.json.endpoint).pathname));
     // 보고서 공유 링크: CLI·웹은 같은 자동 발급 링크를 보고, 실제 clipboard 대신 기록하는 가짜를 쓴다.
     const shared = aaa("library", "link", "demo", t.id);
     if (aaa("library", "list", "--project", "demo").reports[0].link.id !== shared.id) throw new Error("링크 목록과 발급이 다르다");
@@ -390,10 +391,10 @@ export default async function ({ page }) {
     await until("t1 터미널", async () => (await screenText(page)).includes("t1-42"));
   });
 
-  await step("Web Push: 보고 요약이 기기에 오고(제목·자리는 그 thread) 그 thread로 연다, 버려진 구독(410)은 지운다(차이 목록 N6)", async () => {
+  await step("Web Push: coordinator 전체 완료가 기기에 오고 프로젝트로 연다, 버려진 구독(410)은 지운다(차이 목록 N6)", async () => {
     const { msg } = await nextPush(pushDev, pushFrom, "보고 알림");
-    // 한 thread 알림: 제목·자리 유지, 본문은 report-fixture.md 첫 줄의 표지 뒤 요약(§8.226)
-    if (msg.title !== "demo · 웹 결과물" || msg.tag !== "aaa-demo/t-0001" || msg.body !== "맡긴 일과 확인 끝" || msg.url !== "/#thread=demo%2Ft-0001") {
+    // thread 보고를 먼저 만들었어도 외부로 받은 첫 알림은 coordinator post다.
+    if (msg.title !== "demo" || msg.tag !== "aaa-demo" || msg.body !== "coordinator 맡긴 일 완료" || msg.url !== "/#project=demo") {
       throw new Error(JSON.stringify(msg));
     }
     await until("410 구독 정리", async () =>
@@ -944,7 +945,7 @@ export default async function ({ page }) {
     for (const n of ["ord1", "ord2", "ord3"]) aaa("pane", "kill", n);
   });
 
-  await step("사후 평가자: 목록에 섞이지 않고 활동 막대 「특수」 패널의 줄로 보인다(plan §8.249) → 누르면 평가자 화면", async () => {
+  await step("사후 평가자: 목록에 섞이지 않고 활동 막대 「특수」 패널의 줄로 보인다(plan §8.256) → 누르면 평가자 화면", async () => {
     const v = aaa("evaluator", "assign", "demo", "--profile", "fake", "--machine", "labA").evaluators[0];
     const id = v.thread.id;
     const badge = page.getByTestId("evaluator-demo");
@@ -1159,7 +1160,7 @@ export default async function ({ page }) {
     if (bad.length) throw new Error(bad.join("; "));
   });
 
-  await step("특수 임무: 「특수」 패널 줄(plan §8.249)의 메뉴가 좁은 창·휴대폰·데스크톱에서 화면 안에 있고, 줄을 누르면 임무 보기일 뿐 시작·승인하지 않으며, 승인 필요는 활동 막대 배지이고 Controller가 승인한다", async () => {
+  await step("특수 임무: 「특수」 패널 줄(plan §8.256)의 메뉴가 좁은 창·휴대폰·데스크톱에서 화면 안에 있고, 줄을 누르면 임무 보기일 뿐 시작·승인하지 않으며, 승인 필요는 활동 막대 배지이고 Controller가 승인한다", async () => {
     aaa("project", "create", "mission-layout");
     fs.mkdirSync(`${root}/projects/mission-layout/missions`, { recursive: true });
     fs.writeFileSync(`${root}/projects/mission-layout/missions/ci-watch.md`, '+++\nprofile="fake"\ntitle="rc 검증·병합 시간 최적화 감시"\nwithdrawal="none"\n+++\n새 입력을 자료로 읽고 감시한다.\n');
@@ -1237,7 +1238,7 @@ export default async function ({ page }) {
     const row = page.getByTestId("pane-coord-home coordinator");
     await page.setViewportSize({ width: 1280, height: 800 });
     await inList(page, row);
-    // 사용자 결정 10-19(plan §8.249): coordinator 줄은 왼쪽 보라 막대, thread가 있으면 그 아래 「thread n」 머리줄, 자식 줄은 8px만 들인다
+    // 사용자 결정 10-19(plan §8.256): coordinator 줄은 왼쪽 보라 막대, thread가 있으면 그 아래 「thread n」 머리줄, 자식 줄은 8px만 들인다
     fs.writeFileSync(`${root}/coord-task.txt`, "noreport\n");
     const side = aaa("thread", "start", "coord-home", "--title", "옆일", "--profile", "fake", "--machine", "labA", "--kind", "dir", "--task-file", `${root}/coord-task.txt`);
     await domIs(page, "thread 머리줄", () => document.querySelector('[data-testid="project-thread-head-coord-home"]')?.textContent.trim() === "thread 1");

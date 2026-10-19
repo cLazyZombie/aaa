@@ -807,7 +807,8 @@ fs.writeFileSync(
   `${root}/c/host.toml`,
   `schema = 1\n[host]\nagent_listen = ""\n[web]\nlisten = "127.0.0.1:0"\n[local_agent]\nmode = "none"\n` +
     `[projects]\nroot = "${root}/projects"\nallow_profiles = ["fake"]\nlibrary_copy_mb = 1\n` +
-    `[notify]\ndebounce_secs = 1\nkinds = ["report"]\npush_hosts = ["127.0.0.1"]\n`,
+    `[post]\nburst = 100\nhourly = 100\ndaily = 100\n` +
+    `[notify]\ndebounce_secs = 1\nkinds = ["report", "post"]\npush_hosts = ["127.0.0.1"]\n`,
 );
 // 가짜 thread agent: brief 안내를 받으면 Markdown 보고와 결과물(HTML·그림·복사 상한을 넘는 파일)을 쓴다.
 // 결과물 HTML은 자기가 격리됐는지(부모 문서·cookie·API에 닿는지) body data에 적는다.
@@ -863,6 +864,7 @@ fs.writeFileSync(
 printf 'fake> '
 while IFS= read -r line; do
   case "$line" in
+    post-probe\\ *) sh "\${line#post-probe }" ;;
     *brief.md*)
       dir=$(dirname "$(printf '%s' "$line" | sed 's/를 읽고.*//')")
       # 할 일에 「사람을 기다림」이 있으면 보고 없이 사람을 기다린다고만 알린다(host 묶음 확인 필요, 12 「프로젝트 머리 셈」)
@@ -1067,6 +1069,29 @@ async function pushLab(page) {
   );
 }
 
+/** 실제 coordinator pane 자식 CLI로 보낸다. 웹·밖 CLI가 coordinator를 자칭하지 않는다. */
+async function coordinatorPost() {
+  const opened = aaa("project", "open", "demo", "--profile", "fake");
+  const coord = opened.pane.id;
+  await waitOutput(coord, "fake>");
+  const id = crypto.randomBytes(16).toString("hex");
+  const file = `${root}/post-${id}`;
+  const quote = (s) => `'${s.replaceAll("'", "'\\''")}'`;
+  fs.writeFileSync(`${file}.body`, id);
+  fs.writeFileSync(`${file}.sh`, `${quote(AA)} --json post demo user --notice --topic task-complete --title '전체 완료' --body-file ${quote(`${file}.body`)} --post-id ${id} > ${quote(`${file}.out`)} 2>&1\nprintf 'post-${id}-done\\n'\n`);
+  aaa("pane", "run", coord, `post-probe ${file}.sh`);
+  await waitOutput(coord, `post-${id}-done`);
+  const result = JSON.parse(fs.readFileSync(`${file}.out`, "utf8"));
+  if (result.state !== "accepted") throw new Error(`coordinator post: ${JSON.stringify(result)}`);
+  // 이 도우미가 연 pane만 정리한다. 뒤의 coordinator 열기 시나리오에 상태를 남기지 않는다.
+  if (opened.started) {
+    aaa("pane", "kill", coord);
+    await until("coordinator 세션 종료", () => aaa("pane", "list").panes.find((p) => p.id === coord)?.state !== "running");
+    aaa("pane", "forget", coord);
+  }
+  return result;
+}
+
 /**
  * spec 하나를 돈다: host·agent와 셸 탭 t1을 띄우고, 첫 화면(1280×800, 입력줄)을 t1에 연 뒤 spec의 단계를 차례로,
  * 끝나면 띄운 것을 모두 내리고 단계 결과를 찍는다. t1에는 표지 `t1-42`를 찍는다: 단계는 t1로 돌아온 것을 이 글로 본다.
@@ -1126,6 +1151,6 @@ export {
   safariEdit, safariSyllable, iphoneKey, IPAD_KEYCODES, ipadKey, ipadFresh, fakeViewport, softKeyboard,
   ipadReplace, pairPage, pushes, pushServer, pushPort, pushOrigin, b64u, pushDevice, decryptPush, checkVapid,
   nextPush, pushKey, base, failed, steps, openPages, only, step, webPort, usageHome, b64url, fakeJwt, inHours,
-  usageHits, usageRoutes, usageServer, browser, setPushKey, setInUse, pushInUse, pushWho, pushLab, runSpec, openSettings, focusIs, sentFrames, sentCount, sentText,
+  usageHits, usageRoutes, usageServer, browser, setPushKey, setInUse, pushInUse, pushWho, pushLab, coordinatorPost, runSpec, openSettings, focusIs, sentFrames, sentCount, sentText,
   claudeSh, clearScreen, claudeAsk, claudeWorking, claudeIdle, askClaude,
 };

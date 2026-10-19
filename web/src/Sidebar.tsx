@@ -1,5 +1,5 @@
 // 왼쪽 목록(herdr-web-ui MachineSidebar·Sidebar·AgentSidebar, aa624cb). 모양(class)과 CSS는 참고 것을 그대로 쓴다(herdr/*.css).
-// 패널 넷(활동 막대가 하나를 고른다, plan §8.240·§8.249): 「프로젝트」는 프로젝트 머리(접기, 셈, 묶음 대표 상태) 아래 모든 머신의 thread 줄
+// 패널 넷(활동 막대가 하나를 고른다, plan §8.240·§8.256): 「프로젝트」는 프로젝트 머리(접기, 셈, 묶음 대표 상태) 아래 모든 머신의 thread 줄
 // (둘째 줄 왼쪽 상태 말, 오른쪽 머신 이름, t-0352 시안 2안, plan §8.195) → thread가 아닌 pane의 「기타」 묶음(줄에 머신 이름).
 // 「머신」은 머신 줄(이름·host·연결 점·+, 끊김·점검 글), 「에이전트」는 모든 머신의 agent 목록, 「특수」는 임무·사후 평가자.
 // 머신은 트리 단계가 아니다. 넷 다 늘 그려 두고 고르지 않은 것은 숨긴다(굴린 자리를 지킨다). 머리·띠·바닥 줄(사용량, App.tsx ListFoot)은 패널과 상관없다.
@@ -846,7 +846,7 @@ function ProjectGroup({
             {shownCoordinators.map((p) => (
               <PaneRow key={p.id} {...props} pane={p} machine={props.machines.find((m) => m.id === p.machine_id)} online={p.connection === "connected"} twoLine={twoLine} />
             ))}
-            {/* coordinator와 그 아래 thread를 나누는 머리줄(사용자 결정 10-19 m2, plan §8.249) */}
+            {/* coordinator와 그 아래 thread를 나누는 머리줄(사용자 결정 10-19 m2, plan §8.256) */}
             {shownCoordinators.length > 0 && shown.length > 0 && (
               <li className="project-thread-head" aria-hidden="true" data-testid={`project-thread-head-${project}`}>
                 thread {shown.length}
@@ -1065,7 +1065,7 @@ function AgentSection(props: SidebarProps) {
 }
 
 /**
- * 특수 패널(사용자 결정 10-19, plan §8.249): 임무·사후 평가자를 프로젝트별 두 줄 줄로. 예전에는 목록 머리의 「특수 ●」 칩이었다.
+ * 특수 패널(사용자 결정 10-19, plan §8.256): 임무·사후 평가자를 프로젝트별 두 줄 줄로. 예전에는 목록 머리의 「특수 ●」 칩이었다.
  * 줄을 누르면 pane이 돌면 그 pane, 없으면 임무 보기(차이·승인 상태)다. 시작·멈춤·다시 읽기·승인 검토는 ⋯ 메뉴(넓은 창은 오른쪽 클릭)에만
  * 있다: 여는 것만으로 임무를 움직이지 않는다. 보기 권한이면 열기·보기만.
  */

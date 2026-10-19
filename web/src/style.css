@@ -296,7 +296,7 @@ svg.i { width: 16px; height: 16px; flex-shrink: 0; fill: none; stroke: currentCo
 /* 넓은 창에서 접은 사이드바: 막대만 남는다(herdr-web-ui styles.css `.app.sidebar-collapsed .sidebar { display: none }`) */
 @media (min-width: 769px) {
   .app.sidebar-collapsed .list > .sidebar-shell { display: none; }
-  /* 사람이 끈 폭(SidebarResizer, plan §8.248): 창의 절반을 넘지 않는다(herdr-web-ui `--sidebar-shown-w`). drawer는 제 폭 */
+  /* 사람이 끈 폭(SidebarResizer, plan §8.255): 창의 절반을 넘지 않는다(herdr-web-ui `--sidebar-shown-w`). drawer는 제 폭 */
   .list { position: relative; }
   .list > .sidebar-shell { --sidebar-shown: min(var(--sidebar-user-w, var(--sidebar)), 50vw); flex-basis: var(--sidebar-shown); width: var(--sidebar-shown); }
 }
@@ -352,7 +352,6 @@ svg.i { width: 16px; height: 16px; flex-shrink: 0; fill: none; stroke: currentCo
 .list-foot { flex: 0 0 auto; padding: var(--space-2) var(--space-2) max(var(--space-2), env(safe-area-inset-bottom)); border-top: 1px solid var(--border); }
 .list-foot button { width: 100%; justify-content: flex-start; }
 .list-foot { display: flex; flex-direction: column; gap: var(--space-1); }
-.foot-msg { margin: 0; padding: 0 var(--space-2); font-size: var(--fs-xs); color: var(--text-dim); }
 
 /* 평가자·테마 */
 
@@ -865,8 +864,9 @@ svg.i { width: 16px; height: 16px; flex-shrink: 0; fill: none; stroke: currentCo
 }
 
 /* 목록 아래 구독 사용량(herdr-web-ui Sidebar.css sidebar-footer-row, UsageMeters.css. 그 옆 설정은 활동 막대 톱니다).
+   칩은 오른쪽 끝에 붙인다(사용자 요청 10-19 「사용량은 오른쪽으로 붙여」). 펼친 창은 줄 폭 그대로(.usage-popover left·right 0).
    참고 token을 aaa 것으로: --control-h → --control, --touch-target → --touch, --status-blocked → --blocked */
-.foot-row { position: relative; display: flex; align-items: center; gap: var(--space-1); min-width: 0; }
+.foot-row { position: relative; display: flex; align-items: center; justify-content: flex-end; gap: var(--space-1); min-width: 0; }
 .usage { flex: 0 1 auto; min-width: 0; }
 .list-foot button.usage-strip {
   display: flex; align-items: center; gap: var(--space-1); width: auto; height: var(--control); max-width: 100%;

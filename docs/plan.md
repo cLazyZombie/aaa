@@ -1676,7 +1676,7 @@ Claude·Codex pane을 터미널 대신 대화 기록으로도 본다. 휴대폰�
 
 - **전에는.** 브라우저가 설치 신호(`beforeinstallprompt`)를 보낼 때만 목록 바닥에 「홈 화면에 설치」를 보였다. iOS Safari·데스크톱 Safari·Firefox는 그 신호가 없다. 그래서 단추가 없었고, iOS 안내는 알림 문맥에만 있었다.
 - **참고대로(`src/lib/install.ts` → `web/src/herdr/install.ts`).** `t("…")` 문구만 참고 `i18n.ko.ts`의 한국어로 바꿨고 나머지는 그대로다.
-  - 홈 화면 앱(`display-mode: standalone`·iOS `navigator.standalone`)이 아니거나 설치되지 않았으면, 목록 바닥에 「앱 설치」가 늘 있다(참고 MachineSidebar 41~43줄).
+  - 홈 화면 앱(`display-mode: standalone`·iOS `navigator.standalone`)이 아니거나 설치되지 않았으면, 목록 바닥에 「앱 설치」가 늘 있다(참고 MachineSidebar 41~43줄). **§8.248(10-19)에서 이 단추를 없애고 설정 「설치」 줄만 남겼다.**
   - 신호가 있으면 누를 때 브라우저 설치 창을 띄운다. 신호가 없으면 누를 때 이 브라우저의 방법을 펼친다(`installHelp`). 안내는 iPhone·iPad(Mac UA라 터치 점 수로 가림), HTTPS 아님, 데스크톱 Firefox, Android, 데스크톱 Safari, 나머지(주소창 아이콘)로 나뉜다.
   - 설정 「휴대폰」에 「설치」 줄을 둔다. 설치됐으면 「설치됨」을 보인다. 신호가 있으면 「앱 설치」 단추를, 없으면 같은 안내를 보인다(참고 SettingsDialog 844~846줄).
   - 거절하면 그 신호는 다 쓴 것이라 안내로 돌아간다. `appinstalled`가 오면 단추가 숨는다.
@@ -2962,9 +2962,8 @@ coordinator 실기(10-18 00:58, iPhone 홈 화면 앱을 앞에 띄움, binary c
   - 「사용자가 채팅에서 요청하지 않으면 하지 않는 것」: 병합, force push, branch 지우기, worktree 지우기, thread 끝내기(147줄).
     참고의 프로젝트 지우기·보관은 aaa에 그 명령이 없어 뺐다.
 - **끝낸 thread의 pane 닫기(hp threads.rs `clean`·`remove_worktree`).** 참고는 worktree를 지우며 그 workspace를, tab 종류는
-  tab을 닫는다. aaa는 세션만 끝내 끝난 pane 줄이 목록에 남았다(D11a 화면 견본에서 찾음). 이제 작업 폴더 thread는 늘, worktree
-  thread는 worktree를 지웠을 때 pane을 닫는다(`pane close`와 같다: 끝나기를 기다려 layout과 기록에서 지운다). worktree를 남기면
-  pane 줄도 남긴다(참고는 그 workspace를 연 채 둔다. aaa는 §8.14대로 세션은 끝낸다). 이미 없는 worktree는 지운 것으로 친다
+  tab을 닫는다. aaa도 처음에는 worktree를 지웠을 때만 pane을 닫았다. §8.254부터 worktree 보존과 무관하게 모든 thread pane을
+  닫는다(`pane close`와 같다: 끝나기를 기다려 layout과 기록에서 지운다). 이미 없는 worktree는 계속 지운 것으로 친다
   (참고 `worktree_gone`, `git worktree prune`).
 - **평가자(aaa에만 있다, §8.13).** 「착지는 바로 묶음」 사건은 `merge_landed` 대신 PR 병합 `pr_merged`(PR 추적이 `merged`를 보면 낸다)다.
   기본 `[evaluator] events`도 바꿨다. 옛 기록의 `merge_landed`는 시간 요약(`landed_ms`)에서 그대로 읽는다. project.toml에
@@ -3881,7 +3880,7 @@ coordinator 실기(10-18 00:58, iPhone 홈 화면 앱을 앞에 띄움, binary c
 - **thread adopt(#598).** `aaa thread adopt <p> --pane <ID> --title <글> [--task-file 파일|-]`(hp `adopt.rs` `adopt`, `crates/aaa-host/src/adopt.rs`). 이미 띄운 agent pane을 이 프로젝트의 thread(종류 `adopted`)로 적고 brief를 안내한다. pane은 그대로 두고 그 폴더에서 일한다.
   - 거부는 아무것도 만들기 전에(참고 `adoptable_agent`): 멈춘·보관한 프로젝트, 빈 제목, 없는·끝난 pane, Claude·Codex가 아닌 pane, 어느 프로젝트의 coordinator pane(폴더가 그 프로젝트 폴더), 이미 끝나지 않은 thread인 pane, adopt를 모르는 옛 agent.
   - 자리: 그 머신 agent가 세션이 **지금** 있는 폴더(앞 프로그램의 cwd, `follow_cwd` — 참고가 쓰는 herdr `agent.cwd`와 같은 뜻, 못 읽으면 띄운 폴더)에 `.aaa/<p>-<t>/`를 만들고 brief.md를 쓴다. git repo 안이면 `.aaa/`를 exclude에 넣고 repo top·지금 branch(떼어 낸 HEAD면 없음)를 적는다. host는 git을 실행하지 않는다. 할 일을 안 주면 참고 `DEFAULT_TASK`처럼 「하던 일을 이어 하되 이제 이 프로젝트 thread다」. 그다음은 다른 thread와 같다: 보고 감시, brief는 입력을 받을 수 있을 때(`spawn_brief`), 흐름 사건 `thread_started`(평가자 시작 시각).
-  - 다시 띄우지 않는다(참고 `restart`의 「adopt a new pane instead」): launch는 pane argv 그대로이고 이을 방법이 없다. resolve는 pane을 끝내지 않고 그 폴더도 정리하지 않는다(「pane은 그대로 둔다」, 참고 `Kind::Adopted => its pane was left alone`). 마지막 사본·감시 풀기는 같다. sweep은 worktree thread만 본다.
+  - 다시 띄우지 않는다(참고 `restart`의 「adopt a new pane instead」): launch는 pane argv 그대로이고 이을 방법이 없다. resolve는 §8.254부터 pane을 닫고 그 폴더·branch는 정리하지 않는다. 마지막 사본·감시 풀기는 같다. sweep은 worktree thread만 본다.
   - thread 범위: 사람이 띄운 pane은 띄울 때 역할이 없다. 그 pane이 끝나지 않은 thread면 그 역할(worker)로 본다(§8.164 판정의 역할 대체): 그 안 CLI는 보기만이다.
   - Claude·Codex인지: pane을 띄울 때 알린 harness, 없으면 실행 파일 이름(`aaa pane run -- claude`), 그것으로 모르면 agent가 감지해 알린 상태의 harness(셸 안에서 띄운 agent — 참고는 herdr가 감지한 agent가 있는 pane만 데려온다). 띄운 프로그램으로 정하는 것은 갓 띄운 pane이 아직 상태를 알리기 전에도 데려오게 한다.
   - 참고와 다름: (1) 셸 pane 안의 agent는 agent가 앞 프로세스로 감지한 뒤에만 데려온다(§8.110 Q21: 감지는 시작 유예 3초 뒤, 셸만 앞이면 거부). 참고는 herdr가 감지한 agent면 바로다. (2) 재부팅 복원·`aaa pane resume`이 새 pane으로 대신하면 thread가 새 pane을 따라간다(`replace_pane`): 데려온 pane은 사람이 띄운 pane과 같은 길(대화 ID를 알면 `--resume`, 모르면 중단으로 둠)로 잇고, thread restart 길(§8.111)로 가지 않는다. 참고는 herdr pane ID가 복원 뒤에도 같아 따로 할 일이 없다. (3) PR은 보고 `PR:` 줄로만 찾는다(branch로 찾기는 worktree thread만, 사람 checkout의 branch는 main일 수 있다). 참고는 종류와 상관없이 branch로도 찾는다.
@@ -5670,10 +5669,10 @@ primary 근거:
   | 자리 | 무엇 |
   |---|---|
   | 막대 맨 위 | aaa 로고 + host 연결 점(끊기면 빨강), 보기 권한 기기는 눈 표시 |
-  | 막대 위 묶음 | 프로젝트(고정 줄 → 프로젝트 묶음 → 기타, 배지 = 확인 필요·검토 대기 thread) · 머신(머신 줄·+ 새 pane) · 에이전트(Agents 목록, 배지 = 답을 기다리는 agent) |
-  | 막대 아래 묶음 | 보고서(본문을 `#reports`·`#report=<프로젝트>/<이름>`으로, 다시 누르면 앞 화면) · 설정 톱니(설정 창) |
+  | 막대 위 묶음 | 프로젝트(고정 줄 → 프로젝트 묶음 → 기타, 배지 = 확인 필요·검토 대기 thread) · 머신(머신 줄·+ 새 pane) · 에이전트(Agents 목록, 배지 = 답을 기다리는 agent) · 보고서(패널 tablist 밖 보통 단추, 본문을 `#reports`·`#report=<프로젝트>/<이름>`으로, 다시 누르면 앞 화면, §8.248) |
+  | 막대 아래 묶음 | 설정 톱니(설정 창) |
   | 사이드바 머리(공통) | 패널 이름 · 특수 임무·평가자 배지 · 명령 팔레트 돋보기 |
-  | 사이드바 머리 아래·바닥 줄(공통) | 연결 끊김·오류 띠 / 앱 설치·구독 사용량 |
+  | 사이드바 머리 아래·바닥 줄(공통) | 연결 끊김·오류 띠 / 구독 사용량(오른쪽 끝, 앱 설치는 설정 「폰 및 기기 → 설치」, §8.248) |
 
   예전 바닥 줄의 「보고서」·「설정」 글 단추와 설정 안 「보고서」 쪽은 없앴다. Agents 구역의 접기 단추(참고 AgentSidebar, 휴대폰은 접힌 채 시작)는 패널이 되어 없앴다.
 - **보고서 화면.** 목록(`ReportsPanel`, 「열기」는 본문, 「새 창」은 예전 앱에서 열기)과 보고서 하나(`library_open`의 sandbox iframe, 없으면 보고 글·파일)다. 한 번 연 뒤에는 다른 화면으로 가도 그려 둔 채 `visibility: hidden`·`inert`로 숨긴다: 돌아오면 연 보고서·iframe 문서와 그 안 굴린 자리·목록 굴린 자리가 그대로다(display:none은 iframe 안 자리를 잃는다).
@@ -5840,3 +5839,127 @@ primary 근거:
   Codex 작업 중 대기 말이 흡수되는지도 본다. 시간은 Playwright 시계로 넘기고 사건으로 끝낸다. 결함 네 가지를 심어 각각 실패를
   확인했다: host 멈춤이 Enter를 막지 않음, 웹이 `Submitted`만으로 풂, Codex 경로 끔, agent가 대기열을 싣지 않음. 모두 원래대로
   되돌린 뒤 통과했다.
+
+### 8.248 웹 활동 막대의 보고서 자리와 사이드바 바닥 줄(10-19, t-0396)
+
+- **요청.** 사용자 「여기에 앱 설치는 설정 안으로 옮기고, 보고서는 왼쪽 위로 옯겨. (지금 에이전트 밑으로). 그리고, 사용량은 오른쪽으로 붙여.」(캡처: 막대 아래 묶음의 보고서·설정, 바닥 줄 「앱 설치」와 왼쪽에 붙은 Claude·Codex 칩).
+- **배치.** 막대 위 묶음은 프로젝트 → 머신 → 에이전트 → 보고서, 아래 묶음은 설정 톱니만이다(§8.240 표). 보고서는 패널이 아니라 본문을 바꾸는 단추라 `role="tablist"` 밖, 에이전트 단추 바로 밑의 보통 단추(`aria-pressed`)로 둔다: ↑↓·Home·End는 패널 tab 셋 사이만 돌고 보고서는 Tab 차례로 닿는다. 누르면 본문이 보고서 화면, 다시 누르면 앞 화면, 휴대폰은 drawer를 닫는 동작은 그대로다. VS Code도 위 묶음에 고정 view 단추를 두고 아래 묶음은 Accounts·Manage만 둔다.
+- **앱 설치.** 사이드바 바닥의 「앱 설치」 단추와 펼침 안내를 없앴다. 설정 「폰 및 기기 → 설치」 줄이 이미 같은 조건을 보인다(§8.68: 설치됐으면 「설치됨」, 신호가 있으면 「앱 설치」 단추, 없으면 이 브라우저의 방법). 참고 herdr-web-ui도 설정 「휴대폰」의 같은 줄을 둔다.
+- **사용량.** 바닥 줄(`.foot-row`)을 `justify-content: flex-end`로 칩을 오른쪽 끝에 붙인다. 펼친 창(`.usage-popover`)은 줄 폭 그대로다.
+- **TUI(t-0386).** 활동 막대가 웹을 따르면 보고서 칸은 에이전트 칸 밑, 아래 묶음은 설정만이다. TUI 사이드바 바닥에는 설치 줄이 없고, 구독 사용량을 바닥에 둔다면 오른쪽 정렬이다.
+- **검증.** 웹 E2E 26 「막대·바닥 줄 배치」가 데스크톱 1280·좁은 창 700(drawer)·휴대폰 390×844·가로 844×390에서 기본·GitHub Dark로 보고서 단추가 에이전트 단추 바로 밑(tablist 밖), 아래 묶음이 설정만, 바닥 줄 단추가 사용량 하나, 칩 오른쪽 끝이 줄 안쪽 오른쪽 끝임을 재고 찍는다. 바꾸기 전 판에서 여덟 화면 모두 실패했다(보고서가 아래 묶음, 설치 단추, 칩 왼쪽). 04 「앱 설치」는 설정 줄만 본다: 데스크톱의 신호 없음·신호·거절·설치됨, iPhone·iPad 안내, 홈 화면 앱 「설치됨」, 어느 화면에도 설정 밖 설치 단추가 없음.
+
+### 8.249 외부 푸시는 해당 프로젝트 coordinator 사용자 post만(10-19, t-0395)
+
+- **사용자 결정.** 앱 안 알림은 thread 보고·상태·확인창·세션·머신 사건을 계속 보인다. 외부 Web Push와 webhook은
+  host가 해당 프로젝트 coordinator pane으로 검증한 사용자 post만 보낸다. thread의 `[완료]`·`[확인 필요]` 표지는
+  앱 안 알림과 coordinator 판단의 근거다. 시스템 사건도 coordinator가 inbox로 받고 사람이 필요할 때 post로 알린다.
+  §8.223의 오류·머신 외부 알림 유지와 §8.226의 thread 보고 요약 푸시를 이 결정으로 대체한다.
+- **출처 경계.** Front의 peer PID로 판정한 actor pane과 host 정본 `coordinator_project`를 배포와 공통으로 확인한다.
+  thread/adopt·임무·임의 pane·다른 프로젝트 coordinator·웹·밖 CLI는 외부 푸시 출처가 아니다. post에는 host 판정인
+  `verified = coordinator-pane`과 세션을 저장한다. 기존 `front-control`은 조작 권한만 뜻하며 푸시 권한이 아니다.
+  일반 inbox 발행은 외부 알림 대기열을 건드리지 않고, post 저장 뒤 검증한 봉투로만 대기열에 넣는다.
+- **두 의도.** `user --request --needs-user --topic user-action`은 「확인 필요」,
+  `user --notice --topic task-complete`은 「전체 완료」다. 그 외 post는 앱 안에 남는다.
+  post 글·제목은 외부 본문으로 싣지 않고 기존 고정 문구를 유지한다. debounce·done 제거·프로젝트 mute·기기별
+  input/done·쓰는 화면 억제·실패 시 재전송 없음도 유지한다.
+- **설정.** `[notify].kinds`의 기존 기본값·옛 이름 변환은 호환성을 위해 유지한다. `post`를 빼면 외부 알림을 끄며,
+  다른 종류를 추가해도 위 출처 범위를 넓힐 수 없다. 앱 안 알림의 기존 `thread-state` 선택은 유지한다. `post`의 유무는 thread 앱 안 알림을 바꾸지 않는다.
+- **참고 대조.** herdr-projects 0.2.35 `src/notify.rs::Notifier::send`는 coordinator의 herdr socket을 전달 경로로 쓰지만
+  thread·오류 사건을 외부 알림으로 보낸다. herdr-web-ui `aa624cb`의 `server/push.ts::onStatus/onEnded`도 pane 상태가
+  푸시 원인이며 inUse·기기 설정으로 거른다. t3code `4b1024da`의 `packages/provider-core/src/server/notification.ts`는
+  subagent·command·monitor·delegated_task 출처를 구조화하고, `docs/user/mobile-notifications.md`는 agent 완료·실패·승인·입력
+  사건의 모바일 전달을 설명한다. 출처를 host에서 정하고 앱 알림과 전달 정책을 나누는 점은 따르되, coordinator post만
+  푸시하는 범위는 이번 사용자 결정이라 세 참고와 다르게 둔다.
+- **확인.** 기존 report 전이 시험이 완료·사람 필요 표지의 inbox 유지와 외부 대기열 비움을 함께 본다. post 시험은
+  올바른 coordinator 두 의도와 위장·다른 프로젝트·웹·밖 CLI·다른 topic을 비교한다. 실제 CLI webhook과 웹 푸시
+  E2E는 coordinator pane의 자식 CLI로 발송하고 thread 앱 안 알림이 별개로 유지되는지 확인한다.
+### 8.250 웹 대화 맨 아래 붙음: 굴림 사건 없이 줄어든 보기(10-19, t-0392 후속)
+
+- **실제 재현.** 맨 아래를 보던 대화가 끝까지 보이지 않는다(사용자 14:0x, 배포판 `3503e963`, 긴 답의 마지막 줄이 입력창 밑에 걸림).
+  실제 host·agent와 긴 기록으로 늦은 높이 변화를 하나씩 재봤다. 아래까지 남은 거리는 다음과 같았다.
+  - 입력창이 여섯 줄로 커지면 172px. 보내기 상태 줄이 붙으면 52px.
+  - 긴 답(Bash 줄 여러 개, 목록, code block)이 붙거나 입력창이 줄면 0.
+  - 웹 글꼴을 붙잡은 채 열기는 이 Mac에 글꼴이 깔려 있어 요청이 없었고 재현하지 못했다.
+- **원인.** 대화는 기록이 바뀔 때만(effect) 맨 아래로 갔다. 입력창이 커지면(여러 줄, 보내기 상태, 알림, `3503e963`의 receipt 안내) 대화 보기가
+  굴림 사건 없이 줄어든다. 그래서 따라가지 않았다. 휴대폰 키보드와 좁아진 창도 같은 길이다. `3503e963`의 굴림 코드는 이 판과 같다.
+- **수정(참고 herdr-web-ui `aa624cb` `ChatView.tsx`).**
+  - 새 줄은 그리기 전에(`useLayoutEffect`) 맨 아래로 간다.
+  - `ResizeObserver`가 대화 보기 자체의 크기 변화, 기둥의 폭·글자 크기·글꼴 변화를 보고 맨 아래를 보던 사람을 바로 맨 아래에 둔다.
+    높이만 는 것(접힌 말 펼침)은 손이 한 일이라 따라가지 않는다.
+  - 굴림 사건에서는 위로 굴린 손만 따라가기를 끈다(남은 거리 48px까지 맨 아래로 본다).
+  - 참고의 `useFacesArrived`(늦게 온 글꼴로 다시 접힘)는 재현하지 못해 옮기지 않았다.
+- **회귀.** E2E 22 「대화 맨 아래 붙음」은 실제 host·agent, 기록에 붙는 답, 실제 휠로 본다.
+  - 맨 아래에서 입력창이 커져도 남은 거리 ≤1px, 새 답을 따라감.
+  - 위로 올려 읽는 중에는 입력창이 커지거나 새 답이 와도 자리 그대로.
+  - 옛 코드는 「마지막 172px가 가려졌다」, 읽는 중에도 따라가는 변형은 「자리가 바뀌었다·끌어내렸다」로 실패한다.
+
+
+### 8.251 임무의 빈 입력 즉시 대기와 자기 worktree Git 읽기(10-19, t-0380 후속)
+
+- **운영 원인.** 622c20d3의 새 세션은 자기 inbox와 mission show를 확인창 없이 읽었지만, 빈 입력을 확인하고도
+  임무 본문의 첫 참고 읽기 지시를 따라 이전 보고·Git 이력을 조사했다. 그 과정에서 cwd가 참고 폴더로 바뀌었고
+  자기 worktree로 cd한 뒤 git log를 실행해 Claude의 별도 cd+VCS trust 검사에 걸렸다. coordinator가 한 번 승인한 뒤
+  다음 확인창은 거절하고 임무를 pause했다. 이 수리는 운영 임무를 제어하거나 확인창에 답하지 않는다.
+- **입력 우선.** 공통 guide 첫머리와 적용된 임무 본문 뒤에 같은 입력 우선 규칙을 둔다. 미처리 JSON이 0이면 최소 진행
+  보고 외에 조사·초기화·state/history 준비를 하지 않고 현재 턴을 끝낸다. 새 입력 알림 전 polling도 금지한다.
+  미처리 입력이 있을 때만 그 판단에 필요한 참고·상태·저장소 이력을 읽는다. 승인된 임무 사본/hash는 바꾸지 않는다.
+- **Git 최소 범위.** agent가 자기 work_dir의 부모 worktree 경로를 넣어 log/show/status 세 명령만 만든다. brief에도 같은
+  생성 함수를 써서 cd 대신 git -C를 안내한다. 고정 옵션으로 pager·fsmonitor·서명 표시·외부 diff·textconv·선택적 index
+  쓰기를 끈다. 이 명령은 승인된 자기 저장소의 설정을 읽는다(status의 기존 clean filter까지 제거하는 sandbox는 아니다).
+  log/show는 --end-of-options 뒤 ref만, status는 -- 뒤 경로만 받는다. --output 등 가변 옵션을 허용하지
+  않으며 포괄 git·다른 저장소·쓰기·push 권한을 더하지 않는다. Codex는 기존 읽기 sandbox를 유지한다.
+- **참고.** herdr-projects 0.2.35 `src/thread.rs::brief_header/compose_brief`의 머신별 경로 치환을 계속 따른다.
+  같은 package의 SKILL/COORDINATOR는 범위 안 일회 승인 원칙이며 포괄 always-allow 방식이 아니다. herdr 0.9.5
+  `src/app/api/agents.rs`와 t3code `ClaudeAdapterV2.ts`에는 이 임무의 입력 우선·Git 범위 기능이 없다.
+  [Claude permissions](https://code.claude.com/docs/en/permissions)는 cd+VCS의 별도 확인과 Bash wildcard의 옵션 확장
+  위험을 명시한다. 그래서 cd 허용을 넓히지 않고 git -C와 Git 옵션 종료 경계를 함께 쓴다.
+- **검증.** 기존 host·agent·proto keeper 확장과 실제 Git 보안 keeper 한 개다. 빈 입력 규칙·Git 허용 누락을 수정 전
+  RED로 보존했고, 옵션 종료 표지를 뺀 변형은 실제 출력 파일 생성 단언에서 실패했다. 실제 Claude 2.1.303/default도
+  격리 config·로컬 합성 provider에서 옛 cd+git을 같은 trust 사유로 거절하고 새 git -C 읽기 셋은 실행했다.
+  실제 모델의 무인 대기는 host+agent binary 반영 뒤 coordinator가 resume/restart해 읽기 전용으로 재확인한다.
+
+### 8.252 TUI 기본 폭48·선택 제목 전체 보기(10-19, t-0386, D안 4단계)
+
+- **사용자 결정.** D안의 기본 폭48칸(활동 막대·경계 포함)을 적용한다. 기존 설정·끌어 둔 수동 폭은 그대로 두고,
+  경계 두 번 누름으로 설정 기본값에 돌아갈 때48을 쓴다. 한글은2셀 그대로이며 문자열에 공백을 넣지 않는다.
+- **제목 기준.** 웹 `Sidebar.tsx::PaneRow`·herdr-web-ui `components/AgentSidebar.tsx`는 잘린 줄에도 전체 제목을
+  `title` tooltip으로 보존한다. herdr0.9.5 client와 t3code `ThreadHoverCard.tsx`도 조사했으나 TUI에서 제목 끝까지 읽는
+  해당 기능은 없고 t3code 카드 머리도 truncate다. 승인된 전체 보기 결정을 TUI의 기존 `help::popup/panel` 방식으로 옮긴다.
+  탐색 중 고른 pane/thread 제목은 오른쪽 본문 아래 최대3줄로 미리 보고, `i`·미리 보기 누름·목록 오른쪽 누름으로
+  읽기 전용 전체 창을 연다. ↑↓·PgUp/Dn·Home/End·휠로 끝까지 읽고 Esc/Enter/q로 닫는다. 선택·탭·PTY 칸은 보존한다.
+  창은 grapheme과 셀 폭으로 감싸 CJK·결합 문자·ZWJ emoji를 쪼개지 않으며, 제어 문자는 공백으로 표시한다.
+- **후속 웹 배치 지시.** 10-19 사용자 전달에 따라 위 활동 묶음은 프로젝트→머신→에이전트→보고서, 아래는 설정이다.
+  특수 임무는 공통 머리·탐색 s에 둔다. 접힌 막대에 별도 S를 넣지 않는다. 웹 후속 착지77696d70의 ActivityBar와 §8.248을 기준0527d0a7 통합 때 대조했다. 보고서는 에이전트 밑, 아래는 설정만으로 일치한다.
+- **검증 owner.** 기존 config 기본값 keeper·폭/설정 복원 keeper·실제 PTY `side_list_like_web`를 넓혔다. 새 App 경계
+  keeper는 전체 창의 Unicode·긴 제목 끝·작은 화면/compact·선택/PTY 보존·실제 Front Status 울타리 뒤 무입력을 본다.
+  PTY는 한글 thread 제목의 미리 보기·키/마우스 열기·선택 복귀·pane의 뒤따르는 출력 표지 뒤 키/붙여넣기 무누출을 본다.
+  기본36과 미구현 i에서 의도한 RED를 확인했다. 기본36·보고서 아래 배치·End 무동작 변형은 각 keeper가 실패했고,
+  제품 파일의 저장 바이트를 복원했다. 신호·clipboard·고정 sleep·시험 전용 제품 seam은 더하지 않는다.
+- **착지 조건.** 이 단계는 준비 뒤 `[병합 준비됨]`으로 보고하며 다음 창 전에는 push하지 않는다. 새 창과 앞 thread 해시를
+  받으면 최신 main에 통합해 전체 ci-local·별도 공개 검사를 통과시킨다. binary 반영은 배포 담당이 한다.
+
+- **전체 gate의 대기 오류 수리.** 기존 붙여넣기 PTY 시험에서 나누기로 거른 도움말 뒤 `!prefix 모드`로 창 닫힘을
+  기다렸다. 그 문구는 검색으로 이미 사라져 다음 prefix를 창이 열린 동안 보낼 수 있었다. 실제 실패 화면은 도움말을
+  띄운 채 PREFIX를 기다렸다. 검색이 끝난 footer를 확인한 뒤 검색 여부와 무관한 창 제목이 사라진 렌더를 기다린다. 붙여넣기·그림·검색·이름·종료의
+  기존 단언과 시한은 유지하고, 실패 증거를 보존한 뒤 전체 gate를 다시 검증한다.
+
+- **캡처 울타리.** 전체 제목은 뒤의 미리 보기에도 끝 표지가 있으므로 창 머리와 전체 화면의 끝 표지만으로 캡처하지 않는다.
+  PTY keeper는 창 본문의 끝 표지·footer·마지막 테두리 셀을 확인한 뒤 기록한다. 닫을 때도 창 머리만 사라진 중간 렌더 대신 선택 id와 마지막 테두리의 사라짐까지 확인한다.
+
+
+### 8.253 Mac TUI 선택 복사와 입력 응답 지연(10-19, t-0397)
+
+- **원본 분기.** herdr 0.9.5 `client/shell/mouse.rs:2234`는 마우스 보고를 켠 pane의 왼쪽 누름·끌기·뗌을 앱에 보낸다. 보고가 꺼진 pane은 클라이언트의 `Selection`으로 고르고 셀 격자를 칠한다(`selection.rs`, `ui/panes.rs::render_selection`). 로컬 선택의 표시에는 host 응답이 필요 없으며, 복사할 때만 `PaneSelectionRead`로 기록을 읽는다. aaa도 이 분기를 유지한다. 앱이 그린 글자 단위 선택을 TUI의 셀 선택이라고 부르지 않는다. Shift를 누른 바깥 터미널 자체 선택은 여전히 TUI 밖의 동작이다. 임의의 Alt 전달 규칙이나 harness별 예외를 넣지 않는다.
+- **Mac 쓰기.** herdr `platform/macos.rs::write_clipboard`처럼 `/usr/bin/pbcopy`의 stdin에 UTF-8을 쓰고 종료 성공까지 기다린다. SSH·WSL 경로는 front가 있는 터미널에 OSC 52를 보낸다(`selection.rs::should_prefer_osc52`). native 성공만 Copied이며, OSC 요청은 Requested다. Windows의 유효한 창 소유자·UTF-16 쓰기는 §8.241을 유지한다.
+- **앱 자동 복사 보완.** aaa의 `copy_on_select`를 켰다면 앱이 OSC 52를 보내지 않는 선택도 놓을 때 복사한다. 앱이 이미 보낸 글이 있으면 그것을 쓰고, 없으면 기존의 pane 안 선택 범위를 `PaneSelectionRead`로 읽는다. 앱의 마우스 보고·표시 조건은 바꾸지 않는다. 이것은 herdr 원본과 다른 aaa 설정의 보장이다. §8.241의 선택 뒤 복사 키 보호도 유지한다. 새 누름은 지난 앱 복사 상태를 지운다.
+- **입력과 화면.** herdr `client/shell/input.rs::handle_raw_events`처럼 이미 도착한 연속 이동은 한 번 그리기 전에 함께 처리한다. 같은 종류·수정키의 이동만 최대 256개 묶고, 놓기·키·다른 사건은 다음 차례로 보존한다. EventStream을 잠깐 poll할 때도 현재 task의 waker를 써서 뒤늦은 입력이 잠들지 않게 한다. herdr `client/shell.rs::push_target_event`처럼 이미 쌓인 같은 pane의 연속 입력을 하나로 묶는다(최대 64KiB/256요청, 새 입력을 기다리지 않음). 모든 byte·요청별 응답과 크기 변경/다른 pane 경계를 보존한다. aaa agent 계약에는 응답이 있으므로 묶음 단위 확인은 남지만, 쌓인 마우스 사건마다 왕복하지 않는다. herdr `server/headless/render.rs`의 입력 직후 32ms 창·16ms당 16회 예산으로 응답 화면을 즉시 전달하고, 보통 출력은 16ms 동안 묶는다. 반복되는 SGR 마우스 성공 진단은 DEBUG로 낮추고, 일반 입력 전달의 INFO와 연결 끊김·timeout·쓰기 실패 진단은 유지한다.
+- **회귀.** 가상 시계의 입력 직후 표시/예산/보통 출력 대기와 입력 byte·경계·응답 묶음을 host에서 본다. 실제 PTY keeper는 빈칸까지 pane 끝으로 칠하는 여러 줄 셀 선택, OSC 없는 앱 자동 복사, 선택 뒤 Ctrl+C 누수 방지, native clipboard를 검사한다. Windows에도 같은 host·TUI 코드를 쓰며 OS별 native 경계는 공식 ci-local clipboard 단계가 본다.
+
+### 8.254 resolve의 pane 정리와 폴더 보존 분리(10-19)
+
+- **원인.** `thread_resolve`의 `place_gone` 조건이 dirty·보존 worktree의 종료된 pane을 남겼다. adopted는 pane 종료·사건 구독에서도 제외했다. 이미 exited인 일반 작업 폴더 pane은 기존에도 지웠다.
+- **동작.** 마지막 사본과 resolved 상태 저장 뒤, 살아 있는 pane에는 기존 Kill을 보내고 끝남 사건을 확인한다. 이미 끝난 pane은 Kill 없이 Forget으로 지운다. 종류와 worktree 삭제 여부에 관계없이 pane 목록과 모든 layout에서 뺀다.
+- **보존.** dirty·partial·skip-copy·keep-worktree, 미병합 branch의 기존 정리 규칙과 force 없는 삭제는 유지한다. adopted 폴더·branch도 그대로다. 보고·library 사본은 남는다.
+- **참고와 차이.** herdr-projects 0.2.35 `threads.rs::clean`은 workspace 닫기를 worktree 삭제에 묶고 `Kind::Adopted`를 남긴다. 이번 brief의 모든 thread pane 닫기 요구에 따라 그 예외를 없앴다. herdr 0.9.5 `app/actions.rs::handle_pane_died`, `app/api/panes.rs::close_pane`처럼 pane의 layout 제거까지 마친다.
+- **회귀.** m13의 실제 임시 host·agent에서 dir·dirty worktree·adopted fixture를 입력으로 exit 1 종료한 뒤 resolve한다. pane 목록·layout에서 사라지고 dirty 파일·adopted 저장소는 남아야 한다. 기존 dirty/partial 보존·살아 있는 adopted 복원 시험도 같은 동작으로 확인한다.

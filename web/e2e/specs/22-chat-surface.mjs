@@ -397,4 +397,45 @@ export default async function () {
     aaa("pane", "kill", "line1");
     if (bad.length) throw new Error(bad.join("; "));
   });
+
+  await step("대화 맨 아래 붙음(사용자 10-19 14:0x 「스크롤이 되지 않는 경우가 있어」): 맨 아래를 보던 대화는 입력창이 여러 줄로 커져도(굴림 사건 없이 보기가 줄어도) 맨 아래이고 새 답도 따라가며, 위로 올려 읽는 중이면 입력창이 커지거나 새 답이 와도 끌어내리지 않는다(참고 herdr-web-ui ChatView.tsx ResizeObserver·onScroll)", async () => {
+    chatPane("stick1", "3c2b1a09-8f7e-4d6c-9b5a-4f3e2d1c0b9f");
+    const tr = `${root}/claude/projects/-lab-stick1/s1.jsonl`;
+    const L = (o) => JSON.stringify(o) + "\n";
+    const p = (await pairPage(browser, aaa("web", "pair").code, { width: 1280, height: 800 })).page;
+    await openChat(p, "stick1");
+    const chat = p.getByTestId("chat");
+    // 두 번 그린 뒤의 아래까지 거리와 위치(ResizeObserver는 그리기 전에 돈다)
+    const at = () => chat.evaluate((el) => new Promise((done) => requestAnimationFrame(() => requestAnimationFrame(() =>
+      done({ gap: Math.round(el.scrollHeight - el.scrollTop - el.clientHeight), top: Math.round(el.scrollTop) })))));
+    const box = p.getByTestId("chat-composer").getByRole("textbox", { name: "메시지" });
+    let answers = 0;
+    const answer = async () => {
+      const before = await p.locator('[data-testid="chat"] .chat-msg').count();
+      fs.appendFileSync(tr, L({ type: "assistant", message: { content: [{ type: "text", text: `새 답 ${++answers}\n\n${"- 항목\n".repeat(8)}` }] } }));
+      await until("새 답", async () => (await p.locator('[data-testid="chat"] .chat-msg').count()) > before);
+    };
+    const bad = [];
+    if ((await at()).gap > 1) bad.push(`처음부터 맨 아래가 아니다 ${JSON.stringify(await at())}`);
+    await box.fill("가\n나\n다\n라\n마\n바");
+    const grew = await at();
+    if (grew.gap > 1) bad.push(`입력창이 커지자 마지막 ${grew.gap}px가 가려졌다`);
+    await box.fill("");
+    await answer();
+    if ((await at()).gap > 1) bad.push("새 답을 따라가지 않았다");
+    // 위로 올려 읽는 중: 끌어내리지 않는다
+    await chat.hover();
+    const bottom = (await at()).top;
+    await p.mouse.wheel(0, -400);
+    await until("위로 굴렀다", async () => (await at()).top < bottom - 100);
+    const reading = await at();
+    await box.fill("가\n나\n다\n라\n마\n바");
+    if ((await at()).top !== reading.top) bad.push(`읽는 중에 입력창이 커지자 자리가 바뀌었다 ${reading.top} → ${(await at()).top}`);
+    await box.fill("");
+    await answer();
+    if ((await at()).top !== reading.top) bad.push(`읽는 중에 새 답이 와서 끌어내렸다 ${reading.top} → ${(await at()).top}`);
+    await p.context().close();
+    aaa("pane", "kill", "stick1");
+    if (bad.length) throw new Error(bad.join("; "));
+  });
 }

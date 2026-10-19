@@ -239,16 +239,18 @@ coordinator는 조율한다. 일을 직접 하지 않으므로 언제나 사용�
 3. 사용자에게 답한다.
 
 ## 사용자 알림
+외부 푸시(웹 푸시·webhook)는 host가 이 프로젝트 coordinator pane으로 검증한 사용자 post만 보낸다.
 푸시는 맡긴 일 전체와 확인이 완전히 끝났을 때, 또는 사람이 직접 해야 하는 인증·터미널 승인·GUI 조작·사용자 결정이 남았을 때만 보낸다.
 중간 착지·진행 보고·inbox 처리·PR 병합마다 보내지 않는다. thread 보고의 `[완료]`는 그 thread에 맡긴 일 전체의 끝,
 `[결정 필요]`·`[검수 대기]`·`[확인 필요]`는 직접 사람을 기다린다는 뜻이다. 자동 검증·다른 agent 검토를 사람 대기로 적지 않는다.
+thread 표지는 앱 안 알림과 coordinator 판단의 근거이며 외부 푸시를 보내지 않는다.
 coordinator는 thread가 아니므로 보고 파일로 알림을 만들지 않는다. 사용자에게 질문하거나 사람 전용 단계를 남기고 멈추기 전에
 `aaa report --unknown --activity 'Waiting for you'`로 상태를 알리고, 필요한 행동과 까닭을 파일에 쓴 뒤
 `aaa post {p} user --request --needs-user --topic user-action --title '확인 필요' --body-file scratch/user-action.md`를 보낸다.
 맡긴 일 전체를 끝냈으면 완료 내용을 파일에 쓰고
 `aaa post {p} user --notice --topic task-complete --title '전체 완료' --body-file scratch/completed.md`를 한 번 보낸다.
 post 본문에는 비밀값을 쓰지 않는다. 이 두 post는 기기의 입력 필요·작업 완료 알림 설정을 따른다. 사용자가 답하거나 결과를 확인하면
-해당 post inbox 항목을 `aaa inbox done {p} <id>`로 끝낸다. 확인창·세션 사라짐·머신 이상 알림은 그대로다.
+해당 post inbox 항목을 `aaa inbox done {p} <id>`로 끝낸다. 확인창·세션 사라짐·머신 이상은 앱 안 알림과 coordinator inbox에만 남는다. 사람이 필요하면 coordinator가 위 「확인 필요」 post로 알린다.
 
 ## 새 프로젝트의 첫 턴
 TASKS.md가 비어 있고 thread가 없으면 이것만 한다: goal을 한 줄로 다시 말하고, 범위에 든 repo와 머신을 늘어놓고(goal과
@@ -1238,9 +1240,11 @@ impl Host {
         let task = mission_task.as_deref().unwrap_or(task);
         let guide = if let Some(m) = &r.mission {
             crate::brief_text::SPECIAL_GUIDE
+                .replace("{input_gate}", crate::brief_text::MISSION_INPUT_GATE)
                 .replace("{work}", aaa_proto::BRIEF_WORK_DIR)
                 .replace("{exe}", aaa_proto::BRIEF_EXE)
                 .replace("{inbox_list}", aaa_proto::BRIEF_INBOX_LIST)
+                .replace("{git_reads}", aaa_proto::BRIEF_GIT_READS)
                 .replace("{project}", &r.project)
                 .replace("{mission}", &m.name)
                 .replace("{project_dir}", &dir.to_string_lossy())
@@ -1897,11 +1901,11 @@ impl Host {
             r.merged_seen_ms = None;
         })?;
         self.db.audit(actor, "thread_resolve", &format!("{project}/{id}"));
-        // 데려온 pane은 사람 것이다(참고 threads.rs `cleanup`의 `Kind::Adopted`): 끝내지 않고, 그 폴더도 정리하지 않는다
+        // 데려온 폴더는 사람 것이다: pane은 닫되 그 폴더·branch는 정리하지 않는다.
         let adopted = rec.kind == ThreadKind::Adopted;
         // pane을 닫을 때 끝나기를 기다릴 사건 구독은 끝내기 전에 잡는다(그 사이 온 끝남을 놓치지 않는다)
-        let pane_rx = rec.pane.as_deref().filter(|_| !adopted).and_then(|p| self.pane_events(p).ok());
-        if let Some(pane) = rec.pane.as_ref().filter(|_| !adopted)
+        let pane_rx = rec.pane.as_deref().and_then(|p| self.pane_events(p).ok());
+        if let Some(pane) = rec.pane.as_ref()
             && self.pane_view_of(pane, aaa_proto::DeviceRole::Local).is_some_and(|p| p.state.is_running())
         {
             let _ = self.kill_session(&conn, pane).await;
@@ -1909,7 +1913,7 @@ impl Host {
         let _ = conn.request(AgentRequest::ThreadUnwatch { thread: format!("{project}/{id}") }).await;
         let mut notes = Vec::new();
         if adopted {
-            notes.push("pane은 그대로 둔다(데려온 pane은 사람 것)".to_string());
+            notes.push("폴더·branch는 그대로 둔다(데려온 폴더는 사람 것)".to_string());
         }
         // 집에 다 오지 않았으면 worktree를 남긴다(herdr-projects `clean` `copy_complete`): 사본에서 빠진 것(symlink·한도를
         // 넘은 파일)과 사본 없이 끝낸 작업 폴더(`.aaa/`)는 git이 무시하는 파일이라 force 없는 `worktree remove`도 지운다
@@ -1924,8 +1928,6 @@ impl Host {
                 format!("집에 오지 않은 것: {}", rec.copy_notes.join("; "))
             });
         }
-        // 그 thread의 자리가 치워졌나: 작업 폴더 thread는 늘, worktree thread는 worktree를 지웠을 때
-        let mut place_gone = rec.kind == ThreadKind::Dir;
         if let Some(cwd) = rec.cwd.as_ref().filter(|_| !adopted) {
             let repo = if rec.kind == ThreadKind::Worktree { rec.repo.clone() } else { None };
             let merged_head = if repo.is_some() { self.merged_head(project, &rec, &conn).await } else { None };
@@ -1942,7 +1944,6 @@ impl Host {
                 .await
             {
                 Ok(AgentResponse::Cleanup(c)) => {
-                    place_gone |= c.worktree_removed;
                     // 사람이 남기라고 한 worktree(--keep-worktree)·집에 다 오지 않아 남긴 worktree와 그 branch는 청소하지
                     // 않는다(참고 sweep `kept_worktree`, `clean` `copy_complete`)
                     let kept = opts.keep_worktree || uncopied;
@@ -1962,9 +1963,8 @@ impl Host {
                 Err(e) => notes.push(format!("정리 실패: {}", e.message)),
             }
         }
-        // 참고 `clean`은 worktree를 지우며 그 workspace를, tab 종류는 tab을 닫는다: 끝난 pane 줄을 목록에 남기지 않는다.
-        // worktree를 남기면 pane 줄도 남긴다(참고는 그 workspace를 연 채 둔다. aaa는 세션은 끝낸다, §8.14 resolve)
-        if place_gone && let Some(pane) = &rec.pane {
+        // pane 수명과 폴더 보존은 별개다. 이미 끝난 pane·남긴 worktree·adopted도 기록과 layout에서 지운다.
+        if let Some(pane) = &rec.pane {
             // 끝내기는 위에서 보냈다: 끝남을 기다려 layout과 기록에서 지운다(`pane close`의 뒷부분)
             let closed = match pane_rx {
                 None => Ok(false),

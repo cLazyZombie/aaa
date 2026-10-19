@@ -799,16 +799,39 @@ pub const BRIEF_WORK_DIR: &str = "{{aaa:work_dir}}";
 pub const BRIEF_EXE: &str = "{{aaa:exe}}";
 /// 임무 inbox의 목록 조회 한 명령. agent가 채우는 경로와 allow-list가 같은 quoting을 쓴다.
 pub const BRIEF_INBOX_LIST: &str = "{{aaa:inbox_list}}";
+pub const BRIEF_GIT_READS: &str = "{{aaa:git_reads}}";
 
 pub fn mission_inbox_list_command(work_dir: &str) -> String {
     let path = format!("{}/inbox", work_dir.replace('\\', "/").trim_end_matches('/'));
     format!("ls -1 -- '{}'", path.replace('\'', "'\\''"))
 }
 
+/// 자기 worktree와 읽기 옵션을 고정한다. 가변 ref/path는 옵션 종료 표지 뒤에서만 받는다.
+pub fn mission_git_read_commands(work_dir: &str) -> Vec<String> {
+    let path = work_dir.replace('\\', "/");
+    let Some((cwd, leaf)) = path.rsplit_once("/.aaa/") else { return vec![] };
+    if cwd.is_empty() || leaf.is_empty() || leaf.contains('/') || cwd.contains('*') {
+        return vec![];
+    }
+    let git = format!(
+        "git -C '{}' --no-pager --no-optional-locks -c core.fsmonitor=false -c log.showSignature=false",
+        cwd.replace('\'', "'\\''")
+    );
+    vec![
+        format!("{git} log --no-ext-diff --no-textconv --oneline --max-count=100 --end-of-options"),
+        format!("{git} show --no-ext-diff --no-textconv --format=fuller --end-of-options"),
+        format!("{git} status --short --"),
+    ]
+}
+
 /// brief 자리를 채운다. 실행 파일 경로에 빈칸이 있으면 큰따옴표로 감싼다.
 pub fn fill_brief(brief: &str, work_dir: &str, exe: &str) -> String {
     let exe = if exe.contains(char::is_whitespace) { format!("\"{exe}\"") } else { exe.to_string() };
     brief
+        .replace(
+            BRIEF_GIT_READS,
+            &mission_git_read_commands(work_dir).iter().map(|s| format!("- `{s}`")).collect::<Vec<_>>().join("\n"),
+        )
         .replace(BRIEF_INBOX_LIST, &mission_inbox_list_command(work_dir))
         .replace(BRIEF_WORK_DIR, work_dir)
         .replace(BRIEF_EXE, &exe)
@@ -824,7 +847,7 @@ pub fn progress_guidance(prefix: &str) -> String {
          `{prefix} report --unknown --activity '일 가늠'`\n\n\
          새 일을 시작할 때, 의미 있는 고비를 넘긴 뒤, 활동이 바뀔 때, 막혔을 때, 그리고 내용 있는 답을 하기 전마다 보고한다. 사용자에게 무언가 물으려고 멈출 때는 늘 `--activity 'Waiting for you'`로 보고한다(이 말 그대로). 일하는 동안에는 자연스러운 도구 경계에서 1분에 한 번쯤 보고한다. 알림을 채우려고 진행을 지어내지 않는다. 일이 더 있다는 걸 알게 되면 어림을 낮춘다. 범위가 분명하지 않은 동안은 `--unknown`을 쓴다.\n\n\
          `--percent 100`은 요청받은 결과 전체와 그 확인이 다 끝났을 때만 쓴다. `Done`으로 보인다. 그 뒤 일을 더 받으면 새로 낮은 백분율을 보고한다.\n\n\
-         푸시는 맡긴 일 전체와 확인이 끝났을 때, 또는 사람이 직접 해야 하는 인증·터미널 승인·GUI 조작·사용자 결정이 남았을 때만 보낸다. 중간 착지·진행에는 보내지 않는다. thread는 report.md 첫 줄에 `[완료]`, `[결정 필요]`·`[검수 대기]`·`[확인 필요]`, `[착지]`·`[진행 중]`으로 이를 구분한다. 자동 검증·다른 agent 검토는 사람 대기가 아니다. coordinator는 사용자에게 질문하며 멈추기 전에 위 Waiting for you 보고와 프로젝트 안내의 `post <project> user --request --needs-user`를 함께 남긴다. 전체 완료 알림은 `post <project> user --notice --topic task-complete`로 한 번 보낸다.\n\n\
+         외부 푸시(웹 푸시·webhook)는 host가 그 프로젝트 coordinator pane으로 검증한 사용자 post만 보낸다. thread 보고·확인창·세션·머신 사건은 앱 안 알림과 coordinator inbox에만 남는다. coordinator는 맡긴 일 전체와 확인이 끝났을 때, 또는 사람이 직접 해야 하는 인증·터미널 승인·GUI 조작·사용자 결정이 남았을 때만 보낸다. 중간 착지·진행에는 보내지 않는다. thread 표지는 앱 안 알림과 coordinator 판단의 근거이며 푸시를 보내지 않는다. thread는 report.md 첫 줄에 `[완료]`, `[결정 필요]`·`[검수 대기]`·`[확인 필요]`, `[착지]`·`[진행 중]`으로 이를 구분한다. 자동 검증·다른 agent 검토는 사람 대기가 아니다. coordinator는 사용자에게 질문하며 멈추기 전에 위 Waiting for you 보고와 프로젝트 안내의 `post <project> user --request --needs-user --topic user-action`를 함께 남긴다. 전체 완료 알림은 `post <project> user --notice --topic task-complete`로 한 번 보낸다.\n\n\
          이 pane의 맨 위 agent만 보고한다. subagent와 도우미는 보고하지 않는다. report 명령은 끝날 때까지 기다리고 배경으로 돌리지 않는다."
     )
 }
@@ -982,6 +1005,11 @@ mod tests {
         assert_eq!(fill_brief(BRIEF_EXE, "", r"C:\Program Files\aaa.exe"), r#""C:\Program Files\aaa.exe""#);
         assert_eq!(fill_brief(BRIEF_INBOX_LIST, "/work/it's a folder", ""), "ls -1 -- '/work/it'\\''s a folder/inbox'");
         assert_eq!(fill_brief(BRIEF_INBOX_LIST, r"C:\work dir\task", ""), "ls -1 -- 'C:/work dir/task/inbox'");
+        let reads = fill_brief(BRIEF_GIT_READS, "/work/it's a folder/.aaa/demo-t-0001", "");
+        assert!(reads.contains("git -C '/work/it'\\''s a folder' --no-pager --no-optional-locks"));
+        assert!(reads.contains("--end-of-options") && reads.contains("status --short --"));
+        assert!(mission_git_read_commands("/work/other").is_empty());
+        assert!(mission_git_read_commands("/work/*/.aaa/demo-t-0001").is_empty());
     }
 }
 
