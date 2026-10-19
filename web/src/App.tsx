@@ -12,7 +12,6 @@ import type {
   QuestionView,
   ThreadView,
 } from "./gen/proto";
-import { Missions } from "./Missions";
 import { ActivityBar } from "./ActivityBar";
 import { SidebarResizer } from "./SidebarResizer";
 import { PANEL_LABEL, revealPanel, storedCollapsed, storedPanel, storeSidebar, type SidebarPanel } from "./sidebarPanel";
@@ -54,6 +53,7 @@ import { useMediaQuery } from "./herdr/useMediaQuery.ts";
 import { watchDrawerSwipe } from "./herdr/edgeSwipe.ts";
 import { DrawerContext, DrawerToggle, HeadContext, HeadMore, HeadNote } from "./drawer";
 import { highMachines, HIGH_STAT } from "./machineStats";
+import { specialAttention } from "./specialModel";
 
 type Auth = { state: "loading" } | { state: "pair" } | { state: "in"; role: DeviceRole; device: string } | { state: "error"; msg: string };
 
@@ -377,7 +377,7 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
   const [threads, setThreads] = useState<Map<string, ThreadView>>(new Map());
   const [threadsSync, setThreadsSync] = useState(0);
   const threadReload = useRef(new ThreadReload());
-  // 사후 평가자: 목록에 섞지 않고 header badge로만 보인다(§8.13)
+  // 임무·사후 평가자: 목록에 섞지 않고 활동 막대 「특수」 패널에 보인다(§8.13, §8.249)
   const [missions, setMissions] = useState<MissionView[]>([]);
   const missionLoading = useRef(false);
   const missionReload = useRef(false);
@@ -919,6 +919,7 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
       label: "답을 기다림",
     },
     machines: { count: highMachines(machines), label: `CPU·MEM ${HIGH_STAT}% 넘음` },
+    special: { count: specialAttention(missions, evaluators, panes), label: "막힘·오류·승인 필요" },
   };
   // 넓은 창에서 접었으면 사이드바 칸이 없다(좁은 창은 drawer라 늘 칸이 있다)
   const sidebarShown = !wideScreen || !collapsed;
@@ -959,10 +960,6 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
           <h2 className="list-title" data-testid="sidebar-title">{PANEL_LABEL[panel]}</h2>
           {role === "reader" && <span className="list-role">보기 권한</span>}
           <span className="spacer" />
-          <Missions missions={missions} role={role} onOpen={choose} onReload={loadMissions} />
-          {evaluators.map((v) => (
-            <EvaluatorBadge key={v.project} v={v} pane={panes.find((p) => p.id === v.thread.pane)} onOpen={choose} />
-          ))}
           <button
             className="ghost icon palette-button"
             data-testid="palette-open"
@@ -986,6 +983,9 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
           onThread={(t) => chooseThread(t)}
           onNewShell={newShell}
           onProject={chooseProject}
+          missions={missions}
+          evaluators={evaluators}
+          onMissionsChanged={loadMissions}
           banners={
             <>
               {!up && loaded && <div className="banner warn">host와 연결이 끊겼다. 다시 연결하는 중</div>}
@@ -1386,21 +1386,3 @@ function ListFoot() {
   );
 }
 
-/** 사후 평가자 표시: 동작 상태와 정하지 않은 개선안 수. 누르면 평가자 pane을 연다(닫아도 배경에서 계속 돈다). */
-function EvaluatorBadge({ v, pane, onOpen }: { v: EvaluatorView; pane?: PaneView; onOpen: (id: string | null) => void }) {
-  const running = v.running && pane !== undefined;
-  const act = pane?.agent?.activity;
-  const state = !running ? "ended" : act === "question" ? "blocked" : act === "working" ? "working" : "idle";
-  const label = state === "ended" ? "세션 끝남" : state === "blocked" ? "막힘" : state === "working" ? "평가 중" : "대기";
-  return (
-    <button
-      className={`eval-badge ${state}`}
-      data-testid={`evaluator-${v.project}`}
-      title={`${v.project} 사후 평가자 ${v.thread.id} · ${label} · 받은 평가 ${v.evaluations} · 정하지 않은 개선안 ${v.undecided}`}
-      disabled={!v.thread.pane}
-      onClick={() => v.thread.pane && onOpen(v.thread.pane)}
-    >
-      특수 <span className="eval-dot">●</span> {v.undecided}
-    </button>
-  );
-}

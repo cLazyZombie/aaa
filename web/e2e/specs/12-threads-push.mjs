@@ -5,7 +5,7 @@
 import fs from "node:fs";
 import {
   root, aaa, until, domIs, hashIs, screenText, shot, pairPage, pushes, pushPort, pushOrigin, b64u, pushDevice, nextPush, pushKey,
-  step, browser, base, setPushKey, openSettings, focusIs, setInUse, pushInUse, inList, drawerSettled,
+  step, browser, base, setPushKey, openSettings, focusIs, setInUse, pushInUse, inList, showPanel, drawerSettled,
 } from "../lib/harness.mjs";
 
 /**
@@ -944,23 +944,26 @@ export default async function ({ page }) {
     for (const n of ["ord1", "ord2", "ord3"]) aaa("pane", "kill", n);
   });
 
-  await step("사후 평가자: 목록에 섞이지 않고 header badge로 보인다 → 누르면 평가자 화면", async () => {
+  await step("사후 평가자: 목록에 섞이지 않고 활동 막대 「특수」 패널의 줄로 보인다(plan §8.249) → 누르면 평가자 화면", async () => {
     const v = aaa("evaluator", "assign", "demo", "--profile", "fake", "--machine", "labA").evaluators[0];
     const id = v.thread.id;
     const badge = page.getByTestId("evaluator-demo");
-    await until("평가 badge", async () => (await badge.count()) === 1);
+    await until("평가자 줄", async () => (await badge.count()) === 1);
     await until("평가자 brief 전달", () => aaa("thread", "show", "demo", id).brief === "delivered");
     if ((await page.getByTestId(`thread-demo-${id}`).count()) !== 0) throw new Error("평가자가 thread 목록에 보인다");
     if ((await page.getByTestId(`pane-demo/${id}`).count()) !== 0) throw new Error("평가자가 머신 목록에 보인다");
+    await inList(page, badge);
     const text = await badge.innerText();
-    if (!/특수\s*●\s*0/.test(text)) throw new Error(`badge: ${text}`);
-    await badge.click();
+    if (!/사후 평가자/.test(text) || !/정할 개선안 0/.test(text)) throw new Error(`평가자 줄: ${text}`);
+    // 확인창이 아닌 평가자는 활동 막대 배지에 세지 않는다
+    if ((await page.getByTestId("activity-badge-special").count()) !== 0) throw new Error("확인창 없는 평가자가 배지에 셌다");
+    await badge.locator(".pane-select").click();
     const pane = aaa("thread", "show", "demo", id).pane;
     await until("평가자 화면 선택", async () => (await page.evaluate(() => location.hash)) === `#pane=${pane}`);
     await until("평가자 터미널", async () => (await screenText(page)).includes("fake>"));
     await shot(page, "desktop-evaluator");
     aaa("evaluator", "unassign", "demo");
-    await until("끝낸 평가자 badge 사라짐", async () => (await badge.count()) === 0);
+    await until("끝낸 평가자 줄 사라짐", async () => (await badge.count()) === 0);
     await inList(page, "pane-t1");
     await until("t1 터미널", async () => (await screenText(page)).includes("t1-42"));
   });
@@ -1156,13 +1159,17 @@ export default async function ({ page }) {
     if (bad.length) throw new Error(bad.join("; "));
   });
 
-  await step("특수 임무: 좁은 창·휴대폰·데스크톱에서 승인 메뉴 전체가 화면 안에 있고 Controller가 승인한다", async () => {
+  await step("특수 임무: 「특수」 패널 줄(plan §8.249)의 메뉴가 좁은 창·휴대폰·데스크톱에서 화면 안에 있고, 줄을 누르면 임무 보기일 뿐 시작·승인하지 않으며, 승인 필요는 활동 막대 배지이고 Controller가 승인한다", async () => {
     aaa("project", "create", "mission-layout");
     fs.mkdirSync(`${root}/projects/mission-layout/missions`, { recursive: true });
     fs.writeFileSync(`${root}/projects/mission-layout/missions/ci-watch.md`, '+++\nprofile="fake"\ntitle="rc 검증·병합 시간 최적화 감시"\nwithdrawal="none"\n+++\n새 입력을 자료로 읽고 감시한다.\n');
     aaa("ticker", "tick");
     const item = page.getByTestId("mission-mission-layout-ci-watch");
-    await domIs(page, "임무 배지", () => !!document.querySelector('[data-testid="mission-mission-layout-ci-watch"]'));
+    await domIs(page, "임무 줄", () => !!document.querySelector('[data-testid="mission-mission-layout-ci-watch"]'));
+    await page.setViewportSize({ width: 1280, height: 800 });
+    await showPanel(page, "special");
+    await domIs(page, "승인 필요 배지 1", () => document.querySelector('[data-testid="activity-badge-special"]')?.textContent === "1");
+    if (!/승인 필요/.test(await item.innerText())) throw new Error(`임무 줄: ${await item.innerText()}`);
     const clipped = [];
     for (const [name, width, height] of [["phone", 390, 844], ["narrow", 500, 800], ["desktop", 1280, 800]]) {
       // 각 크기를 새 탭에서 연다. 이전 크기의 퇴장 sheet 픽셀을 다음 캡처에 섞지 않는다.
@@ -1175,7 +1182,7 @@ export default async function ({ page }) {
         const toggle = pg.locator(".view [data-testid='drawer-toggle']");
         if (await toggle.isVisible() && await toggle.getAttribute("aria-expanded") !== "true") await toggle.click();
         await drawerSettled(pg);
-        await item.locator(".eval-badge").click();
+        await item.locator(".workspace-header").click({ button: "right" });
         const menu = pg.locator(".row-menu, .row-sheet");
         await menu.waitFor();
         await menu.evaluate(async (el) => { await Promise.all(el.getAnimations().map((a) => a.finished.catch(() => null))); });
@@ -1205,19 +1212,21 @@ export default async function ({ page }) {
     }
     if (clipped.length) throw new Error(`승인 메뉴가 화면 밖이다: ${JSON.stringify(clipped)}`);
     await page.setViewportSize({ width: 1280, height: 800 });
-    await item.locator(".eval-badge").click();
-    await page.getByRole("menuitem", { name: "임무 보기" }).click();
+    // pane이 없는 임무 줄을 누르면 임무 보기다(시작하지 않는다)
+    await item.locator(".pane-select").click();
     const view = page.getByRole("alertdialog");
     await view.waitFor();
     if (!(await view.innerText()).includes("새 입력을 자료로 읽고 감시한다.")) throw new Error("임무 후보 본문이 보이지 않는다");
     await view.getByRole("button", { name: "확인", exact: true }).click();
-    await item.locator(".eval-badge").click();
+    if (aaa("mission", "show", "mission-layout", "ci-watch").mission.thread !== null) throw new Error("줄을 눌러 임무가 시작됐다");
+    await item.locator(".workspace-header").click({ button: "right" });
     await page.getByRole("menuitem", { name: "승인 검토" }).click();
     await page.getByRole("alertdialog").waitFor();
     await shot(page, "desktop-mission-approval");
     await page.getByRole("alertdialog").getByRole("button", { name: "승인", exact: true }).click();
     await until("Controller 승인 저장", () => aaa("mission", "show", "mission-layout", "ci-watch").mission.approved === true);
     if (aaa("mission", "show", "mission-layout", "ci-watch").mission.thread !== null) throw new Error("승인만으로 임무가 실행됐다");
+    await domIs(page, "승인 뒤 배지 없음", () => document.querySelector('[data-testid="activity-badge-special"]') === null);
   });
 
 
@@ -1228,6 +1237,17 @@ export default async function ({ page }) {
     const row = page.getByTestId("pane-coord-home coordinator");
     await page.setViewportSize({ width: 1280, height: 800 });
     await inList(page, row);
+    // 사용자 결정 10-19(plan §8.249): coordinator 줄은 왼쪽 보라 막대, thread가 있으면 그 아래 「thread n」 머리줄, 자식 줄은 8px만 들인다
+    fs.writeFileSync(`${root}/coord-task.txt`, "noreport\n");
+    const side = aaa("thread", "start", "coord-home", "--title", "옆일", "--profile", "fake", "--machine", "labA", "--kind", "dir", "--task-file", `${root}/coord-task.txt`);
+    await domIs(page, "thread 머리줄", () => document.querySelector('[data-testid="project-thread-head-coord-home"]')?.textContent.trim() === "thread 1");
+    const look = await page.evaluate((thread) => {
+      const header = (q) => document.querySelector(q).closest("li").querySelector(".workspace-header");
+      const coord = header('[data-testid="pane-coord-home coordinator"]');
+      const bar = getComputedStyle(coord, "::before");
+      return { coordinator: coord.closest("li").classList.contains("is-coordinator"), bar: bar.backgroundColor, width: bar.width, indent: getComputedStyle(coord).paddingLeft, threadIndent: getComputedStyle(header(`[data-testid="thread-coord-home-${thread}"]`)).paddingLeft };
+    }, side.id);
+    if (!look.coordinator || look.bar !== "rgb(185, 156, 242)" || look.width !== "2px" || look.indent !== "8px" || look.threadIndent !== "8px") throw new Error(`coordinator 구별·들여쓰기: ${JSON.stringify(look)}`);
     await shot(page, "desktop-coordinator-project");
     await page.setViewportSize({ width: 390, height: 844 });
     await page.locator(".view [data-testid='drawer-toggle']").click();

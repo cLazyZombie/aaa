@@ -3,11 +3,12 @@
 // aria-selected·aria-expanded, 사이드바를 접으면 고른 단추가 없다. ↑↓·Home·End는 단추 사이 focus만 옮기고(roving tabindex) Enter·Space가
 // 고른다. 패널이 아닌 보고서(본문을 바꾼다)와 설정(창)은 아래 묶음의 보통 단추다(VS Code 아래 묶음 Accounts·Manage 자리).
 import { useRef, type KeyboardEvent, type ReactNode } from "react";
-import { Bot, Eye, FileText, Folders, Monitor, type LucideIcon } from "lucide-react";
+import { Bot, Eye, FileText, Folders, Monitor, Radar, type LucideIcon } from "lucide-react";
 import { PANEL_LABEL, PANELS, type SidebarPanel } from "./sidebarPanel";
 import "./ActivityBar.css";
 
-const PANEL_ICON: Record<SidebarPanel, LucideIcon> = { projects: Folders, machines: Monitor, agents: Bot };
+// 특수는 Radar: 늘 지켜보다 깨어나는 임무와 평가자, 에이전트(Bot)와 실루엣이 다르다(시안 t-0393, plan §8.249)
+const PANEL_ICON: Record<SidebarPanel, LucideIcon> = { projects: Folders, machines: Monitor, agents: Bot, special: Radar };
 
 export function ActivityBar({
   panel,

@@ -63,11 +63,11 @@ export default async function () {
       await p.keyboard.press("Enter");
       await sidebarIs(p, { panel: "machines", collapsed: false }, "Enter로 머신");
       await p.keyboard.press("End");
-      await focusIs(p, "End 에이전트 단추", '[data-testid="activity-agents"]');
+      await focusIs(p, "End 특수 단추", '[data-testid="activity-special"]');
       await p.keyboard.press("Home");
       await focusIs(p, "Home 프로젝트 단추", '[data-testid="activity-projects"]');
       const tabStops = await p.evaluate(() => [...document.querySelectorAll('.activity-bar [role="tab"]')].map((e) => e.tabIndex).join(","));
-      if (tabStops !== "-1,0,-1") throw new Error(`Tab이 머무는 단추가 고른 패널 하나가 아니다: ${tabStops}`);
+      if (tabStops !== "-1,0,-1,-1") throw new Error(`Tab이 머무는 단추가 고른 패널 하나가 아니다: ${tabStops}`);
       // Mod+Shift+B(참고 toggle-sidebar): 터미널에 focus가 있어도 앱이 가져가 접고 편다
       await p.getByTestId("terminal").click();
       await p.keyboard.press("ControlOrMeta+Shift+B");

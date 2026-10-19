@@ -1,8 +1,8 @@
 // 왼쪽 목록(herdr-web-ui MachineSidebar·Sidebar·AgentSidebar, aa624cb). 모양(class)과 CSS는 참고 것을 그대로 쓴다(herdr/*.css).
-// 패널 셋(활동 막대가 하나를 고른다, plan §8.240): 「프로젝트」는 프로젝트 머리(접기, 셈, 묶음 대표 상태) 아래 모든 머신의 thread 줄
+// 패널 넷(활동 막대가 하나를 고른다, plan §8.240·§8.249): 「프로젝트」는 프로젝트 머리(접기, 셈, 묶음 대표 상태) 아래 모든 머신의 thread 줄
 // (둘째 줄 왼쪽 상태 말, 오른쪽 머신 이름, t-0352 시안 2안, plan §8.195) → thread가 아닌 pane의 「기타」 묶음(줄에 머신 이름).
-// 「머신」은 머신 줄(이름·host·연결 점·+, 끊김·점검 글), 「에이전트」는 모든 머신의 agent 목록. 머신은 트리 단계가 아니다.
-// 셋 다 늘 그려 두고 고르지 않은 것은 숨긴다(굴린 자리를 지킨다). 머리·띠·바닥 줄(사용량, App.tsx ListFoot)은 패널과 상관없다.
+// 「머신」은 머신 줄(이름·host·연결 점·+, 끊김·점검 글), 「에이전트」는 모든 머신의 agent 목록, 「특수」는 임무·사후 평가자.
+// 머신은 트리 단계가 아니다. 넷 다 늘 그려 두고 고르지 않은 것은 숨긴다(굴린 자리를 지킨다). 머리·띠·바닥 줄(사용량, App.tsx ListFoot)은 패널과 상관없다.
 // aaa에는 herdr workspace가 없다: 참고의 workspace 줄 자리에 pane 줄을, worktree 묶음 자리에 프로젝트 묶음을 둔다.
 // thread는 자기 줄 하나로만 보인다(L4, herdr-projects sidebar.rs: thread는 자기 agent 줄이고 이름이 「id · 제목」).
 import {
@@ -21,8 +21,8 @@ import {
   type MouseEvent,
   type ReactNode,
 } from "react";
-import { ChevronDown, ChevronRight, Ellipsis, Eraser, FileText, Folder, FolderOpen, Layers, ListChecks, Monitor, Pencil, Pin, PinOff, Plus, RotateCcw, Terminal, Trash2, TriangleAlert, X } from "lucide-react";
-import type { FrontRequest, MachineView, PaneView, PlanSummary, ThreadView } from "./gen/proto";
+import { ChevronDown, ChevronRight, CircleDashed, Ellipsis, Eraser, FileText, Folder, FolderOpen, Layers, ListChecks, Monitor, Pause, Pencil, Pin, PinOff, Play, Plus, RotateCcw, RotateCw, ScanEye, ShieldCheck, Terminal, Trash2, TriangleAlert, X } from "lucide-react";
+import type { EvaluatorView, FrontRequest, MachineView, MissionView, PaneView, PlanSummary, ThreadView } from "./gen/proto";
 import { ApiError, call } from "./api";
 import { ConfirmDialog } from "./ConfirmDialog";
 import { PaneRename } from "./PaneRename";
@@ -43,6 +43,7 @@ import "./herdr/Machines.css";
 import "./Sidebar.css";
 import { MachineMeters } from "./MachineMeters";
 import { machineStats } from "./machineStats";
+import { evaluatorState, missionTone, missionWord, type SpecialTone } from "./specialModel";
 
 /** 상태 말(참고 status.ts STATUS_WORD는 영어 대문자 낱말이다). 화면 낭독·tooltip에 쓴다 */
 const STATUS_KO: Record<KnownStatus, string> = {
@@ -201,6 +202,8 @@ interface MenuState {
   title: string;
   place: string;
   items: () => RowMenuItem[];
+  /** 제목 대신 둘 머리(특수 줄: 제목과 셈 한 줄) */
+  header?: ReactNode;
 }
 /** 되돌릴 수 없는 일 앞의 확인(참고 Sidebar.tsx `setConfirm`) */
 interface ConfirmState {
@@ -253,6 +256,11 @@ export interface SidebarProps {
   banners?: ReactNode;
   /** 보이는 패널(활동 막대) */
   panel: SidebarPanel;
+  /** 특수 패널: 임무·사후 평가자(App이 읽는다) */
+  missions: MissionView[];
+  evaluators: EvaluatorView[];
+  /** 임무 동작 뒤 다시 읽기 */
+  onMissionsChanged: () => void;
 }
 
 export function Sidebar(props: SidebarProps) {
@@ -303,7 +311,10 @@ export function Sidebar(props: SidebarProps) {
       <div {...panelProps("agents", props.panel)} className="sidebar-panel agents-panel">
         <AgentSection {...props} />
       </div>
-      {menu && <RowMenu anchor={menu.anchor} point={menu.point} restoreFocusTo={menu.previousFocus} title={menu.title} subtitle={menu.place} items={menu.items()} onClose={closeMenu} />}
+      <div {...panelProps("special", props.panel)} className="list-body machine-list sidebar-panel special-panel">
+        <SpecialSection {...props} />
+      </div>
+      {menu && <RowMenu anchor={menu.anchor} point={menu.point} restoreFocusTo={menu.previousFocus} title={menu.title} subtitle={menu.place} header={menu.header} items={menu.items()} onClose={closeMenu} />}
       {confirm && (
         <ConfirmDialog
           title={confirm.title}
@@ -683,7 +694,7 @@ function PaneRow({ pane: p, online, machine, twoLine, move, ...props }: SidebarP
   };
   return (
     <li
-      className={`workspace workspace-group pane-item${selected ? " is-selected" : ""}${p.state !== "running" ? " is-ended" : ""}${online ? "" : " is-offline"}${move?.dragging ? " is-dragging" : ""}${move?.lifted ? " is-lifted" : ""}`}
+      className={`workspace workspace-group pane-item${p.coordinator_project ? " is-coordinator" : ""}${selected ? " is-selected" : ""}${p.state !== "running" ? " is-ended" : ""}${online ? "" : " is-offline"}${move?.dragging ? " is-dragging" : ""}${move?.lifted ? " is-lifted" : ""}`}
       inert={!online}
       data-pane={p.id}
       data-pin-key={pinKey}
@@ -835,6 +846,12 @@ function ProjectGroup({
             {shownCoordinators.map((p) => (
               <PaneRow key={p.id} {...props} pane={p} machine={props.machines.find((m) => m.id === p.machine_id)} online={p.connection === "connected"} twoLine={twoLine} />
             ))}
+            {/* coordinator와 그 아래 thread를 나누는 머리줄(사용자 결정 10-19 m2, plan §8.249) */}
+            {shownCoordinators.length > 0 && shown.length > 0 && (
+              <li className="project-thread-head" aria-hidden="true" data-testid={`project-thread-head-${project}`}>
+                thread {shown.length}
+              </li>
+            )}
             {shown.map((t) => (
               <ThreadRow key={threadKey(t)} {...props} online={online(t)} machine={machineOf(t)} t={t} twoLine={twoLine} />
             ))}
@@ -1044,5 +1061,195 @@ function AgentSection(props: SidebarProps) {
         )}
       </div>
     </section>
+  );
+}
+
+/**
+ * 특수 패널(사용자 결정 10-19, plan §8.249): 임무·사후 평가자를 프로젝트별 두 줄 줄로. 예전에는 목록 머리의 「특수 ●」 칩이었다.
+ * 줄을 누르면 pane이 돌면 그 pane, 없으면 임무 보기(차이·승인 상태)다. 시작·멈춤·다시 읽기·승인 검토는 ⋯ 메뉴(넓은 창은 오른쪽 클릭)에만
+ * 있다: 여는 것만으로 임무를 움직이지 않는다. 보기 권한이면 열기·보기만.
+ */
+function SpecialSection({ missions, evaluators, panes, canControl, agentOf, onPane, onMissionsChanged, selected }: SidebarProps) {
+  const rows = useRows();
+  const [show, setShow] = useState<MissionView | null>(null);
+  const [failed, setFailed] = useState<{ key: string; message: string } | null>(null);
+  const projects = [...new Set([...missions.map((m) => m.project), ...evaluators.map((v) => v.project)])];
+  const live = (id: string | null | undefined) => (id ? panes.find((p) => p.id === id && p.state === "running") : undefined);
+  const invoke = (key: string, req: FrontRequest) => {
+    setFailed(null);
+    call(req)
+      .then(onMissionsChanged)
+      .catch((e: unknown) => setFailed({ key, message: e instanceof ApiError ? e.message : String(e) }));
+  };
+  if (projects.length === 0) return <p className="tree-state">특수 agent가 없다</p>;
+  return (
+    <>
+      {projects.map((project) => (
+        <section key={project} className="special-project" aria-label={`${project} 특수`}>
+          <h3 className="special-project-head">
+            <Folder aria-hidden="true" />
+            {project}
+          </h3>
+          <ul className="workspace-list">
+            {missions
+              .filter((m) => m.project === project)
+              .map((m) => {
+                const key = `mission:${m.project}/${m.name}`;
+                const t = m.thread;
+                const pane = live(t?.pane);
+                const start = !t || t.status === "resolved";
+                const paused = m.state === "멈춤";
+                const items = (): RowMenuItem[] => [
+                  ...(pane ? [{ id: "open", label: "열기", icon: Terminal, run: () => onPane(pane.id) }] : []),
+                  { id: "view", label: `임무 보기${m.stale ? " · 낡음" : ""}`, icon: FileText, run: () => setShow(m) },
+                  ...(canControl
+                    ? [
+                        {
+                          id: "run",
+                          label: start ? "시작" : paused ? "이어 가기" : "멈춤",
+                          icon: start || paused ? Play : Pause,
+                          run: () => invoke(key, { op: start ? "mission_start" : paused ? "mission_resume" : "mission_pause", project: m.project, name: m.name } as FrontRequest),
+                        },
+                        { id: "reload", label: "다시 읽기", icon: RotateCw, run: () => invoke(key, { op: "mission_reload", project: m.project, name: m.name }) },
+                        ...(!m.approved && !m.error
+                          ? [
+                              {
+                                id: "approve",
+                                label: "승인 검토",
+                                icon: ShieldCheck,
+                                run: () =>
+                                  rows.ask({
+                                    title: `${m.title} · 임무 승인`,
+                                    body: `첫 시작·repo·예산 올림을 승인한다.\n승인 hash ${m.approval_sha256}\n\n${m.file_text}`,
+                                    action: "승인",
+                                    run: async () => {
+                                      await call({ op: "mission_approve", project: m.project, name: m.name, approval_sha256: m.approval_sha256 });
+                                      onMissionsChanged();
+                                    },
+                                  }),
+                              },
+                            ]
+                          : []),
+                      ]
+                    : []),
+                ];
+                const agent = t ? agentOf(pane, t) : null;
+                return (
+                  <SpecialRow
+                    key={key}
+                    rowKey={key}
+                    testid={`mission-${m.project}-${m.name}`}
+                    lead={t ? <RowMark agent={agent} /> : <span className="sidebar-mark" aria-hidden="true"><CircleDashed /></span>}
+                    title={m.title}
+                    tone={missionTone(m)}
+                    facts={[missionWord(m), `깨움 ${m.wakes_today}/${m.max_wakes}`, ...(pane ? [] : ["pane 없음"])]}
+                    where={t?.machine ?? ""}
+                    paneOpen={pane !== undefined}
+                    selected={pane !== undefined && selected === `pane:${pane.id}`}
+                    summary={`${m.project} · 일한 분 ${m.work_minutes} · post 처리 ${m.handled_posts}/${m.posts} · 입력 ${m.pending}`}
+                    open={() => (pane ? onPane(pane.id) : setShow(m))}
+                    items={items}
+                  />
+                );
+              })}
+            {evaluators
+              .filter((v) => v.project === project)
+              .map((v) => {
+                const key = `evaluator:${v.project}`;
+                const pane = live(v.thread.pane);
+                const { tone, word } = evaluatorState(v, panes);
+                return (
+                  <SpecialRow
+                    key={key}
+                    rowKey={key}
+                    testid={`evaluator-${v.project}`}
+                    lead={<span className="sidebar-mark" aria-hidden="true"><ScanEye /></span>}
+                    title="사후 평가자"
+                    tone={tone}
+                    facts={[word, `정할 개선안 ${v.undecided}`, ...(pane ? [] : ["pane 없음"])]}
+                    where={v.thread.machine}
+                    paneOpen={pane !== undefined}
+                    selected={pane !== undefined && selected === `pane:${pane.id}`}
+                    summary={`${v.project} 사후 평가자 ${v.thread.id} · 받은 평가 ${v.evaluations} · 정하지 않은 개선안 ${v.undecided}`}
+                    open={() => pane && onPane(pane.id)}
+                    items={() => (pane ? [{ id: "open", label: "열기", icon: Terminal, run: () => onPane(pane.id) }] : [])}
+                  />
+                );
+              })}
+          </ul>
+          {failed?.key.startsWith(`mission:${project}/`) && (
+            <p className="sidebar-inline-error" role="alert">
+              {failed.message}
+            </p>
+          )}
+        </section>
+      ))}
+      {show && (
+        <ConfirmDialog
+          title={`${show.title} · ${missionWord(show)}`}
+          body={`적용 판 ${show.applied_sha ?? "없음"} · 파일 판 ${show.file_sha ?? "없음"}\n승인 ${show.approved ? "됨" : "필요"}\n다음 reset ${show.next_reset_ms ? new Date(show.next_reset_ms).toLocaleString() : "없음"}\n사용량 대기 ${show.usage_wait_until_ms ? new Date(show.usage_wait_until_ms).toLocaleString() : "없음"}\n\n차이\n${show.diff || "없음"}\n\n적용 사본\n${show.applied_text}\n\n후보 파일\n${show.file_text}${show.error ? `\n오류: ${show.error}` : ""}`}
+          confirmLabel="확인"
+          onConfirm={async () => setShow(null)}
+          onClose={() => setShow(null)}
+        />
+      )}
+    </>
+  );
+}
+
+/** 특수 줄 하나: 사이드바 두 줄 줄 모양(이름 / 상태 말·사실, 오른쪽 머신)과 상태 점 */
+function SpecialRow({ rowKey, testid, lead, title, tone, facts, where, paneOpen, selected, summary, open, items }: {
+  rowKey: string;
+  testid: string;
+  lead: ReactNode;
+  title: string;
+  tone: SpecialTone;
+  facts: string[];
+  where: string;
+  paneOpen: boolean;
+  selected: boolean;
+  summary: string;
+  open: () => void;
+  items: () => RowMenuItem[];
+}) {
+  const rows = useRows();
+  const line = facts.join(" · ");
+  const toggleMenu = (anchor: HTMLElement, point?: { x: number; y: number }, previousFocus?: HTMLElement | null) =>
+    rows.toggleMenu({
+      key: rowKey,
+      anchor,
+      point,
+      previousFocus,
+      title,
+      place: summary,
+      items,
+      header: (
+        <div className="mission-summary">
+          <strong>{title}</strong>
+          <p>{summary}</p>
+        </div>
+      ),
+    });
+  return (
+    <li className={`workspace workspace-group pane-item special-row${selected ? " is-selected" : ""}`} data-testid={testid} data-tone={tone}>
+      <div className="workspace-header" onMouseDownCapture={keepFocusOnMenuPress} onContextMenu={(e) => onRowContextMenu(e, toggleMenu)}>
+        <div className="pane-select workspace-select" role="button" tabIndex={0} aria-current={selected ? "true" : undefined} title={[title, line, where].filter(Boolean).join("\n")} onClick={open} onKeyDown={(e) => onRowKey(e, open)}>
+          {lead}
+          <span className="workspace-copy is-two-line">
+            <span className="workspace-line">
+              <span className="workspace-name">{title}</span>
+            </span>
+            <span className="workspace-place thread-place">
+              <span className={`special-state is-${tone}`}>{line}</span>
+              {where && <span className="thread-machine">{where}</span>}
+            </span>
+          </span>
+          <span className="sidebar-pane-meta">
+            <span className={`special-dot is-${tone}${paneOpen ? "" : " is-nopane"}`} aria-hidden="true" />
+          </span>
+        </div>
+        <RowMenuButton title={title} open={rows.menuKey === rowKey} onToggle={(anchor) => toggleMenu(anchor)} />
+      </div>
+    </li>
   );
 }
