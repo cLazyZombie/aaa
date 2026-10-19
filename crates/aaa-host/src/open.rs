@@ -43,7 +43,7 @@ fn record_key(project: &str) -> String {
 impl Host {
     /// 그 폴더에서 도는 coordinator 중 agent가 있는 pane: `project open`이 띄운 것(역할 coordinator, custom profile이어도),
     /// 띄울 때 알린 harness·실행 파일 이름이 Claude·Codex인 것, 감지한 agent가 있는 것
-    fn running_coordinators(&self, dir: &std::path::Path) -> Vec<PaneView> {
+    pub(crate) fn running_coordinators(&self, dir: &std::path::Path) -> Vec<PaneView> {
         self.coordinator_panes(dir)
             .into_iter()
             .filter(|p| {

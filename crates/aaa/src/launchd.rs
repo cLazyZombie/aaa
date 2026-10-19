@@ -201,11 +201,20 @@ fn installed(role: &str, what: &str) -> Result<PathBuf> {
 
 /// 감독자가 aaa를 끝내고 다시 띄운다(`launchctl kickstart -k`). 업그레이드(새 binary로 교체) 뒤에 쓴다
 pub fn restart(role: &str) -> Result<String> {
+    restart_with(role, false)
+}
+/// host가 승인한 배포 executor에서만 부른다. CLI에 우회 인자는 없다.
+pub(crate) fn restart_authorized(role: &str) -> Result<String> {
+    restart_with(role, true)
+}
+fn restart_with(role: &str, authorized: bool) -> Result<String> {
     installed(role, "다시 띄우기")?;
     if launchd_state(role)?.is_none() {
         bail!("{} 감독자가 멈춰 있다. 띄우려면 `aaa service start --role {role}`", label(role));
     }
-    human_only(&format!("{} 다시 띄우기(세션은 이어진다)", label(role)))?;
+    if !authorized {
+        human_only(&format!("{} 다시 띄우기(세션은 이어진다)", label(role)))?;
+    }
     let (ok, text) = launchctl(&["kickstart", "-k", &service_target(role)])?;
     if !ok {
         bail!("launchctl kickstart 실패: {}", text.trim());
