@@ -1,4 +1,5 @@
 //! L1 실제 CLI·TLS agent·사본 실행 파일. launchctl만 기록하는 모형이며 운영 서비스에 닿지 않는다.
+#![cfg(target_os = "macos")]
 use super::*;
 
 #[test]
