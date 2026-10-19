@@ -46,6 +46,7 @@ pub(crate) fn route(json: bool, machine: Option<String>, action: DeployAction) -
 pub(crate) fn execute(exe: &std::path::Path, action: DeployAction) -> Result<String, String> {
     let result: Result<String> = (|| {
         match action {
+            DeployAction::UpdateStaged { .. } => bail!("staged 후보는 agent가 자기 상태 폴더에서만 해석한다"),
             DeployAction::Update { from, version, dry_run } => {
                 crate::update::update_approved(
                     true,

@@ -547,6 +547,29 @@ pub enum LinkMsg {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "op", rename_all = "snake_case")]
 pub enum AgentRequest {
+    /// deploy_stage.v1: provenance가 있는 빌드 폴더의 aaa만 읽는다.
+    DeployFetch {
+        path: String,
+        offset: u64,
+        len: u32,
+        sha256: String,
+    },
+    DeployStage {
+        rollout: String,
+        project: String,
+        offset: u64,
+        data: B64,
+        eof: bool,
+        sha256: String,
+        total: u64,
+    },
+    DeployStageStatus {
+        rollout: String,
+    },
+    DeployStageClean {
+        rollout: String,
+        keep: bool,
+    },
     /// deployment.v1: host가 coordinator 출처와 safety를 확인한 요청만 보낸다.
     DeployStart {
         id: String,
@@ -814,6 +837,15 @@ pub struct PrAnswer {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum AgentResponse {
+    DeployChunk {
+        offset: u64,
+        data: B64,
+        eof: bool,
+        total: u64,
+    },
+    DeployStage {
+        stage: crate::DeployStageView,
+    },
     Deployment {
         job: crate::DeployJob,
         running_software: String,

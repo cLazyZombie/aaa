@@ -4090,7 +4090,7 @@ coordinator 실기(10-18 00:58, iPhone 홈 화면 앱을 앞에 띄움, binary c
   - session host 내부 프로토콜은 이전 session host와 호환해야 한다. 세션은 몇 주 이어질 수 있다.
 - **DB·설정:** DB는 expand/contract로 바꾼다. 이전 프로세스가 남아 있는 동안 설정 migrate를 미룬다.
 - **롤백:** 이전 산출물을 보관한다(개수는 TOML). DB 백업을 복원하고 `aaa update rollback`을 실행한다. 서명이나 다운로드가 실패하면 fallback 설치를 하지 않는다.
-- **지금(10-19, §8.276):** 커밋 빌드는 `scripts/deploy-build.sh`로 한 번 만든다(origin/main 조상, 깨끗한 worktree, 웹 포함, `+<커밋>` 판, provenance.json). `aaa deploy start --from <절대 경로> --sha256 <SHA>`가 host DB의 rollout으로 여러 Mac을 순차 갱신한다. L1은 각 머신에 같은 경로의 후보가 미리 있어야 한다. 모든 대상 SHA·dry-run → host 교체·재시작·실행 판/SHA → 로컬 agent → 원격 agent → coordinator 안내 갱신 순서다. 자동 rollback·host 감시는 L3이며 L1 실패는 멈춘다.
+- **지금(10-19, §8.282):** 커밋 후보는 `scripts/deploy-build.sh`로 한 번 만든다(origin/main 조상·격리 worktree·웹·커밋 판·provenance). `aaa deploy start --file <빌드머신>:<후보폴더>/aaa --sha256 <SHA>`가 Agent link로 전체 전송/SHA/self-check를 끝낸 뒤 host → 로컬 agent → 원격 agent 순서로 교체·재시작·실행 판/SHA를 확인한다. 기존 --from 미리 복사 경로도 유지한다. 실패 머신 자동 rollback·host 감시는 L3이며 L2는 중단한다.
 - **공개판(§8.210):** 공개 GitHub release의 `manifest.json`·OS/arch 실행 파일을 받는 `aaa update [--version <판>]`와 기존 `--from`·보관·rollback을 쓴다. SHA-256·self-check·version 고정 검사 뒤 같은 폴더 rename이다. macOS는 기존과 같은 ad-hoc 서명이며 서명 manifest·host가 agent로 보내기·DB 백업은 아직 없다.
 
 ## 12. 기술 스택 추천
@@ -5535,3 +5535,12 @@ primary 근거:
 - 목록은 열기·포커스·보이는 동안30초·수동 갱신으로 host 정본을 읽는다. 최근 기록20건을 펼치며 휴대폰 drawer에서도 쓴다. 폼 편집/지금 실행/TOML/공통 안전장치는 후속 단계다. [운영 확인](automations.md)과 [시험](testing.md)을 따른다.
 
 - **L3 추가 수리(사용자 21:3x 결정, t-0436 인계).** MissionRun의 내구 blocked_reason으로 question·message_unknown·wake_unknown·brief_unknown·restart_failed·legacy_unknown을 구분한다. question만 Working/Idle 관찰로 해제하며 쌓인 입력은 기존 안전장치를 거친다. 전달 모름은 Question·pause/resume로 우회하지 않고 merge_run의 오래된 사본으로 덮지 않는다. 깨움 표지 commit 전에도 최신 이유를 확인한다. 명시 restart·새 대화 확정 때만 내구 이유를 지운다. 웹 특수 줄은 짧은 이유를 붙이고 자동화 기록에도 남긴다. [운영 확인](mission-blocks.md).
+
+### 8.282 Agent link 빌드 후보 전송 L2(10-19, t-0426)
+
+- **계약.** FRONT_API1.49, AGENT_LINK1.7(N-1=1.6), macOS agent `deploy_stage.v1`. `--file <머신>:<후보폴더>/aaa`는 source_machine을 저장하고 source/모든 대상 기능을 확인한다. 기존 --from과 L1 저장 기록은 source_machine 생략(None)으로 읽는다. 시작/조회 권한은 coordinator+safety 그대로이며 사람 터미널은 L5다.
+- **읽기.** DeployFetch는 빌드 폴더의 일반 파일aaa와 같은 폴더의 일반 provenance.json만 받는다. symlink와 크기 초과, provenance SHA 불일치, 첫 읽기의 실제 SHA 불일치를 거부한다. source 머신의 인터넷/SSH는 필요 없다.
+- **전송.** host가 source에서256KiB를 받아 대상에 하나씩 보낸다. base64 frame은1MiB보다 작고 전체256MiB 상한이다. DeployStage는 deployments/<rollout>.part와 stage.json에 프로젝트/SHA/크기를 묶고 실제 저장 길이와 다른 offset을 거부한다. 조각은 fsync하고 재개는 DeployStageStatus의 길이를 정본으로 삼는다. EOF SHA→실행 권한→기존 dry-run self-check→.bin 공개/완료 영수증 순서다. 원본 후보를 다시 실행하지 않는다.
+- **재개/순서.** 모든 대상 Transfer→모든 대상 Preflight→L1 교체/재시작 순서다. 각 단계/job ID를 먼저 저장하고 bytes 진행도 DB에 남긴다. host 단절/ACK 유실 뒤 전송 상태를 먼저 조회하고 같은 ID/offset으로 잇는다. 각 조각 전 safety와120초 단계 한도를 확인한다. stage 상태가 완료여도 설치 직전 SHA를 다시 확인한다.
+- **교체/정리.** UpdateStaged는 자유 경로 없이 rollout ID의 자기 프로젝트 완료 후보만 해석해 CheckedUpdate로 기존 staging·판 고정·보관·rename을 쓴다. job 영수증의 원래 요청은 유지한다. EOF와 끝 정리에서 완료 후보는 마지막 하나만 남기며, 중단 후보는 지운다. 정리 요청의 보존 ID는 유효/존재/완료를 먼저 확인한다. 연결 단절 중 정리 실패는 기록하고 다음 전송에서 크기를 제한한다. old binary 보관과 자동 rollback은 별개다.
+- **시험.** agent가 경로·offset·SHA/실행순서·프로세스 재생성·보존/정리를 소유하고 host가 전이/영수증을 소유한다. 기존 m13은 실제 TLS source 앞의 시험 소유 byte proxy로 다음 조각을 잡은 뒤 pane 왕복/host 종료/동일ID 재개를 검증한다. 전송을 큰 파일이나 sleep으로 늦추지 않는다. 기존 --from 변조·둘째 머신 실패 단언도 유지한다.

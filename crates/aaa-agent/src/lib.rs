@@ -1185,6 +1185,16 @@ impl Agent {
     ) {
         let wait = Duration::from_millis(deadline_ms.unwrap_or(600_000).clamp(1, 86_400_000));
         let direct: Result<AgentResponse, ErrorBody> = match body {
+            req @ (AgentRequest::DeployFetch { .. }
+            | AgentRequest::DeployStage { .. }
+            | AgentRequest::DeployStageStatus { .. }
+            | AgentRequest::DeployStageClean { .. }) => {
+                let agent = self.clone();
+                tokio::task::spawn_blocking(move || agent.deployments.transport(&agent.exe, req))
+                    .await
+                    .map_err(|e| ErrorBody::new(ErrorCode::Internal, e.to_string()))
+                    .and_then(|r| r)
+            }
             AgentRequest::DeployStart { id: job, project, action } => {
                 return self.deploy_start(id, job, project, action).await;
             }

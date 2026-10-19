@@ -2,6 +2,84 @@
 #![cfg(target_os = "macos")]
 use super::*;
 
+// 실제 TLS agent 앞의 시험 소유 byte proxy. 두 번째 조각 응답을 붙잡고 다른 link/입력을 관찰한다.
+struct TransferProxy {
+    addr: String,
+    reached: std::sync::mpsc::Receiver<()>,
+    release: std::sync::Arc<(std::sync::Mutex<bool>, std::sync::Condvar)>,
+    stop: std::sync::Arc<std::sync::atomic::AtomicBool>,
+}
+impl TransferProxy {
+    fn new(upstream: String) -> Self {
+        use std::io::{Read, Write};
+        use std::net::{TcpListener, TcpStream};
+        use std::sync::{
+            Arc, Condvar, Mutex,
+            atomic::{AtomicBool, Ordering},
+            mpsc,
+        };
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap().to_string();
+        let release = Arc::new((Mutex::new(false), Condvar::new()));
+        let stop = Arc::new(AtomicBool::new(false));
+        let used = Arc::new(AtomicBool::new(false));
+        let (notify, reached) = mpsc::channel();
+        let (thread_release, thread_stop) = (release.clone(), stop.clone());
+        std::thread::spawn(move || {
+            for client in listener.incoming() {
+                if thread_stop.load(Ordering::SeqCst) {
+                    break;
+                }
+                let Ok(mut client) = client else { break };
+                let Ok(mut server) = TcpStream::connect(&upstream) else { continue };
+                let _ = client.set_nodelay(true);
+                let _ = server.set_nodelay(true);
+                let (mut read_server, mut write_client) = (server.try_clone().unwrap(), client.try_clone().unwrap());
+                std::thread::spawn(move || {
+                    let _ = std::io::copy(&mut read_server, &mut write_client);
+                    let _ = write_client.shutdown(std::net::Shutdown::Both);
+                });
+                let (release, used, notify) = (thread_release.clone(), used.clone(), notify.clone());
+                std::thread::spawn(move || {
+                    let mut forwarded = 0;
+                    let mut bytes = [0; 16 * 1024];
+                    while let Ok(n) = client.read(&mut bytes) {
+                        if n == 0 {
+                            break;
+                        }
+                        if forwarded >= 2 * aaa_proto::DEPLOY_CHUNK && !used.swap(true, Ordering::SeqCst) {
+                            let _ = notify.send(());
+                            let (lock, changed) = &*release;
+                            let mut open = lock.lock().unwrap();
+                            while !*open {
+                                open = changed.wait(open).unwrap();
+                            }
+                        }
+                        if server.write_all(&bytes[..n]).is_err() {
+                            break;
+                        }
+                        forwarded += n;
+                    }
+                    let _ = server.shutdown(std::net::Shutdown::Both);
+                });
+            }
+        });
+        Self { addr, reached, release, stop }
+    }
+    fn release(&self) {
+        let (lock, changed) = &*self.release;
+        *lock.lock().unwrap() = true;
+        changed.notify_all();
+    }
+}
+impl Drop for TransferProxy {
+    fn drop(&mut self) {
+        self.release();
+        self.stop.store(true, std::sync::atomic::Ordering::SeqCst);
+        let _ = std::net::TcpStream::connect(&self.addr);
+    }
+}
+
 #[test]
 #[cfg(target_os = "macos")]
 fn rollout_preflights_all_targets_and_resumes_same_jobs_after_host_restart() {
@@ -9,12 +87,15 @@ fn rollout_preflights_all_targets_and_resumes_same_jobs_after_host_restart() {
     let mut w = world();
     w.add_remote();
     let b = w.lab.node("b", None);
+    let proxy = TransferProxy::new(w.addr.clone());
     let dir = w.lab.root.join("rollout-bin");
     std::fs::create_dir_all(dir.join("a")).unwrap();
     std::fs::create_dir_all(dir.join("b")).unwrap();
     let a_exe = dir.join("a/aaa");
     let b_exe = dir.join("b/aaa");
-    let candidate = dir.join("candidate");
+    let candidate_dir = dir.join("build");
+    std::fs::create_dir_all(&candidate_dir).unwrap();
+    let candidate = candidate_dir.join("aaa");
     for path in [&a_exe, &b_exe, &candidate] {
         assert!(Command::new("cp").args([lab::BIN, path_str(path)]).status().unwrap().success());
     }
@@ -28,6 +109,7 @@ fn rollout_preflights_all_targets_and_resumes_same_jobs_after_host_restart() {
     );
     let original = hex::encode(Sha256::digest(std::fs::read(&a_exe).unwrap()));
     let sha = hex::encode(Sha256::digest(std::fs::read(&candidate).unwrap()));
+    std::fs::write(candidate_dir.join("provenance.json"), serde_json::json!({"sha256":sha}).to_string()).unwrap();
     let service_home = dir.join("home");
     let service_bin = dir.join("bin");
     let service_log = dir.join("calls");
@@ -66,7 +148,7 @@ esac
     w.lab.spawn_command("rollout-host", w.h.cmd_bin(&a_exe, &["host"]));
     wait_for("사본 host 준비", T, || w.h.json(&["status"]).ok());
     w.lab.spawn_command("rollout-a", agent_cmd(&w.h, &a_exe, "a", "local", "labA"));
-    w.lab.spawn_command("rollout-b", agent_cmd(&b, &b_exe, "b", &w.addr, "labB"));
+    w.lab.spawn_command("rollout-b", agent_cmd(&b, &b_exe, "b", &proxy.addr, "labB"));
     wait_for("사본 agent 둘 연결", T, || {
         (w.lab.log("rollout-a").contains("host에 연결했다")
             && w.lab.log("rollout-b").contains("host에 연결했다")
@@ -137,12 +219,33 @@ esac
         assert_eq!(hex::encode(Sha256::digest(std::fs::read(exe).unwrap())), original);
     }
 
-    let (rc, out, err) = probe(&w, &start(&sha));
+    // L2: 빌드 머신 한 곳의 provenance 후보를 보낸다. 대상에는 미리 복사하지 않는다.
+    let (rc, out, err) = probe(&w, &format!("deploy start --file 'labB:{}' --sha256 {sha}", candidate.display()));
     assert_eq!(rc, "0", "{out} {err}");
     let started: Value = serde_json::from_str(&out).unwrap();
     let r = &started["rollout"];
     let id = r["id"].as_str().unwrap().to_string();
     let before_ids: Vec<_> = r["steps"].as_array().unwrap().iter().map(|s| s["job_id"].clone()).collect();
+    let transfer_started = Instant::now();
+    let partial = w.h.state.join(format!("agent/deployments/{id}.part"));
+    let total = std::fs::metadata(&candidate).unwrap().len();
+    proxy.reached.recv_timeout(T).expect("시험 소켓이 두 번째 후보 조각을 붙잡았다");
+    let offset = std::fs::metadata(&partial).unwrap().len();
+    assert!(offset > 0 && offset < total);
+    // 같은 link의 세션 입력/출력도 조각 사이에 처리된다.
+    let control = Instant::now();
+    w.h.ok(&["pane", "run", &pane, "전송중제어"]);
+    w.h.wait_output(&pane, "got: 전송중제어", T);
+    let control_ms = control.elapsed().as_millis();
+    w.lab.kill("rollout-host");
+    assert_eq!(std::fs::metadata(&partial).unwrap().len(), offset, "잡아 둔 소켓 사건까지 저장 길이는 고정이다");
+    proxy.release();
+    w.lab.spawn_command("rollout-host-transfer-resume", w.h.cmd_bin(&a_exe, &["host"]));
+    wait_for("전송 재개 host의 agent 연결", T, || {
+        (w.h.connected("labA") && w.h.connected("labB")).then_some(())
+    });
+    eprintln!("L2 transfer resume bytes={offset}/{total}, pane input/output={control_ms}ms");
+    let mut transfer_events = Events::connect(&w.h);
     let next_call = |index: usize| {
         wait_for("typed 서비스 재시작 기록", T, || {
             std::fs::read_to_string(&service_log).ok()?.lines().nth(index).map(str::to_string)
@@ -165,15 +268,61 @@ esac
     wait_for("대기 CLI가 재시작 전 host 응답을 받음", T, || {
         std::fs::read_to_string(&wait_err).ok().filter(|s| s.contains(&format!("rollout {id}:")))
     });
+    // 전송은 실제 진행 사건으로 기다리고, 그 뒤 서비스 재시작의 기존 대기 한도를 적용한다.
+    // 같은 사건이나 바이트가 늘지 않은 사건으로 대기 시간을 새로 시작하지 않는다.
+    let transfer_progress = || {
+        let stages: Vec<Value> = [&w.h, &b]
+            .into_iter()
+            .filter_map(|node| {
+                serde_json::from_slice(
+                    &std::fs::read(node.state.join(format!("agent/deployments/{id}.stage.json"))).ok()?,
+                )
+                .ok()
+            })
+            .collect();
+        // 중간 offset은 실제 파일 길이가 정본이고, metadata는 EOF 검증 때 완료로 바뀐다.
+        let bytes: u64 = [&w.h, &b]
+            .into_iter()
+            .filter_map(|node| {
+                ["part", "bin"].into_iter().find_map(|suffix| {
+                    std::fs::metadata(node.state.join(format!("agent/deployments/{id}.{suffix}"))).ok().map(|m| m.len())
+                })
+            })
+            .sum();
+        let complete = stages.len() == 2 && stages.iter().all(|s| s["complete"] == true && s["offset"] == total);
+        (bytes, complete)
+    };
+    let mut from = 0;
+    let mut progress = transfer_progress();
+    while !progress.1 {
+        let (index, next) =
+            transfer_events.wait_from(from, "후보 전송 진행 또는 검증 완료", T, |event| match event {
+                FrontEvent::Flow(f) if f.kind == "rollout_changed" && f.detail == id => {
+                    let next = transfer_progress();
+                    (next.0 > progress.0 || next.1).then_some(next)
+                }
+                _ => None,
+            });
+        from = index + 1;
+        progress = next;
+    }
     assert!(next_call(0).ends_with("/dev.aaa.host"));
+    let transfer_ms = transfer_started.elapsed().as_millis();
+    eprintln!(
+        "L2 all target transfer/preflight to host restart={transfer_ms}ms, bytes={total}, chunk={}",
+        aaa_proto::DEPLOY_CHUNK
+    );
+    // 교체는 agent 상태 폴더의 검증 후보만 쓴다. 원본을 치워도 두 머신 교체가 끝나야 한다.
+    let saved = candidate_dir.join("saved-aaa");
+    std::fs::rename(&candidate, &saved).unwrap();
     // 첫 교체 전 둘 모두 검사 완료. host 재시작 전 remote 파일은 아직 그대로다.
     assert_eq!(hex::encode(Sha256::digest(std::fs::read(&b_exe).unwrap())), original);
-    let host_job = w.h.state.join(format!("agent/deployments/{}.json", before_ids[3].as_str().unwrap()));
+    let host_job = w.h.state.join(format!("agent/deployments/{}.json", before_ids[5].as_str().unwrap()));
     wait_for("host restart 작업 영수증 완료", T, || {
         let v: Value = serde_json::from_str(&std::fs::read_to_string(&host_job).ok()?).ok()?;
         (v["state"] == "completed").then_some(())
     });
-    w.lab.kill("rollout-host");
+    w.lab.kill("rollout-host-transfer-resume");
     w.lab.kill("rollout-a");
     w.lab.spawn_command("rollout-host-new", w.h.cmd_bin(&a_exe, &["host"]));
     // CLI가 새 host에 먼저 붙어도, peer PID 신원을 local hello 이전에 고정하면 안 된다.
@@ -192,7 +341,7 @@ esac
     let restart = next_call(2);
     assert!(restart.starts_with("b ") && restart.ends_with("/dev.aaa.agent"), "{restart}");
     w.lab.kill("rollout-b");
-    w.lab.spawn_command("rollout-b-new", agent_cmd(&b, &b_exe, "b", &w.addr, "labB"));
+    w.lab.spawn_command("rollout-b-new", agent_cmd(&b, &b_exe, "b", &proxy.addr, "labB"));
     wait_for("새 agent 둘 연결", T, || {
         (w.lab.log("rollout-a-new").contains("host에 연결했다")
             && w.lab.log("rollout-b-new").contains("host에 연결했다")
@@ -205,7 +354,13 @@ esac
     let done: Value = serde_json::from_str(&std::fs::read_to_string(&wait_out).unwrap()).unwrap();
     let r = &done["rollout"];
     assert_eq!(r["state"], "done");
-    assert_eq!(r["cursor"], 7);
+    assert_eq!(r["cursor"], 9);
+    for transfer in &r["steps"].as_array().unwrap()[..2] {
+        assert_eq!(transfer["phase"], "transfer");
+        assert_eq!(transfer["transferred_bytes"], total);
+        assert_eq!(transfer["total_bytes"], total);
+    }
+    std::fs::rename(&saved, &candidate).unwrap();
     let after_ids: Vec<_> = r["steps"].as_array().unwrap().iter().map(|s| s["job_id"].clone()).collect();
     assert_eq!(before_ids, after_ids, "재개 시 job ID가 바뀌었다");
     assert!(r["steps"].as_array().unwrap().iter().all(|s| s["completed"] == true));

@@ -123,6 +123,7 @@ pub fn typescript_bindings() -> String {
         ThreadStatus::decl(&cfg),
         BriefState::decl(&cfg),
         DeployAction::decl(&cfg),
+        DeployStageView::decl(&cfg),
         DeployService::decl(&cfg),
         DeployState::decl(&cfg),
         DeployJob::decl(&cfg),

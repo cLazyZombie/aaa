@@ -1,5 +1,6 @@
 //! 배포는 host가 판정한 typed 요청만 받는다. 실행 전 기록하고 같은 ID는 다시 실행하지 않는다.
 use crate::Agent;
+mod stage;
 use aaa_proto::{DeployAction, DeployJob, DeployService, DeployState, ErrorBody, ErrorCode};
 use sha2::{Digest, Sha256};
 use std::{
@@ -24,6 +25,7 @@ pub(crate) struct Manager {
     instance: String,
     running_sha256: String,
     gate: Mutex<()>,
+    stage_gate: Mutex<()>,
     executor: Mutex<Option<Executor>>,
 }
 fn error(e: impl std::fmt::Display) -> ErrorBody {
@@ -48,6 +50,7 @@ impl Manager {
             running_sha256: sha(exe).map_err(|e| anyhow::anyhow!(e.message))?,
             lease: Mutex::new(None),
             gate: Mutex::new(()),
+            stage_gate: Mutex::new(()),
             executor: Mutex::new(None),
         })
     }
@@ -64,6 +67,9 @@ impl Manager {
         let lease = Lease(lease);
         for entry in std::fs::read_dir(&self.root)? {
             let entry = entry?;
+            if entry.path().extension().is_none_or(|s| s != "json") {
+                continue;
+            }
             let Some(id) = entry.path().file_stem().and_then(|s| s.to_str()).map(str::to_string) else {
                 continue;
             };
@@ -141,6 +147,9 @@ impl Manager {
         }
         for entry in std::fs::read_dir(&self.root).map_err(error)? {
             let entry = entry.map_err(error)?;
+            if entry.path().extension().is_none_or(|s| s != "json") {
+                continue;
+            }
             let Some(id) = entry.path().file_stem().and_then(|s| s.to_str()).map(str::to_string) else {
                 continue;
             };
@@ -175,9 +184,17 @@ impl Manager {
             return None;
         }
         let execute = (*self.executor.lock().unwrap())?;
-        let action = job.action.clone();
-        let result =
-            tokio::task::spawn_blocking(move || execute(&exe, action)).await.map_err(|e| e.to_string()).and_then(|r| r);
+        let action = match &job.action {
+            DeployAction::UpdateStaged { rollout, dry_run } => self.staged_action(&job.project, rollout, *dry_run),
+            action => Ok(action.clone()),
+        };
+        let result = match action {
+            Ok(action) => tokio::task::spawn_blocking(move || execute(&exe, action))
+                .await
+                .map_err(|e| e.to_string())
+                .and_then(|r| r),
+            Err(e) => Err(e.message),
+        };
         job.state = if result.is_ok() { DeployState::Completed } else { DeployState::Failed };
         job.result = Some(result.unwrap_or_else(|e| e).chars().take(4096).collect());
         job.updated_ms = aaa_common::util::now_ms();

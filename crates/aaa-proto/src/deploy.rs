@@ -7,6 +7,7 @@ use ts_rs::TS;
 pub enum DeployAction {
     Update { from: Option<String>, version: Option<String>, dry_run: bool },
     CheckedUpdate { from: String, sha256: String, dry_run: bool },
+    UpdateStaged { rollout: String, dry_run: bool },
     Rollback { name: Option<String>, dry_run: bool },
     Restart { service: DeployService },
 }
@@ -56,6 +57,9 @@ pub struct DeployJob {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 pub struct RolloutSpec {
     pub from: String,
+    /// Some이면 이 머신의 빌드 후보를 Agent link로 가져온다. None은 L1 미리 복사 경로다.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_machine: Option<String>,
     pub sha256: String,
     pub commit: Option<String>,
     pub machines: Vec<String>,
@@ -63,6 +67,7 @@ pub struct RolloutSpec {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "snake_case")]
 pub enum RolloutPhase {
+    Transfer,
     Preflight,
     HostUpdate,
     HostRestart,
@@ -80,6 +85,29 @@ pub struct RolloutStep {
     pub host_instance: Option<String>,
     #[ts(type = "number")]
     pub started_ms: u64,
+    #[serde(default)]
+    #[ts(type = "number")]
+    pub transferred_bytes: u64,
+    #[serde(default)]
+    #[ts(type = "number")]
+    pub total_bytes: u64,
+}
+
+/// 조각은 base64를 포함해 1MiB frame보다 작고, 한 번에 하나만 보낸다.
+pub const DEPLOY_CHUNK: usize = 256 * 1024;
+pub const DEPLOY_MAX_BYTES: u64 = 256 * 1024 * 1024;
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+pub struct DeployStageView {
+    pub rollout: String,
+    pub project: String,
+    pub sha256: String,
+    #[ts(type = "number")]
+    pub total: u64,
+    #[ts(type = "number")]
+    pub offset: u64,
+    pub complete: bool,
+    pub version: Option<String>,
 }
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "snake_case")]
