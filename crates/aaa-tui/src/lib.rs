@@ -35,6 +35,7 @@ mod scrollbar;
 mod settings;
 mod tabs;
 mod theme;
+mod title;
 
 use std::collections::{HashMap, HashSet};
 use std::process::ExitCode;
@@ -379,6 +380,7 @@ enum Mode {
 
 /// 화면 위에 뜨는 창
 enum Overlay {
+    Title(title::View),
     Special(usize),
     Help(Help),
     /// 이름 입력(새 탭·탭 이름)
@@ -2081,6 +2083,10 @@ impl App {
                     self.toggle_fold(&rows[i]);
                     return Ok(());
                 }
+                KeyCode::Char('i') => {
+                    self.show_selected_title();
+                    return Ok(());
+                }
                 KeyCode::Up => {
                     self.list_sel = rows.get(list::step(&rows, i, false)).cloned();
                     self.list_top = None;
@@ -2135,6 +2141,13 @@ impl App {
     /// 창이 열려 있을 때의 키(herdr `route_overlay_key`)
     async fn on_overlay_key(&mut self, k: KeyEvent, tx: &mut FrontSender) -> Result<()> {
         match self.overlay.as_mut() {
+            Some(Overlay::Title(v)) => {
+                if matches!(k.code, KeyCode::Esc | KeyCode::Enter | KeyCode::Char('q')) {
+                    self.overlay = None;
+                } else {
+                    v.key(k.code, Rect { x: 0, y: 0, w: self.width, h: self.height });
+                }
+            }
             Some(Overlay::Special(selected)) => {
                 let mut at = *selected;
                 let items = self.special_items();
@@ -2731,12 +2744,26 @@ impl App {
         }
         // 탐색 모드인데 사이드바가 펼쳐져 있지 않으면 펼친 목록을 pane 위에 띄운다(pane 크기는 그대로).
         // herdr는 접힌 칸의 번호만 강조한다: 이름을 보며 고를 수 있게 aaa는 띄운다(plan §8.73).
+        let preview = if self.mode == Mode::Navigate && self.activity_focus.is_none() && !self.reports.shown {
+            self.selected_title().and_then(|text| title::preview(body, text))
+        } else {
+            None
+        };
         if self.mode == Mode::Navigate && self.activity_focus.is_none() && (self.collapsed() || sh.sidebar.w == 0) {
             // pane 칸 위에만(접힌 칸·탭 막대·머리는 그대로), 모드 막대(pane 맨 아랫줄) 위까지
             let w = if sh.header.h > 0 { body.w } else { self.side_width().min(body.w) };
-            self.render_sidebar(buf, Rect { w, h: body.h.saturating_sub(1), ..body }, false);
+            self.render_sidebar(
+                buf,
+                Rect { w, h: body.h.saturating_sub(1 + preview.as_ref().map_or(0, |(r, _)| r.h)), ..body },
+                false,
+            );
             let mut hits = self.hits.borrow_mut();
             (hits.divider, hits.section_divider) = (None, None);
+        }
+        if let Some((rect, lines)) = preview {
+            title::render_preview(buf, rect, &lines, p);
+            self.hits.borrow_mut().title_preview = Some(rect);
+            cursor = None;
         }
         if self.reports.shown {
             self.render_reports(buf, body);
@@ -2756,6 +2783,11 @@ impl App {
         });
         let mut hits = self.hits.borrow_mut();
         match &self.overlay {
+            Some(Overlay::Title(v)) => {
+                hits.popup = title::popup(area);
+                title::render(buf, area, v, p);
+                return None;
+            }
             Some(Overlay::Special(n)) => {
                 hits.popup = help::popup(area, 76, 22);
                 drop(hits);
@@ -3233,6 +3265,8 @@ impl App {
             Mode::Navigate => Some(vec![
                 s(" NAVIGATE ", chip),
                 s(" esc 돌아가기  ", base),
+                s("i", key),
+                s(" 제목 전체  ", base),
                 s("F6", key),
                 s(" 활동  ", base),
                 s("↑/↓", key),
@@ -3862,7 +3896,7 @@ mod tests {
 
     fn app_with_tabs(names: &[&str]) -> App {
         let mut app = App::new("main".into(), "me".into());
-        // 그리기 시험은 herdr 기본 폭 26칸 배치로 그린다(aaa 기본 36은 `shell_layout_like_herdr`가 본다)
+        // 그리기 시험은 herdr 기본 폭 26칸 배치로 그린다(aaa 기본 48은 `shell_layout_like_herdr`가 본다)
         app.sidebar_width = 26;
         app.width = 90;
         app.height = 30;
@@ -4362,7 +4396,7 @@ mod tests {
         assert_eq!(at_col(lines.last().unwrap(), 25), Some('│'), "사이드바는 막대 밑에 그대로");
     }
 
-    /// 화면 배치(herdr `ClientShellConfig::layout`): 펼친 사이드바(aaa 기본 36칸) 온 높이, 그 오른쪽 위 탭 막대 한 줄, 나머지
+    /// 화면 배치(herdr `ClientShellConfig::layout`): 펼친 사이드바(aaa 기본 48칸) 온 높이, 그 오른쪽 위 탭 막대 한 줄, 나머지
     /// pane. 접으면 compact 4칸 또는 없음, 64칸 이하는 두 줄 머리, 폭은 `[tui] sidebar_min_width`~`sidebar_max_width`(기본
     /// 18~72)로 묶는다.
     #[test]
@@ -4372,7 +4406,7 @@ mod tests {
         let none = |a: Rect| Rect { w: 0, h: 0, ..a };
         assert_eq!(
             app.shell(area),
-            Shell { sidebar: r(0, 0, 36, 30), tab_bar: r(36, 0, 84, 1), header: none(area), panes: r(36, 1, 84, 29) }
+            Shell { sidebar: r(0, 0, 48, 30), tab_bar: r(48, 0, 72, 1), header: none(area), panes: r(48, 1, 72, 29) }
         );
         app.toggle_list();
         assert_eq!(app.shell(area).sidebar, r(0, 0, 4, 30));
@@ -4457,7 +4491,10 @@ mod tests {
         let mut reset = App::new("main".into(), "me".into());
         reset.apply_config(&aaa_config::TuiSection::default());
         reset.apply_chrome(&doc(serde_json::json!({ "tuiSidebarWidth": null })));
-        assert_eq!(reset.shell(area).sidebar.w, 36);
+        assert_eq!(reset.shell(area).sidebar.w, 48);
+        let mut legacy = App::new("main".into(), "me".into());
+        legacy.apply_chrome(&doc(serde_json::json!({ "tuiSidebarWidth": 36 })));
+        assert_eq!(legacy.shell(area).sidebar.w, 36, "기존 수동 폭은 새 기본값으로 덮지 않는다");
         // 보기 권한 기기는 남기지 않는다(host가 거부한다)
         reset.reader = true;
         reset.drag_sidebar_to(49, 0);
@@ -4497,6 +4534,93 @@ mod tests {
         std::fs::remove_dir_all(dir).unwrap();
     }
 
+    /// 선택 제목은 목록·PTY 크기를 바꾸지 않고 끝까지 읽으며, 창의 입력은 pane에 보내지 않는다.
+    #[tokio::test]
+    async fn selected_title_is_readable_without_opening_the_pane() {
+        let (dir, mut peer, mut tx, rx) = front_peer().await;
+        let mut app = app_with_tabs(&[""]);
+        app.panes.insert("p0".into(), pane_view("p0", "m", "시작👩‍💻é끝"));
+        app.pane_order = vec!["p0".into()];
+        app.machines = vec![machine("m", "mac-a")];
+        app.mode = Mode::Navigate;
+        app.list_sel = Some(list::Row::Pane("p0".into()));
+        let before = app.shell(r(0, 0, app.width, app.height));
+        let key = |code| KeyEvent::new(code, KeyModifiers::NONE);
+        app.on_key(key(KeyCode::Char('i')), &mut tx).await.unwrap();
+        let shown = draw(&app).0.join("\n");
+        assert!(shown.contains("제목 전체") && shown.contains("시작👩‍💻é끝"), "{shown}");
+        app.on_key(key(KeyCode::Char('x')), &mut tx).await.unwrap();
+        app.on_paste("TITLE-LEAK".into(), &mut tx).await.unwrap();
+        tx.send(FrontRequest::Status).await.unwrap();
+        assert!(matches!(front_request(&mut peer).await.1, FrontRequest::Status));
+        app.on_key(key(KeyCode::Esc), &mut tx).await.unwrap();
+        assert_eq!(app.mode, Mode::Navigate);
+        assert_eq!(app.list_sel, Some(list::Row::Pane("p0".into())));
+        assert_eq!(app.shell(r(0, 0, app.width, app.height)), before);
+        // 터미널에서 목록을 오른쪽 눌러 연 창도 입력을 소비한다.
+        app.mode = Mode::Terminal;
+        draw(&app);
+        let row = app.hits.borrow().rows.iter().find(|(_, row)| *row == list::Row::Pane("p0".into())).unwrap().0;
+        app.on_mouse(
+            MouseEvent {
+                kind: crossterm::event::MouseEventKind::Down(crossterm::event::MouseButton::Right),
+                column: row.x,
+                row: row.y,
+                modifiers: KeyModifiers::NONE,
+            },
+            &mut tx,
+        )
+        .await
+        .unwrap();
+        assert!(draw(&app).0.join("\n").contains("제목 전체"));
+        app.on_key(key(KeyCode::Char('x')), &mut tx).await.unwrap();
+        app.on_paste("TITLE-TERMINAL-LEAK".into(), &mut tx).await.unwrap();
+        tx.send(FrontRequest::Status).await.unwrap();
+        assert!(matches!(front_request(&mut peer).await.1, FrontRequest::Status));
+        app.on_key(key(KeyCode::Esc), &mut tx).await.unwrap();
+        assert_eq!(app.mode, Mode::Terminal);
+        app.mode = Mode::Navigate;
+        app.panes.get_mut("p0").unwrap().name = format!("처음표지 {} 끝표지END", "가나다라👩‍💻é ".repeat(160));
+        // 미리 보기와 독립된 전체 보기 본문만 읽는다.
+        let visible = |app: &App| {
+            let area = r(0, 0, app.width, app.height);
+            let mut buf = Buffer::empty(ratatui::layout::Rect::new(0, 0, area.w, area.h));
+            app.render(&mut buf, area);
+            let q = app.hits.borrow().popup.unwrap();
+            let mut text = String::new();
+            for y in q.y + 2..q.y + q.h - 2 {
+                let mut row = String::new();
+                let mut x = q.x + 1;
+                while x < q.x + q.w - 1 {
+                    let g = buf[(x, y)].symbol();
+                    row.push_str(g);
+                    x += unicode_width(g).max(1) as u16;
+                }
+                text.push_str(row.trim());
+            }
+            text
+        };
+        // 짧은 창·compact에서도 제목 끝까지 읽고, 다시 앞쪽으로 돌아온다.
+        for (width, height, collapsed) in [(90, 30, false), (64, 10, false), (40, 12, true)] {
+            app.width = width;
+            app.height = height;
+            app.sidebar_collapsed = Some(collapsed);
+            app.on_key(key(KeyCode::Char('i')), &mut tx).await.unwrap();
+            assert!(visible(&app).contains("처음표지"));
+            app.on_key(key(KeyCode::PageDown), &mut tx).await.unwrap();
+            assert!(!visible(&app).contains("처음표지"));
+            app.on_key(key(KeyCode::PageUp), &mut tx).await.unwrap();
+            assert!(visible(&app).contains("처음표지"));
+            app.on_key(key(KeyCode::End), &mut tx).await.unwrap();
+            assert!(visible(&app).contains("끝표지END"));
+            app.on_key(key(KeyCode::Home), &mut tx).await.unwrap();
+            assert!(visible(&app).contains("처음표지"));
+            app.on_key(key(KeyCode::Esc), &mut tx).await.unwrap();
+        }
+        drop((peer, tx, rx));
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
     /// 사이드바 모양(herdr `render_sidebar`·`render_collapsed_sidebar`): 위 ` spaces` 구역(빈 줄 뒤 workspace 줄), 30줄이면
     /// 4줄째에 구분선 `─`과 ` agents`·오른쪽 `projects`, 그 아래 빈 줄 뒤 목록, 오른쪽 `│`, 맨 아래 `«`.
     /// 접으면 번호와 상태 점, `»`. 탐색 모드면 접힌 채여도 펼친 목록을 pane 위에 띄운다.
@@ -4519,6 +4643,10 @@ mod tests {
         assert!(panel(&lines[5]).starts_with(" new"), "{shown}");
         assert!(panel(&lines[6]).starts_with(&"─".repeat(21)), "{shown}");
         assert!(panel(&lines[7]).starts_with(" ▾ 기타") && lines[7].contains("pane 1"), "{shown}");
+        for (y, label) in [(3, "P"), (5, "M"), (7, "A"), (9, "R"), (29, "⚙")] {
+            assert!(lines[y].chars().skip(1).collect::<String>().starts_with(label), "{shown}");
+        }
+        assert!(!app.hits.borrow().activity.iter().any(|(r, at)| *at == 5 && r.x == 0), "특수는 패널 공통 머리에만");
         assert!(panel(&lines[8]).starts_with(" · build mac-a"), "{shown}");
         assert!(lines.iter().all(|l| at_col(l, 25) == Some('│')), "{shown}");
         assert_eq!(at_col(&lines[29], 24), Some('«'));
@@ -4547,7 +4675,8 @@ mod tests {
         assert!(panel(&lines[3]).starts_with(" spaces"));
         assert!(panel(&lines[5]).starts_with(" · main"));
         assert!(lines.iter().any(|l| panel(l).starts_with(" ▾ 기타")));
-        assert_eq!(at_col(&lines[28], 28), Some('«'));
+        assert_eq!(at_col(&lines[26], 28), Some('«'));
+        assert!(lines[27].contains("선택 제목") && lines[28].contains("build"));
         assert!(panel(&lines[29]).starts_with(" NAVIGATE"));
         // 단축키·알림의 드러내기는 패널만 고르고, 접힘과 PTY 너비를 유지한다.
         app.panel = Panel::Machines;
