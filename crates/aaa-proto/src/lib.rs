@@ -101,6 +101,8 @@ pub fn typescript_bindings() -> String {
         RolloutStep::decl(&cfg),
         RolloutState::decl(&cfg),
         RolloutView::decl(&cfg),
+        RolloutCard::decl(&cfg),
+        RolloutCardStep::decl(&cfg),
         FrontResponse::decl(&cfg),
         FrontEvent::decl(&cfg),
         SubmitStage::decl(&cfg),

@@ -358,6 +358,33 @@ impl Db {
         Ok(())
     }
 
+    /// 종료 inbox와 발행 표지를 함께 저장한다. inbox 정리/host 재시작 뒤에도 다시 알리지 않는다.
+    pub fn save_rollout_record(&self, id: &str, record: &str, item: Option<&aaa_proto::InboxItem>) -> Result<bool> {
+        let mut c = self.conn.lock().unwrap();
+        let tx = c.transaction()?;
+        tx.execute(
+            "INSERT INTO meta(key,value) VALUES(?1,?2) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+            [format!("rollout:{id}"), record.to_string()],
+        )?;
+        let Some(item) = item else {
+            tx.commit()?;
+            return Ok(false);
+        };
+        let key = format!("rollout:notice:{}", item.subject);
+        if tx.query_row("SELECT value FROM meta WHERE key=?1", [&key], |r| r.get::<_, String>(0)).optional()?.is_some()
+        {
+            tx.commit()?;
+            return Ok(false);
+        }
+        let n = tx.execute(
+            "INSERT INTO inbox(id,project,kind,subject,event,done,done_at,created_at,data) VALUES(?1,?2,?3,?4,?5,0,NULL,?6,?7) ON CONFLICT(id) DO NOTHING",
+            params![item.id, item.project, item.item_kind, item.subject, item.event, item.created_at_ms as i64, serde_json::to_string(item)?],
+        )?;
+        tx.execute("INSERT INTO meta(key,value) VALUES(?1,'1')", [&key])?;
+        tx.commit()?;
+        Ok(n == 1)
+    }
+
     pub fn meta(&self, key: &str) -> Result<Option<String>> {
         let c = self.conn.lock().unwrap();
         Ok(c.query_row("SELECT value FROM meta WHERE key=?1", [key], |r| r.get(0)).optional()?)
@@ -1329,5 +1356,37 @@ mod input_tests {
         assert!(count < 10000 && bytes <= 20 * 1024 * 1024);
         drop(c);
         assert_eq!(db.input_events(Some("p1"), Some("t-1"), now + 1).unwrap().last().unwrap(), &row);
+    }
+}
+
+#[cfg(test)]
+mod rollout_tests {
+    use super::*;
+    #[test]
+    fn rollout_terminal_state_and_inbox_commit_together() {
+        let db = Db::open(Path::new(":memory:")).unwrap();
+        db.start_rollout("r", "running").unwrap();
+        let item = aaa_proto::InboxItem {
+            id: "rollout-r".into(),
+            project: "demo".into(),
+            item_kind: "rollout".into(),
+            subject: "r".into(),
+            event: "rollout finished".into(),
+            summary: "배포 완료".into(),
+            body: String::new(),
+            done: false,
+            seen: false,
+            created_at_ms: 1,
+            done_at_ms: None,
+        };
+        db.conn.lock().unwrap().execute_batch("CREATE TRIGGER fail_rollout_inbox BEFORE INSERT ON inbox WHEN NEW.kind='rollout' BEGIN SELECT RAISE(ABORT, 'inbox write failed'); END;").unwrap();
+        assert!(db.save_rollout_record("r", "done", Some(&item)).is_err());
+        assert_eq!(db.meta("rollout:r").unwrap().as_deref(), Some("running"), "inbox 없이 완료만 commit하면 안 된다");
+        assert_eq!(db.meta("rollout:notice:r").unwrap(), None);
+        db.conn.lock().unwrap().execute_batch("DROP TRIGGER fail_rollout_inbox;").unwrap();
+        assert!(db.save_rollout_record("r", "done", Some(&item)).unwrap());
+        assert_eq!(db.meta("rollout:r").unwrap().as_deref(), Some("done"));
+        assert_eq!(db.inbox_list(Some("demo"), true).unwrap(), [item]);
+        assert!(!db.save_rollout_record("r", "done", None).unwrap());
     }
 }

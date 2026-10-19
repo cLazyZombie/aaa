@@ -34,6 +34,7 @@ host는 프로젝트 하나만 맡으므로 명령의 프로젝트 인자는 생
 | 명령 | 하는 일 |
 |---|---|
 | `aaa machine list` | 머신 연결·디스크·이상 |
+| 웹 → 머신 → 배포 카드 | 최신 배포의 전송·단계·실패·복구를 Reader도 봅니다. 단절이면 마지막 수신 상태이며 재연결 뒤 최신 기록을 받습니다. 검증 정보에서 전체 ID/SHA를 봅니다. 카드에서는 배포를 시작하지 않습니다. |
 | `aaa service restart\|stop\|start --role host\|agent` | 감독자(launchd)로 다시 띄우기(업그레이드 뒤) · 멈추기 · 띄우기. 사람이 터미널에서(`yes`). restart는 아래 coordinator 배포 허용도 가능 |
 | `aaa deploy start --file <머신>:<후보폴더>/aaa --sha256 <SHA> [--commit <40자리>] [--machines all 또는 쉼표 목록]` · `aaa deploy status <ID> --wait` | coordinator safety 아래 빌드 후보를 Agent link로 전송하고 여러 Mac을 host부터 배포합니다. source/모든 대상에 deploy_stage.v1, 모든 대상에 rollout_recovery.v1이 필요합니다. 전체 전송·SHA/self-check 뒤 첫 교체를 하며 같은 ID로 재개합니다. 기존 미리 복사 경로는 --from입니다. 실패 머신만 배포 전 SHA로 자동 복구하며 recovering 뒤 stopped_rolled_back 또는 recovery_failed를 남깁니다. 앞 머신은 유지합니다. |
 | `aaa update --from <파일> [--dry-run]` · `aaa update rollback [이름]` · `aaa update list` | 지금 실행 파일을 주어진 빌드로 바꾸기(self-check·`[update] version` 고정 검사 뒤 rename, 옛것은 옆 `.aaa-old/`에 `[update] keep`개) · 보관한 것으로 되돌리기 · 보관 목록. 바꾸기·되돌리기는 사람이 터미널에서(`yes`), 도는 host·agent는 `aaa service restart`로 다시 띄웁니다. 사람이 `aaa safety set coordinator_deploy on`을 켠 뒤 사용자 채팅 지시를 받은 coordinator는 `--machine`으로 update·rollback·restart를 직접 실행하고 `aaa update status <ID> --wait`로 확인합니다([절차](install-runbook.md#coordinator가-요청받은-배포를-실행하기10-19)) |

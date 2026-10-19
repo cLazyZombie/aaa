@@ -46,6 +46,7 @@ import "./herdr/Sidebar.css";
 import "./herdr/Machines.css";
 import "./Sidebar.css";
 import { AutomationPanel } from "./AutomationPanel";
+import { RolloutCard, type RolloutSnapshot } from "./RolloutCard";
 import { MachineMeters } from "./MachineMeters";
 import { machineStats } from "./machineStats";
 import { missionCount, missionWork, evaluatorState, missionTone, missionWord, type SpecialTone } from "./specialModel";
@@ -246,6 +247,8 @@ function RowMenuButton({ title, open, onToggle }: { title: string; open: boolean
 
 export interface SidebarProps {
   machines: MachineView[];
+  rollout?: RolloutSnapshot;
+  connected?: boolean;
   panes: PaneView[];
   /** 끝난(resolved)·평가자 thread는 뺀 것 */
   threads: ThreadView[];
@@ -311,6 +314,7 @@ export function Sidebar(props: SidebarProps) {
         <Roster {...props} />
       </div>
       <div {...panelProps("machines", props.panel)} className="sidebar-panel machines-panel">
+        <RolloutCard snapshot={props.rollout ?? null} connected={props.connected ?? false} />
         <MachineStrip {...props} />
       </div>
       <div {...panelProps("special", props.panel)} className="sidebar-panel special-panel">

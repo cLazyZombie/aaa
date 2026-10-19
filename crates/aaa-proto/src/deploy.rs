@@ -252,6 +252,37 @@ pub enum DeployGuardControl {
     Cancel,
 }
 
+/// 웹 조회용 배포 요약. 원본 경로·실행기/PID·actor·내부 작업 ID는 싣지 않는다.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+pub struct RolloutCard {
+    pub id: String,
+    pub state: RolloutState,
+    pub version: Option<String>,
+    pub sha256: String,
+    pub commit: Option<String>,
+    pub cursor: u32,
+    pub steps: Vec<RolloutCardStep>,
+    pub error: Option<String>,
+    pub recovery_phase: Option<DeployGuardPhase>,
+    pub recovery_sha256: Option<String>,
+    #[ts(type = "number")]
+    pub created_ms: u64,
+    #[ts(type = "number")]
+    pub updated_ms: u64,
+}
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+pub struct RolloutCardStep {
+    pub machine: String,
+    pub phase: RolloutPhase,
+    pub completed: bool,
+    #[ts(type = "number")]
+    pub started_ms: u64,
+    #[ts(type = "number")]
+    pub transferred_bytes: u64,
+    #[ts(type = "number")]
+    pub total_bytes: u64,
+}
+
 #[cfg(test)]
 mod compatibility_tests {
     use super::*;

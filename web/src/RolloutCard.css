@@ -1,0 +1,25 @@
+.rollout-card { flex: 0 0 auto; min-width: 0; margin: 10px 8px; padding: 12px; border: 1px solid var(--border); border-radius: 8px; font-size: 12px; line-height: 1.5; overflow-wrap: anywhere; }
+.rollout-heading { display: flex; gap: 8px; align-items: baseline; flex-wrap: wrap; }
+.rollout-heading h3 { margin: 0; font-size: 13px; }
+.rollout-heading strong { margin-left: auto; font-size: 11px; color: var(--accent); }
+.rollout-card[data-state="done"] .rollout-heading strong { color: var(--status-done); }
+.rollout-card:is([data-state="stopped"], [data-state="stopped_rolled_back"], [data-state="recovery_failed"]) .rollout-heading strong { color: var(--danger-text); }
+.rollout-card p { margin: 7px 0; }
+.rollout-meta, .rollout-help, .rollout-step-state { color: var(--text-dim); }
+.rollout-offline, .rollout-recovery { color: var(--notice); }
+.rollout-error { color: var(--danger-text); white-space: pre-wrap; }
+.rollout-steps { list-style: none; padding: 0; margin: 10px 0; }
+.rollout-steps li { display: grid; grid-template-columns: 14px minmax(0, 1fr) auto; gap: 6px; align-items: start; padding: 5px 0; }
+.rollout-mark { color: var(--text-dim); }
+.rollout-steps li[data-completed="true"] .rollout-mark { color: var(--status-done); }
+.rollout-steps li[aria-current="step"] .rollout-mark { color: var(--accent); }
+.rollout-steps li[data-failed="true"] .rollout-mark { color: var(--danger-text); }
+.rollout-step-state { font-size: 10px; }
+.rollout-transfer { display: flex; gap: 6px; align-items: center; }
+.rollout-transfer progress { width: 100%; min-width: 0; height: 5px; accent-color: var(--accent); }
+.rollout-card summary { cursor: pointer; }
+.rollout-card dl { margin: 8px 0 0; }
+.rollout-card dt { color: var(--text-dim); margin-top: 6px; }
+.rollout-card dd { margin: 0; font-family: var(--font-mono, monospace); font-size: 11px; }
+
+.rollout-transfer > span { white-space: nowrap; flex: 0 0 auto; }

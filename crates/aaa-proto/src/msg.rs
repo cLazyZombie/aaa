@@ -2529,6 +2529,8 @@ pub enum FrontEvent {
     Reports { unseen: u32 },
     /// 설치 앱 아이콘의 host 공통 수. 웹 events 연결에서 처음과 값이 바뀔 때만 보낸다.
     AppBadge { count: u32 },
+    /// 웹 연결 처음과 배포 내구 상태가 바뀔 때 주는 최신 요약. 조회만 하며 진행기를 재개하지 않는다.
+    Rollout { result: Outcome<Option<crate::RolloutCard>> },
     /// 앱 안 알림(웹 Droplet, plan §8.185). 기록하지 않는다: 놓친 알림은 다시 오지 않는다(FRONT_API 1.34,
     /// 옛 front는 모르는 사건을 버린다)
     Notice(NoticeView),

@@ -4091,6 +4091,7 @@ coordinator 실기(10-18 00:58, iPhone 홈 화면 앱을 앞에 띄움, binary c
   - session host 내부 프로토콜은 이전 session host와 호환해야 한다. 세션은 몇 주 이어질 수 있다.
 - **DB·설정:** DB는 expand/contract로 바꾼다. 이전 프로세스가 남아 있는 동안 설정 migrate를 미룬다.
 - **롤백:** 이전 산출물을 보관한다(개수는 TOML). DB 백업을 복원하고 `aaa update rollback`을 실행한다. 서명이나 다운로드가 실패하면 fallback 설치를 하지 않는다.
+- **웹 조회(10-20, §8.293):** 머신 패널의 조회 카드에서 전송·단계·복구 결과·전체 SHA/ID를 본다. Reader도 읽으며 연결이 끊기면 마지막 수신 상태로 표시한다. 사용자 결정 A안으로 웹 시작 버튼·web_deploy safety는 만들지 않는다.
 - **지금(10-19, §8.289):** 커밋 후보는 `scripts/deploy-build.sh`로 한 번 만든다(origin/main 조상·격리 worktree·웹·커밋 판·provenance). `aaa deploy start --file <빌드머신>:<후보폴더>/aaa --sha256 <SHA>`가 Agent link로 전체 전송/SHA/self-check를 끝낸 뒤 host → 로컬 agent → 원격 agent 순서로 교체·재시작·실행 판/SHA를 확인한다. 기존 --from 미리 복사 경로도 유지한다. 실패한 머신만 배포 전 SHA로 자동 rollback하며 검증된 옛 실행 파일에서 띄운 독립 감시가 host·agent 재시작 뒤에도 복구를 진행한다. 복구 중에는 다음 머신으로 가지 않으며 앞 머신은 유지한다. 옛 L1/L2 기록은 기존 중단 정책으로 읽는다.
 - **공개판(§8.210):** 공개 GitHub release의 `manifest.json`·OS/arch 실행 파일을 받는 `aaa update [--version <판>]`와 기존 `--from`·보관·rollback을 쓴다. SHA-256·self-check·version 고정 검사 뒤 같은 폴더 rename이다. macOS는 기존과 같은 ad-hoc 서명이며 서명 manifest·host가 agent로 보내기·DB 백업은 아직 없다.
 
@@ -5674,3 +5675,10 @@ L4 후속(10-20 00시 사용자 관찰): 멈춤 상태의 후보 예약과 재�
 - **원인.** `ChatComposer`가 보내는 동안(§8.247 flight) 상태 문장을 단추 줄에 세우려고 `data-lines`를 늘 `more`(두 줄 배치)로 바꿨다. 한 줄 배치(§8.215)에서 Enter를 치면 그 그리기부터 상자가 두 줄이 되고, 대화에 올라 비워질 때 한 줄로 돌아왔다. 데스크톱 44→96px, iPhone 54→102px(Chromium·WebKit 같음, thread·coordinator 같음). 줄바꿈이 먼저 들어가는 것이나 IME 처리 문제는 아니었다(조합 확정 Enter도 같은 +52px, 원인 같음).
 - **결정.** 보내는 동안 입력창에 상태 글을 그리지 않는다. 단계(`sending`·`stuck`·`stopping`·`sent`·`slow`)는 그대로 있고 그 글은 `.visually-hidden` `role="status"`(배치 밖, 화면 읽기만)다. 배치는 글이 정한 `lines` 그대로라 높이가 바뀌지 않는다. 화면에서 단계는 흐린 readOnly 글 칸 + 도는 단추(보내는 중·전달됨, 둘은 같아 보인다), ×(3초 막힘의 탈출구, title 「전달 전에 막혔습니다…」)로 보인다. 잘못됐을 때만 나오는 띠(보내지 못함·다시 보내기, 갔는지 모름·터미널 보기, 10초 넘음·잠금 풀기, 멈춤 결과, 보이지 않는 문자를 뺀 경고)는 회복 단추나 경고라 남긴다. placeholder와 첨부 썸네일 상태 글도 남긴다.
 - **회귀.** 웹 E2E 35 `composer-send-height`: thread·coordinator pane, Chromium·WebKit 데스크톱(Enter)·iPhone(보내기 단추), 바로 반영·전달됨에서 기다림·대화에 올라 비워짐·한글 조합 확정 뒤 Enter·여러 줄. ResizeObserver로 그리기마다 상자·입력창 묶음 높이를 적어 보내기 전보다 큰 그리기가 없고 끝에 처음 높이인지, 전달됨에서 입력창에 그려진 글(글 칸·단추·화면 읽기용 밖)과 알림 띠가 없는지 본다. 고치기 전 코드에서 높이(한 줄)와 글(한 줄·여러 줄) 단언이 따로 실패했다.
+
+### 8.293 웹 배포 조회 카드 L4 A안(10-20, t-0426)
+
+- **범위.** 머신 패널에서 최신 rollout의 전송률·머신별 단계·배포 실패와 복구 결과·전체 SHA/ID를 본다. Reader와 Controller 모두 조회한다. 시작·중단·수동 되돌리기는 카드에서 보내지 않는다. 사용자 결정 A안이며 Controller 시작 버튼·web_deploy safety는 만들지 않는다.
+- **정본과 재연결.** FRONT1.53 웹 전용 Rollout 사건은 연결 처음과 DB 저장 뒤 최신 표시용 요약을 보낸다. actor·후보 원본 경로·실행기/PID·내부 작업 ID는 제외한다. agent 재접속으로 표시 이름이 바뀌어도 다시 보낸다. 웹은 마지막 요약을 그릴 뿐 진행기를 재개하지 않으며 단절 때 마지막 수신 상태임을 표시한다. 표시용 오류는 상태별 안전한 설명으로 한정하고 원본 오류는 coordinator 정본에 보존한다. 설명·SHA는 줄바꿈하며 생략하지 않는다.
+- **종료.** 종료 정본·coordinator inbox·발행 표지는 같은 DB transaction으로 저장한다. commit 뒤 투영/깨움과 앱 안 알림을 보낸다. host 재시작·동일 종료 재조회·inbox 정리 뒤에도 한 번만 알린다. commit 직후 재시작해도 내구 inbox는 남으며 transient 앱 알림은 재발행하지 않는다. 옛 terminal 정본을 새 종료로 소급하지 않는다. 외부 push/webhook을 호출하지 않는다. 새 웹 전용 알림을 N-1 CLI에도 보내지 않는다. 앱 안 알림을 누르면 보던 pane 주소를 유지하며 머신 패널 카드를 연다.
+- **시험.** 실제 DB의 요약/변경/재오픈, terminal commit 경계와 한 번 발행, inbox SQL 실패의 원자성은 host/DB owner가 소유한다. 웹 E2E35는 실제 Reader 세션·WS에 배포 사건만 주입해 진행/복구/재연결·조작 거부·전체 오류/SHA·휴대폰 폭·알림 이동을 본다. 실행기와 실제 실패 머신 복구는 L3 m13 owner를 유지한다.
