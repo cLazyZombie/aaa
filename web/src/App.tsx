@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import type {
   AgentActivity,
   DeviceRole,
@@ -14,6 +14,7 @@ import type {
 } from "./gen/proto";
 import { Missions } from "./Missions";
 import { ActivityBar } from "./ActivityBar";
+import { SidebarResizer } from "./SidebarResizer";
 import { PANEL_LABEL, revealPanel, storedCollapsed, storedPanel, storeSidebar, type SidebarPanel } from "./sidebarPanel";
 import { ReportsView, type ReportRef } from "./ReportsView";
 import { UpdateNotice } from "./UpdateNotice";
@@ -39,7 +40,7 @@ import { UsageMeters } from "./UsageMeters";
 import { SettingsDialog } from "./SettingsDialog";
 import { onSettingsHistory, recordSettings } from "./herdr/settingsHistory.ts";
 import { useInstallPrompt } from "./herdr/install";
-import { currentSidebarShared, useKeepScreenOn } from "./settings";
+import { currentSidebarShared, updateSidebarShared, useKeepScreenOn, useSidebarShared } from "./settings";
 import { useScreenWakeLock } from "./herdr/wakeLock.ts";
 import { justWoke, raiseAlert, unableSince, useAlerts, useAlertSoundUnlock } from "./alerts";
 import { Droplet } from "./herdr/Droplet.tsx";
@@ -921,11 +922,26 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
   };
   // 넓은 창에서 접었으면 사이드바 칸이 없다(좁은 창은 drawer라 늘 칸이 있다)
   const sidebarShown = !wideScreen || !collapsed;
+  // 사이드바 폭(SidebarResizer, plan §8.248): 끄는 동안은 화면에만 두고 놓으면 공유 설정에 남긴다
+  const savedSidebarWidth = useSidebarShared().sidebarWidth;
+  const [draggedSidebarWidth, setDraggedSidebarWidth] = useState<number | null>(null);
+  const sidebarWidth = draggedSidebarWidth ?? savedSidebarWidth;
+  const resizeSidebar = (width: number | null, save: boolean) => {
+    if (!save) return setDraggedSidebarWidth(width);
+    updateSidebarShared({ sidebarWidth: width });
+    setDraggedSidebarWidth(null);
+  };
 
   return (
     <DrawerContext.Provider value={drawer}>
     <HeadContext.Provider value={{ more: <MoreMenu onProjects={() => chooseProject(null)} />, note: headNote }}>
-    <div className={`app${collapsed ? " sidebar-collapsed" : ""}`} data-questions-sync={questionsSync} data-threads-sync={threadsSync} data-sidebar={panel}>
+    <div
+      className={`app${collapsed ? " sidebar-collapsed" : ""}`}
+      style={sidebarWidth === null ? undefined : ({ "--sidebar-user-w": `${sidebarWidth}px` } as CSSProperties)}
+      data-questions-sync={questionsSync}
+      data-threads-sync={threadsSync}
+      data-sidebar={panel}
+    >
       <aside id="workspace-drawer" className={`list${drawerOpen ? " is-open" : ""}`}>
         <ActivityBar
           panel={panel}
@@ -980,6 +996,7 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
         />
         <ListFoot />
         </div>
+        <SidebarResizer width={sidebarWidth} onResize={resizeSidebar} />
       </aside>
       {/* 닫혀도 페이지에 둔다: 그 위에서 시작한 쓸기가 drawer를 닫는다(참고 styles.css) */}
       <div className={`scrim${drawerOpen ? " is-open" : ""}`} aria-hidden="true" onClick={() => setDrawerOpen(false)} />

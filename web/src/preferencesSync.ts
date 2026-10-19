@@ -23,8 +23,9 @@ function useSharedLocal(): { settings: SharedLocal; update: (patch: Partial<Shar
   const sidebar = useSidebarShared();
   const settings: SharedLocal = { theme: appearance.theme, palette: appearance.palette, sidebarRows: appearance.sidebarRows, agentOrder: appearance.agentOrder, ...usage, ...chat, ...sidebar };
   const update = useCallback((patch: Partial<SharedLocal>) => {
-    const { theme, palette, sidebarRows, agentOrder, showThinking, autoSendQueued, quickReplies, showQuickReplies, paneOrder, ...rest } = patch;
-    if (paneOrder !== undefined) updateSidebarShared({ paneOrder });
+    const { theme, palette, sidebarRows, agentOrder, showThinking, autoSendQueued, quickReplies, showQuickReplies, paneOrder, sidebarWidth, ...rest } = patch;
+    const list = Object.fromEntries(Object.entries({ paneOrder, sidebarWidth }).filter(([, v]) => v !== undefined));
+    if (Object.keys(list).length > 0) updateSidebarShared(list);
     const look = Object.fromEntries(Object.entries({ theme, palette, sidebarRows, agentOrder }).filter(([, v]) => v !== undefined));
     if (Object.keys(look).length > 0) updateAppearance(look);
     if (Object.keys(rest).length > 0) updateUsageSettings(rest);

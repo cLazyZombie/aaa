@@ -1,5 +1,6 @@
 // 왼쪽 활동 막대(사용자 요청 10-19 「vs code 처럼 … 같은 버튼 한번 더 누르면 숨겨지고」, plan §8.240): 패널 바꾸기·다시 눌러 접기·
-// 기기별 기억·키보드·Mod+Shift+B·단축키·팔레트·알림이 연 줄의 패널·보고서 본문 화면·설정 톱니·휴대폰 drawer.
+// 기기별 기억·키보드·Mod+Shift+B·단축키·팔레트·알림이 연 줄의 패널·보고서 본문 화면·설정 톱니·휴대폰 drawer,
+// 사이드바 폭 손잡이(사용자 요청 10-19 「왼쪽 창 … 좌우 resize」, plan §8.248).
 import { root, aaa, step, browser, pairPage, claudeSh, claudeAsk, claudeIdle, waitOutput, domIs, hashIs, focusIs, inList, until, drawerSettled, shot } from "../lib/harness.mjs";
 import fs from "node:fs";
 
@@ -253,6 +254,68 @@ export default async function () {
       await p.getByTestId("terminal").waitFor();
     } finally {
       await p.context().close();
+    }
+  });
+
+  await step("사이드바 폭(plan §8.248): 경계 손잡이를 끌면 활동 막대가 아닌 사이드바 칸만 넓어지고 본문이 그만큼 준다. 놓으면 host 공유 설정이라 다른 기기도 같은 폭이고, focus 뒤 ←→ 16px·Home·End, 두 번 누르면 기본 320px. 접힘·좁은 창(drawer)에는 손잡이가 없다", async () => {
+    const dev = await pairPage(browser, aaa("web", "pair").code, { width: 1280, height: 800 });
+    const other = await pairPage(browser, aaa("web", "pair").code, { width: 1280, height: 800 });
+    const p = dev.page;
+    const widths = (page) =>
+      page.evaluate(() => {
+        const w = (q) => Math.round(document.querySelector(q)?.getBoundingClientRect().width ?? -1);
+        const grip = document.querySelector('[data-testid="sidebar-resizer"]');
+        return { column: w("#sidebar-column"), bar: w(".activity-bar"), view: w(".view"), grip: grip ? getComputedStyle(grip).display : "없음", now: Number(grip?.getAttribute("aria-valuenow")) };
+      });
+    const columnIs = (page, want, what) => domIs(page, what, (want) => Math.round(document.getElementById("sidebar-column").getBoundingClientRect().width) === want, want);
+    try {
+      for (const page of [p, other.page]) await page.getByTestId("pane-t1").waitFor();
+      const start = await widths(p);
+      same(start, { column: 320, bar: 48, grip: "block", now: 320 }, "처음");
+      // 끌기: 손잡이 가운데를 잡고 오른쪽으로 80px
+      const box = await p.getByTestId("sidebar-resizer").boundingBox();
+      const x = box.x + box.width / 2;
+      const y = box.y + box.height / 2;
+      await p.mouse.move(x, y);
+      await p.mouse.down();
+      await p.mouse.move(x + 80, y, { steps: 4 });
+      await p.mouse.up();
+      await columnIs(p, 400, "끈 폭 400");
+      const dragged = await widths(p);
+      same(dragged, { bar: 48, view: start.view - 80 }, "끈 뒤 막대·본문");
+      // 놓으면 공유 설정: 다른 기기는 preferences 사건으로 같은 폭
+      await columnIs(other.page, 400, "다른 기기 폭 400");
+      await shot(p, "sidebar-resized");
+      // 키보드: focus 뒤 ←는 16px 좁게, End는 이 창의 최대(1280의 절반이 넘는 520), Home은 최소 240
+      await p.getByTestId("sidebar-resizer").focus();
+      await p.keyboard.press("ArrowLeft");
+      await columnIs(p, 384, "← 384");
+      await p.keyboard.press("End");
+      await columnIs(p, 520, "End 520");
+      await columnIs(other.page, 520, "다른 기기 End 520");
+      // 좁은 창(drawer)은 제 폭이고 손잡이가 없다
+      await p.setViewportSize({ width: 700, height: 800 });
+      const narrow = await widths(p);
+      if (narrow.grip !== "none" || narrow.column > 320) throw new Error(`좁은 창 ${JSON.stringify(narrow)}`);
+      await p.setViewportSize({ width: 1280, height: 800 });
+      await columnIs(p, 520, "넓은 창으로 돌아와 520");
+      await p.getByTestId("sidebar-resizer").focus();
+      await p.keyboard.press("Home");
+      await columnIs(p, 240, "Home 240");
+      // 접으면 칸과 함께 손잡이도 없다
+      await p.keyboard.press("ControlOrMeta+Shift+B");
+      await sidebarIs(p, { panel: "projects", collapsed: true }, "접힘");
+      same(await widths(p), { grip: "none" }, "접힘의 손잡이");
+      await p.keyboard.press("ControlOrMeta+Shift+B");
+      await sidebarIs(p, { panel: "projects", collapsed: false }, "펼침");
+      await columnIs(p, 240, "펴도 240");
+      // 두 번 누르면 기본 폭이고 공유 값도 지운다(다음 시험은 기본 폭)
+      await p.getByTestId("sidebar-resizer").dblclick();
+      await columnIs(p, 320, "두 번 눌러 기본 320");
+      await columnIs(other.page, 320, "다른 기기도 기본 320");
+    } finally {
+      await p.context().close();
+      await other.page.context().close();
     }
   });
 }
