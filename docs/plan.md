@@ -5963,3 +5963,46 @@ primary 근거:
 - **보존.** dirty·partial·skip-copy·keep-worktree, 미병합 branch의 기존 정리 규칙과 force 없는 삭제는 유지한다. adopted 폴더·branch도 그대로다. 보고·library 사본은 남는다.
 - **참고와 차이.** herdr-projects 0.2.35 `threads.rs::clean`은 workspace 닫기를 worktree 삭제에 묶고 `Kind::Adopted`를 남긴다. 이번 brief의 모든 thread pane 닫기 요구에 따라 그 예외를 없앴다. herdr 0.9.5 `app/actions.rs::handle_pane_died`, `app/api/panes.rs::close_pane`처럼 pane의 layout 제거까지 마친다.
 - **회귀.** m13의 실제 임시 host·agent에서 dir·dirty worktree·adopted fixture를 입력으로 exit 1 종료한 뒤 resolve한다. pane 목록·layout에서 사라지고 dirty 파일·adopted 저장소는 남아야 한다. 기존 dirty/partial 보존·살아 있는 adopted 복원 시험도 같은 동작으로 확인한다.
+
+### 8.255 웹 사이드바 칸 폭 끌기(10-19, t-0393)
+
+- **요청.** 사용자 「왼쪽 창 (project 내부 리스트 있고 한. 제일 왼쪽 아이콘 아니고) 좌우 resize 기능도 넣어줘.」 활동 막대가 아니라 그 오른쪽 사이드바 칸(`#sidebar-column`)의 폭이다.
+- **참고.** herdr-web-ui aa624cb `src/components/SidebarResizer.tsx`·`src/lib/sidebarWidth.ts`를 옮겼다(MIT, 고지는 원 파일 머리). t3code 4b1024da `useResizableWidth`는 끄는 동안 화면에만 두고 놓을 때 한 번 저장한다. 그 저장 시점을 따랐다.
+- **동작.**
+  - 손잡이는 칸 오른쪽 경계 안쪽 8px이고 `col-resize` 커서다. 가리키면 경계선이 진해지고, 잡거나 focus면 accent다.
+  - 폭은 240~520px이고 창 폭의 절반을 넘지 않는다(CSS `min(…, 50vw)`와 같은 규칙).
+  - 두 번 누르면 기본 폭(토큰 `--sidebar-w`)이다.
+  - focus 뒤 ←→는 16px, Home은 최소, End는 이 창의 최대다(`role="separator"`, aria-value*).
+  - 넓은 창(769px~)에서 펼쳤을 때만 보인다. 접으면 칸과 함께 숨고, 다시 펴면 고른 폭이다. 휴대폰·좁은 창의 drawer는 제 폭(88vw 한도)이다.
+- **저장.** coordinator 지시대로 기존 host 공유 설정(preferences, §8.79)에 `sidebarWidth`(px, null은 기본 폭)를 둔다. 참고 둘은 기기 localStorage다. aaa는 TUI 사이드바 폭(`tuiSidebarWidth`, 칸 수)처럼 host에 두고, 기기마다 다른 창 폭은 창 절반 한도가 받는다. host `prefs.rs`의 공유 이름에 더했다. 옛 host는 그 이름을 버린다(그때는 이 기기 사본만 남는다).
+- **검증.**
+  - 웹 단위 `sidebarWidth.test.mjs`: 한도, 키, 공유 값 읽기와 주고받기
+  - host `prefs::keeps_the_web_sidebar_width`
+  - E2E 26 「사이드바 폭」: 실제 끌기 80px로 칸만 넓어지고 본문이 준다. 다른 기기가 preferences 사건으로 같은 폭이 되는지는 그 화면 DOM으로 본다. ←·End·Home, 좁은 창·접힘에 손잡이 없음, 두 번 눌러 기본 폭과 공유 값 지움을 본다.
+  - 결함 다섯을 심어 실패를 확인했다. (a) 놓아도 저장 안 함, (b) 접혀도 손잡이, (c) 좁은 창에도 손잡이, (d) 화살표 8px, (e) host가 이름을 버림 → 모두 E2E 26이 잡고, (d)는 단위, (e)는 host 단위도 잡았다.
+
+### 8.256 프로젝트 패널 들여쓰기·coordinator 구별·「특수」 패널(10-19, t-0393)
+
+- **요청과 결정.** 사용자 「projects 와 밑에 child 가 너무 tab … 조금만 띄워지게」, 「coordinator는 … 아이콘 하나」, 「구분 표현도」, 「색상도」, 「특수 에이전트도 저렇게 위에 보여주지 말고, 왼쪽 아이콘에 등록」. 시안(t-0393 library, 16안·특수 4안)을 보고 사용자가 정했다(10-19 15:0x).
+  - 들여쓰기 i2: 프로젝트 묶음 자식 줄을 8px만 들인다(지금 34px). 머신 패널의 worktree 한 단계는 그대로다.
+  - coordinator m2: 왼쪽 세로 막대 2px와 그 아래 dim 「thread n」 머리줄. 아이콘 열과 thread 줄 정렬은 그대로다. 머리줄은 coordinator와 thread가 함께 보일 때만 있다(접힌 묶음에는 없다).
+  - 막대 색 `--coordinator`는 상태색(빨강·파랑·초록·회색)과 그 팔레트의 accent·작업 중 색을 피해 팔레트마다 정했다.
+    - 기본 어두움 `#b99cf2`, 밝음 `#7a45c8`
+    - github-dark·dimmed `#bc8cff`, github-light `#8250df`(github-dark는 accent가 작업 중 파랑)
+    - charcoal 어두움 `#8db8c4`(작업 중이 분홍)
+    - catppuccin 어두움 `#fab387`, 밝음 `#c44d06`(accent가 보라)
+  - 특수: 목록 머리의 「특수 ●」 칩(임무·사후 평가자)을 없애고, 활동 막대 에이전트 아래에 Radar 단추 「특수」 패널을 둔다. 보고서 단추는 그 아래다(§8.248의 「에이전트 밑」이 「패널 단추 묶음 밑」이 된다).
+- **특수 패널.**
+  - 프로젝트 머리 아래 두 줄 줄이다. 이름 / 상태 말 · 깨움 오늘/한도 · (없으면) pane 없음이고, 오른쪽에 머신과 상태 점(pane이 없으면 빈 고리)이 있다.
+  - 앞 칸은 thread의 harness 표지다. thread가 없으면 점선 원, 평가자는 ScanEye.
+  - 줄을 누르면 pane이 돌면 그 pane, 없으면 임무 보기(차이·승인 상태)다. 시작·멈춤·이어 가기·다시 읽기·승인 검토는 ⋯ 메뉴(넓은 창은 오른쪽 클릭)에만 있다. 여는 것만으로 임무를 움직이지 않는다. 보기 권한이면 열기·보기만 있다.
+  - 메뉴 머리는 제목과 셈(일한 분·post 처리·입력)이다.
+- **배지.** 「특수」 배지는 사람이 볼 것만 센다: 막힘·오류·승인 필요 임무 + 확인창(질문)이 걸린 평가자. 정할 개선안·일함·멈춤·대기는 세지 않는다(`specialModel.ts`).
+- **TUI.** 사용자 결정(10-19 15:2x)으로 aaa TUI 개발을 잠정 중지해 TUI 쪽 구현·넘김은 하지 않았다. TUI 머리의 「특수 n」은 그대로다.
+- **검증.**
+  - 웹 단위 `specialModel.test.mjs`: 줄 색·첫 낱말, 평가자 상태, 배지 규칙
+  - E2E 12 「사후 평가자」: 특수 패널 줄, 확인창 없는 평가자는 배지 없음, 누르면 평가자 화면
+  - E2E 12 「특수 임무」: 휴대폰·좁은 창·데스크톱 메뉴가 화면 안, 줄 누름은 임무 보기일 뿐 시작 안 함, 승인 필요 배지 1 → 승인 뒤 없음
+  - E2E 12 「coordinator 프로젝트 소속」: 보라 막대 색·폭, coordinator·thread 줄 8px, 「thread 1」 머리줄
+  - E2E 26: 단추 넷의 roving tabindex·End, 보고서가 패널 단추 묶음 바로 밑
+  - 결함 셋을 심어 실패를 확인했다. (h) 정할 개선안도 배지에 셈 → 단위, (i) 들여쓰기 34px → E2E 12 coordinator 단계, (j) 「thread n」 머리줄 없음 → 같은 단계.

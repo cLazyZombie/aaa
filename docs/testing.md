@@ -247,6 +247,10 @@ Ctrl+Enter는 agent가 작업 중일 때만 steering하고 줄바꿈을 넣지 �
 
 사용자 승인(10-19)에 따라 Windows 본문 복사의 기준은 일반 끌기(OSC 52 → 로컬 native)와 앱 선택 뒤 Ctrl+C(pane 본문 복사, 앱 중단 없음)다. Windows Terminal 자체 Shift+끌기는 플랫폼 제약으로 남긴다.
 
+### 웹 사이드바 폭과 「특수」 패널(§8.255·§8.256)
+
+사이드바 폭 규칙과 공유 값은 `web/test/sidebarWidth.test.mjs`, host 공유 이름은 `prefs::keeps_the_web_sidebar_width`가 본다. 실제 끌기·키·좁은 창·접힘·다른 기기 전파는 E2E 26 「사이드바 폭」이 맡는다. 다른 기기의 폭은 preferences 사건이 그 화면 DOM을 바꾸는 것으로 기다린다(polling 없음). 「특수」 패널의 줄 색·배지 규칙은 `web/test/specialModel.test.mjs`, 실제 임무·평가자 줄과 메뉴·배지·승인은 E2E 12 「사후 평가자」·「특수 임무」가 본다. coordinator 보라 막대·8px 들여쓰기·「thread n」 머리줄은 E2E 12 「coordinator 프로젝트 소속」이 계산된 스타일로 본다.
+
 ## TUI 확장 Enter와 Windows 붙여넣기(§8.242)
 
 - `cargo test --locked -p aaa --test tui modified_enter_uses_agent_newline`: 실제 crossterm 파서·TUI·host·agent·PTY에서
