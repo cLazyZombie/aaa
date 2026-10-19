@@ -217,7 +217,7 @@ web/e2e/specs/NN-기능.mjs  기능별 단계(01-http-pwa … 19-turn-alerts). e
 
 ## 휴대폰 보고 요약(§8.226)
 
-- host `working_threads_publish_landing_reports_once`가 실제 사본·DB·inbox·queue에서 네 알림 표지의 push/webhook 요약과 대기 중 보고 변경을 본다.
+- host `working_threads_publish_landing_reports_once`가 실제 사본·DB·inbox·queue에서 네 알림 표지의 push/webhook 요약과 대기 중 보고 변경을 본다. 확인 요청은 새 `[확인 필요]`와 옛 `[사람 필요]`가 같은 알림 의도인지 함께 검증한다(§8.234).
 - `notify::tests::report_preview_hides_private_values_before_shortening`은 경로·주소·키를 자르기 전에 가리는 계약과 JSON summary에 원문이 새지 않는 경계를 본다. `push::tests::payloads`는 실제 암호문에 제목·JSON escape를 포함해 4096바이트 이내인지 본다.
 - 웹 E2E 12의 기존 Web Push 준비·보고서·보고 요약 단계는 실제 암호문을 복호화해 첫 줄 요약과 클릭 목적지를 확인한다. 신호 금지 작업은 공식 ci-local의 Rust 전체 test를 제외하고 `AAA_E2E_ONLY='^(Web Push:|thread 보고서·결과물:|확인창 질문:|Codex 폴더 신뢰:|보고서 전체 목록:)'`로 고른다. 이 단계에는 신호 동작 시험이 없으며 실험실이 직접 띄운 자식 PID 정리만 허용한다. `m13::notify_webhook`은 pane kill을 시험하므로 이 제한 아래에서는 컴파일만 확인한다.
 - iOS의 `from <앱 이름>`과 Android/브라우저의 출처 줄 배치는 플랫폼 소유 UI다. headless 시험은 service worker에 전달한 title/body와 목적지를 확인하며 실기 OS 창의 줄 수를 증명하지 않는다.
@@ -226,7 +226,9 @@ web/e2e/specs/NN-기능.mjs  기능별 단계(01-http-pwa … 19-turn-alerts). e
 
 m13 `coordinator_deployment_is_gated_and_survives_backend_restarts`는 별도 실행 파일 사본과 TLS agent에서 기본 차단·사람의 safety 허용/철회·coordinator ID 위장·env를 지운 worker 차단·실제 교체/rollback·host/자기 agent 재시작 뒤 동일 pane PID와 결과 조회를 확인한다. probe는 파일 기록 뒤 고유 출력 표지로 끝낸다. macOS에서는 격리 HOME/PATH의 launchctl 모형으로 typed host/원격 agent restart와 실패의 영구 기록을 확인한다. 운영 launchd에는 닿지 않는다. agent `deploy::tests`는 같은 ID 중복·동시 작업·다른 요청 충돌·중단 복구/실행기 중복 잠금/SHA 불일치를 담당한다. 기존 update E2E가 public release hash·self-check·pin·rename을 계속 소유한다.
 
-## TUI 확장 Enter와 Windows 붙여넣기(§8.233)
+배포 실행기 수명 회귀(§8.233): 기존 `jobs_are_durable_once_and_reconcile_only_after_the_executor_releases_its_lock`에서 실제 잠금 File을 `try_clone`해 fork와 같은 잠금 참조를 남긴다. Unix에서는 원본 FD의 close-on-exec도 확인한다. 실행기가 살아 있으면 중복 configure는 실패하고, drop 뒤에는 복제 FD가 살아 있어도 새 실행기가 즉시 잠금과 journal 복구를 맡아야 한다. dup/fork는 같은 flock을 공유하므로 자식·신호·sleep 없이 병렬 spawn의 fork~exec 창을 결정적으로 재현한다. close-on-exec만으로는 exec 전 잠금 참조가 사라지지 않는다.
+
+## TUI 확장 Enter와 Windows 붙여넣기(§8.235)
 
 - `cargo test --locked -p aaa --test tui modified_enter_uses_agent_newline`: 실제 crossterm 파서·TUI·host·agent·PTY에서
   kitty CSI u와 xterm modifyOtherKeys Ctrl/Shift+Enter의 줄바꿈, 보통 Enter, 확장 키 모드 요청·종료 복원을 본다.

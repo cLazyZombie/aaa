@@ -4785,7 +4785,7 @@ fn post_from_thread_reaches_coordinator_inbox() {
         "coordinator-post.sh",
         &format!(
             r#"
-'{bin}' post demo user --request --needs-user --topic user-action --title '사람 필요' > '{out}' 2>&1
+'{bin}' post demo user --request --needs-user --topic user-action --title '확인 필요' > '{out}' 2>&1
 printf 'request-rc=%s\n' "$?" >> '{out}'
 '{bin}' post demo user --notice --topic task-complete --title '전체 완료' >> '{out}' 2>&1
 printf 'complete-rc=%s\n' "$?" >> '{out}'
