@@ -150,6 +150,8 @@ mod tests {
             (ErrorCode::Forbidden, true, Some("mac-a")),
         ] {
             let root = std::env::temp_dir().join(format!("dw-{}", aaa_common::util::new_id()));
+            // Windows Named Pipe는 폴더를 만들지 않으므로 시험이 직접 만들고 정리한다.
+            std::fs::create_dir(&root).unwrap();
             let listener = LocalListener::bind(&socket(&root)).unwrap();
             let target = machine.map(str::to_string);
             let expected = FrontRequest::DeployStatus { machine: target.clone(), id: "job".into() };
