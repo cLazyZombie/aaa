@@ -5531,3 +5531,10 @@ primary 근거:
   받아 마지막 줄바꿈을 command substitution이 지웠다. PTY는 쓰기별 read 경계를 보장하지 않는다. adopt가 보는 것은 pane의
   생존과 제출 뒤 응답이므로 가짜를 canonical 줄 읽기로 바꾸고, 기존 생존 검사는 글+Enter를 한 번 쓰는 `pane run`으로 강화했다.
   실제 입력·기대 응답·시한을 바꾸지 않는다. 첫 실패의 실험실·로그를 보존한다.
+
+### 8.233 배포 실행기 잠금의 상속 FD 수명(10-19, t-0381 후속)
+
+- **실패와 원인.** 다른 작업의 전체 gate에서 기존 durable job 시험이 실행기 drop 뒤 EWOULDBLOCK으로 실패했다. File close만 쓰면 fork/dup가 공유하는 flock 참조가 남아 잠금을 유지한다. 기존 시험의 실제 lease를 복제해 동일 configure 실패를 결정적으로 확인했다. 원본 FD는 이미 close-on-exec이며 이 플래그는 fork~exec 창을 막지 못한다. 원래 실패 실행의 상속 자식 PID까지 추적한 증거는 없으므로 특정 자식을 원인으로 단정하지 않는다.
+- **참고와 차이.** herdr-projects 0.2.35 `project.rs::ProjectLock/Project::lock`도 File close에 맡긴다. herdr `plugin_installations.rs::retain_startup_installation`은 소유권 전환 때 `File::unlock`을 명시한다. herdr의 integration/env 잠금, herdr-web-ui server와 t3code packages에서는 같은 fork 상속 해제 구현이 없었다. [Apple flock(2)](https://developer.apple.com/library/archive/documentation/System/Conceptual/ManPages_iPhoneOS/man2/flock.2.html)의 dup/fork 공유 잠금 계약에 따라 aaa의 실행기 소유권 끝에 명시적으로 unlock한다. 기존 close-on-exec도 유지한다.
+- **제품.** 잠금 획득 직후 private RAII Lease를 만들어 정상 drop과 journal 복구 오류 반환 모두에서 unlock한 뒤 File을 닫는다. 살아 있는 실행기의 배타 잠금, job 재실행 금지, 복구 SHA 판정은 그대로다. 잠금 해제 오류는 기록한다.
+- **검증.** 새 시험을 늘리지 않고 기존 durable job owner 시험에 공유 FD 보유를 더했다. 수정 전 EWOULDBLOCK RED → 수정 후 GREEN, unlock만 제거한 변형도 같은 위치 RED → 바이트 그대로 복원 후 GREEN을 확인한다. 시간 연장·재시도·시험 생략·새 자식/신호·production 시험 seam은 없다. 전체 ci-local과 공개 검사 후 착지한다. 운영 binary 반영은 배포 담당이 한다.
