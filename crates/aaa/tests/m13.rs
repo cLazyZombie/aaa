@@ -3024,6 +3024,55 @@ fn project_lifecycle() {
     assert!(notes(&w.h.ok(&["project", "sweep", "demo"])).contains("치울 것이 없다"));
 }
 
+/// 프로젝트 인자 없는 CLI(plan §8.285, S1): host가 맡은 프로젝트 하나를 CLI가 채운다. 옛 꼴로 같은 이름을 주면 표준 오류에
+/// 한 줄 알리고 같은 결과, 다른 이름이면 거부한다. `aaa set`·`aaa coordinator open`은 `project set`·`project open`의 새 꼴이다.
+#[test]
+fn cli_takes_no_project_argument() {
+    let w = world();
+    let task = w.task("plain.txt", "보고만 쓴다");
+    let v = w.h.ok(&[
+        "thread",
+        "start",
+        "--title",
+        "인자 없음",
+        "--machine",
+        "labA",
+        "--profile",
+        "fake",
+        "--kind",
+        "dir",
+        "--task-file",
+        &task,
+    ]);
+    let id = v["id"].as_str().unwrap().to_string();
+    assert_eq!(v["project"], "demo", "{v}");
+    let new = w.h.ok(&["thread", "show", &id]);
+    let old = w.h.cmd(&["--json", "thread", "show", "demo", &id]).output().unwrap();
+    assert!(old.status.success(), "{old:?}");
+    assert!(String::from_utf8_lossy(&old.stderr).contains("프로젝트 인자는 이제 생략한다"), "{old:?}");
+    let old: Value = serde_json::from_slice(&old.stdout).unwrap();
+    assert_eq!((old["id"].clone(), old["title"].clone()), (new["id"].clone(), new["title"].clone()));
+    let e = w.h.json(&["thread", "show", "other", &id]).expect_err("다른 프로젝트 이름");
+    assert!(e.contains("이 host의 프로젝트는 `demo`다"), "{e}");
+    // 뒤에 여러 값이 오는 명령도 옛 꼴을 받는다
+    w.h.ok(&["thread", "keys", &id, "--text", "a"]);
+    w.h.ok(&["thread", "keys", "demo", &id, "--text", "b"]);
+    w.h.ok(&["inbox", "list"]);
+    w.h.ok(&["context"]);
+    let set = w.h.ok(&["set", "goal", "인자 없는 설정"]);
+    assert_eq!(set["name"], "demo", "{set}");
+    assert!(std::fs::read_to_string(w.projects.join("demo/project.toml")).unwrap().contains("인자 없는 설정"));
+    // coordinator 열기도 같은 프로젝트로 간다: 띄운 coordinator를 옛 꼴 `project open demo`가 돌고 있는 것으로 본다
+    let v = w.h.ok(&["coordinator", "open"]);
+    assert_eq!((v["project"]["name"].as_str(), v["started"].as_bool()), (Some("demo"), Some(true)), "{v}");
+    let again = w.h.ok(&["project", "open", "demo"]);
+    assert_eq!(
+        (again["started"].as_bool(), again["pane"]["id"].clone()),
+        (Some(false), v["pane"]["id"].clone()),
+        "{again}"
+    );
+}
+
 /// 한 host는 프로젝트 하나(plan §8.283, 프로젝트 단계 없애기 S0): 보관하지 않은 프로젝트가 둘이면 다시 띄운 host가 입구를
 /// 열기 전에 줄일 목록을 말하고 끝난다. 보관한 것은 세지 않고, 멈춘 host에서 폴더를 `.trash`로 옮겨 줄이면 다시 뜬다.
 /// 만들기 거부는 S1(프로젝트 인자 없애기)에서 한다.
