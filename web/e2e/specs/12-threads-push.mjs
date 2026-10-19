@@ -945,7 +945,7 @@ export default async function ({ page }) {
     for (const n of ["ord1", "ord2", "ord3"]) aaa("pane", "kill", n);
   });
 
-  await step("사후 평가자: 목록에 섞이지 않고 활동 막대 「특수」 패널의 줄로 보인다(plan §8.256) → 누르면 평가자 화면", async () => {
+  await step("사후 평가자: 목록에 섞이지 않고 활동 막대 「특수」 패널의 줄로 보인다(plan §8.258) → 누르면 평가자 화면", async () => {
     const v = aaa("evaluator", "assign", "demo", "--profile", "fake", "--machine", "labA").evaluators[0];
     const id = v.thread.id;
     const badge = page.getByTestId("evaluator-demo");
@@ -1160,7 +1160,7 @@ export default async function ({ page }) {
     if (bad.length) throw new Error(bad.join("; "));
   });
 
-  await step("특수 임무: 「특수」 패널 줄(plan §8.256)의 메뉴가 좁은 창·휴대폰·데스크톱에서 화면 안에 있고, 줄을 누르면 임무 보기일 뿐 시작·승인하지 않으며, 승인 필요는 활동 막대 배지이고 Controller가 승인한다", async () => {
+  await step("특수 임무: 「특수」 패널 줄(plan §8.258)의 메뉴가 좁은 창·휴대폰·데스크톱에서 화면 안에 있고, 줄을 누르면 임무 보기일 뿐 시작·승인하지 않으며, 승인 필요는 활동 막대 배지이고 Controller가 승인한다", async () => {
     aaa("project", "create", "mission-layout");
     fs.mkdirSync(`${root}/projects/mission-layout/missions`, { recursive: true });
     fs.writeFileSync(`${root}/projects/mission-layout/missions/ci-watch.md`, '+++\nprofile="fake"\ntitle="rc 검증·병합 시간 최적화 감시"\nwithdrawal="none"\n+++\n새 입력을 자료로 읽고 감시한다.\n');
@@ -1238,7 +1238,7 @@ export default async function ({ page }) {
     const row = page.getByTestId("pane-coord-home coordinator");
     await page.setViewportSize({ width: 1280, height: 800 });
     await inList(page, row);
-    // 사용자 결정 10-19(plan §8.256): coordinator 줄은 왼쪽 보라 막대, thread가 있으면 그 아래 「thread n」 머리줄, 자식 줄은 8px만 들인다
+    // 사용자 결정 10-19(plan §8.258): coordinator 줄은 왼쪽 보라 막대, thread가 있으면 그 아래 「thread n」 머리줄, 자식 줄은 8px만 들인다
     fs.writeFileSync(`${root}/coord-task.txt`, "noreport\n");
     const side = aaa("thread", "start", "coord-home", "--title", "옆일", "--profile", "fake", "--machine", "labA", "--kind", "dir", "--task-file", `${root}/coord-task.txt`);
     await domIs(page, "thread 머리줄", () => document.querySelector('[data-testid="project-thread-head-coord-home"]')?.textContent.trim() === "thread 1");

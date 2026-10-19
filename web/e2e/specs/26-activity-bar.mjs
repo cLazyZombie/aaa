@@ -1,6 +1,6 @@
 // 왼쪽 활동 막대(사용자 요청 10-19 「vs code 처럼 … 같은 버튼 한번 더 누르면 숨겨지고」, plan §8.240): 패널 바꾸기·다시 눌러 접기·
 // 기기별 기억·키보드·Mod+Shift+B·단축키·팔레트·알림이 연 줄의 패널·보고서 본문 화면·설정 톱니·휴대폰 drawer·막대와 바닥 줄 배치(§8.248),
-// 사이드바 폭 손잡이(사용자 요청 10-19 「왼쪽 창 … 좌우 resize」, plan §8.255).
+// 사이드바 폭 손잡이(사용자 요청 10-19 「왼쪽 창 … 좌우 resize」, plan §8.257).
 import { root, aaa, step, browser, pairPage, claudeSh, claudeAsk, claudeIdle, waitOutput, domIs, hashIs, focusIs, inList, until, drawerSettled, shot, openSettings } from "../lib/harness.mjs";
 import fs from "node:fs";
 
@@ -258,7 +258,7 @@ export default async function () {
     }
   });
 
-  await step("사이드바 폭(plan §8.255): 경계 손잡이를 끌면 활동 막대가 아닌 사이드바 칸만 넓어지고 본문이 그만큼 준다. 놓으면 host 공유 설정이라 다른 기기도 같은 폭이고, focus 뒤 ←→ 16px·Home·End, 두 번 누르면 기본 320px. 접힘·좁은 창(drawer)·터치 기기에는 손잡이가 없다", async () => {
+  await step("사이드바 폭(plan §8.257): 경계 손잡이를 끌면 활동 막대가 아닌 사이드바 칸만 넓어지고 본문이 그만큼 준다. 놓으면 host 공유 설정이라 다른 기기도 같은 폭이고, focus 뒤 ←→ 16px·Home·End, 두 번 누르면 기본 320px. 접힘·좁은 창(drawer)·터치 기기에는 손잡이가 없다", async () => {
     const dev = await pairPage(browser, aaa("web", "pair").code, { width: 1280, height: 800 });
     const other = await pairPage(browser, aaa("web", "pair").code, { width: 1280, height: 800 });
     const p = dev.page;
@@ -338,7 +338,7 @@ export default async function () {
     const layout = (p) =>
       p.evaluate(() => {
         const box = (s) => document.querySelector(s).getBoundingClientRect();
-        // 보고서는 패널 단추 묶음 바로 밑: 「특수」(plan §8.256)가 에이전트 밑에 더해져 그 아래다
+        // 보고서는 패널 단추 묶음 바로 밑: 「특수」(plan §8.258)가 에이전트 밑에 더해져 그 아래다
         const agents = box('[data-testid="activity-special"]');
         const reports = box('[data-testid="activity-reports"]');
         const foot = document.querySelector(".list-foot");

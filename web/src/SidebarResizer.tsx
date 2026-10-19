@@ -1,4 +1,4 @@
-// 사이드바 오른쪽 경계 손잡이(사용자 요청 10-19 「왼쪽 창 … 좌우 resize 기능도 넣어줘」, plan §8.255). herdr-web-ui aa624cb
+// 사이드바 오른쪽 경계 손잡이(사용자 요청 10-19 「왼쪽 창 … 좌우 resize 기능도 넣어줘」, plan §8.257). herdr-web-ui aa624cb
 // `src/components/SidebarResizer.tsx`를 옮겼다: 끌면 폭이 바뀌고 두 번 누르면 기본 폭, focus 뒤 ←→ 16px·Home·End, role="separator".
 // 활동 막대가 아니라 그 오른쪽 사이드바 칸(#sidebar-column)의 폭이다. 넓은 창에서만 보이고(휴대폰 drawer는 제 폭), 접으면 칸과 함께 숨는다.
 // 끄는 동안은 화면에만 놓고 놓을 때 한 번 저장한다(t3code `useResizableWidth`: 매 tick 쓰지 않는다). 저장은 host 공유 설정이다.

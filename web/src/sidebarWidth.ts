@@ -1,4 +1,4 @@
-// 사이드바 폭(사용자 요청 10-19 「왼쪽 창 … 좌우 resize 기능도 넣어줘」, plan §8.255). 규칙은 herdr-web-ui aa624cb
+// 사이드바 폭(사용자 요청 10-19 「왼쪽 창 … 좌우 resize 기능도 넣어줘」, plan §8.257). 규칙은 herdr-web-ui aa624cb
 // `src/lib/sidebarWidth.ts`를 옮겼다: 240~520px, 창 폭의 절반을 넘지 않고, 화살표 한 번에 16px, Home·End는 양 끝.
 // 참고(herdr-web-ui·t3code)는 기기 localStorage에 두지만 aaa는 TUI 사이드바 폭(`tuiSidebarWidth`)처럼 host 공유 설정에 둔다
 // (preferences.ts `SidebarShared.sidebarWidth`). 넓은 창마다 다른 폭은 창 절반 한도가 받아 낸다.

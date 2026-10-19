@@ -1,4 +1,4 @@
-// 특수 패널(src/specialModel.ts, plan §8.256): 줄 색·첫 낱말과 활동 막대 배지(막힘·오류·승인 필요 임무 + 확인창 걸린 평가자).
+// 특수 패널(src/specialModel.ts, plan §8.258): 줄 색·첫 낱말과 활동 막대 배지(막힘·오류·승인 필요 임무 + 확인창 걸린 평가자).
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import { evaluatorState, missionTone, missionWord, specialAttention } from "../src/specialModel.ts";

@@ -376,7 +376,7 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
   const [threads, setThreads] = useState<Map<string, ThreadView>>(new Map());
   const [threadsSync, setThreadsSync] = useState(0);
   const threadReload = useRef(new ThreadReload());
-  // 임무·사후 평가자: 목록에 섞지 않고 활동 막대 「특수」 패널에 보인다(§8.13, §8.256)
+  // 임무·사후 평가자: 목록에 섞지 않고 활동 막대 「특수」 패널에 보인다(§8.13, §8.258)
   const [missions, setMissions] = useState<MissionView[]>([]);
   const missionLoading = useRef(false);
   const missionReload = useRef(false);
@@ -929,7 +929,7 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
   };
   // 넓은 창에서 접었으면 사이드바 칸이 없다(좁은 창은 drawer라 늘 칸이 있다)
   const sidebarShown = !wideScreen || !collapsed;
-  // 사이드바 폭(SidebarResizer, plan §8.255): 끄는 동안은 화면에만 두고 놓으면 공유 설정에 남긴다
+  // 사이드바 폭(SidebarResizer, plan §8.257): 끄는 동안은 화면에만 두고 놓으면 공유 설정에 남긴다
   const savedSidebarWidth = useSidebarShared().sidebarWidth;
   const [draggedSidebarWidth, setDraggedSidebarWidth] = useState<number | null>(null);
   const sidebarWidth = draggedSidebarWidth ?? savedSidebarWidth;

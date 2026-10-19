@@ -1,4 +1,4 @@
-// 사이드바 폭(src/sidebarWidth.ts, plan §8.255): herdr-web-ui 규칙(240~520px, 창 절반, ←→ 16px, Home·End)과 host 공유 설정 값.
+// 사이드바 폭(src/sidebarWidth.ts, plan §8.257): herdr-web-ui 규칙(240~520px, 창 절반, ←→ 16px, Home·End)과 host 공유 설정 값.
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import { clampSidebarWidth, keyedSidebarWidth, parseSidebarWidth, sidebarMaxWidth } from "../src/sidebarWidth.ts";

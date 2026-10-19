@@ -12,7 +12,7 @@ export const SHARED_SETTING_KEYS = [
   "usageGlance", "usageOrder", "usageHidden",
   // aaa: 목록 pane 줄 순서(참고는 herdr workspace 순서라 서버에 있다, plan §8.196)
   "paneOrder",
-  // aaa: 사이드바 폭 px(참고는 기기 localStorage, plan §8.255)
+  // aaa: 사이드바 폭 px(참고는 기기 localStorage, plan §8.257)
   "sidebarWidth",
 ] as const;
 export type SharedSettingKey = (typeof SHARED_SETTING_KEYS)[number];

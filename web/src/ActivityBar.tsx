@@ -8,7 +8,7 @@ import { Bot, Eye, FileText, Folders, Monitor, Radar, type LucideIcon } from "lu
 import { PANEL_LABEL, PANELS, type SidebarPanel } from "./sidebarPanel";
 import "./ActivityBar.css";
 
-// 특수는 Radar: 늘 지켜보다 깨어나는 임무와 평가자, 에이전트(Bot)와 실루엣이 다르다(시안 t-0393, plan §8.256)
+// 특수는 Radar: 늘 지켜보다 깨어나는 임무와 평가자, 에이전트(Bot)와 실루엣이 다르다(시안 t-0393, plan §8.258)
 const PANEL_ICON: Record<SidebarPanel, LucideIcon> = { projects: Folders, machines: Monitor, agents: Bot, special: Radar };
 
 export function ActivityBar({

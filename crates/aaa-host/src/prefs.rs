@@ -28,7 +28,7 @@ pub(crate) const SHARED_SETTING_KEYS: &[&str] = &[
     "usageHidden",
     // aaa: 웹 목록 pane 줄 순서(참고는 herdr workspace 순서라 herdr 서버에 있다, plan §8.196)
     "paneOrder",
-    // aaa: 웹 사이드바 폭 px(참고 herdr-web-ui는 기기 localStorage, plan §8.255). TUI는 칸 수라 `tuiSidebarWidth`를 따로 쓴다
+    // aaa: 웹 사이드바 폭 px(참고 herdr-web-ui는 기기 localStorage, plan §8.257). TUI는 칸 수라 `tuiSidebarWidth`를 따로 쓴다
     "sidebarWidth",
 ];
 /// TUI 사이드바 배치(plan §8.193): 사용자가 끌거나 접은 값만 있다. herdr는 client 기기 파일(`client-shell/*.json`
@@ -219,7 +219,7 @@ mod tests {
         assert_eq!(store.get().settings.get("tuiSidebarWidth"), Some(&json!(48)));
     }
 
-    /// 웹 사이드바 폭(plan §8.255)은 TUI 칸 수와 다른 이름으로 함께 남고, 되돌림(null)도 그대로 든다
+    /// 웹 사이드바 폭(plan §8.257)은 TUI 칸 수와 다른 이름으로 함께 남고, 되돌림(null)도 그대로 든다
     #[test]
     fn keeps_the_web_sidebar_width() {
         let store = Store::new(parse(None));
