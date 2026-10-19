@@ -5,7 +5,7 @@
 // 혼자 돌리기: node web/e2e/web.e2e.mjs --spec 22-chat-surface(새 실험실). 준비(host·agent·t1·첫 화면)는 lib/harness.mjs runSpec.
 
 import fs from "node:fs";
-import { aaa, until, step, browser, webkit, pairPage, inList, openSettings, domIs, shot, fakeViewport, softKeyboard, root, AA } from "../lib/harness.mjs";
+import { aaa, until, step, browser, webkit, pairPage, inList, openSettings, domIs, shot, shots, fakeViewport, softKeyboard, root, AA } from "../lib/harness.mjs";
 import { pairDevice } from "../lib/devices.mjs";
 
 /** 긴 대화 기록을 가진 Claude pane(hook으로 기록 자리를 알린다, 11-agent-panes 「대화 기록」과 같은 길) */
@@ -287,6 +287,114 @@ export default async function () {
       await wk.close();
     }
     aaa("pane", "kill", "wide1");
+    if (bad.length) throw new Error(bad.join("; "));
+  });
+
+  await step("대화 입력창 높이(사용자 10-19 「두 줄이 필요할 때만 두줄로 쓰고 작을 때는 한 줄로」): 휴대폰 가로·세로·데스크톱에서 비었거나 짧으면 글 칸과 보내기 단추가 한 줄(가운데가 맞고 겹치지 않음), 줄바꿈·자동 줄넘김이면 그만큼 늘어 단추가 밑으로 가고 10줄에서 멈춰 굴러가며, 지우면 처음 높이로 돌아온다. 그동안 focus·아래끝은 그대로다", async () => {
+    chatPane("line1", "3c2b1a09-8f7e-4d6c-9b5a-4f3e2d1c0b9e");
+    const bad = [];
+    // 그 순간의 입력창: 판정 표지(data-lines), 상자·글 칸·단추 자리, 한 줄 높이, focus, 글 칸 안에서 잘린 것
+    const look = (p) =>
+      p.evaluate(() => {
+        const surface = document.querySelector('[data-testid="chat-composer"] .composer-surface');
+        const text = surface.querySelector(".composer-text");
+        const send = surface.querySelector(".composer-send");
+        const r = (el) => { const b = el.getBoundingClientRect(); return { top: b.top, bottom: b.bottom, left: b.left, right: b.right, height: b.height, mid: b.top + b.height / 2 }; };
+        return {
+          lines: surface.dataset.lines,
+          surface: r(surface), text: r(text), send: r(send),
+          lh: parseFloat(getComputedStyle(text).lineHeight),
+          room: parseFloat(getComputedStyle(document.documentElement).getPropertyValue("--app-height")) || innerHeight,
+          focused: document.activeElement === text,
+          scroll: { h: text.scrollHeight, ch: text.clientHeight, w: text.scrollWidth, cw: text.clientWidth },
+          pageWide: document.scrollingElement.scrollWidth > innerWidth,
+        };
+      });
+    const wk = await webkit.launch();
+    try {
+      const phone = (await pairDevice(wk, aaa("web", "pair").code, "iphone")).page;
+      const desk = (await pairPage(browser, aaa("web", "pair").code, { width: 1920, height: 1080 })).page;
+      for (const [name, p, size] of [["phone-landscape", phone, { width: 874, height: 402 }], ["phone-portrait", phone, { width: 402, height: 874 }], ["desktop", desk, null]]) {
+        if (size) await p.setViewportSize(size);
+        await openChat(p, "line1");
+        const box = p.locator('[data-testid="chat-composer"] .composer-text');
+        await box.click();
+        await box.fill("");
+        // 표지가 바뀐 횟수: 한 번 입력에 한 번만 바뀐다(한 줄 ↔ 여러 줄이 오가며 튀지 않는다)
+        await p.evaluate(() => {
+          const surface = document.querySelector('[data-testid="chat-composer"] .composer-surface');
+          window.__lineFlips = [];
+          window.__lineWatch?.disconnect();
+          window.__lineWatch = new MutationObserver(() => window.__lineFlips.push(surface.dataset.lines));
+          window.__lineWatch.observe(surface, { attributes: true, attributeFilter: ["data-lines"] });
+        });
+        const capture = async (state) => shots && (await p.getByTestId("chat-composer").screenshot({ path: `${shots}/composer-${name}-${state}.png`, animations: "disabled" }));
+        const one = async (state) => {
+          await domIs(p, `${name} ${state} 한 줄`, () => document.querySelector('[data-testid="chat-composer"] .composer-surface')?.dataset.lines === "one").catch((e) => bad.push(e.message));
+          await capture(state);
+          const s = await look(p);
+          if (s.lines !== "one") bad.push(`${name} ${state}: 한 줄 표지가 아니다(${s.lines})`);
+          if (Math.abs(s.send.mid - s.text.mid) > 1) bad.push(`${name} ${state}: 단추 가운데 ${Math.round(s.send.mid)} ≠ 글 칸 가운데 ${Math.round(s.text.mid)}`);
+          if (s.send.left < s.text.right - 0.5) bad.push(`${name} ${state}: 단추(${Math.round(s.send.left)})가 글 칸(~${Math.round(s.text.right)})과 겹친다`);
+          if (s.text.height > s.lh * 2) bad.push(`${name} ${state}: 글 칸 ${Math.round(s.text.height)}px이 한 줄(${s.lh}px) 높이가 아니다`);
+          if (s.scroll.h > s.scroll.ch + 1 || s.scroll.w > s.scroll.cw + 1) bad.push(`${name} ${state}: 글 칸 안에서 잘린다 ${JSON.stringify(s.scroll)}`);
+          return s;
+        };
+        const more = async (state, lines) => {
+          await domIs(p, `${name} ${state} 여러 줄`, () => document.querySelector('[data-testid="chat-composer"] .composer-surface')?.dataset.lines === "more").catch((e) => bad.push(e.message));
+          await capture(state);
+          const s = await look(p);
+          if (s.lines !== "more") bad.push(`${name} ${state}: 여러 줄 표지가 아니다(${s.lines})`);
+          if (s.send.top < s.text.bottom - 0.5) bad.push(`${name} ${state}: 단추(${Math.round(s.send.top)})가 글 칸 밑(${Math.round(s.text.bottom)})으로 가지 않았다`);
+          // 한도: 10줄, 보이는 높이의 절반(휴대폰 가로)
+          const cap = Math.min(s.lh * 10, s.room / 2);
+          if (lines > 10 ? Math.abs(s.text.height - cap) > 1 : s.text.height < s.lh * lines || s.text.height > s.lh * (lines + 2))
+            bad.push(`${name} ${state}: 글 칸 ${Math.round(s.text.height)}px이 ${lines > 10 ? `한도 ${Math.round(cap)}px` : `${lines}줄(${s.lh}px씩)`}이 아니다`);
+          if (lines > 10 ? s.scroll.h <= s.scroll.ch : s.scroll.h > s.scroll.ch + 1) bad.push(`${name} ${state}: 굴림이 맞지 않다 ${JSON.stringify(s.scroll)}`);
+          return s;
+        };
+        const empty = await one("empty");
+        await p.keyboard.type("짧은 글");
+        const short = await one("short");
+        await p.keyboard.press("Shift+Enter");
+        await p.keyboard.type("둘째 줄");
+        const two = await more("two-lines", 2);
+        for (let i = 3; i <= 14; i++) {
+          await p.keyboard.press("Shift+Enter");
+          await p.keyboard.type(`${i}째 줄`);
+        }
+        const many = await more("many-lines", 14);
+        await box.fill("");
+        // 상자 폭의 한 배 반쯤 되는 한 문단: 두 줄로 넘어간다
+        const paragraph = await p.evaluate(() => {
+          const text = document.querySelector('[data-testid="chat-composer"] .composer-surface').clientWidth;
+          const ctx = document.createElement("canvas").getContext("2d");
+          ctx.font = getComputedStyle(document.querySelector(".composer-text")).font;
+          let out = "";
+          while (ctx.measureText(out).width < text * 1.5) out += "줄바꿈 없이 길게 쓰는 글 ";
+          return out;
+        });
+        await p.keyboard.type(paragraph);
+        const wrapped = await more("wrapped", 2);
+        await p.keyboard.press("ControlOrMeta+a");
+        await p.keyboard.press("Backspace");
+        const cleared = await one("cleared");
+        for (const [state, s] of Object.entries({ empty, short, two, many, wrapped, cleared })) {
+          if (!s.focused) bad.push(`${name} ${state}: 글 칸이 focus를 잃었다`);
+          if (s.pageWide) bad.push(`${name} ${state}: 화면이 가로로 넘친다`);
+          if (Math.abs(s.surface.bottom - empty.surface.bottom) > 0.5) bad.push(`${name} ${state}: 상자 아래끝 ${Math.round(s.surface.bottom)} ≠ ${Math.round(empty.surface.bottom)}`);
+        }
+        if (Math.abs(short.surface.height - empty.surface.height) > 0.5 || Math.abs(cleared.surface.height - empty.surface.height) > 0.5)
+          bad.push(`${name}: 한 줄 상자 높이가 다르다 ${[empty, short, cleared].map((s) => Math.round(s.surface.height))}`);
+        const flips = await p.evaluate(() => window.__lineFlips);
+        if (flips.join() !== "more,one,more,one") bad.push(`${name}: 표지가 튄다 ${flips}`);
+      }
+      await phone.context().close();
+      await desk.context().close();
+    } finally {
+      await wk.close();
+    }
+    aaa("pane", "kill", "line1");
     if (bad.length) throw new Error(bad.join("; "));
   });
 }

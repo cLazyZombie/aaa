@@ -9,7 +9,7 @@ const VERSION = "5.5.0";
 
 /** unified diff를 붙인다. 각 hunk의 옛 줄 묶음이 파일에 정확히 한 번 있어야 한다(아니면 실패). */
 export function applyPatch(root, patch) {
-  const files = patch.split(/^diff --git /m).filter((s) => s.trim());
+  const files = patch.replace(/\r\n/g, "\n").split(/^diff --git /m).filter((s) => s.trim());
   for (const part of files) {
     const lines = part.split("\n");
     const path = /^a\/(\S+) b\//.exec(lines[0])?.[1];

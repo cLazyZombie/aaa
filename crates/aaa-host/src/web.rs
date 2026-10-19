@@ -1415,22 +1415,29 @@ async fn pane_session(
                             Some(FrontRequest::PaneResize { pane: id.clone(), cols: cols.clamp(10, 500), rows: rows.clamp(3, 300) })
                         }
                         Ok(TermClientMsg::Submit { id: sid, data }) => {
+                            let bytes = data.len();
+                            tracing::info!(pane = %id, front = %front.id, submit = sid, bytes, "웹 입력: submit 수신");
                             // 글, 잠깐 뒤 Enter(한 덩어리로 보내면 Codex가 붙여넣기로 보고 Enter를 줄바꿈으로 넣는다).
                             // 이 연결의 다음 입력은 Enter 뒤에 간다. 답은 둘 다 pane에 들어간 뒤다.
                             host.touch_device(dev, "입력");
                             let typed = |data: Vec<u8>| FrontRequest::PaneInput { pane: id.clone(), data: B64(data) };
                             let mut sent = host.call_from(role, &actor, Some(front), typed(data.into_bytes())).await;
+                            tracing::info!(pane = %id, front = %front.id, submit = sid, ok = sent.is_ok(), code = ?sent.as_ref().err().map(|e| &e.code), phase = "text", "웹 입력: agent 응답");
                             if sent.is_ok() {
                                 tokio::time::sleep(submit_enter_gap()).await;
                                 // 기다리는 동안 폐기된 기기의 Enter는 보내지 않는다(t-0340 감사 A9, t3code `awaitInvalidation`)
                                 if host.is_revoked(dev) {
+                                    tracing::warn!(pane = %id, front = %front.id, submit = sid, "웹 입력: 기기 폐기로 Enter 취소");
                                     out.revoked();
                                     break;
                                 }
                                 sent = host.call_from(role, &actor, Some(front), typed(b"\r".to_vec())).await;
+                                tracing::info!(pane = %id, front = %front.id, submit = sid, ok = sent.is_ok(), code = ?sent.as_ref().err().map(|e| &e.code), phase = "enter", "웹 입력: agent 응답");
                             }
+                            host.db.audit(&actor, "web_submit", &format!("pane={id} front={} submit={sid} bytes={bytes} ok={}", front.id, sent.is_ok()));
                             let reply = TermServerMsg::Submitted { id: sid, ok: sent.is_ok(), message: sent.err().map(|e| e.message) };
                             if !out.msg(&reply) {
+                                tracing::warn!(pane = %id, front = %front.id, submit = sid, "웹 입력: 확인 응답 연결 닫힘");
                                 break;
                             }
                             None

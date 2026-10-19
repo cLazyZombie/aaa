@@ -5294,7 +5294,49 @@ primary 근거:
 - **시험:** 주입한 now와 임시 사본으로 기한·오래된 순·보호·보호 초과 알림·꺼짐·6시간 경계·쓰기 없는 미리 보기를 본다.
   기존 보고서 E2E에 doctor·CLI dry-run·웹 합계/한도 표시를 더한다. 고정 sleep·새 신호 시험은 없다.
 
-### 8.212 대화 사진 첨부·터치 Enter 줄바꿈(10-19)
+### 8.213 Windows release의 xterm 패치 줄 끝과 실험실 환경 격리(10-19, t-0375)
+
+- **실제 실패.** v0.1.1 release의 Windows job은 `npm run build` 중 `src/browser/Terminal.ts` 첫 hunk의 문맥이 없다고 끝났다. Windows checkout의 CRLF 패치를 LF로 읽은 npm 소스와 그대로 비교했다. 적용기는 대상 소스만 LF로 정규화하고 있었다.
+- **수정.** `xterm-source.mjs applyPatch`가 패치 입력도 LF로 정규화한다. 문맥이 정확히 한 곳이어야 하는 조건은 유지한다. workspace 판은 0.1.2이며 v0.1.1 tag를 옮기지 않는다. tag 게시·운영 binary 교체는 coordinator 몫이다.
+- **참고와 차이.** herdr-web-ui `package.json patchedDependencies`·`scripts/build-xterm.ts`는 Bun이 패치한 소스를 TypeScript로 빌드한다. aaa는 npm을 써 자체 패치 적용기가 필요하다. t3code `package.json`·`patches/`도 확인했으나 같은 자체 적용기는 없다. Vite 구성이나 IME 동작은 바꾸지 않는다.
+- **최소 보호선.** `web/test/xterm-source.test.mjs`가 실제 파일 적용기를 LF/CRLF 네 조합으로 실행하고, 이미 바뀌어 문맥이 안 맞는 파일은 거부되는지 본다. 수정 전 CRLF patch에서 실패했고 수정 뒤 통과했다. 기존 CI 세 OS의 `web` 단계가 이 시험을 실행하므로 별도 Windows job을 늘리지 않는다.
+- **실험실.** aaa pane 안에서 전체 검사를 처음 실행하자 기존 시험 다섯 건이 운영 pane의 호출자·hook 환경을 물려받아 실패했다. `tests/lab Node::cmd`·사람 터미널 fixture는 실험실을 띄울 때 그 변수만 제거한다. 권한 시험은 자기 값을 명시해 주입한다. update 사본의 비터미널 검사도 세션 변수를 제거한다. 제품의 사람 전용·worker 권한 검사는 그대로다.
+
+### 8.214 작업 중 보낸 메시지의 chat 기록·전송 확인과 전달 진단(10-19, t-0375)
+
+- **실제 기록.** 작업 중 웹에서 보낸 요청 세 건이 Claude의 `queue-operation enqueue/remove`와 인간 `attachment.queued_command`로 모두 남았으나 aaa chat에는 없었다. `chat.rs claude_line`이 user·assistant만 읽던 것이 원인이다. 과거 전송 경로 로그가 없어 이 밖에 미도착한 메시지가 있었는지는 판정할 수 없다.
+- **참고 그대로.** herdr-web-ui `server/conversation.ts parseClaudeTranscript`의 queued_command 분기를 옮겼다. `commandMode = prompt`·`origin.kind = human`만 사람 말로 표시하고 enqueue/remove 장부는 중복하지 않는다. 배경 작업·peer·meta·sidechain은 그대로 숨긴다. t3code `Adapters/ClaudeAdapterV2.ts`는 SDK의 구조화된 turn 입력·첨부를 쓰므로 PTY transcript 판독에는 herdr-web-ui가 직접 대응한다. Codex의 실제 작업 중 입력은 `response_item.message role=user`이며 기존 판독기가 처리한다.
+- **화면.** submit 응답 뒤 입력창에 전송 확인을 표시한다. 대화 기록 반영과 모델의 처리 완료를 구분한다. 자동 전송을 끈 동안의 기존 기기별 보관·지금 보내기는 유지한다. onSend가 동기로 실패해도 보내는 중에 갇히지 않고 초안과 확인 불가 안내를 남긴다.
+- **진단.** host는 front·pane·submit 번호·바이트 수·글/Enter 응답·거부 코드·확인 연결 닫힘을 기록하고 `web_submit` audit를 남긴다. agent는 link 요청 번호·session·바이트 수, session host는 수신·PTY 쓰기 성공/실패를 남긴다. 본문·키 내용·token은 기록하지 않는다. session 응답은 입력 통로 접수이며 모델 수신 증거는 transcript다. 새 기록은 향후 전송부터 생긴다.
+- **D8 조사.** 감지 상태와 규칙을 debug에서 info로 올려 운영 로그에도 남긴다. 과거 false-idle 신고 시각에는 해당 규칙·프레임이 없어 직접 원인은 미확정이다. 나중 모델 용량 오류의 Ready 화면은 당시 원인으로 소급하지 않는다.
+- **시험.** 기존 chat 파일 tail 회귀에서 queued attachment 누락이 수정 전 실패했고 수정 후 통과한다. 웹 E2E 11의 실제 읽기·변화 push·입력 단계에서 작업 중 전송·한 번 표시·기기 보관·수신 확인·본문 없는 전달 기록을 본다. 확인 표시를 없앤 빌드가 실패하고 정본 복원 뒤 통과한다. 새 대기는 프로그램 수신 출력 사건을 쓴다. wire 판 변경은 없다.
+
+### 8.215 대화 입력창은 한 줄로 시작하고 필요할 때만 늘어난다(10-19, t-0376, 사용자 「두 줄이 필요할 때만 두줄로 쓰고 작을 때는 한 줄로」)
+
+- **원인.** 글 칸은 이미 한 줄이었다(`rows=1`, `min-height: calc(1lh + var(--space-5))`). 두 줄로 보인 것은 `.composer-surface` grid가
+  글 칸(`"text text text"`) 밑에 단추 줄(`"left status right"`)을 따로 두기 때문이다. 참고 herdr-web-ui는 그 줄에 더하기·마이크·작업 칩·상태·보내기를
+  두지만 aaa는 보내기만 옮겨(§8.130) 빈 줄처럼 보였다. 또 글 칸이 글만큼 늘지 않아 여러 줄이 한 줄 칸 안에서 굴렀다(참고 `sizeTextarea`를 옮기지 않았다).
+- **고침.** `web/src/ChatComposer.tsx`
+  - 높이: 참고 herdr-web-ui `src/components/Composer.tsx` `sizeTextarea`(415~433줄) 그대로 `height=auto` → `scrollHeight`를 `useLayoutEffect`에서 준다.
+    다시 재는 때도 참고대로 글·상자 폭(ResizeObserver, 참고 `boxWidth`)·대화 글자 크기와 밀도(참고 `settings.chatFontSize` 효과)다. 참고의 `facesLoaded`는
+    입력창 글꼴이 시스템 글꼴이라 없다.
+  - 한 줄 배치: t3code `ChatComposer.tsx` `isComposerResting`(6645·7054~7060·7126~7137·7219~7221줄)과 `useComposerMultilinePrompt.ts`다. 글이 없거나 한 줄이면
+    `.composer-surface[data-lines="one"]`가 grid를 `"left text right"` 한 줄로 바꿔 단추가 글 칸 옆 가운데에 선다(`herdr/Composer.css`). 줄바꿈이 있거나
+    단추 옆 폭에서 줄이 넘치면 `data-lines="more"`로 참고 herdr-web-ui 배치(글 칸 전체 폭, 단추는 밑 줄)로 간다. 같은 textarea라 focus·caret이 그대로다.
+- **참고와 다른 점.**
+  - t3code resting은 데스크톱·기존 thread·긴 대화·굴려 접힘에만 쓰고 휴대폰은 따로 접는다(`shouldUseRestingComposerLayout`). 여기는 사용자 요청대로 세 기기 모두 글만 본다.
+  - t3code는 펼친 폭과 비교해 판정해서 단추 옆 폭보다 길고 펼친 폭보다 짧은 글은 한 줄 칸에서 잘린다. 여기는 두 배치 모두 **단추 옆 폭**에서 잰다
+    (펼친 배치에서는 같은 그리기 안에서 글 칸 폭을 잠시 그 폭으로 줄여 잰다). 판정이 배치와 무관해 오가며 튀지 않고 잘리지도 않는다.
+  - 높이 한도: 참고 `max-height: 10lh`에 참고 손잡이 한도(`.composer-text.is-sized`의 보이는 높이 절반)를 더했다. 휴대폰 가로(402px)에서 10줄이면
+    입력창이 화면 3/4을 덮고 화면 키보드가 오르면 대화가 남지 않는다.
+  - 한 줄 배치에서 긴 placeholder(「재연결 중…」)는 말줄임으로 끝난다(t3code resting placeholder `whitespace-nowrap overflow-hidden`). 그렇지 않으면
+    Chromium·WebKit 모두 placeholder 줄넘김만큼 빈 칸이 커진다.
+- **시험.** 웹 E2E 22 「대화 입력창 높이」: 휴대폰 874×402·402×874(WebKit iPhone)·데스크톱 1920×1080에서 빈 칸·짧은 글·두 줄·14줄·줄넘김 문단·지운 뒤를
+  `data-lines` 표지로 기다려 본다. 한 줄이면 단추와 글 칸 가운데가 1px 안이고 겹치지 않으며 글 칸이 굴러가지 않는다. 여러 줄이면 단추가 글 칸 밑이고
+  높이가 그 줄 수(한도에서 멈춰 굴러감)다. 내내 focus가 글 칸에 있고 상자 아래끝이 같으며 표지는 입력마다 한 번만 바뀐다(`more,one,more,one`).
+  고치기 전 빌드에서 세 기기 모두 한 줄 표지·단추 가운데·겹침·높이로 실패했다.
+
+### 8.216 대화 사진 첨부·터치 Enter 줄바꿈(10-19)
 
 - **원인.** 배포 기준 `e1d57804`의 ChatComposer에는 paste/drop·첨부 단추가 없었다. 터미널의 파일 선택은 agent 세션 폴더에
   저장하고 PTY에 경로부터 넣으므로 대화 초안과 프로젝트 uploads 계약을 만족하지 못했다. Enter 판정은 터치 기기를 가르지 않았다.
@@ -5315,6 +5357,6 @@ primary 근거:
   만들지 않는다. aaa는 herdr-web-ui/기존 Term의 `(pointer: coarse)`를 터치 판별로 써 휴대폰·패드에서 Enter가 기본 줄바꿈을 하게 하고
   보내기 단추로 전송한다. 데스크톱 Enter/Shift+Enter 및 enterSends 설정은 유지한다.
 - **범위 분담.** 높이·rows·자동 늘림은 별도 thread가 맡는다. 이 변경은 기본 rows 값을 바꾸거나 높이 조절 코드를 추가하지 않는다.
-  착지 지시 뒤 최신 origin/main과 통합해 같은 ChatComposer 파일의 양쪽 의도를 보존한다.
+  착지 때 최신 main의 §8.215 높이 조절과 통합했다. 같은 textarea·surface ref를 함께 써 한 줄 자동 높이와 첨부·터치 Enter를 보존한다.
 - **시험.** 웹 E2E 23, docs/testing.md 「대화 이미지와 Enter」. 실제 OS의 clipboard 권한·iOS 길게 누르기 메뉴는 실기 확인 범위이며
   headless 결과를 실기 확인으로 부르지 않는다.

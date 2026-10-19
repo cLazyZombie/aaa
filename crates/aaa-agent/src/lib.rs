@@ -399,7 +399,7 @@ impl Agent {
 
     /// 화면 감지가 알린 상태(pump에서)
     async fn detected(self: &Arc<Self>, session: &str, harness: detect::Harness, r: detect::Report) {
-        tracing::debug!(%session, kind = r.kind, rule = ?r.rule, "harness 상태(화면 감지)");
+        tracing::info!(%session, kind = r.kind, rule = ?r.rule, "harness 상태(화면 감지)");
         self.harness_event(aaa_proto::HarnessEvent {
             session: session.to_string(),
             harness: harness.label().to_string(),
@@ -1179,6 +1179,7 @@ impl Agent {
                 return self.to_session(id, &session, SessionRequest::Unsubscribe).await;
             }
             AgentRequest::Input { session, data } => {
+                tracing::info!(request = %id, %session, bytes = data.0.len(), "pane 입력: agent 수신");
                 return self.to_session(id, &session, SessionRequest::Input { data }).await;
             }
             AgentRequest::Resize { session, cols, rows } => {

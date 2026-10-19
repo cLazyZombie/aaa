@@ -4,6 +4,8 @@
 // 작업 중이어도 바로 입력하고 harness가 다음 턴으로 줄 세운다(plan §8.100) — 참고의 「턴이 끝나면 저절로 전송」 자리다.
 // 「대기 메시지 자동 전송」을 끄면 작업 중에 쓴 메시지는 이 기기에 붙잡혀(참고 messageQueue.ts) 「지금 보내기」를 누를 때 간다.
 // iPad에서 입력창을 끌면 화면이 통째로 따라가던 것은 pageHold.ts가 막는다(참고에 없음).
+// 글 칸 높이는 참고 `sizeTextarea`(글만큼, CSS 10줄에서 멈춤)다. 한 줄이면 보내기 단추를 같은 줄에 두는 것은 t3code `resting`
+// 배치(ChatComposer.tsx `isComposerResting`, useComposerMultilinePrompt.ts)이고, 데스크톱·긴 대화로 묶은 조건 없이 글만 본다(plan §8.215).
 // 다른 곳: 참고의 슬래시 명령·파일 멘션·받아쓰기·제안 칩·크기 손잡이·멈춤 단추·상태 줄은 옮기지 않았다.
 import {
   useCallback,
@@ -14,7 +16,7 @@ import {
   useSyncExternalStore,
   type KeyboardEvent,
 } from "react";
-import { ArrowUp, Clock, ImagePlus, LoaderCircle, TriangleAlert, X } from "lucide-react";
+import { ArrowUp, Check, Clock, ImagePlus, LoaderCircle, TriangleAlert, X } from "lucide-react";
 import { uploadChatImage } from "./api";
 import { imageMention, insertLeadingMention } from "./herdr/composerImages";
 import { normalizeComposerImageFile } from "./herdr/composerImageMime";
@@ -24,6 +26,7 @@ import { messageQueues } from "./herdr/messageQueue.ts";
 import { holdPageRef } from "./pageHold";
 import { quickReplyButtons } from "./preferences";
 import { useChatShared, useTerminalToggle } from "./settings";
+import { useAppearance } from "./theme";
 
 /** 참고 `MAX_COMPOSER_CHARS` */
 const MAX_COMPOSER_CHARS = 100_000;
@@ -33,6 +36,13 @@ interface Attachment {
   preview: string;
   state: "uploading" | "waiting" | "ready" | "error" | "no-room";
   path?: string;
+}
+
+/** 글 칸이 지금 폭에서 몇 줄인가(높이를 auto로 둔 뒤 잰다) */
+function wrappedRows(element: HTMLTextAreaElement): number {
+  const style = getComputedStyle(element);
+  const padding = parseFloat(style.paddingTop) + parseFloat(style.paddingBottom);
+  return Math.round((element.scrollHeight - padding) / parseFloat(style.lineHeight));
 }
 
 export interface ChatComposerProps {
@@ -76,7 +86,6 @@ export function ChatComposer({
   textRef.current = text;
   const [sending, setSending] = useState(false);
   const [note, setNote] = useState<string | null>(null);
-  const textarea = useRef<HTMLTextAreaElement>(null);
   const picker = useRef<HTMLInputElement>(null);
   const [composing, setComposing] = useState(false);
   const [dragging, setDragging] = useState(false);
@@ -102,7 +111,7 @@ export function ChatComposer({
     let value = textRef.current;
     let changed = false;
     const earlier: string[] = [];
-    const box = textarea.current;
+    const box = textareaRef.current;
     let start = box?.selectionStart ?? 0;
     let end = box?.selectionEnd ?? 0;
     const next = attachments.map((a) => {
@@ -154,6 +163,7 @@ export function ChatComposer({
     for (const a of sent) { removed.current.add(a.id); URL.revokeObjectURL(a.preview); }
     setAttachments((current) => current.filter((a) => !removed.current.has(a.id)));
   };
+  const [delivered, setDelivered] = useState(false);
   const queued = useSyncExternalStore(messageQueues.subscribe, () =>
     messageQueues.read(owner),
   );
@@ -163,15 +173,63 @@ export function ChatComposer({
     text: string;
   } | null>(null);
   const replies = showQuickReplies ? quickReplyButtons({ quickReplies }) : [];
+  const { appearance } = useAppearance();
+  const surfaceRef = useRef<HTMLDivElement>(null);
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
+  // 한 줄(one)이면 단추가 글 칸 옆에, 여러 줄(more)이면 글 칸이 상자 폭을 다 쓰고 단추는 밑 줄로 간다(t3code `resting`)
+  const [lines, setLines] = useState<"one" | "more">("one");
+  const [boxWidth, setBoxWidth] = useState(0);
+
+  // 참고 `boxWidth`: 폭이 바뀌면(돌림·창 크기·옆 목록) 줄넘김이 바뀌므로 다시 잰다
+  useEffect(() => {
+    const surface = surfaceRef.current;
+    if (!surface) return;
+    const observer = new ResizeObserver(() => setBoxWidth(surface.clientWidth));
+    observer.observe(surface);
+    return () => observer.disconnect();
+  }, []);
+
+  // 참고 `sizeTextarea`(Composer.tsx): 높이를 auto로 두고 scrollHeight만큼 준다. 그리기 전에 돌아 깜박이지 않는다.
+  // 한 줄인지는 늘 단추 옆 폭(한 줄 배치의 글 칸 폭)에서 잰다: 배치를 바꿔도 판정이 같아 두 배치를 오가며 튀지 않는다
+  // (t3code useComposerMultilinePrompt.ts는 펼친 폭과 비교해 그 사이 글은 한 줄 칸에서 잘린다 — 여기는 잘리지 않게 좁은 폭).
+  // 글꼴은 시스템 글꼴이라 참고의 `facesLoaded`는 없고, 대화 글자 크기·밀도가 바뀌면 다시 잰다(참고 settings.chatFontSize 효과).
+  useLayoutEffect(() => {
+    const element = textareaRef.current;
+    const surface = surfaceRef.current;
+    if (!element || !surface) return;
+    element.style.height = "auto";
+    let next: "one" | "more";
+    if (text === "") next = "one";
+    else if (text.includes("\n")) next = "more";
+    else if (wrappedRows(element) > 1) next = "more";
+    else if (lines === "one") next = "one";
+    else {
+      // 펼친 폭에서 한 줄: 단추 옆 폭으로 줄여 다시 잰다(같은 그리기 안이라 화면에는 나오지 않는다)
+      let beside = surface.clientWidth;
+      for (const controls of surface.querySelectorAll<HTMLElement>(":scope > .composer-controls"))
+        beside -= controls.offsetWidth;
+      element.style.width = `${beside}px`;
+      next = wrappedRows(element) > 1 ? "more" : "one";
+      element.style.width = "";
+    }
+    if (next !== lines) {
+      // 배치를 바꾼 다음 그리기 전에 이 효과가 다시 돌아 그 배치에서 높이를 준다
+      setLines(next);
+      return;
+    }
+    element.style.height = `${element.scrollHeight}px`;
+  }, [text, lines, boxWidth, appearance.chatFontSize, appearance.uiFontSize, appearance.density]);
 
   /** 보내고 결과를 글로: null은 받음 */
   const deliver = async (message: string): Promise<string | null> => {
-    const sent = onSend(message);
-    if (sent === false)
-      return "전송하지 못했습니다. 다시 연결한 후 시도하세요.";
     try {
+      setDelivered(false);
+      const sent = onSend(message);
+      if (sent === false)
+        return "전송하지 못했습니다. 다시 연결한 후 시도하세요.";
       const result = await sent;
       if (result !== true) return result;
+      setDelivered(true);
       onSent();
       return null;
     } catch {
@@ -341,7 +399,13 @@ export function ChatComposer({
             <span className="composer-note-text">{note}</span>
           </div>
         )}
-        <div className={`composer-surface${dragging ? " is-dragging" : ""}`}
+        {note === null && delivered && (
+          <div className="composer-hint" role="status" data-testid="chat-delivered">
+            <Check size={14} aria-hidden="true" />
+            <span>입력을 보냈습니다. 대화 기록에 반영되기까지 잠시 걸릴 수 있습니다.</span>
+          </div>
+        )}
+        <div ref={surfaceRef} data-lines={lines} className={`composer-surface${dragging ? " is-dragging" : ""}`}
           onDragOver={(event) => {
             if (!event.dataTransfer.types.includes("Files")) return;
             event.preventDefault();
@@ -362,7 +426,7 @@ export function ChatComposer({
             </div>)}
           </div>}
           <textarea
-            ref={textarea}
+            ref={textareaRef}
             className="composer-text"
             rows={1}
             maxLength={MAX_COMPOSER_CHARS}
@@ -385,6 +449,7 @@ export function ChatComposer({
             onChange={(event) => {
               setText(event.target.value);
               setNote(null);
+              setDelivered(false);
             }}
           />
           <input ref={picker} type="file" accept="image/png,image/jpeg,image/gif,image/webp" multiple hidden
