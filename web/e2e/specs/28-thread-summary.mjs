@@ -39,7 +39,8 @@ export default async function ({ page }) {
     fs.writeFileSync(`${root}/summary-task.md`, "# 패널 다듬기\n\n사람을 기다림\n");
     id = aaa("thread", "start", "demo", "--title", "패널 다듬기", "--machine", "labA", "--profile", "fake", "--kind", "dir", "--task-file", `${root}/summary-task.md`).id;
     await until("brief 전달", () => aaa("thread", "show", "demo", id).brief === "delivered");
-    aaa("thread", "message", "demo", id, "--text", "들여쓰기는 8px로");
+    const instruction = "들여쓰기는 8px로\n사용자 계획: 첫 배포는 수동으로 새 host와 agent를 설치하고, 그 다음 배포부터 새 명령으로 실행한다. 실패하면 문제 머신만 되돌리고 앞 머신은 보존한다. 지시 전문 마지막 표지";
+    aaa("thread", "message", "demo", id, "--text", instruction);
     if (aaa("thread", "show", "demo", id).summary?.pending !== 1) throw new Error(`요약 표지 ${JSON.stringify(aaa("thread", "show", "demo", id).summary)}`);
     await inList(page, `thread-demo-${id}`);
     await page.getByTestId(`thread-demo-${id}`).click();
@@ -56,7 +57,10 @@ export default async function ({ page }) {
     const fold = pop.locator("details.summary-fold.is-warn");
     if ((await fold.getAttribute("open")) !== null || !(await fold.innerText()).includes("받은 지시")) throw new Error("받은 지시는 접혀 있다");
     await fold.locator("summary").click();
-    await until("펼친 지시 첫 줄", async () => (await fold.innerText()).includes("들여쓰기는 8px로"));
+    await until("펼친 지시 전문", async () => (await fold.locator(".summary-text").innerText()) === instruction);
+    const overflowing = await fold.locator(".summary-text").evaluate((el) => el.scrollWidth > el.clientWidth + 1);
+    if (overflowing) throw new Error("지시 전문이 창 밖으로 넘쳤다");
+    await shot(page, "summary-instruction-full");
     await page.keyboard.press("Escape");
     await pop.waitFor({ state: "detached" });
 

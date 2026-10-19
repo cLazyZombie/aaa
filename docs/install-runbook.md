@@ -268,21 +268,22 @@ aaa safety set demo coordinator_deploy on
 
 사용자가 **채팅에서 배포를 지시했을 때만** 그 프로젝트의 host 머신 coordinator가 실행한다. thread·평가자·임의 셸 pane·웹 Controller에는 배포 권한을 주지 않는다. host는 socket peer PID로 coordinator 소속을 정하므로 세션 환경변수를 지우거나 coordinator ID를 신고해도 허용되지 않는다.
 
+커밋 빌드 채널은 한 번 빌드해 같은 파일을 배포한다. 공개판은 기존 release tag/manifest 경로다.
+
 ```sh
-aaa update --machine mac-a --version 0.1.2
-# 또는: aaa update --machine mac-a --from /opt/aaa/candidate/aaa
-aaa update status <출력된-ID> --wait
-aaa service restart --role host --machine mac-a
-aaa update status <재시작-ID> --wait
+scripts/deploy-build.sh <origin/main의-조상-커밋> --out /opt/aaa/candidate
+# L1: 출력 aaa를 대상 Mac 모두의 같은 절대 경로에 미리 복사한다.
+aaa deploy start --from /opt/aaa/candidate/aaa --sha256 <provenance.json의-SHA> --commit <40자리-커밋>
+aaa deploy status <출력된-rollout-ID> --wait
 ```
 
-`--from`은 대상 머신에 이미 있는 파일이다. 배포 순서는 host 파일 교체·판/SHA 확인 → host restart·연결 확인 → host 머신 agent → 나머지 agent들이다. agent마다 update → ID의 완료/판/SHA 확인 → `service restart --role agent --machine <머신>` → `machine list`의 재연결과 `update status <id>`의 running_software·running_sha256 확인을 끝낸 뒤 다음으로 간다. 세션은 별도 session host가 소유해 backend 재시작 동안 이어진다. macOS의 기존 launchd 감독자만 재시작하며 설치·해제·start·stop은 계속 사람만 한다.
+`--machines` 생략/all은 등록된 전부, 쉼표 목록은 그 순서다. host 머신은 항상 맨 앞에 포함한다. 모든 대상의 SHA·self-check·version 고정 검사가 통과해야 첫 교체를 한다. host → host 머신 agent → 나머지 agent 순서이며 새 실행 판·SHA·새 프로세스를 확인한다. 기존 macOS launchd 감독자만 재시작한다. 최초 rollout API 반영은 아래 원시 명령을 쓰는 기존 절차로 한다. 설치·해제·start·stop과 시스템 설정은 사람이 한다.
 
-시작 명령은 실행 전 ID와 조회 명령을 stderr에 출력한다. host 응답이나 agent 연결이 끊겨도 시작 명령을 재전송하지 않고 같은 ID를 조회한다. `status`의 machine 생략은 host에 기록된 대상을 따른다. 작업 기록은 agent 상태 폴더의 `deployments/<id>.json`에 원자 저장한다. 같은 ID·같은 작업은 다시 실행하지 않고, 다른 작업은 거부한다. 머신마다 동시에 하나만 실행한다.
+시작 전에 stderr에 출력된 rollout ID를 보존한다. 응답 단절은 성공이 아니며 start를 다시 보내지 않는다. 같은 ID의 status --wait는 host 재연결 뒤에도 조회만 한다. 단계별 작업 ID는 host DB에 먼저 저장되며 agent 기록이 없을 때만 같은 ID로 전송한다. 완료·실패 기록은 자동 재시도하지 않는다. 한 번에 rollout 하나만 실행하며 도중 개별 update/restart 요청은 거부한다.
 
-failed·interrupted·판/SHA 불일치면 진행을 멈추고 원인을 본다. `aaa update rollback --machine <문제 머신>`의 완료 → 해당 서비스 restart → 판/SHA·재연결을 확인한다. 중단된 update는 자동 재실행하지 않는다. agent restart 중 종료는 OS 잠금으로 확인한 이전 실행기 종료와 기대 SHA가 맞을 때만 복구 완료로 기록한다. 구판 host/agent는 새 API를 사용하지 않고 사람의 최초 반영 또는 터미널 복구를 안내한다.
+L1은 실패 시 다음 머신으로 가지 않고 stopped를 남긴다. **실패 머신 자동 rollback·host 감시는 L3에서 추가한다.** 문제 머신에 `aaa update rollback --machine <머신>` → 그 작업 ID `aaa update status <ID> --wait` → `aaa service restart --role agent --machine <머신>` → 판/SHA·재연결을 확인한다. host가 돌아오지 않으면 사람이 host 터미널에서 원시 update rollback과 service restart를 한다. 앞서 성공한 머신을 저절로 되돌리지 않는다. 구판 API로 되돌아갔으면 사람의 터미널 복구로 전환한다.
 
-생성된 coordinator 안내는 binary 반영 뒤 `aaa doctor files --fix`로 갱신한다. 운영 설정·서비스의 변경은 이 코드의 시험·착지와 별도다.
+성공 끝에는 host가 coordinator 안내를 직접 갱신하고 그 결과를 rollout에 저장한다. 운영 배포는 구현 시험·착지와 별도다. L1의 시작 권한은 coordinator+safety뿐이며 사람 터미널 경로는 L5다.
 
 - 준비 응답을 잃어 host에 경로가 없는 실패도 resolve가 agent journal을 먼저 조회해 정리한다. 조회는 준비와 같은 lock에서 끝나므로 준비 뒤늦은 생성과 정리가 경합하지 않는다. `thread_journal.v1`이 없는 옛 agent에서는 확인 없이 resolve 완료하지 않고 갱신을 안내한다.
 

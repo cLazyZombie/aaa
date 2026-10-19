@@ -227,3 +227,12 @@ li.is-dropped .summary-text { text-decoration: line-through; color: var(--text-d
   font-size: var(--fs-md, 14px);
   line-height: 1.5;
 }
+
+/* 상세 창은 원문 전체를 읽는다. hover 카드의 한 줄 훑어보기 규칙은 그대로다. */
+.summary-detail .summary-goal span {
+  white-space: normal;
+  overflow: visible;
+  overflow-wrap: anywhere;
+  text-overflow: clip;
+}
+.summary-detail .summary-text { white-space: pre-wrap; overflow-wrap: anywhere; }

@@ -814,6 +814,8 @@ pub enum AgentResponse {
         job: crate::DeployJob,
         running_software: String,
         running_sha256: String,
+        #[serde(default)]
+        running_instance: String,
     },
     MissionInbox {
         pending: u32,
@@ -1317,6 +1319,13 @@ pub enum FrontRequest {
         pane: Option<String>,
         thread: Option<String>,
         since_ms: u64,
+    },
+    RolloutStart {
+        id: String,
+        spec: crate::RolloutSpec,
+    },
+    RolloutStatus {
+        id: String,
     },
     DeployContext,
     DeployStart {
@@ -2067,6 +2076,9 @@ pub enum FrontResponse {
         project: Option<String>,
         session: bool,
         allowed: bool,
+    },
+    Rollout {
+        rollout: crate::RolloutView,
     },
     Deployment {
         machine: String,

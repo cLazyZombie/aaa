@@ -243,31 +243,31 @@ fn clip(s: &str) -> String {
     t
 }
 
-/// task.md `## Follow-ups`의 지시들(`### <UTC 시각>` 마다 첫 줄). herdr-projects `append_follow_up`의 꼴이다
+/// task.md Follow-ups의 지시 전문. 제목/시각 표지만 떼고 본문은 자르지 않는다.
 pub(crate) fn follow_ups(task: &str) -> Vec<FollowUpLine> {
     let mut out: Vec<FollowUpLine> = Vec::new();
     let mut inside = false;
-    let mut want_text = false;
     for line in task.lines() {
         let t = line.trim();
-        if t == "## Follow-ups" {
-            inside = true;
-            continue;
-        }
         if !inside {
-            continue;
-        }
-        if let Some(when) = t.strip_prefix("### ") {
-            out.push(FollowUpLine { at_ms: aaa_common::util::parse_iso(when), text: String::new() });
-            want_text = true;
-            continue;
-        }
-        if want_text && !t.is_empty() {
-            if let Some(last) = out.last_mut() {
-                last.text = clip(t);
+            if t == "## Follow-ups" {
+                inside = true;
             }
-            want_text = false;
+            continue;
         }
+        if let Some(when) = t.strip_prefix("### ")
+            && let Some(at) = aaa_common::util::parse_iso(when)
+        {
+            out.push(FollowUpLine { at_ms: Some(at), text: String::new() });
+            continue;
+        }
+        if let Some(last) = out.last_mut() {
+            last.text.push_str(line);
+            last.text.push('\n');
+        }
+    }
+    for line in &mut out {
+        line.text = line.text.trim().to_string();
     }
     out
 }
@@ -524,11 +524,13 @@ mod tests {
     }
 
     #[test]
-    fn follow_ups_keep_time_and_first_line() {
+    fn follow_ups_keep_time_and_complete_text() {
         let task = "# 할 일 제목\n\n본문\n\n## Follow-ups\n\n### 2026-10-19 04:09Z\n\n사용자 결정(13:1x) 「추천대로」\n둘째 줄\n\n### 2026-10-19 04:32Z\n\n착지 순서\n";
         let f = follow_ups(task);
         assert_eq!(f.len(), 2);
-        assert_eq!(f[0].text, "사용자 결정(13:1x) 「추천대로」");
+        assert_eq!(f[0].text, "사용자 결정(13:1x) 「추천대로」\n둘째 줄");
+        let long = "자르지 말고 모두 보일 지시 ".repeat(12);
+        assert_eq!(follow_ups(&format!("## Follow-ups\n### 2026-10-19 04:09Z\n{long}"))[0].text, long.trim());
         assert_eq!(f[0].at_ms, aaa_common::util::parse_iso("2026-10-19T04:09:00Z"));
         assert_eq!(f[1].text, "착지 순서");
         assert_eq!(task_line(task).as_deref(), Some("할 일 제목"));

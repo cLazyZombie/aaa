@@ -110,7 +110,7 @@ fn kept_version(p: &Path) -> String {
         .unwrap_or_default()
 }
 
-fn sha256(p: &Path) -> Result<String> {
+pub(crate) fn sha256(p: &Path) -> Result<String> {
     let bytes = std::fs::read(p).with_context(|| format!("{}를 읽지 못했다", p.display()))?;
     Ok(hex::encode(sha2::Sha256::digest(bytes)))
 }
@@ -144,9 +144,9 @@ fn run_limited(bin: &Path, args: &[&str]) -> Result<(bool, String)> {
 }
 
 /// self-check(plan §11): 실행되고 aaa version을 말하며, 이 Mac 설정을 받는다. 그 version을 돌려준다.
-fn self_check(bin: &Path) -> Result<String> {
+pub(crate) fn self_check(bin: &Path) -> Result<String> {
     let (ok, text) = run_limited(bin, &["--version"])?;
-    let version = text.trim().strip_prefix("aaa ").filter(|v| ok && parse_version(v).is_some());
+    let version = text.trim().strip_prefix("aaa ").filter(|v| ok && parse_version(version_core(v)).is_some());
     let Some(version) = version else {
         bail!("self-check 실패: `--version`이 `aaa x.y.z`가 아니다(aaa 실행 파일인가?): {}", text.trim());
     };
@@ -179,16 +179,20 @@ fn settings() -> Result<(Vec<(String, String)>, u32)> {
 }
 
 /// version 고정(plan §11): 고정했으면 그 version이어야 하고, 고정하지 않았으면 major를 바꾸지 않는다
+fn version_core(v: &str) -> &str {
+    v.split_once('+').map_or(v, |(core, _)| core)
+}
+
 fn pin_check(new: &str, pins: &[(String, String)]) -> Result<()> {
     for (file, pin) in pins {
-        if new != pin {
+        if version_core(new) != pin {
             bail!(
                 "새 실행 파일은 {new}인데 {file} `[update] version = \"{pin}\"`로 고정돼 있다. 바꾸려면 사람이 그 값을 고친다"
             );
         }
     }
     let current = env!("CARGO_PKG_VERSION");
-    let major = |v: &str| parse_version(v).map(|(m, _, _)| m);
+    let major = |v: &str| parse_version(version_core(v)).map(|(m, _, _)| m);
     if pins.is_empty() && major(new) != major(current) {
         bail!(
             "major가 바뀐다({current} → {new}). 저절로 올리지 않는다(plan §11): 바꾸려면 host.toml이나 agent.toml에 `[update] version = \"{new}\"`로 고정한다"
@@ -353,7 +357,7 @@ pub(crate) enum Approval {
 }
 
 pub fn update(json: bool, from: Option<PathBuf>, version: Option<String>, dry_run: bool) -> Result<ExitCode> {
-    update_approved(json, from, version, dry_run, Approval::Person, None)
+    update_approved(json, from, version, dry_run, Approval::Person, None, None).map(|_| ExitCode::SUCCESS)
 }
 pub(crate) fn update_approved(
     json: bool,
@@ -362,7 +366,8 @@ pub(crate) fn update_approved(
     dry_run: bool,
     approval: Approval,
     target: Option<PathBuf>,
-) -> Result<ExitCode> {
+    expected_sha256: Option<&str>,
+) -> Result<String> {
     if from.is_some() && version.is_some() {
         bail!("--from과 --version은 함께 쓰지 않는다");
     }
@@ -398,12 +403,17 @@ pub(crate) fn update_approved(
             } else {
                 println!("이미 최신판이다(aaa {} · release {}): 바꾸지 않았다", current_version, manifest.version);
             }
-            return Ok(ExitCode::SUCCESS);
+            return Ok(serde_json::json!({"version":current_version,"sha256":sha256(&place.exe)?}).to_string());
         };
         let staged = asset.download(&place)?;
         let from = staged.path().to_path_buf();
         (staged, from, Some(asset.version))
     };
+    if let Some(expected) = expected_sha256
+        && sha256(staged.path())? != expected
+    {
+        bail!("후보 SHA-256 불일치: 실행·교체하지 않았다");
+    }
     let new_version = self_check(staged.path())?;
     if let Some(expected) = expected
         && new_version != expected
@@ -411,8 +421,14 @@ pub(crate) fn update_approved(
         bail!("self-check 실패: manifest 판은 {expected}인데 실행 파일은 {new_version}이다");
     }
     pin_check(&new_version, &pins)?;
+    let candidate_sha = sha256(staged.path())?;
+    if expected_sha256.is_some_and(|expected| expected != candidate_sha) {
+        bail!("self-check 뒤 후보 SHA-256 불일치: 교체하지 않았다");
+    }
+    let receipt = serde_json::json!({"version":new_version,"sha256":candidate_sha}).to_string();
     let what = format!("{}를 aaa {new_version}로 바꾼다", place.exe.display());
-    finish(json, &place, Swap { what, staged, new_version, from: &from }, dry_run, keep, approval)
+    finish(json, &place, Swap { what, staged, new_version, from: &from }, dry_run, keep, approval)?;
+    Ok(receipt)
 }
 
 /// `aaa update rollback [<이름>] [--dry-run]`: 보관한 옛 실행 파일로 되돌린다. 이름이 없으면 지금과 다른 가장 새 것
@@ -490,6 +506,8 @@ mod tests {
         let (m, n, p) = parse_version(cur).unwrap();
         let pin = |v: &str| vec![("host.toml".to_string(), v.to_string())];
         assert!(pin_check(cur, &[]).is_ok());
+        assert!(pin_check(&format!("{cur}+abc123"), &pin(cur)).is_ok(), "커밋 빌드는 기본 판 고정을 따른다");
+        assert_eq!(parse_version(version_core(&format!("{cur}+abc123"))), parse_version(cur));
         assert!(pin_check(&format!("{m}.{}.0", n + 1), &[]).is_ok(), "minor는 고정 없이 바꾼다");
         let next_major = format!("{}.0.0", m + 1);
         assert!(pin_check(&next_major, &[]).unwrap_err().to_string().contains("major가 바뀐다"));
