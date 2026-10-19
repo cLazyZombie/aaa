@@ -649,15 +649,19 @@ export default async function ({ ctl, page }) {
     );
     const row = page.getByTestId("agent-row-plan1");
     const plan = row.getByTestId("plan-progress");
-    const bg = row.getByTestId("background-tasks");
-    const textIs = async (loc, what, want) => {
-      let last = null;
-      await until(what, async () => (last = (await loc.count()) ? await loc.innerText() : null) === want).catch((e) => {
-        throw new Error(`${e.message}: ${JSON.stringify(last)}`);
+    // count() 다음 innerText() 사이에 배지가 사라지면 Playwright가 그 배지를 30초 다시 기다린다.
+    // 한 DOM 읽기에서 값·부재를 함께 보고 MutationObserver 사건으로 끝낸다.
+    const textIs = async (id, what, want) => {
+      await domIs(page, what, ([id, want]) => {
+        const el = document.querySelector(`[data-testid="agent-row-plan1"] [data-testid="${id}"]`);
+        return (el?.textContent ?? null) === want;
+      }, [id, want]).catch((e) => {
+        const agent = aaa("pane", "list").panes.find((p) => p.name === "plan1")?.agent;
+        throw new Error(`${e.message}: host ${JSON.stringify({ plan: agent?.plan, background: agent?.background })}, 기록 ${fs.statSync(tr).size}바이트`);
       });
     };
-    await textIs(plan, "계획 1/3", "1/3");
-    await textIs(bg, "배경 둘", "2");
+    await textIs("plan-progress", "계획 1/3", "1/3");
+    await textIs("background-tasks", "배경 둘", "2");
     if ((await plan.getAttribute("title")) !== "계획 3단계 중 1단계 끝남 · 고치는 중") throw new Error(`계획 title: ${await plan.getAttribute("title")}`);
     // CLI·TUI도 같은 값을 본다(PaneView.agent)
     const a = aaa("pane", "list").panes.find((p) => p.name === "plan1").agent;
@@ -665,11 +669,11 @@ export default async function ({ ctl, page }) {
     await shot(page, "desktop-agents-plan");
     // 끝남 알림: 배경 명령은 queue-operation으로, 배경 하위 agent는 사람 쪽 글로 온다(같은 알림이 여러 자리에 실린다)
     fs.appendFileSync(tr, L({ type: "queue-operation", operation: "enqueue", timestamp: at(), content: note("bg1", "b1") }));
-    await textIs(bg, "배경 하나", "1");
+    await textIs("background-tasks", "배경 하나", "1");
     fs.appendFileSync(tr, L({ type: "user", timestamp: at(), message: { role: "user", content: note("ag1", "a1") } }));
-    await textIs(bg, "배경 없음", null);
+    await textIs("background-tasks", "배경 없음", null);
     fs.appendFileSync(tr, updated("u3", 2, "completed") + updated("u4", 3, "completed"));
-    await textIs(plan, "계획 3/3", "3/3");
+    await textIs("plan-progress", "계획 3/3", "3/3");
     if (!(await plan.getAttribute("class")).includes("is-done")) throw new Error("다 끝난 계획이 is-done이 아니다");
     aaa("pane", "kill", "plan1");
   });

@@ -5381,3 +5381,11 @@ primary 근거:
   착지 때 최신 main의 §8.215 높이 조절과 통합했다. 같은 textarea·surface ref를 함께 써 한 줄 자동 높이와 첨부·터치 Enter를 보존한다.
 - **시험.** 웹 E2E 23, docs/testing.md 「대화 이미지와 Enter」. 실제 OS의 clipboard 권한·iOS 길게 누르기 메뉴는 실기 확인 범위이며
   headless 결과를 실기 확인으로 부르지 않는다.
+||||||| 854ecc00
+
+### 8.220 배경 수 배지가 사라지는 순간의 웹 E2E 경쟁(10-19, t-0375)
+
+- **최초 증거.** run 39182518678의 macos-15 웹 E2E 11이 배경 수 `1` 뒤 부재를 못 봤다. 실패 요약의 agent/host 로그도 읽었으나 마지막 수의 전달 기록은 없었다. 로컬 반복 통과는 원인 판정에 쓰지 않았다.
+- **원인 재현.** 기존 대기는 `count()`가 1이면 별도 `innerText()` 요청을 했다. 두 요청 사이 실제 완료 알림으로 배지가 제거되면, Playwright의 두 번째 요청이 없는 배지를 기본 30초 동안 기다린다. 바깥 20초 한도보다 길어, 배지가 실제로 사라졌는데도 실패한다. 같은 실험실·실제 transcript 완료 알림으로 count 뒤 제거 사건을 강제해 이 거짓 실패를 재현했다. CI에서 그 순간의 DOM trace는 없으므로 CI 원인을 유일하게 확정한다는 뜻은 아니다.
+- **고침.** 한 DOM 읽기에서 글과 부재를 함께 판정하고 기존 `domIs` MutationObserver로 변경 사건을 기다린다. 없어진 배지를 다시 붙기를 기다리는 locator 요청은 없다. 실패 시 host가 가진 계획·배경 수와 fixture 파일 크기를 함께 남긴다. 제품 감지·전달·기대값·20초 한도는 바꾸지 않는다.
+- **참고.** herdr-web-ui `claude-session.contract.test.ts`는 완료 알림 뒤 background_tasks=0 상태 frame을 기다린다. aaa 기존 `domIs`는 같은 사건 경계에 실제 DOM 렌더까지 포함한다. 추가 polling·sleep·재시도·새 production seam은 없다. 기존 S5 경계 시험 하나를 고쳤다.
