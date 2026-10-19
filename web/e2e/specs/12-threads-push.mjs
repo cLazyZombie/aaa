@@ -156,7 +156,8 @@ export default async function ({ page }) {
         pic: document.getElementById("pic")?.naturalWidth,
         ...document.body.dataset,
       }));
-      return d.api ? d : null;
+      // 제어 API 시험(api)이 그림을 다 읽기보다 먼저 끝날 수 있다: 그림까지 기다린다
+      return d.api && d.pic ? d : null;
     });
     if (probe.title !== "결과 보고" || probe.pic !== 1) throw new Error(`결과물 표시: ${JSON.stringify(probe)}`);
     // opaque origin: 부모 문서·cookie·제어 API에 닿지 못한다
@@ -183,7 +184,7 @@ export default async function ({ page }) {
     const inner = await until("결과물 페이지 실행", async () => {
       const f = await (await pageEl.elementHandle())?.contentFrame();
       const d = f && (await f.evaluate(() => ({ title: document.getElementById("t")?.textContent, pic: document.getElementById("pic")?.naturalWidth, ...document.body.dataset })).catch(() => null));
-      return d?.api ? d : null;
+      return d?.api && d.pic ? d : null;
     });
     if (inner.title !== "결과 보고" || inner.pic !== 1 || inner.parent !== "blocked" || inner.cookie === "visible" || inner.api === "200") {
       throw new Error(`결과물 페이지 ${JSON.stringify(inner)}`);

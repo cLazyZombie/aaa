@@ -3024,6 +3024,35 @@ fn project_lifecycle() {
     assert!(notes(&w.h.ok(&["project", "sweep", "demo"])).contains("치울 것이 없다"));
 }
 
+/// 한 host는 프로젝트 하나(plan §8.283, 프로젝트 단계 없애기 S0): 보관하지 않은 프로젝트가 둘이면 다시 띄운 host가 입구를
+/// 열기 전에 줄일 목록을 말하고 끝난다. 보관한 것은 세지 않고, 멈춘 host에서 폴더를 `.trash`로 옮겨 줄이면 다시 뜬다.
+/// 만들기 거부는 S1(프로젝트 인자 없애기)에서 한다.
+#[test]
+fn host_starts_only_with_one_project() {
+    let mut w = world();
+    w.h.ok(&["project", "create", "p2"]);
+    w.h.ok(&["project", "archive", "p2"]);
+    w.lab.kill("host");
+    w.spawn_host("host2");
+    wait_for("보관한 p2를 세지 않은 host2", T, || w.h.json(&["project", "list"]).ok());
+    let log = w.lab.log("host2");
+    assert!(log.contains("이 host의 프로젝트") && log.contains("demo"), "{log}");
+
+    w.h.ok(&["project", "unarchive", "p2"]);
+    w.lab.kill("host2");
+    w.spawn_host("host3");
+    assert!(!w.lab.wait_exit("host3", T).success(), "프로젝트 둘인데 host가 떴다");
+    let log = w.lab.log("host3");
+    assert!(log.contains("보관하지 않은 프로젝트가 2개다: demo, p2"), "{log}");
+    assert!(log.contains("aaa project archive") && !log.contains("이 host의 프로젝트"), "{log}");
+
+    std::fs::create_dir_all(w.projects.join(".trash")).unwrap();
+    std::fs::rename(w.projects.join("p2"), w.projects.join(".trash").join("p2-hand")).unwrap();
+    w.spawn_host("host4");
+    let list = wait_for("하나로 줄인 뒤 host4", T, || w.h.json(&["project", "list"]).ok());
+    assert_eq!(list["projects"].as_array().map(|a| a.len()), Some(1), "{list}");
+}
+
 /// coordinator safety(herdr-projects `check_allowed`·`Safety::launch_args`의 coordinator 몫): 사람이 터미널에서
 /// `profile allow coordinator`로 정한 목록에 없는 profile은 기본값이어도 거부하고, yolo면 coordinator를 harness의 권한 건너뛰기
 /// 인자로 띄운다(host가 profile을 풀며 붙인다, `resolved_coordinator_profile`). safety가 없는 프로젝트는 그대로다.

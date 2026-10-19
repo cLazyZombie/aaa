@@ -2798,6 +2798,11 @@ pub async fn run(cfg: HostConfig, state_root: PathBuf) -> Result<()> {
     let host = Host::open(cfg, state_root.join("host"))?;
     let _ = host.config_dir.set(aaa_config::paths::config_dir());
     tracing::info!(host = %host.host_id, fp = %&host.identity.fingerprint[..16], "host 시작");
+    // 한 host는 프로젝트 하나(plan §8.283): 입구를 열기 전에 본다. 보관 상태가 DB에 있어 open 뒤에야 셀 수 있다
+    match host.sole_project() {
+        Ok(project) => tracing::info!(project = project.as_deref().unwrap_or("(아직 없음)"), "이 host의 프로젝트"),
+        Err(names) => anyhow::bail!(lifecycle::sole_project_refusal(&names)),
+    }
     // 옛 판이 남긴 보내던 메시지는 입구를 열기 전에 잊는다(연 뒤면 막 기록한 새 메시지까지 「모른다」로 바뀐다)
     host.forget_queued_messages();
     link::start(&host).await?;

@@ -5545,3 +5545,12 @@ primary 근거:
 - **재개/순서.** 모든 대상 Transfer→모든 대상 Preflight→L1 교체/재시작 순서다. 각 단계/job ID를 먼저 저장하고 bytes 진행도 DB에 남긴다. host 단절/ACK 유실 뒤 전송 상태를 먼저 조회하고 같은 ID/offset으로 잇는다. 각 조각 전 safety와120초 단계 한도를 확인한다. stage 상태가 완료여도 설치 직전 SHA를 다시 확인한다.
 - **교체/정리.** UpdateStaged는 자유 경로 없이 rollout ID의 자기 프로젝트 완료 후보만 해석해 CheckedUpdate로 기존 staging·판 고정·보관·rename을 쓴다. job 영수증의 원래 요청은 유지한다. EOF와 끝 정리에서 완료 후보는 마지막 하나만 남기며, 중단 후보는 지운다. 정리 요청의 보존 ID는 유효/존재/완료를 먼저 확인한다. 연결 단절 중 정리 실패는 기록하고 다음 전송에서 크기를 제한한다. old binary 보관과 자동 rollback은 별개다.
 - **시험.** agent가 경로·offset·SHA/실행순서·프로세스 재생성·보존/정리를 소유하고 host가 전이/영수증을 소유한다. 기존 m13은 실제 TLS source 앞의 시험 소유 byte proxy로 다음 조각을 잡은 뒤 pane 왕복/host 종료/동일ID 재개를 검증한다. 전송을 큰 파일이나 sleep으로 늦추지 않는다. 기존 --from 변조·둘째 머신 실패 단언도 유지한다.
+
+### 8.283 한 host는 프로젝트 하나: 시작 검사(10-19, t-0429 S0)
+
+- **결정.** 사용자 결정 10-19 「429는 추천대로」에 따라 프로젝트 층을 바깥에서 없앤다. 그 첫 단계 S0의 범위는 coordinator 결정 10-19 (가)다: 시작 거부와 내부 이름 정하기만 한다. `project create` 거부는 S1(프로젝트 인자 없애기)로 옮기고, 그때 시험도 한 프로젝트 흐름으로 바꾼다.
+- **판정.** `lifecycle::sole_project`가 판정한다. 대상은 보관하지 않은 프로젝트(멈춘 것은 센다)다. 0개면 아직 없음, 1개면 그 이름이 이 host의 내부 이름이다. 운영에서는 `projects`이며 DB·폴더·branch의 이름은 옮기지 않는다. 2개 이상이면 거부한다. 보관 상태가 host DB meta에 있으므로 `run`에서 `Host::open` 바로 뒤, 입구(link·front·web)와 ticker를 열기 전에 본다.
+- **거부.** 남은 이름과 줄이는 길을 말하고 0이 아닌 코드로 끝난다. 줄이는 길은 `aaa project archive`·`delete`, host가 멈춰 있으면 폴더를 `.trash`로 옮기는 것이다. 단위 시험의 `Host::open`과 pairing·web 시험 host에는 걸리지 않는다.
+- **알려진 틈.** S0과 S1 사이에 둘째 프로젝트를 만들면 지금 host는 돈다. 다음 재시작 때 목록을 말하고 뜨지 않는다.
+- **배포 조건.** 보관하지 않은 프로젝트가 하나일 때만 rollout한다. 운영은 m4-pilot·shadow·reports를 지워 `projects` 하나다. rollout의 host restart가 실패하면 host 기록의 이 거부 말을 본다.
+- **검증.** [testing](testing.md)의 「한 host 한 프로젝트 시작 검사」를 따른다.
