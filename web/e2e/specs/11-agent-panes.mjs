@@ -5,7 +5,7 @@ import fs from "node:fs";
 import http from "node:http";
 import path from "node:path";
 import {
-  AA, root, repo, aaa, waitOutput, until, domIs, screenText, pasteFile, bannerPath, shot, pairPage, step, browser,
+  AA, root, repo, aaa, waitOutput, until, domIs, screenText, pasteFile, bannerPath, shot, pairPage, step, browser, webkit,
   claudeSh, clearScreen, claudeAsk, claudeWorking, claudeIdle, openSettings, inList, askClaude, inTime,
 } from "../lib/harness.mjs";
 
@@ -496,6 +496,87 @@ export default async function ({ ctl, page }) {
     if (!fs.readFileSync(p2).equals(big)) throw new Error("여러 조각 그림이 다르다");
     await until("PTY가 받은 경로", () => fs.readFileSync(recv, "latin1") === `\x1b[200~'${p2}' \x1b[201~`);
     await shot(page, "desktop-attach");
+    // Mac Ctrl+V는 이미지 표현만 읽고 기존 업로드 경계를 쓴다. 사람의 시스템 clipboard는 건드리지 않는다.
+    const wk = await webkit.launch();
+    try {
+      for (const [name, engine, platform, touch] of [
+        ["mac-chrome", browser, "MacIntel", false], ["mac-safari", wk, "MacIntel", false],
+        ["windows-chrome", browser, "Win32", false], ["ipad-safari", wk, "MacIntel", true], ["iphone-safari", wk, "iPhone", true],
+      ]) {
+        const client = await pairPage(engine, aaa("web", "pair").code, { width: touch ? 390 : 1280, height: 800 }, {
+          platform, touch,
+          init: () => {
+            const c = window.__imageClipboard = { mode: "image", calls: 0, types: [], png: "" };
+            Object.defineProperty(navigator, "clipboard", { configurable: true, get: () => c.mode === "missing" ? undefined : {
+              read: async () => {
+                c.calls++;
+                if (!navigator.userActivation.isActive) throw new Error("키 동작 밖 clipboard 읽기");
+                if (c.mode === "denied") throw new DOMException("거부", "NotAllowedError");
+                const items = [{ types: c.mode === "text" ? ["text/plain"] : ["text/plain", "image/png"], getType: async (type) => {
+                  c.types.push(type);
+                  if (type !== "image/png") throw new Error("Ctrl+V가 텍스트를 읽었다");
+                  return new Blob([Uint8Array.from(atob(c.png), (v) => v.charCodeAt(0))], { type });
+                } }];
+                if (c.mode === "pending") await new Promise((resolve) => { window.__releaseImageClipboard = resolve; });
+                return items;
+              },
+            } });
+          },
+        });
+        const p = client.page;
+        try {
+          await inList(p, "pane-h1");
+          await until(`${name} raw 입력창`, async () => (await screenText(p)).includes("❯"));
+          await p.evaluate((png) => { window.__imageClipboard.png = png; }, png.toString("base64"));
+          const keys = p.locator('[data-testid="terminal"] textarea');
+          if (!touch && platform === "MacIntel") {
+            for (const mode of ["image", "text", "denied", "missing", "pending"]) {
+              const mark = fs.readFileSync(recv, "latin1").length;
+              await p.evaluate((mode) => { window.__imageClipboard.mode = mode; window.__imageClipboard.calls = 0; }, mode);
+              await keys.focus();
+              await p.keyboard.press("Control+v");
+              if (mode === "pending") {
+                await domIs(p, "clipboard 읽기 시작", () => window.__imageClipboard.calls === 1);
+                await p.keyboard.down("Control");
+                await p.keyboard.down("v");
+                await p.keyboard.down("v"); // repeat는 clipboard를 다시 읽지 않는다
+                await p.keyboard.up("v");
+                await p.keyboard.up("Control");
+                await p.evaluate(() => window.__releaseImageClipboard());
+              }
+              if (mode === "image" || mode === "pending") {
+                // 이전 첨부 배너와 새 ACK를 섞지 않는다. 실제 PTY가 받은 이번 경로로 화면과 bytes를 대조한다.
+                const file = await until(`${name} ${mode} PTY 이미지 하나`, () => /^\x1b\[200~'([^']+)' \x1b\[201~$/.exec(fs.readFileSync(recv, "latin1").slice(mark))?.[1]);
+                await until(`${name} ${mode} 새 경로 안내`, async () => (await p.getByTestId("attach-banner").innerText()).includes(file));
+                if (!fs.readFileSync(file).equals(png)) throw new Error(`${name} Ctrl+V 그림 bytes가 다르다`);
+                await shot(p, `ctrl-v-${name}-${mode}`);
+              } else {
+                await until(`${name} ${mode} 원래 ^V`, () => fs.readFileSync(recv, "latin1").slice(mark) === "\x16");
+                if (mode !== "text") await p.getByTestId("clipboard-note").filter({ hasText: "Cmd+V" }).waitFor();
+              }
+              const state = await p.evaluate(() => window.__imageClipboard);
+              if (state.calls !== (mode === "missing" ? 0 : 1) || state.types.some((t) => t !== "image/png")) throw new Error(`${name} clipboard 읽기 ${JSON.stringify(state)}`);
+            }
+          } else {
+            // Windows의 실제 붙여넣기 단축키·터치 기기에는 새 비동기 읽기를 붙이지 않는다.
+            const mark = fs.readFileSync(recv, "latin1").length;
+            await keys.focus();
+            await p.keyboard.press("Control+v");
+            if (await p.evaluate(() => window.__imageClipboard.calls) !== 0) throw new Error(`${name} Mac 전용 읽기가 켜졌다`);
+            // OS clipboard 대신 표준 paste 사건으로 기존 텍스트/그림 경로를 검증한다.
+            if (!touch) {
+              await keys.evaluate((el) => { const d = new DataTransfer(); d.setData("text/plain", "windows-text"); el.dispatchEvent(new ClipboardEvent("paste", { clipboardData: d, bubbles: true, cancelable: true })); });
+              await until("Windows 글 붙여넣기", () => fs.readFileSync(recv, "latin1").slice(mark) === "\x1b[200~windows-text\x1b[201~");
+            }
+            const imageMark = fs.readFileSync(recv, "latin1").length;
+            await pasteFile(p, png, "image/png");
+            await until(`${name} 기존 그림 붙여넣기`, async () => (await p.getByTestId("attach-banner").innerText()).includes("경로를 넣었다"));
+            const file = bannerPath(await p.getByTestId("attach-banner").innerText());
+            await until(`${name} PTY 경로`, () => fs.readFileSync(recv, "latin1").slice(imageMark) === `\x1b[200~'${file}' \x1b[201~`);
+          }
+        } finally { await p.context().close(); }
+      }
+    } finally { await wk.close(); }
     // 받은 것 가운데 이 뒤에 온 것
     let seen = fs.readFileSync(recv, "latin1").length;
     const recvNext = () => fs.readFileSync(recv, "latin1").slice(seen);

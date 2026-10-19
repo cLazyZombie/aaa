@@ -5544,6 +5544,33 @@ primary 근거:
   기존 E2E 23의 수신 확인 경계를 강화해 새 사용자 기록이 실제로 보인 뒤 안내가 없어지는지, 미확인 뒤 늦은 반영과 즉시 반영
   모두 확인한다. 보낸 글 복원·새 초안 보존·과거 같은 글의 오인 방지는 그대로다. 수정 전 안내 소멸 실패를 보존했다.
 
+- **Mac 웹 터미널 Ctrl+V 후속(10-19, t-0387).** 현재 키 처리기는 OS 구별 없이 Ctrl+V를 xterm에서 제외해 Mac에서는
+  paste 사건도 ^V도 없었다. Cmd+V의 파일 paste 경로는 정상이다. ^V만 원격 프로그램에 보내도 브라우저 clipboard가
+  전달되지는 않으며, Claude Code가 직접 읽는 것은 실행 머신의 clipboard다. 브라우저 이미지는 기존 host→agent 첨부로 보낸다.
+  - **참고와 차이.** herdr-web-ui `aa624cb PaneTerminal.tsx` 610~660은 Ctrl+V를 브라우저에 맡겨 ^V를 차단하며,
+    1449~1458은 파일 paste를 업로드한다. 이번 Mac 요구에는 그 키 제외만 다르게 둔다. herdr `client/clipboard_images.rs
+    should_bridge_clipboard_image_paste`·`client/mod.rs` 976~1002처럼 front 이미지가 있으면 올리고 없으면 원래 키를 보낸다.
+    t3code `4b1024da terminal/ghostty/surface.ts isTerminalPasteShortcut`는 Mac Cmd+V와 비Mac Ctrl+Shift+V를 구분하고
+    Ctrl+V를 보존한다. 비동기 결과의 수명·중복을 막는 `pasteShortcutToken`도 대조했다.
+  - **Mac 데스크톱.** 실제 Ctrl+V keydown 안에서 `navigator.clipboard.read()`를 시작한다. 항목마다 이미지 표현 하나만
+    `getType`하고(PNG 우선) 기존 업로드·서명/상한 검사·경로 삽입으로 보낸다. `text/plain`과 `readText`는 읽지 않는다.
+    이미지가 없으면 ^V 한 번만 보낸다. 읽기 거부·취소·API 없음·이미지 추출 실패도 ^V로 돌아가며 짧게 Cmd+V를 안내한다.
+    이미지 업로드 실패 뒤에는 ^V를 추가하지 않는다. key repeat와 읽는 중 중복 Ctrl+V는 다시 읽거나 올리지 않는다.
+    reader·IME·입력 불가에서는 읽지 않으며, 읽기 중 pane/보기/focus가 바뀌면 늦은 결과를 보내지 않는다.
+  - **브라우저·OS.** Chrome은 clipboard 읽기 권한을 물을 수 있고, Safari는 사용자 동작에서 별도 paste 확인 UI를
+    보일 수 있다. 허용·거부는 브라우저에 맡기며 우회하지 않는다. API가 없는 비보안 주소도 위의 ^V/안내 경로다.
+    Windows·Linux Ctrl+V는 기존 브라우저 paste(글 우선·파일 첨부) 그대로다. iPhone·iPad의 메뉴 paste·Cmd+V는
+    그대로이며 MacIntel로 보이는 iPad도 touch capability로 새 Ctrl+V 읽기에서 제외한다. Composer 입력은 변경하지 않는다.
+    근거: [WebKit Async Clipboard](https://webkit.org/blog/10855/async-clipboard-api/),
+    [Chrome 팀 이미지 읽기](https://web.dev/articles/clipboard/paste-images),
+    [Claude Code 이미지 입력](https://code.claude.com/docs/en/common-workflows#work-with-images).
+  - **회귀 소유 경계.** 기존 웹 E2E 11의 첨부 단계·raw PTY를 넓혔다. Chrome·WebKit의 Mac 이미지/텍스트만/읽기 거부/
+    API 없음/읽기 중 반복, Windows 키와 표준 text/image paste, iPhone·iPad의 기존 image paste를 실제 host·agent로 본다.
+    Clipboard API만 페이지 가짜로 제공하며 사람의 시스템 clipboard를 건드리지 않는다. 실제 OS 권한 창·Windows OS·휴대폰
+    실기를 증명하지는 않는다. 수정 전 이미지 경로 미수신 실패를 보존했고 수정 후 통과했다. 연속 첨부는 이전 배너가 아니라
+    이번 PTY 경로를 받아 파일 bytes·화면을 대조한다. 새 production 시험 seam·고정 sleep은 없다.
+  - **착지 순서.** ci-local·공개 검사 뒤 병합 준비만 보고하고 지정된 착지 창을 기다린다. 안내 소멸 운영 확인은 다음 배포 뒤 남는다.
+
 ### 8.233 배포 실행기 잠금의 상속 FD 수명(10-19, t-0381 후속)
 
 - **실패와 원인.** 다른 작업의 전체 gate에서 기존 durable job 시험이 실행기 drop 뒤 EWOULDBLOCK으로 실패했다. File close만 쓰면 fork/dup가 공유하는 flock 참조가 남아 잠금을 유지한다. 기존 시험의 실제 lease를 복제해 동일 configure 실패를 결정적으로 확인했다. 원본 FD는 이미 close-on-exec이며 이 플래그는 fork~exec 창을 막지 못한다. 원래 실패 실행의 상속 자식 PID까지 추적한 증거는 없으므로 특정 자식을 원인으로 단정하지 않는다.

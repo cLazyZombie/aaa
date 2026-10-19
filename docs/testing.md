@@ -233,3 +233,7 @@ local agent 재연결 중 배포 조회(§8.237): host `deploy::tests::coordinat
 ### Ctrl+Enter 공통 판정
 
 `aaa-host/src/ctrl_enter.rs`의 유닛 시험이 입력 상자 스타일과 현재 steering 패널을 판정한다. `web/e2e/specs/25-ctrl-enter.mjs`는 실제 host·agent·PTY로 전달된 bytes를 출력 사건으로 확인하며 웹 물리 키·모바일 키 막대·입력줄·IME·반복 키의 연결을 본다. 셸 등 일반 프로그램의 키보드 모드는 기존 `03-keys.mjs`가 소유한다. TUI도 `FrontRequest::PaneCtrlEnter`를 사용해 같은 host 판정을 거친다.
+
+## Mac 웹 터미널 Ctrl+V(§8.232 후속)
+
+기존 E2E 11의 「그림 붙여 넣기·끌어 놓기」가 소유한다. 실제 host·agent와 raw PTY에서 Mac Chrome·WebKit의 이미지 경로/bytes, 텍스트만·권한 거부·API 없음의 ^V, 읽는 중 반복의 단일 업로드를 본다. Windows platform의 Ctrl+V는 비동기 read를 호출하지 않고 기존 표준 text/image paste를 처리한다. iPhone·MacIntel iPad도 새 read 없이 기존 image paste를 유지한다. 페이지의 Clipboard API만 가짜여서 사람의 clipboard나 OS 권한 설정에 닿지 않는다. 실제 권한 창·Windows OS·휴대폰 실기를 보증하지 않는다. `--spec 11 --grep '그림 붙여 넣기'`로 좁게 돌린다. 연속 첨부는 실제 PTY가 받은 이번 경로를 대조해 이전 배너와 새 ACK를 섞지 않는다.
