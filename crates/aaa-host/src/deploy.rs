@@ -22,7 +22,7 @@ impl Host {
             || actor.starts_with("detached:");
         FrontResponse::DeployContext { project, session, allowed }
     }
-    fn deployment_authorize(&self, actor: &str) -> Result<String, ErrorBody> {
+    pub(crate) fn deployment_authorize(&self, actor: &str) -> Result<String, ErrorBody> {
         let p = self.coordinator_project_of_actor(actor).ok_or_else(|| {
             err(
                 ErrorCode::Forbidden,
@@ -57,6 +57,9 @@ impl Host {
         // host 재시작으로 답이 끊겨도 작업 ID와 대상은 남는다. 이 기록으로 자동 재실행하지 않는다.
         {
             let _gate = self.deployment_gate.lock().unwrap();
+            if self.rollout_busy()? {
+                return Err(err(ErrorCode::BadRequest, "rollout 진행 중에는 개별 배포를 시작하지 않는다"));
+            }
             let key = format!("deploy:{id}");
             let record = serde_json::json!({"project":project,"machine":mid,"action":action}).to_string();
             match self.db.meta(&key).map_err(|e| err(ErrorCode::Internal, e.to_string()))? {
@@ -70,7 +73,7 @@ impl Host {
         self.db.audit(actor, "deployment_start", &format!("project={project} machine={mid} job={id}"));
         let response = self.live_conn(&mid)?.request(AgentRequest::DeployStart { id, project, action }).await?;
         match response {
-            AgentResponse::Deployment { job, running_software, running_sha256 } => Ok(FrontResponse::Deployment {
+            AgentResponse::Deployment { job, running_software, running_sha256, .. } => Ok(FrontResponse::Deployment {
                 machine: self.machine_name(&mid),
                 job,
                 running_software,
@@ -110,7 +113,7 @@ impl Host {
             ));
         }
         match self.live_conn(&mid)?.request(AgentRequest::DeployStatus { id }).await? {
-            AgentResponse::Deployment { job, running_software, running_sha256 } if job.project == project => {
+            AgentResponse::Deployment { job, running_software, running_sha256, .. } if job.project == project => {
                 Ok(FrontResponse::Deployment {
                     machine: self.machine_name(&mid),
                     job,
@@ -123,6 +126,7 @@ impl Host {
         }
     }
     pub(crate) fn deployment_changed(&self, mid: &str, job: aaa_proto::DeployJob) {
+        self.rollout_wake.notify_one();
         let record = self
             .db
             .meta(&format!("deploy:{}", job.id))

@@ -100,6 +100,7 @@ impl Manager {
             job,
             running_software: aaa_common::util::software(),
             running_sha256: self.running_sha256.clone(),
+            running_instance: self.instance.clone(),
         }
     }
     fn path(&self, id: &str) -> Result<PathBuf, ErrorBody> {

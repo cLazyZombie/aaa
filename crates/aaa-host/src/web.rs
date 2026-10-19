@@ -55,12 +55,48 @@ pub async fn start(host: &Arc<Host>) -> Result<()> {
     let h = host.clone();
     tokio::spawn(async move { h.refresh_publish().await });
     let app = router(host.clone());
+    let listener = ResourceListener { inner: listener, host: host.clone() };
     tokio::spawn(async move {
         if let Err(e) = axum::serve(listener, app).await {
             tracing::error!("웹 서버 끝: {e}");
         }
     });
     Ok(())
+}
+
+/// axum 기본 listener의 재시도(1초)를 유지하고 EMFILE을 시스템 inbox에도 남긴다.
+struct ResourceListener {
+    inner: tokio::net::TcpListener,
+    host: Arc<Host>,
+}
+impl axum::serve::Listener for ResourceListener {
+    type Io = tokio::net::TcpStream;
+    type Addr = std::net::SocketAddr;
+    async fn accept(&mut self) -> (Self::Io, Self::Addr) {
+        loop {
+            match self.inner.accept().await {
+                Ok(pair) => return pair,
+                Err(e)
+                    if matches!(
+                        e.kind(),
+                        std::io::ErrorKind::ConnectionRefused
+                            | std::io::ErrorKind::ConnectionAborted
+                            | std::io::ErrorKind::ConnectionReset
+                    ) =>
+                {
+                    continue;
+                }
+                Err(e) => {
+                    self.host.resource_error("web accept", &e);
+                    tracing::warn!(error = %e, "웹 연결 accept 실패");
+                    tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+                }
+            }
+        }
+    }
+    fn local_addr(&self) -> std::io::Result<Self::Addr> {
+        self.inner.local_addr()
+    }
 }
 
 pub fn router(host: Arc<Host>) -> Router {
@@ -70,6 +106,7 @@ pub fn router(host: Arc<Host>) -> Router {
         .route("/api/v1/call", post(call))
         .route("/api/v1/events", get(events_ws))
         .route("/api/v1/front", get(front_ws))
+        .route("/api/v1/app-badge", get(app_badge))
         .route("/api/v1/push", get(push_info))
         .route("/api/v1/push/subscribe", post(push_subscribe))
         .route("/api/v1/push/unsubscribe", post(push_unsubscribe))
@@ -471,6 +508,13 @@ async fn me(State(host): State<Arc<Host>>, headers: HeaderMap) -> Response {
     }
 }
 
+async fn app_badge(State(host): State<Arc<Host>>, headers: HeaderMap) -> Response {
+    if device(&host, &headers).is_none() {
+        return unauthorized();
+    }
+    Json(Outcome::from(host.app_badge_count())).into_response()
+}
+
 async fn call(State(host): State<Arc<Host>>, headers: HeaderMap, Json(req): Json<FrontRequest>) -> Response {
     let Some((id, role)) = device(&host, &headers) else { return unauthorized() };
     let result = host.call(role, &format!("device:{id}"), req).await;
@@ -737,6 +781,8 @@ async fn events_loop(host: Arc<Host>, dev: String, role: DeviceRole, mut socket:
     let mut send_preferences = true;
     // 보고서 안 본 수(활동 막대 배지, plan §8.256): 열 때와 목록이 바뀔 때
     let mut send_reports = true;
+    let mut send_badge = true;
+    let mut last_badge = None;
     let close_revoked = |mut socket: WebSocket| async move {
         let frame = CloseFrame { code: DEVICE_REVOKED_CLOSE_CODE, reason: DEVICE_REVOKED_REASON.into() };
         let _ = socket.send(Message::Close(Some(frame))).await;
@@ -766,6 +812,18 @@ async fn events_loop(host: Arc<Host>, dev: String, role: DeviceRole, mut socket:
         }
     }
     loop {
+        if send_badge || send_state || send_reports {
+            send_badge = false;
+            if let Ok(count) = host.app_badge_count()
+                && last_badge != Some(count)
+            {
+                last_badge = Some(count);
+                let text = serde_json::to_string(&FrontEvent::AppBadge { count }).unwrap();
+                if socket.send(Message::Text(text.into())).await.is_err() {
+                    break;
+                }
+            }
+        }
         if send_preferences {
             send_preferences = false;
             let doc = preferences.borrow_and_update().clone();
@@ -808,6 +866,7 @@ async fn events_loop(host: Arc<Host>, dev: String, role: DeviceRole, mut socket:
             }
             q = questions.recv() => {
                 send_state = false;
+                send_badge = true;
                 match q {
                     Ok(q) => {
                         let text = serde_json::to_string(&FrontEvent::Question(q)).unwrap();
@@ -821,6 +880,7 @@ async fn events_loop(host: Arc<Host>, dev: String, role: DeviceRole, mut socket:
             }
             t = threads.recv() => {
                 send_state = false;
+                send_badge = true;
                 match t {
                     Ok(t) => {
                         let text = serde_json::to_string(&FrontEvent::Thread(t)).unwrap();
@@ -1968,7 +2028,7 @@ mod guard_tests {
     #[tokio::test]
     async fn api_answers_are_not_stored() {
         let l = lab("https://mac-a.example.ts.net:8443");
-        for path in ["/api/v1/me", "/api/v1/usage", "/api/v1/push"] {
+        for path in ["/api/v1/me", "/api/v1/usage", "/api/v1/push", "/api/v1/app-badge"] {
             let res = ask(&l.0, "GET", path, LOOP, &[]).await;
             assert_eq!(
                 res.headers().get(header::CACHE_CONTROL).map(|v| v.to_str().unwrap()),

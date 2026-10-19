@@ -235,7 +235,7 @@ impl Host {
         self.reports_bump();
         if let Some(title) = to_user {
             let title = title.unwrap_or(name);
-            let post = self.front_post(
+            let post = self.library_report_post(
                 project,
                 PostInput {
                     post_id: hex::encode(rand::random::<[u8; 16]>()),

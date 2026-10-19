@@ -1506,6 +1506,14 @@ impl Host {
                         m.block(MissionBlockReason::RestartFailed);
                         m.resetting = false;
                     })?;
+                    self.record_routine(
+                        p,
+                        &format!("mission:{n}"),
+                        &util::new_id(),
+                        "failed",
+                        &format!("막힘 · 다시 시작 실패: {}", e.message),
+                        Some(&rec.id),
+                    );
                     return Err(e);
                 }
             }

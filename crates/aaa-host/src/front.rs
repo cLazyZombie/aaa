@@ -94,7 +94,16 @@ pub async fn start(host: &Arc<Host>) -> Result<()> {
     let listener = aaa_common::ipc::LocalListener::bind(&path).context("front socket")?;
     let host = host.clone();
     tokio::spawn(async move {
-        while let Ok((s, pid)) = listener.accept_peer().await {
+        loop {
+            let (s, pid) = match listener.accept_peer().await {
+                Ok(pair) => pair,
+                Err(e) => {
+                    host.resource_error("front accept", &e);
+                    tracing::warn!(error = %e, "front accept 실패");
+                    tokio::time::sleep(Duration::from_secs(1)).await;
+                    continue;
+                }
+            };
             let host = host.clone();
             tokio::spawn(async move {
                 if let Err(e) = serve(host, s, pid).await {
@@ -128,6 +137,26 @@ async fn serve(host: Arc<Host>, s: aaa_common::ipc::LocalStream, pid: Option<u32
     // thread 세션 안의 CLI는 보기만 한다(§8.25): 일반 thread(worker)와 사후 평가자는 다른 thread·pane에 지시하지 않는다(§8.13).
     // coordinator와 thread가 아닌 pane(사람의 셸)은 그대로다. 어느 pane 안인지는 host가 연결한 프로세스로 정한다(plan §8.164):
     // CLI가 알린 세션(`AAA_SESSION_ID`)은 권한을 줄이는 쪽으로만 쓴다(변수를 지우면 권한이 늘던 구멍, t-0340 감사).
+    // rollout 대기는 host 시작 직후에도 접속한다. local hello의 pane 자료보다 먼저 신원을 고정하지 않는다.
+    // 그 자료는 같은 inner lock에서 전부 들어오며, 연결이 끊겨도 보존된다. 권한은 이 뒤의 기존 peer PID 판정 그대로다.
+    if client == "deploy-wait" {
+        let mut changes = host.changed.subscribe();
+        if !host.local_machine_connected() {
+            tracing::info!("배포 상태 조회: 로컬 agent 자료 기다림");
+        }
+        let ready = tokio::time::timeout(Duration::from_secs(120), async {
+            while !host.local_machine_connected() {
+                changes.changed().await?;
+            }
+            Ok::<_, anyhow::Error>(())
+        })
+        .await;
+        if !matches!(ready, Ok(Ok(()))) {
+            tx.json(&FrontMsg::Reject(ErrorBody::new(ErrorCode::Unavailable, "로컬 agent 자료가 준비되지 않았다")))
+                .await?;
+            return Ok(());
+        }
+    }
     let caller = host.caller_of(pid);
     let found = match &caller {
         Caller::Pane(p) => Some(p.clone()),
@@ -147,7 +176,6 @@ async fn serve(host: Arc<Host>, s: aaa_common::ipc::LocalStream, pid: Option<u32
     let (found_role, claimed_role) = (found.as_deref().and_then(role_of), session.as_deref().and_then(role_of));
     let scoped = scoped_role(found_role) || scoped_role(claimed_role) || caller == Caller::Detached;
     let role = if scoped { DeviceRole::Reader } else { DeviceRole::Local };
-    tx.json(&FrontMsg::Welcome { proto: agreed, host_id: host.host_id.clone(), role, front: front.id.clone() }).await?;
     // 기록·판단에 쓸 세션: 좁은 쪽(thread)을 먼저, 그다음 판정한 pane, 그다음 알린 세션
     let (sess, sess_role) = if scoped_role(found_role) || (found.is_some() && !scoped_role(claimed_role)) {
         (found, found_role)
@@ -164,6 +192,20 @@ async fn serve(host: Arc<Host>, s: aaa_common::ipc::LocalStream, pid: Option<u32
         (Some(_), _) => format!("local:{client}@unverified"),
         _ => format!("local:{client}"),
     };
+    let warnings = host
+        .coordinator_project_of_actor(&actor)
+        .map(|p| host.post_warnings(&p))
+        .transpose()
+        .map_err(|e| anyhow::anyhow!(e.message))?
+        .unwrap_or_default();
+    tx.json(&FrontMsg::Welcome {
+        proto: agreed,
+        host_id: host.host_id.clone(),
+        role,
+        front: front.id.clone(),
+        warnings,
+    })
+    .await?;
     serve_conn(host, tx, rx, Conn { role, actor, front }).await.map(|_| ())
 }
 
@@ -210,6 +252,8 @@ async fn serve_conn(host: Arc<Host>, tx: FrameTx, mut rx: impl FrontIn, conn: Co
                         Err(_) => break,
                     },
                     n = notices.recv() => match n {
+                        // 새 앱 전용 종류를 옛 CLI의 enum으로 보내지 않는다. CLI는 Welcome 경고를 읽는다.
+                        Ok(n) if n.kind == aaa_proto::NoticeKind::PostMuted => continue,
                         Ok(n) => FrontEvent::Notice(n),
                         Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => continue,
                         Err(_) => break,

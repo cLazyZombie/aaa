@@ -43,6 +43,7 @@ import { currentSidebarShared, updateSidebarShared, useKeepScreenOn, useSidebarS
 import { useScreenWakeLock } from "./herdr/wakeLock.ts";
 import { justWoke, raiseAlert, unableSince, useAlerts, useAlertSoundUnlock } from "./alerts";
 import { Droplet } from "./herdr/Droplet.tsx";
+import { showDroplet } from "./herdr/droplet";
 import { useFileViewer } from "./herdr/useFileViewer.ts";
 import { FileViewer } from "./FileViewer.tsx";
 import { NewSessionDialog } from "./NewSessionDialog";
@@ -55,6 +56,7 @@ import { DrawerContext, DrawerToggle, HeadContext, HeadMore, HeadNote } from "./
 import { highMachines, HIGH_STAT } from "./machineStats";
 import { specialAttention } from "./specialModel";
 import { ErrorBoundary } from "./ErrorBoundary";
+import { setAppBadge } from "./appBadge";
 import { watchBadgeFocus } from "./faviconBadge";
 
 type Auth = { state: "loading" } | { state: "pair" } | { state: "in"; role: DeviceRole; device: string } | { state: "error"; msg: string };
@@ -538,6 +540,10 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
   // 모름)만 띄운다. 휴대폰 push는 없다. 새 보고는 위 thread 길이, 입력 필요는 질문 길이 맡는다. 기록하지 않는 사건이라 다시
   // 붙을 때 놓친 것을 읽지 않는다(참고 `seedStatuses`: 목록은 알리지 않는다)
   const noticeNews = (n: NoticeView) => {
+    if (n.kind === "post_muted") {
+      showDroplet({ target: `project=${encodeURIComponent(n.project ?? "")}`, title: n.title, kind: "blocked", machine: null, agent: null });
+      return;
+    }
     if (n.kind !== "finished" || n.pane === null) return;
     const target = `pane=${encodeURIComponent(n.pane)}`;
     const told = (outcome: string) => tellAlert({ project: n.project, target, kind: "done", outcome });
@@ -646,6 +652,7 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
           setUnseenReports(unseen);
           setReportsRev((n) => n + 1);
         },
+        setAppBadge,
       ),
     [],
   );

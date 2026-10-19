@@ -1,0 +1,165 @@
+//! 보고 회수의 전송·재시도·저장 경계. fake는 Agent link 응답만 만들고 상태 판정은 host가 한다.
+use super::*;
+use aaa_common::conn::{FrameRx, spawn_writer};
+use aaa_proto::{B64, LibFile, LinkMsg, Outcome, ReportSnapshot};
+use std::sync::atomic::{AtomicUsize, Ordering};
+
+struct Lab {
+    h: Arc<Host>,
+    root: PathBuf,
+    requests: Arc<AtomicUsize>,
+    fake: tokio::task::JoinHandle<()>,
+}
+impl Drop for Lab {
+    fn drop(&mut self) {
+        self.fake.abort();
+        let _ = std::fs::remove_dir_all(&self.root);
+    }
+}
+impl Lab {
+    fn new(failures: usize, file_bytes: &'static [u8]) -> Self {
+        let root = std::env::temp_dir().join(format!("aaa-copy-{}", aaa_common::util::new_id()));
+        let mut cfg = aaa_config::HostConfig::default();
+        cfg.projects.root = root.join("projects").display().to_string();
+        cfg.notify.web_push = false;
+        let h = Host::open(cfg, root.join("host")).unwrap();
+        h.project_create("p", Default::default(), "test").unwrap();
+        let mut r = ThreadRec::starting("p", "보고", "m", "codex", Role::Worker, ThreadKind::Dir, 0);
+        r.id = "t-0001".into();
+        r.status = ThreadStatus::Open;
+        r.brief = BriefState::Delivered;
+        r.work_dir = Some("/work/.aaa/p-t-0001".into());
+        r.report_hash = Some("previous".into());
+        r.acked_hash = r.report_hash.clone();
+        h.db.thread_import("p", &r.id, "open", &serde_json::to_string(&r).unwrap()).unwrap();
+        let (writer, reader) = tokio::io::duplex(65536);
+        let conn = crate::AgentConn::new(spawn_writer(writer, aaa_proto::MAX_FRAME), 1);
+        h.inner.lock().unwrap().machines.insert(
+            "m".into(),
+            crate::MachineRt {
+                name: "mac-a".into(),
+                local: true,
+                os: None,
+                boot_id: None,
+                dev_mode: true,
+                conn: Some(conn.clone()),
+                last_seen_ms: None,
+                health: None,
+                health_sent: None,
+                features: vec![],
+                agent_pid: None,
+                colors: None,
+            },
+        );
+        let requests = Arc::new(AtomicUsize::new(0));
+        let seen = requests.clone();
+        let fake = tokio::spawn(async move {
+            let mut rx = FrameRx::new(reader, aaa_proto::MAX_FRAME);
+            while let Ok(LinkMsg::Req { id, body, .. }) = rx.control::<LinkMsg>().await {
+                let reply = match body {
+                    AgentRequest::ReportCollect { max_library_bytes, .. } => {
+                        if max_library_bytes != 0 && seen.fetch_add(1, Ordering::SeqCst) < failures {
+                            Outcome::Err(internal("시험 agent 복사 실패"))
+                        } else {
+                            let report = "[진행 중] 시험 중\n".as_bytes().to_vec();
+                            Outcome::Ok(AgentResponse::Report(ReportSnapshot {
+                                hash: hex::encode(sha2::Sha256::digest(&report)),
+                                report: B64(report),
+                                files: if !file_bytes.is_empty() && max_library_bytes != 0 {
+                                    vec![LibFile {
+                                        path: "test.log".into(),
+                                        size: 3,
+                                        sha256: hex::encode(sha2::Sha256::digest(b"old")),
+                                    }]
+                                } else {
+                                    vec![]
+                                },
+                                skipped: vec![],
+                            }))
+                        }
+                    }
+                    AgentRequest::FileRead { offset, len, .. } => {
+                        // manifest 뒤 append: 요청한 범위만 읽는 실제 agent와 같은 응답이다.
+                        let file = file_bytes;
+                        let start = offset as usize;
+                        let end = (start + len as usize).min(file.len());
+                        Outcome::Ok(AgentResponse::FileChunk {
+                            data: B64(file[start..end].to_vec()),
+                            eof: end == file.len(),
+                        })
+                    }
+                    other => panic!("예상 밖 요청: {other:?}"),
+                };
+                if let Some(tx) = conn.pending.lock().unwrap().remove(&id) {
+                    let _ = tx.send(reply);
+                }
+            }
+        });
+        Self { h, root, requests, fake }
+    }
+}
+
+#[tokio::test]
+async fn copy_failure_retries_without_new_report_and_warns_once() {
+    for failures in [1, usize::MAX] {
+        let lab = Lab::new(failures, b"");
+        lab.h.collect_if_changed("p", "t-0001").await;
+        let r = lab.h.load("p", "t-0001").unwrap();
+        assert_eq!(lab.requests.load(Ordering::SeqCst), 2, "복사 실패를 한 번 다시 받아야 한다");
+        if failures == 1 {
+            assert_eq!(r.copy.as_deref(), Some("complete"));
+            assert!(lab.h.inbox("p", true, true).unwrap().items.is_empty());
+        } else {
+            assert_eq!(r.report_hash.as_deref(), Some("previous"), "이전 사본을 보존한다");
+            assert_eq!(r.last_group, Some(ThreadGroup::Working));
+            // hash 변화·새 harness 사건 없이 ticker만으로 재수집해야 한다.
+            lab.h.retry_report_copies("p", u64::MAX);
+            while lab.h.report_refresh.lock().unwrap().contains_key("p/t-0001") {
+                tokio::task::yield_now().await;
+            }
+            let items = lab.h.inbox("p", true, true).unwrap().items;
+            assert_eq!(items.len(), 1, "계속 실패해도 경고는 한 번이다: {items:?}");
+            assert_eq!(items[0].item_kind, "report-copy-failed");
+            assert!(!items[0].summary.contains("사람"));
+            assert!(lab.requests.load(Ordering::SeqCst) > 2);
+        }
+    }
+}
+
+#[tokio::test]
+async fn appended_library_log_copies_only_the_hashed_prefix() {
+    let lab = Lab::new(0, b"old appended");
+    lab.h.collect_if_changed("p", "t-0001").await;
+    let r = lab.h.load("p", "t-0001").unwrap();
+    assert_eq!(r.copy.as_deref(), Some("complete"));
+    assert_eq!(std::fs::read(lab.h.project_dir("p").unwrap().join("library/t-0001/test.log")).unwrap(), b"old");
+}
+
+#[tokio::test]
+async fn rewritten_library_log_keeps_the_previous_verified_copy() {
+    let lab = Lab::new(0, b"bad appended");
+    let dir = lab.h.project_dir("p").unwrap().join("library/t-0001");
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("test.log"), "verified").unwrap();
+    lab.h.collect_if_changed("p", "t-0001").await;
+    assert_eq!(lab.h.load("p", "t-0001").unwrap().copy.as_deref(), Some("failed"));
+    assert_eq!(std::fs::read(dir.join("test.log")).unwrap(), b"verified");
+}
+
+#[tokio::test]
+async fn host_report_write_failure_is_retried_after_the_storage_recovers() {
+    let lab = Lab::new(0, b"");
+    let path = lab.h.project_dir("p").unwrap().join("threads/t-0001.md");
+    // 최종 report rename을 막는다. FileRead가 성공해도 host 저장 실패는 같은 시스템 오류다.
+    std::fs::create_dir_all(&path).unwrap();
+    lab.h.collect_if_changed("p", "t-0001").await;
+    assert_eq!(lab.h.load("p", "t-0001").unwrap().copy.as_deref(), Some("failed"));
+    assert_eq!(lab.h.inbox("p", true, true).unwrap().items.len(), 1);
+    std::fs::remove_dir(&path).unwrap();
+    lab.h.collect_if_changed("p", "t-0001").await;
+    let r = lab.h.load("p", "t-0001").unwrap();
+    assert_eq!(r.copy.as_deref(), Some("complete"));
+    assert_eq!(r.copy_failures, 0);
+    assert_eq!(r.copy_retry_at_ms, 0);
+    assert!(path.is_file());
+}

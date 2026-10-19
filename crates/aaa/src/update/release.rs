@@ -64,7 +64,7 @@ impl Manifest {
             bail!("요청한 release 판은 {want}인데 manifest는 {version}이다");
         }
         let latest = parse_version(&version).unwrap();
-        let current = parse_version(current).context("지금 실행 파일 판을 해석하지 못했다")?;
+        let current = parse_version(super::version_core(current)).context("지금 실행 파일 판을 해석하지 못했다")?;
         // 기본 최신판은 내리지 않는다. 명시한 옛 판은 사람이 고른 것이므로 고정 검사 뒤 받는다.
         if latest == current || (requested.is_none() && latest < current) {
             return Ok(None);

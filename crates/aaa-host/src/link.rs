@@ -31,7 +31,16 @@ pub async fn start(host: &Arc<Host>) -> Result<()> {
     {
         let host = host.clone();
         tokio::spawn(async move {
-            while let Ok((s, pid)) = local.accept_peer().await {
+            loop {
+                let (s, pid) = match local.accept_peer().await {
+                    Ok(pair) => pair,
+                    Err(e) => {
+                        host.resource_error("local agent accept", &e);
+                        tracing::warn!(error = %e, "로컬 agent accept 실패");
+                        tokio::time::sleep(Duration::from_secs(1)).await;
+                        continue;
+                    }
+                };
                 let host = host.clone();
                 tokio::spawn(async move {
                     if let Err(e) = serve(host, s, None, pid).await {
@@ -53,7 +62,15 @@ pub async fn start(host: &Arc<Host>) -> Result<()> {
         let host = host.clone();
         tokio::spawn(async move {
             loop {
-                let Ok((tcp, peer)) = listener.accept().await else { continue };
+                let (tcp, peer) = match listener.accept().await {
+                    Ok(pair) => pair,
+                    Err(e) => {
+                        host.resource_error("agent link accept", &e);
+                        tracing::warn!(error = %e, "agent link accept 실패");
+                        tokio::time::sleep(Duration::from_secs(1)).await;
+                        continue;
+                    }
+                };
                 let Ok(permit) = gate.clone().try_acquire_owned() else {
                     tracing::warn!(%peer, "인증 전 연결이 너무 많아 끊었다");
                     continue;

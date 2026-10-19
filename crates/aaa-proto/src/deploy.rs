@@ -6,6 +6,7 @@ use ts_rs::TS;
 #[serde(tag = "action", rename_all = "snake_case")]
 pub enum DeployAction {
     Update { from: Option<String>, version: Option<String>, dry_run: bool },
+    CheckedUpdate { from: String, sha256: String, dry_run: bool },
     Rollback { name: Option<String>, dry_run: bool },
     Restart { service: DeployService },
 }
@@ -45,6 +46,60 @@ pub struct DeployJob {
     pub executor_pid: u32,
     pub expected_sha256: String,
     pub result: Option<String>,
+    #[ts(type = "number")]
+    pub created_ms: u64,
+    #[ts(type = "number")]
+    pub updated_ms: u64,
+}
+
+/// host DB의 rollout 정본. 작업 ID는 전송 전에 저장하고 재개 때도 그대로 쓴다.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+pub struct RolloutSpec {
+    pub from: String,
+    pub sha256: String,
+    pub commit: Option<String>,
+    pub machines: Vec<String>,
+}
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+pub enum RolloutPhase {
+    Preflight,
+    HostUpdate,
+    HostRestart,
+    AgentUpdate,
+    AgentRestart,
+}
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+pub struct RolloutStep {
+    pub machine: String,
+    pub phase: RolloutPhase,
+    pub job_id: String,
+    pub completed: bool,
+    pub result: Option<String>,
+    /// 재시작 전에 기록한 host instance. OS boot ID와 별개다.
+    pub host_instance: Option<String>,
+    #[ts(type = "number")]
+    pub started_ms: u64,
+}
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+pub enum RolloutState {
+    Running,
+    Stopped,
+    Done,
+}
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+pub struct RolloutView {
+    pub id: String,
+    pub project: String,
+    pub actor: String,
+    pub spec: RolloutSpec,
+    pub state: RolloutState,
+    pub steps: Vec<RolloutStep>,
+    pub cursor: u32,
+    pub version: Option<String>,
+    pub error: Option<String>,
+    pub finish: Option<String>,
     #[ts(type = "number")]
     pub created_ms: u64,
     #[ts(type = "number")]

@@ -338,7 +338,7 @@ export default async function () {
     const layout = (p) =>
       p.evaluate(() => {
         const box = (s) => document.querySelector(s).getBoundingClientRect();
-        // 보고서는 패널 단추 묶음 바로 밑: 「자동화」(plan §8.277)까지 더해진 묶음 아래다
+        // 보고서는 패널 단추 묶음 바로 밑: 「자동화」(plan §8.280)까지 더해진 묶음 아래다
         const agents = box('[data-testid="activity-automations"]');
         const reports = box('[data-testid="activity-reports"]');
         const foot = document.querySelector(".list-foot");
