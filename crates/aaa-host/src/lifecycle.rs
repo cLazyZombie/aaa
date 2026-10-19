@@ -11,6 +11,8 @@
 //!   연다). DB의 project 열·thread 기록·meta와 폴더, aaa 표지가 있는 AGENTS.md를 바꾼다.
 //! - 청소는 끝난 worktree thread가 resolve 때 남긴 worktree·branch(`ThreadRec.leftover`)를 그 머신 agent에 다시 정리하게 한다
 //!   (force 없음, 병합된 branch만). 참고는 저장소의 `hp/<slug>/` worktree를 직접 훑지만 aaa worktree는 thread 머신에 있다.
+//! - 한 host는 프로젝트 하나(plan §8.283, 프로젝트 단계 없애기 S0): 보관하지 않은 프로젝트가 둘 이상이면 host가 시작하지 않고
+//!   보관·삭제할 목록을 말한다. 남은 하나의 이름이 이 host의 내부 이름이다(DB·폴더·branch의 `projects` 같은 이름을 옮기지 않는다).
 //! - 파일 점검(`aaa doctor files [--fix]`, 참고 `doctor`의 `files <slug>`)은 모든 프로젝트의 AGENTS.md(coordinator 안내)·
 //!   uploads/·routines/pr-followup.md를 보고, `--fix`면 고친다(`orch::write_files`). 있는 프로젝트에 새 안내가 닿는 길이다.
 
@@ -48,7 +50,43 @@ struct Live {
     working: bool,
 }
 
+/// 이 host가 맡은 프로젝트(plan §8.283): 보관하지 않은(멈춘 것은 센다) 프로젝트가 없으면 `None`, 하나면 그 이름. 둘 이상이면
+/// 그 이름들(시작 거부).
+pub(crate) fn sole_project(projects: &[(String, ProjectStatus)]) -> Result<Option<String>, Vec<String>> {
+    let open: Vec<String> =
+        projects.iter().filter(|(_, s)| *s != ProjectStatus::Archived).map(|(n, _)| n.clone()).collect();
+    match open.as_slice() {
+        [] => Ok(None),
+        [one] => Ok(Some(one.clone())),
+        _ => Err(open),
+    }
+}
+
+/// 시작 거부 말: 무엇이 남았고 어떻게 하나로 줄이나
+pub(crate) fn sole_project_refusal(names: &[String]) -> String {
+    format!(
+        "host는 프로젝트 하나만 맡는다(plan §8.283). 보관하지 않은 프로젝트가 {}개다: {}. 남길 하나를 빼고 \
+         `aaa project archive <이름>`(기록은 남는다)이나 `aaa project delete <이름>`(.trash로 옮긴다)으로 줄인 뒤 다시 띄운다. \
+         host가 멈춰 있으면 프로젝트 폴더를 <projects root>/.trash로 옮긴다",
+        names.len(),
+        names.join(", ")
+    )
+}
+
 impl Host {
+    /// 이 host의 프로젝트(내부 이름). 시작할 때 `run`이 보고, 둘 이상이면 시작하지 않는다.
+    pub(crate) fn sole_project(&self) -> Result<Option<String>, Vec<String>> {
+        let all: Vec<_> = self
+            .project_directories()
+            .into_iter()
+            .map(|(name, _)| {
+                let status = self.project_status(&name);
+                (name, status)
+            })
+            .collect();
+        sole_project(&all)
+    }
+
     pub(crate) fn project_status(&self, project: &str) -> ProjectStatus {
         match self.db.meta(&status_key(project)).ok().flatten().as_deref() {
             Some("paused") => ProjectStatus::Paused,
@@ -475,5 +513,43 @@ impl Host {
                 files.join("·")
             )
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn p(name: &str, status: ProjectStatus) -> (String, ProjectStatus) {
+        (name.to_string(), status)
+    }
+
+    #[test]
+    fn sole_project_counts_everything_but_archived() {
+        assert_eq!(sole_project(&[]), Ok(None));
+        assert_eq!(sole_project(&[p("projects", ProjectStatus::Active)]), Ok(Some("projects".into())));
+        // 보관한 것은 세지 않고, 멈춘 것은 센다(되살리면 다시 돈다)
+        assert_eq!(
+            sole_project(&[p("old", ProjectStatus::Archived), p("projects", ProjectStatus::Paused)]),
+            Ok(Some("projects".into()))
+        );
+        assert_eq!(sole_project(&[p("old", ProjectStatus::Archived)]), Ok(None));
+        assert_eq!(
+            sole_project(&[
+                p("m4-pilot", ProjectStatus::Active),
+                p("old", ProjectStatus::Archived),
+                p("projects", ProjectStatus::Paused)
+            ]),
+            Err(vec!["m4-pilot".to_string(), "projects".to_string()])
+        );
+    }
+
+    #[test]
+    fn refusal_names_what_to_reduce() {
+        let m = sole_project_refusal(&["a".into(), "b".into()]);
+        assert!(
+            m.contains("2개다: a, b") && m.contains("aaa project archive") && m.contains("aaa project delete"),
+            "{m}"
+        );
     }
 }

@@ -300,6 +300,12 @@ impl Lab {
         #[cfg(unix)]
         std::fs::write(node.cfg.join("shrc"), "PS1='$ '\n").unwrap();
         if let Some(t) = host_toml {
+            // projects root를 주지 않은 시험 host도 실제 HOME의 프로젝트를 세지 않게(한 host 한 프로젝트 시작 검사, plan §8.283)
+            let t = if t.contains("[projects]") {
+                t.to_string()
+            } else {
+                format!("{t}\n[projects]\nroot = {:?}\n", dir.join("projects"))
+            };
             std::fs::write(node.cfg.join("host.toml"), t).unwrap();
         }
         node
