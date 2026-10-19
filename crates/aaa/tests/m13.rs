@@ -478,7 +478,7 @@ fn world_build(
     let h = lab.node("h", Some(&format!("{}\n{}", host_toml(&projects, extra, web), fixture_profiles(&scripts))));
     std::fs::write(
         h.cfg.join("agent.toml"),
-        format!("schema = 1\n[agent]\nwork_root = {:?}\n", lab.root.join("workA")),
+        format!("schema = 1\n[agent]\nwork_root = {:?}\n[reconnect]\nmax_backoff_s = 1\n", lab.root.join("workA")),
     )
     .unwrap();
     let mut w = World { lab, h, projects, repo, scripts, addr: String::new(), settle_ms };
