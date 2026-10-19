@@ -5403,13 +5403,13 @@ primary 근거:
 - 09:24:52 사건의 당시 프레임·감지 규칙은 여전히 없어 원인 확정이나 수정 완료로 보고하지 않는다. 운영 agent와 host 반영은 coordinator가 한다. 기존 옛 사건 거부 시험과 전체 검사를 사용하고, 로그 문구만 단언하는 새 시험은 만들지 않는다.
 
 
-### 8.223 완료·사람 필요에만 사용자 push(10-19, t-0375)
+### 8.223 완료·확인 필요에만 사용자 push(10-19, t-0375)
 
-- **새 규칙.** 사용자 요청에 따라 중간 착지·진행·PR 병합/리뷰·평가 결과는 push하지 않는다. thread 보고 첫 줄의 `[완료]`는 맡긴 일 전체와 확인의 끝, `[결정 필요]`·`[검수 대기]`·`[사람 필요]`는 인증·터미널 승인·GUI·사용자 결정처럼 직접 사람이 해야 하는 단계다. `[착지]`·`[진행 중]`과 표지 없는 옛 보고는 외부 완료 알림을 만들지 않는다. 확인창·시작 실패·세션 사라짐·머신 이상은 유지한다. 표지로 thread 묶음·진행률·자동 resolve를 바꾸지 않는다(D9).
+- **새 규칙.** 사용자 요청에 따라 중간 착지·진행·PR 병합/리뷰·평가 결과는 push하지 않는다. thread 보고 첫 줄의 `[완료]`는 맡긴 일 전체와 확인의 끝, `[결정 필요]`·`[검수 대기]`·`[확인 필요]`는 인증·터미널 승인·GUI·사용자 결정처럼 직접 사람이 해야 하는 단계다. `[착지]`·`[진행 중]`과 표지 없는 옛 보고는 외부 완료 알림을 만들지 않는다. 확인창·시작 실패·세션 사라짐·머신 이상은 유지한다. 표지로 thread 묶음·진행률·자동 resolve를 바꾸지 않는다(D9).
 - **보고/화면 경계.** host가 회수 사본의 hash와 DB를 대조해 알림 의도를 읽고 ThreadView.report_attention(Front API 1.41)에 실어 웹의 새 보고 알림·재연결도 같은 판정을 쓴다. 착지 inbox는 §8.221대로 남긴다. 보낼 때 사본 의도를 다시 확인해 그 사이 진행 보고로 바뀌었거나 ack한 보고는 취소한다. 표지 아래의 PR 줄만 더 인정하며 옛 PR 첫 줄도 받는다. 작업 중에 표지를 먼저 받은 턴은 그 뒤 Finished 카드를 중복하지 않으며 다음 턴부터 다시 센다.
-- **coordinator 최소 경로.** 기존 출처·역할 검증 post를 확장한다. `aaa post <project> user --request --needs-user --topic user-action --title '사람 필요' --body-file <파일>`은 입력 필요, `aaa post <project> user --notice --topic task-complete --title '전체 완료' --body-file <파일>`은 작업 완료다. worker/evaluator의 user 목적지는 계속 거부한다. 이 항목은 seen으로 저장해 coordinator 자기 nudge를 막고, done은 사용자 응답/확인 뒤 명시적으로 처리한다. push/webhook에는 제목·본문 대신 고정 문구만 보내며 기기별 input/done 선택을 따른다. Web Push 사용 중 억제·mute·오류/머신 경로는 유지한다.
+- **coordinator 최소 경로.** 기존 출처·역할 검증 post를 확장한다. `aaa post <project> user --request --needs-user --topic user-action --title '확인 필요' --body-file <파일>`은 입력 필요, `aaa post <project> user --notice --topic task-complete --title '전체 완료' --body-file <파일>`은 작업 완료다. worker/evaluator의 user 목적지는 계속 거부한다. 이 항목은 seen으로 저장해 coordinator 자기 nudge를 막고, done은 사용자 응답/확인 뒤 명시적으로 처리한다. push/webhook에는 제목·본문 대신 고정 문구만 보내며 기기별 input/done 선택을 따른다. Web Push 사용 중 억제·mute·오류/머신 경로는 유지한다.
 - **시스템 안내.** coordinator AGENTS.md 생성문(CLAUDE.md는 같은 파일 참조), 공통 thread brief와 SessionStart 진행 hook 안내에 같은 규칙을 적는다. coordinator는 질문하며 멈추기 전에 Waiting for you 상태와 user 요청 post를 남긴다. 전체 완료 post는 맡긴 일 전체가 끝난 뒤 한 번이다. 기존 운영 지침 파일은 이 thread가 수정하지 않는다. 새 binary 반영 후 `aaa doctor files --fix`로 생성 안내를 반영한다.
-- **참고와 차이.** herdr-projects notify.rs의 Done/Request 구분, herdr-web-ui push.ts의 대기 중 상태 재검사·seedStatuses, t3code ThreadNotificationCoordinator.tsx의 completed/attention 구분을 따른다. 참고는 턴/검토 대기를 완료로도 알리지만, 이번 사용자가 정한 명시적 전체 완료/사람 필요 경계가 우선한다. pane의 앱 안 턴 끝남 카드(§8.185)는 휴대폰 push와 별개인 기존 경로다.
+- **참고와 차이.** herdr-projects notify.rs의 Done/Request 구분, herdr-web-ui push.ts의 대기 중 상태 재검사·seedStatuses, t3code ThreadNotificationCoordinator.tsx의 completed/attention 구분을 따른다. 참고는 턴/검토 대기를 완료로도 알리지만, 이번 사용자가 정한 명시적 전체 완료/확인 필요 경계가 우선한다. pane의 앱 안 턴 끝남 카드(§8.185)는 휴대폰 push와 별개인 기존 경로다.
 - **검증.** 중간 착지 push 금지와 coordinator user 목적지 불가를 각각 수정 전 RED로 보존했다. host의 실제 사본·DB·inbox·알림 queue 시험은 adopt/worktree, 네 표지, hash 불일치·본문 위장·중복·ack·대기 중 보고 변경·기기 설정을 본다. 기존 post 출처 E2E에서 실제 coordinator pane의 두 CLI 명령도 검증한다. 끝낸 가짜 작업 보고는 새 규칙에 맞춰 완료 표지를 붙이고, 중간 작업 fixture는 유지한다.
 
 ### 8.224 임무 승인 메뉴의 화면 밖 잘림(10-19, t-0375)
@@ -5544,3 +5544,11 @@ primary 근거:
 - **참고와 차이.** herdr-projects 0.2.35 `project.rs::ProjectLock/Project::lock`도 File close에 맡긴다. herdr `plugin_installations.rs::retain_startup_installation`은 소유권 전환 때 `File::unlock`을 명시한다. herdr의 integration/env 잠금, herdr-web-ui server와 t3code packages에서는 같은 fork 상속 해제 구현이 없었다. [Apple flock(2)](https://developer.apple.com/library/archive/documentation/System/Conceptual/ManPages_iPhoneOS/man2/flock.2.html)의 dup/fork 공유 잠금 계약에 따라 aaa의 실행기 소유권 끝에 명시적으로 unlock한다. 기존 close-on-exec도 유지한다.
 - **제품.** 잠금 획득 직후 private RAII Lease를 만들어 정상 drop과 journal 복구 오류 반환 모두에서 unlock한 뒤 File을 닫는다. 살아 있는 실행기의 배타 잠금, job 재실행 금지, 복구 SHA 판정은 그대로다. 잠금 해제 오류는 기록한다.
 - **검증.** 새 시험을 늘리지 않고 기존 durable job owner 시험에 공유 FD 보유를 더했다. 수정 전 EWOULDBLOCK RED → 수정 후 GREEN, unlock만 제거한 변형도 같은 위치 RED → 바이트 그대로 복원 후 GREEN을 확인한다. 시간 연장·재시도·시험 생략·새 자식/신호·production 시험 seam은 없다. 전체 ci-local과 공개 검사 후 착지한다. 운영 binary 반영은 배포 담당이 한다.
+
+### 8.234 확인 요청 표지 이름을 기존 문구와 통일(10-19, t-0379 후속)
+
+- **범위.** 오늘 §8.223이 추가한 「사람 필요」만 「확인 필요」로 고친다. 새 보고 안내는 `[확인 필요]`를 쓰며 옛 `[사람 필요]`는 입력 호환용으로 같은 `NeedsUser` 의미로 받는다. 표지 판정·보고 요약·보내기 직전 필터 모두 두 표지를 인정하고, 요약 없는 보고의 고정 문구와 웹 탭 알림은 새 이름만 쓴다.
+- **지침.** coordinator 생성 안내의 post 제목, 공통 thread brief, SessionStart 진행 안내를 새 이름으로 맞췄다. 기존 운영 안내 파일은 직접 고치지 않는다. binary 반영 뒤 `aaa doctor files --fix`로 생성 파일을 갱신한다.
+- **기존 상태와 구분.** `waiting_on_you`의 기존 「확인 필요」, `idle`의 「쉼」, 확인창·입력 대기 문구는 그대로다. 보고 표지는 `report_attention=needs_user`라는 알림 의도이며 thread group이나 idle 판정·진행률을 바꾸지 않는다. inbox 사건 이름과 저장된 옛 보고 원문도 이주하지 않는다. 기존 「사용자 결정 요청」 등 다른 문구는 변경 범위가 아니다.
+- **참고.** herdr-projects `src/notify.rs::Sound::Request`와 t3code `ThreadNotificationCoordinator.tsx`의 입력/완료 구분을 유지하며 한국어 이름만 사용자 보정대로 맞춘다. 공개 API·프로토콜 판 변경은 없다.
+- **검증.** 기존 실제 사본·DB·inbox·queue owner 표에 새 표지를 더했을 때 수정 전 `None` 대 `NeedsUser`로 실패했고 수정 후 신·구 표지 모두 통과했다. 기존 알림 문구 표는 요약 없는 보고에서 「확인 필요」를 검증한다. 이 문구를 옛 이름으로 되돌린 변형이 실패하는 것도 확인한다. 동일 계약의 새 E2E를 추가하지 않고 기존 웹/host 경계를 유지한다. binary 반영 필요.
