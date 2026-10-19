@@ -5388,3 +5388,10 @@ primary 근거:
 - **원인 재현.** 기존 대기는 `count()`가 1이면 별도 `innerText()` 요청을 했다. 두 요청 사이 실제 완료 알림으로 배지가 제거되면, Playwright의 두 번째 요청이 없는 배지를 기본 30초 동안 기다린다. 바깥 20초 한도보다 길어, 배지가 실제로 사라졌는데도 실패한다. 같은 실험실·실제 transcript 완료 알림으로 count 뒤 제거 사건을 강제해 이 거짓 실패를 재현했다. CI에서 그 순간의 DOM trace는 없으므로 CI 원인을 유일하게 확정한다는 뜻은 아니다.
 - **고침.** 한 DOM 읽기에서 글과 부재를 함께 판정하고 기존 `domIs` MutationObserver로 변경 사건을 기다린다. 없어진 배지를 다시 붙기를 기다리는 locator 요청은 없다. 실패 시 host가 가진 계획·배경 수와 fixture 파일 크기를 함께 남긴다. 제품 감지·전달·기대값·20초 한도는 바꾸지 않는다.
 - **참고.** herdr-web-ui `claude-session.contract.test.ts`는 완료 알림 뒤 background_tasks=0 상태 frame을 기다린다. aaa 기존 `domIs`는 같은 사건 경계에 실제 DOM 렌더까지 포함한다. 추가 polling·sleep·재시도·새 production seam은 없다. 기존 S5 경계 시험 하나를 고쳤다.
+
+### 8.221 작업이 계속돼도 착지 보고는 inbox에 남긴다(10-19, t-0375)
+
+- **실제 기록.** adopt한 thread의 host 사본과 report_hash는 최신이었다. review_item_hash만 없었고, 진행 80%인 agent가 후속 작업을 계속해 last_group=working이었다. new_report_item은 ready_for_review/landing만 받아 착지 결과를 알리지 않았다. adopt에만 있는 분기는 아니며, 새로 띄운 thread도 계속 일하면 같다. 사본을 수동으로 읽고 ack한 뒤에도 이미 빠진 inbox 기록은 생기지 않았다.
+- **수정.** 전체 작업 상태와 완료 보고 알림을 구분한다. 첫 줄이 명시적으로 `[착지]`인 회수 사본은 작업 중이어도 기존 new report 경로로 hash당 한 번 알린다. 일반 `[진행 중]` 보고는 계속 알리지 않는다. 파일과 DB hash가 같을 때만 인정해 사본 교체 중 엇갈린 기록을 알리지 않는다. 작업 중 상태·진행률·Done/auto-resolve 규칙과 pane의 소유권은 그대로다. 기존 사본도 hash가 같고 아직 알리지 않았다면 다음 tick에서 적용된다. 과거 6개 버전의 내용을 새 inbox로 복원하지는 않는다(그 버전별 사본이 현재 host에 없다).
+- **참고와 차이.** herdr-projects `steps.rs write_thread_items` 233~248도 검토 대기/병합 중을 요구한다. herdr-web-ui는 해당 프로젝트 metadata/상태를 표시하고 t3code `ThreadNotificationCoordinator.tsx`는 completed run을 알린다. 세 참고에는 계속 작업하는 한 thread의 여러 착지 보고에 해당하는 사건이 없다. 이번 사용자가 작업 중에도 6번의 착지 보고를 받아야 한다고 지적한 범위에서, 공통 brief에 이미 정한 `[착지]` 표지를 알림에만 사용한다. D9의 「보고 태그로 thread 상태를 정하지 않는다」는 유지한다.
+- **시험.** 실제 host DB·회수 사본·inbox 경계에서 adopted/worktree 모두 중간 보고 제외·착지 2개·hash별 중복 없음·ack 별개·작업 중 상태 유지·파일/DB hash 불일치 거부를 본다. 수정 전 adopted 착지 누락 RED→수정 후 GREEN(0.03초). hash 검사를 제거한 변형도 실패하고 정본을 복원했다. 이미 실제 회수 기록과 기존 adopt E2E가 전송 경계를 덮으므로 같은 시나리오의 E2E를 더 만들지 않는다.
