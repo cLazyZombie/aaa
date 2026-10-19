@@ -5446,3 +5446,12 @@ primary 근거:
   기존 native clipboard CI 왕복 하나를 한글·이모지·여러 줄 텍스트 쓰기/읽기까지 넓혔다.
   개발 머신의 실제 clipboard는 건드리지 않는다. xwin은 Windows 교차 빌드이고 Windows 실행 증거는 CI다.
 - 웹 steering과 TUI 여러 줄 Enter는 각각 별도 작업 범위다.
+
+### 8.226 휴대폰 푸시 본문에 보고 첫 줄 요약(10-19, t-0379)
+
+- **원인.** 실제 inbox의 `new report` 항목은 사본 경로·hash 안내이며 보고 내용이 아니다. `notify::phrase`가 이를 항상 「보고 준비」로 바꿨다. `alert_text` 제목은 이미 「프로젝트 · thread 제목」이고 service worker도 `from aaa`를 넣지 않는다. iOS의 출처 줄은 플랫폼이 붙이며 Notifications API에는 이를 합치거나 숨기는 옵션이 없다. Android·데스크톱도 출처 표시는 브라우저/OS가 결정한다. 제목은 한 줄로 정리하고 길이를 제한하지만 기기의 실제 줄 수는 보장할 수 없다.
+- **수정.** `still_news`가 보내기 직전 hash를 대조한 보고 사본의 첫 줄을 알림용 사본에 싣는다. `safe_summary`·`alert_line`이 네 알림 표지 뒤의 요약을 120자와 말줄임표까지 줄인다. 본문이나 PR 줄은 끌어올리지 않으며 비어 있으면 기존 사건 말을 쓴다. 원본 inbox·보고서는 고치지 않는다. Web Push와 webhook 본문·JSON summary가 같은 함수를 쓴다. `[착지]`·`[진행 중]` 억제, ack·mute·대기 중 보고 변경·기기별 설정은 §8.223대로다.
+- **비공개 값.** 자르기 전에 Unix/Windows/상대 경로, URL, tailnet·IP·이메일, 이름 붙은 비밀값·알려진 token·긴 식별자를 `[숨김]`으로 바꾼다. 키 블록은 요약으로 쓰지 않는다. 임의의 짧은 비밀값을 의미로 알아내는 검사는 아니므로 보고 첫 줄 자체도 공개 가능한 요약으로 쓴다.
+- **크기.** 기존 2400바이트 본문 제한만으로는 긴 제목과 JSON escape를 합친 암호문이 4096바이트를 넘었다. 제목을 120자로 줄이고 제목·URL·tag·JSON escape·암호화 머리 103바이트를 합산해 남은 본문 예산 안에서 보낸다.
+- **참고와 차이.** herdr-projects 0.2.35 `src/notify.rs::Notifier::send`의 「프로젝트 · thread」 제목과 herdr-web-ui `server/push.ts::statusMessage`·`endedMessage`, `src/lib/notifications.ts::show`의 title/body 분리를 유지한다. herdr `src/cli/notification.rs::notification_show`와 t3code `ThreadNotificationCoordinator.tsx`도 보고 첫 줄 요약은 제공하지 않아 사용자 지시로 확장했다. 플랫폼 근거는 [WebKit의 iOS Web Push 소개](https://webkit.org/blog/13878/)와 [Notifications API](https://notifications.spec.whatwg.org/), [WebKit MiniBrowser 출처 subtitle 구현](https://github.com/WebKit/WebKit/blob/main/Tools/MiniBrowser/mac/AppDelegate.m)이다. 브라우저 소유 subtitle을 앱에서 흉내 내거나 manifest 이름을 바꾸지 않는다.
+- **검증.** 기존 실제 사본·DB·queue 시험에 네 표지의 push/webhook 요약 단언을 더해 수정 전 「보고 준비」 실패를 확인했다. 비공개 값 필터를 제거한 변형도 실패하며, 긴 제목/escape의 실제 암호문 크기는 수정 전 실패·수정 후 통과했다. 기존 m13 webhook과 웹 E2E 12의 실제 복호화 기대를 새 보고 요약으로 갱신했다. 고정 sleep·새 production 시험 seam은 추가하지 않았다. 실기 OS 알림 창은 headless가 재현하지 못하므로 배포 뒤 확인한다.

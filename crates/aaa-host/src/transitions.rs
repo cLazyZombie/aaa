@@ -427,6 +427,14 @@ mod tests {
                 assert!(h.new_report_item("p", &r));
                 let got = notifications.try_recv().expect("완료·사람 필요는 push 대상으로 보낸다");
                 assert_eq!(got.event, event);
+                let ready = h.still_news("p", vec![got.clone()]);
+                let place = crate::notify::Place::Project("p".into());
+                let titles = h.alert_titles(&place, &ready);
+                let push = crate::push::payload(&place, &ready, &titles);
+                let hook = crate::notify::notify_body("json", "", &place, &ready, &titles);
+                assert_eq!(push["body"], "명시적인 알림", "사건 이름 대신 보고 첫 줄을 보인다");
+                assert_eq!(hook["items"][0]["summary"], "명시적인 알림");
+                assert!(hook["text"].as_str().unwrap().ends_with("\n- 명시적인 알림"));
                 let only =
                     crate::push::for_device(crate::db::Alerts { input: true, done: false }, std::slice::from_ref(&got));
                 assert_eq!(!only.is_empty(), attention == aaa_proto::ReportAttention::NeedsUser);

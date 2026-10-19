@@ -12,13 +12,17 @@ pub(crate) fn marker(report: &str) -> Option<&'static str> {
 
 impl Host {
     /// 사본 교체와 DB 갱신 사이의 다른 보고를 알림 의도로 읽지 않는다.
-    pub(crate) fn report_marker(&self, r: &ThreadRec) -> Option<&'static str> {
+    pub(crate) fn verified_report(&self, r: &ThreadRec) -> Option<String> {
         let dir = self.project_dir(&r.project).ok()?;
         let bytes = std::fs::read(dir.join("threads").join(format!("{}.md", r.id))).ok()?;
         if Some(hex::encode(Sha256::digest(&bytes))) != r.report_hash {
             return None;
         }
-        marker(std::str::from_utf8(&bytes).ok()?)
+        String::from_utf8(bytes).ok()
+    }
+
+    pub(crate) fn report_marker(&self, r: &ThreadRec) -> Option<&'static str> {
+        marker(&self.verified_report(r)?)
     }
 
     pub(crate) fn report_attention(&self, r: &ThreadRec) -> Option<ReportAttention> {

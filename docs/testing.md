@@ -214,3 +214,10 @@ web/e2e/specs/NN-기능.mjs  기능별 단계(01-http-pwa … 19-turn-alerts). e
   운영 CLI의 사람 판정·host의 프로세스 기반 호출자 판정은 바꾸지 않는다.
 
 웹 E2E 12의 「특수 임무: 좁은 창·휴대폰·데스크톱」은 390/500/1280px에서 승인 메뉴·설명 글 조각·각 단추의 화면 경계와 실제 hit target을 확인하고 Controller 승인을 저장한다. 기존 승인 시험에 화면 경계를 더했으며 별도 가짜 위치 계산 시험은 없다. 화면마다 새 탭을 사용해 퇴장 sheet와 다음 크기를 섞지 않는다. `--spec 12 --grep '특수 임무: 좁은'`으로 이 경계만 확인할 수 있다.
+
+## 휴대폰 보고 요약(§8.226)
+
+- host `working_threads_publish_landing_reports_once`가 실제 사본·DB·inbox·queue에서 네 알림 표지의 push/webhook 요약과 대기 중 보고 변경을 본다.
+- `notify::tests::report_preview_hides_private_values_before_shortening`은 경로·주소·키를 자르기 전에 가리는 계약과 JSON summary에 원문이 새지 않는 경계를 본다. `push::tests::payloads`는 실제 암호문에 제목·JSON escape를 포함해 4096바이트 이내인지 본다.
+- 웹 E2E 12의 기존 Web Push 준비·보고서·보고 요약 단계는 실제 암호문을 복호화해 첫 줄 요약과 클릭 목적지를 확인한다. 신호 금지 작업은 공식 ci-local의 Rust 전체 test를 제외하고 `AAA_E2E_ONLY='^(Web Push:|thread 보고서·결과물:|확인창 질문:|Codex 폴더 신뢰:|보고서 전체 목록:)'`로 고른다. 이 단계에는 신호 동작 시험이 없으며 실험실이 직접 띄운 자식 PID 정리만 허용한다. `m13::notify_webhook`은 pane kill을 시험하므로 이 제한 아래에서는 컴파일만 확인한다.
+- iOS의 `from <앱 이름>`과 Android/브라우저의 출처 줄 배치는 플랫폼 소유 UI다. headless 시험은 service worker에 전달한 title/body와 목적지를 확인하며 실기 OS 창의 줄 수를 증명하지 않는다.

@@ -29,7 +29,7 @@ use crate::db::PushSub;
 const SEND_TIMEOUT: Duration = Duration::from_secs(10);
 /// push 서비스가 기기에 못 전하면 이만큼(초) 들고 있다가 버린다
 const TTL_SECS: u32 = 24 * 3600;
-/// 암호문 한 통 상한(4096바이트)에 머리(86)·tag(16)·구분(1)을 빼고도 남게 줄인다
+/// 본문 JSON 바이트 상한. 실제 한 통 한도는 제목·URL·tag·JSON escape·암호화 머리까지 합쳐 아래에서 잰다.
 const BODY_CAP: usize = 2400;
 
 pub(crate) struct Vapid {
@@ -195,9 +195,20 @@ pub(crate) fn payload(
     titles: &HashMap<String, String>,
 ) -> serde_json::Value {
     let t = crate::notify::alert_text(place, items, titles);
+    let title = t.title.split_whitespace().collect::<Vec<_>>().join(" ");
+    let mut chars = title.chars().filter(|c| !c.is_control());
+    let mut title: String = chars.by_ref().take(120).collect();
+    if chars.next().is_some() {
+        title.push('…');
+    }
+    let mut p = serde_json::json!({ "title": title, "body": "", "url": t.url, "tag": t.tag });
+    // 프로젝트·머신·thread 이름은 짧은 ASCII 식별자다. 제목도 줄였으므로 나머지는 본문에 쓴다.
+    let cap = BODY_CAP.min(4096usize.saturating_sub(103 + p.to_string().len()));
     let mut body = String::new();
+    let mut used = 0;
     for line in t.lines {
-        if body.len() + line.len() + 1 > BODY_CAP {
+        let size = serde_json::to_string(&line).unwrap().len() - 2 + if body.is_empty() { 0 } else { 2 };
+        if used + size + 3 > cap {
             body.push('…');
             break;
         }
@@ -205,8 +216,10 @@ pub(crate) fn payload(
             body.push('\n');
         }
         body.push_str(&line);
+        used += size;
     }
-    serde_json::json!({ "title": t.title, "body": body, "url": t.url, "tag": t.tag })
+    p["body"] = body.into();
+    p
 }
 
 /// encodeURIComponent와 같은 규칙(웹이 decodeURIComponent로 읽는다)
@@ -622,5 +635,11 @@ mod tests {
         );
         let many: Vec<_> = (0..200).map(|n| q(&format!("t-{n:04}"))).collect();
         assert!(payload(&demo, &many, &HashMap::new())["body"].as_str().unwrap().len() <= BODY_CAP + 3);
+        // JSON escape·제목·tag·URL과 암호화 머리까지 한 통(4096바이트)에 들어야 한다.
+        let mut report = item("t-0001", "thread-state", "new report");
+        report.summary = format!("[완료] {}", "\"\\".repeat(60));
+        let titles = [("t-0001".into(), "\"\\\n".repeat(1000))].into();
+        let p = payload(&demo, &vec![report; 30], &titles).to_string();
+        assert!(seal(&[0; 16], &[0; 12], &[0; 16], &[0; 65], p.as_bytes()).unwrap().len() <= 4096);
     }
 }
