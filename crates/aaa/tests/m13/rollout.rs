@@ -406,4 +406,259 @@ esac
     for exe in [&a_exe, &b_exe] {
         assert_eq!(hex::encode(Sha256::digest(std::fs::read(exe).unwrap())), sha, "성공한 앞 머신을 보존한다");
     }
+
+    eprintln!("L3 unchanged failed update stopped without rollback");
+    // L3: 앞 머신은 새 판을 유지하고, 실패한 remote만 배포 전 SHA로 복구한다.
+    let digest = |p: &Path| hex::encode(Sha256::digest(std::fs::read(p).unwrap()));
+    let copy = |from: &Path, to: &Path| {
+        assert!(Command::new("cp").args([path_str(from), path_str(to)]).status().unwrap().success());
+    };
+    let append = |p: &Path, suffix: &str| {
+        assert!(
+            Command::new("python3")
+                .args(["-c", "import sys; open(sys.argv[1], 'ab').write(sys.argv[2].encode())", path_str(p), suffix])
+                .status()
+                .unwrap()
+                .success()
+        );
+    };
+    let old_b = dir.join("old-b");
+    copy(&b_exe, &old_b);
+    copy(&a_exe, &candidate);
+    append(&candidate, "third-candidate");
+    let third_sha = digest(&candidate);
+    let (rc, out, err) = probe(&w, &start(&third_sha));
+    assert_eq!(rc, "0", "{out} {err}");
+    let third: Value = serde_json::from_str(&out).unwrap();
+    let third_id = third["rollout"]["id"].as_str().unwrap();
+    assert!(next_call(5).ends_with("/dev.aaa.host"));
+    w.lab.kill("rollout-host-second");
+    w.lab.spawn_command("rollout-host-third", w.h.cmd_bin(&a_exe, &["host"]));
+    assert!(next_call(6).starts_with("a "));
+    w.lab.kill("rollout-a-second");
+    w.lab.spawn_command("rollout-a-third", agent_cmd(&w.h, &a_exe, "a", "local", "labA"));
+    assert!(next_call(7).starts_with("b "));
+    let guard_id = third["rollout"]["steps"][6]["job_id"].as_str().unwrap().to_string();
+    let guard_file = b.state.join(format!("agent/deployments/{guard_id}.guard.json"));
+    let guard = || -> Option<Value> { serde_json::from_slice(&std::fs::read(&guard_file).ok()?).ok() };
+    let armed = guard().unwrap();
+    // 같은 사용자라도 agent peer PID가 아니면 private token을 알아도 제어할 수 없다.
+    let auth: Value =
+        serde_json::from_slice(&std::fs::read(b.state.join("agent/deployments/executor.identity.json")).unwrap())
+            .unwrap();
+    let mut spoof =
+        std::os::unix::net::UnixStream::connect(b.state.join(format!("agent/run/g{guard_id}.sock"))).unwrap();
+    spoof.set_read_timeout(Some(T)).unwrap();
+    {
+        use std::io::{Read, Write};
+        let payload =
+            serde_json::to_vec(&serde_json::json!({"token":auth["token"],"control":{"op":"recover","reason":"spoof"}}))
+                .unwrap();
+        let mut frame = ((payload.len() + 1) as u32).to_be_bytes().to_vec();
+        frame.push(1);
+        frame.extend(payload);
+        let _ = spoof.write_all(&frame);
+        let mut reply = [0; 1];
+        match spoof.read(&mut reply) {
+            Ok(0) => {}
+            Err(e) if matches!(e.kind(), std::io::ErrorKind::ConnectionReset | std::io::ErrorKind::BrokenPipe) => {}
+            result => panic!("위장 peer가 guard 응답을 받았다: {result:?}"),
+        }
+    }
+    assert_eq!(guard().unwrap()["phase"], "awaiting_new");
+    let direct = b.cmd_bin(&b_exe, &["deployment-guard", "--id", &guard_id]).output().unwrap();
+    assert!(!direct.status.success(), "agent bootstrap 없이 내부 감시 CLI가 실행됐다");
+    let recovery_ids = armed["spec"].clone();
+    let guard_pid = armed["worker_pid"].clone();
+    assert_eq!(digest(&b_exe), third_sha);
+    w.lab.kill("rollout-b-new");
+    // launchctl이 옛 실행 파일을 잘못 다시 띄운 사건. 감시는 원래 agent 밖에서 살아 있어야 한다.
+    w.lab.spawn_command("rollout-b-wrong", agent_cmd(&b, &old_b, "b", &proxy.addr, "labB"));
+    let restart = next_call(8);
+    assert!(restart.starts_with("b ") && restart.ends_with("/dev.aaa.agent"), "{restart}");
+    let restoring = wait_for("독립 감시가 remote 복구 재시작 뒤 옛 프로세스를 기다림", T, || {
+        let v = guard()?;
+        (v["phase"] == "awaiting_old").then_some(v)
+    });
+    assert_eq!(restoring["worker_pid"], guard_pid, "agent가 죽어도 독립 감시는 같은 프로세스다");
+    assert_eq!(restoring["spec"], recovery_ids, "복구 작업 ID를 새로 만들지 않는다");
+    assert_eq!(digest(&a_exe), third_sha, "성공한 앞 머신을 되돌리지 않는다");
+    assert_eq!(digest(&b_exe), sha, "실패 머신은 배포 전 SHA만 복구한다");
+    let (rc, out, err) = probe(&w, &format!("deploy status {third_id}"));
+    assert_eq!(rc, "1", "{out} {err}");
+    let failed: Value = serde_json::from_str(&out).unwrap();
+    assert_eq!(failed["rollout"]["state"], "recovering");
+    assert_eq!(failed["rollout"]["cursor"], 6);
+    // 복구 중 host 재시작도 같은 실패 머신/복구 ID에서 재개한다.
+    w.lab.kill("rollout-host-third");
+    w.lab.spawn_command("rollout-host-recovery-resume", w.h.cmd_bin(&a_exe, &["host"]));
+    wait_for("복구 중 host와 두 agent 재접속", T, || {
+        (w.h.connected("labA") && w.h.connected("labB")).then_some(())
+    });
+    let (rc, out, err) = probe(&w, &format!("deploy status {third_id}"));
+    assert_eq!(rc, "1", "{out} {err}");
+    let resumed: Value = serde_json::from_str(&out).unwrap();
+    assert_eq!(resumed["rollout"]["state"], "recovering", "복구 요청 전 뜬 옛 프로세스를 복구 성공으로 셀 수 없다");
+    assert_eq!(resumed["rollout"]["recovery"]["spec"], recovery_ids);
+    w.lab.kill("rollout-b-wrong");
+    w.lab.spawn_command("rollout-b-restored", agent_cmd(&b, &b_exe, "b", &proxy.addr, "labB"));
+    let (rc, out, err) = probe(&w, &format!("deploy status {third_id} --wait"));
+    assert_eq!(rc, "1", "{out} {err}");
+    let rolled: Value = serde_json::from_str(&out).unwrap();
+    assert_eq!(rolled["rollout"]["state"], "stopped_rolled_back");
+    assert_eq!(rolled["rollout"]["cursor"], 6, "실패 뒤 다음 단계로 진행하지 않는다");
+    assert_eq!(rolled["rollout"]["recovery"]["phase"], "restored");
+    assert_eq!(rolled["rollout"]["recovery"]["spec"], recovery_ids);
+    assert_eq!(std::fs::read_to_string(&service_log).unwrap().lines().count(), 9, "복구 재시작은 한 번만 실행한다");
+
+    eprintln!("L3 remote rollback survived agent death and host restart with the same recovery IDs");
+    // host가 옛 판으로 돌아온 실패도 host 밖 감시가 복구한다. remote 파일/서비스는 건드리지 않는다.
+    let old_a = dir.join("old-a");
+    copy(&a_exe, &old_a);
+    copy(&a_exe, &candidate);
+    append(&candidate, "fourth-candidate");
+    let fourth_sha = digest(&candidate);
+    let (rc, out, err) = probe(&w, &start(&fourth_sha));
+    assert_eq!(rc, "0", "{out} {err}");
+    let fourth: Value = serde_json::from_str(&out).unwrap();
+    let fourth_id = fourth["rollout"]["id"].as_str().unwrap();
+    assert!(next_call(9).ends_with("/dev.aaa.host"));
+    w.lab.kill("rollout-host-recovery-resume");
+    w.lab.spawn_command("rollout-host-wrong", w.h.cmd_bin(&old_a, &["host"]));
+    let restart = next_call(10);
+    assert!(restart.starts_with("a ") && restart.ends_with("/dev.aaa.host"), "{restart}");
+    let host_guard_id = fourth["rollout"]["steps"][3]["job_id"].as_str().unwrap();
+    let host_guard_file = w.h.state.join(format!("agent/deployments/{host_guard_id}.guard.json"));
+    wait_for("host 복구 후 새 옛판 프로세스 대기", T, || {
+        let v: Value = serde_json::from_slice(&std::fs::read(&host_guard_file).ok()?).ok()?;
+        (v["phase"] == "awaiting_old").then_some(())
+    });
+    assert_eq!(digest(&a_exe), third_sha);
+    assert_eq!(digest(&b_exe), sha);
+    w.lab.kill("rollout-host-wrong");
+    w.lab.spawn_command("rollout-host-restored", w.h.cmd_bin(&a_exe, &["host"]));
+    wait_for("복구 host의 front와 두 agent 준비", T, || {
+        (w.h.connected("labA") && w.h.connected("labB")).then_some(())
+    });
+    let (rc, out, err) = probe(&w, &format!("deploy status {fourth_id} --wait"));
+    assert_eq!(rc, "1", "{out} {err}");
+    let rolled: Value = serde_json::from_str(&out).unwrap();
+    assert_eq!(rolled["rollout"]["state"], "stopped_rolled_back");
+    assert_eq!(rolled["rollout"]["cursor"], 3);
+    assert_eq!(
+        std::fs::read_to_string(&service_log).unwrap().lines().count(),
+        11,
+        "host 실패 뒤 agent 교체를 시작하면 안 된다"
+    );
+    assert_eq!(digest(&b_exe), sha);
+
+    eprintln!("L3 wrong host restored without touching the remote agent");
+
+    // 로컬 agent 실패는 공유 실행 파일을 복구하고 host/agent 둘의 새 옛판 프로세스를 확인한다.
+    copy(&a_exe, &candidate);
+    append(&candidate, "fifth-candidate");
+    let fifth_sha = digest(&candidate);
+    let (rc, out, err) = probe(&w, &start(&fifth_sha));
+    assert_eq!(rc, "0", "{out} {err}");
+    let fifth: Value = serde_json::from_str(&out).unwrap();
+    let fifth_id = fifth["rollout"]["id"].as_str().unwrap();
+    assert!(next_call(11).ends_with("/dev.aaa.host"));
+    w.lab.kill("rollout-host-restored");
+    w.lab.spawn_command("rollout-host-fifth", w.h.cmd_bin(&a_exe, &["host"]));
+    assert!(next_call(12).ends_with("/dev.aaa.agent"));
+    w.lab.kill("rollout-a-third");
+    w.lab.spawn_command("rollout-a-wrong", agent_cmd(&w.h, &old_a, "a", "local", "labA"));
+    assert!(next_call(13).ends_with("/dev.aaa.host"));
+    assert!(next_call(14).ends_with("/dev.aaa.agent"));
+    let local_guard_id = fifth["rollout"]["steps"][4]["job_id"].as_str().unwrap();
+    let local_guard_file = w.h.state.join(format!("agent/deployments/{local_guard_id}.guard.json"));
+    wait_for("로컬 복구가 host/agent 둘의 새 프로세스를 기다림", T, || {
+        let v: Value = serde_json::from_slice(&std::fs::read(&local_guard_file).ok()?).ok()?;
+        (v["phase"] == "awaiting_old").then_some(())
+    });
+    assert_eq!(digest(&a_exe), third_sha);
+    w.lab.kill("rollout-host-fifth");
+    w.lab.kill("rollout-a-wrong");
+    w.lab.spawn_command("rollout-host-local-restored", w.h.cmd_bin(&a_exe, &["host"]));
+    w.lab.spawn_command("rollout-a-local-restored", agent_cmd(&w.h, &a_exe, "a", "local", "labA"));
+    wait_for("복구 host의 front와 두 agent 준비", T, || {
+        (w.h.connected("labA") && w.h.connected("labB")).then_some(())
+    });
+    let (rc, out, err) = probe(&w, &format!("deploy status {fifth_id} --wait"));
+    assert_eq!(rc, "1", "{out} {err}");
+    let rolled: Value = serde_json::from_str(&out).unwrap();
+    assert_eq!(rolled["rollout"]["state"], "stopped_rolled_back");
+    assert_eq!(rolled["rollout"]["cursor"], 4);
+    assert_eq!(digest(&b_exe), sha);
+    assert_eq!(std::fs::read_to_string(&service_log).unwrap().lines().count(), 15);
+    eprintln!("L3 local agent rollback verified both restored host and agent processes");
+
+    // 실제 설치 self-check를 socket 사건으로 붙잡는다. 승인 철회 뒤 늦은 rename이 복구를 덮으면 안 된다.
+    let race_socket = w.lab.root.join("race.sock");
+    let listener = std::os::unix::net::UnixListener::bind(&race_socket).unwrap();
+    let (reached, blocked) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        let (stream, _) = listener.accept().unwrap();
+        let _ = reached.send(stream);
+    });
+    let shim = dir.join("blocked-install");
+    let script = format!(
+        r#"#!/usr/bin/env python3
+import os, pathlib, socket, sys
+if sys.argv[1:] == ['--version']:
+    print('aaa 0.1.2')
+elif sys.argv[1:] == ['config', 'check']:
+    counter = pathlib.Path(os.environ['AAA_STATE_DIR']) / 'install-check-count'
+    count = int(counter.read_text()) + 1 if counter.exists() else 1
+    counter.write_text(str(count))
+    if os.environ.get('ROLLOUT_MACHINE') == 'a' and count == 2:
+        with socket.socket(socket.AF_UNIX) as s:
+            s.connect({socket:?})
+            assert s.recv(1) == b'!'
+else:
+    sys.exit(1)
+"#,
+        socket = path_str(&race_socket)
+    );
+    std::fs::write(&shim, script).unwrap();
+    std::fs::set_permissions(&shim, std::os::unix::fs::PermissionsExt::from_mode(0o755)).unwrap();
+    let shim_sha = digest(&shim);
+    let (rc, out, err) = probe(&w, &format!("deploy start --from '{}' --sha256 {shim_sha}", shim.display()));
+    assert_eq!(rc, "0", "{out} {err}");
+    let race: Value = serde_json::from_str(&out).unwrap();
+    let race_id = race["rollout"]["id"].as_str().unwrap();
+    let mut gate = blocked.recv_timeout(T).expect("실제 설치의 config check 도달 사건");
+    let disabled = w.h.in_terminal(&["safety", "set", "demo", "coordinator_deploy", "off"], &[("바꿀까?", "y")], T);
+    assert!(disabled.contains("coordinator_deploy = off"), "{disabled}");
+    let race_guard_id = race["rollout"]["steps"][3]["job_id"].as_str().unwrap();
+    let race_guard_file = w.h.state.join(format!("agent/deployments/{race_guard_id}.guard.json"));
+    wait_for("진행 중 설치 철회는 감시를 끝내지 않고 복구로 전환", T, || {
+        let v: Value = serde_json::from_slice(&std::fs::read(&race_guard_file).ok()?).ok()?;
+        (v["phase"] == "restoring").then_some(())
+    });
+    let (rc, out, err) = probe(&w, &format!("deploy status {race_id}"));
+    assert_eq!(rc, "1", "{out} {err}");
+    let recovering: Value = serde_json::from_str(&out).unwrap();
+    assert_eq!(recovering["rollout"]["state"], "recovering", "진행 중 설치가 남았는데 중단 완료로 기록했다");
+    assert_eq!(digest(&a_exe), third_sha);
+    {
+        use std::io::Write;
+        gate.write_all(b"!").unwrap();
+    }
+    assert!(next_call(15).ends_with("/dev.aaa.host"));
+    wait_for("늦은 설치 rename 뒤 baseline 복구 완료", T, || (digest(&a_exe) == third_sha).then_some(()));
+    w.lab.kill("rollout-host-local-restored");
+    w.lab.spawn_command("rollout-host-cancel-restored", w.h.cmd_bin(&a_exe, &["host"]));
+    wait_for("복구 host의 front와 두 agent 준비", T, || {
+        (w.h.connected("labA") && w.h.connected("labB")).then_some(())
+    });
+    let (rc, out, err) = probe(&w, &format!("deploy status {race_id} --wait"));
+    assert_eq!(rc, "1", "{out} {err}");
+    let rolled: Value = serde_json::from_str(&out).unwrap();
+    assert_eq!(rolled["rollout"]["state"], "stopped_rolled_back");
+    assert_eq!(rolled["rollout"]["cursor"], 2);
+    assert_eq!(digest(&a_exe), third_sha, "복구 뒤 늦은 설치가 덮어썼다");
+    assert_eq!(digest(&b_exe), sha);
+    assert_eq!(std::fs::read_to_string(&service_log).unwrap().lines().count(), 16);
+    eprintln!("L3 in-flight install cancellation restored after the final candidate rename");
 }

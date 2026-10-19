@@ -435,6 +435,26 @@ impl Drop for Lab {
             let _ = c.kill();
             let _ = c.wait();
         }
+        // 독립 배포 감시는 agent의 Child가 아니다. 기록 PID와 실제 명령의 실험실 경로를 함께 확인한다.
+        #[cfg(unix)]
+        if let Ok(nodes) = std::fs::read_dir(&self.root) {
+            for node in nodes.flatten() {
+                let state = node.path().join("s");
+                let Ok(records) = std::fs::read_dir(state.join("agent/deployments")) else { continue };
+                for entry in records.flatten().filter(|e| e.file_name().to_string_lossy().ends_with(".guard.json")) {
+                    let Ok(bytes) = std::fs::read(entry.path()) else { continue };
+                    let Ok(view) = serde_json::from_slice::<Value>(&bytes) else { continue };
+                    let Some(pid) = view["worker_pid"].as_u64().and_then(|p| u32::try_from(p).ok()) else { continue };
+                    if command_of(pid)
+                        .is_some_and(|c| c.contains("deployment-guard") && c.contains(&*state.to_string_lossy()))
+                    {
+                        unsafe {
+                            libc::kill(pid as i32, libc::SIGKILL);
+                        }
+                    }
+                }
+            }
+        }
         for pid in self.session_hosts() {
             #[cfg(unix)]
             unsafe {

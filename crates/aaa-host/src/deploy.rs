@@ -49,6 +49,10 @@ impl Host {
             return Err(err(ErrorCode::BadRequest, "배포 작업 ID 형식이 아니다"));
         }
         let mid = self.resolve_machine(machine.as_deref())?;
+        if matches!(action, DeployAction::CheckedRollback { .. }) && !self.machine_feature(&mid, "rollout_recovery.v1")
+        {
+            return Err(err(ErrorCode::UnsupportedVersion, "SHA 고정 복구에는 rollout_recovery.v1이 필요하다"));
+        }
         if matches!(action, DeployAction::UpdateStaged { .. }) && !self.machine_feature(&mid, "deploy_stage.v1") {
             return Err(err(ErrorCode::UnsupportedVersion, "staged 교체에는 deploy_stage.v1이 필요하다"));
         }

@@ -97,6 +97,8 @@ pub fn hello(agent: &Agent) -> AgentHello {
             "rollout.v1".into(),
             #[cfg(target_os = "macos")]
             "deploy_stage.v1".into(),
+            #[cfg(target_os = "macos")]
+            "rollout_recovery.v1".into(),
             "post.v1".into(),
             "mission.v1".into(),
             "cwd.v1".into(),
@@ -134,19 +136,30 @@ async fn session(agent: &Arc<Agent>, stream: LocalStream) -> Result<()> {
     tx.json(&LinkMsg::Hello(hello(agent))).await?;
     let first: LinkMsg =
         tokio::time::timeout(Duration::from_secs(10), rx.control()).await.context("welcome 대기")??;
-    let (health, replay) = match first {
+    let (health, replay, host_identity) = match first {
         LinkMsg::Welcome(w) => {
             tracing::info!(proto = %w.proto, host = %w.host_id, "host에 연결했다");
             *agent.host_post.lock().unwrap() = Some(w.features.iter().any(|f| f == "post.v1"));
             *agent.host_mission.lock().unwrap() = w.features.iter().any(|f| f == "mission.v1");
+            agent
+                .host_recovery
+                .store(w.features.iter().any(|f| f == "rollout_recovery.v1"), std::sync::atomic::Ordering::Relaxed);
             // harness_hello.v1: host가 hello의 harness 사건을 읽었다. 옛 host에는 연결 뒤 다시 보낸다
-            (w.features.iter().any(|f| f == "health.v1"), !w.features.iter().any(|f| f == "harness_hello.v1"))
+            (
+                w.features.iter().any(|f| f == "health.v1"),
+                !w.features.iter().any(|f| f == "harness_hello.v1"),
+                w.identity,
+            )
         }
         LinkMsg::Reject(e) => bail!("host가 거부했다: {e}"),
         other => bail!("예상하지 못한 응답: {other:?}"),
     };
     agent.host_health.store(health, std::sync::atomic::Ordering::Relaxed);
     agent.set_host(Some(tx.clone()), replay);
+    if let Some(identity) = host_identity {
+        agent.observe_guards(aaa_proto::DeployService::Host, identity).await;
+    }
+    agent.observe_guards(aaa_proto::DeployService::Agent, agent.deployments.runtime_identity()).await;
     agent.replay_posts().await;
     let cached = agent.health.lock().unwrap().clone();
     if let Some(h) = cached {
@@ -280,6 +293,7 @@ mod post_tests {
         let LinkMsg::Hello(h) = rx.control().await.unwrap() else { panic!("hello가 없다") };
         assert!(h.features.iter().any(|f| f == "post.v1"));
         tx.json(&LinkMsg::Welcome(HostWelcome {
+            identity: None,
             proto: AGENT_LINK,
             host_id: "old".into(),
             features: vec!["terminal.v1".into()],

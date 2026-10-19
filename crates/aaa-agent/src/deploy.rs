@@ -1,5 +1,6 @@
 //! 배포는 host가 판정한 typed 요청만 받는다. 실행 전 기록하고 같은 ID는 다시 실행하지 않는다.
 use crate::Agent;
+pub(crate) mod guard;
 mod stage;
 use aaa_proto::{DeployAction, DeployJob, DeployService, DeployState, ErrorBody, ErrorCode};
 use sha2::{Digest, Sha256};
@@ -9,6 +10,7 @@ use std::{
 };
 
 pub type Executor = fn(&Path, DeployAction) -> Result<String, String>;
+#[derive(Debug)]
 struct Lease(std::fs::File);
 impl Drop for Lease {
     fn drop(&mut self) {
@@ -19,10 +21,22 @@ impl Drop for Lease {
         }
     }
 }
+// 실제 교체와 독립 복구가 같은 파일을 차례로 바꾼다. agent 죽음에도 OS가 잠금을 회수한다.
+fn replacement_lease(root: &Path) -> std::io::Result<Lease> {
+    let file = std::fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create(true)
+        .truncate(false)
+        .open(root.join("replacement.lock"))?;
+    file.lock()?;
+    Ok(Lease(file))
+}
 pub(crate) struct Manager {
     root: PathBuf,
     lease: Mutex<Option<Lease>>,
     instance: String,
+    started_ms: u64,
     running_sha256: String,
     gate: Mutex<()>,
     stage_gate: Mutex<()>,
@@ -47,6 +61,7 @@ impl Manager {
         Ok(Self {
             root,
             instance: aaa_common::util::new_id(),
+            started_ms: aaa_common::util::now_ms(),
             running_sha256: sha(exe).map_err(|e| anyhow::anyhow!(e.message))?,
             lease: Mutex::new(None),
             gate: Mutex::new(()),
@@ -99,6 +114,7 @@ impl Manager {
         }
         *owner = Some(lease);
         *self.executor.lock().unwrap() = Some(executor);
+        guard::write_identity(&self.root)?;
         Ok(())
     }
     pub(crate) fn response(&self, job: DeployJob) -> aaa_proto::AgentResponse {
@@ -107,6 +123,15 @@ impl Manager {
             running_software: aaa_common::util::software(),
             running_sha256: self.running_sha256.clone(),
             running_instance: self.instance.clone(),
+            running_started_ms: self.started_ms,
+        }
+    }
+    pub(crate) fn runtime_identity(&self) -> aaa_proto::RuntimeIdentity {
+        aaa_proto::RuntimeIdentity {
+            sha256: self.running_sha256.clone(),
+            software: aaa_common::util::software(),
+            instance: self.instance.clone(),
+            started_ms: self.started_ms,
         }
     }
     fn path(&self, id: &str) -> Result<PathBuf, ErrorBody> {
@@ -184,15 +209,63 @@ impl Manager {
             return None;
         }
         let execute = (*self.executor.lock().unwrap())?;
+        if matches!(job.action, DeployAction::Restart { .. })
+            && guard::read(self.root.parent()?, &job.id).is_ok()
+            && let Err(e) = guard::rpc(self.root.parent()?, &job.id, aaa_proto::DeployGuardControl::Activate).await
+        {
+            job.state = DeployState::Failed;
+            job.result = Some(format!("감시를 활성화하지 못해 재시작하지 않았다: {e:#}"));
+            let _ = self.save(&job);
+            return Some(job);
+        }
+        let mutating = matches!(
+            job.action,
+            DeployAction::Update { dry_run: false, .. }
+                | DeployAction::CheckedUpdate { dry_run: false, .. }
+                | DeployAction::UpdateStaged { dry_run: false, .. }
+                | DeployAction::Rollback { dry_run: false, .. }
+                | DeployAction::CheckedRollback { .. }
+        );
+        let replacement = if mutating {
+            let root = self.root.clone();
+            match tokio::task::spawn_blocking(move || replacement_lease(&root)).await {
+                Ok(Ok(lease)) => Some(lease),
+                result => {
+                    job.state = DeployState::Failed;
+                    job.result = Some(format!("교체 잠금을 얻지 못했다: {result:?}"));
+                    let _ = self.save(&job);
+                    return Some(job);
+                }
+            }
+        } else {
+            None
+        };
+        if mutating
+            && let Some(view) = guard::for_install(self.root.parent()?, &job.id)
+            && let Err(e) = guard::rpc(
+                self.root.parent()?,
+                &view.spec.id,
+                aaa_proto::DeployGuardControl::BeginInstall { job_id: job.id.clone() },
+            )
+            .await
+        {
+            job.state = DeployState::Failed;
+            job.result = Some(format!("설치 감시 승인 실패: {e:#}"));
+            let _ = self.save(&job);
+            return Some(job);
+        }
         let action = match &job.action {
             DeployAction::UpdateStaged { rollout, dry_run } => self.staged_action(&job.project, rollout, *dry_run),
             action => Ok(action.clone()),
         };
         let result = match action {
-            Ok(action) => tokio::task::spawn_blocking(move || execute(&exe, action))
-                .await
-                .map_err(|e| e.to_string())
-                .and_then(|r| r),
+            Ok(action) => tokio::task::spawn_blocking(move || {
+                let _replacement = replacement;
+                execute(&exe, action)
+            })
+            .await
+            .map_err(|e| e.to_string())
+            .and_then(|r| r),
             Err(e) => Err(e.message),
         };
         job.state = if result.is_ok() { DeployState::Completed } else { DeployState::Failed };
@@ -206,8 +279,10 @@ impl Manager {
     }
 }
 impl Agent {
-    pub fn configure_deployment(&self, executor: Executor) -> anyhow::Result<()> {
-        self.deployments.configure(&self.exe, executor)
+    pub fn configure_deployment(self: &Arc<Self>, executor: Executor) -> anyhow::Result<()> {
+        self.deployments.configure(&self.exe, executor)?;
+        self.resume_guards();
+        Ok(())
     }
     pub(crate) async fn deploy_start(
         self: Arc<Self>,

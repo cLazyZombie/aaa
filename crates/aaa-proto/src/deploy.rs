@@ -5,11 +5,31 @@ use ts_rs::TS;
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(tag = "action", rename_all = "snake_case")]
 pub enum DeployAction {
-    Update { from: Option<String>, version: Option<String>, dry_run: bool },
-    CheckedUpdate { from: String, sha256: String, dry_run: bool },
-    UpdateStaged { rollout: String, dry_run: bool },
-    Rollback { name: Option<String>, dry_run: bool },
-    Restart { service: DeployService },
+    Update {
+        from: Option<String>,
+        version: Option<String>,
+        dry_run: bool,
+    },
+    CheckedUpdate {
+        from: String,
+        sha256: String,
+        dry_run: bool,
+    },
+    UpdateStaged {
+        rollout: String,
+        dry_run: bool,
+    },
+    Rollback {
+        name: Option<String>,
+        dry_run: bool,
+    },
+    /// rollout에 먼저 저장한 배포 전 SHA만 복구한다. 최신 보관본 추정은 하지 않는다.
+    CheckedRollback {
+        sha256: String,
+    },
+    Restart {
+        service: DeployService,
+    },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
@@ -91,6 +111,12 @@ pub struct RolloutStep {
     #[serde(default)]
     #[ts(type = "number")]
     pub total_bytes: u64,
+    #[serde(default)]
+    pub baseline: Option<RuntimeIdentity>,
+    #[serde(default)]
+    pub guard: Option<DeployGuardSpec>,
+    #[serde(default)]
+    pub guard_ready: bool,
 }
 
 /// 조각은 base64를 포함해 1MiB frame보다 작고, 한 번에 하나만 보낸다.
@@ -113,7 +139,10 @@ pub struct DeployStageView {
 #[serde(rename_all = "snake_case")]
 pub enum RolloutState {
     Running,
+    Recovering,
     Stopped,
+    StoppedRolledBack,
+    RecoveryFailed,
     Done,
 }
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
@@ -128,8 +157,118 @@ pub struct RolloutView {
     pub version: Option<String>,
     pub error: Option<String>,
     pub finish: Option<String>,
+    /// 없는 옛 rollout은 L1/L2 정책으로만 재개한다.
+    #[serde(default)]
+    pub recovery_enabled: bool,
+    #[serde(default)]
+    pub recovery: Option<Box<DeployGuardView>>,
+    #[serde(default)]
+    #[ts(type = "number")]
+    pub recovery_started_ms: u64,
     #[ts(type = "number")]
     pub created_ms: u64,
     #[ts(type = "number")]
     pub updated_ms: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+pub struct RuntimeIdentity {
+    pub sha256: String,
+    pub software: String,
+    pub instance: String,
+    #[serde(default)]
+    #[ts(type = "number")]
+    pub started_ms: u64,
+}
+
+/// restart 작업 ID를 guard ID로 쓴다. 복구 ID도 실행 전에 host DB에 고정한다.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+pub struct DeployGuardSpec {
+    pub id: String,
+    pub rollout: String,
+    pub project: String,
+    pub service: DeployService,
+    pub host_machine: bool,
+    pub baseline: RuntimeIdentity,
+    pub expected_sha256: String,
+    pub expected_software: String,
+    pub old_host_instance: String,
+    pub install_job: Option<String>,
+    pub rollback_job: String,
+    pub restart_job: String,
+    pub host_restart_job: String,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+pub enum DeployGuardPhase {
+    Armed,
+    AwaitingNew,
+    NewReady,
+    Restoring,
+    Restarting,
+    AwaitingOld,
+    VerifiedNew,
+    Restored,
+    Failed,
+    Cancelled,
+}
+impl DeployGuardPhase {
+    pub fn terminal(self) -> bool {
+        matches!(self, Self::VerifiedNew | Self::Restored | Self::Failed | Self::Cancelled)
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+pub struct DeployGuardView {
+    pub spec: DeployGuardSpec,
+    pub phase: DeployGuardPhase,
+    pub worker_pid: u32,
+    #[ts(type = "number")]
+    pub deadline_ms: u64,
+    pub install_started: bool,
+    pub activated: bool,
+    pub restore_started: bool,
+    pub restart_index: u8,
+    pub restart_started: bool,
+    #[ts(type = "number")]
+    pub host_restart_ms: u64,
+    #[ts(type = "number")]
+    pub agent_restart_ms: u64,
+    pub observed: Vec<DeployService>,
+    pub installed_sha256: String,
+    pub error: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(tag = "op", rename_all = "snake_case")]
+pub enum DeployGuardControl {
+    Status,
+    BeginInstall { job_id: String },
+    Activate,
+    Observe { service: DeployService, identity: RuntimeIdentity },
+    Commit,
+    Recover { reason: String },
+    Cancel,
+}
+
+#[cfg(test)]
+mod compatibility_tests {
+    use super::*;
+    #[test]
+    fn previous_rollout_records_keep_their_non_recovery_policy() {
+        let r: RolloutView = serde_json::from_value(serde_json::json!({
+            "id":"old", "project":"demo", "actor":"coordinator",
+            "spec":{"from":"/tmp/candidate/aaa", "sha256":"old", "commit":null,"machines":["mac-a"]},
+            "state":"running", "steps":[{"machine":"mac-a","phase":"host_restart","job_id":"same-job",
+                "completed":false,"result":null,"host_instance":"old-host","started_ms":1}],
+            "cursor":0,"version":"0.1.2","error":null,"finish":null,"created_ms":1,"updated_ms":1
+        }))
+        .unwrap();
+        assert!(!r.recovery_enabled);
+        assert!(r.recovery.is_none());
+        assert_eq!(r.steps[0].job_id, "same-job");
+        assert!(r.steps[0].guard.is_none() && r.steps[0].baseline.is_none() && !r.steps[0].guard_ready);
+        assert!(r.spec.source_machine.is_none());
+    }
 }

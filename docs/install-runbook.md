@@ -284,7 +284,11 @@ L2의 `--file`은 `<머신>:<절대 경로>/aaa` 또는 `<머신>:~/후보폴더
 
 시작 전에 stderr에 출력된 rollout ID를 보존한다. 응답 단절은 성공이 아니며 start를 다시 보내지 않는다. 같은 ID의 status --wait는 host 재연결 뒤에도 조회만 한다. 단계별 작업 ID는 host DB에 먼저 저장되며 agent 기록이 없을 때만 같은 ID로 전송한다. 완료·실패 기록은 자동 재시도하지 않는다. 한 번에 rollout 하나만 실행하며 도중 개별 update/restart 요청은 거부한다.
 
-L2는 실패 시 다음 머신으로 가지 않고 stopped를 남긴다. **실패 머신 자동 rollback·host 감시는 L3에서 추가한다.** 문제 머신에 `aaa update rollback --machine <머신>` → 그 작업 ID `aaa update status <ID> --wait` → `aaa service restart --role agent --machine <머신>` → 판/SHA·재연결을 확인한다. host가 돌아오지 않으면 사람이 host 터미널에서 원시 update rollback과 service restart를 한다. 앞서 성공한 머신을 저절로 되돌리지 않는다. 구판 API로 되돌아갔으면 사람의 터미널 복구로 전환한다.
+L3는 모든 대상의 `rollout_recovery.v1`과 host/로컬 agent의 배포 전 실행 SHA·판 일치를 확인한다. 먼저 L3를 아는 host·agent를 설치된 L2 CLI의 기존 rollout 또는 원시 절차로 반영한다. 그 rollout은 옛 정책이며 다음 배포부터 독립 복구가 켜진다. 감시는 배포 전 검증 바이너리의 private 사본에서 별도 프로세스로 시작하므로 host/agent 재시작과 일반 old 보관 개수에 의존하지 않는다.
+
+새 실행 SHA·판·새 프로세스가 확인되지 않으면 실패 머신만 baseline SHA로 복구하고 기존 감독자를 재시작한다. `recovering`은 복구와 옛 실행 판 확인을 기다리는 중이다. 복구 요청 뒤 뜬 새 old 프로세스까지 확인해야 `stopped_rolled_back`이며 배포 자체는 실패(exit1)다. `recovery_failed`는 사람이 확인한다. 설치 전 실패/끝까지 unchanged이면 `stopped`다. 진행 중 설치를 철회해도 실제 설치 종료 뒤 복구하도록 OS lease로 직렬화한다. 앞 머신은 유지하고 다음 머신으로 가지 않는다. host 머신 agent 실패는 공유 실행 파일 때문에 host와 agent 둘의 복구 판을 확인한다.
+
+수동 복구는 먼저 rollout의 machine/phase/error/recovery와 private guard json/log를 보존한다. 살아 있는 guard와 경쟁해 새 설치를 시작하지 않는다. terminal failed를 확인한 뒤 해당 머신의 `aaa update list`에서 baseline SHA와 일치하는 보관 이름을 고른다. `aaa update rollback <보관이름> --machine <실패머신>` → `aaa update status <작업ID> --machine <실패머신> --wait` → `aaa service restart --role agent --machine <실패머신>` → 재시작 작업 조회·실행 SHA/판 확인이다. host가 내려갔거나 API가 구판이면 그 머신의 사람 터미널에서 `aaa update rollback <보관이름>` 후 `aaa service restart --role host`(host 머신)·`aaa service restart --role agent`로 복구한다. baseline 보관본이 없으면 검증된 해당 산출물을 기존 --from 수동 절차로 반영한다. 최신 보관본을 추정하지 않으며 DB/설정은 되돌리지 않는다. 앞 머신까지 되돌리려면 별도 사람 지시를 받는다.
 
 성공 끝에는 host가 coordinator 안내를 직접 갱신하고 그 결과를 rollout에 저장한다. 운영 배포는 구현 시험·착지와 별도다. L2의 시작 권한은 coordinator+safety뿐이며 사람 터미널 경로는 L5다.
 

@@ -48,7 +48,7 @@ pub(crate) fn run(json: bool, cmd: DeployCmd) -> Result<ExitCode> {
                     machines.clear();
                 }
                 let mut c = FrontClient::connect(&state).await?;
-                if c.proto.minor < if source_machine.is_some() { 49 } else { 46 } {
+                if c.proto.minor < 51 {
                     bail!("먼저 rollout API를 아는 host·agent를 반영한다");
                 }
                 let id = aaa_common::util::new_id();
@@ -85,7 +85,11 @@ pub(crate) fn run(json: bool, cmd: DeployCmd) -> Result<ExitCode> {
                             let response = c.call(FrontRequest::RolloutStatus { id: id.clone() }).await?;
                             match &response {
                                 Ok(FrontResponse::Rollout { rollout })
-                                    if wait && rollout.state == RolloutState::Running =>
+                                    if wait
+                                        && matches!(
+                                            rollout.state,
+                                            RolloutState::Running | RolloutState::Recovering
+                                        ) =>
                                 {
                                     eprintln!(
                                         "rollout {}: {}/{} · 진행 중",
@@ -95,7 +99,7 @@ pub(crate) fn run(json: bool, cmd: DeployCmd) -> Result<ExitCode> {
                                     );
                                 }
                                 Ok(FrontResponse::Rollout { rollout }) => {
-                                    let stopped = rollout.state == RolloutState::Stopped;
+                                    let stopped = rollout.state != RolloutState::Done;
                                     crate::cli::front_print(json, response)?;
                                     return Ok(if stopped { ExitCode::from(1) } else { ExitCode::SUCCESS });
                                 }

@@ -11,6 +11,7 @@ mod ci;
 mod command;
 mod cwd;
 pub mod deploy;
+pub use deploy::guard::worker as deployment_guard;
 pub mod detect;
 mod files;
 mod git_watch;
@@ -149,6 +150,7 @@ pub struct Agent {
     pub default_cwd: Option<String>,
     exe: PathBuf,
     deployments: deploy::Manager,
+    guard_gate: tokio::sync::Mutex<()>,
     sessions: Mutex<HashMap<String, Entry>>,
     host: Mutex<Option<FrameTx>>,
     pub selfcheck: Mutex<Option<serde_json::Value>>,
@@ -181,6 +183,7 @@ pub struct Agent {
     health: Mutex<Option<aaa_proto::MachineHealth>>,
     /// 지금 host가 건강 보고(`health.v1`)를 받는가
     host_health: std::sync::atomic::AtomicBool,
+    host_recovery: std::sync::atomic::AtomicBool,
     host_post: Mutex<Option<bool>>,
     host_mission: Mutex<bool>,
     post_gate: Mutex<()>,
@@ -206,6 +209,7 @@ impl Agent {
         let deployments = deploy::Manager::new(&state, &std::env::current_exe()?)?;
         Ok(Arc::new(Agent {
             deployments,
+            guard_gate: tokio::sync::Mutex::new(()),
             state,
             machine_id,
             name,
@@ -231,6 +235,7 @@ impl Agent {
             session_ready: tokio::sync::Notify::new(),
             health: Mutex::new(None),
             host_health: std::sync::atomic::AtomicBool::new(false),
+            host_recovery: std::sync::atomic::AtomicBool::new(false),
             term_colors: Mutex::new(None),
             host_post: Mutex::new(None),
             host_mission: Mutex::new(false),
@@ -266,6 +271,19 @@ impl Agent {
         pid: Option<u32>,
     ) -> Result<Option<String>> {
         let msg = hooks::read_msg(s).await?;
+        if msg.harness == "deploy_guard" {
+            let guard = deploy::guard::read(&self.state, &msg.session)?;
+            if pid != Some(guard.worker_pid) {
+                bail!("감시 프로세스의 알림이 아니다");
+            }
+            if self.host_recovery.load(std::sync::atomic::Ordering::Relaxed) {
+                self.send_host(&aaa_proto::LinkMsg::Event(aaa_proto::AgentEvent::DeployGuardChanged {
+                    id: guard.spec.id,
+                }))
+                .await;
+            }
+            return Ok(None);
+        }
         if msg.session.is_empty() || !msg.session.chars().all(|c| c.is_ascii_alphanumeric()) {
             if msg.harness == "post" {
                 self.reject_post(&msg, "세션 ID 형식이 아니다").await;
@@ -1187,6 +1205,9 @@ impl Agent {
     ) {
         let wait = Duration::from_millis(deadline_ms.unwrap_or(600_000).clamp(1, 86_400_000));
         let direct: Result<AgentResponse, ErrorBody> = match body {
+            req @ (AgentRequest::DeployGuardArm { .. } | AgentRequest::DeployGuardControl { .. }) => {
+                self.guard_request(req).await
+            }
             req @ (AgentRequest::DeployFetch { .. }
             | AgentRequest::DeployStage { .. }
             | AgentRequest::DeployStageStatus { .. }

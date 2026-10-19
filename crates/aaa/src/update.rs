@@ -116,7 +116,7 @@ pub(crate) fn sha256(p: &Path) -> Result<String> {
 }
 
 /// 실행해 보고 (성공했나, 표준 출력·오류)를 돌려준다. 한도를 넘기면 그 child를 끝내고 실패로 본다.
-fn run_limited(bin: &Path, args: &[&str]) -> Result<(bool, String)> {
+pub(crate) fn run_limited(bin: &Path, args: &[&str]) -> Result<(bool, String)> {
     let mut child = Command::new(bin)
         .args(args)
         .stdin(Stdio::null())
@@ -292,8 +292,12 @@ struct Swap<'a> {
 /// 바꾸기와 되돌리기가 함께 쓰는 끝 단계: 보이고, 묻고, 바꾸고, 보관을 줄인다
 fn finish(json: bool, place: &Place, swap: Swap, dry_run: bool, keep: u32, approval: Approval) -> Result<ExitCode> {
     let Swap { what, staged, new_version, from } = swap;
-    let current =
-        if approval == Approval::Coordinator { self_check(&place.exe)? } else { env!("CARGO_PKG_VERSION").to_string() };
+    let current = match approval {
+        Approval::Coordinator => self_check(&place.exe)?,
+        // 복구 대상은 실행되지 않는 실패 후보일 수 있다. 보관 이름용 표지만 쓰고 실행하지 않는다.
+        Approval::Recovery => "failed-rollout".into(),
+        Approval::Person => env!("CARGO_PKG_VERSION").to_string(),
+    };
     let (cur_sha, new_sha) = (sha256(&place.exe)?, sha256(staged.path())?);
     if cur_sha == new_sha {
         if json {
@@ -354,6 +358,7 @@ fn finish(json: bool, place: &Place, swap: Swap, dry_run: bool, keep: u32, appro
 pub(crate) enum Approval {
     Person,
     Coordinator,
+    Recovery,
 }
 
 pub fn update(json: bool, from: Option<PathBuf>, version: Option<String>, dry_run: bool) -> Result<ExitCode> {
@@ -462,6 +467,55 @@ pub(crate) fn rollback_approved(
 }
 
 /// `aaa update list`: 보관한 옛 실행 파일
+/// 배포 전 SHA와 같은 보관본만 복구한다. 실패한 설치 파일을 실행하지 않고 staging을 검증한다.
+pub(crate) fn checked_rollback(exe: &Path, expected: &str) -> Result<String> {
+    let (_, keep) = settings()?;
+    checked_rollback_at(exe, expected, keep, None)
+}
+pub(crate) fn checked_recovery(exe: &Path, expected: &str, pin: &Path) -> Result<String> {
+    let (_, keep) = settings()?;
+    checked_rollback_at(exe, expected, keep, Some(pin))
+}
+fn checked_rollback_at(exe: &Path, expected: &str, keep: u32, pin: Option<&Path>) -> Result<String> {
+    if expected.len() != 64 || !expected.bytes().all(|b| b.is_ascii_hexdigit()) {
+        bail!("복구 SHA-256 형식이 아니다");
+    }
+    let place = Place::at(exe.to_path_buf())?;
+    if sha256(exe)? == expected {
+        return installed_identity(exe);
+    }
+    let chosen = if let Some(pin) = pin {
+        if sha256(pin)? != expected {
+            bail!("보존한 복구 사본 SHA-256 불일치");
+        }
+        pin.to_path_buf()
+    } else {
+        place
+            .kept()
+            .into_iter()
+            .find(|p| sha256(p).is_ok_and(|s| s == expected))
+            .context("배포 전 SHA-256의 보관본이 없다: 다른 보관본을 추정하지 않는다")?
+    };
+    let staged = Staged::copy_from(&chosen, &place)?;
+    if sha256(staged.path())? != expected {
+        bail!("복구 후보 SHA-256 불일치: 실행하지 않았다");
+    }
+    let version = self_check(staged.path())?;
+    if sha256(staged.path())? != expected {
+        bail!("self-check 뒤 복구 후보 SHA-256 불일치");
+    }
+    let receipt = serde_json::json!({"version":version,"sha256":expected}).to_string();
+    finish(
+        true,
+        &place,
+        Swap { what: "배포 전 SHA로 복구".into(), staged, new_version: version, from: &chosen },
+        false,
+        keep,
+        Approval::Recovery,
+    )?;
+    Ok(receipt)
+}
+
 pub fn list(json: bool) -> Result<ExitCode> {
     let place = Place::here()?;
     let cur = sha256(&place.exe)?;
@@ -499,6 +553,45 @@ pub(crate) fn installed_identity(exe: &std::path::Path) -> Result<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(unix)]
+    #[test]
+    fn pinned_rollback_ignores_newer_backups_and_never_executes_the_broken_installation() {
+        let dir = std::env::temp_dir().join(format!("aaa-restore-{}", aaa_common::util::new_id()));
+        std::fs::create_dir_all(dir.join(OLD_DIR)).unwrap();
+        let exe = dir.join("aaa");
+        let marker = dir.join("unapproved-executed");
+        let old = dir.join(OLD_DIR).join("aaa-a-old");
+        let newer = dir.join(OLD_DIR).join("aaa-z-newer");
+        let approved = b"#!/bin/sh\nif [ \"$1\" = --version ]; then printf 'aaa 0.1.2\\n'; fi\nexit 0\n";
+        let unapproved = format!("#!/bin/sh\necho bad > '{}'\nexit 1\n", marker.display());
+        // 쓰는 FD를 다른 병렬 시험의 fork에 물려주지 않는다.
+        for (path, bytes) in
+            [(&exe, unapproved.as_bytes()), (&old, approved.as_slice()), (&newer, unapproved.as_bytes())]
+        {
+            assert!(Command::new("python3").args(["-c","import os,sys; open(sys.argv[1], 'wb').write(sys.argv[2].encode()); os.chmod(sys.argv[1], 0o700)"]).arg(path).arg(std::str::from_utf8(bytes).unwrap()).status().unwrap().success());
+        }
+        assert!(checked_rollback_at(&exe, &"c".repeat(64), 3, None).unwrap_err().to_string().contains("보관본"));
+        assert_eq!(std::fs::read(&exe).unwrap(), unapproved.as_bytes());
+        assert!(!marker.exists());
+        let expected = hex::encode(sha2::Sha256::digest(approved));
+        let receipt: serde_json::Value =
+            serde_json::from_str(&checked_rollback_at(&exe, &expected, 3, None).unwrap()).unwrap();
+        assert_eq!(receipt["sha256"], expected);
+        assert_eq!(receipt["version"], "0.1.2");
+        assert_eq!(std::fs::read(&exe).unwrap(), approved);
+        assert!(!marker.exists(), "실패 설치/추정한 최신 보관본을 실행했다");
+        checked_rollback_at(&exe, &expected, 3, None).unwrap();
+        assert_eq!(std::fs::read(&exe).unwrap(), approved);
+        let pin = dir.join("guard.bin");
+        std::fs::copy(&exe, &pin).unwrap();
+        std::fs::remove_dir_all(dir.join(OLD_DIR)).unwrap();
+        std::fs::write(&exe, unapproved.as_bytes()).unwrap();
+        checked_rollback_at(&exe, &expected, 3, Some(&pin)).unwrap();
+        assert_eq!(std::fs::read(&exe).unwrap(), approved, "일반 보관본이 없어도 독립 복구 사본을 쓴다");
+        assert!(!marker.exists());
+        std::fs::remove_dir_all(dir).unwrap();
+    }
 
     #[test]
     fn pins_hold_and_major_needs_one() {

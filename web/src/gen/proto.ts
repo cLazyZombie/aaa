@@ -413,11 +413,15 @@ export type RolloutStep = { machine: string, phase: RolloutPhase, job_id: string
 /**
  * 재시작 전에 기록한 host instance. OS boot ID와 별개다.
  */
-host_instance: string | null, started_ms: number, transferred_bytes: number, total_bytes: number, };
+host_instance: string | null, started_ms: number, transferred_bytes: number, total_bytes: number, baseline: RuntimeIdentity | null, guard: DeployGuardSpec | null, guard_ready: boolean, };
 
-export type RolloutState = "running" | "stopped" | "done";
+export type RolloutState = "running" | "recovering" | "stopped" | "stopped_rolled_back" | "recovery_failed" | "done";
 
-export type RolloutView = { id: string, project: string, actor: string, spec: RolloutSpec, state: RolloutState, steps: Array<RolloutStep>, cursor: number, version: string | null, error: string | null, finish: string | null, created_ms: number, updated_ms: number, };
+export type RolloutView = { id: string, project: string, actor: string, spec: RolloutSpec, state: RolloutState, steps: Array<RolloutStep>, cursor: number, version: string | null, error: string | null, finish: string | null,
+/**
+ * 없는 옛 rollout은 L1/L2 정책으로만 재개한다.
+ */
+recovery_enabled: boolean, recovery: DeployGuardView | null, recovery_started_ms: number, created_ms: number, updated_ms: number, };
 
 export type FrontResponse = { "kind": "input_events", events: Array<InputEvent>, } | { "kind": "deploy_context", project: string | null, session: boolean, allowed: boolean, } | { "kind": "rollout", rollout: RolloutView, } | { "kind": "deployment", machine: string, job: DeployJob, running_software: string, running_sha256: string, } | { "kind": "missions", missions: Array<MissionView>, } | { "kind": "mission", mission: MissionView, } | { "kind": "post", result: PostResult, } | { "kind": "posts", posts: Array<PostEnvelope>, } | { "kind": "status" } & HostStatus | { "kind": "machines", machines: Array<MachineView>, } | { "kind": "panes", panes: Array<PaneView>, } | { "kind": "pane" } & PaneView | { "kind": "next", lines: Array<string>,
 /**
@@ -580,9 +584,19 @@ export type ThreadStatus = "starting" | "open" | "failed" | "resolved";
 
 export type BriefState = "pending" | "delivered" | "unknown";
 
-export type DeployAction = { "action": "update", from: string | null, version: string | null, dry_run: boolean, } | { "action": "checked_update", from: string, sha256: string, dry_run: boolean, } | { "action": "update_staged", rollout: string, dry_run: boolean, } | { "action": "rollback", name: string | null, dry_run: boolean, } | { "action": "restart", service: DeployService, };
+export type DeployAction = { "action": "update", from: string | null, version: string | null, dry_run: boolean, } | { "action": "checked_update", from: string, sha256: string, dry_run: boolean, } | { "action": "update_staged", rollout: string, dry_run: boolean, } | { "action": "rollback", name: string | null, dry_run: boolean, } | { "action": "checked_rollback", sha256: string, } | { "action": "restart", service: DeployService, };
 
 export type DeployStageView = { rollout: string, project: string, sha256: string, total: number, offset: number, complete: boolean, version: string | null, };
+
+export type RuntimeIdentity = { sha256: string, software: string, instance: string, started_ms: number, };
+
+export type DeployGuardSpec = { id: string, rollout: string, project: string, service: DeployService, host_machine: boolean, baseline: RuntimeIdentity, expected_sha256: string, expected_software: string, old_host_instance: string, install_job: string | null, rollback_job: string, restart_job: string, host_restart_job: string, };
+
+export type DeployGuardPhase = "armed" | "awaiting_new" | "new_ready" | "restoring" | "restarting" | "awaiting_old" | "verified_new" | "restored" | "failed" | "cancelled";
+
+export type DeployGuardView = { spec: DeployGuardSpec, phase: DeployGuardPhase, worker_pid: number, deadline_ms: number, install_started: boolean, activated: boolean, restore_started: boolean, restart_index: number, restart_started: boolean, host_restart_ms: number, agent_restart_ms: number, observed: Array<DeployService>, installed_sha256: string, error: string | null, };
+
+export type DeployGuardControl = { "op": "status" } | { "op": "begin_install", job_id: string, } | { "op": "activate" } | { "op": "observe", service: DeployService, identity: RuntimeIdentity, } | { "op": "commit" } | { "op": "recover", reason: string, } | { "op": "cancel" };
 
 export type DeployService = "host" | "agent";
 
