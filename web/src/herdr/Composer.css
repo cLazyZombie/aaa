@@ -558,7 +558,10 @@
   width: 100%;
   min-width: 0;
   min-height: calc(1lh + var(--space-5));
+  /* ten lines, and never over half the visible height (the grip's own limit, .is-sized below): a
+     landscape phone with its keyboard up keeps room for the conversation (ChatComposer sizes it) */
   max-height: 10lh;
+  max-height: min(10lh, calc(var(--app-height, 100dvh) / 2));
   padding: var(--space-4) var(--space-4) var(--space-1);
   resize: none;
   overflow-x: hidden;
@@ -613,6 +616,32 @@
 
 .composer-text::placeholder {
   color: var(--text-dim);
+}
+
+/* One line (ChatComposer data-lines="one", t3code's resting composer): an empty or one-line message
+   shares its row with the controls, centred on one line, so the card is one row high. The text
+   keeps its side padding (the line is measured at this width in both layouts); only the block
+   padding shrinks. A placeholder longer than the row ends in an ellipsis rather than adding a line */
+.composer-surface[data-lines="one"] {
+  grid-template-areas:
+    "attachments attachments attachments"
+    "left text right";
+  align-items: center;
+}
+
+.composer-surface[data-lines="one"] > .composer-text {
+  min-height: calc(1lh + var(--space-2) * 2);
+  padding-block: var(--space-2);
+}
+
+.composer-surface[data-lines="one"] > .composer-text::placeholder {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.composer-surface[data-lines="one"] > .composer-controls {
+  padding-block: var(--space-1);
 }
 
 .composer-text:disabled {
