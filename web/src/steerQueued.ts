@@ -38,7 +38,7 @@ const HELD_STEER = {
   codex: "기다리지 않고 지금 턴에 넣습니다. Codex는 다음 도구 호출 뒤 읽습니다 (Ctrl+Enter와 같음)",
 };
 
-/** 이 기기 보관함(composer-queue)의 「지금 보내기」(plan §8.272, 사용자 결정 10-19 19:36): 대기 말 단추와 같은 뜻이 되게 작업 중이면
+/** 이 기기 보관함(composer-queue)의 「지금 보내기」(plan §8.273, 사용자 결정 10-19 19:36): 대기 말 단추와 같은 뜻이 되게 작업 중이면
  * Ctrl+Enter처럼 steer로 보내 지금 턴에 넣고(`steer`), 쉬면 보통 보내기다. 못 누르는 까닭은 대기 말 단추와 같은 차례·말이다:
  * 질문 중이면 끄고 단추 아래에 안내(`hint`, 글이 질문의 답으로 들어가지 않게), 끊김·다른 글을 보내는 중·빈 글은 title로만 */
 export function heldSend(o: { working: boolean; asking: boolean; connected: boolean; busy: boolean; empty: boolean; harness: "claude" | "codex" }): {

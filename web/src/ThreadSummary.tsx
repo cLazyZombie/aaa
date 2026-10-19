@@ -1,4 +1,4 @@
-// thread 작업 요약(plan §8.259): 프로젝트 패널 thread 줄의 hover 카드(마우스 기기만)와 thread 화면 머리의 「요약」 단추.
+// thread 작업 요약(plan §8.259): 프로젝트·에이전트 패널 thread 줄의 hover 카드(마우스 기기만)와 thread 화면 머리의 「요약」 단추.
 // 카드는 순간 훑어보는 것이라 6줄 안팎이다: 목표, 지금(3줄), 최근 바뀐 것 한 줄, 상태(10-19 사용자 「길면 안 된다」).
 // 정한 것·지난 변경·끝남·요약 뒤 지시는 단추 창에서만, 접어 둔다. 카드 모양·지연·자리는 t3code SidebarThreadTooltip
 // (150ms, 닫힘 0, 400ms 안 다음 줄은 바로, 오른쪽·위 끝·4px), 단추 창은 데스크톱 팝오버·휴대폰 아래 시트(RowMenu와 같은 틀).
@@ -20,16 +20,16 @@ const versionOf = (t: ThreadView) => `${t.summary?.at_ms ?? "-"}:${t.summary?.pe
 const cache = new Map<string, { version: string; view: ThreadSummaryView }>();
 
 /** 요약을 읽는다. 같은 판이면 기억한 것을 쓴다(hover마다 묻지 않게) */
-function useSummary(t: ThreadView, enabled: boolean): { view: ThreadSummaryView | null; error: string | null } {
-  const key = `${t.project}/${t.id}`;
-  const version = versionOf(t);
+function useSummary(t: ThreadView | undefined, enabled: boolean): { view: ThreadSummaryView | null; error: string | null } {
+  const key = t ? `${t.project}/${t.id}` : "";
+  const version = t ? versionOf(t) : "";
   const hit = cache.get(key);
   const [state, setState] = useState<{ view: ThreadSummaryView | null; error: string | null }>({
     view: hit?.version === version ? hit.view : null,
     error: null,
   });
   useEffect(() => {
-    if (!enabled) return;
+    if (!enabled || !t) return;
     const have = cache.get(key);
     if (have?.version === version) {
       setState({ view: have.view, error: null });
@@ -48,7 +48,7 @@ function useSummary(t: ThreadView, enabled: boolean): { view: ThreadSummaryView 
     return () => {
       live = false;
     };
-  }, [enabled, key, version, t.project, t.id]);
+  }, [enabled, key, version, t?.project, t?.id]);
   return state;
 }
 
@@ -196,8 +196,9 @@ const WARM_MS = 400;
 let lastClosed = 0;
 
 /** thread 줄 hover 카드(마우스 기기만). 줄의 title tooltip을 대신한다 */
-export function useSummaryHover(t: ThreadView, suppressed: boolean) {
+export function useSummaryHover(t: ThreadView | undefined, suppressed: boolean) {
   const mouse = useMediaQuery(HOVER_QUERY);
+  const enabled = mouse && t !== undefined;
   const [anchor, setAnchor] = useState<HTMLElement | null>(null);
   // 400ms 안에 다음 줄로 옮기면 지연·등장 효과 없이 바로(t3code Tooltip `timeout`·`data-instant`)
   const [instant, setInstant] = useState(false);
@@ -225,7 +226,7 @@ export function useSummaryHover(t: ThreadView, suppressed: boolean) {
   }, [anchor]);
   const open = anchor !== null && !suppressed;
   const { view } = useSummary(t, open);
-  const handlers = mouse
+  const handlers = enabled
     ? {
         onMouseEnter: (e: React.MouseEvent<HTMLElement>) => {
           const el = e.currentTarget;
@@ -240,8 +241,8 @@ export function useSummaryHover(t: ThreadView, suppressed: boolean) {
         onMouseDown: close,
       }
     : {};
-  const card = open && view ? <HoverCard anchor={anchor} t={t} v={view} instant={instant} /> : null;
-  return { handlers, card, enabled: mouse };
+  const card = open && t && view ? <HoverCard anchor={anchor} t={t} v={view} instant={instant} /> : null;
+  return { handlers, card, enabled };
 }
 
 function HoverCard({ anchor, t, v, instant }: { anchor: HTMLElement; t: ThreadView; v: ThreadSummaryView; instant: boolean }) {

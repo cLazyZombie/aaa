@@ -1097,7 +1097,7 @@ button.report-delete:hover:not(:disabled) { color: var(--danger-text); }
 .chat-pending-note svg { width: 12px; height: 12px; flex: none; margin-right: var(--space-1); vertical-align: -1px; }
 .chat-pending-note-text { min-width: 0; }
 .chat-pending-note.is-quiet { color: var(--text-dim); }
-/* 이 기기 보관함 「지금 보내기」의 까닭 줄(plan §8.272): 대기 말 까닭 줄과 같은 경고 아이콘·「터미널 보기」, 질문 중 안내는 조용히 */
+/* 이 기기 보관함 「지금 보내기」의 까닭 줄(plan §8.273): 대기 말 까닭 줄과 같은 경고 아이콘·「터미널 보기」, 질문 중 안내는 조용히 */
 .composer-queue .composer-queue-error { display: flex; align-items: center; flex-wrap: wrap; gap: var(--space-1); }
 .composer-queue .composer-queue-error svg { width: 12px; height: 12px; flex: none; color: var(--warn); }
 .composer-queue .composer-queue-error.is-quiet { color: var(--text-dim); }

@@ -3,7 +3,7 @@
 // 보내는 길은 터미널 입력줄과 같다(Term `sendTerminalLine`: 글 + Enter, 여러 줄은 bracketed paste). aaa는 host 대기열이 없어
 // 작업 중이어도 바로 입력하고 harness가 다음 턴으로 줄 세운다(plan §8.100) — 참고의 「턴이 끝나면 저절로 전송」 자리다.
 // 「대기 메시지 자동 전송」을 끄면 작업 중에 쓴 메시지는 이 기기에 붙잡혀(참고 messageQueue.ts) 「지금 보내기」를 누를 때 간다.
-// 그 「지금 보내기」는 작업 중이면 Ctrl+Enter처럼 steer로 보내 지금 턴에 넣는다(대기 말 「지금 보내기」와 같은 뜻, plan §8.272).
+// 그 「지금 보내기」는 작업 중이면 Ctrl+Enter처럼 steer로 보내 지금 턴에 넣는다(대기 말 「지금 보내기」와 같은 뜻, plan §8.273).
 // iPad에서 입력창을 끌면 화면이 통째로 따라가던 것은 pageHold.ts가 막는다(참고에 없음).
 // 글 칸 높이는 참고 `sizeTextarea`(글만큼, CSS 10줄에서 멈춤)다. 한 줄이면 보내기 단추를 같은 줄에 두는 것은 t3code `resting`
 // 배치(ChatComposer.tsx `isComposerResting`, useComposerMultilinePrompt.ts)이고, 데스크톱·긴 대화로 묶은 조건 없이 글만 본다(plan §8.215).

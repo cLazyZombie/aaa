@@ -208,7 +208,7 @@ draw();
     await shot(page, "ctrl-enter-chat-desktop");
     await page.getByTestId("chat-toggle").click();
   });
-  await step("이 기기 보관함 「지금 보내기」(사용자 결정 10-19 19:36, plan §8.272): 대기 말 「지금 보내기」와 같은 뜻으로 작업 중이면 Ctrl+Enter처럼 steer로 보내 지금 턴에 넣는다(작업 중 Claude는 글 뒤 sendNow, Codex는 글 + Enter). 입력 진단은 Ctrl+Enter 길 그대로다. pane이 거절하면 보관함 줄에 까닭과 「터미널 보기」를 두고 글은 남는다", async () => {
+  await step("이 기기 보관함 「지금 보내기」(사용자 결정 10-19 19:36, plan §8.273): 대기 말 「지금 보내기」와 같은 뜻으로 작업 중이면 Ctrl+Enter처럼 steer로 보내 지금 턴에 넣는다(작업 중 Claude는 글 뒤 sendNow, Codex는 글 + Enter). 입력 진단은 Ctrl+Enter 길 그대로다. pane이 거절하면 보관함 줄에 까닭과 「터미널 보기」를 두고 글은 남는다", async () => {
     const chat = async (pg, name) => {
       await inList(pg, `pane-${name}`);
       const toggle = pg.getByTestId("chat-toggle");
