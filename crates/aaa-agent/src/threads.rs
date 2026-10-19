@@ -25,6 +25,7 @@ mod preparation;
 #[derive(Debug, Clone, Default)]
 pub struct ThreadsConfig {
     pub work_root: PathBuf,
+    pub work_mount: Option<PathBuf>,
     /// hook 명령에 쓰는 aaa 실행 파일
     pub exe: PathBuf,
     pub profiles: BTreeMap<String, Profile>,
@@ -34,6 +35,9 @@ pub struct ThreadsConfig {
 }
 
 impl ThreadsConfig {
+    pub(crate) fn check_path(&self, path: &Path) -> Result<()> {
+        crate::work_root::check_managed_path(&self.work_root, self.work_mount.as_deref(), path)
+    }
     /// 지금 agent.toml의 머신별 덮어쓰기·호환 profile로 바꾼 설정. 읽지 못하면 그 까닭이 오류다(옛 값으로 띄우지 않는다).
     pub fn fresh(&self) -> Result<ThreadsConfig> {
         let Some(dir) = &self.config_dir else { return Ok(self.clone()) };
@@ -90,6 +94,7 @@ pub fn rebrief(
     safety: Option<&LaunchSafety>,
     resolved: Option<&aaa_proto::ResolvedProfile>,
 ) -> Result<Launch> {
+    cfg.check_path(Path::new(work_dir))?;
     let dir = check_work_dir(work_dir)?;
     std::fs::write(dir.join("brief.md"), fill_brief(brief, &dir.to_string_lossy(), &cfg.exe.to_string_lossy()))?;
     if let Some(name) = profile {
@@ -207,6 +212,7 @@ async fn prepare_inner(cfg: &ThreadsConfig, p: ThreadPrepare, wait: Duration) ->
     let launch = resolve(&p.profile, &profile)?;
     let (cwd, branch, base) = preparation::place(cfg, &p, wait).await?;
     let work_dir = cwd.join(".aaa").join(format!("{}-{}", p.project, p.thread));
+    cfg.check_path(&work_dir)?;
     std::fs::create_dir_all(work_dir.join("library"))?;
     std::fs::write(
         work_dir.join("brief.md"),

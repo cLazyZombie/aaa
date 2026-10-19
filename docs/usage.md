@@ -56,3 +56,21 @@
 | `aaa routine list <p>` · `aaa routine toggle <p> <이름> --off` | 일정 작업과 PR 사건 routine(`on = "pr"`: thread PR의 check 실패·리뷰에 thread로 글을 보낸다) |
 
 모든 명령은 `--json`으로 기계가 읽는 출력을 줍니다. `pane`·`tab`·`workspace`는 늘 JSON 한 줄이고, 실패하면 stderr에 `{"error":…}`를 쓰고 종료 코드 1입니다(herdr와 같다). 셸 완성은 `aaa completion zsh`(bash·fish·elvish·powershell)입니다. 자세한 것은 `aaa <명령> --help`입니다.
+## 머신별 작업 디스크
+
+각 머신의 `agent.toml` 또는 `agent.local.toml`에서 `[agent] work_root`를 정한다. 비우면 기존 `~/aaa-work`를
+사용한다. 절대 경로와 `~/…`만 받으며 상대 경로·상위 탈출·디스크 최상위는 거부한다.
+
+```toml
+[agent]
+work_root = "/Volumes/<disk>/aaa-work"
+work_mount = "/Volumes/<disk>"
+```
+
+`work_mount`는 실제 마운트 지점이어야 한다. macOS `/Volumes/<볼륨>/…`는 이 값을 생략해도 검사한다.
+동명의 일반 폴더만 남아 있거나 볼륨이 없으면 agent 시작을 거부하고 내장 경로로 대체하지 않는다. 실행 중에도
+새 작업·기본 routine 폴더 생성·재실행·정리 전에 대상 볼륨을 확인한다. 폴더가 없다는 이유로 다른 디스크의
+여유 용량을 정상 보고하지 않는다. 설정 변경은 agent 재시작 때 적용된다.
+
+이 단계는 경로 안전 검사다. 기존 준비 기록을 유지하는 경로 전환과 전용 설정 명령은 후속 단계다.
+운영 경로를 아직 바꾸지 않는다. 디스크를 강제로 분리하면 실행 중인 프로그램의 열린 파일까지 복구해 주지는 않는다.

@@ -38,6 +38,25 @@ fn examples_are_valid_and_warning_free() {
 }
 
 #[test]
+fn work_root_settings_preserve_local_override_and_reject_unsafe_paths() {
+    let d = Dir::new("workroot");
+    d.write("agent.toml", "schema = 1\n[agent]\nwork_root = '/work/base'\n");
+    d.write("agent.local.toml", "schema = 1\n[agent]\nwork_root = '~/external/work'\nwork_mount = '/external'\n");
+    let loaded = load_agent(&d.0).unwrap();
+    assert!(loaded.warnings.is_empty());
+    let home = std::env::temp_dir();
+    assert_eq!(work_root::resolve(&loaded.config.agent.work_root, &home).unwrap(), home.join("external/work"));
+    assert_eq!(work_root::resolve("", &home).unwrap(), home.join("aaa-work"));
+    for value in ["relative/work", "~/../work", "/work/../other", "/", "C:/"] {
+        d.write("agent.local.toml", &format!("schema = 1\n[agent]\nwork_root = {value:?}\n"));
+        assert!(load_agent(&d.0).unwrap_err().render().contains("agent.work_root"), "{value}");
+    }
+    // 타 OS 설정 문법은 읽을 수 있어도 이 머신에서 실행할 때는 native 절대 경로여야 한다.
+    assert!(work_root::validate(r"D:\worktrees", false).is_ok());
+    assert!(work_root::validate("/", true).is_ok());
+}
+
+#[test]
 fn bad_value_reports_file_line_col() {
     let d = Dir::new("badvalue");
     d.write("host.toml", "schema = 1\n\n[web]\nlisten = \"0.0.0.0:7431\"\n");

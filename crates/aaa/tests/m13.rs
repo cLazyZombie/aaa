@@ -15,6 +15,8 @@ mod lab;
 mod preparation;
 #[path = "m13/rollout.rs"]
 mod rollout;
+#[path = "m13/work_root.rs"]
+mod work_root;
 
 use std::path::{Path, PathBuf};
 use std::process::Command;

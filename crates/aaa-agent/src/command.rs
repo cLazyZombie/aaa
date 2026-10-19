@@ -19,6 +19,7 @@ const DRAIN_AFTER_KILL: Duration = Duration::from_secs(2);
 
 pub async fn run(
     work_root: &Path,
+    work_mount: Option<&Path>,
     project: &str,
     cwd: Option<&str>,
     command: &str,
@@ -33,13 +34,16 @@ pub async fn run(
     let dir = match cwd {
         Some(c) => {
             let p = PathBuf::from(c);
+            crate::work_root::check_managed_path(work_root, work_mount, &p)?;
             if !p.is_absolute() || !p.is_dir() {
                 bail!("실행 폴더가 없다: {c}");
             }
             p
         }
         None => {
+            crate::work_root::check(work_root, work_mount)?;
             let p = work_root.join(project).join("routines");
+            crate::work_root::check_managed_path(work_root, work_mount, &p)?;
             std::fs::create_dir_all(&p).with_context(|| format!("{}", p.display()))?;
             p
         }
@@ -122,19 +126,23 @@ mod tests {
     #[tokio::test]
     async fn runs_and_times_out_whole_group() {
         let root = std::env::temp_dir().join(format!("aaa-cmd-{}", std::process::id()));
-        let r = run(&root, "demo", None, "echo out; echo err >&2; exit 3", Duration::from_secs(10)).await.unwrap();
+        let r =
+            run(&root, None, "demo", None, "echo out; echo err >&2; exit 3", Duration::from_secs(10)).await.unwrap();
         assert_eq!((r.exit_code, r.timed_out, r.output.as_str()), (Some(3), false, "out\nerr\n"));
         assert!(root.join("demo/routines").is_dir());
         // 손자(sleep)까지 group으로 끝나야 파이프가 닫혀 바로 돌아온다
         let t0 = std::time::Instant::now();
-        let r = run(&root, "demo", None, "echo start; sleep 30 & sleep 30", Duration::from_millis(300)).await.unwrap();
+        let r = run(&root, None, "demo", None, "echo start; sleep 30 & sleep 30", Duration::from_millis(300))
+            .await
+            .unwrap();
         assert!(r.timed_out && r.exit_code.is_none(), "{r:?}");
         assert_eq!(r.output, "start\n");
         assert!(t0.elapsed() < Duration::from_secs(2), "{:?}", t0.elapsed());
-        let r =
-            run(&root, "demo", None, "head -c 100000 /dev/zero | tr '\\0' x", Duration::from_secs(10)).await.unwrap();
+        let r = run(&root, None, "demo", None, "head -c 100000 /dev/zero | tr '\\0' x", Duration::from_secs(10))
+            .await
+            .unwrap();
         assert!(r.truncated && r.output.len() == CAPTURE_BYTES, "{}", r.output.len());
-        assert!(run(&root, "../x", None, "true", Duration::from_secs(1)).await.is_err());
+        assert!(run(&root, None, "../x", None, "true", Duration::from_secs(1)).await.is_err());
         let _ = std::fs::remove_dir_all(&root);
     }
 }
