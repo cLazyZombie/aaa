@@ -126,6 +126,8 @@ export interface ChatComposerProps {
   messages: ChatMessage[] | null;
   /** 터미널 보기로(입력창에 글이 남았는지 본다) */
   onInspect: () => void;
+  /** 보내는 중(잠김)인지 알린다: 그동안 대기 말 「지금 보내기」를 끈다(plan §8.270) */
+  onBusy?: (busy: boolean) => void;
 }
 
 export function ChatComposer({
@@ -145,6 +147,7 @@ export function ChatComposer({
   onSent,
   messages,
   onInspect,
+  onBusy,
 }: ChatComposerProps) {
   const { autoSendQueued, quickReplies, showQuickReplies } = useChatShared();
   const enterSends = useTerminalToggle("enterSends");
@@ -163,6 +166,7 @@ export function ChatComposer({
   const flightRef = useRef(flight);
   flightRef.current = flight;
   const locked = flight !== null;
+  useEffect(() => onBusy?.(locked), [locked, onBusy]);
   // 가는 글은 초안에서 뺐어도 기록에 오를 때까지 입력창에 보인다
   const shown = flight?.source === "box" ? flight.text : text;
   const [note, setNote] = useState<Note | null>(null);

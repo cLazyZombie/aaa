@@ -1043,3 +1043,14 @@ button.report-delete:hover:not(:disabled) { color: var(--danger-text); }
 .chat-pending-tag svg { width: 12px; height: 12px; flex: none; }
 .chat-pending-tag.is-stale { color: var(--warn); }
 .chat-pending-dismiss { height: var(--chip-h); padding: 0 var(--space-2); font-size: var(--fs-xs); }
+/* 대기 메시지 「지금 보내기」(plan §8.270, 참고 herdr-web-ui PendingMessages.css .pending-message-send): 지우기 단추 높이, 글은 본문색.
+   터치는 누를 자리를 넓힌다(칩 20px은 손가락에 작다) */
+.chat-pending-steer { display: inline-flex; align-items: center; gap: var(--space-1); height: var(--chip-h); margin-left: var(--space-1); padding: 0 var(--space-2); font-size: var(--fs-xs); color: var(--text); }
+.chat-pending-steer svg { width: 12px; height: 12px; flex: none; }
+.chat-pending-steer[aria-busy="true"] { opacity: 1; color: var(--text-dim); }
+.chat-pending-steer-spin { animation: composer-send-spin 0.9s linear infinite; }
+@media (pointer: coarse) { .chat-pending-steer { height: 32px; padding: 0 var(--space-3); } }
+.chat-pending-note { display: flex; align-items: center; justify-content: flex-end; flex-wrap: wrap; gap: var(--space-1); max-width: 80%; margin-left: auto; color: var(--warn); font-size: var(--fs-xs); text-align: right; }
+.chat-pending-note svg { width: 12px; height: 12px; flex: none; margin-right: var(--space-1); vertical-align: -1px; }
+.chat-pending-note-text { min-width: 0; }
+.chat-pending-note.is-quiet { color: var(--text-dim); }

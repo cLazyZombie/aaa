@@ -11,7 +11,7 @@
 // 마크다운/일반 텍스트 복사(`CopyButton`, 마우스면 올렸을 때). 참고와 다른 곳: 기록에 시각이 없어 시각은 없고, 접힘은 이 화면 안에서만 기억한다.
 // 문구는 참고 i18n.ko.ts.
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { Check, ChevronDown, ChevronRight, Clock, Copy, TriangleAlert } from "lucide-react";
+import { ArrowUp, Check, ChevronDown, ChevronRight, Clock, Copy, LoaderCircle, TriangleAlert } from "lucide-react";
 import { ApiError, call, watchChat } from "./api";
 import type { ChatMessage, ChatView } from "./gen/proto";
 import { useChatShared } from "./settings";
@@ -25,6 +25,7 @@ import { ConversationRefresh } from "./herdr/conversationRefresh.ts";
 import type { PendingSend } from "./ChatComposer";
 import { chatRowIds, chatScrollAnchor } from "./chatScroll";
 import { unwrapPasted } from "./pastedContent";
+import { steerLabel, type SteerState } from "./steerQueued";
 
 /** 기록 줄 요소(말마다 하나, 끝에 대기 말). 머리 안내·경고는 줄이 아니다 */
 function chatRows(el: HTMLElement): NodeListOf<HTMLElement> {
@@ -151,16 +152,54 @@ interface Pending {
   harness: "claude" | "codex";
   stale?: boolean;
   onDismiss?: () => void;
+  /** 대기 묶음 맨 끝 말에만: 「지금 보내기」(plan §8.270) */
+  steer?: SteerView;
 }
 
-function PendingTag({ harness, stale, onDismiss }: Pending) {
+/** 대기 메시지 「지금 보내기」 단추와 그 결과 줄(ChatPanel이 맨 끝 대기 말에 준다) */
+export interface SteerView {
+  state: SteerState;
+  /** 대기 말 수(stale 빼고): 둘 이상이면 「N개 지금 보내기」 */
+  count: number;
+  /** 끈 까닭(질문 중·다른 글을 보내는 중, 단추 title). null이면 누를 수 있다 */
+  blocked: string | null;
+  /** 단추 아래 조용한 안내(질문 중). 잠깐 끄는 까닭(보내는 중)은 깜박이지 않게 title로만 둔다 */
+  hint: string | null;
+  onSteer: () => void;
+  onInspect?: () => void;
+}
+
+const STEER_CUTS = { claude: "Claude가 하던 일을 끊을 수 있습니다", codex: "Codex가 하던 도구 호출을 끊습니다" };
+
+function PendingTag({ harness, stale, onDismiss, steer }: Pending) {
+  const busy = steer !== undefined && (steer.state.phase === "sending" || steer.state.phase === "sent");
+  const failed = steer?.state.phase === "failed" ? steer.state : null;
   return (
-    <div className={`chat-pending-tag${stale ? " is-stale" : ""}`} data-testid="chat-pending" data-stale={stale || undefined}>
-      {stale ? <TriangleAlert aria-hidden="true" /> : <Clock aria-hidden="true" />}
-      <span>{stale ? "대화 기록에 없습니다 · 터미널 입력창을 확인하세요"
-        : harness === "codex" ? "대기 중 · 다음 도구 호출 뒤 Codex가 읽습니다" : "대기 중 · Claude가 하던 일 사이에 읽습니다"}</span>
-      {stale && onDismiss && <button type="button" className="chat-pending-dismiss" onClick={onDismiss}>지우기</button>}
-    </div>
+    <>
+      <div className={`chat-pending-tag${stale ? " is-stale" : ""}`} data-testid="chat-pending" data-stale={stale || undefined}>
+        {stale ? <TriangleAlert aria-hidden="true" /> : <Clock aria-hidden="true" />}
+        <span>{stale ? "대화 기록에 없습니다 · 터미널 입력창을 확인하세요"
+          : harness === "codex" ? "대기 중 · 다음 도구 호출 뒤 Codex가 읽습니다" : "대기 중 · Claude가 하던 일 사이에 읽습니다"}</span>
+        {stale && onDismiss && <button type="button" className="chat-pending-dismiss" onClick={onDismiss}>지우기</button>}
+        {steer && (
+          // 글을 다시 보내지 않고 host가 고른 키만 보낸다(Claude sendNow, Codex Esc). 그 키는 대기열 전부를 보낸다
+          <button type="button" className="chat-pending-steer" data-testid="chat-pending-steer" data-phase={steer.state.phase}
+            aria-busy={busy || undefined} disabled={busy || steer.blocked !== null}
+            aria-label={steer.count > 1 ? `대기 메시지 ${steer.count}개 지금 보내기` : "대기 메시지 지금 보내기"}
+            title={steer.blocked ?? `기다리지 않고 지금 읽게 합니다. ${STEER_CUTS[harness]} (빈 입력창에서 Ctrl+Enter와 같음)`}
+            onClick={steer.onSteer}>
+            {busy ? <LoaderCircle className="chat-pending-steer-spin" aria-hidden="true" /> : <ArrowUp aria-hidden="true" />}
+            <span>{busy ? "보내는 중…" : steerLabel(steer.count)}</span>
+          </button>
+        )}
+      </div>
+      {steer && (failed || steer.hint) && (
+        <div className={`chat-pending-note${failed?.inspect ? "" : " is-quiet"}`} role={failed ? "alert" : "status"} data-testid="chat-pending-note">
+          <span className="chat-pending-note-text">{failed?.inspect && <TriangleAlert aria-hidden="true" />}{failed?.text ?? steer.hint}</span>
+          {failed?.inspect && steer.onInspect && <button type="button" className="chat-pending-dismiss" onClick={steer.onInspect}>터미널 보기</button>}
+        </div>
+      )}
+    </>
   );
 }
 
@@ -243,6 +282,7 @@ export function ChatPanel({
   pending = [],
   harness = "claude",
   onDismissPending,
+  steer,
 }: {
   pane: string;
   status?: AgentStatus;
@@ -254,6 +294,8 @@ export function ChatPanel({
   pending?: PendingSend[];
   harness?: "claude" | "codex";
   onDismissPending?: (id: number) => void;
+  /** 대기 메시지 「지금 보내기」(plan §8.270). 없으면 단추를 그리지 않는다(쉬는 agent·보기 권한·옛 host) */
+  steer?: Omit<SteerView, "count">;
 }) {
   const [chat, setChat] = useState<ChatView | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -310,6 +352,20 @@ export function ChatPanel({
     () => [...chatRowIds(chat?.messages ?? []), ...pending.map((p) => `pending:${p.id}`)],
     [chat, pending],
   );
+  // 「지금 보내기」는 대기 묶음 맨 끝 말 하나에 단다(키가 대기열 전부를 보낸다). 기록의 대기 말(Claude) 뒤에 이 화면이 붙든
+  // 대기 말이 온다. 기록에 없는(stale) 말은 대기열에 있는지 모르므로 세지 않는다
+  const steerTarget = useMemo(() => {
+    const fresh = pending.filter((p) => !p.stale);
+    const messages = chat?.messages ?? [];
+    let lastQueued = -1;
+    messages.forEach((m, i) => { if (m.pending) lastQueued = i; });
+    const count = messages.filter((m) => m.pending).length + fresh.length;
+    if (count === 0) return null;
+    const last = fresh.at(-1);
+    return { count, row: last ? `pending-${last.id}` : `message-${lastQueued}` };
+  }, [chat, pending]);
+  const steerFor = (row: string): SteerView | undefined =>
+    steer && steerTarget?.row === row ? { ...steer, count: steerTarget.count } : undefined;
   const rowIdsRef = useRef(rowIds);
   rowIdsRef.current = rowIds;
   // 맨 아래가 아니면 보던 줄과 그 줄 안 거리를 지킨다(plan §8.262, t3code timelineScrollAnchoring `rowId`·`offsetWithinRow`):
@@ -390,7 +446,7 @@ export function ChatPanel({
             m.role === "thinking" ? (
               <ThinkingRow key={rowIds[i]} text={m.text} />
             ) : m.role === "user" ? (
-              <UserTurn key={rowIds[i]} text={unwrapPasted(m.text)} pane={pane} onOpenFile={onOpenFile} pending={m.pending ? { harness } : undefined} />
+              <UserTurn key={rowIds[i]} text={unwrapPasted(m.text)} pane={pane} onOpenFile={onOpenFile} pending={m.pending ? { harness, steer: steerFor(`message-${i}`) } : undefined} />
             ) : m.role === "assistant" ? (
               <AgentTurn key={rowIds[i]} text={m.text} />
             ) : (
@@ -401,7 +457,7 @@ export function ChatPanel({
           )}
           {pending.map((p) => (
             <UserTurn key={`pending-${p.id}`} text={p.text} pane={pane} onOpenFile={onOpenFile}
-              pending={{ harness, stale: p.stale, onDismiss: onDismissPending && (() => onDismissPending(p.id)) }} />
+              pending={{ harness, stale: p.stale, onDismiss: onDismissPending && (() => onDismissPending(p.id)), steer: steerFor(`pending-${p.id}`) }} />
           ))}
           {chat && chat.messages.length === 0 && pending.length === 0 && !error && <p className="chat-note">아직 대화가 없다.</p>}
         </div>
