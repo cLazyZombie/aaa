@@ -5701,3 +5701,49 @@ primary 근거:
 - **종료 순서 검토.** 독립 리뷰에서 kitty 스택이 화면별이라는 점을 확인했다. 정상 종료는 alternate screen을 떠나기 전에 pop하고, panic hook도 ratatui의 화면 복원보다 먼저 한 번만 pop한다. 화면별 스택 E2E와 격리한 자식 프로세스의 panic hook 순서 시험이 수정 전 실패·수정 후 통과했다.
 
 - **기존 TUI 카드 시험의 불필요 입력(t-0385).** 최신 통합의 카드 시험 끝에서 TUI `x`+Enter와 CLI `go`가 서로 다른 연결로 겹쳐 `x` → `go\n` → Enter 순으로 도착했다. 줄 단위 fixture가 `xgo`를 받아 작업 상태가 되지 않았다. 카드 없는 `prefix o` 뒤 focus/lease 보존은 이미 화면과 host 사건으로 확인하므로 검증하지도 않던 `type_line("x")` 한 줄을 제거했다. 실제 카드·focus·알림 단언·시한·제품 코드는 유지한다. 실패 로그와 두 연결의 순서를 보고에 보존한다.
+
+### 8.243 TUI thread 두 줄 단위 스크롤(10-19, t-0386, D안 2단계)
+
+- **원인.** 목록의 물리 줄 skip과 휠 ±1줄이 상태 줄에서 시작하거나 제목만 맨 아래 남겼다. herdr-projects 0.2.35
+  `sidebar.rs::agent_card`의 제목·상태 묶음을 aaa의 두 줄 계약으로 유지하고, t3code `Sidebar.tsx`의 항목 단위 탐색처럼
+  스크롤도 항목 경계를 쓴다. 한글 셀 폭·행 템플릿·상태 말·정렬 순서는 바꾸지 않는다.
+- **동작.** thread는 제목·상태 두 줄, 묶음 머리·pane은 한 줄씩 넘긴다. 선택을 따라갈 때도 두 줄이 모두 들어가는 경계로
+  내리고, 남은 한 줄에 다음 제목만 그리지 않는다. 목록 갱신 뒤 오래된 top이 상태 줄을 가리키면 제목으로 맞춘다.
+  극소 한 줄 화면은 상태보다 제목을 우선한다. 상태 줄 클릭은 같은 thread를 열고 compact·탭·workspace 동작은 유지한다.
+- **검증 경계.** 기존 두 줄 렌더 keeper에 0~4줄 viewport·선택·명시 top·끝 경계를 더한다. 실제 PTY keeper에는 기존
+  닫힌 thread와 실행 중 thread를 사용해 SGR 휠 아래·아래·위·아래, 스크롤 뒤 상태 줄 클릭을 더한다. 같은 fixture 준비를
+  재사용하고 새 production 시험 seam·새 신호 시험·고정 sleep은 없다. 제목만 도착한 새 thread는 실행 pane 반영을 기다린다.
+- **범위.** 폭48·선택 제목 전체 보기는 후속 단계다. 두 줄 스크롤은 먼저 구현·전체 검증했고, 사용자 착지 창에서
+  웹 기준 패널 단계와 함께 최신 main에 통합한다.
+
+### 8.244 TUI 활동 막대·패널 경계와 coordinator 연결(10-19, t-0386, D안 3단계)
+
+- **기준.** 웹 착지 8c143c0f의 `ActivityBar.tsx`·`sidebarPanel.ts::revealPanel`·`Sidebar.tsx`와 t-0390 확정 표를
+  따른다. 순서는 프로젝트·머신·에이전트, 막대 아래는 본문을 바꾸는 보고서·설정 창이다. 같은 패널 단추를 다시 누르면
+  접고 활동 막대는 남긴다. 패널별 목록 굴린 자리를 유지하며 단축키·알림의 드러내기는 접힘을 풀거나 PTY 크기를 바꾸지 않는다.
+- **내용.** 프로젝트는 고정 → 프로젝트(coordinator·thread) → 기타, 머신은 연결·host 표시·새 pane·점검 문제,
+  에이전트는 살아 있는 agent(평가자 제외)·고정/정렬 설정을 쓴다. 질문 agent와 확인 필요·검토 대기 thread 수는 각 막대
+  배지다. 특수 임무·평가자는 모든 패널의 공통 머리 배지와 별도 목록에 있다. pane이 없는 임무도 보이고 열기로 시작/승인하지
+  않는다. 프로젝트 머리 Enter/제목 클릭은 실행 중 coordinator를 열며 Space/왼쪽 화살표 클릭은 접는다.
+- **TUI 보존·대응.** herdr `render_sidebar`·`render_collapsed_sidebar`의 workspace·compact 번호·탭·마우스를 남긴다.
+  4칸 막대에서 P/M/A가 세 패널, R이 보고서, 톱니가 설정, S가 공통 특수 목록이다. 탐색 모드 Shift+Tab으로 막대에 가며
+  화살표·Home/End는 포커스만, Enter/Space는 선택, Tab은 목록, s는 특수 목록이다. 일반 Tab의 pane 이동은 유지한다.
+  마지막 패널·접힘은 기기의 state `tui-sidebar.json` 표시 설정이다. 기존 host 공유 접힘은 이전값으로 읽되 기기값이 우선한다.
+  spaces는 공통 머리 아래 자동 높이, 직접 끈 구역 경계는 기존 비율로 유지한다.
+- **터미널 차이.** 보고서는 Front `LibraryReports`/`LibraryOpen`으로 읽는 thread 보고 글·결과물 목록이다. 웹 HTML iframe을
+  TUI에 넣지 않으며 문서·스크롤을 상태로 유지한다. 읽는 동안 키·붙여넣기·마우스가 뒤 pane으로 새지 않는다. 머리의 ?는
+  기존 단축키 검색 창이다. 연결이 끊긴 attach는 기존 연결 종료 처리를 유지한다. 앱 설치·웹 구독 사용량은 TUI에 없는 기능이다.
+- **검증 경계.** 기존 사이드바 렌더 keeper가 패널 경계·이름·차례·compact·드러내기의 PTY 폭 보존을 맡고, 기존 PTY 목록
+  keeper가 실제 SGR 패널 전환·접기·화살표와 Enter·패널별 굴림 복원·기기 기억·보고서 왕복과 입력 차단·특수 목록·coordinator
+  연결을 맡는다. 공용 fixture를 확장하고 새 신호 시험·고정 sleep·시험 전용 production seam은 없다. 기존 mouse drag 검사의
+  열 번호는 한글 패널 머리 도입 뒤 문자열 글자 번호가 아닌 터미널 셀로 읽는다. 폭26 fixture의 말줄임은 상태·pane 입력 표지로
+  함께 검증한다. 기본 폭48과 선택 제목 전체 보기는 다음 단계다.
+
+- **회귀 검증.** 드러낼 때 접힘을 푸는 변형은 사이드바 keeper의 접힘 보존 단언에서, 보고서 단추마다 스크롤을 0으로
+  만드는 변형은 PTY keeper의 보고서 왕복 단언에서 실패했다. 두 변형은 저장 바이트로 복원하고 GREEN을 확인한다.
+
+- **웹 정렬 대조 수리.** 첫 통합본 전체 gate(216초) 뒤 source 대조에서 활동순의 상태별 우선순위 차이를 발견했다.
+  웹 `sidebarModel.ts::activityOrder`대로 질문 우선·최근 `since_ms`·동률은 받은 차례로 맞추고 고정이 앞서는 것을 유지한다.
+  웹 `App.tsx::agentOf`·`herdr/AgentMark.tsx`의 알려진 명령도 hook/thread 없이 인식하며 대소문자는 구분하지 않는다.
+  기존 사이드바 keeper에서 옛 정렬과 알려진 명령 누락 RED를 확인한 뒤 고쳤다. 기준 3503e963의 Ctrl+Enter·Windows paste·
+  pane 복사는 보존하며 최종 소스로 전체 gate를 다시 검증한다.
