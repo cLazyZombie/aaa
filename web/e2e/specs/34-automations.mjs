@@ -68,10 +68,12 @@ export default async function ({ page }) {
   });
   await step("자동화 TOML 변환: 원본 보존·임무 조건 분리·새 파일 토글·Reader 변환 금지", async () => {
     const before=fs.readFileSync(file(),"utf8");
-    const converted=aaa("automation","convert","auto-demo");
+    const converted=aaa("automation","convert");
     if (!converted.files.includes("routines/.converted/check.md") || !converted.files.includes("missions/watch.toml")) throw new Error(`변환 결과 ${JSON.stringify(converted)}`);
     if (fs.readFileSync(`${root}/projects/auto-demo/routines/.converted/check.md`,"utf8")!==before) throw new Error("변환 원본 변경");
-    if (aaa("automation","convert","auto-demo").files.length!==0) throw new Error("변환 재실행이 무음이 아니다");
+    if (aaa("automation","convert").files.length!==0) throw new Error("변환 재실행이 무음이 아니다");
+    const implicit = await page.evaluate(async () => (await fetch("/api/v1/call", {method:"POST", headers:{"content-type":"application/json"}, body:JSON.stringify({op:"automation_convert"})})).json());
+    if (implicit.ok?.kind !== "automation_converted" || implicit.ok.files.length !== 0) throw new Error(`프로젝트 생략 변환 ${JSON.stringify(implicit)}`);
     await page.getByRole("button",{name:"다시 읽기",exact:true}).click();
     const row=page.getByTestId("automation-auto-demo-check");
     await domIs(page,"새 파일 출처",()=>document.querySelector('[data-testid="automation-auto-demo-check"]')?.textContent.includes("automations/check.toml"));

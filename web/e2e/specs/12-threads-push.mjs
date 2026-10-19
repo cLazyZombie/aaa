@@ -1171,11 +1171,11 @@ export default async function ({ page }) {
     await domIs(page, "승인 뒤 배지 없음", () => document.querySelector('[data-testid="activity-badge-special"]') === null);
     // 실제 임무 파일 → host 정규화 → 특수 패널. 생략·옛 무제한 표기·명시 상한을 함께 본다.
     for (const [name, limits] of [["legacy-unlimited", "max_wakes=4294967295\nmax_minutes=4294967295\n"], ["limited", "max_wakes=3\nmax_minutes=60\n"]]) {
-      fs.writeFileSync(`${root}/projects/mission-layout/missions/${name}.md`, `+++\nprofile="fake"\n${limits}+++\n감시 자료를 읽는다.\n`);
+      fs.writeFileSync(`${root}/projects/demo/missions/${name}.md`, `+++\nprofile="fake"\n${limits}+++\n감시 자료를 읽는다.\n`);
     }
     aaa("ticker", "tick");
     for (const [name, wake, time] of [["ci-watch", "깨움 0", "일한 분 0"], ["legacy-unlimited", "깨움 0", "일한 분 0"], ["limited", "깨움 0/3", "깨움 작업 0/60분"]]) {
-      const row = page.getByTestId(`mission-mission-layout-${name}`);
+      const row = page.getByTestId(`mission-demo-${name}`);
       await row.waitFor();
       const text = await row.textContent();
       if (!text.includes(wake)) throw new Error(`임무 횟수 표시 ${name}: ${text}`);
@@ -1191,9 +1191,9 @@ export default async function ({ page }) {
       await page.keyboard.press("Escape");
       await menu.waitFor({ state: "hidden" });
     }
-    if (aaa("mission", "show", "mission-layout", "legacy-unlimited").mission.max_wakes !== 0) throw new Error("옛 최대 정수 상한이 정규화되지 않았다");
+    if (aaa("mission", "show", "legacy-unlimited").mission.max_wakes !== 0) throw new Error("옛 최대 정수 상한이 정규화되지 않았다");
     await shot(page, "desktop-mission-counts");
-    for (const name of ["legacy-unlimited", "limited"]) fs.unlinkSync(`${root}/projects/mission-layout/missions/${name}.md`);
+    for (const name of ["legacy-unlimited", "limited"]) fs.unlinkSync(`${root}/projects/demo/missions/${name}.md`);
     aaa("ticker", "tick");
   });
 
