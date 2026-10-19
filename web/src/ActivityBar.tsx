@@ -17,6 +17,7 @@ export function ActivityBar({
   badges,
   reports,
   onReports,
+  unseenReports,
   up,
   reader,
   settings,
@@ -30,6 +31,8 @@ export function ActivityBar({
   /** 본문이 보고서 화면인가 */
   reports: boolean;
   onReports: () => void;
+  /** 열어 보지 않은 사용자 보고서 수(host `reports` 사건, plan §8.256) */
+  unseenReports: number;
   /** host 연결 */
   up: boolean;
   reader: boolean;
@@ -96,12 +99,17 @@ export function ActivityBar({
         type="button"
         className={`activity-item${reports ? " is-active" : ""}`}
         aria-pressed={reports}
-        aria-label="보고서"
+        aria-label={unseenReports > 0 ? `보고서, 안 본 보고서 ${unseenReports}` : "보고서"}
         title="보고서"
         data-testid="activity-reports"
         onClick={onReports}
       >
         <FileText aria-hidden="true" />
+        {unseenReports > 0 && (
+          <span className="activity-badge" aria-hidden="true" data-testid="activity-badge-reports">
+            {unseenReports > 99 ? "99+" : unseenReports}
+          </span>
+        )}
       </button>
       <div className="activity-group activity-bottom">{settings}</div>
     </nav>

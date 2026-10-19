@@ -701,6 +701,7 @@ async fn events_loop(host: Arc<Host>, dev: String, role: DeviceRole, mut socket:
     let mut threads = host.thread_events.subscribe();
     let mut notices = host.notice_events.subscribe();
     let mut preferences = host.preferences.subscribe();
+    let mut reports = host.reports_changed.subscribe();
     let mut revoked = host.device_revoked.subscribe();
     let mut chat_notes = host.chat_notes();
     // 이 연결이 대화를 청한 pane(차이 목록 C3). 연결이 끝나면 그만둔다
@@ -710,6 +711,8 @@ async fn events_loop(host: Arc<Host>, dev: String, role: DeviceRole, mut socket:
     let mut send_state = true;
     // 공유 설정 문서는 연결을 연다: 다시 붙은 화면(또는 읽기가 경주에 진 화면)도 마지막 문서를 갖는다(herdr-web-ui machine-api.ts)
     let mut send_preferences = true;
+    // 보고서 안 본 수(활동 막대 배지, plan §8.256): 열 때와 목록이 바뀔 때
+    let mut send_reports = true;
     let close_revoked = |mut socket: WebSocket| async move {
         let frame = CloseFrame { code: DEVICE_REVOKED_CLOSE_CODE, reason: DEVICE_REVOKED_REASON.into() };
         let _ = socket.send(Message::Close(Some(frame))).await;
@@ -743,6 +746,15 @@ async fn events_loop(host: Arc<Host>, dev: String, role: DeviceRole, mut socket:
             send_preferences = false;
             let doc = preferences.borrow_and_update().clone();
             let text = serde_json::to_string(&FrontEvent::Preferences(doc)).unwrap();
+            if socket.send(Message::Text(text.into())).await.is_err() {
+                break;
+            }
+        }
+        if send_reports {
+            send_reports = false;
+            reports.borrow_and_update();
+            let unseen = host.db.library_unseen_count().unwrap_or(0);
+            let text = serde_json::to_string(&FrontEvent::Reports { unseen }).unwrap();
             if socket.send(Message::Text(text.into())).await.is_err() {
                 break;
             }
@@ -813,6 +825,11 @@ async fn events_loop(host: Arc<Host>, dev: String, role: DeviceRole, mut socket:
                 if r.is_err() { break }
                 send_state = false;
                 send_preferences = true;
+            }
+            r = reports.changed() => {
+                if r.is_err() { break }
+                send_state = false;
+                send_reports = true;
             }
             n = chat_notes.recv() => {
                 send_state = false;

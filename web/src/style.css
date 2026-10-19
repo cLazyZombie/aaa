@@ -972,6 +972,31 @@ svg.i { width: 16px; height: 16px; flex-shrink: 0; fill: none; stroke: currentCo
 .report-heading strong { min-width: 0; overflow-wrap: anywhere; }
 .report-card p { margin: 6px 0; }
 .report-card .library-link { margin-top: 10px; }
+/* 두 탭(plan §8.256): 내 보고서(안 본 점·수)와 작업 보고(골라 지우기) */
+.reports-tabs { display: flex; margin-bottom: 12px; border-bottom: 1px solid var(--border); }
+.reports-tab { display: inline-flex; align-items: center; gap: 6px; height: 36px; padding: 0 14px; border: 0; border-bottom: 2px solid transparent; border-radius: 0; background: transparent; color: var(--text-dim); font-weight: 600; }
+.reports-tab:hover:not(:disabled) { background: transparent; color: var(--text); }
+.reports-tab.is-on { border-bottom-color: var(--accent); color: var(--text-strong); }
+.reports-count { display: inline-flex; align-items: center; justify-content: center; min-width: 18px; height: 18px; padding: 0 5px; border-radius: 999px; background: var(--bg-hover); color: var(--text-dim); font-size: var(--fs-2xs); font-variant-numeric: tabular-nums; }
+.reports-count.is-new { background: var(--accent); color: var(--on-accent); }
+.report-new-dot { display: inline-block; width: 8px; height: 8px; margin-right: 6px; border-radius: 50%; background: var(--accent); vertical-align: 1px; }
+.report-mine:not(.is-unseen) .report-heading strong { font-weight: 500; color: var(--text); }
+button.danger { background: var(--danger-tint); border-color: var(--status-blocked); color: var(--danger-text); }
+button.danger:hover:not(:disabled) { background: var(--danger-tint); border-color: var(--status-blocked); color: var(--danger-text); filter: brightness(1.05); }
+button.report-delete:hover:not(:disabled) { color: var(--danger-text); }
+.reports-work-tools { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: 4px 0 6px; font-size: var(--fs-sm); }
+.reports-work-tools .spacer { flex: 1; }
+.report-row { min-width: 0; padding: 4px 0; border-bottom: 1px solid var(--border); font-size: var(--fs-sm); }
+.report-row.is-picked { background: color-mix(in srgb, var(--accent) 8%, transparent); }
+.report-row-main { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; min-height: 32px; }
+.report-pick { flex: none; margin: 0 0 0 4px; }
+.report-row-name { min-width: 0; flex: 1 1 10em; overflow: hidden; color: var(--text); font-family: var(--font-mono); text-overflow: ellipsis; white-space: nowrap; }
+.report-row-meta { font-size: var(--fs-xs); white-space: nowrap; }
+.report-row-actions { display: inline-flex; gap: 2px; }
+.report-tag { padding: 1px 6px; border: 1px solid var(--border-strong); border-radius: 4px; color: var(--text-dim); font-size: var(--fs-2xs); white-space: nowrap; }
+.report-tag.is-busy { border-color: var(--status-working); color: var(--status-working); }
+.report-row p { margin: 4px 0; }
+.report-row .library-link { margin: 6px 0 8px; }
 
 /* 임무도 공통 RowMenu의 portal·화면 경계 보정·휴대폰 sheet를 쓴다. */
 .mission-menu { display: inline-flex; min-width: 0; max-width: 100%; }

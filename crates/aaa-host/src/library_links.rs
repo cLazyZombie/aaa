@@ -283,6 +283,8 @@ mod tests {
             name: name.into(),
             source: source.to_str().unwrap().into(),
             live,
+            to_user: false,
+            title: None,
         };
         let FrontResponse::LibraryLink(link) = lab.h.call(DeviceRole::Local, "test", req).await.unwrap() else {
             panic!("발급 응답")
@@ -309,7 +311,7 @@ mod tests {
         assert!(!lab.h.project_dir("demo").unwrap().join("library/page/.env").exists());
         std::fs::File::create(source.join("large.bin")).unwrap().set_len(201 * 1024 * 1024).unwrap();
         assert_eq!(
-            lab.h.library_publish("demo", "page", source.to_str().unwrap(), false, "test").unwrap_err().code,
+            lab.h.library_publish("demo", "page", source.to_str().unwrap(), false, None, "test").unwrap_err().code,
             ErrorCode::TooLarge
         );
         assert_eq!(
@@ -323,8 +325,103 @@ mod tests {
         assert!(String::from_utf8(get(&lab.h, &link.base, None).await.2).unwrap().contains("image.png"));
         assert_eq!(get(&lab.h, &format!("{}image.png", link.base), None).await.2, b"image");
         for name in ["t-0001", "../escape", ".secret", "a/b"] {
-            assert!(lab.h.library_publish("demo", name, file.to_str().unwrap(), false, "test").is_err(), "{name}");
+            assert!(
+                lab.h.library_publish("demo", name, file.to_str().unwrap(), false, None, "test").is_err(),
+                "{name}"
+            );
         }
+    }
+
+    /// 사용자 보고서(plan §8.256): index.html이 있어야 보내고, 보내면 안 봄·알림 post, 열면 봄, 다시 보내면 다시 안 봄,
+    /// --to-user 없이 다시 올리면 작업 보고. 지우기는 끝나지 않은 thread가 하나라도 있으면 아무것도 지우지 않고, 아니면 사본·목록·
+    /// thread 보고 사본·공유 링크를 모두 끝낸다. 보기 권한은 지우지 못한다.
+    #[tokio::test]
+    async fn user_reports_are_unseen_until_opened_and_delete_removes_everything() {
+        let lab = Lab::new();
+        let dir = lab.h.project_dir("demo").unwrap();
+        let view = |name: &str| lab.h.library_reports(None, true).unwrap().into_iter().find(|r| r.name == name);
+        let page = lab.state.join("page");
+        std::fs::create_dir(&page).unwrap();
+        std::fs::write(page.join("index.html"), b"<h1>week</h1>").unwrap();
+        let bare = lab.state.join("bare");
+        std::fs::create_dir(&bare).unwrap();
+        std::fs::write(bare.join("notes.md"), b"notes").unwrap();
+        let send = |name: &str, src: &Path, title: Option<&str>| {
+            lab.h.library_publish("demo", name, src.to_str().unwrap(), false, Some(title), "test")
+        };
+        assert_eq!(send("bare", &bare, None).unwrap_err().code, ErrorCode::BadRequest, "index.html 없는 사용자 보고서");
+        assert!(view("bare").is_none() && !dir.join("library/bare").exists(), "거절하면 아무것도 남기지 않는다");
+        assert_eq!(send("week", &page, Some("a\nb")).unwrap_err().code, ErrorCode::BadRequest, "줄바꿈 제목");
+
+        let mut changed = lab.h.reports_changed.subscribe();
+        changed.borrow_and_update();
+        send("week", &page, Some("주간 보고")).unwrap();
+        assert!(changed.has_changed().unwrap(), "보내면 웹에 알린다");
+        let w = view("week").unwrap();
+        assert!(w.to_user && w.unseen && !w.busy && w.title.as_deref() == Some("주간 보고"), "{w:?}");
+        assert_eq!(lab.h.db.library_unseen_count().unwrap(), 1);
+        let posts = lab.h.db.post_list("demo").unwrap();
+        let post = posts.iter().find(|e| e.input.topic == "report").expect("사용자 알림 post");
+        assert!(post.input.to == "user" && post.input.title.contains("주간 보고"), "{post:?}");
+        assert_eq!(post.input.refs, vec!["library/demo/week".to_string()]);
+
+        // 보기 권한 기기에서 열어도 봤다(사람 하나의 보고서다)
+        changed.borrow_and_update();
+        let open = FrontRequest::LibraryOpen { project: "demo".into(), name: "week".into() };
+        lab.h.call(DeviceRole::Reader, "device:r", open.clone()).await.unwrap();
+        assert!(!view("week").unwrap().unseen && lab.h.db.library_unseen_count().unwrap() == 0);
+        assert!(changed.has_changed().unwrap(), "봤으면 배지를 다시 보낸다");
+        changed.borrow_and_update();
+        lab.h.call(DeviceRole::Reader, "device:r", open).await.unwrap();
+        assert!(!changed.has_changed().unwrap(), "이미 본 보고서를 다시 열면 바뀐 것이 없다");
+
+        send("week", &page, None).unwrap();
+        let w = view("week").unwrap();
+        assert!(w.unseen && w.title.is_none(), "다시 보내면 다시 안 봄: {w:?}");
+        lab.h.library_publish("demo", "week", page.to_str().unwrap(), false, None, "test").unwrap();
+        let w = view("week").unwrap();
+        assert!(!w.to_user && !w.unseen && lab.h.db.library_unseen_count().unwrap() == 0, "작업 보고로: {w:?}");
+
+        // 지우기: 끝난 thread 사본(+보고 사본·링크)과 끝나지 않은 thread 사본
+        let done = lab.report("t-0001", &[("index.html", b"done", false)]);
+        std::fs::write(dir.join("threads/t-0001.md"), b"[\xec\x99\x84\xeb\xa3\x8c]").unwrap();
+        let link = lab.issue("t-0001");
+        let running = lab.report("t-0002", &[("index.html", b"run", false)]);
+        let mut t = lab.h.load("demo", "t-0002").unwrap();
+        t.status = aaa_proto::ThreadStatus::Open;
+        lab.h.db.thread_save("demo", "t-0002", "open", &serde_json::to_string(&t).unwrap()).unwrap();
+        assert!(view("t-0002").unwrap().busy && !view("t-0001").unwrap().busy);
+        let refs = |names: &[&str]| {
+            names
+                .iter()
+                .map(|n| aaa_proto::LibraryRef { project: "demo".into(), name: (*n).into() })
+                .collect::<Vec<_>>()
+        };
+        let req = |names: &[&str]| FrontRequest::LibraryDelete { reports: refs(names) };
+        assert!(
+            lab.h.call(DeviceRole::Reader, "device:r", req(&["t-0001"])).await.is_err(),
+            "보기 권한은 지우지 못한다"
+        );
+        let e = lab.h.call(DeviceRole::Controller, "device:c", req(&["t-0001", "t-0002"])).await.unwrap_err();
+        assert_eq!(e.code, ErrorCode::BadRequest);
+        assert!(done.exists() && running.exists(), "하나라도 막히면 아무것도 지우지 않는다");
+        let e = lab.h.call(DeviceRole::Controller, "device:c", req(&["nope"])).await.unwrap_err();
+        assert_eq!(e.code, ErrorCode::NotFound);
+
+        let FrontResponse::LibraryPruned { removed } =
+            lab.h.call(DeviceRole::Controller, "device:c", req(&["t-0001", "week"])).await.unwrap()
+        else {
+            panic!("지운 목록")
+        };
+        assert_eq!(removed, vec!["demo/t-0001".to_string(), "demo/week".to_string()]);
+        assert!(!done.exists() && !dir.join("library/week").exists());
+        for gone in ["threads/t-0001.files.json", "threads/t-0001.md", "threads/week.files.json"] {
+            assert!(!dir.join(gone).exists(), "{gone}");
+        }
+        assert!(view("t-0001").is_none() && view("week").is_none() && view("t-0002").is_some());
+        assert!(lab.h.load("demo", "t-0001").is_ok(), "thread 기록은 남긴다");
+        assert_eq!(get(&lab.h, &link.base, None).await.0, StatusCode::UNAUTHORIZED, "공유 링크도 끝난다");
+        assert!(page.join("index.html").exists(), "원본은 건드리지 않는다");
     }
 
     #[tokio::test]
@@ -490,6 +587,7 @@ mod tests {
                 name: name.into(),
                 live: None,
                 updated,
+                ..Default::default()
             })
             .unwrap();
         if active {
@@ -539,7 +637,7 @@ mod tests {
         let live = lab.state.join("live-source");
         std::fs::create_dir(&live).unwrap();
         std::fs::write(live.join("index.html"), vec![b'x'; 900_000]).unwrap();
-        lab.h.library_publish("demo", "live", live.to_str().unwrap(), true, "test").unwrap();
+        lab.h.library_publish("demo", "live", live.to_str().unwrap(), true, None, "test").unwrap();
         lab.h.library_retention_pass_at(RETENTION_NOW).unwrap();
         assert!(!gone.exists());
         assert!(active.exists() && newest.exists() && live.join("index.html").exists());
@@ -642,6 +740,8 @@ mod tests {
             name: "page".into(),
             source: source.to_str().unwrap().into(),
             live: false,
+            to_user: false,
+            title: None,
         };
         for role in [DeviceRole::Controller, DeviceRole::Reader] {
             for req in [

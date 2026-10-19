@@ -379,6 +379,8 @@ pub struct Host {
     pub web_port: std::sync::atomic::AtomicU16,
     inner: Mutex<Inner>,
     pub changed: watch::Sender<u64>,
+    /// 보고서 목록이 바뀌었다(보내기·열기·지우기·thread 사본, plan §8.256). 웹 events가 안 본 수를 다시 보낸다
+    pub reports_changed: watch::Sender<u64>,
     enroll: Mutex<Enroll>,
     pairing: Mutex<Pairing>,
     pub agent_listen: Mutex<Option<String>>,
@@ -585,6 +587,7 @@ impl Host {
             web_port: std::sync::atomic::AtomicU16::new(web_port),
             inner: Mutex::new(Inner { machines, panes: HashMap::new(), generation: 0, colors: Default::default() }),
             changed: watch::channel(0).0,
+            reports_changed: watch::channel(0).0,
             enroll: Mutex::new(Enroll::default()),
             pairing: Mutex::new(Pairing::default()),
             agent_listen: Mutex::new(None),
@@ -652,6 +655,11 @@ impl Host {
 
     fn bump(&self) {
         self.changed.send_modify(|v| *v += 1);
+    }
+
+    /// 보고서 목록이 바뀌었다(plan §8.256)
+    pub(crate) fn reports_bump(&self) {
+        self.reports_changed.send_modify(|v| *v += 1);
     }
 
     // ───────────── agent 연결 ─────────────
@@ -1289,9 +1297,11 @@ impl Host {
             FrontRequest::ThreadLibrary { project, thread } => self
                 .thread_library(&project, &thread, actor.strip_prefix("device:"), role.can_control())
                 .map(FrontResponse::Library),
-            FrontRequest::LibraryPublish { project, name, source, live } => {
-                self.library_publish(&project, &name, &source, live, actor)
+            FrontRequest::LibraryPublish { project, name, source, live, to_user, title } => {
+                let to_user = to_user.then_some(title.as_deref());
+                self.library_publish(&project, &name, &source, live, to_user, actor)
             }
+            FrontRequest::LibraryDelete { reports } => self.library_delete(&reports, actor),
             FrontRequest::LibraryImport { project, source, prefix } => {
                 self.library_import(&project, &source, &prefix, actor)
             }
@@ -1305,9 +1315,14 @@ impl Host {
             FrontRequest::LibraryReports { project } => self
                 .library_reports(project.as_deref(), role.can_control())
                 .map(|reports| FrontResponse::LibraryReports { reports }),
-            FrontRequest::LibraryOpen { project, name } => self
-                .report_library(&project, &name, actor.strip_prefix("device:"), role.can_control())
-                .map(FrontResponse::Library),
+            FrontRequest::LibraryOpen { project, name } => {
+                let view = self.report_library(&project, &name, actor.strip_prefix("device:"), role.can_control())?;
+                // 열면 봤다(사용자 결정 10-19, plan §8.256). 기록하지 못해도 열기는 막지 않는다
+                if self.db.library_report_seen(&project, &name, util::now_ms()).unwrap_or(false) {
+                    self.reports_bump();
+                }
+                Ok(FrontResponse::Library(view))
+            }
             FrontRequest::LibraryUsage => self.library_usage(),
             FrontRequest::LibraryLink { project, thread, days } => {
                 self.library_link(&project, &thread, days, actor).map(FrontResponse::LibraryLink)

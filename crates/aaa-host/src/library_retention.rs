@@ -12,7 +12,7 @@ const LAST_PASS: &str = "library_retention_last_pass";
 const OVERFLOW: &str = "library_retention_overflow";
 
 impl Host {
-    fn protected_copy(&self, r: &LibraryReport) -> bool {
+    pub(crate) fn protected_copy(&self, r: &LibraryReport) -> bool {
         // t- 보고서는 thread가 없거나 읽지 못해도 안전하게 남긴다.
         r.name.starts_with("t-") && self.load(&r.project, &r.name).map_or(true, |t| t.status != ThreadStatus::Resolved)
     }
@@ -112,26 +112,48 @@ impl Host {
         // 도중에 실패해도 이미 지운 수·크기를 한 줄로 남긴다.
         let result = (|| {
             for r in &plan.candidates {
-                let dir = self.project_dir(&r.project)?;
-                let dest = dir.join("library").join(&r.name);
-                // 먼저 링크를 끝낸다. 파일 삭제 실패로 반쯤 남아도 공유 링크로 읽지 못한다.
-                self.db.library_report_remove(&r.project, &r.name).map_err(crate::orch::internal)?;
-                self.view_caps.lock().unwrap().retain(|_, c| c.project != r.project || c.thread != r.name);
-                if dest.exists() {
-                    std::fs::remove_dir_all(&dest).map_err(|_| err(ErrorCode::Unavailable, "보고서 사본 삭제 실패"))?;
-                }
-                std::fs::remove_file(manifest_path(&dir, &r.name))
-                    .map_err(|_| err(ErrorCode::Unavailable, "보고서 목록 삭제 실패"))?;
-                let name = format!("{}/{}", r.project, r.name);
-                self.db.audit(actor, "library_prune", &name);
+                self.remove_report(&r.project, &r.name, false, actor, "library_prune")?;
                 bytes = bytes.saturating_add(r.size);
-                removed.push(name);
+                removed.push(format!("{}/{}", r.project, r.name));
             }
             Ok(())
         })();
         tracing::info!("보고서 사본 정리: {}개 · {}B", removed.len(), bytes);
+        if !removed.is_empty() {
+            self.reports_bump();
+        }
         result?;
         Ok(removed)
+    }
+
+    /// 보고서 하나의 host 사본을 지운다. 정리(prune)는 report.md 사본·thread 기록을 남기고(§8.212), 사용자 지우기는
+    /// `with_report`로 thread 보고 사본(`threads/<id>.md`)까지 지운다(§8.256). 실시간 등록 원본은 건드리지 않는다.
+    pub(crate) fn remove_report(
+        &self,
+        project: &str,
+        name: &str,
+        with_report: bool,
+        actor: &str,
+        action: &str,
+    ) -> Result<(), ErrorBody> {
+        let dir = self.project_dir(project)?;
+        let dest = dir.join("library").join(name);
+        // 먼저 링크를 끝낸다. 파일 삭제 실패로 반쯤 남아도 공유 링크로 읽지 못한다.
+        self.db.library_report_remove(project, name).map_err(crate::orch::internal)?;
+        self.view_caps.lock().unwrap().retain(|_, c| c.project != project || c.thread != name);
+        if dest.exists() {
+            std::fs::remove_dir_all(&dest).map_err(|_| err(ErrorCode::Unavailable, "보고서 사본 삭제 실패"))?;
+        }
+        let manifest = manifest_path(&dir, name);
+        if manifest.exists() || !with_report {
+            std::fs::remove_file(manifest).map_err(|_| err(ErrorCode::Unavailable, "보고서 목록 삭제 실패"))?;
+        }
+        let report = dir.join("threads").join(format!("{name}.md"));
+        if with_report && name.starts_with("t-") && report.exists() {
+            std::fs::remove_file(report).map_err(|_| err(ErrorCode::Unavailable, "보고 사본 삭제 실패"))?;
+        }
+        self.db.audit(actor, action, &format!("{project}/{name}"));
+        Ok(())
     }
 
     pub(crate) fn library_prune_at(
