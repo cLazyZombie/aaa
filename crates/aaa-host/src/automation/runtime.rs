@@ -516,6 +516,7 @@ impl Host {
                 thread = outcome.thread.clone();
                 start_outcome = Some(outcome);
             }),
+            Action::Deploy => self.propose_rollout(p, r, &batch.id, &batch.events, now),
             Action::Wake(a) => {
                 let mut value = serde_json::from_str::<serde_json::Value>(&data)
                     .unwrap_or_else(|_| serde_json::json!({"body":data}));

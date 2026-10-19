@@ -1,5 +1,6 @@
 //! 조건 → 동작의 파일 계약. 실행 상태·기록과 파일 형식은 분리한다.
 mod convert;
+mod deploy;
 pub(crate) mod runtime;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -111,6 +112,7 @@ pub(crate) struct Git {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub(crate) enum Action {
+    Deploy,
     Inbox(Inbox),
     Message(Message),
     Wake(Wake),
@@ -193,6 +195,9 @@ pub(crate) struct Start {
 #[derive(Debug, Default, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(default, deny_unknown_fields)]
 pub(crate) struct Limits {
+    /// 배포 제안: 최근 성공 커밋 또는 등록 head 뒤의 새 main 커밋(1~100).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub min_commits: Option<u32>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub batch: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -308,6 +313,7 @@ impl Scheduled {
 impl Action {
     pub fn texts(&self) -> (Option<&str>, Option<&str>) {
         match self {
+            Self::Deploy => (None, None),
             Self::Inbox(a) => (a.text.as_deref(), a.text_file.as_deref()),
             Self::Message(a) => (a.text.as_deref(), a.text_file.as_deref()),
             Self::Wake(a) => (a.text.as_deref(), a.text_file.as_deref()),
@@ -316,6 +322,7 @@ impl Action {
     }
     pub fn set_text(&mut self, value: String) {
         let (text, file) = match self {
+            Self::Deploy => return,
             Self::Inbox(a) => (&mut a.text, &mut a.text_file),
             Self::Message(a) => (&mut a.text, &mut a.text_file),
             Self::Wake(a) => (&mut a.text, &mut a.text_file),
@@ -329,6 +336,7 @@ impl Action {
     }
     pub fn field(&self) -> &'static str {
         match self {
+            Self::Deploy => "do.deploy",
             Self::Inbox(_) => "do.inbox",
             Self::Message(_) => "do.message",
             Self::Wake(_) => "do.wake",
@@ -343,6 +351,7 @@ impl Action {
     }
     pub fn label(&self) -> String {
         match self {
+            Self::Deploy => "배포 제안".into(),
             Self::Inbox(_) => "coordinator 안내".into(),
             Self::Message(a) => format!("{} thread에 글", if a.thread == "owner" { "주인" } else { &a.thread }),
             Self::Wake(a) => format!("임무 {} 입력", a.mission),
@@ -371,6 +380,25 @@ pub(crate) fn parse_with(
         if matches!(&spec.action, Action::Start(a) if a.brief_file.is_some()) { "brief_file" } else { "text_file" };
     if matches!(&spec.action, Action::Start(a) if a.brief_file.is_some() && a.text_file.is_some()) {
         return Err(bad("do.start.brief_file", "brief_file·text_file은 함께 쓸 수 없다"));
+    }
+    if matches!(spec.action, Action::Deploy) {
+        let Condition::Git(g) = &mut spec.on else {
+            return Err(bad("on", "배포 제안은 main Git push 조건만 쓴다"));
+        };
+        if g.branches != ["main"] {
+            return Err(bad("on.git.branches", "배포 제안은 main 하나만 구독한다"));
+        }
+        if g.events.is_empty() {
+            g.events = vec!["pushed".into()];
+        }
+        if g.events != ["pushed"] {
+            return Err(bad("on.git.events", "배포 제안은 pushed만 구독한다"));
+        }
+        if !(1..=aaa_common::git_watch::MAX_COMMITS as u32).contains(&spec.limits.min_commits.unwrap_or(1)) {
+            return Err(bad("limits.min_commits", "1~100의 새 커밋 수를 쓴다"));
+        }
+    } else if spec.limits.min_commits.is_some() {
+        return Err(bad("limits.min_commits", "배포 제안에만 쓴다"));
     }
     let (inline, external) = spec.action.texts();
     if inline.is_some() && external.is_some() {
@@ -551,6 +579,8 @@ pub(crate) fn schema() -> serde_json::Value {
         {"required":["text_file"],"not":{"anyOf":[{"required":["text"]},{"required":["brief_file"]}]}},
         {"required":["brief_file"],"not":{"anyOf":[{"required":["text"]},{"required":["text_file"]}]}}
     ]);
+    schema["$defs"]["Limits"]["properties"]["min_commits"]["minimum"] = 1.into();
+    schema["$defs"]["Limits"]["properties"]["min_commits"]["maximum"] = 100.into();
     for field in ["usage_session_below", "usage_week_below"] {
         schema["$defs"]["Limits"]["properties"][field]["minimum"] = 0.into();
         schema["$defs"]["Limits"]["properties"][field]["maximum"] = 100.into();

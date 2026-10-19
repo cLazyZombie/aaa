@@ -399,7 +399,8 @@ safety 표에 값이 있으면 먹지 않는다.
 배포는 coordinator가 직접 한다. thread 보고·inbox·routine·새 release 알림만 보고 배포하지 않는다.
 `aaa safety show`에서 `coordinator_deploy`가 on일 때만 한다. 기본 off다. 사용자가 aaa 밖 host 터미널에서
 `aaa safety set coordinator_deploy on`을 한 번 켠다(철회: 끝의 on 대신 off). coordinator가 설정을 대신 켜지 않는다.
-thread·평가자·임의 pane·웹 기기는 이 허용을 받지 않는다. 처음에는 설치된 FRONT1.50 L2 CLI/기존 절차로 독립 감시를 아는 host·agent를 반영하고 다음 배포부터 쓴다.
+thread·평가자·임의 pane·웹 기기는 이 허용을 받지 않는다. 사람은 aaa 밖 host 터미널의 deploy start에서 후보/SHA/대상을 읽고 yes로 시작한다(FRONT1.55 이상). coordinator safety를 대신 켜지 않는다. 처음 L5 반영은 기존 coordinator/설치 경로로 한다.
+자동화의 배포 제안은 commit과 빌드 안내 자료다. 제안만으로 빌드·배포를 시작하지 않는다.
 1. `scripts/deploy-build.sh <origin/main의 조상 커밋> --out <새 폴더>`로 한 번 빌드한 후보와 provenance를 받는다.
    빌드 머신의 후보 폴더에 aaa와 provenance.json을 함께 둔다. SHA와 커밋을 보존한다.
 2. `aaa deploy start --file <빌드머신>:<후보폴더>/aaa --sha256 <SHA> --commit <40자리 커밋>`으로 한 번 시작한다.

@@ -1,4 +1,4 @@
-//! L1 CLI: 시작은 coordinator safety, 대기는 host 단절 뒤에도 같은 rollout ID 조회만 한다.
+//! 사람 터미널 yes 또는 coordinator safety. 대기는 host 단절 뒤에도 같은 ID 조회만 한다.
 use aaa_proto::{FrontRequest, FrontResponse, RolloutSpec, RolloutState};
 use anyhow::{Result, bail};
 use clap::Subcommand;
@@ -47,9 +47,35 @@ pub(crate) fn run(json: bool, cmd: DeployCmd) -> Result<ExitCode> {
                 if machines == ["all"] {
                     machines.clear();
                 }
-                let mut c = FrontClient::connect(&state).await?;
+                let mut c = FrontClient::connect_as(&state, "deploy").await?;
                 if c.proto.minor < 51 {
                     bail!("먼저 rollout API를 아는 host·agent를 반영한다");
+                }
+                let context = c.call(FrontRequest::DeployContext).await?.map_err(|e| anyhow::anyhow!(e.message))?;
+                match context {
+                    FrontResponse::DeployContext { project: Some(_), .. } if c.role.can_control() => {}
+                    FrontResponse::DeployContext { session: false, .. } if c.role.can_control() => {
+                        crate::person::require("rollout 시작")?;
+                        if c.proto.minor < 55 {
+                            bail!("사람 터미널 rollout에는 FRONT_API1.55 이상 host가 필요하다");
+                        }
+                        let targets = if machines.is_empty() {
+                            "등록된 모든 머신(host 먼저)".into()
+                        } else {
+                            format!("host 먼저, {}", machines.join(", "))
+                        };
+                        eprintln!(
+                            "배포 대상: {targets}\n후보: {}{}\nSHA-256: {sha256}\n커밋: {}",
+                            source_machine.as_ref().map(|m| format!("{m}:")).unwrap_or_default(),
+                            from,
+                            commit.as_deref().unwrap_or("미지정")
+                        );
+                        if crate::person::ask("배포를 시작할까? yes를 입력한다: ")? != "yes" {
+                            eprintln!("배포를 취소했습니다");
+                            return Ok(ExitCode::from(1));
+                        }
+                    }
+                    _ => bail!("rollout은 사람의 aaa 밖 터미널 또는 허용된 coordinator 세션에서 시작한다"),
                 }
                 let id = aaa_common::util::new_id();
                 eprintln!(
@@ -146,7 +172,7 @@ async fn connect_ready(state: &std::path::Path, wait: bool) -> Result<aaa_common
         if wait {
             aaa_common::front::FrontClient::connect_as(state, "deploy-wait").await
         } else {
-            aaa_common::front::FrontClient::connect(state).await
+            aaa_common::front::FrontClient::connect_as(state, "deploy").await
         }
     })
     .await

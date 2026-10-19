@@ -107,3 +107,5 @@ aaa work-root set '/Volumes/<disk>/aaa-work' --mount '/Volumes/<disk>'
 분리 중 실패한 resolve는 볼륨을 연결한 뒤 같은 `thread resolve`로 이어 간다. `project sweep`은 끝낸 thread가 남긴 자리용이다.
 
 웹 활동 막대 「자동화」의 조건·동작·실행 기록·토글은 [자동화 운영 확인](automations.md)을 본다.
+
+사람은 aaa 밖 host 터미널에서 `aaa deploy start --file mac-b:~/aaa-candidate/aaa --sha256 <SHA> --commit <40자리커밋>`의 후보/대상을 읽고 정확히 `yes`를 입력한다(FRONT1.55 이상). coordinator_deploy 설정은 바꾸지 않는다. 같은 `aaa deploy status <ID> --wait`로 재시작을 넘는다. TOML `do="deploy"`는 배포 제안과 빌드 안내만 만든다([자동화](automations.md#배포는-제안까지만l5)).

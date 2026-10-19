@@ -304,6 +304,20 @@ L3는 모든 대상의 `rollout_recovery.v1`과 host/로컬 agent의 배포 전 
 
 머신 패널의 배포 카드는 연결된 Reader·Controller 모두 볼 수 있다. 전송/사전검사/교체/재접속과 복구를 따로 보며, 「배포 실패 · 복구 완료」는 배포 성공이 아니다. 단절 때 마지막 수신 상태임을 표시하고 다시 연결하면 host DB의 최신 기록을 받는다. 「검증 정보」의 전체 ID/후보·복구 SHA와 오류를 보존해 coordinator의 같은 ID 조회·정확 SHA 복구 절차로 이어 간다. 카드에서는 시작·중단·수동 되돌리기를 하지 않는다. 종료 결과는 앱 안과 coordinator inbox에만 알린다.
 
+### 사람 터미널에서 rollout 시작(L5)
+
+먼저 기존 coordinator+safety/기존 설치 절차로 FRONT_API1.55 이상 host를 반영한다. 다음부터 aaa pane 밖 host 머신의 일반 터미널에서 실행한다.
+
+```sh
+aaa deploy start --file mac-b:~/aaa-candidate/aaa --sha256 <SHA256> --commit <40자리커밋>
+# 후보·SHA·host 먼저 대상 표시 뒤 정확히 yes를 입력한다.
+aaa deploy status <출력된-rollout-ID> --wait
+```
+
+사람 경로는 coordinator_deploy를 켜지 않고도 시작한다. no·y·입력 종료는 시작하지 않는다. `--yes`나 파이프 승인은 없으며 aaa 세션/worker·웹·터미널 없는 routine 명령은 시작할 수 없다. host가 peer pane/제어 터미널을 확인하고 CLI가 표준 입력 터미널과 yes를 확인한다. 같은 OS 사용자가 aaa 밖 PTY/직접 client를 만드는 것을 막는 격리는 아니다. ID는 start 응답 전에 출력한다. 응답 유실·host 재시작 때는 같은 status만 조회한다. 사람 승인은 이 rollout의 끝까지 보존하며 coordinator safety 설정은 바꾸지 않는다. coordinator 시작의 safety 철회·기존 실패 머신 복구 절차는 그대로다.
+
+배포 제안 inbox는 빌드 전 commit과 안내만 저장한다. provenance의 commit/SHA·대상 기능·host/agent baseline 일치와 복구 여유를 확인한 뒤 위 명령으로 시작한다. 실패하면 같은 ID로 stopped/recovering/stopped_rolled_back/recovery_failed를 구분하고 위 L3 정확 SHA 복구 절차를 따른다.
+
 ## 12. 같은 Mac의 둘째 aaa(§8.294)
 
 지금 aaa(기본 인스턴스)는 그대로 두고, 이름 붙은 둘째 aaa를 같은 Mac에 띄운다. 예시 이름은 `work`다. binary는 같이 쓴다(`~/.local/bin/aaa`).

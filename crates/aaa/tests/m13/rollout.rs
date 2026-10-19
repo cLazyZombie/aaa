@@ -181,6 +181,17 @@ esac
             .output()
             .unwrap();
     assert!(!spoof.status.success(), "{spoof:?}");
+    let cancelled = w.h.in_terminal(
+        &["--json", "deploy", "start", "--from", path_str(&candidate), "--sha256", &sha],
+        &[("yes를 입력한다:", "no")],
+        T,
+    );
+    assert!(cancelled.contains("취소"), "{cancelled}");
+    let db = aaa_host::db::Db::open(&w.h.state.join("host/host.db")).unwrap();
+    assert_eq!(db.meta("rollout:active").unwrap(), None, "no 확인으로 배포를 만들지 않는다");
+    let non_tty = w.h.cmd(&["deploy", "start", "--from", path_str(&candidate), "--sha256", &sha]).output().unwrap();
+    assert!(!non_tty.status.success(), "터미널 없는 CLI가 시작했다");
+    assert!(String::from_utf8_lossy(&non_tty.stderr).contains("표준 입력이 터미널"), "{non_tty:?}");
     let enabled = w.h.in_terminal(&["safety", "set", "demo", "coordinator_deploy", "on"], &[("바꿀까?", "y")], T);
     assert!(enabled.contains("coordinator_deploy = on"), "{enabled}");
     let (rc, out, err) = probe(&w, &start(&"0".repeat(64)));
@@ -220,9 +231,16 @@ esac
     }
 
     // L2: 빌드 머신 한 곳의 provenance 후보를 보낸다. 대상에는 미리 복사하지 않는다.
-    let (rc, out, err) = probe(&w, &format!("deploy start --file 'labB:{}' --sha256 {sha}", candidate.display()));
-    assert_eq!(rc, "0", "{out} {err}");
-    let started: Value = serde_json::from_str(&out).unwrap();
+    let off = w.h.in_terminal(&["safety", "set", "demo", "coordinator_deploy", "off"], &[("바꿀까?", "y")], T);
+    assert!(off.contains("coordinator_deploy = off"), "{off}");
+    let from = format!("labB:{}", candidate.display());
+    let out = w.h.in_terminal(
+        &["--json", "deploy", "start", "--file", &from, "--sha256", &sha],
+        &[("yes를 입력한다:", "yes")],
+        T,
+    );
+    let started: Value = serde_json::from_str(out[out.find('{').expect("사람 시작의 JSON 응답")..].trim()).unwrap();
+    assert!(started["rollout"]["actor"].as_str().unwrap().starts_with("person:"), "{out}");
     let r = &started["rollout"];
     let id = r["id"].as_str().unwrap().to_string();
     let before_ids: Vec<_> = r["steps"].as_array().unwrap().iter().map(|s| s["job_id"].clone()).collect();
@@ -370,6 +388,13 @@ esac
     for exe in [&a_exe, &b_exe] {
         assert_eq!(hex::encode(Sha256::digest(std::fs::read(exe).unwrap())), sha);
     }
+    assert!(r["actor"].as_str().unwrap().starts_with("person:"), "사람 승인을 host 재시작 뒤에도 보존한다");
+    let enabled = w.h.in_terminal(&["safety", "set", "demo", "coordinator_deploy", "on"], &[("바꿀까?", "y")], T);
+    assert!(enabled.contains("coordinator_deploy = on"), "{enabled}");
+    let person_status = w.h.in_terminal(&["--json", "deploy", "status", &id], &[], T);
+    let person_view: Value = serde_json::from_str(person_status[person_status.find('{').unwrap()..].trim()).unwrap();
+    assert_eq!(person_view["rollout"]["id"], id);
+    assert_eq!(person_view["rollout"]["state"], "done", "{person_status}");
     // 사전 검사 뒤 후보가 바뀌어도 실제 교체가 다시 SHA를 대조한다.
     let (rc, out, err) = probe(&w, &start(&sha));
     assert_eq!(rc, "0", "{out} {err}");

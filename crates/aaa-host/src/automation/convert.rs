@@ -23,6 +23,7 @@ fn rule(plan: &mut Plan, root: &Path, name: &str, mut spec: File) -> Result<(), 
         let path = format!("automations/{name}.md");
         add(plan, root, path.clone(), format!("{body}\n"))?;
         match &mut spec.action {
+            Action::Deploy => {}
             Action::Inbox(a) => {
                 a.text = None;
                 a.text_file = Some(path)

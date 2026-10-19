@@ -153,7 +153,7 @@ fn public_schema_artifacts_match_rust_types_and_exclusive_tables() {
     }
     let rule = schema();
     assert_eq!(rule["$defs"]["Condition"]["oneOf"].as_array().unwrap().len(), 6);
-    assert_eq!(rule["$defs"]["Action"]["oneOf"].as_array().unwrap().len(), 4);
+    assert_eq!(rule["$defs"]["Action"]["oneOf"].as_array().unwrap().len(), 5);
     assert_eq!(rule["$defs"]["Inbox"]["not"]["required"], serde_json::json!(["text", "text_file"]));
 }
 
@@ -186,4 +186,105 @@ fn start_toml_captures_safe_brief_and_rejects_ambiguous_or_outside_files() {
         let why = parse(&p.0, "nightly", &bad).unwrap_err();
         assert!(why.starts_with("automations/nightly.toml:") && why.contains(field), "{why}");
     }
+}
+
+#[test]
+fn deploy_proposal_toml_requires_main_pushes_and_bounded_commit_threshold() {
+    let p = Project::new();
+    let source =
+        "do = 'deploy'\n[on.git]\nrepo = 'aaa'\nbranches = ['main']\n[limits]\nmin_commits = 2\nmax_per_day = 2\n";
+    p.write("automations/deploy.toml", source);
+    let (rules, bad) = crate::routine::load_all(&p.0);
+    assert!(bad.is_empty(), "{bad:?}");
+    assert_eq!(rules.len(), 1);
+    assert_eq!(rules[0].action.label(), "배포 제안");
+    for invalid in [
+        source.replace("['main']", "['topic']"),
+        source.replace("min_commits = 2", "min_commits = 0"),
+        source.replace("min_commits = 2", "min_commits = 101"),
+        source.replace("repo = 'aaa'", "repo = 'aaa'\nevents = ['forced']"),
+        source.replace("do = 'deploy'", "[do.inbox]\ntext = '안내'"),
+        "do = 'deploy'\n[on.schedule]\nevery = '1m'\n".into(),
+    ] {
+        p.write("automations/deploy.toml", &invalid);
+        let (rules, bad) = crate::routine::load_all(&p.0);
+        assert!(rules.is_empty() && !bad.is_empty(), "{invalid}");
+    }
+}
+
+#[tokio::test]
+async fn deploy_proposal_survives_receipt_failure_prune_and_restart_without_starting() {
+    use aaa_proto::{GitChange, GitCommit};
+    let p = Project::new();
+    p.write("projects/demo/PROJECT.md", "# demo\n");
+    p.write(
+        "projects/demo/automations/deploy.toml",
+        "do='deploy'\n[on.git]\nrepo='aaa'\nbranches=['main']\n[limits]\nmin_commits=2\n",
+    );
+    let mut cfg = aaa_config::HostConfig::default();
+    cfg.projects.root = p.0.join("projects").to_string_lossy().into();
+    cfg.notify.web_push = false;
+    let host_root = p.0.join("host");
+    let h = crate::Host::open(cfg.clone(), host_root.clone()).unwrap();
+    let mut rule = crate::routine::load_all(&p.0.join("projects/demo")).0.remove(0);
+    let commit = "b".repeat(40);
+    let change = GitChange {
+        branch: "main".into(),
+        before: Some("a".repeat(40)),
+        after: Some(commit.clone()),
+        kind: "pushed".into(),
+        commits: vec![
+            GitCommit { sha: commit.clone(), subject: "/private/must-not-copy-marker".into(), owners: vec![] },
+            GitCommit { sha: "c".repeat(40), subject: "second".into(), owners: vec![] },
+        ],
+        changed_files: 2,
+        truncated: false,
+    };
+    let body = serde_json::json!({"change":change,"repo_path":"/private/must-not-copy-marker"}).to_string();
+    let mut notices = h.notice_events.subscribe();
+    h.automation_submit("demo", &rule, "git-proof", body.clone(), None).unwrap();
+    // 실제 DB의 인계 영수증 저장만 실패시켜 제안 commit 뒤 ACK 전 중단을 만든다.
+    let sql = rusqlite::Connection::open(host_root.join("host.db")).unwrap();
+    sql.execute_batch("CREATE TRIGGER fail_proposal_receipt BEFORE INSERT ON meta WHEN NEW.key LIKE 'automation_done:%' BEGIN SELECT RAISE(ABORT, 'receipt write failed'); END;").unwrap();
+    let now = aaa_common::util::now_ms();
+    assert!(h.automation_drain_at("demo", &rule, now).await.is_err());
+    let mut items = h.db.inbox_list(Some("demo"), true).unwrap();
+    assert_eq!(items.len(), 1);
+    assert_eq!(items[0].item_kind, "deploy_proposal");
+    assert!(items[0].body.contains(&format!("scripts/deploy-build.sh {commit}")));
+    let reader = h
+        .call(
+            aaa_proto::DeviceRole::Reader,
+            "web:reader",
+            aaa_proto::FrontRequest::Inbox { project: "demo".into(), all: true, peek: true },
+        )
+        .await
+        .unwrap();
+    assert!(
+        !serde_json::to_string(&reader).unwrap().contains("must-not-copy-marker"),
+        "Reader inbox에 내부 경로/원문을 복제하지 않는다"
+    );
+    assert_eq!(notices.try_recv().unwrap().kind, aaa_proto::NoticeKind::Automation);
+    assert!(notices.try_recv().is_err());
+    assert_eq!(h.db.meta("rollout:active").unwrap(), None, "제안이 배포를 시작하면 안 된다");
+    assert!(h.db.threads(Some("demo")).unwrap().is_empty(), "빌드 thread를 자동으로 띄우지 않는다");
+    items[0].done = true;
+    items[0].done_at_ms = Some(now);
+    h.db.inbox_put(&items[0]).unwrap();
+    h.db.inbox_prune(now + 1).unwrap();
+    sql.execute_batch("DROP TRIGGER fail_proposal_receipt;").unwrap();
+    drop(sql);
+    drop(notices);
+    drop(h);
+    let h = crate::Host::open(cfg, host_root).unwrap();
+    // 입력은 이전 임계값으로 이미 내구 큐에 받았다. 새 설정이 ACK 재개를 막으면 안 된다.
+    rule.limits.min_commits = Some(3);
+    let mut notices = h.notice_events.subscribe();
+    h.automation_drain_at("demo", &rule, now + 1).await.unwrap();
+    h.automation_submit("demo", &rule, "git-proof", body, None).unwrap();
+    h.automation_drain_at("demo", &rule, now + 2).await.unwrap();
+    assert!(h.db.inbox_list(Some("demo"), true).unwrap().is_empty(), "prune·ACK 실패·재시작 뒤 제안을 되살리지 않는다");
+    assert!(notices.try_recv().is_err(), "같은 제안의 transient 알림은 반복하지 않는다");
+    assert_eq!(h.db.meta("rollout:active").unwrap(), None);
+    drop(h);
 }

@@ -3,6 +3,12 @@
     "Action": {
       "oneOf": [
         {
+          "enum": [
+            "deploy"
+          ],
+          "type": "string"
+        },
+        {
           "additionalProperties": false,
           "properties": {
             "inbox": {
@@ -310,6 +316,16 @@
         "max_running": {
           "format": "uint32",
           "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "min_commits": {
+          "description": "배포 제안: 최근 성공 커밋 또는 등록 head 뒤의 새 main 커밋(1~100).",
+          "format": "uint32",
+          "maximum": 100,
+          "minimum": 1,
           "type": [
             "integer",
             "null"
