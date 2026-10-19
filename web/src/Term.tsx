@@ -1545,6 +1545,21 @@ export function TermView({
     followCursor.current();
     return true;
   };
+  /**
+   * 맞추기 전: 입력줄이 여러 줄로 커져 터미널 칸을 줄였으면 true(plan §8.262). 키보드처럼 grid(PTY 크기)는 그대로 두고 칸 안에서
+   * 커서 줄로 옮긴다: 줄 하나 칠 때마다 그 pane을 보는 모든 기기의 크기를 바꾸지 않는다. 폭이 바뀌었으면 맞춘다
+   */
+  const inputSlotRef = useRef<HTMLDivElement | null>(null);
+  const inputHolds = () => {
+    const host = scrollRef.current;
+    const slot = inputSlotRef.current;
+    if (!host || !slot) return false;
+    const grown = slot.getBoundingClientRect().height - parseFloat(getComputedStyle(slot).minHeight) > 1;
+    if (!keyboardHoldsGrid(grown, host.clientWidth, kbRef.current.fittedWidth)) return false;
+    kbRef.current.held = true;
+    followCursor.current();
+    return true;
+  };
   /** 맞춘 뒤: grid가 다시 이 화면 것이고 옮길 것이 없다 */
   const fitted = () => {
     const host = scrollRef.current;
@@ -1555,7 +1570,7 @@ export function TermView({
   };
   const autoFit = useRef((_claim?: boolean) => {});
   autoFit.current = (claim = false) => {
-    // 표지 `data-fit`: 마지막 맞추기 판단(off·released·other·keyboard·unsized·sent·same). 크기는 그 판단 안에서 바로 보내므로,
+    // 표지 `data-fit`: 마지막 맞추기 판단(off·released·other·keyboard·input·unsized·sent·same). 크기는 그 판단 안에서 바로 보내므로,
     // 시험이 「열기만 해서는 크기를 걸지 않는다」를 그 판단 뒤에 sleep 없이 본다(웹 E2E 02 「두 controller」)
     const mark = (why: string): void => {
       if (box.current) box.current.dataset.fit = why;
@@ -1565,6 +1580,7 @@ export function TermView({
     if (releasedRef.current) return mark("released");
     if (heldByOther && !claim) return mark("other");
     if (keyboardHolds()) return mark("keyboard");
+    if (inputHolds()) return mark("input");
     const dims = fitRef.current?.proposeDimensions();
     if (!dims || !Number.isFinite(dims.cols) || dims.cols < 10 || dims.rows < 3) return mark("unsized");
     const change = dims.cols !== size[0] || dims.rows !== size[1] || (claim && heldByOther);
@@ -1675,6 +1691,10 @@ export function TermView({
         // 키보드가 화면 아래를 가렸다: grid는 그대로, 터미널만 커서 줄로 옮긴다(맞출 수 없는 화면도)
         if (keyboardHolds()) {
           el.dataset.fit = "keyboard";
+          return;
+        }
+        if (inputHolds()) {
+          el.dataset.fit = "input";
           return;
         }
         autoFit.current();
@@ -1824,14 +1844,18 @@ export function TermView({
     }
   }, [inputLine, coarse, directTyping, pane.id]);
 
-  // 입력줄은 터미널 마지막 줄 위에 떠서 자란다. 터미널 위끝까지만 자란다(--terminal-input-room, TerminalInput.css).
+  // 입력줄은 흐름 안에서 자라 터미널 칸을 줄인다. 터미널 위끝까지만 자란다(--terminal-input-room, style.css). 커지면 그 자리에서
+  // 바로 커서 줄로 옮긴다(맞추기 판단은 크기 바뀜 뒤 120ms에 온다: 그 사이 마지막 줄이 가려지지 않게)
   const [inputSlot, setInputSlot] = useState<HTMLDivElement | null>(null);
+  inputSlotRef.current = inputSlot;
   useLayoutEffect(() => {
     const surface = scrollRef.current;
     if (!surface || !inputSlot) return;
     const measure = () => {
       const room = inputSlot.getBoundingClientRect().bottom - surface.getBoundingClientRect().top;
       inputSlot.style.setProperty("--terminal-input-room", `${Math.max(0, Math.floor(room))}px`);
+      if (kbRef.current.held) followCursor.current();
+      else inputHolds();
     };
     measure();
     const observer = new ResizeObserver(measure);
