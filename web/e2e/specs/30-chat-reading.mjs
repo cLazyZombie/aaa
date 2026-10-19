@@ -126,7 +126,27 @@ export default async function ({ page }) {
   await step("대화 보내기(t3code promptLinks·ComposerPrimaryActions·composerPromptHistory): 위로 굴려 읽다가 보내도 끝으로 가고(§8.250), 보이지 않는 문자는 빼고 보내며 몇 개 뺐는지 알린다. 작업 중 빈 입력창은 보내기 자리가 중단(Esc)이다. 빈 입력창 ↑는 보낸 글을 새 것부터, ↓는 앞으로, 가장 새 것 너머는 빈 칸이고, 쓰던 글에서는 부르지 않는다", async () => {
     const received = () => fs.readFileSync(`${directory}/cr1.bytes`);
     const box = page.getByTestId("chat-composer").getByRole("textbox", { name: "메시지" });
-    await page.getByTestId("chat").evaluate((el) => (el.scrollTop = 0));
+    // 처음 자동으로 끝에 간 scroll 사건보다 먼저 위로 이동한다. DOM commit의 관찰 사건으로 순서를 고정한다:
+    // 끝 위치를 scroll 사건에서만 기억하면 합쳐진 첫 사건(0)에서 위로 간 것을 놓친다.
+    await openChat(page, "cr2");
+    await page.evaluate(() => {
+      const previous = document.querySelector('[data-testid="chat"]');
+      window.__earlyChatScroll = null;
+      const observer = new MutationObserver(() => {
+        const el = document.querySelector('[data-testid="chat"]');
+        if (!el || el === previous || el.querySelectorAll('.chat-msg').length < 60 || el.scrollTop === 0) return;
+        observer.disconnect();
+        const before = el.scrollTop;
+        el.addEventListener('scroll', () => { window.__earlyChatScroll = { before, after: el.scrollTop }; }, { once: true });
+        el.scrollTop = 0;
+      });
+      observer.observe(document.body, { childList: true, subtree: true });
+    });
+    await openChat(page, "cr1");
+    await page.waitForFunction(() => window.__earlyChatScroll !== null);
+    const earlyScroll = await page.evaluate(() => window.__earlyChatScroll);
+    console.log(`chat-early-scroll ${JSON.stringify(earlyScroll)}`);
+    assert(earlyScroll.before > 0 && earlyScroll.after === 0, "첫 자동 굴림 사건 전에 위로 이동했다");
     await page.getByTestId("chat-jump").waitFor();
     const before = received().length;
     await box.fill("보낼​글⁠");

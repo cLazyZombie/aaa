@@ -842,6 +842,9 @@ export default async function ({ ctl, page }) {
   });
 
   await step("대화 입력창(herdr-web-ui Composer·composer-queue, 차이 목록 C2): Enter로 보내면 터미널 입력줄과 같은 길로 프로그램에 가고, 「대기 메시지 자동 전송」을 끄면 작업 중에 쓴 글은 이 기기에 붙잡혀 「지금 보내기」로 가며, 빠른 답장은 누르면 간다", async () => {
+    // 응답 순서를 route로 고정할 때 service worker가 요청을 대신 보내지 않게 별도 기기에서 본다.
+    const client = await pairPage(browser, aaa("web", "pair").code, { width: 1280, height: 800 }, { line: true, serviceWorkers: "block" });
+    const page = client.page;
     // 받은 줄을 파일에 적는 Claude 화면: 처음은 쉼, 한 줄을 받으면 작업 중으로 바뀌고 그 뒤 줄도 적는다
     const got = `${root}/composer.txt`;
     fs.writeFileSync(got, "");
@@ -884,25 +887,54 @@ export default async function ({ ctl, page }) {
       await page.keyboard.press("Escape");
       await d.waitFor({ state: "detached" });
     };
-    await chatSettings((d) => d.getByRole("switch", { name: "대기 메시지 자동 전송" }).click());
-    await box.fill("붙잡을 글");
-    await box.press("Enter");
-    const queue = page.getByTestId("chat-queue");
-    await queue.waitFor();
-    if ((await queue.getByRole("textbox", { name: "대기 메시지 1" }).inputValue()) !== "붙잡을 글") throw new Error("붙잡은 글이 다르다");
-    if (!(await queue.innerText()).includes("에이전트가 준비될 때까지 보관")) throw new Error(`붙잡은 칸 글: ${await queue.innerText()}`);
-    if (lines().includes("붙잡을 글")) throw new Error("붙잡을 글이 프로그램에 갔다");
-    await shot(page, "desktop-chat-composer-held");
-    await queue.getByRole("button", { name: "지금 보내기" }).click();
-    await until("지금 보내기로 간다", async () => lines().includes("붙잡을 글"));
-    await queue.waitFor({ state: "detached" });
-    // 빠른 답장: 켜면 입력창 위에 칩, 누르면 간다(작업 중이고 자동 전송이 꺼져 있어도 같은 규칙: 다시 켠다)
-    await chatSettings(async (d) => {
-      await d.getByRole("switch", { name: "대기 메시지 자동 전송" }).click();
-      await d.getByRole("switch", { name: "입력창 위에 표시" }).click();
-    });
-    await composer.getByRole("group", { name: "빠른 답장" }).getByRole("button", { name: "yes", exact: true }).click();
-    await until("빠른 답장이 간다", async () => lines().includes("yes"));
+    // 껐다가 다시 켜는 동안 먼저 보낸 끔의 응답을 붙잡아 실제 망 지연 순서를 고정한다.
+    // host는 요청을 처리한다. 돌아오는 답만 늦춰, 원래 값으로 되돌린 사용자 변경을 잃지 않는지 본다.
+    let releaseOff;
+    const offGate = new Promise(resolve => { releaseOff = resolve; });
+    const holdOff = async route => {
+      const body = route.request().postDataJSON();
+      if (body?.op === "preferences_set" && body.settings?.autoSendQueued === false) {
+        const response = await route.fetch();
+        await offGate;
+        await route.fulfill({ response });
+      } else await route.continue();
+    };
+    await page.route("**/api/v1/call", holdOff);
+    try {
+      const offIssued = page.waitForRequest(r => r.url().endsWith("/api/v1/call") && r.postDataJSON()?.op === "preferences_set" && r.postDataJSON()?.settings?.autoSendQueued === false);
+      await chatSettings((d) => d.getByRole("switch", { name: "대기 메시지 자동 전송" }).click());
+      await offIssued;
+      await box.fill("붙잡을 글");
+      await box.press("Enter");
+      const queue = page.getByTestId("chat-queue");
+      await queue.waitFor();
+      if ((await queue.getByRole("textbox", { name: "대기 메시지 1" }).inputValue()) !== "붙잡을 글") throw new Error("붙잡은 글이 다르다");
+      if (!(await queue.innerText()).includes("에이전트가 준비될 때까지 보관")) throw new Error(`붙잡은 칸 글: ${await queue.innerText()}`);
+      if (lines().includes("붙잡을 글")) throw new Error("붙잡을 글이 프로그램에 갔다");
+      await shot(page, "desktop-chat-composer-held");
+      await queue.getByRole("button", { name: "지금 보내기" }).click();
+      await until("지금 보내기로 간다", async () => lines().includes("붙잡을 글"));
+      await queue.waitFor({ state: "detached" });
+      // 빠른 답장: 켜면 입력창 위에 칩, 누르면 간다(작업 중이고 자동 전송이 꺼져 있어도 같은 규칙: 다시 켠다)
+      await chatSettings(async (d) => {
+        await d.getByRole("switch", { name: "대기 메시지 자동 전송" }).click();
+        await d.getByRole("switch", { name: "입력창 위에 표시" }).click();
+      });
+      const nextWrite = page.waitForRequest(r => r.url().endsWith("/api/v1/call") && r.postDataJSON()?.op === "preferences_set" && r.postDataJSON()?.settings?.showQuickReplies === true);
+      releaseOff();
+      const nextBody = (await nextWrite).postDataJSON();
+      const localChat = await page.evaluate(() => JSON.parse(localStorage.getItem("aaa:chat-shared")));
+      await composer.getByRole("group", { name: "빠른 답장" }).getByRole("button", { name: "yes", exact: true }).click();
+      await until("빠른 답장 클릭 결과", async () => lines().includes("yes") || await queue.isVisible());
+      fs.writeFileSync(`${root}/quick-reply-race.json`, JSON.stringify({ nextBody, localChat, received: lines(), held: await queue.isVisible() }, null, 2));
+      if (!lines().includes("yes")) throw new Error(`빠른 답장이 전송 대신 보관됐다: ${JSON.stringify({ nextBody, localChat })}`);
+      await sentOff();
+      console.log(`quick-reply-race ${JSON.stringify({ localAuto: localChat.autoSendQueued, nextAuto: nextBody.settings.autoSendQueued, yesReceived: lines().includes("yes"), held: await queue.isVisible() })}`);
+      await shot(page, "quick-reply-delayed-setting");
+    } finally {
+      releaseOff();
+      await page.unroute("**/api/v1/call", holdOff);
+    }
     await chatSettings((d) => d.getByRole("switch", { name: "입력창 위에 표시" }).click());
     // 보내지 않은 글은 pane마다 이 기기에 남는다(참고 composerDraft.ts): 다시 열어도(새 웹으로 다시 열기, plan §8.166) 그대로다
     await box.fill("남길 초안 c2");
@@ -912,6 +944,8 @@ export default async function ({ ctl, page }) {
     await box.fill("");
     await page.getByTestId("chat-toggle").click();
     aaa("pane", "kill", "cmp1");
+    if (client.errors.length) throw new Error(client.errors.join("; "));
+    await page.context().close();
   });
   await step("Codex 폴더 신뢰: 데스크톱·휴대폰 카드가 실제 선택지에 답한다", async () => {
     const codexSh = `${root}/bin/codex`;

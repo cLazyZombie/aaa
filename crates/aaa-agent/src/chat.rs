@@ -118,6 +118,19 @@ fn injected(t: &str) -> bool {
     .any(|p| t.starts_with(p))
 }
 
+/// Claude의 역할은 사람이 썼다는 증거가 아니다. 2.1.303은 배경 작업·peer도 user로 기록한다.
+/// 구조 표지가 있으면 글 모양보다 우선한다. 사람이 인용한 XML·붙여넣기 봉투는 그대로 둔다.
+fn claude_human(v: &Value, text: &str) -> bool {
+    if ["isSidechain", "isMeta", "isCompactSummary", "isSynthetic"].iter().any(|key| v[*key] == true) {
+        return false;
+    }
+    match v["origin"]["kind"].as_str() {
+        Some(kind) => kind == "human",
+        // 옛 기록·queue-operation에는 origin이 없다. 봉투를 걷어 본문을 추측하지 않는다.
+        None => !injected(text) && !text.trim_start().starts_with("<task-notification>"),
+    }
+}
+
 fn msg(role: ChatRole, text: &str) -> Option<ChatMessage> {
     let receipt = (role == ChatRole::User).then(|| {
         use sha2::{Digest, Sha256};
@@ -140,6 +153,8 @@ fn claude_line(v: &Value, thinking: bool) -> Vec<ChatMessage> {
     let ty = v.get("type").and_then(|t| t.as_str()).unwrap_or("");
     if v.get("isSidechain").and_then(|b| b.as_bool()) == Some(true)
         || v.get("isMeta").and_then(|b| b.as_bool()) == Some(true)
+        || v.get("isCompactSummary").and_then(|b| b.as_bool()) == Some(true)
+        || (ty != "assistant" && v.get("isSynthetic").and_then(|b| b.as_bool()) == Some(true))
     {
         return vec![];
     }
@@ -150,7 +165,7 @@ fn claude_line(v: &Value, thinking: bool) -> Vec<ChatMessage> {
         if a["type"] == "queued_command" && a["commandMode"] == "prompt" && a["origin"]["kind"] == "human" {
             return a["prompt"]
                 .as_str()
-                .filter(|s| !injected(s))
+                .filter(|s| claude_human(a, s))
                 .and_then(|s| msg(ChatRole::User, s))
                 .into_iter()
                 .collect();
@@ -163,17 +178,17 @@ fn claude_line(v: &Value, thinking: bool) -> Vec<ChatMessage> {
     let content = &v["message"]["content"];
     let mut out = Vec::new();
     match (ty, content) {
-        ("user", Value::String(s)) if !injected(s) => out.extend(msg(ChatRole::User, s)),
+        ("user", Value::String(s)) if claude_human(v, s) => out.extend(msg(ChatRole::User, s)),
         (_, Value::Array(blocks)) => {
             for b in blocks {
                 match (ty, b.get("type").and_then(|t| t.as_str())) {
                     ("user", Some("text")) => {
                         let t = b["text"].as_str().unwrap_or("");
-                        if !injected(t) {
+                        if claude_human(v, t) {
                             out.extend(msg(ChatRole::User, t));
                         }
                     }
-                    ("user", Some("image")) => out.extend(msg(ChatRole::User, "[그림]")),
+                    ("user", Some("image")) if claude_human(v, "") => out.extend(msg(ChatRole::User, "[그림]")),
                     ("assistant", Some("text")) => {
                         out.extend(msg(ChatRole::Assistant, b["text"].as_str().unwrap_or("")))
                     }
@@ -291,7 +306,7 @@ fn claude_pending(path: &Path) -> std::io::Result<Vec<ChatMessage>> {
         lines.next(); // 앞 줄의 뒷부분
     }
     // 글이 아닌 enqueue도 자리를 차지한다(dequeue가 맨 앞을 꺼낸다)
-    let mut queue: std::collections::VecDeque<Option<String>> = std::collections::VecDeque::new();
+    let mut queue: std::collections::VecDeque<(Option<String>, bool)> = std::collections::VecDeque::new();
     for line in lines {
         if !line.windows(15).any(|w| w == b"queue-operation") {
             continue;
@@ -302,12 +317,14 @@ fn claude_pending(path: &Path) -> std::io::Result<Vec<ChatMessage>> {
         }
         let content = v["content"].as_str();
         match v["operation"].as_str() {
-            Some("enqueue") => queue.push_back(content.map(str::to_string)),
+            Some("enqueue") => {
+                queue.push_back((content.map(str::to_string), content.is_some_and(|c| claude_human(&v, c))))
+            }
             Some("dequeue") => {
                 queue.pop_front();
             }
             Some("remove") => {
-                if let Some(i) = queue.iter().position(|q| q.as_deref() == content) {
+                if let Some(i) = queue.iter().position(|(q, _)| q.as_deref() == content) {
                     queue.remove(i);
                 }
             }
@@ -316,8 +333,8 @@ fn claude_pending(path: &Path) -> std::io::Result<Vec<ChatMessage>> {
     }
     Ok(queue
         .into_iter()
-        .flatten()
-        .filter(|c| !injected(c) && !c.trim_start().starts_with("<task-notification>"))
+        .filter(|(_, human)| *human)
+        .filter_map(|(text, _)| text)
         .filter_map(|c| msg(ChatRole::User, &c))
         .map(|m| ChatMessage { pending: true, ..m })
         .collect())
@@ -431,6 +448,45 @@ mod tests {
     }
 
     #[test]
+    fn claude_user_origin_separates_notifications_from_literal_receipts() {
+        use serde_json::json;
+        let notification = "<task-notification><task-id>task-1</task-id><status>completed</status><summary>작업 끝</summary></task-notification>";
+        let reminder = "<system-reminder>사람이 인용한 예시</system-reminder>";
+        for content in [json!(notification), json!([{"type":"text","text":notification}])] {
+            for kind in ["task-notification", "peer"] {
+                let record = json!({"type":"user","origin":{"kind":kind},"message":{"role":"user","content":content}});
+                assert!(claude_line(&record, false).is_empty(), "내부 알림은 user receipt가 아니다: {kind}");
+            }
+        }
+        for text in [notification, reminder] {
+            let record = json!({"type":"user","origin":{"kind":"human"},"message":{"content":text}});
+            let messages = claude_line(&record, false);
+            assert_eq!(messages.len(), 1);
+            assert_eq!(messages[0].text, text);
+            assert_eq!(messages[0], msg(ChatRole::User, text).unwrap(), "사람의 원문과 수신 hash 보존");
+            let queued = json!({"type":"attachment","attachment":{"type":"queued_command","commandMode":"prompt","origin":{"kind":"human"},"prompt":text}});
+            assert_eq!(claude_line(&queued, false), messages);
+        }
+        for flag in ["isMeta", "isCompactSummary", "isSynthetic"] {
+            for mut record in [
+                json!({"type":"user","origin":{"kind":"human"},"message":{"content":"내부 안내"}}),
+                json!({"type":"attachment","attachment":{"type":"queued_command","commandMode":"prompt","origin":{"kind":"human"},"prompt":"내부 안내"}}),
+            ] {
+                record[flag] = json!(true);
+                assert!(claude_line(&record, false).is_empty(), "구조 필드가 글 모양보다 우선한다: {flag}");
+            }
+        }
+        // 비사람 origin은 표지 없는 평문이어도 사람이 쓴 글이 아니다.
+        assert!(
+            claude_line(
+                &json!({"type":"user","origin":{"kind":"task-notification"},"message":{"content":"작업 끝"}}),
+                false
+            )
+            .is_empty()
+        );
+    }
+
+    #[test]
     fn claude_pending_queue() {
         let root = dir("pending");
         let f = root.join("s.jsonl");
@@ -439,6 +495,11 @@ mod tests {
             None => format!(r#"{{"type":"queue-operation","operation":"{op}"}}"#),
         };
         let lines = [
+            // 숨긴 알림도 remove가 같은 원문으로 찾아야 다음 dequeue가 사람 글을 꺼낸다.
+            r#"{"type":"queue-operation","operation":"enqueue","origin":{"kind":"task-notification"},"content":"먼저 끝난 알림"}"#.into(),
+            op("remove", Some("먼저 끝난 알림")),
+            op("enqueue", Some("먼저 꺼낸 글")),
+            op("dequeue", None),
             // 한가할 때 보낸 글: 넣자마자 꺼낸다
             op("enqueue", Some("바로 간 글")),
             op("dequeue", None),
@@ -451,12 +512,18 @@ mod tests {
             op("enqueue", Some("기다리는 글 둘")),
             // dequeue는 맨 앞(알림)을 꺼낸다
             op("dequeue", None),
+            r#"{"type":"queue-operation","operation":"enqueue","origin":{"kind":"human"},"content":"<system-reminder>사람의 예시</system-reminder>"}"#.into(),
+            r#"{"type":"queue-operation","operation":"enqueue","origin":{"kind":"task-notification"},"content":"평문 내부 알림"}"#.into(),
         ];
         std::fs::write(&f, lines.join("\n") + "\n").unwrap();
         let got: Vec<_> = claude_pending(&f).unwrap().into_iter().map(|m| (m.role, m.text, m.pending)).collect();
         assert_eq!(
             got,
-            [(ChatRole::User, "기다리는 글".to_string(), true), (ChatRole::User, "기다리는 글 둘".to_string(), true)]
+            [
+                (ChatRole::User, "기다리는 글".to_string(), true),
+                (ChatRole::User, "기다리는 글 둘".to_string(), true),
+                (ChatRole::User, "<system-reminder>사람의 예시</system-reminder>".to_string(), true)
+            ]
         );
         std::fs::remove_dir_all(&root).unwrap();
     }

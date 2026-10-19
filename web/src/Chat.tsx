@@ -311,6 +311,8 @@ export function ChatPanel({
   const restoring = useRef(restoreFrom !== null);
   const cancelRestore = useRef<(() => void) | null>(null);
   const atBottom = useRef(restoreFrom === null);
+  // 자동 굴림도 실제 위치를 즉시 기억한다. 첫 scroll 사건이 손의 위 이동과 합쳐져도 방향을 놓치지 않는다.
+  const lastScrollTop = useRef(0);
   const [showJump, setShowJump] = useState(restoreFrom !== null);
   // 단추는 늦게 보이고 바로 숨는다(참고 showScrollDebouncer 150ms: 자리를 잡는 동안 깜빡이지 않게)
   const jumpTimer = useRef<number | null>(null);
@@ -419,6 +421,7 @@ export function ChatPanel({
     if (row === undefined) return;
     const top = row.getBoundingClientRect().top - el.getBoundingClientRect().top + el.scrollTop;
     el.scrollTop = top + at.offsetWithinRow;
+    lastScrollTop.current = el.scrollTop;
   };
   // 기억한 자리로(참고 MessagesTimeline 871~955줄): 기록을 처음 그린 뒤 그 줄 위 + 거리로 굴리고, 그림·글꼴로 높이가 바뀌어도
   // 두 frame 동안 같을 때까지 맞춘다. 줄이 없어졌으면 굴림 거리로. 손이 굴리면(휠·끌기·누름·굴림 키) 그 자리에서 그친다
@@ -457,6 +460,7 @@ export function ChatPanel({
       return Math.max(0, Math.min(offset, el.scrollHeight - el.clientHeight));
     };
     el.scrollTop = target();
+    lastScrollTop.current = el.scrollTop;
     if (index < 0) {
       finish();
       return;
@@ -467,6 +471,7 @@ export function ChatPanel({
       if (Math.abs(el.scrollTop - offset) > 1) {
         stableFrames = 0;
         el.scrollTop = offset;
+        lastScrollTop.current = el.scrollTop;
       } else if (++stableFrames >= 2) {
         finish();
         return;
@@ -486,7 +491,10 @@ export function ChatPanel({
     atBottom.current = true;
     hideJump();
     const el = list.current;
-    if (el !== null) el.scrollTo({ top: el.scrollHeight, behavior: animated ? "smooth" : "auto" });
+    if (el !== null) {
+      el.scrollTo({ top: el.scrollHeight, behavior: animated ? "smooth" : "auto" });
+      lastScrollTop.current = el.scrollTop;
+    }
   };
   // 이 화면이 보낸 뒤는 끝으로(사용자 결정 §8.250 「입력 보낸 뒤에는 맨 아래로」). 처음 값은 지난 보내기다
   const sentSeen = useRef(readNow);
@@ -501,7 +509,10 @@ export function ChatPanel({
   useLayoutEffect(() => {
     const el = list.current;
     if (el === null) return;
-    if (atBottom.current) el.scrollTop = el.scrollHeight;
+    if (atBottom.current) {
+      el.scrollTop = el.scrollHeight;
+      lastScrollTop.current = el.scrollTop;
+    }
     else holdAnchor(el);
   }, [chat, pending]);
   // 입력창이 커지거나(여러 줄·보내기 상태·알림) 키보드가 오르거나 창이 좁아지면 보기가 굴림 사건 없이 줄어든다. 폭·글자가 바뀌어
@@ -519,14 +530,16 @@ export function ChatPanel({
         const next = `${entry.contentRect.width}|${style.fontSize}|${style.fontFamily}`;
         if (next !== lane) { lane = next; follow = true; }
       }
-      if (follow && atBottom.current) el.scrollTop = el.scrollHeight;
+      if (follow && atBottom.current) {
+        el.scrollTop = el.scrollHeight;
+        lastScrollTop.current = el.scrollTop;
+      }
       else if (!atBottom.current) holdAnchor(el);
     });
     observer.observe(el);
     if (el.firstElementChild !== null) observer.observe(el.firstElementChild);
     return () => observer.disconnect();
   }, []);
-  const lastScrollTop = useRef(0);
 
   return (
     <OpenFileContext.Provider value={onOpenFile ?? null}>

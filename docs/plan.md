@@ -5398,6 +5398,23 @@ primary 근거:
 - **시험 고리.** `AAA_TEST_USAGE_REFRESH_MS`(시험에서만): 구독 숫자 억지 다시 읽기 간격(30초)을 줄인다.
 - **검증.** host 유닛 `usage_limit::tests`(다 찬 창의 때, 다시 차오른 뒤 없음, 99.9%·때 모름은 아님, 둘 다 차면 늦은 때, 모델 몫, 두 계정은 단정 안 함, 다시 차오름은 풀리는 때가 지났을 때만). 웹 유닛 `stateTone`(한도는 실패 다음, 풀리는 때 뒤 걷힘, 작업 중·확인창이 앞). 웹 E2E 32: harness가 claude인 가짜 profile thread에 가짜 구독 5시간 창 100%면 host 보기의 풀리는 때와 목록 줄 경고 색·남은 때, 숫자가 내려가면 걷힘. 10초 뒤 다시 차오르는 창이면 그 뒤 ticker에 걷히고 inbox 항목 하나(다음 ticker도 하나), 다른 pane을 보는 화면에 「한도 풀림」 droplet 하나. 결함 심기: 웹 한도 판정을 끄면 첫 단계, 한도 풀림 판정을 끄면 둘째 단계가 실패한다.
 
+### 8.268 Claude 내부 user 기록과 사람 발언 구분(10-19, t-0408 후속)
+
+- Claude Code2.1.303의 실제 JSONL은 백그라운드 종료 알림도 `type=user`로 남기되 `origin.kind=task-notification`으로 구별한다. peer 알림, `isMeta`, `isCompactSummary` 기록도 사람 발언이 아니다. 역할만 보고 사용자 말풍선이나 수신 확인으로 쓰지 않는다.
+- t3code `AgentSessionScanner`의 구조 필드 우선 필터와 ClaudeAdapter의 비사람 origin 구분을 따른다. `isSidechain`·`isMeta`·`isCompactSummary`·`isSynthetic`는 제외하고, origin이 있으면 human인 글만 사람으로 읽는다. 별도 시스템 줄은 추가하지 않는다.
+- human origin의 글은 XML 표지로 시작해도 원문과 수신 fingerprint를 보존한다. origin이 없는 옛 기록·대기열만 기존 표지 판별을 마지막 수단으로 쓴다. 붙여넣기 봉투를 걷어 내부 알림인지 추측하지 않는다.
+- user 문자열·text/image 블록·흡수된 queued_command·미흡수 enqueue가 같은 구분을 쓴다. 숨긴 queue 항목도 원문 식별과 자리는 보존해 remove/dequeue 순서를 바꾸지 않는다.
+- parser keeper와 실제 host·agent 웹 E2E에서 내부 알림 숨김, 같은 내용의 내부 알림이 receipt가 되지 않음, 사람이 보낸 동일 모양 글의 표시·잠금 해제를 고정한다.
+
+### 8.269 공유 설정의 전송 중 되돌리기와 빠른 답장(10-19, t-0408 후속·t-0413 실패 조사)
+
+- t-0413의 E2E11 실패는 yes submit이 없고 host 설정이 autoSendQueued=false·showQuickReplies=true로 남았다. 최초 응답 순서는 남지 않아 그 실행의 원인을 단정하지 않는다.
+- 별도 실제 host·agent 브라우저 E2E에서 끔 요청의 응답만 붙잡고 다시 켠 뒤 해제하면 같은 증상을 결정적으로 재현한다. 이전 기준값과 같아진 새 편집을 '변경 없음'으로 보아 늦은 끔 응답으로 덮던 제품 경쟁이다.
+- takePreferences는 전송 중인 설정·고정의 값과 현재 값을 비교해 그 이후 편집을 지킨다. 전송 중이 아니면 기존 baseline 비교, 이미 보낸 값과 같으면 다른 기기의 나중 쓰기를 받는 계약은 유지한다. 켬→끔 전송→켬도 늦은 응답 뒤 true를 다시 공유하며 빠른 답장이 실제 전송된다.
+- E2E11은 실제 HTTP 응답 gate와 다음 preferences_set 사건으로 순서를 고정한다. 요청 routing을 위해 이 단계만 service worker 없는 별도 기기를 쓴다. timeout·sleep·재시도를 늘리지 않으며 빠른 답장이 프로그램에 가야 한다는 기대는 유지한다.
+
+- HTTP 답만 유실되고 host 사건을 보관한 경우도 같은 전송 값으로 이후 편집을 판정한 뒤 inFlight를 비운다. E2E14는 실제 host 적용·events 수신 뒤 HTTP 응답만 abort해 이 경로를 고정한다.
+
 ### 8.270 대기 메시지 「지금 보내기」(10-19, t-0417)
 
 - **무엇.** 작업 중에 보내 harness 대기열에 이미 있는 글(대기 말, §8.247)을 기다리지 않고 지금 읽게 한다. 대기 묶음의 맨 끝 말에 단추 하나(「지금 보내기」, 둘 이상이면 「N개 지금 보내기」, ArrowUp)를 둔다. 참고 herdr-web-ui `PendingMessages.tsx`의 문구·모양이다. 취소 단추는 없다(사용자 결정 10-19 20:5x: 추천안 1~5).
