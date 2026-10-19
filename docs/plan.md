@@ -5669,3 +5669,35 @@ primary 근거:
 - **참고.** herdr 0.9.5 `pane/terminal.rs:1423`·`pane.rs:2614`·`server/headless/notifications.rs:334`·`client/clipboard_forwarding.rs:9`·`selection.rs:363`의 live 효과→foreground client→native 쓰기 흐름을 따른다. herdr-projects popup의 경로 복사와 web-ui 붙여넣기는 이 경계의 owner가 아니다. t3code `surface.ts::shouldReportTerminalMouse`·선택 trim 규칙도 대조했다.
 - **Windows Terminal Shift 제약.** [Microsoft Selection 문서](https://learn.microsoft.com/en-us/windows/terminal/selection)의 Shift+끌기는 VT 입력 대신 바깥 터미널 자체 화면 선택이다. sidebar·pane 경계가 그 바깥 화면에 포함되며 aaa/herdr가 좌표를 받지 못한다. aaa에 도달한 선택의 pane 제한과 이 바깥 선택을 구분한다. 시스템·터미널 프로필 변경이나 clipboard 사후 가공으로 우회하지 않는다. 사용자 승인(10-19)에 따라 일반 끌기의 OSC 52→로컬 native와 앱 선택 뒤 Ctrl+C의 pane 본문 복사를 Windows 기준 동작으로 한다. Shift+끌기는 플랫폼 제약으로 남긴다.
 - **회귀.** `pane_osc52_reaches_front_clipboard`는 실제 pane 출력→host→TUI→기존 파일 sink와 재접속 무복사를 본다(수정 전 빈 clipboard RED, 다른 front로 broadcast하는 변형도 전송 큐의 Pong 울타리 owner 시험에서 RED). `reported_selection_copy_never_interrupts_pane`는 raw 관측기에서 mouse 앱의 일반 선택·OSC 유무·pane 밖 끌기·Ctrl+C 누수·선택 없는 Ctrl+C를 본다(수정 전 keys=0321 RED). 기존 local/Shift 선택·복사 실패·반복/Release 보호 시험을 유지한다. 새 VT 유닛 시험은 chunk 분할·BEL/ST·질의/형식 거부·한도를 본다.
+
+### 8.242 TUI 확장 Enter와 Windows Terminal 그림 붙여넣기(10-19, t-0385)
+
+- **원인.** TUI는 모든 Enter를 CR로 만들어 수정키를 버렸고, Unix 바깥 터미널에 확장 키도 요청하지 않았다.
+  crossterm 0.29는 kitty CSI u는 읽지만 xterm modifyOtherKeys의 `CSI 27;modifier;Unicode~`는 버렸다.
+  Windows에서는 bracketed paste를 일부러 끄고 있었다. Windows Terminal은 Ctrl+V를 자신의 paste로 처리하고,
+  그림-only clipboard의 빈 입력은 bracketed paste를 요청한 앱에만 알린다. 과거 입력 로그는 bytes 개수만 있어
+  특정 운영 키를 소급 확정할 수 없으며, 수정 전 PTY 재현에서는 modifyOtherKeys 두 키가 도착하지 않았다.
+- **참고.** herdr 0.9.5 `client/terminal_setup.rs`의 확장 키 요청·종료 복원과
+  `input/model.rs::ime_compatible_keyboard_enhancement_flags`를 따른다. 모든 글자를 escape로 바꾸는 flag는 켜지 않는다.
+  Windows 입력은 `client/input/windows_vti.rs`의 콘솔 key record→붙여넣기 복원을 따른다.
+  t3code는 웹 composer이므로 OS 터미널 입력 파서에 해당하는 경로는 없다.
+  그림-only paste 근거는 Microsoft Terminal `TerminalPage::_PasteFromClipboardHandler`다.
+- **수리.** crossterm 0.29를 MIT 고지와 함께 vendor에 두고 위 두 입력 파서를 보완했다(변경 목록은
+  `vendor/crossterm/AAA.md`). Windows 콘솔은 key-down/up·UTF-16·분할 표지·빈 paste를 복원하며,
+  표지가 아닌 Escape는 원래 키로 돌려준다. Escape 구분 시한은 입력 프로토콜용이며 시험은 주어진 시계로 검사한다.
+  Windows도 bracketed paste를 켜므로 Ctrl+V 그림은 기존 PNG 첨부 경로로 간다. 사용자 Terminal 설정은 바꾸지 않는다.
+  Unix는 kitty와 modifyOtherKeys를 요청하고 끝날 때 복원한다. Shift+Enter와 구 host fallback은
+  Claude의 공식 `chat:newline`과 Codex 0.163 `keymap.rs::editor.insert_newline`이 공통 지원하는 Ctrl+J(LF)다.
+- **사용자 추가 결정.** Ctrl+Enter의 최종 동작은 「agent 입력줄에 글이 있거나 알 수 없으면 줄바꿈, 비었으면 steering」이다.
+  화면 판정·harness steering 키는 웹 작업의 공통 backend owner가 맡는다. 이 절의 입력 파서가 키를 보존한 뒤 TUI는
+  `PaneCtrlEnter` 요청을 사용하며, TUI 안에 별도 입력줄 판정이나 harness 키 표를 만들지 않는다.
+  Front API 1.43부터 요청하며 1.42 host에는 LF를 보낸다. 반복 키는 steering을 재실행하지 않고 reader는 전송하지 않는다.
+  공통 owner t-0384의 판정·키 선택 위치는 §8.239다. 공통 agent 줄바꿈은 Alt+Enter(ESC CR)다.
+- **검증.** 수정 전 Windows 키 인코더와 실제 PTY 경계가 실패했다. 수정 후 kitty/xterm Ctrl+Enter의 공통 요청·안전한 Alt+Enter와 Shift+Enter의 LF 및 보통 Enter의 CR,
+  확장 키 모드 복원, 기존 Ctrl+V·빈 paste의 실제 PNG 저장을 검사했다. 빈 paste를 버리는 변형도 실패했다.
+  Windows Rust target의 TUI·vendored parser 시험 교차 컴파일을 통과했다. Windows 실행은 CI 결과로 별도 확인한다.
+  새 시험은 신호·실제 clipboard·고정 sleep을 쓰지 않는다.
+
+- **종료 순서 검토.** 독립 리뷰에서 kitty 스택이 화면별이라는 점을 확인했다. 정상 종료는 alternate screen을 떠나기 전에 pop하고, panic hook도 ratatui의 화면 복원보다 먼저 한 번만 pop한다. 화면별 스택 E2E와 격리한 자식 프로세스의 panic hook 순서 시험이 수정 전 실패·수정 후 통과했다.
+
+- **기존 TUI 카드 시험의 불필요 입력(t-0385).** 최신 통합의 카드 시험 끝에서 TUI `x`+Enter와 CLI `go`가 서로 다른 연결로 겹쳐 `x` → `go\n` → Enter 순으로 도착했다. 줄 단위 fixture가 `xgo`를 받아 작업 상태가 되지 않았다. 카드 없는 `prefix o` 뒤 focus/lease 보존은 이미 화면과 host 사건으로 확인하므로 검증하지도 않던 `type_line("x")` 한 줄을 제거했다. 실제 카드·focus·알림 단언·시한·제품 코드는 유지한다. 실패 로그와 두 연결의 순서를 보고에 보존한다.
