@@ -5741,3 +5741,9 @@ primary 근거:
 
 - **회귀 검증.** 드러낼 때 접힘을 푸는 변형은 사이드바 keeper의 접힘 보존 단언에서, 보고서 단추마다 스크롤을 0으로
   만드는 변형은 PTY keeper의 보고서 왕복 단언에서 실패했다. 두 변형은 저장 바이트로 복원하고 GREEN을 확인한다.
+
+- **웹 정렬 대조 수리.** 첫 통합본 전체 gate(216초) 뒤 source 대조에서 활동순의 상태별 우선순위 차이를 발견했다.
+  웹 `sidebarModel.ts::activityOrder`대로 질문 우선·최근 `since_ms`·동률은 받은 차례로 맞추고 고정이 앞서는 것을 유지한다.
+  웹 `App.tsx::agentOf`·`herdr/AgentMark.tsx`의 알려진 명령도 hook/thread 없이 인식하며 대소문자는 구분하지 않는다.
+  기존 사이드바 keeper에서 옛 정렬과 알려진 명령 누락 RED를 확인한 뒤 고쳤다. 기준 3503e963의 Ctrl+Enter·Windows paste·
+  pane 복사는 보존하며 최종 소스로 전체 gate를 다시 검증한다.

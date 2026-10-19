@@ -4439,6 +4439,55 @@ mod tests {
         assert_eq!(app.panel, Panel::Projects);
         assert!(app.collapsed());
         assert_eq!(app.shell(r(0, 0, 90, 30)).panes, before);
+        // 웹 activityOrder: 질문이 먼저, 그다음 최근 변화, 동률이면 받은 차례다. DONE 아래로 작업 줄이 밀리지 않는다.
+        app.choose_panel(Panel::Agents);
+        for (id, activity, since, seen) in [
+            ("done", "idle", 90, false),
+            ("work", "working", 100, true),
+            ("question", "question", 5, true),
+            ("tie", "idle", 100, true),
+        ] {
+            let mut pane = pane_view(id, "m", id);
+            pane.agent = Some(Box::new(
+                serde_json::from_value(serde_json::json!({
+                    "activity": activity, "since_ms": since, "harness": "fixture", "seen": seen
+                }))
+                .unwrap(),
+            ));
+            app.panes.insert(id.into(), pane);
+            app.pane_order.push(id.into());
+        }
+        let mut prefs = aaa_proto::SharedPreferences {
+            revision: 1,
+            settings: [("agentOrder".into(), "activity".into())].into(),
+            pins: Some(vec![]),
+        };
+        app.apply_chrome(&prefs);
+        let order = |app: &App| {
+            app.list_rows()
+                .into_iter()
+                .filter_map(|r| match r {
+                    list::Row::Pane(id) => Some(id),
+                    _ => None,
+                })
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(order(&app), ["question", "work", "tie", "done"]);
+        prefs.pins = Some(vec!["m:done".into()]);
+        app.apply_chrome(&prefs);
+        assert_eq!(order(&app), ["done", "question", "work", "tie"]);
+        prefs.settings.insert("agentOrder".into(), "workspace".into());
+        prefs.pins = Some(vec![]);
+        app.apply_chrome(&prefs);
+        assert_eq!(order(&app), ["done", "work", "question", "tie"]);
+        // 웹 agentOf의 알려진 명령은 hook·thread가 없어도 agent다. 이름의 대소문자를 구분하지 않는다.
+        let mut known = pane_view("known", "m", "known");
+        known.argv = vec!["/bin/CURSOR".into()];
+        app.panes.insert("known".into(), known);
+        app.pane_order.push("known".into());
+        assert_eq!(order(&app), ["done", "work", "question", "tie", "known"]);
+        app.panes.get_mut("known").unwrap().role = Some(aaa_proto::Role::Evaluator);
+        assert_eq!(order(&app), ["done", "work", "question", "tie"]);
     }
 
     /// 새 탭·workspace를 여는 머신(herdr 활성 endpoint, 차이 목록 U8): 포커스 pane의 머신이고 고르면 그 머신(포커스가 그대로인

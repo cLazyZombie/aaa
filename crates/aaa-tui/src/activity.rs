@@ -143,7 +143,13 @@ impl App {
                         .filter(|p| p.machine_id == m.id && self.agent_in_panel(p))
                         .collect();
                     if self.agent_by_activity {
-                        group.sort_by_key(|p| std::cmp::Reverse(list::urgency(list::pane_dot(p))));
+                        // 웹 sidebarModel::activityOrder: 질문 우선, 최근 상태 변화, 같으면 받은 차례.
+                        group.sort_by_key(|p| {
+                            (
+                                !p.agent.as_ref().is_some_and(|a| a.activity == aaa_proto::AgentActivity::Question),
+                                std::cmp::Reverse(p.agent.as_ref().map(|a| a.since_ms)),
+                            )
+                        });
                     }
                     agents.extend(group);
                 }
@@ -166,7 +172,35 @@ impl App {
             && p.role != Some(aaa_proto::Role::Evaluator)
             && (p.agent.is_some()
                 || self.threads.values().any(|t| t.pane.as_deref() == Some(&p.id))
-                || p.argv.first().is_some_and(|s| s.contains("claude") || s.contains("codex")))
+                || p.argv.first().is_some_and(|s| {
+                    // 웹 App::agentOf와 같은 알려진 명령. hook이 있거나 thread이면 위의 정본이 우선이다.
+                    let name = s.rsplit('/').next().unwrap_or(s).to_ascii_lowercase();
+                    name.contains("claude")
+                        || name.contains("codex")
+                        || matches!(
+                            name.as_str(),
+                            "omp"
+                                | "cursor"
+                                | "opencode"
+                                | "gjc"
+                                | "omo"
+                                | "agy"
+                                | "amp"
+                                | "cline"
+                                | "copilot"
+                                | "devin"
+                                | "gemini"
+                                | "grok"
+                                | "hermes"
+                                | "kilo"
+                                | "kimi"
+                                | "kiro"
+                                | "muse"
+                                | "pi"
+                                | "qodercli"
+                                | "qwen"
+                        )
+                }))
     }
     /// 알림·단축키가 연 pane은 드러내되 접힘을 풀거나 PTY 크기를 바꾸지 않는다.
     pub(crate) fn reveal_panel(&mut self, pane: &str) {

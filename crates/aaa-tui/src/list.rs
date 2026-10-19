@@ -288,7 +288,7 @@ pub fn thread_dot(t: &ThreadView) -> Dot {
 }
 
 /// 점이 얼마나 급한가(herdr-web-ui `rollupStatus`: blocked > done > working > idle)
-pub(crate) fn urgency(d: Dot) -> u8 {
+fn urgency(d: Dot) -> u8 {
     match d {
         Dot::Blocked => 4,
         Dot::Done => 3,
