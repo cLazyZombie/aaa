@@ -355,6 +355,7 @@ impl vte::Perform for Screen {
 struct Tui {
     /// 화면과, bytes가 들어와 화면이 바뀔 때마다 깨우는 Condvar
     screen: Arc<(Mutex<Screen>, Condvar)>,
+    recording: Option<Arc<Mutex<Vec<u8>>>>,
     writer: Box<dyn Write + Send>,
     child: Box<dyn portable_pty::Child + Send + Sync>,
     _master: Box<dyn portable_pty::MasterPty + Send>,
@@ -398,6 +399,8 @@ impl Tui {
         let writer = pair.master.take_writer().unwrap();
         let screen = Arc::new((Mutex::new(Screen::new(cols)), Condvar::new()));
         let s = screen.clone();
+        let recording = std::env::var_os("AAA_TUI_THEME_SHOTS").map(|_| Arc::new(Mutex::new(Vec::new())));
+        let capture = recording.clone();
         std::thread::spawn(move || {
             let mut parser = vte::Parser::new();
             let mut buf = [0u8; 8192];
@@ -405,11 +408,15 @@ impl Tui {
                 if n == 0 {
                     break;
                 }
-                parser.advance(&mut *s.0.lock().unwrap(), &buf[..n]);
+                let mut screen = s.0.lock().unwrap();
+                if let Some(raw) = &capture {
+                    raw.lock().unwrap().extend_from_slice(&buf[..n]);
+                }
+                parser.advance(&mut *screen, &buf[..n]);
                 s.1.notify_all();
             }
         });
-        Tui { screen, writer, child, _master: pair.master }
+        Tui { screen, recording, writer, child, _master: pair.master }
     }
 
     fn text(&self) -> String {
@@ -2808,6 +2815,42 @@ fn settings_like_herdr() {
     tui.wait_text("메뉴에서 설정 창", |s| s.contains(" ↑↓ 고르기") && !s.contains("설정 다시 읽기"));
     tui.send(b"\x1b");
     tui.wait_text("닫힘", |s| !s.contains(" ↑↓ 고르기"));
+
+    // GitHub: 설정 목록을 끝까지 내려 선택·저장한다. 기본 pane 바탕도 외부 터미널 색에 기대지 않는다.
+    for (name, rgb) in [("github-light", 0xffffff), ("github-dark", 0x0d1117), ("github-dark-dimmed", 0x22272e)] {
+        tui.cmd("s");
+        tui.wait_text("설정 창", |s| s.contains(" ↑↓ 고르기"));
+        // 끝에서 위로 세 GitHub 항목을 고른다(↑↓는 끝에서 멈추는 기존 설정 계약).
+        tui.send("j".repeat(32).as_bytes());
+        tui.wait_text("목록 끝", |s| s.contains("▸ github-dark-dimmed"));
+        let up = match name {
+            "github-light" => 2,
+            "github-dark" => 1,
+            _ => 0,
+        };
+        tui.send("k".repeat(up).as_bytes());
+        tui.wait_text("GitHub 미리 보기", |s| {
+            s.lines().any(|l| l.split("▸ ").nth(1).and_then(|v| v.split_whitespace().next()) == Some(name))
+        });
+        if let (Some(dir), Some(raw)) = (std::env::var_os("AAA_TUI_THEME_SHOTS"), &tui.recording) {
+            std::fs::create_dir_all(&dir).unwrap();
+            std::fs::write(std::path::Path::new(&dir).join(format!("{name}-settings.ansi")), &*raw.lock().unwrap())
+                .unwrap();
+        }
+        tui.send(b"\r");
+        tui.wait_screen("GitHub 적용", |s| !s.text().contains(" ↑↓ 고르기") && tab_bg(s) == 0x0200_0000 | rgb);
+        assert!(host_toml().contains(&format!("theme = \"{name}\"")), "{}", host_toml());
+        tui.wait_screen("pane 기본 바탕", |s| s.bgs[4][COLS as usize - 4] == 0x0200_0000 | rgb);
+        if let (Some(dir), Some(raw)) = (std::env::var_os("AAA_TUI_THEME_SHOTS"), &tui.recording) {
+            std::fs::write(std::path::Path::new(&dir).join(format!("{name}.ansi")), &*raw.lock().unwrap()).unwrap();
+        }
+    }
+    // 뒤의 덮어쓰기 시험은 원래 terminal에서 시작한다.
+    tui.cmd("s");
+    tui.wait_text("설정 창", |s| s.contains(" ↑↓ 고르기"));
+    tui.send("k".repeat(32).as_bytes());
+    tui.send(b"jj\r");
+    tui.wait_screen("terminal 복구", |s| !s.text().contains(" ↑↓ 고르기") && tab_bg(s) == 0);
 
     // 5) host.local.toml이 theme를 덮으면 써도 바뀌지 않았다고 알린다
     std::fs::write(h.cfg.join("host.local.toml"), "schema = 1\n[tui]\ntheme = \"nord\"\n").unwrap();

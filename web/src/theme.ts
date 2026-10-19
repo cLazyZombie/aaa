@@ -11,7 +11,7 @@ import { fontScale, sanitizeUiFontSize } from "./herdr/typography.ts";
 export type ThemeSetting = "dark" | "light" | "system";
 export type ResolvedTheme = "dark" | "light";
 /** amber: herdr 모양(기본), charcoal: 무채색 Ghostty식 어두움, catppuccin: 어두우면 Mocha, 밝으면 Latte */
-export type Palette = "amber" | "charcoal" | "catppuccin";
+export type Palette = "amber" | "charcoal" | "catppuccin" | "github-light" | "github-dark" | "github-dark-dimmed";
 /** 한 줄은 이름, 두 줄은 하는 일과 그 아래 이름(참고 `SidebarRows`) */
 export type SidebarRows = "one" | "two";
 /** Agents 목록 차례: 머신 목록 차례, 또는 기다리는 agent 먼저 그다음 최근 바뀐 것(참고 `AgentOrder`) */
@@ -39,7 +39,7 @@ export interface Appearance {
 export const CHAT_FONT_MIN = 11;
 export const CHAT_FONT_MAX = 24;
 
-export const PALETTES: readonly Palette[] = ["amber", "charcoal", "catppuccin"];
+export const PALETTES: readonly Palette[] = ["amber", "charcoal", "catppuccin", "github-light", "github-dark", "github-dark-dimmed"];
 const DEFAULT: Appearance = { theme: "dark", palette: "amber", paletteLight: "amber", paletteDark: "amber", statusIndicators: "classic", sidebarRows: "two", agentOrder: "workspace", density: "comfortable", uiFontSize: null, chatFontSize: null };
 const KEY = "aaa:appearance";
 /** 전에 쓰던 열쇠(밝음·어두움만 남았다). 처음 한 번 옮긴다 */
@@ -104,8 +104,10 @@ export function resolveTheme(setting: ThemeSetting): ResolvedTheme {
 
 /** 그릴 팔레트: 시스템이면 밝음·어두움 짝 가운데 하나(참고 paletteFor) */
 export function paletteFor(a: Pick<Appearance, "theme" | "palette" | "paletteLight" | "paletteDark">, resolved: ResolvedTheme): Palette {
-  if (a.theme !== "system") return a.palette;
-  return resolved === "dark" ? a.paletteDark : a.paletteLight;
+  const chosen = a.theme === "system" ? (resolved === "dark" ? a.paletteDark : a.paletteLight) : a.palette;
+  // GitHub는 이름이 밝기를 포함한다. 밝기 전환·OS 변경 때 같은 계열의 짝을 그린다.
+  if (chosen.startsWith("github-")) return resolved === "light" ? "github-light" : chosen === "github-dark-dimmed" ? chosen : "github-dark";
+  return chosen;
 }
 
 /** PWA 제목 막대 색은 판 바탕을 따른다(참고 settings.ts THEME_COLOR) */
@@ -113,6 +115,9 @@ const THEME_COLOR: Record<Palette, Record<ResolvedTheme, string>> = {
   amber: { dark: "#181613", light: "#faf8f3" },
   charcoal: { dark: "#171717", light: "#fafaf9" },
   catppuccin: { dark: "#181825", light: "#e6e9ef" },
+  "github-light": { dark: "#0d1117", light: "#ffffff" },
+  "github-dark": { dark: "#0d1117", light: "#ffffff" },
+  "github-dark-dimmed": { dark: "#22272e", light: "#ffffff" },
 };
 
 const subs = new Set<() => void>();

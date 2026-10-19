@@ -5455,3 +5455,12 @@ primary 근거:
 - **크기.** 기존 2400바이트 본문 제한만으로는 긴 제목과 JSON escape를 합친 암호문이 4096바이트를 넘었다. 제목을 120자로 줄이고 제목·URL·tag·JSON escape·암호화 머리 103바이트를 합산해 남은 본문 예산 안에서 보낸다.
 - **참고와 차이.** herdr-projects 0.2.35 `src/notify.rs::Notifier::send`의 「프로젝트 · thread」 제목과 herdr-web-ui `server/push.ts::statusMessage`·`endedMessage`, `src/lib/notifications.ts::show`의 title/body 분리를 유지한다. herdr `src/cli/notification.rs::notification_show`와 t3code `ThreadNotificationCoordinator.tsx`도 보고 첫 줄 요약은 제공하지 않아 사용자 지시로 확장했다. 플랫폼 근거는 [WebKit의 iOS Web Push 소개](https://webkit.org/blog/13878/)와 [Notifications API](https://notifications.spec.whatwg.org/), [WebKit MiniBrowser 출처 subtitle 구현](https://github.com/WebKit/WebKit/blob/main/Tools/MiniBrowser/mac/AppDelegate.m)이다. 브라우저 소유 subtitle을 앱에서 흉내 내거나 manifest 이름을 바꾸지 않는다.
 - **검증.** 기존 실제 사본·DB·queue 시험에 네 표지의 push/webhook 요약 단언을 더해 수정 전 「보고 준비」 실패를 확인했다. 비공개 값 필터를 제거한 변형도 실패하며, 긴 제목/escape의 실제 암호문 크기는 수정 전 실패·수정 후 통과했다. 기존 m13 webhook과 웹 E2E 12의 실제 복호화 기대를 새 보고 요약으로 갱신했다. 고정 sleep·새 production 시험 seam은 추가하지 않았다. 실기 OS 알림 창은 headless가 재현하지 못하므로 배포 뒤 확인한다.
+
+
+### 8.227 GitHub Light·Dark·Dark Dimmed 테마(10-19, t-0388)
+
+- 웹 색상과 TUI 설정에 같은 세 이름을 추가했다. 기본값·설정/공유 protocol은 그대로다.
+- 색 값은 GitHub 공식 Primer 7.10.0이다. 역할·참고 소스·가독성 보정은 [GitHub 테마](github-themes.md)에 적었다.
+- TUI는 pane 기본색·ANSI 16색·빈 바탕까지 테마를 적용하고, 명시 RGB·확장 256색은 유지한다.
+- 웹의 빌드된 단축 hex(`#fff`)도 터미널 기본색 전달 protocol에서 6자리로 보낸다.
+- 기존 웹 공유 설정·TUI 설정 E2E를 넓혔다. 화면은 별도 실험실에서 headless로 캡처하며 운영 설정·프로세스는 바꾸지 않는다.
