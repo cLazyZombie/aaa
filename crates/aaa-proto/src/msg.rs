@@ -540,6 +540,15 @@ pub enum LinkMsg {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "op", rename_all = "snake_case")]
 pub enum AgentRequest {
+    /// deployment.v1: host가 coordinator 출처와 safety를 확인한 요청만 보낸다.
+    DeployStart {
+        id: String,
+        project: String,
+        action: crate::DeployAction,
+    },
+    DeployStatus {
+        id: String,
+    },
     /// post.v1을 양쪽이 알렸을 때만 보낸다.
     PostAck {
         post_id: String,
@@ -794,6 +803,9 @@ pub struct PrAnswer {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum AgentResponse {
+    Deployment {
+        job: crate::DeployJob,
+    },
     MissionInbox {
         pending: u32,
         names: Vec<String>,
@@ -871,6 +883,9 @@ pub struct CommandRan {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "ev", rename_all = "snake_case")]
 pub enum AgentEvent {
+    DeploymentChanged {
+        job: crate::DeployJob,
+    },
     /// post.v1: hook 판정에서 거부한 글의 메타데이터(본문·token 없음).
     PostRejected {
         session: String,
@@ -1427,6 +1442,16 @@ pub struct HostStatus {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(tag = "op", rename_all = "snake_case")]
 pub enum FrontRequest {
+    DeployContext,
+    DeployStart {
+        machine: Option<String>,
+        id: String,
+        action: crate::DeployAction,
+    },
+    DeployStatus {
+        machine: Option<String>,
+        id: String,
+    },
     Post {
         project: String,
         input: crate::PostInput,
@@ -2107,6 +2132,8 @@ impl FrontRequest {
         !matches!(
             self,
             FrontRequest::Status
+                | FrontRequest::DeployContext
+                | FrontRequest::DeployStatus { .. }
                 | FrontRequest::PostStatus { .. }
                 | FrontRequest::Machines
                 | FrontRequest::Panes { .. }
@@ -2179,6 +2206,15 @@ impl FrontRequest {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum FrontResponse {
+    DeployContext {
+        project: Option<String>,
+        session: bool,
+        allowed: bool,
+    },
+    Deployment {
+        machine: String,
+        job: crate::DeployJob,
+    },
     Missions {
         missions: Vec<crate::MissionView>,
     },

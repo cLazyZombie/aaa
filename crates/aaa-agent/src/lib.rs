@@ -9,6 +9,7 @@ mod attach;
 mod chat;
 mod command;
 mod cwd;
+pub mod deploy;
 pub mod detect;
 mod files;
 mod health;
@@ -144,6 +145,7 @@ pub struct Agent {
     pub dev_mode: bool,
     pub default_cwd: Option<String>,
     exe: PathBuf,
+    deployments: deploy::Manager,
     sessions: Mutex<HashMap<String, Entry>>,
     host: Mutex<Option<FrameTx>>,
     pub selfcheck: Mutex<Option<serde_json::Value>>,
@@ -198,7 +200,9 @@ impl Agent {
         util::ensure_private_dir(&state)?;
         util::ensure_private_dir(&state.join("sessions"))?;
         util::ensure_private_dir(&state.join("run"))?;
+        let deployments = deploy::Manager::new(&state, &std::env::current_exe()?)?;
         Ok(Arc::new(Agent {
+            deployments,
             state,
             machine_id,
             name,
@@ -1162,6 +1166,12 @@ impl Agent {
     /// host 요청 하나. 세션 요청은 pump로 넘기고(응답은 pump가 보낸다), 나머지는 여기서 답한다.
     pub async fn handle(self: Arc<Self>, id: String, body: AgentRequest) {
         let direct: Result<AgentResponse, ErrorBody> = match body {
+            AgentRequest::DeployStart { id: job, project, action } => {
+                return self.deploy_start(id, job, project, action).await;
+            }
+            AgentRequest::DeployStatus { id } => {
+                self.deployments.status(&id).map(|job| AgentResponse::Deployment { job })
+            }
             AgentRequest::PostAck { post_id, result } => {
                 self.post_ack(&post_id, result);
                 return;

@@ -1,5 +1,7 @@
 //! aaa의 경계 계약. Rust 타입이 정본이고 웹 TypeScript 타입은 여기서 생성한다(`web/src/gen/proto.ts`).
 
+pub mod deploy;
+pub use deploy::*;
 pub mod frame;
 pub mod layout;
 pub mod mission;
@@ -114,6 +116,10 @@ pub fn typescript_bindings() -> String {
         ProjectOpened::decl(&cfg),
         ThreadStatus::decl(&cfg),
         BriefState::decl(&cfg),
+        DeployAction::decl(&cfg),
+        DeployService::decl(&cfg),
+        DeployState::decl(&cfg),
+        DeployJob::decl(&cfg),
         ThreadGroup::decl(&cfg),
         ReportAttention::decl(&cfg),
         ThreadView::decl(&cfg),

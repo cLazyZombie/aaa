@@ -13,6 +13,7 @@ mod chatwatch;
 mod colors;
 mod coord;
 pub mod db;
+mod deploy;
 mod evaluator;
 mod files;
 pub mod front;
@@ -378,6 +379,7 @@ pub struct Host {
     pub config_dir: std::sync::OnceLock<PathBuf>,
     /// 새 흐름 사건(연결된 front에 알린다). 보내는 차례는 seq 차례다(`flow_order`)
     pub(crate) post_gate: std::sync::Mutex<()>,
+    deployment_gate: std::sync::Mutex<()>,
     mission_locks: Mutex<HashMap<String, Arc<tokio::sync::Mutex<()>>>>,
     mission_start_lock: tokio::sync::Mutex<()>,
     pub flow_events: broadcast::Sender<aaa_proto::FlowEvent>,
@@ -583,6 +585,7 @@ impl Host {
             collect_lock: tokio::sync::Mutex::new(()),
             question_events: broadcast::channel(256).0,
             post_gate: std::sync::Mutex::new(()),
+            deployment_gate: std::sync::Mutex::new(()),
             mission_locks: Mutex::new(HashMap::new()),
             mission_start_lock: tokio::sync::Mutex::new(()),
             notice_events: broadcast::channel(64).0,
@@ -1106,6 +1109,11 @@ impl Host {
             ));
         }
         match req {
+            FrontRequest::DeployContext => Ok(self.deployment_context(actor)),
+            FrontRequest::DeployStart { machine, id, action } => {
+                self.deployment_start(actor, machine, id, action).await
+            }
+            FrontRequest::DeployStatus { machine, id } => self.deployment_status(actor, machine, id).await,
             FrontRequest::Post { project, input } => {
                 self.front_post(&project, input, actor).map(|result| FrontResponse::Post { result })
             }

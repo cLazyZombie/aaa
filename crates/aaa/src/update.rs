@@ -40,7 +40,9 @@ struct Place {
 
 impl Place {
     fn here() -> Result<Place> {
-        let exe = std::env::current_exe().context("지금 실행 파일을 찾지 못했다")?;
+        Self::at(std::env::current_exe().context("지금 실행 파일을 찾지 못했다")?)
+    }
+    fn at(exe: PathBuf) -> Result<Place> {
         if std::fs::symlink_metadata(&exe).map(|m| m.file_type().is_symlink()).unwrap_or(false) {
             bail!(
                 "{}는 링크다: 링크가 가리키는 파일을 바꾸지 않는다. 실행 파일을 고정 경로에 파일로 두고(install-runbook 1번) 그 경로로 친다",
@@ -284,9 +286,10 @@ struct Swap<'a> {
 }
 
 /// 바꾸기와 되돌리기가 함께 쓰는 끝 단계: 보이고, 묻고, 바꾸고, 보관을 줄인다
-fn finish(json: bool, place: &Place, swap: Swap, dry_run: bool, keep: u32) -> Result<ExitCode> {
+fn finish(json: bool, place: &Place, swap: Swap, dry_run: bool, keep: u32, approval: Approval) -> Result<ExitCode> {
     let Swap { what, staged, new_version, from } = swap;
-    let current = env!("CARGO_PKG_VERSION");
+    let current =
+        if approval == Approval::Coordinator { self_check(&place.exe)? } else { env!("CARGO_PKG_VERSION").to_string() };
     let (cur_sha, new_sha) = (sha256(&place.exe)?, sha256(staged.path())?);
     if cur_sha == new_sha {
         if json {
@@ -320,10 +323,11 @@ fn finish(json: bool, place: &Place, swap: Swap, dry_run: bool, keep: u32) -> Re
         return Ok(ExitCode::SUCCESS);
     }
     println!("{plan}");
-    if crate::person::ask(&format!("{what}. 계속하려면 yes를 입력: "))? != "yes" {
+    if approval == Approval::Person && crate::person::ask(&format!("{what}. 계속하려면 yes를 입력: "))? != "yes"
+    {
         bail!("그만뒀다(바꾸지 않았다)");
     }
-    let kept = staged.install(place, current)?;
+    let kept = staged.install(place, &current)?;
     let pruned = prune(place, keep);
     if json {
         println!(
@@ -342,41 +346,57 @@ fn finish(json: bool, place: &Place, swap: Swap, dry_run: bool, keep: u32) -> Re
 }
 
 /// `aaa update [--version <판> | --from <파일>] [--dry-run]`
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Approval {
+    Person,
+    Coordinator,
+}
+
 pub fn update(json: bool, from: Option<PathBuf>, version: Option<String>, dry_run: bool) -> Result<ExitCode> {
+    update_approved(json, from, version, dry_run, Approval::Person, None)
+}
+pub(crate) fn update_approved(
+    json: bool,
+    from: Option<PathBuf>,
+    version: Option<String>,
+    dry_run: bool,
+    approval: Approval,
+    target: Option<PathBuf>,
+) -> Result<ExitCode> {
+    if from.is_some() && version.is_some() {
+        bail!("--from과 --version은 함께 쓰지 않는다");
+    }
     let requested = release::requested_version(version.as_deref())?;
-    if !dry_run {
+    if !dry_run && approval == Approval::Person {
         crate::person::require("실행 파일 바꾸기")?;
     }
-    let place = Place::here()?;
+    let place = match target {
+        Some(exe) => Place::at(exe)?,
+        None => Place::here()?,
+    };
     if let Some(from) = &from
         && !from.is_file()
     {
         bail!("{}가 파일이 아니다", from.display());
     }
+    let current_version =
+        if approval == Approval::Coordinator { self_check(&place.exe)? } else { env!("CARGO_PKG_VERSION").to_string() };
     let (pins, keep) = settings()?;
     let (staged, from, expected) = if let Some(from) = from {
         (Staged::copy_from(&from, &place)?, from, None)
     } else {
         let manifest = release::fetch_manifest(&release::manifest_url(requested.as_deref()))?;
-        let Some(asset) = manifest.select(
-            std::env::consts::OS,
-            std::env::consts::ARCH,
-            env!("CARGO_PKG_VERSION"),
-            requested.as_deref(),
-        )?
+        let Some(asset) =
+            manifest.select(std::env::consts::OS, std::env::consts::ARCH, &current_version, requested.as_deref())?
         else {
             if json {
                 println!(
                     "{}",
                     serde_json::json!({"exe": place.exe, "changed": false,
-                    "version": env!("CARGO_PKG_VERSION"), "release_version": manifest.version})
+                    "version": current_version, "release_version": manifest.version})
                 );
             } else {
-                println!(
-                    "이미 최신판이다(aaa {} · release {}): 바꾸지 않았다",
-                    env!("CARGO_PKG_VERSION"),
-                    manifest.version
-                );
+                println!("이미 최신판이다(aaa {} · release {}): 바꾸지 않았다", &current_version, manifest.version);
             }
             return Ok(ExitCode::SUCCESS);
         };
@@ -392,15 +412,27 @@ pub fn update(json: bool, from: Option<PathBuf>, version: Option<String>, dry_ru
     }
     pin_check(&new_version, &pins)?;
     let what = format!("{}를 aaa {new_version}로 바꾼다", place.exe.display());
-    finish(json, &place, Swap { what, staged, new_version, from: &from }, dry_run, keep)
+    finish(json, &place, Swap { what, staged, new_version, from: &from }, dry_run, keep, approval)
 }
 
 /// `aaa update rollback [<이름>] [--dry-run]`: 보관한 옛 실행 파일로 되돌린다. 이름이 없으면 지금과 다른 가장 새 것
 pub fn rollback(json: bool, name: Option<String>, dry_run: bool) -> Result<ExitCode> {
-    if !dry_run {
+    rollback_approved(json, name, dry_run, Approval::Person, None)
+}
+pub(crate) fn rollback_approved(
+    json: bool,
+    name: Option<String>,
+    dry_run: bool,
+    approval: Approval,
+    target: Option<PathBuf>,
+) -> Result<ExitCode> {
+    if !dry_run && approval == Approval::Person {
         crate::person::require("실행 파일 되돌리기")?;
     }
-    let place = Place::here()?;
+    let place = match target {
+        Some(exe) => Place::at(exe)?,
+        None => Place::here()?,
+    };
     let chosen = place.rollback_source(name.as_deref())?;
     let (pins, keep) = settings()?;
     let staged = Staged::copy_from(&chosen, &place)?;
@@ -410,7 +442,7 @@ pub fn rollback(json: bool, name: Option<String>, dry_run: bool) -> Result<ExitC
         println!("주의: {e}");
     }
     let what = format!("{}를 보관한 aaa {version}로 되돌린다", place.exe.display());
-    finish(json, &place, Swap { what, staged, new_version: version, from: &chosen }, dry_run, keep)
+    finish(json, &place, Swap { what, staged, new_version: version, from: &chosen }, dry_run, keep, approval)
 }
 
 /// `aaa update list`: 보관한 옛 실행 파일
@@ -535,4 +567,9 @@ mod tests {
         assert_eq!(kept_version(Path::new("/x/.aaa-old/aaa-20261018T120500Z-0.1.0")), "0.1.0");
         assert_eq!(kept_version(Path::new("/x/.aaa-old/aaa-20261018T120500Z2-1.2.3")), "1.2.3");
     }
+}
+
+/// 실행 중 이미지 판과 별개로, 지금 설치된 파일을 직접 검증한다.
+pub(crate) fn installed_identity(exe: &std::path::Path) -> Result<String> {
+    Ok(serde_json::json!({"version":self_check(&exe)?,"sha256":sha256(&exe)?}).to_string())
 }

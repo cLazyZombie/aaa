@@ -4846,3 +4846,134 @@ try_post barrier "$BIN" post coordinator --data --topic test --title 자료
     assert!(std::fs::read_to_string(outside).unwrap().contains("열린 thread 세션에서만"));
     assert_eq!(w.h.ok(&["post", "list", "demo"])["posts"].as_array().unwrap().len(), 1);
 }
+
+/// 실제 coordinator→host→TLS agent에서 사본 binary를 바꾼다. 공용 시험 binary·운영 서비스는 건드리지 않는다.
+#[test]
+fn coordinator_deployment_is_gated_and_survives_backend_restarts() {
+    let mut w = world();
+    w.add_remote();
+    let b = w.lab.node("b", None);
+    let bin = w.lab.root.join("deploy-bin");
+    std::fs::create_dir_all(&bin).unwrap();
+    let exe = bin.join("aaa");
+    std::fs::copy(lab::BIN, &exe).unwrap();
+    let original = std::fs::read(&exe).unwrap();
+    let candidate = w.lab.root.join("deploy-candidate");
+    let mut changed = original.clone();
+    changed.extend_from_slice(b"aaa-deployment-test");
+    std::fs::write(&candidate, &changed).unwrap();
+    std::fs::set_permissions(&candidate, std::os::unix::fs::PermissionsExt::from_mode(0o755)).unwrap();
+    w.lab.kill("agentB");
+    w.lab.spawn_command("agentB-copy", b.cmd_bin(&exe, &["agent", "--host", &w.addr, "--name", "labB"]));
+    wait_for("원격 사본 agent 연결", T, || {
+        if !w.lab.log("agentB-copy").contains("host에 연결했다") {
+            return None;
+        }
+        w.h.json(&["machine", "list"])
+            .ok()
+            .and_then(|v| v["machines"].as_array().cloned())
+            .and_then(|v| v.into_iter().find(|m| m["name"] == "labB" && m["connection"] == "connected"))
+    });
+    let coordinator = w.h.ok(&["project", "open", "demo", "--profile", "fake"]);
+    let pane = coordinator["pane"]["id"].as_str().unwrap().to_string();
+    w.wait_screen(&pane, "fake>");
+    let pid = w.h.pane(&pane)["pid"].clone();
+    let mut probe_number = 0;
+    let probe = |w: &World, pane: &str, n: &mut usize, args: &str| -> (String, String, String) {
+        *n += 1;
+        let prefix = w.lab.root.join(format!("deploy-probe-{n}"));
+        let script = w.task(
+            &format!("deploy-probe-{n}.sh"),
+            &format!(
+                "'{}' --json {args} > '{}.out' 2> '{}.err'\nprintf '%s' \"$?\" > '{}.rc'\n",
+                lab::BIN,
+                prefix.display(),
+                prefix.display(),
+                prefix.display()
+            ),
+        );
+
+        w.h.ok(&["pane", "run", pane, &format!("post-probe {script}")]);
+        w.h.wait_output(pane, &format!("deploy-finished-{n}"), T);
+        let read = |suffix: &str| std::fs::read_to_string(prefix.with_extension(suffix)).unwrap();
+        (read("rc"), read("out"), read("err"))
+    };
+    let update = format!("update --machine labB --from '{}'", candidate.display());
+    let (rc, _, err) = probe(&w, &pane, &mut probe_number, &update);
+    assert_eq!(rc, "1", "{err}");
+    assert!(err.contains("coordinator_deploy on"), "{err}");
+    assert_eq!(std::fs::read(&exe).unwrap(), original);
+    // coordinator는 safety를 직접 켤 수 없다.
+    let (rc, _, err) = probe(&w, &pane, &mut probe_number, "safety set demo coordinator_deploy on");
+    assert_eq!(rc, "1");
+    assert!(err.contains("aaa 세션 안"), "{err}");
+    let enabled = w.h.in_terminal(&["safety", "set", "demo", "coordinator_deploy", "on"], &[("바꿀까?", "y")], T);
+    assert!(enabled.contains("coordinator_deploy = on"), "{enabled}");
+
+    let (rc, out, err) = probe(&w, &pane, &mut probe_number, &update);
+    assert_eq!(rc, "0", "{out}\n{err}");
+    let job: Value = serde_json::from_str(&out).unwrap();
+    let id = job["job"]["id"].as_str().unwrap();
+    let (rc, out, err) = probe(&w, &pane, &mut probe_number, &format!("update status {id} --machine labB --wait"));
+    assert_eq!(rc, "0", "{out}\n{err}");
+    assert_eq!(serde_json::from_str::<Value>(&out).unwrap()["job"]["state"], "completed");
+    assert_eq!(std::fs::read(&exe).unwrap(), changed);
+    // 같은 오래 사는 agent에서 rollback도 처음 정한 고정 경로를 써야 한다(Linux current_exe는 옛 inode를 가리킨다).
+    let (rc, out, err) = probe(&w, &pane, &mut probe_number, "update rollback --machine labB");
+    assert_eq!(rc, "0", "{out}\n{err}");
+    let rollback: Value = serde_json::from_str(&out).unwrap();
+    let rollback_id = rollback["job"]["id"].as_str().unwrap();
+    let (rc, out, err) =
+        probe(&w, &pane, &mut probe_number, &format!("update status {rollback_id} --machine labB --wait"));
+    assert_eq!(rc, "0", "{out}\n{err}");
+    assert_eq!(std::fs::read(&exe).unwrap(), original);
+
+    // host가 peer PID로 worker를 판정한다. env를 지워도 배포하지 못한다.
+    let worker = w.start(&[
+        "--title",
+        "배포 차단",
+        "--profile",
+        "fake",
+        "--kind",
+        "dir",
+        "--task-file",
+        &w.task("deploy-worker.txt", "noreport"),
+    ]);
+    let worker_pane = worker["pane"].as_str().unwrap();
+    w.wait_show("worker brief", worker["id"].as_str().unwrap(), |t| t["brief"] == "delivered");
+    let envless = w.task(
+        "deploy-envless.sh",
+        &format!(
+            "env -u AAA_SESSION_ID -u AAA_HOOK_SOCK '{}' --json {update} > '{}' 2>&1\n",
+            lab::BIN,
+            w.lab.root.join("deploy-worker-denied").display()
+        ),
+    );
+    w.h.ok(&["pane", "run", worker_pane, &format!("post-probe {envless}")]);
+    w.h.wait_output(worker_pane, "post-probe-done", T);
+    assert!(std::fs::read_to_string(w.lab.root.join("deploy-worker-denied")).unwrap().contains("thread는 계속 막는다"));
+    assert_eq!(std::fs::read(&exe).unwrap(), original);
+
+    // 사람이 설정을 철회하면 다음 요청부터 즉시 막는다. 이전 작업 조회는 계속 된다.
+    let off = w.h.in_terminal(&["safety", "set", "demo", "coordinator_deploy", "off"], &[("바꿀까?", "y")], T);
+    assert!(off.contains("coordinator_deploy = off"), "{off}");
+    let (rc, _, err) = probe(&w, &pane, &mut probe_number, &update);
+    assert_eq!(rc, "1");
+    assert!(err.contains("coordinator_deploy on"), "{err}");
+
+    let config = w.h.cfg.join("host.toml");
+    std::fs::write(&config, std::fs::read_to_string(&config).unwrap().replace("127.0.0.1:0", &w.addr)).unwrap();
+    w.lab.kill("host");
+    w.spawn_host("host-restored");
+    wait_for("host와 원격 agent 재연결", T, || {
+        w.h.json(&["status"]).ok().filter(|_| w.h.connected("labA") && w.h.connected("labB"))
+    });
+    w.lab.kill("agentA");
+    w.lab.spawn("agentA-restored", &w.h, &["agent", "--host", "local", "--name", "labA"]);
+    wait_for("coordinator agent 재연결", T, || w.h.connected("labA").then_some(()));
+    assert_eq!(w.h.pane(&pane)["pid"], pid, "coordinator 프로세스가 바뀌었다");
+    let (rc, out, err) =
+        probe(&w, &pane, &mut probe_number, &format!("update status {rollback_id} --machine labB --wait"));
+    assert_eq!(rc, "0", "재시작 후 같은 pane의 CLI: {out}\n{err}");
+    assert_eq!(serde_json::from_str::<Value>(&out).unwrap()["job"]["state"], "completed");
+}

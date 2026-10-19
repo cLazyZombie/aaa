@@ -265,6 +265,7 @@ async fn serve(
                         // 대화 감시는 harness·기록 위치를 따라간다
                         host.sync_chat_watches_if_wanted();
                     }
+                    LinkMsg::Event(AgentEvent::DeploymentChanged { job }) => host.deployment_changed(&mid, job),
                     LinkMsg::Event(AgentEvent::ChatChanged { key, signature }) => {
                         host.on_chat_changed(&mid, key, signature)
                     }
