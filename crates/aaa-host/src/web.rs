@@ -267,8 +267,9 @@ async fn view_root(
     Path(cap): Path<String>,
     Query(q): Query<FileQuery>,
     headers: HeaderMap,
+    method: Method,
 ) -> Response {
-    serve_view(host, cap, String::new(), q, headers).await
+    serve_view(host, cap, String::new(), q, headers, method).await
 }
 
 /// `/v/<cap>/<path>`: 보기 경로가 곧 권한이다(그 thread 결과물 읽기만, 2시간). host 사본이 없으면 agent에서 스트리밍한다.
@@ -278,11 +279,31 @@ async fn view_file(
     Path((cap, path)): Path<(String, String)>,
     Query(q): Query<FileQuery>,
     headers: HeaderMap,
+    method: Method,
 ) -> Response {
-    serve_view(host, cap, path, q, headers).await
+    serve_view(host, cap, path, q, headers, method).await
 }
 
-async fn serve_view(host: Arc<Host>, cap: String, path: String, q: FileQuery, headers: HeaderMap) -> Response {
+/// 브라우저 문서 탐색만 열람이다. cookie 없는 외부 탭도 포함하며 fetch·그림·미리보기·HEAD는 제외한다.
+fn report_navigation(method: &Method, headers: &HeaderMap) -> bool {
+    let value = |key: &str| headers.get(key).and_then(|v| v.to_str().ok()).unwrap_or("");
+    method == Method::GET
+        && value("sec-fetch-mode") == "navigate"
+        && matches!(value("sec-fetch-dest"), "document" | "iframe" | "frame")
+        && !["purpose", "sec-purpose", "x-purpose"].iter().any(|key| {
+            let purpose = value(key).to_ascii_lowercase();
+            ["prefetch", "preview", "prerender"].iter().any(|p| purpose.contains(p))
+        })
+}
+
+async fn serve_view(
+    host: Arc<Host>,
+    cap: String,
+    path: String,
+    q: FileQuery,
+    headers: HeaderMap,
+    method: Method,
+) -> Response {
     let fail = |e: ErrorBody| {
         let code = match e.code {
             ErrorCode::Unauthorized => StatusCode::UNAUTHORIZED,
@@ -292,10 +313,11 @@ async fn serve_view(host: Arc<Host>, cap: String, path: String, q: FileQuery, he
         };
         (code, [(header::CONTENT_TYPE, "text/plain; charset=utf-8")], e.message).into_response()
     };
-    let src = match host.view_source(&cap, &path).await {
+    let file = match host.view_source(&cap, &path).await {
         Ok(s) => s,
         Err(e) => return fail(e),
     };
+    let src = file.source;
     let size = src.size();
     let generated = matches!(src, crate::library::ViewSource::Page(_));
     let range = match crate::files::parse_range(headers.get(header::RANGE).and_then(|v| v.to_str().ok()), size) {
@@ -332,6 +354,9 @@ async fn serve_view(host: Arc<Host>, cap: String, path: String, q: FileQuery, he
         let name = path.rsplit('/').next().unwrap_or(&path);
         res = res
             .header(header::CONTENT_DISPOSITION, format!("attachment; filename*=UTF-8''{}", crate::files::pct(name)));
+    }
+    if q.download.is_none() && report_navigation(&method, &headers) {
+        host.library_opened(&file.project, &file.name);
     }
     res.body(Body::from_stream(body)).unwrap()
 }

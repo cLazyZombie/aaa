@@ -144,13 +144,21 @@ impl Db {
         Ok(())
     }
 
-    /// 사용자 보고서를 열었다. 바뀌었으면(처음 열었거나 다시 보낸 뒤) true
-    pub(crate) fn library_report_seen(&self, project: &str, name: &str, now: u64) -> Result<bool> {
-        Ok(self.conn.lock().unwrap().execute(
+    /// 한 열람으로 안 봄과 마지막 열람을 함께 적는다. 처음 보거나 다시 보낸 뒤면 true(배지 사건).
+    pub(crate) fn library_opened_at(&self, project: &str, name: &str, now: u64) -> Result<bool> {
+        let mut conn = self.conn.lock().unwrap();
+        let tx = conn.transaction()?;
+        let changed = tx.execute(
             "UPDATE library_reports SET seen_at=?3 WHERE project=?1 AND name=?2 AND to_user=1
                AND (seen_at IS NULL OR seen_at < sent_at)",
             params![project, name, now],
-        )? > 0)
+        )? > 0;
+        tx.execute(
+            "UPDATE library_links SET opened=?3 WHERE project=?1 AND thread=?2 AND revoked=0",
+            params![project, name, now],
+        )?;
+        tx.commit()?;
+        Ok(changed)
     }
 
     /// 열지 않은 사용자 보고서 수(활동 막대 보고서 배지)
@@ -221,14 +229,6 @@ impl Db {
 
     pub(crate) fn library_link_revoke(&self, id: &str) -> Result<bool> {
         Ok(self.conn.lock().unwrap().execute("UPDATE library_links SET revoked=1 WHERE id=?1", [id])? != 0)
-    }
-
-    pub(crate) fn library_link_opened(&self, id: &str, now: u64) -> Result<()> {
-        self.conn.lock().unwrap().execute(
-            "UPDATE library_links SET opened=?2 WHERE id=?1 AND (opened IS NULL OR opened<=?3)",
-            params![id, now, now.saturating_sub(60_000)],
-        )?;
-        Ok(())
     }
 
     pub fn open(path: &Path) -> Result<Db> {

@@ -73,6 +73,13 @@ export function ReportsPanel({ role, rev, onView }: { role: DeviceRole; rev: num
     catch (e) { setProblem(e instanceof Error ? e.message : String(e)); }
     finally { setOpening(null); }
   };
+  const titleLink = (r: LibraryReport, className?: string) => <a className={className} href={`#report=${encodeURIComponent(keyOf(r))}`} onClick={(e) => {
+    // 보조 키·가운데 단추는 브라우저의 새 탭 동작을 지킨다. 보통 클릭은 목록의 굴린 자리도 보존한다.
+    if (e.button === 0 && !e.metaKey && !e.ctrlKey && !e.shiftKey && !e.altKey) {
+      e.preventDefault();
+      onView(r);
+    }
+  }}>{r.title ?? keyOf(r)}</a>;
   const remove = async (rows: LibraryReport[]) => {
     const r = await call({ op: "library_delete", reports: rows.map((x) => ({ project: x.project, name: x.name })) });
     if (r.kind !== "library_pruned") throw new Error("host가 지우기에 다른 답을 했다");
@@ -117,7 +124,7 @@ export function ReportsPanel({ role, rev, onView }: { role: DeviceRole; rev: num
         const key = keyOf(r);
         return <article className={`report-card report-mine${r.unseen ? " is-unseen" : ""}`} key={key} data-testid={`report-${r.project}-${r.name}`} data-unseen={r.unseen ? "true" : "false"}>
           <div className="report-heading">
-            <strong>{r.unseen && <span className="report-new-dot" role="img" aria-label="안 봄" />}{r.title ?? key}</strong>
+            <strong>{r.unseen && <span className="report-new-dot" role="img" aria-label="안 봄" />}{titleLink(r)}</strong>
             <span>{formatBytes(r.size)}{r.live ? " · 실시간" : ""}</span>
           </div>
           <p className="muted">{r.title ? `${key} · ` : ""}보냄 {when(r.updated_at_ms)}</p>
@@ -153,7 +160,7 @@ export function ReportsPanel({ role, rev, onView }: { role: DeviceRole; rev: num
                   if (e.target.checked) next.add(key); else next.delete(key);
                   return next;
                 })} />}
-              <span className="report-row-name">{key}</span>
+              {titleLink(r, "report-row-name")}
               {r.busy && <span className="report-tag is-busy">진행 중</span>}
               <span className="muted report-row-meta">{formatBytes(r.size)}{r.live ? " · 실시간" : ""} · {when(r.updated_at_ms)}</span>
               <span className="report-row-actions">
