@@ -421,7 +421,7 @@ process.stdin.resume();`;
     const dialog = page.getByRole("dialog", { name: "새 pane · labA" });
     const start = () => dialog.getByRole("button", { name: "시작", exact: true }).click();
     const hash = () => page.evaluate(() => decodeURIComponent(location.hash));
-    // + 단추는 머신 패널에 있다(활동 막대, plan §8.238): 숨은 패널 안은 접근성 트리에 없어 includeHidden으로 찾고 inList가 패널을 연다
+    // + 단추는 머신 패널에 있다(활동 막대, plan §8.240): 숨은 패널 안은 접근성 트리에 없어 includeHidden으로 찾고 inList가 패널을 연다
     await inList(page, page.getByTestId("machine-labA").getByRole("button", { name: "labA에 새 pane", includeHidden: true }));
     await dialog.waitFor();
     // 없는 폴더: agent가 거절한 글이 창 안에 보이고 창은 남는다(pane은 생기지 않는다)

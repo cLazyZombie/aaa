@@ -253,7 +253,7 @@ function storeSelection(sel: string): void {
 
 /**
  * 고른 것: `#pane=<id>`, `#thread=<project>/<id>`, 프로젝트 thread 보기 `#project=<name>`, 프로젝트 고르기 `#projects`,
- * 보고서 화면 `#reports`(목록)·`#report=<project>/<name>`(하나, plan §8.238)
+ * 보고서 화면 `#reports`(목록)·`#report=<project>/<name>`(하나, plan §8.240)
  */
 function selectedFromHash(): string | null {
   if (location.hash === "#projects") return "projects:";
@@ -336,7 +336,7 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
     return () => window.removeEventListener("keydown", onEscape, true);
   }, []);
   const drawer = useMemo(() => ({ open: drawerOpen, toggle: () => setDrawerOpen((open) => !open) }), [drawerOpen]);
-  // 활동 막대(plan §8.238): 사이드바가 보이는 패널 하나, 넓은 창에서 접었나. 둘 다 기기마다 기억한다(sidebarPanel.ts).
+  // 활동 막대(plan §8.240): 사이드바가 보이는 패널 하나, 넓은 창에서 접었나. 둘 다 기기마다 기억한다(sidebarPanel.ts).
   // 접힘은 769px부터만 뜻이 있다(좁은 창의 사이드바는 drawer이고 같은 단추가 drawer를 닫는다)
   const [panel, setPanel] = useState<SidebarPanel>(storedPanel);
   const [collapsed, setCollapsed] = useState(storedCollapsed);
@@ -634,7 +634,7 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
   const [backTo, setBackTo] = useState<string | null>(null);
   const openedHash = useRef<string | null>(null);
   // 앱이 스스로 바꾼 주소(목록·단추·첫 고르기). 그 밖의 주소 바꿈(앱 안 알림 Droplet, 브라우저 뒤로·앞으로, 붙여 넣은 링크)은
-  // 그 줄이 있는 패널을 보인다(VS Code explorer autoReveal, plan §8.238)
+  // 그 줄이 있는 패널을 보인다(VS Code explorer autoReveal, plan §8.240)
   const ownHash = useRef<string | null>(null);
   const goHash = (hash: string) => {
     const next = hash ? `#${hash}` : "";
@@ -707,7 +707,7 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
     goHash(name === null ? "projects" : `project=${encodeURIComponent(name)}`);
     setSel(name === null ? "projects:" : `project:${name}`);
   };
-  // 보고서 화면(plan §8.238): 막대 「보고서」는 마지막으로 본 보고서 자리(목록이나 연 보고서)로, 보고서 화면에서 다시 누르면 그 앞
+  // 보고서 화면(plan §8.240): 막대 「보고서」는 마지막으로 본 보고서 자리(목록이나 연 보고서)로, 보고서 화면에서 다시 누르면 그 앞
   // 화면으로 간다. 한 번 연 보고서 화면은 다른 화면으로 가도 그려 둔다(ReportsView): 돌아오면 연 보고서·굴린 자리가 그대로다
   const reportsShown = sel?.startsWith("reports:") === true;
   const [reportsAt, setReportsAt] = useState<string | null>(reportsShown ? sel : null);
@@ -1271,7 +1271,7 @@ function MoreMenu({ onProjects }: { onProjects: () => void }) {
 }
 
 /**
- * 활동 막대 맨 아래 설정 톱니(사용자 요청 10-19 「설정도 거기에 넣어줘. 왼쪽 밑에.」, VS Code Manage 자리, plan §8.238)와 설정 창.
+ * 활동 막대 맨 아래 설정 톱니(사용자 요청 10-19 「설정도 거기에 넣어줘. 왼쪽 밑에.」, VS Code Manage 자리, plan §8.240)와 설정 창.
  * 예전에는 목록 바닥 줄의 「설정」 단추였다. 단축키·팔레트도 같은 창을 연다(Main이 열림을 갖는다)
  */
 function SettingsGear({

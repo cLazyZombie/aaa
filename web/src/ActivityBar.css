@@ -1,5 +1,5 @@
 /*
- * 왼쪽 활동 막대(plan §8.238). VS Code activity bar의 치수와 상태: 48px 칸, 24px 아이콘, 고르지 않은 아이콘은 흐린 글자색,
+ * 왼쪽 활동 막대(plan §8.240). VS Code activity bar의 치수와 상태: 48px 칸, 24px 아이콘, 고르지 않은 아이콘은 흐린 글자색,
  * 고른 단추는 글자색과 왼쪽 2px 선, 배지는 아이콘 오른쪽 아래 둥근 수. 색은 aaa token(테마를 따른다).
  */
 :root { --activity-w: 48px; }

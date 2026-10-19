@@ -1,4 +1,4 @@
-// 활동 막대 드러내기 규칙(src/sidebarPanel.ts revealPanel, plan §8.238): 단축키·팔레트·알림이 연 줄의 패널. TUI도 같은 규칙을 따른다.
+// 활동 막대 드러내기 규칙(src/sidebarPanel.ts revealPanel, plan §8.240): 단축키·팔레트·알림이 연 줄의 패널. TUI도 같은 규칙을 따른다.
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import { revealPanel } from "../src/sidebarPanel.ts";

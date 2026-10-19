@@ -317,7 +317,7 @@ export default async function ({ ctl, page }) {
 
   await step("목록 두 굴림 영역(사용자 10-19 「projects와 agents의 스크롤바 위치가 달라」): 위 목록과 Agents 목록이 둘 다 넘칠 때 두 굴림 영역이 사이드바 같은 x에 서서 막대가 같은 자리에 온다", async () => {
     // 참고 AgentSidebar.css는 Agents 묶음에 좌우 여백을 줘 그 굴림 영역(과 막대)이 위 목록보다 여백만큼 안쪽이었다(Sidebar.css).
-    // 둘은 활동 막대의 다른 패널이다(plan §8.238): 패널을 바꿔도 막대가 같은 x에 있는지 패널마다 잰다. 에이전트 패널은 사이드바
+    // 둘은 활동 막대의 다른 패널이다(plan §8.240): 패널을 바꿔도 막대가 같은 x에 있는지 패널마다 잰다. 에이전트 패널은 사이드바
     // 높이를 다 가져 넘치려면 agent가 24개 있어야 한다
     const agent = `${root}/fakebin/claude`;
     fs.mkdirSync(`${root}/fakebin`, { recursive: true });

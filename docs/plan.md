@@ -5588,7 +5588,7 @@ primary 근거:
 - **제품.** 배포 소속은 host가 canonical cwd·local 머신·harness/role로 이미 판정한 PaneView.coordinator_project와 running 상태를 쓴다. peer PID actor 검증과 thread/adopt 제외, 사람의 safety 확인은 유지한다. 입력 가능한 coordinator 목록은 그대로다. --wait는 AgentDisconnected만 재연결/배포 완료 사건 뒤 같은 DeployStatus ID로 재조회하며 DeployStart는 재전송하지 않는다. 머신 이름·ID·생략을 지원하고 nonwait·Forbidden 등 다른 오류는 즉시 반환한다.
 - **최소 회귀.** host owner는 실제 agent_disconnected와 caller_of·Front 요청에서 권한 유지/AgentDisconnected·위장/worker/device/일반 셸/끝난 pane 거부를 확인한다. CLI owner는 실제 Front IPC frame에서 단절 → Connected → 같은 ID 상태 조회 → Completed와 nonwait·Forbidden 즉시 종료를 본다. 기존 m13은 실제 backend 재시작과 pane 생존을 계속 맡는다. 둘은 권한과 전송 대기의 다른 계약이며 새 외부 프로세스·신호·시험용 production export·고정 sleep·시한 증가가 없다. 두 owner를 원래 제품으로 되돌린 변형 RED와 저장 바이트 복원 GREEN을 확인했다.
 
-### 8.238 웹 왼쪽 활동 막대와 본문 보고서 화면(10-19, t-0390, VS Code식)
+### 8.240 웹 왼쪽 활동 막대와 본문 보고서 화면(10-19, t-0390, VS Code식)
 
 - **요청.** 사용자 「vs code 처럼, web ui에서 projects, machines, agents 이걸 왼쪽 버튼? 같은걸로 수정하고, 그거 누르면 나오는걸로 해줘. 같은 버튼 한번 더 누르면 숨겨지고」, 「설정도 거기에 넣어줘. 왼쪽 밑에」, 「보고서 거기에 넣고, 보고서 누르면 오른쪽 창이 보고서로 바뀌게」. TUI도 같은 패널 구조로 맞춘다(t-0386 D안).
 - **참고.** herdr-web-ui(aa624cb)와 t3code(4b1024da)에는 아이콘 막대가 없다. 넓은 창 사이드바 접기는 herdr-web-ui를 그대로 따른다: `App.tsx` 318~319줄 `sidebarCollapsed`, 1246~1249줄 `toggleSidebar`(768px 이하는 drawer, 위는 접기), `styles.css` 609·1570줄 `.app.sidebar-collapsed .sidebar { display: none }`, 단축키 `toggle-sidebar` Mod+Shift+B와 팔레트 「사이드바 토글」(i18n.ko.ts). 막대 자체는 VS Code activity bar를 따른다: 48px 세로 tablist, 고른 단추에만 왼쪽 선과 `aria-selected`·`aria-expanded`, 사이드바를 접으면 고른 단추가 없음, ↑↓·Home·End는 focus만(roving tabindex) Enter·Space가 고름, 아이콘 오른쪽 아래 수 배지, 아래 묶음은 패널이 아닌 동작.

@@ -1,4 +1,4 @@
-// 왼쪽 활동 막대(사용자 요청 10-19 「vs code 처럼 … 같은 버튼 한번 더 누르면 숨겨지고」, plan §8.238). 참고 소스(herdr-web-ui·t3code)에
+// 왼쪽 활동 막대(사용자 요청 10-19 「vs code 처럼 … 같은 버튼 한번 더 누르면 숨겨지고」, plan §8.240). 참고 소스(herdr-web-ui·t3code)에
 // 이런 막대가 없어 VS Code activity bar를 따른다: 세로 tablist(`aria-orientation="vertical"`), 고른 패널의 단추에만 왼쪽 선과
 // aria-selected·aria-expanded, 사이드바를 접으면 고른 단추가 없다. ↑↓·Home·End는 단추 사이 focus만 옮기고(roving tabindex) Enter·Space가
 // 고른다. 패널이 아닌 보고서(본문을 바꾼다)와 설정(창)은 아래 묶음의 보통 단추다(VS Code 아래 묶음 Accounts·Manage 자리).

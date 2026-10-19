@@ -680,7 +680,7 @@ const SHORTCUT_LABEL: Record<AaaShortcutId, string> = {
   "focus-input": "패널 입력창으로 이동",
   "scroll-up": "패널 위로 스크롤",
   "scroll-down": "패널 아래로 스크롤",
-  // 참고 i18n.ko.ts 「Toggle sidebar」(활동 막대가 생겨 aaa에도 있다, plan §8.238)
+  // 참고 i18n.ko.ts 「Toggle sidebar」(활동 막대가 생겨 aaa에도 있다, plan §8.240)
   "toggle-sidebar": "사이드바 토글",
   "previous-pane": "이전 패널",
   "next-pane": "다음 패널",

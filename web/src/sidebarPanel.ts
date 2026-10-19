@@ -1,4 +1,4 @@
-// 왼쪽 활동 막대(사용자 요청 10-19 「vs code 처럼」, plan §8.238): 사이드바가 보이는 패널 하나와 넓은 창의 접힘을 기기마다 기억한다.
+// 왼쪽 활동 막대(사용자 요청 10-19 「vs code 처럼」, plan §8.240): 사이드바가 보이는 패널 하나와 넓은 창의 접힘을 기기마다 기억한다.
 // VS Code는 workspace마다 기억하고 herdr-web-ui(aa624cb App.tsx 318~319줄 `sidebarCollapsed`)는 접힘을 주소(`sidebar=hidden`)에
 // 싣는다. aaa는 기기마다(brief: 마지막 패널·접힘은 기기별) localStorage에 둔다.
 

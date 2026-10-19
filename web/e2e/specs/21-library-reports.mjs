@@ -3,7 +3,7 @@ import fs from "node:fs";
 import { root, aaa, base, browser, step, pairPage, inList, domIs, shot } from "../lib/harness.mjs";
 
 export default async function ({ page }) {
-  await step("보고서 전체 목록: publish·실시간·import, 활동 막대 「보고서」가 연 본문 화면(plan §8.238), 데스크톱·휴대폰의 열기·새 창·복사·폐기·새 링크", async () => {
+  await step("보고서 전체 목록: publish·실시간·import, 활동 막대 「보고서」가 연 본문 화면(plan §8.240), 데스크톱·휴대폰의 열기·새 창·복사·폐기·새 링크", async () => {
     aaa("project", "create", "demo");
     aaa("project", "create", "other");
     const input = `${root}/reports`;

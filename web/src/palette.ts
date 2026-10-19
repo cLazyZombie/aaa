@@ -232,7 +232,7 @@ export const ACTION_ALIASES: Readonly<Record<string, string>> = {
   theme: "다크 라이트 모드 외관 색상",
   settings: "환경설정 옵션 구성",
   projects: "프로젝트 thread 끝남 보고",
-  // 보고서는 설정 쪽이었다가 활동 막대의 본문 화면이 됐다(plan §8.238): 예전 말로도 찾는다
+  // 보고서는 설정 쪽이었다가 활동 막대의 본문 화면이 됐다(plan §8.240): 예전 말로도 찾는다
   reports: "보고서 결과물 library 공유 링크",
   sidebar: "사이드바 목록 접기 펴기 숨기기 보이기 패널",
 };

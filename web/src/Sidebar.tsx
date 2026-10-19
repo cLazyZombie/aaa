@@ -1,5 +1,5 @@
 // 왼쪽 목록(herdr-web-ui MachineSidebar·Sidebar·AgentSidebar, aa624cb). 모양(class)과 CSS는 참고 것을 그대로 쓴다(herdr/*.css).
-// 패널 셋(활동 막대가 하나를 고른다, plan §8.238): 「프로젝트」는 프로젝트 머리(접기, 셈, 묶음 대표 상태) 아래 모든 머신의 thread 줄
+// 패널 셋(활동 막대가 하나를 고른다, plan §8.240): 「프로젝트」는 프로젝트 머리(접기, 셈, 묶음 대표 상태) 아래 모든 머신의 thread 줄
 // (둘째 줄 왼쪽 상태 말, 오른쪽 머신 이름, t-0352 시안 2안, plan §8.195) → thread가 아닌 pane의 「기타」 묶음(줄에 머신 이름).
 // 「머신」은 머신 줄(이름·host·연결 점·+, 끊김·점검 글), 「에이전트」는 모든 머신의 agent 목록. 머신은 트리 단계가 아니다.
 // 셋 다 늘 그려 두고 고르지 않은 것은 숨긴다(굴린 자리를 지킨다). 머리·띠·바닥 줄(사용량, App.tsx ListFoot)은 패널과 상관없다.
@@ -347,7 +347,7 @@ function RowError({ rowKey }: { rowKey: string }) {
 }
 
 /**
- * 머신 패널(plan §8.195·§8.238): 목록이 프로젝트 먼저라 머신은 트리 단계가 아니다. 머신마다 머리 한 줄(이름·host·연결 점·+ 새 pane)과
+ * 머신 패널(plan §8.195·§8.240): 목록이 프로젝트 먼저라 머신은 트리 단계가 아니다. 머신마다 머리 한 줄(이름·host·연결 점·+ 새 pane)과
  * 끊김·점검 이상 글만 둔다(참고 MachineSidebar 머리·machine-state). 그 머신의 줄은 프로젝트 패널에 머신 글자로 있다.
  */
 function MachineStrip(props: SidebarProps) {
@@ -927,7 +927,7 @@ function ThreadRow({ t, online, machine, twoLine, ...props }: SidebarProps & { t
 
 /**
  * 에이전트 패널: 모든 머신의 살아 있는 agent를 한 목록으로(참고 AgentSidebar). 참고는 머신 목록 아래 접는 구역이고(휴대폰은 접힌 채
- * 시작) aaa는 활동 막대의 패널 하나라 접기 단추가 없다(plan §8.238).
+ * 시작) aaa는 활동 막대의 패널 하나라 접기 단추가 없다(plan §8.240).
  * agent는 harness hook이 상태를 알리는 pane이나 agent 명령으로 뜬 pane이다(셸은 상태를 알려도 넣지 않는다).
  */
 function AgentSection(props: SidebarProps) {

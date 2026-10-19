@@ -50,7 +50,7 @@ export interface PaletteActions {
   toggleTheme: () => void;
   openSettings: (page?: SettingsPageId) => void;
   openProjects: () => void;
-  /** 본문 보고서 화면(활동 막대 「보고서」, plan §8.238) */
+  /** 본문 보고서 화면(활동 막대 「보고서」, plan §8.240) */
   openReports: () => void;
   /** 사이드바 접기·펴기(휴대폰은 목록 drawer, 참고 CommandPalette `sidebar`) */
   toggleSidebar: () => void;

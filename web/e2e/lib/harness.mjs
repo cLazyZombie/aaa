@@ -437,7 +437,7 @@ async function inList(p, target) {
     await toggle.click();
     await p.locator("#workspace-drawer.is-open").waitFor();
   }
-  // 활동 막대(plan §8.238): 항목이 고르지 않은 패널이나 접은 사이드바에 있으면 그 패널 단추로 보인다(보이는 패널의 단추를 다시
+  // 활동 막대(plan §8.240): 항목이 고르지 않은 패널이나 접은 사이드바에 있으면 그 패널 단추로 보인다(보이는 패널의 단추를 다시
   // 누르면 접히므로 숨었을 때만 누른다)
   const panel = await item.evaluate((el) => {
     const owner = el.closest("[data-panel]");
@@ -464,7 +464,7 @@ async function inList(p, target) {
   await drawerSettled(p, true);
 }
 
-/** 활동 막대(plan §8.238): 넓은 창 사이드바에 그 패널을 보인다. 이미 보이면 누르지 않는다(보이는 패널의 단추를 다시 누르면 접힌다) */
+/** 활동 막대(plan §8.240): 넓은 창 사이드바에 그 패널을 보인다. 이미 보이면 누르지 않는다(보이는 패널의 단추를 다시 누르면 접힌다) */
 async function showPanel(p, panel) {
   const tab = p.getByTestId(`activity-${panel}`);
   if ((await tab.getAttribute("aria-selected")) !== "true") await tab.click();

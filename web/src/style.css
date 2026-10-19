@@ -289,7 +289,7 @@ svg.i { width: 16px; height: 16px; flex-shrink: 0; fill: none; stroke: currentCo
   :root { --inset-l: env(safe-area-inset-left, 0px); }
 }
 .app { display: grid; grid-template-columns: auto minmax(0, 1fr); grid-template-rows: minmax(0, 1fr); height: 100%; height: var(--app-height, 100dvh); }
-/* 왼쪽 칸 = 활동 막대(ActivityBar.css) + 사이드바(plan §8.238). 사이드바는 머리·패널·바닥 줄을 세로로(herdr-web-ui Sidebar.css
+/* 왼쪽 칸 = 활동 막대(ActivityBar.css) + 사이드바(plan §8.240). 사이드바는 머리·패널·바닥 줄을 세로로(herdr-web-ui Sidebar.css
    .sidebar-shell): 패널(.list-body)만 굴러가고 바닥 줄은 늘 맨 아래 */
 .list { background: var(--bg-panel); border-right: 1px solid var(--border); display: flex; min-height: 0; overflow: hidden; }
 .list > .sidebar-shell { flex: 0 0 var(--sidebar); width: var(--sidebar); min-width: 0; }
@@ -956,7 +956,7 @@ svg.i { width: 16px; height: 16px; flex-shrink: 0; fill: none; stroke: currentCo
 .devices-link .settings-description { font-family: var(--font-ui); }
 
 /* 보고서 전체 목록: 휴대폰에서도 기존 링크 줄이 카드 안에서 줄바꿈된다. */
-/* 본문 보고서 화면(ReportsView, plan §8.238): 보이면 본문 칸을 채운다. 다른 화면으로 가면 그려 둔 채 그 칸 위에 숨는다(visibility:
+/* 본문 보고서 화면(ReportsView, plan §8.240): 보이면 본문 칸을 채운다. 다른 화면으로 가면 그려 둔 채 그 칸 위에 숨는다(visibility:
    상자와 굴린 자리·iframe 문서가 그대로라 돌아오면 그 자리다. display:none이면 iframe 안 굴린 자리를 잃는다) */
 .view { position: relative; }
 .reports-view { display: flex; flex: 1 1 auto; flex-direction: column; min-height: 0; }
