@@ -1,4 +1,4 @@
-// 머신 패널의 CPU %·MEM %(10-19 사용자 「웹 UI에 머신에 cpu %, mem % 를 보여줄수 있어? 간략하게」, plan §8.243, t-0393 시안 B안).
+// 머신 패널의 CPU %·MEM %(10-19 사용자 「웹 UI에 머신에 cpu %, mem % 를 보여줄수 있어? 간략하게」, plan §8.245, t-0393 시안 B안).
 // 값과 높음 판정(그리기는 MachineMeters.tsx). 값은 agent 건강 보고(MachineHealth `cpu_pct`·`mem_used_bytes`·`mem_total_bytes`, 15초마다)다.
 // 끊긴 머신은 값이 오래돼 그리지 않는다.
 import type { MachineView } from "./gen/proto";

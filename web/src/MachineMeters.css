@@ -1,4 +1,4 @@
-/* 머신 CPU %·MEM %(MachineMeters.tsx, plan §8.243). 구독 사용량 칩(style.css .usage-chip)과 같은 값 + 아래 2px 막대.
+/* 머신 CPU %·MEM %(MachineMeters.tsx, plan §8.245). 구독 사용량 칩(style.css .usage-chip)과 같은 값 + 아래 2px 막대.
    색은 aaa token만: 평소 흐린 막대, 90% 넘으면 막힘 빨강 */
 .machine-meters { display: inline-flex; flex: none; gap: var(--space-2); margin-left: var(--space-2); }
 .machine-meter {

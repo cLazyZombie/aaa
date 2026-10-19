@@ -1,4 +1,4 @@
-// 머신 CPU·MEM(src/machineStats.ts, plan §8.243): 연결 중일 때만, 옛 agent는 값 없음, 90%부터 높음과 활동 막대 배지.
+// 머신 CPU·MEM(src/machineStats.ts, plan §8.245): 연결 중일 때만, 옛 agent는 값 없음, 90%부터 높음과 활동 막대 배지.
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import { highMachines, isHigh, machineStats } from "../src/machineStats.ts";

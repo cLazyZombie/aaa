@@ -3674,7 +3674,7 @@ fn machine_health() {
     assert_eq!(items[1].0, "ok", "{items:?}");
     w.h.ok(&["tab", "create", "--machine", "labA", "--", "/bin/sh"]);
 
-    // CPU·메모리(§8.243): CPU는 두 표본 사이 평균이라 둘째 보고부터 오고, `machine list`에 보인다
+    // CPU·메모리(§8.245): CPU는 두 표본 사이 평균이라 둘째 보고부터 오고, `machine list`에 보인다
     let m = wait_for("CPU 표본", T, || w.h.machine("labA").filter(|m| m["health"]["cpu_pct"].is_u64()));
     let h = &m["health"];
     assert!(h["cpu_pct"].as_u64().unwrap() <= 100, "{m}");

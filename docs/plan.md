@@ -830,14 +830,14 @@ host 프로젝트 폴더 구성:
 - **보고:** agent가 `[health] every_s`(기본 60초)마다 재서 `AgentEvent::Health`로 보낸다. host가 `health.v1`을 알렸을 때만 보낸다(이전 host와 호환). 다시 붙으면 마지막 보고를 바로 보낸다.
   - 디스크: 작업 root가 있는 디스크의 여유·전체(`statvfs`). 작업 root가 아직 없으면 있는 위 폴더를 본다.
   - 부하: 1분 평균(`getloadavg`)과 CPU 수. 판정에는 쓰지 않고 보이기만 한다.
-  - CPU %·메모리: 점검 사이 15초마다 따로 잰다(§8.243). 판정에는 쓰지 않는다.
+  - CPU %·메모리: 점검 사이 15초마다 따로 잰다(§8.245). 판정에는 쓰지 않는다.
   - 전원: macOS `pmset -g batt`, Linux `/sys/class/power_supply`. 배터리 전원은 주의(warning)로만 보인다.
   - toolchain: agent.toml `[health.toolchain]`의 명령(이름 = argv)을 10초 상한으로 실행하고 출력 첫 줄을 버전으로 보인다. agent.toml은 그 머신 사용자가 쓰는 파일이라 profile 명령과 같은 신뢰로 본다.
   - 시계: host가 보고의 agent 시각과 자기 시각의 차이를 잰다. 60초 넘게 어긋나면 이상이다.
   - 계보·첫 실행 지연·키체인은 시작 때 자가 점검(selfcheck)이 이미 보낸다. boot ID·재부팅은 boot fencing이 맡는다.
 - **이상(새 세션 거부):** 디스크 여유가 `min_free_gb`(기본 5GB)보다 적다, toolchain 명령 실패, 시계 차이. 연결 중인 머신만 보고(끊김은 `outage`), 첫 보고 전에는 막지 않는다. `pane run`·resume·`thread start`·`restart`가 이유와 함께 거부된다. 이미 도는 세션은 건드리지 않는다.
 - **알림:** 이상의 **종류**(`disk`·`toolchain:<이름>`·`clock`)가 생기거나 바뀌거나 풀리면 그 머신에 열린 thread가 있는 프로젝트 inbox에 `health` 항목(`problem`·`ok`)을 남긴다. 값(디스크 여유 GB 등)만 바뀐 것은 새 항목이 아니다(처음에는 설명 글로 비교해 디스크 여유가 0.1GB 바뀔 때마다 항목이 생겼다. E2E가 4번에 1번꼴로 잡았다). 알림 webhook 기본 종류에 `health`를 더했다.
-- **보기:** `aaa status`·`aaa machine list`에 이상 이유 또는 (CPU·MEM·)디스크 여유·부하·주의, 웹 머신 줄에 「점검 이상」 표시와 이유(CPU·MEM 막대는 §8.243).
+- **보기:** `aaa status`·`aaa machine list`에 이상 이유 또는 (CPU·MEM·)디스크 여유·부하·주의, 웹 머신 줄에 「점검 이상」 표시와 이유(CPU·MEM 막대는 §8.245).
 - **남는 한계:** 마지막으로 알린 이상 종류는 host 메모리에만 둔다. host를 다시 시작하면 같은 이상이 이어져도 `problem` 항목이 한 번 더 생긴다.
 
 **coordinator 일 흐름(부록 A의 M1 마무리 항목, 0.2.35 의미)**
@@ -5703,7 +5703,7 @@ primary 근거:
 
 - **기존 TUI 카드 시험의 불필요 입력(t-0385).** 최신 통합의 카드 시험 끝에서 TUI `x`+Enter와 CLI `go`가 서로 다른 연결로 겹쳐 `x` → `go\n` → Enter 순으로 도착했다. 줄 단위 fixture가 `xgo`를 받아 작업 상태가 되지 않았다. 카드 없는 `prefix o` 뒤 focus/lease 보존은 이미 화면과 host 사건으로 확인하므로 검증하지도 않던 `type_line("x")` 한 줄을 제거했다. 실제 카드·focus·알림 단언·시한·제품 코드는 유지한다. 실패 로그와 두 연결의 순서를 보고에 보존한다.
 
-### 8.243 웹 머신 패널의 CPU %·MEM %(10-19, t-0393)
+### 8.245 웹 머신 패널의 CPU %·MEM %(10-19, t-0393)
 
 - **요청.** 사용자 「웹 UI에 머신에 cpu %, mem % 를 보여줄수 있어? 간략하게」. 시안 세 안(이름 아래 숫자 한 줄·머리줄 오른쪽 작은 막대 둘·높을 때만 빨간 글) 가운데 「추천대로」 B안과 접힌 막대 배지, 빨강 90%만, 15초 표본·바뀔 때만 방송, MEM은 Activity Monitor식으로 정했다. `aaa machine list`에도 넣고 TUI 머신 패널은 후속이다(t-0386이 패널 배치를 맞추는 중).
 - **참고.** t3code(4b1024da) `apps/server/src/resourceTelemetry/HostResources.ts`가 같은 값을 잰다: CPU는 누적 tick 차이, macOS 메모리는 `vm_stat`의 free+inactive+speculative를 가용으로, Linux는 MemAvailable. herdr·herdr-web-ui·herdr-projects에는 이런 표시가 없다. 막대 모양은 aaa의 구독 사용량 칩(herdr-web-ui `UsageMeters`를 옮긴 `usage-chip`: 값 + 아래 2px 막대, 높으면 빨강)을 따른다.
