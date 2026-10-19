@@ -21,6 +21,7 @@ arboard = { version = "3", default-features = false, features = ["image-data"] }
 png = "0.18"
 # 고른 글 복사(OSC 52, ssh 셸)
 base64.workspace = true
+sha2.workspace = true
 # 이름 입력 창의 grapheme 커서·넓은 글자 폭(herdr text_editor와 같은 crate, ratatui가 이미 쓴다)
 unicode-segmentation = "1"
 unicode-width = "0.2"

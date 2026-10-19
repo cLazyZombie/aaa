@@ -437,6 +437,17 @@ async function inList(p, target) {
     await toggle.click();
     await p.locator("#workspace-drawer.is-open").waitFor();
   }
+  // 활동 막대(plan §8.240): 항목이 고르지 않은 패널이나 접은 사이드바에 있으면 그 패널 단추로 보인다(보이는 패널의 단추를 다시
+  // 누르면 접히므로 숨었을 때만 누른다)
+  const panel = await item.evaluate((el) => {
+    const owner = el.closest("[data-panel]");
+    const collapsed = innerWidth >= 769 && document.querySelector(".app.sidebar-collapsed") !== null;
+    return owner && (owner.hidden || collapsed) ? owner.dataset.panel : null;
+  });
+  if (panel !== null) {
+    await p.getByTestId(`activity-${panel}`).click();
+    await p.locator(`#sidebar-column [data-panel="${panel}"]:not([hidden])`).waitFor();
+  }
   if (!(await item.isVisible())) {
     // 기다려도 보이지 않을 자리다: 그때 화면을 말하고 끝낸다
     const at = await p.evaluate(() => ({
@@ -451,6 +462,13 @@ async function inList(p, target) {
   await item.click();
   // 줄을 고르면 drawer가 닫히며 미끄러진다. 그동안은 아직 pane 위에 있어 다음 누름을 가져가므로 끝날 때까지 기다린다
   await drawerSettled(p, true);
+}
+
+/** 활동 막대(plan §8.240): 넓은 창 사이드바에 그 패널을 보인다. 이미 보이면 누르지 않는다(보이는 패널의 단추를 다시 누르면 접힌다) */
+async function showPanel(p, panel) {
+  const tab = p.getByTestId(`activity-${panel}`);
+  if ((await tab.getAttribute("aria-selected")) !== "true") await tab.click();
+  await p.locator(`#sidebar-column [data-panel="${panel}"]:not([hidden])`).waitFor();
 }
 
 /** 목록 drawer의 움직임(transform·visibility transition)이 끝났다. nextFrame이면 방금 누른 것이 시작한 움직임까지 본다 */
@@ -1098,6 +1116,7 @@ async function runSpec(spec, labEnv = {}) {
 
 export {
   inList,
+  showPanel,
   drawerSettled,
   inTime,
   STEP_LIMIT_MS,

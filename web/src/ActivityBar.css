@@ -1,0 +1,113 @@
+/*
+ * 왼쪽 활동 막대(plan §8.240). VS Code activity bar의 치수와 상태: 48px 칸, 24px 아이콘, 고르지 않은 아이콘은 흐린 글자색,
+ * 고른 단추는 글자색과 왼쪽 2px 선, 배지는 아이콘 오른쪽 아래 둥근 수. 색은 aaa token(테마를 따른다).
+ */
+:root { --activity-w: 48px; }
+
+.activity-bar {
+  display: flex;
+  flex: 0 0 var(--activity-w);
+  flex-direction: column;
+  width: var(--activity-w);
+  min-height: 0;
+  background: var(--bg-panel);
+  border-right: 1px solid var(--border);
+}
+
+/* 맨 위 aaa 표시: 사이드바 머리줄과 같은 높이(홈 화면 앱은 위 안전 영역만큼 길다, style.css .list-head) */
+.activity-brand {
+  position: relative;
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  height: calc(var(--head) + env(safe-area-inset-top, 0px));
+  padding-top: env(safe-area-inset-top, 0px);
+}
+.activity-logo { position: relative; display: block; width: 22px; height: 22px; }
+/* host 연결 점: 로고 오른쪽 아래. 접혀도 끊김이 보인다 */
+.activity-conn {
+  position: absolute;
+  right: -5px;
+  bottom: -5px;
+  width: 9px;
+  height: 9px;
+  border: 2px solid var(--bg-panel);
+  border-radius: 50%;
+  background: var(--status-done);
+}
+.activity-conn.is-off { background: var(--status-blocked); }
+/* 보기 권한 기기: 로고 왼쪽 아래 눈 */
+.activity-reader {
+  position: absolute;
+  left: -6px;
+  bottom: -6px;
+  width: 12px;
+  height: 12px;
+  padding: 1px;
+  border-radius: 50%;
+  background: var(--bg-panel);
+  color: var(--text-dim);
+}
+
+/* 접은 사이드바: 막대 오른쪽 선과 왼쪽 칸(.list)의 선이 겹치지 않게 막대 선을 뺀다 */
+@media (min-width: 769px) {
+  .app.sidebar-collapsed .activity-bar { border-right: 0; }
+}
+
+.activity-group { display: flex; flex-direction: column; }
+.activity-bottom { margin-top: auto; padding-bottom: env(safe-area-inset-bottom, 0px); }
+
+/* aaa 기본 button 규칙(style.css: 높이·바탕·테두리)을 걷어 VS Code 칸으로 */
+.activity-bar button.activity-item {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: var(--activity-w);
+  height: var(--activity-w);
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: var(--text-dim);
+  cursor: pointer;
+  transition: none;
+}
+.activity-bar button.activity-item > svg { width: 24px; height: 24px; stroke-width: 1.5; }
+.activity-bar button.activity-item.is-active { color: var(--text-strong); }
+.activity-bar button.activity-item.is-active::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  width: 2px;
+  background: var(--text-strong);
+}
+.activity-bar button.activity-item:focus-visible { outline: 1px solid var(--accent); outline-offset: -1px; }
+@media (hover: hover) {
+  .activity-bar button.activity-item:hover { color: var(--text-strong); }
+}
+
+.activity-badge {
+  position: absolute;
+  top: 24px;
+  right: 6px;
+  min-width: 16px;
+  height: 16px;
+  padding: 0 4px;
+  border-radius: 999px;
+  background: var(--accent);
+  color: var(--on-accent);
+  font-size: 9px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  line-height: 16px;
+  text-align: center;
+}
+
+/* 좁은 창: 막대는 사이드바와 함께 drawer 안이고 drawer는 화면 머리줄(이미 상태 막대를 비킨) 아래다(style.css 768px 규칙) */
+@media (max-width: 768px) {
+  .activity-brand { height: var(--head); padding-top: 0; }
+}

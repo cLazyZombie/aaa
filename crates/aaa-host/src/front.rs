@@ -76,6 +76,7 @@ impl<R: tokio::io::AsyncRead + Unpin> FrontIn for FrameRx<R> {
 struct Conn {
     /// 요청 권한
     role: DeviceRole,
+    clipboard: bool,
     /// 목록·화면 구독에 쓰는 역할(보기 전용 표시). 같은 머신 연결은 thread 범위여도 Local로 본다(전과 같다)
     view: DeviceRole,
     actor: String,
@@ -178,7 +179,14 @@ async fn serve(host: Arc<Host>, s: aaa_common::ipc::LocalStream, pid: Option<u32
         (Some(_), _) => format!("local:{client}@unverified"),
         _ => format!("local:{client}"),
     };
-    serve_conn(host, tx, rx, Conn { role, view: DeviceRole::Local, actor, front, device: None }).await.map(|_| ())
+    serve_conn(
+        host,
+        tx,
+        rx,
+        Conn { role, clipboard: agreed.minor >= 43, view: DeviceRole::Local, actor, front, device: None },
+    )
+    .await
+    .map(|_| ())
 }
 
 /// 웹 기기의 front 연결(다른 기기 TUI, plan §6.2). 권한은 그 기기 역할이고 actor는 웹 `call`과 같은 `device:<id>`다.
@@ -207,12 +215,18 @@ pub(crate) async fn serve_device(
     let front = host.new_front(client);
     tx.json(&FrontMsg::Welcome { proto: agreed, host_id: host.host_id.clone(), role, front: front.id.clone() }).await?;
     let actor = format!("device:{device}");
-    serve_conn(host, tx, rx, Conn { role, view: role, actor, front, device: Some(device) }).await
+    serve_conn(
+        host,
+        tx,
+        rx,
+        Conn { role, clipboard: agreed.minor >= 43, view: role, actor, front, device: Some(device) },
+    )
+    .await
 }
 
 /// handshake 뒤 한 front 연결: 사건을 보내고 요청을 처리한다
 async fn serve_conn(host: Arc<Host>, tx: FrameTx, mut rx: impl FrontIn, conn: Conn) -> Result<Ended> {
-    let Conn { role, view, actor, front, device } = conn;
+    let Conn { role, clipboard, view, actor, front, device } = conn;
 
     // workspace layout 변경을 이 연결에 보낸다
     let layout_task = {
@@ -349,7 +363,9 @@ async fn serve_conn(host: Arc<Host>, tx: FrameTx, mut rx: impl FrontIn, conn: Co
                                 old.abort();
                             }
                             let ctl = Arc::new(ScrollCtl::default());
-                            let task = tokio::spawn(watch_grid(host.clone(), pane.clone(), tx.clone(), ctl.clone()));
+                            let owner = (clipboard && role != DeviceRole::Reader).then(|| front.id.clone());
+                            let task =
+                                tokio::spawn(watch_grid(host.clone(), pane.clone(), tx.clone(), ctl.clone(), owner));
                             // 이 화면이 그 pane을 그린다(「보는 화면」, seen.rs)
                             host.view_draw(&front.id, &pane, true);
                             watches.insert(pane, (task, ctl));
@@ -493,7 +509,7 @@ impl GridView {
 }
 
 /// pane 화면을 바뀐 줄만 보낸다. 처음과 화면이 다시 잡힐 때(Reset)는 전체를 보낸다.
-async fn watch_grid(host: Arc<Host>, pane: String, tx: FrameTx, ctl: Arc<ScrollCtl>) {
+async fn watch_grid(host: Arc<Host>, pane: String, tx: FrameTx, ctl: Arc<ScrollCtl>, front: Option<String>) {
     use tokio::sync::broadcast::error::{RecvError, TryRecvError};
     let Some(crate::Attach { mut rx, .. }) = host.attach_pane(&pane) else { return };
     let mut sent: Vec<u64> = Vec::new();
@@ -512,8 +528,11 @@ async fn watch_grid(host: Arc<Host>, pane: String, tx: FrameTx, ctl: Arc<ScrollC
         // 다음 변경이나 기록 옮기기를 기다리고, 짧은 시간 동안 들어온 변경은 한 장으로 묶는다
         tokio::select! {
             r = rx.recv() => match r {
-                Ok(PaneEvent::Reset) | Err(RecvError::Lagged(_)) => full = true,
-                Ok(_) => {}
+                Err(RecvError::Lagged(_)) => full = true,
+                Ok(ev) => match grid_effect(ev, &tx, &pane, front.as_deref()).await {
+                    Ok(reset) => full |= reset,
+                    Err(_) => return,
+                }
                 Err(RecvError::Closed) => return,
             },
             _ = ctl.wake.notified() => {}
@@ -521,12 +540,27 @@ async fn watch_grid(host: Arc<Host>, pane: String, tx: FrameTx, ctl: Arc<ScrollC
         tokio::time::sleep(GRID_INTERVAL).await;
         loop {
             match rx.try_recv() {
-                Ok(PaneEvent::Reset) | Err(TryRecvError::Lagged(_)) => full = true,
-                Ok(_) => {}
+                Err(TryRecvError::Lagged(_)) => full = true,
+                Ok(ev) => match grid_effect(ev, &tx, &pane, front.as_deref()).await {
+                    Ok(reset) => full |= reset,
+                    Err(_) => return,
+                },
                 Err(_) => break,
             }
         }
     }
+}
+
+/// 화면을 묶는 동안에도 복사 효과는 버리지 않고 순서대로 한 번 전달한다.
+async fn grid_effect(ev: PaneEvent, tx: &FrameTx, pane: &str, owner: Option<&str>) -> Result<bool> {
+    match ev {
+        PaneEvent::Reset => return Ok(true),
+        PaneEvent::Clipboard { front, text } if owner == Some(front.as_str()) => {
+            tx.json(&FrontMsg::Event(FrontEvent::Clipboard { pane: pane.into(), text })).await?;
+        }
+        _ => {}
+    }
+    Ok(false)
 }
 
 /// 보낼 frame과 커서가 움직였는지
@@ -642,6 +676,25 @@ fn changed_rows(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// 실제 전송 큐의 뒤따르는 Pong이 울타리다. 다른 front·reader/옛 판에는 복사가 한 건도 없어야 한다.
+    #[tokio::test]
+    async fn clipboard_effect_targets_one_front_before_the_fence() {
+        let (read, write) = tokio::io::duplex(MAX_FRAME);
+        let tx = spawn_writer(write, MAX_FRAME);
+        for owner in [None, Some("other"), Some("owner")] {
+            grid_effect(PaneEvent::Clipboard { front: "owner".into(), text: "한글".into() }, &tx, "pane", owner)
+                .await
+                .unwrap();
+        }
+        tx.json(&FrontMsg::Event(FrontEvent::Pong { id: 42 })).await.unwrap();
+        let mut rx = FrameRx::new(read, MAX_FRAME);
+        assert_eq!(
+            rx.control::<FrontMsg>().await.unwrap(),
+            FrontMsg::Event(FrontEvent::Clipboard { pane: "pane".into(), text: "한글".into() })
+        );
+        assert_eq!(rx.control::<FrontMsg>().await.unwrap(), FrontMsg::Event(FrontEvent::Pong { id: 42 }));
+    }
 
     /// 바뀐 줄만 보내되, 크기가 바뀌면(폭만 바뀌어도) 모든 줄을 다시 보낸다(QA t-0337 Q23)
     #[test]

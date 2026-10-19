@@ -2008,6 +2008,83 @@ fn osc52_copy_reports_a_request() {
     assert!(tui.wait_exit());
 }
 
+/// pane 앱의 OSC 52가 실제 front 복사 경계까지 간다. 시스템 clipboard 대신 기존 파일 sink를 쓴다.
+#[test]
+fn pane_osc52_reaches_front_clipboard() {
+    let mut lab = Lab::new();
+    let (h, mut hw) = start(&mut lab);
+    let ws = h.ok(&["tab", "create", "--machine", "labA", "--label", "osc-copy", "--", "/bin/sh"]);
+    let pane = leaves(&ws)[0].clone();
+    let copied = lab.root.join("copied.txt");
+    let mut tui = Tui::start_env(&h, &[("AAA_TEST_CLIPBOARD_TEXT", lab::path_str(&copied))]);
+    tui.wait_text("첫 셸 화면", |s| s.contains(" · osc-copy labA") && s.contains('$'));
+    hw.wait("입력권", |w| w.held_by(&pane, "tui@").then_some(()));
+    // base64(copy-42), BEL. 셸이 내보내는 bytes만 복사해야 한다.
+    tui.type_line("printf '\\033]52;c;Y29weS00Mg==\\007'; echo osc-$((52))");
+    tui.wait_text("출력 처리 울타리", |s| s.contains("osc-52"));
+    tui.wait_text("실제 복사 알림", |s| s.contains("클립보드에 복사했다"));
+    assert_eq!(std::fs::read_to_string(&copied).unwrap_or_default(), "copy-42");
+    let replay_copy = lab.root.join("replay-copy.txt");
+    let mut reattached = Tui::start_env(&h, &[("AAA_TEST_CLIPBOARD_TEXT", lab::path_str(&replay_copy))]);
+    reattached.wait_text("다시 붙은 화면", |s| s.contains("osc-52"));
+    assert!(!replay_copy.exists(), "replay로 다시 복사하면 안 된다");
+    reattached.cmd("q");
+    assert!(reattached.wait_exit());
+    tui.cmd("q");
+    assert!(tui.wait_exit());
+}
+
+/// 앱 선택 뒤 Ctrl+C도 pane 입력이 아니라 pane 본문 복사다. raw 관측기로 실제 키 누수를 본다.
+#[test]
+fn reported_selection_copy_never_interrupts_pane() {
+    for auto_copy in [false, true] {
+        let mut lab = Lab::new();
+        let (h, _) = start(&mut lab);
+        let fixture = lab.root.join("reported-copy.py");
+        let program = r#"import os, tty, re
+
+tty.setraw(0)
+os.write(1, b"\x1b[?1003h\x1b[?1006halpha   \r\nbeta   \r\nready\r\n")
+received = b""
+mouse = b""
+while True:
+    byte = os.read(0, 1)
+    if not byte:
+        break
+    if mouse or byte == b"\x1b":
+        mouse += byte
+        if re.fullmatch(rb"\x1b\[<[0-9;]+[Mm]", mouse):
+            if mouse.endswith(b"m"):
+                os.write(1, b"APP_OSC\r\napp-selected\r\n")
+            mouse = b""
+        continue
+    received += byte
+    if byte == b"!":
+        os.write(1, b"\r\nkeys=" + received.hex().encode() + b"\r\n")
+        received = b""
+"#
+        .replace("APP_OSC", if auto_copy { "\\x1b]52;c;YWxwaGEKYmV0YQ==\\x07" } else { "" });
+        std::fs::write(&fixture, program).unwrap();
+        h.ok(&["tab", "create", "--machine", "labA", "--", "python3", lab::path_str(&fixture)]);
+        let copied = lab.root.join("copied.txt");
+        let mut tui = Tui::start_env(&h, &[("AAA_TEST_CLIPBOARD_TEXT", lab::path_str(&copied))]);
+        let at = tui.wait_find("alpha");
+        tui.mouse(0, at, false);
+        // pane 밖까지 끌어도 본문 좌표로 묶고 줄 끝 공백·사이드바·경계를 복사하지 않는다.
+        tui.mouse(32, (at.0 + 1, COLS as usize - 1), false);
+        tui.mouse(0, (at.0 + 1, COLS as usize - 1), true);
+        tui.wait_text("앱 선택 울타리", |s| s.contains("app-selected"));
+        tui.send(b"\x03!");
+        tui.wait_text("키 처리 울타리", |s| s.contains("keys="));
+        assert!(tui.text().contains("keys=21"), "Ctrl+C가 pane에 새었다: {}", tui.text());
+        assert_eq!(std::fs::read_to_string(&copied).unwrap_or_default(), "alpha\nbeta");
+        tui.send(b"\x03!");
+        tui.wait_text("선택 없는 Ctrl+C 보존", |s| s.contains("keys=0321"));
+        tui.cmd("q");
+        assert!(tui.wait_exit());
+    }
+}
+
 /// raw 관측기는 ISIG를 끈다. Ctrl+C를 신호로 실행하지 않고, 복사 입력이 pane에 샜는지 bytes로 확인한다.
 #[test]
 fn selection_copy_never_enters_pane() {

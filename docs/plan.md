@@ -5544,6 +5544,33 @@ primary 근거:
   기존 E2E 23의 수신 확인 경계를 강화해 새 사용자 기록이 실제로 보인 뒤 안내가 없어지는지, 미확인 뒤 늦은 반영과 즉시 반영
   모두 확인한다. 보낸 글 복원·새 초안 보존·과거 같은 글의 오인 방지는 그대로다. 수정 전 안내 소멸 실패를 보존했다.
 
+- **Mac 웹 터미널 Ctrl+V 후속(10-19, t-0387).** 현재 키 처리기는 OS 구별 없이 Ctrl+V를 xterm에서 제외해 Mac에서는
+  paste 사건도 ^V도 없었다. Cmd+V의 파일 paste 경로는 정상이다. ^V만 원격 프로그램에 보내도 브라우저 clipboard가
+  전달되지는 않으며, Claude Code가 직접 읽는 것은 실행 머신의 clipboard다. 브라우저 이미지는 기존 host→agent 첨부로 보낸다.
+  - **참고와 차이.** herdr-web-ui `aa624cb PaneTerminal.tsx` 610~660은 Ctrl+V를 브라우저에 맡겨 ^V를 차단하며,
+    1449~1458은 파일 paste를 업로드한다. 이번 Mac 요구에는 그 키 제외만 다르게 둔다. herdr `client/clipboard_images.rs
+    should_bridge_clipboard_image_paste`·`client/mod.rs` 976~1002처럼 front 이미지가 있으면 올리고 없으면 원래 키를 보낸다.
+    t3code `4b1024da terminal/ghostty/surface.ts isTerminalPasteShortcut`는 Mac Cmd+V와 비Mac Ctrl+Shift+V를 구분하고
+    Ctrl+V를 보존한다. 비동기 결과의 수명·중복을 막는 `pasteShortcutToken`도 대조했다.
+  - **Mac 데스크톱.** 실제 Ctrl+V keydown 안에서 `navigator.clipboard.read()`를 시작한다. 항목마다 이미지 표현 하나만
+    `getType`하고(PNG 우선) 기존 업로드·서명/상한 검사·경로 삽입으로 보낸다. `text/plain`과 `readText`는 읽지 않는다.
+    이미지가 없으면 ^V 한 번만 보낸다. 읽기 거부·취소·API 없음·이미지 추출 실패도 ^V로 돌아가며 짧게 Cmd+V를 안내한다.
+    이미지 업로드 실패 뒤에는 ^V를 추가하지 않는다. key repeat와 읽는 중 중복 Ctrl+V는 다시 읽거나 올리지 않는다.
+    reader·IME·입력 불가에서는 읽지 않으며, 읽기 중 pane/보기/focus가 바뀌면 늦은 결과를 보내지 않는다.
+  - **브라우저·OS.** Chrome은 clipboard 읽기 권한을 물을 수 있고, Safari는 사용자 동작에서 별도 paste 확인 UI를
+    보일 수 있다. 허용·거부는 브라우저에 맡기며 우회하지 않는다. API가 없는 비보안 주소도 위의 ^V/안내 경로다.
+    Windows·Linux Ctrl+V는 기존 브라우저 paste(글 우선·파일 첨부) 그대로다. iPhone·iPad의 메뉴 paste·Cmd+V는
+    그대로이며 MacIntel로 보이는 iPad도 touch capability로 새 Ctrl+V 읽기에서 제외한다. Composer 입력은 변경하지 않는다.
+    근거: [WebKit Async Clipboard](https://webkit.org/blog/10855/async-clipboard-api/),
+    [Chrome 팀 이미지 읽기](https://web.dev/articles/clipboard/paste-images),
+    [Claude Code 이미지 입력](https://code.claude.com/docs/en/common-workflows#work-with-images).
+  - **회귀 소유 경계.** 기존 웹 E2E 11의 첨부 단계·raw PTY를 넓혔다. Chrome·WebKit의 Mac 이미지/텍스트만/읽기 거부/
+    API 없음/읽기 중 반복, Windows 키와 표준 text/image paste, iPhone·iPad의 기존 image paste를 실제 host·agent로 본다.
+    Clipboard API만 페이지 가짜로 제공하며 사람의 시스템 clipboard를 건드리지 않는다. 실제 OS 권한 창·Windows OS·휴대폰
+    실기를 증명하지는 않는다. 수정 전 이미지 경로 미수신 실패를 보존했고 수정 후 통과했다. 연속 첨부는 이전 배너가 아니라
+    이번 PTY 경로를 받아 파일 bytes·화면을 대조한다. 새 production 시험 seam·고정 sleep은 없다.
+  - **착지 순서.** ci-local·공개 검사 뒤 병합 준비만 보고하고 지정된 착지 창을 기다린다. 안내 소멸 운영 확인은 다음 배포 뒤 남는다.
+
 ### 8.233 배포 실행기 잠금의 상속 FD 수명(10-19, t-0381 후속)
 
 - **실패와 원인.** 다른 작업의 전체 gate에서 기존 durable job 시험이 실행기 drop 뒤 EWOULDBLOCK으로 실패했다. File close만 쓰면 fork/dup가 공유하는 flock 참조가 남아 잠금을 유지한다. 기존 시험의 실제 lease를 복제해 동일 configure 실패를 결정적으로 확인했다. 원본 FD는 이미 close-on-exec이며 이 플래그는 fork~exec 창을 막지 못한다. 원래 실패 실행의 상속 자식 PID까지 추적한 증거는 없으므로 특정 자식을 원인으로 단정하지 않는다.
@@ -5612,7 +5639,38 @@ primary 근거:
 
 - **최신 main 통합의 fixture 경계.** t-0383의 Codex 제목 `-c` 옵션이 뒤에 추가되어 마지막 두 argv를 읽던 E2E 가짜가 옵션을 모드·기록 파일로 오인했다. fixture 인자를 명시적 `--` 뒤에 두고 그 경계에서 읽어 harness 옵션 추가와 분리한다. 실제 Ctrl+Enter bytes·시한·기대값은 유지하며 실패 로그를 보존했다.
 
-### 8.240 TUI 확장 Enter와 Windows Terminal 그림 붙여넣기(10-19, t-0385)
+### 8.240 웹 왼쪽 활동 막대와 본문 보고서 화면(10-19, t-0390, VS Code식)
+
+- **요청.** 사용자 「vs code 처럼, web ui에서 projects, machines, agents 이걸 왼쪽 버튼? 같은걸로 수정하고, 그거 누르면 나오는걸로 해줘. 같은 버튼 한번 더 누르면 숨겨지고」, 「설정도 거기에 넣어줘. 왼쪽 밑에」, 「보고서 거기에 넣고, 보고서 누르면 오른쪽 창이 보고서로 바뀌게」. TUI도 같은 패널 구조로 맞춘다(t-0386 D안).
+- **참고.** herdr-web-ui(aa624cb)와 t3code(4b1024da)에는 아이콘 막대가 없다. 넓은 창 사이드바 접기는 herdr-web-ui를 그대로 따른다: `App.tsx` 318~319줄 `sidebarCollapsed`, 1246~1249줄 `toggleSidebar`(768px 이하는 drawer, 위는 접기), `styles.css` 609·1570줄 `.app.sidebar-collapsed .sidebar { display: none }`, 단축키 `toggle-sidebar` Mod+Shift+B와 팔레트 「사이드바 토글」(i18n.ko.ts). 막대 자체는 VS Code activity bar를 따른다: 48px 세로 tablist, 고른 단추에만 왼쪽 선과 `aria-selected`·`aria-expanded`, 사이드바를 접으면 고른 단추가 없음, ↑↓·Home·End는 focus만(roving tabindex) Enter·Space가 고름, 아이콘 오른쪽 아래 수 배지, 아래 묶음은 패널이 아닌 동작.
+- **다르게 둔 것.** herdr-web-ui는 접힘을 주소(`sidebar=hidden`)에 싣는다. aaa는 brief대로 마지막 패널·접힘을 기기마다 localStorage(`aaa:sidebar-panel`·`aaa:sidebar-collapsed`, `web/src/sidebarPanel.ts`)에 둔다. 단축키·팔레트·알림·브라우저 이동으로 연 pane·thread는 그 줄이 있는 패널로 바꾸지만(VS Code `explorer.autoReveal`처럼 지금 패널에 있으면 그대로) 접어 둔 사이드바는 펴지 않고 휴대폰 drawer도 열지 않는다: VS Code도 숨긴 사이드바를 열지 않고, 펴면 터미널 폭(PTY 크기)이 바뀐다. 앱이 스스로 바꾼 주소(목록·단추·첫 고르기)는 드러내지 않는다(`ownHash`).
+- **배치.**
+
+  | 자리 | 무엇 |
+  |---|---|
+  | 막대 맨 위 | aaa 로고 + host 연결 점(끊기면 빨강), 보기 권한 기기는 눈 표시 |
+  | 막대 위 묶음 | 프로젝트(고정 줄 → 프로젝트 묶음 → 기타, 배지 = 확인 필요·검토 대기 thread) · 머신(머신 줄·+ 새 pane) · 에이전트(Agents 목록, 배지 = 답을 기다리는 agent) |
+  | 막대 아래 묶음 | 보고서(본문을 `#reports`·`#report=<프로젝트>/<이름>`으로, 다시 누르면 앞 화면) · 설정 톱니(설정 창) |
+  | 사이드바 머리(공통) | 패널 이름 · 특수 임무·평가자 배지 · 명령 팔레트 돋보기 |
+  | 사이드바 머리 아래·바닥 줄(공통) | 연결 끊김·오류 띠 / 앱 설치·구독 사용량 |
+
+  예전 바닥 줄의 「보고서」·「설정」 글 단추와 설정 안 「보고서」 쪽은 없앴다. Agents 구역의 접기 단추(참고 AgentSidebar, 휴대폰은 접힌 채 시작)는 패널이 되어 없앴다.
+- **보고서 화면.** 목록(`ReportsPanel`, 「열기」는 본문, 「새 창」은 예전 앱에서 열기)과 보고서 하나(`library_open`의 sandbox iframe, 없으면 보고 글·파일)다. 한 번 연 뒤에는 다른 화면으로 가도 그려 둔 채 `visibility: hidden`·`inert`로 숨긴다: 돌아오면 연 보고서·iframe 문서와 그 안 굴린 자리·목록 굴린 자리가 그대로다(display:none은 iframe 안 자리를 잃는다).
+- **휴대폰.** 768px 이하는 막대가 drawer 안 왼쪽 세로 막대다(drawer 폭 min(88vw, 48px + 사이드바)). 보이는 패널의 단추는 drawer를 닫고, 「보고서」는 drawer를 닫고 본문을 바꾼다. 가로 휴대폰(769px 이상)은 넓은 창 규칙이다.
+- **검증.** 웹 E2E 26(`26-activity-bar`, t-0384의 25와 겹치지 않게): 패널 바꾸기·다시 눌러 접기(본문 +320px)·키보드·Mod+Shift+B·새로 열어도 기기 기억·다른 기기는 기본값, 단축키·팔레트·알림이 연 줄의 패널과 접힌 채 유지·목록 줄은 그대로·배지, 보고서 화면 왕복에서 같은 iframe 문서·자리와 목록 자리, 설정 톱니, 휴대폰 drawer. 드러낼 때 펴기·보고서 화면을 떠날 때 지우기를 심으면 각각 실패한다. 03 단축키의 Mod+Shift+B는 이제 앱 몫이다. 21 보고서는 막대 「보고서」·본문 열기·새 창으로 바꿨다. 머신 줄이 머신 패널로 가서 02(머신 + 단추)·13(끊김 글)은 그 패널을 열고(`showPanel`·`inList`), 06·08·14는 「목록이 왔다」 표지를 붙음으로 본다. 03 「크기 되찾기」의 둘째 화면은 760→640px다(첫 화면 1100px의 터미널이 막대 48px만큼 좁아졌다). 04 「목록 두 굴림 영역」(§8.235)은 두 목록이 다른 패널이라 패널을 바꿔 가며 재고, 에이전트 패널이 높이를 다 가져 agent를 24개로 넘치게 한다. 그 여백 규칙을 빼면 여전히 실패한다. 고정 sleep은 없다.
+
+### 8.241 TUI 앱 선택의 OSC 52 전달과 복사 키 보호(10-19, t-0391)
+
+- **누락 경계.** 마우스 보고 앱(Codex·Claude)의 일반 끌기는 herdr처럼 앱에 전달한다. 앱의 OSC 52는 vt100 callback에서 끝나던 누락을 고쳐 host mirror가 live 효과로 꺼내고, 출력 당시 입력권을 가진 조작 front 한 곳으로만 전달한다. 셀 화면만 받는 TUI도 기존 `clip::copy_text`로 로컬 clipboard에 쓴다. replay·관찰 화면·reader·다른 pane·focus를 잃은 TUI에는 복사 효과를 실행하지 않는다.
+- **경계·자료.** pane 내부 좌표로 범위를 기억하고 앱 선택 뒤 Ctrl+C·Ctrl+Shift+C·Cmd+C는 pane 본문 복사로 처리한다. 앱의 OSC 52가 이미 있으면 그 정확한 글을 쓴다. 없으면 host의 `PaneSelectionRead`로 inner 범위만 읽고 줄 끝 공백을 뺀다. copy 키의 반복·Release 보호와 선택 없는 Ctrl+C 전달을 유지한다. 앱 mouse 보고 자체와 휠·오른쪽 메뉴를 바꾸지 않는다.
+- **한도·수명.** VT callback은 완료된 BEL/ST OSC의 base64·UTF-8만 받고 질의·NUL·잘못된 데이터는 버린다. 한 글 64KiB·한 feed 최대 8개로 제어 frame 한도 안에 묶는다. 매 feed의 일회성 효과만 꺼내며 snapshot이나 재접속으로 다시 실행하지 않는다.
+- **성공·진단.** native 쓰기 성공만 「클립보드에 복사했다」, 확인 없는 OSC 출력은 「터미널에 복사 요청을 보냈다」, 실패는 오류다. Windows native 쓰기는 기존 자기 thread의 message-only 창·UTF-16·메모리 소유권 경로를 유지한다. TUI는 연결 뒤 판과 실제 실행 파일 SHA256을 host 진단에 한 번 알린다. 화면 이름에는 섞지 않는다. host에는 복사 결과 종류(Copied/Requested/Failed, front 자기 신고)와 OSC 전달의 front ID·길이만 남기며 본문은 기록하지 않는다.
+- **프로토콜·배포.** FRONT_API 1.43 `Clipboard` 사건·`PaneCopyReport`·`FrontIdentity`를 더한다. 1.42 front에는 새 사건을 보내지 않고 1.42 host에는 새 진단을 보내지 않는다. native Windows 왕복은 기존 windows-2025 CI가 담당하며 개발 기기·사용자 PC clipboard를 덮는 검사는 켜지 않는다. host와 PC TUI binary 반영이 모두 필요하다.
+- **참고.** herdr 0.9.5 `pane/terminal.rs:1423`·`pane.rs:2614`·`server/headless/notifications.rs:334`·`client/clipboard_forwarding.rs:9`·`selection.rs:363`의 live 효과→foreground client→native 쓰기 흐름을 따른다. herdr-projects popup의 경로 복사와 web-ui 붙여넣기는 이 경계의 owner가 아니다. t3code `surface.ts::shouldReportTerminalMouse`·선택 trim 규칙도 대조했다.
+- **Windows Terminal Shift 제약.** [Microsoft Selection 문서](https://learn.microsoft.com/en-us/windows/terminal/selection)의 Shift+끌기는 VT 입력 대신 바깥 터미널 자체 화면 선택이다. sidebar·pane 경계가 그 바깥 화면에 포함되며 aaa/herdr가 좌표를 받지 못한다. aaa에 도달한 선택의 pane 제한과 이 바깥 선택을 구분한다. 시스템·터미널 프로필 변경이나 clipboard 사후 가공으로 우회하지 않는다. 사용자 승인(10-19)에 따라 일반 끌기의 OSC 52→로컬 native와 앱 선택 뒤 Ctrl+C의 pane 본문 복사를 Windows 기준 동작으로 한다. Shift+끌기는 플랫폼 제약으로 남긴다.
+- **회귀.** `pane_osc52_reaches_front_clipboard`는 실제 pane 출력→host→TUI→기존 파일 sink와 재접속 무복사를 본다(수정 전 빈 clipboard RED, 다른 front로 broadcast하는 변형도 전송 큐의 Pong 울타리 owner 시험에서 RED). `reported_selection_copy_never_interrupts_pane`는 raw 관측기에서 mouse 앱의 일반 선택·OSC 유무·pane 밖 끌기·Ctrl+C 누수·선택 없는 Ctrl+C를 본다(수정 전 keys=0321 RED). 기존 local/Shift 선택·복사 실패·반복/Release 보호 시험을 유지한다. 새 VT 유닛 시험은 chunk 분할·BEL/ST·질의/형식 거부·한도를 본다.
+
+### 8.242 TUI 확장 Enter와 Windows Terminal 그림 붙여넣기(10-19, t-0385)
 
 - **원인.** TUI는 모든 Enter를 CR로 만들어 수정키를 버렸고, Unix 바깥 터미널에 확장 키도 요청하지 않았다.
   crossterm 0.29는 kitty CSI u는 읽지만 xterm modifyOtherKeys의 `CSI 27;modifier;Unicode~`는 버렸다.

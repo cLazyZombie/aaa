@@ -34,7 +34,7 @@ export default async function ({ ctl, page }) {
     if (composed.length || gots() !== n || (await box.inputValue()) !== "a\nb") throw new Error(`조합 중 Enter로 보냈다: ${JSON.stringify(composed)} ${got()}`);
     // 초안: 다시 열어도 남는다
     await page.reload();
-    await page.getByTestId("machine-labA").waitFor();
+    await page.getByTestId("machine-labA").waitFor({ state: "attached" });
     await until("초안 보존", async () => (await page.getByLabel("보낼 글").inputValue()) === "a\nb");
     // 다시 연 화면은 host의 readonly 알림이 올 때까지 입력줄이 꺼져 있고, 꺼진 동안의 Enter는 초안을 두고 보내지 않는다
     await until("입력줄 켜짐", () => page.getByLabel("보낼 글").isEnabled());

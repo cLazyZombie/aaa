@@ -17,6 +17,8 @@ pub struct Vt {
 struct Modes {
     /// modifyOtherKeys 단계(`CSI > 4 ; n m`). Claude Code는 2를 요청하고 Ctrl+Enter를 `CSI 27;5;13~`로 받는다.
     modify_other_keys: u16,
+    /// 이번 feed의 OSC 52 쓰기. 화면 replay와 별개인 일회성 client 효과다.
+    clipboard: Vec<String>,
     /// harness 상태 감지에 쓰는 마지막 OSC 0/2 제목과 OSC 9 진행 payload(herdr `AgentOscStateTracker`, pane/osc.rs 494~565).
     /// Claude·Codex는 제목 앞 spinner로 작업 중을 알린다. 빈 제목은 지운다.
     osc_title: Option<String>,
@@ -72,7 +74,23 @@ impl Modes {
     }
 }
 
+const MAX_CLIPBOARD_BYTES: usize = 64 << 10;
+const MAX_CLIPBOARD_WRITES: usize = 8;
+
 impl vt100::Callbacks for Modes {
+    fn copy_to_clipboard(&mut self, _: &mut vt100::Screen, _: &[u8], data: &[u8]) {
+        use base64::Engine;
+        // 제어 frame 상한 안에 든다(JSON escape 최악 6배). 질의·잘못된 UTF-8·NUL은 전달하지 않는다.
+        if data.len() > MAX_CLIPBOARD_BYTES.div_ceil(3) * 4 || self.clipboard.len() >= MAX_CLIPBOARD_WRITES {
+            return;
+        }
+        let Ok(bytes) = base64::engine::general_purpose::STANDARD.decode(data) else { return };
+        let Ok(text) = String::from_utf8(bytes) else { return };
+        if text.len() <= MAX_CLIPBOARD_BYTES && !text.contains('\0') {
+            self.clipboard.push(text);
+        }
+    }
+
     fn set_window_title(&mut self, _: &mut vt100::Screen, title: &[u8]) {
         self.title(title);
     }
@@ -143,6 +161,7 @@ impl Vt {
     /// 화면 사본에 넣는다. 버린 줄을 세려고(`count_start`) alt 화면 전환 자리에서 나눠 넣는다: vt100은 alt 화면에 들어갈 때
     /// normal 화면의 기록 위치를 0으로 돌려(`enter_alternate_grid`) 그 앞에서 넣은 줄의 셈이 사라진다.
     pub fn feed(&mut self, bytes: &[u8]) {
+        self.parser.callbacks_mut().clipboard.clear();
         let mut from = 0;
         for cut in alt_switch_cuts(bytes).into_iter().chain([bytes.len()]) {
             self.count_start();
@@ -150,6 +169,11 @@ impl Vt {
             self.count_end();
             from = cut;
         }
+    }
+
+    /// 바로 앞 feed에서 완료된 OSC 52 쓰기만 한 번 꺼낸다. replay를 먹인 호출자는 꺼내지 않는다.
+    pub fn take_clipboard_writes(&mut self) -> Vec<String> {
+        std::mem::take(&mut self.parser.callbacks_mut().clipboard)
     }
 
     /// 버린 줄 세기를 연다(`Modes::dropped_now`). 기록 위치는 읽을 때만 옮기고 늘 0으로 두므로 feed 동안 1에 두어도 다른 읽기와
@@ -2833,6 +2857,27 @@ mod tests {
         assert_eq!(v.modes(), KeyModes::default());
         v.feed(b"\x1b[?1h\x1b[?2004h\x1b[>4;2m");
         assert_eq!(v.modes(), KeyModes { application_cursor: true, bracketed_paste: true, modify_other_keys: 2 });
+    }
+
+    /// VT streaming callback 경계: BEL/ST, chunk 분할, 질의·잘못된 데이터와 크기 제한.
+    #[test]
+    fn clipboard_effects_are_live_bounded_and_drained_once() {
+        use base64::Engine;
+        let mut v = Vt::new(10, 40);
+        v.feed(b"\x1b]52;c;Y29w");
+        assert!(v.take_clipboard_writes().is_empty());
+        v.feed(b"eS00Mg==\x07\x1b]52;p;7ZWc6riA\x1b\\");
+        assert_eq!(v.take_clipboard_writes(), ["copy-42", "한글"]);
+        assert!(v.take_clipboard_writes().is_empty());
+        v.feed(b"\x1b]52;c;?\x07\x1b]52;c;bad=padding\x07\x1b]52;c;/w==\x07\x1b]52;c;AA==\x07");
+        assert!(v.take_clipboard_writes().is_empty());
+        let too_big = base64::engine::general_purpose::STANDARD.encode(vec![b'x'; (64 << 10) + 1]);
+        v.feed(format!("\x1b]52;c;{too_big}\x07").as_bytes());
+        assert!(v.take_clipboard_writes().is_empty());
+        v.feed(b"\x1b]52;c;Y29weS00Mg==\x07");
+        // replay/화면 전용 호출자가 효과를 꺼내지 않아도 다음 feed에 묵은 효과를 섞지 않는다.
+        v.feed(b"next output");
+        assert!(v.take_clipboard_writes().is_empty());
     }
 
     /// herdr pane/osc.rs `AgentOscStateTracker`: 마지막 OSC 0/2 제목·OSC 9 진행. `;`가 든 제목, 빈 제목(지움), 제어 문자,

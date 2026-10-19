@@ -13,6 +13,9 @@ import type {
   ThreadView,
 } from "./gen/proto";
 import { Missions } from "./Missions";
+import { ActivityBar } from "./ActivityBar";
+import { PANEL_LABEL, revealPanel, storedCollapsed, storedPanel, storeSidebar, type SidebarPanel } from "./sidebarPanel";
+import { ReportsView, type ReportRef } from "./ReportsView";
 import { UpdateNotice } from "./UpdateNotice";
 import { ApiError, call, me, onSignedOut, pushedSince, pushInfo, signOut, tellAlert, watchEvents } from "./api";
 import { removePushSubscription } from "./push";
@@ -25,15 +28,14 @@ import { ThreadReload } from "./threadReload";
 import { ThreadPanel } from "./ThreadPanel";
 import { PromptCard } from "./PromptCard";
 import { ProjectThreads } from "./ProjectThreads";
-import { Folder } from "lucide-react";
+import { Folder, Settings } from "lucide-react";
 import { Icon } from "./icons";
 import { hasAgentMark } from "./herdr/AgentMark.tsx";
 import { Sidebar } from "./Sidebar";
-import { rosterRows, shortPath, threadKey } from "./sidebarModel";
+import { needsYou, paneAgentStatus, rosterRows, shortPath, threadKey } from "./sidebarModel";
 import { useShortcuts } from "./herdr/shortcuts.ts";
 import type { AppActions, PaneControls } from "./actions";
 import { UsageMeters } from "./UsageMeters";
-import { requestSettingsPage } from "./palette";
 import { SettingsDialog } from "./SettingsDialog";
 import { onSettingsHistory, recordSettings } from "./herdr/settingsHistory.ts";
 import { useInstallPrompt } from "./herdr/install";
@@ -249,11 +251,34 @@ function storeSelection(sel: string): void {
   }
 }
 
-/** 고른 것: `#pane=<id>`, `#thread=<project>/<id>`, 프로젝트 thread 보기 `#project=<name>`, 프로젝트 고르기 `#projects` */
+/**
+ * 고른 것: `#pane=<id>`, `#thread=<project>/<id>`, 프로젝트 thread 보기 `#project=<name>`, 프로젝트 고르기 `#projects`,
+ * 보고서 화면 `#reports`(목록)·`#report=<project>/<name>`(하나, plan §8.240)
+ */
 function selectedFromHash(): string | null {
   if (location.hash === "#projects") return "projects:";
+  if (location.hash === "#reports") return "reports:";
+  const r = /^#report=(.+)$/.exec(location.hash);
+  if (r) return `reports:${decodeURIComponent(r[1])}`;
   const m = /^#(pane|thread|project)=(.+)$/.exec(location.hash);
   return m ? `${m[1]}:${decodeURIComponent(m[2])}` : null;
+}
+
+/** 고른 것의 주소(selectedFromHash의 반대) */
+function hashOf(sel: string | null): string {
+  if (sel === null) return "";
+  if (sel === "projects:") return "projects";
+  if (sel === "reports:") return "reports";
+  if (sel.startsWith("reports:")) return `report=${encodeURIComponent(sel.slice(8))}`;
+  const at = sel.indexOf(":");
+  return `${sel.slice(0, at)}=${encodeURIComponent(sel.slice(at + 1))}`;
+}
+
+/** 보고서 화면의 연 보고서(`reports:<project>/<name>`): 프로젝트 이름에는 /가 없다 */
+function reportOf(sel: string): ReportRef | null {
+  const rest = sel.slice(8);
+  const at = rest.indexOf("/");
+  return at > 0 ? { project: rest.slice(0, at), name: rest.slice(at + 1) } : null;
 }
 
 /**
@@ -311,6 +336,36 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
     return () => window.removeEventListener("keydown", onEscape, true);
   }, []);
   const drawer = useMemo(() => ({ open: drawerOpen, toggle: () => setDrawerOpen((open) => !open) }), [drawerOpen]);
+  // 활동 막대(plan §8.240): 사이드바가 보이는 패널 하나, 넓은 창에서 접었나. 둘 다 기기마다 기억한다(sidebarPanel.ts).
+  // 접힘은 769px부터만 뜻이 있다(좁은 창의 사이드바는 drawer이고 같은 단추가 drawer를 닫는다)
+  const [panel, setPanel] = useState<SidebarPanel>(storedPanel);
+  const [collapsed, setCollapsed] = useState(storedCollapsed);
+  useEffect(() => storeSidebar(panel, collapsed), [panel, collapsed]);
+  const panelRef = useRef(panel);
+  panelRef.current = panel;
+  const collapsedRef = useRef(collapsed);
+  collapsedRef.current = collapsed;
+  /** 사이드바를 접는다·편다. 사이드바 안의 focus는 숨는 칸과 함께 사라지므로 그 패널의 막대 단추로 옮긴다 */
+  const setSidebarCollapsed = (next: boolean) => {
+    if (next && document.getElementById("sidebar-column")?.contains(document.activeElement))
+      document.getElementById(`activity-tab-${panelRef.current}`)?.focus({ preventScroll: true });
+    setCollapsed(next);
+  };
+  const sidebarToggleRef = useRef(() => {});
+  sidebarToggleRef.current = () => setSidebarCollapsed(!collapsedRef.current);
+  /** 막대의 패널 단추(VS Code activity bar): 다른 패널이면 그것을 보이고, 보이는 패널을 다시 누르면 접는다(좁은 창은 drawer를 닫는다) */
+  const pickPanel = (next: SidebarPanel) => {
+    if (!wideScreen) {
+      if (next === panelRef.current) setDrawerOpen(false);
+      else setPanel(next);
+      return;
+    }
+    if (collapsed) {
+      setPanel(next);
+      setCollapsed(false);
+    } else if (next === panelRef.current) setSidebarCollapsed(true);
+    else setPanel(next);
+  };
   // 열린 질문(id → 질문). 연결할 때마다 목록을 새로 읽고, 이후는 질문 사건으로 따라간다.
   const [questions, setQuestions] = useState<Map<string, QuestionView>>(new Map());
   // HTTP 질문 목록을 화면에 반영한 횟수. 사건과 목록 응답의 완료 경계를 관찰한다.
@@ -578,11 +633,42 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
   // 그 thread를 연 주소 바꿈이 아닌 다른 이동(앱 안 알림·브라우저 뒤로·직접 친 주소)이면 돌아갈 곳을 잊는다
   const [backTo, setBackTo] = useState<string | null>(null);
   const openedHash = useRef<string | null>(null);
+  // 앱이 스스로 바꾼 주소(목록·단추·첫 고르기). 그 밖의 주소 바꿈(앱 안 알림 Droplet, 브라우저 뒤로·앞으로, 붙여 넣은 링크)은
+  // 그 줄이 있는 패널을 보인다(VS Code explorer autoReveal, plan §8.240)
+  const ownHash = useRef<string | null>(null);
+  const goHash = (hash: string) => {
+    const next = hash ? `#${hash}` : "";
+    if (location.hash === next) return;
+    ownHash.current = next;
+    location.hash = hash;
+  };
+  /**
+   * 단축키·팔레트·알림이 연 pane·thread가 있는 패널로 바꾼다(sidebarPanel.ts `revealPanel`). 접어 둔 사이드바는 펼치지 않고 휴대폰
+   * drawer도 열지 않는다: VS Code도 숨긴 사이드바를 열지 않고, 펼치면 터미널 폭(PTY 크기)이 바뀐다. 다음에 펼치면 그 패널이다
+   */
+  const reveal = (target: string | null) => {
+    if (target === null || !(target.startsWith("pane:") || target.startsWith("thread:"))) return;
+    const { panes, threads, machines } = now.current;
+    const listed = [...threads.values()].filter((t) => t.group !== "resolved" && t.role !== "evaluator" && t.project_status !== "archived");
+    const inProjects = rosterRows(machines, panes, listed, currentSidebarShared().paneOrder).some((r) => r.keys.includes(target));
+    const thread = target.startsWith("thread:") ? threads.get(target.slice(7)) : undefined;
+    const pane = target.startsWith("pane:") ? panes.find((p) => `pane:${p.id}` === target) : thread?.pane ? panes.find((p) => p.id === thread.pane) : undefined;
+    const owner = thread ?? (pane ? listed.find((t) => t.pane === pane.id) : undefined);
+    // 에이전트 패널의 줄(Sidebar AgentSection): 도는 agent pane, 평가자 빼고
+    const inAgents = pane !== undefined && pane.state === "running" && pane.role !== "evaluator" && agentOf(pane, owner) !== null;
+    setPanel((current) => revealPanel(current, inProjects, inAgents));
+  };
+  const revealRef = useRef(reveal);
+  revealRef.current = reveal;
   useEffect(() => {
     const on = () => {
       if (location.hash !== openedHash.current) setBackTo(null);
       openedHash.current = null;
-      setSel(selectedFromHash());
+      const own = location.hash === ownHash.current;
+      ownHash.current = null;
+      const next = selectedFromHash();
+      setSel(next);
+      if (!own) revealRef.current(next);
     };
     window.addEventListener("hashchange", on);
     return () => window.removeEventListener("hashchange", on);
@@ -592,7 +678,7 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
   // App이 스스로 고른 pane(주소의 pane이 닫혀 첫 줄로 왔다): 사용자가 고를 때까지 키보드를 가져가지 않는다(참고 autoSelected)
   const [autoSelected, setAutoSelected] = useState(false);
   const choose = (id: string | null, auto = false) => {
-    location.hash = id ? `pane=${encodeURIComponent(id)}` : "";
+    goHash(id ? `pane=${encodeURIComponent(id)}` : "");
     setSel(id ? `pane:${id}` : null);
     setAutoSelected(auto);
     setDrawerOpen(false);
@@ -613,13 +699,32 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
     setDrawerOpen(false);
     setBackTo(from);
     openedHash.current = `#thread=${encodeURIComponent(threadKey(t))}`;
-    location.hash = openedHash.current;
+    goHash(openedHash.current.slice(1));
     setSel(`thread:${threadKey(t)}`);
   };
   const chooseProject = (name: string | null) => {
     setDrawerOpen(false);
-    location.hash = name === null ? "projects" : `project=${encodeURIComponent(name)}`;
+    goHash(name === null ? "projects" : `project=${encodeURIComponent(name)}`);
     setSel(name === null ? "projects:" : `project:${name}`);
+  };
+  // 보고서 화면(plan §8.240): 막대 「보고서」는 마지막으로 본 보고서 자리(목록이나 연 보고서)로, 보고서 화면에서 다시 누르면 그 앞
+  // 화면으로 간다. 한 번 연 보고서 화면은 다른 화면으로 가도 그려 둔다(ReportsView): 돌아오면 연 보고서·굴린 자리가 그대로다
+  const reportsShown = sel?.startsWith("reports:") === true;
+  const [reportsAt, setReportsAt] = useState<string | null>(reportsShown ? sel : null);
+  const beforeReports = useRef<string | null>(null);
+  useEffect(() => {
+    if (sel?.startsWith("reports:")) setReportsAt(sel);
+    else beforeReports.current = sel;
+  }, [sel]);
+  const goSel = (next: string | null) => {
+    setAutoSelected(false);
+    setDrawerOpen(false);
+    goHash(hashOf(next));
+    setSel(next);
+  };
+  const toggleReports = () => {
+    if (reportsShown) goSel(beforeReports.current);
+    else goSel(reportsAt ?? "reports:");
   };
 
   // 새 pane 창(herdr-web-ui App.tsx `newSessionOpen`·`newSessionMachineId`): 머신 머리 +와 단축키가 그 머신으로 연다
@@ -668,6 +773,7 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
         if (!next) return;
         if ("pane" in next.open) choose(next.open.pane);
         else chooseThread(next.open.thread);
+        revealRef.current(next.keys[0] ?? null);
       },
       toggleView: () => paneControls.current?.toggleView(),
       focusInput: () => paneControls.current?.focusInput(),
@@ -678,9 +784,10 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
       },
       openPalette: () => setPaletteOpen(true),
       openFind: none,
-      // 좁은 창에서는 drawer를 여닫는다(참고 1247줄). 넓은 창의 목록 접기는 aaa에 없다
+      // 좁은 창에서는 drawer를 여닫고 넓은 창에서는 사이드바를 접는다·편다(참고 App.tsx 1246~1249줄)
       toggleSidebar: () => {
         if (window.matchMedia("(max-width: 768px)").matches) setDrawerOpen((open) => !open);
+        else sidebarToggleRef.current();
       },
       openNewSession: () => {
         // 참고는 고른 PC로 연다: 고른 pane·thread의 머신, 없으면 붙은 첫 머신. 보기 권한 기기는 띄울 수 없다
@@ -796,21 +903,43 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
     toggleTheme: () => updateAppearance({ theme: resolvedTheme === "dark" ? "light" : "dark" }),
     openSettings: () => setSettingsOpen(true),
     openProjects: () => chooseProject(null),
+    openReports: () => {
+      if (!reportsShown) toggleReports();
+    },
+    toggleSidebar: actions.toggleSidebar,
   };
+
+  // 막대 단추의 배지(VS Code activity bar badge): 접었거나 다른 패널을 보는 동안에도 볼 일이 보인다
+  const badges = {
+    projects: { count: shownThreads.filter((t) => needsYou(t.group)).length, label: "확인 필요·검토 대기" },
+    agents: {
+      count: panes.filter((p) => p.connection === "connected" && p.role !== "evaluator" && paneAgentStatus(p) === "blocked" && agentOf(p, threadOfPane.get(p.id)) !== null).length,
+      label: "답을 기다림",
+    },
+  };
+  // 넓은 창에서 접었으면 사이드바 칸이 없다(좁은 창은 drawer라 늘 칸이 있다)
+  const sidebarShown = !wideScreen || !collapsed;
 
   return (
     <DrawerContext.Provider value={drawer}>
     <HeadContext.Provider value={{ more: <MoreMenu onProjects={() => chooseProject(null)} />, note: headNote }}>
-    <div className="app" data-questions-sync={questionsSync} data-threads-sync={threadsSync}>
-      <aside id="workspace-drawer" className={`list sidebar-shell${drawerOpen ? " is-open" : ""}`}>
+    <div className={`app${collapsed ? " sidebar-collapsed" : ""}`} data-questions-sync={questionsSync} data-threads-sync={threadsSync} data-sidebar={panel}>
+      <aside id="workspace-drawer" className={`list${drawerOpen ? " is-open" : ""}`}>
+        <ActivityBar
+          panel={panel}
+          shown={sidebarShown}
+          onPanel={pickPanel}
+          badges={badges}
+          reports={reportsShown}
+          onReports={toggleReports}
+          up={up}
+          reader={role === "reader"}
+          settings={<SettingsGear role={role} device={device} onSignedOut={signedOut} open={settingsOpen} onOpen={setSettingsOpen} />}
+        />
+        <div id="sidebar-column" className="sidebar-shell">
         <header className="list-head">
-          <span className="brand">
-            <img className="logo" src="/icon.svg" alt="aaa" />
-          </span>
-          <span className="conn" title={up ? "host 연결됨" : "host 연결 끊김"}>
-            <span className={`dot ${up ? "on" : "off"}`} />
-            {role === "reader" ? "보기 권한" : "제어 권한"}
-          </span>
+          <h2 className="list-title" data-testid="sidebar-title">{PANEL_LABEL[panel]}</h2>
+          {role === "reader" && <span className="list-role">보기 권한</span>}
           <span className="spacer" />
           <Missions missions={missions} role={role} onOpen={choose} onReload={loadMissions} />
           {evaluators.map((v) => (
@@ -826,8 +955,9 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
             <Icon name="search" />
           </button>
         </header>
-        {/* 목록(machine-list)만 굴러가고 머리와 바닥 줄(설정·사용량)은 늘 제자리(herdr-web-ui MachineSidebar) */}
+        {/* 패널(목록)만 굴러가고 머리와 바닥 줄(사용량)은 늘 제자리(herdr-web-ui MachineSidebar) */}
         <Sidebar
+          panel={panel}
           machines={machines}
           panes={panes}
           threads={shownThreads}
@@ -846,13 +976,23 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
             </>
           }
         />
-        <ListFoot role={role} device={device} onSignedOut={signedOut} settingsOpen={settingsOpen} onSettings={setSettingsOpen} />
+        <ListFoot />
+        </div>
       </aside>
       {/* 닫혀도 페이지에 둔다: 그 위에서 시작한 쓸기가 drawer를 닫는다(참고 styles.css) */}
       <div className={`scrim${drawerOpen ? " is-open" : ""}`} aria-hidden="true" onClick={() => setDrawerOpen(false)} />
       <main className="view">
         <UpdateNotice hostBuild={hostWeb} />
-        {currentThread ? (
+        {/* 보고서 화면은 한 번 연 뒤 늘 그려 두고 숨긴다(ReportsView) */}
+        {reportsAt !== null && (
+          <ReportsView
+            shown={reportsShown}
+            open={reportOf(reportsAt)}
+            role={role}
+            onOpen={(r) => goSel(r ? `reports:${r.project}/${r.name}` : "reports:")}
+          />
+        )}
+        {reportsShown ? null : currentThread ? (
           <ThreadPanel
             key={threadKey(currentThread)}
             t={currentThread}
@@ -978,7 +1118,11 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
         threads={shownThreads}
         selected={sel}
         agentOf={agentOf}
-        onOpen={(target) => ("pane" in target ? choose(target.pane) : chooseThread(target.thread))}
+        onOpen={(target) => {
+          if ("pane" in target) choose(target.pane);
+          else chooseThread(target.thread);
+          reveal("pane" in target ? `pane:${target.pane}` : `thread:${threadKey(target.thread)}`);
+        }}
         actions={paletteActions}
       />
       {/* 앱 안 알림(참고 Droplet): 누르면 그 pane·thread로 간다 */}
@@ -1126,24 +1270,23 @@ function MoreMenu({ onProjects }: { onProjects: () => void }) {
   );
 }
 
-/** 목록 맨 아래: 홈 화면에 설치(PWA)와 설정. 설치 단추는 설치 전엔 늘 보인다(참고 MachineSidebar). 알림은 머리 「더 보기」 메뉴에,
- * 입력 기록(실기 키보드 진단)은 설정 「진단」에 있다(참고 목록에 그런 자리가 없다) */
-function ListFoot({
+/**
+ * 활동 막대 맨 아래 설정 톱니(사용자 요청 10-19 「설정도 거기에 넣어줘. 왼쪽 밑에.」, VS Code Manage 자리, plan §8.240)와 설정 창.
+ * 예전에는 목록 바닥 줄의 「설정」 단추였다. 단축키·팔레트도 같은 창을 연다(Main이 열림을 갖는다)
+ */
+function SettingsGear({
   role,
   device,
   onSignedOut: signedOut,
-  settingsOpen,
-  onSettings: setSettingsOpen,
+  open: settingsOpen,
+  onOpen: setSettingsOpen,
 }: {
   role: DeviceRole;
   device: string;
   onSignedOut: () => void;
-  /** 설정 창(단축키도 연다, Main이 갖는다) */
-  settingsOpen: boolean;
-  onSettings: (open: boolean) => void;
+  open: boolean;
+  onOpen: (open: boolean) => void;
 }) {
-  const { canInstall, installed, install, help } = useInstallPrompt();
-  const [installHelpOpen, setInstallHelpOpen] = useState(false);
   const closeSettings = useCallback(() => setSettingsOpen(false), [setSettingsOpen]);
   // 설정은 history 안에 있다(herdr/settingsHistory.ts, 참고 App.tsx 398~405줄): 마지막 칸에서 「뒤로」면 닫히고,
   // 「앞으로」면 다시 열리며, 다른 길(X·Esc·바깥)로 닫으면 그 칸들을 지운다
@@ -1171,6 +1314,30 @@ function ListFoot({
     }
   }, [signedOut]);
   return (
+    <>
+      <button
+        type="button"
+        className="activity-item"
+        data-testid="settings-open"
+        aria-label="설정"
+        aria-haspopup="dialog"
+        aria-expanded={settingsOpen}
+        title="설정"
+        onClick={() => setSettingsOpen(true)}
+      >
+        <Settings aria-hidden="true" />
+      </button>
+      {settingsOpen && <SettingsDialog onClose={closeSettings} role={role} device={device} onSignOut={signOutHere} />}
+    </>
+  );
+}
+
+/** 사이드바 바닥 줄(모든 패널 공통): 홈 화면에 설치(PWA)와 구독 사용량. 설치 단추는 설치 전엔 늘 보인다(참고 MachineSidebar).
+ * 설정·보고서는 활동 막대에, 알림은 머리 「더 보기」 메뉴에, 입력 기록(실기 키보드 진단)은 설정 「진단」에 있다 */
+function ListFoot() {
+  const { canInstall, installed, install, help } = useInstallPrompt();
+  const [installHelpOpen, setInstallHelpOpen] = useState(false);
+  return (
     <div className="list-foot">
       {/* 참고 MachineSidebar 41~43줄: 설치 신호가 없는 브라우저(iOS, HTTP)는 누르면 방법을 펼친다(문구는 참고 i18n.ko.ts) */}
       {!installed && (
@@ -1192,16 +1359,10 @@ function ListFoot({
           {help}
         </p>
       )}
-      <button className="ghost" data-testid="reports-open" onClick={() => { requestSettingsPage("reports"); setSettingsOpen(true); }}>보고서</button>
-      {/* 설정과 그 옆 구독 사용량(herdr-web-ui MachineSidebar sidebar-footer-row) */}
+      {/* 구독 사용량(herdr-web-ui MachineSidebar sidebar-footer-row. 그 옆 설정은 활동 막대 톱니로 옮겼다) */}
       <div className="foot-row">
-        <button className="ghost foot-settings" data-testid="settings-open" onClick={() => setSettingsOpen(true)}>
-          <Icon name="settings" />
-          설정
-        </button>
         <UsageMeters />
       </div>
-      {settingsOpen && <SettingsDialog onClose={closeSettings} role={role} device={device} onSignOut={signOutHere} />}
     </div>
   );
 }
