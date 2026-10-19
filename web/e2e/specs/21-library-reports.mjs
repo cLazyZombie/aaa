@@ -4,14 +4,14 @@ import { root, aaa, base, browser, webkit, step, pairPage, inList, domIs, until,
 
 export default async function ({ page }) {
   await step("보고서 전체 목록: publish·실시간·import, 활동 막대 「보고서」가 연 본문 화면(plan §8.240), 데스크톱·휴대폰의 열기·새 창·복사·폐기·새 링크", async () => {
+    // host는 프로젝트 하나다(plan §8.285): 보고서는 모두 demo에. 프로젝트 인자 없는 새 꼴과 옛 꼴(--project demo)을 섞어 쓴다
     aaa("project", "create", "demo");
-    aaa("project", "create", "other");
     const input = `${root}/reports`;
     fs.mkdirSync(input);
     fs.writeFileSync(`${input}/index.html`, "<!doctype html><html lang=ko><meta charset=utf-8><h1>첫 보고서</h1></html>");
     // 사용자 보고서(--to-user, plan §8.256)는 「내 보고서」 탭의 카드다. import한 것은 「작업 보고」 탭이다
     const link = aaa("library", "publish", input, "--project", "demo", "--name", "page", "--to-user");
-    const live = aaa("library", "publish", input, "--project", "other", "--name", "design", "--live", "--to-user");
+    const live = aaa("library", "publish", input, "--name", "design", "--live", "--to-user");
     const batch = `${root}/batch`;
     fs.mkdirSync(`${batch}/extra`, { recursive: true });
     fs.mkdirSync(`${batch}/page`);
@@ -22,7 +22,7 @@ export default async function ({ page }) {
     const imported = aaa("library", "import", batch, "--project", "demo");
     if (imported.reports.length !== 1 || !imported.skipped.some((s) => s.name === "page") || !imported.skipped.some((s) => s.name === "t-0001")) throw new Error("CLI import의 건너뜀 목록");
     const list = aaa("library", "list").reports;
-    if (list.length !== 3 || !list.some((r) => r.project === "other" && r.name === "design" && r.live)) throw new Error("전체 보고서 CLI 목록");
+    if (list.length !== 3 || !list.some((r) => r.project === "demo" && r.name === "design" && r.live)) throw new Error("전체 보고서 CLI 목록");
     if (aaa("library", "prune", "--older-than", "30").removed.length !== 0) throw new Error("최근 보고서를 정리했다");
     const doctor = aaa("doctor").library;
     if (doctor?.reports !== 3 || doctor?.live !== 1 || doctor?.size !== Buffer.byteLength(fs.readFileSync(`${input}/index.html`)) + Buffer.byteLength("추가 보고서")) throw new Error("doctor의 host 사본 크기·실시간 수");
@@ -40,7 +40,7 @@ export default async function ({ page }) {
     if (!usageText.includes(" / 20 GB, 기한 30일")) throw new Error(`웹 보관 한도 표시: ${usageText}`);
     const row = page.getByTestId("report-demo-page");
     if (!(await row.innerText()).includes(`${Buffer.byteLength(fs.readFileSync(`${input}/index.html`))} B`) || !(await row.innerText()).includes("만료")) throw new Error("이름·크기·만료가 없다");
-    if (!(await page.getByTestId("report-other-design").innerText()).includes("실시간")) throw new Error("실시간 표시");
+    if (!(await page.getByTestId("report-demo-design").innerText()).includes("실시간")) throw new Error("실시간 표시");
     await page.evaluate(() => {
       window.__reportCopies = [];
       Object.defineProperty(navigator, "clipboard", { configurable: true, value: { writeText: async (text) => window.__reportCopies.push(text) } });
@@ -76,9 +76,7 @@ export default async function ({ page }) {
     await row.getByRole("link", { name: "보고서 공유 링크" }).waitFor();
     const newUrl = await row.getByRole("link", { name: "보고서 공유 링크" }).getAttribute("href");
     if (newUrl === new URL(link.base, base).href) throw new Error("폐기한 링크 id를 재사용했다");
-    await panel.getByRole("combobox", { name: "보고서 프로젝트" }).selectOption("other");
-    await row.waitFor({ state: "detached" });
-    await page.getByTestId("report-other-design").waitFor();
+    await page.getByTestId("report-demo-design").waitFor();
     aaa("library", "rotate");
     if ((await fetch(newUrl)).status !== 401 || (await fetch(new URL(live.base, base))).status !== 401) throw new Error("rotate가 옛 링크를 끝내지 않았다");
     // 같은 기기 cookie로 API가 계속 된다.
@@ -88,9 +86,9 @@ export default async function ({ page }) {
     const reader = await pairPage(browser, readerCode, { width: 390, height: 844 });
     try {
       await inList(reader.page, "activity-reports");
-      await reader.page.getByTestId("report-other-design").waitFor();
+      await reader.page.getByTestId("report-demo-design").waitFor();
       if (await reader.page.getByTestId("library-link").count() !== 0) throw new Error("보기 기기에 공유 링크 조작을 보였다");
-      await reader.page.getByTestId("report-other-design").getByRole("button", { name: "새 창", exact: true }).waitFor();
+      await reader.page.getByTestId("report-demo-design").getByRole("button", { name: "새 창", exact: true }).waitFor();
       if (await reader.page.getByTestId("report-delete").count() !== 0) throw new Error("보기 기기에 지우기를 보였다");
       await reader.page.getByTestId("reports-tab-work").click();
       await reader.page.getByTestId("report-demo-extra").waitFor();
@@ -112,7 +110,7 @@ export default async function ({ page }) {
     await page.setViewportSize({ width: 1280, height: 800 });
     await page.getByTestId("reports-panel").getByRole("combobox", { name: "보고서 프로젝트" }).selectOption("");
     await page.getByTestId("reports-tab-mine").click();
-    // 앞 단계가 demo/page는 열었고(봄) other/design은 보기 기기가 카드만 기다렸다(안 봄): 지금 1이다
+    // 앞 단계가 demo/page는 열었고(봄) demo/design은 보기 기기가 카드만 기다렸다(안 봄): 지금 1이다
     const before = unseen();
     await badgesAre(before);
     const weekly = `${root}/weekly`;

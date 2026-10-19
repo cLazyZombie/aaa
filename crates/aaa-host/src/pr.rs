@@ -652,25 +652,30 @@ mod tests {
     /// 않았어도 끝난 실패다(inbox.rs `outage_open`, plan §8.209)
     #[test]
     fn restarted_host_takes_over_only_a_gh_failure_still_open() {
-        let state = std::env::temp_dir().join(format!("aaa-gh-outage-{}", aaa_common::util::new_id()));
-        let mut cfg = aaa_config::HostConfig::default();
-        cfg.notify.web_push = false;
-        cfg.projects.root = state.join("projects").display().to_string();
-        let h = Host::open(cfg, state.clone()).unwrap();
-        let count = |p: &str, event: &str| {
-            h.db.inbox_list(Some(p), true).unwrap().iter().filter(|i| i.subject == "gh" && i.event == event).count()
-        };
-        for p in ["done", "open"] {
-            h.project_create(p, Default::default(), "test").unwrap();
-            h.inbox_add(p, "outage", "gh", "failing", "실패");
+        // host는 프로젝트 하나(plan §8.285): 회복을 이미 쓴 실패와 열린 실패를 host마다 하나씩 본다
+        for recovered in [true, false] {
+            let state = std::env::temp_dir().join(format!("aaa-gh-outage-{}", aaa_common::util::new_id()));
+            let mut cfg = aaa_config::HostConfig::default();
+            cfg.notify.web_push = false;
+            cfg.projects.root = state.join("projects").display().to_string();
+            let h = Host::open(cfg, state.clone()).unwrap();
+            h.project_create("demo", Default::default(), "test").unwrap();
+            h.inbox_add("demo", "outage", "gh", "failing", "실패");
+            if recovered {
+                h.inbox_add("demo", "outage", "gh", "working again", "회복");
+            }
+            // 새 host의 첫 gh 결과가 성공이다: 회복은 어느 쪽이든 한 건이다(이미 쓴 것은 다시 쓰지 않는다)
+            h.gh_result("demo", None);
+            let count =
+                h.db.inbox_list(Some("demo"), true)
+                    .unwrap()
+                    .iter()
+                    .filter(|i| i.subject == "gh" && i.event == "working again")
+                    .count();
+            assert_eq!(count, 1, "회복을 이미 썼나: {recovered}");
+            drop(h);
+            std::fs::remove_dir_all(&state).unwrap();
         }
-        h.inbox_add("done", "outage", "gh", "working again", "회복");
-        // 새 host의 첫 gh 결과가 성공이다
-        h.gh_result("done", None);
-        h.gh_result("open", None);
-        assert_eq!((count("done", "working again"), count("open", "working again")), (1, 1));
-        drop(h);
-        std::fs::remove_dir_all(&state).unwrap();
     }
 
     /// PR 추적 한 번이 panic해도 뒷정리(「도는 중」 지우기)가 돈다(보안 감사 t-0340)

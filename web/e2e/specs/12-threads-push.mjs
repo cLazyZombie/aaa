@@ -972,34 +972,23 @@ export default async function ({ page }) {
     await until("t1 터미널", async () => (await screenText(page)).includes("t1-42"));
   });
 
-  await step("프로젝트 멈춤·보관(herdr-projects sidebar.rs project_line 「paused」·archive, 차이 목록 4장 G #592): 멈추면 sidebar 프로젝트 줄과 프로젝트 고르기가 다시 불러오지 않고 「멈춤」, 되살리면 묶음 줄로, 보관하면 그 프로젝트의 thread 줄과 프로젝트가 사라진다", async () => {
+  await step("프로젝트 멈춤(herdr-projects sidebar.rs project_line 「paused」, 차이 목록 4장 G #592): 멈추면 프로젝트 고르기가 「멈춤」, 되살리면 돌아온다. host는 프로젝트 하나라(plan §8.285) 보관·삭제는 m13 project_lifecycle이 본다", async () => {
     const $ = (id) => `[data-testid="${id}"]`;
-    aaa("project", "create", "side");
-    fs.writeFileSync(`${root}/side-task.txt`, "noreport\n");
-    const t = aaa("thread", "start", "side", "--title", "옆일", "--profile", "fake", "--machine", "labA", "--kind", "dir", "--task-file", `${root}/side-task.txt`);
-    const head = `${$("project-side")} .project-select`;
-    await domIs(page, "side 프로젝트 줄", (q) => document.querySelector(q) !== null, head);
-    aaa("project", "pause", "side");
-    await domIs(page, "멈춤 줄", (q) => document.querySelector(q)?.getAttribute("title") === "side · 멈춤", head);
+    const picker = async () => {
+      await page.getByTestId("more").click();
+      const toProjects = hashIs(page, "#projects");
+      await page.getByTestId("projects-item").click();
+      await toProjects;
+    };
+    aaa("project", "pause", "demo");
+    await picker();
+    await domIs(page, "프로젝트 고르기의 멈춤", (q) => document.querySelector(q)?.textContent.includes("멈춤"), $("project-open-demo"));
     await shot(page, "desktop-project-paused");
-    await page.getByTestId("more").click();
-    const toProjects = hashIs(page, "#projects");
-    await page.getByTestId("projects-item").click();
-    await toProjects;
-    await domIs(page, "프로젝트 고르기의 멈춤", (q) => document.querySelector(q)?.textContent.includes("멈춤"), $("project-open-side"));
     await page.getByTestId("projects").getByRole("button", { name: "닫기" }).click();
-    aaa("project", "resume", "side");
-    await domIs(page, "되살린 줄", (q) => document.querySelector(q) && !document.querySelector(q).getAttribute("title").includes("멈춤"), head);
-    aaa("project", "archive", "side");
-    await domIs(page, "보관한 프로젝트 줄 사라짐", ([a, b]) => !document.querySelector(a) && !document.querySelector(b), [$("project-side"), $(`thread-side-${t.id}`)]);
-    await page.getByTestId("more").click();
-    const toProjects2 = hashIs(page, "#projects");
-    await page.getByTestId("projects-item").click();
-    await toProjects2;
-    // 목록을 받은 뒤(줄이 있거나 「프로젝트 없음」) side가 없다
-    await domIs(page, "프로젝트 고르기에 side가 없다", ([list, side]) => document.querySelector(`${list} [data-testid^="project-open-"], ${list} [role=status]`) !== null && !document.querySelector(side), [$("projects"), $("project-open-side")]);
+    aaa("project", "resume", "demo");
+    await picker();
+    await domIs(page, "되살린 프로젝트", (q) => document.querySelector(q) !== null && !document.querySelector(q).textContent.includes("멈춤"), $("project-open-demo"));
     await page.getByTestId("projects").getByRole("button", { name: "닫기" }).click();
-    aaa("project", "delete", "side", "--force");
     await page.getByTestId("pane-t1").click();
     await until("t1 터미널", async () => (await screenText(page)).includes("t1-42"));
   });
@@ -1094,17 +1083,17 @@ export default async function ({ page }) {
     await until("t1 터미널", async () => (await screenText(page)).includes("t1-42"));
   });
   await step("빈 결과물의 자동 링크도 복사·QR·폐기가 보인다", async () => {
-    aaa("project", "create", "empty");
+    // host는 프로젝트 하나(plan §8.285): 프로젝트 인자 없는 CLI로 demo에 시작한다
     fs.writeFileSync(`${root}/empty-task.md`, "빈 결과물 시험");
-    const t = aaa("thread", "start", "empty", "--title", "빈 결과물", "--machine", "labA", "--profile", "fake", "--kind", "dir", "--task-file", `${root}/empty-task.md`);
-    const first = await until("빈 결과물 시험의 첫 보고", () => aaa("thread", "show", "empty", t.id).report_hash);
+    const t = aaa("thread", "start", "--title", "빈 결과물", "--machine", "labA", "--profile", "fake", "--kind", "dir", "--task-file", `${root}/empty-task.md`);
+    const first = await until("빈 결과물 시험의 첫 보고", () => aaa("thread", "show", t.id).report_hash);
     if (!t.work_dir.startsWith(`${root}/`)) throw new Error("실험실 밖 작업 폴더");
     for (const name of fs.readdirSync(`${t.work_dir}/library`)) fs.rmSync(`${t.work_dir}/library/${name}`, { recursive: true });
     fs.appendFileSync(`${t.work_dir}/report.md`, "\n빈 결과물을 회수한다\n");
-    await until("빈 결과물 회수", () => aaa("thread", "show", "empty", t.id).report_hash !== first);
-    const lib = aaa("thread", "library", "empty", t.id);
+    await until("빈 결과물 회수", () => aaa("thread", "show", t.id).report_hash !== first);
+    const lib = aaa("thread", "library", t.id);
     if (lib.files.length !== 0 || !lib.link) throw new Error("빈 사본 자동 링크가 없다");
-    await page.evaluate(() => { location.hash = "#thread=empty%2Ft-0001"; });
+    await page.evaluate((id) => { location.hash = `#thread=demo%2F${id}`; }, t.id);
     const row = page.getByTestId("library-link");
     await row.getByRole("button", { name: "링크 복사" }).waitFor();
     await row.getByRole("button", { name: "QR 코드", exact: true }).click();
@@ -1113,63 +1102,12 @@ export default async function ({ page }) {
     await domIs(page, "빈 결과물 링크 폐기", () => document.querySelector('[data-testid="library-link"]')?.dataset.state === "revoked");
   });
 
-  await step("프로젝트 머리 셈(QA t-0362 O1, plan §8.203): 확인 필요와 검토 대기를 줄 글과 같은 말로 나눠 「확인 필요 1 · 검토 대기 1」, 머리는 빨강(사람이 볼 thread), 휴대폰·iPad·데스크톱 폭에서 같은 글이 잘리지 않고 줄 안에 선다", async () => {
-    aaa("project", "create", "heads");
-    const start = (title, task) => {
-      fs.writeFileSync(`${root}/heads-${title}.md`, task);
-      return aaa("thread", "start", "heads", "--title", title, "--machine", "labA", "--profile", "fake", "--kind", "dir", "--task-file", `${root}/heads-${title}.md`);
-    };
-    const review = start("검토", "보고를 쓴다");
-    const asking = start("물음", "사람을 기다림");
-    await until("두 묶음", () => {
-      const g = Object.fromEntries(aaa("thread", "list", "heads").threads.map((t) => [t.id, t.group]));
-      return g[review.id] === "ready_for_review" && g[asking.id] === "waiting_on_you";
-    });
-    const want = "확인 필요 1 · 검토 대기 1";
-    const bad = [];
-    for (const [name, width, height] of [["desktop", 1280, 800], ["ipad", 820, 1180], ["phone", 390, 844]]) {
-      await page.setViewportSize({ width, height });
-      // 좁은 창은 목록이 drawer다: 연다
-      const toggle = page.locator(".view [data-testid='drawer-toggle']");
-      if ((await toggle.isVisible()) && (await toggle.getAttribute("aria-expanded")) !== "true") {
-        await toggle.click();
-        await page.locator("#workspace-drawer.is-open").waitFor();
-      }
-      const head = page.getByTestId("project-heads");
-      await head.waitFor();
-      await domIs(page, `${name} 머리 셈`, (q) => document.querySelector(q) !== null, '[data-testid="project-heads"] .project-place');
-      const got = await head.locator(".project-place").evaluate((el) => {
-        const r = el.getBoundingClientRect();
-        const row = el.closest(".workspace-header").getBoundingClientRect();
-        const red = document.createElement("span");
-        red.style.color = "var(--status-blocked)";
-        document.body.append(red);
-        const want = getComputedStyle(red).color;
-        red.remove();
-        return { text: el.textContent, clipped: el.scrollWidth > el.clientWidth, inside: r.left >= row.left - 0.5 && r.right <= row.right + 0.5, red: getComputedStyle(el).color === want, wide: document.documentElement.scrollWidth - document.documentElement.clientWidth };
-      });
-      await head.scrollIntoViewIfNeeded();
-      await shot(page, `${name}-project-head-split`);
-      if (got.text !== want) bad.push(`${name}: ${got.text}`);
-      if (got.clipped || !got.inside || got.wide > 0) bad.push(`${name} 넘침 ${JSON.stringify(got)}`);
-      if (!got.red) bad.push(`${name} 머리가 빨갛지 않다`);
-      if ((await toggle.isVisible()) && (await toggle.getAttribute("aria-expanded")) === "true") {
-        await toggle.click();
-        await domIs(page, "목록 drawer 닫힘", () => !document.querySelector("#workspace-drawer.is-open"));
-      }
-    }
-    await page.setViewportSize({ width: 1280, height: 800 });
-    for (const id of [review.id, asking.id]) aaa("thread", "resolve", "heads", id);
-    if (bad.length) throw new Error(bad.join("; "));
-  });
-
   await step("특수 임무: 「특수」 패널 줄(plan §8.258)의 메뉴가 좁은 창·휴대폰·데스크톱에서 화면 안에 있고, 줄을 누르면 임무 보기일 뿐 시작·승인하지 않으며, 승인 필요는 활동 막대 배지이고 Controller가 승인한다", async () => {
-    aaa("project", "create", "mission-layout");
-    fs.mkdirSync(`${root}/projects/mission-layout/missions`, { recursive: true });
-    fs.writeFileSync(`${root}/projects/mission-layout/missions/ci-watch.md`, '+++\nprofile="fake"\ntitle="rc 검증·병합 시간 최적화 감시"\nwithdrawal="none"\n+++\n새 입력을 자료로 읽고 감시한다.\n');
+    fs.mkdirSync(`${root}/projects/demo/missions`, { recursive: true });
+    fs.writeFileSync(`${root}/projects/demo/missions/ci-watch.md`, '+++\nprofile="fake"\ntitle="rc 검증·병합 시간 최적화 감시"\nwithdrawal="none"\n+++\n새 입력을 자료로 읽고 감시한다.\n');
     aaa("ticker", "tick");
-    const item = page.getByTestId("mission-mission-layout-ci-watch");
-    await domIs(page, "임무 줄", () => !!document.querySelector('[data-testid="mission-mission-layout-ci-watch"]'));
+    const item = page.getByTestId("mission-demo-ci-watch");
+    await domIs(page, "임무 줄", () => !!document.querySelector('[data-testid="mission-demo-ci-watch"]'));
     await page.setViewportSize({ width: 1280, height: 800 });
     await showPanel(page, "special");
     await domIs(page, "승인 필요 배지 1", () => document.querySelector('[data-testid="activity-badge-special"]')?.textContent === "1");
@@ -1180,7 +1118,7 @@ export default async function ({ page }) {
       const pg = await page.context().newPage();
       await pg.setViewportSize({ width, height });
       await pg.goto(page.url());
-      const item = pg.getByTestId("mission-mission-layout-ci-watch");
+      const item = pg.getByTestId("mission-demo-ci-watch");
       await item.waitFor({ state: "attached" });
       try {
         const toggle = pg.locator(".view [data-testid='drawer-toggle']");
@@ -1222,93 +1160,87 @@ export default async function ({ page }) {
     await view.waitFor();
     if (!(await view.innerText()).includes("새 입력을 자료로 읽고 감시한다.")) throw new Error("임무 후보 본문이 보이지 않는다");
     await view.getByRole("button", { name: "확인", exact: true }).click();
-    if (aaa("mission", "show", "mission-layout", "ci-watch").mission.thread !== null) throw new Error("줄을 눌러 임무가 시작됐다");
+    if (aaa("mission", "show", "ci-watch").mission.thread !== null) throw new Error("줄을 눌러 임무가 시작됐다");
     await item.locator(".workspace-header").click({ button: "right" });
     await page.getByRole("menuitem", { name: "승인 검토" }).click();
     await page.getByRole("alertdialog").waitFor();
     await shot(page, "desktop-mission-approval");
     await page.getByRole("alertdialog").getByRole("button", { name: "승인", exact: true }).click();
-    await until("Controller 승인 저장", () => aaa("mission", "show", "mission-layout", "ci-watch").mission.approved === true);
-    if (aaa("mission", "show", "mission-layout", "ci-watch").mission.thread !== null) throw new Error("승인만으로 임무가 실행됐다");
+    await until("Controller 승인 저장", () => aaa("mission", "show", "ci-watch").mission.approved === true);
+    if (aaa("mission", "show", "ci-watch").mission.thread !== null) throw new Error("승인만으로 임무가 실행됐다");
     await domIs(page, "승인 뒤 배지 없음", () => document.querySelector('[data-testid="activity-badge-special"]') === null);
   });
 
 
-  await step("coordinator 프로젝트 소속: thread가 없는 프로젝트도 host 소속으로 묶고 좁은 목록에 한 번만 보인다", async () => {
-    aaa("project", "create", "coord-home");
-    const opened = aaa("project", "open", "coord-home", "--profile", "fake");
+  await step("coordinator 줄(plan §8.258·§8.285): 프로젝트가 하나면 머리 없이 트리 맨 위, 왼쪽 보라 막대, 그 아래 「thread n」 머리줄과 thread 줄, 좁은 목록에도 한 번만", async () => {
+    const opened = aaa("coordinator", "open", "--profile", "fake");
     if (!opened.started) throw new Error("coordinator를 새로 열지 않았다");
-    const row = page.getByTestId("pane-coord-home coordinator");
+    const row = page.getByTestId("pane-demo coordinator");
     await page.setViewportSize({ width: 1280, height: 800 });
     await inList(page, row);
-    // 사용자 결정 10-19(plan §8.258): coordinator 줄은 왼쪽 보라 막대, thread가 있으면 그 아래 「thread n」 머리줄, 자식 줄은 8px만 들인다
-    fs.writeFileSync(`${root}/coord-task.txt`, "noreport\n");
-    const side = aaa("thread", "start", "coord-home", "--title", "옆일", "--profile", "fake", "--machine", "labA", "--kind", "dir", "--task-file", `${root}/coord-task.txt`);
-    await domIs(page, "thread 머리줄", () => document.querySelector('[data-testid="project-thread-head-coord-home"]')?.textContent.trim() === "thread 1");
-    const look = await page.evaluate((thread) => {
-      const header = (q) => document.querySelector(q).closest("li").querySelector(".workspace-header");
-      const coord = header('[data-testid="pane-coord-home coordinator"]');
+    if (await page.locator('[data-panel="work"] [data-testid^="project-"].project-group').count()) throw new Error("프로젝트가 하나인데 프로젝트 머리가 있다");
+    // demo thread는 저장소가 없어 폴더 없이 머리줄 「thread n」 아래에 선다(n은 그 아래 줄 수)
+    await domIs(page, "thread 머리줄", () => {
+      const head = document.querySelector('[data-panel="work"] [data-testid="project-thread-head-demo"]');
+      let n = 0;
+      for (let e = head?.nextElementSibling; e?.matches("li[data-thread]"); e = e.nextElementSibling) n++;
+      return n > 0 && head.textContent.trim() === `thread ${n}`;
+    });
+    const look = await page.evaluate(() => {
+      const coord = document.querySelector('[data-panel="work"] [data-testid="pane-demo coordinator"]').closest("li").querySelector(".workspace-header");
+      const thread = document.querySelector('[data-panel="work"] [data-testid="project-thread-head-demo"]').nextElementSibling.querySelector(".workspace-header");
       const bar = getComputedStyle(coord, "::before");
-      return { coordinator: coord.closest("li").classList.contains("is-coordinator"), bar: bar.backgroundColor, width: bar.width, indent: getComputedStyle(coord).paddingLeft, threadIndent: getComputedStyle(header(`[data-testid="thread-coord-home-${thread}"]`)).paddingLeft };
-    }, side.id);
-    if (!look.coordinator || look.bar !== "rgb(185, 156, 242)" || look.width !== "2px" || look.indent !== "8px" || look.threadIndent !== "8px") throw new Error(`coordinator 구별·들여쓰기: ${JSON.stringify(look)}`);
+      return { coordinator: coord.closest("li").classList.contains("is-coordinator"), bar: bar.backgroundColor, width: bar.width, indent: getComputedStyle(coord).paddingLeft, threadIndent: getComputedStyle(thread).paddingLeft };
+    });
+    // 머리가 없으니 coordinator와 thread 줄은 같은 단계(같은 들여쓰기)다
+    if (!look.coordinator || look.bar !== "rgb(185, 156, 242)" || look.width !== "2px" || look.indent !== look.threadIndent) throw new Error(`coordinator 구별·들여쓰기: ${JSON.stringify(look)}`);
     await shot(page, "desktop-coordinator-project");
     await page.setViewportSize({ width: 390, height: 844 });
     await page.locator(".view [data-testid='drawer-toggle']").click();
     await drawerSettled(page);
     await shot(page, "phone-coordinator-project");
-    const membership = await row.evaluate((el) => ({
-      project: el.closest(".worktree-children")?.previousElementSibling?.getAttribute("data-project"),
-      copies: document.querySelectorAll('[data-testid="pane-coord-home coordinator"]').length,
-    }));
-    if (membership.project !== "coord-home" || membership.copies !== 1) throw new Error(`coordinator 프로젝트 소속: ${JSON.stringify(membership)}`);
-    // 접힌 프로젝트도 지금 고른 coordinator는 남기고, 다른 pane을 고르면 숨긴다.
-    const head = page.getByTestId("project-coord-home");
-    await head.locator(".project-select").click();
-    await domIs(page, "접힌 프로젝트의 현재 coordinator", () => document.querySelector('[data-testid="project-coord-home"].is-collapsed') !== null && document.querySelector('[data-testid="pane-coord-home coordinator"]') !== null);
-    await inList(page, "pane-t1");
-    await domIs(page, "고르지 않은 coordinator는 접힘", () => document.querySelector('[data-testid="pane-coord-home coordinator"]') === null);
+    if ((await page.locator('[data-testid="pane-demo coordinator"]').count()) !== 1) throw new Error("coordinator 줄이 둘 이상이다");
+    await page.locator(".view [data-testid='drawer-toggle']").click();
+    await drawerSettled(page);
     await page.setViewportSize({ width: 1280, height: 800 });
-    await head.locator(".project-select").click();
   });
 
-  await step("「작업」 트리 작업 공간 폴더(사용자 결정 10-19 안 A, plan §8.260·§8.280): worktree thread는 저장소 마지막 폴더 이름 폴더에, 저장소 없는 thread는 끝의 「작업 폴더」에. 폴더 머리는 프로젝트 머리 모양이고(프로젝트가 여럿이라 그 안에) 자식 줄은 한 단계 더 8px, 둘째 줄은 상태 말·머신, 접으면 +n, 에이전트 패널은 없다", async () => {
+  await step("「작업」 트리 작업 공간 폴더(사용자 결정 10-19 안 A, plan §8.260·§8.280): worktree thread는 저장소 마지막 폴더 이름 폴더에, 저장소 없는 thread는 끝의 「작업 폴더」에. 폴더 머리는 프로젝트 머리 모양이고(프로젝트가 하나라 트리 맨 위) 자식 줄은 한 단계 더 8px, 둘째 줄은 상태 말·머신, 접으면 +n, 에이전트 패널은 없다", async () => {
     // 저장소 이름이 폴더 이름이다(경로 앞부분은 머신마다 다르다)
     const repo = `${root}/repos/rcgame`;
     fs.mkdirSync(repo, { recursive: true });
     const git = (...a) => execFileSync("git", ["-C", repo, ...a], { stdio: "ignore" });
     git("init", "-q", "-b", "main");
     git("-c", "user.name=e2e", "-c", "user.email=e2e@example.com", "commit", "-q", "--allow-empty", "-m", "init");
-    aaa("project", "create", "folders");
     fs.writeFileSync(`${root}/folder-task.txt`, "noreport\n");
-    const start = (title, ...more) => aaa("thread", "start", "folders", "--title", title, "--profile", "fake", "--machine", "labA", ...more, "--task-file", `${root}/folder-task.txt`);
+    const start = (title, ...more) => aaa("thread", "start", "--title", title, "--profile", "fake", "--machine", "labA", ...more, "--task-file", `${root}/folder-task.txt`);
     const inRepo = start("저장소 일", "--repo", repo);
     const loose = start("폴더 일", "--kind", "dir");
     if (inRepo.repo !== repo || loose.repo !== undefined) throw new Error(`thread repo 칸: ${inRepo.repo} · ${loose.repo}`);
     await page.setViewportSize({ width: 1280, height: 800 });
     await showPanel(page, "work");
     if ((await page.getByTestId("activity-agents").count()) !== 0) throw new Error("에이전트 패널 단추가 남았다");
-    const row = (t) => `[data-panel="work"] li[data-thread="folders/${t.id}"]`;
+    const row = (t) => `[data-panel="work"] li[data-thread="demo/${t.id}"]`;
     await domIs(page, "두 thread 줄", ([a, b]) => document.querySelector(a) !== null && document.querySelector(b) !== null, [row(inRepo), row(loose)]);
     const look = await page.evaluate(([a, b]) => {
       const folderOf = (q) => document.querySelector(q).closest(".worktree-children")?.previousElementSibling?.dataset.testid;
-      const project = document.querySelector('[data-testid="project-folders"]').nextElementSibling;
-      const folders = [...project.querySelectorAll('li[data-testid^="workspace-folder-"]')].map((el) => el.dataset.testid.slice(17));
+      // 프로젝트가 하나라 머리 없이 트리 맨 위에 폴더가 선다
+      const folders = [...document.querySelectorAll('[data-panel="work"] li[data-testid^="workspace-folder-"]')].map((el) => el.dataset.testid.slice(17));
       const r = document.querySelector(a);
       const pad = (q) => parseFloat(getComputedStyle(q).paddingLeft);
       return {
         folders,
         repo: folderOf(a),
         loose: folderOf(b),
-        // 폴더 머리는 프로젝트 자식(8px), 그 안 줄은 한 단계 더(16px)
-        head: pad(document.querySelector('[data-testid="workspace-folder-rcgame"] .workspace-header')),
+        // 폴더 안 줄은 폴더 머리보다 한 단계(8px) 더
+        head: pad(document.querySelector('[data-panel="work"] [data-testid="workspace-folder-rcgame"] .workspace-header')),
         indent: pad(r.querySelector(".workspace-header")),
         state: r.querySelector(".thread-place .thread-state")?.textContent,
         machine: r.querySelector(".thread-place .thread-machine")?.textContent,
       };
     }, [row(inRepo), row(loose)]);
     if (look.folders.join() !== "rcgame,작업 폴더" || look.repo !== "workspace-folder-rcgame" || look.loose !== "workspace-folder-작업 폴더") throw new Error(`작업 공간 폴더: ${JSON.stringify(look)}`);
-    if (look.head !== 8 || look.indent !== 16 || !/^(준비 중|확인 필요|검토 대기|병합 중|작업 중|쉼)/.test(look.state ?? "") || look.machine !== "labA") throw new Error(`폴더 안 줄: ${JSON.stringify(look)}`);
+    if (look.indent - look.head !== 8 || !/^(준비 중|확인 필요|검토 대기|병합 중|작업 중|쉼)/.test(look.state ?? "") || look.machine !== "labA") throw new Error(`폴더 안 줄: ${JSON.stringify(look)}`);
     await shot(page, "desktop-workspace-folders");
     const folder = page.getByTestId("workspace-folder-rcgame");
     await folder.locator(".project-select").click();

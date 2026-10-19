@@ -209,7 +209,7 @@ impl Host {
                 }
             }
             ProjectStatus::Active if current == ProjectStatus::Archived => {
-                notes.push(format!("coordinator는 `aaa project open {project}`로 연다"));
+                notes.push("coordinator는 `aaa coordinator open`으로 연다".to_string());
             }
             ProjectStatus::Active => {}
         }
@@ -248,7 +248,12 @@ impl Host {
             .filter_map(|j| serde_json::from_str::<ThreadRec>(j).ok())
             .collect();
         let trash = self.projects_root().join(".trash");
-        let target = trash.join(format!("{project}-{}", aaa_common::util::utc_compact(aaa_common::util::now_ms())));
+        let stamp = format!("{project}-{}", aaa_common::util::utc_compact(aaa_common::util::now_ms()));
+        // 같은 초에 같은 이름을 다시 지우면(지우고 다시 만든 뒤) 이름이 겹친다: 뒤에 수를 붙인다
+        let target = (1..)
+            .map(|n| trash.join(if n == 1 { stamp.clone() } else { format!("{stamp}-{n}") }))
+            .find(|t| !t.exists())
+            .expect("빈 이름");
         std::fs::create_dir_all(&trash).map_err(internal)?;
         std::fs::rename(&dir, &target)
             .map_err(|e| internal(format!("{}를 휴지통으로 옮기지 못했다: {e}", dir.display())))?;
@@ -542,6 +547,23 @@ mod tests {
             ]),
             Err(vec!["m4-pilot".to_string(), "projects".to_string()])
         );
+    }
+
+    /// 지우고 다시 만든 같은 이름을 같은 초에 또 지워도 휴지통 이름이 겹치지 않는다(host는 프로젝트 하나라 다시 만들기가 잦다)
+    #[tokio::test]
+    async fn deleting_the_same_name_twice_keeps_both_in_the_trash() {
+        let state = std::env::temp_dir().join(format!("aaa-trash-{}", aaa_common::util::new_id()));
+        let mut cfg = aaa_config::HostConfig::default();
+        cfg.projects.root = state.join("projects").display().to_string();
+        cfg.notify.web_push = false;
+        let h = Host::open(cfg, state.clone()).unwrap();
+        for _ in 0..2 {
+            h.project_create("demo", Default::default(), "test").unwrap();
+            h.project_delete("demo", false, "test").await.unwrap();
+        }
+        assert_eq!(std::fs::read_dir(state.join("projects/.trash")).unwrap().count(), 2);
+        drop(h);
+        std::fs::remove_dir_all(&state).unwrap();
     }
 
     #[test]

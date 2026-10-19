@@ -64,7 +64,7 @@ root = ""                          # 기본 ~/.aaa/projects. herdr-projects 폴�
 ```
 
 - 위 요청 상한은 1~86400초이며 기존 `schema = 1` 설정과 `host.local.toml` 덮어쓰기를 따른다. `aaa config check`로 검사하고 다음 host 시작 때 적용한다. 현재 웹 설정은 UI 환경설정이며 host.toml 편집 화면은 없다.
-- coordinator는 `aaa thread start <p> … --background`로 바로 thread ID와 「준비 중」을 받는다. 준비·실패 결과는 `aaa thread show <p> <id>`·`aaa events <p> --follow`로 확인한다. 기본 호출은 예전처럼 세션 시작 결과까지 기다린다.
+- coordinator는 `aaa thread start … --background`로 바로 thread ID와 「준비 중」을 받는다. 준비·실패 결과는 `aaa thread show <id>`·`aaa events --follow`로 확인한다. 기본 호출은 예전처럼 세션 시작 결과까지 기다린다.
 - 연결이 끊겨도 agent가 준비를 마쳐 `<work_root>/.preparations/`에 기록한다. `thread restart`는 같은 repo·경로·branch·기준 commit의 변경 없는 자리를 이어 쓴다. 변경·다른 branch·소유권이 불명확한 자리면 보존하고 사람의 확인을 요구한다.
 - 정리 중에는 `thread show`에 「정리 중」이 보인다. 정리 응답 전에 끊겼다면 같은 `thread resolve`로 이어서 한다(처음의 보존·사본 선택을 유지). 완료 후에만 완료 사건·inbox를 남긴다. agent의 상태 폴더 `thread-cleanup/`에도 결과가 남는다. 미완료 정리를 마치기 전에는 `--reopen`을 거부한다.
 
@@ -160,7 +160,7 @@ tailscale serve status                # 기존 항목 기록(바꾸지 않는다
 - aaa 프로젝트는 aaa projects root에 새로 만든다(`aaa project create <p>`). herdr-projects 폴더를 가리키지 않는다.
 - 기존 herdr thread는 aaa로 제어하지 않는다. 같은 성격의 새 low-impact 일을 aaa thread로 하나 맡기고 상태·보고를 비교한다.
 - agent 안내 파일은 AGENTS.md만 쓴다. CLAUDE.md는 쓰지 않는다.
-- coordinator: `aaa project open <p>`가 host 머신에서 프로젝트 폴더를 cwd로 띄운다(profile은 `--profile`, 없으면 project.toml `coordinator_profile` → host.toml `[defaults] coordinator_profile` → claude). 이미 돌면 그 pane을 알린다. AGENTS.md 안내대로 매 턴 `aaa context <p>`를 본다.
+- coordinator: `aaa coordinator open`(옛 꼴 `aaa project open <p>`)이 host 머신에서 프로젝트 폴더를 cwd로 띄운다(profile은 `--profile`, 없으면 project.toml `coordinator_profile` → host.toml `[defaults] coordinator_profile` → claude). 이미 돌면 그 pane을 알린다. AGENTS.md 안내대로 매 턴 `aaa context <p>`를 본다.
 
 | 비교 | 기준 |
 |---|---|

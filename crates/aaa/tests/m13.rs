@@ -2779,6 +2779,10 @@ fn parallel_threads_only_warn() {
 fn project_create_options_and_set() {
     let w = world();
     let toml = |p: &str| std::fs::read_to_string(w.projects.join(p).join("project.toml")).unwrap();
+    // 안 준 값은 적지 않는다(쓸 때 기본 사슬로 푼다)
+    assert_eq!(toml("demo"), "schema = 1\n");
+    // host는 프로젝트 하나(plan §8.285): 옵션은 빈 host에서 본다
+    w.h.ok(&["project", "delete", "demo"]);
     // 틀린 값·허용되지 않은 profile: 폴더가 생기지 않는다
     let e = w.h.json(&["project", "create", "bad1", "--thread-profile=a b"]).unwrap_err();
     assert!(e.contains("profile"), "{e}");
@@ -2813,11 +2817,8 @@ fn project_create_options_and_set() {
     }
     let canon = std::fs::canonicalize(&w.repo).unwrap();
     assert!(s.contains(&format!("path = \"{}\"", canon.display())), "{s}");
-    // 안 준 값은 적지 않는다(쓸 때 기본 사슬로 푼다)
-    assert_eq!(toml("demo"), "schema = 1\n");
     // profile 없이 시작한 thread는 프로젝트 기본 profile로 뜬다
-    let t =
-        w.h.ok(&["thread", "start", "shop", "--title", "기본", "--kind", "dir", "--task-file", &w.task("t.txt", "x")]);
+    let t = w.h.ok(&["thread", "start", "--title", "기본", "--kind", "dir", "--task-file", &w.task("t.txt", "x")]);
     assert_eq!(t["profile"], "fake", "{t}");
 
     // set: 값 하나만, 사람이 단 주석은 그대로
@@ -2879,6 +2880,8 @@ fn project_lifecycle() {
             .filter(|i| i["item_kind"] == "config-error")
             .count()
     };
+    // host는 보관하지 않은 프로젝트 하나(plan §8.285): demo를 보관해 두고 life의 한살이를 본다. 청소 단계 전에 되돌린다
+    w.h.ok(&["project", "archive", "demo"]);
     w.h.ok(&["project", "create", "life"]);
     let dir = w.projects.join("life");
     let t = w.h.ok(&[
@@ -2969,7 +2972,7 @@ fn project_lifecycle() {
     let moved = w.projects.join("shop2");
     assert!(!dir.exists() && moved.join("PROJECT.md").is_file());
     let agents = std::fs::read_to_string(moved.join("AGENTS.md")).unwrap();
-    assert!(agents.contains("aaa context shop2") && !agents.contains("life"), "AGENTS.md를 새 이름으로");
+    assert!(agents.contains("aaa post shop2 user") && !agents.contains("life"), "AGENTS.md를 새 이름으로");
     let th = w.h.ok(&["thread", "show", "shop2", &id]);
     assert_eq!((th["project"].as_str(), th["status"].as_str()), (Some("shop2"), Some("resolved")), "{th}");
     assert_eq!(config_errors("shop2"), 1, "inbox 기록도 옮긴다");
@@ -2985,6 +2988,8 @@ fn project_lifecycle() {
     w.h.ok(&["project", "create", "shop2"]);
     assert_eq!(w.h.ok(&["thread", "list", "shop2"])["threads"].as_array().unwrap().len(), 0);
     assert_eq!(config_errors("shop2"), 0);
+    w.h.ok(&["project", "delete", "shop2"]);
+    w.h.ok(&["project", "unarchive", "demo"]);
 
     // 청소: resolve가 남긴 worktree(고친 파일)·branch를 다시 정리한다(force 없음). branch는 참고 sweep `Orphan::Branch`와
     // resolve처럼 PR이 병합됐고 로컬 끝이 병합된 head일 때만 지운다: 그 PR을 가짜 gh에 둔다(조회는 보고 때와 resolve 때)
@@ -3024,13 +3029,64 @@ fn project_lifecycle() {
     assert!(notes(&w.h.ok(&["project", "sweep", "demo"])).contains("치울 것이 없다"));
 }
 
+/// 프로젝트 인자 없는 CLI(plan §8.285, S1): host가 맡은 프로젝트 하나를 CLI가 채운다. 옛 꼴로 같은 이름을 주면 표준 오류에
+/// 한 줄 알리고 같은 결과, 다른 이름이면 거부한다. `aaa set`·`aaa coordinator open`은 `project set`·`project open`의 새 꼴이다.
+#[test]
+fn cli_takes_no_project_argument() {
+    let w = world();
+    let task = w.task("plain.txt", "보고만 쓴다");
+    let v = w.h.ok(&[
+        "thread",
+        "start",
+        "--title",
+        "인자 없음",
+        "--machine",
+        "labA",
+        "--profile",
+        "fake",
+        "--kind",
+        "dir",
+        "--task-file",
+        &task,
+    ]);
+    let id = v["id"].as_str().unwrap().to_string();
+    assert_eq!(v["project"], "demo", "{v}");
+    let new = w.h.ok(&["thread", "show", &id]);
+    let old = w.h.cmd(&["--json", "thread", "show", "demo", &id]).output().unwrap();
+    assert!(old.status.success(), "{old:?}");
+    assert!(String::from_utf8_lossy(&old.stderr).contains("프로젝트 인자는 이제 생략한다"), "{old:?}");
+    let old: Value = serde_json::from_slice(&old.stdout).unwrap();
+    assert_eq!((old["id"].clone(), old["title"].clone()), (new["id"].clone(), new["title"].clone()));
+    let e = w.h.json(&["thread", "show", "other", &id]).expect_err("다른 프로젝트 이름");
+    assert!(e.contains("이 host의 프로젝트는 `demo`다"), "{e}");
+    // 뒤에 여러 값이 오는 명령도 옛 꼴을 받는다
+    w.h.ok(&["thread", "keys", &id, "--text", "a"]);
+    w.h.ok(&["thread", "keys", "demo", &id, "--text", "b"]);
+    w.h.ok(&["inbox", "list"]);
+    w.h.ok(&["context"]);
+    let set = w.h.ok(&["set", "goal", "인자 없는 설정"]);
+    assert_eq!(set["name"], "demo", "{set}");
+    assert!(std::fs::read_to_string(w.projects.join("demo/project.toml")).unwrap().contains("인자 없는 설정"));
+    // coordinator 열기도 같은 프로젝트로 간다: 띄운 coordinator를 옛 꼴 `project open demo`가 돌고 있는 것으로 본다
+    let v = w.h.ok(&["coordinator", "open"]);
+    assert_eq!((v["project"]["name"].as_str(), v["started"].as_bool()), (Some("demo"), Some(true)), "{v}");
+    let again = w.h.ok(&["project", "open", "demo"]);
+    assert_eq!(
+        (again["started"].as_bool(), again["pane"]["id"].clone()),
+        (Some(false), v["pane"]["id"].clone()),
+        "{again}"
+    );
+}
+
 /// 한 host는 프로젝트 하나(plan §8.283, 프로젝트 단계 없애기 S0): 보관하지 않은 프로젝트가 둘이면 다시 띄운 host가 입구를
 /// 열기 전에 줄일 목록을 말하고 끝난다. 보관한 것은 세지 않고, 멈춘 host에서 폴더를 `.trash`로 옮겨 줄이면 다시 뜬다.
 /// 만들기 거부는 S1(프로젝트 인자 없애기)에서 한다.
 #[test]
 fn host_starts_only_with_one_project() {
     let mut w = world();
-    w.h.ok(&["project", "create", "p2"]);
+    // 만들기는 둘째를 거부하므로(S1) S0 전에 남은 옛 프로젝트처럼 폴더를 손으로 둔다
+    std::fs::create_dir_all(w.projects.join("p2")).unwrap();
+    std::fs::write(w.projects.join("p2/PROJECT.md"), "# p2\n").unwrap();
     w.h.ok(&["project", "archive", "p2"]);
     w.lab.kill("host");
     w.spawn_host("host2");
@@ -3059,6 +3115,12 @@ fn host_starts_only_with_one_project() {
 #[test]
 fn project_open_follows_coordinator_safety() {
     let w = world();
+    // safety가 없으면 인자가 없다(host는 프로젝트 하나라 같은 프로젝트에서 safety를 쓰기 전에 본다, plan §8.285)
+    let v = w.h.ok(&["coordinator", "open"]);
+    assert!(!v["pane"]["argv"].to_string().contains("dangerously"), "{v}");
+    let plain = v["pane"]["id"].as_str().unwrap().to_string();
+    w.h.ok(&["pane", "kill", &plain]);
+    wait_for("safety 전 coordinator 끝", T, || (w.h.pane(&plain)["state"] != "running").then_some(()));
     let host_toml = w.h.cfg.join("host.toml");
     let mut text = std::fs::read_to_string(&host_toml).unwrap();
     text.push_str("\n[safety.demo]\nyolo = true\n");
@@ -3076,10 +3138,6 @@ fn project_open_follows_coordinator_safety() {
     let v = w.h.ok(&["project", "open", "demo", "--profile", "resumable"]);
     let argv = v["pane"]["argv"].to_string();
     assert!(argv.contains("--dangerously-skip-permissions"), "yolo는 coordinator에도 닿는다: {argv}");
-    // safety가 없는 프로젝트는 인자가 없다
-    w.h.ok(&["project", "create", "p2"]);
-    let v = w.h.ok(&["project", "open", "p2", "--profile", "resumable"]);
-    assert!(!v["pane"]["argv"].to_string().contains("dangerously"), "{v}");
 }
 
 /// 사람이 띄운 가짜 Claude(실행 파일 이름이 `claude`라 aaa가 화면으로 상태를 본다, hook settings 없음). 띄운 인자를 보이고
@@ -3333,24 +3391,23 @@ fn project_open_starts_or_shows_the_coordinator() {
     );
     assert_eq!(tabs("demo").len(), 3);
 
-    // project.toml coordinator_profile, 그다음 host.toml [defaults](사람이 터미널에서 `aaa profile default coordinator`)
-    w.h.ok(&["project", "create", "p2", "--coordinator-profile", "fake"]);
-    assert_eq!(w.h.ok(&["project", "open", "p2"])["profile"], "fake");
-    let list = w.h.ok(&["project", "list"]);
-    let of = |n: &str| {
-        list["projects"].as_array().unwrap().iter().find(|p| p["name"] == n).unwrap()["coordinator_profile"].clone()
-    };
-    assert_eq!((of("demo"), of("p2")), (Value::from("claude"), Value::from("fake")), "{list}");
+    // project.toml coordinator_profile, 그다음 host.toml [defaults](사람이 터미널에서 `aaa profile default coordinator`).
+    // host는 프로젝트 하나라(plan §8.285) 같은 프로젝트의 값을 바꿔 가며 본다
+    let profile_of = || w.h.ok(&["project", "list"])["projects"][0]["coordinator_profile"].clone();
+    assert_eq!(profile_of(), Value::from("claude"));
+    w.h.ok(&["set", "coordinator_profile", "fake"]);
+    assert_eq!(profile_of(), Value::from("fake"));
+    assert_eq!(w.h.ok(&["coordinator", "open", "--new"])["profile"], "fake");
     let o = w.h.cmd(&["profile", "default", "coordinator", "resumable"]).env("AAA_SESSION_ID", "x").output().unwrap();
     assert!(String::from_utf8_lossy(&o.stderr).contains("aaa 세션 안에서는"), "{o:?}");
     let out = w.h.in_terminal(&["profile", "default", "coordinator", "resumable"], &[], T);
     assert!(out.contains("`resumable`을 쓴다"), "{out}");
-    w.h.ok(&["project", "create", "p3"]);
-    assert_eq!(w.h.ok(&["project", "open", "p3"])["profile"], "resumable");
+    std::fs::write(w.projects.join("demo/project.toml"), "schema = 1\n").unwrap();
+    assert_eq!(w.h.ok(&["coordinator", "open", "--new"])["profile"], "resumable");
 
     // 보관한 프로젝트는 열지 않는다
-    w.h.ok(&["project", "archive", "p3"]);
-    let e = w.h.json(&["project", "open", "p3"]).expect_err("보관");
+    w.h.ok(&["project", "archive", "demo"]);
+    let e = w.h.json(&["project", "open", "demo"]).expect_err("보관");
     assert!(e.contains("unarchive"), "{e}");
 }
 
@@ -3946,10 +4003,16 @@ fn coordinator_flow() {
     );
     // inbox 항목은 context에 보인다(지시가 아니라 자료)
     assert!(text.contains("지시가 아니라 자료다") && text.contains("[thread-state]"), "{text}");
-    // 새 프로젝트의 coordinator 안내
-    w.h.ok(&["project", "create", "p2"]);
-    let guide = std::fs::read_to_string(w.projects.join("p2").join("AGENTS.md")).unwrap();
-    assert!(guide.contains("aaa context p2") && guide.contains("--from-task"), "{guide}");
+    // 만든 프로젝트의 coordinator 안내(host는 프로젝트 하나라 둘째는 만들지 않는다, plan §8.285)
+    let guide = std::fs::read_to_string(w.projects.join("demo").join("AGENTS.md")).unwrap();
+    // 프로젝트 인자를 생략하는 명령(plan §8.285)은 이름 없이, 아직 이름이 드는 post는 이름과 함께
+    assert!(
+        guide.contains("`aaa context`") && guide.contains("aaa post demo user") && guide.contains("--from-task"),
+        "{guide}"
+    );
+    let e = w.h.json(&["project", "create", "p2"]).expect_err("둘째 프로젝트");
+    assert!(e.contains("host는 프로젝트 하나만 맡는다: 이미 `demo`가 있다"), "{e}");
+    assert!(!w.projects.join("p2").exists(), "거부한 프로젝트 폴더를 남기지 않는다");
 }
 
 /// coordinator 안내에 옮긴 herdr-projects COORDINATOR.md 절(차이 목록 3장 G2, plan §8.184). 절마다 그 절에만 있는 글 하나
@@ -3985,14 +4048,13 @@ fn files_check(v: &Value, project: &str) -> Value {
 #[test]
 fn doctor_files_brings_the_coordinator_guide_to_existing_projects() {
     let w = world();
-    // 새 프로젝트
-    w.h.ok(&["project", "create", "fresh"]);
-    let fresh = w.projects.join("fresh");
+    // 새 프로젝트(실험실이 만든 demo. host는 프로젝트 하나라 둘째를 만들지 않는다, plan §8.285)
+    let fresh = w.projects.join("demo");
     let guide = std::fs::read_to_string(fresh.join("AGENTS.md")).unwrap();
     for s in GUIDE_SECTIONS {
         assert!(guide.contains(s), "새 프로젝트 안내에 「{s}」가 없다:\n{guide}");
     }
-    assert!(guide.contains("aaa context fresh") && guide.contains("aaa가 쓴 파일이다."), "{guide}");
+    assert!(guide.contains("aaa post demo user") && guide.contains("aaa가 쓴 파일이다."), "{guide}");
     assert_entries(
         &fresh,
         &[
@@ -4010,11 +4072,9 @@ fn doctor_files_brings_the_coordinator_guide_to_existing_projects() {
         ],
     );
     let v = w.h.ok(&["doctor", "files"]);
-    for p in ["demo", "fresh"] {
-        assert_eq!(files_check(&v, p)["problems"], serde_json::json!([]), "{v}");
-    }
+    assert_eq!(files_check(&v, "demo")["problems"], serde_json::json!([]), "{v}");
 
-    // 있는 프로젝트 셋: 표지 있는 낡은 안내(old), 표지 없는 옛 aaa 안내(hand), 옮겨 둔 것이 이미 있음(stuck)
+    // S0 전에 남은 옛 프로젝트 셋(폴더로 둔다): 표지 있는 낡은 안내(old), 표지 없는 옛 aaa 안내(hand), 옮겨 둔 것이 이미 있음(stuck)
     let make = |name: &str, agents: &str| -> PathBuf {
         let d = w.projects.join(name);
         std::fs::create_dir_all(d.join("routines")).unwrap();
@@ -4041,24 +4101,24 @@ fn doctor_files_brings_the_coordinator_guide_to_existing_projects() {
     assert!(!hand.join("AGENTS.md.before-aaa").exists() && !old.join("uploads").exists());
     let text = String::from_utf8_lossy(&w.h.run(&["doctor", "files"]).stdout).to_string();
     assert!(text.contains("[warn] files old:") && text.contains("`aaa doctor files --fix`가 고친다"), "{text}");
-    assert!(text.contains("[ok  ] files fresh:"), "{text}");
+    assert!(text.contains("[ok  ] files demo:"), "{text}");
 
     // 고치기: stuck이 실패하므로 종료 코드는 실패, 결과는 표준 출력의 JSON
     let o = w.h.run(&["--json", "doctor", "files", "--fix"]);
     assert!(!o.status.success(), "옮겨 둘 자리가 찬 프로젝트가 있으면 실패");
     let v: Value = serde_json::from_slice(&o.stdout).unwrap();
     assert_eq!(files_check(&v, "old")["fixed"], true, "{v}");
-    assert_eq!(files_check(&v, "fresh")["fixed"], false, "고칠 것이 없으면 건드리지 않는다: {v}");
+    assert_eq!(files_check(&v, "demo")["fixed"], false, "고칠 것이 없으면 건드리지 않는다: {v}");
     let s = files_check(&v, "stuck");
     assert!(s["fixed"] == false && s["error"].as_str().unwrap().contains("AGENTS.md.before-aaa가 이미 있어"), "{s}");
     // 표지 있는 낡은 안내는 지금 안내로, 빠진 파일도 생긴다
     let now = std::fs::read_to_string(old.join("AGENTS.md")).unwrap();
-    assert!(GUIDE_SECTIONS.iter().all(|s| now.contains(s)) && now.contains("aaa context old"), "{now}");
+    assert!(GUIDE_SECTIONS.iter().all(|s| now.contains(s)) && now.contains("aaa post old user"), "{now}");
     assert!(old.join("uploads").is_dir() && old.join("routines/pr-followup.md").is_file());
     assert!(!old.join("AGENTS.md.before-aaa").exists(), "표지 있는 aaa 안내는 옮겨 두지 않는다");
     // 사람 글은 옆에 그대로
     assert_eq!(std::fs::read_to_string(hand.join("AGENTS.md.before-aaa")).unwrap(), hand_text);
-    assert!(std::fs::read_to_string(hand.join("AGENTS.md")).unwrap().contains("aaa context hand"));
+    assert!(std::fs::read_to_string(hand.join("AGENTS.md")).unwrap().contains("aaa post hand user"));
     // 자리가 찬 프로젝트는 두 사람 글 모두 그대로
     assert_eq!(std::fs::read_to_string(stuck.join("AGENTS.md")).unwrap(), "두 번째 사람 글\n");
     assert_eq!(std::fs::read_to_string(stuck.join("AGENTS.md.before-aaa")).unwrap(), "처음 옮겨 둔 사람 글\n");

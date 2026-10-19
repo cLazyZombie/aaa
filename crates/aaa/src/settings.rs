@@ -282,7 +282,7 @@ fn show_text(target: &Target, rows: &[safety::Row], eff: &safety::Safety, warnin
         .map(|h| format!("{h}: {}", safety::yolo_flags(h).unwrap_or_default().join(" ")))
         .collect();
     out.push_str(&format!(
-        "\nyolo는 thread를 묻지 않고 시작하고(start_threads auto) thread와 coordinator(`aaa project open`)를 harness의 권한 건너뛰기 인자로 띄운다({}). shell·custom profile은 인자가 없어 그대로 묻는다.\n",
+        "\nyolo는 thread를 묻지 않고 시작하고(start_threads auto) thread와 coordinator(`aaa coordinator open`)를 harness의 권한 건너뛰기 인자로 띄운다({}). shell·custom profile은 인자가 없어 그대로 묻는다.\n",
         flags.join("; ")
     ));
     out.push_str(
@@ -535,7 +535,9 @@ fn default(json: bool, role: &str, name: &str) -> Result<ExitCode> {
         (
             "coordinator_profile",
             "coordinator",
-            format!("`aaa project open`에 --profile이 없고 project.toml coordinator_profile도 없으면 `{name}`을 쓴다"),
+            format!(
+                "`aaa coordinator open`에 --profile이 없고 project.toml coordinator_profile도 없으면 `{name}`을 쓴다"
+            ),
         )
     } else {
         (

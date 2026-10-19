@@ -142,6 +142,14 @@ enum Cmd {
         #[command(subcommand)]
         cmd: ProjectCmd,
     },
+    /// 설정 값 하나를 바꾼다(`aaa project set`의 새 꼴, plan §8.285): goal, thread_profile, coordinator_profile,
+    /// max_parallel_threads, auto_resolve_days, repos.add, repos.remove, nudge, mute
+    Set { key: String, value: String },
+    /// coordinator(`aaa project open`의 새 꼴, plan §8.285)
+    Coordinator {
+        #[command(subcommand)]
+        cmd: CoordinatorCmd,
+    },
     /// 없어졌다: 결정은 프로젝트 memory에 적는다(안내만 하고 끝난다)
     #[command(hide = true)]
     Decision {
@@ -150,14 +158,18 @@ enum Cmd {
     },
     /// coordinator가 매 턴 처음 보는 프로젝트 요약: TASKS.md, 열린 thread와 Next, start_threads, 맡길 수 있는 owner
     Context {
-        project: String,
+        /// (옛 꼴의 프로젝트, 생략한다)
+        #[arg(hide = true)]
+        project: Option<String>,
         /// 보인 inbox 항목을 「봤다」로 표시하지 않는다
         #[arg(long)]
         peek: bool,
     },
     /// TASKS.md owner로 쓸 수 있는 profile·머신. --check로 owner 하나를 확인한다.
     Assignable {
-        project: String,
+        /// (옛 꼴의 프로젝트, 생략한다)
+        #[arg(hide = true)]
+        project: Option<String>,
         #[arg(long)]
         check: Option<String>,
     },
@@ -358,10 +370,25 @@ enum TickerCmd {
 }
 
 #[derive(Subcommand)]
+enum CoordinatorCmd {
+    /// coordinator를 연다: 돌고 있으면 그 pane을 알리고, 없으면 host 머신에서 프로젝트 폴더를 작업 폴더로 띄운다
+    Open {
+        /// coordinator profile(안 주면 project.toml coordinator_profile → host.toml [defaults] → claude). `aaa profile list`
+        #[arg(long, value_name = "NAME")]
+        profile: Option<String>,
+        /// coordinator가 돌아도 하나 더 띄운다
+        #[arg(long)]
+        new: bool,
+    },
+}
+
+#[derive(Subcommand)]
 enum InboxCmd {
     /// 끝내지 않은 항목. 처음 보는 항목은 「봤다」로 표시한다(`--peek`이면 표시하지 않는다)
     List {
-        project: String,
+        /// (옛 꼴의 프로젝트, 생략한다)
+        #[arg(hide = true)]
+        project: Option<String>,
         /// 끝낸 항목도 보인다
         #[arg(long)]
         all: bool,
@@ -370,44 +397,100 @@ enum InboxCmd {
     },
     /// 항목을 끝낸다
     Done {
-        project: String,
-        #[arg(required_unless_present = "all")]
         ids: Vec<String>,
         /// 끝내지 않은 항목 모두
-        #[arg(long, conflicts_with = "ids")]
+        #[arg(long)]
         all: bool,
     },
 }
 
 #[derive(Subcommand)]
 enum MissionCmd {
-    List { project: Option<String> },
-    Show { project: String, name: String },
-    Approve { project: String, name: String },
-    Reject { project: String, name: String },
-    Start { project: String, name: String },
-    Stop { project: String, name: String },
-    Pause { project: String, name: String },
-    Resume { project: String, name: String },
-    Reload { project: String, name: String },
-    Restart { project: String, name: String },
-    Open { project: String, name: String },
+    List {
+        project: Option<String>,
+    },
+    Show {
+        name: String,
+        /// (옛 꼴 `<프로젝트> <대상>`의 대상)
+        #[arg(hide = true)]
+        legacy: Option<String>,
+    },
+    Approve {
+        name: String,
+        /// (옛 꼴 `<프로젝트> <대상>`의 대상)
+        #[arg(hide = true)]
+        legacy: Option<String>,
+    },
+    Reject {
+        name: String,
+        /// (옛 꼴 `<프로젝트> <대상>`의 대상)
+        #[arg(hide = true)]
+        legacy: Option<String>,
+    },
+    Start {
+        name: String,
+        /// (옛 꼴 `<프로젝트> <대상>`의 대상)
+        #[arg(hide = true)]
+        legacy: Option<String>,
+    },
+    Stop {
+        name: String,
+        /// (옛 꼴 `<프로젝트> <대상>`의 대상)
+        #[arg(hide = true)]
+        legacy: Option<String>,
+    },
+    Pause {
+        name: String,
+        /// (옛 꼴 `<프로젝트> <대상>`의 대상)
+        #[arg(hide = true)]
+        legacy: Option<String>,
+    },
+    Resume {
+        name: String,
+        /// (옛 꼴 `<프로젝트> <대상>`의 대상)
+        #[arg(hide = true)]
+        legacy: Option<String>,
+    },
+    Reload {
+        name: String,
+        /// (옛 꼴 `<프로젝트> <대상>`의 대상)
+        #[arg(hide = true)]
+        legacy: Option<String>,
+    },
+    Restart {
+        name: String,
+        /// (옛 꼴 `<프로젝트> <대상>`의 대상)
+        #[arg(hide = true)]
+        legacy: Option<String>,
+    },
+    Open {
+        name: String,
+        /// (옛 꼴 `<프로젝트> <대상>`의 대상)
+        #[arg(hide = true)]
+        legacy: Option<String>,
+    },
 }
 
 #[derive(Subcommand)]
 enum RoutineCmd {
     /// 최근 실행·건너뜀 기록(최대 50건, 최근 순서)
     Runs {
-        project: String,
         name: String,
+        /// (옛 꼴 `<프로젝트> <대상>`의 대상)
+        #[arg(hide = true)]
+        legacy: Option<String>,
     },
     List {
-        project: String,
+        /// (옛 꼴의 프로젝트, 생략한다)
+        #[arg(hide = true)]
+        project: Option<String>,
     },
     /// 켜거나 끈다(front matter `enabled`). `--on`·`--off`가 없으면 뒤집는다. 명령 승인은 그대로 필요하다
     Toggle {
-        project: String,
         name: String,
+        /// (옛 꼴 `<프로젝트> <대상>`의 대상)
+        #[arg(hide = true)]
+        legacy: Option<String>,
         #[arg(long, conflicts_with = "off")]
         on: bool,
         #[arg(long)]
@@ -415,8 +498,10 @@ enum RoutineCmd {
     },
     /// 명령을 승인한다. 사람이 host 머신 터미널(aaa 세션 밖)에서 명령을 보고 routine 이름을 쳐야 한다
     Approve {
-        project: String,
         name: String,
+        /// (옛 꼴 `<프로젝트> <대상>`의 대상)
+        #[arg(hide = true)]
+        legacy: Option<String>,
     },
 }
 
@@ -424,7 +509,9 @@ enum RoutineCmd {
 enum EvaluatorCmd {
     /// 평가자를 지정한다: 그 머신에 역할이 evaluator인 thread를 띄운다(프로젝트당 하나, 목록에는 섞이지 않는다)
     Assign {
-        project: String,
+        /// (옛 꼴의 프로젝트, 생략한다)
+        #[arg(hide = true)]
+        project: Option<String>,
         #[arg(long)]
         profile: String,
         #[arg(long)]
@@ -439,26 +526,37 @@ enum EvaluatorCmd {
     /// 평가자 상태: 실행 여부, 넘긴 사건 묶음, 받은 평가, 정하지 않은 개선안
     Status { project: Option<String> },
     /// 삭제된 평가자 TUI 열기. 웹 UI의 평가자 pane을 쓴다
-    Open { project: String },
+    Open {
+        /// (옛 꼴의 프로젝트, 생략한다)
+        #[arg(hide = true)]
+        project: Option<String>,
+    },
     /// 평가자를 끝낸다(평가자 thread resolve)
-    Unassign { project: String },
+    Unassign {
+        /// (옛 꼴의 프로젝트, 생략한다)
+        #[arg(hide = true)]
+        project: Option<String>,
+    },
 }
 
 #[derive(Subcommand)]
 enum EvaluationCmd {
     /// 정하지 않은 개선안이 있는 평가(--all은 전부)
     List {
-        project: String,
+        /// (옛 꼴의 프로젝트, 생략한다)
+        #[arg(hide = true)]
+        project: Option<String>,
         #[arg(long)]
         all: bool,
     },
     Show {
-        project: String,
         id: String,
+        /// (옛 꼴 `<프로젝트> <대상>`의 대상)
+        #[arg(hide = true)]
+        legacy: Option<String>,
     },
     /// 개선안을 채택한다(뒤 thread가 알아야 하면 coordinator가 memory에 적는다)
     Adopt {
-        project: String,
         id: String,
         #[arg(required = true)]
         proposals: Vec<String>,
@@ -467,7 +565,6 @@ enum EvaluationCmd {
     },
     /// 개선안을 보류한다(나중에 채택할 수 있다)
     Hold {
-        project: String,
         id: String,
         #[arg(required = true)]
         proposals: Vec<String>,
@@ -509,7 +606,9 @@ struct PostArgs {
 enum ThreadCmd {
     /// thread를 시작한다: 그 머신 agent가 worktree(또는 작업 폴더)를 만들고 profile로 agent를 띄운 뒤 brief를 안내한다
     Start {
-        project: String,
+        /// (옛 꼴의 프로젝트, 생략한다)
+        #[arg(hide = true)]
+        project: Option<String>,
         /// 제목(--from-task면 비워도 된다)
         #[arg(long)]
         title: Option<String>,
@@ -543,7 +642,9 @@ enum ThreadCmd {
     /// 이미 띄운 Claude·Codex pane을 이 프로젝트의 thread로 기록하고 brief를 안내한다(herdr-projects `thread adopt`).
     /// pane은 그대로 두고 그 폴더에 작업 폴더를 만든다. 다시 시작(restart)은 하지 않고, resolve도 pane을 끝내지 않는다.
     Adopt {
-        project: String,
+        /// (옛 꼴의 프로젝트, 생략한다)
+        #[arg(hide = true)]
+        project: Option<String>,
         /// 데려올 pane(ID·앞 4자 이상·이름)
         #[arg(long)]
         pane: String,
@@ -555,8 +656,10 @@ enum ThreadCmd {
     },
     /// thread의 Next 목록(보고서 `## Next` + 더한 줄). --line N은 그 줄을 thread에 메시지로 보낸다.
     Next {
-        project: String,
         thread: String,
+        /// (옛 꼴 `<프로젝트> <대상>`의 대상)
+        #[arg(hide = true)]
+        legacy: Option<String>,
         #[arg(long, conflicts_with = "add")]
         line: Option<u32>,
         /// Next 목록에 한 줄 더한다
@@ -576,12 +679,16 @@ enum ThreadCmd {
     },
     /// 보고서와 결과물 목록, 웹에서 볼 읽기 전용 경로(2시간)
     Library {
-        project: String,
         thread: String,
+        /// (옛 꼴 `<프로젝트> <대상>`의 대상)
+        #[arg(hide = true)]
+        legacy: Option<String>,
     },
     Show {
-        project: String,
         thread: String,
+        /// (옛 꼴 `<프로젝트> <대상>`의 대상)
+        #[arg(hide = true)]
+        legacy: Option<String>,
     },
     /// 작업 요약(웹 hover 카드·「요약」 단추). --file이면 통째로 다시 쓴다(coordinator가 방향이 바뀔 때마다).
     /// 쉬운 말의 짧은 구로 몇 줄만 쓴다. 형식:
@@ -590,21 +697,27 @@ enum ThreadCmd {
     /// ## 바뀜 / - ~~사용자 14:0x 무효가 된 것~~ / - 사용자 14:1x 최근 바뀐 것(맨 아래) / ## 끝남 / - 끝난 일.
     /// 한 줄 30자, 한 절 3줄, 전체 1KB까지
     Summary {
-        project: String,
         thread: String,
+        /// (옛 꼴 `<프로젝트> <대상>`의 대상)
+        #[arg(hide = true)]
+        legacy: Option<String>,
         /// 요약 파일(`-`면 표준 입력)
         #[arg(long)]
         file: Option<String>,
     },
     /// 지금 보고를 확인했다
     Ack {
-        project: String,
         thread: String,
+        /// (옛 꼴 `<프로젝트> <대상>`의 대상)
+        #[arg(hide = true)]
+        legacy: Option<String>,
     },
     /// 끝낸다: 마지막 사본 → 세션 종료 → worktree 정리(force 없음, 병합된 branch만 삭제)
     Resolve {
-        project: String,
         thread: String,
+        /// (옛 꼴 `<프로젝트> <대상>`의 대상)
+        #[arg(hide = true)]
+        legacy: Option<String>,
         /// worktree와 branch를 남긴다
         #[arg(long)]
         keep_worktree: bool,
@@ -620,20 +733,23 @@ enum ThreadCmd {
     },
     /// brief 안내를 사람이 다시 보낸다(자동 재전송은 하지 않는다)
     Brief {
-        project: String,
         thread: String,
+        /// (옛 꼴 `<프로젝트> <대상>`의 대상)
+        #[arg(hide = true)]
+        legacy: Option<String>,
     },
     /// thread pane이 지금 보이는 것(신뢰 창·질문 메뉴·권한 확인창)을 보인다
     Read {
-        project: String,
         thread: String,
+        /// (옛 꼴 `<프로젝트> <대상>`의 대상)
+        #[arg(hide = true)]
+        legacy: Option<String>,
         /// 보이는 화면 대신 기록 끝 N줄
         #[arg(long, value_name = "N")]
         lines: Option<u32>,
     },
     /// thread pane이 보이는 것에 답한다: --text를 치고(Enter 없음) 키를 누른다(enter·esc·up·down·tab·1·y·ctrl+c)
     Keys {
-        project: String,
         thread: String,
         #[arg(value_name = "KEY")]
         keys: Vec<String>,
@@ -643,13 +759,17 @@ enum ThreadCmd {
     },
     /// thread agent를 멈춘다(Esc 한 번). 세션·작업 폴더는 그대로다
     Stop {
-        project: String,
         thread: String,
+        /// (옛 꼴 `<프로젝트> <대상>`의 대상)
+        #[arg(hide = true)]
+        legacy: Option<String>,
     },
     /// 끝난 thread 세션을 다시 띄운다. 기본은 task를 다시 읽어 새 brief로 새 대화
     Restart {
-        project: String,
         thread: String,
+        /// (옛 꼴 `<프로젝트> <대상>`의 대상)
+        #[arg(hide = true)]
+        legacy: Option<String>,
         /// 저장된 대화를 잇는다(brief 안내 없음)
         #[arg(long)]
         resume: bool,
@@ -659,8 +779,10 @@ enum ThreadCmd {
     },
     /// thread agent에 메시지를 보낸다. 작업 중이어도 바로 입력한다(harness가 다음 턴으로 줄 세운다)
     Message {
-        project: String,
         thread: String,
+        /// (옛 꼴 `<프로젝트> <대상>`의 대상)
+        #[arg(hide = true)]
+        legacy: Option<String>,
         /// 작업 중이면 Esc로 멈춘 뒤 보낸다. 없으면 바로 입력한다(작업 중이면 harness가 다음 턴에 읽는다)
         #[arg(long)]
         interrupt: bool,
@@ -948,8 +1070,9 @@ enum LibraryCmd {
     /// host 머신의 폴더·파일을 복사한다. 같은 이름은 최신으로 바꾼다.
     Publish {
         source: std::path::PathBuf,
-        #[arg(long)]
-        project: String,
+        /// (옛 꼴, 생략한다)
+        #[arg(long, hide = true)]
+        project: Option<String>,
         #[arg(long)]
         name: String,
         /// 복사 없이 등록한 폴더에서 변경을 즉시 보여 준다(폴더만).
@@ -966,16 +1089,18 @@ enum LibraryCmd {
     /// 보고서를 모든 곳에서 지운다(host 사본·목록·공유 링크·thread 보고 사본). 되돌릴 수 없다.
     /// 끝나지 않은(resolve 전) thread의 보고가 있으면 아무것도 지우지 않는다.
     Delete {
-        #[arg(long)]
-        project: String,
+        /// (옛 꼴, 생략한다)
+        #[arg(long, hide = true)]
+        project: Option<String>,
         #[arg(required = true)]
         names: Vec<String>,
     },
     /// 하위 폴더를 각각 가져온다. 충돌·상한 초과·symlink는 건너뛴 목록에 적는다.
     Import {
         source: std::path::PathBuf,
-        #[arg(long)]
-        project: String,
+        /// (옛 꼴, 생략한다)
+        #[arg(long, hide = true)]
+        project: Option<String>,
         /// 저장 이름 앞에 붙인다(예: archive- → archive-t-0001).
         #[arg(long, default_value = "")]
         prefix: String,
@@ -994,8 +1119,10 @@ enum LibraryCmd {
     Rotate,
     /// 유효한 링크를 받는다. 없거나 만료·폐기됐으면 새로 만든다.
     Link {
-        project: String,
         thread: String,
+        /// (옛 꼴 `<프로젝트> <대상>`의 대상)
+        #[arg(hide = true)]
+        legacy: Option<String>,
         /// 새 링크 수명(기본 30일, 1~3650일). 기존 링크 수명은 바꾸지 않는다.
         #[arg(long)]
         days: Option<u32>,
@@ -1285,29 +1412,52 @@ fn run(cli: Cli) -> Result<ExitCode> {
         Cmd::Workspace { cmd } => workspace_cmd(cmd),
         Cmd::Completion { shell } => completion(&shell),
         Cmd::Project { cmd } => project_cmd(json, cmd),
+        Cmd::Set { key, value } => project_cmd(json, ProjectCmd::Set { project: project_or_here(None)?, key, value }),
+        Cmd::Coordinator { cmd: CoordinatorCmd::Open { profile, new } } => {
+            front(json, FrontRequest::ProjectOpen { project: project_or_here(None)?, profile, new })
+        }
         Cmd::Decision { .. } => anyhow::bail!(
             "`aaa decision`은 없어졌다. 뒤 thread가 알아야 할 결정은 coordinator가 프로젝트 memory(MEMORY.md 색인과 \
              memory/ 파일)에 적는다. memory는 모든 thread brief에 들어간다"
         ),
-        Cmd::Context { project, peek } => front(json, FrontRequest::Context { project, peek }),
-        Cmd::Assignable { project, check } => front(json, FrontRequest::Assignable { project, check }),
+        Cmd::Context { project, peek } => {
+            front(json, FrontRequest::Context { project: project_or_here(project)?, peek })
+        }
+        Cmd::Assignable { project, check } => {
+            front(json, FrontRequest::Assignable { project: project_or_here(project)?, check })
+        }
         Cmd::Inbox { cmd } => front(
             json,
             match cmd {
-                InboxCmd::List { project, all, peek } => FrontRequest::Inbox { project, all, peek },
-                InboxCmd::Done { project, ids, all } => FrontRequest::InboxDone { project, ids, all },
+                InboxCmd::List { project, all, peek } => {
+                    FrontRequest::Inbox { project: project_or_here(project)?, all, peek }
+                }
+                InboxCmd::Done { mut ids, all } => {
+                    // 옛 꼴 `inbox done <프로젝트> <ID…>`: 첫 값이 프로젝트 이름이면 뺀다
+                    let given = match ids.first() {
+                        Some(first) if known_projects()?.iter().any(|(n, _)| n == first) => Some(ids.remove(0)),
+                        _ => None,
+                    };
+                    let project = project_or_here(given)?;
+                    anyhow::ensure!(all != !ids.is_empty(), "끝낼 항목 ID나 --all 중 하나만 준다");
+                    FrontRequest::InboxDone { project, ids, all }
+                }
             },
         ),
         Cmd::Ticker { cmd: TickerCmd::Tick } => front(json, FrontRequest::TickerTick),
         Cmd::Merge { .. } => anyhow::bail!(
             "`aaa merge`는 없어졌다. aaa는 병합하지 않는다: 사용자가 병합하라고 하면 그 thread의 Next 줄을 \
-             `aaa thread next <p> <id> --line N`으로 보내 thread가 PR을 병합한다. PR이 병합되면 aaa가 thread를 끝낸다"
+             `aaa thread next <id> --line N`으로 보내 thread가 PR을 병합한다. PR이 병합되면 aaa가 thread를 끝낸다"
         ),
-        Cmd::Routine { cmd: RoutineCmd::Runs { project, name } } => {
+        Cmd::Routine { cmd: RoutineCmd::Runs { name, legacy } } => {
+            let (project, name) = on_target(name, legacy)?;
             front(json, FrontRequest::RoutineRuns { project, name })
         }
-        Cmd::Routine { cmd: RoutineCmd::List { project } } => front(json, FrontRequest::Routines { project }),
-        Cmd::Routine { cmd: RoutineCmd::Toggle { project, name, on, off } } => {
+        Cmd::Routine { cmd: RoutineCmd::List { project } } => {
+            front(json, FrontRequest::Routines { project: project_or_here(project)? })
+        }
+        Cmd::Routine { cmd: RoutineCmd::Toggle { name, legacy, on, off } } => {
+            let (project, name) = on_target(name, legacy)?;
             let on = if on {
                 Some(true)
             } else if off {
@@ -1317,7 +1467,10 @@ fn run(cli: Cli) -> Result<ExitCode> {
             };
             front(json, FrontRequest::RoutineToggle { project, name, on })
         }
-        Cmd::Routine { cmd: RoutineCmd::Approve { project, name } } => routine_approve(json, project, name),
+        Cmd::Routine { cmd: RoutineCmd::Approve { name, legacy } } => {
+            let (project, name) = on_target(name, legacy)?;
+            routine_approve(json, project, name)
+        }
         Cmd::Mission { cmd } => mission_cmd(json, cmd),
         Cmd::Profile { cmd } => crate::settings::profile_cmd(json, cmd),
         Cmd::Safety { cmd } => crate::settings::safety_cmd(json, cmd),
@@ -1346,6 +1499,7 @@ fn run(cli: Cli) -> Result<ExitCode> {
                     let task = task_text(task_file.as_deref())?;
                     let summary = summary_file.as_deref().map(|f| file_text(f, "요약 파일")).transpose()?;
                     let kind = kind.map(|k| if k == "dir" { ThreadKind::Dir } else { ThreadKind::Worktree });
+                    let project = project_or_here(project)?;
                     let req = FrontRequest::ThreadStart {
                         background,
                         project: project.clone(),
@@ -1360,10 +1514,14 @@ fn run(cli: Cli) -> Result<ExitCode> {
                     };
                     return with_summary(json, req, project, None, summary);
                 }
-                ThreadCmd::Adopt { project, pane, title, task_file } => {
-                    FrontRequest::ThreadAdopt { project, pane, title, task: task_text(task_file.as_deref())? }
-                }
-                ThreadCmd::Next { project, thread, line, add } => {
+                ThreadCmd::Adopt { project, pane, title, task_file } => FrontRequest::ThreadAdopt {
+                    project: project_or_here(project)?,
+                    pane,
+                    title,
+                    task: task_text(task_file.as_deref())?,
+                },
+                ThreadCmd::Next { thread, legacy, line, add } => {
+                    let (project, thread) = on_target(thread, legacy)?;
                     FrontRequest::ThreadNext { project, thread, line, add }
                 }
                 ThreadCmd::List { project, role, mission } => {
@@ -1386,26 +1544,53 @@ fn run(cli: Cli) -> Result<ExitCode> {
                     }
                     FrontRequest::Threads { project, role: role.as_deref().and_then(aaa_proto::Role::parse) }
                 }
-                ThreadCmd::Show { project, thread } => FrontRequest::ThreadShow { project, thread },
-                ThreadCmd::Summary { project, thread, file: None } => FrontRequest::ThreadSummary { project, thread },
-                ThreadCmd::Summary { project, thread, file: Some(f) } => {
-                    FrontRequest::ThreadSummarySet { project, thread, text: file_text(&f, "요약 파일")? }
+                ThreadCmd::Show { thread, legacy } => {
+                    let (project, thread) = on_target(thread, legacy)?;
+                    FrontRequest::ThreadShow { project, thread }
                 }
-                ThreadCmd::Library { project, thread } => FrontRequest::ThreadLibrary { project, thread },
-                ThreadCmd::Ack { project, thread } => FrontRequest::ThreadAck { project, thread },
-                ThreadCmd::Resolve { project, thread, keep_worktree, reopen, skip_copy, discard_uncopied } => {
+                ThreadCmd::Summary { thread, legacy, file } => {
+                    let (project, thread) = on_target(thread, legacy)?;
+                    match file {
+                        None => FrontRequest::ThreadSummary { project, thread },
+                        Some(f) => {
+                            FrontRequest::ThreadSummarySet { project, thread, text: file_text(&f, "요약 파일")? }
+                        }
+                    }
+                }
+                ThreadCmd::Library { thread, legacy } => {
+                    let (project, thread) = on_target(thread, legacy)?;
+                    FrontRequest::ThreadLibrary { project, thread }
+                }
+                ThreadCmd::Ack { thread, legacy } => {
+                    let (project, thread) = on_target(thread, legacy)?;
+                    FrontRequest::ThreadAck { project, thread }
+                }
+                ThreadCmd::Resolve { thread, legacy, keep_worktree, reopen, skip_copy, discard_uncopied } => {
+                    let (project, thread) = on_target(thread, legacy)?;
                     FrontRequest::ThreadResolve { project, thread, keep_worktree, reopen, skip_copy, discard_uncopied }
                 }
-                ThreadCmd::Brief { project, thread } => FrontRequest::ThreadBrief { project, thread },
-                ThreadCmd::Read { project, thread, lines } => FrontRequest::ThreadRead { project, thread, lines },
-                ThreadCmd::Keys { project, thread, keys, text } => {
+                ThreadCmd::Brief { thread, legacy } => {
+                    let (project, thread) = on_target(thread, legacy)?;
+                    FrontRequest::ThreadBrief { project, thread }
+                }
+                ThreadCmd::Read { thread, legacy, lines } => {
+                    let (project, thread) = on_target(thread, legacy)?;
+                    FrontRequest::ThreadRead { project, thread, lines }
+                }
+                ThreadCmd::Keys { thread, mut keys, text } => {
+                    let (project, thread) = shift_project(thread, &mut keys)?;
                     FrontRequest::ThreadKeys { project, thread, keys, text }
                 }
-                ThreadCmd::Stop { project, thread } => FrontRequest::ThreadStop { project, thread },
-                ThreadCmd::Restart { project, thread, resume, profile } => {
+                ThreadCmd::Stop { thread, legacy } => {
+                    let (project, thread) = on_target(thread, legacy)?;
+                    FrontRequest::ThreadStop { project, thread }
+                }
+                ThreadCmd::Restart { thread, legacy, resume, profile } => {
+                    let (project, thread) = on_target(thread, legacy)?;
                     FrontRequest::ThreadRestart { project, thread, resume, profile }
                 }
-                ThreadCmd::Message { project, thread, interrupt, text_file, text, summary_file } => {
+                ThreadCmd::Message { thread, legacy, interrupt, text_file, text, summary_file } => {
+                    let (project, thread) = on_target(thread, legacy)?;
                     if text_file.as_deref() == Some("-") && summary_file.as_deref() == Some("-") {
                         anyhow::bail!("--text-file과 --summary-file을 둘 다 표준 입력(-)으로 줄 수 없다");
                     }
@@ -1474,22 +1659,31 @@ fn run(cli: Cli) -> Result<ExitCode> {
             json,
             match cmd {
                 EvaluatorCmd::Assign { project, profile, machine, repo, note } => {
-                    FrontRequest::EvaluatorAssign { project, profile, machine, repo, note }
+                    FrontRequest::EvaluatorAssign { project: project_or_here(project)?, profile, machine, repo, note }
                 }
                 EvaluatorCmd::Status { project } => FrontRequest::EvaluatorStatus { project },
-                EvaluatorCmd::Unassign { project } => FrontRequest::EvaluatorUnassign { project },
+                EvaluatorCmd::Unassign { project } => {
+                    FrontRequest::EvaluatorUnassign { project: project_or_here(project)? }
+                }
                 EvaluatorCmd::Open { .. } => unreachable!(),
             },
         ),
         Cmd::Evaluation { cmd } => front(
             json,
             match cmd {
-                EvaluationCmd::List { project, all } => FrontRequest::Evaluations { project, all },
-                EvaluationCmd::Show { project, id } => FrontRequest::EvaluationShow { project, id },
-                EvaluationCmd::Adopt { project, id, proposals, note } => {
+                EvaluationCmd::List { project, all } => {
+                    FrontRequest::Evaluations { project: project_or_here(project)?, all }
+                }
+                EvaluationCmd::Show { id, legacy } => {
+                    let (project, id) = on_target(id, legacy)?;
+                    FrontRequest::EvaluationShow { project, id }
+                }
+                EvaluationCmd::Adopt { id, mut proposals, note } => {
+                    let (project, id) = shift_project(id, &mut proposals)?;
                     FrontRequest::EvaluationDecide { project, id, proposals, adopt: true, note }
                 }
-                EvaluationCmd::Hold { project, id, proposals, note } => {
+                EvaluationCmd::Hold { id, mut proposals, note } => {
+                    let (project, id) = shift_project(id, &mut proposals)?;
                     FrontRequest::EvaluationDecide { project, id, proposals, adopt: false, note }
                 }
             },
@@ -1507,22 +1701,30 @@ fn run(cli: Cli) -> Result<ExitCode> {
         Cmd::Library { cmd } => front(
             json,
             match cmd {
-                LibraryCmd::Link { project, thread, days } => FrontRequest::LibraryLink { project, thread, days },
+                LibraryCmd::Link { thread, legacy, days } => {
+                    let (project, thread) = on_target(thread, legacy)?;
+                    FrontRequest::LibraryLink { project, thread, days }
+                }
                 LibraryCmd::List { project } => FrontRequest::LibraryReports { project },
                 LibraryCmd::Publish { source, project, name, live, to_user, title } => FrontRequest::LibraryPublish {
                     source: absolute_source(&source)?,
-                    project,
+                    project: project_or_here(project)?,
                     name,
                     live,
                     to_user,
                     title,
                 },
-                LibraryCmd::Delete { project, names } => FrontRequest::LibraryDelete {
-                    reports: names.into_iter().map(|name| LibraryRef { project: project.clone(), name }).collect(),
-                },
-                LibraryCmd::Import { source, project, prefix } => {
-                    FrontRequest::LibraryImport { source: absolute_source(&source)?, project, prefix }
+                LibraryCmd::Delete { project, names } => {
+                    let project = project_or_here(project)?;
+                    FrontRequest::LibraryDelete {
+                        reports: names.into_iter().map(|name| LibraryRef { project: project.clone(), name }).collect(),
+                    }
                 }
+                LibraryCmd::Import { source, project, prefix } => FrontRequest::LibraryImport {
+                    source: absolute_source(&source)?,
+                    project: project_or_here(project)?,
+                    prefix,
+                },
                 LibraryCmd::Prune { older_than, project, dry_run } => {
                     if dry_run {
                         FrontRequest::LibraryPrunePreview { project, older_than_days: older_than }
@@ -2217,6 +2419,67 @@ fn local_repo_path(arg: &str) -> String {
 
 fn front(json: bool, req: FrontRequest) -> Result<ExitCode> {
     front_print(json, front_call(req)?)
+}
+
+/// host가 아는 프로젝트(이름, 보관 여부). 프로젝트 인자를 생략한 명령이 한 번 묻는다(plan §8.285)
+fn known_projects() -> Result<&'static [(String, bool)]> {
+    static KNOWN: std::sync::OnceLock<Vec<(String, bool)>> = std::sync::OnceLock::new();
+    if let Some(k) = KNOWN.get() {
+        return Ok(k);
+    }
+    let projects = match front_call(FrontRequest::Projects { all: true })? {
+        Ok(FrontResponse::Projects { projects }) => projects,
+        Ok(_) => anyhow::bail!("프로젝트 목록 응답이 아니다"),
+        Err(e) => anyhow::bail!("{}", e.message),
+    };
+    let k = projects.into_iter().map(|p| (p.name, p.status == aaa_proto::ProjectStatus::Archived)).collect();
+    Ok(KNOWN.get_or_init(|| k))
+}
+
+/// 프로젝트 인자(plan §8.285): host는 프로젝트 하나만 맡으므로 생략하면 그 이름(내부 이름)이다. 옛 꼴로 그 이름을 주면
+/// 표준 오류에 한 줄 알리고 그대로 하고, 다른 이름이면 거부한다. 보관한 프로젝트·여럿이 남은 옛 상태의 이름은 그대로 받는다.
+fn project_or_here(given: Option<String>) -> Result<String> {
+    let known = known_projects()?;
+    let open: Vec<&str> = known.iter().filter(|(_, archived)| !archived).map(|(n, _)| n.as_str()).collect();
+    match given {
+        None => match open.as_slice() {
+            [one] => Ok(one.to_string()),
+            [] => anyhow::bail!("프로젝트가 없다: 먼저 `aaa project create <이름>`으로 만든다"),
+            many => anyhow::bail!(
+                "보관하지 않은 프로젝트가 {}개다({}): host는 하나만 맡는다(plan §8.283)",
+                many.len(),
+                many.join(", ")
+            ),
+        },
+        Some(p) => {
+            if open.as_slice() == [p.as_str()] {
+                static ONCE: std::sync::Once = std::sync::Once::new();
+                ONCE.call_once(|| eprintln!("경고: 프로젝트 인자는 이제 생략한다(`{p}`를 빼고 쓴다, plan §8.285)"));
+            } else if let [one] = open.as_slice()
+                && !known.iter().any(|(n, _)| *n == p)
+            {
+                anyhow::bail!("이 host의 프로젝트는 `{one}`다(`{p}` 아님). 프로젝트 인자는 이제 생략한다");
+            }
+            Ok(p)
+        }
+    }
+}
+
+/// `<대상>`(새 꼴) 또는 `<프로젝트> <대상>`(옛 꼴): (프로젝트, 대상)
+fn on_target(first: String, second: Option<String>) -> Result<(String, String)> {
+    match second {
+        Some(target) => Ok((project_or_here(Some(first))?, target)),
+        None => Ok((project_or_here(None)?, first)),
+    }
+}
+
+/// 뒤에 여러 값이 오는 명령(`thread keys <t> <키…>`): 첫 값이 host가 아는 프로젝트 이름이면 옛 꼴이다
+fn shift_project(first: String, rest: &mut Vec<String>) -> Result<(String, String)> {
+    if !rest.is_empty() && known_projects()?.iter().any(|(n, _)| *n == first) {
+        let target = rest.remove(0);
+        return Ok((project_or_here(Some(first))?, target));
+    }
+    Ok((project_or_here(None)?, first))
 }
 
 pub(crate) fn front_call(req: FrontRequest) -> Result<Result<FrontResponse, aaa_proto::ErrorBody>> {
@@ -3577,20 +3840,46 @@ fn config_cmd(cmd: ConfigCmd, json: bool) -> Result<ExitCode> {
 fn mission_cmd(json: bool, cmd: MissionCmd) -> Result<ExitCode> {
     let req = match cmd {
         MissionCmd::List { project } => FrontRequest::MissionList { project },
-        MissionCmd::Show { project, name } => FrontRequest::MissionShow { project, name },
-        MissionCmd::Reject { project, name } => FrontRequest::MissionReject { project, name },
-        MissionCmd::Start { project, name } => FrontRequest::MissionStart { project, name },
-        MissionCmd::Stop { project, name } => FrontRequest::MissionStop { project, name },
-        MissionCmd::Pause { project, name } => FrontRequest::MissionPause { project, name },
-        MissionCmd::Resume { project, name } => FrontRequest::MissionResume { project, name },
-        MissionCmd::Reload { project, name } => FrontRequest::MissionReload { project, name },
-        MissionCmd::Restart { project, name } => FrontRequest::MissionRestart { project, name },
-        MissionCmd::Open { project, name } => {
+        MissionCmd::Show { name, legacy } => {
+            let (project, name) = on_target(name, legacy)?;
+            FrontRequest::MissionShow { project, name }
+        }
+        MissionCmd::Reject { name, legacy } => {
+            let (project, name) = on_target(name, legacy)?;
+            FrontRequest::MissionReject { project, name }
+        }
+        MissionCmd::Start { name, legacy } => {
+            let (project, name) = on_target(name, legacy)?;
+            FrontRequest::MissionStart { project, name }
+        }
+        MissionCmd::Stop { name, legacy } => {
+            let (project, name) = on_target(name, legacy)?;
+            FrontRequest::MissionStop { project, name }
+        }
+        MissionCmd::Pause { name, legacy } => {
+            let (project, name) = on_target(name, legacy)?;
+            FrontRequest::MissionPause { project, name }
+        }
+        MissionCmd::Resume { name, legacy } => {
+            let (project, name) = on_target(name, legacy)?;
+            FrontRequest::MissionResume { project, name }
+        }
+        MissionCmd::Reload { name, legacy } => {
+            let (project, name) = on_target(name, legacy)?;
+            FrontRequest::MissionReload { project, name }
+        }
+        MissionCmd::Restart { name, legacy } => {
+            let (project, name) = on_target(name, legacy)?;
+            FrontRequest::MissionRestart { project, name }
+        }
+        MissionCmd::Open { name, legacy } => {
+            let (project, name) = on_target(name, legacy)?;
             let res = front_call(FrontRequest::MissionOpen { project: project.clone(), name: name.clone() })?;
             return front_print(json, res);
         }
-        MissionCmd::Approve { project, name } => {
+        MissionCmd::Approve { name, legacy } => {
             crate::person::require("aaa mission approve")?;
+            let (project, name) = on_target(name, legacy)?;
             let res = front_call(FrontRequest::MissionShow { project: project.clone(), name: name.clone() })?;
             let m = match res {
                 Ok(FrontResponse::Mission { mission }) => mission,

@@ -29,7 +29,7 @@ pub const KEYS: [(&str, &str); 7] = [
 
 /// 바꾼 뒤 알리는 말(참고 `RESTART_NOTE`)
 pub const RESTART_NOTE: &str = "이제부터 띄우는 thread·coordinator가 쓴다. 이미 도는 것은 다시 띄울 때까지 옛 인자다(thread는 \
-                                `aaa thread restart`, coordinator는 닫고 `aaa project open`)";
+                                `aaa thread restart`, coordinator는 닫고 `aaa coordinator open`)";
 
 /// harness가 권한을 묻지 않게 하는 인자(참고 `yolo_flags`). 모르는 harness는 `None`: yolo여도 묻는다.
 pub fn yolo_flags(harness: &str) -> Option<&'static [&'static str]> {
