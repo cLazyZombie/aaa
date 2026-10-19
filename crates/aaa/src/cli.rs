@@ -1349,10 +1349,29 @@ enum ConfigCmd {
     Migrate,
 }
 
+fn with_cli_stack<T: Send + 'static>(build: impl FnOnce() -> T + Send + 'static) -> std::io::Result<T> {
+    // clap derive의 명령 트리 빌더는 debug에서 Cmd·ThreadCmd 프레임만 약 1MiB다.
+    // Windows main의 1MiB 스택을 넘지 않게 명령 트리 생성·파싱만 별도 스택에서 끝낸다.
+    // 서비스·PTY·async 실행은 join 뒤 원래 main thread에서 계속한다.
+    std::thread::Builder::new()
+        .name("aaa-cli".into())
+        .stack_size(4 * 1024 * 1024)
+        .spawn(build)
+        .map(|thread| thread.join().unwrap_or_else(|panic| std::panic::resume_unwind(panic)))
+}
+
 pub fn main() -> ExitCode {
-    let version: &'static str =
-        Box::leak(aaa_common::util::software().trim_start_matches("aaa ").to_string().into_boxed_str());
-    let cli = Cli::from_arg_matches(&Cli::command().version(version).get_matches()).unwrap();
+    let cli = match with_cli_stack(|| {
+        let version: &'static str =
+            Box::leak(aaa_common::util::software().trim_start_matches("aaa ").to_string().into_boxed_str());
+        Cli::from_arg_matches(&Cli::command().version(version).get_matches()).unwrap()
+    }) {
+        Ok(cli) => cli,
+        Err(e) => {
+            eprintln!("aaa: 명령줄 해석 thread를 시작하지 못했다: {e}");
+            return ExitCode::FAILURE;
+        }
+    };
     if let Some(d) = &cli.config_dir {
         // 하위 프로세스(session host 등)도 같은 위치를 쓰게 한다.
         unsafe { std::env::set_var("AAA_CONFIG_DIR", d) };
@@ -2035,7 +2054,7 @@ fn completion(shell: &str) -> Result<ExitCode> {
         "powershell" => Shell::PowerShell,
         _ => Shell::Zsh,
     };
-    let mut cmd = Cli::command();
+    let mut cmd = with_cli_stack(Cli::command).context("완성 명령 트리 thread를 시작하지 못했다")?;
     let mut out = Vec::new();
     generate(sh, &mut cmd, "aaa", &mut out);
     let script = String::from_utf8(out).context("완성 스크립트가 UTF-8이 아니다")?;

@@ -8,6 +8,29 @@ use std::process::{Child, Command, Stdio};
 use std::time::Duration;
 const T: Duration = Duration::from_secs(15);
 
+#[test]
+fn cli_parses_and_dispatches_with_a_small_main_stack() {
+    let lab = Lab::new();
+    let node = lab.node("client", None);
+    for (args, code, message) in [
+        (vec!["--help"], 0, "work-root"),
+        (vec!["attach"], 1, "TUI는 삭제됐다"),
+        (vec!["completion", "bash"], 0, "_aaa"),
+    ] {
+        // macOS의 pre_exec는 시험 worker에서 fork한 자식이라 stack rlimit 변경을
+        // 거부한다. 새 셸의 main에서 한도를 낮춘 뒤 실제 aaa로 exec한다.
+        let mut cmd = node.cmd_bin(
+            std::path::Path::new("/bin/sh"),
+            &["-c", "ulimit -c 0 && ulimit -s 768 && exec \"$@\"", "aaa-small-stack", lab::BIN],
+        );
+        let out = cmd.args(&args).output().unwrap();
+        assert_eq!(out.status.code(), Some(code), "{args:?}: {out:?}");
+        let text = format!("{}{}", String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr));
+        assert!(text.contains(message), "{args:?}: {text}");
+    }
+    assert!(std::fs::read_dir(&node.state).unwrap().next().is_none());
+}
+
 fn limited(mut cmd: Command, hard: libc::rlim_t) -> Command {
     // SAFETY: fork 뒤 이 자식의 rlimit만 바꾼다. 부모·다른 시험에는 영향이 없다.
     unsafe {
