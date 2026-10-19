@@ -125,6 +125,12 @@ pub(crate) enum ViewSource {
     Agent { conn: crate::AgentConn, work_dir: String, path: String, size: u64 },
 }
 
+pub(crate) struct ViewFile {
+    pub source: ViewSource,
+    pub project: String,
+    pub name: String,
+}
+
 pub(crate) type ByteStream = futures_util::stream::BoxStream<'static, Result<Vec<u8>, std::io::Error>>;
 
 impl ViewSource {
@@ -262,7 +268,7 @@ impl Host {
     }
 
     /// 보기 경로의 파일을 찾는다. 읽기는 `ViewSource::open`이다.
-    pub(crate) async fn view_source(self: &Arc<Self>, cap: &str, path: &str) -> Result<ViewSource, ErrorBody> {
+    pub(crate) async fn view_source(self: &Arc<Self>, cap: &str, path: &str) -> Result<ViewFile, ErrorBody> {
         let memory = {
             let caps = self.view_caps.lock().unwrap();
             match caps.get(cap) {
@@ -278,6 +284,7 @@ impl Host {
             Some(target) => target,
             None => self.signed_library_at(cap, aaa_common::util::now_ms())?,
         };
+        let view = |source| ViewFile { source, project: project.clone(), name: id.clone() };
         if path.split('/').any(|c| c.starts_with('.') && c != "." && c != "..") {
             return Err(err(ErrorCode::NotFound, "숨은 결과물은 열지 않는다"));
         }
@@ -288,7 +295,7 @@ impl Host {
         let _ops = self.library_ops.lock().unwrap();
         let manifest = self.report_manifest(&dir, &project, &id)?;
         if path.is_empty() && !manifest.iter().any(|f| f.path == "index.html" && !f.on_agent) {
-            return Ok(ViewSource::Page(library_listing(&manifest)));
+            return Ok(view(ViewSource::Page(library_listing(&manifest))));
         }
         let path = if path.is_empty() { "index.html" } else { path };
         let entry = manifest
@@ -300,20 +307,20 @@ impl Host {
                 && let Some(root) = r.live
             {
                 let (file, size) = crate::library_publish::live_file(Path::new(&root), path)?;
-                return Ok(ViewSource::Local(file, size));
+                return Ok(view(ViewSource::Local(file, size)));
             }
             let (local, _) = local_file(&dir, &id, path)?;
             let file = std::fs::File::open(local).map_err(|_| err(ErrorCode::NotFound, "host 사본이 없다"))?;
             let size = file.metadata().map_err(|_| err(ErrorCode::NotFound, "host 사본이 없다"))?.len();
-            return Ok(ViewSource::Local(file, size));
+            return Ok(view(ViewSource::Local(file, size)));
         }
         if signed {
-            return Ok(ViewSource::Page("<!doctype html><meta charset=utf-8><title>앱에서 열기</title><p>이 결과물은 agent에 남아 있다. pairing한 앱의 보고서 화면에서 연다.</p>".as_bytes().to_vec()));
+            return Ok(view(ViewSource::Page("<!doctype html><meta charset=utf-8><title>앱에서 열기</title><p>이 결과물은 agent에 남아 있다. pairing한 앱의 보고서 화면에서 연다.</p>".as_bytes().to_vec())));
         }
         let rec = self.load(&project, &id)?;
         let work_dir = rec.work_dir.clone().ok_or_else(|| err(ErrorCode::NotFound, "thread 작업 폴더 기록이 없다"))?;
         let conn = self.live_conn(&rec.machine_id)?;
-        Ok(ViewSource::Agent { conn, work_dir, path: path.to_string(), size: entry.size })
+        Ok(view(ViewSource::Agent { conn, work_dir, path: path.to_string(), size: entry.size }))
     }
 }
 

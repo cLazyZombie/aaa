@@ -162,8 +162,16 @@ impl Host {
         if r.revoked || now >= r.expires {
             return Err(fail());
         }
-        self.db.library_link_opened(id, now).map_err(super::orch::internal)?;
         Ok((r.project, r.thread))
+    }
+
+    /// 열람 기록 실패가 보고서 열기를 막지 않는다. API 열기와 실제 문서 응답이 같은 기록을 쓴다.
+    pub(crate) fn library_opened(&self, project: &str, name: &str) {
+        match self.db.library_opened_at(project, name, aaa_common::util::now_ms()) {
+            Ok(true) => self.reports_bump(),
+            Ok(false) => {}
+            Err(e) => tracing::warn!("보고서 열람 기록 실패: {e}"),
+        }
     }
 
     pub(crate) fn library_rotate(&self, actor: &str) -> Result<aaa_proto::FrontResponse, ErrorBody> {
@@ -329,6 +337,76 @@ mod tests {
                 lab.h.library_publish("demo", name, file.to_str().unwrap(), false, None, "test").is_err(),
                 "{name}"
             );
+        }
+    }
+
+    // HTTP 경계가 주인이다. 서명 확인·파일 탐색만으로는 열람이 아니며, 첫 문서 응답이 배지와 마지막 열람을 함께 바꾼다.
+    #[tokio::test]
+    async fn report_navigation_records_seen_and_opened_but_not_previews() {
+        let lab = Lab::new();
+        let source = lab.state.join("input");
+        std::fs::create_dir(&source).unwrap();
+        std::fs::write(source.join("index.html"), b"<h1>report</h1>").unwrap();
+        std::fs::write(source.join("image.png"), b"image").unwrap();
+        let cases = [
+            ("head", "HEAD", "", "navigate", "document", None, false, StatusCode::OK),
+            ("fetch", "GET", "", "cors", "empty", None, false, StatusCode::OK),
+            ("unfurl", "GET", "", "", "", Some(("User-Agent", "TelegramBot")), false, StatusCode::OK),
+            ("thumbnail", "GET", "image.png", "no-cors", "image", None, false, StatusCode::OK),
+            (
+                "prefetch",
+                "GET",
+                "",
+                "navigate",
+                "document",
+                Some(("Sec-Purpose", "prefetch;prerender")),
+                false,
+                StatusCode::OK,
+            ),
+            ("preview", "GET", "", "navigate", "document", Some(("Purpose", "preview")), false, StatusCode::OK),
+            ("download", "GET", "?download=1", "navigate", "document", None, false, StatusCode::OK),
+            ("missing", "GET", "missing.html", "navigate", "document", None, false, StatusCode::NOT_FOUND),
+            (
+                "range",
+                "GET",
+                "",
+                "navigate",
+                "document",
+                Some(("Range", "bytes=9999-")),
+                false,
+                StatusCode::RANGE_NOT_SATISFIABLE,
+            ),
+            ("direct", "GET", "", "navigate", "document", None, true, StatusCode::OK),
+            ("iframe", "GET", "index.html", "navigate", "iframe", None, true, StatusCode::OK),
+            ("app", "GET", "index.html", "navigate", "iframe", None, true, StatusCode::OK),
+        ];
+        for (name, method, path, mode, dest, extra, opened, status) in cases {
+            let FrontResponse::LibraryLink(link) =
+                lab.h.library_publish("demo", name, source.to_str().unwrap(), false, Some(None), "test").unwrap()
+            else {
+                panic!("링크 응답")
+            };
+            let base =
+                if name == "app" { lab.h.report_library("demo", name, None, false).unwrap().base } else { link.base };
+            let mut changed = lab.h.reports_changed.subscribe();
+            changed.borrow_and_update();
+            let mut req =
+                Request::builder().method(method).uri(format!("{base}{path}")).header("Host", "127.0.0.1:7000");
+            if !mode.is_empty() {
+                req = req.header("Sec-Fetch-Mode", mode).header("Sec-Fetch-Dest", dest);
+            }
+            if let Some((key, value)) = extra {
+                req = req.header(key, value);
+            }
+            let res = crate::web::router(lab.h.clone()).oneshot(req.body(Body::empty()).unwrap()).await.unwrap();
+            assert_eq!(res.status(), status, "{name}");
+            let _body = to_bytes(res.into_body(), 1024).await.unwrap();
+            let report = lab.h.db.library_report("demo", name).unwrap().unwrap();
+            let link = lab.h.latest_library_link("demo", name).unwrap();
+            assert_eq!(report.unseen(), !opened, "안 봄: {name}");
+            assert_eq!(link.last_opened_at_ms.is_some(), opened, "마지막 열람: {name}");
+            assert_eq!(report.seen_at, link.last_opened_at_ms, "같은 열람: {name}");
+            assert_eq!(changed.has_changed().unwrap(), opened, "배지 사건: {name}");
         }
     }
 
