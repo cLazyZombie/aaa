@@ -1,6 +1,6 @@
 // 왼쪽 활동 막대(사용자 요청 10-19 「vs code 처럼 … 같은 버튼 한번 더 누르면 숨겨지고」, plan §8.240): 패널 바꾸기·다시 눌러 접기·
-// 기기별 기억·키보드·Mod+Shift+B·단축키·팔레트·알림이 연 줄의 패널·보고서 본문 화면·설정 톱니·휴대폰 drawer.
-import { root, aaa, step, browser, pairPage, claudeSh, claudeAsk, claudeIdle, waitOutput, domIs, hashIs, focusIs, inList, until, drawerSettled, shot } from "../lib/harness.mjs";
+// 기기별 기억·키보드·Mod+Shift+B·단축키·팔레트·알림이 연 줄의 패널·보고서 본문 화면·설정 톱니·휴대폰 drawer·막대와 바닥 줄 배치(§8.246).
+import { root, aaa, step, browser, pairPage, claudeSh, claudeAsk, claudeIdle, waitOutput, domIs, hashIs, focusIs, inList, until, drawerSettled, shot, openSettings } from "../lib/harness.mjs";
 import fs from "node:fs";
 
 /** 패널·접힘·고른 단추를 한 번에 읽는다 */
@@ -254,5 +254,66 @@ export default async function () {
     } finally {
       await p.context().close();
     }
+  });
+
+  await step("막대·바닥 줄 배치(사용자 요청 10-19 「앱 설치는 설정 안으로, 보고서는 왼쪽 위로(에이전트 밑으로), 사용량은 오른쪽으로」): 보고서는 위 묶음의 에이전트 바로 밑(패널 tablist 밖), 아래 묶음은 설정만, 바닥 줄에 설치 단추 없이 사용량 칩이 오른쪽 끝, 데스크톱·좁은 창·휴대폰 세로·가로와 기본·GitHub Dark", async () => {
+    const VIEWS = [
+      ["desktop", { width: 1280, height: 800 }, false],
+      ["narrow", { width: 700, height: 800 }, false],
+      ["phone", { width: 390, height: 844 }, true],
+      ["phone-landscape", { width: 844, height: 390 }, true],
+    ];
+    const layout = (p) =>
+      p.evaluate(() => {
+        const box = (s) => document.querySelector(s).getBoundingClientRect();
+        const agents = box('[data-testid="activity-agents"]');
+        const reports = box('[data-testid="activity-reports"]');
+        const foot = document.querySelector(".list-foot");
+        const footBox = foot.getBoundingClientRect();
+        const strip = box('[data-testid="usage-strip"]');
+        return {
+          reportsGap: Math.round(reports.top - agents.bottom),
+          reportsLeft: Math.round(reports.left - agents.left),
+          inTablist: document.querySelector('[role="tablist"] [data-testid="activity-reports"]') !== null,
+          bottom: [...document.querySelectorAll(".activity-bottom [data-testid]")].map((e) => e.dataset.testid).join(","),
+          footButtons: [...foot.querySelectorAll("button")].map((e) => e.dataset.testid ?? e.textContent.trim()).join(","),
+          stripRight: Math.round(footBox.right - parseFloat(getComputedStyle(foot).paddingRight) - strip.right),
+          stripLeft: Math.round(strip.left - footBox.left - parseFloat(getComputedStyle(foot).paddingLeft)),
+        };
+      });
+    const bad = [];
+    for (const theme of ["default", "github-dark"]) {
+      for (const [name, viewport, touch] of VIEWS) {
+        const p = (await pairPage(browser, aaa("web", "pair").code, viewport, { touch })).page;
+        try {
+          await p.getByTestId("usage-strip").waitFor({ state: "attached" });
+          if (theme === "github-dark" && name === VIEWS[0][0]) {
+            // 팔레트는 host 공유 설정이다(plan §8.79): 한 번 고르면 다음 화면들도 그 팔레트로 연다
+            const d = await openSettings(p, "모양");
+            const sent = p.waitForResponse((r) => r.url().endsWith("/api/v1/call") && r.request().postDataJSON()?.op === "preferences_set");
+            await d.locator("#settings-palette").selectOption("github-dark");
+            if (!(await sent).ok()) throw new Error("GitHub Dark 저장 실패");
+            await p.keyboard.press("Escape");
+            await d.waitFor({ state: "detached" });
+          }
+          await domIs(p, `${name} 팔레트`, (want) => document.documentElement.dataset.palette === want, theme === "default" ? "amber" : theme);
+          // 좁은 창·휴대폰 세로는 drawer를 연다(inList는 항목을 눌러 사용량 창을 펼치므로 쓰지 않는다)
+          const toggle = p.locator(".view [data-testid='drawer-toggle']");
+          if (await toggle.isVisible()) {
+            await toggle.click();
+            await p.locator("#workspace-drawer.is-open").waitFor();
+          }
+          await drawerSettled(p);
+          await shot(p, `layout-${name}-${theme}`);
+          const at = await layout(p);
+          const want = { reportsGap: 0, reportsLeft: 0, inTablist: false, bottom: "settings-open", footButtons: "usage-strip", stripRight: 0 };
+          const off = Object.entries(want).filter(([k, v]) => at[k] !== v);
+          if (off.length || at.stripLeft < 16) bad.push(`${name} ${theme}: ${JSON.stringify(at)}`);
+        } finally {
+          await p.context().close();
+        }
+      }
+    }
+    if (bad.length) throw new Error(bad.join("; "));
   });
 }
