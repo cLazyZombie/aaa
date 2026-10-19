@@ -78,42 +78,160 @@ pub(crate) fn execute(exe: &std::path::Path, action: DeployAction) -> Result<Str
 
 /// 사건을 기다린다. 재시작으로 연결이 끊기면 같은 ID의 결과 확인을 다시 요청하며, 작업 자체는 재실행하지 않는다.
 pub(crate) fn status(json: bool, machine: Option<String>, id: String, wait: bool) -> Result<ExitCode> {
-    use aaa_proto::{DeployState, FrontEvent, FrontMsg};
     let rt = tokio::runtime::Runtime::new()?;
     rt.block_on(async {
-        let mut c = aaa_common::front::FrontClient::connect(&aaa_config::paths::state_dir()).await?;
-        if c.proto.minor < 42 {
-            bail!("이 host는 배포 상태 API가 없다");
-        }
-        loop {
-            let response = c.call(FrontRequest::DeployStatus { machine: machine.clone(), id: id.clone() }).await?;
-            let (target, job) = match &response {
-                Ok(FrontResponse::Deployment { machine, job, .. }) => (machine.clone(), job),
-                _ => return crate::cli::front_print(json, response),
-            };
-            if !wait || !matches!(job.state, DeployState::Queued | DeployState::Running) {
-                let failed = matches!(job.state, DeployState::Failed | DeployState::Interrupted);
-                crate::cli::front_print(json, response)?;
-                return Ok(if failed { ExitCode::from(1) } else { ExitCode::SUCCESS });
-            }
-            loop {
-                match c.next().await? {
-                    Some(FrontMsg::Event(FrontEvent::Flow(ev)))
-                        if ev.kind == "deployment_finished" && ev.detail == id =>
-                    {
-                        break;
-                    }
-                    Some(FrontMsg::Event(FrontEvent::State { machines, .. }))
-                        if machines
-                            .iter()
-                            .any(|m| m.name == target && m.connection == aaa_proto::Connection::Connected) =>
-                    {
-                        break;
-                    }
-                    None => bail!("배포 상태 연결이 끊겼다. 작업을 다시 보내지 말고 같은 ID {id}의 상태를 확인한다"),
-                    _ => {}
-                }
-            }
-        }
+        let c = aaa_common::front::FrontClient::connect(&aaa_config::paths::state_dir()).await?;
+        status_on(c, json, machine, id, wait).await
     })
+}
+
+async fn status_on(
+    mut c: aaa_common::front::FrontClient,
+    json: bool,
+    machine: Option<String>,
+    id: String,
+    wait: bool,
+) -> Result<ExitCode> {
+    use aaa_proto::{DeployState, FrontEvent, FrontMsg};
+    if c.proto.minor < 42 {
+        bail!("이 host는 배포 상태 API가 없다");
+    }
+    loop {
+        let response = c.call(FrontRequest::DeployStatus { machine: machine.clone(), id: id.clone() }).await?;
+        let target = match &response {
+            Ok(FrontResponse::Deployment { machine, job, .. }) => {
+                if !wait || !matches!(job.state, DeployState::Queued | DeployState::Running) {
+                    let failed = matches!(job.state, DeployState::Failed | DeployState::Interrupted);
+                    crate::cli::front_print(json, response)?;
+                    return Ok(if failed { ExitCode::from(1) } else { ExitCode::SUCCESS });
+                }
+                Some(machine.clone())
+            }
+            // 권한 오류는 숨기지 않는다. 일시적인 agent 단절만 같은 ID의 재연결 사건을 기다린다.
+            Err(e) if wait && e.code == aaa_proto::ErrorCode::AgentDisconnected => machine.clone(),
+            _ => return crate::cli::front_print(json, response),
+        };
+        loop {
+            match c.next().await? {
+                Some(FrontMsg::Event(FrontEvent::Flow(ev))) if ev.kind == "deployment_finished" && ev.detail == id => {
+                    break;
+                }
+                Some(FrontMsg::Event(FrontEvent::State { machines, .. }))
+                    if machines.iter().any(|m| {
+                        m.connection == aaa_proto::Connection::Connected
+                            && target.as_ref().is_none_or(|t| m.name == *t || m.id == *t)
+                    }) =>
+                {
+                    break;
+                }
+                None => bail!("배포 상태 연결이 끊겼다. 작업을 다시 보내지 말고 같은 ID {id}의 상태를 확인한다"),
+                _ => {}
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use aaa_common::{
+        conn::{FrameRx, spawn_writer},
+        front::{FrontClient, socket},
+        ipc::LocalListener,
+    };
+    use aaa_proto::*;
+
+    #[tokio::test]
+    async fn status_waits_for_reconnection_but_preserves_nonwait_and_forbidden_errors() {
+        for (code, wait, machine) in [
+            (ErrorCode::AgentDisconnected, true, Some("m")),
+            (ErrorCode::AgentDisconnected, true, None),
+            (ErrorCode::AgentDisconnected, false, Some("mac-a")),
+            (ErrorCode::Forbidden, true, Some("mac-a")),
+        ] {
+            let root = std::env::temp_dir().join(format!("dw-{}", aaa_common::util::new_id()));
+            let listener = LocalListener::bind(&socket(&root)).unwrap();
+            let target = machine.map(str::to_string);
+            let expected = FrontRequest::DeployStatus { machine: target.clone(), id: "job".into() };
+            let completes = code == ErrorCode::AgentDisconnected && wait;
+            let server = tokio::spawn(async move {
+                let stream = listener.accept().await.unwrap();
+                let (r, w) = tokio::io::split(stream);
+                let tx = spawn_writer(w, MAX_FRAME);
+                let mut rx = FrameRx::new(r, MAX_FRAME);
+                assert!(matches!(rx.control::<FrontMsg>().await.unwrap(), FrontMsg::Hello { .. }));
+                tx.json(&FrontMsg::Welcome {
+                    proto: FRONT_API,
+                    host_id: "host".into(),
+                    role: DeviceRole::Local,
+                    front: "f".into(),
+                })
+                .await
+                .unwrap();
+                let FrontMsg::Req { id, body } = rx.control::<FrontMsg>().await.unwrap() else {
+                    panic!("상태 요청")
+                };
+                assert_eq!(serde_json::to_value(body).unwrap(), serde_json::to_value(&expected).unwrap());
+                tx.json(&FrontMsg::Res {
+                    id,
+                    result: Outcome::Err(ErrorBody::new(code, "test disconnect or forbidden")),
+                })
+                .await
+                .unwrap();
+                if completes {
+                    // 응답을 받는 동안 도착한 연결 사건도 FrontClient가 보존해야 한다.
+                    let m = MachineView {
+                        id: "m".into(),
+                        name: "mac-a".into(),
+                        local: true,
+                        connection: Connection::Connected,
+                        os: None,
+                        boot_id: None,
+                        dev_mode: true,
+                        last_seen_ms: None,
+                        health: None,
+                        clock_skew_ms: None,
+                        problems: vec![],
+                    };
+                    tx.json(&FrontMsg::Event(FrontEvent::State { machines: vec![m], panes: vec![] })).await.unwrap();
+                    let FrontMsg::Req { id, body } = rx.control::<FrontMsg>().await.unwrap() else {
+                        panic!("같은 상태 재조회")
+                    };
+                    assert_eq!(
+                        serde_json::to_value(body).unwrap(),
+                        serde_json::to_value(&expected).unwrap(),
+                        "작업 시작을 다시 보내면 안 된다"
+                    );
+                    let job = DeployJob {
+                        id: "job".into(),
+                        project: "demo".into(),
+                        action: DeployAction::Restart { service: DeployService::Agent },
+                        state: DeployState::Completed,
+                        instance: "new-agent".into(),
+                        executor_pid: 1,
+                        expected_sha256: "sha".into(),
+                        result: None,
+                        created_ms: 0,
+                        updated_ms: 1,
+                    };
+                    tx.json(&FrontMsg::Res {
+                        id,
+                        result: Outcome::Ok(FrontResponse::Deployment {
+                            machine: "mac-a".into(),
+                            job,
+                            running_software: "test".into(),
+                            running_sha256: "sha".into(),
+                        }),
+                    })
+                    .await
+                    .unwrap();
+                }
+            });
+            let c = FrontClient::connect_as(&root, "test").await.unwrap();
+            let result = status_on(c, true, target, "job".into(), wait).await.unwrap();
+            assert_eq!(result, if completes { ExitCode::SUCCESS } else { ExitCode::from(1) }, "{code:?}, wait={wait}");
+            server.await.unwrap();
+            std::fs::remove_dir_all(root).unwrap();
+        }
+    }
 }

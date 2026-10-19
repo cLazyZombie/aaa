@@ -8,10 +8,10 @@ impl Host {
         if self.thread_of_pane(pane).is_some() {
             return None;
         }
-        self.projects_all().into_iter().find_map(|p| {
-            let dir = self.project_dir(&p.name).ok()?;
-            self.running_coordinators(&dir).into_iter().any(|c| c.id == pane).then_some(p.name)
-        })
+        // 전송 연결과 소속은 별개다. peer PID로 확인한 pane의 host 정본 metadata를 쓴다.
+        // coordinator_panes/running_coordinators는 입력 가능한 연결만 골라 재시작 창에 쓰면 안 된다.
+        let pane = self.pane_view_of(pane, aaa_proto::DeviceRole::Local)?;
+        pane.state.is_running().then_some(pane.coordinator_project).flatten()
     }
     pub(crate) fn deployment_context(&self, actor: &str) -> FrontResponse {
         let project = self.deployment_project(actor);
@@ -136,5 +136,85 @@ impl Host {
         }) {
             self.flow_project(&job.project, "deployment_finished", None, job.id);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use aaa_proto::{DeviceRole, FrontRequest, Role, SessionInfo, SessionState};
+
+    #[tokio::test]
+    async fn coordinator_identity_survives_local_agent_disconnect() {
+        let root = std::env::temp_dir().join(format!("aaa-deploy-caller-{}", aaa_common::util::new_id()));
+        let mut cfg = aaa_config::HostConfig::default();
+        cfg.projects.root = root.join("projects").to_string_lossy().into();
+        cfg.notify.web_push = false;
+        let h = Host::open(cfg, root.join("host")).unwrap();
+        h.project_create("demo", Default::default(), "test").unwrap();
+        let pane = SessionInfo {
+            id: "coordinator".into(),
+            name: "coordinator".into(),
+            argv: vec!["codex".into()],
+            cwd: Some(h.project_dir("demo").unwrap().to_string_lossy().into()),
+            pid: Some(std::process::id()),
+            started_at_ms: 0,
+            boot_id: "boot".into(),
+            cols: 80,
+            rows: 24,
+            state: SessionState::Running,
+            role: Some(Role::Coordinator),
+            label: None,
+            harness: Some("codex".into()),
+        };
+        h.agent_connected(
+            &aaa_proto::AgentHello {
+                proto: aaa_proto::AGENT_LINK,
+                machine_id: "m".into(),
+                machine_name: "mac-a".into(),
+                boot_id: "boot".into(),
+                os: "test".into(),
+                arch: "test".into(),
+                software: "test".into(),
+                features: vec!["deployment.v1".into()],
+                dev_mode: true,
+                selfcheck: None,
+                sessions: vec![],
+                harness: vec![],
+            },
+            true,
+            crate::AgentConn::new(aaa_common::conn::spawn_writer(tokio::io::sink(), aaa_proto::MAX_FRAME), 1),
+        );
+        h.on_session("m", pane.clone(), false);
+        h.db.set_meta("deploy:job", r#"{"project":"demo","machine":"m"}"#).unwrap();
+        let actor = "local:test@coordinator";
+        let context = || h.call(DeviceRole::Local, actor, FrontRequest::DeployContext);
+        assert!(
+            matches!(context().await.unwrap(), FrontResponse::DeployContext { project: Some(p), .. } if p == "demo")
+        );
+        h.agent_disconnected("m", 1);
+        assert_eq!(h.caller_of(Some(std::process::id())), crate::caller::Caller::Pane("coordinator".into()));
+        assert!(
+            matches!(context().await.unwrap(), FrontResponse::DeployContext { project: Some(p), .. } if p == "demo"),
+            "연결 단절은 coordinator 소속을 없애지 않는다"
+        );
+        let status = || FrontRequest::DeployStatus { machine: Some("mac-a".into()), id: "job".into() };
+        assert_eq!(h.call(DeviceRole::Local, actor, status()).await.unwrap_err().code, ErrorCode::AgentDisconnected);
+        for actor in ["local:test@unverified", "worker:coordinator", "device:coordinator"] {
+            assert_eq!(h.call(DeviceRole::Local, actor, status()).await.unwrap_err().code, ErrorCode::Forbidden);
+        }
+        // 같은 cwd의 일반 셸과 끝난 pane에는 캐시된 프로젝트 권한도 주지 않는다.
+        let mut shell = pane.clone();
+        shell.role = None;
+        shell.harness = None;
+        shell.argv = vec!["sh".into()];
+        h.on_session("m", shell, false);
+        assert_eq!(h.call(DeviceRole::Local, actor, status()).await.unwrap_err().code, ErrorCode::Forbidden);
+        let mut exited = pane;
+        exited.state = SessionState::Lost;
+        h.on_session("m", exited, false);
+        assert_eq!(h.call(DeviceRole::Local, actor, status()).await.unwrap_err().code, ErrorCode::Forbidden);
+        drop(h);
+        std::fs::remove_dir_all(root).unwrap();
     }
 }
