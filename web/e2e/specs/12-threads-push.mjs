@@ -1189,15 +1189,29 @@ export default async function ({ page }) {
     const look = await page.evaluate(() => {
       const coord = document.querySelector('[data-panel="work"] [data-testid="pane-demo coordinator"]').closest("li").querySelector(".workspace-header");
       const thread = document.querySelector('[data-panel="work"] [data-testid="project-thread-head-demo"]').nextElementSibling.querySelector(".workspace-header");
-      const bar = getComputedStyle(coord, "::before");
+      const bar = getComputedStyle(coord.querySelector(".workspace-select"), "::before");
       return { coordinator: coord.closest("li").classList.contains("is-coordinator"), bar: bar.backgroundColor, width: bar.width, indent: getComputedStyle(coord).paddingLeft, threadIndent: getComputedStyle(thread).paddingLeft };
     });
     // 머리가 없으니 coordinator와 thread 줄은 같은 단계(같은 들여쓰기)다
     if (!look.coordinator || look.bar !== "rgb(185, 156, 242)" || look.width !== "2px" || look.indent !== look.threadIndent) throw new Error(`coordinator 구별·들여쓰기: ${JSON.stringify(look)}`);
+    // 보라 막대는 줄 안이고 표지(Claude 별·셸 기호)를 덮지 않는다(사용자 10-19 「보라 세로선이 claude 아이콘을 가려. 핸드폰」, plan §8.286):
+    // 머리가 없어 들여쓰기 0인 줄에서 머리 기준 막대가 표지 칸 왼쪽 8px 안으로 들어갔다
+    const barClear = async (what) => {
+      const m = await page.evaluate(() => {
+        const select = document.querySelector('[data-panel="work"] [data-testid="pane-demo coordinator"]');
+        const bar = getComputedStyle(select, "::before");
+        const left = select.getBoundingClientRect().left + parseFloat(bar.left);
+        const icon = select.querySelector(".sidebar-mark svg").getBoundingClientRect();
+        return { inRow: left - select.closest(".workspace-header").getBoundingClientRect().left, gap: icon.left - (left + parseFloat(bar.width)) };
+      });
+      if (m.inRow < 0 || m.gap < 3) throw new Error(`${what} coordinator 막대와 표지: ${JSON.stringify(m)}`);
+    };
+    await barClear("데스크톱");
     await shot(page, "desktop-coordinator-project");
     await page.setViewportSize({ width: 390, height: 844 });
     await page.locator(".view [data-testid='drawer-toggle']").click();
     await drawerSettled(page);
+    await barClear("휴대폰");
     await shot(page, "phone-coordinator-project");
     if ((await page.locator('[data-testid="pane-demo coordinator"]').count()) !== 1) throw new Error("coordinator 줄이 둘 이상이다");
     await page.locator(".view [data-testid='drawer-toggle']").click();

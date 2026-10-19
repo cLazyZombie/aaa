@@ -4,12 +4,12 @@
 // 고른다. 패널이 아닌 보고서(본문을 바꾼다)는 패널 단추 바로 밑의 보통 단추다(tablist 밖, 사용자 요청 10-19 「보고서는 왼쪽 위로(지금
 // 에이전트 밑으로)」). 설정(창)만 아래 묶음에 둔다(VS Code 아래 묶음 Accounts·Manage 자리).
 import { useRef, type KeyboardEvent, type ReactNode } from "react";
-import { Workflow, Eye, FileText, ListTree, Monitor, Radar, type LucideIcon } from "lucide-react";
+import { Workflow, Eye, FileText, FolderKanban, Monitor, Radar, type LucideIcon } from "lucide-react";
 import { PANEL_LABEL, PANELS, type SidebarPanel } from "./sidebarPanel";
 import "./ActivityBar.css";
 
-// 작업은 ListTree: coordinator·작업 공간 폴더·thread 트리(plan §8.280). 특수는 Radar: 늘 지켜보다 깨어나는 임무와 평가자(plan §8.258)
-const PANEL_ICON: Record<SidebarPanel, LucideIcon> = { work: ListTree, machines: Monitor, special: Radar, automations: Workflow };
+// 작업은 FolderKanban: 작업 공간 폴더 안에서 도는 thread(시안 6개 중 사용자 결정 10-19, plan §8.280·§8.287). 특수는 Radar: 늘 지켜보다 깨어나는 임무와 평가자(plan §8.258)
+const PANEL_ICON: Record<SidebarPanel, LucideIcon> = { work: FolderKanban, machines: Monitor, special: Radar, automations: Workflow };
 
 export function ActivityBar({
   panel,

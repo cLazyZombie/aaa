@@ -71,10 +71,13 @@
 [data-palette="github-dark"] .sidebar-shell,
 [data-palette="github-dark-dimmed"] .sidebar-shell { --coordinator: #bc8cff; }
 [data-palette="github-light"] .sidebar-shell { --coordinator: #8250df; }
-.workspace.is-coordinator > .workspace-header::before {
+/* 막대는 줄 머리가 아니라 내용(select) 시작에 붙여 표지와 4px을 띄운다: 프로젝트가 하나면 머리 없이 들여쓰기 0이라 머리 기준 9px
+   막대가 Claude 표지(칸 34px 가운데 18px, 8px부터)를 덮었다(사용자 10-19 「보라 세로선이 claude 아이콘을 가려」, plan §8.286) */
+.workspace.is-coordinator > .workspace-header > .workspace-select { position: relative; }
+.workspace.is-coordinator > .workspace-header > .workspace-select::before {
   content: "";
   position: absolute;
-  left: calc(var(--space-2) + 1px);
+  left: max(0px, calc((var(--side-box) - var(--icon-size)) / 2 - 6px));
   top: 7px;
   bottom: 7px;
   width: 2px;
