@@ -1916,12 +1916,12 @@ fn mouse_like_herdr() {
 fn osc52_copy_reports_a_request() {
     let mut lab = Lab::new();
     let (h, mut hw) = start(&mut lab);
-    let ws = h.ok(&["tab", "create", "--machine", "labA", "--", "/bin/sh"]);
+    let ws = h.ok(&["tab", "create", "--machine", "labA", "--label", "copy", "--", "/bin/sh"]);
     let pane = leaves(&ws)[0].clone();
     // SSH 경로는 시스템 clipboard에 닿지 않는다.
     let mut tui = Tui::start_env(&h, &[("SSH_TTY", "/dev/test-terminal")]);
-    // 첫 입력은 attach의 셸 화면과 입력권 사건 뒤에 보낸다(다른 TUI 입력 시험과 같은 경계).
-    tui.wait_text("셸 첫 화면", |s| tab_chips(s) == ["1"] && s.contains('$'));
+    // 다른 TUI 입력 시험처럼 첫 셸 화면과 host 입력권 사건 뒤에 입력한다.
+    tui.wait_text("첫 화면", |s| tab_chips(s) == ["copy"] && s.contains(" · copy labA") && s.contains('$'));
     hw.wait("이 화면 입력권", |w| w.held_by(&pane, "tui@").then_some(()));
     tui.type_line("echo copy-$((42))");
     let at = tui.wait_find("copy-42");
