@@ -97,6 +97,18 @@ fn label() -> String {
     format!("tui@{}", aaa_common::util::hostname())
 }
 
+/// 판·실행 파일의 실제 hash를 한 번 host 진단에만 알린다. 화면 이름에는 섞지 않는다.
+fn identity() -> FrontRequest {
+    use sha2::{Digest, Sha256};
+    let hash = std::env::current_exe().ok().and_then(|p| {
+        let mut file = std::fs::File::open(p).ok()?;
+        let mut hash = Sha256::new();
+        std::io::copy(&mut file, &mut hash).ok()?;
+        Some(format!("{:x}", hash.finalize()))
+    });
+    FrontRequest::FrontIdentity { version: aaa_common::util::software(), sha256: hash }
+}
+
 pub fn run(workspace: Option<String>) -> Result<ExitCode> {
     let rt = runtime()?;
     let state = aaa_config::paths::state_dir();
@@ -427,6 +439,11 @@ struct App {
     drag: Option<mouse::Drag>,
     /// 고른 글(pane 화면 칸)
     selection: Option<mouse::Selection>,
+    /// 마우스 보고 앱에 전달한 끌기 범위. Ctrl+C가 앱 중단으로 새지 않게 pane 본문으로 복사한다.
+    reported_selection: Option<mouse::Selection>,
+    /// 앱이 복사한 정확한 글. 다음 키·누름까지 Ctrl+C를 보호한다(두 번 누름 선택도 포함).
+    app_copy: Option<(String, String)>,
+    copy_outcomes: Vec<(String, aaa_proto::ClipboardOutcome)>,
     /// 선택 복사로 소비한 키의 Repeat·Release도 pane으로 보내지 않는다(Windows key event).
     selection_copy_held: bool,
     /// 끌어 고르다 가장자리에 닿아 기록을 넘기는 중
@@ -521,6 +538,9 @@ impl App {
             emitted: vec![],
             drag: None,
             selection: None,
+            reported_selection: None,
+            app_copy: None,
+            copy_outcomes: Vec::new(),
             selection_copy_held: false,
             autoscroll: None,
             copy: None,
@@ -651,6 +671,9 @@ impl App {
             let id = tx.send(FrontRequest::Preferences).await?;
             self.pending.insert(id, Pending::Chrome);
         }
+        if self.host_at_least(43) {
+            tx.send(identity()).await?;
+        }
         let mut keys_in = EventStream::new();
         let mut dirty = true;
         // 목록 thread 둘째 줄 「n분 조용」이 화면에서 늘어나게 1분마다 다시 그린다(웹 `useMinute`)
@@ -658,6 +681,13 @@ impl App {
         minute.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
         loop {
             if dirty {
+                if self.host_at_least(43) && !self.reader {
+                    for (pane, outcome) in std::mem::take(&mut self.copy_outcomes) {
+                        tx.send(FrontRequest::PaneCopyReport { pane, outcome }).await?;
+                    }
+                } else {
+                    self.copy_outcomes.clear();
+                }
                 self.save_chrome(&mut tx).await?;
                 self.sync_capture();
                 let size = terminal.size()?;
@@ -852,6 +882,12 @@ impl App {
                 if q.state == aaa_proto::QuestionState::Open && self.asked.insert(q.id.clone()) {
                     let card = self.question_card(&q);
                     self.cards.receive(card, tokio::time::Instant::now());
+                }
+            }
+            FrontMsg::Event(FrontEvent::Clipboard { pane, text }) => {
+                if self.focus.as_deref() == Some(pane.as_str()) && self.focused {
+                    self.copied(&text, false);
+                    self.app_copy = Some((pane, text));
                 }
             }
             FrontMsg::Event(FrontEvent::Grid(f)) => {

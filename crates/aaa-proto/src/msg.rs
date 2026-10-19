@@ -1605,6 +1605,16 @@ pub enum FrontRequest {
     PaneCtrlEnter {
         pane: String,
     },
+    /// front가 알리는 실행 파일 진단. 신원·권한 근거가 아니며 입력권을 옮기지 않는다(FRONT_API 1.43).
+    FrontIdentity {
+        version: String,
+        sha256: Option<String>,
+    },
+    /// 로컬 복사 결과 진단. 알린 결과일 뿐이며 입력권을 옮기지 않는다(FRONT_API 1.43).
+    PaneCopyReport {
+        pane: String,
+        outcome: ClipboardOutcome,
+    },
     /// 대화형 붙여넣기(TUI가 바깥 터미널의 bracketed paste로 받은 글, herdr client가 서버로 넘기는 붙여넣기).
     /// host가 그 프로그램이 켠 bracketed paste대로 감싸고 ESC·C1 CSI를 뺀다(`KeyModes::paste`). lease는 `PaneInput`과 같다.
     PanePaste {
@@ -2177,6 +2187,7 @@ impl FrontRequest {
                 | FrontRequest::Workspaces
                 | FrontRequest::PaneGet { .. }
                 | FrontRequest::PaneChat { .. }
+                | FrontRequest::FrontIdentity { .. }
                 | FrontRequest::PaneWatch { .. }
                 | FrontRequest::PaneUnwatch { .. }
                 | FrontRequest::PaneScroll { .. }
@@ -2433,6 +2444,15 @@ pub struct SharedPreferences {
     pub pins: Option<Vec<String>>,
 }
 
+/// front가 알리는 복사 결과. 본문·clipboard 내용·OS 오류 문자열은 host로 보내지 않는다.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+pub enum ClipboardOutcome {
+    Copied,
+    Requested,
+    Failed,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(tag = "ev", rename_all = "snake_case")]
 pub enum FrontEvent {
@@ -2442,6 +2462,8 @@ pub enum FrontEvent {
     Workspace(Workspace),
     /// PaneWatch로 구독한 화면
     Grid(GridFrame),
+    /// live pane 앱의 OSC 52. 입력권을 가진 조작 front 한 곳에만 보내며 replay하지 않는다(FRONT_API 1.43).
+    Clipboard { pane: String, text: String },
     /// 흐름 사건(새로 기록될 때). 놓쳤으면 `Events`로 cursor부터 다시 읽는다.
     Flow(FlowEvent),
     /// thread 기록이 바뀌었다

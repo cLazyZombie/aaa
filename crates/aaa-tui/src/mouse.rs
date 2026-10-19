@@ -588,6 +588,10 @@ impl App {
         if !self.replaying_link && self.link_gesture(m) {
             return Ok(());
         }
+        if matches!(m.kind, MouseEventKind::Down(_)) {
+            self.reported_selection = None;
+            self.app_copy = None;
+        }
         let (x, y, mods) = (m.column, m.row, m.modifiers);
         let hits = self.hits.borrow().clone();
         if m.kind == MouseEventKind::Down(MouseButton::Left) && self.link_press(m, &hits, tx).await? {
@@ -806,6 +810,7 @@ impl App {
             return self.open_card(tx).await;
         }
         self.selection = None;
+        self.reported_selection = None;
         if self.mode == Mode::Prefix {
             self.mode = Mode::Terminal;
         }
@@ -899,6 +904,9 @@ impl App {
         let Some(b) = hits.pane_at(x, y).cloned() else { return Ok(()) };
         self.focus = Some(b.pane.clone());
         if !mods.contains(KeyModifiers::SHIFT) && self.reporting(hits, x, y).is_some() {
+            let top = self.grids.get(&b.pane).map_or(0, |g| view_top(g.scroll));
+            let at = (top + u32::from(y - b.inner.y), x - b.inner.x);
+            self.reported_selection = Some(Selection { pane: b.pane.clone(), anchor: at, head: at, until: None });
             self.report_to(tx, &b, Report::Press(MouseButton::Left), x, y, mods).await?;
             self.drag = Some(Drag::Pane { pane: b.pane, button: MouseButton::Left });
             return Ok(());
@@ -1092,6 +1100,16 @@ impl App {
         match self.drag.clone() {
             Some(Drag::Pane { pane, button: held }) if held == button => {
                 if let Some(b) = hits.panes.iter().find(|b| b.pane == pane).cloned() {
+                    if held == MouseButton::Left
+                        && let Some(sel) = self.reported_selection.as_mut()
+                        && b.inner.w > 0
+                        && b.inner.h > 0
+                    {
+                        let row = y.clamp(b.inner.y, b.inner.y + b.inner.h - 1) - b.inner.y;
+                        let col = x.clamp(b.inner.x, b.inner.x + b.inner.w - 1) - b.inner.x;
+                        let top = self.grids.get(&pane).map_or(0, |g| view_top(g.scroll));
+                        sel.head = (top + u32::from(row), col);
+                    }
                     self.report_to(tx, &b, Report::Drag(held), x, y, mods).await?;
                 }
             }
@@ -1379,7 +1397,16 @@ impl App {
         if t.trim().is_empty() {
             return;
         }
-        match clip::copy_text(t) {
+        let result = clip::copy_text(t);
+        if let Some(pane) = self.focus.clone() {
+            let outcome = match &result {
+                Ok(clip::CopyResult::Copied) => aaa_proto::ClipboardOutcome::Copied,
+                Ok(clip::CopyResult::Requested) => aaa_proto::ClipboardOutcome::Requested,
+                Err(_) => aaa_proto::ClipboardOutcome::Failed,
+            };
+            self.copy_outcomes.push((pane, outcome));
+        }
+        match result {
             Ok(clip::CopyResult::Copied) if truncated => self.set_message("클립보드에 복사했다(너무 길어 앞쪽만)"),
             Ok(clip::CopyResult::Copied) => self.set_message("클립보드에 복사했다"),
             Ok(clip::CopyResult::Requested) if truncated => {
@@ -1397,7 +1424,22 @@ impl App {
         mods: KeyModifiers,
         ch: Option<char>,
     ) -> Result<bool> {
-        let Some(sel) = self.selection.take() else { return Ok(false) };
+        let app_copy = self.app_copy.take().filter(|(pane, _)| self.focus.as_deref() == Some(pane.as_str()));
+        if copy_key(mods, ch)
+            && let Some((_, text)) = app_copy
+        {
+            self.reported_selection = None;
+            self.selection = None;
+            self.drag = None;
+            self.autoscroll = None;
+            self.copied(&text, false);
+            return Ok(true);
+        }
+        let reported = self
+            .reported_selection
+            .take()
+            .filter(|s| s.anchor != s.head && self.focus.as_deref() == Some(s.pane.as_str()));
+        let Some(sel) = self.selection.take().or(reported) else { return Ok(false) };
         let copy = copy_key(mods, ch);
         if copy {
             self.drag = None;

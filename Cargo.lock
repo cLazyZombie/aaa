@@ -192,6 +192,7 @@ dependencies = [
  "png",
  "ratatui",
  "serde_json",
+ "sha2",
  "tokio",
  "unicode-segmentation",
  "unicode-width",
@@ -203,6 +204,7 @@ name = "aaa-vt"
 version = "0.1.2"
 dependencies = [
  "aaa-proto",
+ "base64 0.22.1",
  "vt100",
 ]
 

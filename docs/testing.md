@@ -237,3 +237,9 @@ local agent 재연결 중 배포 조회(§8.237): host `deploy::tests::coordinat
 ## Mac 웹 터미널 Ctrl+V(§8.232 후속)
 
 기존 E2E 11의 「그림 붙여 넣기·끌어 놓기」가 소유한다. 실제 host·agent와 raw PTY에서 Mac Chrome·WebKit의 이미지 경로/bytes, 텍스트만·권한 거부·API 없음의 ^V, 읽는 중 반복의 단일 업로드를 본다. Windows platform의 Ctrl+V는 비동기 read를 호출하지 않고 기존 표준 text/image paste를 처리한다. iPhone·MacIntel iPad도 새 read 없이 기존 image paste를 유지한다. 페이지의 Clipboard API만 가짜여서 사람의 clipboard나 OS 권한 설정에 닿지 않는다. 실제 권한 창·Windows OS·휴대폰 실기를 보증하지 않는다. `--spec 11 --grep '그림 붙여 넣기'`로 좁게 돌린다. 연속 첨부는 실제 PTY가 받은 이번 경로를 대조해 이전 배너와 새 ACK를 섞지 않는다.
+
+## TUI pane 앱의 선택 복사
+
+`cargo test -p aaa --test tui`의 `pane_osc52_reaches_front_clipboard`는 pane이 낸 OSC 52를 입력권 TUI의 파일 sink에서 확인하고, 재접속에는 복사하지 않는지 본다. 다른 화면·reader/옛 판의 무복사는 host `clipboard_effect_targets_one_front_before_the_fence`가 실제 전송 큐의 Pong 울타리로 확인한다. `reported_selection_copy_never_interrupts_pane`는 마우스 보고 앱의 일반 끌기 뒤 Ctrl+C가 pane에 `03`으로 새지 않는지 raw 관측기로 확인한다. 시스템 clipboard는 사용하지 않는다. VT의 chunk 분할·잘못된 payload·크기 한도는 `aaa-vt::clipboard_effects_are_live_bounded_and_drained_once`, Windows native UTF-16 왕복은 기존 `AAA_CLIP_NATIVE=1` CI가 맡는다. Windows Terminal 자체가 가로채는 Shift 선택은 headless SGR 입력으로 증명할 수 없으며, [공식 동작](https://learn.microsoft.com/en-us/windows/terminal/selection)과 실제 터미널 확인을 구분한다.
+
+사용자 승인(10-19)에 따라 Windows 본문 복사의 기준은 일반 끌기(OSC 52 → 로컬 native)와 앱 선택 뒤 Ctrl+C(pane 본문 복사, 앱 중단 없음)다. Windows Terminal 자체 Shift+끌기는 플랫폼 제약으로 남긴다.

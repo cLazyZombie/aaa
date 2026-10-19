@@ -192,6 +192,11 @@ pub enum OlderHistory {
 #[derive(Clone, Debug)]
 pub enum PaneEvent {
     Output(u64, Arc<Vec<u8>>),
+    /// 출력 당시 입력권 front에만 전달할 일회성 복사다.
+    Clipboard {
+        front: String,
+        text: String,
+    },
     /// 화면을 snapshot으로 다시 받아야 한다
     Reset,
     /// 상태(끊김·종료·크기)가 바뀌었다
@@ -840,6 +845,13 @@ impl Host {
                 let data = c.data[(m.offset - c.offset) as usize..].to_vec();
                 let start = m.offset;
                 m.vt.feed(&data);
+                for text in m.vt.take_clipboard_writes() {
+                    if let Some(front) = &p.lease {
+                        tracing::info!(session = %c.session, front_id = %front.id, front = %front.label,
+                            bytes = text.len(), "pane OSC 52: 입력권 front로 전달");
+                        let _ = p.events.send(PaneEvent::Clipboard { front: front.id.clone(), text });
+                    }
+                }
                 m.offset = end;
                 let _ = p.events.send(PaneEvent::Output(start, Arc::new(data)));
                 None
@@ -1562,6 +1574,23 @@ impl Host {
                 .await
                 .map(|_| FrontResponse::Done)
             }
+            FrontRequest::FrontIdentity { version, sha256 } => {
+                let f = front.ok_or_else(|| err(ErrorCode::BadRequest, "front 연결에서만 알린다"))?;
+                if version.len() > 128
+                    || !version.chars().all(|c| c.is_ascii_alphanumeric() || ".+- ".contains(c))
+                    || sha256.as_ref().is_some_and(|s| s.len() != 64 || !s.bytes().all(|c| c.is_ascii_hexdigit()))
+                {
+                    return Err(err(ErrorCode::BadRequest, "실행 파일 진단 형식이 아니다"));
+                }
+                tracing::info!(front_id = %f.id, front = %f.label, %version, ?sha256, "front 실행 파일(자기 신고)");
+                Ok(FrontResponse::Done)
+            }
+            FrontRequest::PaneCopyReport { pane, outcome } => {
+                let f = front.ok_or_else(|| err(ErrorCode::BadRequest, "대화형 front 연결에서만 알린다"))?;
+                let (id, _) = self.resolve_pane(&pane)?;
+                tracing::info!(session = %id, front_id = %f.id, front = %f.label, ?outcome, "front 복사 결과(자기 신고)");
+                Ok(FrontResponse::Done)
+            }
             FrontRequest::PaneInput { pane, data } => {
                 let f = front.ok_or_else(|| {
                     err(ErrorCode::BadRequest, "대화형 front 연결에서만 쓴다(한 번 보내기는 pane_send)")
@@ -1773,7 +1802,11 @@ impl Host {
     // ───────────── 조작 lease(§4.5) ─────────────
 
     pub fn new_front(&self, label: String) -> FrontRef {
-        FrontRef { id: format!("f{}", self.front_seq.fetch_add(1, Ordering::Relaxed) + 1), label }
+        let front = FrontRef { id: format!("f{}", self.front_seq.fetch_add(1, Ordering::Relaxed) + 1), label };
+        if front.label.starts_with("tui@") {
+            tracing::info!(front_id = %front.id, front = %front.label, "TUI front 연결");
+        }
+        front
     }
 
     fn lease_set(&self, id: &str, to: Option<FrontRef>) {
