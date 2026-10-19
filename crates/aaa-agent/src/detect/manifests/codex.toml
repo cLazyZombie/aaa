@@ -1,7 +1,7 @@
 id = "codex"
-version = "2026.10.11.1"
+version = "2026.10.19.1"
 min_engine_version = 3
-updated_at = "2026-10-11T00:00:00Z"
+updated_at = "2026-10-19T00:00:00Z"
 
 [[rules]]
 id = "osc_title_blocked"
@@ -17,7 +17,8 @@ state = "working"
 priority = 1050
 region = "osc_title"
 visible_working = true
-regex = ['(?:^| )[⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏](?: |$)']
+# aaa는 run-state를 제목 맨 앞에 둔다. animations=false·commentary 출력 중에도 유지된다.
+regex = ['(?:^| )[⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏](?: |$)|^(?:Starting|Working|Thinking|Waiting)(?: \| |$)']
 
 [[rules]]
 id = "transcript_viewer"
@@ -124,6 +125,6 @@ region = "osc_title"
 visible_idle = true
 regex = ['\S']
 not = [
-  { regex = ['(?:^| )[⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏](?: |$)'] },
+  { regex = ['(?:^| )[⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏](?: |$)|^(?:Starting|Working|Thinking|Waiting)(?: \| |$)'] },
   { contains = ["Action Required"] },
 ]
