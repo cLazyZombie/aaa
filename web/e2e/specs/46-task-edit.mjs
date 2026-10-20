@@ -1,4 +1,4 @@
-// 할 일 편집(T2, 사용자 10-20 「필요하면 수정, 삭제 할수 있고」, plan §8.310). 웹이 host `task_edit`로 TASKS.md를 고친다: 바뀐 블록만
+// 할 일 편집(T2, 사용자 10-20 「필요하면 수정, 삭제 할수 있고」, plan §8.311). 웹이 host `task_edit`로 TASKS.md를 고친다: 바뀐 블록만
 // 쓰고(나머지 바이트 그대로), 대상 블록 hash가 그사이 바뀌었으면 쓰지 않고 충돌 창을 띄운다. 지운 task는 기록에서 되살린다. 저장만으로는
 // thread가 시작되지 않는다. 시간은 기다리지 않는다: 화면 표지 `data-tasks-sha`·`data-task-saving`과 파일 글을 본다.
 import fs from "node:fs";

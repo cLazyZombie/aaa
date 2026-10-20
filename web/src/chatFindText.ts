@@ -171,17 +171,16 @@ export function markdownFindSegments(markdown: string, canOpen: boolean): string
   return segments;
 }
 
-/** 한 말(사람·답)의 찾을 글. 기록 전체를 쿼리마다 다시 뽑지 않게 글로 기억한다(보이는 글이 같으면 같다) */
-const segmentCache = new Map<string, string[]>();
-export function messageFindSegments(text: string, canOpen: boolean): string[] {
-  const key = `${canOpen ? 1 : 0}${text}`;
-  let segments = segmentCache.get(key);
-  if (segments === undefined) {
-    segments = markdownFindSegments(text, canOpen);
-    // 대화 몇 개 분량만 둔다: 넘으면 처음부터
-    if (segmentCache.size >= 20_000) segmentCache.clear();
-    segmentCache.set(key, segments);
-  }
+/**
+ * 한 말(사람·답)의 찾을 글. 기록 전체를 쿼리마다 다시 뽑지 않게 그 말(받아 둔 기록의 객체)에 붙여 기억한다. 기록에서 빠진 말과
+ * 함께 사라지므로 수만 줄을 앞까지 받아도 상한에 걸려 처음부터 다시 뽑지 않는다(plan §8.310)
+ */
+const segmentCache = new WeakMap<object, { text: string; canOpen: boolean; segments: string[] }>();
+export function messageFindSegments(message: object, text: string, canOpen: boolean): string[] {
+  const cached = segmentCache.get(message);
+  if (cached !== undefined && cached.text === text && cached.canOpen === canOpen) return cached.segments;
+  const segments = markdownFindSegments(text, canOpen);
+  segmentCache.set(message, { text, canOpen, segments });
   return segments;
 }
 

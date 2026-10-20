@@ -830,7 +830,7 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
     else beforeTasks.current = sel;
   }, [sel]);
   const toggleTasks = () => goSel(tasksShown ? beforeTasks.current : "tasks:");
-  // 명령 팔레트 「할 일 더하기」: 할 일 화면을 열고 새 task 폼을 연다(plan §8.310)
+  // 명령 팔레트 「할 일 더하기」: 할 일 화면을 열고 새 task 폼을 연다(plan §8.311)
   const [taskAdds, setTaskAdds] = useState(0);
 
   // 새 pane 창(herdr-web-ui App.tsx `newSessionOpen`·`newSessionMachineId`): 머신 머리 +와 단축키가 그 머신으로 연다

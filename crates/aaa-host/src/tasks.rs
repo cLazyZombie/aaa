@@ -1,4 +1,4 @@
-//! TASKS.md 읽기(0.2.35 의미 그대로, 부록 A)와 쓰는 꼴(할 일 편집 T2, plan §8.310). 고치기는 `task_edit.rs`가 한다.
+//! TASKS.md 읽기(0.2.35 의미 그대로, 부록 A)와 쓰는 꼴(할 일 편집 T2, plan §8.311). 고치기는 `task_edit.rs`가 한다.
 //!
 //! - task 줄: `- [ ] 제목 (owner) · t-0001`. `- [x]`도 task다(완료는 줄을 지워 표시한다).
 //! - owner: 없음·`agent`는 미할당, `me`는 사용자, `profile`·`@machine`·`profile@machine`은 agent, 그 밖의 글은 사람.
