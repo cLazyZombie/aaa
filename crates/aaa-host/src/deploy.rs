@@ -1,6 +1,55 @@
 //! coordinator 배포 문. host가 정한 pane 소속과 매번 다시 읽은 safety만 믿는다.
+//! 웹 조작 기기는 서비스 재시작만 연다(관리 GUI W6a). 실행 파일 교체는 rollout으로만 한다.
 use crate::{Host, err};
-use aaa_proto::{AgentRequest, AgentResponse, DeployAction, ErrorBody, ErrorCode, FrontResponse};
+use aaa_proto::{
+    AgentRequest, AgentResponse, DeployAction, DeployJob, DeployJobCard, DeployState, DeviceRole, ErrorBody, ErrorCode,
+    FrontResponse,
+};
+use std::time::Duration;
+
+/// 웹 「배포」의 최근 기록 수
+pub(crate) const RECENT: usize = 10;
+/// 웹 조작 기기의 연결인가(보기 전용 기기·세션 안 연결은 아니다)
+pub(crate) fn web_controller(role: DeviceRole, actor: &str) -> bool {
+    role == DeviceRole::Controller && device(actor)
+}
+/// 웹 기기 actor. 시작할 때 조작 기기만 받았으므로 기록의 이 actor는 웹 승인이다
+pub(crate) fn device(actor: &str) -> bool {
+    actor.strip_prefix("device:").is_some_and(|id| !id.is_empty())
+}
+fn internal(e: impl std::fmt::Display) -> ErrorBody {
+    err(ErrorCode::Internal, e.to_string())
+}
+/// 기록·응답을 화면용 요약으로 줄인다. 실행기 PID·결과 원문(경로·self-check 출력)은 싣지 않는다
+pub(crate) fn job_card(
+    id: String,
+    machine: String,
+    record: &serde_json::Value,
+    job: Option<&DeployJob>,
+) -> DeployJobCard {
+    let created = record["created_ms"].as_u64().unwrap_or(0);
+    DeployJobCard {
+        id,
+        machine,
+        action: job
+            .map(|j| j.action.clone())
+            .or_else(|| serde_json::from_value(record["action"].clone()).ok())
+            .unwrap_or(DeployAction::Rollback { name: None, dry_run: true }),
+        state: job.map(|j| j.state),
+        error: job.and_then(|j| match j.state {
+            DeployState::Failed => {
+                Some("작업이 실패했습니다. 상세 진단은 coordinator의 배포 기록에서 확인하세요.".into())
+            }
+            DeployState::Interrupted => {
+                Some("작업이 도중에 끝났습니다(다시 실행하지 않았습니다). 실행 파일과 서비스 상태를 확인하세요.".into())
+            }
+            _ => None,
+        }),
+        web: record["web"] == true,
+        created_ms: job.map(|j| j.created_ms).unwrap_or(created),
+        updated_ms: job.map(|j| j.updated_ms).unwrap_or(created),
+    }
+}
 impl Host {
     pub(crate) fn coordinator_project_of_actor(&self, actor: &str) -> Option<String> {
         let pane = actor.strip_prefix("local:")?.rsplit_once('@')?.1;
@@ -39,12 +88,24 @@ impl Host {
     }
     pub(crate) async fn deployment_start(
         &self,
+        role: DeviceRole,
         actor: &str,
         machine: Option<String>,
         id: String,
         action: DeployAction,
     ) -> Result<FrontResponse, ErrorBody> {
-        let project = self.deployment_authorize(actor)?;
+        let web = web_controller(role, actor);
+        let project = if web {
+            if !matches!(action, DeployAction::Restart { .. }) {
+                return Err(err(
+                    ErrorCode::Forbidden,
+                    "웹은 서비스 재시작만 한다. 실행 파일 교체는 설정 「배포」의 rollout으로 한다",
+                ));
+            }
+            self.instance_project()?
+        } else {
+            self.deployment_authorize(actor)?
+        };
         if id.len() != 26 || !id.bytes().all(|b| b.is_ascii_alphanumeric()) {
             return Err(err(ErrorCode::BadRequest, "배포 작업 ID 형식이 아니다"));
         }
@@ -66,18 +127,30 @@ impl Host {
                 return Err(err(ErrorCode::BadRequest, "rollout 진행 중에는 개별 배포를 시작하지 않는다"));
             }
             let key = format!("deploy:{id}");
-            let record = serde_json::json!({"project":project,"machine":mid,"action":action}).to_string();
+            let request = serde_json::json!({"project":project,"machine":mid,"action":action});
             match self.db.meta(&key).map_err(|e| err(ErrorCode::Internal, e.to_string()))? {
-                Some(old) if old != record => {
-                    return Err(err(ErrorCode::BadRequest, "같은 배포 ID를 다른 작업에 쓸 수 없다"));
+                // 같은 요청인지는 대상·작업만 본다. 시각·출처는 처음 기록 그대로 둔다
+                Some(old) => {
+                    let old: serde_json::Value = serde_json::from_str(&old).unwrap_or_default();
+                    if ["project", "machine", "action"].iter().any(|k| old[k] != request[k]) {
+                        return Err(err(ErrorCode::BadRequest, "같은 배포 ID를 다른 작업에 쓸 수 없다"));
+                    }
                 }
-                Some(_) => {}
-                None => self.db.set_meta(&key, &record).map_err(|e| err(ErrorCode::Internal, e.to_string()))?,
+                None => {
+                    let mut record = request;
+                    record["created_ms"] = aaa_common::util::now_ms().into();
+                    record["web"] = web.into();
+                    self.db.set_meta(&key, &record.to_string()).map_err(|e| err(ErrorCode::Internal, e.to_string()))?
+                }
             }
         }
         self.db.audit(actor, "deployment_start", &format!("project={project} machine={mid} job={id}"));
-        let response = self.live_conn(&mid)?.request(AgentRequest::DeployStart { id, project, action }).await?;
+        let response =
+            self.live_conn(&mid)?.request(AgentRequest::DeployStart { id: id.clone(), project, action }).await?;
         match response {
+            AgentResponse::Deployment { job, .. } if web => Ok(FrontResponse::DeployJobs {
+                jobs: vec![job_card(id.clone(), self.machine_name(&mid), &self.deploy_record(&id)?, Some(&job))],
+            }),
             AgentResponse::Deployment { job, running_software, running_sha256, .. } => Ok(FrontResponse::Deployment {
                 machine: self.machine_name(&mid),
                 job,
@@ -87,16 +160,28 @@ impl Host {
             _ => Err(err(ErrorCode::Internal, "배포 응답이 아니다")),
         }
     }
+    fn deploy_record(&self, id: &str) -> Result<serde_json::Value, ErrorBody> {
+        self.db
+            .meta(&format!("deploy:{id}"))
+            .map_err(internal)?
+            .and_then(|s| serde_json::from_str::<serde_json::Value>(&s).ok())
+            .ok_or_else(|| err(ErrorCode::NotFound, "배포 기록이 없다"))
+    }
     pub(crate) async fn deployment_status(
         &self,
+        role: DeviceRole,
         actor: &str,
         machine: Option<String>,
         id: String,
     ) -> Result<FrontResponse, ErrorBody> {
-        // 상태도 자기 coordinator 범위에서 본다. 실행 허용 철회 뒤에도 결과는 확인할 수 있다.
-        let project = self
-            .coordinator_project_of_actor(actor)
-            .ok_or_else(|| err(ErrorCode::Forbidden, "배포 기록은 coordinator 세션에서 확인한다"))?;
+        // 상태도 자기 coordinator 범위에서 본다. 실행 허용 철회 뒤에도 결과는 확인할 수 있다. 웹 조작 기기는 이 aaa의 프로젝트다.
+        let web = web_controller(role, actor);
+        let project = if web {
+            self.instance_project()?
+        } else {
+            self.coordinator_project_of_actor(actor)
+                .ok_or_else(|| err(ErrorCode::Forbidden, "배포 기록은 coordinator 세션에서 확인한다"))?
+        };
         let record = self
             .db
             .meta(&format!("deploy:{id}"))
@@ -117,7 +202,10 @@ impl Host {
                 "이 agent는 배포 상태 API가 없다. 머신 판·SHA와 재연결을 직접 확인한다",
             ));
         }
-        match self.live_conn(&mid)?.request(AgentRequest::DeployStatus { id }).await? {
+        match self.live_conn(&mid)?.request(AgentRequest::DeployStatus { id: id.clone() }).await? {
+            AgentResponse::Deployment { job, .. } if web && job.project == project => {
+                Ok(FrontResponse::DeployJobs { jobs: vec![job_card(id, self.machine_name(&mid), &record, Some(&job))] })
+            }
             AgentResponse::Deployment { job, running_software, running_sha256, .. } if job.project == project => {
                 Ok(FrontResponse::Deployment {
                     machine: self.machine_name(&mid),
@@ -130,8 +218,42 @@ impl Host {
             _ => Err(err(ErrorCode::Internal, "배포 응답이 아니다")),
         }
     }
+    /// 웹 「배포」의 최근 개별 작업(새것부터 RECENT개). 상태는 그 머신 agent에게 묻고, 끊긴 머신은 상태 없이 둔다
+    pub(crate) async fn deployment_jobs(&self) -> Result<FrontResponse, ErrorBody> {
+        let project = self.instance_project()?;
+        let mut records = Vec::new();
+        for id in self.db.meta_suffixes("deploy:").map_err(internal)? {
+            let Ok(record) = self.deploy_record(&id) else { continue };
+            if record["project"] == project.as_str()
+                && let Some(mid) = record["machine"].as_str().map(str::to_string)
+            {
+                records.push((record["created_ms"].as_u64().unwrap_or(0), id, mid, record));
+            }
+        }
+        records.sort_by(|a, b| (b.0, &b.1).cmp(&(a.0, &a.1)));
+        records.truncate(RECENT);
+        let project = &project;
+        let asks = records.into_iter().map(|(_, id, mid, record)| async move {
+            let job = match self.live_conn(&mid) {
+                Ok(conn) if self.machine_feature(&mid, "deployment.v1") => {
+                    match conn
+                        .request_timeout(AgentRequest::DeployStatus { id: id.clone() }, Duration::from_secs(5))
+                        .await
+                    {
+                        Ok(AgentResponse::Deployment { job, .. }) if &job.project == project => Some(job),
+                        _ => None,
+                    }
+                }
+                _ => None,
+            };
+            job_card(id, self.machine_name(&mid), &record, job.as_ref())
+        });
+        Ok(FrontResponse::DeployJobs { jobs: futures_util::future::join_all(asks).await })
+    }
     pub(crate) fn deployment_changed(&self, mid: &str, job: aaa_proto::DeployJob) {
         self.rollout_wake.notify_one();
+        // 웹 「배포」의 작업 목록도 다시 읽는다(`rollout` 사건, 관리 GUI W6a)
+        self.rollout_changed.send_modify(|v| *v += 1);
         let record = self
             .db
             .meta(&format!("deploy:{}", job.id))

@@ -1435,13 +1435,19 @@ impl Host {
             FrontRequest::ThreadStartAccount { .. } => unreachable!(),
             FrontRequest::Instance => Ok(FrontResponse::Instance { project: self.instance_view() }),
             FrontRequest::DebugInput { pane, thread, since_ms } => self.debug_input(pane, thread, since_ms),
-            FrontRequest::RolloutStart { id, spec } => self.rollout_start(actor, id, spec).await,
-            FrontRequest::RolloutStatus { id } => self.rollout_status(actor, id),
+            FrontRequest::RolloutStart { id, spec } => self.rollout_start(role, actor, id, spec).await,
+            FrontRequest::RolloutStatus { id } => self.rollout_status(role, actor, id),
+            // 웹 「배포」(관리 GUI W6a): 점검은 조작 기기, 목록은 보기 전용 기기도 본다(표시용 요약만)
+            FrontRequest::RolloutPlan { source_machine, path, machines } => {
+                self.rollout_plan(role, actor, source_machine, path, machines).await
+            }
+            FrontRequest::Rollouts => self.rollouts(),
+            FrontRequest::DeployJobs => self.deployment_jobs().await,
             FrontRequest::DeployContext => Ok(self.deployment_context(actor)),
             FrontRequest::DeployStart { machine, id, action } => {
-                self.deployment_start(actor, machine, id, action).await
+                self.deployment_start(role, actor, machine, id, action).await
             }
-            FrontRequest::DeployStatus { machine, id } => self.deployment_status(actor, machine, id).await,
+            FrontRequest::DeployStatus { machine, id } => self.deployment_status(role, actor, machine, id).await,
             FrontRequest::Post { project, input } => {
                 self.front_post(&project, input, actor).map(|result| FrontResponse::Post { result })
             }

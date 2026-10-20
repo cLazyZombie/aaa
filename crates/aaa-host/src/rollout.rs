@@ -7,6 +7,8 @@ use std::{path::Path, sync::Arc, time::Duration};
 
 mod card;
 mod recovery;
+#[cfg(test)]
+mod web_tests;
 const STEP_LIMIT_MS: u64 = 120_000;
 const RECOVERY_LIMIT_MS: u64 = 3 * STEP_LIMIT_MS;
 pub(crate) fn file_sha(path: &Path) -> anyhow::Result<String> {
@@ -170,8 +172,9 @@ impl Host {
         }
         Ok(())
     }
+    /// 사람 터미널·웹 조작 기기의 승인은 그 rollout 끝까지 남는다. coordinator 시작만 매번 safety를 다시 읽는다
     fn rollout_permitted(&self, r: &RolloutView) -> bool {
-        person(&r.actor) || self.safety(&r.project).coordinator_deploy
+        person(&r.actor) || crate::deploy::device(&r.actor) || self.safety(&r.project).coordinator_deploy
     }
     /// 자동화 제안의 기준은 최근 성공한 커밋 기록이다. 실패한 새 rollout은 이 기준을 지우지 않는다.
     pub(crate) fn rollout_deployed_commit(&self, project: &str) -> Result<Option<(String, String)>, ErrorBody> {
@@ -195,13 +198,54 @@ impl Host {
             .transpose()
             .map(|r| r.unwrap_or(false))
     }
+    /// 대상 한 머신이 rollout을 받을 수 있는가(연결·기능). 시작과 웹 점검이 같이 쓴다
+    fn target_problem(&self, mid: &str, staged: bool) -> Option<ErrorBody> {
+        if let Err(e) = self.live_conn(mid) {
+            return Some(e);
+        }
+        if !self.machine_feature(mid, "rollout.v1") {
+            return Some(err(ErrorCode::UnsupportedVersion, "먼저 rollout.v1을 아는 host·agent를 반영한다"));
+        }
+        if staged && !self.machine_feature(mid, "deploy_stage.v1") {
+            return Some(err(ErrorCode::UnsupportedVersion, "전송 대상에 deploy_stage.v1이 필요하다"));
+        }
+        if !self.machine_feature(mid, "rollout_recovery.v1") {
+            return Some(err(ErrorCode::UnsupportedVersion, "먼저 독립 복구 감시를 아는 host·agent를 반영한다"));
+        }
+        None
+    }
+    /// host 머신을 맨 앞에, 나머지는 받은 순서(비었으면 등록된 전부를 ID 순)로
+    fn rollout_order(&self, requested: &[String]) -> Result<Vec<String>, ErrorBody> {
+        let local = self.resolve_machine(None)?;
+        let mut machines = vec![local];
+        let requested = if requested.is_empty() {
+            let i = self.inner.lock().unwrap();
+            let mut ids: Vec<_> = i.machines.keys().cloned().collect();
+            ids.sort();
+            ids
+        } else {
+            requested.iter().map(|m| self.resolve_machine(Some(m))).collect::<Result<Vec<_>, _>>()?
+        };
+        for mid in requested {
+            if !machines.contains(&mid) {
+                machines.push(mid);
+            }
+        }
+        Ok(machines)
+    }
     pub(crate) async fn rollout_start(
         self: &Arc<Self>,
+        role: DeviceRole,
         actor: &str,
         id: String,
         mut spec: RolloutSpec,
     ) -> Result<FrontResponse, ErrorBody> {
-        let project = if person(actor) { self.instance_project()? } else { self.deployment_authorize(actor)? };
+        // 웹 조작 기기는 빌드 머신에 이미 있는 후보만 고른다(관리 GUI W6a, 답 2A). 응답은 표시용 요약이다
+        let web = crate::deploy::web_controller(role, actor);
+        if web && spec.source_machine.is_none() {
+            return Err(err(ErrorCode::BadRequest, "웹은 빌드 머신의 후보(머신:폴더/aaa)로만 배포한다"));
+        }
+        let project = if person(actor) || web { self.instance_project()? } else { self.deployment_authorize(actor)? };
         if !valid_id(&id)
             || spec.sha256.len() != 64
             || !spec.sha256.bytes().all(|b| b.is_ascii_hexdigit())
@@ -238,38 +282,19 @@ impl Host {
             if old.project != project || old.spec != spec {
                 return Err(err(ErrorCode::BadRequest, "같은 rollout ID를 다른 요청에 쓸 수 없다"));
             }
-            return Ok(FrontResponse::Rollout { rollout: old });
+            return Ok(if web {
+                FrontResponse::RolloutCards { cards: vec![self.card_of(old)] }
+            } else {
+                FrontResponse::Rollout { rollout: old }
+            });
         }
         if self.rollout_busy()? {
             return Err(err(ErrorCode::BadRequest, "진행 중인 rollout이 있다"));
         }
-        let local = self.resolve_machine(None)?;
-        let mut machines = vec![local];
-        let requested = if spec.machines.is_empty() {
-            let i = self.inner.lock().unwrap();
-            let mut ids: Vec<_> = i.machines.keys().cloned().collect();
-            ids.sort();
-            ids
-        } else {
-            spec.machines.iter().map(|m| self.resolve_machine(Some(m))).collect::<Result<Vec<_>, _>>()?
-        };
-        for mid in requested {
-            if !machines.contains(&mid) {
-                machines.push(mid);
-            }
-        }
+        let machines = self.rollout_order(&spec.machines)?;
         for mid in &machines {
-            self.live_conn(mid)?;
-            if !self.machine_feature(mid, "rollout.v1") {
-                return Err(err(ErrorCode::UnsupportedVersion, "먼저 rollout.v1을 아는 host·agent를 반영한다"));
-            }
-            if spec.source_machine.is_some() && !self.machine_feature(mid, "deploy_stage.v1") {
-                return Err(err(ErrorCode::UnsupportedVersion, "전송 대상에 deploy_stage.v1이 필요하다"));
-            }
-        }
-        for mid in &machines {
-            if !self.machine_feature(mid, "rollout_recovery.v1") {
-                return Err(err(ErrorCode::UnsupportedVersion, "먼저 독립 복구 감시를 아는 host·agent를 반영한다"));
+            if let Some(e) = self.target_problem(mid, spec.source_machine.is_some()) {
+                return Err(e);
             }
         }
         spec.machines = machines;
@@ -295,10 +320,20 @@ impl Host {
         self.db.start_rollout(&r.id, &serde_json::to_string(&r).map_err(internal)?).map_err(internal)?;
         self.save_rollout(&mut r)?;
         self.resume_rollout();
-        Ok(FrontResponse::Rollout { rollout: r })
+        Ok(if web {
+            FrontResponse::RolloutCards { cards: vec![self.card_of(r)] }
+        } else {
+            FrontResponse::Rollout { rollout: r }
+        })
     }
-    pub(crate) fn rollout_status(self: &Arc<Self>, actor: &str, id: String) -> Result<FrontResponse, ErrorBody> {
-        let project = if person(actor) {
+    pub(crate) fn rollout_status(
+        self: &Arc<Self>,
+        role: DeviceRole,
+        actor: &str,
+        id: String,
+    ) -> Result<FrontResponse, ErrorBody> {
+        let web = crate::deploy::web_controller(role, actor);
+        let project = if person(actor) || web {
             self.instance_project()?
         } else {
             self.coordinator_project_of_actor(actor)
@@ -309,7 +344,79 @@ impl Host {
             return Err(err(ErrorCode::Forbidden, "다른 프로젝트의 rollout이다"));
         }
         self.resume_rollout();
-        Ok(FrontResponse::Rollout { rollout: r })
+        Ok(if web {
+            FrontResponse::RolloutCards { cards: vec![self.card_of(r)] }
+        } else {
+            FrontResponse::Rollout { rollout: r }
+        })
+    }
+    /// 웹 「배포」의 시작 전 점검(관리 GUI W6a): 빌드 머신 agent가 후보 provenance·SHA를 대조하고 dry-run으로 self-check한다.
+    /// 대상은 시작과 같은 순서·검사를 보인다. 아무것도 저장하지 않는다
+    pub(crate) async fn rollout_plan(
+        &self,
+        role: DeviceRole,
+        actor: &str,
+        source: String,
+        path: String,
+        machines: Vec<String>,
+    ) -> Result<FrontResponse, ErrorBody> {
+        // 점검은 빌드 머신에서 후보를 실행한다. 세션 안 agent·coordinator가 다른 머신에서 실행 파일을 띄우는 길이 되지 않게 한다
+        if !(crate::deploy::web_controller(role, actor) || person(actor)) {
+            return Err(err(ErrorCode::Forbidden, "배포 점검은 웹 조작 기기나 사람의 aaa 밖 터미널에서 한다"));
+        }
+        self.instance_project()?;
+        if !(Path::new(&path).is_absolute() || path.starts_with("~/")) {
+            return Err(err(ErrorCode::BadRequest, "후보는 빌드 머신의 절대 경로나 ~/로 시작하는 경로다"));
+        }
+        let src = self.resolve_machine(Some(&source))?;
+        let conn = self.live_conn(&src)?;
+        if !self.machine_feature(&src, "deploy_candidate.v1") || !self.machine_feature(&src, "deploy_stage.v1") {
+            return Err(err(
+                ErrorCode::UnsupportedVersion,
+                "빌드 머신 agent가 후보 읽기(deploy_candidate.v1)를 모른다. 먼저 새 판 agent를 반영한다",
+            ));
+        }
+        // self-check는 후보를 두 번 실행한다(`--version`·`config check`). agent 실행기의 한도가 먼저 끝낸다
+        let response = conn
+            .request_timeout(AgentRequest::DeployCandidate { path: path.clone() }, Duration::from_millis(STEP_LIMIT_MS))
+            .await?;
+        let AgentResponse::DeployCandidate { sha256, commit, version, total_bytes, built_at } = response else {
+            return Err(internal("후보 읽기 응답이 아니다"));
+        };
+        let candidate = DeployCandidateView {
+            machine: self.machine_name(&src),
+            path,
+            sha256,
+            commit,
+            version,
+            total_bytes,
+            built_at,
+        };
+        let local = self.resolve_machine(None)?;
+        let targets = self
+            .rollout_order(&machines)?
+            .into_iter()
+            .map(|mid| RolloutTargetView {
+                machine: self.machine_name(&mid),
+                host: mid == local,
+                problem: self.target_problem(&mid, true).map(|e| e.message),
+            })
+            .collect();
+        Ok(FrontResponse::RolloutPlan { plan: RolloutPlanView { candidate, targets, busy: self.rollout_busy()? } })
+    }
+    /// 이 프로젝트의 최근 rollout 요약(새것부터)
+    pub(crate) fn rollouts(&self) -> Result<FrontResponse, ErrorBody> {
+        let project = self.instance_project()?;
+        let mut records = Vec::new();
+        for id in self.db.meta_suffixes("rollout:").map_err(internal)?.into_iter().filter(|id| valid_id(id)) {
+            let r = self.load_rollout(&id)?;
+            if r.project == project {
+                records.push(r);
+            }
+        }
+        records.sort_by(|a, b| (b.created_ms, &b.id).cmp(&(a.created_ms, &a.id)));
+        records.truncate(crate::deploy::RECENT);
+        Ok(FrontResponse::RolloutCards { cards: records.into_iter().map(|r| self.card_of(r)).collect() })
     }
     pub(crate) fn resume_rollout(self: &Arc<Self>) {
         let h = self.clone();

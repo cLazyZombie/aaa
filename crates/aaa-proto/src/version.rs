@@ -181,7 +181,11 @@ pub const AGENT_LINK: Version = Version { major: 1, minor: 10 };
 // coordinator_deploy만), `profile_admin`·`profile_plan`·`profile_apply`(claude·codex·shell만, custom 명령·env 칸 없음),
 // `work_root_show`·`work_root_check`·`work_root_set`, `hook_status`·`hook_set`. host.toml 판 대조로 동시 편집은 conflict.
 // Agent link: 새 기능 work_root.manage.v1·hook.manage.v1(`AgentRequest::WorkRoot`·`CodexHook`), 알리지 않은 agent에는 보내지 않는다.
-pub const FRONT_API: Version = Version { major: 1, minor: 81 };
+// 1.82: 웹 배포·재시작(관리 GUI W6a, plan §8.359): 웹 조작 기기의 `rollout_start`(응답은 `rollout_cards`)·`rollout_status`, 새
+// `rollout_plan`(빌드 머신 후보의 provenance·SHA·dry-run과 대상)·`rollouts`·`deploy_jobs`, `deploy_start`·`deploy_status`의 재시작
+// (응답은 `deploy_jobs`). 웹은 실행 파일을 올리지 않는다. 옛 host는 웹 요청을 거부해 웹이 「배포」를 그리지 않는다.
+// Agent link: 새 기능 deploy_candidate.v1(`AgentRequest::DeployCandidate`), 알리지 않은 agent에는 보내지 않는다.
+pub const FRONT_API: Version = Version { major: 1, minor: 82 };
 /// agent ↔ session host(내부). 세션이 몇 주 이어질 수 있으므로 이전 session host와 호환해야 한다.
 /// 1.1: `SessionRequest::Detect`(harness 상태 감지 입력). agent는 1.0 session host에 보내지 않고 `Screen`을 쓴다.
 /// 1.2: `SessionRequest::Colors`(색 질의에 답할 화면 색, plan §8.187). agent는 1.1 이하 session host에 보내지 않는다.
