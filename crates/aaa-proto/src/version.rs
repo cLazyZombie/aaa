@@ -123,7 +123,9 @@ pub const AGENT_LINK: Version = Version { major: 1, minor: 8 };
 // 1.58: 자동화 상세(RoutineView.queue, RoutineRuns.source), 변환 미리보기(AutomationConvert.dry_run·plan_sha256),
 // 막힌 `do.message` 큐 풀기(AutomationUnblock), 웹 `/api/v1/me`의 front_api. 옛 host는 dry_run을 버리고 변환하므로 웹은
 // me.front_api가 1.58 이상일 때만 미리보기를 보내고, 옛 host는 새 요청을 모르는 요청으로 거절한다.
-pub const FRONT_API: Version = Version { major: 1, minor: 58 };
+// 1.59: `thread_diff`(thread worktree의 바뀐 파일·patch, plan §8.305). 그 머신 agent의 diff.v1이 읽는다. 옛 host는 모르는 요청으로
+// 거절해 웹이 변경 파일 카드를 그리지 않는다.
+pub const FRONT_API: Version = Version { major: 1, minor: 59 };
 /// agent ↔ session host(내부). 세션이 몇 주 이어질 수 있으므로 이전 session host와 호환해야 한다.
 /// 1.1: `SessionRequest::Detect`(harness 상태 감지 입력). agent는 1.0 session host에 보내지 않고 `Screen`을 쓴다.
 /// 1.2: `SessionRequest::Colors`(색 질의에 답할 화면 색, plan §8.187). agent는 1.1 이하 session host에 보내지 않는다.

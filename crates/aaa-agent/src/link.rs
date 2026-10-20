@@ -89,6 +89,7 @@ pub fn hello(agent: &Agent) -> AgentHello {
         // launch_safety.v1: `ThreadPrepare.safety`·`ThreadRebrief.safety`(yolo·thread_agent_args)를 profile 인자에 더한다
         // adopt.v1: `AgentRequest::ThreadAdopt`(사람이 띄운 agent 세션을 thread로 데려온다, plan §8.180)
         // term_colors.v1: `AgentRequest::TermColors`(색 질의에 답할 화면 색, plan §8.187)
+        // diff.v1: `AgentRequest::ThreadDiff`(thread worktree의 바뀐 파일·patch, plan §8.305)
         // chat_watch.v1: `AgentRequest::ChatWatch`와 `AgentEvent::ChatChanged`(대화 기록 변화 push, plan §8.191)
         features: vec![
             "terminal.v1".into(),
@@ -122,6 +123,7 @@ pub fn hello(agent: &Agent) -> AgentHello {
             "term_colors.v1".into(),
             "chat_watch.v1".into(),
             "chat_pages.v1".into(),
+            "diff.v1".into(),
         ],
         dev_mode: agent.dev_mode,
         selfcheck: agent.selfcheck.lock().unwrap().clone(),
