@@ -188,6 +188,7 @@ impl Host {
     /// 최초 인증 시각을 지금으로 한다(사용자 답 3A: 다시 로그인하면 모두 채운다)
     pub(crate) fn account_logged_in(&self, name: &str, id: &Identity, switched: bool) {
         let now = util::now_ms();
+        let gate = self.account_meta_gate.lock().unwrap();
         let mut m = self.account_meta(name);
         if id.email.is_some() {
             m.email = id.email.clone();
@@ -202,12 +203,14 @@ impl Host {
         m.expires_ms = id.expires_ms;
         m.rejected_ms = None;
         self.save_account_meta(name, &m);
+        drop(gate);
         self.account_health_pass();
     }
 
     /// Codex 갱신 결과(쓰임으로 본 상태). 거부면 끊김, 성공이면 끊김을 지우고 새 id_token의 plan·메일을 읽는다
     pub(crate) fn account_refresh_seen(&self, name: &str, outcome: crate::accounts::RefreshOutcome) {
         use crate::accounts::RefreshOutcome;
+        let gate = self.account_meta_gate.lock().unwrap();
         let mut m = self.account_meta(name);
         match outcome {
             RefreshOutcome::Rejected => {
@@ -231,13 +234,15 @@ impl Host {
                     return;
                 }
             }
-            RefreshOutcome::Failed => return,
+            RefreshOutcome::Served | RefreshOutcome::Failed => return,
         }
         self.save_account_meta(name, &m);
+        drop(gate);
         self.account_health_pass();
     }
 
     pub(crate) fn account_meta_remove(&self, name: &str) {
+        let _gate = self.account_meta_gate.lock().unwrap();
         let _ = self.db.del_meta(&key(name));
         if let Ok(project) = self.instance_project() {
             self.inbox_finish_where(&project, |i| i.item_kind == "account" && i.subject == name);
@@ -248,6 +253,7 @@ impl Host {
     /// 이 기록 전에 등록한 계정(사용자 답 3A): 저장된 Codex 인증에서 메일·plan만 채운다. 날짜는 모른다
     pub(crate) fn account_meta_backfill(&self) {
         let Ok(list) = self.accounts.list() else { return };
+        let _gate = self.account_meta_gate.lock().unwrap();
         for a in list {
             if a.harness != "codex" || self.db.meta(&key(&a.name)).ok().flatten().is_some() {
                 continue;
@@ -267,6 +273,7 @@ impl Host {
         let now = util::now_ms();
         let project = self.instance_project().ok();
         for a in list {
+            let _gate = self.account_meta_gate.lock().unwrap();
             let mut m = self.account_meta(&a.name);
             let h = health(&m, now);
             let want = (h != AccountHealth::Ok).then_some(h);

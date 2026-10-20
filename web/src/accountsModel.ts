@@ -84,6 +84,14 @@ export function loginText(v: AccountLoginView): { title: string; lines: string[]
       return { title: `${who}: 옛 인증을 그대로 두었습니다`, lines: [], tone: "none", done: true };
     case "cancelled":
       return { title: `${who} 로그인을 취소했습니다`, lines: [], tone: "none", done: true };
+    case "lost":
+      // 웹이 붙인 상태: host가 그 로그인을 더는 모른다(다시 시작했거나 오래된 작업을 정리했다)
+      return {
+        title: `${who} 로그인 진행을 더 읽지 못했습니다`,
+        lines: ["host가 다시 시작했거나 오래된 로그인이다. 결과는 아래 계정 목록에서 확인한다."],
+        tone: "warn",
+        done: true,
+      };
     default:
       return {
         title: `${who} 로그인하지 못했습니다`,

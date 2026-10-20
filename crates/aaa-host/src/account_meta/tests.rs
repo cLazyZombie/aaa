@@ -200,3 +200,19 @@ fn a_switched_email_restarts_the_first_auth_date() {
     assert_eq!(m.email.as_deref(), Some("new@example.com"));
     assert!(m.first_auth_ms.unwrap() > 5 && m.first_auth_ms == m.last_auth_ms);
 }
+
+#[tokio::test]
+async fn an_old_version_served_from_the_vault_does_not_clear_a_rejection() {
+    let lab = lab(true);
+    let h = &lab.h;
+    h.accounts.import("work", "codex", &codex_auth("work@example.com", "plus")).unwrap();
+    h.accounts.import("work", "codex", &codex_auth("work@example.com", "plus")).unwrap();
+    h.account_refresh_seen("work", RefreshOutcome::Rejected);
+    // 옛 판(1) 요청에는 제공자에게 묻지 않고 금고의 판 2를 준다: 거부된 인증이 다시 살아난 것이 아니다
+    let request = aaa_proto::SecretText(r#"{"grant_type":"refresh_token"}"#.into());
+    let (served, outcome) = h.accounts.refresh("work", 1, &request).await;
+    assert_eq!((served.version, outcome), (2, RefreshOutcome::Served));
+    h.account_refresh_seen("work", outcome);
+    assert_eq!(health(&h.account_meta("work"), util::now_ms()), AccountHealth::Rejected);
+    assert_eq!(account_items(h).iter().filter(|i| !i.done).count(), 1, "끊김 항목이 그대로 하나");
+}

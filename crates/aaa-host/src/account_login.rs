@@ -54,14 +54,20 @@ struct Pending {
 /// 다른 메일 확인을 기다리는 시한(로그인 시한과 같다)
 const CONFIRM_FOR: Duration = Duration::from_secs(300);
 
-/// 확인 시한이 지난 새 인증을 버린다(옛 인증은 그대로다)
-fn expire(job: &LoginJob) {
-    let mut v = job.view.lock().unwrap();
-    let mut p = job.pending.lock().unwrap();
+/// 확인 시한이 지난 새 인증을 버린다(옛 인증은 그대로다). 바꿨으면 참: 부른 쪽이 화면에 알린다(`accounts_bump`)
+fn expire_parts(view: &Mutex<AccountLoginView>, pending: &Mutex<Option<Pending>>) -> bool {
+    let mut v = view.lock().unwrap();
+    let mut p = pending.lock().unwrap();
     if v.state == "mismatch" && p.as_ref().is_none_or(|p| std::time::Instant::now() >= p.deadline) {
         *p = None;
         v.state = "cancelled".into();
+        return true;
     }
+    false
+}
+
+fn expire(job: &LoginJob) -> bool {
+    expire_parts(&job.view, &job.pending)
 }
 
 fn busy(state: &str) -> bool {
@@ -92,7 +98,9 @@ impl Host {
         let expect_email =
             if self.accounts.list()?.iter().any(|a| a.name == name) { self.account_meta(name).email } else { None };
         let mut jobs = self.accounts.logins.lock().unwrap();
-        jobs.values().for_each(expire);
+        if jobs.values().map(expire).fold(false, |a, b| a | b) {
+            self.accounts_bump();
+        }
         if jobs.values().any(|j| {
             let v = j.view.lock().unwrap();
             v.account == name && busy(&v.state)
@@ -276,6 +284,15 @@ impl Host {
                     *pending.lock().unwrap() =
                         Some(Pending { secret, identity, deadline: std::time::Instant::now() + CONFIRM_FOR });
                     result = Ok(true);
+                    // 아무도 묻지 않아도 시한에 새 인증을 버리고 화면에 알린다
+                    let (view, pending, host) = (state.clone(), pending.clone(), host.clone());
+                    tokio::spawn(async move {
+                        tokio::time::sleep(CONFIRM_FOR).await;
+                        if expire_parts(&view, &pending) {
+                            tracing::info!(login = %view.lock().unwrap().id, "다른 메일 확인 시한: 새 인증을 버렸다");
+                            host.accounts_bump();
+                        }
+                    });
                 } else {
                     result = host.accounts.import(&v.account, &v.harness, &secret).map(|_| false);
                     if result.is_ok() {
@@ -326,7 +343,9 @@ impl Host {
     pub(crate) fn account_login_status(&self, id: &str) -> Result<FrontResponse, ErrorBody> {
         let jobs = self.accounts.logins.lock().unwrap();
         let job = jobs.get(id).ok_or_else(fail)?;
-        expire(job);
+        if expire(job) {
+            self.accounts_bump();
+        }
         Ok(FrontResponse::AccountLogin { login: job.view.lock().unwrap().clone() })
     }
 
@@ -341,7 +360,9 @@ impl Host {
         let (view, pending) = {
             let jobs = self.accounts.logins.lock().unwrap();
             let job = jobs.get(id).ok_or_else(fail)?;
-            expire(job);
+            if expire(job) {
+                self.accounts_bump();
+            }
             (job.view.clone(), job.pending.clone())
         };
         let mut v = view.lock().unwrap();
@@ -355,7 +376,9 @@ impl Host {
                 },
             ));
         }
-        let p = pending.lock().unwrap().take().ok_or_else(fail)?;
+        // 금고에 넣은 뒤에만 비운다: 쓰기가 실패하면 그대로 다시 고를 수 있다
+        let mut slot = pending.lock().unwrap();
+        let p = slot.as_ref().ok_or_else(fail)?;
         if switch {
             self.accounts.import(&v.account, &v.harness, &p.secret)?;
             self.account_logged_in(&v.account, &p.identity, true);
@@ -363,6 +386,8 @@ impl Host {
         } else {
             v.state = "kept".into();
         }
+        *slot = None;
+        drop(slot);
         self.db.audit(
             actor,
             "account_login_confirm",

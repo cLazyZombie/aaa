@@ -441,6 +441,8 @@ pub struct Host {
     pub inbox_changed: tokio_watch::Sender<u64>,
     /// host 계정이 바뀐 횟수(로그인 진행·끝, 기본, 메일·상태). 웹 계정 페이지가 다시 읽는다
     pub accounts_changed: tokio_watch::Sender<u64>,
+    /// 계정 기록(`account-meta:*`) 읽고-고쳐-쓰기를 하나씩(로그인 끝·갱신 결과·ticker 상태 pass가 겹친다)
+    account_meta_gate: Mutex<()>,
     /// EMFILE 중에는 파일을 더 열지 않고, ticker가 여유가 생긴 뒤 시스템 경고를 저장한다.
     resource_exhausted: std::sync::atomic::AtomicBool,
     health: Mutex<supervisor::Health>,
@@ -675,6 +677,7 @@ impl Host {
             asks_changed: tokio_watch::channel(0).0,
             inbox_changed: tokio_watch::channel(0).0,
             accounts_changed: tokio_watch::channel(0).0,
+            account_meta_gate: Mutex::new(()),
             enroll: Mutex::new(Enroll::default()),
             pairing: Mutex::new(Pairing::default()),
             agent_listen: Mutex::new(None),

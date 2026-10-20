@@ -27,14 +27,16 @@ function useAccounts(loginId: string | null) {
       const m = await me().catch(() => null);
       const full = canAccounts(m?.front_api);
       const [list, defaults] = await Promise.all([call({ op: "account_list" }), call({ op: "account_defaults" })]);
-      const status = full && loginId ? await call({ op: "account_login_status", id: loginId }) : null;
+      // 보던 로그인을 host가 잊었으면(다시 시작·오래된 작업 정리) 목록은 그대로 새로 읽고 카드만 「더 읽지 못함」으로 둔다
+      const status = full && loginId ? await call({ op: "account_login_status", id: loginId }).catch(() => "lost" as const) : null;
       if (mine !== seq.current) return;
       setData({
         accounts: list.kind === "accounts" ? list.accounts : [],
         defaults: defaults.kind === "account_defaults" ? defaults.defaults : [],
         full,
       });
-      if (status?.kind === "account_login") setLogin(status.login);
+      if (status === "lost") setLogin((prev) => (prev ? { ...prev, state: "lost" } : prev));
+      else if (status?.kind === "account_login") setLogin(status.login);
       setError(null);
     })().catch((e: unknown) => {
       if (mine === seq.current) setError(say(e));

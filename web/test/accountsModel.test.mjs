@@ -46,6 +46,6 @@ describe("계정", () => {
     assert.equal(other.done, false);
     assert.equal(other.tone, "warn");
     assert.ok(other.lines.includes("로그인한 메일: other@example.com"));
-    for (const state of ["succeeded", "kept", "cancelled", "failed"]) assert.equal(loginText({ ...base, state }).done, true, state);
+    for (const state of ["succeeded", "kept", "cancelled", "failed", "lost"]) assert.equal(loginText({ ...base, state }).done, true, state);
   });
 });
