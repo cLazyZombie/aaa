@@ -12,7 +12,7 @@
 // 그사이 바로 저장하면 편집을 시작한 판의 블록 hash가 낡아 폼 저장이 충돌로 돌아온다. 메모 입력칸은 첨부 줄을 빼고 보이며(첨부 칸이
 // 보인다) 첨부 줄은 메모 끝에 둔다.
 import { useEffect, useMemo, useRef, useState, type ClipboardEvent, type ReactNode, type SyntheticEvent } from "react";
-import { Bot, ChevronLeft, Circle, CircleDot, Play, Triangle, TriangleAlert, Unlink, X } from "lucide-react";
+import { Bot, ChevronLeft, Circle, CircleDot, Monitor, Play, Triangle, TriangleAlert, Unlink, X } from "lucide-react";
 import type { OwnerChoice, TaskAnchor, TaskBoard, TaskLogEntry, TaskOp, TaskView } from "./gen/proto";
 import { Markdown } from "./Markdown";
 import { uploadTaskFile } from "./api";
@@ -36,6 +36,7 @@ import {
   descendants,
   draftOf,
   draftOps,
+  agentParts,
   draftOwner,
   emptyDraft,
   linkOp,
@@ -47,6 +48,7 @@ import {
   taskDepth,
   taskState,
   type TaskAttachment,
+  type DraftWho,
   type TaskDraft,
   type TaskState,
   type ThreadGroups,
@@ -81,13 +83,48 @@ export function ThreadChip({ id, groups, onThread }: { id: string; groups: Threa
   );
 }
 
-/** agent owner 고르기 값: `profile@machine`·`@machine`(끊긴 머신은 고를 수 없다) */
-function agentOptions(owners: readonly OwnerChoice[]): { value: string; label: string; disabled: boolean }[] {
-  return owners.flatMap((o) =>
-    o.connected
-      ? [...o.profiles.map((p) => ({ value: `${p}@${o.machine}`, label: `${p}@${o.machine}`, disabled: false })), { value: `@${o.machine}`, label: `@${o.machine}(profile은 시작할 때)`, disabled: false }]
-      : [{ value: `@${o.machine}`, label: `@${o.machine}(끊김, profile 모름)`, disabled: true }],
-  );
+/**
+ * 맡은 쪽 칩(plan §8.332): agent 일은 모델·머신 칩 둘(정하지 않은 칸은 칩이 없다), 나·사람·미할당은 담당 칩 하나. `labeled`면 칩 글
+ * 앞에 칸 이름을 쓰고(상세), 아니면 아이콘으로 줄인다(목록 줄)
+ */
+export function WhoChips({ t, agents = [], labeled = false }: { t: TaskView; agents?: readonly string[]; labeled?: boolean }) {
+  const parts = agentParts(t, agents);
+  if (parts) {
+    return (
+      <>
+        {parts.profile && (
+          <span className="task-chip task-model" title="모델" data-testid="task-chip-model">
+            {labeled ? "모델 · " : <Bot aria-label="모델" />}
+            {parts.profile}
+          </span>
+        )}
+        {parts.machine && (
+          <span className="task-chip task-machine" title="머신" data-testid="task-chip-machine">
+            {labeled ? "머신 · " : <Monitor aria-label="머신" />}
+            {parts.machine}
+          </span>
+        )}
+      </>
+    );
+  }
+  const owner = ownerLabel(t, agents);
+  if (!owner) return null;
+  return <span className={`task-chip task-owner${owner === "미할당" ? " is-dim" : ""}`}>{labeled ? `담당 · ${owner}` : owner}</span>;
+}
+
+/** 모델 칸 고르기 값(plan §8.332): 연결된 머신의 profile. 머신을 골랐으면 그 머신의 것만이고, 지금 값이 없으면 앞에 둔다 */
+function modelOptions(owners: readonly OwnerChoice[], machine: string, current: string): string[] {
+  const on = owners.filter((o) => o.connected && (machine === "" || o.machine === machine));
+  const names = [...new Set(on.flatMap((o) => o.profiles))];
+  if (current && !names.includes(current)) names.unshift(current);
+  return names;
+}
+
+/** 머신 칸 고르기 값: 모든 머신(끊긴 머신은 고를 수 없고, 지금 값이 목록에 없으면 앞에 둔다) */
+function machineOptions(owners: readonly OwnerChoice[], current: string): { value: string; label: string; disabled: boolean }[] {
+  const out = owners.map((o) => ({ value: o.machine, label: o.connected ? o.machine : `${o.machine}(끊김)`, disabled: !o.connected && o.machine !== current }));
+  if (current && !owners.some((o) => o.machine === current)) out.unshift({ value: current, label: `${current}(모르는 머신)`, disabled: false });
+  return out;
 }
 
 export function agentNames(owners: readonly OwnerChoice[] | null): string[] {
@@ -182,7 +219,6 @@ export function TaskDetail(props: DetailProps) {
 
 /** 보기 권한: T1 상세 그대로(제목·owner·형식 어긋남·메모·원문 줄·상위·하위) */
 function ReadOnly({ t, board, byLine, groups, onThread, onPick, onOpenAttachment, onCover }: DetailProps & { t: TaskView }) {
-  const owner = ownerLabel(t);
   const state = taskState(t, groups);
   return (
     <div className="task-detail-body">
@@ -192,7 +228,7 @@ function ReadOnly({ t, board, byLine, groups, onThread, onPick, onOpenAttachment
       </h2>
       <div className="task-detail-chips">
         <span className="task-chip">{TASK_STATE_LABEL[state]}</span>
-        {owner && <span className={`task-chip task-owner${owner === "미할당" ? " is-dim" : ""}`}>owner · {owner}</span>}
+        <WhoChips t={t} labeled />
         {t.repo && <span className="task-chip task-repo">저장소 · {t.repo}</span>}
         {t.thread && <ThreadChip id={t.thread} groups={groups} onThread={onThread} />}
         {t.done && <span className="task-chip is-dim">[x] 완료 표시</span>}
@@ -331,9 +367,8 @@ function TaskForm(props: DetailProps) {
   };
   const children = base ? descendants(board, base) : new Set<number>();
   const parentChoices = board.tasks.filter((x) => x.list === draft.list && (!base || (x.line !== base.line && !children.has(x.line))));
-  const ownerValue = draft.ownerKind === "agent" ? `agent:${draft.agent}` : draft.ownerKind;
-  const agentChoices = owners ? agentOptions(owners) : [];
-  if (draft.ownerKind === "agent" && draft.agent && !agentChoices.some((a) => a.value === draft.agent)) agentChoices.unshift({ value: draft.agent, label: draft.agent, disabled: false });
+  const models = modelOptions(owners ?? [], draft.machine, draft.profile);
+  const machines = machineOptions(owners ?? [], draft.machine);
   const mineOf = (d: TaskDraft): MyEdit => {
     const { owner } = draftOwner(d);
     return { title: d.title.trim(), owner: owner || null, repo: d.repo || null, thread: base?.thread ?? null, notes: noteLines(d.notes) };
@@ -356,7 +391,7 @@ function TaskForm(props: DetailProps) {
   };
   const submit = (e?: SyntheticEvent) => {
     e?.preventDefault();
-    if (!dirty || draft.title.trim() === "" || (draft.ownerKind === "person" && draft.person.trim() === "")) return;
+    if (!dirty || draft.title.trim() === "" || (draft.who === "person" && draft.person.trim() === "")) return;
     void run(draftOps(base, draft, baseParent), mine());
   };
   // 첨부(§8.327). 올리는 동안 폼이 바뀔 수 있어 붙일 때의 값을 ref로 본다
@@ -445,6 +480,8 @@ function TaskForm(props: DetailProps) {
       title: s.title,
       owner: (s.owner ?? null) === ownerNow ? null : (s.owner ?? ""),
       person: false,
+      profile: null,
+      machine: null,
       notes: s.notes,
       thread: (s.thread ?? null) === base.thread ? null : (s.thread ?? ""),
       repo: null,
@@ -562,7 +599,7 @@ function TaskForm(props: DetailProps) {
               </button>
             )}
           </div>
-          <p className="muted">coordinator 입력칸에 맡기는 글을 채워 연다(보내기는 직접 누른다). 「바로 시작」은 확인창에서 profile·저장소를 고른다.</p>
+          <p className="muted">coordinator 입력칸에 맡기는 글을 채워 연다(보내기는 직접 누른다). 「바로 시작」은 확인창에서 모델·머신·저장소를 고른다.</p>
         </section>
       )}
       {!t && draft.thread && (
@@ -624,45 +661,11 @@ function TaskForm(props: DetailProps) {
             <input className="input" value={draft.list} disabled={busy} onChange={(e) => set({ list: e.target.value })} data-testid="task-field-new-list" />
           </label>
         )}
-        <label className="task-field">
-          <span>owner</span>
-          <select
-            className="input"
-            value={ownerValue}
-            disabled={busy}
-            onChange={(e) => {
-              const v = e.target.value;
-              if (v.startsWith("agent:")) set({ ownerKind: "agent", agent: v.slice(6) });
-              else set({ ownerKind: v as TaskDraft["ownerKind"] });
-            }}
-            data-testid="task-field-owner"
-          >
-            <option value="none">미할당</option>
-            <option value="me">나(me)</option>
-            {agentChoices.length > 0 && (
-              <optgroup label="agent">
-                {agentChoices.map((a) => (
-                  <option key={a.value} value={`agent:${a.value}`} disabled={a.disabled}>
-                    {a.label}
-                  </option>
-                ))}
-              </optgroup>
-            )}
-            {owners === null && <option disabled>agent 목록 읽는 중</option>}
-            <option value="person">사람…</option>
-          </select>
-        </label>
-        {draft.ownerKind === "person" && (
-          <label className="task-field">
-            <span>사람 이름(사람으로 저장)</span>
-            <input className="input" value={draft.person} disabled={busy} onChange={(e) => set({ person: e.target.value })} data-testid="task-field-person" />
-          </label>
-        )}
         {repoApi && (
           <label className="task-field">
             <span>저장소</span>
             <select className="input" value={draft.repo} disabled={busy} onChange={(e) => set({ repo: e.target.value })} data-testid="task-field-repo">
-              <option value="">정하지 않음(시작할 때 고른다)</option>
+              <option value="">정하지 않음</option>
               {(board.repos ?? []).map((r) => (
                 <option key={r} value={r}>
                   {r}
@@ -671,6 +674,50 @@ function TaskForm(props: DetailProps) {
               <option value={REPO_DIR}>작업 폴더(저장소 없음)</option>
               {draft.repo && draft.repo !== REPO_DIR && !(board.repos ?? []).includes(draft.repo) && <option value={draft.repo}>{draft.repo}(project.toml에 없음)</option>}
             </select>
+          </label>
+        )}
+      </div>
+      <div className="task-field-row task-who-row">
+        <label className="task-field">
+          <span>담당</span>
+          <select className="input" value={draft.who} disabled={busy} onChange={(e) => set({ who: e.target.value as DraftWho })} data-testid="task-field-owner">
+            <option value="agent">agent</option>
+            <option value="me">나(me)</option>
+            <option value="person">사람…</option>
+          </select>
+        </label>
+        {draft.who === "agent" && (
+          <>
+            <label className="task-field">
+              <span>모델</span>
+              <select className="input" value={draft.profile} disabled={busy} onChange={(e) => set({ profile: e.target.value })} data-testid="task-field-profile">
+                <option value="">자동(프로젝트 기본)</option>
+                {models.map((p) => (
+                  <option key={p} value={p}>
+                    {p}
+                  </option>
+                ))}
+                {owners === null && <option disabled>모델 목록 읽는 중</option>}
+              </select>
+            </label>
+            <label className="task-field">
+              <span>머신</span>
+              <select className="input" value={draft.machine} disabled={busy} onChange={(e) => set({ machine: e.target.value })} data-testid="task-field-machine">
+                <option value="">자동(덜 붐비는 곳)</option>
+                {machines.map((m) => (
+                  <option key={m.value} value={m.value} disabled={m.disabled}>
+                    {m.label}
+                  </option>
+                ))}
+                {owners === null && <option disabled>머신 목록 읽는 중</option>}
+              </select>
+            </label>
+          </>
+        )}
+        {draft.who === "person" && (
+          <label className="task-field">
+            <span>사람 이름(사람으로 저장)</span>
+            <input className="input" value={draft.person} disabled={busy} onChange={(e) => set({ person: e.target.value })} data-testid="task-field-person" />
           </label>
         )}
       </div>

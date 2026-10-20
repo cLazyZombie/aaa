@@ -1476,7 +1476,7 @@ impl Host {
                 self.project_dir(&project)?;
                 let owners = self.assignable(&project).await;
                 let valid = match check {
-                    Some(c) => Some(self.check_owner(&owners, &c)?),
+                    Some(c) => Some(self.check_owner(&project, &owners, &c)?),
                     None => None,
                 };
                 Ok(FrontResponse::Assignable { owners, valid })

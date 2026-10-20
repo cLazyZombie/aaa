@@ -487,13 +487,19 @@ enum InboxCmd {
 enum TaskCmd {
     /// 목록별 task와 형식 어긋남(읽기만 한다)
     List,
-    /// task를 더한다(정규형 `- [ ] 제목 (owner) [저장소]`, 같은 제목은 거부)
+    /// task를 더한다(정규형 `- [ ] 제목 (모델@머신) [저장소]`, 같은 제목은 거부)
     Add {
         title: String,
         /// 목록(`##` 이름). 없으면 파일 끝에 만든다
         #[arg(long, default_value = "Backlog")]
         list: String,
-        /// owner: me·profile·@machine·profile@machine(`aaa assignable --check`와 같은 판정). 비우면 미할당
+        /// agent에게 맡길 모델(profile). 비우면 시작할 때 고른다
+        #[arg(long)]
+        profile: Option<String>,
+        /// agent에게 맡길 머신. 비우면 시작할 때 그 저장소가 있는 머신 중 덜 붐비는 곳
+        #[arg(long)]
+        machine: Option<String>,
+        /// 사람의 할 일: `me`(사용자)나 사람 이름(--person). 옛 꼴 profile@machine도 받는다. --profile·--machine과 함께 쓰지 않는다
         #[arg(long)]
         owner: Option<String>,
         /// owner가 사람 이름이다
@@ -524,7 +530,13 @@ enum TaskCmd {
         block: Option<String>,
         #[arg(long)]
         title: Option<String>,
-        /// 빈 글이면 미할당
+        /// 모델(profile) 칸. 빈 글이면 비운다(머신 칸은 그대로)
+        #[arg(long)]
+        profile: Option<String>,
+        /// 머신 칸. 빈 글이면 비운다(모델 칸은 그대로)
+        #[arg(long)]
+        machine: Option<String>,
+        /// 사람의 할 일(`me`·사람 이름). 빈 글이면 미할당
         #[arg(long)]
         owner: Option<String>,
         #[arg(long)]
@@ -731,7 +743,7 @@ enum ThreadCmd {
         title: Option<String>,
         #[arg(long)]
         machine: Option<String>,
-        /// profile. 없으면 --from-task의 owner, 그다음 project.toml thread_profile
+        /// profile(모델). 없으면 --from-task의 모델 칸, 그다음 project.toml thread_profile
         #[arg(long)]
         profile: Option<String>,
         /// host에 등록한 계정 이름(profile과 별개)
@@ -749,7 +761,7 @@ enum ThreadCmd {
         /// 할 일 파일(`-`면 표준 입력). --from-task면 비워도 된다.
         #[arg(long)]
         task_file: Option<String>,
-        /// TASKS.md의 task 제목. owner가 profile·machine 기본값이 되고 메모가 할 일에 붙는다. 저장소 칸이 저장소를 정하고,
+        /// TASKS.md의 task 제목. 모델·머신 칸이 profile·machine 기본값이 되고 메모가 할 일에 붙는다. 저장소 칸이 저장소를 정하고,
         /// 머신을 정하지 않았으면 그 저장소가 있는 머신 가운데 덜 붐비는 곳이다. 칸이 비면 작업 폴더로 띄우고 경고한다.
         #[arg(long)]
         from_task: Option<String>,
@@ -1660,35 +1672,53 @@ fn run(cli: Cli) -> Result<ExitCode> {
             use aaa_proto::TaskOp;
             let op = match cmd {
                 TaskCmd::List | TaskCmd::Log { .. } => unreachable!(),
-                TaskCmd::Add { title, list, owner, person, notes, parent, before, thread, repo } => TaskOp::Add {
-                    list,
-                    title,
-                    owner,
-                    person,
-                    notes,
-                    parent: parent.as_deref().map(task_at),
-                    before: before.as_deref().map(task_at),
-                    thread,
-                    repo,
-                },
-                TaskCmd::Edit { task, block, title, owner, person, notes, clear_notes, thread, repo, done, undone } => {
-                    TaskOp::Update {
-                        at: task_at_block(&task, block),
+                TaskCmd::Add { title, list, profile, machine, owner, person, notes, parent, before, thread, repo } => {
+                    TaskOp::Add {
+                        list,
                         title,
                         owner,
                         person,
-                        notes: if clear_notes { Some(Vec::new()) } else { (!notes.is_empty()).then_some(notes) },
+                        profile,
+                        machine,
+                        notes,
+                        parent: parent.as_deref().map(task_at),
+                        before: before.as_deref().map(task_at),
                         thread,
-                        done: if done {
-                            Some(true)
-                        } else if undone {
-                            Some(false)
-                        } else {
-                            None
-                        },
                         repo,
                     }
                 }
+                TaskCmd::Edit {
+                    task,
+                    block,
+                    title,
+                    profile,
+                    machine,
+                    owner,
+                    person,
+                    notes,
+                    clear_notes,
+                    thread,
+                    repo,
+                    done,
+                    undone,
+                } => TaskOp::Update {
+                    at: task_at_block(&task, block),
+                    title,
+                    owner,
+                    person,
+                    profile,
+                    machine,
+                    notes: if clear_notes { Some(Vec::new()) } else { (!notes.is_empty()).then_some(notes) },
+                    thread,
+                    done: if done {
+                        Some(true)
+                    } else if undone {
+                        Some(false)
+                    } else {
+                        None
+                    },
+                    repo,
+                },
                 TaskCmd::Move { task, block, list, before, parent } => TaskOp::Move {
                     at: task_at_block(&task, block),
                     to_list: list,
@@ -3319,7 +3349,17 @@ fn assignable_line(owners: &[aaa_proto::OwnerChoice]) -> String {
             }
         })
         .collect();
-    format!("맡길 수 있는 owner(profile@machine): {}", parts.join(", "))
+    format!("맡길 수 있는 모델(머신별, task 칸은 --profile·--machine): {}", parts.join(", "))
+}
+
+/// task의 맡은 쪽: agent면 ` (모델 X, 머신 Y)`(빈 칸은 「자동」), `me`·사람은 ` (me)`·` (사람 이름)`, 미할당은 없음(옛 host는 owner 원문)
+fn task_who(t: &aaa_proto::TaskView) -> String {
+    if t.profile.is_some() || t.machine.is_some() {
+        let p = t.profile.as_deref().unwrap_or("자동");
+        let m = t.machine.as_deref().unwrap_or("자동");
+        return format!(" (모델 {p}, 머신 {m})");
+    }
+    t.owner.as_ref().filter(|o| *o != "agent").map(|o| format!(" ({o})")).unwrap_or_default()
 }
 
 /// `aaa task list`: 목록 머리·설명 줄, task(하위는 들여 씀, 형식 어긋남은 ▲), task 없는 열린 thread, 「나중」 파일
@@ -3352,7 +3392,7 @@ fn render_task_board(s: &mut String, b: &aaa_proto::TaskBoard) {
             } else {
                 "○"
             };
-            let owner = t.owner.as_ref().map(|o| format!(" ({o})")).unwrap_or_default();
+            let owner = task_who(t);
             let repo = t.repo.as_ref().map(|r| format!(" [{r}]")).unwrap_or_default();
             let thread = t.thread.as_ref().map(|x| format!(" · {x}")).unwrap_or_default();
             let pad = "  ".repeat(depth(t) + 1);
@@ -3425,10 +3465,11 @@ fn render_context(s: &mut String, c: &aaa_proto::ProjectContext) {
         s.push_str("  (없음)\n");
     }
     for t in &c.tasks {
-        let owner = t.owner.as_ref().map(|o| format!(" ({o})")).unwrap_or_default();
+        let owner = task_who(t);
+        let repo = t.repo.as_ref().map(|r| format!(" [{r}]")).unwrap_or_default();
         let thread = t.thread.as_ref().map(|x| format!(" · {x}")).unwrap_or_default();
         let done = if t.done { " [x]" } else { "" };
-        let _ = writeln!(s, "  [{}] {}{owner}{thread}{done}", t.list, t.title);
+        let _ = writeln!(s, "  [{}] {}{owner}{repo}{thread}{done}", t.list, t.title);
         if !t.notes.is_empty() {
             let n: String = t.notes.join(" ").chars().take(60).collect();
             let _ = writeln!(s, "    notes: {n}");

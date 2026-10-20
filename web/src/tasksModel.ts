@@ -36,11 +36,40 @@ export function unassigned(t: TaskView): boolean {
   return (t.owner === null || t.owner === "agent") && !t.problems.some((p) => p.startsWith("owner 칸이 owner 꼴이 아님"));
 }
 
-/** owner 칩 글: 미할당·나·그 밖 원문 */
-export function ownerLabel(t: TaskView): string | null {
+/**
+ * 담당 칩 글: 미할당·나·사람 이름. agent에게 맡긴 task는 없음이다(모델·머신 칩이 따로 보인다, `agentParts`). 형식 어긋남으로 owner를
+ * 읽지 못한 task도 없음이다
+ */
+export function ownerLabel(t: TaskView, agents: readonly string[] = []): string | null {
   if (t.owner === "me") return "나";
   if (unassigned(t)) return "미할당";
-  return t.owner;
+  return agentParts(t, agents) ? null : t.owner;
+}
+
+/** agent에게 맡긴 task의 모델·머신 칸(plan §8.332, 빈 칸은 null). agent 일이 아니면(미할당·나·사람) null */
+export interface AgentParts {
+  profile: string | null;
+  machine: string | null;
+}
+
+/**
+ * owner → 모델·머신 칸. host가 나눠 준 값(FRONT_API 1.74 `TaskView.profile`·`machine`)을 쓰고, 옛 host(칸이 없다)면 `모델@머신` 글을
+ * 나눈다(맨 이름은 맡길 수 있는 profile 목록에 있을 때만 모델, `ownerKindOf`)
+ */
+export function agentParts(t: Pick<TaskView, "owner" | "profile" | "machine">, agents: readonly string[] = []): AgentParts | null {
+  if (t.profile != null || t.machine != null) return { profile: t.profile ?? null, machine: t.machine ?? null };
+  if (t.profile === null && t.machine === null) return null;
+  if (ownerKindOf(t.owner, agents) !== "agent") return null;
+  const o = t.owner ?? "";
+  const at = o.indexOf("@");
+  return at < 0 ? { profile: o, machine: null } : { profile: at > 0 ? o.slice(0, at) : null, machine: o.slice(at + 1) || null };
+}
+
+/** 모델·머신 칸 → owner 글(host `tasks::agent_owner`): `모델@머신`·`모델`·`@머신`, 둘 다 비면 빈 글(미할당) */
+export function agentOwner(profile: string, machine: string): string {
+  const p = profile.trim();
+  const m = machine.trim();
+  return m ? `${p}@${m}` : p;
 }
 
 const has = (needle: string, text: string | null | undefined) => (text ?? "").toLowerCase().includes(needle);
@@ -178,16 +207,21 @@ export function toListOp(t: TaskView, list: string): TaskOp | null {
   return t.list === list && t.parent === null ? null : move(t, { to_list: list });
 }
 
-/** owner 칸 고르기: 미할당·나·agent(profile@machine)·사람 이름 */
+/** owner 글의 종류: 미할당·나·agent(모델·머신)·사람 이름 */
 export type OwnerKind = "none" | "me" | "agent" | "person";
+
+/** 편집 폼의 담당: agent(모델·머신 칸, 둘 다 비면 미할당)·나·사람 이름 */
+export type DraftWho = "agent" | "me" | "person";
 
 /** 편집 폼의 값 */
 export interface TaskDraft {
   title: string;
   list: string;
-  ownerKind: OwnerKind;
-  /** agent owner(`claude`·`@mac-b`·`codex@mac-b`) */
-  agent: string;
+  who: DraftWho;
+  /** 모델(profile) 칸, 빈 글은 정하지 않음(시작할 때 프로젝트 기본) */
+  profile: string;
+  /** 머신 칸, 빈 글은 정하지 않음(시작할 때 그 저장소가 있는 머신 중 덜 붐비는 곳) */
+  machine: string;
   person: string;
   notes: string;
   /** 상위 task(고른 판의 블록 고정점, 없으면 맨 위 단계). 줄 번호로 들면 그사이 줄이 밀렸을 때 다른 task 밑으로 간다 */
@@ -220,12 +254,14 @@ export function parentAnchor(board: TaskBoard, t: TaskView): TaskAnchor | null {
 }
 
 export function draftOf(t: TaskView, agents: readonly string[], parent: TaskAnchor | null): TaskDraft {
-  const kind = ownerKindOf(t.owner, agents);
+  const parts = agentParts(t, agents);
+  const kind = parts ? "agent" : ownerKindOf(t.owner, agents);
   return {
     title: t.title,
     list: t.list,
-    ownerKind: kind,
-    agent: kind === "agent" ? (t.owner ?? "") : "",
+    who: kind === "me" || kind === "person" ? kind : "agent",
+    profile: parts?.profile ?? "",
+    machine: parts?.machine ?? "",
     person: kind === "person" ? (t.owner ?? "") : "",
     notes: t.notes.join("\n"),
     parent,
@@ -235,20 +271,21 @@ export function draftOf(t: TaskView, agents: readonly string[], parent: TaskAnch
 }
 
 export function emptyDraft(list: string, parent: TaskAnchor | null = null): TaskDraft {
-  return { title: "", list, ownerKind: "none", agent: "", person: "", notes: "", parent, thread: null, repo: "" };
+  return { title: "", list, who: "agent", profile: "", machine: "", person: "", notes: "", parent, thread: null, repo: "" };
 }
 
-/** 폼 owner → host owner 글(빈 글은 미할당)과 「사람으로 저장」 */
+/**
+ * 폼 담당 → host owner 글(빈 글은 미할당)과 「사람으로 저장」. 모델·머신은 표기 그대로 `모델@머신` 한 칸으로 보낸다(옛 host도 같은
+ * 판정을 한다)
+ */
 export function draftOwner(d: TaskDraft): { owner: string; person: boolean } {
-  switch (d.ownerKind) {
+  switch (d.who) {
     case "me":
       return { owner: "me", person: false };
-    case "agent":
-      return { owner: d.agent.trim(), person: false };
     case "person":
       return { owner: d.person.trim(), person: true };
     default:
-      return { owner: "", person: false };
+      return { owner: agentOwner(d.profile, d.machine), person: false };
   }
 }
 
@@ -275,7 +312,7 @@ export function draftOps(t: TaskView | null, d: TaskDraft, wasParent: TaskAnchor
   const notes = noteLines(d.notes);
   const parent = d.parent;
   if (!t) {
-    return [{ op: "add", list: parent ? parent.list : d.list.trim(), title: d.title.trim(), owner: owner || null, person, notes, parent, before: null, thread: d.thread, repo: d.repo || null }];
+    return [{ op: "add", list: parent ? parent.list : d.list.trim(), title: d.title.trim(), owner: owner || null, person, profile: null, machine: null, notes, parent, before: null, thread: d.thread, repo: d.repo || null }];
   }
   const ops: TaskOp[] = [];
   const title = d.title.trim() !== t.title ? d.title.trim() : null;
@@ -284,7 +321,7 @@ export function draftOps(t: TaskView | null, d: TaskDraft, wasParent: TaskAnchor
   const notesChanged = !sameNotes(notes, t.notes);
   const repoChanged = d.repo !== (t.repo ?? "");
   if (title !== null || ownerChanged || notesChanged || repoChanged) {
-    ops.push({ op: "update", at: anchorOf(t), title, owner: ownerChanged ? owner : null, person: ownerChanged && person, notes: notesChanged ? notes : null, thread: null, done: null, repo: repoChanged ? d.repo : null });
+    ops.push({ op: "update", at: anchorOf(t), title, owner: ownerChanged ? owner : null, person: ownerChanged && person, profile: null, machine: null, notes: notesChanged ? notes : null, thread: null, done: null, repo: repoChanged ? d.repo : null });
   }
   if ((parent?.block_sha256 ?? null) !== (wasParent?.block_sha256 ?? null) || (parent === null && d.list.trim() !== t.list)) {
     ops.push(parent ? { op: "move", at: anchorOf(t), to_list: "", before: null, parent } : move(t, { to_list: d.list.trim() }));
@@ -393,15 +430,18 @@ export function handOffText(t: TaskView, again = false): string {
  */
 export function startable(t: TaskView, groups: ThreadGroups, agents: readonly string[]): boolean {
   if (t.problems.length > 0 || taskState(t, groups) === "run") return false;
-  const kind = ownerKindOf(t.owner, agents);
-  return kind === "none" || kind === "agent";
+  return unassigned(t) || agentParts(t, agents) !== null;
 }
 
-/** owner 칸이 정한 profile·머신(`profile@머신`). host `--from-task`는 이와 다른 값을 거부하므로 「바로 시작」 창이 고르기를 잠근다 */
-export function ownerFixes(owner: string | null): { profile: boolean; machine: boolean } {
+/**
+ * task의 모델·머신 칸이 정한 것. host `--from-task`는 이와 다른 값을 거부하므로 「바로 시작」 창이 고르기를 잠근다. 옛 host(칸이
+ * 없다)면 owner 글을 그대로 나눈다(사람은 맡길 수 없어 창이 열리지 않는다)
+ */
+export function ownerFixes(t: Pick<TaskView, "owner" | "profile" | "machine">): { profile: boolean; machine: boolean } {
+  const owner = t.owner;
   if (owner === null || owner === "" || owner === "agent" || owner === "me") return { profile: false, machine: false };
-  const at = owner.indexOf("@");
-  return at < 0 ? { profile: true, machine: false } : { profile: at > 0, machine: at < owner.length - 1 };
+  const parts = agentParts(t, [owner.split("@")[0]]);
+  return { profile: !!parts?.profile, machine: !!parts?.machine };
 }
 
 /** 「바로 시작」의 저장소 이름마다 그 저장소가 있는 머신과 경로(plan §8.330). 머신이 빈 저장소 줄은 host 로컬 머신이다(없으면 뺀다) */
@@ -423,7 +463,7 @@ export function defaultMachine(cands: readonly string[], order: readonly string[
 
 /** 「task에 잇기」·「연결만 풀기」: thread 칸만 바꾼다(빈 글은 풀기) */
 export function linkOp(t: TaskView, thread: string): TaskOp {
-  return { op: "update", at: anchorOf(t), title: null, owner: null, person: false, notes: null, thread, done: null, repo: null };
+  return { op: "update", at: anchorOf(t), title: null, owner: null, person: false, profile: null, machine: null, notes: null, thread, done: null, repo: null };
 }
 
 /** 「task에 잇기」 고르기 목록: 형식 어긋남이 없고 열린 thread와 이어지지 않은 task(줄을 다시 쓰면 제목 검사를 거친다) */

@@ -73,6 +73,9 @@
   text-overflow: ellipsis;
 }
 .task-chip.is-dim { color: var(--text-dim); }
+/* 모델·머신 칩(plan §8.332): 목록 줄은 칸 이름을 아이콘으로 줄인다 */
+.task-chip > svg { flex: 0 0 auto; width: 12px; height: 12px; margin-right: 3px; color: var(--text-dim); }
+.task-model, .task-machine { max-width: 10em; }
 button.task-chip { cursor: pointer; }
 button.task-chip:disabled { cursor: default; color: var(--text-dim); }
 .tasks-filter.is-on { border-color: var(--accent); background: var(--accent-tint); color: var(--text-strong); }
@@ -236,6 +239,8 @@ button.task-chip:disabled { cursor: default; color: var(--text-dim); }
   .task-detail-close { padding-left: 0; font-size: var(--fs-md); }
   .task-row > .task-thread { display: none; }
   .task-row .task-owner,
+  .task-row .task-model,
+  .task-row .task-machine,
   .task-row .task-repo { display: none; }
 }
 
@@ -326,6 +331,9 @@ button.task-chip:disabled { cursor: default; color: var(--text-dim); }
 .task-field-head { display: flex; align-items: center; justify-content: space-between; }
 .task-field-row { display: flex; flex-wrap: wrap; gap: var(--space-3); }
 .task-field-row > .task-field { flex: 1 1 180px; }
+/* 목록·저장소는 둘, 담당·모델·머신은 셋을 한 줄에 둔다(데스크톱 상세 칸 40%·휴대폰 390px에서도 들어가게) */
+.task-form .task-field-row > .task-field { flex-basis: 140px; }
+.task-form .task-who-row > .task-field { flex-basis: 88px; }
 .task-notes-input { min-height: 7.5em; resize: vertical; font-family: var(--font-mono); font-size: var(--fs-xs); line-height: 1.5; }
 .task-notes-preview { min-height: 7.5em; padding: var(--space-2) var(--space-3); border: var(--hairline) solid var(--border); border-radius: var(--radius-md); color: var(--text); }
 .task-form-actions { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); }

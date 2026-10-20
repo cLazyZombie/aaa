@@ -1559,6 +1559,13 @@ pub struct TaskView {
     pub title: String,
     /// 괄호 안 owner 원문(`me`, `claude`, `codex@mac-b`, 사람 이름 등)
     pub owner: Option<String>,
+    /// agent에게 맡긴 task의 모델(profile) 칸(FRONT_API 1.74, plan §8.332): owner `모델@머신`의 앞. 맨 이름은 host가 아는 profile일
+    /// 때만 모델이다(아니면 사람). 비면 시작할 때 고른다. 옛 host는 생략한다
+    #[serde(default)]
+    pub profile: Option<String>,
+    /// agent에게 맡긴 task의 머신 칸(FRONT_API 1.74): owner `모델@머신`의 뒤. 비면 그 저장소가 있는 머신 중 덜 붐비는 곳이다
+    #[serde(default)]
+    pub machine: Option<String>,
     /// owner 뒤 대괄호의 저장소 칸(FRONT_API 1.73, plan §8.330): `project.toml` repos 경로의 마지막 이름이나 `작업 폴더`. 비면 정하지
     /// 않은 task다(「바로 시작」 창에서 고른다). 옛 host는 생략한다
     #[serde(default)]
@@ -1632,6 +1639,12 @@ pub enum TaskOp {
         /// owner가 사람 이름이다(「사람으로 저장」). 아니면 `assignable --check`와 같은 판정을 거친다
         #[serde(default)]
         person: bool,
+        /// 모델(profile) 칸(FRONT_API 1.74). 머신 칸과 함께 owner `모델@머신`으로 적는다. `owner`(me·사람)와 함께 주면 거부한다
+        #[serde(default)]
+        profile: Option<String>,
+        /// 머신 칸(FRONT_API 1.74)
+        #[serde(default)]
+        machine: Option<String>,
         #[serde(default)]
         notes: Vec<String>,
         #[serde(default)]
@@ -1654,6 +1667,12 @@ pub enum TaskOp {
         owner: Option<String>,
         #[serde(default)]
         person: bool,
+        /// 모델 칸(FRONT_API 1.74): `None`은 그대로, 빈 글은 비움. 머신 칸만 바꾸면 모델은 그대로 둔다
+        #[serde(default)]
+        profile: Option<String>,
+        /// 머신 칸(FRONT_API 1.74, `profile`과 같은 규칙)
+        #[serde(default)]
+        machine: Option<String>,
         #[serde(default)]
         notes: Option<Vec<String>>,
         #[serde(default)]
