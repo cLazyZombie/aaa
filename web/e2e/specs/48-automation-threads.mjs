@@ -199,6 +199,19 @@ export default async function ({ page }) {
     await page.keyboard.press("Escape");
     await page.getByTestId("automation-detail").waitFor({ state: "detached" });
     await page.getByTestId("activity-work").click();
+    // 휴대폰 폭: 목록 서랍 안의 표지를 손가락으로 누르면 서랍 안에서 자동화 패널과 규칙 상세가 열린다(줄 pane은 열지 않는다)
+    await page.setViewportSize(SIZES.phone);
+    await openList(page);
+    const at = await page.evaluate(() => location.hash);
+    await page.getByTestId(`thread-origin-${project}-${auto.id}`).click();
+    await page.getByTestId("automation-detail").waitFor();
+    if ((await page.evaluate(() => location.hash)) !== at) throw new Error("휴대폰 표지가 줄(pane)도 열었다");
+    await shot(page, "a1-phone-rule-detail");
+    await page.keyboard.press("Escape");
+    await page.getByTestId("automation-detail").waitFor({ state: "detached" });
+    await page.getByTestId("activity-work").click();
+    await closeList(page);
+    await page.setViewportSize(SIZES.desktop);
   });
 
   await step("「모든 thread」의 「자동화만」: 자동화가 띄운 thread만 남고 줄 사실에 「자동 · 규칙」이 붙는다", async () => {
