@@ -1,6 +1,8 @@
 /.coordinator/
 /research/
 .DS_Store
+__pycache__/
+*.pyc
 /target/
 /web/node_modules/
 /web/dist/

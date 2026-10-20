@@ -5837,7 +5837,7 @@ L4 후속(10-20 00시 사용자 관찰): 멈춤 상태의 후보 예약과 재�
 - **카드.** t3code `ChangedFilesTree.tsx`·`DiffStatLabel.tsx`·`turnDiffTree.ts`를 옮겼다: 「파일 N개 +a -d」(ASCII 붙임표, 1000 위는 k·m), 폴더 먼저·자연수 차례·한 자식 폴더 합침·폴더 합계, 폴더는 접힌 채 시작하고 「모든 폴더 펼치기」를 thread마다 기억, 「diff 열기」(카드 폭 24rem 밑은 아이콘만)는 경로 차례 첫 파일로 연다. 숫자는 공백을 무시하지 않는다(t3code 카드와 같다). 못 읽거나 바뀐 것이 없으면 카드가 없다. 보기 기기는 카드도 요청도 없다(`ThreadFile`과 같다).
 - **패널.** `@pierre/diffs` CodeView(t3code `StyledDiffCodeView`의 머리 32px·구분선 24px, `lineDiffType: "none"`, 붙는 머리), 파일은 모두 접힌 채 시작하고 카드에서 고른 파일을 펼쳐 데려온다(t3code `revealDiffFile`). 머리 한 줄: 범위 고르기·합계·다시 읽기·모두 펼치기/접기·나란히(768px 위만)·긴 줄 바꿈·공백 무시(기본 켬, t3code와 같다)·닫기. 파일 이름을 누르면 파일 보기(worktree 기준), 머리를 누르면 접기. 다시 읽기는 단추·창 focus·보고가 바뀔 때(t3code의 workspace 변경 신호 대신).
 - **t3code와 다른 것.** 패널은 파일 보기처럼 기록 한 칸이다(닫기·뒤로·iOS 가장자리 쓸기가 같다, §8.300·§8.301. t3code 오른쪽 패널은 기록에 없고 sheet에 닫기가 없다). 손가락 기기에서 카드 줄 40px·머리 단추 44px·diff 머리 44px. 카드 250줄 가상화·패널 안 파일 트리 곁칸·diff 안 찾기(t3code 패치)·줄 의견·폭 끌기는 옮기지 않았다. 나란히 보기는 설정 대신 이 기기에 기억한다(aaa 설정에 비교 보기 방식이 없다, §8.175). 줄 높이는 앱 글꼴로 재서 넘긴다(기본 20px 어림이면 짧은 비교에서 붙는 창이 아래로 밀렸다).
-- **검증.** common `diff::tests`(numstat·name-status 해석, 줄 경계 자르기, base 후보), agent `diff::tests`(실제 저장소: branch·미커밋·파일 하나·없는 base, 저장소 불변, 외부 callback 안 돎, 큰 비교의 frame 안 크기), 웹 유닛 `diffTree.test.mjs`, 웹 E2E `42-thread-diff`(데스크톱 Chromium 카드·옆 칸·나란히·미커밋·뒤로, iPhone 390·430·iPad 820 WebKit sheet·머리 한 줄·닫기 44px, 큰 비교의 파일별 읽기·「일부」).
+- **검증.** common `diff::tests`(numstat·name-status 해석, 줄 경계 자르기, base 후보), agent `diff::tests`(실제 저장소: branch·미커밋·파일 하나·없는 base, 저장소 불변, 외부 callback 안 돎, 큰 비교의 frame 안 크기), 웹 유닛 `diffTree.test.mjs`, 웹 E2E `42-thread-diff`(데스크톱 Chromium 카드·옆 칸·나란히·미커밋·뒤로, iPhone 390·430·iPad 820 WebKit sheet·머리 한 줄·닫기 44px(sheet가 다 올라온 뒤 잰다), 큰 비교의 파일별 읽기·「일부」).
 
 ### 8.306 웹 할 일 보기(10-20, t-0480 할 일 관리 T1)
 
@@ -5851,3 +5851,38 @@ L4 후속(10-20 00시 사용자 관찰): 멈춤 상태의 후보 예약과 재�
 - **CLI `aaa task list`(brief 밖에서 더함).** `tasks`를 읽기만 하는 명령이다. 보기 권한(worker 세션 안 CLI)으로 읽히는지를 여러 프로세스 시험이 보려면 CLI 길이 있어야 했고, coordinator도 형식 어긋남을 볼 수 있다. T2가 같은 묶음에 add·edit·rm 등을 더한다.
 - **참고 위치.** 행 모양·상태 아이콘(Circle·CircleDot, 상태별 글자색, 낭독기용 상태 문구): t3code 4b1024da `apps/web/src/components/chat/ComposerTasksBadge.tsx:37-138`. 목록 머리(이름·수)와 메모 표지 `≡`, 메모 상세: herdr-projects 0.2.35 `src/popup.rs` `build`(Section::Tasks)·`task_detail`. 휴대폰 Back으로 닫는 상세: herdr-web-ui aa624cb의 시트 뒤로(이 저장소 `web/src/herdr/sheetHistory.ts`). 참고 넷에 사람이 웹에서 할 일 목록을 보는 화면은 없어(t-0469 §1.3) 와이어프레임(t-0469 index.html §3)을 따랐다. 다르게 한 것: 기획 §3.6은 「파일이 없으면 탭을 숨긴다」였으나 T1 brief의 「파일이 없으면 「없음」 표시」를 따라 탭을 두고 「없음」을 보인다(설정이 잘못된 것을 알 수 있다). 휴대폰 행은 폭 때문에 owner·thread 칩을 숨기고 상세에서 보인다(와이어프레임 휴대폰 행과 같다).
 - **검증.** host 유닛 `tasks::tests`(오독 꼴 셋, 지금 시험 `lines_owners_notes` 기대 그대로, 줄·상위·블록 hash·목록 설명, `task_notes` 경로·절)·`project::tests`(task_notes 더하기·빼기·거부). 오독 판정을 끈 결함 심기에서 `misread_owner_shapes_become_problems`가 실패한다. 여러 프로세스 `m13 task_board_reads_tasks_and_follows_file_edits`. 웹 순수 규칙 `tasksModel.test.mjs`, 웹 E2E `43-tasks`.
+
+### 8.307 키 관리자 K0: aaa 기록의 env 값 가림(10-20, t-0481)
+
+- **요청.** 사용자 10-20 「키 관리자를 만들꺼야 …」, 「완벽한 보안 보다는 사용성에 더 초점을, 기본적인 보안만 되면 돼」, 「다만 로그 같은 곳에서 절대 나오면 안 돼」. 키 관리자 기획(t-0468 확정판) §8의 K0만 한다. 지금 새는 자리를 막는 단계이고, 보관·주입·출력 가림(K1~K3)은 하지 않는다.
+- **감사 기록.** `pane_run`은 띄운 spec을 그대로 남기되 env는 이름 목록만 쓴다(`db::pane_run_detail`). spec의 `env`와 host가 푼 profile의 `resolved_profile.env`가 대상이다.
+- **옛 행 정리.** host DB를 열 때 env 값이 남은 `pane_run` 행을 이름만으로 바꾼다. 대상은 JSON `env[0]`이 배열이거나 `resolved_profile.env`가 객체인 행이다. 그 뒤 `VACUUM`과 `wal_checkpoint(TRUNCATE)`로 빈 page와 WAL에서도 지운다. 시작마다 그런 행만 찾으므로, 옛 판으로 되돌렸다가 다시 올려도 그 사이 행이 정리된다. VACUUM 전에 멈추거나 VACUUM이 실패하면(임시 공간·잠금) meta `audit_vacuum` 표지가 남아 다음 시작에 다시 한다. 이때 host는 경고만 남기고 시작한다(값은 이미 지웠다). schema는 올리지 않는다(옛 판도 그대로 연다). 운영 DB는 배포 뒤 host가 시작하면서 스스로 정리한다.
+- **Debug.** `Launch`·`ResolvedProfile`·`SpawnSpec`(aaa-proto)과 설정 `Profile`·`HarnessOverride`는 env를 `«env N개: 이름…»`로만 찍는다. 이 형을 품은 메시지(`AgentRequest::Spawn`·`ThreadPrepare`·`ThreadReady`)도 같으므로 debug 로그와 「예상하지 못한 응답」 오류 문구에 값이 나오지 않는다. wire 직렬화는 그대로라 FRONT_API와 agent 기능은 바뀌지 않는다.
+- **export.** `project delete`가 휴지통에 남기는 `aaa-records.json`에서 thread 기록의 `launch.env`는 이름만 둔다.
+- **평문 경고.** host.toml·host.local.toml의 profile env 가운데 이름에 KEY·TOKEN·SECRET·PASSWORD(대소문자 무관)가 들고 값이 비어 있지 않은 것은, 값을 정한 파일·줄을 짚어 경고한다. host 시작 로그와 `aaa config check`에 나온다. 경고에는 이름만 쓴다. agent.toml `[harnesses.*] env`는 K0 범위 밖이라 경고하지 않는다.
+- **core dump.** host·agent·session host는 시작할 때 `RLIMIT_CORE` soft를 0으로 내린다. hard는 그대로 둔다. pane 자식도 soft 0을 물려받지만 pane 안에서 `ulimit -c`로 다시 켤 수 있다.
+- **그대로 둔 것.** pane 안 `printenv`에는 값이 보인다(env 전달 기본 동작). 다음은 아직 평문이며 K2(참조만 저장)에서 막는다: DB `threads.data`의 `launch.env`, agent `sessions/*/spec.json`·화면 저장물, `thread-preparations/` 준비 기록. 로그 단계는 `AAA_LOG`가 정한다(`RUST_LOG`는 읽지 않는다).
+- **검증.** E2E m13 `secret_k0::env_values_stay_out_of_audit_db_logs_and_export`(docs/testing.md 「키 관리자 K0 카나리 찾기」). 유닛 시험은 다섯이다.
+  - host `db::audit_env_tests`: 정리 전 DB 사본으로 옛 행 정리·지운 행의 빈 page·WAL 0건·다시 열기.
+  - proto `debug_shows_env_names_without_values`
+  - config `plaintext_secret_env_warns_by_name_only`
+  - common `disable_core_dump_zeroes_only_the_soft_limit`
+  - 고치기 전 main(11f2dc64)에서 E2E는 export·감사 기록·WAL에서 카나리를 찾아 실패했고, 정리 유닛은 값이 남아 실패했다. 결함 심기 셋(core dump 끄기 빼기, 감사 기록에 spec 그대로 쓰기, export 거르기 빼기)을 E2E가 하나씩 잡는다.
+
+### 8.308 대화 안 찾기 ⌘F(10-20, t-0478)
+
+- **요청.** t-0403 추천 7(사용자 10-20 「진행해.」). 대화 보기에서 글을 찾아 칠하고 그 자리로 간다(Enter·Shift+Enter, 개수, Esc 닫기). 휴대폰에서도 연다.
+- **참고(t3code 1451e7cb2).** 칸은 `apps/web/src/components/chat/ThreadFindBar.tsx:26`(칸·「n/전체」·위아래·닫기, 조합 중 Enter 무시, 열 때마다 칸에 가서 말 고르기), 상태는 `useThreadFind.ts:40`(친 말이 100ms 머문 뒤 찾기 `:346`, 열거나 말을 바꾸면 보이는 자리부터 `threadFindPosition.ts:4`, 끝에서 처음으로 도는 이동 `threadFind.ts`), 칠하기는 `threadFindHighlights.ts:17·111·216`(줄마다 찾을 글 영역의 글자 node를 블록 경계까지 이어 Range를 만들고 CSS Highlight API로 칠한다, MutationObserver로 다시 칠함, 접힌 곳은 `beforematch`로 편다), 이동은 `useThreadFindNavigation.ts:6~`(가상 목록의 그 줄을 먼저 꺼내고 찾음을 위아래 96px 안쪽으로, 한 frame 뒤 다시 재기), 대소문자 접기는 `packages/shared/src/threadSearch.ts:7`, 단축키는 `packages/shared/src/keybindings.ts:175`(`mod+f`, 터미널 focus가 아닐 때)·`useChatShortcuts.ts:83`(Esc). 찾는 대상은 사람 말·답(참고는 계획 포함, 도구 줄·생각은 찾지 않는다).
+- **aaa에서.** `web/src/chatFindText.ts`(말에서 찾을 글 뽑기·센다·DOM Range), `web/src/ChatFind.tsx`(칸과 상태·칠하기·이동), `Chat.tsx`·`Markdown.tsx`(찾을 글 영역 `data-chat-find-text`, 머리·단추 `data-chat-find-ignore`, 접힘 `data-chat-find-fold`). 칸은 대화 위 오른쪽에 떠 기록과 함께 굴러가지 않는다(`.chat-frame`). 여는 길은 대화를 보는 동안의 ⌘F(Ctrl+F), 머리의 돋보기(대화 보기일 때만, 휴대폰도), 팔레트 「대화에서 찾기」다. 닫으면 말도 비우고 연 자리로 focus를 돌린다.
+- **참고와 다른 곳.**
+  - 참고는 서버가 thread 전체를 센다(`apps/server/src/orchestration-v2/ThreadFind.ts:119·163`). aaa 1단계는 이 화면이 **받아 둔 기록**(`chat.messages`)을 센다. 가상화로 본문이 없는 화면 밖 줄도 센다. 그러려면 데이터에서 뽑는 글이 Markdown.tsx가 그리는 글과 같은 차례·같은 블록 경계여야 한다: `markdownFindSegments`가 `parseMarkdown` AST를 그리는 차례대로 걷는다(참고 `threadFindText.ts:105`가 렌더와 같은 pipeline을 쓰는 까닭). 앞 기록이 남았거나 앞 쪽을 못 읽는 옛 agent가 앞을 잘랐으면 개수 뒤에 「+」를 붙이고 칸의 title로 알린다.
+  - 긴 code의 꼬리는 aaa가 그리지 않던 글이다. 이제 글만 `hidden="until-found"` pre로 두고(강조 없이) 찾으면 편다. Chromium의 브라우저 찾기도 그 글을 찾아 편다(WebKit은 숨긴 채 둔다. 이 기능은 `beforematch`를 직접 보낸다). 긴 사람 말은 글이 있고 잘려 있을 뿐이라 참고처럼 `beforematch`로 편다.
+  - 단축키는 앱 단축키 표(Mod+Shift, §8.94)에 넣지 않고 대화 보기가 있는 동안 ChatPanel이 직접 받는다. 꺼진 「Find in terminal」(⌘⇧F)은 그대로다. 터미널 보기에서 ⌘F는 브라우저 몫이다.
+  - 닫을 때 참고는 입력창에 focus를 준다. aaa는 연 자리로 돌린다(휴대폰에서 입력창 focus는 화면 키보드를 올린다).
+  - 참고 「Searching…」·「Retry」는 서버 요청의 것이라 없다. 세는 100ms 동안은 「…」다.
+- **앞 기록까지 찾는 길(정함).** 앞 쪽을 더 불러와 이 화면에서 찾는다. 근거:
+  1. 참고도 찾음이 받지 않은 줄에 있으면 클라이언트가 앞 쪽을 넘겨 그 줄까지 불러온다(`useThreadFindNavigation.ts:103` `onLoadEarlier`). 다른 것은 개수를 누가 세느냐뿐이다.
+  2. 참고의 서버 검색이 맞는 까닭은 서버가 thread 전체의 색인(SQLite projection)을 갖고, 화면과 **같은 TypeScript 추출기**(`packages/shared`)로 세기 때문이다. aaa host는 대화 사본을 두지 않고(§8.298) 기록 파일은 그 머신 agent(Rust)에 있다. agent 검색은 `markdownFindSegments`를 Rust로 다시 짜야 하고, 어긋나면 개수와 칠한 자리가 달라진다(이 기능이 기대는 성질). 새 AgentRequest·기능 표지·FRONT_API도 든다.
+  3. 앞 쪽 읽기(§8.298)는 이미 쪽마다 150개·40,000자로 묶이고 cursor가 파일이 자라도 안정하다. 화면은 300줄이 넘으면 본문을 화면 근처만 그린다. 그래서 더 불러온 줄은 글자와 빈 줄 틀만 늘어난다.
+  - 2단계(후속): 칸에 「앞 기록도 찾기」를 두어 누르면 처음까지 쪽을 이어 받으며 개수를 늘린다(받는 동안 「n/전체+」, 멈춤 가능). 쪽 수가 매우 큰 기록(수만 줄)에서 느리면 그때 agent 쪽 색인(파일 revision마다 한 번 뽑아 둔 글)을 검토한다.
+- **검증.** 유닛 `web/test/chatFind.test.mjs`(대소문자 접기·겹치지 않는 찾음·돌아가는 차례, 굵은 글·code·목록·표·code 블록·수식의 블록 경계, 파일 이름 꼬리, 접힌 code 머리와 꼬리, 줄별 개수의 자리·차례·시작). 웹 E2E `44-chat-find`: 실제 lab Claude 기록 400줄(도구 줄·긴 code·긴 사람 말·표·한 말에 둘)을 처음까지 읽어 가상화된 상태에서, 받은 범위만일 때 「1/1+」, ⌘F로 열고 focus, 한글 개수, 대소문자·굵은 글 사이 이어 찾기·도구 줄 제외(7개), 끝을 보던 자리에서 시작, Enter로 처음(본문 없는 화면 밖 줄)으로 돌아가 보임, code 꼬리와 긴 사람 말이 펴짐, 모든 이동에서 활성 찾음이 칸 아래 대화 안에 보임, 그린 줄마다 데이터 개수 = 그린 글의 찾음 수(`data-find-count`·`data-find-dom`), 본문 mount 제한 유지, 0/0과 꺼진 이동 단추, Esc로 칠함 지움·focus 복귀, 팔레트로 열기. iPhone WebKit은 머리 돋보기로 열어 이동·칸이 화면 안. 기다림은 제품 표지(`data-find-count`·`data-find-index`·`data-find-active`·`data-find-revealed`)다. 화면 밖 줄 mount를 기다리지 않게 심으면 「Enter 처음으로」에서 실패한다. 한 frame 뒤 다시 재기는 이 기록(줄 높이가 고르다)에서는 빼도 통과한다(참고 그대로 둔다). 도구 묶음(§8.304) 뒤로 화면 줄 id가 말 차례와 어긋나므로 찾기는 말마다 id(`chatRowIds`)를 쓴다. 기록에 이어진 도구 호출 둘을 두어, 화면 줄 id를 넘기면 「줄 개수 어긋남」으로 실패한다.

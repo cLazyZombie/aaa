@@ -1345,3 +1345,30 @@ button.report-delete:hover:not(:disabled) { color: var(--danger-text); }
   .diff-panel-head { gap: 0; }
   .diff-panel-head > .diff-stat { margin-left: var(--space-2); }
 }
+
+/* 대화 안 찾기(plan §8.308, t3code ThreadFindBar·index.css `::highlight(t3-thread-find)`): 대화 위 오른쪽에 뜨는 칸. 굴림 칸
+   바깥 틀(.chat-frame)에 붙어 기록과 함께 굴러가지 않는다. 찾음은 글을 바꾸지 않고 CSS Highlight로 칠한다(복사 글 그대로) */
+.chat-frame { position: relative; flex: 1; min-height: 0; display: flex; flex-direction: column; }
+.chat-find {
+  position: absolute; top: var(--space-2); right: var(--space-3); z-index: 3;
+  width: min(360px, calc(100% - 2 * var(--space-3)));
+  display: flex; align-items: center; gap: 2px;
+  height: var(--control-h); padding: 0 var(--space-1) 0 var(--space-3);
+  border: 1px solid var(--border-strong); border-radius: var(--radius-pill);
+  background: var(--bg-elevated); box-shadow: var(--shadow-pop);
+}
+.chat-find-input { flex: 1; min-width: 0; height: 100%; border: 0; outline: none; background: transparent; color: var(--text); font: inherit; font-size: var(--fs-sm); }
+.chat-find-input::-webkit-search-cancel-button { display: none; }
+.chat-find-count { min-width: 40px; text-align: center; font-size: var(--fs-xs); color: var(--text-dim); font-variant-numeric: tabular-nums; }
+.chat-find-count.is-none { color: var(--danger-text); }
+.chat-find-step { width: 28px; height: 28px; }
+.chat-find-step svg { width: 16px; height: 16px; }
+.chat-find-open svg { width: 18px; height: 18px; }
+@media (pointer: coarse) {
+  .chat-find { height: var(--touch-target); }
+  /* 휴대폰 화면 키보드가 16px보다 작은 칸에서 화면을 키우지 않게 */
+  .chat-find-input { font-size: 16px; }
+  .chat-find-step { width: 36px; height: 36px; }
+}
+::highlight(aaa-chat-find) { background-color: color-mix(in srgb, var(--accent) 32%, transparent); color: var(--text-strong); }
+::highlight(aaa-chat-find-active) { background-color: var(--accent); color: var(--bg); }

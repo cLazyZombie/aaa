@@ -1,4 +1,4 @@
-// 할 일 편집의 창(할 일 편집 T2, plan §8.307): 충돌 창·목록 이름·원문 편집. 창 틀은 PaneRename(herdr-web-ui PaneCanvas.tsx
+// 할 일 편집의 창(할 일 편집 T2, plan §8.309): 충돌 창·목록 이름·원문 편집. 창 틀은 PaneRename(herdr-web-ui PaneCanvas.tsx
 // `PaneRename`)과 같다: focus 가두기, Esc·바깥 누름은 닫기(일하는 동안 제외), 휴대폰은 시스템 「뒤로」로 닫는다. 충돌 창은 참고 넷에
 // 없다(t-0469 §1.3): 나란히 보기는 herdr-web-ui RepoDiffViewer.tsx 118–174의 좁은 화면 한 줄 접기를 따른다.
 import "./herdr/PaneRename.css";

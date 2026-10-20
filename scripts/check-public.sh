@@ -10,7 +10,7 @@
 # 그 파일에는 내용 대신 「경로<TAB>걸린 줄」(세션 id는 「session<TAB>id」)의 `git hash-object` 값과 이유만 적는다.
 #
 # 검사하는 것
-#   1) 추적 파일 전체: 금지 확장자(p12·key·pem 등), 1MiB 넘는 파일
+#   1) 추적 파일 전체: 금지 확장자(p12·key·pem 등), 기본 1MiB 초과(size_limit의 정확한 경로·상한 예외만 허용)
 #   2) 추적 파일 내용: 개인 키·인증서 블록, 알려진 token 형식(Telegram 봇 token 포함), Web Push 구독 주소,
 #      실제 *.ts.net 주소, IP 주소(Tailscale IPv6 fd7a:115c:a1e0: 포함), 사용자 홈·외장 볼륨 경로(/Volumes/<이름>),
 #      이메일, 대문자 hex 지문(40자 이상, 전부 0인 run은 뺀다)
@@ -27,6 +27,7 @@
 #   7) 충돌 표지 줄(작업 트리의 추적 파일만): 병합 충돌을 풀고 남긴 표지 줄(줄 머리의 「<」·「>」·「|」 일곱 개 뒤 빈칸이나
 #      줄 끝, 「=」 일곱 개만 있는 줄)을 막는다. 공개 검사는 아니지만 착지마다 push 직전에 도는 검사라 여기 둔다(10-18
 #      main에 두 번 남음: 4474e43·97f13d1). 옛 이력에 이미 있으므로 --history에서는 보지 않는다.
+#   8) 추적된 Python 캐시(작업 트리만): __pycache__ 안의 파일과 *.pyc는 생성물이므로 막는다.
 #
 # 허용: example.ts.net·<이름>.ts.net, 127.0.0.1·0.0.0.0·문서용 IP(192.0.2.x, 198.51.100.x, 203.0.113.x),
 #       noreply@anthropic.com·git@github.com·GitHub noreply(5)와 같다)·*@example.com과 그 하위 이름(token@GitHub.example.com),
@@ -64,22 +65,57 @@ KNOWN_SKIPPED=0
 known() { [ -n "$KNOWN_HASHES" ] && grep -q -x -F -e "$(printf '%s\t%s' "$1" "$2" | git hash-object --stdin)" <<<"$KNOWN_HASHES"; }
 # 검사 명령이 돌지 못한 것(정규식·rev 오류)을 「찾은 것 없음」으로 치지 않는다: grep·git grep은 0 찾음, 1 없음, 그 밖은 오류다.
 ERR=$(mktemp) || exit 2
-trap 'rm -f "$ERR"' EXIT
+FILE_LIST=$(mktemp) || { rm -f "$ERR"; exit 2; }
+trap 'rm -f "$ERR" "$FILE_LIST"' EXIT
 broke() { echo "[오류] $1: $(head -c 300 "$ERR")"; fail=1; }
 
+# 크기만 예외다. 금지 확장자·내용 검사에는 적용하지 않는다. 경로·상한 변경은 이유와 함께 검토한다.
+size_limit() {
+  limit=1048576
+  case "$1" in
+    # 누적 설계·결정 원문을 유지한다. 계속 늘어나는 문서에 2MiB까지 명시적으로 허용한다.
+    docs/plan.md) limit=2097152 ;;
+    # 한글 두 칸·영문/아이콘 폭을 맞춘 배포 글꼴. 버전 고정 자산이므로 현재 바이트 크기까지만 허용한다.
+    web/public/fonts/meslotendard-0.3.1/Meslotendard-Bold.woff2) limit=2163908 ;;
+    web/public/fonts/meslotendard-0.3.1/Meslotendard-Regular.woff2) limit=2137228 ;;
+  esac
+}
+
 # 1) 금지 확장자·큰 파일(이력 검사면 모든 커밋의 파일 이름)
+# NUL 목록은 셸 변수에 담지 않는다. git 실패도 빈 목록으로 통과시키지 않도록 먼저 확인한다.
 if [ "$HISTORY" = 1 ]; then
-  FILES=$(for r in $REVS; do git ls-tree -r --name-only "$r"; done | sort -u | tr '\n' '\0')
+  for r in $REVS; do
+    git ls-tree -r -z --name-only "$r" >>"$FILE_LIST" 2>"$ERR" || broke "이력 파일 목록을 읽지 못했다"
+  done
 else
-  FILES=$(git ls-files -z | tr '\0' '\n' | tr '\n' '\0')
+  git ls-files -z >"$FILE_LIST" 2>"$ERR" || broke "추적 파일 목록을 읽지 못했다"
 fi
 while IFS= read -r -d '' f; do
   case "$f" in
     *.p12 | *.pfx | *.key | *.pem | *.cer | *.der | *.crt | *.keychain | *.keychain-db | *.mobileprovision | *.sqlite | *.db | *.local.toml | *.env | .env)
       report "금지 확장자: $f" ;;
   esac
-  if [ "$HISTORY" = 0 ] && [ -f "$f" ] && [ "$(wc -c <"$f")" -gt 1048576 ]; then report "1MiB 넘는 파일: $f"; fi
-done < <(printf '%s' "$FILES")
+  if [ "$HISTORY" = 0 ] && [ -f "$f" ]; then
+    size=$(wc -c <"$f")
+    if [ "$size" -gt 1048576 ]; then
+      size_limit "$f"
+      if [ "$size" -gt "$limit" ]; then
+        if [ "$limit" = 1048576 ]; then report "1MiB 넘는 파일: $f"
+        else report "크기 예외 상한 초과: $f ($size > $limit 바이트)"; fi
+      fi
+    fi
+  fi
+done <"$FILE_LIST"
+
+# 8) 현재 index의 Python 생성물. NUL 구분을 변수에 담으면 사라지므로 직접 읽는다.
+# 옛 이력의 생성물은 이력 재작성 없이 없앨 수 없어 --history에서는 검사하지 않는다.
+if [ "$HISTORY" = 0 ]; then
+  while IFS= read -r -d '' f; do
+    case "$f" in
+      __pycache__/* | */__pycache__/* | *.pyc) report "추적된 Python 캐시: $f" ;;
+    esac
+  done <"$FILE_LIST"
+fi
 
 # 2·3) 내용 패턴: 이름, 정규식, 허용 정규식(빈 값이면 허용 없음), 이 검사에서 뺄 파일 정규식(없으면 빈 값)을 같은 순서로 둔다.
 NAMES=() RES=() ALLOWS=() SKIPS=()

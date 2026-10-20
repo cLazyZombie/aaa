@@ -19,6 +19,8 @@ mod lab;
 mod preparation;
 #[path = "m13/rollout.rs"]
 mod rollout;
+#[path = "m13/secret_k0.rs"]
+mod secret_k0;
 #[path = "m13/work_root.rs"]
 mod work_root;
 
@@ -4140,10 +4142,16 @@ fn task_board_reads_tasks_and_follows_file_edits() {
         "# Tasks\n\n## Backlog\n나중 일은 later.md에 모은다\n- [ ] 이은 일 (fake@labA) · {lid}\n  - 메모\n  - [ ] 하위 (me)\n\
          - [ ] 정리 (t-0101 S4 뒤, 사용자 지시 시)\n- [ ] 실패 조사 (미할당)\n## 빈 목록\n"
     );
+    // 먼저 원본을 기억시킨다. 연결 뒤 md의 첫 관측 사건이 오는 순서를 부하 없이도 검증한다.
+    w.h.ok(&["task", "list"]);
+    let mut ev = Events::connect(&w.h);
     std::fs::write(pdir.join("TASKS.md"), &md).unwrap();
     let sha = |t: &str| hex::encode(sha2::Sha256::digest(t.as_bytes()));
-    let mut ev = Events::connect(&w.h);
     w.h.ok(&["ticker", "tick"]);
+    let (baseline, ()) = ev.wait_from(0, "초기 할 일 관측", T, |e| match e {
+        FrontEvent::Tasks { project, sha256 } if project == "demo" && *sha256 == sha(&md) => Some(()),
+        _ => None,
+    });
 
     let b = w.h.ok(&["task", "list"]);
     assert_eq!(b["sha256"].as_str(), Some(sha(&md).as_str()), "{b}");
@@ -4188,7 +4196,7 @@ fn task_board_reads_tasks_and_follows_file_edits() {
     let md2 = md.replace("## 빈 목록\n", "## 빈 목록\n- [ ] 새로 더한 일\n");
     std::fs::write(pdir.join("TASKS.md"), &md2).unwrap();
     w.h.ok(&["ticker", "tick"]);
-    let (at, got) = ev.wait_from(0, "tasks 사건", T, |e| match e {
+    let (at, got) = ev.wait_from(baseline + 1, "tasks 사건", T, |e| match e {
         aaa_proto::FrontEvent::Tasks { project, sha256 } if project == "demo" => Some(sha256.clone()),
         _ => None,
     });
@@ -4219,7 +4227,7 @@ fn task_board_reads_tasks_and_follows_file_edits() {
     assert_eq!(files[2]["error"].as_str(), Some("없음"), "{files}");
 }
 
-/// 할 일 편집(T2, plan §8.307): `aaa task add`는 그 블록만 붙이고 나머지 바이트를 그대로 두며 기록·`tasks` 사건을 남긴다. 읽은 뒤
+/// 할 일 편집(T2, plan §8.309): `aaa task add`는 그 블록만 붙이고 나머지 바이트를 그대로 두며 기록·`tasks` 사건을 남긴다. 읽은 뒤
 /// 파일을 직접 고치면 같은 블록 저장은 `revision_conflict`(쓰지 않음), 다른 블록 저장은 성공이고, 지운 task는 고쳐도 되살아나지
 /// 않는다. 쓰기에 묻힐 뻔한 직접 편집과 tick이 본 직접 편집은 「파일 직접」으로 적힌다. 되살리기는 한 번만. thread(보기 권한)·
 /// 확인되지 않은 세션 pane은 거부하고 그 프로젝트 coordinator pane은 허용한다.

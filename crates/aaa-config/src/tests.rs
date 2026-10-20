@@ -37,6 +37,42 @@ fn examples_are_valid_and_warning_free() {
     assert!(load_agent(&d.0).unwrap().warnings.is_empty());
 }
 
+/// host.toml profile env 중 이름에 KEY·TOKEN·SECRET·PASSWORD가 든 평문 값은 그 자리(local 우선)를 경고한다. 경고와 Debug에는
+/// 값이 없다(plan §8.307)
+#[test]
+fn plaintext_secret_env_warns_by_name_only() {
+    let value = "aaa-canary-config-0123456789abcdef";
+    let d = Dir::new("secretenv");
+    d.write(
+        "host.toml",
+        &format!(
+            "schema = 1\n[profiles.api]\nagent = \"claude\"\nenv = {{ ANTHROPIC_API_KEY = {value:?}, LANG = \"C\", EMPTY_TOKEN = \"\" }}\n"
+        ),
+    );
+    d.write(
+        "host.local.toml",
+        &format!("schema = 1\n[profiles.api.env]\ngh_token = {value:?}\nDb_Password = {value:?}\n"),
+    );
+    let l = load_host(&d.0).unwrap();
+    let w: Vec<String> = l.warnings.iter().map(|w| w.to_string()).collect();
+    assert_eq!(w.len(), 3, "{w:?}");
+    for (name, file, line) in [
+        ("ANTHROPIC_API_KEY", "host.toml", 4),
+        ("gh_token", "host.local.toml", 3),
+        ("Db_Password", "host.local.toml", 4),
+    ] {
+        let d = l.warnings.iter().find(|d| d.message.contains(&format!("env.{name}`"))).expect(name);
+        assert_eq!((d.file.file_name().unwrap().to_str().unwrap(), d.line), (file, line), "{d}");
+    }
+    for text in w.iter().cloned().chain([format!("{:?}", l.config)]) {
+        assert!(!text.contains(value) && !text.contains("0123456789"), "{text}");
+    }
+    assert!(
+        format!("{:?}", l.config.profiles["api"])
+            .contains("«env 5개: ANTHROPIC_API_KEY, Db_Password, EMPTY_TOKEN, LANG, gh_token»")
+    );
+}
+
 #[test]
 fn work_root_settings_preserve_local_override_and_reject_unsafe_paths() {
     let d = Dir::new("workroot");

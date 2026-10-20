@@ -70,7 +70,7 @@ describe("할 일 화면", () => {
   });
 });
 
-// 편집(T2, plan §8.307): 화면 동작 → host 동작
+// 편집(T2, plan §8.309): 화면 동작 → host 동작
 describe("할 일 편집", () => {
   // ## A: 하나(1) [하위 하나-1(2), 하위 하나-2(3)], 둘(4), 셋(5) / ## B: 넷(7)
   const t = (line, title, list, parent = null) => task({ line, title, list, parent, block_sha256: `sha-${line}` });

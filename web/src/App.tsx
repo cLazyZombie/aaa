@@ -827,7 +827,7 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
     else beforeTasks.current = sel;
   }, [sel]);
   const toggleTasks = () => goSel(tasksShown ? beforeTasks.current : "tasks:");
-  // 명령 팔레트 「할 일 더하기」: 할 일 화면을 열고 새 task 폼을 연다(plan §8.307)
+  // 명령 팔레트 「할 일 더하기」: 할 일 화면을 열고 새 task 폼을 연다(plan §8.309)
   const [taskAdds, setTaskAdds] = useState(0);
 
   // 새 pane 창(herdr-web-ui App.tsx `newSessionOpen`·`newSessionMachineId`): 머신 머리 +와 단축키가 그 머신으로 연다
@@ -886,7 +886,7 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
         setSettingsOpen(true);
       },
       openPalette: () => setPaletteOpen(true),
-      openFind: none,
+      openFind: () => paneControls.current?.openFind(),
       // 좁은 창에서는 drawer를 여닫고 넓은 창에서는 사이드바를 접는다·편다(참고 App.tsx 1246~1249줄)
       toggleSidebar: () => {
         if (window.matchMedia("(max-width: 768px)").matches) setDrawerOpen((open) => !open);
@@ -1027,6 +1027,7 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
     openNewSession: canControl ? actions.openNewSession : null,
     toggleView: paneView ? actions.toggleView : null,
     view: paneView,
+    openFind: paneView === "chat" ? actions.openFind : null,
     toggleTheme: () => updateAppearance({ theme: resolvedTheme === "dark" ? "light" : "dark" }),
     openSettings: () => setSettingsOpen(true),
     openThreads: chooseThreads,
