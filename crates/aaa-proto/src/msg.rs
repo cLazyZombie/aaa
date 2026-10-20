@@ -19,9 +19,10 @@ use crate::orch::{
     RoutineView, ThreadAdopt, ThreadAdopted, ThreadKind, ThreadPlacement, ThreadPrepare, ThreadReady, ThreadView,
 };
 use crate::orch::{
-    EvaluationView, EvaluatorView, MenuPick, NoticeView, TaskBoard, TaskConflict, TaskLogEntry, TaskLogFilter, TaskOp,
-    ThreadStartPreview, ThreadSummaryView,
+    MenuPick, NoticeView, TaskBoard, TaskConflict, TaskLogEntry, TaskLogFilter, TaskOp, ThreadStartPreview,
+    ThreadSummaryView,
 };
+use crate::{EvaluationView, EvaluatorView};
 
 use crate::version::Version;
 
@@ -881,6 +882,26 @@ pub enum AgentRequest {
     TermColors(TermColors),
     /// 사후 평가자 사건 묶음을 작업 폴더의 `inbox/` 아래에 쓴다(§8.13). `path`는 `inbox/<이름>.json`만 받는다.
     /// mission.v1을 양쪽이 알린 연결에서만 임무 입력의 처리 여부를 읽는다.
+    WorkFileInboxStatus {
+        work_dir: String,
+    },
+    /// mission.v1: repo·machine 변경 때 상태 파일만 옮긴다. 본문은 모두 자료다.
+    WorkFileList {
+        work_dir: String,
+    },
+    WorkFileRead {
+        work_dir: String,
+        path: String,
+        offset: u64,
+    },
+    WorkFileWriteChunk {
+        work_dir: String,
+        path: String,
+        offset: u64,
+        data: B64,
+        eof: bool,
+        sha256: String,
+    },
     MissionInboxStatus {
         work_dir: String,
     },
@@ -1000,6 +1021,13 @@ pub enum AgentResponse {
         running_instance: String,
         #[serde(default)]
         running_started_ms: u64,
+    },
+    WorkFileInbox {
+        pending: u32,
+        names: Vec<String>,
+    },
+    WorkFiles {
+        files: Vec<crate::LibFile>,
     },
     MissionInbox {
         pending: u32,
@@ -3133,6 +3161,21 @@ pub enum EventsClientMsg {
     /// 이 화면이 그 pane의 대화를 보고 있다(herdr-web-ui `conversation-watch`). 켜 둔 동안 host는 `chat_watching`과
     /// `chat_changed`를 보낸다. 연결이 끊기면 끈 것이다
     ChatWatch { pane: String, enabled: bool },
+}
+
+impl AgentRequest {
+    /// 1.9 agent와 파일 전송을 계속한다. 새 기능이 없는 상대에게 새 태그를 보내지 않는다.
+    pub fn legacy_work_file(self) -> Self {
+        match self {
+            Self::WorkFileInboxStatus { work_dir } => Self::MissionInboxStatus { work_dir },
+            Self::WorkFileList { work_dir } => Self::MissionStateList { work_dir },
+            Self::WorkFileRead { work_dir, path, offset } => Self::MissionStateRead { work_dir, path, offset },
+            Self::WorkFileWriteChunk { work_dir, path, offset, data, eof, sha256 } => {
+                Self::MissionStateWrite { work_dir, path, offset, data, eof, sha256 }
+            }
+            other => other,
+        }
+    }
 }
 
 #[cfg(test)]

@@ -35,7 +35,8 @@ impl std::fmt::Display for Version {
 // 1.9: account_auth.v1의 전용 인증 spawn·중앙 refresh. Chat.session으로 계정 pane 기록을 찾는다.
 // 같은 1.9에 `AgentRequest::Commands`(commands.v1을 알린 agent에만, plan §8.323)와 `Chat.commands`(옛 agent는 버리고 명령 줄을
 // 싣지 않는다)를 더한다.
-pub const AGENT_LINK: Version = Version { major: 1, minor: 9 };
+// 1.10: work_files.v1의 일반 작업 파일 전송. 1.9 agent에는 옛 파일 태그로 보낸다.
+pub const AGENT_LINK: Version = Version { major: 1, minor: 10 };
 /// front ↔ host. 1.4: CLI pane·tab·workspace(plan §8.75), 1.5: 새 탭 이름(`NewTab.label`)·cwd 따라가기(`NewTab.from`)(plan §8.76),
 /// 1.6: `routine_toggle`·`ThreadView.pr`(plan §8.80), 1.7: `devices`·`device_rename`·`device_revoke`, 웹 기기의 `web_pair`(plan §8.81),
 /// 1.8: `thread read`·`thread keys`(plan §8.86), 1.9: `ticker_tick`(docs/testing.md),
@@ -148,7 +149,8 @@ pub const AGENT_LINK: Version = Version { major: 1, minor: 9 };
 // 게이지를 그리지 않고, 옛 front는 버린다. 입력 진단 `InputReceiptMethod::SlashCommand`(옛 host는 그 진단 줄만 버린다).
 // 1.68: 입력칸 「/」 목록(`pane_commands` → `CommandList`), 대화의 harness 명령 줄(`PaneChat.commands`, `ChatRole::Command`·
 // `CommandOutput`, plan §8.323). 옛 host는 `pane_commands`를 모르는 요청으로 거절해 웹이 목록 없이 보내고, 명령 줄을 싣지 않는다.
-pub const FRONT_API: Version = Version { major: 1, minor: 68 };
+// 1.69: 특수 패널·임무·평가자 제거. 옛 요청은 한 판 동안 제거 안내(목록은 빈 목록).
+pub const FRONT_API: Version = Version { major: 1, minor: 69 };
 /// agent ↔ session host(내부). 세션이 몇 주 이어질 수 있으므로 이전 session host와 호환해야 한다.
 /// 1.1: `SessionRequest::Detect`(harness 상태 감지 입력). agent는 1.0 session host에 보내지 않고 `Screen`을 쓴다.
 /// 1.2: `SessionRequest::Colors`(색 질의에 답할 화면 색, plan §8.187). agent는 1.1 이하 session host에 보내지 않는다.

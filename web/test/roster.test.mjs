@@ -11,7 +11,7 @@ const thread = (project, id, group, pane = null, updated_at_ms = 0, machine = "m
 
 describe("단축키 줄 차례", () => {
   it("프로젝트를 먼저 묶는다(plan §8.195): 모든 머신의 thread를 처음 나온 프로젝트 차례로, 그다음 「기타」 pane을 머신 차례로", () => {
-    const panes = [pane("p1"), pane("b1", "m2"), pane("p2"), pane("t1p"), pane("t4p", "m2"), pane("gone", "m9"), pane("eval", "m1", "running", "evaluator")];
+    const panes = [pane("p1"), pane("b1", "m2"), pane("p2"), pane("t1p"), pane("t4p", "m2"), pane("gone", "m9")];
     const threads = [
       thread("beta", "t-2", "working", null, 5),
       thread("alpha", "t-1", "waiting_on_you", "t1p"),
@@ -52,10 +52,10 @@ describe("단축키 줄 차례", () => {
     assert.deepEqual(keys, ["pane:coord", "thread:p/t-4", "thread:p/t-2", "thread:p/t-1", "thread:p/t-3"]);
   });
 
-  it("임무 thread와 그 pane은 목록에 없다(특수 패널에만, 사용자 결정 10-19)", () => {
-    const threads = [thread("p", "t-1", "working", "w"), { ...thread("p", "t-2", "idle", "m"), mission: "ci-watch" }];
+  it("옛 evaluator thread도 보통 thread처럼 목록에 선다", () => {
+    const threads = [thread("p", "t-1", "working", "w"), { ...thread("p", "t-2", "idle", "m"), role: "evaluator" }];
     const keys = rosterRows([ma], [pane("w"), pane("m"), pane("shell")], threads).map((r) => r.keys[0]);
-    assert.deepEqual(keys, ["thread:p/t-1", "pane:shell"]);
+    assert.deepEqual(keys, ["thread:p/t-1", "thread:p/t-2", "pane:shell"]);
   });
 
   it("자동화가 띄운 thread는 따로 모으지 않고 사람이 띄운 thread와 같은 폴더·같은 rank 차례에 선다(plan t-0475 Q5)", () => {

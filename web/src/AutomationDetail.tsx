@@ -5,9 +5,8 @@ import { useCallback, useEffect, useRef, useState, type ReactNode } from "react"
 import { call } from "./api";
 import { AutomationSheet } from "./AutomationSheet";
 import { ConfirmDialog } from "./ConfirmDialog";
-import type { MissionView, RoutineRun, RoutineSource, RoutineView } from "./gen/proto";
-import { lastSkip, legacyMission, legacyRule, ruleTargets, ruleTone, runTone, runWord, stuckBatch, type RuleTone } from "./automationModel";
-import { missionWord } from "./specialModel";
+import type { RoutineRun, RoutineSource, RoutineView } from "./gen/proto";
+import { lastSkip, legacyRule, ruleTargets, ruleTone, runTone, runWord, stuckBatch, type RuleTone } from "./automationModel";
 
 const time = (at: number) => new Date(at).toLocaleString();
 const toneWord: Record<RuleTone, string> = { off: "꺼짐", failed: "파일 오류", stuck: "막힘 · 입력 전달 모름", done: "처리됨", skipped: "건너뜀", waiting: "대기", ready: "기록 없음" };
@@ -174,66 +173,4 @@ export function RuleDetail({ project, rule, canControl, covered = false, onChang
 }
 function RunLineText({ run }: { run: RoutineRun }) {
   return <>{time(run.at_ms)} · {runWord[run.status] ?? run.status}: {run.detail}{run.thread && ` · ${run.thread}`}</>;
-}
-
-export function MissionDetail({ project, name, onClose }: { project: string; name: string; onClose: () => void }) {
-  const [m, setM] = useState<MissionView | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  const { runs, loading, load } = useRuns(project, `mission:${name}`, m?.wakes_today);
-  const read = useCallback(async () => {
-    try {
-      const r = await call({ op: "mission_show", project, name });
-      if (r.kind !== "mission") throw new Error("임무 응답이 아니다");
-      setM(r.mission);
-      setError(null);
-    } catch (e) { setError(String(e)); }
-  }, [project, name]);
-  useEffect(() => { void read(); }, [read]);
-  const skip = lastSkip({ last_skip: null }, runs);
-  const t = m?.thread;
-  return <AutomationSheet title={m?.title || name} subtitle={m && <><span className="automation-badge is-mission">임무</span>{legacyMission(m) && <span className="automation-badge is-legacy">이전 형식</span>}<span className="automation-dim">{project} · {name}</span></>} onClose={onClose} testid="mission-detail">
-    {error && <p role="alert">{error}</p>}
-    {!m ? !error && <p role="status">읽는 중…</p> : <>
-      <Section title="요약">
-        <Facts rows={[
-          ["상태", missionWord(m)],
-          ["형식", legacyMission(m) ? "이전 형식(.md) · 목록 머리의 「새 형식으로 바꾸기」" : "TOML"],
-          ["thread", t ? `${t.id} · ${t.status}` : "시작 안 함"],
-          ["깨움", `오늘 ${m.wakes_today}${m.max_wakes > 0 ? `/${m.max_wakes}` : " · 상한 없음"} · 대기 입력 ${m.pending}`],
-          ["post 처리", `${m.handled_posts}/${m.posts}`],
-          !!m.usage_wait_until_ms && ["사용량 대기", time(m.usage_wait_until_ms)],
-          !!m.next_reset_ms && ["다음 reset", time(m.next_reset_ms)],
-        ]} />
-        {m.error && <p role="alert">{m.error}</p>}
-        {m.blocked_reason && m.blocked_reason !== "question" && <p className="automation-dim">막힘은 특수 패널의 「다시 시작」이 푼다(다음 단계 W3에서 이 창에도 둔다).</p>}
-      </Section>
-      <Section title="대상">
-        {t ? <Facts rows={[["머신", t.machine], ["저장소", t.repo ?? "저장소 없는 폴더"], ["profile", t.profile]]} /> : <p className="automation-dim">시작하면 그 thread의 머신·저장소·profile이 보인다. 범위는 파일 원문에 있다.</p>}
-      </Section>
-      <Section title="승인 범위">
-        <Facts rows={[["임무", m.approved ? "승인됨" : "승인 필요(첫 시작·repo 추가/변경)"], ["승인 hash", <code key="h">{m.approval_sha256}</code>]]} />
-      </Section>
-      <Section title="적용 판">
-        <Facts rows={[
-          ["적용 판", m.applied_sha ?? "없음"],
-          ["파일 판", m.file_sha ?? "없음"],
-          ["예약 판", m.pending_sha ?? "없음"],
-          ["적용", !m.applied_sha ? "시작 전 · 적용 사본 없음" : m.apply_wait ?? (m.stale ? "파일이 적용 사본과 다르다" : "후보 판과 적용 판이 같다")],
-        ]} />
-        {m.applied_sha && m.diff && <Source file="차이(적용 → 파일)" text={m.diff} />}
-      </Section>
-      <Section title="마지막 건너뜀">
-        {skip ? <p className="automation-run"><RunLine run={skip} /></p> : <p className="automation-dim">없음</p>}
-      </Section>
-      <Section title={`기록 · 최근 ${runs.length}건(최대 50)`} testid="automation-runs">
-        <div className="automation-tools"><button type="button" className="btn" onClick={() => { void read(); void load(); }}>다시 읽기</button></div>
-        <Runs runs={runs} loading={loading} />
-      </Section>
-      <Section title="파일 원문" testid="automation-source">
-        <Source file="후보 파일" text={m.file_text} />
-        {m.brief_text && <Source file="brief_file" text={m.brief_text} />}
-        {m.applied_text && m.applied_text !== m.file_text && <Source file="적용 사본" text={m.applied_text} />}
-      </Section>
-    </>}
-  </AutomationSheet>;
 }

@@ -104,7 +104,8 @@ pub fn hello(agent: &Agent) -> AgentHello {
             #[cfg(target_os = "macos")]
             "rollout_recovery.v1".into(),
             "post.v1".into(),
-            "mission.v1".into(),
+            "mission.v1".into(), // N-1 host의 파일 전송
+            "work_files.v1".into(),
             "cwd.v1".into(),
             "pr.v1".into(),
             "pr.v2".into(),
@@ -148,6 +149,7 @@ async fn session(agent: &Arc<Agent>, stream: LocalStream) -> Result<()> {
         LinkMsg::Welcome(w) => {
             tracing::info!(proto = %w.proto, host = %w.host_id, "host에 연결했다");
             *agent.host_post.lock().unwrap() = Some(w.features.iter().any(|f| f == "post.v1"));
+            *agent.host_work_files.lock().unwrap() = w.features.iter().any(|f| f == "work_files.v1");
             *agent.host_mission.lock().unwrap() = w.features.iter().any(|f| f == "mission.v1");
             agent
                 .host_compacting

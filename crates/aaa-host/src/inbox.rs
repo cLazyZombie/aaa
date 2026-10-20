@@ -229,37 +229,8 @@ impl Host {
     /// launch(not launched). 메시지 전달 모름은 aaa에만 있다(메시지를 대기열로 보낸다).
     pub(crate) fn inbox_from_flow(&self, e: &FlowEvent) {
         let Some(thread) = &e.thread else { return };
-        // 사후 평가자의 알림은 평가 기록(`evaluation`)으로 따로 알린다. 실패는 그대로 알린다.
 
         let p = &e.project;
-        if e.role == Some(aaa_proto::Role::Evaluator) && e.kind == "message_unknown" {
-            self.inbox_once(
-                p,
-                "thread-state",
-                thread,
-                "message not delivered",
-                "특수 thread의 입력을 전달했는지 모른다. 파일을 보존하고 다시 보내지 않는다",
-            );
-            let mut changed = false;
-            let mut mission_name = None;
-            let _ = self.update_rec(p, thread, |r| {
-                if let Some(m) = r.mission.as_mut() {
-                    changed = m.block(aaa_proto::MissionBlockReason::MessageUnknown);
-                    mission_name = Some(m.name.clone());
-                }
-            });
-            if changed && let Some(name) = mission_name {
-                self.record_routine(
-                    p,
-                    &format!("mission:{name}"),
-                    &format!("message-unknown:{}", e.seq),
-                    "waiting",
-                    "막힘 · 입력 전달 모름",
-                    Some(thread),
-                );
-            }
-            return;
-        }
         let (event, summary) = match e.kind.as_str() {
             "brief_unknown" => (
                 "brief not delivered",
@@ -338,16 +309,6 @@ impl Host {
             i.done_at_ms = Some(now);
             self.db.inbox_put(&i)?;
             self.bump(); // 이미 처리한 사용자 요청은 다른 기기에서도 줄어든다
-            if i.item_kind == "post"
-                && let Ok(r) = self.load(project, &i.subject)
-                && r.mission.is_some()
-            {
-                let _ = self.update_rec(project, &r.id, |r| {
-                    let m = r.mission.as_mut().unwrap();
-                    m.handled_posts += 1;
-                    m.last_handled_ms = Some(now);
-                });
-            }
             let _ = std::fs::create_dir_all(dir.join("done"));
             let _ = std::fs::rename(dir.join(format!("{}.md", i.id)), dir.join("done").join(format!("{}.md", i.id)));
         }
@@ -361,18 +322,12 @@ impl Host {
         tokio::spawn(async move {
             let every = Duration::from_secs(me.cfg.projects.tick_secs.max(1));
             loop {
-                // 사후 평가자 묶음·PR 조회 때가 더 이르면 그때까지만 잔다
-                let sleep = [
-                    me.evaluator_next_due(),
-                    me.pr_next_due(),
-                    me.ci_next_due(),
-                    me.git_next_due(),
-                    me.background_wait_due(),
-                ]
-                .into_iter()
-                .flatten()
-                .map(|d| d.saturating_duration_since(std::time::Instant::now()))
-                .fold(every, Duration::min);
+                // PR 조회 때가 더 이르면 그때까지만 잔다
+                let sleep = [me.pr_next_due(), me.ci_next_due(), me.git_next_due(), me.background_wait_due()]
+                    .into_iter()
+                    .flatten()
+                    .map(|d| d.saturating_duration_since(std::time::Instant::now()))
+                    .fold(every, Duration::min);
                 tokio::select! {
                     _ = tokio::time::sleep(sleep) => {}
                     _ = me.tick_wake.notified() => {}
@@ -408,14 +363,15 @@ impl Host {
         let names: Vec<String> = projects.iter().map(|p| p.name.clone()).collect();
         self.check_outages(&names);
         self.check_health_items(&names);
-        self.evaluator_pass();
         for p in &projects {
             self.check_project_config(&p.name, Path::new(&p.path));
             self.check_old_decisions(&p.name, Path::new(&p.path));
             self.thread_pass(&p.name);
             self.retry_report_copies(&p.name, aaa_common::util::now_ms());
-            self.builtin_evaluator_state(&p.name);
-            self.mission_pass(&p.name).await;
+            self.legacy_mission_notice(&p.name);
+            if let Err(e) = self.legacy_mission_recover(&p.name) {
+                self.inbox_once(&p.name, "config-error", "missions", "conversion pending", &e.message);
+            }
             self.usage_limit_pass(&p.name).await;
             self.resolve_merged_pass(&p.name).await;
             self.auto_resolve_pass(&p.name).await;

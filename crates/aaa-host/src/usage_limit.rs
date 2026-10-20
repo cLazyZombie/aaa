@@ -1,7 +1,7 @@
 //! thread의 사용량 한도 표지(plan §8.267, t-0403). t3code(MIT, 1451e7cb2)는 provider SDK가 주는 구조화된 신호
 //! (Claude 응답 `error == "rate_limit"`·429, Codex `usageLimitExceeded`)로 run을 `usage_limit` 실패로 닫고 목록 줄을
 //! 「Limited」로 칠한다(`apps/web/src/components/Sidebar.logic.ts:939`). aaa는 harness를 PTY로 돌려 그 신호가 없다.
-//! 대신 host가 이미 읽어 둔 구독 사용량(usage.rs `cached`, 임무의 「사용량 대기」와 같은 재료, mission.rs `usage_until`)에서
+//! 대신 host가 이미 읽어 둔 구독 사용량(usage.rs `cached`)에서
 //! 이 thread harness의 창이 다 찼고 아직 다시 차오르지 않았으면 그때까지 한도로 본다.
 //!
 //! - host 머신의 thread만이다: 사용량은 host 머신 CLI 로그인만 읽는다. 한 구독에 계정이 둘 이상이면 어느 것인지 단정하지 않는다.
@@ -22,7 +22,7 @@ pub(crate) type LimitMap = Mutex<HashMap<(String, String), u64>>;
 const FULL_PERCENT: f64 = 100.0;
 
 /// 이 harness·model의 구독 창 가운데 다 찼고 `now` 뒤에 다시 차오르는 것의 가장 늦은 때. 계정이 하나가 아니거나
-/// 다 찬 창이 없으면 None. plan이 따로 거는 모델 몫(`scope`)은 그 모델일 때만 본다(mission.rs `usage_until`과 같다)
+/// 다 찬 창이 없으면 None. plan이 따로 거는 모델 몫(`scope`)은 그 모델일 때만 본다
 pub(crate) fn limited_until(harness: &str, model: &str, report: &UsageReport, now: u64) -> Option<u64> {
     let provider = match harness {
         "claude" => P::Claude,

@@ -444,7 +444,7 @@ impl Host {
         let mut events = Vec::new();
         for e in &flow {
             let mut reports = std::collections::BTreeMap::<String, String>::new();
-            if (matches!(&r.action,Action::Wake(a) if a.reports) || matches!(&r.action,Action::Start(a) if a.reports))
+            if matches!(&r.action,Action::Start(a) if a.reports)
                 && let Some(id) = &e.thread
             {
                 let file = self.project_dir(p)?.join("threads").join(format!("{id}.md"));
@@ -501,29 +501,6 @@ impl Host {
         })
     }
 
-    pub(crate) fn automation_seed_mission(
-        &self,
-        p: &str,
-        mission: &str,
-        name: &str,
-        cursor: u64,
-    ) -> Result<(), ErrorBody> {
-        let previous =
-            state(self.db.meta(&key(p, &format!("mission:{mission}"))).map_err(internal)?).map_err(internal)?;
-        self.db
-            .update_meta(&key(p, name), |old| {
-                let mut s = state(old)?;
-                s.cursor = Some(s.cursor.unwrap_or(0).max(cursor));
-                if previous.day == day(aaa_common::util::now_ms())
-                    && (s.day != previous.day || s.count < previous.count)
-                {
-                    s.day = previous.day;
-                    s.count = previous.count;
-                }
-                Ok(serde_json::to_string(&s)?)
-            })
-            .map_err(internal)
-    }
     pub(crate) async fn automation_pass(self: &Arc<Self>, p: &str) {
         let Ok(dir) = self.project_dir(p) else { return };
         let rules = {
@@ -808,39 +785,6 @@ impl Host {
                 }
             }
             Action::Deploy => self.propose_rollout(p, r, &batch.id, &batch.events, now),
-            Action::Wake(a) => {
-                let mut value = serde_json::from_str::<serde_json::Value>(&data)
-                    .unwrap_or_else(|_| serde_json::json!({"body":data}));
-                if let Some(fields) = value.as_object_mut() {
-                    if !a.reports {
-                        fields.remove("reports");
-                        if let Some(inputs) = fields.get_mut("inputs").and_then(|v| v.as_array_mut()) {
-                            for input in inputs {
-                                if let Some(body) = input.get_mut("body")
-                                    && let Some(raw) = body.as_str()
-                                    && let Ok(mut packet) = serde_json::from_str::<serde_json::Value>(raw)
-                                    && let Some(fields) = packet.as_object_mut()
-                                {
-                                    fields.remove("reports");
-                                    *body = packet.to_string().into();
-                                }
-                            }
-                        }
-                    }
-                    if let Some(memo) = a.text.as_ref().filter(|s| !s.is_empty()) {
-                        fields.insert("memo".into(), memo.clone().into());
-                    }
-                }
-                self.mission_data_input(
-                    p,
-                    &a.mission,
-                    &format!("automation_input:{p}:{}", batch.id),
-                    &batch.id,
-                    value.to_string(),
-                    &first.source,
-                )
-                .map(|_| ())
-            }
             Action::Inbox(a) => {
                 let command = first.source == "routine" && !first.body.is_empty();
                 let body = if command {
@@ -1024,6 +968,83 @@ impl Host {
                 at_ms: now,
             });
         }
+        Ok(())
+    }
+}
+
+impl Host {
+    /// 변환의 파일 공개 전에 journal을 남긴다. 원본 DB는 지우지 않고, 새 큐와 완료 표지를 한 transaction으로 확정한다.
+    pub(crate) fn automation_import_legacy(
+        &self,
+        p: &str,
+        name: &str,
+        data: &serde_json::Value,
+        action: &Action,
+    ) -> Result<(), ErrorBody> {
+        let marker = format!("converted_mission:{p}:{name}");
+        let scope: Option<crate::auto_start::Scope> =
+            data.get("start_scope").map(|v| serde_json::from_value(v.clone())).transpose().map_err(internal)?;
+        self.db
+            .update_meta_checked(&key(p, name), &[&marker], |old| {
+                let old = old
+                    .map(|text| -> anyhow::Result<String> {
+                        let mut v: serde_json::Value = serde_json::from_str(&text)?;
+                        let encoded = serde_json::to_value(action)?;
+                        for e in v["pending"].as_array_mut().into_iter().flatten() {
+                            e["action"] = encoded.clone();
+                            e["start_scope"] = serde_json::to_value(&scope)?;
+                        }
+                        for e in v["inflight"]["events"].as_array_mut().into_iter().flatten() {
+                            e["action"] = encoded.clone();
+                            e["start_scope"] = serde_json::to_value(&scope)?;
+                        }
+                        Ok(serde_json::to_string(&v)?)
+                    })
+                    .transpose()?;
+                let mut s = state(old)?;
+                if let Some(cursor) = data.get("cursor").and_then(|v| v.as_u64()) {
+                    s.cursor = Some(s.cursor.unwrap_or(0).max(cursor));
+                }
+                let mut events = Vec::new();
+                for input in data.get("pending").and_then(|v| v.as_array()).into_iter().flatten() {
+                    let id =
+                        input.get("id").and_then(|v| v.as_str()).ok_or_else(|| anyhow::anyhow!("옛 입력 ID가 없다"))?;
+                    let event = Event {
+                        id: format!("converted:{name}:{id}"),
+                        at_ms: 0,
+                        owner: None,
+                        body: input
+                            .get("text")
+                            .or_else(|| input.get("body"))
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("")
+                            .into(),
+                        source: input.get("source").and_then(|v| v.as_str()).unwrap_or("events").into(),
+                        action: action.clone(),
+                        start_scope: scope.clone(),
+                    };
+                    check_input_size(&event).map_err(|e| anyhow::anyhow!(e.message))?;
+                    if !s.pending.iter().chain(s.inflight.iter().flat_map(|b| &b.events)).any(|e| e.id == event.id) {
+                        events.push(event);
+                    }
+                }
+                if data.get("unknown").and_then(|v| v.as_bool()).unwrap_or(false) && !events.is_empty() {
+                    anyhow::ensure!(s.inflight.is_none(), "새 규칙에 이미 처리 중 입력이 있다");
+                    s.inflight = Some(Batch {
+                        id: format!("converted-{name}"),
+                        events,
+                        day: 0,
+                        previous_last: None,
+                        unknown: true,
+                        delivery_started: true,
+                        target: None,
+                    });
+                } else {
+                    s.pending.extend(events);
+                }
+                Ok((serde_json::to_string(&s)?, vec![(marker.clone(), "done".into())]))
+            })
+            .map_err(internal)?;
         Ok(())
     }
 }

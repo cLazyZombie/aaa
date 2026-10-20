@@ -119,7 +119,6 @@ pub(crate) enum Action {
     Deploy,
     Inbox(Inbox),
     Message(Message),
-    Wake(Wake),
     Start(Start),
 }
 
@@ -137,20 +136,6 @@ pub(crate) struct Inbox {
 #[serde(deny_unknown_fields)]
 pub(crate) struct Message {
     pub thread: String,
-    #[serde(default)]
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub text: Option<String>,
-    #[serde(default)]
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub text_file: Option<String>,
-}
-
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub(crate) struct Wake {
-    pub mission: String,
-    #[serde(default)]
-    pub reports: bool,
     #[serde(default)]
     #[serde(skip_serializing_if = "Option::is_none")]
     pub text: Option<String>,
@@ -336,7 +321,6 @@ impl Action {
             Self::Deploy => (None, None),
             Self::Inbox(a) => (a.text.as_deref(), a.text_file.as_deref()),
             Self::Message(a) => (a.text.as_deref(), a.text_file.as_deref()),
-            Self::Wake(a) => (a.text.as_deref(), a.text_file.as_deref()),
             Self::Start(a) => (a.text.as_deref(), a.brief_file.as_deref().or(a.text_file.as_deref())),
         }
     }
@@ -345,7 +329,6 @@ impl Action {
             Self::Deploy => return,
             Self::Inbox(a) => (&mut a.text, &mut a.text_file),
             Self::Message(a) => (&mut a.text, &mut a.text_file),
-            Self::Wake(a) => (&mut a.text, &mut a.text_file),
             Self::Start(a) => {
                 a.brief_file = None;
                 (&mut a.text, &mut a.text_file)
@@ -359,14 +342,7 @@ impl Action {
             Self::Deploy => "do.deploy",
             Self::Inbox(_) => "do.inbox",
             Self::Message(_) => "do.message",
-            Self::Wake(_) => "do.wake",
             Self::Start(_) => "do.start",
-        }
-    }
-    pub fn mission(&self) -> Option<&str> {
-        match self {
-            Self::Wake(a) => Some(&a.mission),
-            _ => None,
         }
     }
     pub fn label(&self) -> String {
@@ -374,7 +350,6 @@ impl Action {
             Self::Deploy => "배포 제안".into(),
             Self::Inbox(_) => "coordinator 안내".into(),
             Self::Message(a) => format!("{} thread에 글", if a.thread == "owner" { "주인" } else { &a.thread }),
-            Self::Wake(a) => format!("임무 {} 입력", a.mission),
             Self::Start(a) => format!("새 thread · {}", a.title),
         }
     }
@@ -458,11 +433,6 @@ pub(crate) fn parse_with(
         if let Some(wait) = &a.wait_max {
             duration_ms(wait).map_err(|e| bad("do.start.wait_max", &e))?;
         }
-    }
-    if let Action::Wake(a) = &spec.action
-        && !aaa_proto::valid_project(&a.mission)
-    {
-        return Err(bad("do.wake.mission", "임무 이름 형식이 아니다"));
     }
     if let Action::Message(a) = &spec.action
         && a.thread != "owner"
@@ -567,7 +537,6 @@ pub(crate) fn parse_with(
     r.enabled = spec.enabled;
     r.title = if spec.title.is_empty() { name.into() } else { spec.title };
     r.file = file;
-    r.mission = spec.action.mission().map(str::to_string);
     r.action = spec.action;
     r.limits = spec.limits;
     r.catch_up = catch_up;
@@ -615,7 +584,7 @@ pub(crate) fn schema() -> serde_json::Value {
         schema["$defs"]["Limits"]["properties"][field]["minimum"] = 0.into();
         schema["$defs"]["Limits"]["properties"][field]["maximum"] = 100.into();
     }
-    for name in ["Inbox", "Message", "Wake"] {
+    for name in ["Inbox", "Message"] {
         schema["$defs"][name]["not"] = serde_json::json!({"required":["text","text_file"]});
     }
     schema
@@ -690,21 +659,12 @@ impl crate::Host {
     ) -> Result<(Vec<String>, String), aaa_proto::ErrorBody> {
         let _guard = self.automation_sources.lock().await;
         let root = self.project_dir(p)?;
+        let mut plan = convert::prepare(&root, &self.resolve_machine(None).unwrap_or_default())
+            .map_err(|e| crate::err(aaa_proto::ErrorCode::BadRequest, e))?;
+        let journal = plan.include_state(self, p).await?;
         if dry_run {
-            let plan = convert::prepare(&root).map_err(|e| crate::err(aaa_proto::ErrorCode::BadRequest, e))?;
             return Ok((plan.listing(), plan.sha256()));
         }
-        let previous: Vec<_> = self
-            .db
-            .threads(Some(p))
-            .map_err(|e| crate::err(aaa_proto::ErrorCode::Internal, e.to_string()))?
-            .iter()
-            .filter_map(|j| serde_json::from_str::<crate::orch::ThreadRec>(j).ok())
-            .filter(|r| r.status != aaa_proto::ThreadStatus::Resolved)
-            .filter_map(|r| r.mission)
-            .map(|m| (m.name, m.cursor, m.last_schedule_ms))
-            .collect();
-        let plan = convert::prepare(&root).map_err(|e| crate::err(aaa_proto::ErrorCode::BadRequest, e))?;
         let sha = plan.sha256();
         if expected.is_some_and(|want| want != sha) {
             return Err(crate::err(
@@ -712,21 +672,21 @@ impl crate::Host {
                 "미리보기 뒤 옛 파일이나 변환 계획이 바뀌었다. 미리보기를 다시 연다",
             ));
         }
-        let files = plan.files();
-        for (name, cursor, last) in previous {
-            for suffix in ["events", "schedule"] {
-                let rule = format!("{name}-{suffix}");
-                if files.iter().any(|f| f == &format!("automations/{rule}.toml")) {
-                    self.automation_seed_mission(p, &name, &rule, cursor)?;
-                    if suffix == "schedule" {
-                        self.seed_routine_schedule(p, &rule, last);
-                    }
-                }
-            }
-        }
+        self.db
+            .set_meta(
+                &format!("mission_conversion:{p}"),
+                &serde_json::to_string(&journal)
+                    .map_err(|e| crate::err(aaa_proto::ErrorCode::Internal, e.to_string()))?,
+            )
+            .map_err(|e| crate::err(aaa_proto::ErrorCode::Internal, e.to_string()))?;
         let files = convert::apply(&root, plan).map_err(|e| crate::err(aaa_proto::ErrorCode::BadRequest, e))?;
+        self.legacy_mission_recover(p)?;
         self.db.audit(actor, "automation_convert", &format!("{p}: {} files", files.len()));
         self.tick_wake.notify_one();
         Ok((files, sha))
     }
 }
+
+#[cfg(test)]
+#[path = "automation/start_tests.rs"]
+mod start_tests;

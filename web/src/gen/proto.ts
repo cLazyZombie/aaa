@@ -379,11 +379,7 @@ inbox_open: number,
  * 끝내지 않은 inbox 항목(herdr-projects `context`의 Inbox 절). 지시가 아니라 자료다.
  * 응답 크기 한도 안에서 오래된 것부터 싣는다: `inbox_open`보다 적을 수 있다.
  */
-inbox: Array<InboxItem>,
-/**
- * 사후 평가자(지정했을 때만)
- */
-evaluator: EvaluatorView | null, missions: Array<MissionView>, };
+inbox: Array<InboxItem>, };
 
 export type ToolCheck = { name: string, ok: boolean,
 /**
@@ -935,7 +931,7 @@ thread_kind: ThreadKind,
 /**
  * 명시한 실행 대기 표지. timing이면 그 머신의 측정이 끝날 때까지 자동 시작이 기다릴 수 있다.
  */
-holds: Array<string>, mission?: string,
+holds: Array<string>,
 /**
  * 이 thread를 띄운 자동화 규칙 이름(`do.start`, FRONT_API 1.64, plan t-0475 A1). 사람이 띄운 thread와 옛 host는 생략한다.
  * 웹 「작업」 목록이 줄 왼쪽 호박색 막대와 `자동 · <규칙 제목>` 표지로 보인다
@@ -1223,7 +1219,7 @@ seen: boolean, created_at_ms: number, done_at_ms: number | null, };
 
 export type RoutineView = { title: string, name: string, trigger: string, action: string,
 /**
- * routine 또는 mission. mission:<이름>은 임무 파일의 조건 보기다.
+ * automation·routine·legacy. legacy는 변환 안내용 옛 파일이다.
  */
 origin: string, file: string, last_result: RoutineRun | null, last_skip: RoutineRun | null, today: number, max_per_day: number | null,
 /**

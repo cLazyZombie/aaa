@@ -1,15 +1,3 @@
-+++
-title = "착지 뒤 CI 실패 분류"
-profile = "cheap"
-machine = "mac-b"
-repo = "aaa"
-events = []
-batch_s = 120
-reset = "daily 05:00"
-reset_after_wakes = 3
-withdrawal = "none"
-+++
-
 host가 전달한 CI JSON 입력만 읽는다. 입력이 없으면 대기하고 GitHub를 직접 조회하지 않는다.
 실패 job·단계·로그·주인 thread 보고를 근거로 간헐·결함·환경을 나눈다.
 이미 회복했으면 그 사실과 간헐 여부만 기록한다.

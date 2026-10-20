@@ -15,7 +15,7 @@
 - ci-local/GitHub CI의 native clipboard 단계·Xvfb 설치와 vendored crossterm 시험. 웹 E2E·CLI·host 시험과 전체 workspace build/clippy는 계속 돈다.
 - README의 TUI 사용법, Windows 원격 TUI 설치 안내, 기획서의 TUI 전용 절과 시험 설명.
 
-옛 `aaa attach`·`aaa tui`·`aaa evaluator open`은 실패 코드와 「TUI는 삭제됐다. 웹 UI를 쓴다」를 출력한다. `mission open`은 TUI 대신 기존 Front 응답을 출력하는 CLI로 남는다. 옛 바이너리의 로컬 `tui`·`tui@…` hello와 인증한 원격 `/api/v1/front`는 명시적인 Reject를 받는다. 일반 웹 API·터미널·CLI 연결은 계속 받는다.
+옛 `aaa attach`·`aaa tui`는 실패 코드와 「TUI는 삭제됐다. 웹 UI를 쓴다」를 출력한다. A4에서 제거한 `mission`·`evaluator`·`evaluation` CLI는 자동화 변환 안내와 실패 코드를 반환한다. 옛 바이너리의 로컬 `tui`·`tui@…` hello와 인증한 원격 `/api/v1/front`는 명시적인 Reject를 받는다. 일반 웹 API·터미널·CLI 연결은 계속 받는다.
 
 ## 삭제 전후 측정
 
