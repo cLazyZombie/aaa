@@ -1,7 +1,7 @@
 // 할 일 화면의 행 상태·거르기·검색·배지 셈(src/tasksModel.ts, 할 일 보기 T1, plan §8.306).
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { anchorOf, canonicalLine, defaultMachine, descendants, draftOf, draftOps, REPO_DIR, repoMachines, repoName, dropOp, emptyDraft, findTask, itemToTask, lineDiff, moveOp, noteItems, ownerKindOf, ownerLabel, parentAnchor, restorable, taskBadge, handOffText, ownerFixes, startable, linkCandidates, newAutoCleans, lastLogId, mineKeys, taskDepth, taskMatches, taskSections, taskState, toListOp, unassigned } from "../src/tasksModel.ts";
+import { agentOwner, agentParts, anchorOf, canonicalLine, defaultMachine, descendants, draftOf, draftOps, REPO_DIR, repoMachines, repoName, dropOp, emptyDraft, findTask, itemToTask, lineDiff, moveOp, noteItems, ownerKindOf, ownerLabel, parentAnchor, restorable, taskBadge, handOffText, ownerFixes, startable, linkCandidates, newAutoCleans, lastLogId, mineKeys, taskDepth, taskMatches, taskSections, taskState, toListOp, unassigned } from "../src/tasksModel.ts";
 
 const task = (over) => ({ list: "Backlog", title: "일", owner: null, thread: null, notes: [], done: false, line: 1, raw: "- [ ] 일", block_sha256: "", parent: null, problems: [], ...over });
 const MISREAD = "owner 칸이 owner 꼴이 아님: t-0001 S4 뒤";
@@ -21,7 +21,9 @@ describe("할 일 화면", () => {
     assert.equal(ownerLabel(task({})), "미할당");
     assert.equal(ownerLabel(task({ owner: "agent" })), "미할당");
     assert.equal(ownerLabel(task({ owner: "me" })), "나");
-    assert.equal(ownerLabel(task({ owner: "codex@mac-b" })), "codex@mac-b");
+    // agent 일은 담당 칩이 없고 모델·머신 칩이 보인다
+    assert.equal(ownerLabel(task({ owner: "codex@mac-b" })), null);
+    assert.equal(ownerLabel(task({ owner: "Priya Rao", profile: null, machine: null })), "Priya Rao");
     assert.equal(unassigned(task({ problems: [MISREAD] })), false);
     assert.equal(ownerLabel(task({ problems: [MISREAD] })), null);
     // `(미할당)`은 미할당으로 읽혔다(정규형 안내만 단다)
@@ -111,15 +113,15 @@ describe("할 일 편집", () => {
   it("폼 → 동작: 바뀐 칸만 고치고, 목록·상위가 바뀌면 옮긴다. 안 바뀌면 없음", () => {
     const one = by(4);
     const d = draftOf({ ...one, owner: "codex@mac-b", notes: ["메모"] }, [], null);
-    assert.equal(d.ownerKind, "agent");
+    assert.deepEqual([d.who, d.profile, d.machine], ["agent", "codex", "mac-b"]);
     assert.deepEqual(draftOps({ ...one, owner: "codex@mac-b", notes: ["메모"] }, d), []);
-    const ops = draftOps(one, { ...draftOf(one, [], null), title: " 둘 고침 ", ownerKind: "person", person: "Priya", notes: "a\n\n  b  \n\n", list: "B" });
+    const ops = draftOps(one, { ...draftOf(one, [], null), title: " 둘 고침 ", who: "person", person: "Priya", notes: "a\n\n  b  \n\n", list: "B" });
     assert.deepEqual(ops.map((o) => o.op), ["update", "move"]);
     assert.deepEqual([ops[0].title, ops[0].owner, ops[0].person, ops[0].notes], ["둘 고침", "Priya", true, ["a", "", "  b"]]);
     assert.equal(ops[1].to_list, "B");
     const child = draftOps(one, { ...draftOf(one, [], null), parent: anchorOf(by(7)) });
     assert.deepEqual(place(child[0]), { before: null, parent: "넷", to_list: "" });
-    const add = draftOps(null, { ...emptyDraft("새 목록"), title: "새 일", ownerKind: "me" });
+    const add = draftOps(null, { ...emptyDraft("새 목록"), title: "새 일", who: "me" });
     assert.deepEqual([add[0].op, add[0].list, add[0].owner, add[0].parent], ["add", "새 목록", "me", null]);
     // owner 목록 전에 만든 폼(`claude`를 사람으로 봄)도 보낼 동작이 없다(손대지 않은 폼)
     assert.deepEqual(draftOps({ ...one, owner: "claude" }, draftOf({ ...one, owner: "claude" }, [], null)), []);
@@ -220,11 +222,39 @@ describe("할 일 thread 연결(T3, plan §8.316)", () => {
     assert.equal(startable(task({ problems: [MISREAD] }), groups, agents), false);
   });
 
-  it("owner가 정한 profile·머신은 바로 시작 창에서 잠근다(host `--from-task`가 다른 값을 거부한다)", () => {
-    for (const o of [null, "", "agent", "me"]) assert.deepEqual(ownerFixes(o), { profile: false, machine: false }, String(o));
-    assert.deepEqual(ownerFixes("claude"), { profile: true, machine: false });
-    assert.deepEqual(ownerFixes("codex@mac-a"), { profile: true, machine: true });
-    assert.deepEqual(ownerFixes("@mac-a"), { profile: false, machine: true });
+  it("task의 모델·머신 칸이 정한 것은 바로 시작 창에서 잠근다(host `--from-task`가 다른 값을 거부한다)", () => {
+    for (const o of [null, "", "agent", "me"]) assert.deepEqual(ownerFixes(task({ owner: o })), { profile: false, machine: false }, String(o));
+    // 옛 host(칸 없음)는 owner 글을 나눈다
+    assert.deepEqual(ownerFixes(task({ owner: "claude" })), { profile: true, machine: false });
+    assert.deepEqual(ownerFixes(task({ owner: "codex@mac-a" })), { profile: true, machine: true });
+    assert.deepEqual(ownerFixes(task({ owner: "@mac-a" })), { profile: false, machine: true });
+    // 새 host(FRONT_API 1.75)는 나눠 준 칸을 쓴다: 모르는 맨 이름은 사람이라 잠그지 않는다
+    assert.deepEqual(ownerFixes(task({ owner: "codex-fast", profile: "codex-fast", machine: null })), { profile: true, machine: false });
+    assert.deepEqual(ownerFixes(task({ owner: "Priya", profile: null, machine: null })), { profile: false, machine: false });
+  });
+
+  it("모델·머신 칸(plan §8.335): host가 나눈 값이 먼저, 옛 host는 owner 글을 나누고, 폼은 칸마다 고쳐 `모델@머신`으로 보낸다", () => {
+    // 끊긴 머신의 profile도 host가 모델로 읽어 준다(맡길 수 있는 목록이 비어도)
+    assert.deepEqual(agentParts(task({ owner: "codex-fast", profile: "codex-fast", machine: null }), []), { profile: "codex-fast", machine: null });
+    assert.equal(agentParts(task({ owner: "me", profile: null, machine: null }), ["me"]), null);
+    assert.deepEqual(agentParts(task({ owner: "@mac-b" })), { profile: null, machine: "mac-b" });
+    assert.equal(agentParts(task({ owner: "codex-fast" }), []), null, "옛 host: 목록에 없는 맨 이름은 사람");
+    assert.deepEqual(agentParts(task({ owner: "codex-fast" }), ["codex-fast"]), { profile: "codex-fast", machine: null });
+    assert.deepEqual([agentOwner("claude", "mac-b"), agentOwner("claude", ""), agentOwner("", "mac-b"), agentOwner(" ", " ")], ["claude@mac-b", "claude", "@mac-b", ""]);
+    const t = task({ owner: "codex-fast@mac-a", profile: "codex-fast", machine: "mac-a", raw: "- [ ] 일 (codex-fast@mac-a)" });
+    const d = draftOf(t, [], null);
+    assert.deepEqual([d.who, d.profile, d.machine], ["agent", "codex-fast", "mac-a"]);
+    assert.deepEqual(draftOps(t, d), [], "그대로면 동작 없음");
+    const owner = (patch) => draftOps(t, { ...d, ...patch })[0].owner;
+    assert.equal(owner({ machine: "" }), "codex-fast", "머신만 비움");
+    assert.equal(owner({ profile: "claude" }), "claude@mac-a", "모델만 바꿈");
+    assert.equal(owner({ profile: "", machine: "" }), "", "둘 다 비면 미할당");
+    assert.equal(owner({ who: "me" }), "me");
+    // 미할당 task의 폼은 agent에 두 칸이 빈 것이다
+    const none = draftOf(task({ profile: null, machine: null }), [], null);
+    assert.deepEqual([none.who, none.profile, none.machine], ["agent", "", ""]);
+    assert.deepEqual(draftOps(task({ profile: null, machine: null }), none), []);
+    assert.equal(startable(task({ owner: "codex-fast", profile: "codex-fast", machine: null }), groups, []), true);
   });
 
   it("잇기 후보: 형식 어긋남·열린 thread 연결을 빼고 제목·메모로 찾는다", () => {
