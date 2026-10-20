@@ -1,7 +1,7 @@
 // 할 일 상세와 편집 폼(할 일 보기 T1 §8.306의 상세를 편집 T2 §8.311에서 폼으로 넓혔다). 칸은 t-0469 §3.4: 제목·목록(새 목록)·owner
 // (미할당·나·agent·사람)·메모(Markdown 미리보기)·상위 task·연결 thread. 폼 모양과 저장 흐름은 t3code ScheduledTasksSettings.tsx
 // `ScheduledTaskEditorForm`(948–1124: 저장 중 두 번 보내지 않음, 실패는 폼 안에, 닫지 않음)을 따른다. 보기 권한 기기는 T1의 읽기
-// 전용 상세 그대로다. thread 연결(T3, §8.314): 「coordinator에게 맡기기」(기본, herdr-projects popup.rs `task_key` `d`와 같은 뜻이나
+// 전용 상세 그대로다. thread 연결(T3, §8.315): 「coordinator에게 맡기기」(기본, herdr-projects popup.rs `task_key` `d`와 같은 뜻이나
 // 바로 보내지 않고 입력칸을 채운다)·「바로 시작」, 「확인 필요」 task의 「끝남으로 지우기」·「다시 맡기기」·「연결만 풀기」.
 //
 // 편집을 시작한 판(`base`)의 블록 hash로 저장한다: 그사이 파일에서 이 task가 바뀌면 host가 쓰지 않고 충돌로 돌려준다(t-0469 §2.3).

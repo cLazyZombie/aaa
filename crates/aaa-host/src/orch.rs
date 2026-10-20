@@ -213,7 +213,7 @@ impl ResolveWhy {
     }
 }
 
-/// 끝난 thread가 이어진 task를 어떻게 정리하나(할 일 T3, plan §8.314, t-0469 §4 P2). resolve가 끝날 때 `why`·`discard`를 적고,
+/// 끝난 thread가 이어진 task를 어떻게 정리하나(할 일 T3, plan §8.315, t-0469 §4 P2). resolve가 끝날 때 `why`·`discard`를 적고,
 /// ticker가 한 번 판정한 뒤 `judged_ms`를 찍는다. 다시 열면 지운다(다음 끝남을 다시 판정한다)
 #[derive(Debug, Clone, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub(crate) struct TaskClean {
@@ -1018,6 +1018,15 @@ impl Host {
             delivered_ms,
             (self.cfg.host.thread_prepare_timeout_secs + 60) * 1000,
         );
+        // Hello 상태 재생 중 agent=None은 아직 모른다는 뜻이다. 알려 둔 묶음을 쉼으로 바꾸지 않는다.
+        let group = if r.status == ThreadStatus::Open
+            && agent.is_none()
+            && self.restoring.lock().unwrap().contains(&r.machine_id)
+        {
+            r.last_group.unwrap_or(group)
+        } else {
+            group
+        };
         ThreadView {
             project: r.project.clone(),
             id: r.id.clone(),
