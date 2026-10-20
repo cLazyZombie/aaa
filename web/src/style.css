@@ -1175,6 +1175,26 @@ button.report-delete:hover:not(:disabled) { color: var(--danger-text); }
 .chat-pending-note svg { width: 12px; height: 12px; flex: none; margin-right: var(--space-1); vertical-align: -1px; }
 .chat-pending-note-text { min-width: 0; }
 .chat-pending-note.is-quiet { color: var(--text-dim); }
+/* 대화가 정리된 자리(plan §8.309, herdr-web-ui ChatView.css 1277~1312줄 `.chat-compact` 그대로): 조용한 구분선, 요약은 누르면 */
+.chat-compact { margin: var(--space-4) 0; color: var(--text-dim); font-size: var(--fs-sm); }
+.chat-compact-head { display: flex; align-items: center; gap: var(--space-2); list-style: none; }
+summary.chat-compact-head { cursor: pointer; }
+.chat-compact-head::before, .chat-compact-head::after { content: ""; flex: 1 1 auto; border-top: var(--hairline) solid var(--border); }
+.chat-compact-head::-webkit-details-marker { display: none; }
+.chat-compact-text { margin-top: var(--space-2); padding: var(--space-3); border: var(--hairline) solid var(--border); border-radius: var(--radius-lg); color: var(--text); }
+/* 대화 정리 중(plan §8.309): t3code `ContextCompactionTimelineRow`처럼 양쪽 가는 선 사이에 Minimize2·말, 정리 중이면 말이 반짝인다
+   (참고 ActivityShimmerOverlay). 움직임을 줄인 기기는 반짝이지 않는다 */
+.chat-compacting { display: flex; align-items: center; gap: var(--space-3); margin: 0; padding: var(--space-1) 0; }
+.chat-compacting-rule { flex: 1; height: var(--hairline); background: var(--border); }
+.chat-compacting-label {
+  display: inline-flex; align-items: center; gap: 6px; flex: none;
+  background: linear-gradient(90deg, var(--text-dim) 40%, var(--text) 50%, var(--text-dim) 60%) 0 0 / 300% 100%;
+  -webkit-background-clip: text; background-clip: text; color: transparent;
+  animation: chat-compacting-shimmer 2.2s linear infinite;
+}
+.chat-compacting-label svg { width: 12px; height: 12px; flex: none; color: var(--text-dim); }
+@keyframes chat-compacting-shimmer { from { background-position: 100% 0; } to { background-position: 0 0; } }
+@media (prefers-reduced-motion: reduce) { .chat-compacting-label { animation: none; background: none; color: var(--text-dim); } }
 /* 이 기기 보관함 「지금 보내기」의 까닭 줄(plan §8.273): 대기 말 까닭 줄과 같은 경고 아이콘·「터미널 보기」, 질문 중 안내는 조용히 */
 .composer-queue .composer-queue-error { display: flex; align-items: center; flex-wrap: wrap; gap: var(--space-1); }
 .composer-queue .composer-queue-error svg { width: 12px; height: 12px; flex: none; color: var(--warn); }

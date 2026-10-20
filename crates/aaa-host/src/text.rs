@@ -95,6 +95,12 @@ impl Host {
             if question {
                 return (Err(SteerRefusal::Question), format!("harness={harness:?} question=true"));
             }
+            // 대화 정리 중(plan §8.309): harness가 정리가 끝날 때까지 대기 글을 읽지 않아 키가 아무 일도 하지 않는다(Claude 2.1.304
+            // 대기열은 정리 중 `wait`, 10-20 운영 사건: 누른 뒤 10초 경고만 떴다). t3code도 정리 중 steering을 거절한다
+            // (`Orchestrator.ts` 「Wait for context compaction to finish before steering the thread.」)
+            if pane.agent.as_ref().is_some_and(|a| a.compacting) {
+                return (Err(SteerRefusal::Compacting), format!("harness={harness:?} compacting=true"));
+            }
             let Some(mirror) = pane.mirror.as_mut() else {
                 return (Err(SteerRefusal::UnknownScreen), format!("harness={harness:?} reason=mirror_missing"));
             };

@@ -2508,6 +2508,7 @@ mod tests {
             plan: None,
             background: None,
             background_wait: false,
+            compacting: false,
         }
     }
 

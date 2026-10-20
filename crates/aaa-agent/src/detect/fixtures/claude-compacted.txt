@@ -1,0 +1,34 @@
+
+ ▐▛███▛█   Claude Code v2.1.304
+▝▜██████▀  Haiku 5.5 · Claude Max
+ ▝▝   ▝▝   /work/lab/work/demo/t-0001
+
+
+❯ Reply with just the word ok.
+
+⏺ ok
+
+✻ Cooked for 1s · done 12:44 PM
+
+❯ /compact
+  ⎿  Compacted (ctrl+o to see full summary)
+
+❯ queued while compacting
+
+⏺ ok
+
+✻ Cogitated for 2s · done 12:45 PM
+
+
+
+
+
+
+
+
+
+────────────────────────────────────────────────────────────────────────────────────────────────────
+❯ 
+────────────────────────────────────────────────────────────────────────────────────────────────────
+  Haiku 5.5 medium | ctx 95% left | 7d 64% left (5d 4h) · 5h 79% left (2h 34m) | t-0001
+  ⏵⏵ bypass permissions on (shift+tab to cycle) · ← 1 agent
