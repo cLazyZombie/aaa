@@ -160,7 +160,8 @@ pub struct Agent {
     deployments: deploy::Manager,
     guard_gate: tokio::sync::Mutex<()>,
     sessions: Mutex<HashMap<String, Entry>>,
-    host: Mutex<Option<FrameTx>>,
+    /// 연결 변경은 옛 전송 큐에서 기다리는 send_host도 깨운다.
+    host: tokio::sync::watch::Sender<Option<FrameTx>>,
     pub selfcheck: Mutex<Option<serde_json::Value>>,
     threads_cfg: Mutex<threads::ThreadsConfig>,
     /// 파일 보기가 여는 폴더(plan §8.125)
@@ -176,6 +177,8 @@ pub struct Agent {
     /// 세션별로 다시 알릴 harness 사건(host가 다시 붙으면 다시 보낸다). 칸마다(`Slot`) 마지막 하나다.
     /// 세션 폴더 `harness.json`에도 적어 agent가 다시 떠도 남는다.
     harness_last: Mutex<HashMap<String, Vec<aaa_proto::HarnessEvent>>>,
+    /// 연결 시 변경분 전달과 새 harness 사건의 기억·전송 순서를 함께 지킨다.
+    harness_delivery: tokio::sync::Mutex<()>,
     /// 세션마다 SessionStart 때 적은 harness 세션 ID(다른 세션의 사건을 거른다)
     harness_started: Mutex<HashMap<String, String>>,
     /// 세션마다 계획·배경 작업 수 추적(plan.rs, 차이 목록 S5)
@@ -228,7 +231,7 @@ impl Agent {
             default_cwd,
             exe: std::env::current_exe()?,
             sessions: Mutex::new(HashMap::new()),
-            host: Mutex::new(None),
+            host: tokio::sync::watch::channel(None).0,
             selfcheck: Mutex::new(None),
             threads_cfg: Mutex::new(threads::ThreadsConfig::default()),
             file_roots: Mutex::new(files::Roots::default()),
@@ -237,6 +240,7 @@ impl Agent {
             chat_watches: Mutex::new(HashMap::new()),
             chat_salt: std::hash::RandomState::new(),
             harness_last: Mutex::new(HashMap::new()),
+            harness_delivery: tokio::sync::Mutex::new(()),
             labels: Mutex::new(HashMap::new()),
             harness_started: Mutex::new(HashMap::new()),
             plans: Mutex::new(HashMap::new()),
@@ -413,6 +417,7 @@ impl Agent {
 
     /// harness 사건을 기억하고(다시 알릴 것이면) host에 보낸다
     async fn harness_event(self: &Arc<Self>, ev: aaa_proto::HarnessEvent) {
+        let _delivery = self.harness_delivery.lock().await;
         // 이 pane이 시작한 harness 세션과 다른 세션(중첩 Codex thread 등)의 사건은 버린다(herdr-projects `foreign_session`)
         if ev.harness != "report" {
             let mut started = self.harness_started.lock().unwrap();
@@ -727,7 +732,7 @@ impl Agent {
     }
 
     fn host_tx(&self) -> Option<FrameTx> {
-        self.host.lock().unwrap().clone()
+        self.host.borrow().clone()
     }
 
     /// 세션별 마지막 harness 사건(시각 차례). hello에 싣거나 옛 host에 다시 보낸다.
@@ -737,21 +742,10 @@ impl Agent {
         last
     }
 
-    /// `replay`: hello에 실은 harness 사건을 연결 뒤 다시 보낸다(hello의 것을 읽지 않는 옛 host)
-    pub fn set_host(&self, tx: Option<FrameTx>, replay: bool) {
+    /// host 연결을 바꾼다. 연결 시 harness 변경분은 link가 live 사건과 같은 울타리 안에서 먼저 보낸다.
+    pub fn set_host(&self, tx: Option<FrameTx>) {
         let gone = tx.is_none();
-        if let Some(tx) = tx.as_ref().filter(|_| replay) {
-            // host가 다시 붙으면 세션별 마지막 harness 상태를 다시 알린다
-            let compacting = self.host_compacting.load(std::sync::atomic::Ordering::Relaxed);
-            let last: Vec<_> = self.harness_events().into_iter().map(|ev| for_host(ev, compacting)).collect();
-            let tx = tx.clone();
-            tokio::spawn(async move {
-                for ev in last {
-                    let _ = tx.json(&LinkMsg::Event(AgentEvent::Harness(ev))).await;
-                }
-            });
-        }
-        *self.host.lock().unwrap() = tx;
+        self.host.send_replace(tx);
         for (_, t) in self.chat_watches.lock().unwrap().drain() {
             t.abort();
         }
@@ -764,7 +758,9 @@ impl Agent {
     }
 
     async fn send_host(&self, msg: &LinkMsg) {
-        if let Some(tx) = self.host_tx() {
+        let mut host = self.host.subscribe();
+        let tx = host.borrow_and_update().clone();
+        if let Some(tx) = tx {
             // 실행 환경은 실행 입력이다. ThreadReady/Relaunch는 기록 경계에서만 가린다.
             let clean = match msg {
                 LinkMsg::Res {
@@ -773,7 +769,12 @@ impl Agent {
                 } => msg.clone(),
                 _ => aaa_common::redact::json(msg.clone()),
             };
-            let _ = tx.json(&clean).await;
+            // 읽기를 멈춘 옛 host의 큐가 차 있어도 새 연결의 replay 울타리를 붙잡지 않는다.
+            // 기억한 harness 상태는 다음 연결이 최신 snapshot으로 전달한다.
+            tokio::select! {
+                _ = host.changed() => {}
+                _ = tx.json(&clean) => {}
+            }
         }
     }
 
@@ -1290,7 +1291,7 @@ impl Agent {
 
     /// host 요청 하나. 세션 요청은 pump로 넘기고(응답은 pump가 보낸다), 나머지는 여기서 답한다.
     pub async fn handle(self: Arc<Self>, id: String, body: AgentRequest) {
-        let reply = self.host.lock().unwrap().clone();
+        let reply = self.host_tx();
         self.handle_deadline(id, body, None, reply).await;
     }
 
@@ -1936,13 +1937,43 @@ mod tests {
         }
     }
 
+    /// 읽기를 멈춘 옛 host의 전송 큐를 그대로 둬도 연결 변경은 그 전송 대기를 끝내야 한다.
+    /// harness_event는 전송까지 순서 울타리를 잡으므로, 옛 대기가 남으면 다음 Welcome도 진행하지 못한다.
+    #[tokio::test]
+    async fn pending_host_send_lets_go_when_the_connection_changes() {
+        use std::future::Future;
+        use std::task::Poll;
+        let state = std::env::temp_dir().join(format!("aach-{}", util::new_id()));
+        let a = Agent::new(state.clone(), "m".into(), "mac-a".into(), true, None).unwrap();
+        let (old, _old_out) = aaa_common::conn::frame_channel();
+        a.set_host(Some(old.clone()));
+        for seq in 0..512 {
+            old.json(&LinkMsg::Ping { seq }).await.unwrap();
+        }
+        let message = LinkMsg::Ping { seq: 513 };
+        let mut sending = std::pin::pin!(a.send_host(&message));
+        std::future::poll_fn(|cx| {
+            assert!(sending.as_mut().poll(cx).is_pending(), "가득 찬 옛 전송 큐에서 기다려야 한다");
+            Poll::Ready(())
+        })
+        .await;
+        a.set_host(None);
+        tokio::time::timeout(Duration::from_secs(3), sending).await.expect("옛 전송 대기가 새 연결을 막았다");
+        let (new, mut out) = aaa_common::conn::frame_channel();
+        a.set_host(Some(new));
+        a.send_host(&message).await;
+        let (_, bytes) = out.recv().await.unwrap();
+        assert_eq!(serde_json::from_slice::<LinkMsg>(&bytes).unwrap(), message);
+        std::fs::remove_dir_all(state).unwrap();
+    }
+
     #[tokio::test]
     async fn compaction_goes_to_an_old_host_as_working() {
         let base = if cfg!(unix) { PathBuf::from("/tmp") } else { std::env::temp_dir() };
         let state = base.join(format!("aach-{}", util::new_id()));
         let a = Agent::new(state.clone(), "m".into(), "mac-a".into(), true, None).unwrap();
         let (tx, mut out) = aaa_common::conn::frame_channel();
-        a.set_host(Some(tx), false);
+        a.set_host(Some(tx));
         let ev = aaa_proto::HarnessEvent {
             session: "s".into(),
             harness: "claude".into(),
@@ -1988,7 +2019,7 @@ mod tests {
         util::ensure_private_dir(&paths.dir).unwrap();
         util::write_json(&paths.spec(), &spec).unwrap();
         let (tx, mut out) = aaa_common::conn::frame_channel();
-        a.set_host(Some(tx), false);
+        a.set_host(Some(tx));
         let msg = hooks::HookMsg {
             session: "s".into(),
             token: hooks::hook_token(&spec.token),
@@ -2237,7 +2268,7 @@ mod tests {
             let gate = Arc::new(std::sync::atomic::AtomicBool::new(open));
             let mut seen = fake_session_host(listener, info, spec.token.clone(), first, gate.clone());
             let (host, mut out) = aaa_common::conn::frame_channel();
-            agent.set_host(Some(host), false);
+            agent.set_host(Some(host));
             agent.recover().await.unwrap();
             assert!(matches!(seen.recv().await, Some(Seen::Hello(1))));
             // 안전 상한(오지 않을 때 멈춘다). 다시 붙기 첫 간격은 0.5초다
@@ -2459,7 +2490,7 @@ mod mission_feature_tests {
         std::fs::create_dir_all(&work).unwrap();
         let (s, peer) = tokio::io::duplex(1 << 20);
         let (_, w) = tokio::io::split(s);
-        *a.host.lock().unwrap() = Some(spawn_writer(w, aaa_proto::MAX_FRAME));
+        a.set_host(Some(spawn_writer(w, aaa_proto::MAX_FRAME)));
         let mut rx = FrameRx::new(peer, aaa_proto::MAX_FRAME);
         a.clone()
             .handle("old".into(), AgentRequest::MissionStateList { work_dir: work.to_string_lossy().into() })
