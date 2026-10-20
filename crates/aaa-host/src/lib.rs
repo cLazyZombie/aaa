@@ -66,6 +66,7 @@ mod routine;
 mod routine_runs;
 mod seen;
 mod summary;
+mod supervisor;
 pub mod tailscale;
 mod task_attach;
 mod task_clean;
@@ -113,6 +114,7 @@ pub struct AgentConn {
     pub generation: u64,
     seq: Arc<AtomicU64>,
     timeouts: aaa_config::HostSection,
+    health_host: std::sync::Weak<Host>,
 }
 
 impl AgentConn {
@@ -123,6 +125,7 @@ impl AgentConn {
             generation,
             seq: Arc::new(AtomicU64::new(0)),
             timeouts: Default::default(),
+            health_host: Default::default(),
         }
     }
 
@@ -164,10 +167,16 @@ impl AgentConn {
             }
             return Err(ErrorBody::new(ErrorCode::AgentDisconnected, "agent 연결이 끊겼다"));
         }
+        let mut timed_out = false;
+        let mut responded = false;
         let result = match tokio::time::timeout(wait, orx).await {
-            Ok(Ok(o)) => o.into_result(),
+            Ok(Ok(o)) => {
+                responded = true;
+                o.into_result()
+            }
             Ok(Err(_)) => Err(ErrorBody::new(ErrorCode::AgentDisconnected, "agent 연결이 끊겼다")),
             Err(_) => {
+                timed_out = true;
                 self.pending.lock().unwrap().remove(&id);
                 // 무슨 요청이었는지 남긴다(op과 세션만: 입력 바이트 같은 내용은 남기지 않는다)
                 let what = match &msg {
@@ -186,6 +195,9 @@ impl AgentConn {
                 Err(ErrorBody::new(ErrorCode::Timeout, "agent 응답 시간 초과"))
             }
         };
+        if let Some(host) = self.health_host.upgrade() {
+            host.agent_request_finished(timed_out, responded);
+        }
         if let Some((session, bytes, true)) = &input {
             tracing::debug!(request = %id, %session, bytes, ok = result.is_ok(), "pane 입력: host 확인");
         } else if let Some((session, bytes, _)) = &input {
@@ -423,6 +435,8 @@ pub struct Host {
     pub reports_changed: tokio_watch::Sender<u64>,
     /// EMFILE 중에는 파일을 더 열지 않고, ticker가 여유가 생긴 뒤 시스템 경고를 저장한다.
     resource_exhausted: std::sync::atomic::AtomicBool,
+    health: Mutex<supervisor::Health>,
+    health_wake: tokio::sync::Notify,
     enroll: Mutex<Enroll>,
     pairing: Mutex<Pairing>,
     pub agent_listen: Mutex<Option<String>>,
@@ -637,6 +651,8 @@ impl Host {
         let web_port = cfg.web.listen.rsplit_once(':').and_then(|(_, p)| p.parse().ok()).unwrap_or(0);
         let dev_mode = cfg.local_agent.mode == LocalAgentMode::Child;
         Ok(Arc::new(Host {
+            health: Mutex::new(supervisor::Health::load(&db)),
+            health_wake: Default::default(),
             accounts,
             cfg,
             state,
@@ -2960,6 +2976,7 @@ pub async fn run(cfg: HostConfig, state_root: PathBuf) -> Result<()> {
     }
     // 옛 판이 남긴 보내던 메시지는 입구를 열기 전에 잊는다(연 뒤면 막 기록한 새 메시지까지 「모른다」로 바뀐다)
     host.forget_queued_messages();
+    host.start_supervisor();
     link::start(&host).await?;
     front::start(&host).await?;
     web::start(&host).await?;

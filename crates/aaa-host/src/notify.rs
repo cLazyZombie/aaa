@@ -1,4 +1,5 @@
 //! 알림 webhook과 Web Push. host가 해당 프로젝트 coordinator pane으로 검증한 사용자 post만 밖으로 보낸다.
+//! 예외: supervisor가 판정한 host 이상·회복만 별도 안전 경로로 직접 보낸다.
 //! thread 보고·확인창·세션·머신 사건은 앱 안 알림과 coordinator inbox에 남긴다.
 //!
 //! - `debounce_secs` 동안 모아 프로젝트마다 한 통으로 보낸다.
@@ -254,6 +255,14 @@ pub(crate) struct AlertText {
 
 pub(crate) fn alert_text(place: &Place, items: &[InboxItem], titles: &HashMap<String, String>) -> AlertText {
     let lines = |who: bool| items.iter().map(|i| alert_line(i, who, titles)).collect::<Vec<_>>();
+    if let Some(first) = items.first().filter(|i| i.item_kind == "host-health") {
+        return AlertText {
+            title: if first.event == "recovered" { "host 회복" } else { "host 이상" }.into(),
+            lines: lines(false),
+            url: "/#threads".into(),
+            tag: format!("aaa-host-{}", first.subject),
+        };
+    }
     match place {
         Place::Project(project) => {
             let one = items
@@ -513,6 +522,71 @@ impl Host {
             && let Some(tx) = self.notify_tx.lock().unwrap().as_ref()
         {
             let _ = tx.send(item.clone());
+        }
+    }
+
+    /// post와 섞지 않는 유일한 예외. supervisor만 정적인 안전 필드로 이 항목을 만든다.
+    pub(crate) async fn publish_host_health(&self, event: crate::supervisor::Transition) {
+        let project = self.sole_project().ok().flatten().unwrap_or_default();
+        let item = InboxItem {
+            id: format!("host-health-{}", event.id),
+            project: project.clone(),
+            item_kind: "host-health".into(),
+            subject: event.task.name().into(),
+            event: if event.recovered { "recovered" } else { "failed" }.into(),
+            summary: event.summary(),
+            body: String::new(),
+            done: false,
+            seen: false,
+            created_at_ms: aaa_common::util::now_ms(),
+            done_at_ms: None,
+        };
+        match self.commit_host_health(event.id, &item) {
+            Ok(true) => {
+                if !project.is_empty() {
+                    self.inbox_publish(&item);
+                }
+            }
+            Ok(false) => return, // 이미 내구 inbox에 확정했다. 외부 발송은 반복하지 않는다.
+            Err(_) => {
+                tracing::error!("host 이상 inbox 저장 실패");
+                return;
+            }
+        }
+        // 기존 '쓰는 기기' 판정 그대로. 앱을 쓰면 앱 안 알림 하나만 보낸다.
+        if self.viewing.lock().unwrap().user_in_use() {
+            self.send_notice(aaa_proto::NoticeView {
+                kind: if event.recovered {
+                    aaa_proto::NoticeKind::HostRecovered
+                } else {
+                    aaa_proto::NoticeKind::HostIssue
+                },
+                pane: None,
+                machine: String::new(),
+                project: (!project.is_empty()).then_some(project),
+                thread: None,
+                title: item.summary.clone(),
+                agent: None,
+                turn_ms: None,
+                long: true,
+                at_ms: item.created_at_ms,
+            });
+            return;
+        }
+        let place = Place::Project(project.clone());
+        let titles = HashMap::new();
+        self.push_items(&place, std::slice::from_ref(&item), &titles).await;
+        let n = &self.cfg.notify;
+        if !n.webhook.is_empty() && !self.viewing.lock().unwrap().user_in_use() {
+            let body = notify_body(&n.format, &n.telegram_chat_id, &place, &[item], &titles);
+            let result = tokio::time::timeout(SEND_TIMEOUT, post(&n.webhook, body.to_string().as_bytes())).await;
+            let ok = matches!(result, Ok(Ok(200..=299)));
+            self.flow_project(
+                &project,
+                if ok { "notify_sent" } else { "notify_failed" },
+                None,
+                if ok { "host 이상 알림 전달" } else { "host 이상 알림 실패(재전송 없음)" },
+            );
         }
     }
 

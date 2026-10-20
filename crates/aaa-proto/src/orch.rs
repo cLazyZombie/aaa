@@ -541,6 +541,9 @@ pub struct QuestionView {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "snake_case")]
 pub enum NoticeKind {
+    /// host 내부 감시의 이상·회복. 웹 앱 안 알림.
+    HostIssue,
+    HostRecovered,
     /// 배포의 최종 성공/중단. 웹 앱 안 알림만 보낸다.
     RolloutFinished,
     RolloutFailed,
