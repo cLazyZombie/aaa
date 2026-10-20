@@ -1,4 +1,4 @@
-// 보고서 그림 크게 보기(plan §8.349, 사용자 10-20 「시안·보고서 이미지를 눌러도 안 커진다」). 보고서 index.html은 opaque origin
+// 보고서 그림 크게 보기(plan §8.350, 사용자 10-20 「시안·보고서 이미지를 눌러도 안 커진다」). 보고서 index.html은 opaque origin
 // sandbox iframe이라 host가 HTML 탐색 응답 끝에 붙인 그림 누름 알림만이 앱에 누른 그림을 알린다. 데스크톱(Chromium)·휴대폰(WebKit
 // iPhone)에서 보고서 안 그림을 눌러 공용 크게 보기(Lightbox)로 열고, 넘기고(←→·단추·옆으로 쓸기), 키우고(두 번 누름·두 손가락),
 // 닫는다(Esc·바깥 누름·아래로 쓸기·휴대폰 뒤로). 원본 파일·Range·내려받기·fetch는 원본 바이트 그대로이고, 보고서 제 script나 다른
@@ -199,7 +199,7 @@ export default async function ({ page }) {
       const frame = p.frameLocator('[data-testid="report-frame"]');
       await frame.getByRole("img", { name: "첫 그림" }).waitFor();
       // headless WebKit은 sandbox 속성과 CSP sandbox 머리가 겹친 iframe 문서의 `img-src 'self'` 그림을 그리지 않는다(main도 같다,
-      // plan §8.349 「남은 것」). 그래서 iframe 안 그림이 읽히기를 기다리지 않는다: 크게 보기는 앱 문서에서 그 주소를 읽는다
+      // plan §8.350 「남은 것」). 그래서 iframe 안 그림이 읽히기를 기다리지 않는다: 크게 보기는 앱 문서에서 그 주소를 읽는다
       await frame.getByRole("img", { name: "셋째 그림" }).waitFor();
       await shot(p, "58-report-phone");
       const hash = await p.evaluate(() => location.hash);

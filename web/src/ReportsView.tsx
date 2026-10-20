@@ -1,7 +1,7 @@
 // 본문(오른쪽) 보고서 화면(사용자 요청 10-19 「보고서 누르면 오른쪽 창이 보고서로 바뀌게」, plan §8.240). 예전에는 설정 안의 쪽이었다.
 // 활동 막대 「보고서」·`#reports`가 목록을, `#report=<프로젝트>/<이름>`이 보고서 하나를 연다. 한 번 연 뒤에는 다른 화면으로 가도
 // 그려 둔 채 숨긴다(App): 돌아오면 열어 둔 보고서·굴린 자리가 그대로다. 보고서 HTML은 thread 결과물처럼 sandbox iframe(opaque origin)이다.
-// 보고서 안 그림을 누르면 앱 크게 보기로 연다(plan §8.349: host가 붙인 알림을 그 iframe에서만 받는다).
+// 보고서 안 그림을 누르면 앱 크게 보기로 연다(plan §8.350: host가 붙인 알림을 그 iframe에서만 받는다).
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { ExternalLink, ListPlus } from "lucide-react";
 import type { DeviceRole, LibraryFile, LibraryView } from "./gen/proto";

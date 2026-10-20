@@ -1,4 +1,4 @@
-// 크게 보기 손짓(src/lightboxGesture.ts, plan §8.349): 두 손가락 확대는 두 점 가운데 아래 자리를 지키고, 배율은 1~6에 묶이며,
+// 크게 보기 손짓(src/lightboxGesture.ts, plan §8.350): 두 손가락 확대는 두 점 가운데 아래 자리를 지키고, 배율은 1~6에 묶이며,
 // 키운 그림은 무대 밖으로 빠지지 않는다. 맞춘 크기에서 옆으로 쓸면 넘기고 아래로 쓸면 닫는다.
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";

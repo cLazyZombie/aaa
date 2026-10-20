@@ -1,4 +1,4 @@
-// 크게 보기(Lightbox)의 손짓 계산(plan §8.349): 두 손가락 확대·끌기·두 번 누름·쓸기. 좌표는 모두 무대 가운데를 0으로 한 화면
+// 크게 보기(Lightbox)의 손짓 계산(plan §8.350): 두 손가락 확대·끌기·두 번 누름·쓸기. 좌표는 모두 무대 가운데를 0으로 한 화면
 // px이고, 그림은 `translate(x, y) scale(scale)`(가운데 기준)으로 그린다. 판정만 여기 두고 사건 처리는 Lightbox.tsx가 한다.
 
 export type Point = { x: number; y: number };

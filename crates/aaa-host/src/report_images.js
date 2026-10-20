@@ -1,4 +1,4 @@
-// 보고서 그림 누름 알림(plan §8.349). host가 `/v/<cap>/` HTML 탐색 응답 끝에만 붙인다. 이 문서와 같은 sandbox(opaque origin)
+// 보고서 그림 누름 알림(plan §8.350). host가 `/v/<cap>/` HTML 탐색 응답 끝에만 붙인다. 이 문서와 같은 sandbox(opaque origin)
 // 안에서 돌고, 그림을 누르면 이 문서의 그림 주소 목록과 누른 자리를 부모(앱)에게 알리기만 한다. 앱은 그 iframe에서 온, 그
 // 보고서 `/v/<cap>/` 아래 주소만 받는다. 링크·단추 안 그림과 보고서가 제 script로 처리한 누름(preventDefault)은 건드리지 않는다.
 (() => {

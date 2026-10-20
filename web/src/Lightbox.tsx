@@ -1,4 +1,4 @@
-// 그림 크게 보기(plan §8.349). 「답할 것」 본문 그림(t-0540)·task 첨부 그림·보고서 그림이 모두 이것으로 연다. 화면을 덮고(문서 맨 위),
+// 그림 크게 보기(plan §8.350). 「답할 것」 본문 그림(t-0540)·task 첨부 그림·보고서 그림이 모두 이것으로 연다. 화면을 덮고(문서 맨 위),
 // 닫기·Esc·바깥 누름·아래로 쓸기·휴대폰 뒤로가 닫는다. 여럿이면 ←→·앞뒤 단추·옆으로 쓸기로 넘긴다. 두 손가락으로 키우고
 // 끌며, 두 번 누르면 그 자리를 키운다(데스크톱 trackpad 벌리기·ctrl+바퀴도). 손짓 계산은 lightboxGesture.ts에 있다.
 import { useCallback, useEffect, useLayoutEffect, useRef, useState, type PointerEvent as ReactPointerEvent, type ReactNode, type Ref, type RefObject } from "react";
@@ -226,7 +226,7 @@ export function useLightbox(): { open: (s: LightboxState | null) => void; shown:
 }
 
 /**
- * 보고서 iframe(보기 경로 `/v/<cap>/…`)의 그림 누름 알림을 받는다(host가 HTML 탐색 응답에 붙인 것, plan §8.349). 그 iframe에서 온
+ * 보고서 iframe(보기 경로 `/v/<cap>/…`)의 그림 누름 알림을 받는다(host가 HTML 탐색 응답에 붙인 것, plan §8.350). 그 iframe에서 온
  * 메시지만, 그 보고서 보기 경로 아래 같은 origin 그림만 연다.
  */
 export function useFrameImages(frame: RefObject<HTMLIFrameElement | null>, src: string | null | undefined, open: (s: LightboxState) => void): void {
