@@ -53,7 +53,7 @@ pub(crate) fn compose(
 
 impl Host {
     /// 답한 곳의 이름: 웹 기기는 그 기기 이름(없으면 「웹」), 그 밖(CLI·coordinator)은 「CLI」
-    fn answered_by(&self, actor: &str) -> String {
+    pub(crate) fn answered_by(&self, actor: &str) -> String {
         match actor.strip_prefix("device:") {
             Some(id) => self
                 .db
@@ -118,6 +118,10 @@ impl Host {
         }
         self.db.audit(actor, "thread_answer", &format!("{project}/{id} {summary}"));
         let rec = self.load(project, id)?;
+        // 답할 때의 원문을 남긴다(plan §8.345): 새 보고가 질문을 비워도 「답한 것」과 대화 칩이 읽는다
+        if let Some(a) = rec.question_answer.as_ref().filter(|a| a.at_ms == answer.at_ms) {
+            self.record_answer(&rec, a);
+        }
         self.flow(&rec, "question_answered", Some(format!("threads/{id}.md")), format!("{summary} · {by}"));
         if actor.starts_with("device:") {
             self.inbox_add(

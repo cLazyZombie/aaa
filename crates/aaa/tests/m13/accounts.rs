@@ -852,11 +852,13 @@ if kind=='codex':
     config=tomllib.loads((home/'config.toml').read_text())
     projects=config.get('projects',{})
     trusted=projects.get(cwd,{}).get('trust_level')=='trusted'
+    settings={}
 else:
     config=json.loads((home/'.claude.json').read_text())
     assert config.get('hasCompletedOnboarding') is True
     projects=config.get('projects',{})
     trusted=projects.get(cwd,{}).get('hasTrustDialogAccepted') is True
+    settings=json.loads((home/'settings.json').read_text()) if (home/'settings.json').exists() else {}
     # 격리 Claude 기록도 실제 hook → agent → 대화/계획 조회 경로를 거친다.
     sid=str(uuid.uuid4())
     transcript=home/'projects'/'fixture'/(sid+'.jsonl')
@@ -867,11 +869,80 @@ else:
     transcript.write_text(''.join(json.dumps(line,separators=(',',':'))+'\n' for line in lines))
     subprocess.run([os.environ['ACCOUNT_AAA'],'hook','--agent','claude',json.dumps(dict(hook_event_name='SessionStart',session_id=sid,transcript_path=str(transcript),source='startup'))],check=True,stdout=subprocess.PIPE)
 print('account-trust-ready' if trusted else 'Trust this folder?',flush=True)
+if kind=='claude' and '--dangerously-skip-permissions' in sys.argv and not settings.get('skipDangerousModePermissionPrompt'):
+    print('WARNING: Claude Code running in Bypass Permissions mode',flush=True)
 h,p=os.environ['ACCOUNT_GATE'].split(':')
 s=socket.create_connection((h,int(p)),timeout=30)
-s.sendall((json.dumps(dict(tid=os.environ['AAA_THREAD'],phase=4,home=str(home),cwd=cwd,projects=projects,trusted=trusted))+'\n').encode())
+s.sendall((json.dumps(dict(tid=os.environ['AAA_THREAD'],phase=4,home=str(home),cwd=cwd,projects=projects,trusted=trusted,settings=settings,config=config))+'\n').encode())
 assert s.recv(1)==b'X'
 "#;
+
+#[test]
+fn fresh_account_claude_initializes_only_authorized_bypass_consent() {
+    let gate = Gate::new();
+    let mut w = world("http://127.0.0.1:1", &gate, "fake-local-token", TRUST_HARNESS);
+    w.add_remote();
+    let token = w.scripts.join("fake-token");
+    std::fs::write(&token, "fake-claude-token").unwrap();
+    w.h.ok(&["account", "import", "token", "--harness", "claude", "--file", path_str(&token)]);
+    w.h.ok(&["account", "default", "claude", "token"]);
+    let task = w.task("onboarding.md", "가짜 첫 실행 검증");
+    let host = w.h.cfg.join("host.toml");
+    let original = std::fs::read_to_string(&host).unwrap();
+    // 실제 사용자 홈 대신 가짜 원본 홈을 가리켜도 첫 실행 키 외의 설정·인증은 복사하지 않는다.
+    let source = w.scripts.join("source-claude");
+    std::fs::create_dir(&source).unwrap();
+    let source_config = r#"{"oauthAccount":{"accessToken":"fake-source-secret"},"theme":"light"}"#;
+    let source_settings = r#"{"env":{"ANTHROPIC_API_KEY":"fake-source-secret"},"skipAutoPermissionPrompt":true}"#;
+    std::fs::write(source.join(".claude.json"), source_config).unwrap();
+    std::fs::write(source.join("settings.json"), source_settings).unwrap();
+    let original = original.replace("env={ACCOUNT_GATE=", &format!("env={{CLAUDE_CONFIG_DIR={source:?},ACCOUNT_GATE="));
+    for (yolo, args, accepted) in [
+        (false, "[]", false),
+        (true, "[]", true),
+        (false, "[\"--permission-mode\",\"bypassPermissions\"]", true),
+        (false, "[\"--permission-mode=bypassPermissions\"]", true),
+        (false, "[\"--permission-mode\",\"default\"]", false),
+    ] {
+        let config = original.replace("[profiles.token]\n", &format!("[profiles.token]\nargs={args}\n"));
+        std::fs::write(&host, format!("{config}\n[safety.demo]\nyolo={yolo}\ntrust_screens=\"coordinator\"\n"))
+            .unwrap();
+        for machine in ["labA", "labB"] {
+            let started = w.start(&[
+                "--title",
+                "계정 첫 실행",
+                "--profile",
+                "token",
+                "--machine",
+                machine,
+                "--kind",
+                "dir",
+                "--task-file",
+                &task,
+            ]);
+            let id = started["id"].as_str().unwrap();
+            let ready = gate.take(1, 4);
+            let proof = &ready[0].1;
+            let expected = if accepted {
+                serde_json::json!({"skipDangerousModePermissionPrompt":true})
+            } else {
+                serde_json::json!({})
+            };
+            assert_eq!(proof["settings"], expected, "{machine}/{yolo}/{args}: {proof}");
+            let config = proof["config"].as_object().unwrap();
+            assert_eq!(config.len(), 2, "인증·다른 사용자 설정을 복사하지 않는다: {proof}");
+            assert_eq!(config["hasCompletedOnboarding"], true);
+            assert!(proof["trusted"].as_bool().unwrap());
+            let pane = w.show(id)["pane"].as_str().unwrap().to_string();
+            let screen = w.h.screen(&pane);
+            assert!(!screen.contains("WARNING: Claude Code running in Bypass Permissions mode"), "{screen}");
+            Gate::release(ready, b'X');
+            w.wait_show("가짜 첫 실행 종료", id, |v| v["agent"]["activity"] == "exited");
+        }
+    }
+    assert_eq!(std::fs::read_to_string(source.join(".claude.json")).unwrap(), source_config);
+    assert_eq!(std::fs::read_to_string(source.join("settings.json")).unwrap(), source_settings);
+}
 
 #[test]
 fn account_threads_trust_only_their_cwd_when_coordinator_answers() {

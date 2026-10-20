@@ -351,12 +351,16 @@ CI routine이 지정 branch를 감시한다. inbox 종류 `ci`는 실패 job·�
 활동 막대 배지에 안 봄으로 뜨고, 사용자 알림 post(topic report)가 함께 남는다. 같은 이름으로 다시 보내면 다시 안 봄이다.
 index.html이 없으면 거절한다. thread가 낸 보고(t-NNNN 사본)는 「작업 보고」에 따로 있으니 그대로 다시 보내지 않는다:
 사용자에게 보일 것만 골라 `--to-user`로 보낸다. 이 알림은 앱 안에만 뜨고 밖 푸시는 위 두 post만 보낸다.
-채팅에서는 그 보고서를 `aaa:report/<이름>`으로 가리킨다(아래 「앱 안 참조」).
+채팅에서는 그 보고서를 링크로 가리킨다(아래 「앱 안 참조」).
 
 ## 앱 안 참조
-웹 대화창은 `aaa:question/<thread>`(그 thread의 질문 카드)와 `aaa:report/<이름>`(보고서 패널의 그 보고서: `library publish
---name`의 이름, thread 사본은 thread ID)을 누르면 앱 안에서 열리는 칩으로 그린다. 터미널에서는 글 그대로 읽힌다. 채팅에서
-보고서·질문을 가리킬 때는 공유 주소(`https://…/v/…`) 대신 이 꼴을 쓴다. 공유 주소는 사용자가 밖으로 보내 달라고 할 때만 쓴다.
+채팅에서 thread 질문·보고서를 가리킬 때는 `aaa context`의 「웹 주소」로 Markdown 링크를 쓴다:
+`[t-0001 질문](<웹 주소>/#question=t-0001)`, `[<제목>](<웹 주소>/#report=<이름>)`(이름은 `library publish --name`의 이름,
+thread 사본은 thread ID). 터미널에서 누르면 브라우저가 그 질문 카드·보고서를 열고, 웹 대화창은 같은 host 링크를 앱 안 칩으로
+그린다. 웹 주소가 없으면(공개 안 함) `aaa:question/<thread>`·`aaa:report/<이름>`을 쓴다(웹 대화창은 칩, 터미널에서는 글).
+공유 주소(`https://…/v/…`)는 사용자가 밖으로 보내 달라고 할 때만 쓴다.
+확인 필요 post와 thread 질문은 웹 「답할 것」에 모인다. 사용자가 카드로 답하면 host가 thread에 전하고, 확인 필요 post를
+「답함으로 표시」하면 그 inbox 항목이 끝나고 `request handled` 항목이 온다: 같은 것을 다시 묻지 않는다.
 
 ## 첫 턴
 TASKS.md가 비어 있고 thread가 없으면 이것만 한다: goal을 한 줄로 다시 말하고, 범위에 든 repo와 머신을 늘어놓고(goal과
@@ -457,7 +461,7 @@ pane이 없어졌거나 시작이 실패한 thread는 `aaa thread restart <id>`�
 ## 설정
 - 사용자가 바꾸라고 하면 `aaa set <key> <값>`으로 바꾼다: `goal`, `thread_profile`, `coordinator_profile`,
   `max_parallel_threads`, `auto_resolve_days`, `repos.add`·`repos.remove`(`PATH` 또는 `PATH@MACHINE`). project.toml을 직접 고쳐도 된다.
-- 사용자가 요청할 때만: `aaa project pause|resume {p}`(멈추면 ticker가 건너뛰고 thread start를 거부한다), `aaa project sweep {p}`
+- 사용자가 요청할 때만: `aaa project pause|resume`(멈추면 ticker가 건너뛰고 thread start를 거부한다), `aaa project sweep`
   (끝난 thread가 남긴 worktree·병합된 branch를 치운다, `--dry-run`으로 먼저 보인다). 보관·삭제·이름 바꾸기는 사용자가 한다.
 
 ## safety(사용자만 바꾼다)
@@ -966,6 +970,50 @@ impl Host {
         Ok(FrontResponse::Project(self.project_view(project, &dir)))
     }
 
+    /// 「이 aaa」·「저장소」 설정 화면이 읽는 값(관리 GUI W4). 잘못된 값은 host가 쓰는 기본값으로 보인다
+    pub(crate) fn project_settings_view(&self, project: &str) -> Result<aaa_proto::ProjectSettingsView, ErrorBody> {
+        let dir = self.project_dir(project)?;
+        let path = aaa_config::project_settings_file(&dir);
+        let s = crate::project::ProjectSettings::load(&dir);
+        Ok(aaa_proto::ProjectSettingsView {
+            project: project.to_string(),
+            file: path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default(),
+            status: self.project_status(project),
+            goal: s.goal,
+            thread_profile: s.thread_profile,
+            coordinator_profile: s.coordinator_profile,
+            max_parallel_threads: s.max_parallel_threads,
+            auto_resolve_days: s.auto_resolve_days,
+            nudge: s.nudge,
+            mute: s.mute,
+            repos: s.repos.into_iter().map(|r| aaa_proto::RepoChoice { path: r.path, machine: r.machine }).collect(),
+            local_machine: self.machine_order().1,
+            task_notes: s.task_notes,
+        })
+    }
+
+    /// 저장소 하나를 제자리에서 바꾼다(웹 「저장소」 페이지의 고치기). 머신 없는 경로는 `repos.add`처럼 host 정본 경로로 바꾼다
+    pub(crate) fn project_repo_edit(
+        &self,
+        project: &str,
+        from: &str,
+        to: &str,
+        actor: &str,
+    ) -> Result<FrontResponse, ErrorBody> {
+        let dir = self.project_dir(project)?;
+        let to = self.repo_arg(to);
+        let path = aaa_config::project_settings_file(&dir);
+        {
+            let _guard = PROJECT_TOML.lock().unwrap();
+            let text = std::fs::read_to_string(&path).unwrap_or_else(|_| "schema = 1\n".into());
+            let edited =
+                crate::project::replace_repo_in(&text, from, &to, crate::project::repos_table(&path)).map_err(bad)?;
+            write_atomic(&path, edited.as_bytes()).map_err(internal)?;
+        }
+        self.db.audit(actor, "project_set", &format!("{project} repos.edit={} -> {to}", from.trim()));
+        self.project_settings_view(project).map(FrontResponse::ProjectSettings)
+    }
+
     /// 머신이 없는 저장소 경로는 host 머신 정본 경로로(참고 `create`·`set_in`: 없는 경로는 그대로)
     fn repo_arg(&self, arg: &str) -> String {
         let r = crate::project::parse_repo_arg(arg.trim());
@@ -1132,6 +1180,7 @@ impl Host {
             limited_until_ms: self.usage_limit(&r.project, &r.id),
             questions: r.report_hash.clone().filter(|_| !r.questions.is_empty()).map(|report_hash| {
                 Box::new(aaa_proto::ThreadQuestions {
+                    files_base: Some(crate::asks::question_files_base(&r.project, &r.id, &report_hash)),
                     report_hash,
                     items: r.questions.clone(),
                     answer: r.question_answer.clone(),
@@ -1238,13 +1287,18 @@ impl Host {
         project: Option<&str>,
         after: u64,
         limit: Option<u32>,
+        tail: bool,
     ) -> Result<Vec<FlowEvent>, ErrorBody> {
         if let Some(p) = project
             && !valid_project(p)
         {
             return Err(bad("프로젝트 이름 형식이 아니다"));
         }
-        self.db.flow_after(project, after, limit.unwrap_or(500).min(5000)).map_err(internal)
+        let limit = limit.unwrap_or(500).min(5000);
+        if tail {
+            return self.db.flow_tail(project, after, limit).map_err(internal);
+        }
+        self.db.flow_after(project, after, limit).map_err(internal)
     }
 
     pub(crate) fn profile_config(&self) -> Result<aaa_config::HostConfig, ErrorBody> {
