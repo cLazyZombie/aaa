@@ -202,9 +202,11 @@ export default async function ({ page }) {
     await shot(page, "56-inbox-desktop");
     await panel.getByTestId("inbox-tab-events").click();
     await panel.getByTestId("event-list").waitFor();
-    const first = await panel.getByTestId("event-item").first().innerText();
-    const last = aaa("events", "demo").events.at(-1);
-    if (!first.includes(last.kind)) throw new Error(`흐름 사건 맨 위가 최근 것이 아니다: ${first} / ${last.kind}`);
+    // 최근 것이 위: 순번이 내려가고 맨 위가 가장 큰 순번(실험실 사건은 `aaa events` 한 번에 다 온다)
+    const seqs = (await panel.getByTestId("event-item").evaluateAll((els) => els.map((e) => Number(e.dataset.seq))));
+    const all = aaa("events", "demo").events;
+    const latest = Math.max(...all.map((e) => e.seq));
+    if (all.length >= 500 || seqs[0] !== latest || seqs.some((n, i) => i > 0 && n >= seqs[i - 1])) throw new Error(`흐름 사건 차례: ${seqs.slice(0, 5)} / 최근 ${latest}`);
     await panel.getByTestId("inbox-tab-posts").click();
     await until("post 탭", async () => /post가 없다|post-item/.test(await panel.innerHTML()));
   });

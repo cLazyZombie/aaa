@@ -4,7 +4,7 @@
 // 검사·거부(범위·허용 profile·없는 경로)는 host가 한다. 보기 권한 기기는 값만 본다.
 import "./ThreadActions.css";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import type { DeviceRole, LibraryPrunePlan, MachineView, ProfileView, ProjectSettingsView } from "./gen/proto";
 import { ApiError, call, me } from "./api";
 import { ConfirmDialog } from "./ConfirmDialog";
@@ -15,32 +15,46 @@ const say = (e: unknown) => (e instanceof ApiError ? e.message : e instanceof Er
 const fmtSize = (n: number) => (n >= 1 << 30 ? `${(n / (1 << 30)).toFixed(1)}GB` : n >= 1 << 20 ? `${(n / (1 << 20)).toFixed(1)}MB` : n >= 1024 ? `${(n / 1024).toFixed(1)}KB` : `${n}B`);
 const STATUS_WORD: Record<string, string> = { active: "돌고 있음", paused: "멈춤", archived: "보관" };
 
-/** 설정 읽기: 옛 host(1.75 전)는 `null`이 아니라 `old`다 */
+/** 설정 읽기: 옛 host(1.75 전)는 `old`다. 겹친 읽기는 마지막 것만 반영하고, 값을 가진 뒤의 실패는 `error`로 함께 보인다 */
 function useSettings(): { view: ProjectSettingsView | null; state: "loading" | "ready" | "old" | "error"; error: string | null; reload: () => void } {
   const [view, setView] = useState<ProjectSettingsView | null>(null);
   const [state, setState] = useState<"loading" | "ready" | "old" | "error">("loading");
   const [error, setError] = useState<string | null>(null);
+  const seq = useRef(0);
   const reload = useCallback(() => {
+    const mine = ++seq.current;
     me()
       .then((m) => {
+        if (mine !== seq.current) return;
         if (!canOperate(m?.front_api)) {
           setState("old");
           return;
         }
         return call({ op: "project_settings" }).then((r) => {
-          if (r.kind !== "project_settings") return;
+          if (mine !== seq.current || r.kind !== "project_settings") return;
           const { kind: _, ...v } = r;
           setView(v);
+          setError(null);
           setState("ready");
         });
       })
       .catch((e: unknown) => {
+        if (mine !== seq.current) return;
         setError(say(e));
         setState("error");
       });
   }, []);
   useEffect(reload, [reload]);
   return { view, state, error, reload };
+}
+
+/** 값을 가진 뒤 다시 읽기가 실패했다: 보이는 값이 옛 것일 수 있다 */
+function Stale({ error }: { error: string | null }) {
+  return error ? (
+    <p className="op-warn" role="alert" data-testid="settings-stale">
+      설정을 다시 읽지 못했다(보이는 값이 옛 것일 수 있다): {error}
+    </p>
+  ) : null;
 }
 
 function Unavailable({ state, error }: { state: string; error: string | null }) {
@@ -167,6 +181,7 @@ export function ThisAaaPage({ role }: { role: DeviceRole }) {
   const paused = view.status === "paused";
   return (
     <div className="op-page" data-testid="settings-this-aaa">
+      <Stale error={error} />
       <SettingsGroup title={view.project} note={`${STATUS_WORD[view.status] ?? view.status} · 설정 파일 ${view.file}`}>
         <SettingText id="set-goal" label="목표" description="thread brief 머리에 들어간다" value={view.goal} canEdit={canEdit} onSave={(v) => set("goal", v)} />
         <SettingText id="set-thread-profile" label="thread 기본 profile" description="시작할 때 profile을 고르지 않으면 쓴다(허용 목록 안에서)" kind="select" options={profiles} value={view.thread_profile} canEdit={canEdit} onSave={(v) => set("thread_profile", v)} />
@@ -266,8 +281,10 @@ export function ThisAaaPage({ role }: { role: DeviceRole }) {
                         setPrune(null);
                         setCleanNote(r.kind === "library_pruned" ? `${r.removed.length}개를 지웠다` : "지웠다");
                       } catch (e) {
-                        if (e instanceof ApiError && e.body.code === "conflict") void previewPrune();
-                        throw e;
+                        if (!(e instanceof ApiError && e.body.code === "conflict")) throw e;
+                        // 이 창은 본 목록을 쥐고 있다: 닫고 새로 미리 본 목록에서 다시 고르게 한다
+                        await previewPrune();
+                        setCleanNote("미리 본 뒤 후보가 바뀌었다. 새 목록을 보고 다시 지운다");
                       }
                     },
                   })
@@ -361,6 +378,7 @@ export function ReposPage({ role }: { role: DeviceRole }) {
   const groups = repoGroups(view.repos, local);
   return (
     <div className="op-page" data-testid="settings-repos">
+      <Stale error={error} />
       <SettingsGroup title="저장소" note="할 일의 저장소 칸이 고르는 목록이다. 이름(경로의 마지막 폴더)이 같으면 한 저장소의 머신별 자리다.">
         <div className="settings-item">
           <ul className="op-repos" data-testid="repo-list">

@@ -38,6 +38,19 @@ impl Host {
     }
 }
 
+/// 끝내기 미리보기의 파일 수. 다 세지 못한 수(새 파일이 상한을 넘어 뺐다, 목록을 잘랐다)나 기준을 찾지 못한 branch 범위(agent가
+/// HEAD로 떨어져 미커밋과 같아진다)는 0으로 보이면 안 된다: 모름(까닭)이다
+fn diff_count(diff: &aaa_proto::DiffView) -> Result<u32, String> {
+    match &diff.files {
+        _ if diff.untracked_omitted || diff.truncated => Err("바뀐 파일이 너무 많아 다 세지 못했다".into()),
+        _ if diff.scope == DiffScope::Branch && diff.base == "HEAD" => {
+            Err("비교할 base(origin/main 등)를 찾지 못했다".into())
+        }
+        Some(f) => Ok(f.len() as u32),
+        None => Err("바뀐 파일이 너무 많아 다 세지 못했다".into()),
+    }
+}
+
 impl Host {
     /// 끝내기 전 확인(관리 GUI W4, plan §8.333): 커밋하지 않은 파일·base 대비 바뀐 파일·사본 상태. 기록·inbox를 고치지 않는다:
     /// PR은 기록된 상태만 본다(`merged_head`는 PR을 다시 찾아 기록을 고친다). 읽지 못한 것은 모름이고, 모르면 남기기가 기본이다.
@@ -51,10 +64,7 @@ impl Host {
         let merged = rec.pr_state.as_deref().is_some_and(|s| s.eq_ignore_ascii_case("merged"));
         let count = |r: Result<FrontResponse, ErrorBody>| -> Result<u32, String> {
             match r {
-                Ok(FrontResponse::ThreadDiff { diff, .. }) => match diff.files {
-                    Some(f) => Ok(f.len() as u32),
-                    None => Err("바뀐 파일이 너무 많아 다 세지 못했다".into()),
-                },
+                Ok(FrontResponse::ThreadDiff { diff, .. }) => diff_count(&diff),
                 Ok(other) => Err(format!("예상하지 못한 응답: {other:?}")),
                 Err(e) => Err(e.message),
             }
@@ -104,5 +114,38 @@ impl Host {
             keep_default: worktree && !risks.is_empty(),
             risks,
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use aaa_proto::{DiffFile, DiffStatus, DiffView};
+
+    /// 다 세지 못했거나 base를 못 찾은 비교는 0개가 아니라 모름이다(그래야 위험으로 보고 남기기가 기본이 된다)
+    #[test]
+    fn preview_counts_are_unknown_when_the_diff_is_partial_or_baseless() {
+        let file = DiffFile {
+            path: "a".into(),
+            old_path: None,
+            status: DiffStatus::Modified,
+            additions: Some(1),
+            deletions: Some(0),
+        };
+        let view = |scope, base: &str| DiffView {
+            scope,
+            base: base.into(),
+            files: Some(vec![file.clone()]),
+            ..Default::default()
+        };
+        assert_eq!(diff_count(&view(DiffScope::Uncommitted, "HEAD")), Ok(1));
+        assert_eq!(diff_count(&view(DiffScope::Branch, "origin/main")), Ok(1));
+        assert!(diff_count(&view(DiffScope::Branch, "HEAD")).unwrap_err().contains("base"));
+        let omitted =
+            DiffView { untracked_omitted: true, files: Some(Vec::new()), ..view(DiffScope::Uncommitted, "HEAD") };
+        assert!(diff_count(&omitted).is_err(), "새 파일을 뺀 0개는 모름이다");
+        let cut = DiffView { truncated: true, ..view(DiffScope::Uncommitted, "HEAD") };
+        assert!(diff_count(&cut).is_err());
+        assert!(diff_count(&DiffView { files: None, ..view(DiffScope::Uncommitted, "HEAD") }).is_err());
     }
 }

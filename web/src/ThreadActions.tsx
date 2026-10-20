@@ -18,7 +18,8 @@ const say = (e: unknown) => (e instanceof ApiError ? e.message : e instanceof Er
 
 export function ThreadActions({ t, running }: { t: ThreadView; running: boolean }) {
   const button = useRef<HTMLButtonElement>(null);
-  const [frontApi, setFrontApi] = useState<string | null>(null);
+  // undefined: 아직 모름(`me` 응답 전). 끝내기 창은 알 때까지 기다린다
+  const [frontApi, setFrontApi] = useState<string | null | undefined>(undefined);
   useEffect(() => {
     let live = true;
     me().then((m) => live && setFrontApi(m?.front_api ?? null), () => undefined);
@@ -81,11 +82,14 @@ function Count({ n, unit }: { n: number | null; unit: string }) {
   return <strong>{n === null ? "모름" : `${n}${unit}`}</strong>;
 }
 
-function ResolveDialog({ t, frontApi, onClose }: { t: ThreadView; frontApi: string | null; onClose: () => void }) {
+function ResolveDialog({ t, frontApi, onClose }: { t: ThreadView; frontApi: string | null | undefined; onClose: () => void }) {
   const preview = canOperate(frontApi);
   const [p, setP] = useState<ResolvePreview | null>(null);
-  const [loading, setLoading] = useState(preview);
   const [readError, setReadError] = useState<string | null>(null);
+  // host 판을 알기 전과 미리보기를 읽는 동안은 끝내기를 막는다(미리보기 없이 끝내지 않게)
+  const loading = frontApi === undefined || (preview && p === null && readError === null);
+  // 정리가 끊긴 thread는 처음 끝낼 때 고른 대로 이어 간다(host `resolve_pending`): 여기서 고를 것이 없다
+  const resuming = t.cleanup_pending === true;
   const [keep, setKeep] = useState(true);
   const [skipCopy, setSkipCopy] = useState(false);
   const [discard, setDiscard] = useState(false);
@@ -101,8 +105,7 @@ function ResolveDialog({ t, frontApi, onClose }: { t: ThreadView; frontApi: stri
         setP(r);
         if (!touched.current) setKeep(resolveDefaults(r).keep);
       })
-      .catch((e: unknown) => live && setReadError(say(e)))
-      .finally(() => live && setLoading(false));
+      .catch((e: unknown) => live && setReadError(say(e)));
     return () => {
       live = false;
     };
@@ -143,7 +146,12 @@ function ResolveDialog({ t, frontApi, onClose }: { t: ThreadView; frontApi: stri
           그 머신에서 worktree 상태를 읽는 중…
         </p>
       )}
-      {!preview && <p className="op-muted">이 host는 끝내기 전 확인을 모른다: worktree를 남기는 것이 기본이다.</p>}
+      {frontApi !== undefined && !preview && <p className="op-muted">이 host는 끝내기 전 확인을 모른다: worktree를 남기는 것이 기본이다.</p>}
+      {resuming && (
+        <p className="op-warn" data-testid="resolve-resuming">
+          정리가 끊긴 thread다: 처음 끝낼 때 고른 대로(남기기·버리기) 이어 간다.
+        </p>
+      )}
       {readError && <p className="op-warn">미리 읽지 못했다: {readError}</p>}
       {p && (
         <dl className="op-facts" data-testid="resolve-facts">
@@ -178,7 +186,7 @@ function ResolveDialog({ t, frontApi, onClose }: { t: ThreadView; frontApi: stri
           ))}
         </ul>
       )}
-      <fieldset className="op-options" disabled={busy}>
+      <fieldset className="op-options" disabled={busy} hidden={resuming}>
         {worktree && (
           <label className="op-check">
             <input
@@ -365,11 +373,8 @@ function SummaryDialog({ t, onClose }: { t: ThreadView; onClose: () => void }) {
     let live = true;
     call({ op: "thread_summary", project: t.project, thread: t.id })
       .then((r) => live && r.kind === "thread_summary" && setText(r.text ?? ""))
-      .catch((e: unknown) => {
-        if (!live) return;
-        setText("");
-        setError(say(e));
-      });
+      // 읽지 못하면 칸을 잠근 채 둔다: 보지 못한 요약을 통째로 덮어쓰지 않게
+      .catch((e: unknown) => live && setError(say(e)));
     return () => {
       live = false;
     };

@@ -5,12 +5,12 @@ import "./InboxPanel.css";
 
 import { useCallback, useEffect, useState } from "react";
 import type { FlowEvent, InboxItem, PostEnvelope } from "./gen/proto";
-import { ApiError, call, onInboxChanged } from "./api";
+import { ApiError, call, me, onInboxChanged } from "./api";
 import { ConfirmDialog } from "./ConfirmDialog";
-import { inboxOpen, needsAnswer } from "./operateModel.ts";
+import { canOperate, inboxOpen, needsAnswer } from "./operateModel.ts";
 
 type Tab = "inbox" | "events" | "posts";
-const say = (e: unknown) => (e instanceof ApiError ? e.message : String(e));
+const say = (e: unknown) => (e instanceof ApiError || e instanceof Error ? e.message : String(e));
 const when = (ms: number) => {
   const d = new Date(ms);
   const today = new Date().toDateString() === d.toDateString();
@@ -139,10 +139,11 @@ function InboxList({ canControl, onThread }: { canControl: boolean; onThread?: (
       {askAll && (
         <ConfirmDialog
           title="알림함 모두 끝내기"
-          body={`끝내지 않은 ${open.length + (all ? 0 : omitted)}개를 모두 끝낸다. 끝낸 항목은 「끝낸 것도」에서 다시 볼 수 있다.`}
+          body={`보이는 끝내지 않은 ${open.length}개를 끝낸다. 창을 연 뒤 새로 온 항목은 그대로 둔다. 끝낸 항목은 「끝낸 것도」에서 다시 볼 수 있다.`}
           confirmLabel="모두 끝내기"
           onConfirm={async () => {
-            await call({ op: "inbox_done", ids: [], all: true });
+            // 본 것만 끝낸다(`all`은 그 사이 온, 보지 않은 항목까지 끝내 coordinator 묶음 알림에서 빠진다)
+            await call({ op: "inbox_done", ids: open.map((i) => i.id), all: false });
             setAskAll(false);
             load();
           }}
@@ -157,7 +158,12 @@ function EventList({ onThread }: { onThread?: (project: string, id: string) => v
   const [events, setEvents] = useState<FlowEvent[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const load = useCallback(() => {
-    call({ op: "events", project: null, after: 0, limit: 100, tail: true })
+    // 최근 N개(`tail`)는 1.75 host만 안다: 옛 host는 모르는 칸을 버리고 가장 오래된 것을 준다
+    me()
+      .then((m) => {
+        if (!canOperate(m?.front_api)) throw new Error("이 host는 최근 흐름 사건 읽기를 모른다(`aaa events`)");
+        return call({ op: "events", project: null, after: 0, limit: 100, tail: true });
+      })
       .then((r) => {
         if (r.kind !== "events") return;
         setEvents(r.events);
@@ -186,7 +192,7 @@ function EventList({ onThread }: { onThread?: (project: string, id: string) => v
       ) : (
         <ul className="inbox-list" data-testid="event-list">
           {[...events].reverse().map((e) => (
-            <li key={`${e.project}:${e.seq}`} data-testid="event-item">
+            <li key={`${e.project}:${e.seq}`} data-testid="event-item" data-seq={e.seq}>
               <div className="inbox-line">
                 <span className="inbox-kind">{e.kind}</span>
                 {e.thread && onThread ? (
