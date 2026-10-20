@@ -350,7 +350,7 @@ fn compaction(harness: &str, v: &Value) -> Option<ChatMessage> {
     Some(ChatMessage { id: None, role: ChatRole::Compact, text: clip(&text), pending: false, receipt: None })
 }
 
-/// 사람이 친 harness 명령과 그 결과(plan §8.322). Claude 2.1.304는 `system/local_command`에, 앞 판과 `/compact`는 사람 줄에 같은
+/// 사람이 친 harness 명령과 그 결과(plan §8.323). Claude 2.1.304는 `system/local_command`에, 앞 판과 `/compact`는 사람 줄에 같은
 /// 봉투(`<command-name>`·`<local-command-stdout>`)를 적는다. `/compact`는 정리 자리가 대신하므로 뺀다. `informational`은 「Unknown
 /// command: /x」 같은 harness 알림이다. Codex는 명령을 기록하지 않는다(실측 0.163)
 fn claude_command(v: &Value) -> Option<ChatMessage> {

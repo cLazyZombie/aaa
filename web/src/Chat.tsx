@@ -72,7 +72,7 @@ function CompactedRow({ text, sizes }: { text: string; sizes?: ContextCompaction
   );
 }
 
-/** 사람이 친 harness 명령(plan §8.322, herdr-web-ui conversation.ts가 숨기는 명령 echo를 조용한 한 줄로). `/compact`는 정리 자리가 대신한다 */
+/** 사람이 친 harness 명령(plan §8.323, herdr-web-ui conversation.ts가 숨기는 명령 echo를 조용한 한 줄로). `/compact`는 정리 자리가 대신한다 */
 function CommandRow({ text }: { text: string }) {
   return (
     <div className="chat-msg chat-command" data-role="command" data-testid="chat-command">

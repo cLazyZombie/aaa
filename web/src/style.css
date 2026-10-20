@@ -1229,7 +1229,7 @@ summary.chat-compact-head { cursor: pointer; }
 .context-pop-foot .btn { display: inline-flex; align-items: center; gap: 6px; height: 28px; padding: 0 10px; font-size: var(--fs-xs); }
 .context-pop-foot .btn svg { width: 14px; height: 14px; }
 
-/* 입력칸 「/」 목록(plan §8.322, herdr-web-ui Composer.tsx listbox 꼴): 입력칸 위에 붙는다. 줄은 「/이름 안내 · 설명」과 끝 표지 */
+/* 입력칸 「/」 목록(plan §8.323, herdr-web-ui Composer.tsx listbox 꼴): 입력칸 위에 붙는다. 줄은 「/이름 안내 · 설명」과 끝 표지 */
 .slash-menu {
   position: absolute; left: 0; right: 0; bottom: calc(100% + var(--space-2)); z-index: var(--z-popover);
   max-height: min(18rem, 45vh); overflow-y: auto; overscroll-behavior: contain; padding: var(--space-1);
@@ -1256,7 +1256,7 @@ summary.chat-compact-head { cursor: pointer; }
   .slash-item-hint { display: none; }
   .slash-item-desc { grid-column: 1 / -1; grid-row: 2; }
 }
-/* 대화의 harness 명령 줄과 결과(plan §8.322): 조용한 한 줄, 결과는 고정폭 글 */
+/* 대화의 harness 명령 줄과 결과(plan §8.323): 조용한 한 줄, 결과는 고정폭 글 */
 .chat-msg.chat-command { align-self: flex-start; display: inline-flex; align-items: center; gap: 6px; padding: 2px var(--space-3); background: transparent; color: var(--text-dim); font: calc(var(--fs-xs) * var(--chat-scale, 1))/1.5 var(--font-mono); }
 .chat-msg.chat-command svg { width: 13px; height: 13px; flex: none; }
 .chat-msg.chat-command code { color: var(--text); }

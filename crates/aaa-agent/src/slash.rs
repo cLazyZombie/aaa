@@ -1,4 +1,4 @@
-//! 입력칸 「/」 목록(plan §8.322, herdr-web-ui `server/commands.ts`를 옮김): harness 버전에 묶인 내장 표 + 그 머신의 명령·skill 파일.
+//! 입력칸 「/」 목록(plan §8.323, herdr-web-ui `server/commands.ts`를 옮김): harness 버전에 묶인 내장 표 + 그 머신의 명령·skill 파일.
 //!
 //! - 내장 표는 Claude Code 2.1.304·Codex 0.163 기준이다(Claude 문서 commands.md와 실행 파일, Codex `tui/src/slash_command.rs`·
 //!   `chatwidget/slash_dispatch.rs`). 버전이 바뀌면 낡으므로 `builtin_version`으로 함께 알린다.

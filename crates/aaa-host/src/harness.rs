@@ -1722,7 +1722,7 @@ mod tests {
                 assert_eq!(harness, "codex");
                 // 정리된 자리는 그것을 청한 front에만 싣는다(옛 front는 모르는 role로 답을 읽지 못한다)
                 assert!(compact);
-                // 명령 줄(plan §8.322)도 청한 front에만
+                // 명령 줄(plan §8.323)도 청한 front에만
                 assert!(commands);
                 assert_eq!(before.as_deref(), asked);
                 let reply = AgentResponse::Chat {

@@ -1,4 +1,4 @@
-// 입력칸 「/」 목록 규칙(src/slashCommands.ts, plan §8.322): 맨 앞에서만 열기, 순위, 숨김, 확인창·터미널 알림 판정
+// 입력칸 「/」 목록 규칙(src/slashCommands.ts, plan §8.323): 맨 앞에서만 열기, 순위, 숨김, 확인창·터미널 알림 판정
 import assert from "node:assert/strict";
 import { it } from "node:test";
 import { commandOf, groups, listed, rank, sendAction, slashQuery } from "../src/slashCommands.ts";

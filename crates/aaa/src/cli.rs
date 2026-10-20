@@ -3762,7 +3762,7 @@ fn render_front(r: &FrontResponse) -> String {
                     aaa_proto::ChatRole::Thinking => writeln!(s, "  (생각) {}", m.text),
                     // 정리된 자리(plan §8.309): 요약은 길어 줄만 남긴다(웹은 누르면 펼친다)
                     aaa_proto::ChatRole::Compact => writeln!(s, "\n── 대화 정리됨 ──"),
-                    // harness 명령과 결과(plan §8.322)
+                    // harness 명령과 결과(plan §8.323)
                     aaa_proto::ChatRole::Command => writeln!(s, "\n[명령] {}", m.text),
                     aaa_proto::ChatRole::CommandOutput => writeln!(s, "  {}", m.text.replace('\n', "\n  ")),
                 };

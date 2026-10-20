@@ -1,4 +1,4 @@
-// 입력칸 「/」 목록과 harness 명령(plan §8.322, 사용자 10-20 「slash command (/compact 등)」, 기획 library/t-0502 §5·§6 2단계).
+// 입력칸 「/」 목록과 harness 명령(plan §8.323, 사용자 10-20 「slash command (/compact 등)」, 기획 library/t-0502 §5·§6 2단계).
 // 실험실 Claude 설정 폴더에 내 명령·skill을, pane 폴더(git root)에 프로젝트 명령을 두고 agent가 내장 표와 함께 읽는다. 가짜 Claude는
 // 실측(Claude 2.1.304)대로 `/context`의 명령·출력 줄(색 코드 포함)을 기록에 적고, `/model`은 선택창을 그렸다가 Esc에 「Kept model」을
 // 적고, `/clear`는 새 기록으로 SessionStart(clear) hook을 보낸다.

@@ -60,7 +60,7 @@ const MAX_COMPOSER_CHARS = 100_000;
 /** host가 이만큼 전달(글+Enter)을 확인하지 않으면 막힌 것으로 보고 탈출구(×)를 보인다. 평소 답은 0.3~0.5초다 */
 export const STUCK_MS = 3000;
 /** 전달된 글이 이만큼 기록에 보이지 않으면 오래 걸림(t-0387의 미확인과 같은 10초) */
-/** 「/」 목록을 다시 묻는 간격(명령·skill 파일이 바뀔 수 있다, plan §8.322) */
+/** 「/」 목록을 다시 묻는 간격(명령·skill 파일이 바뀔 수 있다, plan §8.323) */
 const COMMANDS_REFRESH_MS = 5 * 60_000;
 const SLOW_MS = 10_000;
 /** 작업 중에 보내 harness 대기열에 들어간 글. 기록에 같은 새 사람 글이 보이면 지운다.
@@ -119,7 +119,7 @@ function wrappedRows(element: HTMLTextAreaElement): number {
   return Math.round((element.scrollHeight - padding) / parseFloat(style.lineHeight));
 }
 
-/** 보낸 harness 명령이 터미널에서만 이어질 때의 알림(plan §8.322). 선택창이 열린 동안 보낸 글은 그 선택창에 들어간다(실측 Claude 2.1.304) */
+/** 보낸 harness 명령이 터미널에서만 이어질 때의 알림(plan §8.323). 선택창이 열린 동안 보낸 글은 그 선택창에 들어간다(실측 Claude 2.1.304) */
 function terminalNote(c: SlashCommand, action: "picker" | "screen"): Note {
   const name = c.insert.trim();
   if (action === "screen") return { text: `${name} 결과는 터미널 화면에만 보입니다.`, quiet: true, inspect: true };
@@ -215,7 +215,7 @@ export function ChatComposer({
   // 가는 글은 초안에서 뺐어도 기록에 오를 때까지 입력창에 보인다
   const shown = flight?.source === "box" ? flight.text : text;
   const [note, setNote] = useState<Note | null>(null);
-  // 입력칸 「/」 목록(plan §8.322): pane을 열 때와 5분마다 agent에 묻는다. 옛 host·agent면 목록·확인창 없이 글로 보낸다
+  // 입력칸 「/」 목록(plan §8.323): pane을 열 때와 5분마다 agent에 묻는다. 옛 host·agent면 목록·확인창 없이 글로 보낸다
   const [commandList, setCommandList] = useState<CommandList | null>(null);
   const commandListRef = useRef(commandList);
   commandListRef.current = commandList;
@@ -599,7 +599,7 @@ export function ChatComposer({
       setNote({ text: HIDDEN_ONLY });
       return;
     }
-    // harness 명령(plan §8.322): 맥락을 비우거나 harness를 끝내는 명령은 먼저 묻는다(글은 입력칸에 남는다)
+    // harness 명령(plan §8.323): 맥락을 비우거나 harness를 끝내는 명령은 먼저 묻는다(글은 입력칸에 남는다)
     const found = commandOf(commandListRef.current, message);
     const action = found ? sendAction(found.command.kind, found.args) : "send";
     if (action === "confirm" && !confirmed) {

@@ -179,7 +179,7 @@ impl Host {
         Ok(FrontResponse::PaneDir { listing })
     }
 
-    /// 입력칸 「/」 목록(plan §8.322). 보기 범위는 pane 보기와 같고, harness는 host가 아는 pane 상태(Claude·Codex)다. 목록은 이름과
+    /// 입력칸 「/」 목록(plan §8.323). 보기 범위는 pane 보기와 같고, harness는 host가 아는 pane 상태(Claude·Codex)다. 목록은 이름과
     /// 설명뿐이라 감사 기록에 남기지 않는다
     pub(crate) async fn pane_commands(&self, role: DeviceRole, pane: &str) -> Result<FrontResponse, ErrorBody> {
         let (id, mid) = self.resolve_pane(pane)?;

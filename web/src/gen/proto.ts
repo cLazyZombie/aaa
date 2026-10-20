@@ -585,7 +585,7 @@ thinking: boolean,
  */
 compact: boolean,
 /**
- * harness 명령과 결과(`ChatRole::Command`·`CommandOutput`, plan §8.322, 1.68)도 싣는다. 옛 front는 생략한다
+ * harness 명령과 결과(`ChatRole::Command`·`CommandOutput`, plan §8.323, 1.68)도 싣는다. 옛 front는 생략한다
  */
 commands: boolean,
 /**

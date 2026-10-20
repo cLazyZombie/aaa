@@ -1,4 +1,4 @@
-// 입력칸 「/」 목록(plan §8.322). herdr-web-ui Composer.tsx 1169~1205줄의 입력칸에 붙은 listbox: 빈 「/」만 출처별 머리, 치면 순위 한
+// 입력칸 「/」 목록(plan §8.323). herdr-web-ui Composer.tsx 1169~1205줄의 입력칸에 붙은 listbox: 빈 「/」만 출처별 머리, 치면 순위 한
 // 목록, 줄은 「/이름 안내 · 설명」. 다른 곳: 줄 끝 표지 `터미널`(인자 없이 보내면 선택창이 뜨거나 결과가 화면에만 남는다)·`확인`(맥락을
 // 비운다), skill·내 명령·프로젝트 출처 표지. focus는 글 칸에 남고(aria-activedescendant), 줄은 누르거나 ↑↓·Enter·Tab으로 고른다.
 import { useEffect, useRef } from "react";

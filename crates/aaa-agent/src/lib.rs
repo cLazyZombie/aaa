@@ -682,7 +682,7 @@ impl Agent {
     }
 
     /// 실행 중인 세션이 지금 있는 폴더(새 탭·나누기 cwd follow). 끝났거나 읽지 못하면 None.
-    /// 입력칸 「/」 목록(plan §8.322): 세션이 지금 있는 폴더(못 읽으면 띄운 폴더)를 프로젝트로 본다
+    /// 입력칸 「/」 목록(plan §8.323): 세션이 지금 있는 폴더(못 읽으면 띄운 폴더)를 프로젝트로 본다
     async fn slash_commands(&self, session: &str, harness: String) -> Result<AgentResponse, ErrorBody> {
         let started = {
             let s = self.sessions.lock().unwrap();

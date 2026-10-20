@@ -374,14 +374,14 @@ pub enum ChatRole {
     /// 대화가 정리(compaction)된 자리(plan §8.309, herdr-web-ui `{ kind: "compact" }`). 글은 정리 요약이다(Codex는 빌 수 있다).
     /// host가 `AgentRequest::Chat.compact`로 청할 때만 싣는다: 옛 host는 이 역할을 읽지 못한다
     Compact,
-    /// 사람이 친 harness 명령(Claude `<command-name>`, plan §8.322). 글은 `/이름 인자`다. `/compact`는 정리 자리가 대신한다.
+    /// 사람이 친 harness 명령(Claude `<command-name>`, plan §8.323). 글은 `/이름 인자`다. `/compact`는 정리 자리가 대신한다.
     /// host가 `AgentRequest::Chat.commands`로 청할 때만 싣는다
     Command,
     /// harness 명령의 결과 글(Claude `local_command` 출력·`informational` 알림, 색 코드를 뺀 글). 바로 앞 `Command`의 결과다
     CommandOutput,
 }
 
-/// pane의 harness 명령 목록(plan §8.322). agent가 harness 버전에 묶인 내장 표와 그 머신의 명령·skill 파일로 만든다
+/// pane의 harness 명령 목록(plan §8.323). agent가 harness 버전에 묶인 내장 표와 그 머신의 명령·skill 파일로 만든다
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 pub struct CommandList {
     pub harness: String,
@@ -746,7 +746,7 @@ pub enum AgentRequest {
     },
     /// 폴더 보기: 그 세션이 지금 있는 폴더 기준으로 폴더 한 단계를 읽는다(빈 경로·`~`는 집). 허용 폴더 밖이면 Forbidden,
     /// 폴더가 아니면 NotFound다. agent가 `dir.v1` 기능을 알릴 때만 보낸다.
-    /// 입력칸 「/」 목록(plan §8.322): 그 harness의 내장 명령 표와 세션 폴더·사용자 폴더의 명령·skill 파일. agent가 `commands.v1`
+    /// 입력칸 「/」 목록(plan §8.323): 그 harness의 내장 명령 표와 세션 폴더·사용자 폴더의 명령·skill 파일. agent가 `commands.v1`
     /// 기능을 알릴 때만 보낸다
     Commands {
         session: String,
@@ -791,7 +791,7 @@ pub enum AgentRequest {
         /// 정리된 자리(`ChatRole::Compact`)도 싣는다(plan §8.309). 옛 host는 보내지 않아 agent가 빼고, 옛 agent는 이 칸을 모른다
         #[serde(default)]
         compact: bool,
-        /// harness 명령과 결과(`ChatRole::Command`·`CommandOutput`, plan §8.322)도 싣는다. 옛 host는 보내지 않는다
+        /// harness 명령과 결과(`ChatRole::Command`·`CommandOutput`, plan §8.323)도 싣는다. 옛 host는 보내지 않는다
         #[serde(default)]
         commands: bool,
         /// 이전 응답의 before. 생략하면 최신 쪽, 옛 상대는 무시한다.
@@ -1611,7 +1611,7 @@ pub enum FrontRequest {
         /// 읽지 못하므로)
         #[serde(default)]
         compact: bool,
-        /// harness 명령과 결과(`ChatRole::Command`·`CommandOutput`, plan §8.322, 1.68)도 싣는다. 옛 front는 생략한다
+        /// harness 명령과 결과(`ChatRole::Command`·`CommandOutput`, plan §8.323, 1.68)도 싣는다. 옛 front는 생략한다
         #[serde(default)]
         commands: bool,
         /// 이전 응답의 before. 생략하면 최신 쪽, 옛 상대는 무시한다.
@@ -1619,7 +1619,7 @@ pub enum FrontRequest {
         #[ts(optional)]
         before: Option<String>,
     },
-    /// 입력칸 「/」 목록(plan §8.322): 그 pane harness의 명령. agent가 `commands.v1`을 알릴 때만, 조작 기기만
+    /// 입력칸 「/」 목록(plan §8.323): 그 pane harness의 명령. agent가 `commands.v1`을 알릴 때만, 조작 기기만
     PaneCommands {
         pane: String,
     },
