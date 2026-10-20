@@ -892,11 +892,11 @@ mod tests {
                 Ok(())
             }
         }
-        let profiles = vec!["claude".to_string(), "sol-high".to_string()];
+        let profiles = vec!["claude".to_string(), "codex-fast".to_string()];
         let go = |text: &str, ops: Vec<TaskOp>| {
             apply(text, &ops, &Ctx { owner_ok: &ok, profiles: &profiles, repo_ok: &ok_repo, removed: &no_log })
         };
-        let md = "## A\n- [ ] 일 (sol-high@studio1) [aaa] · t-0001\n  메모\n- [ ] 옛 줄 (sol-high)  \n";
+        let md = "## A\n- [ ] 일 (codex-fast@mac-a) [aaa] · t-0001\n  메모\n- [ ] 옛 줄 (codex-fast)  \n";
         let set = |title: &str, p: Option<&str>, m: Option<&str>| {
             let mut op = update(anchor(md, title));
             if let TaskOp::Update { profile, machine, .. } = &mut op {
@@ -906,22 +906,22 @@ mod tests {
             op
         };
         let line = |out: Applied| out.text.lines().nth(1).unwrap().to_string();
-        assert_eq!(line(go(md, vec![set("일", None, Some(""))]).unwrap()), "- [ ] 일 (sol-high) [aaa] · t-0001");
+        assert_eq!(line(go(md, vec![set("일", None, Some(""))]).unwrap()), "- [ ] 일 (codex-fast) [aaa] · t-0001");
         assert_eq!(
             line(go(md, vec![set("일", Some("claude"), None)]).unwrap()),
-            "- [ ] 일 (claude@studio1) [aaa] · t-0001"
+            "- [ ] 일 (claude@mac-a) [aaa] · t-0001"
         );
-        assert_eq!(line(go(md, vec![set("일", Some(""), None)]).unwrap()), "- [ ] 일 (@studio1) [aaa] · t-0001");
+        assert_eq!(line(go(md, vec![set("일", Some(""), None)]).unwrap()), "- [ ] 일 (@mac-a) [aaa] · t-0001");
         assert_eq!(line(go(md, vec![set("일", Some(""), Some(""))]).unwrap()), "- [ ] 일 [aaa] · t-0001");
         // 메모만 고치면 옛 줄은 바이트 그대로다(끝 공백까지)
         let mut notes = update(anchor(md, "옛 줄"));
         if let TaskOp::Update { notes: n, .. } = &mut notes {
             *n = Some(vec!["새 메모".into()]);
         }
-        assert!(go(md, vec![notes]).unwrap().text.contains("- [ ] 옛 줄 (sol-high)  \n  새 메모\n"));
+        assert!(go(md, vec![notes]).unwrap().text.contains("- [ ] 옛 줄 (codex-fast)  \n  새 메모\n"));
         // 모델만 적힌 줄에 머신을 더한다
         assert!(
-            go(md, vec![set("옛 줄", None, Some("mac-b"))]).unwrap().text.contains("- [ ] 옛 줄 (sol-high@mac-b)\n")
+            go(md, vec![set("옛 줄", None, Some("mac-b"))]).unwrap().text.contains("- [ ] 옛 줄 (codex-fast@mac-b)\n")
         );
         // 더하기: 두 칸, 판정 거부, me와 함께 주면 거부
         let add = |owner: Option<&str>, p: Option<&str>, m: Option<&str>| TaskOp::Add {

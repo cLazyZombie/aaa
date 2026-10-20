@@ -690,8 +690,8 @@ function TaskForm(props: DetailProps) {
           <>
             <label className="task-field">
               <span>모델</span>
-              <select className="input" value={draft.profile} disabled={busy} onChange={(e) => set({ profile: e.target.value })} data-testid="task-field-profile">
-                <option value="">자동(프로젝트 기본)</option>
+              <select className="input" value={draft.profile} disabled={busy} title="자동: 시작할 때 프로젝트 기본 profile" onChange={(e) => set({ profile: e.target.value })} data-testid="task-field-profile">
+                <option value="">자동</option>
                 {models.map((p) => (
                   <option key={p} value={p}>
                     {p}
@@ -702,8 +702,8 @@ function TaskForm(props: DetailProps) {
             </label>
             <label className="task-field">
               <span>머신</span>
-              <select className="input" value={draft.machine} disabled={busy} onChange={(e) => set({ machine: e.target.value })} data-testid="task-field-machine">
-                <option value="">자동(덜 붐비는 곳)</option>
+              <select className="input" value={draft.machine} disabled={busy} title="자동: 시작할 때 그 저장소가 있는 머신 중 덜 붐비는 곳" onChange={(e) => set({ machine: e.target.value })} data-testid="task-field-machine">
+                <option value="">자동</option>
                 {machines.map((m) => (
                   <option key={m.value} value={m.value} disabled={m.disabled}>
                     {m.label}

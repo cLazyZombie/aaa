@@ -84,6 +84,10 @@ pub(crate) fn edited_owner(
     {
         return Err("owner(me·사람)와 모델·머신을 함께 주지 않는다: 모델·머신은 agent에게 맡기는 칸이다".into());
     }
+    // me·사람 owner에 빈 칸이 함께 오면 owner가 정한다(빈 칸은 비울 것이 없다)
+    if let Some(o) = owner.filter(|o| !o.is_empty()) {
+        return Ok(Some(Some(o.to_string())));
+    }
     for (what, v) in [("모델", profile), ("머신", machine)] {
         if let Some(v) = v.filter(|v| !v.is_empty())
             && (!name_like(v) || matches!(v, "me" | "agent"))
@@ -754,9 +758,9 @@ mod tests {
     /// 모델·머신 칸(plan §8.332): 표기 `(모델@머신)` 그대로 두 칸으로 나눠 읽고, 칸마다 고친다
     #[test]
     fn model_and_machine_fields() {
-        let profiles = vec!["claude".to_string(), "sol-high".to_string()];
+        let profiles = vec!["claude".to_string(), "codex-fast".to_string()];
         let mut t = parse(
-            "- [ ] 둘 다 (sol-high@studio1)\n- [ ] 모델만 (sol-high)\n- [ ] 머신만 (@studio1)\n- [ ] 나 (me)\n\
+            "- [ ] 둘 다 (codex-fast@mac-a)\n- [ ] 모델만 (codex-fast)\n- [ ] 머신만 (@mac-a)\n- [ ] 나 (me)\n\
              - [ ] 사람 (Priya Rao)\n- [ ] 미할당\n- [ ] 옛 (agent → t-0007)\n",
         );
         fill_agent(&mut t, &profiles);
@@ -764,9 +768,9 @@ mod tests {
         assert_eq!(
             v,
             [
-                (Some("sol-high"), Some("studio1")),
-                (Some("sol-high"), None),
-                (None, Some("studio1")),
+                (Some("codex-fast"), Some("mac-a")),
+                (Some("codex-fast"), None),
+                (None, Some("mac-a")),
                 (None, None),
                 (None, None),
                 (None, None),
@@ -775,27 +779,30 @@ mod tests {
         );
         // 머신 연결과 상관없이 host가 아는 이름이면 모델이다. 모르는 맨 이름은 사람이다
         fill_agent(&mut t, &[]);
-        assert_eq!((t[1].profile.as_deref(), t[0].profile.as_deref()), (None, Some("sol-high")));
+        assert_eq!((t[1].profile.as_deref(), t[0].profile.as_deref()), (None, Some("codex-fast")));
 
         let ed = |cur: Option<&str>, owner: Option<&str>, p: Option<&str>, m: Option<&str>| {
             edited_owner(cur, owner, p, m, &profiles)
         };
         let some = |o: &str| Ok(Some(Some(o.to_string())));
         // 칸 하나만 바꾸면 다른 칸은 지금 값이다
-        assert_eq!(ed(Some("sol-high@studio1"), None, Some("claude"), None), some("claude@studio1"));
-        assert_eq!(ed(Some("sol-high@studio1"), None, None, Some("mac-b")), some("sol-high@mac-b"));
-        assert_eq!(ed(Some("sol-high"), None, None, Some("mac-b")), some("sol-high@mac-b"));
-        assert_eq!(ed(Some("sol-high@studio1"), None, None, Some("")), some("sol-high"));
-        assert_eq!(ed(Some("sol-high@studio1"), None, Some(""), None), some("@studio1"));
-        assert_eq!(ed(Some("sol-high"), None, Some(""), None), Ok(Some(None)));
+        assert_eq!(ed(Some("codex-fast@mac-a"), None, Some("claude"), None), some("claude@mac-a"));
+        assert_eq!(ed(Some("codex-fast@mac-a"), None, None, Some("mac-b")), some("codex-fast@mac-b"));
+        assert_eq!(ed(Some("codex-fast"), None, None, Some("mac-b")), some("codex-fast@mac-b"));
+        assert_eq!(ed(Some("codex-fast@mac-a"), None, None, Some("")), some("codex-fast"));
+        assert_eq!(ed(Some("codex-fast@mac-a"), None, Some(""), None), some("@mac-a"));
+        assert_eq!(ed(Some("codex-fast"), None, Some(""), None), Ok(Some(None)));
         // me·사람 task에서 비울 칸만 받으면 그대로, 머신을 주면 agent 일이 된다
         assert_eq!(ed(Some("me"), None, Some(""), Some("")), Ok(None));
-        assert_eq!(ed(Some("me"), None, None, Some("studio1")), some("@studio1"));
+        assert_eq!(ed(Some("me"), None, None, Some("mac-a")), some("@mac-a"));
         // owner만(옛 꼴)은 지금처럼, 빈 owner와 칸을 함께 주면 지금 칸을 물려받지 않는다
         assert_eq!(ed(Some("me"), Some("claude@mac-b"), None, None), some("claude@mac-b"));
         assert_eq!(ed(Some("me"), Some(""), None, None), Ok(Some(None)));
-        assert_eq!(ed(Some("sol-high@studio1"), Some(""), None, Some("mac-b")), some("@mac-b"));
+        assert_eq!(ed(Some("codex-fast@mac-a"), Some(""), None, Some("mac-b")), some("@mac-b"));
         assert_eq!(ed(None, None, None, None), Ok(None));
+        // owner(me)와 빈 칸이 함께 오면 owner를 쓴다(`--owner me --profile ""`)
+        assert_eq!(ed(Some("codex-fast@mac-b"), Some("me"), Some(""), None), some("me"));
+        assert_eq!(ed(None, Some("me"), Some(""), Some("")), some("me"));
         // me·사람과 모델·머신은 함께 쓰지 않고, 이름 꼴이 아닌 칸은 거부한다
         assert!(ed(None, Some("me"), Some("claude"), None).unwrap_err().contains("함께 주지 않는다"));
         assert!(ed(None, None, Some("sol high"), None).unwrap_err().contains("모델 이름 꼴"));

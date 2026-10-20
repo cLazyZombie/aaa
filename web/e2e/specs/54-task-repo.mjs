@@ -64,6 +64,7 @@ export default async function ({ page }) {
     const value = (id) => form.getByTestId(id).inputValue();
     if ((await value("task-field-owner")) !== "agent" || (await value("task-field-profile")) !== "" || (await value("task-field-machine")) !== "") throw new Error("미할당 task는 agent에 두 칸이 비어야 한다");
     await domIs(page, "모델 목록", () => [...document.querySelectorAll('[data-testid="task-field-profile"] option')].some((o) => o.value === "fake"));
+    await shot(page, "who-desktop-unassigned");
     const save = async (want) => {
       const before = sha(read());
       await form.getByTestId("task-save").click();

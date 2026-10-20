@@ -120,7 +120,7 @@ impl Host {
     }
 
     /// owner의 맨 이름이 모델(profile)인지 볼 이름(plan §8.332): host가 정의한 profile, 기본 harness, 프로젝트 `thread_profiles`.
-    /// 머신 연결과 상관없다(끊긴 머신에 맡긴 `(sol-high)`가 사람으로 읽히지 않게). 쓸 수 있는지는 `check_owner`가 따로 본다
+    /// 머신 연결과 상관없다(끊긴 머신에 맡긴 `(codex-fast)`가 사람으로 읽히지 않게). 쓸 수 있는지는 `check_owner`가 따로 본다
     pub(crate) fn known_profiles(&self, project: &str) -> Vec<String> {
         let mut out: Vec<String> = aaa_config::profile_edit::BUILTINS.iter().map(|b| b.to_string()).collect();
         if let Ok(cfg) = self.profile_config() {

@@ -229,32 +229,32 @@ describe("할 일 thread 연결(T3, plan §8.316)", () => {
     assert.deepEqual(ownerFixes(task({ owner: "codex@mac-a" })), { profile: true, machine: true });
     assert.deepEqual(ownerFixes(task({ owner: "@mac-a" })), { profile: false, machine: true });
     // 새 host(FRONT_API 1.74)는 나눠 준 칸을 쓴다: 모르는 맨 이름은 사람이라 잠그지 않는다
-    assert.deepEqual(ownerFixes(task({ owner: "sol-high", profile: "sol-high", machine: null })), { profile: true, machine: false });
+    assert.deepEqual(ownerFixes(task({ owner: "codex-fast", profile: "codex-fast", machine: null })), { profile: true, machine: false });
     assert.deepEqual(ownerFixes(task({ owner: "Priya", profile: null, machine: null })), { profile: false, machine: false });
   });
 
   it("모델·머신 칸(plan §8.332): host가 나눈 값이 먼저, 옛 host는 owner 글을 나누고, 폼은 칸마다 고쳐 `모델@머신`으로 보낸다", () => {
     // 끊긴 머신의 profile도 host가 모델로 읽어 준다(맡길 수 있는 목록이 비어도)
-    assert.deepEqual(agentParts(task({ owner: "sol-high", profile: "sol-high", machine: null }), []), { profile: "sol-high", machine: null });
+    assert.deepEqual(agentParts(task({ owner: "codex-fast", profile: "codex-fast", machine: null }), []), { profile: "codex-fast", machine: null });
     assert.equal(agentParts(task({ owner: "me", profile: null, machine: null }), ["me"]), null);
     assert.deepEqual(agentParts(task({ owner: "@mac-b" })), { profile: null, machine: "mac-b" });
-    assert.equal(agentParts(task({ owner: "sol-high" }), []), null, "옛 host: 목록에 없는 맨 이름은 사람");
-    assert.deepEqual(agentParts(task({ owner: "sol-high" }), ["sol-high"]), { profile: "sol-high", machine: null });
+    assert.equal(agentParts(task({ owner: "codex-fast" }), []), null, "옛 host: 목록에 없는 맨 이름은 사람");
+    assert.deepEqual(agentParts(task({ owner: "codex-fast" }), ["codex-fast"]), { profile: "codex-fast", machine: null });
     assert.deepEqual([agentOwner("claude", "mac-b"), agentOwner("claude", ""), agentOwner("", "mac-b"), agentOwner(" ", " ")], ["claude@mac-b", "claude", "@mac-b", ""]);
-    const t = task({ owner: "sol-high@studio1", profile: "sol-high", machine: "studio1", raw: "- [ ] 일 (sol-high@studio1)" });
+    const t = task({ owner: "codex-fast@mac-a", profile: "codex-fast", machine: "mac-a", raw: "- [ ] 일 (codex-fast@mac-a)" });
     const d = draftOf(t, [], null);
-    assert.deepEqual([d.who, d.profile, d.machine], ["agent", "sol-high", "studio1"]);
+    assert.deepEqual([d.who, d.profile, d.machine], ["agent", "codex-fast", "mac-a"]);
     assert.deepEqual(draftOps(t, d), [], "그대로면 동작 없음");
     const owner = (patch) => draftOps(t, { ...d, ...patch })[0].owner;
-    assert.equal(owner({ machine: "" }), "sol-high", "머신만 비움");
-    assert.equal(owner({ profile: "claude" }), "claude@studio1", "모델만 바꿈");
+    assert.equal(owner({ machine: "" }), "codex-fast", "머신만 비움");
+    assert.equal(owner({ profile: "claude" }), "claude@mac-a", "모델만 바꿈");
     assert.equal(owner({ profile: "", machine: "" }), "", "둘 다 비면 미할당");
     assert.equal(owner({ who: "me" }), "me");
     // 미할당 task의 폼은 agent에 두 칸이 빈 것이다
     const none = draftOf(task({ profile: null, machine: null }), [], null);
     assert.deepEqual([none.who, none.profile, none.machine], ["agent", "", ""]);
     assert.deepEqual(draftOps(task({ profile: null, machine: null }), none), []);
-    assert.equal(startable(task({ owner: "sol-high", profile: "sol-high", machine: null }), groups, []), true);
+    assert.equal(startable(task({ owner: "codex-fast", profile: "codex-fast", machine: null }), groups, []), true);
   });
 
   it("잇기 후보: 형식 어긋남·열린 thread 연결을 빼고 제목·메모로 찾는다", () => {
