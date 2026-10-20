@@ -32,7 +32,8 @@ impl std::fmt::Display for Version {
 // 1.7: deploy_stage.v1은 빌드 후보 fetch·조각 stage·staged 교체를 받는다.
 // 1.8: rollout_recovery.v1의 독립 복구 감시와 SHA 고정 rollback.
 // 같은 1.8에 PrAnswer.unavailable·skipped 선택 필드를 더한다(t-0492). 옛 agent는 기존 조회, 옛 host는 새 칸을 버린다.
-pub const AGENT_LINK: Version = Version { major: 1, minor: 8 };
+// 1.9: account_auth.v1의 전용 인증 spawn·중앙 refresh. Chat.session으로 계정 pane 기록을 찾는다.
+pub const AGENT_LINK: Version = Version { major: 1, minor: 9 };
 /// front ↔ host. 1.4: CLI pane·tab·workspace(plan §8.75), 1.5: 새 탭 이름(`NewTab.label`)·cwd 따라가기(`NewTab.from`)(plan §8.76),
 /// 1.6: `routine_toggle`·`ThreadView.pr`(plan §8.80), 1.7: `devices`·`device_rename`·`device_revoke`, 웹 기기의 `web_pair`(plan §8.81),
 /// 1.8: `thread read`·`thread keys`(plan §8.86), 1.9: `ticker_tick`(docs/testing.md),
@@ -139,11 +140,16 @@ pub const AGENT_LINK: Version = Version { major: 1, minor: 8 };
 // plan §8.316). 옛 host는 새 칸을 버려 연결하지 않고 새 요청을 모르는 요청으로 거절해 웹이 맡기기 단추를 그리지 않는다.
 // 1.64: 자동화가 띄운 thread 표지(ThreadView `automation`·`automation_title`, plan t-0475 A1). 옛 host는 생략해 웹이 막대·표지 없이
 // 일반 줄로 그리고, 옛 front는 버린다.
-pub const FRONT_API: Version = Version { major: 1, minor: 64 };
+// 1.65: 자동화 A2의 기억 사본과 끝남 예정(RoutineView.memory·closing). 옛 host는 생략한다. Agent link 변경 없음.
+// 1.66: account_import/list/remove·thread_start_account·ThreadView.account(plan §8.320).
+// 1.67: pane 컨텍스트 사용량(`AgentStatus.context`: used·window·percent·compaction, plan §8.321). 옛 host는 생략해 웹이 입력칸
+// 게이지를 그리지 않고, 옛 front는 버린다. 입력 진단 `InputReceiptMethod::SlashCommand`(옛 host는 그 진단 줄만 버린다).
+pub const FRONT_API: Version = Version { major: 1, minor: 67 };
 /// agent ↔ session host(내부). 세션이 몇 주 이어질 수 있으므로 이전 session host와 호환해야 한다.
 /// 1.1: `SessionRequest::Detect`(harness 상태 감지 입력). agent는 1.0 session host에 보내지 않고 `Screen`을 쓴다.
 /// 1.2: `SessionRequest::Colors`(색 질의에 답할 화면 색, plan §8.187). agent는 1.1 이하 session host에 보내지 않는다.
-pub const SESSION_IPC: Version = Version { major: 1, minor: 2 };
+// 1.3: 인증 refresh 중계와 재접속 시 메모리 가림 규칙 복원.
+pub const SESSION_IPC: Version = Version { major: 1, minor: 3 };
 /// `SessionRequest::Detect`를 받는 첫 SESSION_IPC minor
 pub const SESSION_IPC_DETECT: u16 = 1;
 /// `SessionRequest::Colors`를 받는 첫 SESSION_IPC minor

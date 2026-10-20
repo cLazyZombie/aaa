@@ -6015,7 +6015,54 @@ L4 후속(10-20 00시 사용자 관찰): 멈춤 상태의 후보 예약과 재�
 - **참고와 다른 것.** 줄에 색 막대를 다는 것은 참고에 없다(사용자 요청, 기획 Q4). 참고처럼 소리 없이(배지·숫자 없이) 막대와 글 표지만 둔다. t3code의 「Sent by automation」 메시지 표지(대화 안 출처)는 A1 범위 밖이다.
 - **검증.** host 유닛 `automation::tests::thread_events_skip_automation_threads_unless_included_and_never_the_rules_own`(규칙 a가 띄운 thread 보고는 a·b 모두 안 받음, `include_automation`인 b는 받음, 자기 것은 늘 뺌, 사람 thread는 받음, cursor는 지나감)·`automation_title_reads_rule_title_and_falls_back_to_name`. 여러 프로세스 `m13 automation_thread_reports_do_not_wake_their_own_rule`(실제 `on.thread`+`do.start` 규칙: 자동 thread 보고 뒤 사람 thread 보고로 둘째 시작이 올 때까지 시작은 둘뿐, 원인 사건은 둘 다 사람 thread, `thread show` 출처, 할 일의 task 없는 열린 thread에서 빠짐). 웹 유닛 `roster.test.mjs`(같은 폴더·같은 rank 차례). 웹 E2E `48-automation-threads`(실제 규칙이 띄운 thread, `data-origin`·`::before` 계산 배경 = `--automation`(밝음·어두움)·사람 줄 막대 없음·coordinator 보라 유지, 데스크톱·휴대폰 막대가 표지를 덮지 않음, 휴대폰은 「자동」만, 표지 → 규칙 상세(pane은 그대로), 기록 번호·「열림」 칩 → 그 thread, 메뉴 「자동화 규칙」, 「자동화만」). 결함 되심기: 거르기를 빼면 m13이 자동 thread 보고로 thread 둘을 더 띄워 실패하고 유닛도 실패한다(library/t-0499 fault-replant).
 
-### 8.319 aaa install I2 파일 transaction·읽기 status(10-20, t-0485)
+### 8.319 자동화 이어 보내기·기억 파일·짧은 끝내기(10-20, t-0504 A2)
+
+- 근거: 프로젝트 library/t-0475/plan.md §5.1 A2, §3.2~3.4·3.6. 임무/평가자 제거·운영 파일 이관·기억 편집은 뒤 단계다.
+- do.start에 reuse(new/open, 기본 new), memory(false), reports(false), close_idle(기본 없음)를 더했다. memory·close_idle는 open에서만 받는다. 범위 승인 hash는 바뀌지 않는다. 같은 규칙의 가장 최근 Starting/Open을 고르고, 첫 입력과 이어 받은 입력 모두 최대 32건·512KiB 묶음으로 보존한다. 시작 준비 중에는 같은 thread를 기다린다. propose는 새 시작만 제안으로 바꾼다. 명시한 동시 수 상한은 새 시작에만 적용한다.
+- t3code ScheduledTaskService의 threadId/Queue와 herdr-projects의 열린 thread로 보내기·규칙당 처리 중 하나를 참고했다. aaa는 기존 사건 영수증·묶음·전달 전 내구 확정을 쓴다. 임무와 입력 파일 쓰기를 공용화했다. WorkFileWrite는 inbox 전용이므로 기억 쓰기는 기존 MissionStateWrite로 한다(Agent link 변경 없음).
+- 기억은 host `automations/<규칙>.memory/`가 정본이다. 새 세션/brief 전달 전에 memory 폴더와 processed.txt를 넣고, 보고 사본·resolve 마지막 사본 때 크기/hash/symlink를 검사해 되가져온다. 검증 실패면 앞 사본을 지키고 끝내지 않는다. 64KiB 초과와 끝내기까지 미변경은 inbox에 한 번씩 남긴다. brief는 판단·다음에 볼 것·교훈/원문과 처리 기록의 경로를 안내한다.
+- 끝내기는 마지막 입력 뒤의 새 완료 보고·Idle 시간·빈 내구 입력·빈 agent inbox 넷을 함께 본다. 입력 직전 실제 보고 hash를 기억해 회수 지연의 옛 보고도 거른다. 보고는 자동 확인하고 inbox 한 줄만 남기며, ack 전 잠깐 보이는 보고 사건도 웹이 완료 droplet로 올리지 않는다. 확인 필요 알림은 유지한다. 웹은 기존 상세에 기억 읽기와 열림 칩 옆 남은 시간만 더한다(FRONT_API 1.65).
+- Codex 결정: 28523a97에서 도입한 reset_after_wakes=1은 원 기획 t-0350 결정 7/compaction 절의 「재독 hook 자리 없음」에서 왔다. 대화 길이 문제가 아니므로 확정 기획대로 Codex profile의 reuse=open을 거부한다. 기존 임무 제한은 A4까지 유지한다.
+- 검증: 종료 판정표·runtime/frame·실제 CI/PTY/파일/새 thread m13·E2E49(데스크톱/휴대폰). 조건 2 제거는 m13에서 open 대신 resolved로 실패했다. 자동 완료 droplet은 수정 전 E2E49에서 실패한 뒤 owner에서 고쳤다. 상세 절차는 docs/testing.md A2.
+- 통합 gate에서 E2E25의 spawn ENOENT가 났다. Cargo의 fresh test 빌드가 공용 실행 파일을 지우고 다시 연결하는 것을 파일 상태 관찰로 재현했다. ci-local은 병렬 단계 전에 이번 빌드의 실행 사본을 고정·바이트 대조하고 종료 때 정리한다. 시험 조건·worker·시한은 그대로다.
+
+
+### 8.320 host 인증 정보를 작업 시작 때 agent에 넘기기(10-20, t-0500)
+
+- **계약.** profile과 별개인 `thread start --account`로 등록한 인증 신원을 고른다. 계정 미지정은 기존 인증 그대로이며 배포로 이미 실행 중인 thread/pane의 인증 환경을 바꾸지 않는다. 실제 로그인은 사람이 aaa 밖 터미널에서 하고 `account import --harness claude|codex --file`은 그 결과만 등록한다. 등록·삭제는 host 로컬의 pane 밖 CLI로 제한한다.
+- **저장과 전달.** K 확정판의 봉투 암호화·권한·원자 저장에 맞춘 최소 금고를 먼저 둔다(전체 관리 화면·범용 참조는 후속). host 상태 폴더의 `secrets.key`(KEK, 0600)와 `accounts/`(0700, 계정 파일 0600)에 보관한다. 무작위 DEK를 감싸고 별칭·harness·버전을 AAD로 묶는다. 전용 TLS/UDS 요청과 session 시작 stdin pipe로만 보내고 spec·journal·argv에는 비밀을 쓰지 않는다. Claude는 자식 env `CLAUDE_CODE_OAUTH_TOKEN`, Codex는 thread별 0700 홈·0600 인증/설정을 쓰며 정상 종료 시 auth만 지우고 대화 기록은 조회·재개용으로 남긴다.
+- **동시 실행과 갱신.** 같은 계정을 여러 머신·작업에 동시에 넘기며 실행권/lease로 막지 않는다. Codex 0.163.0 공식 소스의 비공개 URL override를 버전 확인 뒤 사용해 pane별 localhost capability 중계 → agent → host로 갱신을 모은다. host의 계정별 갱신 mutex·버전 비교가 오래된 요청에 최신 인증을 돌려주고 최신 요청 하나만 제공자에 보낸다. 회전 결과를 암호화·원자 저장한 뒤 답하며 부분/null 토큰은 이전 값을 유지한다. auth.json 사본을 맹목적으로 되쓰기하지 않는다.
+- **실패와 후속.** 금고 키 손상은 해당 인증 시작만 잠그고 계정 미지정 기능은 계속 제공한다. 미지원 CLI·host 단절·제공자 거부는 명시적으로 실패하며 직접 갱신 우회나 자동 재시도는 없다. 제공자 회전 성공과 host 저장 사이 crash에는 재로그인·재등록이 필요할 수 있다. 영속 갱신 의도·계정 세대와 CAS·결과 불명 복구·비정상 종료 임시 인증 청소는 후속 설계다. 계약·근거·남는 위험은 [작업별 계정 인증](accounts.md)에 적었다.
+- **비밀 비노출.** 등록 값의 원문·8바이트 조각·JSON/URL/base64 변형을 PTY·출력·post의 영속 outbox·DB·journal·로그·오류/패닉 경계에서 가린다. PTY의 chunk·ANSI·개행 분할을 포함한다. 실제 실행 입력과 인증 전송은 가리지 않으며 재접속 agent는 인증한 session IPC에서 메모리 가림 규칙을 복원한다.
+- **프로토콜.** FRONT_API 1.66(`account_import/list/remove`·`thread_start_account`·선택 `ThreadView.account`), AGENT_LINK 1.9(`account_auth.v1`, 전용 spawn·갱신·계정 pane 기록 조회), SESSION_IPC 1.3(갱신·메모리 가림 규칙). 별도 시작 요청이므로 옛 host가 account를 무시해 기존 인증으로 실행하지 못한다. 계정 미지정의 옛 session 연결은 유지한다. 웹 E2E 신규 spec 번호는 없으며 최신 main의 48·49는 그대로 둔다.
+- **시험.** `m13::accounts::account_credentials_parallel_refresh_and_all_records_are_redacted`가 빈 포트·임시 폴더·가짜 인증/제공자만 써서 UDS/TLS 두 머신의 네 동시 작업·두 토큰 회전·부분/null 응답·거부/우회 없음·대화/재개·Claude 동시/미지정·권한/정상 청소·미전송 outbox와 모든 기록/로그/화면 비노출을 소유한다. host 금고 keeper는 암호문/AAD 변조·키 잠김을 본다. AAD·post 가림 제거 변형의 의도한 실패와 원복 통과를 확인했다. 실제 로그인·실제 인증 파일·운영 host/agent/설정에는 접근하지 않는다.
+
+### 8.321 대화창 컨텍스트 게이지 1단계(10-20, t-0502)
+
+- **요청.** 사용자 10-20 「대화창에서 사용한 컨텍스트를 보여주고 싶어」, 「%, over하면 실제 k」, 시안(library/t-0502) §7 「추천대로 해」(1단계는 안 A 입력칸 게이지만, 1,000k 넘으면 `1050k`, 휴대폰도 숫자를 늘 보임), 「타이핑시에는 보이지 않게도 가능해?」. slash 확인창·숨김(§7-3)은 2단계, 목록 줄 표지(안 C)는 3단계 선택으로 남긴다.
+- **실측: 붙여 넣은 `/compact`.** 실험실에서 실제 harness를 띄워 웹 입력칸이 보내는 꼴(bracketed paste + Enter)로 보냈다. Claude 2.1.304는 383ms에 정리 표지, 7.9초에 끝났다. Codex 0.163은 394ms에 표지, 3.5초에 끝났다. 둘 다 명령으로 받아 따로 보내는 길은 필요 없다. Claude 기록은 `<command-name>/compact</command-name>` 줄(사람 글이 아님)이고, Codex 실측 rollout에는 `/compact` 글이 없이 `compacted` 줄만 있다.
+- **값과 출처(agent `plan.rs`).** 2초마다 이어 읽던 대화 기록의 `plan` 사건에 `context`를 실어 `AgentStatus.context`로 보낸다(모든 기기·목록이 같은 값, 응답 뒤 2초 이하).
+  - Claude: 본 대화(`isSidechain` 아님) assistant 줄의 `usage` 합(input + cache 생성 + cache 읽기). 합이 0인 합성 줄은 건너뛴다. 창은 `requestedModel`이 `claude-…[1m]`이면 1M, `claude-…`면 200k, 없으면 모른다. % = round(사용 / 창 × 100)으로 Claude Code 2.1.304 상태줄과 같다. 실측: 43,922 사용, `/compact` 뒤 `compact_boundary.compactMetadata` preTokens 43,926 → postTokens 7,910 = 4%. 이것은 터미널 「96% left」와 같다. 정리 뒤 다음 응답까지는 postTokens가 값이다.
+  - Codex: `token_count`의 `info.last_token_usage.total_tokens`와 `model_context_window`. Codex TUI 식(기준 12,000: 남은 % = (창−12k − max(0, 사용−12k)) / (창−12k))의 나머지를 쓴다. `info: null`은 앞 값을 둔다. `compacted` 줄 뒤 첫 `token_count`가 정리 뒤 크기다(실측 18,861 → 12,274, 창 258,400).
+  - 창을 모르거나 사용이 창보다 크면 `percent`가 없다.
+- **proto(FRONT_API 1.67, 더하기만).**
+  - `AgentStatus.context`·`HarnessEvent.context` = `ContextUsage{used, window, percent, compaction{before, after}}`. 옛 host는 생략해 웹이 게이지를 그리지 않는다.
+  - 입력 진단 `InputReceiptMethod::SlashCommand`.
+- **웹.**
+  - 입력칸 보내기 앞에 링과 숫자: 사용 %, 창을 넘거나 모르면 k(`230k`, `1050k`). 80%부터 위험 색은 구독 칩과 같다.
+  - 누르면 위로 펼침이 열린다: 사용/창, 막대, 주의, 마지막 정리 「164k → 28k」, 「마지막 응답 기준」, `/compact` 정리 단추.
+  - 정리 단추는 쉬는 중에만 켜진다. 연결 끊김·정리 중·확인창·작업 중·보내는 중에는 까닭을 보이며 꺼진다.
+  - 정리 중에는 링이 돌고 마지막 값이 흐려진다. 마지막 「대화 정리됨」 구분선에 「· 164k → 28k」를 붙인다.
+- **치는 동안 숨김.** 입력칸에 글(또는 첨부)이 있으면 80% 미만·창 모름 게이지는 opacity·visibility로만 사라진다. 자리(폭)를 그대로 두어 글 칸 폭이 흔들리지 않고, 비면 다시 보인다(reduced-motion이면 전환 없음). 80% 이상·창 넘음은 치는 중에도 보인다. 까닭: t3code는 높을 때 「Compact N」 칩을 오히려 더 보이고, 조사한 참고 UI 어디도 위험 값을 숨기지 않는다. 숨기는 목적은 글 칸의 산만함을 줄이는 것이다. 정리를 판단할 값은 그 목적보다 앞선다.
+- **명령의 보내짐.** 입력칸은 보낸 글이 기록에 사람 글로 오를 때 풀린다(§8.247). harness 명령 한 줄(`/word …`, 경로 `/Users/…`는 아님)은 그 증거가 오지 않는다. 그래서 host 전달을 보내짐으로 본다. 이것이 없으면 정리 단추 뒤 입력칸이 잠긴 채 10초 뒤 「오래 걸림」이 됐다.
+- **참고와 다른 것.** herdr-web-ui `ContextRing`·t3code `ContextWindowMeter`는 남은 양이나 사용 %만 보인다. 여기는 사용 %에 넘음·모름이면 k로 바꾸고, 숫자는 늘 보인다(Cursor가 숫자를 숨겼다가 불만이 나온 것, t3code가 미터를 기본 끔으로 바꾼 것과 반대). 휴대폰도 펼친다. 치는 동안 숨김은 사용자 요청이다.
+- **검증.**
+  - agent 유닛 `plan::tests::claude_context_is_the_last_main_answer_and_the_compaction_sizes`(실측 값·sidechain·합성 줄·1M·창 넘음·창 모름)·`codex_context_follows_token_count_and_the_compaction`(실측 18,861 → 12,274). host 유닛 `plan_events_set_counts_without_changing_the_activity`(context를 싣고 끝나면 지움).
+  - 웹 유닛 `contextUsage.test.mjs`(%·k·1050k·숨김 규칙)·`inputReceipt.test.mjs`(명령 한 줄 판정).
+  - 웹 E2E `50-context-gauge`: 가짜 Claude가 실제 꼴 usage·`compact_boundary` 줄을 적고, 실제 agent가 읽는다. 38% → 230k → 84k → 86%를 본다. 치는 중 숨김에서는 게이지·글 칸 폭이 그대로이고, 86%는 보이며, 비면 다시 보인다. 펼침, 작업 중 단추 꺼짐과 까닭, 단추 → pane이 `/compact` bytes를 받고 입력칸이 풀리는 것, 정리 중 표지, 14%와 구분선 「· 164k → 28k」, iPhone Safari도 본다.
+  - 결함 되심기: 명령 판정을 끄면 E2E가 「입력칸 잠금 풀림」에서 실패했고, 되돌린 뒤 통과했다.
+
+### 8.322 aaa install I2 파일 transaction·읽기 status(10-20, t-0485)
 
 - **단계 경계.** 확정 기획 §9와 coordinator 판정에 따라 실제 파일 엔진·내구 journal/재개·기본 repair/reinstall/uninstall을 구현한다. 자동·SSH·외부 TTY의 CLI apply/resume은 모두 `needs_user: installation_authorization_required`/3이다. `--yes`·임의 JSON·환경 flag로 열지 않는다. CLI의 status만 읽기 경계에 연결한다. 서명·issuer pin·외부 TTY 발급·worker/executor는 I6에서 연결한다. 이 단계의 private 쓰기 엔진은 승인된 실험실 owner가 직접 구동하며 시험 전용 허용 flag/export는 없다.
 - **파일·내구성.** 실제 부모/mount·계정·파일 종류·before SHA/권한/inode를 대조하고, 같은 부모의 private stage와 backup을 sync한 뒤 파일별 교체·journal을 기록한다. 새 파일은 기존 파일을 덮지 않는 commit, 기존 파일은 교체 직전 baseline 검사를 사용한다. rename 뒤 journal 전 중단은 기록된 stage inode로 재대조한다. 여러 파일 전체 원자성을 주장하지 않는다. config/state/공유 파일의 OS 잠금과 active job 기록으로 두 프로세스·중복 적용을 막는다. 오류 원문·payload·TOML·경로/계정은 공개 결과/일반 journal에 넣지 않고 별도 private manifest/payload/backup에만 둔다(Unix 0600/0700, Windows 현재 SID+SYSTEM DACL). 기존 ACL/OS 정책을 변경하지 않는다.

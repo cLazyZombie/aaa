@@ -206,6 +206,7 @@ impl State {
     async fn handle(&mut self, conn: u64, id: String, body: SessionRequest) {
         let Some(tx) = self.conns.get(&conn).cloned() else { return };
         let result: Result<AgentResponse, ErrorBody> = match body {
+            SessionRequest::AccountRefreshed(_) => Ok(AgentResponse::Done),
             SessionRequest::Subscribe { from } => {
                 self.subs.insert(conn);
                 let backlog = from.and_then(|f| self.ring.since(f).map(|b| (f, b)));
@@ -301,13 +302,26 @@ impl State {
 }
 
 pub fn main(dir: PathBuf) -> Result<()> {
+    main_with_startup(dir, false)
+}
+pub fn main_with_startup(dir: PathBuf, startup_stdin: bool) -> Result<()> {
+    let startup = if startup_stdin {
+        let mut b = Vec::new();
+        std::io::stdin().take(aaa_proto::MAX_FRAME as u64 + 1).read_to_end(&mut b).context("인증 pipe 읽기 실패")?;
+        if b.len() > aaa_proto::MAX_FRAME {
+            anyhow::bail!("인증 pipe 상한 초과")
+        }
+        Some(serde_json::from_slice::<super::files::Startup>(&b).map_err(|_| anyhow::anyhow!("인증 pipe 형식 오류"))?)
+    } else {
+        None
+    };
     // agent·ssh 세션과 분리한다(SIGHUP을 받지 않고, agent가 죽어도 남는다).
     #[cfg(unix)]
     unsafe {
         libc::setsid();
     }
     let rt = tokio::runtime::Builder::new_multi_thread().worker_threads(2).enable_all().build()?;
-    rt.block_on(run(dir))
+    rt.block_on(run(dir, startup))
 }
 
 /// 세션에 넘기지 않는, 부모 harness 세션의 표지 env. Codex·omp 표지는 herdr `apply_pane_launch_env`(src/pane.rs)와 같다
@@ -326,10 +340,35 @@ const INHERITED_SESSION_MARKERS: &[&str] = &[
     "CLAUDE_EFFORT",
 ];
 
-async fn run(dir: PathBuf) -> Result<()> {
+async fn run(dir: PathBuf, startup: Option<super::files::Startup>) -> Result<()> {
     let paths = SessionPaths::from_dir(&dir);
-    let spec: SpecFile = util::read_json(&paths.spec()).context("spec.json")?;
+    let mut spec: SpecFile = util::read_json(&paths.spec()).context("spec.json")?;
+    let credential = startup.and_then(|start| {
+        spec.spec = start.spec;
+        start.credential
+    });
     let s = &spec.spec;
+    for (key, value) in &s.env {
+        aaa_common::redact::remember_env(key, value);
+    }
+    let authenticated = credential.is_some();
+    if let Some(c) = &credential {
+        if s.harness.as_deref() != Some(&c.harness) {
+            anyhow::bail!("계정과 pane harness가 다르다")
+        }
+        aaa_common::redact::remember_auth(&c.harness, &c.secret.0);
+    }
+    let (broker_tx, mut broker_rx) = mpsc::channel::<crate::account::BrokerRequest>(16);
+    let mut prepared = match credential {
+        Some(c) => {
+            let state = dir.parent().and_then(|p| p.parent()).context("agent 상태 폴더 오류")?;
+            let home = super::files::account_home(state, &c.run)?;
+            Some(crate::account::prepare(&home, c, &std::env::current_exe()?, broker_tx).await?)
+        }
+        None => None,
+    };
+    let mut refreshes = HashMap::<String, crate::account::BrokerRequest>::new();
+    let mut redactor = aaa_common::redact::Stream::default();
 
     let pty = portable_pty::native_pty_system();
     let pair = pty
@@ -361,8 +400,23 @@ async fn run(dir: PathBuf) -> Result<()> {
         cmd.env("fish_handle_reflow", "0");
     }
     cmd.env("AAA_SESSION_ID", &spec.id);
+    if authenticated {
+        for k in crate::account::AUTH_ENV {
+            cmd.env_remove(k);
+        }
+    }
     for (k, v) in &s.env {
-        cmd.env(k, v);
+        if !authenticated || !crate::account::AUTH_ENV.contains(&k.as_str()) {
+            cmd.env(k, v);
+        }
+    }
+    if let Some(p) = &prepared {
+        for (k, v) in &p.env {
+            cmd.env(k, v);
+        }
+        if s.harness.as_deref() == Some("codex") {
+            cmd.args(["-c", "cli_auth_credentials_store=\"file\""]);
+        }
     }
     let mut child = pair.slave.spawn_command(cmd).context("자식 실행")?;
     drop(pair.slave);
@@ -456,7 +510,7 @@ async fn run(dir: PathBuf) -> Result<()> {
         };
         tokio::select! {
             data = out_rx.recv(), if reader_open => match data {
-                Some(d) => st.output(&d),
+                Some(d) => {let clean=redactor.push(&d,false);st.output(&clean);},
                 None => {
                     reader_open = false;
                     if st.exit.is_some() { break; }
@@ -469,17 +523,29 @@ async fn run(dir: PathBuf) -> Result<()> {
                 if !reader_open { break; }
             }
             _ = drain => break,
+            Some(request)=broker_rx.recv(), if authenticated => {
+                for tx in st.conns.values(){let _=tx.json(&SessionMsg::AccountRefresh(request.request.clone())).await;}
+                refreshes.insert(request.request.id.clone(),request);
+            }
             Some(cmd) = cmd_rx.recv() => match cmd {
                 Cmd::Connected { conn, tx, proto } => {
-                    let _ = tx.json(&SessionMsg::Welcome { proto, info: st.info() }).await;
+                    let _ = tx.json(&SessionMsg::Welcome { proto, info: st.info(), account_rules: authenticated.then(|| aaa_proto::SecretText(aaa_common::redact::snapshot())) }).await;
+                    for pending in refreshes.values() {let _=tx.json(&SessionMsg::AccountRefresh(pending.request.clone())).await;}
                     st.conns.insert(conn, tx);
                 }
                 Cmd::Disconnected { conn } => { st.conns.remove(&conn); st.subs.remove(&conn); }
+                Cmd::Req { conn,id,body:SessionRequest::AccountRefreshed(result) } => {
+                    if let Some(pending)=refreshes.remove(&result.id){let _=pending.reply.send(result);}
+                    if let Some(tx)=st.conns.get(&conn){let _=tx.json(&SessionMsg::Res{id,result:Outcome::Ok(AgentResponse::Done)}).await;}
+                }
                 Cmd::Req { conn, id, body } => st.handle(conn, id, body).await,
             },
         }
     }
 
+    let tail = redactor.push(&[], true);
+    st.output(&tail);
+    drop(prepared.take());
     // 질의일까 붙들었던 끝(끝나지 않은 escape)도 마저 남긴다
     let held = st.queries.take_held();
     st.vt.feed(&held);
@@ -503,7 +569,7 @@ async fn run(dir: PathBuf) -> Result<()> {
             _ = tokio::time::sleep_until(until) => break,
             Some(cmd) = cmd_rx.recv() => match cmd {
                 Cmd::Connected { conn, tx, proto } => {
-                    let _ = tx.json(&SessionMsg::Welcome { proto, info: st.info() }).await;
+                    let _ = tx.json(&SessionMsg::Welcome { proto, info: st.info(), account_rules: None }).await;
                     st.conns.insert(conn, tx);
                 }
                 Cmd::Disconnected { conn } => { st.conns.remove(&conn); st.subs.remove(&conn); }

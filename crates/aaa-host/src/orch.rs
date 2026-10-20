@@ -26,6 +26,8 @@ pub(crate) struct ThreadRec {
     pub title: String,
     pub machine_id: String,
     pub profile: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub account: Option<String>,
     #[serde(default)]
     pub role: Role,
     #[serde(default)]
@@ -38,6 +40,8 @@ pub(crate) struct ThreadRec {
     pub started_by: Option<String>,
     #[serde(default)]
     pub automation: Option<String>,
+    #[serde(default)]
+    pub automation_run: Option<crate::automation_thread::Run>,
     pub repo: Option<String>,
     pub base: Option<String>,
     #[serde(default)]
@@ -145,12 +149,14 @@ impl ThreadRec {
             title: title.to_string(),
             machine_id: machine_id.to_string(),
             profile: profile.to_string(),
+            account: None,
             role,
             kind,
             mission: None,
             holds: vec![],
             started_by: None,
             automation: None,
+            automation_run: None,
             repo: None,
             base: None,
             branch: None,
@@ -198,7 +204,7 @@ impl ThreadRec {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum ResolveWhy {
     Manual,
-    Auto { days: u32 },
+    Auto { days: Option<u32> },
     Merged,
 }
 
@@ -247,10 +253,12 @@ pub(crate) struct ResolveOpts {
 pub(crate) struct StartOrigin {
     pub key: String,
     pub rule: String,
+    pub run: crate::automation_thread::Run,
     pub admission: crate::db::StartAdmission,
 }
 
 pub struct StartArgs {
+    pub account: Option<String>,
     pub holds: Vec<String>,
     pub project: String,
     pub title: String,
@@ -986,7 +994,7 @@ impl Host {
 
     pub(crate) fn save(&self, rec: &mut ThreadRec) {
         rec.updated_at_ms = aaa_common::util::now_ms();
-        let json = serde_json::to_string(&rec).expect("thread 기록 직렬화");
+        let json = serde_json::to_string(&aaa_common::redact::json(rec.clone())).expect("thread 기록 직렬화");
         if let Err(e) = self.db.thread_save(&rec.project, &rec.id, rec.status.as_str(), &json) {
             tracing::error!(thread = %rec.id, "thread 기록 저장 실패: {e:#}");
         }
@@ -1006,7 +1014,7 @@ impl Host {
         f(&mut r);
         // 이 성공 뒤 Kill·깨움을 보내는 호출자는 실제 DB 확정을 필요로 한다.
         r.updated_at_ms = aaa_common::util::now_ms();
-        let json = serde_json::to_string(&r).map_err(internal)?;
+        let json = serde_json::to_string(&aaa_common::redact::json(r.clone())).map_err(internal)?;
         self.db.thread_save(project, id, r.status.as_str(), &json).map_err(internal)?;
         let _ = self.thread_events.send(self.thread_view(&r));
         Ok(r)
@@ -1052,6 +1060,7 @@ impl Host {
             title: r.title.clone(),
             machine: self.machine_name(&r.machine_id),
             profile: r.profile.clone(),
+            account: r.account.clone(),
             role: r.role,
             thread_kind: r.kind,
             holds: r.holds.clone(),
@@ -1548,6 +1557,15 @@ impl Host {
         } else {
             self.resolved_profile(Some(&a.project), &mid, &a.profile)?
         };
+        if let Some(account) = &a.account {
+            let c = self.accounts.credential(account)?;
+            if c.harness != profile.harness {
+                return Err(bad("계정과 profile의 harness가 다르다"));
+            }
+            if !self.machine_feature(&mid, "account_auth.v1") {
+                return Err(bad("이 머신 agent는 계정 인증 전달을 지원하지 않는다"));
+            }
+        }
         let resolved_profile = Some(if let Some(m) = &mission {
             crate::mission::profile_context(profile, &dir, &m.name)
         } else {
@@ -1557,9 +1575,11 @@ impl Host {
         let now = aaa_common::util::now_ms();
         let mut rec = ThreadRec {
             mission,
+            account: a.account.clone(),
             holds: a.holds.clone(),
             started_by: Some(actor.into()),
             automation: origin.map(|o| o.rule.clone()),
+            automation_run: origin.map(|o| o.run.clone()),
             repo: a.repo.clone(),
             base: a.base.clone(),
             ..ThreadRec::starting(&a.project, a.title.trim(), &mid, &a.profile, a.role, a.kind, now)
@@ -1694,6 +1714,7 @@ impl Host {
         actor: &str,
     ) -> Result<(), ErrorBody> {
         self.mission_transfer_state(rec).await?;
+        self.automation_prepare(rec).await?;
         let launch = rec.launch.clone().ok_or_else(|| internal("launch 기록이 없다"))?;
         let mut env = launch.env.clone();
         env.push(("AAA_PROJECT".into(), rec.project.clone()));
@@ -1719,9 +1740,22 @@ impl Host {
             // agent가 이 harness(claude·codex)의 화면으로 상태를 본다(plan §8.110)
             harness: Some(launch.harness.clone()),
             profile: None,
-            resolved_profile: None,
+            // agent가 머신별 env를 합친다. 재개 argv는 저장된 실행 계약을 유지한다.
+            resolved_profile: self.resolved_profile(Some(&rec.project), &rec.machine_id, &launch.profile).ok(),
         };
-        let pane = self.spawn_on(&rec.machine_id, spec, actor).await?;
+        let pane = if let Some(name) = &rec.account {
+            let mut credential = self.accounts.credential(name)?;
+            if credential.harness != launch.harness {
+                return Err(bad("계정과 profile의 harness가 다르다"));
+            }
+            if !self.machine_feature(&rec.machine_id, "account_auth.v1") {
+                return Err(bad("계정 인증을 지원하지 않는 agent다"));
+            }
+            credential.run = format!("{}/{}", rec.project, rec.id);
+            self.spawn_account_on(&rec.machine_id, spec, credential, actor).await?
+        } else {
+            self.spawn_on(&rec.machine_id, spec, actor).await?
+        };
         *rec = self.update_rec(&rec.project, &rec.id, |r| {
             r.pane = Some(pane.clone());
             if let Some(m) = r.mission.as_mut() {
@@ -2136,6 +2170,7 @@ impl Host {
                 self.reports_bump();
             }
             let skipped: Vec<String> = snap.skipped.iter().map(|s| format!("{}: {}", s.path, s.reason)).collect();
+            self.automation_copy_memory(&rec, last).await?;
             let copy = if skipped.is_empty() { "complete" } else { "partial" };
             Ok(Some((snap.hash, skipped, copy.to_string(), snap.report.0, changed)))
         }
@@ -2179,6 +2214,10 @@ impl Host {
                 let mut detail = format!("사본 {copy}");
                 if !skipped.is_empty() {
                     detail.push_str(&format!(", 건너뜀: {}", skipped.join("; ")));
+                }
+                if rec.automation.is_some() && crate::report_mark::marker(&text) == Some("[완료]") {
+                    self.thread_ack(project, id, "automation")?;
+                    self.new_report_item(project, &self.load(project, id)?);
                 }
                 self.flow(&rec, "report_ready", Some(format!("threads/{id}.md")), detail);
                 // 보고 첫 줄 `PR:`이 생겼을 수 있다: 간격을 기다리지 않고 본다
@@ -2394,9 +2433,14 @@ impl Host {
             notes.join("; "),
         );
         let mut summary = match why {
+            ResolveWhy::Auto { days: None } => format!(
+                "{}: 자동화 {}의 완료 뒤 쉼 시간이 지나 저절로 끝냈다",
+                crate::transitions::label(&rec),
+                rec.automation.as_deref().unwrap_or("")
+            ),
             ResolveWhy::Manual => format!("{}: 끝냈다(보고와 library는 남는다)", crate::transitions::label(&rec)),
             // herdr-projects steps.rs `resolve_after_copy`의 auto 문구
-            ResolveWhy::Auto { days } => format!(
+            ResolveWhy::Auto { days: Some(days) } => format!(
                 "{}: 쉼으로 auto_resolve_days({days}일)가 지나 저절로 끝냈다. `aaa thread resolve {project} {id} --reopen`으로 되돌린다",
                 crate::transitions::label(&rec)
             ),
@@ -2555,10 +2599,12 @@ mod tests {
 
     fn open_thread() -> ThreadRec {
         ThreadRec {
+            account: None,
             mission: None,
             holds: vec![],
             started_by: None,
             automation: None,
+            automation_run: None,
             project: "p".into(),
             id: "t-0001".into(),
             title: "t".into(),
@@ -2622,6 +2668,7 @@ mod tests {
             background: None,
             background_wait: false,
             compacting: false,
+            context: None,
         }
     }
 

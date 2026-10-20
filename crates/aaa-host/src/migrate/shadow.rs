@@ -141,10 +141,12 @@ pub fn token(g: ThreadGroup) -> &'static str {
 pub fn aaa_group(f: &Facts, now_s: i64) -> ThreadGroup {
     let now_ms = (now_s.max(0) as u64) * 1000;
     let rec = ThreadRec {
+        account: None,
         mission: None,
         holds: vec![],
         started_by: None,
         automation: None,
+        automation_run: None,
         project: String::new(),
         id: "t-0000".into(),
         title: String::new(),
@@ -211,6 +213,7 @@ pub fn aaa_group(f: &Facts, now_s: i64) -> ThreadGroup {
         background: None,
         background_wait: false,
         compacting: false,
+        context: None,
     });
     thread_group(&rec, f.pane_exists, agent.as_ref(), now_ms)
 }

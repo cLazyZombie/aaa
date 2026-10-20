@@ -23,6 +23,12 @@ export function receiptMethod(text: string, message: ChatMessage, hash?: string)
   return message.pending ? "queue_operation" : message.text.trim() === text.trim() ? "normal" : "pasted_content";
 }
 
+/** harness 명령 한 줄(`/compact`, `/model opus`). Claude는 `<command-name>` 줄로, Codex는 기록하지 않아 사람 글 증거가 오지 않는다.
+ * 경로(`/Users/…`)는 명령이 아니다 */
+export function slashCommand(text: string): boolean {
+  return /^\/[a-z][\w:-]*(?:[ \t][^\n]*)?$/i.test(text.trim());
+}
+
 export async function receiptHash(text: string): Promise<string | undefined> {
   if (!crypto.subtle) return undefined;
   const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(receiptText(pasteText(text))));

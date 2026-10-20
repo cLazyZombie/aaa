@@ -271,7 +271,13 @@ async fn serve(
                 Ok(Err(e)) => return Err(e.into()),
                 Ok(Ok(None)) => return Ok(()),
                 Ok(Ok(Some(Incoming::Terminal(c)))) => host.on_chunk(&mid, c),
-                Ok(Ok(Some(Incoming::Control(b)))) => match serde_json::from_slice::<LinkMsg>(&b)? {
+                Ok(Ok(Some(Incoming::Control(b)))) => match match serde_json::from_slice::<LinkMsg>(&b)? {
+                    msg @ LinkMsg::Res { result: Outcome::Ok(AgentResponse::ThreadReady(_) | AgentResponse::Relaunch(_)), .. } => msg,
+                    msg => aaa_common::redact::json(msg),
+                } {
+                    LinkMsg::Event(AgentEvent::AccountRefresh(request)) => {
+                        let h=host.clone();let m=mid.clone();tokio::spawn(async move {h.account_refresh(m,request).await;});
+                    }
                     LinkMsg::Res { id, result } => {
                         // 구독 응답은 이어지는 출력보다 먼저 mirror에 반영한다(같은 reader 순서).
                         if let Outcome::Ok(AgentResponse::Subscribed { session, snapshot, offset }) = &result {

@@ -1,6 +1,6 @@
 //! CLI holds → 실제 두 agent → 승인/대기/시작 → host 재시작의 L5 전송 경계.
 use super::*;
-fn automatic(w: &World) -> Vec<Value> {
+pub(super) fn automatic(w: &World) -> Vec<Value> {
     w.h.ok(&["events", "demo"])["events"]
         .as_array()
         .unwrap()

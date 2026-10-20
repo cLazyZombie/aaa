@@ -47,6 +47,7 @@ async fn codex_trust_detection_question_and_answer_share_the_front_path() {
             transcript: None,
             plan: None,
             background: None,
+            context: None,
         };
         let mut questions = host.question_events.subscribe();
         let stream = ipc::connect(&aaa_host::link::local_socket(&host)).await.unwrap();
@@ -407,6 +408,7 @@ async fn codex_hook_cli_reaches_host_and_returns_guidance() {
             created_at_ms: util::now_ms(),
             label: None,
             colors: None,
+            account_run: None,
             spec: SpawnSpec {
                 name: "codex".into(),
                 argv: vec!["codex".into()],
@@ -444,7 +446,13 @@ async fn codex_hook_cli_reaches_host_and_returns_guidance() {
             let tx = spawn_writer(w, MAX_FRAME);
             let mut rx = FrameRx::new(r, MAX_FRAME);
             assert!(matches!(rx.control::<SessionMsg>().await.unwrap(), SessionMsg::Hello { .. }));
-            tx.json(&SessionMsg::Welcome { proto: Version { major: 1, minor: 0 }, info: info.clone() }).await.unwrap();
+            tx.json(&SessionMsg::Welcome {
+                proto: Version { major: 1, minor: 0 },
+                info: info.clone(),
+                account_rules: None,
+            })
+            .await
+            .unwrap();
             while let Ok(SessionMsg::Req { id, body }) = rx.control::<SessionMsg>().await {
                 let reply = match body {
                     SessionRequest::Subscribe { .. } => {

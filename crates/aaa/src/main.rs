@@ -15,5 +15,6 @@ mod update;
 mod work_root;
 
 fn main() -> std::process::ExitCode {
+    std::panic::set_hook(Box::new(|_| eprintln!("aaa 내부 오류: 비밀을 보호하기 위해 panic 본문을 출력하지 않는다")));
     cli::main()
 }
