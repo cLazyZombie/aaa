@@ -147,6 +147,8 @@ impl Node {
         use portable_pty::{CommandBuilder, PtySize, native_pty_system};
         let pair = native_pty_system().openpty(PtySize::default()).expect("시험 PTY 열기");
         let mut c = CommandBuilder::new(bin);
+        // script와 같은 cwd를 쓴다. PTY 기본값인 HOME은 시험에서 아직 없는 격리 폴더일 수 있다.
+        c.cwd(std::env::current_dir().unwrap());
         c.args(args);
         c.env("AAA_CONFIG_DIR", &self.cfg);
         c.env("AAA_STATE_DIR", &self.state);
