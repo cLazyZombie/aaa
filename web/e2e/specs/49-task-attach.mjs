@@ -23,6 +23,7 @@ const START = `# Tasks
   버튼이 잘린다
 - [ ] 계획 반영
 - [ ] 폰에서 붙이기
+- [ ] 보고서 읽기
 `;
 const shaIs = (p, want) => domIs(p, `할 일 hash ${want.slice(0, 8)}`, (w) => document.querySelector('[data-testid="tasks-view"]')?.dataset.tasksSha === w, want);
 const row = (p, title) => p.locator(`.task-row[data-title="${title}"]`);
@@ -65,6 +66,7 @@ export default async function ({ page }) {
   let md;
   let shotPng;
   let uploadedMd;
+  let started;
   await step("붙여 넣기: task를 고른 채 ⌘V(스크린샷)면 사진 고르기 없이 그 task 메모에 첨부 줄이 저장되고 썸네일이 보인다", async () => {
     // 가짜 thread가 곧 턴을 끝내 앱 안 알림이 화면 위를 덮는다: 이 기기는 앱 안 알림을 끈다(43·47과 같다)
     const dialog = await openSettings(page, "알림");
@@ -223,6 +225,7 @@ export default async function ({ page }) {
     await page.getByTestId("task-start-go").click();
     await page.getByTestId("task-started").waitFor();
     const id = await until("이은 thread", () => / · (t-\d{4})$/m.exec(read())?.[1]);
+    started = id;
     const t = aaa("thread", "show", "demo", id);
     const task = fs.readFileSync(`${dir()}/threads/${id}.task.md`, "utf8");
     if (task.includes("](uploads/") || task.includes("](library/")) throw new Error(`host 경로가 할 일에 남았다:\n${task}`);
@@ -241,14 +244,80 @@ export default async function ({ page }) {
     aaa("thread", "resolve", "demo", t.id);
   });
 
+  await step("할 일에 추가: 보고서 머리·thread 결과물 줄에서 그 문서를 링크한 새 task를 만들거나 있는 task에 링크한다", async () => {
+    // 보고서 머리: index.html이 있는 보고서
+    await page.evaluate(() => (location.hash = "#report=demo%2Fplan-report"));
+    await page.locator('[data-testid="report-detail"][data-status="ready"]').waitFor();
+    await shot(page, "attach-desktop-report-add");
+    await page.getByTestId("report-task-add").click();
+    const add = page.getByTestId("task-docadd");
+    await add.waitFor();
+    await shot(page, "attach-desktop-docadd");
+    await add.getByTestId("task-docadd-new").click();
+    const detail = page.getByTestId("task-detail");
+    await countIs(page, 1);
+    await detail.getByTestId("task-field-title").fill("계획 보고서 검토");
+    await detail.getByTestId("task-save").click();
+    await until("새 task의 보고서 줄", () => JSON.stringify(notesOf("계획 보고서 검토")) === JSON.stringify(["[plan-report](library/plan-report/index.html)"]));
+    // thread 결과물의 md 줄: 있는 task에 링크한다
+    await page.evaluate((id) => (location.hash = `#thread=${id}`), started);
+    const notes = page.locator('[data-testid="files"] [data-testid="file-task-add"][data-path="docs/notes.md"]');
+    await notes.waitFor();
+    if (await page.locator('[data-testid="files"] [data-testid="file-task-add"][data-path="big.bin"]').count()) throw new Error("문서가 아닌 결과물에 「할 일에」가 있다");
+    await notes.scrollIntoViewIfNeeded();
+    await shot(page, "attach-desktop-thread-add");
+    await notes.click();
+    await add.waitFor();
+    await add.getByTestId("task-docadd-search").fill("보고서 읽기");
+    await add.locator('[data-testid="task-docadd-pick"][data-title="보고서 읽기"]').click();
+    await until("결과물 문서 줄", () => notesOf("보고서 읽기").includes(`[notes.md](library/${started}/docs/notes.md)`));
+    await add.waitFor({ state: "detached" });
+    await countIs(page, 1);
+    // 이미 그 문서를 링크한 task는 다시 고를 수 없다
+    await page.evaluate((id) => (location.hash = `#thread=${id}`), started);
+    await notes.click();
+    await add.getByTestId("task-docadd-search").fill("보고서 읽기");
+    await domIs(page, "이미 링크한 task 빠짐", () => document.querySelectorAll('[data-testid="task-docadd-pick"]').length === 0);
+    await page.keyboard.press("Escape");
+    await add.waitFor({ state: "detached" });
+  });
+
+  await step("보고서 주소: 공유 링크·앱 보고서 주소를 붙이면 앱 안 보고서 문서로 알아보고, 풀 수 없는 주소는 주소 그대로 붙인다", async () => {
+    await pick(page, "보고서 읽기");
+    const detail = page.getByTestId("task-detail");
+    await countIs(page, 1);
+    const shared = aaa("library", "link", "demo", "plan-report");
+    await pasteOn(page, '[data-testid="task-attach-paste"]', [], new URL(`${shared.base}plan.md`, base).href);
+    await until("공유 링크 → 보고서 문서 줄", () => notesOf("보고서 읽기").includes("[plan.md](library/plan-report/plan.md)"));
+    await pasteOn(page, '[data-testid="task-attach-paste"]', [], `${base}#report=demo%2Fplan-report`);
+    await until("앱 보고서 주소 → index.html 줄", () => notesOf("보고서 읽기").includes("[plan-report](library/plan-report/index.html)"));
+    const bogus = new URL(`/v/${"0".repeat(48)}/x.md`, base).href;
+    await pasteOn(page, '[data-testid="task-attach-paste"]', [], bogus);
+    await until("풀 수 없는 주소는 주소 줄", () => notesOf("보고서 읽기").some((l) => l.endsWith(`](${bogus})`)));
+    await detail.locator('[role="alert"]', { hasText: "보고서 주소를 앱 문서로 바꾸지 못해" }).waitFor();
+    await countIs(page, 4);
+    await detail.locator('[data-testid="task-doc"][data-target="library/plan-report/plan.md"]').scrollIntoViewIfNeeded();
+    await shot(page, "attach-desktop-report-url");
+    await detail.locator('[data-testid="task-doc"][data-target="library/plan-report/plan.md"] [data-testid="task-doc-open"]').click();
+    await page.getByTestId("file-viewer-markdown").getByText("계획서", { exact: true }).waitFor();
+    await page.keyboard.press("Escape");
+    await page.getByTestId("file-viewer").waitFor({ state: "detached" });
+  });
+
   await step("보기 권한: 썸네일·문서는 보이고 붙여넣기 칸·떼기는 없으며, 올리기 요청은 거부된다", async () => {
     const { page: r } = await pairDevice(browser, aaa("web", "pair", "--reader").code, "desktop", { hash: "#tasks" });
     await pick(r, "계획 반영");
     await r.getByTestId("task-attach").waitFor();
     if ((await r.getByTestId("task-attach-paste").count()) || (await r.getByTestId("task-attach-remove").count())) throw new Error("보기 권한에 붙이기·떼기가 있다");
-    await r.locator('[data-testid="task-doc"]').first().waitFor();
+    await r.locator('[data-testid="task-doc"][data-target="library/plan-report/plan.md"] [data-testid="task-doc-open"]').click();
+    await r.getByTestId("file-viewer-markdown").getByText("계획서", { exact: true }).waitFor();
+    await r.keyboard.press("Escape");
+    await r.getByTestId("file-viewer").waitFor({ state: "detached" });
     const status = await r.evaluate(async (b) => (await fetch(`${b}api/v1/projects/demo/uploads`, { method: "POST", body: new Uint8Array([0x89, 0x50, 0x4e, 0x47]) })).status, base);
     if (status !== 403) throw new Error(`보기 권한 올리기가 ${status}로 답했다`);
+    await r.evaluate(() => (location.hash = "#report=demo%2Fplan-report"));
+    await r.locator('[data-testid="report-detail"][data-status="ready"]').waitFor();
+    if (await r.getByTestId("report-task-add").count()) throw new Error("보기 권한에 「할 일에 추가」가 있다");
     await r.close();
   });
 
@@ -293,6 +362,19 @@ export default async function ({ page }) {
       await doc.click();
       await p.getByTestId("file-viewer-markdown").getByText("계획서", { exact: true }).waitFor();
       await shot(p, `attach-${kind}-${scheme}-open-md`);
+      // 상세 시트 위 파일 보기를 닫으면 상세로 돌아오고, 다른 화면으로 가도 파일 보기가 되살아나지 않는다(시트 기록이 어긋나지 않는다)
+      await p.getByTestId("file-viewer").getByRole("button", { name: "파일 닫기" }).click();
+      await p.getByTestId("file-viewer").waitFor({ state: "detached" });
+      await p.getByTestId("task-detail").waitFor();
+      // 보고서 머리의 「할 일에 추가」와 그 창
+      await p.evaluate(() => (location.hash = "#report=demo%2Fplan-report"));
+      await p.locator('[data-testid="report-detail"][data-status="ready"]').waitFor();
+      await p.getByTestId("report-frame").waitFor();
+      if (await p.getByTestId("file-viewer").count()) throw new Error("닫은 파일 보기가 화면 이동 뒤에 다시 떴다");
+      await shot(p, `attach-${kind}-${scheme}-report`);
+      await p.getByTestId("report-task-add").click();
+      await p.getByTestId("task-docadd").waitFor();
+      await shot(p, `attach-${kind}-${scheme}-docadd`);
       await p.close();
     }
   });

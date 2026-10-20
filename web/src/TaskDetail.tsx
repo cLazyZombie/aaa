@@ -16,7 +16,7 @@ import { Bot, ChevronLeft, Circle, CircleDot, Play, Triangle, TriangleAlert, Unl
 import type { OwnerChoice, TaskAnchor, TaskBoard, TaskLogEntry, TaskOp, TaskView } from "./gen/proto";
 import { Markdown } from "./Markdown";
 import { uploadTaskFile } from "./api";
-import { TaskAttachments, dragHasFiles, filesOf, type PendingUpload } from "./TaskAttachments";
+import { TaskAttachments, dragHasFiles, filesOf, resolveReportLink, type PendingUpload } from "./TaskAttachments";
 import { GROUP_WORD } from "./sidebarModel";
 import { usePhoneSheetBack } from "./herdr/sheetHistory";
 import type { MyEdit } from "./TaskDialogs";
@@ -139,13 +139,16 @@ export interface DetailProps {
   onChangeNotes?: (t: TaskView, change: (notes: string) => string) => Promise<void>;
   /** 상세 위에 그림 크게 보기가 떴다(그동안 휴대폰 뒤로 기록은 그 창 것이다). TaskDetail이 채운다 */
   onCover?: (covered: boolean) => void;
+  /** 앱 파일 보기가 떠 있다(첨부 문서를 열었다): 그동안 휴대폰 뒤로 기록은 파일 보기 것이다 */
+  fileOpen?: boolean;
 }
 
 export function TaskDetail(props: DetailProps) {
   const { t, onClose } = props;
-  // 휴대폰은 전체 화면 시트: 시스템 Back이 닫는다(herdr-web-ui, sheetHistory.ts). 위에 크게 보기가 뜬 동안은 그 창이 기록을 갖는다
+  // 휴대폰은 전체 화면 시트: 시스템 Back이 닫는다(herdr-web-ui, sheetHistory.ts). 위에 크게 보기·파일 보기가 뜬 동안은 그 창이
+  // 기록을 갖는다(시트 칸을 파일 보기가 차지한 채 두면 파일 보기를 닫은 뒤의 뒤로·화면 이동이 시트 칸과 어긋난다)
   const [covered, setCovered] = useState(false);
-  usePhoneSheetBack(() => onClose(), !covered);
+  usePhoneSheetBack(() => onClose(), !covered && !props.fileOpen);
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       // 위에 뜬 창(팔레트·설정·확인창)의 Esc는 그 창 것이다
@@ -397,6 +400,13 @@ function TaskForm(props: DetailProps) {
     attach(added);
   };
   const attach = (added: readonly TaskAttachment[]) => changeNotes((notes) => added.reduce(addAttachment, notes));
+  // 보고서 주소(공유 링크·앱 보고서 주소)는 앱 안 보고서 문서로 바꿔 붙인다. 그사이 상세를 닫았으면 붙이지 않는다
+  const attachLink = async (a: TaskAttachment) => {
+    const { link, note } = await resolveReportLink(board.project, a);
+    if (!mounted.current) return;
+    setError(note);
+    attach([link]);
+  };
   const removeFile = (target: string) => changeNotes((notes) => removeAttachment(notes, target));
   // 상세가 열린 동안 어디서 붙여 넣어도(목록 행·빈 곳) 이 task에 붙는다. 다른 입력칸(검색·제목)의 붙여 넣기는 그 칸 것이다
   useEffect(() => {
@@ -734,7 +744,7 @@ function TaskForm(props: DetailProps) {
         busy={busy}
         pending={pending}
         onFiles={(files) => void attachFiles(files)}
-        onLink={canAttach ? (a) => attach([a]) : undefined}
+        onLink={canAttach ? (a) => void attachLink(a) : undefined}
         onRemove={(a) => removeFile(a.target)}
         onOpen={onOpenAttachment}
         onCover={props.onCover}

@@ -43,7 +43,7 @@ import { copyText } from "./herdr/clipboard";
 import { useMediaQuery } from "./herdr/useMediaQuery";
 import { StateIcon, TaskDetail, ThreadChip, type SaveResult } from "./TaskDetail";
 import { ConflictDialog, NameDialog, RawEditor, type MyEdit } from "./TaskDialogs";
-import { LinkDialog, StartDialog } from "./TaskStart";
+import { DocAddDialog, LinkDialog, StartDialog } from "./TaskStart";
 import { TaskLogView } from "./TaskLogView";
 import {
   TASK_FILTERS,
@@ -65,7 +65,10 @@ import {
   taskSections,
   taskState,
   toListOp,
+  addAttachment,
+  attachmentLine,
   attachmentsOf,
+  docTaskTitle,
   noteLines,
   withoutAttachments,
   type TaskAttachment,
@@ -188,7 +191,11 @@ type Dialog =
   | { kind: "list-rename"; name: string }
   | { kind: "raw" }
   | { kind: "start"; task: TaskView }
-  | { kind: "link"; thread: TaskThread };
+  | { kind: "link"; thread: TaskThread }
+  | { kind: "doc-add"; link: TaskAttachment };
+
+/** 할 일 화면 밖에서 여는 새 task: 명령 팔레트 「할 일 더하기」(link 없음), 보고서·thread 결과물 「할 일에 추가」(그 문서, plan §8.319) */
+export type TaskAddRequest = { seq: number; link: TaskAttachment | null };
 
 export function TasksView({
   shown,
@@ -202,6 +209,7 @@ export function TasksView({
   onHandOff,
   onSeenMine,
   onOpenAttachment,
+  fileOpen,
 }: {
   shown: boolean;
   /** 마지막으로 읽은 TaskBoard(App이 링크가 오를 때와 `tasks` 사건마다 읽는다) */
@@ -211,8 +219,8 @@ export function TasksView({
   groups: ThreadGroups;
   /** 보기 권한 기기: 편집 단추·끌기·「+」를 숨긴다 */
   reader: boolean;
-  /** 명령 팔레트 「할 일 더하기」가 올리는 수(바뀌면 새 task 폼을 연다) */
-  addRequest: number;
+  /** 바뀌면 새 task 폼(문서가 있으면 「할 일에 추가」 창)을 연다 */
+  addRequest: TaskAddRequest;
   /** 편집 응답의 새 board */
   onBoard: (b: TaskBoard) => void;
   onThread: (id: string) => void;
@@ -222,6 +230,8 @@ export function TasksView({
   onSeenMine?: (keys: string[]) => void;
   /** 첨부 문서 열기(파일 보기, plan §8.319) */
   onOpenAttachment?: (project: string, a: TaskAttachment) => Promise<void>;
+  /** 앱 파일 보기가 떠 있다(상세 시트는 그동안 뒤로 기록을 내준다) */
+  fileOpen?: boolean;
 }) {
   const [tab, setTab] = useState<Tab>("tasks");
   const [filter, setFilter] = useState<TaskFilter>("all");
@@ -290,13 +300,16 @@ export function TasksView({
   // 받기 전에는 아직 쓰지 않고 기다린다
   const lastAdd = useRef(0);
   useEffect(() => {
-    if (addRequest === lastAdd.current || frontApi === null || !board) return;
-    lastAdd.current = addRequest;
+    if (addRequest.seq === lastAdd.current || frontApi === null || !board) return;
+    lastAdd.current = addRequest.seq;
     if (!canEdit) return;
     setTab("tasks");
-    setPicked(null);
-    setCreating(emptyDraft(defaultList(board)));
-  }, [addRequest, canEdit, board, frontApi]);
+    if (addRequest.link === null) {
+      setPicked(null);
+      setCreating(emptyDraft(defaultList(board)));
+    } else if (!attachApi) setOpError("이 host는 task 첨부를 모른다. host를 갱신한다");
+    else setDialog({ kind: "doc-add", link: addRequest.link });
+  }, [addRequest, canEdit, attachApi, board, frontApi]);
   const byLine = useMemo(() => new Map((board?.tasks ?? []).map((t) => [t.line, t])), [board]);
   const sections = useMemo(() => (board ? taskSections(board, filter, query, groups) : []), [board, filter, query, groups]);
   const found = findTask(board, picked);
@@ -668,6 +681,7 @@ export function TasksView({
               key={picked ? `${picked.line}:${picked.title}:${saves}` : `new:${saves}:${creating?.list}:${creating?.parent?.block_sha256}:${creating?.title}`}
               t={current}
               gone={gone}
+              fileOpen={fileOpen}
               onDirty={setFormDirty}
               board={board}
               byLine={byLine}
@@ -804,6 +818,25 @@ export function TasksView({
           onLink={async (t) => {
             const r = await edit([linkOp(t, dialog.thread.id)], null);
             if (r) setPicked({ title: t.title, line: t.line });
+          }}
+        />
+      )}
+      {dialog?.kind === "doc-add" && board && (
+        <DocAddDialog
+          link={dialog.link}
+          board={board}
+          // 링크 저장이 충돌하면 그사이 충돌 창이 떠 있다: 이 창만 닫는다
+          onClose={() => setDialog((d) => (d?.kind === "doc-add" ? null : d))}
+          onNew={() => {
+            const link = dialog.link;
+            setDialog(null);
+            setPicked(null);
+            setCreating({ ...emptyDraft(defaultList(board)), title: docTaskTitle(link), notes: attachmentLine(link) });
+          }}
+          onLink={async (t) => {
+            await changeTaskNotes(t, (notes) => addAttachment(notes, dialog.link));
+            setCreating(null);
+            setPicked({ title: t.title, line: t.line });
           }}
         />
       )}

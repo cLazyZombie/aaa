@@ -16,10 +16,10 @@ import { ActivityBar } from "./ActivityBar";
 import { SidebarResizer } from "./SidebarResizer";
 import { PANEL_LABEL, revealPanel, storedCollapsed, storedPanel, storeSidebar, type SidebarPanel } from "./sidebarPanel";
 import { ReportsView, type ReportRef } from "./ReportsView";
-import { TasksView, useSeenMine, useTaskBoard } from "./TasksView";
+import { TasksView, useSeenMine, useTaskBoard, type TaskAddRequest } from "./TasksView";
 import { composerDrafts } from "./herdr/composerDraft.ts";
 import { readTerminalDraft, writeTerminalDraft } from "./herdr/terminalDraft.ts";
-import { reportDoc, taskBadge, uploadsBase } from "./tasksModel";
+import { linkFromText, reportDoc, taskBadge, uploadsBase, type TaskAttachment } from "./tasksModel";
 import { UpdateNotice } from "./UpdateNotice";
 import { ApiError, call, me, onSignedOut, pushedSince, pushInfo, signOut, tellAlert, watchEvents } from "./api";
 import { removePushSubscription } from "./push";
@@ -847,8 +847,19 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
     else beforeTasks.current = sel;
   }, [sel]);
   const toggleTasks = () => goSel(tasksShown ? beforeTasks.current : "tasks:");
-  // 명령 팔레트 「할 일 더하기」: 할 일 화면을 열고 새 task 폼을 연다(plan §8.311)
-  const [taskAdds, setTaskAdds] = useState(0);
+  // 명령 팔레트 「할 일 더하기」: 할 일 화면을 열고 새 task 폼을 연다(plan §8.311). 보고서·thread 결과물의 「할 일에 추가」는 그 문서를
+  // 링크한 새 task나 있는 task에 링크하는 창을 연다(plan §8.319)
+  const [taskAdds, setTaskAdds] = useState<TaskAddRequest>({ seq: 0, link: null });
+  const addTask = (link: TaskAttachment | null) => {
+    if (!tasksShown) toggleTasks();
+    setTaskAdds((a) => ({ seq: a.seq + 1, link }));
+  };
+  /** 보고서 안 md·html 문서를 할 일에(조작 권한만) */
+  const addReportDoc =
+    role === "reader" ? undefined : (name: string, path: string) => {
+      const link = linkFromText(`library/${name}/${path}`, path === "index.html" ? name : undefined);
+      if (link) addTask(link);
+    };
 
   // 새 pane 창(herdr-web-ui App.tsx `newSessionOpen`·`newSessionMachineId`): 머신 머리 +와 단축키가 그 머신으로 연다
   const [newPaneOn, setNewPaneOn] = useState<MachineView | null>(null);
@@ -1075,10 +1086,7 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
     addTask:
       role === "reader"
         ? null
-        : () => {
-            if (!tasksShown) toggleTasks();
-            setTaskAdds((n) => n + 1);
-          },
+        : () => addTask(null),
     toggleSidebar: actions.toggleSidebar,
   };
 
@@ -1202,6 +1210,7 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
             role={role}
             rev={reportsRev}
             onOpen={(r) => goSel(r ? `reports:${r.project}/${r.name}` : "reports:")}
+            onAddDoc={addReportDoc}
           />
         )}
         {tasksOpened && (
@@ -1218,6 +1227,7 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
               if (t) chooseThread(t);
             }}
             onSeenMine={seenMine.see}
+            fileOpen={fileViewing !== null}
             onHandOff={canControl ? handOff : undefined}
             onOpenAttachment={async (project, a) => {
               // task 첨부 문서(plan §8.319): 올린 md·html은 uploads 주소, 보고서 문서는 그 보고서 보기 경로 안에서 파일 보기로 연다
@@ -1241,6 +1251,7 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
             }
             onOpenFile={(path) => openFile({ path, pane: null, library: { project: currentThread.project, thread: currentThread.id } })}
             onOpenReportFile={role !== "reader" ? (path) => openFile({ path, pane: null, worktree: { project: currentThread.project, thread: currentThread.id } }) : undefined}
+            onAddDoc={addReportDoc && ((path) => addReportDoc(currentThread.id, path))}
           />
         ) : sel === "threads:" ? (
           <ProjectThreads

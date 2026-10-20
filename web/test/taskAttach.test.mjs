@@ -1,7 +1,7 @@
 // task 첨부 줄 규칙(src/tasksModel.ts, plan §8.319): 메모의 한 줄이 첨부 하나다(그림·올린 문서·보고서 문서·바깥 주소).
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { addAttachment, attachmentOfLine, attachmentsOf, fileKind, linkFromText, memoText, pickAttachable, removeAttachment, reportDoc, withMemoText, withoutAttachments } from "../src/tasksModel.ts";
+import { addAttachment, attachmentOfLine, attachmentsOf, fileKind, linkFromText, memoText, pickAttachable, removeAttachment, reportDoc, reportUrlOf, withMemoText, withoutAttachments } from "../src/tasksModel.ts";
 
 const IMG = "uploads/0123456789abcdef.png";
 const DOC = "uploads/fedcba9876543210.md";
@@ -58,5 +58,17 @@ describe("task 첨부 줄", () => {
     ]);
     assert.deepEqual(r.ok, [0]);
     assert.equal(r.skipped.length, 2);
+  });
+
+  it("보고서 주소: 보기 경로는 어느 host 이름이든 cap으로, 앱 보고서 주소는 이 앱 것만", () => {
+    const cap = "0123456789abcdef".repeat(3);
+    const origin = "https://mac-a.example.ts.net";
+    assert.deepEqual(reportUrlOf(`https://other.example.ts.net/v/${cap}/docs/%EA%B3%84%ED%9A%8D.md?download=1`, origin), { kind: "view", cap, path: "docs/계획.md" });
+    assert.deepEqual(reportUrlOf(`${origin}/v/${cap}/`, origin), { kind: "view", cap, path: "" });
+    assert.deepEqual(reportUrlOf(`${origin}/#report=projects%2Fweek`, origin), { kind: "report", project: "projects", name: "week" });
+    assert.equal(reportUrlOf(`https://other.example.ts.net/#report=projects%2Fweek`, origin), null, "다른 host의 앱 주소");
+    assert.equal(reportUrlOf(`${origin}/v/short/a.md`, origin), null, "cap 꼴이 아니다");
+    assert.equal(reportUrlOf(`${origin}/#thread=t-0001`, origin), null);
+    assert.equal(reportUrlOf(`${origin}/v/${cap}/%E0%A4%A.md`, origin), null, "풀 수 없는 경로");
   });
 });

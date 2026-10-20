@@ -15,7 +15,7 @@ import type { LibraryFile, LibraryReport } from "./gen/proto";
 import { call } from "./api";
 import { usePhoneSheetBack } from "./herdr/sheetHistory";
 import { normalizeComposerImageFile } from "./herdr/composerImageMime";
-import { ATTACH_TYPES, DOC_ACCEPT, attachmentsOf, linkFromText, reportDoc, taskImageUrl, type TaskAttachment } from "./tasksModel";
+import { ATTACH_TYPES, DOC_ACCEPT, attachmentsOf, linkFromText, reportDoc, reportUrlOf, taskImageUrl, type TaskAttachment } from "./tasksModel";
 
 /** 올리는 중인 파일 칸(그림은 이 기기의 object URL로 미리 본다) */
 export type PendingUpload = { id: number; preview: string | null; name: string };
@@ -34,6 +34,37 @@ export function filesOf(data: DataTransfer | null): File[] {
 /** 붙여 넣은 글이 주소·보고서 문서 경로 하나면 링크 첨부 */
 export function linkOf(data: DataTransfer | null): TaskAttachment | null {
   return data ? linkFromText(data.getData("text/plain")) : null;
+}
+
+/**
+ * 바깥 주소 첨부가 aaa 보고서 주소면 앱 안 보고서 문서(`library/<이름>/<경로>`)로 바꾼다(사용자 10-20 결정 4). 보기 경로는 host
+ * `library_resolve`가 cap을 이 프로젝트 보고서로 풀고, 경로가 없으면 그 보고서의 index.html이다. 풀지 못하면(만료·폐기·다른 프로젝트·
+ * 문서가 아닌 파일) 주소 그대로 붙이고 까닭을 돌려준다
+ */
+export async function resolveReportLink(project: string, a: TaskAttachment): Promise<{ link: TaskAttachment; note: string | null }> {
+  const url = a.kind === "url" ? reportUrlOf(a.target, location.origin) : null;
+  if (!url) return { link: a, note: null };
+  try {
+    let name = url.kind === "report" ? url.name : "";
+    if (url.kind === "view") {
+      const r = await call({ op: "library_resolve", project, cap: url.cap });
+      if (r.kind !== "library_resolved") throw new Error("보고서 답이 아니다");
+      name = r.name;
+    } else if (url.project !== project) throw new Error(`다른 프로젝트(${url.project})의 보고서다`);
+    let path = url.kind === "view" ? url.path : "";
+    if (path === "") {
+      const v = await call({ op: "library_open", project, name });
+      if (v.kind !== "library" || !v.files.some((f) => f.path === "index.html" && !f.on_agent)) throw new Error("보고서에 index.html이 없다. 「문서·링크」에서 문서를 고른다");
+      path = "index.html";
+    }
+    // 이름을 따로 주지 않았으면(주소 그대로) 보고서 맨 위는 보고서 이름, 안쪽 문서는 파일 이름이다
+    const given = a.label !== a.target.replace(/^https?:\/\//i, "");
+    const doc = linkFromText(`library/${name}/${path}`, given ? a.label : path === "index.html" ? name : undefined);
+    if (doc?.kind !== "report") throw new Error(`${path}는 md·html 문서가 아니다`);
+    return { link: doc, note: null };
+  } catch (e) {
+    return { link: a, note: `보고서 주소를 앱 문서로 바꾸지 못해 주소로 붙였다: ${e instanceof Error ? e.message : String(e)}` };
+  }
 }
 
 /** `navigator.clipboard.read()`의 그림들. 읽을 수 없는 브라우저면 null */

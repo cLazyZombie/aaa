@@ -4132,6 +4132,9 @@ fn render_front(r: &FrontResponse) -> String {
                 if l.revoked { " · 폐기됨" } else { "" }
             );
         }
+        FrontResponse::LibraryResolved { project, name } => {
+            let _ = writeln!(s, "{project}/{name}");
+        }
         FrontResponse::LibraryLinks { links } => {
             for l in links {
                 s.push_str(&render_front(&FrontResponse::LibraryLink(l.clone())));

@@ -2023,6 +2023,14 @@ pub enum FrontRequest {
         project: String,
         name: String,
     },
+    /// FRONT_API 1.65. 보고서 보기 주소(`/v/<cap>/…`)의 cap이 이 프로젝트의 어느 보고서인지(task 첨부가 붙인 주소를 앱 안
+    /// 보고서 문서로 바꾼다). 조작 권한만
+    LibraryResolve {
+        #[serde(default)]
+        #[ts(optional, as = "Option<String>")]
+        project: String,
+        cap: String,
+    },
     LibraryUsage,
     /// 지금 보고를 확인했다
     ThreadAck {
@@ -2373,6 +2381,7 @@ impl FrontRequest {
             | FrontRequest::LibraryPublish { project, .. }
             | FrontRequest::LibraryImport { project, .. }
             | FrontRequest::LibraryOpen { project, .. }
+            | FrontRequest::LibraryResolve { project, .. }
             | FrontRequest::ThreadAck { project, .. }
             | FrontRequest::ThreadResolve { project, .. }
             | FrontRequest::ThreadStop { project, .. }
@@ -2672,6 +2681,11 @@ pub enum FrontResponse {
         diff: crate::DiffView,
     },
     LibraryLink(LinkView),
+    /// `library_resolve`의 답: 그 cap이 가리키는 보고서
+    LibraryResolved {
+        project: String,
+        name: String,
+    },
     LibraryReports {
         reports: Vec<LibraryReport>,
     },

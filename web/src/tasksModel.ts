@@ -508,6 +508,48 @@ export function linkFromText(text: string, label?: string): TaskAttachment | nul
   return { kind, target, label: label?.trim() || (kind === "url" ? target.replace(/^https?:\/\//i, "") : tail) };
 }
 
+/**
+ * 붙인 주소가 aaa 보고서 주소면 그 꼴(plan §8.319): 보기 경로 `/v/<cap>/<경로>`(공유 링크·앱 보기 경로. cap 48자가 보고서를 가리므로
+ * host 이름은 보지 않는다)와 이 앱의 `/#report=<프로젝트>/<이름>`(reportLinks `inAppLink`와 같은 꼴). 첨부 `library/<이름>/<경로>`로
+ * 바꾸는 것은 host가 cap을 풀어 준 뒤다(TaskAttachments `resolveReportLink`)
+ */
+export type ReportUrl = { kind: "view"; cap: string; path: string } | { kind: "report"; project: string; name: string };
+export function reportUrlOf(target: string, origin: string): ReportUrl | null {
+  let url: URL;
+  try {
+    url = new URL(target);
+  } catch {
+    return null;
+  }
+  try {
+    const view = /^\/v\/([0-9a-f]{48})\/(.*)$/.exec(url.pathname);
+    if (view) return { kind: "view", cap: view[1]!, path: view[2]!.split("/").map(decodeURIComponent).join("/") };
+    const report = /^#report=(.+)$/.exec(url.hash);
+    if (url.origin !== origin || url.pathname !== "/" || !report) return null;
+    const key = decodeURIComponent(report[1]!);
+    const at = key.indexOf("/");
+    return at > 0 && at < key.length - 1 ? { kind: "report", project: key.slice(0, at), name: key.slice(at + 1) } : null;
+  } catch {
+    return null;
+  }
+}
+
+/** 「할 일에 추가」(보고서·thread 결과물의 문서)로 링크를 붙일 task: 형식이 맞고 그 문서를 아직 링크하지 않은 것, 제목·메모 검색 */
+export function docLinkCandidates(board: TaskBoard, link: TaskAttachment, query: string): TaskView[] {
+  const needle = query.trim().toLowerCase();
+  return board.tasks.filter(
+    (t) =>
+      t.problems.length === 0 &&
+      !attachmentsOf(t.notes.join("\n")).some((a) => a.target === link.target) &&
+      (needle === "" || has(needle, t.title) || t.notes.some((n) => has(needle, n))),
+  );
+}
+
+/** 문서를 링크한 새 task의 처음 제목: 링크 이름에서 문서 확장자를 뺀 것 */
+export function docTaskTitle(link: TaskAttachment): string {
+  return link.label.replace(/\.(md|markdown|html?)$/i, "");
+}
+
 /** 파일 종류: 그림·md·html, 받지 않는 것은 null(브라우저가 md 형식을 비워 보내는 일이 흔해 이름도 본다) */
 export function fileKind(f: { name: string; type: string }): "image" | "md" | "html" | null {
   if ((ATTACH_TYPES as readonly string[]).includes(f.type)) return "image";

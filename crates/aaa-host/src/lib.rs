@@ -1459,6 +1459,7 @@ impl Host {
                 self.library_opened(&project, &name);
                 Ok(FrontResponse::Library(view))
             }
+            FrontRequest::LibraryResolve { project, cap } => self.library_resolve(&project, &cap),
             FrontRequest::LibraryUsage => self.library_usage(),
             FrontRequest::LibraryLink { project, thread, days } => {
                 self.library_link(&project, &thread, days, actor).map(FrontResponse::LibraryLink)

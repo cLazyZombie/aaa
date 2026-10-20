@@ -159,8 +159,7 @@ impl Host {
             } else {
                 // 보고서 안 문서: 내용 hash로 이름을 붙인다(보고서마다 같은 이름 plan.md가 겹치지 않는다)
                 library_ref(&target).and_then(|(report, path)| {
-                    let (local, len) = crate::library::local_file(&dir, report, path).ok()?;
-                    let bytes = (len <= MAX_BYTES).then(|| std::fs::read(&local).ok()).flatten()?;
+                    let bytes = self.report_doc_bytes(project, report, path, MAX_BYTES).ok()?;
                     let ext = doc_ext(&path.rsplit('.').next()?.to_ascii_lowercase())?;
                     Some(TaskFile { name: format!("{}.{ext}", &hex::encode(Sha256::digest(&bytes))[..16]), src: target.clone() })
                 })
@@ -198,8 +197,7 @@ impl Host {
         let conn = self.live_conn(&rec.machine_id)?;
         for f in &rec.attachments {
             let read = if let Some((report, path)) = library_ref(&f.src) {
-                crate::library::local_file(&dir, report, path)
-                    .and_then(|(p, _)| std::fs::read(p).map_err(|e| err(ErrorCode::NotFound, e.to_string())))
+                self.report_doc_bytes(&rec.project, report, path, MAX_BYTES)
             } else if f.src.strip_prefix("uploads/").is_some_and(valid_name) {
                 std::fs::read(dir.join(&f.src)).map_err(|e| err(ErrorCode::NotFound, e.to_string()))
             } else {
