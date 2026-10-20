@@ -1,10 +1,11 @@
 // 웹 E2E 대화의 도구 호출 묶음(plan §8.304, t3code MessagesTimeline `work-toggle`): 이어진 도구 줄이 「명령 2개 실행, 파일 3개 읽음」
 // 한 줄로 접히고, 누르면 그 줄들이 펼쳐진다. 도구 하나는 그대로 한 줄이다. 끝이 아닌 곳에서 펼치고 접어도 그 머리가 1px 안에서
 // 제자리고, 끝을 보던 사람은 펼친 뒤에도 끝에 남는다. 데스크톱 Chromium 1280·패드 WebKit 820·휴대폰 WebKit 390.
+// 작업 중 맨 끝 묶음은 요약 대신 마지막 도구 줄을 빛나는 글자로 보이고, 턴이 끝나면 요약으로 돌아온다(참고 `work-live`).
 // 혼자 돌리기: node web/e2e/web.e2e.mjs --spec 41-chat-tool-groups(새 실험실). 스크린샷 폴더를 주면 기기마다 접힘·펼침을 찍는다.
 
 import fs from "node:fs";
-import { aaa, until, step, browser, webkit, pairPage, inList, shot, root, AA } from "../lib/harness.mjs";
+import { aaa, until, step, browser, webkit, pairPage, inList, shot, root, AA, claudeSh, claudeIdle, claudeWorking } from "../lib/harness.mjs";
 import { pairDevice } from "../lib/devices.mjs";
 
 const LABEL = "tools1";
@@ -129,5 +130,42 @@ export default async function () {
     } finally {
       await wk.close();
     }
+  });
+
+  await step("대화 도구 호출 묶음: 작업 중 맨 끝 묶음은 마지막 도구 줄을 빛나게, 턴이 끝나면 요약으로(가짜 Claude 작업 화면)", async () => {
+    const dir = `${root}/claude/projects/-lab-live1`;
+    fs.mkdirSync(dir, { recursive: true });
+    const tr = `${dir}/s1.jsonl`;
+    const L = (o) => JSON.stringify(o) + "\n";
+    const use = (name, input) => L({ type: "assistant", message: { content: [{ type: "tool_use", name, input }] } });
+    fs.writeFileSync(tr, L({ type: "user", message: { role: "user", content: "고쳐 줘" } }) +
+      use("Bash", { command: "cargo check" }) + use("Read", { file_path: "src/y.rs" }) + use("Read", { file_path: "src/z.rs" }));
+    // 줄 하나를 받으면 턴을 열고(일하는 화면) 다음 줄에 닫는다(입력 상자): 시험이 작업 중을 정한다(E2E11 seen1과 같은 길)
+    const script = `"$0" hook --agent claude "$1"; stty -echo; ${claudeIdle}; while read a; do ${claudeWorking}; read b; ${claudeIdle}; done`;
+    aaa("tab", "create", "--machine", "labA", "--label", "live1", "--", claudeSh, "-c", script, AA,
+      JSON.stringify({ hook_event_name: "SessionStart", session_id: "3c2b1a09-8f7e-4d6c-9b5a-4f3e2d1c0b41", source: "startup", transcript_path: tr }));
+    const { page: p } = await pairPage(browser, aaa("web", "pair").code, { width: 1280, height: 800 });
+    await inList(p, "pane-live1");
+    const state = p.getByTestId("agent-live1");
+    const is = (s) => state.and(p.locator(`[data-status="${s}"]`)).waitFor();
+    await is("idle");
+    if ((await p.getByTestId("chat").count()) === 0) {
+      await until("대화 단추", async () => (await p.getByTestId("chat-toggle").count()) === 1);
+      await p.getByTestId("chat-toggle").click();
+    }
+    const group = p.getByTestId("chat").locator(".chat-tool-group");
+    const look = () => group.evaluate((el) => ({ live: el.classList.contains("is-live"), label: el.querySelector(".chat-tool-group-label").textContent }));
+    const shows = (want, what) => until(what, async () => (await group.count()) === 1 && JSON.stringify(await look()) === JSON.stringify(want));
+    await shows({ live: false, label: "명령 1개 실행, 파일 2개 읽음" }, "쉬는 동안 요약");
+    aaa("pane", "run", "live1", "go");
+    await is("working");
+    await shows({ live: true, label: "Read: src/z.rs" }, "작업 중 마지막 도구 줄");
+    await frames(p);
+    await shot(p, "desktop-tools-live");
+    aaa("pane", "run", "live1", "end");
+    await is("idle");
+    await shows({ live: false, label: "명령 1개 실행, 파일 2개 읽음" }, "턴이 끝나면 요약");
+    await p.context().close();
+    aaa("pane", "kill", "live1");
   });
 }
