@@ -89,3 +89,38 @@
 .automation-thread-link { all: unset; cursor: pointer; text-decoration: underline; text-underline-offset: 2px; }
 
 .automation-open > span { display: inline-flex; align-items: center; gap: .5rem; flex-wrap: wrap; }
+
+/* 편집 창(관리 GUI W2, plan §8.342): 폼·TOML·검토 탭이 한 초안을 쓴다. 휴대폰에서는 칸이 한 줄씩 */
+.automations .automation-tools > h3 { margin: 18px 0 8px; }
+.automation-tabs { display: flex; gap: 4px; margin: 4px 0 8px; border-bottom: 1px solid var(--border); }
+.automation-tabs > button { all: unset; cursor: pointer; padding: 8px 12px; min-height: 20px; border-bottom: 2px solid transparent; color: var(--text-dim); }
+.automation-tabs > button[aria-selected="true"] { border-bottom-color: var(--accent); color: var(--text-strong); }
+.automation-tabs > button:focus-visible { outline: var(--ring); outline-offset: -2px; }
+.automation-tabs > button:disabled { opacity: .5; cursor: default; }
+.automation-field { display: flex; flex-direction: column; gap: 4px; margin: 8px 0; min-width: 0; }
+.automation-field > span { color: var(--text-dim); font-size: var(--fs-xs); }
+.automation-field .input { width: 100%; box-sizing: border-box; }
+.automation-mono { font-family: var(--font-mono); font-size: var(--fs-xs); }
+.automation-checks { display: flex; flex-wrap: wrap; gap: 6px 14px; border: 0; margin: 8px 0; padding: 0; }
+.automation-checks > legend { color: var(--text-dim); font-size: var(--fs-xs); padding: 0; margin-bottom: 4px; width: 100%; }
+.automation-checks label, .automation-toggle { display: inline-flex; align-items: center; gap: 6px; min-height: 32px; }
+.automation-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0 12px; }
+.automation-textarea { width: 100%; box-sizing: border-box; height: auto; min-height: 9rem; padding: 8px 10px; resize: vertical; line-height: 1.5; }
+.automation-body { margin-top: 8px; }
+.automation-preview { padding: 8px 12px; border: 1px solid var(--border); border-radius: var(--radius-md); min-height: 4rem; }
+.automation-errors { margin: 4px 0 8px; padding: 8px 10px 8px 26px; border-radius: var(--radius-md); background: var(--danger-tint); color: var(--danger-text); font-family: var(--font-mono); font-size: var(--fs-xs); }
+.automation-conflict { padding: 10px 12px; margin-bottom: 8px; border-radius: var(--radius-md); background: var(--status-blocked-tint); }
+.automation-diff { margin: 6px 0; max-height: 16rem; overflow: auto; padding: 8px 10px; border-radius: var(--radius-md); background: var(--bg-elevated); font-family: var(--font-mono); font-size: var(--fs-xs); white-space: pre-wrap; overflow-wrap: anywhere; }
+.automation-diff .is-add { color: var(--status-done); }
+.automation-diff .is-del { color: var(--status-blocked); }
+.automation-diff .is-same { color: var(--text-dim); }
+.automation-trash { margin: 8px 0; font-size: 12px; }
+.automation-trash summary { cursor: pointer; min-height: 32px; display: flex; align-items: center; }
+.automation-trash li { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.automation-trash li > button { margin-left: auto; min-height: 32px; }
+@media (max-width: 640px) {
+  .automation-grid { grid-template-columns: minmax(0, 1fr); }
+  .automation-field .input { font-size: 16px; }
+  .automation-textarea { font-size: 16px; }
+}
+.automation-draft { border: 0; margin: 0; padding: 0; min-width: 0; }

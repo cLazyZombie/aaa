@@ -1,7 +1,7 @@
 // A4 이전 판의 세션 기록을 실제 agent가 복원한다. 운영 상태에는 닿지 않는다.
 import assert from "node:assert/strict";
 import fs from "node:fs";
-import { aaa, domIs, root, shot, start, step, stop, until, waitOutput } from "../lib/harness.mjs";
+import { aaa, domIs, root, shot, showPanel, start, step, stop, until, waitOutput } from "../lib/harness.mjs";
 
 export default async function ({ page }) {
   await step("A4 뒤 옛 평가자·임무 종료 기록 18개는 기타에서 숨기고, 실제 실행 중 pane·사용자 종료 기록·직접 읽기는 보존한다", async () => {
@@ -43,6 +43,9 @@ export default async function ({ page }) {
     await page.getByTestId("pane-legacy-live").waitFor();
     await page.getByTestId("pane-mission-user").waitFor();
     await page.getByTestId("pane-t1").waitFor();
+    // t-0540·W4의 새 막대에서도 같은 작업 목록을 쓴다. 다른 패널을 오가도 옛 기록이 되살아나지 않는다.
+    assert.deepEqual(await page.getByRole("tablist", { name: "사이드바 패널" }).getByRole("tab").evaluateAll((tabs) => tabs.map((t) => t.dataset.testid)), ["activity-asks", "activity-work", "activity-machines", "activity-automations", "activity-inbox"]);
+    for (const panel of ["asks", "inbox", "work"]) await showPanel(page, panel);
     // 보존할 줄을 그린 뒤, 같은 목록의 숨김 결과를 검사한다(고정 sleep 없음).
     const visible = await page.locator('[data-panel="work"] [data-pane]').evaluateAll((rows) => rows.map((r) => r.dataset.pane).sort());
     assert.deepEqual(visible, [user.id, ended.id, live.id].sort());

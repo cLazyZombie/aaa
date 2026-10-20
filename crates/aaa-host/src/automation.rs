@@ -1,6 +1,7 @@
 //! 조건 → 동작의 파일 계약. 실행 상태·기록과 파일 형식은 분리한다.
 mod convert;
 mod deploy;
+pub(crate) mod edit;
 pub(crate) mod runtime;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};

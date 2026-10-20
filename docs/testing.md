@@ -561,7 +561,7 @@ E2E28은 실제 host·agent의 pane→thread 대응을 거쳐, ⋯ 메뉴로 고
   - 있으면 그것을 읽고, `[[workspaces]]`에 더하고 뺀다(`workspaces.remove`). project.toml은 그대로다.
   - 옛 이름 `[[repos]]`가 있는 글은 그 목록을 고친다.
   - 쓰기 자리를 project.toml로 되돌린 결함을 심어 실패를 확인했다.
-- 안내: m13 `coordinator_flow`·`doctor_files_brings_the_coordinator_guide_to_existing_projects`·`project_lifecycle`이 `aaa post user`와 남은 `aaa project sweep <p>`를 본다.
+- 안내: m13 `coordinator_flow`·`doctor_files_brings_the_coordinator_guide_to_existing_projects`·`project_lifecycle`이 `aaa post user`·`aaa project pause|resume`·`aaa project sweep`처럼 이름 없는 안내를 본다.
 
 ## 웹의 프로젝트 층 없애기(§8.291)
 
@@ -792,13 +792,33 @@ CI/Git의 source outbox·중복 억제·재시작·outage는 기존 owner를 유
 ## 휴대폰 뒤로 기록(t-0466, plan §8.301)
 
 - `node web/e2e/web.e2e.mjs --spec 39-phone-back`: WebKit iPhone 390·430 × Safari 탭·홈 화면 앱 흉내에서 pane 셋과 대화의 보고서를 연 뒤 앱 문서 칸(init script가 적은 `history.length`)까지 `history.back()`을 popstate 사건마다 하고 화면 차례를 단언한다. 왼쪽 가장자리 쓸기는 `document.createTouch`로 touchstart·touchmove(frame마다)·touchend/touchcancel을 내고, 겹친 뒤로는 손가락을 뗀 뒤 popstate를 기다린다. 닫힌 pane 칸·「모든 thread」 닫기의 기록 칸 수와 휴대폰·데스크톱 빈 화면 문구도 본다. 고정 sleep은 없고 popstate·DOM·animation frame·drawer transition 사건으로 끝낸다.
-- 고치기 전 코드로는 첫 단계가 「(주소 없음)+빈 화면」으로, 쓸기 단계가 목록이 열린 채 뒤로로 실패했다.
+- t-0466 수정 전 코드로는 첫 단계가 「(주소 없음)+빈 화면」으로 실패했다. 당시 쓸기 겹침의 「목록 닫힘」 규칙은 t-0541 사용자 답변 1A·2A로 아래 유지 규칙으로 바뀌었다. 뒤로 화면 순서·빈 화면 방지·기록 칸 수 단언은 유지한다.
+- t-0541(plan §8.340) 메뉴 상태는 창마다 기억하지 않는다. 1→2→3에서 메뉴를 열고 쓸기로 2로 돌아간 뒤 1→2→3을 뒤로·앞으로 순회해도 열린 채이고, 메뉴를 닫은 뒤 같은 창들을 순회하면 닫힌 채다. WebKit 390·430 × Safari 탭·홈 화면 앱 흉내에서 popstate·선택 줄의 aria-current·drawer transition 완료로 기다린다. 메뉴 토글이 기록 칸을 추가하지 않는지도 본다. 수정 전 네 조합 모두 메뉴 유지 단언에서 실패하며 휴대폰 전후 화면을 남긴다. WebKit 데스크톱 1280·패드 820에서는 사이드바 펼침·접힘이 양방향 이동 중 유지되는지도 확인한다.
+- 헤드리스는 Safari 시스템 몸짓 자체를 실행하지 못한다. 오른쪽 쓸기는 합성 touchstart·touchmove·touchcancel 뒤 history.back으로, 일반 뒤로·앞으로는 history.go로 같은 문서의 기록 순회를 흉내 낸다. 실제 iPhone Safari·홈 화면 앱의 운영체제 몸짓까지 대신 보증하지 않는다.
 
 ## 자동화 상세·변환·막힌 큐(t-0468, plan §8.303)
 
 - `node web/e2e/web.e2e.mjs --spec 40-automation-detail`: 상세의 기록 수는 host의 `routine runs`와 같아질 때까지, 원문은 파일 글과 같아질 때까지 기다린다. 변환은 미리보기 sheet가 그린 묶음(`data-group`) 뒤에 파일이 그대로인지 보고, 실행 결과 표지(`convert-archived`) 뒤에 보존 사본을 원본과 비교한다.
 - 막힌 큐는 실제 전송 실패로 만든다: fake thread의 pane을 `pane kill`로 끝내고(목록에서 끝남 확인) 1초 일정의 `do.message` 규칙을 둔 뒤 `ticker tick`으로 host 기록에 「입력 전달 모름 · 확인 필요」가 올 때까지 판정한다. 「다시 보내지 않음」은 tick 두 번(울타리) 뒤 같은 묶음 id·실패 기록 수로 단언한다. 「계속 보내기」 뒤에는 pane이 끝난 채라 다음 입력이 실제로 시도되어 실패하고 새 묶음으로 다시 막히는 것을 `ticker tick`·host 기록으로 기다린다. 그 묶음은 「버리기」로 닫고, 규칙을 끈 뒤 tick 울타리 뒤 큐가 빈 것을 본다. fake agent의 전송 지연(재시작 뒤 첫 글이 0~15초)에 기대지 않는다. 고정 sleep은 없다.
 - host 쪽 묶음 상태(보낸 결과 모름·다른 동작 묶음·버리기)는 `cargo test -p aaa-host --lib automation::tests`가 DB의 큐 JSON을 직접 두고 본다.
+
+## 자동화 만들기·고치기·지우기·지금 실행(t-0538 관리 GUI W2, plan §8.342)
+
+- `cargo test -p aaa-host --lib automation::edit`: 폼 값 합치기의 바이트 보존(바꾼 칸만, 주석·순서 그대로), 조건 바꾸기와 기본값 칸 빼기, 새 파일의 칸 순서와 `#:schema` 머리, 첫 칸이 사라져도 남는 머리 주석, inline 표·`do = "deploy"`, 잘못된 폼·원문의 거부.
+- `cargo test -p aaa-host --lib automation::tests`: 실제 Host로 Reader 검사 허용·저장 거부, 새로 만들기 중복·본 판이 아닌 저장·잘못된 글이 폴더 전체 스냅샷을 바꾸지 않음, 지운 뒤 낡은 판 저장이 NotFound(되살아나지 않음), 되살리기는 꺼진 채 한 번, 옛 `.md` 저장 거부, 삭제의 대기 입력 취소·처리 중 묶음 보존, 지금 실행의 같은 key 한 번·일정 차례와 따로 받기·거부 넷, 본문 파일의 판 대조와 automations/ 밖 새 경로 거부, 명령 승인의 세션 안·worker·evaluator·detached·Reader 거부와 Controller 허용.
+- `node web/e2e/web.e2e.mjs --spec 55-automation-edit`: 폼으로 만든 원문이 검사 응답(TOML 탭)과 파일에 같은지, 「저장만으로는 돌지 않음」을 thread 사건 규칙 저장 뒤 `ticker tick` 두 번(울타리) 뒤 기록 0건·안내 0건으로 본다. 충돌은 파일 직접 편집과 둘째 브라우저 저장 둘 다로 만들고, 거부 뒤 파일 글이 그대로인지·차이 줄을 본다. 지운 규칙은 a 편집기를 연 채 b가 지운 뒤 a 저장으로 되살아나지 않는다. 지금 실행은 inbox 항목·`manual:` 기록을 기다리고, 같은 key 둘째 호출 뒤 tick 울타리 뒤 안내가 늘지 않는 것을 본다. 시작 범위 미승인 거부는 실제 labA 머신이 있는 규칙으로 본다. 고정 sleep은 없다.
+- 「한 초안」 단계는 TOML을 고친 뒤 debounce를 기다리지 않고 폼 탭에서 칸을 고쳐 저장하고, 파일에 두 쪽 고침과 머리 주석이 모두 남는지 본다(탭 전환이 다른 쪽 고침을 먼저 검사한다).
+- 결함 심기: host 저장의 판 대조(사전 대조와 `file_rev` closure)를 빼면 `save_writes_only_the_seen_revision_and_never_resurrects_a_deleted_rule`이 「본 판이 아닌 저장」 단언에서 실패한다. 탭 전환의 먼저 검사를 빼면 E2E 55 「한 초안」이 실패한다(library/t-0538/w2-fault-replant).
+
+## 운영 화면: thread 관리·「이 aaa」·저장소·알림함(t-0538 관리 GUI W4, plan §8.343)
+
+- `cargo test -p aaa-host --lib project::tests::repo_edit_replaces_in_place_and_settings_view_reads_it`: 저장소 제자리 고치기의 차례·다른 칸 보존, 머신 빼기, 이미 있는 값·없는 값 거부, 설정 읽기의 파일 이름·숫자·저장소.
+- `cargo test -p aaa-host --lib library_links::tests::prune_apply_deletes_only_the_previewed_candidates`: 미리 본 뒤 기한을 넘은 사본이 늘면(시각 주입) `conflict`로 하나도 지우지 않고, 같으면 본 것만 지운다.
+- `cargo test -p aaa-host --lib db::flow_tests`: 흐름 사건 `tail`이 최근 N개를 오래된 것부터 준다.
+- `cargo test -p aaa --test m13 resolve_keeps_dirty_worktree_and_unmerged_branch`: 실제 agent·git으로 `thread resolve --dry-run`이 미커밋 1·base 대비 2·병합 안 됨·남기기 권함을 보이고, thread 상태와 흐름 사건 수를 바꾸지 않는다.
+- `node --test web/test/operateModel.test.mjs`: 동작 가능 판정(도는 세션·데려온 thread·준비 중·끝냄·정리 중·받은 brief), 끝내기 기본값과 요청, 저장소 인자·묶음, 숫자 범위, 알림함 배지와 「답할 것」으로 보낼 post.
+- `node web/e2e/web.e2e.mjs --spec 56-operate`: 저장소 더하기·제자리 고치기(파일 글과 차례)·빼기 확인 창·할 일 저장소 목록, 「이 aaa」 값 저장(파일 글)과 범위 밖 숫자, 멈춤·재개 확인 창, 위험한 thread(미커밋·branch 커밋·사본에 빠진 symlink) 끝내기 창의 위험 줄과 남기기 켬, 끝낸 뒤 worktree·branch 남음, 깨끗한 thread(새 파일·big.bin을 치우고 사본이 다 온 뒤)의 남기기 끔과 worktree 지움, 다시 열기·Next 더하기·보내기·요약 고치기·세션을 끈 뒤 다시 시작, 알림함 배지와 한 건 끝내기(화면이 읽어도 `seen`이 바뀌지 않음), 흐름 사건 맨 위가 최근 것, 정리 미리보기, 휴대폰 390 폭, 같은 「바로 시작」 두 번 → thread 하나, Reader에 쓰기 단추 없음. 사본 상태·세션 상태·파일 글로 기다리며 고정 sleep은 없다.
+- 결함 심기: library/t-0538/w4-fault-replant.
 
 ## 대화의 도구 호출 묶음(t-0477, plan §8.304)
 
@@ -990,10 +1010,14 @@ journal·로그·화면에 원문·8바이트 조각·base64/URL/JSON 변형이 
   - 실험실 `CLAUDE_CONFIG_DIR`의 `commands/`·`skills/`와 pane 폴더(`.git`이 있는 git root)의 `.claude/commands/`를 agent가 읽는다.
   - 가짜 Claude는 F7(작업 중)·F5(쉼)과 Enter 글을 받는다. `/context`는 실측 꼴의 명령·출력 줄을 적고, `/model`은 선택창을 그렸다가 Esc에 결과를 적고, `/clear`는 새 기록으로 SessionStart(clear) hook을 보낸다.
   - 「보내지 않았다」는 pane이 받은 bytes로, 상태 전이는 가짜가 그린 「mode …」를 `waitOutput`으로, 화면은 `domIs`로 기다린다. 휴대폰은 WebKit `pairDevice`. 고정 sleep은 없다.
+  - 지연 커서 회귀(t-0536, plan §8.338)는 다음 RAF를 보류한 채 Tab 명령 넣기·↑ 기록 부르기 뒤 실제 키로 전체 선택하거나 중간에 글을 치거나 focus를 옮긴다.
+    보류한 콜백이 실제 frame에서 모두 끝난 뒤 글·선택·focus가 그대로인지, 전체 선택 뒤 Delete가 비우는지 검사한다.
+    원래 RAF 커서 복원을 되살리면 새 전체 선택이 끝 커서로 바뀌어 실패해야 한다. 글과 커서는 같은 React commit에서 반영한다.
+    이 scheduler keeper와 별도 transport 지연 진단은 따로 실행한다(transport의 Tab frame 대기를 keeper가 보류하면 시험 도구끼리 막힌다).
 
 ## 자동화 A4: 특수 실행 제거(t-0507)
 
-- A4 뒤 남은 종료 pane(t-0545): `web/test/roster.test.mjs`는 옛 평가자·임무의 `evaluator` pane 18개가 「기타」·단축키에서 빠지고, 실행 중·중단·유실·사용자 종료 기록과 연결된 thread 줄은 남는지 본다. `web/e2e/specs/55-legacy-special-panes.mjs`는 격리된 실제 agent의 옛 세션 파일을 복원해 화면에서 18개가 빠지는지, 실제 실행 중인 사용자·평가자 pane과 사용자 종료 기록이 남는지 검사한다. 숨긴 기록의 파일 바이트·CLI 읽기·주소로 직접 보기를 함께 확인한다. 종료 기록은 지우지 않으며 새 변환 명령 없이 목록에서만 숨긴다. 준비 완료·종료·출력·DOM 사건으로 끝낸다.
+- A4 뒤 남은 종료 pane(t-0545, plan §8.346): `web/test/roster.test.mjs`는 옛 평가자·임무의 `evaluator` pane 18개가 「기타」·단축키에서 빠지고, 실행 중·중단·유실·사용자 종료 기록과 연결된 thread 줄은 남는지 본다. `web/e2e/specs/57-legacy-special-panes.mjs`는 격리된 실제 agent의 옛 세션 파일을 복원해 화면에서 18개가 빠지는지, 실제 실행 중인 사용자·평가자 pane과 사용자 종료 기록이 남는지 검사한다. t-0540·W4의 막대 단추 다섯과 「답할 것」→「알림함」→「작업」 전환 뒤에도 같은 숨김을 확인한다. 숨긴 기록의 파일 바이트·CLI 읽기·주소로 직접 보기를 함께 확인한다. 종료 기록은 지우지 않으며 새 변환 명령 없이 목록에서만 숨긴다. 준비 완료·종료·출력·DOM 사건으로 끝낸다.
 - `cargo test -p aaa --test m13 automation_start::legacy_mission_files_are_inert_and_convert_with_memory_and_pending_input -- --exact`: 실제 host·agent·CLI·Front API에서 옛 파일 비실행, 완료 처리 뒤에도 한 번인 제거 안내, doctor 진단, mission_list 빈 목록/mission_start 제거 오류, 열린 옛 evaluator 표시, 미리보기 무쓰기, 기억·이력 hash 회수, 원본 보존·대기 입력 이전·tick 뒤 무복제를 확인한다.
 - `cargo test -p aaa-host previous_agent_keeps_input_and_memory_transfer_with_legacy_file_frames --lib`: AGENT_LINK 1.9/mission.v1 fake가 입력 쓰기와 기억 주입·회수·처리 여부 조회를 받는다. 새 WorkFile 태그가 옛 상대에 닿으면 실패한다. 실제 agent의 파일·hash·symlink keeper는 `threads::work_file_tests`가 계속 맡는다.
 - E2E26은 패널 셋과 저장된 special→work를, E2E40은 승인 규칙+막힌 규칙 배지와 기존 변환/Reader/큐 풀기를 검사한다. E2E48·49는 기존 자동화 줄과 기억을 유지한다. 캡처는 데스크톱·390px, 실제 host·agent를 사용한다.
@@ -1094,3 +1118,40 @@ fixture의 ParentDir 전제조건을 선행 단언한 뒤 target의 conflict 거
 - `cargo test -p aaa-host --lib supervisor::tests --locked`: 실제 task의 panic/조기 종료 사건과 가상 backoff 시각으로 1·2·4초 뒤 세 번 재실행, 상한 중단, 한 번 알림을 검사한다. loopback HTTP 수신은 앱을 닫았을 때 이상·회복 각각 한 번, 앱을 쓰는 동안은 notice만 확인한다. 이상/회복 판정 저장 뒤 inbox commit 전 재시작, SQLite INSERT 실패 뒤 재개방, failed INSERT만 거부해 뒤 recovered가 기다리는 순서, 이미 발행한 이상의 재시작 무중복·회복 이어 알림도 같은 owner가 검사한다. 판정의 `now`로 30초 안정 경계·희소 시간 초과 만료·회복 중 새 시간 초과를 확인한다.
 - `cargo test -p aaa-host --lib link::supervision_tests --locked`: Hello/Welcome/Ping을 마친 실험실 link의 전송체가 읽기 중 panic한다. pending의 즉시 AgentDisconnected·세대별 연결 정리·재연결 처리·네 번째 종료 뒤 거부와 독립 감시기의 inbox/notice 한 번을 확인한다. 다른 keeper는 실제 AgentConn 요청을 받되 응답을 보류하여 다섯 deadline 사건을 만들고, 이후 같은 reader의 실제 응답을 확인한다. ticker는 띄우지 않으므로 전달이 ticker에 기대면 실패한다. panic 감지 경계는 공통 `panic_log::latest()` API를 호출하고, 안전한 위치·payload 비노출의 정본 keeper는 t-0533의 `panic_log::` 시험이다.
 - 감시 제거·pending 정리 제거·재실행 상한 변경·시간 초과 관측 제거·회복 판정 제거·중복 억제 제거를 각각 되심으면 owner 단언이 실패해야 한다. 변형마다 원본 바이트를 복원하고 원본 keeper를 통과시킨 뒤 전체 ci-local/deps/TS/public gate를 수행한다. 실제 OS/Web Push 제공자의 휴대폰 전달·host 프로세스 전체 정지는 이 실험실 keeper의 보증 범위 밖이다.
+
+## 계정 thread 폴더 신뢰(t-0543)
+
+`cargo test -p aaa --test m13 accounts::account_threads_trust_only_their_cwd_when_coordinator_answers -- --exact`
+는 실제 host·로컬/원격 agent·session·PTY와 임시 홈의 가짜 Claude/Codex를 사용한다.
+두 harness × 두 머신 × worktree/일반 작업 폴더에서 `trust_screens=coordinator`일 때 신뢰 기록은
+정규화한 자기 cwd 한 곳뿐이고, `user`일 때 기록이 비고 실제 신뢰 화면이 남는지 확인한다.
+Claude SessionStart가 알린 격리 홈의 대화는 pane chat으로, TaskCreate 계획은 thread 상태로 확인한다. 완료는 socket gate와 종료 사건으로 판정한다.
+실제 인증 파일·키체인·제공자 네트워크는 사용하지 않는다. host의 정책 분기나 session의 기록 생성을
+빼면 시작 증명의 trusted 단언에서 실패해야 한다. 정책을 무시하고 늘 기록하면 user 단언에서 실패해야 한다.
+`cargo test -p aaa-session --lib account::tests::`는 격리 Claude의 환경설정 보존,
+재개 시 자동 신뢰 제거, 도입 전 Claude 대화의 원래 홈 유지도 확인한다.
+
+## aaa install I2 파일 조상 경로(t-0485, plan §8.341)
+
+- `unsafe_targets_readonly_and_untrusted_journals_preserve_originals`는 세 OS 공통 owner다.
+  기존 readonly stage/원본 bytes, 불신 journal 읽기의 exit·비밀 비노출·tree 불변, raw ParentDir 거부를 유지한다.
+  파일 아래 직접 자식/여러 단계 proposal은 거부하고 정상 미생성 디렉터리 아래 proposal은 tree 변경 없이 허용한다.
+  유효 proposal 뒤 부모를 일반 파일로 교체한 실제 `Transaction::create`는 journal과 다른 자원 잠금 생성 전에 거부한다.
+- 기존 Windows CI 실패는 native RED다. Unix의 NotADirectory를 Windows식 NotFound로 임시 분류한 진단은
+  native Windows 실행으로 부르지 않는다. 시험용 production flag/export를 만들지 않고 원본 bytes를 복구한다.
+- snapshot 부모 검사·가장 가까운 조상 검사 생략은 오류 분류 진단에서 proposal 거부 단언을 실패시켜야 한다.
+  실제 create의 쓰기 전 확인 생략은 native owner의 전체 tree 보존 단언을 실패시켜야 한다.
+  각 변형 복구 뒤 엔진 owner·전체 ci-local·Windows cross와 비밀 canary 비노출을 확인한다.
+- 동반 Windows native owner `process_observation_rejects_completed_process_with_its_handle_still_open`은
+  기존 cmd/인수/환경/stdio/creation flags와 success·signaled process·유효한 열린 handle의 거부 단언을 유지한다.
+  실패 메시지에 종료 코드(Debug/십진수/32-bit hex)만 더해 main CI가 원인 진단 값을 남기게 한다.
+  native는 진단만, 수리는 다음 착지다. macOS와 cross 통과를 이 Windows owner의 실제 GREEN으로 부르지 않는다.
+
+## project 명령의 프로젝트 이름 인자 정리(S5, §8.344)
+
+- CLI 유닛 `project_lifecycle_help_omits_legacy_project_arguments`: 여섯 명령의 도움말에서 프로젝트·호환 인자를 숨기며, 새 꼴과 옛 꼴만 받고 넘치는 인자는 거부한다. rename의 새 이름은 여전히 필수다.
+- m13 `project_lifecycle`: 이름 없는 pause·resume·archive·rename·delete·sweep으로 실제 상태 전이·거부·이름 변경·기록 이동·휴지통·worktree와 병합된 branch 청소를 본다. 보관한 프로젝트를 직접 지정하는 호환 경로도 유지한다.
+- m13 `project_cli_keeps_legacy_names_with_a_stderr_warning`: 옛 꼴 여섯 명령은 경고 한 줄을 표준 오류에만 쓰고 JSON은 그대로 파싱된다. 다른 이름은 모두 거부하며 상태를 바꾸지 않는다. 새 꼴 sweep은 경고 없이 같은 결과, 옛 꼴 rename은 실제 이름을 바꾸고 새 꼴로 되돌린다. 보관 뒤 이름 생략은 기존 오류이며 폴더를 보존한다.
+- pause에서 주어진 이름을 무시하고 현재 프로젝트를 쓰는 결함을 심으면 다른 이름 거부 단언에서 실패한다. 원본 바이트를 복원한 뒤 같은 keeper를 다시 확인한다.
+- m13 `coordinator_flow`·`doctor_files_brings_the_coordinator_guide_to_existing_projects`·`project_lifecycle`: 새로 만들거나 doctor로 갱신하거나 이름을 바꾼 AGENTS.md에 이름 없는 pause·resume·sweep 안내가 들어간다.
+- 실험실 host·가짜 agent만 쓰며 운영 프로젝트·설정·host는 건드리지 않는다. 고정 sleep이나 새 시험 전용 제품 경로는 더하지 않는다.
