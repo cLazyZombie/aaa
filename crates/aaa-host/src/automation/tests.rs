@@ -403,10 +403,14 @@ async fn convert_preview_writes_nothing_and_runs_only_the_plan_it_showed() {
 
 /// runtime State의 내구 JSON(자동화 큐). 보낸 결과를 모르는 묶음은 host 중단·전송 오류 뒤 이 모양으로 남는다.
 fn queue_state(action: serde_json::Value, inflight: &[&str], pending: &[&str]) -> String {
+    queue_state_at(action, inflight, pending, true)
+}
+/// `unknown`이 false면 아직 보내는 중인 묶음이다(다음 판정이 다시 만나기 전)
+fn queue_state_at(action: serde_json::Value, inflight: &[&str], pending: &[&str], unknown: bool) -> String {
     let event = |id: &str| serde_json::json!({"id":id,"at_ms":1000,"owner":"t-0007","body":"{}","action":action.clone(),"source":"events"});
     serde_json::json!({
         "pending": pending.iter().map(|id| event(id)).collect::<Vec<_>>(),
-        "inflight": {"id":"automation-seen","events":inflight.iter().map(|id| event(id)).collect::<Vec<_>>(),"day":0},
+        "inflight": {"id":"automation-seen","events":inflight.iter().map(|id| event(id)).collect::<Vec<_>>(),"day":0,"unknown":unknown},
     })
     .to_string()
 }
@@ -429,9 +433,19 @@ async fn unblock_releases_only_the_seen_message_batch_and_never_resends_it() {
         "projects/demo/automations/msg.toml",
         "[on.thread]\nevents=['thread_failed']\n[do.message]\nthread='owner'\ntext='확인'\n",
     );
-    h.db.set_meta("automation:demo:msg", &queue_state(message.clone(), &["e1", "e2"], &["e3", "e4"])).unwrap();
     let queue =
         |h: &crate::Host| h.routines("demo").unwrap().into_iter().find(|r| r.name == "msg").unwrap().queue.unwrap();
+    let rule = crate::routine::load_all(&p.0.join("projects/demo")).0.into_iter().find(|r| r.name == "msg").unwrap();
+    // 보내는 중인 묶음은 아직 모름이 아니며 풀 수 없다: 보내기와 풀기가 겹치지 않는다
+    h.db.set_meta("automation:demo:msg", &queue_state_at(message.clone(), &["e1", "e2"], &["e3", "e4"], false))
+        .unwrap();
+    assert!(!queue(&h).inflight.unwrap().unknown);
+    let e = h.call(Controller, "device:c", unblock("msg", "automation-seen", false)).await.unwrap_err();
+    assert!(e.message.contains("보내는 중"), "{e:?}");
+    // 다음 판정이 처리 중 묶음을 다시 만나면 모름으로 적고 다시 보내지 않는다(대상 thread가 없어도 보내려 하지 않는다)
+    h.automation_drain("demo", &rule).await.unwrap();
+    let runs = h.routine_runs("demo", "msg").unwrap();
+    assert_eq!((runs[0].status.as_str(), runs[0].detail.as_str()), ("waiting", "입력 전달 모름 · 사람 확인 필요"));
     let q = queue(&h);
     assert_eq!(q.pending, 2);
     let inflight = q.inflight.unwrap();
@@ -461,7 +475,6 @@ async fn unblock_releases_only_the_seen_message_batch_and_never_resends_it() {
         );
     }
     // 푼 묶음의 같은 입력이 다시 와도 받지 않는다(재전송 없음). 새 입력은 받는다
-    let rule = crate::routine::load_all(&p.0.join("projects/demo")).0.into_iter().find(|r| r.name == "msg").unwrap();
     h.automation_submit("demo", &rule, "e1", "{}".into(), Some("t-0007".into())).unwrap();
     assert_eq!(queue(&h).pending, 2);
     h.automation_submit("demo", &rule, "e5", "{}".into(), Some("t-0007".into())).unwrap();

@@ -25,6 +25,9 @@ struct Batch {
     day: i64,
     #[serde(default)]
     previous_last: Option<u64>,
+    /// 다음 판정이 이 `do.message` 묶음을 처리 중으로 다시 만났다: 보낸 결과를 모른다. 보내는 동안은 false다
+    #[serde(default)]
+    unknown: bool,
 }
 #[derive(Debug, Default, Serialize, Deserialize)]
 #[serde(default)]
@@ -214,7 +217,8 @@ impl Host {
         Ok(())
     }
 
-    /// 상세 화면의 큐 보기. 보낸 결과를 모르는 것은 `do.message` 묶음뿐이다(다른 동작은 다음 판정이 다시 고른다).
+    /// 상세 화면의 큐 보기. 보낸 결과를 모르는 것은 다음 판정이 처리 중으로 다시 만난 `do.message` 묶음뿐이다
+    /// (보내는 중인 묶음은 아직 모름이 아니고, 다른 동작은 다음 판정이 다시 고른다).
     pub(crate) fn automation_queue(&self, p: &str, n: &str) -> Result<aaa_proto::AutomationQueue, ErrorBody> {
         let s = state(self.db.meta(&key(p, n)).map_err(internal)?).map_err(internal)?;
         Ok(aaa_proto::AutomationQueue {
@@ -230,7 +234,7 @@ impl Host {
                     id: b.id,
                     events: b.events.len() as u32,
                     at_ms: first.at_ms,
-                    unknown: matches!(first.action, Action::Message(_)),
+                    unknown: b.unknown && matches!(first.action, Action::Message(_)),
                     thread,
                 }
             }),
@@ -267,8 +271,11 @@ impl Host {
         let result = self.db.update_meta_checked(&key(p, n), &[], |old| {
             let mut s = state(old)?;
             match s.inflight.take() {
-                Some(b) if b.id == batch && matches!(b.events[0].action, Action::Message(_)) => {
+                Some(b) if b.id == batch && b.unknown && matches!(b.events[0].action, Action::Message(_)) => {
                     resolved = b.events.iter().map(|e| e.id.clone()).collect();
+                }
+                Some(b) if b.id == batch && matches!(b.events[0].action, Action::Message(_)) => {
+                    refused = Some("지금 보내는 중인 묶음이다. 끝난 뒤 다시 읽는다")
                 }
                 Some(b) if b.id == batch => {
                     refused = Some("보낸 결과를 모르는 글 묶음이 아니다. 다음 판정이 다시 고른다")
@@ -544,9 +551,10 @@ impl Host {
         self.db
             .update_meta(&key(p, &r.name), |old| {
                 let mut s = state(old)?;
-                if let Some(batch) = &s.inflight {
+                if let Some(batch) = &mut s.inflight {
                     // message의 이전 전송 여부는 알 수 없으므로 재전송하지 않는다.
                     if matches!(batch.events[0].action, Action::Message(_)) {
+                        batch.unknown = true;
                         wait = Some((batch.id.clone(), "입력 전달 모름 · 사람 확인 필요"));
                     } else {
                         selected = Some(batch.clone());
@@ -586,6 +594,7 @@ impl Host {
                             events,
                             day: s.day,
                             previous_last: s.last_started_ms,
+                            unknown: false,
                         };
                         s.last_started_ms = Some(now);
                         s.count = s.count.saturating_add(1);
