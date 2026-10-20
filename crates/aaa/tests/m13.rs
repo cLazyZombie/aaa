@@ -15,6 +15,8 @@ mod git_watch;
 #[path = "m13/instance.rs"]
 mod instance;
 mod lab;
+#[path = "m13/pr_environment.rs"]
+mod pr_environment;
 #[path = "m13/preparation.rs"]
 mod preparation;
 #[path = "m13/rollout.rs"]

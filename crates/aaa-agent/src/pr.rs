@@ -14,23 +14,23 @@ use anyhow::{Context, Result, bail};
 pub async fn query(cwd: &str, q: &PrQuery) -> Result<PrAnswer> {
     let dir = Path::new(cwd);
     if !dir.is_absolute() || !dir.is_dir() {
-        bail!("작업 폴더가 없다: {cwd}");
+        bail!("PR 조회 저장소 폴더가 없다(조회 머신의 thread worktree 확인)");
     }
     let origin = origin(dir).await;
     let out = match q {
         PrQuery::View { url } => {
             let call = pr::view_call(url, &origin).with_context(|| format!("PR 주소가 아니다: {url}"))?;
-            gh(dir, &call).await?
+            gh(&call).await?
         }
         PrQuery::Find { branch } => match pr::find_call(&origin, branch) {
             None => String::new(),
             Some(call) => {
-                pr::pick_listed(&gh(dir, &call).await?).context("gh pr list 출력이 JSON이 아니다")?.unwrap_or_default()
+                pr::pick_listed(&gh(&call).await?).context("gh pr list 출력이 JSON이 아니다")?.unwrap_or_default()
             }
         },
-        PrQuery::Login => pr::sanitize(gh(dir, &pr::login_call(&origin)).await?.trim()),
+        PrQuery::Login => pr::sanitize(gh(&pr::login_call(&origin)).await?.trim()),
         PrQuery::OpenOwn { repo } => {
-            let json = gh(dir, &pr::open_own_call(&origin, repo)).await?;
+            let json = gh(&pr::open_own_call(&origin, repo)).await?;
             let open = pr::pick_numbers(&json).context("gh pr list 출력이 JSON이 아니다")?;
             open.iter().map(u32::to_string).collect::<Vec<_>>().join(",")
         }
@@ -57,15 +57,9 @@ pub(crate) async fn origin(dir: &Path) -> String {
     }
 }
 
-async fn gh(dir: &Path, call: &GhCall) -> Result<String> {
-    let mut cmd = tokio::process::Command::new("gh");
-    cmd.args(&call.args)
-        .current_dir(dir)
-        .env("GH_PROMPT_DISABLED", "1")
-        .stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .kill_on_drop(true);
+async fn gh(call: &GhCall) -> Result<String> {
+    let mut cmd = crate::gh::command()?;
+    cmd.args(&call.args).stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::null()).kill_on_drop(true);
     if let Some(host) = &call.gh_host {
         cmd.env("GH_HOST", host);
     }
@@ -73,11 +67,7 @@ async fn gh(dir: &Path, call: &GhCall) -> Result<String> {
     let out = tokio::time::timeout(GH_TIMEOUT, cmd.output())
         .await
         .with_context(|| format!("gh {what}: {}초가 지나 멈췄다", GH_TIMEOUT.as_secs()))?
-        .with_context(|| format!("gh {what}: 실행하지 못했다(PATH에 gh가 있는가)"))?;
-    if !out.status.success() {
-        let err = pr::sanitize(String::from_utf8_lossy(&out.stderr).lines().last().unwrap_or(""));
-        let code = out.status.code().map(|c| format!("종료 코드 {c}")).unwrap_or_else(|| "신호로 끝남".into());
-        bail!("gh {what}: {}", if err.is_empty() { code } else { format!("{err}({code})") });
-    }
+        .with_context(|| format!("gh {what}: 실행 실패(조회 머신 agent의 gh 실행 파일·권한 확인)"))?;
+    crate::gh::check(out.status).with_context(|| format!("gh {what}"))?;
     Ok(String::from_utf8_lossy(&out.stdout).to_string())
 }
