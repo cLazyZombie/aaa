@@ -446,6 +446,8 @@ pub struct Host {
     pub enroll_changed: tokio_watch::Sender<u64>,
     /// 계정 기록(`account-meta:*`) 읽고-고쳐-쓰기를 하나씩(로그인 끝·갱신 결과·ticker 상태 pass가 겹친다)
     account_meta_gate: Mutex<()>,
+    /// 웹 기기 폐기의 「마지막 조작 기기」 세기와 폐기를 묶는다
+    device_gate: Mutex<()>,
     /// EMFILE 중에는 파일을 더 열지 않고, ticker가 여유가 생긴 뒤 시스템 경고를 저장한다.
     resource_exhausted: std::sync::atomic::AtomicBool,
     health: Mutex<supervisor::Health>,
@@ -682,6 +684,7 @@ impl Host {
             accounts_changed: tokio_watch::channel(0).0,
             enroll_changed: tokio_watch::channel(0).0,
             account_meta_gate: Mutex::new(()),
+            device_gate: Mutex::new(()),
             enroll: Mutex::new(Enroll::default()),
             pairing: Mutex::new(Pairing::default()),
             agent_listen: Mutex::new(None),
@@ -1593,8 +1596,8 @@ impl Host {
                 self.reports_bump();
                 Ok(out)
             }
-            FrontRequest::LibraryUploadPublish { project, upload, name, to_user, title } => {
-                self.library_upload_publish(&project, &upload, &name, to_user, title.as_deref(), actor)
+            FrontRequest::LibraryUploadPublish { project, upload, name, files, to_user, title } => {
+                self.library_upload_publish(&project, &upload, &name, files, to_user, title.as_deref(), actor)
             }
             FrontRequest::LibraryReports { project } => self
                 .library_reports(project.as_deref(), role.can_control())
@@ -2109,7 +2112,9 @@ impl Host {
                 Ok(FrontResponse::Done)
             }
             FrontRequest::DeviceRevoke { id } => {
-                // 마지막 조작 기기는 웹에서 폐기하지 않는다(사용자 답 W5b 2A): 웹으로 관리할 길이 닫힌다. host 터미널은 된다
+                // 마지막 조작 기기는 웹에서 폐기하지 않는다(사용자 답 W5b 2A): 웹으로 관리할 길이 닫힌다. host 터미널은 된다.
+                // 세기와 폐기를 한 잠금 안에서 한다(두 조작 기기가 서로를 함께 폐기하면 둘 다 통과한다)
+                let _gate = self.device_gate.lock().unwrap();
                 if actor.starts_with("device:") {
                     let rows = self.db.devices().map_err(|e| err(ErrorCode::Internal, e.to_string()))?;
                     let controllers: Vec<_> =

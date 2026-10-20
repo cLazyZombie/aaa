@@ -394,12 +394,18 @@ export function UploadReportDialog({ project, onClose, onDone }: { project: stri
         project,
         upload: upload.current,
         name,
+        files: plan.paths.length,
         to_user: toUser,
         ...(toUser && title.trim() ? { title: title.trim() } : {}),
       });
       onDone();
       onClose();
     } catch (e) {
+      // 올린 자리가 오래돼 치워졌다(host가 수를 맞춰 본다): 다음 「올리기」는 새 자리에 처음부터
+      if (e instanceof ApiError && e.body.code === "conflict") {
+        upload.current = newUploadId();
+        setDone(0);
+      }
       setError(say(e));
     } finally {
       setBusy(false);

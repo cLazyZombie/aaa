@@ -55,19 +55,23 @@ async fn an_upload_becomes_one_report_and_its_folder_goes_away() {
     h.library_upload_put(DeviceRole::Controller, "demo", UP, "notes.md", b"# notes\n").unwrap();
     let dir = h.state.join("library-uploads").join(UP);
     // 사용자 보고서는 맨 위 index.html이 있어야 한다: 실패하면 올린 것을 두어 고쳐 다시 등록한다
-    let req = |to_user| FrontRequest::LibraryUploadPublish {
+    let req = |to_user, files| FrontRequest::LibraryUploadPublish {
         project: "demo".into(),
         upload: UP.into(),
         name: "plan-report".into(),
+        files,
         to_user,
         title: Some("계획 보고서".into()),
     };
-    let e = h.call(DeviceRole::Controller, "device:phone", req(true)).await.unwrap_err();
+    let e = h.call(DeviceRole::Controller, "device:phone", req(true, 1)).await.unwrap_err();
     assert_eq!(e.code, ErrorCode::BadRequest, "{e:?}");
     assert!(dir.join("notes.md").is_file());
     h.library_upload_put(DeviceRole::Controller, "demo", UP, "index.html", b"<h1>plan</h1>").unwrap();
     h.library_upload_put(DeviceRole::Controller, "demo", UP, "img/a.png", b"png").unwrap();
-    h.call(DeviceRole::Controller, "device:phone", req(true)).await.unwrap();
+    // 웹이 올린 수와 올린 자리가 다르면(치워진 뒤 나머지만 온 경우) 등록하지 않는다
+    let e = h.call(DeviceRole::Controller, "device:phone", req(true, 4)).await.unwrap_err();
+    assert_eq!(e.code, ErrorCode::Conflict, "{e:?}");
+    h.call(DeviceRole::Controller, "device:phone", req(true, 3)).await.unwrap();
     assert!(!dir.exists(), "등록한 올리기 폴더는 지운다");
     let report = h.project_dir("demo").unwrap().join("library/plan-report");
     for f in ["index.html", "notes.md", "img/a.png"] {
@@ -75,7 +79,53 @@ async fn an_upload_becomes_one_report_and_its_folder_goes_away() {
     }
     // 세션 안 agent는 웹 올리기를 등록하지 못한다(사람만)
     h.library_upload_put(DeviceRole::Controller, "demo", UP, "x.md", b"x").unwrap();
-    let e = h.call(DeviceRole::Local, "local:cli@coordinator", req(false)).await.unwrap_err();
+    let e = h.call(DeviceRole::Local, "local:cli@coordinator", req(false, 1)).await.unwrap_err();
     assert_eq!(e.code, ErrorCode::Forbidden);
-    assert_eq!(h.call(DeviceRole::Reader, "device:tv", req(false)).await.unwrap_err().code, ErrorCode::Forbidden);
+    assert_eq!(h.call(DeviceRole::Reader, "device:tv", req(false, 1)).await.unwrap_err().code, ErrorCode::Forbidden);
+}
+
+#[test]
+fn a_stale_upload_goes_away_but_the_one_being_written_stays() {
+    let lab = lab();
+    let h = &lab.h;
+    const OLD: &str = "ffffffffffffffffffffffffffffffff";
+    h.library_upload_put(DeviceRole::Controller, "demo", OLD, "a.md", b"a").unwrap();
+    h.library_upload_put(DeviceRole::Controller, "demo", UP, "a.md", b"a").unwrap();
+    let root = h.state.join("library-uploads");
+    let day_ago = std::time::SystemTime::now() - std::time::Duration::from_secs(25 * 3600);
+    for id in [OLD, UP] {
+        std::fs::File::open(root.join(id)).unwrap().set_modified(day_ago).unwrap();
+    }
+    // 하루 넘게 둔 올리기에 이어 쓰면 그것은 두고(다른 것만 치운다) 시각을 새로 한다
+    assert_eq!(h.library_upload_put(DeviceRole::Controller, "demo", UP, "sub/b.md", b"b").unwrap().0, 2);
+    assert!(!root.join(OLD).exists(), "버려진 올리기는 치운다");
+    let fresh = std::fs::metadata(root.join(UP)).unwrap().modified().unwrap();
+    assert!(fresh > day_ago + std::time::Duration::from_secs(3600), "하위 폴더에 써도 올리기 시각이 새로워진다");
+}
+
+#[test]
+fn an_upload_under_a_thread_numbered_state_path_has_no_origin_thread() {
+    // host 상태 폴더 경로에 그 프로젝트 thread 번호가 들어 있어도 웹 올리기의 근원으로 읽지 않는다
+    let root = std::env::temp_dir().join(format!("aaa-upload-origin-{}", aaa_common::util::new_id()));
+    let mut cfg = aaa_config::HostConfig::default();
+    cfg.projects.root = root.join("projects").to_string_lossy().into();
+    cfg.notify.web_push = false;
+    let h = Host::open(cfg, root.join("projects-t-0001").join("host")).unwrap();
+    h.project_create("demo", Default::default(), "local:cli").unwrap();
+    let mut r = crate::orch::ThreadRec::starting(
+        "demo",
+        "보고",
+        "mac-a",
+        "fake",
+        aaa_proto::Role::Worker,
+        aaa_proto::ThreadKind::Dir,
+        1,
+    );
+    r.id = "t-0001".into();
+    h.db.thread_import("demo", "t-0001", "open", &serde_json::to_string(&r).unwrap()).unwrap();
+    h.library_upload_put(DeviceRole::Controller, "demo", UP, "a.md", b"a").unwrap();
+    h.library_upload_publish("demo", UP, "notes", 1, false, None, "device:phone").unwrap();
+    let row = h.db.library_report("demo", "notes").unwrap().unwrap();
+    assert_eq!(row.from_thread, None);
+    let _ = std::fs::remove_dir_all(&root);
 }

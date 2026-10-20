@@ -44,8 +44,8 @@ impl Host {
         self.state.join("library-uploads")
     }
 
-    /// 하루 넘게 손대지 않은 올리기를 지운다(등록하지 않고 떠난 화면)
-    fn sweep_uploads(&self, now_ms: u64) {
+    /// 하루 넘게 손대지 않은 올리기를 지운다(등록하지 않고 떠난 화면). 지금 쓰는 올리기는 두고, 쓸 때마다 그 폴더 시각을 새로 한다
+    fn sweep_uploads(&self, keep: &str, now_ms: u64) {
         let Ok(rd) = std::fs::read_dir(self.uploads_root()) else { return };
         for e in rd.flatten() {
             let old = e
@@ -54,7 +54,7 @@ impl Host {
                 .ok()
                 .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
                 .is_some_and(|t| (t.as_millis() as u64).saturating_add(STALE_MS) < now_ms);
-            if old && e.file_name().to_str().is_some_and(valid_upload) {
+            if old && e.file_name().to_str().is_some_and(|n| valid_upload(n) && n != keep) {
                 let _ = std::fs::remove_dir_all(e.path());
             }
         }
@@ -80,7 +80,7 @@ impl Host {
             return Err(err(ErrorCode::BadRequest, format!("숨은 이름이나 안전하지 않은 경로다: {path}")));
         }
         let _one = PUTTING.lock().unwrap();
-        self.sweep_uploads(aaa_common::util::now_ms());
+        self.sweep_uploads(upload, aaa_common::util::now_ms());
         let root = self.uploads_root();
         let dir = root.join(upload);
         let target = dir.join(path);
@@ -103,15 +103,19 @@ impl Host {
             let _ = std::fs::remove_file(&temp);
             crate::orch::internal(e)
         })?;
+        // 하위 폴더에 쓰면 맨 위 폴더 시각은 그대로다: 치우기가 보는 시각을 지금으로
+        let _ = std::fs::File::open(&dir).and_then(|f| f.set_modified(std::time::SystemTime::now()));
         Ok((files + usize::from(replaced == 0), total))
     }
 
     /// 올린 파일 묶음을 보고서 하나로 등록하고 올리기 폴더를 지운다. 실패하면 폴더를 두어 고쳐 다시 등록할 수 있다
+    #[allow(clippy::too_many_arguments)]
     pub(crate) fn library_upload_publish(
         &self,
         project: &str,
         upload: &str,
         name: &str,
+        files: u32,
         to_user: bool,
         title: Option<&str>,
         actor: &str,
@@ -120,8 +124,15 @@ impl Host {
             return Err(err(ErrorCode::BadRequest, "올리기 이름이 아니다"));
         }
         let dir = self.uploads_root().join(upload);
-        if usage(&dir).0 == 0 {
+        let have = usage(&dir).0;
+        if have == 0 {
             return Err(err(ErrorCode::NotFound, "올린 파일이 없다"));
+        }
+        if have != files as usize {
+            return Err(err(
+                ErrorCode::Conflict,
+                format!("올린 파일이 {files}개 중 {have}개다(오래돼 치워졌을 수 있다): 처음부터 다시 올린다"),
+            ));
         }
         let source = dir.to_str().ok_or_else(|| err(ErrorCode::BadRequest, "경로가 글이 아니다"))?;
         let out = self.library_publish(project, name, source, false, to_user.then_some(title), None, actor)?;

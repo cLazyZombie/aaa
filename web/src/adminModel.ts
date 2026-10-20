@@ -73,7 +73,8 @@ export function uploadPlan(files: Picked[]): { paths: { path: string; index: num
     paths.push({ path: rel, index });
     total += f.size;
   });
-  const big = files.find((f) => f.size > FILE_MAX);
+  // 뺀 숨은 파일(`.git` 묶음 등)은 크기를 따지지 않는다
+  const big = paths.map((p) => files[p.index]!).find((f) => f.size > FILE_MAX);
   const error =
     paths.length === 0
       ? "올릴 파일이 없다"

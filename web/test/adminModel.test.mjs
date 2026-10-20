@@ -60,6 +60,13 @@ describe("관리 W5b", () => {
     assert.equal(folder.error, null);
     assert.deepEqual(uploadPlan([{ name: "a.md", relative: "", size: 1 }]).paths, [{ path: "a.md", index: 0 }]);
     assert.equal(uploadPlan([]).error, "올릴 파일이 없다");
+    // 뺀 숨은 파일은 16MB를 넘어도 막지 않는다
+    const packed = uploadPlan([
+      { name: "p.pack", relative: "r/.git/p.pack", size: 16 * MB + 1 },
+      { name: "index.html", relative: "r/index.html", size: 1 },
+    ]);
+    assert.equal(packed.error, null);
+    assert.deepEqual(packed.skipped, ["r/.git/p.pack"]);
     assert.match(uploadPlan([{ name: "big.bin", relative: "", size: 16 * MB + 1 }]).error, /big\.bin: 파일 하나는 16MB/);
     const five = Array.from({ length: 5 }, (_, i) => ({ name: `${i}.bin`, relative: "", size: 16 * MB }));
     assert.equal(uploadPlan(five.slice(0, 4)).error, null);

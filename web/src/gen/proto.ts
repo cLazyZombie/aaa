@@ -767,7 +767,7 @@ from_thread?: string, } | { "op": "library_delete", reports: Array<LibraryRef>, 
 /**
  * 0.2의 t- 이름을 새 thread id와 구분해 가져올 때 쓴다.
  */
-prefix: string, } | { "op": "library_prune", project: string | null, older_than_days: number, } | { "op": "library_prune_preview", project: string | null, older_than_days: number | null, } | { "op": "library_rotate" } | { "op": "library_upload_publish", project?: string, upload: string, name: string, to_user: boolean, title?: string, } | { "op": "library_reports", project: string | null, } | { "op": "library_open", project?: string, name: string, } | { "op": "library_resolve", project?: string, cap: string, } | { "op": "library_usage" } | { "op": "thread_ack", project?: string, thread: string, } | { "op": "thread_resolve", project?: string, thread: string, keep_worktree: boolean,
+prefix: string, } | { "op": "library_prune", project: string | null, older_than_days: number, } | { "op": "library_prune_preview", project: string | null, older_than_days: number | null, } | { "op": "library_rotate" } | { "op": "library_upload_publish", project?: string, upload: string, name: string, files: number, to_user: boolean, title?: string, } | { "op": "library_reports", project: string | null, } | { "op": "library_open", project?: string, name: string, } | { "op": "library_resolve", project?: string, cap: string, } | { "op": "library_usage" } | { "op": "thread_ack", project?: string, thread: string, } | { "op": "thread_resolve", project?: string, thread: string, keep_worktree: boolean,
 /**
  * 끝낸 thread를 다시 연다(herdr-projects `thread resolve --reopen`). 아무것도 띄우지 않는다
  */

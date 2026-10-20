@@ -2204,13 +2204,15 @@ pub enum FrontRequest {
     },
     LibraryRotate,
     /// FRONT_API 1.80. 웹으로 올린 파일 묶음(`POST /api/v1/projects/<p>/library-uploads/<upload>?path=…`)을 보고서 하나로 등록한다
-    /// (관리 GUI W5b). 등록하면 올린 자리는 지운다. 사용자 보고서(`to_user`)는 맨 위 index.html이 있어야 한다
+    /// (관리 GUI W5b). 등록하면 올린 자리는 지운다. 사용자 보고서(`to_user`)는 맨 위 index.html이 있어야 한다.
+    /// `files`는 웹이 올린 파일 수다: 올린 자리의 파일 수가 다르면(오래돼 치워진 뒤 나머지만 올라온 경우) `conflict`로 거부한다
     LibraryUploadPublish {
         #[serde(default)]
         #[ts(optional, as = "Option<String>")]
         project: String,
         upload: String,
         name: String,
+        files: u32,
         #[serde(default)]
         to_user: bool,
         #[serde(default, skip_serializing_if = "Option::is_none")]
