@@ -285,9 +285,6 @@ pub(crate) fn check_title(title: &str) -> Result<String, String> {
     if t.ends_with(')') {
         return Err("제목이 `)`로 끝나면 owner로 읽힌다: 끝 괄호 글은 메모로 옮긴다".into());
     }
-    if repo_tail(t).is_some() {
-        return Err("제목이 `[이름]`으로 끝나면 저장소로 읽힌다: 끝 대괄호 글은 메모로 옮긴다".into());
-    }
     if let Some((_, tail)) = t.rsplit_once('·')
         && tail.trim_start().starts_with("t-")
     {
@@ -335,6 +332,13 @@ pub(crate) fn task_line(ws: &str, done: char, title: &str, f: Fields) -> String 
 pub(crate) fn reads_back(line: &str, title: &str, f: Fields) -> Result<(), String> {
     let t = line.trim_start();
     let Line { title: rt, owner: ro, repo: rr, thread: rth, problems } = split_line(&t[5..]);
+    // 제목 끝 `[이름]`은 owner·저장소 칸이 뒤에 오면 제목으로 읽힌다. 칸이 없으면 저장소로 읽히므로 그때만 거부한다
+    if rr.as_deref() != Fields::get(f.repo) && repo_tail(title).is_some() {
+        return Err(format!(
+            "제목 끝 `{}`가 저장소 칸으로 읽힌다: 끝 대괄호 글은 메모로 옮긴다",
+            title.rsplit(' ').next().unwrap_or(title)
+        ));
+    }
     if rt != title
         || ro.as_deref() != Fields::get(f.owner)
         || rr.as_deref() != Fields::get(f.repo)
@@ -660,7 +664,14 @@ mod tests {
             task_line("", ' ', "고치기", Fields { owner: Some("claude"), repo: Some("aaa"), thread: Some("t-0518") }),
             "- [ ] 고치기 (claude) [aaa] · t-0518"
         );
-        assert!(check_title("릴리스 [v2]").unwrap_err().contains("저장소로 읽힌다"));
+        // 제목 끝 `[이름]`은 뒤에 owner·저장소 칸이 오면 제목이고, 칸이 없으면 저장소로 읽혀 쓰지 않는다
+        let v2 = Fields { owner: Some("claude"), ..Fields::default() };
+        reads_back(&task_line("", ' ', "배포 [v2]", v2), "배포 [v2]", v2).unwrap();
+        let both = Fields { repo: Some("aaa"), ..Fields::default() };
+        reads_back(&task_line("", ' ', "배포 [v2]", both), "배포 [v2]", both).unwrap();
+        let bare = Fields::default();
+        let e = reads_back(&task_line("", ' ', "배포 [v2]", bare), "배포 [v2]", bare).unwrap_err();
+        assert!(e.contains("`[v2]`가 저장소 칸으로 읽힌다"), "{e}");
         assert!(check_title("로그 보기 [긴급]").is_ok(), "저장소 꼴이 아닌 끝 대괄호는 제목이다");
         // 「정리 제안」은 저장소 칸을 그대로 둔다
         let s = suggest(&parse("- [ ] 실패 조사 (미할당) [aaa]\n")[0], &[]).unwrap();

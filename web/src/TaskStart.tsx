@@ -47,7 +47,9 @@ export function StartDialog({ task, owners, onStarted, onClose }: { task: TaskVi
   const cands = choice === REPO_DIR ? machines.map((o) => o.machine) : (byName.get(choice) ?? []).map((x) => x.machine);
   const ownerMachine = fixed.machine ? (preview?.machine ?? null) : null;
   const where = ownerMachine ?? (picked !== null && cands.includes(picked) ? picked : defaultMachine(cands, preview?.machine_order ?? []));
-  const repoPath = (byName.get(choice) ?? []).find((x) => x.machine === where)?.path ?? choice;
+  // 고른 머신의 그 저장소 경로. 한 머신에 같은 이름이 둘이면 이름을 보내 host가 까닭과 함께 거부하게 한다(말없이 고르지 않는다)
+  const onWhere = (byName.get(choice) ?? []).filter((x) => x.machine === where);
+  const repoPath = onWhere.length === 1 ? onWhere[0].path : choice;
   const problem =
     choice === ""
       ? "저장소나 작업 폴더를 고른다"

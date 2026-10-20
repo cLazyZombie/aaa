@@ -165,15 +165,26 @@ impl Host {
                 if kind_given == Some(ThreadKind::Dir) {
                     return Err(bad(format!("task 저장소가 {name}인데 --kind dir다")));
                 }
-                // 그 이름의 repos 줄(머신 이름, 경로). 요청이 경로를 줬으면 그 경로만
-                let mut cands: Vec<(String, String)> = repos
+                // 그 이름의 repos 줄(머신 이름, 경로). 요청이 경로를 줬으면 그 경로만(끝 구분자 무시, `check_repo`와 같다)
+                let trim = |p: &str| p.trim_end_matches(['/', '\\']).to_string();
+                let named: Vec<&Repo> = repos
                     .iter()
                     .filter(|r| repo_name(&r.path) == Some(name))
-                    .filter(|r| given.as_deref().is_none_or(|g| !g.contains(['/', '\\']) || r.path == g))
+                    .filter(|r| given.as_deref().is_none_or(|g| !g.contains(['/', '\\']) || trim(&r.path) == trim(g)))
+                    .collect();
+                if named.is_empty() {
+                    return Err(bad(format!("project.toml repos에 {name} 저장소가 없다")));
+                }
+                // 머신을 적지 않은 줄은 host 로컬 머신이다: 로컬 agent가 없으면 그 줄은 띄울 곳이 없다
+                let mut cands: Vec<(String, String)> = named
+                    .iter()
                     .filter_map(|r| Some((r.machine.clone().or_else(|| local.clone())?, r.path.clone())))
                     .collect();
                 if cands.is_empty() {
-                    return Err(bad(format!("project.toml repos에 {name} 저장소가 없다")));
+                    return Err(err(
+                        ErrorCode::NotFound,
+                        format!("{name} 저장소가 host 로컬 머신에만 있는데 로컬 agent가 없다"),
+                    ));
                 }
                 if let Some(m) = &a.machine {
                     cands.retain(|(cm, _)| cm == m);
@@ -200,6 +211,14 @@ impl Host {
                         }
                     }
                 };
+                // 고른 머신에 같은 이름 저장소가 또 있으면 말없이 고르지 않는다
+                let same: Vec<&str> = cands.iter().filter(|(m, _)| *m == machine).map(|(_, p)| p.as_str()).collect();
+                if !same.is_empty() {
+                    return Err(bad(format!(
+                        "{machine}에 {name} 저장소가 둘 이상이다({path}, {}). --repo로 경로를 준다",
+                        same.join(", ")
+                    )));
+                }
                 a.kind = ThreadKind::Worktree;
                 a.repo = Some(path);
                 a.machine = Some(machine);
@@ -221,13 +240,13 @@ mod tests {
     fn names_and_values() {
         let repos = [
             repo("/work/aaa", None),
-            repo("/Users/x/aaa/", Some("mac-b")),
+            repo("/srv/b/aaa/", Some("mac-b")),
             repo(r"C:\src\rc", Some("win-a")),
             repo("/work/한글", None),
         ];
         assert_eq!(repo_names(&repos), ["aaa", "rc"], "겹침·칸에 못 쓰는 이름은 뺀다");
         assert_eq!(check_repo(&repos, "aaa").unwrap(), "aaa");
-        assert_eq!(check_repo(&repos, "/Users/x/aaa").unwrap(), "aaa", "경로는 이름으로");
+        assert_eq!(check_repo(&repos, "/srv/b/aaa").unwrap(), "aaa", "경로는 이름으로");
         assert_eq!(check_repo(&repos, r"C:\src\rc").unwrap(), "rc");
         assert_eq!(check_repo(&repos, REPO_DIR).unwrap(), REPO_DIR);
         assert!(check_repo(&repos, "bbb").unwrap_err().contains("있는 것: aaa, rc"));

@@ -1094,6 +1094,24 @@ fn task_repo_field_picks_machine_and_path() {
     assert!(read().contains("- [ ] 새 일 (me)\n"), "{}", read());
     let e = w.h.json(&["task", "edit", "새 일", "--repo", "nope"]).expect_err("모르는 이름");
     assert!(e.contains("project.toml repos에 없는 저장소다: nope"), "{e}");
+    // labA에 같은 이름 저장소가 둘이면 말없이 고르지 않는다: 경로를 주면(끝 `/`도 같은 경로) 그 경로로 띄운다
+    let second = w.lab.root.join("c-src");
+    std::fs::create_dir_all(&second).unwrap();
+    git(&second, &["clone", "-q", path_str(&w.repo), "repo"]);
+    let toml = std::fs::read_to_string(demo.join("project.toml")).unwrap();
+    std::fs::write(
+        demo.join("project.toml"),
+        format!("{toml}\n[[repos]]\npath = {:?}\n", path_str(&second.join("repo"))),
+    )
+    .unwrap();
+    std::fs::write(demo.join("TASKS.md"), "# Tasks\n\n## Backlog\n- [ ] 둘 일 [repo]\n").unwrap();
+    let e =
+        w.h.json(&["thread", "start", "demo", "--from-task", "둘 일", "--machine", "labA"])
+            .expect_err("같은 머신에 둘");
+    assert!(e.contains("labA에 repo 저장소가 둘 이상이다"), "{e}");
+    let slash = format!("{}/", path_str(&w.repo));
+    let s = w.start(&["--from-task", "둘 일", "--machine", "labA", "--repo", &slash]);
+    assert_eq!((s["machine"].as_str(), s["repo"].as_str()), (Some("labA"), Some(path_str(&w.repo))), "{s}");
 }
 
 /// 안내를 보내도 화면이 바뀌지 않으면 unknown으로 남기고 자동으로 다시 보내지 않는다(§8.5 a)

@@ -900,6 +900,32 @@ mod tests {
         assert_eq!(with, "## A\n- [ ] 하나 (claude) [작업 폴더] · t-1\n");
         assert_eq!(set(&with, None, Some("me")), "## A\n- [ ] 하나 (me) [작업 폴더] · t-1\n", "None은 그대로");
         assert_eq!(set(&with, Some(""), None), md, "빈 글은 비움");
+        // 끝 대괄호 제목 뒤에 owner가 있는 옛 줄은 그대로 고친다(thread 잇기)
+        let old = "## A\n- [ ] 배포 [v2] (claude)\n";
+        let link = TaskOp::Update {
+            at: anchor(old, "배포 [v2]"),
+            title: None,
+            owner: None,
+            person: false,
+            notes: None,
+            thread: Some("t-2".into()),
+            done: None,
+            repo: None,
+        };
+        assert_eq!(run(old, vec![link]).unwrap().text, "## A\n- [ ] 배포 [v2] (claude) · t-2\n");
+        let bare = TaskOp::Add {
+            list: "A".into(),
+            title: "릴리스 [v2]".into(),
+            owner: None,
+            person: false,
+            notes: vec![],
+            parent: None,
+            before: None,
+            thread: None,
+            repo: None,
+        };
+        let e = run(md, vec![bare]).unwrap_err();
+        assert!(matches!(&e, Fail::Bad(m) if m.contains("저장소 칸으로 읽힌다")), "{e:?}");
     }
 
     /// 목록 설명·빈 줄·모르는 줄·하위 task·CRLF·마지막 줄바꿈 없음이 든 파일

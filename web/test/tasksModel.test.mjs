@@ -144,13 +144,13 @@ describe("할 일 편집", () => {
     const by_name = repoMachines({
       repos: [
         { path: "/work/aaa", machine: null },
-        { path: "/Users/x/aaa", machine: "mac-b" },
+        { path: "/srv/b/aaa", machine: "mac-b" },
         { path: "/work/rc", machine: null },
       ],
       local_machine: "mac-a",
     });
     assert.deepEqual([...by_name.keys()], ["aaa", "rc"]);
-    assert.deepEqual(by_name.get("aaa"), [{ machine: "mac-a", path: "/work/aaa" }, { machine: "mac-b", path: "/Users/x/aaa" }]);
+    assert.deepEqual(by_name.get("aaa"), [{ machine: "mac-a", path: "/work/aaa" }, { machine: "mac-b", path: "/srv/b/aaa" }]);
     assert.deepEqual([...repoMachines({ repos: [{ path: "/work/aaa", machine: null }], local_machine: null }).keys()], [], "로컬 agent가 없으면 host 줄은 뺀다");
     assert.equal(defaultMachine(["mac-a", "mac-b"], ["mac-c", "mac-b", "mac-a"]), "mac-b", "덜 붐비는 차례에서 후보에 든 첫 머신");
     assert.equal(defaultMachine(["mac-a"], []), "mac-a", "한 곳뿐이면 그곳");

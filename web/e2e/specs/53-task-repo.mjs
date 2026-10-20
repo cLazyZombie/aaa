@@ -1,7 +1,7 @@
 // task 저장소 칸(plan §8.328, 사용자 10-20 「506에 workspace 추가」): 할 일 폼에서 project.toml repos 이름이나 「작업 폴더」를 고르면
 // task 줄 owner 뒤에 `[이름]`으로 적는다. 「바로 시작」은 그 저장소로 고정하고 그 저장소가 있는 머신을 기본으로 고른다(덜 붐비는
 // 머신 고르기는 m13 `task_repo_field_picks_machine_and_path`가 두 머신으로 본다). 칸이 빈 task는 저장소나 작업 폴더를 고르기 전에는
-// 시작하지 못하고, 고른 값은 task 줄에 적지 않는다. 시간은 기다리지 않는다: 화면 표지(`data-tasks-sha`·`data-start-state`)와 파일 글을 본다.
+// 시작하지 못하고, 고른 저장소로 띄우되 그 값은 task 줄에 적지 않는다. 시간은 기다리지 않는다: 화면 표지(`data-tasks-sha`·`data-start-state`)와 파일 글을 본다.
 import fs from "node:fs";
 import crypto from "node:crypto";
 import { execFileSync } from "node:child_process";
@@ -71,7 +71,7 @@ export default async function ({ page }) {
     if (t.thread_kind !== "worktree" || t.repo !== fs.realpathSync(repo) || t.machine !== "labA") throw new Error(`저장소로 띄우지 않았다: ${t.thread_kind} ${t.repo} ${t.machine}`);
   });
 
-  await step("칸이 빈 task: 저장소나 작업 폴더를 고르기 전에는 시작하지 못하고, 고른 값은 task 줄에 적지 않는다(iPhone)", async () => {
+  await step("칸이 빈 task: 저장소나 작업 폴더를 고르기 전에는 시작하지 못하고, 고른 저장소로 띄우되 task 줄에 적지 않는다(iPhone)", async () => {
     const before = read();
     const { page: p } = await pairDevice(browser, aaa("web", "pair").code, "iphone", { hash: "#tasks" });
     await shaIs(p, sha(before));
@@ -81,13 +81,14 @@ export default async function ({ page }) {
     if ((await p.getByTestId("task-start-repo").inputValue()) !== "") throw new Error("빈 칸인데 저장소를 골라 두었다");
     if (!(await p.getByTestId("task-start-go").isDisabled())) throw new Error("고르기 전에 시작할 수 있다");
     await shot(p, "repo-iphone-start-pick");
-    await p.getByTestId("task-start-repo").selectOption("app");
-    if (await p.getByTestId("task-start-go").isDisabled()) throw new Error("저장소를 골라도 시작할 수 없다");
     await p.getByTestId("task-start-repo").selectOption("작업 폴더");
+    if (await p.getByTestId("task-start-go").isDisabled()) throw new Error("작업 폴더를 골라도 시작할 수 없다");
+    await p.getByTestId("task-start-repo").selectOption("app");
     await p.getByTestId("task-start-go").click();
     await p.getByTestId("task-started").waitFor();
     const id = await until("이은 thread", () => /빈 칸 일 \(fake@labA\) · (t-\d{4})$/m.exec(read())?.[1]);
-    if (aaa("thread", "show", "demo", id).thread_kind !== "dir") throw new Error("작업 폴더로 띄우지 않았다");
+    const t = aaa("thread", "show", "demo", id);
+    if (t.thread_kind !== "worktree" || t.repo !== fs.realpathSync(repo)) throw new Error(`고른 저장소로 띄우지 않았다: ${t.thread_kind} ${t.repo}`);
     if (read().includes("빈 칸 일 (fake@labA) [")) throw new Error("고른 값을 task 줄에 적었다");
     await p.close();
   });
