@@ -4142,10 +4142,16 @@ fn task_board_reads_tasks_and_follows_file_edits() {
         "# Tasks\n\n## Backlog\n나중 일은 later.md에 모은다\n- [ ] 이은 일 (fake@labA) · {lid}\n  - 메모\n  - [ ] 하위 (me)\n\
          - [ ] 정리 (t-0101 S4 뒤, 사용자 지시 시)\n- [ ] 실패 조사 (미할당)\n## 빈 목록\n"
     );
+    // 먼저 원본을 기억시킨다. 연결 뒤 md의 첫 관측 사건이 오는 순서를 부하 없이도 검증한다.
+    w.h.ok(&["task", "list"]);
+    let mut ev = Events::connect(&w.h);
     std::fs::write(pdir.join("TASKS.md"), &md).unwrap();
     let sha = |t: &str| hex::encode(sha2::Sha256::digest(t.as_bytes()));
-    let mut ev = Events::connect(&w.h);
     w.h.ok(&["ticker", "tick"]);
+    let (baseline, ()) = ev.wait_from(0, "초기 할 일 관측", T, |e| match e {
+        FrontEvent::Tasks { project, sha256 } if project == "demo" && *sha256 == sha(&md) => Some(()),
+        _ => None,
+    });
 
     let b = w.h.ok(&["task", "list"]);
     assert_eq!(b["sha256"].as_str(), Some(sha(&md).as_str()), "{b}");
@@ -4190,7 +4196,7 @@ fn task_board_reads_tasks_and_follows_file_edits() {
     let md2 = md.replace("## 빈 목록\n", "## 빈 목록\n- [ ] 새로 더한 일\n");
     std::fs::write(pdir.join("TASKS.md"), &md2).unwrap();
     w.h.ok(&["ticker", "tick"]);
-    let (at, got) = ev.wait_from(0, "tasks 사건", T, |e| match e {
+    let (at, got) = ev.wait_from(baseline + 1, "tasks 사건", T, |e| match e {
         aaa_proto::FrontEvent::Tasks { project, sha256 } if project == "demo" => Some(sha256.clone()),
         _ => None,
     });

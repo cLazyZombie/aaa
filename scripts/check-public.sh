@@ -27,6 +27,7 @@
 #   7) 충돌 표지 줄(작업 트리의 추적 파일만): 병합 충돌을 풀고 남긴 표지 줄(줄 머리의 「<」·「>」·「|」 일곱 개 뒤 빈칸이나
 #      줄 끝, 「=」 일곱 개만 있는 줄)을 막는다. 공개 검사는 아니지만 착지마다 push 직전에 도는 검사라 여기 둔다(10-18
 #      main에 두 번 남음: 4474e43·97f13d1). 옛 이력에 이미 있으므로 --history에서는 보지 않는다.
+#   8) 추적된 Python 캐시(작업 트리만): __pycache__ 안의 파일과 *.pyc는 생성물이므로 막는다.
 #
 # 허용: example.ts.net·<이름>.ts.net, 127.0.0.1·0.0.0.0·문서용 IP(192.0.2.x, 198.51.100.x, 203.0.113.x),
 #       noreply@anthropic.com·git@github.com·GitHub noreply(5)와 같다)·*@example.com과 그 하위 이름(token@GitHub.example.com),
@@ -80,6 +81,16 @@ while IFS= read -r -d '' f; do
   esac
   if [ "$HISTORY" = 0 ] && [ -f "$f" ] && [ "$(wc -c <"$f")" -gt 1048576 ]; then report "1MiB 넘는 파일: $f"; fi
 done < <(printf '%s' "$FILES")
+
+# 8) 현재 index의 Python 생성물. NUL 구분을 변수에 담으면 사라지므로 직접 읽는다.
+# 옛 이력의 생성물은 이력 재작성 없이 없앨 수 없어 --history에서는 검사하지 않는다.
+if [ "$HISTORY" = 0 ]; then
+  while IFS= read -r -d '' f; do
+    case "$f" in
+      __pycache__/* | */__pycache__/* | *.pyc) report "추적된 Python 캐시: $f" ;;
+    esac
+  done < <(git ls-files -z)
+fi
 
 # 2·3) 내용 패턴: 이름, 정규식, 허용 정규식(빈 값이면 허용 없음), 이 검사에서 뺄 파일 정규식(없으면 빈 값)을 같은 순서로 둔다.
 NAMES=() RES=() ALLOWS=() SKIPS=()
