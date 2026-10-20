@@ -5989,7 +5989,18 @@ L4 후속(10-20 00시 사용자 관찰): 멈춤 상태의 후보 예약과 재�
 - **참고와 다른 것.** 참고는 coordinator가 TASKS.md를 고치고 `[완료]`를 보지 않는다. aaa는 host가 판정해 지우고(P2: 병합 또는 `[완료]`), 기록·되살리기·inbox로 남긴다. 참고의 `d`는 글을 바로 보내지만 aaa는 입력칸만 채운다(§3.4). 참고는 미할당 task를 시작하면 받은 profile을 owner로 적지만 aaa는 owner 칸을 그대로 두고 thread 번호만 붙인다(thread 칩이 profile을 보인다).
 - **검증.** host 유닛 `task_clean::tests`(판정표, 확인 필요 까닭). 여러 프로세스 `m13 task_thread_link_and_auto_clean`(`--link-task` 줄 끝 번호, `--from-task` 없는 `--link-task` 거부, 열린 동안 판정 없음, `[완료]` 지움·「host 자동 정리」 기록, 보고 없음과 보고 `[결정 필요]`의 확인 필요(`task list`·`context`·inbox), 상위 올림, 되살린 뒤 다시 지우지 않음)·`merged_thread_cleans_its_task`(가짜 gh 병합, 보고 `[착지]`여도 지움). 웹 순수 규칙 `tasksModel.test.mjs`, 웹 E2E `47-task-thread`(바로 시작·연결, 확인창을 연 뒤 블록이 바뀌면 시작 안 함, 자동 정리·되살리기, 확인 필요·연결만 풀기, 상위 올림, 잇기·만들기, coordinator 맡기기 초안, 휴대폰·패드 한도 확인). 결함 심기: 병합 판정을 끄면 `merged_thread_cleans_its_task`가, 한 번 판정 거르기를 없애면 `task_thread_link_and_auto_clean`이 실패한다.
 
-### 8.317 자동화 thread 표시와 자기 사건 거르기(10-20, t-0499 상주 특수 thread 없애기 A1)
+### 8.317 aaa install I1 읽기 탐지·계획(10-20, t-0485)
+
+- **범위.** I0(§8.312)의 공통 DTO/순수 검증/hash를 실제 install CLI에 연결한다. 환경 변경 전에 install을 처리하며 JSON/NDJSON 문법 오류도 입력 원문 없이 고정 code로 반환한다. 잘못된 전역 bool 값/앞 옵션의 실제 유출 회귀를 수리했고, clap 명령 metadata 판별도 기존 4MiB 파싱 thread 안에서 수행한다. FRONT_API/AGENT_LINK/schema는 변경하지 않는다. 적용·재개·조회·마법사는 단계 미지원으로 명시한다.
+- **읽기.** 현지 OS/arch·UID/Windows SID·현재/선택 binary SHA·실효 base/local 설정과 관련 파일 hash, 정규화 경로/mount·여유 공간, repo/harness/profile·기존 설치 충돌을 읽는다. root 체크는 읽기 helper만 사용하고 기존 CLI check/probe/init에 위임하지 않는다. missing mount에 대체 폴더를 만들지 않는다. 같은 shared binary는 보존하고 출처/내용이 다른 binary는 충돌이다.
+- **감독자 읽기.** Mac은 기존 plist, Windows는 SCM CONNECT/QUERY_STATUS, Linux는 실제 system/user unit 위치와 systemctl show LoadState만 읽는다. 등록/시작/reload·권한 상승은 하지 않는다. 같은 instance 이름의 기존 서비스/파일은 fresh 충돌이다.
+- **파일/폴더 경계.** profile-file/bin-path는 파일과 원래·실제 부모 mount를 검사하고 config/state/harness home/work-root는 폴더로 검사한다. 외장 볼륨 정상 profile 거부·일반 파일 work-root 수락의 실제 회귀를 기존 CLI owner에서 RED 뒤 수리했다. 없는 경로를 만들거나 쓰기 probe를 하지 않는다.
+- **관찰 한계.** 서비스 ready·연결·등록/승인·pairing·실제 쓰기 probe는 not_run, 관찰하지 않은 ACL/안정 volume ID/소유권·원격 repo·harness 인증/판은 unknown이다. harness는 --version도 실행하지 않는다. 계획이 설치 완료/unchanged를 뜻하지 않는다. I2의 receipt/소유 대조, OS별 실제 관리자 검증, I6의 질문/승인과 구분한다.
+- **profile/비밀.** 새 profile-file은 기존 host schema/[profiles]와 공통 profile 검증을 쓰며 secret env·shell/custom·command override를 거부한다. 기존 설정과 타 profile은 보존 대상으로 읽고 private hash에만 묶는다. stdout/stderr/stream에 TOML·OS/Git 오류·argv·경로·계정·pin/인증 원문을 복사하지 않는다.
+- **참고/차이.** herdr의 OS/arch/checksum·사용자 bin, herdr-projects의 기존 설정 보존, herdr-web-ui의 기존 Serve 충돌, t3code의 데이터 보존·서비스 진단을 따른다. 외부 설치기/자동 fallback·clone·hook trust/PATH 변경은 연결하지 않는다. 자세한 현재 범위는 install-contract.md I1 절이다.
+- **시험.** 실제 CLI owner가 JSON/NDJSON/exit·fake secret 비노출·전후 파일 snapshot·local override/hash·실제 mount/repo·선택 파일/harness 무실행·profile 경계를 소유한다. mkdir/argv leak/context hash 무시/profile guard 제거/harness --version 실행 변형 RED와 bytes 복원 GREEN을 보존한다. coordinator 판정대로 착지 전 macOS 전체 gate·Windows cross clippy/build, 실제 Windows/Linux는 main push 뒤 CI(windows-2025·ubuntu-24.04)다. 공통 CLI 6개에 Unix 권한 1개와 OS별 native 1개를 두며 I1을 완료로 부르지 않는다.
+
+### 8.318 자동화 thread 표시와 자기 사건 거르기(10-20, t-0499 상주 특수 thread 없애기 A1)
 
 - **요청.** 사용자 10-20 「지금 특수 스레드가 … 필요할까? … 자동화에서 필요하면 스레드 만들고, 그 스레드는 왼쪽 작업에 넣고, coordinator처럼 왼쪽에 바만 색상을 노란색이든 해서」, 기획 확정판 library/t-0475 plan.md(「475 모두 추천 대로 해」, Q1~Q7 모두 ①)의 §5.1 A1. §3.5 자기 사건 거르기, §4.1·§4.2·§4.3 표시, §5.3 할 일 목록과의 관계를 따른다. 이어 보내기·기억 파일·짧은 끝내기는 A2, 운영 임무 옮기기는 A3, 임무·평가자·특수 패널 지우기는 A4다. 임무 thread와 특수 패널은 그대로 둔다.
 - **자기 사건 거르기(host).** `automation_flow_events`가 받는 규칙 이름을 받아, 사건 thread의 기록(`ThreadRec.automation`, `do.start`가 이미 남기던 규칙 이름)을 읽어 자동화가 띄운 thread의 사건을 기본으로 뺀다. `on.thread.include_automation = true`인 규칙만 다른 규칙의 자동화 thread 사건을 받고, 자기 규칙이 띄운 thread의 사건은 늘 뺀다. 흐름 사건 저장 형식은 그대로다. 한 판정 안에서는 thread 기록을 한 번만 읽는다. 공개 스키마(`docs/automation.schema.json`)에 칸이 하나 늘었다.

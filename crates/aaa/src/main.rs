@@ -3,6 +3,7 @@
 mod cli;
 mod deployment;
 mod init;
+mod install;
 mod integration;
 mod launchd;
 mod migrate;
