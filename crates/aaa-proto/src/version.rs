@@ -158,7 +158,7 @@ pub const AGENT_LINK: Version = Version { major: 1, minor: 10 };
 //       웹이 카드·칩을 그리지 않고, 새 요청은 옛 host가 모르는 요청으로 거절한다. Agent link 변경 없음.
 // 1.73: task 저장소 칸(plan §8.330): `TaskView.repo`·`TaskOp` Add/Update `repo`·`TaskBoard.repos`, 「바로 시작」 미리보기
 // `repo`·`local_machine`·`machine_order`. 옛 host는 생략한다. Agent link 변경 없음.
-// 1.74: task 모델·머신 칸(plan §8.332): `TaskView.profile`·`machine`(owner `모델@머신`을 나눈 값), `TaskOp` Add/Update
+// 1.74: task 모델·머신 칸(plan §8.333): `TaskView.profile`·`machine`(owner `모델@머신`을 나눈 값), `TaskOp` Add/Update
 // `profile`·`machine`. 표기는 그대로다. 옛 host는 새 칸을 생략·무시하므로 웹은 owner 글로 보낸다. Agent link 변경 없음.
 pub const FRONT_API: Version = Version { major: 1, minor: 74 };
 /// agent ↔ session host(내부). 세션이 몇 주 이어질 수 있으므로 이전 session host와 호환해야 한다.

@@ -84,7 +84,7 @@ export function ThreadChip({ id, groups, onThread }: { id: string; groups: Threa
 }
 
 /**
- * 맡은 쪽 칩(plan §8.332): agent 일은 모델·머신 칩 둘(정하지 않은 칸은 칩이 없다), 나·사람·미할당은 담당 칩 하나. `labeled`면 칩 글
+ * 맡은 쪽 칩(plan §8.333): agent 일은 모델·머신 칩 둘(정하지 않은 칸은 칩이 없다), 나·사람·미할당은 담당 칩 하나. `labeled`면 칩 글
  * 앞에 칸 이름을 쓰고(상세), 아니면 아이콘으로 줄인다(목록 줄)
  */
 export function WhoChips({ t, agents = [], labeled = false }: { t: TaskView; agents?: readonly string[]; labeled?: boolean }) {
@@ -112,7 +112,7 @@ export function WhoChips({ t, agents = [], labeled = false }: { t: TaskView; age
   return <span className={`task-chip task-owner${owner === "미할당" ? " is-dim" : ""}`}>{labeled ? `담당 · ${owner}` : owner}</span>;
 }
 
-/** 모델 칸 고르기 값(plan §8.332): 연결된 머신의 profile. 머신을 골랐으면 그 머신의 것만이고, 지금 값이 없으면 앞에 둔다 */
+/** 모델 칸 고르기 값(plan §8.333): 연결된 머신의 profile. 머신을 골랐으면 그 머신의 것만이고, 지금 값이 없으면 앞에 둔다 */
 function modelOptions(owners: readonly OwnerChoice[], machine: string, current: string): string[] {
   const on = owners.filter((o) => o.connected && (machine === "" || o.machine === machine));
   const names = [...new Set(on.flatMap((o) => o.profiles))];

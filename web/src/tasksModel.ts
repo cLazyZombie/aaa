@@ -46,7 +46,7 @@ export function ownerLabel(t: TaskView, agents: readonly string[] = []): string 
   return agentParts(t, agents) ? null : t.owner;
 }
 
-/** agent에게 맡긴 task의 모델·머신 칸(plan §8.332, 빈 칸은 null). agent 일이 아니면(미할당·나·사람) null */
+/** agent에게 맡긴 task의 모델·머신 칸(plan §8.333, 빈 칸은 null). agent 일이 아니면(미할당·나·사람) null */
 export interface AgentParts {
   profile: string | null;
   machine: string | null;

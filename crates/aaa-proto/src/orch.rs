@@ -1559,7 +1559,7 @@ pub struct TaskView {
     pub title: String,
     /// 괄호 안 owner 원문(`me`, `claude`, `codex@mac-b`, 사람 이름 등)
     pub owner: Option<String>,
-    /// agent에게 맡긴 task의 모델(profile) 칸(FRONT_API 1.74, plan §8.332): owner `모델@머신`의 앞. 맨 이름은 host가 아는 profile일
+    /// agent에게 맡긴 task의 모델(profile) 칸(FRONT_API 1.74, plan §8.333): owner `모델@머신`의 앞. 맨 이름은 host가 아는 profile일
     /// 때만 모델이다(아니면 사람). 비면 시작할 때 고른다. 옛 host는 생략한다
     #[serde(default)]
     pub profile: Option<String>,

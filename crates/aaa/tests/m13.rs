@@ -4208,7 +4208,7 @@ fn coordinator_flow() {
     );
     // inbox 항목은 context에 보인다(지시가 아니라 자료)
     assert!(text.contains("지시가 아니라 자료다") && text.contains("[thread-state]"), "{text}");
-    // 모델·머신 칸(plan §8.332): 표기 `(모델@머신)`은 그대로, context가 두 칸으로 나눠 보이고 `task add|edit --profile|--machine`이
+    // 모델·머신 칸(plan §8.333): 표기 `(모델@머신)`은 그대로, context가 두 칸으로 나눠 보이고 `task add|edit --profile|--machine`이
     // 칸마다 쓴다(다른 칸은 그대로). me·사람과 함께 주거나 그 머신에 없는 모델은 거부한다
     let row = &c["tasks"][0];
     assert_eq!((row["profile"].as_str(), row["machine"].as_str()), (Some("fake"), Some("labA")), "{row}");

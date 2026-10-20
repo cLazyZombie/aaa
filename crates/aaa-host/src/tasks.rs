@@ -4,7 +4,7 @@
 //! - 저장소 칸(plan §8.330): owner 뒤 대괄호에 `project.toml` repos 경로의 마지막 이름(`[aaa]`)이나 `[작업 폴더]`(저장소 없는 작업
 //!   폴더)를 쓴다. 비면 정하지 않은 것이다. 이름·`작업 폴더` 꼴이 아닌 끝 대괄호는 제목 글이다.
 //! - owner: 없음·`agent`는 미할당, `me`는 사용자, `profile`·`@machine`·`profile@machine`은 agent, 그 밖의 글은 사람.
-//!   옛 표기 `(agent → t-0007)`도 읽는다. agent owner는 「모델」(profile)과 「머신」 두 칸으로 나눠 보이고 고친다(plan §8.332,
+//!   옛 표기 `(agent → t-0007)`도 읽는다. agent owner는 「모델」(profile)과 「머신」 두 칸으로 나눠 보이고 고친다(plan §8.333,
 //!   `agent_parts`·`agent_owner`). 표기는 `(모델@머신)` 그대로이고(참고 herdr-projects와 같다), 맨 이름은 host가 아는 profile일
 //!   때만 모델이다.
 //! - 메모: task 줄보다 깊게 들여쓴 줄(사이의 빈 줄 허용).
@@ -755,7 +755,7 @@ mod tests {
         assert_eq!(s.line, "- [ ] 실패 조사 [aaa]");
     }
 
-    /// 모델·머신 칸(plan §8.332): 표기 `(모델@머신)` 그대로 두 칸으로 나눠 읽고, 칸마다 고친다
+    /// 모델·머신 칸(plan §8.333): 표기 `(모델@머신)` 그대로 두 칸으로 나눠 읽고, 칸마다 고친다
     #[test]
     fn model_and_machine_fields() {
         let profiles = vec!["claude".to_string(), "codex-fast".to_string()];

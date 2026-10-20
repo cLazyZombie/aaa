@@ -6217,7 +6217,15 @@ L4 후속(10-20 00시 사용자 관찰): 멈춤 상태의 후보 예약과 재�
 - **근거.** [Rust PathBuf::push](https://doc.rust-lang.org/std/path/struct.PathBuf.html#method.push),
   [Path::join](https://doc.rust-lang.org/std/path/struct.Path.html#method.join)의 verbatim prefix 정규화 규칙.
 
-### 8.332 task 모델·머신 칸(10-20, t-0531)
+### 8.332 비밀 없는 panic 위치 진단(10-20, t-0533)
+
+- **요청.** 장애 때 panic 본문을 숨기면서 위치까지 사라져 디버거가 필요했다. 본문·payload·환경·backtrace를 읽거나 포맷하지 않고 진단 가능한 위치와 실행 정보만 남긴다.
+- **공통 진입점.** 단일 실행 파일이 `aaa_common::panic_log::install()`을 먼저 호출한다. 파싱한 명령으로 CLI·host·agent·session host를 구분하며, 등록용 `agent enroll`은 CLI, 복구 감시는 agent다.
+- **안전한 필드.** Git에서 추적하는 Rust 파일 목록에서 고른 저장소 상대 경로·줄·열, 고정 허용 thread 이름·런타임 숫자 ID, Tokio task 숫자 ID, 프로세스 종류, 빌드 HEAD SHA, 같은 원본 위치의 프로세스 수명 내 반복 횟수만 JSON 한 줄로 stderr에 쓴다. 동적 thread 이름은 `other`로 숨긴다. stable Tokio API에 task 이름이 없어 ID를 쓴다. 모르는 외부·생성 파일은 `external`, Git 없는 소스 배포의 판은 `unknown`이다. 빌드 생성물에도 홈 절대 경로를 넣지 않는다.
+- **감시 API.** `panic_log::latest()`는 마지막 안전한 `Snapshot`만 반환한다. 본문과 임의 이름을 보관하지 않는다. 상태를 먼저 공개하고 상태 잠금을 푼 뒤 stderr에 쓰므로 출력 소비자가 막혀도 감시자가 위치를 읽는다. hook은 알림을 직접 전송하지 않으며 host 자기 감시는 이 API를 쓸 수 있다.
+- **검증.** `cargo test -p aaa-common --lib panic_log::`가 별도 프로세스에서 네 역할·비밀 String과 비문자열 payload·동적 이름·환경·backtrace 설정·실제 Tokio task·서로 다른 thread의 같은 위치 반복을 확인한다. stderr를 잠근 동안에도 감시자가 위치를 관측하는 사건을 받아야 한다. Windows·Unix 절대 경로는 허용된 상대 경로로 줄이고 모르는 경로는 숨긴다. 운영 panic 스위치를 추가하지 않는다. 본문 출력·원본 경로·횟수 초기화·stderr 쓰기 중 상태 잠금의 네 결함이 RED, bytes 원복 뒤 GREEN이어야 한다. 전체 ci-local·deps·TS 최신·check-public을 통과한 뒤 착지한다. 새 웹 동작이 없어 웹 E2E 파일은 추가하지 않는다.
+
+### 8.333 task 모델·머신 칸(10-20, t-0531)
 
 - **요청.** 사용자 10-20 23:2x 「owner는 왜 있어?」 → 「수정해. 모델과 머신 따로 설정하게. UI도 좀 더 컴팩트하게 할 수 있으면(이건 필수 아냐).」 owner 한 칸이 사람 할 일(`me`)·모델·머신을 함께 담았고, 웹은 `profile@machine` 조합 하나를 골랐다. 결정 1A: 표기는 그대로 둔다.
 - **표기(`tasks.rs`).** 줄은 `- [ ] 제목 (모델@머신) [저장소] · t-NNNN` 그대로다(참고 herdr-projects COORDINATOR.md의 owner와 같다). 모델만 `(모델)`, 머신만 `(@머신)`, 사람 할 일은 `(me)`·`(이름)`, 비움은 미할당이다. 옛 줄은 바꿀 것이 없고, 칸을 고친 줄만 다시 쓴다(고치지 않은 줄은 바이트 그대로). 형식 검사(▲)·충돌 감지·기록·되살리기는 그대로다.
@@ -6227,3 +6235,4 @@ L4 후속(10-20 00시 사용자 관찰): 멈춤 상태의 후보 예약과 재�
 - **웹.** 할 일 폼은 「담당」(agent·나·사람…)을 고르고, agent면 「모델」(「자동」=프로젝트 기본, 연결된 머신의 profile, 머신을 골랐으면 그 머신의 것)·「머신」(「자동」=덜 붐비는 곳, 끊긴 머신은 고를 수 없다) 두 칸이다(「자동」의 뜻은 칸의 title). 미할당은 agent에 두 칸이 빈 것이다. 웹은 표기 그대로 `모델@머신` owner 글로 보낸다(옛 host도 같은 판정). 목록 줄은 담당 칩 대신 아이콘 칩 둘(모델·머신), 상세·「바로 시작」 창은 「모델 · X」·「머신 · Y」. 「바로 시작」은 정한 칸만 잠근다(옛 host는 owner 글을 나눈다).
 - **컴팩트(선택).** 폼은 목록·저장소를 한 줄에, 담당·모델·머신을 한 줄에 두어(데스크톱 상세 칸·휴대폰 390px) 저장 단추가 첫 화면에 들어온다. 저장소 「정하지 않음」 글을 줄였다. 목록 줄은 칸 이름을 아이콘으로 줄였다(휴대폰은 지금처럼 칩을 숨긴다).
 - **검증.** host 유닛 `tasks::tests::model_and_machine_fields`(나누기·끊긴 머신의 profile·칸별 고치기·거부·다시 읽기), `task_edit::tests::model_machine_edits`(칸별 고치기, 메모만 고친 옛 줄 바이트 그대로, 더하기·판정 거부·me와 함께 거부). m13 `coordinator_flow`(context 칸·글, `task add|edit --profile|--machine`, 거부 둘, `task list` 글, 안내). 웹 순수 시험 `tasksModel.test.mjs`(host 칸 우선·옛 host 나누기·폼 동작·잠금). 웹 E2E 54에 「모델·머신 칸」 단계(칸별 저장과 파일 줄, 칩, 바로 시작 잠금, 나로 바꾸기)와 데스크톱·iPhone 캡처.
+||||||| efc5663b

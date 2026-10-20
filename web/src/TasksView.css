@@ -73,7 +73,7 @@
   text-overflow: ellipsis;
 }
 .task-chip.is-dim { color: var(--text-dim); }
-/* 모델·머신 칩(plan §8.332): 목록 줄은 칸 이름을 아이콘으로 줄인다 */
+/* 모델·머신 칩(plan §8.333): 목록 줄은 칸 이름을 아이콘으로 줄인다 */
 .task-chip > svg { flex: 0 0 auto; width: 12px; height: 12px; margin-right: 3px; color: var(--text-dim); }
 .task-model, .task-machine { max-width: 10em; }
 button.task-chip { cursor: pointer; }
