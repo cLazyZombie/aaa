@@ -9,7 +9,11 @@
 `host_login_defaults_pin_threads_and_coordinators_without_exposing_credentials`는 공식 로그인 argv·격리 홈·원본 출력 차단,
 임시 인증 정리, 새 worker/자동화 평가/원격 작업의 기본 선택, 기존 로컬 작업 유지, 명시 계정 우선, 깨진 기본 거부,
 coordinator의 host 재시작 뒤 refresh·재부팅 복원·pane 재개와 같은 기록 홈을 확인한다.
-동시 coordinator pane 재개는 가짜 CLI 버전 확인을 socket에서 붙잡아 두고 두 번째 재개가 기동 전에 거부되는지 본다.
+동시 coordinator pane 재개는 Barrier 뒤 두 실제 CLI를 경주시켜 성공이 하나인지 확인한다.
+준비 중 중복 거부는 `cargo test -p aaa-host --lib account_policy::tests::preparing_account_resume_rejects_duplicates_before_agent_spawn -- --exact`가 맡는다.
+실제 `SpawnAccount` 전송을 받은 뒤 응답을 보류하고, 둘째 기동 요청 없이 거부되는지와 첫 응답 뒤 새 pane 결속·옛 pane 재거부를 확인한다.
+CLI 버전 확인의 제품 제한시간(5초)을 시험 제어로 소진하지 않는다. 이전 시험의 gate 해제를 정상 호출 종료 사건 뒤로 늦추면
+CI와 같은 성공 0개·기동 실패/중복 거부가 재현된다. 준비 중 claim 검사를 제거한 변형은 새 host owner가 중복 기동 요청에서 실패해야 한다.
 인증 worker의 pane 재개는 저장한 thread launch·identity를 이어 쓰고, 실행 중 thread restart가 같은 홈을 다시 쓰지 않는지 본다.
 로그인 실패·취소·host 정상 종료는 SIGHUP 무시 자식·PTY를 가진 자손을 포함해 종료와 폴더 정리를 기다린다. 가짜 자식 안에서 계정 관리 명령을
 실행해 aaa 세션에서는 로그인·기본 변경·삭제가 거부되는지도 확인한다.

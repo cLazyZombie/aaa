@@ -153,3 +153,123 @@ impl Host {
         self.spawn_account_on(mid, spec, credential, actor, Some(id)).await
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{AgentConn, MachineRt};
+    use aaa_common::{
+        conn::{FrameRx, spawn_writer},
+        util,
+    };
+    use aaa_proto::{
+        AccountCredential, AgentRequest, AgentResponse, LinkMsg, MAX_FRAME, Outcome, SecretText, SessionInfo,
+        SessionState,
+    };
+
+    struct Temp(std::path::PathBuf);
+    impl Drop for Temp {
+        fn drop(&mut self) {
+            std::fs::remove_dir_all(&self.0).unwrap();
+        }
+    }
+
+    #[tokio::test]
+    async fn preparing_account_resume_rejects_duplicates_before_agent_spawn() {
+        let root = Temp(std::env::temp_dir().join(format!("aaa-account-resume-{}", util::new_id())));
+        let mut cfg = aaa_config::HostConfig::default();
+        cfg.projects.root = root.0.join("projects").display().to_string();
+        cfg.notify.web_push = false;
+        let h = Host::open(cfg, root.0.join("host")).unwrap();
+        let (writer, reader) = tokio::io::duplex(65536);
+        let conn = AgentConn::new(spawn_writer(writer, MAX_FRAME), 1);
+        h.inner.lock().unwrap().machines.insert(
+            "m".into(),
+            MachineRt {
+                name: "mac-a".into(),
+                local: true,
+                os: None,
+                boot_id: None,
+                dev_mode: true,
+                conn: Some(conn.clone()),
+                last_seen_ms: None,
+                health: None,
+                health_sent: None,
+                features: vec!["account_auth.v2".into()],
+                agent_pid: None,
+                colors: None,
+            },
+        );
+        let binding = PaneAccount {
+            run: format!("demo/c-{}", util::new_id()),
+            account: "work".into(),
+            harness: "codex".into(),
+            machine: "m".into(),
+            pane: Some("old".into()),
+            profile: None,
+        };
+        h.save_account_run(&binding).unwrap();
+        let credential = AccountCredential {
+            run: binding.run.clone(),
+            account: binding.account.clone(),
+            harness: binding.harness.clone(),
+            version: 1,
+            secret: SecretText("fixture-only".into()),
+            trust_cwd: None,
+        };
+        let spec = SpawnSpec {
+            name: "coordinator".into(),
+            argv: vec!["codex".into()],
+            cwd: None,
+            env: vec![],
+            cols: 80,
+            rows: 24,
+            role: None,
+            harness: Some("codex".into()),
+            profile: None,
+            resolved_profile: None,
+        };
+        let first = h.spawn_account_on("m", spec.clone(), credential.clone(), "test", Some("old"));
+        tokio::pin!(first);
+        let mut rx = FrameRx::new(reader, MAX_FRAME);
+        // 실제 SpawnAccount가 전송된 사건으로 준비 구간을 잡는다. CLI version 제한시간을 쓰지 않는다.
+        let request = tokio::select! {
+            result = &mut first => panic!("agent 응답 전에 끝난 재개: {result:?}"),
+            request = rx.control::<LinkMsg>() => request.unwrap(),
+        };
+        let LinkMsg::Req { id, body: AgentRequest::SpawnAccount { .. }, .. } = request else {
+            panic!("계정 pane 기동 요청이어야 한다");
+        };
+        assert!(h.account_run(&binding.run).unwrap().unwrap().pane.is_none());
+        // 잠금이 없으면 두 번째 요청을 읽는 분기로 바로 실패한다. 거부가 timeout에 기대지 않는다.
+        let duplicate = tokio::select! {
+            result = h.spawn_account_on("m", spec.clone(), credential.clone(), "test", Some("old")) => result,
+            request = rx.control::<LinkMsg>() => panic!("같은 인증 홈의 중복 기동: {request:?}"),
+        };
+        assert_eq!(duplicate.unwrap_err().code, ErrorCode::BadRequest);
+        assert_eq!(conn.pending.lock().unwrap().len(), 1);
+        let info = SessionInfo {
+            id: "new".into(),
+            name: spec.name.clone(),
+            argv: spec.argv.clone(),
+            cwd: None,
+            pid: None,
+            started_at_ms: 0,
+            boot_id: "boot".into(),
+            cols: 80,
+            rows: 24,
+            state: SessionState::Running,
+            role: None,
+            label: None,
+            harness: spec.harness.clone(),
+        };
+        conn.pending.lock().unwrap().remove(&id).unwrap().send(Outcome::Ok(AgentResponse::Session(info))).unwrap();
+        assert_eq!(first.await.unwrap(), "new");
+        assert_eq!(h.account_run(&binding.run).unwrap().unwrap().pane.as_deref(), Some("new"));
+        assert!(
+            h.spawn_account_on("m", spec, credential, "test", Some("old")).await.is_err(),
+            "완료 뒤 옛 pane의 재개도 거부한다"
+        );
+        assert!(conn.pending.lock().unwrap().is_empty());
+    }
+}
