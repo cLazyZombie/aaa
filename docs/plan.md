@@ -773,7 +773,7 @@ host 프로젝트 폴더 구성:
   2. 사람의 승인: `aaa routine approve <p> <name>`. 승인 대상은 명령과 실행 머신의 sha256이고 host DB에 둔다. 파일의 명령이나 머신이 바뀌면 승인이 풀린다.
   - 둘 중 하나가 없으면 실행하지 않고, 명령 hash당 한 번 `routine-approval` 항목을 남긴다.
   - 승인 CLI는 host 머신 로컬 요청만 받는다(웹·원격 front 불가). aaa 세션 안(`AAA_SESSION_ID`·`AAA_HOOK_SOCK`)이거나 표준 입력이 터미널이 아니면 거부한다. 명령을 보이고 routine 이름을 치게 한다. CLI가 보낸 hash가 지금 파일과 다르면 host가 거부한다.
-  - **남는 한계:** aaa 밖에서 PTY를 만들어 env를 지운 프로세스가 사람처럼 이름을 치는 것까지는 막지 못한다. 0.2.35(터미널 + 이름 입력)보다는 강하지만 사람 확인 장치는 아니다. 강한 확인(웹 pairing 기기의 승인 버튼, OS 인증)은 M3에서 본다.
+  - **남는 한계:** aaa 밖에서 PTY를 만들어 env를 지운 프로세스가 사람처럼 이름을 치는 것까지는 막지 못한다. 0.2.35(터미널 + 이름 입력)보다는 강하지만 사람만 할 수 있게 하는 장치는 아니다. 강한 확인(웹 pairing 기기의 승인 버튼, OS 인증)은 M3에서 본다.
 - **실행:** 대상 머신 agent가 `sh -c`(Windows는 `cmd /C`)로 실행한다. host는 실행하지 않는다.
   - 실행 폴더: host 머신이면 프로젝트 폴더, 다른 머신이면 그 agent의 `<work_root>/<project>/routines`다.
   - 자식은 새 process group으로 띄우고, 60초가 지나면 **그 group만**(agent가 만든 pgid) 끝낸다. 출력은 64KB까지 모으고 나머지는 읽어 버린다.
@@ -3279,7 +3279,7 @@ coordinator 실기(10-18 00:58, iPhone 홈 화면 앱을 앞에 띄움, binary c
   FRONT_API는 통합 main의 1.31을 유지한다. ProfileResolve는 host의 정본·전역 기본값을 읽고, 수정 CLI는 host 머신의
   사람 터미널에서 host.toml만 쓴다. 초기 후보(당시 main 1.17)에서는 1.18로 묶어 1.17 연결을 검증했다. 이후 main이
   승인된 다른 기능으로 1.31까지 올라와 현재 N-1인 1.30의 실제 hello/status를 검증한다. 이 변경으로 minor를 더 올리지 않는다.
-  기본값 host도 첫 profile을 만들 수 있도록 설정 파일이 없으면 로컬 host DB로 host 머신인지 확인한다(사람 확인 유지).
+  기본값 host도 첫 profile을 만들 수 있도록 설정 파일이 없으면 로컬 host DB로 host 머신인지 확인한다(사람이 확인하는 것은 그대로).
 - **front.** 통합 main의 새 pane 창(§8.126 NewSessionDialog·AgentPicker)은 기존 Front Profiles 호출로 host 목록을 본다.
   PaneRun도 host가 푼 SpawnSpec.resolved_profile을 host_profiles.v1 agent에 보낸다. agent는 머신 덮어쓰기·hook만 적용한다.
   thread safety 인자는 pane에 더하지 않던 기존 동작을 유지한다. 이미 펼친 argv로 재개하는 pane은 저장된 argv를 쓴다.
@@ -5796,3 +5796,13 @@ L4 후속(10-20 00시 사용자 관찰): 멈춤 상태의 후보 예약과 재�
 - **굴리면 숨기기는 하지 않는다.** 참고 다섯(herdr·herdr-projects·herdr-web-ui·herdr-mobile-relay·t3code) 어디에도 없다. 그리고 보고서 HTML은 sandbox(opaque origin) iframe 안에서 굴러 앱이 그 굴림을 볼 수 없다.
 - **참고 위치.** t3code 4b1024da `apps/web/src/files/fileSurfaceChrome.tsx:10`(`h-10 px-3 gap-2` 한 줄)·`files/FilePreviewPanel.tsx:1203~1278`(rendered/source 등 아이콘 토글을 같은 줄에), herdr-mobile-relay `frontend/src/app.css:13·188~212`(머리 44px + 위 안전 영역, 한 줄 말줄임). herdr-web-ui aa624cb `FileViewer.tsx:325~360`·`FileViewer.css:252~269`가 옛 두 줄이다.
 - **검증.** 웹 E2E `38-chat-report-close`가 iPhone 390·430 × Safari 탭·홈 화면 앱(WebKit)의 다섯 링크마다 머리 64px 이하·머리 칸 겹침과 잘림 없음·이름 칸 64px 이상·몸이 화면 높이 85% 이상·페이지 iframe 85% 이상이고 몸이 구르지 않음을 단언한다. 고치기 전에는 첫 경우(390 Safari 맨 주소)에서 머리 129px·페이지 80%·몸 굴림으로 실패했다. E2E 16(데스크톱 HTML 소스 토글·휴대폰·iPad 화면 가득)·39 유지.
+
+### 8.303 자동화 상세·옛 형식 변환·막힌 큐 풀기(10-20, t-0468 관리 GUI W1)
+
+- **요청.** 사용자 10-20 「aaa admin 적인 기능들을 다 GUI에 넣고싶어 … cli에 접근하지 않는게 목표」, 관리 GUI 계획(t-0456 plan-revised §5 W1) 「추천대로」. 새 요청은 하나(막힌 큐), 나머지는 기존 Routines·RoutineRuns·MissionList·MissionShow·AutomationConvert를 쓴다.
+- **상세.** 자동화 줄의 이름·「자세히」가 상세를 연다: 요약·막힌 입력·설정(읽기)·대상·승인 범위·적용 판·마지막 건너뜀·기록 50건·파일 원문. 임무는 `mission_show`와 `mission:<이름>` 기록. 목록 줄의 접힌 최근 20건은 상세로 옮겼다. 규칙의 「적용 판」은 §3대로 따로 고정하지 않고 큐(대기 입력·처리 중 묶음)를 보인다. RoutineView에 `queue`, RoutineRuns 답에 `source`(파일 원문·sha256·참조 본문, 64KiB에서 자름)를 더했다.
+- **변환.** `AutomationConvert`에 `dry_run`·`plan_sha256`. 미리보기는 실제 변환과 같은 `prepare`이며 쓰기·임무 seed·audit가 없다. 실행은 본 계획의 hash가 같을 때만 쓴다(계획은 쓸 글과 원본 글 모두). 옛 host는 모르는 칸을 버리고 실제로 변환하므로 웹은 `/api/v1/me`의 `front_api`(새 칸, 옛 host는 없음)가 1.58 이상일 때만 단추를 둔다. 미리보기는 Reader도 본다.
+- **막힌 큐.** `AutomationUnblock { name, batch, discard }`. `do.message` 묶음은 보낸 결과를 모르면 처리 중으로 남아 큐를 막는다(§8.290 「재전송하지 않는다」). 「모름」은 다음 판정이 처리 중 묶음을 다시 만났을 때 묶음에 적는다(`Batch.unknown`): 지금 보내는 중인 묶음은 모름이 아니며 풀 수 없다(보내기와 풀기가 겹치지 않는다. 처음 판은 처리 중 글 묶음을 모두 모름으로 보여 「계속 보내기」 뒤 다음 전송 동안 막힘이 25초 남았다). 사람이 본 묶음 id가 같을 때만 그 묶음을 닫고 receipt를 남긴다. `discard`면 뒤 입력도 cancelled receipt로 닫는다. 세션 안 actor(`local:…@…`·worker·evaluator·detached)는 W0(§8.299) 방식으로 거부한다. 다른 동작의 처리 중 묶음은 다음 판정이 다시 고르므로 풀지 않는다. 임무의 MessageUnknown(임무 깨움)은 다른 것이며 MissionRestart가 그대로 맡는다. CLI는 `aaa automation unblock`·`routine list`의 막힘 줄.
+- **참고 위치.** t3code 4b1024da `apps/web/src/components/settings/ScheduledTasksSettings.tsx`: 목록 줄 `ScheduledTaskRow`(:558-679, 이름·배지·켜기와 상태 한 줄), 상태 배지 색(:238-243, `ui/badge.tsx:30-36` 옅은 바탕), 기록 줄 `[배지] 시각 요약`(:767-791), 원문 블록 `DeliveryBlock`(:816-825 `pre max-h-64 … whitespace-pre-wrap`), Dialog의 모바일 아래 sheet(`ui/dialog.tsx:63-87`). 따르지 않은 것: 삭제·지금 실행을 확인 없이 하는 것(:582-601) 대신 막힌 큐 풀기·변환은 확인을 거친다. herdr-projects 0.2.35 `src/routine.rs:92-107`(`last … · next … · skipped`)·`:299-325`(list의 승인 kind 낱말)를 줄 글과 승인 범위에 썼다. herdr-web-ui에는 자동화 화면이 없고 `components/BackgroundTasks.tsx:17-22,190`의 상태 낱말만 참고했다. 상세 틀은 이 저장소 herdr modal.css(데스크톱 가운데 창·휴대폰 아래 sheet, 뒤로·아래로 밀기 닫기)다.
+- **FRONT_API 1.58.** 옛 front는 새 칸을 버린다. 옛 host는 `queue`·`source`·`front_api`를 생략해 웹이 큐·원문·변환 단추를 숨기고, `automation_unblock`은 모르는 요청으로 거절한다. agent wire는 바뀌지 않는다.
+- **검증.** host 유닛(automation::tests): 미리보기 무기록(폴더 전체 비교)·Reader 미리보기 허용/변환 거부·다른 hash·미리보기 뒤 원본 변경 거부·미리보기 목록 = 실제 변환 목록, 풀기의 actor 거부 4종·다른 묶음 거부·계속(묶음만)·버리기(뒤 입력까지)·닫은 입력 재수락 없음·다른 동작 묶음 거부, 원문·본문 참조·글자 경계 자르기. 웹 유닛 `automationModel.test.mjs`. 웹 E2E `40-automation-detail`: 실제 일정 판정 기록으로 상세 절·기록 수(host 50건과 같음)·원문, 미리보기가 파일을 바꾸지 않음·생기는 규칙·보존 위치·변환 뒤 보존 사본 = 원본, Reader 미리보기만, 대상 pane을 끝내 실제 전송 실패로 막힌 묶음(다시 판정해도 같은 묶음·실패 기록 그대로), 휴대폰 Reader 상세 폭과 풀기 거부, 「계속 보내기」 → 다음 입력이 실제로 시도되어 새 묶음으로 다시 막힘 → 「버리기」 → 규칙 끈 뒤 tick 울타리 뒤 빈 큐·두 묶음의 입력 모두 「다시 보내지 않음」 기록. 패드 820 상세가 화면 안. `34-automations`는 기록 확인을 상세로 옮겼다.

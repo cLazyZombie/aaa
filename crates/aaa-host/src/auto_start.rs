@@ -328,7 +328,7 @@ impl Host {
                     .del_meta(&format!("automation_start_notice:{p}:{}:needs approval", r.name))
                     .map_err(internal)?;
             } else {
-                self.automation_start_notice(p,&r.name,"needs approval",&sha,"자동 시작의 처음·넓힌 범위는 사람 승인이 필요하다",format!("규칙 {}\n범위:\n{}\n범위 hash {sha}\n사람이 aaa 세션 밖에서 aaa automation approve {} {sha}로 승인한다.",r.name,self.automation_start_scope_text(p,r)?.unwrap_or_default(),r.name))?;
+                self.automation_start_notice(p,&r.name,"needs approval",&sha,"자동 시작의 처음·넓힌 범위는 승인이 필요하다",format!("규칙 {}\n범위:\n{}\n범위 hash {sha}\n사람이 aaa 세션 밖에서 aaa automation approve {} {sha}로 승인한다.",r.name,self.automation_start_scope_text(p,r)?.unwrap_or_default(),r.name))?;
             }
         }
         Ok(())
@@ -384,7 +384,7 @@ impl Host {
         }
         let current = self.automation_start_scope(p, r, a)?;
         let Some(scope) = &event.start_scope else {
-            return self.automation_wait(p, r, event, a, now, "입력의 승인 범위 기록 없음 · 사람 확인 필요".into());
+            return self.automation_wait(p, r, event, a, now, "입력의 승인 범위 기록 없음 · 확인 필요".into());
         };
         if scope != &current {
             return Ok(Decision::Skip("규칙 범위가 바뀌어 이전 차례를 취소함".into()));
@@ -398,7 +398,7 @@ impl Host {
             .map_err(internal)?
             .is_some_and(|old| old.covers(scope));
         if !allowed {
-            return self.automation_wait(p, r, event, a, now, "처음·넓힌 자동 시작 범위의 사람 승인 필요".into());
+            return self.automation_wait(p, r, event, a, now, "처음·넓힌 자동 시작 범위 승인 필요".into());
         }
         let wait_key = format!("automation_start_wait:{p}:{}:{}", r.name, hash(&event.id));
         if self.db.meta(&wait_key).map_err(internal)?.is_some()

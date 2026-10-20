@@ -1538,12 +1538,17 @@ impl Host {
             FrontRequest::AutomationApprove { project, name, approval_sha256 } => self
                 .automation_approve(&project, &name, &approval_sha256, actor)
                 .map(|routines| FrontResponse::Routines { routines }),
-            FrontRequest::AutomationConvert { project } => {
-                self.automation_convert(&project, actor).await.map(|files| FrontResponse::AutomationConverted { files })
-            }
-            FrontRequest::RoutineRuns { project, name } => {
-                self.routine_runs(&project, &name).map(|runs| FrontResponse::RoutineRuns { runs })
-            }
+            FrontRequest::AutomationConvert { project, dry_run, plan_sha256 } => self
+                .automation_convert(&project, dry_run, plan_sha256.as_deref(), actor)
+                .await
+                .map(|(files, plan_sha256)| FrontResponse::AutomationConverted { files, dry_run, plan_sha256 }),
+            FrontRequest::AutomationUnblock { project, name, batch, discard } => self
+                .automation_unblock(&project, &name, &batch, discard, actor)
+                .and_then(|_| self.routines(&project))
+                .map(|routines| FrontResponse::Routines { routines }),
+            FrontRequest::RoutineRuns { project, name } => self.routine_runs(&project, &name).and_then(|runs| {
+                Ok(FrontResponse::RoutineRuns { runs, source: self.routine_source(&project, &name)? })
+            }),
             FrontRequest::RoutineToggle { project, name, on } => {
                 self.routine_toggle(&project, &name, on, actor).map(|routines| FrontResponse::Routines { routines })
             }
