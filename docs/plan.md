@@ -6357,3 +6357,10 @@ L4 후속(10-20 00시 사용자 관찰): 멈춤 상태의 후보 예약과 재�
 - **finish 리뷰로 고친 것.** 검사 응답 경합(위), 저장이 말없이 끝나던 경우(그사이 바뀌면 알림), 명령 지금 실행이 「돌고 있음」 거부 때 key를 먼저 써 다시 누를 수 없던 것, 본문 경로로 규칙 TOML·`.trash/`·`.converted/`를 덮을 수 있던 것(새 본문은 `automations/` 안 `.md`), 본문 충돌에서 「내 초안으로 저장」이 옛 본문 판을 보내 빠져나갈 수 없던 것, 지우기와 지금 실행이 겹쳐 지운 규칙의 입력이 남던 것(둘 다 `automation_sources` lock 안).
 - **참고 위치.** t3code 4b1024da `ScheduledTasksSettings.tsx` `ScheduledTaskEditorForm`(948–1124: 저장 중 두 번 보내지 않음, 실패는 폼 안, 닫지 않음)과 「Run now」. 다르게 한 것: 참고는 지우기·지금 실행을 확인 없이 하지만 여기서는 확인 창을 거친다(계획 §3 삭제·W1과 같은 결). 충돌 창은 참고에 없어 할 일 T2(§8.311)의 나란히 보기 대신 줄 차이 한 칸으로 했다(자동화 파일은 짧다).
 - **검증.** host 유닛 `automation::edit::tests`(7)·`automation::tests`(W2 다섯), 웹 유닛 `automationForm.test.mjs`, 웹 E2E `55-automation-edit`(데스크톱·둘째 브라우저·Reader 390·휴대폰 조작 기기). 결함 심기: 판 대조를 빼면 host 유닛이 실패한다. 절차는 [시험](testing.md).
+
+### 8.343 자동화 기억 회수의 동시 편집 보존(10-21, t-0548)
+
+- **문제.** 열린 자동화 thread에 넘긴 기억 폴더를 보고·종료 때 통째로 되가져와 coordinator가 host 원문에 덧붙인 줄을 지웠다. host `automation_prepare`가 agent의 work_files.v1/N-1 Mission 파일 쓰기로 넘기고, 보고 수집·resolve의 `automation_copy_memory`가 목록·조각·hash를 검증한 뒤 host 폴더를 바꾸는 경로다. agent는 바이트 전송만 맡으므로 host에서 수리한다.
+- **판정.** 시작할 때 파일별 SHA-256 공통 판을 Run에 저장한다. 회수할 때 파일별 3-way로 한쪽 변경·추가·삭제를 반영하고, 같은 파일의 다른 변경·파일/폴더 경로 충돌은 host를 유지한다. 서로 합의한 파일만 기준을 갱신하므로 반복 보고와 마지막 회수가 바깥 편집을 뒤늦게 덮지 않는다. DB 재시작 뒤에도 기준을 유지하며 기준 없는 옛 실행은 다른 내용을 보수적으로 충돌 처리한다.
+- **보존.** 양쪽 tree와 충돌 경로를 `<이름>.memory-conflicts/<thread>/<충돌판>/`에 먼저 보존하고 inbox로 알린다. 충돌 파일의 양쪽 hash로 판을 정해 같은 충돌을 반복 복사하지 않는다. 보존 폴더는 전송 대상 밖에 둔다. 줄 병합·충돌 표지로 4KiB 요약이나 history 정리 결과를 추측하지 않는 단순한 방식을 택했다. 기존 8MiB·1000개 전송·합친 tree 상한, 64KiB 초과 안내는 유지한다. host 회수는 기억 폴더별 lock 안에서 최신 DB 판을 읽고 교체 직전 원문을 다시 대조한다.
+- **검증.** 수정 전 실제 host 회귀의 줄 유실을 RED로 확인한다. 파일별 판정 유닛·새/N-1 frame host 시험·기존 CI 자동화 m13의 마지막 회수/4KiB/history/inbox/다음 실행을 확장한다. 전체 ci-local·check-public 뒤 착지 창을 기다린다. 상세 절차는 [시험](testing.md)의 t-0548 절을 따른다.
