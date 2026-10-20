@@ -2,10 +2,13 @@
 // 실제 lab Claude 기록(사람 말·답·도구 줄·긴 code·긴 사람 말·표, 400줄) → agent → host → 웹. 앞 쪽을 처음까지 읽어 300줄을 넘겨
 // 화면 밖 줄의 본문이 없는(가상화) 상태에서 찾는다. 데스크톱 Chromium(⌘F·Enter·Shift+Enter·Esc)과 iPhone WebKit(머리 돋보기)을 본다.
 // 기다림은 제품 표지(`data-find-count`·`data-find-active`·`data-find-revealed`, 줄의 `data-find-count`·`data-find-dom`)다.
+// 「앞 기록도 찾기」(plan §8.310)는 최신 쪽만 받은 상태에서 처음까지 쪽을 이어 받으며 센다(`data-find-earlier`·`data-find-pages`). Claude·Codex.
 // 혼자 돌리기: node web/e2e/web.e2e.mjs --spec 44-chat-find
 import fs from "node:fs";
 import { aaa, AA, root, step, webkit, browser, inList, domIs, until, shot, pairPage } from "../lib/harness.mjs";
 import { pairDevice } from "../lib/devices.mjs";
+
+export const labEnv = { CODEX_HOME: `${root}/codex` };
 
 const NEEDLE = "ZQ-needle";
 const LINES = 400;
@@ -31,8 +34,22 @@ const TOTAL = 7;
 /** 찾기 칸 상태 */
 const bar = (page) => page.evaluate(() => {
   const el = document.querySelector('[data-testid="chat-find"]');
-  return el && { count: el.dataset.findCount ?? null, index: el.dataset.findIndex ?? null, active: el.dataset.findActive ?? null, revealed: el.dataset.findRevealed === "true", text: el.querySelector('[data-testid="chat-find-count"]').textContent };
+  return el && { count: el.dataset.findCount ?? null, index: el.dataset.findIndex ?? null, active: el.dataset.findActive ?? null, revealed: el.dataset.findRevealed === "true",
+    earlier: el.dataset.findEarlier, pages: el.dataset.findPages, text: el.querySelector('[data-testid="chat-find-count"]').textContent };
 });
+
+/** 앞 기록을 처음까지 받아 다 셌다: 개수가 n이고 「+」와 앞 기록 줄이 없고 기록 머리가 「처음이다」 */
+async function earlierDone(page, n, what) {
+  try {
+    await domIs(page, what, (n) => {
+      const el = document.querySelector('[data-testid="chat-find"]');
+      return el?.dataset.findCount === String(n) && el.dataset.findEarlier === "idle" && !el.querySelector('[data-testid="chat-find-count"]').textContent.endsWith("+")
+        && !el.querySelector('[data-testid="chat-find-earlier"]') && document.querySelector('[data-testid="chat-history-start"]')?.textContent === "처음이다";
+    }, n);
+  } catch (error) {
+    throw new Error(`${error.message}: ${JSON.stringify(await bar(page))}`);
+  }
+}
 
 /** 칠한 활성 찾음이 대화 칸 안에 보이고(위 찾기 칸에 가리지 않고), 그 글이 찾는 말이다 */
 async function activeVisible(page, what) {
@@ -73,6 +90,8 @@ export default async function () {
   const dir = `${root}/claude/projects/-lab-${label}`;
   fs.mkdirSync(dir, { recursive: true });
   const tr = `${dir}/s.jsonl`;
+  // 기록 줄 수: 「앞 기록도 찾기」 단계가 울타리 말 하나를 더한다
+  let rowsTotal = LINES;
   fs.writeFileSync(tr, Array.from({ length: LINES }, (_, n) => line(n)).join(""));
   aaa("tab", "create", "--machine", "labA", "--label", label, "--", "/bin/sh", "-c", '"$0" hook --agent claude "$1"; exec cat', AA,
     JSON.stringify({ hook_event_name: "SessionStart", session_id: "6a5b4c3d-2e1f-4a0b-9c8d-7e6f5a4b3c40", source: "startup", transcript_path: tr }));
@@ -91,7 +110,7 @@ export default async function () {
       await chat.evaluate((el) => { el.scrollTop = 0; el.dispatchEvent(new Event("scroll", { bubbles: true })); });
       await chat.and(page.locator('[aria-busy="false"]')).waitFor();
     }
-    await until("기록 전부", async () => (await chat.locator(".chat-row").count()) === LINES);
+    await until("기록 전부", async () => (await chat.locator(".chat-row").count()) === rowsTotal);
     await chat.evaluate((el) => { el.scrollTop = el.scrollHeight; el.dispatchEvent(new Event("scroll", { bubbles: true })); });
     await chat.getByText(`끝 ${NEEDLE}`).waitFor();
     const mounted = await chat.locator(".markdown").count();
@@ -107,6 +126,7 @@ export default async function () {
       await page.keyboard.press("ControlOrMeta+f");
       await page.getByRole("searchbox", { name: "대화에서 찾기" }).fill(NEEDLE);
       await domIs(page, "받은 범위 1/1+", () => document.querySelector('[data-testid="chat-find-count"]')?.textContent === "1/1+");
+      await shot(page, "find-desktop-latest");
       await page.keyboard.press("Escape");
       await domIs(page, "앞 기록 전 닫힘", () => document.querySelector('[data-testid="chat-find"]') === null);
     });
@@ -168,11 +188,137 @@ export default async function () {
     await page.context().close();
   });
 
+  await step("대화 안 찾기: 앞 기록도 찾기·멈춤·이어 찾기", async () => {
+    // 앞 쪽 요청(pane_chat before)을 센다. gate가 있으면 첫 요청 하나를 붙잡는다
+    const befores = [];
+    let gate = null;
+    const { page } = await pairPage(browser, aaa("web", "pair").code, { width: 1280, height: 800 }, {
+      route: ["**/api/v1/call", async (route) => {
+        const request = route.request().postDataJSON();
+        if (request?.op === "pane_chat" && request.before) {
+          befores.push(request.before);
+          if (gate) {
+            const held = gate;
+            gate = null;
+            held.arrive();
+            await held.released;
+          }
+        }
+        await route.continue();
+      }],
+    });
+    await inList(page, `pane-${label}`);
+    const toggle = page.getByTestId("chat-toggle");
+    await toggle.waitFor();
+    if ((await toggle.getAttribute("aria-pressed")) !== "true") await toggle.click();
+    const chat = page.getByTestId("chat");
+    await chat.getByText(`끝 ${NEEDLE}`).waitFor();
+    await chat.focus();
+    await page.keyboard.press("ControlOrMeta+f");
+    await page.getByRole("searchbox", { name: "대화에서 찾기" }).fill(NEEDLE);
+    await domIs(page, "받은 범위 1/1+", () => document.querySelector('[data-testid="chat-find-count"]')?.textContent === "1/1+");
+    await moved(page, 0, "받은 범위 시작");
+    const latest = await chat.locator(".chat-row").count();
+    if (befores.length !== 0 || latest >= LINES) throw new Error(`최신 쪽만이 아니다: 앞 쪽 ${befores.length}, 줄 ${latest}`);
+    const earlierButton = page.getByRole("button", { name: "앞 기록도 찾기" });
+    await earlierButton.waitFor();
+    await shot(page, "find-desktop-earlier");
+
+    // 멈춤: 첫 앞 쪽을 붙잡은 동안 멈추면, 받던 쪽은 붙이고(그 쪽도 센다) 다음 쪽은 부르지 않는다
+    let release;
+    const arrived = new Promise((arrive) => { gate = { arrive, released: new Promise((r) => { release = r; }) }; });
+    await earlierButton.click();
+    await arrived;
+    await domIs(page, "앞 기록 받는 중", () => document.querySelector('[data-testid="chat-find"]')?.dataset.findEarlier === "loading");
+    await shot(page, "find-desktop-earlier-loading");
+    await page.getByRole("button", { name: "멈춤" }).click();
+    await domIs(page, "멈춤", () => document.querySelector('[data-testid="chat-find"]')?.dataset.findEarlier === "idle");
+    release();
+    await until("멈춘 뒤 받던 쪽 붙음", async () => (await chat.locator(".chat-row").count()) > latest);
+    // 울타리: 새 말을 기록에 더하면 최신 쪽 읽기가 앞 쪽과 같은 한 줄 차례(ConversationRefresh)로 돈다. 그 글이 그려졌으면 멈춤 뒤에
+    // 앞 쪽을 또 불렀다면 그 요청이 이미 왔다
+    fs.appendFileSync(tr, L({ type: "user", message: { role: "user", content: "울타리 말" } }));
+    rowsTotal++;
+    await chat.getByText("울타리 말").waitFor();
+    if (befores.length !== 1) throw new Error(`멈춘 뒤에도 앞 쪽을 불렀다: ${befores.length}`);
+    const stopped = await bar(page);
+    if (!stopped.text.endsWith("+") || stopped.pages !== "0") throw new Error(`멈춘 뒤 상태 ${JSON.stringify(stopped)}`);
+    await countsAgree(page, "멈춘 뒤");
+
+    // 이어 찾기: 처음까지 받으면 7개, 「+」와 앞 기록 줄이 사라진다. 보던 찾음(끝 말)과 끝 따라가기는 그대로다
+    await page.getByRole("button", { name: /앞 기록도 찾기|이어 찾기/ }).click();
+    await earlierDone(page, TOTAL, "처음까지 7개");
+    const done = await bar(page);
+    if (done.index !== String(TOTAL - 1) || done.active !== stopped.active) throw new Error(`받는 동안 보던 찾음이 바뀌었다 ${JSON.stringify({ stopped, done })}`);
+    await activeVisible(page, "앞 기록을 다 받은 뒤");
+    if (!(await chat.evaluate((el) => el.scrollHeight - el.clientHeight - el.scrollTop <= 1))) throw new Error("앞 기록을 받는 동안 끝 따라가기를 놓았다");
+    await countsAgree(page, "처음까지");
+    if ((await chat.locator(".chat-row").count()) !== rowsTotal) throw new Error("기록 줄 수가 다르다");
+    const mounted = await chat.locator(".markdown").count();
+    if (mounted >= LINES / 2) throw new Error(`앞 기록 찾기가 본문을 모두 그렸다: ${mounted}`);
+    await shot(page, "find-desktop-earlier-done");
+    // 받은 앞 기록의 찾음으로 간다(본문 없는 맨 앞 줄)
+    await page.keyboard.press("Enter");
+    await moved(page, 0, "앞 기록의 처음");
+    await page.context().close();
+  });
+
+  await step("대화 안 찾기: iPad Codex 기록 앞 기록도 찾기", async () => {
+    const codexLabel = "find-codex";
+    const id = "01900000-0000-7000-8000-00000000b486";
+    const dir = `${root}/codex/sessions/2026/10/20`;
+    fs.mkdirSync(dir, { recursive: true });
+    const text = (n) => (n === 1 ? `처음 ${NEEDLE}` : n === LINES - 1 ? `끝 ${NEEDLE}` : `기록 ${n}: 빌드 오류`);
+    fs.writeFileSync(`${dir}/rollout-2026-10-20T00-00-00-${id}.jsonl`, Array.from({ length: LINES }, (_, n) => L({ type: "response_item",
+      payload: { type: "message", role: n % 2 ? "assistant" : "user", content: [{ type: n % 2 ? "output_text" : "input_text", text: text(n) }] } })).join(""));
+    aaa("tab", "create", "--machine", "labA", "--label", codexLabel, "--", "/bin/sh", "-c", '"$0" hook --agent codex "$1"; exec cat', AA,
+      JSON.stringify({ type: "agent-turn-complete", "thread-id": id }));
+    await until("Codex 기록 연결", () => aaa("pane", "list").panes.find((p) => p.name === codexLabel)?.agent?.harness === "codex");
+    // 패드(iPad WebKit 820): 머리 돋보기로 연다
+    const wk = await webkit.launch({ headless: true });
+    try {
+      const { page } = await pairDevice(wk, aaa("web", "pair").code, "ipad");
+      await inList(page, `pane-${codexLabel}`);
+      const toggle = page.getByTestId("chat-toggle");
+      await toggle.waitFor();
+      if ((await toggle.getAttribute("aria-pressed")) !== "true") await toggle.click();
+      const chat = page.getByTestId("chat");
+      await chat.getByText(`끝 ${NEEDLE}`).waitFor();
+      await page.getByTestId("chat-find-open").click();
+      await page.getByRole("searchbox", { name: "대화에서 찾기" }).fill(NEEDLE);
+      await domIs(page, "Codex 받은 범위 1/1+", () => document.querySelector('[data-testid="chat-find-count"]')?.textContent === "1/1+");
+      await shot(page, "find-ipad-codex-latest");
+      await page.getByRole("button", { name: "앞 기록도 찾기" }).click();
+      await earlierDone(page, 2, "Codex 처음까지 2개");
+      await page.getByRole("button", { name: "다음 찾음" }).click();
+      await domIs(page, "Codex 처음 찾음", () => {
+        const el = document.querySelector('[data-testid="chat-find"]');
+        return el?.dataset.findIndex === "0" && el.dataset.findRevealed === "true";
+      });
+      await activeVisible(page, "Codex 처음 찾음");
+      await shot(page, "find-ipad-codex-first");
+    } finally {
+      await wk.close();
+    }
+  });
+
   await step("대화 안 찾기: iPhone 머리 돋보기", async () => {
     const wk = await webkit.launch({ headless: true });
     try {
       const { page } = await pairDevice(wk, aaa("web", "pair").code, "iphone");
-      await openChat(page);
+      await openChat(page, async () => {
+        await page.getByTestId("chat-find-open").click();
+        await page.getByRole("searchbox", { name: "대화에서 찾기" }).fill(NEEDLE);
+        await domIs(page, "iPhone 받은 범위 1/1+", () => document.querySelector('[data-testid="chat-find-count"]')?.textContent === "1/1+");
+        await shot(page, "find-iphone-latest");
+        // 휴대폰도 앞 기록 줄이 칸 아래 화면 안에 들고, 처음까지 받으면 사라진다
+        const earlier = await page.getByTestId("chat-find-earlier").boundingBox();
+        if (!earlier || earlier.x < 0 || earlier.x + earlier.width > page.viewportSize().width) throw new Error(`앞 기록 줄이 화면 밖 ${JSON.stringify(earlier)}`);
+        await page.getByRole("button", { name: "앞 기록도 찾기" }).click();
+        await earlierDone(page, TOTAL, "iPhone 처음까지 7개");
+        await shot(page, "find-iphone-earlier-done");
+        await page.getByRole("button", { name: "찾기 닫기" }).click();
+      });
       await page.getByTestId("chat-find-open").click();
       const input = page.getByRole("searchbox", { name: "대화에서 찾기" });
       await input.waitFor();
