@@ -52,6 +52,7 @@ import { CommandPalette, type PaletteActions } from "./CommandPalette";
 import { currentAppearance, updateAppearance, useAppearance } from "./theme";
 import { passingFolder, recentDirectories } from "./herdr/recent-directories.ts";
 import { useMediaQuery } from "./herdr/useMediaQuery.ts";
+import { inAppLink } from "./reportLinks.ts";
 import { watchDrawerSwipe } from "./herdr/edgeSwipe.ts";
 import { DrawerContext, DrawerToggle, HeadContext, HeadMore, HeadNote } from "./drawer";
 import { highMachines, HIGH_STAT } from "./machineStats";
@@ -932,6 +933,24 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
   }, [keepScreenOn, holdScreen, viewing]);
   // 파일 보기(결정 20 D7, herdr-web-ui useFileViewer): 휴대폰 뒤로가 닫도록 기록 한 칸이다
   const { viewing: fileViewing, openFile, closeFile } = useFileViewer();
+  // 대화 글의 보고서·앱 주소(plan §8.299): 휴대폰과 홈 화면 앱에서는 새 창 대신 앱 안에서 연다. 새 창으로 연 보고서에서는 돌아올
+  // 길이 없다(Safari 새 탭은 뒤로 칸이 없고, 홈 화면 앱은 뒤로 단추가 없다). 보고서는 파일 보기의 기록 한 칸이라 닫기·뒤로·가장자리
+  // 쓸기가 대화로 돌아오고, 대화는 그 밑에 그대로 있어 같은 pane·같은 굴림 자리다. 넓은 창은 새 탭 습관 그대로다
+  const homeScreenApp = useMediaQuery("(display-mode: standalone)") || (navigator as { standalone?: boolean }).standalone === true;
+  const openLink = (href: string): boolean => {
+    if (wideScreen && !homeScreenApp) return false;
+    const link = inAppLink(href, location.origin);
+    if (link === null) return false;
+    if (link.kind === "view") openFile({ path: link.path, pane: null, view: link.base });
+    else if (link.kind === "report")
+      // 보고서 이름의 보기 경로를 받아 연다(그 index.html, 없으면 host가 그린 목록). 못 받으면 앱 보고서 화면으로 간다
+      void call({ op: "library_open", project: link.project, name: link.name }).then(
+        (v) => (v.kind === "library" ? openFile({ path: "", pane: null, view: v.base }) : undefined),
+        () => (location.hash = hashOf(`reports:${link.project}/${link.name}`)),
+      );
+    else location.hash = link.hash;
+    return true;
+  };
   // 목록은 열린 thread만(herdr-projects sidebar.rs), 모든 thread 화면은 끝난 것까지(popup.rs Section::Threads).
   // 보관한(지웠거나 이름을 바꾼) 프로젝트의 thread는 어디에도 보이지 않는다(참고 archive는 sidebar token을 지운다)
   const allThreads = [...threads.values()].filter((t) => t.role !== "evaluator" && t.project_status !== "archived");
@@ -1112,6 +1131,7 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
             role={role}
             autoSelected={autoSelected}
             onOpenFile={role !== "reader" ? (path) => openFile({ path, pane: current.id }) : undefined}
+            onOpenLink={openLink}
             title={paneTitle(current)}
             agent={agentOf(current, threadOfPane.get(current.id))}
             crumb={`${current.machine} › ${paneSub(current)}`}
@@ -1192,6 +1212,16 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
           source={{ worktree: fileViewing.worktree }}
           onClose={closeFile}
           onOpen={(path) => openFile({ path, pane: null, worktree: fileViewing.worktree })}
+        />
+      )}
+      {/* 대화의 보고서 주소(plan §8.299): 보기 경로 안. 고른 다른 파일도 같은 보기 경로 안이다 */}
+      {fileViewing && fileViewing.pane === null && fileViewing.view && (
+        <FileViewer
+          key={`${fileViewing.view} ${fileViewing.path}`}
+          path={fileViewing.path}
+          source={{ view: fileViewing.view }}
+          onClose={closeFile}
+          onOpen={(path) => openFile({ path, pane: null, view: fileViewing.view })}
         />
       )}
       </ErrorBoundary>

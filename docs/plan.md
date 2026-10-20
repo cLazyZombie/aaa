@@ -5759,3 +5759,18 @@ L4 후속(10-20 00시 사용자 관찰): 멈춤 상태의 후보 예약과 재�
 - **변환본 보존.** create·doctor의 기본 PR 규칙 생성/누락 판정은 `routines/pr-followup.md`와 `automations/pr-followup.toml`을 함께 본다. 변환본을 덮거나 옛 routine을 되살리지 않는다.
 - **브라우저 없는 사용량.** §8.45·§8.267의 웹 요청 전용 갱신을 바꾼다. ticker가 한 번에 하나의 갱신 task를 시작하고 서비스의 5분 TTL·실패 재조회·429 backoff를 쓴다. 판정은 마지막 완료된 보고를 즉시 읽고, 새 보고가 달라지면 다음 tick을 깨운다. 자동화의 확인 불가 대기는 마지막 실행 정보와 inbox에 나타나며 입력을 보존한다. 경고는 usage 항목으로 넣어 routine의 미처리 차례 판정에 섞지 않는다. 외부 push는 보내지 않는다.
 - **검증.** host 요청 경계의 일곱 요청×actor 거부/허용, 실제 coordinator·worker pane과 세션 밖 PTY pairing, 변환→doctor→create→규칙 로드, 실제 ticker→가짜 구독 HTTP→사용량 대기→회복 뒤 입력 1회 처리·조회 실패 표시, m13의 둘째 unarchive 거부·첫 프로젝트 보관 뒤 성공·시작 거부를 확인한다. 수정 전 실패 로그를 보존한다. FRONT_API·schema는 변경하지 않는다.
+||||||| parent of f6a1b232 (대화에서 연 보고서를 휴대폰에서 앱 안 파일 보기로 열고 닫기·뒤로가 같은 대화 자리로 돌아온다 (t-0460))
+
+### 8.300 대화에서 연 보고서의 닫기(10-20, t-0460)
+
+- **요청.** 사용자 「iPhone에서 대화창에서 보고서 글을 열면 다시 대화로 돌아갈 방법이 없어 닫기 같은 걸 만들어 줘」.
+- **원인.** 대화 글의 링크는 Markdown 링크·맨 주소·backtick 주소 모두 `target=_blank`다. host가 보고에 붙이는 `보기: https://…/v/<cap>/`도, 앱 보고서 주소(`/#report=…`)도 새 창으로 열렸다. 새 창은 sandbox(opaque origin) 문서라 앱 화면도 닫기도 없고, Safari 새 탭은 뒤로 칸이 없으며(헤드리스 WebKit에서 새 창 기록 1칸), 홈 화면 앱은 뒤로 단추가 없다. 파일 경로(보고 사본 `report.md` 등)는 이미 파일 보기(기록 한 칸, 닫기)로 열렸다.
+- **고침.** 좁은 창(768px 이하)이나 홈 화면 앱(`display-mode: standalone`·`navigator.standalone`)에서는 대화 글의 같은 host 링크를 앱 안에서 연다(`reportLinks.ts` `inAppLink`, Markdown `OpenLinkContext`, ChatPanel `onOpenLink`).
+  - `/v/<cap>/<path>`: 파일 보기의 새 원천 `{ view: "/v/<cap>/" }`. 목록 없이 그 주소의 HEAD로 종류·크기를 읽고, HTML은 결과물과 같은 sandbox iframe(host `VIEW_CSP frame-ancestors 'self'`), Markdown은 미리보기다. iframe 문서 탐색은 host가 열람으로 적는다(`report_navigation`).
+  - `/#report=<p>/<n>`: `library_open`의 보기 경로로 같은 파일 보기를 연다. 받지 못하면 앱 보고서 화면으로 간다.
+  - 그 밖의 앱 주소(`/#thread=…` 등): 새 창 대신 앱 안 주소 이동(뒤로가 대화로 돌아온다).
+  - 다른 host·내려받기(`?download=1`)·`/f/`·API 주소, 보조 키·가운데 단추는 브라우저 그대로다. 넓은 창(데스크톱·패드 Safari)은 새 탭 습관 그대로다.
+- **닫기.** 파일 보기의 기록 한 칸(`useFileViewer`)이라 닫기(X)·브라우저 뒤로·iOS 가장자리 쓸기가 같은 결과다. 대화는 그 밑에 그대로 있어 같은 pane·같은 굴림 자리다. 휴대폰(pointer: coarse)은 화면 가득이고 머리는 위 안전 영역 아래에 있으며, 긴 보고서는 iframe 안에서 굴러 머리의 닫기는 늘 보인다. 휴대폰 폭의 닫기는 터치를 알리지 않는 브라우저에서도 44px이다(style.css).
+- **참고 위치.** herdr-web-ui aa624cb: `src/components/Markdown.tsx:192`·링크도 `target=_blank`라 같은 문제가 있다. 기록 한 칸 닫기는 `src/lib/useFileViewer.ts`(Android Back)를 따른다. t3code 4b1024da: `apps/web/src/browser/browserLinkTarget.ts:17` `resolveLinkTarget`(⌘·Ctrl·가운데 단추는 system, 아니면 앱 안 미리보기)과 `useOpenLink.ts`를 따랐다. aaa는 설정 대신 화면 폭·홈 화면 앱으로 고른다. herdr·herdr-projects는 TUI라 웹 링크가 없다.
+- **검증.** 웹 유닛 `reportLinks.test.mjs`. 웹 E2E `38-chat-report-close`: WebKit iPhone 390·430 × Safari 탭·홈 화면 앱 흉내(devices.mjs)에서 맨 주소·Markdown 링크·backtick 주소·앱 보고서 주소·파일 경로를 기록 가운데에서 누르고, 새 창이 없음(앱 안 보기 표지 뒤), 닫기가 화면 안·44px 이상, 닫기와 `history.back()` 뒤 같은 `#pane=`·같은 scrollTop을 본다. 데스크톱 Chromium 1280은 새 탭이다. 고치기 전에는 첫 경우(390 Safari 맨 주소)부터 새 창으로 실패했다.
+- **실기 확인 필요.** 실제 iOS 홈 화면 앱이 `target=_blank` 같은 scope 주소를 어떻게 띄우는지(같은 창 이동·Safari 보기)와 가장자리 쓸기가 `popstate`를 내는지는 헤드리스가 보이지 않는다.

@@ -1196,3 +1196,9 @@ button.report-delete:hover:not(:disabled) { color: var(--danger-text); }
 .chat-older:disabled { cursor: progress; }
 
 .chat-transcript { padding-bottom: var(--chat-tail-space, 0px); }
+
+/* t-0460(plan §8.299): 휴대폰 폭의 파일·보고서 보기 닫기는 손가락 크기다. 대화에서 연 보고서를 닫는 길이라, 터치를
+   pointer: coarse로 알리지 않는 브라우저에서도 44px(herdr/FileViewer.css의 coarse 규칙과 같은 크기)로 둔다 */
+@media (max-width: 640px) {
+  .file-viewer .file-viewer-close { width: max(44px, var(--touch-target)); height: max(44px, var(--touch-target)); }
+}

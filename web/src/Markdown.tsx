@@ -4,7 +4,7 @@
 // 그림과 파일 열기는 그것을 주는 곳(파일 보기: `MarkdownImageContext`·`OpenFileContext`)에서만 된다. 그 밖(보고서 등)은
 // 참고의 「그림을 그리지 않는 곳」처럼 대체 글, 「열 수 없는 곳」처럼 이름 뒤 경로다.
 // 문구는 참고 i18n.ko.ts 그대로다.
-import { createContext, Fragment, memo, useCallback, useContext, useEffect, useId, useMemo, useState, type CSSProperties, type ReactNode } from "react";
+import { createContext, Fragment, memo, useCallback, useContext, useEffect, useId, useMemo, useState, type CSSProperties, type MouseEvent, type ReactNode } from "react";
 import { Check, Copy, ImageOff } from "lucide-react";
 import { foldCode, parseMarkdown, type InlineNode, type ListBlock, type MarkdownBlock } from "./herdr/markdown.ts";
 import { codeIsFilePath, OpenFileContext, splitFilePaths } from "./herdr/filePaths.ts";
@@ -15,11 +15,18 @@ import { CHAT_HIGHLIGHT_LIMIT, languageForFence } from "./herdr/highlight.ts";
 import { FilePathLink } from "./FilePathLink.tsx";
 import { formatBytes } from "./formatBytes.ts";
 import { HighlightedCode } from "./HighlightedCode.tsx";
+import { browserClick } from "./reportLinks.ts";
 import "./herdr/Markdown.css";
 
 /** Stats an image before it can load; null context keeps chat images as links. */
 type MarkdownImageResolver = (src: string) => Promise<MarkdownImagePreview | null>;
 export const MarkdownImageContext = createContext<MarkdownImageResolver | null>(null);
+
+/**
+ * 링크를 새 창 대신 앱 안에서 연다(대화 보기, plan §8.299): 열었으면 true. 없거나 false면 링크 그대로(새 창)다. 보조 키·가운데
+ * 단추는 묻지 않고 브라우저 몫이다
+ */
+export const OpenLinkContext = createContext<((href: string) => boolean) | null>(null);
 
 /**
  * An image that holds its box until it decodes (lib/imageBox.ts). With `slot`, the wrapper is the
@@ -87,6 +94,11 @@ function Inline({ nodes, interactive = true, standalone = false }: { nodes: Inli
   const context = useContext(OpenFileContext);
   const open = interactive ? context : null;
   const imageResolver = useContext(MarkdownImageContext);
+  const openLink = useContext(OpenLinkContext);
+  const follow = (href: string) =>
+    openLink === null ? undefined : (e: MouseEvent<HTMLAnchorElement>) => {
+      if (!browserClick(e) && openLink(href)) e.preventDefault();
+    };
   return (
     <>
       {nodes.map((node, index) => {
@@ -105,7 +117,7 @@ function Inline({ nodes, interactive = true, standalone = false }: { nodes: Inli
             // agent는 주소를 backtick에 넣곤 한다: 눈에는 code로 두고 열린다
             if (interactive && /^https?:\/\/\S+$/i.test(node.value))
               return (
-                <a key={key} className="markdown-code-link" href={node.value} target="_blank" rel="noopener noreferrer">
+                <a key={key} className="markdown-code-link" href={node.value} target="_blank" rel="noopener noreferrer" onClick={follow(node.value)}>
                   <code>{node.value}</code>
                 </a>
               );
@@ -144,7 +156,7 @@ function Inline({ nodes, interactive = true, standalone = false }: { nodes: Inli
             );
           case "link":
             return (
-              <a key={key} href={node.href} target="_blank" rel="noopener noreferrer">
+              <a key={key} href={node.href} target="_blank" rel="noopener noreferrer" onClick={follow(node.href)}>
                 <Inline nodes={node.children} interactive={false} standalone={standalone} />
               </a>
             );

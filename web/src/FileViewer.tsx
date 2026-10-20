@@ -7,6 +7,7 @@
 // aaa가 다른 곳: 허용 폴더(§6.5) 밖이면 그 까닭을 말한다(참고는 서버 사용자가 읽을 수 있는 것을 다 연다).
 // thread 결과물도 이것으로 연다(차이 목록 R1): 결과물 목록의 보기 경로(`/v/`, opaque origin sandbox)로 읽고, 경로는 결과물
 // 안 상대 경로다. 문서 안 링크·그림은 결과물 맨 위를 `/`로 두고 풀어 결과물 밖으로 나가지 않는다(plan §8.168).
+// 대화 글의 보고서 주소(`/v/<cap>/…`, plan §8.299)도 같은 보기 경로라 목록 없이 그 주소의 HEAD(종류·크기)로 연다.
 import { lazy, Suspense, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { Braces, Check, Copy, Download, ExternalLink, TriangleAlert, X } from "lucide-react";
 
@@ -43,8 +44,11 @@ const MARKDOWN_CLASS: Record<MarkdownWidth, string> = {
 };
 
 
-/** 파일 보기가 읽는 곳: pane의 파일(허용 폴더 안), thread 결과물, 또는 thread 작업 폴더의 파일(보고서 안 링크, plan §8.171) */
-export type FileSource = { pane: string } | { project: string; thread: string } | { worktree: { project: string; thread: string } };
+/**
+ * 파일 보기가 읽는 곳: pane의 파일(허용 폴더 안), thread 결과물, thread 작업 폴더의 파일(보고서 안 링크, plan §8.171), 또는
+ * 보기 경로 맨 위(`/v/<cap>/`, 대화의 보고서 주소, plan §8.299)
+ */
+export type FileSource = { pane: string } | { project: string; thread: string } | { worktree: { project: string; thread: string } } | { view: string };
 /** 찾은 파일과 그 읽기 경로, 또는 같은 이름의 후보들 */
 type Found = { info: FileInfo; url: string | null } | { candidates: string[] };
 /** 결과물 목록: 보기 경로 맨 위와 상대 경로별 파일 */
@@ -61,6 +65,25 @@ const libraryInfo = (f: LibraryFile): FileInfo => ({
   kind: f.kind,
 });
 const notFound = (path: string) => new ApiError({ code: "not_found", message: `결과물에 없다: ${path}` });
+/** 보기 경로가 알린 종류(host `library::content_type`)의 파일 보기 갈래 */
+const kindOfMime = (mime: string): FileInfo["kind"] =>
+  mime.startsWith("image/") ? "image"
+    : mime.startsWith("video/") ? "video"
+      : mime.startsWith("audio/") ? "audio"
+        : mime === "application/pdf" ? "pdf"
+          : mime.startsWith("text/") || mime === "application/json" ? "text"
+            : "binary";
+/** 보기 경로의 파일: 목록 없이 그 주소의 HEAD로 종류·크기를 읽는다(열람 기록은 문서 탐색만 남는다, host `report_navigation`) */
+async function viewFile(base: string, path: string): Promise<Found> {
+  const rel = path.replace(/^\/+/, "");
+  const url = base + encodePath(rel);
+  const res = await fetch(url, { method: "HEAD", credentials: "same-origin" });
+  if (res.status === 404) throw notFound(rel);
+  if (!res.ok) throw new ApiError({ code: "unavailable", message: `보기 경로가 ${res.status}로 답했다(2시간이 지난 주소일 수 있다)` });
+  const mime = (res.headers.get("content-type") ?? "").split(";")[0]!.trim() || "application/octet-stream";
+  const name = rel.split("/").pop() || "index.html";
+  return { info: { path: `/${rel}`, name, size: Number(res.headers.get("content-length") ?? 0), modified_ms: 0, mime, kind: kindOfMime(mime) }, url };
+}
 
 /** 열 수 없는 까닭. 그 밖의 오류(agent가 파일 보기를 모름·연결 끊김)는 host가 말한 까닭을 붙인다 */
 type Problem = { kind: "missing" } | { kind: "outside" } | { kind: "unreadable"; message: string | null };
@@ -87,7 +110,8 @@ export function FileViewer({ path: asked, source: from, onClose, onOpen }: { pat
   const thread = "thread" in from ? from.thread : null;
   // 보고서 안 링크는 pane 대신 그 thread의 머신·작업 폴더에서 찾는다. 찾은 뒤는 pane 파일과 같은 읽기 경로(`/f/`)다
   const worktree = "worktree" in from ? from.worktree : null;
-  const isLibrary = project !== null;
+  const viewBase = "view" in from ? from.view : null;
+  const isLibrary = project !== null || viewBase !== null;
   // 결과물 목록은 한 번 받는다(보기 경로는 2시간 산다)
   const library = useRef<Promise<Library> | null>(null);
   const locate = useCallback(
@@ -102,6 +126,7 @@ export function FileViewer({ path: asked, source: from, onClose, onOpen }: { pat
         if (r.kind !== "pane_file") throw new Error("thread_file");
         return r.info === null ? { candidates: r.candidates } : { info: r.info, url: r.url };
       }
+      if (viewBase !== null) return viewFile(viewBase, path);
       library.current ??= call({ op: "thread_library", project: project ?? "", thread: thread ?? "" }).then((r) => {
         if (r.kind !== "library") throw new Error("thread_library");
         return { base: r.base, files: new Map(r.files.map((f) => [f.path, f])) };
@@ -112,7 +137,7 @@ export function FileViewer({ path: asked, source: from, onClose, onOpen }: { pat
       if (f === undefined) throw notFound(rel);
       return { info: libraryInfo(f), url: lib.base + encodePath(rel) };
     },
-    [pane, project, thread, worktree?.project, worktree?.thread],
+    [pane, project, thread, worktree?.project, worktree?.thread, viewBase],
   );
   const [path, setPath] = useState(asked);
   const target = useMemo(() => fileLineTarget(path), [path]);

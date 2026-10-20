@@ -146,6 +146,7 @@ export function TermView({
   dock,
   controls,
   onOpenFile,
+  onOpenLink,
   autoSelected = false,
 }: {
   pane: PaneView;
@@ -162,6 +163,8 @@ export function TermView({
   controls?: MutableRefObject<PaneControls | null>;
   /** 파일 경로 링크를 눌렀다: 파일 보기를 연다(결정 20 D7, plan §8.125). 없으면(보기 권한) 링크로 그리지 않는다 */
   onOpenFile?: (path: string) => void;
+  /** 대화 글의 링크를 앱 안에서 연다(휴대폰의 보고서·앱 주소, plan §8.299): 열었으면 true */
+  onOpenLink?: (href: string) => boolean;
   /** App이 스스로 고른 pane(주소의 pane이 없어 첫 줄로 왔다): 사용자가 고를 때까지 키보드를 가져가지 않는다(참고 autoSelected) */
   autoSelected?: boolean;
 }) {
@@ -2058,7 +2061,7 @@ export function TermView({
         <HeadMore />
       </header>
       {flowNotices && notices}
-      {chatView && chatable && <ChatPanel pane={pane.id} status={paneAgentStatus(pane)} readNow={chatSent} onOpenFile={onOpenFile} onMessages={setChatMessages}
+      {chatView && chatable && <ChatPanel pane={pane.id} status={paneAgentStatus(pane)} readNow={chatSent} onOpenFile={onOpenFile} onOpenLink={onOpenLink} onMessages={setChatMessages}
         pending={pendingSends} harness={pane.agent?.harness === "codex" ? "codex" : "claude"} onDismissPending={(id) => setPendingSends((list) => list.filter((p) => p.id !== id))}
         steer={steerOpen === "hidden" ? undefined : { state: steer, ...steerOpen, onSteer: pressSteer, onInspect: () => setChatView(false) }} />}
       {/* data-direct-typing: 바로 입력이면 xterm 칸도 화면 키보드를 올린다(herdr/viewport.ts가 본다) */}
