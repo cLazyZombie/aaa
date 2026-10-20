@@ -185,7 +185,11 @@ parent: number | null,
 /**
  * 형식 어긋남(owner 칸이 owner 꼴이 아님, 제목 안 thread 번호 등). 있으면 화면이 원문을 보이고 판단하지 않는다.
  */
-problems: Array<string>, };
+problems: Array<string>,
+/**
+ * 형식 어긋남 task의 「정리 제안」(FRONT_API 1.62): host가 만든 정규형 후보. 사람이 「이대로 저장」해야 바뀐다.
+ */
+suggestion: TaskSuggestion | null, };
 
 export type TaskListView = {
 /**
@@ -227,7 +231,73 @@ unlinked_threads: Array<TaskThread>,
 /**
  * project.toml `task_notes`의 파일마다(설정이 비면 비어 있다)
  */
-notes_files: Array<TaskNotesFile>, };
+notes_files: Array<TaskNotesFile>,
+/**
+ * 파일 원문(원문 편집, FRONT_API 1.62). 옛 host는 생략한다
+ */
+text: string, };
+
+export type TaskSuggestion = { title: string, owner: string | null, thread: string | null,
+/**
+ * 제안한 뒤의 메모 전체(지금 메모 앞에 옮긴 글을 둔다)
+ */
+notes: Array<string>,
+/**
+ * 제안대로 쓴 task 줄(앞 공백 없이)
+ */
+line: string,
+/**
+ * 무엇을 바꾸나(한 줄씩)
+ */
+changes: Array<string>, };
+
+export type TaskAnchor = { list: string, title: string, block_sha256: string, line: number, };
+
+export type TaskOp = { "op": "add", list: string, title: string,
+/**
+ * 비움 = 미할당
+ */
+owner: string | null,
+/**
+ * owner가 사람 이름이다(「사람으로 저장」). 아니면 `assignable --check`와 같은 판정을 거친다
+ */
+person: boolean, notes: Array<string>, parent: TaskAnchor | null, before: TaskAnchor | null, } | { "op": "update", at: TaskAnchor, title: string | null, owner: string | null, person: boolean, notes: Array<string> | null, thread: string | null, done: boolean | null, } | { "op": "delete", at: TaskAnchor, } | { "op": "move", at: TaskAnchor, to_list: string, before: TaskAnchor | null, parent: TaskAnchor | null, } | { "op": "list_add", name: string, after: string | null, } | { "op": "list_rename", name: string, to: string, } | { "op": "list_merge", name: string, into: string, } | { "op": "list_delete", name: string, } | { "op": "list_move", name: string, before: string | null, } | { "op": "restore", log_id: number, list: string | null, } | { "op": "raw_save", expected_sha256: string, text: string, };
+
+export type TaskConflict = {
+/**
+ * 맞지 않은 동작의 차례(0부터)
+ */
+op: number, reason: string,
+/**
+ * 그 task의 지금 원문(같은 제목으로 찾은 것, 지워졌으면 없음)
+ */
+latest: TaskView | null, };
+
+export type TaskAction = "add" | "update" | "delete" | "move" | "list_add" | "list_rename" | "list_merge" | "list_delete" | "list_move" | "restore" | "raw" | "auto_clean";
+
+export type TaskLogEntry = { id: number, at_ms: number,
+/**
+ * 누가(원문): `device:<id>`, `coordinator:<pane>`, `local:…`, `file`(파일 직접), `host`(자동 정리)
+ */
+actor: string,
+/**
+ * 누가(보이는 이름): 기기 이름·coordinator·터미널·파일 직접·host 자동 정리
+ */
+by: string, action: TaskAction, list: string,
+/**
+ * 옮김·목록 동작의 앞 목록(옮기기 전 목록, 이름 바꾸기·합치기 전 이름)
+ */
+from_list: string | null, title: string,
+/**
+ * 바뀌기 전 블록 원문(하위 task 포함, 더하기에는 없다)
+ */
+before: string | null, after: string | null, thread: string | null,
+/**
+ * 되살린 기록이면 그 항목 id
+ */
+restored_by: number | null, };
+
+export type TaskLogFilter = "deleted" | "auto";
 
 export type OwnerChoice = { machine: string, connected: boolean,
 /**
@@ -512,7 +582,7 @@ from_task: string | null, } | { "op": "thread_adopt", project?: string, pane: st
 /**
  * 할 일. 비면 「하던 일을 이어 하되 이제 이 프로젝트 thread다」
  */
-task: string, } | { "op": "thread_next", project?: string, thread: string, line: number | null, add: string | null, } | { "op": "context", project?: string, peek: boolean, } | { "op": "assignable", project?: string, check: string | null, } | { "op": "tasks", project?: string, } | { "op": "threads", project: string | null, role: Role | null, } | { "op": "thread_show", project?: string, thread: string, } | { "op": "thread_summary", project?: string, thread: string, } | { "op": "thread_summary_set", project?: string, thread: string, text: string, } | { "op": "thread_library", project?: string, thread: string, } | { "op": "library_link", project?: string, thread: string, days: number | null, } | { "op": "library_links", project: string | null, } | { "op": "library_link_revoke", id: string, } | { "op": "library_publish", project?: string, name: string, source: string, live: boolean,
+task: string, } | { "op": "thread_next", project?: string, thread: string, line: number | null, add: string | null, } | { "op": "context", project?: string, peek: boolean, } | { "op": "assignable", project?: string, check: string | null, } | { "op": "tasks", project?: string, } | { "op": "task_edit", project?: string, ops: Array<TaskOp>, base_sha256: string | null, } | { "op": "task_log", project?: string, before: number | null, limit: number | null, filter: TaskLogFilter | null, } | { "op": "task_log_prune", project?: string, before_ms: number, } | { "op": "threads", project: string | null, role: Role | null, } | { "op": "thread_show", project?: string, thread: string, } | { "op": "thread_summary", project?: string, thread: string, } | { "op": "thread_summary_set", project?: string, thread: string, text: string, } | { "op": "thread_library", project?: string, thread: string, } | { "op": "library_link", project?: string, thread: string, days: number | null, } | { "op": "library_links", project: string | null, } | { "op": "library_link_revoke", id: string, } | { "op": "library_publish", project?: string, name: string, source: string, live: boolean,
 /**
  * FRONT_API 1.43. 사용자에게 보내는 웹 보고서(index.html 필수, 「내 보고서」·안 봄·사용자 알림 post)
  */
@@ -602,7 +672,7 @@ message: MessageView | null, } | { "kind": "context" } & ProjectContext | { "kin
 /**
  * `check`가 통과했을 때 설명
  */
-valid: string | null, } | { "kind": "task_board" } & TaskBoard | { "kind": "screen" } & ScreenText | { "kind": "read" } & ReadView | { "kind": "thread_pane" } & ThreadPaneView | { "kind": "output_matched", matched_line: string, read: ReadView, } | { "kind": "workspaces", workspaces: Array<WorkspaceSummary>, } | { "kind": "chat" } & ChatView | { "kind": "pane_file", info: FileInfo | null, candidates: Array<string>, url: string | null, } | { "kind": "pane_dir", listing: DirListing, } | { "kind": "pending", pending: Array<PendingEnroll>, } | { "kind": "pair_code", code: string, role: DeviceRole, expires_in_s: number, } | { "kind": "publish" } & PublishState | { "kind": "devices", devices: Array<DeviceView>, } | { "kind": "workspace" } & Workspace | { "kind": "done" } | { "kind": "attached", path: string, inserted: boolean, note: string | null, } | { "kind": "projects", projects: Array<ProjectView>, } | { "kind": "instance", project: ProjectView | null, } | { "kind": "project" } & ProjectView | { "kind": "project_change" } & ProjectChange | { "kind": "project_opened" } & ProjectOpened | { "kind": "project_files", checks: Array<ProjectFilesCheck>, } | { "kind": "profiles", machine: string, profiles: Array<ProfileView>, } | { "kind": "profile_resolved", profile: ProfileView, } | { "kind": "threads", threads: Array<ThreadView>, } | { "kind": "thread" } & ThreadView | { "kind": "thread_summary" } & ThreadSummaryView | { "kind": "events", events: Array<FlowEvent>, } | { "kind": "questions", questions: Array<QuestionView>, } | { "kind": "question" } & QuestionView | { "kind": "message" } & MessageView | { "kind": "inbox", items: Array<InboxItem>,
+valid: string | null, } | { "kind": "task_board" } & TaskBoard | { "kind": "task_edited", board: TaskBoard, conflict: TaskConflict | null, log_ids: number[], } | { "kind": "task_log", entries: Array<TaskLogEntry>, next: number | null, } | { "kind": "screen" } & ScreenText | { "kind": "read" } & ReadView | { "kind": "thread_pane" } & ThreadPaneView | { "kind": "output_matched", matched_line: string, read: ReadView, } | { "kind": "workspaces", workspaces: Array<WorkspaceSummary>, } | { "kind": "chat" } & ChatView | { "kind": "pane_file", info: FileInfo | null, candidates: Array<string>, url: string | null, } | { "kind": "pane_dir", listing: DirListing, } | { "kind": "pending", pending: Array<PendingEnroll>, } | { "kind": "pair_code", code: string, role: DeviceRole, expires_in_s: number, } | { "kind": "publish" } & PublishState | { "kind": "devices", devices: Array<DeviceView>, } | { "kind": "workspace" } & Workspace | { "kind": "done" } | { "kind": "attached", path: string, inserted: boolean, note: string | null, } | { "kind": "projects", projects: Array<ProjectView>, } | { "kind": "instance", project: ProjectView | null, } | { "kind": "project" } & ProjectView | { "kind": "project_change" } & ProjectChange | { "kind": "project_opened" } & ProjectOpened | { "kind": "project_files", checks: Array<ProjectFilesCheck>, } | { "kind": "profiles", machine: string, profiles: Array<ProfileView>, } | { "kind": "profile_resolved", profile: ProfileView, } | { "kind": "threads", threads: Array<ThreadView>, } | { "kind": "thread" } & ThreadView | { "kind": "thread_summary" } & ThreadSummaryView | { "kind": "events", events: Array<FlowEvent>, } | { "kind": "questions", questions: Array<QuestionView>, } | { "kind": "question" } & QuestionView | { "kind": "message" } & MessageView | { "kind": "inbox", items: Array<InboxItem>,
 /**
  * `inbox_done`이 끝낸 항목 수(그때 `items`는 남은 항목). 목록 요청에는 없다.
  */

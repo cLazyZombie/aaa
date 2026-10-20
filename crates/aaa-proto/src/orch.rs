@@ -1361,6 +1361,232 @@ pub struct TaskView {
     /// 형식 어긋남(owner 칸이 owner 꼴이 아님, 제목 안 thread 번호 등). 있으면 화면이 원문을 보이고 판단하지 않는다.
     #[serde(default)]
     pub problems: Vec<String>,
+    /// 형식 어긋남 task의 「정리 제안」(FRONT_API 1.62): host가 만든 정규형 후보. 사람이 「이대로 저장」해야 바뀐다.
+    #[serde(default)]
+    pub suggestion: Option<TaskSuggestion>,
+}
+
+/// 「정리 제안」(할 일 편집 T2): 끝 괄호 글 → 메모, 본문 속 열린 thread 번호 → 연결, `미할당` → owner 비움
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(default)]
+pub struct TaskSuggestion {
+    pub title: String,
+    pub owner: Option<String>,
+    pub thread: Option<String>,
+    /// 제안한 뒤의 메모 전체(지금 메모 앞에 옮긴 글을 둔다)
+    pub notes: Vec<String>,
+    /// 제안대로 쓴 task 줄(앞 공백 없이)
+    pub line: String,
+    /// 무엇을 바꾸나(한 줄씩)
+    pub changes: Vec<String>,
+}
+
+/// 할 일 편집의 대상 task(FRONT_API 1.62). `block_sha256`으로 찾고(같은 hash가 여럿이면 `line`에 가까운 것), 그 블록이 없으면
+/// `revision_conflict`다(지운 task가 저장으로 되살아나지 않는다). `block_sha256`이 비면 제목(대소문자 무시)으로 찾는다(CLI).
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(default)]
+pub struct TaskAnchor {
+    pub list: String,
+    pub title: String,
+    pub block_sha256: String,
+    pub line: u32,
+}
+
+/// 할 일 편집 동작 하나(FRONT_API 1.62, `task_edit`). 한 요청의 동작은 차례로 적용해 한 번에 쓴다(하나라도 실패하면 쓰지 않는다).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(tag = "op", rename_all = "snake_case")]
+pub enum TaskOp {
+    /// 목록 끝(또는 `before` 앞, `parent`의 하위 끝)에 더한다. 없는 목록은 파일 끝에 만든다
+    Add {
+        list: String,
+        title: String,
+        /// 비움 = 미할당
+        #[serde(default)]
+        owner: Option<String>,
+        /// owner가 사람 이름이다(「사람으로 저장」). 아니면 `assignable --check`와 같은 판정을 거친다
+        #[serde(default)]
+        person: bool,
+        #[serde(default)]
+        notes: Vec<String>,
+        #[serde(default)]
+        parent: Option<TaskAnchor>,
+        #[serde(default)]
+        before: Option<TaskAnchor>,
+    },
+    /// 준 칸만 바꾼다(`None`은 그대로, owner·thread의 빈 글은 비움). 바뀌지 않은 줄은 바이트 그대로 둔다
+    Update {
+        at: TaskAnchor,
+        #[serde(default)]
+        title: Option<String>,
+        #[serde(default)]
+        owner: Option<String>,
+        #[serde(default)]
+        person: bool,
+        #[serde(default)]
+        notes: Option<Vec<String>>,
+        #[serde(default)]
+        thread: Option<String>,
+        #[serde(default)]
+        done: Option<bool>,
+    },
+    /// task 블록을 하위 task와 함께 지운다(기록에 남아 되살릴 수 있다)
+    Delete {
+        at: TaskAnchor,
+    },
+    /// 하위 task와 함께 옮긴다: `before` 앞, 아니면 `parent`의 하위 끝, 아니면 `to_list` 끝
+    Move {
+        at: TaskAnchor,
+        to_list: String,
+        #[serde(default)]
+        before: Option<TaskAnchor>,
+        #[serde(default)]
+        parent: Option<TaskAnchor>,
+    },
+    /// 새 `##` 목록(파일 끝, 또는 `after` 목록 뒤)
+    ListAdd {
+        name: String,
+        #[serde(default)]
+        after: Option<String>,
+    },
+    ListRename {
+        name: String,
+        to: String,
+    },
+    /// `name`의 task와 설명 줄을 `into` 끝으로 옮기고 `name` 머리를 지운다
+    ListMerge {
+        name: String,
+        into: String,
+    },
+    /// task가 없는 목록만 지운다(설명 줄은 기록에 남는다)
+    ListDelete {
+        name: String,
+    },
+    /// 목록을 `before` 목록 앞으로(없으면 파일 끝으로) 옮긴다
+    ListMove {
+        name: String,
+        #[serde(default)]
+        before: Option<String>,
+    },
+    /// 기록의 삭제 항목을 원래 목록 끝(또는 `list`)에 다시 넣는다. 같은 제목이 있으면 거부한다
+    Restore {
+        #[ts(type = "number")]
+        log_id: i64,
+        #[serde(default)]
+        list: Option<String>,
+    },
+    /// 원문 편집(고급): 파일 전체 sha256이 같을 때만 통째로 쓴다. 다른 동작과 함께 보내지 않는다
+    RawSave {
+        expected_sha256: String,
+        text: String,
+    },
+}
+
+/// 편집이 최신 파일과 맞지 않았다(`revision_conflict`). 아무것도 쓰지 않았다
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(default)]
+pub struct TaskConflict {
+    /// 맞지 않은 동작의 차례(0부터)
+    pub op: u32,
+    pub reason: String,
+    /// 그 task의 지금 원문(같은 제목으로 찾은 것, 지워졌으면 없음)
+    pub latest: Option<TaskView>,
+}
+
+/// 할 일 기록의 동작
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+pub enum TaskAction {
+    Add,
+    Update,
+    Delete,
+    Move,
+    ListAdd,
+    ListRename,
+    ListMerge,
+    ListDelete,
+    ListMove,
+    Restore,
+    Raw,
+    /// 끝난 thread의 task를 host가 지웠다(T3)
+    AutoClean,
+}
+
+impl TaskAction {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            TaskAction::Add => "add",
+            TaskAction::Update => "update",
+            TaskAction::Delete => "delete",
+            TaskAction::Move => "move",
+            TaskAction::ListAdd => "list_add",
+            TaskAction::ListRename => "list_rename",
+            TaskAction::ListMerge => "list_merge",
+            TaskAction::ListDelete => "list_delete",
+            TaskAction::ListMove => "list_move",
+            TaskAction::Restore => "restore",
+            TaskAction::Raw => "raw",
+            TaskAction::AutoClean => "auto_clean",
+        }
+    }
+
+    pub fn parse(s: &str) -> Option<TaskAction> {
+        [
+            TaskAction::Add,
+            TaskAction::Update,
+            TaskAction::Delete,
+            TaskAction::Move,
+            TaskAction::ListAdd,
+            TaskAction::ListRename,
+            TaskAction::ListMerge,
+            TaskAction::ListDelete,
+            TaskAction::ListMove,
+            TaskAction::Restore,
+            TaskAction::Raw,
+            TaskAction::AutoClean,
+        ]
+        .into_iter()
+        .find(|a| a.as_str() == s)
+    }
+
+    /// 되살릴 수 있는 항목인가(task 블록이 빠졌다)
+    pub fn removes(self) -> bool {
+        matches!(self, TaskAction::Delete | TaskAction::AutoClean)
+    }
+}
+
+/// 할 일 기록 한 줄(host DB `task_log`, FRONT_API 1.62)
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+pub struct TaskLogEntry {
+    #[ts(type = "number")]
+    pub id: i64,
+    #[ts(type = "number")]
+    pub at_ms: u64,
+    /// 누가(원문): `device:<id>`, `coordinator:<pane>`, `local:…`, `file`(파일 직접), `host`(자동 정리)
+    pub actor: String,
+    /// 누가(보이는 이름): 기기 이름·coordinator·터미널·파일 직접·host 자동 정리
+    pub by: String,
+    pub action: TaskAction,
+    pub list: String,
+    /// 옮김·목록 동작의 앞 목록(옮기기 전 목록, 이름 바꾸기·합치기 전 이름)
+    pub from_list: Option<String>,
+    pub title: String,
+    /// 바뀌기 전 블록 원문(하위 task 포함, 더하기에는 없다)
+    pub before: Option<String>,
+    pub after: Option<String>,
+    pub thread: Option<String>,
+    /// 되살린 기록이면 그 항목 id
+    #[ts(type = "number | null")]
+    pub restored_by: Option<i64>,
+}
+
+/// 기록 거르기
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+pub enum TaskLogFilter {
+    /// 삭제·자동 정리(되살릴 수 있는 것)
+    Deleted,
+    /// 자동 정리만
+    Auto,
 }
 
 /// TASKS.md의 `##` 목록 하나(FRONT_API 1.60). task가 없는 목록도 있다.
@@ -1414,6 +1640,8 @@ pub struct TaskBoard {
     pub unlinked_threads: Vec<TaskThread>,
     /// project.toml `task_notes`의 파일마다(설정이 비면 비어 있다)
     pub notes_files: Vec<TaskNotesFile>,
+    /// 파일 원문(원문 편집, FRONT_API 1.62). 옛 host는 생략한다
+    pub text: String,
 }
 
 /// 머신 하나에서 thread를 맡길 수 있는 profile(host 허용 목록과 그 머신 agent.toml의 교집합)

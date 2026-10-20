@@ -18,7 +18,10 @@ use crate::orch::{
     ProjectChange, ProjectContext, ProjectFilesCheck, ProjectOpened, ProjectView, QuestionView, ReportSnapshot, Role,
     RoutineView, ThreadAdopt, ThreadAdopted, ThreadKind, ThreadPlacement, ThreadPrepare, ThreadReady, ThreadView,
 };
-use crate::orch::{EvaluationView, EvaluatorView, MenuPick, NoticeView, TaskBoard, ThreadSummaryView};
+use crate::orch::{
+    EvaluationView, EvaluatorView, MenuPick, NoticeView, TaskBoard, TaskConflict, TaskLogEntry, TaskLogFilter, TaskOp,
+    ThreadSummaryView,
+};
 
 use crate::version::Version;
 
@@ -1855,6 +1858,37 @@ pub enum FrontRequest {
         #[ts(optional, as = "Option<String>")]
         project: String,
     },
+    /// 할 일 편집(FRONT_API 1.62, 조작 권한). 동작을 차례로 적용해 한 번에 쓴다. 세션 안에서는 그 프로젝트 coordinator만 된다.
+    /// `base_sha256`을 주면 파일 전체가 그 판일 때만 쓴다. 답은 `task_edited`(충돌이면 `conflict`, 쓰지 않음)
+    TaskEdit {
+        #[serde(default)]
+        #[ts(optional, as = "Option<String>")]
+        project: String,
+        ops: Vec<TaskOp>,
+        #[serde(default)]
+        base_sha256: Option<String>,
+    },
+    /// 할 일 기록(FRONT_API 1.62, 보기 권한). 최신부터, `before`(id)보다 앞의 것
+    TaskLog {
+        #[serde(default)]
+        #[ts(optional, as = "Option<String>")]
+        project: String,
+        #[serde(default)]
+        #[ts(type = "number | null")]
+        before: Option<i64>,
+        #[serde(default)]
+        limit: Option<u32>,
+        #[serde(default)]
+        filter: Option<TaskLogFilter>,
+    },
+    /// 이 시각(ms)보다 오래된 할 일 기록을 지운다(FRONT_API 1.62, 조작 권한)
+    TaskLogPrune {
+        #[serde(default)]
+        #[ts(optional, as = "Option<String>")]
+        project: String,
+        #[ts(type = "number")]
+        before_ms: u64,
+    },
     /// thread 목록. 기본은 사후 평가자를 빼고, `role`을 주면 그 역할만 보인다(§8.13).
     Threads {
         project: Option<String>,
@@ -2298,6 +2332,9 @@ impl FrontRequest {
             | FrontRequest::Context { project, .. }
             | FrontRequest::Assignable { project, .. }
             | FrontRequest::Tasks { project }
+            | FrontRequest::TaskEdit { project, .. }
+            | FrontRequest::TaskLog { project, .. }
+            | FrontRequest::TaskLogPrune { project, .. }
             | FrontRequest::ThreadShow { project, .. }
             | FrontRequest::ThreadSummary { project, .. }
             | FrontRequest::ThreadSummarySet { project, .. }
@@ -2371,6 +2408,7 @@ impl FrontRequest {
                 | FrontRequest::Context { peek: true, .. }
                 | FrontRequest::Assignable { .. }
                 | FrontRequest::Tasks { .. }
+                | FrontRequest::TaskLog { .. }
                 | FrontRequest::Events { .. }
                 | FrontRequest::Questions { .. }
                 | FrontRequest::Inbox { peek: true, .. }
@@ -2470,6 +2508,19 @@ pub enum FrontResponse {
     },
     /// `tasks`의 답(FRONT_API 1.60)
     TaskBoard(TaskBoard),
+    /// `task_edit`의 답(FRONT_API 1.62): 쓴 뒤(또는 충돌이면 지금) board. `log_ids`는 이 편집이 남긴 기록
+    TaskEdited {
+        board: TaskBoard,
+        conflict: Option<TaskConflict>,
+        #[ts(type = "number[]")]
+        log_ids: Vec<i64>,
+    },
+    /// `task_log`의 답(FRONT_API 1.62). `next`를 `before`로 주면 그 앞을 읽는다
+    TaskLog {
+        entries: Vec<TaskLogEntry>,
+        #[ts(type = "number | null")]
+        next: Option<i64>,
+    },
     Screen(ScreenText),
     Read(ReadView),
     /// `thread read`·`thread keys`

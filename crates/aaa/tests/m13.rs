@@ -4229,6 +4229,193 @@ fn task_board_reads_tasks_and_follows_file_edits() {
     assert_eq!(files[2]["error"].as_str(), Some("없음"), "{files}");
 }
 
+/// 할 일 편집(T2, plan §8.311): `aaa task add`는 그 블록만 붙이고 나머지 바이트를 그대로 두며 기록·`tasks` 사건을 남긴다. 읽은 뒤
+/// 파일을 직접 고치면 같은 블록 저장은 `revision_conflict`(쓰지 않음), 다른 블록 저장은 성공이고, 지운 task는 고쳐도 되살아나지
+/// 않는다. 쓰기에 묻힐 뻔한 직접 편집과 tick이 본 직접 편집은 「파일 직접」으로 적힌다. 되살리기는 한 번만. thread(보기 권한)·
+/// 확인되지 않은 세션 pane은 거부하고 그 프로젝트 coordinator pane은 허용한다.
+#[test]
+fn task_edit_keeps_bytes_conflicts_and_logs() {
+    use aaa_proto::FrontEvent;
+    use sha2::Digest as _;
+    let w = world();
+    let pdir = w.projects.join("demo");
+    let file = pdir.join("TASKS.md");
+    let md = "# Tasks\n\n## Backlog\n나중 일은 later.md에 모은다\n- [ ] 고칠 일 (me)\n  메모\n- [ ] 다른 일\n<!-- 모르는 줄 -->\n";
+    std::fs::write(&file, md).unwrap();
+    let sha = |t: &str| hex::encode(sha2::Sha256::digest(t.as_bytes()));
+    let read = || std::fs::read_to_string(&file).unwrap();
+    let mut ev = Events::connect(&w.h);
+    // 실험실 프로젝트의 빈 TASKS.md를 이미 본 ticker는 직접 쓴 두 task를 「파일 직접」 더하기로 적는다
+    w.h.ok(&["ticker", "tick"]);
+    let count = || w.h.ok(&["task", "log"])["entries"].as_array().unwrap().len();
+    let seeded = count();
+
+    // 더하기: 그 블록만 붙는다
+    let v = w.h.ok(&["task", "add", "새 일", "--note", "새 메모"]);
+    let added = format!("{md}- [ ] 새 일\n  새 메모\n");
+    assert_eq!(read(), added);
+    assert_eq!((v["kind"].as_str(), v["log_ids"].as_array().map(Vec::len)), (Some("task_edited"), Some(1)), "{v}");
+    let (at, _) = ev.wait_from(0, "더한 뒤 tasks 사건", T, |e| match e {
+        FrontEvent::Tasks { sha256, .. } if *sha256 == sha(&added) => Some(()),
+        _ => None,
+    });
+    // 자기 쓰기는 다음 tick이 「파일 직접」으로 적지 않는다
+    w.h.ok(&["ticker", "tick"]);
+    let log = w.h.ok(&["task", "log"]);
+    let entries = log["entries"].as_array().unwrap();
+    assert_eq!(entries.len(), seeded + 1, "{log}");
+    assert_eq!(
+        (entries[0]["action"].as_str(), entries[0]["by"].as_str(), entries[0]["title"].as_str()),
+        (Some("add"), Some("터미널"), Some("새 일"))
+    );
+    assert_eq!(entries[0]["after"].as_str(), Some("- [ ] 새 일\n  새 메모"));
+
+    // 읽기 → 파일 직접 편집 → 같은 블록 저장은 충돌, 다른 블록 저장은 성공
+    let board = w.h.ok(&["task", "list"]);
+    let block = |title: &str| -> String {
+        let t = board["tasks"].as_array().unwrap().iter().find(|t| t["title"] == title).unwrap();
+        t["block_sha256"].as_str().unwrap().to_string()
+    };
+    let (fix, other) = (block("고칠 일"), block("다른 일"));
+    let direct = added.replace("  메모\n", "  메모 고침(직접)\n");
+    std::fs::write(&file, &direct).unwrap();
+    // 충돌: 종료 코드 1, 까닭과 그 task의 지금 원문, 쓰지 않음
+    let conflict = |args: &[&str]| -> Value {
+        let o = w.h.run(&[&["--json", "task"], args].concat());
+        assert_eq!(o.status.code(), Some(1), "{o:?}");
+        let v: Value = serde_json::from_slice(&o.stderr).unwrap_or_else(|_| panic!("{o:?}"));
+        v["conflict"].clone()
+    };
+    let c = conflict(&["edit", "고칠 일", "--title", "고친 제목", "--block", &fix]);
+    assert_eq!(c["latest"]["raw"].as_str(), Some("- [ ] 고칠 일 (me)"), "{c}");
+    assert_eq!(c["latest"]["notes"], serde_json::json!(["메모 고침(직접)"]), "{c}");
+    assert_eq!(read(), direct, "충돌이면 쓰지 않는다");
+    let v = w.h.ok(&["task", "rm", "다른 일", "--block", &other]);
+    assert!(v["conflict"].is_null() && v["log_ids"].as_array().unwrap().len() == 1, "{v}");
+    let deleted = direct.replace("- [ ] 다른 일\n", "");
+    assert_eq!(read(), deleted);
+    // 지운 task를 고치려 하면 충돌이다(되살아나지 않는다)
+    let c = conflict(&["edit", "다른 일", "--title", "다른 제목", "--block", &other]);
+    assert!(c["latest"].is_null(), "{c}");
+    assert_eq!(read(), deleted);
+    // 쓰기 전에 있던 직접 편집은 쓰기에 묻히지 않고 「파일 직접」으로 먼저 적혔다
+    let log = w.h.ok(&["task", "log"]);
+    let rows: Vec<(String, String, String)> = log["entries"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|e| {
+            (
+                e["action"].as_str().unwrap().into(),
+                e["by"].as_str().unwrap().into(),
+                e["title"].as_str().unwrap().into(),
+            )
+        })
+        .collect();
+    assert_eq!(
+        rows[..3],
+        [
+            ("delete".into(), "터미널".into(), "다른 일".into()),
+            ("update".into(), "파일 직접".into(), "고칠 일".into()),
+            ("add".into(), "터미널".into(), "새 일".into())
+        ],
+        "{log}"
+    );
+    let del_id = log["entries"][0]["id"].as_i64().unwrap().to_string();
+
+    // 되살리기는 원래 목록 끝에, 한 번만
+    w.h.ok(&["task", "restore", &del_id]);
+    assert_eq!(read(), format!("{deleted}- [ ] 다른 일\n"));
+    let e = w.h.json(&["task", "restore", &del_id]).expect_err("두 번");
+    assert!(e.contains("이미 되살렸다"), "{e}");
+
+    // 저장 검사: `)` 끝 제목, 중복 제목, 사람 owner는 「사람으로 저장」
+    let e = w.h.json(&["task", "add", "상태 (S4 뒤)"]).expect_err("`)` 끝");
+    assert!(e.contains("`)`로 끝나면"), "{e}");
+    let e = w.h.json(&["task", "add", "다른 일"]).expect_err("중복");
+    assert!(e.contains("같은 제목"), "{e}");
+    let e = w.h.json(&["task", "edit", "새 일", "--owner", "Priya"]).expect_err("사람 owner");
+    assert!(e.contains("사람으로 저장"), "{e}");
+    w.h.ok(&["task", "edit", "새 일", "--owner", "Priya", "--person"]);
+    assert!(read().contains("- [ ] 새 일 (Priya)\n  새 메모\n"), "{}", read());
+
+    // 파일 직접 편집 → 다음 tick이 사건과 「파일 직접」 기록
+    let before_tick = read().replace("- [ ] 새 일 (Priya)", "- [ ] 새 일 (me)");
+    std::fs::write(&file, &before_tick).unwrap();
+    w.h.ok(&["ticker", "tick"]);
+    ev.wait_from(at + 1, "직접 편집 뒤 tasks 사건", T, |e| match e {
+        FrontEvent::Tasks { sha256, .. } if *sha256 == sha(&before_tick) => Some(()),
+        _ => None,
+    });
+    let first = w.h.ok(&["task", "log"])["entries"][0].clone();
+    assert_eq!((first["by"].as_str(), first["action"].as_str()), (Some("파일 직접"), Some("update")), "{first}");
+    assert_eq!(first["before"].as_str(), Some("- [ ] 새 일 (Priya)\n  새 메모"));
+
+    // 권한: thread 세션(보기 권한)·확인되지 않은 세션 pane은 거부, 그 프로젝트 coordinator pane은 허용
+    let task = w.task("te.txt", "x");
+    let worker = w.start(&["--title", "편집 시험 thread", "--profile", "fake", "--kind", "dir", "--task-file", &task]);
+    let o =
+        w.h.cmd(&["task", "add", "thread가 더함"])
+            .env("AAA_SESSION_ID", worker["pane"].as_str().unwrap())
+            .output()
+            .unwrap();
+    assert!(String::from_utf8_lossy(&o.stderr).contains("보기 권한"), "{o:?}");
+    let shell = w.h.new_pane(None, "labA", None, &["/bin/sh"], None);
+    let o = w.h.cmd(&["task", "add", "셸이 더함"]).env("AAA_SESSION_ID", &shell).output().unwrap();
+    assert!(String::from_utf8_lossy(&o.stderr).contains("그 프로젝트 coordinator만"), "{o:?}");
+    assert!(!read().contains("thread가 더함") && !read().contains("셸이 더함"));
+    // pane 안에서 `aaa task add`를 돌린다(그 pane의 확인된 세션으로): 끝 코드와 stderr
+    let probe = |pane: &str, run: &str, name: &str, title: &str| {
+        let prefix = w.lab.root.join(name);
+        let script = w.task(
+            &format!("{name}.sh"),
+            &format!(
+                "'{}' --json task add '{title}' > '{p}.out' 2> '{p}.err'\nprintf '%s' \"$?\" > '{p}.rc'\nprintf '{name}-finished\\n'\n",
+                lab::BIN,
+                p = prefix.display()
+            ),
+        );
+        w.h.ok(&["pane", "run", pane, &format!("{run} {script}")]);
+        w.h.wait_output(pane, &format!("{name}-finished"), T);
+        let read = |ext: &str| std::fs::read_to_string(prefix.with_extension(ext)).unwrap();
+        (read("rc"), read("err"))
+    };
+    // 확인된 세션 pane이라도 coordinator가 아니면(사람 셸) 거부한다
+    let (rc, err) = probe(&shell, "sh", "shell-probe", "확인된 셸이 더함");
+    assert!(rc != "0" && err.contains("그 프로젝트 coordinator만"), "{rc} {err}");
+    assert!(!read().contains("확인된 셸이 더함"));
+    let coordinator = w.h.ok(&["project", "open", "demo", "--profile", "fake"]);
+    let pane = coordinator["pane"]["id"].as_str().unwrap().to_string();
+    w.wait_screen(&pane, "fake>");
+    let (rc, err) = probe(&pane, "post-probe", "task-probe", "coordinator가 더함");
+    assert_eq!(rc, "0", "{err}");
+    assert!(read().contains("- [ ] coordinator가 더함\n"), "{}", read());
+    let first = w.h.ok(&["task", "log"])["entries"][0].clone();
+    assert_eq!(
+        (first["by"].as_str(), first["title"].as_str()),
+        (Some("coordinator"), Some("coordinator가 더함")),
+        "{first}"
+    );
+}
+
+/// 지운 프로젝트의 TASKS.md 기억은 함께 잊는다(plan §8.311): 같은 이름으로 다시 만든 프로젝트의 첫 tick은 기억만 하고, 옛 글과
+/// 비교해 「파일 직접」 기록을 지어내지 않는다
+#[test]
+fn task_memory_forgets_deleted_project() {
+    let w = world();
+    let file = || w.projects.join("demo").join("TASKS.md");
+    w.h.ok(&["ticker", "tick"]);
+    std::fs::write(file(), "# Tasks\n\n## Backlog\n- [ ] 옛 일\n").unwrap();
+    w.h.ok(&["ticker", "tick"]);
+    assert!(!w.h.ok(&["task", "log"])["entries"].as_array().unwrap().is_empty(), "직접 편집은 기록된다");
+    w.h.ok(&["project", "delete", "demo"]);
+    w.h.ok(&["project", "create", "demo"]);
+    std::fs::write(file(), "# Tasks\n\n## Backlog\n- [ ] 새 일\n").unwrap();
+    w.h.ok(&["ticker", "tick"]);
+    let log = w.h.ok(&["task", "log"]);
+    assert_eq!(log["entries"], serde_json::json!([]), "{log}");
+}
+
 /// coordinator 안내에 옮긴 herdr-projects COORDINATOR.md 절(차이 목록 3장 G2, plan §8.184). 절마다 그 절에만 있는 글 하나
 const GUIDE_SECTIONS: &[&str] = &[
     "일을 직접 하지 않으므로 언제나 사용자에게 답할 수 있다",
@@ -4244,6 +4431,7 @@ const GUIDE_SECTIONS: &[&str] = &[
     "- 목록(`##` 머리): 사용자가 요청하면",
     "- 끝남·그만둠:",
     "- 보이기: 사용자가 task를 보자고 하면",
+    "`aaa task add|edit|move|rm|restore|log`",
     "## 무엇이 누구 것인가",
     "## aaa 배포(사용자가 채팅에서 배포를 지시했을 때만)",
     "## 작업 요약(웹 카드)",
