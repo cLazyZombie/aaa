@@ -119,7 +119,14 @@ async fn temp_index(git: &Git<'_>, head: bool) -> Result<TempIndex> {
     let index = tmp.path();
     let with = Git { top: git.top, temp: Some(&tmp) };
     if real.is_file() {
-        std::fs::copy(&real, &index).context("index를 복사하지 못했다")?;
+        {
+            let mut source = std::fs::File::open(&real).context("index를 열지 못했다")?;
+            let modified = source.metadata()?.modified()?;
+            let mut dest = std::fs::File::create(&index).context("임시 index를 만들지 못했다")?;
+            std::io::copy(&mut source, &mut dest).context("index를 복사하지 못했다")?;
+            // index 시각은 racy entry의 내용 재검사 기준이다. 복사 시각으로 바꾸면 같은 초·크기 변경을 놓친다.
+            dest.set_modified(modified).context("index 수정 시각을 보존하지 못했다")?;
+        }
         // 사본이 저장소의 shared index를 가리키지 않게 한 파일로 만든다(t3code와 같다)
         with.ok(&["update-index", "--no-split-index"]).await?;
     } else if head {
@@ -451,9 +458,19 @@ mod tests {
     async fn repository_callbacks_never_run() {
         use std::os::unix::fs::PermissionsExt;
         let r = Repo::new();
+        // Linux git의 초 단위 stat 비교를 OS·실행 속도와 무관하게 만든다.
+        r.git(&["config", "core.checkStat", "minimal"]);
+        r.git(&["config", "core.trustctime", "false"]);
+        let stamp = std::time::UNIX_EPOCH + std::time::Duration::from_secs(1_700_000_000);
+        let set_mtime = |path: &Path| {
+            std::fs::File::options().write(true).open(path).unwrap().set_modified(stamp).unwrap();
+        };
         r.write("one.txt", "one\n");
+        set_mtime(&r.dir.join("one.txt"));
         r.git(&["add", "-A"]);
         r.git(&["commit", "-qm", "first"]);
+        // 같은 초의 add→덮어쓰기인 racy entry. 원본 git은 내용을 다시 검사한다.
+        set_mtime(&r.dir.join(".git/index"));
         let marker = r.root.join("callback-ran");
         let callback = r.root.join("callback");
         std::fs::write(&callback, format!("#!/bin/sh\ntouch '{}'\n", marker.display())).unwrap();
@@ -464,10 +481,15 @@ mod tests {
         r.git(&["config", "diff.fixture.textconv", callback.to_str().unwrap()]);
         std::fs::write(r.dir.join(".git/info/attributes"), "*.txt diff=fixture\n").unwrap();
         r.write("one.txt", "two\n");
+        set_mtime(&r.dir.join("one.txt"));
         r.write("new.txt", "new\n");
+        let index = r.dir.join(".git/index");
+        let before = std::fs::read(&index).unwrap();
         let v = query(&r.dir.to_string_lossy(), None, &q(DiffScope::Uncommitted, true)).await.unwrap();
         assert!(v.patch.unwrap().contains("+two"));
         assert!(!marker.exists(), "외부 callback을 실행하면 안 된다");
+        assert_eq!(std::fs::read(&index).unwrap(), before);
+        assert_eq!(std::fs::metadata(&index).unwrap().modified().unwrap(), stamp);
     }
 
     #[tokio::test]

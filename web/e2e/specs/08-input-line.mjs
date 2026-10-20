@@ -73,7 +73,7 @@ export default async function ({ ctl, page }) {
       if (!(await line.evaluate((el) => el === document.activeElement))) throw new Error("보낸 뒤 입력칸이 focus를 잃었다");
       await until("보내기 확인 처리", () => send.isEnabled());
       // 조합 확정 기한은 페이지 시계로 본다. 느린 자동화 왕복이 300ms 기한을 대신 소비하지 않는다.
-      await page.clock.install();
+      // pauseAt이 시계를 설치하고 멈춘다. install 뒤 달리는 페이지 시각과 별도 벽시계를 비교하지 않는다.
       await page.clock.pauseAt(new Date());
       // 2) 기다리는 사이 확정: 확정된 글을 한 번 보낸다(compositionend와 값 바꾸기가 같은 task여도)
       await mark();
