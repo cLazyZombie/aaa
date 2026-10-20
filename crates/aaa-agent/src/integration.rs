@@ -182,12 +182,12 @@ pub fn healthy(home: PathBuf, exe: &Path) -> Result<bool> {
 }
 
 /// install 파일 엔진과 기존 integration CLI가 같은 소유 hook 편집을 사용한다.
-pub(crate) struct Edit {
+pub struct Edit {
     pub path: PathBuf,
     pub before: Option<String>,
     pub after: Option<String>,
 }
-pub(crate) fn plan(home: PathBuf, exe: &Path, remove: bool) -> Result<Vec<Edit>> {
+pub fn plan(home: PathBuf, exe: &Path, remove: bool) -> Result<Vec<Edit>> {
     let mut f = Files::load(home, exe, !remove)?;
     let (enabled, new_config) = if remove { (true, String::new()) } else { config(f.config_text.as_deref())? };
     let hooks = edit_hooks(f.hooks.clone(), &f.commands, &f.current, remove);

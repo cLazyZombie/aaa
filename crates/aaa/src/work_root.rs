@@ -1,9 +1,8 @@
 //! 로컬 머신 설정만 바꾼다. 준비 기록·이전 root 보존이 설정 rename보다 먼저다.
-use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
-use aaa_agent::work_root as roots;
-use anyhow::{Context, Result, ensure};
+use aaa_agent::work_root::admin;
+use anyhow::Result;
 use clap::Subcommand;
 use serde_json::{Value, json};
 
@@ -29,46 +28,10 @@ pub enum Command {
     },
 }
 
-fn config(dir: &Path) -> Result<aaa_config::AgentConfig> {
-    aaa_config::load_agent(dir).map(|c| c.config).map_err(|e| anyhow::anyhow!("{}", e.render()))
-}
-fn paths(cfg: &aaa_config::AgentConfig) -> Result<(PathBuf, Option<PathBuf>)> {
-    let home = aaa_config::paths::home();
-    Ok((
-        aaa_config::work_root::resolve(&cfg.agent.work_root, &home).map_err(anyhow::Error::msg)?,
-        aaa_config::work_root::mount(&cfg.agent.work_mount, &home).map_err(anyhow::Error::msg)?,
-    ))
-}
-fn target(
-    cfg: &aaa_config::AgentConfig,
-    path: Option<&str>,
-    mount: Option<&str>,
-) -> Result<(PathBuf, Option<PathBuf>)> {
-    let (current, current_mount) = paths(cfg)?;
-    let root = path
-        .map(|s| aaa_config::work_root::resolve(s, &aaa_config::paths::home()))
-        .transpose()
-        .map_err(anyhow::Error::msg)?
-        .unwrap_or_else(|| current.clone());
-    let mount = match mount {
-        Some(value) => aaa_config::work_root::mount(value, &aaa_config::paths::home()).map_err(anyhow::Error::msg)?,
-        None if root == current => current_mount,
-        None => None,
-    };
-    Ok((root, mount))
-}
-fn view(dir: &Path, state: &Path) -> Result<Value> {
-    let cfg = config(dir)?;
-    let (path, mut mount) = paths(&cfg)?;
-    let saved = roots::inspect(state)?;
-    if mount.is_none() {
-        mount = saved.as_ref().and_then(|s| s.roots.iter().find(|r| r.path == path)).and_then(|r| r.mount.clone());
-    }
-    let applied = saved.as_ref().and_then(|s| s.applied.as_ref().map(|p| json!({"path":p,"mount":s.applied_mount})));
-    let restart = saved.as_ref().is_none_or(|s| s.applied.as_ref() != Some(&path) || s.applied_mount != mount);
-    let previous: Vec<_> = saved.as_ref().into_iter().flat_map(|s| &s.roots).filter(|r| r.path != path).collect();
-    Ok(json!({"configured":{"path":path,"mount":mount},"last_start":applied,
-        "previous_roots":previous,"restart_required":restart,"config_file":dir.join("agent.local.toml")}))
+fn shown_json(s: &admin::Shown) -> Value {
+    let applied = s.last_start.as_ref().map(|(path, mount)| json!({"path":path,"mount":mount}));
+    json!({"configured":{"path":s.path,"mount":s.mount},"last_start":applied,
+        "previous_roots":s.previous,"restart_required":s.restart_required,"config_file":s.config_file})
 }
 
 pub fn run(json_output: bool, cmd: Command) -> Result<ExitCode> {
@@ -76,45 +39,19 @@ pub fn run(json_output: bool, cmd: Command) -> Result<ExitCode> {
     let state = aaa_config::paths::state_dir().join("agent");
     let result = (|| -> Result<Value> {
         let value = match cmd {
-            Command::Show => view(&dir, &state)?,
+            Command::Show => shown_json(&admin::show(&dir, &state)?),
             Command::Check { path, mount } => {
-                let cfg = config(&dir)?;
-                let (path, mount) = target(&cfg, path.as_deref(), mount.as_deref())?;
-                let real = roots::probe(&state, &path, mount.as_deref())?;
-                json!({"ok":true,"path":path,"real_path":real,"mount":mount})
+                let c = admin::check(&dir, &state, path.as_deref(), mount.as_deref())?;
+                json!({"ok":true,"path":c.path,"real_path":c.real_path,"mount":c.mount})
             }
             Command::Set { path, mount } => {
-                let settings = Settings::load(&dir)?;
-                let cfg = config(&dir)?;
-                settings.unchanged()?;
-                let (current, current_mount) = paths(&cfg)?;
-                let (path, mount) = target(&cfg, Some(&path), mount.as_deref())?;
-                // 잘못된 새 볼륨이면 이전 root나 상태를 등록하기 전 거부한다.
-                roots::probe(&state, &path, mount.as_deref())?;
-                let mut tx = roots::RootTransaction::open(&state)?;
-                let saved = roots::inspect(&state)?.context("작업 root 상태가 없다")?;
-                let mut imported = 0;
-                // 이미 가져온 옛 root는 빠진 디스크 때문에 재등록/재가져오기하지 않는다.
-                if !saved.roots.iter().any(|r| r.path == current && r.imported) {
-                    imported += tx.register(&current, current_mount.as_deref())?.1;
-                }
-                let (registered, count) = tx.register(&path, mount.as_deref())?;
-                imported += count;
-                tokio::runtime::Builder::new_current_thread().enable_all().build()?.block_on(tx.protect_worktrees())?;
-                let root_text = path.to_str().context("작업 root가 UTF-8 경로가 아니다")?;
-                let mount_text = registered
-                    .mount
-                    .as_deref()
-                    .map(|p| p.to_str().context("mount가 UTF-8 경로가 아니다"))
-                    .transpose()?
-                    .unwrap_or("");
-                let edited =
-                    aaa_config::work_root::edit(settings.local.as_deref().unwrap_or(""), root_text, mount_text)
-                        .map_err(anyhow::Error::msg)?;
-                let changed = settings.save(&edited)?;
-                let mut value = view(&dir, &state)?;
-                value["changed"] = changed.into();
-                value["imported_preparations"] = imported.into();
+                let done = tokio::runtime::Builder::new_current_thread()
+                    .enable_all()
+                    .build()?
+                    .block_on(admin::set(&dir, &state, &path, mount.as_deref()))?;
+                let mut value = shown_json(&done.shown);
+                value["changed"] = done.changed.into();
+                value["imported_preparations"] = done.imported.into();
                 value
             }
         };
@@ -149,91 +86,4 @@ pub fn run(json_output: bool, cmd: Command) -> Result<ExitCode> {
         println!("작업 root 점검 통과: {}", value["path"].as_str().unwrap_or(""));
     }
     Ok(ExitCode::SUCCESS)
-}
-
-struct Settings {
-    dir: PathBuf,
-    base: Option<String>,
-    local: Option<String>,
-}
-fn read(path: &Path, strict: bool) -> Result<Option<String>> {
-    let m = match path.symlink_metadata() {
-        Ok(m) => m,
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
-        Err(e) => return Err(e.into()),
-    };
-    if strict {
-        ensure!(
-            m.is_file() && !m.permissions().readonly(),
-            "{}: 쓰기 가능한 일반 설정 파일이어야 한다",
-            path.display()
-        );
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::MetadataExt;
-            ensure!(m.nlink() == 1, "설정 hardlink를 교체하지 않는다");
-        }
-    }
-    ensure!(path.metadata()?.len() <= 4 << 20, "설정 파일이 4MiB를 넘는다");
-    Ok(Some(std::fs::read_to_string(path)?))
-}
-impl Settings {
-    fn load(dir: &Path) -> Result<Self> {
-        let local_path = dir.join("agent.local.toml");
-        let local = read(&local_path, true)?;
-        if local.is_some() {
-            std::fs::OpenOptions::new().write(true).open(local_path)?;
-        }
-        Ok(Self { dir: dir.into(), base: read(&dir.join("agent.toml"), false)?, local })
-    }
-    fn unchanged(&self) -> Result<()> {
-        ensure!(
-            read(&self.dir.join("agent.toml"), false)? == self.base
-                && read(&self.dir.join("agent.local.toml"), true)? == self.local,
-            "작업 root 전환 중 설정이 바뀌었다. 저장하지 않았다"
-        );
-        Ok(())
-    }
-    fn save(&self, edited: &str) -> Result<bool> {
-        self.unchanged()?;
-        if self.local.as_deref() == Some(edited) {
-            return Ok(false);
-        }
-        if !self.dir.exists() {
-            aaa_common::util::ensure_private_dir(&self.dir)?;
-        }
-        let stage = self.dir.join(format!(".aaa-work-root-{}.toml", aaa_common::util::new_id()));
-        let result = (|| -> Result<()> {
-            // 공용 private atomic writer의 fsync·0600을 재사용한다. 마지막 rename 전에 다시 snapshot을 본다.
-            aaa_common::util::write_private(&stage, edited.as_bytes())?;
-            self.unchanged()?;
-            std::fs::rename(&stage, self.dir.join("agent.local.toml"))?;
-            Ok(())
-        })();
-        if result.is_err() {
-            let _ = std::fs::remove_file(&stage);
-        }
-        result?;
-        Ok(true)
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    #[test]
-    fn concurrent_edit_is_preserved_instead_of_replaced_by_a_prepared_setting() {
-        let dir = std::env::temp_dir().join(format!("aaa-root-edit-{}", aaa_common::util::new_id()));
-        std::fs::create_dir(&dir).unwrap();
-        let file = dir.join("agent.local.toml");
-        std::fs::write(&file, "# original\n[agent]\nname = \"old\"\n").unwrap();
-        let settings = Settings::load(&dir).unwrap();
-        let edited = aaa_config::work_root::edit(settings.local.as_deref().unwrap(), "/work/next", "").unwrap();
-        let other = "# another editor\n[agent]\nname = \"new\"\n";
-        std::fs::write(&file, other).unwrap();
-        let error = settings.save(&edited).unwrap_err();
-        assert!(error.to_string().contains("설정이 바뀌었다"), "{error:#}");
-        assert_eq!(std::fs::read_to_string(&file).unwrap(), other);
-        std::fs::remove_dir_all(&dir).unwrap();
-    }
 }

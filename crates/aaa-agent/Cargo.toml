@@ -23,6 +23,7 @@ tokio-rustls.workspace = true
 sha2.workspace = true
 regex.workspace = true
 toml.workspace = true
+toml_edit.workspace = true
 # 파일 보기 HTML 페이지에 제 폴더 파일을 data: URL로 넣는다(page.rs)
 base64.workspace = true
 

@@ -4,7 +4,7 @@ mod cli;
 mod deployment;
 mod init;
 mod install;
-mod integration;
+use aaa_agent::integration;
 mod launchd;
 mod migrate;
 mod person;

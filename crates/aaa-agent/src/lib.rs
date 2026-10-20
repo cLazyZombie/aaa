@@ -20,6 +20,7 @@ mod git_watch;
 mod health;
 pub mod hooks;
 pub mod identity;
+pub mod integration;
 mod journal;
 pub mod link;
 mod page;
