@@ -335,7 +335,7 @@ async fn serve_conn(host: Arc<Host>, tx: FrameTx, mut rx: impl FrontIn, conn: Co
         loop {
             let Some(b) = rx.next_control().await? else { return Ok(()) };
             let (id, body) = match read_req(&b)? {
-                ReqFrame::Req(id, body) => (id, body),
+                ReqFrame::Req(id, body) => (id, *body),
                 ReqFrame::Unknown(id, e) => {
                     tx.control(res_frame(id, Err(e))).await?;
                     continue;
@@ -389,7 +389,7 @@ async fn serve_conn(host: Arc<Host>, tx: FrameTx, mut rx: impl FrontIn, conn: Co
 
 /// front가 보낸 control frame 하나
 enum ReqFrame {
-    Req(String, FrontRequest),
+    Req(String, Box<FrontRequest>),
     /// 이 host가 모르는 요청(옛 front가 보낸 없앤 요청, 새 front의 새 요청): 그 요청에 이 오류로 답한다
     Unknown(String, ErrorBody),
     Other,
@@ -399,7 +399,7 @@ enum ReqFrame {
 /// `id`도 없는 frame은 front가 아니다: 끊는다.
 fn read_req(b: &[u8]) -> Result<ReqFrame, serde_json::Error> {
     match serde_json::from_slice::<FrontMsg>(b) {
-        Ok(FrontMsg::Req { id, body }) => Ok(ReqFrame::Req(id, body)),
+        Ok(FrontMsg::Req { id, body }) => Ok(ReqFrame::Req(id, Box::new(body))),
         Ok(_) => Ok(ReqFrame::Other),
         Err(e) => {
             let id = serde_json::from_slice::<serde_json::Value>(b)
@@ -568,7 +568,9 @@ mod tests {
     #[test]
     fn unknown_requests_get_an_error_answer() {
         let known = br#"{"t":"req","id":"1","body":{"op":"projects"}}"#;
-        assert!(matches!(read_req(known), Ok(ReqFrame::Req(id, FrontRequest::Projects { all: false })) if id == "1"));
+        assert!(
+            matches!(read_req(known), Ok(ReqFrame::Req(id, body)) if id == "1" && matches!(*body, FrontRequest::Projects { all: false }))
+        );
         let removed = br#"{"t":"req","id":"2","body":{"op":"decision_add","project":"p","text":"x"}}"#;
         match read_req(removed) {
             Ok(ReqFrame::Unknown(id, e)) => {

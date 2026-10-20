@@ -1,7 +1,7 @@
 // 할 일 화면의 행 상태·거르기·검색·배지 셈(src/tasksModel.ts, 할 일 보기 T1, plan §8.306).
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { anchorOf, canonicalLine, descendants, draftOf, draftOps, dropOp, emptyDraft, findTask, itemToTask, lineDiff, moveOp, noteItems, ownerKindOf, ownerLabel, parentAnchor, restorable, taskBadge, taskDepth, taskMatches, taskSections, taskState, toListOp, unassigned } from "../src/tasksModel.ts";
+import { anchorOf, canonicalLine, descendants, draftOf, draftOps, dropOp, emptyDraft, findTask, itemToTask, lineDiff, moveOp, noteItems, ownerKindOf, ownerLabel, parentAnchor, restorable, taskBadge, handOffText, ownerFixes, startable, linkCandidates, newAutoCleans, lastLogId, mineKeys, taskDepth, taskMatches, taskSections, taskState, toListOp, unassigned } from "../src/tasksModel.ts";
 
 const task = (over) => ({ list: "Backlog", title: "일", owner: null, thread: null, notes: [], done: false, line: 1, raw: "- [ ] 일", block_sha256: "", parent: null, problems: [], ...over });
 const MISREAD = "owner 칸이 owner 꼴이 아님: t-0001 S4 뒤";
@@ -158,5 +158,59 @@ describe("할 일 편집", () => {
     assert.equal(restorable(e), true);
     assert.equal(restorable({ ...e, restored_by: 3 }), false);
     assert.equal(restorable({ ...e, action: "update" }), false);
+  });
+});
+
+describe("할 일 thread 연결(T3, plan §8.316)", () => {
+  it("확인 필요: 형식 어긋남 다음이고 열린 thread보다 앞선다. 거르기 「확인 필요」", () => {
+    const check = task({ thread: "t-0002", attention: "t-0002 끝남: 보고가 없다" });
+    assert.equal(taskState(check, groups), "check");
+    assert.equal(taskState({ ...check, problems: [MISREAD] }, groups), "problem");
+    assert.equal(taskMatches(check, "check", "", groups), true);
+    assert.equal(taskMatches(task({ thread: "t-0001" }), "check", "", groups), false);
+  });
+
+  it("배지: 형식 어긋남·확인 필요·이 기기가 보지 못한 me task를 센다", () => {
+    const board = { project: "p", sha256: "", lists: [], unlinked_threads: [], notes_files: [], tasks: [task({ title: "a", attention: "t-0002 끝남: 보고가 없다" }), task({ title: "B", owner: "me" }), task({ title: "c", owner: "me" }), task({ title: "d" })] };
+    assert.equal(taskBadge(board), 1, "본 목록이 아직 없으면 me task를 세지 않는다");
+    assert.equal(taskBadge(board, new Set()), 3);
+    assert.equal(taskBadge(board, new Set(mineKeys(board))), 1);
+    assert.deepEqual(mineKeys(board), ["b", "c"]);
+  });
+
+  it("맡기기 글과 맡길 수 있는 task", () => {
+    assert.equal(handOffText(task({ title: "로그인" })), "「로그인」 task를 thread로 맡겨 줘");
+    assert.equal(handOffText(task({ title: "로그인", thread: "t-0002", attention: "t-0002 끝남: 보고가 없다" }), true), "「로그인」 task를 thread로 다시 맡겨 줘(앞 t-0002: t-0002 끝남: 보고가 없다)");
+    const agents = ["claude"];
+    assert.equal(startable(task({}), groups, agents), true);
+    assert.equal(startable(task({ owner: "claude" }), groups, agents), true);
+    assert.equal(startable(task({ owner: "codex@mac-b" }), groups, agents), true);
+    assert.equal(startable(task({ owner: "me" }), groups, agents), false);
+    assert.equal(startable(task({ owner: "Priya" }), groups, agents), false);
+    assert.equal(startable(task({ thread: "t-0001" }), groups, agents), false, "열린 thread와 이어졌다");
+    assert.equal(startable(task({ thread: "t-0002" }), groups, agents), true, "끝난 thread는 다시 맡긴다");
+    assert.equal(startable(task({ problems: [MISREAD] }), groups, agents), false);
+  });
+
+  it("owner가 정한 profile·머신은 바로 시작 창에서 잠근다(host `--from-task`가 다른 값을 거부한다)", () => {
+    for (const o of [null, "", "agent", "me"]) assert.deepEqual(ownerFixes(o), { profile: false, machine: false }, String(o));
+    assert.deepEqual(ownerFixes("claude"), { profile: true, machine: false });
+    assert.deepEqual(ownerFixes("codex@mac-a"), { profile: true, machine: true });
+    assert.deepEqual(ownerFixes("@mac-a"), { profile: false, machine: true });
+  });
+
+  it("잇기 후보: 형식 어긋남·열린 thread 연결을 빼고 제목·메모로 찾는다", () => {
+    const board = { project: "p", sha256: "", lists: [], unlinked_threads: [], notes_files: [], tasks: [task({ title: "로그인", notes: ["쿠키"] }), task({ title: "배포", thread: "t-0001" }), task({ title: "문서", problems: [MISREAD] }), task({ title: "정리", thread: "t-0002" })] };
+    assert.deepEqual(linkCandidates(board, groups, "").map((t) => t.title), ["로그인", "정리"]);
+    assert.deepEqual(linkCandidates(board, groups, "쿠키").map((t) => t.title), ["로그인"]);
+  });
+
+  it("자동 정리 알림: 본 id보다 새, 되살리지 않은 auto_clean만", () => {
+    const e = (id, over) => ({ id, at_ms: 1, by: "host 자동 정리", action: "auto_clean", list: "Backlog", title: `일${id}`, before: "- [ ] 일", after: null, restored_by: null, ...over });
+    const log = [e(9), e(8, { restored_by: 10 }), e(7, { action: "delete" }), e(5)];
+    assert.deepEqual(newAutoCleans(log, 5).map((x) => x.id), [9]);
+    assert.deepEqual(newAutoCleans(log, 0).map((x) => x.id), [9, 5]);
+    assert.equal(lastLogId(log), 9);
+    assert.equal(lastLogId([]), 0);
   });
 });

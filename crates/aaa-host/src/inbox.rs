@@ -426,6 +426,7 @@ impl Host {
             self.ci_tick(&p.name);
             self.git_tick(&p.name);
             self.tasks_pass(&p.name, dir);
+            self.task_clean_pass(&p.name, dir);
             self.nudge(&p.name, dir).await;
         }
         let keep = Duration::from_secs(self.cfg.projects.inbox_done_days * 86_400).as_millis() as u64;
