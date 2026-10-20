@@ -258,9 +258,45 @@ esac
     eprintln!("L2 transfer resume bytes={offset}/{total}, pane input/output={control_ms}ms");
     let mut transfer_events = Events::connect(&w.h);
     let next_call = |index: usize| {
-        wait_for("typed 서비스 재시작 기록", T, || {
-            std::fs::read_to_string(&service_log).ok()?.lines().nth(index).map(str::to_string)
-        })
+        wait_for_diag(
+            &format!("typed 서비스 재시작 기록 {index}"),
+            T,
+            || std::fs::read_to_string(&service_log).ok()?.lines().nth(index).map(str::to_string),
+            || format!("서비스 기록: {:?}", std::fs::read_to_string(&service_log)),
+        )
+    };
+    // 서비스 대기 상한에 앞선 사전 검사·설치 시간을 섞지 않는다. 실제 단계 진행만 다음 대기로 넘어간다.
+    // 같은 rollout의 같은 cursor/시작 표지를 되풀이하는 사건은 한도를 새로 시작하지 않는다.
+    let phase_started = |id: &str, phase: aaa_proto::RolloutPhase| {
+        let mut events = Events::connect(&w.h);
+        let load = || -> aaa_proto::RolloutView {
+            serde_json::from_str(&db.meta(&format!("rollout:{id}")).unwrap().unwrap()).unwrap()
+        };
+        let mut view = load();
+        let target = view.steps.iter().rposition(|s| s.phase == phase).expect("기다릴 rollout 단계");
+        loop {
+            eprintln!(
+                "rollout {id}: cursor={} started={} state={:?}, 기다릴 단계={phase:?}",
+                view.cursor,
+                view.steps.get(view.cursor as usize).is_some_and(|s| s.started_ms != 0),
+                view.state
+            );
+            if view.steps[target].started_ms != 0 {
+                return;
+            }
+            assert_eq!(view.state, aaa_proto::RolloutState::Running, "단계 진입 전에 멈췄다: {view:?}");
+            let progress = (view.cursor, view.steps[view.cursor as usize].started_ms != 0);
+            view = events.wait(&format!("rollout {id}의 {phase:?} 전 단계 진행"), T, |event| {
+                let FrontEvent::Flow(f) = event else { return None };
+                if f.kind != "rollout_changed" || f.detail != id {
+                    return None;
+                }
+                let next = load();
+                let advanced = next.cursor > progress.0
+                    || (next.cursor == progress.0 && !progress.1 && next.steps[next.cursor as usize].started_ms != 0);
+                (advanced || next.state != aaa_proto::RolloutState::Running).then_some(next)
+            });
+        }
     };
     let wait_out = dir.join("wait.out");
     let wait_err = dir.join("wait.err");
@@ -279,7 +315,7 @@ esac
     wait_for("대기 CLI가 재시작 전 host 응답을 받음", T, || {
         std::fs::read_to_string(&wait_err).ok().filter(|s| s.contains(&format!("rollout {id}:")))
     });
-    // 전송은 실제 진행 사건으로 기다리고, 그 뒤 서비스 재시작의 기존 대기 한도를 적용한다.
+    // 전송은 실제 진행 사건으로 기다리고, 사전 검사·설치 뒤 서비스 단계에 기존 대기 한도를 적용한다.
     // 같은 사건이나 바이트가 늘지 않은 사건으로 대기 시간을 새로 시작하지 않는다.
     let transfer_progress = || {
         let stages: Vec<Value> = [&w.h, &b]
@@ -317,6 +353,7 @@ esac
         from = index + 1;
         progress = next;
     }
+    phase_started(&id, aaa_proto::RolloutPhase::HostRestart);
     assert!(next_call(0).ends_with("/dev.aaa.host"));
     let transfer_ms = transfer_started.elapsed().as_millis();
     eprintln!(
@@ -349,6 +386,7 @@ esac
     );
     w.lab.kill("rollout-a-hello");
     w.lab.spawn_command("rollout-a-new", agent_cmd(&w.h, &a_exe, "a", "local", "labA"));
+    phase_started(&id, aaa_proto::RolloutPhase::AgentRestart);
     let restart = next_call(2);
     assert!(restart.starts_with("b ") && restart.ends_with("/dev.aaa.agent"), "{restart}");
     w.lab.kill("rollout-b");
@@ -393,6 +431,7 @@ esac
     assert_eq!(rc, "0", "{out} {err}");
     let second: Value = serde_json::from_str(&out).unwrap();
     let second_id = second["rollout"]["id"].as_str().unwrap();
+    phase_started(second_id, aaa_proto::RolloutPhase::HostRestart);
     assert!(next_call(3).ends_with("/dev.aaa.host"));
     w.lab.kill("rollout-host-new");
     w.lab.spawn_command("rollout-host-second", w.h.cmd_bin(&a_exe, &["host"]));
@@ -440,12 +479,14 @@ esac
     assert_eq!(rc, "0", "{out} {err}");
     let third: Value = serde_json::from_str(&out).unwrap();
     let third_id = third["rollout"]["id"].as_str().unwrap();
+    phase_started(third_id, aaa_proto::RolloutPhase::HostRestart);
     assert!(next_call(5).ends_with("/dev.aaa.host"));
     w.lab.kill("rollout-host-second");
     w.lab.spawn_command("rollout-host-third", w.h.cmd_bin(&a_exe, &["host"]));
     assert!(next_call(6).starts_with("a "));
     w.lab.kill("rollout-a-second");
     w.lab.spawn_command("rollout-a-third", agent_cmd(&w.h, &a_exe, "a", "local", "labA"));
+    phase_started(third_id, aaa_proto::RolloutPhase::AgentRestart);
     assert!(next_call(7).starts_with("b "));
     let guard_id = third["rollout"]["steps"][6]["job_id"].as_str().unwrap().to_string();
     let guard_file = b.state.join(format!("agent/deployments/{guard_id}.guard.json"));
@@ -530,6 +571,7 @@ esac
     assert_eq!(rc, "0", "{out} {err}");
     let fourth: Value = serde_json::from_str(&out).unwrap();
     let fourth_id = fourth["rollout"]["id"].as_str().unwrap();
+    phase_started(fourth_id, aaa_proto::RolloutPhase::HostRestart);
     assert!(next_call(9).ends_with("/dev.aaa.host"));
     w.lab.kill("rollout-host-recovery-resume");
     w.lab.spawn_command("rollout-host-wrong", w.h.cmd_bin(&old_a, &["host"]));
@@ -569,6 +611,7 @@ esac
     assert_eq!(rc, "0", "{out} {err}");
     let fifth: Value = serde_json::from_str(&out).unwrap();
     let fifth_id = fifth["rollout"]["id"].as_str().unwrap();
+    phase_started(fifth_id, aaa_proto::RolloutPhase::HostRestart);
     assert!(next_call(11).ends_with("/dev.aaa.host"));
     w.lab.kill("rollout-host-restored");
     w.lab.spawn_command("rollout-host-fifth", w.h.cmd_bin(&a_exe, &["host"]));
