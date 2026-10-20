@@ -695,7 +695,7 @@ pub(super) fn observe(
 pub(super) fn dispatch(context: &Path, sha: &str) -> std::process::ExitCode {
     #[cfg(windows)]
     {
-        return runtime::dispatch(context, sha);
+        runtime::dispatch(context, sha)
     }
     #[cfg(not(windows))]
     {
