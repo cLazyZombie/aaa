@@ -7,7 +7,7 @@
 // 혼자 돌리기: node web/e2e/web.e2e.mjs --spec 39-phone-back(새 실험실).
 
 import fs from "node:fs";
-import { aaa, step, webkit, inList, drawerSettled, domIs, inTime, shot, root, AA, base } from "../lib/harness.mjs";
+import { aaa, step, webkit, inList, showPanel, drawerSettled, domIs, inTime, shot, root, AA, base } from "../lib/harness.mjs";
 import { pairDevice } from "../lib/devices.mjs";
 
 /** 보고서 링크가 든 Claude 대화 pane(38-chat-report-close와 같은 길: hook으로 기록 자리를 알린다) */
@@ -144,7 +144,66 @@ export default async function () {
     }
   });
 
-  await step("왼쪽 가장자리에서 오른쪽 끝까지 쓸기: 앱 몸짓은 목록을 열고 주소·기록은 그대로, Safari 뒤로와 겹치면 뒤로 하나만(목록 닫힘)", async () => {
+  await step("메뉴를 연 채 뒤로·앞으로: 이동 직전의 열림·닫힘 유지(WebKit 390·430, Safari·홈 화면 앱)", async () => {
+    const wk = await webkit.launch();
+    const bad = [];
+    try {
+      for (const width of [390, 430]) for (const standalone of [false, true]) {
+        const tag = `${width}-${standalone ? "app" : "safari"}`;
+        const { page: p } = await pairDevice(wk, aaa("web", "pair").code, "iphone", { standalone });
+        try {
+          if (width !== 390) await p.setViewportSize({ width, height: 932 });
+          const hashes = Object.fromEntries(["bk1", "bk2", "bk3"].map((label) => [label, paneHashOf(label)]));
+          // 1→2→3은 목록에서 직접 고른다: 줄 선택은 지금처럼 메뉴를 닫고 기록을 한 칸씩 만든다.
+          for (const label of ["bk1", "bk2", "bk3"]) {
+            await inList(p, `pane-${label}`);
+            await domIs(p, `${label} 선택`, (label) => document.querySelector(`[data-testid="pane-${label}"]`)?.getAttribute("aria-current") === "true", label);
+          }
+          await p.locator(".view [data-testid='drawer-toggle']").click();
+          await p.locator("#workspace-drawer.is-open").waitFor();
+          await drawerSettled(p, true);
+          await shot(p, `phone-menu-${tag}-3-open`);
+          // 시스템 쓸기의 실제 이동은 history 순회다. popstate 뒤 선택된 줄(hashchange 처리 완료)과 drawer 움직임을 기다린다.
+          const move = async (direction, label, open) => {
+            await inTime(p.evaluate((direction) => new Promise((r) => {
+              addEventListener("popstate", () => r(), { once: true });
+              history.go(direction);
+            }), direction), 20_000, "쓸기 이동의 popstate");
+            await domIs(p, `${label} 선택`, (label) => document.querySelector(`[data-testid="pane-${label}"]`)?.getAttribute("aria-current") === "true", label);
+            await drawerSettled(p, true);
+            const s = await screen(p);
+            if (s.hash !== hashes[label] || s.drawer !== open || s.empty)
+              bad.push(`${tag} ${direction < 0 ? "뒤로" : "앞으로"}: ${fmt(s)} (원함 ${hashes[label]}, 메뉴 ${open ? "열림" : "닫힘"})`);
+          };
+          const len = (await screen(p)).len;
+          // 메뉴가 이미 열린 상태에서 왼쪽 가장자리 쓸기 + Safari 뒤로(touchcancel)도 같은 규칙이다.
+          const swiped = await edgeStroke(p, { end: "touchcancel", back: true });
+          await domIs(p, "bk2 선택", () => document.querySelector('[data-testid="pane-bk2"]')?.getAttribute("aria-current") === "true");
+          if (swiped.hash !== hashes.bk2 || !swiped.drawer || swiped.empty)
+            bad.push(`${tag} 메뉴 열고 쓸기 뒤로: ${fmt(swiped)} (원함 ${hashes.bk2}, 메뉴 열림)`);
+          await shot(p, `phone-menu-${tag}-2-back`);
+          // 창마다 기억하지 않는다: 메뉴가 닫혔던 1·2·3으로 돌아가도 지금 열어 둔 상태를 쓴다.
+          await move(-1, "bk1", true);
+          await move(1, "bk2", true);
+          await move(1, "bk3", true);
+          await shot(p, `phone-menu-${tag}-3-forward`);
+          // 메뉴를 닫은 뒤에는 열려 있던 창으로 뒤로·앞으로 가도 닫힌 채다.
+          if ((await screen(p)).drawer) await p.locator(".scrim.is-open").click({ position: { x: width - 10, y: 600 } });
+          await drawerSettled(p, true);
+          await move(-1, "bk2", false);
+          await move(1, "bk3", false);
+          if ((await screen(p)).len !== len) bad.push(`${tag}: 메뉴 토글·기록 순회가 기록 칸 수를 바꿨다`);
+        } finally {
+          await p.context().close();
+        }
+      }
+      if (bad.length) throw new Error(bad.join("; "));
+    } finally {
+      await wk.close();
+    }
+  });
+
+  await step("왼쪽 가장자리에서 오른쪽 끝까지 쓸기: 앱 몸짓은 목록을 열고 주소·기록은 그대로, Safari 뒤로와 겹치면 뒤로 하나만(이동 직전 목록 유지)", async () => {
     const wk = await webkit.launch();
     try {
       for (const width of [390, 430]) for (const standalone of [false, true]) {
@@ -168,14 +227,47 @@ export default async function () {
           const h3 = paneHashOf("bk3");
           const h2 = paneHashOf("bk2");
           await domIs(p, "bk2 주소", (h) => location.hash === h, h2);
-          // 2. 겹침(시스템이 손가락을 가져감 → touchcancel, 그 뒤 뒤로): 앞 pane으로, 목록은 닫힌 채
+          // 2. 겹침(시스템이 손가락을 가져감 → touchcancel, 그 뒤 뒤로): 앞 pane으로, 쓸기로 연 목록은 유지(사용자 1A·2A)
           const a = await edgeStroke(p, { end: "touchcancel", back: true });
-          if (a.hash !== h3 || a.drawer || a.empty) bad.push(`취소 뒤 뒤로: ${fmt(a)} (원함 ${h3}, 목록 닫힘)`);
+          if (a.hash !== h3 || !a.drawer || a.empty) bad.push(`취소 뒤 뒤로: ${fmt(a)} (원함 ${h3}, 목록 열림)`);
           await inList(p, "pane-bk2");
           // 3. 앱 몸짓이 끝난 뒤(목록 열림) 그 몸짓의 뒤로가 온다: 뒤로 하나만
           const c = await edgeStroke(p, { back: true });
-          if (c.hash !== h3 || c.drawer || c.empty) bad.push(`쓸기 끝난 뒤 뒤로: ${fmt(c)} (원함 ${h3}, 목록 닫힘)`);
+          if (c.hash !== h3 || !c.drawer || c.empty) bad.push(`쓸기 끝난 뒤 뒤로: ${fmt(c)} (원함 ${h3}, 목록 열림)`);
           if (bad.length) throw new Error(`${tag}: ${bad.join("; ")}`);
+        } finally {
+          await p.context().close();
+        }
+      }
+    } finally {
+      await wk.close();
+    }
+  });
+
+  await step("넓은 화면 뒤로·앞으로: 데스크톱·패드의 사이드바 펼침·접힘 유지(WebKit 1280·820)", async () => {
+    const wk = await webkit.launch();
+    try {
+      for (const profile of ["desktop", "ipad"]) {
+        const { page: p } = await pairDevice(wk, aaa("web", "pair").code, profile);
+        try {
+          for (const label of ["bk1", "bk2"]) await inList(p, `pane-${label}`);
+          await showPanel(p, "work");
+          for (const collapsed of [false, true]) {
+            if (collapsed) {
+              await p.getByTestId("activity-work").click();
+              await p.locator(".app.sidebar-collapsed").waitFor();
+            }
+            for (const [direction, label] of [[-1, "bk1"], [1, "bk2"]]) {
+              await inTime(p.evaluate((direction) => new Promise((r) => {
+                addEventListener("popstate", () => r(), { once: true });
+                history.go(direction);
+              }), direction), 20_000, "넓은 화면 popstate");
+              await domIs(p, `${label} 선택`, (label) => document.querySelector(`[data-testid="pane-${label}"]`)?.getAttribute("aria-current") === "true", label);
+              const actual = await p.locator(".app").evaluate((el) => el.classList.contains("sidebar-collapsed"));
+              if (actual !== collapsed || (await screen(p)).empty)
+                throw new Error(`${profile}: 뒤로·앞으로 사이드바 접힘 ${actual} ≠ ${collapsed}`);
+            }
+          }
         } finally {
           await p.context().close();
         }
