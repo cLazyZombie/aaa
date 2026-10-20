@@ -6024,3 +6024,4 @@ L4 후속(10-20 00시 사용자 관찰): 멈춤 상태의 후보 예약과 재�
 - 끝내기는 마지막 입력 뒤의 새 완료 보고·Idle 시간·빈 내구 입력·빈 agent inbox 넷을 함께 본다. 입력 직전 실제 보고 hash를 기억해 회수 지연의 옛 보고도 거른다. 보고는 자동 확인하고 inbox 한 줄만 남기며, ack 전 잠깐 보이는 보고 사건도 웹이 완료 droplet로 올리지 않는다. 확인 필요 알림은 유지한다. 웹은 기존 상세에 기억 읽기와 열림 칩 옆 남은 시간만 더한다(FRONT_API 1.65).
 - Codex 결정: 28523a97에서 도입한 reset_after_wakes=1은 원 기획 t-0350 결정 7/compaction 절의 「재독 hook 자리 없음」에서 왔다. 대화 길이 문제가 아니므로 확정 기획대로 Codex profile의 reuse=open을 거부한다. 기존 임무 제한은 A4까지 유지한다.
 - 검증: 종료 판정표·runtime/frame·실제 CI/PTY/파일/새 thread m13·E2E49(데스크톱/휴대폰). 조건 2 제거는 m13에서 open 대신 resolved로 실패했다. 자동 완료 droplet은 수정 전 E2E49에서 실패한 뒤 owner에서 고쳤다. 상세 절차는 docs/testing.md A2.
+- 통합 gate에서 E2E25의 spawn ENOENT가 났다. Cargo의 fresh test 빌드가 공용 실행 파일을 지우고 다시 연결하는 것을 파일 상태 관찰로 재현했다. ci-local은 병렬 단계 전에 이번 빌드의 실행 사본을 고정·바이트 대조하고 종료 때 정리한다. 시험 조건·worker·시한은 그대로다.
