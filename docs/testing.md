@@ -964,6 +964,12 @@ CI/Git의 source outbox·중복 억제·재시작·outage는 기존 owner를 유
 - E2E49 `49-automation-memory`: 실제 report/Idle 사건으로 기억/크기/마지막 갱신 thread와 끝남 예정 표시를 본다. 데스크톱·390px에서 상세를 열고 캡처하며 가로 넘침과 자동화 완료 droplet 없음도 검사한다.
 - 결함 되심기: close_at의 마지막 입력보다 뒤인 보고 조건(시각과 입력 전 hash)을 제거하면 m13의 옛 완료 보호 단계에서 open 대신 resolved로 실패한다. 원본을 바이트 단위로 복구한다.
 
+### 자동화 기억의 동시 편집(t-0548, plan §8.350)
+
+- `cargo test -p aaa-host --lib memory`는 실제 host·DB와 새 work_files/N-1 Mission frame fixture로 전달 뒤 host 덧붙이기와 thread 요약 변경을 겹친다. host 줄·양쪽 보존 사본·history 두 쪽·충돌 inbox 한 건을 검사하며, 저장한 공통 판을 새 host owner가 읽고 오래된 ThreadRec으로 반복 회수해도 원문을 덮지 않아야 한다. 각각 상한 아래인 양쪽 history를 합쳤을 때 1000개를 넘으면 회수를 거부하고 양쪽 원문을 유지해야 한다. 원래 제품은 「열린 동안 host에서 쓴 줄이 회수로 사라졌다」에서 실패했다.
+- 순수 판정은 독립 추가·삭제, 같은 변경, 수정/삭제 충돌, 기준 없는 옛 실행, 파일/폴더 경로 충돌, 되풀이한 압축, host만 고친 뒤 나중에 thread도 고치는 순서와 수동 해소를 검사한다.
+- 기존 m13 `ci::automation_ci_reuses_open_thread_and_closes_only_after_new_report_with_memory`가 실제 host→agent→PTY의 FIFO gate를 잡고 마지막 보고 전에 host 줄을 더한다. thread는 기존 기억을 history로 옮긴 뒤 요약한다. resolved 사건 뒤 host 원문·4KiB 이하 두 요약·history·양쪽 사본·중복 보존 없음·inbox를 확인하고, 다음 실행이 host의 보존된 기억을 받는지 검사한다. 고정 sleep과 시한 변경은 없다. 이 실험실은 운영 자동화 파일을 읽거나 고치지 않는다.
+
 ## host 계정 전달과 동시 갱신(t-0500, plan §8.320)
 
 `cargo test -p aaa --test m13 accounts:: --locked`는 빈 포트·임시 폴더·가짜 인증만 사용한다.

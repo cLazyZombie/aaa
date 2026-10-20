@@ -235,7 +235,7 @@ while IFS= read -r line; do
     a2-silent) silent=1; echo a2-silent-armed; stty -echo ;;
     *brief.md*) work=$(dirname "$(printf '%s' "$line" | sed 's/를 읽고.*//')"); drain; printf '[완료] 첫 사건 처리\n\n## Report\n초기\n' > "$work/report.md" ;;
     a2-drain) drain; echo a2-drained ;;
-    a2-complete) printf '다음에 볼 것: 같은 실패를 대조한다\n교훈: 입력 뒤 보고한다\n' > "$work/memory/memory.md"; printf '[완료] 이어 받은 사건 처리\n\n## Report\n새 완료\n' > "$work/report.md" ;;
+    a2-complete) mkdir -p "$work/memory/history"; cp "$work/memory/memory.md" "$work/memory/history/before.md"; printf '다음에 볼 것: 같은 실패를 대조한다\n교훈: 입력 뒤 보고한다\n' > "$work/memory/memory.md"; printf '[완료] 이어 받은 사건 처리\n\n## Report\n새 완료\n' > "$work/report.md" ;;
     *) echo "got: $line" ;;
   esac
   hook '{{"hook_event_name":"Stop","session_id":"0f5b2c1e-7a3d-4c8e-9b21-5d6e7f809a1b"}}'
@@ -256,6 +256,10 @@ done
     );
     let dir = w.projects.join("demo/automations");
     std::fs::create_dir_all(&dir).unwrap();
+    let memory_root = dir.join("check.memory");
+    std::fs::create_dir_all(&memory_root).unwrap();
+    let original_memory = format!("이전 판단\n{}\n", "x".repeat(3000));
+    std::fs::write(memory_root.join("memory.md"), &original_memory).unwrap();
     std::fs::write(dir.join("check.toml"),"title='CI 분류'\n[on.ci]\nrepo='repo'\nbranches=['main']\nevents=['failed']\n[do.start]\ntitle='자동 분류'\ntext='입력을 분류한다'\nprofiles=['claude']\nmachines=['labA']\nreuse='open'\nmemory=true\nclose_idle='30m'\n[limits]\nbatch='5m'\n").unwrap();
     let rule = wait_for("규칙 승인 범위", T, || {
         w.h.ticks(1);
@@ -333,10 +337,25 @@ done
     w.h.ticks(2);
     assert_eq!(w.show(&id)["status"], "open", "옛 완료 보고로 끝내면 안 된다");
     w.message(&id, "a2-complete", false);
+    // Working 사건 뒤 FIFO를 열기 전에 host 원문을 고쳐, 마지막 회수와의 순서를 고정한다.
+    let host_memory = format!("{original_memory}coordinator가 열린 동안 덧붙인 줄\n");
+    std::fs::write(memory_root.join("memory.md"), &host_memory).unwrap();
     std::fs::write(&gate, "go\n").unwrap();
     w.wait_show("새 완료 뒤 짧은 끝내기", &id, |v| v["status"] == "resolved");
     let memory = std::fs::read_to_string(dir.join("check.memory/memory.md")).unwrap();
-    assert!(memory.contains("입력 뒤 보고"));
+    assert_eq!(memory, host_memory, "마지막 회수로 host에서 쓴 줄이 사라졌다");
+    assert!(memory.len() <= 4096);
+    assert_eq!(std::fs::read_to_string(memory_root.join("history/before.md")).unwrap(), original_memory);
+    let conflicts = dir.join("check.memory-conflicts").join(&id);
+    let snapshots: Vec<_> = std::fs::read_dir(&conflicts).unwrap().map(|e| e.unwrap().path()).collect();
+    assert_eq!(snapshots.len(), 1, "보고 회수와 마지막 회수는 같은 충돌 사본을 재사용한다");
+    let thread_memory = std::fs::read_to_string(snapshots[0].join("thread/memory.md")).unwrap();
+    assert!(thread_memory.contains("입력 뒤 보고"));
+    assert!(thread_memory.len() <= 4096);
+    assert_eq!(std::fs::read_to_string(snapshots[0].join("host/memory.md")).unwrap(), host_memory);
+    assert!(w.h.ok(&["inbox", "list", "demo", "--peek"])["items"].as_array().unwrap().iter().any(|i| {
+        i["item_kind"] == "automation-memory" && i["summary"].as_str().is_some_and(|s| s.contains("기억 충돌"))
+    }));
     std::fs::write(w.h.cfg.join("automation-clock"), (lab::now_ms() + 6 * 60 * 1000).to_string()).unwrap();
     write_runs(&stub, "a2-next", vec![run(5, 'e', "failure"), run(4, 'd', "failure")]);
     phase(&stub, "a2-next");

@@ -91,10 +91,26 @@ impl Lab {
                     }
                     AgentRequest::MissionStateList { work_dir } | AgentRequest::WorkFileList { work_dir } => {
                         let mut files = vec![];
-                        for path in ["state.md", "processed.txt", "memory/memory.md"] {
-                            if let Ok(bytes) = std::fs::read(std::path::Path::new(&work_dir).join(path)) {
+                        let mut paths = vec!["state.md".to_owned(), "processed.txt".into()];
+                        let root = std::path::Path::new(&work_dir);
+                        let mut dirs = vec![root.join("memory")];
+                        while let Some(dir) = dirs.pop() {
+                            for entry in std::fs::read_dir(dir).into_iter().flatten() {
+                                let entry = entry.unwrap();
+                                if entry.file_type().unwrap().is_dir() {
+                                    dirs.push(entry.path());
+                                } else {
+                                    paths.push(
+                                        entry.path().strip_prefix(root).unwrap().to_string_lossy().replace('\\', "/"),
+                                    );
+                                }
+                            }
+                        }
+                        paths.sort();
+                        for path in paths {
+                            if let Ok(bytes) = std::fs::read(std::path::Path::new(&work_dir).join(&path)) {
                                 files.push(LibFile {
-                                    path: path.into(),
+                                    path,
                                     size: bytes.len() as u64,
                                     sha256: hex::encode(Sha256::digest(&bytes)),
                                 });
@@ -676,6 +692,79 @@ async fn start_reports_are_optional_capped_snapshots_of_source_threads() {
     assert_eq!(second["reports"].as_object().unwrap().len(), 1);
     std::fs::write(root.join("threads/t-0099.md"), "changed").unwrap();
     assert!(second["reports"]["t-0099"].as_str().unwrap().bytes().all(|b| b == b'x'));
+}
+
+#[tokio::test]
+async fn memory_return_preserves_edits_made_on_host_while_thread_is_open() {
+    for features in [vec!["mission.v1".into()], vec!["work_files.v1".into()]] {
+        let mut l = auto_lab();
+        let _peer = l.fake(features.clone()).await;
+        let rule = rule(&l, "reuse='open'\nmemory=true");
+        let Action::Start(a) = &rule.action else { panic!() };
+        let mut rec = seed(&l, "m", &[]);
+        let work = l.root.join("work/.aaa/demo-memory");
+        std::fs::create_dir_all(&work).unwrap();
+        let memory = l.h.project_dir("demo").unwrap().join("automations/check.memory");
+        std::fs::create_dir_all(&memory).unwrap();
+        std::fs::write(memory.join("memory.md"), "이전 판단\n").unwrap();
+        rec =
+            l.h.update_rec("demo", &rec.id, |r| {
+                r.automation = Some("check".into());
+                r.work_dir = Some(work.to_string_lossy().into());
+                r.automation_run = Some(crate::automation_thread::Run::new(a, util::now_ms()));
+            })
+            .unwrap();
+        l.h.automation_prepare(&rec).await.unwrap();
+        std::fs::write(memory.join("memory.md"), "이전 판단\ncoordinator가 남긴 줄\n").unwrap();
+        std::fs::write(work.join("memory/memory.md"), "thread의 새 판단\n").unwrap();
+        std::fs::create_dir_all(work.join("memory/history")).unwrap();
+        std::fs::write(work.join("memory/history/before.md"), "이전 판단\n").unwrap();
+        std::fs::create_dir_all(memory.join("history")).unwrap();
+        std::fs::write(memory.join("history/coordinator.md"), "사용자 원문\n").unwrap();
+        l.h.automation_copy_memory(&l.h.load("demo", &rec.id).unwrap(), true).await.unwrap();
+        assert_eq!(
+            std::fs::read_to_string(memory.join("memory.md")).unwrap(),
+            "이전 판단\ncoordinator가 남긴 줄\n",
+            "열린 동안 host에서 쓴 줄이 회수로 사라졌다"
+        );
+        assert_eq!(std::fs::read_to_string(memory.join("history/before.md")).unwrap(), "이전 판단\n");
+        assert_eq!(std::fs::read_to_string(memory.join("history/coordinator.md")).unwrap(), "사용자 원문\n");
+        // 새 host owner가 JSON/DB의 공통 판과 같은 agent 파일로 마지막 회수를 이어 간다.
+        l.h = Host::open(l.h.cfg.clone(), l.h.state.clone()).unwrap();
+        let _reconnected = l.fake(features).await;
+        let stored = l.h.load("demo", &rec.id).unwrap();
+        assert!(stored.automation_run.as_ref().unwrap().memory_common.is_some());
+        // 오래된 rec을 다시 넘겨도 최신 DB의 기준을 쓴다.
+        l.h.automation_copy_memory(&rec, true).await.unwrap();
+        let conflicts = memory.with_file_name("check.memory-conflicts").join(&rec.id);
+        let copies: Vec<_> = std::fs::read_dir(conflicts).unwrap().map(|e| e.unwrap().path()).collect();
+        assert_eq!(copies.len(), 1);
+        assert_eq!(std::fs::read_to_string(copies[0].join("thread/memory.md")).unwrap(), "thread의 새 판단\n");
+        assert_eq!(
+            std::fs::read_to_string(copies[0].join("host/memory.md")).unwrap(),
+            "이전 판단\ncoordinator가 남긴 줄\n"
+        );
+        let items = l.h.db.inbox_list(Some("demo"), false).unwrap();
+        assert_eq!(
+            items
+                .iter()
+                .filter(|i| i.item_kind == "automation-memory" && i.event.starts_with("memory conflict:"))
+                .count(),
+            1
+        );
+        // 양쪽은 각각 전송 상한 이하여도 합친 history가 1000개를 넘으면 원문을 교체하지 않는다.
+        for i in 0..500 {
+            std::fs::write(memory.join(format!("history/host-{i}.md")), "host").unwrap();
+            std::fs::write(work.join(format!("memory/history/thread-{i}.md")), "thread").unwrap();
+        }
+        let before = std::fs::read(memory.join("memory.md")).unwrap();
+        let error = l.h.automation_copy_memory(&rec, true).await.unwrap_err();
+        assert!(error.message.contains("합친 기억 이동 상한"));
+        assert_eq!(std::fs::read(memory.join("memory.md")).unwrap(), before);
+        assert!(memory.join("history/host-499.md").is_file());
+        assert!(!memory.join("history/thread-0.md").exists());
+        assert!(work.join("memory/history/thread-499.md").is_file());
+    }
 }
 
 #[tokio::test]
