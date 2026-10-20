@@ -6289,3 +6289,10 @@ L4 후속(10-20 00시 사용자 관찰): 멈춤 상태의 후보 예약과 재�
 - **안내.** coordinator는 새 thread를 시작하거나 열린 thread에 일을 넘기기 전에 TASKS.md에서 같은 일·겹치는 일을 찾는다. 있으면 그 task를 `--from-task … --link-task`로 시작하거나 이미 이어진 열린 thread에 넘기고, 사용자 말에 맞게 메모·모델·머신·저장소도 함께 고친다. 없으면 기존 시작 흐름을 따른다. §8.335의 모델·머신 분리 안내와 CLI는 유지한다. 안내 원본은 `aaa doctor files --fix`가 운영 AGENTS.md에 반영한다.
 - **보조 경고.** task 없이 제목으로 시작할 때 비슷한 열린 task와 연결 명령을 한 줄 알린다. 대소문자·구두점을 뺀 낱말 집합이 같거나, 두 낱말 이상 겹치고 합집합의 2/3 이상이 같을 때만 알리며 파일 순서상 첫 후보를 고른다. 완료 task는 제외한다. 형태소·동의어를 추측하지 않으며, 시작을 거부하거나 TASKS.md를 고치지 않는다. 기존 ThreadView 경고를 사용하므로 Front API 변경은 없다.
 - **검증.** 경고 유닛은 정규화·겹침 경계·완료 제외·명령의 셸 인용을, m13은 실제 CLI의 경고와 시작 성공·경고 없는 경로·원문 보존을 검사한다. 기존 안내 생성·갱신 keeper가 새 문구도 검사한다. 완료 제외를 제거하면 음성 시험이 실패해야 한다. 상세는 [시험](testing.md)의 t-0539 절을 따른다.
+
+### 8.337 project 명령의 프로젝트 이름 인자 정리(10-21, t-0544 S5)
+
+- **범위.** S1~S4 뒤 남은 `project pause|resume|archive|delete|sweep`은 이름 없이, `project rename <새 이름>`은 새 이름만 받아 host가 맡은 프로젝트 하나를 쓴다. S1의 `project_or_here`·`on_target`을 그대로 쓰며 Front API·proto 요청의 프로젝트 칸과 backend 동작은 바꾸지 않는다.
+- **호환.** 옛 꼴의 프로젝트 인자는 도움말에서 숨긴다. 현재 프로젝트와 같은 이름이면 표준 오류에 경고 한 줄을 쓰고, 다른 이름이면 거부한다. 보관한 프로젝트·여럿이 남은 옛 상태의 이름은 S1처럼 그대로 받는다. 생략할 수 있는 보관하지 않은 프로젝트가 없으면 기존 오류를 돌려준다. `project unarchive <이름>`은 이번 여섯 명령 밖이며 그대로 이름을 받는다.
+- **안내.** 사용자 문서의 명령 표와 coordinator 안내 원본 「설정」의 `project pause|resume`·`project sweep`에서 이름을 뺀다. 설정 오류의 rename 안내와 멈춘 thread의 resume 안내도 새 꼴이다. 배포 뒤 coordinator가 `aaa doctor files --fix`로 운영 안내를 갱신한다.
+- **검증.** CLI 유닛은 새 꼴·옛 꼴·넘치는 인자·rename의 필수 새 이름과 도움말을 검사한다. m13 `project_lifecycle`은 여섯 명령의 새 꼴로 실제 상태·이름·휴지통·청소를 확인한다. `project_cli_keeps_legacy_names_with_a_stderr_warning`은 옛 꼴 여섯 명령의 경고와 JSON 분리, 다른 이름 거부 뒤 상태 보존, 새 꼴의 무경고와 보관 뒤 생략 거부를 확인한다. 안내 생성·doctor 갱신 keeper도 새 꼴을 검사한다.

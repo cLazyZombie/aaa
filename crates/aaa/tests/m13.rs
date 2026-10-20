@@ -3073,7 +3073,7 @@ fn project_lifecycle() {
     let pane = t["pane"].as_str().unwrap().to_string();
 
     // 멈춤: ticker가 건너뛰고(깨진 project.toml을 알리지 않는다) thread start를 거부한다
-    let v = w.h.ok(&["project", "pause", "life"]);
+    let v = w.h.ok(&["project", "pause"]);
     assert!(notes(&v).contains("이제 멈춤"), "{v}");
     assert!(names(false).contains(&("life".into(), "paused".into())));
     // front가 다시 묻지 않고 알게 thread에도 실린다(웹 sidebar 「멈춤」)
@@ -3097,14 +3097,14 @@ fn project_lifecycle() {
         ])
         .unwrap_err();
     assert!(e.contains("멈춰"), "{e}");
-    w.h.ok(&["project", "resume", "life"]);
+    w.h.ok(&["project", "resume"]);
     assert!(w.h.ok(&["thread", "show", "life", &id]).get("project_status").is_none(), "진행 중이면 없다");
     w.h.ok(&["ticker", "tick"]);
     assert_eq!(config_errors("life"), 1, "되살리면 ticker가 본다");
     std::fs::write(dir.join("project.toml"), "schema = 1\n").unwrap();
 
     // 보관: 살아 있는 pane을 닫고 목록에서 숨긴다. 멈추기·되살리기는 거부, unarchive로 푼다
-    let v = w.h.ok(&["project", "archive", "life"]);
+    let v = w.h.ok(&["project", "archive"]);
     assert!(notes(&v).contains(&format!("{id}의 pane {pane}을 닫았다")), "{v}");
     wait_for("thread pane 닫힘", T, || {
         (!w.h.pane(&pane)["state"].as_str().is_some_and(|s| s == "running")).then_some(())
@@ -3119,12 +3119,12 @@ fn project_lifecycle() {
     assert!(names(false).contains(&("life".into(), "active".into())));
 
     // 이름 바꾸기: 끝나지 않은 thread·도는 coordinator가 있으면 거부, dry-run은 바꾸지 않는다
-    let e = w.h.json(&["project", "rename", "life", "shop2"]).unwrap_err();
+    let e = w.h.json(&["project", "rename", "shop2"]).unwrap_err();
     assert!(e.contains(&id), "{e}");
     w.h.ok(&["thread", "resolve", "life", &id]);
     let coord = w.h.new_pane(None, "labA", None, &["/bin/sh"], Some(path_str(&dir)));
     wait_for("coordinator pane", T, || w.h.pane(&coord)["cwd"].is_string().then_some(()));
-    let e = w.h.json(&["project", "rename", "life", "shop2"]).unwrap_err();
+    let e = w.h.json(&["project", "rename", "shop2"]).unwrap_err();
     assert!(e.contains("coordinator") && e.contains(&coord), "{e}");
     let e = w.h.json(&["project", "delete", "life"]).unwrap_err();
     assert!(e.contains("coordinator") && e.contains("--force"), "{e}");
@@ -3136,22 +3136,22 @@ fn project_lifecycle() {
         "# 프로젝트 coordinator\n\naaa가 쓴 파일이다. 옛 판.\n\n`aaa context life`\n",
     )
     .unwrap();
-    let v = w.h.ok(&["project", "rename", "life", "shop2", "--dry-run"]);
+    let v = w.h.ok(&["project", "rename", "shop2", "--dry-run"]);
     assert!(notes(&v).contains("--dry-run") && dir.exists(), "{v}");
     assert!(notes(&v).contains("AGENTS.md(coordinator 안내)를 새 이름으로 다시 쓴다"), "{v}");
-    let v = w.h.ok(&["project", "rename", "life", "shop2"]);
+    let v = w.h.ok(&["project", "rename", "shop2"]);
     assert_eq!(v["project"]["name"], "shop2", "{v}");
     let moved = w.projects.join("shop2");
     assert!(!dir.exists() && moved.join("PROJECT.md").is_file());
     let agents = std::fs::read_to_string(moved.join("AGENTS.md")).unwrap();
-    assert!(agents.contains("aaa project sweep shop2") && !agents.contains("life"), "AGENTS.md를 새 이름으로");
+    assert!(agents.contains("`aaa project sweep`") && !agents.contains("life"), "AGENTS.md를 새 이름으로");
     let th = w.h.ok(&["thread", "show", "shop2", &id]);
     assert_eq!((th["project"].as_str(), th["status"].as_str()), (Some("shop2"), Some("resolved")), "{th}");
     assert_eq!(config_errors("shop2"), 1, "inbox 기록도 옮긴다");
     assert_eq!(w.h.ok(&["thread", "list", "life"])["threads"].as_array().unwrap().len(), 0);
 
     // 삭제: 휴지통으로, host 기록은 그 안에. 같은 이름으로 다시 만들면 옛 thread가 없다
-    let v = w.h.ok(&["project", "delete", "shop2"]);
+    let v = w.h.ok(&["project", "delete"]);
     let trash = PathBuf::from(v["project"]["path"].as_str().unwrap());
     assert!(trash.starts_with(w.projects.join(".trash")) && trash.join("PROJECT.md").is_file(), "{v}");
     let rec: Value = serde_json::from_str(&std::fs::read_to_string(trash.join("aaa-records.json")).unwrap()).unwrap();
@@ -3160,7 +3160,7 @@ fn project_lifecycle() {
     w.h.ok(&["project", "create", "shop2"]);
     assert_eq!(w.h.ok(&["thread", "list", "shop2"])["threads"].as_array().unwrap().len(), 0);
     assert_eq!(config_errors("shop2"), 0);
-    w.h.ok(&["project", "delete", "shop2"]);
+    w.h.ok(&["project", "delete"]);
     w.h.ok(&["project", "unarchive", "demo"]);
 
     // 청소: resolve가 남긴 worktree(고친 파일)·branch를 다시 정리한다(force 없음). branch는 참고 sweep `Orphan::Branch`와
@@ -3187,19 +3187,63 @@ fn project_lifecycle() {
     let v = w.h.ok(&["thread", "resolve", "demo", &wid]);
     assert_eq!(v["pr"]["state"], "MERGED", "{v}");
     assert!(cwd.join("dirty.txt").exists());
-    let v = w.h.ok(&["project", "sweep", "demo", "--dry-run"]);
+    let v = w.h.ok(&["project", "sweep", "--dry-run"]);
     let listed = notes(&v);
     assert!(listed.contains(&wid) && listed.contains("worktree") && listed.contains("branch aaa/demo/"), "{v}");
     // 아직 고친 파일이 있으면 남긴다
-    let v = w.h.ok(&["project", "sweep", "demo", "--yes"]);
+    let v = w.h.ok(&["project", "sweep", "--yes"]);
     assert!(notes(&v).contains("남겼다") && cwd.exists(), "{v}");
     // 사람이 worktree를 직접 지웠다: 이미 없는 worktree는 지운 것으로 보고 병합된 branch를 지운다
     git(&w.repo, &["worktree", "remove", "--force", path_str(&cwd)]);
-    let v = w.h.ok(&["project", "sweep", "demo", "--yes"]);
+    let v = w.h.ok(&["project", "sweep", "--yes"]);
     assert!(notes(&v).contains("치웠다"), "{v}");
     assert!(!cwd.exists());
     assert_eq!(git(&w.repo, &["branch", "--list", "aaa/demo/*"]), "", "병합된 head와 같은 branch는 지운다");
-    assert!(notes(&w.h.ok(&["project", "sweep", "demo"])).contains("치울 것이 없다"));
+    assert!(notes(&w.h.ok(&["project", "sweep"])).contains("치울 것이 없다"));
+}
+
+/// S5도 S1의 이름 판정·표준 오류 경고를 따른다. 거부한 명령은 상태·폴더를 바꾸지 않는다.
+#[test]
+fn project_cli_keeps_legacy_names_with_a_stderr_warning() {
+    let w = world();
+    let legacy = |args: &[&str]| {
+        let out = w.h.run(&[&["--json"][..], args].concat());
+        assert!(out.status.success(), "{args:?}: {out:?}");
+        let err = String::from_utf8_lossy(&out.stderr);
+        assert_eq!(err.lines().count(), 1, "{args:?}: {err}");
+        assert!(err.starts_with("경고:") && err.contains("프로젝트 인자는 이제 생략한다"), "{err}");
+        serde_json::from_slice::<Value>(&out.stdout).expect("경고는 JSON에 섞이지 않는다")
+    };
+    let before = w.h.ok(&["project", "list", "--all"]);
+    for verb in ["pause", "resume", "archive", "delete", "sweep", "rename"] {
+        let mut args = vec!["project", verb, "other"];
+        if verb == "rename" {
+            args.push("next");
+        }
+        let e = w.h.json(&args).expect_err("다른 프로젝트 이름");
+        assert!(e.contains("이 host의 프로젝트는 `demo`다"), "{verb}: {e}");
+        assert_eq!(w.h.ok(&["project", "list", "--all"]), before, "{verb}: 거부 뒤 상태");
+    }
+    assert_eq!(legacy(&["project", "pause", "demo"])["project"]["status"], "paused");
+    assert_eq!(legacy(&["project", "resume", "demo"])["project"]["status"], "active");
+    let new = w.h.run(&["--json", "project", "sweep", "--dry-run"]);
+    assert!(new.status.success() && new.stderr.is_empty(), "{new:?}");
+    assert_eq!(
+        legacy(&["project", "sweep", "demo", "--dry-run"]),
+        serde_json::from_slice::<Value>(&new.stdout).unwrap()
+    );
+    assert_eq!(legacy(&["project", "rename", "demo", "next", "--dry-run"])["project"]["name"], "demo");
+    assert_eq!(legacy(&["project", "rename", "demo", "next"])["project"]["name"], "next");
+    assert_eq!(w.h.ok(&["project", "rename", "demo"])["project"]["name"], "demo");
+    assert_eq!(legacy(&["project", "archive", "demo"])["project"]["status"], "archived");
+    // 보관한 것의 이름은 S1처럼 명시해서 받는다. 생략하면 새 프로젝트를 만들라는 기존 오류다.
+    let e = w.h.json(&["project", "delete"]).expect_err("보관하지 않은 프로젝트가 없다");
+    assert!(e.contains("프로젝트가 없다"), "{e}");
+    assert!(w.projects.join("demo").exists());
+    w.h.ok(&["project", "unarchive", "demo"]);
+    let v = legacy(&["project", "delete", "demo", "--force"]);
+    assert!(Path::new(v["project"]["path"].as_str().unwrap()).join("aaa-records.json").is_file());
+    assert!(!w.projects.join("demo").exists());
 }
 
 /// 프로젝트 인자 없는 CLI(plan §8.285, S1): host가 맡은 프로젝트 하나를 CLI가 채운다. 옛 꼴로 같은 이름을 주면 표준 오류에
@@ -4256,12 +4300,14 @@ fn coordinator_flow() {
     assert!(list.contains("머신 일 (모델 자동, 머신 labA)"), "{list}");
     // 만든 프로젝트의 coordinator 안내(host는 프로젝트 하나라 둘째는 만들지 않는다, plan §8.285)
     let guide = std::fs::read_to_string(w.projects.join("demo").join("AGENTS.md")).unwrap();
-    // 프로젝트 인자를 생략하는 명령(plan §8.285)과 post(§8.288)는 이름 없이, 아직 이름이 드는 project sweep은 이름과 함께
+    // 프로젝트 인자를 생략하는 명령(plan §8.285·§8.288·S5)은 안내에서도 이름 없이 쓴다
     assert!(
         guide.contains("`aaa context`")
             && guide.contains("`aaa post user --request")
             && !guide.contains("aaa post demo")
-            && guide.contains("aaa project sweep demo")
+            && guide.contains("`aaa project sweep`")
+            && guide.contains("`aaa project pause|resume`")
+            && !guide.contains("aaa project sweep demo")
             && guide.contains("--from-task")
             && guide.contains("`aaa task add|edit --profile <모델>")
             // thread의 시작 질문을 받는 쪽(plan §8.328): 채팅으로 묻고 턴을 끝낸다. harness 질문 창은 턴을 막아 쓰지 않는다
@@ -4715,7 +4761,7 @@ fn doctor_files_brings_the_coordinator_guide_to_existing_projects() {
     for s in GUIDE_SECTIONS {
         assert!(guide.contains(s), "새 프로젝트 안내에 「{s}」가 없다:\n{guide}");
     }
-    assert!(guide.contains("aaa project sweep demo") && guide.contains("aaa가 쓴 파일이다."), "{guide}");
+    assert!(guide.contains("`aaa project sweep`") && guide.contains("aaa가 쓴 파일이다."), "{guide}");
     assert_entries(
         &fresh,
         &[
@@ -4774,12 +4820,12 @@ fn doctor_files_brings_the_coordinator_guide_to_existing_projects() {
     assert!(s["fixed"] == false && s["error"].as_str().unwrap().contains("AGENTS.md.before-aaa가 이미 있어"), "{s}");
     // 표지 있는 낡은 안내는 지금 안내로, 빠진 파일도 생긴다
     let now = std::fs::read_to_string(old.join("AGENTS.md")).unwrap();
-    assert!(GUIDE_SECTIONS.iter().all(|s| now.contains(s)) && now.contains("aaa project sweep old"), "{now}");
+    assert!(GUIDE_SECTIONS.iter().all(|s| now.contains(s)) && now.contains("`aaa project sweep`"), "{now}");
     assert!(old.join("uploads").is_dir() && old.join("routines/pr-followup.md").is_file());
     assert!(!old.join("AGENTS.md.before-aaa").exists(), "표지 있는 aaa 안내는 옮겨 두지 않는다");
     // 사람 글은 옆에 그대로
     assert_eq!(std::fs::read_to_string(hand.join("AGENTS.md.before-aaa")).unwrap(), hand_text);
-    assert!(std::fs::read_to_string(hand.join("AGENTS.md")).unwrap().contains("aaa project sweep hand"));
+    assert!(std::fs::read_to_string(hand.join("AGENTS.md")).unwrap().contains("`aaa project sweep`"));
     // 자리가 찬 프로젝트는 두 사람 글 모두 그대로
     assert_eq!(std::fs::read_to_string(stuck.join("AGENTS.md")).unwrap(), "두 번째 사람 글\n");
     assert_eq!(std::fs::read_to_string(stuck.join("AGENTS.md.before-aaa")).unwrap(), "처음 옮겨 둔 사람 글\n");

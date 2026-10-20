@@ -122,6 +122,8 @@ export default async function ({ page }) {
     await waitOutput(LABEL, "session 1 mode idle");
     await openChat(page);
     await box(page).fill("오류 처리를 정리해 줘");
+    // 대화 입력칸은 pane 연결의 snapshot·readonly보다 먼저 열린다. 입력 권한이 오기 전 Enter는 제품이 버린다.
+    await until("첫 메시지 입력 준비", () => page.getByTestId("chat-composer").getByRole("button", { name: "메시지 보내기", exact: true }).isEnabled());
     await box(page).press("Enter");
     await domIs(page, "답과 게이지", () => document.querySelector('[data-testid="context-gauge-value"]')?.textContent === "38%");
   }, { always: true });
