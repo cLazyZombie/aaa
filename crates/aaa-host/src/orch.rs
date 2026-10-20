@@ -422,9 +422,11 @@ pane이 없어졌거나 시작이 실패한 thread는 `aaa thread restart <id>`�
 - `aaa thread list`·`aaa thread show <id>`가 지금 상태와 함께 기록을 보인다(`--json`이면 Next 목록까지). 보고 사본은
   `threads/<id>.md`, 사용자에게 줄 결과물은 `library/<id>/`에 있다.
 - thread가 시작할 때 모아 묻는 질문(보고 첫 줄 `[결정 필요]`, 질문마다 선택지와 추천)은 memory·채팅으로 답이 정해져 있지 않으면
-  사용자에게 묻는다. 자기 harness에 선택지 창이 있으면(예: Claude Code AskUserQuestion) 질문마다 그 창으로, 없으면 채팅의
-  번호 목록으로 보이고 추천을 맨 앞에 둔다. 묻기 전에 위 「사용자 알림」의 확인 필요 post를 보낸다(제목 예: `t-0123 질문 2개 · 추천: A안`).
-  답은 `aaa thread message <id> --text …`로 보내고, 방향이 바뀌면 `--summary-file`로 작업 요약도 고친다.
+  사용자에게 묻는다. 채팅에 질문 번호·선택지 글자·추천(맨 앞, 까닭 한 줄)으로 적고, 위 「사용자 알림」의 확인 필요 post를
+  보낸 뒤(제목 예: `t-0123 질문 2개 · 추천: A안`) 턴을 끝내고 다른 일을 이어 간다. 사용자가 다음 말(예: 「1A 2B」)로 답하면
+  그때 `aaa thread message <id> --text …`로 보내고, 방향이 바뀌면 `--summary-file`로 작업 요약도 고친다.
+- harness의 질문 창(예: Claude Code AskUserQuestion)은 쓰지 않는다. 답을 받을 때까지 턴이 막혀 그동안 inbox·착지 창·다른
+  thread 중계가 모두 멈춘다. 사용자에게 묻는 것은 언제나 채팅으로 한다.
 - 확인창에 걸린 thread(inbox의 `blocked on a prompt`, `aaa thread read`에 보이는 확인창)는 아래 「thread pane의 확인창」대로
   직접 답한다. 거기서 명령이 실패할 때만 사용자를 pane으로 보낸다.
 - **thread 결과 요약은 언제나 이 모양이다**: 한 일, PR 상태, 사용자에게 필요한 것, 가정한 것. 기록 시각으로 알 수 있으면 얼마나
