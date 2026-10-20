@@ -6,7 +6,7 @@ import path from "node:path";
 import {
   webkit, root, sleep, aaa, waitOutput, until, screenText, termDiag, imeType, safariEdit, safariSyllable,
   iphoneKey, ipadKey, ipadFresh, fakeViewport, softKeyboard, ipadReplace, pairPage, base, step, browser,
-  openSettings, inList,
+  openSettings, inList, sentFrames, sentCount, sentText,
 } from "../lib/harness.mjs";
 
 export default async function ({ ctl, page }) {
@@ -187,15 +187,27 @@ export default async function ({ ctl, page }) {
           await textarea(p).evaluate((el) => {
             el.value = "";
           });
+          const from = await sentCount(p);
           await type(p);
-          await sleep(700);
-          const all = aaa("pane", "read", pane, "--source", "visible").text;
-          const got = all
-            .slice(all.lastIndexOf('GOT:"MARK"') + 10)
-            .split("\n")
-            .filter((l) => l.startsWith("GOT:"))
-            .map((l) => JSON.parse(l.slice(4)))
-            .join("");
+          // 700ms 뒤면 PTY에 도착한다는 어림 대신 송신 전체와 실제 수신 전체를 각각 확인한다.
+          // 늦은 입력이 다음 MARK 뒤에 섞이지 않도록 이 사례의 수신을 마친 뒤 넘어간다.
+          let sent = "";
+          await until(`${engine} ${how} 입력 송신`, async () => {
+            sent = sentText(await sentFrames(p, from));
+            return sent.length >= want.length;
+          });
+          if (sent !== want) bad.push(`${engine} ${how}: 화면이 보낸 글 ${JSON.stringify(sent)}(기대 ${JSON.stringify(want)})`);
+          let got = "";
+          await until(`${engine} ${how} PTY 수신`, () => {
+            const all = aaa("pane", "read", pane, "--source", "visible").text;
+            got = all
+              .slice(all.lastIndexOf('GOT:"MARK"') + 10)
+              .split("\n")
+              .filter((l) => l.startsWith("GOT:"))
+              .map((l) => JSON.parse(l.slice(4)))
+              .join("");
+            return got.length >= sent.length;
+          });
           console.log(`     IME ${engine} ${how}: ${JSON.stringify(got)}`);
           if (got !== want) bad.push(`${engine} ${how}: pane이 받은 글 ${JSON.stringify(got)}(기대 ${JSON.stringify(want)})`);
         }
