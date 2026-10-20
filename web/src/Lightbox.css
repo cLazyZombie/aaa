@@ -1,4 +1,4 @@
-/* 그림 크게 보기(Lightbox.tsx, plan §8.350): 화면을 덮는다. 무대는 손짓을 직접 받는다(touch-action none: 페이지 확대·굴림이 아니다) */
+/* 그림 크게 보기(Lightbox.tsx, plan §8.353): 화면을 덮는다. 무대는 손짓을 직접 받는다(touch-action none: 페이지 확대·굴림이 아니다) */
 .lightbox { position: fixed; inset: 0; z-index: var(--z-modal); background: color-mix(in srgb, #000 88%, transparent); overscroll-behavior: contain; }
 .lightbox-bar { position: absolute; top: 0; left: 0; right: 0; z-index: 1; display: flex; align-items: center; gap: var(--space-2); min-height: var(--header-h); padding: env(safe-area-inset-top) calc(var(--space-3) + env(safe-area-inset-right)) 0 calc(var(--space-3) + env(safe-area-inset-left)); color: #fff; font-size: var(--fs-sm); background: color-mix(in srgb, #000 82%, transparent); }
 .lightbox-count { flex: 0 0 auto; font-variant-numeric: tabular-nums; }

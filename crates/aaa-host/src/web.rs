@@ -307,7 +307,7 @@ const VIEW_CSP: &str = "sandbox allow-scripts allow-popups allow-popups-to-escap
                         media-src 'self' data: blob:; font-src 'self' data:; \
                         connect-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'self'";
 
-/// 보고서 HTML 끝에 붙이는 그림 누름 알림(plan §8.350). 그 문서와 같은 sandbox 안에서 돌고, 부모(앱)에게 누른 그림과 그 문서의
+/// 보고서 HTML 끝에 붙이는 그림 누름 알림(plan §8.353). 그 문서와 같은 sandbox 안에서 돌고, 부모(앱)에게 누른 그림과 그 문서의
 /// 그림 주소만 알린다. 앱은 그 iframe에서 온, 그 보고서 `/v/<cap>/` 아래 주소만 받는다(web `reportImages.ts`)
 const REPORT_IMAGES: &str = concat!("<script>", include_str!("report_images.js"), "</script>");
 
@@ -392,7 +392,7 @@ async fn serve_view(
     let kind =
         if generated || path.is_empty() { "text/html; charset=utf-8" } else { crate::library::content_type(&path) };
     let navigation = report_navigation(&method, &headers);
-    // 그림 누름 알림(plan §8.350): HTML 문서 탐색의 전체 응답 끝에만 붙인다. 원본 바이트·Range·내려받기·fetch(소스 보기)는 그대로다
+    // 그림 누름 알림(plan §8.353): HTML 문서 탐색의 전체 응답 끝에만 붙인다. 원본 바이트·Range·내려받기·fetch(소스 보기)는 그대로다
     let tail: &[u8] = if report_images_bridge(kind, range.is_some(), q.download.is_some(), navigation) {
         REPORT_IMAGES.as_bytes()
     } else {
@@ -918,6 +918,7 @@ async fn events_loop(host: Arc<Host>, dev: String, role: DeviceRole, mut socket:
     let mut reports = host.reports_changed.subscribe();
     let mut asks = host.asks_changed.subscribe();
     let mut inbox = host.inbox_changed.subscribe();
+    let mut accounts = host.accounts_changed.subscribe();
     let mut rollouts = host.rollout_changed.subscribe();
     let mut revoked = host.device_revoked.subscribe();
     let mut chat_notes = host.chat_notes();
@@ -933,6 +934,7 @@ async fn events_loop(host: Arc<Host>, dev: String, role: DeviceRole, mut socket:
     // 「답할 것」(plan §8.345): 열 때와 확인 필요 post·답한 것이 바뀔 때
     let mut send_asks = true;
     let mut send_inbox = true;
+    let mut send_accounts = true;
     let mut send_rollout = true;
     let mut send_badge = true;
     let mut last_badge = None;
@@ -1006,6 +1008,14 @@ async fn events_loop(host: Arc<Host>, dev: String, role: DeviceRole, mut socket:
             send_inbox = false;
             inbox.borrow_and_update();
             let text = serde_json::to_string(&FrontEvent::Inbox).unwrap();
+            if socket.send(Message::Text(text.into())).await.is_err() {
+                break;
+            }
+        }
+        if send_accounts {
+            send_accounts = false;
+            accounts.borrow_and_update();
+            let text = serde_json::to_string(&FrontEvent::Accounts).unwrap();
             if socket.send(Message::Text(text.into())).await.is_err() {
                 break;
             }
@@ -1123,6 +1133,11 @@ async fn events_loop(host: Arc<Host>, dev: String, role: DeviceRole, mut socket:
                 if r.is_err() { break }
                 send_state = false;
                 send_inbox = true;
+            }
+            r = accounts.changed() => {
+                if r.is_err() { break }
+                send_state = false;
+                send_accounts = true;
             }
             n = chat_notes.recv() => {
                 send_state = false;

@@ -1,0 +1,27 @@
+/* 설정 「계정」(관리 GUI W5a). 줄마다 별칭·배지, 그 아래 사실 목록과 단추. 휴대폰은 사실이 한 칸으로 접힌다 */
+.acct-list { list-style: none; margin: 0; padding: 0; }
+.acct-list > li { padding: 10px 0; border-top: 1px solid var(--border); }
+.acct-list > li:first-child { border-top: 0; padding-top: 0; }
+.acct-head { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; }
+.acct-name { font-weight: 600; overflow-wrap: anywhere; }
+.acct-badge { padding: 1px 8px; border-radius: 999px; font-size: var(--fs-xs); background: var(--bg-elevated); color: var(--text-dim); }
+.acct-badge.is-default { background: var(--accent-tint); color: var(--accent); }
+.acct-badge.is-ok { background: var(--status-done-tint); color: var(--status-done); }
+.acct-badge.is-warn { background: var(--warn-bg); color: var(--warn); }
+.acct-badge.is-bad { background: var(--status-blocked-tint); color: var(--status-blocked); }
+.acct-facts { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: 2px 12px; margin: 6px 0 0; font-size: var(--fs-sm); }
+.acct-facts dt { color: var(--text-dim); }
+.acct-facts dd { margin: 0; min-width: 0; overflow-wrap: anywhere; }
+.acct-actions { margin-top: 8px; }
+.acct-actions .btn { min-height: 32px; }
+.acct-new { display: grid; grid-template-columns: minmax(0, 1fr) max-content max-content; align-items: end; gap: 8px; }
+.acct-login { padding: 10px 12px; border-radius: var(--radius-md); background: var(--bg-elevated); }
+.acct-login.is-warn { background: var(--warn-bg); }
+.acct-login.is-bad { background: var(--status-blocked-tint); }
+.acct-login.is-ok { background: var(--status-done-tint); }
+.acct-login h3 { margin: 0 0 4px; font-size: var(--fs-sm); color: var(--text-strong); }
+.acct-login p { margin: 2px 0; overflow-wrap: anywhere; }
+.acct-login .op-buttons { margin-top: 8px; }
+@media (max-width: 640px) {
+  .acct-new { grid-template-columns: minmax(0, 1fr); }
+}

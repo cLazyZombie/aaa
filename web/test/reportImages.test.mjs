@@ -1,4 +1,4 @@
-// 보고서 그림 크게 보기(src/reportImages.ts, plan §8.350): 보고서 iframe이 보낸 그림 누름 알림은 믿지 않는다. 그 보고서 보기 경로
+// 보고서 그림 크게 보기(src/reportImages.ts, plan §8.353): 보고서 iframe이 보낸 그림 누름 알림은 믿지 않는다. 그 보고서 보기 경로
 // `/v/<cap>/` 아래 같은 origin 주소만 받고, 누른 그림이 그 보고서 것이 아니면 열지 않는다. 보고 글 그림은 `library/…`만 보기 경로로 옮긴다.
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";

@@ -6446,7 +6446,39 @@ L4 후속(10-20 00시 사용자 관찰): 멈춤 상태의 후보 예약과 재�
   서명 검사기의 오류까지 해소한다는 주장은 하지 않는다. syspolicyd 오류24(EMFILE) 근거는 비공개 보고에
   보존하고 시스템 조치 여부는 별도 사용자 판단으로 남긴다. 이번 착지는 스크립트 변경이며 운영 배포는 없다.
 
-### 8.350 보고서 그림 눌러 크게 보기(10-21, t-0552)
+### 8.350 자동화 기억 회수의 동시 편집 보존(10-21, t-0548)
+
+- **문제.** 열린 자동화 thread에 넘긴 기억 폴더를 보고·종료 때 통째로 되가져와 coordinator가 host 원문에 덧붙인 줄을 지웠다. host `automation_prepare`가 agent의 work_files.v1/N-1 Mission 파일 쓰기로 넘기고, 보고 수집·resolve의 `automation_copy_memory`가 목록·조각·hash를 검증한 뒤 host 폴더를 바꾸는 경로다. agent는 바이트 전송만 맡으므로 host에서 수리한다.
+- **판정.** 시작할 때 파일별 SHA-256 공통 판을 Run에 저장한다. 회수할 때 파일별 3-way로 한쪽 변경·추가·삭제를 반영하고, 같은 파일의 다른 변경·파일/폴더 경로 충돌은 host를 유지한다. 서로 합의한 파일만 기준을 갱신하므로 반복 보고와 마지막 회수가 바깥 편집을 뒤늦게 덮지 않는다. DB 재시작 뒤에도 기준을 유지하며 기준 없는 옛 실행은 다른 내용을 보수적으로 충돌 처리한다.
+- **보존.** 양쪽 tree와 충돌 경로를 `<이름>.memory-conflicts/<thread>/<충돌판>/`에 먼저 보존하고 inbox로 알린다. 충돌 파일의 양쪽 hash로 판을 정해 같은 충돌을 반복 복사하지 않는다. 보존 폴더는 전송 대상 밖에 둔다. 줄 병합·충돌 표지로 4KiB 요약이나 history 정리 결과를 추측하지 않는 단순한 방식을 택했다. 기존 8MiB·1000개 전송·합친 tree 상한, 64KiB 초과 안내는 유지한다. host 회수는 기억 폴더별 lock 안에서 최신 DB 판을 읽고 교체 직전 원문을 다시 대조한다.
+- **검증.** 수정 전 실제 host 회귀의 줄 유실을 RED로 확인한다. 파일별 판정 유닛·새/N-1 frame host 시험·기존 CI 자동화 m13의 마지막 회수/4KiB/history/inbox/다음 실행을 확장한다. 전체 ci-local·check-public 뒤 착지 창을 기다린다. 상세 절차는 [시험](testing.md)의 t-0548 절을 따른다.
+
+### 8.351 host 계정 화면: 로그인·기본·메일·인증일·끊김·다시 로그인(10-21, t-0538 관리 GUI W5a)
+
+- **요청.** 확정 계획 t-0456 plan-revised §5 W5에 사용자가 더한 계정 화면(23:5x와 그 뒤 더함): host 로그인(브라우저 인증)·진행·취소, 기본 지정·해제, 계정마다 최초 인증일·최근 인증된 날(날짜만, 비밀은 가림), 끊김·곧 만료 표시와 확인 필요 알림, harness별 목록에 별칭마다 공식 CLI가 로그인 때 알린 메일(과 plan), 「다시 로그인」의 「이 메일로 로그인하세요」와 다른 메일이면 경고하고 바꿀지 묻기. 시작 때 물은 다섯은 추천대로 정했다(10-21, 1A~5A): W5를 셋(W5a 계정 → W5b 머신 등록·웹 공개·보고서 → W5c profile·safety·work root·hook)으로 나눠 따로 착지, 끊김은 실제 쓰임과 알 수 있는 만료로만, 이 기록 전 계정은 저장된 인증에서 읽을 수 있는 메일·plan만 채우고 날짜는 모름, 브라우저 인증은 host Mac에서만(웹에 주소를 보이지 않음), 메일은 조작 기기와 host의 세션 밖 CLI에만. 키 관리자(K1~K3)는 범위 밖이다.
+- **proto(FRONT_API 1.79, 더하기만).** 웹 조작 기기에 `account_login`·`account_login_status`·`account_login_cancel`·`account_default`를 연다(이전엔 host 세션 밖 CLI만). 새 `account_login_confirm{id, switch}`. `AccountView`에 `email`·`plan`·`first_auth_ms`·`last_auth_ms`·`expires_ms`·`health`(ok·expiring·expired·rejected), `AccountLoginView`에 `expect_email`·`email`과 상태 `mismatch`·`kept`, 웹 events 사건 `accounts`. 옛 host는 웹 계정 요청을 거부하고 새 칸을 생략해 웹은 목록만 그린다. `account_import`·`account_remove`(인증 파일 넣고 빼기)는 그대로 host 세션 밖 CLI만이다.
+- **권한.** 로그인·상태·취소·확인·기본 변경은 `device:` 조작 기기나 `local:` 세션 밖 CLI만: pane 안 agent·worker·evaluator·detached와 보기 전용 기기는 Local이어도 거부한다(`account_meta::shows_email`). 같은 판정으로 메일·plan을 싣는다: 보기 전용과 세션 안 호출의 `account_list`에서는 host가 지운다(웹이 숨기는 것이 아니다). 감사 기록은 별칭과 선택(`switch`·`keep`)만 남긴다.
+- **기록.** 금고 파일 모양(`Sealed`, AAD)은 바꾸지 않는다(키 관리 K는 별도). host DB meta `account-meta:<별칭>`에 메일·plan·최초/최근 인증 시각·만료·거부 시각·알린 상태를 둔다. 메일·plan은 Codex `auth.json` id_token 본문(`email`, `https://api.openai.com/auth`의 `chatgpt_plan_type`; 서명은 보지 않는다 — 화면 표시용)과, Claude는 로그인 폴더 `.claude.json`의 `oauthAccount.emailAddress`가 있을 때만 읽는다. `claude setup-token`은 메일을 출력하지 않아(공식 CLI 문자열로 확인) 그 파일이 없으면 메일은 모른다. 만료는 `setup-token`의 「valid for N 단위」만 읽는다. 최근 인증된 날은 로그인 성공이며 Codex 갱신은 날짜를 바꾸지 않는다(갱신 성공은 끊김을 지우고 새 id_token의 메일·plan만 읽는다). host 시작 때 이 기록이 없는 Codex 계정은 저장된 인증에서 메일·plan을 채운다(날짜는 모름).
+- **끊김.** 제공자가 Codex 갱신을 400·401로 거부하면 끊김(갱신 거부). 망·시한·5xx는 끊김이 아니다. 알려진 만료가 지났으면 끊김(만료), 7일 안이면 곧 만료. 제공자에게 따로 묻지 않으므로(사용자 2A) Claude 토큰이 만료 전에 취소되면 쓰기 전까지 모르고, 화면 감지에도 인증 오류 상태가 없다. 상태가 바뀌면 ticker·갱신·로그인 때 알림함 `account` 항목(확인 필요, 별칭·harness만)을 한 번 내고, 정상으로 돌아오면 끝낸다.
+- **다시 로그인.** 같은 별칭 로그인이다. 그 별칭에 메일이 있으면 시작 때 `expect_email`을 싣는다. 로그인한 메일이 다르면(둘 다 알 때만, 대소문자 무시) 새 인증을 금고에 넣지 않고 메모리에 두며 `mismatch`로 기다린다: `switch`면 그 인증을 넣고 최초 인증 시각도 새로(다른 계정이 됐다), 아니면 버리고 `kept`. 5분이 지나거나 취소·host 종료면 버린다. 기다리는 동안 같은 별칭의 새 로그인은 거부하고, 16개 작업 정리에서 빼지 않는다.
+- **웹.** 설정 창 「계정」(구독 사용량 다음): harness마다 별칭·기본·상태 배지, 조작 기기에는 메일·plan, 최초 인증일·최근 인증된 날·만료(이 기기 시간대 날짜), 「다시 로그인」·「기본으로/기본 해제」, 「새 계정 로그인」(별칭·harness). 진행 카드는 「host Mac 브라우저에서 인증을 마치세요」·「이 메일로 로그인하세요」·취소, 다른 메일이면 「새 메일로 바꾸기」·「옛 인증 그대로 두기」. host `accounts` 사건으로 다시 읽는다(시간 polling 없음). CLI는 `aaa account list`에 메일·plan·날짜(UTC)·상태 칸과 `aaa account login-confirm <id> --switch|--keep`.
+- **검증.** host 유닛 `account_meta::tests`(메일·plan·만료 읽기, 상태 판정, 웹 조작 기기 허용·세션 안·보기 전용 거부와 메일 가림, 끊김·곧 만료 알림 한 번과 로그인으로 끝냄, 메일이 바뀌면 최초 시각 새로), m13 `host_relogin_checks_the_email_and_asks_before_switching`(가짜 공식 CLI로 메일·plan·날짜·곧 만료 알림, 같은 메일 다시 로그인, 다른 메일 → 그대로 두기·바꾸기, 감사·알림·로그·프로젝트 파일에 메일 없음)과 `account_credentials_parallel_refresh_and_all_records_are_redacted`의 거부된 갱신 → 끊김·알림 한 번, 웹 유닛 `accountsModel.test.mjs`, 웹 E2E `58-accounts`(데스크톱·휴대폰 390·Reader). 절차는 [시험](testing.md).
+
+
+### 8.352 aaa install I5 Windows 종료 process fixture 인수 분리(10-21, t-0485)
+
+- **실제 실패.** Windows CI의 종료 process owner가 제품 관찰 전에 cmd 자식의 exit code 1로 실패했다.
+  CI와 같은 Rust std는 단일 `exit 0` 인수에 따옴표를 더한다. `/C` 이후는 cmd 명령문이므로
+  고정 `exit`·`0` 인수를 나눠 `/C exit 0`으로 전달한다. cmd의 원래 stderr는 null이어서
+  과거 오류 메시지는 미확인이며, 인용만으로 모든 code 1의 원인을 단정하지 않는다.
+- **보존.** 성공 종료, 유효한 열린 handle, 실제 종료 신호, `service_process_unverified` 거부를 모두 유지한다.
+  재시도·대기·기대값·stdio·production은 바꾸지 않는다. 한 handle의 신원/image 결속과 실제 현재
+  process·SCM 읽기·Unicode argv owner도 함께 점검하며 C argv와 cmd parser를 혼동하지 않는다.
+- **검증 경계.** macOS 전체 gate·Windows cross는 착지 전 판정이며 실제 Windows owner는 main push 뒤 CI다.
+  실제 SCM logon·Session 0·로그인 전 부팅·LSA·UAC는 Windows bootstrap 뒤 사용자 시험에 남는다.
+  I6 WIP는 별도 보존하며 이 후보에 포함하지 않는다.
+
+### 8.353 보고서 그림 눌러 크게 보기(10-21, t-0552)
 
 - **요청.** 사용자 10-20 20:3x: 시안·보고서 그림을 눌러도 커지지 않는다(Safari 탓 아님, 보고서 img에 링크·확대 없음). 웹 보고서 화면에서 모든 보고서 그림을 눌러 전체 화면·두 손가락 확대·닫기·넘기기. t-0540의 「답할 것」 크게 보기를 다시 쓴다.
 - **결정(10-21 1A, 사용자 위임 중 coordinator).** 보고서 index.html은 opaque origin sandbox iframe(§8.7·§8.197)이라 앱이 그 안의 누름을 볼 길이 없다(브라우저에 cross-origin iframe 안 사건을 부모가 듣는 기능이 없다). brief의 「script를 보고서에 주입하지 않고」는 coordinator가 붙인 조건이었고 사용자 요청이 우선이라, host가 보고서 HTML 끝에 그림 누름 알림 script를 붙인다. 조건:
@@ -6457,4 +6489,4 @@ L4 후속(10-20 00시 사용자 관찰): 멈춤 상태의 후보 예약과 재�
 - **공용 크게 보기(`web/src/Lightbox.tsx`·`lightboxGesture.ts`).** t-0540 `AsksView` Lightbox와 task 첨부 `Viewer`를 하나로 합쳤다(새 보기를 따로 만들지 않음). 문서 맨 위(portal), 머리 「n / N · 설명 · 원본 · 닫기」, 앞뒤 단추·←→, Esc·바깥 누름·닫기·아래로 쓸기·휴대폰 뒤로(`usePhoneSheetBack`, §8.301의 기록 칸 규칙 그대로)로 닫음, 옆으로 쓸어 넘김(너비 12%·48px 이상), 두 손가락 확대·끌기(1~6배, 무대 밖으로 빠지지 않음), 두 번 누름 2.5배·맞춤, 데스크톱 ctrl+바퀴(trackpad 벌리기)·키운 동안 바퀴 옮기기. 무대는 `touch-action: none`이라 페이지 확대·굴림이 아니고, 목록 drawer 가장자리 쓸기는 `aria-modal` 위에서 멈춘다(§8.301). 표지 `data-at`·`data-count`·`data-scale`.
 - **쓰는 곳.** 보고서 화면 index.html·보고 글(report.md), thread 화면 「보고」 글·결과물 index.html, 파일 보기의 결과물 HTML 페이지와 Markdown(t-0506 문서 열기), 「답할 것」 본문(같은 본문 그림으로 넘김)·선택지 「크게」, task 첨부 그림. 보고 글의 `library/…` 그림은 이제 그 보고서 보기 경로로 그린다(전에는 대체 글만 보였다, `reportMarkdownImage`는 질문 본문과 같은 거름). iframe 요소 표지 `data-messages`(본 메시지 수)·`data-opened`(연 수).
 - **남은 것.** headless WebKit(Playwright 1.58)은 iframe `sandbox` 속성과 CSP `sandbox` 머리가 겹친 문서에서 `img-src 'self'` 그림을 그리지 않는다(둘 중 하나만이면 그린다, Chromium은 늘 그린다. CSP를 `img-src <명시 origin>`으로 쓰면 그린다). main도 같다. 실제 iOS·macOS Safari에서 앱 안 보고서 그림·CSS가 보이는지 실기 확인이 필요하고, 같으면 `/v/` CSP의 `'self'`를 guard가 아는 origin으로 바꾸는 후속이 필요하다. 크게 보기는 앱 문서에서 그림을 읽어 영향이 없다. data: 그림(보고서에 박아 넣은 그림)은 보기 경로 밖이라 크게 보지 않는다. 실제 iOS 손가락이 어떤 pointer 사건으로 오는지는 headless가 보이지 않는다(실기 확인).
-- **검증.** host 유닛 `report_images_bridge_goes_only_on_html_navigation`, 웹 유닛 `reportImages.test.mjs`(뿌리·주소 거름·흉내·상한·보고 글 그림)·`lightboxGesture.test.mjs`(두 손가락·묶기·두 번 누름·바퀴·쓸기). 웹 E2E `58-report-images`와 52·53의 크게 보기 testid(`lightbox`·`lightbox-close`). 상세는 [시험](testing.md)의 t-0552 절.
+- **검증.** host 유닛 `report_images_bridge_goes_only_on_html_navigation`, 웹 유닛 `reportImages.test.mjs`(뿌리·주소 거름·흉내·상한·보고 글 그림)·`lightboxGesture.test.mjs`(두 손가락·묶기·두 번 누름·바퀴·쓸기). 웹 E2E `59-report-images`와 52·53의 크게 보기 testid(`lightbox`·`lightbox-close`). 상세는 [시험](testing.md)의 t-0552 절.

@@ -1587,6 +1587,12 @@ pub enum FrontRequest {
     AccountLoginCancel {
         id: String,
     },
+    /// FRONT_API 1.79. 다시 로그인에 다른 메일이 들어왔을 때(`mismatch`) 고른다: `switch`면 이 별칭을 새 메일 인증으로 바꾸고,
+    /// 아니면 새 인증을 버리고 옛 인증을 남긴다(`kept`). 조작 기기와 host의 세션 밖 CLI만
+    AccountLoginConfirm {
+        id: String,
+        switch: bool,
+    },
     AccountRemove {
         name: String,
     },
@@ -2733,7 +2739,6 @@ impl FrontRequest {
             self,
             FrontRequest::AccountList
                 | FrontRequest::AccountDefaults
-                | FrontRequest::AccountLoginStatus { .. }
                 | FrontRequest::Status
                 | FrontRequest::DeployContext
                 | FrontRequest::DeployStatus { .. }
@@ -2794,10 +2799,6 @@ impl FrontRequest {
         matches!(
             self,
             FrontRequest::AccountImport { .. }
-                | FrontRequest::AccountDefault { .. }
-                | FrontRequest::AccountLogin { .. }
-                | FrontRequest::AccountLoginStatus { .. }
-                | FrontRequest::AccountLoginCancel { .. }
                 | FrontRequest::AccountRemove { .. }
                 | FrontRequest::DebugInput { .. }
                 | FrontRequest::EnrollOpen { .. }
@@ -3138,6 +3139,9 @@ pub enum FrontEvent {
     /// FRONT_API 1.77. 알림함(inbox)이 바뀌었다(항목이 더해지거나 끝났다). 웹 events 연결에만, 열 때와 바뀔 때 보낸다.
     /// 웹은 `inbox`(`peek`)를 다시 읽는다(배지·알림함 패널)
     Inbox,
+    /// FRONT_API 1.79. host 계정이 바뀌었다(로그인 진행·끝, 기본, 메일·상태). 웹 events 연결에만, 열 때와 바뀔 때 보낸다.
+    /// 웹은 `account_list`·`account_defaults`와 보던 로그인의 `account_login_status`를 다시 읽는다
+    Accounts,
     /// FRONT_API 1.60. 프로젝트 TASKS.md가 바뀌었다(ticker가 크기·mtime을 보고 내용 hash로 확인한다). 웹은 `tasks`를 다시 읽는다.
     /// 옛 CLI는 모르는 사건을 풀지 못하므로 1.60 이상과 합의한 연결에만 보낸다.
     Tasks { project: String, sha256: String },

@@ -1,10 +1,10 @@
-// 보고서 그림 크게 보기(plan §8.350, 사용자 10-20 「시안·보고서 이미지를 눌러도 안 커진다」). 보고서 index.html은 opaque origin
+// 보고서 그림 크게 보기(plan §8.353, 사용자 10-20 「시안·보고서 이미지를 눌러도 안 커진다」). 보고서 index.html은 opaque origin
 // sandbox iframe이라 host가 HTML 탐색 응답 끝에 붙인 그림 누름 알림만이 앱에 누른 그림을 알린다. 데스크톱(Chromium)·휴대폰(WebKit
 // iPhone)에서 보고서 안 그림을 눌러 공용 크게 보기(Lightbox)로 열고, 넘기고(←→·단추·옆으로 쓸기), 키우고(두 번 누름·두 손가락),
 // 닫는다(Esc·바깥 누름·아래로 쓸기·휴대폰 뒤로). 원본 파일·Range·내려받기·fetch는 원본 바이트 그대로이고, 보고서 제 script나 다른
 // 창이 흉내 낸 알림, 그 보고서 밖 주소는 열지 않는다. 휴대폰 손짓은 PointerEvent를 무대에 직접 보낸다: 실제 iOS 손가락이 어떤
 // pointer 사건으로 오는지는 headless가 보이지 않는다(실기 확인).
-// 혼자 돌리기: node web/e2e/web.e2e.mjs --spec 58-report-images(새 실험실).
+// 혼자 돌리기: node web/e2e/web.e2e.mjs --spec 59-report-images(새 실험실).
 
 import fs from "node:fs";
 import http from "node:http";
@@ -146,7 +146,7 @@ export default async function ({ page }) {
     await frame.getByRole("img", { name: "셋째 그림" }).waitFor();
     await imagesLoaded(frame);
     await watchOpens(page);
-    await shot(page, "58-report-desktop");
+    await shot(page, "59-report-desktop");
     // 흉내: 보고서 제 script(보고서 밖 주소·다른 origin·data:)와 앱 창 자신(그 보고서 그림 주소)이 보낸 알림. 앱이 넷을 다 본 표지 뒤에
     // 연 것이 없다
     const marks = () => page.getByTestId("report-frame").evaluate((f) => ({ seen: Number(f.dataset.messages ?? 0), opened: Number(f.dataset.opened ?? 0) }));
@@ -164,7 +164,7 @@ export default async function ({ page }) {
     const opens = await page.evaluate(() => window.__lightboxOpens);
     if (opens.length !== 1 || opens[0].count !== "3" || (await marks()).opened !== was.opened + 1) throw new Error(`크게 보기 기록: ${JSON.stringify(opens)}`);
     await page.getByTestId("lightbox-img").evaluate((i) => i.decode());
-    await shot(page, "58-lightbox-desktop");
+    await shot(page, "59-lightbox-desktop");
     // 누른 곳은 iframe 안이다: 크게 보기가 focus를 가져온 뒤의 키는 앱이 받는다
     await focusIs(page, "크게 보기 닫기", '[data-testid="lightbox-close"]');
     await page.keyboard.press("ArrowRight");
@@ -176,7 +176,7 @@ export default async function ({ page }) {
     // 두 번 누름: 그 자리를 키우고 다시 두 번 누르면 맞춘 크기
     await page.getByTestId("lightbox-img").dblclick();
     await boxIs(page, "두 번 눌러 키움", { at: 0, count: 3, scale: "2.50" });
-    await shot(page, "58-lightbox-desktop-zoom");
+    await shot(page, "59-lightbox-desktop-zoom");
     await page.getByTestId("lightbox-img").dblclick();
     await boxIs(page, "두 번 눌러 맞춤", { at: 0, count: 3, scale: "1.00" });
     // 그림 한 번 누름은 닫지 않는다. Esc가 닫고 보고서는 그대로
@@ -199,14 +199,14 @@ export default async function ({ page }) {
       const frame = p.frameLocator('[data-testid="report-frame"]');
       await frame.getByRole("img", { name: "첫 그림" }).waitFor();
       // headless WebKit은 sandbox 속성과 CSP sandbox 머리가 겹친 iframe 문서의 `img-src 'self'` 그림을 그리지 않는다(main도 같다,
-      // plan §8.350 「남은 것」). 그래서 iframe 안 그림이 읽히기를 기다리지 않는다: 크게 보기는 앱 문서에서 그 주소를 읽는다
+      // plan §8.353 「남은 것」). 그래서 iframe 안 그림이 읽히기를 기다리지 않는다: 크게 보기는 앱 문서에서 그 주소를 읽는다
       await frame.getByRole("img", { name: "셋째 그림" }).waitFor();
-      await shot(p, "58-report-phone");
+      await shot(p, "59-report-phone");
       const hash = await p.evaluate(() => location.hash);
       await frame.getByRole("img", { name: "첫 그림" }).tap();
       await boxIs(p, "첫 그림 크게", { at: 0, count: 3, file: "a.png", scale: "1.00" });
       await p.getByTestId("lightbox-img").evaluate((i) => i.decode());
-      await shot(p, "58-lightbox-phone");
+      await shot(p, "59-lightbox-phone");
       // 왼쪽으로 쓸면 다음, 오른쪽이면 앞. 짧게 끈 것은 그대로
       await fingers(p, [["pointerdown", 1, 300, 400], ["pointermove", 1, 200, 405], ["pointermove", 1, 120, 410], ["pointerup", 1, 120, 410]]);
       await boxIs(p, "왼쪽 쓸기 → 둘째", { at: 1, count: 3, file: "sub/c.png" });
@@ -221,7 +221,7 @@ export default async function ({ page }) {
       await fingers(p, [["pointermove", 1, 160, 400], ["pointerup", 1, 160, 400]]);
       const after = await box(p);
       if (after.scale !== "2.11" || after.transform === before) throw new Error(`한 손가락 끌기: ${before} → ${after.transform}`);
-      await shot(p, "58-lightbox-phone-zoom");
+      await shot(p, "59-lightbox-phone-zoom");
       // 키운 동안 옆으로 끈 것은 옮기기다(넘기지 않는다)
       if (after.at !== 0) throw new Error("키운 채 끌기가 넘겼다");
       // 두 번 누름은 맞춘 크기로

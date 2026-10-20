@@ -825,6 +825,13 @@ CI/Git의 source outbox·중복 억제·재시작·outage는 기존 owner를 유
 - `node web/e2e/web.e2e.mjs --spec 56-operate`: 저장소 더하기·제자리 고치기(파일 글과 차례)·빼기 확인 창·할 일 저장소 목록, 「이 aaa」 값 저장(파일 글)과 범위 밖 숫자, 멈춤·재개 확인 창, 위험한 thread(미커밋·branch 커밋·사본에 빠진 symlink) 끝내기 창의 위험 줄과 남기기 켬, 끝낸 뒤 worktree·branch 남음, 깨끗한 thread(새 파일·big.bin을 치우고 사본이 다 온 뒤)의 남기기 끔과 worktree 지움, 다시 열기·Next 더하기·보내기·요약 고치기·세션을 끈 뒤 다시 시작, 알림함 배지와 한 건 끝내기(화면이 읽어도 `seen`이 바뀌지 않음), 흐름 사건 맨 위가 최근 것, 정리 미리보기, 휴대폰 390 폭, 같은 「바로 시작」 두 번 → thread 하나, Reader에 쓰기 단추 없음. 사본 상태·세션 상태·파일 글로 기다리며 고정 sleep은 없다.
 - 결함 심기: library/t-0538/w4-fault-replant.
 
+## host 계정 화면(t-0538 관리 GUI W5a, plan §8.351)
+
+- `cargo test -p aaa-host --lib account_meta::`: Codex id_token의 메일·plan과 깨진 값, Claude 「valid for N」 만료와 `.claude.json` 메일(없으면 모름), 상태 판정(거부 > 만료 > 7일 안), 웹 조작 기기의 로그인·기본 허용과 보기 전용·세션 안·worker 거부, 보기 전용·세션 안 목록에서 메일·plan 가림, 끊김·곧 만료 알림 한 번(메일 없음)과 로그인으로 끝냄·계정 지우기로 정리, 바뀐 메일의 최초 시각.
+- `cargo test -p aaa --test m13 accounts::`: 가짜 공식 CLI(`install_login_fixture`, `.claude.json`도 쓴다)로 로그인 → 메일·plan·날짜·사람이 읽는 목록, Claude 3일 → 곧 만료 알림, 같은 메일 다시 로그인은 최초 날짜 유지, 다른 메일 → `mismatch`(금고 그대로, 같은 별칭 로그인 거부) → `--keep`·`--switch`, 실험실 전체(host DB·fixture 밖)에 `@example.com`이 없음. 병렬 갱신 시험은 제공자가 거부한 갱신 뒤 계정이 `rejected`이고 알림함 `account` 항목이 하나인지 본다.
+- `node --test web/test/accountsModel.test.mjs`: 1.79 판정, 별칭 꼴, 상태 낱말(남은 날 올림), 날짜, harness 묶음과 기본, 로그인 진행 글(host Mac 브라우저 안내·이 메일·다른 메일).
+- `node web/e2e/web.e2e.mjs --spec 58-accounts`: PATH 앞 가짜 `claude`·`codex`가 FIFO에 쓸 때만 끝난다. 새 로그인 진행 → 메일·plan·날짜·정상, 기본으로·기본 해제(host 기본), 진행 중 취소(계정 없음), Claude 3일 → 곧 만료 배지와 알림함 항목(메일 없음), 다시 로그인의 「이 메일로 로그인하세요」 → 다른 메일 → 금고 그대로 → 「새 메일로 바꾸기」, Reader에 메일·로그인 단추 없음, 휴대폰 390 폭. 화면 표지(`data-state`)와 host 기록으로 기다리며 sleep은 없다.
+
 ## 대화의 도구 호출 묶음(t-0477, plan §8.304)
 
 - `node --test web/test/toolGroups.test.mjs`: Claude·Codex 도구 이름 분류, 요약 문구(두 가지까지·우선순위·서로 다른 수정 파일·생각), 이어진 도구·생각 줄 묶기, 앞 쪽이 묶음 앞에 붙은 뒤에도 옛 첫 줄 id로 같은 묶음과 펼침을 찾는지 본다.
@@ -963,6 +970,12 @@ CI/Git의 source outbox·중복 억제·재시작·outage는 기존 owner를 유
 - `AAA_TEST_AUTOMATION_CLOCK_FILE`에 Unix ms를 쓰면 자동화 batch·close_idle의 판정 시계만 움직인다. 실제 보고/입력 시각과 agent 활동 시각은 바꾸지 않는다. m13 Lab의 설정 폴더 안 파일만 사용한다. 고정 sleep·timeout 연장은 없다.
 - E2E49 `49-automation-memory`: 실제 report/Idle 사건으로 기억/크기/마지막 갱신 thread와 끝남 예정 표시를 본다. 데스크톱·390px에서 상세를 열고 캡처하며 가로 넘침과 자동화 완료 droplet 없음도 검사한다.
 - 결함 되심기: close_at의 마지막 입력보다 뒤인 보고 조건(시각과 입력 전 hash)을 제거하면 m13의 옛 완료 보호 단계에서 open 대신 resolved로 실패한다. 원본을 바이트 단위로 복구한다.
+
+### 자동화 기억의 동시 편집(t-0548, plan §8.350)
+
+- `cargo test -p aaa-host --lib memory`는 실제 host·DB와 새 work_files/N-1 Mission frame fixture로 전달 뒤 host 덧붙이기와 thread 요약 변경을 겹친다. host 줄·양쪽 보존 사본·history 두 쪽·충돌 inbox 한 건을 검사하며, 저장한 공통 판을 새 host owner가 읽고 오래된 ThreadRec으로 반복 회수해도 원문을 덮지 않아야 한다. 각각 상한 아래인 양쪽 history를 합쳤을 때 1000개를 넘으면 회수를 거부하고 양쪽 원문을 유지해야 한다. 원래 제품은 「열린 동안 host에서 쓴 줄이 회수로 사라졌다」에서 실패했다.
+- 순수 판정은 독립 추가·삭제, 같은 변경, 수정/삭제 충돌, 기준 없는 옛 실행, 파일/폴더 경로 충돌, 되풀이한 압축, host만 고친 뒤 나중에 thread도 고치는 순서와 수동 해소를 검사한다.
+- 기존 m13 `ci::automation_ci_reuses_open_thread_and_closes_only_after_new_report_with_memory`가 실제 host→agent→PTY의 FIFO gate를 잡고 마지막 보고 전에 host 줄을 더한다. thread는 기존 기억을 history로 옮긴 뒤 요약한다. resolved 사건 뒤 host 원문·4KiB 이하 두 요약·history·양쪽 사본·중복 보존 없음·inbox를 확인하고, 다음 실행이 host의 보존된 기억을 받는지 검사한다. 고정 sleep과 시한 변경은 없다. 이 실험실은 운영 자동화 파일을 읽거나 고치지 않는다.
 
 ## host 계정 전달과 동시 갱신(t-0500, plan §8.320)
 
@@ -1169,10 +1182,20 @@ Claude SessionStart가 알린 격리 홈의 대화는 pane chat으로, TaskCreat
 - `cargo test -p aaa-session --lib account::tests:: --locked`는 명시적 우회/허용 옵션, 마지막 permission-mode, `--` 뒤 문자열 제외, 일반 실행의 파일 미생성, 기존 환경설정 보존, 비우회 재개 시 자동 수락 제거, 인증 비기록, Unix 0600·symlink 대상 보존·깨진 JSON 거부를 확인한다.
 - 수락 준비 제거와 비우회에도 무조건 수락하는 변형은 각각 위 m13의 settings 단언에서 RED여야 한다. 매번 원본 bytes를 복구한 뒤 정상 owner와 전체 ci-local·check-public을 실행한다.
 
-## 보고서 그림 크게 보기(t-0552, plan §8.350)
 
-- 웹 E2E `58-report-images`: 실제 host에 index.html·그림 넷(하나는 링크 안)·data: 그림을 publish한다. host 단계는 `node:http`로 보낸다(Node fetch는 `Sec-Fetch-Mode`를 cors로 덮어 브라우저 탐색 머리를 흉내 내지 못한다). fetch·Range·`?download=1`·그림은 원본 바이트, iframe 탐색은 원본 + `<script>` 하나와 맞는 `Content-Length`, sandbox CSP 그대로, 최상위 문서 탐색에도 붙는다.
+## install I5 Windows 종료 process fixture(t-0485)
+
+`install::engine::supervisor::native::tests::process_observation_rejects_completed_process_with_its_handle_still_open`은
+`cmd /D /Q /C exit 0`의 고정 token을 별도 인수로 전달한다. cmd 명령문 전체를 C argv 한 개로 감싸지 않는다.
+자식의 성공 종료·아직 열린 유효 handle의 `WAIT_OBJECT_0`·제품 `service_process_unverified`를 모두 검사하며
+고정 sleep·재시도·stdio 변경은 없다. 같은 native/상위 supervisor의 현재 image·SID·profile·SCM 읽기와
+Unicode argv 왕복 owner도 Windows cargo test에 남긴다. 이들은 Win32 전용이며 실제 실행은 main push 뒤 windows-2025,
+macOS gate·Windows cross compile 결과와 별도로 보고한다. SCM 실제 logon·UAC/LSA는 실기 인수 경계다.
+
+## 보고서 그림 크게 보기(t-0552, plan §8.353)
+
+- 웹 E2E `59-report-images`: 실제 host에 index.html·그림 넷(하나는 링크 안)·data: 그림을 publish한다. host 단계는 `node:http`로 보낸다(Node fetch는 `Sec-Fetch-Mode`를 cors로 덮어 브라우저 탐색 머리를 흉내 내지 못한다). fetch·Range·`?download=1`·그림은 원본 바이트, iframe 탐색은 원본 + `<script>` 하나와 맞는 `Content-Length`, sandbox CSP 그대로, 최상위 문서 탐색에도 붙는다.
 - 데스크톱(Chromium): 보고서 안 그림 누름 → 크게 보기(`data-at`·`data-count`·`data-scale`·그림 주소), ←→·앞뒤 단추, 두 번 누름 2.5배·맞춤, 그림 누름은 닫지 않음, Esc·바깥 누름으로 닫고 보고서는 남음. 누른 곳이 iframe이라 키는 크게 보기가 focus를 가져온 사건(`focusIs`) 뒤에 누른다(앞서 누르면 키가 보고서 문서로 간다).
 - 흉내 낸 알림: 보고서 제 script(API 주소·다른 origin의 같은 경로·data:)와 앱 창 자신(그 보고서 그림 주소)이 보낸 넷을 iframe 표지 `data-messages`로 본 뒤 `data-opened`·크게 보기가 그대로인지 단언한다. 진짜 누름 뒤에 보면 React가 한 번에 그려 흉내가 연 상태를 덮어 결함을 놓친다(처음 쓴 판이 출처 검사 결함에도 통과했다). 흉내 주소는 iframe의 실제 주소로 만든다(publish가 준 공유 링크 cap은 앱이 연 cap과 다르다).
-- 휴대폰(WebKit iPhone): `tap()`으로 열고, 손짓은 touch PointerEvent를 무대·그림에 직접 보낸다(옆으로 쓸어 넘김, 짧은 끌기는 그대로, 두 손가락 90→190px = 2.11배, 남은 손가락 끌기는 옮기기이고 넘기지 않음, 두 번 누름 맞춤). 뒤로(popstate)는 크게 보기만 닫고 주소·보고서 그대로, 아래로 쓸기는 닫고 기록 칸(`aaa:sheet`)을 거둔다. headless WebKit은 이 iframe 안 그림을 그리지 않아(plan §8.350 「남은 것」) iframe 그림 읽힘은 데스크톱에서만 기다린다.
+- 휴대폰(WebKit iPhone): `tap()`으로 열고, 손짓은 touch PointerEvent를 무대·그림에 직접 보낸다(옆으로 쓸어 넘김, 짧은 끌기는 그대로, 두 손가락 90→190px = 2.11배, 남은 손가락 끌기는 옮기기이고 넘기지 않음, 두 번 누름 맞춤). 뒤로(popstate)는 크게 보기만 닫고 주소·보고서 그대로, 아래로 쓸기는 닫고 기록 칸(`aaa:sheet`)을 거둔다. headless WebKit은 이 iframe 안 그림을 그리지 않아(plan §8.353 「남은 것」) iframe 그림 읽힘은 데스크톱에서만 기다린다.
 - 결함 심기(되돌렸다): iframe 출처 검사·origin 검사·`/v/<cap>/` 경로 검사를 빼면 데스크톱 흉내 단언, host가 fetch에도 붙이면 host 단계, 그림마다 빈 click listener를 빼면 휴대폰 첫 누름에서 실패한다.

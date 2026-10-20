@@ -1,4 +1,4 @@
-// 보고서 그림 크게 보기(plan §8.350). 보고서 HTML은 opaque origin sandbox iframe이라 앱이 그 안을 보지 못한다. host가 HTML 탐색
+// 보고서 그림 크게 보기(plan §8.353). 보고서 HTML은 opaque origin sandbox iframe이라 앱이 그 안을 보지 못한다. host가 HTML 탐색
 // 응답 끝에 붙인 알림(aaa-host `report_images.js`)이 누른 그림과 그 문서의 그림 주소를 보낸다. 보고서 제 script도 같은 꼴을
 // 보낼 수 있으므로 믿지 않고 거른다: 그 보고서의 보기 경로(`/v/<cap>/`) 아래 같은 origin 주소만 받는다(data:·blob:·다른
 // 보고서·API 주소는 버린다). 그래서 흉내 낸 메시지가 할 수 있는 일은 「그 보고서 제 그림을 앱 크게 보기로 연다」뿐이다.

@@ -13,6 +13,7 @@ pub fn automation_schema() -> String {
     serde_json::to_string_pretty(&automation::schema()).expect("schema serialize")
 }
 mod account_login;
+mod account_meta;
 mod account_policy;
 mod accounts;
 mod auto_start;
@@ -438,6 +439,10 @@ pub struct Host {
     pub asks_changed: tokio_watch::Sender<u64>,
     /// 알림함이 바뀐 횟수(웹 알림함 배지가 다시 읽는다)
     pub inbox_changed: tokio_watch::Sender<u64>,
+    /// host 계정이 바뀐 횟수(로그인 진행·끝, 기본, 메일·상태). 웹 계정 페이지가 다시 읽는다
+    pub accounts_changed: tokio_watch::Sender<u64>,
+    /// 계정 기록(`account-meta:*`) 읽고-고쳐-쓰기를 하나씩(로그인 끝·갱신 결과·ticker 상태 pass가 겹친다)
+    account_meta_gate: Mutex<()>,
     /// EMFILE 중에는 파일을 더 열지 않고, ticker가 여유가 생긴 뒤 시스템 경고를 저장한다.
     resource_exhausted: std::sync::atomic::AtomicBool,
     health: Mutex<supervisor::Health>,
@@ -655,7 +660,7 @@ impl Host {
         }
         let web_port = cfg.web.listen.rsplit_once(':').and_then(|(_, p)| p.parse().ok()).unwrap_or(0);
         let dev_mode = cfg.local_agent.mode == LocalAgentMode::Child;
-        Ok(Arc::new(Host {
+        let host = Arc::new(Host {
             health: Mutex::new(supervisor::Health::load(&db)),
             health_wake: Default::default(),
             accounts,
@@ -671,6 +676,8 @@ impl Host {
             reports_changed: tokio_watch::channel(0).0,
             asks_changed: tokio_watch::channel(0).0,
             inbox_changed: tokio_watch::channel(0).0,
+            accounts_changed: tokio_watch::channel(0).0,
+            account_meta_gate: Mutex::new(()),
             enroll: Mutex::new(Enroll::default()),
             pairing: Mutex::new(Pairing::default()),
             agent_listen: Mutex::new(None),
@@ -742,7 +749,10 @@ impl Host {
             report_refresh: Mutex::new(HashMap::new()),
             restoring: Mutex::new(HashSet::new()),
             restore_tried: Mutex::new(HashSet::new()),
-        }))
+        });
+        // 이 기록 전에 등록한 Codex 계정의 메일·plan(관리 GUI W5a, 사용자 답 3A)
+        host.account_meta_backfill();
+        Ok(host)
     }
 
     fn bump(&self) {
@@ -752,6 +762,10 @@ impl Host {
     /// 보고서 목록이 바뀌었다(plan §8.256)
     pub(crate) fn reports_bump(&self) {
         self.reports_changed.send_modify(|v| *v += 1);
+    }
+
+    pub(crate) fn accounts_bump(&self) {
+        self.accounts_changed.send_modify(|v| *v += 1);
     }
 
     pub(crate) fn inbox_bump(&self) {
@@ -1263,18 +1277,29 @@ impl Host {
         front: Option<&FrontRef>,
         req: FrontRequest,
     ) -> Result<FrontResponse, ErrorBody> {
+        // 계정 인증 파일을 넣고 빼는 것은 host의 세션 밖 터미널만 한다
+        if matches!(&req, FrontRequest::AccountImport { .. } | FrontRequest::AccountRemove { .. })
+            && (role != DeviceRole::Local || front::in_session(actor) || !actor.starts_with("local:"))
+        {
+            return Err(err(ErrorCode::Forbidden, "계정 등록·삭제는 host의 aaa 세션 밖 터미널에서 한다"));
+        }
+        // 로그인·기본 계정은 사람이 한다: host의 세션 밖 터미널이나 웹 조작 기기(FRONT_API 1.79, 관리 GUI W5a). 세션 안 agent·worker·
+        // evaluator·detached는 Local이어도 거부한다
         if matches!(
             &req,
-            FrontRequest::AccountImport { .. }
-                | FrontRequest::AccountRemove { .. }
-                | FrontRequest::AccountDefault { .. }
+            FrontRequest::AccountDefault { .. }
                 | FrontRequest::AccountLogin { .. }
                 | FrontRequest::AccountLoginStatus { .. }
                 | FrontRequest::AccountLoginCancel { .. }
-        ) && (role != DeviceRole::Local || front::in_session(actor) || !actor.starts_with("local:"))
+                | FrontRequest::AccountLoginConfirm { .. }
+        ) && !account_meta::shows_email(role, actor)
         {
-            return Err(err(ErrorCode::Forbidden, "계정 로그인·변경은 host의 aaa 세션 밖 터미널에서 한다"));
+            return Err(err(
+                ErrorCode::Forbidden,
+                "계정 로그인·기본 변경은 사람이 host의 aaa 세션 밖 터미널이나 웹(조작 기기)에서 한다",
+            ));
         }
+        let shows_email = account_meta::shows_email(role, actor);
         let req = if matches!(&req, FrontRequest::AccountImport { .. }) {
             req
         } else {
@@ -1331,25 +1356,36 @@ impl Host {
         }
         match req {
             FrontRequest::AccountImport { name, harness, secret } => {
-                self.accounts.import(&name, &harness, secret.0.trim())?;
+                let secret = secret.0.trim();
+                self.accounts.import(&name, &harness, secret)?;
+                // 가져온 인증은 로그인으로 기록한다(Codex는 인증의 계정 정보로 메일·plan을 읽는다)
+                let identity = if harness == "codex" {
+                    account_meta::codex_identity(secret)
+                } else {
+                    account_meta::Identity::default()
+                };
+                self.account_logged_in(&name, &identity, false);
                 self.db.audit(actor, "account_import", &name);
-                Ok(FrontResponse::Accounts { accounts: self.accounts.list()? })
+                Ok(FrontResponse::Accounts { accounts: self.account_views(shows_email)? })
             }
-            FrontRequest::AccountList => Ok(FrontResponse::Accounts { accounts: self.accounts.list()? }),
+            FrontRequest::AccountList => Ok(FrontResponse::Accounts { accounts: self.account_views(shows_email)? }),
             FrontRequest::AccountDefaults => Ok(FrontResponse::AccountDefaults { defaults: self.account_defaults()? }),
             FrontRequest::AccountDefault { harness, account } => {
                 self.set_default_account(&harness, account.as_deref())?;
                 self.db.audit(actor, "account_default", &format!("{harness} {}", account.as_deref().unwrap_or("off")));
+                self.accounts_bump();
                 Ok(FrontResponse::AccountDefaults { defaults: self.account_defaults()? })
             }
             FrontRequest::AccountLogin { name, harness } => self.account_login(&name, &harness, actor),
             FrontRequest::AccountLoginStatus { id } => self.account_login_status(&id),
             FrontRequest::AccountLoginCancel { id } => self.account_login_cancel(&id).await,
+            FrontRequest::AccountLoginConfirm { id, switch } => self.account_login_confirm(&id, switch, actor),
             FrontRequest::AccountRemove { name } => {
                 if self.account_defaults()?.iter().any(|d| d.account == name) {
                     return Err(err(ErrorCode::BadRequest, "기본 계정은 먼저 account default --off로 해제한다"));
                 }
                 self.accounts.remove(&name)?;
+                self.account_meta_remove(&name);
                 self.db.audit(actor, "account_remove", &name);
                 Ok(FrontResponse::Done)
             }

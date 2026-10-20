@@ -160,7 +160,7 @@ export function FileViewer({ path: asked, source: from, onClose, onOpen }: { pat
   const [source, setSource] = useState(false);
   const surface = useFocusTrap<HTMLElement>(true);
   useSheetSwipe(surface, onClose);
-  // 결과물 페이지(보기 경로)·Markdown의 그림을 누르면 크게(plan §8.350)
+  // 결과물 페이지(보기 경로)·Markdown의 그림을 누르면 크게(plan §8.353)
   const lightbox = useLightbox();
   const page = useRef<HTMLIFrameElement>(null);
   useEffect(() => setPath(asked), [asked]);

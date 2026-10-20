@@ -702,7 +702,9 @@ mod tests {
         use std::process::{Command, Stdio};
         let command = PathBuf::from(std::env::var_os("SystemRoot").unwrap()).join("System32/cmd.exe");
         let mut child = Command::new(command)
-            .args(["/D", "/Q", "/C", "exit 0"])
+            // /C 뒤는 C argv가 아닌 cmd 명령문이다. 고정 두 token을 따로 주어
+            // Rust가 전체를 "exit 0"으로 감싸지 않게 한다.
+            .args(["/D", "/Q", "/C", "exit", "0"])
             .stdin(Stdio::null())
             .stdout(Stdio::null())
             .stderr(Stdio::null())

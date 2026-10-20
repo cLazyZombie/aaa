@@ -103,7 +103,7 @@ export function ThreadPanel({
     }
   };
   const index = lib?.files.find((f) => f.path === "index.html" && !f.on_agent);
-  // 보고 글·결과물 index.html 그림을 누르면 크게(plan §8.350)
+  // 보고 글·결과물 index.html 그림을 누르면 크게(plan §8.353)
   const lightbox = useLightbox();
   const frame = useRef<HTMLIFrameElement>(null);
   const page = lib && index ? lib.base + "index.html" : null;
