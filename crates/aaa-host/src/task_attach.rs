@@ -32,6 +32,9 @@ static SAVING: std::sync::Mutex<()> = std::sync::Mutex::new(());
 pub(crate) struct TaskFile {
     pub name: String,
     pub src: String,
+    /// 그 머신 작업 폴더에 한 번 썼다: 다시 시작할 때 원본이 없거나 바뀌었어도 그 사본이 있어 건너뛸 수 있다
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub sent: bool,
 }
 
 /// uploads·attachments 안 이름(`<16 hex>.<png|jpg|gif|webp|md|html>`)인가
@@ -160,7 +163,7 @@ impl Host {
                     .join(name)
                     .symlink_metadata()
                     .is_ok_and(|m| m.is_file() && m.len() <= MAX_BYTES)
-                    .then(|| TaskFile { name: name.to_string(), src: target.clone() })
+                    .then(|| TaskFile { name: name.to_string(), src: target.clone(), sent: false })
             } else {
                 // 보고서 안 문서: 내용 hash로 이름을 붙인다(보고서마다 같은 이름 plan.md가 겹치지 않는다)
                 library_ref(&target).and_then(|(report, path)| {
@@ -169,6 +172,7 @@ impl Host {
                     Some(TaskFile {
                         name: format!("{}.{ext}", &hex::encode(Sha256::digest(&bytes))[..16]),
                         src: target.clone(),
+                        sent: false,
                     })
                 })
             };
@@ -206,6 +210,7 @@ impl Host {
         let work_dir = rec.work_dir.clone().ok_or_else(|| err(ErrorCode::Internal, "작업 폴더 기록이 없다"))?;
         let dir = self.project_dir(&rec.project)?;
         let conn = self.live_conn(&rec.machine_id)?;
+        let mut sent = Vec::new();
         for f in &rec.attachments {
             let read = if let Some((report, path)) = library_ref(&f.src) {
                 self.report_doc_bytes(&rec.project, report, path, MAX_BYTES)
@@ -214,24 +219,27 @@ impl Host {
             } else {
                 Err(err(ErrorCode::BadRequest, "첨부 원본 꼴이 아니다"))
             };
-            // 다시 시작할 때 원본이 사라졌거나(지운 보고서·정리한 uploads) 내용이 바뀌었으면(live 보고서) 넘기지 않는다: 첫 시작 때 쓴
-            // 사본이 작업 폴더에 남아 있고, 이름(내용 hash)과 다른 내용을 그 이름에 덮지 않는다. 다시 시작은 막지 않는다
+            // 원본은 이름(내용 hash)과 같은 내용이어야 넘긴다(바뀐 live 보고서를 그 이름에 덮지 않는다)
+            let read = read.and_then(|b| {
+                if b.is_empty() || b.len() as u64 > MAX_BYTES {
+                    return Err(err(ErrorCode::BadRequest, "1바이트~16MiB가 아니다"));
+                }
+                if !hex::encode(Sha256::digest(&b)).starts_with(f.name.split('.').next().unwrap_or_default()) {
+                    return Err(err(ErrorCode::BadRequest, format!("원본이 바뀌어 이름({})과 내용이 다르다", f.name)));
+                }
+                Ok(b)
+            });
             let bytes = match read {
-                Ok(b) if !b.is_empty() && b.len() as u64 <= MAX_BYTES => b,
-                Ok(_) => {
-                    tracing::warn!(thread = %rec.id, src = %f.src, "task 첨부 원본이 1바이트~16MiB가 아니라 넘기지 않는다");
+                Ok(b) => b,
+                // 한 번 쓴 사본이 작업 폴더에 있다(지운 보고서·정리한 uploads 뒤의 다시 시작): 막지 않고 넘기지 않는다
+                Err(e) if f.sent => {
+                    tracing::warn!(thread = %rec.id, src = %f.src, "task 첨부를 다시 넘기지 않는다(앞 사본을 쓴다): {}", e.message);
                     continue;
                 }
-                Err(e) => {
-                    tracing::warn!(thread = %rec.id, src = %f.src, "task 첨부 원본을 읽지 못해 넘기지 않는다: {}", e.message);
-                    continue;
-                }
+                // 아직 쓴 적이 없다: brief가 「복사해 두었다」고 하지 않게 시작을 멈춘다
+                Err(e) => return Err(err(e.code, format!("task 첨부 {}를 넘기지 못했다: {}", f.src, e.message))),
             };
             let want = hex::encode(Sha256::digest(&bytes));
-            if !want.starts_with(f.name.split('.').next().unwrap_or_default()) {
-                tracing::warn!(thread = %rec.id, src = %f.src, "task 첨부 원본이 바뀌어 이름({})과 내용이 다르다: 넘기지 않는다", f.name);
-                continue;
-            }
             let mut saved = false;
             for (i, chunk) in bytes.chunks(aaa_proto::ATTACH_CHUNK).enumerate() {
                 let offset = i * aaa_proto::ATTACH_CHUNK;
@@ -254,6 +262,12 @@ impl Host {
             if !saved {
                 return Err(err(ErrorCode::Internal, format!("task 첨부 {} 저장 응답이 없다", f.name)));
             }
+            sent.push(f.name.clone());
+        }
+        if rec.attachments.iter().any(|f| !f.sent) {
+            self.update_rec(&rec.project, &rec.id, |r| {
+                r.attachments.iter_mut().filter(|f| sent.contains(&f.name)).for_each(|f| f.sent = true)
+            })?;
         }
         Ok(())
     }
@@ -389,6 +403,7 @@ mod tests {
             attachments: vec![TaskFile {
                 name: "0123456789abcdef.png".into(),
                 src: "uploads/0123456789abcdef.png".into(),
+                sent: false,
             }],
         };
         let e = h.thread_start(start, "test").await.unwrap_err();

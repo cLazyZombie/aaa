@@ -942,4 +942,5 @@ journal·로그·화면에 원문·8바이트 조각·base64/URL/JSON 변형이 
   `work_attach.v1`이 없는 agent에 thread 기록을 만들기 전에 거부하는지 본다(앞 확인을 빼면 실패한다).
 - m13 `task_attachments_reach_a_remote_agent`는 TLS 원격 agent(다른 상태 폴더 labB)에 `--from-task`로 띄워 그림·보고서 문서를
   그 작업 폴더 `attachments/`에 같은 바이트로 쓰고, 할 일 글이 그 경로만 가리키며 host에 없는 첨부는 경고로 알리는지 본다. 이어서
-  host 원본(올린 그림·보고서 문서)을 지운 뒤에도 `thread restart`가 되고 첫 사본이 남는지 본다(옛 코드는 원본을 못 읽어 실패했다).
+  host 원본(올린 그림·보고서 문서)을 지운 뒤에도 `thread restart`가 되고 첫 사본이 남는지 본다. 첫 전송의 `sent` 표지를 저장하지
+  않으면 이 다시 시작은 「아직 쓴 적 없는 첨부」로 보고 멈추므로 실패한다(표지 저장을 빼고 확인했다).
