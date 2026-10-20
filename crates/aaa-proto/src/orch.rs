@@ -1093,7 +1093,7 @@ pub struct AutomationInflight {
     pub at_ms: u64,
     /// `do.message` 대상 thread(주인 thread면 그 사건의 thread)
     pub thread: Option<String>,
-    /// 보냈는지 모른다: 자동으로 다시 보내지 않고 사람 확인을 기다린다
+    /// 보냈는지 모른다: 자동으로 다시 보내지 않고 확인 필요로 기다린다
     pub unknown: bool,
 }
 

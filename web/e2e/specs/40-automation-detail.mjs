@@ -115,9 +115,9 @@ export default async function ({ page }) {
     aaa("pane", "kill", pane);
     await until("pane 끝남", () => aaa("pane", "list").panes.some((p) => p.id === pane && p.state !== "running"));
     fs.writeFileSync(`${dir()}/automations/ping.toml`, `[on.schedule]\nevery="1s"\n[do.message]\nthread=${JSON.stringify(thread)}\ntext="자동 확인 글"\n`);
-    await until("host가 묶음을 보내다 실패해 사람 확인을 기다림", () => {
+    await until("host가 묶음을 보내다 실패해 확인 필요로 기다림", () => {
       aaa("ticker", "tick");
-      return aaa("routine", "runs", "auto-detail", "ping").runs.some((r) => r.status === "waiting" && r.detail === "입력 전달 모름 · 사람 확인 필요");
+      return aaa("routine", "runs", "auto-detail", "ping").runs.some((r) => r.status === "waiting" && r.detail === "입력 전달 모름 · 확인 필요");
     });
     const stuck = aaa("routine", "list").routines.find((r) => r.name === "ping").queue.inflight;
     if (!stuck?.unknown || stuck.thread !== thread) throw new Error(`막힌 묶음 ${JSON.stringify(stuck)}`);
@@ -158,14 +158,14 @@ export default async function ({ page }) {
     await shot(page, "automation-stuck-desktop");
     // 계속 보내기: 그 묶음은 닫고(다시 보내지 않음) 다음 입력은 보낸다. pane이 아직 끝난 채라 다음 입력이 실제로 시도되어 실패한다
     const answered = Date.now();
-    await sheet.getByRole("button", { name: "확인했음 · 남은 입력 계속 보내기", exact: true }).click();
+    await sheet.getByRole("button", { name: "확인함 · 남은 입력 계속 보내기", exact: true }).click();
     const confirm = page.getByRole("alertdialog");
     await confirm.waitFor();
     await confirm.getByRole("button", { name: "계속 보내기", exact: true }).click();
     await confirm.waitFor({ state: "detached" });
     await sheet.getByTestId("automation-stuck").waitFor({ state: "detached" });
     const runs = () => aaa("routine", "runs", "auto-detail", "ping").runs;
-    if (!runs().some((r) => r.status === "skipped" && r.detail === "사람 확인 · 다시 보내지 않음")) throw new Error(`푼 기록 ${JSON.stringify(runs().slice(0, 3))}`);
+    if (!runs().some((r) => r.status === "skipped" && r.detail === "확인함 · 다시 보내지 않음")) throw new Error(`푼 기록 ${JSON.stringify(runs().slice(0, 3))}`);
     await until("다음 입력을 새 묶음으로 보내려다 다시 막힘", () => {
       aaa("ticker", "tick");
       const next = aaa("routine", "list").routines.find((r) => r.name === "ping").queue.inflight;
@@ -181,7 +181,7 @@ export default async function ({ page }) {
     await row.getByRole("button", { name: "ping 자세히", exact: true }).click();
     await sheet.getByTestId("automation-stuck").waitFor();
     aaa("routine", "toggle", "auto-detail", "ping", "--off");
-    await sheet.getByRole("button", { name: "확인했음 · 남은 입력 버리기", exact: true }).click();
+    await sheet.getByRole("button", { name: "확인함 · 남은 입력 버리기", exact: true }).click();
     await confirm.waitFor();
     await confirm.getByRole("button", { name: "버리기", exact: true }).click();
     await confirm.waitFor({ state: "detached" });
@@ -190,7 +190,7 @@ export default async function ({ page }) {
     const after = aaa("routine", "list").routines.find((r) => r.name === "ping").queue;
     if (after.inflight || after.pending !== 0) throw new Error(`버린 뒤 큐 ${JSON.stringify(after)}`);
     // 기록은 입력 id마다 하나: 두 묶음의 입력 모두 「다시 보내지 않음」으로 닫혔다
-    const closed = runs().filter((r) => r.status === "skipped" && r.detail === "사람 확인 · 다시 보내지 않음").length;
+    const closed = runs().filter((r) => r.status === "skipped" && r.detail === "확인함 · 다시 보내지 않음").length;
     if (closed !== stuck.events + second.events) throw new Error(`닫힌 입력 기록 ${closed}: ${JSON.stringify(runs().slice(0, 5))}`);
     await page.keyboard.press("Escape");
     await sheet.waitFor({ state: "detached" });

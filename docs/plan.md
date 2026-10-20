@@ -773,7 +773,7 @@ host 프로젝트 폴더 구성:
   2. 사람의 승인: `aaa routine approve <p> <name>`. 승인 대상은 명령과 실행 머신의 sha256이고 host DB에 둔다. 파일의 명령이나 머신이 바뀌면 승인이 풀린다.
   - 둘 중 하나가 없으면 실행하지 않고, 명령 hash당 한 번 `routine-approval` 항목을 남긴다.
   - 승인 CLI는 host 머신 로컬 요청만 받는다(웹·원격 front 불가). aaa 세션 안(`AAA_SESSION_ID`·`AAA_HOOK_SOCK`)이거나 표준 입력이 터미널이 아니면 거부한다. 명령을 보이고 routine 이름을 치게 한다. CLI가 보낸 hash가 지금 파일과 다르면 host가 거부한다.
-  - **남는 한계:** aaa 밖에서 PTY를 만들어 env를 지운 프로세스가 사람처럼 이름을 치는 것까지는 막지 못한다. 0.2.35(터미널 + 이름 입력)보다는 강하지만 사람 확인 장치는 아니다. 강한 확인(웹 pairing 기기의 승인 버튼, OS 인증)은 M3에서 본다.
+  - **남는 한계:** aaa 밖에서 PTY를 만들어 env를 지운 프로세스가 사람처럼 이름을 치는 것까지는 막지 못한다. 0.2.35(터미널 + 이름 입력)보다는 강하지만 사람만 할 수 있게 하는 장치는 아니다. 강한 확인(웹 pairing 기기의 승인 버튼, OS 인증)은 M3에서 본다.
 - **실행:** 대상 머신 agent가 `sh -c`(Windows는 `cmd /C`)로 실행한다. host는 실행하지 않는다.
   - 실행 폴더: host 머신이면 프로젝트 폴더, 다른 머신이면 그 agent의 `<work_root>/<project>/routines`다.
   - 자식은 새 process group으로 띄우고, 60초가 지나면 **그 group만**(agent가 만든 pgid) 끝낸다. 출력은 64KB까지 모으고 나머지는 읽어 버린다.
@@ -3279,7 +3279,7 @@ coordinator 실기(10-18 00:58, iPhone 홈 화면 앱을 앞에 띄움, binary c
   FRONT_API는 통합 main의 1.31을 유지한다. ProfileResolve는 host의 정본·전역 기본값을 읽고, 수정 CLI는 host 머신의
   사람 터미널에서 host.toml만 쓴다. 초기 후보(당시 main 1.17)에서는 1.18로 묶어 1.17 연결을 검증했다. 이후 main이
   승인된 다른 기능으로 1.31까지 올라와 현재 N-1인 1.30의 실제 hello/status를 검증한다. 이 변경으로 minor를 더 올리지 않는다.
-  기본값 host도 첫 profile을 만들 수 있도록 설정 파일이 없으면 로컬 host DB로 host 머신인지 확인한다(사람 확인 유지).
+  기본값 host도 첫 profile을 만들 수 있도록 설정 파일이 없으면 로컬 host DB로 host 머신인지 확인한다(사람이 확인하는 것은 그대로).
 - **front.** 통합 main의 새 pane 창(§8.126 NewSessionDialog·AgentPicker)은 기존 Front Profiles 호출로 host 목록을 본다.
   PaneRun도 host가 푼 SpawnSpec.resolved_profile을 host_profiles.v1 agent에 보낸다. agent는 머신 덮어쓰기·hook만 적용한다.
   thread safety 인자는 pane에 더하지 않던 기존 동작을 유지한다. 이미 펼친 argv로 재개하는 pane은 저장된 argv를 쓴다.

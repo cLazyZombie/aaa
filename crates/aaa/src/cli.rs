@@ -3632,7 +3632,7 @@ fn render_front(r: &FrontResponse) -> String {
                         s,
                         "자동 시작 {}: {} · 범위 hash {}",
                         r.name,
-                        if r.start_approved == Some(true) { "승인됨" } else { "사람 승인 필요" },
+                        if r.start_approved == Some(true) { "승인됨" } else { "승인 필요" },
                         sha
                     );
                     if let Some(scope) = &r.start_scope {

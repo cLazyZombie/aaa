@@ -91,12 +91,12 @@ export function RuleDetail({ project, rule, canControl, covered = false, onChang
     </Section>
     {stuck && <Section title="막힌 입력" testid="automation-stuck">
       <div className="automation-stuck" role="alert">
-        <p><strong>입력 전달 모름 · 사람 확인 필요</strong></p>
+        <p><strong>입력 전달 모름 · 확인 필요</strong></p>
         <p>{stuck.thread ? `${stuck.thread}에` : "대상 thread에"} 보내던 글 묶음({stuck.events}건, {time(stuck.at_ms)}부터)이 닿았는지 모릅니다. 자동으로 다시 보내지 않습니다. 대상 thread 화면에서 글이 왔는지 확인한 뒤 고릅니다. 이 묶음은 어느 쪽이든 다시 보내지 않습니다.</p>
         <p>뒤에 쌓인 입력 {queue?.pending ?? 0}건</p>
         {canControl ? <div className="automation-actions">
-          <button type="button" className="btn" onClick={() => setUnblock({ discard: false })}>확인했음 · 남은 입력 계속 보내기</button>
-          <button type="button" className="btn btn-danger" onClick={() => setUnblock({ discard: true })}>확인했음 · 남은 입력 버리기</button>
+          <button type="button" className="btn" onClick={() => setUnblock({ discard: false })}>확인함 · 남은 입력 계속 보내기</button>
+          <button type="button" className="btn btn-danger" onClick={() => setUnblock({ discard: true })}>확인함 · 남은 입력 버리기</button>
         </div> : <p className="automation-dim">보기 권한에서는 풀 수 없습니다.</p>}
       </div>
     </Section>}

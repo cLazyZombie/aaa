@@ -300,10 +300,10 @@ impl Host {
         }
         result.map_err(internal)?;
         for id in &resolved {
-            self.record_routine(p, n, id, "skipped", "사람 확인 · 다시 보내지 않음", None);
+            self.record_routine(p, n, id, "skipped", "확인함 · 다시 보내지 않음", None);
         }
         for id in &dropped {
-            self.record_routine(p, n, id, "skipped", "사람이 남은 입력을 버림", None);
+            self.record_routine(p, n, id, "skipped", "확인함 · 남은 입력 버림", None);
         }
         self.db.audit(
             actor,
@@ -555,7 +555,7 @@ impl Host {
                     // message의 이전 전송 여부는 알 수 없으므로 재전송하지 않는다.
                     if matches!(batch.events[0].action, Action::Message(_)) {
                         batch.unknown = true;
-                        wait = Some((batch.id.clone(), "입력 전달 모름 · 사람 확인 필요"));
+                        wait = Some((batch.id.clone(), "입력 전달 모름 · 확인 필요"));
                     } else {
                         selected = Some(batch.clone());
                     }
@@ -731,7 +731,7 @@ impl Host {
                     .await
                     .map(|m| {
                         // 받음 모름도 전송 시도는 끝났다. 실제 메시지의 내구 상태가
-                        // 사람 확인을 맡고 이 사건 receipt는 재전송을 막는다.
+                        // 확인은 사람이 맡고 이 사건 receipt는 재전송을 막는다.
                         message_unknown = m.state == aaa_proto::DeliveryState::Unknown;
                         message_id = Some(m.id);
                     })
@@ -812,7 +812,7 @@ impl Host {
             self.inbox_add(p, "routine", &r.name, "prompted its thread", &outcome);
         }
         let detail = if message_unknown {
-            "입력 전달 모름 · 사람 확인 필요".into()
+            "입력 전달 모름 · 확인 필요".into()
         } else if let Some(outcome) = &start_outcome {
             outcome.detail.clone()
         } else {

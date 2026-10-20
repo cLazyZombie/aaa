@@ -445,7 +445,7 @@ async fn unblock_releases_only_the_seen_message_batch_and_never_resends_it() {
     // 다음 판정이 처리 중 묶음을 다시 만나면 모름으로 적고 다시 보내지 않는다(대상 thread가 없어도 보내려 하지 않는다)
     h.automation_drain("demo", &rule).await.unwrap();
     let runs = h.routine_runs("demo", "msg").unwrap();
-    assert_eq!((runs[0].status.as_str(), runs[0].detail.as_str()), ("waiting", "입력 전달 모름 · 사람 확인 필요"));
+    assert_eq!((runs[0].status.as_str(), runs[0].detail.as_str()), ("waiting", "입력 전달 모름 · 확인 필요"));
     let q = queue(&h);
     assert_eq!(q.pending, 2);
     let inflight = q.inflight.unwrap();

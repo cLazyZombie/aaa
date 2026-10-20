@@ -95,7 +95,7 @@ export function AutomationPanel({ canControl }: { canControl: boolean }) {
             <p className="automation-summary">{r.trigger || r.schedule} → {r.action || "동작 정보 없음"}</p>
             {r.origin === "mission" && <p>임무 파일의 켜짐 상태입니다. 적용 사본이 다르면 특수 패널에서 다시 읽기를 확인하세요.</p>}
             {r.error ? <p role="alert">{r.error}</p> : <>
-              {stuck && <p className="automation-stuck-line" role="alert">막힘 · 입력 전달 모름 · 사람 확인 필요{stuck.thread ? ` (${stuck.thread})` : ""}</p>}
+              {stuck && <p className="automation-stuck-line" role="alert">막힘 · 입력 전달 모름 · 확인 필요{stuck.thread ? ` (${stuck.thread})` : ""}</p>}
               {!r.enabled && <p>꺼짐</p>}
               {r.origin === "mission" && !r.approved && <p className="automation-approval">임무 승인 필요</p>}
               {r.start_approved === false && <p className="automation-approval">자동 시작 승인 필요 {canControl && <button type="button" disabled={busy !== null} onClick={() => setApproval({ project, rule: r })}>승인 검토</button>}</p>}
