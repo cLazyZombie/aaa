@@ -393,32 +393,42 @@ pub(crate) async fn protect_recorded_worktrees_locked(cfg: &ThreadsConfig) -> Re
         Err(e) => return Err(e.into()),
     };
     for entry in entries {
-        let path = entry?.path();
+        let path = match entry {
+            Ok(entry) => entry.path(),
+            Err(e) => {
+                tracing::warn!(error = %e, "준비 journal 목록의 Git 잠금 점검 보류");
+                continue;
+            }
+        };
         if path.extension().and_then(|s| s.to_str()) != Some("json") {
             continue;
         }
-        let saved: Placement = read(&path)?.context("준비 journal이 없다")?;
-        let Some(repo) = &saved.repo else { continue };
-        if cfg.lock_reason(&saved.cwd)?.is_none() {
-            continue;
+        if let Err(e) = protect_recorded_worktree(cfg, &path).await {
+            // 한 thread의 오래된/깨진 기록 때문에 다른 thread와 agent 연결까지 막지 않는다.
+            tracing::warn!(journal = %path.display(), error = %format!("{e:#}"), "준비 journal의 Git 잠금 점검 보류");
         }
-        if let Err(e) = recorded_root(cfg, &saved) {
-            tracing::warn!(%e, "옛 작업 root의 Git 잠금 점검 보류");
-            continue;
-        }
-        if !saved.cwd.is_dir() {
-            continue;
-        }
-        // 실행 중 작업의 새 commit·dirty는 허용하되 다른 repo/branch를 차지하지 않는다.
-        let common = git(&saved.cwd, &["rev-parse", "--path-format=absolute", "--git-common-dir"], GIT_T).await?;
-        if common != git(repo, &["rev-parse", "--path-format=absolute", "--git-common-dir"], GIT_T).await?
-            || saved.branch.as_ref() != Some(&git(&saved.cwd, &["symbolic-ref", "--short", "HEAD"], GIT_T).await?)
-        {
-            bail!("준비 journal과 현재 worktree의 repo·branch가 다르다");
-        }
-        protect(cfg, repo, &saved.cwd).await?;
     }
     Ok(())
+}
+
+async fn protect_recorded_worktree(cfg: &ThreadsConfig, path: &Path) -> Result<()> {
+    let saved: Placement = read(path)?.context("준비 journal이 없다")?;
+    let Some(repo) = &saved.repo else { return Ok(()) };
+    recorded_root(cfg, &saved)?;
+    if cfg.lock_reason(&saved.cwd)?.is_none() || !saved.cwd.is_dir() {
+        return Ok(());
+    }
+    let common = git(&saved.cwd, &["rev-parse", "--path-format=absolute", "--git-common-dir"], GIT_T).await?;
+    let top = git(&saved.cwd, &["rev-parse", "--show-toplevel"], GIT_T).await?;
+    if common != git(repo, &["rev-parse", "--path-format=absolute", "--git-common-dir"], GIT_T).await?
+        || Path::new(&top).canonicalize()? != saved.cwd.canonicalize()?
+    {
+        bail!("준비 journal과 현재 worktree의 repo·자리가 다르다");
+    }
+    // 이 잠금은 Git 등록 경로의 prune을 막는다. 단계 착지 뒤 branch·HEAD·dirty 변경은 정상이다.
+    // journal은 준비 재진입/정리의 소유권 증거이므로 현재 branch로 덮어쓰지 않는다.
+    // 다른 repo·경로는 위에서 거르고, Git 등록 자체의 존재는 protect에서 다시 확인한다.
+    protect(cfg, repo, &saved.cwd).await
 }
 
 #[derive(Serialize, Deserialize, PartialEq, Eq)]

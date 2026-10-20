@@ -5955,3 +5955,13 @@ L4 후속(10-20 00시 사용자 관찰): 멈춤 상태의 후보 예약과 재�
 - **사용 불가:** 실행 가능한 gh가 없거나 실행 시 ENOENT, gh 종료 코드 4(미인증)이면 agent가 정상 응답의 `unavailable`로 돌려준다. host는 그 pass에서 같은 머신의 남은 PR 추적을 생략하고 outage·회복 inbox를 만들지 않는다. 다음 정기 조회에서 다시 확인하며 성공하면 자동으로 사용한다. 일반 네트워크/API 실패·사라진 worktree 등은 기존 PR 장애 판정을 유지한다.
 - **상태:** `MachineView.pr_tracking`은 host 메모리의 마지막 PR 조회 결과다. `aaa doctor`는 머신마다 `PR 추적 <머신>: 사용 불가: <이유>` 또는 `사용 가능` 한 줄을 보인다. 아직 조회하지 않았거나 host를 다시 띄웠으면 아직 조회하지 않음으로 보인다. 끊긴 머신의 값도 마지막 관측값이다. CI 상태와 합치지 않는다.
 - **호환:** 기존 질문 종류를 그대로 쓰고 `PrAnswer.unavailable`·`skipped`, `MachineView.pr_tracking` 선택 필드만 더한다. 옛 agent 응답은 기존 실제 조회로 해석하고 옛 host/front는 새 필드를 버린다. gh 자격 증명 파일·토큰은 읽거나 복사하지 않는다.
+
+
+### 8.315 thread의 branch 변경 뒤 agent 재시작(10-20, t-0495)
+
+- **문제.** 단계 착지 뒤 같은 worktree에서 branch를 바꾸면 시작 시 준비 journal의 branch 대조가 실패해 agent 전체가 종료됐다. 한 thread의 기록이 다른 세션과 host 재연결까지 막았다.
+- **경계.** 시작의 Git 잠금은 등록된 worktree 경로의 자동 prune을 막는 장치다. 등록 root·실제 worktree 최상위 경로·Git common dir·기록 repo의 Git 등록이 일치하면 branch·HEAD·dirty 변경을 허용한다. 다른 repo로 바뀐 경로는 잠그지 않는다.
+- **실패 격리.** journal 읽기·root·Git 검사·잠금 오류는 기록 경로와 원인 체인을 경고하고 해당 기록의 잠금 점검만 보류한다. 다른 기록과 agent 연결은 계속한다. journal 목록 자체를 열 수 없는 상태와 agent 상태/작업 root의 전역 오류는 그대로 실패한다.
+- **journal 보존.** 현재 branch로 기록을 덮어쓰지 않는다. 준비 재진입의 branch·HEAD·clean 검사와 정리 소유권 계약은 유지한다. 작업 단계 변경은 새로운 준비 요청을 옛 요청으로 위장하는 근거가 아니다.
+- **시험.** macOS m13 `agent_restart_preserves_threads_after_branch_changes_and_isolates_invalid_preparations`: 실제 준비 → branch 변경·dirty → agent 재시작 → host 연결·기존 session host PID·pane 읽기·정상 worktree 잠금 복구. 옛 Git 등록이 남은 자리를 다른 repo로 바꾸거나 JSON을 깨뜨려도 전체 시작을 막지 않고, 다른 repo를 잠그거나 journal을 덮지 않는다. 수정 전 종료와 수정 후 통과, branch 거부와 repo 대조 제거 변형의 실패를 남긴다.
+- **rollout 진단 조사.** 재시작 명령은 launchctl kickstart 성공과 직후 감독자 상태를 반환하며 이후 시작 stderr를 수집하지 않는다. guard/rollout 상태는 agent link로만 조회한다. agent가 연결 전에 종료하면 원격 guard 영수증·마지막 오류 줄을 host가 가져올 독립 경로가 없어 단계 한도/복구 확인 실패로 남는다. inbox는 Reader도 읽어 원문 진단을 싣지 않는 기존 계약을 유지한다. 이번에는 이 제약을 기록하며 별도 원격 진단 채널을 추가하지 않는다.
