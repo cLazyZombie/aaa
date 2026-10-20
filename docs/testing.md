@@ -1155,3 +1155,11 @@ Claude SessionStart가 알린 격리 홈의 대화는 pane chat으로, TaskCreat
 - pause에서 주어진 이름을 무시하고 현재 프로젝트를 쓰는 결함을 심으면 다른 이름 거부 단언에서 실패한다. 원본 바이트를 복원한 뒤 같은 keeper를 다시 확인한다.
 - m13 `coordinator_flow`·`doctor_files_brings_the_coordinator_guide_to_existing_projects`·`project_lifecycle`: 새로 만들거나 doctor로 갱신하거나 이름을 바꾼 AGENTS.md에 이름 없는 pause·resume·sweep 안내가 들어간다.
 - 실험실 host·가짜 agent만 쓰며 운영 프로젝트·설정·host는 건드리지 않는다. 고정 sleep이나 새 시험 전용 제품 경로는 더하지 않는다.
+
+
+## 계정 Claude 첫 실행 우회 경고(t-0551, plan §8.347)
+
+- `cargo test -p aaa --test m13 accounts::fresh_account_claude_initializes_only_authorized_bypass_consent --locked -- --exact`는 실제 host·로컬/원격 agent·session·PTY와 가짜 Claude를 사용한다. yolo 켜기/끄기, profile의 두 permission-mode 표기와 일반 모드로 새 홈 10개를 시작한다. 안내 완료와 우회 수락 키, 첫 경고 부재, 가짜 원본 홈의 인증·다른 설정 비복사와 원본 불변을 확인한다. 폴더 신뢰는 별도 정책이므로 실험실에 `trust_screens=coordinator`를 명시한다. 기본값을 coordinator로 가정했던 첫 시험 실패는 제품 결함으로 분류하지 않는다.
+- 가짜 시작 화면은 설치된 공식 Claude 2.1.304의 시작 조건과 저장 키를 따른다. 실제 제공자 CLI·키체인·인증 파일·외부 로그인은 실행하지 않는다. 완료는 socket gate·harness 종료 사건으로 판정하며 고정 sleep·재시도는 없다. 이 시험이 실제 제공자 인증이나 이후 새 버전의 추가 안내를 보증하지는 않는다.
+- `cargo test -p aaa-session --lib account::tests:: --locked`는 명시적 우회/허용 옵션, 마지막 permission-mode, `--` 뒤 문자열 제외, 일반 실행의 파일 미생성, 기존 환경설정 보존, 비우회 재개 시 자동 수락 제거, 인증 비기록, Unix 0600·symlink 대상 보존·깨진 JSON 거부를 확인한다.
+- 수락 준비 제거와 비우회에도 무조건 수락하는 변형은 각각 위 m13의 settings 단언에서 RED여야 한다. 매번 원본 bytes를 복구한 뒤 정상 owner와 전체 ci-local·check-public을 실행한다.

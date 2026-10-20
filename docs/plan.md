@@ -6407,3 +6407,12 @@ L4 후속(10-20 00시 사용자 관찰): 멈춤 상태의 후보 예약과 재�
 - **범위.** 「기타」에서 `role=evaluator`이면서 `state=exited`인 pane만 제외한다. 실행 중·중단·유실 pane, 사용자 종료 기록, 연결된 thread 줄은 유지한다. 같은 `roster`를 쓰는 단축키·명령 팔레트에도 적용한다. 파일·host 기록·보고 사본을 지우지 않아 CLI와 웹 주소 직접 열람은 유지되며, 변환 명령을 따로 실행할 필요가 없다. Front API·DB schema는 바꾸지 않는다.
 - **새 막대 통합.** §8.343 W4와 §8.345의 답할 것·작업·머신·자동화·알림함 다섯 패널을 유지한다. 「답할 것」→「알림함」→「작업」을 오간 뒤에도 같은 숨김 규칙을 쓴다. 종료 여부·역할 외에 이름이나 명령을 보고 옛 특수 pane으로 추측하지 않는다.
 - **검증.** `roster.test.mjs`는 옛 종료 pane 18개 노출을 수정 전 RED로 재현하며 정렬·단축키와 보존할 줄을 함께 본다. 기존 main의 E2E55·56과 번호를 나눠 `57-legacy-special-panes`가 실제 agent의 옛 세션 복원, 새 막대 전환, 18개 숨김과 살아 있는 사용자·평가자 pane, 사용자 종료 기록, 원본 파일 바이트·CLI 읽기·웹 주소 직접 열람 보존을 확인한다. 운영 host에는 닿지 않는다. 준비·종료·출력·DOM 사건으로 끝내며 시간 상한·기대값을 완화하지 않는다. 상세는 [시험](testing.md)의 자동화 A4 절을 따른다.
+
+
+### 8.347 계정 Claude thread의 첫 우회 권한 경고 준비(10-21, t-0551)
+
+- **원인.** §8.339의 계정 격리 홈은 초기 안내 완료만 기록했다. Claude의 초기 안내와 우회 경고는 별개이며, 공식 Claude 2.1.304의 시작·설정 코드에서 `.claude.json`의 `hasCompletedOnboarding`과 `settings.json`의 `skipDangerousModePermissionPrompt`를 각각 확인했다.
+- **범위.** session은 safety/profile을 합친 최종 argv에서 명시적 우회 실행·허용 옵션만 판정한다. `--dangerously-skip-permissions`, `--allow-dangerously-skip-permissions`, 두 가지 `--permission-mode bypassPermissions` 표기일 때만 격리 settings.json에 수락 키를 쓴다. 명시적 우회 허용도 Claude가 같은 경고를 열므로 포함한다. 권한 모드나 다른 안내 수락은 새로 정하지 않는다. 기존 초기 안내·폴더 신뢰 정책은 유지한다.
+- **보존.** 일반 실행은 settings.json을 새로 만들지 않고, 비우회 재개는 이전 자동 수락 키만 제거한다. 격리 홈의 다른 설정은 보존하며 symlink·깨진 JSON은 거부한다. 사용자 홈의 실제 로그인·인증 파일·토큰·키체인·다른 설정은 읽거나 복사하지 않는다. 도입 전 Claude 대화·coordinator의 홈과 인증 전달 경로는 유지한다.
+- **Codex.** 공식 0.163.0 시작·onboarding 소스에는 대응하는 우회 경고 수락 단계가 없어 추가 설정을 만들지 않는다. 로그인·폴더 신뢰·Windows 샌드박스 안내는 별개다. 저장 키와 근거는 [계정](accounts.md#계정-claude-thread의-첫-실행-안내)에 적었다.
+- **검증.** 계정 유닛은 옵션·비우회 파일 미생성·수락 제거·기존 설정 보존·인증 비기록·0600·symlink/JSON 거부를 검사한다. m13은 실제 host·로컬/원격 agent·session·PTY와 가짜 Claude로 새 홈 10개를 시작하여 첫 경고 부재·비우회 수락 없음·가짜 원본 인증/설정 비복사·원본 불변을 확인한다. 수락 준비 누락과 무조건 수락 변형이 각각 RED이며 원본 bytes 복구 뒤 GREEN을 확인했다. 고정 sleep·재시도·실제 제공자 인증 없이 사건으로 끝내며, 착지 기준 ed0a4d7e를 통합한 후보의 전체 ci-local·check-public을 실행한다. 상세는 [시험](testing.md)의 t-0551 절을 따른다.
