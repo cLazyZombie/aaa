@@ -884,7 +884,7 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
         setSettingsOpen(true);
       },
       openPalette: () => setPaletteOpen(true),
-      openFind: none,
+      openFind: () => paneControls.current?.openFind(),
       // 좁은 창에서는 drawer를 여닫고 넓은 창에서는 사이드바를 접는다·편다(참고 App.tsx 1246~1249줄)
       toggleSidebar: () => {
         if (window.matchMedia("(max-width: 768px)").matches) setDrawerOpen((open) => !open);
@@ -1025,6 +1025,7 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
     openNewSession: canControl ? actions.openNewSession : null,
     toggleView: paneView ? actions.toggleView : null,
     view: paneView,
+    openFind: paneView === "chat" ? actions.openFind : null,
     toggleTheme: () => updateAppearance({ theme: resolvedTheme === "dark" ? "light" : "dark" }),
     openSettings: () => setSettingsOpen(true),
     openThreads: chooseThreads,

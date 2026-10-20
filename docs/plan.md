@@ -5868,3 +5868,21 @@ L4 후속(10-20 00시 사용자 관찰): 멈춤 상태의 후보 예약과 재�
   - config `plaintext_secret_env_warns_by_name_only`
   - common `disable_core_dump_zeroes_only_the_soft_limit`
   - 고치기 전 main(11f2dc64)에서 E2E는 export·감사 기록·WAL에서 카나리를 찾아 실패했고, 정리 유닛은 값이 남아 실패했다. 결함 심기 셋(core dump 끄기 빼기, 감사 기록에 spec 그대로 쓰기, export 거르기 빼기)을 E2E가 하나씩 잡는다.
+
+### 8.308 대화 안 찾기 ⌘F(10-20, t-0478)
+
+- **요청.** t-0403 추천 7(사용자 10-20 「진행해.」). 대화 보기에서 글을 찾아 칠하고 그 자리로 간다(Enter·Shift+Enter, 개수, Esc 닫기). 휴대폰에서도 연다.
+- **참고(t3code 1451e7cb2).** 칸은 `apps/web/src/components/chat/ThreadFindBar.tsx:26`(칸·「n/전체」·위아래·닫기, 조합 중 Enter 무시, 열 때마다 칸에 가서 말 고르기), 상태는 `useThreadFind.ts:40`(친 말이 100ms 머문 뒤 찾기 `:346`, 열거나 말을 바꾸면 보이는 자리부터 `threadFindPosition.ts:4`, 끝에서 처음으로 도는 이동 `threadFind.ts`), 칠하기는 `threadFindHighlights.ts:17·111·216`(줄마다 찾을 글 영역의 글자 node를 블록 경계까지 이어 Range를 만들고 CSS Highlight API로 칠한다, MutationObserver로 다시 칠함, 접힌 곳은 `beforematch`로 편다), 이동은 `useThreadFindNavigation.ts:6~`(가상 목록의 그 줄을 먼저 꺼내고 찾음을 위아래 96px 안쪽으로, 한 frame 뒤 다시 재기), 대소문자 접기는 `packages/shared/src/threadSearch.ts:7`, 단축키는 `packages/shared/src/keybindings.ts:175`(`mod+f`, 터미널 focus가 아닐 때)·`useChatShortcuts.ts:83`(Esc). 찾는 대상은 사람 말·답(참고는 계획 포함, 도구 줄·생각은 찾지 않는다).
+- **aaa에서.** `web/src/chatFindText.ts`(말에서 찾을 글 뽑기·센다·DOM Range), `web/src/ChatFind.tsx`(칸과 상태·칠하기·이동), `Chat.tsx`·`Markdown.tsx`(찾을 글 영역 `data-chat-find-text`, 머리·단추 `data-chat-find-ignore`, 접힘 `data-chat-find-fold`). 칸은 대화 위 오른쪽에 떠 기록과 함께 굴러가지 않는다(`.chat-frame`). 여는 길은 대화를 보는 동안의 ⌘F(Ctrl+F), 머리의 돋보기(대화 보기일 때만, 휴대폰도), 팔레트 「대화에서 찾기」다. 닫으면 말도 비우고 연 자리로 focus를 돌린다.
+- **참고와 다른 곳.**
+  - 참고는 서버가 thread 전체를 센다(`apps/server/src/orchestration-v2/ThreadFind.ts:119·163`). aaa 1단계는 이 화면이 **받아 둔 기록**(`chat.messages`)을 센다. 가상화로 본문이 없는 화면 밖 줄도 센다. 그러려면 데이터에서 뽑는 글이 Markdown.tsx가 그리는 글과 같은 차례·같은 블록 경계여야 한다: `markdownFindSegments`가 `parseMarkdown` AST를 그리는 차례대로 걷는다(참고 `threadFindText.ts:105`가 렌더와 같은 pipeline을 쓰는 까닭). 앞 기록이 남았거나 앞 쪽을 못 읽는 옛 agent가 앞을 잘랐으면 개수 뒤에 「+」를 붙이고 칸의 title로 알린다.
+  - 긴 code의 꼬리는 aaa가 그리지 않던 글이다. 이제 글만 `hidden="until-found"` pre로 두고(강조 없이) 찾으면 편다. Chromium의 브라우저 찾기도 그 글을 찾아 편다(WebKit은 숨긴 채 둔다. 이 기능은 `beforematch`를 직접 보낸다). 긴 사람 말은 글이 있고 잘려 있을 뿐이라 참고처럼 `beforematch`로 편다.
+  - 단축키는 앱 단축키 표(Mod+Shift, §8.94)에 넣지 않고 대화 보기가 있는 동안 ChatPanel이 직접 받는다. 꺼진 「Find in terminal」(⌘⇧F)은 그대로다. 터미널 보기에서 ⌘F는 브라우저 몫이다.
+  - 닫을 때 참고는 입력창에 focus를 준다. aaa는 연 자리로 돌린다(휴대폰에서 입력창 focus는 화면 키보드를 올린다).
+  - 참고 「Searching…」·「Retry」는 서버 요청의 것이라 없다. 세는 100ms 동안은 「…」다.
+- **앞 기록까지 찾는 길(정함).** 앞 쪽을 더 불러와 이 화면에서 찾는다. 근거:
+  1. 참고도 찾음이 받지 않은 줄에 있으면 클라이언트가 앞 쪽을 넘겨 그 줄까지 불러온다(`useThreadFindNavigation.ts:103` `onLoadEarlier`). 다른 것은 개수를 누가 세느냐뿐이다.
+  2. 참고의 서버 검색이 맞는 까닭은 서버가 thread 전체의 색인(SQLite projection)을 갖고, 화면과 **같은 TypeScript 추출기**(`packages/shared`)로 세기 때문이다. aaa host는 대화 사본을 두지 않고(§8.298) 기록 파일은 그 머신 agent(Rust)에 있다. agent 검색은 `markdownFindSegments`를 Rust로 다시 짜야 하고, 어긋나면 개수와 칠한 자리가 달라진다(이 기능이 기대는 성질). 새 AgentRequest·기능 표지·FRONT_API도 든다.
+  3. 앞 쪽 읽기(§8.298)는 이미 쪽마다 150개·40,000자로 묶이고 cursor가 파일이 자라도 안정하다. 화면은 300줄이 넘으면 본문을 화면 근처만 그린다. 그래서 더 불러온 줄은 글자와 빈 줄 틀만 늘어난다.
+  - 2단계(후속): 칸에 「앞 기록도 찾기」를 두어 누르면 처음까지 쪽을 이어 받으며 개수를 늘린다(받는 동안 「n/전체+」, 멈춤 가능). 쪽 수가 매우 큰 기록(수만 줄)에서 느리면 그때 agent 쪽 색인(파일 revision마다 한 번 뽑아 둔 글)을 검토한다.
+- **검증.** 유닛 `web/test/chatFind.test.mjs`(대소문자 접기·겹치지 않는 찾음·돌아가는 차례, 굵은 글·code·목록·표·code 블록·수식의 블록 경계, 파일 이름 꼬리, 접힌 code 머리와 꼬리, 줄별 개수의 자리·차례·시작). 웹 E2E `44-chat-find`: 실제 lab Claude 기록 400줄(도구 줄·긴 code·긴 사람 말·표·한 말에 둘)을 처음까지 읽어 가상화된 상태에서, 받은 범위만일 때 「1/1+」, ⌘F로 열고 focus, 한글 개수, 대소문자·굵은 글 사이 이어 찾기·도구 줄 제외(7개), 끝을 보던 자리에서 시작, Enter로 처음(본문 없는 화면 밖 줄)으로 돌아가 보임, code 꼬리와 긴 사람 말이 펴짐, 모든 이동에서 활성 찾음이 칸 아래 대화 안에 보임, 그린 줄마다 데이터 개수 = 그린 글의 찾음 수(`data-find-count`·`data-find-dom`), 본문 mount 제한 유지, 0/0과 꺼진 이동 단추, Esc로 칠함 지움·focus 복귀, 팔레트로 열기. iPhone WebKit은 머리 돋보기로 열어 이동·칸이 화면 안. 기다림은 제품 표지(`data-find-count`·`data-find-index`·`data-find-active`·`data-find-revealed`)다. 화면 밖 줄 mount를 기다리지 않게 심으면 「Enter 처음으로」에서 실패한다. 한 frame 뒤 다시 재기는 이 기록(줄 높이가 고르다)에서는 빼도 통과한다(참고 그대로 둔다). 도구 묶음(§8.304) 뒤로 화면 줄 id가 말 차례와 어긋나므로 찾기는 말마다 id(`chatRowIds`)를 쓴다. 기록에 이어진 도구 호출 둘을 두어, 화면 줄 id를 넘기면 「줄 개수 어긋남」으로 실패한다.

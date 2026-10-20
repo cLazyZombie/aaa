@@ -9,6 +9,8 @@ export interface PaneControls {
   toggleView: () => void;
   /** 지금 보기: 대화를 볼 수 없는 pane은 null(명령 팔레트 「채팅으로 전환」·「터미널로 전환」) */
   view: () => "chat" | "terminal" | null;
+  /** 대화 보기면 대화 안 찾기 칸을 연다(plan §8.308). 터미널 보기는 하지 않는다 */
+  openFind: () => void;
 }
 
 export interface AppActions {
