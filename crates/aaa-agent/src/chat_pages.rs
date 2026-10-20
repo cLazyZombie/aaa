@@ -38,12 +38,12 @@ fn file_history(path: &Path, file: &std::fs::File) -> std::io::Result<(String, u
     // snapshot과 revision 비교를 같은 잠금 안에서 한다. 동시 append 읽기의 순서 역전을 축소로 오인하지 않는다.
     let mut revisions = REVISIONS.lock().unwrap();
     let meta = file.metadata()?;
-    let mut identity = format!("{:?}", meta.created().ok());
+    let identity = format!("{:?}", meta.created().ok());
     #[cfg(unix)]
-    {
+    let identity = {
         use std::os::unix::fs::MetadataExt;
-        identity.push_str(&format!(":{}:{}", meta.dev(), meta.ino()));
-    }
+        format!("{identity}:{}:{}", meta.dev(), meta.ino())
+    };
     // UI처럼 최근 파일만 기억한다. 재시작/퇴출은 cursor를 무효화하며 옛 파일과 섞지 않는다.
     if revisions.len() >= 128 && !revisions.contains_key(path) {
         revisions.clear();

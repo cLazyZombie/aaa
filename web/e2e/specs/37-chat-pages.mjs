@@ -145,6 +145,29 @@ export default async function () {
           const released = new Promise((resolve) => { release = resolve; });
           releases.add(release);
           gate = { arrive, released };
+          // 느린 WebKit은 짧은 최신 쪽으로 줄며 생긴 scroll을 자동 앞 쪽 읽기 뒤에 보낼 수 있다.
+          // 실제 브라우저 scroll만 잠깐 보류해 그 순서를 재현한다. 응답도 기존 gate 뒤에서 기다린다.
+          await chat.evaluate((el) => {
+            let arrive;
+            const previousTop = el.scrollTop;
+            window.shortScroll = new Promise((resolve) => { arrive = resolve; });
+            const delay = (event) => {
+              if (el.querySelectorAll(".chat-row").length !== 1) return;
+              event.stopImmediatePropagation();
+              arrive({ previousTop, top: el.scrollTop, height: el.scrollHeight, client: el.clientHeight });
+            };
+            el.addEventListener("scroll", delay, true);
+            window.releaseShortScroll = () => {
+              el.removeEventListener("scroll", delay, true);
+              el.dispatchEvent(new Event("scroll", { bubbles: true }));
+            };
+            const busy = () => {
+              const end = performance.now() + 25;
+              while (performance.now() < end) { /* 느린 CPU의 frame 점유 */ }
+              if (!window.shortCpuDone) requestAnimationFrame(busy);
+            };
+            requestAnimationFrame(busy);
+          });
           fs.writeFileSync(`${tr}.replacement`, Array.from({ length: 300 }, (_, n) => line(harness, n)).join("")
             + JSON.stringify({ type: "blob", data: "x".repeat(17 << 20) }) + "\n" + line(harness, 9000));
           fs.renameSync(tr, `${tr}.old`);
@@ -154,10 +177,15 @@ export default async function () {
           await short.waitFor();
           await frame(page);
           const beforeY = (await short.boundingBox()).y;
+          const clamped = await inTime(page.evaluate(() => window.shortScroll), 20_000, "짧은 쪽으로 줄며 생긴 scroll");
+          await page.evaluate(() => window.releaseShortScroll());
           release();
           await domIs(page, "짧은 최신 쪽의 이전 쪽 commit", () => document.querySelectorAll('[data-testid="chat"] .chat-row').length === 151);
           await frame(page);
           const afterY = (await short.boundingBox()).y;
+          await page.evaluate(() => { window.shortCpuDone = true; });
+          const closes = await page.evaluate(() => window.__aaaTermLog.filter((entry) => entry.e === "ws close 1006").length);
+          console.log(`${label} short-prepend`, JSON.stringify({ clamped, beforeY, afterY, terminalCloses1006: closes }));
           if (Math.abs(afterY - beforeY) > 1) throw new Error(`${label}: 짧은 쪽 prepend 위치 ${beforeY} → ${afterY}`);
           await shot(page, `${label}-short-prepend`);
           await chat.focus();
