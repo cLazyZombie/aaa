@@ -6216,3 +6216,11 @@ L4 후속(10-20 00시 사용자 관찰): 멈춤 상태의 후보 예약과 재�
   cross clippy/build 뒤 별도 수리분으로 착지하며, Windows·Linux 실제 실행은 main push 뒤 CI다.
 - **근거.** [Rust PathBuf::push](https://doc.rust-lang.org/std/path/struct.PathBuf.html#method.push),
   [Path::join](https://doc.rust-lang.org/std/path/struct.Path.html#method.join)의 verbatim prefix 정규화 규칙.
+
+### 8.332 비밀 없는 panic 위치 진단(10-20, t-0533)
+
+- **요청.** 장애 때 panic 본문을 숨기면서 위치까지 사라져 디버거가 필요했다. 본문·payload·환경·backtrace를 읽거나 포맷하지 않고 진단 가능한 위치와 실행 정보만 남긴다.
+- **공통 진입점.** 단일 실행 파일이 `aaa_common::panic_log::install()`을 먼저 호출한다. 파싱한 명령으로 CLI·host·agent·session host를 구분하며, 등록용 `agent enroll`은 CLI, 복구 감시는 agent다.
+- **안전한 필드.** Git에서 추적하는 Rust 파일 목록에서 고른 저장소 상대 경로·줄·열, 고정 허용 thread 이름·런타임 숫자 ID, Tokio task 숫자 ID, 프로세스 종류, 빌드 HEAD SHA, 같은 원본 위치의 프로세스 수명 내 반복 횟수만 JSON 한 줄로 stderr에 쓴다. 동적 thread 이름은 `other`로 숨긴다. stable Tokio API에 task 이름이 없어 ID를 쓴다. 모르는 외부·생성 파일은 `external`, Git 없는 소스 배포의 판은 `unknown`이다. 빌드 생성물에도 홈 절대 경로를 넣지 않는다.
+- **감시 API.** `panic_log::latest()`는 마지막 안전한 `Snapshot`만 반환한다. 본문과 임의 이름을 보관하지 않는다. 상태를 먼저 공개하고 상태 잠금을 푼 뒤 stderr에 쓰므로 출력 소비자가 막혀도 감시자가 위치를 읽는다. hook은 알림을 직접 전송하지 않으며 host 자기 감시는 이 API를 쓸 수 있다.
+- **검증.** `cargo test -p aaa-common --lib panic_log::`가 별도 프로세스에서 네 역할·비밀 String과 비문자열 payload·동적 이름·환경·backtrace 설정·실제 Tokio task·서로 다른 thread의 같은 위치 반복을 확인한다. stderr를 잠근 동안에도 감시자가 위치를 관측하는 사건을 받아야 한다. Windows·Unix 절대 경로는 허용된 상대 경로로 줄이고 모르는 경로는 숨긴다. 운영 panic 스위치를 추가하지 않는다. 본문 출력·원본 경로·횟수 초기화·stderr 쓰기 중 상태 잠금의 네 결함이 RED, bytes 원복 뒤 GREEN이어야 한다. 전체 ci-local·deps·TS 최신·check-public을 통과한 뒤 착지한다. 새 웹 동작이 없어 웹 E2E 파일은 추가하지 않는다.
