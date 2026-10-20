@@ -3,6 +3,7 @@ import { Trash2 } from "lucide-react";
 import type { DeviceRole, FrontResponse, LibraryReport } from "./gen/proto";
 import { call } from "./api";
 import { ConfirmDialog } from "./ConfirmDialog";
+import { UploadReportDialog, useAdmin } from "./AdminPages";
 import { ReportLink } from "./LibraryLink";
 import { formatBytes } from "./formatBytes";
 
@@ -58,6 +59,9 @@ export function ReportsPanel({ role, rev, onView }: { role: DeviceRole; rev: num
   const [picked, setPicked] = useState<ReadonlySet<string>>(new Set());
   const [doomed, setDoomed] = useState<LibraryReport[] | null>(null);
   const [linkOpen, setLinkOpen] = useState<string | null>(null);
+  // 「올리기」 창의 프로젝트(host는 프로젝트 하나다, 관리 GUI W5b)
+  const [uploading, setUploading] = useState<string | null>(null);
+  const admin = useAdmin();
   const load = useCallback(async () => {
     setProblem("");
     try {
@@ -97,6 +101,13 @@ export function ReportsPanel({ role, rev, onView }: { role: DeviceRole; rev: num
     void load();
   };
   const canEdit = role !== "reader";
+  const startUpload = () => {
+    setProblem("");
+    call({ op: "instance" }).then(
+      (r) => (r.kind === "instance" && r.project ? setUploading(r.project.name) : setProblem("이 host에 프로젝트가 없어 올릴 곳이 없다")),
+      (e: unknown) => setProblem(e instanceof Error ? e.message : String(e)),
+    );
+  };
   // host는 프로젝트 하나라(plan §8.291) 프로젝트로 거르지 않는다
   const shown = reports ?? [];
   const mine = shown.filter((r) => r.to_user);
@@ -118,7 +129,9 @@ export function ReportsPanel({ role, rev, onView }: { role: DeviceRole; rev: num
     </div>
     <div className="reports-toolbar">
       <button className="ghost small" onClick={() => void load()}>새로고침</button>
+      {canEdit && admin && <button className="ghost small" onClick={startUpload} data-testid="reports-upload">보고서 올리기</button>}
     </div>
+    {uploading && <UploadReportDialog project={uploading} onClose={() => setUploading(null)} onDone={() => void load()} />}
     {usage && <p className="muted" data-testid="reports-usage">합계 {storageSize(usage.size)} / {usage.max_size ? storageSize(usage.max_size) : "상한 꺼짐"}, 기한 {usage.max_days ? `${usage.max_days}일` : "꺼짐"}</p>}
     {usage && usage.max_size > 0 && usage.protected_size > usage.max_size && <p role="alert">보호 사본만으로 상한을 넘었다. 자동 삭제하지 않는다</p>}
     {problem && <p role="alert">{problem}</p>}

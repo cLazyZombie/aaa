@@ -8,6 +8,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import type { DeviceRole, LibraryPrunePlan, MachineView, ProfileView, ProjectSettingsView } from "./gen/proto";
 import { ApiError, call, me } from "./api";
 import { ConfirmDialog } from "./ConfirmDialog";
+import { KeyRotate } from "./AdminPages";
 import { SettingsGroup, SettingsRow, Toggle } from "./herdr/SettingsControls.tsx";
 import { canOperate, checkSetting, parseRepoArg, repoArg, repoGroups, REPO_DIR } from "./operateModel.ts";
 
@@ -322,6 +323,13 @@ export function ThisAaaPage({ role }: { role: DeviceRole }) {
           )}
         </div>
       </SettingsGroup>
+      {canEdit && (
+        <SettingsGroup title="공유 링크">
+          <div className="settings-item">
+            <KeyRotate />
+          </div>
+        </SettingsGroup>
+      )}
       {ask && (
         <ConfirmDialog
           title={ask.title}

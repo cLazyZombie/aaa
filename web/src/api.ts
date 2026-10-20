@@ -61,6 +61,13 @@ export function onAsksChanged(listener: () => void): () => void {
   return () => asksListeners.delete(listener);
 }
 
+/** host `enroll` 사건(머신 등록 창·대기 목록이 바뀜, FRONT_API 1.80): 설정 「머신」이 다시 읽는다. 연결을 열 때도 한 번 온다 */
+const enrollListeners = new Set<() => void>();
+export function onEnrollChanged(listener: () => void): () => void {
+  enrollListeners.add(listener);
+  return () => enrollListeners.delete(listener);
+}
+
 /** host `accounts` 사건(계정이 바뀜: 로그인 진행·끝, 기본, 메일·상태, FRONT_API 1.79): 설정 「계정」이 다시 읽는다. 연결을 열 때도 한 번 온다 */
 const accountsListeners = new Set<() => void>();
 export function onAccountsChanged(listener: () => void): () => void {
@@ -123,6 +130,14 @@ export async function uploadTaskFile(project: string, file: File, kind?: "md" | 
     method: "POST", body: file, credentials: "same-origin",
   });
   return (await unwrap<{ path: string }>(response)).path;
+}
+
+/** 웹 「보고서 올리기」(FRONT_API 1.80, plan §8.349): 파일 하나를 올리기 폴더의 `path`에 쓴다. 다 올리면 `library_upload_publish`로 등록한다 */
+export async function uploadReportFile(project: string, upload: string, path: string, file: Blob): Promise<{ files: number; total: number }> {
+  const response = await fetch(`/api/v1/projects/${encodeURIComponent(project)}/library-uploads/${upload}?path=${encodeURIComponent(path)}`, {
+    method: "POST", body: file, credentials: "same-origin",
+  });
+  return unwrap<{ files: number; total: number }>(response);
 }
 
 /** 이 host의 웹 화면들이 함께 쓰는 설정과 고정(plan §8.79, herdr-web-ui api.ts `fetchPreferences`·`savePreferences`) */
@@ -448,6 +463,7 @@ export function watchEvents(
       else if (ev.ev === "asks") for (const listener of asksListeners) listener();
       else if (ev.ev === "inbox") for (const listener of inboxListeners) listener();
       else if (ev.ev === "accounts") for (const listener of accountsListeners) listener();
+      else if (ev.ev === "enroll") for (const listener of enrollListeners) listener();
       else if (ev.ev === "app_badge") onAppBadge(ev.count);
       else if (ev.ev === "rollout") onRollout(ev.result);
       else if (ev.ev === "chat_changed") tellChat(ev.pane, { changed: true });

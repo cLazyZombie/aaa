@@ -1244,7 +1244,7 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
           taskBadge={taskBadge(taskBoard.board, tasksShown ? null : seenMine.seen)}
           up={up}
           reader={role === "reader"}
-          settings={<SettingsGear role={role} device={device} onSignedOut={signedOut} open={settingsOpen} onOpen={setSettingsOpen} />}
+          settings={<SettingsGear role={role} device={device} machines={machines} onSignedOut={signedOut} open={settingsOpen} onOpen={setSettingsOpen} />}
         />
         <div id="sidebar-column" className="sidebar-shell">
         <header className="list-head">
@@ -1688,12 +1688,14 @@ function MoreMenu({ onThreads }: { onThreads: () => void }) {
 function SettingsGear({
   role,
   device,
+  machines,
   onSignedOut: signedOut,
   open: settingsOpen,
   onOpen: setSettingsOpen,
 }: {
   role: DeviceRole;
   device: string;
+  machines: MachineView[];
   onSignedOut: () => void;
   open: boolean;
   onOpen: (open: boolean) => void;
@@ -1740,7 +1742,7 @@ function SettingsGear({
       </button>
       {settingsOpen && (
         <ErrorBoundary area="설정" onDismiss={closeSettings}>
-          <SettingsDialog onClose={closeSettings} role={role} device={device} onSignOut={signOutHere} />
+          <SettingsDialog onClose={closeSettings} role={role} device={device} machines={machines} onSignOut={signOutHere} />
         </ErrorBoundary>
       )}
     </>

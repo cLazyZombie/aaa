@@ -4,12 +4,16 @@
 // - 역할(reader·controller)을 줄마다 보인다(§6.4 P3). 웹에서 만드는 코드는 controller만이다(D6). 보기 기기는 host 머신의 `aaa web pair --reader`로.
 // - 보기 권한 기기는 목록만 본다: 코드·이름 바꾸기·폐기 단추를 끄고 까닭을 적는다(host도 막는다).
 // - 참고의 「아무도 페어링하지 않아 열려 있음」(via open·pairSelf)은 aaa에 없다: 웹은 처음부터 pairing이 있어야 들어온다.
+// - 마지막 조작 기기는 웹에서 폐기하지 않는다(host 터미널의 `aaa web revoke`, host도 거부한다). 이 기기 자신을 폐기하면 이 화면이
+//   끊기므로 확인 창을 받는다(관리 GUI W5b, plan §8.349).
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Check, Pencil, RefreshCw, Trash2, X } from "lucide-react";
 import "./herdr/DevicesPanel.css";
 import type { DeviceRole, DeviceView } from "./gen/proto";
 import { ApiError, call } from "./api";
 import { copyText } from "./herdr/clipboard";
+import { ConfirmDialog } from "./ConfirmDialog";
+import { lastController } from "./adminModel.ts";
 import { QrCode } from "./herdr/QrCode";
 
 const POLL_MS = 3000;
@@ -39,6 +43,7 @@ export function DevicesPanel({ pairUrl, role, device }: { pairUrl: string | null
   const [left, setLeft] = useState("");
   const [renaming, setRenaming] = useState<{ id: string; label: string } | null>(null);
   const [confirming, setConfirming] = useState<string | null>(null);
+  const [revokeSelf, setRevokeSelf] = useState(false);
   const [justPaired, setJustPaired] = useState<string | null>(null);
   const [linkCopied, setLinkCopied] = useState(false);
   const linkRef = useRef<HTMLAnchorElement>(null);
@@ -108,6 +113,10 @@ export function DevicesPanel({ pairUrl, role, device }: { pairUrl: string | null
     }
   };
   const revoke = async (id: string) => {
+    if (id === device) {
+      setRevokeSelf(true);
+      return;
+    }
     if (confirming !== id) {
       setConfirming(id);
       window.setTimeout(() => setConfirming((c) => (c === id ? null : c)), 4000);
@@ -186,7 +195,13 @@ export function DevicesPanel({ pairUrl, role, device }: { pairUrl: string | null
                     >
                       <Pencil />
                     </button>
-                    <button type="button" className={`btn ${confirming === d.id ? "btn-danger" : "btn-ghost"}`} disabled={!canManage} onClick={() => void revoke(d.id)}>
+                    <button
+                      type="button"
+                      className={`btn ${confirming === d.id ? "btn-danger" : "btn-ghost"}`}
+                      disabled={!canManage || lastController(devices, d.id)}
+                      title={lastController(devices, d.id) ? "마지막 조작 기기는 웹에서 폐기하지 않습니다(host 터미널의 aaa web revoke)" : undefined}
+                      onClick={() => void revoke(d.id)}
+                    >
                       <Trash2 aria-hidden="true" />
                       {confirming === d.id ? "폐기할까요?" : "폐기"}
                     </button>
@@ -196,6 +211,24 @@ export function DevicesPanel({ pairUrl, role, device }: { pairUrl: string | null
             </li>
           ))}
         </ul>
+      )}
+      {canManage && devices?.some((d) => lastController(devices, d.id)) && (
+        <p className="settings-hint" data-testid="last-controller">
+          조작 기기가 하나뿐이라 웹에서 폐기하지 않습니다. 다른 조작 기기를 먼저 페어링하거나 host 머신 터미널의 <code>aaa web revoke</code>를 씁니다.
+        </p>
+      )}
+      {revokeSelf && (
+        <ConfirmDialog
+          title="이 기기를 폐기할까요?"
+          body="이 화면이 끊깁니다. 다시 들어오려면 다른 기기나 host 머신 터미널에서 받은 페어링 코드가 필요합니다."
+          confirmLabel="이 기기 폐기"
+          onConfirm={async () => {
+            await call({ op: "device_revoke", id: device });
+            setRevokeSelf(false);
+            await load();
+          }}
+          onClose={() => setRevokeSelf(false)}
+        />
       )}
       {justPaired !== null && (
         <p className="settings-hint" role="status">
