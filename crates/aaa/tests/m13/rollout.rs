@@ -96,17 +96,10 @@ fn rollout_preflights_all_targets_and_resumes_same_jobs_after_host_restart() {
     let candidate_dir = dir.join("build");
     std::fs::create_dir_all(&candidate_dir).unwrap();
     let candidate = candidate_dir.join("aaa");
-    for path in [&a_exe, &b_exe, &candidate] {
+    for path in [&a_exe, &b_exe] {
         assert!(Command::new("cp").args([lab::BIN, path_str(path)]).status().unwrap().success());
     }
-    // 실행 파일을 쓰는 FD는 이 자식에서만 열어 병렬 시험의 fork에 물려주지 않는다.
-    assert!(
-        Command::new("python3")
-            .args(["-c", "import sys; open(sys.argv[1], 'ab').write(b'rollout-candidate')", path_str(&candidate)])
-            .status()
-            .unwrap()
-            .success()
-    );
+    lab::variant_binary(Path::new(lab::BIN), &candidate, "rollout-candidate");
     let original = hex::encode(Sha256::digest(std::fs::read(&a_exe).unwrap()));
     let sha = hex::encode(Sha256::digest(std::fs::read(&candidate).unwrap()));
     std::fs::write(candidate_dir.join("provenance.json"), serde_json::json!({"sha256":sha}).to_string()).unwrap();
@@ -438,19 +431,10 @@ esac
     let copy = |from: &Path, to: &Path| {
         assert!(Command::new("cp").args([path_str(from), path_str(to)]).status().unwrap().success());
     };
-    let append = |p: &Path, suffix: &str| {
-        assert!(
-            Command::new("python3")
-                .args(["-c", "import sys; open(sys.argv[1], 'ab').write(sys.argv[2].encode())", path_str(p), suffix])
-                .status()
-                .unwrap()
-                .success()
-        );
-    };
+    let variant = |p: &Path, suffix: &str| lab::variant_binary(Path::new(lab::BIN), p, suffix);
     let old_b = dir.join("old-b");
     copy(&b_exe, &old_b);
-    copy(&a_exe, &candidate);
-    append(&candidate, "third-candidate");
+    variant(&candidate, "third-candidate");
     let third_sha = digest(&candidate);
     let (rc, out, err) = probe(&w, &start(&third_sha));
     assert_eq!(rc, "0", "{out} {err}");
@@ -540,8 +524,7 @@ esac
     // host가 옛 판으로 돌아온 실패도 host 밖 감시가 복구한다. remote 파일/서비스는 건드리지 않는다.
     let old_a = dir.join("old-a");
     copy(&a_exe, &old_a);
-    copy(&a_exe, &candidate);
-    append(&candidate, "fourth-candidate");
+    variant(&candidate, "fourth-candidate");
     let fourth_sha = digest(&candidate);
     let (rc, out, err) = probe(&w, &start(&fourth_sha));
     assert_eq!(rc, "0", "{out} {err}");
@@ -580,8 +563,7 @@ esac
     eprintln!("L3 wrong host restored without touching the remote agent");
 
     // 로컬 agent 실패는 공유 실행 파일을 복구하고 host/agent 둘의 새 옛판 프로세스를 확인한다.
-    copy(&a_exe, &candidate);
-    append(&candidate, "fifth-candidate");
+    variant(&candidate, "fifth-candidate");
     let fifth_sha = digest(&candidate);
     let (rc, out, err) = probe(&w, &start(&fifth_sha));
     assert_eq!(rc, "0", "{out} {err}");

@@ -5381,13 +5381,11 @@ fn coordinator_deployment_is_gated_and_survives_backend_restarts() {
     let bin = w.lab.root.join("deploy-bin");
     std::fs::create_dir_all(&bin).unwrap();
     let exe = bin.join("aaa");
-    std::fs::copy(lab::BIN, &exe).unwrap();
+    assert!(Command::new("cp").args([Path::new(lab::BIN), &exe]).status().unwrap().success());
     let original = std::fs::read(&exe).unwrap();
     let candidate = w.lab.root.join("deploy-candidate");
-    let mut changed = original.clone();
-    changed.extend_from_slice(b"aaa-deployment-test");
-    std::fs::write(&candidate, &changed).unwrap();
-    std::fs::set_permissions(&candidate, std::os::unix::fs::PermissionsExt::from_mode(0o755)).unwrap();
+    lab::variant_binary(Path::new(lab::BIN), &candidate, "aaa-deployment-test");
+    let changed = std::fs::read(&candidate).unwrap();
     // launchd adapter도 같은 typed 경로로 본다. HOME·PATH는 이 실험실뿐이며 실제 서비스에는 닿지 않는다.
     let service_home = w.lab.root.join("service-home");
     let service_bin = w.lab.root.join("service-bin");
