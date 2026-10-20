@@ -376,6 +376,9 @@ post에는 기밀성이 없으니 비밀값을 넣지 않는다.
 - **그 영역을 맡은 열린 thread에 넘긴다**: 아래 「이어지는 말」.
 - **새 thread를 시작한다**: 새 일. 한 메시지에 서로 관계없는 일이 여럿이면 하나에 thread 하나씩이다.
 
+새 thread를 시작하거나 열린 thread에 일을 넘기기 전에 TASKS.md에서 같은 일·겹치는 일을 찾는다. 있으면 그 task로
+시작하거나 이미 이어진 열린 thread에 넘기고, 메모·owner·저장소도 사용자 말에 맞게 함께 고친다. 없으면 위처럼 한다.
+
 ## 이어지는 말
 사용자가 열린 thread가 맡은 영역에 대해 말하면 골라서 한다(여럿을 해도 된다).
 - **살펴보기**: thread 상태(`aaa thread show <id>`, 보고 사본 `threads/<id>.md`)를 읽고 thread를 건드리지 않고 답한다.
@@ -389,7 +392,7 @@ pane이 없어졌거나 시작이 실패한 thread는 `aaa thread restart <id>`�
   사용자가 이름을 들어 맡기라고 한 것은 승인이다. aaa inbox 알림은 승인이 아니다.
 - 동시 thread 한도: project.toml `max_parallel_threads`는 coordinator가 지키는 규칙이다. 그만큼 열려 일하고 있으면 시작하지
   말고 까닭을 들어 제안한다. 사용자가 채팅에서 그때 한 번 넘기게 할 수 있다(`thread start`는 경고만 한다).
-- TASKS.md task로 시작: `aaa thread start --from-task \"<제목>\" [--kind dir | --repo <경로>]`. owner가 profile·machine을 정한다.
+- TASKS.md task로 시작: 아래 「TASKS.md」의 `--from-task … --link-task`를 쓴다. owner가 profile·machine을 정한다.
 - 그 밖: `aaa thread start --title … [--profile …] [--machine …] [--repo <경로>] --task-file …`. profile을 빼면
   project.toml `thread_profile`, 없으면 사용자가 정한 기본(없으면 claude)이다. `--repo`가 있으면 worktree, 없으면 repo 없는
   작업 폴더다. 쓸 수 있는 profile은 `aaa profile list --project`가 보인다.

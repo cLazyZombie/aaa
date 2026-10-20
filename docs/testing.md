@@ -808,6 +808,12 @@ CI/Git의 source outbox·중복 억제·재시작·outage는 기존 owner를 유
 - 같은 E2E 46의 「터치 입력 글자」는 Chromium·WebKit의 iPhone 세로/가로에서 검색·제목·메모·선택·새 목록·사람 이름·첨부 붙여넣기·원문·목록 이름의 실제 계산 글자가 16px 이상인지 본다(t-0530). 폼의 13px 덮어쓰기를 복원하면 실패한다. headless는 iOS 키보드의 초점 확대를 재현하지 않으므로 실제 iPhone에서 입력·키보드 내림 뒤 배율 유지 확인은 별도다.
 - 결함 심기: 웹 폼이 편집을 시작한 판 대신 최신 판 hash로 저장하게 하면 E2E 46 「충돌」 단계가, 팔레트 요청 수를 mount 때 값으로 두면 「명령 팔레트」 단계가 실패한다. 웹 결함은 `npm run build`가 dist를 다시 만든 뒤 `cargo build -p aaa`로 binary에 넣어 돈다.
 
+## 일을 맡기기 전 task 찾기(t-0539)
+
+- `cargo test -p aaa-host --lib tasks::tests::start_warning`: 제목의 대소문자·구두점 정규화, 낱말 겹침 경계, 첫 열린 후보 선택, 완료·빈 제목·약한 겹침 제외와 제안 명령의 셸 인용을 확인한다. 형태소·동의어는 추측하지 않는다. 완료 task 제외를 제거하면 음성 시험이 실패한다.
+- m13 `thread_start_warns_about_similar_tasks_without_blocking`: 실제 CLI 응답에서 경고 한 줄과 시작 성공, `--from-task` 시작·완료 task에 경고 없음, TASKS.md 원문 보존을 확인한다. 명령 응답이 끝이라는 신호이며 고정 sleep은 없다.
+- 기존 m13 `doctor_files_brings_the_coordinator_guide_to_existing_projects`의 안내 문구 목록이 새 프로젝트 생성과 낡은 안내 갱신 모두에서 사전 검색·기존 thread 재사용·메모/owner/저장소 갱신·`--link-task` 안내를 검사한다.
+
 ## 웹 할 일 thread 연결과 자동 정리(t-0493, plan §8.316)
 
 - `cargo test -p aaa-host --lib task_clean::`: P2 판정표(병합은 표지와 무관하게 완료, `[완료]`만 완료, 그 밖 표지·보고 없음·사본 없이 끝냄·하위 남음은 확인 필요)와 확인 필요 까닭.

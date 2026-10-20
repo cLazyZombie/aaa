@@ -4125,6 +4125,33 @@ fn machine_health() {
     assert!(line.contains("\tCPU ") && line.contains("% · MEM ") && line.contains("% · 디스크 여유"), "{list}");
 }
 
+/// 제목으로 시작할 때만 비슷한 task를 한 줄 알린다. 경고가 있어도 시작하고 TASKS.md는 바꾸지 않는다.
+#[test]
+fn thread_start_warns_about_similar_tasks_without_blocking() {
+    let w = world();
+    let path = w.projects.join("demo/TASKS.md");
+    let tasks = "# Tasks\n\n## Backlog\n- [ ] 웹 로그인 고치기 (fake@labA) [작업 폴더]\n- [x] 배포 자동화\n";
+    std::fs::write(&path, tasks).unwrap();
+    let task = w.task("plain.txt", "noreport");
+    let o = w.h.run(&["thread", "start", "--title", "로그인 고치기", "--profile", "fake", "--task-file", &task]);
+    assert!(o.status.success(), "{o:?}");
+    let text = String::from_utf8(o.stdout).unwrap();
+    let warnings: Vec<_> = text.lines().filter(|l| l.starts_with("경고:")).collect();
+    assert_eq!(
+        warnings,
+        ["경고: 비슷한 열린 task 「웹 로그인 고치기」: aaa thread start --from-task '웹 로그인 고치기' --link-task"]
+    );
+    for args in [
+        vec!["--from-task", "웹 로그인 고치기"],
+        vec!["--title", "배포 자동화", "--profile", "fake", "--task-file", &task],
+    ] {
+        let v = w.start(&args);
+        assert!(v["id"].is_string(), "{v}");
+        assert!(v["warnings"].is_null() || v["warnings"] == serde_json::json!([]), "{v}");
+    }
+    assert_eq!(std::fs::read_to_string(path).unwrap(), tasks);
+}
+
 /// coordinator 일 흐름(부록 A): TASKS.md owner로 thread 시작, assignable 확인, Next 목록·보내기, context 요약.
 #[test]
 fn coordinator_flow() {
@@ -4634,6 +4661,9 @@ const GUIDE_SECTIONS: &[&str] = &[
     "--to-user --title",
     "지시는 사용자만, 채팅으로 한다",
     "## 메시지마다 세 가지 중 하나",
+    "새 thread를 시작하거나 열린 thread에 일을 넘기기 전에 TASKS.md에서 같은 일·겹치는 일을 찾는다",
+    "시작하거나 이미 이어진 열린 thread에 넘기고, 메모·owner·저장소도 사용자 말에 맞게 함께 고친다",
+    "아래 「TASKS.md」의 `--from-task … --link-task`를 쓴다",
     "## 이어지는 말",
     "**thread 결과 요약은 언제나 이 모양이다**",
     "- 더하기: 사용자가 지금 시작하지 않는 일을 말하면 더한다",
