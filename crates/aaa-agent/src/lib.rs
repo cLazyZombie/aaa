@@ -26,6 +26,7 @@ mod page;
 mod plan;
 pub mod post;
 mod pr;
+mod slash;
 pub mod threads;
 pub mod work_root;
 
@@ -680,6 +681,24 @@ impl Agent {
     }
 
     /// 실행 중인 세션이 지금 있는 폴더(새 탭·나누기 cwd follow). 끝났거나 읽지 못하면 None.
+    /// 입력칸 「/」 목록(plan §8.323): 세션이 지금 있는 폴더(못 읽으면 띄운 폴더)를 프로젝트로 본다
+    async fn slash_commands(&self, session: &str, harness: String) -> Result<AgentResponse, ErrorBody> {
+        let started = {
+            let s = self.sessions.lock().unwrap();
+            s.get(session).ok_or_else(|| ErrorBody::new(ErrorCode::NotFound, "세션이 없다"))?.info.cwd.clone()
+        };
+        let cwd = match self.session_cwd(session).await {
+            Ok(AgentResponse::Cwd { cwd: Some(c) }) => Some(c),
+            _ => started,
+        };
+        let list = tokio::task::spawn_blocking(move || {
+            slash::list(&harness, cwd.as_deref().map(Path::new), &chat::claude_home(), &chat::codex_home())
+        })
+        .await
+        .map_err(|e| ErrorBody::new(ErrorCode::Internal, e.to_string()))?;
+        Ok(AgentResponse::Commands(list))
+    }
+
     async fn session_cwd(&self, session: &str) -> Result<AgentResponse, ErrorBody> {
         let pid = {
             let s = self.sessions.lock().unwrap();
@@ -1365,6 +1384,7 @@ impl Agent {
             AgentRequest::FileLocate { session, path } => self.file_locate(&session, path).await,
             AgentRequest::FileLocateIn { dir, path } => self.locate_in(Some(dir), path).await,
             AgentRequest::DirList { session, path, hidden } => self.dir_list(&session, path, hidden).await,
+            AgentRequest::Commands { session, harness } => self.slash_commands(&session, harness).await,
             AgentRequest::FileView { path, offset, len, page } => {
                 let roots = self.file_roots.lock().unwrap().clone();
                 let me = self.clone();
@@ -1380,11 +1400,20 @@ impl Agent {
                 .and_then(|r| r.map_err(|e| ErrorBody::new(ErrorCode::NotFound, format!("{e:#}"))))
                 .map(|(data, eof)| AgentResponse::FileChunk { data: B64(data), eof })
             }
-            AgentRequest::Chat { session, harness, transcript, harness_session, thinking, compact, before } => {
+            AgentRequest::Chat {
+                session,
+                harness,
+                transcript,
+                harness_session,
+                thinking,
+                compact,
+                commands,
+                before,
+            } => {
                 let path =
                     self.chat_path(session.as_deref(), &harness, transcript.as_deref(), harness_session.as_deref());
                 tokio::task::spawn_blocking(move || {
-                    chat::read_path(&harness, path?, thinking, compact, before.as_deref())
+                    chat::read_path(&harness, path?, thinking, compact, commands, before.as_deref())
                 })
                 .await
                 .map_err(|e| ErrorBody::new(ErrorCode::Internal, e.to_string()))

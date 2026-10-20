@@ -91,7 +91,9 @@ pub fn hello(agent: &Agent) -> AgentHello {
         // term_colors.v1: `AgentRequest::TermColors`(색 질의에 답할 화면 색, plan §8.187)
         // diff.v1: `AgentRequest::ThreadDiff`(thread worktree의 바뀐 파일·patch, plan §8.305)
         // chat_watch.v1: `AgentRequest::ChatWatch`와 `AgentEvent::ChatChanged`(대화 기록 변화 push, plan §8.191)
+        // commands.v1: `AgentRequest::Commands`(입력칸 「/」 목록, plan §8.323)
         features: vec![
+            "commands.v1".into(),
             "account_auth.v1".into(),
             "terminal.v1".into(),
             "deployment.v1".into(),
