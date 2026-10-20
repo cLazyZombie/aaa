@@ -6463,3 +6463,17 @@ L4 후속(10-20 00시 사용자 관찰): 멈춤 상태의 후보 예약과 재�
 - **다시 로그인.** 같은 별칭 로그인이다. 그 별칭에 메일이 있으면 시작 때 `expect_email`을 싣는다. 로그인한 메일이 다르면(둘 다 알 때만, 대소문자 무시) 새 인증을 금고에 넣지 않고 메모리에 두며 `mismatch`로 기다린다: `switch`면 그 인증을 넣고 최초 인증 시각도 새로(다른 계정이 됐다), 아니면 버리고 `kept`. 5분이 지나거나 취소·host 종료면 버린다. 기다리는 동안 같은 별칭의 새 로그인은 거부하고, 16개 작업 정리에서 빼지 않는다.
 - **웹.** 설정 창 「계정」(구독 사용량 다음): harness마다 별칭·기본·상태 배지, 조작 기기에는 메일·plan, 최초 인증일·최근 인증된 날·만료(이 기기 시간대 날짜), 「다시 로그인」·「기본으로/기본 해제」, 「새 계정 로그인」(별칭·harness). 진행 카드는 「host Mac 브라우저에서 인증을 마치세요」·「이 메일로 로그인하세요」·취소, 다른 메일이면 「새 메일로 바꾸기」·「옛 인증 그대로 두기」. host `accounts` 사건으로 다시 읽는다(시간 polling 없음). CLI는 `aaa account list`에 메일·plan·날짜(UTC)·상태 칸과 `aaa account login-confirm <id> --switch|--keep`.
 - **검증.** host 유닛 `account_meta::tests`(메일·plan·만료 읽기, 상태 판정, 웹 조작 기기 허용·세션 안·보기 전용 거부와 메일 가림, 끊김·곧 만료 알림 한 번과 로그인으로 끝냄, 메일이 바뀌면 최초 시각 새로), m13 `host_relogin_checks_the_email_and_asks_before_switching`(가짜 공식 CLI로 메일·plan·날짜·곧 만료 알림, 같은 메일 다시 로그인, 다른 메일 → 그대로 두기·바꾸기, 감사·알림·로그·프로젝트 파일에 메일 없음)과 `account_credentials_parallel_refresh_and_all_records_are_redacted`의 거부된 갱신 → 끊김·알림 한 번, 웹 유닛 `accountsModel.test.mjs`, 웹 E2E `58-accounts`(데스크톱·휴대폰 390·Reader). 절차는 [시험](testing.md).
+
+
+### 8.352 aaa install I5 Windows 종료 process fixture 인수 분리(10-21, t-0485)
+
+- **실제 실패.** Windows CI의 종료 process owner가 제품 관찰 전에 cmd 자식의 exit code 1로 실패했다.
+  CI와 같은 Rust std는 단일 `exit 0` 인수에 따옴표를 더한다. `/C` 이후는 cmd 명령문이므로
+  고정 `exit`·`0` 인수를 나눠 `/C exit 0`으로 전달한다. cmd의 원래 stderr는 null이어서
+  과거 오류 메시지는 미확인이며, 인용만으로 모든 code 1의 원인을 단정하지 않는다.
+- **보존.** 성공 종료, 유효한 열린 handle, 실제 종료 신호, `service_process_unverified` 거부를 모두 유지한다.
+  재시도·대기·기대값·stdio·production은 바꾸지 않는다. 한 handle의 신원/image 결속과 실제 현재
+  process·SCM 읽기·Unicode argv owner도 함께 점검하며 C argv와 cmd parser를 혼동하지 않는다.
+- **검증 경계.** macOS 전체 gate·Windows cross는 착지 전 판정이며 실제 Windows owner는 main push 뒤 CI다.
+  실제 SCM logon·Session 0·로그인 전 부팅·LSA·UAC는 Windows bootstrap 뒤 사용자 시험에 남는다.
+  I6 WIP는 별도 보존하며 이 후보에 포함하지 않는다.
