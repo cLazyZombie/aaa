@@ -1307,7 +1307,7 @@ impl Host {
             }
             FrontRequest::AccountLogin { name, harness } => self.account_login(&name, &harness, actor),
             FrontRequest::AccountLoginStatus { id } => self.account_login_status(&id),
-            FrontRequest::AccountLoginCancel { id } => self.account_login_cancel(&id),
+            FrontRequest::AccountLoginCancel { id } => self.account_login_cancel(&id).await,
             FrontRequest::AccountRemove { name } => {
                 if self.account_defaults()?.iter().any(|d| d.account == name) {
                     return Err(err(ErrorCode::BadRequest, "기본 계정은 먼저 account default --off로 해제한다"));
