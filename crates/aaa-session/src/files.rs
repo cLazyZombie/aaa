@@ -69,6 +69,9 @@ pub struct SpecFile {
     /// 띄울 때 agent가 아는 화면 색(plan §8.187): 프로그램이 시작하자마자 묻는 색 질의에도 답한다. 뒤의 바뀜은 `SessionRequest::Colors`로
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub colors: Option<aaa_proto::TermColors>,
+    /// 비밀 없는 계정 작업 참조. 재개와 대화 조회에서 같은 Codex 홈을 쓴다.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub account_run: Option<String>,
 }
 
 impl SpecFile {
@@ -92,4 +95,17 @@ pub struct ExitFile {
     pub end_offset: u64,
     pub cols: u16,
     pub rows: u16,
+}
+
+/// 디스크에 남기지 않는 실행 입력. spec.json은 가린 기록 사본이다.
+#[derive(Serialize, Deserialize)]
+pub struct Startup {
+    pub spec: SpawnSpec,
+    pub credential: Option<aaa_proto::AccountCredential>,
+}
+
+pub fn account_home(state: &Path, run: &str) -> anyhow::Result<PathBuf> {
+    let (project, thread) = run.split_once('/').ok_or_else(|| anyhow::anyhow!("계정 작업 참조 오류"))?;
+    anyhow::ensure!(aaa_proto::valid_project(project) && aaa_proto::valid_thread(thread), "계정 작업 참조 오류");
+    Ok(state.join("account-runs").join(project).join(thread).join("codex-home"))
 }

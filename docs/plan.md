@@ -6025,3 +6025,14 @@ L4 후속(10-20 00시 사용자 관찰): 멈춤 상태의 후보 예약과 재�
 - Codex 결정: 28523a97에서 도입한 reset_after_wakes=1은 원 기획 t-0350 결정 7/compaction 절의 「재독 hook 자리 없음」에서 왔다. 대화 길이 문제가 아니므로 확정 기획대로 Codex profile의 reuse=open을 거부한다. 기존 임무 제한은 A4까지 유지한다.
 - 검증: 종료 판정표·runtime/frame·실제 CI/PTY/파일/새 thread m13·E2E49(데스크톱/휴대폰). 조건 2 제거는 m13에서 open 대신 resolved로 실패했다. 자동 완료 droplet은 수정 전 E2E49에서 실패한 뒤 owner에서 고쳤다. 상세 절차는 docs/testing.md A2.
 - 통합 gate에서 E2E25의 spawn ENOENT가 났다. Cargo의 fresh test 빌드가 공용 실행 파일을 지우고 다시 연결하는 것을 파일 상태 관찰로 재현했다. ci-local은 병렬 단계 전에 이번 빌드의 실행 사본을 고정·바이트 대조하고 종료 때 정리한다. 시험 조건·worker·시한은 그대로다.
+
+
+### 8.320 host 인증 정보를 작업 시작 때 agent에 넘기기(10-20, t-0500)
+
+- **계약.** profile과 별개인 `thread start --account`로 등록한 인증 신원을 고른다. 계정 미지정은 기존 인증 그대로이며 배포로 이미 실행 중인 thread/pane의 인증 환경을 바꾸지 않는다. 실제 로그인은 사람이 aaa 밖 터미널에서 하고 `account import --harness claude|codex --file`은 그 결과만 등록한다. 등록·삭제는 host 로컬의 pane 밖 CLI로 제한한다.
+- **저장과 전달.** K 확정판의 봉투 암호화·권한·원자 저장에 맞춘 최소 금고를 먼저 둔다(전체 관리 화면·범용 참조는 후속). host 상태 폴더의 `secrets.key`(KEK, 0600)와 `accounts/`(0700, 계정 파일 0600)에 보관한다. 무작위 DEK를 감싸고 별칭·harness·버전을 AAD로 묶는다. 전용 TLS/UDS 요청과 session 시작 stdin pipe로만 보내고 spec·journal·argv에는 비밀을 쓰지 않는다. Claude는 자식 env `CLAUDE_CODE_OAUTH_TOKEN`, Codex는 thread별 0700 홈·0600 인증/설정을 쓰며 정상 종료 시 auth만 지우고 대화 기록은 조회·재개용으로 남긴다.
+- **동시 실행과 갱신.** 같은 계정을 여러 머신·작업에 동시에 넘기며 실행권/lease로 막지 않는다. Codex 0.163.0 공식 소스의 비공개 URL override를 버전 확인 뒤 사용해 pane별 localhost capability 중계 → agent → host로 갱신을 모은다. host의 계정별 갱신 mutex·버전 비교가 오래된 요청에 최신 인증을 돌려주고 최신 요청 하나만 제공자에 보낸다. 회전 결과를 암호화·원자 저장한 뒤 답하며 부분/null 토큰은 이전 값을 유지한다. auth.json 사본을 맹목적으로 되쓰기하지 않는다.
+- **실패와 후속.** 금고 키 손상은 해당 인증 시작만 잠그고 계정 미지정 기능은 계속 제공한다. 미지원 CLI·host 단절·제공자 거부는 명시적으로 실패하며 직접 갱신 우회나 자동 재시도는 없다. 제공자 회전 성공과 host 저장 사이 crash에는 재로그인·재등록이 필요할 수 있다. 영속 갱신 의도·계정 세대와 CAS·결과 불명 복구·비정상 종료 임시 인증 청소는 후속 설계다. 계약·근거·남는 위험은 [작업별 계정 인증](accounts.md)에 적었다.
+- **비밀 비노출.** 등록 값의 원문·8바이트 조각·JSON/URL/base64 변형을 PTY·출력·post의 영속 outbox·DB·journal·로그·오류/패닉 경계에서 가린다. PTY의 chunk·ANSI·개행 분할을 포함한다. 실제 실행 입력과 인증 전송은 가리지 않으며 재접속 agent는 인증한 session IPC에서 메모리 가림 규칙을 복원한다.
+- **프로토콜.** FRONT_API 1.66(`account_import/list/remove`·`thread_start_account`·선택 `ThreadView.account`), AGENT_LINK 1.9(`account_auth.v1`, 전용 spawn·갱신·계정 pane 기록 조회), SESSION_IPC 1.3(갱신·메모리 가림 규칙). 별도 시작 요청이므로 옛 host가 account를 무시해 기존 인증으로 실행하지 못한다. 계정 미지정의 옛 session 연결은 유지한다. 웹 E2E 신규 spec 번호는 없으며 최신 main의 48·49는 그대로 둔다.
+- **시험.** `m13::accounts::account_credentials_parallel_refresh_and_all_records_are_redacted`가 빈 포트·임시 폴더·가짜 인증/제공자만 써서 UDS/TLS 두 머신의 네 동시 작업·두 토큰 회전·부분/null 응답·거부/우회 없음·대화/재개·Claude 동시/미지정·권한/정상 청소·미전송 outbox와 모든 기록/로그/화면 비노출을 소유한다. host 금고 keeper는 암호문/AAD 변조·키 잠김을 본다. AAD·post 가림 제거 변형의 의도한 실패와 원복 통과를 확인했다. 실제 로그인·실제 인증 파일·운영 host/agent/설정에는 접근하지 않는다.

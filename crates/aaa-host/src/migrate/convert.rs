@@ -119,6 +119,7 @@ pub(crate) fn thread_rec(
     let next = report.map(|b| next_lines(&String::from_utf8_lossy(b))).unwrap_or_default();
     let created = aaa_common::util::parse_iso(&t.created).unwrap_or(now_ms);
     ThreadRec {
+        account: None,
         mission: None,
         holds: vec![],
         started_by: None,

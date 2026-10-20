@@ -248,6 +248,7 @@ impl Host {
         block: Option<&str>,
     ) -> Result<FrontResponse, ErrorBody> {
         let mut a = StartArgs {
+            account: None,
             holds: vec![],
             project: project.to_string(),
             title: String::new(),
