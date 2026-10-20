@@ -24,7 +24,8 @@ export function AutomationPanel({ canControl }: { canControl: boolean }) {
   const [busy, setBusy] = useState<string | null>(null);
   const [approval, setApproval] = useState<{ project: string; rule: RoutineView } | null>(null);
   const [open, setOpen] = useState<Open | null>(null);
-  const [frontApi, setFrontApi] = useState<string | null>(null);
+  // undefined: 아직 묻는 중(그동안 변환 단추도 안내 글도 그리지 않는다), null: 옛 host이거나 묻지 못함
+  const [frontApi, setFrontApi] = useState<string | null | undefined>(undefined);
   const [loading, setLoading] = useState(true);
   const generation = useRef(0);
   const load = useCallback(async () => {
@@ -77,7 +78,7 @@ export function AutomationPanel({ canControl }: { canControl: boolean }) {
           <span><span className="automation-badge is-legacy">이전 형식</span> {legacy}개 · 웹은 새 형식(TOML)만 고친다</span>
           {canPreviewConvert(frontApi)
             ? <button type="button" className="btn" onClick={() => setOpen({ kind: "convert", project })}>새 형식으로 바꾸기</button>
-            : frontApi !== null || !loading ? <span className="automation-dim">host를 1.58 이상으로 올리면 여기서 바꿀 수 있다</span> : null}
+            : frontApi !== undefined && <span className="automation-dim">host를 1.58 이상으로 올리면 여기서 바꿀 수 있다</span>}
         </div>}
         {rules.map((r) => {
           const tone = ruleTone(r);

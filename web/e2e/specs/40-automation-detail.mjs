@@ -1,7 +1,7 @@
 // 자동화 상세·옛 형식 변환·막힌 큐 풀기(관리 GUI W1, plan §8.302). 실제 일정 판정·DB 기록·파일 변환·thread 전송 실패를 host가 만들고
 // 웹은 그것을 읽고 사람의 결정만 보낸다. 시간은 기다리지 않는다: routine 기록·큐 상태·pane 출력을 기다린다.
 import fs from "node:fs";
-import { root, aaa, step, browser, pairPage, until, domIs, drawerSettled, shot, waitOutput } from "../lib/harness.mjs";
+import { root, aaa, step, browser, pairPage, until, domIs, drawerSettled, shot } from "../lib/harness.mjs";
 export const labEnv = { AAA_TEST_ROUTINE_SECONDS: "1" };
 
 const dir = () => `${root}/projects/auto-detail`;
@@ -55,6 +55,18 @@ export default async function ({ page }) {
     await shot(page, "automation-mission-detail");
     await mission.getByRole("button", { name: "닫기", exact: true }).click();
     await mission.waitFor({ state: "detached" });
+
+    // 패드 폭(820): 640px 밖이라 가운데 창이며 화면 안에 있다
+    const pad = await pairPage(browser, aaa("web", "pair").code, { width: 820, height: 1180 }, { touch: true });
+    try {
+      await pad.page.getByTestId("activity-automations").click();
+      await pad.page.getByTestId("automation-auto-detail-check").getByRole("button", { name: "check 자세히", exact: true }).click();
+      await pad.page.getByTestId("automation-detail").locator(".automation-runs li").first().waitFor();
+      const fit = await fits(pad.page, '[data-testid="automation-detail"]');
+      if (fit !== true) throw new Error(`패드 상세 폭 ${fit}`);
+      await shot(pad.page, "automation-detail-pad");
+      if (pad.errors.length) throw new Error(pad.errors.join("\n"));
+    } finally { await pad.page.context().close(); }
   });
 
   await step("새 형식으로 바꾸기: 미리보기는 쓰지 않고 생기는 규칙·보존 위치를 보이며, 실행은 본 계획만 바꾼다. Reader는 미리보기만", async () => {
@@ -95,7 +107,7 @@ export default async function ({ page }) {
   });
 
   let thread = "";
-  await step("막힌 큐: 대상 pane이 끝나 보낸 결과를 모르는 do.message 묶음은 다시 보내지 않고, 사람이 확인한 뒤 계속 보내면 다음 입력이 간다", async () => {
+  await step("막힌 큐: 대상 pane이 끝나 보낸 결과를 모르는 do.message 묶음은 다시 보내지 않고, 사람이 확인하면 계속 보내기는 다음 입력을 보내고 버리기는 남은 입력을 닫는다", async () => {
     fs.writeFileSync(`${root}/detail-task.md`, "# 자동 글 받기\n\n사람을 기다림\n");
     thread = aaa("thread", "start", "auto-detail", "--title", "자동 글 받기", "--machine", "labA", "--profile", "fake", "--kind", "dir", "--task-file", `${root}/detail-task.md`).id;
     await until("brief 전달", () => aaa("thread", "show", "auto-detail", thread).brief === "delivered");
@@ -144,25 +156,42 @@ export default async function ({ page }) {
     await sheet.getByTestId("automation-stuck").waitFor();
     if (!(await sheet.getByTestId("automation-stuck").textContent()).includes(thread)) throw new Error("막힌 묶음 대상 thread");
     await shot(page, "automation-stuck-desktop");
-    // 사람이 대상 thread를 확인하고 다시 띄운 뒤 계속 보낸다
-    aaa("thread", "restart", thread);
-    await until("새 pane brief 전달", () => {
-      const t = aaa("thread", "show", "auto-detail", thread);
-      return t.brief === "delivered" && t.pane && aaa("pane", "list").panes.some((p) => p.id === t.pane && p.state === "running");
-    });
+    // 계속 보내기: 그 묶음은 닫고(다시 보내지 않음) 다음 입력은 보낸다. pane이 아직 끝난 채라 다음 입력이 실제로 시도되어 실패한다
+    const answered = Date.now();
     await sheet.getByRole("button", { name: "확인했음 · 남은 입력 계속 보내기", exact: true }).click();
     const confirm = page.getByRole("alertdialog");
     await confirm.waitFor();
     await confirm.getByRole("button", { name: "계속 보내기", exact: true }).click();
     await confirm.waitFor({ state: "detached" });
     await sheet.getByTestId("automation-stuck").waitFor({ state: "detached" });
-    const runs = aaa("routine", "runs", "auto-detail", "ping").runs;
-    if (!runs.some((r) => r.status === "skipped" && r.detail === "사람 확인 · 다시 보내지 않음")) throw new Error(`푼 기록 ${JSON.stringify(runs.slice(0, 3))}`);
-    // 다음 차례 입력은 새 pane에 간다
-    const live = aaa("thread", "show", "auto-detail", thread).pane;
-    aaa("ticker", "tick");
-    await waitOutput(live, "자동 확인 글");
+    const runs = () => aaa("routine", "runs", "auto-detail", "ping").runs;
+    if (!runs().some((r) => r.status === "skipped" && r.detail === "사람 확인 · 다시 보내지 않음")) throw new Error(`푼 기록 ${JSON.stringify(runs().slice(0, 3))}`);
+    await until("다음 입력을 새 묶음으로 보내려다 다시 막힘", () => {
+      aaa("ticker", "tick");
+      const next = aaa("routine", "list").routines.find((r) => r.name === "ping").queue.inflight;
+      return next?.unknown && next.id !== stuck.id && runs().filter((r) => r.status === "failed" && r.at_ms >= answered).length === 1;
+    });
+    await page.keyboard.press("Escape");
+    await sheet.waitFor({ state: "detached" });
+
+    // 버리기: 다시 막힌 묶음과 뒤 입력을 닫는다. 그 뒤 판정은 아무것도 보내지 않는다(규칙을 끈 뒤 tick 울타리)
+    const second = aaa("routine", "list").routines.find((r) => r.name === "ping").queue.inflight;
+    await page.getByRole("button", { name: "다시 읽기", exact: true }).click();
+    await domIs(page, "다시 막힘 줄", () => document.querySelector('[data-testid="automation-auto-detail-ping"]')?.dataset.status === "stuck");
+    await row.getByRole("button", { name: "ping 자세히", exact: true }).click();
+    await sheet.getByTestId("automation-stuck").waitFor();
     aaa("routine", "toggle", "auto-detail", "ping", "--off");
+    await sheet.getByRole("button", { name: "확인했음 · 남은 입력 버리기", exact: true }).click();
+    await confirm.waitFor();
+    await confirm.getByRole("button", { name: "버리기", exact: true }).click();
+    await confirm.waitFor({ state: "detached" });
+    await sheet.getByTestId("automation-stuck").waitFor({ state: "detached" });
+    aaa("ticker", "tick");
+    const after = aaa("routine", "list").routines.find((r) => r.name === "ping").queue;
+    if (after.inflight || after.pending !== 0) throw new Error(`버린 뒤 큐 ${JSON.stringify(after)}`);
+    // 기록은 입력 id마다 하나: 두 묶음의 입력 모두 「다시 보내지 않음」으로 닫혔다
+    const closed = runs().filter((r) => r.status === "skipped" && r.detail === "사람 확인 · 다시 보내지 않음").length;
+    if (closed !== stuck.events + second.events) throw new Error(`닫힌 입력 기록 ${closed}: ${JSON.stringify(runs().slice(0, 5))}`);
     await page.keyboard.press("Escape");
     await sheet.waitFor({ state: "detached" });
   });
