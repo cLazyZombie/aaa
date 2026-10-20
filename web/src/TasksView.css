@@ -97,7 +97,7 @@ button.task-chip:disabled { cursor: default; color: var(--text-dim); }
 .tasks-empty { margin: var(--space-3) var(--space-2); color: var(--text-dim); font-size: var(--fs-sm); }
 
 .task-list + .task-list, .task-notes-file + .task-notes-file { margin-top: var(--space-4); }
-.task-list-head { margin: 0 0 var(--space-1); font-size: var(--fs-xs); font-weight: var(--fw-semibold); color: var(--text-dim); }
+.task-list-head { display: flex; align-items: center; gap: var(--space-1); margin: 0 0 var(--space-1); border-radius: var(--radius-sm); font-size: var(--fs-xs); font-weight: var(--fw-semibold); color: var(--text-dim); }
 .task-list-toggle, .task-list-static {
   display: flex;
   align-items: center;
@@ -253,3 +253,159 @@ button.task-chip:disabled { cursor: default; color: var(--text-dim); }
 .task-notes-section[open] > summary .task-notes-chevron { transform: rotate(90deg); }
 @media (hover: hover) { .task-notes-section > summary:hover { background: var(--bg-hover); } }
 .task-notes-section > .task-notes { padding: 0 var(--space-3) var(--space-2) calc(var(--space-3) + 14px); }
+
+/* ───────────── 편집(할 일 편집 T2, plan §8.307) ───────────── */
+.tasks-tab-icon { width: 14px; height: 14px; }
+.tasks-actions { display: flex; align-items: center; gap: var(--space-1); margin-left: auto; }
+.tasks-actions .btn svg { width: 16px; height: 16px; }
+.tasks-add { gap: var(--space-1); }
+
+/* 행·목록 머리의 ⋯(herdr-web-ui RowMenu 단추 크기), 끌기 손잡이 */
+.task-menu-button {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-dim);
+  cursor: pointer;
+}
+.task-menu-button svg { width: 16px; height: 16px; }
+.task-menu-button[aria-expanded="true"] { background: var(--bg-hover); color: var(--text); }
+@media (hover: hover) {
+  .task-menu-button:hover { background: var(--bg-hover); color: var(--text); }
+  /* 넓은 화면은 고른 행·마우스가 올라간 행에서만 또렷이 */
+  .task-row .task-menu-button, .task-row .task-grip { opacity: 0.35; }
+  .task-row:hover .task-menu-button, .task-row:focus-within .task-menu-button, .task-row.is-selected .task-menu-button,
+  .task-row:hover .task-grip, .task-row .task-menu-button[aria-expanded="true"] { opacity: 1; }
+}
+@media (pointer: coarse) { .task-menu-button { width: var(--touch-target); height: var(--touch-target); } }
+.task-list-head .task-list-toggle { flex: 1 1 auto; min-width: 0; }
+.task-grip { display: inline-flex; flex: 0 0 auto; align-items: center; width: 16px; color: var(--text-dim); cursor: grab; }
+.task-grip svg { width: 14px; height: 14px; }
+.task-row.is-dragging { opacity: 0.45; }
+.task-row.is-drop-before { box-shadow: inset 0 2px 0 var(--accent); }
+.task-row.is-drop-after { box-shadow: inset 0 -2px 0 var(--accent); }
+.task-list.is-drop > .task-list-head { background: var(--accent-tint); color: var(--text-strong); }
+.tasks-list-add { gap: var(--space-1); margin-top: var(--space-3); }
+.tasks-list-add svg { width: 16px; height: 16px; }
+
+/* 휴대폰은 아래 떠 있는 「+」(t-0469 §3.3), 넓은 화면은 도구줄 「+ 할 일」 */
+.tasks-fab {
+  position: absolute;
+  right: calc(var(--space-4) + var(--inset-r, 0px));
+  bottom: calc(var(--space-4) + env(safe-area-inset-bottom, 0px));
+  z-index: 1;
+  display: none;
+  align-items: center;
+  justify-content: center;
+  width: 56px;
+  height: 56px;
+  border: 0;
+  border-radius: var(--radius-pill);
+  background: var(--accent);
+  color: var(--accent-contrast, #fff);
+  box-shadow: var(--shadow-pop);
+  cursor: pointer;
+}
+.tasks-fab svg { width: 24px; height: 24px; }
+
+/* 편집 폼(t3code ScheduledTaskEditorForm 칸 차례) */
+.task-form { display: flex; flex-direction: column; gap: var(--space-3); }
+.task-form .task-detail-chips { align-items: center; margin-bottom: 0; }
+.task-field { display: flex; flex-direction: column; gap: var(--space-1); min-width: 0; font-size: var(--fs-xs); color: var(--text-dim); }
+.task-field > .input, .task-field select.input { width: 100%; color: var(--text); font-size: var(--fs-sm); }
+.task-field-head { display: flex; align-items: center; justify-content: space-between; }
+.task-field-row { display: flex; flex-wrap: wrap; gap: var(--space-3); }
+.task-field-row > .task-field { flex: 1 1 180px; }
+.task-notes-input { min-height: 7.5em; resize: vertical; font-family: var(--font-mono); font-size: var(--fs-xs); line-height: 1.5; }
+.task-notes-preview { min-height: 7.5em; padding: var(--space-2) var(--space-3); border: var(--hairline) solid var(--border); border-radius: var(--radius-md); color: var(--text); }
+.task-form-actions { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); }
+.task-form-actions .spacer { flex: 1 1 auto; }
+.task-form-error { margin: 0; padding: var(--space-2) var(--space-3); border-radius: var(--radius-md); background: var(--danger-tint); color: var(--danger-text); font-size: var(--fs-sm); }
+.task-form-stale { margin: 0; font-size: var(--fs-sm); }
+.task-form-preview { margin: var(--space-1) 0 0; font-size: var(--fs-xs); }
+.task-history-line { margin: 0; font-size: var(--fs-xs); }
+.task-suggestion { margin-top: 0; padding: var(--space-2) var(--space-3); border: var(--hairline) solid var(--accent); border-radius: var(--radius-md); background: var(--accent-tint); }
+.task-suggestion h3 { color: var(--text-strong); }
+.task-suggestion ul { margin: 0 0 var(--space-2); font-size: var(--fs-sm); }
+.task-suggestion .task-raw { margin-bottom: var(--space-2); }
+.task-suggestion p { margin: var(--space-1) 0 0; font-size: var(--fs-xs); }
+.task-problems + .task-suggestion { margin-top: 0; }
+.task-form .task-detail-section { margin-top: 0; }
+
+/* 되살리기 줄: 할 일 화면 아래 가운데(시간으로 사라지지 않는다) */
+.task-undo {
+  position: absolute;
+  left: 50%;
+  bottom: calc(var(--space-4) + env(safe-area-inset-bottom, 0px));
+  z-index: 3;
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  max-width: calc(100% - 2 * var(--space-4));
+  padding: var(--space-1) var(--space-1) var(--space-1) var(--space-4);
+  border: var(--hairline) solid var(--border);
+  border-radius: var(--radius-pill);
+  background: var(--bg-panel);
+  box-shadow: var(--shadow-pop);
+  transform: translateX(-50%);
+  font-size: var(--fs-sm);
+}
+.tasks-view { position: relative; }
+.task-undo-text { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.task-undo-close { display: inline-flex; align-items: center; justify-content: center; width: var(--touch-target); height: var(--touch-target); padding: 0; border: 0; border-radius: var(--radius-pill); background: transparent; color: var(--text-dim); cursor: pointer; }
+.task-undo-close svg { width: 16px; height: 16px; }
+
+/* 기록 화면 */
+.task-log-tools { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); margin-bottom: var(--space-3); }
+.task-log-tools .spacer { flex: 1 1 auto; }
+.task-log-rows { list-style: none; margin: 0; padding: 0; }
+.task-log-row { padding: var(--space-1) 0; border-bottom: var(--hairline) solid var(--border); }
+.task-log-line { display: flex; align-items: center; gap: var(--space-2); min-width: 0; }
+.task-log-toggle { display: flex; flex: 1 1 auto; align-items: center; gap: var(--space-2); min-width: 0; min-height: var(--control-h); padding: 0 var(--space-1); border: 0; border-radius: var(--radius-md); background: transparent; color: var(--text); text-align: left; cursor: pointer; }
+.task-log-toggle { justify-content: flex-start; height: auto; }
+.task-log-toggle:disabled { opacity: 1; cursor: default; }
+.task-log-toggle:hover:not(:disabled) { background: var(--bg-hover); border-color: transparent; }
+.task-log-toggle svg { width: 14px; height: 14px; flex: 0 0 auto; color: var(--text-dim); }
+.task-log-dot { width: 14px; flex: 0 0 auto; }
+.task-log-title { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: var(--fs-sm); }
+.task-log-row.is-delete .task-log-action, .task-log-row.is-auto_clean .task-log-action { border-color: var(--status-blocked); color: var(--status-blocked); }
+.task-log-row.is-restore .task-log-action, .task-log-row.is-add .task-log-action { border-color: var(--status-done); color: var(--status-done); }
+.task-log-restore { gap: var(--space-1); }
+.task-log-restore svg { width: 14px; height: 14px; }
+.task-log-meta { display: flex; flex-wrap: wrap; gap: var(--space-3); margin: 0 0 var(--space-1); padding-left: calc(var(--space-1) + 14px + var(--space-2)); color: var(--text-dim); font-size: var(--fs-xs); }
+.task-log-diff { margin: 0 0 var(--space-2) calc(var(--space-1) + 14px + var(--space-2)); padding: var(--space-2) var(--space-3); overflow-x: auto; border-radius: var(--radius-md); background: var(--bg-input); font-family: var(--font-mono); font-size: var(--fs-xs); white-space: pre-wrap; overflow-wrap: anywhere; }
+.task-log-diff .is-add { color: var(--status-done); }
+.task-log-diff .is-del { color: var(--status-blocked); text-decoration: line-through; }
+.task-log-diff .is-same { color: var(--text-dim); }
+.task-log-more { margin-top: var(--space-3); }
+
+/* 창: 충돌(나란히, 휴대폰은 위아래)·원문 편집 */
+.task-modal.is-wide { width: min(100%, 880px); }
+.task-conflict-why { margin: 0 0 var(--space-3); }
+.task-conflict-sides { display: grid; grid-template-columns: 1fr 1fr; gap: var(--space-3); }
+.task-conflict-sides h3 { margin: 0 0 var(--space-1); color: var(--text-dim); font-size: var(--fs-xs); font-weight: var(--fw-semibold); }
+.task-raw-form { display: flex; flex: 1 1 auto; flex-direction: column; min-height: 0; }
+.task-raw-text { width: 100%; min-height: 50vh; resize: vertical; font-family: var(--font-mono); font-size: var(--fs-xs); line-height: 1.5; white-space: pre; }
+
+/* 「나중」 항목: 항목마다 ⋯ */
+.task-notes-items { list-style: none; margin: 0; padding: 0 var(--space-1) var(--space-2) calc(var(--space-3) + 14px); }
+.task-notes-item { display: flex; align-items: flex-start; gap: var(--space-1); padding: var(--space-1) 0; border-bottom: var(--hairline) solid var(--border); }
+.task-notes-item:last-child { border-bottom: 0; }
+.task-notes-item > .task-notes { flex: 1 1 auto; min-width: 0; }
+.task-notes-item > .task-notes > :first-child { margin-top: 0; }
+.task-notes-item > .task-notes > :last-child { margin-bottom: 0; }
+
+@media (max-width: 640px) {
+  .tasks-actions .tasks-add { display: none; }
+  .tasks-fab { display: inline-flex; }
+  .task-conflict-sides { grid-template-columns: 1fr; }
+  .task-form-actions .btn { min-height: var(--touch-target); }
+  .task-undo { bottom: calc(var(--space-4) + 56px + var(--space-3) + env(safe-area-inset-bottom, 0px)); }
+}

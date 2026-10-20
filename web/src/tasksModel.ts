@@ -1,6 +1,7 @@
-// 할 일 화면의 순수 규칙(할 일 보기 T1, plan §8.306): 행 상태, 거르기·검색, 활동 막대 배지, 하위 task 깊이.
+// 할 일 화면의 순수 규칙(할 일 보기 T1, plan §8.306): 행 상태, 거르기·검색, 활동 막대 배지, 하위 task 깊이. 편집(T2, §8.307)은
+// 화면 동작 → host 동작(TaskOp), 「나중」 항목 나누기, 기록 차이.
 // host `tasks`(TaskBoard)는 TASKS.md를 그대로 읽은 것이고, 여기서는 판단하지 않고 보이는 차례와 표지만 정한다.
-import type { TaskBoard, TaskView, ThreadGroup } from "./gen/proto";
+import type { TaskAction, TaskAnchor, TaskBoard, TaskLogEntry, TaskOp, TaskView, ThreadGroup } from "./gen/proto";
 
 /** 행 상태(`data-task-state`): 형식 어긋남 ▲ > 진행 중 ◉(열린 thread와 이어짐) > 대기 ○ */
 export type TaskState = "problem" | "run" | "wait";
@@ -83,4 +84,254 @@ export function findTask(board: TaskBoard | null, key: { title: string; line: nu
   if (!board || !key) return null;
   const same = board.tasks.filter((t) => t.title === key.title);
   return same.find((t) => t.line === key.line) ?? same[0] ?? null;
+}
+
+// ───────────── 편집(할 일 편집 T2, plan §8.307) ─────────────
+// host `task_edit`는 대상 task를 블록 hash로 찾는다(그사이 바뀌었으면 충돌). 여기서는 화면 동작을 host 동작(TaskOp)으로 바꾸기만 한다.
+
+/** 동작의 대상(host가 이 hash의 블록을 찾는다) */
+export function anchorOf(t: TaskView): TaskAnchor {
+  return { list: t.list, title: t.title, block_sha256: t.block_sha256, line: t.line };
+}
+
+/** 같은 목록·같은 상위의 task(파일 차례) */
+export function siblings(board: TaskBoard, t: TaskView): TaskView[] {
+  return board.tasks.filter((x) => x.list === t.list && x.parent === t.parent);
+}
+
+/** 그 task 아래의 모든 하위 task 줄 */
+export function descendants(board: TaskBoard, t: TaskView): Set<number> {
+  const out = new Set<number>();
+  let grew = true;
+  while (grew) {
+    grew = false;
+    for (const x of board.tasks) {
+      if (x.parent !== null && (x.parent === t.line || out.has(x.parent)) && !out.has(x.line)) {
+        out.add(x.line);
+        grew = true;
+      }
+    }
+  }
+  return out;
+}
+
+const move = (t: TaskView, place: { to_list?: string; before?: TaskView; parent?: TaskView }): TaskOp => ({
+  op: "move",
+  at: anchorOf(t),
+  to_list: place.to_list ?? "",
+  before: place.before ? anchorOf(place.before) : null,
+  parent: place.parent ? anchorOf(place.parent) : null,
+});
+
+/** 그 자리(같은 상위)의 끝으로: 하위면 상위의 하위 끝, 아니면 목록 끝 */
+function toEnd(board: TaskBoard, t: TaskView, of: TaskView): TaskOp {
+  const parent = of.parent !== null ? board.tasks.find((x) => x.line === of.parent) : undefined;
+  return parent ? move(t, { parent }) : move(t, { to_list: of.list });
+}
+
+export type MoveDir = "up" | "down" | "top";
+
+/** 행 메뉴의 위로·아래로·맨 위로(휴대폰은 끌기 대신 이것, t-0469 §3.3). 그 자리면 없음 */
+export function moveOp(board: TaskBoard, t: TaskView, dir: MoveDir): TaskOp | null {
+  const sibs = siblings(board, t);
+  const i = sibs.findIndex((x) => x.line === t.line);
+  if (i < 0) return null;
+  if (dir === "up" || dir === "top") return i > 0 ? move(t, { before: sibs[dir === "up" ? i - 1 : 0] }) : null;
+  if (i >= sibs.length - 1) return null;
+  return i + 2 < sibs.length ? move(t, { before: sibs[i + 2] }) : toEnd(board, t, t);
+}
+
+/** 끌어 놓기: `target` 앞이나 뒤(그 task와 같은 상위가 된다). 자기·자기 하위 위, 지금 자리면 없음 */
+export function dropOp(board: TaskBoard, dragged: TaskView, target: TaskView, side: "before" | "after"): TaskOp | null {
+  if (target.line === dragged.line || descendants(board, dragged).has(target.line)) return null;
+  const sibs = siblings(board, target).filter((x) => x.line !== dragged.line);
+  const i = sibs.findIndex((x) => x.line === target.line);
+  const next = side === "before" ? sibs[i] : sibs[i + 1];
+  const same = siblings(board, dragged);
+  const at = same.findIndex((x) => x.line === dragged.line);
+  // 같은 자리에 다시 놓았다
+  if (dragged.list === target.list && dragged.parent === target.parent && (next ? same[at + 1]?.line === next.line : at === same.length - 1)) return null;
+  return next ? move(dragged, { before: next }) : toEnd(board, dragged, target);
+}
+
+/** 목록 머리에 놓기·「다른 목록으로」: 그 목록 끝(맨 위 단계) */
+export function toListOp(t: TaskView, list: string): TaskOp | null {
+  return t.list === list && t.parent === null ? null : move(t, { to_list: list });
+}
+
+/** owner 칸 고르기: 미할당·나·agent(profile@machine)·사람 이름 */
+export type OwnerKind = "none" | "me" | "agent" | "person";
+
+/** 편집 폼의 값 */
+export interface TaskDraft {
+  title: string;
+  list: string;
+  ownerKind: OwnerKind;
+  /** agent owner(`claude`·`@mac-b`·`codex@mac-b`) */
+  agent: string;
+  person: string;
+  notes: string;
+  /** 상위 task 줄(없으면 맨 위 단계) */
+  parent: number | null;
+}
+
+/** 이 owner 글을 agent로 볼까: 맡길 수 있는 profile 목록에 있거나 `@`가 든 것. 그 밖의 이름은 사람이다 */
+export function ownerKindOf(owner: string | null, agents: readonly string[]): OwnerKind {
+  if (owner === null || owner === "" || owner === "agent") return "none";
+  if (owner === "me") return "me";
+  return owner.includes("@") || agents.includes(owner) ? "agent" : "person";
+}
+
+export function draftOf(t: TaskView, agents: readonly string[]): TaskDraft {
+  const kind = ownerKindOf(t.owner, agents);
+  return {
+    title: t.title,
+    list: t.list,
+    ownerKind: kind,
+    agent: kind === "agent" ? (t.owner ?? "") : "",
+    person: kind === "person" ? (t.owner ?? "") : "",
+    notes: t.notes.join("\n"),
+    parent: t.parent,
+  };
+}
+
+export function emptyDraft(list: string, parent: number | null = null): TaskDraft {
+  return { title: "", list, ownerKind: "none", agent: "", person: "", notes: "", parent };
+}
+
+/** 폼 owner → host owner 글(빈 글은 미할당)과 「사람으로 저장」 */
+export function draftOwner(d: TaskDraft): { owner: string; person: boolean } {
+  switch (d.ownerKind) {
+    case "me":
+      return { owner: "me", person: false };
+    case "agent":
+      return { owner: d.agent.trim(), person: false };
+    case "person":
+      return { owner: d.person.trim(), person: true };
+    default:
+      return { owner: "", person: false };
+  }
+}
+
+/** 메모 글 → 줄(끝 공백·앞뒤 빈 줄을 뗀다, host와 같다) */
+export function noteLines(text: string): string[] {
+  const lines = text.split("\n").map((l) => l.replace(/\s+$/, ""));
+  while (lines.length > 0 && lines[lines.length - 1] === "") lines.pop();
+  while (lines.length > 0 && lines[0] === "") lines.shift();
+  return lines;
+}
+
+const sameNotes = (a: string[], b: string[]) => {
+  const n = (x: string[]) => x.map((l) => l.trim()).filter((l) => l !== "");
+  return JSON.stringify(n(a)) === JSON.stringify(n(b));
+};
+
+/**
+ * 폼 → host 동작. 새 task는 더하기 하나, 있는 task는 바뀐 칸만 고치기와(목록·상위가 바뀌었으면) 옮기기다. 같은 요청의 옮기기는
+ * 고치기가 바꾼 hash를 host가 따라간다. 바뀐 것이 없으면 빈 목록.
+ */
+export function draftOps(board: TaskBoard, t: TaskView | null, d: TaskDraft): TaskOp[] {
+  const { owner, person } = draftOwner(d);
+  const notes = noteLines(d.notes);
+  const parent = d.parent !== null ? board.tasks.find((x) => x.line === d.parent) : undefined;
+  if (!t) {
+    return [{ op: "add", list: parent ? parent.list : d.list.trim(), title: d.title.trim(), owner: owner || null, person, notes, parent: parent ? anchorOf(parent) : null, before: null }];
+  }
+  const ops: TaskOp[] = [];
+  const title = d.title.trim() !== t.title ? d.title.trim() : null;
+  const was = t.owner === "agent" ? "" : (t.owner ?? "");
+  const ownerChanged = owner !== was;
+  const notesChanged = !sameNotes(notes, t.notes);
+  if (title !== null || ownerChanged || notesChanged) {
+    ops.push({ op: "update", at: anchorOf(t), title, owner: ownerChanged ? owner : null, person: ownerChanged && person, notes: notesChanged ? notes : null, thread: null, done: null });
+  }
+  if (d.parent !== t.parent || (d.parent === null && d.list.trim() !== t.list)) {
+    ops.push(parent ? move(t, { parent }) : move(t, { to_list: d.list.trim() }));
+  }
+  return ops;
+}
+
+/** 정규형 줄 미리보기(host `task_line`과 같은 꼴) */
+export function canonicalLine(title: string, owner: string | null, thread: string | null, done = false): string {
+  const o = owner ? ` (${owner})` : "";
+  const th = thread ? ` · ${thread}` : "";
+  return `- [${done ? "x" : " "}] ${title}${o}${th}`;
+}
+
+/** 「나중」 절의 줄을 항목으로 묶는다: 들여쓰지 않은 글머리(`- `·`* `·`1. `)가 새 항목이고, 들여쓴 줄·이어진 줄은 그 항목에 붙는다 */
+export function noteItems(lines: readonly string[]): string[][] {
+  const out: string[][] = [];
+  for (const l of lines) {
+    const starts = /^([-*]|\d+\.)\s/.test(l);
+    if (l.trim() === "") {
+      if (out.length > 0) out[out.length - 1].push(l);
+      continue;
+    }
+    if (starts || out.length === 0) out.push([l]);
+    else out[out.length - 1].push(l);
+  }
+  return out.map((item) => {
+    while (item.length > 0 && item[item.length - 1].trim() === "") item.pop();
+    return item;
+  });
+}
+
+/** 「할 일로 옮기기」: 항목 첫 줄(글머리를 뗌)이 제목 후보, 나머지 줄이 메모. 제목은 한 줄 120자까지 자르고 넘친 것은 메모 앞에 둔다 */
+export function itemToTask(item: readonly string[]): { title: string; notes: string[] } {
+  const first = (item[0] ?? "").replace(/^([-*]|\d+\.)\s+/, "").trim();
+  const rest = item.slice(1).map((l) => l.replace(/^ {2}/, ""));
+  if ([...first].length <= 120) return { title: first, notes: rest };
+  const cut = [...first].slice(0, 120).join("");
+  return { title: cut, notes: [first, ...rest] };
+}
+
+export const TASK_ACTION_LABEL: Record<TaskAction, string> = {
+  add: "더함",
+  update: "고침",
+  delete: "지움",
+  move: "옮김",
+  list_add: "목록 더함",
+  list_rename: "목록 이름 바꿈",
+  list_merge: "목록 합침",
+  list_delete: "목록 지움",
+  list_move: "목록 옮김",
+  restore: "되살림",
+  raw: "원문 편집",
+  auto_clean: "자동 정리",
+};
+
+/** 되살릴 수 있는 기록(삭제·자동 정리, 아직 되살리지 않음) */
+export function restorable(e: TaskLogEntry): boolean {
+  return (e.action === "delete" || e.action === "auto_clean") && e.restored_by === null;
+}
+
+/** 전후 원문의 줄 차이(가장 긴 공통 줄 차례). 작은 블록용이다 */
+export function lineDiff(before: string | null, after: string | null): { kind: "same" | "del" | "add"; text: string }[] {
+  const a = before === null ? [] : before.split("\n");
+  const b = after === null ? [] : after.split("\n");
+  const n = a.length;
+  const m = b.length;
+  const lcs: number[][] = Array.from({ length: n + 1 }, () => new Array<number>(m + 1).fill(0));
+  for (let i = n - 1; i >= 0; i--) for (let j = m - 1; j >= 0; j--) lcs[i][j] = a[i] === b[j] ? lcs[i + 1][j + 1] + 1 : Math.max(lcs[i + 1][j], lcs[i][j + 1]);
+  const out: { kind: "same" | "del" | "add"; text: string }[] = [];
+  let i = 0;
+  let j = 0;
+  while (i < n || j < m) {
+    if (i < n && j < m && a[i] === b[j]) {
+      out.push({ kind: "same", text: a[i] });
+      i++;
+      j++;
+    } else if (j < m && (i >= n || lcs[i][j + 1] >= lcs[i + 1][j])) out.push({ kind: "add", text: b[j++] });
+    else out.push({ kind: "del", text: a[i++] });
+  }
+  return out;
+}
+
+/** 기록의 때(지금부터): 방금·N분 전·N시간 전·N일 전 */
+export function ago(atMs: number, now: number): string {
+  const s = Math.max(0, Math.floor((now - atMs) / 1000));
+  if (s < 60) return "방금";
+  if (s < 3600) return `${Math.floor(s / 60)}분 전`;
+  if (s < 86_400) return `${Math.floor(s / 3600)}시간 전`;
+  return `${Math.floor(s / 86_400)}일 전`;
 }

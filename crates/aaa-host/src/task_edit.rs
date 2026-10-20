@@ -285,6 +285,20 @@ fn at_op(i: usize) -> impl Fn(String) -> Fail {
     move |reason| Fail::Bad(if i == 0 { reason } else { format!("{}번째 동작: {reason}", i + 1) })
 }
 
+/// 한 요청 안에서 앞 동작이 바꾼 블록의 hash(옛 → 새). 같은 task를 고친 뒤 옮기는 요청이 둘째 동작에서도 그 task를 찾는다
+type Renames = Vec<(String, String)>;
+
+fn renamed(a: &TaskAnchor, renames: &Renames) -> TaskAnchor {
+    let mut a = a.clone();
+    for _ in 0..renames.len() {
+        match renames.iter().find(|(old, _)| *old == a.block_sha256) {
+            Some((_, new)) if *new != a.block_sha256 => a.block_sha256 = new.clone(),
+            _ => break,
+        }
+    }
+    a
+}
+
 /// 대상 task를 찾는다: hash가 같은 블록(여럿이면 같은 목록, 그다음 `line`에 가까운 것), hash가 없으면 제목
 fn find(spans: &[Span], a: &TaskAnchor, op: usize) -> Result<usize, Fail> {
     if a.block_sha256.is_empty() {
@@ -344,10 +358,14 @@ pub(crate) fn apply(text: &str, ops: &[TaskOp], ctx: &Ctx) -> Result<Applied, Fa
     }
     let mut d = Doc::new(text);
     let mut records = Vec::new();
+    let mut renames: Renames = Vec::new();
+    // 그 줄에서 시작하는 task의 지금 hash(동작 뒤 새 블록)
+    let sha_at = |d: &Doc, idx: usize| d.spans().into_iter().find(|s| s.idx == idx).map(|s| s.view.block_sha256);
     // 저장 뒤 중복을 볼 제목
     let mut titles: Vec<String> = Vec::new();
     for (i, op) in ops.iter().enumerate() {
         let bad = at_op(i);
+        let op = &remap(op, &renames);
         match op {
             TaskOp::Add { list, title, owner, person, notes, parent, before } => {
                 let title = tasks::check_title(title).map_err(&bad)?;
@@ -446,6 +464,9 @@ pub(crate) fn apply(text: &str, ops: &[TaskOp], ctx: &Ctx) -> Result<Applied, Fa
                     titles.push(new_title.clone());
                 }
                 d.lines.splice(s.idx..=s.block_end, block);
+                if let Some(new) = sha_at(&d, s.idx) {
+                    renames.push((v.block_sha256.clone(), new));
+                }
                 records.push(r);
             }
             TaskOp::Delete { at } => {
@@ -487,6 +508,9 @@ pub(crate) fn apply(text: &str, ops: &[TaskOp], ctx: &Ctx) -> Result<Applied, Fa
                 r.after = Some(moved.iter().map(|l| plain(l)).collect::<Vec<_>>().join("\n"));
                 r.thread = s.view.thread.clone();
                 d.insert(at, moved);
+                if let Some(new) = sha_at(&d, at) {
+                    renames.push((s.view.block_sha256.clone(), new));
+                }
                 records.push(r);
             }
             TaskOp::ListAdd { name, after } => {
@@ -641,6 +665,40 @@ pub(crate) fn apply(text: &str, ops: &[TaskOp], ctx: &Ctx) -> Result<Applied, Fa
         return Err(Fail::Bad(format!("같은 제목 task가 이미 있다: {t}(`--from-task`가 제목으로 찾는다)")));
     }
     Ok(Applied { text: d.text(), records })
+}
+
+/// 동작의 대상들을 앞 동작이 바꾼 hash로
+fn remap(op: &TaskOp, renames: &Renames) -> TaskOp {
+    if renames.is_empty() {
+        return op.clone();
+    }
+    let r = |a: &TaskAnchor| renamed(a, renames);
+    let ro = |a: &Option<TaskAnchor>| a.as_ref().map(r);
+    match op {
+        TaskOp::Add { list, title, owner, person, notes, parent, before } => TaskOp::Add {
+            list: list.clone(),
+            title: title.clone(),
+            owner: owner.clone(),
+            person: *person,
+            notes: notes.clone(),
+            parent: ro(parent),
+            before: ro(before),
+        },
+        TaskOp::Update { at, title, owner, person, notes, thread, done } => TaskOp::Update {
+            at: r(at),
+            title: title.clone(),
+            owner: owner.clone(),
+            person: *person,
+            notes: notes.clone(),
+            thread: thread.clone(),
+            done: *done,
+        },
+        TaskOp::Delete { at } => TaskOp::Delete { at: r(at) },
+        TaskOp::Move { at, to_list, before, parent } => {
+            TaskOp::Move { at: r(at), to_list: to_list.clone(), before: ro(before), parent: ro(parent) }
+        }
+        other => other.clone(),
+    }
 }
 
 /// 목록 이름(빈 글은 첫 `##` 앞의 이름 없는 목록)
@@ -1036,6 +1094,21 @@ mod tests {
         assert_eq!(gone.iter().filter(|r| r.action == TaskAction::Delete).count(), 2);
         assert_eq!(gone[0].before.as_deref(), Some("- [ ] 둘\n  메모"));
         assert!(diff(old, old).is_empty());
+    }
+
+    /// 한 요청에서 같은 task를 고친 뒤 옮긴다(둘째 동작은 바뀐 hash를 따라간다)
+    #[test]
+    fn update_then_move_in_one_request() {
+        let md = "## A\n- [ ] 하나\n- [ ] 둘\n## B\n- [ ] 셋\n";
+        let a = anchor(md, "하나");
+        let out = run(md, vec![
+            TaskOp::Update { at: a.clone(), title: Some("하나 고침".into()), owner: None, person: false, notes: Some(vec!["메모".into()]), thread: None, done: None },
+            TaskOp::Move { at: a.clone(), to_list: String::new(), before: None, parent: Some(anchor(md, "셋")) },
+            TaskOp::Update { at: a, title: None, owner: Some("me".into()), person: false, notes: None, thread: None, done: None },
+        ])
+        .unwrap();
+        assert_eq!(out.text, "## A\n- [ ] 둘\n## B\n- [ ] 셋\n  - [ ] 하나 고침 (me)\n    메모\n");
+        assert_eq!(out.records.iter().map(|r| r.action).collect::<Vec<_>>(), [TaskAction::Update, TaskAction::Move, TaskAction::Update]);
     }
 
     /// 원문 편집은 홀로만

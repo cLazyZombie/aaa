@@ -827,6 +827,8 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
     else beforeTasks.current = sel;
   }, [sel]);
   const toggleTasks = () => goSel(tasksShown ? beforeTasks.current : "tasks:");
+  // 명령 팔레트 「할 일 더하기」: 할 일 화면을 열고 새 task 폼을 연다(plan §8.307)
+  const [taskAdds, setTaskAdds] = useState(0);
 
   // 새 pane 창(herdr-web-ui App.tsx `newSessionOpen`·`newSessionMachineId`): 머신 머리 +와 단축키가 그 머신으로 연다
   const [newPaneOn, setNewPaneOn] = useState<MachineView | null>(null);
@@ -998,7 +1000,7 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
   // 할 일 화면의 thread 칩(묶음)과 「task 없는 열린 thread」: 열린 thread 모음이 바뀌면 board를 다시 읽는다
   const threadGroups = useMemo(() => new Map(allThreads.map((t) => [t.id, t.group])), [threads]); // eslint-disable-line react-hooks/exhaustive-deps
   const openThreadIds = allThreads.filter((t) => t.group !== "resolved").map((t) => t.id).sort().join(" ");
-  const taskBoard = useTaskBoard(up, openThreadIds);
+  const taskBoard = useTaskBoard(up, openThreadIds, tasksShown);
   const shownThreads = allThreads.filter((t) => t.group !== "resolved");
   // pane → 그 pane에서 도는 thread(목록에서 pane 이름 대신 thread 제목을 보인다)
   const threadOfPane = new Map<string, ThreadView>();
@@ -1034,6 +1036,13 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
     openTasks: () => {
       if (!tasksShown) toggleTasks();
     },
+    addTask:
+      role === "reader"
+        ? null
+        : () => {
+            if (!tasksShown) toggleTasks();
+            setTaskAdds((n) => n + 1);
+          },
     toggleSidebar: actions.toggleSidebar,
   };
 
@@ -1160,6 +1169,9 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
             board={taskBoard.board}
             error={taskBoard.error}
             groups={threadGroups}
+            reader={role === "reader"}
+            addRequest={taskAdds}
+            onBoard={taskBoard.replace}
             onThread={(id) => {
               const t = allThreads.find((x) => x.id === id);
               if (t) chooseThread(t);
