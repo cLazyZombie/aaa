@@ -214,7 +214,7 @@ async fn serve(
         AssertUnwindSafe(serve_connection(host.clone(), stream, known, pid, &mut cleanup)).catch_unwind().await;
     let panicked = result.is_err();
     if panicked {
-        host.task_failed(Task::AgentLink);
+        host.task_panicked(Task::AgentLink);
     }
     // 정리 중 poison 등으로 또 panic해도 감시 기록은 남는다. 새 generation을 끊지 않는다.
     let cleaned = std::panic::catch_unwind(AssertUnwindSafe(|| {
@@ -225,7 +225,7 @@ async fn serve(
         }
     }));
     if cleaned.is_err() && !panicked {
-        host.task_failed(Task::AgentLink);
+        host.task_panicked(Task::AgentLink);
     }
     match result {
         Ok(result) if cleaned.is_ok() => result,

@@ -250,6 +250,19 @@ impl Host {
         })
     }
 
+    /// 공통 hook의 마지막 안전 기록 중 현재 task와 일치하는 것만 연결한다.
+    /// 다른 task의 동시 panic을 이 작업의 위치로 잘못 기록하지 않는다.
+    pub(crate) fn task_panicked(&self, task: Task) -> u32 {
+        let current = tokio::task::try_id().map(|id| id.to_string());
+        if let Some(snapshot) =
+            aaa_common::panic_log::latest().filter(|snapshot| current.is_some() && snapshot.task_id == current)
+            && let Ok(safe) = serde_json::to_string(&snapshot)
+        {
+            tracing::error!(task = task.name(), panic_snapshot = %safe, "host 작업의 최근 안전 panic 기록");
+        }
+        self.task_failed(task)
+    }
+
     pub(crate) fn task_failed(&self, task: Task) -> u32 {
         let mut health = self.health.lock().unwrap();
         let restarts = health.fail(task, Instant::now(), aaa_common::util::now_ms(), 1);
@@ -287,8 +300,8 @@ impl Host {
         tokio::spawn(async move {
             loop {
                 // factory 생성 단계의 panic과 정상 조기 종료도 감지한다.
-                let _ = AssertUnwindSafe(async { factory().await }).catch_unwind().await;
-                let failures = host.task_failed(task);
+                let panicked = AssertUnwindSafe(async { factory().await }).catch_unwind().await.is_err();
+                let failures = if panicked { host.task_panicked(task) } else { host.task_failed(task) };
                 if failures > RESTARTS {
                     break;
                 }
