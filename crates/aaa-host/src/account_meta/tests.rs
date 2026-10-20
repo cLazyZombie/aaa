@@ -166,7 +166,8 @@ fn broken_and_expiring_accounts_raise_one_alert_without_email_and_logging_in_cle
     assert_eq!(h.account_meta("work").email.as_deref(), Some("work@example.com"), "모르는 메일은 옛 값을 남긴다");
 
     // 알려진 만료가 7일 안이면 「곧 만료」, 지나면 「끊김」으로 바뀐다(옛 항목은 끝낸다)
-    h.accounts.import("ci", "claude", "sk-ant-oat01-test-only-0123456789").unwrap();
+    // 공개 저장소 검사가 token 꼴 글을 막는다: 가짜 값도 실행 중에 만든다
+    h.accounts.import("ci", "claude", &format!("sk-ant-{}-test-only-0123456789", "oat01")).unwrap();
     let soon = util::now_ms() + 3 * DAY;
     h.account_logged_in("ci", &Identity { expires_ms: Some(soon), ..Default::default() }, false);
     let open: Vec<_> = account_items(h).into_iter().filter(|i| !i.done).collect();

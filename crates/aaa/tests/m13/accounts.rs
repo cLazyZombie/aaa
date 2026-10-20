@@ -1071,7 +1071,7 @@ fn host_relogin_checks_the_email_and_asks_before_switching() {
     assert!(audit.iter().all(|(_, d)| !d.contains('@')), "{audit:?}");
     // 알림함·로그·프로젝트 파일에도 없다(host DB의 계정 기록과 fixture는 뺀다)
     w.h.ticks(1);
-    let found = hits(&[w.lab.root.clone()], &[("메일".into(), b"@example.com".to_vec())], &|p| {
+    let found = hits(std::slice::from_ref(&w.lab.root), &[("메일".into(), b"@example.com".to_vec())], &|p| {
         p.starts_with(&w.scripts) || p.file_name().is_some_and(|n| n.to_string_lossy().starts_with("host.db"))
     });
     assert!(found.is_empty(), "{found:?}");

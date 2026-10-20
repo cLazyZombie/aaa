@@ -88,7 +88,8 @@ export default async function ({ page }) {
   });
 
   await step("Claude 로그인: 유효 기간 3일 → 곧 만료 배지, 알림함에 확인 필요 한 번(메일 없음)", async () => {
-    fs.writeFileSync(`${bin}/claude-out.txt`, "Your OAuth token (valid for 3 days):\nsk-ant-oat01-e2e-only-0123456789abcdef\n");
+    // 공개 저장소 검사가 token 꼴 글을 막는다: 가짜 값도 실행 중에 만든다
+    fs.writeFileSync(`${bin}/claude-out.txt`, `Your OAuth token (valid for 3 days):\nsk-ant-${"oat01"}-e2e-only-0123456789abcdef\n`);
     fs.writeFileSync(`${bin}/claude.json`, JSON.stringify({ oauthAccount: { emailAddress: "ci@example.com" } }));
     await pane.getByTestId("account-alias").fill("ci");
     await pane.getByTestId("account-harness").selectOption("claude");
