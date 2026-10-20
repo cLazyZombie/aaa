@@ -20,6 +20,7 @@ export function ActivityBar({
   reports,
   onReports,
   unseenReports,
+  askReports,
   tasks,
   onTasks,
   taskBadge,
@@ -38,6 +39,8 @@ export function ActivityBar({
   onReports: () => void;
   /** 열어 보지 않은 사용자 보고서 수(host `reports` 사건, plan §8.256) */
   unseenReports: number;
+  /** 답할 thread 질문 수(plan §8.329): 있으면 안 본 수 대신 빨강으로 이 수를 단다(사용자 결정 10-20 3A) */
+  askReports: number;
   /** 본문이 할 일 화면인가 */
   tasks: boolean;
   onTasks: () => void;
@@ -109,14 +112,18 @@ export function ActivityBar({
         type="button"
         className={`activity-item${reports ? " is-active" : ""}`}
         aria-pressed={reports}
-        aria-label={unseenReports > 0 ? `보고서, 안 본 보고서 ${unseenReports}` : "보고서"}
+        aria-label={askReports > 0 ? `보고서, 답할 질문 ${askReports}` : unseenReports > 0 ? `보고서, 안 본 보고서 ${unseenReports}` : "보고서"}
         title="보고서"
         data-testid="activity-reports"
         onClick={onReports}
       >
         <FileText aria-hidden="true" />
-        {unseenReports > 0 && (
-          <span className="activity-badge" aria-hidden="true" data-testid="activity-badge-reports">
+        {askReports > 0 ? (
+          <span className="activity-badge is-ask" aria-hidden="true" data-testid="activity-badge-reports" data-kind="ask">
+            {askReports > 99 ? "99+" : askReports}
+          </span>
+        ) : unseenReports > 0 && (
+          <span className="activity-badge" aria-hidden="true" data-testid="activity-badge-reports" data-kind="unseen">
             {unseenReports > 99 ? "99+" : unseenReports}
           </span>
         )}

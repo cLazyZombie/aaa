@@ -910,6 +910,16 @@ enum ThreadCmd {
         #[arg(long)]
         summary_file: Option<String>,
     },
+    /// thread 보고 `## Questions`에 답한다(예: `aaa thread answer t-0012 1A 2B`). 웹 질문 카드와 같은 길이라 모든 기기가 「답함」을
+    /// 본다. 고르지 않은 질문은 --text로 직접 쓴 답이 대신한다
+    Answer {
+        thread: String,
+        /// 질문 번호와 선택지 글자(`1A 2B`, `1a,2b`)
+        answers: Vec<String>,
+        /// 직접 쓴 답(질문 번호를 붙여 쓴다, 예: "2 둘 다 보이게")
+        #[arg(long)]
+        text: Option<String>,
+    },
 }
 
 #[derive(Args)]
@@ -1869,6 +1879,20 @@ fn run(cli: Cli) -> Result<ExitCode> {
                     let (project, thread) = on_target(thread, legacy)?;
                     FrontRequest::ThreadRestart { project, thread, resume, profile }
                 }
+                ThreadCmd::Answer { thread, mut answers, text } => {
+                    let (project, thread) = shift_project(thread, &mut answers)?;
+                    let view = match front_call(FrontRequest::ThreadShow {
+                        project: project.clone(),
+                        thread: thread.clone(),
+                    })? {
+                        Ok(FrontResponse::Thread(t)) => t,
+                        Ok(_) => anyhow::bail!("host가 thread 대신 다른 답을 했다"),
+                        Err(e) => anyhow::bail!("{}", e.message),
+                    };
+                    let Some(q) = view.questions else { anyhow::bail!("{thread}에는 답할 질문이 없다") };
+                    let picks = answer_picks(&answers.join(" "), q.items.len())?;
+                    FrontRequest::ThreadAnswer { project, thread, report_hash: q.report_hash, picks, text }
+                }
                 ThreadCmd::Message { thread, legacy, interrupt, text_file, text, summary_file } => {
                     let (project, thread) = on_target(thread, legacy)?;
                     if text_file.as_deref() == Some("-") && summary_file.as_deref() == Some("-") {
@@ -2744,6 +2768,27 @@ pub(crate) fn project_or_here(given: Option<String>) -> Result<String> {
 }
 
 /// `<대상>`(새 꼴) 또는 `<프로젝트> <대상>`(옛 꼴): (프로젝트, 대상)
+/// `1A 2B`(쉼표·붙여 쓰기도)를 질문마다 고른 선택지 번호로. 고르지 않은 질문은 None(--text가 대신한다)
+fn answer_picks(text: &str, questions: usize) -> Result<Vec<Option<u32>>> {
+    let mut picks = vec![None; questions];
+    let compact: String = text.chars().filter(|c| !c.is_whitespace() && *c != ',').collect();
+    let mut rest = compact.as_str();
+    while !rest.is_empty() {
+        let digits = rest.chars().take_while(char::is_ascii_digit).count();
+        let letter = rest[digits..].chars().next().filter(char::is_ascii_alphabetic);
+        let (Some(letter), true) = (letter, digits > 0) else {
+            anyhow::bail!("답은 질문 번호와 선택지 글자다(예: 1A 2B): {text}");
+        };
+        let n: usize = rest[..digits].parse()?;
+        if n == 0 || n > questions {
+            anyhow::bail!("{n}번 질문이 없다(질문 {questions}개)");
+        }
+        picks[n - 1] = Some(u32::from(letter.to_ascii_uppercase() as u8 - b'A'));
+        rest = &rest[digits + 1..];
+    }
+    Ok(picks)
+}
+
 fn on_target(first: String, second: Option<String>) -> Result<(String, String)> {
     match second {
         Some(target) => Ok((project_or_here(Some(first))?, target)),
@@ -4295,5 +4340,18 @@ mod tests {
         assert!(!ok(&["--percent", "25", "--unknown", "--activity", "x"]));
         assert!(!ok(&["--percent", "101", "--activity", "x"]));
         assert!(!ok(&["--percent", "25"]));
+    }
+
+    /// `aaa thread answer`의 답 글(plan §8.329): 띄어 쓰기·쉼표·붙여 쓰기·소문자를 받고, 없는 질문·꼴이 아닌 글은 거절한다
+    #[test]
+    fn answer_picks_read_question_numbers_and_letters() {
+        use super::answer_picks;
+        assert_eq!(answer_picks("1A 2B", 2).unwrap(), [Some(0), Some(1)]);
+        assert_eq!(answer_picks("1a,2c", 3).unwrap(), [Some(0), Some(2), None]);
+        assert_eq!(answer_picks("2B1A", 2).unwrap(), [Some(0), Some(1)]);
+        assert_eq!(answer_picks("", 2).unwrap(), [None, None]);
+        assert!(answer_picks("3A", 2).unwrap_err().to_string().contains("3번 질문이 없다"));
+        assert!(answer_picks("A1", 2).is_err());
+        assert!(answer_picks("1", 2).is_err());
     }
 }

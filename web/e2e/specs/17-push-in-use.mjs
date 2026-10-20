@@ -1,4 +1,4 @@
-// 웹 E2E 쓰는 화면·쓰는 기기에 따른 push 판정(plan §8.69·§8.105·§8.119): 보는 동안·두 기기·죽은 연결·쓰는 기기·기기별 알림 종류.
+// 웹 E2E 쓰는 화면·쓰는 기기에 따른 push 판정(plan §8.69·§8.105·§8.119): 보는 동안·두 기기·죽은 연결·쓰는 기기·기기별 알림 종류·시작 질문(§8.328).
 // 혼자 돌리기: node web/e2e/web.e2e.mjs --spec 17-push-in-use(새 실험실). 준비는 runSpec과 pushLab(서명 키·구독 하나·demo):
 // 단계는 서로 기대지 않아 하나만 골라(--grep) 돌 수 있다
 import crypto from "node:crypto";
@@ -503,6 +503,97 @@ export default async function ({ page }) {
     await work("완료 알림 다시 켬");
     const { msg } = await nextPush(dev, start, "다시 켠 뒤 push");
     if (msg.tag !== "aaa-demo") throw new Error(JSON.stringify(msg));
+    if (toDev(start).length !== 1) throw new Error(`이 기기에 push ${toDev(start).length}건`);
+    if (phone.errors.length) throw new Error(`페이지 오류: ${phone.errors.join("; ")}`);
+    await pp.context().close();
+    for (const x of ts) aaa("thread", "resolve", "demo", x.id);
+    await setInUse(page, true);
+    await until("본 화면 다시 씀", async () => (await pushInUse(page)) === 1);
+  });
+
+  await step("시작 질문(plan §8.328): thread가 구현 전에 [결정 필요]로 모아 묻고, coordinator가 확인 필요 post(제목은 질문 요약·추천)로 사용자에게 넘긴다. 앱을 보는 동안은 thread 표지의 앱 안 알림 하나뿐이고 post push는 건너뛴다. 앱을 닫은 동안은 앱 안 알림 없이 post push 하나가 가린 질문 요약·추천을 싣는다", async () => {
+    const dev = pushDevice("push/dev-ask");
+    const devPath = new URL(dev.json.endpoint).pathname;
+    const toDev = (from) => pushes.slice(from).filter((x) => x.path === devPath);
+    // 알림을 켜 둔 기기(위 「기기별 알림 종류」와 같다)
+    const init = `(${(a) => {
+      const log = [];
+      Object.defineProperty(window, "__pushLog", { value: log });
+      class FakeNotification {
+        static permission = "granted";
+        static async requestPermission() {
+          return "granted";
+        }
+        addEventListener() {}
+      }
+      Object.defineProperty(window, "Notification", { configurable: true, value: FakeNotification });
+      ServiceWorkerRegistration.prototype.showNotification = async () => {};
+      const key = Uint8Array.from(atob(a.key.replace(/-/g, "+").replace(/_/g, "/")), (c) => c.charCodeAt(0)).buffer;
+      const sub = { endpoint: a.sub.endpoint, options: { applicationServerKey: key }, toJSON: () => a.sub, unsubscribe: async () => true };
+      PushManager.prototype.getSubscription = async () => sub;
+      PushManager.prototype.subscribe = async () => sub;
+      const Real = window.WebSocket;
+      window.WebSocket = class extends Real {
+        constructor(url, p) {
+          super(url, p);
+          if (!String(url).includes("/api/v1/events")) return;
+          this.addEventListener("message", (m) => {
+            try {
+              const d = JSON.parse(m.data);
+              if (d.ev === "thread") log.push(`thr ${String(d.report_hash).slice(0, 6)}`);
+            } catch {}
+          });
+        }
+      };
+    }})(${JSON.stringify({ key: pushKey, sub: dev.json })})`;
+    await setInUse(page, false);
+    await until("쓰는 화면 없음", async () => (await pushInUse(page)) === 0);
+    const start = pushes.length;
+    const phone = await pairPage(browser, aaa("web", "pair").code, { width: 390, height: 844 }, { init });
+    const pp = phone.page;
+    await until("열 때 다시 등록", async () => (await pp.evaluate(async () => (await (await fetch("/api/v1/push")).json()).ok)).subscribed === 1);
+    await until("휴대폰을 봄", async () => (await pushInUse(page)) === 1);
+    const hide = (hidden) =>
+      pp.evaluate((hidden) => {
+        Object.defineProperty(document, "visibilityState", { configurable: true, get: () => (hidden ? "hidden" : "visible") });
+        Object.defineProperty(document, "hidden", { configurable: true, get: () => hidden });
+        if (hidden) document.hasFocus = () => false;
+        else delete document.hasFocus;
+        document.dispatchEvent(new Event("visibilitychange"));
+        window.dispatchEvent(new Event(hidden ? "blur" : "focus"));
+      }, hidden);
+    const kinds = (kind) => aaa("events", "demo").events.filter((e) => e.kind === kind);
+    const ts = [];
+    // fake agent는 할 일에 「모아 묻기 시험」이 있으면 [결정 필요] 질문 보고만 쓴다. 그 보고를 받은 coordinator가 post를 보낸다
+    const ask = async (title, question) => {
+      fs.writeFileSync(`${root}/task-ask-${ts.length}.md`, `${title}\n모아 묻기 시험`);
+      const t = aaa("thread", "start", "demo", "--title", title, "--machine", "labA", "--profile", "fake", "--kind", "dir", "--task-file", `${root}/task-ask-${ts.length}.md`);
+      ts.push(t);
+      const hash = await until(`${title} 질문 보고`, () => {
+        const v = aaa("thread", "show", "demo", t.id);
+        return v.report_attention === "needs_user" && v.report_hash;
+      });
+      await until(`${title} 보고 사건 받음`, () => pp.evaluate((h) => window.__pushLog.includes(`thr ${h.slice(0, 6)}`), hash));
+      await coordinatorPost({ request: true, title: question });
+    };
+    // (1) 보는 동안: host는 post push를 건너뛰고, 이 화면에는 thread 표지의 앱 안 알림(입력 필요) 하나만 내려온다
+    const skipped = kinds("push_skipped").length;
+    await ask("배치 질문 보는 중", "질문 1개 · 추천: A안");
+    await until("보는 동안 post push 건너뜀", () => kinds("push_skipped").length > skipped);
+    await until("thread 표지의 앱 안 알림", async () => (await pp.locator(".droplet-title").allInnerTexts()).includes("배치 질문 보는 중"));
+    if ((await pp.locator(".droplet").count()) !== 1) throw new Error(`앱 안 알림 ${await pp.locator(".droplet").count()}개`);
+    if ((await pp.locator(".droplet").getAttribute("data-kind")) !== "blocked") throw new Error(`앱 안 알림 종류 ${await pp.locator(".droplet").getAttribute("data-kind")}`);
+    if (toDev(start).length !== 0) throw new Error(`보는 동안 push ${toDev(start).length}건`);
+    await dismissObservedDroplet(pp);
+    // (2) 닫은 동안: 앱 안 알림은 없고, post push 하나가 질문 요약·추천을 싣는다(경로는 가린다)
+    await hide(true);
+    await until("가려진 휴대폰", async () => (await pushInUse(page)) === 0);
+    await ask("배치 질문 닫은 동안", "질문 1개 · 추천: A안(기존과 같음) ~/work/plan.md");
+    const { msg } = await nextPush(dev, start, "닫은 동안 질문 push");
+    const want = { title: "demo", body: "coordinator 사용자 결정 요청 · 질문 1개 · 추천: A안(기존과 같음) [숨김]", url: "/#threads", tag: "aaa-demo" };
+    for (const [k, v] of Object.entries(want)) if (msg[k] !== v) throw new Error(`질문 push ${k}: ${JSON.stringify(msg)}`);
+    await pp.evaluate(() => new Promise((r) => setTimeout(r)));
+    if ((await pp.locator(".droplet").count()) !== 0) throw new Error("닫은 동안 앱 안 알림이 내려왔다");
     if (toDev(start).length !== 1) throw new Error(`이 기기에 push ${toDev(start).length}건`);
     if (phone.errors.length) throw new Error(`페이지 오류: ${phone.errors.join("; ")}`);
     await pp.context().close();
