@@ -38,7 +38,7 @@ fn examples_are_valid_and_warning_free() {
 }
 
 /// host.toml profile env 중 이름에 KEY·TOKEN·SECRET·PASSWORD가 든 평문 값은 그 자리(local 우선)를 경고한다. 경고와 Debug에는
-/// 값이 없다(plan §8.305)
+/// 값이 없다(plan §8.307)
 #[test]
 fn plaintext_secret_env_warns_by_name_only() {
     let value = "aaa-canary-config-0123456789abcdef";

@@ -51,7 +51,7 @@ pub enum ThreadKind {
     Adopted,
 }
 
-/// env를 Debug로 찍을 때 값 없이 「«env N개: 이름…»」만 보인다(키 관리자 K0, plan §8.305). 로그·오류 문구가 Debug를 쓴다.
+/// env를 Debug로 찍을 때 값 없이 「«env N개: 이름…»」만 보인다(키 관리자 K0, plan §8.307). 로그·오류 문구가 Debug를 쓴다.
 pub struct EnvNames<'a>(pub Vec<&'a str>);
 
 impl<'a> EnvNames<'a> {

@@ -1,4 +1,4 @@
-//! 키 관리자 K0(plan §8.305): pane·thread env의 값이 aaa가 남기는 기록(감사 기록·DB·로그·`AAA_LOG=trace`·프로젝트
+//! 키 관리자 K0(plan §8.307): pane·thread env의 값이 aaa가 남기는 기록(감사 기록·DB·로그·`AAA_LOG=trace`·프로젝트
 //! export)에 나오지 않는다. pane 안에서는 값이 그대로 보인다.
 //!
 //! 카나리(무작위 가짜 값)는 셋이다.

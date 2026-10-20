@@ -1107,7 +1107,7 @@ impl Db {
     }
 
     /// 프로젝트 하나의 기록(아래 [`PROJECT_TABLES`]의 행과 `<종류>:<프로젝트>…` meta)을 JSON으로. `project delete`가 휴지통 폴더에 둔다.
-    /// thread 기록의 launch env는 이름만 남긴다(plan §8.305).
+    /// thread 기록의 launch env는 이름만 남긴다(plan §8.307).
     pub fn project_export(&self, project: &str) -> Result<serde_json::Value> {
         use rusqlite::types::ValueRef;
         let c = self.conn.lock().unwrap();
@@ -1185,7 +1185,7 @@ impl Db {
 }
 
 /// project 열이 있는 표(옛 db에 남은 `merge_queue`는 읽지 않아 옮기지 않는다, 새 db에는 없다 — §8.135)
-/// env 값(`[[이름, 값]…]` 또는 `{이름: 값}`)을 이름 목록으로 바꾼다(키 관리자 K0, plan §8.305). 바꿨으면 true
+/// env 값(`[[이름, 값]…]` 또는 `{이름: 값}`)을 이름 목록으로 바꾼다(키 관리자 K0, plan §8.307). 바꿨으면 true
 fn env_names_only(v: &mut serde_json::Value, path: &[&str]) -> bool {
     use serde_json::Value;
     let Some(env) = path.iter().try_fold(v, |v, k| v.get_mut(*k)) else { return false };
@@ -1206,7 +1206,7 @@ fn spawn_env_names_only(v: &mut serde_json::Value) -> bool {
     env_names_only(v, &["resolved_profile", "env"]) || a
 }
 
-/// pane_run 감사 기록의 detail: env는 이름만(plan §8.305)
+/// pane_run 감사 기록의 detail: env는 이름만(plan §8.307)
 pub(crate) fn pane_run_detail(spec: &aaa_proto::SpawnSpec) -> String {
     let mut v = serde_json::to_value(spec).unwrap_or_default();
     spawn_env_names_only(&mut v);
@@ -1221,7 +1221,7 @@ fn thread_data_without_env(data: &str) -> String {
 
 /// 옛 판이 pane_run 감사 기록에 남긴 env 값을 이름만 남기고 지운다. 지운 값이 빈 page·WAL에 남지 않게 VACUUM하고 WAL을 비운다.
 /// 시작마다 값이 남은 행만 찾으므로 옛 판으로 되돌렸다 다시 올려도 그 사이 행을 정리한다. VACUUM 전에 멈추면 표지가 남아 다음 시작에
-/// 다시 한다(plan §8.305).
+/// 다시 한다(plan §8.307).
 fn scrub_audit_env(conn: &mut Connection) -> Result<()> {
     let rows: Vec<(i64, String)> = conn
         .prepare(
@@ -1554,7 +1554,7 @@ mod audit_env_tests {
     }
 
     /// 옛 판이 남긴 pane_run 감사 기록(SpawnSpec 직렬화 전체)을 연 Db가 env 이름만 남기고, 지운 값이 빈 page·WAL에 남지 않게
-    /// VACUUM한다(plan §8.305). 정리 전 DB 사본으로 시험하고, 다시 열어도 그대로다.
+    /// VACUUM한다(plan §8.307). 정리 전 DB 사본으로 시험하고, 다시 열어도 그대로다.
     #[test]
     fn open_scrubs_old_pane_run_env_values_and_vacuums() {
         let root = std::env::temp_dir().join(format!("aaa-audit-env-{}", std::process::id()));

@@ -31,7 +31,7 @@ fn raise_nofile() -> std::io::Result<(u64, u64, u64)> {
     Ok((before, limit.rlim_cur, limit.rlim_max))
 }
 
-/// 데몬(host·agent·session host)의 core dump를 끈다: 메모리의 env 값이 core 파일로 남지 않게(키 관리자 K0, plan §8.305).
+/// 데몬(host·agent·session host)의 core dump를 끈다: 메모리의 env 값이 core 파일로 남지 않게(키 관리자 K0, plan §8.307).
 /// soft 한도만 0으로 내리고 hard는 두므로 pane 안에서 `ulimit -c`로 다시 켤 수 있다(자식 프로세스는 soft를 물려받는다).
 pub fn disable_core_dump(role: &str) {
     #[cfg(unix)]

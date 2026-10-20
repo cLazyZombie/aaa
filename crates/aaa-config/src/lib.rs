@@ -497,7 +497,7 @@ impl std::fmt::Debug for HarnessOverride {
     }
 }
 
-/// 설정의 env를 Debug로 찍을 때 값 없이 「«env N개: 이름…»」만(키 관리자 K0, plan §8.305)
+/// 설정의 env를 Debug로 찍을 때 값 없이 「«env N개: 이름…»」만(키 관리자 K0, plan §8.307)
 struct EnvNames<'a>(&'a std::collections::BTreeMap<String, String>);
 
 impl std::fmt::Debug for EnvNames<'_> {
@@ -672,7 +672,7 @@ fn defines(text: &str, path: &[&str]) -> bool {
     true
 }
 
-/// 이름에 KEY·TOKEN·SECRET·PASSWORD가 든 env(대소문자 무관). 평문 값이면 경고한다(키 관리자 K0, plan §8.305)
+/// 이름에 KEY·TOKEN·SECRET·PASSWORD가 든 env(대소문자 무관). 평문 값이면 경고한다(키 관리자 K0, plan §8.307)
 pub fn secret_like(name: &str) -> bool {
     let upper = name.to_ascii_uppercase();
     ["KEY", "TOKEN", "SECRET", "PASSWORD"].iter().any(|w| upper.contains(w))
