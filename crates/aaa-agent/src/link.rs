@@ -145,6 +145,9 @@ async fn session(agent: &Arc<Agent>, stream: LocalStream) -> Result<()> {
             *agent.host_post.lock().unwrap() = Some(w.features.iter().any(|f| f == "post.v1"));
             *agent.host_mission.lock().unwrap() = w.features.iter().any(|f| f == "mission.v1");
             agent
+                .host_compacting
+                .store(w.features.iter().any(|f| f == "compacting.v1"), std::sync::atomic::Ordering::Relaxed);
+            agent
                 .host_recovery
                 .store(w.features.iter().any(|f| f == "rollout_recovery.v1"), std::sync::atomic::Ordering::Relaxed);
             // harness_hello.v1: host가 hello의 harness 사건을 읽었다. 옛 host에는 연결 뒤 다시 보낸다

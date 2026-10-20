@@ -129,16 +129,19 @@ const ACTIVITY_LABEL: Record<AgentActivity, string> = {
 export function AgentChip({ p, testid }: { p: PaneView; testid?: boolean }) {
   const a = p.agent;
   if (!a || p.state !== "running") return null;
-  const title = [a.harness, a.progress, a.message].filter(Boolean).join(" · ");
+  // 대화 정리 중(plan §8.309)도 작업 중이다: 같은 색·숨쉬는 점에 말만 「정리 중」
+  const compacting = a.activity === "working" && a.compacting;
+  const title = [a.harness, compacting ? "대화 정리 중: 끝나면 보낸 글을 읽습니다" : null, a.progress, a.message].filter(Boolean).join(" · ");
   const quiet = a.activity === "idle" || a.activity === "started" || a.activity === "exited";
   return (
     <span
       className={`chip agent ${a.activity} ${quiet ? "plain" : ""}`}
       title={title}
-      data-testid={testid ? `agent-${p.name || p.id}` : undefined}
+      data-testid={testid ? `agent-${p.name || p.id}` : "agent-chip"}
+      data-compacting={compacting || undefined}
     >
       {a.activity === "working" && <span className="dot working" aria-hidden />}
-      {ACTIVITY_LABEL[a.activity]}
+      {compacting ? "정리 중" : ACTIVITY_LABEL[a.activity]}
       {a.percent != null && <span className="pct"> {a.percent}%</span>}
     </span>
   );

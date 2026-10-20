@@ -521,20 +521,31 @@ export function TermView({
     setSteer({ phase: "sending", id });
     ws.send(JSON.stringify({ t: "steer_queued", id, trace: inputTraceId() } satisfies TermClientMsg));
   };
-  // 보낸 뒤: 대기 말이 줄면 끝, 10초 줄지 않으면 알린다. 대기 말이 모두 없어지면 지난 실패 줄도 지운다(다음 대기 말에 남지 않게)
+  // 대화 정리 중(plan §8.309, host `AgentStatus.compacting`): 작업 중일 때만 뜻이 있다
+  const compacting = paneAgentStatus(pane) === "working" && pane.agent?.compacting === true;
+  // 보낸 뒤: 대기 말이 줄면 끝, 10초 줄지 않으면 알린다. 대기 말이 모두 없어지면 지난 실패 줄도 지운다(다음 대기 말에 남지 않게).
+  // 정리 중에는 harness가 대기 글을 읽지 않으므로 세지 않고, 정리가 끝난 때부터 다시 잰다
+  const wasCompacting = useRef(compacting);
   useEffect(() => {
+    const ended = wasCompacting.current && !compacting;
+    wasCompacting.current = compacting;
+    if (ended && steer.phase === "sent") {
+      setSteer({ ...steer, at: Date.now() });
+      return;
+    }
     if (steer.phase === "sent") {
-      const settled = steerSettled(steer, pendingCount, Date.now());
+      const settled = steerSettled(steer, pendingCount, Date.now(), compacting);
       if (settled !== steer) {
         setSteer(settled);
         return;
       }
+      if (compacting) return;
       const timer = window.setTimeout(() => setSteer((s) => steerSettled(s, pendingCountRef.current, Date.now())), Math.max(0, steer.at + STEER_SLOW_MS - Date.now()));
       return () => window.clearTimeout(timer);
     }
     if (steer.phase === "failed" && pendingCount === 0) setSteer(STEER_IDLE);
-  }, [steer, pendingCount]);
-  const steerOpen = steerKnown && canControl && !readonly ? steerAvailability(paneAgentStatus(pane), composerBusy) : "hidden";
+  }, [steer, pendingCount, compacting]);
+  const steerOpen = steerKnown && canControl && !readonly ? steerAvailability(paneAgentStatus(pane), composerBusy, compacting) : "hidden";
 
   useEffect(() => {
     // 모든 기기가 설정한 크기(기본 13px)로 연다. 좁은 화면만 11px로 줄이던 것은 없앴다(herdr-web-ui와 같다)
@@ -2072,7 +2083,7 @@ export function TermView({
         <HeadMore />
       </header>
       {flowNotices && notices}
-      {chatView && chatable && <ChatPanel pane={pane.id} status={paneAgentStatus(pane)} readNow={chatSent} onOpenFile={onOpenFile} onOpenLink={onOpenLink} onMessages={setChatMessages} findRequest={findRequest}
+      {chatView && chatable && <ChatPanel pane={pane.id} status={paneAgentStatus(pane)} compacting={compacting} readNow={chatSent} onOpenFile={onOpenFile} onOpenLink={onOpenLink} onMessages={setChatMessages} findRequest={findRequest}
         pending={pendingSends} harness={pane.agent?.harness === "codex" ? "codex" : "claude"} onDismissPending={(id) => setPendingSends((list) => list.filter((p) => p.id !== id))}
         steer={steerOpen === "hidden" ? undefined : { state: steer, ...steerOpen, onSteer: pressSteer, onInspect: () => setChatView(false) }} />}
       {/* data-direct-typing: 바로 입력이면 xterm 칸도 화면 키보드를 올린다(herdr/viewport.ts가 본다) */}
@@ -2208,6 +2219,7 @@ export function TermView({
           pane={pane.id}
           touch={coarse}
           working={paneAgentStatus(pane) === "working"}
+          compacting={compacting}
           asking={paneAgentStatus(pane) === "blocked"}
           coordinator={pane.role === "coordinator"}
           onInterrupt={interruptAgent}
