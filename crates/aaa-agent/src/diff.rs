@@ -452,7 +452,7 @@ mod tests {
         assert!(frame.len() < aaa_proto::MAX_FRAME, "{}", frame.len());
     }
 
-    /// 저장소 설정의 외부 diff·textconv·fsmonitor를 부르지 않는다(`mission_git_read_commands`와 같은 경계).
+    /// 저장소 설정의 외부 diff·textconv·fsmonitor를 부르지 않는다(`work_git_read_commands`와 같은 경계).
     #[cfg(unix)]
     #[tokio::test]
     async fn repository_callbacks_never_run() {

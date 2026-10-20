@@ -26,6 +26,7 @@ mod page;
 mod plan;
 pub mod post;
 mod pr;
+mod slash;
 pub mod threads;
 pub mod work_root;
 
@@ -199,6 +200,7 @@ pub struct Agent {
     host_compacting: std::sync::atomic::AtomicBool,
     host_post: Mutex<Option<bool>>,
     host_mission: Mutex<bool>,
+    host_work_files: Mutex<bool>,
     post_gate: Mutex<()>,
     post_waiters: Mutex<HashMap<String, tokio::sync::oneshot::Sender<aaa_proto::PostResult>>>,
     /// 세션마다 사람이 붙인 이름(`spec.json`의 `label`). session host는 띄울 때 이름만 알므로(이전 판은 label을 모른다)
@@ -254,6 +256,7 @@ impl Agent {
             term_colors: Mutex::new(None),
             host_post: Mutex::new(None),
             host_mission: Mutex::new(false),
+            host_work_files: Mutex::new(false),
             post_gate: Mutex::new(()),
             post_waiters: Mutex::new(HashMap::new()),
         }))
@@ -402,16 +405,8 @@ impl Agent {
         }
         let prefix = aaa_proto::fill_brief(aaa_proto::BRIEF_EXE, "", &self.exe.to_string_lossy());
         let mut map = self.progress.lock().unwrap();
-        let mut text = hooks::respond(map.entry(session.to_string()).or_default(), kind, &prefix, now)?;
-        if kind == "SessionStart"
-            && matches!(p.get("source").and_then(|v| v.as_str()), Some("compact" | "clear" | "resume"))
-            && let Ok(spec) = util::read_json::<SpecFile>(&SessionPaths::new(&self.state, session).spec())
-            && spec.spec.role == Some(aaa_proto::Role::Evaluator)
-            && let Some((_, pointer)) = spec.spec.env.iter().find(|(k, _)| k == "AAA_MISSION_POINTER")
-        {
-            text.push('\n');
-            text.push_str(pointer);
-        }
+        let text = hooks::respond(map.entry(session.to_string()).or_default(), kind, &prefix, now)?;
+
         Some(hooks::output(kind, &text))
     }
 
@@ -686,6 +681,24 @@ impl Agent {
     }
 
     /// 실행 중인 세션이 지금 있는 폴더(새 탭·나누기 cwd follow). 끝났거나 읽지 못하면 None.
+    /// 입력칸 「/」 목록(plan §8.323): 세션이 지금 있는 폴더(못 읽으면 띄운 폴더)를 프로젝트로 본다
+    async fn slash_commands(&self, session: &str, harness: String) -> Result<AgentResponse, ErrorBody> {
+        let started = {
+            let s = self.sessions.lock().unwrap();
+            s.get(session).ok_or_else(|| ErrorBody::new(ErrorCode::NotFound, "세션이 없다"))?.info.cwd.clone()
+        };
+        let cwd = match self.session_cwd(session).await {
+            Ok(AgentResponse::Cwd { cwd: Some(c) }) => Some(c),
+            _ => started,
+        };
+        let list = tokio::task::spawn_blocking(move || {
+            slash::list(&harness, cwd.as_deref().map(Path::new), &chat::claude_home(), &chat::codex_home())
+        })
+        .await
+        .map_err(|e| ErrorBody::new(ErrorCode::Internal, e.to_string()))?;
+        Ok(AgentResponse::Commands(list))
+    }
+
     async fn session_cwd(&self, session: &str) -> Result<AgentResponse, ErrorBody> {
         let pid = {
             let s = self.sessions.lock().unwrap();
@@ -1375,6 +1388,7 @@ impl Agent {
             AgentRequest::FileLocate { session, path } => self.file_locate(&session, path).await,
             AgentRequest::FileLocateIn { dir, path } => self.locate_in(Some(dir), path).await,
             AgentRequest::DirList { session, path, hidden } => self.dir_list(&session, path, hidden).await,
+            AgentRequest::Commands { session, harness } => self.slash_commands(&session, harness).await,
             AgentRequest::FileView { path, offset, len, page } => {
                 let roots = self.file_roots.lock().unwrap().clone();
                 let me = self.clone();
@@ -1390,11 +1404,20 @@ impl Agent {
                 .and_then(|r| r.map_err(|e| ErrorBody::new(ErrorCode::NotFound, format!("{e:#}"))))
                 .map(|(data, eof)| AgentResponse::FileChunk { data: B64(data), eof })
             }
-            AgentRequest::Chat { session, harness, transcript, harness_session, thinking, compact, before } => {
+            AgentRequest::Chat {
+                session,
+                harness,
+                transcript,
+                harness_session,
+                thinking,
+                compact,
+                commands,
+                before,
+            } => {
                 let path =
                     self.chat_path(session.as_deref(), &harness, transcript.as_deref(), harness_session.as_deref());
                 tokio::task::spawn_blocking(move || {
-                    chat::read_path(&harness, path?, thinking, compact, before.as_deref())
+                    chat::read_path(&harness, path?, thinking, compact, commands, before.as_deref())
                 })
                 .await
                 .map_err(|e| ErrorBody::new(ErrorCode::Internal, e.to_string()))
@@ -1508,11 +1531,47 @@ impl Agent {
                 .map(AgentResponse::CommandRan)
                 .map_err(|e| ErrorBody::new(ErrorCode::BadRequest, format!("{e:#}")))
             }
+            AgentRequest::WorkFileList { work_dir } => {
+                if !*self.host_work_files.lock().unwrap() {
+                    Err(ErrorBody::new(ErrorCode::Forbidden, "work_files.v1 미협상"))
+                } else {
+                    threads::work_file_state_list(&work_dir)
+                        .map(|files| AgentResponse::WorkFiles { files })
+                        .map_err(|e| ErrorBody::new(ErrorCode::BadRequest, format!("{e:#}")))
+                }
+            }
+            AgentRequest::WorkFileRead { work_dir, path, offset } => {
+                if !*self.host_work_files.lock().unwrap() {
+                    Err(ErrorBody::new(ErrorCode::Forbidden, "work_files.v1 미협상"))
+                } else {
+                    threads::work_file_state_read(&work_dir, &path, offset)
+                        .map(|(data, eof)| AgentResponse::FileChunk { data: aaa_proto::B64(data), eof })
+                        .map_err(|e| ErrorBody::new(ErrorCode::BadRequest, format!("{e:#}")))
+                }
+            }
+            AgentRequest::WorkFileWriteChunk { work_dir, path, offset, data, eof, sha256 } => {
+                if !*self.host_work_files.lock().unwrap() {
+                    Err(ErrorBody::new(ErrorCode::Forbidden, "work_files.v1 미협상"))
+                } else {
+                    threads::work_file_state_write(&work_dir, &path, offset, &data.0, eof, &sha256)
+                        .map(|_| AgentResponse::Done)
+                        .map_err(|e| ErrorBody::new(ErrorCode::BadRequest, format!("{e:#}")))
+                }
+            }
+            AgentRequest::WorkFileInboxStatus { work_dir } => {
+                if !*self.host_work_files.lock().unwrap() {
+                    Err(ErrorBody::new(ErrorCode::Forbidden, "host가 work_files.v1을 알리지 않았다"))
+                } else {
+                    threads::work_file_inbox_pending(&work_dir)
+                        .map(|names| AgentResponse::WorkFileInbox { pending: names.len() as u32, names })
+                        .map_err(|e| ErrorBody::new(ErrorCode::BadRequest, format!("{e:#}")))
+                }
+            }
             AgentRequest::MissionStateList { work_dir } => {
                 if !*self.host_mission.lock().unwrap() {
                     Err(ErrorBody::new(ErrorCode::Forbidden, "mission.v1 미협상"))
                 } else {
-                    threads::mission_state_list(&work_dir)
+                    threads::work_file_state_list(&work_dir)
                         .map(|files| AgentResponse::MissionFiles { files })
                         .map_err(|e| ErrorBody::new(ErrorCode::BadRequest, format!("{e:#}")))
                 }
@@ -1521,7 +1580,7 @@ impl Agent {
                 if !*self.host_mission.lock().unwrap() {
                     Err(ErrorBody::new(ErrorCode::Forbidden, "mission.v1 미협상"))
                 } else {
-                    threads::mission_state_read(&work_dir, &path, offset)
+                    threads::work_file_state_read(&work_dir, &path, offset)
                         .map(|(data, eof)| AgentResponse::FileChunk { data: aaa_proto::B64(data), eof })
                         .map_err(|e| ErrorBody::new(ErrorCode::BadRequest, format!("{e:#}")))
                 }
@@ -1530,7 +1589,7 @@ impl Agent {
                 if !*self.host_mission.lock().unwrap() {
                     Err(ErrorBody::new(ErrorCode::Forbidden, "mission.v1 미협상"))
                 } else {
-                    threads::mission_state_write(&work_dir, &path, offset, &data.0, eof, &sha256)
+                    threads::work_file_state_write(&work_dir, &path, offset, &data.0, eof, &sha256)
                         .map(|_| AgentResponse::Done)
                         .map_err(|e| ErrorBody::new(ErrorCode::BadRequest, format!("{e:#}")))
                 }
@@ -1539,7 +1598,7 @@ impl Agent {
                 if !*self.host_mission.lock().unwrap() {
                     Err(ErrorBody::new(ErrorCode::Forbidden, "host가 mission.v1을 알리지 않았다"))
                 } else {
-                    threads::mission_inbox_pending(&work_dir)
+                    threads::work_file_inbox_pending(&work_dir)
                         .map(|names| AgentResponse::MissionInbox { pending: names.len() as u32, names })
                         .map_err(|e| ErrorBody::new(ErrorCode::BadRequest, format!("{e:#}")))
                 }
@@ -2413,57 +2472,6 @@ mod tests {
         assert!(rig.agent.sessions().iter().all(|s| s.state == SessionState::Lost), "{:?}", rig.agent.sessions());
         assert!(rig.seen.try_recv().is_err(), "사라진 session host에 또 붙었다");
         std::fs::remove_dir_all(&rig.state).unwrap();
-    }
-}
-
-#[cfg(test)]
-mod mission_tests {
-    use super::*;
-    #[test]
-    fn claude_session_start_reloads_only_the_mission_pointer() {
-        let state = std::env::temp_dir().join(format!("aaa-mission-hook-{}", util::new_id()));
-        let a = Agent::new(state.clone(), "m".into(), "mac-a".into(), true, None).unwrap();
-        let mut spec = SpecFile {
-            id: "s1".into(),
-            token: "test-only".into(),
-            boot_id: "b".into(),
-            created_at_ms: 0,
-            label: None,
-            colors: None,
-            account_run: None,
-            spec: SpawnSpec {
-                name: "감시".into(),
-                argv: vec![],
-                cwd: None,
-                env: vec![("AAA_MISSION_POINTER".into(), "임무 판 abc: brief.md와 state.md를 다시 읽는다".into())],
-                cols: 80,
-                rows: 24,
-                role: Some(aaa_proto::Role::Evaluator),
-                harness: Some("claude".into()),
-                profile: None,
-                resolved_profile: None,
-            },
-        };
-        let path = SessionPaths::new(&state, "s1").spec();
-        util::ensure_private_dir(path.parent().unwrap()).unwrap();
-        util::write_json(&path, &spec).unwrap();
-        for source in ["compact", "clear", "resume"] {
-            let out =
-                a.guide("s1", &serde_json::json!({"hook_event_name":"SessionStart","source":source}), 1000).unwrap();
-            assert_eq!(out.matches("임무 판 abc").count(), 1);
-            assert!(out.contains("additionalContext"));
-        }
-        let out =
-            a.guide("s1", &serde_json::json!({"hook_event_name":"SessionStart","source":"startup"}), 1000).unwrap();
-        assert!(!out.contains("임무 판 abc"));
-        spec.spec.role = Some(aaa_proto::Role::Worker);
-        util::write_json(&path, &spec).unwrap();
-        assert!(
-            !a.guide("s1", &serde_json::json!({"hook_event_name":"SessionStart","source":"compact"}), 1000)
-                .unwrap()
-                .contains("임무 판 abc")
-        );
-        std::fs::remove_dir_all(state).unwrap();
     }
 }
 

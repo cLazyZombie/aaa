@@ -47,15 +47,6 @@ export default async function ({ page }) {
     await page.keyboard.press("Escape");
     await sheet.waitFor({ state: "detached" });
 
-    await page.getByTestId("automation-mission-auto-detail-watch").getByRole("button", { name: "watch 자세히", exact: true }).click();
-    const mission = page.getByTestId("mission-detail");
-    await mission.waitFor();
-    await until("임무 상세", async () => (await mission.textContent()).includes("승인 필요") && (await mission.getByTestId("automation-source").textContent()).includes("자료를 분류한다."));
-    if (!(await mission.textContent()).includes("이전 형식")) throw new Error("옛 임무 배지");
-    await shot(page, "automation-mission-detail");
-    await mission.getByRole("button", { name: "닫기", exact: true }).click();
-    await mission.waitFor({ state: "detached" });
-
     // 패드 폭(820): 640px 밖이라 가운데 창이며 화면 안에 있다
     const pad = await pairPage(browser, aaa("web", "pair").code, { width: 820, height: 1180 }, { touch: true });
     try {
@@ -76,7 +67,7 @@ export default async function ({ page }) {
       await dev.page.getByTestId("activity-automations").click();
       await dev.page.getByTestId("automation-legacy-auto-detail").getByRole("button", { name: "새 형식으로 바꾸기", exact: true }).click();
       const reader = dev.page.getByTestId("automation-convert");
-      await reader.locator('[data-group="derived"]').waitFor();
+      await reader.locator('[data-group="rules"]').waitFor();
       if (await reader.getByRole("button", { name: "변환", exact: true }).count()) throw new Error("Reader 변환 단추");
       const forbidden = await call(dev.page, { op: "automation_convert", project: "auto-detail", plan_sha256: "0".repeat(64) });
       if (forbidden.err?.code !== "forbidden") throw new Error(`Reader 변환 ${JSON.stringify(forbidden)}`);
@@ -87,9 +78,9 @@ export default async function ({ page }) {
     if (!(await legacy.textContent()).includes("3개")) throw new Error(`이전 형식 수 ${await legacy.textContent()}`);
     await legacy.getByRole("button", { name: "새 형식으로 바꾸기", exact: true }).click();
     const sheet = page.getByTestId("automation-convert");
-    await sheet.locator('[data-group="derived"]').waitFor();
+    await sheet.locator('[data-group="rules"]').waitFor();
     const group = async (key) => (await sheet.locator(`[data-group="${key}"] li`).allTextContents());
-    if (!(await group("derived")).includes("automations/watch-events.toml")) throw new Error(`생기는 규칙 ${await group("derived")}`);
+    if (!(await group("rules")).includes("automations/watch.toml")) throw new Error(`생기는 규칙 ${await group("rules")}`);
     for (const f of ["routines/.converted/check.md", "routines/.converted/pr-followup.md", "missions/.converted/watch.md"]) if (!(await group("archived")).includes(f)) throw new Error(`보존 ${f}: ${await group("archived")}`);
     if (!(await group("rules")).includes("automations/check.toml")) throw new Error("새 규칙 파일");
     // 미리보기는 쓰지 않는다
@@ -106,6 +97,8 @@ export default async function ({ page }) {
     await domIs(page, "이전 형식 줄이 사라진다", () => !document.querySelector('[data-testid="automation-legacy-auto-detail"]') && document.querySelector('[data-testid="automation-auto-detail-check"]')?.textContent.includes("automations/check.toml"));
   });
 
+  // 변환한 watch의 시작 범위는 아직 승인 전이다.
+  await domIs(page,"변환 규칙 승인 배지",()=>document.querySelector('[data-testid="activity-badge-automations"]')?.textContent==="1");
   let thread = "";
   await step("막힌 큐: 대상 pane이 끝나 보낸 결과를 모르는 do.message 묶음은 다시 보내지 않고, 사람이 확인하면 계속 보내기는 다음 입력을 보내고 버리기는 남은 입력을 닫는다", async () => {
     fs.writeFileSync(`${root}/detail-task.md`, "# 자동 글 받기\n\n사람을 기다림\n");
@@ -121,6 +114,10 @@ export default async function ({ page }) {
     });
     const stuck = aaa("routine", "list").routines.find((r) => r.name === "ping").queue.inflight;
     if (!stuck?.unknown || stuck.thread !== thread) throw new Error(`막힌 묶음 ${JSON.stringify(stuck)}`);
+    // 자동화 막대 배지는 열리지 않은 패널에서도 실제 막힌 큐를 센다.
+    await page.reload();
+    await domIs(page,"승인 규칙 하나와 막힌 규칙 하나의 배지",()=>document.querySelector('[data-testid="activity-badge-automations"]')?.textContent==="2");
+    if (await page.getByTestId("activity-special").count()) throw new Error("특수 단추가 남았다");
     // 다시 판정해도 같은 묶음은 보내지 않는다(같은 묶음 그대로, 실패 기록이 늘지 않음)
     const failed = aaa("routine", "runs", "auto-detail", "ping").runs.filter((r) => r.status === "failed").length;
     aaa("ticker", "tick");

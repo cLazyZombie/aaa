@@ -19,9 +19,10 @@ use crate::orch::{
     RoutineView, ThreadAdopt, ThreadAdopted, ThreadKind, ThreadPlacement, ThreadPrepare, ThreadReady, ThreadView,
 };
 use crate::orch::{
-    EvaluationView, EvaluatorView, MenuPick, NoticeView, TaskBoard, TaskConflict, TaskLogEntry, TaskLogFilter, TaskOp,
-    ThreadStartPreview, ThreadSummaryView,
+    MenuPick, NoticeView, TaskBoard, TaskConflict, TaskLogEntry, TaskLogFilter, TaskOp, ThreadStartPreview,
+    ThreadSummaryView,
 };
+use crate::{EvaluationView, EvaluatorView};
 
 use crate::version::Version;
 
@@ -374,6 +375,63 @@ pub enum ChatRole {
     /// 대화가 정리(compaction)된 자리(plan §8.309, herdr-web-ui `{ kind: "compact" }`). 글은 정리 요약이다(Codex는 빌 수 있다).
     /// host가 `AgentRequest::Chat.compact`로 청할 때만 싣는다: 옛 host는 이 역할을 읽지 못한다
     Compact,
+    /// 사람이 친 harness 명령(Claude `<command-name>`, plan §8.323). 글은 `/이름 인자`다. `/compact`는 정리 자리가 대신한다.
+    /// host가 `AgentRequest::Chat.commands`로 청할 때만 싣는다
+    Command,
+    /// harness 명령의 결과 글(Claude `local_command` 출력·`informational` 알림, 색 코드를 뺀 글). 바로 앞 `Command`의 결과다
+    CommandOutput,
+}
+
+/// pane의 harness 명령 목록(plan §8.323). agent가 harness 버전에 묶인 내장 표와 그 머신의 명령·skill 파일로 만든다
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+pub struct CommandList {
+    pub harness: String,
+    /// 내장 표가 기준으로 삼은 harness 버전(`2.1.304`, `0.163`)
+    pub builtin_version: String,
+    pub commands: Vec<SlashCommand>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+pub struct SlashCommand {
+    /// 트리거 뒤 이름(`compact`, `frontend:review`, `plugin:skill`)
+    pub name: String,
+    pub description: String,
+    pub source: CommandSource,
+    pub kind: CommandKind,
+    /// 인자 안내(`[지시]`) 또는 선택창을 건너뛰는 꼴(`/model sonnet`)
+    pub hint: Option<String>,
+    /// 같은 명령의 다른 이름(Claude `/reset`·`/new`는 `/clear`)
+    pub aliases: Vec<String>,
+    /// 작업 중에는 목록에서 뺀다(harness가 막거나 턴 뒤로 미룬다)
+    pub idle_only: bool,
+    /// 고르면 입력칸에 넣을 글(`/compact `, Codex skill은 `$name `)
+    pub insert: String,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+pub enum CommandSource {
+    Builtin,
+    User,
+    Project,
+    Skill,
+    Plugin,
+}
+
+/// 보낼 때 웹이 할 일
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+pub enum CommandKind {
+    /// 그대로 보낸다(바로 끝나거나 모델이 일한다)
+    Send,
+    /// 인자 없이 보내면 터미널 선택창이 뜬다. aaa는 그것을 질문으로 보지 못한다: 보낸 뒤 「터미널 보기」를 알린다
+    Picker,
+    /// 결과가 터미널 화면에만 남는다(기록에 없다): 보낸 뒤 「터미널 보기」를 알린다
+    Screen,
+    /// 맥락을 비운다: 확인창으로 묻는다
+    Confirm,
+    /// harness를 끝내거나 되돌릴 수 없다: 목록에서 숨기고, 직접 쳐서 보내도 확인창으로 묻는다
+    Danger,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
@@ -689,6 +747,12 @@ pub enum AgentRequest {
     },
     /// 폴더 보기: 그 세션이 지금 있는 폴더 기준으로 폴더 한 단계를 읽는다(빈 경로·`~`는 집). 허용 폴더 밖이면 Forbidden,
     /// 폴더가 아니면 NotFound다. agent가 `dir.v1` 기능을 알릴 때만 보낸다.
+    /// 입력칸 「/」 목록(plan §8.323): 그 harness의 내장 명령 표와 세션 폴더·사용자 폴더의 명령·skill 파일. agent가 `commands.v1`
+    /// 기능을 알릴 때만 보낸다
+    Commands {
+        session: String,
+        harness: String,
+    },
     DirList {
         session: String,
         path: String,
@@ -728,6 +792,9 @@ pub enum AgentRequest {
         /// 정리된 자리(`ChatRole::Compact`)도 싣는다(plan §8.309). 옛 host는 보내지 않아 agent가 빼고, 옛 agent는 이 칸을 모른다
         #[serde(default)]
         compact: bool,
+        /// harness 명령과 결과(`ChatRole::Command`·`CommandOutput`, plan §8.323)도 싣는다. 옛 host는 보내지 않는다
+        #[serde(default)]
+        commands: bool,
         /// 이전 응답의 before. 생략하면 최신 쪽, 옛 상대는 무시한다.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         before: Option<String>,
@@ -815,6 +882,26 @@ pub enum AgentRequest {
     TermColors(TermColors),
     /// 사후 평가자 사건 묶음을 작업 폴더의 `inbox/` 아래에 쓴다(§8.13). `path`는 `inbox/<이름>.json`만 받는다.
     /// mission.v1을 양쪽이 알린 연결에서만 임무 입력의 처리 여부를 읽는다.
+    WorkFileInboxStatus {
+        work_dir: String,
+    },
+    /// mission.v1: repo·machine 변경 때 상태 파일만 옮긴다. 본문은 모두 자료다.
+    WorkFileList {
+        work_dir: String,
+    },
+    WorkFileRead {
+        work_dir: String,
+        path: String,
+        offset: u64,
+    },
+    WorkFileWriteChunk {
+        work_dir: String,
+        path: String,
+        offset: u64,
+        data: B64,
+        eof: bool,
+        sha256: String,
+    },
     MissionInboxStatus {
         work_dir: String,
     },
@@ -935,6 +1022,13 @@ pub enum AgentResponse {
         #[serde(default)]
         running_started_ms: u64,
     },
+    WorkFileInbox {
+        pending: u32,
+        names: Vec<String>,
+    },
+    WorkFiles {
+        files: Vec<crate::LibFile>,
+    },
     MissionInbox {
         pending: u32,
         names: Vec<String>,
@@ -991,6 +1085,8 @@ pub enum AgentResponse {
     },
     /// 읽은 폴더 한 단계
     DirListed(DirListing),
+    /// `AgentRequest::Commands`의 답
+    Commands(CommandList),
     /// 찾은 파일. 없으면 끝이 같은 파일 후보(실제 경로, 둘 이상)
     FileLocated {
         info: Option<FileInfo>,
@@ -1562,10 +1658,17 @@ pub enum FrontRequest {
         /// 읽지 못하므로)
         #[serde(default)]
         compact: bool,
+        /// harness 명령과 결과(`ChatRole::Command`·`CommandOutput`, plan §8.323, 1.68)도 싣는다. 옛 front는 생략한다
+        #[serde(default)]
+        commands: bool,
         /// 이전 응답의 before. 생략하면 최신 쪽, 옛 상대는 무시한다.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         #[ts(optional)]
         before: Option<String>,
+    },
+    /// 입력칸 「/」 목록(plan §8.323): 그 pane harness의 명령. agent가 `commands.v1`을 알릴 때만, 조작 기기만
+    PaneCommands {
+        pane: String,
     },
     /// 파일 보기(plan §8.125, 결정 20 D7): pane이 지금 있는 폴더 기준으로 경로를 찾고, 찾았으면 짧은 수명의
     /// 읽기 경로(`url`)를 준다. 조작 기기만(참고도 보기 전용 기기는 403).
@@ -2635,6 +2738,9 @@ pub enum FrontResponse {
     PaneDir {
         listing: DirListing,
     },
+    PaneCommands {
+        list: CommandList,
+    },
     Pending {
         pending: Vec<PendingEnroll>,
     },
@@ -3088,6 +3194,21 @@ pub enum EventsClientMsg {
     ChatWatch { pane: String, enabled: bool },
 }
 
+impl AgentRequest {
+    /// 1.9 agent와 파일 전송을 계속한다. 새 기능이 없는 상대에게 새 태그를 보내지 않는다.
+    pub fn legacy_work_file(self) -> Self {
+        match self {
+            Self::WorkFileInboxStatus { work_dir } => Self::MissionInboxStatus { work_dir },
+            Self::WorkFileList { work_dir } => Self::MissionStateList { work_dir },
+            Self::WorkFileRead { work_dir, path, offset } => Self::MissionStateRead { work_dir, path, offset },
+            Self::WorkFileWriteChunk { work_dir, path, offset, data, eof, sha256 } => {
+                Self::MissionStateWrite { work_dir, path, offset, data, eof, sha256 }
+            }
+            other => other,
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -3169,7 +3290,8 @@ mod tests {
         );
         assert!(FrontRequest::ThreadKeys { project, thread, keys: vec!["enter".into()], text: None }.needs_control());
         assert!(
-            !FrontRequest::PaneChat { pane: "p".into(), thinking: false, compact: true, before: None }.needs_control()
+            !FrontRequest::PaneChat { pane: "p".into(), thinking: false, compact: true, commands: true, before: None }
+                .needs_control()
         );
         // 파일 보기는 조작 기기만(herdr-web-ui도 보기 전용 기기는 fs/ 403)
         assert!(FrontRequest::PaneFile { pane: "p".into(), path: "a.txt".into() }.needs_control());
@@ -3295,9 +3417,14 @@ mod tests {
         }
         let old = r#"{"op":"pane_chat","pane":"p","thinking":false}"#;
         let request: FrontRequest = serde_json::from_str(old).unwrap();
-        assert!(matches!(request, FrontRequest::PaneChat { before: None, compact: false, .. }));
-        let new =
-            FrontRequest::PaneChat { pane: "p".into(), thinking: true, compact: true, before: Some("cursor".into()) };
+        assert!(matches!(request, FrontRequest::PaneChat { before: None, compact: false, commands: false, .. }));
+        let new = FrontRequest::PaneChat {
+            pane: "p".into(),
+            thinking: true,
+            compact: true,
+            commands: true,
+            before: Some("cursor".into()),
+        };
         let OldRequest::PaneChat { pane, thinking } =
             serde_json::from_value(serde_json::to_value(new).unwrap()).unwrap();
         assert_eq!(pane, "p");

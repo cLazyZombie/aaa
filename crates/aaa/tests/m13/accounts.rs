@@ -504,8 +504,25 @@ fn host_login_defaults_pin_threads_and_coordinators_without_exposing_credentials
     for machine in ["labA", "labB"] {
         jobs.push(w.start(&["--title", "기본", "--profile", "plain", "--machine", machine, "--task-file", &task]));
     }
-    let evaluator = w.h.ok(&["evaluator", "assign", "demo", "--profile", "plain"]);
-    jobs.push(evaluator["evaluators"][0]["thread"].clone());
+    // A4 이후 평가는 일반 자동화가 띄우는 worker다. 그 시작에도 같은 host 기본을 고른다.
+    let rule_dir = w.projects.join("demo/automations");
+    std::fs::create_dir_all(&rule_dir).unwrap();
+    std::fs::write(rule_dir.join("policy.toml"), "[on.schedule]\nevery='1s'\n[do.start]\ntitle='기본 평가'\nprofiles=['plain']\nmachines=['labA']\nreuse='open'\ntext='평가 작업'\n").unwrap();
+    let listed = w.h.ok(&["routine", "list", "demo"]);
+    let rule = listed["routines"].as_array().unwrap().iter().find(|r| r["name"] == "policy").unwrap();
+    w.h.in_terminal(&["automation", "approve", "policy", rule["start_approval_sha256"].as_str().unwrap()], &[], T);
+    let automatic = wait_for("기본 인증 자동 평가 시작", T, || {
+        w.h.ticks(1);
+        w.h.ok(&["events", "demo"])["events"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|e| e["kind"] == "thread_started" && e["actor"] == "routine:policy")
+            .and_then(|e| e["thread"].as_str())
+            .map(str::to_string)
+    });
+    jobs.push(w.show(&automatic));
+    w.h.ok(&["routine", "toggle", "demo", "policy", "--off"]);
     let first = gate.take(3, 0);
     assert!(first.iter().all(|(_, v)| v["token"] == sha(&claude)));
     assert!(jobs.iter().all(|v| v["account"] == "central-claude"));

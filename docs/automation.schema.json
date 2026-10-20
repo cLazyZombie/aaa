@@ -35,18 +35,6 @@
         {
           "additionalProperties": false,
           "properties": {
-            "wake": {
-              "$ref": "#/$defs/Wake"
-            }
-          },
-          "required": [
-            "wake"
-          ],
-          "type": "object"
-        },
-        {
-          "additionalProperties": false,
-          "properties": {
             "start": {
               "$ref": "#/$defs/Start"
             }
@@ -687,40 +675,6 @@
       },
       "required": [
         "events"
-      ],
-      "type": "object"
-    },
-    "Wake": {
-      "additionalProperties": false,
-      "not": {
-        "required": [
-          "text",
-          "text_file"
-        ]
-      },
-      "properties": {
-        "mission": {
-          "type": "string"
-        },
-        "reports": {
-          "default": false,
-          "type": "boolean"
-        },
-        "text": {
-          "type": [
-            "string",
-            "null"
-          ]
-        },
-        "text_file": {
-          "type": [
-            "string",
-            "null"
-          ]
-        }
-      },
-      "required": [
-        "mission"
       ],
       "type": "object"
     }

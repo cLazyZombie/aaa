@@ -127,22 +127,7 @@
 
 /* 특수 패널(plan §8.258): 사이드바 두 줄 줄(프로젝트 머리는 없다, plan §8.291). 상태 말·점 색은 thread 줄과 같은 뜻(막힘 빨강, 일함 파랑, 사람 차례 노랑) */
 /* 남은 높이를 갖고 굴러간다(목록 .list-body·.machine-list와 같은 꼴, 그 class는 다른 시험·규칙이 목록 하나로 찾으므로 쓰지 않는다) */
-.special-panel { position: relative; flex: 1 1 0; min-height: 0; padding: var(--space-2) var(--side-gutter) 0; overflow-y: auto; overscroll-behavior: contain; scroll-padding-bottom: var(--space-4); }
-.special-panel .workspace-header { min-height: var(--side-row-2); }
-.special-project + .special-project { margin-top: var(--space-3); }
-.special-state { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text-dim); }
-.special-state.is-blocked { color: var(--status-blocked); }
-.special-state.is-working { color: var(--status-working); }
-.special-state.is-need { color: var(--notice); }
-.special-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--status-idle); }
-.special-dot.is-blocked { background: var(--status-blocked); }
-.special-dot.is-working { background: var(--status-working); }
-.special-dot.is-need { background: var(--notice); }
-.special-dot.is-nopane { background: transparent; box-shadow: inset 0 0 0 1.5px var(--text-faint); }
 /* 특수 줄 메뉴의 머리: 제목과 셈(일한 분·post 처리·입력) */
-.mission-summary { min-width: 0; overflow-wrap: anywhere; }
-.mission-summary strong { display: block; color: var(--text-strong); }
-.mission-summary p { margin: var(--space-1) 0 0; color: var(--text-dim); font-size: var(--fs-xs); }
 
 /* 프로젝트가 둘 이상 남아 있는 동안(plan §8.280) 프로젝트 머리 안의 작업 공간 폴더: 폴더 자식 줄은 폴더 머리보다 한 번 더 8px */
 .project-group + .worktree-children .project-group + .worktree-children .workspace-header { padding-left: calc(var(--space-2) * 2); }

@@ -6042,7 +6042,7 @@ L4 후속(10-20 00시 사용자 관찰): 멈춤 상태의 후보 예약과 재�
 - **요청.** 사용자 10-20 「대화창에서 사용한 컨텍스트를 보여주고 싶어」, 「%, over하면 실제 k」, 시안(library/t-0502) §7 「추천대로 해」(1단계는 안 A 입력칸 게이지만, 1,000k 넘으면 `1050k`, 휴대폰도 숫자를 늘 보임), 「타이핑시에는 보이지 않게도 가능해?」. slash 확인창·숨김(§7-3)은 2단계, 목록 줄 표지(안 C)는 3단계 선택으로 남긴다.
 - **실측: 붙여 넣은 `/compact`.** 실험실에서 실제 harness를 띄워 웹 입력칸이 보내는 꼴(bracketed paste + Enter)로 보냈다. Claude 2.1.304는 383ms에 정리 표지, 7.9초에 끝났다. Codex 0.163은 394ms에 표지, 3.5초에 끝났다. 둘 다 명령으로 받아 따로 보내는 길은 필요 없다. Claude 기록은 `<command-name>/compact</command-name>` 줄(사람 글이 아님)이고, Codex 실측 rollout에는 `/compact` 글이 없이 `compacted` 줄만 있다.
 - **값과 출처(agent `plan.rs`).** 2초마다 이어 읽던 대화 기록의 `plan` 사건에 `context`를 실어 `AgentStatus.context`로 보낸다(모든 기기·목록이 같은 값, 응답 뒤 2초 이하).
-  - Claude: 본 대화(`isSidechain` 아님) assistant 줄의 `usage` 합(input + cache 생성 + cache 읽기). 합이 0인 합성 줄은 건너뛴다. 창은 `requestedModel`이 `claude-…[1m]`이면 1M, `claude-…`면 200k, 없으면 모른다. % = round(사용 / 창 × 100)으로 Claude Code 2.1.304 상태줄과 같다. 실측: 43,922 사용, `/compact` 뒤 `compact_boundary.compactMetadata` preTokens 43,926 → postTokens 7,910 = 4%. 이것은 터미널 「96% left」와 같다. 정리 뒤 다음 응답까지는 postTokens가 값이다.
+  - Claude: 본 대화(`isSidechain` 아님) assistant 줄의 `usage` 합(input + cache 생성 + cache 읽기). 합이 0인 합성 줄은 건너뛴다. 창은 `requestedModel`이 `claude-…[1m]`이면 1M, `claude-…`면 200k, 없으면 모른다(§8.323에서 고침: Claude 5 모델은 `[1m]` 없이도 1M이고 사용자 `autoCompactWindow`가 창을 줄인다). % = round(사용 / 창 × 100)으로 Claude Code 2.1.304 상태줄과 같다. 실측: 43,922 사용, `/compact` 뒤 `compact_boundary.compactMetadata` preTokens 43,926 → postTokens 7,910. 정리 뒤 다음 응답까지는 postTokens가 값이다.
   - Codex: `token_count`의 `info.last_token_usage.total_tokens`와 `model_context_window`. Codex TUI 식(기준 12,000: 남은 % = (창−12k − max(0, 사용−12k)) / (창−12k))의 나머지를 쓴다. `info: null`은 앞 값을 둔다. `compacted` 줄 뒤 첫 `token_count`가 정리 뒤 크기다(실측 18,861 → 12,274, 창 258,400).
   - 창을 모르거나 사용이 창보다 크면 `percent`가 없다.
 - **proto(FRONT_API 1.67, 더하기만).**
@@ -6071,11 +6071,55 @@ L4 후속(10-20 00시 사용자 관찰): 멈춤 상태의 후보 예약과 재�
 - **후속 OS 검증.** I3(macOS)→I5(Windows)→I4(Linux)는 I6 승인 경로 전까지 실험실 owner가 실제 엔진과 고정 OS adapter를 직접 구동한다. CLI 승인 우회나 시험 전용 production flag/export를 넣지 않는다. 운영 서비스·계정·키체인을 변경하지 않고, 실제 OS 관리자 시험에 필요한 권한/환경은 각 단계 진입 전에 보고한다. Windows/Linux 실행은 별도 VM 없이 main push 뒤 GitHub CI의 windows-2025/ubuntu-24.04가 판정한다.
 - **시험.** 실제 파일 중단/rename·동시 편집·두 OS 프로세스 잠금·다른 instance·재실행 무변경·공유 마지막 참조·rollback/repair/reinstall·private 권한/link·root 읽기·프로젝트 보존 owner를 cargo test에 둔다. Windows에는 실제 handle link 수/DACL 거부 분기를 별도로 둔다. CLI owner는 임의 승인 파일/--yes에도 적용0·status 쓰기0을 지킨다. 보안·복구 검사를 제거한 변형 RED와 원본 bytes 복원 GREEN을 남긴다. 착지 판정은 macOS 전체 gate와 Windows cross clippy/build이며 실제 Windows/Linux는 main push 뒤 CI로 구분한다. FRONT_API/AGENT_LINK/schema는 바꾸지 않는다.
 
-### 8.323 host 로그인과 새 thread·coordinator 기본 인증: 멀티 계정 2단계(10-20, t-0510)
+### 8.323 입력칸 「/」 목록·명령 확인창·터미널 알림과 대화의 명령 줄(10-20, t-0502 2단계)
+
+- **요청.** 사용자 10-20 「slash command (/compact 등)」. 시안 library/t-0502 §5·§6 2단계와 §7 결정 3(확인창 `/clear`·Codex `/new`, 숨김+확인창 `/exit`·`/quit`·`/logout`·Codex `/delete`).
+- **실측(실험실, 실제 harness, 웹 입력칸에서 보냄).**
+  - Claude 2.1.304 `/context`: 명령 줄과 출력이 `system/local_command`로 남는다(`<command-name>`, 색 코드가 든 `<local-command-stdout>`). 마크다운판 `isMeta` 사람 줄도 남는다.
+  - 인자 없는 `/model`은 터미널 선택창을 연다. aaa 상태는 「입력 대기」 그대로이고 질문 카드도 없다. 선택창이 열린 동안 보낸 글은 선택창으로 갔다(`/clear`가 실행되지 않았다). Esc로 닫으면 「Kept model as …」가 남는다.
+  - `/clear`는 새 `session_id`·`transcript_path`로 SessionStart(`source: clear`)를 보낸다. aaa hook matcher가 이미 clear를 받으므로 대화 보기와 게이지(§8.321)는 새 기록으로 넘어간다.
+  - Codex 0.163 `/status`는 화면에만 나오고 rollout에는 남지 않는다.
+- **창 크기 수리(§8.321).** 모델마다 `/context`로 실측했다(API 호출 없음). Claude 5 모델(opus·sonnet·haiku·fable 5와 5.x)은 `[1m]` 없이도 1M이고, haiku-4-5는 200k다. 사용자 설정 `modelSettings.<모델>.autoCompactWindow`가 있으면 `/context`가 그 값을 창으로 보인다(이 Mac의 opus-5-5는 500000이라 `[1m]`이어도 500k). 1단계는 Haiku 5.5 43,922를 22%로 보였지만 실제는 4%다. agent는 `$CLAUDE_CONFIG_DIR|~/.claude/settings.json`을 모델마다 한 번 읽는다(읽기만).
+- **목록(agent `slash.rs`, `commands.v1`, `AgentRequest::Commands`).**
+  - harness 버전에 묶인 내장 표(Claude 2.1.304, Codex 0.163)를 쓰고 `builtin_version`으로 알린다.
+  - 파일: Claude 사용자·프로젝트 명령(`commands/**/*.md`, 하위 폴더는 `a:b`)과 skill(`skills/*/SKILL.md`, `user-invocable: false`는 뺀다), Codex skill(`$이름`을 넣는다). 프로젝트는 세션 폴더(앞 프로그램 기준)에서 git root까지 본다.
+  - 파일은 앞 16KB만 읽는다(frontmatter `name`·`description`·`argument-hint`, 없으면 첫 줄). 폴더마다 300개, 깊이 4가 상한이다. 내장 이름은 파일이 가리지 않는다.
+  - plugin·MCP prompt·Codex `prompts/`(deprecated)는 이 머신에 실례가 없어 뺐다.
+  - 분류(`CommandKind`): `send`, `picker`(인자 없이 보내면 선택창, `/model` 등), `screen`(결과가 화면에만, Codex `/status` 등), `confirm`(Claude `/clear`와 다른 이름 `/reset`·`/new`, Codex `/new`·`/clear`), `danger`(`/exit`·`/quit`·`/logout`, Codex `/delete`). `idle_only`는 작업 중 목록에서 뺀다(Codex `available_during_task`, Claude `/compact`).
+- **proto(FRONT_API 1.68, 더하기만).** `pane_commands` → `CommandList{harness, builtin_version, commands[SlashCommand{name, description, source, kind, hint, aliases, idle_only, insert}]}`. `PaneChat.commands`·`AgentRequest::Chat.commands`와 `ChatRole::Command`·`CommandOutput`. AGENT_LINK는 1.9 그대로이고 새 요청은 기능 표시로만 보낸다. 옛 host·agent면 웹은 목록·확인창 없이 지금처럼 글로 보낸다.
+- **웹 입력칸.** herdr-web-ui를 따른다: 입력칸 위 listbox, 빈 「/」만 출처 머리(기본·skill·내 명령·프로젝트), 치면 순위 한 목록(앞 < 단어 경계 < 부분 < 글자 순서 < 설명, 같은 순위는 이 기기에서 고른 횟수), ↑↓·Tab·Enter 넣기(보내지 않음)·Esc 닫기, IME 조합 중 무시. 다르게 하는 곳은 아래와 같다.
+  - 메시지 맨 앞의 「/이름」에서만 연다(t3code). 줄 중간·경로(`/Users/…`)에서는 열지 않는다.
+  - 다 친 이름에서 Enter는 넣지 않고 보낸다. 넣어도 같은 글이고, Claude TUI의 Enter 실행과 같다.
+  - 줄 끝 표지: `터미널`(picker·screen), `확인`(confirm).
+  - 다 친 숨은 명령(`/exit`)에서는 빈 목록을 띄우지 않는다.
+  - 확인창(`ConfirmDialog`): confirm·danger는 보내기 전에 묻는다. 취소면 아무것도 보내지 않고 글은 입력칸에 남는다. 숨은 명령도 직접 쳐서 보내면 묻는다.
+  - 터미널 알림: 인자 없는 picker와 screen은 보낸 뒤 입력칸 위에 「터미널 보기」 알림을 보인다. picker 알림은 「닫기 전에는 다음 글이 선택창으로 갑니다」와 인자형 안내(`/model sonnet`)다.
+  - 목록은 pane을 열 때와 5분마다 다시 묻는다.
+- **대화의 명령 줄.** agent `chat.rs`가 Claude `<command-name>` 봉투를 `Command`(「/이름 인자」)로, `<local-command-stdout|stderr>`와 `system/informational`(「Unknown command: /x」)을 색 코드를 뺀 `CommandOutput`으로 읽는다. `/compact`는 정리 자리가 대신하므로 뺀다.
+  - 웹은 조용한 명령 한 줄과 고정폭 결과를 보인다. 결과가 여섯 줄을 넘으면 접는다.
+  - 쪽 읽기의 칸 고르기가 `subtype`을 버려 `system` 줄을 읽지 못하던 것도 고쳤다.
+- **참고와 다른 것.** herdr-web-ui·t3code에는 확인창이 없다. 여기는 휴대폰에서 thread를 다루고 thread의 harness가 끝나면 맡긴 일이 멈춰 확인창을 둔다(사용자 결정). 화면 메뉴를 카드로 바꾸기(herdr-web-ui `prompt.ts`)와 `/context` 범주 펼침은 3단계다.
+- **알려진 한계.** 목록을 받기 전(pane을 연 직후·옛 agent)에는 확인창도 없다. 선택창이 열린 것을 aaa는 모르고 알림만 한다. `autoCompactWindow`는 사용자 `settings.json`만 읽는다(Claude가 함께 보는 프로젝트 `.claude/settings.json`·`settings.local.json`의 값은 반영하지 않는다). E2E는 가짜 Claude만 쓴다: Codex 표·`$` skill·`screen` 분류는 유닛으로만 본다.
+- **검증.**
+  - agent 유닛: `slash::tests`(내장 분류·다른 이름, 사용자·프로젝트 명령·skill·숨은 skill·git root·내장 이름 보호, Codex `$` skill). `chat::tests::claude_commands_and_their_output_only_when_asked`는 실측 줄을 실제 쪽 읽기 길로 읽는다(`subtype`을 빼면 실패). `plan::tests::claude_window_names_and_setting_forms`와 `claude_context_…`(Haiku 5.5 43,922 = 4%, `autoCompactWindow` 500k).
+  - host 유닛(PaneChat이 `commands`를 agent에 넘김), 웹 유닛 `slashCommands.test.mjs`(맨 앞만·경로 제외, 순위, 숨김·작업 중, 확인창·알림 판정).
+  - 웹 E2E `51-slash-commands`: 실험실 설정 폴더의 내 명령·skill과 pane 폴더의 프로젝트 명령, 가짜 Claude가 실측 꼴로 기록한다. 출처 묶음과 숨김, 표지, 걸러내기·↓·Tab·Esc, 줄 중간·경로, `/context` 명령 줄과 색 코드 없는 결과·입력칸 풀림, `/model` 알림과 Esc 뒤 결과, `/exit` 취소(bytes 그대로)·`/clear` 보내기와 새 기록(대화·게이지 비움), 작업 중 `/compact` 숨김, iPhone 눌러 넣기를 본다.
+  - 결함 되심기: 확인창 판정을 끄면 E2E가 「확인창」 단계에서 실패했고, 되돌린 뒤 통과했다. E2E 50(Haiku 4.5의 200k로 바꿈)·45·37도 다시 통과했다.
+
+### 8.324 임무·평가자·특수 패널 제거 A4(10-20, t-0507)
+
+- **범위.** 확정 기획 t-0475 §5.1 A4·§4.2. 임무 실행·reset·평가자·전용 권한·do.wake·host 임무 상한·특수 패널을 제거한다. 일반 자동화의 시작·이어 보내기·기억·짧은 종료는 유지한다. 운영 이관 A3는 coordinator가 완료한 뒤 착지한다.
+- **호환.** FRONT_API 1.69에서 옛 요청은 한 판 동안 제거 오류, mission_list는 빈 목록이다. ProjectContext와 ThreadView에서 특수 필드를 제거하고 옛 DTO는 legacy_special에 격리한다. Role::Evaluator 값과 evaluations 표는 보존하며 새 실행에는 쓰지 않는다. 열린 옛 행은 일반 목록에 표시하고 시작 때 inbox로 안내한다. 일반 ticker의 저장이 변환 전 원본 필드를 버리지 않는다.
+- **파일 전송.** AGENT_LINK 1.10의 work_files.v1은 WorkFile 이름을 사용한다. 1.9 agent는 기존 파일 태그로 입력·기억·미처리 여부를 전송한다. 전용 mission_permissions와 SessionStart 포인터를 제거한다. 일반 safety와 기존 파일 경계·hash 검사를 유지한다.
+- **변환.** 옛 임무 파일은 실행하지 않고 inbox 한 번과 doctor files에 제거 안내를 낸다. AutomationConvert의 미리보기·hash·원본 사본을 유지하며 do.start(reuse=open, memory)·brief·기억으로 옮긴다. 기억·이력·pending·cursor와 전달 모름을 이전하고 파일 공개 전 journal로 중단 후 큐 이전을 마친다. 옛 source outbox도 변환 전 보존한다. 서로 다른 조건은 각각 규칙이 되며 원본 pending은 한 규칙에 한 번 옮긴다. 규칙은 시작 범위 승인 뒤 켠다.
+- **웹.** 활동 막대는 작업·머신·자동화 셋이며 저장된 special은 work다. 자동화 배지는 막힌 큐·승인 필요 규칙을 중복 없이 센다. 옛 evaluator도 작업 목록에 표시한다. 데스크톱·휴대폰의 전후 캡처와 실제 상호작용은 thread library에 둔다.
+- **검증.** 기존 A1/A2 keeper는 automation::start_tests로 옮긴다. m13이 옛 파일 비실행·한 번 안내·Front 제거 응답·미리보기 무쓰기·기억/이력/큐 이전을 검사하고 1.9 fake가 옛 파일 프레임만 받는지 확인한다. N-1 변환을 끄거나 pending 이전을 빼면 각각 keeper가 실패하며 원본 bytes를 복구한다. E2E26/40/48/49와 전체 ci-local·deps·TS 생성물·automation schema·공개 검사를 실행한다.
+
+### 8.325 host 로그인과 새 thread·coordinator 기본 인증: 멀티 계정 2단계(10-20, t-0510)
 
 - **요청·결정.** 사용자가 사용량 카드·자동 배정에 앞서 host에서 인증하고 새 작업들이 이를 기본으로 쓰도록 요청했다. A안으로 새 worker·평가 thread와 새 coordinator pane 모두 포함한다. 실행 중인 작업에는 소급하지 않는다. 기본 미지정은 기존 로컬 로그인, 지정 인증 오류는 시작 거부, 명시 `--account` 우선, 로그인·기본 변경은 host의 aaa 세션 밖 로컬 CLI라는 안전한 기본을 따른다.
 - **공식 로그인.** `account login <이름> --harness claude|codex`가 host의 격리된 임시 홈·별도 PTY에서 공식 `claude setup-token` 또는 Codex file 저장 로그인을 실행한다. 브라우저 인증만 사용자가 host에서 한다. 원본 출력·오류·인증 URL은 pane·로그·journal로 중계하지 않는다. 성공 결과는 기존 암호화 금고에 직접 넣는다. `login-status`/`login-cancel`은 비밀 없는 상태만 제공한다. 5분·128KiB 상한, 취소와 확정의 직렬화, 임시 자료 정리 후 금고 확정, 정상 host 종료 때 취소·정리 완료를 지킨다. 웹 로그인 시작과 수동 인증 코드 입력은 첫 배포 범위 밖이다.
-- **선택·수명.** `account default <harness> <이름>`/`--off`와 조회를 제공한다. host의 공통 thread 시작 경로가 profile의 harness로 기본을 고르므로 웹·자동화·할 일·임무·평가자도 같은 규칙이다. 선택한 별칭은 작업에 고정하며 재시작·resume에는 그 별칭의 최신 인증을 전달한다. 기본 변경·해제는 이후 새 작업에만 적용한다. 기본 계정 삭제는 먼저 기본 해제를 요구한다.
-- **coordinator.** 새 `project open`도 같은 기본을 선택하며 실행 중 pane 재사용은 바꾸지 않는다. `c-<실행 ID>`의 별도 이름 공간과 비밀 없는 host 실행 기록으로 Codex home·계정·머신·pane·profile을 잇는다. host 재시작 뒤 refresh, 재부팅 복원과 수동 pane 재개가 같은 인증과 기록 홈을 사용한다. 준비 중 인증 참조와 이전 pane의 참조를 재개에 쓰지 않아 같은 인증 홈의 중복 CLI 기동을 막는다. 이전 실행 참조는 실패한 spawn 뒤 복구한다.
+- **선택·수명.** `account default <harness> <이름>`/`--off`와 조회를 제공한다. host의 공통 thread 시작 경로가 profile의 harness로 기본을 고르므로 웹·자동화·할 일로 시작한 평가 작업도 같은 규칙이다. 선택한 별칭은 작업에 고정하며 재시작·resume에는 그 별칭의 최신 인증을 전달한다. 기본 변경·해제는 이후 새 작업에만 적용한다. 기본 계정 삭제는 먼저 기본 해제를 요구한다.
+- **coordinator.** 새 `project open`도 같은 기본을 선택하며 실행 중 pane 재사용은 바꾸지 않는다. `c-<실행 ID>`의 별도 이름 공간과 비밀 없는 host 실행 기록으로 Codex home·계정·머신·pane·profile을 잇는다. host 재시작 뒤 refresh, 재부팅 복원과 수동 pane 재개가 같은 인증과 기록 홈을 사용한다. 준비 중 인증 참조와 이전 pane의 참조를 재개에 쓰지 않아 같은 인증 홈의 중복 CLI 기동을 막는다. 이전 pane 확인과 시작 중 표지는 한 DB transaction에서 확정한다. 이전 실행 참조는 실패한 spawn 뒤 복구한다.
 - **비노출·표지.** `ThreadView.account`, `PaneView.account`와 CLI의 인증 별칭, 기본 조회 및 별칭만 남긴 감사 기록으로 적용 경로를 확인한다. 실제 제공자 인증 성공까지 대신 보증하지 않는다. 로컬 profile의 공식 인증 env도 agent 응답을 host 실행 기록에 저장하기 전에 가림 규칙에 등록한다. 새 keeper가 원래 host DB/WAL의 이 누출을 잡아 함께 수리했다.
-- **프로토콜·검증·배포.** FRONT_API 1.68(로그인·기본 관리와 선택 `PaneView.account`), agent 기능 `account_auth.v2`(coordinator 실행 참조)를 더하며 AGENT_LINK/SESSION_IPC 버전은 유지한다. 미지원 coordinator agent는 인증 전달 전에 거부한다. 가짜 CLI·토큰·회전 서버 E2E가 두 머신·평가자·coordinator·기본 우선순위·기존 로컬 유지·실패/취소/종료 정리·재개·복원·비노출을 소유한다. 기본 제거·원본 출력 노출·인증 없는 coordinator 재개·준비 중 참조 허용 변형에서 실패와 바이트 원복을 확인한다. 착지 뒤 coordinator가 바로 배포하고 실제 host 브라우저 로그인·기본 지정과 새 작업의 적용을 사용자가 확인한다. 절차와 해제 방법은 [작업별 계정 인증](accounts.md)에 둔다. 사용량 카드·자동 배정·API 키 연결은 포함하지 않는다.
+- **프로토콜·검증·배포.** FRONT_API 1.70(로그인·기본 관리와 선택 `PaneView.account`), agent 기능 `account_auth.v2`(coordinator 실행 참조)를 더하며 AGENT_LINK/SESSION_IPC 버전은 유지한다. 미지원 coordinator agent는 인증 전달 전에 거부한다. 가짜 CLI·토큰·회전 서버 E2E가 두 머신·자동화 평가 작업·coordinator·기본 우선순위·기존 로컬 유지·실패/취소/종료 정리·재개·복원·비노출을 소유한다. 기본 제거·원본 출력 노출·인증 없는 coordinator 재개·준비 중 참조 허용 변형에서 실패와 바이트 원복을 확인한다. 착지 뒤 coordinator가 바로 배포하고 실제 host 브라우저 로그인·기본 지정과 새 작업의 적용을 사용자가 확인한다. 절차와 해제 방법은 [작업별 계정 인증](accounts.md)에 둔다. 사용량 카드·자동 배정·API 키 연결은 포함하지 않는다.

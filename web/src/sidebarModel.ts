@@ -180,15 +180,14 @@ export interface WorkFolder {
 export function roster(machines: readonly MachineView[], panes: readonly PaneView[], threads: readonly ThreadView[], paneOrder: readonly string[] = [], byActivity = false) {
   const paneOf = (id: string) => panes.find((p) => p.id === id);
   const machineOf = (t: ThreadView) => machineOfThread(t, machines, paneOf);
-  const missionPanes = new Set(threads.flatMap((t) => (t.mission && t.pane ? [t.pane] : [])));
-  const known = sortThreads(threads.filter((t) => !t.mission && machineOf(t) !== undefined));
+  const known = sortThreads(threads.filter((t) => machineOf(t) !== undefined));
   const threadPanes = new Set(known.flatMap((t) => (t.pane ? [t.pane] : [])));
-  const coordinators = panes.filter((p) => p.coordinator_project && p.role !== "evaluator" && !threadPanes.has(p.id) && machines.some((m) => m.id === p.machine_id));
+  const coordinators = panes.filter((p) => p.coordinator_project && !threadPanes.has(p.id) && machines.some((m) => m.id === p.machine_id));
   const coordinatorPanes = new Set(coordinators.map((p) => p.id));
   const rank = new Map(paneOrder.map((key, index) => [key, index]));
   const last = Number.MAX_SAFE_INTEGER;
   const loose = machines
-    .flatMap((m) => panes.filter((p) => p.machine_id === m.id && p.role !== "evaluator" && !threadPanes.has(p.id) && !coordinatorPanes.has(p.id) && !missionPanes.has(p.id)))
+    .flatMap((m) => panes.filter((p) => p.machine_id === m.id && !threadPanes.has(p.id) && !coordinatorPanes.has(p.id)))
     .map((p, index) => ({ p, index, rank: rank.get(sidebarPinKey(p.machine_id, p.id)) ?? last }))
     .sort((a, b) => a.rank - b.rank || a.index - b.index)
     .map((entry) => entry.p);

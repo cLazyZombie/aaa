@@ -1,4 +1,4 @@
-//! 자동화 thread의 입력·기억·짧은 수명. Agent link는 기존 mission.v1 파일 전송을 함께 쓴다.
+//! 자동화 thread의 입력·기억·짧은 수명. work_files.v1과 N-1 파일 전송을 함께 지원한다.
 use crate::{
     AgentConn, Host,
     automation::Start,
@@ -194,14 +194,17 @@ impl Host {
                 for offset in (0..bytes.len().max(1)).step_by(384 * 1024) {
                     let end = (offset + 384 * 1024).min(bytes.len());
                     match conn
-                        .request(AgentRequest::MissionStateWrite {
-                            work_dir: work.into(),
-                            path: if path == "processed.txt" { path.clone() } else { format!("memory/{path}") },
-                            offset: offset as u64,
-                            data: B64(bytes[offset..end].to_vec()),
-                            eof: end == bytes.len(),
-                            sha256: hash.clone(),
-                        })
+                        .request(self.work_file_request(
+                            &r.machine_id,
+                            AgentRequest::WorkFileWriteChunk {
+                                work_dir: work.into(),
+                                path: if path == "processed.txt" { path.clone() } else { format!("memory/{path}") },
+                                offset: offset as u64,
+                                data: B64(bytes[offset..end].to_vec()),
+                                eof: end == bytes.len(),
+                                sha256: hash.clone(),
+                            },
+                        ))
                         .await?
                     {
                         AgentResponse::Done => {}
@@ -226,8 +229,9 @@ impl Host {
         let Some(work) = r.work_dir.clone() else { return Ok(()) };
         let name = r.automation.as_deref().ok_or_else(|| bad("규칙이 없다"))?;
         let conn = self.live_conn(&r.machine_id)?;
-        let AgentResponse::MissionFiles { files } =
-            conn.request(AgentRequest::MissionStateList { work_dir: work.clone() }).await?
+        let (AgentResponse::WorkFiles { files } | AgentResponse::MissionFiles { files }) = conn
+            .request(self.work_file_request(&r.machine_id, AgentRequest::WorkFileList { work_dir: work.clone() }))
+            .await?
         else {
             return Err(bad("기억 목록 응답이 아니다"));
         };
@@ -252,11 +256,14 @@ impl Host {
                 let mut bytes = vec![];
                 loop {
                     let AgentResponse::FileChunk { data, eof } = conn
-                        .request(AgentRequest::MissionStateRead {
-                            work_dir: work.clone(),
-                            path: f.path.clone(),
-                            offset: bytes.len() as u64,
-                        })
+                        .request(self.work_file_request(
+                            &r.machine_id,
+                            AgentRequest::WorkFileRead {
+                                work_dir: work.clone(),
+                                path: f.path.clone(),
+                                offset: bytes.len() as u64,
+                            },
+                        ))
                         .await?
                     else {
                         return Err(bad("기억 읽기 응답이 아니다"));
@@ -352,10 +359,19 @@ impl Host {
             }
             let Some(work) = &rec.work_dir else { continue };
             let Ok(conn) = self.live_conn(&rec.machine_id) else { continue };
-            let pending = match conn.request(AgentRequest::MissionInboxStatus { work_dir: work.clone() }).await {
-                Ok(AgentResponse::MissionInbox { pending, .. }) => pending > 0,
-                _ => true,
-            };
+            let pending =
+                match conn
+                    .request(self.work_file_request(
+                        &rec.machine_id,
+                        AgentRequest::WorkFileInboxStatus { work_dir: work.clone() },
+                    ))
+                    .await
+                {
+                    Ok(AgentResponse::WorkFileInbox { pending, .. } | AgentResponse::MissionInbox { pending, .. }) => {
+                        pending > 0
+                    }
+                    _ => true,
+                };
             let rec = if rec.automation_run.as_ref().unwrap().inbox_pending != pending {
                 match self.update_rec(p, &rec.id, |r| r.automation_run.as_mut().unwrap().inbox_pending = pending) {
                     Ok(r) => r,
@@ -412,6 +428,12 @@ impl Host {
             .map_err(bad)?
             .map_or((None, None), |(t, at)| (Some(t), Some(at)));
         Ok(aaa_proto::AutomationMemory { text, bytes, truncated: bytes > 65536, thread, updated_at_ms: updated })
+    }
+}
+
+impl Host {
+    fn work_file_request(&self, machine: &str, request: AgentRequest) -> AgentRequest {
+        if self.machine_feature(machine, "work_files.v1") { request } else { request.legacy_work_file() }
     }
 }
 

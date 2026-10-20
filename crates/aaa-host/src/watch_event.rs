@@ -13,7 +13,7 @@ pub(crate) struct Event<'a> {
 }
 impl Host {
     /// 프로젝트 이력과(있으면) 이미 끝난 주인 thread 이력에 같은 사건을 남긴다.
-    /// 임무 입력은 이 발행 함수가 보내지 않는다. source가 별도 mission_data_input을 선택한다.
+    /// 입력 전달은 source가 공통 자동화 큐에 확정한다.
     pub(crate) fn publish_watch_event(&self, project: &str, event: Event<'_>) -> Result<(), ErrorBody> {
         let _order = self.flow_order.lock().unwrap_or_else(|p| p.into_inner());
         for owner in std::iter::once(None).chain(event.owners.iter().map(Some)) {

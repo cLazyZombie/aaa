@@ -270,9 +270,10 @@ enum Cmd {
         cmd: AutomationCmd,
     },
     /// 특수 임무 정의·승인·깨움 상태
+    #[command(hide = true)]
     Mission {
-        #[command(subcommand)]
-        cmd: MissionCmd,
+        #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
+        _rest: Vec<String>,
     },
     /// thread profile: 머신마다 agent.toml과 기본 profile(claude·codex). 바꾸기·허용 목록은 사람만(herdr-projects `profile`)
     Profile {
@@ -290,14 +291,16 @@ enum Cmd {
         cmd: ThreadCmd,
     },
     /// 사후 평가자: 배경에서 일의 흐름(시간·재작업·막힌 곳)을 평가하는 agent 지정·상태·열기·끝내기
+    #[command(hide = true)]
     Evaluator {
-        #[command(subcommand)]
-        cmd: EvaluatorCmd,
+        #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
+        _rest: Vec<String>,
     },
     /// 평가 기록 목록·보기, 개선안 채택(adopt)·보류(hold)
+    #[command(hide = true)]
     Evaluation {
-        #[command(subcommand)]
-        cmd: EvaluationCmd,
+        #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
+        _rest: Vec<String>,
     },
     /// (harness hook) 세션 안에서 harness 사건을 이 머신 agent에 보낸다. 사건 JSON은 인자 또는 표준 입력
     #[command(hide = true)]
@@ -477,73 +480,6 @@ enum InboxCmd {
         /// 끝내지 않은 항목 모두
         #[arg(long)]
         all: bool,
-    },
-}
-
-#[derive(Subcommand)]
-enum MissionCmd {
-    List {
-        project: Option<String>,
-    },
-    Show {
-        name: String,
-        /// (옛 꼴 `<프로젝트> <대상>`의 대상)
-        #[arg(hide = true)]
-        legacy: Option<String>,
-    },
-    Approve {
-        name: String,
-        /// (옛 꼴 `<프로젝트> <대상>`의 대상)
-        #[arg(hide = true)]
-        legacy: Option<String>,
-    },
-    Reject {
-        name: String,
-        /// (옛 꼴 `<프로젝트> <대상>`의 대상)
-        #[arg(hide = true)]
-        legacy: Option<String>,
-    },
-    Start {
-        name: String,
-        /// (옛 꼴 `<프로젝트> <대상>`의 대상)
-        #[arg(hide = true)]
-        legacy: Option<String>,
-    },
-    Stop {
-        name: String,
-        /// (옛 꼴 `<프로젝트> <대상>`의 대상)
-        #[arg(hide = true)]
-        legacy: Option<String>,
-    },
-    Pause {
-        name: String,
-        /// (옛 꼴 `<프로젝트> <대상>`의 대상)
-        #[arg(hide = true)]
-        legacy: Option<String>,
-    },
-    Resume {
-        name: String,
-        /// (옛 꼴 `<프로젝트> <대상>`의 대상)
-        #[arg(hide = true)]
-        legacy: Option<String>,
-    },
-    Reload {
-        name: String,
-        /// (옛 꼴 `<프로젝트> <대상>`의 대상)
-        #[arg(hide = true)]
-        legacy: Option<String>,
-    },
-    Restart {
-        name: String,
-        /// (옛 꼴 `<프로젝트> <대상>`의 대상)
-        #[arg(hide = true)]
-        legacy: Option<String>,
-    },
-    Open {
-        name: String,
-        /// (옛 꼴 `<프로젝트> <대상>`의 대상)
-        #[arg(hide = true)]
-        legacy: Option<String>,
     },
 }
 
@@ -745,77 +681,9 @@ enum RoutineCmd {
     },
 }
 
-#[derive(Subcommand)]
-enum EvaluatorCmd {
-    /// 평가자를 지정한다: 그 머신에 역할이 evaluator인 thread를 띄운다(프로젝트당 하나, 목록에는 섞이지 않는다)
-    Assign {
-        /// (옛 꼴의 프로젝트, 생략한다)
-        #[arg(hide = true)]
-        project: Option<String>,
-        #[arg(long)]
-        profile: String,
-        #[arg(long)]
-        machine: Option<String>,
-        /// 채택된 개선을 직접 고칠 repo(없으면 repo 없는 작업 폴더)
-        #[arg(long)]
-        repo: Option<String>,
-        /// 평가자에게 더할 말
-        #[arg(long)]
-        note: Option<String>,
-    },
-    /// 평가자 상태: 실행 여부, 넘긴 사건 묶음, 받은 평가, 정하지 않은 개선안
-    Status { project: Option<String> },
-    /// 삭제된 평가자 TUI 열기. 웹 UI의 평가자 pane을 쓴다
-    Open {
-        /// (옛 꼴의 프로젝트, 생략한다)
-        #[arg(hide = true)]
-        project: Option<String>,
-    },
-    /// 평가자를 끝낸다(평가자 thread resolve)
-    Unassign {
-        /// (옛 꼴의 프로젝트, 생략한다)
-        #[arg(hide = true)]
-        project: Option<String>,
-    },
-}
-
-#[derive(Subcommand)]
-enum EvaluationCmd {
-    /// 정하지 않은 개선안이 있는 평가(--all은 전부)
-    List {
-        /// (옛 꼴의 프로젝트, 생략한다)
-        #[arg(hide = true)]
-        project: Option<String>,
-        #[arg(long)]
-        all: bool,
-    },
-    Show {
-        id: String,
-        /// (옛 꼴 `<프로젝트> <대상>`의 대상)
-        #[arg(hide = true)]
-        legacy: Option<String>,
-    },
-    /// 개선안을 채택한다(뒤 thread가 알아야 하면 coordinator가 memory에 적는다)
-    Adopt {
-        id: String,
-        #[arg(required = true)]
-        proposals: Vec<String>,
-        #[arg(long)]
-        note: Option<String>,
-    },
-    /// 개선안을 보류한다(나중에 채택할 수 있다)
-    Hold {
-        id: String,
-        #[arg(required = true)]
-        proposals: Vec<String>,
-        #[arg(long)]
-        note: Option<String>,
-    },
-}
-
 #[derive(Args)]
 struct PostArgs {
-    /// 목적지(user·coordinator·mission:<이름>) 또는 status·list·unmute. 프로젝트는 생략한다(옛 꼴은 앞에 프로젝트)
+    /// 목적지(user·coordinator) 또는 status·list·unmute. 프로젝트는 생략한다(옛 꼴은 앞에 프로젝트)
     first: String,
     second: Option<String>,
     third: Option<String>,
@@ -922,9 +790,6 @@ enum ThreadCmd {
         /// 이 역할만(기본은 사후 평가자를 뺀 목록)
         #[arg(long, value_parser = ["coordinator", "worker", "evaluator"])]
         role: Option<String>,
-        /// 특수 임무만. 이름을 생략하면 모든 임무
-        #[arg(long, num_args=0..=1, default_missing_value="")]
-        mission: Option<String>,
     },
     /// 보고서와 결과물 목록, 웹에서 볼 읽기 전용 경로(2시간)
     Library {
@@ -1608,17 +1473,6 @@ fn with_cli_stack<T: Send + 'static>(build: impl FnOnce() -> T + Send + 'static)
         .map(|thread| thread.join().unwrap_or_else(|panic| std::panic::resume_unwind(panic)))
 }
 
-fn mission_count(value: u64, cap: u32) -> String {
-    if cap == 0 || cap == u32::MAX { value.to_string() } else { format!("{value}/{cap}") }
-}
-fn mission_work(m: &aaa_proto::MissionView) -> String {
-    let mut text = format!("일한 분 {}", m.work_minutes);
-    if m.max_minutes > 0 && m.max_minutes < u32::MAX {
-        text.push_str(&format!(" · 깨움 작업 {}분", mission_count(m.wake_work_minutes, m.max_minutes)));
-    }
-    text
-}
-
 pub fn main() -> ExitCode {
     let cli = match with_cli_stack(|| {
         let version: &'static str =
@@ -1871,7 +1725,10 @@ fn run(cli: Cli) -> Result<ExitCode> {
             front(json, FrontRequest::AutomationUnblock { project: project_or_here(None)?, name, batch, discard })
         }
         Cmd::Automation { cmd: AutomationCmd::Schema { mission } } => {
-            println!("{}", if mission { aaa_host::mission_schema() } else { aaa_host::automation_schema() });
+            if mission {
+                anyhow::bail!("없어짐: 자동화로 바꿨다(aaa automation convert)");
+            }
+            println!("{}", aaa_host::automation_schema());
             Ok(ExitCode::SUCCESS)
         }
         Cmd::Routine { cmd: RoutineCmd::Runs { name, legacy } } => {
@@ -1896,7 +1753,9 @@ fn run(cli: Cli) -> Result<ExitCode> {
             let (project, name) = on_target(name, legacy)?;
             routine_approve(json, project, name)
         }
-        Cmd::Mission { cmd } => mission_cmd(json, cmd),
+        Cmd::Mission { .. } | Cmd::Evaluator { .. } | Cmd::Evaluation { .. } => {
+            anyhow::bail!("없어짐: 자동화로 바꿨다(aaa automation convert)")
+        }
         Cmd::Profile { cmd } => crate::settings::profile_cmd(json, cmd),
         Cmd::Safety { cmd } => crate::settings::safety_cmd(json, cmd),
         Cmd::Thread { cmd } => front(
@@ -1962,24 +1821,7 @@ fn run(cli: Cli) -> Result<ExitCode> {
                     let (project, thread) = on_target(thread, legacy)?;
                     FrontRequest::ThreadNext { project, thread, line, add }
                 }
-                ThreadCmd::List { project, role, mission } => {
-                    if let Some(name) = mission {
-                        let res =
-                            front_call(FrontRequest::Threads { project, role: Some(aaa_proto::Role::Evaluator) })?.map(
-                                |r| match r {
-                                    FrontResponse::Threads { threads } => FrontResponse::Threads {
-                                        threads: threads
-                                            .into_iter()
-                                            .filter(|t| {
-                                                t.mission.as_ref().is_some_and(|n| name.is_empty() || n == &name)
-                                            })
-                                            .collect(),
-                                    },
-                                    r => r,
-                                },
-                            );
-                        return front_print(json, res);
-                    }
+                ThreadCmd::List { project, role } => {
                     FrontRequest::Threads { project, role: role.as_deref().and_then(aaa_proto::Role::parse) }
                 }
                 ThreadCmd::Show { thread, legacy } => {
@@ -2092,42 +1934,9 @@ fn run(cli: Cli) -> Result<ExitCode> {
                 }
             },
         ),
-        Cmd::Attach { .. } | Cmd::Evaluator { cmd: EvaluatorCmd::Open { .. } } => {
+        Cmd::Attach { .. } => {
             anyhow::bail!("{}", aaa_common::front::TUI_REMOVED)
         }
-        Cmd::Evaluator { cmd } => front(
-            json,
-            match cmd {
-                EvaluatorCmd::Assign { project, profile, machine, repo, note } => {
-                    FrontRequest::EvaluatorAssign { project: project_or_here(project)?, profile, machine, repo, note }
-                }
-                EvaluatorCmd::Status { project } => FrontRequest::EvaluatorStatus { project },
-                EvaluatorCmd::Unassign { project } => {
-                    FrontRequest::EvaluatorUnassign { project: project_or_here(project)? }
-                }
-                EvaluatorCmd::Open { .. } => unreachable!(),
-            },
-        ),
-        Cmd::Evaluation { cmd } => front(
-            json,
-            match cmd {
-                EvaluationCmd::List { project, all } => {
-                    FrontRequest::Evaluations { project: project_or_here(project)?, all }
-                }
-                EvaluationCmd::Show { id, legacy } => {
-                    let (project, id) = on_target(id, legacy)?;
-                    FrontRequest::EvaluationShow { project, id }
-                }
-                EvaluationCmd::Adopt { id, mut proposals, note } => {
-                    let (project, id) = shift_project(id, &mut proposals)?;
-                    FrontRequest::EvaluationDecide { project, id, proposals, adopt: true, note }
-                }
-                EvaluationCmd::Hold { id, mut proposals, note } => {
-                    let (project, id) = shift_project(id, &mut proposals)?;
-                    FrontRequest::EvaluationDecide { project, id, proposals, adopt: false, note }
-                }
-            },
-        ),
         Cmd::Machine { cmd } => front(
             json,
             match cmd {
@@ -2301,7 +2110,7 @@ fn pane_cmd(json: bool, cmd: PaneCmd) -> Result<ExitCode> {
             );
         }
         PaneCmd::Chat { pane, thinking } => {
-            return front(json, FrontRequest::PaneChat { pane, thinking, compact: true, before: None });
+            return front(json, FrontRequest::PaneChat { pane, thinking, compact: true, commands: true, before: None });
         }
         PaneCmd::Split { target, pane, current: _, direction, ratio, cwd, machine, workspace, argv } => {
             let pane = match target {
@@ -3615,79 +3424,6 @@ fn render_context(s: &mut String, c: &aaa_proto::ProjectContext) {
     if omitted > 0 {
         let _ = writeln!(s, "  … 항목 {omitted}개는 더 싣지 못했다. 위 항목을 끝내면 다음 것이 보인다");
     }
-    for m in &c.missions {
-        let _ = writeln!(
-            s,
-            "특수 {}: {} · 깨움 {} · 입력 {} · post 처리 {}/{}",
-            m.name,
-            m.state,
-            mission_count(m.wakes_today.into(), m.max_wakes),
-            m.pending,
-            m.handled_posts,
-            m.posts
-        );
-    }
-    if let Some(v) = &c.evaluator {
-        let _ = writeln!(
-            s,
-            "사후 평가자 {}: {}, 정하지 않은 개선안 {}개 (aaa evaluation list {})",
-            v.thread.id,
-            if v.running { "실행 중" } else { "세션 끝남" },
-            v.undecided,
-            c.project
-        );
-    }
-}
-
-fn render_evaluator(s: &mut String, v: &aaa_proto::EvaluatorView) {
-    use std::fmt::Write as _;
-    let t = &v.thread;
-    let state = if t.status == aaa_proto::ThreadStatus::Resolved {
-        "끝남".to_string()
-    } else if v.running {
-        t.agent.as_ref().map(|a| format!("{:?}", a.activity).to_lowercase()).unwrap_or_else(|| "실행 중".into())
-    } else {
-        format!("세션 끝남(aaa thread restart {} {} --resume)", v.project, t.id)
-    };
-    let _ = writeln!(s, "{} 사후 평가자 {}\t{}@{}\t{state}", v.project, t.id, t.profile, t.machine);
-    let _ = writeln!(
-        s,
-        "  사건: 넘긴 묶음 {} (cursor {}), 기다리는 사건 {}\n  평가: {}건, 정하지 않은 개선안 {}",
-        v.batches, v.cursor, v.pending, v.evaluations, v.undecided
-    );
-    if let Some(e) = &t.error {
-        let _ = writeln!(s, "  오류: {e}");
-    }
-}
-
-fn render_evaluation(s: &mut String, v: &aaa_proto::EvaluationView) {
-    use std::fmt::Write as _;
-    let d = &v.doc;
-    let _ = writeln!(s, "평가 {} (평가자 {}, 대상 {})\n{}", v.id, v.evaluator, d.targets.join(", "), d.summary);
-    for st in &d.stages {
-        let m = st.minutes.map(|m| format!("{}분", m.0)).unwrap_or_else(|| "?".into());
-        let _ = writeln!(s, "  단계 {} {}: {m}", st.thread, st.stage);
-    }
-    for (title, items) in [("재작업", &d.rework), ("막힌 곳", &d.blocked), ("도구 문제", &d.tool_issues)] {
-        for i in items {
-            let _ = writeln!(s, "  {title}: {i}");
-        }
-    }
-    for x in &d.defects {
-        let _ = writeln!(s, "  결함: {} ({} · {})", x.what, x.found_by, x.stage);
-    }
-    for p in &d.proposals {
-        let state = match &p.decision {
-            None => "정하지 않음".to_string(),
-            Some(dc) if dc.adopted => "채택".to_string(),
-            Some(_) => "보류".to_string(),
-        };
-        let _ = writeln!(s, "  개선안 {} [{state}] {}", p.id, p.text);
-        if !p.effect.is_empty() || !p.tool.is_empty() {
-            let _ = writeln!(s, "    효과: {} · 도구: {}", p.effect, p.tool);
-        }
-    }
-    let _ = writeln!(s, "본문: projects/{}/{}", v.project, v.file);
 }
 
 fn status_word(s: ProjectStatus) -> &'static str {
@@ -3795,6 +3531,9 @@ fn render_front(r: &FrontResponse) -> String {
                     aaa_proto::ChatRole::Thinking => writeln!(s, "  (생각) {}", m.text),
                     // 정리된 자리(plan §8.309): 요약은 길어 줄만 남긴다(웹은 누르면 펼친다)
                     aaa_proto::ChatRole::Compact => writeln!(s, "\n── 대화 정리됨 ──"),
+                    // harness 명령과 결과(plan §8.323)
+                    aaa_proto::ChatRole::Command => writeln!(s, "\n[명령] {}", m.text),
+                    aaa_proto::ChatRole::CommandOutput => writeln!(s, "  {}", m.text.replace('\n', "\n  ")),
                 };
             }
         }
@@ -3808,6 +3547,11 @@ fn render_front(r: &FrontResponse) -> String {
                 }
             }
         },
+        FrontResponse::PaneCommands { list } => {
+            for c in &list.commands {
+                let _ = writeln!(s, "{}\t{:?}\t{}", c.insert.trim_end(), c.kind, c.description);
+            }
+        }
         FrontResponse::PaneDir { listing } => {
             let _ = writeln!(s, "{}", listing.path);
             for d in &listing.directories {
@@ -4014,41 +3758,8 @@ fn render_front(r: &FrontResponse) -> String {
         FrontResponse::Message(m) => {
             let _ = writeln!(s, "{}/{} 메시지 {}: {:?} ({:?})", m.project, m.thread, m.id, m.state, m.mode);
         }
-        FrontResponse::Missions { missions } => {
-            for m in missions {
-                s.push_str(&format!(
-                    "{}/{} · {} · {} · 깨움 {} · {} · post {}/{} · 입력 {}\n",
-                    m.project,
-                    m.name,
-                    m.title,
-                    m.state,
-                    mission_count(m.wakes_today.into(), m.max_wakes),
-                    mission_work(m),
-                    m.handled_posts,
-                    m.posts,
-                    m.pending
-                ));
-            }
-        }
-        FrontResponse::Mission { mission: m } => {
-            if let Some(reason) = &m.apply_wait {
-                let _ = writeln!(
-                    s,
-                    "적용 대기{}: {reason}",
-                    m.pending_sha.as_ref().map(|sha| format!(" · 예약 판 {sha}")).unwrap_or_default()
-                );
-            } else {
-                let _ = writeln!(s, "후보 판과 적용 판이 같다");
-            }
-            s.push_str(&format!("차이:\n{}\n", m.diff));
-            s.push_str(&format!("{}/{} · {}\n적용 판: {} · 파일 판: {} · 승인: {}\n오늘 깨움 {} · {} · 묶음 {}바이트 · post 처리 {}/{} · 입력 {}\n다음 reset {:?} · 사용량 대기 {:?}\n\n적용 사본:\n{}\n후보 파일:\n{}",m.project,m.name,m.state,m.applied_sha.as_deref().unwrap_or("없음"),m.file_sha.as_deref().unwrap_or("없음"),m.approved,mission_count(m.wakes_today.into(),m.max_wakes),mission_work(m),m.input_bytes,m.handled_posts,m.posts,m.pending,m.next_reset_ms,m.usage_wait_until_ms,m.applied_text,m.file_text));
-            if !m.applied_brief_text.is_empty() {
-                s.push_str(&format!("\n적용 brief_file:\n{}\n", m.applied_brief_text));
-            }
-            if !m.brief_text.is_empty() {
-                s.push_str(&format!("\n후보 brief_file:\n{}\n", m.brief_text));
-            }
-        }
+        FrontResponse::Missions { .. } => {}
+        FrontResponse::Mission { .. } => s.push_str("없어짐: 자동화로 바꿨다(aaa automation convert)"),
         FrontResponse::Routines { routines } => {
             if routines.is_empty() {
                 s.push_str("routine이 없다\n");
@@ -4073,9 +3784,7 @@ fn render_front(r: &FrontResponse) -> String {
                 }
                 let off = if r.enabled { "" } else { " · 꺼짐" };
                 let when = |t: Option<u64>| t.map(aaa_common::util::utc_text).unwrap_or_else(|| "사건 오면".into());
-                let approval = if r.origin == "mission" && !r.approved {
-                    " · 임무 승인 필요"
-                } else if r.command.is_empty() {
+                let approval = if r.command.is_empty() {
                     ""
                 } else if !r.approved {
                     " · 승인 필요"
@@ -4306,31 +4015,9 @@ fn render_front(r: &FrontResponse) -> String {
             }
         }
         FrontResponse::TaskLog { entries, next } => render_task_log(&mut s, entries, *next),
-        FrontResponse::Evaluators { evaluators } => {
-            if evaluators.is_empty() {
-                s.push_str("사후 평가자가 없다(aaa evaluator assign)\n");
-            }
-            for v in evaluators {
-                render_evaluator(&mut s, v);
-            }
+        FrontResponse::Evaluators { .. } | FrontResponse::Evaluations { .. } | FrontResponse::Evaluation(_) => {
+            s.push_str("없어짐: 자동화로 바꿨다(aaa automation convert)")
         }
-        FrontResponse::Evaluations { evaluations } => {
-            if evaluations.is_empty() {
-                s.push_str("정하지 않은 평가가 없다(--all은 전부)\n");
-            }
-            for v in evaluations {
-                let open = v.doc.proposals.iter().filter(|p| p.decision.is_none()).count();
-                let _ = writeln!(
-                    s,
-                    "{}\t{}\t개선안 {}건(남음 {open})\t{}",
-                    v.id,
-                    v.evaluator,
-                    v.doc.proposals.len(),
-                    v.doc.summary
-                );
-            }
-        }
-        FrontResponse::Evaluation(v) => render_evaluation(&mut s, v),
         FrontResponse::Post { result } => {
             let _ = writeln!(s, "{}", serde_json::to_string(result).unwrap());
         }
@@ -4515,73 +4202,6 @@ fn config_cmd(cmd: ConfigCmd, json: bool) -> Result<ExitCode> {
             Ok(if ok { ExitCode::SUCCESS } else { ExitCode::from(2) })
         }
     }
-}
-
-fn mission_cmd(json: bool, cmd: MissionCmd) -> Result<ExitCode> {
-    let req = match cmd {
-        MissionCmd::List { project } => FrontRequest::MissionList { project },
-        MissionCmd::Show { name, legacy } => {
-            let (project, name) = on_target(name, legacy)?;
-            FrontRequest::MissionShow { project, name }
-        }
-        MissionCmd::Reject { name, legacy } => {
-            let (project, name) = on_target(name, legacy)?;
-            FrontRequest::MissionReject { project, name }
-        }
-        MissionCmd::Start { name, legacy } => {
-            let (project, name) = on_target(name, legacy)?;
-            FrontRequest::MissionStart { project, name }
-        }
-        MissionCmd::Stop { name, legacy } => {
-            let (project, name) = on_target(name, legacy)?;
-            FrontRequest::MissionStop { project, name }
-        }
-        MissionCmd::Pause { name, legacy } => {
-            let (project, name) = on_target(name, legacy)?;
-            FrontRequest::MissionPause { project, name }
-        }
-        MissionCmd::Resume { name, legacy } => {
-            let (project, name) = on_target(name, legacy)?;
-            FrontRequest::MissionResume { project, name }
-        }
-        MissionCmd::Reload { name, legacy } => {
-            let (project, name) = on_target(name, legacy)?;
-            FrontRequest::MissionReload { project, name }
-        }
-        MissionCmd::Restart { name, legacy } => {
-            let (project, name) = on_target(name, legacy)?;
-            FrontRequest::MissionRestart { project, name }
-        }
-        MissionCmd::Open { name, legacy } => {
-            let (project, name) = on_target(name, legacy)?;
-            let res = front_call(FrontRequest::MissionOpen { project: project.clone(), name: name.clone() })?;
-            return front_print(json, res);
-        }
-        MissionCmd::Approve { name, legacy } => {
-            crate::person::require("aaa mission approve")?;
-            let (project, name) = on_target(name, legacy)?;
-            let res = front_call(FrontRequest::MissionShow { project: project.clone(), name: name.clone() })?;
-            let m = match res {
-                Ok(FrontResponse::Mission { mission }) => mission,
-                other => return front_print(json, other),
-            };
-            let brief =
-                if m.brief_text.is_empty() { String::new() } else { format!("\n\nbrief_file:\n{}", m.brief_text) };
-            println!(
-                "임무 {project}/{name}\n{}{}\n첫 시작·repo 추가/변경 승인 대상 hash {}",
-                m.file_text, brief, m.approval_sha256
-            );
-
-            if crate::person::ask(&format!("승인하려면 임무 이름 {name:?}를 그대로 입력한다: "))? != name
-            {
-                anyhow::bail!(
-                    "임무 이름 확인이 일치하지 않아 승인하지 않았다. 확인 입력에는 {name:?}를 그대로 입력해야 한다"
-                );
-            }
-            FrontRequest::MissionApprove { project, name, approval_sha256: m.approval_sha256 }
-        }
-    };
-    front(json, req)
 }
 
 fn debug_since(value: &str) -> Result<u64> {

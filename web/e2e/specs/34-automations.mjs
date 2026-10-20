@@ -19,10 +19,9 @@ export default async function ({ page }) {
     const row = page.getByTestId("automation-auto-demo-check");
     await row.waitFor();
     await domIs(page, "건너뜀 기록", () => document.querySelector('[data-testid="automation-auto-demo-check"]')?.textContent.includes("마지막 건너뜀: coordinator 없음"));
-    const mission = page.getByTestId("automation-auto-demo-mission:watch");
-    await mission.waitFor();
-    if (!(await mission.textContent()).includes("임무 승인 필요")) throw new Error("승인 전 임무 조건의 승인 필요 표시가 없다");
-    if (!(await mission.textContent()).includes("임무 파일에서") || !(await mission.textContent()).includes("git_pushed")) throw new Error("임무 조건 출처가 없다");
+    const legacy=page.getByTestId("automation-auto-demo-missions/watch.md");
+    await legacy.waitFor();
+    if (!(await legacy.textContent()).includes("없어짐")) throw new Error("옛 파일 변환 안내가 없다");
     // 최근 기록은 상세(40-automation-detail)에 있다
     await row.getByRole("button", { name: "check 자세히", exact: true }).click();
     const detail = page.getByTestId("automation-detail");
@@ -37,12 +36,6 @@ export default async function ({ page }) {
     await button.click();
     await domIs(page, "규칙 꺼짐", () => document.querySelector('[data-testid="automation-auto-demo-check"] [role="switch"]')?.getAttribute("aria-checked") === "false");
     if (fs.readFileSync(file(), "utf8") !== original.replace("enabled = true", "enabled = false")) throw new Error("enabled 외 파일 변경");
-    const missionPath = `${root}/projects/auto-demo/missions/watch.md`;
-    const before = fs.readFileSync(missionPath, "utf8");
-    await page.getByRole("switch", { name: "auto-demo/mission:watch 켜기", exact: true }).click();
-    await domIs(page, "임무 조건 꺼짐", () => document.querySelector('[data-testid="automation-auto-demo-mission:watch"] [role="switch"]')?.getAttribute("aria-checked") === "false");
-    const after = fs.readFileSync(missionPath, "utf8");
-    if (after.replace('enabled = false\n', '') !== before) throw new Error("임무 enabled 외 파일 변경");
   });
   await step("자동화: Reader는 기록을 읽되 토글할 수 없고 휴대폰 drawer 안 목록·토글이 화면 폭 안에 있다", async () => {
     const dev = await pairPage(browser, aaa("web", "pair", "--reader").code, { width: 390, height: 844 }, { touch: true });
@@ -71,7 +64,7 @@ export default async function ({ page }) {
   await step("자동화 TOML 변환: 원본 보존·임무 조건 분리·새 파일 토글·Reader 변환 금지", async () => {
     const before=fs.readFileSync(file(),"utf8");
     const converted=aaa("automation","convert");
-    if (!converted.files.includes("routines/.converted/check.md") || !converted.files.includes("missions/watch.toml")) throw new Error(`변환 결과 ${JSON.stringify(converted)}`);
+    if (!converted.files.includes("routines/.converted/check.md") || !converted.files.includes("automations/watch.brief.md")) throw new Error(`변환 결과 ${JSON.stringify(converted)}`);
     if (fs.readFileSync(`${root}/projects/auto-demo/routines/.converted/check.md`,"utf8")!==before) throw new Error("변환 원본 변경");
     if (aaa("automation","convert").files.length!==0) throw new Error("변환 재실행이 무음이 아니다");
     const implicit = await page.evaluate(async () => (await fetch("/api/v1/call", {method:"POST", headers:{"content-type":"application/json"}, body:JSON.stringify({op:"automation_convert"})})).json());
@@ -79,7 +72,7 @@ export default async function ({ page }) {
     await page.getByRole("button",{name:"다시 읽기",exact:true}).click();
     const row=page.getByTestId("automation-auto-demo-check");
     await domIs(page,"새 파일 출처",()=>document.querySelector('[data-testid="automation-auto-demo-check"]')?.textContent.includes("automations/check.toml"));
-    await page.getByTestId("automation-auto-demo-watch-events").waitFor();
+    await page.getByTestId("automation-auto-demo-watch").waitFor();
     if (await page.getByTestId("automation-auto-demo-mission:watch").count()) throw new Error("임무 조건이 새 규칙과 중복으로 남았다");
     const path=`${root}/projects/auto-demo/automations/check.toml`;
     const original=fs.readFileSync(path,"utf8");
