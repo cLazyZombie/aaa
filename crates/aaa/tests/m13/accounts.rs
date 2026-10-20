@@ -322,7 +322,7 @@ fn account_credentials_parallel_refresh_and_all_records_are_redacted() {
     assert!(std::fs::read_dir(&outbox).unwrap().next().is_some(), "미전송 post가 남아야 한다");
     assert!(hits(&[outbox], &needles(&claude, &claude_hex), &|_| false).is_empty(), "미전송 post 비밀 노출");
     w.lab.spawn_env(
-        "host",
+        "host2",
         &w.h,
         &["host"],
         &[("AAA_TEST_ACCOUNT_REFRESH_ORIGIN", &format!("http://{}", upstream.addr)), ("AAA_LOG", "trace")],
@@ -343,6 +343,7 @@ fn account_credentials_parallel_refresh_and_all_records_are_redacted() {
             b_state,
             w.projects.clone(),
             w.lab.root.join("host.log"),
+            w.lab.root.join("host2.log"),
             w.lab.root.join("agentA.log"),
             w.lab.root.join("agentB.log"),
         ],
