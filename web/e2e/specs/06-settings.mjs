@@ -274,8 +274,9 @@ export default async function ({ ctl, page }) {
     await dp.keyboard.press("ArrowDown");
     await dlg.getByRole("tabpanel", { name: "채팅" }).waitFor();
     if ((await dlg.getByRole("tab", { name: "채팅" }).getAttribute("aria-selected")) !== "true") bad.push("화살표로 넘긴 줄이 골라지지 않았다");
+    // 마지막 쪽은 「저장소」(관리 GUI W4, plan §8.333: 「폰 및 기기」 뒤에 「이 aaa」·「저장소」)
     await dp.keyboard.press("End");
-    await dlg.getByRole("tabpanel", { name: "폰 및 기기" }).waitFor();
+    await dlg.getByRole("tabpanel", { name: "저장소" }).waitFor();
     await dp.keyboard.press("Home");
     await dlg.getByRole("tabpanel", { name: "모양" }).waitFor();
     await dlg.getByRole("tab", { name: "알림" }).click();
