@@ -142,7 +142,9 @@ pub const AGENT_LINK: Version = Version { major: 1, minor: 9 };
 // 일반 줄로 그리고, 옛 front는 버린다.
 // 1.65: 자동화 A2의 기억 사본과 끝남 예정(RoutineView.memory·closing). 옛 host는 생략한다. Agent link 변경 없음.
 // 1.66: account_import/list/remove·thread_start_account·ThreadView.account(plan §8.320).
-pub const FRONT_API: Version = Version { major: 1, minor: 66 };
+// 1.67: pane 컨텍스트 사용량(`AgentStatus.context`: used·window·percent·compaction, plan §8.321). 옛 host는 생략해 웹이 입력칸
+// 게이지를 그리지 않고, 옛 front는 버린다. 입력 진단 `InputReceiptMethod::SlashCommand`(옛 host는 그 진단 줄만 버린다).
+pub const FRONT_API: Version = Version { major: 1, minor: 67 };
 /// agent ↔ session host(내부). 세션이 몇 주 이어질 수 있으므로 이전 session host와 호환해야 한다.
 /// 1.1: `SessionRequest::Detect`(harness 상태 감지 입력). agent는 1.0 session host에 보내지 않고 `Screen`을 쓴다.
 /// 1.2: `SessionRequest::Colors`(색 질의에 답할 화면 색, plan §8.187). agent는 1.1 이하 session host에 보내지 않는다.

@@ -49,6 +49,7 @@ async fn failing_report_agent_keeps_working_and_recovers_without_a_new_hash() {
             transcript: None,
             plan: None,
             background: None,
+            context: None,
         }],
         sessions: vec![SessionInfo {
             id: "s".into(),

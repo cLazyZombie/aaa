@@ -400,6 +400,7 @@ mod tests {
                     transcript: None,
                     plan: None,
                     background: None,
+                    context: None,
                 };
                 let sessions = ["first", "s"].map(|id| SessionInfo {
                     id: id.into(),
@@ -628,6 +629,7 @@ mod tests {
             background: None,
             background_wait: false,
             compacting: false,
+            context: None,
         }
     }
 

@@ -172,6 +172,8 @@ pub fn typescript_bindings() -> String {
         FlowEvent::decl(&cfg),
         AgentActivity::decl(&cfg),
         PlanSummary::decl(&cfg),
+        ContextUsage::decl(&cfg),
+        ContextCompaction::decl(&cfg),
         AgentStatus::decl(&cfg),
         QuestionState::decl(&cfg),
         QuestionView::decl(&cfg),
