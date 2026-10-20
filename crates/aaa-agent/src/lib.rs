@@ -15,6 +15,7 @@ pub use deploy::guard::worker as deployment_guard;
 pub mod detect;
 mod diff;
 mod files;
+mod gh;
 mod git_watch;
 mod health;
 pub mod hooks;
