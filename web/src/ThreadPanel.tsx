@@ -1,5 +1,5 @@
-import { useEffect, useState } from "react";
-import type { DeviceRole, LibraryView, ThreadView } from "./gen/proto";
+import { lazy, Suspense, useEffect, useState } from "react";
+import type { DeviceRole, DiffView, LibraryView, ThreadView } from "./gen/proto";
 import { ApiError, call } from "./api";
 import { Icon } from "./icons";
 import { Markdown } from "./Markdown";
@@ -8,6 +8,12 @@ import { DrawerToggle, HeadMore, HeadNote } from "./drawer";
 import { LIBRARY_SANDBOX } from "./FileViewer";
 import { LibraryLink } from "./LibraryLink";
 import { SummaryButton } from "./ThreadSummary";
+import { ChangedFilesCard } from "./ChangedFiles";
+import { useDiffPanel } from "./useDiffPanel";
+import { useMediaQuery } from "./herdr/useMediaQuery";
+
+// `@pierre/diffs`는 diff를 열 때만 받는다(파일 보기의 VirtualSource와 같다)
+const DiffPanel = lazy(() => import("./DiffPanel"));
 
 export const GROUP_LABEL: Record<string, string> = {
   waiting_on_you: "확인 필요",
@@ -63,6 +69,26 @@ export function ThreadPanel({
     };
   }, [t.project, t.id, t.report_hash, t.copy]);
 
+  // 변경 파일 카드(plan §8.305): 소스를 보이므로 조작 기기만, git 저장소 thread만. 못 읽으면 카드를 그리지 않는다(t3code와 같다)
+  const [diff, setDiff] = useState<DiffView | null>(null);
+  const canDiff = role !== "reader" && !!t.repo;
+  useEffect(() => {
+    let live = true;
+    if (!canDiff) {
+      setDiff(null);
+      return;
+    }
+    call({ op: "thread_diff", project: t.project, thread: t.id, query: { scope: "branch" } })
+      .then((r) => live && r.kind === "thread_diff" && setDiff(r.diff))
+      .catch(() => live && setDiff(null));
+    return () => {
+      live = false;
+    };
+  }, [canDiff, t.project, t.id, t.report_hash, t.group, t.status]);
+  const diffPanel = useDiffPanel(t.project, t.id);
+  // t3code `rightPanelLayout.ts`: 980px 위는 thread 옆 칸, 밑은 덮는 sheet
+  const sheet = useMediaQuery("(max-width: 980px)");
+
   const ack = async () => {
     setMsg(null);
     try {
@@ -109,6 +135,7 @@ export function ThreadPanel({
       </header>
       {msg && <div className="banner err">{msg}</div>}
       {t.copy === "failed" && <div className="banner" data-testid="report-copy-failed">보고·결과물 사본을 다시 받는 중이다. 마지막으로 받은 내용과 작업 상태를 유지한다.</div>}
+      <div className={`thread-split${diffPanel.target && !sheet ? " with-diff" : ""}`}>
       <div className="thread-body">
         <div className="thread-col">
           <div className="t-hero">
@@ -135,6 +162,9 @@ export function ThreadPanel({
               <p className="muted">아직 회수한 보고가 없다</p>
             )}
           </section>
+          {diff?.files && diff.files.length > 0 && (
+            <ChangedFilesCard key={`${t.project}/${t.id}`} project={t.project} thread={t.id} base={diff.base} files={diff.files} onOpen={(path) => diffPanel.open(path ?? null)} />
+          )}
           {lib && (lib.files.length > 0 || lib.link !== null) && (
             <section className="card files" data-testid="files">
               <h2>
@@ -176,6 +206,21 @@ export function ThreadPanel({
             </section>
           )}
         </div>
+      </div>
+      {diffPanel.target && canDiff && (
+        <Suspense fallback={null}>
+          <DiffPanel
+            project={t.project}
+            thread={t.id}
+            path={diffPanel.target.path}
+            reveal={diffPanel.target.reveal}
+            reportHash={t.report_hash}
+            sheet={sheet}
+            onClose={diffPanel.close}
+            onOpenFile={onOpenReportFile}
+          />
+        </Suspense>
+      )}
       </div>
     </div>
   );

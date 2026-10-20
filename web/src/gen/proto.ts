@@ -325,6 +325,62 @@ export type PostSender = { thread: string | null, role: Role, mission: string | 
 
 export type PostEnvelope = { id: string, project: string, from: PostSender, caused_by: Array<string>, body_sha256: string, created_ms: number, state: string, post_id: string, to: string, post_type: PostType, topic: string, title: string, body: string, needs_user: boolean, refs: Array<string>, };
 
+export type DiffScope = "branch" | "uncommitted";
+
+export type DiffFileRef = { path: string, old_path?: string, };
+
+export type DiffQuery = { scope?: DiffScope,
+/**
+ * `--ignore-all-space`(t3code 패널 기본 켬, 카드 숫자는 끔)
+ */
+ignore_whitespace?: boolean,
+/**
+ * patch도 읽는다. 끄면 파일 목록과 숫자만(카드)
+ */
+patch?: boolean,
+/**
+ * 이 파일의 patch만(파일 목록은 비운다)
+ */
+file?: DiffFileRef, };
+
+export type DiffStatus = "added" | "deleted" | "modified" | "renamed" | "copied" | "type_changed" | "unmerged" | "untracked";
+
+export type DiffFile = {
+/**
+ * 저장소 맨 위 기준 경로(`/`)
+ */
+path: string, old_path?: string, status: DiffStatus,
+/**
+ * 바이너리면 없다(numstat `-`)
+ */
+additions: number | null, deletions: number | null, };
+
+export type DiffView = { scope: DiffScope,
+/**
+ * 비교 기준의 이름: branch 범위는 base ref(`origin/main`), 미커밋은 `HEAD`
+ */
+base: string,
+/**
+ * 비교한 commit(merge-base 또는 HEAD). 첫 커밋 전이면 빈 tree
+ */
+base_sha: string,
+/**
+ * 지금 branch 이름(분리된 HEAD면 `HEAD`)
+ */
+head: string,
+/**
+ * 바뀐 파일(경로 차례). 너무 많으면 없다(`truncated`)
+ */
+files: Array<DiffFile> | null, patch: string | null,
+/**
+ * patch를 상한에서 잘랐거나 파일 목록이 모자라다
+ */
+truncated: boolean,
+/**
+ * 새 파일이 상한보다 많아 새 파일은 뺐다
+ */
+untracked_omitted: boolean, };
+
 export type FrontRequest = { "op": "debug_input", pane: string | null, thread: string | null, since_ms: bigint, } | { "op": "rollout_start", id: string, spec: RolloutSpec, } | { "op": "rollout_status", id: string, } | { "op": "deploy_context" } | { "op": "deploy_start", machine: string | null, id: string, action: DeployAction, } | { "op": "deploy_status", machine: string | null, id: string, } | { "op": "post", project?: string, input: PostInput, } | { "op": "post_status", project?: string, post_id: string, } | { "op": "post_list", project?: string, } | { "op": "post_unmute", project?: string, thread: string, } | { "op": "status" } | { "op": "machines" } | { "op": "panes", role: Role | null, } | { "op": "pane_run", machine: string | null, name: string | null, argv: Array<string>, cwd: string | null, cols: number | null, rows: number | null,
 /**
  * host 정본 profile로 harness를 띄운다(`argv`는 비운다, herdr-web-ui 새 세션의 agent 고르기)
@@ -337,7 +393,7 @@ thinking: boolean,
 /**
  * 이전 응답의 before. 생략하면 최신 쪽, 옛 상대는 무시한다.
  */
-before?: string, } | { "op": "pane_file", pane: string, path: string, } | { "op": "thread_file", project?: string, thread: string, path: string, } | { "op": "pane_dir", pane: string, path: string, hidden: boolean, } | { "op": "pane_send", pane: string, data: B64, } | { "op": "pane_read_text", pane: string, source: ReadSource,
+before?: string, } | { "op": "pane_file", pane: string, path: string, } | { "op": "thread_file", project?: string, thread: string, path: string, } | { "op": "thread_diff", project?: string, thread: string, query?: DiffQuery, } | { "op": "pane_dir", pane: string, path: string, hidden: boolean, } | { "op": "pane_send", pane: string, data: B64, } | { "op": "pane_read_text", pane: string, source: ReadSource,
 /**
  * 줄 수(기본: Recent 80줄, Visible은 화면 전부, 최대 1000)
  */
@@ -499,7 +555,7 @@ plan_sha256: string, } | { "kind": "routine_runs", runs: Array<RoutineRun>,
 /**
  * 파일 원문(FRONT_API 1.58). 임무 조건·깨진 파일·옛 host는 없다.
  */
-source: RoutineSource | null, } | { "kind": "library" } & LibraryView | { "kind": "library_link" } & LinkView | { "kind": "library_reports", reports: Array<LibraryReport>, } | { "kind": "library_imported", reports: Array<LibraryReport>, skipped: Array<LibrarySkip>, } | { "kind": "library_pruned", removed: Array<string>, } | { "kind": "library_prune_preview" } & LibraryPrunePlan | { "kind": "library_rotated" } | { "kind": "library_usage", size: number, reports: number, live: number, problems: number, max_size: number, max_days: number, protected_size: number, } | { "kind": "library_links", links: Array<LinkView>, } | { "kind": "evaluators", evaluators: Array<EvaluatorView>, } | { "kind": "evaluations", evaluations: Array<EvaluationView>, } | { "kind": "evaluation" } & EvaluationView | { "kind": "preferences" } & SharedPreferences;
+source: RoutineSource | null, } | { "kind": "library" } & LibraryView | { "kind": "thread_diff", project: string, thread: string, diff: DiffView, } | { "kind": "library_link" } & LinkView | { "kind": "library_reports", reports: Array<LibraryReport>, } | { "kind": "library_imported", reports: Array<LibraryReport>, skipped: Array<LibrarySkip>, } | { "kind": "library_pruned", removed: Array<string>, } | { "kind": "library_prune_preview" } & LibraryPrunePlan | { "kind": "library_rotated" } | { "kind": "library_usage", size: number, reports: number, live: number, problems: number, max_size: number, max_days: number, protected_size: number, } | { "kind": "library_links", links: Array<LinkView>, } | { "kind": "evaluators", evaluators: Array<EvaluatorView>, } | { "kind": "evaluations", evaluations: Array<EvaluationView>, } | { "kind": "evaluation" } & EvaluationView | { "kind": "preferences" } & SharedPreferences;
 
 export type FrontEvent = { "ev": "state", machines: Array<MachineView>, panes: Array<PaneView>, } | { "ev": "workspace" } & Workspace | { "ev": "flow" } & FlowEvent | { "ev": "thread" } & ThreadView | { "ev": "question" } & QuestionView | { "ev": "preferences" } & SharedPreferences | { "ev": "pong", id: number, } | { "ev": "web", build: string, } | { "ev": "reports", unseen: number, } | { "ev": "app_badge", count: number, } | { "ev": "rollout", result: Outcome<RolloutCard | null>, } | { "ev": "notice" } & NoticeView | { "ev": "chat_changed", pane: string, signature: string, } | { "ev": "chat_watching", pane: string, live: boolean, };
 
@@ -826,7 +882,7 @@ background: number | null,
 background_wait: boolean,
 /**
  * 작업 중이지만 harness가 대화를 정리(compaction)하는 중이다(화면 감지 사건 `compacting`, plan §8.306). 그동안 harness는 친 글과
- * 대기 글을 읽지 않고, 웹은 보낸 글을 이 기기에 붙잡았다가 끝나면 보낸다. 옛 host는 보내지 않는다(없으면 false, 1.59)
+ * 대기 글을 읽지 않고, 웹은 보낸 글을 이 기기에 붙잡았다가 끝나면 보낸다. 옛 host는 보내지 않는다(없으면 false, 1.60)
  */
 compacting: boolean, };
 

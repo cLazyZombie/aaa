@@ -13,6 +13,7 @@ mod cwd;
 pub mod deploy;
 pub use deploy::guard::worker as deployment_guard;
 pub mod detect;
+mod diff;
 mod files;
 mod git_watch;
 mod health;
@@ -1471,6 +1472,10 @@ impl Agent {
             AgentRequest::PrQuery { cwd, query } => pr::query(&cwd, &query)
                 .await
                 .map(AgentResponse::Pr)
+                .map_err(|e| ErrorBody::new(ErrorCode::BadRequest, format!("{e:#}"))),
+            AgentRequest::ThreadDiff { cwd, base, query } => diff::query(&cwd, base.as_deref(), &query)
+                .await
+                .map(AgentResponse::Diff)
                 .map_err(|e| ErrorBody::new(ErrorCode::BadRequest, format!("{e:#}"))),
         };
         if let Some(reply) = reply {

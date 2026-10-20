@@ -5807,6 +5807,38 @@ L4 후속(10-20 00시 사용자 관찰): 멈춤 상태의 후보 예약과 재�
 - **FRONT_API 1.58.** 옛 front는 새 칸을 버린다. 옛 host는 `queue`·`source`·`front_api`를 생략해 웹이 큐·원문·변환 단추를 숨기고, `automation_unblock`은 모르는 요청으로 거절한다. agent wire는 바뀌지 않는다.
 - **검증.** host 유닛(automation::tests): 미리보기 무기록(폴더 전체 비교)·Reader 미리보기 허용/변환 거부·다른 hash·미리보기 뒤 원본 변경 거부·미리보기 목록 = 실제 변환 목록, 풀기의 actor 거부 4종·다른 묶음 거부·계속(묶음만)·버리기(뒤 입력까지)·닫은 입력 재수락 없음·다른 동작 묶음 거부, 원문·본문 참조·글자 경계 자르기. 웹 유닛 `automationModel.test.mjs`. 웹 E2E `40-automation-detail`: 실제 일정 판정 기록으로 상세 절·기록 수(host 50건과 같음)·원문, 미리보기가 파일을 바꾸지 않음·생기는 규칙·보존 위치·변환 뒤 보존 사본 = 원본, Reader 미리보기만, 대상 pane을 끝내 실제 전송 실패로 막힌 묶음(다시 판정해도 같은 묶음·실패 기록 그대로), 휴대폰 Reader 상세 폭과 풀기 거부, 「계속 보내기」 → 다음 입력이 실제로 시도되어 새 묶음으로 다시 막힘 → 「버리기」 → 규칙 끈 뒤 tick 울타리 뒤 빈 큐·두 묶음의 입력 모두 「다시 보내지 않음」 기록. 패드 820 상세가 화면 안. `34-automations`는 기록 확인을 상세로 옮겼다.
 
+### 8.304 대화의 도구 호출 묶음(10-20, t-0477)
+
+- **요청.** 사용자 「진행해.」(t-0403 t3code 조사 UI·UX 추천 2). 대화 보기에서 도구가 하나에 한 줄씩 길게 늘어서 휴대폰에서 대화 흐름이 묻혔다.
+- **고침.** 사람·답 말 사이에 이어진 도구·생각 줄이 둘 이상이면 한 줄로 접는다: 그림 + 「명령 2개 실행, 파일 3개 읽음」. 누르면 그 줄들이 바로 아래에 펼쳐지고 다시 누르면 접힌다. 도구 하나는 지금처럼 한 줄 그대로다. 묶기·요약은 순수 모듈 `web/src/toolGroups.ts`, 그리기는 `Chat.tsx` `ToolGroup`이다. agent·proto는 그대로다(도구 줄 「이름: 대표 인자」, chat.rs `tool_line`).
+- **참고에서 그대로 옮긴 것(t3code 4b1024daf).**
+  - 묶기: `apps/web/src/components/chat/MessagesTimeline.logic.ts:1594~1716`. 이어진 work 항목을 모으고, 하나뿐이면 묶지 않고, 둘 이상이면 접힌 `work-toggle`(처음엔 접힘)과 펼친 `work` 줄. 묶음 id는 첫 항목 id(`workGroupId`).
+  - 동작 분류: `packages/client-runtime/src/work-log/presentation.ts:417` `toolGroupAction`, `packages/shared/src/toolActivity.ts:246~300` `toolNameToken`(소문자, `_`·`-`·빈칸 뺌, `__`·`.`·`/`가 든 MCP 이름은 분류하지 않음)·`classifyToolActivity`(bash·shell·terminal=명령, read=읽기, grep·glob·find·rg·ls=코드 검색).
+  - 요약: 같은 파일 `toolGroupActionCount`(수정은 서로 다른 파일 수 + 파일 모르는 수정), `summaryActionPriority`(명령·수정 0, 그 밖의 도구 2, 나머지 1), `summarizeToolGroup`(우선순위로 두 가지를 골라 나온 차례로, 나머지는 「그 밖의 동작 N개」, 생각은 세지 않고 생각만이면 「생각 (×N)」).
+  - 머리: `MessagesTimeline.tsx:3834` `toolGroupSummaryIconName`(명령 terminal·읽기 eye·수정 square-pen·코드 검색 search·웹 globe·그 밖 wrench·생각 brain·섞임 hammer)·`WorkGroupHeader`(그림 + 말줄임 한 줄, 펼침 화살표 없음).
+  - 펼친 목록: `ExpandedWorkGroupEntries` 높이 `min(18rem, 50dvh)` 안에서 굴리고, 끝을 보고 있었으면 새 줄을 따라간다(`shouldFollowWorkGroupAppend`).
+  - 펼침 기억: thread(pane)마다(`rememberedPosition.disclosures.workGroups`). 펼치고 접을 때 끝을 보던 사람은 끝에 남고, 아니면 보던 자리가 그대로다(`suspendEndScrollMaintenanceForDisclosure`). aaa는 이미 있는 보던 줄 고정(§8.262 `holdAnchor`)과 끝 따라가기가 같은 일을 한다.
+  - 작업 중 맨 끝 묶음(`work-live`, logic.ts:1440~1500): 요약 대신 마지막 도구 줄을 빛나는 글자(`live-tool-shine`)로 보인다.
+- **다르게 한 곳.**
+  - 문구는 한국어이고 이음은 「, 」다(참고는 「 and 」·「, and 」). 브리프의 「명령 2개 실행, 파일 3개 읽음」대로.
+  - Claude·Codex 도구 이름을 이름표로 나눈다(참고는 서버가 준 item type). 수정(Edit·Write·MultiEdit·NotebookEdit·apply_patch), 읽기(view_image·NotebookRead 더함), 명령(exec_command·local_shell 더함), 웹(WebSearch·WebFetch)을 aaa 기록 이름에 맞춰 더했다. Agent·Task·TodoWrite·MCP는 「도구 N개 사용」이다.
+  - 실패 표시(빨간 그림)·시각·「Running …」 같은 진행 동사는 없다: aaa 기록에는 도구 결과·시각이 없다(agent가 뺀다). 작업 중 표시는 pane의 agent 상태(working)와 「기록 맨 끝 묶음」으로 가린다.
+  - 펼친 목록은 가상 목록(LegendList) 대신 보통 DOM이다: 묶음은 짧고, 대화 전체는 이미 줄 단위로 보이는 곳만 그린다(ChatRow, §8.298).
+  - 줄 id·자리 기억: 묶음은 화면에서 한 줄이라 굴림 기준 줄 목록(`rowIds`)에도 하나다. 앞 쪽을 읽어 묶음 앞에 도구 줄이 붙으면 첫 줄 id가 바뀌므로, 보던 줄·기억한 자리·펼침은 묶음 안 어느 줄 id로도 같은 묶음을 찾는다(`rowIndexById`, 참고는 같은 경우 묶음 id가 바뀐다).
+- **검증.** 단위 `web/test/toolGroups.test.mjs`(분류·요약·묶기·앞 쪽이 붙은 뒤 같은 묶음과 펼침). 웹 E2E `41-chat-tool-groups`가 데스크톱 Chromium 1280·패드 WebKit 820·휴대폰 WebKit 390에서 묶음 요약 두 줄, 접힌 동안 보이는 도구 줄은 한 줄짜리 Write뿐, 펼친 줄의 글과 차례, 끝이 아닌 곳에서 펼치고 접어도 머리가 1px 안 제자리, 끝을 보던 사람은 끝 묶음을 펼친 뒤에도 끝임을, 25줄 묶음은 펼치면 목록이 맨 위(scrollTop 0)에서 높이 상한 안에 굴림임을 단언한다(처음 구현은 끝에서 열려 실패했다). 둘째 단계는 가짜 Claude 작업 화면(입력 한 줄에 턴을 열고 다음 줄에 닫는다)으로 작업 중 맨 끝 묶음이 마지막 도구 줄(「Read: src/z.rs」)을 빛나는 글자로 보이고 턴이 끝나면 요약으로 돌아옴을 단언한다(작업 중 판정을 끄면 실패한다). 고치기 전 코드로는 「묶음 요약 []」로 실패했다. E2E 11·22·29·30·38·37(12조합, t-0474 수리 뒤) 유지. 가상화 판정(300줄)은 화면 줄(묶음은 한 줄) 수로 하고, row와 끝 이동이 같은 판정을 쓴다(t-0474).
+
+### 8.305 변경 파일 카드와 diff 보기(10-20, t-0476)
+
+- **요청.** t-0403 추천 3: 「파일 2개 +29 −12 · diff 열기」 카드와 파일 트리·diff 패널. 검토 대기 thread를 휴대폰에서 보고 병합을 정할 때 쓴다(사용자 10-20 「진행해.」).
+- **자리(t3code 근거).** t3code 4b1024da의 변경 카드는 턴이 끝난 assistant 글 바로 아래(`MessagesTimeline.tsx:2644-2649`), branch 범위의 입구는 thread 상세의 「Changes」 줄(`GitActionsControl.tsx:1844-1851`)이다. aaa는 턴 단위가 없고(t-0403) thread의 마지막 글이 보고이므로 thread 화면의 보고 카드 바로 아래에 둔다. 목록 줄에는 두지 않는다(t3code 목록 줄에도 숫자가 없다). diff 패널은 t3code `rightPanelLayout.ts`대로 980px 위에서 thread 옆 칸(`min(540px, 50%)`), 그 밑에서 덮는 sheet(휴대폰은 화면 전체, 패드는 `min(100vw, 760px)`)다.
+- **범위.** agent `diff.v1`(`AgentRequest::ThreadDiff`, FRONT_API 1.59 `thread_diff`)이 그 thread worktree에서 읽는다. 「main 대비」는 thread base ref(`ThreadRec.base`, 없으면 `origin/HEAD`·`origin/main`·`origin/master`·`main`·`master`)와 HEAD의 merge-base 대비 지금 작업 트리(커밋·staged·미커밋·무시하지 않은 새 파일), 「미커밋」은 HEAD 대비다(t3code `GitVcsDriverCore.ts:2854-3005`의 branch-range·working-tree). git 인수는 t3code `REVIEW_DIFF_ARGS`(`--find-renames --no-ext-diff --no-textconv --minimal`)에 `--no-optional-locks`·`core.fsmonitor=false`를 더한다.
+- **읽기만.** index를 임시 파일로 복사하고 새 파일을 그 사본에만 intent-to-add로 담는다(t3code와 같다). intent-to-add가 쓰는 빈 blob도 임시 객체 폴더에 쓰고 저장소 객체는 alternate로 읽기만 한다(`GIT_OBJECT_DIRECTORY`). 저장소의 index·HEAD·ref·`.git/objects`·작업 파일은 그대로다(agent 시험이 바이트로 확인).
+- **상한.** 전체 patch 120,000바이트(t3code와 같다)를 넘으면 목록만 주고 웹이 파일마다 읽는다(처음 넷, 바닥이 600px 안에 들면 넷 더: t3code `useReviewFilePatches`·`DiffFileLoadingBoundary`). 파일 하나는 t3code 1 MiB 대신 JSON으로 적은 길이 768 KiB에서 줄 경계로 자르고 「일부」를 단다(agent link frame 1 MiB). 새 파일 5,000개를 넘으면 새 파일을 빼고 알린다(t3code와 같다). 목록은 3,000개까지(frame), 넘으면 잘린 patch만 보인다. 비교 전체 20초.
+- **카드.** t3code `ChangedFilesTree.tsx`·`DiffStatLabel.tsx`·`turnDiffTree.ts`를 옮겼다: 「파일 N개 +a -d」(ASCII 붙임표, 1000 위는 k·m), 폴더 먼저·자연수 차례·한 자식 폴더 합침·폴더 합계, 폴더는 접힌 채 시작하고 「모든 폴더 펼치기」를 thread마다 기억, 「diff 열기」(카드 폭 24rem 밑은 아이콘만)는 경로 차례 첫 파일로 연다. 숫자는 공백을 무시하지 않는다(t3code 카드와 같다). 못 읽거나 바뀐 것이 없으면 카드가 없다. 보기 기기는 카드도 요청도 없다(`ThreadFile`과 같다).
+- **패널.** `@pierre/diffs` CodeView(t3code `StyledDiffCodeView`의 머리 32px·구분선 24px, `lineDiffType: "none"`, 붙는 머리), 파일은 모두 접힌 채 시작하고 카드에서 고른 파일을 펼쳐 데려온다(t3code `revealDiffFile`). 머리 한 줄: 범위 고르기·합계·다시 읽기·모두 펼치기/접기·나란히(768px 위만)·긴 줄 바꿈·공백 무시(기본 켬, t3code와 같다)·닫기. 파일 이름을 누르면 파일 보기(worktree 기준), 머리를 누르면 접기. 다시 읽기는 단추·창 focus·보고가 바뀔 때(t3code의 workspace 변경 신호 대신).
+- **t3code와 다른 것.** 패널은 파일 보기처럼 기록 한 칸이다(닫기·뒤로·iOS 가장자리 쓸기가 같다, §8.300·§8.301. t3code 오른쪽 패널은 기록에 없고 sheet에 닫기가 없다). 손가락 기기에서 카드 줄 40px·머리 단추 44px·diff 머리 44px. 카드 250줄 가상화·패널 안 파일 트리 곁칸·diff 안 찾기(t3code 패치)·줄 의견·폭 끌기는 옮기지 않았다. 나란히 보기는 설정 대신 이 기기에 기억한다(aaa 설정에 비교 보기 방식이 없다, §8.175). 줄 높이는 앱 글꼴로 재서 넘긴다(기본 20px 어림이면 짧은 비교에서 붙는 창이 아래로 밀렸다).
+- **검증.** common `diff::tests`(numstat·name-status 해석, 줄 경계 자르기, base 후보), agent `diff::tests`(실제 저장소: branch·미커밋·파일 하나·없는 base, 저장소 불변, 외부 callback 안 돎, 큰 비교의 frame 안 크기), 웹 유닛 `diffTree.test.mjs`, 웹 E2E `42-thread-diff`(데스크톱 Chromium 카드·옆 칸·나란히·미커밋·뒤로, iPhone 390·430·iPad 820 WebKit sheet·머리 한 줄·닫기 44px, 큰 비교의 파일별 읽기·「일부」).
+
 ### 8.306 대화 정리(compaction) 중 감지·보내기 보류·표시(10-20, t-0479)
 
 - **사건.** 10-20 12:22 운영 coordinator가 받은 글로 턴을 열자마자 자동 정리를 65초 했다(JSONL `compact_boundary` durationMs 65597). 그 사이 웹에서 보낸 글은 Claude 대기열에 들어갔고(`queue-operation enqueue` 12:22:46) 정리가 끝난 12:23:41에 읽혔다(유실이 아니라 지연). 사용자가 대기 말 「지금 보내기」를 눌렀지만 Claude 2.1.304 대기열은 정리 중 `wait`라 아무 일도 없었고, 10초 뒤 「보냈지만 10초가 지나도 대기 글이 그대로입니다」 경고만 떴다.

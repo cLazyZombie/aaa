@@ -5,6 +5,8 @@ mod git_watch;
 pub use ci::*;
 pub use git_watch::*;
 pub mod deploy;
+pub mod diff;
+pub use diff::*;
 pub mod input;
 pub use deploy::*;
 pub use input::*;
@@ -94,6 +96,12 @@ pub fn typescript_bindings() -> String {
         PostResult::decl(&cfg),
         PostSender::decl(&cfg),
         PostEnvelope::decl(&cfg),
+        DiffScope::decl(&cfg),
+        DiffFileRef::decl(&cfg),
+        DiffQuery::decl(&cfg),
+        DiffStatus::decl(&cfg),
+        DiffFile::decl(&cfg),
+        DiffView::decl(&cfg),
         FrontRequest::decl(&cfg),
         SharedPreferences::decl(&cfg),
         RolloutSpec::decl(&cfg),

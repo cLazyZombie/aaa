@@ -663,6 +663,30 @@ svg.i { width: 16px; height: 16px; flex-shrink: 0; fill: none; stroke: currentCo
   .chat-msg.user { max-width: 92%; }
 }
 .chat-msg.tool { align-self: flex-start; padding: 2px var(--space-3); font: calc(var(--fs-xs) * var(--chat-scale, 1))/1.5 var(--font-mono); color: var(--text-dim); background: transparent; }
+/* 도구 호출 묶음(plan §8.304, t3code WorkLog.tsx `WorkLogButton`·MessagesTimeline.tsx `ExpandedWorkGroupEntries`): 그림 + 한 줄 요약(넘치면
+   말줄임), 펼친 줄은 요약 글자와 같은 선에서 시작해 min(18rem, 50dvh) 안에서 굴린다. 손가락이면 머리를 누를 만한 높이로 */
+.chat-tool-group { display: flex; flex-direction: column; min-width: 0; }
+.chat-tool-group .chat-tool-group-head { display: flex; align-items: center; justify-content: flex-start; gap: var(--space-2); width: 100%; min-width: 0; height: auto; min-height: calc(var(--control-h) - var(--space-2)); padding: 0 var(--space-3); border: 0; border-radius: var(--r-sm); background: transparent; color: var(--text-dim); font: calc(var(--fs-sm) * var(--chat-scale, 1))/1.5 var(--font-ui); text-align: left; cursor: pointer; }
+@media (hover: hover) {
+  .chat-tool-group .chat-tool-group-head:hover { background: var(--bg-hover); color: var(--text); }
+}
+.chat-tool-group-icon { flex: none; width: var(--fs-md); height: var(--fs-md); }
+.chat-tool-group-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.chat-tool-group-list { display: flex; flex-direction: column; max-height: min(18rem, 50dvh); overflow-y: auto; overscroll-behavior: contain; padding-left: calc(var(--fs-md) + var(--space-2)); border-radius: var(--r-sm); }
+.chat-tool-group-list > .chat-msg.tool { max-width: 100%; overflow-wrap: anywhere; }
+@media (pointer: coarse) {
+  .chat-tool-group .chat-tool-group-head { min-height: var(--touch-target); }
+}
+/* 작업 중 맨 끝 묶음(참고 `live-tool-shine`): 글자 위로 빛이 지나간다. 움직임을 줄인 기기는 멈춘 글자 */
+.chat-tool-group.is-live .chat-tool-group-label {
+  background: linear-gradient(90deg, var(--text-dim) 0%, var(--text-dim) 40%, var(--text) 50%, var(--text-dim) 60%, var(--text-dim) 100%) 0 0 / 300% 100%;
+  -webkit-background-clip: text; background-clip: text; color: transparent;
+  animation: chat-tool-shine 2s linear infinite;
+}
+@keyframes chat-tool-shine { from { background-position: 100% 0; } to { background-position: 0 0; } }
+@media (prefers-reduced-motion: reduce) {
+  .chat-tool-group.is-live .chat-tool-group-label { animation: none; color: var(--text); background: none; }
+}
 .chat-btn[aria-pressed="true"] { color: var(--accent); }
 /* 붙잡은 메시지는 입력창 기둥에(herdr/Composer.css `.terminal-stack.is-chat .composer-queue`: aaa의 pane 칸은 .term) */
 .term .composer-queue { width: min(calc(100% - 2 * var(--space-4)), var(--chat-w)); margin: 0 auto; }
@@ -1238,3 +1262,106 @@ summary.chat-compact-head { cursor: pointer; }
 }
 /* 휴대폰 빈 화면의 「목록 열기」(plan §8.301): 손가락에 맞는 44px */
 .empty-view .empty-open-list { margin-top: var(--space-5); min-height: 44px; }
+
+/* ── 변경 파일 카드·diff 패널(plan §8.305, t3code ChangedFilesTree·DiffPanel) ───── */
+.thread-split { flex: 1; min-height: 0; display: flex; }
+.thread-split > .thread-body { flex: 1 1 auto; min-width: 0; }
+.diff-stat { display: inline-flex; gap: var(--space-1); font-family: var(--font-mono); font-variant-numeric: tabular-nums; vertical-align: middle; }
+.diff-stat.aligned { display: inline-grid; grid-template-columns: 4ch 4ch; gap: var(--space-2); text-align: right; font-size: var(--fs-2xs); }
+.diff-add { color: var(--syntax-inserted); }
+.diff-del { color: var(--syntax-deleted); }
+.card.changed-files { container: changed-files / inline-size; padding: 0; overflow: clip; }
+.changed-files-head {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-3) var(--space-2) var(--space-4);
+  background: var(--bg-elevated);
+  border-bottom: 1px solid var(--border);
+}
+.changed-files-title { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-1) var(--space-3); min-width: 0; font-size: var(--fs-xs); font-weight: 600; color: var(--text-strong); }
+.changed-files-title .diff-stat { font-weight: 500; }
+.changed-files-base { font-weight: 400; font-family: var(--font-mono); font-size: var(--fs-2xs); }
+.changed-files-actions { display: flex; flex: none; align-items: center; gap: var(--space-1); }
+.changed-files-button { display: inline-flex; align-items: center; gap: var(--space-1); height: 28px; min-width: 28px; justify-content: center; padding: 0 var(--space-2); font-size: var(--fs-xs); }
+.changed-files-button svg { width: 14px; height: 14px; }
+.changed-files-open-word { display: none; }
+@container changed-files (min-width: 24rem) { .changed-files-open-word { display: inline; } }
+.changed-files-tree { padding: var(--space-1); }
+.changed-files-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  width: 100%;
+  height: 28px;
+  padding-right: var(--space-2);
+  border: 0;
+  border-radius: var(--r-md, 6px);
+  background: transparent;
+  color: var(--text);
+  text-align: left;
+  font: inherit;
+  cursor: pointer;
+}
+.changed-files-row:hover { background: var(--bg-hover); }
+.changed-files-row:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.changed-files-row svg { flex: none; width: 14px; height: 14px; color: var(--text-dim); }
+.changed-files-chevron { transition: transform 120ms; }
+.changed-files-chevron.open { transform: rotate(90deg); }
+.changed-files-indent { flex: none; width: 14px; }
+.changed-files-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: var(--font-mono); font-size: var(--fs-xs); }
+.changed-files-name.dir { color: var(--text-dim); font-size: var(--fs-2xs); }
+.changed-files-row > .diff-stat { margin-left: auto; flex: none; }
+@media (pointer: coarse) {
+  .changed-files-row { height: 40px; }
+  .changed-files-button { height: 44px; min-width: 44px; }
+}
+
+.diff-panel { display: flex; flex-direction: column; min-width: 0; min-height: 0; background: var(--bg); }
+.diff-panel.inline { flex: none; width: min(540px, 50%); border-left: 1px solid var(--border); }
+.diff-scrim { justify-content: flex-end; align-items: stretch; padding: 0; }
+.diff-scrim > .diff-panel.sheet { width: min(100vw, 760px); max-width: 100%; height: 100%; max-height: none; border-radius: 0; padding-bottom: env(safe-area-inset-bottom, 0px); }
+.diff-panel-head {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  min-width: 0;
+  height: 44px;
+  padding: 0 var(--space-1) 0 var(--space-3);
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-elevated);
+}
+.diff-panel.sheet .diff-panel-head { box-sizing: content-box; padding-top: env(safe-area-inset-top, 0px); }
+.diff-scope { min-width: 0; max-width: 45%; height: 32px; padding: 0 var(--space-2); border: 1px solid var(--border); border-radius: var(--r-md, 6px); background: var(--bg); color: var(--text-strong); font: inherit; font-size: var(--fs-xs); text-overflow: ellipsis; }
+.diff-panel-head > .diff-stat { flex: none; font-size: var(--fs-xs); }
+.diff-panel-gap { flex: 1 1 auto; }
+.diff-panel .diff-action { flex: none; }
+.diff-panel .diff-action[aria-pressed="true"] { color: var(--accent); }
+.diff-panel-body { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; }
+.diff-scroll-host { flex: 1 1 auto; min-height: 0; display: flex; font-size: var(--fs-xs); line-height: calc(var(--fs-xs) * var(--lh-base)); }
+.diff-code-view { flex: 1 1 auto; min-width: 0; min-height: 0; height: 100%; overflow: auto; }
+.diff-note { margin: var(--space-6) var(--space-4); color: var(--text-dim); font-size: var(--fs-sm); }
+.diff-banner { flex: none; }
+.diff-file-toggle { display: inline-flex; align-items: center; justify-content: center; width: 24px; height: 24px; padding: 0; border: 0; border-radius: 4px; background: transparent; color: var(--text-dim); cursor: pointer; }
+.diff-file-toggle svg { width: 14px; height: 14px; transition: transform 120ms; }
+.diff-file-toggle svg.open { transform: rotate(90deg); }
+.diff-file-toggle[data-type="new"] { color: var(--syntax-inserted); }
+.diff-file-toggle[data-type="deleted"] { color: var(--syntax-deleted); }
+.diff-tag { margin-left: var(--space-2); padding: 0 var(--space-1); border-radius: 4px; background: var(--bg-hover); color: var(--text-dim); font-size: var(--fs-2xs); }
+.diff-tag.warn { color: var(--warn, var(--syntax-deleted)); }
+.diff-loading { display: flex; flex-direction: column; gap: var(--space-2); padding: var(--space-3) var(--space-4); }
+.diff-loading-row { height: 12px; border-radius: 4px; background: var(--bg-hover); }
+.diff-loading-row.head { width: 60%; height: 20px; }
+@media (pointer: coarse) {
+  .diff-file-toggle { width: 40px; height: 40px; }
+  .diff-panel .diff-action { width: max(44px, var(--touch-target)); height: max(44px, var(--touch-target)); }
+}
+@media (max-width: 768px) {
+  .diff-panel-head { gap: 0; }
+  .diff-panel-head > .diff-stat { margin-left: var(--space-2); }
+}
