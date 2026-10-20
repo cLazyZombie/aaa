@@ -6309,3 +6309,10 @@ L4 후속(10-20 00시 사용자 관찰): 멈춤 상태의 후보 예약과 재�
   보류한 콜백이 실제 RAF에서 끝난 뒤 글·선택·focus 보존과 Delete로 비우기를 확인한다. 원래 커서 RAF를 되살리면 선택 단언이 RED여야 한다.
   별도 transport 지연 진단의 수정 전 RED·수정 후 GREEN과 바이트 동일 원본 spec 3회 GREEN을 보존한다.
   기존 시한·단언·재시도 규칙을 바꾸지 않으며 전체 ci-local·check-public 뒤 착지한다. 새 E2E 번호는 만들지 않는다.
+
+### 8.339 새 계정 thread의 자기 폴더 신뢰 준비(10-21, t-0543)
+
+- **원인.** Codex 계정 실행은 새 격리 `codex-home/config.toml`에 신뢰 기록이 없었다. Claude 계정 실행은 토큰만 주입하고 인증 환경 정리에서 기존 `CLAUDE_CONFIG_DIR`도 지워 기본 설정 홈으로 돌아갔다. 실제 사용자 로그인·인증 파일·키체인은 조사하거나 복사하지 않는다.
+- **정책과 범위.** host는 유효한 safety `trust_screens=coordinator`일 때만 thread 자기 cwd를 전용 인증 요청의 선택 필드 `trust_cwd`로 보낸다. session은 실제 cwd와 같고 thread 실행인지 확인한다. 정규화한 cwd 한 곳만 기록하며 부모·main checkout·다른 worktree는 더하지 않는다. Codex는 cwd 신뢰를 저장소 루트보다 먼저 조회하므로 본 저장소 전체를 신뢰할 필요가 없다. 옛 agent는 선택 필드를 무시해 기존 신뢰 창을 유지한다. Front API 변경은 없다.
+- **격리와 재개.** Codex는 `projects.<cwd>.trust_level="trusted"`, 새 Claude 계정 thread는 전용 `claude-home/.claude.json`의 `projects[cwd].hasTrustDialogAccepted=true`를 사용한다. Claude 계정 토큰이 준비된 새 홈의 로그인 안내만 완료로 초기화하며 로컬 설정 전체를 복사하지 않는다. `user`이면 미리 신뢰하지 않고, 재시작 때 현재 정책으로 목록을 새로 만들어 이전 자동 신뢰도 제거한다. 격리 Claude의 다른 설정은 보존하고 대화·계획 조회는 같은 홈을 읽는다. 도입 전 Claude 계정 대화의 재개와 coordinator의 홈은 유지한다.
+- **검증.** 실제 host·로컬/원격 agent·session·PTY와 임시 홈의 가짜 Claude/Codex로 두 harness × 두 머신 × worktree/일반 폴더 × 두 정책을 검사한다. 계정은 host 기본값을 쓰며 신뢰 목록은 coordinator일 때 자기 cwd 하나, user일 때 빈 목록과 신뢰 화면이어야 한다. Claude 격리 대화와 TaskCreate 계획도 공개 조회 경로로 확인한다. 소켓 gate·종료·계획 사건으로 끝내며 실제 제공자 인증은 하지 않는다. 신뢰 전달 제거와 user 정책 무시 변형은 각각 첫 해당 worktree에서 RED여야 한다. 격리 설정 보존·자동 신뢰 제거·옛 대화 홈 유지 유닛과 전체 ci-local·check-public을 통과한 뒤 착지한다. 상세는 [계정](accounts.md#계정-thread의-폴더-신뢰)과 [시험](testing.md)의 t-0543 절을 따른다.

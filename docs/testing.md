@@ -1097,3 +1097,15 @@ fixture의 ParentDir 전제조건을 선행 단언한 뒤 target의 conflict 거
 - `cargo test -p aaa-host --lib supervisor::tests --locked`: 실제 task의 panic/조기 종료 사건과 가상 backoff 시각으로 1·2·4초 뒤 세 번 재실행, 상한 중단, 한 번 알림을 검사한다. loopback HTTP 수신은 앱을 닫았을 때 이상·회복 각각 한 번, 앱을 쓰는 동안은 notice만 확인한다. 이상/회복 판정 저장 뒤 inbox commit 전 재시작, SQLite INSERT 실패 뒤 재개방, failed INSERT만 거부해 뒤 recovered가 기다리는 순서, 이미 발행한 이상의 재시작 무중복·회복 이어 알림도 같은 owner가 검사한다. 판정의 `now`로 30초 안정 경계·희소 시간 초과 만료·회복 중 새 시간 초과를 확인한다.
 - `cargo test -p aaa-host --lib link::supervision_tests --locked`: Hello/Welcome/Ping을 마친 실험실 link의 전송체가 읽기 중 panic한다. pending의 즉시 AgentDisconnected·세대별 연결 정리·재연결 처리·네 번째 종료 뒤 거부와 독립 감시기의 inbox/notice 한 번을 확인한다. 다른 keeper는 실제 AgentConn 요청을 받되 응답을 보류하여 다섯 deadline 사건을 만들고, 이후 같은 reader의 실제 응답을 확인한다. ticker는 띄우지 않으므로 전달이 ticker에 기대면 실패한다. panic 감지 경계는 공통 `panic_log::latest()` API를 호출하고, 안전한 위치·payload 비노출의 정본 keeper는 t-0533의 `panic_log::` 시험이다.
 - 감시 제거·pending 정리 제거·재실행 상한 변경·시간 초과 관측 제거·회복 판정 제거·중복 억제 제거를 각각 되심으면 owner 단언이 실패해야 한다. 변형마다 원본 바이트를 복원하고 원본 keeper를 통과시킨 뒤 전체 ci-local/deps/TS/public gate를 수행한다. 실제 OS/Web Push 제공자의 휴대폰 전달·host 프로세스 전체 정지는 이 실험실 keeper의 보증 범위 밖이다.
+
+## 계정 thread 폴더 신뢰(t-0543)
+
+`cargo test -p aaa --test m13 accounts::account_threads_trust_only_their_cwd_when_coordinator_answers -- --exact`
+는 실제 host·로컬/원격 agent·session·PTY와 임시 홈의 가짜 Claude/Codex를 사용한다.
+두 harness × 두 머신 × worktree/일반 작업 폴더에서 `trust_screens=coordinator`일 때 신뢰 기록은
+정규화한 자기 cwd 한 곳뿐이고, `user`일 때 기록이 비고 실제 신뢰 화면이 남는지 확인한다.
+Claude SessionStart가 알린 격리 홈의 대화는 pane chat으로, TaskCreate 계획은 thread 상태로 확인한다. 완료는 socket gate와 종료 사건으로 판정한다.
+실제 인증 파일·키체인·제공자 네트워크는 사용하지 않는다. host의 정책 분기나 session의 기록 생성을
+빼면 시작 증명의 trusted 단언에서 실패해야 한다. 정책을 무시하고 늘 기록하면 user 단언에서 실패해야 한다.
+`cargo test -p aaa-session --lib account::tests::`는 격리 Claude의 환경설정 보존,
+재개 시 자동 신뢰 제거, 도입 전 Claude 대화의 원래 홈 유지도 확인한다.
