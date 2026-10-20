@@ -1372,11 +1372,37 @@ summary.chat-compact-head { cursor: pointer; }
 .chat-find {
   position: absolute; top: var(--space-2); right: var(--space-3); z-index: 3;
   width: min(360px, calc(100% - 2 * var(--space-3)));
+  display: flex; flex-direction: column; align-items: flex-end; gap: var(--space-1);
+  /* 칸과 앞 기록 줄 사이·옆의 빈 곳은 아래 대화를 가리지 않는다 */
+  pointer-events: none;
+}
+.chat-find > * { pointer-events: auto; }
+.chat-find-bar {
+  width: 100%;
   display: flex; align-items: center; gap: 2px;
   height: var(--control-h); padding: 0 var(--space-1) 0 var(--space-3);
   border: 1px solid var(--border-strong); border-radius: var(--radius-pill);
   background: var(--bg-elevated); box-shadow: var(--shadow-pop);
 }
+/* 앞 기록도 찾기(plan §8.309): 칸 아래 오른쪽의 작은 줄. 받는 동안 쪽 수와 멈춤 */
+.chat-find-earlier {
+  display: inline-flex; align-items: center; gap: var(--space-2);
+  height: 28px; padding: 0 var(--space-1) 0 var(--space-3);
+  border: 1px solid var(--border-strong); border-radius: var(--radius-pill);
+  background: var(--bg-elevated); box-shadow: var(--shadow-pop);
+  font-size: var(--fs-xs); color: var(--text-dim); font-variant-numeric: tabular-nums;
+}
+.chat-find-earlier-note.is-failed { color: var(--danger-text); }
+.chat-find-earlier-action {
+  display: inline-flex; align-items: center; gap: 4px; height: 22px; padding: 0 var(--space-2);
+  border: 0; border-radius: var(--radius-pill); background: transparent; color: var(--accent); font: inherit; cursor: pointer;
+}
+.chat-find-earlier-action:hover { background: var(--bg-hover); }
+.chat-find-earlier-action svg { width: 14px; height: 14px; }
+.chat-find-earlier:has(.chat-find-spin) { padding-left: var(--space-2); }
+.chat-find-spin { width: 14px; height: 14px; animation: chat-find-spin 0.9s linear infinite; }
+@keyframes chat-find-spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { .chat-find-spin { animation: none; } }
 .chat-find-input { flex: 1; min-width: 0; height: 100%; border: 0; outline: none; background: transparent; color: var(--text); font: inherit; font-size: var(--fs-sm); }
 .chat-find-input::-webkit-search-cancel-button { display: none; }
 .chat-find-count { min-width: 40px; text-align: center; font-size: var(--fs-xs); color: var(--text-dim); font-variant-numeric: tabular-nums; }
@@ -1385,7 +1411,9 @@ summary.chat-compact-head { cursor: pointer; }
 .chat-find-step svg { width: 16px; height: 16px; }
 .chat-find-open svg { width: 18px; height: 18px; }
 @media (pointer: coarse) {
-  .chat-find { height: var(--touch-target); }
+  .chat-find-bar { height: var(--touch-target); }
+  .chat-find-earlier { height: 36px; }
+  .chat-find-earlier-action { height: 32px; }
   /* 휴대폰 화면 키보드가 16px보다 작은 칸에서 화면을 키우지 않게 */
   .chat-find-input { font-size: 16px; }
   .chat-find-step { width: 36px; height: 36px; }
