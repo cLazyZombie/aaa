@@ -160,6 +160,9 @@ fn service_phase_keeps_file_resource_locks_and_removal_and_credentials_resume_pr
         credentials_verified(&job.record, Process { created: 18, ..previous }),
         "PID를 재사용해도 새 process 생성 시각을 검증한다"
     );
+    assert_eq!(job.restart(&mut os).unwrap_err().code, "service_ready_unverified");
+    assert_eq!(os.stops, 1, "암호 갱신 뒤 restart는 이전 process부터 중지한다");
+    assert!(job.record.phase == ServicePhase::Starting, "다시 RUNNING이어도 실제 ready 전에는 미완료다");
     job.remove(&mut os).unwrap();
     job.remove(&mut os).unwrap();
     assert_eq!(os.removes, 1);

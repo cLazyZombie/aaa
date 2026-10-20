@@ -6215,3 +6215,40 @@ L4 후속(10-20 00시 사용자 관찰): 멈춤 상태의 후보 예약과 재�
   cross clippy/build 뒤 별도 수리분으로 착지하며, Windows·Linux 실제 실행은 main push 뒤 CI다.
 - **근거.** [Rust PathBuf::push](https://doc.rust-lang.org/std/path/struct.PathBuf.html#method.push),
   [Path::join](https://doc.rust-lang.org/std/path/struct.Path.html#method.join)의 verbatim prefix 정규화 규칙.
+
+
+### 8.332 aaa install I5 Windows SCM 기반·읽기 상태(10-20, t-0485)
+
+- **단계 순서.** I2 뒤 Windows(I5) → 대화형·승인/Windows apply(I6) → Windows 최소 bootstrap(I7 일부) →
+  사용자 Windows PC 인수 → macOS(I3) → Linux(I4) → I7 최종 인수다. I3/I4에 두려던 감독자 내구 경계와
+  실제 backend ready/stop을 I5에서 먼저 만든다. CLI apply/resume은 I6의 서명·issuer pin·executor 전까지
+  자동화·SSH·외부 TTY 모두 needs_user/3이며 --yes/임의 JSON/시험 허용 flag로 열지 않는다.
+- **감독자와 파일 경계.** I2 configured receipt·같은 계획/계정/active ID·실제 파일과 resource lock을
+  대조한 private 감독자 job을 만든다. instance별 고정 host/agent 명령·사용자 SID·실행 SHA·프로필·config/state·
+  환경 allowlist를 결속한다. OS 등록 intent를 먼저 내구화하고 실제 SCM 조회로 같은 ID를 재개한다.
+  기존 정확한 서비스의 암호는 보존하며 모르는/변경된 서비스와 무소유 서비스 제거는 거부한다.
+  owned 서비스 제거 뒤 I2 보존 제거가 실행 파일을 없애도 읽기 status가 이를 복구하거나 잠그지 않는다.
+- **Windows adapter.** 고정 ServiceMain/dispatcher·SCM 상태·stop/shutdown handler와 최소 Win32 권한의
+  query/create/start/stop/delete/credential API를 둔다. console 호출은 backend fallback 없이 거부한다.
+  CreateEnvironmentBlock(FALSE)의 실제 사용자 token 환경을 선택해 쓰며 helper 환경을 상속하지 않는다.
+  SID·프로필·Session0·실행 경로/SHA·process 생성 시각·실효 elevation을 대조한다. 서비스 상태 변화는
+  SubscribeServiceChangeNotifications와 OS event로 기다리고 해제 시 진행 중 callback의 끝을 보장한다.
+- **준비와 연결.** 실제 host listener/agent 초기화 뒤 RUNNING을 보고한다. agent는 host가 없어도 실행하되
+  실제 Welcome/replay·단절·재연결을 별도 proof에 반영한다. proof는 실제 backend가 만들고, 읽기 status는
+  SCM PID·실제 process token/생성 시각·context/계정/프로필/SHA/boot/session/연결을 대조한다.
+  RUNNING 또는 private proof 하나만으로 완료를 만들지 않는다. 서비스 stop은 host/agent backend만 끝낸다.
+  host 서비스 종료에도 최신 로그인 취소/정리 경로를 유지한다.
+- **계정·암호.** 요청 SID와 계정명을 왕복 확인하고 잘못된 암호/정책은 needs_user로 거부한다.
+  사용자·유효 그룹·서비스 SID의 SeDenyServiceLogonRight가 우선하며 disabled/deny-only 그룹의 Allow를
+  채택하지 않는다. 필요한 경우만 SeServiceLogonRight를 더하고 다른 서비스 권한 제거를 추정하지 않는다.
+  암호는 일회 메모리/SCM API 외 serde·Debug·argv·env·journal에 넣지 않고 소유 buffer를 지운다.
+  갱신 중단은 pending이며 재개 때 새 보호 입력을 받는다. 갱신 성공 뒤에도 이전 PID/생성 시각의 process는
+  새 암호 검증이 아니다. 실제 재시작·ready 대조까지 별도 상태로 남긴다. UAC/보호 입력 UI는 I6다.
+- **owner와 한계.** 공통 owner는 세 OS cargo test에서 실제 I2 파일 transaction·private journal/잠금과
+  실제 고정 host/agent process를 사용한다. 외부 SCM/token 경계만 모형이며 ready producer를 stub하지 않는다.
+  Windows 전용 owner는 실제 token/profile·SCM 읽기/구독 ABI·UTF-16 argv·SCM 외 진입 거부·I2 receipt 대조를
+  검사한다. Mac/Linux에는 Win32 ABI owner만 없고 공통 owner는 제외하지 않는다. 현지 macOS 전체 gate와
+  Windows cross clippy/build는 착지 전 판정이다. Windows·Linux 실제 실행은 main push 뒤 CI다.
+- **실기 인수.** 실제 SCM 등록/logon·Session0·로그인 전 부팅·사용자 프로필·UAC·LSA Deny/GPO·암호 갱신·
+  잠긴 exe·ConPTY/인증은 CI의 읽기 probe로 증명하지 않는다. Windows 최소 bootstrap 뒤 준비물·받기·명령·
+  확인·되돌리기·가린 로그 절차를 확정해 사용자 PC에서 검증한다. 별도 VM/runner나 실제 계정/LSA 변경은 없다.

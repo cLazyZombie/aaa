@@ -986,3 +986,26 @@ fixture의 ParentDir 전제조건을 선행 단언한 뒤 target의 conflict 거
 `Path::join`은 Windows verbatim prefix에서 `..`를 먼저 정규화하므로 이 부정 입력을 만드는 데 쓰지 않는다.
 기존 invalid journal status의 bytes/권한/mtime·비밀 비노출 검사를 유지하며, 거부 분기를 허용으로 바꾼
 결함 변형은 conflict 단언에서 실패해야 한다. Windows 실제 통과 판정은 main CI가 맡는다.
+
+
+## aaa install I5 Windows 감독자(t-0485, plan §8.332)
+
+- `cargo test -p aaa --bin aaa install::engine::supervisor --locked`: 공통 owner 7개는 세 OS에서 실행한다.
+  실제 I2 파일/receipt/잠금·감독자 journal로 등록 직후 중단/실제 manager 대조·같은 ID 재개·기존 암호 보존·
+  외부 서비스 보존·credential 중단/이전 process 미채택·보존 제거·읽기 status를 확인한다.
+- lifecycle owner는 별도 process의 실제 고정 host/agent backend와 실제 ready producer를 쓴다.
+  host가 없는 agent 초기화 → 실제 host 연결/Welcome → 단절/재연결 → 각각 stop을 사건으로 기다린다.
+  유효 proof를 받아 계정/context/SHA/PID/생성 시각/boot/session/연결/elevation을 변조해 거부를 본다.
+  실제 TCP listener 충돌은 RUNNING/ready를 낼 수 없다. 외부 SCM/token 관찰만 모형이고 준비 영수증을 fixture가 만들지 않는다.
+- Windows 추가 owner 3개는 실제 현재 token/profile/SCM query·EventLog 읽기 구독/해제 ABI·CommandLineToArgvW,
+  실제 configured I2 receipt와 context/active ID 대조다. Win32 API가 없는 Mac/Linux에서 이 ABI owner만 제외한다.
+  lifecycle Windows 자식은 CREATE_NO_WINDOW지만 실제 SCM Session0 logon 증거는 아니다.
+- `cargo test -p aaa --test install --locked`는 숨은 서비스 진입의 console fallback 거부와 무변경을 포함한다.
+  apply/resume 승인 차단·I1 읽기 keeper를 유지한다. agent link owner는 Welcome/replay 완료 전 연결을 공개하지 않는지 본다.
+- 실제 process 대조 제거·proof context 무시·credential 이전 process 허용·manifest 결속 제거·LSA Deny 무시·
+  Removed에서 실행 파일 강제 요구·restart stop 생략·listener 전 host ready 변형은 각각 기존 owner에서 실패해야 한다.
+  원본 bytes 복구 뒤 공통 owner GREEN을 확인하고 전수 gate를 실행한다. 비밀 canary는 private tree UTF-8/UTF-16와
+  정상 owner 출력에서 검사한다. 시험 허용 production flag/export·실제 SCM/LSA 쓰기·고정 sleep·재시도는 없다.
+- 전체 macOS ci-local·deps·check-public과 Windows workspace/all-targets cross Clippy/build를 구분해 기록한다.
+  Windows·Linux 실제 실행은 main push 뒤 CI(windows-2025·ubuntu-24.04)다. 실제 서비스 logon·부팅·권한·암호·
+  ConPTY/공식 인증은 Windows bootstrap 뒤 사용자 실기 인수의 준비물/명령/되돌리기/로그 항목으로 남긴다.
