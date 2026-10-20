@@ -558,6 +558,11 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
   // 모름)만 띄운다. 휴대폰 push는 없다. 새 보고는 위 thread 길이, 입력 필요는 질문 길이 맡는다. 기록하지 않는 사건이라 다시
   // 붙을 때 놓친 것을 읽지 않는다(참고 `seedStatuses`: 목록은 알리지 않는다)
   const noticeNews = (n: NoticeView) => {
+    if (n.kind === "host_issue" || n.kind === "host_recovered") {
+      showDroplet({ target: "threads", title: n.title, kind: n.kind === "host_recovered" ? "done" : "blocked", machine: null, agent: null });
+      return;
+    }
+
     if (n.kind === "rollout_finished" || n.kind === "rollout_failed") {
       showDroplet({ target: "deployment", title: n.title, kind: n.kind === "rollout_finished" ? "done" : "blocked", machine: null, agent: null });
       return;

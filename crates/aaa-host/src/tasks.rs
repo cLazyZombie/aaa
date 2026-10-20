@@ -4,7 +4,9 @@
 //! - 저장소 칸(plan §8.330): owner 뒤 대괄호에 `project.toml` repos 경로의 마지막 이름(`[aaa]`)이나 `[작업 폴더]`(저장소 없는 작업
 //!   폴더)를 쓴다. 비면 정하지 않은 것이다. 이름·`작업 폴더` 꼴이 아닌 끝 대괄호는 제목 글이다.
 //! - owner: 없음·`agent`는 미할당, `me`는 사용자, `profile`·`@machine`·`profile@machine`은 agent, 그 밖의 글은 사람.
-//!   옛 표기 `(agent → t-0007)`도 읽는다.
+//!   옛 표기 `(agent → t-0007)`도 읽는다. agent owner는 「모델」(profile)과 「머신」 두 칸으로 나눠 보이고 고친다(plan §8.335,
+//!   `agent_parts`·`agent_owner`). 표기는 `(모델@머신)` 그대로이고(참고 herdr-projects와 같다), 맨 이름은 host가 아는 profile일
+//!   때만 모델이다.
 //! - 메모: task 줄보다 깊게 들여쓴 줄(사이의 빈 줄 허용).
 //! - 형식 어긋남(할 일 보기 T1, plan §8.306): 끝 괄호에 상태 메모를 쓴 줄(`(t-0001 S4 뒤, 사용자 지시 시)`)을 사람 owner로
 //!   오독하지 않는다. owner 꼴이 아니면 owner로 쓰지 않고 괄호째 제목에 두며 `problems`에 까닭을 단다. 판단하지 않고 원문을 보인다.
@@ -43,6 +45,79 @@ impl Owner {
             return Owner::Agent { profile: Some(s.to_string()), machine: None };
         }
         Owner::Person(s.to_string())
+    }
+}
+
+/// agent owner의 (모델, 머신) 칸. agent owner가 아니면(미할당·`me`·사람) 없음
+pub(crate) fn agent_parts(owner: Option<&str>, profiles: &[String]) -> Option<(Option<String>, Option<String>)> {
+    match Owner::parse(owner, profiles) {
+        Owner::Agent { profile, machine } => Some((profile, machine)),
+        _ => None,
+    }
+}
+
+/// 모델·머신 칸 → owner 글(`모델@머신`·`모델`·`@머신`). 둘 다 비면 없음
+pub(crate) fn agent_owner(profile: Option<&str>, machine: Option<&str>) -> Option<String> {
+    match (profile.filter(|p| !p.is_empty()), machine.filter(|m| !m.is_empty())) {
+        (None, None) => None,
+        (Some(p), None) => Some(p.to_string()),
+        (p, Some(m)) => Some(format!("{}@{m}", p.unwrap_or_default())),
+    }
+}
+
+/// 편집 동작의 owner·모델·머신 → 새 owner. `None`은 그대로, `Some(None)`은 비움(미할당). `cur`는 지금 owner(더하기는 없음).
+/// 모델·머신 칸은 주지 않은 칸을 지금 agent owner에서 가져온다. me·사람 owner와 모델·머신은 함께 쓰지 않는다.
+pub(crate) fn edited_owner(
+    cur: Option<&str>,
+    owner: Option<&str>,
+    profile: Option<&str>,
+    machine: Option<&str>,
+    profiles: &[String],
+) -> Result<Option<Option<String>>, String> {
+    let owner = owner.map(str::trim);
+    let (profile, machine) = (profile.map(str::trim), machine.map(str::trim));
+    if profile.is_none() && machine.is_none() {
+        return Ok(owner.map(|o| (!o.is_empty()).then(|| o.to_string())));
+    }
+    if owner.is_some_and(|o| !o.is_empty())
+        && (profile.is_some_and(|p| !p.is_empty()) || machine.is_some_and(|m| !m.is_empty()))
+    {
+        return Err("owner(me·사람)와 모델·머신을 함께 주지 않는다: 모델·머신은 agent에게 맡기는 칸이다".into());
+    }
+    // me·사람 owner에 빈 칸이 함께 오면 owner가 정한다(빈 칸은 비울 것이 없다)
+    if let Some(o) = owner.filter(|o| !o.is_empty()) {
+        return Ok(Some(Some(o.to_string())));
+    }
+    for (what, v) in [("모델", profile), ("머신", machine)] {
+        if let Some(v) = v.filter(|v| !v.is_empty())
+            && (!name_like(v) || matches!(v, "me" | "agent"))
+        {
+            return Err(format!("{what} 이름 꼴이 아니다: {v}"));
+        }
+    }
+    // owner를 함께 비웠으면 지금 칸을 물려받지 않는다
+    let cur_parts = if owner.is_some() { None } else { agent_parts(cur, profiles) };
+    let (cp, cm) = cur_parts.clone().unwrap_or_default();
+    let p = match profile {
+        Some(p) => (!p.is_empty()).then(|| p.to_string()),
+        None => cp,
+    };
+    let m = match machine {
+        Some(m) => (!m.is_empty()).then(|| m.to_string()),
+        None => cm,
+    };
+    match agent_owner(p.as_deref(), m.as_deref()) {
+        Some(o) => Ok(Some(Some(o))),
+        // 비울 칸만 받았다: agent owner면 미할당으로, me·사람은 그대로 둔다(그 칸이 아니다)
+        None if cur_parts.is_some() || owner.is_some() => Ok(Some(None)),
+        None => Ok(None),
+    }
+}
+
+/// task들의 모델·머신 칸을 owner에서 채운다(`profiles`: host가 아는 profile 이름)
+pub(crate) fn fill_agent(tasks: &mut [TaskView], profiles: &[String]) {
+    for t in tasks {
+        (t.profile, t.machine) = agent_parts(t.owner.as_deref(), profiles).unwrap_or_default();
     }
 }
 
@@ -251,6 +326,8 @@ pub(crate) fn parse_board(text: &str) -> (Vec<TaskListView>, Vec<TaskView>) {
             list: list.clone(),
             title,
             owner,
+            profile: None,
+            machine: None,
             repo,
             thread,
             notes,
@@ -734,6 +811,69 @@ mod tests {
         // 「정리 제안」은 저장소 칸을 그대로 둔다
         let s = suggest(&parse("- [ ] 실패 조사 (미할당) [aaa]\n")[0], &[]).unwrap();
         assert_eq!(s.line, "- [ ] 실패 조사 [aaa]");
+    }
+
+    /// 모델·머신 칸(plan §8.335): 표기 `(모델@머신)` 그대로 두 칸으로 나눠 읽고, 칸마다 고친다
+    #[test]
+    fn model_and_machine_fields() {
+        let profiles = vec!["claude".to_string(), "codex-fast".to_string()];
+        let mut t = parse(
+            "- [ ] 둘 다 (codex-fast@mac-a)\n- [ ] 모델만 (codex-fast)\n- [ ] 머신만 (@mac-a)\n- [ ] 나 (me)\n\
+             - [ ] 사람 (Priya Rao)\n- [ ] 미할당\n- [ ] 옛 (agent → t-0007)\n",
+        );
+        fill_agent(&mut t, &profiles);
+        let v: Vec<_> = t.iter().map(|t| (t.profile.as_deref(), t.machine.as_deref())).collect();
+        assert_eq!(
+            v,
+            [
+                (Some("codex-fast"), Some("mac-a")),
+                (Some("codex-fast"), None),
+                (None, Some("mac-a")),
+                (None, None),
+                (None, None),
+                (None, None),
+                (None, None)
+            ]
+        );
+        // 머신 연결과 상관없이 host가 아는 이름이면 모델이다. 모르는 맨 이름은 사람이다
+        fill_agent(&mut t, &[]);
+        assert_eq!((t[1].profile.as_deref(), t[0].profile.as_deref()), (None, Some("codex-fast")));
+
+        let ed = |cur: Option<&str>, owner: Option<&str>, p: Option<&str>, m: Option<&str>| {
+            edited_owner(cur, owner, p, m, &profiles)
+        };
+        let some = |o: &str| Ok(Some(Some(o.to_string())));
+        // 칸 하나만 바꾸면 다른 칸은 지금 값이다
+        assert_eq!(ed(Some("codex-fast@mac-a"), None, Some("claude"), None), some("claude@mac-a"));
+        assert_eq!(ed(Some("codex-fast@mac-a"), None, None, Some("mac-b")), some("codex-fast@mac-b"));
+        assert_eq!(ed(Some("codex-fast"), None, None, Some("mac-b")), some("codex-fast@mac-b"));
+        assert_eq!(ed(Some("codex-fast@mac-a"), None, None, Some("")), some("codex-fast"));
+        assert_eq!(ed(Some("codex-fast@mac-a"), None, Some(""), None), some("@mac-a"));
+        assert_eq!(ed(Some("codex-fast"), None, Some(""), None), Ok(Some(None)));
+        // me·사람 task에서 비울 칸만 받으면 그대로, 머신을 주면 agent 일이 된다
+        assert_eq!(ed(Some("me"), None, Some(""), Some("")), Ok(None));
+        assert_eq!(ed(Some("me"), None, None, Some("mac-a")), some("@mac-a"));
+        // owner만(옛 꼴)은 지금처럼, 빈 owner와 칸을 함께 주면 지금 칸을 물려받지 않는다
+        assert_eq!(ed(Some("me"), Some("claude@mac-b"), None, None), some("claude@mac-b"));
+        assert_eq!(ed(Some("me"), Some(""), None, None), Ok(Some(None)));
+        assert_eq!(ed(Some("codex-fast@mac-a"), Some(""), None, Some("mac-b")), some("@mac-b"));
+        assert_eq!(ed(None, None, None, None), Ok(None));
+        // owner(me)와 빈 칸이 함께 오면 owner를 쓴다(`--owner me --profile ""`)
+        assert_eq!(ed(Some("codex-fast@mac-b"), Some("me"), Some(""), None), some("me"));
+        assert_eq!(ed(None, Some("me"), Some(""), Some("")), some("me"));
+        // me·사람과 모델·머신은 함께 쓰지 않고, 이름 꼴이 아닌 칸은 거부한다
+        assert!(ed(None, Some("me"), Some("claude"), None).unwrap_err().contains("함께 주지 않는다"));
+        assert!(ed(None, None, Some("sol high"), None).unwrap_err().contains("모델 이름 꼴"));
+        assert!(ed(None, None, None, Some("a@b")).unwrap_err().contains("머신 이름 꼴"));
+        assert!(ed(None, None, Some("me"), None).unwrap_err().contains("모델 이름 꼴"));
+        // 쓴 owner는 다시 같은 칸으로 읽힌다
+        for (p, m) in [(Some("claude"), Some("mac-b")), (Some("claude"), None), (None, Some("mac-b"))] {
+            let o = agent_owner(p, m).unwrap();
+            let line = task_line("", ' ', "일", Fields { owner: Some(&o), ..Fields::default() });
+            let mut back = parse(&format!("{line}\n"));
+            fill_agent(&mut back, &profiles);
+            assert_eq!((back[0].profile.as_deref(), back[0].machine.as_deref()), (p, m), "{line}");
+        }
     }
 
     #[test]

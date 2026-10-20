@@ -6224,3 +6224,68 @@ L4 후속(10-20 00시 사용자 관찰): 멈춤 상태의 후보 예약과 재�
 - **안전한 필드.** Git에서 추적하는 Rust 파일 목록에서 고른 저장소 상대 경로·줄·열, 고정 허용 thread 이름·런타임 숫자 ID, Tokio task 숫자 ID, 프로세스 종류, 빌드 HEAD SHA, 같은 원본 위치의 프로세스 수명 내 반복 횟수만 JSON 한 줄로 stderr에 쓴다. 동적 thread 이름은 `other`로 숨긴다. stable Tokio API에 task 이름이 없어 ID를 쓴다. 모르는 외부·생성 파일은 `external`, Git 없는 소스 배포의 판은 `unknown`이다. 빌드 생성물에도 홈 절대 경로를 넣지 않는다.
 - **감시 API.** `panic_log::latest()`는 마지막 안전한 `Snapshot`만 반환한다. 본문과 임의 이름을 보관하지 않는다. 상태를 먼저 공개하고 상태 잠금을 푼 뒤 stderr에 쓰므로 출력 소비자가 막혀도 감시자가 위치를 읽는다. hook은 알림을 직접 전송하지 않으며 host 자기 감시는 이 API를 쓸 수 있다.
 - **검증.** `cargo test -p aaa-common --lib panic_log::`가 별도 프로세스에서 네 역할·비밀 String과 비문자열 payload·동적 이름·환경·backtrace 설정·실제 Tokio task·서로 다른 thread의 같은 위치 반복을 확인한다. stderr를 잠근 동안에도 감시자가 위치를 관측하는 사건을 받아야 한다. Windows·Unix 절대 경로는 허용된 상대 경로로 줄이고 모르는 경로는 숨긴다. 운영 panic 스위치를 추가하지 않는다. 본문 출력·원본 경로·횟수 초기화·stderr 쓰기 중 상태 잠금의 네 결함이 RED, bytes 원복 뒤 GREEN이어야 한다. 전체 ci-local·deps·TS 최신·check-public을 통과한 뒤 착지한다. 새 웹 동작이 없어 웹 E2E 파일은 추가하지 않는다.
+
+### 8.333 aaa install I5 Windows SCM 기반·읽기 상태(10-21, t-0485)
+
+- **단계 순서.** I2 뒤 Windows(I5) → 대화형·승인/Windows apply(I6) → Windows 최소 bootstrap(I7 일부) →
+  사용자 Windows PC 인수 → macOS(I3) → Linux(I4) → I7 최종 인수다. I3/I4에 두려던 감독자 내구 경계와
+  실제 backend ready/stop을 I5에서 먼저 만든다. CLI apply/resume은 I6의 서명·issuer pin·executor 전까지
+  자동화·SSH·외부 TTY 모두 needs_user/3이며 --yes/임의 JSON/시험 허용 flag로 열지 않는다.
+- **감독자와 파일 경계.** I2 configured receipt·같은 계획/계정/active ID·실제 파일과 resource lock을
+  대조한 private 감독자 job을 만든다. instance별 고정 host/agent 명령·사용자 SID·실행 SHA·프로필·config/state·
+  환경 allowlist를 결속한다. OS 등록 intent를 먼저 내구화하고 실제 SCM 조회로 같은 ID를 재개한다.
+  기존 정확한 서비스의 암호는 보존하며 모르는/변경된 서비스와 무소유 서비스 제거는 거부한다.
+  owned 서비스 제거 뒤 I2 보존 제거가 실행 파일을 없애도 읽기 status가 이를 복구하거나 잠그지 않는다.
+- **Windows adapter.** 고정 ServiceMain/dispatcher·SCM 상태·stop/shutdown handler와 최소 Win32 권한의
+  query/create/start/stop/delete/credential API를 둔다. console 호출은 backend fallback 없이 거부한다.
+  CreateEnvironmentBlock(FALSE)의 실제 사용자 token 환경을 선택해 쓰며 helper 환경을 상속하지 않는다.
+  SID·프로필·Session0·실행 경로/SHA·process 생성 시각·실효 elevation을 대조한다. 신원과 image는
+  같은 process handle에서 읽고 조회 전후의 종료 신호를 즉시 확인한다. 서비스 상태 변화는
+  SubscribeServiceChangeNotifications와 OS event로 기다리고 해제 시 진행 중 callback의 끝을 보장한다.
+- **준비와 연결.** 실제 host listener/agent 초기화 뒤 RUNNING을 보고한다. agent는 host가 없어도 실행하되
+  실제 Welcome/replay·단절·재연결을 별도 proof에 반영한다. proof는 실제 backend가 만들고, 읽기 status는
+  SCM PID·실제 process token/생성 시각·context/계정/프로필/SHA/boot/session/연결을 대조한다.
+  RUNNING 또는 private proof 하나만으로 완료를 만들지 않는다. 서비스 stop은 host/agent backend만 끝낸다.
+  host 서비스 종료에도 최신 로그인 취소/정리 경로를 유지한다. SCM backend 진입에서도 §8.332의 안전한 panic 진단을
+  검증한 고정 역할(host/agent)로 분류한다.
+- **계정·암호.** 요청 SID와 계정명을 왕복 확인하고 잘못된 암호/정책은 needs_user로 거부한다.
+  사용자·유효 그룹·서비스 SID의 SeDenyServiceLogonRight가 우선하며 disabled/deny-only 그룹의 Allow를
+  채택하지 않는다. 필요한 경우만 SeServiceLogonRight를 더하고 다른 서비스 권한 제거를 추정하지 않는다.
+  암호는 일회 메모리/SCM API 외 serde·Debug·argv·env·journal에 넣지 않고 소유 buffer를 지운다.
+  갱신 중단은 pending이며 재개 때 새 보호 입력을 받는다. 갱신 성공 뒤에도 이전 PID/생성 시각의 process는
+  새 암호 검증이 아니다. 실제 재시작·ready 대조까지 별도 상태로 남긴다. UAC/보호 입력 UI는 I6다.
+- **owner와 한계.** 공통 owner는 세 OS cargo test에서 실제 I2 파일 transaction·private journal/잠금과
+  실제 고정 host/agent process를 사용한다. 외부 SCM/token 경계만 모형이며 ready producer를 stub하지 않는다.
+  Windows 전용 owner는 실제 token/profile·SCM 읽기/구독 ABI·UTF-16 argv·SCM 외 진입 거부·I2 receipt 대조를
+  검사한다. Mac/Linux에는 Win32 ABI owner만 없고 공통 owner는 제외하지 않는다. 현지 macOS 전체 gate와
+  Windows cross clippy/build는 착지 전 판정이다. Windows·Linux 실제 실행은 main push 뒤 CI다.
+- **실기 인수.** 실제 SCM 등록/logon·Session0·로그인 전 부팅·사용자 프로필·UAC·LSA Deny/GPO·암호 갱신·
+  잠긴 exe·ConPTY/인증은 CI의 읽기 probe로 증명하지 않는다. Windows 최소 bootstrap 뒤 준비물·받기·명령·
+  확인·되돌리기·가린 로그 절차를 확정해 사용자 PC에서 검증한다. 별도 VM/runner나 실제 계정/LSA 변경은 없다.
+
+### 8.334 host 핵심 작업 자기 감시와 이상 알림(10-20, t-0532)
+
+- **경계.** Agent link의 UDS/TLS 수신기·인증된 연결 처리, ticker, Front API 수신기, 웹 서버의 panic과 조기 종료를 감지한다. 운영 host 밖 감시자·시스템 설정은 만들지 않는다. panic 내용은 읽거나 알림에 복제하지 않는다. 위치 기록은 §8.332의 공통 panic hook 소유다. 감지한 panic은 `panic_log::latest()`의 안전한 Snapshot 중 현재 Tokio task ID와 일치하는 것만 작업 이름과 함께 로그에 연결한다. 동시 다른 task의 기록은 붙이지 않고, 정상 조기 종료에는 이전 panic을 붙이지 않는다.
+- **재실행.** listener를 `Arc`로 보존하여 같은 socket/port에서 1·2·4초 물러나 3회 다시 실행한다. 같은 사건의 네 번째 종료에서 멈추며 host 재시작이 필요하다. 소비한 link 스트림·명령을 재생하지 않는다. pinger·pending·세대별 연결을 정리하고 agent의 기존 재연결을 받아 복구한다. 같은 link 실패의 새 연결에도 물러남과 상한을 적용한다. 상한과 시작 시각·누적 횟수는 안전 로그에 남는다.
+- **판정.** agent 요청의 응답 시간 초과가 30초 창에 5건이면 한 이상이다. 떨어져 발생한 시간 초과는 창 밖으로 버린다. 실제 응답(오류 응답도 포함) 또는 재실행된 작업의 정상 진행 뒤 30초 동안 재발하지 않아야 회복이다. ticker가 실패한 회차는 완료로 세지 않고, 다음 성공 회차가 대기자를 풀게 한다.
+- **독립 전달.** 감시 상태와 알림 전달 task는 ticker와 따로 돈다. 이상·회복을 종류별 한 번씩 coordinator inbox에 저장한다. 열린 이상·시작 시각·누적 횟수와 미발행 사건을 host DB에 저장한다. 고정 항목 ID로 inbox INSERT와 발행 대기열 ACK를 같은 transaction에서 확정하므로 그 앞뒤 재시작·저장 실패에도 inbox를 잃거나 중복 발행하지 않고 회복을 이어 알린다. 앞 사건의 INSERT가 실패하면 뒤 사건도 보류하여 회복이 이상보다 먼저 발행되지 않게 한다. host 프로세스 전체의 종료·runtime 정지·OS 자원 소진·공유 상태 잠금의 poison을 자동 수리하는 경로는 아니다.
+- **외부 알림 예외.** §8.249의 coordinator 사용자 post 전용 규칙은 유지한다. 유일한 새 예외는 host supervisor가 정적인 작업 이름·시각·횟수로 만든 `host-health` 이상/회복이다. 임의 system/thread/inbox 항목을 외부로 보내지 않는다. 기존 쓰는 기기의 presence/focus 판정으로 앱을 쓰면 앱 안 알림, 닫으면 Web Push·webhook이다. 이 예외는 post 종류 선택·project mute에 묶지 않으며, 발송 실패는 재전송하지 않는다. 외부 알림이 설정되지 않았으면 inbox가 남는다.
+- **호환.** FRONT_API 1.74에 `host_issue`/`host_recovered` NoticeKind를 더한다. 옛 CLI에는 이 웹 알림을 보내지 않는다. Rust 정본에서 TypeScript를 생성한다. N-1 웹은 모르는 notice를 무시하며 새 웹에 다시 연결하면 받는다.
+- **근거와 시험.** 기존 `inbox::Outage`의 시각 인자·한 번 알림/회복 관례와 기존 `Viewing::user_in_use`, Web Push·webhook owner를 재사용한다. 실험실 전송체가 실제 link 읽기 중 panic하고, 실제 AgentConn 요청은 응답을 보류한다. 제품 결함 주입 flag나 고정 sleep은 없다. 상세 keeper·변형 RED·gate는 [시험](testing.md)의 t-0532 절을 따른다.
+
+### 8.335 task 모델·머신 칸(10-20, t-0531)
+
+- **요청.** 사용자 10-20 23:2x 「owner는 왜 있어?」 → 「수정해. 모델과 머신 따로 설정하게. UI도 좀 더 컴팩트하게 할 수 있으면(이건 필수 아냐).」 owner 한 칸이 사람 할 일(`me`)·모델·머신을 함께 담았고, 웹은 `profile@machine` 조합 하나를 골랐다. 결정 1A: 표기는 그대로 둔다.
+- **표기(`tasks.rs`).** 줄은 `- [ ] 제목 (모델@머신) [저장소] · t-NNNN` 그대로다(참고 herdr-projects COORDINATOR.md의 owner와 같다). 모델만 `(모델)`, 머신만 `(@머신)`, 사람 할 일은 `(me)`·`(이름)`, 비움은 미할당이다. 옛 줄은 바꿀 것이 없고, 칸을 고친 줄만 다시 쓴다(고치지 않은 줄은 바이트 그대로). 형식 검사(▲)·충돌 감지·기록·되살리기는 그대로다.
+- **나누기(`agent_parts`·`fill_agent`·`known_profiles`).** host가 owner를 `TaskView.profile`·`machine`으로 나눠 준다(할 일 화면·`context`). 맨 이름은 host가 아는 profile(host 정의 profile·기본 harness·프로젝트 `thread_profiles`)일 때만 모델이다. 예전에는 연결된 머신의 profile 목록으로만 판정해, 머신이 끊기면 `(codex-fast)`가 사람으로 읽혔다(`check_owner`·`--from-task`도 같은 목록을 더한다).
+- **쓰기(`edited_owner`).** `TaskOp` Add/Update `profile`·`machine`(FRONT_API 1.75): 주지 않은 칸은 지금 agent owner에서 가져오고(머신만 바꾸면 모델은 그대로), 빈 글은 그 칸만 비운다. 둘 다 비면 미할당이고, me·사람 task에 비울 칸만 오면 그대로 둔다. `owner`(me·사람)와 모델·머신을 함께 주거나 이름 꼴이 아닌 칸은 거부한다. 합친 owner는 지금처럼 `assignable --check`와 같은 판정을 거친다(칸 하나를 비워도 남은 칸을 다시 본다). CLI `aaa task add|edit --profile <모델> --machine <머신>`(`thread start`와 같은 이름), 사람 할 일은 `--owner me|<이름>`.
+- **보이기.** `aaa context`·`task list`는 agent task를 `(모델 X, 머신 Y)`로(빈 칸은 「자동」), 저장소 칸도 함께 보인다. coordinator 안내(AGENTS.md TASKS 절)는 새 옵션과 「머신이 비면 덜 붐비는 곳, 모델이 비면 프로젝트 기본」을 적는다. 있는 프로젝트의 AGENTS.md는 `aaa doctor files --fix`로 새 안내를 받는다.
+- **웹.** 할 일 폼은 「담당」(agent·나·사람…)을 고르고, agent면 「모델」(「자동」=프로젝트 기본, 연결된 머신의 profile, 머신을 골랐으면 그 머신의 것)·「머신」(「자동」=덜 붐비는 곳, 끊긴 머신은 고를 수 없다) 두 칸이다(「자동」의 뜻은 칸의 title). 미할당은 agent에 두 칸이 빈 것이다. 웹은 표기 그대로 `모델@머신` owner 글로 보낸다(옛 host도 같은 판정). 목록 줄은 담당 칩 대신 아이콘 칩 둘(모델·머신), 상세·「바로 시작」 창은 「모델 · X」·「머신 · Y」. 「바로 시작」은 정한 칸만 잠근다(옛 host는 owner 글을 나눈다).
+- **컴팩트(선택).** 폼은 목록·저장소를 한 줄에, 담당·모델·머신을 한 줄에 두어(데스크톱 상세 칸·휴대폰 390px) 저장 단추가 첫 화면에 들어온다. 저장소 「정하지 않음」 글을 줄였다. 목록 줄은 칸 이름을 아이콘으로 줄였다(휴대폰은 지금처럼 칩을 숨긴다).
+- **검증.** host 유닛 `tasks::tests::model_and_machine_fields`(나누기·끊긴 머신의 profile·칸별 고치기·거부·다시 읽기), `task_edit::tests::model_machine_edits`(칸별 고치기, 메모만 고친 옛 줄 바이트 그대로, 더하기·판정 거부·me와 함께 거부). m13 `coordinator_flow`(context 칸·글, `task add|edit --profile|--machine`, 거부 둘, `task list` 글, 안내). 웹 순수 시험 `tasksModel.test.mjs`(host 칸 우선·옛 host 나누기·폼 동작·잠금). 웹 E2E 54에 「모델·머신 칸」 단계(칸별 저장과 파일 줄, 칩, 바로 시작 잠금, 나로 바꾸기)와 데스크톱·iPhone 캡처.
+
+### 8.336 일을 맡기기 전 기존 task 검색과 동시 갱신(10-21, t-0539)
+
+- **안내.** coordinator는 새 thread를 시작하거나 열린 thread에 일을 넘기기 전에 TASKS.md에서 같은 일·겹치는 일을 찾는다. 있으면 그 task를 `--from-task … --link-task`로 시작하거나 이미 이어진 열린 thread에 넘기고, 사용자 말에 맞게 메모·모델·머신·저장소도 함께 고친다. 없으면 기존 시작 흐름을 따른다. §8.335의 모델·머신 분리 안내와 CLI는 유지한다. 안내 원본은 `aaa doctor files --fix`가 운영 AGENTS.md에 반영한다.
+- **보조 경고.** task 없이 제목으로 시작할 때 비슷한 열린 task와 연결 명령을 한 줄 알린다. 대소문자·구두점을 뺀 낱말 집합이 같거나, 두 낱말 이상 겹치고 합집합의 2/3 이상이 같을 때만 알리며 파일 순서상 첫 후보를 고른다. 완료 task는 제외한다. 형태소·동의어를 추측하지 않으며, 시작을 거부하거나 TASKS.md를 고치지 않는다. 기존 ThreadView 경고를 사용하므로 Front API 변경은 없다.
+- **검증.** 경고 유닛은 정규화·겹침 경계·완료 제외·명령의 셸 인용을, m13은 실제 CLI의 경고와 시작 성공·경고 없는 경로·원문 보존을 검사한다. 기존 안내 생성·갱신 keeper가 새 문구도 검사한다. 완료 제외를 제거하면 음성 시험이 실패해야 한다. 상세는 [시험](testing.md)의 t-0539 절을 따른다.
