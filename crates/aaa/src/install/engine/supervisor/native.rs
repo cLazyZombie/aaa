@@ -698,25 +698,35 @@ mod tests {
     use super::*;
     #[test]
     fn process_observation_rejects_completed_process_with_its_handle_still_open() {
+        use std::io::Read;
         use std::os::windows::io::AsRawHandle;
         use std::process::{Command, Stdio};
-        let command = PathBuf::from(std::env::var_os("SystemRoot").unwrap()).join("System32/cmd.exe");
-        let mut child = Command::new(command)
-            // /C 뒤는 C argv가 아닌 cmd 명령문이다. 고정 두 token을 따로 주어
-            // Rust가 전체를 "exit 0"으로 감싸지 않게 한다.
-            .args(["/D", "/Q", "/C", "exit", "0"])
+        // 같은 시험 실행 파일의 목록만 출력하고 성공 종료한다. 시험 본체는 실행하지 않아 재귀하지 않는다.
+        let mut child = Command::new(std::env::current_exe().unwrap())
+            .arg("--list")
             .stdin(Stdio::null())
             .stdout(Stdio::null())
-            .stderr(Stdio::null())
+            .stderr(Stdio::piped())
             .spawn()
             .unwrap();
+        // wait 중에도 pipe를 읽어 많은 실패 출력이 자식의 종료를 막지 않게 한다.
+        let mut stderr = child.stderr.take().unwrap();
+        let stderr = std::thread::spawn(move || {
+            let mut bytes = Vec::new();
+            stderr.read_to_end(&mut bytes).unwrap();
+            bytes
+        });
         let status = child.wait().unwrap();
-        assert!(
-            status.success(),
-            "cmd exit fixture failed: status={status:?}, code={:?}, hex={:?}",
-            status.code(),
-            status.code().map(|code| format!("0x{:08X}", code as u32))
-        );
+        let stderr = stderr.join().unwrap();
+        if !status.success() {
+            eprintln!(
+                "test executable exit fixture failed: status={status:?}, code={:?}, hex={:?}, stderr_first_line={:?}",
+                status.code(),
+                status.code().map(|code| format!("0x{:08X}", code as u32)),
+                String::from_utf8_lossy(&stderr).lines().next().unwrap_or("")
+            );
+        }
+        assert!(status.success(), "test executable exit fixture failed");
         let handle = child.as_raw_handle();
         // 잘못된 handle이 아닌 실제 종료한 process가 부정 입력이어야 한다.
         assert_eq!(unsafe { WaitForSingleObject(handle, 0) }, WAIT_OBJECT_0);

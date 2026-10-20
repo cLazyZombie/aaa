@@ -1198,9 +1198,12 @@ Claude SessionStart가 알린 격리 홈의 대화는 pane chat으로, TaskCreat
 ## install I5 Windows 종료 process fixture(t-0485)
 
 `install::engine::supervisor::native::tests::process_observation_rejects_completed_process_with_its_handle_still_open`은
-`cmd /D /Q /C exit 0`의 고정 token을 별도 인수로 전달한다. cmd 명령문 전체를 C argv 한 개로 감싸지 않는다.
+현재 시험 실행 파일을 `--list`로 직접 실행해 시험 본체의 실행·재귀 없이 성공 종료시킨다(§8.356).
+cmd 인수 분리(§8.352)는 실제 Windows CI에서도 실패했으므로 셸 해석에 기대지 않는다.
+stdout은 null로 두고 stderr는 reader thread가 읽어 자식 종료를 막지 않으며, 실패하면 status·code·32-bit hex·stderr 첫 줄을
+panic 앞 `eprintln!` 한 줄로 남긴다. `wait_with_output`으로 Child를 소비하지 않아 같은 process handle이 남는다.
 자식의 성공 종료·아직 열린 유효 handle의 `WAIT_OBJECT_0`·제품 `service_process_unverified`를 모두 검사하며
-고정 sleep·재시도·stdio 변경은 없다. 같은 native/상위 supervisor의 현재 image·SID·profile·SCM 읽기와
+고정 sleep·재시도·timeout·production 변경은 없다. 같은 native/상위 supervisor의 현재 image·SID·profile·SCM 읽기와
 Unicode argv 왕복 owner도 Windows cargo test에 남긴다. 이들은 Win32 전용이며 실제 실행은 main push 뒤 windows-2025,
 macOS gate·Windows cross compile 결과와 별도로 보고한다. SCM 실제 logon·UAC/LSA는 실기 인수 경계다.
 

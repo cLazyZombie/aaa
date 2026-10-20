@@ -6505,3 +6505,17 @@ L4 후속(10-20 00시 사용자 관찰): 멈춤 상태의 후보 예약과 재�
 - **올리기.** `POST /api/v1/projects/<p>/library-uploads/<올리기>?path=<보고서 안 경로>`(조작 기기, 본문 16MiB)는 host 상태 폴더 `library-uploads/<올리기>/<경로>`에 임시 파일 뒤 rename으로 쓴다. 올리기 이름은 웹이 만든 소문자 hex 32자, 경로는 library 사본 규칙(`safe_rel`: 숨은 이름·`..`·절대·역슬래시 거부). 한 올리기에 합계 64MiB·1000개(같은 경로를 다시 올리면 그 파일을 빼고 센다). `library_upload_publish`는 그 폴더를 CLI와 같은 `library_publish`(사본, 이름 규칙·사용자 보고서 index.html·library 상한·사용자 알림)로 등록하고 성공하면 폴더를 지운다. 실패하면 두어 고쳐 다시 등록한다. 손대지 않은 지 하루 넘은 올리기는 다음 올리기 때 지운다(쓰는 중인 올리기는 두고, 쓸 때마다 그 폴더 시각을 새로 한다). 등록 요청의 `files`(웹이 올린 수)와 올린 자리의 파일 수가 다르면(통째로 치워져 0이어도) `conflict`로 거부하고 웹은 다음 「올리기」를 새 자리에 처음부터 한다: 치워진 뒤 나머지만 올라온 반쪽 보고서를 등록하지 않는다. 등록은 쓰기와 같은 잠금 안이라 읽는 동안 다른 쓰기의 치우기가 지우지 않는다. host(macOS 기본 볼륨)가 한 파일로 보는 대소문자·유니코드 정규화만 다른 이름은 웹이 고를 때 막는다. 원본이 host 상태 폴더라 경로 성분의 thread 번호를 근원 thread로 읽지 않는다(이름의 번호만). 감사 기록 `library_upload`.
 - **웹.** 설정 창 「머신」(폰 및 기기 다음): 등록 창 열기(5·10·30·60분)·남은 분·닫기, 승인을 기다리는 머신(이름·fingerprint 앞부분)과 「승인…」 창(6자리 코드, 공백·하이픈 무시), 등록된 머신(연결·끊김은 host `state` 사건, host 머신은 폐기 단추 없음)과 폐기 확인 창. 「폰 및 기기」: 마지막 조작 기기의 폐기 단추를 끄고 까닭을 적음, 이 기기 폐기 확인 창, 「tailnet에 공개」(확인 창)·「공개 끄기」(aaa가 만든 공개만; 끈 뒤 다른 경로는 host Mac의 loopback 주소와 그리로의 ssh 포트 전달 — host가 tailnet 이름의 http Host를 받지 않으므로 그것은 경로로 내지 않는다). 보고서 화면 「보고서 올리기」 창(파일·폴더 고르기, 올릴 목록과 뺀 숨은 파일 수, 이름·사용자 보고서·제목, 파일마다 올린 수). 「이 aaa」 → 「공유 링크」 → 「키 교체…」.
 - **검증.** host 유닛 `library_upload::tests`(권한·경로·이름·합계 상한·다시 올리기, 등록과 폴더 지움, 사용자 보고서 index.html, 세션 안·Reader 거부)·`pairing_tests::the_web_keeps_its_last_controller_and_the_host_machine`·`pairing_tests::trust_management_requires_a_person_outside_the_session`(조작 기기가 등록 창을 열고 Reader는 거부), 웹 유닛 `adminModel.test.mjs`, 웹 E2E `60-admin`(가짜 `tailscale`·같은 Mac의 둘째 agent, 데스크톱·Reader·휴대폰 390). 절차는 [시험](testing.md).
+
+### 8.356 aaa install I5 종료 process fixture의 셸 의존 제거(10-21, t-0485)
+
+- **실패 보존.** §8.352의 cmd 인수 분리 뒤에도 실제 Windows CI에서 같은 성공 종료 단언이 실패했다.
+  인용 가설을 확정 원인이나 수리 성공으로 보지 않는다. 시험 목적은 종료했지만 handle이 아직 열린
+  process의 거부이므로 cmd 해석을 fixture의 전제에서 뺀다.
+- **fixture.** supervisor lifecycle의 자식 실행 관례처럼 `current_exe()`를 직접 실행한다. libtest의
+  `--list`는 시험 본체를 실행하지 않고 성공 종료하므로 재귀·운영 쓰기·별도 시험용 제품 진입점이 없다.
+  부모는 자식의 stderr를 별도 reader로 읽고 종료를 기다린 뒤 같은 Child의 handle을 계속 보유한다.
+  실패하면 status·code·32-bit hex·stderr 첫 줄을 panic 전 한 줄로 남긴다.
+- **보존·검증.** 성공 종료·`WAIT_OBJECT_0`·`service_process_unverified` 단언, production, timeout은
+  그대로다. 같은 모듈의 실제 SCM 구독·현재 process 신원과 상위 supervisor의 handle 결속·argv owner도
+  유지한다. 전체 macOS gate·Windows cross·공개 검사 뒤 착지 창을 기다리며 실제 Windows 통과는
+  main push 뒤 windows-2025 CI로만 판정한다. I6 WIP는 별도 보존한다.
