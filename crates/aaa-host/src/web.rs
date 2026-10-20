@@ -120,6 +120,7 @@ pub fn router(host: Arc<Host>) -> Router {
         .route("/api/v1/panes/{id}/ws", get(pane_ws))
         .route("/api/v1/panes/{id}/image", post(chat_image))
         .route("/api/v1/projects/{project}/uploads", post(task_file))
+        .route("/api/v1/projects/{project}/library-uploads/{upload}", post(library_upload))
         .route("/api/v1/projects/{project}/uploads/{name}", get(task_file_get))
         .route("/api/v1/projects/{project}/questions/{thread}/{hash}/{*path}", get(question_file_get))
         .route("/api/v1/projects/{project}/asks/{id}/{*path}", get(ask_file_get))
@@ -481,6 +482,36 @@ async fn task_file(
     };
     match host.task_file_save(role, &format!("device:{id}"), &project, q.kind.as_deref(), &bytes) {
         Ok(path) => Json(Outcome::Ok(serde_json::json!({ "path": path }))).into_response(),
+        Err(e) => error_response(e),
+    }
+}
+
+/// 웹 「보고서 올리기」(관리 GUI W5b, plan §8.349): 파일 하나를 올리기 폴더의 `path`에 쓴다(16MiB). 다 올리면 웹이
+/// `library_upload_publish`로 등록한다. 돌려주는 것은 그 올리기의 파일 수·합계
+#[derive(serde::Deserialize)]
+struct LibraryUploadQuery {
+    path: String,
+}
+
+async fn library_upload(
+    State(host): State<Arc<Host>>,
+    Path((project, upload)): Path<(String, String)>,
+    Query(q): Query<LibraryUploadQuery>,
+    req: Request,
+) -> Response {
+    let Some((_, role)) = device(&host, req.headers()) else { return unauthorized() };
+    if !role.can_control() {
+        return error_response(ErrorBody::new(ErrorCode::Forbidden, "보기 권한으로는 보고서를 올릴 수 없다"));
+    }
+    let Ok(bytes) = axum::body::to_bytes(req.into_body(), crate::library_upload::FILE_MAX as usize).await else {
+        return (
+            StatusCode::PAYLOAD_TOO_LARGE,
+            Json(Outcome::<()>::Err(ErrorBody::new(ErrorCode::TooLarge, "파일 하나는 16MiB까지 올린다"))),
+        )
+            .into_response();
+    };
+    match host.library_upload_put(role, &project, &upload, &q.path, &bytes) {
+        Ok((files, total)) => Json(Outcome::Ok(serde_json::json!({ "files": files, "total": total }))).into_response(),
         Err(e) => error_response(e),
     }
 }
@@ -897,6 +928,7 @@ async fn events_loop(host: Arc<Host>, dev: String, role: DeviceRole, mut socket:
     let mut asks = host.asks_changed.subscribe();
     let mut inbox = host.inbox_changed.subscribe();
     let mut accounts = host.accounts_changed.subscribe();
+    let mut enroll = host.enroll_changed.subscribe();
     let mut rollouts = host.rollout_changed.subscribe();
     let mut revoked = host.device_revoked.subscribe();
     let mut chat_notes = host.chat_notes();
@@ -913,6 +945,7 @@ async fn events_loop(host: Arc<Host>, dev: String, role: DeviceRole, mut socket:
     let mut send_asks = true;
     let mut send_inbox = true;
     let mut send_accounts = true;
+    let mut send_enroll = true;
     let mut send_rollout = true;
     let mut send_badge = true;
     let mut last_badge = None;
@@ -994,6 +1027,14 @@ async fn events_loop(host: Arc<Host>, dev: String, role: DeviceRole, mut socket:
             send_accounts = false;
             accounts.borrow_and_update();
             let text = serde_json::to_string(&FrontEvent::Accounts).unwrap();
+            if socket.send(Message::Text(text.into())).await.is_err() {
+                break;
+            }
+        }
+        if send_enroll {
+            send_enroll = false;
+            enroll.borrow_and_update();
+            let text = serde_json::to_string(&FrontEvent::Enroll).unwrap();
             if socket.send(Message::Text(text.into())).await.is_err() {
                 break;
             }
@@ -1116,6 +1157,11 @@ async fn events_loop(host: Arc<Host>, dev: String, role: DeviceRole, mut socket:
                 if r.is_err() { break }
                 send_state = false;
                 send_accounts = true;
+            }
+            r = enroll.changed() => {
+                if r.is_err() { break }
+                send_state = false;
+                send_enroll = true;
             }
             n = chat_notes.recv() => {
                 send_state = false;
