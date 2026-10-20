@@ -68,6 +68,7 @@ mod rollout;
 mod routine;
 mod routine_runs;
 mod seen;
+mod settings_admin;
 mod summary;
 mod supervisor;
 pub mod tailscale;
@@ -95,7 +96,7 @@ use aaa_config::{HostConfig, LocalAgentMode};
 use aaa_proto::{
     AgentRequest, AgentResponse, Connection, DeviceRole, ErrorBody, ErrorCode, FRONT_API, FrontRequest, FrontResponse,
     HostStatus, LayoutChange, LayoutNode, LeaseView, LinkMsg, MachineView, Outcome, PaneView, PendingEnroll,
-    PublishState, ScreenText, SessionInfo, SessionState, SpawnSpec, Tab, TerminalChunk, Workspace,
+    PublishState, ScreenText, SessionInfo, SessionState, SpawnSpec, Tab, TerminalChunk, WorkRootOp, Workspace,
 };
 use anyhow::{Context, Result};
 use sha2::Digest;
@@ -1330,6 +1331,11 @@ impl Host {
                 | FrontRequest::LibraryRotate
                 | FrontRequest::LibraryUploadPublish { .. }
                 | FrontRequest::RoutineApprove { .. }
+                | FrontRequest::SafetySet { .. }
+                | FrontRequest::ProfileApply { .. }
+                | FrontRequest::WorkRootCheck { .. }
+                | FrontRequest::WorkRootSet { .. }
+                | FrontRequest::HookSet { .. }
         ) && (front::in_session(actor)
             || actor.starts_with("worker:")
             || actor.starts_with("evaluator:")
@@ -1339,6 +1345,15 @@ impl Host {
                 ErrorCode::Forbidden,
                 if matches!(req, FrontRequest::RoutineApprove { .. }) {
                     "routine 명령 승인은 사람이 aaa 밖 터미널이나 웹(조작 기기)에서 한다(이 연결은 aaa 세션 안에서 왔다)"
+                } else if matches!(
+                    req,
+                    FrontRequest::SafetySet { .. }
+                        | FrontRequest::ProfileApply { .. }
+                        | FrontRequest::WorkRootCheck { .. }
+                        | FrontRequest::WorkRootSet { .. }
+                        | FrontRequest::HookSet { .. }
+                ) {
+                    "safety·profile·작업 root·hook 설정은 사람이 aaa 밖 터미널이나 웹(조작 기기)에서 바꾼다(이 연결은 aaa 세션 안에서 왔다)"
                 } else {
                     "기기·머신 등록과 폐기·웹 공개 변경·보고서 키 교체·올리기는 사람이 aaa 밖 터미널이나 웹에서 한다"
                 },
@@ -1363,10 +1378,24 @@ impl Host {
             other => (other, None),
         };
         // 프로젝트를 생략한 요청(FRONT_API 1.50, plan §8.288): host가 맡은 프로젝트 하나로 채운다
+        // 모든 프로젝트 기본·profile 자체를 고치는 설정 관리(W5c)는 프로젝트가 아직 없는 host에서도 된다(그때는 빈 채로 둔다)
+        let needs_project = !matches!(
+            &req,
+            FrontRequest::SafetyShow { scope: aaa_proto::SettingsScope::Global, .. }
+                | FrontRequest::SafetySet { scope: aaa_proto::SettingsScope::Global, .. }
+        ) && !matches!(
+            &req,
+            FrontRequest::ProfilePlan { change, .. } | FrontRequest::ProfileApply { change, .. }
+                if !matches!(change, aaa_proto::ProfileChangeReq::Allow { scope: aaa_proto::SettingsScope::Project, .. })
+        );
         if let Some(project) = req.project_mut()
             && project.is_empty()
         {
-            *project = self.instance_project()?;
+            match self.instance_project() {
+                Ok(p) => *project = p,
+                Err(e) if needs_project => return Err(e),
+                Err(_) => {}
+            }
         }
         match req {
             FrontRequest::AccountImport { name, harness, secret } => {
@@ -2034,6 +2063,30 @@ impl Host {
                 self.db.audit(actor, "enroll_open", &format!("{minutes}m"));
                 self.enroll_bump();
                 Ok(FrontResponse::Done)
+            }
+            FrontRequest::SafetyShow { project, scope } => self.safety_show(&project, scope).map(FrontResponse::Safety),
+            FrontRequest::SafetySet { project, scope, key, value, expected } => {
+                self.safety_set(&project, scope, &key, value, &expected, actor).map(FrontResponse::Safety)
+            }
+            FrontRequest::ProfileAdmin => self.profile_admin().map(FrontResponse::ProfileAdmin),
+            FrontRequest::ProfilePlan { project, change } => {
+                self.profile_plan(&project, &change).map(FrontResponse::ProfilePlan)
+            }
+            FrontRequest::ProfileApply { project, change, expected } => {
+                self.profile_apply(&project, &change, &expected, actor)
+            }
+            FrontRequest::WorkRootShow { machine } => self.work_root(&machine, WorkRootOp::Show, actor).await,
+            FrontRequest::WorkRootCheck { machine, path, mount } => {
+                self.work_root(&machine, WorkRootOp::Check { path, mount }, actor).await
+            }
+            FrontRequest::WorkRootSet { machine, path, mount } => {
+                self.work_root(&machine, WorkRootOp::Set { path, mount }, actor).await
+            }
+            FrontRequest::HookStatus { machine } => {
+                self.codex_hook(&machine, None, actor).await.map(FrontResponse::Hook)
+            }
+            FrontRequest::HookSet { machine, install } => {
+                self.codex_hook(&machine, Some(install), actor).await.map(FrontResponse::Hook)
             }
             FrontRequest::EnrollClose => {
                 self.enroll.lock().unwrap().open_until = None;

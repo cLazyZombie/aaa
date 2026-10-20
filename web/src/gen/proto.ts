@@ -702,7 +702,7 @@ lines: number | null, format: ReadFormat, } | { "op": "pane_send_text", pane: st
 /**
  * 없으면 끝없이 기다린다(herdr와 같다)
  */
-timeout_ms: number | null, } | { "op": "pane_get", pane: string, } | { "op": "pane_close", pane: string, } | { "op": "workspaces" } | { "op": "workspace_close", name: string, } | { "op": "workspace_rename", name: string, to: string, } | { "op": "pane_resize", pane: string, cols: number, rows: number, } | { "op": "pane_kill", pane: string, } | { "op": "pane_input", pane: string, data: B64, } | { "op": "pane_ctrl_enter", pane: string, trace: string | null, } | { "op": "pane_paste", pane: string, text: string, } | { "op": "pane_take", pane: string, } | { "op": "pane_release", pane: string, } | { "op": "pane_attach", pane: string, offset: number, total: number, sha256: string, data: B64, } | { "op": "pane_resume", pane: string, } | { "op": "pane_forget", pane: string, } | { "op": "pane_rename", pane: string, label: string | null, } | { "op": "workspace", name: string | null, } | { "op": "layout_apply", workspace: string | null, change: LayoutChange, } | { "op": "enroll_open", minutes: number, } | { "op": "enroll_close" } | { "op": "enroll_pending" } | { "op": "enroll_approve", name: string, code: string, } | { "op": "machine_revoke", name: string, } | { "op": "web_pair", role: DeviceRole, } | { "op": "devices" } | { "op": "device_rename", id: string, label: string, } | { "op": "device_revoke", id: string, } | { "op": "web_publish" } | { "op": "web_publish_off" } | { "op": "web_status" } | { "op": "project_create", name: string, goal: string,
+timeout_ms: number | null, } | { "op": "pane_get", pane: string, } | { "op": "pane_close", pane: string, } | { "op": "workspaces" } | { "op": "workspace_close", name: string, } | { "op": "workspace_rename", name: string, to: string, } | { "op": "pane_resize", pane: string, cols: number, rows: number, } | { "op": "pane_kill", pane: string, } | { "op": "pane_input", pane: string, data: B64, } | { "op": "pane_ctrl_enter", pane: string, trace: string | null, } | { "op": "pane_paste", pane: string, text: string, } | { "op": "pane_take", pane: string, } | { "op": "pane_release", pane: string, } | { "op": "pane_attach", pane: string, offset: number, total: number, sha256: string, data: B64, } | { "op": "pane_resume", pane: string, } | { "op": "pane_forget", pane: string, } | { "op": "pane_rename", pane: string, label: string | null, } | { "op": "workspace", name: string | null, } | { "op": "layout_apply", workspace: string | null, change: LayoutChange, } | { "op": "enroll_open", minutes: number, } | { "op": "enroll_close" } | { "op": "safety_show", project?: string, scope: SettingsScope, } | { "op": "safety_set", project?: string, scope: SettingsScope, key: string, value: string | null, expected: string, } | { "op": "profile_admin" } | { "op": "profile_plan", project?: string, change: ProfileChangeReq, } | { "op": "profile_apply", project?: string, change: ProfileChangeReq, expected: string, } | { "op": "work_root_show", machine: string, } | { "op": "work_root_check", machine: string, path: string | null, mount: string | null, } | { "op": "work_root_set", machine: string, path: string, mount: string | null, } | { "op": "hook_status", machine: string, } | { "op": "hook_set", machine: string, install: boolean, } | { "op": "enroll_pending" } | { "op": "enroll_approve", name: string, code: string, } | { "op": "machine_revoke", name: string, } | { "op": "web_pair", role: DeviceRole, } | { "op": "devices" } | { "op": "device_rename", id: string, label: string, } | { "op": "device_revoke", id: string, } | { "op": "web_publish" } | { "op": "web_publish_off" } | { "op": "web_status" } | { "op": "project_create", name: string, goal: string,
 /**
  * `PATH` 또는 `PATH@MACHINE`(머신이 없으면 host 머신, 상대 경로는 CLI가 절대 경로로 바꿔 보낸다)
  */
@@ -881,7 +881,7 @@ omitted_done: number, } | { "kind": "ticker", runs: bigint, } | { "kind": "routi
 /**
  * 지운 자동화(FRONT_API 1.76). 옛 host는 생략한다
  */
-trash?: Array<AutomationTrashEntry>, } | { "kind": "automation_doc", doc: AutomationDoc, } | { "kind": "automation_checked", text: string, check: AutomationCheck, } | { "kind": "automation_ran", accepted: boolean, detail: string, } | { "kind": "project_settings" } & ProjectSettingsView | { "kind": "resolve_preview" } & ResolvePreview | { "kind": "automation_converted", files: Array<string>,
+trash?: Array<AutomationTrashEntry>, } | { "kind": "automation_doc", doc: AutomationDoc, } | { "kind": "automation_checked", text: string, check: AutomationCheck, } | { "kind": "automation_ran", accepted: boolean, detail: string, } | { "kind": "project_settings" } & ProjectSettingsView | { "kind": "safety" } & SafetyView | { "kind": "profile_admin" } & ProfileAdminView | { "kind": "profile_plan" } & ProfilePlanView | { "kind": "profile_applied", message: string, warnings: Array<string>, view: ProfileAdminView, } | { "kind": "work_root" } & WorkRootView | { "kind": "work_root_checked" } & WorkRootCheckView | { "kind": "hook" } & HookView | { "kind": "resolve_preview" } & ResolvePreview | { "kind": "automation_converted", files: Array<string>,
 /**
  * 쓰지 않은 계획이다(FRONT_API 1.58). `files`는 실제 변환과 같은 모양(새 파일과 `.converted/` 보존 사본)이다.
  */
@@ -1619,6 +1619,110 @@ repos: Array<RepoChoice>,
  * host 로컬 머신 이름(`RepoChoice.machine`이 빈 저장소의 머신, 모르면 없다)
  */
 local_machine: string | null, task_notes: Array<string>, };
+
+export type SettingsScope = "project" | "global";
+
+export type SafetyRowView = { key: string, value: string,
+/**
+ * 프로젝트·모든 프로젝트·옛 자리·기본값
+ */
+source: string,
+/**
+ * 적힌 값과 다른 까닭(yolo가 start_threads를 auto로 만든다 등)
+ */
+note: string,
+/**
+ * 웹에서 바꿀 수 있는 key(yolo·start_threads·trust_screens·coordinator_deploy)
+ */
+editable: boolean,
+/**
+ * 바꿀 수 있는 key만: 이 표의 값을 지우면(「기본」) 되는 값. 웹은 이것이 yolo on이면 한 번 더 확인한다
+ */
+below: string | null, };
+
+export type SafetyView = { scope: SettingsScope, project: string, rows: Array<SafetyRowView>,
+/**
+ * thread·coordinator 기본 profile(프로젝트 설정 → host.toml [defaults] → claude)
+ */
+thread_profile: string, coordinator_profile: string,
+/**
+ * thread·coordinator가 쓸 수 있는 profile 실효값(`None`이면 모든 profile). 허용 목록 고치기의 처음 값
+ */
+thread_profiles: Array<string> | null, coordinator_profiles: Array<string> | null,
+/**
+ * 읽다 버린 값 등
+ */
+warnings: Array<string>,
+/**
+ * host.toml 판(sha256). 고칠 때 이 값을 돌려준다(그사이 바뀌었으면 conflict)
+ */
+rev: string,
+/**
+ * 바꾼 뒤 알림(적용 시점, host.local.toml이 덮음 등). 읽기에는 없다
+ */
+notes: Array<string>, };
+
+export type ProfileAdminRow = { name: string, harness: string, model: string, effort: string, description: string, args: Array<string>, env_names: Array<string>,
+/**
+ * host.toml에 표가 없는 기본 profile(claude·codex)
+ */
+builtin: boolean,
+/**
+ * host.local.toml이 정한 profile: 웹에서 고치지 않는다(그 파일이 필드마다 덮는다)
+ */
+local: boolean,
+/**
+ * custom harness(실행 명령이 있다): 웹에서 고치지 않는다
+ */
+custom: boolean,
+/**
+ * harness 실행 파일 뒤에 붙는 인자 전체(model·effort 플래그와 제 인자). custom은 앞 명령을 빼고 보인다
+ */
+launch: Array<string>, };
+
+export type ProfileAdminView = { profiles: Array<ProfileAdminRow>, rev: string, };
+
+export type ProfileChangeReq = { "change": "add", name: string, harness: string, model: string, effort: string, description: string, args: Array<string>, } | { "change": "edit", name: string, harness: string | null, model: string | null, effort: string | null, description: string | null,
+/**
+ * 인자 전체를 바꾼다(빈 목록이면 지운다)
+ */
+args: Array<string> | null, } | { "change": "remove", name: string, } | { "change": "allow", scope: SettingsScope,
+/**
+ * thread 또는 coordinator
+ */
+role: string, names: Array<string> | null, } | { "change": "default", role: string, name: string, };
+
+export type ProfilePlanView = { message: string, before: ProfileAdminRow | null, after: ProfileAdminRow | null,
+/**
+ * 경고(host.local.toml이 덮음, 허용 목록에 없는 profile 등)
+ */
+warnings: Array<string>, rev: string, };
+
+export type WorkRootView = { path: string, mount: string | null, last_start: string | null, last_start_mount: string | null, previous_roots: Array<string>,
+/**
+ * 다음 시작 설정과 마지막 시작 기록이 다르다(agent를 다시 띄워야 닿는다)
+ */
+restart_required: boolean,
+/**
+ * 전환했을 때만: 설정을 바꿨나, 가져온 준비 기록 수
+ */
+changed?: boolean, imported?: number, };
+
+export type WorkRootCheckView = { path: string, real_path: string, mount: string | null, };
+
+export type HookView = {
+/**
+ * aaa Codex 전역 hook이 있고 hooks 기능이 켜져 있다
+ */
+codex_installed: boolean,
+/**
+ * 상태를 읽지 못한 까닭(Codex 설정 파일이 깨짐 등)
+ */
+codex_problem: string | null,
+/**
+ * 설치·제거 뒤 만든 백업 수
+ */
+backups?: number, };
 
 export type ResolvePreview = { project: string, thread: string,
 /**

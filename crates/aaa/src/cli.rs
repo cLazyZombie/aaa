@@ -4109,6 +4109,42 @@ fn render_front(r: &FrontResponse) -> String {
         FrontResponse::AutomationRan { accepted, detail } => {
             let _ = writeln!(s, "{}: {detail}", if *accepted { "받음" } else { "이미 받음" });
         }
+        FrontResponse::Safety(v) => {
+            for r in &v.rows {
+                let note = if r.note.is_empty() { String::new() } else { format!(" ({})", r.note) };
+                let _ = writeln!(s, "{}\t{}{note}\t[{}]", r.key, r.value, r.source);
+            }
+            for w in v.warnings.iter().chain(&v.notes) {
+                let _ = writeln!(s, "{w}");
+            }
+        }
+        FrontResponse::ProfileAdmin(v) | FrontResponse::ProfileApplied { view: v, .. } => {
+            if let FrontResponse::ProfileApplied { message, warnings, .. } = r {
+                for line in std::iter::once(message).chain(warnings) {
+                    let _ = writeln!(s, "{line}");
+                }
+            }
+            for p in &v.profiles {
+                let _ = writeln!(s, "{}\t{}\t{}", p.name, p.harness, p.launch.join(" "));
+            }
+        }
+        FrontResponse::ProfilePlan(v) => {
+            for line in std::iter::once(&v.message).chain(&v.warnings) {
+                let _ = writeln!(s, "{line}");
+            }
+        }
+        FrontResponse::WorkRoot(v) => {
+            let _ = writeln!(s, "{}{}", v.path, if v.restart_required { "\t다음 agent 시작부터" } else { "" });
+        }
+        FrontResponse::WorkRootChecked(v) => {
+            let _ = writeln!(s, "점검 통과: {}", v.real_path);
+        }
+        FrontResponse::Hook(v) => {
+            let _ = writeln!(s, "codex hook: {}", if v.codex_installed { "설치됨" } else { "없음" });
+            if let Some(p) = &v.codex_problem {
+                let _ = writeln!(s, "{p}");
+            }
+        }
         FrontResponse::ProjectSettings(v) => {
             let _ = writeln!(s, "{} ({}, {:?})", v.project, v.file, v.status);
             let _ = writeln!(s, "goal: {}", v.goal);
