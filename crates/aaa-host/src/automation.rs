@@ -650,9 +650,20 @@ impl File {
 }
 
 impl crate::Host {
-    pub(crate) async fn automation_convert(&self, p: &str, actor: &str) -> Result<Vec<String>, aaa_proto::ErrorBody> {
+    /// `dry_run`이면 계획만 답한다(쓰기·임무 seed·audit 없음). `expected`가 있으면 그 계획일 때만 변환한다.
+    pub(crate) async fn automation_convert(
+        &self,
+        p: &str,
+        dry_run: bool,
+        expected: Option<&str>,
+        actor: &str,
+    ) -> Result<(Vec<String>, String), aaa_proto::ErrorBody> {
         let _guard = self.automation_sources.lock().await;
         let root = self.project_dir(p)?;
+        if dry_run {
+            let plan = convert::prepare(&root).map_err(|e| crate::err(aaa_proto::ErrorCode::BadRequest, e))?;
+            return Ok((plan.listing(), plan.sha256()));
+        }
         let previous: Vec<_> = self
             .db
             .threads(Some(p))
@@ -664,6 +675,13 @@ impl crate::Host {
             .map(|m| (m.name, m.cursor, m.last_schedule_ms))
             .collect();
         let plan = convert::prepare(&root).map_err(|e| crate::err(aaa_proto::ErrorCode::BadRequest, e))?;
+        let sha = plan.sha256();
+        if expected.is_some_and(|want| want != sha) {
+            return Err(crate::err(
+                aaa_proto::ErrorCode::BadRequest,
+                "미리보기 뒤 옛 파일이나 변환 계획이 바뀌었다. 미리보기를 다시 연다",
+            ));
+        }
         let files = plan.files();
         for (name, cursor, last) in previous {
             for suffix in ["events", "schedule"] {
@@ -679,6 +697,6 @@ impl crate::Host {
         let files = convert::apply(&root, plan).map_err(|e| crate::err(aaa_proto::ErrorCode::BadRequest, e))?;
         self.db.audit(actor, "automation_convert", &format!("{p}: {} files", files.len()));
         self.tick_wake.notify_one();
-        Ok(files)
+        Ok((files, sha))
     }
 }

@@ -312,3 +312,225 @@ async fn converted_followup_survives_doctor_and_project_create() {
     assert!(errors.is_empty(), "{errors:?}");
     assert_eq!(rules.iter().filter(|r| r.name == "pr-followup").count(), 1);
 }
+
+fn demo_host(p: &Project) -> std::sync::Arc<crate::Host> {
+    let mut cfg = aaa_config::HostConfig::default();
+    cfg.projects.root = p.0.join("projects").display().to_string();
+    cfg.notify.web_push = false;
+    let h = crate::Host::open(cfg, p.0.join("host")).unwrap();
+    h.project_create("demo", Default::default(), "local:cli").unwrap();
+    h
+}
+/// 프로젝트 폴더의 모든 파일 내용. 미리보기·거부가 아무것도 쓰지 않았는지 본다.
+fn snapshot(root: &std::path::Path) -> std::collections::BTreeMap<String, Vec<u8>> {
+    let mut out = std::collections::BTreeMap::new();
+    let mut stack = vec![root.to_path_buf()];
+    while let Some(dir) = stack.pop() {
+        for e in std::fs::read_dir(&dir).unwrap().filter_map(Result::ok) {
+            let path = e.path();
+            if path.is_dir() {
+                stack.push(path);
+            } else {
+                out.insert(path.strip_prefix(root).unwrap().display().to_string(), std::fs::read(&path).unwrap());
+            }
+        }
+    }
+    out
+}
+fn convert_req(dry_run: bool, plan_sha256: Option<String>) -> aaa_proto::FrontRequest {
+    aaa_proto::FrontRequest::AutomationConvert { project: "demo".into(), dry_run, plan_sha256 }
+}
+
+#[tokio::test]
+async fn convert_preview_writes_nothing_and_runs_only_the_plan_it_showed() {
+    use aaa_proto::{DeviceRole::*, ErrorCode, FrontResponse};
+    let p = Project::new();
+    let h = demo_host(&p);
+    let dir = p.0.join("projects/demo");
+    p.write("projects/demo/routines/check.md", "+++\nschedule='every 1m'\n+++\n확인\n");
+    p.write("projects/demo/missions/watch.md", "+++\nprofile='fake'\nevents=['thread_failed']\n+++\n자료\n");
+    let before = snapshot(&dir);
+    // 보기 권한도 미리보기는 본다. 쓰지 않는다
+    let Ok(FrontResponse::AutomationConverted { files: preview, dry_run: true, plan_sha256 }) =
+        h.call(Reader, "device:r", convert_req(true, None)).await
+    else {
+        panic!("미리보기 응답이 아니다")
+    };
+    for file in [
+        "automations/check.toml",
+        "automations/watch-events.toml",
+        "missions/watch.toml",
+        "routines/.converted/check.md",
+        "missions/.converted/watch.md",
+    ] {
+        assert!(preview.iter().any(|f| f == file), "{file}: {preview:?}");
+    }
+    assert_eq!(snapshot(&dir), before, "미리보기가 파일을 썼다");
+    let e = h.call(Reader, "device:r", convert_req(false, Some(plan_sha256.clone()))).await.unwrap_err();
+    assert_eq!(e.code, ErrorCode::Forbidden);
+    // 본 계획이 아니면(다른 hash, 미리보기 뒤 원본 변경) 아무것도 바꾸지 않는다
+    let e = h.call(Controller, "device:c", convert_req(false, Some("0".repeat(64)))).await.unwrap_err();
+    assert!(e.message.contains("미리보기를 다시"), "{e:?}");
+    assert_eq!(snapshot(&dir), before);
+    p.write("projects/demo/routines/check.md", "+++\nschedule='every 2m'\n+++\n확인\n");
+    let changed = snapshot(&dir);
+    let e = h.call(Controller, "device:c", convert_req(false, Some(plan_sha256))).await.unwrap_err();
+    assert!(e.message.contains("미리보기를 다시"), "{e:?}");
+    assert_eq!(snapshot(&dir), changed);
+    let Ok(FrontResponse::AutomationConverted { files: preview, plan_sha256, .. }) =
+        h.call(Controller, "device:c", convert_req(true, None)).await
+    else {
+        panic!("미리보기 응답이 아니다")
+    };
+    let Ok(FrontResponse::AutomationConverted { files, dry_run: false, .. }) =
+        h.call(Controller, "device:c", convert_req(false, Some(plan_sha256))).await
+    else {
+        panic!("변환 응답이 아니다")
+    };
+    let sorted = |mut v: Vec<String>| {
+        v.sort();
+        v
+    };
+    assert_eq!(sorted(files), sorted(preview), "미리보기 목록이 실제 변환과 다르다");
+    assert!(dir.join("routines/.converted/check.md").exists() && !dir.join("routines/check.md").exists());
+    let Ok(FrontResponse::AutomationConverted { files, .. }) =
+        h.call(Reader, "device:r", convert_req(true, None)).await
+    else {
+        panic!()
+    };
+    assert!(files.is_empty(), "변환 뒤 미리보기는 비어야 한다: {files:?}");
+}
+
+/// runtime State의 내구 JSON(자동화 큐). 보낸 결과를 모르는 묶음은 host 중단·전송 오류 뒤 이 모양으로 남는다.
+fn queue_state(action: serde_json::Value, inflight: &[&str], pending: &[&str]) -> String {
+    queue_state_at(action, inflight, pending, true)
+}
+/// `unknown`이 false면 아직 보내는 중인 묶음이다(다음 판정이 다시 만나기 전)
+fn queue_state_at(action: serde_json::Value, inflight: &[&str], pending: &[&str], unknown: bool) -> String {
+    let event = |id: &str| serde_json::json!({"id":id,"at_ms":1000,"owner":"t-0007","body":"{}","action":action.clone(),"source":"events"});
+    serde_json::json!({
+        "pending": pending.iter().map(|id| event(id)).collect::<Vec<_>>(),
+        "inflight": {"id":"automation-seen","events":inflight.iter().map(|id| event(id)).collect::<Vec<_>>(),"day":0,"unknown":unknown},
+    })
+    .to_string()
+}
+fn unblock(name: &str, batch: &str, discard: bool) -> aaa_proto::FrontRequest {
+    aaa_proto::FrontRequest::AutomationUnblock {
+        project: "demo".into(),
+        name: name.into(),
+        batch: batch.into(),
+        discard,
+    }
+}
+
+#[tokio::test]
+async fn unblock_releases_only_the_seen_message_batch_and_never_resends_it() {
+    use aaa_proto::{DeviceRole::*, ErrorCode};
+    let p = Project::new();
+    let h = demo_host(&p);
+    let message = serde_json::json!({"message":{"thread":"owner","text":"확인"}});
+    p.write(
+        "projects/demo/automations/msg.toml",
+        "[on.thread]\nevents=['thread_failed']\n[do.message]\nthread='owner'\ntext='확인'\n",
+    );
+    let queue =
+        |h: &crate::Host| h.routines("demo").unwrap().into_iter().find(|r| r.name == "msg").unwrap().queue.unwrap();
+    let rule = crate::routine::load_all(&p.0.join("projects/demo")).0.into_iter().find(|r| r.name == "msg").unwrap();
+    // 보내는 중인 묶음은 아직 모름이 아니며 풀 수 없다: 보내기와 풀기가 겹치지 않는다
+    h.db.set_meta("automation:demo:msg", &queue_state_at(message.clone(), &["e1", "e2"], &["e3", "e4"], false))
+        .unwrap();
+    assert!(!queue(&h).inflight.unwrap().unknown);
+    let e = h.call(Controller, "device:c", unblock("msg", "automation-seen", false)).await.unwrap_err();
+    assert!(e.message.contains("보내는 중"), "{e:?}");
+    // 다음 판정이 처리 중 묶음을 다시 만나면 모름으로 적고 다시 보내지 않는다(대상 thread가 없어도 보내려 하지 않는다)
+    h.automation_drain("demo", &rule).await.unwrap();
+    let runs = h.routine_runs("demo", "msg").unwrap();
+    assert_eq!((runs[0].status.as_str(), runs[0].detail.as_str()), ("waiting", "입력 전달 모름 · 확인 필요"));
+    let q = queue(&h);
+    assert_eq!(q.pending, 2);
+    let inflight = q.inflight.unwrap();
+    assert_eq!(
+        (inflight.id.as_str(), inflight.events, inflight.thread.as_deref(), inflight.unknown),
+        ("automation-seen", 2, Some("t-0007"), true)
+    );
+    // 세션 안 CLI·worker·평가자·분리 실행·보기 권한은 풀 수 없다(사람이 대상 thread를 확인한다)
+    for (role, actor) in [
+        (Local, "local:p1@labA"),
+        (Local, "worker:t-0001"),
+        (Local, "evaluator:t-0002"),
+        (Local, "detached:t-0003"),
+        (Reader, "device:r"),
+    ] {
+        let e = h.call(role, actor, unblock("msg", "automation-seen", false)).await.unwrap_err();
+        assert_eq!(e.code, ErrorCode::Forbidden, "{actor}");
+    }
+    // 화면에서 본 묶음이 아니면 바꾸지 않는다
+    let e = h.call(Controller, "device:c", unblock("msg", "automation-other", false)).await.unwrap_err();
+    assert!(e.message.contains("이미 풀렸거나"), "{e:?}");
+    assert_eq!(queue(&h).inflight.unwrap().id, "automation-seen");
+    h.call(Controller, "device:c", unblock("msg", "automation-seen", false)).await.unwrap();
+    let q = queue(&h);
+    assert_eq!((q.pending, q.inflight), (2, None), "계속: 묶음만 풀고 남은 입력은 다음 차례에 보낸다");
+    let runs = h.routine_runs("demo", "msg").unwrap();
+    for id in ["e1", "e2"] {
+        assert!(
+            runs.iter().any(|r| r.id == id && r.status == "skipped" && r.detail.contains("다시 보내지 않음")),
+            "{runs:?}"
+        );
+    }
+    // 푼 묶음의 같은 입력이 다시 와도 받지 않는다(재전송 없음). 새 입력은 받는다
+    h.automation_submit("demo", &rule, "e1", "{}".into(), Some("t-0007".into())).unwrap();
+    assert_eq!(queue(&h).pending, 2);
+    h.automation_submit("demo", &rule, "e5", "{}".into(), Some("t-0007".into())).unwrap();
+    assert_eq!(queue(&h).pending, 3);
+    let e = h.call(Controller, "device:c", unblock("msg", "automation-seen", false)).await.unwrap_err();
+    assert!(e.message.contains("이미 풀렸거나"), "{e:?}");
+
+    // 버리기: 묶음과 남은 입력 모두. 버린 입력도 다시 받지 않는다
+    h.db.set_meta("automation:demo:msg", &queue_state(message, &["f1"], &["f2", "f3"])).unwrap();
+    h.call(Local, "local:cli", unblock("msg", "automation-seen", true)).await.unwrap();
+    let q = queue(&h);
+    assert_eq!((q.pending, q.inflight), (0, None));
+    let runs = h.routine_runs("demo", "msg").unwrap();
+    assert!(runs.iter().any(|r| r.id == "f3" && r.status == "skipped" && r.detail.contains("버림")), "{runs:?}");
+    h.automation_submit("demo", &rule, "f2", "{}".into(), Some("t-0007".into())).unwrap();
+    assert_eq!(queue(&h).pending, 0);
+
+    // 결과를 모르는 것은 글 묶음뿐이다: 다른 동작의 처리 중 묶음은 다음 판정이 다시 고르므로 풀지 않는다
+    p.write("projects/demo/automations/note.toml", "[on.thread]\nevents=['thread_failed']\n[do.inbox]\ntext='확인'\n");
+    h.db.set_meta("automation:demo:note", &queue_state(serde_json::json!({"inbox":{"text":"확인"}}), &["g1"], &[]))
+        .unwrap();
+    let note = h.routines("demo").unwrap().into_iter().find(|r| r.name == "note").unwrap().queue.unwrap();
+    assert!(!note.inflight.unwrap().unknown);
+    let e = h.call(Controller, "device:c", unblock("note", "automation-seen", false)).await.unwrap_err();
+    assert!(e.message.contains("글 묶음이 아니다"), "{e:?}");
+}
+
+#[tokio::test]
+async fn routine_runs_carries_rule_source_and_body_file() {
+    use aaa_proto::{DeviceRole::*, FrontRequest, FrontResponse};
+    let p = Project::new();
+    let h = demo_host(&p);
+    let rule =
+        "#:schema ./automation.schema.json\n[on.schedule]\nevery='1h'\n[do.inbox]\ntext_file='automations/long.md'\n";
+    p.write("projects/demo/automations/long.toml", rule);
+    p.write("projects/demo/automations/long.md", &"가".repeat(30000));
+    let runs = |name: &str| FrontRequest::RoutineRuns { project: "demo".into(), name: name.into() };
+    let Ok(FrontResponse::RoutineRuns { source: Some(s), .. }) = h.call(Reader, "device:r", runs("long")).await else {
+        panic!("원문이 없다")
+    };
+    assert_eq!(
+        (s.file.as_str(), s.text.as_str(), s.body_file.as_deref()),
+        ("automations/long.toml", rule, Some("automations/long.md"))
+    );
+    use sha2::Digest;
+    assert_eq!(s.sha256, hex::encode(sha2::Sha256::digest(rule.as_bytes())));
+    assert!(
+        !s.truncated && s.body_truncated && s.body.len() <= 64 * 1024 && s.body.chars().all(|c| c == '가'),
+        "짧은 원문은 그대로, 본문만 글자 경계에서 자른다"
+    );
+    let Ok(FrontResponse::RoutineRuns { source: None, .. }) = h.call(Reader, "device:r", runs("mission:watch")).await
+    else {
+        panic!("임무 조건은 mission_show가 원문을 준다")
+    };
+}

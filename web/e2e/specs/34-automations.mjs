@@ -23,9 +23,13 @@ export default async function ({ page }) {
     await mission.waitFor();
     if (!(await mission.textContent()).includes("임무 승인 필요")) throw new Error("승인 전 임무 조건의 승인 필요 표시가 없다");
     if (!(await mission.textContent()).includes("임무 파일에서") || !(await mission.textContent()).includes("git_pushed")) throw new Error("임무 조건 출처가 없다");
-    await row.locator("summary").click();
-    await row.locator("ol li").first().waitFor();
-    if (!(await row.locator("ol").textContent()).includes("건너뜀: coordinator 없음")) throw new Error("최근 기록이 없다");
+    // 최근 기록은 상세(40-automation-detail)에 있다
+    await row.getByRole("button", { name: "check 자세히", exact: true }).click();
+    const detail = page.getByTestId("automation-detail");
+    await detail.locator(".automation-runs li").first().waitFor();
+    if (!(await detail.locator(".automation-runs").textContent()).includes("coordinator 없음")) throw new Error("최근 기록이 없다");
+    await page.keyboard.press("Escape");
+    await detail.waitFor({ state: "detached" });
     await shot(page, "automations-desktop");
   });
   await step("자동화: 토글은 enabled만 바꾸고 주석·일정·본문을 지킨다. 임무 파일 토글도 다른 칸을 바꾸지 않는다", async () => {
@@ -54,8 +58,6 @@ export default async function ({ page }) {
       if (!(await toggle.isDisabled())) throw new Error("Reader 토글 활성");
       const forbidden = await p.evaluate(async () => (await fetch("/api/v1/call", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ op: "routine_toggle", project: "auto-demo", name: "check", on: true }) })).json());
       if (forbidden.err?.code !== "forbidden") throw new Error(`Reader 쓰기 ${JSON.stringify(forbidden)}`);
-      await row.locator("summary").click();
-      await row.locator("ol li").first().waitFor();
       const geometry = await p.evaluate(() => {
         const panel = document.querySelector('.automations');
         const button = document.querySelector('[data-testid="automation-auto-demo-check"] [role="switch"]').getBoundingClientRect();

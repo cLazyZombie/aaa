@@ -148,6 +148,27 @@ impl Plan {
     pub(super) fn files(&self) -> Vec<String> {
         self.writes.keys().cloned().collect()
     }
+    /// 실제 변환이 답하는 목록과 같은 모양: 새 파일과 `.converted/` 보존 사본.
+    pub(super) fn listing(&self) -> Vec<String> {
+        if self.originals.is_empty() {
+            return vec![];
+        }
+        self.writes.keys().cloned().chain(self.originals.keys().map(|f| archive(f))).collect()
+    }
+    /// 사람이 본 미리보기와 실행할 계획이 같은지 본다: 쓸 글과 원본 글 모두.
+    pub(super) fn sha256(&self) -> String {
+        use sha2::{Digest, Sha256};
+        let mut h = Sha256::new();
+        for (tag, map) in [("w", &self.writes), ("o", &self.originals)] {
+            for (file, text) in map {
+                for part in [tag, file.as_str(), text.as_str()] {
+                    h.update((part.len() as u64).to_le_bytes());
+                    h.update(part.as_bytes());
+                }
+            }
+        }
+        hex::encode(h.finalize())
+    }
 }
 pub(super) fn apply(root: &Path, plan: Plan) -> Result<Vec<String>, String> {
     if plan.originals.is_empty() {

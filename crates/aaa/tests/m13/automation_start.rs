@@ -66,7 +66,7 @@ fn automation_start_holds_approval_two_agents_and_restart_receipt() {
             .as_array()
             .unwrap()
             .iter()
-            .any(|r| r["detail"].as_str().is_some_and(|s| s.contains("사람 승인")))
+            .any(|r| r["detail"].as_str().is_some_and(|s| s.contains("범위 승인 필요")))
             .then_some(())
     });
     assert!(automatic(&w).is_empty());
