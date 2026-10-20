@@ -2270,7 +2270,7 @@ fn pane_cmd(json: bool, cmd: PaneCmd) -> Result<ExitCode> {
             );
         }
         PaneCmd::Chat { pane, thinking } => {
-            return front(json, FrontRequest::PaneChat { pane, thinking, compact: true, before: None });
+            return front(json, FrontRequest::PaneChat { pane, thinking, compact: true, commands: true, before: None });
         }
         PaneCmd::Split { target, pane, current: _, direction, ratio, cwd, machine, workspace, argv } => {
             let pane = match target {
@@ -3762,6 +3762,9 @@ fn render_front(r: &FrontResponse) -> String {
                     aaa_proto::ChatRole::Thinking => writeln!(s, "  (생각) {}", m.text),
                     // 정리된 자리(plan §8.309): 요약은 길어 줄만 남긴다(웹은 누르면 펼친다)
                     aaa_proto::ChatRole::Compact => writeln!(s, "\n── 대화 정리됨 ──"),
+                    // harness 명령과 결과(plan §8.323)
+                    aaa_proto::ChatRole::Command => writeln!(s, "\n[명령] {}", m.text),
+                    aaa_proto::ChatRole::CommandOutput => writeln!(s, "  {}", m.text.replace('\n', "\n  ")),
                 };
             }
         }
@@ -3775,6 +3778,11 @@ fn render_front(r: &FrontResponse) -> String {
                 }
             }
         },
+        FrontResponse::PaneCommands { list } => {
+            for c in &list.commands {
+                let _ = writeln!(s, "{}\t{:?}\t{}", c.insert.trim_end(), c.kind, c.description);
+            }
+        }
         FrontResponse::PaneDir { listing } => {
             let _ = writeln!(s, "{}", listing.path);
             for d in &listing.directories {

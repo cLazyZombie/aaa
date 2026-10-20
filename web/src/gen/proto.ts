@@ -54,7 +54,7 @@ export type PaneDirection = "left" | "right" | "up" | "down";
 
 export type WorkspaceSummary = { name: string, tabs: number, panes: number, };
 
-export type ChatRole = "user" | "assistant" | "tool" | "thinking" | "compact";
+export type ChatRole = "user" | "assistant" | "tool" | "thinking" | "compact" | "command" | "command_output";
 
 export type ChatMessage = {
 /**
@@ -585,9 +585,13 @@ thinking: boolean,
  */
 compact: boolean,
 /**
+ * harness 명령과 결과(`ChatRole::Command`·`CommandOutput`, plan §8.323, 1.68)도 싣는다. 옛 front는 생략한다
+ */
+commands: boolean,
+/**
  * 이전 응답의 before. 생략하면 최신 쪽, 옛 상대는 무시한다.
  */
-before?: string, } | { "op": "pane_file", pane: string, path: string, } | { "op": "thread_file", project?: string, thread: string, path: string, } | { "op": "thread_diff", project?: string, thread: string, query?: DiffQuery, } | { "op": "pane_dir", pane: string, path: string, hidden: boolean, } | { "op": "pane_send", pane: string, data: B64, } | { "op": "pane_read_text", pane: string, source: ReadSource,
+before?: string, } | { "op": "pane_commands", pane: string, } | { "op": "pane_file", pane: string, path: string, } | { "op": "thread_file", project?: string, thread: string, path: string, } | { "op": "thread_diff", project?: string, thread: string, query?: DiffQuery, } | { "op": "pane_dir", pane: string, path: string, hidden: boolean, } | { "op": "pane_send", pane: string, data: B64, } | { "op": "pane_read_text", pane: string, source: ReadSource,
 /**
  * 줄 수(기본: Recent 80줄, Visible은 화면 전부, 최대 1000)
  */
@@ -734,7 +738,7 @@ message: MessageView | null, } | { "kind": "context" } & ProjectContext | { "kin
 /**
  * `check`가 통과했을 때 설명
  */
-valid: string | null, } | { "kind": "task_board" } & TaskBoard | { "kind": "task_edited", board: TaskBoard, conflict: TaskConflict | null, log_ids: number[], } | { "kind": "thread_start_preview" } & ThreadStartPreview | { "kind": "task_log", entries: Array<TaskLogEntry>, next: number | null, } | { "kind": "screen" } & ScreenText | { "kind": "read" } & ReadView | { "kind": "thread_pane" } & ThreadPaneView | { "kind": "output_matched", matched_line: string, read: ReadView, } | { "kind": "workspaces", workspaces: Array<WorkspaceSummary>, } | { "kind": "chat" } & ChatView | { "kind": "pane_file", info: FileInfo | null, candidates: Array<string>, url: string | null, } | { "kind": "pane_dir", listing: DirListing, } | { "kind": "pending", pending: Array<PendingEnroll>, } | { "kind": "pair_code", code: string, role: DeviceRole, expires_in_s: number, } | { "kind": "publish" } & PublishState | { "kind": "devices", devices: Array<DeviceView>, } | { "kind": "workspace" } & Workspace | { "kind": "done" } | { "kind": "attached", path: string, inserted: boolean, note: string | null, } | { "kind": "projects", projects: Array<ProjectView>, } | { "kind": "instance", project: ProjectView | null, } | { "kind": "project" } & ProjectView | { "kind": "project_change" } & ProjectChange | { "kind": "project_opened" } & ProjectOpened | { "kind": "project_files", checks: Array<ProjectFilesCheck>, } | { "kind": "profiles", machine: string, profiles: Array<ProfileView>, } | { "kind": "profile_resolved", profile: ProfileView, } | { "kind": "threads", threads: Array<ThreadView>, } | { "kind": "thread" } & ThreadView | { "kind": "thread_summary" } & ThreadSummaryView | { "kind": "events", events: Array<FlowEvent>, } | { "kind": "questions", questions: Array<QuestionView>, } | { "kind": "question" } & QuestionView | { "kind": "message" } & MessageView | { "kind": "inbox", items: Array<InboxItem>,
+valid: string | null, } | { "kind": "task_board" } & TaskBoard | { "kind": "task_edited", board: TaskBoard, conflict: TaskConflict | null, log_ids: number[], } | { "kind": "thread_start_preview" } & ThreadStartPreview | { "kind": "task_log", entries: Array<TaskLogEntry>, next: number | null, } | { "kind": "screen" } & ScreenText | { "kind": "read" } & ReadView | { "kind": "thread_pane" } & ThreadPaneView | { "kind": "output_matched", matched_line: string, read: ReadView, } | { "kind": "workspaces", workspaces: Array<WorkspaceSummary>, } | { "kind": "chat" } & ChatView | { "kind": "pane_file", info: FileInfo | null, candidates: Array<string>, url: string | null, } | { "kind": "pane_dir", listing: DirListing, } | { "kind": "pane_commands", list: CommandList, } | { "kind": "pending", pending: Array<PendingEnroll>, } | { "kind": "pair_code", code: string, role: DeviceRole, expires_in_s: number, } | { "kind": "publish" } & PublishState | { "kind": "devices", devices: Array<DeviceView>, } | { "kind": "workspace" } & Workspace | { "kind": "done" } | { "kind": "attached", path: string, inserted: boolean, note: string | null, } | { "kind": "projects", projects: Array<ProjectView>, } | { "kind": "instance", project: ProjectView | null, } | { "kind": "project" } & ProjectView | { "kind": "project_change" } & ProjectChange | { "kind": "project_opened" } & ProjectOpened | { "kind": "project_files", checks: Array<ProjectFilesCheck>, } | { "kind": "profiles", machine: string, profiles: Array<ProfileView>, } | { "kind": "profile_resolved", profile: ProfileView, } | { "kind": "threads", threads: Array<ThreadView>, } | { "kind": "thread" } & ThreadView | { "kind": "thread_summary" } & ThreadSummaryView | { "kind": "events", events: Array<FlowEvent>, } | { "kind": "questions", questions: Array<QuestionView>, } | { "kind": "question" } & QuestionView | { "kind": "message" } & MessageView | { "kind": "inbox", items: Array<InboxItem>,
 /**
  * `inbox_done`이 끝낸 항목 수(그때 `items`는 남은 항목). 목록 요청에는 없다.
  */
@@ -1400,6 +1404,38 @@ export type FileKind = "image" | "video" | "audio" | "pdf" | "text" | "binary";
 export type FileInfo = { path: string, name: string, size: number, modified_ms: number, mime: string, kind: FileKind, };
 
 export type DirListing = { path: string, parent: string | null, home: string, directories: Array<string>, files: Array<DirFile>, truncated: boolean, };
+
+export type CommandList = { harness: string,
+/**
+ * 내장 표가 기준으로 삼은 harness 버전(`2.1.304`, `0.163`)
+ */
+builtin_version: string, commands: Array<SlashCommand>, };
+
+export type SlashCommand = {
+/**
+ * 트리거 뒤 이름(`compact`, `frontend:review`, `plugin:skill`)
+ */
+name: string, description: string, source: CommandSource, kind: CommandKind,
+/**
+ * 인자 안내(`[지시]`) 또는 선택창을 건너뛰는 꼴(`/model sonnet`)
+ */
+hint: string | null,
+/**
+ * 같은 명령의 다른 이름(Claude `/reset`·`/new`는 `/clear`)
+ */
+aliases: Array<string>,
+/**
+ * 작업 중에는 목록에서 뺀다(harness가 막거나 턴 뒤로 미룬다)
+ */
+idle_only: boolean,
+/**
+ * 고르면 입력칸에 넣을 글(`/compact `, Codex skill은 `$name `)
+ */
+insert: string, };
+
+export type CommandSource = "builtin" | "user" | "project" | "skill" | "plugin";
+
+export type CommandKind = "send" | "picker" | "screen" | "confirm" | "danger";
 
 export type DirFile = { name: string, size: number, };
 

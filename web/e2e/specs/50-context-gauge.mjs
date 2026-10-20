@@ -59,9 +59,9 @@ const directory = `${root}/context`;
 const transcript = `${root}/claude/projects/-lab-${LABEL}/s1.jsonl`;
 const bytes = () => fs.readFileSync(`${directory}/${LABEL}.bytes`, "utf8");
 
-/** 실제 Claude 2.1.304 assistant 줄 꼴: 컨텍스트는 input + cache 생성 + cache 읽기, 창은 requestedModel */
-function answer(used, requestedModel = "claude-opus-5-5") {
-  const line = { type: "assistant", isSidechain: false, message: { model: "claude-opus-5-5", content: [{ type: "text", text: `${used} 토큰째 답` }],
+/** 실제 Claude 2.1.304 assistant 줄 꼴: 컨텍스트는 input + cache 생성 + cache 읽기, 창은 requestedModel(Haiku 4.5는 200k, Claude 5는 1M) */
+function answer(used, requestedModel = "claude-haiku-4-5") {
+  const line = { type: "assistant", isSidechain: false, message: { model: "claude-haiku-4-5", content: [{ type: "text", text: `${used} 토큰째 답` }],
     usage: { input_tokens: 2, cache_creation_input_tokens: 998, cache_read_input_tokens: used - 1000, output_tokens: 40 } } };
   if (requestedModel) line.requestedModel = requestedModel;
   fs.appendFileSync(transcript, JSON.stringify(line) + "\n");

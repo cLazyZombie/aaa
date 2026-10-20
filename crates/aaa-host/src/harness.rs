@@ -1699,6 +1699,7 @@ mod tests {
                     pane: "s".into(),
                     thinking: false,
                     compact: false,
+                    commands: false,
                     before: Some("older".into()),
                 },
             )
@@ -1713,7 +1714,7 @@ mod tests {
                 (Some("boundary"), None, Some("file"), "첫 쪽"),
                 (None, Some("grown-boundary"), Some("file"), "파일이 자람"),
             ] {
-                let LinkMsg::Req { id, body: AgentRequest::Chat { before, harness, compact, .. }, .. } =
+                let LinkMsg::Req { id, body: AgentRequest::Chat { before, harness, compact, commands, .. }, .. } =
                     rx.control::<LinkMsg>().await.unwrap()
                 else {
                     panic!("chat 요청이 아니다")
@@ -1721,6 +1722,8 @@ mod tests {
                 assert_eq!(harness, "codex");
                 // 정리된 자리는 그것을 청한 front에만 싣는다(옛 front는 모르는 role로 답을 읽지 못한다)
                 assert!(compact);
+                // 명령 줄(plan §8.323)도 청한 front에만
+                assert!(commands);
                 assert_eq!(before.as_deref(), asked);
                 let reply = AgentResponse::Chat {
                     messages: vec![ChatMessage {
@@ -1757,6 +1760,7 @@ mod tests {
                         pane: "s".into(),
                         thinking: false,
                         compact: true,
+                        commands: true,
                         before: before.map(str::to_string),
                     },
                 )

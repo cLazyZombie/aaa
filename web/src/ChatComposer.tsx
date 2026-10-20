@@ -25,16 +25,21 @@
 import {
   useCallback,
   useEffect,
+  useId,
   useLayoutEffect,
+  useMemo,
   useRef,
   useState,
   useSyncExternalStore,
   type KeyboardEvent,
 } from "react";
 import { ArrowUp, Clock, ImagePlus, Info, LoaderCircle, Square, TriangleAlert, X } from "lucide-react";
-import { uploadChatImage } from "./api";
-import type { ChatMessage, ContextUsage, SubmitStage, InputTraceEvent, InputReceiptMethod, InputSubmitMeta } from "./gen/proto";
+import { call, uploadChatImage } from "./api";
+import type { ChatMessage, CommandList, ContextUsage, SlashCommand, SubmitStage, InputTraceEvent, InputReceiptMethod, InputSubmitMeta } from "./gen/proto";
+import { ConfirmDialog } from "./ConfirmDialog";
 import { ContextGauge } from "./ContextGauge";
+import { SlashMenu, slashOptionId } from "./SlashMenu";
+import { bumpUsage, commandOf, groups, listed, rank, readUsage, sendAction, slashQuery } from "./slashCommands";
 import { imageMention, insertLeadingMention } from "./herdr/composerImages";
 import { normalizeComposerImageFile } from "./herdr/composerImageMime";
 import "./herdr/Composer.css";
@@ -55,6 +60,8 @@ const MAX_COMPOSER_CHARS = 100_000;
 /** host가 이만큼 전달(글+Enter)을 확인하지 않으면 막힌 것으로 보고 탈출구(×)를 보인다. 평소 답은 0.3~0.5초다 */
 export const STUCK_MS = 3000;
 /** 전달된 글이 이만큼 기록에 보이지 않으면 오래 걸림(t-0387의 미확인과 같은 10초) */
+/** 「/」 목록을 다시 묻는 간격(명령·skill 파일이 바뀔 수 있다, plan §8.323) */
+const COMMANDS_REFRESH_MS = 5 * 60_000;
 const SLOW_MS = 10_000;
 /** 작업 중에 보내 harness 대기열에 들어간 글. 기록에 같은 새 사람 글이 보이면 지운다.
  * `stale`: 그 harness가 이미 적었어야 할 때가 지났는데 기록에 없다(Enter가 먹혔을 수 있다) */
@@ -110,6 +117,14 @@ function wrappedRows(element: HTMLTextAreaElement): number {
   const style = getComputedStyle(element);
   const padding = parseFloat(style.paddingTop) + parseFloat(style.paddingBottom);
   return Math.round((element.scrollHeight - padding) / parseFloat(style.lineHeight));
+}
+
+/** 보낸 harness 명령이 터미널에서만 이어질 때의 알림(plan §8.323). 선택창이 열린 동안 보낸 글은 그 선택창에 들어간다(실측 Claude 2.1.304) */
+function terminalNote(c: SlashCommand, action: "picker" | "screen"): Note {
+  const name = c.insert.trim();
+  if (action === "screen") return { text: `${name} 결과는 터미널 화면에만 보입니다.`, quiet: true, inspect: true };
+  const shortcut = c.hint?.startsWith("/") ? ` 다음에는 ${c.hint}처럼 인자를 붙이면 선택창 없이 바뀝니다.` : "";
+  return { text: `터미널에 ${name} 선택창이 떴습니다. 터미널에서 고르거나 닫기(Esc) 전에는 다음 글이 선택창으로 갑니다.${shortcut}`, quiet: true, inspect: true };
 }
 
 export interface ChatComposerProps {
@@ -200,6 +215,30 @@ export function ChatComposer({
   // 가는 글은 초안에서 뺐어도 기록에 오를 때까지 입력창에 보인다
   const shown = flight?.source === "box" ? flight.text : text;
   const [note, setNote] = useState<Note | null>(null);
+  // 입력칸 「/」 목록(plan §8.323): pane을 열 때와 5분마다 agent에 묻는다. 옛 host·agent면 목록·확인창 없이 글로 보낸다
+  const [commandList, setCommandList] = useState<CommandList | null>(null);
+  const commandListRef = useRef(commandList);
+  commandListRef.current = commandList;
+  useEffect(() => {
+    let live = true;
+    setCommandList(null);
+    const load = () => void call({ op: "pane_commands", pane }).then((r) => {
+      if (live && r.kind === "pane_commands") setCommandList(r.list);
+    }, () => {});
+    load();
+    const timer = window.setInterval(load, COMMANDS_REFRESH_MS);
+    return () => {
+      live = false;
+      window.clearInterval(timer);
+    };
+  }, [pane, harness]);
+  const [caret, setCaret] = useState(0);
+  const [menuActive, setMenuActive] = useState(0);
+  /** Esc로 닫은 때의 글: 글이 바뀌면 다시 연다 */
+  const [menuClosed, setMenuClosed] = useState<string | null>(null);
+  const menuId = useId();
+  /** 확인을 기다리는 명령(맥락을 비우거나 harness를 끝낸다) */
+  const [confirming, setConfirming] = useState<{ command: SlashCommand; given?: string; steer: boolean; ctrlEnter: boolean } | null>(null);
   const messagesRef = useRef(messages);
   messagesRef.current = messages;
   const workingRef = useRef(working);
@@ -219,6 +258,31 @@ export function ChatComposer({
   const mounted = useRef(true);
   const uploading = attachments.some((a) => a.state === "uploading" || a.state === "waiting");
   const noRoom = attachments.some((a) => a.state === "no-room");
+  // 메시지 맨 앞의 「/이름」에서만 목록을 연다. 빈 「/」는 출처별 묶음 차례, 치면 순위 차례다(↑↓ 차례가 보이는 차례와 같다)
+  const query = locked || composing ? null : slashQuery(shown, caret);
+  const menuItems = useMemo(() => {
+    if (query === null) return [];
+    const items = listed(commandList, working);
+    return query === "" ? groups(items).flatMap((g) => g.items) : rank(items, query, readUsage());
+  }, [query, commandList, working]);
+  // 다 친 숨은 명령(`/exit`)은 빈 목록 대신 닫는다: 보내면 확인창이 묻는다
+  const menuOpen = query !== null && commandList !== null && menuClosed !== shown
+    && !(menuItems.length === 0 && commandOf(commandList, shown) !== null);
+  useEffect(() => setMenuActive(0), [query]);
+  /** 목록에서 고름: 「/이름 」을 넣고(바로 보내지 않는다) 커서를 그 뒤에 둔다 */
+  const pickCommand = (c: SlashCommand): void => {
+    const rest = shown.slice(caret).replace(/^\s+/, "");
+    const value = c.insert + rest;
+    textRef.current = value;
+    setText(value);
+    bumpUsage(c.name);
+    const at = c.insert.length;
+    setCaret(at);
+    requestAnimationFrame(() => {
+      textareaRef.current?.focus();
+      textareaRef.current?.setSelectionRange(at, at);
+    });
+  };
   useEffect(() => {
     mounted.current = true;
     return () => {
@@ -524,7 +588,8 @@ export function ChatComposer({
   }, [pending, working]);
 
   /** `steer`: Ctrl+Enter로 작업 중에 보낸다(지금 턴에 끼워 넣는다). 붙잡지 않는다 */
-  const send = (given?: string, steer = false, ctrlEnter = false): void => {
+  /** `confirmed`: 확인창에서 「보내기」를 눌렀다 */
+  const send = (given?: string, steer = false, ctrlEnter = false, confirmed = false): void => {
     const raw = (given ?? textRef.current).trim();
     if (raw === "" || flightRef.current !== null || uploading || noRoom || composing || !connected) return;
     // 보이지 않는 문자는 빼고 보낸다(plan §8.266). 보내짐 증거(기록의 같은 글)도 뺀 글로 맞춘다
@@ -532,6 +597,13 @@ export function ChatComposer({
     const message = cleaned.trim();
     if (message === "") {
       setNote({ text: HIDDEN_ONLY });
+      return;
+    }
+    // harness 명령(plan §8.323): 맥락을 비우거나 harness를 끝내는 명령은 먼저 묻는다(글은 입력칸에 남는다)
+    const found = commandOf(commandListRef.current, message);
+    const action = found ? sendAction(found.command.kind, found.args) : "send";
+    if (action === "confirm" && !confirmed) {
+      setConfirming({ command: found!.command, given, steer, ctrlEnter });
       return;
     }
     const sentAttachments = attachments;
@@ -545,7 +617,11 @@ export function ChatComposer({
     } else if (working && !autoSendQueued && !steer) {
       messageQueues.add(owner, message);
       if (given === undefined) { setText(""); clearAttachments(sentAttachments); }
-    } else deliver({ text: message, source: given === undefined ? "box" : "reply", attachments: given === undefined ? sentAttachments : [], ctrlEnter, ...(steer ? { steer } : {}) });
+    } else {
+      deliver({ text: message, source: given === undefined ? "box" : "reply", attachments: given === undefined ? sentAttachments : [], ctrlEnter, ...(steer ? { steer } : {}) });
+      // 터미널 선택창·화면에만 남는 결과: aaa는 그것을 질문으로 보지 못한다(실측: 상태는 「입력 대기」 그대로)
+      if (found && (action === "picker" || action === "screen")) setNote(terminalNote(found.command, action));
+    }
     if (removed > 0) setNote({ text: hiddenNote(removed), quiet: true });
   };
   // Ctrl+Enter(사용자 10-19 15:3x, plan §8.239 후속): 안내 줄 없이 글을 steering으로 보낸다. 작업 중이면 지금 턴에 끼워 넣고
@@ -605,6 +681,30 @@ export function ChatComposer({
       if (event.key === "Enter" && event.ctrlKey && !event.metaKey && !event.shiftKey && !event.altKey)
         onInputTrace(inputTraceId(), "ctrl_enter_blocked", "composing");
       return;
+    }
+    // 「/」 목록(herdr-web-ui Composer.tsx 979~1003줄): ↑↓ 고르기, Tab·Enter 넣기(보내지 않음), Esc 닫기(글은 그대로).
+    // 다 친 이름(`/clear`)에서 Enter는 넣지 않고 보낸다: 넣어도 같은 글이다
+    if (menuOpen && !event.altKey && !event.metaKey && !event.ctrlKey) {
+      const n = menuItems.length;
+      const current = menuItems[Math.min(menuActive, n - 1)];
+      if ((event.key === "ArrowDown" || event.key === "ArrowUp") && !event.shiftKey) {
+        if (n > 0) {
+          event.preventDefault();
+          setMenuActive((i) => (Math.min(i, n - 1) + (event.key === "ArrowDown" ? 1 : n - 1)) % n);
+        }
+        return;
+      }
+      const typedWhole = current !== undefined && query !== null && [current.name, ...current.aliases].includes(query.toLowerCase());
+      if (current && !event.shiftKey && (event.key === "Tab" || (event.key === "Enter" && !typedWhole))) {
+        event.preventDefault();
+        pickCommand(current);
+        return;
+      }
+      if (event.key === "Escape") {
+        event.preventDefault();
+        setMenuClosed(shown);
+        return;
+      }
     }
     if ((event.key === "ArrowUp" || event.key === "ArrowDown") && !event.shiftKey && !event.altKey && !event.metaKey && !event.ctrlKey) {
       if (recallKey(event.key === "ArrowUp" ? "backward" : "forward", event.currentTarget)) event.preventDefault();
@@ -815,6 +915,10 @@ export function ChatComposer({
           onDrop={(event) => { event.preventDefault(); setDragging(false); uploadImages(Array.from(event.dataTransfer.files)); }}
         >
           {coordinator && <span className="composer-glow" aria-hidden="true" data-paused={visible ? undefined : ""} />}
+          {menuOpen && (
+            <SlashMenu id={menuId} items={menuItems} grouped={query === ""} active={Math.min(menuActive, Math.max(0, menuItems.length - 1))}
+              onHover={setMenuActive} onPick={pickCommand} />
+          )}
           {attachments.length > 0 && <div className="composer-attachments" aria-label="첨부한 그림">
             {attachments.map((a) => <div className={`composer-attachment is-${a.state}`} key={a.id}>
               <img src={a.preview} alt={a.file.name} />
@@ -840,6 +944,10 @@ export function ChatComposer({
             autoCapitalize="sentences"
             autoCorrect="on"
             onKeyDown={onKeyDown}
+            onSelect={(event) => setCaret(event.currentTarget.selectionStart)}
+            aria-controls={menuOpen ? menuId : undefined}
+            aria-activedescendant={menuOpen && menuItems.length > 0 ? slashOptionId(menuId, Math.min(menuActive, menuItems.length - 1)) : undefined}
+            aria-autocomplete="list"
             onCompositionStart={() => setComposing(true)}
             onCompositionEnd={() => setComposing(false)}
             onPaste={(event) => {
@@ -851,6 +959,7 @@ export function ChatComposer({
             }}
             onChange={(event) => {
               setText(event.target.value);
+              setCaret(event.target.selectionStart);
               if (recall.current?.recalled !== event.target.value) recall.current = null;
               setNote(null);
             }}
@@ -933,6 +1042,21 @@ export function ChatComposer({
           </div>
         </div>
       </div>
+      {confirming && (
+        <ConfirmDialog
+          title={`${confirming.command.insert.trim()}를 보낼까요?`}
+          body={confirming.command.kind === "danger"
+            ? `${confirming.command.description}. 이 pane의 ${agentLabel}가 끝나거나 되돌릴 수 없습니다. 이어서 쓰려면 터미널에서 다시 띄워야 합니다.`
+            : `${confirming.command.description}. 지금 대화의 맥락이 비워집니다.`}
+          confirmLabel="보내기"
+          onConfirm={async () => {
+            const c = confirming;
+            setConfirming(null);
+            send(c.given, c.steer, c.ctrlEnter, true);
+          }}
+          onClose={() => setConfirming(null)}
+        />
+      )}
     </>
   );
 }
