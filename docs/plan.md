@@ -6014,3 +6014,28 @@ L4 후속(10-20 00시 사용자 관찰): 멈춤 상태의 후보 예약과 재�
 - **참고 위치.** 기획 §1.5(t3code 4b1024da: 예약 작업 thread를 일반 목록에 섞고 출처는 작게, herdr-web-ui aa624cb DESIGN.md 532 「배지가 아니다」, herdr-projects 0.2.35 routine). 이 머신에는 t3code·herdr-web-ui 소스가 없어 기획서가 적은 위치를 따랐다.
 - **참고와 다른 것.** 줄에 색 막대를 다는 것은 참고에 없다(사용자 요청, 기획 Q4). 참고처럼 소리 없이(배지·숫자 없이) 막대와 글 표지만 둔다. t3code의 「Sent by automation」 메시지 표지(대화 안 출처)는 A1 범위 밖이다.
 - **검증.** host 유닛 `automation::tests::thread_events_skip_automation_threads_unless_included_and_never_the_rules_own`(규칙 a가 띄운 thread 보고는 a·b 모두 안 받음, `include_automation`인 b는 받음, 자기 것은 늘 뺌, 사람 thread는 받음, cursor는 지나감)·`automation_title_reads_rule_title_and_falls_back_to_name`. 여러 프로세스 `m13 automation_thread_reports_do_not_wake_their_own_rule`(실제 `on.thread`+`do.start` 규칙: 자동 thread 보고 뒤 사람 thread 보고로 둘째 시작이 올 때까지 시작은 둘뿐, 원인 사건은 둘 다 사람 thread, `thread show` 출처, 할 일의 task 없는 열린 thread에서 빠짐). 웹 유닛 `roster.test.mjs`(같은 폴더·같은 rank 차례). 웹 E2E `48-automation-threads`(실제 규칙이 띄운 thread, `data-origin`·`::before` 계산 배경 = `--automation`(밝음·어두움)·사람 줄 막대 없음·coordinator 보라 유지, 데스크톱·휴대폰 막대가 표지를 덮지 않음, 휴대폰은 「자동」만, 표지 → 규칙 상세(pane은 그대로), 기록 번호·「열림」 칩 → 그 thread, 메뉴 「자동화 규칙」, 「자동화만」). 결함 되심기: 거르기를 빼면 m13이 자동 thread 보고로 thread 둘을 더 띄워 실패하고 유닛도 실패한다(library/t-0499 fault-replant).
+
+### 8.319 대화창 컨텍스트 게이지 1단계(10-20, t-0502)
+
+- **요청.** 사용자 10-20 「대화창에서 사용한 컨텍스트를 보여주고 싶어」, 「%, over하면 실제 k」, 시안(library/t-0502) §7 「추천대로 해」(1단계는 안 A 입력칸 게이지만, 1,000k 넘으면 `1050k`, 휴대폰도 숫자를 늘 보임), 「타이핑시에는 보이지 않게도 가능해?」. slash 확인창·숨김(§7-3)은 2단계, 목록 줄 표지(안 C)는 3단계 선택으로 남긴다.
+- **실측: 붙여 넣은 `/compact`.** 실험실에서 실제 harness를 띄워 웹 입력칸이 보내는 꼴(bracketed paste + Enter)로 보냈다. Claude 2.1.304는 383ms에 정리 표지, 7.9초에 끝났다. Codex 0.163은 394ms에 표지, 3.5초에 끝났다. 둘 다 명령으로 받아 따로 보내는 길은 필요 없다. Claude 기록은 `<command-name>/compact</command-name>` 줄(사람 글이 아님)이고, Codex는 명령을 기록하지 않는다.
+- **값과 출처(agent `plan.rs`).** 2초마다 이어 읽던 대화 기록의 `plan` 사건에 `context`를 실어 `AgentStatus.context`로 보낸다(모든 기기·목록이 같은 값, 응답 뒤 2초 이하).
+  - Claude: 본 대화(`isSidechain` 아님) assistant 줄의 `usage` 합(input + cache 생성 + cache 읽기). 합이 0인 합성 줄은 건너뛴다. 창은 `requestedModel`이 `claude-…[1m]`이면 1M, `claude-…`면 200k, 없으면 모른다. % = round(사용 / 창 × 100)으로 Claude Code 2.1.304 상태줄과 같다. 실측: 43,922 사용, `/compact` 뒤 `compact_boundary.compactMetadata` preTokens 43,926 → postTokens 7,910 = 4%. 이것은 터미널 「96% left」와 같다. 정리 뒤 다음 응답까지는 postTokens가 값이다.
+  - Codex: `token_count`의 `info.last_token_usage.total_tokens`와 `model_context_window`. Codex TUI 식(기준 12,000: 남은 % = (창−12k − max(0, 사용−12k)) / (창−12k))의 나머지를 쓴다. `info: null`은 앞 값을 둔다. `compacted` 줄 뒤 첫 `token_count`가 정리 뒤 크기다(실측 18,861 → 12,274, 창 258,400).
+  - 창을 모르거나 사용이 창보다 크면 `percent`가 없다.
+- **proto(FRONT_API 1.65, 더하기만).**
+  - `AgentStatus.context`·`HarnessEvent.context` = `ContextUsage{used, window, percent, compaction{before, after}}`. 옛 host는 생략해 웹이 게이지를 그리지 않는다.
+  - 입력 진단 `InputReceiptMethod::SlashCommand`.
+- **웹.**
+  - 입력칸 보내기 앞에 링과 숫자: 사용 %, 창을 넘거나 모르면 k(`230k`, `1050k`). 80%부터 위험 색은 구독 칩과 같다.
+  - 누르면 위로 펼침이 열린다: 사용/창, 막대, 주의, 마지막 정리 「164k → 28k」, 「마지막 응답 기준」, `/compact` 정리 단추.
+  - 정리 단추는 쉬는 중에만 켜진다. 연결 끊김·정리 중·확인창·작업 중·보내는 중에는 까닭을 보이며 꺼진다.
+  - 정리 중에는 링이 돌고 마지막 값이 흐려진다. 마지막 「대화 정리됨」 구분선에 「· 164k → 28k」를 붙인다.
+- **치는 동안 숨김.** 입력칸에 글(또는 첨부)이 있으면 80% 미만·창 모름 게이지는 opacity·visibility로만 사라진다. 자리(폭)를 그대로 두어 글 칸 폭이 흔들리지 않고, 비면 다시 보인다(reduced-motion이면 전환 없음). 80% 이상·창 넘음은 치는 중에도 보인다. 까닭: t3code는 높을 때 「Compact N」 칩을 오히려 더 보이고, 조사한 참고 UI 어디도 위험 값을 숨기지 않는다. 숨기는 목적은 글 칸의 산만함을 줄이는 것이다. 정리를 판단할 값은 그 목적보다 앞선다.
+- **명령의 보내짐.** 입력칸은 보낸 글이 기록에 사람 글로 오를 때 풀린다(§8.247). harness 명령 한 줄(`/word …`, 경로 `/Users/…`는 아님)은 그 증거가 오지 않는다. 그래서 host 전달을 보내짐으로 본다. 이것이 없으면 정리 단추 뒤 입력칸이 잠긴 채 10초 뒤 「오래 걸림」이 됐다.
+- **참고와 다른 것.** herdr-web-ui `ContextRing`·t3code `ContextWindowMeter`는 남은 양이나 사용 %만 보인다. 여기는 사용 %에 넘음·모름이면 k로 바꾸고, 숫자는 늘 보인다(Cursor가 숫자를 숨겼다가 불만이 나온 것, t3code가 미터를 기본 끔으로 바꾼 것과 반대). 휴대폰도 펼친다. 치는 동안 숨김은 사용자 요청이다.
+- **검증.**
+  - agent 유닛 `plan::tests::claude_context_is_the_last_main_answer_and_the_compaction_sizes`(실측 값·sidechain·합성 줄·1M·창 넘음·창 모름)·`codex_context_follows_token_count_and_the_compaction`(실측 18,861 → 12,274). host 유닛 `plan_events_set_counts_without_changing_the_activity`(context를 싣고 끝나면 지움).
+  - 웹 유닛 `contextUsage.test.mjs`(%·k·1050k·숨김 규칙)·`inputReceipt.test.mjs`(명령 한 줄 판정).
+  - 웹 E2E `49-context-gauge`: 가짜 Claude가 실제 꼴 usage·`compact_boundary` 줄을 적고, 실제 agent가 읽는다. 38% → 230k → 84k → 86%를 본다. 치는 중 숨김에서는 게이지·글 칸 폭이 그대로이고, 86%는 보이며, 비면 다시 보인다. 펼침, 작업 중 단추 꺼짐과 까닭, 단추 → pane이 `/compact` bytes를 받고 입력칸이 풀리는 것, 정리 중 표지, 14%와 구분선 「· 164k → 28k」, iPhone Safari도 본다.
+  - 결함 되심기: 명령 판정을 끄면 E2E가 「입력칸 잠금 풀림」에서 실패했고, 되돌린 뒤 통과했다.

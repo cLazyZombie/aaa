@@ -869,3 +869,13 @@ L2 결함 검증은 이전 root 가져오기 생략, 재시작 전 applied 변�
   Windows·Linux 실제 실행: main push 뒤 CI(windows-2025·ubuntu-24.04)의 cargo test가 판정한다.
   사전 branch/PR push·별도 runner/VM은 쓰지 않는다. 착지 전은 macOS 전체 gate와 Windows cross clippy/build이며,
   I1을 완료로 부르지 않는다. 서비스 등록·boot/login/PTY는 후속 단계의 별도 증거다.
+
+## 대화창 컨텍스트 게이지(t-0502, plan §8.319)
+
+- `cargo test -p aaa-agent --lib plan::tests::`: 대화 기록 꼴(Claude assistant `usage`·`requestedModel`·`compact_boundary`, Codex `token_count`·`compacted`)을 임시 파일에 이어 적고 Reader를 직접 돌린다. 값은 실제 harness 실측(Claude 43,922 → 7,910, Codex 18,861 → 12,274)이다.
+- `node --test web/test/contextUsage.test.mjs web/test/inputReceipt.test.mjs`: 표기(%·k·1050k), 치는 동안 숨김 규칙(80% 미만·창 모름만), harness 명령 한 줄 판정.
+- `node web/e2e/web.e2e.mjs --spec 49-context-gauge`:
+  - 가짜 Claude가 SessionStart hook으로 기록 자리를 알린다. F7(작업 중)·F5(쉼)·F6(정리 끝: `compact_boundary` pre 163,600/post 28,400과 요약)과 「/compact」 Enter(정리 화면)를 받는다.
+  - spec이 기록에 assistant usage 줄을 더하면 게이지 글이 바뀔 때까지 `domIs`로 기다린다(agent는 2초마다 읽는다).
+  - 숨김은 `data-hidden`과 게이지·글 칸 폭이 같은지로 본다. 정리 단추는 pane이 받은 bytes와 입력칸 잠금 풀림으로 본다. 휴대폰은 WebKit `pairDevice`. 고정 sleep은 없다.
+  - `AAA_E2E_SHOTS`를 주면 데스크톱·iPhone 빈/치는 중·펼침·정리 중·정리 뒤 그림을 남긴다.
