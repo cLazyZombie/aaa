@@ -170,7 +170,7 @@ pub const AGENT_LINK: Version = Version { major: 1, minor: 10 };
 // 1.78: 「답할 것」(plan §8.345): `Asks`·`AskHandle`·`AskForget` → `Asks`, 사건 `asks`, 질문 본문(ThreadQuestion `body`·
 //       QuestionChoice `body`·ThreadQuestions `files_base`). 옛 host는 생략하고 새 요청을 모르는 요청으로 거절해 웹이 확인 필요 post·
 //       답한 것 없이 질문만 보인다. Agent link 변경 없음.
-// 1.79: host 계정 화면(관리 GUI W5a, plan §8.348): 웹 조작 기기의 `account_login`·`account_login_status`·`account_login_cancel`·
+// 1.79: host 계정 화면(관리 GUI W5a, plan §8.351): 웹 조작 기기의 `account_login`·`account_login_status`·`account_login_cancel`·
 // `account_default`, 새 `account_login_confirm`, `AccountView`의 메일·plan·인증 시각·만료·`health`, `AccountLoginView`의
 // `expect_email`·`email`, 웹 events `accounts`. 옛 host는 웹 계정 요청을 거부하고 새 칸을 생략해 웹이 목록만 그린다. Agent link 변경 없음.
 pub const FRONT_API: Version = Version { major: 1, minor: 79 };

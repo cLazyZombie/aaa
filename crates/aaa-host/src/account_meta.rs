@@ -1,4 +1,4 @@
-//! 계정 메일·plan·인증 시각·상태(관리 GUI W5a, plan §8.348). 금고 파일 모양은 바꾸지 않고 host DB meta `account-meta:<이름>`에
+//! 계정 메일·plan·인증 시각·상태(관리 GUI W5a, plan §8.351). 금고 파일 모양은 바꾸지 않고 host DB meta `account-meta:<이름>`에
 //! 둔다(키 관리는 별도 일이다). 메일·plan은 조작 기기와 host의 세션 밖 CLI에만 보인다: 감사 기록·알림함·로그에는 별칭만 남긴다.
 //! 「끊김」은 제공자가 Codex 인증 갱신을 거부했거나 알려진 만료 시각이 지난 것뿐이다. 제공자에게 따로 묻지 않는다.
 use std::path::Path;

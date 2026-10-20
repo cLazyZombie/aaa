@@ -11,7 +11,12 @@ git fetch --no-tags origin main
 git merge-base --is-ancestor "$commit" origin/main || { echo 'origin/main의 조상 커밋만 빌드한다' >&2; exit 1; }
 origin_main=$(git rev-parse origin/main)
 short=${commit:0:12}
-build_root=$(mktemp -d "${TMPDIR:-/tmp}/aaa-deploy-build.XXXXXX")
+# macOS system temp에서 build-script 실행이 SIGKILL된 적이 있다. TMPDIR·Cargo의
+# 공용 target 설정과 무관하게 저장소의 무시된 target 아래에 매번 새 공간을 만든다.
+# 다른 디스크가 필요하면 AAA_DEPLOY_BUILD_ROOT로 부모 폴더를 지정한다.
+build_parent=$(python3 -c 'import os,sys; print(os.path.abspath(sys.argv[1]))' "${AAA_DEPLOY_BUILD_ROOT:-$repo/target/deploy-build}")
+mkdir -p "$build_parent"
+build_root=$(mktemp -d "$build_parent/aaa-deploy-build.XXXXXX")
 cleanup() {
   git -C "$repo" worktree remove --force "$build_root/source" >/dev/null 2>&1 || true
   rm -rf "${build_root:?}"

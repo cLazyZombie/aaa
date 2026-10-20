@@ -388,6 +388,34 @@ export default async function () {
           bad.push(`${name}: 한 줄 상자 높이가 다르다 ${[empty, short, cleared].map((s) => Math.round(s.surface.height))}`);
         const flips = await p.evaluate(() => window.__lineFlips);
         if (flips.join() !== "more,one,more,one") bad.push(`${name}: 표지가 튄다 ${flips}`);
+        // 단추 옆 칸보다 길고 펼친 글 칸 한 줄보다 짧은 글(사용자 10-20 「한 줄을 다 채우지 않았는데 두 줄 높이」, t-0546):
+        // 단추만 있는 밑 줄이 없다(한 줄 배치에서 단추 옆에 접힌다). 펼친 한 줄을 넘으면 그때 여러 줄 배치고, 다시 줄이면 돌아온다
+        const between = await p.evaluate(() => {
+          const surface = document.querySelector('[data-testid="chat-composer"] .composer-surface');
+          const text = surface.querySelector(".composer-text");
+          const cs = getComputedStyle(text);
+          const pad = parseFloat(cs.paddingLeft) + parseFloat(cs.paddingRight);
+          const beside = text.clientWidth - pad;
+          const full = surface.clientWidth - (text.offsetWidth - text.clientWidth) - pad;
+          const ctx = document.createElement("canvas").getContext("2d");
+          ctx.font = cs.font;
+          const fill = (width) => { let out = ""; while (ctx.measureText(out + "가").width < width) out += "가나다라마 바사아자차 ".at(out.length % 12); return out; };
+          return { beside, full, mid: fill((beside + full) / 2), over: fill(full * 1.2) };
+        });
+        const settled = (value) => p.evaluate((v) => new Promise((done) => requestAnimationFrame(() => requestAnimationFrame(() =>
+          done(document.querySelector('[data-testid="chat-composer"] .composer-text').value === v)))), value);
+        for (const [state, value, want] of [["between", between.mid, "one"], ["over", between.over, "more"], ["between-again", between.mid, "one"]]) {
+          await box.fill(value);
+          if (!(await settled(value))) bad.push(`${name} ${state}: 글이 들어가지 않았다`);
+          await capture(state);
+          const s = await look(p);
+          if (s.lines !== want) bad.push(`${name} ${state}: 표지 ${s.lines} ≠ ${want}(단추 옆 ${Math.round(between.beside)}px·펼친 ${Math.round(between.full)}px)`);
+          if (want === "one" && s.send.top >= s.text.bottom - 0.5) bad.push(`${name} ${state}: 단추(${Math.round(s.send.top)})만 글 칸 밑(${Math.round(s.text.bottom)}) 줄에 있다`);
+          if (want === "one" && s.text.height > s.lh * 3) bad.push(`${name} ${state}: 글 칸 ${Math.round(s.text.height)}px이 두 줄(${s.lh}px씩)을 넘는다`);
+          if (s.scroll.h > s.scroll.ch + 1 || s.scroll.w > s.scroll.cw + 1) bad.push(`${name} ${state}: 글 칸 안에서 잘린다 ${JSON.stringify(s.scroll)}`);
+          if (!s.focused) bad.push(`${name} ${state}: 글 칸이 focus를 잃었다`);
+          if (Math.abs(s.surface.bottom - empty.surface.bottom) > 0.5) bad.push(`${name} ${state}: 상자 아래끝 ${Math.round(s.surface.bottom)} ≠ ${Math.round(empty.surface.bottom)}`);
+        }
       }
       await phone.context().close();
       await desk.context().close();

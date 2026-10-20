@@ -1,4 +1,4 @@
-// 설정 「계정」 규칙(src/accountsModel.ts, 관리 GUI W5a, plan §8.348). 권한·메일 싣기·상태 판정의 정본은 host다
+// 설정 「계정」 규칙(src/accountsModel.ts, 관리 GUI W5a, plan §8.351). 권한·메일 싣기·상태 판정의 정본은 host다
 // (account_meta/tests.rs, m13 `host_relogin_checks_the_email_and_asks_before_switching`).
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
