@@ -42,7 +42,11 @@ fn base(text: &str) -> String {
 /// host.toml이 TOML로 읽히는가. 오류는 줄과 까닭만 싣는다: toml_edit 오류 글은 그 줄 원문(env 값일 수 있다)을 함께 찍는다
 fn toml_ok(text: &str) -> Result<(), ErrorBody> {
     text.parse::<toml_edit::DocumentMut>().map(|_| ()).map_err(|e| {
-        let line = e.span().map(|s| text[..s.start.min(text.len())].lines().count().max(1)).unwrap_or(0);
+        // 바이트로 센다(`aaa config check`의 줄 번호와 같고, 글자 경계에 기대지 않는다)
+        let line = e
+            .span()
+            .map(|s| text.as_bytes()[..s.start.min(text.len())].iter().filter(|b| **b == b'\n').count() + 1)
+            .unwrap_or(0);
         bad(format!(
             "host.toml {line}번째 줄을 TOML로 읽지 못했다({}): host 터미널에서 `aaa config check`로 본다",
             e.message().trim()
@@ -110,14 +114,14 @@ fn shadowed(dir: &Path, table: &str, key: &str, project: &str) -> Option<String>
     })
 }
 
-/// 이 표의 `key`를 지우면(「기본」) 실제로 어떤 값이 되나: 웹이 yolo를 켜게 되는 「기본」을 확인한다. `[safety]` 표 하나가 그
-/// key를 정하면 그것이 앞서 그대로다
-fn below(layers: &safety::Layers, key: &str, top: bool) -> Option<String> {
+/// 이 표의 `key`를 지우면(「기본」) 실제로 어떤 값이 되나: 웹이 yolo를 켜게 되는 「기본」을 확인한다. 웹은 host.toml만 고치므로
+/// host.local.toml의 같은 표·key나 (프로젝트 표면) `[safety]` 표 하나가 그 key를 정하면(`kept`) 값은 그대로다
+fn below(layers: &safety::Layers, key: &str, kept: bool) -> Option<String> {
     if !WEB_SAFETY_KEYS.contains(&key) {
         return None;
     }
     let mut l = layers.clone();
-    if !top {
+    if !kept {
         match key {
             "yolo" => l.own.yolo = None,
             "start_threads" => l.own.start_threads = None,
@@ -164,6 +168,13 @@ impl Host {
         self.config_dir.get().ok_or_else(|| err(ErrorCode::Unavailable, "host 설정 폴더를 모른다"))
     }
 
+    /// 겹친 host 설정(local 포함). 오류 글은 웹에 싣지 않는다: 형식 오류(serde)의 글에는 값 자체(`invalid type: string "…"`,
+    /// env 값일 수 있다)가 들어 있다
+    fn web_config(&self) -> Result<aaa_config::HostConfig, ErrorBody> {
+        self.profile_config()
+            .map_err(|_| bad("host 설정을 읽지 못했다: host 터미널에서 `aaa config check`로 본다(까닭에 값이 들어 있을 수 있어 웹에 싣지 않는다)"))
+    }
+
     fn host_toml_rev(&self, dir: &Path) -> Result<file_rev::Rev, ErrorBody> {
         file_rev::read(&dir.join("host.toml")).map_err(|e| internal(format!("host.toml: {e}")))
     }
@@ -186,7 +197,8 @@ impl Host {
 
     pub(crate) fn safety_show(&self, project: &str, scope: SettingsScope) -> Result<SafetyView, ErrorBody> {
         let dir = self.settings_dir()?;
-        self.safety_table(project, scope)?;
+        let table = self.safety_table(project, scope)?;
+        let local = read_in(dir, "host.local.toml");
         // 판을 먼저 읽는다: 내용을 읽기 전에 다른 쓰기가 끼면 이 판은 낡아 고치기가 conflict로 끝난다(새 내용에 옛 판을 붙이지 않는다)
         let rev = self.host_toml_rev(dir)?.sha256;
         let (layers, warnings) = match scope {
@@ -204,7 +216,11 @@ impl Host {
                 below: below(
                     &layers,
                     r.key,
-                    ["host.toml", "host.local.toml"].iter().any(|f| safety::has_top_key(&read_in(dir, f), r.key)),
+                    safety::has_key(&local, &table, r.key)
+                        || (scope == SettingsScope::Project
+                            && ["host.toml", "host.local.toml"]
+                                .iter()
+                                .any(|f| safety::has_top_key(&read_in(dir, f), r.key))),
                 ),
                 key: r.key.to_string(),
                 value: r.value,
@@ -286,7 +302,7 @@ impl Host {
     pub(crate) fn profile_admin(&self) -> Result<ProfileAdminView, ErrorBody> {
         let dir = self.settings_dir()?;
         let rev = self.host_toml_rev(dir)?.sha256;
-        let cfg = self.profile_config()?;
+        let cfg = self.web_config()?;
         let mut profiles: Vec<ProfileAdminRow> =
             cfg.profiles.iter().map(|(n, p)| row(n, p, false, local_defines(dir, "profiles", n))).collect();
         for name in profile_edit::BUILTINS.iter().filter(|n| !cfg.profiles.contains_key(**n)) {
@@ -299,7 +315,7 @@ impl Host {
     /// 허용 목록·기본값에 넣는 이름: host.toml(local 포함) profile이나 기본 profile만
     fn known_profile(&self, name: &str) -> Result<(), ErrorBody> {
         profile_edit::validate_name(name).map_err(bad)?;
-        let cfg = self.profile_config()?;
+        let cfg = self.web_config()?;
         if cfg.profiles.contains_key(name) || profile_edit::builtin(name).is_some() {
             Ok(())
         } else {

@@ -311,6 +311,12 @@ async fn global_edits_warn_when_the_project_table_wins_and_rows_tell_the_value_b
     let p = lab.safety(SettingsScope::Project).await;
     let yolo = p.rows.iter().find(|r| r.key == "yolo").unwrap();
     assert_eq!((yolo.value.as_str(), yolo.below.as_deref()), ("off", Some("on")), "「기본」은 yolo를 켠다");
+    // host.local.toml도 같은 표·key를 정하면 host.toml을 지워도 그대로다
+    std::fs::write(lab.root.join("c/host.local.toml"), "schema = 1\n\n[safety.demo]\nyolo = false\n").unwrap();
+    let p = lab.safety(SettingsScope::Project).await;
+    let yolo = p.rows.iter().find(|r| r.key == "yolo").unwrap();
+    assert_eq!(yolo.below.as_deref(), Some("off"));
+    std::fs::remove_file(lab.root.join("c/host.local.toml")).unwrap();
     let g = lab.safety(SettingsScope::Global).await;
     let FrontResponse::Safety(after) = lab
         .call(FrontRequest::SafetySet {
@@ -362,6 +368,16 @@ async fn toml_errors_do_not_carry_the_broken_line() {
         .await
         .unwrap_err();
     assert!(!e.message.contains("zq-broken"), "{}", e.message);
+    // 줄 첫 칸의 오류도 그 줄 번호(`aaa config check`와 같다)
+    assert!(toml_ok("schema = 1\n]\n").unwrap_err().message.contains("2번째 줄"));
+    // 형식(타입) 오류의 글에는 값 자체가 든다: 웹에 싣지 않는다
+    std::fs::write(
+        lab.root.join("c/host.toml"),
+        "schema = 1\n\n[profiles.opus]\nagent = \"claude\"\nenv = \"API_TOKEN=zq-type-secret\"\n",
+    )
+    .unwrap();
+    let e = lab.call(FrontRequest::ProfileAdmin).await.unwrap_err();
+    assert!(!e.message.contains("zq-type-secret"), "{}", e.message);
 }
 
 /// 프로젝트가 아직 없는 host에서도 모든 프로젝트 기본과 profile 자체는 고친다

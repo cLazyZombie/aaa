@@ -229,7 +229,12 @@ export function ProfilesPage({ role }: { role: DeviceRole }) {
       .catch((e: unknown) => mine === seq.current && setError(say(e)));
     call({ op: "safety_show", scope })
       .then((s) => mine === seq.current && s.kind === "safety" && setSafety(s))
-      .catch((e: unknown) => mine === seq.current && setError(say(e)));
+      .catch((e: unknown) => {
+        if (mine !== seq.current) return;
+        // 프로젝트가 아직 없는 host: 허용 목록은 모든 프로젝트 기본으로 연다
+        if (scope === "project" && e instanceof ApiError && e.body.code === "not_found") setScope("global");
+        else setError(say(e));
+      });
   }, [shown, scope]);
   useEffect(() => load(), [load]);
   /**

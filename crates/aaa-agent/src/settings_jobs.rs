@@ -60,7 +60,11 @@ pub(crate) async fn work_root(state: &Path, action: WorkRootOp) -> Result<AgentR
             .await
         }
         WorkRootOp::Set { path, mount } => {
-            let done = admin::set(&dir, state, &path, mount.as_deref()).await.map_err(bad)?;
+            // 점검·등록·저장은 동기 파일 I/O라 통째로 blocking thread에서 돈다(worktree 보호의 await는 그 안에서 기다린다)
+            let rt = tokio::runtime::Handle::current();
+            let done =
+                blocking(move || rt.block_on(admin::set(&dir, &state_owned, &path, mount.as_deref())).map_err(bad))
+                    .await?;
             let mut v = view(&done.shown);
             v.changed = Some(done.changed);
             v.imported = Some(done.imported as u32);
