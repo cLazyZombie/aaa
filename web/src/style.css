@@ -1206,5 +1206,15 @@ button.report-delete:hover:not(:disabled) { color: var(--danger-text); }
 @media (max-width: 640px) {
   .file-viewer .file-viewer-close { width: max(44px, var(--touch-target)); height: max(44px, var(--touch-target)); }
 }
+/* t-0473(plan §8.302): 휴대폰 머리는 한 줄(이름·크기 | 단추들 | 닫기)이다. 44px 단추가 제 여백이라 둘레·사이를 줄여 이름 칸을
+   남긴다(참고 t3code 파일 머리 h-10 한 줄, herdr-mobile-relay 머리 44px). 손가락 기기의 페이지·PDF는 머리 아래를 다 채우고
+   (고정 뺄셈 170px·120px 대신) 몸은 구르지 않는다 */
+@media (max-width: 768px), (pointer: coarse) {
+  .file-viewer .file-viewer-header { gap: var(--space-2); padding: var(--space-1) var(--space-1) var(--space-1) var(--space-4); }
+  .file-viewer .file-viewer-actions, .file-viewer .file-viewer-group { gap: 0; }
+}
+@media (pointer: coarse) {
+  .file-viewer .file-viewer-page, .file-viewer .file-viewer-pdf { flex: 1 1 auto; height: auto; min-height: 0; }
+}
 /* 휴대폰 빈 화면의 「목록 열기」(plan §8.301): 손가락에 맞는 44px */
 .empty-view .empty-open-list { margin-top: var(--space-5); min-height: 44px; }

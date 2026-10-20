@@ -75,6 +75,26 @@ async function openAndClose(p, link, name, how, shotName) {
     : []);
   if (small.length) throw new Error(`${name}: 44px보다 작은 머리 단추 ${JSON.stringify(small)}`);
   if (shotName) await shot(p, shotName);
+  // 머리는 한 줄이고 내용이 화면 대부분을 쓴다(사용자 10-20 「윗부분이 너무 위아래가 길어」, plan §8.302): 머리 칸들은 서로 겹치거나
+  // 머리 밖으로 잘리지 않고, 이름 칸이 남으며, 내용 칸(굴리는 몸)이 화면 높이의 85% 이상이다. 페이지는 iframe 안에서만 구른다
+  const room = await viewer.evaluate((el) => {
+    const r = (n) => n.getBoundingClientRect();
+    const header = el.querySelector(".file-viewer-header");
+    const h = r(header);
+    const parts = [...header.children].map((c) => ({ c: c.className, ...r(c).toJSON() })).filter((b) => b.width > 0).sort((a, b) => a.left - b.left);
+    const body = el.querySelector(".file-viewer-body");
+    const page = body.querySelector(".file-viewer-page");
+    return {
+      header: Math.round(h.height),
+      overlap: parts.some((b, i) => i > 0 && b.left < parts[i - 1].right - 0.5),
+      clipped: parts.filter((b) => b.left < h.left - 0.5 || b.right > h.right + 0.5 || b.top < h.top - 0.5 || b.bottom > h.bottom + 0.5).map((b) => b.c),
+      title: Math.round(r(header.querySelector(".file-viewer-title")).width),
+      body: r(body).height / innerHeight,
+      page: page === null ? null : { share: r(page).height / innerHeight, bodyScrolls: body.scrollHeight > body.clientHeight + 1 },
+    };
+  });
+  if (room.header > 64 || room.overlap || room.clipped.length || room.title < 64 || room.body < 0.85 || (room.page && (room.page.share < 0.85 || room.page.bodyScrolls)))
+    throw new Error(`${name}: 머리·내용 칸 ${JSON.stringify(room)} (머리 64px 이하 한 줄, 이름 64px 이상, 내용 85% 이상)`);
   if (how === "close") await close.click();
   else await p.evaluate(() => history.back());
   await viewer.waitFor({ state: "detached" });

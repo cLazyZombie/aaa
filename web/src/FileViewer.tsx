@@ -275,16 +275,6 @@ export function FileViewer({ path: asked, source: from, onClose, onOpen }: { pat
   // (host VIEW_CSP: 제 폴더의 형제 파일을 읽는다)
   const htmlPage = textFile && info.mime === "text/html";
   const pageUrl = url === null ? null : isLibrary ? url : `${url}?render=1`;
-  const modes = (
-    <div className="segmented file-viewer-modes" role="group" aria-label="HTML 파일 보기 방식">
-      <button type="button" aria-pressed={!source} onClick={() => setSource(false)}>
-        페이지
-      </button>
-      <button type="button" aria-pressed={source} onClick={() => setSource(true)}>
-        소스
-      </button>
-    </div>
-  );
   const view = markdown && mode === "preview" ? "markdown" : "code";
   // 소스는 보이는 대로의 글(잘린 앞부분은 마지막 줄바꿈 뒤 줄 없이)이다. VIRTUAL_SOURCE_LINES를 넘으면 가상화한 줄로, 작으면
   // 그 worker가 칠하고(virtualHighlightable) 아니면 글 그대로 알림과 함께. 그 아래는 CodeLines(참고 FileViewer)
@@ -377,21 +367,17 @@ export function FileViewer({ path: asked, source: from, onClose, onOpen }: { pat
       case "text":
         if (htmlPage && !source)
           return (
-            <>
-              {modes}
-              <iframe
-                className="file-viewer-page"
-                src={pageUrl ?? undefined}
-                sandbox={isLibrary ? LIBRARY_SANDBOX : "allow-scripts"}
-                title={info.name}
-              />
-            </>
+            <iframe
+              className="file-viewer-page"
+              src={pageUrl ?? undefined}
+              sandbox={isLibrary ? LIBRARY_SANDBOX : "allow-scripts"}
+              title={info.name}
+            />
           );
         if (loaded === null) return <p className="file-viewer-note">여는 중…</p>;
         // 참고 TextFileView: Markdown 너비와 긴 줄 바꿈은 「파일 뷰어」 설정(이 기기)
         return (
           <>
-            {htmlPage && modes}
             <div
               className={virtual !== null && view === "code" ? "file-viewer-content file-viewer-content-virtual" : "file-viewer-content"}
               data-testid={view === "markdown" ? "file-viewer-markdown" : "file-viewer-code"}
@@ -426,7 +412,8 @@ export function FileViewer({ path: asked, source: from, onClose, onOpen }: { pat
   return (
     <div className="modal-scrim file-viewer-scrim" onMouseDown={(event) => event.target === event.currentTarget && onClose()}>
       <section className={virtualBody ? "modal file-viewer file-viewer-virtual" : "modal file-viewer"} role="dialog" aria-modal="true" aria-label={info?.name ?? path} ref={surface} tabIndex={-1} data-testid="file-viewer">
-        <header className="modal-header file-viewer-header file-viewer-header-stacked">
+        {/* 머리는 어느 폭에서나 한 줄이다(plan §8.302): 참고의 좁은 화면 두 줄(file-viewer-header-stacked)은 휴대폰 내용 칸을 줄였다 */}
+        <header className="modal-header file-viewer-header">
           <div className="file-viewer-title">
             <h2 className="modal-title">
               <span className="file-viewer-stem">{stem}</span>
@@ -458,15 +445,16 @@ export function FileViewer({ path: asked, source: from, onClose, onOpen }: { pat
             </p>
           </div>
           <div className="file-viewer-actions">
-            {markdown && (
+            {/* HTML의 페이지·소스도 Markdown과 같은 머리 토글이다(참고 t3code FilePreviewPanel의 rendered/source 토글, plan §8.302) */}
+            {(markdown || htmlPage) && (
               <div className="file-viewer-group">
                 <button
                   type="button"
                   className="icon-button file-viewer-action"
-                  aria-pressed={mode === "code"}
+                  aria-pressed={markdown ? mode === "code" : source}
                   aria-label="소스 보기"
                   title="소스 보기"
-                  onClick={() => setChosen({ path, mode: mode === "code" ? "preview" : "code" })}
+                  onClick={() => (markdown ? setChosen({ path, mode: mode === "code" ? "preview" : "code" }) : setSource(!source))}
                 >
                   <Braces aria-hidden="true" />
                 </button>
