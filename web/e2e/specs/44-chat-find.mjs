@@ -85,6 +85,36 @@ async function moved(page, index, what) {
   await activeVisible(page, what);
 }
 
+/**
+ * 통지 task가 늦은 브라우저처럼 첫 찾음 줄의 실제 화면 밖 관측을 보류한다. 그 줄로 이동해 실제 화면 안 관측이 오면
+ * 원래 시간 차례대로 함께 전달한다. 가짜 entry·좌표·시계·고정 sleep은 없다. ChatRow는 한 target이어도 마지막 관측을 써야 한다.
+ */
+function batchFirstFindIntersections() {
+  const Native = window.IntersectionObserver;
+  window.IntersectionObserver = class extends Native {
+    constructor(callback, options) {
+      let pending = [];
+      super((entries, observer) => {
+        const row = entries[0]?.target;
+        const rows = [...(row?.parentElement?.querySelectorAll(":scope > .chat-row") ?? [])];
+        // fixture의 첫 찾음은 n=3이다. 처음까지 받은 뒤에 생긴 화면 밖 row shell만 붙잡는다.
+        const first = document.querySelector('[data-testid="chat-history-start"]')?.textContent === "처음이다"
+          && rows.length > 300 && rows[3] === row;
+        if (pending.length || first && entries.some((entry) => !entry.isIntersecting)) {
+          pending.push(...entries);
+          row.dataset.e2eFindIntersections = "held";
+          if (!pending.at(-1).isIntersecting) return;
+          row.dataset.e2eFindIntersections = pending.map((entry) => String(entry.isIntersecting)).join(",");
+          callback(pending, observer);
+          pending = [];
+          return;
+        }
+        callback(entries, observer);
+      }, options);
+    }
+  };
+}
+
 export default async function () {
   const label = "find";
   const dir = `${root}/claude/projects/-lab-${label}`;
@@ -188,11 +218,12 @@ export default async function () {
     await page.context().close();
   });
 
-  await step("대화 안 찾기: 앞 기록도 찾기·멈춤·이어 찾기", async () => {
+  const findEarlier = async (batchIntersections = false) => {
     // 앞 쪽 요청(pane_chat before)을 센다. gate가 있으면 첫 요청 하나를 붙잡는다
     const befores = [];
     let gate = null;
     const { page } = await pairPage(browser, aaa("web", "pair").code, { width: 1280, height: 800 }, {
+      init: batchIntersections ? batchFirstFindIntersections : undefined,
       route: ["**/api/v1/call", async (route) => {
         const request = route.request().postDataJSON();
         if (request?.op === "pane_chat" && request.before) {
@@ -237,9 +268,11 @@ export default async function () {
     await until("멈춘 뒤 받던 쪽 붙음", async () => (await chat.locator(".chat-row").count()) > latest);
     // 울타리: 새 말을 기록에 더하면 최신 쪽 읽기가 앞 쪽과 같은 한 줄 차례(ConversationRefresh)로 돈다. 그 글이 그려졌으면 멈춤 뒤에
     // 앞 쪽을 또 불렀다면 그 요청이 이미 왔다
-    fs.appendFileSync(tr, L({ type: "user", message: { role: "user", content: "울타리 말" } }));
+    // 같은 기록에서 원본 단계와 주입 단계를 연달아 돌려도 이번에 붙인 말의 commit을 기다린다.
+    const fence = batchIntersections ? "관측 묶음 울타리 말" : "울타리 말";
+    fs.appendFileSync(tr, L({ type: "user", message: { role: "user", content: fence } }));
     rowsTotal++;
-    await chat.getByText("울타리 말").waitFor();
+    await chat.getByText(fence, { exact: true }).waitFor();
     if (befores.length !== 1) throw new Error(`멈춘 뒤에도 앞 쪽을 불렀다: ${befores.length}`);
     const stopped = await bar(page);
     if (!stopped.text.endsWith("+") || stopped.pages !== "0") throw new Error(`멈춘 뒤 상태 ${JSON.stringify(stopped)}`);
@@ -258,10 +291,20 @@ export default async function () {
     if (mounted >= LINES / 2) throw new Error(`앞 기록 찾기가 본문을 모두 그렸다: ${mounted}`);
     await shot(page, "find-desktop-earlier-done");
     // 받은 앞 기록의 찾음으로 간다(본문 없는 맨 앞 줄)
+    if (batchIntersections) await domIs(page, "화면 밖 첫 찾음 관측 보류", () =>
+      document.querySelectorAll('[data-testid="chat"] .chat-row')[3]?.dataset.e2eFindIntersections === "held");
     await page.keyboard.press("Enter");
     await moved(page, 0, "앞 기록의 처음");
+    if (batchIntersections) {
+      const batch = await chat.locator(".chat-row").nth(3).getAttribute("data-e2e-find-intersections");
+      if (batch !== "false,true") throw new Error(`화면 밖→안 관측 묶음이 아니다: ${batch}`);
+      await countsAgree(page, "관측 묶음 뒤");
+    }
     await page.context().close();
-  });
+  };
+
+  await step("대화 안 찾기: 앞 기록도 찾기·멈춤·이어 찾기", async () => findEarlier());
+  await step("대화 안 찾기: 앞 기록의 가상 줄 관측 묶음", async () => findEarlier(true));
 
   await step("대화 안 찾기: iPad Codex 기록 앞 기록도 찾기", async () => {
     const codexLabel = "find-codex";
