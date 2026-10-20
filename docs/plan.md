@@ -4744,8 +4744,8 @@ primary 근거:
     단추 옆 폭에서 줄이 넘치면 `data-lines="more"`로 참고 herdr-web-ui 배치(글 칸 전체 폭, 단추는 밑 줄)로 간다. 같은 textarea라 focus·caret이 그대로다.
 - **참고와 다른 점.**
   - t3code resting은 데스크톱·기존 thread·긴 대화·굴려 접힘에만 쓰고 휴대폰은 따로 접는다(`shouldUseRestingComposerLayout`). 여기는 사용자 요청대로 세 기기 모두 글만 본다.
-  - t3code는 펼친 폭과 비교해 판정해서 단추 옆 폭보다 길고 펼친 폭보다 짧은 글은 한 줄 칸에서 잘린다. 여기는 두 배치 모두 **단추 옆 폭**에서 잰다
-    (펼친 배치에서는 같은 그리기 안에서 글 칸 폭을 잠시 그 폭으로 줄여 잰다). 판정이 배치와 무관해 오가며 튀지 않고 잘리지도 않는다.
+  - t3code는 펼친 폭과 비교해 판정해서 단추 옆 폭보다 길고 펼친 폭보다 짧은 글은 한 줄 칸에서 잘린다. 여기는 처음에 두 배치 모두 **단추 옆 폭**에서
+    쟀으나, 그 사이 글이 펼친 한 줄에 놓이고 밑 줄엔 단추만 남아 §8.348에서 펼친 폭 판정으로 바꿨다(자르지 않고 단추 옆에서 접는다).
   - 높이 한도: 참고 `max-height: 10lh`에 참고 손잡이 한도(`.composer-text.is-sized`의 보이는 높이 절반)를 더했다. 휴대폰 가로(402px)에서 10줄이면
     입력창이 화면 3/4을 덮고 화면 키보드가 오르면 대화가 남지 않는다.
   - 한 줄 배치에서 긴 placeholder(「재연결 중…」)는 말줄임으로 끝난다(t3code resting placeholder `whitespace-nowrap overflow-hidden`). 그렇지 않으면
@@ -6417,7 +6417,43 @@ L4 후속(10-20 00시 사용자 관찰): 멈춤 상태의 후보 예약과 재�
 - **Codex.** 공식 0.163.0 시작·onboarding 소스에는 대응하는 우회 경고 수락 단계가 없어 추가 설정을 만들지 않는다. 로그인·폴더 신뢰·Windows 샌드박스 안내는 별개다. 저장 키와 근거는 [계정](accounts.md#계정-claude-thread의-첫-실행-안내)에 적었다.
 - **검증.** 계정 유닛은 옵션·비우회 파일 미생성·수락 제거·기존 설정 보존·인증 비기록·0600·symlink/JSON 거부를 검사한다. m13은 실제 host·로컬/원격 agent·session·PTY와 가짜 Claude로 새 홈 10개를 시작하여 첫 경고 부재·비우회 수락 없음·가짜 원본 인증/설정 비복사·원본 불변을 확인한다. 수락 준비 누락과 무조건 수락 변형이 각각 RED이며 원본 bytes 복구 뒤 GREEN을 확인했다. 고정 sleep·재시도·실제 제공자 인증 없이 사건으로 끝내며, 착지 기준 ed0a4d7e를 통합한 후보의 전체 ci-local·check-public을 실행한다. 상세는 [시험](testing.md)의 t-0551 절을 따른다.
 
-### 8.348 host 계정 화면: 로그인·기본·메일·인증일·끊김·다시 로그인(10-21, t-0538 관리 GUI W5a)
+### 8.348 웹 대화 입력칸 한 줄 높이 수리(10-21, t-0546, 사용자 10-20 「한 줄을 다 채우지 않았는데 두 줄 높이」)
+
+- **원인.** §8.215의 한 줄 판정은 **단추 옆 폭**(상자 폭 − 그림 단추 칸 − 보내기 칸)에서 쟀다. 그 폭보다 길고 펼친 글 칸 폭보다 짧은 글은
+  여러 줄 배치로 가서 펼친 한 줄에 다 들어가고, 밑 줄엔 그림·보내기 단추만 남았다. 데스크톱 상자 818px에서 글 폭 690~780px,
+  iPhone 세로 상자 364px에서 252~340px 구간이다. 사용자 캡처의 글(약 695px)이 이 구간이며 상자는 44px 대신 96px였다.
+- **수리.** `ChatComposer` 한 줄 판정을 배치와 무관하게 **펼친 폭**(상자 안 폭, 여러 줄 배치의 글 칸 폭)에서 잰다(t3code
+  `useComposerMultilinePrompt.ts`와 같은 기준). 한 줄 배치면 같은 그리기 안에서 글 칸을 잠시 그 폭으로 넓혀 잰다. 펼친 한 줄에 드는 글이
+  단추 옆 칸보다 길면 t3code처럼 자르지 않고 단추 옆에서 접는다(높이 66px, 단추는 가운데). 펼친 한 줄을 넘을 때만 여러 줄 배치로 간다.
+  그래서 단추만 있는 밑 줄은 글이 펼친 줄을 채운 뒤에만 생긴다. 보내기 칸 폭(맥락 게이지 유무)은 판정에 들지 않는다.
+- **시험.** 웹 E2E 22 「대화 입력창 높이」에 휴대폰 가로·세로·데스크톱마다 두 폭 사이(가운데) 글·펼친 폭 1.2배 글·다시 사이 글을 더했다.
+  사이 글은 한 줄 표지이고 보내기 단추가 글 칸 밑 줄에 홀로 있지 않으며 두 줄을 넘지 않고 잘리지 않는다. 고치기 전 빌드에서 세 기기 모두
+  표지 more·단추 홀로 밑 줄로 실패했다. 한 글자씩 늘이고 줄인 측정에서 전환 지점이 같아 배치가 튀지 않는다.
+
+### 8.349 배포 빌드 작업 공간을 system temp 밖으로 이동(10-21, t-0547)
+
+- **범위.** `scripts/deploy-build.sh`의 기본 부모 폴더를 호출한 저장소의 `target/deploy-build`로 옮긴다.
+  다른 디스크는 `AAA_DEPLOY_BUILD_ROOT`로 지정하며 상대 경로는 호출 폴더 기준이다. `TMPDIR`와 공용
+  `CARGO_TARGET_DIR`에 기대지 않고 빌드마다 새 detached source·target을 함께 만든다.
+- **보존.** origin/main 조상 검사·한 번 빌드·커밋 salt·판/SHA/provenance 계약은 유지한다. 성공·실패 모두
+  이번 scratch와 worktree 등록만 지우고 이웃 파일은 보존한다. 기존 출력은 덮어쓰지 않으며 실패 중 만든
+  부분 출력은 기존처럼 남긴다. 사용할 수 없는 부모면 temp로 우회하거나 재시도하지 않고 실패한다.
+- **검증.** 기존 스크립트 keeper가 기본/명시 부모·공백·호출 폴더 기준 상대 경로·TMPDIR와 공용 target 무시,
+  npm/Cargo/판 검증 실패의 단일 호출·정리·부분 출력 보존을 확인한다. 원래 temp 선택은 기본 위치 단언에서
+  RED다. 같은 커밋의 temp 밖 실빌드 두 경로에서 판·실제 SHA와 provenance 일치를 확인했으며,
+  착지 기준 f7ff5bb7 통합 뒤 전체 ci-local·check-public을 실행한다. 상세는 [시험](testing.md)의 배포 자동화 절을 따른다.
+- **진단 한계.** temp 밖에서도 build-script SIGKILL과 AMFI 서명 검사 실패를 관측했다. 위치 변경이 macOS
+  서명 검사기의 오류까지 해소한다는 주장은 하지 않는다. syspolicyd 오류24(EMFILE) 근거는 비공개 보고에
+  보존하고 시스템 조치 여부는 별도 사용자 판단으로 남긴다. 이번 착지는 스크립트 변경이며 운영 배포는 없다.
+
+### 8.350 자동화 기억 회수의 동시 편집 보존(10-21, t-0548)
+
+- **문제.** 열린 자동화 thread에 넘긴 기억 폴더를 보고·종료 때 통째로 되가져와 coordinator가 host 원문에 덧붙인 줄을 지웠다. host `automation_prepare`가 agent의 work_files.v1/N-1 Mission 파일 쓰기로 넘기고, 보고 수집·resolve의 `automation_copy_memory`가 목록·조각·hash를 검증한 뒤 host 폴더를 바꾸는 경로다. agent는 바이트 전송만 맡으므로 host에서 수리한다.
+- **판정.** 시작할 때 파일별 SHA-256 공통 판을 Run에 저장한다. 회수할 때 파일별 3-way로 한쪽 변경·추가·삭제를 반영하고, 같은 파일의 다른 변경·파일/폴더 경로 충돌은 host를 유지한다. 서로 합의한 파일만 기준을 갱신하므로 반복 보고와 마지막 회수가 바깥 편집을 뒤늦게 덮지 않는다. DB 재시작 뒤에도 기준을 유지하며 기준 없는 옛 실행은 다른 내용을 보수적으로 충돌 처리한다.
+- **보존.** 양쪽 tree와 충돌 경로를 `<이름>.memory-conflicts/<thread>/<충돌판>/`에 먼저 보존하고 inbox로 알린다. 충돌 파일의 양쪽 hash로 판을 정해 같은 충돌을 반복 복사하지 않는다. 보존 폴더는 전송 대상 밖에 둔다. 줄 병합·충돌 표지로 4KiB 요약이나 history 정리 결과를 추측하지 않는 단순한 방식을 택했다. 기존 8MiB·1000개 전송·합친 tree 상한, 64KiB 초과 안내는 유지한다. host 회수는 기억 폴더별 lock 안에서 최신 DB 판을 읽고 교체 직전 원문을 다시 대조한다.
+- **검증.** 수정 전 실제 host 회귀의 줄 유실을 RED로 확인한다. 파일별 판정 유닛·새/N-1 frame host 시험·기존 CI 자동화 m13의 마지막 회수/4KiB/history/inbox/다음 실행을 확장한다. 전체 ci-local·check-public 뒤 착지 창을 기다린다. 상세 절차는 [시험](testing.md)의 t-0548 절을 따른다.
+
+### 8.351 host 계정 화면: 로그인·기본·메일·인증일·끊김·다시 로그인(10-21, t-0538 관리 GUI W5a)
 
 - **요청.** 확정 계획 t-0456 plan-revised §5 W5에 사용자가 더한 계정 화면(23:5x와 그 뒤 더함): host 로그인(브라우저 인증)·진행·취소, 기본 지정·해제, 계정마다 최초 인증일·최근 인증된 날(날짜만, 비밀은 가림), 끊김·곧 만료 표시와 확인 필요 알림, harness별 목록에 별칭마다 공식 CLI가 로그인 때 알린 메일(과 plan), 「다시 로그인」의 「이 메일로 로그인하세요」와 다른 메일이면 경고하고 바꿀지 묻기. 시작 때 물은 다섯은 추천대로 정했다(10-21, 1A~5A): W5를 셋(W5a 계정 → W5b 머신 등록·웹 공개·보고서 → W5c profile·safety·work root·hook)으로 나눠 따로 착지, 끊김은 실제 쓰임과 알 수 있는 만료로만, 이 기록 전 계정은 저장된 인증에서 읽을 수 있는 메일·plan만 채우고 날짜는 모름, 브라우저 인증은 host Mac에서만(웹에 주소를 보이지 않음), 메일은 조작 기기와 host의 세션 밖 CLI에만. 키 관리자(K1~K3)는 범위 밖이다.
 - **proto(FRONT_API 1.79, 더하기만).** 웹 조작 기기에 `account_login`·`account_login_status`·`account_login_cancel`·`account_default`를 연다(이전엔 host 세션 밖 CLI만). 새 `account_login_confirm{id, switch}`. `AccountView`에 `email`·`plan`·`first_auth_ms`·`last_auth_ms`·`expires_ms`·`health`(ok·expiring·expired·rejected), `AccountLoginView`에 `expect_email`·`email`과 상태 `mismatch`·`kept`, 웹 events 사건 `accounts`. 옛 host는 웹 계정 요청을 거부하고 새 칸을 생략해 웹은 목록만 그린다. `account_import`·`account_remove`(인증 파일 넣고 빼기)는 그대로 host 세션 밖 CLI만이다.
@@ -6428,9 +6464,9 @@ L4 후속(10-20 00시 사용자 관찰): 멈춤 상태의 후보 예약과 재�
 - **웹.** 설정 창 「계정」(구독 사용량 다음): harness마다 별칭·기본·상태 배지, 조작 기기에는 메일·plan, 최초 인증일·최근 인증된 날·만료(이 기기 시간대 날짜), 「다시 로그인」·「기본으로/기본 해제」, 「새 계정 로그인」(별칭·harness). 진행 카드는 「host Mac 브라우저에서 인증을 마치세요」·「이 메일로 로그인하세요」·취소, 다른 메일이면 「새 메일로 바꾸기」·「옛 인증 그대로 두기」. host `accounts` 사건으로 다시 읽는다(시간 polling 없음). CLI는 `aaa account list`에 메일·plan·날짜(UTC)·상태 칸과 `aaa account login-confirm <id> --switch|--keep`.
 - **검증.** host 유닛 `account_meta::tests`(메일·plan·만료 읽기, 상태 판정, 웹 조작 기기 허용·세션 안·보기 전용 거부와 메일 가림, 끊김·곧 만료 알림 한 번과 로그인으로 끝냄, 메일이 바뀌면 최초 시각 새로), m13 `host_relogin_checks_the_email_and_asks_before_switching`(가짜 공식 CLI로 메일·plan·날짜·곧 만료 알림, 같은 메일 다시 로그인, 다른 메일 → 그대로 두기·바꾸기, 감사·알림·로그·프로젝트 파일에 메일 없음)과 `account_credentials_parallel_refresh_and_all_records_are_redacted`의 거부된 갱신 → 끊김·알림 한 번, 웹 유닛 `accountsModel.test.mjs`, 웹 E2E `58-accounts`(데스크톱·휴대폰 390·Reader). 절차는 [시험](testing.md).
 
-### 8.349 웹 머신 등록·폐기, 웹 공개 켜기·끄기, 보고서 올리기·키 교체(10-21, t-0538 관리 GUI W5b)
+### 8.352 웹 머신 등록·폐기, 웹 공개 켜기·끄기, 보고서 올리기·키 교체(10-21, t-0538 관리 GUI W5b)
 
-- **요청.** 확정 계획 t-0456 plan-revised §5 W5의 둘째 묶음(§8.348의 1A로 나눔): 머신 등록 승인·폐기, 웹 공개, 보고서 올리기·가져오기·키 교체를 웹 조작 기기에서. 등록 승인은 M1(웹 머신 추가)이 다시 쓸 공용 요청으로 둔다. 시작 때 물은 다섯은 추천대로 정했다(10-21, 1A~5A): 웹 승인도 새 머신 화면의 6자리 코드와 이름 확인, 마지막 조작 기기는 웹에서 폐기하지 않고(host CLI만) 이 기기 자신의 폐기는 「이 화면이 끊깁니다」 확인, 공개 주소로 연 화면에서 끄면 「이 화면이 끊길 수 있음」과 다른 경로를 보이고 「다른 경로를 확인했다」를 켜야 끄기가 열림(켜기는 확인 창 하나), 올리기는 파일 여러 개나 폴더 하나(파일당 16MB·합계 64MB, 사용자 보고서는 맨 위 index.html), 가져오기(`library import`)는 웹에 넣지 않고 키 교체 확인 창에 살아 있는 공유 링크 수와 「모두 끊긴다」.
+- **요청.** 확정 계획 t-0456 plan-revised §5 W5의 둘째 묶음(§8.351의 1A로 나눔): 머신 등록 승인·폐기, 웹 공개, 보고서 올리기·가져오기·키 교체를 웹 조작 기기에서. 등록 승인은 M1(웹 머신 추가)이 다시 쓸 공용 요청으로 둔다. 시작 때 물은 다섯은 추천대로 정했다(10-21, 1A~5A): 웹 승인도 새 머신 화면의 6자리 코드와 이름 확인, 마지막 조작 기기는 웹에서 폐기하지 않고(host CLI만) 이 기기 자신의 폐기는 「이 화면이 끊깁니다」 확인, 공개 주소로 연 화면에서 끄면 「이 화면이 끊길 수 있음」과 다른 경로를 보이고 「다른 경로를 확인했다」를 켜야 끄기가 열림(켜기는 확인 창 하나), 올리기는 파일 여러 개나 폴더 하나(파일당 16MB·합계 64MB, 사용자 보고서는 맨 위 index.html), 가져오기(`library import`)는 웹에 넣지 않고 키 교체 확인 창에 살아 있는 공유 링크 수와 「모두 끊긴다」.
 - **proto(FRONT_API 1.80, 더하기만).** 웹 조작 기기에 `enroll_open`·`enroll_pending`·`enroll_approve`·`machine_revoke`·`web_publish`·`web_publish_off`·`library_rotate`를 연다(이전엔 host 세션 밖 CLI만). 새 `enroll_close`(CLI `aaa machine enroll --close`), `library_upload_publish{project?, upload, name, to_user, title?}`, `pending`에 `open_until_ms`(등록 창이 닫히는 시각), 웹 events 사건 `enroll`(창 열기·닫기, 요청 들어옴·취소, 승인·거부). 옛 host는 웹 요청을 거부하고 웹은 1.80 미만이면 이 단추들을 그리지 않는다.
 - **권한.** 사람 판정(§8.333의 `call_from`)은 그대로: pane 안 `local:…@…`·worker·evaluator·detached는 Local이어도 거부하고 `enroll_close`·`library_rotate`·`library_upload_publish`도 더했다. Reader는 모두 거부한다. 웹(`device:`)에서 host 머신을 폐기하거나, 남은 조작 기기가 하나일 때 그 기기를 폐기하면 host가 `forbidden`으로 거부한다(host 터미널의 `aaa web revoke`는 그대로). 등록 코드는 세 번 틀리면 그 요청을 버린다(기존).
 - **올리기.** `POST /api/v1/projects/<p>/library-uploads/<올리기>?path=<보고서 안 경로>`(조작 기기, 본문 16MiB)는 host 상태 폴더 `library-uploads/<올리기>/<경로>`에 임시 파일 뒤 rename으로 쓴다. 올리기 이름은 웹이 만든 소문자 hex 32자, 경로는 library 사본 규칙(`safe_rel`: 숨은 이름·`..`·절대·역슬래시 거부). 한 올리기에 합계 64MiB·1000개(같은 경로를 다시 올리면 그 파일을 빼고 센다). `library_upload_publish`는 그 폴더를 CLI와 같은 `library_publish`(사본, 이름 규칙·사용자 보고서 index.html·library 상한·사용자 알림)로 등록하고 성공하면 폴더를 지운다. 실패하면 두어 고쳐 다시 등록한다. 손대지 않은 지 하루 넘은 올리기는 다음 올리기 때 지운다. 감사 기록 `library_upload`.

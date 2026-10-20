@@ -1,4 +1,5 @@
 //! 자동화 thread의 입력·기억·짧은 수명. work_files.v1과 N-1 파일 전송을 함께 지원한다.
+mod memory;
 use crate::{
     AgentConn, Host,
     automation::Start,
@@ -19,6 +20,13 @@ fn digest(b: &[u8]) -> String {
     hex::encode(Sha256::digest(b))
 }
 
+struct Scratch(std::path::PathBuf);
+impl Drop for Scratch {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.0);
+    }
+}
+
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(default)]
 pub(crate) struct Run {
@@ -29,6 +37,8 @@ pub(crate) struct Run {
     pub first_input: Option<(String, String)>,
     pub seeded_work: Option<String>,
     pub initial_memory_hash: Option<String>,
+    /// 양쪽에서 합의된 마지막 파일별 판. None은 업그레이드 전 열린 실행이다.
+    pub memory_common: Option<memory::Hashes>,
     pub memory_changed: bool,
     pub inbox_pending: bool,
 }
@@ -179,9 +189,11 @@ impl Host {
         }
         let conn = self.live_conn(&r.machine_id)?;
         let mut initial = None;
+        let mut common = None;
         if run.memory {
             let root = memory_root(self, &r.project, r.automation.as_deref().ok_or_else(|| bad("규칙이 없다"))?)?;
             let mut files = local_files(&root)?;
+            common = Some(memory::hashes(&files.iter().cloned().collect()));
             if !files.iter().any(|(p, _)| p == "memory.md") {
                 files.push(("memory.md".into(), vec![]));
             }
@@ -220,12 +232,15 @@ impl Host {
             let run = r.automation_run.as_mut().unwrap();
             run.seeded_work = Some(work.into());
             run.initial_memory_hash = initial;
+            run.memory_common = common;
             run.first_input = None;
         })?;
         Ok(())
     }
     pub(crate) async fn automation_copy_memory(&self, r: &ThreadRec, last: bool) -> Result<(), ErrorBody> {
-        let Some(run) = r.automation_run.as_ref().filter(|r| r.memory) else { return Ok(()) };
+        if !r.automation_run.as_ref().is_some_and(|r| r.memory) {
+            return Ok(());
+        }
         let Some(work) = r.work_dir.clone() else { return Ok(()) };
         let name = r.automation.as_deref().ok_or_else(|| bad("규칙이 없다"))?;
         let conn = self.live_conn(&r.machine_id)?;
@@ -242,6 +257,7 @@ impl Host {
         }
         let dest = memory_root(self, &r.project, name)?;
         let tmp = dest.with_file_name(format!(".{name}.memory-{}", aaa_common::util::new_id()));
+        let _cleanup = Scratch(tmp.clone());
         let fetch = async {
             std::fs::create_dir_all(&tmp).map_err(bad)?;
             let mut current = None;
@@ -300,10 +316,44 @@ impl Host {
                 return Err(e);
             }
         };
+        // 파일 전송을 마친 뒤 최신 host 원문과 공통 판을 같은 lock 안에서 읽는다.
+        // 보고 회수·마지막 회수가 옛 ThreadRec을 넘겨도 이미 저장한 판을 되돌리지 않는다.
+        let lock = self.file_locks.of(&dest);
+        let _guard = lock.lock().unwrap();
+        let latest = self.load(&r.project, &r.id)?;
+        let run = latest.automation_run.as_ref().unwrap();
+        let host = memory::read(&dest)?;
+        let thread = memory::read(&tmp)?;
+        let merged = memory::merge(run.memory_common.as_ref(), &host, &thread);
+        let conflict = if merged.conflicts.is_empty() {
+            None
+        } else {
+            Some(memory::preserve(&dest, &r.id, &host, &thread, &merged.conflicts)?)
+        };
+        // 합쳐진 history도 기존 전송 상한 안에 있어야 한다. 실패해도 양쪽 원문은 남는다.
+        if merged.files.len() > 1000 || merged.files.values().map(|b| b.len()).sum::<usize>() > 8 * 1024 * 1024 {
+            let _ = std::fs::remove_dir_all(&tmp);
+            return Err(bad("합친 기억 이동 상한: 8MiB·1000개. 원본을 보존했다"));
+        }
+        std::fs::remove_dir_all(&tmp).map_err(bad)?;
+        memory::write(&tmp, &merged.files)?;
+        if memory::read(&dest)? != host {
+            let _ = std::fs::remove_dir_all(&tmp);
+            return Err(bad("회수 중 host 기억이 바뀌었다. 원본을 보존했다"));
+        }
         // 프로젝트의 기존 기억은 검증이 전부 끝날 때까지 보존한다.
         let old = dest.with_file_name(format!(".{name}.old-{}", aaa_common::util::new_id()));
         if dest.exists() {
             std::fs::rename(&dest, &old).map_err(bad)?;
+            match memory::read(&old) {
+                Ok(displaced) if displaced == host => {}
+                displaced => {
+                    std::fs::rename(&old, &dest).map_err(bad)?;
+                    return Err(displaced
+                        .err()
+                        .unwrap_or_else(|| bad("교체 중 host 기억이 바뀌었다. 원본을 보존했다")));
+                }
+            }
         }
         if let Err(e) = std::fs::rename(&tmp, &dest) {
             if old.exists() {
@@ -315,13 +365,26 @@ impl Host {
             std::fs::remove_dir_all(&old).map_err(bad)?;
         }
         let changed = run.memory_changed || current != run.initial_memory_hash;
-        self.update_rec(&r.project, &r.id, |r| r.automation_run.as_mut().unwrap().memory_changed = changed)?;
+        self.update_rec(&r.project, &r.id, |r| {
+            let run = r.automation_run.as_mut().unwrap();
+            run.memory_changed = changed;
+            // 기준 없는 옛 실행은 새 판을 추측하지 않고 계속 보수적으로 회수한다.
+            if run.memory_common.is_some() {
+                run.memory_common = Some(merged.common);
+            }
+        })?;
         self.db
             .set_meta(
                 &format!("automation_memory:{}:{name}", r.project),
                 &serde_json::to_string(&(r.id.clone(), aaa_common::util::now_ms())).map_err(bad)?,
             )
             .map_err(bad)?;
+        if let Some(path) = conflict {
+            self.inbox_once(
+                &r.project, "automation-memory", &r.id, &format!("memory conflict:{path}"),
+                &format!("자동화 {name} 기억 충돌: host 원문을 유지하고 양쪽 사본을 {path}에 보존했다. conflicts.json의 경로를 확인해 합친다"),
+            );
+        }
         if large {
             self.inbox_once(
                 &r.project,

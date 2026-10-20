@@ -486,7 +486,7 @@ async fn task_file(
     }
 }
 
-/// 웹 「보고서 올리기」(관리 GUI W5b, plan §8.349): 파일 하나를 올리기 폴더의 `path`에 쓴다(16MiB). 다 올리면 웹이
+/// 웹 「보고서 올리기」(관리 GUI W5b, plan §8.352): 파일 하나를 올리기 폴더의 `path`에 쓴다(16MiB). 다 올리면 웹이
 /// `library_upload_publish`로 등록한다. 돌려주는 것은 그 올리기의 파일 수·합계
 #[derive(serde::Deserialize)]
 struct LibraryUploadQuery {
