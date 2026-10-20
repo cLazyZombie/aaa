@@ -1242,10 +1242,17 @@ fn scrub_audit_env(conn: &mut Connection) -> Result<()> {
     }
     tx.execute("INSERT INTO meta(key,value) VALUES('audit_vacuum','1') ON CONFLICT(key) DO NOTHING", [])?;
     tx.commit()?;
-    conn.execute_batch("VACUUM")?;
-    conn.execute("DELETE FROM meta WHERE key='audit_vacuum'", [])?;
-    conn.query_row("PRAGMA wal_checkpoint(TRUNCATE)", [], |_| Ok(()))?;
-    tracing::info!(rows = rows.len(), "감사 기록의 옛 env 값을 지웠다(VACUUM)");
+    // 행의 값은 이미 지웠다. VACUUM(임시 공간·잠금이 필요하다)이 실패해도 host는 시작하고, 표지가 남아 다음 시작에 다시 한다
+    let vacuum = conn.execute_batch("VACUUM").and_then(|_| {
+        conn.execute("DELETE FROM meta WHERE key='audit_vacuum'", [])?;
+        conn.query_row("PRAGMA wal_checkpoint(TRUNCATE)", [], |_| Ok(()))
+    });
+    match vacuum {
+        Ok(()) => tracing::info!(rows = rows.len(), "감사 기록의 옛 env 값을 지웠다(VACUUM)"),
+        Err(e) => {
+            tracing::warn!(rows = rows.len(), error = %e, "감사 기록의 옛 env 값은 지웠지만 VACUUM을 못 했다: 다음 시작에 다시 한다")
+        }
+    }
     Ok(())
 }
 
