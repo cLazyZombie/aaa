@@ -52,7 +52,7 @@ fn diff_count(diff: &aaa_proto::DiffView) -> Result<u32, String> {
 }
 
 impl Host {
-    /// 끝내기 전 확인(관리 GUI W4, plan §8.333): 커밋하지 않은 파일·base 대비 바뀐 파일·사본 상태. 기록·inbox를 고치지 않는다:
+    /// 끝내기 전 확인(관리 GUI W4, plan §8.343): 커밋하지 않은 파일·base 대비 바뀐 파일·사본 상태. 기록·inbox를 고치지 않는다:
     /// PR은 기록된 상태만 본다(`merged_head`는 PR을 다시 찾아 기록을 고친다). 읽지 못한 것은 모름이고, 모르면 남기기가 기본이다.
     pub(crate) async fn thread_resolve_preview(
         &self,

@@ -1,4 +1,4 @@
-// thread 화면 머리의 「thread 관리」(관리 GUI W4, plan §8.333): 끝내기·다시 열기·다시 시작·brief 다시 보내기·Next·요약 고치기.
+// thread 화면 머리의 「thread 관리」(관리 GUI W4, plan §8.343): 끝내기·다시 열기·다시 시작·brief 다시 보내기·Next·요약 고치기.
 // 끝내기 창은 host가 미리 읽은 잃을 수 있는 것(커밋하지 않은 파일·병합되지 않은 변경·사본 상태)을 보이고, 위험하거나 모르면
 // 「worktree 남기기」를 켠 채로 연다. 거부·검사는 host가 한다: 화면은 그 글을 창 안에 보인다. 조작 기기만 그린다.
 import "./AutomationPanel.css";

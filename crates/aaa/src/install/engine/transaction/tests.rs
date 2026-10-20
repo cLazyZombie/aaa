@@ -4,9 +4,9 @@ use std::sync::atomic::{AtomicU32, Ordering};
 
 const CANARY: &str = "install-secret-canary-DO-NOT-PRINT";
 static SEQ: AtomicU32 = AtomicU32::new(0);
-pub(super) struct Lab(pub(super) PathBuf);
+pub(in crate::install::engine) struct Lab(pub(in crate::install::engine) PathBuf);
 impl Lab {
-    pub(super) fn new() -> Self {
+    pub(in crate::install::engine) fn new() -> Self {
         let path = std::env::temp_dir().canonicalize().unwrap().join(format!(
             "aaa-install-engine-{}-{}",
             std::process::id(),
@@ -72,13 +72,33 @@ impl Lab {
     pub(super) fn request(&self, state: &str, files: Vec<Proposed>) -> Request {
         Request { plan: self.plan(state), files, root: None, directories: Vec::new() }
     }
+    pub(in crate::install::engine) fn uninstall_service_files(&self, plan: &InstallPlan, id: &str) {
+        let mut tx =
+            Transaction::resume(Path::new(&plan.context.state_dir), id, plan.choices.instance.as_deref()).unwrap();
+        tx.uninstall(false).unwrap();
+    }
+    pub(in crate::install::engine) fn configured_service(&self) -> (InstallPlan, String) {
+        let mut plan = self.plan("state");
+        if cfg!(windows) {
+            plan.choices.service = Some(InstallService::WindowsScm);
+            plan.choices.service_account = Some(InstallAccount::CurrentUser);
+            plan.choices.startup = Some(InstallStartup::Auto);
+            plan.choices.service_password_source = Some(InstallPasswordSource::Prompt);
+        }
+        let plan = aaa_config::install::plan(plan.choices, plan.context).unwrap();
+        let mut tx = Transaction::create(prepare::install(plan.clone()).unwrap()).unwrap();
+        tx.run().unwrap();
+        (plan, tx.journal.id.clone())
+    }
 }
 impl Drop for Lab {
     fn drop(&mut self) {
         std::fs::remove_dir_all(&self.0).unwrap();
     }
 }
-pub(super) fn tree(path: &Path) -> BTreeMap<PathBuf, (Vec<u8>, u32, Option<std::time::SystemTime>)> {
+pub(in crate::install::engine) fn tree(
+    path: &Path,
+) -> BTreeMap<PathBuf, (Vec<u8>, u32, Option<std::time::SystemTime>)> {
     fn visit(root: &Path, path: &Path, out: &mut BTreeMap<PathBuf, (Vec<u8>, u32, Option<std::time::SystemTime>)>) {
         let meta = path.symlink_metadata().unwrap();
         out.insert(
@@ -311,7 +331,32 @@ fn unsafe_targets_readonly_and_untrusted_journals_preserve_originals() {
     assert!(!lab.0.join("escape").exists());
     assert_eq!(tree(&lab.0), before);
     let parent = lab.put("file-parent", b"not directory");
-    assert!(prepare::proposal(parent.join("child"), Kind::Config, None, b"new".to_vec(), None, true, false).is_err());
+    let before = tree(&lab.0);
+    for path in [parent.join("child"), parent.join("missing/deep/child")] {
+        assert!(
+            prepare::proposal(path.clone(), Kind::Config, None, b"new".to_vec(), None, true, false).is_err(),
+            "파일 조상 아래 proposal은 거부해야 한다: metadata 오류 {:?}",
+            path.symlink_metadata().err().map(|e| (e.kind(), e.raw_os_error()))
+        );
+        assert_eq!(tree(&lab.0), before);
+    }
+    let missing = lab.0.join("missing-parent/deep/child");
+    assert!(prepare::proposal(missing, Kind::Config, None, b"new".to_vec(), None, true, false).is_ok());
+    assert_eq!(tree(&lab.0), before, "정상 미생성 부모 아래 proposal도 쓰지 않는다");
+
+    // proposal 뒤 부모가 일반 파일로 교체되면 실제 적용 진입도 journal/잠금 생성 전에 거부한다.
+    for (n, suffix) in ["child", "missing/deep/child"].into_iter().enumerate() {
+        let directory = lab.0.join(format!("zzz-changed-parent-{n}"));
+        private::parents(&directory).unwrap();
+        let proposed =
+            prepare::proposal(directory.join(suffix), Kind::Config, None, b"new".to_vec(), None, true, false).unwrap();
+        let request = lab.request(&format!("write-state-{n}"), vec![proposed]);
+        std::fs::remove_dir(&directory).unwrap();
+        private::write(&directory, b"user replaced directory with a file").unwrap();
+        let before = tree(&lab.0);
+        assert!(Transaction::create(request).is_err(), "부모 교체 뒤 실제 적용을 거부한다");
+        assert_eq!(tree(&lab.0), before, "거부 전에 자원 잠금이나 journal도 만들지 않는다");
+    }
 }
 
 #[cfg(unix)]

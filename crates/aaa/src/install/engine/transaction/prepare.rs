@@ -156,7 +156,11 @@ pub(super) fn install(plan: InstallPlan) -> Result<Request> {
         host.put(
             &["local_agent", "mode"],
             string(if local {
-                if c.service == Some(InstallService::None) { "child" } else { "launchd" }
+                match c.service {
+                    Some(InstallService::None) => "child",
+                    Some(InstallService::WindowsScm) => "windows_scm",
+                    _ => "launchd",
+                }
             } else {
                 "none"
             }),

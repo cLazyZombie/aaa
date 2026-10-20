@@ -1,13 +1,13 @@
-// 운영 화면 규칙(src/operateModel.ts, 관리 GUI W4, plan §8.333). 거부·검사의 정본은 host다(m13 `resolve_keeps_dirty_worktree_and_unmerged_branch`,
+// 운영 화면 규칙(src/operateModel.ts, 관리 GUI W4, plan §8.343). 거부·검사의 정본은 host다(m13 `resolve_keeps_dirty_worktree_and_unmerged_branch`,
 // project.rs `repo_edit_replaces_in_place_and_settings_view_reads_it`).
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import { canOperate, checkSetting, inboxOpen, needsAnswer, parseRepoArg, repoArg, repoGroups, resolveDefaults, resolveRequest, threadActions } from "../src/operateModel.ts";
 
 describe("운영 화면", () => {
-  it("설정 읽기·끝내기 미리보기·정리 실행은 1.75 이상 host만", () => {
-    for (const v of [undefined, null, "1.74", "2.75"]) assert.equal(canOperate(v), false, String(v));
-    for (const v of ["1.75", "1.90"]) assert.equal(canOperate(v), true, v);
+  it("설정 읽기·끝내기 미리보기·정리 실행은 1.77 이상 host만", () => {
+    for (const v of [undefined, null, "1.76", "2.77"]) assert.equal(canOperate(v), false, String(v));
+    for (const v of ["1.77", "1.90"]) assert.equal(canOperate(v), true, v);
   });
   it("thread 동작: 도는 세션은 다시 시작하지 않고, brief는 받기 전에만 다시 보내며, 데려온 thread는 다시 띄우지 않으며, 끝낸 thread는 다시 열기만", () => {
     const open = { status: "open", thread_kind: "worktree", cleanup_pending: undefined, brief: "pending" };

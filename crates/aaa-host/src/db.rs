@@ -1670,7 +1670,7 @@ mod audit_env_tests {
 mod flow_tests {
     use super::*;
 
-    /// 웹 알림함 「흐름 사건」(FRONT_API 1.75 `tail`): 가장 최근 N개를 오래된 것부터 보인다
+    /// 웹 알림함 「흐름 사건」(FRONT_API 1.77 `tail`): 가장 최근 N개를 오래된 것부터 보인다
     #[test]
     fn flow_tail_returns_the_latest_in_order() {
         let db = Db::open(Path::new(":memory:")).unwrap();

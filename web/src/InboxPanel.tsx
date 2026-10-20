@@ -1,4 +1,4 @@
-// 활동 막대 「알림함」 패널(관리 GUI W4, plan §8.333): coordinator 알림함(inbox)·흐름 사건·post. 알림함은 늘 `peek`로 읽는다:
+// 활동 막대 「알림함」 패널(관리 GUI W4, plan §8.343): coordinator 알림함(inbox)·흐름 사건·post. 알림함은 늘 `peek`로 읽는다:
 // 화면이 읽어도 「봤다」가 되지 않아 coordinator 묶음 알림(nudge)이 그대로 간다. 끝내기는 조작 기기만. 사용자가 답할 요청 post는
 // 「답할 것」이 다루므로 여기서는 수만 보이고 그리로 보낸다(같은 자료를 두 곳에 두지 않는다). post 목록은 조작 기기만 읽는다.
 import "./InboxPanel.css";
@@ -159,7 +159,7 @@ function EventList({ onThread }: { onThread?: (project: string, id: string) => v
   const [events, setEvents] = useState<FlowEvent[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const load = useCallback(() => {
-    // 최근 N개(`tail`)는 1.75 host만 안다: 옛 host는 모르는 칸을 버리고 가장 오래된 것을 준다
+    // 최근 N개(`tail`)는 1.77 host만 안다: 옛 host는 모르는 칸을 버리고 가장 오래된 것을 준다
     me()
       .then((m) => {
         if (!canOperate(m?.front_api)) throw new Error("이 host는 최근 흐름 사건 읽기를 모른다(`aaa events`)");

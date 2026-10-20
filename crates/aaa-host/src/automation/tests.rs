@@ -661,7 +661,7 @@ fn converter_rejects_malformed_legacy_targets_before_writing() {
     }
 }
 
-// ───── 관리 GUI W2: 읽기·검사·저장·삭제·되살리기·지금 실행(plan §8.332) ─────
+// ───── 관리 GUI W2: 읽기·검사·저장·삭제·되살리기·지금 실행(plan §8.342) ─────
 
 fn doc_of(r: Result<aaa_proto::FrontResponse, aaa_proto::ErrorBody>) -> aaa_proto::AutomationDoc {
     match r {

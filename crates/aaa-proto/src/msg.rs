@@ -2439,7 +2439,7 @@ pub enum FrontRequest {
         #[serde(default)]
         discard: bool,
     },
-    /// 자동화 파일 원문·판·본문과 검사 결과(관리 GUI W2, FRONT_API 1.74, Reader 가능)
+    /// 자동화 파일 원문·판·본문과 검사 결과(관리 GUI W2, FRONT_API 1.76, Reader 가능)
     AutomationRead {
         #[serde(default)]
         #[ts(optional, as = "Option<String>")]
@@ -2503,13 +2503,13 @@ pub enum FrontRequest {
         name: String,
         key: String,
     },
-    /// FRONT_API 1.75. 「이 aaa」·「저장소」 설정 화면이 읽는 프로젝트 설정(관리 GUI W4, plan §8.333). Reader 가능
+    /// FRONT_API 1.77. 「이 aaa」·「저장소」 설정 화면이 읽는 프로젝트 설정(관리 GUI W4, plan §8.343). Reader 가능
     ProjectSettings {
         #[serde(default)]
         #[ts(optional, as = "Option<String>")]
         project: String,
     },
-    /// FRONT_API 1.75. 저장소 하나를 제자리에서 바꾼다(`PATH[@MACHINE]`, `repos.remove`+`repos.add`를 한 번에, 차례는 그대로)
+    /// FRONT_API 1.77. 저장소 하나를 제자리에서 바꾼다(`PATH[@MACHINE]`, `repos.remove`+`repos.add`를 한 번에, 차례는 그대로)
     ProjectRepoEdit {
         #[serde(default)]
         #[ts(optional, as = "Option<String>")]
@@ -2517,7 +2517,7 @@ pub enum FrontRequest {
         from: String,
         to: String,
     },
-    /// FRONT_API 1.75. 끝내기 전에 잃을 수 있는 것(미커밋·미병합·사본 상태)을 읽는다. 기록을 고치지 않는다. 바뀐 파일 수를
+    /// FRONT_API 1.77. 끝내기 전에 잃을 수 있는 것(미커밋·미병합·사본 상태)을 읽는다. 기록을 고치지 않는다. 바뀐 파일 수를
     /// 그 머신 agent가 읽으므로 조작 기기만(`ThreadDiff`와 같다)
     ThreadResolvePreview {
         #[serde(default)]
@@ -2525,7 +2525,7 @@ pub enum FrontRequest {
         project: String,
         thread: String,
     },
-    /// FRONT_API 1.75. 미리보기(`library_prune_preview`)와 같은 판정으로 지우되, 후보가 `expected`(`project/name`)와 같을 때만
+    /// FRONT_API 1.77. 미리보기(`library_prune_preview`)와 같은 판정으로 지우되, 후보가 `expected`(`project/name`)와 같을 때만
     /// 지운다(그 사이 바뀌면 `conflict`). 웹 「보고서 정리」의 실행이다. 지우는 것은 `library_delete`보다 좁다(report.md
     /// 사본·thread 기록은 남는다)
     LibraryPruneApply {
@@ -2566,7 +2566,7 @@ pub enum FrontRequest {
         after: u64,
         #[serde(default)]
         limit: Option<u32>,
-        /// 가장 최근 `limit`개(차례는 그대로 오래된 것부터, FRONT_API 1.75). 웹 알림함 「흐름 사건」이 쓴다. 옛 host는 버린다
+        /// 가장 최근 `limit`개(차례는 그대로 오래된 것부터, FRONT_API 1.77). 웹 알림함 「흐름 사건」이 쓴다. 옛 host는 버린다
         #[serde(default, skip_serializing_if = "std::ops::Not::not")]
         #[ts(optional, as = "Option<bool>")]
         tail: bool,
@@ -2828,7 +2828,7 @@ pub enum FrontResponse {
     },
     Posts {
         posts: Vec<crate::PostEnvelope>,
-        /// 음소거된 보낸 쪽(`post unmute`에 줄 이름, FRONT_API 1.75). 옛 host는 생략한다
+        /// 음소거된 보낸 쪽(`post unmute`에 줄 이름, FRONT_API 1.77). 옛 host는 생략한다
         #[serde(default, skip_serializing_if = "Vec::is_empty")]
         #[ts(optional, as = "Option<Vec<String>>")]
         muted: Vec<String>,
@@ -2967,7 +2967,7 @@ pub enum FrontResponse {
     },
     Routines {
         routines: Vec<RoutineView>,
-        /// 지운 자동화(FRONT_API 1.74). 옛 host는 생략한다
+        /// 지운 자동화(FRONT_API 1.76). 옛 host는 생략한다
         #[serde(default, skip_serializing_if = "Vec::is_empty")]
         #[ts(optional, as = "Option<Vec<crate::AutomationTrashEntry>>")]
         trash: Vec<crate::AutomationTrashEntry>,
@@ -3099,7 +3099,7 @@ pub enum FrontEvent {
     /// FRONT_API 1.43. 보고서 목록이 바뀌었다(보내기·열기·지우기·thread 사본). 웹 events 연결에만, 열 때와 바뀔 때 보낸다.
     /// `unseen`은 열지 않은 사용자 보고서 수(활동 막대 보고서 배지)
     Reports { unseen: u32 },
-    /// FRONT_API 1.75. 알림함(inbox)이 바뀌었다(항목이 더해지거나 끝났다). 웹 events 연결에만, 열 때와 바뀔 때 보낸다.
+    /// FRONT_API 1.77. 알림함(inbox)이 바뀌었다(항목이 더해지거나 끝났다). 웹 events 연결에만, 열 때와 바뀔 때 보낸다.
     /// 웹은 `inbox`(`peek`)를 다시 읽는다(배지·알림함 패널)
     Inbox,
     /// FRONT_API 1.60. 프로젝트 TASKS.md가 바뀌었다(ticker가 크기·mtime을 보고 내용 hash로 확인한다). 웹은 `tasks`를 다시 읽는다.

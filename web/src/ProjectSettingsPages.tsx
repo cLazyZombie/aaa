@@ -1,4 +1,4 @@
-// 설정 창의 「이 aaa」·「저장소」(관리 GUI W4, plan §8.333). host가 맡은 프로젝트 하나의 설정(`aaa.toml`, 없으면 `project.toml`)을
+// 설정 창의 「이 aaa」·「저장소」(관리 GUI W4, plan §8.343). host가 맡은 프로젝트 하나의 설정(`aaa.toml`, 없으면 `project.toml`)을
 // `project_settings`로 읽고, 값 하나씩 `project_set`(CLI `aaa project set`과 같은 key)으로 고친다. 저장소 고치기는
 // `project_repo_edit` 한 번이라 차례가 그대로다. 멈춤·재개는 `project_lifecycle`, 정리는 미리보기를 본 뒤 확인 창으로 실행한다.
 // 검사·거부(범위·허용 profile·없는 경로)는 host가 한다. 보기 권한 기기는 값만 본다.
@@ -15,7 +15,7 @@ const say = (e: unknown) => (e instanceof ApiError ? e.message : e instanceof Er
 const fmtSize = (n: number) => (n >= 1 << 30 ? `${(n / (1 << 30)).toFixed(1)}GB` : n >= 1 << 20 ? `${(n / (1 << 20)).toFixed(1)}MB` : n >= 1024 ? `${(n / 1024).toFixed(1)}KB` : `${n}B`);
 const STATUS_WORD: Record<string, string> = { active: "돌고 있음", paused: "멈춤", archived: "보관" };
 
-/** 설정 읽기: 옛 host(1.75 전)는 `old`다. 겹친 읽기는 마지막 것만 반영하고, 값을 가진 뒤의 실패는 `error`로 함께 보인다 */
+/** 설정 읽기: 옛 host(1.77 전)는 `old`다. 겹친 읽기는 마지막 것만 반영하고, 값을 가진 뒤의 실패는 `error`로 함께 보인다 */
 function useSettings(): { view: ProjectSettingsView | null; state: "loading" | "ready" | "old" | "error"; error: string | null; reload: () => void } {
   const [view, setView] = useState<ProjectSettingsView | null>(null);
   const [state, setState] = useState<"loading" | "ready" | "old" | "error">("loading");

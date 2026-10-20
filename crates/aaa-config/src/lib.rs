@@ -432,6 +432,8 @@ pub enum LocalAgentMode {
     Child,
     /// 운영 모드: OS 감독자(LaunchAgent)가 띄운다. host는 띄우지 않는다.
     Launchd,
+    /// 운영 모드: Windows SCM이 같은 사용자 계정의 agent를 감독한다.
+    WindowsScm,
     /// 로컬 agent를 쓰지 않는다
     None,
 }

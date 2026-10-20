@@ -54,11 +54,15 @@ pub async fn start(host: &Arc<Host>) -> Result<()> {
     // 공개 주소(Host·Origin 허용)를 지금 serve 상태로 맞춘다. tailscale을 기다리지 않고 연다(그동안은 지난 값)
     let h = host.clone();
     tokio::spawn(async move { h.refresh_publish().await });
-    let app = router(host.clone());
-    let listener = ResourceListener { inner: listener, host: host.clone() };
-    tokio::spawn(async move {
-        if let Err(e) = axum::serve(listener, app).await {
-            tracing::error!("웹 서버 끝: {e}");
+    let listener = Arc::new(listener);
+    let host = host.clone();
+    host.clone().supervise(crate::supervisor::Task::Web, move || {
+        let host = host.clone();
+        let listener = ResourceListener { inner: listener.clone(), host: host.clone() };
+        async move {
+            host.task_progress(crate::supervisor::Task::Web);
+            // 오류의 원문은 외부 알림에 넣지 않는다. 정상 조기 종료도 supervisor가 이상으로 판정한다.
+            let _ = axum::serve(listener, router(host)).await;
         }
     });
     Ok(())
@@ -66,7 +70,7 @@ pub async fn start(host: &Arc<Host>) -> Result<()> {
 
 /// axum 기본 listener의 재시도(1초)를 유지하고 EMFILE을 시스템 inbox에도 남긴다.
 struct ResourceListener {
-    inner: tokio::net::TcpListener,
+    inner: Arc<tokio::net::TcpListener>,
     host: Arc<Host>,
 }
 impl axum::serve::Listener for ResourceListener {

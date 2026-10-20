@@ -167,6 +167,15 @@ list: string, title: string,
  */
 owner: string | null,
 /**
+ * agent에게 맡긴 task의 모델(profile) 칸(FRONT_API 1.75, plan §8.335): owner `모델@머신`의 앞. 맨 이름은 host가 아는 profile일
+ * 때만 모델이다(아니면 사람). 비면 시작할 때 고른다. 옛 host는 생략한다
+ */
+profile: string | null,
+/**
+ * agent에게 맡긴 task의 머신 칸(FRONT_API 1.75): owner `모델@머신`의 뒤. 비면 그 저장소가 있는 머신 중 덜 붐비는 곳이다
+ */
+machine: string | null,
+/**
  * owner 뒤 대괄호의 저장소 칸(FRONT_API 1.73, plan §8.330): `project.toml` repos 경로의 마지막 이름이나 `작업 폴더`. 비면 정하지
  * 않은 task다(「바로 시작」 창에서 고른다). 옛 host는 생략한다
  */
@@ -283,7 +292,15 @@ owner: string | null,
 /**
  * owner가 사람 이름이다(「사람으로 저장」). 아니면 `assignable --check`와 같은 판정을 거친다
  */
-person: boolean, notes: Array<string>, parent: TaskAnchor | null, before: TaskAnchor | null,
+person: boolean,
+/**
+ * 모델(profile) 칸(FRONT_API 1.75). 머신 칸과 함께 owner `모델@머신`으로 적는다. `owner`(me·사람)와 함께 주면 거부한다
+ */
+profile: string | null,
+/**
+ * 머신 칸(FRONT_API 1.75)
+ */
+machine: string | null, notes: Array<string>, parent: TaskAnchor | null, before: TaskAnchor | null,
 /**
  * 이어 줄 thread(` · t-NNNN`, FRONT_API 1.63 「task로 만들기」). 옛 host는 버린다
  */
@@ -291,7 +308,15 @@ thread: string | null,
 /**
  * 저장소 칸(FRONT_API 1.73): 저장소 이름·경로나 `작업 폴더`. 경로는 host가 이름으로 바꿔 적는다. 비움 = 정하지 않음
  */
-repo: string | null, } | { "op": "update", at: TaskAnchor, title: string | null, owner: string | null, person: boolean, notes: Array<string> | null, thread: string | null, done: boolean | null,
+repo: string | null, } | { "op": "update", at: TaskAnchor, title: string | null, owner: string | null, person: boolean,
+/**
+ * 모델 칸(FRONT_API 1.75): `None`은 그대로, 빈 글은 비움. 머신 칸만 바꾸면 모델은 그대로 둔다
+ */
+profile: string | null,
+/**
+ * 머신 칸(FRONT_API 1.75, `profile`과 같은 규칙)
+ */
+machine: string | null, notes: Array<string> | null, thread: string | null, done: boolean | null,
 /**
  * 저장소 칸(FRONT_API 1.73, Add의 `repo`와 같은 값)
  */
@@ -728,7 +753,7 @@ picks: Array<number | null>, text: string | null, } | { "op": "preferences" } | 
  */
 body_expected_sha256?: string, } | { "op": "automation_delete", project?: string, name: string, expected_sha256: string, } | { "op": "automation_restore", project?: string, id: string, } | { "op": "automation_run", project?: string, name: string, key: string, } | { "op": "project_settings", project?: string, } | { "op": "project_repo_edit", project?: string, from: string, to: string, } | { "op": "thread_resolve_preview", project?: string, thread: string, } | { "op": "library_prune_apply", project: string | null, older_than_days: number | null, expected: Array<string>, } | { "op": "routine_runs", project?: string, name: string, } | { "op": "routine_approve", project?: string, name: string, command_sha256: string, } | { "op": "routine_toggle", project?: string, name: string, on: boolean | null, } | { "op": "events", project: string | null, after: number, limit: number | null,
 /**
- * 가장 최근 `limit`개(차례는 그대로 오래된 것부터, FRONT_API 1.75). 웹 알림함 「흐름 사건」이 쓴다. 옛 host는 버린다
+ * 가장 최근 `limit`개(차례는 그대로 오래된 것부터, FRONT_API 1.77). 웹 알림함 「흐름 사건」이 쓴다. 옛 host는 버린다
  */
 tail?: boolean, } | { "op": "evaluator_assign", project?: string, profile: string, machine: string | null,
 /**
@@ -782,7 +807,7 @@ export type RolloutCardStep = { machine: string, phase: RolloutPhase, completed:
 
 export type FrontResponse = { "kind": "accounts", accounts: Array<AccountView>, } | { "kind": "account_defaults", defaults: Array<AccountDefault>, } | { "kind": "account_login", login: AccountLoginView, } | { "kind": "input_events", events: Array<InputEvent>, } | { "kind": "deploy_context", project: string | null, session: boolean, allowed: boolean, } | { "kind": "rollout", rollout: RolloutView, } | { "kind": "deployment", machine: string, job: DeployJob, running_software: string, running_sha256: string, } | { "kind": "missions", missions: Array<MissionView>, } | { "kind": "mission", mission: MissionView, } | { "kind": "post", result: PostResult, } | { "kind": "posts", posts: Array<PostEnvelope>,
 /**
- * 음소거된 보낸 쪽(`post unmute`에 줄 이름, FRONT_API 1.75). 옛 host는 생략한다
+ * 음소거된 보낸 쪽(`post unmute`에 줄 이름, FRONT_API 1.77). 옛 host는 생략한다
  */
 muted?: Array<string>, } | { "kind": "status" } & HostStatus | { "kind": "machines", machines: Array<MachineView>, } | { "kind": "panes", panes: Array<PaneView>, } | { "kind": "pane" } & PaneView | { "kind": "next", lines: Array<string>,
 /**
@@ -806,7 +831,7 @@ omitted_open: number,
  */
 omitted_done: number, } | { "kind": "ticker", runs: bigint, } | { "kind": "routines", routines: Array<RoutineView>,
 /**
- * 지운 자동화(FRONT_API 1.74). 옛 host는 생략한다
+ * 지운 자동화(FRONT_API 1.76). 옛 host는 생략한다
  */
 trash?: Array<AutomationTrashEntry>, } | { "kind": "automation_doc", doc: AutomationDoc, } | { "kind": "automation_checked", text: string, check: AutomationCheck, } | { "kind": "automation_ran", accepted: boolean, detail: string, } | { "kind": "project_settings" } & ProjectSettingsView | { "kind": "resolve_preview" } & ResolvePreview | { "kind": "automation_converted", files: Array<string>,
 /**
@@ -1256,7 +1281,7 @@ body: string | null, options: Array<MenuOption>, multi_select: boolean,
  */
 custom_option_index: number | null, };
 
-export type NoticeKind = "rollout_finished" | "rollout_failed" | "finished" | "post_muted" | "automation" | "report";
+export type NoticeKind = "host_issue" | "host_recovered" | "rollout_finished" | "rollout_failed" | "finished" | "post_muted" | "automation" | "report";
 
 export type NoticeView = { kind: NoticeKind,
 /**

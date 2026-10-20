@@ -1,11 +1,11 @@
-// 운영 화면의 순수 규칙(관리 GUI W4, plan §8.333): thread 끝내기·다시 시작·Next, 「이 aaa」·「저장소」 설정, 알림함.
+// 운영 화면의 순수 규칙(관리 GUI W4, plan §8.343): thread 끝내기·다시 시작·Next, 「이 aaa」·「저장소」 설정, 알림함.
 // 판정의 정본은 host다(거부·검사). 화면은 고를 수 있는 것만 보이고 기본값을 정한다.
 import { apiAtLeast } from "./automationModel.ts";
 import { repoName, REPO_DIR } from "./tasksModel.ts";
 import type { InboxItem, PostEnvelope, RepoChoice, ResolvePreview, ThreadView } from "./gen/proto";
 
-/** 설정 읽기·저장소 고치기·끝내기 미리보기·보고서 정리 실행은 1.75 이상 host만 안다 */
-export const canOperate = (frontApi: string | null | undefined): boolean => apiAtLeast(frontApi, 1, 75);
+/** 설정 읽기·저장소 고치기·끝내기 미리보기·보고서 정리 실행은 1.77 이상 host만 안다 */
+export const canOperate = (frontApi: string | null | undefined): boolean => apiAtLeast(frontApi, 1, 77);
 
 /** thread 화면 머리의 동작 중 지금 할 수 있는 것. `running`은 그 thread의 agent pane이 도는가 */
 export function threadActions(t: Pick<ThreadView, "status" | "thread_kind" | "cleanup_pending" | "brief">, running: boolean): {

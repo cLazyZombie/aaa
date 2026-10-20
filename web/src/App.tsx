@@ -560,6 +560,11 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
   // 모름)만 띄운다. 휴대폰 push는 없다. 새 보고는 위 thread 길이, 입력 필요는 질문 길이 맡는다. 기록하지 않는 사건이라 다시
   // 붙을 때 놓친 것을 읽지 않는다(참고 `seedStatuses`: 목록은 알리지 않는다)
   const noticeNews = (n: NoticeView) => {
+    if (n.kind === "host_issue" || n.kind === "host_recovered") {
+      showDroplet({ target: "threads", title: n.title, kind: n.kind === "host_recovered" ? "done" : "blocked", machine: null, agent: null });
+      return;
+    }
+
     if (n.kind === "rollout_finished" || n.kind === "rollout_failed") {
       showDroplet({ target: "deployment", title: n.title, kind: n.kind === "rollout_finished" ? "done" : "blocked", machine: null, agent: null });
       return;
@@ -740,9 +745,8 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
       ownHash.current = null;
       const next = selectedFromHash();
       if (!own) {
-        // 브라우저 뒤로·앞으로·알림이 연 곳: iPhone 왼쪽 가장자리 쓸기는 목록 drawer 쓸기와 Safari 뒤로가 함께 일어난다. 뒤로가 이기고
-        // 목록은 닫는다(참고 onPop → selectTarget의 setDrawerOpen(false), App.tsx 715줄)
-        setDrawerOpen(false);
+        // 브라우저 뒤로·앞으로는 이동 직전 drawer 상태를 유지한다(창마다 기억하지 않는다, plan §8.340). 목록 줄을 직접 고를 때는
+        // choose·chooseThread 등이 닫는다. 가장자리 쓸기가 drawer를 열고 Safari 뒤로와 겹쳐도 그 열린 상태를 유지한다.
         // 고른 것이 없는 칸(옛 첫 칸·「고른 것 없음」)이나 닫힌 pane의 칸에 닿으면 지금 화면에 머물고 그 칸에 지금 주소를 쓴다(참고
         // onPop: pane이 없으면 그대로, 닿은 칸에는 보이는 곳을 쓴다). 빈 「하나를 고른다」로 떨어지지 않는다
         const { sel: shown, panes, loaded } = now.current;

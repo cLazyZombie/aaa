@@ -1,4 +1,4 @@
-// 자동화 편집 초안의 순수 규칙(관리 GUI W2, plan §8.332). 폼 값은 host 정본 타입(`automations/*.toml`)과 같은 모양이다:
+// 자동화 편집 초안의 순수 규칙(관리 GUI W2, plan §8.342). 폼 값은 host 정본 타입(`automations/*.toml`)과 같은 모양이다:
 // 화면은 이 값을 고치고, host(`automation_validate`)가 바뀐 칸만 원문 TOML에 합친다. 기본값 채우기·검사의 정본은 host다.
 import { apiAtLeast } from "./automationModel.ts";
 
@@ -6,8 +6,8 @@ export type ConditionKind = "schedule" | "command" | "thread" | "pr" | "ci" | "g
 export type ActionKind = "inbox" | "message" | "start" | "deploy";
 export type Form = Record<string, unknown> & { on?: Record<string, Record<string, unknown>>; do?: Record<string, Record<string, unknown>> | "deploy"; limits?: Record<string, unknown> };
 
-/** 편집·지금 실행·지운 목록은 1.74 이상 host만 안다(옛 host는 모르는 요청으로 거절한다) */
-export const canEditAutomations = (frontApi: string | null | undefined): boolean => apiAtLeast(frontApi, 1, 74);
+/** 편집·지금 실행·지운 목록은 1.76 이상 host만 안다(옛 host는 모르는 요청으로 거절한다) */
+export const canEditAutomations = (frontApi: string | null | undefined): boolean => apiAtLeast(frontApi, 1, 76);
 
 export const conditionKinds: Array<{ kind: ConditionKind; label: string }> = [
   { kind: "schedule", label: "일정" },

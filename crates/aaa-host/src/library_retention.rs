@@ -92,7 +92,7 @@ impl Host {
         )
     }
 
-    /// 웹 「보고서 정리」 실행(관리 GUI W4, plan §8.333): 미리보기와 같은 판정(기한·용량)으로 다시 셈해, 후보가 사람이 본 목록
+    /// 웹 「보고서 정리」 실행(관리 GUI W4, plan §8.343): 미리보기와 같은 판정(기한·용량)으로 다시 셈해, 후보가 사람이 본 목록
     /// (`expected`, `project/name`)과 같을 때만 지운다. 그 사이 사본이 바뀌었으면 하나도 지우지 않고 `conflict`다.
     pub(crate) fn library_prune_apply(
         &self,

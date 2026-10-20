@@ -54,7 +54,7 @@ export function onTasksChanged(listener: (sha256: string) => void): () => void {
   return () => tasksListeners.delete(listener);
 }
 
-/** host `inbox` 사건(알림함이 바뀜, FRONT_API 1.75): 알림함 배지와 패널이 다시 읽는다. 연결을 열 때도 한 번 온다 */
+/** host `inbox` 사건(알림함이 바뀜, FRONT_API 1.77): 알림함 배지와 패널이 다시 읽는다. 연결을 열 때도 한 번 온다 */
 const inboxListeners = new Set<() => void>();
 export function onInboxChanged(listener: () => void): () => void {
   inboxListeners.add(listener);

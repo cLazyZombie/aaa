@@ -40,7 +40,7 @@ export default async function () {
       await sidebarIs(p,{panel:"work",collapsed:false},"옛 special 기억은 작업 패널");
       if (await p.getByTestId("activity-special").count()) throw new Error("특수 단추가 남았다");
       same(await sidebar(p), { panel: "work", collapsed: false, column: "flex", selected: "activity-work", title: "작업" }, "처음");
-      // 예전 프로젝트·에이전트 두 패널은 「작업」 하나다(plan §8.280): L3 자동화·W4 알림함(plan §8.333)을 더해 막대 패널 단추는
+      // 예전 프로젝트·에이전트 두 패널은 「작업」 하나다(plan §8.280): L3 자동화·W4 알림함(plan §8.343)을 더해 막대 패널 단추는
       // 작업·머신·자동화·알림함 넷
       const tabs = await p.evaluate(() => [...document.querySelectorAll('.activity-bar [role="tab"]')].map((e) => e.dataset.testid).join(","));
       if (tabs !== "activity-work,activity-machines,activity-automations,activity-inbox") throw new Error(`패널 단추: ${tabs}`);
@@ -347,7 +347,7 @@ export default async function () {
     const layout = (p) =>
       p.evaluate(() => {
         const box = (s) => document.querySelector(s).getBoundingClientRect();
-        // 보고서는 패널 단추 묶음 바로 밑: 「자동화」(plan §8.281)·「알림함」(plan §8.333)까지 더해진 묶음 아래다
+        // 보고서는 패널 단추 묶음 바로 밑: 「자동화」(plan §8.281)·「알림함」(plan §8.343)까지 더해진 묶음 아래다
         const special = box('[data-testid="activity-inbox"]');
         const reports = box('[data-testid="activity-reports"]');
         const foot = document.querySelector(".list-foot");
