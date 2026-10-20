@@ -5922,3 +5922,13 @@ L4 후속(10-20 00시 사용자 관찰): 멈춤 상태의 후보 예약과 재�
   - 「iPad Codex 기록 앞 기록도 찾기」(WebKit 820, 머리 돋보기): Codex rollout 400줄에서 1/1+ → 처음까지 2개 → 처음 찾음이 보임.
   - iPhone 단계: 최신 쪽에서 작은 줄이 화면 안, 처음까지 7개.
   - 결함 심기 셋: 멈춤 뒤 결과 무시를 빼면 「멈춘 뒤에도 앞 쪽을 불렀다: 2」, 찾기 받기에서도 끝 따라가기를 놓으면 「끝 따라가기를 놓았다」, 개수 기억 키에서 찾는 말을 빼면 1단계 단계가 「줄 개수 어긋남」으로 실패한다.
+
+
+### 8.312 PR 없는 thread·gh 없는 머신의 PR 조회 생략(10-20, t-0492)
+
+- **목적:** PR 없이 main에 직접 착지하는 thread 때문에 gh 설치·로그인을 요구하거나 coordinator inbox에 장애를 쌓지 않는다. CI 감시의 조회 머신에는 기존 gh 요구와 장애 알림을 유지한다.
+- **branch 탐색:** thread 머신 agent가 원래 worktree의 origin과 `refs/remotes/origin/<branch>`를 읽는다. GitHub 원격이고 해당 원격 참조가 있을 때만 `gh pr list`를 부른다. 원격 참조는 push/fetch로 얻은 게시 근거다. 이를 확인하려고 fetch·원격 접속·인증을 새로 하지 않는다. GitHub 밖 원격·미게시 branch는 실제 조회로 세지 않는다. 사용자 정의 push 설정 등으로 로컬 원격 참조가 없다면 보고의 `PR:` 주소를 지정할 수 있다.
+- **명시한 PR:** 보고 표지 다음 줄의 `PR: https://github.com/<owner>/<repo>/pull/<number>`와 이미 찾은 PR은 원격 branch 탐색을 거치지 않고 계속 본다. 기존 PR head 소유 검사·상태 변경·pr-followup·병합 뒤 resolve 계약은 유지한다.
+- **사용 불가:** 실행 가능한 gh가 없거나 실행 시 ENOENT, gh 종료 코드 4(미인증)이면 agent가 정상 응답의 `unavailable`로 돌려준다. host는 그 pass에서 같은 머신의 남은 PR 추적을 생략하고 outage·회복 inbox를 만들지 않는다. 다음 정기 조회에서 다시 확인하며 성공하면 자동으로 사용한다. 일반 네트워크/API 실패·사라진 worktree 등은 기존 PR 장애 판정을 유지한다.
+- **상태:** `MachineView.pr_tracking`은 host 메모리의 마지막 PR 조회 결과다. `aaa doctor`는 머신마다 `PR 추적 <머신>: 사용 불가: <이유>` 또는 `사용 가능` 한 줄을 보인다. 아직 조회하지 않았거나 host를 다시 띄웠으면 아직 조회하지 않음으로 보인다. 끊긴 머신의 값도 마지막 관측값이다. CI 상태와 합치지 않는다.
+- **호환:** 기존 질문 종류를 그대로 쓰고 `PrAnswer.unavailable`·`skipped`, `MachineView.pr_tracking` 선택 필드만 더한다. 옛 agent 응답은 기존 실제 조회로 해석하고 옛 host/front는 새 필드를 버린다. gh 자격 증명 파일·토큰은 읽거나 복사하지 않는다.

@@ -4628,6 +4628,7 @@ fn pr_followup() {
         std::fs::write(stub.join("view.json"), body).unwrap();
     };
     view("");
+    git(&w.repo, &["update-ref", &format!("refs/remotes/origin/{branch}"), &branch]);
     std::fs::write(
         stub.join("list.json"),
         format!(r#"[{{"url":"{url}","state":"OPEN","createdAt":"2026-10-18T00:00:00Z"}}]"#),
@@ -4820,6 +4821,7 @@ fn merged_pr_resolves_the_thread() {
     let a_id = a["id"].as_str().unwrap().to_string();
     f.kind("report_ready", &a_id, T);
     let a_branch = w.show(&a_id)["branch"].as_str().unwrap().to_string();
+    git(&w.repo, &["update-ref", &format!("refs/remotes/origin/{a_branch}"), &a_branch]);
     let a_tip = git(&w.repo, &["rev-parse", &a_branch]);
     std::fs::write(stub.join("view-7.json"), pr_view_json(&a_branch, "OPEN", "APPROVED", &a_tip)).unwrap();
     std::fs::write(
@@ -4921,6 +4923,7 @@ fn merged_resolve_waits_for_the_routine_prompt() {
     w.message(&id, "finish quiet", false);
     w.wait_show("Done", &id, |v| v["agent"]["percent"] == 100);
     let branch = w.show(&id)["branch"].as_str().unwrap().to_string();
+    git(&w.repo, &["update-ref", &format!("refs/remotes/origin/{branch}"), &branch]);
     let tip = git(&w.repo, &["rev-parse", &branch]);
     std::fs::write(stub.join("view-21.json"), pr_view_json(&branch, "MERGED", "APPROVED", &tip)).unwrap();
     std::fs::write(
@@ -4953,6 +4956,7 @@ fn resolve_looks_up_the_pull_request_once_more() {
     let mut f = w.lab.follow("follow", &w.h, "demo");
     git(&w.repo, &["remote", "set-url", "origin", "https://github.com/o/app.git"]);
     let (branch, base) = ("aaa/demo/t-0001-c", git(&w.repo, &["rev-parse", "origin/main"]));
+    git(&w.repo, &["update-ref", &format!("refs/remotes/origin/{branch}"), &base]);
     std::fs::write(stub.join("view-5.json"), pr_view_json(branch, "OPEN", "", &base)).unwrap();
     std::fs::write(
         stub.join(format!("list-{}.json", branch.replace('/', "_"))),

@@ -5,7 +5,8 @@
 //! - **어느 PR:** 집 보고 사본(`threads/<id>.md`) 첫 줄 `PR: <주소>`, 없으면 전에 찾은 것, 없으면 worktree thread의 branch로
 //!   찾는다(hp `find_by_branch`). 첫 줄 `PR:`이 꼴이 틀리면 그 보고 hash마다 한 번 알린다.
 //! - **누가 gh를 부르나:** host는 실행하지 않는다(결정 3). thread 머신의 agent가 그 worktree origin으로 `gh`를 부른다
-//!   (`AgentRequest::PrQuery`, agent 기능 `pr.v1`). 옛 agent나 `gh` 실패는 `outage_secs` 동안 이어지면 한 번 알린다.
+//!   (`AgentRequest::PrQuery`, agent 기능 `pr.v1`). gh 없음·미인증은 머신별 사용 불가로 생략한다.
+//!   그 밖의 조회 실패·옛 agent는 `outage_secs` 동안 이어지면 한 번 알린다.
 //! - **무엇을 남기나:** GitHub 글(본문·제목)은 받지 않는다. 정해진 필드만 줄여(`reduce`) 바뀌면 `pr` inbox 항목과 흐름 사건을
 //!   남기고, `on = "pr"` routine 중 그 사건을 원하는 것이 thread에 메시지를 보낸다(`routine` 항목).
 //! - **병합 뒤(D11):** 열리고 승인된 PR은 묶음 「병합 중」이다(orch.rs `thread_group`). 병합되면 ticker가 agent가 끝난 뒤
@@ -270,6 +271,14 @@ pub(crate) struct PrMemory {
     gh: HashMap<String, Outage>,
     /// `gh` 계정 login(thread 자기 댓글을 review로 치지 않는다)
     login: Option<String>,
+    /// CI와 분리한 머신별 PR 사용 상태. 다음 조회에서 성공하면 저절로 풀린다.
+    pub(crate) availability: HashMap<String, String>,
+}
+
+enum Poll {
+    Skipped,
+    Queried,
+    Unavailable,
 }
 
 fn label(r: &ThreadRec) -> String {
@@ -337,11 +346,21 @@ impl Host {
         self.inner.lock().unwrap().machines.get(mid).is_some_and(|m| m.features.iter().any(|f| f == feature))
     }
 
-    async fn pr_ask(&self, conn: &AgentConn, cwd: &str, query: PrQuery) -> Result<PrAnswer, ErrorBody> {
+    async fn pr_ask(&self, mid: &str, conn: &AgentConn, cwd: &str, query: PrQuery) -> Result<PrAnswer, ErrorBody> {
         // agent는 gh를 10초에 끊는다. 그 위에 연결 여유를 둔다.
         let wait = aaa_common::pr::GH_TIMEOUT * 2 + Duration::from_secs(5);
         match conn.request_timeout(AgentRequest::PrQuery { cwd: cwd.to_string(), query }, wait).await? {
-            AgentResponse::Pr(a) => Ok(a),
+            AgentResponse::Pr(a) => {
+                if !a.skipped {
+                    let state = a
+                        .unavailable
+                        .as_ref()
+                        .map(|why| format!("사용 불가: {why}"))
+                        .unwrap_or_else(|| "사용 가능".into());
+                    self.pr.lock().unwrap().availability.insert(mid.to_string(), state);
+                }
+                Ok(a)
+            }
             other => Err(err(ErrorCode::Internal, format!("예상하지 못한 응답: {other:?}"))),
         }
     }
@@ -386,10 +405,19 @@ impl Host {
         let Ok(dir) = self.project_dir(project) else { return };
         let mut checked = false;
         let mut failed = None;
+        let mut unavailable = HashSet::new();
         for rec in self.open_threads(project).into_iter().filter(|r| r.role == Role::Worker) {
+            if unavailable.contains(&rec.machine_id) {
+                continue;
+            }
+            let mid = rec.machine_id.clone();
             let who = format!("{} · 머신 {}", rec.id, self.machine_name(&rec.machine_id));
             match self.pr_thread(project, &dir, rec).await {
-                Ok(queried) => checked |= queried,
+                Ok(Poll::Queried) => checked = true,
+                Ok(Poll::Unavailable) => {
+                    unavailable.insert(mid);
+                }
+                Ok(Poll::Skipped) => {}
                 Err(why) => {
                     checked = true;
                     failed.get_or_insert_with(|| format!("{who}: {why}"));
@@ -403,11 +431,11 @@ impl Host {
         }
     }
 
-    async fn pr_thread(self: &Arc<Self>, project: &str, dir: &Path, rec: ThreadRec) -> Result<bool, String> {
-        let Some(cwd) = rec.cwd.clone().or_else(|| rec.work_dir.clone()) else { return Ok(false) };
+    async fn pr_thread(self: &Arc<Self>, project: &str, dir: &Path, rec: ThreadRec) -> Result<Poll, String> {
+        let Some(cwd) = rec.cwd.clone().or_else(|| rec.work_dir.clone()) else { return Ok(Poll::Skipped) };
         let mut queried = false;
         // 머신이 끊긴 것은 outage 항목이 알린다
-        let Some(conn) = self.conn_of(&rec.machine_id) else { return Ok(false) };
+        let Some(conn) = self.conn_of(&rec.machine_id) else { return Ok(Poll::Skipped) };
         if !self.machine_feature(&rec.machine_id, "pr.v1") {
             let why =
                 format!("머신 {}의 agent가 PR 조회(pr.v1)를 모른다(옛 binary)", self.machine_name(&rec.machine_id));
@@ -435,11 +463,14 @@ impl Host {
         if url.is_empty() && rec.kind == ThreadKind::Worktree {
             let branch = rec.branch.clone().unwrap_or_default();
             if branch.is_empty() {
-                return Ok(false);
+                return Ok(Poll::Skipped);
             }
-            match self.pr_ask(&conn, &cwd, PrQuery::Find { branch }).await {
+            match self.pr_ask(&rec.machine_id, &conn, &cwd, PrQuery::Find { branch }).await {
                 Ok(a) => {
-                    queried = true;
+                    if a.unavailable.is_some() {
+                        return Ok(Poll::Unavailable);
+                    }
+                    queried = !a.skipped;
                     url = a.out;
                 }
                 Err(e) => return Err(e.message),
@@ -450,12 +481,15 @@ impl Host {
             let _ = self.update_rec(project, &rec.id, |r| r.pr = found);
         }
         if url.is_empty() {
-            return Ok(queried);
+            return Ok(if queried { Poll::Queried } else { Poll::Skipped });
         }
-        let answer = match self.pr_ask(&conn, &cwd, PrQuery::View { url: url.clone() }).await {
+        let answer = match self.pr_ask(&rec.machine_id, &conn, &cwd, PrQuery::View { url: url.clone() }).await {
             Ok(a) => a,
             Err(e) => return Err(e.message),
         };
+        if answer.unavailable.is_some() {
+            return Ok(Poll::Unavailable);
+        }
         // 보고의 `#n`이 가리키는 저장소(herdr-projects thread `origin`, `other_pr_open`이 쓴다)
         let key = format!("pr_origin:{project}:{}", rec.id);
         if !answer.origin.is_empty() && self.db.meta(&key).ok().flatten().as_deref() != Some(answer.origin.as_str()) {
@@ -483,7 +517,7 @@ impl Host {
                 let old: Option<Summary> =
                     self.db.meta(&key).ok().flatten().and_then(|j| serde_json::from_str(&j).ok());
                 if old.as_ref() == Some(&summary) {
-                    return Ok(true);
+                    return Ok(Poll::Queried);
                 }
                 let (state, review) = (summary.state.clone(), summary.review_decision.clone());
                 let rec = self
@@ -495,8 +529,8 @@ impl Host {
                 let login = self.pr.lock().unwrap().login.clone();
                 let login = match login {
                     Some(l) => Some(l),
-                    None => match self.pr_ask(&conn, &cwd, PrQuery::Login).await {
-                        Ok(a) if !a.out.is_empty() => {
+                    None => match self.pr_ask(&rec.machine_id, &conn, &cwd, PrQuery::Login).await {
+                        Ok(a) if a.unavailable.is_none() && !a.out.is_empty() => {
                             self.pr.lock().unwrap().login = Some(a.out.clone());
                             Some(a.out)
                         }
@@ -516,7 +550,7 @@ impl Host {
                 let _ = self.db.set_meta(&key, &serde_json::to_string(&summary).unwrap());
             }
         }
-        Ok(true)
+        Ok(Poll::Queried)
     }
 
     /// 정리에 넘길 병합된 PR head(herdr-projects threads.rs `clean` 앞부분). 기록이 병합이면 마지막으로 본 head이고,
@@ -553,10 +587,15 @@ impl Host {
         let url = match pr_line(&report) {
             Ok(Some(url)) => url,
             _ if rec.pr.as_deref().is_some_and(|u| !u.is_empty()) => rec.pr.clone()?,
-            _ => Some(self.pr_ask(conn, &cwd, PrQuery::Find { branch: branch.clone() }).await.ok()?.out)
-                .filter(|u| !u.is_empty())?,
+            _ => {
+                Some(self.pr_ask(&rec.machine_id, conn, &cwd, PrQuery::Find { branch: branch.clone() }).await.ok()?.out)
+                    .filter(|u| !u.is_empty())?
+            }
         };
-        let answer = self.pr_ask(conn, &cwd, PrQuery::View { url: url.clone() }).await.ok()?;
+        let answer = self.pr_ask(&rec.machine_id, conn, &cwd, PrQuery::View { url: url.clone() }).await.ok()?;
+        if answer.unavailable.is_some() {
+            return None;
+        }
         let Checked::Summary(summary) = reduce(&answer.out, &branch, &answer.origin).ok()? else {
             return None;
         };
@@ -597,9 +636,9 @@ impl Host {
             return true;
         }
         for (repo, named) in refs {
-            let open: BTreeSet<u32> = match self.pr_ask(&conn, &cwd, PrQuery::OpenOwn { repo }).await {
-                Ok(a) => a.out.split(',').filter_map(|n| n.trim().parse().ok()).collect(),
-                Err(_) => return true,
+            let open: BTreeSet<u32> = match self.pr_ask(&rec.machine_id, &conn, &cwd, PrQuery::OpenOwn { repo }).await {
+                Ok(a) if a.unavailable.is_none() => a.out.split(',').filter_map(|n| n.trim().parse().ok()).collect(),
+                _ => return true,
             };
             if !open.is_disjoint(&named) {
                 return true;

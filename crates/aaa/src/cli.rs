@@ -2227,9 +2227,11 @@ fn doctor_cmd(a: DoctorArgs, json: bool) -> Result<ExitCode> {
                 Err(e) => (false, format!("Codex 전역 hook 점검 실패: {e:#}")),
             };
             let r = doctor::probe(&doctor::ProbeOptions { samples: 3, throughput: false, ..Default::default() });
+            let machines = front_call(FrontRequest::Machines).ok().and_then(Result::ok);
             let usage = front_call(FrontRequest::LibraryUsage).ok().and_then(Result::ok);
             if json {
                 let mut value = serde_json::to_value(&r)?;
+                value["pr_tracking"] = serde_json::to_value(&machines)?;
                 value["library"] = serde_json::to_value(&usage)?;
                 value["codex_hooks"] = serde_json::json!({"ok":ok,"detail":detail,"backups":backups});
                 println!("{}", serde_json::to_string_pretty(&value)?);
@@ -2239,6 +2241,11 @@ fn doctor_cmd(a: DoctorArgs, json: bool) -> Result<ExitCode> {
                     print!("{}", render_front(&usage));
                 } else {
                     println!("보고서 용량: host에 연결할 수 없어 확인하지 못했다");
+                }
+                if let Some(FrontResponse::Machines { machines }) = machines {
+                    for m in machines {
+                        println!("PR 추적 {}: {}", m.name, m.pr_tracking.as_deref().unwrap_or("아직 조회하지 않음"));
+                    }
                 }
                 println!("[{}] {detail}", if ok { "ok  " } else { "warn" });
                 for path in backups {

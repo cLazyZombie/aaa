@@ -31,6 +31,7 @@ impl std::fmt::Display for Version {
 // 1.6: rollout.v1을 광고한 macOS agent에만 CheckedUpdate를 보낸다.
 // 1.7: deploy_stage.v1은 빌드 후보 fetch·조각 stage·staged 교체를 받는다.
 // 1.8: rollout_recovery.v1의 독립 복구 감시와 SHA 고정 rollback.
+// 같은 1.8에 PrAnswer.unavailable·skipped 선택 필드를 더한다(t-0492). 옛 agent는 기존 조회, 옛 host는 새 칸을 버린다.
 pub const AGENT_LINK: Version = Version { major: 1, minor: 8 };
 /// front ↔ host. 1.4: CLI pane·tab·workspace(plan §8.75), 1.5: 새 탭 이름(`NewTab.label`)·cwd 따라가기(`NewTab.from`)(plan §8.76),
 /// 1.6: `routine_toggle`·`ThreadView.pr`(plan §8.80), 1.7: `devices`·`device_rename`·`device_revoke`, 웹 기기의 `web_pair`(plan §8.81),
@@ -131,6 +132,7 @@ pub const AGENT_LINK: Version = Version { major: 1, minor: 8 };
 // 정리된 자리 `ChatRole::Compact`(front가 `pane_chat.compact`로 청할 때만, 옛 front는 모르는 role로 답을 읽지 못한다).
 // 옛 host는 표지를 보내지 않아 웹이 정리를 모르고 전처럼 보낸다(harness가 정리 뒤 읽는다). 옛 웹은 새 칸을 버리고, 모르는 거절에는
 // 까닭 글 없는 실패 줄을 그린다(옛 `refusalText`에 기본 갈래가 없다).
+// 같은 버전에 MachineView.pr_tracking(선택)을 더한다(t-0492). 옛 host는 생략하고 옛 front는 버린다.
 pub const FRONT_API: Version = Version { major: 1, minor: 61 };
 /// agent ↔ session host(내부). 세션이 몇 주 이어질 수 있으므로 이전 session host와 호환해야 한다.
 /// 1.1: `SessionRequest::Detect`(harness 상태 감지 입력). agent는 1.0 session host에 보내지 않고 `Screen`을 쓴다.

@@ -889,6 +889,12 @@ pub struct PrAnswer {
     /// `git remote get-url origin`(없으면 빈 값)
     pub origin: String,
     pub out: String,
+    /// PR 조회 생략 사유. gh 없음·인증 없음은 오류나 outage가 아니다.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub unavailable: Option<String>,
+    /// 원격에 없는 branch·GitHub 밖 저장소여서 gh를 부르지 않았다.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub skipped: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -1150,6 +1156,10 @@ pub enum Connection {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 pub struct MachineView {
+    /// 마지막 PR 조회의 머신별 사용 상태. 조회 전·옛 host는 생략한다.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub pr_tracking: Option<String>,
     pub id: String,
     pub name: String,
     pub local: bool,
