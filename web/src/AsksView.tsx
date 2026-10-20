@@ -4,7 +4,7 @@
 // 선택지에 그림이 있으면 선택지마다 큰 그림 카드(데스크톱 2열, 2B)다. 답한 것은 답할 때의 원문(질문·본문·선택지 전체와 까닭·
 // 고른 답·때·기기)과 「그때 보고」를 보인다. 질문 카드 꼴은 화면 선택 창 카드(PromptCard, herdr-web-ui)를 따른다.
 import { useCallback, useEffect, useId, useMemo, useRef, useState, type MouseEvent } from "react";
-import { Check, ChevronRight, CircleQuestionMark, ListChecks, Maximize2, MessageSquareReply, Send, Trash2, Bot } from "lucide-react";
+import { Check, ChevronRight, CircleQuestionMark, ListChecks, Maximize2, MessageSquareReply, Send, Trash2, Bot, X } from "lucide-react";
 import type { AskRecord, FrontResponse, ThreadQuestion, ThreadQuestions, ThreadView } from "./gen/proto";
 import { ApiError, call, onAsksChanged } from "./api";
 import { Markdown, MarkdownImageContext } from "./Markdown";
@@ -113,6 +113,7 @@ export type AskSelection = { kind: "open"; ask: OpenAsk } | { kind: "done"; reco
 
 export function AsksView({
   shown,
+  onClose,
   selection,
   canControl,
   onAnswer,
@@ -123,6 +124,7 @@ export function AsksView({
   onThread,
 }: {
   shown: boolean;
+  onClose: () => void;
   selection: AskSelection;
   canControl: boolean;
   onAnswer: (t: ThreadView, picks: (number | null)[], text: string | null) => Promise<void>;
@@ -168,6 +170,9 @@ export function AsksView({
           <strong>{head.title}</strong>
           <span className="muted">{head.sub}</span>
         </div>
+        <button type="button" className="icon-button" aria-label="답할 것 닫기" title="답할 것 닫기" data-testid="asks-close" onClick={onClose}>
+          <X aria-hidden="true" />
+        </button>
         <HeadMore />
       </header>
       <div className="thread-body" ref={body} onClick={onBodyClick} data-testid="asks-scroll">

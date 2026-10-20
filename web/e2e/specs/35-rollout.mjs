@@ -1,5 +1,6 @@
 // 카드 소비 경계: 실제 Reader 세션/WS에 rollout 사건만 주입한다. 배포 실행기는 L3 m13이 소유한다.
-import { aaa, step, browser, pairPage, domIs, inList, shot } from "../lib/harness.mjs";
+import { aaa, step, browser, webkit, pairPage, domIs, inList, shot } from "../lib/harness.mjs";
+import { pairDevice } from "../lib/devices.mjs";
 const id = "01ARZ3NDEKTSV4RRFFQ69G5FAV";
 const error = "새 실행 판을 확인하지 못해 실패 머신만 복구했습니다. 앞에서 완료한 머신은 유지합니다. ".repeat(4);
 const fixture = () => ({
@@ -73,4 +74,71 @@ export default async function () {
       if (dev.errors.length) throw new Error(dev.errors.join("\n"));
     } finally { await p.context().close(); }
   });
+  await step("끝난 배포만 접기·펼치기, 같은 배포 갱신 유지, 새 배포와 모든 실패·복구는 다시 표시(WebKit 390·데스크톱 1280)", async () => {
+    const wk = await webkit.launch();
+    try {
+      for (const phone of [true, false]) {
+        let latest = { ...fixture(), state: "done", cursor: 3, steps: fixture().steps.map((s) => ({ ...s, completed: true, transferred_bytes: s.total_bytes })) };
+        let peer;
+        const opts = { wsRoute: [/\/api\/v1\/events$/, (socket) => {
+          peer = socket;
+          const server = socket.connectToServer();
+          server.onMessage((raw) => {
+            if (typeof raw === "string" && JSON.parse(raw).ev === "rollout") socket.send(JSON.stringify({ ev: "rollout", result: { ok: latest } }));
+            else socket.send(raw);
+          });
+          socket.onMessage((raw) => server.send(raw));
+        }] };
+        const dev = phone
+          ? await pairDevice(wk, aaa("web", "pair", "--reader").code, "iphone", opts)
+          : await pairPage(browser, aaa("web", "pair", "--reader").code, { width: 1280, height: 800 }, opts);
+        const p = dev.page;
+        const card = p.getByTestId("rollout-card");
+        const toggle = card.getByRole("button", { name: "배포 상세 접기" });
+        const tag = phone ? "phone" : "desktop";
+        const send = async () => {
+          latest = { ...latest, updated_ms: latest.updated_ms + 1 };
+          peer.send(JSON.stringify({ ev: "rollout", result: { ok: latest } }));
+          await domIs(p, "새 배포 상태 반영", (ms) => document.querySelector('[data-testid="rollout-card"]')?.dataset.updated === String(ms), latest.updated_ms);
+        };
+        try {
+          await inList(p, "activity-machines");
+          await domIs(p, "성공한 배포", () => document.querySelector('[data-testid="rollout-card"]')?.dataset.state === "done");
+          await shot(p, `35-${tag}-done-open`);
+          if (await toggle.count() !== 1) throw new Error("성공한 배포의 접기 단추가 없다");
+          const openHeight = await card.evaluate((e) => e.getBoundingClientRect().height);
+          await toggle.click();
+          const expand = card.getByRole("button", { name: "배포 상세 펼치기" });
+          await expand.waitFor();
+          if (await card.locator(".rollout-steps").isVisible()) throw new Error("접은 배포의 단계가 보인다");
+          if (await card.evaluate((e) => e.getBoundingClientRect().height) >= openHeight / 2) throw new Error("접은 카드가 여전히 큰 공간을 차지한다");
+          await shot(p, `35-${tag}-done-folded`);
+          await send();
+          if (await expand.count() !== 1) throw new Error("같은 배포의 상태 갱신이 접기를 풀었다");
+          await inList(p, "activity-work");
+          await inList(p, "activity-machines");
+          if (await expand.count() !== 1) throw new Error("패널 전환이 접기를 풀었다");
+          await expand.click();
+          if (!await card.locator(".rollout-steps").isVisible()) throw new Error("펼친 배포의 단계가 없다");
+          await toggle.click();
+          // 다른 ID의 성공한 배포도 다시 보인다.
+          latest = { ...latest, id: "01ARZ3NDEKTSV4RRFFQ69G5FAW" };
+          await send();
+          if (!await card.locator(".rollout-steps").isVisible() || await toggle.count() !== 1) throw new Error("새 배포가 접힌 채다");
+          for (const state of ["running", "recovering", "stopped", "stopped_rolled_back", "recovery_failed"]) {
+            latest = { ...latest, state: "done", error: null, recovery_phase: null };
+            await send();
+            await toggle.click();
+            latest = { ...latest, state, error: state === "running" ? null : "배포 확인 필요", recovery_phase: state === "recovering" ? "awaiting_old" : null };
+            await send();
+            if (!await card.locator(".rollout-steps").isVisible()) throw new Error(`${state} 배포가 숨었다`);
+            if (await card.getByRole("button", { name: /배포 상세 (접기|펼치기)/ }).count()) throw new Error(`${state} 배포를 접을 수 있다`);
+          }
+          await shot(p, `35-${tag}-recovery-failed-visible`);
+          if (dev.errors.length) throw new Error(dev.errors.join("\n"));
+        } finally { await p.context().close(); }
+      }
+    } finally { await wk.close(); }
+  });
+
 }

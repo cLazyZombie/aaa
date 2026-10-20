@@ -124,9 +124,20 @@ impl Host {
         let path = dir.join(&name);
         // 같은 내용을 함께 올리면(빠른 두 번 붙이기·두 기기) 같은 임시 파일을 다투지 않게 한 번에 하나씩 쓴다
         let _saving = SAVING.lock().unwrap_or_else(|e| e.into_inner());
-        // 같은 내용은 이미 있다(이름이 내용 hash다). symlink 등 일반 파일이 아닌 것은 덮지 않고 거부한다
+        // 이름은 hash의 일부이므로 기존 바이트도 확인한다. 바뀐 파일·충돌·symlink는 덮지 않는다.
         match path.symlink_metadata() {
-            Ok(m) if m.is_file() => {}
+            Ok(m) if m.is_file() => {
+                let same = m.len() == bytes.len() as u64
+                    && std::fs::read(&path).map_err(|e| err(ErrorCode::Internal, e.to_string()))? == bytes;
+                if !same {
+                    return Err(err(
+                        ErrorCode::BadRequest,
+                        format!(
+                            "uploads/{name}의 기존 내용이 올린 파일과 다르다. 기존 파일을 보존했으니 원본을 확인한다"
+                        ),
+                    ));
+                }
+            }
             Ok(_) => return Err(err(ErrorCode::Internal, format!("uploads/{name}가 일반 파일이 아니다"))),
             Err(_) => std::fs::create_dir_all(&dir)
                 .and_then(|_| aaa_common::util::write_private(&path, bytes))
@@ -225,7 +236,16 @@ impl Host {
                     return Err(err(ErrorCode::BadRequest, "1바이트~16MiB가 아니다"));
                 }
                 if !hex::encode(Sha256::digest(&b)).starts_with(f.name.split('.').next().unwrap_or_default()) {
-                    return Err(err(ErrorCode::BadRequest, format!("원본이 바뀌어 이름({})과 내용이 다르다", f.name)));
+                    let message = if f.src.starts_with("uploads/") {
+                        format!(
+                            "첨부 {}의 이름과 내용 해시가 다르다. 원본이 바뀌었거나 무작위 이름을 쓰던 예전 대화 첨부일 수 있다. \
+                             원본 파일을 확인한 뒤 할 일에 다시 첨부하고 메모의 옛 링크를 새 링크로 바꾼다. 기존 파일은 보존했다",
+                            f.name
+                        )
+                    } else {
+                        format!("원본이 바뀌어 이름({})과 내용이 다르다", f.name)
+                    };
+                    return Err(err(ErrorCode::BadRequest, message));
                 }
                 Ok(b)
             });
@@ -345,11 +365,18 @@ mod tests {
         );
         let img = save(DeviceRole::Controller, "device:c", None, &png).unwrap();
         assert_eq!(save(DeviceRole::Controller, "device:c", None, &png).unwrap(), img, "같은 내용은 같은 이름");
-        assert!(img.starts_with("uploads/") && img.ends_with(".png"), "{img}");
+        assert_eq!(img, format!("uploads/{}.png", &hex::encode(Sha256::digest(&png))[..16]));
         let doc = save(DeviceRole::Controller, "device:c", Some("html"), b"<script>1</script>").unwrap();
         assert!(doc.ends_with(".html"), "{doc}");
         assert_eq!(files(), 2);
         assert_eq!(h.task_file_read("demo", img.trim_start_matches("uploads/")).unwrap(), png);
+        // 같은 이름에 다른 내용이 있으면 성공했다고 돌려주거나 덮지 않는다(대화와 task가 함께 쓰는 저장 경계).
+        let changed = b"\x89PNG\r\n\x1a\nchanged!";
+        std::fs::write(h.project_dir("demo").unwrap().join(&img), changed).unwrap();
+        let e = save(DeviceRole::Controller, "device:c", None, &png).unwrap_err();
+        assert_eq!(e.code, ErrorCode::BadRequest);
+        assert!(e.message.contains("기존 내용이 올린 파일과 다르다"), "{e:?}");
+        assert_eq!(h.task_file_read("demo", img.trim_start_matches("uploads/")).unwrap(), changed);
         assert_eq!(h.task_file_read("demo", "../TASKS.md").unwrap_err().code, ErrorCode::BadRequest);
         #[cfg(unix)]
         {
