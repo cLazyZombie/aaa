@@ -173,11 +173,11 @@ pub const AGENT_LINK: Version = Version { major: 1, minor: 10 };
 // 1.79: host 계정 화면(관리 GUI W5a, plan §8.351): 웹 조작 기기의 `account_login`·`account_login_status`·`account_login_cancel`·
 // `account_default`, 새 `account_login_confirm`, `AccountView`의 메일·plan·인증 시각·만료·`health`, `AccountLoginView`의
 // `expect_email`·`email`, 웹 events `accounts`. 옛 host는 웹 계정 요청을 거부하고 새 칸을 생략해 웹이 목록만 그린다. Agent link 변경 없음.
-// 1.80: 머신 등록·웹 공개·보고서 올리기·키 교체(관리 GUI W5b, plan §8.352): 웹 조작 기기의 `enroll_open`·`enroll_pending`·
+// 1.80: 머신 등록·웹 공개·보고서 올리기·키 교체(관리 GUI W5b, plan §8.355): 웹 조작 기기의 `enroll_open`·`enroll_pending`·
 // `enroll_approve`·`machine_revoke`·`web_publish`·`web_publish_off`·`library_rotate`, 새 `enroll_close`·`library_upload_publish`(+ 웹
 // 올리기 주소), `Pending.open_until_ms`, 웹 events `enroll`, 마지막 조작 기기 폐기 거부. 옛 host는 웹 요청을 거부해 웹이 그리지 않는다.
 // Agent link 변경 없음.
-// 1.81: profile·safety·작업 root·hook(관리 GUI W5c, plan §8.353): `safety_show`·`safety_set`(웹은 yolo·start_threads·trust_screens·
+// 1.81: profile·safety·작업 root·hook(관리 GUI W5c, plan §8.356): `safety_show`·`safety_set`(웹은 yolo·start_threads·trust_screens·
 // coordinator_deploy만), `profile_admin`·`profile_plan`·`profile_apply`(claude·codex·shell만, custom 명령·env 칸 없음),
 // `work_root_show`·`work_root_check`·`work_root_set`, `hook_status`·`hook_set`. host.toml 판 대조로 동시 편집은 conflict.
 // Agent link: 새 기능 work_root.manage.v1·hook.manage.v1(`AgentRequest::WorkRoot`·`CodexHook`), 알리지 않은 agent에는 보내지 않는다.

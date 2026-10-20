@@ -1,4 +1,4 @@
-// 웹 관리 W5c(plan §8.353): 설정 「안전」(실효값·출처, 넷만 바꾸고 yolo 켜기는 한 번 더 확인, 그사이 바뀐 host.toml은 쓰지 않음),
+// 웹 관리 W5c(plan §8.356): 설정 「안전」(실효값·출처, 넷만 바꾸고 yolo 켜기는 한 번 더 확인, 그사이 바뀐 host.toml은 쓰지 않음),
 // 「profile」(custom은 고치지 못함, 더하기 → 미리보기의 실행 인자 → 적용, 허용 목록), 「머신」의 작업 폴더(절대 경로만, 점검 안내 →
 // 통과한 경로만 전환, 다음 시작 설정만 바뀌고 host.toml은 그대로)와 Codex hook 설치·제거(다른 hook은 그대로), 보기 전용 기기, 휴대폰 390.
 // Codex 설정은 실험실 폴더(CODEX_HOME)다: 실제 ~/.codex는 건드리지 않는다.
@@ -43,7 +43,7 @@ export default async function ({ page }) {
     await row(sp, "yolo").locator("select").selectOption("on");
     const ask = page.getByRole("alertdialog", { name: "demo의 yolo를 켤까요?" });
     await ask.getByText("묻지 않고 명령을 실행하고").waitFor();
-    await shot(page, "60-yolo-confirm-desktop");
+    await shot(page, "61-yolo-confirm-desktop");
     await ask.getByRole("button", { name: "yolo 켜기" }).click();
     await ask.waitFor({ state: "detached" });
     await row(sp, "yolo").getByTestId("safety-value").filter({ hasText: "on" }).waitFor();
@@ -58,7 +58,7 @@ export default async function ({ page }) {
     await row(sp, "trust_screens").locator("select").selectOption("user");
     await row(sp, "trust_screens").getByTestId("safety-value").filter({ hasText: "user" }).waitFor();
     if (!read(hostToml).includes("# 사람이 고침")) throw new Error("사람이 고친 줄이 사라졌다");
-    await shot(page, "60-safety-desktop");
+    await shot(page, "61-safety-desktop");
   });
 
   await step("profile: custom은 고치지 못하고, 더하기는 미리보기의 실행 인자를 본 뒤 적용한다", async () => {
@@ -79,7 +79,7 @@ export default async function ({ page }) {
     const plan = page.getByRole("dialog", { name: "적용할까요?" });
     await plan.getByTestId("plan-after").filter({ hasText: "claude --model opus --verbose --add-dir /tmp/a b" }).waitFor();
     if (read(hostToml) !== before) throw new Error("미리보기가 host.toml에 썼다");
-    await shot(page, "60-profile-plan-desktop");
+    await shot(page, "61-profile-plan-desktop");
     await plan.getByTestId("profile-apply").click();
     await plan.waitFor({ state: "detached" });
     await pp.getByTestId("profile-done").getByText("profile `e2e-opus`를 더했다").waitFor();
@@ -104,7 +104,7 @@ export default async function ({ page }) {
     await allow.getByText("지금 e2e-opus").waitFor();
     const shown = aaa("safety", "show", "demo").rows.find((r) => r.key === "thread_profiles");
     if (shown.value !== "e2e-opus") throw new Error(`host 허용 목록: ${JSON.stringify(shown)}`);
-    await shot(page, "60-profiles-desktop");
+    await shot(page, "61-profiles-desktop");
   });
 
   await step("작업 폴더: 절대 경로만, 점검(검사 파일 안내) 통과한 경로만 전환, 다음 시작 설정만 바뀐다", async () => {
@@ -140,7 +140,7 @@ export default async function ({ page }) {
     await wr.getByTestId("work-root-restart").waitFor();
     if (!read(`${root}/c/agent.local.toml`).includes(next)) throw new Error("agent 다음 시작 설정에 없다");
     if (read(hostToml) !== hostBefore) throw new Error("작업 폴더 전환이 host.toml을 바꿨다");
-    await shot(page, "60-work-root-desktop");
+    await shot(page, "61-work-root-desktop");
   });
 
   await step("Codex hook: 설치 → 설치됨(다른 hook 그대로) → 제거 → 없음", async () => {
@@ -154,7 +154,7 @@ export default async function ({ page }) {
     const hooks = JSON.parse(read(`${codex}/hooks.json`));
     if (!JSON.stringify(hooks.hooks.SessionStart).includes("hook --agent codex")) throw new Error(`설치된 hook이 없다: ${JSON.stringify(hooks)}`);
     if (!isDeepStrictEqual(hooks.hooks.Stop, other.hooks.Stop)) throw new Error("다른 hook이 바뀌었다");
-    await shot(page, "60-hook-desktop");
+    await shot(page, "61-hook-desktop");
     await hk.getByTestId("hook-toggle").click();
     ask = page.getByRole("alertdialog", { name: "labA의 Codex hook을 제거할까요?" });
     await ask.getByRole("button", { name: "제거" }).click();
@@ -180,12 +180,12 @@ export default async function ({ page }) {
     await d.getByTestId("profile-list").locator('[data-name="e2e-opus"]').waitFor();
     const wide = await ph.evaluate(() => document.documentElement.scrollWidth > window.innerWidth);
     if (wide) throw new Error("profile 쪽이 가로로 넘친다");
-    await shot(ph, "60-profiles-phone");
+    await shot(ph, "61-profiles-phone");
     await ph.getByRole("button", { name: "설정으로 돌아가기" }).click();
     await d.getByRole("tab", { name: "안전" }).click();
     d = ph.getByRole("dialog", { name: "설정" });
     await d.getByTestId("settings-safety").getByTestId("safety-rows").waitFor();
-    await shot(ph, "60-safety-phone");
+    await shot(ph, "61-safety-phone");
     await ph.close();
   });
 }

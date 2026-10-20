@@ -1,4 +1,4 @@
-//! 웹 설정 관리(관리 GUI W5c, plan §8.353): host.toml의 safety·profile·허용 목록·기본 profile 읽기·고치기와, 머신마다 작업
+//! 웹 설정 관리(관리 GUI W5c, plan §8.356): host.toml의 safety·profile·허용 목록·기본 profile 읽기·고치기와, 머신마다 작업
 //! root·Codex hook을 그 머신 agent의 고정 작업으로 부르기.
 //!
 //! - 고치기는 CLI `aaa safety`·`aaa profile`과 같은 `aaa_config` 함수로 한다. 웹이 본 판(host.toml sha256)과 지금 판이 다르면

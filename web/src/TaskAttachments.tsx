@@ -9,11 +9,10 @@
 // 않는 contenteditable 칸(`inputmode="none"`: 자판이 뜨지 않는다)을 둔다. 「클립보드에서」 단추는 `navigator.clipboard.read()`로
 // 읽는다(iOS는 그 자리에 「붙여넣기」 허용 말풍선을 띄운다).
 import { useEffect, useRef, useState, type ClipboardEvent, type DragEvent } from "react";
-import { createPortal } from "react-dom";
-import { ChevronLeft, ChevronRight, ClipboardPaste, ExternalLink, FileCode, FileText, Globe, ImagePlus, Link2, Loader2, X } from "lucide-react";
+import { ClipboardPaste, ExternalLink, FileCode, FileText, Globe, ImagePlus, Link2, Loader2, X } from "lucide-react";
 import type { LibraryFile, LibraryReport } from "./gen/proto";
 import { call } from "./api";
-import { usePhoneSheetBack } from "./herdr/sheetHistory";
+import { Lightbox } from "./Lightbox";
 import { normalizeComposerImageFile } from "./herdr/composerImageMime";
 import { ATTACH_TYPES, DOC_ACCEPT, attachmentsOf, linkFromText, reportDoc, reportUrlOf, taskImageUrl, type TaskAttachment } from "./tasksModel";
 
@@ -298,7 +297,9 @@ export function TaskAttachments({
           {note}
         </p>
       )}
-      {open !== null && images[open] && <Viewer project={project} list={images} at={open} onAt={setOpen} onClose={() => setOpen(null)} />}
+      {open !== null && images[open] && (
+        <Lightbox items={images.map((a) => ({ src: taskImageUrl(project, a.target), alt: a.label }))} at={open} onAt={setOpen} onClose={() => setOpen(null)} />
+      )}
     </section>
   );
 }
@@ -416,58 +417,6 @@ function LinkForm({ project, busy, onAdd, onCancel }: { project: string; busy?: 
         </button>
       </div>
     </div>
-  );
-}
-
-/** 크게 보기: 화면을 덮고 Esc·바깥 누름·휴대폰 뒤로가 닫는다. 여럿이면 ←→로 넘긴다 */
-function Viewer({ project, list, at, onAt, onClose }: { project: string; list: readonly TaskAttachment[]; at: number; onAt: (i: number) => void; onClose: () => void }) {
-  usePhoneSheetBack(() => onClose());
-  const close = useRef<HTMLButtonElement>(null);
-  useEffect(() => {
-    close.current?.focus();
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") {
-        e.preventDefault();
-        e.stopPropagation();
-        onClose();
-      } else if (e.key === "ArrowLeft" && at > 0) onAt(at - 1);
-      else if (e.key === "ArrowRight" && at < list.length - 1) onAt(at + 1);
-    };
-    // 상세의 Esc(닫기)보다 먼저 받는다
-    window.addEventListener("keydown", onKey, true);
-    return () => window.removeEventListener("keydown", onKey, true);
-  }, [at, list.length, onAt, onClose]);
-  const a = list[at];
-  if (!a) return null;
-  const url = taskImageUrl(project, a.target);
-  // 상세 시트(휴대폰 전체 화면 시트는 transform이 있다) 밖, 문서 맨 위에 그린다: 시트 안이면 시트 머리와 겹친다
-  return createPortal(
-    <div className="task-viewer" role="dialog" aria-modal="true" aria-label={`그림 ${at + 1}/${list.length}`} data-testid="task-viewer" onClick={(e) => e.target === e.currentTarget && onClose()}>
-      <div className="task-viewer-bar">
-        <span>
-          {at + 1} / {list.length}
-        </span>
-        <a className="btn btn-ghost" href={url} target="_blank" rel="noreferrer">
-          <ExternalLink aria-hidden="true" />
-          원본
-        </a>
-        <button ref={close} type="button" className="btn btn-ghost" aria-label="닫기" data-testid="task-viewer-close" onClick={onClose}>
-          <X aria-hidden="true" />
-        </button>
-      </div>
-      <img className="task-viewer-img" src={url} alt={a.label} onClick={(e) => e.stopPropagation()} />
-      {at > 0 && (
-        <button type="button" className="task-viewer-nav is-prev" aria-label="앞 그림" onClick={() => onAt(at - 1)}>
-          <ChevronLeft aria-hidden="true" />
-        </button>
-      )}
-      {at < list.length - 1 && (
-        <button type="button" className="task-viewer-nav is-next" aria-label="다음 그림" onClick={() => onAt(at + 1)}>
-          <ChevronRight aria-hidden="true" />
-        </button>
-      )}
-    </div>,
-    document.body,
   );
 }
 

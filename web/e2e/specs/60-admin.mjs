@@ -1,4 +1,4 @@
-// 웹 관리 W5b(plan §8.352): 설정 「머신」에서 등록 창 열기·닫기, 새 머신 승인(6자리 코드: 틀리면 말하고 맞으면 등록), host 머신은 폐기
+// 웹 관리 W5b(plan §8.355): 설정 「머신」에서 등록 창 열기·닫기, 새 머신 승인(6자리 코드: 틀리면 말하고 맞으면 등록), host 머신은 폐기
 // 단추 없음, 다른 머신 폐기. 「폰 및 기기」의 마지막 조작 기기(폐기 꺼짐)·이 기기 폐기 확인(「이 화면이 끊깁니다」), tailnet 공개
 // 켜기(확인 창)·끄기(공개 주소로 연 화면은 「다른 경로를 확인했다」를 켜야 열림). 보고서 올리기(폴더·여러 파일), 공유 링크 키 교체
 // (살아 있는 링크 수, 옛 링크 끊김), 보기 전용 기기, 휴대폰 390.
@@ -90,7 +90,7 @@ export default async function ({ page }) {
     await ap.getByTestId("enroll-code").fill(code === "000000" ? "111 111" : "000 000");
     await ap.getByTestId("enroll-approve").click();
     await ap.getByRole("alert").waitFor();
-    await shot(page, "59-enroll-approve-desktop");
+    await shot(page, "60-enroll-approve-desktop");
     await ap.getByTestId("enroll-code").fill(`${code.slice(0, 3)} ${code.slice(3)}`);
     await ap.getByTestId("enroll-approve").click();
     await ap.waitFor({ state: "detached" });
@@ -102,7 +102,7 @@ export default async function ({ page }) {
     await mp.getByTestId("machine-list").locator('[data-name="labB"]').filter({ hasText: "연결됨" }).waitFor();
     await mp.getByRole("button", { name: "창 닫기" }).click();
     await mp.getByTestId("enroll-open-button").waitFor();
-    await shot(page, "59-machines-desktop");
+    await shot(page, "60-machines-desktop");
   });
 
   await step("머신 폐기: 확인 창 → 목록과 host에서 빠진다", async () => {
@@ -159,7 +159,7 @@ export default async function ({ page }) {
     await off.getByTestId("publish-off-here").filter({ hasText: "이 화면이 끊길 수 있음" }).waitFor();
     if (!(await off.getByTestId("publish-off").isDisabled())) throw new Error("확인 전에 끄기가 열렸다");
     await off.getByTestId("publish-off-checked").check();
-    await shot(hp, "59-publish-off-here-desktop");
+    await shot(hp, "60-publish-off-here-desktop");
     await off.getByTestId("publish-off").click();
     await off.waitFor({ state: "detached" });
     if (aaa("web", "status").url !== null) throw new Error("공개 주소 화면에서 끄지 않았다");
@@ -182,7 +182,7 @@ export default async function ({ page }) {
     await up.getByTestId("upload-name").fill("plan-review");
     await up.getByTestId("upload-to-user").check();
     await up.getByTestId("upload-title").fill("계획 검토");
-    await shot(page, "59-upload-desktop");
+    await shot(page, "60-upload-desktop");
     await up.getByTestId("upload-submit").click();
     await up.waitFor({ state: "detached" });
     await panel.getByRole("link", { name: "계획 검토" }).waitFor();
@@ -249,7 +249,7 @@ export default async function ({ page }) {
       return box.left >= 0 && box.right <= innerWidth + 0.5 && el.scrollWidth <= el.clientWidth + 1 ? true : JSON.stringify({ l: box.left, r: box.right, sw: el.scrollWidth, cw: el.clientWidth });
     });
     if (fits !== true) throw new Error(`휴대폰 폭: ${fits}`);
-    await shot(ph, "59-machines-phone");
+    await shot(ph, "60-machines-phone");
     // 좁은 설정 창은 목록과 쪽이 번갈아 보인다: 다시 열어 고른다
     await ph.keyboard.press("Escape");
     d = await openSettings(ph, "폰 및 기기");
@@ -257,7 +257,7 @@ export default async function ({ page }) {
     await mine.getByRole("button", { name: "폐기" }).click();
     const ask = ph.getByRole("alertdialog", { name: "이 기기를 폐기할까요?" });
     await ask.getByText("이 화면이 끊깁니다").waitFor();
-    await shot(ph, "59-revoke-self-phone");
+    await shot(ph, "60-revoke-self-phone");
     await ask.getByRole("button", { name: "이 기기 폐기" }).click();
     await ph.getByLabel("페어링 코드").waitFor();
     await ph.context().close();

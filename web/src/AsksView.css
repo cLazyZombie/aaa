@@ -1,5 +1,5 @@
 /* 「답할 것」(plan §8.345): 사이드바 목록과 본문 카드. 카드는 화면 선택 창 카드(PromptCard.css)를 바탕으로 쓰고 본문 Markdown·
-   선택지 그림 카드(2B)·크게 보기를 더한다 */
+   선택지 그림 카드(2B)를 더한다. 크게 보기는 공용 Lightbox.css다 */
 
 .asks-panel { display: flex; flex-direction: column; gap: 2px; padding: var(--space-2); overflow-y: auto; min-height: 0; flex: 1 1 0; }
 .asks-panel-head {
@@ -91,11 +91,3 @@
 .ask-choice.is-picked { border-color: var(--status-done) !important; background: var(--status-done-tint) !important; }
 .ask-picked { display: inline-block; padding: 0 6px; border-radius: var(--radius-pill); background: var(--status-done); color: var(--bg); font-size: var(--fs-2xs); font-weight: var(--fw-semibold); }
 
-.ask-lightbox {
-  position: fixed; inset: 0; z-index: var(--z-modal);
-  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: var(--space-2);
-  padding: var(--space-6) var(--space-4); background: color-mix(in srgb, #000 82%, transparent);
-}
-.ask-lightbox img { max-width: 100%; max-height: calc(100% - 48px); object-fit: contain; border-radius: var(--radius-md); cursor: zoom-out; }
-.ask-lightbox-caption { margin: 0; color: #eee; font-size: var(--fs-sm); }
-.ask-lightbox-close { position: absolute; top: var(--space-3); inset-inline-end: var(--space-3); color: #fff; }

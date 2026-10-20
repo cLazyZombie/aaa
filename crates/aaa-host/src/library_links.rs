@@ -404,7 +404,8 @@ mod tests {
             }
             let res = crate::web::router(lab.h.clone()).oneshot(req.body(Body::empty()).unwrap()).await.unwrap();
             assert_eq!(res.status(), status, "{name}");
-            let _body = to_bytes(res.into_body(), 1024).await.unwrap();
+            // 몸은 비우기만 한다(HTML 탐색 응답에는 그림 누름 알림이 붙는다, plan §8.353)
+            let _body = to_bytes(res.into_body(), 64 * 1024).await.unwrap();
             let report = lab.h.db.library_report("demo", name).unwrap().unwrap();
             let link = lab.h.latest_library_link("demo", name).unwrap();
             assert_eq!(report.unseen(), !opened, "안 봄: {name}");

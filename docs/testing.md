@@ -9,7 +9,11 @@
 `host_login_defaults_pin_threads_and_coordinators_without_exposing_credentials`는 공식 로그인 argv·격리 홈·원본 출력 차단,
 임시 인증 정리, 새 worker/자동화 평가/원격 작업의 기본 선택, 기존 로컬 작업 유지, 명시 계정 우선, 깨진 기본 거부,
 coordinator의 host 재시작 뒤 refresh·재부팅 복원·pane 재개와 같은 기록 홈을 확인한다.
-동시 coordinator pane 재개는 가짜 CLI 버전 확인을 socket에서 붙잡아 두고 두 번째 재개가 기동 전에 거부되는지 본다.
+동시 coordinator pane 재개는 Barrier 뒤 두 실제 CLI를 경주시켜 성공이 하나인지 확인한다.
+준비 중 중복 거부는 `cargo test -p aaa-host --lib account_policy::tests::preparing_account_resume_rejects_duplicates_before_agent_spawn -- --exact`가 맡는다.
+실제 `SpawnAccount` 전송을 받은 뒤 응답을 보류하고, 둘째 기동 요청 없이 거부되는지와 첫 응답 뒤 새 pane 결속·옛 pane 재거부를 확인한다.
+CLI 버전 확인의 제품 제한시간(5초)을 시험 제어로 소진하지 않는다. 이전 시험의 gate 해제를 정상 호출 종료 사건 뒤로 늦추면
+CI와 같은 성공 0개·기동 실패/중복 거부가 재현된다. 준비 중 claim 검사를 제거한 변형은 새 host owner가 중복 기동 요청에서 실패해야 한다.
 인증 worker의 pane 재개는 저장한 thread launch·identity를 이어 쓰고, 실행 중 thread restart가 같은 홈을 다시 쓰지 않는지 본다.
 로그인 실패·취소·host 정상 종료는 SIGHUP 무시 자식·PTY를 가진 자손을 포함해 종료와 폴더 정리를 기다린다. 가짜 자식 안에서 계정 관리 명령을
 실행해 aaa 세션에서는 로그인·기본 변경·삭제가 거부되는지도 확인한다.
@@ -832,20 +836,20 @@ CI/Git의 source outbox·중복 억제·재시작·outage는 기존 owner를 유
 - `node --test web/test/accountsModel.test.mjs`: 1.79 판정, 별칭 꼴, 상태 낱말(남은 날 올림), 날짜, harness 묶음과 기본, 로그인 진행 글(host Mac 브라우저 안내·이 메일·다른 메일).
 - `node web/e2e/web.e2e.mjs --spec 58-accounts`: PATH 앞 가짜 `claude`·`codex`가 FIFO에 쓸 때만 끝난다. 새 로그인 진행 → 메일·plan·날짜·정상, 기본으로·기본 해제(host 기본), 진행 중 취소(계정 없음), Claude 3일 → 곧 만료 배지와 알림함 항목(메일 없음), 다시 로그인의 「이 메일로 로그인하세요」 → 다른 메일 → 금고 그대로 → 「새 메일로 바꾸기」, Reader에 메일·로그인 단추 없음, 휴대폰 390 폭. 화면 표지(`data-state`)와 host 기록으로 기다리며 sleep은 없다.
 
-## 웹 머신 등록·공개·보고서 올리기(t-0538 관리 GUI W5b, plan §8.352)
+## 웹 머신 등록·공개·보고서 올리기(t-0538 관리 GUI W5b, plan §8.355)
 
 - `cargo test -p aaa-host --lib library_upload::`: 올리기 권한(Reader 거부)·경로(숨은 이름·`..`·절대·역슬래시)·올리기 이름·없는 프로젝트, 합계 64MiB(16MiB 넷은 되고 1바이트 더는 `too_large`, 같은 경로 다시 올리기는 그 크기를 빼고 셈), 사용자 보고서의 맨 위 index.html이 없으면 거부하고 올린 것을 둠 → 더 올린 뒤 등록하면 하위 폴더까지 보고서가 되고 올리기 폴더가 지워짐, 세션 안 agent·Reader의 등록 거부, 웹이 올린 수와 다르면(올린 자리가 없어도) `conflict`. `a_stale_upload_goes_away_but_the_one_being_written_stays`는 하루 넘은 올리기 둘 가운데 이어 쓰는 것만 남고 시각이 새로워지는지, `an_upload_under_a_thread_numbered_state_path_has_no_origin_thread`는 상태 폴더 경로의 thread 번호를 근원으로 읽지 않는지 본다.
 - `cargo test -p aaa-host --lib pairing_tests::the_web_keeps_its_last_controller_and_the_host_machine`: 웹에서 host 머신 폐기 거부, 조작 기기가 하나일 때 그 기기 폐기 거부(host CLI는 됨), 둘이면 웹 폐기 허용. `trust_management_requires_a_person_outside_the_session`은 조작 기기가 등록 창을 열고 Reader는 거부하는지 본다.
 - `node --test web/test/adminModel.test.mjs`: 1.80 판정, 대소문자·NFC/NFD만 다른 이름 막기, 확인 코드(공백·하이픈), 등록 창 남은 분, 마지막 조작 기기(보기 기기는 세지 않음), 공개 주소 판정과 다른 경로(tailnet 이름의 http 주소는 내지 않음), 보고서 이름(host `name_ok`와 같음), 폴더 올리기 경로(맨 위 폴더 빼기·숨은 파일 빼기)와 상한 까닭, 살아 있는 링크, 올리기 이름.
-- `node web/e2e/web.e2e.mjs --spec 59-admin`: PATH 앞 가짜 `tailscale`(serve 상태는 실험실 파일, 실제 tailscale을 부르지 않는다)과 같은 Mac에서 다른 설정·상태 폴더로 띄운 둘째 agent(host `agent_listen`을 loopback에 연다). 등록 창 열기 → `aaa agent enroll`이 찍은 확인 코드 → 대기 목록(enroll 사건) → 틀린 코드의 말 → 맞는 코드로 승인 → enroll 끝 코드 0 → 연결(state 사건) → 창 닫기, host 머신에 폐기 단추 없음, 폐기 확인 창 → 목록·host에서 빠짐, 마지막 조작 기기의 폐기 단추 꺼짐, 공개 켜기(확인 창)와 loopback 화면의 끄기(다른 경로만), 공개 주소로 연 화면(실험실은 TLS 공개 주소를 열 수 없어 `web_status` 답의 주소만 이 화면 origin으로 바꾼다)의 「이 화면이 끊길 수 있음」과 확인 전 끄기 꺼짐, 폴더 올리기(맨 위 폴더·숨은 파일 빠짐, 사용자 보고서·제목, 올리기 폴더 지움)와 여러 파일(index.html 없는 사용자 보고서 막음 → 작업 보고), 키 교체 확인 창의 살아 있는 링크 수와 옛 링크가 열리지 않음, Reader에 등록·폐기·공개·올리기·키 교체 없음, 휴대폰 390 폭과 이 기기 폐기 확인 → pairing 화면. 화면 표지·host 기록·프로세스 출력과 끝으로 기다리며 sleep은 없다.
+- `node web/e2e/web.e2e.mjs --spec 60-admin`: PATH 앞 가짜 `tailscale`(serve 상태는 실험실 파일, 실제 tailscale을 부르지 않는다)과 같은 Mac에서 다른 설정·상태 폴더로 띄운 둘째 agent(host `agent_listen`을 loopback에 연다). 등록 창 열기 → `aaa agent enroll`이 찍은 확인 코드 → 대기 목록(enroll 사건) → 틀린 코드의 말 → 맞는 코드로 승인 → enroll 끝 코드 0 → 연결(state 사건) → 창 닫기, host 머신에 폐기 단추 없음, 폐기 확인 창 → 목록·host에서 빠짐, 마지막 조작 기기의 폐기 단추 꺼짐, 공개 켜기(확인 창)와 loopback 화면의 끄기(다른 경로만), 공개 주소로 연 화면(실험실은 TLS 공개 주소를 열 수 없어 `web_status` 답의 주소만 이 화면 origin으로 바꾼다)의 「이 화면이 끊길 수 있음」과 확인 전 끄기 꺼짐, 폴더 올리기(맨 위 폴더·숨은 파일 빠짐, 사용자 보고서·제목, 올리기 폴더 지움)와 여러 파일(index.html 없는 사용자 보고서 막음 → 작업 보고), 키 교체 확인 창의 살아 있는 링크 수와 옛 링크가 열리지 않음, Reader에 등록·폐기·공개·올리기·키 교체 없음, 휴대폰 390 폭과 이 기기 폐기 확인 → pairing 화면. 화면 표지·host 기록·프로세스 출력과 끝으로 기다리며 sleep은 없다.
 - 이 단계 ci-local에서 E2E 53(t-0540)의 「알림함 배지가 답할 요청을 세지 않음」이 5 → 6으로 실패했다. 실험실 DB를 보니 앞 단계 보고의 「report needs user」 항목이 요청 post 16ms 전에 들어와 앞뒤 배지 대조 사이에 끼었다. 대조를 「배지 = host의 끝내지 않은 항목 − 요청 1」로 바꿨다(늦게 온 항목은 둘을 함께 바꾼다). 배지가 요청을 세게 결함을 심으면 이 단계가 실패한다.
 
-## 웹 profile·safety·작업 폴더·hook(t-0538 관리 GUI W5c, plan §8.353)
+## 웹 profile·safety·작업 폴더·hook(t-0538 관리 GUI W5c, plan §8.356)
 
 - `cargo test -p aaa-host --lib settings_admin::`: 웹이 바꾸는 safety key는 넷뿐(`*_agent_args`·`routine_commands`는 `forbidden`, 파일 그대로), 프로젝트 표·모든 프로젝트 표(`[safety.default]`)에 쓰고 「기본」은 그 key를 지움, 앞 판(`expected`)으로 보내면 `conflict`이고 파일 그대로, 주석 보존. custom profile 만들기·고치기·harness를 custom으로·지우기 거부, 목록 JSON에 env 값과 custom 실행 명령이 없음, 미리보기는 쓰지 않고 적용 뒤 실행 인자가 미리보기와 같음, 낡은 판 적용은 `conflict`. 허용 목록·기본값은 없는 이름 거부, 적용 뒤 host의 thread 허용·coordinator 기본이 바뀜. 세션 안 agent·worker·detached의 바꾸기 다섯 가지 거부와 Reader의 읽기 거부. 작업 root는 `~`·상대·`C:work`를 agent에 닿기 전 거부.
 - `cargo test -p aaa-proto control_classification`: 설정 관리 읽기도 조작 권한.
 - `node --test web/test/settingsModel.test.mjs`: 1.81 판정, yolo 켜기만 한 번 더 확인, 인자 줄마다 하나(빈칸 든 인자), 기본 profile 고치기는 같은 이름 더하기, harness를 바꾸면 받지 않는 model·effort 비움, profile 이름(host `validate_name`과 같음), 절대 경로(host `absolute`와 같음), 전환은 점검한 그 경로·mount일 때만.
-- `node web/e2e/web.e2e.mjs --spec 60-settings-admin`: 실험실 `CODEX_HOME`(사람이 둔 다른 hook 하나). 「안전」에서 넷만 바꾸는 칸(인자·명령 목록은 「host 터미널에서」), start_threads auto → `aaa safety show` 값·출처, yolo 켜기 확인 창 → host.toml, 실험실 밖에서 host.toml을 고친 뒤 바꾸면 「그사이」 알림이고 파일 그대로 → 다시 바꾸면 사람이 고친 줄을 두고 씀. 「profile」의 custom `fake`에 단추·실행 명령 없음, 더하기 창(harness에 custom 없음) → 미리보기의 실행 인자(빈칸 든 인자 포함) → 미리보기만으로는 파일 그대로 → 적용 → `aaa profile resolve`. 허용 목록(실험실 기본 fake → 이 프로젝트는 e2e-opus만) → `aaa safety show`. 「머신」 작업 폴더: 상대 경로는 점검 꺼짐, 점검 전 전환 꺼짐, 「검사 파일을 만듭니다」 확인 → 없는 폴더를 만들고 통과, 점검 뒤 경로를 바꾸면 전환 꺼짐, 전환 → `agent.local.toml`에 새 경로·재시작 필요 표시, host.toml 그대로. Codex hook 설치 → 설치됨·aaa hook 세 사건·다른 hook 그대로 → 제거 → 없음·다른 hook 그대로. Reader에 안전·작업 폴더 없음, 휴대폰 390 가로 넘침 없음. 화면 표지·파일·host 답으로 끝내며 sleep은 없다.
+- `node web/e2e/web.e2e.mjs --spec 61-settings-admin`: 실험실 `CODEX_HOME`(사람이 둔 다른 hook 하나). 「안전」에서 넷만 바꾸는 칸(인자·명령 목록은 「host 터미널에서」), start_threads auto → `aaa safety show` 값·출처, yolo 켜기 확인 창 → host.toml, 실험실 밖에서 host.toml을 고친 뒤 바꾸면 「그사이」 알림이고 파일 그대로 → 다시 바꾸면 사람이 고친 줄을 두고 씀. 「profile」의 custom `fake`에 단추·실행 명령 없음, 더하기 창(harness에 custom 없음) → 미리보기의 실행 인자(빈칸 든 인자 포함) → 미리보기만으로는 파일 그대로 → 적용 → `aaa profile resolve`. 허용 목록(실험실 기본 fake → 이 프로젝트는 e2e-opus만) → `aaa safety show`. 「머신」 작업 폴더: 상대 경로는 점검 꺼짐, 점검 전 전환 꺼짐, 「검사 파일을 만듭니다」 확인 → 없는 폴더를 만들고 통과, 점검 뒤 경로를 바꾸면 전환 꺼짐, 전환 → `agent.local.toml`에 새 경로·재시작 필요 표시, host.toml 그대로. Codex hook 설치 → 설치됨·aaa hook 세 사건·다른 hook 그대로 → 제거 → 없음·다른 hook 그대로. Reader에 안전·작업 폴더 없음, 휴대폰 390 가로 넘침 없음. 화면 표지·파일·host 답으로 끝내며 sleep은 없다.
 
 ## 대화의 도구 호출 묶음(t-0477, plan §8.304)
 
@@ -1196,3 +1200,21 @@ Claude SessionStart가 알린 격리 홈의 대화는 pane chat으로, TaskCreat
 - 가짜 시작 화면은 설치된 공식 Claude 2.1.304의 시작 조건과 저장 키를 따른다. 실제 제공자 CLI·키체인·인증 파일·외부 로그인은 실행하지 않는다. 완료는 socket gate·harness 종료 사건으로 판정하며 고정 sleep·재시도는 없다. 이 시험이 실제 제공자 인증이나 이후 새 버전의 추가 안내를 보증하지는 않는다.
 - `cargo test -p aaa-session --lib account::tests:: --locked`는 명시적 우회/허용 옵션, 마지막 permission-mode, `--` 뒤 문자열 제외, 일반 실행의 파일 미생성, 기존 환경설정 보존, 비우회 재개 시 자동 수락 제거, 인증 비기록, Unix 0600·symlink 대상 보존·깨진 JSON 거부를 확인한다.
 - 수락 준비 제거와 비우회에도 무조건 수락하는 변형은 각각 위 m13의 settings 단언에서 RED여야 한다. 매번 원본 bytes를 복구한 뒤 정상 owner와 전체 ci-local·check-public을 실행한다.
+
+
+## install I5 Windows 종료 process fixture(t-0485)
+
+`install::engine::supervisor::native::tests::process_observation_rejects_completed_process_with_its_handle_still_open`은
+`cmd /D /Q /C exit 0`의 고정 token을 별도 인수로 전달한다. cmd 명령문 전체를 C argv 한 개로 감싸지 않는다.
+자식의 성공 종료·아직 열린 유효 handle의 `WAIT_OBJECT_0`·제품 `service_process_unverified`를 모두 검사하며
+고정 sleep·재시도·stdio 변경은 없다. 같은 native/상위 supervisor의 현재 image·SID·profile·SCM 읽기와
+Unicode argv 왕복 owner도 Windows cargo test에 남긴다. 이들은 Win32 전용이며 실제 실행은 main push 뒤 windows-2025,
+macOS gate·Windows cross compile 결과와 별도로 보고한다. SCM 실제 logon·UAC/LSA는 실기 인수 경계다.
+
+## 보고서 그림 크게 보기(t-0552, plan §8.353)
+
+- 웹 E2E `59-report-images`: 실제 host에 index.html·그림 넷(하나는 링크 안)·data: 그림을 publish한다. host 단계는 `node:http`로 보낸다(Node fetch는 `Sec-Fetch-Mode`를 cors로 덮어 브라우저 탐색 머리를 흉내 내지 못한다). fetch·Range·`?download=1`·그림은 원본 바이트, iframe 탐색은 원본 + `<script>` 하나와 맞는 `Content-Length`, sandbox CSP 그대로, 최상위 문서 탐색에도 붙는다.
+- 데스크톱(Chromium): 보고서 안 그림 누름 → 크게 보기(`data-at`·`data-count`·`data-scale`·그림 주소), ←→·앞뒤 단추, 두 번 누름 2.5배·맞춤, 그림 누름은 닫지 않음, Esc·바깥 누름으로 닫고 보고서는 남음. 누른 곳이 iframe이라 키는 크게 보기가 focus를 가져온 사건(`focusIs`) 뒤에 누른다(앞서 누르면 키가 보고서 문서로 간다).
+- 흉내 낸 알림: 보고서 제 script(API 주소·다른 origin의 같은 경로·data:)와 앱 창 자신(그 보고서 그림 주소)이 보낸 넷을 iframe 표지 `data-messages`로 본 뒤 `data-opened`·크게 보기가 그대로인지 단언한다. 진짜 누름 뒤에 보면 React가 한 번에 그려 흉내가 연 상태를 덮어 결함을 놓친다(처음 쓴 판이 출처 검사 결함에도 통과했다). 흉내 주소는 iframe의 실제 주소로 만든다(publish가 준 공유 링크 cap은 앱이 연 cap과 다르다).
+- 휴대폰(WebKit iPhone): `tap()`으로 열고, 손짓은 touch PointerEvent를 무대·그림에 직접 보낸다(옆으로 쓸어 넘김, 짧은 끌기는 그대로, 두 손가락 90→190px = 2.11배, 남은 손가락 끌기는 옮기기이고 넘기지 않음, 두 번 누름 맞춤). 뒤로(popstate)는 크게 보기만 닫고 주소·보고서 그대로, 아래로 쓸기는 닫고 기록 칸(`aaa:sheet`)을 거둔다. headless WebKit은 이 iframe 안 그림을 그리지 않아(plan §8.353 「남은 것」) iframe 그림 읽힘은 데스크톱에서만 기다린다.
+- 결함 심기(되돌렸다): iframe 출처 검사·origin 검사·`/v/<cap>/` 경로 검사를 빼면 데스크톱 흉내 단언, host가 fetch에도 붙이면 host 단계, 그림마다 빈 click listener를 빼면 휴대폰 첫 누름에서 실패한다.

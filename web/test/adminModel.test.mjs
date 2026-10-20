@@ -1,4 +1,4 @@
-// 머신 등록·기기·웹 공개·보고서 올리기·키 교체 규칙(src/adminModel.ts, 관리 GUI W5b, plan §8.352). 권한·폐기 거부·올리기 상한의
+// 머신 등록·기기·웹 공개·보고서 올리기·키 교체 규칙(src/adminModel.ts, 관리 GUI W5b, plan §8.355). 권한·폐기 거부·올리기 상한의
 // 정본은 host다(lib.rs `the_web_keeps_its_last_controller_and_the_host_machine`, library_upload/tests.rs).
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";

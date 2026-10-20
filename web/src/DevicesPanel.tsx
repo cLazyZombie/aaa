@@ -5,7 +5,7 @@
 // - 보기 권한 기기는 목록만 본다: 코드·이름 바꾸기·폐기 단추를 끄고 까닭을 적는다(host도 막는다).
 // - 참고의 「아무도 페어링하지 않아 열려 있음」(via open·pairSelf)은 aaa에 없다: 웹은 처음부터 pairing이 있어야 들어온다.
 // - 마지막 조작 기기는 웹에서 폐기하지 않는다(host 터미널의 `aaa web revoke`, host도 거부한다). 이 기기 자신을 폐기하면 이 화면이
-//   끊기므로 확인 창을 받는다(관리 GUI W5b, plan §8.352).
+//   끊기므로 확인 창을 받는다(관리 GUI W5b, plan §8.355).
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Check, Pencil, RefreshCw, Trash2, X } from "lucide-react";
 import "./herdr/DevicesPanel.css";

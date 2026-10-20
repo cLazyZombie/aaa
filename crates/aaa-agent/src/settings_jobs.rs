@@ -1,4 +1,4 @@
-//! host가 부르는 이 머신 설정 고정 작업(관리 GUI W5c, plan §8.353): 작업 root 보기·점검·전환(work_root.manage.v1)과 Codex
+//! host가 부르는 이 머신 설정 고정 작업(관리 GUI W5c, plan §8.356): 작업 root 보기·점검·전환(work_root.manage.v1)과 Codex
 //! 전역 hook 상태·설치·제거(hook.manage.v1). `aaa work-root`·`aaa integration install|uninstall codex`와 같은 코드다.
 //! 이 머신의 설정 폴더(`AAA_CONFIG_DIR`)와 agent 상태 폴더를 쓴다. hook 명령은 이 agent 실행 파일이다(요청이 경로를 주지 않는다).
 use std::path::Path;
