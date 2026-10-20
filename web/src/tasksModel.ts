@@ -411,3 +411,120 @@ export function newAutoCleans(log: readonly TaskLogEntry[], seen: number): TaskL
 export function lastLogId(log: readonly TaskLogEntry[]): number {
   return log.reduce((n, e) => Math.max(n, e.id), 0);
 }
+
+// task 첨부(plan §8.319): 메모의 한 줄이 첨부 하나다. 그림 `![그림](uploads/<16 hex>.<ext>)`, 올린 문서 `[제목](uploads/<16 hex>.md|html)`,
+// 보고서 안 문서 `[제목](library/<보고서>/<경로>.md|html)`, 바깥 주소 `[제목](https://…)`. 올린 파일은 프로젝트 uploads/에 있고(host가
+// 내용 hash로 이름을 정한다) 메모 줄을 고쳐 붙이고 뗀다. 줄 가운데 섞인 참조는 메모 글로 둔다(Markdown이 그린다).
+const IMAGE_LINE = /^\s*!\[([^\]\n]*)\]\((uploads\/[0-9a-f]{16}\.(?:png|jpg|gif|webp))\)\s*$/;
+const LINK_LINE = /^\s*\[([^\]\n]+)\]\(([^()\s]+)\)\s*$/;
+const UPLOAD_DOC = /^uploads\/[0-9a-f]{16}\.(?:md|html)$/;
+const REPORT_DOC = /^library\/([a-z0-9_-][a-z0-9_.-]*)\/((?:[^/.][^/]*\/)*[^/.][^/]*\.(?:md|html|htm))$/i;
+const URL_TARGET = /^https?:\/\/[^\s<>]+$/i;
+/** image: 올린 그림, upload: 올린 문서, report: 보고서(library) 안 문서, url: 바깥 주소 */
+export type TaskAttachmentKind = "image" | "upload" | "report" | "url";
+export type TaskAttachment = { kind: TaskAttachmentKind; target: string; label: string };
+/** 받는 그림 형식과 한 개 상한(host와 같다) */
+export const ATTACH_TYPES = ["image/png", "image/jpeg", "image/gif", "image/webp"] as const;
+export const DOC_ACCEPT = ".md,.markdown,.html,.htm,text/markdown,text/html";
+export const ATTACH_MAX_BYTES = 16 * 1024 * 1024;
+
+/** 줄 하나가 첨부면 그 첨부 */
+export function attachmentOfLine(line: string): TaskAttachment | null {
+  const img = IMAGE_LINE.exec(line);
+  if (img) return { kind: "image", target: img[2] ?? "", label: img[1] ?? "" };
+  const link = LINK_LINE.exec(line);
+  if (!link) return null;
+  const [, label = "", target = ""] = link;
+  const kind: TaskAttachmentKind | null = UPLOAD_DOC.test(target) ? "upload" : REPORT_DOC.test(target) ? "report" : URL_TARGET.test(target) ? "url" : null;
+  return kind ? { kind, target, label } : null;
+}
+
+/** 메모의 첨부들(줄 차례, 같은 대상은 한 번) */
+export function attachmentsOf(notes: string): TaskAttachment[] {
+  const out: TaskAttachment[] = [];
+  for (const line of notes.split("\n")) {
+    const a = attachmentOfLine(line);
+    if (a && !out.some((x) => x.target === a.target)) out.push(a);
+  }
+  return out;
+}
+
+/** 첨부 줄을 뺀 메모(그린 메모는 첨부를 따로 보인다) */
+export function withoutAttachments(notes: string): string {
+  return noteLines(notes.split("\n").filter((l) => attachmentOfLine(l) === null).join("\n")).join("\n");
+}
+
+/** 메모에 적을 첨부 줄. 제목의 `[`·`]`·줄바꿈은 줄 꼴을 깨므로 바꾼다 */
+export function attachmentLine(a: TaskAttachment): string {
+  if (a.kind === "image") return `![그림](${a.target})`;
+  const label = a.label.replace(/[[\]\n\r]+/g, " ").trim() || a.target;
+  return `[${label}](${a.target})`;
+}
+
+/** 첨부 줄 하나를 메모 끝에 더한다. 이미 있으면 그대로 */
+export function addAttachment(notes: string, a: TaskAttachment): string {
+  if (attachmentsOf(notes).some((x) => x.target === a.target)) return notes;
+  return notes === "" ? attachmentLine(a) : `${notes}\n${attachmentLine(a)}`;
+}
+
+/** 메모 입력칸이 보이는 글: 첨부 줄을 뺀 나머지(첨부는 첨부 칸이 보인다). 다듬지 않는다(치는 중인 빈 줄을 지키려고) */
+export function memoText(notes: string): string {
+  return notes.split("\n").filter((l) => attachmentOfLine(l) === null).join("\n");
+}
+
+/** 입력칸 글을 고친 메모: 글 뒤에 첨부 줄을 차례대로 둔다(첨부 줄이 메모 가운데 있었으면 끝으로 옮겨진다) */
+export function withMemoText(notes: string, text: string): string {
+  const lines = notes.split("\n").filter((l) => attachmentOfLine(l) !== null);
+  if (lines.length === 0) return text;
+  return text === "" ? lines.join("\n") : `${text}\n${lines.join("\n")}`;
+}
+
+/** 그 대상의 첨부 줄을 뗀다(파일은 uploads/에 남는다: 기록의 되살리기가 줄을 돌려놓으면 다시 보인다) */
+export function removeAttachment(notes: string, target: string): string {
+  return noteLines(notes.split("\n").filter((l) => attachmentOfLine(l)?.target !== target).join("\n")).join("\n");
+}
+
+/** 올린 파일의 주소 바탕(host `GET /api/v1/projects/<p>/uploads/<이름>`, 보기 권한도) */
+export function uploadsBase(project: string): string {
+  return `/api/v1/projects/${encodeURIComponent(project)}/uploads/`;
+}
+export function taskImageUrl(project: string, path: string): string {
+  return uploadsBase(project) + encodeURIComponent(path.replace(/^uploads\//, ""));
+}
+
+/** 보고서 안 문서 대상의 (보고서 이름, 보고서 안 경로) */
+export function reportDoc(target: string): { name: string; path: string } | null {
+  const m = REPORT_DOC.exec(target);
+  return m ? { name: m[1] ?? "", path: m[2] ?? "" } : null;
+}
+
+/** 붙인 글(주소·`library/…` 경로)을 링크 첨부로. 첨부 꼴이 아니면 null */
+export function linkFromText(text: string, label?: string): TaskAttachment | null {
+  const target = text.trim();
+  if (/\s/.test(target)) return null;
+  const kind: TaskAttachmentKind | null = REPORT_DOC.test(target) ? "report" : URL_TARGET.test(target) ? "url" : null;
+  if (!kind) return null;
+  const tail = target.replace(/[?#].*$/, "").replace(/\/+$/, "").split("/").pop() ?? target;
+  return { kind, target, label: label?.trim() || (kind === "url" ? target.replace(/^https?:\/\//i, "") : tail) };
+}
+
+/** 파일 종류: 그림·md·html, 받지 않는 것은 null(브라우저가 md 형식을 비워 보내는 일이 흔해 이름도 본다) */
+export function fileKind(f: { name: string; type: string }): "image" | "md" | "html" | null {
+  if ((ATTACH_TYPES as readonly string[]).includes(f.type)) return "image";
+  const ext = /\.([a-z0-9]+)$/i.exec(f.name)?.[1]?.toLowerCase() ?? "";
+  if (f.type === "text/markdown" || ext === "md" || ext === "markdown") return "md";
+  if (f.type === "text/html" || ext === "html" || ext === "htm") return "html";
+  return null;
+}
+
+/** 클립보드·끌어 놓기·고르기로 온 파일 중 첨부할 것과, 뺀 까닭 */
+export function pickAttachable(files: readonly { name: string; type: string; size: number }[]): { ok: number[]; skipped: string[] } {
+  const ok: number[] = [];
+  const skipped: string[] = [];
+  files.forEach((f, i) => {
+    if (fileKind(f) === null) skipped.push(`${f.name || "이름 없음"}: 그림(PNG·JPEG·GIF·WebP)·md·html만`);
+    else if (f.size === 0 || f.size > ATTACH_MAX_BYTES) skipped.push(`${f.name || "이름 없음"}: 1바이트부터 16MiB까지`);
+    else ok.push(i);
+  });
+  return { ok, skipped };
+}

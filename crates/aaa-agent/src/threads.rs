@@ -460,7 +460,7 @@ pub fn report_hash(work_dir: &Path) -> Option<String> {
 }
 
 /// work_dir가 thread 작업 폴더 형식인가(host가 준 경로를 그대로 믿지 않는다)
-fn check_work_dir(work_dir: &str) -> Result<PathBuf> {
+pub(crate) fn check_work_dir(work_dir: &str) -> Result<PathBuf> {
     let p = PathBuf::from(work_dir);
     let ok = p.is_absolute()
         && p.parent().and_then(|d| d.file_name()).is_some_and(|n| n == ".aaa")

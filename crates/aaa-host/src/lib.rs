@@ -67,6 +67,7 @@ mod routine_runs;
 mod seen;
 mod summary;
 pub mod tailscale;
+mod task_attach;
 mod task_clean;
 mod task_edit;
 mod tasks;
@@ -1366,6 +1367,7 @@ impl Host {
                     base,
                     task,
                     role: aaa_proto::Role::Worker,
+                    attachments: Vec::new(),
                 };
                 let (warning, picked) = match from_task {
                     Some(t) => {

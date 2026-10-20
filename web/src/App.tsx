@@ -19,7 +19,7 @@ import { ReportsView, type ReportRef } from "./ReportsView";
 import { TasksView, useSeenMine, useTaskBoard } from "./TasksView";
 import { composerDrafts } from "./herdr/composerDraft.ts";
 import { readTerminalDraft, writeTerminalDraft } from "./herdr/terminalDraft.ts";
-import { taskBadge } from "./tasksModel";
+import { reportDoc, taskBadge, uploadsBase } from "./tasksModel";
 import { UpdateNotice } from "./UpdateNotice";
 import { ApiError, call, me, onSignedOut, pushedSince, pushInfo, signOut, tellAlert, watchEvents } from "./api";
 import { removePushSubscription } from "./push";
@@ -1219,6 +1219,14 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
             }}
             onSeenMine={seenMine.see}
             onHandOff={canControl ? handOff : undefined}
+            onOpenAttachment={async (project, a) => {
+              // task 첨부 문서(plan §8.319): 올린 md·html은 uploads 주소, 보고서 문서는 그 보고서 보기 경로 안에서 파일 보기로 연다
+              if (a.kind === "upload") openFile({ path: a.target.replace(/^uploads\//, ""), pane: null, view: uploadsBase(project) });
+              const doc = a.kind === "report" ? reportDoc(a.target) : null;
+              if (!doc) return;
+              const r = await call({ op: "library_open", project, name: doc.name });
+              if (r.kind === "library") openFile({ path: doc.path, pane: null, view: r.base });
+            }}
           />
         )}
         {reportsShown || tasksShown ? null : currentThread ? (

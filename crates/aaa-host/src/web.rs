@@ -115,6 +115,8 @@ pub fn router(host: Arc<Host>) -> Router {
         .route("/api/v1/usage", get(usage_report))
         .route("/api/v1/panes/{id}/ws", get(pane_ws))
         .route("/api/v1/panes/{id}/image", post(chat_image))
+        .route("/api/v1/projects/{project}/uploads", post(task_file))
+        .route("/api/v1/projects/{project}/uploads/{name}", get(task_file_get))
         .route("/v/{cap}/{*path}", get(view_file))
         .route("/v/{cap}/", get(view_root))
         .route("/v", get(|| async { StatusCode::NOT_FOUND }))
@@ -435,6 +437,71 @@ fn unauthorized() -> Response {
         .into_response()
 }
 
+fn error_response(e: ErrorBody) -> Response {
+    let status = match e.code {
+        ErrorCode::Forbidden => StatusCode::FORBIDDEN,
+        ErrorCode::Unauthorized => StatusCode::UNAUTHORIZED,
+        ErrorCode::NotFound => StatusCode::NOT_FOUND,
+        ErrorCode::Internal => StatusCode::INTERNAL_SERVER_ERROR,
+        _ => StatusCode::BAD_REQUEST,
+    };
+    (status, Json(Outcome::<()>::Err(e))).into_response()
+}
+
+/// task 첨부(plan §8.319, 그림·md·html 문서): 프로젝트 uploads/에 쓰고 메모에 적을 `uploads/<이름>`을 돌려준다. 대화 첨부와 같이 인증·권한을
+/// 확인한 뒤 원본 bytes를 16MiB 한도로 읽는다. 메모 줄은 웹이 `task_edit`로 쓴다
+#[derive(serde::Deserialize)]
+struct TaskFileQuery {
+    /// 문서 종류(md·html). 없으면 그림이다
+    kind: Option<String>,
+}
+
+async fn task_file(
+    State(host): State<Arc<Host>>,
+    Path(project): Path<String>,
+    Query(q): Query<TaskFileQuery>,
+    req: Request,
+) -> Response {
+    let Some((id, role)) = device(&host, req.headers()) else { return unauthorized() };
+    if !role.can_control() {
+        return error_response(ErrorBody::new(ErrorCode::Forbidden, "보기 권한으로는 첨부할 수 없다"));
+    }
+    let Ok(bytes) = axum::body::to_bytes(req.into_body(), crate::task_attach::MAX_BYTES as usize).await else {
+        return (
+            StatusCode::PAYLOAD_TOO_LARGE,
+            Json(Outcome::<()>::Err(ErrorBody::new(ErrorCode::BadRequest, "파일은 16MiB까지 첨부한다"))),
+        )
+            .into_response();
+    };
+    match host.task_file_save(role, &format!("device:{id}"), &project, q.kind.as_deref(), &bytes) {
+        Ok(path) => Json(Outcome::Ok(serde_json::json!({ "path": path }))).into_response(),
+        Err(e) => error_response(e),
+    }
+}
+
+/// task 첨부 파일(보기 권한도). 이름이 내용 hash라 바뀌지 않아 오래 둔다. 올린 HTML은 결과물처럼 sandbox(opaque origin)로 보내
+/// 앱 cookie·API에 닿지 못하게 한다
+async fn task_file_get(
+    State(host): State<Arc<Host>>,
+    Path((project, name)): Path<(String, String)>,
+    headers: HeaderMap,
+) -> Response {
+    if device(&host, &headers).is_none() {
+        return unauthorized();
+    }
+    match host.task_file_read(&project, &name) {
+        Ok(bytes) => Response::builder()
+            .header(header::CONTENT_TYPE, crate::task_attach::mime(&name))
+            .header(header::CACHE_CONTROL, "private, max-age=31536000, immutable")
+            .header("x-content-type-options", "nosniff")
+            .header(header::CONTENT_SECURITY_POLICY, VIEW_CSP)
+            .header(header::X_FRAME_OPTIONS, "SAMEORIGIN")
+            .body(Body::from(bytes))
+            .unwrap(),
+        Err(e) => error_response(e),
+    }
+}
+
 /// 참고 `/api/pane/image`: 저장만 하고 경로를 돌려준다. Origin·cookie는 기존 웹 guard와 같다.
 /// 인증·권한을 확인한 뒤 본문을 읽으며, base64 대신 원본 bytes를 16MiB 한도로 받는다.
 async fn chat_image(State(host): State<Arc<Host>>, Path(pane): Path<String>, req: Request) -> Response {
@@ -455,16 +522,7 @@ async fn chat_image(State(host): State<Arc<Host>>, Path(pane): Path<String>, req
     };
     match host.chat_image(role, &format!("device:{id}"), &pane, &bytes).await {
         Ok(path) => Json(Outcome::Ok(serde_json::json!({ "path": path }))).into_response(),
-        Err(e) => {
-            let status = match e.code {
-                ErrorCode::Forbidden => StatusCode::FORBIDDEN,
-                ErrorCode::Unauthorized => StatusCode::UNAUTHORIZED,
-                ErrorCode::NotFound => StatusCode::NOT_FOUND,
-                ErrorCode::Internal => StatusCode::INTERNAL_SERVER_ERROR,
-                _ => StatusCode::BAD_REQUEST,
-            };
-            (status, Json(Outcome::<()>::Err(e))).into_response()
-        }
+        Err(e) => error_response(e),
     }
 }
 

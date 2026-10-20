@@ -60,7 +60,7 @@ pub(crate) fn safe_rel(p: &str) -> bool {
 }
 
 /// 최종 파일뿐 아니라 library 아래의 모든 폴더도 symlink를 거부한다.
-fn local_file(dir: &Path, id: &str, path: &str) -> Result<(PathBuf, u64), ErrorBody> {
+pub(crate) fn local_file(dir: &Path, id: &str, path: &str) -> Result<(PathBuf, u64), ErrorBody> {
     let mut local = dir.to_path_buf();
     for part in std::iter::once("library").chain(std::iter::once(id)).chain(path.split('/')) {
         local.push(part);

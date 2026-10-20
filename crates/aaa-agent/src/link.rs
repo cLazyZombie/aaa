@@ -124,6 +124,8 @@ pub fn hello(agent: &Agent) -> AgentHello {
             "chat_watch.v1".into(),
             "chat_pages.v1".into(),
             "diff.v1".into(),
+            // task 첨부를 thread 작업 폴더로 받는다(WorkAttachWrite, plan §8.319)
+            "work_attach.v1".into(),
         ],
         dev_mode: agent.dev_mode,
         selfcheck: agent.selfcheck.lock().unwrap().clone(),

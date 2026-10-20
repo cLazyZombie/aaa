@@ -119,6 +119,9 @@ pub(crate) struct ThreadRec {
     /// 끝난 thread의 이어진 task 판정(할 일 T3, task_clean.rs). 이 칸 전에 끝난 thread는 `why`가 없어 판정하지 않는다
     #[serde(default)]
     pub task_clean: TaskClean,
+    /// `--from-task`로 넘길 task 첨부(plan §8.319): 작업 폴더 `attachments/`에 쓸 이름과 host 원본. 세션을 띄울 때마다 쓴다
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub attachments: Vec<crate::task_attach::TaskFile>,
     #[serde(default)]
     pub prepare_started_ms: Option<u64>,
     pub created_at_ms: u64,
@@ -187,6 +190,7 @@ impl ThreadRec {
             leftover: None,
             resolve_pending: None,
             task_clean: TaskClean::default(),
+            attachments: Vec::new(),
             prepare_started_ms: Some(now),
             created_at_ms: now,
             updated_at_ms: now,
@@ -261,6 +265,8 @@ pub struct StartArgs {
     pub base: Option<String>,
     pub task: String,
     pub role: Role,
+    /// 할 일 글이 `attachments/<이름>`으로 가리키는 task 첨부(`--from-task`만 채운다, plan §8.319)
+    pub attachments: Vec<crate::task_attach::TaskFile>,
 }
 
 /// `project create`의 옵션(herdr-projects `new`)
@@ -1429,6 +1435,7 @@ impl Host {
             repos: &settings.repos,
             uploads_path: &dir.join("uploads").to_string_lossy(),
             remote: !self.machine_is_local(&r.machine_id),
+            attachments: r.attachments.len(),
             guide: &guide,
             instructions: &instructions,
             memory_index: &read("MEMORY.md"),
@@ -1524,6 +1531,17 @@ impl Host {
         let mid = self.resolve_machine(a.machine.as_deref())?;
         let conn = self.live_conn(&mid)?;
         self.check_health(&mid)?;
+        // task 첨부는 그 머신 작업 폴더로 넘긴다: 받지 못하는 agent면 thread를 만들기 전에 거부한다(plan §8.319)
+        if !a.attachments.is_empty() && !self.machine_feature(&mid, crate::task_attach::FEATURE) {
+            return Err(err(
+                ErrorCode::Unavailable,
+                format!(
+                    "{} agent가 task 첨부를 받지 못한다({} 없음). 그 머신 aaa를 갱신하거나 첨부를 다른 머신에서 맡긴다",
+                    self.machine_name(&mid),
+                    crate::task_attach::FEATURE
+                ),
+            ));
+        }
         let profile = if mission.is_some() {
             self.resolved_mission_profile(&a.project, &mid, &a.profile)?
         } else {
@@ -1543,6 +1561,7 @@ impl Host {
             automation: origin.map(|o| o.rule.clone()),
             repo: a.repo.clone(),
             base: a.base.clone(),
+            attachments: a.attachments.clone(),
             ..ThreadRec::starting(&a.project, a.title.trim(), &mid, &a.profile, a.role, a.kind, now)
         };
         let (id, created) = self
@@ -1675,6 +1694,7 @@ impl Host {
         actor: &str,
     ) -> Result<(), ErrorBody> {
         self.mission_transfer_state(rec).await?;
+        self.task_attach_transfer(rec).await?;
         let launch = rec.launch.clone().ok_or_else(|| internal("launch 기록이 없다"))?;
         let mut env = launch.env.clone();
         env.push(("AAA_PROJECT".into(), rec.project.clone()));
@@ -2581,6 +2601,7 @@ mod tests {
             eval_last_batch_ms: None,
             resolve_pending: None,
             task_clean: TaskClean::default(),
+            attachments: Vec::new(),
             prepare_started_ms: None,
             leftover: None,
             created_at_ms: NOW - 3_600_000,

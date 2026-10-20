@@ -799,6 +799,15 @@ pub enum AgentRequest {
         data: B64,
         eof: bool,
     },
+    /// task 첨부(plan §8.319): thread 작업 폴더 `attachments/`에 `AttachWrite`와 같은 꼴로 쓴다(같은 이름은 덮어쓴다). 답도 같다.
+    /// agent 기능 `work_attach.v1`이 있을 때만 보낸다(옛 agent는 모르는 요청에 연결을 끊는다)
+    WorkAttachWrite {
+        work_dir: String,
+        att: String,
+        offset: u64,
+        data: B64,
+        eof: bool,
+    },
     /// 화면의 터미널 기본 색이 바뀌었다(plan §8.187). agent는 모든 session host에 알리고 새 세션에 실은 뒤 답한다.
     /// agent 기능 `term_colors.v1`이 있을 때만 보낸다.
     TermColors(TermColors),

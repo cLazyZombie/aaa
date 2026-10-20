@@ -25,6 +25,7 @@ import {
   History,
   Link2,
   ListPlus,
+  Paperclip,
   Pencil,
   Plus,
   Search,
@@ -64,6 +65,10 @@ import {
   taskSections,
   taskState,
   toListOp,
+  attachmentsOf,
+  noteLines,
+  withoutAttachments,
+  type TaskAttachment,
   type TaskDraft,
   type TaskFilter,
   type TaskState,
@@ -77,6 +82,8 @@ type Tab = "tasks" | "later" | "log";
 const EDIT_API: readonly [number, number] = [1, 62];
 /** host가 thread 연결(`thread_start_preview`·`link_task`·`attention`)을 아는 FRONT_API */
 const LINK_API: readonly [number, number] = [1, 63];
+/** task 첨부 그림 올리기(plan §8.319) */
+const ATTACH_API: readonly [number, number] = [1, 65];
 
 /** 이 기기가 알린 마지막 자동 정리 기록 id(기기마다, 없으면 처음 읽은 기록까지를 본 것으로 둔다) */
 const AUTO_SEEN_KEY = "aaa:tasks:auto-clean-seen";
@@ -194,6 +201,7 @@ export function TasksView({
   onThread,
   onHandOff,
   onSeenMine,
+  onOpenAttachment,
 }: {
   shown: boolean;
   /** 마지막으로 읽은 TaskBoard(App이 링크가 오를 때와 `tasks` 사건마다 읽는다) */
@@ -212,6 +220,8 @@ export function TasksView({
   onHandOff?: (text: string) => Promise<void>;
   /** 할 일 화면에서 본 `me` task(활동 막대 배지의 「새 me task」를 걷는다) */
   onSeenMine?: (keys: string[]) => void;
+  /** 첨부 문서 열기(파일 보기, plan §8.319) */
+  onOpenAttachment?: (project: string, a: TaskAttachment) => Promise<void>;
 }) {
   const [tab, setTab] = useState<Tab>("tasks");
   const [filter, setFilter] = useState<TaskFilter>("all");
@@ -232,6 +242,7 @@ export function TasksView({
   const editApi = apiAtLeast(frontApi, EDIT_API);
   const canEdit = !reader && editApi;
   const linkApi = canEdit && apiAtLeast(frontApi, LINK_API);
+  const attachApi = canEdit && apiAtLeast(frontApi, ATTACH_API);
   // 「바로 시작」으로 시작한 thread(열기 단추와 host 경고)
   const [started, setStarted] = useState<{ id: string; warnings: string[] } | null>(null);
   // 자동 정리 알림 줄(t-0469 §4 「알림 한 줄(되살리기 단추)」): 이 기기가 아직 알리지 않은 자동 정리
@@ -334,6 +345,29 @@ export function TasksView({
   const act = (ops: TaskOp[]) => {
     setOpError(null);
     void edit(ops, null).catch((e: unknown) => setOpError(e instanceof Error ? e.message : String(e)));
+  };
+  // 첨부를 바로 저장하는 메모 고치기(plan §8.319): 차례로 줄 세워 그때의 최신 판에 쓴다. 저장 중에 또 붙여도(빠른 두 번 붙여넣기)
+  // 앞 저장이 끝난 판의 블록으로 이어 쓴다. 판은 편집 응답의 board로 바로 넘긴다(부모가 다시 그리기를 기다리지 않는다)
+  const boardRef = useRef(board);
+  const boardProp = useRef(board);
+  if (board !== boardProp.current) {
+    boardProp.current = board;
+    boardRef.current = board;
+  }
+  const notesChain = useRef<Promise<void>>(Promise.resolve());
+  const changeTaskNotes = (t: TaskView, change: (notes: string) => string): Promise<void> => {
+    const next = notesChain.current.then(async () => {
+      const cur = findTask(boardRef.current, { title: t.title, line: t.line });
+      if (!cur) throw new Error(`「${t.title}」 task가 파일에서 빠졌다`);
+      const before = noteLines(cur.notes.join("\n"));
+      const after = noteLines(change(cur.notes.join("\n")));
+      if (after.join("\n") === before.join("\n")) return;
+      const owner = cur.owner === "agent" ? null : cur.owner;
+      const r = await edit([{ op: "update", at: anchorOf(cur), title: null, owner: null, person: false, notes: after, thread: null, done: null }], { title: cur.title, owner, thread: cur.thread, notes: after });
+      if (r) boardRef.current = r.board;
+    });
+    notesChain.current = next.catch(() => undefined);
+    return next;
   };
   const onSave = async (ops: TaskOp[], mine: MyEdit | null): Promise<SaveResult> => {
     const r = await edit(ops, mine);
@@ -648,6 +682,16 @@ export function TasksView({
               onSave={onSave}
               onDelete={remove}
               linkApi={linkApi}
+              attachApi={attachApi}
+              onChangeNotes={changeTaskNotes}
+              onOpenAttachment={
+                onOpenAttachment
+                  ? (a) => {
+                      setOpError(null);
+                      onOpenAttachment(board.project, a).catch((e: unknown) => setOpError(`문서를 열지 못했다: ${e instanceof Error ? e.message : String(e)}`));
+                    }
+                  : undefined
+              }
               onHandOff={onHandOff ? (t, again) => onHandOff(handOffText(t, again)) : undefined}
               onStart={(t) => setDialog({ kind: "start", task: t })}
             />
@@ -845,6 +889,7 @@ function TaskRow({
   onDrop: (e: DragEvent<HTMLElement>) => void;
 }) {
   const owner = ownerLabel(t);
+  const attachments = attachmentsOf(t.notes.join("\n")).length;
   return (
     <li
       className={`task-row is-${state}${selected ? " is-selected" : ""}${t.done ? " is-done" : ""}${dragging ? " is-dragging" : ""}${drop ? ` is-drop-${drop}` : ""}`}
@@ -880,9 +925,15 @@ function TaskRow({
         {state === "problem" && <span className="task-chip task-problem">형식 어긋남</span>}
         {state === "check" && <span className="task-chip task-check">확인 필요</span>}
         {owner && <span className={`task-chip task-owner${owner === "미할당" ? " is-dim" : ""}`}>{owner}</span>}
-        {t.notes.length > 0 && (
+        {withoutAttachments(t.notes.join("\n")) !== "" && (
           <span className="task-notes-mark" role="img" aria-label="메모 있음" title="메모 있음">
             ≡
+          </span>
+        )}
+        {attachments > 0 && (
+          <span className="task-attach-mark" role="img" aria-label={`첨부 ${attachments}개`} title={`첨부 ${attachments}개`} data-testid="task-attach-mark">
+            <Paperclip aria-hidden="true" />
+            {attachments}
           </span>
         )}
       </button>

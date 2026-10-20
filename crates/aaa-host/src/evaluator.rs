@@ -703,6 +703,7 @@ impl Host {
             base: None,
             task,
             role: Role::Evaluator,
+            attachments: Vec::new(),
         };
         let v = self.thread_start(a, actor).await?;
         let rec = self.update_rec(project, &v.id, |r| r.eval_cursor = start_seq)?;

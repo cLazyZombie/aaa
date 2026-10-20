@@ -945,6 +945,7 @@ impl Host {
             base: None,
             task: m.body.clone(),
             role: Role::Evaluator,
+            attachments: Vec::new(),
         };
         let v = self.thread_start_with_mission(a, actor, Some(run)).await?;
         let r = self.load(p, &v.id)?;

@@ -18,6 +18,8 @@ pub(crate) struct BriefInput<'a> {
     pub uploads_path: &'a str,
     /// thread가 host 머신이 아닌 곳에서 돈다
     pub remote: bool,
+    /// 작업 폴더 `attachments/`로 넘긴 task 첨부(그림·문서) 수(plan §8.319)
+    pub attachments: usize,
     /// 사후 평가자면 thread 규칙 대신 평가자 규칙
     pub guide: &'a str,
     pub instructions: &'a str,
@@ -147,6 +149,13 @@ pub(crate) fn compose_brief(input: &BriefInput) -> String {
         "\n\n# 경로\n\n- 보고: `{work}/report.md`\n- 사용자에게 줄 파일을 두는 library 폴더: `{work}/library`\n- 사용자가 준 파일(uploads): `{}`\n",
         input.uploads_path
     ));
+    if input.attachments > 0 {
+        // 할 일 글의 `attachments/<이름>`은 이 폴더다. 다른 머신이어도 host가 이 머신으로 복사했다
+        brief.push_str(&format!(
+            "- task 첨부 {}개(할 일의 `attachments/…`): `{work}/attachments` (네 머신에 복사해 두었다)\n",
+            input.attachments
+        ));
+    }
     brief
 }
 
@@ -217,6 +226,7 @@ mod tests {
             repos: &repos,
             uploads_path: "/root/demo/uploads",
             remote: false,
+            attachments: 0,
             guide: THREAD_GUIDE,
             instructions: "# Demo\n\nAlways run the tests.",
             memory_index: "# Memory\n- a\n- b\n- c",
@@ -274,6 +284,12 @@ mod tests {
         assert!(!fresh.contains("# 지금 범위"));
         assert!(fresh.starts_with("# aaa\n\n- 이름: `demo`\n- 목표: (정하지 않음)\n- 저장소: (없음)\n"), "{fresh}");
         assert!(fresh.contains("`/root/demo/uploads` (host 머신에만 있다. 네 머신으로 복사되지 않는다)"));
+        assert!(!fresh.contains("task 첨부"));
+        // task 첨부가 있으면 경로 절 끝에 그 머신 작업 폴더를 적는다(host 경로가 아니다)
+        let with = compose_brief(&BriefInput { attachments: 2, ..input });
+        assert!(with.ends_with(&format!(
+            "- task 첨부 2개(할 일의 `attachments/…`): `{BRIEF_WORK_DIR}/attachments` (네 머신에 복사해 두었다)\n"
+        )));
     }
 
     #[test]
