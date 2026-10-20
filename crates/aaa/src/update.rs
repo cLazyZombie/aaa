@@ -235,7 +235,28 @@ impl Staged {
     }
 
     /// 지금 것을 보관하고 이것을 그 자리로 rename한다. 보관 이름을 돌려준다
-    fn install(mut self, place: &Place, current_version: &str) -> Result<PathBuf> {
+    fn install(mut self, place: &Place, current_version: &str, _checked_sha: &str) -> Result<PathBuf> {
+        #[cfg(target_os = "macos")]
+        {
+            // macOS는 inode에 실행·서명 판정 정보를 붙인다(Apple Updating Mac Software).
+            // self-check로 실행한 staging inode를 설치하면 다음 실행이 EXEC/SECURITY_POLICY로
+            // 죽는 경우가 있다. 검사한 바이트만 실행 이력 없는 새 inode에 옮기고 rename한다.
+            let path = place.dir.join(format!(".aaa-update-{}-install.tmp", std::process::id()));
+            let mut output = std::fs::OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .open(&path)
+                .context("설치할 새 실행 파일을 만들지 못했다(기존 파일은 덮지 않는다)")?;
+            let fresh = Staged(Some(path));
+            let mut input = std::fs::File::open(self.path())?;
+            std::io::copy(&mut input, &mut output)?;
+            drop(output);
+            if sha256(fresh.path())? != _checked_sha {
+                bail!("self-check한 실행 파일과 설치할 바이트가 다르다(바꾸지 않았다)");
+            }
+            fresh.make_executable()?;
+            self = fresh;
+        }
         let old = place.old();
         std::fs::create_dir_all(&old).with_context(|| format!("{}를 만들지 못했다", old.display()))?;
         let kept = place.backup_path(aaa_common::util::now_ms(), current_version);
@@ -340,7 +361,7 @@ fn finish(json: bool, place: &Place, swap: Swap, dry_run: bool, keep: u32, appro
     {
         bail!("그만뒀다(바꾸지 않았다)");
     }
-    let kept = staged.install(place, &current)?;
+    let kept = staged.install(place, &current, &new_sha)?;
     let pruned = prune(place, keep);
     if json {
         println!(
@@ -645,7 +666,7 @@ mod tests {
         let place = Place { exe: exe.clone(), dir: dir.clone() };
         let new = dir.join("new-build");
         std::fs::write(&new, b"new build").unwrap();
-        let kept = Staged::copy_from(&new, &place).unwrap().install(&place, "0.1.0").unwrap();
+        let kept = Staged::copy_from(&new, &place).unwrap().install(&place, "0.1.0", &sha256(&new).unwrap()).unwrap();
         assert_eq!(std::fs::read(&exe).unwrap(), b"new build");
         assert_eq!(std::fs::read(&kept).unwrap(), original, "보관한 것은 바꾸기 전(도는) 실행 파일");
         assert!(kept.starts_with(place.old()), "{}", kept.display());

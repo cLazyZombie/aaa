@@ -155,7 +155,8 @@ fn downloaded_build_keeps_previous_and_rolls_back() {
     for (version, body) in [("0.1.0", b"build one".as_slice()), ("0.2.0", b"build two".as_slice())] {
         let (url, server) = serve(body.to_vec(), None);
         let staged = download(&url, &digest(body), &lab.0).unwrap();
-        staged.install(&lab.0, version).unwrap();
+        let checked_sha = sha256(staged.path()).unwrap();
+        staged.install(&lab.0, version, &checked_sha).unwrap();
         server.join().unwrap();
         assert_eq!(std::fs::read(&lab.0.exe).unwrap(), body);
     }
@@ -163,7 +164,8 @@ fn downloaded_build_keeps_previous_and_rolls_back() {
     assert_eq!(std::fs::read(&chosen).unwrap(), b"build one", "가장 새 보관으로 돌아간다");
     let chosen_by_name = lab.0.rollback_source(chosen.file_name().unwrap().to_str()).unwrap();
     assert_eq!(chosen, chosen_by_name);
-    let saved = Staged::copy_from(&chosen, &lab.0).unwrap().install(&lab.0, "0.3.0").unwrap();
+    let saved =
+        Staged::copy_from(&chosen, &lab.0).unwrap().install(&lab.0, "0.3.0", &sha256(&chosen).unwrap()).unwrap();
     assert_eq!(std::fs::read(&lab.0.exe).unwrap(), b"build one");
     assert_eq!(std::fs::read(saved).unwrap(), b"build two", "되돌리기 전 것도 보관한다");
     assert_eq!(std::fs::read(lab.0.rollback_source(None).unwrap()).unwrap(), b"build two");
