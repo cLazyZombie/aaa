@@ -6464,11 +6464,44 @@ L4 후속(10-20 00시 사용자 관찰): 멈춤 상태의 후보 예약과 재�
 - **웹.** 설정 창 「계정」(구독 사용량 다음): harness마다 별칭·기본·상태 배지, 조작 기기에는 메일·plan, 최초 인증일·최근 인증된 날·만료(이 기기 시간대 날짜), 「다시 로그인」·「기본으로/기본 해제」, 「새 계정 로그인」(별칭·harness). 진행 카드는 「host Mac 브라우저에서 인증을 마치세요」·「이 메일로 로그인하세요」·취소, 다른 메일이면 「새 메일로 바꾸기」·「옛 인증 그대로 두기」. host `accounts` 사건으로 다시 읽는다(시간 polling 없음). CLI는 `aaa account list`에 메일·plan·날짜(UTC)·상태 칸과 `aaa account login-confirm <id> --switch|--keep`.
 - **검증.** host 유닛 `account_meta::tests`(메일·plan·만료 읽기, 상태 판정, 웹 조작 기기 허용·세션 안·보기 전용 거부와 메일 가림, 끊김·곧 만료 알림 한 번과 로그인으로 끝냄, 메일이 바뀌면 최초 시각 새로), m13 `host_relogin_checks_the_email_and_asks_before_switching`(가짜 공식 CLI로 메일·plan·날짜·곧 만료 알림, 같은 메일 다시 로그인, 다른 메일 → 그대로 두기·바꾸기, 감사·알림·로그·프로젝트 파일에 메일 없음)과 `account_credentials_parallel_refresh_and_all_records_are_redacted`의 거부된 갱신 → 끊김·알림 한 번, 웹 유닛 `accountsModel.test.mjs`, 웹 E2E `58-accounts`(데스크톱·휴대폰 390·Reader). 절차는 [시험](testing.md).
 
-### 8.352 웹 머신 등록·폐기, 웹 공개 켜기·끄기, 보고서 올리기·키 교체(10-21, t-0538 관리 GUI W5b)
+
+### 8.352 aaa install I5 Windows 종료 process fixture 인수 분리(10-21, t-0485)
+
+- **실제 실패.** Windows CI의 종료 process owner가 제품 관찰 전에 cmd 자식의 exit code 1로 실패했다.
+  CI와 같은 Rust std는 단일 `exit 0` 인수에 따옴표를 더한다. `/C` 이후는 cmd 명령문이므로
+  고정 `exit`·`0` 인수를 나눠 `/C exit 0`으로 전달한다. cmd의 원래 stderr는 null이어서
+  과거 오류 메시지는 미확인이며, 인용만으로 모든 code 1의 원인을 단정하지 않는다.
+- **보존.** 성공 종료, 유효한 열린 handle, 실제 종료 신호, `service_process_unverified` 거부를 모두 유지한다.
+  재시도·대기·기대값·stdio·production은 바꾸지 않는다. 한 handle의 신원/image 결속과 실제 현재
+  process·SCM 읽기·Unicode argv owner도 함께 점검하며 C argv와 cmd parser를 혼동하지 않는다.
+- **검증 경계.** macOS 전체 gate·Windows cross는 착지 전 판정이며 실제 Windows owner는 main push 뒤 CI다.
+  실제 SCM logon·Session 0·로그인 전 부팅·LSA·UAC는 Windows bootstrap 뒤 사용자 시험에 남는다.
+  I6 WIP는 별도 보존하며 이 후보에 포함하지 않는다.
+
+### 8.353 보고서 그림 눌러 크게 보기(10-21, t-0552)
+
+- **요청.** 사용자 10-20 20:3x: 시안·보고서 그림을 눌러도 커지지 않는다(Safari 탓 아님, 보고서 img에 링크·확대 없음). 웹 보고서 화면에서 모든 보고서 그림을 눌러 전체 화면·두 손가락 확대·닫기·넘기기. t-0540의 「답할 것」 크게 보기를 다시 쓴다.
+- **결정(10-21 1A, 사용자 위임 중 coordinator).** 보고서 index.html은 opaque origin sandbox iframe(§8.7·§8.197)이라 앱이 그 안의 누름을 볼 길이 없다(브라우저에 cross-origin iframe 안 사건을 부모가 듣는 기능이 없다). brief의 「script를 보고서에 주입하지 않고」는 coordinator가 붙인 조건이었고 사용자 요청이 우선이라, host가 보고서 HTML 끝에 그림 누름 알림 script를 붙인다. 조건:
+  - 같은 sandbox 권한 그대로다. `VIEW_CSP`·iframe `sandbox` 속성을 바꾸지 않고, script는 그 문서 안에서 보고서 제 script와 같은 권한으로 돈다.
+  - HTML 문서 탐색 응답에만 붙인다(`report_images_bridge`: `text/html`, `Sec-Fetch-Mode: navigate`·`Sec-Fetch-Dest: document|iframe|frame`, Range·`?download=1` 아님, GET). 원본 파일·내려받기·Range·fetch(파일 보기 소스)·HEAD·그림은 원본 바이트 그대로다. `Content-Length`는 붙인 만큼 늘린다.
+  - 앱은 그 iframe(`e.source === iframe.contentWindow`)에서 온, 그 보고서 보기 경로 `/v/<cap>/` 아래 같은 origin 주소만 받는다(`reportImages.ts`: `..`·`%2e%2e`는 URL이 풀어 둔 경로로 본다, data:·blob:·다른 보고서·API·다른 origin은 버림, 누른 그림이 걸러지면 열지 않음, 500장 넘으면 누른 그림 둘레만). 보고서 제 script가 같은 꼴을 흉내 내도 할 수 있는 일은 「제 그림을 앱 크게 보기로 연다」뿐이다.
+- **알림 script(`aaa-host/src/report_images.js`, inline).** 부모가 없으면(공유 링크 최상위 탭) 아무것도 하지 않는다. 링크·단추 안 그림, 보고서가 처리한 누름(`defaultPrevented`), 보조 키·가운데 단추는 건드리지 않는다. 누르면 `{type: "aaa:report-image", at, images: [{src, alt}]}`를 `location.origin`으로 부모에게 보낸다. 그림에 `cursor: zoom-in`. iOS(WebKit 터치)는 click을 듣는 요소에서만 누름을 click으로 만들어 window 위임만으로는 그림 누름이 오지 않는다: 그림마다(뒤에 생긴 그림도 MutationObserver로) 빈 click listener를 단다.
+- **공용 크게 보기(`web/src/Lightbox.tsx`·`lightboxGesture.ts`).** t-0540 `AsksView` Lightbox와 task 첨부 `Viewer`를 하나로 합쳤다(새 보기를 따로 만들지 않음). 문서 맨 위(portal), 머리 「n / N · 설명 · 원본 · 닫기」, 앞뒤 단추·←→, Esc·바깥 누름·닫기·아래로 쓸기·휴대폰 뒤로(`usePhoneSheetBack`, §8.301의 기록 칸 규칙 그대로)로 닫음, 옆으로 쓸어 넘김(너비 12%·48px 이상), 두 손가락 확대·끌기(1~6배, 무대 밖으로 빠지지 않음), 두 번 누름 2.5배·맞춤, 데스크톱 ctrl+바퀴(trackpad 벌리기)·키운 동안 바퀴 옮기기. 무대는 `touch-action: none`이라 페이지 확대·굴림이 아니고, 목록 drawer 가장자리 쓸기는 `aria-modal` 위에서 멈춘다(§8.301). 표지 `data-at`·`data-count`·`data-scale`.
+- **쓰는 곳.** 보고서 화면 index.html·보고 글(report.md), thread 화면 「보고」 글·결과물 index.html, 파일 보기의 결과물 HTML 페이지와 Markdown(t-0506 문서 열기), 「답할 것」 본문(같은 본문 그림으로 넘김)·선택지 「크게」, task 첨부 그림. 보고 글의 `library/…` 그림은 이제 그 보고서 보기 경로로 그린다(전에는 대체 글만 보였다, `reportMarkdownImage`는 질문 본문과 같은 거름). iframe 요소 표지 `data-messages`(본 메시지 수)·`data-opened`(연 수).
+- **남은 것.** headless WebKit(Playwright 1.58)은 iframe `sandbox` 속성과 CSP `sandbox` 머리가 겹친 문서에서 `img-src 'self'` 그림을 그리지 않는다(둘 중 하나만이면 그린다, Chromium은 늘 그린다. CSP를 `img-src <명시 origin>`으로 쓰면 그린다). main도 같다. 실제 iOS·macOS Safari에서 앱 안 보고서 그림·CSS가 보이는지 실기 확인이 필요하고, 같으면 `/v/` CSP의 `'self'`를 guard가 아는 origin으로 바꾸는 후속이 필요하다. 크게 보기는 앱 문서에서 그림을 읽어 영향이 없다. data: 그림(보고서에 박아 넣은 그림)은 보기 경로 밖이라 크게 보지 않는다. 실제 iOS 손가락이 어떤 pointer 사건으로 오는지는 headless가 보이지 않는다(실기 확인).
+- **검증.** host 유닛 `report_images_bridge_goes_only_on_html_navigation`, 웹 유닛 `reportImages.test.mjs`(뿌리·주소 거름·흉내·상한·보고 글 그림)·`lightboxGesture.test.mjs`(두 손가락·묶기·두 번 누름·바퀴·쓸기). 웹 E2E `59-report-images`와 52·53의 크게 보기 testid(`lightbox`·`lightbox-close`). 상세는 [시험](testing.md)의 t-0552 절.
+
+### 8.354 계정 pane 동시 재개 시험의 버전 확인 경쟁 제거(10-21, t-0553)
+
+- **문제.** 기존 m13은 두 실제 `pane resume` 호출을 경주시킨 뒤 첫 호출의 가짜 Codex `--version`을 socket에서 붙잡고 다른 호출의 거부를 기다렸다. 제품의 버전 확인 제한시간은 5초라 느린 시험 제어가 정상 호출도 기동 실패로 만들었다. CI의 results는 성공 0개·기동 실패/중복 거부이며, gate 해제를 정상 호출 종료 사건 뒤로 늦춘 진단으로 같은 실패를 재현했다.
+- **수리.** 전체 경로 시험은 버전 gate·accept 폴링을 없애고 Barrier 뒤 두 CLI의 성공이 정확히 하나인지 계속 확인한다. 인증 해시·같은 홈·재개 종료·인증 정리·비밀 비노출 단언은 유지한다. 준비 중 중복 거부는 host 시험 `account_policy::tests::preparing_account_resume_rejects_duplicates_before_agent_spawn`가 실제 `SpawnAccount` 전송을 받고 응답을 보류해 결정적으로 검사한다.
+- **검증.** 준비 중 claim 거부를 우회한 변형은 추가 기동 요청 수신에서 실패하고 원복 뒤 통과한다. 수리 뒤 동일 m13 20회 연속과 workspace 동시 실행에서도 통과했다. 제품 제한시간·재시도·성공 기준은 바꾸지 않는다. 새 번호의 웹 E2E는 추가하지 않으며 기존 58·59는 각각 계정 화면·보고서 그림 보기를 유지한다. 착지 후보는 최신 main 통합 뒤 새 실험 폴더에서 전체 ci-local·check-public으로 확인한다. 상세는 [시험](testing.md)의 host 로그인·기본 계정 절을 따른다.
+
+### 8.355 웹 머신 등록·폐기, 웹 공개 켜기·끄기, 보고서 올리기·키 교체(10-21, t-0538 관리 GUI W5b)
 
 - **요청.** 확정 계획 t-0456 plan-revised §5 W5의 둘째 묶음(§8.351의 1A로 나눔): 머신 등록 승인·폐기, 웹 공개, 보고서 올리기·가져오기·키 교체를 웹 조작 기기에서. 등록 승인은 M1(웹 머신 추가)이 다시 쓸 공용 요청으로 둔다. 시작 때 물은 다섯은 추천대로 정했다(10-21, 1A~5A): 웹 승인도 새 머신 화면의 6자리 코드와 이름 확인, 마지막 조작 기기는 웹에서 폐기하지 않고(host CLI만) 이 기기 자신의 폐기는 「이 화면이 끊깁니다」 확인, 공개 주소로 연 화면에서 끄면 「이 화면이 끊길 수 있음」과 다른 경로를 보이고 「다른 경로를 확인했다」를 켜야 끄기가 열림(켜기는 확인 창 하나), 올리기는 파일 여러 개나 폴더 하나(파일당 16MB·합계 64MB, 사용자 보고서는 맨 위 index.html), 가져오기(`library import`)는 웹에 넣지 않고 키 교체 확인 창에 살아 있는 공유 링크 수와 「모두 끊긴다」.
 - **proto(FRONT_API 1.80, 더하기만).** 웹 조작 기기에 `enroll_open`·`enroll_pending`·`enroll_approve`·`machine_revoke`·`web_publish`·`web_publish_off`·`library_rotate`를 연다(이전엔 host 세션 밖 CLI만). 새 `enroll_close`(CLI `aaa machine enroll --close`), `library_upload_publish{project?, upload, name, files, to_user, title?}`, `pending`에 `open_until_ms`(등록 창이 닫히는 시각), 웹 events 사건 `enroll`(창 열기·닫기, 요청 들어옴·취소, 승인·거부). 옛 host는 웹 요청을 거부하고 웹은 1.80 미만이면 이 단추들을 그리지 않는다.
 - **권한.** 사람 판정(§8.333의 `call_from`)은 그대로: pane 안 `local:…@…`·worker·evaluator·detached는 Local이어도 거부하고 `enroll_close`·`library_rotate`·`library_upload_publish`도 더했다. Reader는 모두 거부한다. 웹(`device:`)에서 host 머신을 폐기하거나, 남은 조작 기기가 하나일 때 그 기기를 폐기하면 host가 `forbidden`으로 거부한다(host 터미널의 `aaa web revoke`는 그대로). 세기와 폐기는 한 잠금 안이라 두 조작 기기가 서로를 함께 폐기해도 하나는 남는다. 등록 코드는 세 번 틀리면 그 요청을 버린다(기존).
 - **올리기.** `POST /api/v1/projects/<p>/library-uploads/<올리기>?path=<보고서 안 경로>`(조작 기기, 본문 16MiB)는 host 상태 폴더 `library-uploads/<올리기>/<경로>`에 임시 파일 뒤 rename으로 쓴다. 올리기 이름은 웹이 만든 소문자 hex 32자, 경로는 library 사본 규칙(`safe_rel`: 숨은 이름·`..`·절대·역슬래시 거부). 한 올리기에 합계 64MiB·1000개(같은 경로를 다시 올리면 그 파일을 빼고 센다). `library_upload_publish`는 그 폴더를 CLI와 같은 `library_publish`(사본, 이름 규칙·사용자 보고서 index.html·library 상한·사용자 알림)로 등록하고 성공하면 폴더를 지운다. 실패하면 두어 고쳐 다시 등록한다. 손대지 않은 지 하루 넘은 올리기는 다음 올리기 때 지운다(쓰는 중인 올리기는 두고, 쓸 때마다 그 폴더 시각을 새로 한다). 등록 요청의 `files`(웹이 올린 수)와 올린 자리의 파일 수가 다르면(통째로 치워져 0이어도) `conflict`로 거부하고 웹은 다음 「올리기」를 새 자리에 처음부터 한다: 치워진 뒤 나머지만 올라온 반쪽 보고서를 등록하지 않는다. 등록은 쓰기와 같은 잠금 안이라 읽는 동안 다른 쓰기의 치우기가 지우지 않는다. host(macOS 기본 볼륨)가 한 파일로 보는 대소문자·유니코드 정규화만 다른 이름은 웹이 고를 때 막는다. 원본이 host 상태 폴더라 경로 성분의 thread 번호를 근원 thread로 읽지 않는다(이름의 번호만). 감사 기록 `library_upload`.
 - **웹.** 설정 창 「머신」(폰 및 기기 다음): 등록 창 열기(5·10·30·60분)·남은 분·닫기, 승인을 기다리는 머신(이름·fingerprint 앞부분)과 「승인…」 창(6자리 코드, 공백·하이픈 무시), 등록된 머신(연결·끊김은 host `state` 사건, host 머신은 폐기 단추 없음)과 폐기 확인 창. 「폰 및 기기」: 마지막 조작 기기의 폐기 단추를 끄고 까닭을 적음, 이 기기 폐기 확인 창, 「tailnet에 공개」(확인 창)·「공개 끄기」(aaa가 만든 공개만; 끈 뒤 다른 경로는 host Mac의 loopback 주소와 그리로의 ssh 포트 전달 — host가 tailnet 이름의 http Host를 받지 않으므로 그것은 경로로 내지 않는다). 보고서 화면 「보고서 올리기」 창(파일·폴더 고르기, 올릴 목록과 뺀 숨은 파일 수, 이름·사용자 보고서·제목, 파일마다 올린 수). 「이 aaa」 → 「공유 링크」 → 「키 교체…」.
-- **검증.** host 유닛 `library_upload::tests`(권한·경로·이름·합계 상한·다시 올리기, 등록과 폴더 지움, 사용자 보고서 index.html, 세션 안·Reader 거부)·`pairing_tests::the_web_keeps_its_last_controller_and_the_host_machine`·`pairing_tests::trust_management_requires_a_person_outside_the_session`(조작 기기가 등록 창을 열고 Reader는 거부), 웹 유닛 `adminModel.test.mjs`, 웹 E2E `59-admin`(가짜 `tailscale`·같은 Mac의 둘째 agent, 데스크톱·Reader·휴대폰 390). 절차는 [시험](testing.md).
+- **검증.** host 유닛 `library_upload::tests`(권한·경로·이름·합계 상한·다시 올리기, 등록과 폴더 지움, 사용자 보고서 index.html, 세션 안·Reader 거부)·`pairing_tests::the_web_keeps_its_last_controller_and_the_host_machine`·`pairing_tests::trust_management_requires_a_person_outside_the_session`(조작 기기가 등록 창을 열고 Reader는 거부), 웹 유닛 `adminModel.test.mjs`, 웹 E2E `60-admin`(가짜 `tailscale`·같은 Mac의 둘째 agent, 데스크톱·Reader·휴대폰 390). 절차는 [시험](testing.md).

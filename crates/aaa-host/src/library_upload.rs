@@ -1,4 +1,4 @@
-//! 웹 「보고서 올리기」(관리 GUI W5b, plan §8.352). 브라우저가 파일을 하나씩 host 상태 폴더 `library-uploads/<올리기>/<경로>`에
+//! 웹 「보고서 올리기」(관리 GUI W5b, plan §8.355). 브라우저가 파일을 하나씩 host 상태 폴더 `library-uploads/<올리기>/<경로>`에
 //! 올리고(`POST /api/v1/projects/<p>/library-uploads/<올리기>?path=…`), `library_upload_publish`가 그 폴더를 보고서 하나로 등록한 뒤
 //! 지운다. 등록은 CLI `aaa library publish`와 같은 `library_publish`다(이름 규칙·사용자 보고서의 index.html·library 상한·사용자 알림).
 //! 파일당 16MiB(할 일 첨부와 같다), 한 올리기에 합계 64MiB·1000개까지. 끝내지 않은 올리기는 하루 뒤 다음 올리기 때 지운다.

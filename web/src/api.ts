@@ -132,7 +132,7 @@ export async function uploadTaskFile(project: string, file: File, kind?: "md" | 
   return (await unwrap<{ path: string }>(response)).path;
 }
 
-/** 웹 「보고서 올리기」(FRONT_API 1.80, plan §8.352): 파일 하나를 올리기 폴더의 `path`에 쓴다. 다 올리면 `library_upload_publish`로 등록한다 */
+/** 웹 「보고서 올리기」(FRONT_API 1.80, plan §8.355): 파일 하나를 올리기 폴더의 `path`에 쓴다. 다 올리면 `library_upload_publish`로 등록한다 */
 export async function uploadReportFile(project: string, upload: string, path: string, file: Blob): Promise<{ files: number; total: number }> {
   const response = await fetch(`/api/v1/projects/${encodeURIComponent(project)}/library-uploads/${upload}?path=${encodeURIComponent(path)}`, {
     method: "POST", body: file, credentials: "same-origin",
