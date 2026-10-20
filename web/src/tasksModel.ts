@@ -1,5 +1,5 @@
 // 할 일 화면의 순수 규칙(할 일 보기 T1, plan §8.306): 행 상태, 거르기·검색, 활동 막대 배지, 하위 task 깊이. 편집(T2, §8.311)은
-// 화면 동작 → host 동작(TaskOp), 「나중」 항목 나누기, 기록 차이. thread 연결(T3, §8.315)은 확인 필요 상태, coordinator에게 맡기는
+// 화면 동작 → host 동작(TaskOp), 「나중」 항목 나누기, 기록 차이. thread 연결(T3, §8.316)은 확인 필요 상태, coordinator에게 맡기는
 // 글, 맡길 수 있는 task, 잇기·풀기 동작, 자동 정리 알림.
 // host `tasks`(TaskBoard)는 TASKS.md를 그대로 읽은 것이고, 여기서는 판단하지 않고 보이는 차례와 표지만 정한다.
 import type { TaskAction, TaskAnchor, TaskBoard, TaskLogEntry, TaskOp, TaskView, ThreadGroup } from "./gen/proto";
@@ -365,7 +365,7 @@ export function ago(atMs: number, now: number): string {
   return `${Math.floor(s / 86_400)}일 전`;
 }
 
-// ───────────── thread 연결(할 일 T3, plan §8.315) ─────────────
+// ───────────── thread 연결(할 일 T3, plan §8.316) ─────────────
 
 /** 「coordinator에게 맡기기」가 coordinator 입력칸에 채우는 글(t-0469 §3.4, 사람이 보내기를 누른다). 「다시 맡기기」는 앞 thread와 까닭을 붙인다 */
 export function handOffText(t: TaskView, again = false): string {

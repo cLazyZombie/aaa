@@ -136,7 +136,7 @@ pub const AGENT_LINK: Version = Version { major: 1, minor: 8 };
 // 모르는 요청으로 거절해 웹이 편집 단추를 그리지 않고, 새 칸은 생략한다.
 // 같은 버전에 MachineView.pr_tracking(선택)을 더한다(t-0492). 옛 host는 생략하고 옛 front는 버린다.
 // 1.63: 할 일 thread 연결(`ThreadStart.link_task`·`task_block`, `ThreadStartPreview`, TaskOp `add.thread`, TaskView `attention`,
-// plan §8.315). 옛 host는 새 칸을 버려 연결하지 않고 새 요청을 모르는 요청으로 거절해 웹이 맡기기 단추를 그리지 않는다.
+// plan §8.316). 옛 host는 새 칸을 버려 연결하지 않고 새 요청을 모르는 요청으로 거절해 웹이 맡기기 단추를 그리지 않는다.
 pub const FRONT_API: Version = Version { major: 1, minor: 63 };
 /// agent ↔ session host(내부). 세션이 몇 주 이어질 수 있으므로 이전 session host와 호환해야 한다.
 /// 1.1: `SessionRequest::Detect`(harness 상태 감지 입력). agent는 1.0 session host에 보내지 않고 `Screen`을 쓴다.

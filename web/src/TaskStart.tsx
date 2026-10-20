@@ -1,4 +1,4 @@
-// 할 일 thread 연결의 창(할 일 T3, plan §8.315, t-0469 §3.4): 「바로 시작」 확인창과 「task에 잇기」 고르기. 창 틀은 TaskDialogs의
+// 할 일 thread 연결의 창(할 일 T3, plan §8.316, t-0469 §3.4): 「바로 시작」 확인창과 「task에 잇기」 고르기. 창 틀은 TaskDialogs의
 // TaskModal(herdr-web-ui PaneRename)이다. 「바로 시작」은 host `thread_start_preview`가 `thread start --from-task`와 같은 규칙으로 채운
 // 값(owner → profile·머신, 메모를 붙인 할 일 글)을 보이고, profile 고르기는 herdr-projects popup `profile_picker`(owner의 profile을 맨
 // 위에)와 같다. 열린 thread가 `max_parallel_threads` 이상이면 한 번 더 확인받는다(host는 경고만 한다). 시작하면 host가 같은 요청 안에서

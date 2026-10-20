@@ -4399,7 +4399,7 @@ fn task_edit_keeps_bytes_conflicts_and_logs() {
     );
 }
 
-/// 할 일 thread 연결과 자동 정리(T3, plan §8.315, t-0469 §4 P2): `thread start --from-task --link-task`는 그 task 줄 끝에
+/// 할 일 thread 연결과 자동 정리(T3, plan §8.316, t-0469 §4 P2): `thread start --from-task --link-task`는 그 task 줄 끝에
 /// thread 번호를 붙인다. 이어진 thread가 끝나면 다음 tick이 한 번 판정한다: 보고 `[완료]`면 줄을 지우고(기록 「host 자동
 /// 정리」·inbox `task auto-cleaned`), 보고가 없으면 줄을 남겨 확인 필요로 보인다(`task list`·`context`·inbox `task needs
 /// check`). 하위가 모두 끝난 상위는 지우지 않고 그 thread를 이어 확인 필요로 올린다. 판정은 한 번이다: 되살린 task를 다음
@@ -5191,7 +5191,7 @@ fn merged_pr_resolves_the_thread() {
     assert_eq!(git(&w.repo, &["branch", "--list", &b_branch, "--format=%(refname:short)"]), b_branch);
 }
 
-/// 병합으로 끝난 thread의 task(T3, plan §8.315): PR이 병합돼 저절로 끝난 thread는 마지막 보고 표지가 `[완료]`가 아니어도(`[착지]`)
+/// 병합으로 끝난 thread의 task(T3, plan §8.316): PR이 병합돼 저절로 끝난 thread는 마지막 보고 표지가 `[완료]`가 아니어도(`[착지]`)
 /// 그 task 줄을 지운다(병합이 표지보다 앞선다, t-0469 §4 P2). 병합 끝내기와 판정은 같은 tick에서 돈다.
 #[test]
 fn merged_thread_cleans_its_task() {

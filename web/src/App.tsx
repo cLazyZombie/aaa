@@ -788,7 +788,7 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
     goHash(openedHash.current.slice(1), replace);
     setSel(`thread:${threadKey(t)}`);
   };
-  // 할 일 「coordinator에게 맡기기」(t-0469 §3.4, plan §8.315): 도는 coordinator(없으면 기본 profile로 띄운 것, `project open`)의
+  // 할 일 「coordinator에게 맡기기」(t-0469 §3.4, plan §8.316): 도는 coordinator(없으면 기본 profile로 띄운 것, `project open`)의
   // 입력칸에 글을 채우고 그 pane을 연다. 보내기는 사람이 누른다. 대화 보기 입력창과 터미널 입력줄 초안을 함께 채운다(그 pane을 어느
   // 보기로 열든 보인다). 이미 쓴 초안은 덮지 않고 뒤에 붙인다
   const handOff = async (text: string) => {

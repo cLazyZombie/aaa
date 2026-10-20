@@ -213,7 +213,7 @@ impl ResolveWhy {
     }
 }
 
-/// 끝난 thread가 이어진 task를 어떻게 정리하나(할 일 T3, plan §8.315, t-0469 §4 P2). resolve를 시작할 때 `why`·`discard`를 적고,
+/// 끝난 thread가 이어진 task를 어떻게 정리하나(할 일 T3, plan §8.316, t-0469 §4 P2). resolve를 시작할 때 `why`·`discard`를 적고,
 /// ticker가 한 번 판정한 뒤 `judged_ms`를 찍는다. 다시 열면 지운다(다음 끝남을 다시 판정한다)
 #[derive(Debug, Clone, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub(crate) struct TaskClean {

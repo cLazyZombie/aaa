@@ -5965,7 +5965,16 @@ L4 후속(10-20 00시 사용자 관찰): 멈춤 상태의 후보 예약과 재�
 - **시험.** host `hello_replay_does_not_publish_idle_between_panes`는 첫 pane 상태 사건 콜백에서 ticker를 돌려 뒤 pane의 거짓 쉼 inbox·조회 묶음을 검사한다. 수정 전 실패·수정 후 로컬/원격 통과·원래 울타리 조건을 되살린 변형 실패를 확인한다. 복원 뒤 실제 Idle은 한 번 알린다. e2e `restart::restart_preserves_working_pty_without_input_signal_or_resize`는 같은 시험 머신의 로컬 UDS·원격 TLS agent에서 host→로컬→원격 SIGTERM 재시작 중 FIFO 진행, 자식·session host PID, 전체 입력·신호·PTY 크기와 Working을 비교한다. 실제 PTY probe 수신이 울타리이며 마지막 실제 Esc는 Idle이 되어야 한다. session 재연결에 Esc를 넣은 변형은 입력 바이트 단언에서 실패했다. 실제 Codex 모델 요청·TUI·launchd 전체 생명주기는 이 harness가 대신 증명하지 않는다.
 - **운영 도구.** 화면 끝의 `esc to interrupt` 부재·짧은 화면 무변화는 중단의 독립된 증거가 아니다. 상태 복원 완료, 구조화된 harness 상태, 턴 경계와 후속 실행을 함께 대조한다. 저장소 밖 coordinator 도구와 운영 서비스·설정은 이 변경에서 수정하지 않는다.
 
-### 8.315 웹 할 일 thread 연결과 자동 정리(10-20, t-0493 할 일 관리 T3)
+### 8.315 thread의 branch 변경 뒤 agent 재시작(10-20, t-0495)
+
+- **문제.** 단계 착지 뒤 같은 worktree에서 branch를 바꾸면 시작 시 준비 journal의 branch 대조가 실패해 agent 전체가 종료됐다. 한 thread의 기록이 다른 세션과 host 재연결까지 막았다.
+- **경계.** 시작의 Git 잠금은 등록된 worktree 경로의 자동 prune을 막는 장치다. 등록 root·실제 worktree 최상위 경로·Git common dir·기록 repo의 Git 등록이 일치하면 branch·HEAD·dirty 변경을 허용한다. 다른 repo로 바뀐 경로는 잠그지 않는다.
+- **실패 격리.** journal 읽기·root·Git 검사·잠금 오류는 기록 경로와 원인 체인을 경고하고 해당 기록의 잠금 점검만 보류한다. 다른 기록과 agent 연결은 계속한다. journal 목록 자체를 열 수 없는 상태와 agent 상태/작업 root의 전역 오류는 그대로 실패한다.
+- **journal 보존.** 현재 branch로 기록을 덮어쓰지 않는다. 준비 재진입의 branch·HEAD·clean 검사와 정리 소유권 계약은 유지한다. 작업 단계 변경은 새로운 준비 요청을 옛 요청으로 위장하는 근거가 아니다.
+- **시험.** macOS m13 `agent_restart_preserves_threads_after_branch_changes_and_isolates_invalid_preparations`: 실제 준비 → branch 변경·dirty → agent 재시작 → host 연결·기존 session host PID·pane 읽기·정상 worktree 잠금 복구. 옛 Git 등록이 남은 자리를 다른 repo로 바꾸거나 JSON을 깨뜨려도 전체 시작을 막지 않고, 다른 repo를 잠그거나 journal을 덮지 않는다. 수정 전 종료와 수정 후 통과, branch 거부와 repo 대조 제거 변형의 실패를 남긴다.
+- **rollout 진단 조사.** 재시작 명령은 launchctl kickstart 성공과 직후 감독자 상태를 반환하며 이후 시작 stderr를 수집하지 않는다. guard/rollout 상태는 agent link로만 조회한다. agent가 연결 전에 종료하면 원격 guard 영수증·마지막 오류 줄을 host가 가져올 독립 경로가 없어 단계 한도/복구 확인 실패로 남는다. inbox는 Reader도 읽어 원문 진단을 싣지 않는 기존 계약을 유지한다. 이번에는 이 제약을 기록하며 별도 원격 진단 채널을 추가하지 않는다.
+
+### 8.316 웹 할 일 thread 연결과 자동 정리(10-20, t-0493 할 일 관리 T3)
 
 - **요청.** 사용자 10-20 「작업이 시작되면 (끝나면? 지금 정책에 따라) 삭제도 되고」, 기획 t-0469의 T3(§6.2: `ThreadStart{link_task}`·「coordinator에게 맡기기」·「task에 잇기」·「task로 만들기」·§4 P2 자동 정리·되살리기 줄·coordinator 안내 「thread가 끝나면」, §3.4 단추, §5 권한). 운영 TASKS.md·later.md·project.toml 정리는 T4다.
 - **시작과 연결.** `ThreadStart`에 `link_task`·`task_block`을 더했다. `--from-task`로 시작한 thread가 서면 host가 같은 요청 안에서 그 task 줄 끝에 ` · t-NNNN`을 붙인다(`task_edit` update, thread 칸만). 대상은 화면이 본 블록 hash로 찾는다. 그사이 블록이 바뀌었으면 웹 「바로 시작」은 시작하지 않고 「다시 열라」고 알린다(`task_block`이 다르면 거부). 시작한 뒤 연결만 실패하면(그 블록을 그사이 고쳤다) 시작은 그대로 두고 경고를 돌려준다. 새 요청 `thread_start_preview`는 `thread start --from-task`와 같은 규칙으로 owner → profile·머신, 저장소 후보, 메모를 붙인 할 일 글, 열린 thread 수와 `max_parallel_threads`를 준다(조작 권한). 이미 열린 thread와 이어진 task는 참고처럼 막지 않고 경고만 한다.

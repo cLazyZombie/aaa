@@ -161,7 +161,7 @@ describe("할 일 편집", () => {
   });
 });
 
-describe("할 일 thread 연결(T3, plan §8.315)", () => {
+describe("할 일 thread 연결(T3, plan §8.316)", () => {
   it("확인 필요: 형식 어긋남 다음이고 열린 thread보다 앞선다. 거르기 「확인 필요」", () => {
     const check = task({ thread: "t-0002", attention: "t-0002 끝남: 보고가 없다" });
     assert.equal(taskState(check, groups), "check");
