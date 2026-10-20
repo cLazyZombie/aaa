@@ -314,7 +314,8 @@ function TaskDetail({
   usePhoneSheetBack(() => onClose());
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (e.key !== "Escape" || e.defaultPrevented) return;
+      // 위에 뜬 창(팔레트·설정·확인창)의 Esc는 그 창 것이다
+      if (e.key !== "Escape" || e.defaultPrevented || document.querySelector('[aria-modal="true"]')) return;
       e.preventDefault();
       onClose();
     };
