@@ -2,6 +2,83 @@
 use super::*;
 
 #[test]
+#[cfg(target_os = "macos")]
+fn agent_restart_preserves_threads_after_branch_changes_and_isolates_invalid_preparations() {
+    use std::os::unix::ffi::OsStrExt;
+    let mut w = world();
+    let root = w.lab.root.join("portable");
+    let path = std::ffi::CString::new(w.lab.root.as_os_str().as_bytes()).unwrap();
+    let mut fs: libc::statfs = unsafe { std::mem::zeroed() };
+    assert_eq!(unsafe { libc::statfs(path.as_ptr(), &mut fs) }, 0);
+    let mount = unsafe { std::ffi::CStr::from_ptr(fs.f_mntonname.as_ptr()) }.to_str().unwrap();
+    w.h.ok(&["work-root", "set", path_str(&root), "--mount", mount]);
+    w.lab.kill("agentA");
+    wait_for("옛 agent 종료", T, || (!w.h.connected("labA")).then_some(()));
+    w.lab.spawn("portable-agent", &w.h, &["agent", "--host", "local", "--name", "labA"]);
+    wait_for("휴대용 root agent 연결", T, || w.h.connected("labA").then_some(()));
+    let mut threads = Vec::new();
+    for title in ["changed", "healthy", "foreign"] {
+        let thread = w.start(&[
+            "--profile",
+            "fake",
+            "--repo",
+            path_str(&w.repo),
+            "--title",
+            title,
+            "--task-file",
+            &w.task(&format!("{title}.txt"), "noreport"),
+        ]);
+        w.wait_show("brief 전달", thread["id"].as_str().unwrap(), |v| v["brief"] == "delivered");
+        threads.push(thread);
+    }
+    let cwd = Path::new(threads[0]["cwd"].as_str().unwrap());
+    git(cwd, &["switch", "-qc", "next-stage"]);
+    std::fs::write(cwd.join("next-stage.txt"), "keep dirty work\n").unwrap();
+    let preparations = w.h.state.join("agent/thread-preparations");
+    let changed_journal = preparations.join(format!("demo-{}.json", threads[0]["id"].as_str().unwrap()));
+    let original = std::fs::read(&changed_journal).unwrap();
+    let pids: Vec<_> = threads.iter().map(|t| w.h.session_host_pid(t["pane"].as_str().unwrap()).unwrap()).collect();
+    // Git 잠금은 다시 부여해야 한다. 단순히 오류를 무시하는 수리로는 이 계약을 통과하지 못한다.
+    for thread in &threads {
+        git(&w.repo, &["worktree", "unlock", thread["cwd"].as_str().unwrap()]);
+    }
+    let foreign = preparations.join(format!("demo-{}.json", threads[2]["id"].as_str().unwrap()));
+    let foreign_original = std::fs::read(&foreign).unwrap();
+    // 옛 repo에 Git 등록이 남은 경로를 다른 repo로 바꾼다. 등록 목록만 보면 소유권을 오인한다.
+    let foreign_cwd = Path::new(threads[2]["cwd"].as_str().unwrap());
+    std::fs::remove_file(foreign_cwd.join(".git")).unwrap();
+    git(foreign_cwd, &["init", "-q", "-b", "main"]);
+    let broken = preparations.join("demo-t-9000.json");
+    std::fs::write(&broken, "{broken journal").unwrap();
+    w.lab.kill("portable-agent");
+    wait_for("휴대용 agent 종료", T, || (!w.h.connected("labA")).then_some(()));
+    w.lab.spawn("restarted-agent", &w.h, &["agent", "--host", "local", "--name", "labA"]);
+    wait_for("branch 변경 뒤 agent 연결", T, || {
+        let log = w.lab.log("restarted-agent");
+        assert!(!log.contains("Error:"), "agent 시작 실패: {log}");
+        w.h.connected("labA").then_some(())
+    });
+    for (thread, pid) in threads[..2].iter().zip(pids) {
+        assert_eq!(w.h.session_host_pid(thread["pane"].as_str().unwrap()), Some(pid));
+        assert!(w.h.json(&["pane", "read", thread["pane"].as_str().unwrap()]).is_ok());
+    }
+    let list = git(&w.repo, &["worktree", "list", "--porcelain"]);
+    for (index, thread) in threads.iter().enumerate() {
+        let record = list.split("\n\n").find(|r| r.contains(thread["cwd"].as_str().unwrap())).unwrap();
+        assert_eq!(record.contains("locked aaa:"), index < 2, "{record}");
+    }
+    assert_eq!(git(cwd, &["branch", "--show-current"]), "next-stage");
+    assert_eq!(std::fs::read_to_string(cwd.join("next-stage.txt")).unwrap(), "keep dirty work\n");
+    assert_eq!(std::fs::read(&changed_journal).unwrap(), original, "준비 재진입의 원래 branch 계약은 보존한다");
+    assert_eq!(std::fs::read(&foreign).unwrap(), foreign_original);
+    assert_eq!(std::fs::read_to_string(&broken).unwrap(), "{broken journal");
+    let log = w.lab.log("restarted-agent");
+    assert!(log.contains("Git 잠금 점검 보류"), "{log}");
+    assert!(log.contains(foreign.file_name().unwrap().to_str().unwrap()), "{log}");
+    assert!(log.contains("demo-t-9000.json"), "{log}");
+}
+
+#[test]
 fn agent_refuses_an_unmounted_work_volume_before_creating_a_workspace() {
     let mut lab = Lab::new();
     let node = lab.node("agent", None);
