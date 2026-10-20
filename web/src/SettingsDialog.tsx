@@ -7,13 +7,14 @@
 // 「키 바」 줄의 「키 바 편집」은 같은 창 안에서 편집 화면(herdr/KeyBarSettings)으로 바꾸고 ← 로 돌아온다(참고 984~1116줄).
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type RefObject } from "react";
 import { createPortal } from "react-dom";
-import { ArrowLeft, Bell, ChevronDown, ChevronRight, ChevronUp, Eye, EyeOff, FolderCog, FolderGit2, Gauge, Keyboard, MessageSquare, Palette, Plus, Search, Smartphone, SquareTerminal, X, type LucideIcon } from "lucide-react";
+import { ArrowLeft, Bell, ChevronDown, ChevronRight, ChevronUp, Eye, EyeOff, FolderCog, FolderGit2, Gauge, Keyboard, KeyRound, MessageSquare, Palette, Plus, Search, Smartphone, SquareTerminal, X, type LucideIcon } from "lucide-react";
 import "./herdr/SettingsDialog.css";
 import type { DeviceRole, ProviderUsage, PublishState } from "./gen/proto";
 import { call } from "./api";
 import { ConfirmDialog } from "./ConfirmDialog";
 import { DevicesPanel } from "./DevicesPanel";
 import { ReposPage, ThisAaaPage } from "./ProjectSettingsPages";
+import { AccountsPage } from "./AccountsPage";
 import { PhonePanel, phonePlan } from "./PhonePanel";
 import { isLoopbackHost } from "./herdr/phone";
 import { AgentMark } from "./herdr/AgentMark.tsx";
@@ -883,7 +884,7 @@ function ShortcutsPage() {
   );
 }
 
-type SettingsPage = "appearance" | "chat" | "terminal" | "alerts" | "usage" | "shortcuts" | "devices" | "project" | "repos";
+type SettingsPage = "appearance" | "chat" | "terminal" | "alerts" | "usage" | "accounts" | "shortcuts" | "devices" | "project" | "repos";
 
 /** 목록에 보이는 차례(참고 PAGES 198~210줄 가운데 aaa에 있는 쪽) */
 export const PAGES: readonly { id: SettingsPage; icon: LucideIcon; label: string }[] = [
@@ -892,6 +893,7 @@ export const PAGES: readonly { id: SettingsPage; icon: LucideIcon; label: string
   { id: "terminal", icon: SquareTerminal, label: "터미널" },
   { id: "alerts", icon: Bell, label: "알림" },
   { id: "usage", icon: Gauge, label: "구독 사용량" },
+  { id: "accounts", icon: KeyRound, label: "계정" },
   { id: "shortcuts", icon: Keyboard, label: "단축키" },
   { id: "devices", icon: Smartphone, label: "폰 및 기기" },
   { id: "project", icon: FolderCog, label: "이 aaa" },
@@ -1024,6 +1026,8 @@ export function SettingsDialog({ onClose, role, device, onSignOut }: { onClose: 
         return <AlertsPage />;
       case "usage":
         return <UsageGroups />;
+      case "accounts":
+        return <AccountsPage role={role} />;
       case "shortcuts":
         return <ShortcutsPage />;
       case "devices":

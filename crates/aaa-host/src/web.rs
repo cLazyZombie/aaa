@@ -896,6 +896,7 @@ async fn events_loop(host: Arc<Host>, dev: String, role: DeviceRole, mut socket:
     let mut reports = host.reports_changed.subscribe();
     let mut asks = host.asks_changed.subscribe();
     let mut inbox = host.inbox_changed.subscribe();
+    let mut accounts = host.accounts_changed.subscribe();
     let mut rollouts = host.rollout_changed.subscribe();
     let mut revoked = host.device_revoked.subscribe();
     let mut chat_notes = host.chat_notes();
@@ -911,6 +912,7 @@ async fn events_loop(host: Arc<Host>, dev: String, role: DeviceRole, mut socket:
     // 「답할 것」(plan §8.345): 열 때와 확인 필요 post·답한 것이 바뀔 때
     let mut send_asks = true;
     let mut send_inbox = true;
+    let mut send_accounts = true;
     let mut send_rollout = true;
     let mut send_badge = true;
     let mut last_badge = None;
@@ -984,6 +986,14 @@ async fn events_loop(host: Arc<Host>, dev: String, role: DeviceRole, mut socket:
             send_inbox = false;
             inbox.borrow_and_update();
             let text = serde_json::to_string(&FrontEvent::Inbox).unwrap();
+            if socket.send(Message::Text(text.into())).await.is_err() {
+                break;
+            }
+        }
+        if send_accounts {
+            send_accounts = false;
+            accounts.borrow_and_update();
+            let text = serde_json::to_string(&FrontEvent::Accounts).unwrap();
             if socket.send(Message::Text(text.into())).await.is_err() {
                 break;
             }
@@ -1101,6 +1111,11 @@ async fn events_loop(host: Arc<Host>, dev: String, role: DeviceRole, mut socket:
                 if r.is_err() { break }
                 send_state = false;
                 send_inbox = true;
+            }
+            r = accounts.changed() => {
+                if r.is_err() { break }
+                send_state = false;
+                send_accounts = true;
             }
             n = chat_notes.recv() => {
                 send_state = false;

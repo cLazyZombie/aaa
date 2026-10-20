@@ -36,7 +36,17 @@ impl Sealed {
         format!("aaa-account/v1\0{}\0{}\0{}", self.name, self.harness, self.version).into_bytes()
     }
     fn view(&self) -> AccountView {
-        AccountView { name: self.name.clone(), harness: self.harness.clone(), version: self.version }
+        AccountView {
+            name: self.name.clone(),
+            harness: self.harness.clone(),
+            version: self.version,
+            email: None,
+            plan: None,
+            first_auth_ms: None,
+            last_auth_ms: None,
+            expires_ms: None,
+            health: None,
+        }
     }
 }
 
@@ -185,6 +195,18 @@ impl Store {
     }
 }
 
+/// Codex 갱신이 어떻게 끝났나(계정 상태 판정, plan §8.351). 제공자가 거부한 것(400·401)만 끊김이다: 망·시한·5xx는 모른다
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum RefreshOutcome {
+    /// 제공자가 새 인증을 줬다
+    Renewed,
+    /// 옛 판 요청에 금고의 더 새 판을 줬다(제공자에게 묻지 않았다: 상태를 바꾸지 않는다)
+    Served,
+    /// 제공자가 지금 금고 판의 갱신을 거부했다
+    Rejected,
+    Failed,
+}
+
 pub struct Accounts {
     pub(crate) logins: Mutex<HashMap<String, crate::account_login::LoginJob>>,
     store: Mutex<Store>,
@@ -251,18 +273,30 @@ impl Accounts {
         regular(&p)?;
         std::fs::remove_file(p).map_err(|_| fail())
     }
-    pub async fn refresh(&self, name: &str, version: u64, request: &SecretText) -> AccountRefreshed {
+    pub(crate) async fn refresh(
+        &self,
+        name: &str,
+        version: u64,
+        request: &SecretText,
+    ) -> (AccountRefreshed, RefreshOutcome) {
         let gate = self.gates.lock().unwrap().entry(name.into()).or_default().clone();
         let _guard = gate.lock().await;
-        let result = self.refresh_inner(name, version, request).await;
+        let mut outcome = RefreshOutcome::Failed;
+        let result = self.refresh_inner(name, version, request, &mut outcome).await;
         match result {
             Ok((version, response)) => {
-                AccountRefreshed { id: String::new(), version, response: Some(SecretText(response)) }
+                (AccountRefreshed { id: String::new(), version, response: Some(SecretText(response)) }, outcome)
             }
-            Err(_) => AccountRefreshed { id: String::new(), version, response: None },
+            Err(_) => (AccountRefreshed { id: String::new(), version, response: None }, outcome),
         }
     }
-    async fn refresh_inner(&self, name: &str, version: u64, request: &SecretText) -> Result<(u64, String), ErrorBody> {
+    async fn refresh_inner(
+        &self,
+        name: &str,
+        version: u64,
+        request: &SecretText,
+        outcome: &mut RefreshOutcome,
+    ) -> Result<(u64, String), ErrorBody> {
         let c = self.credential(name)?;
         if c.harness != "codex" || version > c.version {
             return Err(fail());
@@ -273,6 +307,7 @@ impl Accounts {
             return Err(fail());
         }
         if version < c.version {
+            *outcome = RefreshOutcome::Served;
             return Ok((c.version, token_response(&auth)?));
         }
         // 주소는 production에서 고정한다. 가짜 서버는 debug 실험실의 loopback에만 허용한다.
@@ -293,6 +328,10 @@ impl Accounts {
         .map_err(|_| fail())?;
         redact::remember_auth("codex", &String::from_utf8_lossy(&response.body));
         if response.status != 200 {
+            // 묻는 사이 다시 로그인해 금고 판이 올랐으면 거부는 옛 인증의 것이다(끊김이 아니다)
+            if matches!(response.status, 400 | 401) && self.store.lock().unwrap().record(name)?.version == version {
+                *outcome = RefreshOutcome::Rejected;
+            }
             return Err(fail());
         }
         let tokens: serde_json::Value = serde_json::from_slice(&response.body).map_err(|_| fail())?;
@@ -314,6 +353,7 @@ impl Accounts {
         }
         let v = version.checked_add(1).ok_or_else(fail)?;
         s.write(name, "codex", v, &value)?;
+        *outcome = RefreshOutcome::Renewed;
         Ok((v, token_response(&auth)?))
     }
 }
@@ -413,7 +453,11 @@ impl crate::Host {
                 .and_then(|r| r.account)
         });
         let mut result = match account {
-            Some(a) => self.accounts.refresh(&a, request.version, &request.request).await,
+            Some(a) => {
+                let (result, outcome) = self.accounts.refresh(&a, request.version, &request.request).await;
+                self.account_refresh_seen(&a, outcome, request.version);
+                result
+            }
             None => AccountRefreshed { id: String::new(), version: request.version, response: None },
         };
         result.id = request.id;
