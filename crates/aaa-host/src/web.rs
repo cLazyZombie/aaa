@@ -307,6 +307,15 @@ const VIEW_CSP: &str = "sandbox allow-scripts allow-popups allow-popups-to-escap
                         media-src 'self' data: blob:; font-src 'self' data:; \
                         connect-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'self'";
 
+/// 보고서 HTML 끝에 붙이는 그림 누름 알림(plan §8.353). 그 문서와 같은 sandbox 안에서 돌고, 부모(앱)에게 누른 그림과 그 문서의
+/// 그림 주소만 알린다. 앱은 그 iframe에서 온, 그 보고서 `/v/<cap>/` 아래 주소만 받는다(web `reportImages.ts`)
+const REPORT_IMAGES: &str = concat!("<script>", include_str!("report_images.js"), "</script>");
+
+/// 알림을 붙이는 응답: HTML을 문서·iframe으로 여는 전체 응답만. Range(파일 보기의 앞부분 읽기)·내려받기·fetch·HEAD는 원본이다
+fn report_images_bridge(kind: &str, range: bool, download: bool, navigation: bool) -> bool {
+    kind.starts_with("text/html") && !range && !download && navigation
+}
+
 async fn view_root(
     State(host): State<Arc<Host>>,
     Path(cap): Path<String>,
@@ -382,12 +391,25 @@ async fn serve_view(
     };
     let kind =
         if generated || path.is_empty() { "text/html; charset=utf-8" } else { crate::library::content_type(&path) };
+    let navigation = report_navigation(&method, &headers);
+    // 그림 누름 알림(plan §8.353): HTML 문서 탐색의 전체 응답 끝에만 붙인다. 원본 바이트·Range·내려받기·fetch(소스 보기)는 그대로다
+    let tail: &[u8] = if report_images_bridge(kind, range.is_some(), q.download.is_some(), navigation) {
+        REPORT_IMAGES.as_bytes()
+    } else {
+        &[]
+    };
+    let body: crate::library::ByteStream = if tail.is_empty() {
+        body
+    } else {
+        use futures_util::StreamExt;
+        body.chain(futures_util::stream::once(async move { Ok(tail.to_vec()) })).boxed()
+    };
     // PDF는 브라우저의 PDF 보기가 그리는데 그것은 sandbox 문서를 거부한다(`/f/`의 `PDF_CSP`와 같은 까닭)
     let csp = if kind == "application/pdf" { PDF_CSP } else { VIEW_CSP };
     let mut res = Response::builder()
         .status(if range.is_some() { StatusCode::PARTIAL_CONTENT } else { StatusCode::OK })
         .header(header::CONTENT_TYPE, kind)
-        .header(header::CONTENT_LENGTH, len)
+        .header(header::CONTENT_LENGTH, len + tail.len() as u64)
         .header(header::ACCEPT_RANGES, "bytes")
         .header(header::CACHE_CONTROL, "private, no-store")
         .header(header::CONTENT_SECURITY_POLICY, csp)
@@ -400,7 +422,7 @@ async fn serve_view(
         res = res
             .header(header::CONTENT_DISPOSITION, format!("attachment; filename*=UTF-8''{}", crate::files::pct(name)));
     }
-    if q.download.is_none() && report_navigation(&method, &headers) {
+    if q.download.is_none() && navigation {
         host.library_opened(&file.project, &file.name);
     }
     res.body(Body::from_stream(body)).unwrap()
@@ -896,6 +918,7 @@ async fn events_loop(host: Arc<Host>, dev: String, role: DeviceRole, mut socket:
     let mut reports = host.reports_changed.subscribe();
     let mut asks = host.asks_changed.subscribe();
     let mut inbox = host.inbox_changed.subscribe();
+    let mut accounts = host.accounts_changed.subscribe();
     let mut rollouts = host.rollout_changed.subscribe();
     let mut revoked = host.device_revoked.subscribe();
     let mut chat_notes = host.chat_notes();
@@ -911,6 +934,7 @@ async fn events_loop(host: Arc<Host>, dev: String, role: DeviceRole, mut socket:
     // 「답할 것」(plan §8.345): 열 때와 확인 필요 post·답한 것이 바뀔 때
     let mut send_asks = true;
     let mut send_inbox = true;
+    let mut send_accounts = true;
     let mut send_rollout = true;
     let mut send_badge = true;
     let mut last_badge = None;
@@ -984,6 +1008,14 @@ async fn events_loop(host: Arc<Host>, dev: String, role: DeviceRole, mut socket:
             send_inbox = false;
             inbox.borrow_and_update();
             let text = serde_json::to_string(&FrontEvent::Inbox).unwrap();
+            if socket.send(Message::Text(text.into())).await.is_err() {
+                break;
+            }
+        }
+        if send_accounts {
+            send_accounts = false;
+            accounts.borrow_and_update();
+            let text = serde_json::to_string(&FrontEvent::Accounts).unwrap();
             if socket.send(Message::Text(text.into())).await.is_err() {
                 break;
             }
@@ -1101,6 +1133,11 @@ async fn events_loop(host: Arc<Host>, dev: String, role: DeviceRole, mut socket:
                 if r.is_err() { break }
                 send_state = false;
                 send_inbox = true;
+            }
+            r = accounts.changed() => {
+                if r.is_err() { break }
+                send_state = false;
+                send_accounts = true;
             }
             n = chat_notes.recv() => {
                 send_state = false;
@@ -2013,6 +2050,23 @@ mod content_type_tests {
         for line in src.lines().filter(|l| l.contains("include_bytes!")) {
             assert!(line.contains("include_bytes!(concat!(env!(\"CARGO_MANIFEST_DIR\"), \"/../../web/dist/"), "{line}");
         }
+    }
+
+    #[test]
+    fn report_images_bridge_goes_only_on_html_navigation() {
+        use super::{REPORT_IMAGES, report_images_bridge};
+        assert!(report_images_bridge("text/html; charset=utf-8", false, false, true));
+        // 원본 그대로: fetch(소스 보기)·Range·내려받기·HTML 아닌 파일
+        assert!(!report_images_bridge("text/html; charset=utf-8", false, false, false));
+        assert!(!report_images_bridge("text/html; charset=utf-8", true, false, true));
+        assert!(!report_images_bridge("text/html; charset=utf-8", false, true, true));
+        for kind in ["image/svg+xml", "text/plain; charset=utf-8", "application/pdf", "text/javascript; charset=utf-8"]
+        {
+            assert!(!report_images_bridge(kind, false, false, true), "{kind}");
+        }
+        // 붙인 script 하나가 문서 끝에서 닫힌다
+        assert!(REPORT_IMAGES.starts_with("<script>") && REPORT_IMAGES.ends_with("</script>"));
+        assert_eq!(REPORT_IMAGES.matches("</script").count(), 1);
     }
 
     #[test]

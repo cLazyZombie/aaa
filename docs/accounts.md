@@ -1,7 +1,7 @@
 # 작업별 계정 인증
 
 profile은 실행할 harness·model·effort를 고르고, account는 인증 신원을 고른다.
-host의 **aaa 세션 밖 터미널**에서 공식 harness 로그인을 시작하고 기본 계정을 정한다.
+host의 **aaa 세션 밖 터미널**이나 **웹 설정 「계정」(조작 기기)**에서 공식 harness 로그인을 시작하고 기본 계정을 정한다.
 브라우저 인증은 사용자가 host에서 한다. 기본 계정을 지정하기 전에는 기존 머신 로컬 로그인을 사용한다.
 
 ```sh
@@ -19,7 +19,8 @@ aaa account list
 `codex -c 'cli_auth_credentials_store="file"' login`을 실행한다. host 브라우저가 열리면 해당 계정으로
 인증한다. 다른 머신 브라우저로 localhost callback을 대신하지 않는다. 원본 출력·오류·토큰·인증 URL은
 aaa 화면이나 로그에 중계하지 않는다. 원본 출력이 필요한 수동 코드 입력 방식은 이 경로에서 지원하지 않는다.
-로그인 상태는 `waiting`, `succeeded`, `failed`, `cancelled`이며 host를 다시 시작하면 진행 상태 ID는 유지하지 않는다.
+로그인 상태는 `waiting`, `succeeded`, `failed`, `cancelled`, 그리고 다시 로그인의 `mismatch`·`kept`(아래 「메일·인증일·상태」)이며
+host를 다시 시작하면 진행 상태 ID는 유지하지 않는다.
 `aaa account login-cancel <로그인-ID>`는 자식 종료·임시 자료 정리가 끝난 최종 상태를 반환한다. 같은 ID를 여러 번 취소해도 모두 완료 상태를 받으며 이미 성공/실패한 결과는 유지한다. 5분 상한·출력 128KiB 상한을 넘으면 실패한다.
 `waiting`은 로그인 미완료 상태이며 브라우저가 열렸다는 확인은 아니다. 원래 실행한 host의 로그인 사용자 브라우저에서 인증한다. 로그인별 자식 PID·종료 코드·최종 상태·임시 자료 정리 여부는 host 로그로 확인할 수 있지만 원본 출력·인증 URL·토큰은 기록하지 않는다.
 성공 결과를 암호화 저장하고 성공·실패·취소의 임시 홈 정리를 끝낸 뒤 종료 상태를 표시한다.
@@ -67,9 +68,41 @@ aaa account remove work-codex
 
 Claude 입력은 `claude setup-token`으로 발급한 OAuth 토큰 한 줄이다. Codex 입력은 사람이 계정별
 `CODEX_HOME`으로 로그인하고 `cli_auth_credentials_store = "file"`로 저장한 auth.json이다.
-로그인·로그인 상태/취소·등록·삭제·기본 변경은 host의 aaa 세션 밖 로컬 CLI에서만 가능하며
-pane 안, 웹, 원격 클라이언트에서는 거부한다. 첫 배포에는 웹 로그인 시작을 제공하지 않는다.
-목록과 thread에는 별칭·harness·버전만 표시한다. 기본 설정 조회에는 인증값이 없다.
+로그인·로그인 상태/취소/확인·기본 변경은 사람이 한다: host의 aaa 세션 밖 로컬 CLI나 웹 조작 기기(FRONT_API 1.79).
+pane 안 agent·worker·evaluator·detached와 보기 전용 기기는 거부한다. 등록(`import`)·삭제는 host의 aaa 세션 밖 로컬 CLI에서만 가능하다.
+thread에는 별칭만 표시한다. 기본 설정 조회에는 인증값이 없다.
+
+## 메일·인증일·상태(관리 GUI W5a)
+
+`aaa account list`와 웹 설정 「계정」은 계정마다 별칭·harness·판에 더해 메일·plan·최초 인증일·최근 인증된 날·상태를 보인다:
+
+```text
+work	codex	판 2	work@example.com	plus	최초 2026-10-21	최근 2026-10-21	정상
+ci	claude	판 1	ci@example.com	-	최초 2026-10-21	최근 2026-10-21	곧 만료(2026-10-24)
+```
+
+- **메일·plan**은 공식 CLI가 로그인 때 남긴 것만 적는다. Codex는 `auth.json`의 id_token 계정 정보(메일, `chatgpt_plan_type`),
+  Claude는 로그인 폴더의 `.claude.json`에 `oauthAccount.emailAddress`가 있을 때만이다(`claude setup-token`은 메일을 출력하지
+  않는다: 없으면 「메일 모름」). 이 기록 전에 등록한 Codex 계정은 host가 시작할 때 저장된 인증에서 메일·plan을 채운다.
+- **최초 인증일**은 aaa가 처음 기록한 로그인, **최근 인증된 날**은 마지막 로그인 성공이다(날짜만, CLI는 UTC·웹은 그 기기 시간대).
+  이 기록 전에 등록한 계정은 「모름」이며 「다시 로그인」하면 채운다. Codex 갱신은 날짜를 바꾸지 않는다.
+- **상태**: `정상`, `곧 만료`(알려진 만료 7일 전부터), `끊김(만료)`, `끊김(갱신 거부)`. 판정은 실제 쓰임과 알려진 만료 시각뿐이다:
+  Codex 갱신을 제공자가 400·401로 거부하면 끊김이고(망·시한·5xx는 끊김이 아니다), 갱신이 다시 성공하거나 로그인하면 지운다.
+  만료 시각은 `claude setup-token`이 알린 유효 기간뿐이다(Codex는 갱신으로 이어 가 만료를 모른다). 제공자에게 따로 묻지 않으므로
+  Claude 토큰이 만료 전에 취소되면 쓰기 전까지 모른다.
+- 상태가 `곧 만료`·`끊김`으로 바뀌면 알림함에 「확인 필요」 항목(`account`)을 한 번 낸다. 다시 정상이 되면 끝낸다. 항목에는 별칭·
+  harness만 싣는다.
+- 메일·plan은 웹 조작 기기와 host의 aaa 세션 밖 CLI에만 싣는다. 보기 전용 기기와 pane 안 agent에는 별칭·상태만 간다.
+  감사 기록·알림함·로그·외부 푸시에는 메일을 쓰지 않는다. 기록은 host DB(`account-meta:<별칭>`)에 두며 금고 파일은 그대로다.
+
+**다시 로그인**은 같은 별칭으로 `aaa account login`(웹 「다시 로그인」)이다. 그 별칭에 메일이 기록돼 있으면 「이 메일로 로그인하세요」를
+보인다. 다른 메일로 로그인하면 금고를 바꾸지 않고 `mismatch`로 기다린다(5분, 지나면 새 인증을 버린다):
+
+```sh
+aaa account login-status <로그인-ID>          # 기록된 메일·로그인한 메일
+aaa account login-confirm <로그인-ID> --switch # 이 별칭을 새 메일 인증으로(최초 인증일도 새로)
+aaa account login-confirm <로그인-ID> --keep   # 새 인증을 버리고 옛 인증 그대로(kept)
+```
 
 host는 K 저장 층의 최소 부분을 먼저 구현한다. `state/secrets.key`는 32바이트 KEK(0600),
 `state/accounts/`는 0700, 그 안의 계정 파일은 0600이다. 각 파일의 무작위 DEK를 KEK로 감싸고

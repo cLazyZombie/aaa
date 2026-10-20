@@ -1,14 +1,17 @@
 // 본문(오른쪽) 보고서 화면(사용자 요청 10-19 「보고서 누르면 오른쪽 창이 보고서로 바뀌게」, plan §8.240). 예전에는 설정 안의 쪽이었다.
 // 활동 막대 「보고서」·`#reports`가 목록을, `#report=<프로젝트>/<이름>`이 보고서 하나를 연다. 한 번 연 뒤에는 다른 화면으로 가도
 // 그려 둔 채 숨긴다(App): 돌아오면 열어 둔 보고서·굴린 자리가 그대로다. 보고서 HTML은 thread 결과물처럼 sandbox iframe(opaque origin)이다.
-import { useEffect, useLayoutEffect, useRef, useState } from "react";
+// 보고서 안 그림을 누르면 앱 크게 보기로 연다(plan §8.353: host가 붙인 알림을 그 iframe에서만 받는다).
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { ExternalLink, ListPlus } from "lucide-react";
 import type { DeviceRole, LibraryFile, LibraryView } from "./gen/proto";
 import { ApiError, call } from "./api";
 import { Icon } from "./icons";
-import { Markdown } from "./Markdown";
+import { Markdown, MarkdownImageContext } from "./Markdown";
 import { DrawerToggle, HeadMore, HeadNote } from "./drawer";
 import { LIBRARY_SANDBOX } from "./FileViewer";
+import { useFrameImages, useLightbox, type LightboxState } from "./Lightbox";
+import { markdownImages, reportMarkdownImage } from "./reportImages";
 import { ReportThread, ReportsPanel, openReportWindow } from "./ReportsPanel";
 import { formatBytes } from "./formatBytes";
 import { reportDocLink } from "./tasksModel";
@@ -19,6 +22,28 @@ const encodePath = (p: string) => p.split("/").map(encodeURIComponent).join("/")
 
 /** task에 링크할 수 있는 결과물: host 사본이 있고(agent에만 있는 것은 thread로 넘길 사본이 없다) 첨부 줄로 쓸 수 있는 md·html */
 export const isDoc = (name: string, f: LibraryFile) => !f.on_agent && reportDocLink(name, f.path) !== null;
+
+/** 보고 글(report.md): `library/…` 그림을 그 보고서 보기 경로(`base`)로 그리고, 누르면 크게 본다(같은 글의 다른 그림으로 넘긴다) */
+export function ReportMarkdown({ base, text, onImages }: { base: string | null; text: string; onImages: (s: LightboxState) => void }) {
+  const resolve = useCallback(async (src: string) => {
+    const url = base === null ? null : reportMarkdownImage(base, src);
+    return url === null ? null : ({ kind: "inline", url } as const);
+  }, [base]);
+  return (
+    <MarkdownImageContext.Provider value={resolve}>
+      <div
+        onClick={(e) => {
+          const got = markdownImages(e.currentTarget, e.target);
+          if (!got) return;
+          e.preventDefault();
+          onImages(got);
+        }}
+      >
+        <Markdown className="report-markdown">{text}</Markdown>
+      </div>
+    </MarkdownImageContext.Provider>
+  );
+}
 
 /** 결과물 파일 줄의 「할 일에」 단추(보고서 화면·thread 결과물) */
 export function TaskAddButton({ path, onAdd }: { path: string; onAdd: (path: string) => void }) {
@@ -99,6 +124,10 @@ function ReportDetail({ report, onBack, onAddDoc }: { report: ReportRef; onBack:
   }, [report.project, report.name]);
   const index = lib?.files.find((f) => f.path === "index.html" && !f.on_agent);
   const size = lib ? lib.files.reduce((n, f) => n + f.size, 0) : null;
+  const lightbox = useLightbox();
+  const frame = useRef<HTMLIFrameElement>(null);
+  const page = lib && index ? lib.base + "index.html" : null;
+  useFrameImages(frame, page, lightbox.open);
   return (
     <div className="thread-view report-detail" data-testid="report-detail" data-status={lib ? "ready" : problem ? "error" : "loading"}>
       <header className="term-head">
@@ -130,14 +159,14 @@ function ReportDetail({ report, onBack, onAddDoc }: { report: ReportRef; onBack:
       </header>
       {problem && <div className="banner err" role="alert">{problem}</div>}
       {lib && index ? (
-        <iframe className="report-frame" data-testid="report-frame" title={`${report.project}/${report.name} index.html`} sandbox={LIBRARY_SANDBOX} src={lib.base + "index.html"} />
+        <iframe ref={frame} className="report-frame" data-testid="report-frame" title={`${report.project}/${report.name} index.html`} sandbox={LIBRARY_SANDBOX} src={page ?? undefined} />
       ) : lib ? (
         <div className="thread-body">
           <div className="thread-col">
             {lib.report && (
               <section className="card report">
                 <h2>보고</h2>
-                <Markdown className="report-markdown">{lib.report}</Markdown>
+                <ReportMarkdown base={lib.base} text={lib.report} onImages={lightbox.open} />
               </section>
             )}
             <section className="card files">
@@ -160,6 +189,7 @@ function ReportDetail({ report, onBack, onAddDoc }: { report: ReportRef; onBack:
           </div>
         </div>
       ) : null}
+      {lightbox.node}
     </div>
   );
 }

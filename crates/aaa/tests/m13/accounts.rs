@@ -287,6 +287,18 @@ fn account_credentials_parallel_refresh_and_all_records_are_redacted() {
     assert_eq!(resumed[0].1["token"], sha(&token_pairs[2].0));
     assert!(homes.contains(&resumed[0].1["home"].as_str().unwrap().to_string()), "재개는 같은 기록 홈");
     assert_eq!(upstream.calls.load(Ordering::SeqCst), 3, "거부된 갱신은 한 번, 우회/자동 재시도 없음");
+    // 제공자가 거부한 갱신은 그 계정을 끊김으로 보이고 확인 필요 알림을 한 번 낸다(관리 GUI W5a, plan §8.351)
+    let listed = w.h.ok(&["account", "list"]);
+    let work = listed["accounts"].as_array().unwrap().iter().find(|a| a["name"] == "work").unwrap().clone();
+    assert_eq!(work["health"], "rejected", "{work}");
+    let alerts: Vec<_> = w.h.ok(&["inbox", "list", "demo", "--peek"])["items"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|i| i["item_kind"] == "account")
+        .map(|i| (i["subject"].clone(), i["event"].clone()))
+        .collect();
+    assert_eq!(alerts, [(serde_json::json!("work"), serde_json::json!("끊김"))]);
     Gate::release(resumed, b'X');
     w.wait_show("재개 종료", id, |v| v["agent"]["activity"] == "exited");
     let mut find = needles(&claude, &claude_hex);
@@ -422,6 +434,8 @@ print(raw,file=sys.stderr,flush=True)
 if values.get('fail') or values.get('fail_for')==kind: sys.exit(1)
 if kind=='codex':
     p=home/'auth.json';p.write_text(raw);p.chmod(0o600)
+if kind=='claude' and values.get('claude_json'):
+    (home/'.claude.json').write_text(json.dumps(values['claude_json']))
 "#,
         fixture = fixture,
         host = "127.0.0.1",
@@ -994,4 +1008,121 @@ fn account_threads_trust_only_their_cwd_when_coordinator_answers() {
             }
         }
     }
+}
+
+/// 시험용 Codex id_token(서명은 가짜): 공식 CLI가 로그인 때 남기는 계정 정보 자리
+fn id_token(email: &str, plan: &str) -> String {
+    use base64::Engine;
+    let claims = serde_json::json!({"email": email, "https://api.openai.com/auth": {"chatgpt_plan_type": plan}});
+    format!("e30.{}.c2ln", base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(claims.to_string()))
+}
+
+/// 관리 GUI W5a(plan §8.351): host 로그인은 공식 CLI가 알린 메일·plan·유효 기간과 인증 날짜를 남기고, 다시 로그인에 다른 메일이
+/// 들어오면 옛 인증을 둔 채 사람이 고르기를 기다린다. 메일은 감사·알림·로그·프로젝트 파일에 나오지 않는다
+#[test]
+fn host_relogin_checks_the_email_and_asks_before_switching() {
+    let (legacy, _) = canary("legacy");
+    let (raw, _) = canary("relogin-claude");
+    let upstream = Upstream::new(vec![]);
+    let gate = Gate::new();
+    let w = world(&format!("http://{}", upstream.addr), &gate, &legacy, POLICY_HARNESS);
+    let codex = |email: &str, plan: &str, n: u32| serde_json::json!({"tokens":{"access_token":format!("test-access-{n}-0123456789"),"refresh_token":format!("test-refresh-{n}-0123456789"),"id_token":id_token(email, plan)}});
+    let mut values = serde_json::json!({
+        "claude": format!("Your OAuth token (valid for 3 days):\nsk-ant-oat01-{raw}"),
+        "claude_json": {"oauthAccount": {"emailAddress": "ci@example.com"}},
+        "codex": codex("work@example.com", "plus", 1),
+    });
+    let fixture = install_login_fixture(&w, &gate, &values);
+    let login = |name: &str, harness: &str, expected: &str| {
+        let start = w.h.ok(&["account", "login", name, "--harness", harness]);
+        let id = start["login"]["id"].as_str().unwrap().to_string();
+        Gate::release(gate.take(1, 8), b'1');
+        (start, login_result(&w, &id, expected), id)
+    };
+    let account = |name: &str| {
+        w.h.ok(&["account", "list"])["accounts"].as_array().unwrap().iter().find(|a| a["name"] == name).unwrap().clone()
+    };
+
+    let (start, done, _) = login("work", "codex", "succeeded");
+    assert!(start["login"]["expect_email"].is_null(), "새 별칭은 확인할 메일이 없다");
+    assert_eq!(done["login"]["email"], "work@example.com");
+    let first = account("work");
+    assert_eq!(
+        (&first["email"], &first["plan"], &first["health"]),
+        (&"work@example.com".into(), &"plus".into(), &"ok".into())
+    );
+    assert!(first["first_auth_ms"].is_u64() && first["first_auth_ms"] == first["last_auth_ms"], "{first}");
+    assert!(first["expires_ms"].is_null(), "Codex는 갱신으로 이어 가 만료 시각을 모른다");
+    // 사람이 읽는 목록: 메일·plan·날짜(UTC)·상태
+    let text = String::from_utf8(w.h.run(&["account", "list"]).stdout).unwrap();
+    let day = &aaa_common::util::utc_text(first["first_auth_ms"].as_u64().unwrap())[..10];
+    assert!(
+        text.contains(&format!("work\tcodex\t판 1\twork@example.com\tplus\t최초 {day}\t최근 {day}\t정상")),
+        "{text}"
+    );
+
+    // Claude: `.claude.json`의 메일과 「valid for 3 days」 → 곧 만료 알림(별칭만, 메일 없음)
+    let (_, done, _) = login("ci", "claude", "succeeded");
+    assert_eq!(done["login"]["email"], "ci@example.com");
+    let ci = account("ci");
+    assert_eq!(ci["health"], "expiring", "{ci}");
+    let left = ci["expires_ms"].as_u64().unwrap() - ci["last_auth_ms"].as_u64().unwrap();
+    assert!((3 * 86_400_000 - 60_000..=3 * 86_400_000).contains(&left), "{left}");
+    let items = w.h.ok(&["inbox", "list", "demo", "--peek"])["items"].as_array().unwrap().clone();
+    let alerts: Vec<_> = items.iter().filter(|i| i["item_kind"] == "account").collect();
+    assert_eq!(alerts.len(), 1, "{alerts:?}");
+    assert_eq!((&alerts[0]["subject"], &alerts[0]["event"]), (&"ci".into(), &"곧 만료".into()));
+    assert!(alerts[0]["summary"].as_str().unwrap().starts_with("확인 필요: "));
+
+    // 같은 메일로 다시 로그인: 최초 날짜는 그대로, 「이 메일로 로그인하세요」
+    let (start, _, _) = login("work", "codex", "succeeded");
+    assert_eq!(start["login"]["expect_email"], "work@example.com");
+    let again = account("work");
+    assert_eq!((&again["first_auth_ms"], &again["version"]), (&first["first_auth_ms"], &2.into()));
+
+    // 다른 메일: 금고를 바꾸지 않고 기다린다 → 그대로 두기
+    values["codex"] = codex("other@example.com", "pro", 2);
+    std::fs::write(&fixture, serde_json::to_vec(&values).unwrap()).unwrap();
+    let (_, waiting, id) = login("work", "codex", "mismatch");
+    assert_eq!(
+        (&waiting["login"]["expect_email"], &waiting["login"]["email"]),
+        (&"work@example.com".into(), &"other@example.com".into())
+    );
+    let text = String::from_utf8(w.h.run(&["account", "login-status", &id]).stdout).unwrap();
+    assert!(text.contains(&format!("aaa account login-confirm {id} --switch")), "{text}");
+    assert_eq!(account("work")["version"], 2, "고르기 전에는 옛 인증 그대로");
+    assert!(
+        w.h.json(&["account", "login", "work", "--harness", "codex"]).is_err(),
+        "확인 대기 중 같은 별칭 로그인 거부"
+    );
+    let kept = w.h.ok(&["account", "login-confirm", &id, "--keep"]);
+    assert_eq!(kept["login"]["state"], "kept");
+    assert_eq!((&account("work")["email"], &account("work")["version"]), (&"work@example.com".into(), &2.into()));
+    assert!(w.h.json(&["account", "login-confirm", &id, "--switch"]).is_err(), "한 번 고른 것은 다시 고르지 않는다");
+
+    // 다시 다른 메일 → 바꾸기: 새 메일·plan, 최초 날짜도 새로
+    let (_, _, id) = login("work", "codex", "mismatch");
+    let switched = w.h.ok(&["account", "login-confirm", &id, "--switch"]);
+    assert_eq!(switched["login"]["state"], "succeeded");
+    let now = account("work");
+    assert_eq!((&now["email"], &now["plan"], &now["version"]), (&"other@example.com".into(), &"pro".into(), &3.into()));
+    assert!(now["first_auth_ms"].as_u64() > first["first_auth_ms"].as_u64(), "{now}");
+
+    // 메일은 화면·목록에만: 감사 기록은 별칭과 선택만 남긴다
+    let db = w.h.state.join("host/host.db");
+    let audit: Vec<(String, String)> = {
+        let c = rusqlite::Connection::open_with_flags(&db, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY).unwrap();
+        let mut st = c.prepare("SELECT action, detail FROM audit WHERE action LIKE 'account%' ORDER BY ts").unwrap();
+        st.query_map([], |r| Ok((r.get(0)?, r.get(1)?))).unwrap().map(Result::unwrap).collect()
+    };
+    let confirms: Vec<_> =
+        audit.iter().filter(|(a, _)| a == "account_login_confirm").map(|(_, d)| d.as_str()).collect();
+    assert_eq!(confirms, ["work keep", "work switch"], "{audit:?}");
+    assert!(audit.iter().all(|(_, d)| !d.contains('@')), "{audit:?}");
+    // 알림함·로그·프로젝트 파일에도 없다(host DB의 계정 기록과 fixture는 뺀다)
+    w.h.ticks(1);
+    let found = hits(std::slice::from_ref(&w.lab.root), &[("메일".into(), b"@example.com".to_vec())], &|p| {
+        p.starts_with(&w.scripts) || p.file_name().is_some_and(|n| n.to_string_lossy().starts_with("host.db"))
+    });
+    assert!(found.is_empty(), "{found:?}");
 }

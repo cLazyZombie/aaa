@@ -11,6 +11,7 @@ use aaa_proto::{AccountLoginView, ErrorBody, ErrorCode, FrontResponse};
 use portable_pty::{CommandBuilder, PtySize, native_pty_system};
 use tokio::sync::{oneshot, watch};
 
+use crate::account_meta::{Identity, claude_identity, codex_identity};
 use crate::{Host, util};
 
 const MAX_OUTPUT: u64 = 128 * 1024;
@@ -40,6 +41,37 @@ pub(crate) struct LoginJob {
     view: Arc<Mutex<AccountLoginView>>,
     cancel: Option<oneshot::Sender<()>>,
     finished: watch::Receiver<bool>,
+    /// 다시 로그인에 다른 메일이 들어온 새 인증(`mismatch`). 금고에 넣지 않고 메모리에만 두며, 고르거나 시한이 지나면 버린다
+    pending: Arc<Mutex<Option<Pending>>>,
+}
+
+struct Pending {
+    secret: String,
+    identity: Identity,
+    deadline: std::time::Instant,
+}
+
+/// 다른 메일 확인을 기다리는 시한(로그인 시한과 같다)
+const CONFIRM_FOR: Duration = Duration::from_secs(300);
+
+/// 확인 시한이 지난 새 인증을 버린다(옛 인증은 그대로다). 바꿨으면 참: 부른 쪽이 화면에 알린다(`accounts_bump`)
+fn expire_parts(view: &Mutex<AccountLoginView>, pending: &Mutex<Option<Pending>>) -> bool {
+    let mut v = view.lock().unwrap();
+    let mut p = pending.lock().unwrap();
+    if v.state == "mismatch" && p.as_ref().is_none_or(|p| std::time::Instant::now() >= p.deadline) {
+        *p = None;
+        v.state = "cancelled".into();
+        return true;
+    }
+    false
+}
+
+fn expire(job: &LoginJob) -> bool {
+    expire_parts(&job.view, &job.pending)
+}
+
+fn busy(state: &str) -> bool {
+    state == "waiting" || state == "mismatch"
 }
 
 struct Temp(PathBuf);
@@ -62,16 +94,22 @@ impl Host {
         if self.accounts.list()?.iter().any(|a| a.name == name && a.harness != harness) {
             return Err(fail());
         }
+        // 다시 로그인이면 그 별칭에 기록된 메일로 들어와야 한다(「이 메일로 로그인하세요」)
+        let expect_email =
+            if self.accounts.list()?.iter().any(|a| a.name == name) { self.account_meta(name).email } else { None };
         let mut jobs = self.accounts.logins.lock().unwrap();
+        if jobs.values().map(expire).fold(false, |a, b| a | b) {
+            self.accounts_bump();
+        }
         if jobs.values().any(|j| {
             let v = j.view.lock().unwrap();
-            v.account == name && v.state == "waiting"
+            v.account == name && busy(&v.state)
         }) {
             return Err(ErrorBody::new(ErrorCode::BadRequest, "그 계정의 로그인이 진행 중이다"));
         }
-        // 진행 중 작업은 버리지 않는다. 오래된 완료 상태만 정리한다.
+        // 진행 중·확인 대기 작업은 버리지 않는다. 오래된 완료 상태만 정리한다.
         if jobs.len() >= 16 {
-            jobs.retain(|_, j| j.view.lock().unwrap().state == "waiting");
+            jobs.retain(|_, j| busy(&j.view.lock().unwrap().state));
         }
         if jobs.len() >= 16 {
             return Err(fail());
@@ -140,12 +178,24 @@ impl Host {
             }
         };
         drop(pair.slave);
-        let view =
-            AccountLoginView { id: id.clone(), account: name.into(), harness: harness.into(), state: "waiting".into() };
+        let view = AccountLoginView {
+            id: id.clone(),
+            account: name.into(),
+            harness: harness.into(),
+            state: "waiting".into(),
+            expect_email,
+            email: None,
+        };
         let state = Arc::new(Mutex::new(view.clone()));
+        let pending = Arc::new(Mutex::new(None));
         let (cancel, mut cancelled) = oneshot::channel();
         let (done, finished) = watch::channel(false);
-        jobs.insert(id.clone(), LoginJob { view: state.clone(), cancel: Some(cancel), finished });
+        jobs.insert(
+            id.clone(),
+            LoginJob { view: state.clone(), cancel: Some(cancel), finished, pending: pending.clone() },
+        );
+        drop(jobs);
+        self.accounts_bump();
         tracing::info!(login = %id, account = %name, %harness, child_pid = pid, browser = "provider_managed_unconfirmed", "계정 로그인 자식 시작");
         self.db.audit(actor, "account_login", name);
         let host = self.clone();
@@ -215,23 +265,58 @@ impl Host {
             } else {
                 Err(fail())
             };
+            // 메일·만료는 임시 폴더를 지우기 전에 읽는다(Claude `.claude.json`)
+            let identity = match &secret {
+                Ok(secret) => login_identity(&v.harness, &temp.0, &home, &bytes, secret),
+                Err(_) => Identity::default(),
+            };
             // 평문 정리에 실패하면 기존 금고 값을 바꾸지 않는다.
             let cleaned = std::fs::remove_dir_all(&temp.0).is_ok();
             drop(temp);
-            let result = if cleaned {
-                secret.and_then(|secret| host.accounts.import(&v.account, &v.harness, &secret).map(|_| ()))
-            } else {
-                Err(fail())
-            };
+            let other_email =
+                matches!((&v.expect_email, &identity.email), (Some(a), Some(b)) if !a.eq_ignore_ascii_case(b));
+            let mut result = Err(fail());
+            if cleaned && let Ok(secret) = secret {
+                if other_email {
+                    // 다른 메일: 옛 인증을 그대로 두고 사람이 고르기를 기다린다
+                    aaa_common::redact::remember_auth(&v.harness, &secret);
+                    v.email = identity.email.clone();
+                    *pending.lock().unwrap() =
+                        Some(Pending { secret, identity, deadline: std::time::Instant::now() + CONFIRM_FOR });
+                    result = Ok(true);
+                    // 아무도 묻지 않아도 시한에 새 인증을 버리고 화면에 알린다
+                    // host를 붙잡지 않는다(약한 참조): 그 전에 host가 끝나면 할 일이 없다
+                    let (view, pending, host) = (state.clone(), pending.clone(), Arc::downgrade(&host));
+                    tokio::spawn(async move {
+                        tokio::time::sleep(CONFIRM_FOR).await;
+                        if expire_parts(&view, &pending) {
+                            tracing::info!(login = %view.lock().unwrap().id, "다른 메일 확인 시한: 새 인증을 버렸다");
+                            if let Some(host) = host.upgrade() {
+                                host.accounts_bump();
+                            }
+                        }
+                    });
+                } else {
+                    result = host.accounts.import(&v.account, &v.harness, &secret).map(|_| false);
+                    if result.is_ok() {
+                        v.email = identity.email.clone();
+                        host.account_logged_in(&v.account, &identity, false);
+                    }
+                }
+            }
             v.state = if was_cancelled {
                 "cancelled"
-            } else if result.is_ok() {
-                "succeeded"
             } else {
-                "failed"
+                match result {
+                    Ok(true) => "mismatch",
+                    Ok(false) => "succeeded",
+                    Err(_) => "failed",
+                }
             }
             .into();
             tracing::info!(login = %id, state = %v.state, temporary_cleaned = cleaned, "계정 로그인 완료");
+            drop(v);
+            host.accounts_bump();
             done.send_replace(true);
         });
         Ok(FrontResponse::AccountLogin { login: view })
@@ -261,13 +346,77 @@ impl Host {
     pub(crate) fn account_login_status(&self, id: &str) -> Result<FrontResponse, ErrorBody> {
         let jobs = self.accounts.logins.lock().unwrap();
         let job = jobs.get(id).ok_or_else(fail)?;
+        if expire(job) {
+            self.accounts_bump();
+        }
         Ok(FrontResponse::AccountLogin { login: job.view.lock().unwrap().clone() })
+    }
+
+    /// 다시 로그인에 다른 메일이 들어온 뒤의 선택(FRONT_API 1.79): 바꾸면 이 별칭이 새 메일 인증이 되고(최초 인증 시각도 새로),
+    /// 아니면 새 인증을 버린다. 감사 기록에는 별칭과 선택만 남긴다
+    pub(crate) fn account_login_confirm(
+        &self,
+        id: &str,
+        switch: bool,
+        actor: &str,
+    ) -> Result<FrontResponse, ErrorBody> {
+        let (view, pending) = {
+            let jobs = self.accounts.logins.lock().unwrap();
+            let job = jobs.get(id).ok_or_else(fail)?;
+            if expire(job) {
+                self.accounts_bump();
+            }
+            (job.view.clone(), job.pending.clone())
+        };
+        let mut v = view.lock().unwrap();
+        if v.state != "mismatch" {
+            return Err(ErrorBody::new(
+                ErrorCode::BadRequest,
+                if v.state == "cancelled" {
+                    "확인 시한이 지나 새 인증을 버렸다. 다시 로그인한다"
+                } else {
+                    "다른 메일 확인을 기다리는 로그인이 아니다"
+                },
+            ));
+        }
+        // 금고에 넣은 뒤에만 비운다: 쓰기가 실패하면 그대로 다시 고를 수 있다
+        let mut slot = pending.lock().unwrap();
+        let p = slot.as_ref().ok_or_else(fail)?;
+        if switch {
+            self.accounts.import(&v.account, &v.harness, &p.secret)?;
+            self.account_logged_in(&v.account, &p.identity, true);
+            v.state = "succeeded".into();
+        } else {
+            v.state = "kept".into();
+        }
+        *slot = None;
+        drop(slot);
+        self.db.audit(
+            actor,
+            "account_login_confirm",
+            &format!("{} {}", v.account, if switch { "switch" } else { "keep" }),
+        );
+        tracing::info!(login = %id, state = %v.state, "계정 로그인 메일 확인");
+        let out = v.clone();
+        drop(v);
+        self.accounts_bump();
+        Ok(FrontResponse::AccountLogin { login: out })
     }
 
     pub(crate) async fn account_login_cancel(&self, id: &str) -> Result<FrontResponse, ErrorBody> {
         let (view, finished) = {
             let mut jobs = self.accounts.logins.lock().unwrap();
             let job = jobs.get_mut(id).ok_or_else(fail)?;
+            {
+                // 확인을 기다리던 새 인증은 버린다(옛 인증 그대로)
+                let mut v = job.view.lock().unwrap();
+                if v.state == "mismatch" {
+                    *job.pending.lock().unwrap() = None;
+                    v.state = "cancelled".into();
+                    drop(v);
+                    self.accounts_bump();
+                }
+            }
             if job.view.lock().unwrap().state == "waiting"
                 && let Some(cancel) = job.cancel.take()
             {
@@ -289,11 +438,30 @@ async fn login_finished(mut done: watch::Receiver<bool>) -> Result<(), ErrorBody
     Ok(())
 }
 
+/// PTY 출력의 ANSI 제어열을 뺀 글
+fn plain(output: &[u8]) -> Result<String, ErrorBody> {
+    let text = String::from_utf8_lossy(output);
+    let ansi = regex::Regex::new(r"\x1b\[[0-?]*[ -/]*[@-~]").map_err(|_| fail())?;
+    Ok(ansi.replace_all(&text, "").into_owned())
+}
+
+/// 로그인 결과의 메일·plan·만료(인증값은 돌려주지 않는다). Codex는 auth.json의 id_token, Claude는 출력의 유효 기간과 `.claude.json`
+fn login_identity(
+    harness: &str,
+    root: &std::path::Path,
+    home: &std::path::Path,
+    output: &[u8],
+    secret: &str,
+) -> Identity {
+    if harness == "codex" {
+        return codex_identity(secret);
+    }
+    plain(output).map(|text| claude_identity(&text, &[home, root], util::now_ms())).unwrap_or_default()
+}
+
 fn login_secret(harness: &str, home: &std::path::Path, output: &[u8]) -> Result<String, ErrorBody> {
     if harness == "claude" {
-        let text = String::from_utf8_lossy(output);
-        let ansi = regex::Regex::new(r"\x1b\[[0-?]*[ -/]*[@-~]").map_err(|_| fail())?;
-        let text = ansi.replace_all(&text, "");
+        let text = plain(output)?;
         let token = regex::Regex::new(r"sk-ant-oat01-[A-Za-z0-9_-]+").map_err(|_| fail())?;
         let values: std::collections::BTreeSet<_> = token.find_iter(&text).map(|m| m.as_str()).collect();
         if values.len() != 1 {

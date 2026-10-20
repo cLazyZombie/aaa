@@ -500,17 +500,6 @@ button.task-chip:disabled { cursor: default; color: var(--text-dim); }
 .task-attach-help { margin: var(--space-1) 0 0; font-size: var(--fs-xs); }
 .task-form.is-dropping { outline: 2px dashed var(--accent); outline-offset: -6px; background: var(--accent-tint); }
 
-/* 크게 보기: 화면을 덮는다(휴대폰은 뒤로가 닫는다) */
-.task-viewer { position: fixed; inset: 0; z-index: var(--z-modal); display: grid; place-items: center; padding: calc(var(--header-h) + var(--space-2)) var(--space-3) var(--space-4); background: color-mix(in srgb, #000 84%, transparent); }
-.task-viewer-img { max-width: 100%; max-height: 100%; object-fit: contain; border-radius: var(--radius-sm); background: var(--bg); }
-.task-viewer-bar { position: absolute; top: 0; left: 0; right: 0; display: flex; align-items: center; gap: var(--space-2); height: var(--header-h); padding: 0 var(--space-3); padding-top: env(safe-area-inset-top); color: #fff; font-size: var(--fs-sm); }
-.task-viewer-bar > span { flex: 1 1 auto; }
-.task-viewer-bar .btn { color: #fff; }
-.task-viewer-bar .btn svg { width: 16px; height: 16px; }
-.task-viewer-nav { position: absolute; top: 50%; display: grid; place-items: center; width: var(--touch); height: var(--touch); margin-top: calc(var(--touch) / -2); border: 0; border-radius: 999px; background: color-mix(in srgb, #000 50%, transparent); color: #fff; cursor: pointer; }
-.task-viewer-nav.is-prev { left: var(--space-2); }
-.task-viewer-nav.is-next { right: var(--space-2); }
-.task-viewer-nav svg { width: 22px; height: 22px; }
 .task-attach-file { width: 28px; height: 28px; margin: auto; color: var(--text-dim); position: absolute; inset: 0; }
 .task-docs { display: flex; flex-direction: column; gap: var(--space-1); margin: 0 0 var(--space-2); padding: 0; list-style: none; }
 .task-doc { position: relative; display: flex; align-items: center; gap: var(--space-2); min-width: 0; }
