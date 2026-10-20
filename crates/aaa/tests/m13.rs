@@ -4147,21 +4147,33 @@ fn task_board_reads_tasks_and_follows_file_edits() {
 
     let b = w.h.ok(&["task", "list"]);
     assert_eq!(b["sha256"].as_str(), Some(sha(&md).as_str()), "{b}");
-    assert_eq!(b["lists"], serde_json::json!([{"name": "Backlog", "notes": ["나중 일은 later.md에 모은다"]}, {"name": "빈 목록", "notes": []}]));
+    assert_eq!(
+        b["lists"],
+        serde_json::json!([{"name": "Backlog", "notes": ["나중 일은 later.md에 모은다"]}, {"name": "빈 목록", "notes": []}])
+    );
     let tasks = b["tasks"].as_array().unwrap();
-    let row = |title: &str| tasks.iter().find(|t| t["title"] == title).unwrap_or_else(|| panic!("{title}: {b}")).clone();
+    let row =
+        |title: &str| tasks.iter().find(|t| t["title"] == title).unwrap_or_else(|| panic!("{title}: {b}")).clone();
     assert_eq!((row("이은 일")["line"].as_u64(), row("이은 일")["thread"].as_str()), (Some(5), Some(lid)));
     assert_eq!(row("하위")["parent"].as_u64(), Some(5));
     let tidy = row("정리 (t-0101 S4 뒤, 사용자 지시 시)");
-    assert!(tidy["owner"].is_null() && tidy["problems"][0].as_str().unwrap().starts_with("owner 칸이 owner 꼴이 아님"), "{tidy}");
+    assert!(
+        tidy["owner"].is_null() && tidy["problems"][0].as_str().unwrap().starts_with("owner 칸이 owner 꼴이 아님"),
+        "{tidy}"
+    );
     assert_eq!(row("실패 조사")["owner"], Value::Null);
     assert_eq!(b["unlinked_threads"].as_array().unwrap().iter().map(|t| t["id"].clone()).collect::<Vec<_>>(), [oid]);
     assert_eq!(b["notes_files"], serde_json::json!([]));
     // context도 같은 파서다: 형식 어긋남을 보이고 사람 owner로 쓰지 않는다
     let text = String::from_utf8_lossy(&w.h.run(&["context", "demo", "--peek"]).stdout).to_string();
-    assert!(text.contains("형식 어긋남: owner 칸이 owner 꼴이 아님") && !text.contains("(t-0101 S4 뒤, 사용자 지시 시) ·"), "{text}");
+    assert!(
+        text.contains("형식 어긋남: owner 칸이 owner 꼴이 아님") && !text.contains("(t-0101 S4 뒤, 사용자 지시 시) ·"),
+        "{text}"
+    );
     // --from-task: 상태 메모 owner는 정확한 까닭으로 거부한다(예전에는 「사람(…)이 맡은 task」)
-    let e = w.h.json(&["thread", "start", "demo", "--from-task", "정리 (t-0101 S4 뒤, 사용자 지시 시)", "--kind", "dir"]).expect_err("형식 어긋남");
+    let e =
+        w.h.json(&["thread", "start", "demo", "--from-task", "정리 (t-0101 S4 뒤, 사용자 지시 시)", "--kind", "dir"])
+            .expect_err("형식 어긋남");
     assert!(e.contains("owner 칸 형식 어긋남, 고친 뒤 시작"), "{e}");
 
     // 보기 권한(worker 세션 안 CLI)도 읽는다

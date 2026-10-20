@@ -10,8 +10,8 @@ use std::path::Path;
 use std::sync::Arc;
 
 use aaa_proto::{
-    ErrorBody, ErrorCode, FrontResponse, MessageMode, OwnerChoice, ProjectContext, TaskBoard, TaskNotesFile, TaskThread,
-    ThreadGroup, ThreadStatus,
+    ErrorBody, ErrorCode, FrontResponse, MessageMode, OwnerChoice, ProjectContext, TaskBoard, TaskNotesFile,
+    TaskThread, ThreadGroup, ThreadStatus,
 };
 
 use crate::orch::StartArgs;

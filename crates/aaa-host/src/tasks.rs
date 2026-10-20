@@ -83,9 +83,7 @@ fn head(s: &str) -> String {
 
 /// owner 칸 글이 owner 꼴인가. 아니면 까닭(problems 한 줄)
 fn owner_shape(o: &str) -> Result<(), String> {
-    let bad = o.contains(['(', ')', ',', '·'])
-        || thread_number(o, 1).is_some()
-        || o.chars().count() > OWNER_MAX_CHARS;
+    let bad = o.contains(['(', ')', ',', '·']) || thread_number(o, 1).is_some() || o.chars().count() > OWNER_MAX_CHARS;
     if bad { Err(format!("{OWNER_SHAPE}: {}", head(o))) } else { Ok(()) }
 }
 
@@ -372,14 +370,19 @@ mod tests {
         let names: Vec<_> = lists.iter().map(|l| (l.name.as_str(), l.notes.clone())).collect();
         assert_eq!(
             names,
-            [
-                ("Backlog", vec!["나중 일은 later.md에 모은다".to_string()]),
-                ("빈 목록", vec![]),
-                ("Later", vec![]),
-            ]
+            [("Backlog", vec!["나중 일은 later.md에 모은다".to_string()]), ("빈 목록", vec![]), ("Later", vec![]),]
         );
         let v: Vec<_> = t.iter().map(|t| (t.title.as_str(), t.line, t.parent)).collect();
-        assert_eq!(v, [("상위", 6, None), ("하위 하나", 8, Some(6)), ("하위 둘", 11, Some(6)), ("다음", 12, None), ("셋", 15, None)]);
+        assert_eq!(
+            v,
+            [
+                ("상위", 6, None),
+                ("하위 하나", 8, Some(6)),
+                ("하위 둘", 11, Some(6)),
+                ("다음", 12, None),
+                ("셋", 15, None)
+            ]
+        );
         assert_eq!(t[0].raw, "- [ ] 상위 (me)");
         assert_eq!(t[1].raw, "- [ ] 하위 하나");
         // 블록 = task 줄 + 메모(끝 빈 줄 제외). 하위 task 줄은 상위 블록에 들지 않는다
@@ -410,7 +413,8 @@ mod tests {
             let e = check_notes_path(bad).unwrap_err();
             assert!(e.contains(why), "{bad}: {e}");
         }
-        let s = parse_notes("# 나중 작업 모음\n\n소개 줄\n\n## UI\n- 하나 `code`\n\n- 둘\n\n## 빈 절\n\n## 밸런스\n- 셋\n");
+        let s =
+            parse_notes("# 나중 작업 모음\n\n소개 줄\n\n## UI\n- 하나 `code`\n\n- 둘\n\n## 빈 절\n\n## 밸런스\n- 셋\n");
         let v: Vec<_> = s.iter().map(|s| (s.name.as_str(), s.lines.clone())).collect();
         assert_eq!(
             v,

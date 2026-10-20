@@ -3165,7 +3165,13 @@ fn render_task_board(s: &mut String, b: &aaa_proto::TaskBoard) {
             let _ = writeln!(s, "  {n}");
         }
         for t in mine {
-            let mark = if !t.problems.is_empty() { "▲" } else if t.thread.is_some() { "◉" } else { "○" };
+            let mark = if !t.problems.is_empty() {
+                "▲"
+            } else if t.thread.is_some() {
+                "◉"
+            } else {
+                "○"
+            };
             let owner = t.owner.as_ref().map(|o| format!(" ({o})")).unwrap_or_default();
             let thread = t.thread.as_ref().map(|x| format!(" · {x}")).unwrap_or_default();
             let pad = "  ".repeat(depth(t) + 1);
