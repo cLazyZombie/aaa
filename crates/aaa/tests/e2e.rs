@@ -4,6 +4,8 @@
 #![cfg(unix)]
 
 mod lab;
+#[path = "e2e/restart.rs"]
+mod restart;
 
 use std::time::Duration;
 
