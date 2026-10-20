@@ -3,7 +3,7 @@
 
 import path from "node:path";
 import {
-  shots, root, sleep, aaa, waitOutput, until, screenText, shot, pairPage, step, browser, openSettings, sentFrames, sentCount, inList, paneHash,
+  shots, root, aaa, waitOutput, until, screenText, shot, pairPage, step, browser, openSettings, sentFrames, sentCount, inList, paneHash,
 } from "../lib/harness.mjs";
 
 export default async function ({ ctl, page }) {
@@ -21,11 +21,12 @@ export default async function ({ ctl, page }) {
     // service worker는 /fonts/를 캐시 먼저로 맡아(plan §8.115) 다시 연 화면의 face가 아래 route를 거치지 않는다.
     // 다시 연 뒤에도 늦게 온 face를 받은 다음 재는지 보려고 이 기기는 worker 없이 연다(worker 캐시는 01-http-pwa가 본다)
     const fp = (await pairPage(browser, aaa("web", "pair").code, { width: 1280, height: 800 }, { init, serviceWorkers: "block" })).page;
-    // 그 face는 늦게 준다: 받기 전에 cell을 재면 대신 글꼴 너비가 남아 아래 1.5배 확인이 실패한다
+    // 그 face는 시험이 놓을 때 준다. 800ms 뒤면 충분하다는 어림 없이, 받기 전/후를 따로 확인한다.
     let wideFetches = 0;
+    let fontGate = Promise.withResolvers();
     await fp.context().route((url) => url.search === "?e2e-wide", async (r) => {
       wideFetches += 1;
-      await sleep(800);
+      await fontGate.promise;
       await r.continue();
     });
     await inList(fp, "pane-fontset");
@@ -34,21 +35,36 @@ export default async function ({ ctl, page }) {
     const cell = async () => {
       const m = await fp.evaluate(() => {
         const w = document.querySelector('[data-testid="terminal"] .xterm-screen').getBoundingClientRect().width;
-        const cols = Number(/(\d+)×\d+/.exec(document.querySelector(".term-title .muted").textContent)?.[1]);
-        return { w: w / cols, cols };
+        const size = /(\d+)×(\d+)/.exec(document.querySelector(".term-title .muted").textContent);
+        const cols = Number(size?.[1]);
+        const rows = Number(size?.[2]);
+        const term = document.querySelector('[data-testid="terminal"]');
+        const drawn = term.querySelector(".xterm-rows");
+        const style = getComputedStyle(drawn);
+        const measure = document.createElement("canvas").getContext("2d");
+        measure.font = `${style.fontSize} ${style.fontFamily}`;
+        return {
+          w: w / cols, cols, rows, drawnRows: drawn.childElementCount,
+          advance: measure.measureText("M").width, family: style.fontFamily,
+          fit: term.dataset.fit, pending: term.dataset.fitPending,
+        };
       });
       return { ...m, pty: aaa("pane", "list").panes.find((x) => x.name === "fontset").cols };
     };
     let last = null;
+    let first = null;
     const settle = (what, ok) =>
       until(what, async () => {
         last = await cell();
-        return last.cols === last.pty && ok(last);
+        // 제목/fit은 state 수신 때 먼저 바뀌고 xterm resize는 출력 큐 뒤다. 실제 그리드도 맞은 뒤 잰다.
+        // 0.02px는 공용 fontOk의 cell/영문 advance 단언과 같다.
+        return last.fit === "same" && !last.pending && last.cols === last.pty &&
+          last.drawnRows === last.rows && Math.abs(last.w - last.advance) <= 0.02 && ok(last);
       }).catch((e) => {
-        throw new Error(`${e.message} 마지막: ${JSON.stringify(last)}`);
+        throw new Error(`${e.message} 기준: ${JSON.stringify(first)} 마지막: ${JSON.stringify(last)}`);
       });
     await settle("처음 크기", () => true);
-    const first = last;
+    first = last;
     const field = () => fp.getByRole("dialog", { name: "설정" }).getByRole("textbox", { name: "터미널 글꼴" });
     const stored = () => fp.evaluate(() => localStorage.getItem("aaa:terminal-font-family"));
     // 찾아보기: 이름순, 검색, 비례폭 거절(값을 바꾸지 않음), 고정폭을 고르면 그것이 값
@@ -67,6 +83,12 @@ export default async function ({ ctl, page }) {
     await dlg.getByRole("button", { name: "터미널 글꼴에 설치된 글꼴 찾아보기" }).click();
     await dlg.getByRole("button", { name: "E2E Wide" }).click();
     if ((await field().inputValue()) !== '"E2E Wide"' || (await stored()) !== '"E2E Wide"') throw new Error(`고른 값 ${await field().inputValue()} / ${await stored()}`);
+    await until("넓은 글꼴 요청을 붙잡음", () => wideFetches === 1);
+    const loading = await fp.evaluate(() => [...document.fonts].find((f) => f.family.replaceAll('"', "") === "E2E Wide")?.status);
+    const waiting = await cell();
+    if (loading !== "loading" || waiting.family !== first.family || waiting.cols !== first.cols || Math.abs(waiting.w - first.w) >= 0.05)
+      throw new Error(`face를 받기 전에 크기를 바꿨다: ${loading} ${JSON.stringify(waiting)}`);
+    fontGate.resolve();
     // 그 face를 받은 뒤 넣으므로 cell은 1.5배, grid는 줄고 host PTY도 그 열 수
     await settle("넓은 글꼴로 다시 맞춤", (c) => Math.abs(c.w / first.w - 1.5) < 0.05 && c.cols < first.cols);
     if (wideFetches !== 1) throw new Error(`E2E Wide를 ${wideFetches}번 받았다`);
@@ -76,7 +98,11 @@ export default async function ({ ctl, page }) {
     await until("설정 닫힘", async () => (await fp.locator(".settings-dialog").count()) === 0);
     if ((await stored()) !== '"E2E Wide", Menlo') throw new Error(`거른 값 ${await stored()}`);
     // 다시 열어도 이 기기의 글꼴: 연 뒤 face를 받고 나서 잰다
-    await fp.reload();
+    fontGate = Promise.withResolvers();
+    const reloaded = fp.reload();
+    await until("다시 연 넓은 글꼴 요청을 붙잡음", () => wideFetches === 2);
+    fontGate.resolve();
+    await reloaded;
     await inList(fp, "pane-fontset");
     await settle("다시 연 화면도 넓은 글꼴", (c) => Math.abs(c.w / first.w - 1.5) < 0.05);
     if (wideFetches !== 2) throw new Error(`다시 열고 E2E Wide를 ${wideFetches}번째로 받지 않았다`);
