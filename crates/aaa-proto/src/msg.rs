@@ -1633,6 +1633,29 @@ pub enum FrontRequest {
         #[ts(optional, as = "Option<String>")]
         project: String,
     },
+    /// 「답할 것」(FRONT_API 1.74, plan §8.333, 보기 권한): 열린 coordinator 확인 필요 post와 답한 것 기록
+    Asks {
+        #[serde(default)]
+        #[ts(optional, as = "Option<String>")]
+        project: String,
+    },
+    /// coordinator 확인 필요 post를 「답함으로 표시」한다: 그 inbox 항목을 끝내고 기록에 남긴다
+    AskHandle {
+        #[serde(default)]
+        #[ts(optional, as = "Option<String>")]
+        project: String,
+        item: String,
+    },
+    /// 답한 것 기록을 지운다(모든 기기). `all`이면 모두
+    AskForget {
+        #[serde(default)]
+        #[ts(optional, as = "Option<String>")]
+        project: String,
+        #[serde(default)]
+        ids: Vec<String>,
+        #[serde(default)]
+        all: bool,
+    },
     PostUnmute {
         #[serde(default)]
         #[ts(optional, as = "Option<String>")]
@@ -2530,6 +2553,9 @@ impl FrontRequest {
             FrontRequest::Post { project, .. }
             | FrontRequest::PostStatus { project, .. }
             | FrontRequest::PostList { project, .. }
+            | FrontRequest::Asks { project, .. }
+            | FrontRequest::AskHandle { project, .. }
+            | FrontRequest::AskForget { project, .. }
             | FrontRequest::PostUnmute { project, .. }
             | FrontRequest::ThreadFile { project, .. }
             | FrontRequest::ThreadDiff { project, .. }
@@ -2602,6 +2628,7 @@ impl FrontRequest {
                 | FrontRequest::DeployContext
                 | FrontRequest::DeployStatus { .. }
                 | FrontRequest::PostStatus { .. }
+                | FrontRequest::Asks { .. }
                 | FrontRequest::Machines
                 | FrontRequest::Panes { .. }
                 | FrontRequest::Projects { .. }
@@ -2716,6 +2743,12 @@ pub enum FrontResponse {
     },
     Posts {
         posts: Vec<crate::PostEnvelope>,
+    },
+    /// 「답할 것」(FRONT_API 1.74): 열린 확인 필요 post, 답한 것(최신부터), 자동 정리 기간
+    Asks {
+        requests: Vec<crate::UserRequestView>,
+        done: Vec<crate::AskRecord>,
+        keep_days: u32,
     },
     Status(HostStatus),
     Machines {
@@ -2961,6 +2994,9 @@ pub enum FrontEvent {
     /// FRONT_API 1.43. 보고서 목록이 바뀌었다(보내기·열기·지우기·thread 사본). 웹 events 연결에만, 열 때와 바뀔 때 보낸다.
     /// `unseen`은 열지 않은 사용자 보고서 수(활동 막대 보고서 배지)
     Reports { unseen: u32 },
+    /// FRONT_API 1.74. 「답할 것」의 확인 필요 post나 답한 것 기록이 바뀌었다(웹은 `asks`를 다시 읽는다). 웹 events 연결에만, 열 때와
+    /// 바뀔 때 보낸다. `requests`는 열린 확인 필요 post 수
+    Asks { requests: u32 },
     /// FRONT_API 1.60. 프로젝트 TASKS.md가 바뀌었다(ticker가 크기·mtime을 보고 내용 hash로 확인한다). 웹은 `tasks`를 다시 읽는다.
     /// 옛 CLI는 모르는 사건을 풀지 못하므로 1.60 이상과 합의한 연결에만 보낸다.
     Tasks { project: String, sha256: String },

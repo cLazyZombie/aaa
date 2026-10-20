@@ -158,7 +158,10 @@ pub const AGENT_LINK: Version = Version { major: 1, minor: 10 };
 //       웹이 카드·칩을 그리지 않고, 새 요청은 옛 host가 모르는 요청으로 거절한다. Agent link 변경 없음.
 // 1.73: task 저장소 칸(plan §8.330): `TaskView.repo`·`TaskOp` Add/Update `repo`·`TaskBoard.repos`, 「바로 시작」 미리보기
 // `repo`·`local_machine`·`machine_order`. 옛 host는 생략한다. Agent link 변경 없음.
-pub const FRONT_API: Version = Version { major: 1, minor: 73 };
+// 1.74: 「답할 것」(plan §8.333): `Asks`·`AskHandle`·`AskForget` → `Asks`, 사건 `asks`, 질문 본문(ThreadQuestion `body`·
+//       QuestionChoice `body`·ThreadQuestions `files_base`). 옛 host는 생략하고 새 요청을 모르는 요청으로 거절해 웹이 확인 필요 post·
+//       답한 것 없이 질문만 보인다. Agent link 변경 없음.
+pub const FRONT_API: Version = Version { major: 1, minor: 74 };
 /// agent ↔ session host(내부). 세션이 몇 주 이어질 수 있으므로 이전 session host와 호환해야 한다.
 /// 1.1: `SessionRequest::Detect`(harness 상태 감지 입력). agent는 1.0 session host에 보내지 않고 `Screen`을 쓴다.
 /// 1.2: `SessionRequest::Colors`(색 질의에 답할 화면 색, plan §8.187). agent는 1.1 이하 session host에 보내지 않는다.

@@ -362,10 +362,16 @@ impl Host {
         actor: &str,
     ) -> Result<FrontResponse, ErrorBody> {
         let dir = self.project_dir(project)?;
+        let by = self.answered_by(actor);
         let actor = self.task_writer(project, actor)?;
         if ops.is_empty() {
             return Err(bad("동작이 없다"));
         }
+        // 「답할 것」의 할 일 확인 필요(plan §8.333): 이 편집으로 풀린 것을 기록에 남긴다
+        let attention_before: Vec<(String, String, Option<String>)> = self
+            .task_board(project)
+            .map(|b| b.tasks.into_iter().filter_map(|t| Some((t.title.clone(), t.attention?, t.thread))).collect())
+            .unwrap_or_default();
         // owner 판정에 쓸 목록(쓰기 lock 밖에서 한 번, 머신마다 묻는다)
         let checks_owner = ops.iter().any(|o| match o {
             TaskOp::Add { owner, .. } | TaskOp::Update { owner, .. } => {
@@ -400,6 +406,19 @@ impl Host {
         let ctx = task_edit::Ctx { owner_ok: &owner_ok, repo_ok: &repo_ok, removed: &removed };
         let (conflict, log_ids) = self.task_write(project, &dir, &ops, base_sha256.as_deref(), &actor, &ctx, false)?;
         let board = self.task_board(project)?;
+        for (title, why, thread) in &attention_before {
+            let now = tasks::find(&board.tasks, title);
+            if now.is_some_and(|t| t.attention.is_some()) {
+                continue;
+            }
+            let summary = match now {
+                None => "끝남으로 지움",
+                Some(t) if t.thread.is_none() => "연결만 풂",
+                Some(t) if t.thread != *thread => "다시 맡김",
+                Some(_) => "처리함",
+            };
+            self.record_task(project, title, why, summary, &by);
+        }
         let conflict = conflict.map(|(op, reason, title)| TaskConflict {
             op: op as u32,
             reason,

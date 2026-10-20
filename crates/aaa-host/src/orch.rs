@@ -1126,6 +1126,7 @@ impl Host {
             limited_until_ms: self.usage_limit(&r.project, &r.id),
             questions: r.report_hash.clone().filter(|_| !r.questions.is_empty()).map(|report_hash| {
                 Box::new(aaa_proto::ThreadQuestions {
+                    files_base: Some(crate::asks::question_files_base(&r.project, &r.id, &report_hash)),
                     report_hash,
                     items: r.questions.clone(),
                     answer: r.question_answer.clone(),

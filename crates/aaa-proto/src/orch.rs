@@ -900,6 +900,11 @@ pub struct ThreadQuestions {
     pub items: Vec<ThreadQuestion>,
     /// 답했으면 그 답(웹 카드·`aaa thread answer`). 모든 기기가 같은 값을 본다
     pub answer: Option<QuestionAnswerView>,
+    /// 본문 그림의 주소 앞부분(FRONT_API 1.74, plan §8.333): 본문의 `library/<경로>`는 `<files_base><경로>`로 읽는다.
+    /// 그 보고의 host 사본에서만 주고, 새 보고가 오면 옛 주소는 열리지 않는다. 옛 host는 생략한다
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub files_base: Option<String>,
 }
 
 /// 질문 하나: 글과 선택지(앞에서부터 A·B·C…)
@@ -907,6 +912,10 @@ pub struct ThreadQuestions {
 pub struct ThreadQuestion {
     pub text: String,
     pub choices: Vec<QuestionChoice>,
+    /// `### N. 질문` 머리 아래의 Markdown 본문(FRONT_API 1.74, plan §8.333): 그림·표·code·링크. 옛 꼴과 옛 host는 생략한다
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub body: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
@@ -916,6 +925,10 @@ pub struct QuestionChoice {
     pub description: Option<String>,
     /// 「(추천)」 표지가 있었다
     pub recommended: bool,
+    /// 선택지 줄 아래 두 칸 들여쓴 Markdown(시안 그림 등, FRONT_API 1.74). 없으면 생략한다
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub body: Option<String>,
 }
 
 /// 받은 답. `summary`는 「1A 2B」 꼴(직접 쓴 답이 있으면 「직접」)
@@ -932,17 +945,204 @@ pub struct QuestionAnswerView {
     pub at_ms: u64,
 }
 
+/// 「답할 것」 기록의 종류(plan §8.333): thread 질문, coordinator 확인 필요 post, 할 일 확인 필요
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+pub enum AskKind {
+    Question,
+    Request,
+    Task,
+}
+
+/// 답한 것 하나(plan §8.333, FRONT_API 1.74). 답할 때의 원문을 보존한다: 새 보고가 질문을 비워도 남고, host가 14일 뒤 지운다
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+pub struct AskRecord {
+    pub id: String,
+    pub kind: AskKind,
+    /// 질문은 thread 번호, 확인 필요 post는 inbox 항목 ID, 할 일은 task 제목
+    pub subject: String,
+    /// thread 제목·post 제목·task 제목
+    pub title: String,
+    /// 물은 때(보고를 받은 때·post를 받은 때). 모르면 답한 때
+    #[ts(type = "number")]
+    pub asked_ms: u64,
+    #[ts(type = "number")]
+    pub done_ms: u64,
+    /// 답한 곳(웹 기기 이름·`CLI`·`coordinator`)
+    pub by: String,
+    /// 「1A 2B」·「답함으로 표시」·「끝남으로 지움」
+    pub summary: String,
+    /// 질문 원문(본문·선택지 본문 포함)과 답
+    #[serde(default)]
+    pub items: Vec<ThreadQuestion>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub answer: Option<QuestionAnswerView>,
+    /// 확인 필요 post 본문·할 일 확인 필요 까닭(Markdown 글)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub body: Option<String>,
+    /// 보존한 파일의 주소 앞부분: `<files_base>library/<경로>`가 그림, `<files_base>report.md`가 그때 보고다
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub files_base: Option<String>,
+}
+
+/// 열린 coordinator 확인 필요 post(`post user --request --needs-user`, plan §8.333). inbox 항목이 끝나지 않은 동안 「답할 것」이다
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+pub struct UserRequestView {
+    /// inbox 항목 ID(「답함으로 표시」가 끝낸다)
+    pub id: String,
+    pub title: String,
+    /// post 본문(Markdown 글). 본문이 지워졌으면 inbox 요약
+    pub body: String,
+    #[ts(type = "number")]
+    pub created_ms: u64,
+}
+
 /// 질문당 선택지·질문 수 상한(글자 A–I, 숫자 1–9)
 pub const QUESTION_MAX: usize = 9;
+/// 질문 본문 한도(바이트). thread 사건은 모든 기기에 가므로 본문을 줄인다. 넘으면 잘랐다고 꼬리에 적는다
+pub const QUESTION_BODY_MAX: usize = 16 * 1024;
+/// 선택지 본문 한도(바이트)
+pub const CHOICE_BODY_MAX: usize = 4 * 1024;
 
-/// 보고 `## Questions` 절의 질문(plan §8.329). 「N. 질문」 줄 아래 「- A 선택지 (추천) — 까닭」 줄이 선택지다. 선택지가 둘이 안 되는
-/// 질문은 버린다(카드로 답할 수 없다). 글자는 차례로 읽고 표시는 자리로 다시 붙인다
+/// code fence 줄(``` 또는 ~~~로 시작)
+fn fence_line(line: &str) -> bool {
+    let t = line.trim_start();
+    t.starts_with("```") || t.starts_with("~~~")
+}
+
+/// `- A 선택지 (추천) — 까닭` 꼴 줄의 선택지. 앞 공백은 부르는 쪽이 정한다
+fn choice_line(text: &str) -> Option<QuestionChoice> {
+    let item = text.strip_prefix("- ").or_else(|| text.strip_prefix("* "))?;
+    let mut chars = item.chars();
+    let (Some(letter), Some(sep)) = (chars.next(), chars.next()) else { return None };
+    if !letter.is_ascii_alphabetic() || !matches!(sep, ' ' | ')' | '.') {
+        return None;
+    }
+    let rest = chars.as_str().trim_start_matches([' ', ')', '.']).trim();
+    let (label, description) = match rest.split_once(" — ") {
+        Some((l, d)) => (l.trim(), Some(d.trim().to_string()).filter(|d| !d.is_empty())),
+        None => (rest, None),
+    };
+    // Claude 메뉴처럼 영어 표지도 받는다(PromptCard `labelOf`)
+    let mut recommended = false;
+    let mut label = label.to_string();
+    for mark in ["(추천)", "(Recommended)", "(recommended)"] {
+        if label.contains(mark) {
+            recommended = true;
+            label = label.replace(mark, "");
+        }
+    }
+    let label = label.split_whitespace().collect::<Vec<_>>().join(" ");
+    (!label.is_empty()).then_some(QuestionChoice { label, description, recommended, body: None })
+}
+
+/// 앞뒤 빈 줄을 뗀 본문(없으면 None). `max`를 넘으면 글자 경계에서 자르고, 열린 code fence를 닫은 뒤 잘랐다고 적는다
+fn body_of(lines: &[String], max: usize) -> Option<String> {
+    let text = lines.join("\n");
+    let text = text.trim_matches('\n').trim_end();
+    if text.trim().is_empty() {
+        return None;
+    }
+    if text.len() <= max {
+        return Some(text.to_string());
+    }
+    let mut cut = max;
+    while !text.is_char_boundary(cut) {
+        cut -= 1;
+    }
+    let mut out = text[..cut].trim_end().to_string();
+    if out.lines().filter(|l| fence_line(l)).count() % 2 == 1 {
+        out.push_str("\n```");
+    }
+    out.push_str("\n\n*(본문이 길어 잘렸다. 나머지는 보고서에서 본다)*");
+    Some(out)
+}
+
+/// `### N. 질문` 블록: 끝의 선택지 목록(열 0의 `- A …` 줄과 그 아래 들여쓴 줄)을 떼고 그 앞은 본문이다. 본문 안의 보통 글머리나
+/// code fence 안 줄은 선택지로 읽지 않는다(꼬리 목록만)
+fn rich_question(text: String, block: &[String]) -> ThreadQuestion {
+    let mut fenced = vec![false; block.len()];
+    let mut inside = false;
+    for (i, l) in block.iter().enumerate() {
+        if fence_line(l) {
+            fenced[i] = true;
+            inside = !inside;
+        } else {
+            fenced[i] = inside;
+        }
+    }
+    let is_choice = |i: usize| !fenced[i] && choice_line(&block[i]).is_some();
+    let mut start = None;
+    for i in (0..block.len()).rev() {
+        let l = &block[i];
+        if is_choice(i) {
+            start = Some(i);
+        } else if !(l.trim().is_empty() || l.starts_with(' ') || l.starts_with('\t')) {
+            break;
+        }
+    }
+    let start = start.unwrap_or(block.len());
+    let mut choices: Vec<QuestionChoice> = Vec::new();
+    let mut extra: Vec<Vec<String>> = Vec::new();
+    for (i, l) in block.iter().enumerate().skip(start) {
+        if is_choice(i) {
+            choices.push(choice_line(l).expect("선택지 줄"));
+            extra.push(Vec::new());
+        } else if let Some(lines) = extra.last_mut() {
+            let indent = l.len() - l.trim_start_matches(' ').len();
+            lines.push(l[indent.min(2)..].to_string());
+        }
+    }
+    for (c, lines) in choices.iter_mut().zip(&extra) {
+        c.body = body_of(lines, CHOICE_BODY_MAX);
+    }
+    choices.truncate(QUESTION_MAX);
+    ThreadQuestion { text, choices, body: body_of(&block[..start], QUESTION_BODY_MAX) }
+}
+
+/// 보고 `## Questions` 절의 질문(plan §8.329·§8.333). 두 꼴을 읽는다.
+/// - `### N. 질문` 머리: 그 아래 Markdown 본문(그림·표·code·링크), 끝에 열 0의 `- A 선택지 (추천) — 까닭` 목록, 선택지 그림은
+///   그 줄 아래 두 칸 들여쓴 줄이다.
+/// - 옛 꼴 `N. 질문` 줄 아래 `- A 선택지 (추천) — 까닭` 줄(본문 없음).
+///
+/// 선택지가 둘이 안 되는 질문은 버린다(카드로 답할 수 없다). 글자는 차례로 읽고 표시는 자리로 다시 붙인다
 pub fn report_questions(report: &str) -> Vec<ThreadQuestion> {
     let mut out: Vec<ThreadQuestion> = Vec::new();
     let mut inside = false;
+    // 지금 모으는 `###` 질문(머리 글, 줄)과 그 안의 code fence
+    let mut rich: Option<(String, Vec<String>)> = None;
+    let mut fenced = false;
+    let finish = |rich: &mut Option<(String, Vec<String>)>, out: &mut Vec<ThreadQuestion>| {
+        if let Some((text, block)) = rich.take() {
+            out.push(rich_question(text, &block));
+        }
+    };
     for line in report.lines() {
-        if let Some(head) = line.strip_prefix("## ") {
+        if !fenced && let Some(head) = line.strip_prefix("## ") {
+            finish(&mut rich, &mut out);
             inside = head.trim() == "Questions";
+            continue;
+        }
+        if inside && !fenced && let Some(head) = line.strip_prefix("### ") {
+            let head = head.trim();
+            if let Some((n, rest)) = head.split_once(". ")
+                && !n.is_empty()
+                && n.chars().all(|c| c.is_ascii_digit())
+                && !rest.trim().is_empty()
+            {
+                finish(&mut rich, &mut out);
+                rich = Some((rest.trim().to_string(), Vec::new()));
+                continue;
+            }
+        }
+        if let Some((_, block)) = rich.as_mut() {
+            if fence_line(line) {
+                fenced = !fenced;
+            }
+            block.push(line.to_string());
             continue;
         }
         if line.starts_with('#') {
@@ -957,35 +1157,17 @@ pub fn report_questions(report: &str) -> Vec<ThreadQuestion> {
             && n.chars().all(|c| c.is_ascii_digit())
             && !rest.trim().is_empty()
         {
-            out.push(ThreadQuestion { text: rest.trim().to_string(), choices: Vec::new() });
-            continue;
-        }
-        let Some(item) = text.strip_prefix("- ").or_else(|| text.strip_prefix("* ")) else { continue };
-        let mut chars = item.chars();
-        let (Some(letter), Some(sep)) = (chars.next(), chars.next()) else { continue };
-        if !letter.is_ascii_alphabetic() || !matches!(sep, ' ' | ')' | '.') {
+            out.push(ThreadQuestion { text: rest.trim().to_string(), choices: Vec::new(), body: None });
             continue;
         }
         let Some(q) = out.last_mut() else { continue };
-        let rest = chars.as_str().trim_start_matches([' ', ')', '.']).trim();
-        let (label, description) = match rest.split_once(" — ") {
-            Some((l, d)) => (l.trim(), Some(d.trim().to_string()).filter(|d| !d.is_empty())),
-            None => (rest, None),
-        };
-        // Claude 메뉴처럼 영어 표지도 받는다(PromptCard `labelOf`)
-        let mut recommended = false;
-        let mut label = label.to_string();
-        for mark in ["(추천)", "(Recommended)", "(recommended)"] {
-            if label.contains(mark) {
-                recommended = true;
-                label = label.replace(mark, "");
-            }
-        }
-        let label = label.split_whitespace().collect::<Vec<_>>().join(" ");
-        if !label.is_empty() && q.choices.len() < QUESTION_MAX {
-            q.choices.push(QuestionChoice { label, description, recommended });
+        if let Some(c) = choice_line(text)
+            && q.choices.len() < QUESTION_MAX
+        {
+            q.choices.push(c);
         }
     }
+    finish(&mut rich, &mut out);
     out.retain(|q| q.choices.len() >= 2);
     out.truncate(QUESTION_MAX);
     out
@@ -1531,6 +1713,30 @@ mod tests {
         assert_eq!((qs[1].choices[0].label.as_str(), qs[1].choices[0].recommended), ("넣는다", true));
         assert_eq!(qs[1].choices.len(), 3, "글자 줄은 그 앞 질문에 붙는다");
         assert!(report_questions("## Report\n1. 질문\n- A 하나\n- B 둘\n").is_empty());
+    }
+
+    #[test]
+    fn report_questions_read_rich_bodies_and_choice_pictures() {
+        let report = "[결정 필요] 질문 2개: 시안\n\n## Questions\n### 1. 왼쪽 막대 시안\n지금 모양:\n\n![지금](library/now.png)\n\n\
+            | 안 | 차이 |\n| --- | --- |\n| A | 한 화면 |\n\n- 보통 글머리\n- I think 이것도 본문\n\n```text\n- A 코드 안 줄\n```\n\n\
+            - A 따로 된 화면 (추천) — 한 번에 답함\n  ![A안](library/A.png)\n\n  둘째 줄\n- B 사이드바 목록 — 목록이 옆에\n  ![B안](library/B.png)\n\n\
+            ### 2. 정리 기간\n- A 14일 (추천)\n- B 30일\n\n## Next\n- 다음\n";
+        let qs = report_questions(report);
+        assert_eq!(qs.len(), 2, "{qs:?}");
+        assert_eq!(qs[0].text, "왼쪽 막대 시안");
+        let body = qs[0].body.as_deref().unwrap();
+        assert!(body.starts_with("지금 모양:") && body.contains("![지금](library/now.png)") && body.contains("| A | 한 화면 |"));
+        assert!(body.contains("- I think 이것도 본문") && body.ends_with("```"), "본문 글머리·code 안 줄은 본문이다: {body}");
+        let c = &qs[0].choices;
+        assert_eq!(c.len(), 2);
+        assert_eq!((c[0].label.as_str(), c[0].recommended, c[0].description.as_deref()), ("따로 된 화면", true, Some("한 번에 답함")));
+        assert_eq!(c[0].body.as_deref(), Some("![A안](library/A.png)\n\n둘째 줄"));
+        assert_eq!(c[1].body.as_deref(), Some("![B안](library/B.png)"));
+        assert_eq!((qs[1].text.as_str(), qs[1].body.as_deref(), qs[1].choices.len()), ("정리 기간", None, 2));
+        // 한도: 글자 경계에서 자르고 열린 fence를 닫는다
+        let long = format!("## Questions\n### 1. 긴 본문\n```\n{}\n```\n- A 하나\n- B 둘\n", "가".repeat(QUESTION_BODY_MAX));
+        let b = report_questions(&long)[0].body.clone().unwrap();
+        assert!(b.len() < QUESTION_BODY_MAX + 100 && b.contains("```\n\n*(본문이 길어 잘렸다"), "{}", &b[b.len() - 80..]);
     }
 
     #[test]
