@@ -293,6 +293,9 @@ impl Db {
                action TEXT NOT NULL, list TEXT NOT NULL, from_list TEXT, title TEXT NOT NULL, before TEXT, after TEXT,
                thread TEXT, restored_by INTEGER);
              CREATE INDEX IF NOT EXISTS task_log_project ON task_log(project, id);
+             CREATE TABLE IF NOT EXISTS asks(
+               project TEXT NOT NULL, id TEXT NOT NULL, kind TEXT NOT NULL, subject TEXT NOT NULL,
+               done_ms INTEGER NOT NULL, data TEXT NOT NULL, PRIMARY KEY(project, id));
              CREATE TABLE IF NOT EXISTS push_subs(
                endpoint TEXT PRIMARY KEY, p256dh TEXT NOT NULL, auth TEXT NOT NULL, device TEXT NOT NULL,
                created_at INTEGER NOT NULL);",
@@ -1316,7 +1319,7 @@ fn scrub_audit_env(conn: &mut Connection) -> Result<()> {
 }
 
 /// project 열이 있는 표(옛 db에 남은 `merge_queue`는 읽지 않아 옮기지 않는다, 새 db에는 없다 — §8.135)
-const PROJECT_TABLES: [&str; 9] = [
+const PROJECT_TABLES: [&str; 10] = [
     "threads",
     "flow_events",
     "messages",
@@ -1326,6 +1329,7 @@ const PROJECT_TABLES: [&str; 9] = [
     "library_reports",
     "posts",
     "task_log",
+    "asks",
 ];
 
 fn task_log_row(r: &rusqlite::Row) -> rusqlite::Result<aaa_proto::TaskLogEntry> {
@@ -1450,6 +1454,66 @@ impl Db {
         tx.commit()?;
         Ok(())
     }
+    /// inbox 항목 ID(`<시각>-post-<번호>`)의 post 봉투. 본문을 정리했으면 None
+    pub(crate) fn post_of_item(&self, project: &str, item: &str) -> Result<Option<aaa_proto::PostEnvelope>> {
+        let Some((_, id)) = item.rsplit_once("-post-") else { return Ok(None) };
+        let c = self.conn.lock().unwrap();
+        let data: Option<String> = c
+            .query_row(
+                "SELECT data FROM posts WHERE project=?1 AND data IS NOT NULL AND json_extract(data,'$.id')=?2",
+                params![project, id],
+                |r| r.get(0),
+            )
+            .optional()?;
+        Ok(data.map(|d| serde_json::from_str(&d)).transpose()?)
+    }
+
+    /// 「답할 것」 기록 하나를 넣는다(plan §8.345)
+    pub(crate) fn ask_put(&self, project: &str, r: &aaa_proto::AskRecord) -> Result<()> {
+        let kind = serde_json::to_value(r.kind)?.as_str().unwrap_or_default().to_string();
+        self.conn.lock().unwrap().execute(
+            "INSERT INTO asks(project,id,kind,subject,done_ms,data) VALUES(?1,?2,?3,?4,?5,?6)
+             ON CONFLICT(project,id) DO UPDATE SET data=excluded.data, done_ms=excluded.done_ms",
+            params![project, r.id, kind, r.subject, r.done_ms as i64, serde_json::to_string(r)?],
+        )?;
+        Ok(())
+    }
+
+    /// 프로젝트의 기록, 최신부터
+    pub(crate) fn ask_list(&self, project: &str) -> Result<Vec<aaa_proto::AskRecord>> {
+        let c = self.conn.lock().unwrap();
+        let mut st = c.prepare("SELECT data FROM asks WHERE project=?1 ORDER BY done_ms DESC, id DESC")?;
+        let rows = st.query_map([project], |r| r.get::<_, String>(0))?.collect::<rusqlite::Result<Vec<_>>>()?;
+        rows.iter().map(|d| Ok(serde_json::from_str(d)?)).collect()
+    }
+
+    /// 기록을 지우고 지운 ID를 돌려준다. `ids`가 None이면 모두
+    pub(crate) fn ask_delete(&self, project: &str, ids: Option<&[String]>) -> Result<Vec<String>> {
+        let mut c = self.conn.lock().unwrap();
+        let tx = c.transaction()?;
+        let all: Vec<String> = tx
+            .prepare("SELECT id FROM asks WHERE project=?1")?
+            .query_map([project], |r| r.get(0))?
+            .collect::<rusqlite::Result<_>>()?;
+        let gone: Vec<String> = all.into_iter().filter(|id| ids.is_none_or(|ids| ids.contains(id))).collect();
+        for id in &gone {
+            tx.execute("DELETE FROM asks WHERE project=?1 AND id=?2", params![project, id])?;
+        }
+        tx.commit()?;
+        Ok(gone)
+    }
+
+    /// 답한 지 오래된 기록을 지우고 (project, id)를 돌려준다
+    pub(crate) fn ask_prune(&self, before_ms: u64) -> Result<Vec<(String, String)>> {
+        let c = self.conn.lock().unwrap();
+        let gone = c
+            .prepare("SELECT project, id FROM asks WHERE done_ms < ?1")?
+            .query_map([before_ms as i64], |r| Ok((r.get(0)?, r.get(1)?)))?
+            .collect::<rusqlite::Result<Vec<(String, String)>>>()?;
+        c.execute("DELETE FROM asks WHERE done_ms < ?1", [before_ms as i64])?;
+        Ok(gone)
+    }
+
     pub(crate) fn post_list(&self, project: &str) -> Result<Vec<aaa_proto::PostEnvelope>> {
         let c = self.conn.lock().unwrap();
         let mut st =

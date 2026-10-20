@@ -40,10 +40,10 @@ export default async function () {
       await sidebarIs(p,{panel:"work",collapsed:false},"옛 special 기억은 작업 패널");
       if (await p.getByTestId("activity-special").count()) throw new Error("특수 단추가 남았다");
       same(await sidebar(p), { panel: "work", collapsed: false, column: "flex", selected: "activity-work", title: "작업" }, "처음");
-      // 예전 프로젝트·에이전트 두 패널은 「작업」 하나다(plan §8.280): L3 자동화·W4 알림함(plan §8.343)을 더해 막대 패널 단추는
-      // 작업·머신·자동화·알림함 넷
+      // 예전 프로젝트·에이전트 두 패널은 「작업」 하나다(plan §8.280): L3 자동화·W4 알림함(plan §8.343)과 맨 위 「답할 것」(plan §8.345)을
+      // 더해 막대 패널 단추는 답할 것·작업·머신·자동화·알림함 다섯
       const tabs = await p.evaluate(() => [...document.querySelectorAll('.activity-bar [role="tab"]')].map((e) => e.dataset.testid).join(","));
-      if (tabs !== "activity-work,activity-machines,activity-automations,activity-inbox") throw new Error(`패널 단추: ${tabs}`);
+      if (tabs !== "activity-asks,activity-work,activity-machines,activity-automations,activity-inbox") throw new Error(`패널 단추: ${tabs}`);
       await p.getByTestId("pane-t1").waitFor();
       const viewWidth = () => p.evaluate(() => Math.round(document.querySelector(".view").getBoundingClientRect().width));
       const wide = await viewWidth();
@@ -73,7 +73,7 @@ export default async function () {
       await p.keyboard.press("End");
       await focusIs(p, "End 알림함 단추", '[data-testid="activity-inbox"]');
       await p.keyboard.press("Home");
-      await focusIs(p, "Home 작업 단추", '[data-testid="activity-work"]');
+      await focusIs(p, "Home 답할 것 단추", '[data-testid="activity-asks"]');
       const tabStops = await p.evaluate(() => [...document.querySelectorAll('.activity-bar [role="tab"]')].map((e) => ({ id: e.dataset.testid, stop: e.tabIndex })));
       if (!tabStops.some((t) => t.id === "activity-machines") || tabStops.some((t) => t.stop !== (t.id === "activity-machines" ? 0 : -1))) throw new Error(`Tab이 머무는 단추가 고른 패널 하나가 아니다: ${JSON.stringify(tabStops)}`);
       // Mod+Shift+B(참고 toggle-sidebar): 터미널에 focus가 있어도 앱이 가져가 접고 편다

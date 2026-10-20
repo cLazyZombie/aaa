@@ -208,6 +208,9 @@ impl Host {
 
     pub(crate) fn inbox_publish(&self, item: &InboxItem) {
         self.bump(); // 사용자 요청의 설치 앱 배지도 다시 읽는다
+        if crate::asks::is_user_request(item) {
+            self.asks_bump();
+        }
         self.inbox_bump(); // 웹 알림함 배지·패널도
         let dir = self.inbox_dir(&item.project);
         if let Err(e) = std::fs::create_dir_all(&dir)
@@ -286,7 +289,7 @@ impl Host {
         }
         let pick: Vec<InboxItem> = open.into_iter().filter(|i| all || ids.contains(&i.id)).collect();
         let n = pick.len();
-        self.inbox_finish(project, pick).map_err(internal)?;
+        self.inbox_finish(project, pick, &self.answered_by(actor)).map_err(internal)?;
         self.db.audit(actor, "inbox_done", &format!("{project} {n}"));
         Ok((n as u32, fit_inbox(self.db.inbox_list(Some(project), false).map_err(internal)?, INBOX_REPLY_BYTES)))
     }
@@ -296,19 +299,23 @@ impl Host {
         let pick: Vec<InboxItem> =
             self.db.inbox_list(Some(project), false).unwrap_or_default().into_iter().filter(|i| f(i)).collect();
         if !pick.is_empty()
-            && let Err(e) = self.inbox_finish(project, pick)
+            && let Err(e) = self.inbox_finish(project, pick, "host")
         {
             tracing::warn!("inbox 항목을 끝내지 못했다: {e:#}");
         }
     }
 
-    fn inbox_finish(&self, project: &str, items: Vec<InboxItem>) -> anyhow::Result<()> {
+    /// `by`는 끝낸 곳(확인 필요 post의 「답한 것」 기록에 남는다)
+    fn inbox_finish(&self, project: &str, items: Vec<InboxItem>, by: &str) -> anyhow::Result<()> {
         let dir = self.inbox_dir(project);
         let now = aaa_common::util::now_ms();
         for mut i in items {
             i.done = true;
             i.done_at_ms = Some(now);
             self.db.inbox_put(&i)?;
+            if crate::asks::is_user_request(&i) {
+                self.record_request(&i, by, now);
+            }
             self.bump(); // 이미 처리한 사용자 요청은 다른 기기에서도 줄어든다
             let _ = std::fs::create_dir_all(dir.join("done"));
             let _ = std::fs::rename(dir.join(format!("{}.md", i.id)), dir.join("done").join(format!("{}.md", i.id)));
@@ -359,7 +366,7 @@ impl Host {
 
     async fn tick(self: &Arc<Self>) {
         self.refresh_usage();
-        // 알려진 만료 시각에 다가간 계정(곧 만료·끊김)을 알림함에 낸다(plan §8.344)
+        // 알려진 만료 시각에 다가간 계정(곧 만료·끊김)을 알림함에 낸다(plan §8.346)
         self.account_health_pass();
         self.settle_background_waits();
         if let Err(e) = self.library_retention_pass_at(aaa_common::util::now_ms()) {
@@ -393,6 +400,7 @@ impl Host {
             self.task_clean_pass(&p.name, dir);
             self.nudge(&p.name, dir).await;
         }
+        self.ask_prune_pass(aaa_common::util::now_ms());
         let keep = Duration::from_secs(self.cfg.projects.inbox_done_days * 86_400).as_millis() as u64;
         if let Ok(gone) = self.db.inbox_prune(aaa_common::util::now_ms().saturating_sub(keep)) {
             for (project, id) in gone {

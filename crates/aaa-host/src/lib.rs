@@ -6,6 +6,7 @@
 mod adopt;
 mod answer;
 mod app_badge;
+mod asks;
 mod attach;
 /// 자동화 정본 타입의 편집기용 JSON Schema. host 상태를 읽지 않는다.
 pub fn automation_schema() -> String {
@@ -434,6 +435,8 @@ pub struct Host {
     pub changed: tokio_watch::Sender<u64>,
     /// 보고서 목록이 바뀌었다(보내기·열기·지우기·thread 사본, plan §8.256). 웹 events가 안 본 수를 다시 보낸다
     pub reports_changed: tokio_watch::Sender<u64>,
+    /// 「답할 것」의 확인 필요 post·답한 것 기록이 바뀌었다(plan §8.345). 웹 events가 `asks` 사건을 보낸다
+    pub asks_changed: tokio_watch::Sender<u64>,
     /// 알림함이 바뀐 횟수(웹 알림함 배지가 다시 읽는다)
     pub inbox_changed: tokio_watch::Sender<u64>,
     /// host 계정이 바뀐 횟수(로그인 진행·끝, 기본, 메일·상태). 웹 계정 페이지가 다시 읽는다
@@ -669,6 +672,7 @@ impl Host {
             inner: Mutex::new(Inner { machines, panes: HashMap::new(), generation: 0, colors: Default::default() }),
             changed: tokio_watch::channel(0).0,
             reports_changed: tokio_watch::channel(0).0,
+            asks_changed: tokio_watch::channel(0).0,
             inbox_changed: tokio_watch::channel(0).0,
             accounts_changed: tokio_watch::channel(0).0,
             enroll: Mutex::new(Enroll::default()),
@@ -1276,7 +1280,7 @@ impl Host {
         {
             return Err(err(ErrorCode::Forbidden, "계정 등록·삭제는 host의 aaa 세션 밖 터미널에서 한다"));
         }
-        // 로그인·기본 계정은 사람이 한다: host의 세션 밖 터미널이나 웹 조작 기기(FRONT_API 1.78, 관리 GUI W5a). 세션 안 agent·worker·
+        // 로그인·기본 계정은 사람이 한다: host의 세션 밖 터미널이나 웹 조작 기기(FRONT_API 1.79, 관리 GUI W5a). 세션 안 agent·worker·
         // evaluator·detached는 Local이어도 거부한다
         if matches!(
             &req,
@@ -1400,6 +1404,9 @@ impl Host {
             }
             FrontRequest::PostList { project } => self.post_list(&project),
             FrontRequest::PostUnmute { project, thread } => self.post_unmute(&project, &thread, actor),
+            FrontRequest::Asks { project } => self.asks_view(&project),
+            FrontRequest::AskHandle { project, item } => self.ask_handle(&project, &item, actor),
+            FrontRequest::AskForget { project, ids, all } => self.ask_forget(&project, &ids, all, actor),
             FrontRequest::Status => Ok(FrontResponse::Status(HostStatus {
                 host_id: self.host_id.clone(),
                 software: util::software(),
@@ -3007,7 +3014,7 @@ impl Host {
 
     /// 공개 origin. 아직 serve 상태를 읽지 못했으면(새 binary로 바꾼 뒤 tailscale을 못 읽음) aaa가 만든 공개
     /// (`publish_port`)와 이름으로 대신한다: 둘 다 포트까지 안다
-    fn public_origin(&self) -> Option<String> {
+    pub(crate) fn public_origin(&self) -> Option<String> {
         if let Some(o) = self.db.meta("publish_origin").ok().flatten() {
             return Some(o);
         }

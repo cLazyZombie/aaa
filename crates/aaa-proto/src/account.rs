@@ -18,7 +18,7 @@ pub struct AccountView {
     pub harness: String,
     #[ts(type = "number")]
     pub version: u64,
-    /// 공식 CLI가 로그인 때 알린 메일(FRONT_API 1.78, 관리 GUI W5a). 조작 기기와 host의 세션 밖 CLI에만 싣는다. 모르면 생략
+    /// 공식 CLI가 로그인 때 알린 메일(FRONT_API 1.79, 관리 GUI W5a). 조작 기기와 host의 세션 밖 CLI에만 싣는다. 모르면 생략
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub email: Option<String>,
@@ -44,7 +44,7 @@ pub struct AccountView {
     pub health: Option<AccountHealth>,
 }
 
-/// 계정 인증 상태(plan §8.344). 판정은 실제 쓰임(Codex 갱신 거부)과 알려진 만료 시각뿐이다: 제공자에게 따로 묻지 않는다
+/// 계정 인증 상태(plan §8.346). 판정은 실제 쓰임(Codex 갱신 거부)과 알려진 만료 시각뿐이다: 제공자에게 따로 묻지 않는다
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "snake_case")]
 pub enum AccountHealth {
@@ -108,7 +108,7 @@ pub struct AccountLoginView {
     /// waiting·succeeded·failed·cancelled, 그리고 `mismatch`(다시 로그인에 다른 메일이 들어왔다: `account_login_confirm`을 기다린다)·
     /// `kept`(바꾸지 않고 옛 인증을 남겼다)
     pub state: String,
-    /// 다시 로그인할 때 그 별칭에 기록된 메일(「이 메일로 로그인하세요」, FRONT_API 1.78). 조작 기기·세션 밖 CLI에만
+    /// 다시 로그인할 때 그 별칭에 기록된 메일(「이 메일로 로그인하세요」, FRONT_API 1.79). 조작 기기·세션 밖 CLI에만
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub expect_email: Option<String>,

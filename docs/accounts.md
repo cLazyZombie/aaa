@@ -68,7 +68,7 @@ aaa account remove work-codex
 
 Claude 입력은 `claude setup-token`으로 발급한 OAuth 토큰 한 줄이다. Codex 입력은 사람이 계정별
 `CODEX_HOME`으로 로그인하고 `cli_auth_credentials_store = "file"`로 저장한 auth.json이다.
-로그인·로그인 상태/취소/확인·기본 변경은 사람이 한다: host의 aaa 세션 밖 로컬 CLI나 웹 조작 기기(FRONT_API 1.78).
+로그인·로그인 상태/취소/확인·기본 변경은 사람이 한다: host의 aaa 세션 밖 로컬 CLI나 웹 조작 기기(FRONT_API 1.79).
 pane 안 agent·worker·evaluator·detached와 보기 전용 기기는 거부한다. 등록(`import`)·삭제는 host의 aaa 세션 밖 로컬 CLI에서만 가능하다.
 thread에는 별칭만 표시한다. 기본 설정 조회에는 인증값이 없다.
 

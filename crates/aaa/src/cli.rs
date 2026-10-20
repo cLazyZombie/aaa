@@ -425,31 +425,49 @@ enum ProjectCmd {
     /// 지금 설정 값(`set`이 고치는 key 모두, 잘못된 값은 host가 쓰는 기본값으로)
     Show { project: String },
     /// 멈춘다: ticker가 건너뛰고 `thread start`를 거부한다. 도는 agent는 멈추지 않는다
-    Pause { project: String },
+    Pause {
+        /// (옛 꼴의 프로젝트, 생략한다)
+        #[arg(hide = true)]
+        project: Option<String>,
+    },
     /// 멈춘 프로젝트를 다시 돌린다
-    Resume { project: String },
+    Resume {
+        /// (옛 꼴의 프로젝트, 생략한다)
+        #[arg(hide = true)]
+        project: Option<String>,
+    },
     /// 보관한다: 멈추고, 목록에서 숨기고, 살아 있는 pane(coordinator·thread)을 닫는다. `project open`을 거부한다
-    Archive { project: String },
+    Archive {
+        /// (옛 꼴의 프로젝트, 생략한다)
+        #[arg(hide = true)]
+        project: Option<String>,
+    },
     /// 보관을 푼다
     Unarchive { project: String },
     /// 폴더를 휴지통(projects root의 .trash)으로 옮기고 host 기록을 그 안에 남긴다. worktree·branch·PR은 건드리지 않는다
     Delete {
-        project: String,
+        /// (옛 꼴의 프로젝트, 생략한다)
+        #[arg(hide = true)]
+        project: Option<String>,
         /// coordinator나 thread pane이 살아 있어도
         #[arg(long)]
         force: bool,
     },
     /// 이름(폴더 이름)을 바꾼다. 끝나지 않은 thread나 도는 coordinator가 있으면 거부한다
     Rename {
-        project: String,
         new_name: String,
+        /// (옛 꼴 `<프로젝트> <새 이름>`의 새 이름)
+        #[arg(hide = true)]
+        legacy: Option<String>,
         /// 할 일만 보이고 바꾸지 않는다
         #[arg(long)]
         dry_run: bool,
     },
     /// 끝난 thread가 남긴 worktree·병합된 branch를 그 머신에서 치운다(force 없음)
     Sweep {
-        project: String,
+        /// (옛 꼴의 프로젝트, 생략한다)
+        #[arg(hide = true)]
+        project: Option<String>,
         /// 목록만
         #[arg(long)]
         dry_run: bool,
@@ -2810,16 +2828,20 @@ fn routine_approve(json: bool, project: String, name: String) -> Result<ExitCode
 fn project_cmd(json: bool, cmd: ProjectCmd) -> Result<ExitCode> {
     match cmd {
         ProjectCmd::List { all } => front(json, FrontRequest::Projects { all }),
-        ProjectCmd::Pause { project } => lifecycle(json, project, ProjectAction::Pause),
-        ProjectCmd::Resume { project } => lifecycle(json, project, ProjectAction::Resume),
-        ProjectCmd::Archive { project } => lifecycle(json, project, ProjectAction::Archive),
+        ProjectCmd::Pause { project } => lifecycle(json, project_or_here(project)?, ProjectAction::Pause),
+        ProjectCmd::Resume { project } => lifecycle(json, project_or_here(project)?, ProjectAction::Resume),
+        ProjectCmd::Archive { project } => lifecycle(json, project_or_here(project)?, ProjectAction::Archive),
         ProjectCmd::Unarchive { project } => lifecycle(json, project, ProjectAction::Unarchive),
-        ProjectCmd::Delete { project, force } => front(json, FrontRequest::ProjectDelete { project, force }),
-        ProjectCmd::Rename { project, new_name, dry_run } => {
+        ProjectCmd::Delete { project, force } => {
+            front(json, FrontRequest::ProjectDelete { project: project_or_here(project)?, force })
+        }
+        ProjectCmd::Rename { new_name, legacy, dry_run } => {
+            let (project, new_name) = on_target(new_name, legacy)?;
             front(json, FrontRequest::ProjectRename { project, to: new_name, dry_run })
         }
         ProjectCmd::Open { project, profile, new } => front(json, FrontRequest::ProjectOpen { project, profile, new }),
         ProjectCmd::Sweep { project, dry_run, yes } => {
+            let project = project_or_here(project)?;
             if dry_run || yes {
                 return front(json, FrontRequest::ProjectSweep { project, dry_run });
             }
@@ -3586,6 +3608,15 @@ fn render_context(s: &mut String, c: &aaa_proto::ProjectContext) {
     }
     let _ = writeln!(s, "프로젝트 {} ({})", c.project, c.path);
     let _ = writeln!(s, "thread 시작: start_threads={} (propose면 제안하고 승인을 기다린다)", c.start_threads);
+    match &c.web_url {
+        Some(u) => {
+            let _ = writeln!(
+                s,
+                "웹 주소: {u} (채팅의 질문·보고서 링크: [t-NNNN 질문]({u}/#question=t-NNNN) · [제목]({u}/#report=<이름>))"
+            );
+        }
+        None => s.push_str("웹 주소: 공개 안 함 (채팅에는 aaa:question/<thread>·aaa:report/<이름>을 쓴다)\n"),
+    }
     let _ = writeln!(s, "\nTasks(TASKS.md, coordinator와 사용자가 고친다: aaa task …, 웹 할 일 화면):");
     if c.tasks.is_empty() {
         s.push_str("  (없음)\n");
@@ -4272,7 +4303,7 @@ fn render_front(r: &FrontResponse) -> String {
         FrontResponse::Accounts { accounts } => {
             for a in accounts {
                 let _ = write!(s, "{}\t{}\t판 {}", a.name, a.harness, a.version);
-                // 1.78 host는 메일·plan·인증일(UTC 날짜)·상태를 준다. 옛 host는 셋째 칸까지다
+                // 1.79 host는 메일·plan·인증일(UTC 날짜)·상태를 준다. 옛 host는 셋째 칸까지다
                 if let Some(h) = a.health {
                     let day = |ms: Option<u64>| ms.map(|ms| aaa_common::util::utc_text(ms)[..10].to_string());
                     let state = match h {
@@ -4359,6 +4390,16 @@ fn render_front(r: &FrontResponse) -> String {
             for p in posts {
                 let _ = writeln!(s, "{}\t{}\t{}", p.id, p.input.to, p.input.title);
             }
+        }
+        // 「답할 것」(웹 화면이 쓴다): CLI는 확인 필요 post와 답한 것을 한 줄씩 보인다
+        FrontResponse::Asks { requests, done, keep_days } => {
+            for r in requests {
+                let _ = writeln!(s, "답할 것\t{}\t{}", r.id, r.title);
+            }
+            for d in done {
+                let _ = writeln!(s, "답한 것\t{}\t{}\t{}\t{}", d.id, d.title, d.summary, d.by);
+            }
+            let _ = writeln!(s, "(답한 것은 {keep_days}일 뒤 지운다)");
         }
         // 웹 화면들의 공유 설정: CLI는 문서를 그대로 보인다
         FrontResponse::Preferences(p) => {
@@ -4557,6 +4598,27 @@ fn debug_since(value: &str) -> Result<u64> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn project_lifecycle_help_omits_legacy_project_arguments() {
+        use super::Cli;
+        use clap::Parser as _;
+        for verb in ["pause", "resume", "archive", "delete", "sweep", "rename"] {
+            let help = Cli::try_parse_from(["aaa", "project", verb, "--help"]).err().unwrap().to_string();
+            assert!(!help.contains("[PROJECT]") && !help.contains("<PROJECT>") && !help.contains("LEGACY"), "{help}");
+            let mut args = vec!["aaa", "project", verb];
+            if verb == "rename" {
+                assert!(help.contains("<NEW_NAME>"), "{help}");
+                assert!(Cli::try_parse_from(&args).is_err(), "새 이름은 필수다");
+                args.push("next");
+            }
+            assert!(Cli::try_parse_from(&args).is_ok(), "{args:?}");
+            args.push("old");
+            assert!(Cli::try_parse_from(&args).is_ok(), "옛 꼴: {args:?}");
+            args.push("extra");
+            assert!(Cli::try_parse_from(&args).is_err(), "넘치는 인자: {args:?}");
+        }
+    }
+
     #[test]
     fn update_accepts_release_version_and_keeps_local_and_subcommand_modes() {
         use super::{Cli, Cmd};

@@ -125,7 +125,7 @@ impl Host {
             ProjectStatus::Active => Ok(()),
             ProjectStatus::Paused => Err(err(
                 ErrorCode::BadRequest,
-                format!("`{project}`는 멈춰 있어 thread를 시작하지 않는다(`aaa project resume {project}`)"),
+                format!("`{project}`는 멈춰 있어 thread를 시작하지 않는다(`aaa project resume`)"),
             )),
             ProjectStatus::Archived => Err(err(
                 ErrorCode::BadRequest,

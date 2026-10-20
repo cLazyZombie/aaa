@@ -1,13 +1,13 @@
-// 설정 「계정」 규칙(src/accountsModel.ts, 관리 GUI W5a, plan §8.344). 권한·메일 싣기·상태 판정의 정본은 host다
+// 설정 「계정」 규칙(src/accountsModel.ts, 관리 GUI W5a, plan §8.346). 권한·메일 싣기·상태 판정의 정본은 host다
 // (account_meta/tests.rs, m13 `host_relogin_checks_the_email_and_asks_before_switching`).
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import { canAccounts, day, groupAccounts, healthWord, loginText, validAlias } from "../src/accountsModel.ts";
 
 describe("계정", () => {
-  it("웹 로그인·기본 변경은 1.78 이상 host만", () => {
-    for (const v of [undefined, null, "1.77", "2.78"]) assert.equal(canAccounts(v), false, String(v));
-    for (const v of ["1.78", "1.90"]) assert.equal(canAccounts(v), true, v);
+  it("웹 로그인·기본 변경은 1.79 이상 host만", () => {
+    for (const v of [undefined, null, "1.78", "2.79"]) assert.equal(canAccounts(v), false, String(v));
+    for (const v of ["1.79", "1.90"]) assert.equal(canAccounts(v), true, v);
   });
   it("별칭은 host와 같은 꼴만", () => {
     for (const ok of ["work", "work-claude_2", "a".repeat(64)]) assert.equal(validAlias(ok), true, ok);

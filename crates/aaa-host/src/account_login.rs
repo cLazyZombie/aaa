@@ -332,7 +332,7 @@ impl Host {
         Ok(FrontResponse::AccountLogin { login: job.view.lock().unwrap().clone() })
     }
 
-    /// 다시 로그인에 다른 메일이 들어온 뒤의 선택(FRONT_API 1.78): 바꾸면 이 별칭이 새 메일 인증이 되고(최초 인증 시각도 새로),
+    /// 다시 로그인에 다른 메일이 들어온 뒤의 선택(FRONT_API 1.79): 바꾸면 이 별칭이 새 메일 인증이 되고(최초 인증 시각도 새로),
     /// 아니면 새 인증을 버린다. 감사 기록에는 별칭과 선택만 남긴다
     pub(crate) fn account_login_confirm(&self, id: &str, switch: bool, actor: &str) -> Result<FrontResponse, ErrorBody> {
         let (view, pending) = {

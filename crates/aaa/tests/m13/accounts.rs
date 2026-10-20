@@ -287,7 +287,7 @@ fn account_credentials_parallel_refresh_and_all_records_are_redacted() {
     assert_eq!(resumed[0].1["token"], sha(&token_pairs[2].0));
     assert!(homes.contains(&resumed[0].1["home"].as_str().unwrap().to_string()), "재개는 같은 기록 홈");
     assert_eq!(upstream.calls.load(Ordering::SeqCst), 3, "거부된 갱신은 한 번, 우회/자동 재시도 없음");
-    // 제공자가 거부한 갱신은 그 계정을 끊김으로 보이고 확인 필요 알림을 한 번 낸다(관리 GUI W5a, plan §8.344)
+    // 제공자가 거부한 갱신은 그 계정을 끊김으로 보이고 확인 필요 알림을 한 번 낸다(관리 GUI W5a, plan §8.346)
     let listed = w.h.ok(&["account", "list"]);
     let work = listed["accounts"].as_array().unwrap().iter().find(|a| a["name"] == "work").unwrap().clone();
     assert_eq!(work["health"], "rejected", "{work}");
@@ -967,7 +967,7 @@ fn id_token(email: &str, plan: &str) -> String {
     format!("e30.{}.c2ln", base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(claims.to_string()))
 }
 
-/// 관리 GUI W5a(plan §8.344): host 로그인은 공식 CLI가 알린 메일·plan·유효 기간과 인증 날짜를 남기고, 다시 로그인에 다른 메일이
+/// 관리 GUI W5a(plan §8.346): host 로그인은 공식 CLI가 알린 메일·plan·유효 기간과 인증 날짜를 남기고, 다시 로그인에 다른 메일이
 /// 들어오면 옛 인증을 둔 채 사람이 고르기를 기다린다. 메일은 감사·알림·로그·프로젝트 파일에 나오지 않는다
 #[test]
 fn host_relogin_checks_the_email_and_asks_before_switching() {

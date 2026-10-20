@@ -16,7 +16,7 @@ import { FilePathLink } from "./FilePathLink.tsx";
 import { formatBytes } from "./formatBytes.ts";
 import { HighlightedCode } from "./HighlightedCode.tsx";
 import { browserClick } from "./reportLinks.ts";
-import { appRefOf, splitAppRefs } from "./appRef.ts";
+import { appLinkOf, appRefOf, splitAppRefs } from "./appRef.ts";
 import { AppRefChip, AppRefContext } from "./AppRefChip.tsx";
 import "./herdr/Markdown.css";
 
@@ -165,7 +165,7 @@ function Inline({ nodes, interactive = true, standalone = false }: { nodes: Inli
               </del>
             );
           case "link": {
-            const ref = refs === null ? null : appRefOf(node.href);
+            const ref = refs === null ? null : (appRefOf(node.href) ?? appLinkOf(node.href, location.origin));
             if (ref !== null) return <AppRefChip key={key} at={ref} refs={refs!} />;
             return (
               <a key={key} href={node.href} target="_blank" rel="noopener noreferrer" onClick={follow(node.href)}>

@@ -50,6 +50,8 @@ describe("운영 화면", () => {
   });
   it("알림함 배지는 끝내지 않은 항목과 싣지 못한 항목, post 탭은 답할 요청을 「답할 것」에 맡긴다", () => {
     assert.equal(inboxOpen([{ done: false }, { done: true }, { done: false }], 3), 5);
+    // 사용자가 답할 요청 post 항목은 「답할 것」 배지가 센다(두 배지가 같은 항목을 세지 않는다)
+    assert.equal(inboxOpen([{ done: false, item_kind: "post", event: "post request for user" }, { done: false, item_kind: "post", event: "post notice for user" }], 0), 1);
     assert.equal(needsAnswer({ to: "user", post_type: "request", needs_user: true }), true);
     assert.equal(needsAnswer({ to: "user", post_type: "notice", needs_user: false }), false);
     assert.equal(needsAnswer({ to: "t-0001", post_type: "request", needs_user: true }), false);
