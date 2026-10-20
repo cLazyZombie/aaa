@@ -5806,3 +5806,20 @@ L4 후속(10-20 00시 사용자 관찰): 멈춤 상태의 후보 예약과 재�
 - **참고 위치.** t3code 4b1024da `apps/web/src/components/settings/ScheduledTasksSettings.tsx`: 목록 줄 `ScheduledTaskRow`(:558-679, 이름·배지·켜기와 상태 한 줄), 상태 배지 색(:238-243, `ui/badge.tsx:30-36` 옅은 바탕), 기록 줄 `[배지] 시각 요약`(:767-791), 원문 블록 `DeliveryBlock`(:816-825 `pre max-h-64 … whitespace-pre-wrap`), Dialog의 모바일 아래 sheet(`ui/dialog.tsx:63-87`). 따르지 않은 것: 삭제·지금 실행을 확인 없이 하는 것(:582-601) 대신 막힌 큐 풀기·변환은 확인을 거친다. herdr-projects 0.2.35 `src/routine.rs:92-107`(`last … · next … · skipped`)·`:299-325`(list의 승인 kind 낱말)를 줄 글과 승인 범위에 썼다. herdr-web-ui에는 자동화 화면이 없고 `components/BackgroundTasks.tsx:17-22,190`의 상태 낱말만 참고했다. 상세 틀은 이 저장소 herdr modal.css(데스크톱 가운데 창·휴대폰 아래 sheet, 뒤로·아래로 밀기 닫기)다.
 - **FRONT_API 1.58.** 옛 front는 새 칸을 버린다. 옛 host는 `queue`·`source`·`front_api`를 생략해 웹이 큐·원문·변환 단추를 숨기고, `automation_unblock`은 모르는 요청으로 거절한다. agent wire는 바뀌지 않는다.
 - **검증.** host 유닛(automation::tests): 미리보기 무기록(폴더 전체 비교)·Reader 미리보기 허용/변환 거부·다른 hash·미리보기 뒤 원본 변경 거부·미리보기 목록 = 실제 변환 목록, 풀기의 actor 거부 4종·다른 묶음 거부·계속(묶음만)·버리기(뒤 입력까지)·닫은 입력 재수락 없음·다른 동작 묶음 거부, 원문·본문 참조·글자 경계 자르기. 웹 유닛 `automationModel.test.mjs`. 웹 E2E `40-automation-detail`: 실제 일정 판정 기록으로 상세 절·기록 수(host 50건과 같음)·원문, 미리보기가 파일을 바꾸지 않음·생기는 규칙·보존 위치·변환 뒤 보존 사본 = 원본, Reader 미리보기만, 대상 pane을 끝내 실제 전송 실패로 막힌 묶음(다시 판정해도 같은 묶음·실패 기록 그대로), 휴대폰 Reader 상세 폭과 풀기 거부, 「계속 보내기」 → 다음 입력이 실제로 시도되어 새 묶음으로 다시 막힘 → 「버리기」 → 규칙 끈 뒤 tick 울타리 뒤 빈 큐·두 묶음의 입력 모두 「다시 보내지 않음」 기록. 패드 820 상세가 화면 안. `34-automations`는 기록 확인을 상세로 옮겼다.
+
+### 8.305 키 관리자 K0: aaa 기록의 env 값 가림(10-20, t-0481)
+
+- **요청.** 사용자 10-20 「키 관리자를 만들꺼야 …」, 「완벽한 보안 보다는 사용성에 더 초점을, 기본적인 보안만 되면 돼」, 「다만 로그 같은 곳에서 절대 나오면 안 돼」. 키 관리자 기획(t-0468 확정판) §8의 K0만 한다. 지금 새는 자리를 막는 단계이고, 보관·주입·출력 가림(K1~K3)은 하지 않는다.
+- **감사 기록.** `pane_run`은 띄운 spec을 그대로 남기되 env는 이름 목록만 쓴다(`db::pane_run_detail`). spec의 `env`와 host가 푼 profile의 `resolved_profile.env`가 대상이다.
+- **옛 행 정리.** host DB를 열 때 env 값이 남은 `pane_run` 행을 이름만으로 바꾼다. 대상은 JSON `env[0]`이 배열이거나 `resolved_profile.env`가 객체인 행이다. 그 뒤 `VACUUM`과 `wal_checkpoint(TRUNCATE)`로 빈 page와 WAL에서도 지운다. 시작마다 그런 행만 찾으므로, 옛 판으로 되돌렸다가 다시 올려도 그 사이 행이 정리된다. VACUUM 전에 멈추면 meta `audit_vacuum` 표지가 남아 다음 시작에 다시 한다. schema는 올리지 않는다(옛 판도 그대로 연다). 운영 DB는 배포 뒤 host가 시작하면서 스스로 정리한다.
+- **Debug.** `Launch`·`ResolvedProfile`·`SpawnSpec`(aaa-proto)과 설정 `Profile`·`HarnessOverride`는 env를 `«env N개: 이름…»`로만 찍는다. 이 형을 품은 메시지(`AgentRequest::Spawn`·`ThreadPrepare`·`ThreadReady`)도 같으므로 debug 로그와 「예상하지 못한 응답」 오류 문구에 값이 나오지 않는다. wire 직렬화는 그대로라 FRONT_API와 agent 기능은 바뀌지 않는다.
+- **export.** `project delete`가 휴지통에 남기는 `aaa-records.json`에서 thread 기록의 `launch.env`는 이름만 둔다.
+- **평문 경고.** host.toml·host.local.toml의 profile env 가운데 이름에 KEY·TOKEN·SECRET·PASSWORD(대소문자 무관)가 들고 값이 비어 있지 않은 것은, 값을 정한 파일·줄을 짚어 경고한다. host 시작 로그와 `aaa config check`에 나온다. 경고에는 이름만 쓴다. agent.toml `[harnesses.*] env`는 K0 범위 밖이라 경고하지 않는다.
+- **core dump.** host·agent·session host는 시작할 때 `RLIMIT_CORE` soft를 0으로 내린다. hard는 그대로 둔다. pane 자식도 soft 0을 물려받지만 pane 안에서 `ulimit -c`로 다시 켤 수 있다.
+- **그대로 둔 것.** pane 안 `printenv`에는 값이 보인다(env 전달 기본 동작). 다음은 아직 평문이며 K2(참조만 저장)에서 막는다: DB `threads.data`의 `launch.env`, agent `sessions/*/spec.json`·화면 저장물, `thread-preparations/` 준비 기록. 로그 단계는 `AAA_LOG`가 정한다(`RUST_LOG`는 읽지 않는다).
+- **검증.** E2E m13 `secret_k0::env_values_stay_out_of_audit_db_logs_and_export`(docs/testing.md 「키 관리자 K0 카나리 찾기」). 유닛 시험은 다섯이다.
+  - host `db::audit_env_tests`: 정리 전 DB 사본으로 옛 행 정리·지운 행의 빈 page·WAL 0건·다시 열기.
+  - proto `debug_shows_env_names_without_values`
+  - config `plaintext_secret_env_warns_by_name_only`
+  - common `disable_core_dump_zeroes_only_the_soft_limit`
+  - 고치기 전 main(11f2dc64)에서 E2E는 export·감사 기록·WAL에서 카나리를 찾아 실패했고, 정리 유닛은 값이 남아 실패했다. 결함 심기 셋(core dump 끄기 빼기, 감사 기록에 spec 그대로 쓰기, export 거르기 빼기)을 E2E가 하나씩 잡는다.

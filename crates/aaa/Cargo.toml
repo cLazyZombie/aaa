@@ -43,4 +43,5 @@ objc2-service-management = "0.3"
 
 [dev-dependencies]
 libc.workspace = true
+rusqlite = "0.37"
 portable-pty.workspace = true

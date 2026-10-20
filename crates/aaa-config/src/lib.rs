@@ -482,11 +482,29 @@ pub struct AgentConfig {
     pub harnesses: std::collections::BTreeMap<String, HarnessOverride>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+/// Debug는 env 값을 찍지 않는다([`EnvNames`])
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(default)]
 pub struct HarnessOverride {
     pub command: Vec<String>,
     pub env: std::collections::BTreeMap<String, String>,
+}
+
+impl std::fmt::Debug for HarnessOverride {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let HarnessOverride { command, env } = self;
+        f.debug_struct("HarnessOverride").field("command", command).field("env", &EnvNames(env)).finish()
+    }
+}
+
+/// 설정의 env를 Debug로 찍을 때 값 없이 「«env N개: 이름…»」만(키 관리자 K0, plan §8.305)
+struct EnvNames<'a>(&'a std::collections::BTreeMap<String, String>);
+
+impl std::fmt::Debug for EnvNames<'_> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let names: Vec<&str> = self.0.keys().map(String::as_str).collect();
+        write!(f, "«env {}개: {}»", names.len(), names.join(", "))
+    }
 }
 
 impl Default for AgentConfig {
@@ -504,8 +522,8 @@ impl Default for AgentConfig {
     }
 }
 
-/// agent harness 실행 방법. model·effort는 harness별 플래그로 바뀐다.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+/// agent harness 실행 방법. model·effort는 harness별 플래그로 바뀐다. Debug는 env 값을 찍지 않는다([`EnvNames`]).
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(default)]
 pub struct Profile {
     /// claude·codex·shell·custom
@@ -520,6 +538,21 @@ pub struct Profile {
     /// harness 실행 파일(비우면 harness 이름). custom은 필수이고 앞부분 argv 전체다.
     pub command: Vec<String>,
     pub description: String,
+}
+
+impl std::fmt::Debug for Profile {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let Profile { harness, model, effort, args, env, command, description } = self;
+        f.debug_struct("Profile")
+            .field("harness", harness)
+            .field("model", model)
+            .field("effort", effort)
+            .field("args", args)
+            .field("env", &EnvNames(env))
+            .field("command", command)
+            .field("description", description)
+            .finish()
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
@@ -598,7 +631,51 @@ pub fn project_settings_file(dir: &Path) -> PathBuf {
 }
 
 pub fn load_host(dir: &Path) -> Result<Loaded<HostConfig>, ConfigErrors> {
-    load(dir, "host", validate_host)
+    let mut loaded = load(dir, "host", validate_host)?;
+    let texts: Vec<(PathBuf, String)> =
+        loaded.files.iter().filter_map(|f| Some((f.clone(), std::fs::read_to_string(f).ok()?))).collect();
+    for (profile, p) in &loaded.config.profiles {
+        for (name, value) in &p.env {
+            if value.is_empty() || !secret_like(name) {
+                continue;
+            }
+            // 값을 마지막으로 정한 파일(local 우선)의 자리. 경고에는 이름만 쓴다
+            let parts = ["profiles", profile.as_str(), "env", name.as_str()];
+            let (file, (line, col)) = texts
+                .iter()
+                .rev()
+                .find(|(_, t)| defines(t, &parts))
+                .and_then(|(f, t)| locate(t, &parts).map(|lc| (f.clone(), lc)))
+                .unwrap_or_else(|| (dir.join("host.toml"), (0, 0)));
+            loaded.warnings.push(diag(
+                Severity::Warning,
+                &file,
+                line,
+                col,
+                format!("`profiles.{profile}.env.{name}`에 평문 비밀 값이 있다: 설정 파일·백업에 그대로 남는다. 키 관리자로 옮긴다"),
+            ));
+        }
+    }
+    Ok(loaded)
+}
+
+/// 그 파일이 key 경로 끝까지 정하는가([`locate`]는 가장 깊이 찾은 key의 자리를 돌려준다)
+fn defines(text: &str, path: &[&str]) -> bool {
+    let Ok(doc) = toml_edit::Document::parse(text) else { return false };
+    let mut item = doc.as_item();
+    for key in path {
+        match item.get(key) {
+            Some(next) => item = next,
+            None => return false,
+        }
+    }
+    true
+}
+
+/// 이름에 KEY·TOKEN·SECRET·PASSWORD가 든 env(대소문자 무관). 평문 값이면 경고한다(키 관리자 K0, plan §8.305)
+pub fn secret_like(name: &str) -> bool {
+    let upper = name.to_ascii_uppercase();
+    ["KEY", "TOKEN", "SECRET", "PASSWORD"].iter().any(|w| upper.contains(w))
 }
 
 pub fn load_agent(dir: &Path) -> Result<Loaded<AgentConfig>, ConfigErrors> {

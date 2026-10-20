@@ -1922,7 +1922,7 @@ impl Host {
     async fn spawn_on(self: &Arc<Self>, mid: &str, spec: SpawnSpec, actor: &str) -> Result<String, ErrorBody> {
         let conn = self.live_conn(mid)?;
         self.check_health(mid)?;
-        self.db.audit(actor, "pane_run", &serde_json::to_string(&spec).unwrap_or_default());
+        self.db.audit(actor, "pane_run", &db::pane_run_detail(&spec));
         match conn.request(AgentRequest::Spawn(spec)).await? {
             AgentResponse::Session(info) => {
                 let id = info.id.clone();
