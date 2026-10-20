@@ -1182,10 +1182,10 @@ summary.chat-compact-head { cursor: pointer; }
 .chat-compact-head::before, .chat-compact-head::after { content: ""; flex: 1 1 auto; border-top: var(--hairline) solid var(--border); }
 .chat-compact-head::-webkit-details-marker { display: none; }
 .chat-compact-text { margin-top: var(--space-2); padding: var(--space-3); border: var(--hairline) solid var(--border); border-radius: var(--radius-lg); color: var(--text); }
-/* 마지막 정리의 전후 컨텍스트 크기(plan §8.319, t3code 「Context compacted A → B tokens」) */
+/* 마지막 정리의 전후 컨텍스트 크기(plan §8.321, t3code 「Context compacted A → B tokens」) */
 .chat-compact-sizes { font-family: var(--font-mono); font-variant-numeric: tabular-nums; }
 
-/* 입력칸 컨텍스트 게이지(plan §8.319, herdr-web-ui Composer.css `.composer-context` 링·t3code ContextWindowMeter 꼴).
+/* 입력칸 컨텍스트 게이지(plan §8.321, herdr-web-ui Composer.css `.composer-context` 링·t3code ContextWindowMeter 꼴).
    글을 치는 동안은 자리를 그대로 두고 투명해진다: 단추 줄 폭이 바뀌지 않아 글 칸 폭·한 줄 판정이 흔들리지 않는다 */
 .context-gauge { display: inline-flex; flex: none; }
 .context-gauge-button {

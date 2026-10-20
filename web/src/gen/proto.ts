@@ -1,6 +1,10 @@
 // 생성 파일: crates/aaa-proto의 Rust 타입에서 만든다. 손으로 고치지 않는다.
 // 갱신: AAA_UPDATE_TS=1 cargo test -p aaa-proto typescript
 
+export type SecretText = string;
+
+export type AccountView = { name: string, harness: string, version: bigint, };
+
 export type Version = { major: number, minor: number, };
 
 export type B64 = string;
@@ -566,7 +570,7 @@ truncated: boolean,
  */
 untracked_omitted: boolean, };
 
-export type FrontRequest = { "op": "debug_input", pane: string | null, thread: string | null, since_ms: bigint, } | { "op": "rollout_start", id: string, spec: RolloutSpec, } | { "op": "rollout_status", id: string, } | { "op": "deploy_context" } | { "op": "deploy_start", machine: string | null, id: string, action: DeployAction, } | { "op": "deploy_status", machine: string | null, id: string, } | { "op": "post", project?: string, input: PostInput, } | { "op": "post_status", project?: string, post_id: string, } | { "op": "post_list", project?: string, } | { "op": "post_unmute", project?: string, thread: string, } | { "op": "status" } | { "op": "machines" } | { "op": "panes", role: Role | null, } | { "op": "pane_run", machine: string | null, name: string | null, argv: Array<string>, cwd: string | null, cols: number | null, rows: number | null,
+export type FrontRequest = { "op": "account_import", name: string, harness: string, secret: SecretText, } | { "op": "account_list" } | { "op": "account_remove", name: string, } | { "op": "thread_start_account", account: string, start: FrontRequest, } | { "op": "debug_input", pane: string | null, thread: string | null, since_ms: bigint, } | { "op": "rollout_start", id: string, spec: RolloutSpec, } | { "op": "rollout_status", id: string, } | { "op": "deploy_context" } | { "op": "deploy_start", machine: string | null, id: string, action: DeployAction, } | { "op": "deploy_status", machine: string | null, id: string, } | { "op": "post", project?: string, input: PostInput, } | { "op": "post_status", project?: string, post_id: string, } | { "op": "post_list", project?: string, } | { "op": "post_unmute", project?: string, thread: string, } | { "op": "status" } | { "op": "machines" } | { "op": "panes", role: Role | null, } | { "op": "pane_run", machine: string | null, name: string | null, argv: Array<string>, cwd: string | null, cols: number | null, rows: number | null,
 /**
  * host 정본 profile로 harness를 띄운다(`argv`는 비운다, herdr-web-ui 새 세션의 agent 고르기)
  */
@@ -722,7 +726,7 @@ export type RolloutCard = { id: string, state: RolloutState, version: string | n
 
 export type RolloutCardStep = { machine: string, phase: RolloutPhase, completed: boolean, started_ms: number, transferred_bytes: number, total_bytes: number, };
 
-export type FrontResponse = { "kind": "input_events", events: Array<InputEvent>, } | { "kind": "deploy_context", project: string | null, session: boolean, allowed: boolean, } | { "kind": "rollout", rollout: RolloutView, } | { "kind": "deployment", machine: string, job: DeployJob, running_software: string, running_sha256: string, } | { "kind": "missions", missions: Array<MissionView>, } | { "kind": "mission", mission: MissionView, } | { "kind": "post", result: PostResult, } | { "kind": "posts", posts: Array<PostEnvelope>, } | { "kind": "status" } & HostStatus | { "kind": "machines", machines: Array<MachineView>, } | { "kind": "panes", panes: Array<PaneView>, } | { "kind": "pane" } & PaneView | { "kind": "next", lines: Array<string>,
+export type FrontResponse = { "kind": "accounts", accounts: Array<AccountView>, } | { "kind": "input_events", events: Array<InputEvent>, } | { "kind": "deploy_context", project: string | null, session: boolean, allowed: boolean, } | { "kind": "rollout", rollout: RolloutView, } | { "kind": "deployment", machine: string, job: DeployJob, running_software: string, running_sha256: string, } | { "kind": "missions", missions: Array<MissionView>, } | { "kind": "mission", mission: MissionView, } | { "kind": "post", result: PostResult, } | { "kind": "posts", posts: Array<PostEnvelope>, } | { "kind": "status" } & HostStatus | { "kind": "machines", machines: Array<MachineView>, } | { "kind": "panes", panes: Array<PaneView>, } | { "kind": "pane" } & PaneView | { "kind": "next", lines: Array<string>,
 /**
  * `line`으로 보낸 메시지
  */
@@ -919,7 +923,7 @@ export type ThreadGroup = "waiting_on_you" | "ready_for_review" | "landing" | "w
 
 export type ReportAttention = "completed" | "needs_user";
 
-export type ThreadView = { project: string, id: string, title: string, machine: string, profile: string, role: Role,
+export type ThreadView = { project: string, id: string, title: string, machine: string, profile: string, account?: string, role: Role,
 /**
  * (FrontResponse 태그 `kind`와 겹치지 않게 이름을 달리한다)
  */
@@ -1115,7 +1119,7 @@ background_wait: boolean,
  */
 compacting: boolean,
 /**
- * 컨텍스트 사용량(plan §8.319, 1.65). 옛 host·첫 응답 전에는 null
+ * 컨텍스트 사용량(plan §8.321, 1.67). 옛 host·첫 응답 전에는 null
  */
 context: ContextUsage | null, };
 
@@ -1257,7 +1261,19 @@ error: string | null,
 /**
  * 내구 입력 큐(FRONT_API 1.58). 옛 host는 생략한다.
  */
-queue: AutomationQueue | null, };
+queue: AutomationQueue | null,
+/**
+ * 자동화 기억의 host 사본. 옛 host는 생략한다.
+ */
+memory: AutomationMemory | null,
+/**
+ * 입력 처리·완료 보고·Idle가 갖춰진 thread의 끝남 예정 시각.
+ */
+closing: Array<AutomationClosing>, };
+
+export type AutomationMemory = { text: string, bytes: number, truncated: boolean, thread: string | null, updated_at_ms: number | null, };
+
+export type AutomationClosing = { thread: string, close_at_ms: number, };
 
 export type RoutineRun = { id: string, at_ms: number,
 /**

@@ -393,12 +393,12 @@ pub struct HarnessEvent {
     /// `kind = "plan"`일 때만: 아직 도는 배경 작업(하위 agent·배경 명령) 수. 0이면 None
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub background: Option<u32>,
-    /// `kind = "plan"`일 때만: 대화 기록에서 읽은 컨텍스트 사용량(plan §8.319). 아직 응답이 없으면 None
+    /// `kind = "plan"`일 때만: 대화 기록에서 읽은 컨텍스트 사용량(plan §8.321). 아직 응답이 없으면 None
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub context: Option<ContextUsage>,
 }
 
-/// harness 세션이 지금 쓴 컨텍스트(plan §8.319). agent가 대화 기록의 마지막 응답에서 읽는다(Claude `usage`, Codex `token_count`).
+/// harness 세션이 지금 쓴 컨텍스트(plan §8.321). agent가 대화 기록의 마지막 응답에서 읽는다(Claude `usage`, Codex `token_count`).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 pub struct ContextUsage {
     /// 마지막 응답에 실린 컨텍스트 토큰(정리가 막 끝났으면 정리 뒤 크기)
@@ -465,7 +465,7 @@ pub struct AgentStatus {
     /// 대기 글을 읽지 않고, 웹은 보낸 글을 이 기기에 붙잡았다가 끝나면 보낸다. 옛 host는 보내지 않는다(없으면 false, 1.61)
     #[serde(default)]
     pub compacting: bool,
-    /// 컨텍스트 사용량(plan §8.319, 1.65). 옛 host·첫 응답 전에는 null
+    /// 컨텍스트 사용량(plan §8.321, 1.67). 옛 host·첫 응답 전에는 null
     #[serde(default)]
     pub context: Option<ContextUsage>,
 }
@@ -814,6 +814,9 @@ pub struct ThreadView {
     pub title: String,
     pub machine: String,
     pub profile: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub account: Option<String>,
     pub role: Role,
     /// (FrontResponse 태그 `kind`와 겹치지 않게 이름을 달리한다)
     pub thread_kind: ThreadKind,
@@ -1161,6 +1164,29 @@ pub struct RoutineView {
     /// 내구 입력 큐(FRONT_API 1.58). 옛 host는 생략한다.
     #[serde(default)]
     pub queue: Option<AutomationQueue>,
+    /// 자동화 기억의 host 사본. 옛 host는 생략한다.
+    pub memory: Option<AutomationMemory>,
+    /// 입력 처리·완료 보고·Idle가 갖춰진 thread의 끝남 예정 시각.
+    pub closing: Vec<AutomationClosing>,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(default)]
+pub struct AutomationMemory {
+    pub text: String,
+    #[ts(type = "number")]
+    pub bytes: u64,
+    pub truncated: bool,
+    pub thread: Option<String>,
+    #[ts(type = "number | null")]
+    pub updated_at_ms: Option<u64>,
+}
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(default)]
+pub struct AutomationClosing {
+    pub thread: String,
+    #[ts(type = "number")]
+    pub close_at_ms: u64,
 }
 
 /// 규칙의 내구 입력 큐. 보낸 뒤 결과를 모르는 `do.message` 묶음은 사람이 확인하고 푼다(`automation_unblock`).

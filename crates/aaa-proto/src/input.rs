@@ -36,7 +36,7 @@ pub enum InputReceiptMethod {
     NoRoom,
     /// 대화 정리 중이라 보내지 않았다(plan §8.309, FRONT_API 1.61)
     Compacting,
-    /// harness 명령(`/compact` 등)은 사람 글로 기록되지 않아 host의 전달이 보내짐이다(plan §8.319, FRONT_API 1.65)
+    /// harness 명령(`/compact` 등)은 사람 글로 기록되지 않아 host의 전달이 보내짐이다(plan §8.321, FRONT_API 1.67)
     SlashCommand,
 }
 

@@ -520,7 +520,8 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
     });
   };
   // seenReports: thread마다 알린(또는 처음 볼 때 이미 검토 대기였던) 보고 hash
-  const reviewHash = (t: ThreadView) => (t.report_attention && t.report_hash !== t.acked_hash ? t.report_hash : null);
+  // 자동화 완료는 host가 저절로 확인한다. 사본 사건과 ack 사이에도 알림을 띄우지 않는다(A2).
+  const reviewHash = (t: ThreadView) => (t.automation && t.report_attention === "completed" ? null : t.report_attention && t.report_hash !== t.acked_hash ? t.report_hash : null);
   const reportNews = (t: ThreadView, replayFrom: number | null = null) => {
     const key = threadKey(t);
     const target = `thread=${encodeURIComponent(key)}`;

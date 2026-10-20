@@ -1,4 +1,4 @@
-// 입력칸 컨텍스트 게이지의 규칙(plan §8.319). 값은 agent가 대화 기록에서 읽어 `AgentStatus.context`로 보낸다(%는 그 harness 식).
+// 입력칸 컨텍스트 게이지의 규칙(plan §8.321). 값은 agent가 대화 기록에서 읽어 `AgentStatus.context`로 보낸다(%는 그 harness 식).
 // 사용자 10-20 「컨텍스트 사용량 (%, over하면 실제 k)」: 기본은 사용량 %, 창을 넘었거나 창을 모르면 실제 토큰 수를 k로 보인다.
 import type { ContextUsage } from "./gen/proto";
 

@@ -56,7 +56,7 @@ function CompactingRow() {
 /** 대화가 정리된 자리(plan §8.309, 사용자 10-20 「대화 정리됨 구분선으로 남겨」). herdr-web-ui ChatView.tsx 618~623줄 `chat-compact`
  * 그대로: 조용한 구분선이고 요약은 누르면 펼친다. 기록에 시각이 없어 시각은 없다. 요약이 없는(Codex) 정리는 구분선만이다 */
 function CompactedRow({ text, sizes }: { text: string; sizes?: ContextCompaction | null }) {
-  // 마지막 정리에는 전후 컨텍스트 크기를 붙인다(plan §8.319, t3code 「Context compacted A → B tokens」)
+  // 마지막 정리에는 전후 컨텍스트 크기를 붙인다(plan §8.321, t3code 「Context compacted A → B tokens」)
   const delta = sizes ? <span className="chat-compact-sizes" data-testid="chat-compact-sizes"> · {compactionText(sizes.before, sizes.after)}</span> : null;
   if (text.trim() === "")
     return (
@@ -392,7 +392,7 @@ export function ChatPanel({
   status?: AgentStatus;
   /** agent가 대화를 정리하는 중(plan §8.309): 대화 끝에 「대화 정리 중…」 줄 */
   compacting?: boolean;
-  /** 이 기록의 마지막 정리 전후 컨텍스트 크기(plan §8.319): 마지막 「대화 정리됨」 줄에 붙인다 */
+  /** 이 기록의 마지막 정리 전후 컨텍스트 크기(plan §8.321): 마지막 「대화 정리됨」 줄에 붙인다 */
   compaction?: ContextCompaction | null;
   readNow?: number;
   /** 글 속 파일 경로를 연다(조작 기기만) */

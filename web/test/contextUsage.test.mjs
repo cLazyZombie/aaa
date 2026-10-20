@@ -1,4 +1,4 @@
-// 입력칸 컨텍스트 게이지 규칙(src/contextUsage.ts, plan §8.319): 사용량 %, 넘거나 창을 모르면 k, 80%부터 위험, 치는 중 숨김.
+// 입력칸 컨텍스트 게이지 규칙(src/contextUsage.ts, plan §8.321): 사용량 %, 넘거나 창을 모르면 k, 80%부터 위험, 치는 중 숨김.
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import { compactionText, contextView, formatK, hiddenWhileTyping } from "../src/contextUsage.ts";

@@ -149,7 +149,7 @@ export interface ChatComposerProps {
   asking?: boolean;
   /** coordinator pane의 입력창: 보라 테두리와 도는 빛으로 thread 입력창과 가른다(style.css `.composer-surface.is-coordinator`) */
   coordinator?: boolean;
-  /** 그 harness 세션의 컨텍스트 사용량(plan §8.319). 없으면 게이지를 그리지 않는다(옛 host·첫 응답 전) */
+  /** 그 harness 세션의 컨텍스트 사용량(plan §8.321). 없으면 게이지를 그리지 않는다(옛 host·첫 응답 전) */
   context?: ContextUsage | null;
 }
 
@@ -442,7 +442,7 @@ export function ChatComposer({
         messageQueues.endSend(owner, f.queueId);
       }
       // 보낼 때 대화 기록을 읽지 못했으면(Claude 첫 hook 전 등) 기록 증거가 올 수 없다: host의 전달이 보내짐이다.
-      // harness 명령(게이지의 /compact 등)도 사람 글로 기록되지 않는다(plan §8.319)
+      // harness 명령(게이지의 /compact 등)도 사람 글로 기록되지 않는다(plan §8.321)
       if (seen(f) || f.before === null || slashCommand(f.text)) settle(f, f.before === null ? "no_transcript" : seen(f) ? undefined : "slash_command");
       else if (harness === "codex" && workingRef.current) {
         // Codex는 작업 중에 받은 글을 다음 도구 호출 뒤 읽을 때에야 기록한다: host의 전달이 보내짐이고 대화 끝 대기 말로 기다린다

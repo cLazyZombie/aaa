@@ -1579,7 +1579,7 @@ mod tests {
         };
         h.on_harness("m", ev("working", 1_000, None, None));
         let plan = aaa_proto::PlanSummary { done: 1, total: 3, current: Some("고치는 중".into()) };
-        // 컨텍스트 사용량도 같은 사건으로 온다(plan §8.319)
+        // 컨텍스트 사용량도 같은 사건으로 온다(plan §8.321)
         let context =
             aaa_proto::ContextUsage { used: 43_922, window: Some(200_000), percent: Some(22), compaction: None };
         h.on_harness(

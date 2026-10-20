@@ -29,7 +29,7 @@ elif 'actions/runs?' in endpoint:
         if 'created=' in endpoint and page=='1': print('Link: <ignored>; rel="next"')
         print('\n'+body)
 elif '/jobs?' in endpoint:
-    print('HTTP/2.0 200 OK\n\n'+json.dumps({'jobs':[{'id':77,'name':'linux','conclusion':'failure','steps':[{'name':'test','conclusion':'failure'}]}]}))
+    print('HTTP/2.0 200 OK\n\n'+json.dumps({'jobs':[{'id':77,'name':('linux-'+phase if phase.startswith('a2-') else 'linux'),'conclusion':'failure','steps':[{'name':'test','conclusion':'failure'}]}]}))
 elif '/compare/' in endpoint:
     print('HTTP/2.0 200 OK\n\n'+json.dumps({'commits':[{'sha':'f'*40,'commit':{'message':'병합: 두번째 착지 (t-0043)'}}]}))
 else:
@@ -252,4 +252,168 @@ fn ci_conditional_failure_mission_restart_catchup_and_outage() {
     // CI 작업 때문에 새로운 thread를 만들거나 기존 착지 thread를 되살리지 않는다.
     assert_eq!(w.h.ok(&["thread", "list", "demo", "--role", "evaluator"])["threads"].as_array().unwrap().len(), 1);
     assert_eq!(w.h.ok(&["thread", "list", "demo"])["threads"].as_array().unwrap().len(), 0);
+}
+
+/// A2: CI 둘은 첫 inbox 하나, 셋째는 같은 thread에 Queue, 옛 완료는 닫지 않고 새 완료 뒤 기억을 다음 thread로 옮긴다.
+#[test]
+fn automation_ci_reuses_open_thread_and_closes_only_after_new_report_with_memory() {
+    let w = world_setup("tick_secs=1\nci_poll_secs=1\npr_poll_secs=3600\n", false, fake_ci);
+    let script = format!(
+        r#"#!/bin/sh
+AA={:?}
+hook() {{ "$AA" hook --agent claude "$1" >/dev/null; }}
+hook '{{"hook_event_name":"SessionStart","session_id":"0f5b2c1e-7a3d-4c8e-9b21-5d6e7f809a1b"}}'
+printf '────────────────────────────────────────\n❯ \n────────────────────────────────────────\n'
+work=".aaa/$AAA_PROJECT-$AAA_THREAD"
+mkfifo "$work/turn"
+drain() {{ find "$work/inbox" -name '*.json' -type f -exec basename '{{}}' \; > "$work/processed.txt"; }}
+while IFS= read -r line; do
+  if [ "$silent" = 1 ]; then printf '%s\n' "$line" >> "$work/silent-input"; continue; fi
+  hook '{{"hook_event_name":"UserPromptSubmit","session_id":"0f5b2c1e-7a3d-4c8e-9b21-5d6e7f809a1b"}}'
+  printf '\033[2J\033[H✻ Working… (1s · esc to interrupt)\n────────────────────────────────────────\n❯ \n────────────────────────────────────────\n'
+  # 시험은 host가 작업 화면을 관측한 뒤 FIFO로 다음 화면을 허용한다.
+  read proceed < "$work/turn"
+  case "$line" in
+    a2-silent) silent=1; echo a2-silent-armed; stty -echo ;;
+    *brief.md*) work=$(dirname "$(printf '%s' "$line" | sed 's/를 읽고.*//')"); drain; printf '[완료] 첫 사건 처리\n\n## Report\n초기\n' > "$work/report.md" ;;
+    a2-drain) drain; echo a2-drained ;;
+    a2-complete) printf '다음에 볼 것: 같은 실패를 대조한다\n교훈: 입력 뒤 보고한다\n' > "$work/memory/memory.md"; printf '[완료] 이어 받은 사건 처리\n\n## Report\n새 완료\n' > "$work/report.md" ;;
+    *) echo "got: $line" ;;
+  esac
+  hook '{{"hook_event_name":"Stop","session_id":"0f5b2c1e-7a3d-4c8e-9b21-5d6e7f809a1b"}}'
+  printf '\033[2J\033[H────────────────────────────────────────\n❯ \n────────────────────────────────────────\n'
+done
+"#,
+        lab::BIN
+    );
+    std::fs::write(w.scripts.join("claude.sh"), script).unwrap();
+    w.h.in_terminal(&["safety", "set", "start_threads", "auto"], &[("[y/N]", "y")], T);
+    w.h.ok(&["project", "set", "demo", "repos.add", path_str(&w.repo)]);
+    assert!(
+        Command::new("git")
+            .args(["-C", path_str(&w.repo), "remote", "set-url", "origin", "https://github.com/o/app.git"])
+            .status()
+            .unwrap()
+            .success()
+    );
+    let dir = w.projects.join("demo/automations");
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("check.toml"),"title='CI 분류'\n[on.ci]\nrepo='repo'\nbranches=['main']\nevents=['failed']\n[do.start]\ntitle='자동 분류'\ntext='입력을 분류한다'\nprofiles=['claude']\nmachines=['labA']\nreuse='open'\nmemory=true\nclose_idle='30m'\n[limits]\nbatch='5m'\n").unwrap();
+    let rule = wait_for("규칙 승인 범위", T, || {
+        w.h.ticks(1);
+        w.h.ok(&["routine", "list"])["routines"]
+            .as_array()?
+            .iter()
+            .find(|r| r["name"] == "check" && r["start_approval_sha256"].is_string())
+            .cloned()
+    });
+    w.h.in_terminal(&["automation", "approve", "check", rule["start_approval_sha256"].as_str().unwrap()], &[], T);
+    let stub = w.lab.root.join("ci");
+    quiet_barrier(&w, &stub, "base");
+    write_runs(&stub, "a2-one", vec![run(2, 'b', "failure"), run(1, 'a', "success")]);
+    phase(&stub, "a2-one");
+    wait_for("첫 CI 실패가 batch에 대기", T, || {
+        w.h.ticks(1);
+        w.h.ok(&["routine", "list"])["routines"]
+            .as_array()?
+            .iter()
+            .find(|r| r["name"] == "check" && r["queue"]["pending"] == 1)
+            .cloned()
+    });
+    write_runs(&stub, "a2-two", vec![run(3, 'c', "failure"), run(2, 'b', "failure")]);
+    phase(&stub, "a2-two");
+    wait_for("둘째 CI 실패도 같은 batch에 대기", T, || {
+        w.h.ticks(1);
+        w.h.ok(&["routine", "list"])["routines"]
+            .as_array()?
+            .iter()
+            .find(|r| r["name"] == "check" && r["queue"]["pending"] == 2)
+            .cloned()
+    });
+    std::fs::write(w.h.cfg.join("automation-clock"), (lab::now_ms() + 6 * 60 * 1000).to_string()).unwrap();
+    let id = wait_for("CI 두 사건의 첫 thread", T, || {
+        w.h.ticks(1);
+        super::automation_start::automatic(&w).first().and_then(|e| e["thread"].as_str().map(str::to_owned))
+    });
+    let working = w.wait_show("첫 brief 작업 화면", &id, |v| v["agent"]["activity"] == "working");
+    let gate = Path::new(working["work_dir"].as_str().unwrap()).join("turn");
+    std::fs::write(&gate, "go\n").unwrap();
+    let first =
+        w.wait_show("첫 완료와 Idle", &id, |v| v["report_hash"].is_string() && v["agent"]["activity"] == "idle");
+    let work = PathBuf::from(first["work_dir"].as_str().unwrap());
+    let initial: Vec<_> = std::fs::read_dir(work.join("inbox")).unwrap().map(|e| e.unwrap().path()).collect();
+    assert_eq!(initial.len(), 1);
+    let packet: Value = serde_json::from_slice(&std::fs::read(&initial[0]).unwrap()).unwrap();
+    assert_eq!(packet["inputs"].as_array().unwrap().len(), 2, "두 실패를 하나로 묶는다");
+    assert_eq!(first["acked_hash"], first["report_hash"], "자동 완료는 저절로 확인한다");
+    write_runs(&stub, "a2-third", vec![run(4, 'd', "failure"), run(3, 'c', "failure"), run(2, 'b', "failure")]);
+    phase(&stub, "a2-third");
+    wait_for("같은 thread의 이어 보내기 전달 기록", T, || {
+        w.h.ticks(1);
+        w.h.ok(&["routine", "runs", "check"])["runs"]
+            .as_array()?
+            .iter()
+            .any(|r| r["detail"].as_str().is_some_and(|s| s.contains("이어 보냄")) && r["thread"] == id)
+            .then_some(())
+    });
+    assert_eq!(super::automation_start::automatic(&w).len(), 1);
+    std::fs::write(&gate, "go\n").unwrap();
+    w.wait_show("이어 보내기 뒤 Idle", &id, |v| v["agent"]["activity"] == "idle");
+    w.message(&id, "a2-drain", false);
+    std::fs::write(&gate, "go\n").unwrap();
+    wait_for("처리 기록 두 파일", T, || {
+        std::fs::read_to_string(work.join("processed.txt")).ok().filter(|s| s.lines().count() == 2)
+    });
+    w.wait_show("처리 뒤 Idle", &id, |v| v["agent"]["activity"] == "idle");
+    // 처리 기록은 비었지만 완료 보고는 마지막 입력보다 옛것이다. 종료 조건 2를 빼면 여기서 잘못 끝난다.
+    std::fs::write(w.h.cfg.join("automation-clock"), (lab::now_ms() + 31 * 60 * 1000).to_string()).unwrap();
+    wait_for("입력 처리 상태 판정", T, || {
+        w.h.ticks(1);
+        let raw = std::fs::read_to_string(work.join("processed.txt")).ok()?;
+        (raw.lines().count() == 2).then_some(())
+    });
+    w.h.ticks(2);
+    assert_eq!(w.show(&id)["status"], "open", "옛 완료 보고로 끝내면 안 된다");
+    w.message(&id, "a2-complete", false);
+    std::fs::write(&gate, "go\n").unwrap();
+    w.wait_show("새 완료 뒤 짧은 끝내기", &id, |v| v["status"] == "resolved");
+    let memory = std::fs::read_to_string(dir.join("check.memory/memory.md")).unwrap();
+    assert!(memory.contains("입력 뒤 보고"));
+    std::fs::write(w.h.cfg.join("automation-clock"), (lab::now_ms() + 6 * 60 * 1000).to_string()).unwrap();
+    write_runs(&stub, "a2-next", vec![run(5, 'e', "failure"), run(4, 'd', "failure")]);
+    phase(&stub, "a2-next");
+    let next = wait_for("다음 사건의 새 thread", T, || {
+        w.h.ticks(1);
+        super::automation_start::automatic(&w)
+            .iter()
+            .find_map(|e| e["thread"].as_str().filter(|t| *t != id).map(str::to_owned))
+    });
+    let starting = w.wait_show("새 thread 작업 화면", &next, |v| v["agent"]["activity"] == "working");
+    let next_gate = Path::new(starting["work_dir"].as_str().unwrap()).join("turn");
+    std::fs::write(&next_gate, "go\n").unwrap();
+    let shown = w.wait_show("새 thread 기억 주입", &next, |v| v["brief"] == "delivered");
+    assert_eq!(
+        std::fs::read_to_string(Path::new(shown["work_dir"].as_str().unwrap()).join("memory/memory.md")).unwrap(),
+        memory
+    );
+    w.wait_show("다음 thread Idle", &next, |v| v["agent"]["activity"] == "idle");
+    w.message(&next, "a2-silent", false);
+    std::fs::write(&next_gate, "go\n").unwrap();
+    w.wait_show("조용한 입력창", &next, |v| v["agent"]["activity"] == "idle");
+    write_runs(&stub, "a2-unknown", vec![run(6, '1', "failure"), run(5, 'e', "failure")]);
+    phase(&stub, "a2-unknown");
+    let blocked = wait_for("전달 모름은 막힘", T, || {
+        w.h.ticks(1);
+        w.h.ok(&["routine", "list"])["routines"]
+            .as_array()?
+            .iter()
+            .find(|r| r["name"] == "check" && r["queue"]["inflight"]["unknown"] == true)
+            .cloned()
+    });
+    assert_eq!(blocked["queue"]["inflight"]["thread"], next);
+    let log = Path::new(shown["work_dir"].as_str().unwrap()).join("silent-input");
+    let before = wait_for("조용히 받은 입력 파일", T, || std::fs::read_to_string(&log).ok());
+    w.h.ticks(3);
+    assert_eq!(std::fs::read_to_string(log).unwrap(), before, "모름 묶음을 자동 재전송하지 않는다");
+    assert_eq!(super::automation_start::automatic(&w).len(), 2);
 }

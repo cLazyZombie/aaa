@@ -10,7 +10,7 @@
 //!   다시 깨운 agent·하위 agent가 띄운 배경 명령·토큰은 뺐다(plan §8.151).
 //! - 배경 작업은 그것을 띄운 Claude 프로세스 안에서 돈다: 지금 프로세스가 시작하기 전에 띄운 것은 세지 않는다(`since_ms`:
 //!   Claude SessionStart startup·resume를 받은 때, 모르면 aaa 세션이 시작한 때).
-//! - 컨텍스트 사용량(plan §8.319): Claude는 본 대화(sidechain 아님) assistant 줄의 `usage`(input + cache 생성 + cache 읽기,
+//! - 컨텍스트 사용량(plan §8.321): Claude는 본 대화(sidechain 아님) assistant 줄의 `usage`(input + cache 생성 + cache 읽기,
 //!   Claude Code 상태줄 `total_input_tokens`와 같은 합)와 `requestedModel`(`…[1m]`이면 창 1M, 아니면 200k), 정리 끝
 //!   `compact_boundary.compactMetadata`(preTokens·postTokens). Codex는 `token_count`의 `last_token_usage.total_tokens`와
 //!   `model_context_window`, 정리(`compacted`) 뒤 첫 `token_count`가 정리 뒤 크기다. %는 그 harness 터미널과 같은 식으로 낸다.
@@ -601,13 +601,18 @@ pub(crate) struct Track {
 }
 
 /// harness 세션 사건이 알린 기록 파일. 기록 폴더 밖이면 없다(chat.rs와 같은 검사: hook은 세션 안 누구나 보낸다)
-fn locate(harness: &str, transcript: Option<&str>, harness_session: Option<&str>) -> Option<(Source, PathBuf)> {
+fn locate(
+    codex_root: &std::path::Path,
+    harness: &str,
+    transcript: Option<&str>,
+    harness_session: Option<&str>,
+) -> Option<(Source, PathBuf)> {
     match harness {
         "claude" => Some((
             Source::Claude,
             crate::chat::inside(&crate::chat::claude_root(), std::path::Path::new(transcript?)).ok()?,
         )),
-        "codex" => Some((Source::Codex, crate::chat::codex_file(&crate::chat::codex_root(), harness_session?).ok()?)),
+        "codex" => Some((Source::Codex, crate::chat::codex_file(codex_root, harness_session?).ok()?)),
         _ => None,
     }
 }
@@ -682,8 +687,13 @@ impl crate::Agent {
             }
             if t.reader.is_none() && t.looked.is_none_or(|at| at.elapsed() >= RETRY) {
                 t.looked = Some(Instant::now());
-                t.reader = locate(&harness, transcript.as_deref(), harness_session.as_deref())
-                    .map(|(src, p)| Reader::new(src, p));
+                t.reader = locate(
+                    &self.codex_root_for(Some(&session)),
+                    &harness,
+                    transcript.as_deref(),
+                    harness_session.as_deref(),
+                )
+                .map(|(src, p)| Reader::new(src, p));
             }
             let Some(r) = t.reader.as_mut() else { continue };
             let from = since.get(&session).copied().unwrap_or(running[&session]);

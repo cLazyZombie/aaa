@@ -119,7 +119,10 @@ impl Host {
             .get(pane)
             .and_then(|p| p.agent.as_ref())
             .is_some_and(|a| a.activity == AgentActivity::Idle && !a.seen);
-        if !reported && unseen_idle {
+        let quiet = self
+            .thread_of_pane(pane)
+            .is_some_and(|r| r.automation.is_some() && self.report_marker(&r) == Some("[완료]"));
+        if !reported && unseen_idle && !quiet {
             self.send_notice(n);
         }
     }

@@ -297,8 +297,9 @@ impl Host {
             .map(|r| r.id)
             .collect();
         for id in due {
-            if let Err(e) =
-                self.thread_resolve(project, &id, Default::default(), ResolveWhy::Auto { days }, "ticker").await
+            if let Err(e) = self
+                .thread_resolve(project, &id, Default::default(), ResolveWhy::Auto { days: Some(days) }, "ticker")
+                .await
             {
                 tracing::warn!(project, thread = %id, "자동 resolve를 다음 셈으로 미룬다: {}", e.message);
             }
@@ -308,7 +309,7 @@ impl Host {
     /// 검토 대기·병합 중인 thread의 새 보고: 보고 hash당 한 번(herdr-projects `write_thread_items` Ready for review).
     /// 계속 작업하는 thread의 착지·완료·확인 필요도 hash당 한 번 inbox에 남긴다. push는 완료·확인 필요만이다. 상태·진행률은 그대로다.
     /// 작업 중과 쉼을 오가는 같은 보고는 아무것도 만들지 않는다. 낸 항목은 앱 안 알림으로도 보낸다(notice.rs). 냈으면 true
-    fn new_report_item(&self, project: &str, r: &ThreadRec) -> bool {
+    pub(crate) fn new_report_item(&self, project: &str, r: &ThreadRec) -> bool {
         if r.status != ThreadStatus::Open || r.report_hash.is_none() || r.report_hash == r.review_item_hash {
             return false;
         }
@@ -331,7 +332,8 @@ impl Host {
         let event =
             if attention == Some(aaa_proto::ReportAttention::NeedsUser) { "report needs user" } else { "new report" };
         self.inbox_add(project, "thread-state", &r.id, event, &summary);
-        if attention.is_some() {
+        if attention.is_some() && !(r.automation.is_some() && attention == Some(aaa_proto::ReportAttention::Completed))
+        {
             self.report_notice(project, r);
         }
         true
@@ -496,15 +498,21 @@ mod tests {
         cfg.projects.root = root.join("projects").to_string_lossy().into();
         cfg.notify.web_push = false;
         let h = Host::open(cfg, root.join("host")).unwrap();
+        let mut notices = h.notice_events.subscribe();
         let (tx, mut notifications) = tokio::sync::mpsc::unbounded_channel();
         *h.notify_tx.lock().unwrap() = Some(tx);
         h.project_create("p", Default::default(), "local:cli").unwrap();
         let dir = h.project_dir("p").unwrap().join("threads");
         std::fs::create_dir_all(&dir).unwrap();
-        for (id, kind) in [("t-0001", aaa_proto::ThreadKind::Adopted), ("t-0002", aaa_proto::ThreadKind::Worktree)] {
+        for (id, kind) in [
+            ("t-0001", aaa_proto::ThreadKind::Adopted),
+            ("t-0002", aaa_proto::ThreadKind::Worktree),
+            ("t-0003", aaa_proto::ThreadKind::Dir),
+        ] {
             let mut r = rec();
             r.id = id.into();
             r.kind = kind;
+            r.automation = (id == "t-0003").then(|| "check".into());
             r.last_group = Some(ThreadGroup::Working);
             h.db.thread_import("p", id, "open", &serde_json::to_string(&r).unwrap()).unwrap();
             let write = |r: &mut ThreadRec, body: &str| {
@@ -541,6 +549,7 @@ mod tests {
                 h.db.thread_save("p", id, "open", &serde_json::to_string(&r).unwrap()).unwrap();
                 assert_eq!(h.thread_view(&r).report_attention, Some(attention));
                 assert!(h.new_report_item("p", &r));
+                assert_eq!(notices.try_recv().is_ok(), !(id == "t-0003" && mark == "[완료]"), "{id} {mark} 앱 안 알림");
                 let items = h.inbox("p", true, true).unwrap().items;
                 assert!(items.iter().any(|i| i.subject == id && i.event == event), "앱 안 inbox에 보고가 남아야 한다");
                 assert!(

@@ -1,9 +1,9 @@
-// 입력칸 컨텍스트 게이지(plan §8.319, 사용자 10-20 「대화창에서 사용한 컨텍스트를 보여주고 싶어」·「%, over하면 실제 k」·
+// 입력칸 컨텍스트 게이지(plan §8.321, 사용자 10-20 「대화창에서 사용한 컨텍스트를 보여주고 싶어」·「%, over하면 실제 k」·
 // 「타이핑시에는 보이지 않게」). 가짜 Claude가 대화 기록에 실제 Claude 2.1.304 꼴의 usage 줄·정리 줄을 적고, agent가 그 기록을
 // 읽어 host 상태로 보낸 값을 웹이 보인다: 38% → 230k(창 넘음) → 84k(창 모름) → 86%(위험). 글을 치는 동안은 자리를 둔 채 숨고
 // (입력칸 폭이 그대로), 80% 이상은 치는 중에도 보인다. 펼침의 「/compact 정리」는 쉴 때만 켜지고 pane에 /compact를 보내며,
 // 입력칸은 전달로 풀리고(명령은 사람 글로 기록되지 않는다), 정리 중 표지 → 정리 뒤 값 14%와 「대화 정리됨 · 164k → 28k」로 이어진다. 휴대폰(iPhone Safari)도 같다.
-// 혼자 돌리기: node web/e2e/web.e2e.mjs --spec 49-context-gauge(새 실험실).
+// 혼자 돌리기: node web/e2e/web.e2e.mjs --spec 50-context-gauge(새 실험실).
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import { root, aaa, AA, step, inList, until, domIs, waitOutput, shot, webkit } from "../lib/harness.mjs";
@@ -138,13 +138,13 @@ export default async function ({ page }) {
     await box(page).fill("정리할까");
     const high = await gauge(page);
     assert.deepEqual([high.hidden, high.visibility], [false, "visible"], "86%는 치는 중에도 보인다");
-    await shot(page, "49-high-typing-desktop");
+    await shot(page, "50-high-typing-desktop");
     await box(page).fill("");
     answer(76_000);
     await shows(page, "38%");
-    await shot(page, "49-empty-desktop");
+    await shot(page, "50-empty-desktop");
     await typingHides(page, "데스크톱");
-    await shot(page, "49-typing-desktop");
+    await shot(page, "50-typing-desktop");
     await box(page).fill("");
     await domIs(page, "빈 입력칸에서 다시 보임", () => document.querySelector('[data-testid="context-gauge"]')?.dataset.hidden === undefined);
   });
@@ -155,7 +155,7 @@ export default async function ({ page }) {
     await pop.waitFor();
     assert.match(await pop.textContent(), /76k \/ 200k 사용/);
     assert.equal(await page.getByTestId("context-compact").isDisabled(), false, "쉬는 중에는 정리할 수 있다");
-    await shot(page, "49-pop-desktop");
+    await shot(page, "50-pop-desktop");
     await page.keyboard.press("Escape");
     await pop.waitFor({ state: "detached" });
     await key("f7", "working");
@@ -182,11 +182,11 @@ export default async function ({ page }) {
     await domIs(page, "입력칸 잠금 풀림", () => !document.querySelector(".composer-send-progress") && !document.querySelector('[data-testid="chat-composer"] textarea').readOnly);
     await domIs(page, "정리 중 게이지", () => document.querySelector('[data-testid="context-gauge"]')?.dataset.compacting === "true");
     assert.equal((await gauge(page)).text, "82%", "정리 중에는 마지막 값");
-    await shot(page, "49-compacting-desktop");
+    await shot(page, "50-compacting-desktop");
     await key("f6", "idle");
     await shows(page, "14%");
     await domIs(page, "구분선 전후 크기", () => [...document.querySelectorAll('[data-testid="chat-compact-sizes"]')].map((e) => e.textContent).join("|") === " · 164k → 28k");
-    await shot(page, "49-after-desktop");
+    await shot(page, "50-after-desktop");
   });
 
   await step("휴대폰(iPhone Safari): 같은 값, 치는 동안 숨고 비면 다시 보인다, 펼침", async () => {
@@ -195,15 +195,15 @@ export default async function ({ page }) {
       const { page: p } = await pairDevice(wk, aaa("web", "pair").code, "iphone");
       await openChat(p);
       await shows(p, "14%");
-      await shot(p, "49-empty-iphone");
+      await shot(p, "50-empty-iphone");
       await typingHides(p, "iPhone");
-      await shot(p, "49-typing-iphone");
+      await shot(p, "50-typing-iphone");
       await box(p).fill("");
       await domIs(p, "iPhone 다시 보임", () => document.querySelector('[data-testid="context-gauge"]')?.dataset.hidden === undefined);
       await p.getByTestId("context-gauge").getByRole("button").click();
       await p.getByTestId("context-pop").waitFor();
       assert.match(await p.getByTestId("context-pop").textContent(), /28k \/ 200k 사용/);
-      await shot(p, "49-pop-iphone");
+      await shot(p, "50-pop-iphone");
       await p.context().close();
     } finally {
       await wk.close();
