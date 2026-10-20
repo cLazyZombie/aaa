@@ -161,7 +161,7 @@ fn automation_thread_reports_do_not_wake_their_own_rule() {
     });
     let shown = w.wait_show("자동 thread 보고", &auto, |v| v["report_hash"].is_string());
     assert_eq!((shown["automation"].as_str(), shown["automation_title"].as_str()), (Some("check"), Some("보고 점검")));
-    assert_eq!(cause(&auto), [first.clone()]);
+    assert_eq!(cause(&auto), std::slice::from_ref(&first));
     assert!(w.show(&first)["automation"].is_null(), "사람이 띄운 thread에는 출처가 없다");
     let board = w.h.ok(&["task", "list"]);
     let unlinked: Vec<_> =
