@@ -7,11 +7,10 @@ import { call } from "./api";
 import { AutomationSheet } from "./AutomationSheet";
 import { ConfirmDialog } from "./ConfirmDialog";
 import type { RoutineRun, RoutineSource, RoutineView } from "./gen/proto";
-import { lastSkip, legacyRule, ruleTargets, ruleTone, runTone, runWord, stuckBatch, type RuleTone } from "./automationModel";
+import { lastSkip, legacyRule, ruleTargets, ruleTone, ruleWord, runTone, runWord, stuckBatch } from "./automationModel";
 import { runKey } from "./automationForm";
 
 const time = (at: number) => new Date(at).toLocaleString();
-const toneWord: Record<RuleTone, string> = { off: "꺼짐", failed: "파일 오류", stuck: "막힘 · 입력 전달 모름", done: "처리됨", skipped: "건너뜀", waiting: "대기", ready: "기록 없음" };
 
 function Section({ title, children, testid }: { title: string; children: ReactNode; testid?: string }) {
   return <section className="automation-section" aria-label={title} data-testid={testid}><h3>{title}</h3>{children}</section>;
@@ -93,7 +92,7 @@ export function RuleDetail({ project, rule, canControl, canEdit = false, onEdit 
   const asked = unblock && stuck?.id === unblock.batch ? unblock : null;
   const editable = canControl && canEdit && !legacy && !rule.file.startsWith("missions/");
   const runnable = editable && rule.enabled && !rule.error && rule.action !== "배포 제안";
-  return <AutomationSheet title={rule.title || rule.name} subtitle={<><span className={`automation-badge is-${tone}`}>{toneWord[tone]}</span>{legacy && <span className="automation-badge is-legacy">이전 형식</span>}<span className="automation-dim">{project} · {rule.name}</span></>} onClose={onClose} covered={covered || asked !== null || ask !== null} testid="automation-detail">
+  return <AutomationSheet title={rule.title || rule.name} subtitle={<><span className={`automation-badge is-${tone}`}>{ruleWord[tone]}</span>{legacy && <span className="automation-badge is-legacy">이전 형식</span>}<span className="automation-dim">{project} · {rule.name}</span></>} onClose={onClose} covered={covered || asked !== null || ask !== null} testid="automation-detail">
     {error && <p role="alert">{error}</p>}
     {editable && <div className="automation-actions" data-testid="automation-detail-actions">
       <button type="button" className="btn" onClick={onEdit}>고치기</button>
@@ -103,7 +102,7 @@ export function RuleDetail({ project, rule, canControl, canEdit = false, onEdit 
     {notice && <p role="status" data-testid="automation-notice">{notice}</p>}
     <Section title="요약">
       <Facts rows={[
-        ["상태", rule.enabled ? toneWord[tone] : "꺼짐"],
+        ["상태", ruleWord[tone]],
         ["형식", legacy ? "이전 형식(.md) · 웹은 고치지 않는다. 목록 머리의 「새 형식으로 바꾸기」" : "TOML"],
         ["파일", rule.file || "—"],
         ["지난", rule.last_result ? <RunLineText run={rule.last_result} /> : "기록 없음"],
