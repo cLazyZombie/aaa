@@ -805,3 +805,16 @@ L2 결함 검증은 이전 root 가져오기 생략, 재시작 전 applied 변�
 - 별도 thread의 `.git`을 다른 repo로 바꾸되 원래 repo의 worktree 등록은 남긴다. JSON이 깨진 기록도 함께 둔다. 두 기록은 원인과 파일명이 경고에 남고 journal bytes는 보존된다. 정상 두 worktree만 aaa 소유 잠금을 복구해야 한다.
 - 수정 전에는 agent가 repo·branch 불일치 오류로 종료했다. branch 거부를 다시 심으면 변경한 thread의 잠금 단언, 실제 repo 대조를 빼면 다른 repo의 잠금 금지 단언이 실패해야 한다. journal의 repo 칸만 바꾸는 입력은 Git 등록 검사도 거부하므로 그것만으로 repo 대조 제거를 검증했다고 하지 않는다.
 - 기존 `work_root::recovery_tests`와 m13 `configured_prepare_timeout_recovers_only_unchanged_worktree`는 준비 재진입·dirty 거부·정리 잠금 계약을 계속 소유한다. 전체 ci-local·check-public 뒤 착지 창을 받는다.
+
+## host 계정 전달과 동시 갱신(t-0500)
+
+`cargo test -p aaa --test m13 accounts:: --locked`는 빈 포트·임시 폴더·가짜 인증만 사용한다.
+CLI→host→UDS/TLS agent→session pipe→PTY의 실제 경계에서 같은 Codex 계정 네 작업(머신당 둘)을
+동시에 띄운다. 이전 refresh token을 재사용하면 거부하는 가짜 제공자가 두 회전을 처리하며,
+각 회전의 제공자 호출은 한 번이다. 부분 응답의 이전 토큰 보존, 갱신 거부 시 우회 없음, 대화 조회·
+같은 기록으로 재개, auth 파일 권한·정상 종료 청소를 검사한다. Claude 동시 작업·기존 profile 인증·
+계정 미지정 환경도 함께 확인한다. host 단절 중 outbox를 직접 검사하고 DB/WAL·post·spec·준비
+journal·로그·화면에 원문·8바이트 조각·base64/URL/JSON 변형이 없는지 찾는다.
+
+금고의 암호문/AAD 무결성·키 잠김은 `cargo test -p aaa-host accounts:: --locked`가 소유한다.
+이 시험은 실제 로그인·실제 인증 파일·운영 host/agent·기본 설정에 접근하지 않는다.

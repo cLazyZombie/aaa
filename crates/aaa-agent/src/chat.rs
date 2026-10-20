@@ -349,16 +349,14 @@ fn line(harness: &str, v: &Value, thinking: bool, compact: bool) -> Vec<ChatMess
     }
 }
 
-/// agent 요청 처리
-pub fn read(
+/// agent 요청 처리: 검증한 pane 기록 경로만 읽는다.
+pub(crate) fn read_path(
     harness: &str,
-    transcript: Option<&str>,
-    harness_session: Option<&str>,
+    path: PathBuf,
     thinking: bool,
     compact: bool,
     before: Option<&str>,
 ) -> Result<pages::Page, String> {
-    let path = path(harness, transcript, harness_session)?;
     let failed = |e: std::io::Error| format!("기록을 읽지 못했다: {}", e.kind());
     let mut page = pages::read(&path, before, |v| line(harness, v, thinking, compact))?;
     if harness == "claude" && before.is_none() {

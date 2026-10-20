@@ -34,7 +34,28 @@ struct Cli {
 }
 
 #[derive(Subcommand)]
+enum AccountCmd {
+    /// 결과 파일에서 읽어 암호화 보관한다. 토큰을 argv로 받지 않는다.
+    Import {
+        name: String,
+        #[arg(long,value_parser=["claude","codex"])]
+        harness: String,
+        #[arg(long)]
+        file: PathBuf,
+    },
+    List,
+    Remove {
+        name: String,
+    },
+}
+
+#[derive(Subcommand)]
 enum Cmd {
+    /// host에 준비한 계정 인증 결과만 등록한다(로그인은 aaa 밖에서 한다)
+    Account {
+        #[command(subcommand)]
+        cmd: AccountCmd,
+    },
     /// harness 전역 연동을 설치하거나 제거한다(기존 사용자 hook은 보존)
     Integration {
         #[command(subcommand)]
@@ -62,6 +83,8 @@ enum Cmd {
     SessionHost {
         #[arg(long)]
         dir: PathBuf,
+        #[arg(long, hide = true)]
+        startup_stdin: bool,
     },
     /// host 입력 사건 진단(로컬에서만, 원문 없음)
     Debug {
@@ -814,6 +837,9 @@ enum ThreadCmd {
         /// profile. 없으면 --from-task의 owner, 그다음 project.toml thread_profile
         #[arg(long)]
         profile: Option<String>,
+        /// host에 등록한 계정 이름(profile과 별개)
+        #[arg(long)]
+        account: Option<String>,
         /// worktree(--repo 필요) 또는 dir(repo 없는 작업 폴더). 없으면 --repo가 있으면 worktree, 없으면 dir
         #[arg(long, value_parser = ["worktree", "dir"])]
         kind: Option<String>,
@@ -1602,7 +1628,7 @@ pub fn main() -> ExitCode {
     match run(cli) {
         Ok(code) => code,
         Err(e) => {
-            eprintln!("aaa: {e:#}");
+            eprintln!("aaa: {}", aaa_common::redact::text(&format!("{e:#}")));
             ExitCode::from(1)
         }
     }
@@ -1614,7 +1640,7 @@ fn init_log(default: &str) {
     use std::io::IsTerminal;
     let _ = tracing_subscriber::fmt()
         .with_env_filter(filter)
-        .with_writer(std::io::stderr)
+        .with_writer(aaa_common::redact::LogWriter::default)
         .with_ansi(std::io::stderr().is_terminal())
         .with_target(false)
         .try_init();
@@ -1648,16 +1674,36 @@ fn run(cli: Cli) -> Result<ExitCode> {
             runtime()?.block_on(aaa_agent::deployment_guard(&id, crate::deployment::execute_recovery))?;
             Ok(ExitCode::SUCCESS)
         }
-        Cmd::SessionHost { dir } => {
+        Cmd::SessionHost { dir, startup_stdin } => {
             init_log("info");
             aaa_common::resource::disable_core_dump("session host");
-            aaa_session::host::main(dir)?;
+            aaa_session::host::main_with_startup(dir, startup_stdin)?;
             Ok(ExitCode::SUCCESS)
         }
         Cmd::Debug { cmd: DebugCmd::Input { pane, thread, since } } => {
             let since_ms = debug_since(&since)?;
             front(json, FrontRequest::DebugInput { pane, thread, since_ms })
         }
+        Cmd::Account { cmd } => match cmd {
+            AccountCmd::List => front(json, FrontRequest::AccountList),
+            AccountCmd::Remove { name } => front(json, FrontRequest::AccountRemove { name }),
+            AccountCmd::Import { name, harness, file } => {
+                aaa_common::resource::disable_core_dump("account import");
+                if std::env::var_os("AAA_SESSION_ID").is_some() || std::env::var_os("AAA_HOOK_SOCK").is_some() {
+                    anyhow::bail!("계정 등록은 host의 aaa 밖 터미널에서 한다");
+                }
+                use std::io::Read;
+                let m = file.symlink_metadata().context("인증 결과 파일을 열지 못했다")?;
+                anyhow::ensure!(m.is_file() && m.len() <= 128 * 1024, "인증 결과는 128KiB 이하 일반 파일이어야 한다");
+                let mut secret = String::new();
+                std::fs::File::open(file)?
+                    .take(128 * 1024 + 1)
+                    .read_to_string(&mut secret)
+                    .map_err(|_| anyhow::anyhow!("인증 결과 파일을 읽지 못했다"))?;
+                aaa_common::redact::remember_auth(&harness, &secret);
+                front(json, FrontRequest::AccountImport { name, harness, secret: aaa_proto::SecretText(secret) })
+            }
+        },
         Cmd::Status => front(json, FrontRequest::Status),
         Cmd::Pane { cmd } => pane_cmd(json, cmd),
         Cmd::Tab { cmd } => tab_cmd(cmd),
@@ -1809,6 +1855,7 @@ fn run(cli: Cli) -> Result<ExitCode> {
                     title,
                     machine,
                     profile,
+                    account,
                     kind,
                     repo,
                     base,
@@ -1845,6 +1892,10 @@ fn run(cli: Cli) -> Result<ExitCode> {
                         from_task,
                         link_task,
                         task_block: None,
+                    };
+                    let req = match account {
+                        Some(account) => FrontRequest::ThreadStartAccount { account, start: Box::new(req) },
+                        None => req,
                     };
                     return with_summary(json, req, project, None, summary);
                 }
@@ -4162,6 +4213,11 @@ fn render_front(r: &FrontResponse) -> String {
         },
         FrontResponse::Context(c) => render_context(&mut s, c),
         FrontResponse::TaskBoard(b) => render_task_board(&mut s, b),
+        FrontResponse::Accounts { accounts } => {
+            s.push_str(
+                &accounts.iter().map(|a| format!("{}\t{}\t판 {}\n", a.name, a.harness, a.version)).collect::<String>(),
+            );
+        }
         FrontResponse::ThreadStartPreview(p) => {
             let _ = writeln!(s, "제목: {}\nprofile: {}", p.title, p.profile);
             if let Some(m) = &p.machine {

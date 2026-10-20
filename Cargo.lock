@@ -65,6 +65,7 @@ version = "0.1.2"
 dependencies = [
  "aaa-proto",
  "anyhow",
+ "base64 0.22.1",
  "futures-util",
  "hex",
  "libc",
@@ -169,8 +170,10 @@ dependencies = [
  "aaa-proto",
  "aaa-vt",
  "anyhow",
+ "hex",
  "libc",
  "portable-pty",
+ "rand",
  "serde",
  "serde_json",
  "tokio",

@@ -92,6 +92,7 @@ pub fn hello(agent: &Agent) -> AgentHello {
         // diff.v1: `AgentRequest::ThreadDiff`(thread worktree의 바뀐 파일·patch, plan §8.305)
         // chat_watch.v1: `AgentRequest::ChatWatch`와 `AgentEvent::ChatChanged`(대화 기록 변화 push, plan §8.191)
         features: vec![
+            "account_auth.v1".into(),
             "terminal.v1".into(),
             "deployment.v1".into(),
             #[cfg(target_os = "macos")]

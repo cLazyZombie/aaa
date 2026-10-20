@@ -141,6 +141,7 @@ pub fn token(g: ThreadGroup) -> &'static str {
 pub fn aaa_group(f: &Facts, now_s: i64) -> ThreadGroup {
     let now_ms = (now_s.max(0) as u64) * 1000;
     let rec = ThreadRec {
+        account: None,
         mission: None,
         holds: vec![],
         started_by: None,

@@ -186,6 +186,9 @@ fn uuid_v4() -> String {
 pub fn resolve(name: &str, p: &Profile) -> Result<Launch> {
     let base = |default: &str| if p.command.is_empty() { vec![default.to_string()] } else { p.command.clone() };
     let env: Vec<(String, String)> = p.env.iter().map(|(k, v)| (k.clone(), v.clone())).collect();
+    for (key, value) in &env {
+        aaa_common::redact::remember_env(key, value);
+    }
     let (argv, resume_argv, session_key) = match p.harness.as_str() {
         "claude" => {
             let flags = aaa_config::profile_edit::launch_flags(p);
@@ -322,6 +325,15 @@ pub async fn adopt(exe: &Path, p: ThreadAdopt, cwd: &Path) -> Result<ThreadAdopt
     })
 }
 
+/// 재개 argv를 바꾸지 않고 현재 인증 env만 복원할 때도 같은 덮어쓰기 순서를 쓴다.
+pub(crate) fn local_env(cfg: &ThreadsConfig, spec: &aaa_proto::ResolvedProfile) -> BTreeMap<String, String> {
+    let mut env = spec.env.clone();
+    if let Some(local) = cfg.harnesses.get(&spec.harness) {
+        env.extend(local.env.clone());
+    }
+    env
+}
+
 /// host 정의에 머신 실행 경로·환경만 덮어쓴다. 없는 harness로 조용히 바꾸지 않는다.
 pub(crate) fn local_profile(cfg: &ThreadsConfig, spec: &aaa_proto::ResolvedProfile) -> Result<Profile> {
     let mut p = Profile {
@@ -330,14 +342,13 @@ pub(crate) fn local_profile(cfg: &ThreadsConfig, spec: &aaa_proto::ResolvedProfi
         effort: spec.effort.clone(),
         args: spec.args.clone(),
         command: spec.command.clone(),
-        env: spec.env.clone(),
+        env: local_env(cfg, spec),
         description: String::new(),
     };
-    if let Some(local) = cfg.harnesses.get(&p.harness) {
-        if !local.command.is_empty() {
-            p.command = local.command.clone();
-        }
-        p.env.extend(local.env.clone());
+    if let Some(local) = cfg.harnesses.get(&p.harness)
+        && !local.command.is_empty()
+    {
+        p.command = local.command.clone();
     }
     let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/sh".into());
     let exe =

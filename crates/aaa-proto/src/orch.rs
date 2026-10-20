@@ -783,6 +783,9 @@ pub struct ThreadView {
     pub title: String,
     pub machine: String,
     pub profile: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub account: Option<String>,
     pub role: Role,
     /// (FrontResponse 태그 `kind`와 겹치지 않게 이름을 달리한다)
     pub thread_kind: ThreadKind,

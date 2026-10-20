@@ -487,13 +487,18 @@ pub(crate) struct Track {
 }
 
 /// harness 세션 사건이 알린 기록 파일. 기록 폴더 밖이면 없다(chat.rs와 같은 검사: hook은 세션 안 누구나 보낸다)
-fn locate(harness: &str, transcript: Option<&str>, harness_session: Option<&str>) -> Option<(Source, PathBuf)> {
+fn locate(
+    codex_root: &std::path::Path,
+    harness: &str,
+    transcript: Option<&str>,
+    harness_session: Option<&str>,
+) -> Option<(Source, PathBuf)> {
     match harness {
         "claude" => Some((
             Source::Claude,
             crate::chat::inside(&crate::chat::claude_root(), std::path::Path::new(transcript?)).ok()?,
         )),
-        "codex" => Some((Source::Codex, crate::chat::codex_file(&crate::chat::codex_root(), harness_session?).ok()?)),
+        "codex" => Some((Source::Codex, crate::chat::codex_file(codex_root, harness_session?).ok()?)),
         _ => None,
     }
 }
@@ -567,8 +572,13 @@ impl crate::Agent {
             }
             if t.reader.is_none() && t.looked.is_none_or(|at| at.elapsed() >= RETRY) {
                 t.looked = Some(Instant::now());
-                t.reader = locate(&harness, transcript.as_deref(), harness_session.as_deref())
-                    .map(|(src, p)| Reader::new(src, p));
+                t.reader = locate(
+                    &self.codex_root_for(Some(&session)),
+                    &harness,
+                    transcript.as_deref(),
+                    harness_session.as_deref(),
+                )
+                .map(|(src, p)| Reader::new(src, p));
             }
             let Some(r) = t.reader.as_mut() else { continue };
             let from = since.get(&session).copied().unwrap_or(running[&session]);

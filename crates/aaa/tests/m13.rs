@@ -6,6 +6,8 @@
 
 #![cfg(unix)]
 
+#[path = "m13/accounts.rs"]
+mod accounts;
 #[path = "m13/automation_start.rs"]
 mod automation_start;
 #[path = "m13/ci.rs"]
@@ -5333,7 +5335,7 @@ fn profiles_come_from_host_and_harness_overrides_are_local() {
     w.add_remote();
     let config = w.h.cfg.join("host.toml");
     let base = std::fs::read_to_string(&config).unwrap();
-    std::fs::write(&config, format!("{base}\n[profiles.central]\nagent = \"codex\"\nmodel = \"host-model\"\neffort = \"high\"\nargs = [\"--search\"]\ndescription = \"중앙 정의\"\n[safety.demo]\nthread_profiles = [\"central\"]\n")).unwrap();
+    std::fs::write(&config, format!("{base}\n[profiles.central]\nagent = \"codex\"\nmodel = \"host-model\"\neffort = \"high\"\nargs = [\"--search\"]\ndescription = \"중앙 정의\"\nenv = {{ PROFILE_MARK = \"host-value\" }}\n[safety.demo]\nthread_profiles = [\"central\"]\n")).unwrap();
     for (machine, cfg, root, marker) in [
         ("labA", w.h.cfg.clone(), w.lab.root.join("workA"), "local-A"),
         ("labB", w.lab.root.join("b/c"), w.lab.root.join("workB"), "local-B"),
@@ -5360,7 +5362,8 @@ fn profiles_come_from_host_and_harness_overrides_are_local() {
             &w.task(&format!("{machine}.txt"), "x"),
         ]);
         let pane = t["pane"].as_str().unwrap();
-        w.h.wait_output(pane, &format!("OVERRIDE:{marker}"), T);
+        w.h.wait_output(pane, "OVERRIDE:", T);
+        assert!(w.h.screen(pane).contains(&format!("OVERRIDE:{marker}")), "머신 환경이 host 값으로 덮였다");
         let argv = w.h.pane(pane)["argv"].clone();
         let text = argv.to_string();
         assert!(

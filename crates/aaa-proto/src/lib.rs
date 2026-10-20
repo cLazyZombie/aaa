@@ -1,6 +1,8 @@
 //! aaa의 경계 계약. Rust 타입이 정본이고 웹 TypeScript 타입은 여기서 생성한다(`web/src/gen/proto.ts`).
 
+pub mod account;
 pub mod ci;
+pub use account::*;
 mod git_watch;
 pub mod install;
 pub use ci::*;
@@ -48,6 +50,8 @@ pub fn typescript_bindings() -> String {
     use ts_rs::TS;
     let cfg = ts_rs::Config::default();
     let decls = [
+        SecretText::decl(&cfg),
+        AccountView::decl(&cfg),
         Version::decl(&cfg),
         B64::decl(&cfg),
         ErrorCode::decl(&cfg),

@@ -233,7 +233,9 @@ pub fn write_private(p: &Path, bytes: &[u8]) -> std::io::Result<()> {
 }
 
 pub fn write_json<T: serde::Serialize>(p: &Path, v: &T) -> std::io::Result<()> {
-    write_private(p, &serde_json::to_vec_pretty(v).expect("JSON 직렬화"))
+    let mut value = serde_json::to_value(v).expect("JSON 직렬화");
+    crate::redact::value(&mut value);
+    write_private(p, &serde_json::to_vec_pretty(&value).expect("JSON 직렬화"))
 }
 
 pub fn read_json<T: serde::de::DeserializeOwned>(p: &Path) -> anyhow::Result<T> {
