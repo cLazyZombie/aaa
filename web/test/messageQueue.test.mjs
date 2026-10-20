@@ -7,7 +7,7 @@ const memory = () => {
   return { getItem: (k) => data.get(k) ?? null, setItem: (k, v) => data.set(k, v), removeItem: (k) => data.delete(k) };
 };
 
-it("정리 뒤 보낼 글은 넣은 탭과 함께 저장되고, 다시 읽어도 남는다(plan §8.306)", () => {
+it("정리 뒤 보낼 글은 넣은 탭과 함께 저장되고, 다시 읽어도 남는다(plan §8.309)", () => {
   const storage = memory();
   const a = new MessageQueueStore(() => storage);
   a.add("p", "보통");

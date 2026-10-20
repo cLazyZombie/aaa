@@ -185,7 +185,7 @@ pub struct Agent {
     /// 지금 host가 건강 보고(`health.v1`)를 받는가
     host_health: std::sync::atomic::AtomicBool,
     host_recovery: std::sync::atomic::AtomicBool,
-    /// 지금 host가 정리 사건(`compacting.v1`, plan §8.306)을 아는가. 모르는 host에는 정리 중을 `working`으로 보낸다
+    /// 지금 host가 정리 사건(`compacting.v1`, plan §8.309)을 아는가. 모르는 host에는 정리 중을 `working`으로 보낸다
     host_compacting: std::sync::atomic::AtomicBool,
     host_post: Mutex<Option<bool>>,
     host_mission: Mutex<bool>,
@@ -1779,7 +1779,7 @@ pub fn start_selfcheck(agent: &Arc<Agent>, cfg: &aaa_config::SelfcheckSection) {
     });
 }
 
-/// 정리 사건(`compacting`, plan §8.306)을 모르는 host(`compacting.v1`을 알리지 않음)에는 작업 중으로 보낸다: 옛 host는 모르는 kind를
+/// 정리 사건(`compacting`, plan §8.309)을 모르는 host(`compacting.v1`을 알리지 않음)에는 작업 중으로 보낸다: 옛 host는 모르는 kind를
 /// 버려 정리 내내 앞 상태(쉼)로 남고, 받음 대기(`ACCEPTED`)도 끝내 받지 못한다. 기억하는 사건(`remember_harness`)은 그대로 둔다
 fn for_host(mut ev: aaa_proto::HarnessEvent, host_compacting: bool) -> aaa_proto::HarnessEvent {
     if ev.kind == "compacting" && !host_compacting {

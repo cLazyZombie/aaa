@@ -16,7 +16,7 @@ use super::{DetectionInput, Detector, Harness, Published, State, Tick, question_
 /// 알릴 사건(`HarnessEvent`의 kind·본문·질문 종류)
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Report {
-    /// working·compacting(대화 정리 중인 작업 중, plan §8.306)·idle·question
+    /// working·compacting(대화 정리 중인 작업 중, plan §8.309)·idle·question
     pub kind: &'static str,
     pub message: Option<String>,
     pub question_kind: Option<&'static str>,
@@ -289,7 +289,7 @@ mod tests {
         }
     }
 
-    /// 대화 정리(plan §8.306): 표지가 보이면 「compacting」을 한 번 알리고, 요약 글이 오기 전(참고 규칙은 쉼)과 오는 중(작업 중)을
+    /// 대화 정리(plan §8.309): 표지가 보이면 「compacting」을 한 번 알리고, 요약 글이 오기 전(참고 규칙은 쉼)과 오는 중(작업 중)을
     /// 오가도 다시 알리지 않는다. 표지가 사라지면 그때의 상태(쉼·작업 중)를 알린다. 정리 중에 다시 작업 중이 되는 것도 바뀜이다
     #[test]
     fn compaction_is_reported_once_and_ends_when_the_marker_goes() {

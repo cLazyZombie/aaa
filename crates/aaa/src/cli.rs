@@ -3368,7 +3368,7 @@ fn render_front(r: &FrontResponse) -> String {
                     aaa_proto::ChatRole::Assistant => writeln!(s, "\n[{}] {}", c.harness, m.text),
                     aaa_proto::ChatRole::Tool => writeln!(s, "  · {}", m.text),
                     aaa_proto::ChatRole::Thinking => writeln!(s, "  (생각) {}", m.text),
-                    // 정리된 자리(plan §8.306): 요약은 길어 줄만 남긴다(웹은 누르면 펼친다)
+                    // 정리된 자리(plan §8.309): 요약은 길어 줄만 남긴다(웹은 누르면 펼친다)
                     aaa_proto::ChatRole::Compact => writeln!(s, "\n── 대화 정리됨 ──"),
                 };
             }

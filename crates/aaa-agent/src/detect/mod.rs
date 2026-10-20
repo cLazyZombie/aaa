@@ -112,7 +112,7 @@ pub fn text_from_screen(lines: &[String], cursor_row: u16) -> String {
     format!("{}\n", rows.join("\n"))
 }
 
-/// 대화 정리(compaction) 중인가(plan §8.306). 참고 herdr의 규칙에는 정리 상태가 없어(정리 중 화면은 작업 중이다) aaa가 더한다.
+/// 대화 정리(compaction) 중인가(plan §8.309). 참고 herdr의 규칙에는 정리 상태가 없어(정리 중 화면은 작업 중이다) aaa가 더한다.
 /// 표지는 실제 harness 화면이다(`fixtures/*compact*`, 10-20 실측): Claude 2.1.304 spinner 줄
 /// `✽ Compacting conversation… (5s · ↓ 168 tokens)`(manual·auto 같은 글), Codex 0.163 `• Compacting context (4s • esc to interrupt)`.
 /// 줄 맨 앞(Claude spinner 글자, Codex `•`)부터 맞춰 사람 글·Claude 답 글(`❯ `·`⏺ `·`› `로 시작)이 흉내 내지 못하게 한다. Codex 답 글도

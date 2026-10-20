@@ -391,7 +391,7 @@ profile?: string, } | { "op": "pane_read", pane: string, } | { "op": "pane_chat"
  */
 thinking: boolean,
 /**
- * 정리된 자리(`ChatRole::Compact`, plan §8.306, 1.60)도 싣는다. 옛 front는 생략해 그 줄을 받지 않는다(모르는 role로 답 전체를
+ * 정리된 자리(`ChatRole::Compact`, plan §8.309, 1.61)도 싣는다. 옛 front는 생략해 그 줄을 받지 않는다(모르는 role로 답 전체를
  * 읽지 못하므로)
  */
 compact: boolean,
@@ -886,8 +886,8 @@ background: number | null,
  */
 background_wait: boolean,
 /**
- * 작업 중이지만 harness가 대화를 정리(compaction)하는 중이다(화면 감지 사건 `compacting`, plan §8.306). 그동안 harness는 친 글과
- * 대기 글을 읽지 않고, 웹은 보낸 글을 이 기기에 붙잡았다가 끝나면 보낸다. 옛 host는 보내지 않는다(없으면 false, 1.60)
+ * 작업 중이지만 harness가 대화를 정리(compaction)하는 중이다(화면 감지 사건 `compacting`, plan §8.309). 그동안 harness는 친 글과
+ * 대기 글을 읽지 않고, 웹은 보낸 글을 이 기기에 붙잡았다가 끝나면 보낸다. 옛 host는 보내지 않는다(없으면 false, 1.61)
  */
 compacting: boolean, };
 
