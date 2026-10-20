@@ -329,7 +329,7 @@ pub struct HarnessEvent {
     /// claude·codex·report(`aaa report`)
     pub harness: String,
     /// session_start·turn_start·turn_end·question·idle·error·exited·progress·released(셸 앞 agent를 놓음)·
-    /// compacting(대화 정리 중인 작업 중, plan §8.304: 옛 host는 모르는 kind로 버린다)
+    /// compacting(대화 정리 중인 작업 중, plan §8.305: 옛 host는 모르는 kind로 버린다)
     pub kind: String,
     /// harness 자기 세션 ID(resume에 쓴다)
     pub harness_session: Option<String>,
@@ -388,7 +388,7 @@ pub struct AgentStatus {
     /// 대신 BG다. 옛 host는 보내지 않는다(없으면 false)
     #[serde(default)]
     pub background_wait: bool,
-    /// 작업 중이지만 harness가 대화를 정리(compaction)하는 중이다(화면 감지 사건 `compacting`, plan §8.304). 그동안 harness는 친 글과
+    /// 작업 중이지만 harness가 대화를 정리(compaction)하는 중이다(화면 감지 사건 `compacting`, plan §8.305). 그동안 harness는 친 글과
     /// 대기 글을 읽지 않고, 웹은 보낸 글을 이 기기에 붙잡았다가 끝나면 보낸다. 옛 host는 보내지 않는다(없으면 false, 1.59)
     #[serde(default)]
     pub compacting: bool,

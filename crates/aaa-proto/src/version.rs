@@ -123,7 +123,7 @@ pub const AGENT_LINK: Version = Version { major: 1, minor: 8 };
 // 1.58: 자동화 상세(RoutineView.queue, RoutineRuns.source), 변환 미리보기(AutomationConvert.dry_run·plan_sha256),
 // 막힌 `do.message` 큐 풀기(AutomationUnblock), 웹 `/api/v1/me`의 front_api. 옛 host는 dry_run을 버리고 변환하므로 웹은
 // me.front_api가 1.58 이상일 때만 미리보기를 보내고, 옛 host는 새 요청을 모르는 요청으로 거절한다.
-// 1.59: 대화 정리 표지(`AgentStatus.compacting`)와 대기 메시지 「지금 보내기」의 정리 중 거절(`SteerRefusal::Compacting`, plan §8.304),
+// 1.59: 대화 정리 표지(`AgentStatus.compacting`)와 대기 메시지 「지금 보내기」의 정리 중 거절(`SteerRefusal::Compacting`, plan §8.305),
 // 정리된 자리 `ChatRole::Compact`(host가 agent에 `Chat.compact`로 청할 때만).
 // 옛 host는 표지를 보내지 않아 웹이 정리를 모르고 전처럼 보낸다(harness가 정리 뒤 읽는다). 옛 웹은 새 칸을 버리고, 모르는 거절은
 // 「보내지 못했습니다」로 보인다.

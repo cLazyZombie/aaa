@@ -22,7 +22,7 @@ export const STEER_IDLE: SteerState = { phase: "idle" };
 /** 다른 글을 보내는 중이라 잠깐 못 누르는 까닭. 대기 말 단추와 이 기기 보관함 단추가 같은 말을 쓴다 */
 export const STEER_BUSY = "보내는 중인 글이 전달된 뒤 누를 수 있습니다";
 
-/** 대화 정리 중(plan §8.304)에는 harness가 대기 글을 읽지 않는다: 대기 말·이 기기 보관함 단추가 같은 말을 쓴다 */
+/** 대화 정리 중(plan §8.305)에는 harness가 대기 글을 읽지 않는다: 대기 말·이 기기 보관함 단추가 같은 말을 쓴다 */
 export const STEER_COMPACTING = "대화 정리가 끝나면 대기 글이 이어서 읽힙니다";
 
 /** 단추를 보일까. 쉬는 agent는 대기 글을 곧 읽으므로 숨기고, 질문 중·대화 정리 중·다른 글을 보내는 중이면 까닭과 함께 끈다.
@@ -58,7 +58,7 @@ export function heldSend(o: { working: boolean; asking: boolean; compacting?: bo
     const why = "질문에 답한 뒤 보낼 수 있습니다";
     return { steer, blocked: why, hint: why, title: why };
   }
-  // 정리 중: 보내도 harness가 정리 뒤에 읽는다. 끝나면 입력창이 차례대로 보낸다(plan §8.304)
+  // 정리 중: 보내도 harness가 정리 뒤에 읽는다. 끝나면 입력창이 차례대로 보낸다(plan §8.305)
   if (o.compacting) {
     const why = "대화 정리가 끝나면 차례대로 보냅니다";
     return { steer, blocked: why, hint: why, title: why };
@@ -99,7 +99,7 @@ export function refusalText(reason: SteerRefusal | null, message: string | null,
 }
 
 /** 보낸 뒤: 대기 말이 줄면 끝(기록이 그 글을 보통 사람 말로 보인다), 오래 줄지 않으면 알린다. 그 밖은 그대로.
- * 대화 정리 중(`compacting`)은 harness가 대기 글을 읽지 않으므로 오래 걸림을 세지 않는다: 정리가 끝난 때부터 다시 잰다(plan §8.304) */
+ * 대화 정리 중(`compacting`)은 harness가 대기 글을 읽지 않으므로 오래 걸림을 세지 않는다: 정리가 끝난 때부터 다시 잰다(plan §8.305) */
 export function steerSettled(state: SteerState, pending: number, now: number, compacting = false): SteerState {
   if (state.phase !== "sent") return state;
   if (pending < state.before) return STEER_IDLE;

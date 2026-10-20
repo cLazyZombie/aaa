@@ -59,7 +59,7 @@ it("이 기기 보관함 「지금 보내기」: 작업 중이면 steer(지금 �
   assert.equal(heldSend({ ...base, empty: true }).title, heldSend({ ...base, empty: true }).blocked);
 });
 
-it("대화 정리 중(plan §8.304): 대기 말·보관함 「지금 보내기」를 까닭과 함께 끄고, 거절 까닭은 터미널 보기 없이 알리며, 10초 오래 걸림을 세지 않는다", () => {
+it("대화 정리 중(plan §8.305): 대기 말·보관함 「지금 보내기」를 까닭과 함께 끄고, 거절 까닭은 터미널 보기 없이 알리며, 10초 오래 걸림을 세지 않는다", () => {
   const compacting = steerAvailability("working", false, true);
   assert.equal(compacting.blocked, STEER_COMPACTING);
   assert.equal(compacting.hint, STEER_COMPACTING, "단추 아래에 안내한다");

@@ -519,7 +519,7 @@ export function TermView({
     setSteer({ phase: "sending", id });
     ws.send(JSON.stringify({ t: "steer_queued", id, trace: inputTraceId() } satisfies TermClientMsg));
   };
-  // 대화 정리 중(plan §8.304, host `AgentStatus.compacting`): 작업 중일 때만 뜻이 있다
+  // 대화 정리 중(plan §8.305, host `AgentStatus.compacting`): 작업 중일 때만 뜻이 있다
   const compacting = paneAgentStatus(pane) === "working" && pane.agent?.compacting === true;
   // 보낸 뒤: 대기 말이 줄면 끝, 10초 줄지 않으면 알린다. 대기 말이 모두 없어지면 지난 실패 줄도 지운다(다음 대기 말에 남지 않게).
   // 정리 중에는 harness가 대기 글을 읽지 않으므로 세지 않고, 정리가 끝난 때부터 다시 잰다

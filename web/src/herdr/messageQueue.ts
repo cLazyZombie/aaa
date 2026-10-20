@@ -1,5 +1,5 @@
 /** Held messages are explicitly sent, never dispatched by reconnects or status changes.
- * aaa의 예외(plan §8.304): 대화 정리 중에 보낸 글(`after: "compaction"`)은 정리가 끝나면 입력창이 차례대로 보낸다. 보내다 실패하면
+ * aaa의 예외(plan §8.305): 대화 정리 중에 보낸 글(`after: "compaction"`)은 정리가 끝나면 입력창이 차례대로 보낸다. 보내다 실패하면
  * 표지를 떼어 보통 붙잡은 글이 된다(다시 저절로 보내지 않는다). */
 export interface HeldMessage { id: string; text: string; after?: "compaction" }
 type QueueStorage = Pick<Storage, "getItem" | "setItem" | "removeItem">;

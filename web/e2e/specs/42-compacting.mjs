@@ -1,8 +1,8 @@
 // 대화 정리(compaction) 중 감지·보내기 보류·표시(사용자 10-20 「compacting 중인 걸 감지해서 이때 동안은 보내지 못하게 하고 대화창에서도
-// compacting 중이란 걸 보여줘」, plan §8.304). 가짜 Claude가 실제 Claude 2.1.304 정리 화면(spinner 「Compacting conversation… (3s)」,
+// compacting 중이란 걸 보여줘」, plan §8.305). 가짜 Claude가 실제 Claude 2.1.304 정리 화면(spinner 「Compacting conversation… (3s)」,
 // 요약 글이 오기 전이라 참고 규칙으로는 입력 상자의 쉼)을 그린다. agent 감지가 「정리 중」을 알리면 웹은 상단 표지·대화 끝 줄을 보이고,
 // 그동안 보낸 글을 pane에 치지 않고 이 기기 보관함에 붙잡았다가 정리가 끝나면 차례대로 보낸다. Claude 대기 글의 「지금 보내기」는 끈다.
-// 혼자 돌리기: node web/e2e/web.e2e.mjs --spec 41-compacting(새 실험실). 준비(host·agent·t1·첫 화면)는 lib/harness.mjs runSpec.
+// 혼자 돌리기: node web/e2e/web.e2e.mjs --spec 42-compacting(새 실험실). 준비(host·agent·t1·첫 화면)는 lib/harness.mjs runSpec.
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import { root, aaa, AA, step, inList, until, domIs, waitOutput, shot, webkit, sentFrames, sentCount } from "../lib/harness.mjs";
@@ -114,14 +114,14 @@ export default async function ({ page }) {
     const steer = page.getByTestId("chat-pending-steer");
     await steer.waitFor();
     assert.equal(await steer.isDisabled(), false, "작업 중 대기 글은 지금 보낼 수 있다");
-    await shot(page, "41-before-compacting-desktop");
+    await shot(page, "42-before-compacting-desktop");
     await key("f5", "compacting");
     await domIs(page, "정리 중 표지", () => document.querySelector('[data-testid="agent-chip"]')?.dataset.compacting === "true");
     assert.deepEqual(await shows(page), { chip: "정리 중", compacting: true, row: "대화 정리 중…" });
     await domIs(page, "대기 글 단추가 꺼짐", () => document.querySelector('[data-testid="chat-pending-steer"]')?.disabled === true);
     assert.match(await page.getByTestId("chat-pending-note").textContent(), /대화 정리가 끝나면 대기 글이 이어서 읽힙니다/);
     assert.equal(await steer.getAttribute("title"), "대화 정리가 끝나면 대기 글이 이어서 읽힙니다");
-    await shot(page, "41-compacting-claude-queue-desktop");
+    await shot(page, "42-compacting-claude-queue-desktop");
     await key("f6", "idle");
     await domIs(page, "정리 끝: 대기 말이 사람 말로", () => !document.querySelector('[data-testid="chat-pending"]') && !document.querySelector('[data-testid="chat-compacting"]')
       && [...document.querySelectorAll('[data-role="user"]')].some((el) => el.textContent.trim() === "작업 중 추가"));
@@ -145,7 +145,7 @@ export default async function ({ page }) {
     // 보내지 않았다: 이 화면이 pane WebSocket으로 submit을 보내지 않았고(보관은 그 사건 안에서 끝난다) pane도 받지 않았다
     assert.deepEqual((await sentFrames(page, from)).filter((f) => f.t === "submit" || f.t === "input"), []);
     assert.equal(bytes(), before);
-    await shot(page, "41-compacting-held-desktop");
+    await shot(page, "42-compacting-held-desktop");
 
     // 휴대폰(iPhone Safari)·패드: host 상태 표지는 모든 기기가 같다
     const wk = await webkit.launch();
@@ -157,7 +157,7 @@ export default async function ({ page }) {
         const seen = await shows(p);
         assert.equal(seen.row, "대화 정리 중…", profile);
         if (seen.chip !== null) assert.equal(seen.chip, "정리 중", profile);
-        await shot(p, `41-compacting-${profile}`);
+        await shot(p, `42-compacting-${profile}`);
         await p.context().close();
       }
     } finally {
@@ -181,6 +181,6 @@ export default async function ({ page }) {
     await divider.locator("summary").click();
     await domIs(page, "요약 펼침", () => [...document.querySelectorAll('[data-role="compact"]')].at(-1)?.open === true);
     assert.match(await divider.locator(".chat-compact-text").textContent(), /앞 대화를 줄였다/);
-    await shot(page, "41-after-compacting-desktop");
+    await shot(page, "42-after-compacting-desktop");
   });
 }

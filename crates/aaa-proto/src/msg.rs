@@ -349,7 +349,7 @@ pub enum ChatRole {
     Tool,
     /// agent의 생각(Claude thinking 블록, Codex reasoning 요약). 「생각 표시」를 켠 화면이 청할 때만 싣는다(plan §8.129).
     Thinking,
-    /// 대화가 정리(compaction)된 자리(plan §8.304, herdr-web-ui `{ kind: "compact" }`). 글은 정리 요약이다(Codex는 빌 수 있다).
+    /// 대화가 정리(compaction)된 자리(plan §8.305, herdr-web-ui `{ kind: "compact" }`). 글은 정리 요약이다(Codex는 빌 수 있다).
     /// host가 `AgentRequest::Chat.compact`로 청할 때만 싣는다: 옛 host는 이 역할을 읽지 못한다
     Compact,
 }
@@ -692,7 +692,7 @@ pub enum AgentRequest {
         /// 생각도 싣는다(plan §8.129). 옛 agent는 이 칸을 모르고 빼고 보낸다
         #[serde(default)]
         thinking: bool,
-        /// 정리된 자리(`ChatRole::Compact`)도 싣는다(plan §8.304). 옛 host는 보내지 않아 agent가 빼고, 옛 agent는 이 칸을 모른다
+        /// 정리된 자리(`ChatRole::Compact`)도 싣는다(plan §8.305). 옛 host는 보내지 않아 agent가 빼고, 옛 agent는 이 칸을 모른다
         #[serde(default)]
         compact: bool,
         /// 이전 응답의 before. 생략하면 최신 쪽, 옛 상대는 무시한다.
@@ -2733,7 +2733,7 @@ pub enum SteerRefusal {
     Unsupported,
     /// 보내다 실패했다(권한·pane 끝남·연결)
     Failed,
-    /// agent가 대화를 정리하는 중이다(plan §8.304, 1.59): harness가 정리가 끝날 때까지 대기 글을 읽지 않는다
+    /// agent가 대화를 정리하는 중이다(plan §8.305, 1.59): harness가 정리가 끝날 때까지 대기 글을 읽지 않는다
     Compacting,
 }
 

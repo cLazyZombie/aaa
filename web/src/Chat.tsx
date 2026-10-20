@@ -35,7 +35,7 @@ function chatRows(el: HTMLElement): NodeListOf<HTMLElement> {
 }
 const SCROLL_KEYS = ["ArrowUp", "ArrowDown", "PageUp", "PageDown", "Home", "End", " "];
 
-/** 대화 정리 중(plan §8.304): 대화 끝의 구분선. t3code `ContextCompactionTimelineRow`(MessagesTimeline.tsx 1980~2010줄, 가로선·
+/** 대화 정리 중(plan §8.305): 대화 끝의 구분선. t3code `ContextCompactionTimelineRow`(MessagesTimeline.tsx 1980~2010줄, 가로선·
  * Minimize2·「Compacting context」 반짝임)를 옮겼다. 굴림 기준 줄(`chatRows`)에 들지 않게 chat-note다: 정리가 끝나면 사라진다 */
 function CompactingRow() {
   return (
@@ -50,7 +50,7 @@ function CompactingRow() {
   );
 }
 
-/** 대화가 정리된 자리(plan §8.304, 사용자 10-20 「대화 정리됨 구분선으로 남겨」). herdr-web-ui ChatView.tsx 618~623줄 `chat-compact`
+/** 대화가 정리된 자리(plan §8.305, 사용자 10-20 「대화 정리됨 구분선으로 남겨」). herdr-web-ui ChatView.tsx 618~623줄 `chat-compact`
  * 그대로: 조용한 구분선이고 요약은 누르면 펼친다. 기록에 시각이 없어 시각은 없다. 요약이 없는(Codex) 정리는 구분선만이다 */
 function CompactedRow({ text }: { text: string }) {
   if (text.trim() === "")
@@ -322,7 +322,7 @@ export function ChatPanel({
 }: {
   pane: string;
   status?: AgentStatus;
-  /** agent가 대화를 정리하는 중(plan §8.304): 대화 끝에 「대화 정리 중…」 줄 */
+  /** agent가 대화를 정리하는 중(plan §8.305): 대화 끝에 「대화 정리 중…」 줄 */
   compacting?: boolean;
   readNow?: number;
   /** 글 속 파일 경로를 연다(조작 기기만) */

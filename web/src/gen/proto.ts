@@ -825,7 +825,7 @@ background: number | null,
  */
 background_wait: boolean,
 /**
- * 작업 중이지만 harness가 대화를 정리(compaction)하는 중이다(화면 감지 사건 `compacting`, plan §8.304). 그동안 harness는 친 글과
+ * 작업 중이지만 harness가 대화를 정리(compaction)하는 중이다(화면 감지 사건 `compacting`, plan §8.305). 그동안 harness는 친 글과
  * 대기 글을 읽지 않고, 웹은 보낸 글을 이 기기에 붙잡았다가 끝나면 보낸다. 옛 host는 보내지 않는다(없으면 false, 1.59)
  */
 compacting: boolean, };
