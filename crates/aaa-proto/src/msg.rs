@@ -833,6 +833,14 @@ pub enum AgentRequest {
         cwd: String,
         query: PrQuery,
     },
+    /// diff.v1을 알린 agent만 thread worktree(`cwd`)의 바뀐 파일·patch를 읽는다(plan §8.305). `base`는 thread를 시작할 때
+    /// 잡은 기준 ref(`origin/main` 등)이고, 없으면 agent가 `origin/HEAD`·`main`·`master`에서 고른다
+    ThreadDiff {
+        cwd: String,
+        #[serde(default)]
+        base: Option<String>,
+        query: crate::DiffQuery,
+    },
 }
 
 /// `AgentRequest::PrQuery`가 묻는 것
@@ -947,6 +955,7 @@ pub enum AgentResponse {
     Ci(crate::CiAnswer),
     Git(crate::GitAnswer),
     History(HistoryChunk),
+    Diff(crate::DiffView),
 }
 
 /// routine 명령 실행 결과
@@ -1480,6 +1489,17 @@ pub enum FrontRequest {
         project: String,
         thread: String,
         path: String,
+    },
+    /// FRONT_API 1.59. thread worktree의 바뀐 파일과 patch(plan §8.305): 그 thread의 머신 agent가 읽는다(diff.v1). 소스를
+    /// 보이므로 조작 기기만(`ThreadFile`과 같다)
+    ThreadDiff {
+        #[serde(default)]
+        #[ts(optional, as = "Option<String>")]
+        project: String,
+        thread: String,
+        #[serde(default)]
+        #[ts(optional, as = "Option<crate::DiffQuery>")]
+        query: crate::DiffQuery,
     },
     /// 폴더 보기(파일 보기 안, 참고 `DirectoryBrowser`): pane이 지금 있는 폴더 기준으로 폴더 한 단계를 읽는다. 허용 폴더 안만,
     /// 조작 기기만(`PaneFile`과 같다)
@@ -2230,6 +2250,7 @@ impl FrontRequest {
             | FrontRequest::PostList { project, .. }
             | FrontRequest::PostUnmute { project, .. }
             | FrontRequest::ThreadFile { project, .. }
+            | FrontRequest::ThreadDiff { project, .. }
             | FrontRequest::ProjectSet { project, .. }
             | FrontRequest::ProjectOpen { project, .. }
             | FrontRequest::ThreadStart { project, .. }
@@ -2522,6 +2543,12 @@ pub enum FrontResponse {
         source: Option<crate::RoutineSource>,
     },
     Library(LibraryView),
+    /// `thread_diff`의 답
+    ThreadDiff {
+        project: String,
+        thread: String,
+        diff: crate::DiffView,
+    },
     LibraryLink(LinkView),
     LibraryReports {
         reports: Vec<LibraryReport>,
@@ -2960,6 +2987,11 @@ mod tests {
         assert!(!FrontRequest::PaneChat { pane: "p".into(), thinking: false, before: None }.needs_control());
         // 파일 보기는 조작 기기만(herdr-web-ui도 보기 전용 기기는 fs/ 403)
         assert!(FrontRequest::PaneFile { pane: "p".into(), path: "a.txt".into() }.needs_control());
+        // diff는 소스를 보인다: 보기 기기는 못 받는다(plan §8.305)
+        assert!(
+            FrontRequest::ThreadDiff { project: "p".into(), thread: "t-0001".into(), query: Default::default() }
+                .needs_control()
+        );
         assert!(
             FrontRequest::ThreadFile { project: "p".into(), thread: "t-0001".into(), path: "a.txt".into() }
                 .needs_control()

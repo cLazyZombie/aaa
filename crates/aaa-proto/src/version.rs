@@ -123,6 +123,8 @@ pub const AGENT_LINK: Version = Version { major: 1, minor: 8 };
 // 1.58: 자동화 상세(RoutineView.queue, RoutineRuns.source), 변환 미리보기(AutomationConvert.dry_run·plan_sha256),
 // 막힌 `do.message` 큐 풀기(AutomationUnblock), 웹 `/api/v1/me`의 front_api. 옛 host는 dry_run을 버리고 변환하므로 웹은
 // me.front_api가 1.58 이상일 때만 미리보기를 보내고, 옛 host는 새 요청을 모르는 요청으로 거절한다.
+// 1.59: `thread_diff`(thread worktree의 바뀐 파일·patch, plan §8.305). 그 머신 agent의 diff.v1이 읽는다. 옛 host는 모르는 요청으로
+// 거절해 웹이 변경 파일 카드를 그리지 않는다.
 // 1.60: 할 일 보기(`Tasks`→`TaskBoard`, TaskView `line`·`raw`·`block_sha256`·`parent`·`problems`, 사건 `tasks`). 옛 host는 새 칸을
 // 생략하고 새 요청을 모르는 요청으로 거절한다. 사건 `tasks`는 1.60 이상과 합의한 CLI 연결에만 보낸다.
 pub const FRONT_API: Version = Version { major: 1, minor: 60 };

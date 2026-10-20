@@ -3875,6 +3875,22 @@ fn render_front(r: &FrontResponse) -> String {
                 s.push_str("회수한 보고가 없다\n");
             }
         }
+        FrontResponse::ThreadDiff { project, thread, diff } => {
+            let files = diff.files.as_deref().unwrap_or_default();
+            let (add, del) =
+                files.iter().fold((0, 0), |(a, d), f| (a + f.additions.unwrap_or(0), d + f.deletions.unwrap_or(0)));
+            let _ = writeln!(s, "{project}/{thread} {} 대비 파일 {}개 +{add} -{del}", diff.base, files.len());
+            for f in files {
+                let n = |v: Option<u64>| v.map_or("-".to_string(), |v| v.to_string());
+                let _ = writeln!(s, "  {:?}\t+{}\t-{}\t{}", f.status, n(f.additions), n(f.deletions), f.path);
+            }
+            if let Some(p) = &diff.patch {
+                s.push_str(p);
+            }
+            if diff.truncated {
+                s.push_str("(상한에서 잘렸다)\n");
+            }
+        }
         FrontResponse::Next { lines, message } => {
             if let Some(m) = message {
                 let _ = writeln!(s, "보냈다({:?}): {}", m.state, m.text);

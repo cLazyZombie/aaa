@@ -27,6 +27,7 @@ mod coord;
 mod ctrl_enter;
 pub mod db;
 mod deploy;
+mod diff;
 mod evaluator;
 mod files;
 pub mod front;
@@ -1624,6 +1625,7 @@ impl Host {
             FrontRequest::ThreadFile { project, thread, path } => {
                 self.thread_file(actor, &project, &thread, &path).await
             }
+            FrontRequest::ThreadDiff { project, thread, query } => self.thread_diff(&project, &thread, query).await,
             FrontRequest::PaneDir { pane, path, hidden } => self.pane_dir(role, actor, &pane, &path, hidden).await,
             FrontRequest::PaneChat { pane, thinking, before } => {
                 let (id, mid) = self.resolve_pane(&pane)?;
