@@ -6,18 +6,7 @@ import "./ThreadActions.css";
 import "./AdminPages.css";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import type {
-  DeviceRole,
-  HookView,
-  MachineView,
-  ProfileAdminRow,
-  ProfileAdminView,
-  ProfileChangeReq,
-  ProfilePlanView,
-  SafetyView,
-  SettingsScope,
-  WorkRootView,
-} from "./gen/proto";
+import type { DeviceRole, HookView, MachineView, ProfileAdminRow, ProfileAdminView, ProfileChangeReq, ProfilePlanView, SafetyView, SettingsScope, WorkRootView } from "./gen/proto";
 import { ApiError, call, me } from "./api";
 import { AdminDialog } from "./AdminPages";
 import { ConfirmDialog } from "./ConfirmDialog";
@@ -39,14 +28,8 @@ import {
   type ProfileDraft,
 } from "./settingsModel.ts";
 
-const say = (e: unknown) =>
-  e instanceof ApiError
-    ? e.message
-    : e instanceof Error
-      ? e.message
-      : String(e);
-const conflictNote =
-  "그사이 host 설정이 바뀌어 쓰지 않았다. 새로 읽었으니 다시 본다.";
+const say = (e: unknown) => (e instanceof ApiError ? e.message : e instanceof Error ? e.message : String(e));
+const conflictNote = "그사이 host 설정이 바뀌어 쓰지 않았다. 새로 읽었으니 다시 본다.";
 
 /** 1.81 이상 host인가(모르면 null) */
 function useSettingsAdmin(): boolean | null {
@@ -63,29 +46,9 @@ function useSettingsAdmin(): boolean | null {
   return ok;
 }
 
-function Gate({
-  role,
-  admin,
-  what,
-}: {
-  role: DeviceRole;
-  admin: boolean | null;
-  what: string;
-}) {
-  if (role === "reader")
-    return (
-      <p className="op-muted">
-        보기 전용 기기는 {what}을 보지 않는다(host 설정 경로와 인자가 들어
-        있다).
-      </p>
-    );
-  if (admin === false)
-    return (
-      <p className="op-muted">
-        이 host는 웹 {what} 관리를 모른다. host를 새 판으로 바꾸면 보인다(지금은
-        host 터미널의 aaa 명령).
-      </p>
-    );
+function Gate({ role, admin, what }: { role: DeviceRole; admin: boolean | null; what: string }) {
+  if (role === "reader") return <p className="op-muted">보기 전용 기기에는 {what} 설정을 보이지 않는다(host 설정과 실행 인자가 들어 있다).</p>;
+  if (admin === false) return <p className="op-muted">이 host는 웹 {what} 관리를 모른다. host를 새 판으로 바꾸면 보인다(지금은 host 터미널의 aaa 명령).</p>;
   return null;
 }
 
@@ -100,34 +63,13 @@ function Notes({ items, testid }: { items: string[]; testid?: string }) {
   );
 }
 
-function ScopePick({
-  scope,
-  project,
-  onChange,
-  disabled,
-}: {
-  scope: SettingsScope;
-  project: string;
-  onChange: (s: SettingsScope) => void;
-  disabled?: boolean;
-}) {
+function ScopePick({ scope, project, onChange, disabled }: { scope: SettingsScope; project: string; onChange: (s: SettingsScope) => void; disabled?: boolean }) {
   return (
     <div className="admin-line" role="radiogroup" aria-label="고칠 표">
       {(["project", "global"] as const).map((s) => (
         <label key={s} className="op-check">
-          <input
-            type="radio"
-            name="settings-scope"
-            checked={scope === s}
-            disabled={disabled}
-            onChange={() => onChange(s)}
-            data-testid={`scope-${s}`}
-          />
-          <span>
-            {s === "project"
-              ? `이 프로젝트${project ? `(${project})` : ""}`
-              : "모든 프로젝트 기본"}
-          </span>
+          <input type="radio" name="settings-scope" checked={scope === s} disabled={disabled} onChange={() => onChange(s)} data-testid={`scope-${s}`} />
+          <span>{s === "project" ? `이 프로젝트${project ? `(${project})` : ""}` : "모든 프로젝트 기본"}</span>
         </label>
       ))}
     </div>
@@ -174,11 +116,7 @@ export function SafetyPage({ role }: { role: DeviceRole }) {
       });
       if (r.kind === "safety") setView(r);
     } catch (e) {
-      setError(
-        e instanceof ApiError && e.body.code === "conflict"
-          ? conflictNote
-          : say(e),
-      );
+      setError(e instanceof ApiError && e.body.code === "conflict" ? conflictNote : say(e));
       load(true);
     } finally {
       setBusy(false);
@@ -193,17 +131,9 @@ export function SafetyPage({ role }: { role: DeviceRole }) {
           {error}
         </p>
       )}
-      <SettingsGroup
-        title="safety"
-        note="사람만 바꾼다(agent는 바꾸지 못한다). 웹은 아래 넷만 바꾼다. 인자·명령 목록은 host의 aaa 세션 밖 터미널에서 aaa safety set으로 바꾼다."
-      >
+      <SettingsGroup title="safety" note="사람만 바꾼다(agent는 바꾸지 못한다). 웹은 아래 넷만 바꾼다. 인자·명령 목록은 host의 aaa 세션 밖 터미널에서 aaa safety set으로 바꾼다.">
         <div className="settings-item">
-          <ScopePick
-            scope={scope}
-            project={view?.project ?? ""}
-            onChange={setScope}
-            disabled={busy}
-          />
+          <ScopePick scope={scope} project={view?.project ?? ""} onChange={setScope} disabled={busy} />
           {view && (
             <ul className="admin-list" data-testid="safety-rows">
               {view.rows.map((r) => (
@@ -225,8 +155,7 @@ export function SafetyPage({ role }: { role: DeviceRole }) {
                       disabled={busy}
                       data-testid={`safety-set-${r.key}`}
                       onChange={(e) => {
-                        const v =
-                          e.target.value === "default" ? null : e.target.value;
+                        const v = e.target.value === "default" ? null : e.target.value;
                         if (needsYoloConfirm(r.key, v)) setYolo(true);
                         else void set(r.key, v);
                       }}
@@ -248,16 +177,10 @@ export function SafetyPage({ role }: { role: DeviceRole }) {
               ))}
             </ul>
           )}
-          {view && (
-            <Notes
-              items={[...view.warnings.map((w) => `경고: ${w}`), ...view.notes]}
-              testid="safety-notes"
-            />
-          )}
+          {view && <Notes items={[...view.warnings.map((w) => `경고: ${w}`), ...view.notes]} testid="safety-notes" />}
           {view && (
             <p className="op-muted">
-              기본 profile — thread {view.thread_profile} · coordinator{" "}
-              {view.coordinator_profile}
+              기본 profile — thread {view.thread_profile} · coordinator {view.coordinator_profile}
             </p>
           )}
         </div>
@@ -299,10 +222,7 @@ export function ProfilesPage({ role }: { role: DeviceRole }) {
   const load = useCallback(() => {
     if (!shown) return;
     const mine = ++seq.current;
-    Promise.all([
-      call({ op: "profile_admin" }),
-      call({ op: "safety_show", scope }),
-    ])
+    Promise.all([call({ op: "profile_admin" }), call({ op: "safety_show", scope })])
       .then(([p, s]) => {
         if (mine !== seq.current) return;
         if (p.kind === "profile_admin") setView(p);
@@ -350,33 +270,18 @@ export function ProfilesPage({ role }: { role: DeviceRole }) {
                   {p.description ? ` — ${p.description}` : ""}
                 </span>
                 <code className="mono admin-argv" data-testid="profile-launch">
-                  {[
-                    p.harness === "custom" ? "(실행 명령)" : p.harness,
-                    ...p.launch,
-                  ].join(" ")}
+                  {[p.harness === "custom" ? "(실행 명령)" : p.harness, ...p.launch].join(" ")}
                 </code>
-                {p.env_names.length > 0 && (
-                  <span className="op-muted">env {p.env_names.join(", ")}</span>
-                )}
+                {p.env_names.length > 0 && <span className="op-muted">env {p.env_names.join(", ")}</span>}
                 {p.custom ? (
                   <span className="op-muted">host 터미널에서</span>
                 ) : (
                   <span className="admin-actions">
-                    <button
-                      type="button"
-                      className="btn small"
-                      onClick={() => setEditing({ before: p })}
-                      aria-label={`${p.name} 고치기`}
-                    >
+                    <button type="button" className="btn small" onClick={() => setEditing({ before: p })} aria-label={`${p.name} 고치기`}>
                       고치기
                     </button>
                     {!p.builtin && (
-                      <button
-                        type="button"
-                        className="btn small"
-                        onClick={() => ask({ change: "remove", name: p.name })}
-                        aria-label={`${p.name} 지우기`}
-                      >
+                      <button type="button" className="btn small" onClick={() => ask({ change: "remove", name: p.name })} aria-label={`${p.name} 지우기`}>
                         지우기
                       </button>
                     )}
@@ -385,26 +290,13 @@ export function ProfilesPage({ role }: { role: DeviceRole }) {
               </li>
             ))}
           </ul>
-          <button
-            type="button"
-            className="btn btn-primary"
-            onClick={() => setEditing({ before: null })}
-            data-testid="profile-add"
-          >
+          <button type="button" className="btn btn-primary" onClick={() => setEditing({ before: null })} data-testid="profile-add">
             profile 더하기
           </button>
         </div>
       </SettingsGroup>
-      {safety && (
-        <AllowGroup
-          key={`${scope}-${safety.rev}`}
-          safety={safety}
-          scope={scope}
-          onScope={setScope}
-          names={names}
-          onPreview={ask}
-        />
-      )}
+      {/* 고치던 칸은 그 값이 바뀔 때만 새로 채운다(profile을 더해 판만 바뀌면 그대로) */}
+      {safety && <AllowGroup key={JSON.stringify([scope, safety.thread_profiles, safety.coordinator_profiles, safety.thread_profile, safety.coordinator_profile])} safety={safety} scope={scope} onScope={setScope} names={names} onPreview={ask} />}
       {editing && (
         <ProfileDialog
           before={editing.before}
@@ -421,11 +313,7 @@ export function ProfilesPage({ role }: { role: DeviceRole }) {
           onClose={() => setPlanned(null)}
           onApplied={(message, warnings, next) => {
             setView(next);
-            setDone([
-              message,
-              ...warnings.map((w) => `경고: ${w}`),
-              "host가 다음에 profile을 쓸 때 읽는다. 이미 도는 thread는 다시 띄울 때까지 옛 설정이다.",
-            ]);
+            setDone([message, ...warnings.map((w) => `경고: ${w}`), "host가 다음에 profile을 쓸 때 읽는다. 이미 도는 thread는 다시 띄울 때까지 옛 설정이다."]);
             setPlanned(null);
             load();
           }}
@@ -454,43 +342,16 @@ function AllowGroup({
   onPreview: (c: ProfileChangeReq) => void;
 }) {
   return (
-    <SettingsGroup
-      title="허용 목록·기본 profile"
-      note="thread·coordinator가 고를 수 있는 profile과, 정하지 않았을 때 쓰는 profile. 이 목록은 사람만 바꾼다."
-    >
+    <SettingsGroup title="허용 목록·기본 profile" note="thread·coordinator가 고를 수 있는 profile과, 정하지 않았을 때 쓰는 profile. 이 목록은 사람만 바꾼다.">
       <div className="settings-item">
         <ScopePick scope={scope} project={safety.project} onChange={onScope} />
         {(["thread", "coordinator"] as const).map((role) => (
-          <AllowRow
-            key={role}
-            role={role}
-            current={
-              role === "thread"
-                ? safety.thread_profiles
-                : safety.coordinator_profiles
-            }
-            names={names}
-            scope={scope}
-            onPreview={onPreview}
-          />
+          <AllowRow key={role} role={role} current={role === "thread" ? safety.thread_profiles : safety.coordinator_profiles} names={names} scope={scope} onPreview={onPreview} />
         ))}
         {(["thread", "coordinator"] as const).map((role) => (
-          <DefaultRow
-            key={role}
-            role={role}
-            current={
-              role === "thread"
-                ? safety.thread_profile
-                : safety.coordinator_profile
-            }
-            names={names}
-            onPreview={onPreview}
-          />
+          <DefaultRow key={role} role={role} current={role === "thread" ? safety.thread_profile : safety.coordinator_profile} names={names} onPreview={onPreview} />
         ))}
-        <p className="op-muted">
-          기본 profile은 host.toml [defaults]다. 프로젝트 설정(aaa.toml)에 따로
-          적혀 있으면 그것이 앞선다.
-        </p>
+        <p className="op-muted">기본 profile은 host.toml [defaults]다. 프로젝트 설정(aaa.toml)에 따로 적혀 있으면 그것이 앞선다.</p>
       </div>
     </SettingsGroup>
   );
@@ -518,28 +379,14 @@ function AllowRow({
         {role} 허용 — 지금 {allowText(current)}
       </legend>
       <label className="op-check">
-        <input
-          type="checkbox"
-          checked={all}
-          onChange={(e) => setAll(e.target.checked)}
-        />
+        <input type="checkbox" checked={all} onChange={(e) => setAll(e.target.checked)} />
         <span>모든 profile</span>
       </label>
       {!all && (
         <div className="admin-line">
           {choices.map((n) => (
             <label key={n} className="op-check">
-              <input
-                type="checkbox"
-                checked={picked.includes(n)}
-                onChange={(e) =>
-                  setPicked(
-                    e.target.checked
-                      ? [...picked, n]
-                      : picked.filter((x) => x !== n),
-                  )
-                }
-              />
+              <input type="checkbox" checked={picked.includes(n)} onChange={(e) => setPicked(e.target.checked ? [...picked, n] : picked.filter((x) => x !== n))} />
               <span>{n}</span>
             </label>
           ))}
@@ -563,17 +410,7 @@ function AllowRow({
   );
 }
 
-function DefaultRow({
-  role,
-  current,
-  names,
-  onPreview,
-}: {
-  role: "thread" | "coordinator";
-  current: string;
-  names: string[];
-  onPreview: (c: ProfileChangeReq) => void;
-}) {
+function DefaultRow({ role, current, names, onPreview }: { role: "thread" | "coordinator"; current: string; names: string[]; onPreview: (c: ProfileChangeReq) => void }) {
   const [name, setName] = useState(current);
   return (
     <div className="admin-line" data-testid={`default-${role}`}>
@@ -587,40 +424,22 @@ function DefaultRow({
           ))}
         </select>
       </label>
-      <button
-        type="button"
-        className="btn small"
-        disabled={name === current}
-        onClick={() => onPreview({ change: "default", role, name })}
-      >
+      <button type="button" className="btn small" disabled={name === current} onClick={() => onPreview({ change: "default", role, name })}>
         미리보기…
       </button>
     </div>
   );
 }
 
-function ProfileDialog({
-  before,
-  onClose,
-  onPreview,
-}: {
-  before: ProfileAdminRow | null;
-  onClose: () => void;
-  onPreview: (c: ProfileChangeReq) => Promise<void>;
-}) {
+function ProfileDialog({ before, onClose, onPreview }: { before: ProfileAdminRow | null; onClose: () => void; onPreview: (c: ProfileChangeReq) => Promise<void> }) {
   const [d, setD] = useState<ProfileDraft>(() => draftOf(before));
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const put = (k: keyof ProfileDraft) => (e: { target: { value: string } }) =>
-    setD({ ...d, [k]: e.target.value });
+  const put = (k: keyof ProfileDraft) => (e: { target: { value: string } }) => setD({ ...d, [k]: e.target.value });
   const efforts = effortValues(d.harness);
   const nameOk = before !== null || profileNameOk(d.name.trim());
   return (
-    <AdminDialog
-      label={before ? `${before.name} 고치기` : "profile 더하기"}
-      busy={busy}
-      onClose={onClose}
-    >
+    <AdminDialog label={before ? `${before.name} 고치기` : "profile 더하기"} busy={busy} onClose={onClose}>
       <form
         onSubmit={(e) => {
           e.preventDefault();
@@ -634,32 +453,16 @@ function ProfileDialog({
         }}
       >
         <div className="modal-body">
-          {before?.builtin && (
-            <p className="op-muted">
-              기본 profile이다. 고치면 같은 이름의 profile을 host.toml에 더해
-              대신한다(지우면 기본이 돌아온다).
-            </p>
-          )}
+          {before?.builtin && <p className="op-muted">기본 profile이다. 고치면 같은 이름의 profile을 host.toml에 더해 대신한다(지우면 기본이 돌아온다).</p>}
           {!before && (
             <label className="op-field">
               <span>이름</span>
-              <input
-                autoFocus
-                value={d.name}
-                onChange={put("name")}
-                disabled={busy}
-                data-testid="profile-name"
-              />
+              <input autoFocus value={d.name} onChange={put("name")} disabled={busy} data-testid="profile-name" />
             </label>
           )}
           <label className="op-field">
             <span>harness</span>
-            <select
-              value={d.harness}
-              onChange={put("harness")}
-              disabled={busy}
-              data-testid="profile-harness"
-            >
+            <select value={d.harness} onChange={put("harness")} disabled={busy} data-testid="profile-harness">
               {WEB_HARNESSES.map((h) => (
                 <option key={h} value={h}>
                   {h}
@@ -670,12 +473,7 @@ function ProfileDialog({
           {hasModel(d.harness) && (
             <label className="op-field">
               <span>model(비우면 harness 기본)</span>
-              <input
-                value={d.model}
-                onChange={put("model")}
-                disabled={busy}
-                data-testid="profile-model"
-              />
+              <input value={d.model} onChange={put("model")} disabled={busy} data-testid="profile-model" />
             </label>
           )}
           {efforts.length > 0 && (
@@ -693,32 +491,14 @@ function ProfileDialog({
           )}
           <label className="op-field">
             <span>설명</span>
-            <input
-              value={d.description}
-              onChange={put("description")}
-              disabled={busy}
-            />
+            <input value={d.description} onChange={put("description")} disabled={busy} />
           </label>
           <label className="op-field">
             <span>인자(줄마다 하나)</span>
-            <textarea
-              rows={3}
-              value={d.args}
-              onChange={put("args")}
-              disabled={busy}
-              className="mono"
-              data-testid="profile-args"
-            />
+            <textarea rows={3} value={d.args} onChange={put("args")} disabled={busy} className="mono" data-testid="profile-args" />
           </label>
-          <p className="op-muted">
-            인자는 harness 실행 파일 뒤에 그대로 붙는다. 다음 화면에서 실제 실행
-            인자를 보고 적용한다.
-          </p>
-          {!nameOk && d.name !== "" && (
-            <p className="op-warn">
-              이름은 영문·숫자·. _ -로 40자까지 쓴다(-·.로 시작하지 않는다).
-            </p>
-          )}
+          <p className="op-muted">인자는 harness 실행 파일 뒤에 그대로 붙는다. 다음 화면에서 실제 실행 인자를 보고 적용한다.</p>
+          {!nameOk && d.name !== "" && <p className="op-warn">이름은 영문·숫자·. _ -로 40자까지 쓴다(-·.로 시작하지 않는다).</p>}
           {error && (
             <p className="op-warn" role="alert">
               {error}
@@ -726,20 +506,10 @@ function ProfileDialog({
           )}
         </div>
         <footer className="modal-footer">
-          <button
-            type="button"
-            className="btn"
-            onClick={onClose}
-            disabled={busy}
-          >
+          <button type="button" className="btn" onClick={onClose} disabled={busy}>
             닫기
           </button>
-          <button
-            type="submit"
-            className="btn btn-primary"
-            disabled={busy || !nameOk}
-            data-testid="profile-preview"
-          >
+          <button type="submit" className="btn btn-primary" disabled={busy || !nameOk} data-testid="profile-preview">
             미리보기
           </button>
         </footer>
@@ -748,8 +518,7 @@ function ProfileDialog({
   );
 }
 
-const argv = (p: ProfileAdminRow | null) =>
-  p ? [p.harness, ...p.launch].join(" ") : "(없음)";
+const argv = (p: ProfileAdminRow | null) => (p ? [p.harness, ...p.launch].join(" ") : "(없음)");
 
 function PlanDialog({
   planned,
@@ -759,11 +528,7 @@ function PlanDialog({
 }: {
   planned: { change: ProfileChangeReq; plan: ProfilePlanView };
   onClose: () => void;
-  onApplied: (
-    message: string,
-    warnings: string[],
-    view: ProfileAdminView,
-  ) => void;
+  onApplied: (message: string, warnings: string[], view: ProfileAdminView) => void;
   onConflict: () => void;
 }) {
   const [busy, setBusy] = useState(false);
@@ -808,12 +573,10 @@ function PlanDialog({
               expected: plan.rev,
             })
               .then((r) => {
-                if (r.kind === "profile_applied")
-                  onApplied(r.message, r.warnings, r.view);
+                if (r.kind === "profile_applied") onApplied(r.message, r.warnings, r.view);
               })
               .catch((e: unknown) => {
-                if (e instanceof ApiError && e.body.code === "conflict")
-                  onConflict();
+                if (e instanceof ApiError && e.body.code === "conflict") onConflict();
                 else {
                   setError(say(e));
                   setBusy(false);
@@ -831,34 +594,19 @@ function PlanDialog({
 // ───────────── 머신 작업 폴더·hook ─────────────
 
 /** 「머신」의 머신 하나 설정: 작업 폴더(답 3A)와 Codex hook(답 4A). 그 머신 agent가 한다 */
-export function MachineSetup({
-  role,
-  machines,
-}: {
-  role: DeviceRole;
-  machines: MachineView[];
-}) {
+export function MachineSetup({ role, machines }: { role: DeviceRole; machines: MachineView[] }) {
   const admin = useSettingsAdmin();
   const live = machines.filter((m) => m.connection === "connected");
-  const [name, setName] = useState<string>(
-    () => live.find((m) => m.local)?.name ?? live[0]?.name ?? "",
-  );
+  const [name, setName] = useState<string>(() => live.find((m) => m.local)?.name ?? live[0]?.name ?? "");
   if (role === "reader" || admin !== true) return null;
   if (live.length === 0) return null;
   const chosen = live.some((m) => m.name === name) ? name : live[0]!.name;
   return (
-    <SettingsGroup
-      title="작업 폴더·hook"
-      note="머신마다 thread 작업 폴더(worktree가 생기는 곳)와 harness hook 연동. 그 머신의 agent가 바꾼다."
-    >
+    <SettingsGroup title="작업 폴더·hook" note="머신마다 thread 작업 폴더(worktree가 생기는 곳)와 harness hook 연동. 그 머신의 agent가 바꾼다.">
       <div className="settings-item">
         <label className="op-field">
           <span>머신</span>
-          <select
-            value={chosen}
-            onChange={(e) => setName(e.target.value)}
-            data-testid="setup-machine"
-          >
+          <select value={chosen} onChange={(e) => setName(e.target.value)} data-testid="setup-machine">
             {live.map((m) => (
               <option key={m.id} value={m.name}>
                 {m.name}
@@ -929,8 +677,7 @@ function WorkRoot({ machine }: { machine: string }) {
       )}
       {view?.restart_required && (
         <p className="op-muted" data-testid="work-root-restart">
-          다음 시작 설정이 마지막 시작 기록과 다르다: 그 머신 agent를 다시
-          띄우면 닿는다.
+          다음 시작 설정이 마지막 시작 기록과 다르다: 그 머신 agent를 다시 띄우면 닿는다.
         </p>
       )}
       {note && (
@@ -941,43 +688,20 @@ function WorkRoot({ machine }: { machine: string }) {
       <div className="admin-line">
         <label className="op-field">
           <span>절대 경로</span>
-          <input
-            value={path}
-            onChange={(e) => setPath(e.target.value)}
-            className="mono"
-            data-testid="work-root-path"
-          />
+          <input value={path} onChange={(e) => setPath(e.target.value)} className="mono" data-testid="work-root-path" />
         </label>
         <label className="op-field">
           <span>mount(외장 볼륨이면)</span>
-          <input
-            value={mount}
-            onChange={(e) => setMount(e.target.value)}
-            className="mono"
-          />
+          <input value={mount} onChange={(e) => setMount(e.target.value)} className="mono" />
         </label>
-        <button
-          type="button"
-          className="btn"
-          disabled={!ok}
-          onClick={() => setAsking("check")}
-          data-testid="work-root-check"
-        >
+        <button type="button" className="btn" disabled={!ok} onClick={() => setAsking("check")} data-testid="work-root-check">
           점검…
         </button>
-        <button
-          type="button"
-          className="btn btn-primary"
-          disabled={!canSwitch(checked, path, mount)}
-          onClick={() => setAsking("set")}
-          data-testid="work-root-set"
-        >
+        <button type="button" className="btn btn-primary" disabled={!canSwitch(checked, path, mount)} onClick={() => setAsking("set")} data-testid="work-root-set">
           전환…
         </button>
       </div>
-      {!ok && path !== "" && (
-        <p className="op-warn">절대 경로만 받는다(~·상대 경로는 안 된다).</p>
-      )}
+      {!ok && path !== "" && <p className="op-warn">절대 경로만 받는다(~·상대 경로는 안 된다).</p>}
       {checked && canSwitch(checked, path, mount) && (
         <p className="op-muted" data-testid="work-root-checked">
           점검 통과: {checked.real}
@@ -997,8 +721,7 @@ function WorkRoot({ machine }: { machine: string }) {
               path: p,
               mount: m || null,
             });
-            if (r.kind === "work_root_checked")
-              setChecked({ path: p, mount: m, real: r.real_path });
+            if (r.kind === "work_root_checked") setChecked({ path: p, mount: m, real: r.real_path });
             setAsking(null);
           }}
           onClose={() => setAsking(null)}
@@ -1018,11 +741,7 @@ function WorkRoot({ machine }: { machine: string }) {
             });
             if (r.kind === "work_root") {
               setView(r);
-              setNote(
-                r.changed
-                  ? "저장했다. 다음 agent 시작부터 쓴다."
-                  : "이미 그 설정이다.",
-              );
+              setNote(r.changed ? "저장했다. 다음 agent 시작부터 쓴다." : "이미 그 설정이다.");
             }
             setChecked(null);
             setAsking(null);
@@ -1050,9 +769,7 @@ function Hook({ machine }: { machine: string }) {
   return (
     <div className="admin-block" data-testid="hook">
       <h4 className="admin-sub">harness hook</h4>
-      <p className="op-muted">
-        Claude: aaa가 실행마다 hook을 넣는다(설치할 것 없음).
-      </p>
+      <p className="op-muted">Claude: aaa가 실행마다 hook을 넣는다(설치할 것 없음).</p>
       {error && (
         <p className="op-warn" role="alert">
           {error}
@@ -1060,33 +777,17 @@ function Hook({ machine }: { machine: string }) {
       )}
       {view && (
         <div className="admin-line">
-          <span data-testid="hook-codex">
-            Codex 전역 hook: {view.codex_installed ? "설치됨" : "없음"}
-          </span>
-          <button
-            type="button"
-            className="btn small"
-            onClick={() => setAsking(!view.codex_installed)}
-            data-testid="hook-toggle"
-          >
+          <span data-testid="hook-codex">Codex 전역 hook: {view.codex_installed ? "설치됨" : "없음"}</span>
+          <button type="button" className="btn small" onClick={() => setAsking(!view.codex_installed)} data-testid="hook-toggle">
             {view.codex_installed ? "제거…" : "설치…"}
           </button>
         </div>
       )}
       {view?.codex_problem && <p className="op-warn">{view.codex_problem}</p>}
-      {view?.codex_installed && (
-        <p className="op-muted">
-          Codex가 hook을 처음 만나면 Codex 화면에서 신뢰를 묻는다. 그 머신에서
-          사람이 답한다.
-        </p>
-      )}
+      {view?.codex_installed && <p className="op-muted">Codex가 hook을 처음 만나면 Codex 화면에서 신뢰를 묻는다. 그 머신에서 사람이 답한다.</p>}
       {asking !== null && (
         <ConfirmDialog
-          title={
-            asking
-              ? `${machine}에 Codex hook을 설치할까요?`
-              : `${machine}의 Codex hook을 제거할까요?`
-          }
+          title={asking ? `${machine}에 Codex hook을 설치할까요?` : `${machine}의 Codex hook을 제거할까요?`}
           body={
             asking
               ? "그 머신 Codex 설정에 aaa 상태 hook을 넣고 hooks 기능을 켠다(aaa integration install codex와 같다). 고치기 전 설정은 백업한다."
