@@ -90,6 +90,32 @@ impl Host {
         Ok(())
     }
 
+    /// 이전 pane 검사와 시작 중 표지를 같은 transaction에서 확정한다.
+    pub(crate) fn claim_account_run(
+        &self,
+        record: &mut PaneAccount,
+        expected_pane: Option<&str>,
+    ) -> Result<Option<PaneAccount>, ErrorBody> {
+        let mut previous = None;
+        self.db
+            .update_meta_checked(&format!("account-run:{}", record.run), &[], |old| {
+                let old = old.map(|s| serde_json::from_str::<PaneAccount>(&s)).transpose()?;
+                if let Some(pane) = expected_pane
+                    && old.as_ref().and_then(|r| r.pane.as_deref()) != Some(pane)
+                {
+                    anyhow::bail!("실행 인증 기록이 이미 바뀌었다");
+                }
+                if record.profile.is_none() {
+                    record.profile = old.as_ref().and_then(|r| r.profile.clone());
+                }
+                let text = serde_json::to_string(record)?;
+                previous = old;
+                Ok((text, vec![]))
+            })
+            .map_err(|_| fail())?;
+        Ok(previous)
+    }
+
     /// coordinator의 pane 재개·복원도 처음 선택한 인증과 같은 기록 홈을 쓴다.
     pub(crate) async fn respawn_with_account(
         self: &Arc<Self>,
@@ -119,6 +145,6 @@ impl Host {
             return Err(fail());
         }
         credential.run = binding.run;
-        self.spawn_account_on(mid, spec, credential, actor).await
+        self.spawn_account_on(mid, spec, credential, actor, Some(id)).await
     }
 }

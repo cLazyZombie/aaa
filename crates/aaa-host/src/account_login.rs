@@ -1,7 +1,10 @@
 //! 공식 harness 로그인만 격리된 PTY에서 실행한다. 원본 출력은 어떠한 공개 경로에도 전달하지 않는다.
 use std::io::Read;
 use std::path::PathBuf;
-use std::sync::{Arc, Mutex};
+use std::sync::{
+    Arc, Mutex,
+    atomic::{AtomicBool, Ordering},
+};
 use std::time::Duration;
 
 use aaa_proto::{AccountLoginView, ErrorBody, ErrorCode, FrontResponse};
@@ -17,6 +20,20 @@ fn fail() -> ErrorBody {
         ErrorCode::BadRequest,
         "host 로그인을 끝내지 못했다. 공식 CLI 설치·브라우저 인증·저장 권한을 확인한다",
     )
+}
+
+// Unix PTY 자식은 spawn_command가 만든 독립 session/group의 leader다.
+// clone_killer의 SIGHUP은 무시할 수 있으므로 이 로그인만의 group을 강제로 끝낸다.
+fn kill_login(killer: &mut dyn portable_pty::ChildKiller, pid: Option<u32>) {
+    #[cfg(unix)]
+    if let Some(pid) = pid {
+        unsafe {
+            libc::kill(-(pid as i32), libc::SIGKILL);
+        }
+        return;
+    }
+    let _ = pid;
+    let _ = killer.kill();
 }
 
 pub(crate) struct LoginJob {
@@ -109,12 +126,15 @@ impl Host {
         let pair = native_pty_system()
             .openpty(PtySize { rows: 32, cols: 512, pixel_width: 0, pixel_height: 0 })
             .map_err(|_| fail())?;
+        #[cfg(unix)]
+        let output_fd = pair.master.as_raw_fd().ok_or_else(fail)?;
         let mut child = pair.slave.spawn_command(command).map_err(|_| fail())?;
+        let pid = child.process_id();
         let mut killer = child.clone_killer();
         let reader = match pair.master.try_clone_reader() {
             Ok(reader) => reader,
             Err(_) => {
-                let _ = child.kill();
+                kill_login(&mut *child.clone_killer(), pid);
                 let _ = child.wait();
                 return Err(fail());
             }
@@ -131,12 +151,38 @@ impl Host {
         tokio::spawn(async move {
             // PTY의 출력/오류는 메모리에만 모은다. 상한을 넘으면 자식을 끝내고 실패한다.
             let mut output_killer = killer.clone_killer();
+            let output_done = Arc::new(AtomicBool::new(false));
+            let reader_done = output_done.clone();
             let output = tokio::task::spawn_blocking(move || {
+                #[cfg(not(unix))]
+                let _ = reader_done;
                 let mut bytes = Vec::new();
-                // Unix PTY의 정상 EOF는 EIO일 수도 있다. 종료 성공은 child.wait로 따로 확인한다.
-                let _ = reader.take(MAX_OUTPUT + 1).read_to_end(&mut bytes);
-                if bytes.len() as u64 > MAX_OUTPUT {
-                    let _ = output_killer.kill();
+                let mut reader = reader;
+                let mut chunk = [0; 4096];
+                loop {
+                    // 자식 종료 뒤에도 자손이 PTY를 보유할 수 있다. 출력이 더 없으면 EOF를 기다리지 않는다.
+                    #[cfg(unix)]
+                    {
+                        let mut event = libc::pollfd { fd: output_fd, events: libc::POLLIN, revents: 0 };
+                        let ready = unsafe { libc::poll(&mut event, 1, 20) };
+                        if ready == 0 {
+                            if reader_done.load(Ordering::Acquire) {
+                                break;
+                            }
+                            continue;
+                        }
+                        if ready < 0 {
+                            break;
+                        }
+                    }
+                    match reader.read(&mut chunk) {
+                        Ok(0) | Err(_) => break,
+                        Ok(n) => bytes.extend_from_slice(&chunk[..n]),
+                    }
+                    if bytes.len() as u64 > MAX_OUTPUT {
+                        kill_login(&mut *output_killer, pid);
+                        break;
+                    }
                 }
                 bytes
             });
@@ -147,11 +193,12 @@ impl Host {
                 _ = tokio::time::sleep(Duration::from_secs(300)) => "failed",
             };
             if !wait.is_finished() {
-                let _ = killer.kill();
+                kill_login(&mut *killer, pid);
                 let _ = wait.await;
             }
-            drop(pair.master);
+            output_done.store(true, Ordering::Release);
             let bytes = output.await.unwrap_or_default();
+            drop(pair.master);
             // 취소·금고 확정·상태 확정을 같은 상태 lock 아래 직렬화한다.
             let mut v = state.lock().unwrap();
             let was_cancelled = end == "cancelled" || cancelled.try_recv().is_ok();

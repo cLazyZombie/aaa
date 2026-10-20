@@ -162,7 +162,7 @@ impl Host {
         };
         let id = if let Some(mut credential) = credential {
             credential.run = format!("{project}/c-{}", util::new_id());
-            self.spawn_account_on(&mid, spec, credential, actor).await?
+            self.spawn_account_on(&mid, spec, credential, actor, None).await?
         } else {
             self.spawn_on(&mid, spec, actor).await?
         };

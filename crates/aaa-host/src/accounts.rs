@@ -352,6 +352,7 @@ impl crate::Host {
         spec: aaa_proto::SpawnSpec,
         credential: AccountCredential,
         actor: &str,
+        expected_pane: Option<&str>,
     ) -> Result<String, ErrorBody> {
         let conn = self.live_conn(mid)?;
         self.check_health(mid)?;
@@ -360,16 +361,15 @@ impl crate::Host {
         if !self.machine_feature(mid, feature) {
             return Err(fail());
         }
-        let previous = self.account_run(&credential.run)?;
         let mut binding = crate::account_policy::PaneAccount {
             run: credential.run.clone(),
             account: credential.account.clone(),
             harness: credential.harness.clone(),
             machine: mid.into(),
             pane: None,
-            profile: spec.profile.clone().or_else(|| previous.as_ref().and_then(|r| r.profile.clone())),
+            profile: spec.profile.clone(),
         };
-        self.save_account_run(&binding)?;
+        let previous = self.claim_account_run(&mut binding, expected_pane)?;
         self.db.audit(actor, "pane_run_account", &credential.account);
         match conn.request(aaa_proto::AgentRequest::SpawnAccount { spec, credential }).await {
             Ok(aaa_proto::AgentResponse::Session(info)) => {

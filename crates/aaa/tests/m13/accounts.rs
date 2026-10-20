@@ -403,7 +403,8 @@ fn install_login_fixture(w: &World, gate: &Gate, values: &Value) -> PathBuf {
     std::fs::write(&fixture, serde_json::to_vec(values).unwrap()).unwrap();
     let source = format!(
         r#"#!/usr/bin/env python3
-import os,sys,json,pathlib,socket,stat
+import os,sys,json,pathlib,socket,stat,signal
+signal.signal(signal.SIGHUP,signal.SIG_IGN)
 kind=pathlib.Path(sys.argv[0]).name
 expected=['setup-token'] if kind=='claude' else ['-c','cli_auth_credentials_store="file"','login']
 assert sys.argv[1:]==expected, 'official login command'
@@ -414,6 +415,10 @@ assert home.parent==pathlib.Path(os.environ['HOME'])
 assert stat.S_IMODE(home.stat().st_mode)==0o700
 values=json.loads(pathlib.Path({fixture:?}).read_text())
 s=socket.create_connection(({host:?},{port}),timeout=30)
+if values.get('stubborn'):
+    s.settimeout(None)
+    if os.fork()==0:
+        s.close();signal.pause();sys.exit(0)
 s.sendall((json.dumps(dict(tid='login',phase=8,home=str(home.parent)))+'\n').encode())
 assert s.recv(1)==b'1'
 value=values[kind]
@@ -611,7 +616,7 @@ fn host_login_defaults_pin_threads_and_coordinators_without_exposing_credentials
         calls.into_iter().map(|c| c.join().unwrap()).collect::<Vec<_>>()
     });
     std::fs::remove_file(version_gate).unwrap();
-    assert_eq!(results.iter().filter(|r| r.is_ok()).count(), 1, "인증 실행마다 살아 있는 pane 하나");
+    assert_eq!(results.iter().filter(|r| r.is_ok()).count(), 1, "인증 실행마다 살아 있는 pane 하나: {results:?}");
     let manual = results.into_iter().find_map(Result::ok).unwrap();
     let again = gate.take(1, 0);
     assert_eq!(again[0].1["token"], sha(&tokens[1].0));
@@ -645,23 +650,28 @@ fn host_login_defaults_pin_threads_and_coordinators_without_exposing_credentials
     wait_for("host 로그인 재접속", T, || w.h.json(&["status"]).ok());
     let (failed, failed_hex) = canary("failed-login");
     find.extend(needles(&failed, &failed_hex));
-    std::fs::write(
-        &fixture,
-        serde_json::to_vec(&serde_json::json!({"claude":format!("sk-ant-oat01-{failed}"),"fail":true})).unwrap(),
-    )
-    .unwrap();
     for (name, cancel) in [("failed-login", false), ("cancelled-login", true)] {
+        std::fs::write(
+            &fixture,
+            serde_json::to_vec(
+                &serde_json::json!({"claude":format!("sk-ant-oat01-{failed}"),"fail":true,"stubborn":cancel}),
+            )
+            .unwrap(),
+        )
+        .unwrap();
         let v = w.h.ok(&["account", "login", name, "--harness", "claude"]);
         let id = v["login"]["id"].as_str().unwrap();
         let ready = gate.take(1, 8);
         let home = PathBuf::from(ready[0].1["home"].as_str().unwrap());
-        if cancel {
+        let held = if cancel {
             w.h.ok(&["account", "login-cancel", id]);
-            drop(ready);
+            Some(ready)
         } else {
             Gate::release(ready, b'1');
-        }
+            None
+        };
         responses.push(login_result(&w, id, if cancel { "cancelled" } else { "failed" }));
+        drop(held);
         assert!(!home.exists());
         assert!(!w.h.state.join(format!("host/accounts/{name}.json")).exists());
     }
