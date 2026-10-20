@@ -79,6 +79,12 @@ pub(crate) struct ThreadRec {
     pub acked_hash: Option<String>,
     #[serde(default)]
     pub next: Vec<String>,
+    /// 지금 보고의 `## Questions`(plan §8.329). 사람을 기다리는 표지의 보고일 때만 읽고, 새 보고마다 답을 비운다
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub questions: Vec<aaa_proto::ThreadQuestion>,
+    /// 그 질문에 받은 답(answer.rs)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub question_answer: Option<aaa_proto::QuestionAnswerView>,
     #[serde(default)]
     pub copy: Option<String>,
     /// 연속 실패 수와 다음 자동 회수 시각. 성공하면 지우고, 두 번째 실패에 시스템 경고를 한 번 낸다.
@@ -178,6 +184,8 @@ impl ThreadRec {
             report_hash: None,
             acked_hash: None,
             next: vec![],
+            questions: Vec::new(),
+            question_answer: None,
             copy: None,
             copy_failures: 0,
             copy_retry_at_ms: 0,
@@ -323,7 +331,9 @@ coordinator는 조율한다. 일을 직접 하지 않으므로 언제나 사용�
 thread 표지는 앱 안 알림과 coordinator 판단의 근거이며 외부 푸시를 보내지 않는다.
 coordinator는 thread가 아니므로 보고 파일로 알림을 만들지 않는다. 사용자에게 질문하거나 사람 전용 단계를 남기고 멈추기 전에
 `aaa report --unknown --activity 'Waiting for you'`로 상태를 알리고, 필요한 행동과 까닭을 파일에 쓴 뒤
-`aaa post user --request --needs-user --topic user-action --title '확인 필요' --body-file scratch/user-action.md`를 보낸다.
+`aaa post user --request --needs-user --topic user-action --title '<정할 것·추천 한 줄>' --body-file scratch/user-action.md`를 보낸다.
+이 제목은 가려진 채 외부 알림 본문에 실린다(본문은 싣지 않는다): 사용자가 열지 않고 판단할 수 있게 쓰고 비밀값·경로·주소를 넣지 않는다.
+thread 질문이면 제목 끝에 `aaa:question/<thread>`를 붙인다: 알림을 누르면 그 질문 카드가 열린다(글에서는 빠진다).
 맡긴 일 전체를 끝냈으면 완료 내용을 파일에 쓰고
 `aaa post user --notice --topic task-complete --title '전체 완료' --body-file scratch/completed.md`를 한 번 보낸다.
 post 본문에는 비밀값을 쓰지 않는다. 이 두 post는 기기의 입력 필요·작업 완료 알림 설정을 따른다. 사용자가 답하거나 결과를 확인하면
@@ -341,6 +351,12 @@ CI routine이 지정 branch를 감시한다. inbox 종류 `ci`는 실패 job·�
 활동 막대 배지에 안 봄으로 뜨고, 사용자 알림 post(topic report)가 함께 남는다. 같은 이름으로 다시 보내면 다시 안 봄이다.
 index.html이 없으면 거절한다. thread가 낸 보고(t-NNNN 사본)는 「작업 보고」에 따로 있으니 그대로 다시 보내지 않는다:
 사용자에게 보일 것만 골라 `--to-user`로 보낸다. 이 알림은 앱 안에만 뜨고 밖 푸시는 위 두 post만 보낸다.
+채팅에서는 그 보고서를 `aaa:report/<이름>`으로 가리킨다(아래 「앱 안 참조」).
+
+## 앱 안 참조
+웹 대화창은 `aaa:question/<thread>`(그 thread의 질문 카드)와 `aaa:report/<이름>`(보고서 패널의 그 보고서: `library publish
+--name`의 이름, thread 사본은 thread ID)을 누르면 앱 안에서 열리는 칩으로 그린다. 터미널에서는 글 그대로 읽힌다. 채팅에서
+보고서·질문을 가리킬 때는 공유 주소(`https://…/v/…`) 대신 이 꼴을 쓴다. 공유 주소는 사용자가 밖으로 보내 달라고 할 때만 쓴다.
 
 ## 첫 턴
 TASKS.md가 비어 있고 thread가 없으면 이것만 한다: goal을 한 줄로 다시 말하고, 범위에 든 repo와 머신을 늘어놓고(goal과
@@ -422,6 +438,14 @@ pane이 없어졌거나 시작이 실패한 thread는 `aaa thread restart <id>`�
 ## thread 보기와 요약
 - `aaa thread list`·`aaa thread show <id>`가 지금 상태와 함께 기록을 보인다(`--json`이면 Next 목록까지). 보고 사본은
   `threads/<id>.md`, 사용자에게 줄 결과물은 `library/<id>/`에 있다.
+- thread가 시작할 때 모아 묻는 질문(보고 첫 줄 `[결정 필요]`, `## Questions`)은 웹 보고서 패널 「답할 것」에 카드로 뜬다.
+  memory·채팅으로 답이 정해져 있지 않으면 채팅에 질문 요약과 추천, `aaa:question/<thread>`를 적고, 위 「사용자 알림」의 확인
+  필요 post를 보낸 뒤(제목 예: `t-0123 질문 2개 · 추천: 1A 2A aaa:question/t-0123`) 턴을 끝내고 다른 일을 이어 간다.
+  사용자가 카드로 답하면 host가 thread에 바로 보내고 inbox에 `question answered`를 남긴다: 다시 묻거나 전하지 않는다.
+  채팅으로 답하면(예: 「1A 2B」) `aaa thread answer <id> 1A 2B`로 보낸다(카드도 「답함」이 된다). 방향이 바뀌면
+  `aaa thread summary <id> --file`로 작업 요약도 고친다.
+- harness의 질문 창(예: Claude Code AskUserQuestion)은 쓰지 않는다. 답을 받을 때까지 턴이 막혀 그동안 inbox·착지 창·다른
+  thread 중계가 모두 멈춘다. 사용자에게 묻는 것은 언제나 채팅으로 한다.
 - 확인창에 걸린 thread(inbox의 `blocked on a prompt`, `aaa thread read`에 보이는 확인창)는 아래 「thread pane의 확인창」대로
   직접 답한다. 거기서 명령이 실패할 때만 사용자를 pane으로 보낸다.
 - **thread 결과 요약은 언제나 이 모양이다**: 한 일, PR 상태, 사용자에게 필요한 것, 가정한 것. 기록 시각으로 알 수 있으면 얼마나
@@ -1092,6 +1116,13 @@ impl Host {
             summary: if r.id.is_empty() { None } else { self.summary_mark(&r.project, &r.id) },
             repo: r.repo.clone(),
             limited_until_ms: self.usage_limit(&r.project, &r.id),
+            questions: r.report_hash.clone().filter(|_| !r.questions.is_empty()).map(|report_hash| {
+                Box::new(aaa_proto::ThreadQuestions {
+                    report_hash,
+                    items: r.questions.clone(),
+                    answer: r.question_answer.clone(),
+                })
+            }),
         }
     }
 
@@ -2117,10 +2148,14 @@ impl Host {
                 write_atomic(&dir.join("threads").join(format!("{id}.md")), &report).map_err(internal)?;
                 let text = String::from_utf8_lossy(&report);
                 let next = next_lines(&text);
+                let questions =
+                    if crate::report_mark::needs_user(&text) { aaa_proto::report_questions(&text) } else { Vec::new() };
                 let rec = self.update_rec(project, id, |r| {
                     r.report_hash = Some(hash);
                     r.report_changed_ms = Some(aaa_common::util::now_ms());
                     r.next = next;
+                    r.questions = questions;
+                    r.question_answer = None;
                     r.copy = Some(copy.clone());
                     r.copy_failures = 0;
                     r.copy_retry_at_ms = 0;
@@ -2538,6 +2573,8 @@ mod tests {
             report_hash: None,
             acked_hash: None,
             next: Vec::new(),
+            questions: Vec::new(),
+            question_answer: None,
             copy: None,
             copy_failures: 0,
             copy_retry_at_ms: 0,

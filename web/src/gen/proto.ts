@@ -684,7 +684,15 @@ discard_uncopied: boolean, } | { "op": "thread_stop", project?: string, thread: 
 /**
  * 이 profile로 새 대화를 띄운다(herdr-projects `thread restart --profile`). `resume`과 함께 쓰지 않는다
  */
-profile: string | null, } | { "op": "thread_brief", project?: string, thread: string, } | { "op": "thread_read", project?: string, thread: string, lines: number | null, } | { "op": "thread_keys", project?: string, thread: string, keys: Array<string>, text: string | null, } | { "op": "questions", all: boolean, } | { "op": "question_answer", id: string, choice: string, menu: string | null, pick: MenuPick | null, } | { "op": "thread_message", project?: string, thread: string, text: string, mode: MessageMode, } | { "op": "preferences" } | { "op": "preferences_set", settings: Record<string, unknown>, pins: Array<string> | null, } | { "op": "inbox", project?: string, all: boolean, peek: boolean, } | { "op": "inbox_done", project?: string, ids: Array<string>, all: boolean, } | { "op": "ticker_tick" } | { "op": "mission_list", project: string | null, } | { "op": "mission_show", project?: string, name: string, } | { "op": "mission_approve", project?: string, name: string, approval_sha256: string, } | { "op": "mission_reject", project?: string, name: string, } | { "op": "mission_start", project?: string, name: string, } | { "op": "mission_stop", project?: string, name: string, } | { "op": "mission_pause", project?: string, name: string, } | { "op": "mission_resume", project?: string, name: string, } | { "op": "mission_reload", project?: string, name: string, } | { "op": "mission_restart", project?: string, name: string, } | { "op": "mission_open", project?: string, name: string, } | { "op": "routines", project?: string, } | { "op": "automation_approve", project?: string, name: string, approval_sha256: string, } | { "op": "automation_convert", project?: string, dry_run?: boolean, plan_sha256?: string, } | { "op": "automation_unblock", project?: string, name: string, batch: string, discard: boolean, } | { "op": "routine_runs", project?: string, name: string, } | { "op": "routine_approve", project?: string, name: string, command_sha256: string, } | { "op": "routine_toggle", project?: string, name: string, on: boolean | null, } | { "op": "events", project: string | null, after: bigint, limit: number | null, } | { "op": "evaluator_assign", project?: string, profile: string, machine: string | null,
+profile: string | null, } | { "op": "thread_brief", project?: string, thread: string, } | { "op": "thread_read", project?: string, thread: string, lines: number | null, } | { "op": "thread_keys", project?: string, thread: string, keys: Array<string>, text: string | null, } | { "op": "questions", all: boolean, } | { "op": "question_answer", id: string, choice: string, menu: string | null, pick: MenuPick | null, } | { "op": "thread_message", project?: string, thread: string, text: string, mode: MessageMode, } | { "op": "thread_answer", project?: string, thread: string,
+/**
+ * 답하는 질문의 보고 hash(`ThreadQuestions.report_hash`)
+ */
+report_hash: string,
+/**
+ * 질문마다 고른 선택지(0부터). 직접 쓴 답으로 대신하는 질문은 null
+ */
+picks: Array<number | null>, text: string | null, } | { "op": "preferences" } | { "op": "preferences_set", settings: Record<string, unknown>, pins: Array<string> | null, } | { "op": "inbox", project?: string, all: boolean, peek: boolean, } | { "op": "inbox_done", project?: string, ids: Array<string>, all: boolean, } | { "op": "ticker_tick" } | { "op": "mission_list", project: string | null, } | { "op": "mission_show", project?: string, name: string, } | { "op": "mission_approve", project?: string, name: string, approval_sha256: string, } | { "op": "mission_reject", project?: string, name: string, } | { "op": "mission_start", project?: string, name: string, } | { "op": "mission_stop", project?: string, name: string, } | { "op": "mission_pause", project?: string, name: string, } | { "op": "mission_resume", project?: string, name: string, } | { "op": "mission_reload", project?: string, name: string, } | { "op": "mission_restart", project?: string, name: string, } | { "op": "mission_open", project?: string, name: string, } | { "op": "routines", project?: string, } | { "op": "automation_approve", project?: string, name: string, approval_sha256: string, } | { "op": "automation_convert", project?: string, dry_run?: boolean, plan_sha256?: string, } | { "op": "automation_unblock", project?: string, name: string, batch: string, discard: boolean, } | { "op": "routine_runs", project?: string, name: string, } | { "op": "routine_approve", project?: string, name: string, command_sha256: string, } | { "op": "routine_toggle", project?: string, name: string, on: boolean | null, } | { "op": "events", project: string | null, after: bigint, limit: number | null, } | { "op": "evaluator_assign", project?: string, profile: string, machine: string | null,
 /**
  * 개선을 직접 고칠 repo(없으면 repo 없는 작업 폴더)
  */
@@ -991,7 +999,12 @@ repo?: string,
  * 사용량 한도(FRONT_API 1.44, plan §8.267): 이 thread harness의 구독 창이 다 찼으면 그 창이 다시 차오르는 때(ms).
  * host 머신의 thread이고 그 구독에 계정이 하나일 때만 안다. 다 차지 않았거나 모르면 생략한다
  */
-limited_until_ms?: number, };
+limited_until_ms?: number,
+/**
+ * 보고 `## Questions`의 질문과 답(FRONT_API 1.72, plan §8.329): 웹 보고서 패널 「답할 것」 카드와 대화창 칩이 쓴다.
+ * 질문이 없는 보고와 옛 host는 생략한다
+ */
+questions?: ThreadQuestions, };
 
 export type ThreadPr = { url: string, state: string | null, review: string | null, };
 
@@ -1004,6 +1017,42 @@ at_ms: number | null,
  * 요약을 쓴 뒤 task.md Follow-ups에 쌓인 지시 수(요약이 없으면 Follow-ups 전부)
  */
 pending: number, };
+
+export type ThreadQuestions = {
+/**
+ * 이 질문이 든 보고 사본의 hash. 답은 이 hash가 지금 보고일 때만 받는다
+ */
+report_hash: string, items: Array<ThreadQuestion>,
+/**
+ * 답했으면 그 답(웹 카드·`aaa thread answer`). 모든 기기가 같은 값을 본다
+ */
+answer: QuestionAnswerView | null, };
+
+export type ThreadQuestion = { text: string, choices: Array<QuestionChoice>, };
+
+export type QuestionChoice = { label: string,
+/**
+ * 「 — 」 뒤의 까닭 한 줄
+ */
+description: string | null,
+/**
+ * 「(추천)」 표지가 있었다
+ */
+recommended: boolean, };
+
+export type QuestionAnswerView = {
+/**
+ * 질문마다 고른 선택지 번호(0부터). 고르지 않고 직접 쓴 질문은 null
+ */
+picks: Array<number | null>,
+/**
+ * 직접 쓴 답(질문 번호를 붙여 쓴다, 예: 「2 둘 다 보이게」)
+ */
+text: string | null, summary: string,
+/**
+ * 답한 곳(웹 기기 이름·`CLI`)
+ */
+by: string, at_ms: number, };
 
 export type SummaryEntry = {
 /**

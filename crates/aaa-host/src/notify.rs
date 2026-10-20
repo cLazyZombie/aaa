@@ -31,10 +31,14 @@ fn debounce(secs: u64) -> Duration {
         .map_or(Duration::from_secs(secs), Duration::from_millis)
 }
 
-/// post 글은 알림에 넣지 않는다(웹 push·webhook 공통).
+/// post 글은 알림에 넣지 않는다(웹 push·webhook 공통). coordinator가 사용자에게 묻는 post만 가린 제목(질문 요약·추천)을 붙인다
 pub(crate) fn safe_summary(i: &InboxItem) -> String {
     if i.item_kind == "post" {
-        if i.event == "post completed" { "맡긴 일 완료" } else { "사용자 결정 요청" }.into()
+        if i.event == "post completed" {
+            "맡긴 일 완료".into()
+        } else {
+            request_title(i).map_or_else(|| "사용자 결정 요청".into(), |t| format!("사용자 결정 요청 · {t}"))
+        }
     } else if report_item(i) {
         report_preview(&i.summary).unwrap_or_else(|| phrase(i).unwrap_or("보고 확인 필요").into())
     } else {
@@ -46,16 +50,50 @@ fn report_item(i: &InboxItem) -> bool {
     i.item_kind == "thread-state" && matches!(i.event.as_str(), "new report" | "report needs user")
 }
 
-/// 첫 줄 표지 뒤 요약만 보낸다. 본문·PR·링크를 요약으로 끌어올리지 않는다. 공개 검사와 같은 종류의 경로·주소·키를
-/// 자르기 전에 가린다(잘린 token 조각도 보내지 않음). 알 수 없는 비밀값까지 판별하는 함수는 아니다.
+/// 첫 줄 표지 뒤 요약만 보낸다. 본문·PR·링크를 요약으로 끌어올리지 않는다.
 fn report_preview(report: &str) -> Option<String> {
-    use regex::Regex;
-    use std::sync::LazyLock;
     let mark = crate::report_mark::marker(report)?;
     if !matches!(mark, "[완료]" | "[결정 필요]" | "[검수 대기]" | "[확인 필요]" | "[사람 필요]") {
         return None;
     }
     let line = report.trim_start_matches('\u{feff}').lines().next()?.strip_prefix(mark)?.trim();
+    redact(line, 120)
+}
+
+/// coordinator가 사용자에게 묻는 post(`post request for user`)의 제목: 질문 요약·추천 한 줄(plan §8.328). 본문은 싣지 않는다.
+/// 제목은 inbox 요약 「<보낸 이> request: 「<제목>」」에 있다(post.rs `store_post`)
+fn request_title(i: &InboxItem) -> Option<String> {
+    if i.item_kind != "post" || i.subject != "coordinator" || i.event != "post request for user" {
+        return None;
+    }
+    let title = i.summary.split_once(": 「")?.1.strip_suffix('」')?;
+    // 앱 안 참조(`aaa:question/<id>`, plan §8.329)는 알림을 누르면 가는 곳이다: 글에서는 뺀다
+    let words: Vec<&str> = title.split_whitespace().filter(|w| app_ref(w).is_none()).collect();
+    redact(&words.join(" "), 160)
+}
+
+/// 앱 안 참조 한 낱말(`aaa:question/<thread>`·`aaa:report/<이름>`)의 종류와 대상
+pub(crate) fn app_ref(word: &str) -> Option<(&str, &str)> {
+    let rest = word.strip_prefix("aaa:")?;
+    let (kind, target) = rest.split_once('/')?;
+    let ok = !target.is_empty() && target.chars().all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.'));
+    (matches!(kind, "question" | "report") && ok).then_some((kind, target))
+}
+
+/// coordinator 사용자 post 제목이 가리키는 thread 질문(누르면 그 질문 카드를 연다)
+fn request_question(i: &InboxItem) -> Option<String> {
+    request_title(i)?;
+    let title = i.summary.split_once(": 「")?.1;
+    title
+        .split_whitespace()
+        .find_map(|w| app_ref(w.trim_end_matches('」')).filter(|(k, _)| *k == "question").map(|(_, t)| t.to_string()))
+}
+
+/// 알림에 싣는 글 한 줄. 공개 검사와 같은 종류의 경로·주소·키를 자르기 전에 가린다(잘린 token 조각도 보내지 않음).
+/// 알 수 없는 비밀값까지 판별하는 함수는 아니다.
+fn redact(line: &str, cap: usize) -> Option<String> {
+    use regex::Regex;
+    use std::sync::LazyLock;
     // URL은 query의 token·사용자명까지, 경로는 Unix·Windows·상대 경로까지 함께 가린다.
     // 이름이 붙은 비밀값·알려진 token·긴 식별자·지문은 공개 검사보다 보수적으로 숨긴다.
     static PRIVATE: LazyLock<Regex> = LazyLock::new(|| {
@@ -82,7 +120,7 @@ fn report_preview(report: &str) -> Option<String> {
     let clean: String = clean.chars().filter(|c| !c.is_control() || c.is_whitespace()).collect();
     let clean = clean.split_whitespace().collect::<Vec<_>>().join(" ");
     let mut chars = clean.chars();
-    let mut short: String = chars.by_ref().take(120).collect();
+    let mut short: String = chars.by_ref().take(cap).collect();
     if chars.next().is_some() {
         short.push('…');
     }
@@ -187,7 +225,7 @@ fn alert_who(i: &InboxItem) -> String {
 /// 항목 한 줄(웹 push·webhook 공통): 「대상 사건 · thread 제목」(`t-0012 보고 준비 · 제목`, `mac-a 다시 연결됨`).
 /// `who`가 false면 알림 제목이 이미 그 대상을 말한다(thread 하나·머신 하나 자리): 사건만 쓴다. 고정 말이 없는 사건은 요약이다
 pub(crate) fn alert_line(i: &InboxItem, who: bool, titles: &HashMap<String, String>) -> String {
-    let preview = report_item(i).then(|| safe_summary(i));
+    let preview = (report_item(i) || request_title(i).is_some()).then(|| safe_summary(i));
     let Some(p) = preview.as_deref().or_else(|| phrase(i)) else { return safe_summary(i).chars().take(120).collect() };
     if !who {
         return p.to_string();
@@ -236,10 +274,13 @@ pub(crate) fn alert_text(place: &Place, items: &[InboxItem], titles: &HashMap<St
                 None => AlertText {
                     title: project.clone(),
                     lines: lines(true),
-                    url: if items.iter().all(|i| i.item_kind == "post" && i.subject == "coordinator") {
-                        "/#threads".into()
-                    } else {
-                        "/".into()
+                    // 질문을 가리키는 post 하나면 그 질문 카드(보고서 패널 「답할 것」), 그 밖의 post 묶음은 모든 thread
+                    url: match items.iter().filter_map(request_question).collect::<Vec<_>>().as_slice() {
+                        [one] if items.len() == 1 => format!("/#question={}", crate::push::url_escape(one)),
+                        _ if items.iter().all(|i| i.item_kind == "post" && i.subject == "coordinator") => {
+                            "/#threads".into()
+                        }
+                        _ => "/".into(),
                     },
                     tag: format!("aaa-{project}"),
                 },

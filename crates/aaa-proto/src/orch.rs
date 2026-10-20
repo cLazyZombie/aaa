@@ -884,6 +884,111 @@ pub struct ThreadView {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional, type = "number")]
     pub limited_until_ms: Option<u64>,
+    /// 보고 `## Questions`의 질문과 답(FRONT_API 1.72, plan §8.329): 웹 보고서 패널 「답할 것」 카드와 대화창 칩이 쓴다.
+    /// 질문이 없는 보고와 옛 host는 생략한다
+    // 사건(`FrontEvent::Thread`) 크기를 늘리지 않게 Box에 둔다(clippy large_enum_variant)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub questions: Option<Box<ThreadQuestions>>,
+}
+
+/// thread가 구현 전에 모아 묻는 질문 묶음(plan §8.329). 그 보고에 묶인다: 새 보고가 오면 새 질문이고 답도 비운다
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+pub struct ThreadQuestions {
+    /// 이 질문이 든 보고 사본의 hash. 답은 이 hash가 지금 보고일 때만 받는다
+    pub report_hash: String,
+    pub items: Vec<ThreadQuestion>,
+    /// 답했으면 그 답(웹 카드·`aaa thread answer`). 모든 기기가 같은 값을 본다
+    pub answer: Option<QuestionAnswerView>,
+}
+
+/// 질문 하나: 글과 선택지(앞에서부터 A·B·C…)
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+pub struct ThreadQuestion {
+    pub text: String,
+    pub choices: Vec<QuestionChoice>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+pub struct QuestionChoice {
+    pub label: String,
+    /// 「 — 」 뒤의 까닭 한 줄
+    pub description: Option<String>,
+    /// 「(추천)」 표지가 있었다
+    pub recommended: bool,
+}
+
+/// 받은 답. `summary`는 「1A 2B」 꼴(직접 쓴 답이 있으면 「직접」)
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+pub struct QuestionAnswerView {
+    /// 질문마다 고른 선택지 번호(0부터). 고르지 않고 직접 쓴 질문은 null
+    pub picks: Vec<Option<u32>>,
+    /// 직접 쓴 답(질문 번호를 붙여 쓴다, 예: 「2 둘 다 보이게」)
+    pub text: Option<String>,
+    pub summary: String,
+    /// 답한 곳(웹 기기 이름·`CLI`)
+    pub by: String,
+    #[ts(type = "number")]
+    pub at_ms: u64,
+}
+
+/// 질문당 선택지·질문 수 상한(글자 A–I, 숫자 1–9)
+pub const QUESTION_MAX: usize = 9;
+
+/// 보고 `## Questions` 절의 질문(plan §8.329). 「N. 질문」 줄 아래 「- A 선택지 (추천) — 까닭」 줄이 선택지다. 선택지가 둘이 안 되는
+/// 질문은 버린다(카드로 답할 수 없다). 글자는 차례로 읽고 표시는 자리로 다시 붙인다
+pub fn report_questions(report: &str) -> Vec<ThreadQuestion> {
+    let mut out: Vec<ThreadQuestion> = Vec::new();
+    let mut inside = false;
+    for line in report.lines() {
+        if let Some(head) = line.strip_prefix("## ") {
+            inside = head.trim() == "Questions";
+            continue;
+        }
+        if line.starts_with('#') {
+            inside = false;
+        }
+        if !inside {
+            continue;
+        }
+        let text = line.trim();
+        if let Some((n, rest)) = text.split_once(". ")
+            && !n.is_empty()
+            && n.chars().all(|c| c.is_ascii_digit())
+            && !rest.trim().is_empty()
+        {
+            out.push(ThreadQuestion { text: rest.trim().to_string(), choices: Vec::new() });
+            continue;
+        }
+        let Some(item) = text.strip_prefix("- ").or_else(|| text.strip_prefix("* ")) else { continue };
+        let mut chars = item.chars();
+        let (Some(letter), Some(sep)) = (chars.next(), chars.next()) else { continue };
+        if !letter.is_ascii_alphabetic() || !matches!(sep, ' ' | ')' | '.') {
+            continue;
+        }
+        let Some(q) = out.last_mut() else { continue };
+        let rest = chars.as_str().trim_start_matches([' ', ')', '.']).trim();
+        let (label, description) = match rest.split_once(" — ") {
+            Some((l, d)) => (l.trim(), Some(d.trim().to_string()).filter(|d| !d.is_empty())),
+            None => (rest, None),
+        };
+        // Claude 메뉴처럼 영어 표지도 받는다(PromptCard `labelOf`)
+        let mut recommended = false;
+        let mut label = label.to_string();
+        for mark in ["(추천)", "(Recommended)", "(recommended)"] {
+            if label.contains(mark) {
+                recommended = true;
+                label = label.replace(mark, "");
+            }
+        }
+        let label = label.split_whitespace().collect::<Vec<_>>().join(" ");
+        if !label.is_empty() && q.choices.len() < QUESTION_MAX {
+            q.choices.push(QuestionChoice { label, description, recommended });
+        }
+    }
+    out.retain(|q| q.choices.len() >= 2);
+    out.truncate(QUESTION_MAX);
+    out
 }
 
 /// thread 작업 요약 표지(plan §8.259). 줄·머리 단추가 요약을 읽지 않고 「낡았다」를 안다
@@ -1402,6 +1507,30 @@ mod tests {
         assert!(next_lines("## Next\n").is_empty());
         // `#` 머리가 오면 Next가 끝난다
         assert_eq!(next_lines("## Next\n- 하나\n# 다른 절\n- 둘\n"), ["하나"]);
+    }
+
+    /// `## Questions`(plan §8.329): 번호 줄이 질문, 글자 줄이 선택지. 추천 표지·까닭을 떼고, 선택지가 둘이 안 되는 질문은 버린다
+    #[test]
+    fn report_questions_read_numbered_questions_and_lettered_choices() {
+        let report = "[결정 필요] 질문 2개: 배치\n\n## Report\n- 1. 이것은 질문이 아니다\n\n## Questions\n\
+            1. 로그인 단추 자리\n   - A 오른쪽 아래 (추천) — 지금 화면과 같음\n   - B) 가운데 큰 단추 — 휴대폰에서 누르기 쉬움\n   - C. 입력칸 바로 아래\n\
+            2. 선택지 하나뿐\n   - A 그대로\n\
+            3. 비밀번호 보기\n   - A 넣는다(Recommended)\n   - B 넣지 않는다\n\
+            - Z 질문 밖 줄은 앞 질문 것이다\n\n## Next\n- 1. 다음 절\n";
+        let qs = report_questions(report);
+        assert_eq!(qs.len(), 2, "{qs:?}");
+        assert_eq!(qs[0].text, "로그인 단추 자리");
+        let c = &qs[0].choices;
+        assert_eq!(
+            (c[0].label.as_str(), c[0].description.as_deref(), c[0].recommended),
+            ("오른쪽 아래", Some("지금 화면과 같음"), true)
+        );
+        assert_eq!((c[1].label.as_str(), c[1].recommended), ("가운데 큰 단추", false));
+        assert_eq!((c[2].label.as_str(), c[2].description.as_deref()), ("입력칸 바로 아래", None));
+        assert_eq!(qs[1].text, "비밀번호 보기");
+        assert_eq!((qs[1].choices[0].label.as_str(), qs[1].choices[0].recommended), ("넣는다", true));
+        assert_eq!(qs[1].choices.len(), 3, "글자 줄은 그 앞 질문에 붙는다");
+        assert!(report_questions("## Report\n1. 질문\n- A 하나\n- B 둘\n").is_empty());
     }
 
     #[test]
