@@ -171,8 +171,8 @@ export interface TaskDraft {
   agent: string;
   person: string;
   notes: string;
-  /** 상위 task 줄(없으면 맨 위 단계) */
-  parent: number | null;
+  /** 상위 task(고른 판의 블록 고정점, 없으면 맨 위 단계). 줄 번호로 들면 그사이 줄이 밀렸을 때 다른 task 밑으로 간다 */
+  parent: TaskAnchor | null;
 }
 
 /** 이 owner 글을 agent로 볼까: 맡길 수 있는 profile 목록에 있거나 `@`가 든 것. 그 밖의 이름은 사람이다 */
@@ -182,7 +182,13 @@ export function ownerKindOf(owner: string | null, agents: readonly string[]): Ow
   return owner.includes("@") || agents.includes(owner) ? "agent" : "person";
 }
 
-export function draftOf(t: TaskView, agents: readonly string[]): TaskDraft {
+/** 이 판(`board`)에서 t의 상위 task 고정점 */
+export function parentAnchor(board: TaskBoard, t: TaskView): TaskAnchor | null {
+  const p = t.parent !== null ? board.tasks.find((x) => x.line === t.parent) : undefined;
+  return p ? anchorOf(p) : null;
+}
+
+export function draftOf(t: TaskView, agents: readonly string[], parent: TaskAnchor | null): TaskDraft {
   const kind = ownerKindOf(t.owner, agents);
   return {
     title: t.title,
@@ -191,11 +197,11 @@ export function draftOf(t: TaskView, agents: readonly string[]): TaskDraft {
     agent: kind === "agent" ? (t.owner ?? "") : "",
     person: kind === "person" ? (t.owner ?? "") : "",
     notes: t.notes.join("\n"),
-    parent: t.parent,
+    parent,
   };
 }
 
-export function emptyDraft(list: string, parent: number | null = null): TaskDraft {
+export function emptyDraft(list: string, parent: TaskAnchor | null = null): TaskDraft {
   return { title: "", list, ownerKind: "none", agent: "", person: "", notes: "", parent };
 }
 
@@ -228,14 +234,15 @@ const sameNotes = (a: string[], b: string[]) => {
 
 /**
  * 폼 → host 동작. 새 task는 더하기 하나, 있는 task는 바뀐 칸만 고치기와(목록·상위가 바뀌었으면) 옮기기다. 같은 요청의 옮기기는
- * 고치기가 바꾼 hash를 host가 따라간다. 바뀐 것이 없으면 빈 목록.
+ * 고치기가 바꾼 hash를 host가 따라간다. 바뀐 것이 없으면 빈 목록. `wasParent`는 편집을 시작한 판의 상위 고정점이다(상위를 바꿨는지
+ * 블록 hash로 본다). 고른 상위가 그사이 바뀌었으면 host가 쓰지 않고 충돌로 돌려준다.
  */
-export function draftOps(board: TaskBoard, t: TaskView | null, d: TaskDraft): TaskOp[] {
+export function draftOps(t: TaskView | null, d: TaskDraft, wasParent: TaskAnchor | null = null): TaskOp[] {
   const { owner, person } = draftOwner(d);
   const notes = noteLines(d.notes);
-  const parent = d.parent !== null ? board.tasks.find((x) => x.line === d.parent) : undefined;
+  const parent = d.parent;
   if (!t) {
-    return [{ op: "add", list: parent ? parent.list : d.list.trim(), title: d.title.trim(), owner: owner || null, person, notes, parent: parent ? anchorOf(parent) : null, before: null }];
+    return [{ op: "add", list: parent ? parent.list : d.list.trim(), title: d.title.trim(), owner: owner || null, person, notes, parent, before: null }];
   }
   const ops: TaskOp[] = [];
   const title = d.title.trim() !== t.title ? d.title.trim() : null;
@@ -245,8 +252,8 @@ export function draftOps(board: TaskBoard, t: TaskView | null, d: TaskDraft): Ta
   if (title !== null || ownerChanged || notesChanged) {
     ops.push({ op: "update", at: anchorOf(t), title, owner: ownerChanged ? owner : null, person: ownerChanged && person, notes: notesChanged ? notes : null, thread: null, done: null });
   }
-  if (d.parent !== t.parent || (d.parent === null && d.list.trim() !== t.list)) {
-    ops.push(parent ? move(t, { parent }) : move(t, { to_list: d.list.trim() }));
+  if ((parent?.block_sha256 ?? null) !== (wasParent?.block_sha256 ?? null) || (parent === null && d.list.trim() !== t.list)) {
+    ops.push(parent ? { op: "move", at: anchorOf(t), to_list: "", before: null, parent } : move(t, { to_list: d.list.trim() }));
   }
   return ops;
 }

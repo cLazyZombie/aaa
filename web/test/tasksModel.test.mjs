@@ -1,7 +1,7 @@
 // 할 일 화면의 행 상태·거르기·검색·배지 셈(src/tasksModel.ts, 할 일 보기 T1, plan §8.306).
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { canonicalLine, descendants, draftOf, draftOps, dropOp, emptyDraft, findTask, itemToTask, lineDiff, moveOp, noteItems, ownerKindOf, ownerLabel, restorable, taskBadge, taskDepth, taskMatches, taskSections, taskState, toListOp, unassigned } from "../src/tasksModel.ts";
+import { anchorOf, canonicalLine, descendants, draftOf, draftOps, dropOp, emptyDraft, findTask, itemToTask, lineDiff, moveOp, noteItems, ownerKindOf, ownerLabel, parentAnchor, restorable, taskBadge, taskDepth, taskMatches, taskSections, taskState, toListOp, unassigned } from "../src/tasksModel.ts";
 
 const task = (over) => ({ list: "Backlog", title: "일", owner: null, thread: null, notes: [], done: false, line: 1, raw: "- [ ] 일", block_sha256: "", parent: null, problems: [], ...over });
 const MISREAD = "owner 칸이 owner 꼴이 아님: t-0001 S4 뒤";
@@ -110,21 +110,32 @@ describe("할 일 편집", () => {
 
   it("폼 → 동작: 바뀐 칸만 고치고, 목록·상위가 바뀌면 옮긴다. 안 바뀌면 없음", () => {
     const one = by(4);
-    const d = draftOf({ ...one, owner: "codex@mac-b", notes: ["메모"] }, []);
+    const d = draftOf({ ...one, owner: "codex@mac-b", notes: ["메모"] }, [], null);
     assert.equal(d.ownerKind, "agent");
-    assert.deepEqual(draftOps(board, { ...one, owner: "codex@mac-b", notes: ["메모"] }, d), []);
-    const ops = draftOps(board, one, { ...draftOf(one, []), title: " 둘 고침 ", ownerKind: "person", person: "Priya", notes: "a\n\n  b  \n\n", list: "B" });
+    assert.deepEqual(draftOps({ ...one, owner: "codex@mac-b", notes: ["메모"] }, d), []);
+    const ops = draftOps(one, { ...draftOf(one, [], null), title: " 둘 고침 ", ownerKind: "person", person: "Priya", notes: "a\n\n  b  \n\n", list: "B" });
     assert.deepEqual(ops.map((o) => o.op), ["update", "move"]);
     assert.deepEqual([ops[0].title, ops[0].owner, ops[0].person, ops[0].notes], ["둘 고침", "Priya", true, ["a", "", "  b"]]);
     assert.equal(ops[1].to_list, "B");
-    const child = draftOps(board, one, { ...draftOf(one, []), parent: 7 });
+    const child = draftOps(one, { ...draftOf(one, [], null), parent: anchorOf(by(7)) });
     assert.deepEqual(place(child[0]), { before: null, parent: "넷", to_list: "" });
-    const add = draftOps(board, null, { ...emptyDraft("새 목록"), title: "새 일", ownerKind: "me" });
+    const add = draftOps(null, { ...emptyDraft("새 목록"), title: "새 일", ownerKind: "me" });
     assert.deepEqual([add[0].op, add[0].list, add[0].owner, add[0].parent], ["add", "새 목록", "me", null]);
+    // owner 목록 전에 만든 폼(`claude`를 사람으로 봄)도 보낼 동작이 없다(손대지 않은 폼)
+    assert.deepEqual(draftOps({ ...one, owner: "claude" }, draftOf({ ...one, owner: "claude" }, [], null)), []);
     assert.equal(ownerKindOf("claude", ["claude"]), "agent");
     assert.equal(ownerKindOf("Priya Rao", ["claude"]), "person");
     assert.equal(ownerKindOf("agent", []), "none");
     assert.equal(canonicalLine("일", "me", "t-0001"), "- [ ] 일 (me) · t-0001");
+  });
+
+  it("상위 task는 고른 판의 블록 고정점으로 든다: 그대로면 옮기지 않고, 더할 때 그 블록을 보낸다", () => {
+    const sub = by(2);
+    const was = parentAnchor(board, sub);
+    assert.deepEqual([was.title, was.block_sha256], ["하나", "sha-1"]);
+    assert.deepEqual(draftOps(sub, draftOf(sub, [], was), was), [], "상위를 그대로 두면 옮기지 않는다");
+    const add = draftOps(null, { ...emptyDraft("A", anchorOf(by(4))), title: "하위 새 일" });
+    assert.deepEqual([add[0].parent.title, add[0].parent.block_sha256], ["둘", "sha-4"], "줄 번호가 아니라 고른 판의 블록을 보낸다(줄이 밀려도 host가 블록 hash로 찾는다)");
   });
 
   it("「나중」 항목: 들여쓰지 않은 글머리마다 하나, 들여쓴 줄은 붙고 빈 줄은 끝에서 뗀다", () => {

@@ -7,7 +7,7 @@
 // 손대지 않은 폼은 새 판을 따라가고, 손댄 폼은 「파일에서 바뀌었다」를 보인다.
 import { useEffect, useMemo, useRef, useState, type SyntheticEvent } from "react";
 import { ChevronLeft, Circle, CircleDot, Triangle, X } from "lucide-react";
-import type { OwnerChoice, TaskBoard, TaskLogEntry, TaskOp, TaskView } from "./gen/proto";
+import type { OwnerChoice, TaskAnchor, TaskBoard, TaskLogEntry, TaskOp, TaskView } from "./gen/proto";
 import { Markdown } from "./Markdown";
 import { GROUP_WORD } from "./sidebarModel";
 import { usePhoneSheetBack } from "./herdr/sheetHistory";
@@ -25,6 +25,7 @@ import {
   emptyDraft,
   noteLines,
   ownerLabel,
+  parentAnchor,
   taskDepth,
   taskState,
   type TaskDraft,
@@ -230,9 +231,10 @@ const NEW_LIST = "\u0000new";
 function TaskForm(props: DetailProps) {
   const { t, board, byLine, groups, owners, log, onThread, onPick, onSave, onDelete } = props;
   const agents = useMemo(() => agentNames(owners), [owners]);
-  // 편집을 시작한 판: 이 판의 블록 hash로 저장한다
+  // 편집을 시작한 판: 이 판의 블록 hash로 저장한다. 상위 task도 그 판의 고정점으로 든다(줄 번호는 그사이 밀릴 수 있다)
   const [base, setBase] = useState<TaskView | null>(t);
-  const [draft, setDraft] = useState<TaskDraft>(() => (t ? draftOf(t, agents) : (props.start ?? emptyDraft(board.lists.find((l) => l.name === "Backlog")?.name ?? board.lists[0]?.name ?? "Backlog"))));
+  const [baseParent, setBaseParent] = useState<TaskAnchor | null>(() => (t ? parentAnchor(board, t) : null));
+  const [draft, setDraft] = useState<TaskDraft>(() => (t ? draftOf(t, agents, baseParent) : (props.start ?? emptyDraft(board.lists.find((l) => l.name === "Backlog")?.name ?? board.lists[0]?.name ?? "Backlog"))));
   const [newList, setNewList] = useState(false);
   // 메모가 있는 task는 그린 메모부터 보인다(보기 기기와 같다). 「고치기」가 입력 칸으로 바꾼다
   const [preview, setPreview] = useState(() => (t?.notes.length ?? 0) > 0);
@@ -245,18 +247,21 @@ function TaskForm(props: DetailProps) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const submitting = useRef(false);
-  const pristine = base ? draftOf(base, agents) : null;
-  const dirty = base ? JSON.stringify(draft) !== JSON.stringify(pristine) : draft.title.trim() !== "";
+  // 고쳤는지는 보낼 동작이 있는지로 본다: owner 목록이 늦게 와 agent·사람 구분만 달라진 폼은 손대지 않은 폼이다
+  const dirty = base ? draftOps(base, draft, baseParent).length > 0 : draft.title.trim() !== "";
+  const rebase = (x: TaskView) => {
+    const p = parentAnchor(board, x);
+    setBase(x);
+    setBaseParent(p);
+    setDraft(draftOf(x, agents, p));
+  };
   // 손대지 않은 폼은 파일의 새 판을 따라간다. 손댄 폼은 그대로 두고 「바뀌었다」를 보인다
   useEffect(() => {
-    if (t && base && t.block_sha256 !== base.block_sha256 && !dirty) {
-      setBase(t);
-      setDraft(draftOf(t, agents));
-    }
-  }, [t, base, dirty, agents]);
+    if (t && base && t.block_sha256 !== base.block_sha256 && !dirty) rebase(t);
+  }, [t, base, dirty, agents]); // eslint-disable-line react-hooks/exhaustive-deps
   // owner 목록을 늦게 받으면 agent·사람 구분을 다시 한다(손대기 전만)
   useEffect(() => {
-    if (base && !dirty) setDraft(draftOf(base, agents));
+    if (base && !dirty) setDraft(draftOf(base, agents, baseParent));
   }, [agents]); // eslint-disable-line react-hooks/exhaustive-deps
   const changedOnDisk = base !== null && (t === null ? !!props.gone : t.block_sha256 !== base.block_sha256);
   const { onDirty } = props;
@@ -265,8 +270,7 @@ function TaskForm(props: DetailProps) {
   const set = (patch: Partial<TaskDraft>) => setDraft((d) => ({ ...d, ...patch }));
   const reopen = () => {
     if (!t) return;
-    setBase(t);
-    setDraft(draftOf(t, agents));
+    rebase(t);
     setError(null);
   };
   const children = base ? descendants(board, base) : new Set<number>();
@@ -296,7 +300,7 @@ function TaskForm(props: DetailProps) {
   const submit = (e?: SyntheticEvent) => {
     e?.preventDefault();
     if (!dirty || draft.title.trim() === "" || (draft.ownerKind === "person" && draft.person.trim() === "")) return;
-    void run(draftOps(board, base, draft), mine());
+    void run(draftOps(base, draft, baseParent), mine());
   };
   const s = base?.suggestion ?? null;
   const applySuggestion = () => {
@@ -436,10 +440,20 @@ function TaskForm(props: DetailProps) {
       </div>
       <label className="task-field">
         <span>상위 task</span>
-        <select className="input" value={draft.parent ?? ""} disabled={busy} onChange={(e) => set({ parent: e.target.value === "" ? null : Number(e.target.value) })} data-testid="task-field-parent">
+        <select
+          className="input"
+          value={draft.parent?.block_sha256 ?? ""}
+          disabled={busy}
+          onChange={(e) => {
+            const p = parentChoices.find((x) => x.block_sha256 === e.target.value);
+            set({ parent: p ? anchorOf(p) : null });
+          }}
+          data-testid="task-field-parent"
+        >
           <option value="">없음(맨 위 단계)</option>
+          {draft.parent && !parentChoices.some((x) => x.block_sha256 === draft.parent?.block_sha256) && <option value={draft.parent.block_sha256}>{draft.parent.title}</option>}
           {parentChoices.map((x) => (
-            <option key={x.line} value={x.line}>
+            <option key={x.line} value={x.block_sha256}>
               {"— ".repeat(taskDepth(x, byLine))}
               {x.title}
             </option>

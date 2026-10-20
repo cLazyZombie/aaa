@@ -44,6 +44,13 @@ const saved = async (p, before) => {
 const shaOf = (p) => p.getByTestId("tasks-view").getAttribute("data-tasks-sha");
 const row = (p, title) => p.locator(`.task-row[data-title="${title}"]`);
 const pickRow = (p, title) => row(p, title).locator(".task-pick").click();
+/** 상세 자리: 화면 안 상자와 목록 칸(43-tasks와 같다) */
+const detailBox = (p) =>
+  p.evaluate(() => {
+    const d = document.querySelector('[data-testid="task-detail"]')?.getBoundingClientRect();
+    const l = document.querySelector('[data-testid="tasks-list"]')?.getBoundingClientRect();
+    return d && l && { d: { left: d.left, right: d.right, top: d.top, bottom: d.bottom, width: d.width }, l: { left: l.left, width: l.width }, w: innerWidth, h: innerHeight, wide: document.documentElement.scrollWidth > innerWidth + 1 };
+  });
 const expectFile = (got, want, what) => {
   if (got !== want) throw new Error(`${what}: 파일이 다르다\n--- 기대\n${want}\n--- 실제\n${got}`);
 };
@@ -113,7 +120,7 @@ export default async function ({ page }) {
     md = sha(text);
   });
 
-  await step("행 메뉴·끌기·Alt+↑: 같은 상위 안 순서와 목록 옮기기, 목록 머리 메뉴: 이름 바꾸기·빈 목록 지우기·새 목록", async () => {
+  await step("행 메뉴·끌기·Alt+↓: 같은 상위 안 순서와 목록 옮기기, 목록 머리 메뉴: 이름 바꾸기·빈 목록 지우기·새 목록", async () => {
     const order = (text, list) => {
       const block = text.split("## ").find((b) => b.startsWith(`${list}\n`)) ?? "";
       return block.split("\n").filter((l) => l.startsWith("- [")).map((l) => l.replace(/^- \[.\] /, "").replace(/ \(.*$/, ""));
@@ -205,6 +212,23 @@ export default async function ({ page }) {
     }
   });
 
+  await step("대상만 충돌: 폼을 고치는 동안 다른 task가 파일에서 바뀌어도 저장된다(두 고침이 모두 남는다)", async () => {
+    await pickRow(page, "배포 준비");
+    await page.getByTestId("task-field-notes").fill("폼에서 더한 메모");
+    // 그사이 다른 task(정리)의 메모를 파일에서 직접 고친다
+    const direct = read().replace("- [ ] 정리\n  선택\n", "- [ ] 정리\n  선택(직접 고침)\n");
+    if (direct === read()) throw new Error("직접 고칠 줄이 없다");
+    write(direct);
+    aaa("ticker", "tick");
+    await shaIs(page, sha(direct));
+    if ((await page.getByTestId("task-form-stale").count()) !== 0) throw new Error("다른 task가 바뀌었는데 이 폼이 「파일에서 바뀌었다」");
+    const before = await shaOf(page);
+    await page.getByTestId("task-save").click();
+    const text = await saved(page, before);
+    expectFile(text, direct.replace("- [ ] 배포 준비 (Priya Rao)\n", "- [ ] 배포 준비 (Priya Rao)\n  폼에서 더한 메모\n"), "대상만 충돌");
+    md = sha(text);
+  });
+
   await step("지우기·되살리기: 끝남으로 지우면 줄이 빠지고 「되살리기」 줄, 기록 화면의 삭제만 거르기와 되살리기", async () => {
     let before = await shaOf(page);
     await pickRow(page, "원격 일");
@@ -273,6 +297,23 @@ export default async function ({ page }) {
     }
   });
 
+  await step("명령 팔레트 「할 일 더하기」: 할 일 화면을 연 적 없는 기기에서도 화면을 열고 새 task 폼을 연다", async () => {
+    const c = await pairPage(browser, aaa("web", "pair").code, { width: 1280, height: 800 });
+    try {
+      const p = c.page;
+      await p.getByTestId("palette-open").click();
+      const palette = p.getByTestId("command-palette");
+      await palette.getByRole("searchbox", { name: "패널과 동작 검색" }).fill("할 일 더하기");
+      await palette.getByRole("option", { name: "할 일 더하기" }).click();
+      await p.getByTestId("task-form").waitFor();
+      if ((await p.getByTestId("task-detail").getAttribute("aria-label")) !== "새 할 일") throw new Error("새 task 폼이 아니다");
+      if ((await p.getByTestId("task-field-title").inputValue()) !== "") throw new Error("새 폼 제목");
+      if (c.errors.length) throw new Error(c.errors.join("\n"));
+    } finally {
+      await c.page.context().close();
+    }
+  });
+
   await step("휴대폰: 떠 있는 「+」로 더하고, 행 메뉴(아래 시트)의 맨 위로로 순서를 바꾼다. 상세는 전체 화면 시트", async () => {
     const { page: p } = await pairDevice(browser, aaa("web", "pair").code, "iphone", { hash: "#tasks" });
     try {
@@ -280,6 +321,8 @@ export default async function ({ page }) {
       await shot(p, "edit-phone-list");
       await p.getByTestId("tasks-fab").click();
       await p.getByTestId("task-field-title").fill("휴대폰 일");
+      const box = await detailBox(p);
+      if (Math.abs(box.d.left) > 1 || Math.abs(box.d.right - box.w) > 1 || box.d.bottom < box.h - 1 || box.wide) throw new Error(`휴대폰 폼은 화면 전체 ${JSON.stringify(box)}`);
       await shot(p, "edit-phone-form");
       let before = await shaOf(p);
       await p.getByTestId("task-save").click();
@@ -307,6 +350,8 @@ export default async function ({ page }) {
       await shaIs(p, md);
       await pickRow(p, "로그인 고치기");
       await p.getByTestId("task-form").waitFor();
+      const box = await detailBox(p);
+      if (Math.abs(box.d.right - box.w) > 1 || box.d.width >= box.l.width || box.d.left <= box.l.left || box.wide) throw new Error(`패드 세로 폼은 오른쪽 시트 ${JSON.stringify(box)}`);
       await shot(p, "edit-pad-portrait");
     } finally {
       await p.context().close();

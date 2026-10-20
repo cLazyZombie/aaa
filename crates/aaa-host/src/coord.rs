@@ -350,10 +350,17 @@ impl Host {
             }
             // 자기 쓰기를 다음 tick이 「파일 직접」으로 적지 않게 기억을 새 판으로 둔다. 크기·mtime은 비워 다음 tick이 다시 재게 한다
             // (rename과 이 기억 사이에 끼어든 직접 편집은 내용 hash가 달라 그대로 잡힌다)
-            if let Some(seen) = self.tasks_seen.lock().unwrap().get_mut(project) {
-                (seen.len, seen.mtime, seen.sha256, seen.text) =
-                    (u64::MAX, None, after.sha256.clone(), after.text.clone());
-            }
+            // 기억이 아직 없으면(host가 뜬 뒤 첫 tick 전) 새 판으로 심는다: 쓰기 전에 읽은 `tasks`가 옛 글을 심지 못하게
+            let notes = notes_stamps(&dir, &self.settings(project).task_notes);
+            let mut seen = self.tasks_seen.lock().unwrap();
+            let seen = seen.entry(project.to_string()).or_insert_with(|| TasksSeen {
+                len: u64::MAX,
+                mtime: None,
+                sha256: String::new(),
+                text: String::new(),
+                notes,
+            });
+            (seen.len, seen.mtime, seen.sha256, seen.text) = (u64::MAX, None, after.sha256.clone(), after.text.clone());
             drop(guard);
             let _ = self.task_events.send((project.to_string(), after.sha256.clone()));
             self.db.audit(

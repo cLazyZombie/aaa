@@ -75,8 +75,8 @@ function apiAtLeast(v: string | null | undefined, [major, minor]: readonly [numb
 
 /**
  * 할 일 board(활동 막대 배지와 할 일 화면이 함께 쓴다). host 연결이 오를 때, host `tasks` 사건(TASKS.md가 바뀜)마다, 열린 thread
- * 모음이 바뀔 때(「task 없는 열린 thread」) 다시 읽는다. 늦게 돌아온 옛 응답은 버린다. 편집 응답의 board는 `replace`로 바로 넣고,
- * 뒤따르는 같은 판의 사건은 다시 읽지 않는다(깜빡임 없음).
+ * 모음이 바뀔 때(「task 없는 열린 thread」), 화면을 열 때 다시 읽는다. 늦게 돌아온 옛 응답은 버린다. 편집 응답의 board는 `replace`로
+ * 바로 넣는다. 그 편집의 `tasks` 사건이 시작한 읽기는 버리지 않는다(편집 둘의 응답이 거꾸로 와도 그 읽기가 최신 판으로 덮는다).
  */
 export function useTaskBoard(up: boolean, openThreads: string, visible: boolean): { board: TaskBoard | null; error: string | null; replace: (b: TaskBoard) => void } {
   const [board, setBoard] = useState<TaskBoard | null>(null);
@@ -96,7 +96,6 @@ export function useTaskBoard(up: boolean, openThreads: string, visible: boolean)
       });
   }, []);
   const replace = useCallback((b: TaskBoard) => {
-    ++seq.current;
     setBoard(b);
     setError(null);
   }, []);
@@ -190,16 +189,17 @@ export function TasksView({
   useEffect(() => {
     if (tab === "later" && notesFiles.length === 0) setTab("tasks");
   }, [tab, notesFiles.length]);
-  // 명령 팔레트 「할 일 더하기」
-  const lastAdd = useRef(addRequest);
+  // 명령 팔레트 「할 일 더하기」: 화면을 처음 여는 요청도 받는다(처음 mount 전에 수가 올라 있다). host 판(`frontApi`)과 board를
+  // 받기 전에는 아직 쓰지 않고 기다린다
+  const lastAdd = useRef(0);
   useEffect(() => {
-    if (addRequest === lastAdd.current) return;
+    if (addRequest === lastAdd.current || frontApi === null || !board) return;
     lastAdd.current = addRequest;
     if (!canEdit) return;
     setTab("tasks");
     setPicked(null);
     setCreating(emptyDraft(defaultList(board)));
-  }, [addRequest, canEdit, board]);
+  }, [addRequest, canEdit, board, frontApi]);
   const byLine = useMemo(() => new Map((board?.tasks ?? []).map((t) => [t.line, t])), [board]);
   const sections = useMemo(() => (board ? taskSections(board, filter, query, groups) : []), [board, filter, query, groups]);
   const found = findTask(board, picked);
@@ -288,7 +288,7 @@ export function TasksView({
       ...others.map((l, i) => ({ id: `to-${l.name}`, label: `${l.name || "(목록 없음)"}(으)로 옮기기`, icon: FolderInput, divider: i === 0, run: () => act([toListOp(t, l.name)!]) })),
       { id: "child", label: "하위 task 더하기", icon: CornerDownRight, divider: true, run: () => {
         setPicked(null);
-        setCreating(emptyDraft(t.list, t.line));
+        setCreating(emptyDraft(t.list, anchorOf(t)));
       } },
       { id: "delete", label: "끝남으로 지우기", icon: Trash2, danger: true, run: () => void remove(t).catch((e: unknown) => setOpError(e instanceof Error ? e.message : String(e))) },
     ];
@@ -346,7 +346,7 @@ export function TasksView({
       data-testid="tasks-view"
       data-shown={shown ? "true" : "false"}
       data-tasks-sha={board?.sha256 ?? ""}
-      data-can-edit={canEdit ? "true" : "false"}
+      data-can-edit={frontApi === null ? "pending" : canEdit ? "true" : "false"}
     >
       <header className="term-head">
         <DrawerToggle />
@@ -521,7 +521,7 @@ export function TasksView({
           </div>
           {board && detailOpen ? (
             <TaskDetail
-              key={picked ? `${picked.line}:${picked.title}:${saves}` : `new:${saves}:${creating?.list}:${creating?.parent}:${creating?.title}`}
+              key={picked ? `${picked.line}:${picked.title}:${saves}` : `new:${saves}:${creating?.list}:${creating?.parent?.block_sha256}:${creating?.title}`}
               t={current}
               gone={gone}
               onDirty={setFormDirty}

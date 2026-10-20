@@ -1101,14 +1101,36 @@ mod tests {
     fn update_then_move_in_one_request() {
         let md = "## A\n- [ ] 하나\n- [ ] 둘\n## B\n- [ ] 셋\n";
         let a = anchor(md, "하나");
-        let out = run(md, vec![
-            TaskOp::Update { at: a.clone(), title: Some("하나 고침".into()), owner: None, person: false, notes: Some(vec!["메모".into()]), thread: None, done: None },
-            TaskOp::Move { at: a.clone(), to_list: String::new(), before: None, parent: Some(anchor(md, "셋")) },
-            TaskOp::Update { at: a, title: None, owner: Some("me".into()), person: false, notes: None, thread: None, done: None },
-        ])
+        let out = run(
+            md,
+            vec![
+                TaskOp::Update {
+                    at: a.clone(),
+                    title: Some("하나 고침".into()),
+                    owner: None,
+                    person: false,
+                    notes: Some(vec!["메모".into()]),
+                    thread: None,
+                    done: None,
+                },
+                TaskOp::Move { at: a.clone(), to_list: String::new(), before: None, parent: Some(anchor(md, "셋")) },
+                TaskOp::Update {
+                    at: a,
+                    title: None,
+                    owner: Some("me".into()),
+                    person: false,
+                    notes: None,
+                    thread: None,
+                    done: None,
+                },
+            ],
+        )
         .unwrap();
         assert_eq!(out.text, "## A\n- [ ] 둘\n## B\n- [ ] 셋\n  - [ ] 하나 고침 (me)\n    메모\n");
-        assert_eq!(out.records.iter().map(|r| r.action).collect::<Vec<_>>(), [TaskAction::Update, TaskAction::Move, TaskAction::Update]);
+        assert_eq!(
+            out.records.iter().map(|r| r.action).collect::<Vec<_>>(),
+            [TaskAction::Update, TaskAction::Move, TaskAction::Update]
+        );
     }
 
     /// 원문 편집은 홀로만
