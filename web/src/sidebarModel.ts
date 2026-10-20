@@ -175,7 +175,8 @@ export interface WorkFolder {
  * 작업 공간 폴더(저장소 이름순, 「작업 폴더」 끝, plan §8.260) → 폴더 안 thread(묶음 rank·최근 바뀐 순, 또는 활동순)로 늘어놓는다.
  * 머신은 줄에 글자로만 적는다(plan §8.195). 프로젝트 차례는 가장 앞 rank의 thread가 있는 프로젝트가 먼저다. 그다음 thread에 딸리지 않은
  * pane의 「기타」 묶음: 사람이 옮긴 차례(공유 설정 `paneOrder`, plan §8.196)를 먼저, 옮긴 적 없는 pane은 머신 차례·host 차례로 그 뒤에.
- * 임무 thread와 그 pane은 특수 패널에만 있다(사용자 결정 10-19). 목록(Sidebar)·「이전·다음 패널」 단축키·명령 팔레트가 같이 쓴다.
+ * 종료된 옛 평가자·임무 pane은 「기타」에서 뺀다. 기록은 host에 남겨 직접 열 수 있고, 살아 있거나 복원할 pane과 thread 줄은 유지한다.
+ * 목록(Sidebar)·「이전·다음 패널」 단축키·명령 팔레트가 같이 쓴다.
  */
 export function roster(machines: readonly MachineView[], panes: readonly PaneView[], threads: readonly ThreadView[], paneOrder: readonly string[] = [], byActivity = false) {
   const paneOf = (id: string) => panes.find((p) => p.id === id);
@@ -188,6 +189,7 @@ export function roster(machines: readonly MachineView[], panes: readonly PaneVie
   const last = Number.MAX_SAFE_INTEGER;
   const loose = machines
     .flatMap((m) => panes.filter((p) => p.machine_id === m.id && !threadPanes.has(p.id) && !coordinatorPanes.has(p.id)))
+    .filter((p) => !(p.role === "evaluator" && p.state === "exited"))
     .map((p, index) => ({ p, index, rank: rank.get(sidebarPinKey(p.machine_id, p.id)) ?? last }))
     .sort((a, b) => a.rank - b.rank || a.index - b.index)
     .map((entry) => entry.p);
