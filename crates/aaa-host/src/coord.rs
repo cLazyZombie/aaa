@@ -164,6 +164,13 @@ impl Host {
         }
     }
 
+    /// task 없이 시작할 때 TASKS.md의 비슷한 열린 task를 알린다. 파일이 없으면 평소처럼 시작한다.
+    pub(crate) fn task_start_warning(&self, project: &str, title: &str) -> Option<String> {
+        let dir = self.project_dir(project).ok()?;
+        let text = std::fs::read_to_string(dir.join("TASKS.md")).ok()?;
+        tasks::start_warning(&tasks::parse(&text), title)
+    }
+
     /// `thread start --from-task`: owner를 profile·machine 기본값으로, 메모를 할 일에 붙인다
     /// 돌려주는 것은 경고 한 줄(이미 열린 thread가 맡은 task: 참고에는 그 거부가 없어 막지 않는다)과 읽은 task다(시작한 뒤 그 블록에
     /// thread를 잇는다). `block`(화면이 본 블록 hash)을 주면 지금 파일의 블록이 같을 때만 받는다: 본 것과 다른 일을 맡기지 않는다.
