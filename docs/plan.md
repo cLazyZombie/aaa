@@ -6216,3 +6216,61 @@ L4 후속(10-20 00시 사용자 관찰): 멈춤 상태의 후보 예약과 재�
   cross clippy/build 뒤 별도 수리분으로 착지하며, Windows·Linux 실제 실행은 main push 뒤 CI다.
 - **근거.** [Rust PathBuf::push](https://doc.rust-lang.org/std/path/struct.PathBuf.html#method.push),
   [Path::join](https://doc.rust-lang.org/std/path/struct.Path.html#method.join)의 verbatim prefix 정규화 규칙.
+
+### 8.332 비밀 없는 panic 위치 진단(10-20, t-0533)
+
+- **요청.** 장애 때 panic 본문을 숨기면서 위치까지 사라져 디버거가 필요했다. 본문·payload·환경·backtrace를 읽거나 포맷하지 않고 진단 가능한 위치와 실행 정보만 남긴다.
+- **공통 진입점.** 단일 실행 파일이 `aaa_common::panic_log::install()`을 먼저 호출한다. 파싱한 명령으로 CLI·host·agent·session host를 구분하며, 등록용 `agent enroll`은 CLI, 복구 감시는 agent다.
+- **안전한 필드.** Git에서 추적하는 Rust 파일 목록에서 고른 저장소 상대 경로·줄·열, 고정 허용 thread 이름·런타임 숫자 ID, Tokio task 숫자 ID, 프로세스 종류, 빌드 HEAD SHA, 같은 원본 위치의 프로세스 수명 내 반복 횟수만 JSON 한 줄로 stderr에 쓴다. 동적 thread 이름은 `other`로 숨긴다. stable Tokio API에 task 이름이 없어 ID를 쓴다. 모르는 외부·생성 파일은 `external`, Git 없는 소스 배포의 판은 `unknown`이다. 빌드 생성물에도 홈 절대 경로를 넣지 않는다.
+- **감시 API.** `panic_log::latest()`는 마지막 안전한 `Snapshot`만 반환한다. 본문과 임의 이름을 보관하지 않는다. 상태를 먼저 공개하고 상태 잠금을 푼 뒤 stderr에 쓰므로 출력 소비자가 막혀도 감시자가 위치를 읽는다. hook은 알림을 직접 전송하지 않으며 host 자기 감시는 이 API를 쓸 수 있다.
+- **검증.** `cargo test -p aaa-common --lib panic_log::`가 별도 프로세스에서 네 역할·비밀 String과 비문자열 payload·동적 이름·환경·backtrace 설정·실제 Tokio task·서로 다른 thread의 같은 위치 반복을 확인한다. stderr를 잠근 동안에도 감시자가 위치를 관측하는 사건을 받아야 한다. Windows·Unix 절대 경로는 허용된 상대 경로로 줄이고 모르는 경로는 숨긴다. 운영 panic 스위치를 추가하지 않는다. 본문 출력·원본 경로·횟수 초기화·stderr 쓰기 중 상태 잠금의 네 결함이 RED, bytes 원복 뒤 GREEN이어야 한다. 전체 ci-local·deps·TS 최신·check-public을 통과한 뒤 착지한다. 새 웹 동작이 없어 웹 E2E 파일은 추가하지 않는다.
+
+### 8.333 aaa install I5 Windows SCM 기반·읽기 상태(10-21, t-0485)
+
+- **단계 순서.** I2 뒤 Windows(I5) → 대화형·승인/Windows apply(I6) → Windows 최소 bootstrap(I7 일부) →
+  사용자 Windows PC 인수 → macOS(I3) → Linux(I4) → I7 최종 인수다. I3/I4에 두려던 감독자 내구 경계와
+  실제 backend ready/stop을 I5에서 먼저 만든다. CLI apply/resume은 I6의 서명·issuer pin·executor 전까지
+  자동화·SSH·외부 TTY 모두 needs_user/3이며 --yes/임의 JSON/시험 허용 flag로 열지 않는다.
+- **감독자와 파일 경계.** I2 configured receipt·같은 계획/계정/active ID·실제 파일과 resource lock을
+  대조한 private 감독자 job을 만든다. instance별 고정 host/agent 명령·사용자 SID·실행 SHA·프로필·config/state·
+  환경 allowlist를 결속한다. OS 등록 intent를 먼저 내구화하고 실제 SCM 조회로 같은 ID를 재개한다.
+  기존 정확한 서비스의 암호는 보존하며 모르는/변경된 서비스와 무소유 서비스 제거는 거부한다.
+  owned 서비스 제거 뒤 I2 보존 제거가 실행 파일을 없애도 읽기 status가 이를 복구하거나 잠그지 않는다.
+- **Windows adapter.** 고정 ServiceMain/dispatcher·SCM 상태·stop/shutdown handler와 최소 Win32 권한의
+  query/create/start/stop/delete/credential API를 둔다. console 호출은 backend fallback 없이 거부한다.
+  CreateEnvironmentBlock(FALSE)의 실제 사용자 token 환경을 선택해 쓰며 helper 환경을 상속하지 않는다.
+  SID·프로필·Session0·실행 경로/SHA·process 생성 시각·실효 elevation을 대조한다. 신원과 image는
+  같은 process handle에서 읽고 조회 전후의 종료 신호를 즉시 확인한다. 서비스 상태 변화는
+  SubscribeServiceChangeNotifications와 OS event로 기다리고 해제 시 진행 중 callback의 끝을 보장한다.
+- **준비와 연결.** 실제 host listener/agent 초기화 뒤 RUNNING을 보고한다. agent는 host가 없어도 실행하되
+  실제 Welcome/replay·단절·재연결을 별도 proof에 반영한다. proof는 실제 backend가 만들고, 읽기 status는
+  SCM PID·실제 process token/생성 시각·context/계정/프로필/SHA/boot/session/연결을 대조한다.
+  RUNNING 또는 private proof 하나만으로 완료를 만들지 않는다. 서비스 stop은 host/agent backend만 끝낸다.
+  host 서비스 종료에도 최신 로그인 취소/정리 경로를 유지한다. SCM backend 진입에서도 §8.332의 안전한 panic 진단을
+  검증한 고정 역할(host/agent)로 분류한다.
+- **계정·암호.** 요청 SID와 계정명을 왕복 확인하고 잘못된 암호/정책은 needs_user로 거부한다.
+  사용자·유효 그룹·서비스 SID의 SeDenyServiceLogonRight가 우선하며 disabled/deny-only 그룹의 Allow를
+  채택하지 않는다. 필요한 경우만 SeServiceLogonRight를 더하고 다른 서비스 권한 제거를 추정하지 않는다.
+  암호는 일회 메모리/SCM API 외 serde·Debug·argv·env·journal에 넣지 않고 소유 buffer를 지운다.
+  갱신 중단은 pending이며 재개 때 새 보호 입력을 받는다. 갱신 성공 뒤에도 이전 PID/생성 시각의 process는
+  새 암호 검증이 아니다. 실제 재시작·ready 대조까지 별도 상태로 남긴다. UAC/보호 입력 UI는 I6다.
+- **owner와 한계.** 공통 owner는 세 OS cargo test에서 실제 I2 파일 transaction·private journal/잠금과
+  실제 고정 host/agent process를 사용한다. 외부 SCM/token 경계만 모형이며 ready producer를 stub하지 않는다.
+  Windows 전용 owner는 실제 token/profile·SCM 읽기/구독 ABI·UTF-16 argv·SCM 외 진입 거부·I2 receipt 대조를
+  검사한다. Mac/Linux에는 Win32 ABI owner만 없고 공통 owner는 제외하지 않는다. 현지 macOS 전체 gate와
+  Windows cross clippy/build는 착지 전 판정이다. Windows·Linux 실제 실행은 main push 뒤 CI다.
+- **실기 인수.** 실제 SCM 등록/logon·Session0·로그인 전 부팅·사용자 프로필·UAC·LSA Deny/GPO·암호 갱신·
+  잠긴 exe·ConPTY/인증은 CI의 읽기 probe로 증명하지 않는다. Windows 최소 bootstrap 뒤 준비물·받기·명령·
+  확인·되돌리기·가린 로그 절차를 확정해 사용자 PC에서 검증한다. 별도 VM/runner나 실제 계정/LSA 변경은 없다.
+
+### 8.334 웹 대화 입력칸 지연 커서 경합 수리(10-21, t-0536)
+
+- **원인.** 슬래시 명령을 넣은 뒤 다음 RAF에서 실행하던 커서 복원이 그 사이의 새 전체 선택을 끝 커서로 덮는다.
+  원본 웹 E2E 51에서 Tab frame 정렬·선택 완료 응답 지연을 넣으면 `/context `가 지워지지 않고 `/context /he`가 남아
+  원래 목록 대기가 실패한다. 실제 키로 전체 선택한 경우도 덮인다. 자연 재현과 최초 I5 실패의 동일 원인 여부는 확정하지 않는다.
+- **수리.** 명령 넣기와 기록 다시 부르기의 커서 요청은 글이 반영되는 layout effect에서 한 번 소비한다.
+  입력칸 글이 요청과 다르거나 잠겨 있으면 버린다. 다음 frame에 새 선택·입력·focus를 덮는 작업을 남기지 않는다.
+- **검증.** 기존 E2E `51-slash-commands`에 frame을 보류한 동안 실제 키로 전체 선택·중간 입력·focus 이동을 하는 keeper를 더한다.
+  보류한 콜백이 실제 RAF에서 끝난 뒤 글·선택·focus 보존과 Delete로 비우기를 확인한다. 원래 커서 RAF를 되살리면 선택 단언이 RED여야 한다.
+  별도 transport 지연 진단의 수정 전 RED·수정 후 GREEN과 바이트 동일 원본 spec 3회 GREEN을 보존한다.
+  기존 시한·단언·재시도 규칙을 바꾸지 않으며 전체 ci-local·check-public 뒤 착지한다. 새 E2E 번호는 만들지 않는다.

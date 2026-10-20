@@ -970,7 +970,7 @@ journal·로그·화면에 원문·8바이트 조각·base64/URL/JSON 변형이 
   - 실험실 `CLAUDE_CONFIG_DIR`의 `commands/`·`skills/`와 pane 폴더(`.git`이 있는 git root)의 `.claude/commands/`를 agent가 읽는다.
   - 가짜 Claude는 F7(작업 중)·F5(쉼)과 Enter 글을 받는다. `/context`는 실측 꼴의 명령·출력 줄을 적고, `/model`은 선택창을 그렸다가 Esc에 결과를 적고, `/clear`는 새 기록으로 SessionStart(clear) hook을 보낸다.
   - 「보내지 않았다」는 pane이 받은 bytes로, 상태 전이는 가짜가 그린 「mode …」를 `waitOutput`으로, 화면은 `domIs`로 기다린다. 휴대폰은 WebKit `pairDevice`. 고정 sleep은 없다.
-  - 지연 커서 회귀(t-0536)는 다음 RAF를 보류한 채 Tab 명령 넣기·↑ 기록 부르기 뒤 실제 키로 전체 선택하거나 중간에 글을 치거나 focus를 옮긴다.
+  - 지연 커서 회귀(t-0536, plan §8.334)는 다음 RAF를 보류한 채 Tab 명령 넣기·↑ 기록 부르기 뒤 실제 키로 전체 선택하거나 중간에 글을 치거나 focus를 옮긴다.
     보류한 콜백이 실제 frame에서 모두 끝난 뒤 글·선택·focus가 그대로인지, 전체 선택 뒤 Delete가 비우는지 검사한다.
     원래 RAF 커서 복원을 되살리면 새 전체 선택이 끝 커서로 바뀌어 실패해야 한다. 글과 커서는 같은 React commit에서 반영한다.
     이 scheduler keeper와 별도 transport 지연 진단은 따로 실행한다(transport의 Tab frame 대기를 keeper가 보류하면 시험 도구끼리 막힌다).
@@ -1029,3 +1029,45 @@ fixture의 ParentDir 전제조건을 선행 단언한 뒤 target의 conflict 거
 `Path::join`은 Windows verbatim prefix에서 `..`를 먼저 정규화하므로 이 부정 입력을 만드는 데 쓰지 않는다.
 기존 invalid journal status의 bytes/권한/mtime·비밀 비노출 검사를 유지하며, 거부 분기를 허용으로 바꾼
 결함 변형은 conflict 단언에서 실패해야 한다. Windows 실제 통과 판정은 main CI가 맡는다.
+
+## 비밀 없는 panic 위치(t-0533)
+
+- `cargo test -p aaa-common --lib panic_log::`는 실제 hook을 별도 시험 프로세스에서 설치한다.
+  CLI·host·agent·session host 네 종류마다 비밀 String·비문자열 payload·동적 thread 이름·환경변수를 두고,
+  `RUST_BACKTRACE=full`이어도 stdout/stderr와 알림용 snapshot에 비밀이 없는지 검사한다.
+  같은 소스 위치를 서로 다른 thread에서 세 번 실행해 횟수 1·2·3, 다른 위치는 1,
+  실제 Tokio task의 숫자 ID와 파일·줄·열·빌드 SHA를 확인한다. stderr를 실제로 잠근 동안에도
+  감시자가 `latest()`를 읽는 사건을 받아야 한다. 종료·join·관측 사건으로 끝내며 sleep은 없다.
+- `panic_log::latest()`는 마지막 안전한 `Snapshot`을 반환한다. hook은 알림을 전송하지 않는다.
+  단일 실행 파일 진입점에서 hook을 설치하고, 파싱한 명령으로 프로세스 종류를 정한다.
+  등록용 `agent enroll` 등 일반 명령은 CLI, 복구 감시는 agent로 분류한다.
+- 임의 thread 이름은 `other`로 숨기고 런타임 숫자 ID로 구분한다. 고정 이름(main·aaa-cli·Tokio worker)만 허용한다.
+  Tokio의 안정 API에는 task 이름이 없어 숫자 task ID를 쓴다. payload·환경·backtrace는 읽거나 포맷하지 않는다.
+- build script는 Git HEAD SHA와 추적된 Rust 파일 목록만 생성물에 넣는다. HEAD·현재 ref·index·packed-refs를 감시한다.
+  절대 경로는 허용된 저장소 상대 경로로 줄이고, 모르는 의존성·생성 파일 위치는 `external`로 숨긴다.
+  Git 없는 소스 배포는 SHA `unknown`, 경로 `external`로 숨긴다. 줄·열과 원본 위치별 횟수는 계속 남긴다.
+- 본문 출력 복원·원본 경로 출력·반복 횟수 초기화 결함은 각각 keeper의 비밀 비노출·경로·횟수 단언에서 RED여야 한다.
+  stderr 쓰기 중 상태 잠금을 잡는 결함은 감시자가 출력 전에 위치를 읽는 계약에서 RED여야 한다.
+  각 변형의 원본 bytes를 복구한 뒤 GREEN과 전체 ci-local·deps·TS 최신·check-public을 확인한다.
+
+## aaa install I5 Windows 감독자(t-0485, plan §8.333)
+
+- `cargo test -p aaa --bin aaa install::engine::supervisor --locked`: 공통 owner 7개는 세 OS에서 실행한다.
+  실제 I2 파일/receipt/잠금·감독자 journal로 등록 직후 중단/실제 manager 대조·같은 ID 재개·기존 암호 보존·
+  외부 서비스 보존·credential 중단/이전 process 미채택·보존 제거·읽기 status를 확인한다.
+- lifecycle owner는 별도 process의 실제 고정 host/agent backend와 실제 ready producer를 쓴다.
+  host가 없는 agent 초기화 → 실제 host 연결/Welcome → 단절/재연결 → 각각 stop을 사건으로 기다린다.
+  유효 proof를 받아 계정/context/SHA/PID/생성 시각/boot/session/연결/elevation을 변조해 거부를 본다.
+  실제 TCP listener 충돌은 RUNNING/ready를 낼 수 없다. 외부 SCM/token 관찰만 모형이고 준비 영수증을 fixture가 만들지 않는다.
+- Windows 추가 owner 4개는 실제 현재 token/profile/image/SCM query·EventLog 읽기 구독/해제 ABI·CommandLineToArgvW,
+  종료 process handle 거부·실제 configured I2 receipt와 context/active ID 대조다. Win32 API가 없는 Mac/Linux에서 이 ABI owner만 제외한다.
+  lifecycle Windows 자식은 CREATE_NO_WINDOW지만 실제 SCM Session0 logon 증거는 아니다.
+- `cargo test -p aaa --test install --locked`는 숨은 서비스 진입의 console fallback 거부와 무변경을 포함한다.
+  apply/resume 승인 차단·I1 읽기 keeper를 유지한다. agent link owner는 Welcome/replay 완료 전 연결을 공개하지 않는지 본다.
+- 실제 process 대조 제거·proof context 무시·credential 이전 process 허용·manifest 결속 제거·LSA Deny 무시·
+  Removed에서 실행 파일 강제 요구·restart stop 생략·listener 전 host ready 변형은 각각 기존 owner에서 실패해야 한다.
+  원본 bytes 복구 뒤 공통 owner GREEN을 확인하고 전수 gate를 실행한다. 비밀 canary는 private tree UTF-8/UTF-16와
+  정상 owner 출력에서 검사한다. 시험 허용 production flag/export·실제 SCM/LSA 쓰기·고정 sleep·재시도는 없다.
+- 전체 macOS ci-local·deps·check-public과 Windows workspace/all-targets cross Clippy/build를 구분해 기록한다.
+  Windows·Linux 실제 실행은 main push 뒤 CI(windows-2025·ubuntu-24.04)다. 실제 서비스 logon·부팅·권한·암호·
+  ConPTY/공식 인증은 Windows bootstrap 뒤 사용자 실기 인수의 준비물/명령/되돌리기/로그 항목으로 남긴다.

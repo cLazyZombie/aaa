@@ -501,3 +501,19 @@ fn install_windows_drive_mount_and_scm_queries_are_read_only() {
         assert_eq!(snapshot(&lab.0), before);
     }
 }
+
+#[test]
+fn internal_service_entry_requires_scm_and_never_falls_back_to_console_backend() {
+    let lab = Lab::new();
+    let before = snapshot(&lab.0);
+    let context = lab.0.join("untrusted-context.json");
+    let out = lab.cmd(&["service-run", "--context", context.to_str().unwrap(), "--context-sha256", &"0".repeat(64)]);
+    assert_eq!(out.status.code(), Some(if cfg!(windows) { 3 } else { 5 }));
+    assert!(out.stdout.is_empty());
+    assert!(String::from_utf8_lossy(&out.stderr).contains(if cfg!(windows) {
+        "service_controller_required"
+    } else {
+        "unsupported_service_platform"
+    }));
+    assert_eq!(snapshot(&lab.0), before);
+}

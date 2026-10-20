@@ -8,6 +8,12 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
 mod private;
+#[cfg_attr(not(test), expect(dead_code, reason = "I5 감독자 adapter는 I6 승인 executor에서 연결한다"))]
+mod supervisor;
+
+pub(super) fn service_dispatch(context: &Path, sha: &str) -> std::process::ExitCode {
+    supervisor::dispatch(context, sha)
+}
 
 type Result<T> = std::result::Result<T, Fault>;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -166,7 +172,8 @@ pub(super) fn status(
 ) -> std::result::Result<InstallResult, Box<InstallResult>> {
     validate_id(id)?;
     let j = read_journal(state, id, instance).map_err(|e| super::error(e.code, e.exit))?;
-    transaction::observe(state, j).map_err(|e| super::error(e.code, e.exit))
+    let result = transaction::observe(state, j).map_err(|e| super::error(e.code, e.exit))?;
+    supervisor::observe(state, instance, id, result).map_err(|e| super::error(e.code, e.exit))
 }
 impl Journal {
     fn result(&self) -> InstallResult {

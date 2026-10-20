@@ -1,9 +1,9 @@
 # aaa install 공통 계약 v1
 
-I0/I1(t-0485)의 정본이다. `aaa.install.v1`은 CLI 설치 계약이며 FRONT_API/AGENT_LINK와 독립이다.
-I1은 **공유 검증·읽기 탐지·계획 hash·dry-run CLI**까지다. 파일 적용·재개는 I2,
-실제 감독자는 macOS → Windows → Linux, 대화형/승인 executor는 I6에서 연결한다.
-아래 전체 계약 중 현재 실행 가능한 범위와 미지원 결과는 끝의 I1 절에 구분한다.
+I0~I2와 I5(t-0485)의 정본이다. `aaa.install.v1`은 CLI 설치 계약이며 FRONT_API/AGENT_LINK와 독립이다.
+I1은 **공유 검증·읽기 탐지·계획 hash·dry-run CLI**, I2는 private 파일 적용·재개다.
+순서는 Windows(I5) → 대화형/승인 executor(I6) → Windows 최소 bootstrap/사용자 인수 → macOS(I3) → Linux(I4)다.
+아래 전체 계약 중 현재 실행 가능한 범위와 미지원 결과는 끝의 단계별 절에 구분한다.
 
 ## 두 기획의 차이와 채택 기준
 
@@ -217,3 +217,17 @@ I3~I5 실험실 owner는 I6 전까지 엔진/고정 adapter를 직접 호출하�
 
 재개는 현재 active job의 같은 ID만 허용한다. rollback은 소유를 입증한 stage만 정리하며,
 보존한 root나 입증하지 못한 stage가 있으면 `rollback.state=partial`과 고정 remaining code로 남긴다.
+
+
+## I5 Windows 감독자와 읽기 상태
+
+Windows 감독자 기반은 I2 파일 receipt·같은 계획/계정/ID를 쓰며, I6가 검증한 executor에서 연결할 경계다.
+공개 CLI의 apply/resume은 위 needs_user/3 경계를 유지한다. service 등록·암호 입력·UAC를 실제 수행할 사용자 명령은 I6/Windows bootstrap에서 제공한다.
+
+`install --status <ID>`는 소유 service record가 있으면 등록·RUNNING·실제 backend ready를 나눠 읽는다.
+SCM 접근 승인이 없거나 실행/연결 proof를 확인하지 못하면 고정 needs_user code를 반환한다.
+실제 SID·프로필·실행 SHA·Session0·PID/생성 시각·연결과 receipt를 대조하며 조회는 기록/lock을 만들지 않는다.
+비밀번호를 SCM에 갱신해도 이전 process가 계속 실행 중이면 새 logon 검증으로 표시하지 않는다.
+
+Windows·Linux 실제 실행은 main push 뒤 CI다. 실제 SCM logon·Session0·로그인 전 부팅·UAC/LSA·암호 변경·
+ConPTY/인증은 사용자 Windows PC 인수로 확인한다. CI/cross만으로 실제 설치를 완료했다고 부르지 않는다.

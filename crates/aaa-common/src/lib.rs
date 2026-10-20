@@ -8,6 +8,7 @@ pub mod diff;
 pub mod front;
 pub mod git_watch;
 pub mod ipc;
+pub mod panic_log;
 pub mod pr;
 pub mod process;
 pub mod redact;
