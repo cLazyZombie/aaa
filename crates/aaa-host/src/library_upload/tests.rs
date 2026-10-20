@@ -84,7 +84,7 @@ async fn an_upload_becomes_one_report_and_its_folder_goes_away() {
     };
     assert_eq!(h.call(DeviceRole::Controller, "device:phone", gone).await.unwrap_err().code, ErrorCode::Conflict);
     h.call(DeviceRole::Controller, "device:phone", req(true, 3)).await.unwrap();
-    assert!(!dir.exists(), "등록한 올리기 폴더는 지운다");
+    assert!(!dir.exists() && !mark(&h.state.join("library-uploads"), UP).exists(), "등록한 올리기 폴더와 그 표지는 지운다");
     let report = h.project_dir("demo").unwrap().join("library/plan-report");
     for f in ["index.html", "notes.md", "img/a.png"] {
         assert!(report.join(f).is_file(), "{f}");
@@ -105,15 +105,27 @@ fn a_stale_upload_goes_away_but_the_one_being_written_stays() {
     // 하위 폴더를 미리 만든다: 그 안에 더 써도 맨 위 폴더 항목은 그대로라 OS가 시각을 바꾸지 않는다
     h.library_upload_put(DeviceRole::Controller, "demo", UP, "sub/a.md", b"a").unwrap();
     let root = h.state.join("library-uploads");
-    let day_ago = std::time::SystemTime::now() - std::time::Duration::from_secs(25 * 3600);
+    // 둘 다 하루 넘게 손대지 않은 것으로 한다(표지의 시각). 폴더 시각은 OS마다 달라 쓰지 않는다(Windows는 폴더 시각을 열어 바꾸지 못한다)
+    let day_ago = aaa_common::util::now_ms() - 25 * 3600 * 1000;
     for id in [OLD, UP] {
-        std::fs::File::open(root.join(id)).unwrap().set_modified(day_ago).unwrap();
+        assert!(
+            last_put_ms(&root, id).is_some_and(|ms| ms + 3600 * 1000 > aaa_common::util::now_ms()),
+            "쓸 때 표지를 남긴다"
+        );
+        std::fs::write(mark(&root, id), day_ago.to_string()).unwrap();
     }
     // 하루 넘게 둔 올리기에 이어 쓰면 그것은 두고(다른 것만 치운다) 시각을 새로 한다
     assert_eq!(h.library_upload_put(DeviceRole::Controller, "demo", UP, "sub/b.md", b"b").unwrap().0, 2);
-    assert!(!root.join(OLD).exists(), "버려진 올리기는 치운다");
-    let fresh = std::fs::metadata(root.join(UP)).unwrap().modified().unwrap();
-    assert!(fresh > day_ago + std::time::Duration::from_secs(3600), "하위 폴더에 써도 올리기 시각이 새로워진다");
+    assert!(!root.join(OLD).exists() && !mark(&root, OLD).exists(), "버려진 올리기와 그 표지는 치운다");
+    assert!(root.join(UP).join("sub/a.md").is_file(), "쓰는 올리기는 그대로");
+    assert!(
+        last_put_ms(&root, UP).is_some_and(|ms| ms > day_ago + 3600 * 1000),
+        "하위 폴더에 써도 올리기 시각이 새로워진다"
+    );
+    // 다음 올리기도 방금 쓴 올리기는 치우지 않는다(표지가 새롭다)
+    const NEXT: &str = "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee";
+    h.library_upload_put(DeviceRole::Controller, "demo", NEXT, "a.md", b"a").unwrap();
+    assert!(root.join(UP).join("sub/b.md").is_file(), "새로 쓴 올리기는 다른 올리기의 치우기에 남는다");
 }
 
 #[test]

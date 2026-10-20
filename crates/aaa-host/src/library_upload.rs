@@ -2,7 +2,7 @@
 //! 올리고(`POST /api/v1/projects/<p>/library-uploads/<올리기>?path=…`), `library_upload_publish`가 그 폴더를 보고서 하나로 등록한 뒤
 //! 지운다. 등록은 CLI `aaa library publish`와 같은 `library_publish`다(이름 규칙·사용자 보고서의 index.html·library 상한·사용자 알림).
 //! 파일당 16MiB(할 일 첨부와 같다), 한 올리기에 합계 64MiB·1000개까지. 끝내지 않은 올리기는 하루 뒤 다음 올리기 때 지운다.
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use aaa_proto::{DeviceRole, ErrorBody, ErrorCode, FrontResponse};
 
@@ -39,23 +39,43 @@ fn usage(dir: &std::path::Path) -> (usize, u64) {
     (n, size)
 }
 
+/// 올리기마다 마지막으로 쓴 때의 표지(올리기 폴더 옆 `<올리기>.put`, 내용은 그 시각 ms). 폴더 시각은 믿지 않는다: 하위 폴더에
+/// 쓰면 맨 위 폴더 시각은 그대로이고, Windows는 폴더를 파일로 열어 시각을 바꾸지 못한다(Access denied)
+fn mark(root: &Path, upload: &str) -> PathBuf {
+    root.join(format!("{upload}.put"))
+}
+
+/// 그 올리기를 마지막으로 쓴 때(ms): 표지의 내용, 표지가 없으면(표지 전에 만든 올리기) 폴더 시각
+fn last_put_ms(root: &Path, upload: &str) -> Option<u64> {
+    if let Some(ms) = std::fs::read_to_string(mark(root, upload)).ok().and_then(|t| t.trim().parse().ok()) {
+        return Some(ms);
+    }
+    std::fs::metadata(root.join(upload))
+        .and_then(|m| m.modified())
+        .ok()
+        .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+        .map(|t| t.as_millis() as u64)
+}
+
 impl Host {
     fn uploads_root(&self) -> PathBuf {
         self.state.join("library-uploads")
     }
 
-    /// 하루 넘게 손대지 않은 올리기를 지운다(등록하지 않고 떠난 화면). 지금 쓰는 올리기는 두고, 쓸 때마다 그 폴더 시각을 새로 한다
+    /// 하루 넘게 손대지 않은 올리기를 지운다(등록하지 않고 떠난 화면). 지금 쓰는 올리기는 두고, 쓸 때마다 그 표지를 새로 한다
     fn sweep_uploads(&self, keep: &str, now_ms: u64) {
-        let Ok(rd) = std::fs::read_dir(self.uploads_root()) else { return };
+        let root = self.uploads_root();
+        let Ok(rd) = std::fs::read_dir(&root) else { return };
         for e in rd.flatten() {
-            let old = e
-                .metadata()
-                .and_then(|m| m.modified())
-                .ok()
-                .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
-                .is_some_and(|t| (t.as_millis() as u64).saturating_add(STALE_MS) < now_ms);
-            if old && e.file_name().to_str().is_some_and(|n| valid_upload(n) && n != keep) {
-                let _ = std::fs::remove_dir_all(e.path());
+            let Some(name) = e.file_name().to_str().map(str::to_string) else { continue };
+            let id = name.strip_suffix(".put").unwrap_or(&name);
+            if !valid_upload(id) || id == keep {
+                continue;
+            }
+            // 폴더 없이 남은 표지도 같은 시각으로 치운다
+            if last_put_ms(&root, id).is_some_and(|ms| ms.saturating_add(STALE_MS) < now_ms) {
+                let _ = std::fs::remove_dir_all(root.join(id));
+                let _ = std::fs::remove_file(mark(&root, id));
             }
         }
     }
@@ -103,8 +123,8 @@ impl Host {
             let _ = std::fs::remove_file(&temp);
             crate::orch::internal(e)
         })?;
-        // 하위 폴더에 쓰면 맨 위 폴더 시각은 그대로다: 치우기가 보는 시각을 지금으로
-        let _ = std::fs::File::open(&dir).and_then(|f| f.set_modified(std::time::SystemTime::now()));
+        // 치우기가 보는 시각을 지금으로. 못 쓰면 이 올리기가 하루 뒤 치워질 수 있어 실패로 알린다
+        std::fs::write(mark(&root, upload), aaa_common::util::now_ms().to_string()).map_err(crate::orch::internal)?;
         Ok((files + usize::from(replaced == 0), total))
     }
 
@@ -141,6 +161,7 @@ impl Host {
         let source = dir.to_str().ok_or_else(|| err(ErrorCode::BadRequest, "경로가 글이 아니다"))?;
         let out = self.library_publish(project, name, source, false, to_user.then_some(title), None, actor)?;
         let _ = std::fs::remove_dir_all(&dir);
+        let _ = std::fs::remove_file(mark(&self.uploads_root(), upload));
         self.db.audit(actor, "library_upload", &format!("{project}/{name}"));
         Ok(out)
     }
