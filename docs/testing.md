@@ -786,6 +786,14 @@ CI/Git의 source outbox·중복 억제·재시작·outage는 기존 owner를 유
 - 막힌 큐는 실제 전송 실패로 만든다: fake thread의 pane을 `pane kill`로 끝내고(목록에서 끝남 확인) 1초 일정의 `do.message` 규칙을 둔 뒤 `ticker tick`으로 host 기록에 「입력 전달 모름 · 확인 필요」가 올 때까지 판정한다. 「다시 보내지 않음」은 tick 두 번(울타리) 뒤 같은 묶음 id·실패 기록 수로 단언한다. 「계속 보내기」 뒤에는 pane이 끝난 채라 다음 입력이 실제로 시도되어 실패하고 새 묶음으로 다시 막히는 것을 `ticker tick`·host 기록으로 기다린다. 그 묶음은 「버리기」로 닫고, 규칙을 끈 뒤 tick 울타리 뒤 큐가 빈 것을 본다. fake agent의 전송 지연(재시작 뒤 첫 글이 0~15초)에 기대지 않는다. 고정 sleep은 없다.
 - host 쪽 묶음 상태(보낸 결과 모름·다른 동작 묶음·버리기)는 `cargo test -p aaa-host --lib automation::tests`가 DB의 큐 JSON을 직접 두고 본다.
 
+## 자동화 만들기·고치기·지우기·지금 실행(t-0538 관리 GUI W2, plan §8.332)
+
+- `cargo test -p aaa-host --lib automation::edit`: 폼 값 합치기의 바이트 보존(바꾼 칸만, 주석·순서 그대로), 조건 바꾸기와 기본값 칸 빼기, 새 파일의 칸 순서와 `#:schema` 머리, 첫 칸이 사라져도 남는 머리 주석, inline 표·`do = "deploy"`, 잘못된 폼·원문의 거부.
+- `cargo test -p aaa-host --lib automation::tests`: 실제 Host로 Reader 검사 허용·저장 거부, 새로 만들기 중복·본 판이 아닌 저장·잘못된 글이 폴더 전체 스냅샷을 바꾸지 않음, 지운 뒤 낡은 판 저장이 NotFound(되살아나지 않음), 되살리기는 꺼진 채 한 번, 옛 `.md` 저장 거부, 삭제의 대기 입력 취소·처리 중 묶음 보존, 지금 실행의 같은 key 한 번·일정 차례와 따로 받기·거부 넷, 본문 파일의 판 대조와 automations/ 밖 새 경로 거부, 명령 승인의 세션 안·worker·evaluator·detached·Reader 거부와 Controller 허용.
+- `node web/e2e/web.e2e.mjs --spec 55-automation-edit`: 폼으로 만든 원문이 검사 응답(TOML 탭)과 파일에 같은지, 「저장만으로는 돌지 않음」을 thread 사건 규칙 저장 뒤 `ticker tick` 두 번(울타리) 뒤 기록 0건·안내 0건으로 본다. 충돌은 파일 직접 편집과 둘째 브라우저 저장 둘 다로 만들고, 거부 뒤 파일 글이 그대로인지·차이 줄을 본다. 지운 규칙은 a 편집기를 연 채 b가 지운 뒤 a 저장으로 되살아나지 않는다. 지금 실행은 inbox 항목·`manual:` 기록을 기다리고, 같은 key 둘째 호출 뒤 tick 울타리 뒤 안내가 늘지 않는 것을 본다. 시작 범위 미승인 거부는 실제 labA 머신이 있는 규칙으로 본다. 고정 sleep은 없다.
+- 「한 초안」 단계는 TOML을 고친 뒤 debounce를 기다리지 않고 폼 탭에서 칸을 고쳐 저장하고, 파일에 두 쪽 고침과 머리 주석이 모두 남는지 본다(탭 전환이 다른 쪽 고침을 먼저 검사한다).
+- 결함 심기: host 저장의 판 대조(사전 대조와 `file_rev` closure)를 빼면 `save_writes_only_the_seen_revision_and_never_resurrects_a_deleted_rule`이 「본 판이 아닌 저장」 단언에서 실패한다. 탭 전환의 먼저 검사를 빼면 E2E 55 「한 초안」이 실패한다(library/t-0538/w2-fault-replant).
+
 ## 대화의 도구 호출 묶음(t-0477, plan §8.304)
 
 - `node --test web/test/toolGroups.test.mjs`: Claude·Codex 도구 이름 분류, 요약 문구(두 가지까지·우선순위·서로 다른 수정 파일·생각), 이어진 도구·생각 줄 묶기, 앞 쪽이 묶음 앞에 붙은 뒤에도 옛 첫 줄 id로 같은 묶음과 펼침을 찾는지 본다.

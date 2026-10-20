@@ -3705,7 +3705,10 @@ fn routines() {
     wait_for("이름 물음", T, || std::fs::read_to_string(&out).ok().filter(|s| s.contains("이름을 친다")));
     w.h.ok(&["pane", "run", &shell, "cmd"]);
     let got = wait_for("pane 안 승인 끝", T, || std::fs::read_to_string(&out).ok().filter(|s| s.contains("rc=")));
-    assert!(got.contains("routine 명령 승인은 사람이 aaa 세션 밖 터미널에서 한다") && got.ends_with("rc=1\n"), "{got}");
+    assert!(
+        got.contains("routine 명령 승인은 사람이 aaa 밖 터미널이나 웹(조작 기기)에서 한다") && got.ends_with("rc=1\n"),
+        "{got}"
+    );
     assert_eq!(routine("cmd")["approved"], false);
     // 사람이 터미널에서 이름을 치면 승인된다(시험은 script로 PTY를 만든다)
     let approve =

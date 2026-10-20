@@ -98,6 +98,8 @@ fn wait_reason(
     }
     None
 }
+/// 「지금 실행」(`automation_run`)의 사건 출처. 묶는 시간(`limits.batch`)을 기다리지 않는다
+pub(crate) const MANUAL: &str = "manual";
 fn source(r: &Routine) -> &'static str {
     match r.trigger {
         crate::routine::Trigger::Ci(_) => "ci",
@@ -137,7 +139,7 @@ impl Host {
             source: source(r).into(),
             start_scope: None,
         };
-        self.automation_accept(p, r, event)
+        self.automation_accept(p, r, event).map(|_| ())
     }
     fn automation_input_reports(
         &self,
@@ -171,26 +173,32 @@ impl Host {
         }
         Ok(value.to_string())
     }
-    pub(crate) fn automation_accept(&self, p: &str, r: &Routine, mut event: Event) -> Result<(), ErrorBody> {
+    /// 새로 받았으면 참이다. 같은 id를 이미 받았거나(대기·처리 중·끝남) 일정 차례가 이미 쌓여 있으면 거짓이다.
+    pub(crate) fn automation_accept(&self, p: &str, r: &Routine, mut event: Event) -> Result<bool, ErrorBody> {
         if let Action::Start(a) = &event.action {
             event.start_scope = Some(self.automation_start_scope(p, r, a)?);
             event.body = self.automation_input_reports(p, a, event.owner.as_deref(), event.body.clone())?;
         }
         check_input_size(&event)?;
         let guard = receipt(p, &r.name, &event.id);
+        let mut added = false;
         self.db
             .update_meta_checked(&key(p, &r.name), &[&guard], |old| {
                 let mut s = state(old)?;
                 if !s.pending.iter().chain(s.inflight.iter().flat_map(|b| b.events.iter())).any(|e| e.id == event.id) {
-                    let schedule = matches!(r.trigger, crate::routine::Trigger::Schedule(_)) && r.command.is_empty();
+                    // 일정 차례는 쌓인 것 하나로 모은다. 지금 실행(manual)은 일정 차례가 아니다
+                    let schedule = matches!(r.trigger, crate::routine::Trigger::Schedule(_))
+                        && r.command.is_empty()
+                        && event.source != MANUAL;
                     if !schedule || (s.pending.is_empty() && s.inflight.is_none()) {
                         s.pending.push(event);
+                        added = true;
                     }
                 }
                 Ok((serde_json::to_string(&s)?, vec![]))
             })
-            .map(|_| ())
-            .map_err(internal)
+            .map_err(internal)?;
+        Ok(added)
     }
 
     pub(crate) fn automation_changed(&self, p: &str, r: &Routine, hash: &str, body: String) -> Result<bool, ErrorBody> {
@@ -627,8 +635,15 @@ impl Host {
                         s.day = day(now);
                         s.count = 0;
                     }
+                    let manual;
+                    let limits = if first.source == MANUAL {
+                        manual = Limits { batch: None, ..r.limits.clone() };
+                        &manual
+                    } else {
+                        &r.limits
+                    };
                     if let Some(reason) =
-                        wait_reason(&r.limits, first.at_ms, s.last_started_ms, s.count, now, usage_blocked)
+                        wait_reason(limits, first.at_ms, s.last_started_ms, s.count, now, usage_blocked)
                     {
                         wait = Some((first.id.clone(), reason));
                     } else {

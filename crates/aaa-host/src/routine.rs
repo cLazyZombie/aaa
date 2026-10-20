@@ -366,6 +366,21 @@ pub(crate) fn load_all(dir: &Path) -> (Vec<Routine>, Vec<(String, String, String
     (ok, broken)
 }
 
+/// 목록 줄의 조건 낱말(웹 목록·검토 화면이 같은 글을 쓴다)
+pub(crate) fn trigger_label(r: &Routine) -> String {
+    match &r.trigger {
+        Trigger::Ci(c) => format!("{} {} CI ({})", c.repo, c.branches.join(", "), c.events.join(", ")),
+        Trigger::Git(g) => format!("{} {} Git ({})", g.repo, g.branches.join(", "), g.events.join(", ")),
+        Trigger::Thread(t) => format!(
+            "사건 {}{}",
+            t.events.join(", "),
+            if t.repos.is_empty() { String::new() } else { format!(" · repos {}", t.repos.join(", ")) }
+        ),
+        Trigger::Schedule(_) if !r.command.is_empty() => format!("{} 명령 출력 변화", r.schedule_text),
+        _ => r.schedule_text.clone(),
+    }
+}
+
 /// 출력은 지시가 아니라 자료다. 출력 안의 backtick보다 긴 fence로 감싼다.
 fn output_block(ran: &CommandRan) -> (String, String) {
     let exit = match (ran.timed_out, ran.exit_code) {
@@ -424,6 +439,16 @@ pub(crate) fn edit_enabled(text: &str, on: Option<bool>) -> Result<(String, bool
 }
 
 impl Host {
+    /// 자동화 목록 답: 지운 자동화도 함께 싣는다(FRONT_API 1.74)
+    pub(crate) fn routines_reply(
+        &self,
+        project: &str,
+        routines: Result<Vec<RoutineView>, ErrorBody>,
+    ) -> Result<aaa_proto::FrontResponse, ErrorBody> {
+        let routines = routines?;
+        Ok(aaa_proto::FrontResponse::Routines { routines, trash: self.automation_trash(project)? })
+    }
+
     fn routine_state(&self, project: &str, name: &str) -> State {
         self.db
             .meta(&format!("routine:{project}:{name}"))
@@ -438,11 +463,11 @@ impl Host {
     }
 
     /// safety `routine_commands`(host.toml `[safety.*]`, 옛 `[projects] routine_commands`). 쓸 때마다 다시 읽는다.
-    fn routine_commands_allowed(&self, project: &str) -> bool {
+    pub(crate) fn routine_commands_allowed(&self, project: &str) -> bool {
         self.safety(project).routine_commands
     }
 
-    fn routine_approved(&self, project: &str, r: &Routine) -> bool {
+    pub(crate) fn routine_approved(&self, project: &str, r: &Routine) -> bool {
         self.db.meta(&format!("routine_ok:{project}:{}", r.name)).ok().flatten().as_deref()
             == Some(r.command_sha256().as_str())
     }
@@ -457,23 +482,7 @@ impl Host {
                 let st = self.routine_state(project, &r.name);
                 let mut view = RoutineView {
                     title: r.title.clone(),
-                    trigger: match &r.trigger {
-                        Trigger::Ci(c) => format!("{} {} CI ({})", c.repo, c.branches.join(", "), c.events.join(", ")),
-                        Trigger::Git(g) => {
-                            format!("{} {} Git ({})", g.repo, g.branches.join(", "), g.events.join(", "))
-                        }
-                        Trigger::Thread(t) => format!(
-                            "사건 {}{}",
-                            t.events.join(", "),
-                            if t.repos.is_empty() {
-                                String::new()
-                            } else {
-                                format!(" · repos {}", t.repos.join(", "))
-                            }
-                        ),
-                        Trigger::Schedule(_) if !r.command.is_empty() => format!("{} 명령 출력 변화", r.schedule_text),
-                        _ => r.schedule_text.clone(),
-                    },
+                    trigger: trigger_label(r),
                     action: r.action.label(),
                     origin: if r.file.starts_with("automations/") { "automation" } else { "routine" }.into(),
                     file: r.file.clone(),
@@ -573,11 +582,12 @@ impl Host {
         sha: &str,
         actor: &str,
     ) -> Result<Vec<RoutineView>, ErrorBody> {
-        // 사람만: CLI의 사람 문(`person.rs`)은 env를 보지만, host는 연결한 프로세스로 aaa pane 안인지 판정한다(plan §8.164)
+        // 사람만: CLI의 사람 문(`person.rs`)은 env를 보지만, host는 연결한 프로세스로 aaa pane 안인지 판정한다(plan §8.164).
+        // 웹 조작 기기(Controller)도 확인 화면에서 승인한다(관리 GUI W2, plan §8.332). 요청 경계(`call_from`)가 worker 등도 거부한다
         if crate::front::in_session(actor) {
             return Err(err(
                 ErrorCode::Forbidden,
-                "routine 명령 승인은 사람이 aaa 세션 밖 터미널에서 한다(이 연결은 aaa pane 안에서 왔다)",
+                "routine 명령 승인은 사람이 aaa 밖 터미널이나 웹(조작 기기)에서 한다(이 연결은 aaa pane 안에서 왔다)",
             ));
         }
         let dir = self.project_dir(project)?;
@@ -762,7 +772,7 @@ impl Host {
         }
     }
 
-    async fn routine_run(self: &Arc<Self>, project: &str, r: &Routine) {
+    pub(crate) async fn routine_run(self: &Arc<Self>, project: &str, r: &Routine) {
         let run_id = aaa_common::util::new_id();
         let res = async {
             let mid = self.resolve_machine(r.machine.as_deref())?;

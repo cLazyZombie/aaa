@@ -5632,7 +5632,7 @@ primary 근거:
 - 임무도 missions/*.toml+brief_file을 받는다. 적용 사본은 글까지 고정하며 승인 범위는 값으로 비교한다. 옛 임무 조건은 숨은 규칙으로 공통 처리하고, 변환 때 cursor·일정 기준·당일 횟수를 인계한다. 운영 변환은 배포 뒤 coordinator가 한다.
 - CLI automation schema/convert, FRONT_API1.52·TS 재생성. 변환은 전체 값·충돌을 검증한 뒤 쓰고 .converted 원본을 보존한다. 프로젝트 저장소의 한 커밋은 coordinator가 남긴다. host에서 git을 실행하지 않는다.
 - 별도 운영 수리: inbox_once의 open 전용 중복 판정 때문에 임무 하루 상한 안내가 done 뒤 재생성됐다. 날짜별 통지 표식+inbox INSERT를 같은 transaction에 넣어 하루 한 번으로 제한하고 완료 기록 정리·재시작·구판 done 이행을 보존한다. 저장 실패는 통지 완료로 확정하지 않는다.
-- [운영/형식/변환](automations.md)·[시험](testing.md)을 따른다. 웹 칸별 폼과 지금 실행은 미구현이며 목록·출처·토글은 새 파일 형식을 읽는다.
+- [운영/형식/변환](automations.md)·[시험](testing.md)을 따른다. 웹 칸별 폼과 지금 실행은 §8.332(W2)이며 목록·출처·토글은 새 파일 형식을 읽는다.
 
 
 - **L4 사용자23:3x 수정.** 임무 max_wakes/max_minutes/min_gap/retire_cap_days 및 자동화의 횟수·동시성은 기본 제한을 없앤다. 생략·0은 제한 없음, 옛 파일의 명시 값은 유지한다. 임무 host 동시/밀린 입력 상한도 기본0이며 명시 값만 지킨다. 기본 철수 일수도0으로 두고 명시 기준만 제안한다. 예산은 승인 hash에서 빼며 기존 승인 기록의 repo/머신 범위는 이어받는다. 예산 변경은 다음 tick에 적용하고 기존 예산 대기는 범위 승인 없이 해제한다. 모델 사용량 문턱·batch·reset·중복 방지는 유지한다. 생성 안내·CI/Git 예시에서 기본 상한 줄을 제거하고 CLI/웹은 무제한으로 표시한다.
@@ -6216,3 +6216,15 @@ L4 후속(10-20 00시 사용자 관찰): 멈춤 상태의 후보 예약과 재�
   cross clippy/build 뒤 별도 수리분으로 착지하며, Windows·Linux 실제 실행은 main push 뒤 CI다.
 - **근거.** [Rust PathBuf::push](https://doc.rust-lang.org/std/path/struct.PathBuf.html#method.push),
   [Path::join](https://doc.rust-lang.org/std/path/struct.Path.html#method.join)의 verbatim prefix 정규화 규칙.
+
+### 8.332 자동화 만들기·고치기·지우기·지금 실행(10-21, t-0538 관리 GUI W2)
+
+- **요청.** 사용자 10-20 23:5x 「w2부터 계속 다 진행해」, 확정 계획 t-0456 plan-revised §3(저장·적용 계약)·§5 W2. W3(상주 agent 마법사)는 t-0475 Q6대로 지웠다. 동작은 do.wake 제거(A4) 뒤라 4종이다(계획의 「5종」은 do.wake가 있던 때 수).
+- **proto(FRONT_API 1.74, 더하기만).** `automation_read`(원문·sha256·본문 파일과 판·검사), `automation_validate`(쓰지 않음, Reader 가능, `form`을 주면 원문에 합친다), `automation_save`(`expected_sha256` 없음 = 새로 만들기, 있음 = 그 판일 때만), `automation_delete`(본 판일 때만), `automation_restore`, `automation_run`(key). `Routines.trash`, 새 오류 코드 `conflict`. `routine_approve`는 local_only에서 빼고 요청 경계의 「사람이 여는 신뢰 경계」 묶음(§8.299)에 넣었다: 웹 Controller와 aaa 밖 Local만 된다. 옛 host는 새 요청을 모르는 요청으로 거절하고 `trash`를 생략하므로 웹은 `/api/v1/me`의 `front_api`가 1.74 이상일 때만 편집·실행 단추를 그린다.
+- **합치기(`automation/edit.rs` `merge_form`).** 폼 값(TOML과 같은 모양의 JSON)을 정본 타입 `File`로 읽고, 원문을 읽은 값과 칸마다 비교해 다른 칸만 toml_edit로 고친다. 값 뒤 주석·키 앞 주석·칸 순서는 그대로, 바뀐 조건 종류는 표를 갈아 끼운다. 새로 넣은 칸은 지워도 같은 값으로 읽히면(기본값) 뺀다. 맨 위 주석 줄은 따로 쥐었다 붙인다(첫 칸이나 숨은 표가 사라지면 toml_edit가 그 decor를 함께 버린다). 새 파일은 정본 타입의 칸 순서와 `#:schema` 머리로 쓴다. 정수인 실수(사용량 문턱)는 정수로 쓴다. 합친 글은 다시 읽어 폼 값과 같은지 본다.
+- **저장·삭제·되살리기.** 쓰기는 공용 저장 helper(§8.311 `file_rev`)로 한다: 파일마다 lock, closure가 판을 대조, rename 직전 다시 읽어 바뀌었으면 다시 대조. 본문 파일을 먼저, 규칙을 마지막에 쓴다. 웹이 새로 만드는 본문 파일은 `automations/` 안만 받는다(이미 가리키던 파일은 그 자리). 삭제는 끈 판을 쓰고 `.trash/<이름>-<ms>.toml`로 옮긴 뒤 대기 입력을 cancelled receipt로 닫는다(처리 중 묶음·기록·본문·기억은 둔다). 되살리기는 같은 이름이 없을 때 꺼진 채로 쓴다. 지운 규칙은 낡은 판 저장으로 되살아나지 않는다(t3code `requireExisting`과 같은 뜻, NotFound). `automation_sources` lock으로 ticker 판정과 줄 세운다. 감사 기록·흐름 사건(`automation_saved`·`automation_deleted`·`automation_restored`·`automation_run`)을 남긴다.
+- **지금 실행.** 출처 `manual`의 사건 하나를 id `manual:<key>`로 공통 큐에 넣는다. 같은 id는 큐와 receipt로 한 번만 받는다(`automation_accept`가 새로 받았는지 돌려주게 했다). 일정 규칙의 「쌓인 차례 하나」 합치기에서 빼고, 묶는 시간만 건너뛴다(사용량 문턱·하루 상한·간격은 그대로). 명령 조건은 명령을 지금 돌린다(승인·`routine_commands` 필요, key는 meta로 한 번). 꺼짐·파일 오류·주인 thread·배포 제안·승인되지 않은 시작 범위는 큐에 넣기 전에 거부한다.
+- **웹.** `AutomationEditor`(폼·TOML·검토 탭, 본문 Markdown 미리보기, 충돌 창의 줄 차이(본문 파일 차이 포함)와 두 선택), 상세의 고치기·지금 실행·지우기·명령 승인 확인 창, 목록의 「새 자동화」·「지운 자동화」. 키마다 부르지 않고 고침이 멈춘 뒤 host 검사를 부른다. 고칠 때마다 검사 차례를 올려 늦은 응답이 새 고침을 덮지 않고, 탭을 바꾸거나 저장하기 전에 기다리던 고침을 먼저 검사한다(그동안 칸을 잠근다). 휴대폰은 같은 sheet, 입력 글자 16px.
+- **finish 리뷰로 고친 것.** 검사 응답 경합(위), 저장이 말없이 끝나던 경우(그사이 바뀌면 알림), 명령 지금 실행이 「돌고 있음」 거부 때 key를 먼저 써 다시 누를 수 없던 것, 본문 경로로 규칙 TOML·`.trash/`·`.converted/`를 덮을 수 있던 것(새 본문은 `automations/` 안 `.md`), 본문 충돌에서 「내 초안으로 저장」이 옛 본문 판을 보내 빠져나갈 수 없던 것, 지우기와 지금 실행이 겹쳐 지운 규칙의 입력이 남던 것(둘 다 `automation_sources` lock 안).
+- **참고 위치.** t3code 4b1024da `ScheduledTasksSettings.tsx` `ScheduledTaskEditorForm`(948–1124: 저장 중 두 번 보내지 않음, 실패는 폼 안, 닫지 않음)과 「Run now」. 다르게 한 것: 참고는 지우기·지금 실행을 확인 없이 하지만 여기서는 확인 창을 거친다(계획 §3 삭제·W1과 같은 결). 충돌 창은 참고에 없어 할 일 T2(§8.311)의 나란히 보기 대신 줄 차이 한 칸으로 했다(자동화 파일은 짧다).
+- **검증.** host 유닛 `automation::edit::tests`(7)·`automation::tests`(W2 다섯), 웹 유닛 `automationForm.test.mjs`, 웹 E2E `55-automation-edit`(데스크톱·둘째 브라우저·Reader 390·휴대폰 조작 기기). 결함 심기: 판 대조를 빼면 host 유닛이 실패한다. 절차는 [시험](testing.md).

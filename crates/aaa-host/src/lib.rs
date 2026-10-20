@@ -1263,6 +1263,7 @@ impl Host {
                 | FrontRequest::DeviceRevoke { .. }
                 | FrontRequest::WebPublish
                 | FrontRequest::WebPublishOff
+                | FrontRequest::RoutineApprove { .. }
         ) && (front::in_session(actor)
             || actor.starts_with("worker:")
             || actor.starts_with("evaluator:")
@@ -1270,7 +1271,11 @@ impl Host {
         {
             return Err(err(
                 ErrorCode::Forbidden,
-                "기기·머신 등록과 폐기·웹 공개 변경은 사람이 aaa 밖 터미널이나 웹에서 한다",
+                if matches!(req, FrontRequest::RoutineApprove { .. }) {
+                    "routine 명령 승인은 사람이 aaa 밖 터미널이나 웹(조작 기기)에서 한다(이 연결은 aaa 세션 안에서 왔다)"
+                } else {
+                    "기기·머신 등록과 폐기·웹 공개 변경은 사람이 aaa 밖 터미널이나 웹에서 한다"
+                },
             ));
         }
         if req.local_only() && role != DeviceRole::Local {
@@ -1616,29 +1621,49 @@ impl Host {
             | FrontRequest::MissionReload { .. }
             | FrontRequest::MissionRestart { .. }
             | FrontRequest::MissionOpen { .. } => Err(legacy_mission::removed()),
-            FrontRequest::Routines { project } => {
-                self.routines(&project).map(|routines| FrontResponse::Routines { routines })
+            FrontRequest::Routines { project } => self.routines_reply(&project, self.routines(&project)),
+            FrontRequest::AutomationApprove { project, name, approval_sha256 } => {
+                self.routines_reply(&project, self.automation_approve(&project, &name, &approval_sha256, actor))
             }
-            FrontRequest::AutomationApprove { project, name, approval_sha256 } => self
-                .automation_approve(&project, &name, &approval_sha256, actor)
-                .map(|routines| FrontResponse::Routines { routines }),
+            FrontRequest::AutomationRead { project, name } => {
+                self.automation_read(&project, &name).map(|doc| FrontResponse::AutomationDoc { doc })
+            }
+            FrontRequest::AutomationValidate { project, name, text, form, body } => self
+                .automation_validate(&project, &name, text, form, body)
+                .map(|(text, check)| FrontResponse::AutomationChecked { text, check }),
+            FrontRequest::AutomationSave { project, name, text, expected_sha256, body, body_expected_sha256 } => self
+                .automation_save(&project, &name, text, expected_sha256, body, body_expected_sha256, actor)
+                .await
+                .map(|doc| FrontResponse::AutomationDoc { doc }),
+            FrontRequest::AutomationDelete { project, name, expected_sha256 } => {
+                let deleted = self.automation_delete(&project, &name, &expected_sha256, actor).await;
+                self.routines_reply(&project, deleted.and_then(|_| self.routines(&project)))
+            }
+            FrontRequest::AutomationRestore { project, id } => {
+                let restored = self.automation_restore(&project, &id, actor).await;
+                self.routines_reply(&project, restored.and_then(|_| self.routines(&project)))
+            }
+            FrontRequest::AutomationRun { project, name, key } => self
+                .automation_run(&project, &name, &key, actor)
+                .await
+                .map(|(accepted, detail)| FrontResponse::AutomationRan { accepted, detail }),
             FrontRequest::AutomationConvert { project, dry_run, plan_sha256 } => self
                 .automation_convert(&project, dry_run, plan_sha256.as_deref(), actor)
                 .await
                 .map(|(files, plan_sha256)| FrontResponse::AutomationConverted { files, dry_run, plan_sha256 }),
-            FrontRequest::AutomationUnblock { project, name, batch, discard } => self
-                .automation_unblock(&project, &name, &batch, discard, actor)
-                .and_then(|_| self.routines(&project))
-                .map(|routines| FrontResponse::Routines { routines }),
+            FrontRequest::AutomationUnblock { project, name, batch, discard } => self.routines_reply(
+                &project,
+                self.automation_unblock(&project, &name, &batch, discard, actor).and_then(|_| self.routines(&project)),
+            ),
             FrontRequest::RoutineRuns { project, name } => self.routine_runs(&project, &name).and_then(|runs| {
                 Ok(FrontResponse::RoutineRuns { runs, source: self.routine_source(&project, &name)? })
             }),
             FrontRequest::RoutineToggle { project, name, on } => {
-                self.routine_toggle(&project, &name, on, actor).map(|routines| FrontResponse::Routines { routines })
+                self.routines_reply(&project, self.routine_toggle(&project, &name, on, actor))
             }
-            FrontRequest::RoutineApprove { project, name, command_sha256 } => self
-                .routine_approve(&project, &name, &command_sha256, actor)
-                .map(|routines| FrontResponse::Routines { routines }),
+            FrontRequest::RoutineApprove { project, name, command_sha256 } => {
+                self.routines_reply(&project, self.routine_approve(&project, &name, &command_sha256, actor))
+            }
             FrontRequest::Events { project, after, limit } => {
                 self.events(project.as_deref(), after, limit).map(|events| FrontResponse::Events { events })
             }

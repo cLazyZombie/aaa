@@ -74,6 +74,8 @@ pub enum ErrorCode {
     SubscriptionGone,
     /// 받을 수 있는 크기를 넘었다(공유 설정 64KB, herdr-web-ui `too_large`)
     TooLarge,
+    /// 본 판과 지금 파일이 다르다(자동화 저장 등). 다시 읽고 차이를 본 뒤 고친다
+    Conflict,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
@@ -2437,6 +2439,70 @@ pub enum FrontRequest {
         #[serde(default)]
         discard: bool,
     },
+    /// 자동화 파일 원문·판·본문과 검사 결과(관리 GUI W2, FRONT_API 1.74, Reader 가능)
+    AutomationRead {
+        #[serde(default)]
+        #[ts(optional, as = "Option<String>")]
+        project: String,
+        name: String,
+    },
+    /// 초안을 쓰지 않고 검사한다(Reader 가능). `form`(TOML과 같은 모양의 값)을 주면 host가 그 값을 원문에 합친다:
+    /// 바뀐 칸만 고치고 주석·나머지 칸은 그대로 둔다. `body`는 `text_file`·`brief_file`이 가리킬 본문 초안이다.
+    AutomationValidate {
+        #[serde(default)]
+        #[ts(optional, as = "Option<String>")]
+        project: String,
+        name: String,
+        text: String,
+        #[serde(default)]
+        #[ts(optional, type = "Record<string, unknown>")]
+        form: Option<serde_json::Value>,
+        #[serde(default)]
+        #[ts(optional)]
+        body: Option<String>,
+    },
+    /// 검사한 초안을 쓴다. `expected_sha256`이 없으면 새로 만들기(그 이름 파일이 있으면 거부), 있으면 그 판일 때만 고친다
+    /// (지운 규칙은 되살리지 않는다). 다르면 `conflict`로 거부하고 아무것도 쓰지 않는다. 본문 파일은 먼저, 규칙은 마지막에 쓴다.
+    AutomationSave {
+        #[serde(default)]
+        #[ts(optional, as = "Option<String>")]
+        project: String,
+        name: String,
+        text: String,
+        #[serde(default)]
+        #[ts(optional)]
+        expected_sha256: Option<String>,
+        #[serde(default)]
+        #[ts(optional)]
+        body: Option<String>,
+        /// 본문 파일의 본 판. 없으면 그 파일이 아직 없어야 한다
+        #[serde(default)]
+        #[ts(optional)]
+        body_expected_sha256: Option<String>,
+    },
+    /// 끈 뒤 `automations/.trash/`로 옮긴다. 대기 입력은 취소하고 처리 중 묶음·기록은 둔다. 본문 파일은 그대로 둔다.
+    AutomationDelete {
+        #[serde(default)]
+        #[ts(optional, as = "Option<String>")]
+        project: String,
+        name: String,
+        expected_sha256: String,
+    },
+    /// 지운 자동화를 꺼진 채로 되살린다. 같은 이름이 있으면 거부한다.
+    AutomationRestore {
+        #[serde(default)]
+        #[ts(optional, as = "Option<String>")]
+        project: String,
+        id: String,
+    },
+    /// 조건을 기다리지 않고 동작을 한 번 돌린다(수동 사건 하나). 같은 `key`는 한 번만 받는다. 꺼짐·파일 오류·승인되지 않은 범위는 거부한다.
+    AutomationRun {
+        #[serde(default)]
+        #[ts(optional, as = "Option<String>")]
+        project: String,
+        name: String,
+        key: String,
+    },
     /// 최근 실행·건너뜀 기록, 최대 50건(Reader 가능).
     RoutineRuns {
         #[serde(default)]
@@ -2581,6 +2647,12 @@ impl FrontRequest {
             | FrontRequest::AutomationApprove { project, .. }
             | FrontRequest::AutomationConvert { project, .. }
             | FrontRequest::AutomationUnblock { project, .. }
+            | FrontRequest::AutomationRead { project, .. }
+            | FrontRequest::AutomationValidate { project, .. }
+            | FrontRequest::AutomationSave { project, .. }
+            | FrontRequest::AutomationDelete { project, .. }
+            | FrontRequest::AutomationRestore { project, .. }
+            | FrontRequest::AutomationRun { project, .. }
             | FrontRequest::RoutineToggle { project, .. }
             | FrontRequest::EvaluatorAssign { project, .. }
             | FrontRequest::EvaluatorUnassign { project, .. }
@@ -2632,6 +2704,8 @@ impl FrontRequest {
                 | FrontRequest::Routines { .. }
                 | FrontRequest::RoutineRuns { .. }
                 | FrontRequest::AutomationConvert { dry_run: true, .. }
+                | FrontRequest::AutomationRead { .. }
+                | FrontRequest::AutomationValidate { .. }
                 | FrontRequest::ThreadRead { .. }
                 | FrontRequest::PaneRead { .. }
                 | FrontRequest::PaneReadText { .. }
@@ -2664,7 +2738,6 @@ impl FrontRequest {
                 | FrontRequest::EnrollPending
                 | FrontRequest::EnrollApprove { .. }
                 | FrontRequest::MachineRevoke { .. }
-                | FrontRequest::RoutineApprove { .. }
                 | FrontRequest::WebPublish
                 | FrontRequest::WebPublishOff
                 | FrontRequest::TickerTick
@@ -2851,6 +2924,24 @@ pub enum FrontResponse {
     },
     Routines {
         routines: Vec<RoutineView>,
+        /// 지운 자동화(FRONT_API 1.74). 옛 host는 생략한다
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        #[ts(optional, as = "Option<Vec<crate::AutomationTrashEntry>>")]
+        trash: Vec<crate::AutomationTrashEntry>,
+    },
+    /// `automation_read`·`automation_save`의 답
+    AutomationDoc {
+        doc: crate::AutomationDoc,
+    },
+    /// `automation_validate`의 답: 합친 원문과 검사 결과
+    AutomationChecked {
+        text: String,
+        check: crate::AutomationCheck,
+    },
+    /// `automation_run`의 답. `accepted`가 거짓이면 같은 key를 이미 받았다
+    AutomationRan {
+        accepted: bool,
+        detail: String,
     },
     AutomationConverted {
         files: Vec<String>,

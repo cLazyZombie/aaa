@@ -660,3 +660,276 @@ fn converter_rejects_malformed_legacy_targets_before_writing() {
         assert!(!p.0.join("automations/watch.toml").exists());
     }
 }
+
+// ───── 관리 GUI W2: 읽기·검사·저장·삭제·되살리기·지금 실행(plan §8.332) ─────
+
+fn doc_of(r: Result<aaa_proto::FrontResponse, aaa_proto::ErrorBody>) -> aaa_proto::AutomationDoc {
+    match r {
+        Ok(aaa_proto::FrontResponse::AutomationDoc { doc }) => doc,
+        other => panic!("문서 응답이 아니다: {other:?}"),
+    }
+}
+fn save(name: &str, text: &str, expected: Option<&str>) -> aaa_proto::FrontRequest {
+    aaa_proto::FrontRequest::AutomationSave {
+        project: "demo".into(),
+        name: name.into(),
+        text: text.into(),
+        expected_sha256: expected.map(str::to_owned),
+        body: None,
+        body_expected_sha256: None,
+    }
+}
+fn sha(text: &str) -> String {
+    use sha2::Digest as _;
+    hex::encode(sha2::Sha256::digest(text.as_bytes()))
+}
+
+#[tokio::test]
+async fn save_writes_only_the_seen_revision_and_never_resurrects_a_deleted_rule() {
+    use aaa_proto::{DeviceRole::*, ErrorCode, FrontRequest, FrontResponse};
+    let p = Project::new();
+    let h = demo_host(&p);
+    let dir = p.0.join("projects/demo");
+    let read = |name: &str| FrontRequest::AutomationRead { project: "demo".into(), name: name.into() };
+    assert_eq!(h.call(Reader, "device:r", read("check")).await.unwrap_err().code, ErrorCode::NotFound);
+    // 폼으로 새 규칙의 글을 만든다(Reader도 검사는 한다)
+    let form = serde_json::json!({"title":"점검","on":{"thread":{"events":["thread_failed"]}},"do":{"inbox":{"text":"본다"}},"limits":{"usage_session_below":5,"usage_week_below":10}});
+    let Ok(FrontResponse::AutomationChecked { text, check }) = h
+        .call(
+            Reader,
+            "device:r",
+            FrontRequest::AutomationValidate {
+                project: "demo".into(),
+                name: "check".into(),
+                text: String::new(),
+                form: Some(form),
+                body: None,
+            },
+        )
+        .await
+    else {
+        panic!("검사 응답이 아니다")
+    };
+    assert!(check.errors.is_empty(), "{:?}", check.errors);
+    assert_eq!(check.review.as_ref().unwrap().start_threads, h.safety("demo").start_threads);
+    assert!(!dir.join("automations/check.toml").exists(), "검사가 파일을 썼다");
+    assert_eq!(h.call(Reader, "device:r", save("check", &text, None)).await.unwrap_err().code, ErrorCode::Forbidden);
+    let doc = doc_of(h.call(Controller, "device:a", save("check", &text, None)).await);
+    assert_eq!(std::fs::read_to_string(dir.join("automations/check.toml")).unwrap(), text);
+    assert_eq!(doc.sha256, sha(&text));
+    // 같은 이름 새로 만들기·본 판이 아닌 저장은 아무것도 쓰지 않는다(다른 화면, 파일 직접 편집)
+    let e = h.call(Controller, "device:b", save("check", "title='b'\n", None)).await.unwrap_err();
+    assert_eq!(e.code, ErrorCode::Conflict);
+    let edited = text.replace("본다", "직접 고침");
+    p.write("projects/demo/automations/check.toml", &edited);
+    let before = snapshot(&dir);
+    let e = h
+        .call(Controller, "device:a", save("check", &text.replace("본다", "a 화면"), Some(&doc.sha256)))
+        .await
+        .unwrap_err();
+    assert_eq!(e.code, ErrorCode::Conflict, "{e:?}");
+    assert_eq!(snapshot(&dir), before);
+    // 잘못된 글은 저장하지 않는다
+    let e = h
+        .call(Controller, "device:a", save("check", "[on.schedule]\nevery='x'\n", Some(&sha(&edited))))
+        .await
+        .unwrap_err();
+    assert_eq!(e.code, ErrorCode::BadRequest);
+    assert_eq!(snapshot(&dir), before);
+    // b가 지운 뒤 a의 낡은 편집기 저장은 되살리지 않는다
+    let Ok(FrontResponse::Routines { routines, trash }) = h
+        .call(
+            Controller,
+            "device:b",
+            FrontRequest::AutomationDelete {
+                project: "demo".into(),
+                name: "check".into(),
+                expected_sha256: sha(&edited),
+            },
+        )
+        .await
+    else {
+        panic!("삭제 응답")
+    };
+    assert!(routines.iter().all(|r| r.name != "check"));
+    assert_eq!(trash.len(), 1);
+    assert_eq!((trash[0].name.as_str(), trash[0].title.as_str()), ("check", "점검"));
+    let trashed = std::fs::read_to_string(dir.join("automations/.trash").join(&trash[0].id)).unwrap();
+    assert!(trashed.contains("enabled = false"), "{trashed}");
+    let e = h.call(Controller, "device:a", save("check", &edited, Some(&sha(&edited)))).await.unwrap_err();
+    assert_eq!(e.code, ErrorCode::NotFound);
+    assert!(!dir.join("automations/check.toml").exists());
+    // 되살리면 꺼진 채로 돌아오고, 같은 것을 두 번 되살리지 않는다
+    let restore = FrontRequest::AutomationRestore { project: "demo".into(), id: trash[0].id.clone() };
+    let Ok(FrontResponse::Routines { routines, trash: left }) = h.call(Controller, "device:a", restore.clone()).await
+    else {
+        panic!("되살리기 응답")
+    };
+    assert!(left.is_empty());
+    let back = routines.iter().find(|r| r.name == "check").unwrap();
+    assert!(!back.enabled && back.error.is_none(), "{back:?}");
+    assert_eq!(h.call(Controller, "device:a", restore).await.unwrap_err().code, ErrorCode::NotFound);
+    // 옛 .md는 읽기만 한다
+    p.write("projects/demo/routines/old.md", "+++\nschedule='every 1m'\n+++\n확인\n");
+    assert!(doc_of(h.call(Reader, "device:r", read("old")).await).legacy);
+    let e = h.call(Controller, "device:a", save("old", &text, None)).await.unwrap_err();
+    assert!(e.message.contains("이전 형식"), "{e:?}");
+}
+
+#[tokio::test]
+async fn delete_cancels_waiting_inputs_but_keeps_the_inflight_batch_and_records() {
+    let p = Project::new();
+    let h = demo_host(&p);
+    let text = "[on.thread]\nevents=['thread_failed']\n[do.message]\nthread='owner'\ntext='확인'\n";
+    p.write("projects/demo/automations/msg.toml", text);
+    let message = serde_json::json!({"message":{"thread":"owner","text":"확인"}});
+    h.db.set_meta("automation:demo:msg", &queue_state(message, &["e1"], &["e2", "e3"])).unwrap();
+    h.automation_delete("demo", "msg", &sha(text), "device:a").await.unwrap();
+    let state: serde_json::Value = serde_json::from_str(&h.db.meta("automation:demo:msg").unwrap().unwrap()).unwrap();
+    assert_eq!(state["pending"].as_array().unwrap().len(), 0, "{state}");
+    assert_eq!(state["inflight"]["id"], "automation-seen", "{state}");
+    let runs = h.routine_runs("demo", "msg").unwrap();
+    for id in ["e2", "e3"] {
+        assert!(runs.iter().any(|r| r.id == id && r.status == "skipped"), "{id}: {runs:?}");
+    }
+}
+
+#[tokio::test]
+async fn run_now_queues_one_manual_input_per_key_and_refuses_unapproved_scope() {
+    use aaa_proto::{DeviceRole::*, ErrorCode, FrontRequest, FrontResponse};
+    let p = Project::new();
+    let h = demo_host(&p);
+    let run = |name: &str, key: &str| FrontRequest::AutomationRun {
+        project: "demo".into(),
+        name: name.into(),
+        key: key.into(),
+    };
+    p.write("projects/demo/automations/note.toml", "[on.schedule]\nevery='1h'\n[do.inbox]\ntext='본다'\n");
+    let rule = crate::routine::load_all(&p.0.join("projects/demo")).0.into_iter().find(|r| r.name == "note").unwrap();
+    // 쌓인 일정 차례가 있어도 지금 실행은 따로 받는다
+    h.automation_submit("demo", &rule, "schedule:1", String::new(), None).unwrap();
+    assert!(matches!(
+        h.call(Controller, "device:a", run("note", "k1")).await,
+        Ok(FrontResponse::AutomationRan { accepted: true, .. })
+    ));
+    assert!(matches!(
+        h.call(Controller, "device:b", run("note", "k1")).await,
+        Ok(FrontResponse::AutomationRan { accepted: false, .. })
+    ));
+    assert_eq!(h.automation_queue("demo", "note").unwrap().pending, 2);
+    assert_eq!(h.call(Reader, "device:r", run("note", "k2")).await.unwrap_err().code, ErrorCode::Forbidden);
+    // 꺼짐·주인 thread·배포·승인되지 않은 시작 범위·승인되지 않은 명령은 거부하고 큐를 바꾸지 않는다
+    p.write(
+        "projects/demo/automations/off.toml",
+        "enabled=false\n[on.schedule]\nevery='1h'\n[do.inbox]\ntext='본다'\n",
+    );
+    p.write(
+        "projects/demo/automations/owner.toml",
+        "[on.thread]\nevents=['thread_failed']\n[do.message]\nthread='owner'\ntext='본다'\n",
+    );
+    p.write("projects/demo/automations/ship.toml", "do='deploy'\n[on.git]\nrepo='app'\nbranches=['main']\n");
+    p.write(
+        "projects/demo/automations/cmd.toml",
+        "[on.command]\nevery='1h'\ncommand='echo x'\n[do.inbox]\ntext='본다'\n",
+    );
+    p.write(
+        "projects/demo/automations/go.toml",
+        "[on.schedule]\nevery='1h'\n[do.start]\ntitle='점검'\nprofiles=['fake']\nmachines=['local']\ntext='본다'\n",
+    );
+    for (name, code) in [
+        ("off", ErrorCode::BadRequest),
+        ("owner", ErrorCode::BadRequest),
+        ("ship", ErrorCode::BadRequest),
+        ("cmd", ErrorCode::Forbidden),
+        ("missing", ErrorCode::NotFound),
+    ] {
+        let e = h.call(Controller, "device:a", run(name, "k3")).await.unwrap_err();
+        assert_eq!(e.code, code, "{name}: {e:?}");
+    }
+    // 시작 대상을 풀지 못하는 범위도 돌리지 않는다(승인 필요 거부는 실제 머신이 있는 웹 E2E 55가 본다)
+    h.call(Controller, "device:a", run("go", "k3")).await.unwrap_err();
+    for name in ["off", "owner", "go"] {
+        assert_eq!(h.automation_queue("demo", name).unwrap().pending, 0, "{name}");
+    }
+}
+
+#[tokio::test]
+async fn body_file_is_written_first_only_at_its_seen_revision_and_inside_automations() {
+    use aaa_proto::{DeviceRole::*, ErrorCode, FrontRequest};
+    let p = Project::new();
+    let h = demo_host(&p);
+    let dir = p.0.join("projects/demo");
+    let text = "[on.schedule]\nevery='1h'\n[do.inbox]\ntext_file='automations/note.md'\n";
+    let with_body =
+        |text: &str, expected: Option<&str>, body: &str, body_expected: Option<&str>| FrontRequest::AutomationSave {
+            project: "demo".into(),
+            name: "note".into(),
+            text: text.into(),
+            expected_sha256: expected.map(str::to_owned),
+            body: Some(body.into()),
+            body_expected_sha256: body_expected.map(str::to_owned),
+        };
+    let doc = doc_of(h.call(Controller, "device:a", with_body(text, None, "첫 본문\n", None)).await);
+    assert_eq!(std::fs::read_to_string(dir.join("automations/note.md")).unwrap(), "첫 본문\n");
+    assert_eq!(doc.body.as_deref(), Some("첫 본문\n"));
+    p.write("projects/demo/automations/note.md", "직접 고친 본문\n");
+    let before = snapshot(&dir);
+    let e = h
+        .call(Controller, "device:a", with_body(text, Some(&doc.sha256), "a 본문\n", doc.body_sha256.as_deref()))
+        .await
+        .unwrap_err();
+    assert_eq!(e.code, ErrorCode::Conflict);
+    assert_eq!(snapshot(&dir), before);
+    // 규칙 파일·보존 폴더는 본문 파일이 될 수 없다(다른 규칙을 본문으로 덮지 않는다)
+    p.write("projects/demo/automations/other.toml", "[on.schedule]\nevery='1h'\n[do.inbox]\ntext='x'\n");
+    let other = std::fs::read_to_string(dir.join("automations/other.toml")).unwrap();
+    for target in ["automations/other.toml", "automations/.trash/x.md"] {
+        let e = h
+            .call(
+                Controller,
+                "device:a",
+                with_body(
+                    &text.replace("automations/note.md", target),
+                    Some(&doc.sha256),
+                    "덮기\n",
+                    Some(&sha(&other)),
+                ),
+            )
+            .await
+            .unwrap_err();
+        assert_eq!(e.code, ErrorCode::BadRequest, "{target}: {e:?}");
+    }
+    let before = snapshot(&dir);
+    let outside = text.replace("automations/note.md", "TASKS.md");
+    let e = h
+        .call(Controller, "device:a", with_body(&outside, Some(&doc.sha256), "덮어쓰기\n", Some(&sha("x"))))
+        .await
+        .unwrap_err();
+    assert!(e.message.contains("automations/ 안"), "{e:?}");
+    assert_eq!(snapshot(&dir), before);
+}
+
+#[tokio::test]
+async fn command_approval_is_allowed_from_web_controllers_but_not_from_sessions_or_workers() {
+    use aaa_proto::{DeviceRole::*, ErrorCode, FrontRequest};
+    let p = Project::new();
+    let h = demo_host(&p);
+    p.write(
+        "projects/demo/automations/cmd.toml",
+        "[on.command]\nevery='1h'\ncommand='echo x'\n[do.inbox]\ntext='본다'\n",
+    );
+    let rule = crate::routine::load_all(&p.0.join("projects/demo")).0.into_iter().find(|r| r.name == "cmd").unwrap();
+    let approve = || FrontRequest::RoutineApprove {
+        project: "demo".into(),
+        name: "cmd".into(),
+        command_sha256: rule.command_sha256(),
+    };
+    for actor in ["local:jo@t-0001", "worker:t-0001", "evaluator:t-0001", "detached:x"] {
+        let e = h.call(Local, actor, approve()).await.unwrap_err();
+        assert_eq!(e.code, ErrorCode::Forbidden, "{actor}");
+    }
+    assert_eq!(h.call(Reader, "device:r", approve()).await.unwrap_err().code, ErrorCode::Forbidden);
+    assert!(!h.routine_approved("demo", &rule));
+    h.call(Controller, "device:c", approve()).await.unwrap();
+    assert!(h.routine_approved("demo", &rule));
+}

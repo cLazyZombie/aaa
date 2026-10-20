@@ -13,7 +13,7 @@ export type Version = { major: number, minor: number, };
 
 export type B64 = string;
 
-export type ErrorCode = "bad_request" | "unauthorized" | "forbidden" | "not_found" | "agent_disconnected" | "session_exited" | "unsupported_version" | "not_enrolled" | "enroll_closed" | "enroll_code_mismatch" | "name_taken" | "timeout" | "unavailable" | "internal" | "lease_held" | "subscription_not_found" | "subscription_gone" | "too_large";
+export type ErrorCode = "bad_request" | "unauthorized" | "forbidden" | "not_found" | "agent_disconnected" | "session_exited" | "unsupported_version" | "not_enrolled" | "enroll_closed" | "enroll_code_mismatch" | "name_taken" | "timeout" | "unavailable" | "internal" | "lease_held" | "subscription_not_found" | "subscription_gone" | "too_large" | "conflict";
 
 export type ErrorBody = { code: ErrorCode, message: string, };
 
@@ -722,7 +722,11 @@ report_hash: string,
 /**
  * 질문마다 고른 선택지(0부터). 직접 쓴 답으로 대신하는 질문은 null
  */
-picks: Array<number | null>, text: string | null, } | { "op": "preferences" } | { "op": "preferences_set", settings: Record<string, unknown>, pins: Array<string> | null, } | { "op": "inbox", project?: string, all: boolean, peek: boolean, } | { "op": "inbox_done", project?: string, ids: Array<string>, all: boolean, } | { "op": "ticker_tick" } | { "op": "mission_list", project: string | null, } | { "op": "mission_show", project?: string, name: string, } | { "op": "mission_approve", project?: string, name: string, approval_sha256: string, } | { "op": "mission_reject", project?: string, name: string, } | { "op": "mission_start", project?: string, name: string, } | { "op": "mission_stop", project?: string, name: string, } | { "op": "mission_pause", project?: string, name: string, } | { "op": "mission_resume", project?: string, name: string, } | { "op": "mission_reload", project?: string, name: string, } | { "op": "mission_restart", project?: string, name: string, } | { "op": "mission_open", project?: string, name: string, } | { "op": "routines", project?: string, } | { "op": "automation_approve", project?: string, name: string, approval_sha256: string, } | { "op": "automation_convert", project?: string, dry_run?: boolean, plan_sha256?: string, } | { "op": "automation_unblock", project?: string, name: string, batch: string, discard: boolean, } | { "op": "routine_runs", project?: string, name: string, } | { "op": "routine_approve", project?: string, name: string, command_sha256: string, } | { "op": "routine_toggle", project?: string, name: string, on: boolean | null, } | { "op": "events", project: string | null, after: bigint, limit: number | null, } | { "op": "evaluator_assign", project?: string, profile: string, machine: string | null,
+picks: Array<number | null>, text: string | null, } | { "op": "preferences" } | { "op": "preferences_set", settings: Record<string, unknown>, pins: Array<string> | null, } | { "op": "inbox", project?: string, all: boolean, peek: boolean, } | { "op": "inbox_done", project?: string, ids: Array<string>, all: boolean, } | { "op": "ticker_tick" } | { "op": "mission_list", project: string | null, } | { "op": "mission_show", project?: string, name: string, } | { "op": "mission_approve", project?: string, name: string, approval_sha256: string, } | { "op": "mission_reject", project?: string, name: string, } | { "op": "mission_start", project?: string, name: string, } | { "op": "mission_stop", project?: string, name: string, } | { "op": "mission_pause", project?: string, name: string, } | { "op": "mission_resume", project?: string, name: string, } | { "op": "mission_reload", project?: string, name: string, } | { "op": "mission_restart", project?: string, name: string, } | { "op": "mission_open", project?: string, name: string, } | { "op": "routines", project?: string, } | { "op": "automation_approve", project?: string, name: string, approval_sha256: string, } | { "op": "automation_convert", project?: string, dry_run?: boolean, plan_sha256?: string, } | { "op": "automation_unblock", project?: string, name: string, batch: string, discard: boolean, } | { "op": "automation_read", project?: string, name: string, } | { "op": "automation_validate", project?: string, name: string, text: string, form?: Record<string, unknown>, body?: string, } | { "op": "automation_save", project?: string, name: string, text: string, expected_sha256?: string, body?: string,
+/**
+ * 본문 파일의 본 판. 없으면 그 파일이 아직 없어야 한다
+ */
+body_expected_sha256?: string, } | { "op": "automation_delete", project?: string, name: string, expected_sha256: string, } | { "op": "automation_restore", project?: string, id: string, } | { "op": "automation_run", project?: string, name: string, key: string, } | { "op": "routine_runs", project?: string, name: string, } | { "op": "routine_approve", project?: string, name: string, command_sha256: string, } | { "op": "routine_toggle", project?: string, name: string, on: boolean | null, } | { "op": "events", project: string | null, after: bigint, limit: number | null, } | { "op": "evaluator_assign", project?: string, profile: string, machine: string | null,
 /**
  * 개선을 직접 고칠 repo(없으면 repo 없는 작업 폴더)
  */
@@ -792,7 +796,11 @@ omitted_open: number,
 /**
  * 응답 크기 한도로 싣지 못한 끝낸 항목 수(`all`, 실은 것은 최근 것부터다)
  */
-omitted_done: number, } | { "kind": "ticker", runs: bigint, } | { "kind": "routines", routines: Array<RoutineView>, } | { "kind": "automation_converted", files: Array<string>,
+omitted_done: number, } | { "kind": "ticker", runs: bigint, } | { "kind": "routines", routines: Array<RoutineView>,
+/**
+ * 지운 자동화(FRONT_API 1.74). 옛 host는 생략한다
+ */
+trash?: Array<AutomationTrashEntry>, } | { "kind": "automation_doc", doc: AutomationDoc, } | { "kind": "automation_checked", text: string, check: AutomationCheck, } | { "kind": "automation_ran", accepted: boolean, detail: string, } | { "kind": "automation_converted", files: Array<string>,
 /**
  * 쓰지 않은 계획이다(FRONT_API 1.58). `files`는 실제 변환과 같은 모양(새 파일과 `.converted/` 보존 사본)이다.
  */
@@ -1405,6 +1413,58 @@ truncated: boolean,
  * 본문(`body`)을 잘랐다
  */
 body_truncated: boolean, };
+
+export type AutomationDoc = { name: string,
+/**
+ * `automations/<이름>.toml`, 옛 형식이면 `routines/<이름>.md`
+ */
+file: string, text: string, sha256: string,
+/**
+ * 옛 `.md` 규칙: 웹은 읽기만 하고 저장·삭제를 거부한다
+ */
+legacy: boolean,
+/**
+ * `text_file`·`brief_file`이 가리키는 본문 파일과 그 판(없는 파일이면 `body_sha256`이 없다)
+ */
+body_file: string | null, body: string | null, body_sha256: string | null, check: AutomationCheck, };
+
+export type AutomationCheck = { form: Record<string, unknown> | null,
+/**
+ * `파일:줄:열 칸: 이유`. 하나라도 있으면 저장하지 않는다
+ */
+errors: Array<string>,
+/**
+ * 저장은 되지만 실행 때 막히는 것(시작 후보 머신·저장소·profile을 지금 풀지 못함 등)
+ */
+warnings: Array<string>, review: AutomationReview | null, };
+
+export type AutomationReview = { enabled: boolean,
+/**
+ * 조건·동작 낱말(목록 줄과 같다)
+ */
+trigger: string, action: string,
+/**
+ * safety `start_threads`(propose·auto): 자동 시작이 바로 띄우는지, 제안 한 줄만 남기는지
+ */
+start_threads: string, start_scope: string | null, start_approval_sha256: string | null,
+/**
+ * 지금 승인한 범위 안인가(시작 동작만)
+ */
+start_approved: boolean | null,
+/**
+ * 명령 조건의 명령·머신과 그 hash(승인 대상)
+ */
+command: string, machine: string | null, command_sha256: string, command_approved: boolean,
+/**
+ * safety `routine_commands`
+ */
+commands_allowed: boolean, };
+
+export type AutomationTrashEntry = {
+/**
+ * `.trash/` 안 파일 이름(되살리기 요청에 쓴다)
+ */
+id: string, name: string, title: string, deleted_at_ms: number, };
 
 export type LibraryFile = {
 /**
