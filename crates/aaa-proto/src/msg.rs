@@ -877,6 +877,15 @@ pub enum AgentRequest {
         data: B64,
         eof: bool,
     },
+    /// task 첨부(plan §8.327): thread 작업 폴더 `attachments/`에 `AttachWrite`와 같은 꼴로 쓴다(같은 이름은 덮어쓴다). 답도 같다.
+    /// agent 기능 `work_attach.v1`이 있을 때만 보낸다(옛 agent는 모르는 요청에 연결을 끊는다)
+    WorkAttachWrite {
+        work_dir: String,
+        att: String,
+        offset: u64,
+        data: B64,
+        eof: bool,
+    },
     /// 화면의 터미널 기본 색이 바뀌었다(plan §8.187). agent는 모든 session host에 알리고 새 세션에 실은 뒤 답한다.
     /// agent 기능 `term_colors.v1`이 있을 때만 보낸다.
     TermColors(TermColors),
@@ -1354,6 +1363,10 @@ pub struct LeaseView {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 pub struct PaneView {
+    /// host에 고정한 인증 별칭. 이전 판 thread의 인증은 ThreadView.account로 확인한다.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub account: Option<String>,
     pub id: String,
     pub machine_id: String,
     pub machine: String,
@@ -1553,6 +1566,21 @@ pub enum FrontRequest {
         secret: crate::SecretText,
     },
     AccountList,
+    AccountDefaults,
+    AccountDefault {
+        harness: String,
+        account: Option<String>,
+    },
+    AccountLogin {
+        name: String,
+        harness: String,
+    },
+    AccountLoginStatus {
+        id: String,
+    },
+    AccountLoginCancel {
+        id: String,
+    },
     AccountRemove {
         name: String,
     },
@@ -2148,6 +2176,14 @@ pub enum FrontRequest {
         project: String,
         name: String,
     },
+    /// FRONT_API 1.71. 보고서 보기 주소(`/v/<cap>/…`)의 cap이 이 프로젝트의 어느 보고서인지(task 첨부가 붙인 주소를 앱 안
+    /// 보고서 문서로 바꾼다). 조작 권한만
+    LibraryResolve {
+        #[serde(default)]
+        #[ts(optional, as = "Option<String>")]
+        project: String,
+        cap: String,
+    },
     LibraryUsage,
     /// 지금 보고를 확인했다
     ThreadAck {
@@ -2246,6 +2282,20 @@ pub enum FrontRequest {
         text: String,
         #[serde(default)]
         mode: MessageMode,
+    },
+    /// thread의 `## Questions`에 답한다(FRONT_API 1.72, plan §8.329). host가 지금 보고의 질문인지·아직 답하지 않았는지 다시 보고,
+    /// 「1A 2B」 꼴 글을 `ThreadMessage`와 같은 길로 thread에 보낸 뒤 답을 기록한다(모든 기기가 「답함」을 본다)
+    ThreadAnswer {
+        #[serde(default)]
+        #[ts(optional, as = "Option<String>")]
+        project: String,
+        thread: String,
+        /// 답하는 질문의 보고 hash(`ThreadQuestions.report_hash`)
+        report_hash: String,
+        /// 질문마다 고른 선택지(0부터). 직접 쓴 답으로 대신하는 질문은 null
+        picks: Vec<Option<u32>>,
+        #[serde(default)]
+        text: Option<String>,
     },
     /// 이 host의 웹 화면들이 함께 쓰는 설정과 고정(herdr-web-ui `GET /api/preferences`)
     Preferences,
@@ -2499,6 +2549,7 @@ impl FrontRequest {
             | FrontRequest::LibraryPublish { project, .. }
             | FrontRequest::LibraryImport { project, .. }
             | FrontRequest::LibraryOpen { project, .. }
+            | FrontRequest::LibraryResolve { project, .. }
             | FrontRequest::ThreadAck { project, .. }
             | FrontRequest::ThreadResolve { project, .. }
             | FrontRequest::ThreadStop { project, .. }
@@ -2507,6 +2558,7 @@ impl FrontRequest {
             | FrontRequest::ThreadRead { project, .. }
             | FrontRequest::ThreadKeys { project, .. }
             | FrontRequest::ThreadMessage { project, .. }
+            | FrontRequest::ThreadAnswer { project, .. }
             | FrontRequest::Inbox { project, .. }
             | FrontRequest::InboxDone { project, .. }
             | FrontRequest::MissionShow { project, .. }
@@ -2540,6 +2592,8 @@ impl FrontRequest {
         !matches!(
             self,
             FrontRequest::AccountList
+                | FrontRequest::AccountDefaults
+                | FrontRequest::AccountLoginStatus { .. }
                 | FrontRequest::Status
                 | FrontRequest::DeployContext
                 | FrontRequest::DeployStatus { .. }
@@ -2596,6 +2650,10 @@ impl FrontRequest {
         matches!(
             self,
             FrontRequest::AccountImport { .. }
+                | FrontRequest::AccountDefault { .. }
+                | FrontRequest::AccountLogin { .. }
+                | FrontRequest::AccountLoginStatus { .. }
+                | FrontRequest::AccountLoginCancel { .. }
                 | FrontRequest::AccountRemove { .. }
                 | FrontRequest::DebugInput { .. }
                 | FrontRequest::EnrollOpen { .. }
@@ -2619,6 +2677,12 @@ impl FrontRequest {
 pub enum FrontResponse {
     Accounts {
         accounts: Vec<crate::AccountView>,
+    },
+    AccountDefaults {
+        defaults: Vec<crate::AccountDefault>,
+    },
+    AccountLogin {
+        login: crate::AccountLoginView,
     },
     InputEvents {
         events: Vec<crate::InputEvent>,
@@ -2807,6 +2871,11 @@ pub enum FrontResponse {
         diff: crate::DiffView,
     },
     LibraryLink(LinkView),
+    /// `library_resolve`의 답: 그 cap이 가리키는 보고서
+    LibraryResolved {
+        project: String,
+        name: String,
+    },
     LibraryReports {
         reports: Vec<LibraryReport>,
     },

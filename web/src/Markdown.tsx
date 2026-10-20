@@ -16,6 +16,8 @@ import { FilePathLink } from "./FilePathLink.tsx";
 import { formatBytes } from "./formatBytes.ts";
 import { HighlightedCode } from "./HighlightedCode.tsx";
 import { browserClick } from "./reportLinks.ts";
+import { appRefOf, splitAppRefs } from "./appRef.ts";
+import { AppRefChip, AppRefContext } from "./AppRefChip.tsx";
 import "./herdr/Markdown.css";
 
 /** Stats an image before it can load; null context keeps chat images as links. */
@@ -95,6 +97,9 @@ function Inline({ nodes, interactive = true, standalone = false }: { nodes: Inli
   const open = interactive ? context : null;
   const imageResolver = useContext(MarkdownImageContext);
   const openLink = useContext(OpenLinkContext);
+  // 앱 안 참조(`aaa:question/…`·`aaa:report/…`, plan §8.329)는 칩이다. 링크 안(interactive=false)에서는 누를 것을 겹치지 않는다
+  const refContext = useContext(AppRefContext);
+  const refs = interactive ? refContext : null;
   const follow = (href: string) =>
     openLink === null ? undefined : (e: MouseEvent<HTMLAnchorElement>) => {
       if (!browserClick(e) && openLink(href)) e.preventDefault();
@@ -104,14 +109,19 @@ function Inline({ nodes, interactive = true, standalone = false }: { nodes: Inli
       {nodes.map((node, index) => {
         const key = `${node.type}-${index}`;
         switch (node.type) {
-          case "text":
-            if (open === null) return <span key={key}>{node.value}</span>;
+          case "text": {
+            const paths = (text: string) =>
+              open === null ? text : splitFilePaths(text).map((part, n) => (typeof part === "string" ? <Fragment key={n}>{part}</Fragment> : <FilePathLink key={n} path={part.path} code={false} open={open} />));
+            if (refs === null) return <span key={key}>{paths(node.value)}</span>;
             return (
               <span key={key}>
-                {splitFilePaths(node.value).map((part, n) => (typeof part === "string" ? <Fragment key={n}>{part}</Fragment> : <FilePathLink key={n} path={part.path} code={false} open={open} />))}
+                {splitAppRefs(node.value).map((part, n) => (typeof part === "string" ? <Fragment key={n}>{paths(part)}</Fragment> : <AppRefChip key={n} at={part} refs={refs} />))}
               </span>
             );
+          }
           case "code": {
+            const ref = refs === null ? null : appRefOf(node.value);
+            if (ref !== null) return <AppRefChip key={key} at={ref} refs={refs!} />;
             const file = fileUriPath(node.value);
             if (open !== null && file !== null) return <FilePathLink key={key} path={file} code open={open} />;
             // agent는 주소를 backtick에 넣곤 한다: 눈에는 code로 두고 열린다
@@ -154,12 +164,15 @@ function Inline({ nodes, interactive = true, standalone = false }: { nodes: Inli
                 <Inline nodes={node.children} interactive={interactive} />
               </del>
             );
-          case "link":
+          case "link": {
+            const ref = refs === null ? null : appRefOf(node.href);
+            if (ref !== null) return <AppRefChip key={key} at={ref} refs={refs!} />;
             return (
               <a key={key} href={node.href} target="_blank" rel="noopener noreferrer" onClick={follow(node.href)}>
                 <Inline nodes={node.children} interactive={false} standalone={standalone} />
               </a>
             );
+          }
           case "file":
             // 이름을 누르면 파일을 연다. 열 곳이 없으면 이름 뒤에 경로를 보인다(참고: Codex 터미널처럼)
             return open !== null ? (

@@ -16,6 +16,8 @@ describe("앱 안에서 여는 링크", () => {
     assert.deepEqual(inAppLink(`${O}/#report=demo/t-0448`, O), { kind: "report", project: "demo", name: "t-0448" });
     assert.deepEqual(inAppLink(`${O}/#report=demo%2Fpage`, O), { kind: "report", project: "demo", name: "page" });
     assert.deepEqual(inAppLink(`${O}/#thread=t-0001`, O), { kind: "app", hash: "#thread=t-0001" });
+    // 질문 알림(plan §8.329)은 보고서 화면의 그 질문 카드다
+    assert.deepEqual(inAppLink(`${O}/#question=t-0001`, O), { kind: "app", hash: "#question=t-0001" });
   });
   it("다른 host·내려받기·다른 경로·깨진 주소는 새 창 그대로", () => {
     for (const href of [

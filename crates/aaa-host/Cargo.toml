@@ -11,6 +11,7 @@ aaa-proto.workspace = true
 aaa-config.workspace = true
 aaa-common.workspace = true
 aaa-vt.workspace = true
+portable-pty.workspace = true
 anyhow.workspace = true
 serde.workspace = true
 serde_json.workspace = true

@@ -105,6 +105,7 @@ pub fn hello(agent: &Agent) -> AgentHello {
         features: vec![
             "commands.v1".into(),
             "account_auth.v1".into(),
+            "account_auth.v2".into(),
             "terminal.v1".into(),
             "deployment.v1".into(),
             #[cfg(target_os = "macos")]
@@ -138,6 +139,8 @@ pub fn hello(agent: &Agent) -> AgentHello {
             "chat_watch.v1".into(),
             "chat_pages.v1".into(),
             "diff.v1".into(),
+            // task 첨부를 thread 작업 폴더로 받는다(WorkAttachWrite, plan §8.327)
+            "work_attach.v1".into(),
         ],
         dev_mode: agent.dev_mode,
         selfcheck: agent.selfcheck.lock().unwrap().clone(),

@@ -11,7 +11,8 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use aaa_proto::{
-    AgentRequest, AgentResponse, ErrorBody, ErrorCode, FileKind, LibraryFile, LibraryView, ReportSnapshot,
+    AgentRequest, AgentResponse, ErrorBody, ErrorCode, FileKind, FrontResponse, LibraryFile, LibraryView,
+    ReportSnapshot,
 };
 
 use crate::{Host, err};
@@ -60,7 +61,7 @@ pub(crate) fn safe_rel(p: &str) -> bool {
 }
 
 /// 최종 파일뿐 아니라 library 아래의 모든 폴더도 symlink를 거부한다.
-fn local_file(dir: &Path, id: &str, path: &str) -> Result<(PathBuf, u64), ErrorBody> {
+pub(crate) fn local_file(dir: &Path, id: &str, path: &str) -> Result<(PathBuf, u64), ErrorBody> {
     let mut local = dir.to_path_buf();
     for part in std::iter::once("library").chain(std::iter::once(id)).chain(path.split('/')) {
         local.push(part);
@@ -272,8 +273,8 @@ impl Host {
         })
     }
 
-    /// 보기 경로의 파일을 찾는다. 읽기는 `ViewSource::open`이다.
-    pub(crate) async fn view_source(self: &Arc<Self>, cap: &str, path: &str) -> Result<ViewFile, ErrorBody> {
+    /// 보기 경로의 cap이 가리키는 (프로젝트, 보고서): 앱이 준 짧은 경로(폐기한 기기 것은 아님), 아니면 서명한 공유 링크
+    fn view_target(&self, cap: &str) -> Result<(String, String), ErrorBody> {
         let memory = {
             let caps = self.view_caps.lock().unwrap();
             match caps.get(cap) {
@@ -284,11 +285,48 @@ impl Host {
                 _ => None,
             }
         };
-        let signed = memory.is_none();
-        let (project, id) = match memory {
-            Some(target) => target,
-            None => self.signed_library_at(cap, aaa_common::util::now_ms())?,
+        match memory {
+            Some(target) => Ok(target),
+            None => self.signed_library_at(cap, aaa_common::util::now_ms()),
+        }
+    }
+
+    /// task 첨부에 붙인 보고서 보기 주소를 그 보고서로 바꾼다. 다른 프로젝트 보고서는 이 프로젝트 할 일에 링크하지 않는다
+    pub(crate) fn library_resolve(&self, project: &str, cap: &str) -> Result<FrontResponse, ErrorBody> {
+        let (at, name) = self.view_target(cap)?;
+        if at != project {
+            return Err(err(ErrorCode::BadRequest, format!("다른 프로젝트({at})의 보고서 주소다")));
+        }
+        Ok(FrontResponse::LibraryResolved { project: at, name })
+    }
+
+    /// host에 있는 보고서 문서를 `max` 바이트까지 읽는다(live 공개는 원본 폴더에서). task 첨부를 thread로 넘길 때 쓴다
+    pub(crate) fn report_doc_bytes(&self, project: &str, id: &str, path: &str, max: u64) -> Result<Vec<u8>, ErrorBody> {
+        use std::io::Read;
+        let dir = self.project_dir(project)?;
+        let live = self.db.library_report(project, id).map_err(super::orch::internal)?.and_then(|r| r.live);
+        let (file, size) = match live {
+            Some(root) => crate::library_publish::live_file(Path::new(&root), path)?,
+            None => {
+                let (local, size) = local_file(&dir, id, path)?;
+                (std::fs::File::open(local).map_err(|_| err(ErrorCode::NotFound, "host 사본이 없다"))?, size)
+            }
         };
+        if size > max {
+            return Err(err(ErrorCode::BadRequest, format!("{path}가 너무 크다")));
+        }
+        let mut buf = Vec::new();
+        file.take(max + 1).read_to_end(&mut buf).map_err(|e| err(ErrorCode::NotFound, e.to_string()))?;
+        if buf.len() as u64 > max {
+            return Err(err(ErrorCode::BadRequest, format!("{path}가 너무 크다")));
+        }
+        Ok(buf)
+    }
+
+    /// 보기 경로의 파일을 찾는다. 읽기는 `ViewSource::open`이다.
+    pub(crate) async fn view_source(self: &Arc<Self>, cap: &str, path: &str) -> Result<ViewFile, ErrorBody> {
+        let signed = !self.view_caps.lock().unwrap().contains_key(cap);
+        let (project, id) = self.view_target(cap)?;
         let view = |source| ViewFile { source, project: project.clone(), name: id.clone() };
         if path.split('/').any(|c| c.starts_with('.') && c != "." && c != "..") {
             return Err(err(ErrorCode::NotFound, "숨은 결과물은 열지 않는다"));

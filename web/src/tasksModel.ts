@@ -2,7 +2,7 @@
 // 화면 동작 → host 동작(TaskOp), 「나중」 항목 나누기, 기록 차이. thread 연결(T3, §8.316)은 확인 필요 상태, coordinator에게 맡기는
 // 글, 맡길 수 있는 task, 잇기·풀기 동작, 자동 정리 알림.
 // host `tasks`(TaskBoard)는 TASKS.md를 그대로 읽은 것이고, 여기서는 판단하지 않고 보이는 차례와 표지만 정한다.
-import type { TaskAction, TaskAnchor, TaskBoard, TaskLogEntry, TaskOp, TaskView, ThreadGroup } from "./gen/proto";
+import type { TaskAction, TaskAnchor, TaskBoard, TaskLogEntry, TaskOp, TaskView, ThreadGroup, ThreadStartPreview } from "./gen/proto";
 
 /** 행 상태(`data-task-state`): 형식 어긋남 ▲ > 확인 필요 ⚠(이어진 thread가 끝났는데 완료로 판정하지 못함, host `attention`) >
  * 진행 중 ◉(열린 thread와 이어짐) > 대기 ○ */
@@ -194,6 +194,16 @@ export interface TaskDraft {
   parent: TaskAnchor | null;
   /** 새 task에 이을 thread(「task로 만들기」, T3) */
   thread: string | null;
+  /** 저장소 칸(plan §8.330): 저장소 이름·`작업 폴더`, 빈 글은 정하지 않음 */
+  repo: string;
+}
+
+/** 저장소 칸의 「저장소 없는 작업 폴더」(host `tasks::REPO_DIR`) */
+export const REPO_DIR = "작업 폴더";
+
+/** 저장소 경로의 마지막 이름(host `task_repo::repo_name`, `\`도 구분자) */
+export function repoName(path: string): string {
+  return path.replace(/[\/\\]+$/, "").split(/[\/\\]/).pop() ?? "";
 }
 
 /** 이 owner 글을 agent로 볼까: 맡길 수 있는 profile 목록에 있거나 `@`가 든 것. 그 밖의 이름은 사람이다 */
@@ -220,11 +230,12 @@ export function draftOf(t: TaskView, agents: readonly string[], parent: TaskAnch
     notes: t.notes.join("\n"),
     parent,
     thread: null,
+    repo: t.repo ?? "",
   };
 }
 
 export function emptyDraft(list: string, parent: TaskAnchor | null = null): TaskDraft {
-  return { title: "", list, ownerKind: "none", agent: "", person: "", notes: "", parent, thread: null };
+  return { title: "", list, ownerKind: "none", agent: "", person: "", notes: "", parent, thread: null, repo: "" };
 }
 
 /** 폼 owner → host owner 글(빈 글은 미할당)과 「사람으로 저장」 */
@@ -264,15 +275,16 @@ export function draftOps(t: TaskView | null, d: TaskDraft, wasParent: TaskAnchor
   const notes = noteLines(d.notes);
   const parent = d.parent;
   if (!t) {
-    return [{ op: "add", list: parent ? parent.list : d.list.trim(), title: d.title.trim(), owner: owner || null, person, notes, parent, before: null, thread: d.thread }];
+    return [{ op: "add", list: parent ? parent.list : d.list.trim(), title: d.title.trim(), owner: owner || null, person, notes, parent, before: null, thread: d.thread, repo: d.repo || null }];
   }
   const ops: TaskOp[] = [];
   const title = d.title.trim() !== t.title ? d.title.trim() : null;
   const was = t.owner === "agent" ? "" : (t.owner ?? "");
   const ownerChanged = owner !== was;
   const notesChanged = !sameNotes(notes, t.notes);
-  if (title !== null || ownerChanged || notesChanged) {
-    ops.push({ op: "update", at: anchorOf(t), title, owner: ownerChanged ? owner : null, person: ownerChanged && person, notes: notesChanged ? notes : null, thread: null, done: null });
+  const repoChanged = d.repo !== (t.repo ?? "");
+  if (title !== null || ownerChanged || notesChanged || repoChanged) {
+    ops.push({ op: "update", at: anchorOf(t), title, owner: ownerChanged ? owner : null, person: ownerChanged && person, notes: notesChanged ? notes : null, thread: null, done: null, repo: repoChanged ? d.repo : null });
   }
   if ((parent?.block_sha256 ?? null) !== (wasParent?.block_sha256 ?? null) || (parent === null && d.list.trim() !== t.list)) {
     ops.push(parent ? { op: "move", at: anchorOf(t), to_list: "", before: null, parent } : move(t, { to_list: d.list.trim() }));
@@ -281,10 +293,11 @@ export function draftOps(t: TaskView | null, d: TaskDraft, wasParent: TaskAnchor
 }
 
 /** 정규형 줄 미리보기(host `task_line`과 같은 꼴) */
-export function canonicalLine(title: string, owner: string | null, thread: string | null, done = false): string {
+export function canonicalLine(title: string, owner: string | null, repo: string | null, thread: string | null, done = false): string {
   const o = owner ? ` (${owner})` : "";
+  const r = repo ? ` [${repo}]` : "";
   const th = thread ? ` · ${thread}` : "";
-  return `- [${done ? "x" : " "}] ${title}${o}${th}`;
+  return `- [${done ? "x" : " "}] ${title}${o}${r}${th}`;
 }
 
 /** 「나중」 절의 줄을 항목으로 묶는다: 들여쓰지 않은 글머리(`- `·`* `·`1. `)가 새 항목이고, 들여쓴 줄·이어진 줄은 그 항목에 붙는다 */
@@ -391,9 +404,26 @@ export function ownerFixes(owner: string | null): { profile: boolean; machine: b
   return at < 0 ? { profile: true, machine: false } : { profile: at > 0, machine: at < owner.length - 1 };
 }
 
+/** 「바로 시작」의 저장소 이름마다 그 저장소가 있는 머신과 경로(plan §8.330). 머신이 빈 저장소 줄은 host 로컬 머신이다(없으면 뺀다) */
+export function repoMachines(p: Pick<ThreadStartPreview, "repos" | "local_machine">): Map<string, { machine: string; path: string }[]> {
+  const out = new Map<string, { machine: string; path: string }[]>();
+  for (const r of p.repos) {
+    const machine = r.machine ?? p.local_machine ?? null;
+    const name = repoName(r.path);
+    if (machine === null || name === "") continue;
+    out.set(name, [...(out.get(name) ?? []), { machine, path: r.path }]);
+  }
+  return out;
+}
+
+/** 「바로 시작」 기본 머신: 덜 붐비는 차례(`machine_order`)에서 후보에 든 첫 머신, 아니면 후보가 하나면 그것, 아니면 빈 글(host가 고른다) */
+export function defaultMachine(cands: readonly string[], order: readonly string[]): string {
+  return order.find((m) => cands.includes(m)) ?? (cands.length === 1 ? cands[0] : "");
+}
+
 /** 「task에 잇기」·「연결만 풀기」: thread 칸만 바꾼다(빈 글은 풀기) */
 export function linkOp(t: TaskView, thread: string): TaskOp {
-  return { op: "update", at: anchorOf(t), title: null, owner: null, person: false, notes: null, thread, done: null };
+  return { op: "update", at: anchorOf(t), title: null, owner: null, person: false, notes: null, thread, done: null, repo: null };
 }
 
 /** 「task에 잇기」 고르기 목록: 형식 어긋남이 없고 열린 thread와 이어지지 않은 task(줄을 다시 쓰면 제목 검사를 거친다) */
@@ -410,4 +440,171 @@ export function newAutoCleans(log: readonly TaskLogEntry[], seen: number): TaskL
 /** 기록의 가장 큰 id(처음 읽은 기기는 여기까지를 본 것으로 둔다) */
 export function lastLogId(log: readonly TaskLogEntry[]): number {
   return log.reduce((n, e) => Math.max(n, e.id), 0);
+}
+
+// task 첨부(plan §8.327): 메모의 한 줄이 첨부 하나다. 그림 `![그림](uploads/<16 hex>.<ext>)`, 올린 문서 `[제목](uploads/<16 hex>.md|html)`,
+// 보고서 안 문서 `[제목](library/<보고서>/<경로>.md|html)`, 바깥 주소 `[제목](https://…)`. 올린 파일은 프로젝트 uploads/에 있고(host가
+// 내용 hash로 이름을 정한다) 메모 줄을 고쳐 붙이고 뗀다. 줄 가운데 섞인 참조는 메모 글로 둔다(Markdown이 그린다).
+const IMAGE_LINE = /^\s*!\[([^\]\n]*)\]\((uploads\/[0-9a-f]{16}\.(?:png|jpg|gif|webp))\)\s*$/;
+const LINK_LINE = /^\s*\[([^\]\n]+)\]\(([^()\s]+)\)\s*$/;
+const UPLOAD_DOC = /^uploads\/[0-9a-f]{16}\.(?:md|html)$/;
+const REPORT_DOC = /^library\/([a-z0-9_-][a-z0-9_.-]*)\/((?:[^/.][^/]*\/)*[^/.][^/]*\.(?:md|html|htm))$/i;
+const URL_TARGET = /^https?:\/\/[^\s<>]+$/i;
+/** image: 올린 그림, upload: 올린 문서, report: 보고서(library) 안 문서, url: 바깥 주소 */
+export type TaskAttachmentKind = "image" | "upload" | "report" | "url";
+export type TaskAttachment = { kind: TaskAttachmentKind; target: string; label: string };
+/** 받는 그림 형식과 한 개 상한(host와 같다) */
+export const ATTACH_TYPES = ["image/png", "image/jpeg", "image/gif", "image/webp"] as const;
+export const DOC_ACCEPT = ".md,.markdown,.html,.htm,text/markdown,text/html";
+export const ATTACH_MAX_BYTES = 16 * 1024 * 1024;
+
+/** 줄 하나가 첨부면 그 첨부 */
+export function attachmentOfLine(line: string): TaskAttachment | null {
+  const img = IMAGE_LINE.exec(line);
+  if (img) return { kind: "image", target: img[2] ?? "", label: img[1] ?? "" };
+  const link = LINK_LINE.exec(line);
+  if (!link) return null;
+  const [, label = "", target = ""] = link;
+  const kind: TaskAttachmentKind | null = UPLOAD_DOC.test(target) ? "upload" : REPORT_DOC.test(target) ? "report" : URL_TARGET.test(target) ? "url" : null;
+  return kind ? { kind, target, label } : null;
+}
+
+/** 메모의 첨부들(줄 차례, 같은 대상은 한 번) */
+export function attachmentsOf(notes: string): TaskAttachment[] {
+  const out: TaskAttachment[] = [];
+  for (const line of notes.split("\n")) {
+    const a = attachmentOfLine(line);
+    if (a && !out.some((x) => x.target === a.target)) out.push(a);
+  }
+  return out;
+}
+
+/** 첨부 줄을 뺀 메모(그린 메모는 첨부를 따로 보인다) */
+export function withoutAttachments(notes: string): string {
+  return noteLines(notes.split("\n").filter((l) => attachmentOfLine(l) === null).join("\n")).join("\n");
+}
+
+/** 메모에 적을 첨부 줄. 제목의 `[`·`]`·줄바꿈은 줄 꼴을 깨므로 바꾼다 */
+export function attachmentLine(a: TaskAttachment): string {
+  if (a.kind === "image") return `![그림](${a.target})`;
+  const label = a.label.replace(/[[\]\s]+/g, " ").trim() || a.target;
+  return `[${label}](${a.target})`;
+}
+
+/** 첨부 줄 하나를 메모 끝에 더한다. 이미 있으면 그대로 */
+export function addAttachment(notes: string, a: TaskAttachment): string {
+  if (attachmentsOf(notes).some((x) => x.target === a.target)) return notes;
+  return notes === "" ? attachmentLine(a) : `${notes}\n${attachmentLine(a)}`;
+}
+
+/** 메모 입력칸이 보이는 글: 첨부 줄을 뺀 나머지(첨부는 첨부 칸이 보인다). 다듬지 않는다(치는 중인 빈 줄을 지키려고) */
+export function memoText(notes: string): string {
+  return notes.split("\n").filter((l) => attachmentOfLine(l) === null).join("\n");
+}
+
+/** 입력칸 글을 고친 메모: 글 뒤에 첨부 줄을 차례대로 둔다(첨부 줄이 메모 가운데 있었으면 끝으로 옮겨진다) */
+export function withMemoText(notes: string, text: string): string {
+  const lines = notes.split("\n").filter((l) => attachmentOfLine(l) !== null);
+  if (lines.length === 0) return text;
+  return text === "" ? lines.join("\n") : `${text}\n${lines.join("\n")}`;
+}
+
+/** 그 대상의 첨부 줄을 뗀다(파일은 uploads/에 남는다: 기록의 되살리기가 줄을 돌려놓으면 다시 보인다) */
+export function removeAttachment(notes: string, target: string): string {
+  return noteLines(notes.split("\n").filter((l) => attachmentOfLine(l)?.target !== target).join("\n")).join("\n");
+}
+
+/** 올린 파일의 주소 바탕(host `GET /api/v1/projects/<p>/uploads/<이름>`, 보기 권한도) */
+export function uploadsBase(project: string): string {
+  return `/api/v1/projects/${encodeURIComponent(project)}/uploads/`;
+}
+export function taskImageUrl(project: string, path: string): string {
+  return uploadsBase(project) + encodeURIComponent(path.replace(/^uploads\//, ""));
+}
+
+/** 보고서 안 문서 대상의 (보고서 이름, 보고서 안 경로) */
+export function reportDoc(target: string): { name: string; path: string } | null {
+  const m = REPORT_DOC.exec(target);
+  return m ? { name: m[1] ?? "", path: m[2] ?? "" } : null;
+}
+
+/** 붙인 글(주소·`library/…` 경로)을 링크 첨부로. 첨부 꼴이 아니면 null */
+export function linkFromText(text: string, label?: string): TaskAttachment | null {
+  let target = text.trim();
+  if (/\s/.test(target)) return null;
+  const kind: TaskAttachmentKind | null = REPORT_DOC.test(target) ? "report" : URL_TARGET.test(target) ? "url" : null;
+  if (!kind) return null;
+  // 괄호는 첨부 줄 `[제목](대상)`을 깬다: 주소는 풀어 쓴 꼴로 바꾸고, 괄호 든 보고서 경로는 받지 않는다
+  if (kind === "url") target = target.replace(/\(/g, "%28").replace(/\)/g, "%29");
+  else if (/[()]/.test(target)) return null;
+  const tail = target.replace(/[?#].*$/, "").replace(/\/+$/, "").split("/").pop() ?? target;
+  return { kind, target, label: label?.trim() || (kind === "url" ? target.replace(/^https?:\/\//i, "") : tail) };
+}
+
+/**
+ * 붙인 주소가 aaa 보고서 주소면 그 꼴(plan §8.327): 보기 경로 `/v/<cap>/<경로>`(공유 링크·앱 보기 경로. cap 48자가 보고서를 가리므로
+ * host 이름은 보지 않는다)와 이 앱의 `/#report=<프로젝트>/<이름>`(reportLinks `inAppLink`와 같은 꼴). 첨부 `library/<이름>/<경로>`로
+ * 바꾸는 것은 host가 cap을 풀어 준 뒤다(TaskAttachments `resolveReportLink`)
+ */
+export type ReportUrl = { kind: "view"; cap: string; path: string } | { kind: "report"; project: string; name: string };
+export function reportUrlOf(target: string, origin: string): ReportUrl | null {
+  let url: URL;
+  try {
+    url = new URL(target);
+  } catch {
+    return null;
+  }
+  try {
+    const view = /^\/v\/([0-9a-f]{48})\/(.*)$/.exec(url.pathname);
+    if (view) return { kind: "view", cap: view[1]!, path: view[2]!.split("/").map(decodeURIComponent).join("/") };
+    const report = /^#report=(.+)$/.exec(url.hash);
+    if (url.origin !== origin || url.pathname !== "/" || !report) return null;
+    const key = decodeURIComponent(report[1]!);
+    const at = key.indexOf("/");
+    return at > 0 && at < key.length - 1 ? { kind: "report", project: key.slice(0, at), name: key.slice(at + 1) } : null;
+  } catch {
+    return null;
+  }
+}
+
+/** 보고서 안 문서의 첨부(「할 일에 추가」). 첨부 줄로 쓸 수 없는 경로(md·html이 아님, 공백·괄호)는 null: 그 줄에는 단추를 두지 않는다 */
+export function reportDocLink(name: string, path: string): TaskAttachment | null {
+  return linkFromText(`library/${name}/${path}`, path === "index.html" ? name : undefined);
+}
+
+/** 「할 일에 추가」(보고서·thread 결과물의 문서)로 링크를 붙일 task: 형식이 맞고 그 문서를 아직 링크하지 않은 것, 제목·메모 검색 */
+export function docLinkCandidates(board: TaskBoard, link: TaskAttachment, query: string): TaskView[] {
+  const needle = query.trim().toLowerCase();
+  return board.tasks.filter(
+    (t) =>
+      t.problems.length === 0 &&
+      !attachmentsOf(t.notes.join("\n")).some((a) => a.target === link.target) &&
+      (needle === "" || has(needle, t.title) || t.notes.some((n) => has(needle, n))),
+  );
+}
+
+/** 문서를 링크한 새 task의 처음 제목: 링크 이름에서 문서 확장자를 뺀 것 */
+export function docTaskTitle(link: TaskAttachment): string {
+  return link.label.replace(/\.(md|markdown|html?)$/i, "");
+}
+
+/** 파일 종류: 그림·md·html, 받지 않는 것은 null(브라우저가 md 형식을 비워 보내는 일이 흔해 이름도 본다) */
+export function fileKind(f: { name: string; type: string }): "image" | "md" | "html" | null {
+  if ((ATTACH_TYPES as readonly string[]).includes(f.type)) return "image";
+  const ext = /\.([a-z0-9]+)$/i.exec(f.name)?.[1]?.toLowerCase() ?? "";
+  if (f.type === "text/markdown" || ext === "md" || ext === "markdown") return "md";
+  if (f.type === "text/html" || ext === "html" || ext === "htm") return "html";
+  return null;
+}
+
+/** 클립보드·끌어 놓기·고르기로 온 파일 중 첨부할 것과, 뺀 까닭 */
+export function pickAttachable(files: readonly { name: string; type: string; size: number }[]): { ok: number[]; skipped: string[] } {
+  const ok: number[] = [];
+  const skipped: string[] = [];
+  files.forEach((f, i) => {
+    if (fileKind(f) === null) skipped.push(`${f.name || "이름 없음"}: 그림(PNG·JPEG·GIF·WebP)·md·html만`);
+    else if (f.size === 0 || f.size > ATTACH_MAX_BYTES) skipped.push(`${f.name || "이름 없음"}: 1바이트부터 16MiB까지`);
+    else ok.push(i);
+  });
+  return { ok, skipped };
 }

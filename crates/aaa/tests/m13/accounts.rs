@@ -181,12 +181,12 @@ impl Gate {
     }
 }
 
-fn world(upstream: &str, gate: &Gate, legacy_token: &str) -> World {
+fn world(upstream: &str, gate: &Gate, legacy_token: &str, harness_script: &str) -> World {
     let lab = Lab::new();
     let scripts = lab.root.join("scripts");
     std::fs::create_dir_all(&scripts).unwrap();
     let executable = scripts.join("fake-codex");
-    std::fs::write(&executable, HARNESS).unwrap();
+    std::fs::write(&executable, harness_script).unwrap();
     std::fs::set_permissions(&executable, std::os::unix::fs::PermissionsExt::from_mode(0o755)).unwrap();
     let projects = lab.root.join("projects");
     let proof = lab.root.join("proof");
@@ -201,7 +201,16 @@ fn world(upstream: &str, gate: &Gate, legacy_token: &str) -> World {
     }
     let h = lab.node("h", Some(&config));
     let mut w = World { lab, h, projects, repo: scripts.clone(), scripts, addr: String::new(), settle_ms: None };
-    w.lab.spawn_env("host", &w.h, &["host"], &[("AAA_TEST_ACCOUNT_REFRESH_ORIGIN", upstream), ("AAA_LOG", "trace")]);
+    let path = std::env::join_paths(
+        std::iter::once(w.scripts.clone()).chain(std::env::split_paths(&std::env::var_os("PATH").unwrap())),
+    )
+    .unwrap();
+    w.lab.spawn_env(
+        "host",
+        &w.h,
+        &["host"],
+        &[("AAA_TEST_ACCOUNT_REFRESH_ORIGIN", upstream), ("AAA_LOG", "trace"), ("PATH", path.to_str().unwrap())],
+    );
     let status = wait_for("host 준비", T, || w.h.json(&["status"]).ok());
     w.addr = status["agent_listen"].as_str().unwrap().into();
     let mut cmd = w.h.cmd(&["agent", "--host", "local", "--name", "labA"]);
@@ -222,7 +231,7 @@ fn account_credentials_parallel_refresh_and_all_records_are_redacted() {
     let (claude, claude_hex) = canary("claude");
     let upstream = Upstream::new(token_pairs.clone());
     let gate = Gate::new();
-    let mut w = world(&format!("http://{}", upstream.addr), &gate, &claude);
+    let mut w = world(&format!("http://{}", upstream.addr), &gate, &claude, HARNESS);
     w.add_remote();
     let credential = w.scripts.join("import.json");
     std::fs::write(
@@ -234,21 +243,11 @@ fn account_credentials_parallel_refresh_and_all_records_are_redacted() {
     let claude_file = w.scripts.join("import.token");
     std::fs::write(&claude_file, &claude).unwrap();
     w.h.ok(&["account", "import", "token", "--harness", "claude", "--file", path_str(&claude_file)]);
+    w.h.ok(&["account", "default", "codex", "work"]);
     let task = w.task("task.txt", "인증 실험실에서 기다린다");
     let mut jobs = vec![];
     for machine in ["labA", "labA", "labB", "labB"] {
-        jobs.push(w.start(&[
-            "--title",
-            "가짜 인증",
-            "--profile",
-            "file",
-            "--machine",
-            machine,
-            "--account",
-            "work",
-            "--task-file",
-            &task,
-        ]));
+        jobs.push(w.start(&["--title", "가짜 인증", "--profile", "file", "--machine", machine, "--task-file", &task]));
     }
     let first = gate.take(4, 0);
     let mut homes: Vec<_> = first.iter().map(|(_, v)| v["home"].as_str().unwrap().to_string()).collect();
@@ -259,6 +258,7 @@ fn account_credentials_parallel_refresh_and_all_records_are_redacted() {
     for job in &jobs {
         let id = job["id"].as_str().unwrap();
         let shown = w.wait_show("Codex 기록 연결", id, |v| v["agent"]["harness_session"].is_string());
+        assert_eq!(shown["account"], "work", "원격도 host 기본 계정을 쓴다");
         let pane = shown["pane"].as_str().unwrap();
         let chat = w.h.ok(&["pane", "chat", pane]);
         assert!(chat["messages"].as_array().unwrap().iter().any(|m| m["text"] == "account-history"));
@@ -281,6 +281,7 @@ fn account_credentials_parallel_refresh_and_all_records_are_redacted() {
         wait_for("임시 인증 정리", T, || (!Path::new(home).join("auth.json").exists()).then_some(()));
     }
     let id = jobs[0]["id"].as_str().unwrap();
+    w.h.ok(&["account", "default", "codex", "--off"]);
     w.h.ok(&["thread", "restart", "demo", id, "--resume"]);
     let resumed = gate.take(1, 3);
     assert_eq!(resumed[0].1["token"], sha(&token_pairs[2].0));
@@ -351,4 +352,489 @@ fn account_credentials_parallel_refresh_and_all_records_are_redacted() {
         &|_| false,
     );
     assert!(leak.is_empty(), "비밀이 남은 경로: {leak:?}");
+}
+
+// 이 fixture는 인증을 선택하지 않는다. 실제 자식이 받은 env/파일을 해시로 보고하고
+// 제공자 갱신을 요청할 뿐이다. 선택·저장·재개는 제품 경로가 맡는다.
+const POLICY_HARNESS: &str = r#"#!/usr/bin/env python3
+import os,sys,json,pathlib,socket,hashlib,subprocess,urllib.request,uuid
+if sys.argv[1:]==['--version']:
+    version_gate=pathlib.Path(__file__).parent/'policy-version-gate'
+    if version_gate.exists():
+        h,p=version_gate.read_text().split(':')
+        s=socket.create_connection((h,int(p)),timeout=30)
+        s.sendall((json.dumps(dict(tid='version',phase=9))+'\n').encode())
+        assert s.recv(1)==b'1'
+    print('codex-cli 0.163.0');sys.exit(0)
+kind=os.environ['ACCOUNT_KIND']
+tid=os.environ.get('AAA_THREAD','coordinator')
+home=os.environ.get('CODEX_HOME') if kind=='codex' else None
+if home: assert pathlib.Path(home).is_relative_to(pathlib.Path(os.environ['ACCOUNT_PROOF']).parent), 'authentication escaped lab'
+auth=json.loads((pathlib.Path(home)/'auth.json').read_text()) if home else None
+token=auth['tokens']['access_token'] if auth else os.environ.get('CLAUDE_CODE_OAUTH_TOKEN')
+def digest(s): return hashlib.sha256(s.encode()).hexdigest() if s else None
+sid=str(uuid.uuid5(uuid.NAMESPACE_URL,home or (os.getcwd()+tid)))
+payload=dict(hook_event_name='SessionStart',session_id=sid,source='resume' if 'resume' in sys.argv or '--resume' in sys.argv else 'startup')
+subprocess.run([os.environ['ACCOUNT_AAA'],'hook','--agent',kind,json.dumps(payload)],check=True,stdout=subprocess.PIPE,stderr=subprocess.PIPE)
+for args in [['account','default',kind,'--off'],['account','login','denied-from-pane','--harness',kind],['account','remove','central-'+kind]]:
+    refused=subprocess.run([os.environ['ACCOUNT_AAA'],*args],stdout=subprocess.PIPE,stderr=subprocess.PIPE)
+    assert refused.returncode!=0, 'pane changed account administration'
+if home:
+    history=pathlib.Path(home)/'policy-history'
+    if 'resume' in sys.argv: assert history.exists(), 'lost history'
+    history.write_text('history')
+def gate(phase):
+    h,p=os.environ['ACCOUNT_GATE'].split(':')
+    s=socket.create_connection((h,int(p)),timeout=30)
+    s.sendall((json.dumps(dict(tid=tid,phase=phase,token=digest(token),home=home,resume='resume' in sys.argv or '--resume' in sys.argv))+'\n').encode())
+    return s
+s=gate(0)
+command=s.recv(1);s.close()
+if command==b'R':
+    request=urllib.request.Request(os.environ['CODEX_REFRESH_TOKEN_URL_OVERRIDE'],data=json.dumps(dict(grant_type='refresh_token')).encode())
+    with urllib.request.urlopen(request,timeout=25) as r: auth['tokens'].update(json.load(r))
+    token=auth['tokens']['access_token']
+s=gate(1)
+assert s.recv(1)==b'X'
+"#;
+
+fn install_login_fixture(w: &World, gate: &Gate, values: &Value) -> PathBuf {
+    let fixture = w.scripts.join("login-fixture.json");
+    std::fs::write(&fixture, serde_json::to_vec(values).unwrap()).unwrap();
+    let source = format!(
+        r#"#!/usr/bin/env python3
+import os,sys,json,pathlib,socket,stat,signal
+signal.signal(signal.SIGHUP,signal.SIG_IGN)
+kind=pathlib.Path(sys.argv[0]).name
+expected=['setup-token'] if kind=='claude' else ['-c','cli_auth_credentials_store="file"','login']
+assert sys.argv[1:]==expected, 'official login command'
+for key in ['CLAUDE_CODE_OAUTH_TOKEN','OPENAI_API_KEY','CODEX_REFRESH_TOKEN_URL_OVERRIDE','AAA_THREAD','AAA_SESSION_ID']:
+    assert key not in os.environ, 'inherited credential or pane identity'
+home=pathlib.Path(os.environ['CLAUDE_CONFIG_DIR' if kind=='claude' else 'CODEX_HOME'])
+assert home.parent==pathlib.Path(os.environ['HOME'])
+assert stat.S_IMODE(home.stat().st_mode)==0o700
+values=json.loads(pathlib.Path({fixture:?}).read_text())
+s=socket.create_connection(({host:?},{port}),timeout=30)
+if values.get('stubborn'):
+    s.settimeout(None)
+    if os.fork()==0:
+        s.close();signal.pause();sys.exit(0)
+s.sendall((json.dumps(dict(tid='login',phase=8,home=str(home.parent),harness=kind,pid=os.getpid()))+'\n').encode())
+assert s.recv(1)==b'1'
+value=values[kind]
+raw=value if isinstance(value,str) else json.dumps(value)
+print(raw,flush=True)
+print(raw,file=sys.stderr,flush=True)
+if values.get('fail') or values.get('fail_for')==kind: sys.exit(1)
+if kind=='codex':
+    p=home/'auth.json';p.write_text(raw);p.chmod(0o600)
+"#,
+        fixture = fixture,
+        host = "127.0.0.1",
+        port = gate.0.local_addr().unwrap().port(),
+    );
+    for name in ["claude", "codex"] {
+        let path = w.scripts.join(name);
+        std::fs::write(&path, &source).unwrap();
+        std::fs::set_permissions(path, std::os::unix::fs::PermissionsExt::from_mode(0o755)).unwrap();
+    }
+    fixture
+}
+
+fn login_result(w: &World, id: &str, expected: &str) -> Value {
+    let value = wait_for("로그인 종료", T, || {
+        w.h.json(&["account", "login-status", id]).ok().filter(|v| v["login"]["state"] != "waiting")
+    });
+    assert_eq!(value["login"]["state"], expected);
+    value
+}
+
+#[test]
+fn host_login_defaults_pin_threads_and_coordinators_without_exposing_credentials() {
+    let (legacy, legacy_hex) = canary("legacy");
+    let (raw, raw_hex) = canary("login-claude");
+    let claude = format!("sk-ant-oat01-{raw}");
+    let pairs: Vec<_> =
+        (0..2).map(|i| (canary(&format!("policy-access{i}")), canary(&format!("policy-refresh{i}")))).collect();
+    let tokens: Vec<_> = pairs.iter().map(|(a, r)| (a.0.clone(), r.0.clone())).collect();
+    let upstream = Upstream::new(tokens.clone());
+    let gate = Gate::new();
+    let mut w = world(&format!("http://{}", upstream.addr), &gate, &legacy, POLICY_HARNESS);
+    w.add_remote();
+    let task = w.task("policy.txt", "가짜 인증에서 기다린다");
+    let values = serde_json::json!({"claude":claude,"codex":{"tokens":{"access_token":tokens[0].0,"refresh_token":tokens[0].1}}});
+    let fixture = install_login_fixture(&w, &gate, &values);
+    let old = w.start(&["--title", "기존 로컬", "--profile", "token", "--task-file", &task]);
+    let old_first = gate.take(1, 0);
+    assert_eq!(old_first[0].1["token"], sha(&legacy));
+    assert!(old["account"].is_null());
+
+    let mut responses = Vec::new();
+    for (name, harness) in [("central-claude", "claude"), ("central-codex", "codex")] {
+        let start = w.h.ok(&["account", "login", name, "--harness", harness]);
+        let id = start["login"]["id"].as_str().unwrap();
+        let ready = gate.take(1, 8);
+        let home = PathBuf::from(ready[0].1["home"].as_str().unwrap());
+        assert!(home.starts_with(w.h.state.join("host/account-logins")));
+        Gate::release(ready, b'1');
+        responses.push(start.clone());
+        responses.push(login_result(&w, id, "succeeded"));
+        assert!(!home.exists(), "성공 상태 전에 임시 인증 정리");
+        w.h.ok(&["account", "default", harness, name]);
+        assert!(w.h.json(&["account", "remove", name]).is_err(), "기본 계정 삭제 거부");
+    }
+    let defaults = w.h.ok(&["account", "default", "claude"]);
+    assert_eq!(defaults["defaults"].as_array().unwrap().len(), 2);
+    // 시작 전에 고른 로컬 인증은 기본 지정 뒤에도 바뀌지 않는다.
+    Gate::release(old_first, b'1');
+    let old_last = gate.take(1, 1);
+    assert_eq!(old_last[0].1["token"], sha(&legacy));
+    Gate::release(old_last, b'X');
+    let old_id = old["id"].as_str().unwrap();
+    w.wait_show("기존 작업 종료", old_id, |v| v["agent"]["activity"] == "exited");
+    w.h.ok(&["thread", "restart", "demo", old_id, "--resume"]);
+    let resumed = gate.take(1, 0);
+    assert_eq!(resumed[0].1["token"], sha(&legacy));
+    assert_eq!(resumed[0].1["resume"], true);
+    Gate::release(resumed, b'1');
+    Gate::release(gate.take(1, 1), b'X');
+    w.wait_show("로컬 재개 종료", old_id, |v| v["agent"]["activity"] == "exited");
+
+    let mut jobs = vec![];
+    for machine in ["labA", "labB"] {
+        jobs.push(w.start(&["--title", "기본", "--profile", "plain", "--machine", machine, "--task-file", &task]));
+    }
+    w.h.in_terminal(&["safety", "set", "start_threads", "auto"], &[("[y/N]", "y")], T);
+    // A4 이후 평가는 일반 자동화가 띄우는 worker다. 그 시작에도 같은 host 기본을 고른다.
+    let rule_dir = w.projects.join("demo/automations");
+    std::fs::create_dir_all(&rule_dir).unwrap();
+    std::fs::write(rule_dir.join("policy.toml"), "[on.schedule]\nevery='1s'\n[do.start]\ntitle='기본 평가'\nprofiles=['plain']\nmachines=['labA']\nreuse='open'\ntext='평가 작업'\n").unwrap();
+    let listed = w.h.ok(&["routine", "list", "demo"]);
+    let rule = listed["routines"].as_array().unwrap().iter().find(|r| r["name"] == "policy").unwrap();
+    w.h.in_terminal(&["automation", "approve", "policy", rule["start_approval_sha256"].as_str().unwrap()], &[], T);
+    let automatic = wait_for("기본 인증 자동 평가 시작", T, || {
+        w.h.ticks(1);
+        w.h.ok(&["events", "demo"])["events"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|e| e["kind"] == "thread_started" && e["actor"] == "routine:policy")
+            .and_then(|e| e["thread"].as_str())
+            .map(str::to_string)
+    });
+    jobs.push(w.show(&automatic));
+    w.h.ok(&["routine", "toggle", "demo", "policy", "--off"]);
+    let first = gate.take(3, 0);
+    assert!(first.iter().all(|(_, v)| v["token"] == sha(&claude)));
+    assert!(jobs.iter().all(|v| v["account"] == "central-claude"));
+    Gate::release(first, b'1');
+    Gate::release(gate.take(3, 1), b'X');
+    for job in &jobs {
+        w.wait_show("기본 작업 종료", job["id"].as_str().unwrap(), |v| v["agent"]["activity"] == "exited");
+    }
+
+    // 기본 참조가 깨져도 명시 --account는 우선한다. 지정이 없는 시작은 local로 우회하지 않는다.
+    let other = w.scripts.join("other.token");
+    std::fs::write(&other, &legacy).unwrap();
+    w.h.ok(&["account", "import", "broken", "--harness", "claude", "--file", path_str(&other)]);
+    w.h.ok(&["account", "default", "claude", "broken"]);
+    std::fs::remove_file(w.h.state.join("host/accounts/broken.json")).unwrap();
+    assert!(
+        w.h.json(&["thread", "start", "demo", "--title", "거부", "--profile", "plain", "--task-file", &task]).is_err()
+    );
+    assert!(w.h.json(&["project", "open", "demo", "--profile", "plain", "--new"]).is_err());
+    let explicit =
+        w.start(&["--title", "명시 우선", "--profile", "plain", "--account", "central-claude", "--task-file", &task]);
+    let first = gate.take(1, 0);
+    assert_eq!(first[0].1["token"], sha(&claude));
+    Gate::release(first, b'1');
+    Gate::release(gate.take(1, 1), b'X');
+    w.wait_show("명시 작업 종료", explicit["id"].as_str().unwrap(), |v| v["agent"]["activity"] == "exited");
+    w.h.ok(&["account", "default", "claude", "--off"]);
+
+    // worker pane을 직접 재개한 뒤 thread restart도 같은 인증 홈의 중복 CLI를 거부한다.
+    let file_worker = w.start(&["--title", "파일 인증 작업", "--profile", "file", "--task-file", &task]);
+    let worker_id = file_worker["id"].as_str().unwrap();
+    let original = w.wait_show("파일 인증 기록 연결", worker_id, |v| v["agent"]["harness_session"].is_string());
+    let worker_pane = original["pane"].as_str().unwrap();
+    Gate::release(gate.take(1, 0), b'1');
+    Gate::release(gate.take(1, 1), b'X');
+    w.wait_show("파일 인증 종료", worker_id, |v| v["agent"]["activity"] == "exited");
+    let worker_resume = w.h.ok(&["pane", "resume", worker_pane]);
+    let held = gate.take(1, 0);
+    assert_eq!(held[0].1["tid"], worker_id);
+    assert_eq!(held[0].1["resume"], true);
+    assert!(
+        w.h.json(&["thread", "restart", "demo", worker_id, "--resume"]).is_err(),
+        "재개된 worker의 인증 홈을 thread restart로 다시 사용하지 않는다"
+    );
+    Gate::release(held, b'1');
+    Gate::release(gate.take(1, 1), b'X');
+    wait_for("직접 재개 worker 종료", T, || {
+        (w.h.pane(worker_resume["id"].as_str().unwrap())["state"] == "exited").then_some(())
+    });
+
+    // 새 coordinator, host 재시작, 중앙 갱신, 재부팅 복원, 수동 pane 재개가 같은 인증/기록 홈을 잇는다.
+    let opened = w.h.ok(&["project", "open", "demo", "--profile", "file", "--new"]);
+    let pane = opened["pane"]["id"].as_str().unwrap().to_string();
+    assert_eq!(opened["pane"]["account"], "central-codex");
+    let first = gate.take(1, 0);
+    let home = first[0].1["home"].as_str().unwrap().to_string();
+    assert_eq!(first[0].1["token"], sha(&tokens[0].0));
+    w.lab.kill("host");
+    w.lab.spawn_env(
+        "policy-host2",
+        &w.h,
+        &["host"],
+        &[("AAA_TEST_ACCOUNT_REFRESH_ORIGIN", &format!("http://{}", upstream.addr)), ("AAA_LOG", "trace")],
+    );
+    wait_for("host 재접속", T, || w.h.connected("labA").then_some(()));
+    assert_eq!(w.h.ok(&["account", "default", "codex"])["defaults"][0]["account"], "central-codex");
+    w.h.ok(&["account", "default", "codex", "--off"]);
+    Gate::release(first, b'R');
+    let refreshed = gate.take(1, 1);
+    assert_eq!(refreshed[0].1["token"], sha(&tokens[1].0));
+    assert_eq!(upstream.calls.load(Ordering::SeqCst), 1);
+    wait_for("coordinator 대화 연결", T, || w.h.pane(&pane)["agent"]["harness_session"].is_string().then_some(()));
+    w.lab.kill("agentA");
+    assert!(w.lab.kill_session_hosts() >= 1);
+    drop(refreshed);
+    w.lab.spawn_env(
+        "policy-agent2",
+        &w.h,
+        &["agent", "--host", "local", "--name", "labA"],
+        &[("AAA_TEST_BOOT_ID", "policy-after")],
+    );
+    let restored = gate.take(1, 0);
+    assert_eq!(restored[0].1["token"], sha(&tokens[1].0));
+    assert_eq!(restored[0].1["home"], home);
+    assert_eq!(restored[0].1["resume"], true);
+    let new = wait_for("복원 pane", T, || {
+        w.h.ok(&["pane", "list"])["panes"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|v| v["replaced"].as_array().is_some_and(|a| a.contains(&Value::String(pane.clone()))))
+            .cloned()
+    });
+    let new_id = new["id"].as_str().unwrap();
+    assert_eq!(new["account"], "central-codex");
+    Gate::release(restored, b'1');
+    Gate::release(gate.take(1, 1), b'X');
+    wait_for("복원 종료", T, || {
+        (!w.h.pane(new_id)["state"].as_str().is_some_and(|s| s == "running")).then_some(())
+    });
+    // 같은 coordinator 재개를 동시에 눌러도 하나의 인증 홈에 두 CLI를 띄우지 않는다.
+    let version_gate = w.scripts.join("policy-version-gate");
+    std::fs::write(&version_gate, gate.address()).unwrap();
+    let results = std::thread::scope(|scope| {
+        let (sent, received) = std::sync::mpsc::channel();
+        let barrier = Arc::new(std::sync::Barrier::new(2));
+        let calls: Vec<_> = (0..2)
+            .map(|_| {
+                let barrier = barrier.clone();
+                let node = &w.h;
+                let sent = sent.clone();
+                scope.spawn(move || {
+                    barrier.wait();
+                    let result = node.json(&["pane", "resume", new_id]);
+                    sent.send(result.clone()).unwrap();
+                    result
+                })
+            })
+            .collect();
+        let held = gate.take(1, 9);
+        wait_for("첫 재개가 준비 중일 때 중복 거부", T, || {
+            if let Ok(result) = received.try_recv() {
+                assert!(result.is_err());
+                return Some(());
+            }
+            assert!(gate.0.accept().is_err(), "같은 인증 홈으로 두 번째 CLI 기동을 시도했다");
+            None
+        });
+        Gate::release(held, b'1');
+        calls.into_iter().map(|c| c.join().unwrap()).collect::<Vec<_>>()
+    });
+    std::fs::remove_file(version_gate).unwrap();
+    assert_eq!(results.iter().filter(|r| r.is_ok()).count(), 1, "인증 실행마다 살아 있는 pane 하나: {results:?}");
+    let manual = results.into_iter().find_map(Result::ok).unwrap();
+    let again = gate.take(1, 0);
+    assert_eq!(again[0].1["token"], sha(&tokens[1].0));
+    assert_eq!(again[0].1["home"], home);
+    Gate::release(again, b'1');
+    Gate::release(gate.take(1, 1), b'X');
+    let manual_id = manual["id"].as_str().unwrap();
+    wait_for("수동 재개 종료", T, || (w.h.pane(manual_id)["state"] == "exited").then_some(()));
+    wait_for("인증 정리", T, || (!Path::new(&home).join("auth.json").exists()).then_some(()));
+
+    let local = w.start(&["--title", "기본 해제 뒤 로컬", "--profile", "plain", "--task-file", &task]);
+    let first = gate.take(1, 0);
+    assert!(first[0].1["token"].is_null());
+    assert!(local["account"].is_null());
+    Gate::release(first, b'1');
+    Gate::release(gate.take(1, 1), b'X');
+    w.wait_show("해제 뒤 로컬 종료", local["id"].as_str().unwrap(), |v| v["agent"]["activity"] == "exited");
+    let mut find = needles(&legacy, &legacy_hex);
+    find.extend(needles(&raw, &raw_hex));
+    for (a, r) in &pairs {
+        find.extend(needles(&a.0, &a.1));
+        find.extend(needles(&r.0, &r.1));
+    }
+    // 새 로그인 실패·취소도 원본 출력·인증을 남기지 않는다. 재시작한 host에는 실험실 PATH를 명시한다.
+    w.lab.kill("policy-host2");
+    let path = std::env::join_paths(
+        std::iter::once(w.scripts.clone()).chain(std::env::split_paths(&std::env::var_os("PATH").unwrap())),
+    )
+    .unwrap();
+    w.lab.spawn_env("policy-host3", &w.h, &["host"], &[("PATH", path.to_str().unwrap()), ("AAA_LOG", "trace")]);
+    wait_for("host 로그인 재접속", T, || w.h.json(&["status"]).ok());
+    let (failed, failed_hex) = canary("failed-login");
+    find.extend(needles(&failed, &failed_hex));
+    for (name, cancel) in [("failed-login", false), ("cancelled-login", true)] {
+        std::fs::write(
+            &fixture,
+            serde_json::to_vec(
+                &serde_json::json!({"claude":format!("sk-ant-oat01-{failed}"),"fail":true,"stubborn":cancel}),
+            )
+            .unwrap(),
+        )
+        .unwrap();
+        let v = w.h.ok(&["account", "login", name, "--harness", "claude"]);
+        let id = v["login"]["id"].as_str().unwrap();
+        let ready = gate.take(1, 8);
+        let home = PathBuf::from(ready[0].1["home"].as_str().unwrap());
+        let held = if cancel {
+            w.h.ok(&["account", "login-cancel", id]);
+            Some(ready)
+        } else {
+            Gate::release(ready, b'1');
+            None
+        };
+        responses.push(login_result(&w, id, if cancel { "cancelled" } else { "failed" }));
+        drop(held);
+        assert!(!home.exists());
+        assert!(!w.h.state.join(format!("host/accounts/{name}.json")).exists());
+    }
+    for v in responses {
+        for (_, n) in &find {
+            assert!(!v.to_string().as_bytes().windows(n.len()).any(|b| b == n), "로그인 응답 노출");
+        }
+    }
+    w.h.ticks(1);
+    let pending = w.h.ok(&["account", "login", "shutdown-login", "--harness", "claude"]);
+    let ready = gate.take(1, 8);
+    let home = PathBuf::from(ready[0].1["home"].as_str().unwrap());
+    assert_eq!(pending["login"]["state"], "waiting");
+    w.lab.signal("policy-host3", libc::SIGTERM);
+    assert!(w.lab.wait_exit("policy-host3", T).success(), "host가 로그인 자식 종료까지 마친다");
+    drop(ready);
+    assert!(!home.exists(), "host 정상 종료도 임시 인증을 정리한다");
+    let leak = hits(
+        &[
+            w.h.state.clone(),
+            w.lab.root.join("b/s"),
+            w.projects.clone(),
+            w.lab.root.join("host.log"),
+            w.lab.root.join("policy-host2.log"),
+            w.lab.root.join("policy-host3.log"),
+        ],
+        &find,
+        &|_| false,
+    );
+    assert!(leak.is_empty(), "인증 비밀이 남은 경로: {leak:?}");
+}
+
+#[test]
+fn parallel_host_logins_finish_independently_and_cancel_returns_after_cleanup() {
+    let (token, encoded) = canary("opaque");
+    let gate = Gate::new();
+    let upstream = Upstream::new(vec![]);
+    let mut w = world(&format!("http://{}", upstream.addr), &gate, &token, POLICY_HARNESS);
+    let values = serde_json::json!({"claude":format!("sk-ant-oat01-{token}"),"codex":{"tokens":{"access_token":token,"refresh_token":token}}});
+    let fixture = install_login_fixture(&w, &gate, &values);
+    let start = |harness: &str, suffix: &str| {
+        let v = w.h.ok(&["account", "login", &format!("parallel-{harness}-{suffix}"), "--harness", harness]);
+        v["login"]["id"].as_str().unwrap().to_string()
+    };
+    let a = start("claude", "done");
+    let b = start("codex", "done");
+    let mut held = gate.take(2, 8);
+    let b_at = held.iter().position(|(_, v)| v["harness"] == "codex").unwrap();
+    let waiting = held.remove(b_at);
+    let a_home = PathBuf::from(held[0].1["home"].as_str().unwrap());
+    Gate::release(held, b'1');
+    login_result(&w, &a, "succeeded");
+    assert!(!a_home.exists(), "다른 로그인이 진행 중이어도 종료한 자식의 자료를 정리한다");
+    assert_eq!(w.h.ok(&["account", "login-status", &b])["login"]["state"], "waiting");
+    let b_home = PathBuf::from(waiting.1["home"].as_str().unwrap());
+    Gate::release(vec![waiting], b'1');
+    login_result(&w, &b, "succeeded");
+    assert!(!b_home.exists());
+
+    assert_eq!(w.h.ok(&["account", "login-cancel", &a])["login"]["state"], "succeeded");
+    // 이미 자식이 실패해 끝난 작업도 다른 로그인과 독립적으로 waiting을 걷는다.
+    let mut failed_values = values.clone();
+    failed_values["fail_for"] = "claude".into();
+    std::fs::write(&fixture, serde_json::to_vec(&failed_values).unwrap()).unwrap();
+    let a = start("claude", "failed");
+    let b = start("codex", "held");
+    let mut held = gate.take(2, 8);
+    let a_at = held.iter().position(|(_, v)| v["harness"] == "claude").unwrap();
+    let done = held.remove(a_at);
+    let a_home = PathBuf::from(done.1["home"].as_str().unwrap());
+    Gate::release(vec![done], b'1');
+    login_result(&w, &a, "failed");
+    assert!(!a_home.exists());
+    assert_eq!(w.h.ok(&["account", "login-cancel", &a])["login"]["state"], "failed");
+    assert_eq!(w.h.ok(&["account", "login-status", &b])["login"]["state"], "waiting");
+    assert_eq!(w.h.ok(&["account", "login-cancel", &b])["login"]["state"], "cancelled");
+    assert!(!Path::new(held[0].1["home"].as_str().unwrap()).exists());
+    drop(held);
+
+    std::fs::write(
+        &fixture,
+        serde_json::to_vec(&serde_json::json!({"claude":token,"codex":values["codex"],"stubborn":true})).unwrap(),
+    )
+    .unwrap();
+    let a = start("claude", "cancel");
+    let b = start("codex", "cancel");
+    let held = gate.take(2, 8);
+    let ids = [&a, &a, &b];
+    let results = std::thread::scope(|scope| {
+        let barrier = Arc::new(std::sync::Barrier::new(ids.len()));
+        let calls: Vec<_> = ids
+            .iter()
+            .map(|id| {
+                let barrier = barrier.clone();
+                let node = &w.h;
+                scope.spawn(move || {
+                    barrier.wait();
+                    node.ok(&["account", "login-cancel", id])
+                })
+            })
+            .collect();
+        calls.into_iter().map(|c| c.join().unwrap()).collect::<Vec<_>>()
+    });
+    for v in results {
+        assert_eq!(v["login"]["state"], "cancelled", "cancel 응답은 자식 종료·자료 정리 뒤의 최종 상태여야 한다");
+    }
+    for (_, v) in &held {
+        assert!(!Path::new(v["home"].as_str().unwrap()).exists());
+        assert_ne!(
+            unsafe { libc::kill(v["pid"].as_i64().unwrap() as i32, 0) },
+            0,
+            "취소 응답 뒤 로그인 자식이 없어야 한다"
+        );
+    }
+    drop(held);
+    start("claude", "shutdown");
+    start("codex", "shutdown");
+    let held = gate.take(2, 8);
+    w.lab.signal("host", libc::SIGTERM);
+    assert!(w.lab.wait_exit("host", T).success());
+    for (_, v) in &held {
+        assert!(!Path::new(v["home"].as_str().unwrap()).exists());
+    }
+    drop(held);
+    assert!(hits(&[w.h.state.clone(), w.lab.root.join("host.log")], &needles(&token, &encoded), &|_| false).is_empty());
 }

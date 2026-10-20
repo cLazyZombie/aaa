@@ -266,7 +266,9 @@ impl Host {
         let plan = key.as_ref().and_then(|(h, s)| {
             if shell {
                 resume_argv(h, s)
-            } else if program(&info.argv).as_deref() == Some(h.as_str()) {
+            } else if program(&info.argv).as_deref() == Some(h.as_str())
+                || self.pane_account(id).ok().flatten().is_some_and(|r| r.harness == *h)
+            {
                 resume_in_place(&info.argv, h, s)
             } else {
                 None

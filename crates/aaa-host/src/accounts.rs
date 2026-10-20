@@ -185,6 +185,7 @@ impl Store {
 }
 
 pub struct Accounts {
+    pub(crate) logins: Mutex<HashMap<String, crate::account_login::LoginJob>>,
     store: Mutex<Store>,
     gates: Mutex<HashMap<String, Arc<tokio::sync::Mutex<()>>>>,
 }
@@ -193,6 +194,7 @@ impl Accounts {
         let out = Self {
             store: Mutex::new(Store { root: state.join("accounts"), key_path: state.join("secrets.key") }),
             gates: Default::default(),
+            logins: Default::default(),
         };
         // 재시작 뒤에도 과거 인증을 일반 기록에 다시 노출하지 않는다.
         // 키/한 계정이 잠겨도 계정 미지정 기능은 계속 제공한다.
@@ -350,29 +352,65 @@ impl crate::Host {
         spec: aaa_proto::SpawnSpec,
         credential: AccountCredential,
         actor: &str,
+        expected_pane: Option<&str>,
     ) -> Result<String, ErrorBody> {
         let conn = self.live_conn(mid)?;
         self.check_health(mid)?;
+        let (_, task) = aaa_proto::account_run_parts(&credential.run).ok_or_else(fail)?;
+        let feature = if task.starts_with("c-") { "account_auth.v2" } else { "account_auth.v1" };
+        if !self.machine_feature(mid, feature) {
+            return Err(fail());
+        }
+        let mut binding = crate::account_policy::PaneAccount {
+            run: credential.run.clone(),
+            account: credential.account.clone(),
+            harness: credential.harness.clone(),
+            machine: mid.into(),
+            pane: None,
+            profile: spec.profile.clone(),
+        };
+        let previous = self.claim_account_run(&mut binding, expected_pane)?;
         self.db.audit(actor, "pane_run_account", &credential.account);
-        match conn.request(aaa_proto::AgentRequest::SpawnAccount { spec, credential }).await? {
-            aaa_proto::AgentResponse::Session(info) => {
+        match conn.request(aaa_proto::AgentRequest::SpawnAccount { spec, credential }).await {
+            Ok(aaa_proto::AgentResponse::Session(info)) => {
                 let id = info.id.clone();
+                binding.pane = Some(id.clone());
+                self.save_account_run(&binding)?;
                 self.on_session(mid, info, false);
                 Ok(id)
             }
-            _ => Err(fail()),
+            other => {
+                if let Some(previous) = previous {
+                    self.save_account_run(&previous)?;
+                } else {
+                    self.db.del_meta(&format!("account-run:{}", binding.run)).map_err(|_| fail())?;
+                }
+                match other {
+                    Err(e) => Err(e),
+                    _ => Err(fail()),
+                }
+            }
         }
     }
     pub(crate) async fn account_refresh(self: Arc<Self>, mid: String, request: aaa_proto::AccountRefresh) {
-        let account = request
-            .run
-            .split_once('/')
-            .and_then(|(p, t)| self.load(p, t).ok())
-            .filter(|r| {
-                r.machine_id == mid
-                    && (r.pane.as_deref() == Some(&request.session) || r.status == aaa_proto::ThreadStatus::Starting)
-            })
-            .and_then(|r| r.account);
+        let bound = self
+            .account_run(&request.run)
+            .ok()
+            .flatten()
+            .filter(|r| r.machine == mid && r.pane.as_deref().is_none_or(|p| p == request.session))
+            .map(|r| r.account);
+        let account = bound.or_else(|| {
+            request
+                .run
+                .split_once('/')
+                .and_then(|(p, t)| self.load(p, t).ok())
+                .filter(|r| {
+                    r.machine_id == mid
+                        && (r.pane.as_deref() == Some(&request.session)
+                            || r.status == aaa_proto::ThreadStatus::Starting)
+                })
+                .and_then(|r| r.account)
+        });
         let mut result = match account {
             Some(a) => self.accounts.refresh(&a, request.version, &request.request).await,
             None => AccountRefreshed { id: String::new(), version: request.version, response: None },

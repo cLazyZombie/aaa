@@ -963,6 +963,156 @@ fn remote_dir_thread_survives_host_restart() {
     wait_for("outage recovered", T, || (outage("recovered") == 1).then_some(()));
     assert_eq!(outage("down"), 1);
 }
+/// task 첨부(plan §8.327): `--from-task`로 다른 머신(TLS, 상태 폴더가 다른 labB)에 thread를 띄우면 메모가 가리키는 host 파일
+/// (올린 그림·보고서 안 문서)을 그 머신 작업 폴더 `attachments/`에 복사하고, 할 일 글·brief는 그 머신에서 열 수 있는 경로만 쓴다
+#[test]
+fn task_attachments_reach_a_remote_agent() {
+    let mut w = world();
+    w.add_remote();
+    let demo = w.projects.join("demo");
+    std::fs::create_dir_all(demo.join("uploads")).unwrap();
+    use sha2::Digest as _;
+    let img = b"\x89PNG\r\n\x1a\n\0\0\0\rIHDR task attach".to_vec();
+    // 올린 파일 이름은 내용 hash다(host가 정한다, 넘길 때 이름과 내용을 대조한다)
+    let png = format!("{}.png", &hex::encode(sha2::Sha256::digest(&img))[..16]);
+    std::fs::write(demo.join("uploads").join(&png), &img).unwrap();
+    let report = w.lab.root.join("plan-report");
+    std::fs::create_dir_all(&report).unwrap();
+    std::fs::write(report.join("index.html"), "<!doctype html><title>계획</title>").unwrap();
+    std::fs::write(report.join("plan.md"), "# 계획서\n\n- 첫 단계\n").unwrap();
+    w.h.ok(&["library", "publish", path_str(&report), "--project", "demo", "--name", "plan-report"]);
+    std::fs::write(
+        demo.join("TASKS.md"),
+        format!(
+            "# Tasks\n\n## Backlog\n- [ ] 첨부 일\n  고칠 화면\n  ![그림](uploads/{png})\n  \
+             [계획서](library/plan-report/plan.md)\n  [없는 그림](uploads/fedcba9876543210.png)\n"
+        ),
+    )
+    .unwrap();
+    let v = w.start(&["--from-task", "첨부 일", "--machine", "labB", "--profile", "fake", "--kind", "dir"]);
+    let id = v["id"].as_str().unwrap().to_string();
+    let warnings = v["warnings"].to_string();
+    assert!(warnings.contains("uploads/fedcba9876543210.png"), "host에 없는 첨부는 경고로 알린다: {v}");
+    let v = w.wait_show("원격 brief 받음", &id, |v| v["brief"] == "delivered");
+    let work = PathBuf::from(v["work_dir"].as_str().unwrap());
+    assert!(work.starts_with(w.lab.root.join("workB")), "labB 작업 폴더가 아니다: {}", work.display());
+    let names: Vec<String> = std::fs::read_dir(work.join("attachments"))
+        .unwrap()
+        .map(|e| e.unwrap().file_name().into_string().unwrap())
+        .collect();
+    assert_eq!(names.len(), 2, "그림·보고서 문서 둘만 넘긴다: {names:?}");
+    assert_eq!(std::fs::read(work.join("attachments").join(&png)).unwrap(), img);
+    let doc = names.iter().find(|n| n.ends_with(".md")).expect("보고서 문서 사본");
+    assert_eq!(std::fs::read_to_string(work.join("attachments").join(doc)).unwrap(), "# 계획서\n\n- 첫 단계\n");
+    let brief = std::fs::read_to_string(work.join("brief.md")).unwrap();
+    let task = std::fs::read_to_string(demo.join("threads").join(format!("{id}.task.md"))).unwrap();
+    // brief 머리의 uploads 줄(「host 머신에만 있다」)은 원래 안내다. 첨부 자체는 host 경로·host 상대 경로로 가리키지 않는다
+    assert!(!task.contains(path_str(&w.projects)), "할 일에 host 경로가 있다:\n{task}");
+    for host in [format!("](uploads/{png})"), "](library/".into()] {
+        assert!(!brief.contains(&host), "brief가 첨부를 host 쪽으로 가리킨다({host}):\n{brief}");
+    }
+    assert!(
+        task.contains(&format!("![그림](attachments/{png})")) && task.contains(&format!("[계획서](attachments/{doc})")),
+        "{task}"
+    );
+    assert!(task.contains("[없는 그림](uploads/fedcba9876543210.png)"), "넘기지 못한 줄은 그대로 둔다: {task}");
+    assert!(
+        brief.contains(&format!("- task 첨부 2개(할 일의 `attachments/…`): `{}`", work.join("attachments").display())),
+        "{brief}"
+    );
+
+    // 원본을 지운 뒤(정리한 uploads·지운 보고서 파일)에도 다시 시작한다: 첫 시작 때 쓴 사본이 작업 폴더에 남는다
+    w.wait_show("보고", &id, |v| v["report_hash"].is_string());
+    w.h.ok(&["thread", "ack", "demo", &id]);
+    let pane = v["pane"].as_str().unwrap().to_string();
+    w.h.ok(&["pane", "kill", &pane]);
+    wait_for("세션 끝남", T, || (w.h.pane(&pane)["state"] != "running").then_some(()));
+    std::fs::remove_file(demo.join("uploads").join(&png)).unwrap();
+    std::fs::remove_file(demo.join("library/plan-report/plan.md")).unwrap();
+    let again = w.h.ok(&["thread", "restart", "demo", &id]);
+    assert_ne!(again["pane"].as_str(), Some(pane.as_str()), "{again}");
+    assert_eq!(std::fs::read(work.join("attachments").join(&png)).unwrap(), img, "첫 사본은 그대로다");
+}
+
+/// task 저장소 칸(plan §8.330): `[repo]` task는 그 이름의 project.toml repos 줄이 있는 머신에서 그 머신의 경로로 띄운다. owner
+/// 머신이 있으면 그 머신이고(거기에 없으면 거부), 없으면 덜 붐비는(열린 thread가 적은) 머신이다. `--repo`·`--kind`가 칸과 어긋나면
+/// 거부하고, project.toml에 없는 이름은 할 일 목록에 형식 어긋남으로 보인다. `task add|edit --repo`는 경로를 이름으로 적는다.
+#[test]
+fn task_repo_field_picks_machine_and_path() {
+    let mut w = world();
+    w.add_remote();
+    // labB의 같은 이름 저장소(다른 경로)
+    let other = w.lab.root.join("b-src");
+    std::fs::create_dir_all(&other).unwrap();
+    git(&other, &["clone", "-q", path_str(&w.repo), "repo"]);
+    let repo_b = other.join("repo");
+    let demo = w.projects.join("demo");
+    std::fs::write(
+        demo.join("project.toml"),
+        format!(
+            "schema = 1\nthread_profile = \"fake\"\n\n[[repos]]\npath = {:?}\n\n[[repos]]\npath = {:?}\nmachine = \"labB\"\n",
+            path_str(&w.repo),
+            path_str(&repo_b)
+        ),
+    )
+    .unwrap();
+    std::fs::write(
+        demo.join("TASKS.md"),
+        "# Tasks\n\n## Backlog\n- [ ] 원격 일 (@labB) [repo]\n- [ ] 자동 일 [repo]\n- [ ] 폴더 일 [작업 폴더]\n\
+         - [ ] 모르는 일 [nope]\n",
+    )
+    .unwrap();
+    let r = w.start(&["--from-task", "원격 일"]);
+    assert_eq!((r["machine"].as_str(), r["thread_kind"].as_str()), (Some("labB"), Some("worktree")), "{r}");
+    assert_eq!(r["repo"].as_str(), Some(path_str(&repo_b)), "labB의 경로로 띄운다: {r}");
+    // labB에 열린 thread가 하나 있으니 덜 붐비는 labA다
+    let a = w.start(&["--from-task", "자동 일"]);
+    assert_eq!((a["machine"].as_str(), a["repo"].as_str()), (Some("labA"), Some(path_str(&w.repo))), "{a}");
+    assert!(a["warnings"].as_array().is_none_or(Vec::is_empty), "{a}");
+    let d = w.start(&["--from-task", "폴더 일"]);
+    assert_eq!(d["thread_kind"], "dir", "{d}");
+    assert!(d["warnings"].as_array().is_none_or(Vec::is_empty), "작업 폴더 칸은 경고 없음: {d}");
+    for (args, why) in [
+        (vec!["--from-task", "원격 일", "--repo", path_str(&w.repo)], "labB에 repo 저장소가 없다"),
+        (vec!["--from-task", "자동 일", "--kind", "dir"], "--kind dir"),
+        (vec!["--from-task", "폴더 일", "--repo", "repo"], "--repo가 다르다"),
+        (vec!["--from-task", "모르는 일"], "project.toml repos에 nope 저장소가 없다"),
+    ] {
+        let mut full = vec!["thread", "start", "demo"];
+        full.extend(args);
+        let e = w.h.json(&full).expect_err(why);
+        assert!(e.contains(why), "{why}: {e}");
+    }
+    let list = w.h.ok(&["task", "list"]);
+    let bad = list["tasks"].as_array().unwrap().iter().find(|t| t["title"] == "모르는 일").unwrap();
+    assert_eq!(bad["problems"], serde_json::json!(["project.toml repos에 없는 저장소 칸: [nope]"]), "{bad}");
+    // task add|edit --repo: 경로는 이름으로 적고, 빈 글은 비우며, 모르는 이름은 거부한다
+    w.h.ok(&["task", "add", "새 일", "--owner", "me", "--repo", path_str(&repo_b)]);
+    let read = || std::fs::read_to_string(demo.join("TASKS.md")).unwrap();
+    assert!(read().contains("- [ ] 새 일 (me) [repo]\n"), "{}", read());
+    w.h.ok(&["task", "edit", "새 일", "--repo", ""]);
+    assert!(read().contains("- [ ] 새 일 (me)\n"), "{}", read());
+    let e = w.h.json(&["task", "edit", "새 일", "--repo", "nope"]).expect_err("모르는 이름");
+    assert!(e.contains("project.toml repos에 없는 저장소다: nope"), "{e}");
+    // labA에 같은 이름 저장소가 둘이면 말없이 고르지 않는다: 경로를 주면(끝 `/`도 같은 경로) 그 경로로 띄운다
+    let second = w.lab.root.join("c-src");
+    std::fs::create_dir_all(&second).unwrap();
+    git(&second, &["clone", "-q", path_str(&w.repo), "repo"]);
+    let toml = std::fs::read_to_string(demo.join("project.toml")).unwrap();
+    std::fs::write(
+        demo.join("project.toml"),
+        format!("{toml}\n[[repos]]\npath = {:?}\n", path_str(&second.join("repo"))),
+    )
+    .unwrap();
+    std::fs::write(demo.join("TASKS.md"), "# Tasks\n\n## Backlog\n- [ ] 둘 일 [repo]\n").unwrap();
+    let e =
+        w.h.json(&["thread", "start", "demo", "--from-task", "둘 일", "--machine", "labA"])
+            .expect_err("같은 머신에 둘");
+    assert!(e.contains("labA에 repo 저장소가 둘 이상이다"), "{e}");
+    let slash = format!("{}/", path_str(&w.repo));
+    let s = w.start(&["--from-task", "둘 일", "--machine", "labA", "--repo", &slash]);
+    assert_eq!((s["machine"].as_str(), s["repo"].as_str()), (Some("labA"), Some(path_str(&w.repo))), "{s}");
+}
 
 /// 안내를 보내도 화면이 바뀌지 않으면 unknown으로 남기고 자동으로 다시 보내지 않는다(§8.5 a)
 /// 입력창을 읽을 수 없는 harness(`mute`: 화면이 바뀌지 않는다): ticker는 한 번 보내고, 다시 보내기 전에 화면으로 앞
@@ -1703,7 +1853,9 @@ fn start_defaults_profile_kind_and_task() {
         .unwrap();
     let c = w.start(&["--from-task", "새 일"]);
     assert_eq!((c["profile"].as_str(), c["title"].as_str()), (Some("fake"), Some("새 일")), "{c}");
-    assert!(c.get("warnings").is_none(), "{c}");
+    // 저장소 칸이 빈 task는 작업 폴더로 띄우고 경고한다(plan §8.330, --kind를 주면 경고 없음)
+    assert_eq!(c["thread_kind"], "dir", "{c}");
+    assert_eq!(c["warnings"], serde_json::json!(["task에 저장소 칸이 없어 작업 폴더로 띄웠다"]), "{c}");
     let o = w.h.run(&["thread", "start", "demo", "--from-task", "맡긴 일"]);
     let out = String::from_utf8_lossy(&o.stdout);
     assert!(o.status.success(), "{out}{}", String::from_utf8_lossy(&o.stderr));
@@ -4064,7 +4216,13 @@ fn coordinator_flow() {
             && guide.contains("`aaa post user --request")
             && !guide.contains("aaa post demo")
             && guide.contains("aaa project sweep demo")
-            && guide.contains("--from-task"),
+            && guide.contains("--from-task")
+            // thread의 시작 질문을 받는 쪽(plan §8.328): 채팅으로 묻고 턴을 끝낸다. harness 질문 창은 턴을 막아 쓰지 않는다
+            && guide.contains("시작할 때 모아 묻는 질문")
+            && guide.contains("턴을 끝내고 다른 일을 이어 간다")
+            && guide.contains("`aaa thread answer <id> 1A 2B`")
+            && guide.contains("## 앱 안 참조")
+            && guide.contains("harness의 질문 창(예: Claude Code AskUserQuestion)은 쓰지 않는다"),
         "{guide}"
     );
     let e = w.h.json(&["project", "create", "p2"]).expect_err("둘째 프로젝트");

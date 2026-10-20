@@ -848,6 +848,15 @@ svg.i { width: 16px; height: 16px; flex-shrink: 0; fill: none; stroke: currentCo
 .files a { color: var(--text-strong); text-decoration: none; overflow-wrap: anywhere; font-family: var(--font-mono); font-size: calc(var(--fs-xs) * 12.5 / 12); }
 .files a:hover { color: var(--accent); text-decoration: underline; }
 .files .size { margin-left: auto; color: var(--text-dim); font-size: var(--fs-xs); font-variant-numeric: tabular-nums; white-space: nowrap; }
+/* 결과물 md·html 줄의 「할 일에」(plan §8.327): 크기 뒤 끝에 둔다. 휴대폰은 글 없이 아이콘만(손가락 칸은 44px) */
+.files .file-task-add { flex: 0 0 auto; display: inline-flex; align-items: center; gap: 4px; color: var(--text-dim); }
+.files .file-task-add:hover { color: var(--accent); }
+@media (max-width: 640px) {
+  .files .file-task-add { min-width: 44px; min-height: 38px; justify-content: center; }
+  .files .file-task-add .label { display: none; }
+  /* 보고서 머리는 이름이 먼저다: 「할 일에 추가」는 아이콘만 */
+  .report-task-add .label { display: none; }
+}
 .library-frame { width: 100%; height: 56vh; border: 1px solid var(--border); border-radius: var(--r-md); background: #fff; }
 
 /* 빈 화면 머리: 좁은 창의 목록 drawer 단추, 머리 알림, 「더 보기」 */
@@ -1507,3 +1516,44 @@ summary.chat-compact-head { cursor: pointer; }
 }
 ::highlight(aaa-chat-find) { background-color: color-mix(in srgb, var(--accent) 32%, transparent); color: var(--text-strong); }
 ::highlight(aaa-chat-find-active) { background-color: var(--accent); color: var(--bg); }
+
+/* 앱 안 참조 칩(plan §8.329): 대화 글의 `aaa:question/…`·`aaa:report/…`. 링크가 아니라 앱 안에서 연다 */
+.app-ref { display: inline-flex; align-items: center; gap: 6px; max-width: 100%; height: 26px; padding: 0 10px 0 8px; margin: 0 2px; border-radius: var(--radius-pill); border: var(--hairline) solid var(--border-strong); background: var(--bg-elevated); color: var(--text-strong); font: inherit; font-size: var(--fs-sm); font-weight: var(--fw-medium); line-height: 1; vertical-align: middle; cursor: pointer; white-space: nowrap; overflow: hidden; }
+.app-ref svg { width: 14px; height: 14px; flex: none; }
+.app-ref-label { overflow: hidden; text-overflow: ellipsis; }
+.app-ref-state { color: var(--text-dim); font-size: var(--fs-xs); flex: none; }
+.app-ref.is-ask { border-color: color-mix(in srgb, var(--status-blocked) 55%, transparent); background: var(--status-blocked-tint); }
+.app-ref.is-ask svg, .app-ref.is-ask .app-ref-state { color: var(--status-blocked); }
+.app-ref.is-done { border-color: color-mix(in srgb, var(--status-done) 45%, transparent); background: var(--status-done-tint); }
+.app-ref.is-done svg { color: var(--status-done); }
+.app-ref.is-report svg { color: var(--accent); }
+@media (hover: hover) { .app-ref:hover { border-color: var(--accent); } }
+.app-ref:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.dock-ref { display: flex; max-width: 1120px; margin: 0 0 var(--space-2); }
+
+/* 보고서 화면 위 「지금」 줄과 「답할 것」(plan §8.329). 카드는 화면 선택 창 카드(PromptCard) 꼴이고 패널이 굴러가니 높이를 묶지 않는다 */
+.thread-asks { display: flex; flex-direction: column; gap: var(--space-2); margin: 0 0 var(--space-4); }
+.thread-asks-now { display: flex; flex-wrap: wrap; gap: var(--space-2); }
+.thread-asks-now span { font-size: var(--fs-xs); padding: 2px 10px; border-radius: var(--radius-pill); background: var(--bg-elevated); border: var(--hairline) solid var(--border); color: var(--text); }
+.thread-asks-now b { font-weight: var(--fw-semibold); }
+.thread-asks-now span.is-ask { background: var(--status-blocked-tint); color: var(--status-blocked); border-color: transparent; }
+.thread-asks-title { margin: var(--space-2) 0 0; font-size: var(--fs-sm); color: var(--text-dim); font-weight: var(--fw-semibold); }
+.thread-ask-row { display: flex; align-items: center; gap: var(--space-2); width: 100%; padding: 10px 12px; border-radius: var(--radius-lg); border: var(--hairline) solid var(--border); background: var(--bg-elevated); color: inherit; font: inherit; font-size: var(--fs-sm); text-align: start; cursor: pointer; }
+.thread-ask-row-title { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text-strong); }
+.thread-ask-row-meta { color: var(--text-dim); font-size: var(--fs-xs); white-space: nowrap; }
+.thread-ask-row.is-done { opacity: .75; }
+.prompt-card.thread-ask-card { max-height: none; gap: var(--space-3); overflow: visible; }
+.thread-ask-fold { margin-inline-start: auto; flex: none; }
+.thread-ask-q { display: flex; flex-direction: column; gap: var(--space-2); }
+.thread-ask-q + .thread-ask-q { border-top: var(--hairline) solid var(--border); padding-top: var(--space-3); }
+.thread-ask-q .prompt-card-question { display: flex; gap: var(--space-2); align-items: baseline; font-weight: var(--fw-semibold); color: var(--text-strong); }
+.thread-ask-qno { font-family: var(--font-mono); font-size: var(--fs-xs); color: var(--text-dim); }
+.thread-ask-card .prompt-card-option.is-checked { background: var(--accent-tint); border-color: var(--accent); }
+.thread-ask-foot { display: flex; align-items: center; justify-content: space-between; gap: var(--space-2); flex-wrap: wrap; }
+.thread-ask-foot .muted { font-size: var(--fs-xs); color: var(--text-dim); }
+.thread-ask-card.is-answered .prompt-card-header h2 { color: var(--status-done); }
+.thread-ask-answers { list-style: none; margin: 0; padding: 0 0 var(--space-3); display: flex; flex-direction: column; gap: var(--space-1); font-size: var(--fs-sm); }
+.thread-ask-answers .muted { color: var(--text-dim); }
+.thread-ask-answers strong { color: var(--text-strong); }
+.thread-ask-card .prompt-card-header h2 { flex: none; }
+.thread-ask-card .prompt-card-where { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

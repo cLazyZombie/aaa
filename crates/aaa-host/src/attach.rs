@@ -36,7 +36,7 @@ pub(crate) struct Attached {
 }
 
 /// 확장자. 브라우저가 알린 MIME이 아니라 내용의 signature로 정한다.
-fn sniff(b: &[u8]) -> Option<&'static str> {
+pub(crate) fn sniff(b: &[u8]) -> Option<&'static str> {
     if b.starts_with(b"\x89PNG\r\n\x1a\n") {
         Some("png")
     } else if b.starts_with(&[0xff, 0xd8, 0xff]) {

@@ -1,15 +1,18 @@
 //! `aaa host`: host backend. 정본 목록·권한·Front API·웹을 갖고, 각 머신의 agent backend와 Agent link로 통신한다.
 //!
-//! - host는 자식 프로세스를 만들지 않는다. 예외: tailscale CLI, 개발 모드의 로컬 agent 기동(§4.2).
+//! - host의 자식 실행은 tailscale CLI, 개발 모드 로컬 agent(§4.2), 세션 밖 CLI가 요청한 격리 공식 로그인뿐이다.
 //! - pane 화면은 agent(session host)가 정본이다. host는 마지막 화면 mirror를 가져 agent가 끊겨도 읽기 전용으로 보여 준다.
 
 mod adopt;
+mod answer;
 mod app_badge;
 mod attach;
 /// 자동화 정본 타입의 편집기용 JSON Schema. host 상태를 읽지 않는다.
 pub fn automation_schema() -> String {
     serde_json::to_string_pretty(&automation::schema()).expect("schema serialize")
 }
+mod account_login;
+mod account_policy;
 mod accounts;
 mod auto_start;
 mod automation;
@@ -64,8 +67,10 @@ mod routine_runs;
 mod seen;
 mod summary;
 pub mod tailscale;
+mod task_attach;
 mod task_clean;
 mod task_edit;
+mod task_repo;
 mod tasks;
 mod text;
 mod transitions;
@@ -1050,6 +1055,7 @@ impl Host {
             None
         };
         PaneView {
+            account: None,
             id: id.to_string(),
             machine_id: p.machine_id.clone(),
             machine: m.map(|m| m.name.clone()).unwrap_or_default(),
@@ -1073,8 +1079,14 @@ impl Host {
 
     pub fn pane_views(&self, role: DeviceRole) -> Vec<PaneView> {
         let projects = self.coordinator_projects();
-        let i = self.inner.lock().unwrap();
-        let mut v: Vec<_> = i.panes.iter().map(|(id, p)| Self::pane_view(&i, id, p, role, &projects)).collect();
+        let mut v: Vec<_> = {
+            let i = self.inner.lock().unwrap();
+            i.panes.iter().map(|(id, p)| Self::pane_view(&i, id, p, role, &projects)).collect()
+        };
+        // 상태 잠금을 잡은 채 DB를 조회하지 않는다.
+        for pane in &mut v {
+            pane.account = self.pane_account(&pane.id).ok().flatten().map(|a| a.account);
+        }
         // 처음 띄운 차례(ULID): 재개·재부팅 복원으로 새 ID가 되어도 처음 ID 자리에 남는다(목록이 옮겨 다니지 않는다)
         let first = |p: &PaneView| p.replaced.first().cloned().unwrap_or_else(|| p.id.clone());
         v.sort_by(|a, b| a.machine.cmp(&b.machine).then_with(|| first(a).cmp(&first(b))));
@@ -1083,8 +1095,12 @@ impl Host {
 
     pub fn pane_view_of(&self, id: &str, role: DeviceRole) -> Option<PaneView> {
         let projects = self.coordinator_projects();
-        let i = self.inner.lock().unwrap();
-        i.panes.get(id).map(|p| Self::pane_view(&i, id, p, role, &projects))
+        let mut view = {
+            let i = self.inner.lock().unwrap();
+            i.panes.get(id).map(|p| Self::pane_view(&i, id, p, role, &projects))
+        }?;
+        view.account = self.pane_account(id).ok().flatten().map(|a| a.account);
+        Some(view)
     }
 
     fn coordinator_projects(&self) -> Vec<(String, std::path::PathBuf)> {
@@ -1220,10 +1236,17 @@ impl Host {
         front: Option<&FrontRef>,
         req: FrontRequest,
     ) -> Result<FrontResponse, ErrorBody> {
-        if matches!(&req, FrontRequest::AccountImport { .. } | FrontRequest::AccountRemove { .. })
-            && (role != DeviceRole::Local || front::in_session(actor) || !actor.starts_with("local:"))
+        if matches!(
+            &req,
+            FrontRequest::AccountImport { .. }
+                | FrontRequest::AccountRemove { .. }
+                | FrontRequest::AccountDefault { .. }
+                | FrontRequest::AccountLogin { .. }
+                | FrontRequest::AccountLoginStatus { .. }
+                | FrontRequest::AccountLoginCancel { .. }
+        ) && (role != DeviceRole::Local || front::in_session(actor) || !actor.starts_with("local:"))
         {
-            return Err(err(ErrorCode::Forbidden, "계정 등록·삭제는 host의 aaa 밖 터미널에서 한다"));
+            return Err(err(ErrorCode::Forbidden, "계정 로그인·변경은 host의 aaa 세션 밖 터미널에서 한다"));
         }
         let req = if matches!(&req, FrontRequest::AccountImport { .. }) { req } else { aaa_common::redact::json(req) };
         // 기기·머신 신뢰와 공개 범위는 사람이 바꾼다. coordinator도 Local이지만 세션 안이다.
@@ -1277,7 +1300,19 @@ impl Host {
                 Ok(FrontResponse::Accounts { accounts: self.accounts.list()? })
             }
             FrontRequest::AccountList => Ok(FrontResponse::Accounts { accounts: self.accounts.list()? }),
+            FrontRequest::AccountDefaults => Ok(FrontResponse::AccountDefaults { defaults: self.account_defaults()? }),
+            FrontRequest::AccountDefault { harness, account } => {
+                self.set_default_account(&harness, account.as_deref())?;
+                self.db.audit(actor, "account_default", &format!("{harness} {}", account.as_deref().unwrap_or("off")));
+                Ok(FrontResponse::AccountDefaults { defaults: self.account_defaults()? })
+            }
+            FrontRequest::AccountLogin { name, harness } => self.account_login(&name, &harness, actor),
+            FrontRequest::AccountLoginStatus { id } => self.account_login_status(&id),
+            FrontRequest::AccountLoginCancel { id } => self.account_login_cancel(&id).await,
             FrontRequest::AccountRemove { name } => {
+                if self.account_defaults()?.iter().any(|d| d.account == name) {
+                    return Err(err(ErrorCode::BadRequest, "기본 계정은 먼저 account default --off로 해제한다"));
+                }
                 self.accounts.remove(&name)?;
                 self.db.audit(actor, "account_remove", &name);
                 Ok(FrontResponse::Done)
@@ -1363,7 +1398,9 @@ impl Host {
                 link_task,
                 task_block,
             } => {
-                // herdr-projects threads.rs `placement`: repo가 있으면 worktree, 없으면 repo 없는 작업 폴더
+                // herdr-projects threads.rs `placement`: repo가 있으면 worktree, 없으면 repo 없는 작업 폴더. task에서 띄우면
+                // 저장소 칸이 정한다(`apply_task_repo`): 요청이 정한 kind를 그 판정에 넘긴다
+                let kind_given = kind;
                 let kind = kind.unwrap_or(if repo.is_some() {
                     aaa_proto::ThreadKind::Worktree
                 } else {
@@ -1381,13 +1418,15 @@ impl Host {
                     base,
                     task,
                     role: aaa_proto::Role::Worker,
+                    attachments: Vec::new(),
                 };
-                let (warning, picked) = match from_task {
+                let (mut warnings, picked) = match from_task {
                     Some(t) => {
                         let (w, t) = self.apply_from_task(&mut a, &t, task_block.as_deref()).await?;
-                        (w, Some(t))
+                        let placed = self.apply_task_repo(&mut a, t.repo.as_deref(), kind_given)?;
+                        (w.into_iter().chain(placed).collect::<Vec<_>>(), Some(t))
                     }
-                    None => (None, None),
+                    None => (Vec::new(), None),
                 };
                 // 머신을 주지 않았으면 project.toml repos에 적힌 그 repo의 머신(herdr-projects `start`의 `listed`)
                 if a.machine.is_none() {
@@ -1401,7 +1440,7 @@ impl Host {
                 } else {
                     self.thread_start(a, actor).await?
                 };
-                v.warnings.extend(warning);
+                v.warnings.append(&mut warnings);
                 // 시작에 성공했으면 그 task 줄 끝에 thread를 잇는다(할 일 T3, 시작할 때 읽은 블록으로)
                 if link_task && let Some(t) = &picked {
                     v.warnings.extend(self.link_started(&project, t, &v.id, actor).await);
@@ -1476,6 +1515,7 @@ impl Host {
                 self.library_opened(&project, &name);
                 Ok(FrontResponse::Library(view))
             }
+            FrontRequest::LibraryResolve { project, cap } => self.library_resolve(&project, &cap),
             FrontRequest::LibraryUsage => self.library_usage(),
             FrontRequest::LibraryLink { project, thread, days } => {
                 self.library_link(&project, &thread, days, actor).map(FrontResponse::LibraryLink)
@@ -1530,6 +1570,9 @@ impl Host {
             .map(FrontResponse::Question),
             FrontRequest::ThreadMessage { project, thread, text, mode } => {
                 self.thread_message(&project, &thread, text, mode, actor).await.map(FrontResponse::Message)
+            }
+            FrontRequest::ThreadAnswer { project, thread, report_hash, picks, text } => {
+                self.thread_answer(&project, &thread, &report_hash, picks, text, actor).await.map(FrontResponse::Thread)
             }
             FrontRequest::Preferences => Ok(FrontResponse::Preferences(self.preferences.get())),
             FrontRequest::PreferencesSet { settings, pins } => {
@@ -2097,7 +2140,7 @@ impl Host {
         spec: SpawnSpec,
         actor: &str,
     ) -> Result<String, ErrorBody> {
-        let new_id = self.spawn_on(mid, spec, actor).await?;
+        let new_id = self.respawn_with_account(id, mid, spec, actor).await?;
         self.db.audit(actor, "pane_resume", &format!("{id} -> {new_id}"));
         self.replace_pane(id, &new_id, mid, actor).await;
         Ok(new_id)
@@ -2956,6 +2999,7 @@ pub async fn run_with_shutdown(
         });
     }
     shutdown.await;
+    host.cancel_account_logins().await;
     tracing::info!("host 종료(세션은 agent·session host가 계속 유지한다)");
     Ok(())
 }

@@ -1153,17 +1153,6 @@ impl Agent {
             aaa_common::redact::remember_auth(&c.harness, &c.secret.0);
         }
 
-        if credential.as_ref().is_some_and(|c| c.harness == "codex") {
-            // 이 비공개 override를 실제 지원하는 버전만 인증을 받는다. unknown CLI로 직접 refresh하지 않는다.
-            let executable = spec.argv.first().context("Codex 실행 파일이 없다")?;
-            let mut command = tokio::process::Command::new(executable);
-            command.arg("--version").stdin(std::process::Stdio::null()).kill_on_drop(true);
-            let result = tokio::time::timeout(Duration::from_secs(5), command.output()).await;
-            anyhow::ensure!(
-                matches!(result, Ok(Ok(ref out)) if out.status.success() && out.stdout == b"codex-cli 0.163.0\n"),
-                "계정 Codex는 refresh 중계가 확인된 0.163.0이 필요하다"
-            );
-        }
         let id = util::new_id();
         let paths = SessionPaths::new(&self.state, &id);
         util::ensure_private_dir(&paths.dir)?;
@@ -1213,14 +1202,29 @@ impl Agent {
             && let Some(resolved) = &spec.resolved_profile
         {
             // 저장 때 가린 env만 복원한다. 일반 env와 재개 argv는 종전 값이 유지된다.
-            if spec.env.iter().any(|(_, value)| value.contains("********")) {
+            if credential.is_some() || spec.env.iter().any(|(_, value)| value.contains("********")) {
                 let cfg = self.threads_cfg.lock().unwrap().clone().fresh()?;
                 for (key, value) in threads::local_env(&cfg, resolved) {
-                    if let Some((_, old)) = spec.env.iter_mut().find(|(k, v)| k == &key && v.contains("********")) {
+                    if let Some((_, old)) =
+                        spec.env.iter_mut().find(|(k, v)| k == &key && (credential.is_some() || v.contains("********")))
+                    {
                         *old = value;
+                    } else if credential.is_some() && !spec.env.iter().any(|(k, _)| k == &key) {
+                        spec.env.push((key, value));
                     }
                 }
             }
+        }
+        if credential.as_ref().is_some_and(|c| c.harness == "codex") {
+            // 이 비공개 override를 실제 지원하는 버전만 인증을 받는다. unknown CLI로 직접 refresh하지 않는다.
+            let executable = spec.argv.first().context("Codex 실행 파일이 없다")?;
+            let mut command = tokio::process::Command::new(executable);
+            command.arg("--version").stdin(std::process::Stdio::null()).kill_on_drop(true);
+            let result = tokio::time::timeout(Duration::from_secs(5), command.output()).await;
+            anyhow::ensure!(
+                matches!(result, Ok(Ok(ref out)) if out.status.success() && out.stdout == b"codex-cli 0.163.0\n"),
+                "계정 Codex는 refresh 중계가 확인된 0.163.0이 필요하다"
+            );
         }
         for (key, value) in &spec.env {
             aaa_common::redact::remember_env(key, value);
@@ -1608,6 +1612,21 @@ impl Agent {
             }
             AgentRequest::AttachWrite { session, att, offset, data, eof } => {
                 self.attach_write(&session, &att, offset, data.0, eof).await
+            }
+            AgentRequest::WorkAttachWrite { work_dir, att, offset, data, eof } => {
+                tokio::task::spawn_blocking(move || {
+                    threads::check_work_dir(&work_dir)
+                        .and_then(|dir| attach::write_work(&dir, &att, offset, &data.0, eof))
+                })
+                .await
+                .map_err(|e| ErrorBody::new(ErrorCode::Internal, e.to_string()))
+                .and_then(|r| {
+                    r.map(|r| match r {
+                        Some((path, sha256)) => AgentResponse::Attached { path, sha256 },
+                        None => AgentResponse::Done,
+                    })
+                    .map_err(|e| ErrorBody::new(ErrorCode::BadRequest, format!("{e:#}")))
+                })
             }
             AgentRequest::TermColors(c) => {
                 self.set_term_colors(c).await;

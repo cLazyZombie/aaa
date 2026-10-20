@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties }
 import type {
   AgentActivity,
   DeviceRole,
+  LibraryReport,
   MachineView,
   MenuPick,
   NoticeView,
@@ -14,10 +15,10 @@ import { ActivityBar } from "./ActivityBar";
 import { SidebarResizer } from "./SidebarResizer";
 import { PANEL_LABEL, revealPanel, storedCollapsed, storedPanel, storeSidebar, type SidebarPanel } from "./sidebarPanel";
 import { ReportsView, type ReportRef } from "./ReportsView";
-import { TasksView, useSeenMine, useTaskBoard } from "./TasksView";
+import { TasksView, useSeenMine, useTaskBoard, type TaskAddRequest } from "./TasksView";
 import { composerDrafts } from "./herdr/composerDraft.ts";
 import { readTerminalDraft, writeTerminalDraft } from "./herdr/terminalDraft.ts";
-import { taskBadge } from "./tasksModel";
+import { reportDoc, reportDocLink, taskBadge, uploadsBase, type TaskAttachment } from "./tasksModel";
 import { UpdateNotice } from "./UpdateNotice";
 import { ApiError, call, me, onSignedOut, pushedSince, pushInfo, signOut, tellAlert, watchEvents } from "./api";
 import { removePushSubscription } from "./push";
@@ -55,6 +56,9 @@ import { currentAppearance, updateAppearance, useAppearance } from "./theme";
 import { passingFolder, recentDirectories } from "./herdr/recent-directories.ts";
 import { useMediaQuery } from "./herdr/useMediaQuery.ts";
 import { inAppLink } from "./reportLinks.ts";
+import type { AppRef } from "./appRef";
+import { AppRefChip, AppRefContext, type AppRefLook, type AppRefs } from "./AppRefChip";
+import { asks } from "./ThreadAsks";
 import { watchDrawerSwipe } from "./herdr/edgeSwipe.ts";
 import { DrawerContext, DrawerToggle, HeadContext, HeadMore, HeadNote } from "./drawer";
 import { highMachines, HIGH_STAT } from "./machineStats";
@@ -266,7 +270,7 @@ function storeSelection(sel: string): void {
 
 /**
  * 고른 것: `#pane=<id>`, `#thread=<id>`, 모든 thread `#threads`, 보고서 화면 `#reports`(목록)·`#report=<project>/<name>`(하나,
- * plan §8.240), 할 일 화면 `#tasks`(plan §8.306). host는 프로젝트 하나만 맡아(plan §8.291) 주소에 프로젝트가 없다. 옛 주소(이미 보낸 알림·저장한 링크)도 연다:
+ * plan §8.240), 할 일 화면 `#tasks`(plan §8.306), thread 질문 카드 `#question=<thread>`(보고서 화면 「답할 것」의 그 카드, plan §8.329). host는 프로젝트 하나만 맡아(plan §8.291) 주소에 프로젝트가 없다. 옛 주소(이미 보낸 알림·저장한 링크)도 연다:
  * `#thread=<project>/<id>`는 그대로 받고, 프로젝트 고르기 `#projects`·프로젝트 thread 보기 `#project=<name>`은 `#threads`로 바꾼다.
  * 짧은 thread 주소는 thread 목록을 받은 뒤 내부 열쇠 `thread:<project>/<id>`로 바뀐다(App의 `sel` 정리).
  */
@@ -277,7 +281,7 @@ function selectedFromHash(): string | null {
   if (location.hash === "#tasks") return "tasks:";
   const r = /^#report=(.+)$/.exec(location.hash);
   if (r) return `reports:${decodeURIComponent(r[1])}`;
-  const m = /^#(pane|thread)=(.+)$/.exec(location.hash);
+  const m = /^#(pane|thread|question)=(.+)$/.exec(location.hash);
   return m ? `${m[1]}:${decodeURIComponent(m[2])}` : null;
 }
 
@@ -811,14 +815,17 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
   }, [sel, threads]);
   // 보고서 화면(plan §8.240): 막대 「보고서」는 마지막으로 본 보고서 자리(목록이나 연 보고서)로, 보고서 화면에서 다시 누르면 그 앞
   // 화면으로 간다. 한 번 연 보고서 화면은 다른 화면으로 가도 그려 둔다(ReportsView): 돌아오면 연 보고서·굴린 자리가 그대로다
-  const reportsShown = sel?.startsWith("reports:") === true;
+  const reportsShown = sel?.startsWith("reports:") === true || sel?.startsWith("question:") === true;
   // 안 본 사용자 보고서 수와 목록이 다시 읽을 때(host `reports` 사건: 올림·열어 봄·지움, plan §8.256)
   const [unseenReports, setUnseenReports] = useState(0);
   const [reportsRev, setReportsRev] = useState(0);
-  const [reportsAt, setReportsAt] = useState<string | null>(reportsShown ? sel : null);
+  // 질문 주소(`question:<thread>`)는 보고서 목록에 그 질문 카드를 펼친 것이다: 목록 자리(reportsAt)에는 남기지 않는다(펼침은 열 때마다, 2A)
+  const [reportsAt, setReportsAt] = useState<string | null>(reportsShown ? (sel!.startsWith("question:") ? "reports:" : sel) : null);
+  const askFocus = sel?.startsWith("question:") ? sel.slice("question:".length) : null;
   const beforeReports = useRef<string | null>(null);
   useEffect(() => {
     if (sel?.startsWith("reports:")) setReportsAt(sel);
+    else if (sel?.startsWith("question:")) setReportsAt("reports:");
     else beforeReports.current = sel;
   }, [sel]);
   const goSel = (next: string | null) => {
@@ -840,8 +847,19 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
     else beforeTasks.current = sel;
   }, [sel]);
   const toggleTasks = () => goSel(tasksShown ? beforeTasks.current : "tasks:");
-  // 명령 팔레트 「할 일 더하기」: 할 일 화면을 열고 새 task 폼을 연다(plan §8.311)
-  const [taskAdds, setTaskAdds] = useState(0);
+  // 명령 팔레트 「할 일 더하기」: 할 일 화면을 열고 새 task 폼을 연다(plan §8.311). 보고서·thread 결과물의 「할 일에 추가」는 그 문서를
+  // 링크한 새 task나 있는 task에 링크하는 창을 연다(plan §8.327)
+  const [taskAdds, setTaskAdds] = useState<TaskAddRequest>({ seq: 0, link: null });
+  const addTask = (link: TaskAttachment | null) => {
+    if (!tasksShown) toggleTasks();
+    setTaskAdds((a) => ({ seq: a.seq + 1, link }));
+  };
+  /** 보고서 안 md·html 문서를 할 일에(조작 권한만) */
+  const addReportDoc =
+    role === "reader" ? undefined : (name: string, path: string) => {
+      const link = reportDocLink(name, path);
+      if (link) addTask(link);
+    };
 
   // 새 pane 창(herdr-web-ui App.tsx `newSessionOpen`·`newSessionMachineId`): 머신 머리 +와 단축키가 그 머신으로 연다
   const [newPaneOn, setNewPaneOn] = useState<MachineView | null>(null);
@@ -1030,6 +1048,59 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
   const taskBoard = useTaskBoard(up, openThreadIds, tasksShown);
   const seenMine = useSeenMine(taskBoard.board);
   const shownThreads = allThreads.filter((t) => t.group !== "resolved");
+  // thread 질문(plan §8.329): 보고서 화면 「답할 것」, 활동 막대 빨강 수(3A), 대화의 칩. 답은 host가 한 번만 받고 thread에 보낸다
+  const askCount = shownThreads.filter(asks).length;
+  const answerThread = async (t: ThreadView, picks: (number | null)[], text: string | null) => {
+    const r = await call({ op: "thread_answer", project: t.project, thread: t.id, report_hash: t.questions!.report_hash, picks, text });
+    if (r.kind === "thread") putThread(r);
+  };
+  // `aaa:report/<이름>`의 제목·프로젝트: 보고서 목록이 바뀔 때(host `reports` 사건) 다시 읽는다. 못 읽으면 이름 그대로다
+  const [reportNames, setReportNames] = useState<Map<string, LibraryReport>>(new Map());
+  useEffect(() => {
+    if (!up) return;
+    let live = true;
+    call({ op: "library_reports", project: null })
+      .then((r) => {
+        if (live && r.kind === "library_reports") setReportNames(new Map(r.reports.map((x) => [x.name, x])));
+      })
+      .catch(() => {});
+    return () => {
+      live = false;
+    };
+  }, [up, reportsRev]);
+  // 칩이 그리는 상태가 바뀔 때만 새 값이다(대화 Markdown이 thread 사건마다 다시 그리지 않게)
+  const refKey = [
+    ...shownThreads.filter((t) => t.questions).map((t) => `${t.id}:${t.questions!.answer ? `done ${t.questions!.answer.summary}` : `ask ${t.questions!.items.length}`}`),
+    ...[...reportNames.values()].map((r) => `${r.project}/${r.name}:${r.title ?? ""}`),
+  ].join("\n");
+  // 같은 질문 칩을 다시 눌러도(주소가 같다) 접은 카드를 다시 펼친다
+  const [askSeq, setAskSeq] = useState(0);
+  const openRefRef = useRef<(ref: AppRef) => void>(() => {});
+  openRefRef.current = (ref: AppRef) => {
+    if (ref.kind === "question") {
+      setAskSeq((n) => n + 1);
+      return goSel(`question:${ref.target}`);
+    }
+    const r = reportNames.get(ref.target);
+    goSel(r ? `reports:${r.project}/${r.name}` : "reports:");
+    if (!r) setHeadNote(`보고서 ${ref.target}을(를) 찾지 못했다`);
+  };
+  const appRefs = useMemo<AppRefs>(() => {
+    const byId = new Map(shownThreads.map((t) => [t.id, t]));
+    return {
+      look: (ref): AppRefLook => {
+        if (ref.kind === "report") {
+          const r = reportNames.get(ref.target);
+          return { label: r?.title ?? ref.target, tone: "report", state: r?.from_thread && r.from_thread !== ref.target ? r.from_thread : null };
+        }
+        const q = byId.get(ref.target)?.questions;
+        if (!q) return { label: `${ref.target} 질문`, tone: "plain", state: null };
+        if (q.answer) return { label: `${ref.target} 질문`, tone: "done", state: `답함 · ${q.answer.summary}` };
+        return { label: `${ref.target} 질문 ${q.items.length}개`, tone: "ask", state: "답할 것" };
+      },
+      open: (ref) => openRefRef.current(ref),
+    };
+  }, [refKey]); // eslint-disable-line react-hooks/exhaustive-deps
   // pane → 그 pane에서 도는 thread(목록에서 pane 이름 대신 thread 제목을 보인다)
   const threadOfPane = new Map<string, ThreadView>();
   for (const t of threads.values()) if (t.pane) threadOfPane.set(t.pane, t);
@@ -1068,10 +1139,7 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
     addTask:
       role === "reader"
         ? null
-        : () => {
-            if (!tasksShown) toggleTasks();
-            setTaskAdds((n) => n + 1);
-          },
+        : () => addTask(null),
     toggleSidebar: actions.toggleSidebar,
   };
 
@@ -1105,6 +1173,7 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
   return (
     <DrawerContext.Provider value={drawer}>
     <HeadContext.Provider value={{ more: <MoreMenu onThreads={chooseThreads} />, note: headNote }}>
+    <AppRefContext.Provider value={appRefs}>
     <div
       className={`app${collapsed ? " sidebar-collapsed" : ""}`}
       style={sidebarWidth === null ? undefined : ({ "--sidebar-user-w": `${sidebarWidth}px` } as CSSProperties)}
@@ -1121,6 +1190,7 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
           reports={reportsShown}
           onReports={toggleReports}
           unseenReports={unseenReports}
+          askReports={askCount}
           tasks={tasksShown}
           onTasks={toggleTasks}
           // 할 일 화면이 보이는 동안 me task는 이미 본 것이다(본 기록은 effect가 그린 뒤에 남겨 그 사이 배지가 튄다)
@@ -1191,6 +1261,12 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
             role={role}
             rev={reportsRev}
             onOpen={(r) => goSel(r ? `reports:${r.project}/${r.name}` : "reports:")}
+            threads={shownThreads}
+            askFocus={askFocus}
+            askSeq={askSeq}
+            unseen={unseenReports}
+            onAnswer={answerThread}
+            onAddDoc={addReportDoc}
           />
         )}
         {tasksOpened && (
@@ -1207,7 +1283,16 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
               if (t) chooseThread(t);
             }}
             onSeenMine={seenMine.see}
+            fileOpen={fileViewing !== null}
             onHandOff={canControl ? handOff : undefined}
+            onOpenAttachment={async (project, a) => {
+              // task 첨부 문서(plan §8.327): 올린 md·html은 uploads 주소, 보고서 문서는 그 보고서 보기 경로 안에서 파일 보기로 연다
+              if (a.kind === "upload") openFile({ path: a.target.replace(/^uploads\//, ""), pane: null, view: uploadsBase(project) });
+              const doc = a.kind === "report" ? reportDoc(a.target) : null;
+              if (!doc) return;
+              const r = await call({ op: "library_open", project, name: doc.name });
+              if (r.kind === "library") openFile({ path: doc.path, pane: null, view: r.base });
+            }}
           />
         )}
         {reportsShown || tasksShown ? null : currentThread ? (
@@ -1222,6 +1307,7 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
             }
             onOpenFile={(path) => openFile({ path, pane: null, library: { project: currentThread.project, thread: currentThread.id } })}
             onOpenReportFile={role !== "reader" ? (path) => openFile({ path, pane: null, worktree: { project: currentThread.project, thread: currentThread.id } }) : undefined}
+            onAddDoc={addReportDoc && ((path) => addReportDoc(currentThread.id, path))}
           />
         ) : sel === "threads:" ? (
           <ProjectThreads
@@ -1257,7 +1343,7 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
               </>
             }
             dock={
-              currentQ.length > 0 ? (
+              currentQ.length > 0 || threadOfPane.get(current.id)?.questions ? (
                 <div className="dock">
                   {currentQ.map((q) =>
                     q.menu ? (
@@ -1273,6 +1359,12 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
                     ) : (
                       <QuestionCard key={q.id} q={q} where={whereOf(q)} canControl={canControl} onPick={answer} docked />
                     ),
+                  )}
+                  {/* 그 thread 보고의 질문(plan §8.329, 사용자 결정 10-20 4A): 입력칸 위 한 줄 칩, 누르면 질문 카드 */}
+                  {threadOfPane.get(current.id)?.questions && (
+                    <div className="dock-ref" data-testid="dock-question">
+                      <AppRefChip at={{ kind: "question", target: threadOfPane.get(current.id)!.id }} />
+                    </div>
                   )}
                 </div>
               ) : null
@@ -1377,6 +1469,7 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
         }}
       />
     </div>
+    </AppRefContext.Provider>
     </HeadContext.Provider>
     </DrawerContext.Provider>
   );

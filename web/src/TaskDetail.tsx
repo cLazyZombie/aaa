@@ -6,14 +6,28 @@
 //
 // 편집을 시작한 판(`base`)의 블록 hash로 저장한다: 그사이 파일에서 이 task가 바뀌면 host가 쓰지 않고 충돌로 돌려준다(t-0469 §2.3).
 // 손대지 않은 폼은 새 판을 따라가고, 손댄 폼은 「파일에서 바뀌었다」를 보인다.
-import { useEffect, useMemo, useRef, useState, type ReactNode, type SyntheticEvent } from "react";
+//
+// 첨부 그림(§8.327, TaskAttachments.tsx): 손대지 않은 폼에 붙이면 메모 끝에 첨부 줄을 더해 바로 저장한다(사진 고르기 없이 「붙여넣기」
+// 한 번으로 그 task에 붙는다). 고치는 중인 폼(손댄 폼·새 task)은 초안 메모에 더하고 「저장」 때 함께 쓴다:
+// 그사이 바로 저장하면 편집을 시작한 판의 블록 hash가 낡아 폼 저장이 충돌로 돌아온다. 메모 입력칸은 첨부 줄을 빼고 보이며(첨부 칸이
+// 보인다) 첨부 줄은 메모 끝에 둔다.
+import { useEffect, useMemo, useRef, useState, type ClipboardEvent, type ReactNode, type SyntheticEvent } from "react";
 import { Bot, ChevronLeft, Circle, CircleDot, Play, Triangle, TriangleAlert, Unlink, X } from "lucide-react";
 import type { OwnerChoice, TaskAnchor, TaskBoard, TaskLogEntry, TaskOp, TaskView } from "./gen/proto";
 import { Markdown } from "./Markdown";
+import { uploadTaskFile } from "./api";
+import { TaskAttachments, dragHasFiles, filesOf, resolveReportLink, type PendingUpload } from "./TaskAttachments";
 import { GROUP_WORD } from "./sidebarModel";
 import { usePhoneSheetBack } from "./herdr/sheetHistory";
 import type { MyEdit } from "./TaskDialogs";
 import {
+  addAttachment,
+  fileKind,
+  memoText,
+  withMemoText,
+  pickAttachable,
+  removeAttachment,
+  withoutAttachments,
   TASK_ACTION_LABEL,
   TASK_STATE_LABEL,
   ago,
@@ -28,9 +42,11 @@ import {
   noteLines,
   ownerLabel,
   parentAnchor,
+  REPO_DIR,
   startable,
   taskDepth,
   taskState,
+  type TaskAttachment,
   type TaskDraft,
   type TaskState,
   type ThreadGroups,
@@ -116,12 +132,26 @@ export interface DetailProps {
   onHandOff?: (t: TaskView, again: boolean) => Promise<void>;
   /** 「바로 시작」 확인창을 연다 */
   onStart?: (t: TaskView) => void;
+  /** host가 task 첨부를 안다(FRONT_API 1.71): 붙이기·떼기. 보기는 늘 한다 */
+  attachApi?: boolean;
+  /** host가 task 저장소 칸을 안다(FRONT_API 1.73): 폼의 저장소 고르기 */
+  repoApi?: boolean;
+  /** 첨부 문서 열기(올린 md·html, 보고서 안 문서: 파일 보기) */
+  onOpenAttachment?: (a: TaskAttachment) => void;
+  /** 손대지 않은 폼의 첨부 붙이기·떼기: 그 task 메모를 최신 판에서 고쳐 바로 저장한다(차례로 줄 세운다) */
+  onChangeNotes?: (t: TaskView, change: (notes: string) => string) => Promise<void>;
+  /** 상세 위에 그림 크게 보기가 떴다(그동안 휴대폰 뒤로 기록은 그 창 것이다). TaskDetail이 채운다 */
+  onCover?: (covered: boolean) => void;
+  /** 앱 파일 보기가 떠 있다(첨부 문서를 열었다): 그동안 휴대폰 뒤로 기록은 파일 보기 것이다 */
+  fileOpen?: boolean;
 }
 
 export function TaskDetail(props: DetailProps) {
   const { t, onClose } = props;
-  // 휴대폰은 전체 화면 시트: 시스템 Back이 닫는다(herdr-web-ui, sheetHistory.ts)
-  usePhoneSheetBack(() => onClose());
+  // 휴대폰은 전체 화면 시트: 시스템 Back이 닫는다(herdr-web-ui, sheetHistory.ts). 위에 크게 보기·파일 보기가 뜬 동안은 그 창이
+  // 기록을 갖는다(시트 칸을 파일 보기가 차지한 채 두면 파일 보기를 닫은 뒤의 뒤로·화면 이동이 시트 칸과 어긋난다)
+  const [covered, setCovered] = useState(false);
+  usePhoneSheetBack(() => onClose(), !covered && !props.fileOpen);
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       // 위에 뜬 창(팔레트·설정·확인창)의 Esc는 그 창 것이다
@@ -145,13 +175,13 @@ export function TaskDetail(props: DetailProps) {
         </button>
         <span className="task-detail-list">{t ? `${t.list || "(목록 없음)"} · ${t.line}줄` : props.gone ? "파일에서 빠짐" : "새 할 일"}</span>
       </header>
-      {props.canEdit ? <TaskForm {...props} /> : t && <ReadOnly {...props} t={t} />}
+      {props.canEdit ? <TaskForm {...props} onCover={setCovered} /> : t && <ReadOnly {...props} onCover={setCovered} t={t} />}
     </aside>
   );
 }
 
 /** 보기 권한: T1 상세 그대로(제목·owner·형식 어긋남·메모·원문 줄·상위·하위) */
-function ReadOnly({ t, byLine, groups, onThread, onPick }: DetailProps & { t: TaskView }) {
+function ReadOnly({ t, board, byLine, groups, onThread, onPick, onOpenAttachment, onCover }: DetailProps & { t: TaskView }) {
   const owner = ownerLabel(t);
   const state = taskState(t, groups);
   return (
@@ -163,6 +193,7 @@ function ReadOnly({ t, byLine, groups, onThread, onPick }: DetailProps & { t: Ta
       <div className="task-detail-chips">
         <span className="task-chip">{TASK_STATE_LABEL[state]}</span>
         {owner && <span className={`task-chip task-owner${owner === "미할당" ? " is-dim" : ""}`}>owner · {owner}</span>}
+        {t.repo && <span className="task-chip task-repo">저장소 · {t.repo}</span>}
         {t.thread && <ThreadChip id={t.thread} groups={groups} onThread={onThread} />}
         {t.done && <span className="task-chip is-dim">[x] 완료 표시</span>}
       </div>
@@ -170,8 +201,9 @@ function ReadOnly({ t, byLine, groups, onThread, onPick }: DetailProps & { t: Ta
       {t.attention && <Attention t={t} />}
       <section className="task-detail-section">
         <h3>메모</h3>
-        {t.notes.length > 0 ? <Markdown className="task-notes">{t.notes.join("\n")}</Markdown> : <p className="muted">메모 없음</p>}
+        {withoutAttachments(t.notes.join("\n")) ? <Markdown className="task-notes">{withoutAttachments(t.notes.join("\n"))}</Markdown> : <p className="muted">메모 없음</p>}
       </section>
+      <TaskAttachments project={board.project} notes={t.notes.join("\n")} canEdit={false} onOpen={onOpenAttachment} onCover={onCover} />
       <section className="task-detail-section">
         <h3>원문 줄</h3>
         <pre className="task-raw" data-testid="task-raw">
@@ -253,7 +285,7 @@ function Attention({ t, actions }: { t: TaskView; actions?: ReactNode }) {
 const NEW_LIST = "\u0000new";
 
 function TaskForm(props: DetailProps) {
-  const { t, board, byLine, groups, owners, log, onThread, onPick, onSave, onDelete, linkApi, onHandOff, onStart } = props;
+  const { t, board, byLine, groups, owners, log, onThread, onPick, onSave, onDelete, linkApi, onHandOff, onStart, attachApi, repoApi, onOpenAttachment, onChangeNotes } = props;
   const agents = useMemo(() => agentNames(owners), [owners]);
   // 편집을 시작한 판: 이 판의 블록 hash로 저장한다. 상위 task도 그 판의 고정점으로 든다(줄 번호는 그사이 밀릴 수 있다)
   const [base, setBase] = useState<TaskView | null>(t);
@@ -302,10 +334,11 @@ function TaskForm(props: DetailProps) {
   const ownerValue = draft.ownerKind === "agent" ? `agent:${draft.agent}` : draft.ownerKind;
   const agentChoices = owners ? agentOptions(owners) : [];
   if (draft.ownerKind === "agent" && draft.agent && !agentChoices.some((a) => a.value === draft.agent)) agentChoices.unshift({ value: draft.agent, label: draft.agent, disabled: false });
-  const mine = (): MyEdit => {
-    const { owner } = draftOwner(draft);
-    return { title: draft.title.trim(), owner: owner || null, thread: base?.thread ?? null, notes: noteLines(draft.notes) };
+  const mineOf = (d: TaskDraft): MyEdit => {
+    const { owner } = draftOwner(d);
+    return { title: d.title.trim(), owner: owner || null, repo: d.repo || null, thread: base?.thread ?? null, notes: noteLines(d.notes) };
   };
+  const mine = () => mineOf(draft);
   const run = async (ops: TaskOp[], edit: MyEdit | null) => {
     if (submitting.current || ops.length === 0) return;
     submitting.current = true;
@@ -326,6 +359,82 @@ function TaskForm(props: DetailProps) {
     if (!dirty || draft.title.trim() === "" || (draft.ownerKind === "person" && draft.person.trim() === "")) return;
     void run(draftOps(base, draft, baseParent), mine());
   };
+  // 첨부(§8.327). 올리는 동안 폼이 바뀔 수 있어 붙일 때의 값을 ref로 본다
+  const [pending, setPending] = useState<PendingUpload[]>([]);
+  const latest = useRef({ base, dirty });
+  latest.current = { base, dirty };
+  const mounted = useRef(true);
+  useEffect(() => () => {
+    mounted.current = false;
+  }, []);
+  const uploadSeq = useRef(0);
+  const canAttach = !!attachApi && !!onChangeNotes;
+  /** 메모 고치기: 고치는 중인 폼은 초안에, 손대지 않은 폼은 바로 저장한다(폼은 새 판을 따라간다) */
+  const changeNotes = (f: (notes: string) => string) => {
+    const now = latest.current;
+    if (!now.base || now.dirty || !onChangeNotes) {
+      setDraft((d) => ({ ...d, notes: f(d.notes) }));
+      return;
+    }
+    onChangeNotes(now.base, f).catch((e: unknown) => mounted.current && setError(e instanceof Error ? e.message : String(e)));
+  };
+  const attachFiles = async (files: File[]) => {
+    if (!canAttach || files.length === 0) return;
+    const { ok, skipped } = pickAttachable(files);
+    setError(skipped.length > 0 ? `첨부하지 않은 것: ${skipped.join(", ")}` : null);
+    const picked = ok.map((i) => files[i]).filter((f): f is File => f !== undefined);
+    if (picked.length === 0) return;
+    const tiles = picked.map((f) => ({ id: ++uploadSeq.current, preview: fileKind(f) === "image" ? URL.createObjectURL(f) : null, name: f.name || "그림" }));
+    setPending((p) => [...p, ...tiles]);
+    const added: TaskAttachment[] = [];
+    try {
+      for (const f of picked) {
+        const kind = fileKind(f);
+        const target = await uploadTaskFile(board.project, f, kind === "image" || kind === null ? undefined : kind);
+        added.push(kind === "image" ? { kind: "image", target, label: "그림" } : { kind: "upload", target, label: f.name || target });
+      }
+    } catch (e) {
+      if (mounted.current) setError(`파일을 올리지 못했다: ${e instanceof Error ? e.message : String(e)}`);
+    } finally {
+      for (const tile of tiles) if (tile.preview) URL.revokeObjectURL(tile.preview);
+      if (mounted.current) setPending((p) => p.filter((x) => !tiles.some((tile) => tile.id === x.id)));
+    }
+    // 올린 것만 한 번에 붙인다(여러 개가 저장 한 번이다). 그사이 상세를 닫았으면 붙이지 않는다(파일은 uploads/에 남는다)
+    if (added.length === 0 || !mounted.current) return;
+    attach(added);
+  };
+  const attach = (added: readonly TaskAttachment[]) => changeNotes((notes) => added.reduce(addAttachment, notes));
+  // 보고서 주소(공유 링크·앱 보고서 주소)는 앱 안 보고서 문서로 바꿔 붙인다. 그사이 상세를 닫았으면 붙이지 않는다
+  const attachLink = async (a: TaskAttachment) => {
+    const { link, note } = await resolveReportLink(board.project, a);
+    if (!mounted.current) return;
+    setError(note);
+    attach([link]);
+  };
+  const removeFile = (target: string) => changeNotes((notes) => removeAttachment(notes, target));
+  // 상세가 열린 동안 어디서 붙여 넣어도(목록 행·빈 곳) 이 task에 붙는다. 다른 입력칸(검색·제목)의 붙여 넣기는 그 칸 것이다
+  useEffect(() => {
+    if (!canAttach) return;
+    const onPaste = (e: globalThis.ClipboardEvent) => {
+      if (e.defaultPrevented || document.querySelector('[aria-modal="true"]')) return;
+      const target = e.target instanceof HTMLElement ? e.target : null;
+      if (target?.closest("input, textarea, select, [contenteditable='true'], [contenteditable='']")) return;
+      const files = filesOf(e.clipboardData);
+      if (files.length === 0) return;
+      e.preventDefault();
+      void attachFiles(files);
+    };
+    window.addEventListener("paste", onPaste);
+    return () => window.removeEventListener("paste", onPaste);
+  }); // 렌더마다 최신 attachFiles를 건다
+  const pasteIntoNotes = (e: ClipboardEvent<HTMLTextAreaElement>) => {
+    if (!canAttach) return;
+    const files = filesOf(e.clipboardData);
+    if (files.length === 0) return;
+    e.preventDefault();
+    void attachFiles(files);
+  };
+  const [dropping, setDropping] = useState(false);
   const s = base?.suggestion ?? null;
   const applySuggestion = () => {
     if (!base || !s) return;
@@ -338,6 +447,7 @@ function TaskForm(props: DetailProps) {
       person: false,
       notes: s.notes,
       thread: (s.thread ?? null) === base.thread ? null : (s.thread ?? ""),
+      repo: null,
       done: null,
     };
     void run([op], { title: s.title, owner: s.owner, thread: s.thread, notes: s.notes });
@@ -365,9 +475,25 @@ function TaskForm(props: DetailProps) {
   const pastThreads = [...new Set(history.flatMap((e) => (e.thread && e.thread !== t?.thread ? [e.thread] : [])))];
   const state = t ? taskState(t, groups) : "wait";
   return (
-    <form className="task-detail-body task-form" onSubmit={submit} onKeyDown={(e) => {
+    <form className={`task-detail-body task-form${dropping ? " is-dropping" : ""}`} onSubmit={submit} onKeyDown={(e) => {
       if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) submit(e);
-    }} aria-busy={busy} data-task-saving={busy ? "true" : "false"} data-testid="task-form">
+    }}
+      onDragOver={(e) => {
+        if (!canAttach || !dragHasFiles(e)) return;
+        e.preventDefault();
+        setDropping(true);
+      }}
+      onDragLeave={(e) => {
+        if (e.currentTarget.contains(e.relatedTarget as Node | null)) return;
+        setDropping(false);
+      }}
+      onDrop={(e) => {
+        if (!canAttach || !dragHasFiles(e)) return;
+        e.preventDefault();
+        setDropping(false);
+        void attachFiles(filesOf(e.dataTransfer));
+      }}
+      aria-busy={busy} data-task-saving={busy ? "true" : "false"} data-testid="task-form">
       {t && (
         <div className="task-detail-chips">
           <StateIcon state={state} />
@@ -532,6 +658,21 @@ function TaskForm(props: DetailProps) {
             <input className="input" value={draft.person} disabled={busy} onChange={(e) => set({ person: e.target.value })} data-testid="task-field-person" />
           </label>
         )}
+        {repoApi && (
+          <label className="task-field">
+            <span>저장소</span>
+            <select className="input" value={draft.repo} disabled={busy} onChange={(e) => set({ repo: e.target.value })} data-testid="task-field-repo">
+              <option value="">정하지 않음(시작할 때 고른다)</option>
+              {(board.repos ?? []).map((r) => (
+                <option key={r} value={r}>
+                  {r}
+                </option>
+              ))}
+              <option value={REPO_DIR}>작업 폴더(저장소 없음)</option>
+              {draft.repo && draft.repo !== REPO_DIR && !(board.repos ?? []).includes(draft.repo) && <option value={draft.repo}>{draft.repo}(project.toml에 없음)</option>}
+            </select>
+          </label>
+        )}
       </div>
       <label className="task-field">
         <span>상위 task</span>
@@ -572,9 +713,9 @@ function TaskForm(props: DetailProps) {
           </button>
         </span>
         {preview ? (
-          <div className="task-notes-preview" data-testid="task-notes-preview">{draft.notes.trim() ? <Markdown className="task-notes">{draft.notes}</Markdown> : <p className="muted">메모 없음</p>}</div>
+          <div className="task-notes-preview" data-testid="task-notes-preview">{withoutAttachments(draft.notes) ? <Markdown className="task-notes">{withoutAttachments(draft.notes)}</Markdown> : <p className="muted">메모 없음</p>}</div>
         ) : (
-          <textarea ref={notesInput} className="input task-notes-input" value={draft.notes} disabled={busy} rows={5} onChange={(e) => set({ notes: e.target.value })} aria-label="메모" data-testid="task-field-notes" placeholder="여러 줄 Markdown. thread로 맡길 때 할 일 끝에 붙는다" />
+          <textarea ref={notesInput} className="input task-notes-input" value={memoText(draft.notes)} disabled={busy} rows={5} onChange={(e) => { const text = e.target.value; setDraft((d) => ({ ...d, notes: withMemoText(d.notes, text) })); }} onPaste={pasteIntoNotes} aria-label="메모" data-testid="task-field-notes" placeholder={canAttach ? "여러 줄 Markdown. 그림·문서를 붙여 넣으면 아래 첨부에 붙는다" : "여러 줄 Markdown. thread로 맡길 때 할 일 끝에 붙는다"} />
         )}
       </div>
       {error && (
@@ -615,6 +756,19 @@ function TaskForm(props: DetailProps) {
           </button>
         )}
       </div>
+      <TaskAttachments
+        project={board.project}
+        notes={draft.notes}
+        saved={base ? base.notes.join("\n") : ""}
+        canEdit={canAttach}
+        busy={busy}
+        pending={pending}
+        onFiles={(files) => void attachFiles(files)}
+        onLink={canAttach ? (a) => void attachLink(a) : undefined}
+        onRemove={(a) => removeFile(a.target)}
+        onOpen={onOpenAttachment}
+        onCover={props.onCover}
+      />
       {t && (
         <>
           <section className="task-detail-section">
@@ -624,7 +778,7 @@ function TaskForm(props: DetailProps) {
             </pre>
             {dirty && (
               <p className="muted task-form-preview">
-                저장하면: <code>{canonicalLine(draft.title.trim(), draftOwner(draft).owner || null, t.thread)}</code>
+                저장하면: <code>{canonicalLine(draft.title.trim(), draftOwner(draft).owner || null, draft.repo || null, t.thread)}</code>
               </p>
             )}
           </section>
