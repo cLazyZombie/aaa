@@ -5153,7 +5153,7 @@ primary 근거:
   일반 inbox 발행은 외부 알림 대기열을 건드리지 않고, post 저장 뒤 검증한 봉투로만 대기열에 넣는다.
 - **두 의도.** `user --request --needs-user --topic user-action`은 「확인 필요」,
   `user --notice --topic task-complete`은 「전체 완료」다. 그 외 post는 앱 안에 남는다.
-  post 글·제목은 외부 본문으로 싣지 않고 기존 고정 문구를 유지한다. debounce·done 제거·프로젝트 mute·기기별
+  post 글·제목은 외부 본문으로 싣지 않고 기존 고정 문구를 유지한다(§8.323이 확인 필요 post의 가린 제목만 싣게 바꿨다). debounce·done 제거·프로젝트 mute·기기별
   input/done·쓰는 화면 억제·실패 시 재전송 없음도 유지한다.
 - **설정.** `[notify].kinds`의 기존 기본값·옛 이름 변환은 호환성을 위해 유지한다. `post`를 빼면 외부 알림을 끄며,
   다른 종류를 추가해도 위 출처 범위를 넓힐 수 없다. 앱 안 알림의 기존 `thread-state` 선택은 유지한다. `post`의 유무는 thread 앱 안 알림을 바꾸지 않는다.
@@ -6070,3 +6070,16 @@ L4 후속(10-20 00시 사용자 관찰): 멈춤 상태의 후보 예약과 재�
 - **보존·복구.** 기존 integration 편집과 host 프로젝트 뼈대를 production 호출자와 공유한다. base/local TOML의 주석·알 수 없는 key·우선순위와 기존 repo를 보존한다. repair는 빠진 소유 파일을 저장 payload에서 복구하며 다른 내용은 conflict다. reinstall은 소유 binary를 다시 배치하고 현재 TOML·identity/pin·DB·repo/worktree를 보존한다. 기본 uninstall은 마지막 공유 참조만 제거/원본 복원하며 설정·작업 root·기록·backup을 남긴다. hook의 외부 추가/변경은 전체 파일 충돌로 보존하고 제거 성공으로 숨기지 않는다. 제거/rollback도 intent→stage→파일 완료→참조 완료를 내구화해 이미 끝난 파일 작업을 반복하지 않는다. 과거 job은 active ID와 다르면 재개하지 않고 config/root 경로도 파일과 함께 잠근다. rollback은 inode/내용이 입증된 stage만 정리하며 남긴 root·입증하지 못한 stage는 partial/remaining으로 표시한다. 버전 갱신·purge·서비스/PATH/등록/신뢰 작업은 이 경계에서 실행하지 않는다.
 - **후속 OS 검증.** I3(macOS)→I5(Windows)→I4(Linux)는 I6 승인 경로 전까지 실험실 owner가 실제 엔진과 고정 OS adapter를 직접 구동한다. CLI 승인 우회나 시험 전용 production flag/export를 넣지 않는다. 운영 서비스·계정·키체인을 변경하지 않고, 실제 OS 관리자 시험에 필요한 권한/환경은 각 단계 진입 전에 보고한다. Windows/Linux 실행은 별도 VM 없이 main push 뒤 GitHub CI의 windows-2025/ubuntu-24.04가 판정한다.
 - **시험.** 실제 파일 중단/rename·동시 편집·두 OS 프로세스 잠금·다른 instance·재실행 무변경·공유 마지막 참조·rollback/repair/reinstall·private 권한/link·root 읽기·프로젝트 보존 owner를 cargo test에 둔다. Windows에는 실제 handle link 수/DACL 거부 분기를 별도로 둔다. CLI owner는 임의 승인 파일/--yes에도 적용0·status 쓰기0을 지킨다. 보안·복구 검사를 제거한 변형 RED와 원본 bytes 복원 GREEN을 남긴다. 착지 판정은 macOS 전체 gate와 Windows cross clippy/build이며 실제 Windows/Linux는 main push 뒤 CI로 구분한다. FRONT_API/AGENT_LINK/schema는 바꾸지 않는다.
+
+### 8.323 thread 시작할 때 모아 묻기와 질문 알림(10-20, t-0512)
+
+- **요청.** 사용자 10-20 20:0x 「스레드에서 처음에 작업 맡아서 궁금한 걸 내게 물어보게 할 수 있어? 난 coordinator에서 처리하고」, 「aaa 자체 규칙에 넣어 줘」. 이어서 「이런 질문은 알람(푸시)이 오게 해 줘. 앱을 닫아 뒀다면. 열었으면 앱 내 알림으로」와 정정 「질문 푸시는 host가 직접 보내지 말고 지금 원칙대로 coordinator가 보낸다 … thread 보고 표지는 지금처럼 앱 안 알림만」. 알림 본문은 질문 요약·추천을 담는다(비밀값 없음).
+- **thread 안내(`brief_text.rs` `THREAD_GUIDE` 「시작할 때 묻기」).** 할 일을 읽고 코드·기획을 짧게 훑은 뒤, 결과를 바꿀 만큼 모호한 것만 구현 전에 한 번 모아 묻는다. 보고 첫 줄 `[결정 필요] 질문 N개: <한 줄 요약>`, `## Report`에 질문마다 선택지 2~4개와 맨 앞 추천(까닭 한 줄). 코드·기획·memory·관례로 정할 것은 묻지 않고, 물을 것이 없으면 바로 진행한다. harness의 pane 안 질문 창(AskUserQuestion 등)이 아니라 보고로 묻는다: Codex 등 모든 harness가 같은 길이고 사용자는 pane에 가지 않는다. 모든 프로젝트 brief에 들어간다.
+- **coordinator 안내(`orch.rs` `COORDINATOR_GUIDE`).** 「thread 보기와 요약」에 받는 쪽 한 항목: memory·채팅으로 답이 정해져 있지 않으면 자기 harness의 선택지 창(있으면, 예 AskUserQuestion)으로, 없으면 채팅 번호 목록으로 추천을 맨 앞에 두고 묻는다. 묻기 전에 「사용자 알림」의 확인 필요 post를 보내고(제목 예 `t-0123 질문 2개 · 추천: A안`), 답은 `aaa thread message`, 방향이 바뀌면 `--summary-file`. 「사용자 알림」의 `--title '확인 필요'`는 `'<정할 것·추천 한 줄>'`로 바꾸고 그 제목이 가려진 채 외부 본문에 실린다고 적었다. Waiting for you 보고와 post를 함께 남기는 기존 규칙은 그대로 한 곳(「사용자 알림」)에 둔다. 운영 프로젝트의 AGENTS.md는 배포 뒤 `aaa doctor files --fix`가 다시 쓴다.
+- **알림 판정(바꾸지 않음, 확인).** 외부 푸시는 §8.249대로 coordinator pane으로 검증한 사용자 post만이다. thread의 `[결정 필요]` 보고는 지금처럼 앱 안 알림(입력 필요)만 낸다. 앱을 보는 동안(쓰는 기기가 보이고 focus) coordinator post push는 `push_skipped`로 건너뛰므로 그 화면에는 thread 표지의 앱 안 알림 하나만 있다. 앱을 닫은 동안은 앱 안 알림이 없고 post push 하나가 간다. post 전용 앱 안 알림 길은 만들지 않았다: 보는 화면에는 이미 thread 표지 알림이 있어 하나 더 띄우면 겹친다(FRONT_API 그대로).
+- **본문(§8.249 고정 문구를 이 경우만 바꿈).** coordinator의 `user-action` 확인 필요 post(`post request for user`, 대상 coordinator)만 제목을 「사용자 결정 요청 · <제목>」으로 싣는다(웹 push·webhook 공통 `alert_line`·`safe_summary`). 제목은 보고 요약과 같은 가림(`notify.rs` `redact`: URL·경로·이메일·tailnet 이름·IP·이름 붙은 비밀값·알려진 token·긴 식별자, 제어 문자)을 거쳐 160자로 줄인다. 본문·참고는 싣지 않는다. 전체 완료 post와 thread가 coordinator에게 보낸 request는 고정 문구 그대로다.
+- **남은 틈(이번 범위 밖).** 보고가 올 때는 가려져 앱 안 알림이 없고(소리·탭 알림만), coordinator post 때는 보고 있어 push를 건너뛰면 그 질문의 알림은 둘 다 없다. thread 보고 알림 전반의 성질이다.
+- **검증.**
+  - host 유닛 `post::tests::coordinator_can_request_the_user_without_nudging_itself`(가린 제목 줄, webhook JSON에 본문·token 없음), `post_fence_push_matrix_and_privacy`(thread가 보낸 request는 그대로 고정 문구), `brief_text::tests::brief_order_and_memory_cap`(새 절의 자리·문구). m13 `AGENTS.md` 검사에 받는 쪽 문구.
+  - 웹 E2E 17 「시작 질문」: fake agent가 「모아 묻기 시험」 할 일에 `[결정 필요] 질문 1개` 보고만 쓰고, coordinator pane 자식 CLI가 확인 필요 post를 보낸다. (1) 휴대폰이 쓰는 기기: `push_skipped`, 이 기기 push 0, 앱 안 알림 1(입력 필요, thread 제목). (2) 가림: 앱 안 알림 0, push 1(제목 `demo`, tag `aaa-demo`, `/#threads`, 본문 `coordinator 사용자 결정 요청 · 질문 1개 · 추천: A안(기존과 같음) [숨김]`).
+  - 결함 심기: post 제목을 알림 줄에 싣지 않게 되돌리면 (2)가 「질문 push body: … "coordinator 사용자 결정 요청"」으로 실패했고, 되돌린 뒤 통과했다.

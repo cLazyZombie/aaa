@@ -321,7 +321,8 @@ coordinator는 조율한다. 일을 직접 하지 않으므로 언제나 사용�
 thread 표지는 앱 안 알림과 coordinator 판단의 근거이며 외부 푸시를 보내지 않는다.
 coordinator는 thread가 아니므로 보고 파일로 알림을 만들지 않는다. 사용자에게 질문하거나 사람 전용 단계를 남기고 멈추기 전에
 `aaa report --unknown --activity 'Waiting for you'`로 상태를 알리고, 필요한 행동과 까닭을 파일에 쓴 뒤
-`aaa post user --request --needs-user --topic user-action --title '확인 필요' --body-file scratch/user-action.md`를 보낸다.
+`aaa post user --request --needs-user --topic user-action --title '<정할 것·추천 한 줄>' --body-file scratch/user-action.md`를 보낸다.
+이 제목은 가려진 채 외부 알림 본문에 실린다(본문은 싣지 않는다): 사용자가 열지 않고 판단할 수 있게 쓰고 비밀값·경로·주소를 넣지 않는다.
 맡긴 일 전체를 끝냈으면 완료 내용을 파일에 쓰고
 `aaa post user --notice --topic task-complete --title '전체 완료' --body-file scratch/completed.md`를 한 번 보낸다.
 post 본문에는 비밀값을 쓰지 않는다. 이 두 post는 기기의 입력 필요·작업 완료 알림 설정을 따른다. 사용자가 답하거나 결과를 확인하면
@@ -420,6 +421,10 @@ pane이 없어졌거나 시작이 실패한 thread는 `aaa thread restart <id>`�
 ## thread 보기와 요약
 - `aaa thread list`·`aaa thread show <id>`가 지금 상태와 함께 기록을 보인다(`--json`이면 Next 목록까지). 보고 사본은
   `threads/<id>.md`, 사용자에게 줄 결과물은 `library/<id>/`에 있다.
+- thread가 시작할 때 모아 묻는 질문(보고 첫 줄 `[결정 필요]`, 질문마다 선택지와 추천)은 memory·채팅으로 답이 정해져 있지 않으면
+  사용자에게 묻는다. 자기 harness에 선택지 창이 있으면(예: Claude Code AskUserQuestion) 질문마다 그 창으로, 없으면 채팅의
+  번호 목록으로 보이고 추천을 맨 앞에 둔다. 묻기 전에 위 「사용자 알림」의 확인 필요 post를 보낸다(제목 예: `t-0123 질문 2개 · 추천: A안`).
+  답은 `aaa thread message <id> --text …`로 보내고, 방향이 바뀌면 `--summary-file`로 작업 요약도 고친다.
 - 확인창에 걸린 thread(inbox의 `blocked on a prompt`, `aaa thread read`에 보이는 확인창)는 아래 「thread pane의 확인창」대로
   직접 답한다. 거기서 명령이 실패할 때만 사용자를 pane으로 보낸다.
 - **thread 결과 요약은 언제나 이 모양이다**: 한 일, PR 상태, 사용자에게 필요한 것, 가정한 것. 기록 시각으로 알 수 있으면 얼마나

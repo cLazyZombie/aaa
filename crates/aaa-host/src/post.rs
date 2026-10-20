@@ -689,6 +689,8 @@ mod tests {
         let mut i = input(90);
         i.to = "user".into();
         i.topic = "user-action".into();
+        // 질문 요약·추천 제목은 가려 싣는다(plan §8.323). 본문은 싣지 않는다
+        i.title = "t-0512 질문 2개 · 추천: A안 ~/work/a.txt token=abc".into();
         assert!(matches!(h.store_post("demo", sender(), i.clone(), "worker:s1", None, 1), PostResult::Refused { .. }));
         i.post_id = format!("{:032x}", 91);
         assert!(matches!(h.front_post("demo", i, "local:cli@coord").unwrap(), PostResult::Accepted { .. }));
@@ -701,7 +703,15 @@ mod tests {
         let alert =
             crate::notify::alert_text(&crate::notify::Place::Project("demo".into()), &items, &Default::default());
         assert_eq!(alert.url, "/#threads");
-        assert_eq!(alert.lines, ["coordinator 사용자 결정 요청"]);
+        assert_eq!(alert.lines, ["coordinator 사용자 결정 요청 · t-0512 질문 2개 · 추천: A안 [숨김] [숨김]"]);
+        let body = crate::notify::notify_body(
+            "json",
+            "",
+            &crate::notify::Place::Project("demo".into()),
+            &items,
+            &Default::default(),
+        );
+        assert!(!body.to_string().contains("merge") && !body.to_string().contains("token"), "{body}");
         assert!(crate::notify::pushes(&h.cfg.notify.item_kinds(), &items[0]));
         let mut done = input(92);
         done.to = "user".into();

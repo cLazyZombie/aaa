@@ -878,6 +878,13 @@ while IFS= read -r line; do
         printf 'fake> '
         continue
       fi
+      # 할 일에 「모아 묻기 시험」이 있으면 구현 전에 모아 묻는 보고만 쓴다(brief 「시작할 때 묻기」, 17 「시작 질문」)
+      if grep -q '모아 묻기 시험' "$dir/brief.md"; then
+        printf '[결정 필요] 질문 1개: 배치\n\n## Report\n- 배치: A안(추천, 기존과 같음) · B안\n\n## Next\n- 배치를 정한다\n' > "$dir/report.md"
+        echo asked
+        printf 'fake> '
+        continue
+      fi
       cp "${root}/index.html" "${root}/pic.png" "$dir/library/"
       mkdir -p "$dir/library/docs" && cp "${root}/notes.md" "$dir/library/docs/"
       head -c 2097152 /dev/urandom > "$dir/library/big.bin"
@@ -1074,8 +1081,9 @@ async function pushLab(page) {
   );
 }
 
-/** 실제 coordinator pane 자식 CLI로 보낸다. 웹·밖 CLI가 coordinator를 자칭하지 않는다. */
-async function coordinatorPost() {
+/** 실제 coordinator pane 자식 CLI로 사용자 post를 보낸다. 웹·밖 CLI가 coordinator를 자칭하지 않는다. 기본은 전체 완료,
+ * `request`면 확인 필요(제목은 질문 요약·추천) */
+async function coordinatorPost({ request = false, title = "전체 완료" } = {}) {
   const opened = aaa("project", "open", "demo", "--profile", "fake");
   const coord = opened.pane.id;
   await waitOutput(coord, "fake>");
@@ -1083,7 +1091,8 @@ async function coordinatorPost() {
   const file = `${root}/post-${id}`;
   const quote = (s) => `'${s.replaceAll("'", "'\\''")}'`;
   fs.writeFileSync(`${file}.body`, id);
-  fs.writeFileSync(`${file}.sh`, `${quote(AA)} --json post user --notice --topic task-complete --title '전체 완료' --body-file ${quote(`${file}.body`)} --post-id ${id} > ${quote(`${file}.out`)} 2>&1\nprintf 'post-${id}-done\\n'\n`);
+  const kind = request ? "--request --needs-user --topic user-action" : "--notice --topic task-complete";
+  fs.writeFileSync(`${file}.sh`, `${quote(AA)} --json post user ${kind} --title ${quote(title)} --body-file ${quote(`${file}.body`)} --post-id ${id} > ${quote(`${file}.out`)} 2>&1\nprintf 'post-${id}-done\\n'\n`);
   aaa("pane", "run", coord, `post-probe ${file}.sh`);
   await waitOutput(coord, `post-${id}-done`);
   const result = JSON.parse(fs.readFileSync(`${file}.out`, "utf8"));

@@ -4147,7 +4147,10 @@ fn coordinator_flow() {
             && guide.contains("`aaa post user --request")
             && !guide.contains("aaa post demo")
             && guide.contains("aaa project sweep demo")
-            && guide.contains("--from-task"),
+            && guide.contains("--from-task")
+            // thread의 시작 질문을 받는 쪽(plan §8.323)
+            && guide.contains("시작할 때 모아 묻는 질문")
+            && guide.contains("AskUserQuestion"),
         "{guide}"
     );
     let e = w.h.json(&["project", "create", "p2"]).expect_err("둘째 프로젝트");

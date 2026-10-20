@@ -45,6 +45,12 @@ pub(crate) const THREAD_GUIDE: &str = "\
 - 아래 지침과 memory는 네가 하는 모든 일에 적용된다.
 - memory를 고치지 않는다. 남길 만한 교훈은 보고의 `## Remember`에 적는다. 무엇을 남길지는 coordinator가 정한다.
 
+## 시작할 때 묻기
+
+할 일을 읽고 코드·기획을 짧게 훑은 뒤, 결과를 바꿀 만큼 모호한 것이 있으면 구현 전에 한 번 모아 묻는다. 보고 첫 줄을 `[결정 필요] 질문 N개: <한 줄 요약>`으로 쓰고, `## Report`에 질문마다 선택지 2~4개를 두되 추천을 맨 앞에 까닭 한 줄과 함께 적은 뒤 멈춘다. 답은 coordinator가 메시지로 보낸다.
+코드·기획·memory로 알 수 있는 것, 관례대로 정하면 되는 것은 묻지 않는다. 물을 것이 없으면 바로 진행한다.
+harness의 pane 안 질문 창(예: Claude Code AskUserQuestion)으로 묻지 않는다. 어느 harness든 보고로 묻는다(사용자는 pane에 가지 않는다).
+
 ## 착지와 GitHub CI
 
 착지 병합 첫 줄은 `병합: <요약> (t-NNNN)`으로 끝낸다. 로컬 필수 검증과 main push 뒤 GitHub CI를 기다리지 않고 바로 보고한다.
@@ -250,6 +256,11 @@ mod tests {
         assert!(brief.contains("gamma fact"));
         assert!(brief.contains("memory가 32000자를 넘어 넣지 않은 것: memory/b.md."));
         assert!(!brief.contains(&"x".repeat(100)));
+        // 시작할 때 모아 묻기(plan §8.323): 규칙 다음, 보고 형식 앞. pane 안 질문 창이 아니라 보고로 묻는다
+        assert!(pos("## 시작할 때 묻기") < pos("## 보고"));
+        assert!(
+            brief.contains("`[결정 필요] 질문 N개: <한 줄 요약>`") && brief.contains("어느 harness든 보고로 묻는다")
+        );
         // 표지는 알림 의도에만 쓴다. thread 상태는 계속 harness·진행률로 정한다.
         assert!(brief.contains("[진행 중]") && brief.contains("[완료]") && brief.contains("사람이 직접"));
         // 운영 설정은 thread에 가지 않는다
