@@ -35,10 +35,14 @@ export default async function () {
     const p = dev.page;
     try {
       await p.getByTestId("activity-bar").waitFor();
+      await p.evaluate(() => localStorage.setItem("aaa:sidebar-panel","special"));
+      await p.reload();
+      await sidebarIs(p,{panel:"work",collapsed:false},"옛 special 기억은 작업 패널");
+      if (await p.getByTestId("activity-special").count()) throw new Error("특수 단추가 남았다");
       same(await sidebar(p), { panel: "work", collapsed: false, column: "flex", selected: "activity-work", title: "작업" }, "처음");
-      // 예전 프로젝트·에이전트 두 패널은 「작업」 하나다(plan §8.280): L3 자동화를 더해 막대 패널 단추는 작업·머신·특수·자동화 넷
+      // 예전 프로젝트·에이전트 두 패널은 「작업」 하나다(plan §8.280): L3 자동화를 더해 막대 패널 단추는 작업·머신·자동화 셋
       const tabs = await p.evaluate(() => [...document.querySelectorAll('.activity-bar [role="tab"]')].map((e) => e.dataset.testid).join(","));
-      if (tabs !== "activity-work,activity-machines,activity-special,activity-automations") throw new Error(`패널 단추: ${tabs}`);
+      if (tabs !== "activity-work,activity-machines,activity-automations") throw new Error(`패널 단추: ${tabs}`);
       await p.getByTestId("pane-t1").waitFor();
       const viewWidth = () => p.evaluate(() => Math.round(document.querySelector(".view").getBoundingClientRect().width));
       const wide = await viewWidth();
@@ -47,11 +51,11 @@ export default async function () {
       await sidebarIs(p, { panel: "machines", collapsed: false }, "머신 패널");
       same(await sidebar(p), { selected: "activity-machines", title: "머신" }, "머신 패널");
       await p.getByTestId("machine-labA").waitFor();
-      await p.getByTestId("activity-special").click();
-      await sidebarIs(p, { panel: "special", collapsed: false }, "특수 패널");
+      await p.getByTestId("activity-automations").click();
+      await sidebarIs(p, { panel: "automations", collapsed: false }, "자동화 패널");
       // 같은 단추를 다시 누르면 접힌다: 막대만 남고 본문이 사이드바 폭만큼 넓어진다
-      await p.getByTestId("activity-special").click();
-      await sidebarIs(p, { panel: "special", collapsed: true }, "접힘");
+      await p.getByTestId("activity-automations").click();
+      await sidebarIs(p, { panel: "automations", collapsed: true }, "접힘");
       same(await sidebar(p), { column: "none", selected: "" }, "접힘");
       if ((await viewWidth()) - wide !== 320) throw new Error(`접어도 본문 폭 ${wide} → ${await viewWidth()}`);
       await shot(p, "activity-collapsed");
@@ -111,9 +115,9 @@ export default async function () {
       await sidebarIs(p, { panel: "machines", collapsed: false }, "머신 패널");
       await p.keyboard.press("ControlOrMeta+Shift+ArrowDown");
       await sidebarIs(p, { panel: "work", collapsed: false }, "단축키가 연 줄의 패널");
-      // 특수 패널에서 팔레트로 agent pane·셸을 열면 둘 다 작업 패널로(예전 에이전트 패널의 줄도 이 트리에 있다)
-      await p.getByTestId("activity-special").click();
-      await sidebarIs(p, { panel: "special", collapsed: false }, "특수 패널");
+      // 자동화 패널에서 팔레트로 agent pane·셸을 열면 둘 다 작업 패널로(예전 에이전트 패널의 줄도 이 트리에 있다)
+      await p.getByTestId("activity-automations").click();
+      await sidebarIs(p, { panel: "automations", collapsed: false }, "자동화 패널");
       const palette = async (query) => {
         await p.keyboard.press("ControlOrMeta+Shift+K");
         const box = p.getByTestId("command-palette");

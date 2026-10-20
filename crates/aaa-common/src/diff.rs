@@ -22,7 +22,7 @@ pub const QUERY_TIMEOUT: Duration = Duration::from_secs(20);
 pub const EMPTY_TREE: &str = "4b825dc642cb6eb9a060e54bf8d69288fbee4904";
 
 /// 모든 git 호출 앞에 붙는다. 저장소 설정의 외부 명령·잠금·색·경로 따옴표가 끼지 않게 한다
-/// (`aaa_proto::mission_git_read_commands`와 같은 경계, t3code는 `--no-ext-diff --no-textconv`).
+/// (`aaa_proto::work_git_read_commands`와 같은 경계, t3code는 `--no-ext-diff --no-textconv`).
 pub fn git_prefix() -> Vec<String> {
     [
         "--no-pager",

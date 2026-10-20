@@ -141,8 +141,8 @@ pub fn token(g: ThreadGroup) -> &'static str {
 pub fn aaa_group(f: &Facts, now_s: i64) -> ThreadGroup {
     let now_ms = (now_s.max(0) as u64) * 1000;
     let rec = ThreadRec {
+        legacy: Default::default(),
         account: None,
-        mission: None,
         holds: vec![],
         started_by: None,
         automation: None,
@@ -187,10 +187,6 @@ pub fn aaa_group(f: &Facts, now_s: i64) -> ThreadGroup {
         report_changed_ms: None,
         merged_seen_ms: None,
         error: None,
-        eval_cursor: 0,
-        eval_inputs: vec![],
-        eval_batches: 0,
-        eval_last_batch_ms: None,
         resolve_pending: None,
         task_clean: Default::default(),
         prepare_started_ms: None,

@@ -446,7 +446,10 @@ impl Host {
             .into_iter()
             .map(|p| {
                 let dir = Path::new(&p.path);
-                let problems = crate::orch::files_problems(dir, &p.name);
+                let mut problems = crate::orch::files_problems(dir, &p.name);
+                if !crate::legacy_mission::files(dir).is_empty() {
+                    problems.push(crate::legacy_mission::REMOVED.into());
+                }
                 let (fixed, error) = match fix && !problems.is_empty() {
                     false => (false, None),
                     true => match crate::orch::write_files(dir, &p.name) {

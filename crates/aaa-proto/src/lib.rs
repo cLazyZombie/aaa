@@ -15,11 +15,11 @@ pub use deploy::*;
 pub use input::*;
 pub mod frame;
 pub mod layout;
-pub mod mission;
+pub mod legacy_special;
 pub mod msg;
 pub mod orch;
 pub mod post;
-pub use mission::*;
+pub use legacy_special::*;
 pub use post::*;
 pub mod usage;
 pub mod version;
@@ -204,6 +204,10 @@ pub fn typescript_bindings() -> String {
         FileKind::decl(&cfg),
         FileInfo::decl(&cfg),
         DirListing::decl(&cfg),
+        CommandList::decl(&cfg),
+        SlashCommand::decl(&cfg),
+        CommandSource::decl(&cfg),
+        CommandKind::decl(&cfg),
         DirFile::decl(&cfg),
         EvaluatorView::decl(&cfg),
         EvaluationDoc::decl(&cfg),

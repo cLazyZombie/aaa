@@ -91,7 +91,9 @@ pub fn hello(agent: &Agent) -> AgentHello {
         // term_colors.v1: `AgentRequest::TermColors`(색 질의에 답할 화면 색, plan §8.187)
         // diff.v1: `AgentRequest::ThreadDiff`(thread worktree의 바뀐 파일·patch, plan §8.305)
         // chat_watch.v1: `AgentRequest::ChatWatch`와 `AgentEvent::ChatChanged`(대화 기록 변화 push, plan §8.191)
+        // commands.v1: `AgentRequest::Commands`(입력칸 「/」 목록, plan §8.323)
         features: vec![
+            "commands.v1".into(),
             "account_auth.v1".into(),
             "terminal.v1".into(),
             "deployment.v1".into(),
@@ -102,7 +104,8 @@ pub fn hello(agent: &Agent) -> AgentHello {
             #[cfg(target_os = "macos")]
             "rollout_recovery.v1".into(),
             "post.v1".into(),
-            "mission.v1".into(),
+            "mission.v1".into(), // N-1 host의 파일 전송
+            "work_files.v1".into(),
             "cwd.v1".into(),
             "pr.v1".into(),
             "pr.v2".into(),
@@ -146,6 +149,7 @@ async fn session(agent: &Arc<Agent>, stream: LocalStream) -> Result<()> {
         LinkMsg::Welcome(w) => {
             tracing::info!(proto = %w.proto, host = %w.host_id, "host에 연결했다");
             *agent.host_post.lock().unwrap() = Some(w.features.iter().any(|f| f == "post.v1"));
+            *agent.host_work_files.lock().unwrap() = w.features.iter().any(|f| f == "work_files.v1");
             *agent.host_mission.lock().unwrap() = w.features.iter().any(|f| f == "mission.v1");
             agent
                 .host_compacting
