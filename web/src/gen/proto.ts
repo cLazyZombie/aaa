@@ -95,7 +95,11 @@ export type DeviceRole = "reader" | "controller" | "local";
 
 export type Connection = "connected" | "disconnected";
 
-export type MachineView = { id: string, name: string, local: boolean, connection: Connection, os: string | null, boot_id: string | null, dev_mode: boolean, last_seen_ms: number | null,
+export type MachineView = {
+/**
+ * 마지막 PR 조회의 머신별 사용 상태. 조회 전·옛 host는 생략한다.
+ */
+pr_tracking?: string, id: string, name: string, local: boolean, connection: Connection, os: string | null, boot_id: string | null, dev_mode: boolean, last_seen_ms: number | null,
 /**
  * 마지막 건강 보고(§8.10). 연결 중이 아니면 오래된 값이다.
  */
@@ -181,7 +185,11 @@ parent: number | null,
 /**
  * 형식 어긋남(owner 칸이 owner 꼴이 아님, 제목 안 thread 번호 등). 있으면 화면이 원문을 보이고 판단하지 않는다.
  */
-problems: Array<string>, };
+problems: Array<string>,
+/**
+ * 형식 어긋남 task의 「정리 제안」(FRONT_API 1.62): host가 만든 정규형 후보. 사람이 「이대로 저장」해야 바뀐다.
+ */
+suggestion: TaskSuggestion | null, };
 
 export type TaskListView = {
 /**
@@ -223,7 +231,73 @@ unlinked_threads: Array<TaskThread>,
 /**
  * project.toml `task_notes`의 파일마다(설정이 비면 비어 있다)
  */
-notes_files: Array<TaskNotesFile>, };
+notes_files: Array<TaskNotesFile>,
+/**
+ * 파일 원문(원문 편집, FRONT_API 1.62). 옛 host는 생략한다
+ */
+text: string, };
+
+export type TaskSuggestion = { title: string, owner: string | null, thread: string | null,
+/**
+ * 제안한 뒤의 메모 전체(지금 메모 앞에 옮긴 글을 둔다)
+ */
+notes: Array<string>,
+/**
+ * 제안대로 쓴 task 줄(앞 공백 없이)
+ */
+line: string,
+/**
+ * 무엇을 바꾸나(한 줄씩)
+ */
+changes: Array<string>, };
+
+export type TaskAnchor = { list: string, title: string, block_sha256: string, line: number, };
+
+export type TaskOp = { "op": "add", list: string, title: string,
+/**
+ * 비움 = 미할당
+ */
+owner: string | null,
+/**
+ * owner가 사람 이름이다(「사람으로 저장」). 아니면 `assignable --check`와 같은 판정을 거친다
+ */
+person: boolean, notes: Array<string>, parent: TaskAnchor | null, before: TaskAnchor | null, } | { "op": "update", at: TaskAnchor, title: string | null, owner: string | null, person: boolean, notes: Array<string> | null, thread: string | null, done: boolean | null, } | { "op": "delete", at: TaskAnchor, } | { "op": "move", at: TaskAnchor, to_list: string, before: TaskAnchor | null, parent: TaskAnchor | null, } | { "op": "list_add", name: string, after: string | null, } | { "op": "list_rename", name: string, to: string, } | { "op": "list_merge", name: string, into: string, } | { "op": "list_delete", name: string, } | { "op": "list_move", name: string, before: string | null, } | { "op": "restore", log_id: number, list: string | null, } | { "op": "raw_save", expected_sha256: string, text: string, };
+
+export type TaskConflict = {
+/**
+ * 맞지 않은 동작의 차례(0부터)
+ */
+op: number, reason: string,
+/**
+ * 그 task의 지금 원문(같은 제목으로 찾은 것, 지워졌으면 없음)
+ */
+latest: TaskView | null, };
+
+export type TaskAction = "add" | "update" | "delete" | "move" | "list_add" | "list_rename" | "list_merge" | "list_delete" | "list_move" | "restore" | "raw" | "auto_clean";
+
+export type TaskLogEntry = { id: number, at_ms: number,
+/**
+ * 누가(원문): `device:<id>`, `coordinator:<pane>`, `local:…`, `file`(파일 직접), `host`(자동 정리)
+ */
+actor: string,
+/**
+ * 누가(보이는 이름): 기기 이름·coordinator·터미널·파일 직접·host 자동 정리
+ */
+by: string, action: TaskAction, list: string,
+/**
+ * 옮김·목록 동작의 앞 목록(옮기기 전 목록, 이름 바꾸기·합치기 전 이름)
+ */
+from_list: string | null, title: string,
+/**
+ * 바뀌기 전 블록 원문(하위 task 포함, 더하기에는 없다)
+ */
+before: string | null, after: string | null, thread: string | null,
+/**
+ * 되살린 기록이면 그 항목 id
+ */
+restored_by: number | null, };
+
+export type TaskLogFilter = "deleted" | "auto";
 
 export type OwnerChoice = { machine: string, connected: boolean,
 /**
@@ -508,7 +582,7 @@ from_task: string | null, } | { "op": "thread_adopt", project?: string, pane: st
 /**
  * 할 일. 비면 「하던 일을 이어 하되 이제 이 프로젝트 thread다」
  */
-task: string, } | { "op": "thread_next", project?: string, thread: string, line: number | null, add: string | null, } | { "op": "context", project?: string, peek: boolean, } | { "op": "assignable", project?: string, check: string | null, } | { "op": "tasks", project?: string, } | { "op": "threads", project: string | null, role: Role | null, } | { "op": "thread_show", project?: string, thread: string, } | { "op": "thread_summary", project?: string, thread: string, } | { "op": "thread_summary_set", project?: string, thread: string, text: string, } | { "op": "thread_library", project?: string, thread: string, } | { "op": "library_link", project?: string, thread: string, days: number | null, } | { "op": "library_links", project: string | null, } | { "op": "library_link_revoke", id: string, } | { "op": "library_publish", project?: string, name: string, source: string, live: boolean,
+task: string, } | { "op": "thread_next", project?: string, thread: string, line: number | null, add: string | null, } | { "op": "context", project?: string, peek: boolean, } | { "op": "assignable", project?: string, check: string | null, } | { "op": "tasks", project?: string, } | { "op": "task_edit", project?: string, ops: Array<TaskOp>, base_sha256: string | null, } | { "op": "task_log", project?: string, before: number | null, limit: number | null, filter: TaskLogFilter | null, } | { "op": "task_log_prune", project?: string, before_ms: number, } | { "op": "threads", project: string | null, role: Role | null, } | { "op": "thread_show", project?: string, thread: string, } | { "op": "thread_summary", project?: string, thread: string, } | { "op": "thread_summary_set", project?: string, thread: string, text: string, } | { "op": "thread_library", project?: string, thread: string, } | { "op": "library_link", project?: string, thread: string, days: number | null, } | { "op": "library_links", project: string | null, } | { "op": "library_link_revoke", id: string, } | { "op": "library_publish", project?: string, name: string, source: string, live: boolean,
 /**
  * FRONT_API 1.43. 사용자에게 보내는 웹 보고서(index.html 필수, 「내 보고서」·안 봄·사용자 알림 post)
  */
@@ -598,7 +672,7 @@ message: MessageView | null, } | { "kind": "context" } & ProjectContext | { "kin
 /**
  * `check`가 통과했을 때 설명
  */
-valid: string | null, } | { "kind": "task_board" } & TaskBoard | { "kind": "screen" } & ScreenText | { "kind": "read" } & ReadView | { "kind": "thread_pane" } & ThreadPaneView | { "kind": "output_matched", matched_line: string, read: ReadView, } | { "kind": "workspaces", workspaces: Array<WorkspaceSummary>, } | { "kind": "chat" } & ChatView | { "kind": "pane_file", info: FileInfo | null, candidates: Array<string>, url: string | null, } | { "kind": "pane_dir", listing: DirListing, } | { "kind": "pending", pending: Array<PendingEnroll>, } | { "kind": "pair_code", code: string, role: DeviceRole, expires_in_s: number, } | { "kind": "publish" } & PublishState | { "kind": "devices", devices: Array<DeviceView>, } | { "kind": "workspace" } & Workspace | { "kind": "done" } | { "kind": "attached", path: string, inserted: boolean, note: string | null, } | { "kind": "projects", projects: Array<ProjectView>, } | { "kind": "instance", project: ProjectView | null, } | { "kind": "project" } & ProjectView | { "kind": "project_change" } & ProjectChange | { "kind": "project_opened" } & ProjectOpened | { "kind": "project_files", checks: Array<ProjectFilesCheck>, } | { "kind": "profiles", machine: string, profiles: Array<ProfileView>, } | { "kind": "profile_resolved", profile: ProfileView, } | { "kind": "threads", threads: Array<ThreadView>, } | { "kind": "thread" } & ThreadView | { "kind": "thread_summary" } & ThreadSummaryView | { "kind": "events", events: Array<FlowEvent>, } | { "kind": "questions", questions: Array<QuestionView>, } | { "kind": "question" } & QuestionView | { "kind": "message" } & MessageView | { "kind": "inbox", items: Array<InboxItem>,
+valid: string | null, } | { "kind": "task_board" } & TaskBoard | { "kind": "task_edited", board: TaskBoard, conflict: TaskConflict | null, log_ids: number[], } | { "kind": "task_log", entries: Array<TaskLogEntry>, next: number | null, } | { "kind": "screen" } & ScreenText | { "kind": "read" } & ReadView | { "kind": "thread_pane" } & ThreadPaneView | { "kind": "output_matched", matched_line: string, read: ReadView, } | { "kind": "workspaces", workspaces: Array<WorkspaceSummary>, } | { "kind": "chat" } & ChatView | { "kind": "pane_file", info: FileInfo | null, candidates: Array<string>, url: string | null, } | { "kind": "pane_dir", listing: DirListing, } | { "kind": "pending", pending: Array<PendingEnroll>, } | { "kind": "pair_code", code: string, role: DeviceRole, expires_in_s: number, } | { "kind": "publish" } & PublishState | { "kind": "devices", devices: Array<DeviceView>, } | { "kind": "workspace" } & Workspace | { "kind": "done" } | { "kind": "attached", path: string, inserted: boolean, note: string | null, } | { "kind": "projects", projects: Array<ProjectView>, } | { "kind": "instance", project: ProjectView | null, } | { "kind": "project" } & ProjectView | { "kind": "project_change" } & ProjectChange | { "kind": "project_opened" } & ProjectOpened | { "kind": "project_files", checks: Array<ProjectFilesCheck>, } | { "kind": "profiles", machine: string, profiles: Array<ProfileView>, } | { "kind": "profile_resolved", profile: ProfileView, } | { "kind": "threads", threads: Array<ThreadView>, } | { "kind": "thread" } & ThreadView | { "kind": "thread_summary" } & ThreadSummaryView | { "kind": "events", events: Array<FlowEvent>, } | { "kind": "questions", questions: Array<QuestionView>, } | { "kind": "question" } & QuestionView | { "kind": "message" } & MessageView | { "kind": "inbox", items: Array<InboxItem>,
 /**
  * `inbox_done`이 끝낸 항목 수(그때 `items`는 남은 항목). 목록 요청에는 없다.
  */
@@ -1365,4 +1439,114 @@ windows: Array<UsageWindow>, problem: UsageProblem | null,
 checked_at: string | null, };
 
 export type UsageReport = { providers: Array<ProviderUsage>, };
+
+export type InstallRole = "host" | "agent";
+
+export type InstallOs = "macos" | "linux" | "windows";
+
+export type InstallArch = "aarch64" | "x86_64";
+
+export type InstallMode = "fresh" | "repair" | "reinstall";
+
+export type InstallToggle = "enabled" | "disabled";
+
+export type InstallProjectMode = "create" | "use" | "skip";
+
+export type InstallStorage = "internal";
+
+export type InstallHarness = "claude" | "codex" | "none";
+
+export type InstallLogin = "require" | "defer";
+
+export type InstallHooks = "install" | "preserve" | "skip";
+
+export type InstallService = "auto" | "launchd" | "systemd-system" | "systemd-user" | "windows-scm" | "none";
+
+export type InstallAccount = "current-user";
+
+export type InstallPasswordSource = "prompt" | "stdin" | "broker";
+
+export type InstallStartup = "auto" | "manual";
+
+export type InstallStart = "now" | "deferred";
+
+export type InstallLinger = "require" | "preserve";
+
+export type InstallPathPolicy = "preserve" | "user";
+
+export type InstallLauncherPolicy = "install" | "preserve";
+
+export type InstallNetwork = "tailscale" | "direct";
+
+export type InstallWeb = "local" | "off";
+
+export type InstallServe = "on" | "off";
+
+export type InstallPairing = "controller" | "skip";
+
+export type InstallEnroll = "wait" | "grant" | "skip";
+
+export type InstallOpen = "yes" | "no";
+
+export type InstallPrompt = "auto" | "plain";
+
+export type InstallStatus = "planned" | "completed" | "unchanged" | "configured" | "needs_user" | "failed" | "cancelled";
+
+export type InstallChangeState = "planned" | "applied" | "unchanged" | "pending" | "reverted" | "failed";
+
+export type InstallCheckState = "passed" | "failed" | "not_run" | "not_requested" | "unknown";
+
+export type InstallRollbackState = "not_requested" | "completed" | "partial" | "failed";
+
+export type InstallPhase = "detect" | "preflight" | "plan" | "authorize" | "stage" | "configure" | "hooks" | "work_root" | "service" | "enroll" | "web" | "pairing" | "verify" | "rollback";
+
+export type InstallEventState = "pending" | "running" | "completed" | "unchanged" | "skipped" | "needs_user" | "failed" | "reverted";
+
+export type InstallOperation = "write_file" | "stage_binary" | "stage_launcher" | "configure_hook" | "prepare_work_root" | "register_service" | "start_service" | "publish_web" | "enroll_agent" | "create_project" | "modify_path";
+
+export type InstallSchema = "aaa.install.v1";
+
+export type InstallPlanSchema = "aaa.install.plan.v1";
+
+export type InstallEventSchema = "aaa.install.event.v1";
+
+export type InstallAuthorizationSchema = "aaa.install.authorization.v1";
+
+export type InstallGrantSchema = "aaa.install.enroll-grant.v1";
+
+export type InstallPlatform = { os: InstallOs, arch: InstallArch, };
+
+export type InstallChoices = { role: InstallRole | null, instance: string | null, config_dir: string | null, state_dir: string | null, mode: InstallMode | null, name: string | null, local_agent: InstallToggle | null, bin_path: string | null, version: string | null, from: string | null, sha256: string | null, expected_os: InstallOs | null, expected_arch: InstallArch | null, project_mode: InstallProjectMode | null, project: string | null, projects_root: string | null, goal: string | null, work_root: string | null, work_mount: string | null, work_storage: InstallStorage | null, min_free_gb: number | null, default_cwd: string | null, shell: string | null, claude_path: string | null, codex_path: string | null, claude_home: string | null, codex_home: string | null, login: InstallLogin | null, hooks: InstallHooks | null, thread_profile: string | null, coordinator_profile: string | null, service: InstallService | null, service_account: InstallAccount | null, service_password_source: InstallPasswordSource | null, startup: InstallStartup | null, start: InstallStart | null, linger: InstallLinger | null, path: InstallPathPolicy | null, launcher: string | null, launcher_policy: InstallLauncherPolicy | null, host: string | null, agent_listen: string | null, web_listen: string | null, network: InstallNetwork | null, web: InstallWeb | null, tailscale_serve: InstallServe | null, serve_port: number | null, pairing: InstallPairing | null, enroll: InstallEnroll | null, wait_timeout: number | null, open_coordinator: InstallOpen | null, repo: Array<string>, harness: Array<InstallHarness>, harness_env: Array<InstallHarnessEnv>, profile_file: Array<string>, allow_thread_profile: Array<string>, allow_coordinator_profile: Array<string>, no_repo: boolean, };
+
+export type InstallHarnessEnv = { harness: InstallHarness, key: string, value: string, };
+
+export type InstallInvocation = { choices: InstallChoices, non_interactive: boolean, yes: boolean, dry_run: boolean, json: boolean, json_stream: boolean, prompt: InstallPrompt | null, events_file: string | null, authorization_stdin: boolean, authorization_file: string | null, secrets_stdin: boolean, service_password_ref: string | null, resume: string | null, status: string | null, };
+
+export type InstallPlanContext = { platform: InstallPlatform, version: string, binary_sha256: string, bin_path: string, config_dir: string, state_dir: string, projects_root: string, default_shell: string, effective_config_sha256: string, target_account: string, };
+
+export type InstallPlan = { schema: InstallPlanSchema, context: InstallPlanContext, choices: InstallChoices, };
+
+export type InstallError = { code: string, message: string, details: Array<string>, };
+
+export type InstallChange = { kind: string, action: string, state: InstallChangeState, };
+
+export type InstallCheck = { name: string, state: InstallCheckState, };
+
+export type InstallNeedsUser = { code: string, target: string, message: string, };
+
+export type InstallRollback = { state: InstallRollbackState, remaining: Array<string>, };
+
+export type InstallResume = { installation_id: string, };
+
+export type InstallResult = { schema: InstallSchema, installation_id: string | null, plan_sha256: string | null, status: InstallStatus, exit_code: number, role: InstallRole | null, instance: string | null, platform: InstallPlatform | null, version: string | null, binary_sha256: string | null, changes: Array<InstallChange>, checks: Array<InstallCheck>, needs_user: Array<InstallNeedsUser>, error: InstallError | null, rollback: InstallRollback, resume: InstallResume | null, };
+
+export type InstallProgress = { done: number, total: number, unit: string, };
+
+export type InstallStreamItem = { "type": "event", schema: InstallEventSchema, installation_id: string | null, seq: number, phase: InstallPhase, state: InstallEventState, code: string, message: string, progress?: InstallProgress, needs_user?: InstallEventNeedsUser, } | { "type": "result", schema: InstallEventSchema, installation_id: string | null, seq: number, result: InstallResult, };
+
+export type InstallEventNeedsUser = { kind: string, resume_id: string | null, };
+
+export type InstallPermission = { operation: InstallOperation, target: string, before_sha256: string | null, after_sha256: string | null, };
+
+export type InstallAuthorizationClaims = { schema: InstallAuthorizationSchema, installation_id: string, plan_sha256: string, platform: InstallPlatform, target_account: string, instance: string | null, binary_sha256: string, permissions: Array<InstallPermission>, issued_at_ms: number, expires_at_ms: number, nonce: string, issuer: string, };
 
