@@ -1206,3 +1206,5 @@ button.report-delete:hover:not(:disabled) { color: var(--danger-text); }
 @media (max-width: 640px) {
   .file-viewer .file-viewer-close { width: max(44px, var(--touch-target)); height: max(44px, var(--touch-target)); }
 }
+/* 휴대폰 빈 화면의 「목록 열기」(plan §8.301): 손가락에 맞는 44px */
+.empty-view .empty-open-list { margin-top: var(--space-5); min-height: 44px; }

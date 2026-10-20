@@ -29,7 +29,7 @@ import { SummaryButton } from "./ThreadSummary";
 import { ThreadPanel } from "./ThreadPanel";
 import { PromptCard } from "./PromptCard";
 import { ProjectThreads } from "./ProjectThreads";
-import { ListChecks, Settings } from "lucide-react";
+import { ListChecks, Menu, Settings } from "lucide-react";
 import { Icon } from "./icons";
 import { hasAgentMark } from "./herdr/AgentMark.tsx";
 import { Sidebar } from "./Sidebar";
@@ -439,8 +439,8 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
   const seenReports = useRef(new Map<string, string | null>());
   // 이 화면이 한 번이라도 붙었었나: 다시 붙을 때 읽은 목록은 끊긴 동안 놓친 사건이다(아래)
   const linkedOnce = useRef({ questions: false, threads: false });
-  const now = useRef({ sel, panes, threads, machines, role });
-  now.current = { sel, panes, threads, machines, role };
+  const now = useRef({ sel, panes, threads, machines, role, loaded });
+  now.current = { sel, panes, threads, machines, role, loaded };
   // 늦은 알림(멈췄다 깬 페이지가 받은 사건, 다시 붙어 읽은 놓친 사건): 이 기기에 그 뒤 이미 push로 보낸 항목이면 앱 안에서
   // 다시 띄우지 않는다. push가 안 간 항목(push 꺼짐·다른 기기가 쓰는 중이라 건너뜀)만 띄운다(사용자 결정 10-18 「A」, plan §8.141).
   // 목록의 안 읽음 표시는 그대로다. host에 묻지 못하면 띄운다(놓치지 않는 쪽)
@@ -692,9 +692,19 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
   // 앱이 스스로 바꾼 주소(목록·단추·첫 고르기). 그 밖의 주소 바꿈(앱 안 알림 Droplet, 브라우저 뒤로·앞으로, 붙여 넣은 링크)은
   // 그 줄이 있는 패널을 보인다(VS Code explorer autoReveal, plan §8.240)
   const ownHash = useRef<string | null>(null);
-  const goHash = (hash: string) => {
+  // 다른 pane·thread·화면으로 가는 것만 기록 한 칸이다(뒤로가 앞 화면으로 돌아간다). 앱이 스스로 고른 첫 화면과 「고른 것 없음」은
+  // 지금 칸을 바꾼다: 뒤로 끝에 빈 「하나를 고른다」 칸이 남지 않는다(herdr-web-ui App.tsx 1091줄 첫 쓰기·autoSelected는
+  // replaceState, deepLink.ts `isNavigation`은 pane 없는 곳을 이동으로 치지 않는다, plan §8.301)
+  const goHash = (hash: string, replace = false) => {
     const next = hash ? `#${hash}` : "";
     if (location.hash === next) return;
+    if (replace) {
+      // replaceState는 hashchange를 내지 않는다
+      ownHash.current = null;
+      openedHash.current = null;
+      history.replaceState(history.state, "", next || location.pathname + location.search);
+      return;
+    }
     ownHash.current = next;
     location.hash = hash;
   };
@@ -719,6 +729,20 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
       const own = location.hash === ownHash.current;
       ownHash.current = null;
       const next = selectedFromHash();
+      if (!own) {
+        // 브라우저 뒤로·앞으로·알림이 연 곳: iPhone 왼쪽 가장자리 쓸기는 목록 drawer 쓸기와 Safari 뒤로가 함께 일어난다. 뒤로가 이기고
+        // 목록은 닫는다(참고 onPop → selectTarget의 setDrawerOpen(false), App.tsx 715줄)
+        setDrawerOpen(false);
+        // 고른 것이 없는 칸(옛 첫 칸·「고른 것 없음」)이나 닫힌 pane의 칸에 닿으면 지금 화면에 머물고 그 칸에 지금 주소를 쓴다(참고
+        // onPop: pane이 없으면 그대로, 닿은 칸에는 보이는 곳을 쓴다). 빈 「하나를 고른다」로 떨어지지 않는다
+        const { sel: shown, panes, loaded } = now.current;
+        const closed = next?.startsWith("pane:") && loaded && !panes.some((p) => `pane:${p.id}` === next || p.replaced?.includes(next.slice(5)));
+        if (shown !== null && (next === null || closed)) {
+          history.replaceState(history.state, "", `#${hashOf(shown)}`);
+          if (closed) setHeadNote("그 pane은 닫혔습니다");
+          return;
+        }
+      }
       setSel(next);
       if (!own) revealRef.current(next);
     };
@@ -729,8 +753,9 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
   // 고르면 drawer를 닫는다(참고 selectTarget·selectPane의 setDrawerOpen(false))
   // App이 스스로 고른 pane(주소의 pane이 닫혀 첫 줄로 왔다): 사용자가 고를 때까지 키보드를 가져가지 않는다(참고 autoSelected)
   const [autoSelected, setAutoSelected] = useState(false);
-  const choose = (id: string | null, auto = false) => {
-    goHash(id ? `pane=${encodeURIComponent(id)}` : "");
+  // replace: 지금 칸을 바꾼다(앱이 고른 첫 화면, 고른 것 없음. goHash)
+  const choose = (id: string | null, auto = false, replace = auto || id === null) => {
+    goHash(id ? `pane=${encodeURIComponent(id)}` : "", replace);
     setSel(id ? `pane:${id}` : null);
     setAutoSelected(auto);
     setDrawerOpen(false);
@@ -746,12 +771,12 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
     history.replaceState(history.state, "", `#pane=${encodeURIComponent(next.id)}`);
     setSel(`pane:${next.id}`);
   }, [panes, sel]);
-  const chooseThread = (t: ThreadView, from: string | null = null) => {
+  const chooseThread = (t: ThreadView, from: string | null = null, replace = false) => {
     setAutoSelected(false);
     setDrawerOpen(false);
     setBackTo(from);
     openedHash.current = `#${hashOf(`thread:${threadKey(t)}`)}`;
-    goHash(openedHash.current.slice(1));
+    goHash(openedHash.current.slice(1), replace);
     setSel(`thread:${threadKey(t)}`);
   };
   // 모든 thread(끝난 것까지, herdr-projects popup Threads). 프로젝트 고르기는 없다(host는 프로젝트 하나, plan §8.291)
@@ -896,8 +921,8 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
       const shown = [...threads.values()].filter((t) => t.group !== "resolved" && t.role !== "evaluator");
       const first = rosterRows(machines, panes, shown, currentSidebarShared().paneOrder, currentAppearance().agentOrder === "activity")[0];
       if (!first) return;
-      if ("pane" in first.open) choose(first.open.pane, auto);
-      else chooseThread(first.open.thread);
+      if ("pane" in first.open) choose(first.open.pane, auto, true);
+      else chooseThread(first.open.thread, null, true);
     };
     // 주소가 가리킨 pane이 없다(닫혔다): 첫 줄을 열고 머리에 말한다. 키보드는 사용자가 고를 때까지 둔다(참고 resolveLink
     // 「workspace-closed」·fallback·autoSelected. aaa 주소에는 workspace가 없어 그 workspace의 pane을 여는 갈래는 없다)
@@ -908,9 +933,9 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
       return pickFirst(true);
     }
     const stored = storedSelection();
-    if (stored?.startsWith("pane:") && panes.some((p) => `pane:${p.id}` === stored && p.state === "running")) return choose(stored.slice(5));
+    if (stored?.startsWith("pane:") && panes.some((p) => `pane:${p.id}` === stored && p.state === "running")) return choose(stored.slice(5), false, true);
     const storedThread = stored?.startsWith("thread:") ? threads.get(stored.slice(7)) : undefined;
-    if (storedThread && storedThread.group !== "resolved") return chooseThread(storedThread);
+    if (storedThread && storedThread.group !== "resolved") return chooseThread(storedThread, null, true);
     pickFirst(false);
     // choose·chooseThread는 주소와 setSel만 쓴다
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -1184,10 +1209,17 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
           </header>
           <div className="empty-view">
             <img className="logo big" src="/icon.svg" alt="" />
-            <h2>{open.length > 0 ? `답을 기다리는 질문 ${open.length}개` : "왼쪽에서 하나를 고른다"}</h2>
+            {/* 휴대폰(768px 이하)에는 왼쪽 칸이 없고 목록은 drawer다: 목록을 가리키고 여는 단추를 둔다(plan §8.301) */}
+            <h2>{open.length > 0 ? `답을 기다리는 질문 ${open.length}개` : wideScreen ? "왼쪽에서 하나를 고른다" : "목록에서 하나를 고른다"}</h2>
             <p>
               pane이나 thread를 고르면 터미널을 본다. 질문은 목록에 빨간 ?로 보이고, 그 pane을 열면 답할 수 있다.
             </p>
+            {!wideScreen && (
+              <button type="button" className="btn btn-primary empty-open-list" data-testid="empty-open-list" onClick={() => setDrawerOpen(true)}>
+                <Menu aria-hidden="true" />
+                목록 열기
+              </button>
+            )}
           </div>
           </>
         )}
