@@ -2106,10 +2106,29 @@ pub enum FrontRequest {
         name: String,
         approval_sha256: String,
     },
+    /// `dry_run`이면 쓰지 않고 계획만 답한다(FRONT_API 1.58, Reader 가능). 옛 host는 그 칸을 버리고 변환하므로
+    /// 웹은 `/api/v1/me`의 `front_api`가 1.58 이상일 때만 보낸다. `plan_sha256`을 주면 계획이 그 사이 바뀌었을 때 거부한다.
     AutomationConvert {
         #[serde(default)]
         #[ts(optional, as = "Option<String>")]
         project: String,
+        #[serde(default)]
+        #[ts(optional, as = "Option<bool>")]
+        dry_run: bool,
+        #[serde(default)]
+        #[ts(optional)]
+        plan_sha256: Option<String>,
+    },
+    /// 보냈는지 모르는 `do.message` 묶음을 사람이 확인하고 푼다(FRONT_API 1.58). `batch`는 화면에서 본 묶음이다.
+    /// 그 묶음은 다시 보내지 않는다. `discard`면 남은 입력도 버리고, 아니면 남은 입력을 이어 보낸다. 세션 안 연결은 거부한다.
+    AutomationUnblock {
+        #[serde(default)]
+        #[ts(optional, as = "Option<String>")]
+        project: String,
+        name: String,
+        batch: String,
+        #[serde(default)]
+        discard: bool,
     },
     /// 최근 실행·건너뜀 기록, 최대 50건(Reader 가능).
     RoutineRuns {
@@ -2245,6 +2264,7 @@ impl FrontRequest {
             | FrontRequest::RoutineApprove { project, .. }
             | FrontRequest::AutomationApprove { project, .. }
             | FrontRequest::AutomationConvert { project, .. }
+            | FrontRequest::AutomationUnblock { project, .. }
             | FrontRequest::RoutineToggle { project, .. }
             | FrontRequest::EvaluatorAssign { project, .. }
             | FrontRequest::EvaluatorUnassign { project, .. }
@@ -2290,6 +2310,7 @@ impl FrontRequest {
                 | FrontRequest::MissionShow { .. }
                 | FrontRequest::Routines { .. }
                 | FrontRequest::RoutineRuns { .. }
+                | FrontRequest::AutomationConvert { dry_run: true, .. }
                 | FrontRequest::ThreadRead { .. }
                 | FrontRequest::PaneRead { .. }
                 | FrontRequest::PaneReadText { .. }
@@ -2477,9 +2498,18 @@ pub enum FrontResponse {
     },
     AutomationConverted {
         files: Vec<String>,
+        /// 쓰지 않은 계획이다(FRONT_API 1.58). `files`는 실제 변환과 같은 모양(새 파일과 `.converted/` 보존 사본)이다.
+        #[serde(default)]
+        dry_run: bool,
+        /// 계획 hash. 실행 요청에 실어 보내면 그 사이 바뀐 계획을 거부한다.
+        #[serde(default)]
+        plan_sha256: String,
     },
     RoutineRuns {
         runs: Vec<crate::RoutineRun>,
+        /// 파일 원문(FRONT_API 1.58). 임무 조건·깨진 파일·옛 host는 없다.
+        #[serde(default)]
+        source: Option<crate::RoutineSource>,
     },
     Library(LibraryView),
     LibraryLink(LinkView),

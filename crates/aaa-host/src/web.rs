@@ -480,6 +480,8 @@ struct PairBody {
 struct Me {
     role: DeviceRole,
     device: String,
+    /// 이 host의 FRONT_API(1.58부터). 웹은 옛 host가 버리는 요청 칸(변환 미리보기)을 이것으로 고른다.
+    front_api: String,
 }
 
 async fn pair(State(host): State<Arc<Host>>, headers: HeaderMap, Json(b): Json<PairBody>) -> Response {
@@ -515,7 +517,9 @@ async fn sign_out() -> Response {
 
 async fn me(State(host): State<Arc<Host>>, headers: HeaderMap) -> Response {
     match device(&host, &headers) {
-        Some((id, role)) => Json(Outcome::Ok(Me { role, device: id })).into_response(),
+        Some((id, role)) => {
+            Json(Outcome::Ok(Me { role, device: id, front_api: aaa_proto::FRONT_API.to_string() })).into_response()
+        }
         None => unauthorized(),
     }
 }

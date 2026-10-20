@@ -1,7 +1,7 @@
-// 웹 E2E 대화의 도구 호출 묶음(plan §8.303, t3code MessagesTimeline `work-toggle`): 이어진 도구 줄이 「명령 2개 실행, 파일 3개 읽음」
+// 웹 E2E 대화의 도구 호출 묶음(plan §8.304, t3code MessagesTimeline `work-toggle`): 이어진 도구 줄이 「명령 2개 실행, 파일 3개 읽음」
 // 한 줄로 접히고, 누르면 그 줄들이 펼쳐진다. 도구 하나는 그대로 한 줄이다. 끝이 아닌 곳에서 펼치고 접어도 그 머리가 1px 안에서
 // 제자리고, 끝을 보던 사람은 펼친 뒤에도 끝에 남는다. 데스크톱 Chromium 1280·패드 WebKit 820·휴대폰 WebKit 390.
-// 혼자 돌리기: node web/e2e/web.e2e.mjs --spec 40-chat-tool-groups(새 실험실). 스크린샷 폴더를 주면 기기마다 접힘·펼침을 찍는다.
+// 혼자 돌리기: node web/e2e/web.e2e.mjs --spec 41-chat-tool-groups(새 실험실). 스크린샷 폴더를 주면 기기마다 접힘·펼침을 찍는다.
 
 import fs from "node:fs";
 import { aaa, until, step, browser, webkit, pairPage, inList, shot, root, AA } from "../lib/harness.mjs";

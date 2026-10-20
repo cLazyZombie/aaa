@@ -60,7 +60,8 @@ async function unwrap<T>(res: Response): Promise<T> {
   return out.ok;
 }
 
-export type Me = { role: DeviceRole; device: string };
+/** `front_api`: host의 FRONT_API(1.58부터, 옛 host는 없다) */
+export type Me = { role: DeviceRole; device: string; front_api?: string };
 
 export async function me(): Promise<Me | null> {
   const res = await fetch("/api/v1/me", { credentials: "same-origin" });

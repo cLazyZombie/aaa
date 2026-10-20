@@ -1628,7 +1628,7 @@ async fn conversion_hands_legacy_cursor_to_rule_before_new_events_without_double
     l.h.flow_project("demo", "thread_failed", None, "before conversion");
     l.h.mission_tick("demo", "watch", now).await.unwrap();
     let cursor = l.h.load("demo", &r.id).unwrap().mission.unwrap().cursor;
-    let files = l.h.automation_convert("demo", "coordinator").await.unwrap();
+    let (files, _) = l.h.automation_convert("demo", false, None, "coordinator").await.unwrap();
     assert!(files.iter().any(|f| f == "automations/watch-events.toml"));
     let seeded: Option<serde_json::Value> =
         l.h.db.meta("automation:demo:watch-events").unwrap().map(|s| serde_json::from_str(&s)).transpose().unwrap();

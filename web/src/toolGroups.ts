@@ -1,4 +1,4 @@
-// 대화의 도구 호출 묶음(plan §8.303). t3code(MIT, 4b1024daf)를 aaa 기록으로 옮겼다:
+// 대화의 도구 호출 묶음(plan §8.304). t3code(MIT, 4b1024daf)를 aaa 기록으로 옮겼다:
 // - 이어진 도구·생각 줄을 한 묶음으로, 하나뿐이면 그대로: `apps/web/src/components/chat/MessagesTimeline.logic.ts:1594~1716`
 // - 동작 분류: `packages/client-runtime/src/work-log/presentation.ts:417` `toolGroupAction`, `packages/shared/src/toolActivity.ts:246~300`
 //   `toolNameToken`·`classifyToolActivity`

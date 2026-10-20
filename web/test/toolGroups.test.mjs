@@ -1,4 +1,4 @@
-// 대화의 도구 호출 묶음(src/toolGroups.ts, plan §8.303). t3code `presentation.ts` summarizeToolGroup·toolGroupAction과
+// 대화의 도구 호출 묶음(src/toolGroups.ts, plan §8.304). t3code `presentation.ts` summarizeToolGroup·toolGroupAction과
 // `MessagesTimeline.logic.ts`의 이어진 work 묶기를 aaa 기록(「이름: 인자」 도구 줄)으로.
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";

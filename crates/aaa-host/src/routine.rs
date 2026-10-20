@@ -533,6 +533,10 @@ impl Host {
                     Err(e) => view.error = Some(e.message),
                 };
                 view.max_per_day = r.limits.max_per_day.filter(|n| *n > 0);
+                match self.automation_queue(project, &r.name) {
+                    Ok(queue) => view.queue = Some(queue),
+                    Err(e) => view.error = Some(e.message),
+                }
                 view
             })
             .collect();

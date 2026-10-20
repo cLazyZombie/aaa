@@ -58,7 +58,7 @@ const GROUP_ICONS: Readonly<Record<ToolGroupKind, typeof Terminal>> = {
 };
 
 /**
- * 이어진 도구·생각 줄 묶음(plan §8.303, 참고 t3code `WorkGroupHeader`·`ExpandedWorkGroupEntries`): 그림과 요약 한 줄, 누르면 그 줄들을
+ * 이어진 도구·생각 줄 묶음(plan §8.304, 참고 t3code `WorkGroupHeader`·`ExpandedWorkGroupEntries`): 그림과 요약 한 줄, 누르면 그 줄들을
  * 펼친다. 펼친 목록은 높이 min(18rem, 50dvh) 안에서 굴리고, 그 끝을 보고 있었으면 새 줄을 따라간다(참고 shouldFollowWorkGroupAppend).
  * agent가 작업 중이고 기록 맨 끝 묶음이면 요약 대신 마지막 줄을 빛나게 보인다(참고 `work-live`)
  */
@@ -525,7 +525,7 @@ export function ChatPanel({
 
   // 줄 id(chatScroll.ts): React key이자 읽던 자리의 기준이다. 차례 번호를 key로 쓰면 agent가 기록 앞을 자를 때마다 같은 DOM에
   // 다음 말이 들어가 보던 화면이 밀린다(사용자 10-19 16:5x 「위를 보고 있으면 거기에 멈춰 있게」)
-  // 이어진 도구·생각 줄은 한 줄(묶음)이다(plan §8.303). 묶음 id는 첫 줄 id고, 찾을 때는 묶음 안 어느 줄 id로도 찾는다(`rowAt`)
+  // 이어진 도구·생각 줄은 한 줄(묶음)이다(plan §8.304). 묶음 id는 첫 줄 id고, 찾을 때는 묶음 안 어느 줄 id로도 찾는다(`rowAt`)
   const displayRows = useMemo(() => {
     const messages = chat?.messages ?? [];
     return groupChatRows(messages, chatRowIds(messages));
