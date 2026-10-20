@@ -3075,6 +3075,7 @@ fn project_lifecycle() {
     let task = w.task("dirty.txt", "dirty 파일을 남긴다");
     let base = git(&w.repo, &["rev-parse", "origin/main"]);
     let branch = "aaa/demo/t-0001-keep";
+    git(&w.repo, &["update-ref", &format!("refs/remotes/origin/{branch}"), &base]);
     std::fs::write(stub.join("view-31.json"), pr_view_json(branch, "OPEN", "", &base)).unwrap();
     std::fs::write(
         stub.join(format!("list-{}.json", branch.replace('/', "_"))),
