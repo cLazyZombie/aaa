@@ -841,8 +841,13 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
   const asksShown = sel === "asks:" || sel?.startsWith("ask:") === true || sel?.startsWith("question:") === true;
   const [asksOpened, setAsksOpened] = useState(asksShown);
   const asksAt = useRef<string>("asks:");
+  const beforeAsks = useRef<string | null>(null);
   useEffect(() => {
-    if (!asksShown) return;
+    // 보고서·할 일과 같이 앞 화면을 기억한다. 카드 사이 이동은 돌아갈 곳을 바꾸지 않는다.
+    if (!asksShown) {
+      beforeAsks.current = sel;
+      return;
+    }
     setAsksOpened(true);
     asksAt.current = sel!;
   }, [asksShown, sel]);
@@ -1325,6 +1330,7 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
         {asksOpened && (
           <AsksView
             shown={asksShown}
+            onClose={() => goSel(beforeAsks.current)}
             selection={askSelection}
             canControl={canControl}
             onAnswer={answerThread}
