@@ -16,6 +16,8 @@ import { ActivityBar } from "./ActivityBar";
 import { SidebarResizer } from "./SidebarResizer";
 import { PANEL_LABEL, revealPanel, storedCollapsed, storedPanel, storeSidebar, type SidebarPanel } from "./sidebarPanel";
 import { ReportsView, type ReportRef } from "./ReportsView";
+import { TasksView, useTaskBoard } from "./TasksView";
+import { taskBadge } from "./tasksModel";
 import { UpdateNotice } from "./UpdateNotice";
 import { ApiError, call, me, onSignedOut, pushedSince, pushInfo, signOut, tellAlert, watchEvents } from "./api";
 import { removePushSubscription } from "./push";
@@ -261,7 +263,7 @@ function storeSelection(sel: string): void {
 
 /**
  * 고른 것: `#pane=<id>`, `#thread=<id>`, 모든 thread `#threads`, 보고서 화면 `#reports`(목록)·`#report=<project>/<name>`(하나,
- * plan §8.240). host는 프로젝트 하나만 맡아(plan §8.291) 주소에 프로젝트가 없다. 옛 주소(이미 보낸 알림·저장한 링크)도 연다:
+ * plan §8.240), 할 일 화면 `#tasks`(plan §8.306). host는 프로젝트 하나만 맡아(plan §8.291) 주소에 프로젝트가 없다. 옛 주소(이미 보낸 알림·저장한 링크)도 연다:
  * `#thread=<project>/<id>`는 그대로 받고, 프로젝트 고르기 `#projects`·프로젝트 thread 보기 `#project=<name>`은 `#threads`로 바꾼다.
  * 짧은 thread 주소는 thread 목록을 받은 뒤 내부 열쇠 `thread:<project>/<id>`로 바뀐다(App의 `sel` 정리).
  */
@@ -269,6 +271,7 @@ function selectedFromHash(): string | null {
   if (location.hash === "#projects" || location.hash.startsWith("#project=")) history.replaceState(history.state, "", "#threads");
   if (location.hash === "#threads") return "threads:";
   if (location.hash === "#reports") return "reports:";
+  if (location.hash === "#tasks") return "tasks:";
   const r = /^#report=(.+)$/.exec(location.hash);
   if (r) return `reports:${decodeURIComponent(r[1])}`;
   const m = /^#(pane|thread)=(.+)$/.exec(location.hash);
@@ -280,6 +283,7 @@ function hashOf(sel: string | null): string {
   if (sel === null) return "";
   if (sel === "threads:") return "threads";
   if (sel === "reports:") return "reports";
+  if (sel === "tasks:") return "tasks";
   if (sel.startsWith("reports:")) return `report=${encodeURIComponent(sel.slice(8))}`;
   if (sel.startsWith("thread:")) {
     const key = sel.slice("thread:".length);
@@ -814,6 +818,15 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
     if (reportsShown) goSel(beforeReports.current);
     else goSel(reportsAt ?? "reports:");
   };
+  // 할 일 화면(plan §8.306): 보고서와 같은 꼴. 다시 누르면 그 앞 화면으로, 한 번 연 화면은 숨긴 채 그려 둔다(거르기·접은 목록이 그대로)
+  const tasksShown = sel === "tasks:";
+  const [tasksOpened, setTasksOpened] = useState(tasksShown);
+  const beforeTasks = useRef<string | null>(null);
+  useEffect(() => {
+    if (sel === "tasks:") setTasksOpened(true);
+    else beforeTasks.current = sel;
+  }, [sel]);
+  const toggleTasks = () => goSel(tasksShown ? beforeTasks.current : "tasks:");
 
   // 새 pane 창(herdr-web-ui App.tsx `newSessionOpen`·`newSessionMachineId`): 머신 머리 +와 단축키가 그 머신으로 연다
   const [newPaneOn, setNewPaneOn] = useState<MachineView | null>(null);
@@ -982,6 +995,10 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
   // 목록은 열린 thread만(herdr-projects sidebar.rs), 모든 thread 화면은 끝난 것까지(popup.rs Section::Threads).
   // 보관한(지웠거나 이름을 바꾼) 프로젝트의 thread는 어디에도 보이지 않는다(참고 archive는 sidebar token을 지운다)
   const allThreads = [...threads.values()].filter((t) => t.role !== "evaluator" && t.project_status !== "archived");
+  // 할 일 화면의 thread 칩(묶음)과 「task 없는 열린 thread」: 열린 thread 모음이 바뀌면 board를 다시 읽는다
+  const threadGroups = useMemo(() => new Map(allThreads.map((t) => [t.id, t.group])), [threads]); // eslint-disable-line react-hooks/exhaustive-deps
+  const openThreadIds = allThreads.filter((t) => t.group !== "resolved").map((t) => t.id).sort().join(" ");
+  const taskBoard = useTaskBoard(up, openThreadIds);
   const shownThreads = allThreads.filter((t) => t.group !== "resolved");
   // pane → 그 pane에서 도는 thread(목록에서 pane 이름 대신 thread 제목을 보인다)
   const threadOfPane = new Map<string, ThreadView>();
@@ -1013,6 +1030,9 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
     openThreads: chooseThreads,
     openReports: () => {
       if (!reportsShown) toggleReports();
+    },
+    openTasks: () => {
+      if (!tasksShown) toggleTasks();
     },
     toggleSidebar: actions.toggleSidebar,
   };
@@ -1064,6 +1084,9 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
           reports={reportsShown}
           onReports={toggleReports}
           unseenReports={unseenReports}
+          tasks={tasksShown}
+          onTasks={toggleTasks}
+          taskBadge={taskBadge(taskBoard.board)}
           up={up}
           reader={role === "reader"}
           settings={<SettingsGear role={role} device={device} onSignedOut={signedOut} open={settingsOpen} onOpen={setSettingsOpen} />}
@@ -1120,7 +1143,7 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
       <main className="view">
         <UpdateNotice hostBuild={hostWeb} />
         {/* 그리기 오류는 본문 자리에서 멈춘다(ErrorBoundary, plan §8.266): 다른 화면으로 가면 다시 그린다 */}
-        <ErrorBoundary area="본문" resetKeys={[sel, reportsShown]}>
+        <ErrorBoundary area="본문" resetKeys={[sel, reportsShown, tasksShown]}>
         {/* 보고서 화면은 한 번 연 뒤 늘 그려 두고 숨긴다(ReportsView) */}
         {reportsAt !== null && (
           <ReportsView
@@ -1131,7 +1154,19 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
             onOpen={(r) => goSel(r ? `reports:${r.project}/${r.name}` : "reports:")}
           />
         )}
-        {reportsShown ? null : currentThread ? (
+        {tasksOpened && (
+          <TasksView
+            shown={tasksShown}
+            board={taskBoard.board}
+            error={taskBoard.error}
+            groups={threadGroups}
+            onThread={(id) => {
+              const t = allThreads.find((x) => x.id === id);
+              if (t) chooseThread(t);
+            }}
+          />
+        )}
+        {reportsShown || tasksShown ? null : currentThread ? (
           <ThreadPanel
             key={threadKey(currentThread)}
             t={currentThread}

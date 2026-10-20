@@ -4,7 +4,7 @@
 // 다른 곳: 참고의 묶음은 workspace, aaa는 머신 안 프로젝트와 pane 묶음이다(palette.ts). 참고의 탭·나누기·확대·사이드바·PC 추가·
 // 알림 켜기·파일·폴더 찾아보기·plugin 동작·worktree branch는 aaa에 그 화면이나 API가 없어 뺐다. plan §8.132.
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ComponentType, type FocusEvent as ReactFocusEvent, type KeyboardEvent as ReactKeyboardEvent, type MouseEvent as ReactMouseEvent } from "react";
-import { FileText, ListChecks, MessageSquarePlus, PanelLeft, Settings, SunMoon, SwitchCamera, X } from "lucide-react";
+import { FileText, ListChecks, ListTodo, MessageSquarePlus, PanelLeft, Settings, SunMoon, SwitchCamera, X } from "lucide-react";
 
 import "./herdr/CommandPalette.css";
 
@@ -53,6 +53,8 @@ export interface PaletteActions {
   openThreads: () => void;
   /** 본문 보고서 화면(활동 막대 「보고서」, plan §8.240) */
   openReports: () => void;
+  /** 본문 할 일 화면(활동 막대 「할 일」, plan §8.306) */
+  openTasks: () => void;
   /** 사이드바 접기·펴기(휴대폰은 목록 drawer, 참고 CommandPalette `sidebar`) */
   toggleSidebar: () => void;
 }
@@ -187,6 +189,7 @@ export function CommandPalette({ open, onClose, machines, panes, threads, select
     // 참고 「Toggle sidebar」(i18n.ko.ts 「사이드바 토글」)
     { id: "sidebar", label: "사이드바 토글", icon: PanelLeft, shortcut: "toggle-sidebar", run: actions.toggleSidebar },
     { id: "reports", label: "보고서", icon: FileText, run: actions.openReports },
+    { id: "tasks", label: "할 일 열기", icon: ListTodo, run: actions.openTasks },
     // aaa 머리 「더 보기 → 모든 thread」(끝난 thread까지)
     { id: "threads", label: "모든 thread", icon: ListChecks, run: actions.openThreads },
   ], [actions]);

@@ -1,0 +1,255 @@
+/* 할 일 화면(TasksView.tsx, plan §8.306). 색·크기는 herdr-web-ui token만 쓴다. 행은 t3code ComposerTasksBadge 행(아이콘·글·오른쪽
+   칩), 목록 머리는 herdr-projects popup 머리(이름·수). 상세는 본문 폭으로 정한다: 넓으면(패드 가로·데스크톱) 오른쪽 칸, 좁으면(패드 세로)
+   오른쪽에서 밀려 나온 시트, 휴대폰은 전체 화면 시트(herdr/sheets.ts SHEET_QUERY 640px). */
+.tasks-view {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  min-height: 0;
+  container: tasks / inline-size;
+  padding-left: var(--inset-l);
+  padding-right: var(--inset-r);
+}
+.tasks-view.is-hidden { position: absolute; inset: 0; visibility: hidden; pointer-events: none; }
+
+.tasks-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-4);
+  border-bottom: var(--hairline) solid var(--border);
+}
+
+.tasks-tabs { display: flex; gap: var(--space-1); }
+.tasks-tab {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  height: var(--control-h);
+  padding: 0 var(--space-3);
+  border: 0;
+  border-bottom: 2px solid transparent;
+  border-radius: 0;
+  background: transparent;
+  color: var(--text-dim);
+  font-weight: var(--fw-semibold);
+}
+.tasks-tab.is-on { color: var(--text-strong); border-bottom-color: var(--accent); }
+
+.tasks-search {
+  display: flex;
+  flex: 1 1 200px;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+  padding: 0 var(--space-3);
+  background: var(--bg-input);
+  border: var(--hairline) solid var(--border);
+  border-radius: var(--radius-md);
+}
+.tasks-search:focus-within { border-color: var(--accent); }
+.tasks-search svg { width: 16px; height: 16px; flex: 0 0 auto; color: var(--text-dim); }
+.tasks-search .input { flex: 1 1 auto; min-width: 0; height: var(--control-h); padding: 0; border: 0; background: transparent; outline: none; }
+
+/* 휴대폰은 칩을 가로로 굴린다(plan §3.3) */
+.tasks-filters { display: flex; gap: var(--space-1); max-width: 100%; overflow-x: auto; scrollbar-width: none; }
+.tasks-filters::-webkit-scrollbar { display: none; }
+
+.task-chip {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  height: var(--chip-h);
+  max-width: 14em;
+  padding: 0 var(--space-2);
+  overflow: hidden;
+  border: var(--hairline) solid var(--border);
+  border-radius: var(--radius-pill);
+  background: transparent;
+  color: var(--text);
+  font-size: var(--fs-xs);
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.task-chip.is-dim { color: var(--text-dim); }
+button.task-chip { cursor: pointer; }
+button.task-chip:disabled { cursor: default; color: var(--text-dim); }
+.tasks-filter.is-on { border-color: var(--accent); background: var(--accent-tint); color: var(--text-strong); }
+.task-problem { border-color: var(--status-blocked); color: var(--status-blocked); }
+.task-thread.is-working { border-color: var(--status-working); color: var(--status-working); }
+.task-thread.is-waiting_on_you { border-color: var(--status-blocked); color: var(--status-blocked); }
+.task-thread.is-ready_for_review { border-color: var(--notice); color: var(--notice); }
+.task-thread.is-landing { border-color: var(--status-done); color: var(--status-done); }
+@media (hover: hover) { button.task-chip:not(:disabled):hover { background: var(--bg-hover); } }
+
+.tasks-count { color: var(--text-dim); font-size: var(--fs-xs); font-weight: var(--fw-regular); font-variant-numeric: tabular-nums; }
+
+/* 목록과 상세: 넓으면 두 칸(목록 60%, 상세 40%) */
+.tasks-main { position: relative; display: flex; flex: 1 1 auto; min-height: 0; }
+.tasks-scroll {
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 0;
+  overflow-y: auto;
+  padding: var(--space-3) var(--space-4) max(var(--space-6), env(safe-area-inset-bottom));
+}
+.tasks-empty { margin: var(--space-3) var(--space-2); color: var(--text-dim); font-size: var(--fs-sm); }
+
+.task-list + .task-list, .task-notes-file + .task-notes-file { margin-top: var(--space-4); }
+.task-list-head { margin: 0 0 var(--space-1); font-size: var(--fs-xs); font-weight: var(--fw-semibold); color: var(--text-dim); }
+.task-list-toggle, .task-list-static {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  width: 100%;
+  min-height: 28px;
+  padding: 0 var(--space-1);
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+}
+.task-list-toggle { justify-content: flex-start; cursor: pointer; border-radius: var(--radius-sm); }
+.task-list-toggle svg, .task-notes-chevron { width: 14px; height: 14px; flex: 0 0 auto; }
+.task-list-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.task-list-note { margin: 0 0 var(--space-1); padding: 0 var(--space-2) 0 calc(var(--space-2) + 14px); color: var(--text-dim); font-size: var(--fs-xs); overflow-wrap: anywhere; }
+
+.task-rows { list-style: none; margin: 0; padding: 0; }
+.task-row { display: flex; align-items: center; gap: var(--space-1); min-width: 0; border-radius: var(--radius-md); }
+.task-row.is-selected { background: var(--accent-tint); }
+@media (hover: hover) { .task-row:not(.is-selected):hover { background: var(--bg-hover); } }
+.task-row > .task-thread { margin-right: var(--space-2); }
+.task-pick {
+  display: flex;
+  flex: 1 1 auto;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+  min-height: var(--control-h);
+  height: auto;
+  padding: var(--space-1) var(--space-2);
+  border: 0;
+  border-radius: var(--radius-md);
+  background: transparent;
+  color: var(--text);
+  text-align: left;
+  cursor: pointer;
+}
+.task-pick:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.task-title { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: var(--fs-sm); }
+/* t3code: 진행 중은 또렷하게, 대기는 흐리게, 끝난([x]) 줄은 더 흐리게 */
+.task-row.is-wait .task-title { color: var(--text); }
+.task-row.is-run .task-title { color: var(--text-strong); font-weight: var(--fw-medium); }
+.task-row.is-done .task-title { color: var(--text-dim); text-decoration: line-through; }
+.task-state { width: 16px; height: 16px; flex: 0 0 auto; }
+.task-state.is-wait { color: var(--text-dim); }
+.task-state.is-run { color: var(--status-working); }
+.task-state.is-problem { color: var(--status-blocked); }
+.task-notes-mark { flex: 0 0 auto; color: var(--text-dim); font-size: var(--fs-sm); }
+.task-unlinked .task-pick .task-title { color: var(--text); }
+
+/* 상세: 기본(좁은 본문)은 오른쪽 시트 */
+.task-detail {
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 2;
+  display: flex;
+  flex-direction: column;
+  width: min(440px, 92%);
+  min-height: 0;
+  background: var(--bg-panel);
+  border-left: var(--hairline) solid var(--border);
+  box-shadow: var(--shadow-drawer);
+}
+.task-detail.is-empty { display: none; }
+.tasks-scrim { position: absolute; inset: 0; z-index: 1; background: var(--scrim); }
+.task-detail-head { display: flex; align-items: center; gap: var(--space-2); min-height: var(--header-h); padding: 0 var(--space-3); border-bottom: var(--hairline) solid var(--border); }
+.task-detail-close {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  min-width: var(--touch-target);
+  height: var(--touch-target);
+  padding: 0 var(--space-2);
+  border: 0;
+  border-radius: var(--radius-md);
+  background: transparent;
+  color: var(--text);
+  cursor: pointer;
+}
+.task-detail-close svg { width: 18px; height: 18px; }
+.task-detail-close .task-close-back { display: none; }
+@media (hover: hover) { .task-detail-close:hover { background: var(--bg-hover); } }
+.task-detail-list { min-width: 0; overflow: hidden; color: var(--text-dim); font-size: var(--fs-xs); text-overflow: ellipsis; white-space: nowrap; }
+.task-detail-body { flex: 1 1 auto; min-height: 0; overflow-y: auto; padding: var(--space-3) var(--space-4) max(var(--space-6), env(safe-area-inset-bottom)); overflow-wrap: anywhere; }
+.task-detail-title { display: flex; align-items: flex-start; gap: var(--space-2); margin: 0 0 var(--space-2); font-size: var(--fs-md); font-weight: var(--fw-semibold); color: var(--text-strong); }
+.task-detail-title .task-state { margin-top: 3px; }
+.task-detail-chips { display: flex; flex-wrap: wrap; gap: var(--space-1); margin-bottom: var(--space-3); }
+.task-detail-section { margin-top: var(--space-4); }
+.task-detail-section h3 { margin: 0 0 var(--space-1); color: var(--text-dim); font-size: var(--fs-xs); font-weight: var(--fw-semibold); }
+.task-detail-section ul { margin: 0; padding-left: var(--space-4); }
+.task-problems { padding: var(--space-2) var(--space-3); border: var(--hairline) solid var(--status-blocked); border-radius: var(--radius-md); background: var(--status-blocked-tint); }
+.task-problems h3 { color: var(--status-blocked); }
+.task-problems p { margin: var(--space-2) 0 0; font-size: var(--fs-xs); }
+.task-raw { margin: 0; padding: var(--space-2) var(--space-3); overflow-x: auto; border-radius: var(--radius-md); background: var(--bg-input); font-family: var(--font-mono); font-size: var(--fs-xs); white-space: pre-wrap; overflow-wrap: anywhere; }
+.task-related { list-style: none; padding-left: 0 !important; }
+.task-related li { display: flex; align-items: center; gap: var(--space-2); min-height: 28px; }
+.task-detail .linkish { padding: 0; border: 0; background: none; color: var(--accent); font: inherit; font-size: var(--fs-sm); text-align: left; cursor: pointer; }
+.task-notes { font-size: var(--fs-sm); }
+
+/* 넓은 본문: 목록 60%·상세 40% 두 칸, 시트 그늘 없음 */
+@container tasks (min-width: 720px) {
+  .task-detail, .task-detail.is-empty {
+    position: static;
+    display: flex;
+    flex: 0 0 40%;
+    width: auto;
+    box-shadow: none;
+  }
+  .task-detail.is-empty { align-items: center; justify-content: center; padding: var(--space-4); text-align: center; }
+  .tasks-scrim { display: none; }
+  .task-detail-close { order: 2; margin-left: auto; }
+}
+
+/* 휴대폰: 전체 화면 시트(Back으로 닫는다) */
+@media (max-width: 640px) {
+  .tasks-toolbar { padding: var(--space-2) calc(var(--space-2) + var(--inset-r)) var(--space-2) calc(var(--space-2) + var(--inset-l)); }
+  .tasks-scroll { padding-left: var(--space-2); padding-right: var(--space-2); }
+  .tasks-search { flex-basis: 100%; }
+  .task-detail {
+    position: fixed;
+    inset: 0;
+    z-index: var(--z-modal);
+    width: auto;
+    border: 0;
+    box-shadow: none;
+    padding-top: env(safe-area-inset-top, 0px);
+  }
+  .task-detail-close .task-close-x { display: none; }
+  .task-detail-close .task-close-back { display: inline; }
+  .task-detail-close { padding-left: 0; font-size: var(--fs-md); }
+  .task-row > .task-thread { display: none; }
+  .task-row .task-owner { display: none; }
+}
+
+/* 「나중」 탭: `##` 절을 접는 묶음 */
+.task-notes-section { margin: 0 0 var(--space-1); border-radius: var(--radius-md); }
+.task-notes-section > summary {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  min-height: var(--control-h);
+  padding: 0 var(--space-2);
+  border-radius: var(--radius-md);
+  cursor: pointer;
+  list-style: none;
+  font-size: var(--fs-sm);
+}
+.task-notes-section > summary::-webkit-details-marker { display: none; }
+.task-notes-section[open] > summary .task-notes-chevron { transform: rotate(90deg); }
+@media (hover: hover) { .task-notes-section > summary:hover { background: var(--bg-hover); } }
+.task-notes-section > .task-notes { padding: 0 var(--space-3) var(--space-2) calc(var(--space-3) + 14px); }
