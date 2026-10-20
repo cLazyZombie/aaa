@@ -87,8 +87,7 @@ pub(crate) fn restore(config_dir: &Path, state_root: &Path, now_ms: u64) -> Resu
         };
         good.push((name, text));
     }
-    let stamp = aaa_common::util::utc_compact(now_ms);
-    let mut backups = Vec::new();
+    let mut changes = Vec::new();
     for (name, text) in good {
         let current = config_dir.join(name);
         let now = match std::fs::read(&current) {
@@ -96,36 +95,43 @@ pub(crate) fn restore(config_dir: &Path, state_root: &Path, now_ms: u64) -> Resu
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => None,
             Err(e) => return Err(e).with_context(|| format!("지금 {name}")),
         };
-        if now == text {
-            continue;
+        if now != text {
+            changes.push((name, current, now, text));
         }
-        if let Some(bytes) = &now {
-            let backup = config_dir.join(format!("{name}.broken-{stamp}"));
-            let mut opts = std::fs::OpenOptions::new();
-            opts.write(true).create_new(true);
-            #[cfg(unix)]
-            {
-                use std::os::unix::fs::OpenOptionsExt;
-                opts.mode(0o600);
-            }
-            std::io::Write::write_all(
-                &mut opts.open(&backup).with_context(|| format!("{} 만들기", backup.display()))?,
-                bytes,
-            )?;
-            backups.push(backup);
+    }
+    // 남길 파일을 모두 만든 뒤에 바꾼다: 둘째 파일의 남기기가 실패해도 첫째만 바뀐 채로 두지 않는다
+    let stamp = aaa_common::util::utc_compact(now_ms);
+    let mut backups = Vec::new();
+    for (name, _, now, _) in &changes {
+        let Some(bytes) = now else { continue };
+        let backup_name = format!("{name}.broken-{stamp}");
+        let backup = config_dir.join(&backup_name);
+        let mut opts = std::fs::OpenOptions::new();
+        opts.write(true).create_new(true);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt;
+            opts.mode(0o600);
         }
+        // 화면에 가는 오류 글에는 파일 이름만 쓴다(홈 경로를 싣지 않는다)
+        std::io::Write::write_all(&mut opts.open(&backup).with_context(|| format!("{backup_name} 만들기"))?, bytes)
+            .with_context(|| format!("{backup_name} 쓰기"))?;
+        backups.push(backup);
+    }
+    for (name, current, _, text) in changes {
         match text {
-            Some(t) => aaa_common::util::write_private(&current, &t)?,
-            None => std::fs::remove_file(&current)?,
+            Some(t) => aaa_common::util::write_private(&current, &t).with_context(|| format!("{name} 쓰기"))?,
+            None => std::fs::remove_file(&current).with_context(|| format!("{name} 치우기"))?,
         }
     }
     Ok(backups)
 }
 
-/// 안전 모드가 뜰 주소: 정상 host가 마지막으로 연 주소 → 보관한 정상 설정의 listen → 기본값. 빈 주소(웹 끔)면 None
+/// 안전 모드가 뜰 주소: 정상 host가 마지막으로 연 주소(웹을 끈 채 시작했으면 None) → 보관한 정상 설정의 listen → 기본값. 빈 주소면 None
 pub(crate) fn listen_addr(db: &Db, state_root: &Path) -> Option<String> {
-    if let Some(addr) = db.meta(LISTEN_KEY).ok().flatten().filter(|a| !a.is_empty()) {
-        return Some(addr);
+    // 빈 값은 지난 정상 시작이 웹을 끈 설정이었다는 기록이다
+    if let Some(addr) = db.meta(LISTEN_KEY).ok().flatten() {
+        return (!addr.is_empty()).then_some(addr);
     }
     let listen = aaa_config::load_host(&last_good_dir(state_root))
         .map(|l| l.config.web.listen)
@@ -227,7 +233,7 @@ pub(crate) fn mask(text: &str) -> (Vec<String>, Vec<String>) {
             key.split('.').map(|k| k.trim().trim_matches('"').trim_matches('\'').to_string()).collect();
         let in_env = table.iter().chain(segments.iter()).any(|s| s == "env");
         let secret = in_env
-            || segments.iter().any(|s| secret_word(s))
+            || table.iter().chain(segments.iter()).any(|s| secret_word(s))
             || secret_word(value)
             || (value.starts_with('{') && value.contains("env"));
         let multi = ["\"\"\"", "'''"].into_iter().find(|d| value.starts_with(d) && value[3..].find(d).is_none());

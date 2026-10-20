@@ -1,6 +1,6 @@
 // 안전 모드 W6b(plan §8.360): 정상 시작이 그 설정을 「마지막 정상 설정」으로 보관한다. host.toml을 깨고 host를 다시 띄우면 끝나지 않고
 // 같은 주소에 안전 모드 웹만 연다: 조작 기기는 오류 줄 표시와 가린 원문(env 값 없음), 보기 전용 기기는 안내만 본다. API는 503
-// unavailable이다. 「마지막 정상 설정으로 되돌리기」는 지금 파일을 옆에 남기고 정상 설정으로 바꿔, 같은 프로세스가 정상 host로 이어 간다.
+// unavailable이고, 열려 있던 앱은 그 글을 보인다. 「마지막 정상 설정으로 되돌리기」는 지금 파일을 옆에 남기고 정상 설정으로 바꿔, 같은 프로세스가 정상 host로 이어 간다.
 import fs from "node:fs";
 import { root, aaa, step, start, stop, until, browser, pairPage, shot, base, procs } from "../lib/harness.mjs";
 
@@ -33,6 +33,9 @@ export default async function ({ page }) {
       return res.status === 503 && (await res.json());
     });
     if (me.err?.code !== "unavailable" || !me.err.message.includes("안전 모드")) throw new Error(`me: ${JSON.stringify(me)}`);
+    // 열려 있던 앱: 다시 붙기 전 기기 확인이 안전 모드 답을 받아 그 글을 보인다(끊김 배너에 머물지 않는다)
+    await page.getByTestId("unreachable").getByText("안전 모드").waitFor();
+    await shot(page, "63-open-app-desktop");
     await page.goto(base);
     await page.getByRole("heading", { name: "aaa 안전 모드" }).waitFor();
     await page.getByTestId("safe-errors").getByText(`host.toml:${badLine}:`).waitFor();

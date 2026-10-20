@@ -37,6 +37,8 @@ tokens = [
   "array-secret-1",
   "array-secret-2",
 ]
+[mcp.auth]
+value = "header-secret"
 after = "kept-value"
 "#;
     let (lines, hidden) = mask(text);
@@ -51,6 +53,7 @@ after = "kept-value"
         "first-line-secret",
         "array-secret-1",
         "array-secret-2",
+        "header-secret",
     ] {
         assert!(!shown.contains(secret), "{secret}가 보인다:\n{shown}");
         assert!(hidden.iter().any(|h| h.contains(secret)), "{secret}를 오류 글에서 뺄 목록에 없다: {hidden:?}");
@@ -132,10 +135,19 @@ fn restore_backs_up_current_files_and_brings_back_exactly_the_kept_set() {
     assert!(restore(&config, &state, 1_700_000_001_000).unwrap().is_empty());
     assert_eq!(std::fs::read_to_string(config.join("host.local.toml")).unwrap(), "schema = 1\n");
     assert!(restore(&config, &t.0.join("other"), 0).is_err());
+    // 둘째 파일을 남기지 못하면(같은 이름이 이미 있다) 첫째도 바꾸지 않는다
+    std::fs::write(config.join("host.toml"), "[web\n").unwrap();
+    std::fs::write(config.join("host.local.toml"), "[local\n").unwrap();
+    let stamp = aaa_common::util::utc_compact(1_700_000_002_000);
+    std::fs::write(config.join(format!("host.local.toml.broken-{stamp}")), "older").unwrap();
+    let err = restore(&config, &state, 1_700_000_002_000).unwrap_err();
+    assert!(!format!("{err:#}").contains(&*t.0.to_string_lossy()), "오류 글에 경로가 있다: {err:#}");
+    assert_eq!(std::fs::read_to_string(config.join("host.toml")).unwrap(), "[web\n");
+    assert_eq!(std::fs::read_to_string(config.join("host.local.toml")).unwrap(), "[local\n");
 }
 
-#[test]
-fn listen_prefers_the_last_bound_address_then_last_good_then_default() {
+#[tokio::test]
+async fn listen_prefers_the_last_bound_address_then_last_good_then_default() {
     let t = tmp();
     let state = t.0.join("state");
     let db = Db::open(&state.join("host").join("host.db")).unwrap();
@@ -144,12 +156,18 @@ fn listen_prefers_the_last_bound_address_then_last_good_then_default() {
     std::fs::write(config.join("host.toml"), "schema = 1\n[web]\nlisten = \"127.0.0.1:7999\"\n").unwrap();
     keep_last_good(&state, &[config.join("host.toml")]).unwrap();
     assert_eq!(listen_addr(&db, &state).as_deref(), Some("127.0.0.1:7999"));
-    db.set_meta(LISTEN_KEY, "127.0.0.1:54321").unwrap();
-    assert_eq!(listen_addr(&db, &state).as_deref(), Some("127.0.0.1:54321"));
-    // 웹을 끈 설정이면 안전 모드도 없다
-    db.set_meta(LISTEN_KEY, "").unwrap();
-    std::fs::write(config.join("host.toml"), "schema = 1\n[web]\nlisten = \"\"\n").unwrap();
-    keep_last_good(&state, &[config.join("host.toml")]).unwrap();
+    // 정상 host가 실제로 연 주소(:0이면 받은 port)를 적고, 안전 모드는 그 주소를 먼저 쓴다
+    let mut cfg = aaa_config::HostConfig::default();
+    cfg.notify.web_push = false;
+    cfg.web.listen = "127.0.0.1:0".into();
+    let h = crate::Host::open(cfg.clone(), state.join("host")).unwrap();
+    crate::web::start(&h).await.unwrap();
+    let bound = h.web_listen.lock().unwrap().clone().unwrap();
+    assert_eq!(listen_addr(&db, &state), Some(bound));
+    // 웹을 끈 설정으로 정상 시작하면 지난 주소를 지워, 다음 안전 모드도 웹을 열지 않는다(보관 설정에 listen이 있어도)
+    cfg.web.listen = String::new();
+    let h = crate::Host::open(cfg, state.join("host")).unwrap();
+    crate::web::start(&h).await.unwrap();
     assert_eq!(listen_addr(&db, &state), None);
 }
 

@@ -45,6 +45,10 @@ const CSP: &str = "default-src 'self'; script-src 'self'; style-src 'self' 'unsa
 pub async fn start(host: &Arc<Host>) -> Result<()> {
     let addr = host.cfg.web.listen.clone();
     if addr.is_empty() {
+        // 웹을 끈 설정: 다음 시작의 안전 모드도 웹을 열지 않는다(지난 주소를 남기지 않는다)
+        if let Err(e) = host.db.set_meta(crate::safe_mode::LISTEN_KEY, "") {
+            tracing::warn!("웹 주소 기록 실패: {e:#}");
+        }
         return Ok(());
     }
     let listener = tokio::net::TcpListener::bind(&addr).await.with_context(|| format!("웹 listen {addr}"))?;
