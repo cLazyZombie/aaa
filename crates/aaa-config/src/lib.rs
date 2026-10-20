@@ -6,6 +6,7 @@
 //! - 사용자 파일을 자동으로 다시 쓰지 않는다. 사람이 터미널에서 내린 명령(`aaa profile`·`aaa safety`)만 toml_edit로 그
 //!   key만 고친다(주석·차례는 그대로).
 
+pub mod install;
 pub mod paths;
 pub mod profile_edit;
 pub mod safety;

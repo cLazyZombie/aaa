@@ -1,0 +1,158 @@
+# aaa install 공통 계약 v1
+
+I0(t-0485)의 정본이다. `aaa.install.v1`은 CLI 설치 계약이며 FRONT_API/AGENT_LINK와 독립이다.
+현재 단계는 **공유 타입·순수 선택 검증·계획 hash·schema fixture**까지다. `aaa install` 진입점과 탐지는 I1,
+파일 적용·재개는 I2, 실제 감독자는 macOS → Windows → Linux, 대화형/승인 executor는 I6에서 연결한다.
+아래 명령은 완성된 설치 명령의 계약이며 I0에서 실행 가능한 명령이 아니다.
+
+## 두 기획의 차이와 채택 기준
+
+t-0472 확정판 §4~5·9~11과 사용자 D1~D8을 따른다. t-0471 §5.2의 인자 이름은 초안의 예시였으므로 다음처럼 맞춘다.
+원본 기획서는 수정하지 않았다. 웹 머신 추가 구현은 이 변경에 포함하지 않는다.
+
+| t-0471 초안 | 확정 공통 계약 |
+|---|---|
+| `--check` 사전 검사 | I1의 `--dry-run`: 읽기 탐지와 전체 계획. 별도 check 명령은 예약하지 않음 |
+| `--json` JSON Lines, `v:1` | `--json` 단일 결과, `--json-stream` NDJSON, schema 문자열로 판 구분 |
+| `needs_human`, 초안 exit | `needs_user`, 아래 exit 표 |
+| enroll 코드·지문 stdout 사건 | 일반 JSON/로그에 출력하지 않음. private 승인 입력과 보호 표시 사용 |
+| `--host-fingerprint` argv | 기존 pin 또는 private 승인 입력의 host identity. 첫 응답을 신뢰 root로 쓰지 않음 |
+| `--hooks claude,codex` | 반복 `--harness claude\|codex`와 `--hooks install\|preserve\|skip` |
+| Windows 로그온 예약 작업 | 설치 요청 사용자 계정 SCM. LocalSystem/가상 계정 자동 대체 없음 |
+| Linux user unit 기본 | system unit + 요청자 `User=` 기본. 명시 선택으로 user unit + linger |
+| `--yes`로 원격 적용 | 계획 확인 생략만. W0 유지, 유효한 범위 제한 승인 executor가 별도로 필요 |
+
+참고 넷의 사본을 읽었다: herdr `distribution/install.sh`, herdr-projects `src/setup.rs`,
+herdr-web-ui `server/tailscale.ts`, t3code `scripts/install.sh`·`docs/user/background-service.md`.
+OS/arch·checksum·사용자 bin·소유 journal·동시 편집 보존·기존 공개 보존·데이터 보존 제거를 따른다.
+참고와 다른 부분은 확정 결정을 따른 Windows SCM/Linux system unit, 자동 재시도·외부 설치기·PATH 자동 덮어쓰기 제외다.
+
+## 입력과 검증 소유자
+
+- `aaa-proto::install`: `InstallChoices`, `InstallInvocation`, 결과/사건/승인서/등록 허가의 Rust 정본.
+- `aaa-config::install::plan`: 질문과 CLI가 공통으로 쓰는 순수 선택 검증·기본값 정규화.
+- I1 adapter: 현지 탐지·실효 설정/경로·OS 계정·mount·충돌·profile 파일 검증.
+- 웹은 proto 타입만 사용한다. host가 agent/session 구현을 직접 호출하지 않는다.
+
+입력 우선순위는 명시 인자 → 재개 초안 → 기존 실효값 → 탐지 후보 → 공개한 기본값이다.
+새 자동 설치의 필수 선택은 숨은 값으로 보충하지 않는다. I0 planner에는 이미 선택한 값과 읽기 탐지 context를 준다.
+repair/resume의 기존 계획 로딩과 실물 비교는 I2에서 한다. 문법/누락 오류는 변경 전에 끝낸다.
+I0의 함수는 파일·env·OS·프로세스·네트워크를 읽거나 쓰지 않는다.
+
+전역 `--instance`, `--config-dir`, `--state-dir`도 choices에 포함한다. CLI 인자 이름은 필드의 `_`를 `-`로 바꾼다.
+`InstallInvocation.choices` 중첩은 내부 DTO이며 최상위 CLI에 `--choices` 인자를 만들지 않는다.
+비대화/질문 입력에 다른 검증기를 만들지 않는다.
+
+## 인자
+
+아래 선택 인자의 전체 타입/enum은 [생성 schema](install.schema.json)의 `InstallChoices`와
+[생성 TS](../web/src/gen/proto.ts)에 있다. 현재 설치 명령을 문서화한 README와 혼동하지 않는다.
+
+| 영역 | 인자 | 규칙/기본값 |
+|---|---|---|
+| 역할 | `--role host\|agent`, `--name` | 새 자동 설치에서 둘 다 필수. hostname 자동 보충 없음 |
+| 인스턴스 | `--instance`, `--config-dir`, `--state-dir` | 기존 instance 이름 규칙. default 예약, config/state 충돌 금지. 실물 격리 검사는 I1 |
+| 설치 | `--mode fresh\|repair\|reinstall` | fresh. 같은 실효 계획은 unchanged. 실물 대조는 I1/I2 |
+| binary | `--bin-path`, `--version` 또는 `--from`+`--sha256` | 현재 binary 기본. exact 판만, latest/stable/nightly 금지. from의 파일 SHA 대조는 I1 |
+| 예상 대상 | `--expected-os macos\|linux\|windows`, `--expected-arch aarch64\|x86_64` | 현지 context와 일치해야 함. Windows aarch64 release 지원 주장 없음 |
+| 로컬 agent | `--local-agent enabled\|disabled` | host 기본 enabled, agent에는 금지 |
+| 프로젝트 | `--project-mode create\|use\|skip`, `--project`, `--projects-root`, `--goal`, 반복 `--repo`, `--no-repo` | host project-mode 필수. create/use는 이름과 repo/no-repo 선택 필수. agent는 로컬 repo만, host 프로젝트 변경 금지 |
+| 작업 디스크 | `--work-root`, `--work-mount` 또는 `--work-storage internal` | agent/로컬 agent host 필수. mount와 internal 상충. 실물 mount/volume identity는 I1 이후 |
+| 작업 기본 | `--min-free-gb`, `--default-cwd`, `--shell` | 신규 20 GiB, work-root, 탐지한 OS shell. 기존값 보존은 I1 |
+| harness | 반복 `--harness claude\|codex` 또는 `--harness none` | agent/로컬 agent host 명시 필수. none과 다른 harness 상충 |
+| 경로 | `--claude-path`, `--codex-path`, `--claude-home`, `--codex-home` | 선택한 harness만. 절대 경로. 미존재/login 상태는 I1 이후 |
+| 환경 | 반복 `--harness-env harness:key=value` | typed harness/key/value로 변환. v1 허용 key는 LANG/LC_ALL/LC_CTYPE/TZ/TERM. 같은 key 중복 거부, 비밀 전달에 사용 금지 |
+| 로그인/hook | `--login require\|defer`, `--hooks install\|preserve\|skip` | require. Codex면 hooks 명시 필수, 그 밖 preserve. Claude 전역 hook 설치 없음 |
+| profile | 반복 `--profile-file`, `--thread-profile`, `--coordinator-profile`, 반복 `--allow-thread-profile`, `--allow-coordinator-profile` | host만. profile 파일 정본·비밀 env·자유 shell 검사는 I1, safety 확대는 별도 승인 |
+| 감독자 | `--service auto\|launchd\|systemd-system\|systemd-user\|windows-scm\|none` | 자동화 명시 필수. auto는 Mac LaunchAgent/Linux system unit/Windows SCM. 다른 OS 감독자 거부 |
+| 계정 | `--service-account current-user` | 요청자 UID/SID 고정, 승격 helper 계정으로 변경 금지. none에는 지정 금지 |
+| Windows 암호 | `--service-password-source prompt\|stdin\|broker`, `--secrets-stdin`, `--service-password-ref` | 비TTY 신규 apply는 stdin/broker private 일회 입력 필수. dry-run에는 비밀 불필요. 암호 값 argv/env/journal 금지 |
+| 시작 | `--startup auto\|manual`, `--start now\|deferred` | auto/now. Mac auto는 로그인 시 RunAtLoad. deferred 또는 service none은 configured 범위 |
+| linger | `--linger require\|preserve` | 명시 systemd-user에만 사용, require 기본 |
+| PATH/launcher | `--path preserve\|user`, `--launcher`, `--launcher-policy install\|preserve` | PATH preserve. launcher는 Mac만, 기존 asset preserve. 새 asset 검증/설치는 I3 |
+| agent 네트워크 | `--host name:port`, `--network tailscale\|direct`, `--enroll wait\|grant\|skip`, `--wait-timeout` | host/network/enroll 필수. wait 상한 기본 600초, 양수. skip는 configured |
+| host listen | `--agent-listen`, `--web-listen` | agent-listen 필수, port 0 금지. web loopback 7431 기본, 둘째 instance는 명시 port. 두 port 분리 |
+| host 웹 | `--web local\|off`, `--tailscale-serve on\|off`, `--serve-port`, `--pairing controller\|skip` | web/Serve/pairing 명시 필수. on이면 1..65535 외부 port 필수, off면 port 금지. web off와 Serve on/controller 상충 |
+| coordinator | `--open-coordinator yes\|no` | host만, no. 자동 유료 harness 대화 없음 |
+| 모드 | `--non-interactive`, `--yes`, `--dry-run`, `--json`, `--json-stream`, `--prompt auto\|plain` | JSON 두 모드 상충, JSON은 질문 금지. 비TTY 무인자 exit 2. yes는 필수값/권한/승인 대체 아님 |
+| 기록/승인 | `--events-file`, `--authorization-stdin` 또는 `--authorization-file` | 승인 입력 둘 중 하나, EOF 뒤 적용. 비밀 stdin의 질문 응답 혼합 금지 |
+| 재개/조회 | `--resume ID`, `--status ID` | status 읽기만. ID와 소유자·instance·판·hash·실물 대조. 변경은 새 계획/승인 |
+
+역할에 맞지 않는 선택을 버리지 않는다. 공백·한글·괄호·`&`·`%`·`!`·따옴표·역슬래시·drive/UNC는 argv 데이터다.
+줄바꿈/NUL/제어 문자·`$(`·backtick은 인자에서 거부한다. 경로는 대상 OS 절대 경로를 요구한다.
+SSH의 POSIX/PowerShell/cmd 인용은 t-0471 전송 adapter의 소유다. 공백 join으로 명령을 만들지 않는다.
+
+## 계획 hash
+
+`InstallPlan`은 private 데이터다. context에는 현지 OS/arch·정확한 binary 판/SHA·실효 설정 hash·요청 계정과
+탐지한 경로/shell이 있다. choices에는 정규화된 모든 실효 선택을 둔다. path/symlink/case/`..`를 실물 없이 합치지 않는다.
+동일 실효값 표현은 기본값 보충, SHA 소문자화, 집합인 harness/repo/허용 profile 정렬·중복 제거,
+expected OS/arch 검증 후 제거, 현재 판과 같은 version 생략으로 정규화한다. profile-file 배열은 병합 순서를 보존한다.
+
+canonical bytes는 객체 key를 재귀 사전순으로 정렬한 compact UTF-8 JSON이다. 배열 순서는 보존하고 BOM/마지막 LF는 없다.
+SHA-256 소문자 hex가 `plan_sha256`이다. ID·시각·진행·출력 방식·yes·dry-run은 계획 밖이다.
+[고정 입력](install/agent-input.json)과 [기대 hash](install/agent-plan.sha256)는 독립 Python JSON/SHA 계산으로 대조한다.
+경로·role·공개 범위·계정·binary·기존 설정 내용 변경은 hash를 바꾸고 재승인을 요구한다.
+계획 hash는 **승인이나 비밀 제거 기능이 아니다**.
+
+## 결과와 스트림
+
+`InstallResult`는 t-0472 §4.4 envelope를 고정한다. ID/hash/role/platform/version은 계획 전 오류에서 null일 수 있다.
+changes.kind는 확장 가능한 항목 이름(agent_config/service 등), checks.name도 항목 이름이다.
+공유 결과는 경로·SSH 계정/주소·host 지문·token·SAS·pairing·암호·private 설정을 포함하지 않는다.
+하위 오류 원문을 넣지 않고 고정 code와 한국어 안내를 반환한다. 로컬 private 위치 안내는 이후 별도 화면으로 제공한다.
+
+| status | exit |
+|---|---|
+| planned/completed/unchanged/configured | 0 (checks로 실제 완료 범위 구분) |
+| needs_user | 3, needs_user 항목 필요 |
+| failed | 1 적용/검증, 2 인자/계약, 4 lock/충돌, 5 지원 범위, 6 명시 대기 상한. error 필요 |
+| cancelled | 130 |
+
+`--json`은 stdout에 envelope 하나와 LF만 쓴다. `--json-stream`은 schema `aaa.install.event.v1`의
+`type:event`와 마지막 `type:result`를 NDJSON으로 매 줄 flush한다. 최종 result는 envelope 전체를 담는다.
+seq는 1부터 단조 증가, 최종 결과는 정확히 한 번, OS exit와 result.exit_code 일치가 필수다.
+stdout은 UTF-8/BOM·ANSI 없음, stderr/사건 파일도 정제한다. 소비자는 CRLF/청크 분할/분할 UTF-8를 처리한다.
+미지원 schema·잘린 줄·result 없는 EOF는 실패/결과 불명이며 같은 ID status로 확인한다.
+I0는 typed envelope만 제공하며 스트림 I/O/수명/상태 조회는 I1/I2/I6에서 구현한다.
+
+## 승인서와 등록 허가
+
+schema는 **데이터 형식만** 고정한다. deserialize 성공·`approved:true`·`--yes`로 신뢰를 만들지 않는다.
+I0에는 서명 발급/검증·pin 저장·grant 소비·worker가 없으며 기존 W0/사람 전용 명령을 열지 않는다.
+
+- `aaa.install.authorization.v1`: 설치 ID, 계획 hash, 대상 OS/arch/계정/instance, binary SHA,
+  허용 operation/정확한 target와 전후 hash, 발급·만료, nonce, issuer를 claims에 묶는다.
+- `InstallAuthorization`: claims + signature + 선택적 enrollment grant. private 입력에만 사용한다.
+- `aaa.install.enroll-grant.v1`: 설치 ID/계획 hash/agent identity/host identity/issuer/만료/nonce/signature.
+- signature는 I6의 고정 Ed25519 검증으로 처리한다. 승인서 서명 대상은 canonical claims,
+  grant 서명 대상은 signature를 뺀 나머지 필드의 canonical bytes다. signature는 base64url(no padding).
+  issuer는 검증 root를 참조하는 식별자이며 envelope가 신뢰 root를 공급하지 않는다.
+- 신뢰는 검증된 SSH bootstrap의 pin 또는 외부 TTY가 만든 private 로컬 발급 기록과 대조한다.
+  대상·소유권/ACL·만료·허용 범위·nonce 일회 소비·재개 정책을 모두 검증해야 한다.
+- 허용 operation은 파일·binary/launcher staging·hook/root·서비스·공개·등록·프로젝트/PATH의 typed 목록뿐이다.
+  임의 shell·safety 확대·기기 추가·다른 머신 승인 권한은 없다. application 승인과 OS UAC/sudo는 별개다.
+- grant는 host가 TLS에서 증명한 agent 신원과 대조해 한 번만 소비한다. 응답 유실은 ID+신원으로 조회한다.
+  `install_enroll.v1` 기능 협상·AGENT_LINK 증가는 I6의 당시 main에서 한다.
+- Windows 암호는 보호 stdin/broker에서 메모리로 일회 전달한다. SCM/LSA 밖에 보관하지 않는다.
+  승인서·grant·암호 내용은 argv/env/공개 JSON/로그/일반 journal에 넣지 않는다.
+
+[fixture](install/fixtures.json)의 signature/신원/nonce는 의도적으로 유효하지 않은 예시다.
+`InstallContract`의 kind/value wrapper는 schema/fixture 도구용이며 실제 CLI stdout에 붙이지 않는다.
+
+## 생성·검증
+
+```sh
+AAA_UPDATE_INSTALL=1 cargo test -p aaa-proto install_schema
+AAA_UPDATE_TS=1 cargo test -p aaa-proto typescript
+cargo test -p aaa-config install
+cargo test -p aaa-proto install
+cargo test -p aaa --test deps
+bash scripts/ci-local.sh
+bash scripts/check-public.sh
+```
+
+Rust 타입 → JSON schema/TS를 생성하고 drift를 시험한다. role·조건부 필수/상충·hash의 의미 판정은 공통 planner가 소유한다.
+JSON Schema는 shape, enum, 알려진 key를 검사하는 도구이며 실제 권한/서명/OS 지원을 증명하지 않는다.
+새 계약/보안 시험은 해당 owner에 결함을 심어 RED, 원본 복원 뒤 GREEN을 남긴다.
+I3 진입 전 실제 LaunchAgent 시험에 필요한 깨끗한 계정/GUI/권한을 보고하고 운영 설정에는 손대지 않는다.
