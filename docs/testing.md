@@ -23,6 +23,28 @@ session 재연결에 Esc를 넣는 변형은 `local-back: inputs` 단언에서 �
 끝 20줄의 `esc to interrupt` 부재나 짧은 화면 무변화만으로 중단을 확정하지 않는다. 긴 추론 요약이 그 줄을 대신하는
 실측 화면에서도 도구 실행은 이어졌다. 연결 직후 `no agent`는 상태 복원이 끝났는지도 먼저 확인한다.
 
+## agent 재연결 중 상태 전달(t-0508)
+
+`cargo test -p aaa-agent --lib link::post_tests::harness_changes_while_waiting_for_welcome_reach_the_host -- --exact`
+는 실제 link 세션의 Hello를 받은 뒤 Welcome을 보류한다. 그 사이 기억한 Idle이 연결 뒤 전달되어야 한다.
+Hello를 읽는 host에는 바뀐 사건만, 옛 host에는 최신 기억 전체를 보내며 Ping/Pong으로 앞선 전달의 끝을 확인한다.
+연결 뒤 같은 밀리초의 새 Working도 뒤에 전달한다. `harness_hello.v1`이면 변경분을 생략하는 원래 결함을
+되심으면 Idle 누락 단언에서 실패해야 한다. 새 production 시험 주입점은 없다.
+
+기존 `cargo test -p aaa --test e2e stale_working_left_by_hooks_turns_idle_from_the_screen -- --exact`
+는 재시작한 실제 agent의 연결 하나만 실험실 UDS로 중계한다. Hello의 옛 Working을 확인하고, 실제 감지기가
+`harness.json`에 새 Idle을 적을 때까지 Welcome을 보류한 뒤 연다. host의 새 Idle 사건과 파일 기억을 모두 검사한다.
+시간 상한·감지 간격은 그대로다. 원래 제품과 변경분 전송을 제거한 변형은 같은 host Idle 대기에서 실패해야 한다.
+전송 계약의 세부 표는 link 시험이 맡고, 이 E2E는 화면 감지·저장·프로세스 재시작 경계를 맡는다.
+
+`link::post_tests::live_hook_waits_for_the_replay_to_finish`는 작은 실제 duplex 전송 버퍼와 여러 pane의
+기억 fixture로 replay를 멈춘 동안 실제 `prompt_submit` 전달을 진행한다. 재생 뒤 live hook이 빠짐없이 오고,
+없는 세션의 실제 Screen 요청도 NotFound 응답을 받아야 한다.
+상대가 Ping 뒤 write half만 닫으면 읽기 half가 남아도 세션이 끝나야 한다. 잠금 제거·replay와 reader 직렬화 변형은
+각각 live 누락·EOF 대기에서 실패한다. 디스크 저장을 이 시험에서 반복하지 않는다.
+`tests::pending_host_send_lets_go_when_the_connection_changes`는 옛 bounded 큐를 가득 둔 채 연결을 바꿔
+옛 전송 대기가 끝나고 새 전송이 가는지 본다. 연결 변경 시 취소를 빼면 옛 전송 대기에서 실패한다.
+
 ## 원칙
 
 - **사건으로 끝낸다.** 시험은 정한 시간을 자지 않고, 기다리는 것이 왔다는 신호(흐름 사건·출력·화면 표지·fake 기록·tick 끝남)를 기다린다. 「시간 제한이 있어야 통과하는 시험은 틀렸다」(t3code `AGENTS.md`). 시한은 오지 않을 때 멈추는 안전 상한일 뿐이다.
