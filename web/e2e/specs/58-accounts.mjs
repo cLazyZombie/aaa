@@ -1,4 +1,4 @@
-// host 계정 화면(관리 GUI W5a, plan §8.346): 설정 창 「계정」에서 새 로그인·진행·취소, 메일·plan·최초 인증일·최근 인증된 날,
+// host 계정 화면(관리 GUI W5a, plan §8.348): 설정 창 「계정」에서 새 로그인·진행·취소, 메일·plan·최초 인증일·최근 인증된 날,
 // 기본 지정·해제, 다시 로그인의 「이 메일로 로그인하세요」, 다른 메일이 들어왔을 때 고르기, 곧 만료 배지와 알림함 확인 필요,
 // 보기 전용 기기(메일 없음), 휴대폰 390. host는 PATH 앞의 가짜 `claude`·`codex`를 공식 CLI 자리로 띄운다(실제 인증·브라우저 없음).
 // 가짜 로그인은 시험이 FIFO에 쓸 때만 끝난다: 시간을 기다리지 않고 화면 표지와 host 기록을 본다.
@@ -65,7 +65,7 @@ export default async function ({ page }) {
     if (a.plan !== "plus" || a.health !== "ok" || !a.first_auth_ms || a.first_auth_ms !== a.last_auth_ms) throw new Error(JSON.stringify(a));
     const text = await row(pane, "work").innerText();
     if (!text.includes("plus") || !text.includes("정상") || (text.match(/\d{4}-\d{2}-\d{2}/g) ?? []).length < 2) throw new Error(`줄: ${text}`);
-    await shot(page, "57-accounts-desktop");
+    await shot(page, "58-accounts-desktop");
   });
 
   await step("기본으로 → 기본 배지와 host 기본 계정, 기본 해제", async () => {
@@ -113,7 +113,7 @@ export default async function ({ page }) {
     await loginState(pane, "mismatch");
     const card = await pane.getByTestId("account-login").innerText();
     if (!card.includes("로그인한 메일: other@example.com") || account("work").version !== 1) throw new Error(`고르기 전: ${card} ${JSON.stringify(account("work"))}`);
-    await shot(page, "57-accounts-mismatch-desktop");
+    await shot(page, "58-accounts-mismatch-desktop");
     await pane.getByRole("button", { name: "새 메일로 바꾸기" }).click();
     await loginState(pane, "succeeded");
     await row(pane, "work").getByTestId("account-email").filter({ hasText: "other@example.com" }).waitFor();
@@ -144,7 +144,7 @@ export default async function ({ page }) {
       return box.left >= 0 && box.right <= innerWidth + 0.5 && el.scrollWidth <= el.clientWidth + 1 ? true : JSON.stringify({ l: box.left, r: box.right, sw: el.scrollWidth, cw: el.clientWidth });
     });
     if (fits !== true) throw new Error(`휴대폰 폭: ${fits}`);
-    await shot(ph, "57-accounts-phone");
+    await shot(ph, "58-accounts-phone");
     await ph.context().close();
   });
 }

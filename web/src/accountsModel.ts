@@ -1,4 +1,4 @@
-// 설정 「계정」의 순수 규칙(관리 GUI W5a, plan §8.346): host 계정 목록·상태 낱말·로그인 진행 글.
+// 설정 「계정」의 순수 규칙(관리 GUI W5a, plan §8.348): host 계정 목록·상태 낱말·로그인 진행 글.
 // 판정의 정본은 host다(웹 조작 기기·세션 밖 CLI만 로그인·기본 변경, 메일은 그 둘에만 실린다). 인증 주소·토큰은 화면에 없다.
 import { apiAtLeast } from "./automationModel.ts";
 import type { AccountDefault, AccountHealth, AccountLoginView, AccountView } from "./gen/proto";

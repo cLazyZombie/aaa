@@ -168,3 +168,29 @@ cwd 우선 조회는 [Codex 0.163.0 소스](https://github.com/openai/codex/blob
 Claude의 설정 홈·신뢰 기록은 [Claude 공식 설정 문서](https://code.claude.com/docs/en/settings)를 근거로 한다.
 Claude의 cwd·조상 조회와 격리 홈 `.claude.json` 경로는 설치된 공식 CLI 코드에서도 확인했다.
 시험은 실제 CLI 로그인 대신 임시 홈의 가짜 harness로 시작과 조회 계약을 검사한다.
+
+
+## 계정 Claude thread의 첫 실행 안내
+
+계정별 격리 홈은 사용자 홈의 첫 실행 기록도 물려받지 않는다. 인증을 전달받은 새 Claude 홈의
+`.claude.json`에는 기존대로 `hasCompletedOnboarding=true`를 초기화한다. 이 키는 첫 실행 안내를
+닫지만 우회 권한 경고를 수락하지는 않는다.
+
+session은 safety와 profile을 합친 실제 실행 argv에 `--dangerously-skip-permissions`,
+`--allow-dangerously-skip-permissions`, `--permission-mode bypassPermissions` 또는
+`--permission-mode=bypassPermissions`가 있을 때만 격리 홈 `settings.json`의
+`skipDangerousModePermissionPrompt=true`를 기록한다. `--allow-`도 Claude가 같은 경고를 여는
+명시적 우회 허용이다. 권한 모드 자체와 다른 안내 수락은 바꾸지 않는다. 일반 실행은 이 파일을
+새로 만들지 않으며, 우회 인자 없이 다시 시작하면 이전 자동 수락 키를 제거한다.
+기존 격리 설정의 다른 키는 보존하고 symlink·깨진 JSON은 조용히 덮어쓰지 않는다.
+
+[Claude 공식 설정 문서](https://code.claude.com/docs/en/settings)는 설정 홈과 파일별 범위를,
+[권한 모드 문서](https://code.claude.com/docs/en/permission-modes)는 위 실행 옵션을 설명한다.
+정확한 경고 판정과 수락 키는 설치된 공식 Claude 2.1.304의 시작·설정 코드에서 확인했다.
+현재 키를 쓰며 이전 `.claude.json`의 `bypassPermissionsModeAccepted`는 새로 만들지 않는다.
+원래 사용자 홈의 로그인·인증 파일·키체인·다른 설정은 읽거나 복사하지 않는다.
+
+Codex 0.163.0의 [공식 시작 코드](https://github.com/openai/codex/blob/rust-v0.163.0/codex-rs/tui/src/lib.rs)와
+[첫 실행 화면 코드](https://github.com/openai/codex/blob/rust-v0.163.0/codex-rs/tui/src/onboarding/onboarding_screen.rs)에서는
+Claude의 우회 경고에 대응하는 별도 첫 실행 수락을 찾지 못했다. 로그인·폴더 신뢰와 Windows
+샌드박스 안내는 별개이며 이번 변경에서 Codex 수락 키를 추가하지 않는다.

@@ -44,7 +44,7 @@ pub struct AccountView {
     pub health: Option<AccountHealth>,
 }
 
-/// 계정 인증 상태(plan §8.346). 판정은 실제 쓰임(Codex 갱신 거부)과 알려진 만료 시각뿐이다: 제공자에게 따로 묻지 않는다
+/// 계정 인증 상태(plan §8.348). 판정은 실제 쓰임(Codex 갱신 거부)과 알려진 만료 시각뿐이다: 제공자에게 따로 묻지 않는다
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "snake_case")]
 pub enum AccountHealth {

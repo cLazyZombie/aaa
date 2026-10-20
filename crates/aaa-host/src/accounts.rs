@@ -195,7 +195,7 @@ impl Store {
     }
 }
 
-/// Codex 갱신이 어떻게 끝났나(계정 상태 판정, plan §8.346). 제공자가 거부한 것(400·401)만 끊김이다: 망·시한·5xx는 모른다
+/// Codex 갱신이 어떻게 끝났나(계정 상태 판정, plan §8.348). 제공자가 거부한 것(400·401)만 끊김이다: 망·시한·5xx는 모른다
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum RefreshOutcome {
     /// 제공자가 새 인증을 줬다
