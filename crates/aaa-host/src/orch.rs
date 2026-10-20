@@ -115,6 +115,9 @@ pub(crate) struct ThreadRec {
     /// 끝난 thread의 이어진 task 판정(할 일 T3, task_clean.rs). 이 칸 전에 끝난 thread는 `why`가 없어 판정하지 않는다
     #[serde(default)]
     pub task_clean: TaskClean,
+    /// `--from-task`로 넘길 task 첨부(plan §8.327): 작업 폴더 `attachments/`에 쓸 이름과 host 원본. 세션을 띄울 때마다 쓴다
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub attachments: Vec<crate::task_attach::TaskFile>,
     #[serde(default)]
     pub prepare_started_ms: Option<u64>,
     pub created_at_ms: u64,
@@ -189,6 +192,7 @@ impl ThreadRec {
             leftover: None,
             resolve_pending: None,
             task_clean: TaskClean::default(),
+            attachments: Vec::new(),
             prepare_started_ms: Some(now),
             created_at_ms: now,
             updated_at_ms: now,
@@ -265,6 +269,8 @@ pub struct StartArgs {
     pub base: Option<String>,
     pub task: String,
     pub role: Role,
+    /// 할 일 글이 `attachments/<이름>`으로 가리키는 task 첨부(`--from-task`만 채운다, plan §8.327)
+    pub attachments: Vec<crate::task_attach::TaskFile>,
 }
 
 /// `project create`의 옵션(herdr-projects `new`)
@@ -480,6 +486,8 @@ thread가 키를 기다리는 화면(시작 때 신뢰 창, 질문 메뉴, 명�
   남긴다(지운 task는 `aaa task restore`로 되살린다). 파일을 직접 고쳐도 되지만 충돌 감지가 없다.
 - 사용자는 웹 할 일 화면에서 고친다. 그 결과는 `aaa context`의 task 목록에 이미 들어 있다. 따로 묻지 않고 되돌리지 않는다.
 - owner를 쓰기 전에 `aaa assignable --check <owner>`로 확인한다(`aaa task`도 같은 판정을 한다).
+- 메모의 첨부 줄(`![그림](uploads/…)`·`[제목](uploads/….md)`·`[제목](library/<보고서>/<경로>)`·`[제목](https://…)`)은 사용자가
+  웹에서 붙인 그림·문서다. `aaa task edit --notes`는 메모 전체를 바꾸니 그 줄을 함께 남긴다. `--from-task`가 그 파일을 thread에 넘긴다.
 - 형식 어긋남(owner 칸의 상태 메모 등)은 `aaa task list`가 ▲로 보인다. 고칠지는 사용자에게 묻는다.
 - task를 thread에 맡길 때는 `aaa thread start --from-task \"<제목>\" --link-task …`로 시작한다. host가 줄 끝에 ` · <thread id>`를
   붙인다(따로 시작했으면 `aaa task edit \"<제목>\" --thread <id>`). 사용자가 그만둔다고 하면 줄을 지운다(메모도 함께).
@@ -1417,6 +1425,7 @@ impl Host {
             repos: &settings.repos,
             uploads_path: &dir.join("uploads").to_string_lossy(),
             remote: !self.machine_is_local(&r.machine_id),
+            attachments: r.attachments.len(),
             guide: &guide,
             instructions: &instructions,
             memory_index: &read("MEMORY.md"),
@@ -1505,6 +1514,17 @@ impl Host {
         let mid = self.resolve_machine(a.machine.as_deref())?;
         let conn = self.live_conn(&mid)?;
         self.check_health(&mid)?;
+        // task 첨부는 그 머신 작업 폴더로 넘긴다: 받지 못하는 agent면 thread를 만들기 전에 거부한다(plan §8.327)
+        if !a.attachments.is_empty() && !self.machine_feature(&mid, crate::task_attach::FEATURE) {
+            return Err(err(
+                ErrorCode::Unavailable,
+                format!(
+                    "{} agent가 task 첨부를 받지 못한다({} 없음). 그 머신 aaa를 갱신하거나 첨부를 다른 머신에서 맡긴다",
+                    self.machine_name(&mid),
+                    crate::task_attach::FEATURE
+                ),
+            ));
+        }
         let profile = self.resolved_profile(Some(&a.project), &mid, &a.profile)?;
         if a.account.is_none() {
             a.account = self.default_account(&profile.harness)?;
@@ -1529,6 +1549,7 @@ impl Host {
             automation_run: origin.map(|o| o.run.clone()),
             repo: a.repo.clone(),
             base: a.base.clone(),
+            attachments: a.attachments.clone(),
             ..ThreadRec::starting(&a.project, a.title.trim(), &mid, &a.profile, a.role, a.kind, now)
         };
         let (id, created) = self
@@ -1661,6 +1682,7 @@ impl Host {
         actor: &str,
     ) -> Result<(), ErrorBody> {
         self.automation_prepare(rec).await?;
+        self.task_attach_transfer(rec).await?;
         let launch = rec.launch.clone().ok_or_else(|| internal("launch 기록이 없다"))?;
         let mut env = launch.env.clone();
         env.push(("AAA_PROJECT".into(), rec.project.clone()));
@@ -2528,6 +2550,7 @@ mod tests {
             error: None,
             resolve_pending: None,
             task_clean: TaskClean::default(),
+            attachments: Vec::new(),
             prepare_started_ms: None,
             leftover: None,
             created_at_ms: NOW - 3_600_000,

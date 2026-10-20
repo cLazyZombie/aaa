@@ -18,6 +18,8 @@ pub(crate) struct BriefInput<'a> {
     pub uploads_path: &'a str,
     /// thread가 host 머신이 아닌 곳에서 돈다
     pub remote: bool,
+    /// 작업 폴더 `attachments/`로 넘긴 task 첨부(그림·문서) 수(plan §8.327)
+    pub attachments: usize,
     /// 사후 평가자면 thread 규칙 대신 평가자 규칙
     pub guide: &'a str,
     pub instructions: &'a str,
@@ -147,5 +149,111 @@ pub(crate) fn compose_brief(input: &BriefInput) -> String {
         "\n\n# 경로\n\n- 보고: `{work}/report.md`\n- 사용자에게 줄 파일을 두는 library 폴더: `{work}/library`\n- 사용자가 준 파일(uploads): `{}`\n",
         input.uploads_path
     ));
+    if input.attachments > 0 {
+        // 할 일 글의 `attachments/<이름>`은 이 폴더다. 다른 머신이어도 host가 이 머신으로 복사했다
+        brief.push_str(&format!(
+            "- task 첨부 {}개(할 일의 `attachments/…`): `{work}/attachments` (네 머신에 복사해 두었다)\n",
+            input.attachments
+        ));
+    }
     brief
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// herdr-projects `brief_order_and_memory_cap`을 옮겼다
+    #[test]
+    fn brief_order_and_memory_cap() {
+        let cap = 32_000;
+        let files = vec![
+            ("a.md".to_string(), "alpha fact".to_string()),
+            ("b.md".to_string(), "x".repeat(cap)),
+            ("c.md".to_string(), "gamma fact".to_string()),
+        ];
+        let repos = vec![
+            Repo { path: "/srv/app".into(), machine: Some("box".into()) },
+            Repo { path: "/work/lib".into(), machine: None },
+        ];
+        let input = BriefInput {
+            title: "Demo",
+            project: "demo",
+            goal: "Ship it",
+            repos: &repos,
+            uploads_path: "/root/demo/uploads",
+            remote: false,
+            attachments: 0,
+            guide: THREAD_GUIDE,
+            instructions: "# Demo\n\nAlways run the tests.",
+            memory_index: "# Memory\n- a\n- b\n- c",
+            memory_files: &files,
+            memory_cap: cap,
+            task: "Do the thing.",
+            restart: true,
+            summary: "# 목표\n지금 목표",
+        };
+        let brief = compose_brief(&input);
+        let pos = |needle: &str| brief.find(needle).unwrap_or_else(|| panic!("없다 {needle}"));
+        // 머리가 맨 앞이다: 이름, 목표, 머신과 함께 저장소, uploads, library, 보고
+        assert!(brief.starts_with("# aaa\n\n- 이름: Demo (`demo`)\n- 목표: Ship it\n"), "{brief}");
+        assert!(pos("/srv/app (`box` 머신)") < pos("/work/lib (host 머신)"));
+        assert!(pos("- 사용자가 준 파일(uploads): `/root/demo/uploads`\n") < pos("# thread brief"));
+        assert!(pos(&format!("- 보고: `{BRIEF_WORK_DIR}/report.md`")) < pos("# thread brief"));
+        assert!(pos("# thread brief") < pos("앞서 시도한 것"));
+        assert!(pos("앞서 시도한 것") < pos("Always run the tests."));
+        assert!(pos("Always run the tests.") < pos("# Memory"));
+        assert!(pos("# Memory") < pos("alpha fact"));
+        assert!(pos("alpha fact") < pos("# 진행 보고"));
+        assert!(!brief.contains("결정 기록"), "결정은 memory에 있다(G9)");
+        assert!(pos(&format!("`{BRIEF_EXE} report --percent 25")) < pos("Do the thing."));
+        assert!(pos("Do the thing.") < pos("# 경로"));
+        // 작업 요약은 할 일 바로 앞(다시 시작한 thread가 지금 범위를 먼저 본다)
+        assert!(pos("# 진행 보고") < pos("# 지금 범위(작업 요약)"));
+        assert!(pos("지금 목표") < pos("# 할 일"));
+        assert!(brief.ends_with(&format!(
+            "# 경로\n\n- 보고: `{BRIEF_WORK_DIR}/report.md`\n- 사용자에게 줄 파일을 두는 library 폴더: `{BRIEF_WORK_DIR}/library`\n- 사용자가 준 파일(uploads): `/root/demo/uploads`\n"
+        )));
+        assert!(brief.contains("gamma fact"));
+        assert!(brief.contains("memory가 32000자를 넘어 넣지 않은 것: memory/b.md."));
+        assert!(!brief.contains(&"x".repeat(100)));
+        // 표지는 알림 의도에만 쓴다. thread 상태는 계속 harness·진행률로 정한다.
+        assert!(brief.contains("[진행 중]") && brief.contains("[완료]") && brief.contains("사람이 직접"));
+        // 운영 설정은 thread에 가지 않는다
+        for word in ["max_parallel_threads", "auto_resolve_days", "start_threads", "trust_screens", "thread_profile"] {
+            assert!(!brief.contains(word), "{word}");
+        }
+
+        let fresh = compose_brief(&BriefInput {
+            title: "demo",
+            goal: "",
+            repos: &[],
+            remote: true,
+            instructions: "",
+            memory_index: "",
+            memory_files: &[],
+            task: "t",
+            restart: false,
+            summary: "",
+            ..input
+        });
+        assert!(!fresh.contains("앞서 시도한 것"));
+        assert!(!fresh.contains("# 지금 범위"));
+        assert!(fresh.starts_with("# aaa\n\n- 이름: `demo`\n- 목표: (정하지 않음)\n- 저장소: (없음)\n"), "{fresh}");
+        assert!(fresh.contains("`/root/demo/uploads` (host 머신에만 있다. 네 머신으로 복사되지 않는다)"));
+        assert!(!fresh.contains("task 첨부"));
+        // task 첨부가 있으면 경로 절 끝에 그 머신 작업 폴더를 적는다(host 경로가 아니다)
+        let with = compose_brief(&BriefInput { attachments: 2, ..input });
+        assert!(with.ends_with(&format!(
+            "- task 첨부 2개(할 일의 `attachments/…`): `{BRIEF_WORK_DIR}/attachments` (네 머신에 복사해 두었다)\n"
+        )));
+    }
+
+    #[test]
+    fn progress_guidance_names_the_command() {
+        let g = progress_guidance("/opt/aaa");
+        assert!(g.contains("`/opt/aaa report --unknown --activity '일 가늠'`"), "{g}");
+        assert!(g.contains("`--activity 'Waiting for you'`"));
+        assert!(g.contains(crate::orch::WAITING));
+    }
 }

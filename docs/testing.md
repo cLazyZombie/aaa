@@ -939,3 +939,27 @@ I2 Windows 수리(plan §8.325): 같은 파일 owner를 세 OS에서 유지한�
 읽히고 바뀌지 않으며 해제 뒤 같은 ID 재개가 되는지 함께 본다. Windows는 읽기 공유만 허용하는 handle
 예약을 사용한다. stage/reverse flush는 Windows 쓰기 handle로 수행하고 원본 ACL/hardlink/복구 owner를 뺄 수 없다.
 Windows 실행이 없는 현지 cross 결과는 native GREEN이 아니며 다음 main CI 결과와 나눠 보고한다.
+
+
+## 웹 할 일 첨부(t-0506, plan §8.327)
+
+- 웹 E2E 52 `task-attach`가 실제 host·agent에서 Chromium 데스크톱·iPhone·iPad(밝음·어두움)로 붙여 넣기(⌘V·붙여넣기 칸), 고치는 중 초안,
+  떼기, md 올리기·보고서 문서 고르기·주소, 파일 보기 열기(md는 그린 Markdown, html은 sandbox 페이지), 「바로 시작」 복사, 「할 일에 추가」
+  (보고서 머리·thread 결과물 줄 → 새 task·있는 task에 링크), 보고서 주소 알아보기(공유 링크·앱 보고서 주소·풀 수 없는 주소), 보기 권한을
+  본다. 올린 html은 GET 응답의 sandbox CSP·`nosniff`·글 종류를 본다. 끝은 화면 표지(`data-tasks-sha`·`data-count`)와 TASKS.md·작업
+  폴더 파일로 정한다. 시간은 기다리지 않는다.
+- iOS 길게 누름 메뉴와 클립보드 허용 말풍선은 headless가 그리지 못한다. 그 메뉴 뒤 브라우저가 내는 `ClipboardEvent`를 붙여넣기 칸에
+  재생한다. iPhone 실기기 확인은 배포 뒤 사용자가 한다(보고의 절차).
+- 휴대폰 단계는 상세 시트 위 파일 보기를 닫기 단추로 닫은 뒤 상세가 남고, 다른 화면으로 가도 파일 보기가 되살아나지 않는지 본다.
+  상세 시트가 파일 보기 동안 기록을 내주지 않으면(`usePhoneSheetBack(…, !fileOpen)`을 빼면) 이 단계가 실패한다.
+- 웹 순수 시험 `web/test/taskAttach.test.mjs`는 첨부 줄 규칙·입력칸 글·붙인 글과 파일 판정(주소의 괄호는 풀어 쓰고 괄호 든 보고서
+  경로는 받지 않는다)·「할 일에 추가」 단추를 둘 문서·보고서 주소 꼴을 본다.
+- host `task_attach::tests::upload_rules`는 보기 권한·폐기한 기기를 파일을 쓰기 전에 거부하고(옛 순서는 폐기 기기의 파일을 남겼다),
+  signature 없는 그림·NUL·UTF-8 아닌 문서·모르는 문서 종류를 거부하며, 같은 내용은 파일 하나, 읽기는 이름 꼴만·symlink 거부인지 본다.
+- host `library_links::tests::task_link_resolves_report_urls_and_reads_live_docs`는 공유 링크·앱 보기 경로의 cap 풀기, 보기 권한·
+  다른 프로젝트·없는 cap·폐기 거부, live 공개 문서 사본 읽기를 본다. `task_attach::tests::old_agent_is_refused_before_a_record`는
+  `work_attach.v1`이 없는 agent에 thread 기록을 만들기 전에 거부하는지 본다(앞 확인을 빼면 실패한다).
+- m13 `task_attachments_reach_a_remote_agent`는 TLS 원격 agent(다른 상태 폴더 labB)에 `--from-task`로 띄워 그림·보고서 문서를
+  그 작업 폴더 `attachments/`에 같은 바이트로 쓰고, 할 일 글이 그 경로만 가리키며 host에 없는 첨부는 경고로 알리는지 본다. 이어서
+  host 원본(올린 그림·보고서 문서)을 지운 뒤에도 `thread restart`가 되고 첫 사본이 남는지 본다. 첫 전송의 `sent` 표지를 저장하지
+  않으면 이 다시 시작은 「아직 쓴 적 없는 첨부」로 보고 멈추므로 실패한다(표지 저장을 빼고 확인했다).

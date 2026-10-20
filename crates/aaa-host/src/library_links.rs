@@ -606,6 +606,44 @@ mod tests {
         }
     }
 
+    /// task 첨부(plan §8.327): 붙인 보고서 주소를 그 보고서로 알아보고, live 공개 문서도 thread로 넘길 사본을 읽는다
+    #[tokio::test]
+    async fn task_link_resolves_report_urls_and_reads_live_docs() {
+        let lab = Lab::new();
+        let source = lab.state.join("live");
+        std::fs::create_dir(&source).unwrap();
+        std::fs::write(source.join("index.html"), b"page").unwrap();
+        std::fs::write(source.join("plan.md"), b"# one").unwrap();
+        let link = publish(&lab, "design", &source, true).await;
+        let cap = |base: &str| base.trim_start_matches("/v/").trim_end_matches('/').to_string();
+        let resolve = |role, cap: String| {
+            lab.h.call(role, "device:c", FrontRequest::LibraryResolve { project: "demo".into(), cap })
+        };
+        let resolved = FrontResponse::LibraryResolved { project: "demo".into(), name: "design".into() };
+        let signed = resolve(DeviceRole::Controller, cap(&link.base)).await.unwrap();
+        assert_eq!(serde_json::to_value(signed).unwrap(), serde_json::to_value(&resolved).unwrap(), "공유 링크");
+        let app = lab.h.report_library("demo", "design", Some("device:c"), false).unwrap();
+        let short = resolve(DeviceRole::Controller, cap(&app.base)).await.unwrap();
+        assert_eq!(serde_json::to_value(short).unwrap(), serde_json::to_value(&resolved).unwrap(), "앱 보기 경로");
+        assert!(resolve(DeviceRole::Reader, cap(&link.base)).await.is_err(), "첨부는 조작 권한만 한다");
+        assert_eq!(lab.h.library_resolve("other", &cap(&link.base)).unwrap_err().code, ErrorCode::BadRequest);
+        assert_eq!(resolve(DeviceRole::Controller, "0".repeat(48)).await.unwrap_err().code, ErrorCode::Unauthorized);
+        lab.h.library_link_revoke(&link.id, "test").unwrap();
+        assert_eq!(resolve(DeviceRole::Controller, cap(&link.base)).await.unwrap_err().code, ErrorCode::Unauthorized);
+
+        let mut task = "고칠 것\n[계획](library/design/plan.md)\n[없음](library/design/gone.md)".to_string();
+        let (files, warnings) = lab.h.task_attachments("demo", &mut task);
+        assert_eq!(files.len(), 1, "live 공개는 원본 폴더에서 읽는다: {warnings:?}");
+        assert!(
+            task.contains(&format!("[계획](attachments/{})", files[0].name)) && files[0].name.ends_with(".md"),
+            "{task}"
+        );
+        assert!(warnings.len() == 1 && warnings[0].contains("library/design/gone.md"), "{warnings:?}");
+        std::fs::write(source.join("plan.md"), b"# two").unwrap();
+        assert_eq!(lab.h.report_doc_bytes("demo", "design", "plan.md", 1024).unwrap(), b"# two");
+        assert_eq!(lab.h.report_doc_bytes("demo", "design", "plan.md", 3).unwrap_err().code, ErrorCode::BadRequest);
+    }
+
     #[tokio::test]
     async fn import_reports_every_skip_and_does_not_overwrite() {
         let lab = Lab::new();

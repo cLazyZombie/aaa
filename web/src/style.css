@@ -848,6 +848,15 @@ svg.i { width: 16px; height: 16px; flex-shrink: 0; fill: none; stroke: currentCo
 .files a { color: var(--text-strong); text-decoration: none; overflow-wrap: anywhere; font-family: var(--font-mono); font-size: calc(var(--fs-xs) * 12.5 / 12); }
 .files a:hover { color: var(--accent); text-decoration: underline; }
 .files .size { margin-left: auto; color: var(--text-dim); font-size: var(--fs-xs); font-variant-numeric: tabular-nums; white-space: nowrap; }
+/* 결과물 md·html 줄의 「할 일에」(plan §8.327): 크기 뒤 끝에 둔다. 휴대폰은 글 없이 아이콘만(손가락 칸은 44px) */
+.files .file-task-add { flex: 0 0 auto; display: inline-flex; align-items: center; gap: 4px; color: var(--text-dim); }
+.files .file-task-add:hover { color: var(--accent); }
+@media (max-width: 640px) {
+  .files .file-task-add { min-width: 44px; min-height: 38px; justify-content: center; }
+  .files .file-task-add .label { display: none; }
+  /* 보고서 머리는 이름이 먼저다: 「할 일에 추가」는 아이콘만 */
+  .report-task-add .label { display: none; }
+}
 .library-frame { width: 100%; height: 56vh; border: 1px solid var(--border); border-radius: var(--r-md); background: #fff; }
 
 /* 빈 화면 머리: 좁은 창의 목록 drawer 단추, 머리 알림, 「더 보기」 */

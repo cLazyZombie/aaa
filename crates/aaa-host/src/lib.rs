@@ -66,6 +66,7 @@ mod routine_runs;
 mod seen;
 mod summary;
 pub mod tailscale;
+mod task_attach;
 mod task_clean;
 mod task_edit;
 mod tasks;
@@ -1413,6 +1414,7 @@ impl Host {
                     base,
                     task,
                     role: aaa_proto::Role::Worker,
+                    attachments: Vec::new(),
                 };
                 let (warning, picked) = match from_task {
                     Some(t) => {
@@ -1508,6 +1510,7 @@ impl Host {
                 self.library_opened(&project, &name);
                 Ok(FrontResponse::Library(view))
             }
+            FrontRequest::LibraryResolve { project, cap } => self.library_resolve(&project, &cap),
             FrontRequest::LibraryUsage => self.library_usage(),
             FrontRequest::LibraryLink { project, thread, days } => {
                 self.library_link(&project, &thread, days, actor).map(FrontResponse::LibraryLink)

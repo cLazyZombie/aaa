@@ -166,6 +166,7 @@ pub(crate) fn thread_rec(
         error: opt(&t.error),
         resolve_pending: None,
         task_clean: Default::default(),
+        attachments: Vec::new(),
         prepare_started_ms: None,
         leftover: None,
         created_at_ms: created,

@@ -210,6 +210,13 @@ impl Host {
         if !t.notes.is_empty() {
             a.task = format!("{}\n\n## Notes from the task list\n\n{}\n", a.task.trim_end(), t.notes.join("\n"));
         }
+        // 메모의 그림은 그 머신 작업 폴더 `attachments/`로 넘긴다(plan §8.327): 할 일 글도 그 경로를 가리킨다
+        let (attachments, missing) = self.task_attachments(&a.project, &mut a.task);
+        a.attachments = attachments;
+        let warning = match (warning, missing.into_iter().next()) {
+            (Some(w), Some(m)) => Some(format!("{w}. {m}")),
+            (w, m) => w.or(m),
+        };
         Ok((warning, t))
     }
 
@@ -259,6 +266,7 @@ impl Host {
             base: None,
             task: String::new(),
             role: aaa_proto::Role::Worker,
+            attachments: Vec::new(),
         };
         let (warning, t) = self.apply_from_task(&mut a, from_task, block).await?;
         if a.profile.is_empty() {

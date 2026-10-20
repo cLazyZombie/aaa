@@ -587,6 +587,7 @@ impl Host {
             base: None,
             task,
             role: Role::Worker,
+            attachments: Vec::new(),
         };
         let key = start_key(p, &r.name, &event.id);
         match self.thread_start_once(args, &format!("routine:{}", r.name), &origin).await {

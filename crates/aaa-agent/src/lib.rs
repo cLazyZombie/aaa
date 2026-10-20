@@ -1613,6 +1613,21 @@ impl Agent {
             AgentRequest::AttachWrite { session, att, offset, data, eof } => {
                 self.attach_write(&session, &att, offset, data.0, eof).await
             }
+            AgentRequest::WorkAttachWrite { work_dir, att, offset, data, eof } => {
+                tokio::task::spawn_blocking(move || {
+                    threads::check_work_dir(&work_dir)
+                        .and_then(|dir| attach::write_work(&dir, &att, offset, &data.0, eof))
+                })
+                .await
+                .map_err(|e| ErrorBody::new(ErrorCode::Internal, e.to_string()))
+                .and_then(|r| {
+                    r.map(|r| match r {
+                        Some((path, sha256)) => AgentResponse::Attached { path, sha256 },
+                        None => AgentResponse::Done,
+                    })
+                    .map_err(|e| ErrorBody::new(ErrorCode::BadRequest, format!("{e:#}")))
+                })
+            }
             AgentRequest::TermColors(c) => {
                 self.set_term_colors(c).await;
                 Ok(AgentResponse::Done)

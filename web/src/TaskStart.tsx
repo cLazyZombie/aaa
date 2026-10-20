@@ -9,7 +9,7 @@ import type { OwnerChoice, TaskBoard, TaskThread, TaskView, ThreadStartPreview, 
 import { ApiError, call } from "./api";
 import { Markdown } from "./Markdown";
 import { TaskModal } from "./TaskDialogs";
-import { linkCandidates, ownerFixes, ownerLabel, type ThreadGroups } from "./tasksModel";
+import { docLinkCandidates, linkCandidates, ownerFixes, ownerLabel, type TaskAttachment, type ThreadGroups } from "./tasksModel";
 
 const errText = (e: unknown) => (e instanceof ApiError || e instanceof Error ? e.message : String(e));
 
@@ -219,6 +219,67 @@ export function LinkDialog({ thread, board, groups, onLink, onClose }: { thread:
                 <span className="task-title">{t.title}</span>
                 <span className="muted">{t.list || "(목록 없음)"}</span>
                 {t.thread && <span className="task-chip is-dim">지난 {t.thread}</span>}
+              </button>
+            </li>
+          ))}
+        </ul>
+        {error && (
+          <p className="task-form-error" role="alert">
+            {error}
+          </p>
+        )}
+      </div>
+      <footer className="modal-footer">
+        <button type="button" className="btn" disabled={busy} onClick={onClose}>
+          닫기
+        </button>
+      </footer>
+    </TaskModal>
+  );
+}
+
+/**
+ * 「할 일에 추가」(plan §8.327 2단계): 보고서·thread 결과물의 md·html 문서를 링크한 새 task 폼을 열거나(「새 task로」), 있는 task의
+ * 메모에 그 문서 첨부 줄을 붙인다(「task에 링크」). 이미 그 문서를 링크한 task와 형식 어긋난 task는 고를 수 없다
+ */
+export function DocAddDialog({ link, board, onNew, onLink, onClose }: { link: TaskAttachment; board: TaskBoard; onNew: () => void; onLink: (t: TaskView) => Promise<void>; onClose: () => void }) {
+  const [query, setQuery] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const choices = docLinkCandidates(board, link, query);
+  const pick = (t: TaskView) => {
+    if (busy) return;
+    setBusy(true);
+    setError(null);
+    void onLink(t).then(onClose, (e: unknown) => {
+      setError(errText(e));
+      setBusy(false);
+    });
+  };
+  return (
+    <TaskModal label="할 일에 추가" busy={busy} onClose={onClose} testid="task-docadd">
+      <header className="modal-header">
+        <h2 className="modal-title">할 일에 추가 · {link.label}</h2>
+      </header>
+      <div className="modal-body task-link-body">
+        <p className="muted task-docadd-target">
+          <code>{link.target}</code>
+        </p>
+        <button type="button" className="btn btn-primary" disabled={busy} data-testid="task-docadd-new" onClick={onNew}>
+          이 문서로 새 task 만들기
+        </button>
+        <p className="muted">또는 이 문서를 링크할 task를 고른다. 그 task 메모 끝에 첨부 줄이 붙는다.</p>
+        <label className="tasks-search">
+          <Search aria-hidden="true" />
+          <input className="input" type="search" value={query} placeholder="제목·메모 검색" aria-label="링크할 task 검색" data-testid="task-docadd-search" onChange={(e) => setQuery(e.target.value)} />
+        </label>
+        <ul className="task-link-list">
+          {choices.length === 0 && <li className="muted">링크할 수 있는 task가 없다</li>}
+          {choices.map((t) => (
+            <li key={`${t.line}:${t.title}`}>
+              <button type="button" className="task-link-pick" disabled={busy} data-testid="task-docadd-pick" data-title={t.title} onClick={() => pick(t)}>
+                <span className="task-title">{t.title}</span>
+                <span className="muted">{t.list || "(목록 없음)"}</span>
               </button>
             </li>
           ))}
