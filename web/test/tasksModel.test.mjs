@@ -1,7 +1,7 @@
 // 할 일 화면의 행 상태·거르기·검색·배지 셈(src/tasksModel.ts, 할 일 보기 T1, plan §8.306).
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { anchorOf, canonicalLine, descendants, draftOf, draftOps, dropOp, emptyDraft, findTask, itemToTask, lineDiff, moveOp, noteItems, ownerKindOf, ownerLabel, parentAnchor, restorable, taskBadge, handOffText, ownerFixes, startable, linkCandidates, newAutoCleans, lastLogId, mineKeys, taskDepth, taskMatches, taskSections, taskState, toListOp, unassigned } from "../src/tasksModel.ts";
+import { anchorOf, canonicalLine, defaultMachine, descendants, draftOf, draftOps, REPO_DIR, repoMachines, repoName, dropOp, emptyDraft, findTask, itemToTask, lineDiff, moveOp, noteItems, ownerKindOf, ownerLabel, parentAnchor, restorable, taskBadge, handOffText, ownerFixes, startable, linkCandidates, newAutoCleans, lastLogId, mineKeys, taskDepth, taskMatches, taskSections, taskState, toListOp, unassigned } from "../src/tasksModel.ts";
 
 const task = (over) => ({ list: "Backlog", title: "일", owner: null, thread: null, notes: [], done: false, line: 1, raw: "- [ ] 일", block_sha256: "", parent: null, problems: [], ...over });
 const MISREAD = "owner 칸이 owner 꼴이 아님: t-0001 S4 뒤";
@@ -126,7 +126,35 @@ describe("할 일 편집", () => {
     assert.equal(ownerKindOf("claude", ["claude"]), "agent");
     assert.equal(ownerKindOf("Priya Rao", ["claude"]), "person");
     assert.equal(ownerKindOf("agent", []), "none");
-    assert.equal(canonicalLine("일", "me", "t-0001"), "- [ ] 일 (me) · t-0001");
+    assert.equal(canonicalLine("일", "me", null, "t-0001"), "- [ ] 일 (me) · t-0001");
+    assert.equal(canonicalLine("일", "me", "aaa", "t-0001"), "- [ ] 일 (me) [aaa] · t-0001");
+  });
+
+  it("저장소 칸(plan §8.330): 폼은 바뀐 때만 보내고 빈 글은 비움, 「바로 시작」은 이름마다 머신을 묶고 덜 붐비는 머신이 기본", () => {
+    const one = { ...by(4), repo: "aaa" };
+    assert.deepEqual(draftOps(one, draftOf(one, [], null)), [], "그대로면 동작 없음");
+    const cleared = draftOps(one, { ...draftOf(one, [], null), repo: "" });
+    assert.deepEqual([cleared[0].repo, cleared[0].owner, cleared[0].title], ["", null, null]);
+    const notesOnly = draftOps(one, { ...draftOf(one, [], null), notes: "새 메모" });
+    assert.equal(notesOnly[0].repo, null, "칸을 안 고치면 None(그대로)");
+    const add = draftOps(null, { ...emptyDraft("A"), title: "새 일", repo: REPO_DIR });
+    assert.equal(add[0].repo, REPO_DIR);
+    assert.equal(draftOps(null, { ...emptyDraft("A"), title: "새 일" })[0].repo, null);
+    assert.deepEqual([repoName("/work/aaa/"), repoName("C:\\src\\rc")], ["aaa", "rc"]);
+    const by_name = repoMachines({
+      repos: [
+        { path: "/work/aaa", machine: null },
+        { path: "/srv/b/aaa", machine: "mac-b" },
+        { path: "/work/rc", machine: null },
+      ],
+      local_machine: "mac-a",
+    });
+    assert.deepEqual([...by_name.keys()], ["aaa", "rc"]);
+    assert.deepEqual(by_name.get("aaa"), [{ machine: "mac-a", path: "/work/aaa" }, { machine: "mac-b", path: "/srv/b/aaa" }]);
+    assert.deepEqual([...repoMachines({ repos: [{ path: "/work/aaa", machine: null }], local_machine: null }).keys()], [], "로컬 agent가 없으면 host 줄은 뺀다");
+    assert.equal(defaultMachine(["mac-a", "mac-b"], ["mac-c", "mac-b", "mac-a"]), "mac-b", "덜 붐비는 차례에서 후보에 든 첫 머신");
+    assert.equal(defaultMachine(["mac-a"], []), "mac-a", "한 곳뿐이면 그곳");
+    assert.equal(defaultMachine(["mac-a", "mac-b"], []), "", "고를 수 있는 머신이 없으면 host가 고른다");
   });
 
   it("상위 task는 고른 판의 블록 고정점으로 든다: 그대로면 옮기지 않고, 더할 때 그 블록을 보낸다", () => {

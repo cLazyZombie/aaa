@@ -487,7 +487,7 @@ enum InboxCmd {
 enum TaskCmd {
     /// 목록별 task와 형식 어긋남(읽기만 한다)
     List,
-    /// task를 더한다(정규형 `- [ ] 제목 (owner)`, 같은 제목은 거부)
+    /// task를 더한다(정규형 `- [ ] 제목 (owner) [저장소]`, 같은 제목은 거부)
     Add {
         title: String,
         /// 목록(`##` 이름). 없으면 파일 끝에 만든다
@@ -511,6 +511,9 @@ enum TaskCmd {
         /// 이어 줄 thread(` · t-NNNN`, task 없는 열린 thread를 task로 만들 때)
         #[arg(long)]
         thread: Option<String>,
+        /// 띄울 저장소: project.toml repos 경로나 그 마지막 이름(이름으로 적는다), 또는 `작업 폴더`. 비우면 정하지 않음
+        #[arg(long)]
+        repo: Option<String>,
     },
     /// task 칸을 바꾼다(준 칸만, 나머지 줄은 바이트 그대로)
     Edit {
@@ -535,6 +538,9 @@ enum TaskCmd {
         /// 이은 thread(빈 글이면 연결을 푼다)
         #[arg(long)]
         thread: Option<String>,
+        /// 저장소 칸(`task add --repo`와 같은 값, 빈 글이면 비운다)
+        #[arg(long)]
+        repo: Option<String>,
         #[arg(long, conflicts_with = "undone")]
         done: bool,
         #[arg(long)]
@@ -734,7 +740,7 @@ enum ThreadCmd {
         /// worktree(--repo 필요) 또는 dir(repo 없는 작업 폴더). 없으면 --repo가 있으면 worktree, 없으면 dir
         #[arg(long, value_parser = ["worktree", "dir"])]
         kind: Option<String>,
-        /// 그 머신의 repo 경로
+        /// 그 머신의 repo 경로. --from-task면 task 저장소 칸이 정하고(다르면 거부), 칸이 빈 task에는 경로나 이름을 준다
         #[arg(long)]
         repo: Option<String>,
         /// 기준 ref(기본: origin/HEAD, 없으면 현재 branch)
@@ -743,7 +749,8 @@ enum ThreadCmd {
         /// 할 일 파일(`-`면 표준 입력). --from-task면 비워도 된다.
         #[arg(long)]
         task_file: Option<String>,
-        /// TASKS.md의 task 제목. owner가 profile·machine 기본값이 되고 메모가 할 일에 붙는다.
+        /// TASKS.md의 task 제목. owner가 profile·machine 기본값이 되고 메모가 할 일에 붙는다. 저장소 칸이 저장소를 정하고,
+        /// 머신을 정하지 않았으면 그 저장소가 있는 머신 가운데 덜 붐비는 곳이다. 칸이 비면 작업 폴더로 띄우고 경고한다.
         #[arg(long)]
         from_task: Option<String>,
         /// 시작하면 그 task 줄 끝에 ` · <thread id>`를 붙인다(--from-task와 함께)
@@ -909,6 +916,16 @@ enum ThreadCmd {
         /// 보낸 뒤 작업 요약을 다시 쓴다(방향이 바뀌는 말이면 함께, `aaa thread summary --file`과 같다)
         #[arg(long)]
         summary_file: Option<String>,
+    },
+    /// thread 보고 `## Questions`에 답한다(예: `aaa thread answer t-0012 1A 2B`). 웹 질문 카드와 같은 길이라 모든 기기가 「답함」을
+    /// 본다. 고르지 않은 질문은 --text로 직접 쓴 답이 대신한다
+    Answer {
+        thread: String,
+        /// 질문 번호와 선택지 글자(`1A 2B`, `1a,2b`)
+        answers: Vec<String>,
+        /// 직접 쓴 답(질문 번호를 붙여 쓴다, 예: "2 둘 다 보이게")
+        #[arg(long)]
+        text: Option<String>,
     },
 }
 
@@ -1643,7 +1660,7 @@ fn run(cli: Cli) -> Result<ExitCode> {
             use aaa_proto::TaskOp;
             let op = match cmd {
                 TaskCmd::List | TaskCmd::Log { .. } => unreachable!(),
-                TaskCmd::Add { title, list, owner, person, notes, parent, before, thread } => TaskOp::Add {
+                TaskCmd::Add { title, list, owner, person, notes, parent, before, thread, repo } => TaskOp::Add {
                     list,
                     title,
                     owner,
@@ -1652,8 +1669,9 @@ fn run(cli: Cli) -> Result<ExitCode> {
                     parent: parent.as_deref().map(task_at),
                     before: before.as_deref().map(task_at),
                     thread,
+                    repo,
                 },
-                TaskCmd::Edit { task, block, title, owner, person, notes, clear_notes, thread, done, undone } => {
+                TaskCmd::Edit { task, block, title, owner, person, notes, clear_notes, thread, repo, done, undone } => {
                     TaskOp::Update {
                         at: task_at_block(&task, block),
                         title,
@@ -1668,6 +1686,7 @@ fn run(cli: Cli) -> Result<ExitCode> {
                         } else {
                             None
                         },
+                        repo,
                     }
                 }
                 TaskCmd::Move { task, block, list, before, parent } => TaskOp::Move {
@@ -1868,6 +1887,20 @@ fn run(cli: Cli) -> Result<ExitCode> {
                 ThreadCmd::Restart { thread, legacy, resume, profile } => {
                     let (project, thread) = on_target(thread, legacy)?;
                     FrontRequest::ThreadRestart { project, thread, resume, profile }
+                }
+                ThreadCmd::Answer { thread, mut answers, text } => {
+                    let (project, thread) = shift_project(thread, &mut answers)?;
+                    let view = match front_call(FrontRequest::ThreadShow {
+                        project: project.clone(),
+                        thread: thread.clone(),
+                    })? {
+                        Ok(FrontResponse::Thread(t)) => t,
+                        Ok(_) => anyhow::bail!("host가 thread 대신 다른 답을 했다"),
+                        Err(e) => anyhow::bail!("{}", e.message),
+                    };
+                    let Some(q) = view.questions else { anyhow::bail!("{thread}에는 답할 질문이 없다") };
+                    let picks = answer_picks(&answers.join(" "), q.items.len())?;
+                    FrontRequest::ThreadAnswer { project, thread, report_hash: q.report_hash, picks, text }
                 }
                 ThreadCmd::Message { thread, legacy, interrupt, text_file, text, summary_file } => {
                     let (project, thread) = on_target(thread, legacy)?;
@@ -2744,6 +2777,27 @@ pub(crate) fn project_or_here(given: Option<String>) -> Result<String> {
 }
 
 /// `<대상>`(새 꼴) 또는 `<프로젝트> <대상>`(옛 꼴): (프로젝트, 대상)
+/// `1A 2B`(쉼표·붙여 쓰기도)를 질문마다 고른 선택지 번호로. 고르지 않은 질문은 None(--text가 대신한다)
+fn answer_picks(text: &str, questions: usize) -> Result<Vec<Option<u32>>> {
+    let mut picks = vec![None; questions];
+    let compact: String = text.chars().filter(|c| !c.is_whitespace() && *c != ',').collect();
+    let mut rest = compact.as_str();
+    while !rest.is_empty() {
+        let digits = rest.chars().take_while(char::is_ascii_digit).count();
+        let letter = rest[digits..].chars().next().filter(char::is_ascii_alphabetic);
+        let (Some(letter), true) = (letter, digits > 0) else {
+            anyhow::bail!("답은 질문 번호와 선택지 글자다(예: 1A 2B): {text}");
+        };
+        let n: usize = rest[..digits].parse()?;
+        if n == 0 || n > questions {
+            anyhow::bail!("{n}번 질문이 없다(질문 {questions}개)");
+        }
+        picks[n - 1] = Some(u32::from(letter.to_ascii_uppercase() as u8 - b'A'));
+        rest = &rest[digits + 1..];
+    }
+    Ok(picks)
+}
+
 fn on_target(first: String, second: Option<String>) -> Result<(String, String)> {
     match second {
         Some(target) => Ok((project_or_here(Some(first))?, target)),
@@ -3299,9 +3353,10 @@ fn render_task_board(s: &mut String, b: &aaa_proto::TaskBoard) {
                 "○"
             };
             let owner = t.owner.as_ref().map(|o| format!(" ({o})")).unwrap_or_default();
+            let repo = t.repo.as_ref().map(|r| format!(" [{r}]")).unwrap_or_default();
             let thread = t.thread.as_ref().map(|x| format!(" · {x}")).unwrap_or_default();
             let pad = "  ".repeat(depth(t) + 1);
-            let _ = writeln!(s, "{pad}{mark} {}{owner}{thread}  [{}줄]", t.title, t.line);
+            let _ = writeln!(s, "{pad}{mark} {}{owner}{repo}{thread}  [{}줄]", t.title, t.line);
             for p in &t.problems {
                 let _ = writeln!(s, "{pad}    형식 어긋남: {p}");
             }
@@ -3995,13 +4050,21 @@ fn render_front(r: &FrontResponse) -> String {
         FrontResponse::AccountLogin { login } => {
             let _ = writeln!(s, "{}\t{}\t{}\t{}", login.id, login.account, login.harness, login.state);
             if login.state == "waiting" {
-                let _ = writeln!(s, "host 브라우저에서 인증한다. 상태: aaa account login-status {}", login.id);
+                let _ = writeln!(
+                    s,
+                    "로그인 완료 대기 중이다(브라우저 열림을 보증하지 않는다). 상태: aaa account login-status {}",
+                    login.id
+                );
             }
         }
         FrontResponse::ThreadStartPreview(p) => {
             let _ = writeln!(s, "제목: {}\nprofile: {}", p.title, p.profile);
+            let _ = writeln!(s, "저장소: {}", p.repo.as_deref().unwrap_or("(칸 없음: 작업 폴더로 띄운다)"));
             if let Some(m) = &p.machine {
                 let _ = writeln!(s, "머신: {m}");
+            }
+            if !p.machine_order.is_empty() {
+                let _ = writeln!(s, "덜 붐비는 차례: {}", p.machine_order.join(", "));
             }
             let _ = writeln!(s, "열린 thread: {}/{}", p.open_threads, p.max_parallel_threads);
             for w in &p.warnings {
@@ -4291,5 +4354,18 @@ mod tests {
         assert!(!ok(&["--percent", "25", "--unknown", "--activity", "x"]));
         assert!(!ok(&["--percent", "101", "--activity", "x"]));
         assert!(!ok(&["--percent", "25"]));
+    }
+
+    /// `aaa thread answer`의 답 글(plan §8.329): 띄어 쓰기·쉼표·붙여 쓰기·소문자를 받고, 없는 질문·꼴이 아닌 글은 거절한다
+    #[test]
+    fn answer_picks_read_question_numbers_and_letters() {
+        use super::answer_picks;
+        assert_eq!(answer_picks("1A 2B", 2).unwrap(), [Some(0), Some(1)]);
+        assert_eq!(answer_picks("1a,2c", 3).unwrap(), [Some(0), Some(2), None]);
+        assert_eq!(answer_picks("2B1A", 2).unwrap(), [Some(0), Some(1)]);
+        assert_eq!(answer_picks("", 2).unwrap(), [None, None]);
+        assert!(answer_picks("3A", 2).unwrap_err().to_string().contains("3번 질문이 없다"));
+        assert!(answer_picks("A1", 2).is_err());
+        assert!(answer_picks("1", 2).is_err());
     }
 }

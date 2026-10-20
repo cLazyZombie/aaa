@@ -178,6 +178,7 @@ impl Host {
                 notes: None,
                 thread: Some(rec.id.clone()),
                 done: None,
+                repo: None,
             };
             // 잇지 못하면(그사이 상위가 바뀌었다) 다시 하지 않지만 신호는 남긴다: 줄 대신 inbox로 묻게 한다
             let summary = match self.task_write(project, dir, &[op], None, HOST_ACTOR, &no_input(), true) {
@@ -213,15 +214,18 @@ impl Host {
     }
 }
 
-/// 자동 정리는 owner를 바꾸거나 되살리지 않는다
+/// 자동 정리는 owner·저장소를 바꾸거나 되살리지 않는다
 fn no_input() -> task_edit::Ctx<'static> {
     fn owner_ok(_: &str, _: bool) -> Result<(), String> {
         Ok(())
     }
+    fn repo_ok(_: &str) -> Result<String, String> {
+        Err("자동 정리는 저장소 칸을 바꾸지 않는다".into())
+    }
     fn removed(_: i64) -> Result<task_edit::Removed, String> {
         Err("자동 정리는 되살리지 않는다".into())
     }
-    task_edit::Ctx { owner_ok: &owner_ok, removed: &removed }
+    task_edit::Ctx { owner_ok: &owner_ok, repo_ok: &repo_ok, removed: &removed }
 }
 
 #[cfg(test)]

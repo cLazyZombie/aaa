@@ -237,6 +237,7 @@ impl Host {
             notes: None,
             thread: Some(thread.to_string()),
             done: None,
+            repo: None,
         };
         let why = match self.task_edit(project, vec![op], None, actor).await {
             Ok(FrontResponse::TaskEdited { conflict: None, .. }) => return None,
@@ -274,6 +275,7 @@ impl Host {
         }
         let set = self.settings(project);
         let open_threads = self.open_worker_threads(project);
+        let (machine_order, local_machine) = self.machine_order();
         Ok(FrontResponse::ThreadStartPreview(aaa_proto::ThreadStartPreview {
             title: a.title,
             task_block: t.block_sha256,
@@ -284,6 +286,9 @@ impl Host {
             open_threads,
             max_parallel_threads: set.max_parallel_threads,
             warnings: warning.into_iter().collect(),
+            repo: t.repo,
+            local_machine,
+            machine_order,
         }))
     }
 
@@ -304,6 +309,13 @@ impl Host {
             t.suggestion = tasks::suggest(t, &open_ids);
         }
         self.fill_attention(project, &mut tasks);
+        // 끝 대괄호가 저장소 꼴이라 칸으로 읽었지만 project.toml에 없는 이름(손으로 쓴 `[WIP]` 등): 시작 전에 화면에서 보이게
+        let repos = crate::task_repo::repo_names(&self.settings(project).repos);
+        for t in &mut tasks {
+            if let Some(r) = t.repo.as_deref().filter(|r| *r != tasks::REPO_DIR && !repos.iter().any(|x| x == r)) {
+                t.problems.push(format!("project.toml repos에 없는 저장소 칸: [{r}]"));
+            }
+        }
         // 임무 thread는 특수 패널의 일이고, 자동화 thread는 출처(규칙)가 있어 task가 필요 없다(plan t-0475 §5.3): 할 일과 잇지 않는다
         let unlinked_threads = open
             .into_iter()
@@ -319,6 +331,7 @@ impl Host {
             unlinked_threads,
             notes_files,
             text,
+            repos,
         })
     }
 
@@ -383,7 +396,8 @@ impl Host {
             }
             Ok(Removed { list: e.list, text: e.before.unwrap_or_default() })
         };
-        let ctx = task_edit::Ctx { owner_ok: &owner_ok, removed: &removed };
+        let repo_ok = |r: &str| self.task_repo_ok(project, r);
+        let ctx = task_edit::Ctx { owner_ok: &owner_ok, repo_ok: &repo_ok, removed: &removed };
         let (conflict, log_ids) = self.task_write(project, &dir, &ops, base_sha256.as_deref(), &actor, &ctx, false)?;
         let board = self.task_board(project)?;
         let conflict = conflict.map(|(op, reason, title)| TaskConflict {

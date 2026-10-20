@@ -226,6 +226,7 @@ export default async function ({ page }) {
     await pick(page, "화면 고치기");
     await detail.getByTestId("task-handoff-start").click();
     await domIs(page, "바로 시작 값", () => document.querySelector('[data-testid="task-start"] form')?.dataset.startState === "ready");
+    await page.getByTestId("task-start-repo").selectOption("작업 폴더");
     await shot(page, "attach-desktop-start");
     await page.getByTestId("task-start-go").click();
     await page.getByTestId("task-started").waitFor();

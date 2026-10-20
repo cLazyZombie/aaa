@@ -5153,7 +5153,7 @@ primary 근거:
   일반 inbox 발행은 외부 알림 대기열을 건드리지 않고, post 저장 뒤 검증한 봉투로만 대기열에 넣는다.
 - **두 의도.** `user --request --needs-user --topic user-action`은 「확인 필요」,
   `user --notice --topic task-complete`은 「전체 완료」다. 그 외 post는 앱 안에 남는다.
-  post 글·제목은 외부 본문으로 싣지 않고 기존 고정 문구를 유지한다. debounce·done 제거·프로젝트 mute·기기별
+  post 글·제목은 외부 본문으로 싣지 않고 기존 고정 문구를 유지한다(§8.328이 확인 필요 post의 가린 제목만 싣게 바꿨다). debounce·done 제거·프로젝트 mute·기기별
   input/done·쓰는 화면 억제·실패 시 재전송 없음도 유지한다.
 - **설정.** `[notify].kinds`의 기존 기본값·옛 이름 변환은 호환성을 위해 유지한다. `post`를 빼면 외부 알림을 끄며,
   다른 종류를 추가해도 위 출처 범위를 넓힐 수 없다. 앱 안 알림의 기존 `thread-state` 선택은 유지한다. `post`의 유무는 thread 앱 안 알림을 바꾸지 않는다.
@@ -6132,6 +6132,8 @@ L4 후속(10-20 00시 사용자 관찰): 멈춤 상태의 후보 예약과 재�
 - **프로토콜·검증·배포.** FRONT_API 1.70(로그인·기본 관리와 선택 `PaneView.account`), agent 기능 `account_auth.v2`(coordinator 실행 참조)를 더하며 AGENT_LINK/SESSION_IPC 버전은 유지한다. 미지원 coordinator agent는 인증 전달 전에 거부한다. 가짜 CLI·토큰·회전 서버 E2E가 두 머신·자동화 평가 작업·coordinator·기본 우선순위·기존 로컬 유지·실패/취소/종료 정리·재개·복원·비노출을 소유한다. 기본 제거·원본 출력 노출·인증 없는 coordinator 재개·준비 중 참조 허용 변형에서 실패와 바이트 원복을 확인한다. 착지 뒤 coordinator가 바로 배포하고 실제 host 브라우저 로그인·기본 지정과 새 작업의 적용을 사용자가 확인한다. 절차와 해제 방법은 [작업별 계정 인증](accounts.md)에 둔다. 사용량 카드·자동 배정·API 키 연결은 포함하지 않는다.
 
 
+- **운영 첫 취소 수리.** 동시 로그인 뒤 cancel이 종료·정리 전의 waiting snapshot을 반환하던 결함을 수리한다. 완료 상태를 여러 취소자와 host 종료자가 함께 기다리며, 이미 성공/실패한 결과는 유지한다. 새 가짜 PTY keeper가 두 harness의 독립 성공/실패·중복 동시 취소·두 작업 중 host 종료와 비노출을 검사한다. 로그인 PID·자식 종료·최종 정리 결과만 host 로그에 남긴다. waiting은 브라우저 열림 확인이 아니며 실제 브라우저 결과를 가짜 시험으로 대신 보증하지 않는다.
+
 ### 8.327 웹 할 일 첨부: 그림·md·html 문서·링크(10-20, t-0506)
 
 - **요청.** 사용자 10-20 18:1x 「할일에 이미지 첨부할수있게 해」, 덧붙임 「붙여넣기도 지원하게」(⌘V·Ctrl+V 필수, 메모를 쓰는 중이든 task를 고르고 있든 그 task에), 「폰에서 캡쳐 후 복사해서 바로 붙이게」(사진 고르기 없이 길게 눌러 「붙여넣기」), 18:3x 「md·html 문서도 task에 첨부(링크)」(계획서 → 피드백 → 바로 시작·할 일에 추가, 할 일 화면에서 바로 연다, thread에도 넘긴다).
@@ -6148,3 +6150,51 @@ L4 후속(10-20 00시 사용자 관찰): 멈춤 상태의 후보 예약과 재�
 - **참고 위치.** 붙여 넣기 추출·형식 보정: herdr-web-ui aa624cb Composer(이 저장소 `ChatComposer.tsx` `onPaste`, `herdr/composerImageMime.ts`). 받는 그림 형식(gif·jpeg·png·webp): t3code 4b1024da `packages/contracts/src/chatAttachment.ts:15-23`(한 장 10MiB, aaa는 대화 첨부와 같은 16MiB). 크게 보기(목록과 위치, 앞뒤 넘김): t3code `apps/web/src/components/chat/ExpandedImagePreview.tsx:35-55`. 설명 칸의 붙여 넣기·끌어 놓기·첨부 단추와 업로드 중 칸, Markdown 그림 줄로 남기기: GitHub issue 설명 칸·Linear 설명(사용 방식, 소스 없음). 결과물 HTML sandbox: 이 저장소 `web.rs` `VIEW_CSP`. 휴대폰 시트 뒤로: `herdr/sheetHistory.ts`.
 - **참고와 다른 것.** GitHub는 입력칸 커서 자리에 그림 줄을 넣고 원문으로 보이지만, aaa는 입력칸에 글만 보이고 첨부를 첨부 칸에 모은다(TASKS.md 줄은 사람이 읽는 꼴 그대로). 참고는 첨부를 고친 뒤 저장 단추를 누르지만 aaa는 손대지 않은 폼이면 바로 저장한다(사용자 「사진 고르기 창을 거치지 않는다」). 참고 넷에 할 일 첨부가 없어 thread로 넘기는 길은 aaa 것이다. Linear·Notion은 문서 링크를 붙이면 링크 미리보기 카드로 바꾸지만, aaa는 이 앱 보고서 주소만 앱 안 문서로 바꾸고 바깥 주소는 그대로 둔다.
 - **검증.** host 유닛 `task_attach::tests`(참조 꼴: uploads·보고서 문서, 숨은 이름·`..`·그림 파일 거부)·`brief_text::tests`(경로 절 첨부 줄), agent 유닛 `attach::tests::work_attachments_replace_same_name`. 웹 순수 규칙 `taskAttach.test.mjs`. 웹 E2E `52-task-attach`(본문 ⌘V로 바로 저장·같은 그림 두 번은 하나, 고치는 중 붙이기는 초안·저장 전·충돌 없음, 붙여넣기 칸·글만 붙이면 알림·떼기 뒤 파일 남음·기록, md 올리기·보고서 문서 고르기·html 페이지 열기·주소 붙이기, 바로 시작이 attachments/로 복사·할 일 글·brief, 할 일에 추가: 보고서 머리 → 새 task·thread 결과물 md 줄 → 있는 task에 링크·이미 링크한 task 빠짐, 보고서 주소: 공유 링크·앱 보고서 주소·풀 수 없는 주소, 보기 권한: 문서 열기·「할 일에 추가」 없음·403, iPhone·iPad 밝음·어두움 붙여넣기 칸·크게 보기·문서 열기·파일 보기 닫은 뒤 상세 남음·화면 이동 뒤 되살아나지 않음·보고서 머리와 「할 일에 추가」 창). host 유닛 `library_links::tests::task_link_resolves_report_urls_and_reads_live_docs`(cap 풀기·거부, live 사본), `task_attach::tests::old_agent_is_refused_before_a_record`(옛 agent는 기록 전에 거부). m13 `task_attachments_reach_a_remote_agent`(TLS 원격 agent 작업 폴더에 같은 바이트, 할 일 글은 그 경로만, 없는 첨부는 경고). iOS 길게 누름 메뉴·허용 말풍선·홈 화면 앱은 실기기로 보지 못했다(headless는 그 뒤의 paste 사건을 재생한다).
+
+### 8.328 thread 시작할 때 모아 묻기와 질문 알림(10-20, t-0512)
+
+- **요청.** 사용자 10-20 20:0x 「스레드에서 처음에 작업 맡아서 궁금한 걸 내게 물어보게 할 수 있어? 난 coordinator에서 처리하고」, 「aaa 자체 규칙에 넣어 줘」. 이어서 「이런 질문은 알람(푸시)이 오게 해 줘. 앱을 닫아 뒀다면. 열었으면 앱 내 알림으로」와 정정 「질문 푸시는 host가 직접 보내지 말고 지금 원칙대로 coordinator가 보낸다 … thread 보고 표지는 지금처럼 앱 안 알림만」. 알림 본문은 질문 요약·추천을 담는다(비밀값 없음).
+- **thread 안내(`brief_text.rs` `THREAD_GUIDE` 「시작할 때 묻기」).** 할 일을 읽고 코드·기획을 짧게 훑은 뒤, 결과를 바꿀 만큼 모호한 것만 구현 전에 한 번 모아 묻는다. 보고 첫 줄 `[결정 필요] 질문 N개: <한 줄 요약>`, `## Report`에 질문마다 선택지 2~4개와 맨 앞 추천(까닭 한 줄). 코드·기획·memory·관례로 정할 것은 묻지 않고, 물을 것이 없으면 바로 진행한다. harness의 pane 안 질문 창(AskUserQuestion 등)이 아니라 보고로 묻는다: Codex 등 모든 harness가 같은 길이고 사용자는 pane에 가지 않는다. 모든 프로젝트 brief에 들어간다.
+- **coordinator 안내(`orch.rs` `COORDINATOR_GUIDE`).** 「thread 보기와 요약」에 받는 쪽 두 항목.
+  - memory·채팅으로 답이 정해져 있지 않으면 채팅에 질문 번호·선택지 글자·추천(맨 앞, 까닭 한 줄)으로 적는다. 「사용자 알림」의 확인 필요 post를 보내고(제목 예 `t-0123 질문 2개 · 추천: A안`) 턴을 끝내 다른 일을 이어 간다. 사용자가 다음 말(「1A 2B」)로 답하면 그때 `aaa thread message`로 보내고, 방향이 바뀌면 `--summary-file`.
+  - harness 질문 창(AskUserQuestion 등)은 쓰지 않는다. 사용자 정정(10-20 20:1x): 그 창은 답을 받을 때까지 coordinator 턴을 막아 inbox·착지 창·다른 thread 중계가 모두 멈춘다(실제로 10분 막힘). 처음 요청의 「선택지 창으로」는 이 정정으로 버렸다. 「사용자 알림」의 `--title '확인 필요'`는 `'<정할 것·추천 한 줄>'`로 바꾸고 그 제목이 가려진 채 외부 본문에 실린다고 적었다. Waiting for you 보고와 post를 함께 남기는 기존 규칙은 그대로 한 곳(「사용자 알림」)에 둔다. 운영 프로젝트의 AGENTS.md는 배포 뒤 `aaa doctor files --fix`가 다시 쓴다.
+- **알림 판정(바꾸지 않음, 확인).** 외부 푸시는 §8.249대로 coordinator pane으로 검증한 사용자 post만이다. thread의 `[결정 필요]` 보고는 지금처럼 앱 안 알림(입력 필요)만 낸다. 앱을 보는 동안(쓰는 기기가 보이고 focus) coordinator post push는 `push_skipped`로 건너뛰므로 그 화면에는 thread 표지의 앱 안 알림 하나만 있다. coordinator가 질문 창을 띄우지 않으므로 coordinator pane의 확인창 알림도 겹치지 않는다. 앱을 닫은 동안은 앱 안 알림이 없고 post push 하나가 간다. post 전용 앱 안 알림 길은 만들지 않았다: 보는 화면에는 이미 thread 표지 알림이 있어 하나 더 띄우면 겹친다(FRONT_API 그대로).
+- **본문(§8.249 고정 문구를 이 경우만 바꿈).** coordinator의 `user-action` 확인 필요 post(`post request for user`, 대상 coordinator)만 제목을 「사용자 결정 요청 · <제목>」으로 싣는다(웹 push·webhook 공통 `alert_line`·`safe_summary`). 제목은 보고 요약과 같은 가림(`notify.rs` `redact`: URL·경로·이메일·tailnet 이름·IP·이름 붙은 비밀값·알려진 token·긴 식별자, 제어 문자)을 거쳐 160자로 줄인다. 본문·참고는 싣지 않는다. 전체 완료 post와 thread가 coordinator에게 보낸 request는 고정 문구 그대로다.
+- **남은 틈(이번 범위 밖).** 보고가 올 때는 가려져 앱 안 알림이 없고(소리·탭 알림만), coordinator post 때는 보고 있어 push를 건너뛰면 그 질문의 알림은 둘 다 없다. thread 보고 알림 전반의 성질이다.
+- **검증.**
+  - host 유닛 `post::tests::coordinator_can_request_the_user_without_nudging_itself`(가린 제목 줄, webhook JSON에 본문·token 없음), `post_fence_push_matrix_and_privacy`(thread가 보낸 request는 그대로 고정 문구), `brief_text::tests::brief_order_and_memory_cap`(새 절의 자리·문구). m13 `AGENTS.md` 검사에 받는 쪽 문구.
+  - 웹 E2E 17 「시작 질문」: fake agent가 「모아 묻기 시험」 할 일에 `[결정 필요] 질문 1개` 보고만 쓰고, coordinator pane 자식 CLI가 확인 필요 post를 보낸다. (1) 휴대폰이 쓰는 기기: `push_skipped`, 이 기기 push 0, 앱 안 알림 1(입력 필요, thread 제목). (2) 가림: 앱 안 알림 0, push 1(제목 `demo`, tag `aaa-demo`, `/#threads`, 본문 `coordinator 사용자 결정 요청 · 질문 1개 · 추천: A안(기존과 같음) [숨김]`).
+  - 결함 심기: post 제목을 알림 줄에 싣지 않게 되돌리면 (2)가 「질문 push body: … "coordinator 사용자 결정 요청"」으로 실패했고, 되돌린 뒤 통과했다.
+
+### 8.329 thread 질문 카드와 앱 안 참조 칩(10-20, t-0512)
+
+- **요청.** 사용자 10-20 20:2x 「질문을 앱 안 선택지 카드로」, 20:3x 확정 방향(「지금 상황 + 답할 것」을 활동 막대 보고서 화면에 합치고 답할 것을 위에, 대화에는 앱 안 링크 칩, 보고서 웹 주소도 같은 앱 안 참조 꼴로, 터미널에서도 읽히게), 20:4x 시안(library/t-0512 `index.html`) 「추천대로」: 1A 참조 꼴 `aaa:question/<thread>`·`aaa:report/<이름>`, 2A 칩·알림으로 연 질문만 펼침, 3A 답할 것이 있으면 보고서 단추에 빨강 답할 수(없으면 안 본 보고서 수), 4A thread 대화 입력칸 위 칩 한 줄.
+- **질문 꼴(thread 안내 「시작할 때 묻기」, §8.328을 바꿈).** 질문은 `## Report`가 아니라 `## Questions` 절에 `1. 질문`과 `- A 선택지 (추천) — 까닭` 줄로 쓴다(안내에 예시 fence). host가 보고 사본을 받을 때 첫 줄 표지가 사람 대기(`[결정 필요]`·`[검수 대기]`·`[확인 필요]`·`[사람 필요]`)이면 이 절을 읽는다(`aaa_proto::report_questions`: 선택지 2개 미만인 질문은 버림, 질문·선택지 9개까지, `(추천)`·`(Recommended)` 표지는 떼어 `recommended`). 새 보고마다 질문을 다시 읽고 답을 비운다.
+- **proto(FRONT_API 1.72, 더하기만).** `ThreadView.questions = ThreadQuestions{report_hash, items[{text, choices[{label, description, recommended}]}], answer: QuestionAnswerView{picks, text, summary, by, at_ms}}`(질문 없는 보고·옛 host는 생략). `FrontRequest::ThreadAnswer{project, thread, report_hash, picks: [선택지 번호|null], text}`는 조작 권한만(보기 권한은 forbidden).
+- **답(host `answer.rs`).** 그 보고(hash)의 질문에만 맞는다. 모든 질문은 고르거나 직접 쓴 답으로 대신한다. 기록에 먼저 `question_answer` 자리를 잡고(두 기기가 함께 눌러도 한 번, 늦은 쪽은 「이미 답함(누구): 1A 2B」) `thread message`와 같은 길(확인창·입력창 글·brief 전 거부)로 「보고의 질문에 대한 사용자 답(1B 2A)」과 질문·선택지 줄을 보낸다. 보내지 못하면 자리를 푼다. 웹 기기에서 답하면 coordinator inbox에 `question answered`(「t-0001 질문에 답함(기기): 1B 2A」)를 남긴다. CLI `aaa thread answer <id> 1A 2B [--text …]`는 같은 요청이다(채팅으로 받은 답을 coordinator가 보낼 때, 카드도 「답함」).
+- **웹.**
+  - 보고서 화면 맨 위: 「지금」 줄(작업 중·답할 것·안 본 보고 수)과 「답할 것」. 질문 카드는 화면 선택 창 카드(PromptCard, herdr-web-ui) 꼴로 한 thread의 질문을 한 카드에 모은다: 질문마다 A·B 선택지와 추천 표시, 직접 쓴 답(고르지 않은 질문을 대신), 다 고르면 「답 보내기 (n)」, 덜 고르면 「추천대로 보내기」(남은 질문을 추천으로 채움). 답한 카드는 「답함 · 시각 · 기기」와 고른 것을 보이고 다음 보고가 올 때까지 한 줄로 남는다. 보기 권한은 단추가 꺼진다.
+  - 주소 `#question=<thread>`(알림 url, 칩)는 보고서 목록에서 그 카드만 펼친다(2A). 다른 카드는 한 줄이고 누르면 펼친다. 같은 칩을 다시 누르면 접은 카드를 다시 펼친다.
+  - 활동 막대 보고서 단추: 답할 질문이 있으면 빨강 수(답할 thread 수), 없으면 안 본 보고서 수(3A).
+  - 대화 글(Markdown)의 `aaa:question/<thread>`·`aaa:report/<이름>`(글 속·backtick·링크 주소)은 칩이다: 질문은 「t-0001 질문 2개 · 답할 것」(빨강)·「답함 · 1B 2A」(초록), 보고서는 보고서 제목. 누르면 넓은 창도 새 탭이 아니라 앱 안(질문 카드·보고서 화면)이다. 모르는 보고서는 보고서 목록으로 가고 머리에 말한다. 칩 상태가 바뀔 때만 대화가 다시 그린다. 같은 host의 http 주소(`/v/…`·`/#report=…`)는 §8.300 그대로 둔다.
+  - thread pane(터미널·대화 보기) 입력칸 위에 그 thread 질문의 칩 한 줄(4A).
+- **coordinator 안내.** 질문 post 제목 끝에 `aaa:question/<thread>`(알림을 누르면 그 카드, 글에서는 빠진다: host `notify::app_ref`·`request_question`, push url `/#question=<thread>`). 채팅에도 같은 참조를 적고, 카드로 답하면 host가 전하니 다시 묻거나 전하지 않는다. 채팅 답은 `aaa thread answer`. 「앱 안 참조」 절: 보고서·질문은 공유 주소 대신 이 꼴로 가리키고 공유 주소는 사용자가 밖으로 보내 달라고 할 때만.
+- **검증.**
+  - proto 유닛 `report_questions_read_numbered_questions_and_lettered_choices`, host 유닛 `answer::tests::compose_checks_every_question_and_writes_the_short_form`·`post::tests`(제목의 참조는 글에서 빠지고 url `/#question=t-0512`)·`brief_text::tests::brief_order_and_memory_cap`(안내 fence를 `report_questions`가 읽음), CLI `answer_picks_read_question_numbers_and_letters`, m13 안내 문구, 웹 유닛 `appRef.test.mjs`·`reportLinks.test.mjs`(`/#question=`).
+  - 웹 E2E `53-thread-questions`: fake agent가 「질문 카드 시험」에 `## Questions` 두 질문 보고를 쓴다. 빨강 배지 1, coordinator 대화(Claude 기록)의 질문·보고서·모르는 보고서 칩, 질문 칩 → `#question=` 그 카드 펼침, 보고서 칩 → 앱 안 보고서, 입력칸 위 칩, 휴대폰은 알림 주소로 연 펼친 카드, 보기 권한은 단추 꺼짐·host forbidden, 휴대폰 1B + 「추천대로 보내기」 → pane에 「사용자 답(1B 2A)」, 기록 `[1,0]`, 휴대폰·보기 권한 카드와 입력칸 위 칩이 답함, 배지는 안 본 수로, CLI 두 번째 답은 「이미 답함」, inbox `question answered`, 새 보고가 오면 다시 답할 것·빨강 배지·옛 hash 답은 「질문이 바뀌었다」.
+  - 결함 심기: 자리 잡기를 끄면(두 번째 답이 덮음) 「두 번째 답」에서, 칩으로 연 카드 펼침을 끄면 「질문 카드 펼침」에서 실패했고 되돌린 뒤 통과했다.
+
+
+### 8.330 task 저장소 칸(10-20, t-0506)
+
+- **요청.** 사용자 10-20 20:5x 「506에 workspace 추가」: 할 일(task)에 저장소 칸을 더하고 CLI `aaa task add|edit --repo`, 웹 할 일 편집에서 고치며, 웹 「thread로 바로 시작」과 `aaa thread start --from-task`가 그 저장소로 띄운다. 머신마다 경로는 `project.toml` repos의 머신 매핑을 쓰고, 첫 저장소를 말없이 고르지 않는다. 21:0x 결정: 표기 1A, 이름 2A, 빈 칸 웹 4A·CLI 5A, 머신 3은 「host와 상관없이 덜 붐비는 곳」.
+- **표기(`tasks.rs`).** owner 뒤 대괄호 `- [ ] 제목 (owner) [aaa] · t-0518`. 값은 `project.toml` repos 경로의 마지막 이름(`\`도 구분자)이나 `[작업 폴더]`(저장소 없는 작업 폴더)다. 이름 꼴(영문·숫자·`.`·`_`·`-`)이나 `작업 폴더`가 아닌 끝 대괄호(`[긴급]`)는 제목 글이다. 이름 꼴인데 repos에 없는 칸(손으로 쓴 `[WIP]`)은 할 일 화면·`task list`에 형식 어긋남으로 보인다. 제목 끝 `[이름]`은 뒤에 owner·저장소 칸이 오면 제목으로 읽히므로(`배포 [v2] (claude)`) 그대로 고칠 수 있고, 칸 없이 쓰면 저장소로 읽히므로 저장을 거부한다(다시 읽기 검사). owner 없는 옛 줄 `배포 [v2]`는 표기상 저장소 칸으로 읽힌다(repos에 없으면 형식 어긋남으로 보인다). 「정리 제안」은 칸을 그대로 둔다.
+- **쓰기(`task_edit`·`task_repo::check_repo`).** `TaskOp` Add/Update `repo`(Update: 없음은 그대로, 빈 글은 비움). 경로를 받으면 repos 줄을 찾아 이름으로 적고, repos에 없는 이름은 거부한다(있는 이름을 알린다). 자동 정리는 칸을 바꾸지 않는다. CLI `aaa task add|edit --repo <이름|경로|작업 폴더>`, `task list`는 칸을 줄에 보인다.
+- **띄우기(`task_repo::apply_task_repo`, `--from-task`만).** `apply_from_task`(owner → profile·머신) 뒤에 칸을 옮긴다.
+  - 이름: 그 이름의 repos 줄(머신, 그 머신 경로) 가운데 owner·`--machine`의 머신이 있으면 그것(없으면 거부), 한 줄뿐이면 그것, 아니면 덜 붐비는 머신의 줄이다. 고를 수 있는 머신이 없으면 그 저장소가 있는 머신을 알리며 거부한다. 고른 머신에 같은 이름 저장소가 둘 이상이면 말없이 고르지 않고 경로(`--repo`)를 달라고 거부한다. `--repo` 경로는 끝 구분자를 무시하고 비교한다. 경로·머신을 정해 worktree로 띄운다. 머신이 빈 repos 줄은 host 로컬 머신이고, 로컬 agent가 없으면 그 까닭으로 거부한다.
+  - `작업 폴더`: 작업 폴더로, 머신은 owner·`--machine`, 아니면 덜 붐비는 머신이다.
+  - 빈 칸: 요청의 `--repo`를 칸처럼 쓴다(웹 창이 고른 이름). 그것도 없으면 작업 폴더로 띄우고, `--kind`를 주지 않았으면 경고 「task에 저장소 칸이 없어 작업 폴더로 띄웠다」를 단다. repos에 없는 경로를 주면 지금처럼 그 경로로 띄운다(일반 `thread start --repo`와 같다).
+  - 어긋남: 칸과 다른 `--repo`(이름으로 비교), 칸이 저장소인데 `--kind dir`, 칸이 작업 폴더인데 `--kind worktree`·`--repo`는 거부한다. `thread restart`는 처음 띄운 자리를 그대로 쓴다.
+- **덜 붐빔(`least_busy_order`).** 연결돼 있고 점검 이상(`problems`)이 없는 머신만, 모든 프로젝트의 열린(시작 중 포함) thread가 적은 차례 → health `load_x100`이 낮은 차례(모르면 뒤) → 이름순. 지금 고르는 기준이 코드에 따로 없어 coordinator가 이 기준을 확인했다.
+- **웹(FRONT_API 1.73).** `TaskBoard.repos`(칸에 쓸 이름), 할 일 폼 「저장소」 고르기(정하지 않음·이름·작업 폴더), 목록 줄과 상세의 칩. 「바로 시작」 미리보기는 `repo`(task 칸)·`local_machine`·`machine_order`(덜 붐비는 차례)를 더 준다. 창은 저장소를 이름으로 고르고, 칸이 있으면 고정, 비면 「고르기…」로 시작해 저장소나 작업 폴더를 고르기 전에는 「시작」을 막는다(고른 값은 task 줄에 적지 않는다). 머신은 그 저장소가 있는 머신만 보이고 owner의 머신, 아니면 `machine_order`에서 후보에 든 첫 머신이 기본이며 「(덜 붐빔)」으로 표시한다. 시작 요청은 고른 머신의 경로를 보낸다(그 머신에 같은 이름이 둘이면 이름을 보내 host가 거부하게 한다). 같은 창의 「host 머신」 항목은 별도 할 일이라 그대로 두었다.
+- **검증.** host 유닛 `tasks::tests::repo_field_reads_and_writes`(읽기·쓰기·제목 거부·정리 제안), `task_edit::tests::repo_field_edits`(경로 → 이름·비움·그대로·거부), `task_repo::tests`(이름·값 판정, 덜 붐빔 차례). m13 `task_repo_field_picks_machine_and_path`(labA·labB에 같은 이름 저장소: owner 머신 → 그 머신 경로, 칸만 → 덜 붐비는 labA, 작업 폴더, 어긋남 넷 거부, 모르는 칸의 형식 어긋남, `task add|edit --repo`)와 `start_defaults_profile_kind_and_task`(빈 칸 경고). 웹 E2E 54 `task-repo`(폼 고르기·칩, 고정된 저장소로 worktree, 빈 칸은 고르기 전 시작 막힘·작업 폴더·줄에 적지 않음, iPhone). 47·52는 빈 칸 task를 「작업 폴더」로 골라 시작한다. 웹 순수 시험 `tasksModel.test.mjs`(폼 동작, 이름별 머신 묶기, 기본 머신).

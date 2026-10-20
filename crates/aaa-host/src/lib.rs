@@ -4,6 +4,7 @@
 //! - pane 화면은 agent(session host)가 정본이다. host는 마지막 화면 mirror를 가져 agent가 끊겨도 읽기 전용으로 보여 준다.
 
 mod adopt;
+mod answer;
 mod app_badge;
 mod attach;
 /// 자동화 정본 타입의 편집기용 JSON Schema. host 상태를 읽지 않는다.
@@ -69,6 +70,7 @@ pub mod tailscale;
 mod task_attach;
 mod task_clean;
 mod task_edit;
+mod task_repo;
 mod tasks;
 mod text;
 mod transitions;
@@ -1310,7 +1312,7 @@ impl Host {
             }
             FrontRequest::AccountLogin { name, harness } => self.account_login(&name, &harness, actor),
             FrontRequest::AccountLoginStatus { id } => self.account_login_status(&id),
-            FrontRequest::AccountLoginCancel { id } => self.account_login_cancel(&id),
+            FrontRequest::AccountLoginCancel { id } => self.account_login_cancel(&id).await,
             FrontRequest::AccountRemove { name } => {
                 if self.account_defaults()?.iter().any(|d| d.account == name) {
                     return Err(err(ErrorCode::BadRequest, "기본 계정은 먼저 account default --off로 해제한다"));
@@ -1400,7 +1402,9 @@ impl Host {
                 link_task,
                 task_block,
             } => {
-                // herdr-projects threads.rs `placement`: repo가 있으면 worktree, 없으면 repo 없는 작업 폴더
+                // herdr-projects threads.rs `placement`: repo가 있으면 worktree, 없으면 repo 없는 작업 폴더. task에서 띄우면
+                // 저장소 칸이 정한다(`apply_task_repo`): 요청이 정한 kind를 그 판정에 넘긴다
+                let kind_given = kind;
                 let kind = kind.unwrap_or(if repo.is_some() {
                     aaa_proto::ThreadKind::Worktree
                 } else {
@@ -1420,12 +1424,13 @@ impl Host {
                     role: aaa_proto::Role::Worker,
                     attachments: Vec::new(),
                 };
-                let (warning, picked) = match from_task {
+                let (mut warnings, picked) = match from_task {
                     Some(t) => {
                         let (w, t) = self.apply_from_task(&mut a, &t, task_block.as_deref()).await?;
-                        (w, Some(t))
+                        let placed = self.apply_task_repo(&mut a, t.repo.as_deref(), kind_given)?;
+                        (w.into_iter().chain(placed).collect::<Vec<_>>(), Some(t))
                     }
-                    None => (None, None),
+                    None => (Vec::new(), None),
                 };
                 // 머신을 주지 않았으면 project.toml repos에 적힌 그 repo의 머신(herdr-projects `start`의 `listed`)
                 if a.machine.is_none() {
@@ -1439,7 +1444,7 @@ impl Host {
                 } else {
                     self.thread_start(a, actor).await?
                 };
-                v.warnings.extend(warning);
+                v.warnings.append(&mut warnings);
                 // 시작에 성공했으면 그 task 줄 끝에 thread를 잇는다(할 일 T3, 시작할 때 읽은 블록으로)
                 if link_task && let Some(t) = &picked {
                     v.warnings.extend(self.link_started(&project, t, &v.id, actor).await);
@@ -1569,6 +1574,9 @@ impl Host {
             .map(FrontResponse::Question),
             FrontRequest::ThreadMessage { project, thread, text, mode } => {
                 self.thread_message(&project, &thread, text, mode, actor).await.map(FrontResponse::Message)
+            }
+            FrontRequest::ThreadAnswer { project, thread, report_hash, picks, text } => {
+                self.thread_answer(&project, &thread, &report_hash, picks, text, actor).await.map(FrontResponse::Thread)
             }
             FrontRequest::Preferences => Ok(FrontResponse::Preferences(self.preferences.get())),
             FrontRequest::PreferencesSet { settings, pins } => {
