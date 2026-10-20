@@ -54,6 +54,13 @@ export function onTasksChanged(listener: (sha256: string) => void): () => void {
   return () => tasksListeners.delete(listener);
 }
 
+/** host `asks` 사건(확인 필요 post·답한 것 기록이 바뀜, FRONT_API 1.74, plan §8.333): 「답할 것」이 다시 읽는다 */
+const asksListeners = new Set<() => void>();
+export function onAsksChanged(listener: () => void): () => void {
+  asksListeners.add(listener);
+  return () => asksListeners.delete(listener);
+}
+
 async function unwrap<T>(res: Response): Promise<T> {
   // pairing 자체(/api/v1/pair)의 401은 코드가 틀린 것이다. 그 밖의 401은 이 기기를 host가 모른다는 뜻이다
   if (res.status === 401 && !res.url.endsWith("/api/v1/pair")) reportSignedOut();
@@ -424,6 +431,7 @@ export function watchEvents(
       }
       else if (ev.ev === "reports") onReports(ev.unseen);
       else if (ev.ev === "tasks") for (const listener of tasksListeners) listener(ev.sha256);
+      else if (ev.ev === "asks") for (const listener of asksListeners) listener();
       else if (ev.ev === "app_badge") onAppBadge(ev.count);
       else if (ev.ev === "rollout") onRollout(ev.result);
       else if (ev.ev === "chat_changed") tellChat(ev.pane, { changed: true });

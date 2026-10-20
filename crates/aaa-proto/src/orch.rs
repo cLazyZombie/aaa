@@ -1126,7 +1126,10 @@ pub fn report_questions(report: &str) -> Vec<ThreadQuestion> {
             inside = head.trim() == "Questions";
             continue;
         }
-        if inside && !fenced && let Some(head) = line.strip_prefix("### ") {
+        if inside
+            && !fenced
+            && let Some(head) = line.strip_prefix("### ")
+        {
             let head = head.trim();
             if let Some((n, rest)) = head.split_once(". ")
                 && !n.is_empty()
@@ -1725,18 +1728,33 @@ mod tests {
         assert_eq!(qs.len(), 2, "{qs:?}");
         assert_eq!(qs[0].text, "왼쪽 막대 시안");
         let body = qs[0].body.as_deref().unwrap();
-        assert!(body.starts_with("지금 모양:") && body.contains("![지금](library/now.png)") && body.contains("| A | 한 화면 |"));
-        assert!(body.contains("- I think 이것도 본문") && body.ends_with("```"), "본문 글머리·code 안 줄은 본문이다: {body}");
+        assert!(
+            body.starts_with("지금 모양:")
+                && body.contains("![지금](library/now.png)")
+                && body.contains("| A | 한 화면 |")
+        );
+        assert!(
+            body.contains("- I think 이것도 본문") && body.ends_with("```"),
+            "본문 글머리·code 안 줄은 본문이다: {body}"
+        );
         let c = &qs[0].choices;
         assert_eq!(c.len(), 2);
-        assert_eq!((c[0].label.as_str(), c[0].recommended, c[0].description.as_deref()), ("따로 된 화면", true, Some("한 번에 답함")));
+        assert_eq!(
+            (c[0].label.as_str(), c[0].recommended, c[0].description.as_deref()),
+            ("따로 된 화면", true, Some("한 번에 답함"))
+        );
         assert_eq!(c[0].body.as_deref(), Some("![A안](library/A.png)\n\n둘째 줄"));
         assert_eq!(c[1].body.as_deref(), Some("![B안](library/B.png)"));
         assert_eq!((qs[1].text.as_str(), qs[1].body.as_deref(), qs[1].choices.len()), ("정리 기간", None, 2));
         // 한도: 글자 경계에서 자르고 열린 fence를 닫는다
-        let long = format!("## Questions\n### 1. 긴 본문\n```\n{}\n```\n- A 하나\n- B 둘\n", "가".repeat(QUESTION_BODY_MAX));
+        let long =
+            format!("## Questions\n### 1. 긴 본문\n```\n{}\n```\n- A 하나\n- B 둘\n", "가".repeat(QUESTION_BODY_MAX));
         let b = report_questions(&long)[0].body.clone().unwrap();
-        assert!(b.len() < QUESTION_BODY_MAX + 100 && b.contains("```\n\n*(본문이 길어 잘렸다"), "{}", &b[b.len() - 80..]);
+        assert!(
+            b.len() < QUESTION_BODY_MAX + 100 && b.contains("```\n\n*(본문이 길어 잘렸다"),
+            "{}",
+            &b[b.len() - 80..]
+        );
     }
 
     #[test]

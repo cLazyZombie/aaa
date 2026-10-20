@@ -1531,19 +1531,8 @@ summary.chat-compact-head { cursor: pointer; }
 .app-ref:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 .dock-ref { display: flex; max-width: 1120px; margin: 0 0 var(--space-2); }
 
-/* 보고서 화면 위 「지금」 줄과 「답할 것」(plan §8.329). 카드는 화면 선택 창 카드(PromptCard) 꼴이고 패널이 굴러가니 높이를 묶지 않는다 */
-.thread-asks { display: flex; flex-direction: column; gap: var(--space-2); margin: 0 0 var(--space-4); }
-.thread-asks-now { display: flex; flex-wrap: wrap; gap: var(--space-2); }
-.thread-asks-now span { font-size: var(--fs-xs); padding: 2px 10px; border-radius: var(--radius-pill); background: var(--bg-elevated); border: var(--hairline) solid var(--border); color: var(--text); }
-.thread-asks-now b { font-weight: var(--fw-semibold); }
-.thread-asks-now span.is-ask { background: var(--status-blocked-tint); color: var(--status-blocked); border-color: transparent; }
-.thread-asks-title { margin: var(--space-2) 0 0; font-size: var(--fs-sm); color: var(--text-dim); font-weight: var(--fw-semibold); }
-.thread-ask-row { display: flex; align-items: center; gap: var(--space-2); width: 100%; padding: 10px 12px; border-radius: var(--radius-lg); border: var(--hairline) solid var(--border); background: var(--bg-elevated); color: inherit; font: inherit; font-size: var(--fs-sm); text-align: start; cursor: pointer; }
-.thread-ask-row-title { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text-strong); }
-.thread-ask-row-meta { color: var(--text-dim); font-size: var(--fs-xs); white-space: nowrap; }
-.thread-ask-row.is-done { opacity: .75; }
+/* 「답할 것」 질문 카드(plan §8.329·§8.333). 카드는 화면 선택 창 카드(PromptCard) 꼴이고 패널이 굴러가니 높이를 묶지 않는다 */
 .prompt-card.thread-ask-card { max-height: none; gap: var(--space-3); overflow: visible; }
-.thread-ask-fold { margin-inline-start: auto; flex: none; }
 .thread-ask-q { display: flex; flex-direction: column; gap: var(--space-2); }
 .thread-ask-q + .thread-ask-q { border-top: var(--hairline) solid var(--border); padding-top: var(--space-3); }
 .thread-ask-q .prompt-card-question { display: flex; gap: var(--space-2); align-items: baseline; font-weight: var(--fw-semibold); color: var(--text-strong); }
@@ -1551,9 +1540,5 @@ summary.chat-compact-head { cursor: pointer; }
 .thread-ask-card .prompt-card-option.is-checked { background: var(--accent-tint); border-color: var(--accent); }
 .thread-ask-foot { display: flex; align-items: center; justify-content: space-between; gap: var(--space-2); flex-wrap: wrap; }
 .thread-ask-foot .muted { font-size: var(--fs-xs); color: var(--text-dim); }
-.thread-ask-card.is-answered .prompt-card-header h2 { color: var(--status-done); }
-.thread-ask-answers { list-style: none; margin: 0; padding: 0 0 var(--space-3); display: flex; flex-direction: column; gap: var(--space-1); font-size: var(--fs-sm); }
-.thread-ask-answers .muted { color: var(--text-dim); }
-.thread-ask-answers strong { color: var(--text-strong); }
 .thread-ask-card .prompt-card-header h2 { flex: none; }
 .thread-ask-card .prompt-card-where { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

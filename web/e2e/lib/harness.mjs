@@ -885,9 +885,11 @@ while IFS= read -r line; do
         printf 'fake> '
         continue
       fi
-      # 「질문 카드 시험」: 보고 \`## Questions\`에 질문 둘(53 「질문 카드」, plan §8.329). 답 메시지는 입력 줄로 화면에 남는다
+      # 「질문 카드 시험」: 보고 \`## Questions\`에 \`### N.\` 질문 둘(53 「질문 카드」, plan §8.329·§8.333). 1번은 본문(글·그림·표)과
+      # 선택지 그림이 있다(그림은 보고서 옆 library). 답 메시지는 입력 줄로 화면에 남는다
       if grep -q '질문 카드 시험' "$dir/brief.md"; then
-        printf '[결정 필요] 질문 2개: 로그인 화면\n\n## Report\n- 구현 전에 묻는다\n\n## Questions\n1. 로그인 단추 자리\n   - A 오른쪽 아래 (추천) — 지금 화면과 같음\n   - B 가운데 큰 단추 — 휴대폰에서 누르기 쉬움\n2. 비밀번호 눈 아이콘\n   - A 넣는다 (추천)\n   - B 넣지 않는다\n\n## Next\n- 답을 기다린다\n' > "$dir/report.md"
+        mkdir -p "$dir/library" && cp "${root}/pic.png" "$dir/library/"
+        printf '[결정 필요] 질문 2개: 로그인 화면\n\n## Report\n- 구현 전에 묻는다\n\n## Questions\n### 1. 로그인 단추 자리\n지금 화면은 단추가 **오른쪽 아래**다.\n\n![지금 화면](library/pic.png)\n\n| 안 | 차이 |\n| --- | --- |\n| A | 지금과 같음 |\n| B | 누르기 쉬움 |\n\n- A 오른쪽 아래 (추천) — 지금 화면과 같음\n  ![A안](library/pic.png)\n- B 가운데 큰 단추 — 휴대폰에서 누르기 쉬움\n  ![B안](library/pic.png)\n\n### 2. 비밀번호 눈 아이콘\n- A 넣는다 (추천)\n- B 넣지 않는다\n\n## Next\n- 답을 기다린다\n' > "$dir/report.md"
         echo asked-cards
         printf 'fake> '
         continue

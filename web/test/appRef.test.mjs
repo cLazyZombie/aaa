@@ -2,7 +2,7 @@
 // 그린다. 대상 글자는 host `notify::app_ref`와 같고, 문장 끝 점·조사·괄호는 참조가 아니다.
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { appRefOf, splitAppRefs } from "../src/appRef.ts";
+import { appLinkOf, appRefOf, splitAppRefs } from "../src/appRef.ts";
 
 const q = (target) => ({ kind: "question", target });
 const r = (target) => ({ kind: "report", target });
@@ -22,5 +22,14 @@ describe("앱 안 참조", () => {
     assert.deepEqual(appRefOf(" aaa:question/t-9 "), q("t-9"));
     assert.equal(appRefOf("aaa:question/t-9 보기"), null);
     assert.equal(appRefOf("https://example.ts.net/"), null);
+  });
+  it("같은 host 앱 주소 링크(plan §8.333)", () => {
+    const o = "https://mac-a.example.ts.net:8443";
+    assert.deepEqual(appLinkOf(`${o}/#question=t-0540`, o), q("t-0540"));
+    assert.deepEqual(appLinkOf(`${o}/#report=ui-v2`, o), r("ui-v2"));
+    assert.deepEqual(appLinkOf("/#report=demo%2Fui-v2", o), r("ui-v2"), "앱 자신의 프로젝트/이름 꼴");
+    assert.deepEqual(appLinkOf("#question=t-1", o), q("t-1"));
+    for (const href of [`https://other.example.ts.net/#question=t-1`, `${o}/v/abc/#question=t-1`, `${o}/?x=1#question=t-1`, `${o}/#pane=p1`, `${o}/#question=한글`, "aaa:question/t-1", "::"])
+      assert.equal(appLinkOf(href, o), null, href);
   });
 });

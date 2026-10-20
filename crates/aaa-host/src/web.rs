@@ -506,7 +506,12 @@ async fn task_file_get(
 
 /// 「답할 것」 질문 본문의 그림·링크(plan §8.333, 보기 권한도): 열린 질문은 그 보고의 host 사본, 답한 것은 보존한 사본에서 준다.
 /// HTML은 결과물처럼 sandbox(opaque origin)로 보내 앱 cookie·API에 닿지 못하게 한다
-fn ask_file_response(host: &Host, headers: &HeaderMap, path: Result<std::path::PathBuf, ErrorBody>, name: &str) -> Response {
+fn ask_file_response(
+    host: &Host,
+    headers: &HeaderMap,
+    path: Result<std::path::PathBuf, ErrorBody>,
+    name: &str,
+) -> Response {
     if device(host, headers).is_none() {
         return unauthorized();
     }

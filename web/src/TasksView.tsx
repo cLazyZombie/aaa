@@ -198,6 +198,8 @@ type Dialog =
 
 /** 할 일 화면 밖에서 여는 새 task: 명령 팔레트 「할 일 더하기」(link 없음), 보고서·thread 결과물 「할 일에 추가」(그 문서, plan §8.327) */
 export type TaskAddRequest = { seq: number; link: TaskAttachment | null };
+/** 할 일 화면 밖에서 여는 task(「답할 것」의 할 일 확인 필요 「할 일에서 정하기」, plan §8.333): 바뀌면 그 제목의 상세를 연다 */
+export type TaskFocusRequest = { seq: number; title: string | null };
 
 export function TasksView({
   shown,
@@ -206,6 +208,7 @@ export function TasksView({
   groups,
   reader,
   addRequest,
+  focusRequest,
   onBoard,
   onThread,
   onHandOff,
@@ -223,6 +226,7 @@ export function TasksView({
   reader: boolean;
   /** 바뀌면 새 task 폼(문서가 있으면 「할 일에 추가」 창)을 연다 */
   addRequest: TaskAddRequest;
+  focusRequest?: TaskFocusRequest;
   /** 편집 응답의 새 board */
   onBoard: (b: TaskBoard) => void;
   onThread: (id: string) => void;
@@ -313,6 +317,16 @@ export function TasksView({
     } else if (!attachApi) setOpError("이 host는 task 첨부를 모른다. host를 갱신한다");
     else setDialog({ kind: "doc-add", link: addRequest.link });
   }, [addRequest, canEdit, attachApi, board, frontApi]);
+  const lastFocus = useRef(0);
+  useEffect(() => {
+    if (!focusRequest || focusRequest.seq === lastFocus.current || !board) return;
+    lastFocus.current = focusRequest.seq;
+    const t = board.tasks.find((x) => x.title === focusRequest.title);
+    if (!t) return;
+    setTab("tasks");
+    setCreating(null);
+    setPicked({ title: t.title, line: t.line });
+  }, [focusRequest, board]);
   const byLine = useMemo(() => new Map((board?.tasks ?? []).map((t) => [t.line, t])), [board]);
   const sections = useMemo(() => (board ? taskSections(board, filter, query, groups) : []), [board, filter, query, groups]);
   const found = findTask(board, picked);

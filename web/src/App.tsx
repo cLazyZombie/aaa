@@ -15,7 +15,7 @@ import { ActivityBar } from "./ActivityBar";
 import { SidebarResizer } from "./SidebarResizer";
 import { PANEL_LABEL, revealPanel, storedCollapsed, storedPanel, storeSidebar, type SidebarPanel } from "./sidebarPanel";
 import { ReportsView, type ReportRef } from "./ReportsView";
-import { TasksView, useSeenMine, useTaskBoard, type TaskAddRequest } from "./TasksView";
+import { TasksView, useSeenMine, useTaskBoard, type TaskAddRequest, type TaskFocusRequest } from "./TasksView";
 import { composerDrafts } from "./herdr/composerDraft.ts";
 import { readTerminalDraft, writeTerminalDraft } from "./herdr/terminalDraft.ts";
 import { reportDoc, reportDocLink, taskBadge, uploadsBase, type TaskAttachment } from "./tasksModel";
@@ -58,7 +58,8 @@ import { useMediaQuery } from "./herdr/useMediaQuery.ts";
 import { inAppLink } from "./reportLinks.ts";
 import type { AppRef } from "./appRef";
 import { AppRefChip, AppRefContext, type AppRefLook, type AppRefs } from "./AppRefChip";
-import { asks } from "./ThreadAsks";
+import { AsksPanel, AsksView, useAskSelection, useAsksData } from "./AsksView";
+import { lastAnswer, openAsks, questionKey } from "./asksModel";
 import { watchDrawerSwipe } from "./herdr/edgeSwipe.ts";
 import { DrawerContext, DrawerToggle, HeadContext, HeadMore, HeadNote } from "./drawer";
 import { highMachines, HIGH_STAT } from "./machineStats";
@@ -270,7 +271,9 @@ function storeSelection(sel: string): void {
 
 /**
  * 고른 것: `#pane=<id>`, `#thread=<id>`, 모든 thread `#threads`, 보고서 화면 `#reports`(목록)·`#report=<project>/<name>`(하나,
- * plan §8.240), 할 일 화면 `#tasks`(plan §8.306), thread 질문 카드 `#question=<thread>`(보고서 화면 「답할 것」의 그 카드, plan §8.329). host는 프로젝트 하나만 맡아(plan §8.291) 주소에 프로젝트가 없다. 옛 주소(이미 보낸 알림·저장한 링크)도 연다:
+ * plan §8.240. 프로젝트 없는 `#report=<이름>`은 보고서 목록을 받은 뒤 채운다), 할 일 화면 `#tasks`(plan §8.306), 「답할 것」 `#asks`·
+ * `#ask=<열쇠>`(asksModel, plan §8.333), thread 질문 `#question=<thread>`(「답할 것」의 그 질문 카드, 답했으면 그때 기록, plan §8.329). host는
+ * 프로젝트 하나만 맡아(plan §8.291) 주소에 프로젝트가 없다. 옛 주소(이미 보낸 알림·저장한 링크)도 연다:
  * `#thread=<project>/<id>`는 그대로 받고, 프로젝트 고르기 `#projects`·프로젝트 thread 보기 `#project=<name>`은 `#threads`로 바꾼다.
  * 짧은 thread 주소는 thread 목록을 받은 뒤 내부 열쇠 `thread:<project>/<id>`로 바뀐다(App의 `sel` 정리).
  */
@@ -279,9 +282,10 @@ function selectedFromHash(): string | null {
   if (location.hash === "#threads") return "threads:";
   if (location.hash === "#reports") return "reports:";
   if (location.hash === "#tasks") return "tasks:";
+  if (location.hash === "#asks") return "asks:";
   const r = /^#report=(.+)$/.exec(location.hash);
   if (r) return `reports:${decodeURIComponent(r[1])}`;
-  const m = /^#(pane|thread|question)=(.+)$/.exec(location.hash);
+  const m = /^#(pane|thread|question|ask)=(.+)$/.exec(location.hash);
   return m ? `${m[1]}:${decodeURIComponent(m[2])}` : null;
 }
 
@@ -291,6 +295,7 @@ function hashOf(sel: string | null): string {
   if (sel === "threads:") return "threads";
   if (sel === "reports:") return "reports";
   if (sel === "tasks:") return "tasks";
+  if (sel === "asks:") return "asks";
   if (sel.startsWith("reports:")) return `report=${encodeURIComponent(sel.slice(8))}`;
   if (sel.startsWith("thread:")) {
     const key = sel.slice("thread:".length);
@@ -815,19 +820,26 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
   }, [sel, threads]);
   // 보고서 화면(plan §8.240): 막대 「보고서」는 마지막으로 본 보고서 자리(목록이나 연 보고서)로, 보고서 화면에서 다시 누르면 그 앞
   // 화면으로 간다. 한 번 연 보고서 화면은 다른 화면으로 가도 그려 둔다(ReportsView): 돌아오면 연 보고서·굴린 자리가 그대로다
-  const reportsShown = sel?.startsWith("reports:") === true || sel?.startsWith("question:") === true;
+  const reportsShown = sel?.startsWith("reports:") === true;
   // 안 본 사용자 보고서 수와 목록이 다시 읽을 때(host `reports` 사건: 올림·열어 봄·지움, plan §8.256)
   const [unseenReports, setUnseenReports] = useState(0);
   const [reportsRev, setReportsRev] = useState(0);
-  // 질문 주소(`question:<thread>`)는 보고서 목록에 그 질문 카드를 펼친 것이다: 목록 자리(reportsAt)에는 남기지 않는다(펼침은 열 때마다, 2A)
-  const [reportsAt, setReportsAt] = useState<string | null>(reportsShown ? (sel!.startsWith("question:") ? "reports:" : sel) : null);
-  const askFocus = sel?.startsWith("question:") ? sel.slice("question:".length) : null;
+  const [reportsAt, setReportsAt] = useState<string | null>(reportsShown ? sel : null);
   const beforeReports = useRef<string | null>(null);
   useEffect(() => {
     if (sel?.startsWith("reports:")) setReportsAt(sel);
-    else if (sel?.startsWith("question:")) setReportsAt("reports:");
     else beforeReports.current = sel;
   }, [sel]);
+  // 「답할 것」 화면(plan §8.333, 사용자 결정 10-21 1B): 사이드바 「답할 것」 패널이 목록이고 본문은 고른 것 하나의 카드다. 질문 주소
+  // (`question:<thread>`, 칩·알림·터미널 링크)도 이 화면이다. 한 번 연 뒤에는 숨긴 채 그려 둔다(쓰던 답·굴린 자리가 그대로)
+  const asksShown = sel === "asks:" || sel?.startsWith("ask:") === true || sel?.startsWith("question:") === true;
+  const [asksOpened, setAsksOpened] = useState(asksShown);
+  const asksAt = useRef<string>("asks:");
+  useEffect(() => {
+    if (!asksShown) return;
+    setAsksOpened(true);
+    asksAt.current = sel!;
+  }, [asksShown, sel]);
   const goSel = (next: string | null) => {
     setAutoSelected(false);
     setDrawerOpen(false);
@@ -1048,8 +1060,29 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
   const taskBoard = useTaskBoard(up, openThreadIds, tasksShown);
   const seenMine = useSeenMine(taskBoard.board);
   const shownThreads = allThreads.filter((t) => t.group !== "resolved");
-  // thread 질문(plan §8.329): 보고서 화면 「답할 것」, 활동 막대 빨강 수(3A), 대화의 칩. 답은 host가 한 번만 받고 thread에 보낸다
-  const askCount = shownThreads.filter(asks).length;
+  // 「답할 것」(plan §8.333): thread 질문·coordinator 확인 필요 post·할 일 확인 필요와 host가 남긴 답한 것 기록. 활동 막대 빨강 수,
+  // 대화의 칩(답한 질문은 새 보고 뒤에도 그 기록으로 「답함」)이 이것을 본다. 질문 답은 host가 한 번만 받고 thread에 보낸다
+  const { data: asksData, put: putAsks } = useAsksData(up);
+  const asksDone = asksData?.done ?? [];
+  const askList = useMemo(() => openAsks(shownThreads, asksData, taskBoard.board?.tasks ?? []), [threads, asksData, taskBoard.board]); // eslint-disable-line react-hooks/exhaustive-deps
+  const askKey = sel?.startsWith("ask:")
+    ? sel.slice("ask:".length)
+    : sel?.startsWith("question:")
+      ? (questionKey(sel.slice("question:".length), shownThreads, asksDone) ?? `q:${sel.slice("question:".length)}`)
+      : null;
+  const askSelection = useAskSelection(askKey, askList, asksDone);
+  const askSelected = askSelection.kind === "open" ? askSelection.ask.key : askSelection.kind === "done" ? `d:${askSelection.record.id}` : null;
+  // 질문 링크로 들어오면 사이드바도 「답할 것」 목록으로 바꾼다(목록 + 카드, 1B. 휴대폰은 drawer를 열면 그 목록이다)
+  useEffect(() => {
+    if (asksShown && panelRef.current !== "asks") setPanel("asks");
+  }, [asksShown]); // eslint-disable-line react-hooks/exhaustive-deps
+  // 넓은 창에서 막대 「답할 것」으로 그 패널을 펼치면 본문도 「답할 것」(마지막으로 본 카드)
+  const showPanel = (next: SidebarPanel) => {
+    const opening = collapsed || next !== panelRef.current;
+    pickPanel(next);
+    if (next === "asks" && wideScreen && opening && !asksShown) goSel(asksAt.current);
+  };
+  const [taskFocus, setTaskFocus] = useState<TaskFocusRequest>({ seq: 0, title: null });
   const answerThread = async (t: ThreadView, picks: (number | null)[], text: string | null) => {
     const r = await call({ op: "thread_answer", project: t.project, thread: t.id, report_hash: t.questions!.report_hash, picks, text });
     if (r.kind === "thread") putThread(r);
@@ -1068,19 +1101,21 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
       live = false;
     };
   }, [up, reportsRev]);
+  // 프로젝트 없는 보고서 주소(`#report=<이름>`, coordinator가 채팅에 쓰는 링크)는 보고서 목록을 받으면 채운다
+  useEffect(() => {
+    if (!sel?.startsWith("reports:") || sel === "reports:" || sel.includes("/")) return;
+    const r = reportNames.get(sel.slice("reports:".length));
+    if (r) setSel(`reports:${r.project}/${r.name}`);
+  }, [sel, reportNames]); // eslint-disable-line react-hooks/exhaustive-deps
   // 칩이 그리는 상태가 바뀔 때만 새 값이다(대화 Markdown이 thread 사건마다 다시 그리지 않게)
   const refKey = [
     ...shownThreads.filter((t) => t.questions).map((t) => `${t.id}:${t.questions!.answer ? `done ${t.questions!.answer.summary}` : `ask ${t.questions!.items.length}`}`),
+    ...asksDone.filter((r) => r.kind === "question").map((r) => `${r.subject}:record ${r.id} ${r.summary}`),
     ...[...reportNames.values()].map((r) => `${r.project}/${r.name}:${r.title ?? ""}`),
   ].join("\n");
-  // 같은 질문 칩을 다시 눌러도(주소가 같다) 접은 카드를 다시 펼친다
-  const [askSeq, setAskSeq] = useState(0);
   const openRefRef = useRef<(ref: AppRef) => void>(() => {});
   openRefRef.current = (ref: AppRef) => {
-    if (ref.kind === "question") {
-      setAskSeq((n) => n + 1);
-      return goSel(`question:${ref.target}`);
-    }
+    if (ref.kind === "question") return goSel(`question:${ref.target}`);
     const r = reportNames.get(ref.target);
     goSel(r ? `reports:${r.project}/${r.name}` : "reports:");
     if (!r) setHeadNote(`보고서 ${ref.target}을(를) 찾지 못했다`);
@@ -1094,9 +1129,12 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
           return { label: r?.title ?? ref.target, tone: "report", state: r?.from_thread && r.from_thread !== ref.target ? r.from_thread : null };
         }
         const q = byId.get(ref.target)?.questions;
-        if (!q) return { label: `${ref.target} 질문`, tone: "plain", state: null };
-        if (q.answer) return { label: `${ref.target} 질문`, tone: "done", state: `답함 · ${q.answer.summary}` };
-        return { label: `${ref.target} 질문 ${q.items.length}개`, tone: "ask", state: "답할 것" };
+        if (q && !q.answer) return { label: `${ref.target} 질문 ${q.items.length}개`, tone: "ask", state: "답할 것" };
+        if (q?.answer) return { label: `${ref.target} 질문`, tone: "done", state: `답함 · ${q.answer.summary}` };
+        // 새 보고로 질문·답이 비어도 host가 남긴 답한 기록이 「답함」이다(누르면 그때 원문)
+        const rec = lastAnswer(asksDone, ref.target);
+        if (rec) return { label: `${ref.target} 질문`, tone: "done", state: `답함 · ${rec.answer?.summary ?? rec.summary}` };
+        return { label: `${ref.target} 질문`, tone: "plain", state: null };
       },
       open: (ref) => openRefRef.current(ref),
     };
@@ -1107,6 +1145,8 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
   const canControl = role !== "reader";
   const open = [...questions.values()].sort((a, b) => a.created_at_ms - b.created_at_ms);
   const currentQ = current ? open.filter((q) => q.pane === current.id) : [];
+  // 그 thread 보고의 질문 칩(입력칸 위): 지금 보고에 질문이 있을 때만(답한 기록은 대화 칩이 보인다)
+  const dockAsk = current ? threadOfPane.get(current.id)?.questions != null : false;
   const whereOf = (q: QuestionView) => {
     if (q.project && q.thread) return threads.get(`${q.project}/${q.thread}`)?.title ?? `${q.project}/${q.thread}`;
     const p = panes.find((x) => x.id === q.pane);
@@ -1152,6 +1192,7 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
   );
   useEffect(() => { const refresh = () => loadAutomations(); window.addEventListener("aaa:automations-changed", refresh); return () => window.removeEventListener("aaa:automations-changed", refresh); }, []);
   const badges = {
+    asks: { count: askList.length, label: "질문·확인 필요·할 일", ask: true },
     work: { count: needThreads.length + waitingAgents.length, label: "확인 필요·검토 대기·답을 기다림" },
     machines: { count: highMachines(machines), label: `CPU·MEM ${HIGH_STAT}% 넘음` },
     automations: { count: automationBadge, label: "막힌 큐·승인 필요" },
@@ -1185,12 +1226,11 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
         <ActivityBar
           panel={panel}
           shown={sidebarShown}
-          onPanel={pickPanel}
+          onPanel={showPanel}
           badges={badges}
           reports={reportsShown}
           onReports={toggleReports}
           unseenReports={unseenReports}
-          askReports={askCount}
           tasks={tasksShown}
           onTasks={toggleTasks}
           // 할 일 화면이 보이는 동안 me task는 이미 본 것이다(본 기록은 effect가 그린 뒤에 남겨 그 사이 배지가 튄다)
@@ -1234,6 +1274,16 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
           onThreadId={openThreadId}
           ruleAsk={ruleAsk}
           onRuleAsked={() => setRuleAsk(null)}
+          asks={
+            <AsksPanel
+              open={askList}
+              data={asksData}
+              selected={asksShown ? askSelected : null}
+              canControl={canControl}
+              onPick={(k) => goSel(`ask:${k}`)}
+              onForgetAll={async () => putAsks(await call({ op: "ask_forget", ids: [], all: true }))}
+            />
+          }
           banners={
             <>
               {!up && loaded && <div className="banner warn">host와 연결이 끊겼다. 다시 연결하는 중</div>}
@@ -1252,7 +1302,7 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
       <main className="view">
         <UpdateNotice hostBuild={hostWeb} />
         {/* 그리기 오류는 본문 자리에서 멈춘다(ErrorBoundary, plan §8.266): 다른 화면으로 가면 다시 그린다 */}
-        <ErrorBoundary area="본문" resetKeys={[sel, reportsShown, tasksShown]}>
+        <ErrorBoundary area="본문" resetKeys={[sel, reportsShown, tasksShown, asksShown]}>
         {/* 보고서 화면은 한 번 연 뒤 늘 그려 두고 숨긴다(ReportsView) */}
         {reportsAt !== null && (
           <ReportsView
@@ -1261,12 +1311,26 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
             role={role}
             rev={reportsRev}
             onOpen={(r) => goSel(r ? `reports:${r.project}/${r.name}` : "reports:")}
-            threads={shownThreads}
-            askFocus={askFocus}
-            askSeq={askSeq}
-            unseen={unseenReports}
-            onAnswer={answerThread}
             onAddDoc={addReportDoc}
+          />
+        )}
+        {asksOpened && (
+          <AsksView
+            shown={asksShown}
+            selection={askSelection}
+            canControl={canControl}
+            onAnswer={answerThread}
+            onHandle={async (item) => putAsks(await call({ op: "ask_handle", item }))}
+            onReply={(title) => handOff(`「${title}」에 대한 답: `)}
+            onForget={async (id) => putAsks(await call({ op: "ask_forget", ids: [id], all: false }))}
+            onOpenTask={(title) => {
+              goSel("tasks:");
+              setTaskFocus((f) => ({ seq: f.seq + 1, title }));
+            }}
+            onThread={(id) => {
+              const t = allThreads.find((x) => x.id === id);
+              if (t) chooseThread(t);
+            }}
           />
         )}
         {tasksOpened && (
@@ -1277,6 +1341,7 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
             groups={threadGroups}
             reader={role === "reader"}
             addRequest={taskAdds}
+            focusRequest={taskFocus}
             onBoard={taskBoard.replace}
             onThread={(id) => {
               const t = allThreads.find((x) => x.id === id);
@@ -1295,7 +1360,7 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
             }}
           />
         )}
-        {reportsShown || tasksShown ? null : currentThread ? (
+        {reportsShown || tasksShown || asksShown ? null : currentThread ? (
           <ThreadPanel
             key={threadKey(currentThread)}
             t={currentThread}
@@ -1343,7 +1408,7 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
               </>
             }
             dock={
-              currentQ.length > 0 || threadOfPane.get(current.id)?.questions ? (
+              currentQ.length > 0 || dockAsk ? (
                 <div className="dock">
                   {currentQ.map((q) =>
                     q.menu ? (
@@ -1361,7 +1426,7 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
                     ),
                   )}
                   {/* 그 thread 보고의 질문(plan §8.329, 사용자 결정 10-20 4A): 입력칸 위 한 줄 칩, 누르면 질문 카드 */}
-                  {threadOfPane.get(current.id)?.questions && (
+                  {dockAsk && (
                     <div className="dock-ref" data-testid="dock-question">
                       <AppRefChip at={{ kind: "question", target: threadOfPane.get(current.id)!.id }} />
                     </div>

@@ -129,7 +129,8 @@ impl Host {
         let Some(i) = open.iter().find(|i| i.id == item && is_user_request(i)) else {
             return Err(err(ErrorCode::NotFound, "열린 확인 필요 post가 아니다(이미 처리했을 수 있다)"));
         };
-        let title = self.db.post_of_item(project, item).ok().flatten().map(|p| p.input.title).unwrap_or(i.summary.clone());
+        let title =
+            self.db.post_of_item(project, item).ok().flatten().map(|p| p.input.title).unwrap_or(i.summary.clone());
         self.inbox_done(project, &[item.to_string()], false, actor)?;
         let by = self.answered_by(actor);
         self.inbox_add(
@@ -142,7 +143,13 @@ impl Host {
         self.asks_view(project)
     }
 
-    pub(crate) fn ask_forget(&self, project: &str, ids: &[String], all: bool, actor: &str) -> Result<FrontResponse, ErrorBody> {
+    pub(crate) fn ask_forget(
+        &self,
+        project: &str,
+        ids: &[String],
+        all: bool,
+        actor: &str,
+    ) -> Result<FrontResponse, ErrorBody> {
         let dir = self.project_dir(project)?;
         if ids.is_empty() && !all {
             return Err(err(ErrorCode::BadRequest, "지울 기록 ID나 all이 필요하다"));
@@ -283,7 +290,13 @@ impl Host {
     }
 
     /// 열린 질문 본문의 파일(그 보고 hash일 때만): `report.md`는 보고 사본, `library/…`는 thread 결과물 host 사본
-    pub(crate) fn question_file(&self, project: &str, thread: &str, hash: &str, path: &str) -> Result<PathBuf, ErrorBody> {
+    pub(crate) fn question_file(
+        &self,
+        project: &str,
+        thread: &str,
+        hash: &str,
+        path: &str,
+    ) -> Result<PathBuf, ErrorBody> {
         let dir = self.project_dir(project)?;
         let rec = self.load(project, thread)?;
         if rec.report_hash.as_deref() != Some(hash) || rec.questions.is_empty() {
@@ -297,7 +310,8 @@ impl Host {
             }
             return Ok(p);
         }
-        let rel = path.strip_prefix("library/").ok_or_else(|| err(ErrorCode::BadRequest, "library/ 아래 경로만 연다"))?;
+        let rel =
+            path.strip_prefix("library/").ok_or_else(|| err(ErrorCode::BadRequest, "library/ 아래 경로만 연다"))?;
         if !crate::library::safe_rel(rel) {
             return Err(err(ErrorCode::BadRequest, "library 상대 경로가 아니다"));
         }
@@ -362,10 +376,16 @@ mod tests {
         assert!(seen.has_changed().unwrap());
         let FrontResponse::Asks { requests, done, keep_days } = h.asks_view("demo").unwrap() else { panic!() };
         assert_eq!((requests.len(), done.len(), keep_days), (0, 1, ASK_KEEP_DAYS));
-        assert_eq!((done[0].kind, done[0].summary.as_str(), done[0].by.as_str()), (AskKind::Request, "답함으로 표시", "웹"));
+        assert_eq!(
+            (done[0].kind, done[0].summary.as_str(), done[0].by.as_str()),
+            (AskKind::Request, "답함으로 표시", "웹")
+        );
         assert_eq!(done[0].body.as_deref(), Some("main **검증 통과**. 승인하면 tag를 만든다"));
         let inbox = h.db.inbox_list(Some("demo"), false).unwrap();
-        assert!(inbox.iter().any(|i| i.event == "request handled" && i.summary.contains("배포 승인 필요")), "{inbox:?}");
+        assert!(
+            inbox.iter().any(|i| i.event == "request handled" && i.summary.contains("배포 승인 필요")),
+            "{inbox:?}"
+        );
         assert!(h.ask_handle("demo", &open[0].id, "device:phone").is_err(), "이미 처리했다");
     }
 
@@ -393,7 +413,13 @@ mod tests {
             body: Some("![지금](library/now.png)".into()),
             choices: vec![choice("A", Some("![A](library/mock/a.png)")), choice("B", None)],
         }];
-        let answer = QuestionAnswerView { picks: vec![Some(0)], text: None, summary: "1A".into(), by: "iPhone".into(), at_ms: 5 };
+        let answer = QuestionAnswerView {
+            picks: vec![Some(0)],
+            text: None,
+            summary: "1A".into(),
+            by: "iPhone".into(),
+            at_ms: 5,
+        };
         h.record_answer(&rec, &answer);
         let done = h.db.ask_list("demo").unwrap();
         assert_eq!((done.len(), done[0].subject.as_str(), done[0].summary.as_str()), (1, "t-0001", "1A"));
@@ -403,7 +429,10 @@ mod tests {
         // 새 보고가 원본을 바꾸고 지워도 사본이 남는다. 가리키지 않은 파일은 두지 않는다
         std::fs::write(dir.join("threads/t-0001.md"), "[완료]\n").unwrap();
         std::fs::remove_dir_all(dir.join("library/t-0001")).unwrap();
-        assert_eq!(std::fs::read(h.ask_file("demo", &id, "report.md").unwrap()).unwrap(), "[결정 필요] 질문 1개\n".as_bytes());
+        assert_eq!(
+            std::fs::read(h.ask_file("demo", &id, "report.md").unwrap()).unwrap(),
+            "[결정 필요] 질문 1개\n".as_bytes()
+        );
         assert_eq!(std::fs::read(h.ask_file("demo", &id, "library/mock/a.png").unwrap()).unwrap(), b"a");
         assert!(h.ask_file("demo", &id, "library/now.png").is_ok());
         assert!(h.ask_file("demo", &id, "library/other.png").is_err());

@@ -5,8 +5,8 @@
 
 mod adopt;
 mod answer;
-mod asks;
 mod app_badge;
+mod asks;
 mod attach;
 /// 자동화 정본 타입의 편집기용 JSON Schema. host 상태를 읽지 않는다.
 pub fn automation_schema() -> String {
