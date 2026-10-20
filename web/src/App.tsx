@@ -127,7 +127,7 @@ const ACTIVITY_LABEL: Record<AgentActivity, string> = {
 export function AgentChip({ p, testid }: { p: PaneView; testid?: boolean }) {
   const a = p.agent;
   if (!a || p.state !== "running") return null;
-  // 대화 정리 중(plan §8.305)도 작업 중이다: 같은 색·숨쉬는 점에 말만 「정리 중」
+  // 대화 정리 중(plan §8.306)도 작업 중이다: 같은 색·숨쉬는 점에 말만 「정리 중」
   const compacting = a.activity === "working" && a.compacting;
   const title = [a.harness, compacting ? "대화 정리 중: 끝나면 보낸 글을 읽습니다" : null, a.progress, a.message].filter(Boolean).join(" · ");
   const quiet = a.activity === "idle" || a.activity === "started" || a.activity === "exited";

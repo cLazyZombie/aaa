@@ -350,7 +350,7 @@ impl Host {
                 st.seen = crate::seen::seen_after(was, a, st.seen, sees);
                 st.activity = a;
                 st.message = ev.message.clone();
-                // 정리 중은 작업 중 안의 표지다: 다른 상태 사건이 오면 끝났다(화면 표지가 사라졌다, plan §8.305)
+                // 정리 중은 작업 중 안의 표지다: 다른 상태 사건이 오면 끝났다(화면 표지가 사라졌다, plan §8.306)
                 st.compacting = ev.kind == "compacting";
             }
             // 배경 작업을 기다리는 쉼(bgwait.rs, 참고 server/index.ts가 상태·배경 수·사람 입력마다 BackgroundWait에 알림).
@@ -1624,7 +1624,7 @@ mod tests {
         assert_ne!(again.id, q.id);
     }
 
-    /// 대화 정리(plan §8.305): 화면 감지의 `compacting`은 작업 중이고 정리 표지를 단다. 같은 작업 중이라 상태가 된 때(목록 차례)는
+    /// 대화 정리(plan §8.306): 화면 감지의 `compacting`은 작업 중이고 정리 표지를 단다. 같은 작업 중이라 상태가 된 때(목록 차례)는
     /// 그대로다. 다음 상태 사건(작업 중·쉼)이 오면 표지를 지운다. 정리 중에는 대기 메시지 「지금 보내기」를 하지 않는다
     #[tokio::test]
     async fn compacting_is_working_with_a_marker_until_the_next_state() {

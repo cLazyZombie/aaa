@@ -320,7 +320,7 @@ pub fn path(harness: &str, transcript: Option<&str>, harness_session: Option<&st
     }
 }
 
-/// 대화가 정리된 자리(plan §8.305). herdr-web-ui conversation.ts가 Claude `isCompactSummary` 사람 줄을 「정리 요약」 구분선으로
+/// 대화가 정리된 자리(plan §8.306). herdr-web-ui conversation.ts가 Claude `isCompactSummary` 사람 줄을 「정리 요약」 구분선으로
 /// 보이는 것을 옮기고, Codex rollout의 `compacted`(정리 뒤 남은 기록과 요약 message)도 같은 자리로 본다. 요약은 4000자까지
 fn compaction(harness: &str, v: &Value) -> Option<ChatMessage> {
     let text = match harness {
@@ -602,7 +602,7 @@ mod tests {
         std::fs::remove_dir_all(&root).unwrap();
     }
 
-    /// 정리된 자리(plan §8.305): Claude `isCompactSummary` 사람 줄(10-20 실측 「This session is being continued …」)과 Codex
+    /// 정리된 자리(plan §8.306): Claude `isCompactSummary` 사람 줄(10-20 실측 「This session is being continued …」)과 Codex
     /// `compacted`는 host가 청할 때만 「정리됨」 줄이다. 청하지 않으면 전처럼 아무것도 싣지 않는다(옛 host는 이 역할을 모른다).
     /// 요약 글은 사람 말·받음 증거가 아니다
     #[test]

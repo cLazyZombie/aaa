@@ -19,7 +19,7 @@
 // Ctrl+Enter(사용자 10-19 15:3x, plan §8.239 후속)는 안내 없이 글을 steering으로 보낸다: 같은 보내기 길에 `steer`를 붙인다(`ctrlEnter`).
 // plan §8.266(t3code 참고): 작업 중이고 입력창이 비면 보내기 자리가 「중단」(Esc, 키 막대와 같은 길)이고, 빈 입력창의 ↑·↓는 이 대화
 // 기록의 사람 글을 다시 부르며(t3code composerPromptHistory.ts), 보내는 글의 보이지 않는 문자는 빼고 몇 개를 뺐는지 알린다(hiddenChars.ts).
-// 대화 정리 중(plan §8.305, 사용자 10-20 「이때 동안은 보내지 못하게」): 보낸 글(Ctrl+Enter 포함)은 pane에 치지 않고 이 기기 보관함에
+// 대화 정리 중(plan §8.306, 사용자 10-20 「이때 동안은 보내지 못하게」): 보낸 글(Ctrl+Enter 포함)은 pane에 치지 않고 이 기기 보관함에
 // 「정리가 끝나면 보냄」 표지로 붙잡았다가, 정리가 끝나면 차례대로 보통 보내기로 보낸다(t3code는 정리 중 보내기를 대기열로 돌린다:
 // composerDispatch.ts `canSteer: !isCompacting` → queue, CommandPolicy.ts). 그동안 「지금 보내기」는 끄고 10초 오래 걸림은 세지 않는다.
 import {
@@ -121,7 +121,7 @@ export interface ChatComposerProps {
   connected: boolean;
   /** agent가 작업 중(참고 `composerDelivery`의 queue 자리) */
   working: boolean;
-  /** agent가 대화를 정리하는 중(작업 중일 때만, plan §8.305): 보낸 글을 붙잡았다가 끝나면 보낸다 */
+  /** agent가 대화를 정리하는 중(작업 중일 때만, plan §8.306): 보낸 글을 붙잡았다가 끝나면 보낸다 */
   compacting?: boolean;
   /** Claude는 대기열에 넣자마자 기록에 적고, Codex는 실제로 읽을 때 적는다 */
   harness: "claude" | "codex";
@@ -481,7 +481,7 @@ export function ChatComposer({
   };
 
   // 3초 동안 전달 답이 없으면 탈출구, 전달됨에서 10초 동안 보내짐 증거가 없으면 오래 걸림. 늦게 걸린 타이머도 시작 때부터 잰다.
-  // 대화 정리 중에는 harness가 글을 읽지 않으므로 오래 걸림을 세지 않고, 정리가 끝난 때부터 다시 잰다(plan §8.305)
+  // 대화 정리 중에는 harness가 글을 읽지 않으므로 오래 걸림을 세지 않고, 정리가 끝난 때부터 다시 잰다(plan §8.306)
   const wasCompacting = useRef(compacting);
   useEffect(() => {
     const ended = wasCompacting.current && !compacting;
@@ -534,7 +534,7 @@ export function ChatComposer({
     const sentAttachments = attachments;
     setNote(null);
     recall.current = null;
-    // 대화 정리 중: steering(Ctrl+Enter)도 받지 않는다. 붙잡았다가 정리가 끝나면 차례대로 보낸다(plan §8.305)
+    // 대화 정리 중: steering(Ctrl+Enter)도 받지 않는다. 붙잡았다가 정리가 끝나면 차례대로 보낸다(plan §8.306)
     if (compactingRef.current) {
       messageQueues.add(owner, message, "compaction");
       if (given === undefined) { setText(""); clearAttachments(sentAttachments); }
@@ -636,7 +636,7 @@ export function ChatComposer({
     deliver({ text: message, source: "queue", queueId: id, attachments: [], ...(steer ? { steer } : {}) });
     if (removed > 0) setNote({ text: hiddenNote(removed), quiet: true });
   };
-  // 정리가 끝났다: 정리 중에 붙잡은 글을 차례대로 보낸다(plan §8.305). 앞 글이 보내져야 다음 글이다(입력창 잠금과 같은 한 줄 비행).
+  // 정리가 끝났다: 정리 중에 붙잡은 글을 차례대로 보낸다(plan §8.306). 앞 글이 보내져야 다음 글이다(입력창 잠금과 같은 한 줄 비행).
   // 질문 중이면 답한 뒤, 끊겼으면 다시 붙은 뒤에 보낸다. 작업 중이고 「대기 메시지 자동 전송」을 껐으면 그 설정대로 보통 붙잡은 글로 둔다.
   // 이 기기 보관함은 localStorage라 정리 중에 앱을 닫았어도 다시 열 때 보낸다
   useEffect(() => {

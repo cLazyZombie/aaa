@@ -183,7 +183,7 @@ impl Detector {
     pub fn observe(&mut self, now: Instant, seq: Option<u64>, input: DetectionInput<'_>) -> Option<Published> {
         self.last_scan_seq = seq;
         let mut detection = detect(self.harness, input);
-        // 정리 표지가 보이면 작업 중이다(plan §8.305). 참고 규칙은 정리 화면을 작업 중과 쉼 사이에서 오간다: Claude spinner가
+        // 정리 표지가 보이면 작업 중이다(plan §8.306). 참고 규칙은 정리 화면을 작업 중과 쉼 사이에서 오간다: Claude spinner가
         // 「(5s · ↓ 168 tokens)」면 `live_turn_working`, 요약 글이 아직 오지 않은 「(0s)」면 입력 상자(`live_prompt_box`)로 쉼이고,
         // 그동안 창 제목도 작업 중 spinner가 아니다(10-20 실측 「✳ …」). 확인창·기록 보기는 그대로 둔다
         let compacting = detection.state != State::Blocked
