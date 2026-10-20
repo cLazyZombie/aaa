@@ -6115,7 +6115,14 @@ L4 후속(10-20 00시 사용자 관찰): 멈춤 상태의 후보 예약과 재�
 - **웹.** 활동 막대는 작업·머신·자동화 셋이며 저장된 special은 work다. 자동화 배지는 막힌 큐·승인 필요 규칙을 중복 없이 센다. 옛 evaluator도 작업 목록에 표시한다. 데스크톱·휴대폰의 전후 캡처와 실제 상호작용은 thread library에 둔다.
 - **검증.** 기존 A1/A2 keeper는 automation::start_tests로 옮긴다. m13이 옛 파일 비실행·한 번 안내·Front 제거 응답·미리보기 무쓰기·기억/이력/큐 이전을 검사하고 1.9 fake가 옛 파일 프레임만 받는지 확인한다. N-1 변환을 끄거나 pending 이전을 빼면 각각 keeper가 실패하며 원본 bytes를 복구한다. E2E26/40/48/49와 전체 ci-local·deps·TS 생성물·automation schema·공개 검사를 실행한다.
 
-### 8.325 host 로그인과 새 thread·coordinator 기본 인증: 멀티 계정 2단계(10-20, t-0510)
+### 8.325 aaa install I2 Windows 파일 내구·읽기 잠금 수리(10-20, t-0485)
+
+- **실제 실패.** I2 main push 뒤 Windows CI의 파일 owner가 실패했다. cross build는 실제 Windows 실행을 증명하지 않는다. 읽기 handle의 `sync_all`은 Windows `FlushFileBuffers`가 요구하는 쓰기 권한이 없어 적용/reverse 단계에서 실패했다. 전체 byte-range 독점 잠금은 같은 process의 별도 read handle도 막아 잠금 중 상태 snapshot이 실패했다.
+- **수리.** 이미 입증한 stage의 마지막 flush를 공통 helper로 모으고 Windows만 쓰기 handle을 요청한다. Unix 읽기 flush 의미는 유지한다. Windows의 자원 ticket은 read 공유만 허용하는 쓰기 handle 예약으로 두 process의 writer/deleter를 막고 읽기 관찰은 허용한다. 기존 owner/DACL/nlink/reparse·before SHA/mode/inode·journal·backup·원자 교체 경계는 유지한다. 기존 ACL이나 OS 정책을 바꾸지 않는다.
+- **owner.** 원본 파일/복구/ACL owner를 제외하거나 완화하지 않는다. 두 process 잠금 owner에 잠금 중 유효 status/snapshot의 전후 불변을 더하고, contention 거부·해제 뒤 같은 ID 재개를 유지한다. 잠금 오류를 무시하는 변형은 이 owner에서 실패해야 한다. 실제 Windows 원본 실패와 수리 후 macOS gate/cross를 나눠 기록하고, Windows 수리 후 실제 실행은 다음 main CI로 판정한다.
+- **순서.** I2 Windows 수리를 따로 착지한 뒤 사용자 최신 순서인 I5 Windows→I6 승인·대화형→Windows 최소 bootstrap→사용자 시험 PC 인수→I3 macOS→I4 Linux→I7 최종 인수로 간다. I5/I6의 공통 감독자·승인 경계와 I7 Windows 부분을 앞당기며 미구현 OS adapter는 성공으로 채우지 않는다. 사용자 인수에는 준비물·받기·명령·확인·되돌리기·문제 로그와 CI가 못 보는 SCM logon/Session 0/부팅/LSA/UAC를 명시한다.
+
+### 8.326 host 로그인과 새 thread·coordinator 기본 인증: 멀티 계정 2단계(10-20, t-0510)
 
 - **요청·결정.** 사용자가 사용량 카드·자동 배정에 앞서 host에서 인증하고 새 작업들이 이를 기본으로 쓰도록 요청했다. A안으로 새 worker·평가 thread와 새 coordinator pane 모두 포함한다. 실행 중인 작업에는 소급하지 않는다. 기본 미지정은 기존 로컬 로그인, 지정 인증 오류는 시작 거부, 명시 `--account` 우선, 로그인·기본 변경은 host의 aaa 세션 밖 로컬 CLI라는 안전한 기본을 따른다.
 - **공식 로그인.** `account login <이름> --harness claude|codex`가 host의 격리된 임시 홈·별도 PTY에서 공식 `claude setup-token` 또는 Codex file 저장 로그인을 실행한다. 브라우저 인증만 사용자가 host에서 한다. 원본 출력·오류·인증 URL은 pane·로그·journal로 중계하지 않는다. 성공 결과는 기존 암호화 금고에 직접 넣는다. `login-status`/`login-cancel`은 비밀 없는 상태만 제공한다. 5분·128KiB 상한, 취소와 확정의 직렬화, 임시 자료 정리 후 금고 확정, 정상 host 종료 때 취소·정리 완료를 지킨다. 웹 로그인 시작과 수동 인증 코드 입력은 첫 배포 범위 밖이다.

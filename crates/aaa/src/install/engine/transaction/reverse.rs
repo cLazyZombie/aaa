@@ -183,7 +183,7 @@ impl Transaction {
                 )
                 .map_err(Fault::io)?;
             }
-            File::open(&stage).map_err(Fault::io)?.sync_all().map_err(Fault::io)?;
+            private::sync_file(&stage).map_err(Fault::io)?;
             private::sync_parent(&stage).map_err(Fault::io)?;
             self.journal.reverse[slot].inode = Some(identity(&stage)?);
         }
