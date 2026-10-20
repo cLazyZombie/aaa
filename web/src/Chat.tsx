@@ -29,6 +29,7 @@ import { ChatRow } from "./ChatRow";
 import { mergeChatPage } from "./chatPages";
 import { steerLabel, type SteerState } from "./steerQueued";
 import { groupChatRows, groupExpanded, readExpandedGroups, rememberExpandedGroups, rowIndexById, summarizeToolGroup, toggleExpanded, toolGroupKind, type ChatDisplayRow, type ToolGroupKind } from "./toolGroups";
+import { ChatFindBar, useChatFind } from "./ChatFind";
 
 /** 기록 줄 요소(말마다 하나, 끝에 대기 말). 머리 안내·경고는 줄이 아니다 */
 function chatRows(el: HTMLElement): NodeListOf<HTMLElement> {
@@ -174,6 +175,14 @@ function UserMessage({ text, pending = false }: { text: string; pending?: boolea
     observer.observe(node);
     return () => observer.disconnect();
   }, [capped]);
+  // 대화 안 찾기가 잘린 아래의 찾음으로 갈 때 편다(ChatFind.tsx, 참고 t3code `data-thread-find-fold`·beforematch)
+  useEffect(() => {
+    const node = body.current;
+    if (!capped || node === null) return;
+    const reveal = () => setOpen(true);
+    node.addEventListener("beforematch", reveal);
+    return () => node.removeEventListener("beforematch", reveal);
+  }, [capped]);
   const card = useRef<HTMLDivElement>(null);
   const folding = useRef(false);
   const toggle = () => {
@@ -190,7 +199,7 @@ function UserMessage({ text, pending = false }: { text: string; pending?: boolea
   }, [open]);
   return (
     <div ref={card} className={`chat-msg user chat-bubble${capped ? " is-capped" : ""}${clipped ? " is-folded" : ""}${pending ? " is-pending" : ""}`} data-role="user">
-      <div ref={body} className="chat-bubble-body">
+      <div ref={body} className="chat-bubble-body" data-chat-find-text="" data-chat-find-fold={capped ? "" : undefined}>
         <Markdown>{text}</Markdown>
       </div>
       {(open || clipped) && (
@@ -312,7 +321,7 @@ function AgentTurn({ text }: { text: string }) {
   const { note, onResult } = useCopyResult();
   return (
     <article className="chat-turn chat-turn-agent">
-      <div className="chat-msg assistant" data-role="assistant">
+      <div className="chat-msg assistant" data-role="assistant" data-chat-find-text="">
         <Markdown>{text}</Markdown>
       </div>
       <div className="chat-turn-meta chat-agent-meta">
@@ -340,6 +349,7 @@ export function ChatPanel({
   harness = "claude",
   onDismissPending,
   steer,
+  findRequest = 0,
 }: {
   pane: string;
   status?: AgentStatus;
@@ -355,6 +365,8 @@ export function ChatPanel({
   onDismissPending?: (id: number) => void;
   /** 대기 메시지 「지금 보내기」(plan §8.271). 없으면 단추를 그리지 않는다(쉬는 agent·보기 권한·옛 host) */
   steer?: Omit<SteerView, "count">;
+  /** 머리 돋보기·팔레트 「대화에서 찾기」가 올린다: 바뀌면 찾기 칸을 연다(plan §8.308) */
+  findRequest?: number;
 }) {
   const [chat, setChat] = useState<ChatView | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -567,6 +579,11 @@ export function ChatPanel({
   rowIdsRef.current = rowIds;
   // 가상화 판정은 화면 줄(묶음은 한 줄) 수로 한다. row와 끝 이동이 같은 판정을 쓴다(t-0474)
   const virtual = displayRows.length > 300;
+  // 대화 안 찾기(plan §8.308): 받아 둔 기록을 센다. 가상화로 화면 밖인 줄은 그 자리로 굴려 꺼낸다. 사람 말·답은 묶이지 않아
+  // 그 말의 id가 곧 화면 줄 id다(도구 묶음은 찾지 않는다)
+  const chatMessages = useMemo(() => chat?.messages ?? [], [chat]);
+  const messageRowIds = useMemo(() => chatRowIds(chatMessages), [chatMessages]);
+  const find = useChatFind({ container: list, messages: chatMessages, rowIds: messageRowIds, canOpen: onOpenFile !== undefined, openRequest: findRequest, more: Boolean(chat?.before) });
   // 맨 아래가 아니면 보던 줄과 그 줄 안 거리를 지킨다(plan §8.262, t3code timelineScrollAnchoring `rowId`·`offsetWithinRow`):
   // 새 말·앞 자름·입력창 높이·폭이 바뀌어도 그리기 전에 그 줄을 같은 거리로 되돌린다. 브라우저 굴림 고정(overflow-anchor)은 끈다
   // (iOS Safari에는 없고, 이것과 겹치면 두 번 옮긴다). 같은 자리를 이 pane의 읽던 자리로도 기억한다(plan §8.266, 참고 MessagesTimeline
@@ -748,6 +765,8 @@ export function ChatPanel({
   return (
     <OpenFileContext.Provider value={onOpenFile ?? null}>
       <OpenLinkContext.Provider value={onOpenLink ?? null}>
+      <div className="chat-frame">
+      <ChatFindBar {...find.bar} />
       <div
         className="chat"
         ref={list}
@@ -847,6 +866,7 @@ export function ChatPanel({
             </button>
           </div>
         )}
+      </div>
       </div>
       </OpenLinkContext.Provider>
     </OpenFileContext.Provider>
