@@ -2,6 +2,27 @@
 
 새 기능을 만드는 thread가 따르는 짧은 규칙이다. 근거는 참고 넷(herdr 0.9.5·herdr-projects 0.2.35·herdr-web-ui `aa624cb`·t3code `4b1024da`)과 이 저장소에서 실제로 난 간헐 실패다. 전략과 도구 목록은 [plan §13](plan.md#13-테스트-전략과-직접-만들-e2e-도구)에 있다.
 
+## host·agent 재시작과 상태 복원(t-0491)
+
+`cargo test -p aaa-host --lib transitions::tests::hello_replay_does_not_publish_idle_between_panes -- --exact`
+는 Hello의 첫 pane Working 사건을 처리하는 실제 대기자 콜백에서 ticker를 실행한다.
+뒤 pane의 상태를 아직 재생하지 않았다는 이유로 `쉼(no agent)` inbox를 만들거나 조회 묶음을 쉼으로 바꾸면 실패한다.
+로컬·원격을 모두 검사하며, Hello가 끝난 뒤 실제 Idle은 한 번 알린다. 복원 울타리를 재부팅 pane에만 치는
+원래 결함을 되살리면 같은 거짓 쉼 알림에서 실패해야 한다. 시간·부하·새 production 주입 지점을 쓰지 않는다.
+
+`cargo test -p aaa --test e2e restart::restart_preserves_working_pty_without_input_signal_or_resize -- --exact`
+는 격리 host, 로컬 UDS agent, 원격 TLS agent를 띄운다. 별도 FIFO로 진행하는 raw PTY harness가
+host → 로컬 → 원격 순서의 SIGTERM 재시작 중에도 checkpoint를 기록해야 한다. 자식·session host PID,
+수신 바이트 전체, SIGINT·SIGTERM·SIGHUP·SIGWINCH, 실제 PTY 크기와 Working 상태를 비교한다.
+재연결 뒤 의도한 `p` probe를 **PTY에서 읽은 사건**을 기다려 앞서 큐에 든 예상 밖 입력도 검사한다.
+Screen 응답은 PTY writer 완료의 울타리가 아니다. 마지막 실제 Esc는 Idle과 정확한 바이트를 확인하는 양성 대조군이다.
+session 재연결에 Esc를 넣는 변형은 `local-back: inputs` 단언에서 실패해야 한다.
+
+이 시험은 연결·PTY 생명주기 계약을 지킨다. 실제 Codex의 네트워크 요청, hook 실패, TUI 표시까지
+대신 검증하지 않는다. 턴이 중단됐다는 진단은 화면 관측과 rollout의 후속 실행·`turn_aborted`·턴 경계를 함께 대조한다.
+끝 20줄의 `esc to interrupt` 부재나 짧은 화면 무변화만으로 중단을 확정하지 않는다. 긴 추론 요약이 그 줄을 대신하는
+실측 화면에서도 도구 실행은 이어졌다. 연결 직후 `no agent`는 상태 복원이 끝났는지도 먼저 확인한다.
+
 ## 원칙
 
 - **사건으로 끝낸다.** 시험은 정한 시간을 자지 않고, 기다리는 것이 왔다는 신호(흐름 사건·출력·화면 표지·fake 기록·tick 끝남)를 기다린다. 「시간 제한이 있어야 통과하는 시험은 틀렸다」(t3code `AGENTS.md`). 시한은 오지 않을 때 멈추는 안전 상한일 뿐이다.
@@ -748,6 +769,14 @@ L2 결함 검증은 이전 root 가져오기 생략, 재시작 전 applied 변�
   해당 owner 시험의 단언 실패를 본다. 각 변형은 원본 bytes로 복원한 뒤 다음 시험/전수 gate를 실행한다.
 - I0는 승인서/등록 허가의 schema만 만든다. 서명·pin·nonce·W0 executor·일회 grant·실제 감독자/SSH 수명은
   후속 단계의 구현과 시험 전까지 통과했다고 표시하지 않는다. 가짜 fixture 서명은 승인으로 쓸 수 없다.
+
+## PR 추적의 선택 실행과 CI 장애 분리(t-0492, plan §8.313)
+
+- `cargo test -p aaa --test m13 pr_environment::`: 실제 host↔agent↔가짜 gh에서 미게시 branch의 호출 0, 게시 branch 탐색, 미게시 branch의 명시한 보고 PR 추적, 미인증의 inbox 0·머신 상태·자동 사용 재개, 실행 파일 ENOENT의 조용한 생략, 일반 API 오류의 장애·회복 경계를 본다. 앞의 미게시 thread가 사용 불가 상태 때문에 뒤의 인증 회복 조회를 막지 않아야 한다. 호출 기록의 뒤 pass 시작, 보고 수신, 머신 상태로 기다리며 고정 sleep은 없다.
+- gh 없는 경계는 `cargo test -p aaa-agent --lib gh::tests::`의 실제 실행 가능 파일 검색(사용자 PATH·서비스 fallback·아무 실행 파일도 없음)과 위 ENOENT 통합 시험이 나누어 맡는다. ENOENT는 시험 gh의 없는 interpreter로 만들며 운영 gh·로그인·시스템 설정에 닿지 않는다.
+- 기존 `project_lifecycle`의 PR 청소·`pr_followup`·`merged_pr_resolves_the_thread`·`merged_resolve_waits_for_the_routine_prompt`·`resolve_looks_up_the_pull_request_once_more`는 가짜 GitHub가 게시된 branch라고 답할 때 그 원격 참조도 fixture에 둔다. 기존 PR 상태·후속 메시지·병합·정리 단언은 유지한다.
+- `cargo test -p aaa --test m13 ci_conditional_failure_mission_restart_catchup_and_outage`: 기존 HTTP 실패·중복 억제·복구에 이어 별도 인증 실패(gh 종료 코드 4)의 CI outage를 확인한다. PR 생략 때문에 CI 실패를 숨기면 안 된다.
+- 수정 전에는 미게시 branch의 불필요 호출과 미인증 PR outage가 각각 실패했다. 게시 조건 제거·사용 불가 오류를 다시 실패로 전달·머신 상태 저장 제거·CI outage 전달 제거를 각각 심어 keeper 실패를 확인하고 원본 bytes로 복원한다. 마지막 검증은 전체 ci-local과 check-public이다.
 
 ## aaa install I1 읽기 CLI(t-0485, plan §8.315)
 

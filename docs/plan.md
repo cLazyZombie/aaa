@@ -5947,6 +5947,24 @@ L4 후속(10-20 00시 사용자 관찰): 멈춤 상태의 후보 예약과 재�
 - **참고/차이.** herdr OS/arch/checksum·사용자 bin, herdr-projects 소유 journal/동시 편집 보존, herdr-web-ui 기존 Serve 보존, t3code 데이터 보존 제거·서비스 진단을 읽었다. 자동 재시도/외부 설치기/PATH 자동 덮어쓰기는 채택하지 않으며 Windows SCM/Linux system unit은 확정 결정을 따른다.
 - **시험.** 순수 선택/필수값/상충·OS 서비스·한국어 Windows 경로·안전 env/비밀 원문 비노출·입력 모드·고정 canonical plan/hash를 검사한다. schema/TS drift와 공개/비공개 fixture·status/exit를 검사한다. 보안/hash owner 결함 주입 RED 후 bytes 복원과 GREEN을 보존한다. 공식 ci-local·deps·check-public을 실행하고 결과는 thread report/library에 남긴다. 운영 설정·서비스·launchd·계정·키체인은 변경하지 않는다.
 
+### 8.313 PR 없는 thread·gh 없는 머신의 PR 조회 생략(10-20, t-0492)
+
+- **목적:** PR 없이 main에 직접 착지하는 thread 때문에 gh 설치·로그인을 요구하거나 coordinator inbox에 장애를 쌓지 않는다. CI 감시의 조회 머신에는 기존 gh 요구와 장애 알림을 유지한다.
+- **branch 탐색:** thread 머신 agent가 원래 worktree의 origin과 `refs/remotes/origin/<branch>`를 읽는다. GitHub 원격이고 해당 원격 참조가 있을 때만 `gh pr list`를 부른다. 원격 참조는 push/fetch로 얻은 게시 근거다. 이를 확인하려고 fetch·원격 접속·인증을 새로 하지 않는다. GitHub 밖 원격·미게시 branch는 실제 조회로 세지 않는다. 사용자 정의 push 설정 등으로 로컬 원격 참조가 없다면 보고의 `PR:` 주소를 지정할 수 있다.
+- **명시한 PR:** 보고 표지 다음 줄의 `PR: https://github.com/<owner>/<repo>/pull/<number>`와 이미 찾은 PR은 원격 branch 탐색을 거치지 않고 계속 본다. 기존 PR head 소유 검사·상태 변경·pr-followup·병합 뒤 resolve 계약은 유지한다.
+- **사용 불가:** 실행 가능한 gh가 없거나 실행 시 ENOENT, gh 종료 코드 4(미인증)이면 agent가 정상 응답의 `unavailable`로 돌려준다. host는 그 pass에서 같은 머신의 남은 PR 추적을 생략하고 outage·회복 inbox를 만들지 않는다. 다음 정기 조회에서 다시 확인하며 성공하면 자동으로 사용한다. 일반 네트워크/API 실패·사라진 worktree 등은 기존 PR 장애 판정을 유지한다.
+- **상태:** `MachineView.pr_tracking`은 host 메모리의 마지막 PR 조회 결과다. `aaa doctor`는 머신마다 `PR 추적 <머신>: 사용 불가: <이유>` 또는 `사용 가능` 한 줄을 보인다. 아직 조회하지 않았거나 host를 다시 띄웠으면 아직 조회하지 않음으로 보인다. 끊긴 머신의 값도 마지막 관측값이다. CI 상태와 합치지 않는다.
+- **호환:** 기존 질문 종류를 그대로 쓰고 `PrAnswer.unavailable`·`skipped`, `MachineView.pr_tracking` 선택 필드만 더한다. 옛 agent 응답은 기존 실제 조회로 해석하고 옛 host/front는 새 필드를 버린다. gh 자격 증명 파일·토큰은 읽거나 복사하지 않는다.
+
+### 8.314 배포 재시작의 거짓 쉼 알림 수리와 PTY 보존(10-20, t-0491)
+
+- **현상과 근거.** 배포 뒤 Codex 화면의 Working 표시가 없어 실제 턴 중단으로 보였지만, 조사한 세 과거 배포와 추가 배포의 rollout에는 재시작 뒤 추가 입력 전에 도구 실행·파일 수정이 있고 같은 턴 ID가 유지됐다. `turn_aborted`는 없었다. 추가 배포의 두 로컬 pane은 session host·자식 PID가 유지됐고 배포 구간 PTY 입력 쓰기도 없었다. Working 줄 대신 잘린 추론 요약이 보이는 화면도 실행 중 확보했다. 외부 신호·모든 과거 화면의 이력은 없으므로 다른 종류의 중단까지 배제하지 않는다.
+- **확인한 원인.** host는 agent 연결과 세션 목록을 공개한 뒤 Hello.harness의 저장된 상태를 순서대로 적용했다. 새 host의 아직 복원되지 않은 pane은 agent=None이다. ticker가 이 사이를 읽어 실제 작업 중인 thread에 `쉼(no agent)` inbox를 만들었다. 운영 inbox의 거짓 쉼 시각은 Working 적용보다 앞섰고, 첫 pane의 상태 사건 처리 중 ticker를 실행하면 같은 알림이 결정적으로 재현됐다. 로컬은 host 재시작 직후 바로 붙어 이 창을 밟았으며, 이 경합 자체는 원격에도 가능하다.
+- **수리.** 기존 재부팅 복원 울타리를 Hello의 모든 상태 재생부터 적용한다. 중단된 pane이 있으면 기존 재부팅 복원으로 이어지고, 없으면 Hello 재생 뒤 바로 푼다. agent=None인 thread 조회도 이 동안 기록된 묶음을 유지한다. 복원이 끝나면 조회와 ticker를 다시 깨운다. 입력·신호·resize·재연결 프로토콜을 바꾸지 않는다.
+- **배포 경로.** host와 로컬 agent부터, 이어 원격 agent를 재시작한다. launcher는 지정한 자식 PID에 신호를 전달한다. session host는 `setsid`로 분리되어 PTY·자식을 유지한다. agent는 기존 session host에 IPC Hello/Welcome으로 다시 붙고 화면 감지·출력 구독을 복구한다. host 연결이 끊기면 출력 구독만 해제하며 입력을 재생하거나 session host를 다시 띄우지 않는다. 로컬은 UDS, 원격은 TLS이고 session IPC는 같다.
+- **시험.** host `hello_replay_does_not_publish_idle_between_panes`는 첫 pane 상태 사건 콜백에서 ticker를 돌려 뒤 pane의 거짓 쉼 inbox·조회 묶음을 검사한다. 수정 전 실패·수정 후 로컬/원격 통과·원래 울타리 조건을 되살린 변형 실패를 확인한다. 복원 뒤 실제 Idle은 한 번 알린다. e2e `restart::restart_preserves_working_pty_without_input_signal_or_resize`는 같은 시험 머신의 로컬 UDS·원격 TLS agent에서 host→로컬→원격 SIGTERM 재시작 중 FIFO 진행, 자식·session host PID, 전체 입력·신호·PTY 크기와 Working을 비교한다. 실제 PTY probe 수신이 울타리이며 마지막 실제 Esc는 Idle이 되어야 한다. session 재연결에 Esc를 넣은 변형은 입력 바이트 단언에서 실패했다. 실제 Codex 모델 요청·TUI·launchd 전체 생명주기는 이 harness가 대신 증명하지 않는다.
+- **운영 도구.** 화면 끝의 `esc to interrupt` 부재·짧은 화면 무변화는 중단의 독립된 증거가 아니다. 상태 복원 완료, 구조화된 harness 상태, 턴 경계와 후속 실행을 함께 대조한다. 저장소 밖 coordinator 도구와 운영 서비스·설정은 이 변경에서 수정하지 않는다.
+
 ### 8.315 aaa install I1 읽기 탐지·계획(10-20, t-0485)
 
 - **범위.** I0(§8.312)의 공통 DTO/순수 검증/hash를 실제 install CLI에 연결한다. 환경 변경 전에 install을 처리하며 JSON/NDJSON 문법 오류도 입력 원문 없이 고정 code로 반환한다. FRONT_API/AGENT_LINK/schema는 변경하지 않는다. 적용·재개·조회·마법사는 단계 미지원으로 명시한다.

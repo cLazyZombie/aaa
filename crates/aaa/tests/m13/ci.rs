@@ -16,7 +16,9 @@ if args[:2]==['run','view']:
     print('x'*40000+'\ntest failure tail')
 elif 'actions/runs?' in endpoint:
     etag='If-None-Match: "'+phase+'"'
-    if phase=='outage':
+    if phase=='auth':
+        code=4;result='auth'
+    elif phase=='outage':
         print('HTTP/2.0 403 Forbidden\n\n{}');code=1;result='403'
     elif etag in args and 'created=' not in endpoint:
         print('HTTP/2.0 304 Not Modified\nETag: "'+phase+'"\n\n');code=1;result='304'
@@ -231,6 +233,22 @@ fn ci_conditional_failure_mission_restart_catchup_and_outage() {
             .count(),
         1
     );
+    // PR의 조용한 생략과 달리 CI 조회 머신의 인증 실패는 계속 알린다.
+    phase(&stub, "fixed");
+    quiet_barrier(&w, &stub, "fixed");
+    phase(&stub, "auth");
+    wait_for("CI 인증 실패 알림", T, || {
+        let items = w.h.ok(&["inbox", "list", "demo", "--peek"]);
+        items["items"]
+            .as_array()?
+            .iter()
+            .find(|i| {
+                i["item_kind"] == "outage"
+                    && i["subject"] == "ci:ci-main"
+                    && i["summary"].as_str().is_some_and(|s| s.contains("인증 실패"))
+            })
+            .cloned()
+    });
     // CI 작업 때문에 새로운 thread를 만들거나 기존 착지 thread를 되살리지 않는다.
     assert_eq!(w.h.ok(&["thread", "list", "demo", "--role", "evaluator"])["threads"].as_array().unwrap().len(), 1);
     assert_eq!(w.h.ok(&["thread", "list", "demo"])["threads"].as_array().unwrap().len(), 0);
