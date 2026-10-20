@@ -6278,3 +6278,8 @@ L4 후속(10-20 00시 사용자 관찰): 멈춤 상태의 후보 예약과 재�
   보존하고, 다른 OS의 오류 분류 제어 진단은 Windows 실제 실행과 구분한다. snapshot 부모 확인·
   가까운 조상 확인·쓰기 전 확인 생략 변형은 각각 owner에서 RED여야 하고 바이트 복구 뒤 GREEN을 확인한다.
   macOS 전체 gate와 Windows cross를 검증하며 Windows·Linux 실제 실행은 main push 뒤 CI다.
+- **동반 native 진단.** 같은 착지에 I5 Windows 종료 process owner의 실패 메시지에만
+  `wait` 종료 코드(Debug/십진수/32-bit hex)를 더한다. cmd 생성 조건·성공 전제·열린 handle 확인·
+  `process_identity`의 거부 단언은 유지한다. 기존 main CI 실패 로그가 종료 코드를 버렸으므로
+  native는 진단만, 수리는 다음 착지다. 이번 main push 뒤 windows-2025 값으로 원인을 확정하며
+  승인 없는 branch push/PR·별도 runner/VM으로 미리 CI를 실행하지 않는다.

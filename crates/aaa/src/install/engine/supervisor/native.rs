@@ -708,7 +708,13 @@ mod tests {
             .stderr(Stdio::null())
             .spawn()
             .unwrap();
-        assert!(child.wait().unwrap().success());
+        let status = child.wait().unwrap();
+        assert!(
+            status.success(),
+            "cmd exit fixture failed: status={status:?}, code={:?}, hex={:?}",
+            status.code(),
+            status.code().map(|code| format!("0x{:08X}", code as u32))
+        );
         let handle = child.as_raw_handle();
         // 잘못된 handle이 아닌 실제 종료한 process가 부정 입력이어야 한다.
         assert_eq!(unsafe { WaitForSingleObject(handle, 0) }, WAIT_OBJECT_0);
