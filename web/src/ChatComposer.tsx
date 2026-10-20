@@ -391,8 +391,9 @@ export function ChatComposer({
   }, []);
 
   // 참고 `sizeTextarea`(Composer.tsx): 높이를 auto로 두고 scrollHeight만큼 준다. 그리기 전에 돌아 깜박이지 않는다.
-  // 한 줄인지는 늘 단추 옆 폭(한 줄 배치의 글 칸 폭)에서 잰다: 배치를 바꿔도 판정이 같아 두 배치를 오가며 튀지 않는다
-  // (t3code useComposerMultilinePrompt.ts는 펼친 폭과 비교해 그 사이 글은 한 줄 칸에서 잘린다 — 여기는 잘리지 않게 좁은 폭).
+  // 한 줄인지는 늘 펼친 폭(여러 줄 배치의 글 칸 폭 = 상자 안 폭)에서 잰다(t3code useComposerMultilinePrompt.ts): 배치를 바꿔도
+  // 판정이 같아 두 배치를 오가며 튀지 않는다. 펼친 한 줄에 드는 글이 단추 옆 칸보다 길면 t3code처럼 자르지 않고 단추 옆에서 접는다.
+  // 단추 옆 폭에서 재면 그 사이 글은 펼친 한 줄에 놓이고 밑 줄엔 단추만 남는다(사용자 10-20 「한 줄을 다 채우지 않았는데 두 줄 높이」).
   // 글꼴은 시스템 글꼴이라 참고의 `facesLoaded`는 없고, 대화 글자 크기·밀도가 바뀌면 다시 잰다(참고 settings.chatFontSize 효과).
   useLayoutEffect(() => {
     const element = textareaRef.current;
@@ -402,14 +403,9 @@ export function ChatComposer({
     let next: "one" | "more";
     if (shown === "") next = "one";
     else if (shown.includes("\n")) next = "more";
-    else if (wrappedRows(element) > 1) next = "more";
-    else if (lines === "one") next = "one";
     else {
-      // 펼친 폭에서 한 줄: 단추 옆 폭으로 줄여 다시 잰다(같은 그리기 안이라 화면에는 나오지 않는다)
-      let beside = surface.clientWidth;
-      for (const controls of surface.querySelectorAll<HTMLElement>(":scope > .composer-controls"))
-        beside -= controls.offsetWidth;
-      element.style.width = `${beside}px`;
+      // 한 줄 배치면 글 칸을 잠시 상자 안 폭으로 넓혀 잰다(같은 그리기 안이라 화면에는 나오지 않는다)
+      if (lines === "one") element.style.width = `${surface.clientWidth}px`;
       next = wrappedRows(element) > 1 ? "more" : "one";
       element.style.width = "";
     }

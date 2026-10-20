@@ -604,9 +604,10 @@
   color: var(--text-dim);
 }
 
-/* One line (ChatComposer data-lines="one", t3code's resting composer): an empty or one-line message
-   shares its row with the controls, centred on one line, so the card is one row high. The text
-   keeps its side padding (the line is measured at this width in both layouts); only the block
+/* One line (ChatComposer data-lines="one", t3code's resting composer): an empty message, or one that
+   fits one line of the full-width text, shares its row with the controls, centred, so a short one
+   leaves the card one row high. One longer than the room beside the controls wraps there instead
+   of leaving a row of controls alone under it. The text keeps its side padding; only the block
    padding shrinks. A placeholder longer than the row ends in an ellipsis rather than adding a line */
 .composer-surface[data-lines="one"] {
   grid-template-areas:
