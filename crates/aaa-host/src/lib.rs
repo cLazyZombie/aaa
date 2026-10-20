@@ -1446,7 +1446,7 @@ impl Host {
                         let placed = self.apply_task_repo(&mut a, t.repo.as_deref(), kind_given)?;
                         (w.into_iter().chain(placed).collect::<Vec<_>>(), Some(t))
                     }
-                    None => (Vec::new(), None),
+                    None => (self.task_start_warning(&a.project, &a.title).into_iter().collect(), None),
                 };
                 // 머신을 주지 않았으면 project.toml repos에 적힌 그 repo의 머신(herdr-projects `start`의 `listed`)
                 if a.machine.is_none() {

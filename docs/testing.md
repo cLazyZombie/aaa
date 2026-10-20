@@ -186,6 +186,20 @@ HTML fixture에는 열람 기록용 스크립트를 넣지 않는다. 기록은 
 웹 E2E 38은 대화에서 연 보고서(plan §8.300)를 WebKit iPhone 390·430 Safari 탭·홈 화면 앱 흉내로 본다. 「새 창이 없음」은 앱 안 보기(`file-viewer`)가 그려진 뒤에 보고, 휴대폰 sheet는 올라오는 움직임(`getAnimations().finished`)이 끝난 뒤 닫기 자리를 잰다. 헤드리스 WebKit의 휴대폰 꼴(hasTouch)도 `pointer: coarse`다. 같은 화면에서 파일 보기 머리가 한 줄(64px 이하, 칸 겹침·잘림 없음)이고 몸이 화면 높이의 85% 이상인지도 잰다(plan §8.302).
 웹 E2E 42는 thread 변경 파일 카드와 diff 패널(plan §8.305)을 실제 git 저장소 thread로 본다. 가짜 agent가 보고를 쓴 뒤 worktree에 만드는 새 파일을 파일 존재로 기다리고 나서 worktree를 바꾼다. 카드는 `data-files`(받은 파일 수), 패널은 `data-diff-status="ready"`·`data-diff-lazy`·`data-diff-loaded`(큰 비교에서 읽은 파일 수) 표지를 기다린다. diff 줄은 CodeView shadow root 안의 글로 본다. agent 쪽 읽기 전용 경계(index·HEAD·ref·`.git` 안 파일이 바이트로 같음, 외부 callback 안 돎)는 `cargo test -p aaa-agent --lib diff::`가 실제 임시 저장소로 본다.
 
+### 대화 찾기의 가상 줄 관측 묶음(t-0542, plan §8.337)
+
+- E2E44 「앞 기록의 가상 줄 관측 묶음」은 기존 멈춤·이어 찾기 시나리오를 그대로 실행한다. 첫 찾음 줄의 실제
+  IntersectionObserver 화면 밖 관측을 보류하고, Enter로 그 줄에 갈 때 생기는 실제 화면 안 관측과 시간순으로 함께 전달한다.
+  보류 표지를 기다리고 전달 묶음 `false,true`도 단언한다. 원본과 주입 단계의 울타리 문구를 구분해 이번 append의 commit을 기다린다.
+  가짜 좌표·entry·고정 sleep·시한 연장은 없다.
+- [관측 규칙](https://www.w3.org/TR/intersection-observer/#notify-intersection-observers)은 모인 entry 전체를 전달한다.
+  한 줄에 observer 하나여도 첫 entry만 쓰면 최신 화면 안 관측을 버려 본문이 빈 채로 남고 찾기 재개용 DOM 변화도 오지 않는다.
+  ChatRow는 마지막 entry로 본문을 그릴지 정한다. 느린 통지에서 사용자가 찾거나 스크롤할 때도 해당하는 제품 결함이다.
+- 수정 전 주입은 기존 20초 「앞 기록의 처음 1/7」에서 count=7·index=0·revealed=false·earlier=idle로 RED였다.
+  첫 찾음 shell은 화면 안에 있지만 본문이 없었다. 같은 주입 GREEN과 주입 없는 기존 네 단계의 반복 통과를 별도로 보존한다.
+  최초 착지 실패의 DOM은 남아 있지 않아 그 실행의 실제 entry 묶음까지 확인한 것은 아니다.
+  원래 단언(강조 Range의 실제 보임·접힘 펼침·개수 일치·가상화)과 시한을 유지하며 전체 ci-local·check-public을 실행한다.
+
 ```
 web/e2e/web.e2e.mjs        입구: spec 파일마다 lib/child.mjs 프로세스를 띄우고(worker N개가 함께) 결과를 모은다
 web/e2e/durations.json     파일마다 기록한 초. 함께 돌 때 긴 파일부터 넣는다
@@ -808,6 +822,12 @@ CI/Git의 source outbox·중복 억제·재시작·outage는 기존 owner를 유
 - 같은 E2E 46의 「터치 입력 글자」는 Chromium·WebKit의 iPhone 세로/가로에서 검색·제목·메모·선택·새 목록·사람 이름·첨부 붙여넣기·원문·목록 이름의 실제 계산 글자가 16px 이상인지 본다(t-0530). 폼의 13px 덮어쓰기를 복원하면 실패한다. headless는 iOS 키보드의 초점 확대를 재현하지 않으므로 실제 iPhone에서 입력·키보드 내림 뒤 배율 유지 확인은 별도다.
 - 결함 심기: 웹 폼이 편집을 시작한 판 대신 최신 판 hash로 저장하게 하면 E2E 46 「충돌」 단계가, 팔레트 요청 수를 mount 때 값으로 두면 「명령 팔레트」 단계가 실패한다. 웹 결함은 `npm run build`가 dist를 다시 만든 뒤 `cargo build -p aaa`로 binary에 넣어 돈다.
 
+## 일을 맡기기 전 task 찾기(t-0539, plan §8.336)
+
+- `cargo test -p aaa-host --lib tasks::tests::start_warning`: 제목의 대소문자·구두점 정규화, 낱말 겹침 경계, 첫 열린 후보 선택, 완료·빈 제목·약한 겹침 제외와 제안 명령의 셸 인용을 확인한다. 형태소·동의어는 추측하지 않는다. 완료 task 제외를 제거하면 음성 시험이 실패한다.
+- m13 `thread_start_warns_about_similar_tasks_without_blocking`: 실제 CLI 응답에서 경고 한 줄과 시작 성공, `--from-task` 시작·완료 task에 경고 없음, TASKS.md 원문 보존을 확인한다. 명령 응답이 끝이라는 신호이며 고정 sleep은 없다.
+- 기존 m13 `doctor_files_brings_the_coordinator_guide_to_existing_projects`의 안내 문구 목록이 새 프로젝트 생성과 낡은 안내 갱신 모두에서 사전 검색·기존 thread 재사용·메모/모델/머신/저장소 갱신·`--link-task` 안내를 검사한다.
+
 ## 웹 할 일 thread 연결과 자동 정리(t-0493, plan §8.316)
 
 - `cargo test -p aaa-host --lib task_clean::`: P2 판정표(병합은 표지와 무관하게 완료, `[완료]`만 완료, 그 밖 표지·보고 없음·사본 없이 끝냄·하위 남음은 확인 필요)와 확인 필요 까닭.
@@ -970,6 +990,10 @@ journal·로그·화면에 원문·8바이트 조각·base64/URL/JSON 변형이 
   - 실험실 `CLAUDE_CONFIG_DIR`의 `commands/`·`skills/`와 pane 폴더(`.git`이 있는 git root)의 `.claude/commands/`를 agent가 읽는다.
   - 가짜 Claude는 F7(작업 중)·F5(쉼)과 Enter 글을 받는다. `/context`는 실측 꼴의 명령·출력 줄을 적고, `/model`은 선택창을 그렸다가 Esc에 결과를 적고, `/clear`는 새 기록으로 SessionStart(clear) hook을 보낸다.
   - 「보내지 않았다」는 pane이 받은 bytes로, 상태 전이는 가짜가 그린 「mode …」를 `waitOutput`으로, 화면은 `domIs`로 기다린다. 휴대폰은 WebKit `pairDevice`. 고정 sleep은 없다.
+  - 지연 커서 회귀(t-0536, plan §8.338)는 다음 RAF를 보류한 채 Tab 명령 넣기·↑ 기록 부르기 뒤 실제 키로 전체 선택하거나 중간에 글을 치거나 focus를 옮긴다.
+    보류한 콜백이 실제 frame에서 모두 끝난 뒤 글·선택·focus가 그대로인지, 전체 선택 뒤 Delete가 비우는지 검사한다.
+    원래 RAF 커서 복원을 되살리면 새 전체 선택이 끝 커서로 바뀌어 실패해야 한다. 글과 커서는 같은 React commit에서 반영한다.
+    이 scheduler keeper와 별도 transport 지연 진단은 따로 실행한다(transport의 Tab frame 대기를 keeper가 보류하면 시험 도구끼리 막힌다).
 
 ## 자동화 A4: 특수 실행 제거(t-0507)
 

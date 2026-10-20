@@ -524,6 +524,26 @@ pub(crate) fn find<'a>(tasks: &'a [TaskView], title: &str) -> Option<&'a TaskVie
     tasks.iter().find(|t| t.title.to_lowercase() == want)
 }
 
+/// task 없이 시작할 때의 참고 경고. 대소문자·구두점을 뺀 낱말 집합이 같거나, 두 낱말 이상 겹치고
+/// 합집합의 2/3 이상이 같을 때만 알린다. 후보가 여럿이면 TASKS.md의 첫 열린 task를 보인다.
+pub(crate) fn start_warning(tasks: &[TaskView], title: &str) -> Option<String> {
+    fn words(s: &str) -> std::collections::BTreeSet<String> {
+        s.split(|c: char| !c.is_alphanumeric()).filter(|w| !w.is_empty()).map(str::to_lowercase).collect()
+    }
+    let want = words(title);
+    if want.is_empty() {
+        return None;
+    }
+    let t = tasks.iter().filter(|t| !t.done).find(|t| {
+        let have = words(&t.title);
+        let shared = want.intersection(&have).count();
+        want == have || (shared >= 2 && 3 * shared >= 2 * want.union(&have).count())
+    })?;
+    // 제안 명령을 셸에 붙여 넣어도 제목 속 따옴표·치환 문자는 글자로 남는다.
+    let quoted = t.title.replace('\'', "'\\''");
+    Some(format!("비슷한 열린 task 「{}」: aaa thread start --from-task '{quoted}' --link-task", t.title))
+}
+
 /// `task_notes` 경로: 프로젝트 폴더 안 상대 경로만(절대 경로·`..`·빈 값 거부). symlink는 읽을 때 본다
 pub(crate) fn check_notes_path(p: &str) -> Result<(), String> {
     use std::path::Component;
@@ -569,6 +589,44 @@ pub(crate) fn parse_notes(text: &str) -> Vec<TaskNotesSection> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn start_warning_normalizes_words_and_keeps_the_first_open_match() {
+        let tasks =
+            parse("- [x] 웹 로그인 고치기\n- [ ] 웹 로그인 고치기 (codex) [aaa] · t-0001\n- [ ] 로그인 고치기\n");
+        for title in ["웹: 로그인 고치기!", "로그인 고치기"] {
+            assert_eq!(
+                start_warning(&tasks, title).as_deref(),
+                Some(
+                    "비슷한 열린 task 「웹 로그인 고치기」: aaa thread start --from-task '웹 로그인 고치기' --link-task"
+                )
+            );
+        }
+        let tasks = parse("- [ ] Fix LOGIN\n- [ ] 배포\n");
+        assert!(start_warning(&tasks, "login: FIX").unwrap().contains("--from-task 'Fix LOGIN' --link-task"));
+        assert!(start_warning(&tasks, "배포!").is_some());
+    }
+
+    #[test]
+    fn start_warning_ignores_done_empty_and_weak_overlap() {
+        let tasks = parse("- [x] 끝난 일\n- [ ] 웹 로그인 고치기\n");
+        for title in ["끝난 일", "", "!!!", "배포 자동화", "웹 설정 바꾸기", "로그인 로그인", "웹 로그인 화면 디자인"]
+        {
+            assert_eq!(start_warning(&tasks, title), None, "{title}");
+        }
+        assert_eq!(start_warning(&[], "웹 로그인 고치기"), None);
+    }
+
+    #[test]
+    fn start_warning_quotes_the_suggested_task_title_for_the_shell() {
+        let tasks = parse("- [ ] 로그인 '$(example)' `$EXAMPLE`\n");
+        assert_eq!(
+            start_warning(&tasks, "로그인 '$(example)' `$EXAMPLE`").as_deref(),
+            Some(
+                "비슷한 열린 task 「로그인 '$(example)' `$EXAMPLE`」: aaa thread start --from-task '로그인 '\\''$(example)'\\'' `$EXAMPLE`' --link-task"
+            )
+        );
+    }
 
     #[test]
     fn lines_owners_notes() {
