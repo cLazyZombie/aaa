@@ -6366,3 +6366,10 @@ L4 후속(10-20 00시 사용자 관찰): 멈춤 상태의 후보 예약과 재�
 - **보고서 정리 실행.** 계획 §5 W4는 미리보기까지였으나 사용자 4A로 실행까지 한다. 수동 `library_prune`(기한만, local_only)은 그대로 두고 새 요청을 더했다: 미리보기와 같은 기한·용량 판정으로 셈해 보인 것만 지운다. 웹 조작 기기는 이미 보고서 지우기(`library_delete`, report.md 사본까지)를 할 수 있어 신뢰 경계를 넓히지 않는다(정리는 그보다 좁다). sweep은 원래 Controller 허용이고 웹은 dry-run 줄을 보인 뒤 확인 창으로 실행한다.
 - **웹.** thread 화면 머리 「관리」 메뉴(끝내기·다시 열기·다시 시작(새 대화/이어 가기·profile)·brief 다시 보내기(받기 전만)·Next 보기·보내기·더하기·작업 요약 고치기). 설정 창 「이 aaa」(목표·thread/coordinator profile·동시 thread 경고·자동 끝내기 일수·nudge·mute, 멈춤·재개, 끝난 thread 자리 정리, 보고서 사본 정리)와 「저장소」(할 일 저장소 칸 이름마다 머신별 경로, 더하기·제자리 고치기·빼기, 끝에 「작업 폴더(저장소 없음)」). 활동 막대 「알림함」(탭: 알림함·흐름 사건·post, 배지는 끝내지 않은 항목 수). 알림함은 늘 `peek`로 읽어 화면이 읽어도 「봤다」가 되지 않는다(coordinator 묶음 알림이 그대로 간다). 보기 권한 기기는 값만 보고 쓰기 단추·post 탭이 없다.
 - **검증.** host 유닛 `project::tests::repo_edit_replaces_in_place_and_settings_view_reads_it`·`library_links::tests::prune_apply_deletes_only_the_previewed_candidates`·`db::flow_tests`, m13 `resolve_keeps_dirty_worktree_and_unmerged_branch`의 미리보기 단언, 웹 유닛 `operateModel.test.mjs`, 웹 E2E `56-operate`(데스크톱·휴대폰 390·Reader), `26-activity-bar`(막대 단추 넷). 절차는 [시험](testing.md).
+
+### 8.344 project 명령의 프로젝트 이름 인자 정리(10-21, t-0544 S5)
+
+- **범위.** S1~S4 뒤 남은 `project pause|resume|archive|delete|sweep`은 이름 없이, `project rename <새 이름>`은 새 이름만 받아 host가 맡은 프로젝트 하나를 쓴다. S1의 `project_or_here`·`on_target`을 그대로 쓰며 Front API·proto 요청의 프로젝트 칸과 backend 동작은 바꾸지 않는다.
+- **호환.** 옛 꼴의 프로젝트 인자는 도움말에서 숨긴다. 현재 프로젝트와 같은 이름이면 표준 오류에 경고 한 줄을 쓰고, 다른 이름이면 거부한다. 보관한 프로젝트·여럿이 남은 옛 상태의 이름은 S1처럼 그대로 받는다. 생략할 수 있는 보관하지 않은 프로젝트가 없으면 기존 오류를 돌려준다. `project unarchive <이름>`은 이번 여섯 명령 밖이며 그대로 이름을 받는다.
+- **안내.** 사용자 문서의 명령 표와 coordinator 안내 원본 「설정」의 `project pause|resume`·`project sweep`에서 이름을 뺀다. 설정 오류의 rename 안내와 멈춘 thread의 resume 안내도 새 꼴이다. 배포 뒤 coordinator가 `aaa doctor files --fix`로 운영 안내를 갱신한다.
+- **검증.** CLI 유닛은 새 꼴·옛 꼴·넘치는 인자·rename의 필수 새 이름과 도움말을 검사한다. m13 `project_lifecycle`은 여섯 명령의 새 꼴로 실제 상태·이름·휴지통·청소를 확인한다. `project_cli_keeps_legacy_names_with_a_stderr_warning`은 옛 꼴 여섯 명령의 경고와 JSON 분리, 다른 이름 거부 뒤 상태 보존, 새 꼴의 무경고와 보관 뒤 생략 거부를 확인한다. 안내 생성·doctor 갱신 keeper도 새 꼴을 검사한다.

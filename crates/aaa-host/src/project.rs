@@ -266,7 +266,7 @@ pub(crate) fn set_in_table(text: &str, key: &str, value: &str, repos: &str) -> R
                 (_, None) => return Err(format!("{value}는 `task_notes`에 없다")),
             }
         }
-        "name" => return Err("aaa 프로젝트 이름은 폴더 이름이다: `aaa project rename <프로젝트> <새 이름>`".into()),
+        "name" => return Err("aaa 프로젝트 이름은 폴더 이름이다: `aaa project rename <새 이름>`".into()),
         other => {
             return Err(format!(
                 "없는 설정 `{other}`: {}",

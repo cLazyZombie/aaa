@@ -457,7 +457,7 @@ pane이 없어졌거나 시작이 실패한 thread는 `aaa thread restart <id>`�
 ## 설정
 - 사용자가 바꾸라고 하면 `aaa set <key> <값>`으로 바꾼다: `goal`, `thread_profile`, `coordinator_profile`,
   `max_parallel_threads`, `auto_resolve_days`, `repos.add`·`repos.remove`(`PATH` 또는 `PATH@MACHINE`). project.toml을 직접 고쳐도 된다.
-- 사용자가 요청할 때만: `aaa project pause|resume {p}`(멈추면 ticker가 건너뛰고 thread start를 거부한다), `aaa project sweep {p}`
+- 사용자가 요청할 때만: `aaa project pause|resume`(멈추면 ticker가 건너뛰고 thread start를 거부한다), `aaa project sweep`
   (끝난 thread가 남긴 worktree·병합된 branch를 치운다, `--dry-run`으로 먼저 보인다). 보관·삭제·이름 바꾸기는 사용자가 한다.
 
 ## safety(사용자만 바꾼다)

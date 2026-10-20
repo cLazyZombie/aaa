@@ -35,7 +35,7 @@ coordinator의 상태 조회·post·일반 thread 관리·허용된 배포 경�
 
 ## 자주 쓰는 CLI
 
-host는 프로젝트 하나만 맡으므로 명령의 프로젝트 인자는 생략한다(§8.285). 옛 꼴(`aaa thread show <p> <id>`처럼 앞에 프로젝트)도 한 판 동안 받는다: 이 host의 프로젝트와 같은 이름이면 표준 오류에 경고 한 줄을 남기고 그대로 하고, 다른 이름이면 거부한다. `post`(coordinator·사람의 셸 pane은 Front로, thread pane은 hook으로)·`safety`·`profile list --project`도 생략한다(§8.288). `project pause|resume|sweep|archive|delete|rename`은 아직 이름을 받는다(S5). 프로젝트 설정은 홈의 `aaa.toml`(`[[workspaces]]`)이 있으면 그것을, 없으면 `project.toml`(`[[repos]]`)을 읽고 쓴다. aaa는 aaa.toml을 만들지 않는다.
+host는 프로젝트 하나만 맡으므로 명령의 프로젝트 인자는 생략한다(§8.285). 옛 꼴(`aaa thread show <p> <id>`처럼 앞에 프로젝트)도 한 판 동안 받는다: 이 host의 프로젝트와 같은 이름이면 표준 오류에 경고 한 줄을 남기고 그대로 하고, 다른 이름이면 거부한다. `post`(coordinator·사람의 셸 pane은 Front로, thread pane은 hook으로)·`safety`·`profile list --project`도 생략한다(§8.288). `project pause|resume|sweep|archive|delete`도 이름 없이 쓰고, `project rename <새 이름>`은 새 이름만 준다(S5). 보관한 프로젝트나 여럿이 남은 옛 상태의 이름은 옛 꼴로 지정할 수 있다. 보관을 풀 때는 `project unarchive <이름>`을 쓴다. 프로젝트 설정은 홈의 `aaa.toml`(`[[workspaces]]`)이 있으면 그것을, 없으면 `project.toml`(`[[repos]]`)을 읽고 쓴다. aaa는 aaa.toml을 만들지 않는다.
 
 | 명령 | 하는 일 |
 |---|---|
@@ -56,8 +56,8 @@ host는 프로젝트 하나만 맡으므로 명령의 프로젝트 인자는 생
 | `aaa task list` | 할 일 목록(TASKS.md) 읽기: 목록별 task, 형식 어긋남, task 없는 열린 thread, 「나중」 파일. 웹은 활동 막대 「할 일」(§8.306) |
 | `aaa task add "<제목>" [--list 목록] [--profile 모델] [--machine 머신] [--owner me\|이름] [--repo 저장소]` · `aaa task edit "<제목>" [--title …] [--profile …] [--machine …] [--owner …] [--repo …] [--thread t-NNNN]` · `aaa task move\|rm "<제목>"` · `aaa task restore <기록 id>` · `aaa task log` | 할 일 고치기: 바뀐 task 줄만 다시 쓰고 나머지 줄은 그대로 둔다. `--block <sha256>`이면 그 판의 블록으로 고정하고, 그사이 바뀌었으면 쓰지 않는다(충돌). 지운 task는 기록에서 되살린다. `--repo`는 저장소 칸(project.toml repos 경로나 그 마지막 이름, 또는 `작업 폴더`, §8.330)이고 `--from-task`가 그 저장소로 띄운다. `--profile`·`--machine`은 agent에게 맡길 모델·머신 칸이고(§8.335, 줄에는 `(모델@머신)`으로 적는다) 칸마다 따로 고친다(빈 글이면 그 칸만 비운다). 사람의 할 일은 `--owner me`(사람 이름은 `--person`)이다. 목록은 `aaa task list-add\|list-rename\|list-merge\|list-rm\|list-move`. aaa 세션 안에서는 그 프로젝트 coordinator만 고친다. 웹은 할 일 화면의 폼·⋯ 메뉴·「기록」 탭(§8.311) |
 | `aaa coordinator open [--profile 이름] [--new]` | coordinator 열기: 돌고 있으면 그 pane을 알리고, 없으면 host 머신에서 프로젝트 폴더로 띄워 workspace `<p>`의 탭 coordinator에 둠(profile 기본: project.toml → `aaa profile default coordinator` → claude) |
-| `aaa project pause\|resume\|archive\|unarchive <p>` | 멈추기(ticker·thread start 멈춤) · 보관(목록에서 숨기고 pane을 닫음). 보관 해제는 다른 활성·멈춤 프로젝트가 없을 때만 가능 |
-| `aaa project rename <p> <새 이름>` · `aaa project delete <p>` · `aaa project sweep <p>` | 이름 바꾸기 · 휴지통으로(worktree·branch는 그대로) · 끝난 thread가 남긴 worktree·병합된 branch 치우기 |
+| `aaa project pause\|resume\|archive` · `aaa project unarchive <p>` | 멈추기(ticker·thread start 멈춤) · 보관(목록에서 숨기고 pane을 닫음). 보관 해제는 다른 활성·멈춤 프로젝트가 없을 때만 가능 |
+| `aaa project rename <새 이름>` · `aaa project delete` · `aaa project sweep` | 이름 바꾸기 · 휴지통으로(worktree·branch는 그대로) · 끝난 thread가 남긴 worktree·병합된 branch 치우기 |
 | `aaa doctor files [--fix]` | 모든 프로젝트의 coordinator 안내(AGENTS.md)·uploads/·pr-followup 규칙 보기(TOML 변환본이 있으면 옛 routine을 다시 만들지 않음) · 낡은 안내를 지금 aaa 것으로 다시 쓰기(사람이 쓴 파일은 `.before-aaa`로 옮겨 둠) |
 | `aaa thread start --title "…" --machine mac-b --profile codex --kind dir --task-file task.md` | thread 시작 |
 | `aaa thread adopt --pane <ID> --title "…"` | 이미 띄운 Claude·Codex pane(셸에서 친 것은 감지된 뒤)을 thread로 데려오기(pane은 그대로, 다시 시작·resolve가 pane을 끝내지 않음) |
