@@ -28,6 +28,8 @@ import { nativeModalOver, useFocusTrap } from "./herdr/useFocusTrap.ts";
 import { useSheetSwipe } from "./herdr/sheets.ts";
 import { lineRequest, readBudget, shownSource, sourceLayout, virtualHighlightable } from "./herdr/sourcePreview.ts";
 import { useAppearance } from "./theme";
+import { useFrameImages, useLightbox } from "./Lightbox.tsx";
+import { markdownImages } from "./reportImages.ts";
 import "./herdr/FileViewer.css";
 
 // 가상화한 줄과 그 강조는 따로 받는 조각이다: 그것이 필요한 첫 소스와 함께 읽는다(참고 TextFileView)
@@ -158,6 +160,9 @@ export function FileViewer({ path: asked, source: from, onClose, onOpen }: { pat
   const [source, setSource] = useState(false);
   const surface = useFocusTrap<HTMLElement>(true);
   useSheetSwipe(surface, onClose);
+  // 결과물 페이지(보기 경로)·Markdown의 그림을 누르면 크게(plan §8.349)
+  const lightbox = useLightbox();
+  const page = useRef<HTMLIFrameElement>(null);
   useEffect(() => setPath(asked), [asked]);
   useEffect(() => setSource(target.line !== null), [path, target.line]);
 
@@ -275,6 +280,7 @@ export function FileViewer({ path: asked, source: from, onClose, onOpen }: { pat
   // (host VIEW_CSP: 제 폴더의 형제 파일을 읽는다)
   const htmlPage = textFile && info.mime === "text/html";
   const pageUrl = url === null ? null : isLibrary ? url : `${url}?render=1`;
+  useFrameImages(page, htmlPage && !source && isLibrary ? pageUrl : null, lightbox.open);
   const view = markdown && mode === "preview" ? "markdown" : "code";
   // 소스는 보이는 대로의 글(잘린 앞부분은 마지막 줄바꿈 뒤 줄 없이)이다. VIRTUAL_SOURCE_LINES를 넘으면 가상화한 줄로, 작으면
   // 그 worker가 칠하고(virtualHighlightable) 아니면 글 그대로 알림과 함께. 그 아래는 CodeLines(참고 FileViewer)
@@ -368,6 +374,7 @@ export function FileViewer({ path: asked, source: from, onClose, onOpen }: { pat
         if (htmlPage && !source)
           return (
             <iframe
+              ref={page}
               className="file-viewer-page"
               src={pageUrl ?? undefined}
               sandbox={isLibrary ? LIBRARY_SANDBOX : "allow-scripts"}
@@ -381,6 +388,12 @@ export function FileViewer({ path: asked, source: from, onClose, onOpen }: { pat
             <div
               className={virtual !== null && view === "code" ? "file-viewer-content file-viewer-content-virtual" : "file-viewer-content"}
               data-testid={view === "markdown" ? "file-viewer-markdown" : "file-viewer-code"}
+              onClick={(e) => {
+                const got = view === "markdown" ? markdownImages(e.currentTarget, e.target) : null;
+                if (!got) return;
+                e.preventDefault();
+                lightbox.open(got);
+              }}
             >
               {view === "markdown" ? (
                 <OpenFileContext.Provider value={openLink}>
@@ -485,6 +498,7 @@ export function FileViewer({ path: asked, source: from, onClose, onOpen }: { pat
         </header>
         <div className={virtualBody ? "file-viewer-body file-viewer-body-virtual" : "file-viewer-body"}>{body}</div>
       </section>
+      {lightbox.node}
     </div>
   );
 }

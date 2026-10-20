@@ -1,13 +1,13 @@
-import { lazy, Suspense, useEffect, useState } from "react";
+import { lazy, Suspense, useEffect, useRef, useState } from "react";
 import type { DeviceRole, DiffView, LibraryView, ThreadView } from "./gen/proto";
 import { ApiError, call } from "./api";
 import { Icon } from "./icons";
-import { Markdown } from "./Markdown";
 import { OpenFileContext } from "./herdr/filePaths.ts";
 import { DrawerToggle, HeadMore, HeadNote } from "./drawer";
 import { LIBRARY_SANDBOX } from "./FileViewer";
 import { LibraryLink } from "./LibraryLink";
-import { TaskAddButton, isDoc } from "./ReportsView";
+import { ReportMarkdown, TaskAddButton, isDoc } from "./ReportsView";
+import { useFrameImages, useLightbox } from "./Lightbox";
 import { SummaryButton } from "./ThreadSummary";
 import { ThreadActions } from "./ThreadActions";
 import { ChangedFilesCard } from "./ChangedFiles";
@@ -103,6 +103,11 @@ export function ThreadPanel({
     }
   };
   const index = lib?.files.find((f) => f.path === "index.html" && !f.on_agent);
+  // 보고 글·결과물 index.html 그림을 누르면 크게(plan §8.349)
+  const lightbox = useLightbox();
+  const frame = useRef<HTMLIFrameElement>(null);
+  const page = lib && index ? lib.base + "index.html" : null;
+  useFrameImages(frame, page, lightbox.open);
   return (
     <div className="thread-view" data-testid="thread-view">
       <header className="term-head">
@@ -162,7 +167,7 @@ export function ThreadPanel({
             <h2>보고</h2>
             {lib?.report ? (
               <OpenFileContext.Provider value={onOpenReportFile ?? null}>
-                <Markdown className="report-markdown">{lib.report}</Markdown>
+                <ReportMarkdown base={lib.base} text={lib.report} onImages={lightbox.open} />
               </OpenFileContext.Provider>
             ) : (
               <p className="muted">아직 회수한 보고가 없다</p>
@@ -179,11 +184,12 @@ export function ThreadPanel({
               {role !== "reader" && <LibraryLink key={`${t.project}/${t.id}`} library={lib} onChange={setLib} />}
               {index && (
                 <iframe
+                  ref={frame}
                   className="library-frame"
                   data-testid="library-frame"
                   title="결과물 index.html"
                   sandbox={LIBRARY_SANDBOX}
-                  src={lib.base + "index.html"}
+                  src={page ?? undefined}
                 />
               )}
               <ul>
@@ -229,6 +235,7 @@ export function ThreadPanel({
         </Suspense>
       )}
       </div>
+      {lightbox.node}
     </div>
   );
 }

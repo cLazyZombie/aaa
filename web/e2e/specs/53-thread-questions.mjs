@@ -101,10 +101,10 @@ export default async function ({ page }) {
     await shot(page, "53-card-desktop");
     // 선택지 그림 「크게 보기」: 고르지 않고 크게 본다. Esc로 닫는다
     await page.getByTestId("ask-zoom").first().click();
-    await until("크게 보기", async () => (await page.getByTestId("ask-lightbox").count()) === 1);
+    await until("크게 보기", async () => (await page.getByTestId("lightbox").count()) === 1);
     await shot(page, "53-card-zoom");
     await page.keyboard.press("Escape");
-    await until("크게 보기 닫힘", async () => (await page.getByTestId("ask-lightbox").count()) === 0);
+    await until("크게 보기 닫힘", async () => (await page.getByTestId("lightbox").count()) === 0);
     if ((await page.locator(`${card} [aria-checked="true"]`).count()) !== 0) throw new Error("크게 보기가 선택지를 골랐다");
     // 보고서 칩: 앱 안 보고서 화면(넓은 창도 새 탭이 아니다)
     await page.goBack();

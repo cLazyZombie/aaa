@@ -1,0 +1,16 @@
+/* 그림 크게 보기(Lightbox.tsx, plan §8.349): 화면을 덮는다. 무대는 손짓을 직접 받는다(touch-action none: 페이지 확대·굴림이 아니다) */
+.lightbox { position: fixed; inset: 0; z-index: var(--z-modal); background: color-mix(in srgb, #000 88%, transparent); overscroll-behavior: contain; }
+.lightbox-bar { position: absolute; top: 0; left: 0; right: 0; z-index: 1; display: flex; align-items: center; gap: var(--space-2); min-height: var(--header-h); padding: env(safe-area-inset-top) calc(var(--space-3) + env(safe-area-inset-right)) 0 calc(var(--space-3) + env(safe-area-inset-left)); color: #fff; font-size: var(--fs-sm); background: color-mix(in srgb, #000 82%, transparent); }
+.lightbox-count { flex: 0 0 auto; font-variant-numeric: tabular-nums; }
+.lightbox-caption { flex: 1 1 auto; min-width: 0; overflow: hidden; color: #ddd; text-overflow: ellipsis; white-space: nowrap; }
+.lightbox-bar .btn { color: #fff; }
+.lightbox-bar .btn svg { width: 16px; height: 16px; }
+.lightbox-stage { position: absolute; inset: 0; display: grid; place-items: center; padding: calc(var(--header-h) + env(safe-area-inset-top)) var(--space-3) calc(var(--space-4) + env(safe-area-inset-bottom)); overflow: hidden; touch-action: none; user-select: none; -webkit-user-select: none; }
+.lightbox-img { max-width: 100%; max-height: 100%; object-fit: contain; border-radius: var(--radius-sm); background: var(--bg); transform-origin: center; transition: transform 120ms ease-out; -webkit-user-drag: none; cursor: zoom-in; }
+.lightbox[data-scale]:not([data-scale="1.00"]) .lightbox-img { cursor: grab; }
+.lightbox-stage.is-moving .lightbox-img { transition: none; }
+.lightbox-nav { position: absolute; top: 50%; z-index: 1; display: grid; place-items: center; width: var(--touch); height: var(--touch); margin-top: calc(var(--touch) / -2); border: 0; border-radius: 999px; background: color-mix(in srgb, #000 50%, transparent); color: #fff; cursor: pointer; }
+.lightbox-nav.is-prev { left: calc(var(--space-2) + env(safe-area-inset-left)); }
+.lightbox-nav.is-next { right: calc(var(--space-2) + env(safe-area-inset-right)); }
+.lightbox-nav svg { width: 22px; height: 22px; }
+@media (prefers-reduced-motion: reduce) { .lightbox-img { transition: none; } }
