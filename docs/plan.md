@@ -6114,3 +6114,10 @@ L4 후속(10-20 00시 사용자 관찰): 멈춤 상태의 후보 예약과 재�
 - **변환.** 옛 임무 파일은 실행하지 않고 inbox 한 번과 doctor files에 제거 안내를 낸다. AutomationConvert의 미리보기·hash·원본 사본을 유지하며 do.start(reuse=open, memory)·brief·기억으로 옮긴다. 기억·이력·pending·cursor와 전달 모름을 이전하고 파일 공개 전 journal로 중단 후 큐 이전을 마친다. 옛 source outbox도 변환 전 보존한다. 서로 다른 조건은 각각 규칙이 되며 원본 pending은 한 규칙에 한 번 옮긴다. 규칙은 시작 범위 승인 뒤 켠다.
 - **웹.** 활동 막대는 작업·머신·자동화 셋이며 저장된 special은 work다. 자동화 배지는 막힌 큐·승인 필요 규칙을 중복 없이 센다. 옛 evaluator도 작업 목록에 표시한다. 데스크톱·휴대폰의 전후 캡처와 실제 상호작용은 thread library에 둔다.
 - **검증.** 기존 A1/A2 keeper는 automation::start_tests로 옮긴다. m13이 옛 파일 비실행·한 번 안내·Front 제거 응답·미리보기 무쓰기·기억/이력/큐 이전을 검사하고 1.9 fake가 옛 파일 프레임만 받는지 확인한다. N-1 변환을 끄거나 pending 이전을 빼면 각각 keeper가 실패하며 원본 bytes를 복구한다. E2E26/40/48/49와 전체 ci-local·deps·TS 생성물·automation schema·공개 검사를 실행한다.
+
+### 8.325 aaa install I2 Windows 파일 내구·읽기 잠금 수리(10-20, t-0485)
+
+- **실제 실패.** I2 main push 뒤 Windows CI의 파일 owner가 실패했다. cross build는 실제 Windows 실행을 증명하지 않는다. 읽기 handle의 `sync_all`은 Windows `FlushFileBuffers`가 요구하는 쓰기 권한이 없어 적용/reverse 단계에서 실패했다. 전체 byte-range 독점 잠금은 같은 process의 별도 read handle도 막아 잠금 중 상태 snapshot이 실패했다.
+- **수리.** 이미 입증한 stage의 마지막 flush를 공통 helper로 모으고 Windows만 쓰기 handle을 요청한다. Unix 읽기 flush 의미는 유지한다. Windows의 자원 ticket은 read 공유만 허용하는 쓰기 handle 예약으로 두 process의 writer/deleter를 막고 읽기 관찰은 허용한다. 기존 owner/DACL/nlink/reparse·before SHA/mode/inode·journal·backup·원자 교체 경계는 유지한다. 기존 ACL이나 OS 정책을 바꾸지 않는다.
+- **owner.** 원본 파일/복구/ACL owner를 제외하거나 완화하지 않는다. 두 process 잠금 owner에 잠금 중 유효 status/snapshot의 전후 불변을 더하고, contention 거부·해제 뒤 같은 ID 재개를 유지한다. 잠금 오류를 무시하는 변형은 이 owner에서 실패해야 한다. 실제 Windows 원본 실패와 수리 후 macOS gate/cross를 나눠 기록하고, Windows 수리 후 실제 실행은 다음 main CI로 판정한다.
+- **순서.** I2 Windows 수리를 따로 착지한 뒤 사용자 최신 순서인 I5 Windows→I6 승인·대화형→Windows 최소 bootstrap→사용자 시험 PC 인수→I3 macOS→I4 Linux→I7 최종 인수로 간다. I5/I6의 공통 감독자·승인 경계와 I7 Windows 부분을 앞당기며 미구현 OS adapter는 성공으로 채우지 않는다. 사용자 인수에는 준비물·받기·명령·확인·되돌리기·문제 로그와 CI가 못 보는 SCM logon/Session 0/부팅/LSA/UAC를 명시한다.

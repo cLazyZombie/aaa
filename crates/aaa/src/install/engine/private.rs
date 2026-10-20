@@ -76,15 +76,33 @@ pub(super) fn read(path: &Path, limit: u64) -> io::Result<Vec<u8>> {
 }
 
 pub(super) fn lock(path: &Path) -> io::Result<File> {
-    let file = match new_file(path) {
-        Ok(file) => file,
-        Err(e) if e.kind() == io::ErrorKind::AlreadyExists => open(path, false, true)?,
-        Err(e) => return Err(e),
-    };
+    #[cfg(windows)]
+    {
+        windows::lock(path)
+    }
+    #[cfg(unix)]
+    {
+        let file = match new_file(path) {
+            Ok(file) => file,
+            Err(e) if e.kind() == io::ErrorKind::AlreadyExists => open(path, false, true)?,
+            Err(e) => return Err(e),
+        };
+        verify(&file, false)?;
+        file.try_lock()
+            .map_err(|_| io::Error::new(io::ErrorKind::WouldBlock, "설치 자원을 다른 실행기가 사용 중입니다"))?;
+        Ok(file)
+    }
+}
+
+/// stage의 마지막 권한 변경까지 내구화한다. Windows FlushFileBuffers에는 쓰기 handle이 필요하다.
+pub(super) fn sync_file(path: &Path) -> io::Result<()> {
+    let file = open(path, false, cfg!(windows))?;
+    if !file.metadata()?.is_file() {
+        return Err(denied());
+    }
+    #[cfg(windows)]
     verify(&file, false)?;
-    file.try_lock()
-        .map_err(|_| io::Error::new(io::ErrorKind::WouldBlock, "설치 자원을 다른 실행기가 사용 중입니다"))?;
-    Ok(file)
+    file.sync_all()
 }
 
 pub(super) fn write(path: &Path, bytes: &[u8]) -> io::Result<()> {
