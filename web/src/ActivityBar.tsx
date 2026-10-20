@@ -2,9 +2,10 @@
 // 이런 막대가 없어 VS Code activity bar를 따른다: 세로 tablist(`aria-orientation="vertical"`), 고른 패널의 단추에만 왼쪽 선과
 // aria-selected·aria-expanded, 사이드바를 접으면 고른 단추가 없다. ↑↓·Home·End는 단추 사이 focus만 옮기고(roving tabindex) Enter·Space가
 // 고른다. 패널이 아닌 보고서(본문을 바꾼다)는 패널 단추 바로 밑의 보통 단추다(tablist 밖, 사용자 요청 10-19 「보고서는 왼쪽 위로(지금
-// 에이전트 밑으로)」). 설정(창)만 아래 묶음에 둔다(VS Code 아래 묶음 Accounts·Manage 자리).
+// 에이전트 밑으로)」). 그 바로 밑의 「할 일」(TASKS.md, plan §8.304)도 본문을 바꾸는 단추다. 설정(창)만 아래 묶음에 둔다(VS Code 아래 묶음
+// Accounts·Manage 자리).
 import { useRef, type KeyboardEvent, type ReactNode } from "react";
-import { Workflow, Eye, FileText, FolderKanban, Monitor, Radar, type LucideIcon } from "lucide-react";
+import { Workflow, Eye, FileText, FolderKanban, ListTodo, Monitor, Radar, type LucideIcon } from "lucide-react";
 import { PANEL_LABEL, PANELS, type SidebarPanel } from "./sidebarPanel";
 import "./ActivityBar.css";
 
@@ -19,6 +20,9 @@ export function ActivityBar({
   reports,
   onReports,
   unseenReports,
+  tasks,
+  onTasks,
+  taskBadge,
   up,
   reader,
   settings,
@@ -34,6 +38,11 @@ export function ActivityBar({
   onReports: () => void;
   /** 열어 보지 않은 사용자 보고서 수(host `reports` 사건, plan §8.256) */
   unseenReports: number;
+  /** 본문이 할 일 화면인가 */
+  tasks: boolean;
+  onTasks: () => void;
+  /** 사람이 볼 task 수(형식 어긋남, plan §8.304) */
+  taskBadge: number;
   /** host 연결 */
   up: boolean;
   reader: boolean;
@@ -109,6 +118,22 @@ export function ActivityBar({
         {unseenReports > 0 && (
           <span className="activity-badge" aria-hidden="true" data-testid="activity-badge-reports">
             {unseenReports > 99 ? "99+" : unseenReports}
+          </span>
+        )}
+      </button>
+      <button
+        type="button"
+        className={`activity-item${tasks ? " is-active" : ""}`}
+        aria-pressed={tasks}
+        aria-label={taskBadge > 0 ? `할 일, 형식 어긋남 ${taskBadge}` : "할 일"}
+        title="할 일"
+        data-testid="activity-tasks"
+        onClick={onTasks}
+      >
+        <ListTodo aria-hidden="true" />
+        {taskBadge > 0 && (
+          <span className="activity-badge" aria-hidden="true" data-testid="activity-badge-tasks">
+            {taskBadge > 99 ? "99+" : taskBadge}
           </span>
         )}
       </button>

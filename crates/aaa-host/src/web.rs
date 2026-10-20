@@ -784,6 +784,7 @@ async fn events_loop(host: Arc<Host>, dev: String, role: DeviceRole, mut socket:
     let mut questions = host.question_events.subscribe();
     let mut threads = host.thread_events.subscribe();
     let mut notices = host.notice_events.subscribe();
+    let mut tasks = host.task_events.subscribe();
     let mut preferences = host.preferences.subscribe();
     let mut reports = host.reports_changed.subscribe();
     let mut rollouts = host.rollout_changed.subscribe();
@@ -934,6 +935,19 @@ async fn events_loop(host: Arc<Host>, dev: String, role: DeviceRole, mut socket:
                     }
                     Err(RecvError::Lagged(_)) => {}
                     Err(RecvError::Closed) => break,
+                }
+            }
+            // TASKS.md가 바뀌었다(할 일 화면이 다시 읽는다). 놓쳤으면 끊는다: 웹은 다시 붙으며 새로 읽는다
+            t = tasks.recv() => {
+                send_state = false;
+                match t {
+                    Ok((project, sha256)) => {
+                        let text = serde_json::to_string(&FrontEvent::Tasks { project, sha256 }).unwrap();
+                        if socket.send(Message::Text(text.into())).await.is_err() {
+                            break;
+                        }
+                    }
+                    Err(RecvError::Lagged(_)) | Err(RecvError::Closed) => break,
                 }
             }
             r = preferences.changed() => {
