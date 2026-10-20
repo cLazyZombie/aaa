@@ -31,9 +31,13 @@ use crate::version::Version;
 #[ts(type = "string")]
 pub struct B64(pub Vec<u8>);
 
+/// serde JSON의 wire 모양은 그대로 두고 가림 serializer에 바이트 타입을 알린다.
+#[doc(hidden)]
+pub const B64_SERDE_NAME: &str = "aaa.bytes.b64";
+
 impl Serialize for B64 {
     fn serialize<S: Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
-        s.serialize_str(&base64::engine::general_purpose::STANDARD.encode(&self.0))
+        s.serialize_newtype_struct(B64_SERDE_NAME, &base64::engine::general_purpose::STANDARD.encode(&self.0))
     }
 }
 

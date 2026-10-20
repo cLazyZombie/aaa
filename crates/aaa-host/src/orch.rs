@@ -994,7 +994,12 @@ impl Host {
     pub(crate) fn save(&self, rec: &mut ThreadRec) {
         rec.updated_at_ms = aaa_common::util::now_ms();
         rec.remember_auth_env();
-        let json = serde_json::to_string(&aaa_common::redact::json(rec.clone())).expect("thread 기록 직렬화");
+        let json = match aaa_common::redact::json(rec.clone())
+            .and_then(|clean| serde_json::to_string(&clean).map_err(|_| aaa_common::redact::Error::Serialize))
+        {
+            Ok(json) => json,
+            Err(_) => return, // 원문 저장·발행 없이 거부한다. 이유는 가림 경계가 기록한다.
+        };
         if let Err(e) = self.db.thread_save(&rec.project, &rec.id, rec.status.as_str(), &json) {
             tracing::error!(thread = %rec.id, "thread 기록 저장 실패: {e:#}");
         }
@@ -1015,7 +1020,8 @@ impl Host {
         // 이 성공 뒤 Kill·깨움을 보내는 호출자는 실제 DB 확정을 필요로 한다.
         r.updated_at_ms = aaa_common::util::now_ms();
         r.remember_auth_env();
-        let json = serde_json::to_string(&aaa_common::redact::json(r.clone())).map_err(internal)?;
+        let clean = aaa_common::redact::json(r.clone()).map_err(|_| internal("thread 기록 가림 거부"))?;
+        let json = serde_json::to_string(&clean).map_err(|_| internal("thread 기록 직렬화 거부"))?;
         self.db.thread_save(project, id, r.status.as_str(), &json).map_err(internal)?;
         let _ = self.thread_events.send(self.thread_view(&r));
         Ok(r)

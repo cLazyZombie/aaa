@@ -3,6 +3,8 @@ use anyhow::{Context, Result, bail};
 use std::path::Path;
 
 pub(crate) fn write<T: serde::Serialize>(path: &Path, value: &T) -> Result<()> {
+    let clean = aaa_common::redact::to_value(value)?;
+    let bytes = serde_json::to_vec(&clean).map_err(|_| anyhow::anyhow!("가림 journal 직렬화 거부"))?;
     let dir = path.parent().context("journal 부모가 없다")?;
     std::fs::create_dir_all(dir)?;
     if dir.symlink_metadata()?.file_type().is_symlink() {
@@ -19,9 +21,7 @@ pub(crate) fn write<T: serde::Serialize>(path: &Path, value: &T) -> Result<()> {
     }
     let mut file = opts.open(&tmp)?;
     use std::io::Write;
-    let mut value = serde_json::to_value(value)?;
-    aaa_common::redact::value(&mut value);
-    file.write_all(&serde_json::to_vec(&value)?)?;
+    file.write_all(&bytes)?;
     file.sync_all()?;
     drop(file);
     // Windows에서도 기존 journal을 원자적으로 교체한다.

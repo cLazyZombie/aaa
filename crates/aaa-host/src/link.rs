@@ -276,7 +276,7 @@ async fn serve(
                     // 실행 입력과 배포 후보는 표시용 글이 아니다. B64 안의 인증 조각을 가리면
                     // 길이는 같아도 바이너리 SHA가 달라져 마지막 EOF 검증에서 멈춘다.
                     msg @ LinkMsg::Res { result: Outcome::Ok(AgentResponse::ThreadReady(_) | AgentResponse::Relaunch(_) | AgentResponse::DeployChunk { .. }), .. } => msg,
-                    msg => aaa_common::redact::json(msg),
+                    msg => aaa_common::redact::json(msg).map_err(|_| anyhow::anyhow!("agent 메시지 가림 거부"))?,
                 } {
                     LinkMsg::Event(AgentEvent::AccountRefresh(request)) => {
                         let h=host.clone();let m=mid.clone();tokio::spawn(async move {h.account_refresh(m,request).await;});
@@ -458,6 +458,31 @@ mod post_tests {
             !data.0.windows(8).any(|s| secret.as_bytes().windows(8).any(|n| s == n)),
             "파일 보기에서 인증이 노출됐다"
         );
+        // host 일반 응답의 B64 글자만 겹쳐도 reader가 살아 있어야 한다.
+        aaa_common::redact::remember("QkxPQ0tTRUNSRVQ5host-fixture0525");
+        let snapshot = base64::engine::general_purpose::STANDARD.decode("QkxPQ0tTRUNSRVQ5AAAA").unwrap();
+        let (visible, ()) = tokio::join!(
+            conn.request(AgentRequest::FileView {
+                path: "/build/snapshot.bin".into(),
+                offset: 0,
+                len: DEPLOY_CHUNK as u32,
+                page: false,
+            }),
+            async {
+                let LinkMsg::Req { id, .. } = rx.control::<LinkMsg>().await.unwrap() else {
+                    panic!("요청이어야 한다")
+                };
+                tx.json(&LinkMsg::Res {
+                    id,
+                    result: Outcome::Ok(AgentResponse::FileChunk { data: B64(snapshot.clone()), eof: true }),
+                })
+                .await
+                .unwrap();
+            }
+        );
+        assert!(matches!(visible.unwrap(), AgentResponse::FileChunk { data, .. } if data.0 == snapshot));
+        tx.json(&LinkMsg::Ping { seq: 526 }).await.unwrap();
+        assert_eq!(rx.control::<LinkMsg>().await.unwrap(), LinkMsg::Pong { seq: 526 });
         drop(conn);
         drop(tx);
         drop(rx);

@@ -24,7 +24,9 @@ pub(crate) fn res_frame(id: String, result: Result<FrontResponse, ErrorBody>) ->
 
 /// frame 길이는 종류 byte까지 센다(`write_frame`: payload + 1 > max면 거부). payload가 `max`와 같으면 이미 넘는다(t-0340 감사 D2).
 fn res_frame_within(id: String, result: Result<FrontResponse, ErrorBody>, max: usize) -> Vec<u8> {
-    let msg = FrontMsg::Res { id, result: aaa_common::redact::json(result).into() };
+    let clean = aaa_common::redact::json(result)
+        .unwrap_or_else(|_| Err(ErrorBody::new(ErrorCode::Unavailable, "응답 가림 실패로 전송을 거부했다")));
+    let msg = FrontMsg::Res { id, result: clean.into() };
     let bytes = serde_json::to_vec(&msg).expect("JSON 직렬화");
     if bytes.len() < max {
         return bytes;
