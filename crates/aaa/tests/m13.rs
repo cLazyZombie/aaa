@@ -19,6 +19,8 @@ mod lab;
 mod preparation;
 #[path = "m13/rollout.rs"]
 mod rollout;
+#[path = "m13/secret_k0.rs"]
+mod secret_k0;
 #[path = "m13/work_root.rs"]
 mod work_root;
 
@@ -4122,6 +4124,101 @@ fn coordinator_flow() {
     let e = w.h.json(&["project", "create", "p2"]).expect_err("둘째 프로젝트");
     assert!(e.contains("host는 프로젝트 하나만 맡는다: 이미 `demo`가 있다"), "{e}");
     assert!(!w.projects.join("p2").exists(), "거부한 프로젝트 폴더를 남기지 않는다");
+}
+
+/// 할 일 보기(T1, plan §8.306): `tasks`(`aaa task list`)가 목록·형식 어긋남·task 없는 열린 thread·「나중」 파일을 주고, 보기 권한
+/// 세션도 읽는다. 파일을 직접 고치면 다음 tick이 `tasks` 사건(새 sha)을 내고, 고치지 않은 tick은 내지 않는다. `--from-task`는 owner 칸이
+/// 상태 메모인 task를 사람 owner로 오인하지 않고 정확한 까닭으로 거부한다.
+#[test]
+fn task_board_reads_tasks_and_follows_file_edits() {
+    use sha2::Digest as _;
+    let w = world();
+    let pdir = w.projects.join("demo");
+    let task = w.task("tb.txt", "x");
+    let linked = w.start(&["--title", "이은 일", "--profile", "fake", "--kind", "dir", "--task-file", &task]);
+    let other = w.start(&["--title", "따로 도는 일", "--profile", "fake", "--kind", "dir", "--task-file", &task]);
+    let (lid, oid) = (linked["id"].as_str().unwrap(), other["id"].as_str().unwrap());
+    let md = format!(
+        "# Tasks\n\n## Backlog\n나중 일은 later.md에 모은다\n- [ ] 이은 일 (fake@labA) · {lid}\n  - 메모\n  - [ ] 하위 (me)\n\
+         - [ ] 정리 (t-0101 S4 뒤, 사용자 지시 시)\n- [ ] 실패 조사 (미할당)\n## 빈 목록\n"
+    );
+    std::fs::write(pdir.join("TASKS.md"), &md).unwrap();
+    let sha = |t: &str| hex::encode(sha2::Sha256::digest(t.as_bytes()));
+    let mut ev = Events::connect(&w.h);
+    w.h.ok(&["ticker", "tick"]);
+
+    let b = w.h.ok(&["task", "list"]);
+    assert_eq!(b["sha256"].as_str(), Some(sha(&md).as_str()), "{b}");
+    assert_eq!(
+        b["lists"],
+        serde_json::json!([{"name": "Backlog", "notes": ["나중 일은 later.md에 모은다"]}, {"name": "빈 목록", "notes": []}])
+    );
+    let tasks = b["tasks"].as_array().unwrap();
+    let row =
+        |title: &str| tasks.iter().find(|t| t["title"] == title).unwrap_or_else(|| panic!("{title}: {b}")).clone();
+    assert_eq!((row("이은 일")["line"].as_u64(), row("이은 일")["thread"].as_str()), (Some(5), Some(lid)));
+    assert_eq!(row("하위")["parent"].as_u64(), Some(5));
+    let tidy = row("정리 (t-0101 S4 뒤, 사용자 지시 시)");
+    assert!(
+        tidy["owner"].is_null() && tidy["problems"][0].as_str().unwrap().starts_with("owner 칸이 owner 꼴이 아님"),
+        "{tidy}"
+    );
+    assert_eq!(row("실패 조사")["owner"], Value::Null);
+    assert_eq!(b["unlinked_threads"].as_array().unwrap().iter().map(|t| t["id"].clone()).collect::<Vec<_>>(), [oid]);
+    assert_eq!(b["notes_files"], serde_json::json!([]));
+    // context도 같은 파서다: 형식 어긋남을 보이고 사람 owner로 쓰지 않는다
+    let text = String::from_utf8_lossy(&w.h.run(&["context", "demo", "--peek"]).stdout).to_string();
+    assert!(
+        text.contains("형식 어긋남: owner 칸이 owner 꼴이 아님") && !text.contains("(t-0101 S4 뒤, 사용자 지시 시) ·"),
+        "{text}"
+    );
+    // --from-task: 상태 메모 owner는 정확한 까닭으로 거부한다(예전에는 「사람(…)이 맡은 task」)
+    let e =
+        w.h.json(&["thread", "start", "demo", "--from-task", "정리 (t-0101 S4 뒤, 사용자 지시 시)", "--kind", "dir"])
+            .expect_err("형식 어긋남");
+    assert!(e.contains("owner 칸 형식 어긋남, 고친 뒤 시작"), "{e}");
+
+    // 보기 권한(worker 세션 안 CLI)도 읽는다
+    let pane = other["pane"].as_str().unwrap();
+    let o = w.h.cmd(&["--json", "task", "list"]).env("AAA_SESSION_ID", pane).output().unwrap();
+    assert!(o.status.success(), "{}", String::from_utf8_lossy(&o.stderr));
+    let o = w.h.cmd(&["thread", "next", "demo", oid, "--add", "x"]).env("AAA_SESSION_ID", pane).output().unwrap();
+    assert!(String::from_utf8_lossy(&o.stderr).contains("보기 권한"), "그 세션은 보기 권한이다");
+
+    // 고치지 않은 tick은 사건을 내지 않는다: 다음에 고친 뒤 오는 첫 `tasks` 사건이 고친 sha다
+    w.h.ok(&["ticker", "tick"]);
+    let md2 = md.replace("## 빈 목록\n", "## 빈 목록\n- [ ] 새로 더한 일\n");
+    std::fs::write(pdir.join("TASKS.md"), &md2).unwrap();
+    w.h.ok(&["ticker", "tick"]);
+    let (at, got) = ev.wait_from(0, "tasks 사건", T, |e| match e {
+        aaa_proto::FrontEvent::Tasks { project, sha256 } if project == "demo" => Some(sha256.clone()),
+        _ => None,
+    });
+    assert_eq!(got, sha(&md2));
+    assert_eq!(w.h.ok(&["task", "list"])["sha256"].as_str(), Some(sha(&md2).as_str()));
+
+    // 「나중」 파일: 상대 경로만 받고, 프로젝트 폴더 밖을 가리키는 symlink는 읽지 않는다
+    std::fs::create_dir_all(pdir.join("memory")).unwrap();
+    std::fs::write(pdir.join("memory/later.md"), "# 나중\n\n## UI\n- 하나\n").unwrap();
+    let outside = w.task("outside.md", "## 밖\n- 비밀\n");
+    std::os::unix::fs::symlink(&outside, pdir.join("memory/out.md")).unwrap();
+    for bad in ["../x.md", "/etc/hosts"] {
+        let e = w.h.json(&["project", "set", "demo", "task_notes.add", bad]).expect_err(bad);
+        assert!(e.contains("상대 경로") || e.contains("`..`"), "{bad}: {e}");
+    }
+    for p in ["memory/later.md", "memory/out.md", "memory/none.md"] {
+        w.h.ok(&["project", "set", "demo", "task_notes.add", p]);
+    }
+    w.h.ok(&["ticker", "tick"]);
+    ev.wait_from(at + 1, "「나중」 설정 뒤 tasks 사건", T, |e| match e {
+        aaa_proto::FrontEvent::Tasks { .. } => Some(()),
+        _ => None,
+    });
+    let files = w.h.ok(&["task", "list"])["notes_files"].clone();
+    assert_eq!(files[0]["sections"], serde_json::json!([{"name": "UI", "lines": ["- 하나"]}]), "{files}");
+    assert!(files[1]["error"].as_str().unwrap().contains("프로젝트 폴더 밖"), "{files}");
+    assert!(files[1]["sections"].as_array().unwrap().is_empty() && !files.to_string().contains("비밀"), "{files}");
+    assert_eq!(files[2]["error"].as_str(), Some("없음"), "{files}");
 }
 
 /// coordinator 안내에 옮긴 herdr-projects COORDINATOR.md 절(차이 목록 3장 G2, plan §8.184). 절마다 그 절에만 있는 글 하나

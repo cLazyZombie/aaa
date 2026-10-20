@@ -18,7 +18,7 @@ use crate::orch::{
     ProjectChange, ProjectContext, ProjectFilesCheck, ProjectOpened, ProjectView, QuestionView, ReportSnapshot, Role,
     RoutineView, ThreadAdopt, ThreadAdopted, ThreadKind, ThreadPlacement, ThreadPrepare, ThreadReady, ThreadView,
 };
-use crate::orch::{EvaluationView, EvaluatorView, MenuPick, NoticeView, ThreadSummaryView};
+use crate::orch::{EvaluationView, EvaluatorView, MenuPick, NoticeView, TaskBoard, ThreadSummaryView};
 
 use crate::version::Version;
 
@@ -166,7 +166,8 @@ pub struct SessionInfo {
 /// 사람이 붙이는 pane 이름의 최대 글자 수(참고 herdr-web-ui `PaneRename` 입력 `maxLength={80}`)
 pub const MAX_PANE_LABEL_CHARS: usize = 80;
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+/// Debug는 env 값을 찍지 않는다([`crate::EnvNames`]).
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 pub struct SpawnSpec {
     pub name: String,
     /// 비어 있으면 그 머신 사용자의 기본 셸
@@ -190,6 +191,24 @@ pub struct SpawnSpec {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(skip)]
     pub resolved_profile: Option<crate::ResolvedProfile>,
+}
+
+impl std::fmt::Debug for SpawnSpec {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let SpawnSpec { name, argv, cwd, env, cols, rows, role, harness, profile, resolved_profile } = self;
+        f.debug_struct("SpawnSpec")
+            .field("name", name)
+            .field("argv", argv)
+            .field("cwd", cwd)
+            .field("env", &crate::EnvNames::of(env.iter().map(|(k, _)| k)))
+            .field("cols", cols)
+            .field("rows", rows)
+            .field("role", role)
+            .field("harness", harness)
+            .field("profile", profile)
+            .field("resolved_profile", resolved_profile)
+            .finish()
+    }
 }
 
 /// 재접속용 화면 snapshot. `replay`를 빈 터미널에 쓰면 지금 화면이 된다.
@@ -1820,6 +1839,12 @@ pub enum FrontRequest {
         project: String,
         check: Option<String>,
     },
+    /// 할 일 화면이 읽는 TASKS.md 전체(FRONT_API 1.60, Reader 가능). 형식 어긋남·줄 번호·블록 hash·「나중」 파일을 함께 준다.
+    Tasks {
+        #[serde(default)]
+        #[ts(optional, as = "Option<String>")]
+        project: String,
+    },
     /// thread 목록. 기본은 사후 평가자를 빼고, `role`을 주면 그 역할만 보인다(§8.13).
     Threads {
         project: Option<String>,
@@ -2262,6 +2287,7 @@ impl FrontRequest {
             | FrontRequest::ThreadNext { project, .. }
             | FrontRequest::Context { project, .. }
             | FrontRequest::Assignable { project, .. }
+            | FrontRequest::Tasks { project }
             | FrontRequest::ThreadShow { project, .. }
             | FrontRequest::ThreadSummary { project, .. }
             | FrontRequest::ThreadSummarySet { project, .. }
@@ -2334,6 +2360,7 @@ impl FrontRequest {
                 | FrontRequest::ThreadNext { line: None, add: None, .. }
                 | FrontRequest::Context { peek: true, .. }
                 | FrontRequest::Assignable { .. }
+                | FrontRequest::Tasks { .. }
                 | FrontRequest::Events { .. }
                 | FrontRequest::Questions { .. }
                 | FrontRequest::Inbox { peek: true, .. }
@@ -2431,6 +2458,8 @@ pub enum FrontResponse {
         /// `check`가 통과했을 때 설명
         valid: Option<String>,
     },
+    /// `tasks`의 답(FRONT_API 1.60)
+    TaskBoard(TaskBoard),
     Screen(ScreenText),
     Read(ReadView),
     /// `thread read`·`thread keys`
@@ -2631,6 +2660,9 @@ pub enum FrontEvent {
     /// FRONT_API 1.43. 보고서 목록이 바뀌었다(보내기·열기·지우기·thread 사본). 웹 events 연결에만, 열 때와 바뀔 때 보낸다.
     /// `unseen`은 열지 않은 사용자 보고서 수(활동 막대 보고서 배지)
     Reports { unseen: u32 },
+    /// FRONT_API 1.60. 프로젝트 TASKS.md가 바뀌었다(ticker가 크기·mtime을 보고 내용 hash로 확인한다). 웹은 `tasks`를 다시 읽는다.
+    /// 옛 CLI는 모르는 사건을 풀지 못하므로 1.60 이상과 합의한 연결에만 보낸다.
+    Tasks { project: String, sha256: String },
     /// 설치 앱 아이콘의 host 공통 수. 웹 events 연결에서 처음과 값이 바뀔 때만 보낸다.
     AppBadge { count: u32 },
     /// 웹 연결 처음과 배포 내구 상태가 바뀔 때 주는 최신 요약. 조회만 하며 진행기를 재개하지 않는다.

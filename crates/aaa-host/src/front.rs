@@ -71,6 +71,8 @@ struct Conn {
     role: DeviceRole,
     actor: String,
     front: crate::FrontRef,
+    /// 합의한 FRONT_API(새 사건은 아는 판에만 보낸다)
+    proto: aaa_proto::Version,
 }
 
 /// 보기 권한인 까닭(CLI 연결의 actor로 가린다, plan §8.164). 자기 스크립트가 왜 막혔는지 알게 한다.
@@ -213,12 +215,14 @@ async fn serve(host: Arc<Host>, s: aaa_common::ipc::LocalStream, pid: Option<u32
         warnings,
     })
     .await?;
-    serve_conn(host, tx, rx, Conn { role, actor, front }).await.map(|_| ())
+    serve_conn(host, tx, rx, Conn { role, actor, front, proto: agreed }).await.map(|_| ())
 }
 
 /// handshake 뒤 한 front 연결: 사건을 보내고 요청을 처리한다
 async fn serve_conn(host: Arc<Host>, tx: FrameTx, mut rx: impl FrontIn, conn: Conn) -> Result<()> {
-    let Conn { role, actor, front } = conn;
+    let Conn { role, actor, front, proto } = conn;
+    // `tasks` 사건(1.60): 옛 CLI는 모르는 사건을 풀지 못해 연결이 끊긴다
+    let tasks_known = (proto.major, proto.minor) >= (1, 60);
 
     // workspace layout 변경을 이 연결에 보낸다
     let layout_task = {
@@ -233,12 +237,13 @@ async fn serve_conn(host: Arc<Host>, tx: FrameTx, mut rx: impl FrontIn, conn: Co
     };
     // 흐름 사건과 thread 기록 변화(놓치면 `events`로 cursor부터 다시 읽는다)
     let flow_task = {
-        let (tx, mut flow, mut threads, mut questions, mut notices) = (
+        let (tx, mut flow, mut threads, mut questions, mut notices, mut tasks) = (
             tx.clone(),
             host.flow_events.subscribe(),
             host.thread_events.subscribe(),
             host.question_events.subscribe(),
             host.notice_events.subscribe(),
+            host.task_events.subscribe(),
         );
         tokio::spawn(async move {
             loop {
@@ -263,6 +268,11 @@ async fn serve_conn(host: Arc<Host>, tx: FrameTx, mut rx: impl FrontIn, conn: Co
                         Ok(n) if matches!(n.kind, aaa_proto::NoticeKind::PostMuted | aaa_proto::NoticeKind::RolloutFinished | aaa_proto::NoticeKind::RolloutFailed) => continue,
                         Ok(n) => FrontEvent::Notice(n),
                         Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => continue,
+                        Err(_) => break,
+                    },
+                    t = tasks.recv() => match t {
+                        Ok((project, sha256)) if tasks_known => FrontEvent::Tasks { project, sha256 },
+                        Ok(_) | Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => continue,
                         Err(_) => break,
                     },
                 };
@@ -467,7 +477,7 @@ mod tests {
             h.clone(),
             spawn_writer(sw, MAX_FRAME),
             FrameRx::new(sr, MAX_FRAME),
-            Conn { role: DeviceRole::Local, actor: "local:cli".into(), front },
+            Conn { role: DeviceRole::Local, actor: "local:cli".into(), front, proto: FRONT_API },
         ));
         let mut rx = FrameRx::new(client, MAX_FRAME);
         assert!(matches!(rx.control::<FrontMsg>().await.unwrap(), FrontMsg::Event(FrontEvent::State { .. })));

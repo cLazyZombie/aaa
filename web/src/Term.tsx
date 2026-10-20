@@ -57,14 +57,14 @@ import { finalStep, HERDR_MOUSE_SCROLL_LINES, wheelSteps } from "./herdr/wheelSt
 import { parseOsc52 } from "./herdr/osc52.ts";
 import { applyToDraft, draftIsEmpty, EMPTY_DRAFT, restoreDraft, type InputDraft } from "./herdr/draft.ts";
 import { fileUriPath, hyperlinkFilter, isWebLink, terminalFileLinkProvider } from "./herdr/terminalFileLinks.ts";
-import { isAppShortcut } from "./herdr/shortcuts.ts";
+import { isAppShortcut, modKeyLabel } from "./herdr/shortcuts.ts";
 import { disposeAfterPendingFrame } from "./herdr/terminalDispose.ts";
 import { pasteText } from "./pasteText.ts";
 import { readTerminalDraft } from "./herdr/terminalDraft.ts";
 import type { PaneControls } from "./actions";
 import { lensesFor, pickedLens, rememberLens } from "./paneLens";
 import { WebLinksAddon } from "@xterm/addon-web-links";
-import { ArrowDown, RotateCcw, TriangleAlert } from "lucide-react";
+import { ArrowDown, RotateCcw, Search, TriangleAlert } from "lucide-react";
 import { DrawerToggle, HeadMore, HeadNote } from "./drawer";
 
 /** 함께 넣은 터미널 글꼴(style.css @font-face) */
@@ -201,6 +201,8 @@ export function TermView({
   const chatView = (picked ?? lensesFor(defaultView).of(lensKey, chatable ? true : agent ? null : false, coarse)) === "chat";
   // 대화 입력창이 보낸 수: 대화를 바로 다시 읽는다(Chat `readNow`)
   const [chatSent, setChatSent] = useState(0);
+  // 대화 안 찾기를 여는 요청(머리 돋보기·팔레트, plan §8.308). ⌘F는 ChatPanel이 직접 받는다
+  const [findRequest, setFindRequest] = useState(0);
   const [chatMessages, setChatMessages] = useState<ChatMessage[] | null>(null);
   // 작업 중에 보내 harness 대기열에 들어간 글(대화 보기 끝의 대기 말). 터미널 보기로 갔다 와도 남게 이 pane 화면이 갖는다
   const [pendingSends, setPendingSends] = useState<PendingSend[]>([]);
@@ -2008,6 +2010,9 @@ export function TermView({
         if (chatable) setChatView(!chatViewRef.current);
       },
       view: () => (chatable ? (chatViewRef.current ? "chat" : "terminal") : null),
+      openFind: () => {
+        if (chatViewRef.current) setFindRequest((n) => n + 1);
+      },
     };
     controls.current = current;
     return () => {
@@ -2057,6 +2062,12 @@ export function TermView({
           </span>
         </div>
         {status}
+        {chatView && chatable && (
+          <button type="button" className="ghost icon chat-find-open" data-testid="chat-find-open" aria-label="대화에서 찾기" title={`대화에서 찾기 (${modKeyLabel() === "⌘" ? "⌘F" : "Ctrl+F"})`}
+            onPointerDown={(e) => e.preventDefault()} onClick={() => setFindRequest((n) => n + 1)}>
+            <Search aria-hidden="true" />
+          </button>
+        )}
         {chatable && (
           <button
             className="ghost chat-btn"
@@ -2072,7 +2083,7 @@ export function TermView({
         <HeadMore />
       </header>
       {flowNotices && notices}
-      {chatView && chatable && <ChatPanel pane={pane.id} status={paneAgentStatus(pane)} compacting={compacting} readNow={chatSent} onOpenFile={onOpenFile} onOpenLink={onOpenLink} onMessages={setChatMessages}
+      {chatView && chatable && <ChatPanel pane={pane.id} status={paneAgentStatus(pane)} compacting={compacting} readNow={chatSent} onOpenFile={onOpenFile} onOpenLink={onOpenLink} onMessages={setChatMessages} findRequest={findRequest}
         pending={pendingSends} harness={pane.agent?.harness === "codex" ? "codex" : "claude"} onDismissPending={(id) => setPendingSends((list) => list.filter((p) => p.id !== id))}
         steer={steerOpen === "hidden" ? undefined : { state: steer, ...steerOpen, onSteer: pressSteer, onInspect: () => setChatView(false) }} />}
       {/* data-direct-typing: 바로 입력이면 xterm 칸도 화면 키보드를 올린다(herdr/viewport.ts가 본다) */}

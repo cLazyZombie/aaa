@@ -160,7 +160,8 @@ enum Cmd {
         cmd: ProjectCmd,
     },
     /// 설정 값 하나를 바꾼다(`aaa project set`의 새 꼴, plan §8.285): goal, thread_profile, coordinator_profile,
-    /// max_parallel_threads, auto_resolve_days, repos.add, repos.remove(workspaces.add·remove도 같다), nudge, mute.
+    /// max_parallel_threads, auto_resolve_days, repos.add, repos.remove(workspaces.add·remove도 같다), nudge, mute,
+    /// task_notes.add, task_notes.remove(할 일 화면 「나중」 탭이 읽는 프로젝트 폴더 안 Markdown).
     /// 프로젝트 홈의 aaa.toml이 있으면 거기, 없으면 project.toml에 쓴다(plan §8.288)
     Set { key: String, value: String },
     /// coordinator(`aaa project open`의 새 꼴, plan §8.285)
@@ -190,6 +191,11 @@ enum Cmd {
         project: Option<String>,
         #[arg(long)]
         check: Option<String>,
+    },
+    /// TASKS.md 할 일 목록(웹 할 일 화면과 같은 읽기: 형식 어긋남·task 없는 열린 thread·「나중」 파일)
+    Task {
+        #[command(subcommand)]
+        cmd: TaskCmd,
     },
     /// inbox: 보고·질문·세션 끝남·머신 단절 같은 잃지 않는 항목(끝내기로 정리)
     Inbox {
@@ -349,7 +355,7 @@ enum ProjectCmd {
         new: bool,
     },
     /// project.toml 값 하나를 바꾼다(herdr-projects `set`): goal, thread_profile, coordinator_profile,
-    /// max_parallel_threads, auto_resolve_days, repos.add, repos.remove, nudge, mute
+    /// max_parallel_threads, auto_resolve_days, repos.add, repos.remove, nudge, mute, task_notes.add, task_notes.remove
     Set { project: String, key: String, value: String },
     /// 멈춘다: ticker가 건너뛰고 `thread start`를 거부한다. 도는 agent는 멈추지 않는다
     Pause { project: String },
@@ -493,6 +499,12 @@ enum MissionCmd {
         #[arg(hide = true)]
         legacy: Option<String>,
     },
+}
+
+#[derive(Subcommand)]
+enum TaskCmd {
+    /// 목록별 task와 형식 어긋남(읽기만 한다. 고치기는 아직 TASKS.md를 직접 고친다)
+    List,
 }
 
 #[derive(Subcommand)]
@@ -1480,6 +1492,7 @@ fn run(cli: Cli) -> Result<ExitCode> {
         Cmd::Host => {
             init_log("info");
             aaa_common::resource::raise_nofile_limit("host");
+            aaa_common::resource::disable_core_dump("host");
             legacy_guard()?;
             let cfg = load_or_exit(aaa_config::load_host(&aaa_config::paths::config_dir()))?;
             runtime()?.block_on(aaa_host::run(cfg, aaa_config::paths::state_dir()))?;
@@ -1488,6 +1501,7 @@ fn run(cli: Cli) -> Result<ExitCode> {
         Cmd::Agent(a) => {
             init_log("info");
             aaa_common::resource::raise_nofile_limit("agent");
+            aaa_common::resource::disable_core_dump("agent");
             legacy_guard()?;
             agent_cmd(a)
         }
@@ -1498,6 +1512,7 @@ fn run(cli: Cli) -> Result<ExitCode> {
         }
         Cmd::SessionHost { dir } => {
             init_log("info");
+            aaa_common::resource::disable_core_dump("session host");
             aaa_session::host::main(dir)?;
             Ok(ExitCode::SUCCESS)
         }
@@ -1523,6 +1538,7 @@ fn run(cli: Cli) -> Result<ExitCode> {
         Cmd::Context { project, peek } => {
             front(json, FrontRequest::Context { project: project_or_here(project)?, peek })
         }
+        Cmd::Task { cmd: TaskCmd::List } => front(json, FrontRequest::Tasks { project: project_or_here(None)? }),
         Cmd::Assignable { project, check } => {
             front(json, FrontRequest::Assignable { project: project_or_here(project)?, check })
         }
@@ -3131,6 +3147,61 @@ fn assignable_line(owners: &[aaa_proto::OwnerChoice]) -> String {
     format!("맡길 수 있는 owner(profile@machine): {}", parts.join(", "))
 }
 
+/// `aaa task list`: 목록 머리·설명 줄, task(하위는 들여 씀, 형식 어긋남은 ▲), task 없는 열린 thread, 「나중」 파일
+fn render_task_board(s: &mut String, b: &aaa_proto::TaskBoard) {
+    use std::fmt::Write as _;
+    let _ = writeln!(s, "TASKS.md sha256 {}", b.sha256);
+    let depth = |t: &aaa_proto::TaskView| {
+        let mut n = 0;
+        let mut up = t.parent;
+        while let Some(line) = up {
+            n += 1;
+            up = b.tasks.iter().find(|x| x.line == line).and_then(|x| x.parent);
+        }
+        n
+    };
+    for l in &b.lists {
+        let mine: Vec<_> = b.tasks.iter().filter(|t| t.list == l.name).collect();
+        let name = if l.name.is_empty() { "(목록 없음)" } else { &l.name };
+        let _ = writeln!(s, "\n## {name} ({})", mine.len());
+        for n in &l.notes {
+            let _ = writeln!(s, "  {n}");
+        }
+        for t in mine {
+            let mark = if !t.problems.is_empty() {
+                "▲"
+            } else if t.thread.is_some() {
+                "◉"
+            } else {
+                "○"
+            };
+            let owner = t.owner.as_ref().map(|o| format!(" ({o})")).unwrap_or_default();
+            let thread = t.thread.as_ref().map(|x| format!(" · {x}")).unwrap_or_default();
+            let pad = "  ".repeat(depth(t) + 1);
+            let _ = writeln!(s, "{pad}{mark} {}{owner}{thread}  [{}줄]", t.title, t.line);
+            for p in &t.problems {
+                let _ = writeln!(s, "{pad}    형식 어긋남: {p}");
+            }
+        }
+    }
+    if !b.unlinked_threads.is_empty() {
+        let _ = writeln!(s, "\ntask 없는 열린 thread:");
+        for t in &b.unlinked_threads {
+            let _ = writeln!(s, "  {} {} · {}", t.id, t.title, t.group.label());
+        }
+    }
+    for f in &b.notes_files {
+        match &f.error {
+            Some(e) => {
+                let _ = writeln!(s, "\n나중 {}: {e}", f.path);
+            }
+            None => {
+                let _ = writeln!(s, "\n나중 {}: 절 {}개", f.path, f.sections.len());
+            }
+        }
+    }
+}
+
 fn render_context(s: &mut String, c: &aaa_proto::ProjectContext) {
     use std::fmt::Write as _;
     for w in &c.post_warnings {
@@ -3150,6 +3221,9 @@ fn render_context(s: &mut String, c: &aaa_proto::ProjectContext) {
         if !t.notes.is_empty() {
             let n: String = t.notes.join(" ").chars().take(60).collect();
             let _ = writeln!(s, "    notes: {n}");
+        }
+        for p in &t.problems {
+            let _ = writeln!(s, "    형식 어긋남: {p}");
         }
     }
     let _ = writeln!(s, "\n열린 thread:");
@@ -3842,6 +3916,7 @@ fn render_front(r: &FrontResponse) -> String {
             }
         },
         FrontResponse::Context(c) => render_context(&mut s, c),
+        FrontResponse::TaskBoard(b) => render_task_board(&mut s, b),
         FrontResponse::Evaluators { evaluators } => {
             if evaluators.is_empty() {
                 s.push_str("사후 평가자가 없다(aaa evaluator assign)\n");

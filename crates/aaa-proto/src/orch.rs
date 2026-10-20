@@ -51,8 +51,24 @@ pub enum ThreadKind {
     Adopted,
 }
 
+/// env를 Debug로 찍을 때 값 없이 「«env N개: 이름…»」만 보인다(키 관리자 K0, plan §8.307). 로그·오류 문구가 Debug를 쓴다.
+pub struct EnvNames<'a>(pub Vec<&'a str>);
+
+impl<'a> EnvNames<'a> {
+    pub fn of(names: impl IntoIterator<Item = &'a String>) -> Self {
+        EnvNames(names.into_iter().map(String::as_str).collect())
+    }
+}
+
+impl std::fmt::Debug for EnvNames<'_> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "«env {}개: {}»", self.0.len(), self.0.join(", "))
+    }
+}
+
 /// host profile에 그 머신 실행 경로·환경·hook을 적용한 결과. host는 thread 기록에 그대로 저장하고 restart·resume에 다시 쓴다(§7.2).
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+/// Debug는 env 값을 찍지 않는다([`EnvNames`]).
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 pub struct Launch {
     pub profile: String,
     /// claude·codex·shell·custom
@@ -63,6 +79,20 @@ pub struct Launch {
     pub resume_argv: Vec<String>,
     /// harness 세션 ID(미리 정할 수 있는 harness만, 예: claude `--session-id`)
     pub session_key: Option<String>,
+}
+
+impl std::fmt::Debug for Launch {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let Launch { profile, harness, argv, env, resume_argv, session_key } = self;
+        f.debug_struct("Launch")
+            .field("profile", profile)
+            .field("harness", harness)
+            .field("argv", argv)
+            .field("env", &EnvNames::of(env.iter().map(|(k, _)| k)))
+            .field("resume_argv", resume_argv)
+            .field("session_key", session_key)
+            .finish()
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
@@ -102,7 +132,8 @@ pub struct ThreadPrepare {
 }
 
 /// host에서 해석한 실행 설정. command·env는 옛 shell/custom profile의 호환 필드이며 머신 덮어쓰기가 우선이다.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+/// Debug는 env 값을 찍지 않는다([`EnvNames`]).
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ResolvedProfile {
     pub harness: String,
     pub model: String,
@@ -110,6 +141,20 @@ pub struct ResolvedProfile {
     pub args: Vec<String>,
     pub command: Vec<String>,
     pub env: std::collections::BTreeMap<String, String>,
+}
+
+impl std::fmt::Debug for ResolvedProfile {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let ResolvedProfile { harness, model, effort, args, command, env } = self;
+        f.debug_struct("ResolvedProfile")
+            .field("harness", harness)
+            .field("model", model)
+            .field("effort", effort)
+            .field("args", args)
+            .field("command", command)
+            .field("env", &EnvNames::of(env.keys()))
+            .finish()
+    }
 }
 
 /// host → agent: thread 인자에 더할 safety(herdr-projects `profiles::launch_args`·`Safety::launch_args`). host는 profile의
@@ -1151,6 +1196,58 @@ pub fn slug(title: &str) -> String {
 mod tests {
     use super::*;
 
+    /// env를 담는 형의 Debug(로그·오류 문구)는 이름만 찍고 값은 찍지 않는다. 이 형을 품은 메시지(AgentRequest·ThreadPrepare 등)도 같다.
+    #[test]
+    fn debug_shows_env_names_without_values() {
+        let value = "aaa-canary-debug-0123456789abcdef";
+        let env = vec![("GH_TOKEN".to_string(), value.to_string()), ("LANG".to_string(), value.to_string())];
+        let resolved = ResolvedProfile {
+            harness: "claude".into(),
+            model: String::new(),
+            effort: String::new(),
+            args: vec![],
+            command: vec![],
+            env: env.iter().cloned().collect(),
+        };
+        let launch = Launch {
+            profile: "p".into(),
+            harness: "claude".into(),
+            argv: vec!["claude".into()],
+            env: env.clone(),
+            resume_argv: vec![],
+            session_key: None,
+        };
+        let spec = crate::SpawnSpec {
+            name: "n".into(),
+            argv: vec![],
+            cwd: None,
+            env,
+            cols: 80,
+            rows: 24,
+            role: None,
+            harness: None,
+            profile: Some("p".into()),
+            resolved_profile: Some(resolved.clone()),
+        };
+        let prepare = ThreadPrepare {
+            resolved_profile: Some(resolved),
+            project: "demo".into(),
+            thread: "t-0001".into(),
+            title: String::new(),
+            kind: ThreadKind::Dir,
+            repo: None,
+            base: None,
+            profile: "p".into(),
+            brief: String::new(),
+            safety: None,
+        };
+        let request = crate::AgentRequest::Spawn(spec.clone());
+        for text in [format!("{launch:?}"), format!("{spec:?}"), format!("{prepare:#?}"), format!("{request:?}")] {
+            assert!(!text.contains(value) && !text.contains("0123456789"), "{text}");
+            assert!(text.contains("«env 2개: GH_TOKEN, LANG»"), "{text}");
+        }
+    }
+
     /// N-1 host의 wire 응답에는 L3 기록 필드가 없다.
     #[test]
     fn routine_view_reads_previous_front_response() {
@@ -1249,6 +1346,74 @@ pub struct TaskView {
     /// task 줄 아래 들여쓴 메모
     pub notes: Vec<String>,
     pub done: bool,
+    /// task 줄 번호(1부터, FRONT_API 1.60). 옛 host는 생략한다.
+    #[serde(default)]
+    pub line: u32,
+    /// task 줄 원문(앞 공백 제외)
+    #[serde(default)]
+    pub raw: String,
+    /// task 블록(task 줄과 메모 줄, 블록 끝 빈 줄 제외, 줄 끝 문자 없이 `\n`으로 이음)의 sha256. 편집(T2)의 충돌 anchor다.
+    #[serde(default)]
+    pub block_sha256: String,
+    /// 들여쓴 하위 task면 상위 task의 `line`
+    #[serde(default)]
+    pub parent: Option<u32>,
+    /// 형식 어긋남(owner 칸이 owner 꼴이 아님, 제목 안 thread 번호 등). 있으면 화면이 원문을 보이고 판단하지 않는다.
+    #[serde(default)]
+    pub problems: Vec<String>,
+}
+
+/// TASKS.md의 `##` 목록 하나(FRONT_API 1.60). task가 없는 목록도 있다.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(default)]
+pub struct TaskListView {
+    /// `##` 머리 이름. 첫 `##` 앞의 task·설명 줄은 이름 없는 목록(`""`)이다
+    pub name: String,
+    /// 머리 밑 체크박스 없는 줄(목록 설명). task 블록 안의 메모는 들지 않는다
+    pub notes: Vec<String>,
+}
+
+/// 할 일 화면의 thread 한 줄(id·제목·묶음)
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+pub struct TaskThread {
+    pub id: String,
+    pub title: String,
+    pub group: ThreadGroup,
+}
+
+/// `task_notes` 파일(예: `memory/later.md`)의 `##` 절 하나. 줄은 Markdown 원문 그대로다
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(default)]
+pub struct TaskNotesSection {
+    /// `##` 머리 이름. 첫 `##` 앞 줄은 이름 없는 절이다
+    pub name: String,
+    pub lines: Vec<String>,
+}
+
+/// 「나중」 탭의 읽기 전용 파일 하나(project.toml `task_notes`)
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(default)]
+pub struct TaskNotesFile {
+    /// 프로젝트 폴더 기준 상대 경로
+    pub path: String,
+    /// 읽지 못한 까닭(없음·프로젝트 폴더 밖·너무 큼). 있으면 `sections`는 비어 있다
+    pub error: Option<String>,
+    pub sections: Vec<TaskNotesSection>,
+}
+
+/// `tasks` 답(FRONT_API 1.60): 할 일 화면이 읽는 TASKS.md 전체
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(default)]
+pub struct TaskBoard {
+    pub project: String,
+    /// 파일 전체 바이트의 sha256(파일이 없으면 빈 글의 hash)
+    pub sha256: String,
+    pub lists: Vec<TaskListView>,
+    pub tasks: Vec<TaskView>,
+    /// 열린 thread 중 어느 task의 `thread`에도 없는 것
+    pub unlinked_threads: Vec<TaskThread>,
+    /// project.toml `task_notes`의 파일마다(설정이 비면 비어 있다)
+    pub notes_files: Vec<TaskNotesFile>,
 }
 
 /// 머신 하나에서 thread를 맡길 수 있는 profile(host 허용 목록과 그 머신 agent.toml의 교집합)
