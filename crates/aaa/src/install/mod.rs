@@ -13,24 +13,28 @@ mod services;
 pub use args::Args;
 
 /// 문법 오류가 나도 install의 출력 계약을 선택한다. 다른 명령의 인자 안 install은 세지 않는다.
-pub fn requested_output() -> Option<(bool, bool)> {
+pub fn requested_output(command: &clap::Command) -> Option<(bool, bool)> {
     let args: Vec<_> = std::env::args_os().skip(1).collect();
+    let flag = |name: &str| {
+        args.iter().any(|a| {
+            a.to_str().is_some_and(|s| s == name || s.strip_prefix(name).is_some_and(|rest| rest.starts_with('=')))
+        })
+    };
     let mut i = 0;
     while i < args.len() {
-        if args[i] == "install" {
-            return Some((args.iter().any(|a| a == "--json"), args.iter().any(|a| a == "--json-stream")));
-        }
         if ["--config-dir", "--state-dir", "--instance"].iter().any(|v| args[i] == *v) {
             i += 2;
-        } else if args[i] == "--json"
-            || args[i].to_string_lossy().starts_with("--instance=")
-            || args[i].to_string_lossy().starts_with("--config-dir=")
-            || args[i].to_string_lossy().starts_with("--state-dir=")
-        {
-            i += 1;
-        } else {
-            return None;
+            continue;
         }
+        if let Some(cmd) = command.get_subcommands().find(|cmd| {
+            args[i]
+                .to_str()
+                .is_some_and(|name| cmd.get_name() == name || cmd.get_all_aliases().any(|alias| alias == name))
+        }) {
+            return (cmd.get_name() == "install").then(|| (flag("--json"), flag("--json-stream")));
+        }
+        // 모르는 앞 옵션/잘못된 bool 값 때문에 설치 문법 오류가 원문 clap 출력으로 빠지지 않는다.
+        i += 1;
     }
     None
 }

@@ -5967,7 +5967,7 @@ L4 후속(10-20 00시 사용자 관찰): 멈춤 상태의 후보 예약과 재�
 
 ### 8.315 aaa install I1 읽기 탐지·계획(10-20, t-0485)
 
-- **범위.** I0(§8.312)의 공통 DTO/순수 검증/hash를 실제 install CLI에 연결한다. 환경 변경 전에 install을 처리하며 JSON/NDJSON 문법 오류도 입력 원문 없이 고정 code로 반환한다. FRONT_API/AGENT_LINK/schema는 변경하지 않는다. 적용·재개·조회·마법사는 단계 미지원으로 명시한다.
+- **범위.** I0(§8.312)의 공통 DTO/순수 검증/hash를 실제 install CLI에 연결한다. 환경 변경 전에 install을 처리하며 JSON/NDJSON 문법 오류도 입력 원문 없이 고정 code로 반환한다. 잘못된 전역 bool 값/앞 옵션의 실제 유출 회귀를 수리했고, clap 명령 metadata 판별도 기존 4MiB 파싱 thread 안에서 수행한다. FRONT_API/AGENT_LINK/schema는 변경하지 않는다. 적용·재개·조회·마법사는 단계 미지원으로 명시한다.
 - **읽기.** 현지 OS/arch·UID/Windows SID·현재/선택 binary SHA·실효 base/local 설정과 관련 파일 hash, 정규화 경로/mount·여유 공간, repo/harness/profile·기존 설치 충돌을 읽는다. root 체크는 읽기 helper만 사용하고 기존 CLI check/probe/init에 위임하지 않는다. missing mount에 대체 폴더를 만들지 않는다. 같은 shared binary는 보존하고 출처/내용이 다른 binary는 충돌이다.
 - **감독자 읽기.** Mac은 기존 plist, Windows는 SCM CONNECT/QUERY_STATUS, Linux는 실제 system/user unit 위치와 systemctl show LoadState만 읽는다. 등록/시작/reload·권한 상승은 하지 않는다. 같은 instance 이름의 기존 서비스/파일은 fresh 충돌이다.
 - **관찰 한계.** 서비스 ready·연결·등록/승인·pairing·실제 쓰기 probe는 not_run, 관찰하지 않은 ACL/안정 volume ID/소유권·원격 repo·harness 인증/판은 unknown이다. harness는 --version도 실행하지 않는다. 계획이 설치 완료/unchanged를 뜻하지 않는다. I2의 receipt/소유 대조, OS별 실제 관리자 검증, I6의 질문/승인과 구분한다.

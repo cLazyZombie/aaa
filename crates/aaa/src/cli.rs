@@ -1567,14 +1567,15 @@ fn mission_work(m: &aaa_proto::MissionView) -> String {
 }
 
 pub fn main() -> ExitCode {
-    let install_output = crate::install::requested_output();
     let cli = match with_cli_stack(|| {
         let version: &'static str =
             Box::leak(aaa_common::util::software().trim_start_matches("aaa ").to_string().into_boxed_str());
-        Cli::command().version(version).try_get_matches().and_then(|m| Cli::from_arg_matches(&m))
+        let command = Cli::command().version(version);
+        let install_output = crate::install::requested_output(&command);
+        (install_output, command.try_get_matches().and_then(|m| Cli::from_arg_matches(&m)))
     }) {
-        Ok(Ok(cli)) => cli,
-        Ok(Err(e)) => {
+        Ok((_, Ok(cli))) => cli,
+        Ok((install_output, Err(e))) => {
             if !matches!(e.kind(), clap::error::ErrorKind::DisplayHelp | clap::error::ErrorKind::DisplayVersion)
                 && let Some((json, stream)) = install_output
             {

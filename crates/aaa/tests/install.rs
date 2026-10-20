@@ -129,7 +129,10 @@ fn json(out: &Output) -> Value {
 fn install_errors_are_sanitized_and_never_prompt_or_write() {
     let lab = Lab::new();
     let before = snapshot(&lab.0);
+    let malformed_json = format!("--json={CANARY}");
     for args in [
+        vec![malformed_json.as_str(), "install", "--dry-run"],
+        vec!["--unknown", CANARY, "install", "--json", "--dry-run"],
         vec!["install", "--json", "--dry-run", "--unknown", CANARY],
         vec!["--instance", CANARY, "install", "--json", "--dry-run"],
         vec!["install", "--json", "--dry-run", "--role", CANARY],
@@ -142,6 +145,17 @@ fn install_errors_are_sanitized_and_never_prompt_or_write() {
     }
     let out = lab.cmd(&["install"]);
     assert_eq!(out.status.code(), Some(2));
+    let malformed_stream = format!("--json-stream={CANARY}");
+    let out = lab.cmd(&["install", &malformed_stream]);
+    assert_eq!(out.status.code(), Some(2));
+    assert!(out.stderr.is_empty());
+    let item: Value = serde_json::from_slice(&out.stdout).unwrap();
+    assert_eq!(item["type"], "result");
+    assert_eq!(item["result"]["exit_code"], 2);
+    // 다른 명령의 경로/인자에 install이 있어도 그 명령의 오류 계약은 유지한다.
+    let other = lab.cmd(&["--config-dir", "install", "completion", "install", "--json"]);
+    assert_eq!(other.status.code(), Some(2));
+    assert!(other.stdout.is_empty() && !other.stderr.is_empty());
     assert_eq!(snapshot(&lab.0), before);
 }
 
