@@ -284,7 +284,7 @@ mod tests {
     async fn post_peer_token_queue_limits_ack_and_replay() {
         let (a, _lab) = agent();
         let (host, peer) = tokio::io::duplex(1 << 20);
-        a.set_host(Some(spawn_writer(host, aaa_proto::MAX_FRAME)), false);
+        a.set_host(Some(spawn_writer(host, aaa_proto::MAX_FRAME)));
         *a.host_post.lock().unwrap() = Some(true);
         let mut rx = FrameRx::new(peer, aaa_proto::MAX_FRAME);
         let bad = hook(&a, "s1", "forged", serde_json::to_value(input(1)).unwrap()).await;
@@ -298,7 +298,7 @@ mod tests {
             matches!(next(&mut rx).await,LinkMsg::Event(AgentEvent::PostRejected { reason,.. }) if reason.contains("peer pid"))
         );
         assert!(!a.post_out().exists(), "인증 실패는 outbox에 넣지 않는다");
-        a.set_host(None, false);
+        a.set_host(None);
         for n in 1..=20 {
             let out = hook(&a, "s1", &token(), serde_json::to_value(input(n)).unwrap()).await;
             assert!(out.contains("queued"), "{out}");
@@ -310,7 +310,7 @@ mod tests {
         drop(a);
         let a = Agent::new(path, "m".into(), "mac-a".into(), true, None).unwrap();
         let (host, peer) = tokio::io::duplex(1 << 20);
-        a.set_host(Some(spawn_writer(host, aaa_proto::MAX_FRAME)), false);
+        a.set_host(Some(spawn_writer(host, aaa_proto::MAX_FRAME)));
         *a.host_post.lock().unwrap() = Some(true);
         let mut rx = FrameRx::new(peer, aaa_proto::MAX_FRAME);
         a.replay_posts().await;
@@ -356,7 +356,7 @@ mod tests {
     async fn post_needs_host_feature_and_does_not_emit_unknown_event() {
         let (a, _lab) = agent();
         let (host, peer) = tokio::io::duplex(1 << 20);
-        a.set_host(Some(spawn_writer(host, aaa_proto::MAX_FRAME)), false);
+        a.set_host(Some(spawn_writer(host, aaa_proto::MAX_FRAME)));
         *a.host_post.lock().unwrap() = Some(false);
         let mut rx = FrameRx::new(peer, aaa_proto::MAX_FRAME);
         let out = hook(&a, "s1", &token(), serde_json::to_value(input(1)).unwrap()).await;
