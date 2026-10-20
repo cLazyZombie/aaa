@@ -1,0 +1,1709 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "InstallContract",
+  "description": "schema/fixture 판정용 묶음. 실제 CLI stdout envelope에는 이 wrapper를 쓰지 않는다.",
+  "oneOf": [
+    {
+      "type": "object",
+      "properties": {
+        "kind": {
+          "type": "string",
+          "const": "invocation"
+        },
+        "value": {
+          "$ref": "#/$defs/InstallInvocation"
+        }
+      },
+      "required": [
+        "kind",
+        "value"
+      ]
+    },
+    {
+      "type": "object",
+      "properties": {
+        "kind": {
+          "type": "string",
+          "const": "plan"
+        },
+        "value": {
+          "$ref": "#/$defs/InstallPlan"
+        }
+      },
+      "required": [
+        "kind",
+        "value"
+      ]
+    },
+    {
+      "type": "object",
+      "properties": {
+        "kind": {
+          "type": "string",
+          "const": "result"
+        },
+        "value": {
+          "$ref": "#/$defs/InstallResult"
+        }
+      },
+      "required": [
+        "kind",
+        "value"
+      ]
+    },
+    {
+      "type": "object",
+      "properties": {
+        "kind": {
+          "type": "string",
+          "const": "stream"
+        },
+        "value": {
+          "$ref": "#/$defs/InstallStreamItem"
+        }
+      },
+      "required": [
+        "kind",
+        "value"
+      ]
+    },
+    {
+      "type": "object",
+      "properties": {
+        "kind": {
+          "type": "string",
+          "const": "authorization"
+        },
+        "value": {
+          "$ref": "#/$defs/InstallAuthorization"
+        }
+      },
+      "required": [
+        "kind",
+        "value"
+      ]
+    },
+    {
+      "type": "object",
+      "properties": {
+        "kind": {
+          "type": "string",
+          "const": "grant"
+        },
+        "value": {
+          "$ref": "#/$defs/InstallEnrollmentGrant"
+        }
+      },
+      "required": [
+        "kind",
+        "value"
+      ]
+    }
+  ],
+  "$defs": {
+    "InstallAccount": {
+      "type": "string",
+      "enum": [
+        "current-user"
+      ]
+    },
+    "InstallArch": {
+      "type": "string",
+      "enum": [
+        "aarch64",
+        "x86-64"
+      ]
+    },
+    "InstallAuthorization": {
+      "description": "private 입력. Debug를 구현하지 않으며 public 결과나 TS 출력에 포함하지 않는다.",
+      "type": "object",
+      "properties": {
+        "claims": {
+          "$ref": "#/$defs/InstallAuthorizationClaims"
+        },
+        "enrollment": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/InstallEnrollmentGrant"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "signature": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "claims",
+        "signature"
+      ]
+    },
+    "InstallAuthorizationClaims": {
+      "description": "서명 전 claims. 이 구조체를 deserialize했다는 사실은 승인이 아니다.",
+      "type": "object",
+      "properties": {
+        "binary_sha256": {
+          "type": "string"
+        },
+        "expires_at_ms": {
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "installation_id": {
+          "type": "string"
+        },
+        "instance": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "issued_at_ms": {
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "issuer": {
+          "type": "string"
+        },
+        "nonce": {
+          "type": "string"
+        },
+        "permissions": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/InstallPermission"
+          }
+        },
+        "plan_sha256": {
+          "type": "string"
+        },
+        "platform": {
+          "$ref": "#/$defs/InstallPlatform"
+        },
+        "schema": {
+          "$ref": "#/$defs/InstallAuthorizationSchema"
+        },
+        "target_account": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "schema",
+        "installation_id",
+        "plan_sha256",
+        "platform",
+        "target_account",
+        "binary_sha256",
+        "permissions",
+        "issued_at_ms",
+        "expires_at_ms",
+        "nonce",
+        "issuer"
+      ]
+    },
+    "InstallAuthorizationSchema": {
+      "type": "string",
+      "enum": [
+        "aaa.install.authorization.v1"
+      ]
+    },
+    "InstallChange": {
+      "type": "object",
+      "properties": {
+        "action": {
+          "type": "string"
+        },
+        "kind": {
+          "type": "string"
+        },
+        "state": {
+          "$ref": "#/$defs/InstallChangeState"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "kind",
+        "action",
+        "state"
+      ]
+    },
+    "InstallChangeState": {
+      "type": "string",
+      "enum": [
+        "planned",
+        "applied",
+        "unchanged",
+        "pending",
+        "reverted",
+        "failed"
+      ]
+    },
+    "InstallCheck": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "state": {
+          "$ref": "#/$defs/InstallCheckState"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "name",
+        "state"
+      ]
+    },
+    "InstallCheckState": {
+      "type": "string",
+      "enum": [
+        "passed",
+        "failed",
+        "not_run",
+        "not_requested",
+        "unknown"
+      ]
+    },
+    "InstallChoices": {
+      "description": "원시 입력에는 비밀값을 받는 필드가 없다. CLI는 kebab-case 이름을 snake_case 필드로 옮긴다.\n기본값과 필수/상충 판정은 aaa-config::install::plan 한 곳에서 한다.",
+      "type": "object",
+      "properties": {
+        "agent_listen": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        },
+        "allow_coordinator_profile": {
+          "type": "array",
+          "default": [],
+          "items": {
+            "type": "string"
+          }
+        },
+        "allow_thread_profile": {
+          "type": "array",
+          "default": [],
+          "items": {
+            "type": "string"
+          }
+        },
+        "bin_path": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        },
+        "claude_home": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        },
+        "claude_path": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        },
+        "codex_home": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        },
+        "codex_path": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        },
+        "config_dir": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        },
+        "coordinator_profile": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        },
+        "default_cwd": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        },
+        "enroll": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/InstallEnroll"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "expected_arch": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/InstallArch"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "expected_os": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/InstallOs"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "from": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        },
+        "goal": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        },
+        "harness": {
+          "type": "array",
+          "default": [],
+          "items": {
+            "$ref": "#/$defs/InstallHarness"
+          }
+        },
+        "harness_env": {
+          "type": "array",
+          "default": [],
+          "items": {
+            "$ref": "#/$defs/InstallHarnessEnv"
+          }
+        },
+        "hooks": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/InstallHooks"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "host": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        },
+        "instance": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        },
+        "launcher": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        },
+        "launcher_policy": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/InstallLauncherPolicy"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "linger": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/InstallLinger"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "local_agent": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/InstallToggle"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "login": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/InstallLogin"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "min_free_gb": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint32",
+          "default": null,
+          "minimum": 0
+        },
+        "mode": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/InstallMode"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "name": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        },
+        "network": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/InstallNetwork"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "no_repo": {
+          "type": "boolean",
+          "default": false
+        },
+        "open_coordinator": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/InstallOpen"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "pairing": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/InstallPairing"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "path": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/InstallPathPolicy"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "profile_file": {
+          "type": "array",
+          "default": [],
+          "items": {
+            "type": "string"
+          }
+        },
+        "project": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        },
+        "project_mode": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/InstallProjectMode"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "projects_root": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        },
+        "repo": {
+          "type": "array",
+          "default": [],
+          "items": {
+            "type": "string"
+          }
+        },
+        "role": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/InstallRole"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "serve_port": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint16",
+          "default": null,
+          "maximum": 65535,
+          "minimum": 0
+        },
+        "service": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/InstallService"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "service_account": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/InstallAccount"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "service_password_source": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/InstallPasswordSource"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "sha256": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        },
+        "shell": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        },
+        "start": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/InstallStart"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "startup": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/InstallStartup"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "state_dir": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        },
+        "tailscale_serve": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/InstallServe"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "thread_profile": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        },
+        "version": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        },
+        "wait_timeout": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint32",
+          "default": null,
+          "minimum": 0
+        },
+        "web": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/InstallWeb"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "web_listen": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        },
+        "work_mount": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        },
+        "work_root": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        },
+        "work_storage": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/InstallStorage"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        }
+      },
+      "additionalProperties": false
+    },
+    "InstallEnroll": {
+      "type": "string",
+      "enum": [
+        "wait",
+        "grant",
+        "skip"
+      ]
+    },
+    "InstallEnrollmentGrant": {
+      "type": "object",
+      "properties": {
+        "agent_identity": {
+          "type": "string"
+        },
+        "expires_at_ms": {
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "host_identity": {
+          "type": "string"
+        },
+        "installation_id": {
+          "type": "string"
+        },
+        "issuer": {
+          "type": "string"
+        },
+        "nonce": {
+          "type": "string"
+        },
+        "plan_sha256": {
+          "type": "string"
+        },
+        "schema": {
+          "$ref": "#/$defs/InstallGrantSchema"
+        },
+        "signature": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "schema",
+        "installation_id",
+        "plan_sha256",
+        "agent_identity",
+        "host_identity",
+        "issuer",
+        "expires_at_ms",
+        "nonce",
+        "signature"
+      ]
+    },
+    "InstallError": {
+      "description": "공개 오류에는 입력 원문·OS 하위 오류를 싣지 않는다.",
+      "type": "object",
+      "properties": {
+        "code": {
+          "type": "string"
+        },
+        "details": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "message": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "code",
+        "message",
+        "details"
+      ]
+    },
+    "InstallEventNeedsUser": {
+      "type": "object",
+      "properties": {
+        "kind": {
+          "type": "string"
+        },
+        "resume_id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "kind"
+      ]
+    },
+    "InstallEventSchema": {
+      "type": "string",
+      "enum": [
+        "aaa.install.event.v1"
+      ]
+    },
+    "InstallEventState": {
+      "type": "string",
+      "enum": [
+        "pending",
+        "running",
+        "completed",
+        "unchanged",
+        "skipped",
+        "needs_user",
+        "failed",
+        "reverted"
+      ]
+    },
+    "InstallGrantSchema": {
+      "type": "string",
+      "enum": [
+        "aaa.install.enroll-grant.v1"
+      ]
+    },
+    "InstallHarness": {
+      "type": "string",
+      "enum": [
+        "claude",
+        "codex",
+        "none"
+      ]
+    },
+    "InstallHarnessEnv": {
+      "type": "object",
+      "properties": {
+        "harness": {
+          "$ref": "#/$defs/InstallHarness"
+        },
+        "key": {
+          "type": "string"
+        },
+        "value": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "harness",
+        "key",
+        "value"
+      ]
+    },
+    "InstallHooks": {
+      "type": "string",
+      "enum": [
+        "install",
+        "preserve",
+        "skip"
+      ]
+    },
+    "InstallInvocation": {
+      "description": "파일 내용/handle은 이 객체에 포함하지 않는다. I6가 private 채널을 소비한다.",
+      "type": "object",
+      "properties": {
+        "authorization_file": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        },
+        "authorization_stdin": {
+          "type": "boolean",
+          "default": false
+        },
+        "choices": {
+          "$ref": "#/$defs/InstallChoices",
+          "default": {
+            "agent_listen": null,
+            "allow_coordinator_profile": [],
+            "allow_thread_profile": [],
+            "bin_path": null,
+            "claude_home": null,
+            "claude_path": null,
+            "codex_home": null,
+            "codex_path": null,
+            "config_dir": null,
+            "coordinator_profile": null,
+            "default_cwd": null,
+            "enroll": null,
+            "expected_arch": null,
+            "expected_os": null,
+            "from": null,
+            "goal": null,
+            "harness": [],
+            "harness_env": [],
+            "hooks": null,
+            "host": null,
+            "instance": null,
+            "launcher": null,
+            "launcher_policy": null,
+            "linger": null,
+            "local_agent": null,
+            "login": null,
+            "min_free_gb": null,
+            "mode": null,
+            "name": null,
+            "network": null,
+            "no_repo": false,
+            "open_coordinator": null,
+            "pairing": null,
+            "path": null,
+            "profile_file": [],
+            "project": null,
+            "project_mode": null,
+            "projects_root": null,
+            "repo": [],
+            "role": null,
+            "serve_port": null,
+            "service": null,
+            "service_account": null,
+            "service_password_source": null,
+            "sha256": null,
+            "shell": null,
+            "start": null,
+            "startup": null,
+            "state_dir": null,
+            "tailscale_serve": null,
+            "thread_profile": null,
+            "version": null,
+            "wait_timeout": null,
+            "web": null,
+            "web_listen": null,
+            "work_mount": null,
+            "work_root": null,
+            "work_storage": null
+          }
+        },
+        "dry_run": {
+          "type": "boolean",
+          "default": false
+        },
+        "events_file": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        },
+        "json": {
+          "type": "boolean",
+          "default": false
+        },
+        "json_stream": {
+          "type": "boolean",
+          "default": false
+        },
+        "non_interactive": {
+          "type": "boolean",
+          "default": false
+        },
+        "prompt": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/InstallPrompt"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "resume": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        },
+        "secrets_stdin": {
+          "type": "boolean",
+          "default": false
+        },
+        "service_password_ref": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        },
+        "status": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        },
+        "yes": {
+          "type": "boolean",
+          "default": false
+        }
+      },
+      "additionalProperties": false
+    },
+    "InstallLauncherPolicy": {
+      "type": "string",
+      "enum": [
+        "install",
+        "preserve"
+      ]
+    },
+    "InstallLinger": {
+      "type": "string",
+      "enum": [
+        "require",
+        "preserve"
+      ]
+    },
+    "InstallLogin": {
+      "type": "string",
+      "enum": [
+        "require",
+        "defer"
+      ]
+    },
+    "InstallMode": {
+      "type": "string",
+      "enum": [
+        "fresh",
+        "repair",
+        "reinstall"
+      ]
+    },
+    "InstallNeedsUser": {
+      "type": "object",
+      "properties": {
+        "code": {
+          "type": "string"
+        },
+        "message": {
+          "type": "string"
+        },
+        "target": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "code",
+        "target",
+        "message"
+      ]
+    },
+    "InstallNetwork": {
+      "type": "string",
+      "enum": [
+        "tailscale",
+        "direct"
+      ]
+    },
+    "InstallOpen": {
+      "type": "string",
+      "enum": [
+        "yes",
+        "no"
+      ]
+    },
+    "InstallOperation": {
+      "type": "string",
+      "enum": [
+        "write_file",
+        "stage_binary",
+        "stage_launcher",
+        "configure_hook",
+        "prepare_work_root",
+        "register_service",
+        "start_service",
+        "publish_web",
+        "enroll_agent",
+        "create_project",
+        "modify_path"
+      ]
+    },
+    "InstallOs": {
+      "type": "string",
+      "enum": [
+        "macos",
+        "linux",
+        "windows"
+      ]
+    },
+    "InstallPairing": {
+      "type": "string",
+      "enum": [
+        "controller",
+        "skip"
+      ]
+    },
+    "InstallPasswordSource": {
+      "type": "string",
+      "enum": [
+        "prompt",
+        "stdin",
+        "broker"
+      ]
+    },
+    "InstallPathPolicy": {
+      "type": "string",
+      "enum": [
+        "preserve",
+        "user"
+      ]
+    },
+    "InstallPermission": {
+      "description": "승인된 작업의 typed 범위. 자유 shell·safety·기기 추가 권한은 표현할 수 없다.",
+      "type": "object",
+      "properties": {
+        "after_sha256": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "before_sha256": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "operation": {
+          "$ref": "#/$defs/InstallOperation"
+        },
+        "target": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "operation",
+        "target"
+      ]
+    },
+    "InstallPhase": {
+      "type": "string",
+      "enum": [
+        "detect",
+        "preflight",
+        "plan",
+        "authorize",
+        "stage",
+        "configure",
+        "hooks",
+        "work_root",
+        "service",
+        "enroll",
+        "web",
+        "pairing",
+        "verify",
+        "rollback"
+      ]
+    },
+    "InstallPlan": {
+      "description": "private 계획. 공유 결과/일반 journal에 직렬화하지 않는다.",
+      "type": "object",
+      "properties": {
+        "choices": {
+          "$ref": "#/$defs/InstallChoices"
+        },
+        "context": {
+          "$ref": "#/$defs/InstallPlanContext"
+        },
+        "schema": {
+          "$ref": "#/$defs/InstallPlanSchema"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "schema",
+        "context",
+        "choices"
+      ]
+    },
+    "InstallPlanContext": {
+      "description": "탐지 adapter가 읽은 값. I0는 파일·env·OS·network를 읽지 않는다.",
+      "type": "object",
+      "properties": {
+        "bin_path": {
+          "type": "string"
+        },
+        "binary_sha256": {
+          "type": "string"
+        },
+        "config_dir": {
+          "type": "string"
+        },
+        "default_shell": {
+          "type": "string"
+        },
+        "effective_config_sha256": {
+          "type": "string"
+        },
+        "platform": {
+          "$ref": "#/$defs/InstallPlatform"
+        },
+        "projects_root": {
+          "type": "string"
+        },
+        "state_dir": {
+          "type": "string"
+        },
+        "target_account": {
+          "type": "string"
+        },
+        "version": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "platform",
+        "version",
+        "binary_sha256",
+        "bin_path",
+        "config_dir",
+        "state_dir",
+        "projects_root",
+        "default_shell",
+        "effective_config_sha256",
+        "target_account"
+      ]
+    },
+    "InstallPlanSchema": {
+      "type": "string",
+      "enum": [
+        "aaa.install.plan.v1"
+      ]
+    },
+    "InstallPlatform": {
+      "type": "object",
+      "properties": {
+        "arch": {
+          "$ref": "#/$defs/InstallArch"
+        },
+        "os": {
+          "$ref": "#/$defs/InstallOs"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "os",
+        "arch"
+      ]
+    },
+    "InstallProgress": {
+      "type": "object",
+      "properties": {
+        "done": {
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "total": {
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "unit": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "done",
+        "total",
+        "unit"
+      ]
+    },
+    "InstallProjectMode": {
+      "type": "string",
+      "enum": [
+        "create",
+        "use",
+        "skip"
+      ]
+    },
+    "InstallPrompt": {
+      "type": "string",
+      "enum": [
+        "auto",
+        "plain"
+      ]
+    },
+    "InstallResult": {
+      "type": "object",
+      "properties": {
+        "binary_sha256": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "changes": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/InstallChange"
+          }
+        },
+        "checks": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/InstallCheck"
+          }
+        },
+        "error": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/InstallError"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "exit_code": {
+          "type": "integer",
+          "format": "uint8",
+          "maximum": 255,
+          "minimum": 0
+        },
+        "installation_id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "instance": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "needs_user": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/InstallNeedsUser"
+          }
+        },
+        "plan_sha256": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "platform": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/InstallPlatform"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "resume": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/InstallResume"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "role": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/InstallRole"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "rollback": {
+          "$ref": "#/$defs/InstallRollback"
+        },
+        "schema": {
+          "$ref": "#/$defs/InstallSchema"
+        },
+        "status": {
+          "$ref": "#/$defs/InstallStatus"
+        },
+        "version": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "schema",
+        "status",
+        "exit_code",
+        "changes",
+        "checks",
+        "needs_user",
+        "rollback"
+      ]
+    },
+    "InstallResume": {
+      "type": "object",
+      "properties": {
+        "installation_id": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "installation_id"
+      ]
+    },
+    "InstallRole": {
+      "type": "string",
+      "enum": [
+        "host",
+        "agent"
+      ]
+    },
+    "InstallRollback": {
+      "type": "object",
+      "properties": {
+        "remaining": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "state": {
+          "$ref": "#/$defs/InstallRollbackState"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "state",
+        "remaining"
+      ]
+    },
+    "InstallRollbackState": {
+      "type": "string",
+      "enum": [
+        "not_requested",
+        "completed",
+        "partial",
+        "failed"
+      ]
+    },
+    "InstallSchema": {
+      "type": "string",
+      "enum": [
+        "aaa.install.v1"
+      ]
+    },
+    "InstallServe": {
+      "type": "string",
+      "enum": [
+        "on",
+        "off"
+      ]
+    },
+    "InstallService": {
+      "type": "string",
+      "enum": [
+        "auto",
+        "launchd",
+        "systemd-system",
+        "systemd-user",
+        "windows-scm",
+        "none"
+      ]
+    },
+    "InstallStart": {
+      "type": "string",
+      "enum": [
+        "now",
+        "deferred"
+      ]
+    },
+    "InstallStartup": {
+      "type": "string",
+      "enum": [
+        "auto",
+        "manual"
+      ]
+    },
+    "InstallStatus": {
+      "type": "string",
+      "enum": [
+        "planned",
+        "completed",
+        "unchanged",
+        "configured",
+        "needs_user",
+        "failed",
+        "cancelled"
+      ]
+    },
+    "InstallStorage": {
+      "type": "string",
+      "enum": [
+        "internal"
+      ]
+    },
+    "InstallStreamItem": {
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "code": {
+              "type": "string"
+            },
+            "installation_id": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "message": {
+              "type": "string"
+            },
+            "needs_user": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/InstallEventNeedsUser"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "phase": {
+              "$ref": "#/$defs/InstallPhase"
+            },
+            "progress": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/InstallProgress"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "schema": {
+              "$ref": "#/$defs/InstallEventSchema"
+            },
+            "seq": {
+              "type": "integer",
+              "format": "uint64",
+              "minimum": 0
+            },
+            "state": {
+              "$ref": "#/$defs/InstallEventState"
+            },
+            "type": {
+              "type": "string",
+              "const": "event"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "type",
+            "schema",
+            "seq",
+            "phase",
+            "state",
+            "code",
+            "message"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "installation_id": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "result": {
+              "$ref": "#/$defs/InstallResult"
+            },
+            "schema": {
+              "$ref": "#/$defs/InstallEventSchema"
+            },
+            "seq": {
+              "type": "integer",
+              "format": "uint64",
+              "minimum": 0
+            },
+            "type": {
+              "type": "string",
+              "const": "result"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "type",
+            "schema",
+            "seq",
+            "result"
+          ]
+        }
+      ]
+    },
+    "InstallToggle": {
+      "type": "string",
+      "enum": [
+        "enabled",
+        "disabled"
+      ]
+    },
+    "InstallWeb": {
+      "type": "string",
+      "enum": [
+        "local",
+        "off"
+      ]
+    }
+  }
+}

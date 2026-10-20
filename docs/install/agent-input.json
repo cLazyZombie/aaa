@@ -1,0 +1,31 @@
+{
+  "choices": {
+    "role": "agent",
+    "name": "mac-b",
+    "host": "mac-a.example.ts.net:7430",
+    "work_root": "/srv/aaa-work",
+    "work_storage": "internal",
+    "harness": [
+      "codex"
+    ],
+    "hooks": "install",
+    "service": "auto",
+    "network": "tailscale",
+    "enroll": "grant"
+  },
+  "context": {
+    "platform": {
+      "os": "macos",
+      "arch": "aarch64"
+    },
+    "version": "0.1.2",
+    "binary_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "bin_path": "/opt/aaa/bin/aaa",
+    "config_dir": "/srv/aaa/config",
+    "state_dir": "/srv/aaa/state",
+    "projects_root": "/srv/aaa/projects",
+    "default_shell": "/bin/zsh",
+    "effective_config_sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    "target_account": "uid:1001"
+  }
+}

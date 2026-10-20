@@ -1356,3 +1356,113 @@ checked_at: string | null, };
 
 export type UsageReport = { providers: Array<ProviderUsage>, };
 
+export type InstallRole = "host" | "agent";
+
+export type InstallOs = "macos" | "linux" | "windows";
+
+export type InstallArch = "aarch64" | "x86-64";
+
+export type InstallMode = "fresh" | "repair" | "reinstall";
+
+export type InstallToggle = "enabled" | "disabled";
+
+export type InstallProjectMode = "create" | "use" | "skip";
+
+export type InstallStorage = "internal";
+
+export type InstallHarness = "claude" | "codex" | "none";
+
+export type InstallLogin = "require" | "defer";
+
+export type InstallHooks = "install" | "preserve" | "skip";
+
+export type InstallService = "auto" | "launchd" | "systemd-system" | "systemd-user" | "windows-scm" | "none";
+
+export type InstallAccount = "current-user";
+
+export type InstallPasswordSource = "prompt" | "stdin" | "broker";
+
+export type InstallStartup = "auto" | "manual";
+
+export type InstallStart = "now" | "deferred";
+
+export type InstallLinger = "require" | "preserve";
+
+export type InstallPathPolicy = "preserve" | "user";
+
+export type InstallLauncherPolicy = "install" | "preserve";
+
+export type InstallNetwork = "tailscale" | "direct";
+
+export type InstallWeb = "local" | "off";
+
+export type InstallServe = "on" | "off";
+
+export type InstallPairing = "controller" | "skip";
+
+export type InstallEnroll = "wait" | "grant" | "skip";
+
+export type InstallOpen = "yes" | "no";
+
+export type InstallPrompt = "auto" | "plain";
+
+export type InstallStatus = "planned" | "completed" | "unchanged" | "configured" | "needs_user" | "failed" | "cancelled";
+
+export type InstallChangeState = "planned" | "applied" | "unchanged" | "pending" | "reverted" | "failed";
+
+export type InstallCheckState = "passed" | "failed" | "not_run" | "not_requested" | "unknown";
+
+export type InstallRollbackState = "not_requested" | "completed" | "partial" | "failed";
+
+export type InstallPhase = "detect" | "preflight" | "plan" | "authorize" | "stage" | "configure" | "hooks" | "work_root" | "service" | "enroll" | "web" | "pairing" | "verify" | "rollback";
+
+export type InstallEventState = "pending" | "running" | "completed" | "unchanged" | "skipped" | "needs_user" | "failed" | "reverted";
+
+export type InstallOperation = "write_file" | "stage_binary" | "stage_launcher" | "configure_hook" | "prepare_work_root" | "register_service" | "start_service" | "publish_web" | "enroll_agent" | "create_project" | "modify_path";
+
+export type InstallSchema = "aaa.install.v1";
+
+export type InstallPlanSchema = "aaa.install.plan.v1";
+
+export type InstallEventSchema = "aaa.install.event.v1";
+
+export type InstallAuthorizationSchema = "aaa.install.authorization.v1";
+
+export type InstallGrantSchema = "aaa.install.enroll-grant.v1";
+
+export type InstallPlatform = { os: InstallOs, arch: InstallArch, };
+
+export type InstallChoices = { role: InstallRole | null, instance: string | null, config_dir: string | null, state_dir: string | null, mode: InstallMode | null, name: string | null, local_agent: InstallToggle | null, bin_path: string | null, version: string | null, from: string | null, sha256: string | null, expected_os: InstallOs | null, expected_arch: InstallArch | null, project_mode: InstallProjectMode | null, project: string | null, projects_root: string | null, goal: string | null, work_root: string | null, work_mount: string | null, work_storage: InstallStorage | null, min_free_gb: number | null, default_cwd: string | null, shell: string | null, claude_path: string | null, codex_path: string | null, claude_home: string | null, codex_home: string | null, login: InstallLogin | null, hooks: InstallHooks | null, thread_profile: string | null, coordinator_profile: string | null, service: InstallService | null, service_account: InstallAccount | null, service_password_source: InstallPasswordSource | null, startup: InstallStartup | null, start: InstallStart | null, linger: InstallLinger | null, path: InstallPathPolicy | null, launcher: string | null, launcher_policy: InstallLauncherPolicy | null, host: string | null, agent_listen: string | null, web_listen: string | null, network: InstallNetwork | null, web: InstallWeb | null, tailscale_serve: InstallServe | null, serve_port: number | null, pairing: InstallPairing | null, enroll: InstallEnroll | null, wait_timeout: number | null, open_coordinator: InstallOpen | null, repo: Array<string>, harness: Array<InstallHarness>, harness_env: Array<InstallHarnessEnv>, profile_file: Array<string>, allow_thread_profile: Array<string>, allow_coordinator_profile: Array<string>, no_repo: boolean, };
+
+export type InstallHarnessEnv = { harness: InstallHarness, key: string, value: string, };
+
+export type InstallInvocation = { choices: InstallChoices, non_interactive: boolean, yes: boolean, dry_run: boolean, json: boolean, json_stream: boolean, prompt: InstallPrompt | null, events_file: string | null, authorization_stdin: boolean, authorization_file: string | null, secrets_stdin: boolean, service_password_ref: string | null, resume: string | null, status: string | null, };
+
+export type InstallPlanContext = { platform: InstallPlatform, version: string, binary_sha256: string, bin_path: string, config_dir: string, state_dir: string, projects_root: string, default_shell: string, effective_config_sha256: string, target_account: string, };
+
+export type InstallPlan = { schema: InstallPlanSchema, context: InstallPlanContext, choices: InstallChoices, };
+
+export type InstallError = { code: string, message: string, details: Array<string>, };
+
+export type InstallChange = { kind: string, action: string, state: InstallChangeState, };
+
+export type InstallCheck = { name: string, state: InstallCheckState, };
+
+export type InstallNeedsUser = { code: string, target: string, message: string, };
+
+export type InstallRollback = { state: InstallRollbackState, remaining: Array<string>, };
+
+export type InstallResume = { installation_id: string, };
+
+export type InstallResult = { schema: InstallSchema, installation_id: string | null, plan_sha256: string | null, status: InstallStatus, exit_code: number, role: InstallRole | null, instance: string | null, platform: InstallPlatform | null, version: string | null, binary_sha256: string | null, changes: Array<InstallChange>, checks: Array<InstallCheck>, needs_user: Array<InstallNeedsUser>, error: InstallError | null, rollback: InstallRollback, resume: InstallResume | null, };
+
+export type InstallProgress = { done: number, total: number, unit: string, };
+
+export type InstallStreamItem = { "type": "event", schema: InstallEventSchema, installation_id: string | null, seq: number, phase: InstallPhase, state: InstallEventState, code: string, message: string, progress?: InstallProgress, needs_user?: InstallEventNeedsUser, } | { "type": "result", schema: InstallEventSchema, installation_id: string | null, seq: number, result: InstallResult, };
+
+export type InstallEventNeedsUser = { kind: string, resume_id: string | null, };
+
+export type InstallPermission = { operation: InstallOperation, target: string, before_sha256: string | null, after_sha256: string | null, };
+
+export type InstallAuthorizationClaims = { schema: InstallAuthorizationSchema, installation_id: string, plan_sha256: string, platform: InstallPlatform, target_account: string, instance: string | null, binary_sha256: string, permissions: Array<InstallPermission>, issued_at_ms: number, expires_at_ms: number, nonce: string, issuer: string, };
+
