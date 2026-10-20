@@ -3,7 +3,7 @@
 // thread가 시작되지 않는다. 시간은 기다리지 않는다: 화면 표지 `data-tasks-sha`·`data-task-saving`과 파일 글을 본다.
 import fs from "node:fs";
 import crypto from "node:crypto";
-import { root, aaa, step, browser, pairPage, domIs, shot, openSettings } from "../lib/harness.mjs";
+import { root, aaa, step, browser, webkit, pairPage, domIs, shot, openSettings } from "../lib/harness.mjs";
 import { pairDevice } from "../lib/devices.mjs";
 
 const dir = () => `${root}/projects/demo`;
@@ -341,6 +341,49 @@ export default async function ({ page }) {
       md = sha(text);
     } finally {
       await p.context().close();
+    }
+  });
+
+  await step("터치 입력 글자: 할 일 검색·편집·붙여넣기·원문은 iOS 초점 확대 하한을 지킨다", async () => {
+    const wk = await webkit.launch();
+    try {
+      for (const [name, engine] of [["chromium", browser], ["webkit", wk]]) {
+        const { page: p } = await pairDevice(engine, aaa("web", "pair").code, "iphone", { hash: "#tasks" });
+        // iOS의 키보드·초점 확대는 headless에 없다. 실제 렌더된 글자의 하한을 검사한다.
+        const readable = async (scope) => {
+          const fields = scope.locator('input.input:visible, select.input:visible, textarea.input:visible, [contenteditable="true"]:visible');
+          const sizes = await fields.evaluateAll((els) => els.map((el) => ({ field: el.getAttribute("data-testid"), size: parseFloat(getComputedStyle(el).fontSize) })));
+          if (!sizes.length || sizes.some(({ size }) => size < 16)) throw new Error(`${name} 입력 글자: ${JSON.stringify(sizes)}`);
+        };
+        try {
+          await shaIs(p, md);
+          await readable(p.getByTestId("tasks-view"));
+          await p.getByTestId("tasks-fab").click();
+          await p.getByTestId("task-field-title").fill("입력 확대 확인");
+          await p.getByTestId("task-field-notes").fill("메모 입력 확인");
+          await p.getByTestId("task-field-owner").selectOption("person");
+          await p.getByTestId("task-field-person").fill("담당자");
+          await p.getByTestId("task-field-list").selectOption({ label: "+ 새 목록…" });
+          await p.getByTestId("task-field-new-list").fill("새 목록");
+          await readable(p.getByTestId("task-detail"));
+          await shot(p, `input-font-${name}-phone`);
+          await p.setViewportSize({ width: 844, height: 390 });
+          await readable(p.getByTestId("task-detail"));
+          await shot(p, `input-font-${name}-landscape`);
+          await p.getByTestId("task-detail-close").click();
+          await p.getByTestId("tasks-raw").click();
+          await p.getByTestId("task-raw-text").fill("# 원문 입력 확인\n");
+          await readable(p.getByTestId("task-raw-editor"));
+          await p.keyboard.press("Escape");
+          await p.getByTestId("tasks-list-add").click();
+          await p.getByTestId("task-name-input").fill("목록 입력 확인");
+          await readable(p.getByTestId("task-name-dialog"));
+        } finally {
+          await p.context().close();
+        }
+      }
+    } finally {
+      await wk.close();
     }
   });
 
