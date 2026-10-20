@@ -720,6 +720,8 @@ L2 결함 검증은 이전 root 가져오기 생략, 재시작 전 applied 변�
 - `docs/install/agent-input.json` → `agent-plan.json`/`agent-plan.sha256`은 공개된 canonical JSON/SHA-256 계약의
   독립 fixture다. 해시는 compact JSON의 key를 재귀 정렬하고 UTF-8/BOM·끝 LF 없이 계산한다.
   테스트 실행 중 owner가 기대 hash를 갱신하지 않는다.
+- SSH arch는 문자열 fixture `x86_64`의 역직렬화/직렬화를 검사한다. enum의 kebab-case 자동 변환으로
+  `x86-64`가 되던 실제 계약 결함은 이 fixture가 수정 전 RED, 명시 snake_case 수정 뒤 GREEN이다.
 - 새 보안/hash 검사는 허용 env 거부 제거, 대상 context를 hash에서 제외, 입력의 모르는 필드 허용을 각각 심어
   해당 owner 시험의 단언 실패를 본다. 각 변형은 원본 bytes로 복원한 뒤 다음 시험/전수 gate를 실행한다.
 - I0는 승인서/등록 허가의 schema만 만든다. 서명·pin·nonce·W0 executor·일회 grant·실제 감독자/SSH 수명은

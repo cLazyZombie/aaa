@@ -1370,7 +1370,7 @@ export type InstallRole = "host" | "agent";
 
 export type InstallOs = "macos" | "linux" | "windows";
 
-export type InstallArch = "aarch64" | "x86-64";
+export type InstallArch = "aarch64" | "x86_64";
 
 export type InstallMode = "fresh" | "repair" | "reinstall";
 

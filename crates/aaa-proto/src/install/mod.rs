@@ -20,7 +20,12 @@ macro_rules! state {
 }
 choice!(InstallRole { Host, Agent });
 choice!(InstallOs { Macos, Linux, Windows });
-choice!(InstallArch { Aarch64, X86_64 });
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
+#[serde(rename_all = "snake_case")]
+pub enum InstallArch {
+    Aarch64,
+    X86_64,
+}
 choice!(InstallMode { Fresh, Repair, Reinstall });
 choice!(InstallToggle { Enabled, Disabled });
 choice!(InstallProjectMode { Create, Use, Skip });

@@ -65,3 +65,11 @@ fn status_exit_contract_rejects_false_success_and_private_fields() {
     stream["type"] = serde_json::json!("unknown");
     assert!(serde_json::from_value::<InstallStreamItem>(stream).is_err());
 }
+
+#[test]
+fn expected_arch_uses_the_shared_ssh_spelling() {
+    let arch: InstallArch = serde_json::from_str("\"x86_64\"").expect("t-0471/t-0472 SSH arch");
+    assert_eq!(arch, InstallArch::X86_64);
+    assert_eq!(serde_json::to_string(&arch).unwrap(), "\"x86_64\"");
+    assert!(serde_json::from_str::<InstallArch>("\"x86-64\"").is_err());
+}

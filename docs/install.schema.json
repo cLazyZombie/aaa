@@ -111,7 +111,7 @@
       "type": "string",
       "enum": [
         "aarch64",
-        "x86-64"
+        "x86_64"
       ]
     },
     "InstallAuthorization": {
