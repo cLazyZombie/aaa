@@ -3,7 +3,7 @@
 // 그려 둔 채 숨긴다(App): 돌아오면 열어 둔 보고서·굴린 자리가 그대로다. 보고서 HTML은 thread 결과물처럼 sandbox iframe(opaque origin)이다.
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { ExternalLink } from "lucide-react";
-import type { DeviceRole, LibraryView } from "./gen/proto";
+import type { DeviceRole, LibraryView, ThreadView } from "./gen/proto";
 import { ApiError, call } from "./api";
 import { Icon } from "./icons";
 import { Markdown } from "./Markdown";
@@ -11,6 +11,7 @@ import { DrawerToggle, HeadMore, HeadNote } from "./drawer";
 import { LIBRARY_SANDBOX } from "./FileViewer";
 import { ReportThread, ReportsPanel, openReportWindow } from "./ReportsPanel";
 import { formatBytes } from "./formatBytes";
+import { ThreadAsks } from "./ThreadAsks";
 
 export type ReportRef = { project: string; name: string };
 
@@ -22,6 +23,11 @@ export function ReportsView({
   role,
   rev,
   onOpen,
+  threads,
+  askFocus,
+  askSeq,
+  unseen,
+  onAnswer,
 }: {
   shown: boolean;
   /** 연 보고서(없으면 목록) */
@@ -31,6 +37,14 @@ export function ReportsView({
   rev: number;
   /** 보고서 하나를 연다·목록으로(주소를 바꾼다) */
   onOpen: (report: ReportRef | null) => void;
+  /** 끝나지 않은 thread: 위 「지금」 줄과 「답할 것」 카드(plan §8.324) */
+  threads: ThreadView[];
+  /** 칩·알림으로 연 질문의 thread 번호(그 카드만 펼친다) */
+  askFocus: string | null;
+  /** 같은 질문을 다시 열 때마다 는다(접은 카드를 다시 펼친다) */
+  askSeq: number;
+  unseen: number;
+  onAnswer: (t: ThreadView, picks: (number | null)[], text: string | null) => Promise<void>;
 }) {
   // 목록은 보고서를 연 동안에도 그려 둔다. 숨으면 굴린 자리를 잃는 브라우저가 있어(display:none) 열 때 적고 돌아올 때 놓는다
   const listScroll = useRef<HTMLDivElement>(null);
@@ -50,12 +64,13 @@ export function ReportsView({
           <HeadNote />
           <div className="term-title">
             <strong>보고서</strong>
-            <span className="muted">보고서와 공유 링크</span>
+            <span className="muted">지금 상황·답할 것·보고서</span>
           </div>
           <HeadMore />
         </header>
         <div className="thread-body" ref={listScroll} data-testid="reports-scroll">
           <div className="thread-col">
+            <ThreadAsks threads={threads} focus={askFocus} focusSeq={askSeq} unseen={unseen} canControl={role !== "reader"} onAnswer={onAnswer} />
             <ReportsPanel role={role} rev={rev} onView={openReport} />
           </div>
         </div>

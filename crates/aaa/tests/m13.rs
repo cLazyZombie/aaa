@@ -4151,6 +4151,8 @@ fn coordinator_flow() {
             // thread의 시작 질문을 받는 쪽(plan §8.323): 채팅으로 묻고 턴을 끝낸다. harness 질문 창은 턴을 막아 쓰지 않는다
             && guide.contains("시작할 때 모아 묻는 질문")
             && guide.contains("턴을 끝내고 다른 일을 이어 간다")
+            && guide.contains("`aaa thread answer <id> 1A 2B`")
+            && guide.contains("## 앱 안 참조")
             && guide.contains("harness의 질문 창(예: Claude Code AskUserQuestion)은 쓰지 않는다"),
         "{guide}"
     );

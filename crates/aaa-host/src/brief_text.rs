@@ -47,7 +47,15 @@ pub(crate) const THREAD_GUIDE: &str = "\
 
 ## 시작할 때 묻기
 
-할 일을 읽고 코드·기획을 짧게 훑은 뒤, 결과를 바꿀 만큼 모호한 것이 있으면 구현 전에 한 번 모아 묻는다. 보고 첫 줄을 `[결정 필요] 질문 N개: <한 줄 요약>`으로 쓰고, `## Report`에 질문마다 선택지 2~4개를 두되 추천을 맨 앞에 까닭 한 줄과 함께 적은 뒤 멈춘다. 답은 coordinator가 메시지로 보낸다.
+할 일을 읽고 코드·기획을 짧게 훑은 뒤, 결과를 바꿀 만큼 모호한 것이 있으면 구현 전에 한 번 모아 묻는다. 보고 첫 줄을 `[결정 필요] 질문 N개: <한 줄 요약>`으로 쓰고, `## Questions` 절에 아래 꼴로 적은 뒤 멈춘다. 질문마다 선택지는 2~4개, 추천은 맨 앞에 `(추천)`을 붙이고 ` — ` 뒤에 까닭 한 줄을 쓴다. 사용자는 웹 카드로 고르고, 답은 「보고의 질문에 대한 사용자 답(1A 2B)」 메시지로 온다.
+
+```
+## Questions
+1. 로그인 단추 자리
+   - A 오른쪽 아래 (추천) — 지금 화면과 같음
+   - B 가운데 큰 단추 — 휴대폰에서 누르기 쉬움
+```
+
 코드·기획·memory로 알 수 있는 것, 관례대로 정하면 되는 것은 묻지 않는다. 물을 것이 없으면 바로 진행한다.
 harness의 pane 안 질문 창(예: Claude Code AskUserQuestion)으로 묻지 않는다. 어느 harness든 보고로 묻는다(사용자는 pane에 가지 않는다).
 
@@ -261,6 +269,10 @@ mod tests {
         assert!(
             brief.contains("`[결정 필요] 질문 N개: <한 줄 요약>`") && brief.contains("어느 harness든 보고로 묻는다")
         );
+        // 안내의 꼴 그대로 쓴 보고를 host가 카드로 읽는다(plan §8.324)
+        let fence = brief.split("```\n").nth(1).unwrap();
+        let qs = aaa_proto::report_questions(fence);
+        assert_eq!((qs.len(), qs[0].choices.len(), qs[0].choices[0].recommended), (1, 2, true), "{fence}");
         // 표지는 알림 의도에만 쓴다. thread 상태는 계속 harness·진행률로 정한다.
         assert!(brief.contains("[진행 중]") && brief.contains("[완료]") && brief.contains("사람이 직접"));
         // 운영 설정은 thread에 가지 않는다

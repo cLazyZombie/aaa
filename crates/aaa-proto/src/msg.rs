@@ -2144,6 +2144,20 @@ pub enum FrontRequest {
         #[serde(default)]
         mode: MessageMode,
     },
+    /// thread의 `## Questions`에 답한다(FRONT_API 1.68, plan §8.324). host가 지금 보고의 질문인지·아직 답하지 않았는지 다시 보고,
+    /// 「1A 2B」 꼴 글을 `ThreadMessage`와 같은 길로 thread에 보낸 뒤 답을 기록한다(모든 기기가 「답함」을 본다)
+    ThreadAnswer {
+        #[serde(default)]
+        #[ts(optional, as = "Option<String>")]
+        project: String,
+        thread: String,
+        /// 답하는 질문의 보고 hash(`ThreadQuestions.report_hash`)
+        report_hash: String,
+        /// 질문마다 고른 선택지(0부터). 직접 쓴 답으로 대신하는 질문은 null
+        picks: Vec<Option<u32>>,
+        #[serde(default)]
+        text: Option<String>,
+    },
     /// 이 host의 웹 화면들이 함께 쓰는 설정과 고정(herdr-web-ui `GET /api/preferences`)
     Preferences,
     /// 공유 설정을 바꾼다: 바꾼 설정만, 고정은 바뀌었을 때만(herdr-web-ui `PUT /api/preferences`). 보기 권한은 못 한다
@@ -2404,6 +2418,7 @@ impl FrontRequest {
             | FrontRequest::ThreadRead { project, .. }
             | FrontRequest::ThreadKeys { project, .. }
             | FrontRequest::ThreadMessage { project, .. }
+            | FrontRequest::ThreadAnswer { project, .. }
             | FrontRequest::Inbox { project, .. }
             | FrontRequest::InboxDone { project, .. }
             | FrontRequest::MissionShow { project, .. }

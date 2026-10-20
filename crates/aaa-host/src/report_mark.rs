@@ -11,6 +11,11 @@ pub(crate) fn marker(report: &str) -> Option<&'static str> {
         .find(|m| first == *m || first.strip_prefix(m).is_some_and(|rest| rest.starts_with(char::is_whitespace)))
 }
 
+/// 사람을 기다리는 표지인가(알림 의도 「확인 필요」). 질문 카드(`## Questions`)도 이 보고에서만 읽는다(plan §8.324)
+pub(crate) fn needs_user(report: &str) -> bool {
+    matches!(marker(report), Some("[결정 필요]" | "[검수 대기]" | "[확인 필요]" | "[사람 필요]"))
+}
+
 impl Host {
     /// 사본 교체와 DB 갱신 사이의 다른 보고를 알림 의도로 읽지 않는다.
     pub(crate) fn verified_report(&self, r: &ThreadRec) -> Option<String> {
@@ -27,12 +32,10 @@ impl Host {
     }
 
     pub(crate) fn report_attention(&self, r: &ThreadRec) -> Option<ReportAttention> {
-        match self.report_marker(r) {
-            Some("[완료]") => Some(ReportAttention::Completed),
-            Some("[결정 필요]" | "[검수 대기]" | "[확인 필요]" | "[사람 필요]") => {
-                Some(ReportAttention::NeedsUser)
-            }
-            _ => None,
+        let report = self.verified_report(r)?;
+        if needs_user(&report) {
+            return Some(ReportAttention::NeedsUser);
         }
+        (marker(&report) == Some("[완료]")).then_some(ReportAttention::Completed)
     }
 }

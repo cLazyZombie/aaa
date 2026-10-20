@@ -154,6 +154,8 @@ pub(crate) fn thread_rec(
         },
         report_hash: copy_hash,
         next,
+        questions: Vec::new(),
+        question_answer: None,
         copy_failures: 0,
         copy_retry_at_ms: 0,
         copy: report.map(|_| "complete".to_string()),

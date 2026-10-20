@@ -107,6 +107,9 @@
   text-align: center;
 }
 
+/* 답할 thread 질문(plan §8.324): 안 본 보고서 수 대신 빨강 */
+.activity-badge.is-ask { background: var(--status-blocked); color: var(--on-accent); }
+
 /* 좁은 창: 막대는 사이드바와 함께 drawer 안이고 drawer는 화면 머리줄(이미 상태 막대를 비킨) 아래다(style.css 768px 규칙) */
 @media (max-width: 768px) {
   .activity-brand { height: var(--head); padding-top: 0; }

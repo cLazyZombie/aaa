@@ -66,7 +66,27 @@ fn request_title(i: &InboxItem) -> Option<String> {
     if i.item_kind != "post" || i.subject != "coordinator" || i.event != "post request for user" {
         return None;
     }
-    redact(i.summary.split_once(": 「")?.1.strip_suffix('」')?, 160)
+    let title = i.summary.split_once(": 「")?.1.strip_suffix('」')?;
+    // 앱 안 참조(`aaa:question/<id>`, plan §8.324)는 알림을 누르면 가는 곳이다: 글에서는 뺀다
+    let words: Vec<&str> = title.split_whitespace().filter(|w| app_ref(w).is_none()).collect();
+    redact(&words.join(" "), 160)
+}
+
+/// 앱 안 참조 한 낱말(`aaa:question/<thread>`·`aaa:report/<이름>`)의 종류와 대상
+pub(crate) fn app_ref(word: &str) -> Option<(&str, &str)> {
+    let rest = word.strip_prefix("aaa:")?;
+    let (kind, target) = rest.split_once('/')?;
+    let ok = !target.is_empty() && target.chars().all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.'));
+    (matches!(kind, "question" | "report") && ok).then_some((kind, target))
+}
+
+/// coordinator 사용자 post 제목이 가리키는 thread 질문(누르면 그 질문 카드를 연다)
+fn request_question(i: &InboxItem) -> Option<String> {
+    request_title(i)?;
+    let title = i.summary.split_once(": 「")?.1;
+    title
+        .split_whitespace()
+        .find_map(|w| app_ref(w.trim_end_matches('」')).filter(|(k, _)| *k == "question").map(|(_, t)| t.to_string()))
 }
 
 /// 알림에 싣는 글 한 줄. 공개 검사와 같은 종류의 경로·주소·키를 자르기 전에 가린다(잘린 token 조각도 보내지 않음).
@@ -254,10 +274,13 @@ pub(crate) fn alert_text(place: &Place, items: &[InboxItem], titles: &HashMap<St
                 None => AlertText {
                     title: project.clone(),
                     lines: lines(true),
-                    url: if items.iter().all(|i| i.item_kind == "post" && i.subject == "coordinator") {
-                        "/#threads".into()
-                    } else {
-                        "/".into()
+                    // 질문을 가리키는 post 하나면 그 질문 카드(보고서 패널 「답할 것」), 그 밖의 post 묶음은 모든 thread
+                    url: match items.iter().filter_map(request_question).collect::<Vec<_>>().as_slice() {
+                        [one] if items.len() == 1 => format!("/#question={}", crate::push::url_escape(one)),
+                        _ if items.iter().all(|i| i.item_kind == "post" && i.subject == "coordinator") => {
+                            "/#threads".into()
+                        }
+                        _ => "/".into(),
                     },
                     tag: format!("aaa-{project}"),
                 },

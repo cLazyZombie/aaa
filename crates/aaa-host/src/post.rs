@@ -712,6 +712,16 @@ mod tests {
             &Default::default(),
         );
         assert!(!body.to_string().contains("merge") && !body.to_string().contains("token"), "{body}");
+        // 질문 참조가 든 제목: 글에서 빼고, 누르면 그 질문 카드로 간다(plan §8.324)
+        let mut asked = items[0].clone();
+        asked.summary = "local:cli@coord request: 「t-0512 질문 2개 · 추천: 1A 2A aaa:question/t-0512」".into();
+        let alert = crate::notify::alert_text(
+            &crate::notify::Place::Project("demo".into()),
+            std::slice::from_ref(&asked),
+            &Default::default(),
+        );
+        assert_eq!(alert.lines, ["coordinator 사용자 결정 요청 · t-0512 질문 2개 · 추천: 1A 2A"]);
+        assert_eq!(alert.url, "/#question=t-0512");
         assert!(crate::notify::pushes(&h.cfg.notify.item_kinds(), &items[0]));
         let mut done = input(92);
         done.to = "user".into();
