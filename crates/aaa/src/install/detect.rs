@@ -186,7 +186,7 @@ pub fn plan(i: &InstallInvocation) -> Result<InstallResult> {
         effective_config_sha256: "0".repeat(64),
         target_account: "unobserved".into(),
     };
-    aaa_config::install::plan(c.clone(), context.clone()).map_err(unsupported)?;
+    let shape = aaa_config::install::plan(c.clone(), context.clone()).map_err(unsupported)?;
     let config = real(&config)?;
     let state = real(&state)?;
     isolated(&c, &config, &state)?;
@@ -385,23 +385,20 @@ pub fn plan(i: &InstallInvocation) -> Result<InstallResult> {
         check(&mut result, "repo", InstallCheckState::Passed);
         observations[format!("repo:{repo}")] = json!(real(Path::new(repo))?);
     }
-    let mut service_paths = vec![];
-    if context.platform.os == InstallOs::Macos {
-        for role in if c.role == Some(InstallRole::Host) && has_local {
-            &["host", "agent"][..]
-        } else if c.role == Some(InstallRole::Host) {
-            &["host"][..]
-        } else {
-            &["agent"][..]
-        } {
-            let label =
-                c.instance.as_ref().map_or_else(|| format!("dev.aaa.{role}"), |i| format!("dev.aaa.{i}.{role}"));
-            service_paths.push(home.join("Library/LaunchAgents").join(format!("{label}.plist")));
-        }
+    let roles = if c.role == Some(InstallRole::Host) && has_local {
+        &["host", "agent"][..]
+    } else if c.role == Some(InstallRole::Host) {
+        &["host"][..]
+    } else {
+        &["agent"][..]
+    };
+    let service = super::services::read(shape.choices.service.unwrap(), roles, c.instance.as_deref(), &home);
+    for path in &service.files {
+        existing |= add_file(&mut files, path)?;
     }
-    for path in service_paths {
-        existing |= add_file(&mut files, &path)?;
-    }
+    existing |= service.present == Some(true);
+    check(&mut result, "service_manager", service.manager);
+    observations["service_inventory"] = json!({"manager":service.manager,"present":service.present});
     if let Some(launcher) = &c.launcher {
         add_file(&mut files, Path::new(launcher))?;
     }

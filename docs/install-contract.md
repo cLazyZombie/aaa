@@ -181,6 +181,9 @@ aaa install --role agent --name mac-a --host example.ts.net:7430 \
   여유 공간·Unix access만 사전 관찰한다. Windows ACL 쓰기 가능성, 안정 volume UUID, root 소유권은 unknown이다.
   device/volume serial 관찰은 계획 hash에 묶지만 적용 직전 안정 신원 재검사를 대신하지 않는다.
 - repo는 Git rev-parse를 고정 argv·fsmonitor 비활성·optional lock 없음·상한으로 읽는다. clone·checkout·trust 설정을 하지 않는다.
+  Windows는 SCM CONNECT/QUERY_STATUS만으로 같은 instance의 서비스 유무를 읽는다. Linux는 실제 unit 경로와
+  systemctl show LoadState만 읽으며 pager/암호 질문/서비스 변경은 하지 않는다. Mac은 기존 LaunchAgent plist를 읽는다.
+  systemd unit/SCM 이름은 기본 aaa-host/aaa-agent, instance는 aaa-<instance>-host/agent다. Mac label은 기존 dev.aaa.<instance>.<role>이다.
   remote repo, 실제 포트 bind, 서비스 ready/연결/등록/pairing/승인, harness 판·로그인·hook 신뢰는 관찰 범위에 따라 unknown/not_run이다.
   harness는 실행 권한/경로/내용만 읽는다. --version/로그인 명령도 설정을 만들 수 있어 dry-run에서 실행하지 않는다.
 - profile-file은 `schema = 1`과 `[profiles.<이름>]`만 있는 host TOML이다. 기존 profile 검증을 공유하고

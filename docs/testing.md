@@ -782,7 +782,11 @@ L2 결함 검증은 이전 root 가져오기 생략, 재시작 전 applied 변�
 
 - `cargo test -p aaa --test install --locked`: 실제 binary/argv와 임시 HOME/config/state/root/repo를 소유한다.
   문법·전역 instance·필수값 오류의 정제된 JSON/exit, JSON/NDJSON의 같은 계획 hash, dry-run/오류 전후 파일 snapshot 불변을 본다.
-  Windows에서도 실행하는 공통 여섯 시험과 Unix 실행 권한/harness 무실행 시험 하나다. I0 순수 입력 표를 반복하지 않는다.
+  공통 여섯 시험은 OS cfg로 빼지 않는다. Unix 실행 권한/harness 무실행 하나는 chmod·shell 의미를 검사하므로 Windows에 없다.
+  여기에 OS별 native owner 하나를 더해 Mac/Linux 8개, Windows 7개다. Mac은 기존 LaunchAgent 파일,
+  Linux는 stat mount 관찰·systemd system 조회/booted marker·XDG user unit 충돌·상대 경로,
+  Windows는 실제 drive mount·SCM 읽기 조회·drive 상대/불완전 UNC 거부·ACL unknown을 검사한다. 등록/daemon-reload는 하지 않는다.
+  snapshot은 내용·목록뿐 아니라 파일 종류·권한·수정 시각을 포함해 같은 내용 재쓰기/권한 변경도 잡는다. I0 순수 입력 표를 반복하지 않는다.
 - 기존 base/local 설정·CLI에 없는 reconnect 변경의 계획 무효화, fresh 충돌, 없는 mount/남은 일반 폴더,
   binary SHA/형식·선택 파일 무실행, 실제 Git rev-parse 전후 무변경, profile import의 secret env/자유 실행 거부를 확인한다.
   모든 child 출력에서 fake secret canary가 없어야 한다. snapshot에는 선택한 events/lock/probe 경로도 들어간다.
@@ -790,4 +794,6 @@ L2 결함 검증은 이전 root 가져오기 생략, 재시작 전 applied 변�
   profile owner에 secret/shell guard 제거, harness owner에 --version 실행을 각각 심으면 의도한 단언에서 실패해야 한다.
   원본 source bytes를 복구하고 같은 owner GREEN 뒤 전수 gate를 실행한다. 의도적인 leak 양성 대조 로그와 정상 출력 검사를 구분한다.
 - 공식 gate는 전체 ci-local·deps·check-public이다. Windows cross-check는 native SID/volume API의 컴파일 증거다.
-  Windows/Linux 실제 CLI 실행·서비스 등록·boot/login/PTY는 서로 다른 증거이며 이 Mac의 통과로 대신하지 않는다.
+  Windows·Linux 실제 실행: main push 뒤 CI(windows-2025·ubuntu-24.04)의 cargo test가 판정한다.
+  사전 branch/PR push·별도 runner/VM은 쓰지 않는다. 착지 전은 macOS 전체 gate와 Windows cross clippy/build이며,
+  I1을 완료로 부르지 않는다. 서비스 등록·boot/login/PTY는 후속 단계의 별도 증거다.

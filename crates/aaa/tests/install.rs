@@ -11,6 +11,9 @@ const CANARY: &str = "install-secret-canary-DO-NOT-PRINT";
 static SEQ: AtomicU32 = AtomicU32::new(0);
 struct Lab(PathBuf);
 impl Lab {
+    fn instance(&self) -> String {
+        format!("i{:x}", std::process::id())
+    }
     fn new() -> Self {
         let p = std::env::temp_dir().join(format!(
             "aaa-install-{}-{}",
@@ -33,6 +36,7 @@ impl Lab {
         }
         c.env("AAA_CONFIG_DIR", self.0.join("config"))
             .env("AAA_STATE_DIR", self.0.join("state"))
+            .env("AAA_INSTANCE", self.instance())
             .env("SHELL", if cfg!(windows) { "cmd.exe" } else { "/bin/sh" });
         let out = c.output().unwrap();
         for bytes in [&out.stdout, &out.stderr] {
@@ -78,17 +82,35 @@ impl Drop for Lab {
         std::fs::remove_dir_all(&self.0).unwrap();
     }
 }
-fn snapshot(root: &Path) -> BTreeMap<PathBuf, Vec<u8>> {
-    fn visit(root: &Path, at: &Path, out: &mut BTreeMap<PathBuf, Vec<u8>>) {
+#[derive(Debug, PartialEq, Eq)]
+struct FileView {
+    readonly: bool,
+    modified: Option<std::time::SystemTime>,
+    #[cfg(unix)]
+    mode: u32,
+    bytes: Option<Vec<u8>>,
+}
+fn snapshot(root: &Path) -> BTreeMap<PathBuf, FileView> {
+    fn visit(root: &Path, at: &Path, out: &mut BTreeMap<PathBuf, FileView>) {
+        let meta = at.metadata().unwrap();
+        #[cfg(unix)]
+        use std::os::unix::fs::PermissionsExt;
+        out.insert(
+            at.strip_prefix(root).unwrap().to_owned(),
+            FileView {
+                readonly: meta.permissions().readonly(),
+                modified: meta.modified().ok(),
+                #[cfg(unix)]
+                mode: meta.permissions().mode(),
+                bytes: if meta.is_file() { Some(std::fs::read(at).unwrap()) } else { None },
+            },
+        );
+        if !meta.is_dir() {
+            return;
+        }
         for entry in std::fs::read_dir(at).unwrap() {
             let p = entry.unwrap().path();
-            let key = p.strip_prefix(root).unwrap().to_owned();
-            if p.is_dir() {
-                out.insert(key, vec![]);
-                visit(root, &p, out);
-            } else {
-                out.insert(key, std::fs::read(p).unwrap());
-            }
+            visit(root, &p, out);
         }
     }
     let mut out = BTreeMap::new();
@@ -327,4 +349,97 @@ fn install_observes_harness_paths_without_running_their_login_or_version_command
         found["checks"].as_array().unwrap().iter().any(|c| c["name"] == "claude_version" && c["state"] == "unknown")
     );
     assert_eq!(snapshot(&lab.0), before, "dry-run은 harness 조회의 부작용도 만들지 않는다");
+}
+
+#[cfg(target_os = "macos")]
+#[test]
+fn install_macos_launchagent_inventory_is_read_only_even_when_service_is_not_requested() {
+    let lab = Lab::new();
+    let dir = lab.0.join("Library/LaunchAgents");
+    std::fs::create_dir_all(&dir).unwrap();
+    let plist = dir.join(format!("dev.aaa.{}.agent.plist", lab.instance()));
+    std::fs::write(&plist, "<plist><dict/></plist>\n").unwrap();
+    let mut args = lab.args();
+    args.push("--json".into());
+    let before = snapshot(&lab.0);
+    let v = json(&lab.run(&args));
+    assert_eq!(v["exit_code"], 4);
+    assert_eq!(v["error"]["code"], "existing_installation_conflict");
+    assert_eq!(snapshot(&lab.0), before);
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn install_linux_mount_and_systemd_user_inventory_are_read_only() {
+    let lab = Lab::new();
+    // stat의 mount 관찰을 별도 oracle로 삼아 /proc parser가 실제 볼륨을 인정하는지 본다.
+    let stat = Command::new("stat").args(["-c", "%m"]).arg(&lab.0).output().unwrap();
+    assert!(stat.status.success());
+    let mount = String::from_utf8(stat.stdout).unwrap();
+    let mut args = lab.args();
+    let at = args.iter().position(|s| s == "--work-storage").unwrap();
+    args.splice(at..at + 2, ["--work-mount".into(), mount.trim().into()]);
+    let at = args.iter().position(|s| s == "--service").unwrap() + 1;
+    args[at] = "systemd-system".into();
+    args.push("--json".into());
+    let before = snapshot(&lab.0);
+    let v = json(&lab.run(&args));
+    assert_eq!(v["status"], "planned");
+    assert!(v["checks"].as_array().unwrap().iter().any(|c| c["name"] == "work_mount" && c["state"] == "passed"));
+    // booted marker는 manager 조회와 다른 OS 관찰이다. systemd가 없는 환경은 unknown이다.
+    let expected = if Path::new("/run/systemd/system").is_dir() { "passed" } else { "unknown" };
+    assert!(v["checks"].as_array().unwrap().iter().any(|c| c["name"] == "service_manager" && c["state"] == expected));
+    assert_eq!(snapshot(&lab.0), before);
+    // AAA가 쓰는 XDG_CONFIG_HOME과 같은 실제 user-unit 위치다. daemon-reload/등록은 하지 않는다.
+    args[at] = "systemd-user".into();
+    let dir = lab.0.join("systemd/user");
+    std::fs::create_dir_all(&dir).unwrap();
+    let unit = dir.join(format!("aaa-{}-agent.service", lab.instance()));
+    std::fs::write(&unit, "[Service]\nExecStart=/usr/bin/false\n").unwrap();
+    let before = snapshot(&lab.0);
+    let v = json(&lab.run(&args));
+    assert_eq!(v["exit_code"], 4);
+    assert_eq!(v["error"]["code"], "existing_installation_conflict");
+    assert_eq!(snapshot(&lab.0), before);
+    let at = args.iter().position(|s| s == "--work-root").unwrap() + 1;
+    args[at] = "relative/work".into();
+    let v = json(&lab.run(&args));
+    assert_eq!(v["exit_code"], 2);
+    assert_eq!(snapshot(&lab.0), before);
+}
+
+#[cfg(windows)]
+#[test]
+fn install_windows_drive_mount_and_scm_queries_are_read_only() {
+    let lab = Lab::new();
+    let canonical = lab.0.canonicalize().unwrap();
+    let mount = canonical.ancestors().last().unwrap().to_string_lossy().into_owned();
+    let mut args = lab.args();
+    let at = args.iter().position(|s| s == "--work-storage").unwrap();
+    args.splice(at..at + 2, ["--work-mount".into(), mount]);
+    let at = args.iter().position(|s| s == "--service").unwrap() + 1;
+    args[at] = "windows-scm".into();
+    args.push("--json".into());
+    let before = snapshot(&lab.0);
+    let v = json(&lab.run(&args));
+    assert_eq!(v["status"], "planned");
+    for name in ["service_manager", "work_mount"] {
+        assert!(v["checks"].as_array().unwrap().iter().any(|c| c["name"] == name && c["state"] == "passed"));
+    }
+    assert!(
+        v["checks"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|c| c["name"] == "write_permission_preflight" && c["state"] == "unknown")
+    );
+    assert_eq!(snapshot(&lab.0), before);
+    // drive 상대/불완전 UNC는 filesystem/SCM을 바꾸기 전의 계약 오류다.
+    let at = args.iter().position(|s| s == "--work-root").unwrap() + 1;
+    for bad in ["C:relative", "\\\\example-server"] {
+        args[at] = bad.into();
+        let v = json(&lab.run(&args));
+        assert_eq!(v["exit_code"], 2);
+        assert_eq!(snapshot(&lab.0), before);
+    }
 }

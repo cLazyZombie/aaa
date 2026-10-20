@@ -9,6 +9,7 @@ mod args;
 mod detect;
 mod platform;
 mod profiles;
+mod services;
 pub use args::Args;
 
 /// 문법 오류가 나도 install의 출력 계약을 선택한다. 다른 명령의 인자 안 install은 세지 않는다.
