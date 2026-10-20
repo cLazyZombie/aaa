@@ -23,6 +23,7 @@ dependencies = [
  "objc2-foundation",
  "objc2-service-management",
  "portable-pty",
+ "rusqlite",
  "serde",
  "serde_json",
  "sha2",

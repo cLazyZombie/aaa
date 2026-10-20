@@ -5851,3 +5851,20 @@ L4 후속(10-20 00시 사용자 관찰): 멈춤 상태의 후보 예약과 재�
 - **CLI `aaa task list`(brief 밖에서 더함).** `tasks`를 읽기만 하는 명령이다. 보기 권한(worker 세션 안 CLI)으로 읽히는지를 여러 프로세스 시험이 보려면 CLI 길이 있어야 했고, coordinator도 형식 어긋남을 볼 수 있다. T2가 같은 묶음에 add·edit·rm 등을 더한다.
 - **참고 위치.** 행 모양·상태 아이콘(Circle·CircleDot, 상태별 글자색, 낭독기용 상태 문구): t3code 4b1024da `apps/web/src/components/chat/ComposerTasksBadge.tsx:37-138`. 목록 머리(이름·수)와 메모 표지 `≡`, 메모 상세: herdr-projects 0.2.35 `src/popup.rs` `build`(Section::Tasks)·`task_detail`. 휴대폰 Back으로 닫는 상세: herdr-web-ui aa624cb의 시트 뒤로(이 저장소 `web/src/herdr/sheetHistory.ts`). 참고 넷에 사람이 웹에서 할 일 목록을 보는 화면은 없어(t-0469 §1.3) 와이어프레임(t-0469 index.html §3)을 따랐다. 다르게 한 것: 기획 §3.6은 「파일이 없으면 탭을 숨긴다」였으나 T1 brief의 「파일이 없으면 「없음」 표시」를 따라 탭을 두고 「없음」을 보인다(설정이 잘못된 것을 알 수 있다). 휴대폰 행은 폭 때문에 owner·thread 칩을 숨기고 상세에서 보인다(와이어프레임 휴대폰 행과 같다).
 - **검증.** host 유닛 `tasks::tests`(오독 꼴 셋, 지금 시험 `lines_owners_notes` 기대 그대로, 줄·상위·블록 hash·목록 설명, `task_notes` 경로·절)·`project::tests`(task_notes 더하기·빼기·거부). 오독 판정을 끈 결함 심기에서 `misread_owner_shapes_become_problems`가 실패한다. 여러 프로세스 `m13 task_board_reads_tasks_and_follows_file_edits`. 웹 순수 규칙 `tasksModel.test.mjs`, 웹 E2E `43-tasks`.
+
+### 8.307 키 관리자 K0: aaa 기록의 env 값 가림(10-20, t-0481)
+
+- **요청.** 사용자 10-20 「키 관리자를 만들꺼야 …」, 「완벽한 보안 보다는 사용성에 더 초점을, 기본적인 보안만 되면 돼」, 「다만 로그 같은 곳에서 절대 나오면 안 돼」. 키 관리자 기획(t-0468 확정판) §8의 K0만 한다. 지금 새는 자리를 막는 단계이고, 보관·주입·출력 가림(K1~K3)은 하지 않는다.
+- **감사 기록.** `pane_run`은 띄운 spec을 그대로 남기되 env는 이름 목록만 쓴다(`db::pane_run_detail`). spec의 `env`와 host가 푼 profile의 `resolved_profile.env`가 대상이다.
+- **옛 행 정리.** host DB를 열 때 env 값이 남은 `pane_run` 행을 이름만으로 바꾼다. 대상은 JSON `env[0]`이 배열이거나 `resolved_profile.env`가 객체인 행이다. 그 뒤 `VACUUM`과 `wal_checkpoint(TRUNCATE)`로 빈 page와 WAL에서도 지운다. 시작마다 그런 행만 찾으므로, 옛 판으로 되돌렸다가 다시 올려도 그 사이 행이 정리된다. VACUUM 전에 멈추거나 VACUUM이 실패하면(임시 공간·잠금) meta `audit_vacuum` 표지가 남아 다음 시작에 다시 한다. 이때 host는 경고만 남기고 시작한다(값은 이미 지웠다). schema는 올리지 않는다(옛 판도 그대로 연다). 운영 DB는 배포 뒤 host가 시작하면서 스스로 정리한다.
+- **Debug.** `Launch`·`ResolvedProfile`·`SpawnSpec`(aaa-proto)과 설정 `Profile`·`HarnessOverride`는 env를 `«env N개: 이름…»`로만 찍는다. 이 형을 품은 메시지(`AgentRequest::Spawn`·`ThreadPrepare`·`ThreadReady`)도 같으므로 debug 로그와 「예상하지 못한 응답」 오류 문구에 값이 나오지 않는다. wire 직렬화는 그대로라 FRONT_API와 agent 기능은 바뀌지 않는다.
+- **export.** `project delete`가 휴지통에 남기는 `aaa-records.json`에서 thread 기록의 `launch.env`는 이름만 둔다.
+- **평문 경고.** host.toml·host.local.toml의 profile env 가운데 이름에 KEY·TOKEN·SECRET·PASSWORD(대소문자 무관)가 들고 값이 비어 있지 않은 것은, 값을 정한 파일·줄을 짚어 경고한다. host 시작 로그와 `aaa config check`에 나온다. 경고에는 이름만 쓴다. agent.toml `[harnesses.*] env`는 K0 범위 밖이라 경고하지 않는다.
+- **core dump.** host·agent·session host는 시작할 때 `RLIMIT_CORE` soft를 0으로 내린다. hard는 그대로 둔다. pane 자식도 soft 0을 물려받지만 pane 안에서 `ulimit -c`로 다시 켤 수 있다.
+- **그대로 둔 것.** pane 안 `printenv`에는 값이 보인다(env 전달 기본 동작). 다음은 아직 평문이며 K2(참조만 저장)에서 막는다: DB `threads.data`의 `launch.env`, agent `sessions/*/spec.json`·화면 저장물, `thread-preparations/` 준비 기록. 로그 단계는 `AAA_LOG`가 정한다(`RUST_LOG`는 읽지 않는다).
+- **검증.** E2E m13 `secret_k0::env_values_stay_out_of_audit_db_logs_and_export`(docs/testing.md 「키 관리자 K0 카나리 찾기」). 유닛 시험은 다섯이다.
+  - host `db::audit_env_tests`: 정리 전 DB 사본으로 옛 행 정리·지운 행의 빈 page·WAL 0건·다시 열기.
+  - proto `debug_shows_env_names_without_values`
+  - config `plaintext_secret_env_warns_by_name_only`
+  - common `disable_core_dump_zeroes_only_the_soft_limit`
+  - 고치기 전 main(11f2dc64)에서 E2E는 export·감사 기록·WAL에서 카나리를 찾아 실패했고, 정리 유닛은 값이 남아 실패했다. 결함 심기 셋(core dump 끄기 빼기, 감사 기록에 spec 그대로 쓰기, export 거르기 빼기)을 E2E가 하나씩 잡는다.

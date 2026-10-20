@@ -243,7 +243,7 @@ impl Db {
     }
 
     pub fn open(path: &Path) -> Result<Db> {
-        let conn = Connection::open(path)?;
+        let mut conn = Connection::open(path)?;
         conn.pragma_update(None, "journal_mode", "WAL")?;
         conn.pragma_update(None, "foreign_keys", "ON")?;
         conn.execute_batch(
@@ -334,6 +334,7 @@ impl Db {
         if !has_from_thread {
             conn.execute("ALTER TABLE library_reports ADD COLUMN from_thread TEXT", [])?;
         }
+        scrub_audit_env(&mut conn)?;
         let v: Option<String> =
             conn.query_row("SELECT value FROM meta WHERE key='schema'", [], |r| r.get(0)).optional()?;
         match v.as_deref().map(str::parse::<i64>) {
@@ -1106,6 +1107,7 @@ impl Db {
     }
 
     /// 프로젝트 하나의 기록(아래 [`PROJECT_TABLES`]의 행과 `<종류>:<프로젝트>…` meta)을 JSON으로. `project delete`가 휴지통 폴더에 둔다.
+    /// thread 기록의 launch env는 이름만 남긴다(plan §8.307).
     pub fn project_export(&self, project: &str) -> Result<serde_json::Value> {
         use rusqlite::types::ValueRef;
         let c = self.conn.lock().unwrap();
@@ -1121,6 +1123,9 @@ impl Db {
                             ValueRef::Null => serde_json::Value::Null,
                             ValueRef::Integer(n) => n.into(),
                             ValueRef::Real(f) => f.into(),
+                            ValueRef::Text(b) if t == "threads" && name == "data" => {
+                                thread_data_without_env(&String::from_utf8_lossy(b)).into()
+                            }
                             ValueRef::Text(b) | ValueRef::Blob(b) => String::from_utf8_lossy(b).into_owned().into(),
                         };
                         o.insert(name.clone(), v);
@@ -1180,6 +1185,77 @@ impl Db {
 }
 
 /// project 열이 있는 표(옛 db에 남은 `merge_queue`는 읽지 않아 옮기지 않는다, 새 db에는 없다 — §8.135)
+/// env 값(`[[이름, 값]…]` 또는 `{이름: 값}`)을 이름 목록으로 바꾼다(키 관리자 K0, plan §8.307). 바꿨으면 true
+fn env_names_only(v: &mut serde_json::Value, path: &[&str]) -> bool {
+    use serde_json::Value;
+    let Some(env) = path.iter().try_fold(v, |v, k| v.get_mut(*k)) else { return false };
+    let names: Vec<Value> = match env {
+        Value::Array(items) if items.iter().any(|i| !i.is_string()) => {
+            items.iter().map(|i| i.get(0).cloned().unwrap_or(Value::Null)).collect()
+        }
+        Value::Object(map) => map.keys().map(|k| Value::String(k.clone())).collect(),
+        _ => return false,
+    };
+    *env = Value::Array(names);
+    true
+}
+
+/// pane_run 감사 기록(띄운 spec)에서 env 값을 뺀다: spec의 env와 host가 푼 profile env
+fn spawn_env_names_only(v: &mut serde_json::Value) -> bool {
+    let a = env_names_only(v, &["env"]);
+    env_names_only(v, &["resolved_profile", "env"]) || a
+}
+
+/// pane_run 감사 기록의 detail: env는 이름만(plan §8.307)
+pub(crate) fn pane_run_detail(spec: &aaa_proto::SpawnSpec) -> String {
+    let mut v = serde_json::to_value(spec).unwrap_or_default();
+    spawn_env_names_only(&mut v);
+    v.to_string()
+}
+
+/// export에 넣는 thread 기록: launch env는 이름만. JSON이 아니면 그대로 둔다
+fn thread_data_without_env(data: &str) -> String {
+    let Ok(mut v) = serde_json::from_str::<serde_json::Value>(data) else { return data.to_string() };
+    if env_names_only(&mut v, &["launch", "env"]) { v.to_string() } else { data.to_string() }
+}
+
+/// 옛 판이 pane_run 감사 기록에 남긴 env 값을 이름만 남기고 지운다. 지운 값이 빈 page·WAL에 남지 않게 VACUUM하고 WAL을 비운다.
+/// 시작마다 값이 남은 행만 찾으므로 옛 판으로 되돌렸다 다시 올려도 그 사이 행을 정리한다. VACUUM 전에 멈추면 표지가 남아 다음 시작에
+/// 다시 한다(plan §8.307).
+fn scrub_audit_env(conn: &mut Connection) -> Result<()> {
+    let rows: Vec<(i64, String)> = conn
+        .prepare(
+            "SELECT rowid, detail FROM audit WHERE action='pane_run' AND json_valid(detail)
+             AND (json_type(detail,'$.env[0]')='array' OR json_type(detail,'$.resolved_profile.env')='object')",
+        )?
+        .query_map([], |r| Ok((r.get(0)?, r.get(1)?)))?
+        .collect::<rusqlite::Result<_>>()?;
+    let pending = conn.query_row("SELECT 1 FROM meta WHERE key='audit_vacuum'", [], |_| Ok(())).optional()?.is_some();
+    if rows.is_empty() && !pending {
+        return Ok(());
+    }
+    let tx = conn.transaction()?;
+    for (rowid, detail) in &rows {
+        let mut v: serde_json::Value = serde_json::from_str(detail)?;
+        spawn_env_names_only(&mut v);
+        tx.execute("UPDATE audit SET detail=?2 WHERE rowid=?1", params![rowid, v.to_string()])?;
+    }
+    tx.execute("INSERT INTO meta(key,value) VALUES('audit_vacuum','1') ON CONFLICT(key) DO NOTHING", [])?;
+    tx.commit()?;
+    // 행의 값은 이미 지웠다. VACUUM(임시 공간·잠금이 필요하다)이 실패해도 host는 시작하고, 표지가 남아 다음 시작에 다시 한다
+    let vacuum = conn.execute_batch("VACUUM").and_then(|_| {
+        conn.execute("DELETE FROM meta WHERE key='audit_vacuum'", [])?;
+        conn.query_row("PRAGMA wal_checkpoint(TRUNCATE)", [], |_| Ok(()))
+    });
+    match vacuum {
+        Ok(()) => tracing::info!(rows = rows.len(), "감사 기록의 옛 env 값을 지웠다(VACUUM)"),
+        Err(e) => {
+            tracing::warn!(rows = rows.len(), error = %e, "감사 기록의 옛 env 값은 지웠지만 VACUUM을 못 했다: 다음 시작에 다시 한다")
+        }
+    }
+    Ok(())
+}
+
 const PROJECT_TABLES: [&str; 8] =
     ["threads", "flow_events", "messages", "inbox", "evaluations", "library_links", "library_reports", "posts"];
 
@@ -1460,5 +1536,104 @@ mod rollout_tests {
         assert_eq!(db.meta("rollout:r").unwrap().as_deref(), Some("done"));
         assert_eq!(db.inbox_list(Some("demo"), true).unwrap(), [item]);
         assert!(!db.save_rollout_record("r", "done", None).unwrap());
+    }
+}
+
+#[cfg(test)]
+mod audit_env_tests {
+    use super::*;
+
+    fn bytes_have(dir: &Path, needle: &str) -> Vec<String> {
+        ["host.db", "host.db-wal", "host.db-shm"]
+            .iter()
+            .filter(|f| {
+                std::fs::read(dir.join(f)).is_ok_and(|b| b.windows(needle.len()).any(|w| w == needle.as_bytes()))
+            })
+            .map(|f| f.to_string())
+            .collect()
+    }
+
+    /// 옛 판이 남긴 pane_run 감사 기록(SpawnSpec 직렬화 전체)을 연 Db가 env 이름만 남기고, 지운 값이 빈 page·WAL에 남지 않게
+    /// VACUUM한다(plan §8.307). 정리 전 DB 사본으로 시험하고, 다시 열어도 그대로다.
+    #[test]
+    fn open_scrubs_old_pane_run_env_values_and_vacuums() {
+        let root = std::env::temp_dir().join(format!("aaa-audit-env-{}", std::process::id()));
+        let (old, copy) = (root.join("old"), root.join("copy"));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&old).unwrap();
+        std::fs::create_dir_all(&copy).unwrap();
+        let (value, gone) = ("aaa-canary-audit-5f29deba74dd23fe", "aaa-canary-deleted-0c827dbcceed4341");
+        let spec = |v: &str| aaa_proto::SpawnSpec {
+            name: "demo/t-0001".into(),
+            argv: vec!["/bin/sh".into()],
+            cwd: None,
+            env: vec![("GH_TOKEN".into(), v.into()), ("AAA_THREAD".into(), "t-0001".into())],
+            cols: 120,
+            rows: 32,
+            role: None,
+            harness: None,
+            profile: Some("api".into()),
+            resolved_profile: Some(aaa_proto::ResolvedProfile {
+                harness: "claude".into(),
+                model: String::new(),
+                effort: String::new(),
+                args: vec![],
+                command: vec![],
+                env: [("ANTHROPIC_API_KEY".to_string(), v.to_string())].into(),
+            }),
+        };
+        {
+            // 고치기 전 판이 쓰던 그대로: spec 전체를 detail에 둔다. 지운 행의 값도 빈 page에 남아 있다
+            let db = Db::open(&old.join("host.db")).unwrap();
+            let c = db.conn.lock().unwrap();
+            let put = |v: &str| {
+                c.execute(
+                    "INSERT INTO audit(ts,actor,action,detail) VALUES(1,'local','pane_run',?1)",
+                    [serde_json::to_string(&spec(v)).unwrap()],
+                )
+                .unwrap()
+            };
+            put(value);
+            put(gone);
+            c.execute("DELETE FROM audit WHERE detail LIKE '%' || ?1 || '%'", [gone]).unwrap();
+            c.execute("INSERT INTO audit(ts,actor,action,detail) VALUES(2,'local','pane_run','p1 5 bytes')", [])
+                .unwrap();
+            c.execute("INSERT INTO audit(ts,actor,action,detail) VALUES(3,'local','web_publish','')", []).unwrap();
+        }
+        for f in ["host.db", "host.db-wal", "host.db-shm"] {
+            let _ = std::fs::copy(old.join(f), copy.join(f));
+        }
+        assert!(
+            !bytes_have(&copy, value).is_empty() && !bytes_have(&copy, gone).is_empty(),
+            "정리 전 사본에는 값이 있다"
+        );
+
+        let db = Db::open(&copy.join("host.db")).unwrap();
+        let rows = || -> Vec<(String, String)> {
+            let c = db.conn.lock().unwrap();
+            let mut st = c.prepare("SELECT action, detail FROM audit ORDER BY ts").unwrap();
+            st.query_map([], |r| Ok((r.get(0)?, r.get(1)?))).unwrap().map(Result::unwrap).collect()
+        };
+        let got = rows();
+        assert_eq!(got.len(), 3, "{got:?}");
+        let v: serde_json::Value = serde_json::from_str(&got[0].1).unwrap();
+        assert_eq!(v["env"], serde_json::json!(["GH_TOKEN", "AAA_THREAD"]), "{v}");
+        assert_eq!(v["resolved_profile"]["env"], serde_json::json!(["ANTHROPIC_API_KEY"]), "{v}");
+        assert_eq!((v["name"].as_str(), v["profile"].as_str()), (Some("demo/t-0001"), Some("api")), "나머지는 그대로");
+        assert_eq!(got[1..], [("pane_run".into(), "p1 5 bytes".into()), ("web_publish".into(), String::new())]);
+        assert_eq!(db.meta("audit_vacuum").unwrap(), None, "VACUUM을 끝냈다");
+        // 열린 채로도 파일(DB·WAL)에 값이 없다: 시작 때 정리를 마쳤다
+        assert_eq!(bytes_have(&copy, value), Vec::<String>::new());
+        assert_eq!(bytes_have(&copy, gone), Vec::<String>::new());
+        drop(db);
+        let db = Db::open(&copy.join("host.db")).unwrap();
+        let again: Vec<(String, String)> = {
+            let c = db.conn.lock().unwrap();
+            let mut st = c.prepare("SELECT action, detail FROM audit ORDER BY ts").unwrap();
+            st.query_map([], |r| Ok((r.get(0)?, r.get(1)?))).unwrap().map(Result::unwrap).collect()
+        };
+        assert_eq!(again, got, "다시 열어도 그대로");
+        drop(db);
+        let _ = std::fs::remove_dir_all(&root);
     }
 }

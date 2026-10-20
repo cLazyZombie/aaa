@@ -51,8 +51,24 @@ pub enum ThreadKind {
     Adopted,
 }
 
+/// env를 Debug로 찍을 때 값 없이 「«env N개: 이름…»」만 보인다(키 관리자 K0, plan §8.307). 로그·오류 문구가 Debug를 쓴다.
+pub struct EnvNames<'a>(pub Vec<&'a str>);
+
+impl<'a> EnvNames<'a> {
+    pub fn of(names: impl IntoIterator<Item = &'a String>) -> Self {
+        EnvNames(names.into_iter().map(String::as_str).collect())
+    }
+}
+
+impl std::fmt::Debug for EnvNames<'_> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "«env {}개: {}»", self.0.len(), self.0.join(", "))
+    }
+}
+
 /// host profile에 그 머신 실행 경로·환경·hook을 적용한 결과. host는 thread 기록에 그대로 저장하고 restart·resume에 다시 쓴다(§7.2).
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+/// Debug는 env 값을 찍지 않는다([`EnvNames`]).
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 pub struct Launch {
     pub profile: String,
     /// claude·codex·shell·custom
@@ -63,6 +79,20 @@ pub struct Launch {
     pub resume_argv: Vec<String>,
     /// harness 세션 ID(미리 정할 수 있는 harness만, 예: claude `--session-id`)
     pub session_key: Option<String>,
+}
+
+impl std::fmt::Debug for Launch {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let Launch { profile, harness, argv, env, resume_argv, session_key } = self;
+        f.debug_struct("Launch")
+            .field("profile", profile)
+            .field("harness", harness)
+            .field("argv", argv)
+            .field("env", &EnvNames::of(env.iter().map(|(k, _)| k)))
+            .field("resume_argv", resume_argv)
+            .field("session_key", session_key)
+            .finish()
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
@@ -102,7 +132,8 @@ pub struct ThreadPrepare {
 }
 
 /// host에서 해석한 실행 설정. command·env는 옛 shell/custom profile의 호환 필드이며 머신 덮어쓰기가 우선이다.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+/// Debug는 env 값을 찍지 않는다([`EnvNames`]).
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ResolvedProfile {
     pub harness: String,
     pub model: String,
@@ -110,6 +141,20 @@ pub struct ResolvedProfile {
     pub args: Vec<String>,
     pub command: Vec<String>,
     pub env: std::collections::BTreeMap<String, String>,
+}
+
+impl std::fmt::Debug for ResolvedProfile {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let ResolvedProfile { harness, model, effort, args, command, env } = self;
+        f.debug_struct("ResolvedProfile")
+            .field("harness", harness)
+            .field("model", model)
+            .field("effort", effort)
+            .field("args", args)
+            .field("command", command)
+            .field("env", &EnvNames::of(env.keys()))
+            .finish()
+    }
 }
 
 /// host → agent: thread 인자에 더할 safety(herdr-projects `profiles::launch_args`·`Safety::launch_args`). host는 profile의
@@ -1145,6 +1190,58 @@ pub fn slug(title: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// env를 담는 형의 Debug(로그·오류 문구)는 이름만 찍고 값은 찍지 않는다. 이 형을 품은 메시지(AgentRequest·ThreadPrepare 등)도 같다.
+    #[test]
+    fn debug_shows_env_names_without_values() {
+        let value = "aaa-canary-debug-0123456789abcdef";
+        let env = vec![("GH_TOKEN".to_string(), value.to_string()), ("LANG".to_string(), value.to_string())];
+        let resolved = ResolvedProfile {
+            harness: "claude".into(),
+            model: String::new(),
+            effort: String::new(),
+            args: vec![],
+            command: vec![],
+            env: env.iter().cloned().collect(),
+        };
+        let launch = Launch {
+            profile: "p".into(),
+            harness: "claude".into(),
+            argv: vec!["claude".into()],
+            env: env.clone(),
+            resume_argv: vec![],
+            session_key: None,
+        };
+        let spec = crate::SpawnSpec {
+            name: "n".into(),
+            argv: vec![],
+            cwd: None,
+            env,
+            cols: 80,
+            rows: 24,
+            role: None,
+            harness: None,
+            profile: Some("p".into()),
+            resolved_profile: Some(resolved.clone()),
+        };
+        let prepare = ThreadPrepare {
+            resolved_profile: Some(resolved),
+            project: "demo".into(),
+            thread: "t-0001".into(),
+            title: String::new(),
+            kind: ThreadKind::Dir,
+            repo: None,
+            base: None,
+            profile: "p".into(),
+            brief: String::new(),
+            safety: None,
+        };
+        let request = crate::AgentRequest::Spawn(spec.clone());
+        for text in [format!("{launch:?}"), format!("{spec:?}"), format!("{prepare:#?}"), format!("{request:?}")] {
+            assert!(!text.contains(value) && !text.contains("0123456789"), "{text}");
+            assert!(text.contains("«env 2개: GH_TOKEN, LANG»"), "{text}");
+        }
+    }
 
     /// N-1 host의 wire 응답에는 L3 기록 필드가 없다.
     #[test]

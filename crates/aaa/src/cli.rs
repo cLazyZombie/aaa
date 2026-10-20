@@ -1492,6 +1492,7 @@ fn run(cli: Cli) -> Result<ExitCode> {
         Cmd::Host => {
             init_log("info");
             aaa_common::resource::raise_nofile_limit("host");
+            aaa_common::resource::disable_core_dump("host");
             legacy_guard()?;
             let cfg = load_or_exit(aaa_config::load_host(&aaa_config::paths::config_dir()))?;
             runtime()?.block_on(aaa_host::run(cfg, aaa_config::paths::state_dir()))?;
@@ -1500,6 +1501,7 @@ fn run(cli: Cli) -> Result<ExitCode> {
         Cmd::Agent(a) => {
             init_log("info");
             aaa_common::resource::raise_nofile_limit("agent");
+            aaa_common::resource::disable_core_dump("agent");
             legacy_guard()?;
             agent_cmd(a)
         }
@@ -1510,6 +1512,7 @@ fn run(cli: Cli) -> Result<ExitCode> {
         }
         Cmd::SessionHost { dir } => {
             init_log("info");
+            aaa_common::resource::disable_core_dump("session host");
             aaa_session::host::main(dir)?;
             Ok(ExitCode::SUCCESS)
         }
