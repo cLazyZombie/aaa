@@ -33,6 +33,8 @@ const env = {
   // 기본 profile(claude·codex) 목록이 이 머신의 설치·로그인에 따라 바뀌지 않게
   AAA_TEST_BUILTINS: "",
 };
+// 운영 pane에서 시험을 실행해도 실험실 CLI가 그 세션·hook 신원을 물려받지 않는다(Rust Lab과 같다).
+for (const key of ["AAA_SESSION_ID", "AAA_PROJECT", "AAA_THREAD", "AAA_HOOK_SOCK", "AAA_HOOK_TOKEN"]) delete env[key];
 const procs = new Map();
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));

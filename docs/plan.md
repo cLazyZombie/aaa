@@ -5748,3 +5748,14 @@ L4 후속(10-20 00시 사용자 관찰): 멈춤 상태의 후보 예약과 재�
 - **호환.** FRONT_API 1.57의 선택 필드(before/history/id)다. 구 웹은 무시하고 구 요청은 생략한다. `chat_pages.v1`을 알린 agent만 앞 쪽 요청을 받는다. 구 host/agent에는 history가 없어 앞 쪽 요청을 보내지 않고 갱신 안내를 보인다. AGENT_LINK의 선택 기능이며 버전은 1.8 그대로다.
 - **참고 위치.** herdr-web-ui aa624cb `server/conversation.ts` ConversationPage/TranscriptStream의 파일 byte cursor, `src/components/ChatView.tsx:1030-1083,1199`의 400px 이전 쪽 요청/row key·좌표 보존과 구 bridge 판정, `src/lib/conversationRefresh.ts`의 page lane을 따른다. t3code 4b1024da `apps/web/src/components/chat/MessagesTimeline.tsx`와 timelineScrollAnchoring의 ID/줄 안 거리/가시 영역 렌더를 따른다. aaa는 기존 DOM 구조를 지키려고 같은 높이의 shell로 본문 mount를 제한한다. herdr v0.9.5 terminal scrollback과 herdr-projects v0.2.35 `src/herdr.rs:490`, `threads.rs:656`는 PTY 기록이며 별도 harness 대화 쪽 API는 없다.
 - **역할.** thread/coordinator/임무 pane은 모두 Term의 같은 ChatPanel과 pane_chat 경로를 쓴다. 별도 목록/권한 우회는 없다. 기존 기록 폴더·symlink·일반 파일 경계를 유지한다. cursor/오류/ID에는 실제 경로를 싣지 않는다.
+
+
+### 8.299 관리 GUI 앞 W0 결함·권한 수리(10-20, t-0459)
+
+처음 설치 뒤 웹으로 운영하기 위한 선행 수리다. 관리 GUI 계획 W0이며 새 관리 API·권한 층은 만들지 않는다.
+
+- **사람이 여는 신뢰 경계.** WebPair·EnrollOpen·EnrollApprove·MachineRevoke·DeviceRevoke·WebPublish·WebPublishOff는 `local:…@…`·worker·evaluator·detached actor를 host 요청 경계에서 거부한다. 사람이 aaa 밖 터미널이나 웹에서 하도록 안내한다. 세션 밖 Local과 웹 Controller의 기존 허용 경로는 유지하며 기존 local_only는 풀지 않는다. coordinator도 pairing·등록·공개 변경은 못 하지만 post·thread 관리와 safety가 허용한 배포는 그대로다. 같은 OS 사용자 권한으로 pane 밖 터미널을 흉내 내거나 host.toml을 고칠 수 있는 한계는 남는다.
+- **프로젝트 하나.** unarchive는 다른 보관하지 않은 프로젝트(멈춤 포함)가 있으면 상태를 쓰기 전에 거부한다. 먼저 기존 프로젝트를 보관하면 해제할 수 있다. 시작 시 검사도 남긴다.
+- **변환본 보존.** create·doctor의 기본 PR 규칙 생성/누락 판정은 `routines/pr-followup.md`와 `automations/pr-followup.toml`을 함께 본다. 변환본을 덮거나 옛 routine을 되살리지 않는다.
+- **브라우저 없는 사용량.** §8.45·§8.267의 웹 요청 전용 갱신을 바꾼다. ticker가 한 번에 하나의 갱신 task를 시작하고 서비스의 5분 TTL·실패 재조회·429 backoff를 쓴다. 판정은 마지막 완료된 보고를 즉시 읽고, 새 보고가 달라지면 다음 tick을 깨운다. 자동화의 확인 불가 대기는 마지막 실행 정보와 inbox에 나타나며 입력을 보존한다. 경고는 usage 항목으로 넣어 routine의 미처리 차례 판정에 섞지 않는다. 외부 push는 보내지 않는다.
+- **검증.** host 요청 경계의 일곱 요청×actor 거부/허용, 실제 coordinator·worker pane과 세션 밖 PTY pairing, 변환→doctor→create→규칙 로드, 실제 ticker→가짜 구독 HTTP→사용량 대기→회복 뒤 입력 1회 처리·조회 실패 표시, m13의 둘째 unarchive 거부·첫 프로젝트 보관 뒤 성공·시작 거부를 확인한다. 수정 전 실패 로그를 보존한다. FRONT_API·schema는 변경하지 않는다.

@@ -64,7 +64,7 @@ source가 자료를 확정하면 `automation:<프로젝트>:<이름>` DB meta의
 
 `limits.batch`는 첫 입력부터 묶는 시간, `min_gap`은 실행 시작 사이 간격, `max_per_day`는 명시했을 때만 host 지역 날짜별 실행 시작 상한이다. 생략·0은 무제한이며 min_gap도 생략·0(또는 "0m")이면 간격 제한이 없다. 한 번에 같은 동작/목적지의 최대32건을 묶고, 큰 묶음은 나누며 나머지는 pending에 둔다. 대기 입력 건수나 당일 실행 횟수에 기본 상한을 두지 않는다. DB 저장 실패 때는 source 기준을 전진시키지 않아 입력을 버리지 않는다. 기록 고리의 정리나 inbox done은 실행 예산을 지우지 않는다.
 
-`usage_session_below`·`usage_week_below`는 해당 창의 남은 비율 문턱이다. 설정한 창을 확인할 수 없을 때도 대기한다. 캐시 사용량을 읽으며 AI 요청을 만들지 않는다. 상한·간격·사용량 대기 중 입력은 내구 보존한다. 일정의 `catch_up="once"`(기본)는 놓친 차례를 하나로 모으며 `"skip"`은 놓친 차례를 기록하고 넘긴다. 이 옵션은 schedule/command 조건의 칸이다.
+`usage_session_below`·`usage_week_below`는 해당 창의 남은 비율 문턱이다. 설정한 창을 확인할 수 없을 때도 대기한다. host ticker가 웹 접속 없이도 별도 task에서 사용량 캐시를 갱신한다. 정상 조회는 5분 캐시, 실패·로그인 만료는 기존 재조회 간격, 429는 서버가 말한 backoff를 지킨다. 느린 조회가 ticker의 다른 판정을 막지 않도록 마지막 완료된 보고를 읽으며 AI 요청을 만들지 않는다. 구독 창을 확인할 수 없으면 규칙의 마지막 대기 이유에 「사용량 확인 불가」를 보이고 coordinator inbox에 한 번 알린다. 입력은 보존하며 새 보고 뒤 다시 판정한다. 상한·간격·사용량 대기 중 입력은 내구 보존한다. 일정의 `catch_up="once"`(기본)는 놓친 차례를 하나로 모으며 `"skip"`은 놓친 차례를 기록하고 넘긴다. 이 옵션은 schedule/command 조건의 칸이다.
 
 전달 전에 inflight와 횟수를 확정한다. inbox·임무 입력은 내구 id로 중복을 막고 재시작 뒤 이어 전달한다. thread 메시지는 전달 여부가 모호하면 재전송하지 않고 「입력 전달 모름 · 사람 확인 필요」로 남긴다. brief·확인창 대기와 전송 전 명확한 거절은 예산을 소모하지 않는다. 꺼진 규칙은 새 동작을 실행하지 않는다. 실행 중 명령/전달을 토글로 종료하지 않는다.
 
@@ -184,3 +184,5 @@ max_per_day = 2
 임계값 뒤 기존 queue/limits로 묶어 coordinator inbox에 proposed 제안을 만든다. commit과 `scripts/deploy-build.sh` 안내를 보며 사람이 빌드한 후보의 provenance/SHA를 확인한다. 그 뒤 사람이 aaa 밖 host 터미널에서 deploy start의 yes를 입력하거나 사용자 지시를 받은 coordinator가 기존 safety로 시작한다. 자동 빌드/thread 시작·배포는 없다. 제안은 앱 안에만 알리고, 읽고 정리한 항목을 ACK 실패·host 재시작으로 되살리지 않는다.
 
 임계값은 source가 새 head를 받을 때 판정한다. 이미 내구 큐에 받은 제안 자료는 이후 임계값 편집으로 ACK 재개가 막히지 않는다. batch/하루/사용량 실행 예산은 기존 공통 queue 규칙을 따른다.
+
+`automations/pr-followup.toml`로 변환한 기본 PR 규칙은 `project create`와 `doctor files --fix`가 보존한다. `routines/pr-followup.md`를 다시 만들지 않으며, 이미 두 파일이 겹친 경우에는 기존 충돌 진단을 유지한다.

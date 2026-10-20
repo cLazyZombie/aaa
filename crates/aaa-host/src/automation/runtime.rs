@@ -417,6 +417,7 @@ impl Host {
                 }
             }
         }
+        let mut usage_unknown = false;
         let usage_blocked = if r.limits.usage_session_below.is_some() || r.limits.usage_week_below.is_some() {
             let report = self.usage.cached().await;
             let mut session_seen = r.limits.usage_session_below.is_none();
@@ -436,7 +437,8 @@ impl Host {
                 };
                 low |= threshold.is_some_and(|t| 100.0 - w.used_percent < t);
             }
-            low || !session_seen || !week_seen
+            usage_unknown = !session_seen || !week_seen;
+            low || usage_unknown
         } else {
             false
         };
@@ -498,7 +500,16 @@ impl Host {
             })
             .map_err(internal)?;
         if let Some((id, reason)) = wait {
+            let reason = if reason == "사용량 문턱 또는 확인 불가" {
+                if usage_unknown { "사용량 확인 불가" } else { "사용량 문턱" }
+            } else {
+                reason
+            };
             self.record_routine(p, &r.name, &id, "waiting", reason, None);
+            if reason == "사용량 확인 불가" {
+                // routine 차례로 세면 일정 source가 회복 뒤에도 미처리 안내로 보고 멈춘다.
+                self.inbox_once(p, "usage", &r.name, "usage unavailable", "사용량 확인 불가: 구독 로그인 또는 조회 상태를 확인한다. 입력은 보존하며 ticker가 다시 읽으면 판정한다");
+            }
         }
         let Some(batch) = selected else { return Ok(()) };
         let first = &batch.events[0];

@@ -43,6 +43,9 @@ impl Node {
             .env("RUST_LOG", "aaa=info")
             // 기본 profile(claude·codex) 목록이 이 머신의 설치·로그인에 따라 바뀌지 않게(보는 시험만 채운다)
             .env("AAA_TEST_BUILTINS", "")
+            // ticker도 사용량을 읽는다. 실제 CLI 로그인·keychain·외부 구독에 닿지 않는다.
+            .env("AAA_USAGE_HOME", self.cfg.join("usage-home"))
+            .env_remove("AAA_USAGE_ORIGIN")
             // routine `every <N>s`: host가 시험에서만 받는다
             .env("AAA_TEST_ROUTINE_SECONDS", "1")
             // aaa pane에서 시험을 돌려도 실험실 CLI가 운영 thread의 호출자·hook을 물려받지 않는다.
@@ -131,6 +134,9 @@ impl Node {
         c.env("AAA_CONFIG_DIR", &self.cfg)
             .env("AAA_STATE_DIR", &self.state)
             .env("AAA_TEST_BUILTINS", "")
+            // ticker도 사용량을 읽는다. 실제 CLI 로그인·keychain·외부 구독에 닿지 않는다.
+            .env("AAA_USAGE_HOME", self.cfg.join("usage-home"))
+            .env_remove("AAA_USAGE_ORIGIN")
             .env_remove("AAA_SESSION_ID")
             .env_remove("AAA_HOOK_SOCK")
             .env_remove("AAA_HOOK_TOKEN")

@@ -288,3 +288,27 @@ async fn deploy_proposal_survives_receipt_failure_prune_and_restart_without_star
     assert_eq!(h.db.meta("rollout:active").unwrap(), None);
     drop(h);
 }
+
+#[tokio::test]
+async fn converted_followup_survives_doctor_and_project_create() {
+    let p = Project::new();
+    let mut cfg = aaa_config::HostConfig::default();
+    cfg.projects.root = p.0.join("projects").display().to_string();
+    cfg.notify.web_push = false;
+    let h = crate::Host::open(cfg, p.0.join("host")).unwrap();
+    h.project_create("demo", Default::default(), "local:cli").unwrap();
+    let dir = p.0.join("projects/demo");
+    convert(&dir).unwrap();
+    let converted = std::fs::read(dir.join("automations/pr-followup.toml")).unwrap();
+    let response = h.project_files(true, "local:cli");
+    assert!(!dir.join("routines/pr-followup.md").exists(), "doctor가 옛 routine을 되살렸다: {response:?}");
+    assert!(crate::orch::files_problems(&dir, "demo").is_empty());
+    // PROJECT.md 없는 기존 폴더에서 create를 이어가는 경로도 변환본을 지킨다.
+    std::fs::remove_file(dir.join("PROJECT.md")).unwrap();
+    h.project_create("demo", Default::default(), "local:cli").unwrap();
+    assert!(!dir.join("routines/pr-followup.md").exists());
+    assert_eq!(std::fs::read(dir.join("automations/pr-followup.toml")).unwrap(), converted);
+    let (rules, errors) = crate::routine::load_all(&dir);
+    assert!(errors.is_empty(), "{errors:?}");
+    assert_eq!(rules.iter().filter(|r| r.name == "pr-followup").count(), 1);
+}

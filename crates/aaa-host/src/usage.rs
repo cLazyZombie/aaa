@@ -10,8 +10,8 @@
 //! 일부러 읽기만 한다: OAuth token을 여기서 refresh하지 않는다. Claude·Codex는 refresh token을 돌려쓰므로
 //! CLI가 하지 않은 refresh는 그 CLI를 로그아웃시킨다. 끝난 token은 `expired`로 알리고, CLI가 다음에 돌 때 제 파일을 고친다.
 //!
-//! 뒤에서 혼자 돌지 않는다: client가 물을 때만, FRESH_MS에 한 번까지 묻는다. client가 다시 읽기를 원해도
-//! MIN_REFRESH_MS에 한 번이다. 429로 답한 구독은 그가 말한 때까지 다시 묻지 않는다.
+//! client 요청과 ticker가 FRESH_MS에 한 번까지 갱신한다. ticker는 별도 task에서 읽어 판정을 막지 않는다.
+//! client가 다시 읽기를 원해도 MIN_REFRESH_MS에 한 번이다. 429로 답한 구독은 그가 말한 때까지 다시 묻지 않는다.
 //!
 //! 참고와 다른 곳(plan §8.45):
 //! - keychain을 로그인(Aqua) 세션 밖에서 못 읽을 때 참고는 launchd 일회 job으로 다시 읽는다. aaa는 하지 않는다:
@@ -707,6 +707,8 @@ pub struct UsageService {
     ctx: UsageContext,
     /// 한 번에 한 바퀴. 동시에 물은 client는 앞 바퀴가 끝난 뒤 그 결과(아직 새 것)를 받는다
     state: tokio::sync::Mutex<State>,
+    /// 갱신 중에도 ticker는 마지막 완료된 보고를 즉시 읽는다.
+    snapshot: Mutex<UsageReport>,
 }
 
 fn hash12(s: &str) -> String {
@@ -715,19 +717,12 @@ fn hash12(s: &str) -> String {
 
 impl UsageService {
     pub fn new(ctx: UsageContext) -> UsageService {
-        UsageService { ctx, state: Default::default() }
+        UsageService { ctx, state: Default::default(), snapshot: Default::default() }
     }
 
-    /// 이미 읽은 숫자만 쓴다. 임무 ticker는 인증 파일이나 외부 서비스를 읽지 않는다.
+    /// 마지막으로 읽기를 끝낸 숫자만 쓴다. 외부 서비스의 응답을 기다리지 않는다.
     pub(crate) async fn cached(&self) -> UsageReport {
-        let st = self.state.lock().await;
-        let mut by_key = std::collections::BTreeMap::new();
-        for u in st.entries.values().filter_map(|e| e.usage.clone()) {
-            if !by_key.contains_key(&u.key) || u.problem.is_none() {
-                by_key.insert(u.key.clone(), u);
-            }
-        }
-        UsageReport { providers: by_key.into_values().collect() }
+        self.snapshot.lock().unwrap().clone()
     }
 
     /// `refresh`는 FRESH_MS보다 일찍 다시 묻는다(MIN_REFRESH_MS에 한 번까지).
@@ -791,7 +786,9 @@ impl UsageService {
                 by_key[i].account = Some(format!("#{}", n + 1));
             }
         }
-        UsageReport { providers: by_key }
+        let report = UsageReport { providers: by_key };
+        *self.snapshot.lock().unwrap() = report.clone();
+        report
     }
 
     async fn provider_pass(&self, id: UsageProviderId, st: &State, now: u64, refresh: bool) -> ProviderPass {
@@ -916,3 +913,28 @@ impl UsageService {
 
 #[cfg(test)]
 mod tests;
+
+impl crate::Host {
+    /// 웹이 없어도 캐시를 갱신한다. 서비스 자체의 TTL·429 backoff를 그대로 쓴다.
+    pub(crate) fn refresh_usage(self: &Arc<Self>) {
+        if !self.watch_claim("usage", "", Duration::ZERO) {
+            return;
+        }
+        let host = self.clone();
+        tokio::spawn(async move {
+            let inner = host.clone();
+            let before = host.usage.cached().await;
+            let changed = match tokio::spawn(async move { inner.usage.report(false).await }).await {
+                Ok(report) => report != before,
+                Err(_) => {
+                    tracing::error!("사용량 갱신 task panic");
+                    false
+                }
+            };
+            host.watch_finished("usage", "");
+            if changed {
+                host.tick_wake.notify_one();
+            }
+        });
+    }
+}
