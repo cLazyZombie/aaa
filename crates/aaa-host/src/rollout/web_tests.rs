@@ -158,6 +158,17 @@ async fn web_approval_lasts_the_rollout_and_web_reads_only_display_cards() {
     let plan = FrontRequest::RolloutPlan { source_machine: "mac-a".into(), path: "~/c/aaa".into(), machines: vec![] };
     let e = h.call(DeviceRole::Controller, WEB, plan).await.unwrap_err();
     assert!(e.code == ErrorCode::BadRequest && e.message.contains("진행 중"), "{}", e.message);
+    // 응답을 잃고 같은 ID로 다시 보내면, 빌드 머신 agent가 잠시 끊겨 있어도 기존 rollout 요약을 돌려준다
+    let mut sent = super::tests::record();
+    sent.actor = WEB.into();
+    sent.spec.from = "~/c/aaa".into();
+    sent.spec.source_machine = Some("m".into());
+    sent.spec.machines = vec!["m".into()];
+    h.db.set_meta(&format!("rollout:{}", sent.id), &serde_json::to_string(&sent).unwrap()).unwrap();
+    let again = RolloutSpec { source_machine: Some("mac-a".into()), machines: vec![], ..sent.spec.clone() };
+    let resent =
+        h.call(DeviceRole::Controller, WEB, FrontRequest::RolloutStart { id: sent.id.clone(), spec: again }).await;
+    assert!(matches!(&resent, Ok(FrontResponse::RolloutCards { cards }) if cards[0].id == sent.id), "{resent:?}");
     drop(h);
     std::fs::remove_dir_all(root).unwrap();
 }

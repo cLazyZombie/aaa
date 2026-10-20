@@ -40,6 +40,8 @@ pub(crate) struct Manager {
     running_sha256: String,
     gate: Mutex<()>,
     stage_gate: Mutex<()>,
+    /// 후보 점검(웹 「배포」)이 실행기를 쓰는 중이다. `gate` 아래에서 세우고 보며, 점검은 lock 밖에서 실행기를 돌린다
+    inspecting: std::sync::atomic::AtomicBool,
     executor: Mutex<Option<Executor>>,
 }
 fn error(e: impl std::fmt::Display) -> ErrorBody {
@@ -66,6 +68,7 @@ impl Manager {
             lease: Mutex::new(None),
             gate: Mutex::new(()),
             stage_gate: Mutex::new(()),
+            inspecting: Default::default(),
             executor: Mutex::new(None),
         })
     }
@@ -188,6 +191,10 @@ impl Manager {
         }
         if self.executor.lock().unwrap().is_none() {
             return Err(error("이 agent에는 배포 실행기가 없다"));
+        }
+        // 실행기 staging 이름이 agent에 하나라 점검과 겹치면 한쪽이 실패한다
+        if self.inspecting.load(std::sync::atomic::Ordering::SeqCst) {
+            return Err(error("빌드 후보 점검이 실행 중이다. 끝난 뒤 다시 요청한다"));
         }
         if let Some(id) = self.unfinished()? {
             return Err(error(format!("배포 작업 {id}가 진행 중이다")));

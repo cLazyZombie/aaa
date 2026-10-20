@@ -78,12 +78,23 @@ impl Manager {
         match req {
             AgentRequest::DeployFetch { path, offset, len, sha256 } => fetch(&path, offset, len, &sha256),
             AgentRequest::DeployCandidate { path } => {
-                // 실행기의 staging 파일 이름은 agent PID 하나다: 배포 작업과 겹치지 않게 작업 gate를 쥐고, 도는 작업이 있으면 거부한다.
-                // 전송 끝의 dry-run과는 stage_gate로 이미 차례를 지킨다
-                let _jobs = self.gate.lock().unwrap();
-                if let Some(id) = self.unfinished()? {
-                    return Err(error(format!("배포 작업 {id}가 진행 중이다. 끝난 뒤 다시 점검한다")));
+                // 실행기의 staging 파일 이름은 agent PID 하나다: 도는 배포 작업이 있으면 거부하고, 점검하는 동안은 새 작업을 받지 않는다.
+                // 작업 gate는 표지만 세우는 동안 쥔다(self-check가 길어도 async `deploy_start`를 붙잡지 않는다). 전송 끝의 dry-run과는
+                // stage_gate로 이미 차례를 지킨다. 거절 글에는 작업 ID를 싣지 않는다(웹으로 간다)
+                {
+                    let _jobs = self.gate.lock().unwrap();
+                    if self.unfinished()?.is_some() {
+                        return Err(error("배포 작업이 진행 중이다. 끝난 뒤 다시 점검한다"));
+                    }
+                    self.inspecting.store(true, std::sync::atomic::Ordering::SeqCst);
                 }
+                struct Done<'a>(&'a std::sync::atomic::AtomicBool);
+                impl Drop for Done<'_> {
+                    fn drop(&mut self) {
+                        self.0.store(false, std::sync::atomic::Ordering::SeqCst);
+                    }
+                }
+                let _done = Done(&self.inspecting);
                 let execute = (*self.executor.lock().unwrap()).ok_or_else(|| error("배포 실행기가 없다"))?;
                 inspect(exe, execute, &path)
             }
@@ -429,9 +440,15 @@ mod tests {
         let manager = Manager::new(&root, &exe).unwrap();
         manager.configure(&exe, never).unwrap();
         let restart = DeployAction::Restart { service: aaa_proto::DeployService::Agent };
-        manager.prepare(&exe, aaa_common::util::new_id(), "demo".into(), restart).unwrap();
+        let job = aaa_common::util::new_id();
+        manager.prepare(&exe, job.clone(), "demo".into(), restart.clone()).unwrap();
         let ask = AgentRequest::DeployCandidate { path: root.join("aaa").to_string_lossy().into() };
-        assert!(manager.transport(&exe, ask).unwrap_err().message.contains("진행 중"));
+        let refused = manager.transport(&exe, ask).unwrap_err().message;
+        assert!(refused.contains("진행 중") && !refused.contains(&job), "{refused}");
+        // 점검하는 동안 들어온 작업은 바로 거부한다(실행기를 lock 밖에서 돌린다)
+        manager.inspecting.store(true, std::sync::atomic::Ordering::SeqCst);
+        let next = manager.prepare(&exe, aaa_common::util::new_id(), "demo".into(), restart.clone());
+        assert!(next.unwrap_err().message.contains("점검"));
         drop(manager);
         std::fs::remove_dir_all(root).unwrap();
     }

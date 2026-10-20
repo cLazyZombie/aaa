@@ -256,12 +256,7 @@ impl Host {
         }
         spec.sha256.make_ascii_lowercase();
         if let Some(source) = &spec.source_machine {
-            let source = self.resolve_machine(Some(source))?;
-            self.live_conn(&source)?;
-            if !self.machine_feature(&source, "deploy_stage.v1") {
-                return Err(err(ErrorCode::UnsupportedVersion, "빌드 머신에 deploy_stage.v1이 필요하다"));
-            }
-            spec.source_machine = Some(source);
+            spec.source_machine = Some(self.resolve_machine(Some(source))?);
         }
         let _gate = self.deployment_gate.lock().unwrap();
         // 같은 ID의 중복 시작은 기존 요청과 같을 때만 조회로 취급한다.
@@ -290,6 +285,13 @@ impl Host {
         }
         if self.rollout_busy()? {
             return Err(err(ErrorCode::BadRequest, "진행 중인 rollout이 있다"));
+        }
+        // 빌드 머신 연결은 새 시작에만 본다: 같은 ID 재전송은 rollout 중 그 agent가 잠시 끊겨도 기존 기록을 돌려준다
+        if let Some(source) = &spec.source_machine {
+            self.live_conn(source)?;
+            if !self.machine_feature(source, "deploy_stage.v1") {
+                return Err(err(ErrorCode::UnsupportedVersion, "빌드 머신에 deploy_stage.v1이 필요하다"));
+            }
         }
         let machines = self.rollout_order(&spec.machines)?;
         for mid in &machines {
