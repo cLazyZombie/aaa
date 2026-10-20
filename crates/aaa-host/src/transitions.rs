@@ -365,6 +365,126 @@ impl Host {
 mod tests {
     use super::*;
 
+    /// Hello의 앞 pane 상태를 적용한 사건 경계에서 ticker를 돌린다. 뒤 pane의 저장된 Working을
+    /// 아직 적용하지 않았다고 쉼(no agent) 알림을 만들면 안 된다. sleep·부하에 기대지 않는다.
+    #[test]
+    fn hello_replay_does_not_publish_idle_between_panes() {
+        use aaa_common::conn::spawn_writer;
+        use aaa_proto::{AgentHello, HarnessEvent, SessionInfo, SessionState};
+        let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
+        let roots = rt.block_on(async {
+            let mut roots = Vec::new();
+            for local in [true, false] {
+                let root = std::env::temp_dir().join(format!("aaa-hello-{}", aaa_common::util::new_id()));
+                let mut cfg = aaa_config::HostConfig::default();
+                cfg.projects.root = root.join("projects").display().to_string();
+                cfg.notify.web_push = false;
+                let h = Host::open(cfg, root.join("host")).unwrap();
+                h.project_create("p", Default::default(), "test").unwrap();
+                h.db.upsert_machine("m", "mac-a", None, local).unwrap();
+                let mut r = rec();
+                r.pane = Some("s".into());
+                r.last_group = Some(ThreadGroup::Working);
+                h.db.thread_import("p", &r.id, "open", &serde_json::to_string(&r).unwrap()).unwrap();
+                let event = |session: &str, kind: &str, at_ms| HarnessEvent {
+                    session: session.into(),
+                    harness: "codex".into(),
+                    kind: kind.into(),
+                    harness_session: None,
+                    message: None,
+                    question_kind: None,
+                    percent: None,
+                    at_ms,
+                    transcript: None,
+                    plan: None,
+                    background: None,
+                };
+                let sessions = ["first", "s"].map(|id| SessionInfo {
+                    id: id.into(),
+                    name: "codex".into(),
+                    argv: vec!["codex".into()],
+                    cwd: None,
+                    pid: None,
+                    started_at_ms: 0,
+                    boot_id: "boot".into(),
+                    cols: 80,
+                    rows: 24,
+                    state: SessionState::Running,
+                    role: None,
+                    label: None,
+                    harness: Some("codex".into()),
+                });
+                let (done, seen) = tokio::sync::oneshot::channel();
+                let during = h.clone();
+                h.waiters.lock().unwrap().insert(
+                    "first".into(),
+                    vec![(
+                        &["working"],
+                        done,
+                        Some(Box::new(move || {
+                            during.thread_pass("p");
+                            let items = during.inbox("p", true, true).unwrap().items;
+                            assert!(items.is_empty(), "Hello 복원 중 거짓 전이: {items:?}");
+                            let r = during.load("p", "t-0001").unwrap();
+                            assert_eq!(during.thread_view(&r).group, ThreadGroup::Working);
+                        })),
+                    )],
+                );
+                let (writer, _peer) = tokio::io::duplex(65536);
+                let generation = h.next_gen();
+                h.agent_connected(
+                    &AgentHello {
+                        proto: aaa_proto::AGENT_LINK,
+                        machine_id: "m".into(),
+                        machine_name: "mac-a".into(),
+                        boot_id: "boot".into(),
+                        os: "test".into(),
+                        arch: "test".into(),
+                        software: "test".into(),
+                        features: vec![],
+                        dev_mode: true,
+                        selfcheck: None,
+                        sessions: sessions.to_vec(),
+                        harness: vec![event("first", "working", 1), event("s", "working", 1)],
+                    },
+                    local,
+                    crate::AgentConn::new(spawn_writer(writer, aaa_proto::MAX_FRAME), generation),
+                );
+                assert_eq!(seen.await.unwrap(), "working");
+                h.thread_pass("p");
+                assert!(h.inbox("p", true, true).unwrap().items.is_empty());
+                assert_eq!(h.thread_view(&h.load("p", &r.id).unwrap()).group, ThreadGroup::Working);
+                // 초기화가 끝난 뒤의 실제 쉼은 숨기지 않는다.
+                h.on_harness("m", event("s", "idle", 2));
+                tokio::time::timeout(std::time::Duration::from_secs(3), async {
+                    loop {
+                        let changed = h.tick_wake.notified();
+                        tokio::pin!(changed);
+                        changed.as_mut().enable();
+                        if !h.report_refresh.lock().unwrap().contains_key("p/t-0001") {
+                            break;
+                        }
+                        changed.await;
+                    }
+                })
+                .await
+                .unwrap();
+                h.thread_pass("p");
+                let items = h.inbox("p", true, true).unwrap().items;
+                assert_eq!(items.len(), 1, "{items:?}");
+                assert!(items[0].summary.contains("쉼(idle)"), "{items:?}");
+                drop(h);
+                roots.push(root);
+            }
+            roots
+        });
+        // agent_connected의 구독 task도 Host·DB를 잡고 있다. runtime을 먼저 끝내 열린 DB 파일을 닫는다.
+        drop(rt);
+        for root in roots {
+            std::fs::remove_dir_all(root).unwrap();
+        }
+    }
+
     /// 계속 일하는 thread도 명시한 착지는 알린다. adopt와 새로 띄운 thread의 보고 계약은 같다.
     /// 실제 사본·DB·inbox 경계에서 hash당 한 번, ack와 작업 상태는 별개임을 본다.
     #[tokio::test]
