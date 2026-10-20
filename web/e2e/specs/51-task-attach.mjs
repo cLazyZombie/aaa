@@ -202,12 +202,17 @@ export default async function ({ page }) {
     await shot(page, "attach-desktop-open-html");
     await page.keyboard.press("Escape");
     await page.getByTestId("file-viewer").waitFor({ state: "detached" });
-    // 올린 html은 앱 origin에서 돌지 않는다(sandbox)
-    const html = await page.evaluate(async (b) => {
-      const r = await fetch(`${b}api/v1/projects/demo/uploads/0123456789abcdef.png`);
-      return r.status;
+    // 올린 html은 앱 origin에서 돌지 않는다: 결과물 보기와 같은 sandbox CSP·nosniff로 보낸다. 없는 이름은 404다
+    const served = await page.evaluate(async (b) => {
+      const up = await fetch(`${b}api/v1/projects/demo/uploads?kind=html`, { method: "POST", body: "<!doctype html><script>parent.document.title='x'</script>" });
+      const { ok } = await up.json();
+      const r = await fetch(`${b}api/v1/projects/demo/${ok.path}`);
+      const missing = await fetch(`${b}api/v1/projects/demo/uploads/0123456789abcdef.png`);
+      return { csp: r.headers.get("content-security-policy"), sniff: r.headers.get("x-content-type-options"), type: r.headers.get("content-type"), missing: missing.status };
     }, base);
-    if (html !== 404) throw new Error(`없는 첨부가 ${html}로 답했다`);
+    if (!/(^|;)\s*sandbox\b/.test(served.csp ?? "") || served.sniff !== "nosniff" || !served.type?.startsWith("text/html") || served.missing !== 404) {
+      throw new Error(`올린 html 응답: ${JSON.stringify(served)}`);
+    }
   });
 
   await step("바로 시작: 첨부 그림·올린 문서·보고서 문서를 thread 작업 폴더 attachments/로 복사하고 할 일 글과 brief가 그 경로를 가리킨다", async () => {

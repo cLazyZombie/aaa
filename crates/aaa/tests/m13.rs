@@ -971,8 +971,11 @@ fn task_attachments_reach_a_remote_agent() {
     w.add_remote();
     let demo = w.projects.join("demo");
     std::fs::create_dir_all(demo.join("uploads")).unwrap();
+    use sha2::Digest as _;
     let img = b"\x89PNG\r\n\x1a\n\0\0\0\rIHDR task attach".to_vec();
-    std::fs::write(demo.join("uploads/0123456789abcdef.png"), &img).unwrap();
+    // 올린 파일 이름은 내용 hash다(host가 정한다, 넘길 때 이름과 내용을 대조한다)
+    let png = format!("{}.png", &hex::encode(sha2::Sha256::digest(&img))[..16]);
+    std::fs::write(demo.join("uploads").join(&png), &img).unwrap();
     let report = w.lab.root.join("plan-report");
     std::fs::create_dir_all(&report).unwrap();
     std::fs::write(report.join("index.html"), "<!doctype html><title>계획</title>").unwrap();
@@ -980,8 +983,10 @@ fn task_attachments_reach_a_remote_agent() {
     w.h.ok(&["library", "publish", path_str(&report), "--project", "demo", "--name", "plan-report"]);
     std::fs::write(
         demo.join("TASKS.md"),
-        "# Tasks\n\n## Backlog\n- [ ] 첨부 일\n  고칠 화면\n  ![그림](uploads/0123456789abcdef.png)\n  \
-         [계획서](library/plan-report/plan.md)\n  [없는 그림](uploads/fedcba9876543210.png)\n",
+        format!(
+            "# Tasks\n\n## Backlog\n- [ ] 첨부 일\n  고칠 화면\n  ![그림](uploads/{png})\n  \
+             [계획서](library/plan-report/plan.md)\n  [없는 그림](uploads/fedcba9876543210.png)\n"
+        ),
     )
     .unwrap();
     let v = w.start(&["--from-task", "첨부 일", "--machine", "labB", "--profile", "fake", "--kind", "dir"]);
@@ -996,24 +1001,38 @@ fn task_attachments_reach_a_remote_agent() {
         .map(|e| e.unwrap().file_name().into_string().unwrap())
         .collect();
     assert_eq!(names.len(), 2, "그림·보고서 문서 둘만 넘긴다: {names:?}");
-    assert_eq!(std::fs::read(work.join("attachments/0123456789abcdef.png")).unwrap(), img);
+    assert_eq!(std::fs::read(work.join("attachments").join(&png)).unwrap(), img);
     let doc = names.iter().find(|n| n.ends_with(".md")).expect("보고서 문서 사본");
     assert_eq!(std::fs::read_to_string(work.join("attachments").join(doc)).unwrap(), "# 계획서\n\n- 첫 단계\n");
     let brief = std::fs::read_to_string(work.join("brief.md")).unwrap();
     let task = std::fs::read_to_string(demo.join("threads").join(format!("{id}.task.md"))).unwrap();
     // brief 머리의 uploads 줄(「host 머신에만 있다」)은 원래 안내다. 첨부 자체는 host 경로·host 상대 경로로 가리키지 않는다
     assert!(!task.contains(path_str(&w.projects)), "할 일에 host 경로가 있다:\n{task}");
-    for host in ["](uploads/0123456789abcdef.png)", "](library/", "uploads/0123456789abcdef.png`"] {
-        assert!(!brief.contains(host), "brief가 첨부를 host 쪽으로 가리킨다({host}):\n{brief}");
+    for host in [format!("](uploads/{png})"), "](library/".into()] {
+        assert!(!brief.contains(&host), "brief가 첨부를 host 쪽으로 가리킨다({host}):\n{brief}");
     }
-    assert!(task.contains("![그림](attachments/0123456789abcdef.png)") && task.contains(&format!("[계획서](attachments/{doc})")), "{task}");
+    assert!(
+        task.contains(&format!("![그림](attachments/{png})")) && task.contains(&format!("[계획서](attachments/{doc})")),
+        "{task}"
+    );
     assert!(task.contains("[없는 그림](uploads/fedcba9876543210.png)"), "넘기지 못한 줄은 그대로 둔다: {task}");
     assert!(
         brief.contains(&format!("- task 첨부 2개(할 일의 `attachments/…`): `{}`", work.join("attachments").display())),
         "{brief}"
     );
-}
 
+    // 원본을 지운 뒤(정리한 uploads·지운 보고서 파일)에도 다시 시작한다: 첫 시작 때 쓴 사본이 작업 폴더에 남는다
+    w.wait_show("보고", &id, |v| v["report_hash"].is_string());
+    w.h.ok(&["thread", "ack", "demo", &id]);
+    let pane = v["pane"].as_str().unwrap().to_string();
+    w.h.ok(&["pane", "kill", &pane]);
+    wait_for("세션 끝남", T, || (w.h.pane(&pane)["state"] != "running").then_some(()));
+    std::fs::remove_file(demo.join("uploads").join(&png)).unwrap();
+    std::fs::remove_file(demo.join("library/plan-report/plan.md")).unwrap();
+    let again = w.h.ok(&["thread", "restart", "demo", &id]);
+    assert_ne!(again["pane"].as_str(), Some(pane.as_str()), "{again}");
+    assert_eq!(std::fs::read(work.join("attachments").join(&png)).unwrap(), img, "첫 사본은 그대로다");
+}
 
 /// 안내를 보내도 화면이 바뀌지 않으면 unknown으로 남기고 자동으로 다시 보내지 않는다(§8.5 a)
 /// 입력창을 읽을 수 없는 harness(`mute`: 화면이 바뀌지 않는다): ticker는 한 번 보내고, 다시 보내기 전에 화면으로 앞

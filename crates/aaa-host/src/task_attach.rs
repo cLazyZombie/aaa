@@ -24,6 +24,8 @@ use crate::{Host, err};
 pub(crate) const MAX_BYTES: u64 = 16 << 20;
 /// agent 기능: 작업 폴더 `attachments/` 쓰기
 pub(crate) const FEATURE: &str = "work_attach.v1";
+/// 올리기 한 번에 하나(`task_file_save`)
+static SAVING: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
 /// thread 작업 폴더로 넘길 파일 하나: 거기 쓸 이름과 host 프로젝트 폴더 안 원본
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -64,7 +66,8 @@ pub(crate) fn mime(name: &str) -> &'static str {
 fn library_ref(target: &str) -> Option<(&str, &str)> {
     let (name, path) = target.strip_prefix("library/")?.split_once('/')?;
     let doc = path.rsplit('.').next().is_some_and(|e| doc_ext(&e.to_ascii_lowercase()).is_some());
-    (crate::library::safe_rel(name) && !name.contains('/') && crate::library::safe_rel(path) && doc).then_some((name, path))
+    (crate::library::safe_rel(name) && !name.contains('/') && crate::library::safe_rel(path) && doc)
+        .then_some((name, path))
 }
 
 /// 메모 글이 가리키는 host 파일의 경로들(`](uploads/…)`·`](library/…)`, 처음 나온 차례, 겹치지 않게)
@@ -96,6 +99,9 @@ impl Host {
         if !role.can_control() {
             return Err(err(ErrorCode::Forbidden, "보기 권한으로는 첨부할 수 없다"));
         }
+        if actor.strip_prefix("device:").is_some_and(|d| self.is_revoked(d)) {
+            return Err(err(ErrorCode::Unauthorized, "기기가 폐기됐다"));
+        }
         let dir = self.project_dir(project)?.join("uploads");
         if bytes.is_empty() || bytes.len() as u64 > MAX_BYTES {
             return Err(err(ErrorCode::BadRequest, "파일은 1바이트부터 16MiB까지 첨부한다"));
@@ -113,6 +119,8 @@ impl Host {
         };
         let name = format!("{}.{ext}", &hex::encode(Sha256::digest(bytes))[..16]);
         let path = dir.join(&name);
+        // 같은 내용을 함께 올리면(빠른 두 번 붙이기·두 기기) 같은 임시 파일을 다투지 않게 한 번에 하나씩 쓴다
+        let _saving = SAVING.lock().unwrap_or_else(|e| e.into_inner());
         // 같은 내용은 이미 있다(이름이 내용 hash다). symlink 등 일반 파일이 아닌 것은 덮지 않고 거부한다
         match path.symlink_metadata() {
             Ok(m) if m.is_file() => {}
@@ -120,9 +128,6 @@ impl Host {
             Err(_) => std::fs::create_dir_all(&dir)
                 .and_then(|_| aaa_common::util::write_private(&path, bytes))
                 .map_err(|e| err(ErrorCode::Internal, e.to_string()))?,
-        }
-        if actor.strip_prefix("device:").is_some_and(|d| self.is_revoked(d)) {
-            return Err(err(ErrorCode::Unauthorized, "기기가 폐기됐다"));
         }
         self.db.audit(actor, "task_file", &format!("{project} {name} {} bytes", bytes.len()));
         Ok(format!("uploads/{name}"))
@@ -161,7 +166,10 @@ impl Host {
                 library_ref(&target).and_then(|(report, path)| {
                     let bytes = self.report_doc_bytes(project, report, path, MAX_BYTES).ok()?;
                     let ext = doc_ext(&path.rsplit('.').next()?.to_ascii_lowercase())?;
-                    Some(TaskFile { name: format!("{}.{ext}", &hex::encode(Sha256::digest(&bytes))[..16]), src: target.clone() })
+                    Some(TaskFile {
+                        name: format!("{}.{ext}", &hex::encode(Sha256::digest(&bytes))[..16]),
+                        src: target.clone(),
+                    })
                 })
             };
             match file {
@@ -189,7 +197,10 @@ impl Host {
         if !self.machine_feature(&rec.machine_id, FEATURE) {
             return Err(err(
                 ErrorCode::Unavailable,
-                format!("{} agent가 task 첨부를 받지 못한다({FEATURE} 없음). 그 머신 aaa를 갱신한다", self.machine_name(&rec.machine_id)),
+                format!(
+                    "{} agent가 task 첨부를 받지 못한다({FEATURE} 없음). 그 머신 aaa를 갱신한다",
+                    self.machine_name(&rec.machine_id)
+                ),
             ));
         }
         let work_dir = rec.work_dir.clone().ok_or_else(|| err(ErrorCode::Internal, "작업 폴더 기록이 없다"))?;
@@ -203,11 +214,24 @@ impl Host {
             } else {
                 Err(err(ErrorCode::BadRequest, "첨부 원본 꼴이 아니다"))
             };
-            let bytes = read.map_err(|e| err(ErrorCode::NotFound, format!("task 첨부 {}를 읽지 못했다: {}", f.src, e.message)))?;
-            if bytes.is_empty() || bytes.len() as u64 > MAX_BYTES {
-                return Err(err(ErrorCode::BadRequest, format!("task 첨부 {}가 1바이트~16MiB가 아니다", f.src)));
-            }
+            // 다시 시작할 때 원본이 사라졌거나(지운 보고서·정리한 uploads) 내용이 바뀌었으면(live 보고서) 넘기지 않는다: 첫 시작 때 쓴
+            // 사본이 작업 폴더에 남아 있고, 이름(내용 hash)과 다른 내용을 그 이름에 덮지 않는다. 다시 시작은 막지 않는다
+            let bytes = match read {
+                Ok(b) if !b.is_empty() && b.len() as u64 <= MAX_BYTES => b,
+                Ok(_) => {
+                    tracing::warn!(thread = %rec.id, src = %f.src, "task 첨부 원본이 1바이트~16MiB가 아니라 넘기지 않는다");
+                    continue;
+                }
+                Err(e) => {
+                    tracing::warn!(thread = %rec.id, src = %f.src, "task 첨부 원본을 읽지 못해 넘기지 않는다: {}", e.message);
+                    continue;
+                }
+            };
             let want = hex::encode(Sha256::digest(&bytes));
+            if !want.starts_with(f.name.split('.').next().unwrap_or_default()) {
+                tracing::warn!(thread = %rec.id, src = %f.src, "task 첨부 원본이 바뀌어 이름({})과 내용이 다르다: 넘기지 않는다", f.name);
+                continue;
+            }
             let mut saved = false;
             for (i, chunk) in bytes.chunks(aaa_proto::ATTACH_CHUNK).enumerate() {
                 let offset = i * aaa_proto::ATTACH_CHUNK;
@@ -250,12 +274,76 @@ mod tests {
         );
         assert_eq!(
             refs(&text),
-            [format!("uploads/{a}"), format!("uploads/{b}"), "library/t-0482/plan.md".into(), "library/automation-design/index.html".into()]
+            [
+                format!("uploads/{a}"),
+                format!("uploads/{b}"),
+                "library/t-0482/plan.md".into(),
+                "library/automation-design/index.html".into()
+            ]
         );
-        for bad in ["0123456789ABCDEF.png", "0123456789abcdef.exe", "x.png", "../0123456789abcdef.png", "0123456789abcdef.htm"] {
+        for bad in
+            ["0123456789ABCDEF.png", "0123456789abcdef.exe", "x.png", "../0123456789abcdef.png", "0123456789abcdef.htm"]
+        {
             assert!(!valid_name(bad), "{bad}");
         }
         assert_eq!((doc_ext("htm"), doc_ext("markdown"), doc_ext("pdf")), (Some("html"), Some("md"), None));
+    }
+
+    /// 올리기: 보기 권한·폐기한 기기는 쓰기 전에 거부하고, 그림은 signature, 문서는 UTF-8 글만 받으며, 같은 내용은 파일 하나다.
+    /// 읽기는 이름 꼴만 받고 uploads 안 symlink는 읽지 않는다
+    #[test]
+    fn upload_rules() {
+        let state = std::env::temp_dir().join(format!("aaa-task-upload-{}", aaa_common::util::new_id()));
+        let mut cfg = aaa_config::HostConfig::default();
+        cfg.notify.web_push = false;
+        cfg.projects.root = state.join("projects").display().to_string();
+        let h = Host::open(cfg, state.clone()).unwrap();
+        h.project_create("demo", Default::default(), "test").unwrap();
+        let uploads = h.project_dir("demo").unwrap().join("uploads");
+        let png = b"\x89PNG\r\n\x1a\n\0\0\0\rIHDR".to_vec();
+        let save =
+            |role, actor: &str, kind: Option<&str>, bytes: &[u8]| h.task_file_save(role, actor, "demo", kind, bytes);
+        let code = |r: Result<String, ErrorBody>| r.unwrap_err().code;
+        assert_eq!(code(save(DeviceRole::Reader, "device:r", None, &png)), ErrorCode::Forbidden);
+        h.revoked_devices.lock().unwrap().insert("gone".into());
+        assert_eq!(code(save(DeviceRole::Controller, "device:gone", None, &png)), ErrorCode::Unauthorized);
+        let files = || std::fs::read_dir(&uploads).map(|d| d.count()).unwrap_or(0);
+        assert_eq!(files(), 0, "거부한 올리기가 파일을 남겼다");
+        assert_eq!(
+            code(save(DeviceRole::Controller, "device:c", None, b"<svg/>")),
+            ErrorCode::BadRequest,
+            "signature 없는 그림"
+        );
+        assert_eq!(
+            code(save(DeviceRole::Controller, "device:c", Some("md"), b"a\0b")),
+            ErrorCode::BadRequest,
+            "NUL 든 문서"
+        );
+        assert_eq!(
+            code(save(DeviceRole::Controller, "device:c", Some("md"), &[0xff, 0xfe])),
+            ErrorCode::BadRequest,
+            "UTF-8 아님"
+        );
+        assert_eq!(
+            code(save(DeviceRole::Controller, "device:c", Some("pdf"), b"x")),
+            ErrorCode::BadRequest,
+            "문서 종류"
+        );
+        let img = save(DeviceRole::Controller, "device:c", None, &png).unwrap();
+        assert_eq!(save(DeviceRole::Controller, "device:c", None, &png).unwrap(), img, "같은 내용은 같은 이름");
+        assert!(img.starts_with("uploads/") && img.ends_with(".png"), "{img}");
+        let doc = save(DeviceRole::Controller, "device:c", Some("html"), b"<script>1</script>").unwrap();
+        assert!(doc.ends_with(".html"), "{doc}");
+        assert_eq!(files(), 2);
+        assert_eq!(h.task_file_read("demo", img.trim_start_matches("uploads/")).unwrap(), png);
+        assert_eq!(h.task_file_read("demo", "../TASKS.md").unwrap_err().code, ErrorCode::BadRequest);
+        #[cfg(unix)]
+        {
+            std::os::unix::fs::symlink(state.join("projects/demo/TASKS.md"), uploads.join("0123456789abcdef.md"))
+                .unwrap();
+            assert!(h.task_file_read("demo", "0123456789abcdef.md").is_err(), "symlink를 읽었다");
+        }
+        let _ = std::fs::remove_dir_all(&state);
     }
 
     /// 첨부를 받지 못하는 옛 agent(`work_attach.v1` 없음)에는 thread 기록을 만들기 전에 거부한다: 넘기지 못한 host 경로를
@@ -298,7 +386,10 @@ mod tests {
             task: "첨부 일\n![그림](attachments/0123456789abcdef.png)".into(),
             role: aaa_proto::Role::Worker,
             account: None,
-            attachments: vec![TaskFile { name: "0123456789abcdef.png".into(), src: "uploads/0123456789abcdef.png".into() }],
+            attachments: vec![TaskFile {
+                name: "0123456789abcdef.png".into(),
+                src: "uploads/0123456789abcdef.png".into(),
+            }],
         };
         let e = h.thread_start(start, "test").await.unwrap_err();
         assert_eq!(e.code, ErrorCode::Unavailable, "{e:?}");

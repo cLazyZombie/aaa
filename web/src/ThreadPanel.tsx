@@ -204,7 +204,7 @@ export function ThreadPanel({
                     </a>
                     {f.on_agent && <span className="tag">agent에서 읽음</span>}
                     <span className="size">{fmtSize(f.size)}</span>
-                    {onAddDoc && isDoc(f) && <TaskAddButton path={f.path} onAdd={onAddDoc} />}
+                    {onAddDoc && isDoc(t.id, f) && <TaskAddButton path={f.path} onAdd={onAddDoc} />}
                   </li>
                 ))}
               </ul>

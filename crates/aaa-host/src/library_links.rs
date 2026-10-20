@@ -616,7 +616,9 @@ mod tests {
         std::fs::write(source.join("plan.md"), b"# one").unwrap();
         let link = publish(&lab, "design", &source, true).await;
         let cap = |base: &str| base.trim_start_matches("/v/").trim_end_matches('/').to_string();
-        let resolve = |role, cap: String| lab.h.call(role, "device:c", FrontRequest::LibraryResolve { project: "demo".into(), cap });
+        let resolve = |role, cap: String| {
+            lab.h.call(role, "device:c", FrontRequest::LibraryResolve { project: "demo".into(), cap })
+        };
         let resolved = FrontResponse::LibraryResolved { project: "demo".into(), name: "design".into() };
         let signed = resolve(DeviceRole::Controller, cap(&link.base)).await.unwrap();
         assert_eq!(serde_json::to_value(signed).unwrap(), serde_json::to_value(&resolved).unwrap(), "공유 링크");
@@ -632,7 +634,10 @@ mod tests {
         let mut task = "고칠 것\n[계획](library/design/plan.md)\n[없음](library/design/gone.md)".to_string();
         let (files, warnings) = lab.h.task_attachments("demo", &mut task);
         assert_eq!(files.len(), 1, "live 공개는 원본 폴더에서 읽는다: {warnings:?}");
-        assert!(task.contains(&format!("[계획](attachments/{})", files[0].name)) && files[0].name.ends_with(".md"), "{task}");
+        assert!(
+            task.contains(&format!("[계획](attachments/{})", files[0].name)) && files[0].name.ends_with(".md"),
+            "{task}"
+        );
         assert!(warnings.len() == 1 && warnings[0].contains("library/design/gone.md"), "{warnings:?}");
         std::fs::write(source.join("plan.md"), b"# two").unwrap();
         assert_eq!(lab.h.report_doc_bytes("demo", "design", "plan.md", 1024).unwrap(), b"# two");

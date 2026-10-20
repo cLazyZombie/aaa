@@ -1,7 +1,7 @@
 // task 첨부 줄 규칙(src/tasksModel.ts, plan §8.323): 메모의 한 줄이 첨부 하나다(그림·올린 문서·보고서 문서·바깥 주소).
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { addAttachment, attachmentOfLine, attachmentsOf, fileKind, linkFromText, memoText, pickAttachable, removeAttachment, reportDoc, reportUrlOf, withMemoText, withoutAttachments } from "../src/tasksModel.ts";
+import { addAttachment, attachmentOfLine, attachmentsOf, fileKind, linkFromText, memoText, pickAttachable, removeAttachment, reportDoc, reportDocLink, reportUrlOf, withMemoText, withoutAttachments } from "../src/tasksModel.ts";
 
 const IMG = "uploads/0123456789abcdef.png";
 const DOC = "uploads/fedcba9876543210.md";
@@ -47,6 +47,15 @@ describe("task 첨부 줄", () => {
     assert.deepEqual(linkFromText(" https://example.com/spec/ "), { kind: "url", target: "https://example.com/spec/", label: "example.com/spec/" });
     assert.deepEqual(linkFromText("library/t-0482/plan.md"), { kind: "report", target: "library/t-0482/plan.md", label: "plan.md" });
     assert.equal(linkFromText("그냥 글"), null);
+    // 괄호는 첨부 줄을 깬다: 주소는 풀어 쓰고, 괄호 든 보고서 경로는 받지 않는다(줄로 쓴 뒤에도 첨부로 읽힌다)
+    const wiki = linkFromText("https://example.com/a_(b)");
+    assert.equal(wiki?.target, "https://example.com/a_%28b%29");
+    assert.deepEqual(attachmentOfLine(`[x](${wiki?.target})`)?.kind, "url");
+    assert.equal(linkFromText("library/t-0482/plan(v2).md"), null);
+    // 「할 일에 추가」 단추: 첨부 줄로 쓸 수 있는 보고서 문서만, 보고서 맨 위는 보고서 이름
+    assert.deepEqual(reportDocLink("plan-report", "index.html"), { kind: "report", target: "library/plan-report/index.html", label: "plan-report" });
+    assert.equal(reportDocLink("t-0001", "docs/notes.md")?.label, "notes.md");
+    for (const bad of ["notes.markdown", "my plan.md", "p(1).md", "pic.png"]) assert.equal(reportDocLink("t-0001", bad), null, bad);
     assert.deepEqual(reportDoc("library/t-0482/docs/plan.md"), { name: "t-0482", path: "docs/plan.md" });
     assert.equal(fileKind({ name: "plan.md", type: "" }), "md");
     assert.equal(fileKind({ name: "IMG.HEIC", type: "image/heic" }), null);

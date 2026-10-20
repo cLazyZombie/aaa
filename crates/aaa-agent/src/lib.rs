@@ -1551,7 +1551,8 @@ impl Agent {
             }
             AgentRequest::WorkAttachWrite { work_dir, att, offset, data, eof } => {
                 tokio::task::spawn_blocking(move || {
-                    threads::check_work_dir(&work_dir).and_then(|dir| attach::write_work(&dir, &att, offset, &data.0, eof))
+                    threads::check_work_dir(&work_dir)
+                        .and_then(|dir| attach::write_work(&dir, &att, offset, &data.0, eof))
                 })
                 .await
                 .map_err(|e| ErrorBody::new(ErrorCode::Internal, e.to_string()))

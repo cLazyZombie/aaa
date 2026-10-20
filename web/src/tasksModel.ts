@@ -500,10 +500,13 @@ export function reportDoc(target: string): { name: string; path: string } | null
 
 /** 붙인 글(주소·`library/…` 경로)을 링크 첨부로. 첨부 꼴이 아니면 null */
 export function linkFromText(text: string, label?: string): TaskAttachment | null {
-  const target = text.trim();
+  let target = text.trim();
   if (/\s/.test(target)) return null;
   const kind: TaskAttachmentKind | null = REPORT_DOC.test(target) ? "report" : URL_TARGET.test(target) ? "url" : null;
   if (!kind) return null;
+  // 괄호는 첨부 줄 `[제목](대상)`을 깬다: 주소는 풀어 쓴 꼴로 바꾸고, 괄호 든 보고서 경로는 받지 않는다
+  if (kind === "url") target = target.replace(/\(/g, "%28").replace(/\)/g, "%29");
+  else if (/[()]/.test(target)) return null;
   const tail = target.replace(/[?#].*$/, "").replace(/\/+$/, "").split("/").pop() ?? target;
   return { kind, target, label: label?.trim() || (kind === "url" ? target.replace(/^https?:\/\//i, "") : tail) };
 }
@@ -532,6 +535,11 @@ export function reportUrlOf(target: string, origin: string): ReportUrl | null {
   } catch {
     return null;
   }
+}
+
+/** 보고서 안 문서의 첨부(「할 일에 추가」). 첨부 줄로 쓸 수 없는 경로(md·html이 아님, 공백·괄호)는 null: 그 줄에는 단추를 두지 않는다 */
+export function reportDocLink(name: string, path: string): TaskAttachment | null {
+  return linkFromText(`library/${name}/${path}`, path === "index.html" ? name : undefined);
 }
 
 /** 「할 일에 추가」(보고서·thread 결과물의 문서)로 링크를 붙일 task: 형식이 맞고 그 문서를 아직 링크하지 않은 것, 제목·메모 검색 */

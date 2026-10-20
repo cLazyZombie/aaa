@@ -11,7 +11,8 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use aaa_proto::{
-    AgentRequest, AgentResponse, ErrorBody, ErrorCode, FileKind, FrontResponse, LibraryFile, LibraryView, ReportSnapshot,
+    AgentRequest, AgentResponse, ErrorBody, ErrorCode, FileKind, FrontResponse, LibraryFile, LibraryView,
+    ReportSnapshot,
 };
 
 use crate::{Host, err};

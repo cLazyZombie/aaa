@@ -11,13 +11,14 @@ import { DrawerToggle, HeadMore, HeadNote } from "./drawer";
 import { LIBRARY_SANDBOX } from "./FileViewer";
 import { ReportThread, ReportsPanel, openReportWindow } from "./ReportsPanel";
 import { formatBytes } from "./formatBytes";
+import { reportDocLink } from "./tasksModel";
 
 export type ReportRef = { project: string; name: string };
 
 const encodePath = (p: string) => p.split("/").map(encodeURIComponent).join("/");
 
-/** task에 링크할 수 있는 결과물: host 사본이 있는 md·html(agent에만 있는 것은 thread로 넘길 사본이 없다) */
-export const isDoc = (f: LibraryFile) => !f.on_agent && /\.(md|markdown|html?)$/i.test(f.path);
+/** task에 링크할 수 있는 결과물: host 사본이 있고(agent에만 있는 것은 thread로 넘길 사본이 없다) 첨부 줄로 쓸 수 있는 md·html */
+export const isDoc = (name: string, f: LibraryFile) => !f.on_agent && reportDocLink(name, f.path) !== null;
 
 /** 결과물 파일 줄의 「할 일에」 단추(보고서 화면·thread 결과물) */
 export function TaskAddButton({ path, onAdd }: { path: string; onAdd: (path: string) => void }) {
@@ -151,7 +152,7 @@ function ReportDetail({ report, onBack, onAddDoc }: { report: ReportRef; onBack:
                       {f.path}
                     </a>
                     <span className="size">{formatBytes(f.size)}</span>
-                    {onAddDoc && isDoc(f) && <TaskAddButton path={f.path} onAdd={onAddDoc} />}
+                    {onAddDoc && isDoc(report.name, f) && <TaskAddButton path={f.path} onAdd={onAddDoc} />}
                   </li>
                 ))}
               </ul>

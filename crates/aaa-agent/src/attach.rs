@@ -48,7 +48,14 @@ pub fn write_work(work_dir: &Path, att: &str, offset: u64, data: &[u8], eof: boo
     write_in(&dir, att, offset, data, eof, true)
 }
 
-fn write_in(dir: &Path, att: &str, offset: u64, data: &[u8], eof: bool, replace: bool) -> Result<Option<(String, String)>> {
+fn write_in(
+    dir: &Path,
+    att: &str,
+    offset: u64,
+    data: &[u8],
+    eof: bool,
+    replace: bool,
+) -> Result<Option<(String, String)>> {
     if !valid_att(att) {
         bail!("첨부 이름 형식이 아니다");
     }

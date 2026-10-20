@@ -19,7 +19,7 @@ import { ReportsView, type ReportRef } from "./ReportsView";
 import { TasksView, useSeenMine, useTaskBoard, type TaskAddRequest } from "./TasksView";
 import { composerDrafts } from "./herdr/composerDraft.ts";
 import { readTerminalDraft, writeTerminalDraft } from "./herdr/terminalDraft.ts";
-import { linkFromText, reportDoc, taskBadge, uploadsBase, type TaskAttachment } from "./tasksModel";
+import { reportDoc, reportDocLink, taskBadge, uploadsBase, type TaskAttachment } from "./tasksModel";
 import { UpdateNotice } from "./UpdateNotice";
 import { ApiError, call, me, onSignedOut, pushedSince, pushInfo, signOut, tellAlert, watchEvents } from "./api";
 import { removePushSubscription } from "./push";
@@ -858,7 +858,7 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
   /** 보고서 안 md·html 문서를 할 일에(조작 권한만) */
   const addReportDoc =
     role === "reader" ? undefined : (name: string, path: string) => {
-      const link = linkFromText(`library/${name}/${path}`, path === "index.html" ? name : undefined);
+      const link = reportDocLink(name, path);
       if (link) addTask(link);
     };
 
