@@ -1,7 +1,7 @@
 // 할 일 화면의 행 상태·거르기·검색·배지 셈(src/tasksModel.ts, 할 일 보기 T1, plan §8.306).
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { anchorOf, canonicalLine, descendants, draftOf, draftOps, dropOp, emptyDraft, findTask, itemToTask, lineDiff, moveOp, noteItems, ownerKindOf, ownerLabel, parentAnchor, restorable, taskBadge, handOffText, startable, linkCandidates, newAutoCleans, lastLogId, mineKeys, taskDepth, taskMatches, taskSections, taskState, toListOp, unassigned } from "../src/tasksModel.ts";
+import { anchorOf, canonicalLine, descendants, draftOf, draftOps, dropOp, emptyDraft, findTask, itemToTask, lineDiff, moveOp, noteItems, ownerKindOf, ownerLabel, parentAnchor, restorable, taskBadge, handOffText, ownerFixes, startable, linkCandidates, newAutoCleans, lastLogId, mineKeys, taskDepth, taskMatches, taskSections, taskState, toListOp, unassigned } from "../src/tasksModel.ts";
 
 const task = (over) => ({ list: "Backlog", title: "일", owner: null, thread: null, notes: [], done: false, line: 1, raw: "- [ ] 일", block_sha256: "", parent: null, problems: [], ...over });
 const MISREAD = "owner 칸이 owner 꼴이 아님: t-0001 S4 뒤";
@@ -190,6 +190,13 @@ describe("할 일 thread 연결(T3, plan §8.315)", () => {
     assert.equal(startable(task({ thread: "t-0001" }), groups, agents), false, "열린 thread와 이어졌다");
     assert.equal(startable(task({ thread: "t-0002" }), groups, agents), true, "끝난 thread는 다시 맡긴다");
     assert.equal(startable(task({ problems: [MISREAD] }), groups, agents), false);
+  });
+
+  it("owner가 정한 profile·머신은 바로 시작 창에서 잠근다(host `--from-task`가 다른 값을 거부한다)", () => {
+    for (const o of [null, "", "agent", "me"]) assert.deepEqual(ownerFixes(o), { profile: false, machine: false }, String(o));
+    assert.deepEqual(ownerFixes("claude"), { profile: true, machine: false });
+    assert.deepEqual(ownerFixes("codex@mac-a"), { profile: true, machine: true });
+    assert.deepEqual(ownerFixes("@mac-a"), { profile: false, machine: true });
   });
 
   it("잇기 후보: 형식 어긋남·열린 thread 연결을 빼고 제목·메모로 찾는다", () => {

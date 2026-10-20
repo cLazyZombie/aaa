@@ -4411,7 +4411,7 @@ fn task_thread_link_and_auto_clean() {
     let read = || std::fs::read_to_string(&file).unwrap();
     std::fs::write(
         &file,
-        "# Tasks\n\n## Backlog\n- [ ] 끝낼 일\n- [ ] noreport 일\n- [ ] 상위 일\n  - [ ] 하위 일\n- [ ] 남는 일\n",
+        "# Tasks\n\n## Backlog\n- [ ] 끝낼 일\n- [ ] noreport 일\n- [ ] 결정 일\n- [ ] 상위 일\n  - [ ] 하위 일\n- [ ] 남는 일\n",
     )
     .unwrap();
     let start = |title: &str| -> String {
@@ -4421,27 +4421,34 @@ fn task_thread_link_and_auto_clean() {
     };
     let e = w.h.json(&["thread", "start", "demo", "--title", "x", "--task-file", &w.task("x.md", "x"), "--link-task"]);
     assert!(e.expect_err("--from-task 없이").contains("--link-task는 --from-task와 함께"));
-    let (done, quiet, child) = (start("끝낼 일"), start("noreport 일"), start("하위 일"));
+    let (done, quiet, decide, child) = (start("끝낼 일"), start("noreport 일"), start("결정 일"), start("하위 일"));
     assert_eq!(
         read(),
         format!(
-            "# Tasks\n\n## Backlog\n- [ ] 끝낼 일 · {done}\n- [ ] noreport 일 · {quiet}\n- [ ] 상위 일\n  - [ ] 하위 일 · {child}\n\
-             - [ ] 남는 일\n"
+            "# Tasks\n\n## Backlog\n- [ ] 끝낼 일 · {done}\n- [ ] noreport 일 · {quiet}\n- [ ] 결정 일 · {decide}\n- [ ] 상위 일\n\
+             \x20 - [ ] 하위 일 · {child}\n- [ ] 남는 일\n"
         )
     );
     // 열린 thread와 이어진 task는 아직 판정하지 않는다
     w.h.ok(&["ticker", "tick"]);
     assert!(read().contains(&format!("끝낼 일 · {done}")));
-    for id in [&done, &child] {
+    for id in [&done, &decide, &child] {
         w.wait_show("보고", id, |v| v["report_hash"].is_string() && v["brief"] == "delivered");
     }
     w.wait_show("brief 전달", &quiet, |v| v["brief"] == "delivered");
-    for id in [&done, &quiet, &child] {
+    // 결정 일은 마지막 보고를 `[결정 필요]`로 바꾼다: host가 새 보고를 받은 뒤 끝낸다
+    let first = w.show(&decide);
+    let work = PathBuf::from(first["work_dir"].as_str().unwrap());
+    std::fs::write(work.join("report.md"), "[결정 필요] 둘 중 고른다\n\n## Report\n고를 것\n\n## Next\n- 고르기\n")
+        .unwrap();
+    w.wait_show("결정 보고", &decide, |v| v["report_hash"] != first["report_hash"]);
+    for id in [&done, &quiet, &decide, &child] {
         w.h.ok(&["thread", "resolve", "demo", id]);
     }
     w.h.ok(&["ticker", "tick"]);
-    let cleaned =
-        format!("# Tasks\n\n## Backlog\n- [ ] noreport 일 · {quiet}\n- [ ] 상위 일 · {child}\n- [ ] 남는 일\n");
+    let cleaned = format!(
+        "# Tasks\n\n## Backlog\n- [ ] noreport 일 · {quiet}\n- [ ] 결정 일 · {decide}\n- [ ] 상위 일 · {child}\n- [ ] 남는 일\n"
+    );
     assert_eq!(read(), cleaned);
 
     // 기록: 지운 둘은 「host 자동 정리」
@@ -4459,6 +4466,7 @@ fn task_thread_link_and_auto_clean() {
         t["attention"].as_str().unwrap_or_default().to_string()
     };
     assert_eq!(attention(&board, "noreport 일"), format!("{quiet} 끝남: 보고가 없다"));
+    assert_eq!(attention(&board, "결정 일"), format!("{decide} 끝남: 보고 표지 [결정 필요]"));
     assert_eq!(attention(&board, "상위 일"), format!("하위 task가 모두 끝났다(마지막 {child})"));
     assert_eq!(attention(&board, "남는 일"), "");
     let text = String::from_utf8_lossy(&w.h.run(&["task", "list"]).stdout).to_string();
@@ -4478,6 +4486,7 @@ fn task_thread_link_and_auto_clean() {
     };
     assert_eq!(events(&done), ["task auto-cleaned"], "{items:?}");
     assert_eq!(events(&quiet), ["task needs check"], "{items:?}");
+    assert_eq!(events(&decide), ["task needs check"], "{items:?}");
     assert_eq!(events(&child), ["task auto-cleaned", "task needs check"], "{items:?}");
     let restore =
         items.iter().find(|i| i["subject"] == done.as_str() && i["event"] == "task auto-cleaned").unwrap()["summary"]
@@ -5183,7 +5192,7 @@ fn merged_pr_resolves_the_thread() {
 }
 
 /// 병합으로 끝난 thread의 task(T3, plan §8.315): PR이 병합돼 저절로 끝난 thread는 마지막 보고 표지가 `[완료]`가 아니어도(`[착지]`)
-/// 다음 tick이 그 task 줄을 지운다(병합이 표지보다 앞선다, t-0469 §4 P2). 끝내기가 ticker를 깨우므로 따로 tick하지 않는다.
+/// 그 task 줄을 지운다(병합이 표지보다 앞선다, t-0469 §4 P2). 병합 끝내기와 판정은 같은 tick에서 돈다.
 #[test]
 fn merged_thread_cleans_its_task() {
     let mut w = world_setup("tick_secs = 1\npr_poll_secs = 1\nmerge_grace_secs = 1\n", false, fake_gh);
@@ -5202,19 +5211,16 @@ fn merged_thread_cleans_its_task() {
     std::fs::write(stub.join("view-8.json"), pr_view_json(&branch, "MERGED", "APPROVED", &"0".repeat(40))).unwrap();
     std::fs::write(
         PathBuf::from(t["work_dir"].as_str().unwrap()).join("report.md"),
-        "PR: https://github.com/o/app/pull/8\n[착지] #8을 병합했다\n\n## Report\n병합\n\n## Next\n- 없음\n",
+        "[착지] #8을 병합했다\nPR: https://github.com/o/app/pull/8\n\n## Report\n병합\n\n## Next\n- 없음\n",
     )
     .unwrap();
     f.kind("thread_resolved", &id, T);
-    wait_for_diag(
-        "병합한 task 지움",
-        T,
-        || {
-            let text = std::fs::read_to_string(&file).unwrap();
-            (text == "# Tasks\n\n## Backlog\n- [ ] 남는 일\n").then_some(())
-        },
-        || format!("TASKS.md: {}\nlog: {}", std::fs::read_to_string(&file).unwrap(), w.h.ok(&["task", "log"])),
-    );
+    // 끝낸 그 tick이 판정까지 한다: 그 뒤에 시작한 tick이 끝나면 판정·기록·inbox가 다 끝났다
+    w.h.ticks(1);
+    assert_eq!(std::fs::read_to_string(&file).unwrap(), "# Tasks\n\n## Backlog\n- [ ] 남는 일\n");
+    // 판정이 본 마지막 보고는 `[착지]`다(표지만 보면 확인 필요)
+    let copied = std::fs::read_to_string(w.projects.join(format!("demo/threads/{id}.md"))).unwrap();
+    assert!(copied.starts_with("[착지]"), "{copied}");
     let log = w.h.ok(&["task", "log"]);
     let e = &log["entries"][0];
     assert_eq!(

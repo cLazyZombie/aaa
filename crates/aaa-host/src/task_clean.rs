@@ -98,20 +98,12 @@ impl Host {
         let marker = self.report_marker(rec);
         let c = &rec.task_clean;
         let mut clean: Vec<(TaskView, String)> = Vec::new();
+        let mut check: Vec<(String, String)> = Vec::new();
         for t in all.iter().filter(|t| t.thread.as_deref() == Some(rec.id.as_str())) {
             let children = all.iter().any(|x| x.parent == Some(t.line));
             match judge(c.why.as_deref(), c.discard, marker, children) {
                 Verdict::Clean(r) => clean.push((t.clone(), r)),
-                Verdict::Check(r) => self.inbox_add(
-                    project,
-                    "task",
-                    &rec.id,
-                    "task needs check",
-                    &format!(
-                        "「{}」 task 확인 필요({} 끝남: {r}). 줄은 남겼다. 끝났는지·다시 맡길지·연결만 풀지 사용자에게 묻는다",
-                        t.title, rec.id
-                    ),
-                ),
+                Verdict::Check(r) => check.push((t.title.clone(), r)),
             }
         }
         let mut cleaned = Vec::new();
@@ -135,6 +127,19 @@ impl Host {
                 cleaned.push(t.title.clone());
             }
             parents = self.raise_parents(project, dir, rec, &all, &clean);
+        }
+        // 확인 필요 알림은 지우기가 쓰인 뒤에 낸다: 쓰기가 실패하면 다음 tick이 다시 판정해 알림이 겹친다
+        for (title, r) in &check {
+            self.inbox_add(
+                project,
+                "task",
+                &rec.id,
+                "task needs check",
+                &format!(
+                    "「{title}」 task 확인 필요({} 끝남: {r}). 줄은 남겼다. 끝났는지·다시 맡길지·연결만 풀지 사용자에게 묻는다",
+                    rec.id
+                ),
+            );
         }
         self.update_rec(project, &rec.id, |r| {
             r.task_clean.judged_ms = Some(aaa_common::util::now_ms());
@@ -174,25 +179,24 @@ impl Host {
                 thread: Some(rec.id.clone()),
                 done: None,
             };
-            match self.task_write(project, dir, &[op], None, HOST_ACTOR, &no_input(), true) {
+            // 잇지 못하면(그사이 상위가 바뀌었다) 다시 하지 않지만 신호는 남긴다: 줄 대신 inbox로 묻게 한다
+            let summary = match self.task_write(project, dir, &[op], None, HOST_ACTOR, &no_input(), true) {
                 Ok((None, _)) => {
-                    self.inbox_add(
-                        project,
-                        "task",
-                        &rec.id,
-                        "task needs check",
-                        &format!(
-                            "상위 「{}」 task의 하위가 모두 끝났다(마지막 {}). 상위에 {}를 이었다. 끝났는지 사용자에게 묻는다",
-                            p.title, rec.id, rec.id
-                        ),
-                    );
                     raised.push(p.title.clone());
+                    format!(
+                        "상위 「{}」 task의 하위가 모두 끝났다(마지막 {}). 상위에 {}를 이었다. 끝났는지 사용자에게 묻는다",
+                        p.title, rec.id, rec.id
+                    )
                 }
-                Ok((Some((_, reason, _)), _)) => {
-                    tracing::warn!(project, task = %p.title, "상위 task를 올리지 못했다: {reason}")
+                Ok((Some((_, why, _)), _)) | Err(ErrorBody { message: why, .. }) => {
+                    tracing::warn!(project, task = %p.title, "상위 task를 올리지 못했다: {why}");
+                    format!(
+                        "상위 「{}」 task의 하위가 모두 끝났다(마지막 {}). 상위에 잇지 못했다({why}). 끝났는지 사용자에게 묻는다",
+                        p.title, rec.id
+                    )
                 }
-                Err(e) => tracing::warn!(project, task = %p.title, "상위 task를 올리지 못했다: {}", e.message),
-            }
+            };
+            self.inbox_add(project, "task", &rec.id, "task needs check", &summary);
         }
         raised
     }

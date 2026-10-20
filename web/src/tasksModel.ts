@@ -384,6 +384,13 @@ export function startable(t: TaskView, groups: ThreadGroups, agents: readonly st
   return kind === "none" || kind === "agent";
 }
 
+/** owner 칸이 정한 profile·머신(`profile@머신`). host `--from-task`는 이와 다른 값을 거부하므로 「바로 시작」 창이 고르기를 잠근다 */
+export function ownerFixes(owner: string | null): { profile: boolean; machine: boolean } {
+  if (owner === null || owner === "" || owner === "agent" || owner === "me") return { profile: false, machine: false };
+  const at = owner.indexOf("@");
+  return at < 0 ? { profile: true, machine: false } : { profile: at > 0, machine: at < owner.length - 1 };
+}
+
 /** 「task에 잇기」·「연결만 풀기」: thread 칸만 바꾼다(빈 글은 풀기) */
 export function linkOp(t: TaskView, thread: string): TaskOp {
   return { op: "update", at: anchorOf(t), title: null, owner: null, person: false, notes: null, thread, done: null };

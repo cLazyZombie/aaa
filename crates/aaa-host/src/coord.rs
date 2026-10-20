@@ -397,11 +397,11 @@ impl Host {
         actor: &str,
         ctx: &task_edit::Ctx,
         auto: bool,
-    ) -> Result<(Option<(usize, String, String)>, Vec<i64>), ErrorBody> {
+    ) -> Result<(Option<WriteConflict>, Vec<i64>), ErrorBody> {
         let path = dir.join("TASKS.md");
         let lock = self.file_locks.of(&path);
         let guard = lock.lock().unwrap();
-        let mut conflict: Option<(usize, String, String)> = None;
+        let mut conflict: Option<WriteConflict> = None;
         let saved = file_rev::save(&path, |rev| {
             conflict = None;
             let expected = base_sha256.or(match ops {
@@ -679,3 +679,6 @@ fn notes_file(dir: &Path, rel: &str) -> TaskNotesFile {
         Err(e) => fail(e.to_string()),
     }
 }
+
+/// 할 일 쓰기 충돌: 동작 차례, 까닭, 대상 제목(없으면 빈 글)
+pub(crate) type WriteConflict = (usize, String, String);

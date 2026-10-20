@@ -213,7 +213,7 @@ impl ResolveWhy {
     }
 }
 
-/// 끝난 thread가 이어진 task를 어떻게 정리하나(할 일 T3, plan §8.315, t-0469 §4 P2). resolve가 끝날 때 `why`·`discard`를 적고,
+/// 끝난 thread가 이어진 task를 어떻게 정리하나(할 일 T3, plan §8.315, t-0469 §4 P2). resolve를 시작할 때 `why`·`discard`를 적고,
 /// ticker가 한 번 판정한 뒤 `judged_ms`를 찍는다. 다시 열면 지운다(다음 끝남을 다시 판정한다)
 #[derive(Debug, Clone, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub(crate) struct TaskClean {
@@ -2247,6 +2247,11 @@ impl Host {
         let rec = self.update_rec(project, id, |r| {
             r.status = ThreadStatus::Resolved;
             r.resolve_pending = Some(opts);
+            // 이어진 task 판정의 까닭은 처음 끝낸 까닭이다: 정리가 끊겨 `aaa thread resolve`로 이어 끝내도 병합은 병합이다
+            if r.task_clean.why.is_none() {
+                r.task_clean.why = Some(why.as_str().into());
+            }
+            r.task_clean.discard |= opts.skip_copy || opts.discard_uncopied;
             r.error = Some("정리 중: 응답을 기록할 때까지 다시 resolve로 이어갈 수 있다".into());
             r.last_group = Some(ThreadGroup::Resolved);
             r.merged_seen_ms = None;
@@ -2343,15 +2348,10 @@ impl Host {
             let _ = self.update_rec(project, id, |r| r.error = Some(message.clone()));
             return Err(ErrorBody { message, ..e });
         }
-        // 이어진 task 판정(할 일 T3)은 ticker가 한다: 끝난 까닭과 버림을 남기고 tick을 깨운다
+        // 이어진 task 판정(할 일 T3)은 ticker가 한다(끝낸 까닭과 버림은 위에서 적었다): 정리가 끝났으니 tick을 깨운다
         self.update_rec(project, id, |r| {
             r.resolve_pending = None;
             r.error = None;
-            r.task_clean = crate::orch::TaskClean {
-                why: Some(why.as_str().into()),
-                discard: opts.skip_copy || opts.discard_uncopied,
-                ..Default::default()
-            };
         })?;
         self.tick_wake.notify_one();
         self.flow(

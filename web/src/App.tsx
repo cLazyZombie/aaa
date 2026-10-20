@@ -1115,7 +1115,8 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
           unseenReports={unseenReports}
           tasks={tasksShown}
           onTasks={toggleTasks}
-          taskBadge={taskBadge(taskBoard.board, seenMine.seen)}
+          // 할 일 화면이 보이는 동안 me task는 이미 본 것이다(본 기록은 effect가 그린 뒤에 남겨 그 사이 배지가 튄다)
+          taskBadge={taskBadge(taskBoard.board, tasksShown ? null : seenMine.seen)}
           up={up}
           reader={role === "reader"}
           settings={<SettingsGear role={role} device={device} onSignedOut={signedOut} open={settingsOpen} onOpen={setSettingsOpen} />}

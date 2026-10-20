@@ -679,6 +679,7 @@ export function TasksView({
             자동 정리: 「{autoNews[0].title}」{autoNews[0].thread ? `(${autoNews[0].thread} 완료)` : ""}
             {autoNews.length > 1 ? ` 외 ${autoNews.length - 1}개` : ""}
           </span>
+          {canEdit && (
           <button
             type="button"
             className="btn btn-ghost"
@@ -693,6 +694,7 @@ export function TasksView({
           >
             되살리기
           </button>
+          )}
           <button type="button" className="task-undo-close" aria-label="닫기" data-testid="task-auto-clean-close" onClick={() => seeAuto(Math.max(autoSeen ?? 0, autoNews[0].id))}>
             <X aria-hidden="true" />
           </button>
@@ -900,7 +902,7 @@ function Unlinked({ threads, canLink, onThread, onLink, onMake }: { threads: Tas
       </h3>
       <ul className="task-rows">
         {threads.map((t) => (
-          <li key={t.id} className="task-row" data-testid={`tasks-unlinked-row-${t.id}`}>
+          <li key={t.id} className="task-row" data-testid={`task-unlinked-row-${t.id}`}>
             <button type="button" className="task-pick" data-testid={`tasks-unlinked-${t.id}`} onClick={() => onThread(t.id)}>
               <CircleDot className="task-state is-run" aria-hidden="true" />
               <span className="task-title">
@@ -910,11 +912,11 @@ function Unlinked({ threads, canLink, onThread, onLink, onMake }: { threads: Tas
             </button>
             {canLink && (
               <span className="task-unlinked-actions">
-                <button type="button" className="btn btn-ghost task-unlinked-action" title="이 thread를 있는 task에 잇는다" data-testid={`tasks-unlinked-link-${t.id}`} onClick={() => onLink(t)}>
+                <button type="button" className="btn btn-ghost task-unlinked-action" title="이 thread를 있는 task에 잇는다" data-testid={`task-unlinked-link-${t.id}`} onClick={() => onLink(t)}>
                   <Link2 aria-hidden="true" />
                   <span>task에 잇기</span>
                 </button>
-                <button type="button" className="btn btn-ghost task-unlinked-action" title="이 thread를 이은 새 task를 만든다" data-testid={`tasks-unlinked-make-${t.id}`} onClick={() => onMake(t)}>
+                <button type="button" className="btn btn-ghost task-unlinked-action" title="이 thread를 이은 새 task를 만든다" data-testid={`task-unlinked-make-${t.id}`} onClick={() => onMake(t)}>
                   <Plus aria-hidden="true" />
                   <span>task로 만들기</span>
                 </button>

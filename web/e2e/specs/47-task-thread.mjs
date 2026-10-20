@@ -80,6 +80,22 @@ export default async function ({ page }) {
     if (!task.includes("테스트 먼저 쓴다")) throw new Error(`메모가 할 일에 붙지 않았다: ${task}`);
     await stateIs(page, "로그인 고치기", "run");
     await shot(page, "thread-desktop-running");
+    // 확인창을 연 뒤 그 task 블록이 파일에서 바뀌면 시작하지 않는다(화면이 본 블록 hash, 사용자 10-20 결정)
+    await pick(page, "원격 일");
+    await page.getByTestId("task-detail").getByTestId("task-handoff-start").click();
+    await domIs(page, "바로 시작 값", () => document.querySelector('[data-testid="task-start"] form')?.dataset.startState === "ready");
+    const kept = read();
+    const threads = aaa("thread", "list", "demo").threads.length;
+    write(kept.replace("- [ ] 원격 일\n", "- [ ] 원격 일\n  그사이 더한 메모\n"));
+    await page.getByTestId("task-start-go").click();
+    const error = page.getByTestId("task-start-error");
+    await error.waitFor();
+    if (!(await error.textContent()).includes("그사이 바뀌었다")) throw new Error(`바뀐 블록 거부 글: ${await error.textContent()}`);
+    if (aaa("thread", "list", "demo").threads.length !== threads || linked("원격 일") !== null) throw new Error("바뀐 블록으로 시작했다");
+    await page.getByTestId("task-start").getByRole("button", { name: "취소" }).click();
+    md = write(kept);
+    aaa("ticker", "tick");
+    await shaIs(page, md);
   });
 
   await step("자동 정리: 보고 [완료]로 끝난 thread의 task는 다음 tick에 지워지고 알림 줄 「되살리기」로 돌아오면 「확인 필요」다", async () => {
@@ -140,10 +156,10 @@ export default async function ({ page }) {
     fs.writeFileSync(`${root}/task-47.md`, "사람을 기다림");
     const a = aaa("thread", "start", "demo", "--title", "따로 도는 일", "--machine", "labA", "--profile", "fake", "--kind", "dir", "--task-file", `${root}/task-47.md`).id;
     const b = aaa("thread", "start", "demo", "--title", "새로 생긴 일", "--machine", "labA", "--profile", "fake", "--kind", "dir", "--task-file", `${root}/task-47.md`).id;
-    await page.getByTestId(`tasks-unlinked-row-${a}`).waitFor();
-    await page.getByTestId(`tasks-unlinked-row-${b}`).waitFor();
+    await page.getByTestId(`task-unlinked-row-${a}`).waitFor();
+    await page.getByTestId(`task-unlinked-row-${b}`).waitFor();
     await shot(page, "thread-desktop-unlinked");
-    await page.getByTestId(`tasks-unlinked-link-${a}`).click();
+    await page.getByTestId(`task-unlinked-link-${a}`).click();
     const dialog = page.getByTestId("task-link");
     await dialog.getByTestId("task-link-search").fill("원격");
     await shot(page, "thread-desktop-link");
@@ -151,7 +167,7 @@ export default async function ({ page }) {
     await dialog.waitFor({ state: "detached" });
     await until("원격 일에 이음", () => linked("원격 일") === a);
     await stateIs(page, "원격 일", "run");
-    await page.getByTestId(`tasks-unlinked-make-${b}`).click();
+    await page.getByTestId(`task-unlinked-make-${b}`).click();
     const detail = page.getByTestId("task-detail");
     await detail.getByTestId("task-new-thread").waitFor();
     if ((await detail.getByTestId("task-field-title").inputValue()) !== "새로 생긴 일") throw new Error("thread 제목을 채우지 않았다");

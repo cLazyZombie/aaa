@@ -9,7 +9,7 @@ import type { OwnerChoice, TaskBoard, TaskThread, TaskView, ThreadStartPreview, 
 import { ApiError, call } from "./api";
 import { Markdown } from "./Markdown";
 import { TaskModal } from "./TaskDialogs";
-import { linkCandidates, ownerLabel, type ThreadGroups } from "./tasksModel";
+import { linkCandidates, ownerFixes, ownerLabel, type ThreadGroups } from "./tasksModel";
 
 const errText = (e: unknown) => (e instanceof ApiError || e instanceof Error ? e.message : String(e));
 
@@ -41,7 +41,10 @@ export function StartDialog({ task, owners, onStarted, onClose }: { task: TaskVi
       live = false;
     };
   }, [task.title, task.block_sha256]);
-  const repoMachine = preview?.repos.find((x) => x.path === repo)?.machine ?? null;
+  // owner가 정한 profile·머신은 고르지 못한다(host가 다른 값을 거부한다). 머신이 정해졌으면 다른 머신의 저장소도 빠진다
+  const fixed = ownerFixes(task.owner);
+  const repos = (preview?.repos ?? []).filter((x) => !fixed.machine || x.machine === null || x.machine === preview?.machine);
+  const repoMachine = repos.find((x) => x.path === repo)?.machine ?? null;
   // 저장소가 머신을 정하면 그 머신이다(다른 머신에서 그 경로를 찾지 않는다)
   const where = repoMachine ?? machine;
   const machines = (owners ?? []).filter((o) => o.connected);
@@ -106,7 +109,7 @@ export function StartDialog({ task, owners, onStarted, onClose }: { task: TaskVi
                 <label className="task-field">
                   <span>저장소</span>
                   <select className="input" value={repo} disabled={busy} onChange={(e) => setRepo(e.target.value)} data-testid="task-start-repo">
-                    {preview.repos.map((x) => (
+                    {repos.map((x) => (
                       <option key={`${x.machine ?? ""}:${x.path}`} value={x.path}>
                         {x.path}
                         {x.machine ? ` @${x.machine}` : ""}(worktree)
@@ -117,7 +120,7 @@ export function StartDialog({ task, owners, onStarted, onClose }: { task: TaskVi
                 </label>
                 <label className="task-field">
                   <span>머신</span>
-                  <select className="input" value={where} disabled={busy || repoMachine !== null} onChange={(e) => setMachine(e.target.value)} data-testid="task-start-machine">
+                  <select className="input" value={where} disabled={busy || repoMachine !== null || fixed.machine} onChange={(e) => setMachine(e.target.value)} data-testid="task-start-machine">
                     <option value="">host 머신</option>
                     {machines.map((o) => (
                       <option key={o.machine} value={o.machine}>
@@ -129,7 +132,7 @@ export function StartDialog({ task, owners, onStarted, onClose }: { task: TaskVi
                 </label>
                 <label className="task-field">
                   <span>profile</span>
-                  <select className="input" value={profile} disabled={busy} onChange={(e) => setProfile(e.target.value)} data-testid="task-start-profile">
+                  <select className="input" value={profile} disabled={busy || fixed.profile} onChange={(e) => setProfile(e.target.value)} data-testid="task-start-profile">
                     {profiles.length === 0 && <option value="">기본 profile</option>}
                     {profiles.map((p) => (
                       <option key={p} value={p}>
