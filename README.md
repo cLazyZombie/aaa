@@ -146,7 +146,7 @@ bash scripts/ci-local.sh --skip e2e          # 빼고 전부
 
 - 끝에 단계마다 걸린 시간과 결과를 요약하고, 실패한 단계는 로그 위치(`target/ci-local/<시각>/<단계>.log`)를 보인다. 실패를 다시 돌려 통과시키지 않는다.
 - `e2e`는 웹 E2E(Playwright Chromium·WebKit)다. Unix만이고 playwright를 전역 npm 모듈로 찾는다: `npm install -g playwright@1.59.1 && npx playwright@1.59.1 install chromium webkit`.
-- `public`은 공개 저장소 검사(`scripts/check-public.sh`)다. push 전에 돈다. 저장소 파일은 1MiB를 넘지 못한다.
+- `public`은 공개 저장소 검사(`scripts/check-public.sh`)다. push 전에 돈다. 저장소 파일은 기본 1MiB 이하이며, 스크립트의 `size_limit`에 정확한 경로·이유·상한을 명시한 예외만 허용한다. 누적 설계 원문 `docs/plan.md`는 2MiB, 버전 고정 Meslotendard 0.3.1 Bold·Regular 글꼴은 각각 기존 2,163,908·2,137,228바이트까지다. 크기 예외도 금지 확장자·비밀값 검사는 그대로 받는다.
 - README 그림은 가짜 실험실로 다시 찍는다(ffmpeg 필요). 영상 폴더를 더 주면 mp4도 만든다.
   ```sh
   (cd web && npm run build) && cargo build -p aaa

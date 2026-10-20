@@ -80,7 +80,7 @@ step_build() { cargo build --workspace --all-targets --locked; }
 step_clippy() { cargo clippy --workspace --all-targets --locked --keep-going -- -D warnings; }
 # 한 binary가 실패해도 나머지를 모두 돈다: fail-fast면 앞 binary 실패가 뒤 crate 유닛 시험을 돌지 않게 해, main이 빨간 동안 그 결과가 어느 run에도 없다
 step_test() {
-  if [ "$OS" != windows ]; then python3 -m unittest scripts.test_deploy_build || return 1; fi
+  if [ "$OS" != windows ]; then python3 -m unittest scripts.test_deploy_build scripts.test_check_public || return 1; fi
   cargo test --workspace --locked --no-fail-fast || return 1
 }
 step_e2e() {
