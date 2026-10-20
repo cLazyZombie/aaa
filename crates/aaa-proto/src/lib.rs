@@ -203,6 +203,8 @@ pub fn typescript_bindings() -> String {
         AutomationCheck::decl(&cfg),
         AutomationReview::decl(&cfg),
         AutomationTrashEntry::decl(&cfg),
+        ProjectSettingsView::decl(&cfg),
+        ResolvePreview::decl(&cfg),
         LibraryFile::decl(&cfg),
         LibraryView::decl(&cfg),
         LinkView::decl(&cfg),

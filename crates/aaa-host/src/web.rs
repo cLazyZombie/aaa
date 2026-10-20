@@ -849,6 +849,7 @@ async fn events_loop(host: Arc<Host>, dev: String, role: DeviceRole, mut socket:
     let mut tasks = host.task_events.subscribe();
     let mut preferences = host.preferences.subscribe();
     let mut reports = host.reports_changed.subscribe();
+    let mut inbox = host.inbox_changed.subscribe();
     let mut rollouts = host.rollout_changed.subscribe();
     let mut revoked = host.device_revoked.subscribe();
     let mut chat_notes = host.chat_notes();
@@ -861,6 +862,7 @@ async fn events_loop(host: Arc<Host>, dev: String, role: DeviceRole, mut socket:
     let mut send_preferences = true;
     // 보고서 안 본 수(활동 막대 배지, plan §8.256): 열 때와 목록이 바뀔 때
     let mut send_reports = true;
+    let mut send_inbox = true;
     let mut send_rollout = true;
     let mut send_badge = true;
     let mut last_badge = None;
@@ -918,6 +920,14 @@ async fn events_loop(host: Arc<Host>, dev: String, role: DeviceRole, mut socket:
             reports.borrow_and_update();
             let unseen = host.db.library_unseen_count().unwrap_or(0);
             let text = serde_json::to_string(&FrontEvent::Reports { unseen }).unwrap();
+            if socket.send(Message::Text(text.into())).await.is_err() {
+                break;
+            }
+        }
+        if send_inbox {
+            send_inbox = false;
+            inbox.borrow_and_update();
+            let text = serde_json::to_string(&FrontEvent::Inbox).unwrap();
             if socket.send(Message::Text(text.into())).await.is_err() {
                 break;
             }
@@ -1025,6 +1035,11 @@ async fn events_loop(host: Arc<Host>, dev: String, role: DeviceRole, mut socket:
                 if r.is_err() { break }
                 send_state = false;
                 send_reports = true;
+            }
+            r = inbox.changed() => {
+                if r.is_err() { break }
+                send_state = false;
+                send_inbox = true;
             }
             n = chat_notes.recv() => {
                 send_state = false;

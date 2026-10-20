@@ -751,7 +751,11 @@ picks: Array<number | null>, text: string | null, } | { "op": "preferences" } | 
 /**
  * 본문 파일의 본 판. 없으면 그 파일이 아직 없어야 한다
  */
-body_expected_sha256?: string, } | { "op": "automation_delete", project?: string, name: string, expected_sha256: string, } | { "op": "automation_restore", project?: string, id: string, } | { "op": "automation_run", project?: string, name: string, key: string, } | { "op": "routine_runs", project?: string, name: string, } | { "op": "routine_approve", project?: string, name: string, command_sha256: string, } | { "op": "routine_toggle", project?: string, name: string, on: boolean | null, } | { "op": "events", project: string | null, after: bigint, limit: number | null, } | { "op": "evaluator_assign", project?: string, profile: string, machine: string | null,
+body_expected_sha256?: string, } | { "op": "automation_delete", project?: string, name: string, expected_sha256: string, } | { "op": "automation_restore", project?: string, id: string, } | { "op": "automation_run", project?: string, name: string, key: string, } | { "op": "project_settings", project?: string, } | { "op": "project_repo_edit", project?: string, from: string, to: string, } | { "op": "thread_resolve_preview", project?: string, thread: string, } | { "op": "library_prune_apply", project: string | null, older_than_days: number | null, expected: Array<string>, } | { "op": "routine_runs", project?: string, name: string, } | { "op": "routine_approve", project?: string, name: string, command_sha256: string, } | { "op": "routine_toggle", project?: string, name: string, on: boolean | null, } | { "op": "events", project: string | null, after: number, limit: number | null,
+/**
+ * 가장 최근 `limit`개(차례는 그대로 오래된 것부터, FRONT_API 1.77). 웹 알림함 「흐름 사건」이 쓴다. 옛 host는 버린다
+ */
+tail?: boolean, } | { "op": "evaluator_assign", project?: string, profile: string, machine: string | null,
 /**
  * 개선을 직접 고칠 repo(없으면 repo 없는 작업 폴더)
  */
@@ -801,7 +805,11 @@ export type RolloutCard = { id: string, state: RolloutState, version: string | n
 
 export type RolloutCardStep = { machine: string, phase: RolloutPhase, completed: boolean, started_ms: number, transferred_bytes: number, total_bytes: number, };
 
-export type FrontResponse = { "kind": "accounts", accounts: Array<AccountView>, } | { "kind": "account_defaults", defaults: Array<AccountDefault>, } | { "kind": "account_login", login: AccountLoginView, } | { "kind": "input_events", events: Array<InputEvent>, } | { "kind": "deploy_context", project: string | null, session: boolean, allowed: boolean, } | { "kind": "rollout", rollout: RolloutView, } | { "kind": "deployment", machine: string, job: DeployJob, running_software: string, running_sha256: string, } | { "kind": "missions", missions: Array<MissionView>, } | { "kind": "mission", mission: MissionView, } | { "kind": "post", result: PostResult, } | { "kind": "posts", posts: Array<PostEnvelope>, } | { "kind": "status" } & HostStatus | { "kind": "machines", machines: Array<MachineView>, } | { "kind": "panes", panes: Array<PaneView>, } | { "kind": "pane" } & PaneView | { "kind": "next", lines: Array<string>,
+export type FrontResponse = { "kind": "accounts", accounts: Array<AccountView>, } | { "kind": "account_defaults", defaults: Array<AccountDefault>, } | { "kind": "account_login", login: AccountLoginView, } | { "kind": "input_events", events: Array<InputEvent>, } | { "kind": "deploy_context", project: string | null, session: boolean, allowed: boolean, } | { "kind": "rollout", rollout: RolloutView, } | { "kind": "deployment", machine: string, job: DeployJob, running_software: string, running_sha256: string, } | { "kind": "missions", missions: Array<MissionView>, } | { "kind": "mission", mission: MissionView, } | { "kind": "post", result: PostResult, } | { "kind": "posts", posts: Array<PostEnvelope>,
+/**
+ * 음소거된 보낸 쪽(`post unmute`에 줄 이름, FRONT_API 1.77). 옛 host는 생략한다
+ */
+muted?: Array<string>, } | { "kind": "status" } & HostStatus | { "kind": "machines", machines: Array<MachineView>, } | { "kind": "panes", panes: Array<PaneView>, } | { "kind": "pane" } & PaneView | { "kind": "next", lines: Array<string>,
 /**
  * `line`으로 보낸 메시지
  */
@@ -825,7 +833,7 @@ omitted_done: number, } | { "kind": "ticker", runs: bigint, } | { "kind": "routi
 /**
  * 지운 자동화(FRONT_API 1.76). 옛 host는 생략한다
  */
-trash?: Array<AutomationTrashEntry>, } | { "kind": "automation_doc", doc: AutomationDoc, } | { "kind": "automation_checked", text: string, check: AutomationCheck, } | { "kind": "automation_ran", accepted: boolean, detail: string, } | { "kind": "automation_converted", files: Array<string>,
+trash?: Array<AutomationTrashEntry>, } | { "kind": "automation_doc", doc: AutomationDoc, } | { "kind": "automation_checked", text: string, check: AutomationCheck, } | { "kind": "automation_ran", accepted: boolean, detail: string, } | { "kind": "project_settings" } & ProjectSettingsView | { "kind": "resolve_preview" } & ResolvePreview | { "kind": "automation_converted", files: Array<string>,
 /**
  * 쓰지 않은 계획이다(FRONT_API 1.58). `files`는 실제 변환과 같은 모양(새 파일과 `.converted/` 보존 사본)이다.
  */
@@ -839,7 +847,7 @@ plan_sha256: string, } | { "kind": "routine_runs", runs: Array<RoutineRun>,
  */
 source: RoutineSource | null, } | { "kind": "library" } & LibraryView | { "kind": "thread_diff", project: string, thread: string, diff: DiffView, } | { "kind": "library_link" } & LinkView | { "kind": "library_resolved", project: string, name: string, } | { "kind": "library_reports", reports: Array<LibraryReport>, } | { "kind": "library_imported", reports: Array<LibraryReport>, skipped: Array<LibrarySkip>, } | { "kind": "library_pruned", removed: Array<string>, } | { "kind": "library_prune_preview" } & LibraryPrunePlan | { "kind": "library_rotated" } | { "kind": "library_usage", size: number, reports: number, live: number, problems: number, max_size: number, max_days: number, protected_size: number, } | { "kind": "library_links", links: Array<LinkView>, } | { "kind": "evaluators", evaluators: Array<EvaluatorView>, } | { "kind": "evaluations", evaluations: Array<EvaluationView>, } | { "kind": "evaluation" } & EvaluationView | { "kind": "preferences" } & SharedPreferences;
 
-export type FrontEvent = { "ev": "state", machines: Array<MachineView>, panes: Array<PaneView>, } | { "ev": "workspace" } & Workspace | { "ev": "flow" } & FlowEvent | { "ev": "thread" } & ThreadView | { "ev": "question" } & QuestionView | { "ev": "preferences" } & SharedPreferences | { "ev": "pong", id: number, } | { "ev": "web", build: string, } | { "ev": "reports", unseen: number, } | { "ev": "tasks", project: string, sha256: string, } | { "ev": "app_badge", count: number, } | { "ev": "rollout", result: Outcome<RolloutCard | null>, } | { "ev": "notice" } & NoticeView | { "ev": "chat_changed", pane: string, signature: string, } | { "ev": "chat_watching", pane: string, live: boolean, };
+export type FrontEvent = { "ev": "state", machines: Array<MachineView>, panes: Array<PaneView>, } | { "ev": "workspace" } & Workspace | { "ev": "flow" } & FlowEvent | { "ev": "thread" } & ThreadView | { "ev": "question" } & QuestionView | { "ev": "preferences" } & SharedPreferences | { "ev": "pong", id: number, } | { "ev": "web", build: string, } | { "ev": "reports", unseen: number, } | { "ev": "inbox" } | { "ev": "tasks", project: string, sha256: string, } | { "ev": "app_badge", count: number, } | { "ev": "rollout", result: Outcome<RolloutCard | null>, } | { "ev": "notice" } & NoticeView | { "ev": "chat_changed", pane: string, signature: string, } | { "ev": "chat_watching", pane: string, live: boolean, };
 
 export type SubmitStage = "not_sent" | "no_enter" | "too_late";
 
@@ -1490,6 +1498,58 @@ export type AutomationTrashEntry = {
  * `.trash/` 안 파일 이름(되살리기 요청에 쓴다)
  */
 id: string, name: string, title: string, deleted_at_ms: number, };
+
+export type ProjectSettingsView = { project: string,
+/**
+ * 설정 파일 이름(`aaa.toml`, 없으면 옛 `project.toml`)
+ */
+file: string, status: ProjectStatus, goal: string, thread_profile: string, coordinator_profile: string, max_parallel_threads: number, auto_resolve_days: number, nudge: boolean, mute: boolean,
+/**
+ * 저장소 목록(`[[workspaces]]`·`[[repos]]`). 머신이 없으면 host 머신이다
+ */
+repos: Array<RepoChoice>,
+/**
+ * host 로컬 머신 이름(`RepoChoice.machine`이 빈 저장소의 머신, 모르면 없다)
+ */
+local_machine: string | null, task_notes: Array<string>, };
+
+export type ResolvePreview = { project: string, thread: string,
+/**
+ * thread 종류(응답 꼬리표 `kind`와 겹치지 않게 이름이 다르다)
+ */
+thread_kind: ThreadKind,
+/**
+ * 끝내면 지울 수 있는 worktree가 있다(worktree thread이고 작업 폴더 기록이 있다)
+ */
+worktree: boolean, branch: string | null,
+/**
+ * 기록된 PR 상태가 병합이다(끝낼 때 branch를 지울 수 있다)
+ */
+merged: boolean,
+/**
+ * 마지막 사본 상태(`complete`·`partial`, 없으면 아직 사본 없음)
+ */
+copy: string | null, copy_notes: Array<string>,
+/**
+ * HEAD 대비 커밋하지 않은 파일 수
+ */
+uncommitted: number | null,
+/**
+ * base(`origin/main` 등) 대비 바뀐 파일 수(커밋하지 않은 것 포함)
+ */
+changed: number | null,
+/**
+ * git을 읽지 못한 까닭(머신 끊김·옛 agent·저장소 없음)
+ */
+unknown: string | null,
+/**
+ * 끝내기 창이 보일 위험(한 줄씩)
+ */
+risks: Array<string>,
+/**
+ * 위험이 있거나 모르면 「worktree 남기기」를 기본으로 켠다
+ */
+keep_default: boolean, };
 
 export type LibraryFile = {
 /**

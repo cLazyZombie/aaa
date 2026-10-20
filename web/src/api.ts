@@ -54,6 +54,13 @@ export function onTasksChanged(listener: (sha256: string) => void): () => void {
   return () => tasksListeners.delete(listener);
 }
 
+/** host `inbox` 사건(알림함이 바뀜, FRONT_API 1.77): 알림함 배지와 패널이 다시 읽는다. 연결을 열 때도 한 번 온다 */
+const inboxListeners = new Set<() => void>();
+export function onInboxChanged(listener: () => void): () => void {
+  inboxListeners.add(listener);
+  return () => inboxListeners.delete(listener);
+}
+
 async function unwrap<T>(res: Response): Promise<T> {
   // pairing 자체(/api/v1/pair)의 401은 코드가 틀린 것이다. 그 밖의 401은 이 기기를 host가 모른다는 뜻이다
   if (res.status === 401 && !res.url.endsWith("/api/v1/pair")) reportSignedOut();
@@ -424,6 +431,7 @@ export function watchEvents(
       }
       else if (ev.ev === "reports") onReports(ev.unseen);
       else if (ev.ev === "tasks") for (const listener of tasksListeners) listener(ev.sha256);
+      else if (ev.ev === "inbox") for (const listener of inboxListeners) listener();
       else if (ev.ev === "app_badge") onAppBadge(ev.count);
       else if (ev.ev === "rollout") onRollout(ev.result);
       else if (ev.ev === "chat_changed") tellChat(ev.pane, { changed: true });

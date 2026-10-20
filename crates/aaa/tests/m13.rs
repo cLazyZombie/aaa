@@ -750,6 +750,17 @@ fn resolve_keeps_dirty_worktree_and_unmerged_branch() {
     // fake agent는 안내 줄을 받자마자 보고하므로, host가 전달을 확인해 brief_delivered를 남기는 것이 보고보다 늦을 수 있다.
     // 둘 다 본 뒤 resolve해야 마지막 사건이 thread_resolved다(부하 아래 brief_delivered가 resolve 뒤에 남아 실패했다)
     w.wait_show("보고", &id, |v| v["report_hash"].is_string() && v["brief"] == "delivered");
+    // 끝내기 전 확인(관리 GUI W4): 커밋하지 않은 파일·병합되지 않은 변경을 읽고 남기기를 권한다. 기록·사건은 그대로다
+    let before = w.h.ok(&["events", "demo"])["events"].as_array().unwrap().len();
+    let p = w.h.ok(&["thread", "resolve", "demo", &id, "--dry-run"]);
+    assert_eq!((p["kind"].as_str(), p["thread_kind"].as_str()), (Some("resolve_preview"), Some("worktree")), "{p}");
+    assert!(p["uncommitted"].as_u64().is_some_and(|n| n >= 1), "{p}");
+    assert!(p["changed"].as_u64() > p["uncommitted"].as_u64(), "commit한 파일도 base 대비 바뀐 것이다: {p}");
+    assert_eq!((p["merged"].as_bool(), p["keep_default"].as_bool()), (Some(false), Some(true)), "{p}");
+    let risks = p["risks"].to_string();
+    assert!(risks.contains("커밋하지 않은 파일") && risks.contains("병합되지 않은 변경"), "{p}");
+    assert_eq!(w.h.ok(&["thread", "show", "demo", &id])["status"], "open", "미리보기는 끝내지 않는다");
+    assert_eq!(w.h.ok(&["events", "demo"])["events"].as_array().unwrap().len(), before);
     let v = w.h.ok(&["thread", "resolve", "demo", &id]);
     assert_eq!(v["status"], "resolved");
     assert!(cwd.join("dirty.txt").exists(), "고친 worktree는 남아야 한다");
@@ -5509,12 +5520,14 @@ fn flow_events_go_out_in_seq_order() {
             result = response(&mut held, &held_id) => panic!("hold 없이 요청이 먼저 끝났다: {result:?}"),
         };
         assert_eq!(line, "Hhold: 켬\n", "저장 후 실제로 붙잡힌 사건");
-        let stored =
-            timeout(T, query.call(FrontRequest::Events { project: Some("demo".into()), after: 0, limit: None }))
-                .await
-                .expect("붙잡힌 사건 조회가 끝나지 않았다")
-                .unwrap()
-                .unwrap();
+        let stored = timeout(
+            T,
+            query.call(FrontRequest::Events { project: Some("demo".into()), after: 0, limit: None, tail: false }),
+        )
+        .await
+        .expect("붙잡힌 사건 조회가 끝나지 않았다")
+        .unwrap()
+        .unwrap();
         let FrontResponse::Events { events: stored } = stored else { panic!("사건 조회: {stored:?}") };
         assert!(stored.iter().any(|e| e.detail == "hold: 켬"), "hold 알림 전에 사건이 저장돼야 한다: {stored:?}");
 

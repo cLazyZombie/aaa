@@ -433,6 +433,8 @@ pub struct Host {
     pub changed: tokio_watch::Sender<u64>,
     /// 보고서 목록이 바뀌었다(보내기·열기·지우기·thread 사본, plan §8.256). 웹 events가 안 본 수를 다시 보낸다
     pub reports_changed: tokio_watch::Sender<u64>,
+    /// 알림함이 바뀐 횟수(웹 알림함 배지가 다시 읽는다)
+    pub inbox_changed: tokio_watch::Sender<u64>,
     /// EMFILE 중에는 파일을 더 열지 않고, ticker가 여유가 생긴 뒤 시스템 경고를 저장한다.
     resource_exhausted: std::sync::atomic::AtomicBool,
     health: Mutex<supervisor::Health>,
@@ -664,6 +666,7 @@ impl Host {
             inner: Mutex::new(Inner { machines, panes: HashMap::new(), generation: 0, colors: Default::default() }),
             changed: tokio_watch::channel(0).0,
             reports_changed: tokio_watch::channel(0).0,
+            inbox_changed: tokio_watch::channel(0).0,
             enroll: Mutex::new(Enroll::default()),
             pairing: Mutex::new(Pairing::default()),
             agent_listen: Mutex::new(None),
@@ -745,6 +748,10 @@ impl Host {
     /// 보고서 목록이 바뀌었다(plan §8.256)
     pub(crate) fn reports_bump(&self) {
         self.reports_changed.send_modify(|v| *v += 1);
+    }
+
+    pub(crate) fn inbox_bump(&self) {
+        self.inbox_changed.send_modify(|v| *v += 1);
     }
 
     // ───────────── agent 연결 ─────────────
@@ -1358,11 +1365,7 @@ impl Host {
             FrontRequest::PostStatus { project, post_id } => {
                 self.post_status(&project, &post_id, actor).map(|result| FrontResponse::Post { result })
             }
-            FrontRequest::PostList { project } => self
-                .db
-                .post_list(&project)
-                .map(|posts| FrontResponse::Posts { posts })
-                .map_err(|e| err(ErrorCode::Internal, e.to_string())),
+            FrontRequest::PostList { project } => self.post_list(&project),
             FrontRequest::PostUnmute { project, thread } => self.post_unmute(&project, &thread, actor),
             FrontRequest::Status => Ok(FrontResponse::Status(HostStatus {
                 host_id: self.host_id.clone(),
@@ -1663,6 +1666,16 @@ impl Host {
                 .automation_run(&project, &name, &key, actor)
                 .await
                 .map(|(accepted, detail)| FrontResponse::AutomationRan { accepted, detail }),
+            FrontRequest::ProjectSettings { project } => {
+                self.project_settings_view(&project).map(FrontResponse::ProjectSettings)
+            }
+            FrontRequest::ProjectRepoEdit { project, from, to } => self.project_repo_edit(&project, &from, &to, actor),
+            FrontRequest::ThreadResolvePreview { project, thread } => {
+                self.thread_resolve_preview(&project, &thread).await.map(FrontResponse::ResolvePreview)
+            }
+            FrontRequest::LibraryPruneApply { project, older_than_days, expected } => {
+                self.library_prune_apply(project.as_deref(), older_than_days, &expected, util::now_ms(), actor)
+            }
             FrontRequest::AutomationConvert { project, dry_run, plan_sha256 } => self
                 .automation_convert(&project, dry_run, plan_sha256.as_deref(), actor)
                 .await
@@ -1680,8 +1693,8 @@ impl Host {
             FrontRequest::RoutineApprove { project, name, command_sha256 } => {
                 self.routines_reply(&project, self.routine_approve(&project, &name, &command_sha256, actor))
             }
-            FrontRequest::Events { project, after, limit } => {
-                self.events(project.as_deref(), after, limit).map(|events| FrontResponse::Events { events })
+            FrontRequest::Events { project, after, limit, tail } => {
+                self.events(project.as_deref(), after, limit, tail).map(|events| FrontResponse::Events { events })
             }
             FrontRequest::EvaluatorAssign { .. }
             | FrontRequest::EvaluatorStatus { .. }

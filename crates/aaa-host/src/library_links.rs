@@ -769,6 +769,28 @@ mod tests {
 
     const RETENTION_NOW: u64 = 40 * 86_400_000;
 
+    /// 웹 「보고서 정리」 실행(관리 GUI W4): 미리 본 후보 그대로일 때만 지운다. 그 사이 후보가 늘면 하나도 지우지 않는다
+    #[tokio::test]
+    async fn prune_apply_deletes_only_the_previewed_candidates() {
+        let lab = Lab::with_retention(1, 0);
+        let day = 86_400_000;
+        let old = retention_report(&lab, "t-0001", 4, RETENTION_NOW - 2 * day, false);
+        let recent = retention_report(&lab, "t-0002", 4, RETENTION_NOW - day, false);
+        let plan = lab.h.library_prune_preview(None, None, RETENTION_NOW).unwrap();
+        let seen: Vec<String> = plan.candidates.iter().map(|c| format!("{}/{}", c.project, c.name)).collect();
+        assert_eq!(seen, vec!["demo/t-0001"]);
+        let e = lab.h.library_prune_apply(None, None, &seen, RETENTION_NOW + day, "test").unwrap_err();
+        assert_eq!(e.code, aaa_proto::ErrorCode::Conflict, "{}", e.message);
+        assert!(old.exists() && recent.exists(), "후보가 바뀌면 하나도 지우지 않는다");
+        let FrontResponse::LibraryPruned { removed } =
+            lab.h.library_prune_apply(None, None, &seen, RETENTION_NOW, "test").unwrap()
+        else {
+            panic!("정리 응답")
+        };
+        assert_eq!(removed, seen);
+        assert!(!old.exists() && recent.exists());
+    }
+
     #[tokio::test]
     async fn retention_expires_copies_and_ends_links() {
         let lab = Lab::with_retention(1, 0);
