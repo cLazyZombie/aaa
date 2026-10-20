@@ -732,7 +732,7 @@ L2 결함 검증은 이전 root 가져오기 생략, 재시작 전 applied 변�
 - 수정 전 두 thread 시험에서 실패와 회복이 교대로 기록되는 RED를 보존했다. 거짓 회복·인증 코드 오분류·worktree cwd 의존·fallback 제거를 각각 심어 keeper의 의도한 단언 RED를 확인하고 소스 bytes를 복구했다. 최종 gate는 전체 `bash scripts/ci-local.sh`와 `bash scripts/check-public.sh`다.
 - 과거 세 사건의 저장 오류에는 조회 머신·thread·환경 snapshot이 없었다. 인증 안내/ENOENT까지 구분할 수 있지만 당시 HOME·PATH·삭제 경쟁 중 하나를 확정할 수는 없다. gh 자체의 빈 설정 PR 조회는 종료 코드 4, PATH에서 gh가 없거나 spawn cwd가 사라졌을 때는 ENOENT로 재현했다.
 
-## aaa install I0 계약(t-0485, plan §8.310)
+## aaa install I0 계약(t-0485, plan §8.312)
 
 - `cargo test -p aaa-config --lib install::tests`: 질문과 자동화 DTO의 같은 순수 검증기·고정 계획/hash,
   role별 필수/상충·OS 서비스·한국어 Windows 경로·출력/비밀 입력 모드·허용 env와 오류의 값 비노출을 검사한다.
