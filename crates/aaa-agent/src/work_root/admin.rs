@@ -70,8 +70,7 @@ pub fn show(dir: &Path, state: &Path) -> Result<Shown> {
         mount = saved.as_ref().and_then(|s| s.roots.iter().find(|r| r.path == path)).and_then(|r| r.mount.clone());
     }
     let last_start = saved.as_ref().and_then(|s| s.applied.clone().map(|p| (p, s.applied_mount.clone())));
-    let restart_required =
-        saved.as_ref().is_none_or(|s| s.applied.as_ref() != Some(&path) || s.applied_mount != mount);
+    let restart_required = saved.as_ref().is_none_or(|s| s.applied.as_ref() != Some(&path) || s.applied_mount != mount);
     let previous =
         saved.as_ref().into_iter().flat_map(|s| s.roots.iter()).filter(|r| r.path != path).cloned().collect();
     Ok(Shown { path, mount, last_start, previous, restart_required, config_file: dir.join("agent.local.toml") })

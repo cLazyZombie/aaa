@@ -141,6 +141,9 @@ pub fn hello(agent: &Agent) -> AgentHello {
             "diff.v1".into(),
             // task 첨부를 thread 작업 폴더로 받는다(WorkAttachWrite, plan §8.327)
             "work_attach.v1".into(),
+            // 웹 설정 관리(관리 GUI W5c): 작업 root 보기·점검·전환, Codex hook 상태·설치·제거
+            "work_root.manage.v1".into(),
+            "hook.manage.v1".into(),
         ],
         dev_mode: agent.dev_mode,
         selfcheck: agent.selfcheck.lock().unwrap().clone(),

@@ -21,6 +21,8 @@ pub mod orch;
 pub mod post;
 pub use legacy_special::*;
 pub use post::*;
+pub mod settings_admin;
+pub use settings_admin::*;
 pub mod usage;
 pub mod version;
 
@@ -208,6 +210,16 @@ pub fn typescript_bindings() -> String {
         AutomationReview::decl(&cfg),
         AutomationTrashEntry::decl(&cfg),
         ProjectSettingsView::decl(&cfg),
+        SettingsScope::decl(&cfg),
+        SafetyRowView::decl(&cfg),
+        SafetyView::decl(&cfg),
+        ProfileAdminRow::decl(&cfg),
+        ProfileAdminView::decl(&cfg),
+        ProfileChangeReq::decl(&cfg),
+        ProfilePlanView::decl(&cfg),
+        WorkRootView::decl(&cfg),
+        WorkRootCheckView::decl(&cfg),
+        HookView::decl(&cfg),
         ResolvePreview::decl(&cfg),
         LibraryFile::decl(&cfg),
         LibraryView::decl(&cfg),

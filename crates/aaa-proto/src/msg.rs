@@ -982,6 +982,15 @@ pub enum AgentRequest {
         base: Option<String>,
         query: crate::DiffQuery,
     },
+    /// work_root.manage.v1을 알린 agent만: 그 머신 작업 root 보기·점검·전환(관리 GUI W5c, `aaa work-root`와 같다)
+    WorkRoot {
+        action: crate::WorkRootOp,
+    },
+    /// hook.manage.v1을 알린 agent만: Codex 전역 hook 상태(`install` 없음)·설치(true)·제거(false). 고정 작업이라 다른 인자는 없다
+    CodexHook {
+        #[serde(default)]
+        install: Option<bool>,
+    },
 }
 
 /// `AgentRequest::PrQuery`가 묻는 것
@@ -1112,6 +1121,9 @@ pub enum AgentResponse {
     Git(crate::GitAnswer),
     History(HistoryChunk),
     Diff(crate::DiffView),
+    WorkRoot(crate::WorkRootView),
+    WorkRootChecked(crate::WorkRootCheckView),
+    Hook(crate::HookView),
 }
 
 /// routine 명령 실행 결과
@@ -1880,6 +1892,68 @@ pub enum FrontRequest {
     },
     /// FRONT_API 1.80. 등록 창을 시한 전에 닫는다(대기 중인 요청은 그대로, 새 요청만 막는다)
     EnrollClose,
+    /// FRONT_API 1.81(관리 GUI W5c). safety 실효값과 출처. `scope`가 global이면 모든 프로젝트 기본 표
+    SafetyShow {
+        #[serde(default)]
+        #[ts(optional, as = "Option<String>")]
+        project: String,
+        #[serde(default)]
+        scope: crate::SettingsScope,
+    },
+    /// FRONT_API 1.81. safety 값 하나를 바꾼다(웹은 yolo·start_threads·trust_screens·coordinator_deploy만). `value`가 없으면
+    /// 그 표의 값을 지워 아래 층을 따른다. `expected`는 읽은 host.toml 판
+    SafetySet {
+        #[serde(default)]
+        #[ts(optional, as = "Option<String>")]
+        project: String,
+        #[serde(default)]
+        scope: crate::SettingsScope,
+        key: String,
+        value: Option<String>,
+        expected: String,
+    },
+    /// FRONT_API 1.81. host.toml profile 목록(env는 이름만)과 판
+    ProfileAdmin,
+    /// FRONT_API 1.81. profile·허용 목록·기본값 바꾸기 미리보기(쓰지 않는다)
+    ProfilePlan {
+        #[serde(default)]
+        #[ts(optional, as = "Option<String>")]
+        project: String,
+        change: crate::ProfileChangeReq,
+    },
+    /// FRONT_API 1.81. 미리 본 바꾸기를 쓴다. `expected`와 host.toml 판이 다르면 conflict
+    ProfileApply {
+        #[serde(default)]
+        #[ts(optional, as = "Option<String>")]
+        project: String,
+        change: crate::ProfileChangeReq,
+        expected: String,
+    },
+    /// FRONT_API 1.81. 머신 작업 root 보기(그 머신 agent의 work_root.manage.v1)
+    WorkRootShow {
+        machine: String,
+    },
+    /// FRONT_API 1.81. 작업 root 점검(검사 파일을 만들고 쓰기·읽기·삭제, 없는 root는 만든다). `path`가 없으면 지금 설정
+    WorkRootCheck {
+        machine: String,
+        path: Option<String>,
+        mount: Option<String>,
+    },
+    /// FRONT_API 1.81. 다음 agent 시작의 작업 root를 바꾼다(절대 경로, agent가 다시 점검한 뒤 저장)
+    WorkRootSet {
+        machine: String,
+        path: String,
+        mount: Option<String>,
+    },
+    /// FRONT_API 1.81. 그 머신 harness hook 연동 상태
+    HookStatus {
+        machine: String,
+    },
+    /// FRONT_API 1.81. 그 머신 agent의 고정 작업으로 Codex 전역 hook을 설치(true)·제거(false)한다
+    HookSet {
+        machine: String,
+        install: bool,
+    },
     EnrollPending,
     EnrollApprove {
         name: String,
@@ -2703,6 +2777,10 @@ impl FrontRequest {
             | FrontRequest::LibraryLink { project, .. }
             | FrontRequest::LibraryPublish { project, .. }
             | FrontRequest::LibraryUploadPublish { project, .. }
+            | FrontRequest::SafetyShow { project, .. }
+            | FrontRequest::SafetySet { project, .. }
+            | FrontRequest::ProfilePlan { project, .. }
+            | FrontRequest::ProfileApply { project, .. }
             | FrontRequest::LibraryImport { project, .. }
             | FrontRequest::LibraryOpen { project, .. }
             | FrontRequest::LibraryResolve { project, .. }
@@ -3038,6 +3116,18 @@ pub enum FrontResponse {
     },
     /// `project_settings`·`project_repo_edit`의 답
     ProjectSettings(crate::ProjectSettingsView),
+    Safety(crate::SafetyView),
+    ProfileAdmin(crate::ProfileAdminView),
+    ProfilePlan(crate::ProfilePlanView),
+    /// profile을 바꾼 뒤: 알림 글과 경고, 새 목록
+    ProfileApplied {
+        message: String,
+        warnings: Vec<String>,
+        view: crate::ProfileAdminView,
+    },
+    WorkRoot(crate::WorkRootView),
+    WorkRootChecked(crate::WorkRootCheckView),
+    Hook(crate::HookView),
     /// `thread_resolve_preview`의 답
     ResolvePreview(crate::ResolvePreview),
     AutomationConverted {
@@ -3592,6 +3682,11 @@ mod tests {
             .needs_control()
         );
         assert!(FrontRequest::ThreadAck { project: "p".into(), thread: "t".into() }.needs_control());
+        // 설정 관리(W5c)는 읽기도 조작 기기만: host 설정 경로·profile 인자·머신 폴더를 보인다
+        assert!(FrontRequest::ProfileAdmin.needs_control());
+        assert!(FrontRequest::SafetyShow { project: "p".into(), scope: Default::default() }.needs_control());
+        assert!(FrontRequest::WorkRootShow { machine: "m".into() }.needs_control());
+        assert!(FrontRequest::HookStatus { machine: "m".into() }.needs_control());
         assert!(!FrontRequest::Questions { all: true }.needs_control());
         assert!(
             FrontRequest::QuestionAnswer { id: "q".into(), choice: "yes".into(), menu: None, pick: None }

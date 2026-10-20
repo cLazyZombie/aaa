@@ -27,6 +27,7 @@ mod page;
 mod plan;
 pub mod post;
 mod pr;
+mod settings_jobs;
 mod slash;
 pub mod threads;
 pub mod work_root;
@@ -1686,6 +1687,8 @@ impl Agent {
                 .await
                 .map(AgentResponse::Diff)
                 .map_err(|e| ErrorBody::new(ErrorCode::BadRequest, format!("{e:#}"))),
+            AgentRequest::WorkRoot { action } => settings_jobs::work_root(&self.state, action).await,
+            AgentRequest::CodexHook { install } => settings_jobs::codex_hook(install),
         };
         if let Some(reply) = reply {
             let _ = reply.json(&LinkMsg::Res { id, result: direct.into() }).await;

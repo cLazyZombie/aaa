@@ -38,23 +38,24 @@ pub fn run(json_output: bool, cmd: Command) -> Result<ExitCode> {
     let dir = aaa_config::paths::config_dir();
     let state = aaa_config::paths::state_dir().join("agent");
     let result = (|| -> Result<Value> {
-        let value = match cmd {
-            Command::Show => shown_json(&admin::show(&dir, &state)?),
-            Command::Check { path, mount } => {
-                let c = admin::check(&dir, &state, path.as_deref(), mount.as_deref())?;
-                json!({"ok":true,"path":c.path,"real_path":c.real_path,"mount":c.mount})
-            }
-            Command::Set { path, mount } => {
-                let done = tokio::runtime::Builder::new_current_thread()
-                    .enable_all()
-                    .build()?
-                    .block_on(admin::set(&dir, &state, &path, mount.as_deref()))?;
-                let mut value = shown_json(&done.shown);
-                value["changed"] = done.changed.into();
-                value["imported_preparations"] = done.imported.into();
-                value
-            }
-        };
+        let value =
+            match cmd {
+                Command::Show => shown_json(&admin::show(&dir, &state)?),
+                Command::Check { path, mount } => {
+                    let c = admin::check(&dir, &state, path.as_deref(), mount.as_deref())?;
+                    json!({"ok":true,"path":c.path,"real_path":c.real_path,"mount":c.mount})
+                }
+                Command::Set { path, mount } => {
+                    let done = tokio::runtime::Builder::new_current_thread()
+                        .enable_all()
+                        .build()?
+                        .block_on(admin::set(&dir, &state, &path, mount.as_deref()))?;
+                    let mut value = shown_json(&done.shown);
+                    value["changed"] = done.changed.into();
+                    value["imported_preparations"] = done.imported.into();
+                    value
+                }
+            };
         Ok(value)
     })();
     let value = match result {
