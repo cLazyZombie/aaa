@@ -67,6 +67,7 @@ mod routine_runs;
 mod seen;
 mod summary;
 pub mod tailscale;
+mod task_clean;
 mod task_edit;
 mod tasks;
 mod text;
@@ -1345,6 +1346,8 @@ impl Host {
                 task,
                 from_task,
                 background,
+                link_task,
+                task_block,
             } => {
                 // herdr-projects threads.rs `placement`: repo가 있으면 worktree, 없으면 repo 없는 작업 폴더
                 let kind = kind.unwrap_or(if repo.is_some() {
@@ -1364,9 +1367,12 @@ impl Host {
                     task,
                     role: aaa_proto::Role::Worker,
                 };
-                let warning = match from_task {
-                    Some(t) => self.apply_from_task(&mut a, &t).await?,
-                    None => None,
+                let (warning, picked) = match from_task {
+                    Some(t) => {
+                        let (w, t) = self.apply_from_task(&mut a, &t, task_block.as_deref()).await?;
+                        (w, Some(t))
+                    }
+                    None => (None, None),
                 };
                 // 머신을 주지 않았으면 project.toml repos에 적힌 그 repo의 머신(herdr-projects `start`의 `listed`)
                 if a.machine.is_none() {
@@ -1374,10 +1380,17 @@ impl Host {
                     a.machine =
                         a.repo.as_ref().and_then(|r| repos.into_iter().find(|x| &x.path == r)).and_then(|x| x.machine);
                 }
-                self.thread_start_mode(a, actor, None, background).await.map(|mut v| {
-                    v.warnings.extend(warning);
-                    FrontResponse::Thread(v)
-                })
+                let project = a.project.clone();
+                let mut v = self.thread_start_mode(a, actor, None, background).await?;
+                v.warnings.extend(warning);
+                // 시작에 성공했으면 그 task 줄 끝에 thread를 잇는다(할 일 T3, 시작할 때 읽은 블록으로)
+                if link_task && let Some(t) = &picked {
+                    v.warnings.extend(self.link_started(&project, t, &v.id, actor).await);
+                }
+                Ok(FrontResponse::Thread(v))
+            }
+            FrontRequest::ThreadStartPreview { project, from_task, task_block } => {
+                self.thread_start_preview(&project, &from_task, task_block.as_deref()).await
             }
             FrontRequest::ThreadAdopt { project, pane, title, task } => {
                 self.thread_adopt(&project, &pane, &title, &task, actor).await.map(FrontResponse::Thread)

@@ -1,6 +1,7 @@
 // 본문(오른쪽) 할 일 화면(할 일 보기 T1 §8.306, 편집 T2 §8.311, 사용자 10-20 「하기로 했던 기능들을 다 볼수 있고 (왼쪽에 아이콘이
 // 있어서 거기서 들어가게), 필요하면 수정, 삭제 할수 있고」). 활동 막대 「할 일」·`#tasks`가 연다. host `tasks`(TaskBoard)를 읽고
-// `task_edit`로 고친다(바뀐 블록만 쓰고 블록 hash로 충돌을 감지한다). 「coordinator에게 맡기기」·「바로 시작」·자동 정리는 T3다.
+// `task_edit`로 고친다(바뀐 블록만 쓰고 블록 hash로 충돌을 감지한다). thread 연결(T3, §8.316): 상세의 「coordinator에게 맡기기」·
+// 「바로 시작」(TaskStart.tsx), 「task 없는 열린 thread」의 「task에 잇기」·「task로 만들기」, 끝난 thread의 자동 정리 알림 줄(되살리기).
 // 행 모양과 상태 아이콘은 t3code ComposerTasksBadge.tsx, 목록 머리(이름·수)와 메모 표지 `≡`은 herdr-projects popup.rs `build`.
 // 행·목록 머리의 ⋯ 메뉴는 herdr-web-ui RowMenu(휴대폰은 아래 시트), 끌기는 herdr-web-ui Sidebar.tsx 483–491의 HTML 끌어 놓기와
 // Alt+↑↓(580–584), 휴대폰은 끌기 대신 메뉴의 위로·아래로·맨 위로(t-0469 §3.3). 지운 뒤 「되살리기」 줄은 t3code
@@ -22,6 +23,7 @@ import {
   GitMerge,
   GripVertical,
   History,
+  Link2,
   ListPlus,
   Pencil,
   Plus,
@@ -30,7 +32,7 @@ import {
   X,
   type LucideIcon,
 } from "lucide-react";
-import type { OwnerChoice, TaskBoard, TaskConflict, TaskLogEntry, TaskNotesFile, TaskOp, TaskThread, TaskView, ThreadGroup } from "./gen/proto";
+import type { OwnerChoice, TaskBoard, TaskConflict, TaskLogEntry, TaskNotesFile, TaskOp, TaskThread, TaskView, ThreadGroup, ThreadView } from "./gen/proto";
 import { ApiError, call, me, onTasksChanged } from "./api";
 import { DrawerToggle, HeadMore, HeadNote } from "./drawer";
 import { Markdown } from "./Markdown";
@@ -40,6 +42,7 @@ import { copyText } from "./herdr/clipboard";
 import { useMediaQuery } from "./herdr/useMediaQuery";
 import { StateIcon, TaskDetail, ThreadChip, type SaveResult } from "./TaskDetail";
 import { ConflictDialog, NameDialog, RawEditor, type MyEdit } from "./TaskDialogs";
+import { LinkDialog, StartDialog } from "./TaskStart";
 import { TaskLogView } from "./TaskLogView";
 import {
   TASK_FILTERS,
@@ -48,8 +51,13 @@ import {
   dropOp,
   emptyDraft,
   findTask,
+  handOffText,
   itemToTask,
+  lastLogId,
+  linkOp,
+  mineKeys,
   moveOp,
+  newAutoCleans,
   noteItems,
   ownerLabel,
   taskDepth,
@@ -67,6 +75,26 @@ type Tab = "tasks" | "later" | "log";
 
 /** host가 편집(`task_edit`)을 아는 FRONT_API */
 const EDIT_API: readonly [number, number] = [1, 62];
+/** host가 thread 연결(`thread_start_preview`·`link_task`·`attention`)을 아는 FRONT_API */
+const LINK_API: readonly [number, number] = [1, 63];
+
+/** 이 기기가 알린 마지막 자동 정리 기록 id(기기마다, 없으면 처음 읽은 기록까지를 본 것으로 둔다) */
+const AUTO_SEEN_KEY = "aaa:tasks:auto-clean-seen";
+function readAutoSeen(): number | null {
+  try {
+    const v = localStorage.getItem(AUTO_SEEN_KEY);
+    return v === null ? null : Number(v) || 0;
+  } catch {
+    return null;
+  }
+}
+function writeAutoSeen(id: number): void {
+  try {
+    localStorage.setItem(AUTO_SEEN_KEY, String(id));
+  } catch {
+    // 저장이 막혀도 이 화면 동안은 기억한다
+  }
+}
 
 function apiAtLeast(v: string | null | undefined, [major, minor]: readonly [number, number]): boolean {
   const m = /^(\d+)\.(\d+)/.exec(v ?? "");
@@ -110,6 +138,38 @@ export function useTaskBoard(up: boolean, openThreads: string, visible: boolean)
   useEffect(() => onTasksChanged(() => load()), [load]);
   return { board, error, replace };
 }
+/**
+ * 이 기기가 할 일 화면에서 본 `me` task(활동 막대 배지의 「새 me task」, t-0469 §3.1). 기기마다 localStorage에 둔다. 처음 읽는 기기는
+ * 지금 me task를 모두 본 것으로 둔다(배지가 처음부터 쌓이지 않게). 지워진 task 열쇠는 다음 표시 때 걸러진다
+ */
+const MINE_SEEN_KEY = "aaa:tasks:mine-seen";
+export function useSeenMine(board: TaskBoard | null): { seen: ReadonlySet<string> | null; see: (keys: string[]) => void } {
+  const [seen, setSeen] = useState<ReadonlySet<string> | null>(() => {
+    try {
+      const v = localStorage.getItem(MINE_SEEN_KEY);
+      return v === null ? null : new Set(JSON.parse(v) as string[]);
+    } catch {
+      return null;
+    }
+  });
+  const see = useCallback((keys: string[]) => {
+    setSeen((old) => {
+      if (old !== null && keys.every((k) => old.has(k))) return old;
+      const next = new Set([...(old ?? []), ...keys]);
+      try {
+        localStorage.setItem(MINE_SEEN_KEY, JSON.stringify([...next]));
+      } catch {
+        // 저장이 막혀도 이 화면 동안은 기억한다
+      }
+      return next;
+    });
+  }, []);
+  useEffect(() => {
+    if (seen === null && board) see(mineKeys(board));
+  }, [seen, board, see]);
+  return { seen, see };
+}
+
 type Key = { title: string; line: number };
 
 /** ⋯ 메뉴(행·목록 머리·「나중」 항목) */
@@ -119,7 +179,9 @@ type Dialog =
   | { kind: "conflict"; conflict: TaskConflict; mine: MyEdit | null }
   | { kind: "list-add"; after: string | null }
   | { kind: "list-rename"; name: string }
-  | { kind: "raw" };
+  | { kind: "raw" }
+  | { kind: "start"; task: TaskView }
+  | { kind: "link"; thread: TaskThread };
 
 export function TasksView({
   shown,
@@ -130,6 +192,8 @@ export function TasksView({
   addRequest,
   onBoard,
   onThread,
+  onHandOff,
+  onSeenMine,
 }: {
   shown: boolean;
   /** 마지막으로 읽은 TaskBoard(App이 링크가 오를 때와 `tasks` 사건마다 읽는다) */
@@ -144,6 +208,10 @@ export function TasksView({
   /** 편집 응답의 새 board */
   onBoard: (b: TaskBoard) => void;
   onThread: (id: string) => void;
+  /** 「coordinator에게 맡기기」: coordinator 입력칸에 글을 채우고 그 pane을 연다(새 API 없음, t-0469 §3.4) */
+  onHandOff?: (text: string) => Promise<void>;
+  /** 할 일 화면에서 본 `me` task(활동 막대 배지의 「새 me task」를 걷는다) */
+  onSeenMine?: (keys: string[]) => void;
 }) {
   const [tab, setTab] = useState<Tab>("tasks");
   const [filter, setFilter] = useState<TaskFilter>("all");
@@ -163,6 +231,15 @@ export function TasksView({
   const coarse = useMediaQuery("(pointer: coarse)");
   const editApi = apiAtLeast(frontApi, EDIT_API);
   const canEdit = !reader && editApi;
+  const linkApi = canEdit && apiAtLeast(frontApi, LINK_API);
+  // 「바로 시작」으로 시작한 thread(열기 단추와 host 경고)
+  const [started, setStarted] = useState<{ id: string; warnings: string[] } | null>(null);
+  // 자동 정리 알림 줄(t-0469 §4 「알림 한 줄(되살리기 단추)」): 이 기기가 아직 알리지 않은 자동 정리
+  const [autoSeen, setAutoSeen] = useState<number | null>(() => readAutoSeen());
+  const seeAuto = useCallback((id: number) => {
+    writeAutoSeen(id);
+    setAutoSeen(id);
+  }, []);
   useEffect(() => {
     if (!shown || frontApi !== null) return;
     me()
@@ -184,6 +261,15 @@ export function TasksView({
       .then((r) => r.kind === "task_log" && setLog(r.entries))
       .catch(() => undefined);
   }, [shown, editApi, sha]);
+  // 처음 읽은 기기는 지금 기록까지를 본 것으로 둔다(지난 자동 정리를 한꺼번에 알리지 않는다)
+  useEffect(() => {
+    if (autoSeen === null && log.length > 0) seeAuto(lastLogId(log));
+  }, [autoSeen, log, seeAuto]);
+  const autoNews = autoSeen === null ? [] : newAutoCleans(log, autoSeen);
+  // 화면을 열면 지금 me task를 모두 본 것으로 둔다(배지의 「새 me task」)
+  useEffect(() => {
+    if (shown && board) onSeenMine?.(mineKeys(board));
+  }, [shown, board, onSeenMine]);
   const notesFiles = board?.notes_files ?? [];
   // 「나중」 파일이 설정에서 빠지면 할 일 탭으로
   useEffect(() => {
@@ -413,6 +499,19 @@ export function TasksView({
           {error}
         </div>
       )}
+      {started && (
+        <div className="banner task-started" role="status" data-testid="task-started">
+          <span>
+            {started.id}를 시작했다{started.warnings.length > 0 ? `: ${started.warnings.join(" · ")}` : ". task 줄 끝에 이었다"}
+          </span>
+          <button type="button" className="linkish" onClick={() => onThread(started.id)}>
+            thread 열기
+          </button>
+          <button type="button" className="linkish" onClick={() => setStarted(null)}>
+            닫기
+          </button>
+        </div>
+      )}
       {opError && (
         <div className="banner err" role="alert" data-testid="tasks-op-error">
           {opError}
@@ -517,7 +616,18 @@ export function TasksView({
                 <ListPlus aria-hidden="true" />새 목록
               </button>
             )}
-            {board && board.unlinked_threads.length > 0 && <Unlinked threads={board.unlinked_threads} onThread={onThread} />}
+            {board && board.unlinked_threads.length > 0 && (
+              <Unlinked
+                threads={board.unlinked_threads}
+                canLink={linkApi}
+                onThread={onThread}
+                onLink={(thread) => setDialog({ kind: "link", thread })}
+                onMake={(thread) => {
+                  setPicked(null);
+                  setCreating({ ...emptyDraft(defaultList(board)), title: thread.title, thread: thread.id });
+                }}
+              />
+            )}
           </div>
           {board && detailOpen ? (
             <TaskDetail
@@ -537,6 +647,9 @@ export function TasksView({
               onClose={closeDetail}
               onSave={onSave}
               onDelete={remove}
+              linkApi={linkApi}
+              onHandOff={onHandOff ? (t, again) => onHandOff(handOffText(t, again)) : undefined}
+              onStart={(t) => setDialog({ kind: "start", task: t })}
             />
           ) : (
             <aside className="task-detail is-empty" aria-hidden="true">
@@ -558,6 +671,33 @@ export function TasksView({
               <Plus aria-hidden="true" />
             </button>
           )}
+        </div>
+      )}
+      {!undo && autoNews[0] && shown && (
+        <div className="task-undo task-auto-clean" role="status" data-testid="task-auto-clean" data-log-id={autoNews[0].id}>
+          <span className="task-undo-text">
+            자동 정리: 「{autoNews[0].title}」{autoNews[0].thread ? `(${autoNews[0].thread} 완료)` : ""}
+            {autoNews.length > 1 ? ` 외 ${autoNews.length - 1}개` : ""}
+          </span>
+          {canEdit && (
+          <button
+            type="button"
+            className="btn btn-ghost"
+            data-testid="task-auto-clean-restore"
+            onClick={() => {
+              const e = autoNews[0];
+              void restore(e.id, e.title).then(
+                () => seeAuto(Math.max(autoSeen ?? 0, e.id)),
+                (err: unknown) => setOpError(err instanceof Error ? err.message : String(err)),
+              );
+            }}
+          >
+            되살리기
+          </button>
+          )}
+          <button type="button" className="task-undo-close" aria-label="닫기" data-testid="task-auto-clean-close" onClick={() => seeAuto(Math.max(autoSeen ?? 0, autoNews[0].id))}>
+            <X aria-hidden="true" />
+          </button>
         </div>
       )}
       {undo && shown && (
@@ -597,6 +737,29 @@ export function TasksView({
           onSave={async (name) => {
             const op: TaskOp = dialog.kind === "list-add" ? { op: "list_add", name, after: dialog.after } : { op: "list_rename", name: dialog.name, to: name };
             await edit([op], null);
+          }}
+        />
+      )}
+      {dialog?.kind === "start" && (
+        <StartDialog
+          task={dialog.task}
+          owners={owners}
+          onClose={() => setDialog(null)}
+          onStarted={(v: ThreadView) => {
+            setDialog(null);
+            setStarted({ id: v.id, warnings: v.warnings ?? [] });
+          }}
+        />
+      )}
+      {dialog?.kind === "link" && board && (
+        <LinkDialog
+          thread={dialog.thread}
+          board={board}
+          groups={groups}
+          onClose={() => setDialog(null)}
+          onLink={async (t) => {
+            const r = await edit([linkOp(t, dialog.thread.id)], null);
+            if (r) setPicked({ title: t.title, line: t.line });
           }}
         />
       )}
@@ -715,6 +878,7 @@ function TaskRow({
           {t.title}
         </span>
         {state === "problem" && <span className="task-chip task-problem">형식 어긋남</span>}
+        {state === "check" && <span className="task-chip task-check">확인 필요</span>}
         {owner && <span className={`task-chip task-owner${owner === "미할당" ? " is-dim" : ""}`}>{owner}</span>}
         {t.notes.length > 0 && (
           <span className="task-notes-mark" role="img" aria-label="메모 있음" title="메모 있음">
@@ -728,7 +892,7 @@ function TaskRow({
   );
 }
 
-function Unlinked({ threads, onThread }: { threads: TaskThread[]; onThread: (id: string) => void }) {
+function Unlinked({ threads, canLink, onThread, onLink, onMake }: { threads: TaskThread[]; canLink: boolean; onThread: (id: string) => void; onLink: (t: TaskThread) => void; onMake: (t: TaskThread) => void }) {
   return (
     <section className="task-list task-unlinked" aria-label="task 없는 열린 thread" data-testid="tasks-unlinked">
       <h3 className="task-list-head">
@@ -738,7 +902,7 @@ function Unlinked({ threads, onThread }: { threads: TaskThread[]; onThread: (id:
       </h3>
       <ul className="task-rows">
         {threads.map((t) => (
-          <li key={t.id} className="task-row">
+          <li key={t.id} className="task-row" data-testid={`task-unlinked-row-${t.id}`}>
             <button type="button" className="task-pick" data-testid={`tasks-unlinked-${t.id}`} onClick={() => onThread(t.id)}>
               <CircleDot className="task-state is-run" aria-hidden="true" />
               <span className="task-title">
@@ -746,6 +910,18 @@ function Unlinked({ threads, onThread }: { threads: TaskThread[]; onThread: (id:
               </span>
               <span className={`task-chip task-thread is-${t.group}`}>{GROUP_WORD[t.group as ThreadGroup] ?? t.group}</span>
             </button>
+            {canLink && (
+              <span className="task-unlinked-actions">
+                <button type="button" className="btn btn-ghost task-unlinked-action" title="이 thread를 있는 task에 잇는다" data-testid={`task-unlinked-link-${t.id}`} onClick={() => onLink(t)}>
+                  <Link2 aria-hidden="true" />
+                  <span>task에 잇기</span>
+                </button>
+                <button type="button" className="btn btn-ghost task-unlinked-action" title="이 thread를 이은 새 task를 만든다" data-testid={`task-unlinked-make-${t.id}`} onClick={() => onMake(t)}>
+                  <Plus aria-hidden="true" />
+                  <span>task로 만들기</span>
+                </button>
+              </span>
+            )}
           </li>
         ))}
       </ul>

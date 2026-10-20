@@ -167,6 +167,7 @@ pub(crate) fn thread_rec(
         eval_batches: 0,
         eval_last_batch_ms: None,
         resolve_pending: None,
+        task_clean: Default::default(),
         prepare_started_ms: None,
         leftover: None,
         created_at_ms: created,

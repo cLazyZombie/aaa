@@ -10,7 +10,7 @@ import { nativeModalOver, useFocusTrap } from "./herdr/useFocusTrap.ts";
 import { usePhoneSheetBack } from "./herdr/sheetHistory.ts";
 import { canonicalLine } from "./tasksModel";
 
-function TaskModal({ label, busy, onClose, wide, children, testid }: { label: string; busy: boolean; onClose: () => void; wide?: boolean; children: ReactNode; testid: string }) {
+export function TaskModal({ label, busy, onClose, wide, children, testid }: { label: string; busy: boolean; onClose: () => void; wide?: boolean; children: ReactNode; testid: string }) {
   const done = useRef(false);
   const surface = useFocusTrap<HTMLDivElement>(true, { shouldRestore: () => !done.current });
   usePhoneSheetBack(() => {

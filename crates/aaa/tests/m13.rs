@@ -2623,9 +2623,22 @@ fn worker_session_cli_is_read_only() {
 #[test]
 fn web_pair_requires_a_person_outside_aaa_panes() {
     let w = world();
+    let mut ev = Events::connect(&w.h);
     let t =
         w.start(&["--title", "pair", "--profile", "fake", "--kind", "dir", "--task-file", &w.task("pair.txt", "x")]);
     let worker = t["pane"].as_str().unwrap();
+    // brief도 글과 Enter를 따로 보낸다. 그 사이 probe를 치면 brief 줄에 붙어 실행되지 않는다.
+    ev.wait("worker의 brief 수신·처리", T, |e| match e {
+        FrontEvent::Thread(v)
+            if v.project == "demo"
+                && v.id == t["id"].as_str().unwrap()
+                && v.brief == aaa_proto::BriefState::Delivered
+                && v.report_hash.is_some() =>
+        {
+            Some(())
+        }
+        _ => None,
+    });
     let coord = w.h.new_pane(None, "labA", Some("coord"), &["/bin/sh"], Some(path_str(&w.projects.join("demo"))));
     for (name, pane) in [("coordinator", coord.as_str()), ("worker", worker)] {
         let out = w.lab.root.join(format!("pair-{name}.txt"));
@@ -2643,8 +2656,19 @@ fn web_pair_requires_a_person_outside_aaa_panes() {
             line
         };
         w.h.ok(&["pane", "run", pane, &line]);
-        let got =
-            wait_for("pane 안 pairing 끝", T, || std::fs::read_to_string(&out).ok().filter(|s| s.contains("rc=")));
+        let got = wait_for_diag(
+            &format!("{name} pane 안 pairing 끝"),
+            T,
+            || std::fs::read_to_string(&out).ok().filter(|s| s.contains("rc=")),
+            || {
+                format!(
+                    "probe: {:?}\npane: {}\n화면:\n{}",
+                    std::fs::read_to_string(&out),
+                    w.h.pane(pane),
+                    w.h.screen(pane)
+                )
+            },
+        );
         assert!(got.contains("사람이 aaa 밖 터미널이나 웹에서") && got.ends_with("rc=1\n"), "{name}: {got}");
     }
     let outside = w.h.in_terminal(&["web", "pair"], &[], T);
@@ -4399,6 +4423,113 @@ fn task_edit_keeps_bytes_conflicts_and_logs() {
     );
 }
 
+/// 할 일 thread 연결과 자동 정리(T3, plan §8.316, t-0469 §4 P2): `thread start --from-task --link-task`는 그 task 줄 끝에
+/// thread 번호를 붙인다. 이어진 thread가 끝나면 다음 tick이 한 번 판정한다: 보고 `[완료]`면 줄을 지우고(기록 「host 자동
+/// 정리」·inbox `task auto-cleaned`), 보고가 없으면 줄을 남겨 확인 필요로 보인다(`task list`·`context`·inbox `task needs
+/// check`). 하위가 모두 끝난 상위는 지우지 않고 그 thread를 이어 확인 필요로 올린다. 판정은 한 번이다: 되살린 task를 다음
+/// tick이 다시 지우지 않는다.
+#[test]
+fn task_thread_link_and_auto_clean() {
+    let w = world();
+    let file = w.projects.join("demo/TASKS.md");
+    let read = || std::fs::read_to_string(&file).unwrap();
+    std::fs::write(
+        &file,
+        "# Tasks\n\n## Backlog\n- [ ] 끝낼 일\n- [ ] noreport 일\n- [ ] 결정 일\n- [ ] 상위 일\n  - [ ] 하위 일\n- [ ] 남는 일\n",
+    )
+    .unwrap();
+    let start = |title: &str| -> String {
+        let v = w.start(&["--from-task", title, "--link-task", "--profile", "fake", "--kind", "dir"]);
+        assert!(v["warnings"].as_array().is_none_or(Vec::is_empty), "{v}");
+        v["id"].as_str().unwrap().to_string()
+    };
+    let e = w.h.json(&["thread", "start", "demo", "--title", "x", "--task-file", &w.task("x.md", "x"), "--link-task"]);
+    assert!(e.expect_err("--from-task 없이").contains("--link-task는 --from-task와 함께"));
+    let (done, quiet, decide, child) = (start("끝낼 일"), start("noreport 일"), start("결정 일"), start("하위 일"));
+    assert_eq!(
+        read(),
+        format!(
+            "# Tasks\n\n## Backlog\n- [ ] 끝낼 일 · {done}\n- [ ] noreport 일 · {quiet}\n- [ ] 결정 일 · {decide}\n- [ ] 상위 일\n\
+             \x20 - [ ] 하위 일 · {child}\n- [ ] 남는 일\n"
+        )
+    );
+    // 열린 thread와 이어진 task는 아직 판정하지 않는다
+    w.h.ok(&["ticker", "tick"]);
+    assert!(read().contains(&format!("끝낼 일 · {done}")));
+    for id in [&done, &decide, &child] {
+        w.wait_show("보고", id, |v| v["report_hash"].is_string() && v["brief"] == "delivered");
+    }
+    w.wait_show("brief 전달", &quiet, |v| v["brief"] == "delivered");
+    // 결정 일은 마지막 보고를 `[결정 필요]`로 바꾼다: host가 새 보고를 받은 뒤 끝낸다
+    let first = w.show(&decide);
+    let work = PathBuf::from(first["work_dir"].as_str().unwrap());
+    std::fs::write(work.join("report.md"), "[결정 필요] 둘 중 고른다\n\n## Report\n고를 것\n\n## Next\n- 고르기\n")
+        .unwrap();
+    w.wait_show("결정 보고", &decide, |v| v["report_hash"] != first["report_hash"]);
+    for id in [&done, &quiet, &decide, &child] {
+        w.h.ok(&["thread", "resolve", "demo", id]);
+    }
+    w.h.ok(&["ticker", "tick"]);
+    let cleaned = format!(
+        "# Tasks\n\n## Backlog\n- [ ] noreport 일 · {quiet}\n- [ ] 결정 일 · {decide}\n- [ ] 상위 일 · {child}\n- [ ] 남는 일\n"
+    );
+    assert_eq!(read(), cleaned);
+
+    // 기록: 지운 둘은 「host 자동 정리」
+    let log = w.h.ok(&["task", "log"]);
+    let autos: Vec<&Value> =
+        log["entries"].as_array().unwrap().iter().filter(|e| e["action"] == "auto_clean").collect();
+    let mut titles: Vec<&str> = autos.iter().map(|e| e["title"].as_str().unwrap()).collect();
+    titles.sort_unstable();
+    assert_eq!(titles, ["끝낼 일", "하위 일"], "{log}");
+    assert!(autos.iter().all(|e| e["by"] == "host 자동 정리"), "{log}");
+    // 확인 필요: 까닭이 보인다
+    let board = w.h.ok(&["task", "list"]);
+    let attention = |b: &Value, title: &str| -> String {
+        let t = b["tasks"].as_array().unwrap().iter().find(|t| t["title"] == title).unwrap_or_else(|| panic!("{b}"));
+        t["attention"].as_str().unwrap_or_default().to_string()
+    };
+    assert_eq!(attention(&board, "noreport 일"), format!("{quiet} 끝남: 보고가 없다"));
+    assert_eq!(attention(&board, "결정 일"), format!("{decide} 끝남: 보고 표지 [결정 필요]"));
+    assert_eq!(attention(&board, "상위 일"), format!("하위 task가 모두 끝났다(마지막 {child})"));
+    assert_eq!(attention(&board, "남는 일"), "");
+    let text = String::from_utf8_lossy(&w.h.run(&["task", "list"]).stdout).to_string();
+    assert!(text.contains(&format!("확인 필요: {quiet} 끝남: 보고가 없다")), "{text}");
+    let text = String::from_utf8_lossy(&w.h.run(&["context", "demo", "--peek"]).stdout).to_string();
+    assert!(text.contains(&format!("확인 필요: {quiet} 끝남: 보고가 없다")), "{text}");
+    // coordinator inbox
+    let items = w.h.ok(&["inbox", "list", "demo", "--all", "--peek"])["items"].as_array().unwrap().clone();
+    let events = |thread: &str| -> Vec<String> {
+        let mut v: Vec<String> = items
+            .iter()
+            .filter(|i| i["item_kind"] == "task" && i["subject"] == thread)
+            .map(|i| i["event"].as_str().unwrap().to_string())
+            .collect();
+        v.sort();
+        v
+    };
+    assert_eq!(events(&done), ["task auto-cleaned"], "{items:?}");
+    assert_eq!(events(&quiet), ["task needs check"], "{items:?}");
+    assert_eq!(events(&decide), ["task needs check"], "{items:?}");
+    assert_eq!(events(&child), ["task auto-cleaned", "task needs check"], "{items:?}");
+    let restore =
+        items.iter().find(|i| i["subject"] == done.as_str() && i["event"] == "task auto-cleaned").unwrap()["summary"]
+            .as_str()
+            .unwrap()
+            .to_string();
+    let id = autos.iter().find(|e| e["title"] == "끝낼 일").unwrap()["id"].as_i64().unwrap().to_string();
+    assert!(restore.contains(&format!("`aaa task restore {id}`")), "{restore}");
+
+    // 한 번만: 되살린 task를 다음 tick이 다시 지우지 않고, 되살렸다고 보인다
+    w.h.ok(&["task", "restore", &id]);
+    w.h.ok(&["ticker", "tick"]);
+    assert_eq!(read(), format!("{cleaned}- [ ] 끝낼 일 · {done}\n"));
+    let board = w.h.ok(&["task", "list"]);
+    assert_eq!(attention(&board, "끝낼 일"), format!("{done} 완료(보고 [완료])로 자동 정리했다가 되살렸다"));
+    let n = w.h.ok(&["inbox", "list", "demo", "--all", "--peek"])["items"].as_array().unwrap().len();
+    assert_eq!(n, items.len(), "다시 판정하지 않는다");
+}
+
 /// 지운 프로젝트의 TASKS.md 기억은 함께 잊는다(plan §8.311): 같은 이름으로 다시 만든 프로젝트의 첫 tick은 기억만 하고, 옛 글과
 /// 비교해 「파일 직접」 기록을 지어내지 않는다
 #[test]
@@ -5084,6 +5215,49 @@ fn merged_pr_resolves_the_thread() {
     assert_eq!(git(&w.repo, &["branch", "--list", &b_branch, "--format=%(refname:short)"]), b_branch);
 }
 
+/// 병합으로 끝난 thread의 task(T3, plan §8.316): PR이 병합돼 저절로 끝난 thread는 마지막 보고 표지가 `[완료]`가 아니어도(`[착지]`)
+/// 그 task 줄을 지운다(병합이 표지보다 앞선다, t-0469 §4 P2). 병합 끝내기와 판정은 같은 tick에서 돈다.
+#[test]
+fn merged_thread_cleans_its_task() {
+    let mut w = world_setup("tick_secs = 1\npr_poll_secs = 1\nmerge_grace_secs = 1\n", false, fake_gh);
+    let stub = w.lab.root.join("gh");
+    let mut f = w.lab.follow("follow", &w.h, "demo");
+    git(&w.repo, &["remote", "set-url", "origin", "https://github.com/o/app.git"]);
+    let file = w.projects.join("demo/TASKS.md");
+    std::fs::write(&file, "# Tasks\n\n## Backlog\n- [ ] commit 병합할 일\n- [ ] 남는 일\n").unwrap();
+    let v =
+        w.start(&["--from-task", "commit 병합할 일", "--link-task", "--profile", "fake", "--repo", path_str(&w.repo)]);
+    let id = v["id"].as_str().unwrap().to_string();
+    assert!(std::fs::read_to_string(&file).unwrap().contains(&format!("- [ ] commit 병합할 일 · {id}\n")));
+    f.kind("report_ready", &id, T);
+    let t = w.show(&id);
+    let branch = t["branch"].as_str().unwrap().to_string();
+    std::fs::write(stub.join("view-8.json"), pr_view_json(&branch, "MERGED", "APPROVED", &"0".repeat(40))).unwrap();
+    std::fs::write(
+        PathBuf::from(t["work_dir"].as_str().unwrap()).join("report.md"),
+        "[착지] #8을 병합했다\nPR: https://github.com/o/app/pull/8\n\n## Report\n병합\n\n## Next\n- 없음\n",
+    )
+    .unwrap();
+    f.kind("thread_resolved", &id, T);
+    // 끝낸 그 tick이 판정까지 한다: 그 뒤에 시작한 tick이 끝나면 판정·기록·inbox가 다 끝났다
+    w.h.ticks(1);
+    assert_eq!(std::fs::read_to_string(&file).unwrap(), "# Tasks\n\n## Backlog\n- [ ] 남는 일\n");
+    // 판정이 본 마지막 보고는 `[착지]`다(표지만 보면 확인 필요)
+    let copied = std::fs::read_to_string(w.projects.join(format!("demo/threads/{id}.md"))).unwrap();
+    assert!(copied.starts_with("[착지]"), "{copied}");
+    let log = w.h.ok(&["task", "log"]);
+    let e = &log["entries"][0];
+    assert_eq!(
+        (e["action"].as_str(), e["by"].as_str(), e["title"].as_str()),
+        (Some("auto_clean"), Some("host 자동 정리"), Some("commit 병합할 일")),
+        "{log}"
+    );
+    let items = w.h.ok(&["inbox", "list", "demo", "--all", "--peek"])["items"].as_array().unwrap().clone();
+    let cleaned = items.iter().find(|i| i["subject"] == id.as_str() && i["item_kind"] == "task").expect("inbox");
+    assert_eq!(cleaned["event"], "task auto-cleaned", "{items:?}");
+    assert!(cleaned["summary"].as_str().unwrap().contains("PR 병합"), "{cleaned}");
+}
+
 /// 처음 본 PR이 이미 승인·병합이면 PR 조회가 pr-followup(`review`)을 그 thread에 보낸다. 병합 뒤 끝내기는 그 글의 받음
 /// 확인이 끝난 뒤에 한다(herdr-projects는 한 tick 안에서 PR 조회·routine 뒤에 `resolve_merged`). agent는 `Done` 뒤 입력을
 /// 보이지 않아 받음 확인이 `accept_wait_ms`(3초) 동안 이어진다. 그동안 tick(1초)이 여러 번 돌아도 끝내지 않는다.
@@ -5339,9 +5513,10 @@ fn flow_events_go_out_in_seq_order() {
     let mut lab = Lab::new();
     let projects = lab.root.join("projects");
     let h = lab.node("h", Some(&host_toml(&projects, "", false)));
-    let release = lab.root.join("release");
-    let release_s = path_str(&release).to_string();
-    lab.spawn_env("host", &h, &["host"], &[("AAA_TEST_FLOW_HOLD", release_s.as_str())]);
+    let control = lab.root.join("flow.sock");
+    let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
+    let listener = rt.block_on(async { tokio::net::UnixListener::bind(&control).unwrap() });
+    lab.spawn_env("host", &h, &["host"], &[("AAA_TEST_FLOW_HOLD", path_str(&control))]);
     wait_for("host 준비", T, || h.json(&["status"]).ok());
     h.ok(&["project", "create", "demo"]);
     let routines = projects.join("demo/routines");
@@ -5353,40 +5528,86 @@ fn flow_events_go_out_in_seq_order() {
         )
         .unwrap();
     }
-    let mut ev = Events::connect(&h);
-    let waiting = lab.root.join("release.waiting");
-    std::thread::scope(|s| {
-        // `hold: 켬`은 저장된 뒤 붙잡힌다
-        let held = s.spawn(|| h.ok(&["routine", "toggle", "demo", "hold", "--on"]));
-        wait_for("붙잡힌 사건 저장", T, || {
-            h.ok(&["events", "demo"])["events"]
-                .as_array()
-                .unwrap()
-                .iter()
-                .any(|e| e["detail"] == "hold: 켬")
-                .then_some(())
-        });
-        // 그 사이 다른 사건: 끝났거나(먼저 나갔다) 앞 사건을 기다린다(host가 표지를 남긴다)
-        let free = s.spawn(|| h.ok(&["routine", "toggle", "demo", "free", "--on"]));
-        wait_for("다음 사건이 들어옴", T, || (free.is_finished() || waiting.exists()).then_some(()));
-        std::fs::write(&release, "").unwrap();
-        held.join().unwrap();
-        free.join().unwrap();
-    });
-    let mut got = Vec::new();
-    while got.len() < 2 {
-        let f = ev.wait_from(0, "routine_toggled 둘", T, |e| match e {
-            FrontEvent::Flow(f) if f.kind == "routine_toggled" && !got.iter().any(|(s, _)| *s == f.seq) => {
-                Some((f.seq, f.detail.clone()))
+    rt.block_on(async {
+        use aaa_common::front::FrontClient;
+        use aaa_proto::{FrontMsg, FrontRequest, FrontResponse};
+        use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+        use tokio::time::timeout;
+
+        async fn signal(listener: &tokio::net::UnixListener) -> (tokio::net::UnixStream, String) {
+            let (stream, _) = listener.accept().await.unwrap();
+            let mut reader = BufReader::new(stream);
+            let mut line = String::new();
+            assert!(reader.read_line(&mut line).await.unwrap() > 0, "flow 제어 연결이 알림 없이 닫혔다");
+            (reader.into_inner(), line)
+        }
+        async fn response(client: &mut FrontClient, id: &str) -> FrontResponse {
+            loop {
+                match client.next().await.expect("flow 요청 연결").expect("flow 응답 전 연결 종료") {
+                    FrontMsg::Res { id: got, result } if got == id => return result.into_result().unwrap(),
+                    _ => {}
+                }
             }
-            _ => None,
-        });
-        got.push(f.1);
-    }
-    let held = got.iter().find(|(_, d)| d == "hold: 켬").unwrap().0;
-    let free = got.iter().find(|(_, d)| d == "free: 켬").unwrap().0;
-    assert_eq!(free, held + 1, "{got:?}");
-    assert_eq!(got.iter().map(|(s, _)| *s).collect::<Vec<_>>(), [held, free], "나간 차례가 seq 차례가 아니다: {got:?}");
+        }
+        let toggle =
+            |name: &str| FrontRequest::RoutineToggle { project: "demo".into(), name: name.into(), on: Some(true) };
+        // 요청·조회·구독 연결을 먼저 열어 둔다. 기다리는 동안 CLI를 반복 spawn하지 않는다.
+        let mut events = FrontClient::connect(&h.state).await.unwrap();
+        let mut query = FrontClient::connect(&h.state).await.unwrap();
+        let mut held = FrontClient::connect(&h.state).await.unwrap();
+        let mut free = FrontClient::connect(&h.state).await.unwrap();
+        let held_id = held.send(toggle("hold")).await.unwrap();
+        let (mut gate, line) = tokio::select! {
+            signal = timeout(T, signal(&listener)) => signal.expect("저장 후 hold 알림이 오지 않았다"),
+            result = response(&mut held, &held_id) => panic!("hold 없이 요청이 먼저 끝났다: {result:?}"),
+        };
+        assert_eq!(line, "Hhold: 켬\n", "저장 후 실제로 붙잡힌 사건");
+        let stored =
+            timeout(T, query.call(FrontRequest::Events { project: Some("demo".into()), after: 0, limit: None }))
+                .await
+                .expect("붙잡힌 사건 조회가 끝나지 않았다")
+                .unwrap()
+                .unwrap();
+        let FrontResponse::Events { events: stored } = stored else { panic!("사건 조회: {stored:?}") };
+        assert!(stored.iter().any(|e| e.detail == "hold: 켬"), "hold 알림 전에 사건이 저장돼야 한다: {stored:?}");
+
+        let free_id = free.send(toggle("free")).await.unwrap();
+        // 정상 경로는 잠금 대기를 알린다. 잠금 결함이면 free가 먼저 끝나므로 실제 발행 순서로 잡는다.
+        let free_finished = tokio::select! {
+            signal = timeout(T, signal(&listener)) => {
+                let (_, line) = signal.expect("두 번째 사건의 잠금 대기 알림이 오지 않았다");
+                assert_eq!(line, "Wfree: 켬\n", "기다리는 사건의 출처");
+                false
+            }
+            _ = response(&mut free, &free_id) => true,
+        };
+        gate.write_all(b"R").await.unwrap();
+        timeout(T, response(&mut held, &held_id)).await.expect("hold 해제 뒤 응답이 오지 않았다");
+        if !free_finished {
+            timeout(T, response(&mut free, &free_id)).await.expect("다음 사건 응답이 오지 않았다");
+        }
+        let mut got = Vec::new();
+        timeout(T, async {
+            while got.len() < 2 {
+                if let FrontMsg::Event(FrontEvent::Flow(f)) = events.next().await.unwrap().unwrap()
+                    && f.kind == "routine_toggled"
+                    && !got.iter().any(|(seq, _)| *seq == f.seq)
+                {
+                    got.push((f.seq, f.detail));
+                }
+            }
+        })
+        .await
+        .unwrap_or_else(|_| panic!("routine_toggled 둘이 오지 않았다: {got:?}"));
+        let held = got.iter().find(|(_, d)| d == "hold: 켬").unwrap().0;
+        let free = got.iter().find(|(_, d)| d == "free: 켬").unwrap().0;
+        assert_eq!(free, held + 1, "{got:?}");
+        assert_eq!(
+            got.iter().map(|(s, _)| *s).collect::<Vec<_>>(),
+            [held, free],
+            "나간 차례가 seq 차례가 아니다: {got:?}"
+        );
+    });
 }
 
 /// 같은 CLI가 로컬 UDS와 원격 TLS agent 양쪽에서 host inbox로 간다. 보낸 프로젝트 자기 신고는 쓰지 않는다.
@@ -5576,13 +5797,11 @@ fn coordinator_deployment_is_gated_and_survives_backend_restarts() {
     let bin = w.lab.root.join("deploy-bin");
     std::fs::create_dir_all(&bin).unwrap();
     let exe = bin.join("aaa");
-    std::fs::copy(lab::BIN, &exe).unwrap();
+    assert!(Command::new("cp").args([Path::new(lab::BIN), &exe]).status().unwrap().success());
     let original = std::fs::read(&exe).unwrap();
     let candidate = w.lab.root.join("deploy-candidate");
-    let mut changed = original.clone();
-    changed.extend_from_slice(b"aaa-deployment-test");
-    std::fs::write(&candidate, &changed).unwrap();
-    std::fs::set_permissions(&candidate, std::os::unix::fs::PermissionsExt::from_mode(0o755)).unwrap();
+    lab::variant_binary(Path::new(lab::BIN), &candidate, "aaa-deployment-test");
+    let changed = std::fs::read(&candidate).unwrap();
     // launchd adapter도 같은 typed 경로로 본다. HOME·PATH는 이 실험실뿐이며 실제 서비스에는 닿지 않는다.
     let service_home = w.lab.root.join("service-home");
     let service_bin = w.lab.root.join("service-bin");

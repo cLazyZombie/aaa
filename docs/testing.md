@@ -86,6 +86,36 @@ hook CLI 진단은 기존 `codex_integration`의 무음 시험이 기본 exit 0�
 
 ## 웹 E2E
 
+### 두 controller의 전송·focus 순서(t-0488)
+
+- E2E02는 입력줄 전송의 첫 resize를 완료로 보지 않는다. 글 뒤 Enter도 lease를 얻으므로,
+  `submitted`를 처리한 입력줄(빈 값·다시 켜진 Enter 단추)과 해당 PTY 출력을 기다린 뒤 focus·blur·숨김으로 간다.
+  host의 크기·lease와 두 화면의 제목·실제 행 수·`data-fit`·`data-fit-pending`을 함께 확인해 이전 state를 기준으로 삼지 않는다.
+- 보이는 창의 blur는 페이지 시계를 멈춰 999ms에는 release 없음, 1000ms에는 release 있음을 확인한다.
+  첫 `pauseAt`으로 설치와 정지를 함께 한다. 별도 `install` 뒤 벽시계로 멈추면 과거 시각을 지정할 수 있다.
+  숨김은 `visibilitychange`를 보낸 같은 task에서 pane WebSocket 기록을 닫아 즉시 release를 본다.
+  자동화 왕복 시간·700ms 벽시계 한도·Playwright `framesent` 도착 순서에 기대지 않는다.
+- E2E03의 크기 되찾기도 500ms를 자지 않고 첫 화면의 새 grid·맞추기 판단을 기다린다.
+  키보다 resize가 먼저 간다는 기존 전송 순서 단언은 유지한다. fixed-sleep 상한은 하나 낮춘다.
+- 원본은 `AAA_E2E_THROTTLE=2`·`--spec 02 --grep '두 controller' --repeat 6 --workers 6`에서
+  focus 실패 3/6을 재현했다. 고친 시험은 같은 조건 6/6, `AAA_TEST_SUBMIT_GAP_MS=1500`으로
+  Enter를 늦춘 전체 02도 3/3 통과했다. 시한·허용 오차·시나리오는 줄이거나 늘리지 않는다.
+- focus 되찾기 제거, blur의 1초 미만 release, 숨김 즉시 release 제거를 독립 변형으로 심어
+  기존 keeper가 각각 실패하는지 본다. 제품 소스는 바이트로 복원하고 웹·실행 파일을 다시 빌드한 뒤 전수 gate를 실행한다.
+
+### diff index와 입력줄 시계의 간헐 실패(t-0496)
+
+- `cargo test -p aaa-agent --lib diff::tests::`의 기존 callback 시험은 같은 크기·mtime의 덮어쓰기와
+  그 시각의 index를 만든다. `core.checkStat=minimal`·`core.trustctime=false`로 stat 정밀도의 우연을 없앤다.
+  Linux에서 원본은 `+two` 단언에 실패했고 index 사본의 mtime 보존 뒤 통과했다. macOS의 원본 통과로
+  Linux를 대신 판정하지 않는다. 원본 index의 바이트·mtime과 외부 callback 미실행도 그대로 검사한다.
+  index mtime은 [Git의 racy entry 내용 재검사 기준](https://git-scm.com/docs/racy-git)이므로 사본을 만든
+  현재 시각으로 바꾸지 않는다. 열린 원본 파일에서 내용과 시각을 함께 가져온다.
+- E2E08은 `clock.install()` 뒤 별도 벽시계의 `pauseAt(new Date())`로 멈추지 않는다. 설치된 페이지 시계가
+  벽시계보다 앞서면 과거로 진행하려다 실패한다. `install` 뒤 `runFor(1000)`을 넣은 결정적 재현에서
+  CI와 같은 오류를 확인했다. 첫 `pauseAt`이 설치와 정지를 함께 하도록 하며 조합 취소·기한·PTY 단언은 유지한다.
+  [Playwright Clock](https://playwright.dev/docs/api/class-clock)의 공개 API를 쓰고 타이머·자동화 왕복을 기다리지 않는다.
+
 ### 크기 기준값과 조합 확정 기한(t-0463)
 
 - E2E06의 글꼴 기준값은 제목과 host 열 수가 같은 것만으로 정하지 않는다. 둘 다 이전 snapshot의 크기일 수 있으므로
@@ -240,6 +270,22 @@ web/e2e/specs/NN-기능.mjs  기능별 단계(01-http-pwa … 19-turn-alerts). e
 
 - `cargo test --locked -p aaa --bin aaa update::`는 임시 HTTP 서버와 실제 curl로 manifest 선택·SHA-256 거부·없는 OS/arch·전송 중단·같은 판 무동작·보관/rollback을 본다. 서버는 응답/연결 종료 사건으로 끝나며 운영 설정·키체인·신호·고정 sleep을 쓰지 않는다. 같은 시각에 version이 내려가는 보관 순서는 고정 `now`로 검사한다.
 - `cargo test --locked -p aaa --bin aaa cli::tests::update_accepts_release_version_and_keeps_local_and_subcommand_modes`는 공개 CLI의 release 판·로컬 파일·rollback 선택과 충돌을 본다.
+
+### update 후보 서명과 사람 터미널 출력(t-0488)
+
+- 기존 E2E `update_replaces_keeps_and_rolls_back`, m13 `coordinator_deployment_is_gated_and_survives_backend_restarts`, `rollout_preflights_all_targets_and_resumes_same_jobs_after_host_restart`가 실제 다음 실행·교체·보관·rollback과 재시작 수명을 계속 소유한다. macOS 후보는 바이트를 덧붙이지 않고 서로 다른 ad-hoc 서명 식별자를 써서 같은 version·다른 SHA·유효 strict 서명을 갖는다. 복사·서명은 자식 프로세스에서 끝내 병렬 fork에 쓰기 FD를 물려주지 않는다.
+- m13 `web_pair_requires_a_person_outside_aaa_panes`의 사람 문은 그대로 검사한다. 터미널 helper는 직접 PTY를 열고 남은 출력을 EOF까지 읽은 뒤 자식을 수거한다. macOS `script`가 자식 종료를 먼저 처리하면 종료 0인데도 PTY의 끝 출력을 잃는다. 전달 프로세스 정지→자식 출력·종료→kqueue 종료 확인→전달 프로세스 재개 순서로 고정 sleep 없이 재현했다.
+- helper의 cwd는 이전 `script`처럼 호출자의 작업 폴더로 명시한다. PTY의 HOME 기본 cwd를 쓰면 아직 없는 격리 HOME을 넘긴 service 시험이 실행 전에 실패한다. 기존 `service_stop_start_restart_wrap_launchctl`이 이 경계를 지킨다.
+- ca58f1b0 macOS CI의 pair 실패는 outside 출력 전에 `pane 안 pairing 끝`에서 났다. worker의 brief 글과 Enter 사이에 probe를 보내면 두 글이 붙어 probe가 실행되지 않는다. 시작 응답을 brief 완료로 보지 않고, 시작 전 구독한 Thread 사건에서 brief 수신과 fixture의 보고 처리를 기다린 뒤 probe를 보낸다. 같은 typing 경계·느린 제출에서 수정 전 실패/수정 후 통과를 보고, 준비 대기를 제거한 변형도 실패해야 한다. 사람 문 단언과 30초 상한은 그대로이며 실패에는 역할·파일·pane·화면 진단을 남긴다.
+- rollout의 서비스 재시작 기록은 해당 단계가 시작된 뒤 기다린다. 전송 완료만 기다린 뒤 두 사전 검사·설치·서비스를 한 30초 안에 기대하면 부하 아래 설치 중에 실패했다. 같은 rollout의 내구 cursor 전진/단계 시작을 `rollout_changed` 사건으로 관측하고 단계별 기존 상한을 적용한다. 같은 cursor·같은 시작 표지의 반복 사건은 상한을 새로 시작하지 않는다. 서비스 기록의 순서·횟수·실제 job/복구 단언은 그대로다. 재시작 대신 상태만 조회하는 제품 변형에서 기존 서비스 기록 keeper가 실패해야 한다.
+- 구 inode 설치 경로, 같은 SHA의 후보 둘, PTY 출력 유실을 각각 심어 기존 keeper가 실패하는지 확인하고 바이트 단위로 원복한다. 시간 제한·사람 문·교체 기대값은 바꾸지 않는다.
+- macOS 제품 update는 self-check에 사용한 staging과 별도로 실행 이력 없는 설치 파일을 독점 생성한다. 검증한 SHA와 복사한 바이트가 같은지 확인한 뒤 rename하고, 원래 실행 파일은 그대로 보관한다. 유효 서명 후보의 교체 완료 뒤 다음 실행이 SIGKILL 9(`EXEC/SECURITY_POLICY`)로 죽는 경계를 수리한다. [Apple의 갱신 원칙](https://developer.apple.com/documentation/security/updating-mac-software)은 파일에 붙은 서명 캐시 때문에 새 파일로 교체하라고 설명한다. 구 경로도 rename은 했으므로 이번 관측을 단순 제자리 덮어쓰기나 INVALID_PAGE라고 부르지 않는다. 구 staging inode 재사용을 심으면 기존 update keeper의 다음 실행이 다시 실패하고, 원복하면 전체 교체·rollback이 통과해야 한다.
+
+### 흐름 사건의 동시 발행 제어(t-0488)
+
+- m13 `flow_events_go_out_in_seq_order`는 기존 `AAA_TEST_FLOW_HOLD` 경로를 Unix 제어 연결로 쓴다. host가 DB 저장 뒤 `Hhold: 켬`, 다음 사건이 순서 잠금을 기다릴 때 `Wfree: 켬`을 보낸다. 시험이 해제 `R`을 보내야 첫 사건을 발행한다. 고정 sleep·파일 polling·시간 경과에 따른 조용한 해제는 없다. 30초 실패 상한은 그대로이며 단계·연결·사건 출처를 실패 출력에 남긴다.
+- Front 요청·조회·구독 연결을 미리 열어 두고, 저장은 붙잡힘 알림 뒤 한 번 조회한다. 기존 contiguous seq 및 수신 순서 단언을 유지한다. 구 시험은 hold와 잠금을 함께 제거해도 통과했다. 새 시험은 hold 제거를 조기 응답으로, 잠금 제거를 실제 수신 순서 `[2, 1]`로 잡아야 한다. 변형을 바이트 단위로 원복하고 runtime worker 하나에서도 통과시킨다.
+- 제보된 ci-local의 첫 저장 30초 실패는 좁은 동시 부하 대조에서 재현되지 않았다. 이 수리는 확인한 제어 수명·관측의 허점을 없애며, 당시 지연을 특정 OS·DB 오류로 단정하지 않는다. 최종 검증은 test·e2e·clippy를 함께 도는 ci-local 전체다.
 - `python3 -B -m unittest scripts.test_release`는 release 도구를 실제 CLI로 실행해 tag/Cargo 판 일치·빠진 실행 파일 거부·생성 manifest와 checksum이 실제 바이트를 가리키는지 본다. `.github/workflows/distribution.yml`에서도 돈다.
 - release workflow 실행·tag push는 착지 뒤 coordinator가 한다. actionlint가 없으면 YAML 문법 검사와 install-runbook 9.1의 herdr 차이표로 검토한다. 신호 금지 작업은 공식 ci-local에서 Rust 전체 test를 제외하고 문서의 확인창 E2E 범위를 쓴다. Windows는 웹 빌드가 끝난 뒤 target clippy로 별도 확인한다.
 
@@ -713,6 +759,13 @@ L2 결함 검증은 이전 root 가져오기 생략, 재시작 전 applied 변�
 - `node web/e2e/web.e2e.mjs --spec 46-task-edit`: 폼으로 더하기·고치고 옮기기(파일 글 전체를 기대값과 바이트로 비교), 사람 이름 owner 거부, 정리 제안, 행 메뉴·끌기·Alt+↓·목록 이름 바꾸기·빈 목록 지우기·새 목록, 두 브라우저 충돌 창과 「최신으로 다시 열기」, 폼을 고치는 동안 다른 task가 파일에서 바뀌어도 저장됨(대상만 충돌), 지우기·되살리기 줄·기록 거르기·기록에서 되살리기, 저장만으로 thread가 시작되지 않음(`ticker tick` 울타리 뒤 흐름 사건·thread 수), 보기 권한 기기에 편집 UI 없음(host 판 판정이 끝난 `data-can-edit="false"` 뒤에 본다. 판정 전은 `pending`), 명령 팔레트 「할 일 더하기」(할 일 화면을 연 적 없는 기기), 휴대폰 「+」·전체 화면 폼·메뉴 시트, 패드 세로 오른쪽 시트(상자 좌표로 단언), 「나중」 할 일로 옮기기(「나중」 파일 그대로), 원문 편집의 판 대조. 저장이 끝났는지는 시간이 아니라 화면 `data-tasks-sha`가 새 판이 되고 `data-task-saving`이 없어진 뒤 그 판이 파일 sha와 같은지로 본다.
 - 결함 심기: 웹 폼이 편집을 시작한 판 대신 최신 판 hash로 저장하게 하면 E2E 46 「충돌」 단계가, 팔레트 요청 수를 mount 때 값으로 두면 「명령 팔레트」 단계가 실패한다. 웹 결함은 `npm run build`가 dist를 다시 만든 뒤 `cargo build -p aaa`로 binary에 넣어 돈다.
 
+## 웹 할 일 thread 연결과 자동 정리(t-0493, plan §8.316)
+
+- `cargo test -p aaa-host --lib task_clean::`: P2 판정표(병합은 표지와 무관하게 완료, `[완료]`만 완료, 그 밖 표지·보고 없음·사본 없이 끝냄·하위 남음은 확인 필요)와 확인 필요 까닭.
+- `cargo test -p aaa --test m13 task_thread_link_and_auto_clean`: `--link-task` 줄 끝 번호, 열린 동안 판정 없음, `[완료]` 지움과 「host 자동 정리」 기록, 보고 없음·`[결정 필요]` 확인 필요(`task list`·`context`·inbox), 상위 올림, 되살린 task를 다음 tick이 다시 지우지 않음(한 번 판정 거르기를 없애면 실패). 판정은 `ticker tick` 울타리 뒤에 본다.
+- `cargo test -p aaa --test m13 merged_thread_cleans_its_task`: 가짜 gh로 병합한 thread는 보고가 `[착지]`여도 그 task를 지운다(병합 판정을 끄면 실패). 병합 끝내기와 판정은 같은 tick에서 돌아 `thread_resolved` 사건 뒤 `ticker tick` 하나가 울타리다.
+- `node web/e2e/web.e2e.mjs --spec 47-task-thread`: 바로 시작 확인창(`data-start-state`)과 줄 끝 연결, 확인창을 연 뒤 블록이 바뀌면 시작 거부, 자동 정리 줄·되살리기, 확인 필요 단추, 상위 올림, task 없는 thread 잇기·만들기, coordinator 맡기기(입력칸 초안을 localStorage로 확인), 휴대폰·패드 한도 확인.
+
 ## 키 관리자 K0 카나리 찾기(§8.307)
 
 - `cargo test -p aaa --test m13 secret_k0`: 실험실 host·agent를 `AAA_LOG=trace`로 띄운다. 무작위 가짜 값(카나리)을 셋 둔다.
@@ -778,7 +831,15 @@ L2 결함 검증은 이전 root 가져오기 생략, 재시작 전 applied 변�
 - `cargo test -p aaa --test m13 ci_conditional_failure_mission_restart_catchup_and_outage`: 기존 HTTP 실패·중복 억제·복구에 이어 별도 인증 실패(gh 종료 코드 4)의 CI outage를 확인한다. PR 생략 때문에 CI 실패를 숨기면 안 된다.
 - 수정 전에는 미게시 branch의 불필요 호출과 미인증 PR outage가 각각 실패했다. 게시 조건 제거·사용 불가 오류를 다시 실패로 전달·머신 상태 저장 제거·CI outage 전달 제거를 각각 심어 keeper 실패를 확인하고 원본 bytes로 복원한다. 마지막 검증은 전체 ci-local과 check-public이다.
 
-## aaa install I1 읽기 CLI(t-0485, plan §8.315)
+
+## branch 변경 뒤 agent 재시작과 준비 기록 격리(t-0495, plan §8.315)
+
+- `cargo test -p aaa --test m13 agent_restart_preserves_threads_after_branch_changes_and_isolates_invalid_preparations`: macOS 실제 host·agent·Git worktree 실험실에서 현재 볼륨을 명시한 휴대용 root를 쓴다. 준비 뒤 branch 변경·dirty 상태와 정상 thread를 함께 두고 agent만 재시작한다. 연결 상태·pane 읽기·기존 session host PID·Git 잠금으로 확인하며 고정 sleep은 없다.
+- 별도 thread의 `.git`을 다른 repo로 바꾸되 원래 repo의 worktree 등록은 남긴다. JSON이 깨진 기록도 함께 둔다. 두 기록은 원인과 파일명이 경고에 남고 journal bytes는 보존된다. 정상 두 worktree만 aaa 소유 잠금을 복구해야 한다.
+- 수정 전에는 agent가 repo·branch 불일치 오류로 종료했다. branch 거부를 다시 심으면 변경한 thread의 잠금 단언, 실제 repo 대조를 빼면 다른 repo의 잠금 금지 단언이 실패해야 한다. journal의 repo 칸만 바꾸는 입력은 Git 등록 검사도 거부하므로 그것만으로 repo 대조 제거를 검증했다고 하지 않는다.
+- 기존 `work_root::recovery_tests`와 m13 `configured_prepare_timeout_recovers_only_unchanged_worktree`는 준비 재진입·dirty 거부·정리 잠금 계약을 계속 소유한다. 전체 ci-local·check-public 뒤 착지 창을 받는다.
+
+## aaa install I1 읽기 CLI(t-0485, plan §8.317)
 
 - `cargo test -p aaa --test install --locked`: 실제 binary/argv와 임시 HOME/config/state/root/repo를 소유한다.
   문법·전역 instance·필수값 오류의 정제된 JSON/exit, JSON/NDJSON의 같은 계획 hash, dry-run/오류 전후 파일 snapshot 불변을 본다.

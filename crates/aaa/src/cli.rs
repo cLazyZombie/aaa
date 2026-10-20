@@ -528,6 +528,9 @@ enum TaskCmd {
         /// 이 task 앞에
         #[arg(long, value_name = "TITLE")]
         before: Option<String>,
+        /// 이어 줄 thread(` · t-NNNN`, task 없는 열린 thread를 task로 만들 때)
+        #[arg(long)]
+        thread: Option<String>,
     },
     /// task 칸을 바꾼다(준 칸만, 나머지 줄은 바이트 그대로)
     Edit {
@@ -828,6 +831,9 @@ enum ThreadCmd {
         /// TASKS.md의 task 제목. owner가 profile·machine 기본값이 되고 메모가 할 일에 붙는다.
         #[arg(long)]
         from_task: Option<String>,
+        /// 시작하면 그 task 줄 끝에 ` · <thread id>`를 붙인다(--from-task와 함께)
+        #[arg(long)]
+        link_task: bool,
         /// 준비는 host 배경 작업으로 계속하고 바로 thread ID·준비 중 상태를 돌려준다
         #[arg(long)]
         background: bool,
@@ -1706,7 +1712,7 @@ fn run(cli: Cli) -> Result<ExitCode> {
             use aaa_proto::TaskOp;
             let op = match cmd {
                 TaskCmd::List | TaskCmd::Log { .. } => unreachable!(),
-                TaskCmd::Add { title, list, owner, person, notes, parent, before } => TaskOp::Add {
+                TaskCmd::Add { title, list, owner, person, notes, parent, before, thread } => TaskOp::Add {
                     list,
                     title,
                     owner,
@@ -1714,6 +1720,7 @@ fn run(cli: Cli) -> Result<ExitCode> {
                     notes,
                     parent: parent.as_deref().map(task_at),
                     before: before.as_deref().map(task_at),
+                    thread,
                 },
                 TaskCmd::Edit { task, block, title, owner, person, notes, clear_notes, thread, done, undone } => {
                     TaskOp::Update {
@@ -1829,9 +1836,13 @@ fn run(cli: Cli) -> Result<ExitCode> {
                     base,
                     task_file,
                     from_task,
+                    link_task,
                     summary_file,
                     background,
                 } => {
+                    if link_task && from_task.is_none() {
+                        anyhow::bail!("--link-task는 --from-task와 함께 쓴다");
+                    }
                     if from_task.is_none() && (title.is_none() || task_file.is_none()) {
                         anyhow::bail!("--title·--task-file이 필요하다(TASKS.md task로 시작하면 --from-task)");
                     }
@@ -1854,6 +1865,8 @@ fn run(cli: Cli) -> Result<ExitCode> {
                         base,
                         task,
                         from_task,
+                        link_task,
+                        task_block: None,
                     };
                     return with_summary(json, req, project, None, summary);
                 }
@@ -3386,6 +3399,8 @@ fn render_task_board(s: &mut String, b: &aaa_proto::TaskBoard) {
         for t in mine {
             let mark = if !t.problems.is_empty() {
                 "▲"
+            } else if t.attention.is_some() {
+                "⚠"
             } else if t.thread.is_some() {
                 "◉"
             } else {
@@ -3397,6 +3412,9 @@ fn render_task_board(s: &mut String, b: &aaa_proto::TaskBoard) {
             let _ = writeln!(s, "{pad}{mark} {}{owner}{thread}  [{}줄]", t.title, t.line);
             for p in &t.problems {
                 let _ = writeln!(s, "{pad}    형식 어긋남: {p}");
+            }
+            if let Some(a) = &t.attention {
+                let _ = writeln!(s, "{pad}    확인 필요: {a}");
             }
         }
     }
@@ -3470,6 +3488,9 @@ fn render_context(s: &mut String, c: &aaa_proto::ProjectContext) {
         }
         for p in &t.problems {
             let _ = writeln!(s, "    형식 어긋남: {p}");
+        }
+        if let Some(a) = &t.attention {
+            let _ = writeln!(s, "    확인 필요: {a}");
         }
     }
     let _ = writeln!(s, "\n열린 thread:");
@@ -4163,6 +4184,17 @@ fn render_front(r: &FrontResponse) -> String {
         },
         FrontResponse::Context(c) => render_context(&mut s, c),
         FrontResponse::TaskBoard(b) => render_task_board(&mut s, b),
+        FrontResponse::ThreadStartPreview(p) => {
+            let _ = writeln!(s, "제목: {}\nprofile: {}", p.title, p.profile);
+            if let Some(m) = &p.machine {
+                let _ = writeln!(s, "머신: {m}");
+            }
+            let _ = writeln!(s, "열린 thread: {}/{}", p.open_threads, p.max_parallel_threads);
+            for w in &p.warnings {
+                let _ = writeln!(s, "경고: {w}");
+            }
+            let _ = writeln!(s, "\n{}", p.task.trim_end());
+        }
         FrontResponse::TaskEdited { board, log_ids, .. } => {
             if log_ids.is_empty() {
                 let _ = writeln!(s, "바뀐 것이 없다(TASKS.md sha256 {})", board.sha256);
