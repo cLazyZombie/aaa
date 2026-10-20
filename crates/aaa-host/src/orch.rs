@@ -1078,10 +1078,10 @@ impl Host {
         let kind = kind.as_str();
         let _order = match self.flow_order.try_lock() {
             Ok(g) => g,
-            Err(_) => {
-                test_flow_waiting();
-                blocking(|| self.flow_order.lock().unwrap_or_else(|p| p.into_inner()))
-            }
+            Err(_) => blocking(|| {
+                test_flow_waiting(&e);
+                self.flow_order.lock().unwrap_or_else(|p| p.into_inner())
+            }),
         };
         match self.db.flow_insert(&e) {
             Ok(seq) => {
@@ -2377,19 +2377,24 @@ impl Host {
     }
 }
 
-/// 시험에서만(`AAA_TEST_FLOW_HOLD=<파일>`): 글이 `hold:`로 시작하는 흐름 사건을 저장한 뒤 그 파일이 생길 때까지(30초까지)
-/// 알리지 않는다. 두 사건이 동시에 기록되는 때를 시간에 기대지 않고 만든다(m13 `flow_events_go_out_in_seq_order`)
+/// 시험에서만(`AAA_TEST_FLOW_HOLD=<Unix socket>`): 저장한 사건을 알리기 전 시험에 H<detail>을 보내고 R을 기다린다.
+/// 시간이 지났다고 조용히 풀면 두 사건이 겹치지 않아도 순서 시험이 통과하므로, 제어 연결 실패는 시험 실패다.
 fn test_flow_hold(e: &FlowEvent) {
-    let Some(release) = std::env::var_os("AAA_TEST_FLOW_HOLD") else { return };
-    if !e.detail.starts_with("hold:") {
+    if std::env::var_os("AAA_TEST_FLOW_HOLD").is_none() {
         return;
     }
-    let until = std::time::Instant::now() + std::time::Duration::from_secs(30);
-    blocking(|| {
-        while !std::path::Path::new(&release).exists() && std::time::Instant::now() < until {
-            std::thread::sleep(std::time::Duration::from_millis(10));
-        }
-    });
+    #[cfg(unix)]
+    if e.detail.starts_with("hold:") {
+        blocking(|| {
+            if let Some(mut control) = test_flow_signal(b'H', e) {
+                let mut release = [0];
+                std::io::Read::read_exact(&mut control, &mut release).expect("flow 시험의 해제 사건");
+                assert_eq!(release, [b'R'], "flow 시험의 해제 표지");
+            }
+        });
+    }
+    #[cfg(not(unix))]
+    let _ = e;
 }
 
 /// 막히는 일을 tokio worker에서 할 때 runtime에 알린다(그 worker에 줄 선 작업을 다른 worker가 맡는다). 여러 스레드 runtime
@@ -2401,13 +2406,22 @@ fn blocking<R>(f: impl FnOnce() -> R) -> R {
     }
 }
 
-/// 시험에서만: 다른 흐름 사건이 끝나기를 기다리게 된 사건이 있다고 `<파일>.waiting`을 남긴다(시험이 그 사건이 들어온 것을 안다)
-fn test_flow_waiting() {
-    if let Some(release) = std::env::var_os("AAA_TEST_FLOW_HOLD") {
-        let mut p = release;
-        p.push(".waiting");
-        let _ = std::fs::write(p, "");
-    }
+/// 시험에서만: 어떤 사건이 flow_order를 기다리는지 W<detail>로 알린다.
+fn test_flow_waiting(e: &FlowEvent) {
+    #[cfg(unix)]
+    drop(test_flow_signal(b'W', e));
+    #[cfg(not(unix))]
+    let _ = e;
+}
+
+#[cfg(unix)]
+fn test_flow_signal(phase: u8, e: &FlowEvent) -> Option<std::os::unix::net::UnixStream> {
+    let path = std::env::var_os("AAA_TEST_FLOW_HOLD")?;
+    let mut control = std::os::unix::net::UnixStream::connect(path).expect("flow 시험 제어 연결");
+    control.set_read_timeout(Some(std::time::Duration::from_secs(30))).unwrap();
+    std::io::Write::write_all(&mut control, format!("{}{}\n", phase as char, e.detail).as_bytes())
+        .expect("flow 시험 단계 알림");
+    Some(control)
 }
 
 /// 두 폴더가 같은 상대 경로에 같은 바이트의 파일을 가졌나(library 사본이 바뀌었는지 볼 때). 없는 폴더는 빈 폴더와 다르다.

@@ -5144,9 +5144,10 @@ fn flow_events_go_out_in_seq_order() {
     let mut lab = Lab::new();
     let projects = lab.root.join("projects");
     let h = lab.node("h", Some(&host_toml(&projects, "", false)));
-    let release = lab.root.join("release");
-    let release_s = path_str(&release).to_string();
-    lab.spawn_env("host", &h, &["host"], &[("AAA_TEST_FLOW_HOLD", release_s.as_str())]);
+    let control = lab.root.join("flow.sock");
+    let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
+    let listener = rt.block_on(async { tokio::net::UnixListener::bind(&control).unwrap() });
+    lab.spawn_env("host", &h, &["host"], &[("AAA_TEST_FLOW_HOLD", path_str(&control))]);
     wait_for("host 준비", T, || h.json(&["status"]).ok());
     h.ok(&["project", "create", "demo"]);
     let routines = projects.join("demo/routines");
@@ -5158,40 +5159,86 @@ fn flow_events_go_out_in_seq_order() {
         )
         .unwrap();
     }
-    let mut ev = Events::connect(&h);
-    let waiting = lab.root.join("release.waiting");
-    std::thread::scope(|s| {
-        // `hold: 켬`은 저장된 뒤 붙잡힌다
-        let held = s.spawn(|| h.ok(&["routine", "toggle", "demo", "hold", "--on"]));
-        wait_for("붙잡힌 사건 저장", T, || {
-            h.ok(&["events", "demo"])["events"]
-                .as_array()
-                .unwrap()
-                .iter()
-                .any(|e| e["detail"] == "hold: 켬")
-                .then_some(())
-        });
-        // 그 사이 다른 사건: 끝났거나(먼저 나갔다) 앞 사건을 기다린다(host가 표지를 남긴다)
-        let free = s.spawn(|| h.ok(&["routine", "toggle", "demo", "free", "--on"]));
-        wait_for("다음 사건이 들어옴", T, || (free.is_finished() || waiting.exists()).then_some(()));
-        std::fs::write(&release, "").unwrap();
-        held.join().unwrap();
-        free.join().unwrap();
-    });
-    let mut got = Vec::new();
-    while got.len() < 2 {
-        let f = ev.wait_from(0, "routine_toggled 둘", T, |e| match e {
-            FrontEvent::Flow(f) if f.kind == "routine_toggled" && !got.iter().any(|(s, _)| *s == f.seq) => {
-                Some((f.seq, f.detail.clone()))
+    rt.block_on(async {
+        use aaa_common::front::FrontClient;
+        use aaa_proto::{FrontMsg, FrontRequest, FrontResponse};
+        use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+        use tokio::time::timeout;
+
+        async fn signal(listener: &tokio::net::UnixListener) -> (tokio::net::UnixStream, String) {
+            let (stream, _) = listener.accept().await.unwrap();
+            let mut reader = BufReader::new(stream);
+            let mut line = String::new();
+            assert!(reader.read_line(&mut line).await.unwrap() > 0, "flow 제어 연결이 알림 없이 닫혔다");
+            (reader.into_inner(), line)
+        }
+        async fn response(client: &mut FrontClient, id: &str) -> FrontResponse {
+            loop {
+                match client.next().await.expect("flow 요청 연결").expect("flow 응답 전 연결 종료") {
+                    FrontMsg::Res { id: got, result } if got == id => return result.into_result().unwrap(),
+                    _ => {}
+                }
             }
-            _ => None,
-        });
-        got.push(f.1);
-    }
-    let held = got.iter().find(|(_, d)| d == "hold: 켬").unwrap().0;
-    let free = got.iter().find(|(_, d)| d == "free: 켬").unwrap().0;
-    assert_eq!(free, held + 1, "{got:?}");
-    assert_eq!(got.iter().map(|(s, _)| *s).collect::<Vec<_>>(), [held, free], "나간 차례가 seq 차례가 아니다: {got:?}");
+        }
+        let toggle =
+            |name: &str| FrontRequest::RoutineToggle { project: "demo".into(), name: name.into(), on: Some(true) };
+        // 요청·조회·구독 연결을 먼저 열어 둔다. 기다리는 동안 CLI를 반복 spawn하지 않는다.
+        let mut events = FrontClient::connect(&h.state).await.unwrap();
+        let mut query = FrontClient::connect(&h.state).await.unwrap();
+        let mut held = FrontClient::connect(&h.state).await.unwrap();
+        let mut free = FrontClient::connect(&h.state).await.unwrap();
+        let held_id = held.send(toggle("hold")).await.unwrap();
+        let (mut gate, line) = tokio::select! {
+            signal = timeout(T, signal(&listener)) => signal.expect("저장 후 hold 알림이 오지 않았다"),
+            result = response(&mut held, &held_id) => panic!("hold 없이 요청이 먼저 끝났다: {result:?}"),
+        };
+        assert_eq!(line, "Hhold: 켬\n", "저장 후 실제로 붙잡힌 사건");
+        let stored =
+            timeout(T, query.call(FrontRequest::Events { project: Some("demo".into()), after: 0, limit: None }))
+                .await
+                .expect("붙잡힌 사건 조회가 끝나지 않았다")
+                .unwrap()
+                .unwrap();
+        let FrontResponse::Events { events: stored } = stored else { panic!("사건 조회: {stored:?}") };
+        assert!(stored.iter().any(|e| e.detail == "hold: 켬"), "hold 알림 전에 사건이 저장돼야 한다: {stored:?}");
+
+        let free_id = free.send(toggle("free")).await.unwrap();
+        // 정상 경로는 잠금 대기를 알린다. 잠금 결함이면 free가 먼저 끝나므로 실제 발행 순서로 잡는다.
+        let free_finished = tokio::select! {
+            signal = timeout(T, signal(&listener)) => {
+                let (_, line) = signal.expect("두 번째 사건의 잠금 대기 알림이 오지 않았다");
+                assert_eq!(line, "Wfree: 켬\n", "기다리는 사건의 출처");
+                false
+            }
+            _ = response(&mut free, &free_id) => true,
+        };
+        gate.write_all(b"R").await.unwrap();
+        timeout(T, response(&mut held, &held_id)).await.expect("hold 해제 뒤 응답이 오지 않았다");
+        if !free_finished {
+            timeout(T, response(&mut free, &free_id)).await.expect("다음 사건 응답이 오지 않았다");
+        }
+        let mut got = Vec::new();
+        timeout(T, async {
+            while got.len() < 2 {
+                if let FrontMsg::Event(FrontEvent::Flow(f)) = events.next().await.unwrap().unwrap()
+                    && f.kind == "routine_toggled"
+                    && !got.iter().any(|(seq, _)| *seq == f.seq)
+                {
+                    got.push((f.seq, f.detail));
+                }
+            }
+        })
+        .await
+        .unwrap_or_else(|_| panic!("routine_toggled 둘이 오지 않았다: {got:?}"));
+        let held = got.iter().find(|(_, d)| d == "hold: 켬").unwrap().0;
+        let free = got.iter().find(|(_, d)| d == "free: 켬").unwrap().0;
+        assert_eq!(free, held + 1, "{got:?}");
+        assert_eq!(
+            got.iter().map(|(s, _)| *s).collect::<Vec<_>>(),
+            [held, free],
+            "나간 차례가 seq 차례가 아니다: {got:?}"
+        );
+    });
 }
 
 /// 같은 CLI가 로컬 UDS와 원격 TLS agent 양쪽에서 host inbox로 간다. 보낸 프로젝트 자기 신고는 쓰지 않는다.
