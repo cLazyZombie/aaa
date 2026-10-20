@@ -1,7 +1,7 @@
 // 왼쪽 활동 막대(사용자 요청 10-19 「vs code 처럼 … 같은 버튼 한번 더 누르면 숨겨지고」, plan §8.240). 참고 소스(herdr-web-ui·t3code)에
 // 이런 막대가 없어 VS Code activity bar를 따른다: 세로 tablist(`aria-orientation="vertical"`), 고른 패널의 단추에만 왼쪽 선과
 // aria-selected·aria-expanded, 사이드바를 접으면 고른 단추가 없다. ↑↓·Home·End는 단추 사이 focus만 옮기고(roving tabindex) Enter·Space가
-// 고른다. 「답할 것」(plan §8.345)은 맨 위 패널 단추이고 배지는 빨강이다. 패널이 아닌 보고서(본문을 바꾼다)는 패널 단추 바로 밑의
+// 고른다. 「답할 것」(plan §8.345)은 패널 단추 끝, 보고서 바로 위이고 배지는 빨강이다. 패널이 아닌 보고서(본문을 바꾼다)는 패널 단추 바로 밑의
 // 보통 단추다(tablist 밖, 사용자 요청 10-19 「보고서는 왼쪽 위로(지금 에이전트 밑으로)」). 보고서 배지는 안 본 보고서 수뿐이다. 그 바로 밑의 「할 일」(TASKS.md, plan §8.306)도 본문을 바꾸는 단추다. 설정(창)만 아래 묶음에 둔다(VS Code 아래 묶음
 // Accounts·Manage 자리).
 import { useRef, type KeyboardEvent, type ReactNode } from "react";
