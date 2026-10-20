@@ -77,8 +77,11 @@ export function checkSetting(key: "max_parallel_threads" | "auto_resolve_days", 
   return Number.isInteger(n) && n >= lo && n <= 1000 ? null : `${lo}~1000의 수다`;
 }
 
-/** 알림함 배지: 끝내지 않은 항목 수(응답에 싣지 못한 것 포함) */
-export const inboxOpen = (items: InboxItem[], omittedOpen: number): number => items.filter((i) => !i.done).length + omittedOpen;
+/** 사용자가 답할 요청 post의 inbox 항목(host `asks::is_user_request`와 같은 기준): 「답할 것」이 다룬다(plan §8.345) */
+export const isUserRequest = (i: Pick<InboxItem, "item_kind" | "event">): boolean => i.item_kind === "post" && i.event === "post request for user";
+
+/** 알림함 배지: 끝내지 않은 항목 수(응답에 싣지 못한 것 포함). 사용자가 답할 요청은 「답할 것」 배지가 세므로 뺀다 */
+export const inboxOpen = (items: InboxItem[], omittedOpen: number): number => items.filter((i) => !i.done && !isUserRequest(i)).length + omittedOpen;
 
 /** post 탭에서 뺄 것: 사용자가 답할 요청은 「답할 것」에서 다룬다(같은 자료를 두 곳에 두지 않는다) */
 export const needsAnswer = (p: Pick<PostEnvelope, "post_type" | "needs_user" | "to">): boolean =>

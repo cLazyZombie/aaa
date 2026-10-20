@@ -3597,6 +3597,15 @@ fn render_context(s: &mut String, c: &aaa_proto::ProjectContext) {
     }
     let _ = writeln!(s, "프로젝트 {} ({})", c.project, c.path);
     let _ = writeln!(s, "thread 시작: start_threads={} (propose면 제안하고 승인을 기다린다)", c.start_threads);
+    match &c.web_url {
+        Some(u) => {
+            let _ = writeln!(
+                s,
+                "웹 주소: {u} (채팅의 질문·보고서 링크: [t-NNNN 질문]({u}/#question=t-NNNN) · [제목]({u}/#report=<이름>))"
+            );
+        }
+        None => s.push_str("웹 주소: 공개 안 함 (채팅에는 aaa:question/<thread>·aaa:report/<이름>을 쓴다)\n"),
+    }
     let _ = writeln!(s, "\nTasks(TASKS.md, coordinator와 사용자가 고친다: aaa task …, 웹 할 일 화면):");
     if c.tasks.is_empty() {
         s.push_str("  (없음)\n");
@@ -4336,6 +4345,16 @@ fn render_front(r: &FrontResponse) -> String {
             for p in posts {
                 let _ = writeln!(s, "{}\t{}\t{}", p.id, p.input.to, p.input.title);
             }
+        }
+        // 「답할 것」(웹 화면이 쓴다): CLI는 확인 필요 post와 답한 것을 한 줄씩 보인다
+        FrontResponse::Asks { requests, done, keep_days } => {
+            for r in requests {
+                let _ = writeln!(s, "답할 것\t{}\t{}", r.id, r.title);
+            }
+            for d in done {
+                let _ = writeln!(s, "답한 것\t{}\t{}\t{}\t{}", d.id, d.title, d.summary, d.by);
+            }
+            let _ = writeln!(s, "(답한 것은 {keep_days}일 뒤 지운다)");
         }
         // 웹 화면들의 공유 설정: CLI는 문서를 그대로 보인다
         FrontResponse::Preferences(p) => {

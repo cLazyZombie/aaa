@@ -1017,9 +1017,10 @@ fn task_attachments_reach_a_remote_agent() {
     assert_eq!(std::fs::read_to_string(work.join("attachments").join(doc)).unwrap(), "# 계획서\n\n- 첫 단계\n");
     let brief = std::fs::read_to_string(work.join("brief.md")).unwrap();
     let task = std::fs::read_to_string(demo.join("threads").join(format!("{id}.task.md"))).unwrap();
-    // brief 머리의 uploads 줄(「host 머신에만 있다」)은 원래 안내다. 첨부 자체는 host 경로·host 상대 경로로 가리키지 않는다
+    // brief 머리의 uploads 줄(「host 머신에만 있다」)은 원래 안내다. 첨부 자체는 host 경로·host 상대 경로로 가리키지 않는다.
+    // 안내 「시작할 때 묻기」의 `![A안](library/a.png)`은 thread 자기 보고서 옆 library라 첨부가 아니다(plan §8.345)
     assert!(!task.contains(path_str(&w.projects)), "할 일에 host 경로가 있다:\n{task}");
-    for host in [format!("](uploads/{png})"), "](library/".into()] {
+    for host in [format!("](uploads/{png})"), "](library/plan-report/".into()] {
         assert!(!brief.contains(&host), "brief가 첨부를 host 쪽으로 가리킨다({host}):\n{brief}");
     }
     assert!(

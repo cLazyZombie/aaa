@@ -1,13 +1,13 @@
 // 활동 막대 「알림함」 패널(관리 GUI W4, plan §8.343): coordinator 알림함(inbox)·흐름 사건·post. 알림함은 늘 `peek`로 읽는다:
 // 화면이 읽어도 「봤다」가 되지 않아 coordinator 묶음 알림(nudge)이 그대로 간다. 끝내기는 조작 기기만. 사용자가 답할 요청 post는
-// 「답할 것」이 다루므로 여기서는 수만 보이고 그리로 보낸다(같은 자료를 두 곳에 두지 않는다). post 목록은 조작 기기만 읽는다.
+// 「답할 것」이 다루므로(plan §8.345) post 탭과 알림함 탭 모두 수만 보이고 그리로 보낸다(같은 자료를 두 곳에 두지 않는다). post 목록은 조작 기기만 읽는다.
 import "./InboxPanel.css";
 
 import { useCallback, useEffect, useState } from "react";
 import type { FlowEvent, InboxItem, PostEnvelope } from "./gen/proto";
 import { ApiError, call, me, onInboxChanged } from "./api";
 import { ConfirmDialog } from "./ConfirmDialog";
-import { canOperate, inboxOpen, needsAnswer } from "./operateModel.ts";
+import { canOperate, inboxOpen, isUserRequest, needsAnswer } from "./operateModel.ts";
 
 type Tab = "inbox" | "events" | "posts";
 const say = (e: unknown) => (e instanceof ApiError || e instanceof Error ? e.message : String(e));
@@ -40,14 +40,14 @@ export function InboxPanel({ canControl, onThread, onAnswers }: {
           </button>
         ))}
       </div>
-      {tab === "inbox" && <InboxList canControl={canControl} onThread={onThread} />}
+      {tab === "inbox" && <InboxList canControl={canControl} onThread={onThread} onAnswers={onAnswers} />}
       {tab === "events" && <EventList onThread={onThread} />}
       {tab === "posts" && <PostList onAnswers={onAnswers} />}
     </div>
   );
 }
 
-function InboxList({ canControl, onThread }: { canControl: boolean; onThread?: (project: string, id: string) => void }) {
+function InboxList({ canControl, onThread, onAnswers }: { canControl: boolean; onThread?: (project: string, id: string) => void; onAnswers?: () => void }) {
   const [all, setAll] = useState(false);
   const [items, setItems] = useState<InboxItem[] | null>(null);
   const [omitted, setOmitted] = useState(0);
@@ -81,9 +81,12 @@ function InboxList({ canControl, onThread }: { canControl: boolean; onThread?: (
       setBusy(null);
     }
   };
-  const open = (items ?? []).filter((i) => !i.done);
+  // 사용자가 답할 요청 post는 「답할 것」에서 답하고 끝낸다(plan §8.345): 여기서는 끝내지 않은 수만 보이고 그리로 보낸다
+  const answers = (items ?? []).filter((i) => !i.done && isUserRequest(i)).length;
+  const mine = (items ?? []).filter((i) => !isUserRequest(i));
+  const open = mine.filter((i) => !i.done);
   // 끝내지 않은 것이 먼저, 그 안에서는 최근 것이 위
-  const shown = [...(items ?? [])].sort((a, b) => Number(a.done) - Number(b.done) || b.created_at_ms - a.created_at_ms);
+  const shown = [...mine].sort((a, b) => Number(a.done) - Number(b.done) || b.created_at_ms - a.created_at_ms);
   return (
     <div className="inbox-body">
       <div className="inbox-tools">
@@ -98,6 +101,16 @@ function InboxList({ canControl, onThread }: { canControl: boolean; onThread?: (
         )}
       </div>
       {error && <p className="inbox-error" role="alert">{error}</p>}
+      {answers > 0 && (
+        <p className="inbox-answers" data-testid="inbox-answers">
+          사용자가 답할 요청 {answers}건은 「답할 것」에서 다룬다.
+          {onAnswers && (
+            <button type="button" className="link" onClick={onAnswers}>
+              답할 것 열기
+            </button>
+          )}
+        </p>
+      )}
       {items === null ? (
         <p className="inbox-empty">읽는 중…</p>
       ) : shown.length === 0 ? (

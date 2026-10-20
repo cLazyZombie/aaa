@@ -351,12 +351,16 @@ CI routine이 지정 branch를 감시한다. inbox 종류 `ci`는 실패 job·�
 활동 막대 배지에 안 봄으로 뜨고, 사용자 알림 post(topic report)가 함께 남는다. 같은 이름으로 다시 보내면 다시 안 봄이다.
 index.html이 없으면 거절한다. thread가 낸 보고(t-NNNN 사본)는 「작업 보고」에 따로 있으니 그대로 다시 보내지 않는다:
 사용자에게 보일 것만 골라 `--to-user`로 보낸다. 이 알림은 앱 안에만 뜨고 밖 푸시는 위 두 post만 보낸다.
-채팅에서는 그 보고서를 `aaa:report/<이름>`으로 가리킨다(아래 「앱 안 참조」).
+채팅에서는 그 보고서를 링크로 가리킨다(아래 「앱 안 참조」).
 
 ## 앱 안 참조
-웹 대화창은 `aaa:question/<thread>`(그 thread의 질문 카드)와 `aaa:report/<이름>`(보고서 패널의 그 보고서: `library publish
---name`의 이름, thread 사본은 thread ID)을 누르면 앱 안에서 열리는 칩으로 그린다. 터미널에서는 글 그대로 읽힌다. 채팅에서
-보고서·질문을 가리킬 때는 공유 주소(`https://…/v/…`) 대신 이 꼴을 쓴다. 공유 주소는 사용자가 밖으로 보내 달라고 할 때만 쓴다.
+채팅에서 thread 질문·보고서를 가리킬 때는 `aaa context`의 「웹 주소」로 Markdown 링크를 쓴다:
+`[t-0001 질문](<웹 주소>/#question=t-0001)`, `[<제목>](<웹 주소>/#report=<이름>)`(이름은 `library publish --name`의 이름,
+thread 사본은 thread ID). 터미널에서 누르면 브라우저가 그 질문 카드·보고서를 열고, 웹 대화창은 같은 host 링크를 앱 안 칩으로
+그린다. 웹 주소가 없으면(공개 안 함) `aaa:question/<thread>`·`aaa:report/<이름>`을 쓴다(웹 대화창은 칩, 터미널에서는 글).
+공유 주소(`https://…/v/…`)는 사용자가 밖으로 보내 달라고 할 때만 쓴다.
+확인 필요 post와 thread 질문은 웹 「답할 것」에 모인다. 사용자가 카드로 답하면 host가 thread에 전하고, 확인 필요 post를
+「답함으로 표시」하면 그 inbox 항목이 끝나고 `request handled` 항목이 온다: 같은 것을 다시 묻지 않는다.
 
 ## 첫 턴
 TASKS.md가 비어 있고 thread가 없으면 이것만 한다: goal을 한 줄로 다시 말하고, 범위에 든 repo와 머신을 늘어놓고(goal과
@@ -1176,6 +1180,7 @@ impl Host {
             limited_until_ms: self.usage_limit(&r.project, &r.id),
             questions: r.report_hash.clone().filter(|_| !r.questions.is_empty()).map(|report_hash| {
                 Box::new(aaa_proto::ThreadQuestions {
+                    files_base: Some(crate::asks::question_files_base(&r.project, &r.id, &report_hash)),
                     report_hash,
                     items: r.questions.clone(),
                     answer: r.question_answer.clone(),
