@@ -22,7 +22,8 @@ export function ThreadActions({ t, running }: { t: ThreadView; running: boolean 
   const [frontApi, setFrontApi] = useState<string | null | undefined>(undefined);
   useEffect(() => {
     let live = true;
-    me().then((m) => live && setFrontApi(m?.front_api ?? null), () => undefined);
+    // 못 읽으면 옛 host처럼 다룬다(미리보기 없이 남기기가 기본): 「읽는 중」에 머물지 않게
+    me().then((m) => live && setFrontApi(m?.front_api ?? null), () => live && setFrontApi(null));
     return () => {
       live = false;
     };

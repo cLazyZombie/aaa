@@ -200,13 +200,17 @@ export default async function ({ page }) {
     // 화면이 읽어도(peek) 「봤다」가 되지 않는다: coordinator 묶음 알림이 그대로 간다
     if (openInbox().some((i) => i.seen)) throw new Error("알림함 화면이 항목을 봤다로 바꿨다");
     await shot(page, "56-inbox-desktop");
+    // 최근 것이 위: 화면을 읽기 전에 잡은 가장 늦은 사건(시각, 순번)이 맨 위이거나 그보다 늦다. host 차례는 시각 먼저다
+    // (순번은 기록할 때 정해져 같은 무렵 사건끼리 시각과 어긋날 수 있다)
+    const all = aaa("events", "demo").events;
+    if (all.length >= 500) throw new Error("실험실 사건이 한 번에 다 오지 않는다");
+    const key = (e) => [e.at_ms, e.seq];
+    const later = (a, b) => a[0] > b[0] || (a[0] === b[0] && a[1] >= b[1]);
+    const newest = all.map(key).reduce((m, k) => (later(k, m) ? k : m));
     await panel.getByTestId("inbox-tab-events").click();
     await panel.getByTestId("event-list").waitFor();
-    // 최근 것이 위: 순번이 내려가고 맨 위가 가장 큰 순번(실험실 사건은 `aaa events` 한 번에 다 온다)
-    const seqs = (await panel.getByTestId("event-item").evaluateAll((els) => els.map((e) => Number(e.dataset.seq))));
-    const all = aaa("events", "demo").events;
-    const latest = Math.max(...all.map((e) => e.seq));
-    if (all.length >= 500 || seqs[0] !== latest || seqs.some((n, i) => i > 0 && n >= seqs[i - 1])) throw new Error(`흐름 사건 차례: ${seqs.slice(0, 5)} / 최근 ${latest}`);
+    const keys = await panel.getByTestId("event-item").evaluateAll((els) => els.map((e) => [Number(e.dataset.at), Number(e.dataset.seq)]));
+    if (!later(keys[0], newest) || keys.some((k, i) => i > 0 && !later(keys[i - 1], k))) throw new Error(`흐름 사건 차례: ${JSON.stringify(keys.slice(0, 5))} / 읽기 전 최근 ${newest}`);
     await panel.getByTestId("inbox-tab-posts").click();
     await until("post 탭", async () => /post가 없다|post-item/.test(await panel.innerHTML()));
   });

@@ -53,7 +53,8 @@ function InboxList({ canControl, onThread }: { canControl: boolean; onThread?: (
   const [omitted, setOmitted] = useState(0);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
-  const [askAll, setAskAll] = useState(false);
+  // 「모두 끝내기」 창을 연 때 보인 항목(창이 떠 있는 동안 새로 온 항목은 끝내지 않는다)
+  const [askAll, setAskAll] = useState<string[] | null>(null);
   const load = useCallback(() => {
     call({ op: "inbox", all, peek: true })
       .then((r) => {
@@ -91,7 +92,7 @@ function InboxList({ canControl, onThread }: { canControl: boolean; onThread?: (
           끝낸 것도
         </label>
         {canControl && open.length > 0 && (
-          <button type="button" className="btn small" disabled={busy !== null} onClick={() => setAskAll(true)} data-testid="inbox-done-all">
+          <button type="button" className="btn small" disabled={busy !== null} onClick={() => setAskAll(open.map((i) => i.id))} data-testid="inbox-done-all">
             모두 끝내기
           </button>
         )}
@@ -139,15 +140,15 @@ function InboxList({ canControl, onThread }: { canControl: boolean; onThread?: (
       {askAll && (
         <ConfirmDialog
           title="알림함 모두 끝내기"
-          body={`보이는 끝내지 않은 ${open.length}개를 끝낸다. 창을 연 뒤 새로 온 항목은 그대로 둔다. 끝낸 항목은 「끝낸 것도」에서 다시 볼 수 있다.`}
+          body={`보이는 끝내지 않은 ${askAll.length}개를 끝낸다. 창을 연 뒤 새로 온 항목은 그대로 둔다. 끝낸 항목은 「끝낸 것도」에서 다시 볼 수 있다.`}
           confirmLabel="모두 끝내기"
           onConfirm={async () => {
             // 본 것만 끝낸다(`all`은 그 사이 온, 보지 않은 항목까지 끝내 coordinator 묶음 알림에서 빠진다)
-            await call({ op: "inbox_done", ids: open.map((i) => i.id), all: false });
-            setAskAll(false);
+            await call({ op: "inbox_done", ids: askAll, all: false });
+            setAskAll(null);
             load();
           }}
-          onClose={() => setAskAll(false)}
+          onClose={() => setAskAll(null)}
         />
       )}
     </div>
@@ -192,7 +193,7 @@ function EventList({ onThread }: { onThread?: (project: string, id: string) => v
       ) : (
         <ul className="inbox-list" data-testid="event-list">
           {[...events].reverse().map((e) => (
-            <li key={`${e.project}:${e.seq}`} data-testid="event-item" data-seq={e.seq}>
+            <li key={`${e.project}:${e.seq}`} data-testid="event-item" data-seq={e.seq} data-at={e.at_ms}>
               <div className="inbox-line">
                 <span className="inbox-kind">{e.kind}</span>
                 {e.thread && onThread ? (
