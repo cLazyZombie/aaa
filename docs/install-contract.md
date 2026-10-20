@@ -177,6 +177,8 @@ aaa install --role agent --name mac-a --host example.ts.net:7430 \
   기존 min-free-gb는 명시 override가 없으면 보존한다. 내용 변경도 계획을 무효화하므로 주석 변경에 hash가 달라질 수 있다.
   binary 공유 위치의 같은 내용은 보존하고 다른 내용은 소유 증명/갱신 절차 전까지 충돌로 둔다.
 - 존재하는 조상부터 실제 경로·mount를 확인한다. 빠진 mount 자리의 일반 폴더와 볼륨 밖 symlink를 통과시키지 않는다.
+  profile-file/bin-path는 파일로 해석하고 원래 경로와 symlink 해석 뒤 부모의 mount를 확인한다.
+  config/state/harness home/work-root는 디렉터리이며 기존 일반 파일을 work-root로 지정하면 work_root_not_directory/2다.
   Mac /Volumes 선택에는 명시 mount가 필요하다. 없는 작업 root/config/state를 만들지 않으며 lock/probe/기록도 만들지 않는다.
   여유 공간·Unix access만 사전 관찰한다. Windows ACL 쓰기 가능성, 안정 volume UUID, root 소유권은 unknown이다.
   device/volume serial 관찰은 계획 hash에 묶지만 적용 직전 안정 신원 재검사를 대신하지 않는다.

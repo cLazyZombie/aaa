@@ -13,8 +13,38 @@ type Result<T> = std::result::Result<T, Box<InstallResult>>;
 fn path_text(p: &Path) -> Result<String> {
     p.to_str().map(str::to_owned).ok_or_else(|| error("path_not_utf8", 2))
 }
-fn real(p: &Path) -> Result<PathBuf> {
-    aaa_agent::work_root::check(p, None).map_err(|_| error("invalid_path", 2))
+fn check_directory(p: &Path, code: &str) -> Result<()> {
+    match p.metadata() {
+        Ok(meta) if !meta.is_dir() => Err(error(code, 2)),
+        Ok(_) => Ok(()),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(_) => Err(error("invalid_path", 2)),
+    }
+}
+fn real_dir(p: &Path) -> Result<PathBuf> {
+    let resolved = aaa_agent::work_root::check(p, None).map_err(|_| error("invalid_path", 2))?;
+    check_directory(&resolved, "invalid_path")?;
+    Ok(resolved)
+}
+/// 파일 자체를 작업 폴더 검사에 넘기지 않고 원래 경로와 해석한 경로의 부모 mount를 확인한다.
+fn real_file(p: &Path) -> Result<PathBuf> {
+    if !p.is_absolute() || p.components().any(|part| part == std::path::Component::ParentDir) {
+        return Err(error("invalid_path", 2));
+    }
+    let parent = real_dir(p.parent().ok_or_else(|| error("invalid_path", 2))?)?;
+    let path = parent.join(p.file_name().ok_or_else(|| error("invalid_path", 2))?);
+    match path.symlink_metadata() {
+        Ok(_) => {
+            let resolved = path.canonicalize().map_err(|_| error("invalid_path", 2))?;
+            if !resolved.is_file() {
+                return Err(error("invalid_path", 2));
+            }
+            real_dir(resolved.parent().ok_or_else(|| error("invalid_path", 2))?)?;
+            Ok(resolved)
+        }
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(path),
+        Err(_) => Err(error("invalid_path", 2)),
+    }
 }
 fn digest(bytes: &[u8]) -> String {
     hex::encode(Sha256::digest(bytes))
@@ -92,8 +122,8 @@ fn isolated(c: &InstallChoices, config: &Path, state: &Path) -> Result<()> {
         return Err(error("config_state_collision", 2));
     }
     if c.instance.is_some() {
-        let default_config = real(&aaa_config::paths::default_config_dir_for(None))?;
-        let default_state = real(&aaa_config::paths::default_state_dir_for(None))?;
+        let default_config = real_dir(&aaa_config::paths::default_config_dir_for(None))?;
+        let default_state = real_dir(&aaa_config::paths::default_state_dir_for(None))?;
         if config.starts_with(&default_config)
             || default_config.starts_with(config)
             || state.starts_with(&default_state)
@@ -112,7 +142,7 @@ fn isolated(c: &InstallChoices, config: &Path, state: &Path) -> Result<()> {
                 continue;
             }
             let Some(name) = entry.file_name().to_str().map(str::to_owned) else { continue };
-            if (name == "aaa" || name.starts_with("aaa-")) && real(&p)? == config {
+            if (name == "aaa" || name.starts_with("aaa-")) && real_dir(&p)? == config {
                 return Err(error("instance_path_collision", 2));
             }
         }
@@ -187,12 +217,12 @@ pub fn plan(i: &InstallInvocation) -> Result<InstallResult> {
         target_account: "unobserved".into(),
     };
     let shape = aaa_config::install::plan(c.clone(), context.clone()).map_err(unsupported)?;
-    let config = real(&config)?;
-    let state = real(&state)?;
+    let config = real_dir(&config)?;
+    let state = real_dir(&state)?;
     isolated(&c, &config, &state)?;
     c.config_dir = Some(path_text(&config)?);
     c.state_dir = Some(path_text(&state)?);
-    c.bin_path = Some(path_text(&real(c.bin_path.as_deref().map(Path::new).unwrap_or(&binary))?)?);
+    c.bin_path = Some(path_text(&real_file(c.bin_path.as_deref().map(Path::new).unwrap_or(&binary))?)?);
     // 기존 설정도 loader를 부르기 전에 일반 파일/크기를 확인한다.
     for name in ["host.toml", "host.local.toml", "agent.toml", "agent.local.toml"] {
         let p = config.join(name);
@@ -279,6 +309,7 @@ pub fn plan(i: &InstallInvocation) -> Result<InstallResult> {
         let root = Path::new(c.work_root.as_deref().unwrap());
         let mount = c.work_mount.as_deref().map(Path::new);
         let resolved = aaa_agent::work_root::check(root, mount).map_err(|_| error("work_mount_unavailable", 2))?;
+        check_directory(&resolved, "work_root_not_directory")?;
         if context.platform.os == InstallOs::Macos && resolved.starts_with("/Volumes") && mount.is_none() {
             return Err(error("external_mount_required", 2));
         }
@@ -346,7 +377,7 @@ pub fn plan(i: &InstallInvocation) -> Result<InstallResult> {
         for file in ["config.toml", "hooks.json", "aaa-codex-integration.json"] {
             add_file(&mut files, &config_home.join(file))?;
         }
-        observations[format!("{name}_home")] = json!(real(&config_home)?);
+        observations[format!("{name}_home")] = json!(real_dir(&config_home)?);
         check(&mut result, &format!("{name}_version"), InstallCheckState::Unknown);
         check(&mut result, &format!("{name}_login"), InstallCheckState::Unknown);
         check(&mut result, &format!("{name}_hook_trust"), InstallCheckState::Unknown);
@@ -354,13 +385,13 @@ pub fn plan(i: &InstallInvocation) -> Result<InstallResult> {
     let mut profile_names: std::collections::BTreeSet<_> = host.config.profiles.keys().cloned().collect();
     profile_names.extend(["claude".to_string(), "codex".to_string()]);
     for profile in &c.profile_file {
-        let path = real(Path::new(profile))?;
+        let path = real_file(Path::new(profile))?;
         if file_hash(&path)?.is_none() || path.metadata().map_or(true, |m| m.len() > 1024 * 1024) {
             return Err(error("profile_unreadable", 2));
         }
-        let text = std::fs::read_to_string(profile).map_err(|_| error("profile_unreadable", 2))?;
+        let text = std::fs::read_to_string(&path).map_err(|_| error("profile_unreadable", 2))?;
         profile_names.extend(super::profiles::names(&text)?);
-        add_file(&mut files, Path::new(profile))?;
+        add_file(&mut files, &path)?;
     }
     for name in c
         .thread_profile
@@ -383,7 +414,7 @@ pub fn plan(i: &InstallInvocation) -> Result<InstallResult> {
         }
         repo_check(Path::new(repo))?;
         check(&mut result, "repo", InstallCheckState::Passed);
-        observations[format!("repo:{repo}")] = json!(real(Path::new(repo))?);
+        observations[format!("repo:{repo}")] = json!(real_dir(Path::new(repo))?);
     }
     let roles = if c.role == Some(InstallRole::Host) && has_local {
         &["host", "agent"][..]
@@ -453,7 +484,7 @@ pub fn plan(i: &InstallInvocation) -> Result<InstallResult> {
 }
 
 fn repo_check(path: &Path) -> Result<()> {
-    let path = real(path)?;
+    let path = real_dir(path)?;
     if !path.is_dir() {
         return Err(error("repo_unavailable", 2));
     }

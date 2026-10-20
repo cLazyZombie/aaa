@@ -15,11 +15,10 @@ impl Lab {
         format!("i{:x}", std::process::id())
     }
     fn new() -> Self {
-        let p = std::env::temp_dir().join(format!(
-            "aaa-install-{}-{}",
-            std::process::id(),
-            SEQ.fetch_add(1, Ordering::Relaxed)
-        ));
+        Self::in_dir(&std::env::temp_dir())
+    }
+    fn in_dir(parent: &Path) -> Self {
+        let p = parent.join(format!("aaa-install-{}-{}", std::process::id(), SEQ.fetch_add(1, Ordering::Relaxed)));
         std::fs::create_dir(&p).unwrap();
         Self(p)
     }
@@ -244,6 +243,17 @@ fn install_rejects_unmounted_storage_and_wrong_binary_without_changes() {
         assert_eq!(v["error"]["code"], "work_mount_unavailable");
         assert_eq!(snapshot(&lab.0), before);
     }
+    let file_root = lab.0.join("file-root");
+    std::fs::write(&file_root, "work-root must be a directory\n").unwrap();
+    let mut args = lab.args();
+    let at = args.iter().position(|s| s == "--work-root").unwrap() + 1;
+    args[at] = file_root.to_string_lossy().into_owned();
+    args.push("--json".into());
+    let before = snapshot(&lab.0);
+    let v = json(&lab.run(&args));
+    assert_eq!(v["exit_code"], 2, "existing regular file is not a work-root");
+    assert_eq!(v["error"]["code"], "work_root_not_directory");
+    assert_eq!(snapshot(&lab.0), before);
     let binary = lab.0.join("candidate");
     std::fs::write(&binary, CANARY).unwrap();
     let mut args = lab.args();
@@ -294,7 +304,8 @@ fn install_does_not_apply_or_execute_selected_files_and_reads_repos_without_writ
 
 #[test]
 fn install_profile_imports_use_the_host_contract_and_reject_secrets_and_shells() {
-    let lab = Lab::new();
+    // 빌드 볼륨의 실제 파일을 읽는다. macOS 외장 볼륨에서도 파일을 폴더로 검사하면 안 된다.
+    let lab = Lab::in_dir(Path::new(BIN).parent().unwrap());
     let profile = lab.0.join("profiles.toml");
     let mut args: Vec<String> = [
         "install",
