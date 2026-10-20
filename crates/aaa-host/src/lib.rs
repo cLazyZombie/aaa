@@ -316,6 +316,7 @@ impl FrontRef {
 }
 
 pub use aaa_proto::DEFAULT_WORKSPACE;
+pub use orch::{ProjectScaffold, project_scaffold};
 
 struct Inner {
     machines: HashMap<String, MachineRt>,
