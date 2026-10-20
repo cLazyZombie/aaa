@@ -50,7 +50,7 @@ export type PaneDirection = "left" | "right" | "up" | "down";
 
 export type WorkspaceSummary = { name: string, tabs: number, panes: number, };
 
-export type ChatRole = "user" | "assistant" | "tool" | "thinking";
+export type ChatRole = "user" | "assistant" | "tool" | "thinking" | "compact";
 
 export type ChatMessage = {
 /**
@@ -83,7 +83,7 @@ history?: string, };
 
 export type InputTraceEvent = "receipt" | "preparing" | "ctrl_enter_blocked" | "unlocked" | "slow" | "unlock" | "cancel" | "failed" | "pending" | "stuck";
 
-export type InputReceiptMethod = "normal" | "pasted_content" | "queue_operation" | "codex_delivery" | "no_transcript" | "connection" | "rejected" | "unknown" | "held_draft" | "composing" | "readonly" | "locked" | "uploading" | "no_room";
+export type InputReceiptMethod = "normal" | "pasted_content" | "queue_operation" | "codex_delivery" | "no_transcript" | "connection" | "rejected" | "unknown" | "held_draft" | "composing" | "readonly" | "locked" | "uploading" | "no_room" | "compacting";
 
 export type InputEvent = { at_ms: bigint, id: string, pane: string, thread: string | null, harness: string | null, working: boolean, event: string, detail: string, };
 
@@ -183,7 +183,7 @@ parent: number | null,
  */
 problems: Array<string>,
 /**
- * 형식 어긋남 task의 「정리 제안」(FRONT_API 1.61): host가 만든 정규형 후보. 사람이 「이대로 저장」해야 바뀐다.
+ * 형식 어긋남 task의 「정리 제안」(FRONT_API 1.62): host가 만든 정규형 후보. 사람이 「이대로 저장」해야 바뀐다.
  */
 suggestion: TaskSuggestion | null, };
 
@@ -229,7 +229,7 @@ unlinked_threads: Array<TaskThread>,
  */
 notes_files: Array<TaskNotesFile>,
 /**
- * 파일 원문(원문 편집, FRONT_API 1.61). 옛 host는 생략한다
+ * 파일 원문(원문 편집, FRONT_API 1.62). 옛 host는 생략한다
  */
 text: string, };
 
@@ -523,6 +523,11 @@ profile?: string, } | { "op": "pane_read", pane: string, } | { "op": "pane_chat"
  */
 thinking: boolean,
 /**
+ * 정리된 자리(`ChatRole::Compact`, plan §8.309, 1.61)도 싣는다. 옛 front는 생략해 그 줄을 받지 않는다(모르는 role로 답 전체를
+ * 읽지 못하므로)
+ */
+compact: boolean,
+/**
  * 이전 응답의 before. 생략하면 최신 쪽, 옛 상대는 무시한다.
  */
 before?: string, } | { "op": "pane_file", pane: string, path: string, } | { "op": "thread_file", project?: string, thread: string, path: string, } | { "op": "thread_diff", project?: string, thread: string, query?: DiffQuery, } | { "op": "pane_dir", pane: string, path: string, hidden: boolean, } | { "op": "pane_send", pane: string, data: B64, } | { "op": "pane_read_text", pane: string, source: ReadSource,
@@ -693,7 +698,7 @@ export type FrontEvent = { "ev": "state", machines: Array<MachineView>, panes: A
 
 export type SubmitStage = "not_sent" | "no_enter" | "too_late";
 
-export type SteerRefusal = "not_working" | "question" | "draft" | "no_queue" | "unknown_screen" | "unsupported" | "failed";
+export type SteerRefusal = "not_working" | "question" | "draft" | "no_queue" | "unknown_screen" | "unsupported" | "failed" | "compacting";
 
 export type TermServerMsg = { "t": "snapshot", replay: B64, cols: number, rows: number, readonly: boolean, stream: number,
 /**
@@ -1011,7 +1016,12 @@ background: number | null,
  * 쉬지만 그 턴이 띄운 배경 작업을 기다린다(herdr-web-ui `background_wait`, host `bgwait.rs`, 차이 목록 S1): 목록은 끝남·쉼
  * 대신 BG다. 옛 host는 보내지 않는다(없으면 false)
  */
-background_wait: boolean, };
+background_wait: boolean,
+/**
+ * 작업 중이지만 harness가 대화를 정리(compaction)하는 중이다(화면 감지 사건 `compacting`, plan §8.309). 그동안 harness는 친 글과
+ * 대기 글을 읽지 않고, 웹은 보낸 글을 이 기기에 붙잡았다가 끝나면 보낸다. 옛 host는 보내지 않는다(없으면 false, 1.61)
+ */
+compacting: boolean, };
 
 export type QuestionState = "open" | "answered" | "gone";
 

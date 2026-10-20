@@ -681,7 +681,16 @@ L2 결함 검증은 이전 root 가져오기 생략, 재시작 전 applied 변�
 - `cargo test -p aaa-host --lib tasks::`: 운영에서 나온 오독 꼴 셋(같은 꼴의 가짜 글)이 owner가 아니라 `problems`로 나오고 기존 `lines_owners_notes` 기대가 그대로인지, 메모만 바뀌면 그 task의 `block_sha256`만 바뀌는지 본다. 오독 판정을 끄면 `misread_owner_shapes_become_problems`가 실패한다.
 - `cargo test -p aaa --test m13 task_board_reads_tasks_and_follows_file_edits`: `aaa task list`의 목록·형식 어긋남·task 없는 열린 thread, worker 세션(보기 권한) 읽기, `--from-task` 거부 까닭, 「나중」 경로 거부·폴더 밖 symlink·없는 파일. 「고치지 않은 tick은 사건이 없다」는 sleep 없이 본다: 원본 목록 읽기 → 사건 연결 → 초기 파일 쓰기 → tick 뒤 초기 sha 사건의 위치를 기억한다. 그 위치 다음에서 고치지 않은 tick → 파일 고침 → tick 뒤 첫 `tasks` 사건이 고친 sha인지 확인한다. 초기 사건을 다시 읽는 경쟁을 재현하며, 수정 사건을 sha로 걸러 기다리지 않아 불필요한 사건도 잡는다.
 - `node web/e2e/web.e2e.mjs --spec 43-tasks`: 막대 단추로 열기, 행 상태·배지·상세·thread 칩 이동, 파일 직접 편집 + `ticker tick` 뒤 `data-tasks-sha` 갱신, 거르기·검색, Reader, 휴대폰 전체 화면 시트와 Back, 패드 세로 시트·가로 두 칸, 「나중」 탭 있음·없음·「없음」. 가짜 thread가 곧 턴을 끝내 앱 안 알림이 도구줄을 덮으면 Playwright가 알림이 시간으로 사라지기를 기다리므로(6초), 첫 단계에서 그 기기의 「앱 안에서」 알림을 끈다.
-- `node web/e2e/web.e2e.mjs --spec 45-task-edit`(할 일 편집 T2, §8.309): 폼으로 더하기·고치고 옮기기(파일 글 전체를 기대값과 바이트로 비교), 사람 이름 owner 거부, 정리 제안, 행 메뉴·끌기·Alt+↓·목록 이름 바꾸기·빈 목록 지우기·새 목록, 두 브라우저 충돌 창과 「최신으로 다시 열기」, 지우기·되살리기 줄·기록 거르기·기록에서 되살리기, 저장만으로 thread가 시작되지 않음(`ticker tick` 울타리 뒤 흐름 사건·thread 수), 보기 권한 기기에 편집 UI 없음, 휴대폰 「+」·메뉴 시트, 패드 세로 시트, 「나중」 할 일로 옮기기(「나중」 파일 그대로), 원문 편집의 판 대조. 저장이 끝났는지는 시간이 아니라 화면 `data-tasks-sha`가 새 판이 되고 `data-task-saving`이 없어진 뒤 그 판이 파일 sha와 같은지로 본다.
+
+## 웹 할 일 편집(t-0482, plan §8.310)
+
+- `cargo test -p aaa-host --lib task_edit::`: 순수 함수 `apply`. 바꾼 블록 밖 바이트(CRLF 포함) 보존, 대상 블록만 충돌(다른 task 변경은 통과, 지운 task 고치기는 충돌), 저장 검사(`)` 끝 제목·`· t-` 끝·task 꼴 메모·중복 제목), 하위 묶음째 지우기·옮기기, 목록 동작, 되살리기, 파일 직접 차이 기록, 한 요청 안 고치고 옮기기(hash 따라가기), 원문 저장 홀로. 대상을 블록 hash 대신 제목으로 찾게 하면 `block_anchor_conflicts_only_on_the_target`·`update_then_move_in_one_request`가 실패한다.
+- `cargo test -p aaa-host --lib file_rev::`·`tasks::tests::suggestions_for_misread_lines`: 공용 저장 helper(판 대조·다시 읽기), 정리 제안 후보.
+- `cargo test -p aaa --test m13 task_edit_keeps_bytes_conflicts_and_logs`: CLI 더하기의 바이트와 `tasks` 사건, `--block` 충돌, 지운 task 고치기 충돌, 쓰기에 묻힐 뻔한 직접 편집 기록, 되살리기 한 번, 저장 검사, 다음 tick의 「파일 직접」 기록, 권한(worker 세션 보기 권한 거부, 확인되지 않은 셸·확인된 사람 셸 pane은 「그 프로젝트 coordinator만」, coordinator pane 허용). 확인된 pane을 허용하게 느슨히 하면 실패한다.
+- `cargo test -p aaa --test m13 task_memory_forgets_deleted_project`: 지운 프로젝트를 같은 이름으로 다시 만들면 첫 tick은 기억만 하고 「파일 직접」 기록을 지어내지 않는다(지울 때 기억을 남기면 실패).
+- `node --test web/test/tasksModel.test.mjs`: 메뉴·끌기 → host 동작, 폼 → 동작(상위는 고른 판의 블록 고정점, owner 목록 전 폼은 동작 없음), 「나중」 항목, 기록 차이.
+- `node web/e2e/web.e2e.mjs --spec 46-task-edit`: 폼으로 더하기·고치고 옮기기(파일 글 전체를 기대값과 바이트로 비교), 사람 이름 owner 거부, 정리 제안, 행 메뉴·끌기·Alt+↓·목록 이름 바꾸기·빈 목록 지우기·새 목록, 두 브라우저 충돌 창과 「최신으로 다시 열기」, 폼을 고치는 동안 다른 task가 파일에서 바뀌어도 저장됨(대상만 충돌), 지우기·되살리기 줄·기록 거르기·기록에서 되살리기, 저장만으로 thread가 시작되지 않음(`ticker tick` 울타리 뒤 흐름 사건·thread 수), 보기 권한 기기에 편집 UI 없음(host 판 판정이 끝난 `data-can-edit="false"` 뒤에 본다. 판정 전은 `pending`), 명령 팔레트 「할 일 더하기」(할 일 화면을 연 적 없는 기기), 휴대폰 「+」·전체 화면 폼·메뉴 시트, 패드 세로 오른쪽 시트(상자 좌표로 단언), 「나중」 할 일로 옮기기(「나중」 파일 그대로), 원문 편집의 판 대조. 저장이 끝났는지는 시간이 아니라 화면 `data-tasks-sha`가 새 판이 되고 `data-task-saving`이 없어진 뒤 그 판이 파일 sha와 같은지로 본다.
+- 결함 심기: 웹 폼이 편집을 시작한 판 대신 최신 판 hash로 저장하게 하면 E2E 46 「충돌」 단계가, 팔레트 요청 수를 mount 때 값으로 두면 「명령 팔레트」 단계가 실패한다. 웹 결함은 `npm run build`가 dist를 다시 만든 뒤 `cargo build -p aaa`로 binary에 넣어 돈다.
 
 ## 키 관리자 K0 카나리 찾기(§8.307)
 
@@ -703,3 +712,22 @@ L2 결함 검증은 이전 root 가져오기 생략, 재시작 전 applied 변�
 - `python3 -m unittest scripts.test_check_public`: 실제 check-public CLI를 임시 Git 저장소에서 실행한다. 1MiB 경계·초과, 공백·개행·마지막 파일의 금지 확장자, 현재 트리에서는 지워졌지만 이력에는 남은 금지 확장자를 검사한다. 정상 현재/이력 입력도 함께 통과해야 한다. 모든 키 fixture는 빈 파일이다.
 - 크기 예외는 정확한 경로와 상한을 지킨다. plan 2MiB와 버전 고정 Bold·Regular의 기존 바이트 상한까지 허용하고, 각각 1바이트 초과 및 다른 문서·폰트는 차단한다. 해당 세 파일은 삭제·축소하지 않는다.
 - 기존 NUL 변수 경유로 돌아가면 세 keeper가 실패하고, 예외 상한을 없애면 크기 keeper가 실패해야 한다. 바이트 복원 뒤 ci-local 전체·check-public을 실행한다. ci-local의 Unix test 단계가 기존 배포 빌드 계약 시험과 함께 실행한다.
+
+## 대화 정리(compaction) 중 감지·보류·표시(t-0479, plan §8.309)
+
+- agent 감지는 실제 화면 fixture(`crates/aaa-agent/src/detect/fixtures/*compact*.txt`, 10-20 Claude 2.1.304·Codex 0.163 `/compact` 실측)로 본다: `cargo test -p aaa-agent --lib detect`. 「(0s)」 Claude 화면은 참고 규칙으로 쉼이라 덧댐이 없으면 시험이 실패한다(결함 심기로 확인).
+- `node web/e2e/web.e2e.mjs --spec 45-compacting`: 가짜 Claude가 F7(작업 중)·F5(정리 시작)·F6(정리 끝)을 `aaa pane send-keys`로 받아 실제 정리 화면(spinner 「Compacting conversation… (3s)」, 참고 규칙으로는 쉼)과 실제 기록 차례(compact_boundary → isCompactSummary → 대기열 dequeue)를 그린다. 상태 전이는 가짜가 그린 「mode …」를 `waitOutput`으로, 화면은 `domIs`로 기다린다. 「보내지 않았다」는 보관 직후 `sentFrames`(그 사건 안에서 끝나는 보관)와 pane이 받은 bytes로 본다. 휴대폰·패드는 WebKit `pairDevice`. 같은 브라우저 탭 둘은 같은 context의 page 둘이다: 「한 번만 갔다」는 그 글을 품은 사람 말이 꼭 하나인지(두 탭이 함께 붙여 넣으면 한 말로 붙는다)와, 다른 탭이 다음 글을 보낸 뒤에도 그대로인지(입력창은 앞 글이 보내질 때까지 잠긴다)로 본다. 고정 sleep은 없다(넘겨받기 전 다른 탭에 묻는 500ms는 제품의 기다림이고, 시험은 기록에 오는 것을 기다린다).
+- 웹 단위 `node --test web/test/messageQueue.test.mjs`: 정리 뒤 보낼 글의 저장 왕복(넣은 탭 `by`), 표지 떼기·넘겨받기, 정리 뒤 차례(`compactionStep`: 넣은 탭만 보냄, 앞의 보통 글을 앞지르지 않음, 자동 전송을 껐으면 표지를 뗌).
+- 결함 심기로 확인한 것: agent 덧댐 끔(detect 시험 둘 실패), 옛 host에 compacting 그대로 보냄(`compaction_goes_to_an_old_host_as_working` 실패), host 표지 안 씀, agent가 청하지 않아도 정리 줄을 냄, 웹 보류 없음·「지금 보내기」 정리 중 켬·정리 중 줄 없음·정리됨 구분선 없음·끝나도 안 보냄·탭 주인 무시(「두 탭 하나두 탭 하나」)·넘겨받기 없음(각각 E2E 45 실패). Codex 답 글 오탐·긴 초안에 밀린 표지는 detect 시험이 고치기 전에 실패했다. 웹 결함은 `npm run build`(tsc 포함)가 실패하면 dist가 그대로라 옛 번들로 돈다: 심은 뒤 binary의 `index-*.js` 이름이 바뀌었는지 먼저 본다.
+
+
+## PR 추적 gh 실행·인증·회복(t-0487)
+
+- host는 thread 머신 agent에 `PrQuery`를 보낸다. CI는 별도로 정한 조회 머신 agent에 `CiQuery`를 보낸다. coordinator 셸의 로그인은 다른 머신의 인증을 증명하지 않는다.
+- PR·CI는 agent PATH에서 실행 가능한 gh를 절대 경로로 찾고, macOS에서는 PATH에 없을 때 Homebrew 표준 경로를 본다. 사용자 PATH가 우선이다. URL·`--repo`·API 경로로 대상을 지정하고 gh의 cwd는 실행 파일이 있는 볼륨의 root로 둔다. origin은 계속 원래 저장소에서 읽으며, 이미 사라진 저장소는 별도 폴더 오류다.
+- 인증 파일·토큰은 읽거나 복사하지 않고 gh의 기존 HOME·GH_CONFIG_DIR·XDG_CONFIG_HOME·토큰 환경을 그대로 전달한다. gh 종료 코드 4는 인증 실패로 안내한다. GH_TOKEN은 기존 gh 로그인을 대신할 수 있는 선택지다. 실패 stderr 원문은 inbox·로그로 넘기지 않는다. 운영 설정·서비스·키체인을 자동으로 바꾸지 않는다.
+- PR outage는 한 pass의 모든 thread 조회가 끝난 뒤 한 번 판정한다. 실패가 남아 있으면 다른 thread의 성공으로 회복하지 않으며, 실패 안내에는 thread와 조회 머신을 붙인다. 실제 조회가 하나도 없으면 회복을 만들지 않는다. 재시도·시간 상한 변경은 없다.
+- `cargo test -p aaa --test m13 pr_environment_failure`: 실제 host↔agent↔가짜 gh에서 한 thread 인증 실패와 다른 thread 성공, 실패를 포함한 뒤 pass의 시작을 울타리로 한 회복 없음, 인증 진단·stderr 비노출·설정 경로 전달·gh cwd, 인증 조건 해제 뒤 회복 한 번, worktree가 사라졌을 때 폴더 진단을 확인한다. 고정 sleep 없이 호출 기록·flow로 끝낸다. 기존 PR·CI 시험이 상태 변경·병합·HTTP 응답 처리를 계속 맡는다.
+- `cargo test -p aaa-agent --lib gh::tests::`: 사용자 PATH 우선·짧은 서비스 PATH의 fallback·실행 파일 없음은 실제 임시 파일의 실행 권한으로 판정한다. 별도 실행 프로세스나 운영 gh 로그인은 필요 없다.
+- 수정 전 두 thread 시험에서 실패와 회복이 교대로 기록되는 RED를 보존했다. 거짓 회복·인증 코드 오분류·worktree cwd 의존·fallback 제거를 각각 심어 keeper의 의도한 단언 RED를 확인하고 소스 bytes를 복구했다. 최종 gate는 전체 `bash scripts/ci-local.sh`와 `bash scripts/check-public.sh`다.
+- 과거 세 사건의 저장 오류에는 조회 머신·thread·환경 snapshot이 없었다. 인증 안내/ENOENT까지 구분할 수 있지만 당시 HOME·PATH·삭제 경쟁 중 하나를 확정할 수는 없다. gh 자체의 빈 설정 PR 조회는 종료 코드 4, PATH에서 gh가 없거나 spawn cwd가 사라졌을 때는 ENOENT로 재현했다.

@@ -57,7 +57,7 @@ export interface PaletteActions {
   openReports: () => void;
   /** 본문 할 일 화면(활동 막대 「할 일」, plan §8.306) */
   openTasks: () => void;
-  /** 할 일 화면에서 새 task 폼(plan §8.309). 보기 권한이면 없음 */
+  /** 할 일 화면에서 새 task 폼(plan §8.310). 보기 권한이면 없음 */
   addTask: (() => void) | null;
   /** 사이드바 접기·펴기(휴대폰은 목록 drawer, 참고 CommandPalette `sidebar`) */
   toggleSidebar: () => void;

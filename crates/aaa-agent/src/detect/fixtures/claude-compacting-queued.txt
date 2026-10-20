@@ -1,0 +1,34 @@
+
+ ▐▛███▛█   Claude Code v2.1.304
+▝▜██████▀  Haiku 5.5 · Claude Max
+ ▝▝   ▝▝   /work/lab/work/demo/t-0001
+
+
+❯ Reply with just the word ok.
+
+⏺ ok
+
+✻ Cooked for 1s · done 12:44 PM
+
+❯ /compact
+
+❯ queued while compacting
+  ctrl+x ctrl+s to send now
+
+
+
+
+
+
+
+
+
+
+✽ Compacting conversation… (5s · ↓ 168 tokens)
+  ⎿  Tip: Name your conversations with /rename to find them easily in /resume later
+                              Advisor Tool (experimental) is on and may use more tokens · /advisor
+────────────────────────────────────────────────────────────────────────────────────────────────────
+❯ Press up to edit queued messages
+────────────────────────────────────────────────────────────────────────────────────────────────────
+  Haiku 5.5 medium | ctx 95% left | 7d 64% left (5d 4h) · 5h 80% left (2h 35m) | t-0001
+  ⏵⏵ bypass permissions on (shift+tab to cycle) · ← 1 agent

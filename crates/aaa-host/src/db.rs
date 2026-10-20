@@ -1103,7 +1103,7 @@ impl Db {
         rows.map(|r| Ok(serde_json::from_str(&r?)?)).collect()
     }
 
-    /// 할 일 기록 한 줄(할 일 편집 T2, plan §8.309). 새 id
+    /// 할 일 기록 한 줄(할 일 편집 T2, plan §8.310). 새 id
     pub(crate) fn task_log_add(
         &self,
         project: &str,

@@ -1,4 +1,4 @@
-// 할 일 화면의 순수 규칙(할 일 보기 T1, plan §8.306): 행 상태, 거르기·검색, 활동 막대 배지, 하위 task 깊이. 편집(T2, §8.309)은
+// 할 일 화면의 순수 규칙(할 일 보기 T1, plan §8.306): 행 상태, 거르기·검색, 활동 막대 배지, 하위 task 깊이. 편집(T2, §8.310)은
 // 화면 동작 → host 동작(TaskOp), 「나중」 항목 나누기, 기록 차이.
 // host `tasks`(TaskBoard)는 TASKS.md를 그대로 읽은 것이고, 여기서는 판단하지 않고 보이는 차례와 표지만 정한다.
 import type { TaskAction, TaskAnchor, TaskBoard, TaskLogEntry, TaskOp, TaskView, ThreadGroup } from "./gen/proto";
@@ -86,7 +86,7 @@ export function findTask(board: TaskBoard | null, key: { title: string; line: nu
   return same.find((t) => t.line === key.line) ?? same[0] ?? null;
 }
 
-// ───────────── 편집(할 일 편집 T2, plan §8.309) ─────────────
+// ───────────── 편집(할 일 편집 T2, plan §8.310) ─────────────
 // host `task_edit`는 대상 task를 블록 hash로 찾는다(그사이 바뀌었으면 충돌). 여기서는 화면 동작을 host 동작(TaskOp)으로 바꾸기만 한다.
 
 /** 동작의 대상(host가 이 hash의 블록을 찾는다) */

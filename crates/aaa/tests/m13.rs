@@ -15,6 +15,8 @@ mod git_watch;
 #[path = "m13/instance.rs"]
 mod instance;
 mod lab;
+#[path = "m13/pr_environment.rs"]
+mod pr_environment;
 #[path = "m13/preparation.rs"]
 mod preparation;
 #[path = "m13/rollout.rs"]
@@ -4227,7 +4229,7 @@ fn task_board_reads_tasks_and_follows_file_edits() {
     assert_eq!(files[2]["error"].as_str(), Some("없음"), "{files}");
 }
 
-/// 할 일 편집(T2, plan §8.309): `aaa task add`는 그 블록만 붙이고 나머지 바이트를 그대로 두며 기록·`tasks` 사건을 남긴다. 읽은 뒤
+/// 할 일 편집(T2, plan §8.310): `aaa task add`는 그 블록만 붙이고 나머지 바이트를 그대로 두며 기록·`tasks` 사건을 남긴다. 읽은 뒤
 /// 파일을 직접 고치면 같은 블록 저장은 `revision_conflict`(쓰지 않음), 다른 블록 저장은 성공이고, 지운 task는 고쳐도 되살아나지
 /// 않는다. 쓰기에 묻힐 뻔한 직접 편집과 tick이 본 직접 편집은 「파일 직접」으로 적힌다. 되살리기는 한 번만. thread(보기 권한)·
 /// 확인되지 않은 세션 pane은 거부하고 그 프로젝트 coordinator pane은 허용한다.
@@ -4396,7 +4398,7 @@ fn task_edit_keeps_bytes_conflicts_and_logs() {
     );
 }
 
-/// 지운 프로젝트의 TASKS.md 기억은 함께 잊는다(plan §8.309): 같은 이름으로 다시 만든 프로젝트의 첫 tick은 기억만 하고, 옛 글과
+/// 지운 프로젝트의 TASKS.md 기억은 함께 잊는다(plan §8.310): 같은 이름으로 다시 만든 프로젝트의 첫 tick은 기억만 하고, 옛 글과
 /// 비교해 「파일 직접」 기록을 지어내지 않는다
 #[test]
 fn task_memory_forgets_deleted_project() {

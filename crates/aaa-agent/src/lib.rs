@@ -15,6 +15,7 @@ pub use deploy::guard::worker as deployment_guard;
 pub mod detect;
 mod diff;
 mod files;
+mod gh;
 mod git_watch;
 mod health;
 pub mod hooks;
@@ -185,6 +186,8 @@ pub struct Agent {
     /// 지금 host가 건강 보고(`health.v1`)를 받는가
     host_health: std::sync::atomic::AtomicBool,
     host_recovery: std::sync::atomic::AtomicBool,
+    /// 지금 host가 정리 사건(`compacting.v1`, plan §8.309)을 아는가. 모르는 host에는 정리 중을 `working`으로 보낸다
+    host_compacting: std::sync::atomic::AtomicBool,
     host_post: Mutex<Option<bool>>,
     host_mission: Mutex<bool>,
     post_gate: Mutex<()>,
@@ -237,6 +240,7 @@ impl Agent {
             health: Mutex::new(None),
             host_health: std::sync::atomic::AtomicBool::new(false),
             host_recovery: std::sync::atomic::AtomicBool::new(false),
+            host_compacting: std::sync::atomic::AtomicBool::new(false),
             term_colors: Mutex::new(None),
             host_post: Mutex::new(None),
             host_mission: Mutex::new(false),
@@ -420,6 +424,7 @@ impl Agent {
         } else {
             ev
         };
+        let ev = for_host(ev, self.host_compacting.load(std::sync::atomic::Ordering::Relaxed));
         self.send_host(&LinkMsg::Event(AgentEvent::Harness(ev))).await;
     }
 
@@ -704,7 +709,8 @@ impl Agent {
         let gone = tx.is_none();
         if let Some(tx) = tx.as_ref().filter(|_| replay) {
             // host가 다시 붙으면 세션별 마지막 harness 상태를 다시 알린다
-            let last = self.harness_events();
+            let compacting = self.host_compacting.load(std::sync::atomic::Ordering::Relaxed);
+            let last: Vec<_> = self.harness_events().into_iter().map(|ev| for_host(ev, compacting)).collect();
             let tx = tx.clone();
             tokio::spawn(async move {
                 for ev in last {
@@ -1276,9 +1282,16 @@ impl Agent {
                 .and_then(|r| r.map_err(|e| ErrorBody::new(ErrorCode::NotFound, format!("{e:#}"))))
                 .map(|(data, eof)| AgentResponse::FileChunk { data: B64(data), eof })
             }
-            AgentRequest::Chat { harness, transcript, harness_session, thinking, before } => {
+            AgentRequest::Chat { harness, transcript, harness_session, thinking, compact, before } => {
                 tokio::task::spawn_blocking(move || {
-                    chat::read(&harness, transcript.as_deref(), harness_session.as_deref(), thinking, before.as_deref())
+                    chat::read(
+                        &harness,
+                        transcript.as_deref(),
+                        harness_session.as_deref(),
+                        thinking,
+                        compact,
+                        before.as_deref(),
+                    )
                 })
                 .await
                 .map_err(|e| ErrorBody::new(ErrorCode::Internal, e.to_string()))
@@ -1767,6 +1780,15 @@ pub fn start_selfcheck(agent: &Arc<Agent>, cfg: &aaa_config::SelfcheckSection) {
     });
 }
 
+/// 정리 사건(`compacting`, plan §8.309)을 모르는 host(`compacting.v1`을 알리지 않음)에는 작업 중으로 보낸다: 옛 host는 모르는 kind를
+/// 버려 정리 내내 앞 상태(쉼)로 남고, 받음 대기(`ACCEPTED`)도 끝내 받지 못한다. 기억하는 사건(`remember_harness`)은 그대로 둔다
+fn for_host(mut ev: aaa_proto::HarnessEvent, host_compacting: bool) -> aaa_proto::HarnessEvent {
+    if ev.kind == "compacting" && !host_compacting {
+        ev.kind = "working".into();
+    }
+    ev
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1799,6 +1821,43 @@ mod tests {
             assert!(file.spec.env.iter().any(|(k, v)| k == hooks::ENV_TOKEN && !v.is_empty()));
             std::fs::remove_dir_all(state).unwrap();
         }
+    }
+
+    #[tokio::test]
+    async fn compaction_goes_to_an_old_host_as_working() {
+        let base = if cfg!(unix) { PathBuf::from("/tmp") } else { std::env::temp_dir() };
+        let state = base.join(format!("aach-{}", util::new_id()));
+        let a = Agent::new(state.clone(), "m".into(), "mac-a".into(), true, None).unwrap();
+        let (tx, mut out) = aaa_common::conn::frame_channel();
+        a.set_host(Some(tx), false);
+        let ev = aaa_proto::HarnessEvent {
+            session: "s".into(),
+            harness: "claude".into(),
+            kind: "compacting".into(),
+            harness_session: None,
+            message: None,
+            question_kind: None,
+            percent: None,
+            at_ms: util::now_ms(),
+            transcript: None,
+            plan: None,
+            background: None,
+        };
+        let mut sent = async |host_compacting: bool| {
+            a.host_compacting.store(host_compacting, std::sync::atomic::Ordering::Relaxed);
+            a.harness_event(ev.clone()).await;
+            let (_, bytes) = out.recv().await.unwrap();
+            match serde_json::from_slice(&bytes).unwrap() {
+                LinkMsg::Event(AgentEvent::Harness(ev)) => ev.kind,
+                other => panic!("{other:?}"),
+            }
+        };
+        // 옛 host(`compacting.v1` 없음)는 모르는 kind를 버리므로 작업 중으로 보낸다
+        assert_eq!(sent(false).await, "working");
+        assert_eq!(sent(true).await, "compacting");
+        // 다시 알릴 사건은 원래 kind다: 새 host에 다시 붙으면 정리 중으로 보인다
+        assert!(a.harness_events().iter().any(|e| e.kind == "compacting"));
+        std::fs::remove_dir_all(state).unwrap();
     }
 
     #[tokio::test]

@@ -1,4 +1,4 @@
-// 할 일 기록 화면(할 일 편집 T2, plan §8.309, t-0469 §3.5): 최근 변경을 시간순으로 누가(기기 이름·coordinator·터미널·파일 직접·
+// 할 일 기록 화면(할 일 편집 T2, plan §8.310, t-0469 §3.5): 최근 변경을 시간순으로 누가(기기 이름·coordinator·터미널·파일 직접·
 // 자동 정리)·언제·무엇·전후 차이로 보인다. 삭제 항목에는 「되살리기」, 거르기는 삭제만·자동 정리만. 목록 모양은 t3code
 // SettingsPanels.tsx `ArchivedThreadsPanel`(3294–3560: 묶음 목록, 줄마다 되살리기 단추, 누른 뒤 다시 읽기)을 따른다.
 import { useCallback, useEffect, useRef, useState } from "react";

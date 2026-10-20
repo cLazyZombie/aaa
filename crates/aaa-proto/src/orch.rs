@@ -373,7 +373,8 @@ pub struct HarnessEvent {
     pub session: String,
     /// claude·codex·report(`aaa report`)
     pub harness: String,
-    /// session_start·turn_start·turn_end·question·idle·error·exited·progress·released(셸 앞 agent를 놓음)
+    /// session_start·turn_start·turn_end·question·idle·error·exited·progress·released(셸 앞 agent를 놓음)·
+    /// compacting(대화 정리 중인 작업 중, plan §8.309: 옛 host는 모르는 kind로 버린다)
     pub kind: String,
     /// harness 자기 세션 ID(resume에 쓴다)
     pub harness_session: Option<String>,
@@ -432,6 +433,10 @@ pub struct AgentStatus {
     /// 대신 BG다. 옛 host는 보내지 않는다(없으면 false)
     #[serde(default)]
     pub background_wait: bool,
+    /// 작업 중이지만 harness가 대화를 정리(compaction)하는 중이다(화면 감지 사건 `compacting`, plan §8.309). 그동안 harness는 친 글과
+    /// 대기 글을 읽지 않고, 웹은 보낸 글을 이 기기에 붙잡았다가 끝나면 보낸다. 옛 host는 보내지 않는다(없으면 false, 1.61)
+    #[serde(default)]
+    pub compacting: bool,
 }
 
 fn seen_default() -> bool {
@@ -1356,7 +1361,7 @@ pub struct TaskView {
     /// 형식 어긋남(owner 칸이 owner 꼴이 아님, 제목 안 thread 번호 등). 있으면 화면이 원문을 보이고 판단하지 않는다.
     #[serde(default)]
     pub problems: Vec<String>,
-    /// 형식 어긋남 task의 「정리 제안」(FRONT_API 1.61): host가 만든 정규형 후보. 사람이 「이대로 저장」해야 바뀐다.
+    /// 형식 어긋남 task의 「정리 제안」(FRONT_API 1.62): host가 만든 정규형 후보. 사람이 「이대로 저장」해야 바뀐다.
     #[serde(default)]
     pub suggestion: Option<TaskSuggestion>,
 }
@@ -1376,7 +1381,7 @@ pub struct TaskSuggestion {
     pub changes: Vec<String>,
 }
 
-/// 할 일 편집의 대상 task(FRONT_API 1.61). `block_sha256`으로 찾고(같은 hash가 여럿이면 `line`에 가까운 것), 그 블록이 없으면
+/// 할 일 편집의 대상 task(FRONT_API 1.62). `block_sha256`으로 찾고(같은 hash가 여럿이면 `line`에 가까운 것), 그 블록이 없으면
 /// `revision_conflict`다(지운 task가 저장으로 되살아나지 않는다). `block_sha256`이 비면 제목(대소문자 무시)으로 찾는다(CLI).
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(default)]
@@ -1387,7 +1392,7 @@ pub struct TaskAnchor {
     pub line: u32,
 }
 
-/// 할 일 편집 동작 하나(FRONT_API 1.61, `task_edit`). 한 요청의 동작은 차례로 적용해 한 번에 쓴다(하나라도 실패하면 쓰지 않는다).
+/// 할 일 편집 동작 하나(FRONT_API 1.62, `task_edit`). 한 요청의 동작은 차례로 적용해 한 번에 쓴다(하나라도 실패하면 쓰지 않는다).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(tag = "op", rename_all = "snake_case")]
 pub enum TaskOp {
@@ -1549,7 +1554,7 @@ impl TaskAction {
     }
 }
 
-/// 할 일 기록 한 줄(host DB `task_log`, FRONT_API 1.61)
+/// 할 일 기록 한 줄(host DB `task_log`, FRONT_API 1.62)
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 pub struct TaskLogEntry {
     #[ts(type = "number")]
@@ -1635,7 +1640,7 @@ pub struct TaskBoard {
     pub unlinked_threads: Vec<TaskThread>,
     /// project.toml `task_notes`의 파일마다(설정이 비면 비어 있다)
     pub notes_files: Vec<TaskNotesFile>,
-    /// 파일 원문(원문 편집, FRONT_API 1.61). 옛 host는 생략한다
+    /// 파일 원문(원문 편집, FRONT_API 1.62). 옛 host는 생략한다
     pub text: String,
 }
 

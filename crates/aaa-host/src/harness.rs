@@ -27,8 +27,9 @@ const MENU_WAIT: Duration = Duration::from_secs(3);
 /// 선택 창 답: 옮긴 커서가 화면에 보이기를 기다리는 상한(참고 herdr-web-ui `SETTLE_MS`)과 키 사이 틈(참고 30ms)
 const SETTLE: Duration = Duration::from_millis(1500);
 const STEP_GAP: Duration = Duration::from_millis(30);
-/// 입력을 받았다는 사건: 화면 감지의 작업 중·질문(herdr-projects `--until working --until blocked`), 옛 agent의 turn_start
-const ACCEPTED: &[&str] = &["working", "question", "turn_start"];
+/// 입력을 받았다는 사건: 화면 감지의 작업 중·질문(herdr-projects `--until working --until blocked`), 옛 agent의 turn_start.
+/// 대화 정리 중(`compacting`)도 작업 중이다: 받은 글이 턴을 열자마자 자동 정리가 먼저 돌 수 있다(10-20 운영 coordinator)
+const ACCEPTED: &[&str] = &["working", "compacting", "question", "turn_start"];
 
 /// 아직 모르는 pane의 harness 사건을 이만큼 보관한다
 const HOLD_FOR: Duration = Duration::from_secs(60);
@@ -163,7 +164,7 @@ fn next_activity(prev: Option<&AgentStatus>, ev: &HarnessEvent) -> Option<AgentA
     }
     match ev.kind.as_str() {
         "session_start" | "session" => prev.is_none().then_some(AgentActivity::Started),
-        "turn_start" | "working" => Some(AgentActivity::Working),
+        "turn_start" | "working" | "compacting" => Some(AgentActivity::Working),
         "turn_end" | "idle" => Some(AgentActivity::Idle),
         "question" => Some(AgentActivity::Question),
         "error" => Some(AgentActivity::Error),
@@ -282,6 +283,7 @@ impl Host {
                 plan: None,
                 background: None,
                 background_wait: false,
+                compacting: false,
             });
             if ev.harness != "report" {
                 st.harness = ev.harness.clone();
@@ -292,7 +294,7 @@ impl Host {
             let next = next_activity(prev.as_ref(), &ev);
             if matches!(
                 ev.kind.as_str(),
-                "turn_start" | "working" | "turn_end" | "idle" | "question" | "error" | "exited"
+                "turn_start" | "working" | "compacting" | "turn_end" | "idle" | "question" | "error" | "exited"
             ) {
                 tracing::info!(
                     machine = mid, pane = %ev.session, harness = %ev.harness, kind = %ev.kind,
@@ -348,6 +350,8 @@ impl Host {
                 st.seen = crate::seen::seen_after(was, a, st.seen, sees);
                 st.activity = a;
                 st.message = ev.message.clone();
+                // 정리 중은 작업 중 안의 표지다: 다른 상태 사건이 오면 끝났다(화면 표지가 사라졌다, plan §8.309)
+                st.compacting = ev.kind == "compacting";
             }
             // 배경 작업을 기다리는 쉼(bgwait.rs, 참고 server/index.ts가 상태·배경 수·사람 입력마다 BackgroundWait에 알림).
             // host 시계로 잰다: agent 시계가 어긋나도 유예·한도는 이 host에서 맞다
@@ -1275,6 +1279,7 @@ mod tests {
             plan: None,
             background: None,
             background_wait: false,
+            compacting: false,
         };
         assert_eq!(next_activity(Some(&idle), &ev("turn_start", 1_000)), None);
         assert_eq!(next_activity(Some(&idle), &ev("working", 2_000)), Some(AgentActivity::Working));
@@ -1619,6 +1624,23 @@ mod tests {
         assert_ne!(again.id, q.id);
     }
 
+    /// 대화 정리(plan §8.309): 화면 감지의 `compacting`은 작업 중이고 정리 표지를 단다. 같은 작업 중이라 상태가 된 때(목록 차례)는
+    /// 그대로다. 다음 상태 사건(작업 중·쉼)이 오면 표지를 지운다. 정리 중에는 대기 메시지 「지금 보내기」를 하지 않는다
+    #[tokio::test]
+    async fn compacting_is_working_with_a_marker_until_the_next_state() {
+        let (h, _t) = host_with_pane();
+        let state = |h: &Arc<Host>| h.pane_agent("s").map(|a| (a.activity, a.compacting, a.since_ms));
+        h.on_harness("m", codex_event("working", 1_000));
+        h.on_harness("m", codex_event("compacting", 2_000));
+        assert_eq!(state(&h), Some((AgentActivity::Working, true, 1_000)));
+        assert_eq!(h.steer_queued_data("s", "t"), Err(aaa_proto::SteerRefusal::Compacting));
+        h.on_harness("m", codex_event("working", 3_000));
+        assert_eq!(state(&h), Some((AgentActivity::Working, false, 1_000)));
+        h.on_harness("m", codex_event("compacting", 4_000));
+        h.on_harness("m", codex_event("idle", 5_000));
+        assert_eq!(state(&h), Some((AgentActivity::Idle, false, 5_000)));
+    }
+
     /// 같은 ms에 잇달아 만든 ID도 다르다(전에는 ULID 시각 부분이라 같아져 둘째 질문·메시지가 첫째 기록을 덮었다)
     #[test]
     fn ids_made_in_the_same_millisecond_differ() {
@@ -1655,7 +1677,12 @@ mod tests {
             .call(
                 crate::DeviceRole::Reader,
                 "test",
-                FrontRequest::PaneChat { pane: "s".into(), thinking: false, before: Some("older".into()) },
+                FrontRequest::PaneChat {
+                    pane: "s".into(),
+                    thinking: false,
+                    compact: false,
+                    before: Some("older".into()),
+                },
             )
             .await
             .unwrap_err();
@@ -1668,12 +1695,14 @@ mod tests {
                 (Some("boundary"), None, Some("file"), "첫 쪽"),
                 (None, Some("grown-boundary"), Some("file"), "파일이 자람"),
             ] {
-                let LinkMsg::Req { id, body: AgentRequest::Chat { before, harness, .. }, .. } =
+                let LinkMsg::Req { id, body: AgentRequest::Chat { before, harness, compact, .. }, .. } =
                     rx.control::<LinkMsg>().await.unwrap()
                 else {
                     panic!("chat 요청이 아니다")
                 };
                 assert_eq!(harness, "codex");
+                // 정리된 자리는 그것을 청한 front에만 싣는다(옛 front는 모르는 role로 답을 읽지 못한다)
+                assert!(compact);
                 assert_eq!(before.as_deref(), asked);
                 let reply = AgentResponse::Chat {
                     messages: vec![ChatMessage {
@@ -1706,7 +1735,12 @@ mod tests {
                 .call(
                     crate::DeviceRole::Reader,
                     "test",
-                    FrontRequest::PaneChat { pane: "s".into(), thinking: false, before: before.map(str::to_string) },
+                    FrontRequest::PaneChat {
+                        pane: "s".into(),
+                        thinking: false,
+                        compact: true,
+                        before: before.map(str::to_string),
+                    },
                 )
                 .await
                 .unwrap();

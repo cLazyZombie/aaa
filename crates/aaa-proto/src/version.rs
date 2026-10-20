@@ -127,9 +127,13 @@ pub const AGENT_LINK: Version = Version { major: 1, minor: 8 };
 // 거절해 웹이 변경 파일 카드를 그리지 않는다.
 // 1.60: 할 일 보기(`Tasks`→`TaskBoard`, TaskView `line`·`raw`·`block_sha256`·`parent`·`problems`, 사건 `tasks`). 옛 host는 새 칸을
 // 생략하고 새 요청을 모르는 요청으로 거절한다. 사건 `tasks`는 1.60 이상과 합의한 CLI 연결에만 보낸다.
-// 1.61: 할 일 편집(`TaskEdit`→`TaskEdited`, `TaskLog`, `TaskLogPrune`, TaskView `suggestion`, TaskBoard `text`). 옛 host는 새 요청을
+// 1.61: 대화 정리 표지(`AgentStatus.compacting`)와 대기 메시지 「지금 보내기」의 정리 중 거절(`SteerRefusal::Compacting`, plan §8.309),
+// 정리된 자리 `ChatRole::Compact`(front가 `pane_chat.compact`로 청할 때만, 옛 front는 모르는 role로 답을 읽지 못한다).
+// 옛 host는 표지를 보내지 않아 웹이 정리를 모르고 전처럼 보낸다(harness가 정리 뒤 읽는다). 옛 웹은 새 칸을 버리고, 모르는 거절에는
+// 까닭 글 없는 실패 줄을 그린다(옛 `refusalText`에 기본 갈래가 없다).
+// 1.62: 할 일 편집(`TaskEdit`→`TaskEdited`, `TaskLog`, `TaskLogPrune`, TaskView `suggestion`, TaskBoard `text`). 옛 host는 새 요청을
 // 모르는 요청으로 거절해 웹이 편집 단추를 그리지 않고, 새 칸은 생략한다.
-pub const FRONT_API: Version = Version { major: 1, minor: 61 };
+pub const FRONT_API: Version = Version { major: 1, minor: 62 };
 /// agent ↔ session host(내부). 세션이 몇 주 이어질 수 있으므로 이전 session host와 호환해야 한다.
 /// 1.1: `SessionRequest::Detect`(harness 상태 감지 입력). agent는 1.0 session host에 보내지 않고 `Screen`을 쓴다.
 /// 1.2: `SessionRequest::Colors`(색 질의에 답할 화면 색, plan §8.187). agent는 1.1 이하 session host에 보내지 않는다.

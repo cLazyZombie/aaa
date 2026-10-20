@@ -1637,7 +1637,7 @@ impl Host {
             }
             FrontRequest::ThreadDiff { project, thread, query } => self.thread_diff(&project, &thread, query).await,
             FrontRequest::PaneDir { pane, path, hidden } => self.pane_dir(role, actor, &pane, &path, hidden).await,
-            FrontRequest::PaneChat { pane, thinking, before } => {
+            FrontRequest::PaneChat { pane, thinking, compact, before } => {
                 let (id, mid) = self.resolve_pane(&pane)?;
                 // 보기 범위(§8.25)는 pane 보기와 같다
                 if self.pane_view_of(&id, role).is_none() {
@@ -1673,6 +1673,7 @@ impl Host {
                         transcript,
                         harness_session,
                         thinking,
+                        compact,
                         before,
                     })
                     .await?

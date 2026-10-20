@@ -2,7 +2,7 @@
 //!
 //! - TASKS.md가 원본이다. 완료는 줄을 지워 표시한다. 웹 할 일 화면은 `tasks`(TaskBoard)로 읽고 ticker가 파일 변화를 `tasks` 사건으로
 //!   알린다(할 일 보기 T1, plan §8.306). 웹 조작 기기·그 프로젝트 coordinator·aaa 밖 터미널은 `task_edit`로 고치고(바뀐 블록만, 블록 hash
-//!   충돌 감지, 할 일 편집 T2, plan §8.309), 모든 변경을 `task_log`에 남긴다. 파일 직접 편집도 되며 ticker가 「파일 직접」으로 적는다.
+//!   충돌 감지, 할 일 편집 T2, plan §8.310), 모든 변경을 `task_log`에 남긴다. 파일 직접 편집도 되며 ticker가 「파일 직접」으로 적는다.
 //! - `start_threads`(safety, propose·auto)는 coordinator가 따르는 안내 값이다. aaa가 강제하지 않는다(0.2.35와 같다).
 //! - 권한을 건너뛰는 실행 인자는 사람만 바꾸는 host.toml `[safety.*]`(yolo·thread_agent_args)와 그 머신 agent.toml의 profile
 //!   `args`에 둔다(coordinator가 바꿀 수 없다, plan §8.163).
@@ -252,7 +252,7 @@ impl Host {
         }
     }
 
-    /// `task_edit`(할 일 편집 T2, plan §8.309): 동작을 최신 파일에 차례로 적용해 한 번에 쓴다(t-0469 §2.2·§2.3). 대상 블록이
+    /// `task_edit`(할 일 편집 T2, plan §8.310): 동작을 최신 파일에 차례로 적용해 한 번에 쓴다(t-0469 §2.2·§2.3). 대상 블록이
     /// 없으면 쓰지 않고 `conflict`와 그 task의 지금 원문을 준다. 쓴 뒤 기록·ticker 기억·`tasks` 사건.
     pub(crate) async fn task_edit(
         &self,
