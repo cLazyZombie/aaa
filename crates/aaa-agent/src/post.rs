@@ -213,6 +213,7 @@ mod tests {
                 label: None,
                 colors: None,
                 account_run: None,
+                account_generation: None,
                 spec: SpawnSpec {
                     name: "test".into(),
                     argv: vec![],

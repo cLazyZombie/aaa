@@ -312,6 +312,7 @@ mod tests {
             version: 1,
             secret: SecretText("fake-test-credential".into()),
             trust_cwd: cwd.map(|p| p.to_string_lossy().into_owned()),
+            auth_generation: None,
         }
     }
 

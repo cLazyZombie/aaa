@@ -26,14 +26,23 @@ struct Sealed {
     name: String,
     harness: String,
     version: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    generation: Option<String>,
     nonce: String,
     wrapped_nonce: String,
     data: String,
     wrapped: String,
 }
 impl Sealed {
+    fn auth_generation(&self) -> String {
+        self.generation.clone().unwrap_or_else(|| format!("legacy-{}", self.version))
+    }
     fn aad(&self) -> Vec<u8> {
-        format!("aaa-account/v1\0{}\0{}\0{}", self.name, self.harness, self.version).into_bytes()
+        let mut aad = format!("aaa-account/v1\0{}\0{}\0{}", self.name, self.harness, self.version);
+        if let Some(generation) = &self.generation {
+            aad.push_str(&format!("\0{generation}"));
+        }
+        aad.into_bytes()
     }
     fn view(&self) -> AccountView {
         AccountView {
@@ -136,6 +145,7 @@ impl Store {
         let dek = open(&key, &r.wrapped_nonce, &aad, &r.wrapped)?;
         let value = String::from_utf8(open(&dek, &r.nonce, &aad, &r.data)?).map_err(|_| fail())?;
         redact::remember_auth(&r.harness, &value);
+        let generation = r.auth_generation();
         Ok(AccountCredential {
             run: String::new(),
             account: r.name,
@@ -143,9 +153,17 @@ impl Store {
             version: r.version,
             secret: SecretText(value),
             trust_cwd: None,
+            auth_generation: Some(generation),
         })
     }
-    fn write(&self, name: &str, harness: &str, version: u64, value: &str) -> Result<AccountView, ErrorBody> {
+    fn write(
+        &self,
+        name: &str,
+        harness: &str,
+        version: u64,
+        value: &str,
+        generation: Option<String>,
+    ) -> Result<AccountView, ErrorBody> {
         let path = self.path(name)?;
         if self.root.symlink_metadata().is_ok_and(|m| m.file_type().is_symlink()) {
             return Err(fail());
@@ -159,6 +177,7 @@ impl Store {
             name: name.into(),
             harness: harness.into(),
             version,
+            generation,
             nonce: hex::encode(nonce),
             wrapped_nonce: hex::encode(wrap_nonce),
             data: String::new(),
@@ -262,7 +281,11 @@ impl Accounts {
         } else {
             1
         };
-        s.write(name, harness, version, value)
+        s.write(name, harness, version, value, Some(util::new_id()))
+    }
+    pub(crate) fn generation(&self, name: &str) -> Result<String, ErrorBody> {
+        let r = self.store.lock().unwrap().record(name)?;
+        Ok(r.auth_generation())
     }
     pub fn credential(&self, name: &str) -> Result<AccountCredential, ErrorBody> {
         self.store.lock().unwrap().read(name)
@@ -352,7 +375,8 @@ impl Accounts {
             return Err(fail());
         }
         let v = version.checked_add(1).ok_or_else(fail)?;
-        s.write(name, "codex", v, &value)?;
+        let generation = Some(s.record(name)?.auth_generation());
+        s.write(name, "codex", v, &value, generation)?;
         *outcome = RefreshOutcome::Renewed;
         Ok((v, token_response(&auth)?))
     }
@@ -477,6 +501,47 @@ mod tests {
         }
     }
     #[test]
+    fn legacy_vault_aad_reads_and_reseals_without_changing_auth_generation() {
+        let state = Temp(std::env::temp_dir().join(format!("aaa-legacy-vault-{}", util::new_id())));
+        util::ensure_private_dir(&state.0).unwrap();
+        let accounts = Accounts::new(&state.0).unwrap();
+        let value = "fake-legacy-auth-fixture";
+        {
+            let s = accounts.store.lock().unwrap();
+            util::ensure_private_dir(&s.root).unwrap();
+            let key = s.key(true).unwrap();
+            let dek = random::<32>().unwrap();
+            let nonce = random::<12>().unwrap();
+            let wrap_nonce = random::<12>().unwrap();
+            // A2 전 파일의 AAD 계약을 직접 고정한다. 새 aad()로 fixture를 만들지 않는다.
+            let aad =
+                b"aaa-account/v1\0legacy\0claude\0".iter().copied().chain(b"7".iter().copied()).collect::<Vec<_>>();
+            let old = Sealed {
+                name: "legacy".into(),
+                harness: "claude".into(),
+                version: 7,
+                generation: None,
+                nonce: hex::encode(nonce),
+                wrapped_nonce: hex::encode(wrap_nonce),
+                data: seal(&dek, nonce, &aad, value.as_bytes()).unwrap(),
+                wrapped: seal(&key, wrap_nonce, &aad, &dek).unwrap(),
+            };
+            util::write_private(&s.path("legacy").unwrap(), &serde_json::to_vec(&old).unwrap()).unwrap();
+        }
+        let old = accounts.credential("legacy").unwrap();
+        assert_eq!(old.secret.0, value);
+        assert_eq!(old.auth_generation.as_deref(), Some("legacy-7"));
+        {
+            let s = accounts.store.lock().unwrap();
+            let generation = Some(s.record("legacy").unwrap().auth_generation());
+            s.write("legacy", "claude", 8, value, generation).unwrap();
+        }
+        assert_eq!(accounts.generation("legacy").unwrap(), "legacy-7", "암호문 판 교체는 로그인 교체가 아니다");
+        assert_eq!(accounts.credential("legacy").unwrap().auth_generation, old.auth_generation);
+        accounts.import("legacy", "claude", value).unwrap();
+        assert_ne!(accounts.generation("legacy").unwrap(), "legacy-7", "다시 로그인은 새 세대");
+    }
+    #[test]
     fn encrypted_accounts_reject_tampering_and_lock_without_stopping_other_accounts() {
         let state = Temp(std::env::temp_dir().join(format!("aaa-vault-{}", util::new_id())));
         util::ensure_private_dir(&state.0).unwrap();
@@ -485,6 +550,8 @@ mod tests {
         let value = format!("test-oauth-{}", hex::encode(random::<32>().unwrap()));
         let first = accounts.import("work", "claude", &value).unwrap();
         assert_eq!(first.version, 1);
+        let generation = accounts.generation("work").unwrap();
+        assert_eq!(accounts.credential("work").unwrap().auth_generation.as_deref(), Some(generation.as_str()));
         assert!(accounts.credential("work").unwrap().secret.0 == value, "인증 왕복");
         let file = state.0.join("accounts/work.json");
         let sealed = std::fs::read(&file).unwrap();
@@ -498,7 +565,7 @@ mod tests {
                 assert_eq!(path.metadata().unwrap().permissions().mode() & 0o777, mode);
             }
         }
-        for field in ["name", "harness", "version", "data", "wrapped"] {
+        for field in ["name", "harness", "version", "data", "wrapped", "generation"] {
             let mut changed: serde_json::Value = serde_json::from_slice(&sealed).unwrap();
             changed[field] = match field {
                 "name" => "other".into(),
@@ -518,7 +585,10 @@ mod tests {
         std::fs::rename(state.0.join("held.key"), state.0.join("secrets.key")).unwrap();
         assert!(locked.credential("work").unwrap().secret.0 == value, "키 복구 뒤 인증 왕복");
         assert_eq!(locked.import("work", "claude", &format!("{value}-next")).unwrap().version, 2);
+        assert_ne!(locked.generation("work").unwrap(), generation, "다시 로그인은 새 세대");
         locked.remove("work").unwrap();
         assert!(locked.credential("work").is_err());
+        locked.import("work", "claude", &value).unwrap();
+        assert_ne!(locked.generation("work").unwrap(), generation, "같은 별칭 삭제·재등록도 새 세대");
     }
 }

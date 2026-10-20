@@ -2,6 +2,31 @@
 
 새 기능을 만드는 thread가 따르는 짧은 규칙이다. 근거는 참고 넷(herdr 0.9.5·herdr-projects 0.2.35·herdr-web-ui `aa624cb`·t3code `4b1024da`)과 이 저장소에서 실제로 난 간헐 실패다. 전략과 도구 목록은 [plan §13](plan.md#13-테스트-전략과-직접-만들-e2e-도구)에 있다.
 
+## 계정별 사용량(A2, t-0561)
+
+- `cargo test -p aaa-common --lib quota`: 공식 camelCase RPC·Claude 상태줄 fixture, 누락·NaN·범위 밖
+  수치·기간 모름·모델별 창·창별 관측 시각·2분/10분·리셋·미래 시각 경계.
+- `cargo test -p aaa-host --lib quota`: 가짜 공식 실행 파일 여섯을 동시에 사용한다. RPC 기록은
+  initialize·initialized·account/rateLimits/read만이며 thread/start·turn/start는 0회여야 한다.
+  401·429와 재조회 가능 시각·깨진 응답·누락·stderr·알림·응답(버킷 이름 포함)의 canary 폐기·로컬 갱신 거부·임시 홈 정리를 본다.
+  병합 규칙은 동시 관측 충돌·모델 창 분리·다른 계정/로그인 세대 거부·끊김의 원래 시각 보존·머신 시각 차이를 본다.
+- `cargo test -p aaa-agent --lib quota`: 전용 pane 파일과 창별 시각·세대·경로 검사·0600·원문 폐기.
+  기존 `accounts::encrypted_accounts_reject_tampering_and_lock_without_stopping_other_accounts`는
+  세대 변조 거부·잠김·다시 등록·같은 별칭 삭제/재등록의 새 세대도 검사한다.
+  `cargo test -p aaa-host --lib legacy_vault`는 A2 전 AAD로 만든 가짜 암호문을 읽고 첫 재암호화에도 로그인 세대가 유지됨을 확인한다.
+- `node web/e2e/web.e2e.mjs --spec 62-account-quota`: 실제 host·agent와 가짜 공식 RPC 두 계정,
+  관측 없는 Claude, 계정 pane의 주입된 상태줄 → agent snapshot → host 카드, 누락 주간 창의 원래 시각,
+  401·429·잠긴 가짜 금고·agent 끊김·마지막 숫자·backoff 중 추가 RPC 없음·로그인 세대 교체·Reader 비노출·320/390/768px 카드.
+  가짜 Claude pane에 F6 사건을 보내 창을 바꾸고 출력 표지를 기다린다. sleep·실제 로그인·실제 인증은 없다.
+  `AAA_TEST_USAGE_REFRESH_MS=0`은 기존 수동 조회 하한 시험 고리이며 429의 시각은 줄이지 않는다.
+
+`AAA_USAGE_HOME`을 지정한 기존 실험실에서는 새 수집기도 실제 Codex를 실행하지 않는다.
+debug 실험실이 `AAA_TEST_QUOTA_CODEX`에 명시한 가짜 실행 파일만 허용한다. RPC 단위 시험은 실행 파일을
+직접 주입하므로 전역 env를 바꾸지 않는다. 원격 숫자는 수신 시각 대신 원래 창 관측 시각으로 판정한다.
+
+무작업 RPC keeper에는 실제 `thread/start` 전송을 추가하는 변형을 심어 RPC 기록 단언이 실패함을 확인한다.
+변형 뒤 제품 파일 bytes를 원복하며 원복한 후보에서 전체 검증한다.
+
 ## host 로그인·기본 계정(t-0510)
 
 `cargo test -p aaa --test m13 accounts::`는 실제 인증을 읽지 않고 가짜 공식 CLI·토큰·갱신 서버만 쓴다.

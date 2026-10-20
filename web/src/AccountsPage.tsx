@@ -4,6 +4,8 @@
 // 다시 로그인에 다른 메일이 들어오면 host가 옛 인증을 둔 채 기다리고, 여기서 바꿀지 고른다. 바뀌면 host `accounts` 사건으로 다시 읽는다.
 import "./ThreadActions.css";
 import "./AccountsPage.css";
+import { AccountQuotaCard, useAccountQuota } from "./AccountQuota";
+import { apiAtLeast } from "./automationModel";
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { AccountDefault, AccountLoginView, AccountView, DeviceRole } from "./gen/proto";
@@ -13,7 +15,7 @@ import { canAccounts, day, groupAccounts, HARNESS_LABEL, HARNESSES, healthWord, 
 
 const say = (e: unknown) => (e instanceof ApiError ? e.message : e instanceof Error ? e.message : String(e));
 
-type Loaded = { accounts: AccountView[]; defaults: AccountDefault[]; full: boolean };
+type Loaded = { accounts: AccountView[]; defaults: AccountDefault[]; full: boolean; quota: boolean };
 
 /** 목록·기본과 보던 로그인을 함께 읽는다. 겹친 읽기는 마지막 것만 반영한다 */
 function useAccounts(loginId: string | null) {
@@ -41,6 +43,7 @@ function useAccounts(loginId: string | null) {
         accounts: list.kind === "accounts" ? list.accounts : [],
         defaults: defaults.kind === "account_defaults" ? defaults.defaults : [],
         full,
+        quota: apiAtLeast(m?.front_api, 1, 82),
       });
       if (status === "lost") setLogin((prev) => (prev ? { ...prev, state: "lost" } : prev));
       else if (status?.kind === "account_login") setLogin(status.login);
@@ -63,6 +66,7 @@ export function AccountsPage({ role }: { role: DeviceRole }) {
   const [msg, setMsg] = useState<string | null>(null);
   const [alias, setAlias] = useState("");
   const [harness, setHarness] = useState<string>("claude");
+  const usage = useAccountQuota(data?.quota ?? false);
   const now = Date.now();
   if (!data) return error ? <p className="op-warn">{error}</p> : <p className="op-muted">읽는 중…</p>;
   const canEdit = role !== "reader" && data.full;
@@ -102,6 +106,7 @@ export function AccountsPage({ role }: { role: DeviceRole }) {
           {msg}
         </p>
       )}
+      {data.quota && <div className="op-buttons"><button className="btn small" type="button" onClick={usage.refresh} disabled={usage.busy}>사용량 다시 읽기</button><span className="op-muted">관측이 없으면 사용량 모름</span></div>}
       {groups.map((g) => (
         <SettingsGroup key={g.harness} title={HARNESS_LABEL[g.harness]} section={`accounts-${g.harness}`}>
           <div className="settings-item">
@@ -140,6 +145,7 @@ export function AccountsPage({ role }: { role: DeviceRole }) {
                           )}
                         </dl>
                       )}
+                      {data.quota && <AccountQuotaCard quota={usage.report?.accounts.find((q) => q.account === a.name && q.harness === a.harness)} now={usage.now} failed={usage.error} />}
                       {canEdit && (
                         <div className="op-buttons acct-actions">
                           <button type="button" className="btn small" disabled={busy || !!active} onClick={() => void start(a.name, a.harness)} aria-label={`${a.name} 다시 로그인`}>

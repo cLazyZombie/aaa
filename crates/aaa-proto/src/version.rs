@@ -181,7 +181,8 @@ pub const AGENT_LINK: Version = Version { major: 1, minor: 10 };
 // coordinator_deploy만), `profile_admin`·`profile_plan`·`profile_apply`(claude·codex·shell만, custom 명령·env 칸 없음),
 // `work_root_show`·`work_root_check`·`work_root_set`, `hook_status`·`hook_set`. host.toml 판 대조로 동시 편집은 conflict.
 // Agent link: 새 기능 work_root.manage.v1·hook.manage.v1(`AgentRequest::WorkRoot`·`CodexHook`), 알리지 않은 agent에는 보내지 않는다.
-pub const FRONT_API: Version = Version { major: 1, minor: 81 };
+// 1.82: 등록 계정 사용량 HTTP /api/v1/account-usage(A2). Agent link account_quota.v1은 비밀 없는 원격 관측만 읽는다.
+pub const FRONT_API: Version = Version { major: 1, minor: 82 };
 /// agent ↔ session host(내부). 세션이 몇 주 이어질 수 있으므로 이전 session host와 호환해야 한다.
 /// 1.1: `SessionRequest::Detect`(harness 상태 감지 입력). agent는 1.0 session host에 보내지 않고 `Screen`을 쓴다.
 /// 1.2: `SessionRequest::Colors`(색 질의에 답할 화면 색, plan §8.187). agent는 1.1 이하 session host에 보내지 않는다.
