@@ -313,9 +313,10 @@ export default async function ({ page }) {
     }
   });
 
-  await step("「나중」 항목 메뉴 「할 일로 옮기기」가 새 task 폼을 채우고, 더하면 Backlog에 들어간다", async () => {
+  await step("「나중」 항목 메뉴 「할 일로 옮기기」가 새 task 폼을 채우고, 더하면 Backlog에 들어간다(「나중」 파일은 그대로)", async () => {
     fs.mkdirSync(`${dir()}/memory`, { recursive: true });
-    fs.writeFileSync(`${dir()}/memory/later.md`, "# 나중 작업 모음\n\n## UI\n- 건설 안내 문구를 UI로\n  취소 버튼(터치)은 필요\n- `카드` 기울기\n");
+    const later = "# 나중 작업 모음\n\n## UI\n- 건설 안내 문구를 UI로\n  취소 버튼(터치)은 필요\n- `카드` 기울기\n";
+    fs.writeFileSync(`${dir()}/memory/later.md`, later);
     aaa("project", "set", "demo", "task_notes.add", "memory/later.md");
     aaa("ticker", "tick");
     await page.getByTestId("tasks-tab-later").click();
@@ -329,6 +330,8 @@ export default async function ({ page }) {
     await page.getByTestId("task-save").click();
     const text = await saved(page, before);
     if (!text.includes("- [ ] 건설 안내 문구를 UI로\n  취소 버튼(터치)은 필요\n  (나중 memory/later.md · UI에서 옮김)\n")) throw new Error(text);
+    // 「나중」 파일은 고치지 않는다(출처는 메모 끝 줄에만 남는다)
+    if (fs.readFileSync(`${dir()}/memory/later.md`, "utf8") !== later) throw new Error("「나중」 파일이 바뀌었다");
     md = sha(text);
   });
 
