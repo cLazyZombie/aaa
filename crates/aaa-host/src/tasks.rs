@@ -1,4 +1,4 @@
-//! TASKS.md 읽기(0.2.35 의미 그대로, 부록 A). aaa는 읽기만 하고 쓰는 쪽은 coordinator다.
+//! TASKS.md 읽기(0.2.35 의미 그대로, 부록 A)와 쓰는 꼴(할 일 편집 T2, plan §8.307). 고치기는 `task_edit.rs`가 한다.
 //!
 //! - task 줄: `- [ ] 제목 (owner) · t-0001`. `- [x]`도 task다(완료는 줄을 지워 표시한다).
 //! - owner: 없음·`agent`는 미할당, `me`는 사용자, `profile`·`@machine`·`profile@machine`은 agent, 그 밖의 글은 사람.
@@ -6,8 +6,10 @@
 //! - 메모: task 줄보다 깊게 들여쓴 줄(사이의 빈 줄 허용).
 //! - 형식 어긋남(할 일 보기 T1, plan §8.306): 끝 괄호에 상태 메모를 쓴 줄(`(t-0001 S4 뒤, 사용자 지시 시)`)을 사람 owner로
 //!   오독하지 않는다. owner 꼴이 아니면 owner로 쓰지 않고 괄호째 제목에 두며 `problems`에 까닭을 단다. 판단하지 않고 원문을 보인다.
+//! - 쓰는 꼴(정규형): `- [ ] 제목 (owner) · t-0001`. 저장 때 제목을 검사하고(`check_title`), 쓴 줄을 다시 읽어 같은 값인지 본다.
+//!   형식 어긋남 task에는 「정리 제안」(`suggest`)을 단다: 사람이 보고 「이대로 저장」해야 바뀐다.
 
-use aaa_proto::{TaskListView, TaskNotesSection, TaskView};
+use aaa_proto::{TaskListView, TaskNotesSection, TaskSuggestion, TaskView};
 use sha2::Digest as _;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -51,18 +53,18 @@ const TITLE_MAX_CHARS: usize = 120;
 /// 「나중」 파일은 이만큼까지 읽는다
 pub(crate) const NOTES_MAX_BYTES: u64 = 512 * 1024;
 
-fn indent(l: &str) -> usize {
+pub(crate) fn indent(l: &str) -> usize {
     l.len() - l.trim_start().len()
 }
 
-fn is_task(l: &str) -> bool {
+pub(crate) fn is_task(l: &str) -> bool {
     let t = l.trim_start();
     t.starts_with("- [") && t.get(4..5) == Some("]")
 }
 
-/// 글 안 `t-` + 숫자 `digits`자리 이상(앞 글자가 낱말 글자가 아닐 때). 처음 찾은 번호를 돌려준다
-fn thread_number(s: &str, digits: usize) -> Option<&str> {
-    s.match_indices("t-").find_map(|(at, _)| {
+/// 글 안 `t-` + 숫자 `digits`자리 이상(앞 글자가 낱말 글자가 아닐 때)을 차례로
+fn thread_numbers(s: &str, digits: usize) -> impl Iterator<Item = &str> {
+    s.match_indices("t-").filter_map(move |(at, _)| {
         let before = s[..at].chars().next_back();
         if before.is_some_and(|c| c.is_alphanumeric()) {
             return None;
@@ -70,6 +72,11 @@ fn thread_number(s: &str, digits: usize) -> Option<&str> {
         let n = s[at + 2..].chars().take_while(char::is_ascii_digit).count();
         (n >= digits).then(|| &s[at..at + 2 + n])
     })
+}
+
+/// 처음 찾은 thread 번호
+fn thread_number(s: &str, digits: usize) -> Option<&str> {
+    thread_numbers(s, digits).next()
 }
 
 /// 원문 앞부분(문제 글에 싣는다)
@@ -88,7 +95,7 @@ fn owner_shape(o: &str) -> Result<(), String> {
 }
 
 /// 줄 본문 → (제목, owner, thread, 형식 어긋남)
-fn split_line(text: &str) -> (String, Option<String>, Option<String>, Vec<String>) {
+pub(crate) fn split_line(text: &str) -> (String, Option<String>, Option<String>, Vec<String>) {
     let mut rest = text.trim().to_string();
     let mut thread = None;
     let mut problems = Vec::new();
@@ -146,7 +153,7 @@ fn at(lists: &mut Vec<TaskListView>, name: &str) -> usize {
     }
 }
 
-fn sha256(s: &str) -> String {
+pub(crate) fn sha256(s: &str) -> String {
     hex::encode(sha2::Sha256::digest(s.as_bytes()))
 }
 
@@ -220,6 +227,7 @@ pub(crate) fn parse_board(text: &str) -> (Vec<TaskListView>, Vec<TaskView>) {
             block_sha256: sha256(&lines[i..=end].join("\n")),
             parent,
             problems,
+            suggestion: None,
         });
         // 멈춘 줄(다음 task·제목, 들여쓴 하위 task 포함)부터 다시 본다
         i = j;
@@ -229,6 +237,144 @@ pub(crate) fn parse_board(text: &str) -> (Vec<TaskListView>, Vec<TaskView>) {
 
 pub(crate) fn parse(text: &str) -> Vec<TaskView> {
     parse_board(text).1
+}
+
+/// 저장할 제목(앞뒤 공백을 뗀 것). 다시 읽을 때 owner·thread로 오독되는 꼴을 거부한다(t-0469 §2.2)
+pub(crate) fn check_title(title: &str) -> Result<String, String> {
+    let t = title.trim();
+    if t.is_empty() {
+        return Err("제목이 비었다".into());
+    }
+    if t.contains(['\n', '\r']) {
+        return Err("제목은 한 줄이다(나머지는 메모에 쓴다)".into());
+    }
+    if t.ends_with(')') {
+        return Err("제목이 `)`로 끝나면 owner로 읽힌다: 끝 괄호 글은 메모로 옮긴다".into());
+    }
+    if let Some((_, tail)) = t.rsplit_once('·')
+        && tail.trim_start().starts_with("t-")
+    {
+        return Err("제목 끝의 `· t-…`는 thread로 읽힌다: 메모로 옮긴다".into());
+    }
+    if is_task(t) {
+        return Err("제목이 `[ ]`로 시작하면 안 된다".into());
+    }
+    Ok(t.to_string())
+}
+
+/// thread 칸 값(`t-` + 영문·숫자·`-`)
+pub(crate) fn check_thread(id: &str) -> Result<String, String> {
+    let t = id.trim();
+    if t.len() > 2 && t.starts_with("t-") && t[2..].chars().all(|c| c.is_ascii_alphanumeric() || c == '-') {
+        Ok(t.to_string())
+    } else {
+        Err(format!("thread 번호 꼴이 아니다: {t}"))
+    }
+}
+
+/// 정규형 task 줄(앞 들여쓰기 `ws`, 줄 끝 문자 없이): `- [ ] 제목 (owner) · t-0001`
+pub(crate) fn task_line(ws: &str, done: char, title: &str, owner: Option<&str>, thread: Option<&str>) -> String {
+    let owner = owner.filter(|o| !o.is_empty()).map(|o| format!(" ({o})")).unwrap_or_default();
+    let thread = thread.filter(|t| !t.is_empty()).map(|t| format!(" · {t}")).unwrap_or_default();
+    format!("{ws}- [{done}] {title}{owner}{thread}")
+}
+
+/// 쓴 줄을 다시 읽은 값이 뜻한 값과 같은가(제목·owner·thread). 다르면 까닭
+pub(crate) fn reads_back(line: &str, title: &str, owner: Option<&str>, thread: Option<&str>) -> Result<(), String> {
+    let t = line.trim_start();
+    let (rt, ro, rth, problems) = split_line(&t[5..]);
+    let owner = owner.filter(|o| !o.is_empty());
+    let thread = thread.filter(|t| !t.is_empty());
+    if rt != title || ro.as_deref() != owner || rth.as_deref() != thread {
+        return Err(format!("`{t}`가 다른 값으로 다시 읽힌다(제목 `{rt}`)"));
+    }
+    if let Some(p) = problems.iter().find(|p| p.starts_with(OWNER_SHAPE)) {
+        return Err(format!("`{t}`: {p}"));
+    }
+    Ok(())
+}
+
+/// owner 칸 글을 사람 이름으로 받아도 되나(「사람으로 저장」): owner 칸에 다시 그대로 읽히는 꼴만
+pub(crate) fn check_person(name: &str) -> Result<(), String> {
+    let n = name.trim();
+    owner_shape(n)?;
+    if matches!(n, "me" | "agent" | "미할당" | "없음") || n.contains('@') {
+        return Err(format!("`{n}`는 사람 이름으로 쓰지 않는다"));
+    }
+    Ok(())
+}
+
+/// 마지막 괄호 묶음(짝을 맞춘 것)의 여는 괄호 자리. `)`로 끝나지 않거나 짝이 없으면 없음
+fn last_group(s: &str) -> Option<usize> {
+    if !s.ends_with(')') {
+        return None;
+    }
+    let mut depth = 0i32;
+    for (i, c) in s.char_indices().rev() {
+        match c {
+            ')' => depth += 1,
+            '(' => {
+                depth -= 1;
+                if depth == 0 {
+                    return Some(i);
+                }
+            }
+            _ => {}
+        }
+    }
+    None
+}
+
+/// 「정리 제안」(t-0469 §2.2): 끝 괄호 글 → 메모, 본문 속 열린 thread 번호 → 연결, `미할당`·`없음` → owner 비움, 긴 제목 → 앞부분과
+/// 메모. 형식 어긋남이 없거나 제안이 다시 저장 검사를 통과하지 못하면 없다. 자동으로 고치지 않는다.
+pub(crate) fn suggest(t: &TaskView, open_threads: &[String]) -> Option<TaskSuggestion> {
+    if t.problems.is_empty() {
+        return None;
+    }
+    let (mut title, mut owner, mut thread) = (t.title.clone(), t.owner.clone(), t.thread.clone());
+    let mut moved = Vec::new();
+    let mut changes = Vec::new();
+    // 끝 괄호 묶음을 차례로 메모로 옮긴다(남은 제목이 다시 `)`로 끝나면 owner로 읽히므로 그것도)
+    while owner_misread(t)
+        && let Some(open) = last_group(&title)
+    {
+        let inner = title[open + 1..title.len() - 1].trim().to_string();
+        let front = title[..open].trim_end().to_string();
+        if front.is_empty() || inner.is_empty() {
+            break;
+        }
+        changes.push(format!("끝 괄호 글을 메모로: {}", head(&inner)));
+        moved.insert(0, inner);
+        title = front;
+    }
+    if t.problems.iter().any(|p| p.starts_with("owner `")) && owner.is_none() {
+        changes.push("owner `미할당` → 비움(미할당)".into());
+    }
+    if thread.is_none()
+        && let Some(n) = thread_numbers(&t.title, 4).find(|n| open_threads.iter().any(|o| o == n))
+    {
+        changes.push(format!("본문 속 열린 {n}을 연결"));
+        thread = Some(n.to_string());
+    }
+    if title.chars().count() > TITLE_MAX_CHARS
+        && let Some((front, tail)) = [" — ", " - ", ": ", ". "].iter().find_map(|sep| title.split_once(sep))
+        && front.chars().count() >= 4
+    {
+        let (front, tail) = (front.trim().to_string(), tail.trim().to_string());
+        changes.push(format!("긴 제목의 뒷부분을 메모로: {}", head(&tail)));
+        moved.insert(0, tail);
+        title = front;
+    }
+    if owner.as_deref().is_some_and(|o| owner_shape(o).is_err()) {
+        owner = None;
+    }
+    if changes.is_empty() || check_title(&title).is_err() {
+        return None;
+    }
+    let line = task_line("", ' ', &title, owner.as_deref(), thread.as_deref());
+    reads_back(&line, &title, owner.as_deref(), thread.as_deref()).ok()?;
+    moved.extend(t.notes.iter().cloned());
+    Some(TaskSuggestion { title, owner, thread, notes: moved, line, changes })
 }
 
 /// owner 칸을 owner로 읽지 못한 task인가
@@ -396,6 +542,35 @@ mod tests {
         let (lists, t) = parse_board("- [ ] 맨 앞\r\n  메모\r\n## A\n");
         assert_eq!(lists.iter().map(|l| l.name.as_str()).collect::<Vec<_>>(), ["", "A"]);
         assert_eq!(t[0].block_sha256, sha256("- [ ] 맨 앞\n  메모"));
+    }
+
+    /// 「정리 제안」: 운영 오독 꼴 셋이 정규형 후보가 되고, 그 후보는 다시 읽어도 같다
+    #[test]
+    fn suggestions_for_misread_lines() {
+        let md = "## Backlog\n- [ ] 정리(선택) (t-0001 S4 뒤, 사용자 지시 시)\n  옛 메모\n- [ ] 실패 조사 (미할당)\n\
+                  - [ ] 웹 화면 W1~W8(계획 · t-0002(opus-high), 이어서 W2~W8 차례로)\n- [ ] 사람 일 (Priya Rao)\n";
+        let t = parse(md);
+        let open = vec!["t-0002".to_string()];
+        let s = suggest(&t[0], &open).unwrap();
+        assert_eq!((s.title.as_str(), s.owner.as_deref(), s.thread.as_deref()), ("정리", None, None));
+        assert_eq!(s.notes, ["선택", "t-0001 S4 뒤, 사용자 지시 시", "옛 메모"]);
+        assert_eq!(s.line, "- [ ] 정리");
+        let s = suggest(&t[1], &open).unwrap();
+        assert_eq!((s.title.as_str(), s.line.as_str()), ("실패 조사", "- [ ] 실패 조사"));
+        let s = suggest(&t[2], &open).unwrap();
+        assert_eq!((s.title.as_str(), s.thread.as_deref()), ("웹 화면 W1~W8", Some("t-0002")));
+        assert_eq!(s.notes, ["계획 · t-0002(opus-high), 이어서 W2~W8 차례로"]);
+        assert_eq!(s.line, "- [ ] 웹 화면 W1~W8 · t-0002");
+        assert!(suggest(&t[3], &open).is_none(), "형식 어긋남이 없으면 제안도 없다");
+        // 열린 thread가 아니면 잇지 않는다
+        assert_eq!(suggest(&t[2], &[]).unwrap().thread, None);
+        // 제안한 줄은 다시 읽어도 같은 값이다
+        for task in &t[..3] {
+            let s = suggest(task, &open).unwrap();
+            let back = &parse(&format!("{}\n", s.line))[0];
+            assert_eq!((&back.title, &back.owner, &back.thread), (&s.title, &s.owner, &s.thread));
+            assert!(back.problems.is_empty(), "{back:?}");
+        }
     }
 
     #[test]

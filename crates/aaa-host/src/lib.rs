@@ -29,6 +29,7 @@ pub mod db;
 mod deploy;
 mod diff;
 mod evaluator;
+mod file_rev;
 mod files;
 pub mod front;
 mod git_watch;
@@ -66,6 +67,7 @@ mod routine_runs;
 mod seen;
 mod summary;
 pub mod tailscale;
+mod task_edit;
 mod tasks;
 mod text;
 mod transitions;
@@ -454,6 +456,8 @@ pub struct Host {
     pub task_events: broadcast::Sender<(String, String)>,
     /// ticker가 마지막으로 본 프로젝트마다의 TASKS.md 상태
     tasks_seen: Mutex<HashMap<String, coord::TasksSeen>>,
+    /// 파일마다의 쓰기 lock(TASKS.md 편집과 ticker의 외부 변경 감지, file_rev.rs)
+    file_locks: file_rev::Locks,
     /// ticker 묶음 셈까지 미룬 thread pane의 끝남(pane → 알림, notice.rs `turn_finished`)
     turn_ends: Mutex<HashMap<String, aaa_proto::NoticeView>>,
     /// 질문 저장과 화면 선택 창 붙이기(읽고 쓰기)를 차례로: 답한 질문을 선택 창 붙이기가 다시 열지 않는다
@@ -672,6 +676,7 @@ impl Host {
             notice_events: broadcast::channel(64).0,
             task_events: broadcast::channel(64).0,
             tasks_seen: Mutex::new(HashMap::new()),
+            file_locks: Default::default(),
             turn_ends: Mutex::new(HashMap::new()),
             question_lock: std::sync::Mutex::new(()),
             preferences,
@@ -1383,6 +1388,11 @@ impl Host {
                 FrontResponse::Context(c)
             }),
             FrontRequest::Tasks { project } => self.task_board(&project).map(FrontResponse::TaskBoard),
+            FrontRequest::TaskEdit { project, ops, base_sha256 } => {
+                self.task_edit(&project, ops, base_sha256, actor).await
+            }
+            FrontRequest::TaskLog { project, before, limit, filter } => self.task_log(&project, before, limit, filter),
+            FrontRequest::TaskLogPrune { project, before_ms } => self.task_log_prune(&project, before_ms, actor),
             FrontRequest::Assignable { project, check } => {
                 self.project_dir(&project)?;
                 let owners = self.assignable(&project).await;
