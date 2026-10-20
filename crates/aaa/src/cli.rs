@@ -501,6 +501,16 @@ enum AutomationCmd {
     Approve { name: String, approval_sha256: String },
     /// 옛 파일을 검증 뒤 TOML로 옮기고 원본은 .converted/에 보존한다
     Convert { project: Option<String> },
+    /// 보낸 결과를 모르는 `do.message` 묶음을 대상 thread를 확인한 뒤 푼다(사람의 aaa 밖 터미널). 그 묶음은 다시 보내지 않는다.
+    /// 묶음 id는 `routine list --json`의 `queue.inflight.id`다
+    Unblock {
+        name: String,
+        #[arg(long)]
+        batch: String,
+        /// 뒤에 쌓인 입력도 버린다(없으면 이어 보낸다)
+        #[arg(long)]
+        discard: bool,
+    },
     /// Rust 정본 타입에서 JSON Schema를 출력한다
     Schema {
         #[arg(long)]
@@ -1543,8 +1553,13 @@ fn run(cli: Cli) -> Result<ExitCode> {
             crate::person::require("aaa automation approve")?;
             front(json, FrontRequest::AutomationApprove { project: project_or_here(None)?, name, approval_sha256 })
         }
-        Cmd::Automation { cmd: AutomationCmd::Convert { project } } => {
-            front(json, FrontRequest::AutomationConvert { project: project_or_here(project)? })
+        Cmd::Automation { cmd: AutomationCmd::Convert { project } } => front(
+            json,
+            FrontRequest::AutomationConvert { project: project_or_here(project)?, dry_run: false, plan_sha256: None },
+        ),
+        Cmd::Automation { cmd: AutomationCmd::Unblock { name, batch, discard } } => {
+            crate::person::require("aaa automation unblock")?;
+            front(json, FrontRequest::AutomationUnblock { project: project_or_here(None)?, name, batch, discard })
         }
         Cmd::Automation { cmd: AutomationCmd::Schema { mission } } => {
             println!("{}", if mission { aaa_host::mission_schema() } else { aaa_host::automation_schema() });
@@ -3658,9 +3673,20 @@ fn render_front(r: &FrontResponse) -> String {
                     r.today,
                     r.origin
                 );
+                if let Some(b) = r.queue.as_ref().and_then(|q| q.inflight.as_ref()).filter(|b| b.unknown) {
+                    let _ = writeln!(
+                        s,
+                        "  막힘: 입력 전달 모름 · {}에 보내던 {}건 · 묶음 {} · 대상 thread를 확인한 뒤                          `aaa automation unblock {} --batch {} [--discard]`",
+                        b.thread.as_deref().unwrap_or("대상 thread"),
+                        b.events,
+                        b.id,
+                        r.name,
+                        b.id
+                    );
+                }
             }
         }
-        FrontResponse::AutomationConverted { files } => {
+        FrontResponse::AutomationConverted { files, .. } => {
             if files.is_empty() {
                 s.push_str("변환할 옛 파일이 없다\n");
             } else {
@@ -3670,7 +3696,7 @@ fn render_front(r: &FrontResponse) -> String {
                 s.push_str("변환 파일과 보존 사본을 coordinator 폴더 git에 한 커밋으로 남긴다.\n");
             }
         }
-        FrontResponse::RoutineRuns { runs } => {
+        FrontResponse::RoutineRuns { runs, .. } => {
             for r in runs {
                 let _ = writeln!(
                     s,

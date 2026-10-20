@@ -1068,6 +1068,46 @@ pub struct RoutineView {
     pub no_coordinator: u32,
     /// 파일을 읽지 못했다
     pub error: Option<String>,
+    /// 내구 입력 큐(FRONT_API 1.58). 옛 host는 생략한다.
+    #[serde(default)]
+    pub queue: Option<AutomationQueue>,
+}
+
+/// 규칙의 내구 입력 큐. 보낸 뒤 결과를 모르는 `do.message` 묶음은 사람이 확인하고 푼다(`automation_unblock`).
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(default)]
+pub struct AutomationQueue {
+    /// 아직 보내지 않은 입력 수
+    pub pending: u32,
+    pub inflight: Option<AutomationInflight>,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(default)]
+pub struct AutomationInflight {
+    /// 사람이 본 묶음. 풀 때 이 값을 실어 보낸다.
+    pub id: String,
+    pub events: u32,
+    /// 묶음 첫 입력이 들어온 때
+    #[ts(type = "number")]
+    pub at_ms: u64,
+    /// `do.message` 대상 thread(주인 thread면 그 사건의 thread)
+    pub thread: Option<String>,
+    /// 보냈는지 모른다: 자동으로 다시 보내지 않고 사람 확인을 기다린다
+    pub unknown: bool,
+}
+
+/// 상세 화면의 파일 원문(`routine_runs` 답, FRONT_API 1.58). 각 글은 64KiB에서 자른다.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(default)]
+pub struct RoutineSource {
+    pub file: String,
+    pub text: String,
+    pub sha256: String,
+    /// `text_file`·`brief_file`이 가리키는 본문
+    pub body_file: Option<String>,
+    pub body: String,
+    pub truncated: bool,
 }
 
 /// 프로젝트 이름: 영문 소문자·숫자·`-`·`_`(경로에 쓰므로 엄격히 본다)

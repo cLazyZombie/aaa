@@ -2,6 +2,7 @@
 use crate::{Host, err};
 use aaa_proto::{ErrorBody, ErrorCode, RoutineRun, RoutineView};
 use serde::{Deserialize, Serialize};
+use sha2::Digest;
 
 const CAP: usize = 50;
 #[derive(Default, Serialize, Deserialize)]
@@ -61,6 +62,47 @@ impl Host {
             return Err(err(ErrorCode::BadRequest, "자동화 이름 형식이 아니다"));
         }
         Ok(self.routine_history(p, name)?.runs)
+    }
+    /// 상세 화면의 파일 원문과 참조 본문. 임무 조건(`mission:`)은 `mission_show`가 맡는다.
+    pub(crate) fn routine_source(&self, p: &str, name: &str) -> Result<Option<aaa_proto::RoutineSource>, ErrorBody> {
+        const MAX: usize = 64 * 1024;
+        if name.starts_with("mission:") {
+            return Ok(None);
+        }
+        let root = self.project_dir(p)?;
+        let (ok, broken) = crate::routine::load_all(&root);
+        let stem = |f: &str| std::path::Path::new(f).file_stem().is_some_and(|s| s == name);
+        let file = if let Some(r) = ok.iter().find(|r| r.name == name) {
+            r.file.clone()
+        } else if let Some((file, _, _)) = broken.iter().find(|(f, _, _)| stem(f)) {
+            file.clone()
+        } else {
+            return Ok(None);
+        };
+        let mut truncated = false;
+        let mut cut = |text: String| {
+            if text.len() <= MAX {
+                return text;
+            }
+            truncated = true;
+            let mut end = MAX;
+            while !text.is_char_boundary(end) {
+                end -= 1;
+            }
+            text[..end].to_string()
+        };
+        let raw = crate::automation::project_text(&root, &file).unwrap_or_default();
+        // 읽은 규칙은 본문 파일을 글로 풀어 두므로 참조는 원문 TOML에서 찾는다
+        let body_file = file
+            .ends_with(".toml")
+            .then(|| crate::automation::decode::<crate::automation::File>(&file, &raw).ok())
+            .flatten()
+            .and_then(|f| f.action.texts().1.map(str::to_owned));
+        let sha256 = hex::encode(sha2::Sha256::digest(raw.as_bytes()));
+        let text = cut(raw);
+        let body = body_file.as_deref().map(|f| crate::automation::project_text(&root, f).unwrap_or_default());
+        let body = body.map(&mut cut).unwrap_or_default();
+        Ok(Some(aaa_proto::RoutineSource { file, text, sha256, body_file, body, truncated }))
     }
     pub(crate) fn record_routine(
         &self,

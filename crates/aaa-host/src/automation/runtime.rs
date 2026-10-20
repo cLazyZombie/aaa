@@ -214,6 +214,103 @@ impl Host {
         Ok(())
     }
 
+    /// 상세 화면의 큐 보기. 보낸 결과를 모르는 것은 `do.message` 묶음뿐이다(다른 동작은 다음 판정이 다시 고른다).
+    pub(crate) fn automation_queue(&self, p: &str, n: &str) -> Result<aaa_proto::AutomationQueue, ErrorBody> {
+        let s = state(self.db.meta(&key(p, n)).map_err(internal)?).map_err(internal)?;
+        Ok(aaa_proto::AutomationQueue {
+            pending: s.pending.len() as u32,
+            inflight: s.inflight.map(|b| {
+                let first = &b.events[0];
+                let thread = match &first.action {
+                    Action::Message(a) if a.thread == "owner" => first.owner.clone(),
+                    Action::Message(a) => Some(a.thread.clone()),
+                    _ => None,
+                };
+                aaa_proto::AutomationInflight {
+                    id: b.id,
+                    events: b.events.len() as u32,
+                    at_ms: first.at_ms,
+                    unknown: matches!(first.action, Action::Message(_)),
+                    thread,
+                }
+            }),
+        })
+    }
+
+    /// 사람이 대상 thread를 확인한 뒤 막힌 `do.message` 묶음을 푼다. 그 묶음은 다시 보내지 않는다(receipt로 재수락도 막는다).
+    /// `discard`면 남은 입력도 버린다. 화면에서 본 묶음이 아니면(이미 풀렸거나 다른 묶음) 아무것도 바꾸지 않는다.
+    pub(crate) fn automation_unblock(
+        &self,
+        p: &str,
+        n: &str,
+        batch: &str,
+        discard: bool,
+        actor: &str,
+    ) -> Result<(), ErrorBody> {
+        if crate::front::in_session(actor)
+            || actor.starts_with("worker:")
+            || actor.starts_with("evaluator:")
+            || actor.starts_with("detached:")
+        {
+            return Err(err(
+                ErrorCode::Forbidden,
+                "막힌 입력은 사람이 대상 thread를 확인하고 aaa 밖 터미널이나 웹에서 푼다",
+            ));
+        }
+        if !aaa_proto::valid_project(n) {
+            return Err(err(ErrorCode::BadRequest, "자동화 이름 형식이 아니다"));
+        }
+        self.project_dir(p)?;
+        let mut refused = None;
+        let mut resolved = Vec::new();
+        let mut dropped = Vec::new();
+        let result = self.db.update_meta_checked(&key(p, n), &[], |old| {
+            let mut s = state(old)?;
+            match s.inflight.take() {
+                Some(b) if b.id == batch && matches!(b.events[0].action, Action::Message(_)) => {
+                    resolved = b.events.iter().map(|e| e.id.clone()).collect();
+                }
+                Some(b) if b.id == batch => {
+                    refused = Some("보낸 결과를 모르는 글 묶음이 아니다. 다음 판정이 다시 고른다")
+                }
+                _ => refused = Some("그 묶음은 이미 풀렸거나 바뀌었다. 다시 읽고 확인한다"),
+            }
+            if refused.is_some() {
+                anyhow::bail!("unblock refused");
+            }
+            if discard {
+                dropped = s.pending.drain(..).map(|e| e.id).collect();
+            }
+            let receipts = resolved
+                .iter()
+                .map(|id| (receipt(p, n, id), batch.to_string()))
+                .chain(dropped.iter().map(|id| (receipt(p, n, id), "cancelled".to_string())))
+                .collect();
+            Ok((serde_json::to_string(&s)?, receipts))
+        });
+        if let Some(why) = refused {
+            return Err(err(ErrorCode::BadRequest, why));
+        }
+        result.map_err(internal)?;
+        for id in &resolved {
+            self.record_routine(p, n, id, "skipped", "사람 확인 · 다시 보내지 않음", None);
+        }
+        for id in &dropped {
+            self.record_routine(p, n, id, "skipped", "사람이 남은 입력을 버림", None);
+        }
+        self.db.audit(
+            actor,
+            "automation_unblock",
+            &format!(
+                "{p}/{n} {batch}: 확인 {}건{}",
+                resolved.len(),
+                if discard { format!(", 버림 {}건", dropped.len()) } else { String::new() }
+            ),
+        );
+        self.tick_wake.notify_one();
+        Ok(())
+    }
+
     pub(crate) fn automation_count(&self, p: &str, n: &str) -> Result<u32, ErrorBody> {
         let s = state(self.db.meta(&key(p, n)).map_err(internal)?).map_err(internal)?;
         Ok(if s.day == day(aaa_common::util::now_ms()) { s.count } else { 0 })

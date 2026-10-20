@@ -417,7 +417,7 @@ discard_uncopied: boolean, } | { "op": "thread_stop", project?: string, thread: 
 /**
  * 이 profile로 새 대화를 띄운다(herdr-projects `thread restart --profile`). `resume`과 함께 쓰지 않는다
  */
-profile: string | null, } | { "op": "thread_brief", project?: string, thread: string, } | { "op": "thread_read", project?: string, thread: string, lines: number | null, } | { "op": "thread_keys", project?: string, thread: string, keys: Array<string>, text: string | null, } | { "op": "questions", all: boolean, } | { "op": "question_answer", id: string, choice: string, menu: string | null, pick: MenuPick | null, } | { "op": "thread_message", project?: string, thread: string, text: string, mode: MessageMode, } | { "op": "preferences" } | { "op": "preferences_set", settings: Record<string, unknown>, pins: Array<string> | null, } | { "op": "inbox", project?: string, all: boolean, peek: boolean, } | { "op": "inbox_done", project?: string, ids: Array<string>, all: boolean, } | { "op": "ticker_tick" } | { "op": "mission_list", project: string | null, } | { "op": "mission_show", project?: string, name: string, } | { "op": "mission_approve", project?: string, name: string, approval_sha256: string, } | { "op": "mission_reject", project?: string, name: string, } | { "op": "mission_start", project?: string, name: string, } | { "op": "mission_stop", project?: string, name: string, } | { "op": "mission_pause", project?: string, name: string, } | { "op": "mission_resume", project?: string, name: string, } | { "op": "mission_reload", project?: string, name: string, } | { "op": "mission_restart", project?: string, name: string, } | { "op": "mission_open", project?: string, name: string, } | { "op": "routines", project?: string, } | { "op": "automation_approve", project?: string, name: string, approval_sha256: string, } | { "op": "automation_convert", project?: string, } | { "op": "routine_runs", project?: string, name: string, } | { "op": "routine_approve", project?: string, name: string, command_sha256: string, } | { "op": "routine_toggle", project?: string, name: string, on: boolean | null, } | { "op": "events", project: string | null, after: bigint, limit: number | null, } | { "op": "evaluator_assign", project?: string, profile: string, machine: string | null,
+profile: string | null, } | { "op": "thread_brief", project?: string, thread: string, } | { "op": "thread_read", project?: string, thread: string, lines: number | null, } | { "op": "thread_keys", project?: string, thread: string, keys: Array<string>, text: string | null, } | { "op": "questions", all: boolean, } | { "op": "question_answer", id: string, choice: string, menu: string | null, pick: MenuPick | null, } | { "op": "thread_message", project?: string, thread: string, text: string, mode: MessageMode, } | { "op": "preferences" } | { "op": "preferences_set", settings: Record<string, unknown>, pins: Array<string> | null, } | { "op": "inbox", project?: string, all: boolean, peek: boolean, } | { "op": "inbox_done", project?: string, ids: Array<string>, all: boolean, } | { "op": "ticker_tick" } | { "op": "mission_list", project: string | null, } | { "op": "mission_show", project?: string, name: string, } | { "op": "mission_approve", project?: string, name: string, approval_sha256: string, } | { "op": "mission_reject", project?: string, name: string, } | { "op": "mission_start", project?: string, name: string, } | { "op": "mission_stop", project?: string, name: string, } | { "op": "mission_pause", project?: string, name: string, } | { "op": "mission_resume", project?: string, name: string, } | { "op": "mission_reload", project?: string, name: string, } | { "op": "mission_restart", project?: string, name: string, } | { "op": "mission_open", project?: string, name: string, } | { "op": "routines", project?: string, } | { "op": "automation_approve", project?: string, name: string, approval_sha256: string, } | { "op": "automation_convert", project?: string, dry_run?: boolean, plan_sha256?: string, } | { "op": "automation_unblock", project?: string, name: string, batch: string, discard: boolean, } | { "op": "routine_runs", project?: string, name: string, } | { "op": "routine_approve", project?: string, name: string, command_sha256: string, } | { "op": "routine_toggle", project?: string, name: string, on: boolean | null, } | { "op": "events", project: string | null, after: bigint, limit: number | null, } | { "op": "evaluator_assign", project?: string, profile: string, machine: string | null,
 /**
  * 개선을 직접 고칠 repo(없으면 repo 없는 작업 폴더)
  */
@@ -487,7 +487,19 @@ omitted_open: number,
 /**
  * 응답 크기 한도로 싣지 못한 끝낸 항목 수(`all`, 실은 것은 최근 것부터다)
  */
-omitted_done: number, } | { "kind": "ticker", runs: bigint, } | { "kind": "routines", routines: Array<RoutineView>, } | { "kind": "automation_converted", files: Array<string>, } | { "kind": "routine_runs", runs: Array<RoutineRun>, } | { "kind": "library" } & LibraryView | { "kind": "library_link" } & LinkView | { "kind": "library_reports", reports: Array<LibraryReport>, } | { "kind": "library_imported", reports: Array<LibraryReport>, skipped: Array<LibrarySkip>, } | { "kind": "library_pruned", removed: Array<string>, } | { "kind": "library_prune_preview" } & LibraryPrunePlan | { "kind": "library_rotated" } | { "kind": "library_usage", size: number, reports: number, live: number, problems: number, max_size: number, max_days: number, protected_size: number, } | { "kind": "library_links", links: Array<LinkView>, } | { "kind": "evaluators", evaluators: Array<EvaluatorView>, } | { "kind": "evaluations", evaluations: Array<EvaluationView>, } | { "kind": "evaluation" } & EvaluationView | { "kind": "preferences" } & SharedPreferences;
+omitted_done: number, } | { "kind": "ticker", runs: bigint, } | { "kind": "routines", routines: Array<RoutineView>, } | { "kind": "automation_converted", files: Array<string>,
+/**
+ * 쓰지 않은 계획이다(FRONT_API 1.58). `files`는 실제 변환과 같은 모양(새 파일과 `.converted/` 보존 사본)이다.
+ */
+dry_run: boolean,
+/**
+ * 계획 hash. 실행 요청에 실어 보내면 그 사이 바뀐 계획을 거부한다.
+ */
+plan_sha256: string, } | { "kind": "routine_runs", runs: Array<RoutineRun>,
+/**
+ * 파일 원문(FRONT_API 1.58). 임무 조건·깨진 파일·옛 host는 없다.
+ */
+source: RoutineSource | null, } | { "kind": "library" } & LibraryView | { "kind": "library_link" } & LinkView | { "kind": "library_reports", reports: Array<LibraryReport>, } | { "kind": "library_imported", reports: Array<LibraryReport>, skipped: Array<LibrarySkip>, } | { "kind": "library_pruned", removed: Array<string>, } | { "kind": "library_prune_preview" } & LibraryPrunePlan | { "kind": "library_rotated" } | { "kind": "library_usage", size: number, reports: number, live: number, problems: number, max_size: number, max_days: number, protected_size: number, } | { "kind": "library_links", links: Array<LinkView>, } | { "kind": "evaluators", evaluators: Array<EvaluatorView>, } | { "kind": "evaluations", evaluations: Array<EvaluationView>, } | { "kind": "evaluation" } & EvaluationView | { "kind": "preferences" } & SharedPreferences;
 
 export type FrontEvent = { "ev": "state", machines: Array<MachineView>, panes: Array<PaneView>, } | { "ev": "workspace" } & Workspace | { "ev": "flow" } & FlowEvent | { "ev": "thread" } & ThreadView | { "ev": "question" } & QuestionView | { "ev": "preferences" } & SharedPreferences | { "ev": "pong", id: number, } | { "ev": "web", build: string, } | { "ev": "reports", unseen: number, } | { "ev": "app_badge", count: number, } | { "ev": "rollout", result: Outcome<RolloutCard | null>, } | { "ev": "notice" } & NoticeView | { "ev": "chat_changed", pane: string, signature: string, } | { "ev": "chat_watching", pane: string, live: boolean, };
 
@@ -947,13 +959,47 @@ no_coordinator: number,
 /**
  * 파일을 읽지 못했다
  */
-error: string | null, };
+error: string | null,
+/**
+ * 내구 입력 큐(FRONT_API 1.58). 옛 host는 생략한다.
+ */
+queue: AutomationQueue | null, };
 
 export type RoutineRun = { id: string, at_ms: number,
 /**
  * done / skipped / waiting / failed
  */
 status: string, detail: string, thread: string | null, };
+
+export type AutomationQueue = {
+/**
+ * 아직 보내지 않은 입력 수
+ */
+pending: number, inflight: AutomationInflight | null, };
+
+export type AutomationInflight = {
+/**
+ * 사람이 본 묶음. 풀 때 이 값을 실어 보낸다.
+ */
+id: string, events: number,
+/**
+ * 묶음 첫 입력이 들어온 때
+ */
+at_ms: number,
+/**
+ * `do.message` 대상 thread(주인 thread면 그 사건의 thread)
+ */
+thread: string | null,
+/**
+ * 보냈는지 모른다: 자동으로 다시 보내지 않고 사람 확인을 기다린다
+ */
+unknown: boolean, };
+
+export type RoutineSource = { file: string, text: string, sha256: string,
+/**
+ * `text_file`·`brief_file`이 가리키는 본문
+ */
+body_file: string | null, body: string, truncated: boolean, };
 
 export type LibraryFile = {
 /**
