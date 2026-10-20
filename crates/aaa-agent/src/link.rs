@@ -60,7 +60,7 @@ pub async fn run(agent: Arc<Agent>, target: Target, max_backoff: Duration) {
             },
             Err(e) => tracing::debug!("host 연결 실패({target}): {e:#}"),
         }
-        agent.set_host(None, false);
+        agent.set_host(None);
         if started.elapsed() > Duration::from_secs(10) {
             backoff = Duration::from_millis(250);
         }
@@ -137,7 +137,9 @@ async fn session(agent: &Arc<Agent>, stream: LocalStream) -> Result<()> {
     let (r, w) = tokio::io::split(stream);
     let tx = spawn_writer(w, MAX_FRAME);
     let mut rx = FrameRx::new(r, MAX_FRAME);
-    tx.json(&LinkMsg::Hello(hello(agent))).await?;
+    let hello = hello(agent);
+    let sent_harness = hello.harness.clone();
+    tx.json(&LinkMsg::Hello(hello)).await?;
     let first: LinkMsg =
         tokio::time::timeout(Duration::from_secs(10), rx.control()).await.context("welcome 대기")??;
     let (health, replay, host_identity) = match first {
@@ -151,7 +153,7 @@ async fn session(agent: &Arc<Agent>, stream: LocalStream) -> Result<()> {
             agent
                 .host_recovery
                 .store(w.features.iter().any(|f| f == "rollout_recovery.v1"), std::sync::atomic::Ordering::Relaxed);
-            // harness_hello.v1: host가 hello의 harness 사건을 읽었다. 옛 host에는 연결 뒤 다시 보낸다
+            // harness_hello.v1: host가 Hello의 사건을 읽었다. 새 host에는 그 뒤 변경분, 옛 host에는 최신 기억 전체를 보낸다
             (
                 w.features.iter().any(|f| f == "health.v1"),
                 !w.features.iter().any(|f| f == "harness_hello.v1"),
@@ -162,16 +164,6 @@ async fn session(agent: &Arc<Agent>, stream: LocalStream) -> Result<()> {
         other => bail!("예상하지 못한 응답: {other:?}"),
     };
     agent.host_health.store(health, std::sync::atomic::Ordering::Relaxed);
-    agent.set_host(Some(tx.clone()), replay);
-    if let Some(identity) = host_identity {
-        agent.observe_guards(aaa_proto::DeployService::Host, identity).await;
-    }
-    agent.observe_guards(aaa_proto::DeployService::Agent, agent.deployments.runtime_identity()).await;
-    agent.replay_posts().await;
-    let cached = agent.health.lock().unwrap().clone();
-    if let Some(h) = cached {
-        agent.send_health(h).await;
-    }
     let pinger = {
         let tx = tx.clone();
         tokio::spawn(async move {
@@ -185,9 +177,46 @@ async fn session(agent: &Arc<Agent>, stream: LocalStream) -> Result<()> {
             }
         })
     };
+    // 큰 replay도 전송 backpressure에 막힐 수 있다. 그동안 EOF·기존 응답 상한과 요청 처리를 계속한다.
+    let initialize = async {
+        {
+            // Hello의 스냅샷 뒤 Welcome을 기다리는 동안에도 감지·hook은 기억을 갱신한다.
+            // 상태 사건은 replay 뒤에 세우되 일반 요청 응답은 Welcome 직후부터 보낸다.
+            let _delivery = agent.harness_delivery.lock().await;
+            agent.set_host(Some(tx.clone()));
+            let compacting = agent.host_compacting.load(std::sync::atomic::Ordering::Relaxed);
+            for ev in agent.harness_events().into_iter().filter(|ev| replay || !sent_harness.contains(ev)) {
+                tx.json(&LinkMsg::Event(aaa_proto::AgentEvent::Harness(super::for_host(ev, compacting)))).await?;
+            }
+        }
+        if let Some(identity) = host_identity {
+            agent.observe_guards(aaa_proto::DeployService::Host, identity).await;
+        }
+        agent.observe_guards(aaa_proto::DeployService::Agent, agent.deployments.runtime_identity()).await;
+        agent.replay_posts().await;
+        let cached = agent.health.lock().unwrap().clone();
+        if let Some(h) = cached {
+            agent.send_health(h).await;
+        }
+        Ok::<(), anyhow::Error>(())
+    };
+    tokio::pin!(initialize);
+    let mut initialized = false;
+    let mut deadline = tokio::time::Instant::now() + DEAD_AFTER;
+    let mut replies = tokio::task::JoinSet::new();
     let result = async {
         loop {
-            let next = tokio::time::timeout(DEAD_AFTER, rx.next()).await;
+            while replies.try_join_next().is_some() {}
+            let next = tokio::select! {
+                biased;
+                ready = &mut initialize, if !initialized => {
+                    ready?;
+                    initialized = true;
+                    continue;
+                }
+                next = tokio::time::timeout_at(deadline, rx.next()) => next,
+            };
+            deadline = tokio::time::Instant::now() + DEAD_AFTER;
             match next {
                 Err(_) => bail!("{}초 동안 host 응답이 없다", DEAD_AFTER.as_secs()),
                 Ok(Err(e)) => return Err(e.into()),
@@ -198,7 +227,11 @@ async fn session(agent: &Arc<Agent>, stream: LocalStream) -> Result<()> {
                         tokio::spawn(agent.clone().handle_deadline(id, body, deadline_ms, Some(tx.clone())));
                     }
                     Ok(LinkMsg::Ping { seq }) => {
-                        let _ = tx.json(&LinkMsg::Pong { seq }).await;
+                        // 느린 상대의 답 전송이 EOF·응답 상한 읽기를 막지 않게 한다.
+                        let tx = tx.clone();
+                        replies.spawn(async move {
+                            let _ = tx.json(&LinkMsg::Pong { seq }).await;
+                        });
                     }
                     Ok(LinkMsg::Pong { .. }) => {}
                     Ok(LinkMsg::Reject(e)) => bail!("host가 연결을 끊었다: {e}"),
@@ -210,6 +243,7 @@ async fn session(agent: &Arc<Agent>, stream: LocalStream) -> Result<()> {
     }
     .await;
     pinger.abort();
+    replies.abort_all();
     result
 }
 
@@ -269,6 +303,175 @@ mod post_tests {
     use super::*;
     use aaa_common::util;
     use aaa_proto::{HostWelcome, PostInput, PostType};
+    /// Hello를 읽은 뒤 Welcome을 보류한다. 그 사이 화면 감지가 기억한 idle은 연결 뒤 반드시 전달되고,
+    /// Hello를 읽는 host에는 이미 받은 진행 사건을 중복해서 보내지 않는다. Ping/Pong이 전달 완료 울타리다.
+    #[tokio::test]
+    async fn harness_changes_while_waiting_for_welcome_reach_the_host() {
+        use aaa_proto::{AgentEvent, HarnessEvent};
+        for reads_hello in [true, false] {
+            let path = std::env::temp_dir().join(format!("aap-link-{}", util::new_id()));
+            let agent = Agent::new(path.clone(), "m".into(), "mac-a".into(), true, None).unwrap();
+            util::ensure_private_dir(&path.join("sessions/s")).unwrap();
+            let event = |kind: &str, at_ms| HarnessEvent {
+                session: "s".into(),
+                harness: "claude".into(),
+                kind: kind.into(),
+                harness_session: None,
+                message: None,
+                question_kind: None,
+                percent: None,
+                at_ms,
+                transcript: None,
+                plan: None,
+                background: None,
+                context: None,
+            };
+            let working = event("turn_start", 1);
+            let mut report = event("progress", 2);
+            report.harness = "report".into();
+            agent.harness_event(working.clone()).await;
+            agent.harness_event(report.clone()).await;
+            let (stream, peer) = tokio::io::duplex(1 << 20);
+            let running = tokio::spawn({
+                let agent = agent.clone();
+                async move { session(&agent, Box::new(stream)).await }
+            });
+            let (r, w) = tokio::io::split(peer);
+            let tx = spawn_writer(w, MAX_FRAME);
+            let mut rx = FrameRx::new(r, MAX_FRAME);
+            let LinkMsg::Hello(h) = rx.control().await.unwrap() else { panic!("hello가 없다") };
+            assert_eq!(h.harness, vec![working, report.clone()]);
+            // 실제 화면 감지 진입점을 마친 뒤에만 Welcome을 보낸다. 부하나 sleep에 기대지 않는다.
+            let idle = event("idle", 3);
+            agent.harness_event(idle.clone()).await;
+            tx.json(&LinkMsg::Welcome(HostWelcome {
+                identity: None,
+                proto: AGENT_LINK,
+                host_id: "host".into(),
+                features: if reads_hello { vec!["harness_hello.v1".into()] } else { vec![] },
+            }))
+            .await
+            .unwrap();
+            tx.json(&LinkMsg::Ping { seq: 42 }).await.unwrap();
+            let mut received = vec![];
+            loop {
+                match tokio::time::timeout(Duration::from_secs(3), rx.control::<LinkMsg>()).await.unwrap().unwrap() {
+                    LinkMsg::Event(AgentEvent::Harness(ev)) => received.push(ev),
+                    LinkMsg::Pong { seq: 42 } => break,
+                    other => panic!("예상하지 못한 사건: {other:?}"),
+                }
+            }
+            let expected = if reads_hello { vec![idle] } else { vec![report, idle] };
+            assert_eq!(received, expected, "Hello와 Welcome 사이의 idle이 빠졌다(reads_hello={reads_hello})");
+            // 연결 뒤 같은 밀리초에 바뀐 상태도 replay보다 뒤에 전달된다.
+            let live = event("working", 3);
+            agent.harness_event(live.clone()).await;
+            assert_eq!(rx.control::<LinkMsg>().await.unwrap(), LinkMsg::Event(AgentEvent::Harness(live)));
+            drop(tx);
+            drop(rx);
+            running.await.unwrap().unwrap();
+            std::fs::remove_dir_all(path).unwrap();
+        }
+    }
+
+    /// 작은 실제 전송 버퍼와 여러 pane의 변경분으로 replay를 멈춘 뒤 live hook을 함께 진행한다.
+    /// hook은 기억하지 않는 prompt_submit이라 replay 뒤 live 전송이 열리기 전에 실행되면 영원히 빠진다.
+    #[tokio::test]
+    async fn live_hook_waits_for_the_replay_to_finish() {
+        use aaa_proto::{AgentEvent, HarnessEvent};
+        for close_during_replay in [false, true] {
+            let path = std::env::temp_dir().join(format!("aap-link-{}", util::new_id()));
+            let agent = Agent::new(path.clone(), "m".into(), "mac-a".into(), true, None).unwrap();
+            let (stream, peer) = tokio::io::duplex(64);
+            let running = tokio::spawn({
+                let agent = agent.clone();
+                async move { session(&agent, Box::new(stream)).await }
+            });
+            let (r, w) = tokio::io::split(peer);
+            let tx = spawn_writer(w, MAX_FRAME);
+            let mut rx = FrameRx::new(r, MAX_FRAME);
+            let LinkMsg::Hello(h) = rx.control().await.unwrap() else { panic!("Hello가 없다") };
+            assert!(h.harness.is_empty());
+            let event = |session: String, kind: &str| HarnessEvent {
+                session,
+                harness: "claude".into(),
+                kind: kind.into(),
+                harness_session: None,
+                message: None,
+                question_kind: None,
+                percent: None,
+                at_ms: 3,
+                transcript: None,
+                plan: None,
+                background: None,
+                context: None,
+            };
+            // 전송 큐보다 많은 기억을 입력 fixture로 둔다. 디스크 저장은 위 회귀·실제 E2E가 맡고,
+            // 이 owner는 전송 backpressure와 live hook의 순서만 본다.
+            *agent.harness_last.lock().unwrap() = (0..600)
+                .map(|n| {
+                    let id = format!("s{n}");
+                    (id.clone(), vec![event(id, "idle")])
+                })
+                .collect();
+            tx.json(&LinkMsg::Welcome(HostWelcome {
+                identity: None,
+                proto: AGENT_LINK,
+                host_id: "host".into(),
+                features: vec!["harness_hello.v1".into()],
+            }))
+            .await
+            .unwrap();
+            let first = rx.control::<LinkMsg>().await.unwrap();
+            assert!(matches!(first, LinkMsg::Event(AgentEvent::Harness(_))));
+            if close_during_replay {
+                // Ping 답도 full 큐에서 기다린다. write half만 닫고 읽기 half와 큐는 그대로 둔다.
+                tx.json(&LinkMsg::Ping { seq: 99 }).await.unwrap();
+                drop(tx);
+                tokio::time::timeout(Duration::from_secs(3), running)
+                    .await
+                    .expect("replay 중 EOF를 읽지 못했다")
+                    .unwrap()
+                    .unwrap();
+                drop(rx);
+                std::fs::remove_dir_all(path).unwrap();
+                continue;
+            }
+            let live = event("s0".into(), "prompt_submit");
+            let (_, _, received) = tokio::time::timeout(Duration::from_secs(3), async {
+                tokio::join! {
+                    biased;
+                    // 실제 요청 owner를 replay drain보다 먼저 진행한다. NotFound 응답도 잃으면 안 된다.
+                    agent.clone().handle("screen".into(), aaa_proto::AgentRequest::Screen { session: "missing".into() }),
+                    agent.harness_event(live.clone()),
+                    async {
+                        let mut received = vec![first];
+                        while received.len() < 602 {
+                            received.push(rx.control::<LinkMsg>().await.unwrap());
+                        }
+                        received
+                    }
+                }
+            })
+            .await
+            .expect("replay 도중 Screen 응답 또는 live hook이 빠졌다");
+            assert!(
+                received.iter().any(|m| matches!(m, LinkMsg::Res { id, result: aaa_proto::Outcome::Err(e) }
+                if id == "screen" && e.code == aaa_proto::ErrorCode::NotFound)),
+                "{received:?}"
+            );
+            assert_eq!(
+                received.last(),
+                Some(&LinkMsg::Event(AgentEvent::Harness(live))),
+                "replay 도중 live hook이 앞질렀다"
+            );
+            drop(tx);
+            drop(rx);
+            running.await.unwrap().unwrap();
+            std::fs::remove_dir_all(path).unwrap();
+        }
+    }
+
     #[tokio::test]
     async fn post_feature_is_negotiated_and_old_host_receives_no_post() {
         let path = std::env::temp_dir().join(format!("aap-link-{}", util::new_id()));

@@ -234,13 +234,61 @@ fn stale_working_left_by_hooks_turns_idle_from_the_screen() {
     wait_for("host2 준비", T, || h.json(&["status"]).ok());
     let mut ev = lab::Events::connect(&h);
     let t1 = lab::now_ms();
+    // 재연결의 Hello는 옛 Working을 싣고, 실제 화면 감지는 Welcome 전에 Idle을 기억하게 한다.
+    // 부하로 우연히 벌어지던 순서를 실험실 UDS 중계로 고정한다. 운영 설정·감지 시한은 바꾸지 않는다.
+    let socket = h.state.join("host/agent.sock");
+    let upstream = h.state.join("host/gated.sock");
+    std::fs::rename(&socket, &upstream).unwrap();
+    let listener = std::os::unix::net::UnixListener::bind(&socket).unwrap();
+    listener.set_nonblocking(true).unwrap();
+    let (hello_tx, hello_rx) = std::sync::mpsc::channel();
+    let (release_tx, release_rx) = tokio::sync::oneshot::channel();
+    let (stop_tx, stop_rx) = tokio::sync::oneshot::channel();
+    let proxy = std::thread::spawn(move || {
+        let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
+        rt.block_on(async move {
+            use aaa_proto::{LinkMsg, MAX_FRAME, read_frame, write_frame};
+            let listener = tokio::net::UnixListener::from_std(listener).unwrap();
+            let (mut agent, _) = listener.accept().await.unwrap();
+            let mut host = tokio::net::UnixStream::connect(&upstream).await.unwrap();
+            // 이후 CLI는 정본 socket에 직접 붙는다. 이 agent 연결 하나만 중계한다.
+            std::fs::remove_file(&socket).unwrap();
+            std::fs::rename(&upstream, &socket).unwrap();
+            let hello = read_frame(&mut agent, MAX_FRAME).await.unwrap().unwrap();
+            let LinkMsg::Hello(h) = serde_json::from_slice(&hello.payload).unwrap() else {
+                panic!("Hello가 아니다")
+            };
+            write_frame(&mut host, hello.kind, &hello.payload, MAX_FRAME).await.unwrap();
+            hello_tx.send(h).unwrap();
+            let welcome = read_frame(&mut host, MAX_FRAME).await.unwrap().unwrap();
+            assert!(matches!(serde_json::from_slice::<LinkMsg>(&welcome.payload).unwrap(), LinkMsg::Welcome(_)));
+            if release_rx.await.is_err() {
+                return;
+            }
+            write_frame(&mut agent, welcome.kind, &welcome.payload, MAX_FRAME).await.unwrap();
+            tokio::select! {
+                result = tokio::io::copy_bidirectional(&mut agent, &mut host) => { result.unwrap(); }
+                _ = stop_rx => {}
+            }
+        });
+    });
     lab.spawn("agent2", &h, &["agent", "--host", "local", "--name", "labA"]);
+    let hello = hello_rx.recv_timeout(T).unwrap();
+    assert!(hello.harness.iter().any(|e| e.session == id && e.kind == "turn_start"), "{hello:?}");
+    wait_for("Welcome 전 화면 감지 Idle 기억", T, || {
+        let kept: Vec<aaa_proto::HarnessEvent> = serde_json::from_slice(&std::fs::read(&file).ok()?).ok()?;
+        kept.iter().any(|e| e.session == id && e.kind == "idle" && e.at_ms >= t1).then_some(())
+    });
+    release_tx.send(()).unwrap();
     idle_after(&mut ev, "새 agent가 화면으로 idle", &id, t1);
     let a = h.pane(&id)["agent"].clone();
     assert_eq!((a["harness"].as_str(), a["activity"].as_str()), (Some("claude"), Some("idle")), "{a}");
     // 바로잡은 상태를 기억한다: 다시 떠도 옛 「작업 중」이 돌아오지 않는다
     let kept = std::fs::read_to_string(&file).unwrap();
     assert!(kept.contains("\"idle\"") && !kept.contains("turn_start"), "{kept}");
+    stop_tx.send(()).unwrap();
+    proxy.join().unwrap();
+    lab.kill("agent2");
 }
 
 /// pane 안 Codex가 낸 것처럼 notify 사건 셋을 보내고, 하나 보낼 때마다 진행 보고로 끝을 알린다. `$1`은 aaa 실행 파일이다.
