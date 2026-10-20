@@ -1,4 +1,4 @@
-// 상태 정본은 host DB다. 웹은 받은 요약만 표시하며 배포 요청을 보내지 않는다.
+// 상태 정본은 host DB다. 웹은 받은 요약만 표시한다. 이 카드는 배포 요청을 보내지 않는다(시작은 설정 「배포」, 관리 GUI W6a).
 import { useId, useState } from "react";
 import { ChevronDown, ChevronUp } from "lucide-react";
 import type { Outcome, RolloutCard as Card, RolloutPhase, RolloutState, DeployGuardPhase } from "./gen/proto";
@@ -17,12 +17,12 @@ const recovery: Record<DeployGuardPhase, string> = {
   restarting: "이전 판 재시작 중", awaiting_old: "이전 실행 확인 중", restored: "이전 실행 확인 완료",
   failed: "복구 확인 필요", cancelled: "설치 전 중단", verified_new: "새 실행 확인 완료",
 };
-export function RolloutCard({ snapshot, connected }: { snapshot: RolloutSnapshot; connected: boolean }) {
+export function RolloutCard({ snapshot, connected, help = true }: { snapshot: RolloutSnapshot; connected: boolean; help?: boolean }) {
   const card = snapshot && "ok" in snapshot ? snapshot.ok : null;
   // 접기는 이 화면의 표시 상태뿐이다. 새 배포·상태 전이는 다시 펼치며, 실패·복구는 접기 단추를 두지 않는다.
-  return <RolloutStatus key={`${card?.id}/${card?.state}`} snapshot={snapshot} connected={connected} />;
+  return <RolloutStatus key={`${card?.id}/${card?.state}`} snapshot={snapshot} connected={connected} help={help} />;
 }
-function RolloutStatus({ snapshot, connected }: { snapshot: RolloutSnapshot; connected: boolean }) {
+function RolloutStatus({ snapshot, connected, help }: { snapshot: RolloutSnapshot; connected: boolean; help: boolean }) {
   const card = snapshot && "ok" in snapshot ? snapshot.ok : null;
   const [folded, setFolded] = useState(false);
   const detailsId = useId();
@@ -63,7 +63,7 @@ function RolloutStatus({ snapshot, connected }: { snapshot: RolloutSnapshot; con
         <dt>마지막 변경</dt><dd>{new Date(card.updated_ms).toLocaleString()}</dd>
       </dl></details>
     </>}
-    <p className="rollout-help">배포 시작은 coordinator에게 요청하세요.</p>
+    {help && <p className="rollout-help">배포 시작은 설정 「배포」(조작 기기)나 coordinator에게 요청하세요.</p>}
     </div>
   </section>;
 }

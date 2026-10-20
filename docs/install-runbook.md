@@ -267,7 +267,7 @@ aaa safety set demo coordinator_deploy on
 
 `demo`는 프로젝트 이름이다. `[safety.demo] coordinator_deploy = true`를 host 설정에 기록한다. yolo나 project.toml은 이 허용을 켜지 않는다. 끄려면 `aaa safety set demo coordinator_deploy off`다. 변경은 다음 요청부터 적용하며, 이전 배포 기록 조회는 계속된다. 같은 OS 계정의 파일 접근 자체를 격리하는 sandbox는 아니다.
 
-사용자가 **채팅에서 배포를 지시했을 때만** 그 프로젝트의 host 머신 coordinator가 실행한다. thread·평가자·임의 셸 pane·웹 Controller에는 배포 권한을 주지 않는다. host는 socket peer PID로 coordinator 소속을 정하므로 세션 환경변수를 지우거나 coordinator ID를 신고해도 허용되지 않는다.
+사용자가 **채팅에서 배포를 지시했을 때만** 그 프로젝트의 host 머신 coordinator가 실행한다. thread·평가자·임의 셸 pane에는 배포 권한을 주지 않는다(웹 조작 기기의 시작은 아래 「웹에서 배포·재시작」, coordinator_deploy와 별개다). host는 socket peer PID로 coordinator 소속을 정하므로 세션 환경변수를 지우거나 coordinator ID를 신고해도 허용되지 않는다.
 
 커밋 빌드 채널은 한 번 빌드해 같은 파일을 배포한다. 공개판은 기존 release tag/manifest 경로다.
 
@@ -314,7 +314,18 @@ L3는 모든 대상의 `rollout_recovery.v1`과 host/로컬 agent의 배포 전 
 
 ### 웹에서 배포 상태 보기(L4)
 
-머신 패널의 배포 카드는 연결된 Reader·Controller 모두 볼 수 있다. 전송/사전검사/교체/재접속과 복구를 따로 보며, 「배포 실패 · 복구 완료」는 배포 성공이 아니다. 단절 때 마지막 수신 상태임을 표시하고 다시 연결하면 host DB의 최신 기록을 받는다. 「검증 정보」의 전체 ID/후보·복구 SHA와 오류를 보존해 coordinator의 같은 ID 조회·정확 SHA 복구 절차로 이어 간다. 카드에서는 시작·중단·수동 되돌리기를 하지 않는다. 종료 결과는 앱 안과 coordinator inbox에만 알린다.
+머신 패널의 배포 카드는 연결된 Reader·Controller 모두 볼 수 있다. 전송/사전검사/교체/재접속과 복구를 따로 보며, 「배포 실패 · 복구 완료」는 배포 성공이 아니다. 단절 때 마지막 수신 상태임을 표시하고 다시 연결하면 host DB의 최신 기록을 받는다. 「검증 정보」의 전체 ID/후보·복구 SHA와 오류를 보존해 coordinator의 같은 ID 조회·정확 SHA 복구 절차로 이어 간다. 카드에서는 시작·중단·수동 되돌리기를 하지 않는다(시작은 설정 「배포」). 종료 결과는 앱 안과 coordinator inbox에만 알린다.
+
+### 웹에서 배포·재시작(관리 GUI W6a, FRONT_API 1.82)
+
+조작 기기의 설정 「배포」에서 한다. 보기 전용 기기는 기록만 본다. 먼저 이 API를 아는 host·agent(빌드 머신에 `deploy_candidate.v1`)를 기존 절차로 반영한다.
+
+1. 빌드 머신에서 `scripts/deploy-build.sh <커밋> --out ~/aaa-candidate`로 후보를 만든다(웹은 실행 파일을 올리지 않는다).
+2. 「새 배포」에서 빌드 머신과 후보 경로(`~/aaa-candidate/aaa` 또는 절대 경로)를 넣고 대상 머신을 고른 뒤 「점검」한다. 빌드 머신 agent가 `provenance.json`의 SHA·커밋을 파일과 대조하고 dry-run(self-check·판 고정)을 돌린다. 화면은 SHA 전체·판·커밋·크기와 대상 순서(host 먼저)·머신마다 준비 여부를 보인다. SHA는 사람이 치지 않는다.
+3. 「배포 시작…」 확인 창 하나로 시작한다. 점검한 뒤 후보·대상을 바꾸면 다시 점검해야 열린다. rollout ID는 보내기 전에 화면에 나온다. 이후는 위 L2·L3과 같다(모든 대상 전송·사전 검사 뒤 host부터 교체, 새 판이 확인되지 않으면 그 머신 복구). 웹 승인은 사람 터미널처럼 그 rollout 끝까지 남고 coordinator_deploy를 바꾸지 않는다.
+4. 화면이 끊기거나 host가 재시작해도 「배포 기록」에서 같은 rollout ID의 상태를 다시 읽는다. 웹에는 표시용 요약만 간다(실행기 오류 원문·경로·actor는 coordinator의 배포 기록에만).
+
+「서비스 재시작」은 연결된 머신마다 agent(host 머신은 host도)를 확인 창 뒤 감독자(launchd)로 다시 띄운다. 실행 파일은 바꾸지 않는다. 진행 중 rollout이 있으면 거부한다. 최근 재시작·coordinator 개별 작업은 상태(머신이 끊겼으면 「상태 모름」)와 함께 보인다. 아직 독립 복구 감시(guard) 밖이다(W6c에서 guard 아래로 옮긴다).
 
 ### 사람 터미널에서 rollout 시작(L5)
 

@@ -114,6 +114,9 @@ pub fn hello(agent: &Agent) -> AgentHello {
             "deploy_stage.v1".into(),
             #[cfg(target_os = "macos")]
             "rollout_recovery.v1".into(),
+            // 웹 「배포」의 빌드 후보 읽기(`AgentRequest::DeployCandidate`, 관리 GUI W6a)
+            #[cfg(target_os = "macos")]
+            "deploy_candidate.v1".into(),
             "post.v1".into(),
             "mission.v1".into(), // N-1 host의 파일 전송
             "work_files.v1".into(),
