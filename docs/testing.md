@@ -1154,3 +1154,13 @@ Claude SessionStart가 알린 격리 홈의 대화는 pane chat으로, TaskCreat
 - pause에서 주어진 이름을 무시하고 현재 프로젝트를 쓰는 결함을 심으면 다른 이름 거부 단언에서 실패한다. 원본 바이트를 복원한 뒤 같은 keeper를 다시 확인한다.
 - m13 `coordinator_flow`·`doctor_files_brings_the_coordinator_guide_to_existing_projects`·`project_lifecycle`: 새로 만들거나 doctor로 갱신하거나 이름을 바꾼 AGENTS.md에 이름 없는 pause·resume·sweep 안내가 들어간다.
 - 실험실 host·가짜 agent만 쓰며 운영 프로젝트·설정·host는 건드리지 않는다. 고정 sleep이나 새 시험 전용 제품 경로는 더하지 않는다.
+
+
+## install I5 Windows 종료 process fixture(t-0485)
+
+`install::engine::supervisor::native::tests::process_observation_rejects_completed_process_with_its_handle_still_open`은
+`cmd /D /Q /C exit 0`의 고정 token을 별도 인수로 전달한다. cmd 명령문 전체를 C argv 한 개로 감싸지 않는다.
+자식의 성공 종료·아직 열린 유효 handle의 `WAIT_OBJECT_0`·제품 `service_process_unverified`를 모두 검사하며
+고정 sleep·재시도·stdio 변경은 없다. 같은 native/상위 supervisor의 현재 image·SID·profile·SCM 읽기와
+Unicode argv 왕복 owner도 Windows cargo test에 남긴다. 이들은 Win32 전용이며 실제 실행은 main push 뒤 windows-2025,
+macOS gate·Windows cross compile 결과와 별도로 보고한다. SCM 실제 logon·UAC/LSA는 실기 인수 경계다.

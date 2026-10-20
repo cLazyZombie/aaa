@@ -6400,3 +6400,17 @@ L4 후속(10-20 00시 사용자 관찰): 멈춤 상태의 후보 예약과 재�
   - 웹 E2E 53은 확인 필요 post를 올린 뒤 알림함 배지가 그대로이고 알림함 목록에 없으며 「답할 것 열기」가 「답할 것」 화면을 여는지 본다. 웹 유닛 `operateModel.test.mjs`의 알림함 배지 수도 같다.
   - §8.329의 「같은 host http 주소(`/#report=…`)는 §8.300 그대로」는 00:4x 지시로 바뀌었다: 웹 E2E `38-chat-report-close`의 앱 보고서 주소는 이제 칩이고, 누르면 보고서 화면, 뒤로가 같은 pane인지 본다(파일 보기·새 창이 아니다). `26-activity-bar`는 패널 단추 다섯과 Home이 「답할 것」, End가 「알림함」인지 본다.
   - m13 `task_attachments_reach_a_remote_agent`의 brief 검사는 새 안내 예시 `![A안](library/a.png)`(thread 자기 library)에 걸려 첨부 경로 `](library/plan-report/`로 좁혔다.
+
+
+### 8.346 aaa install I5 Windows 종료 process fixture 인수 분리(10-21, t-0485)
+
+- **실제 실패.** Windows CI의 종료 process owner가 제품 관찰 전에 cmd 자식의 exit code 1로 실패했다.
+  CI와 같은 Rust std는 단일 `exit 0` 인수에 따옴표를 더한다. `/C` 이후는 cmd 명령문이므로
+  고정 `exit`·`0` 인수를 나눠 `/C exit 0`으로 전달한다. cmd의 원래 stderr는 null이어서
+  과거 오류 메시지는 미확인이며, 인용만으로 모든 code 1의 원인을 단정하지 않는다.
+- **보존.** 성공 종료, 유효한 열린 handle, 실제 종료 신호, `service_process_unverified` 거부를 모두 유지한다.
+  재시도·대기·기대값·stdio·production은 바꾸지 않는다. 한 handle의 신원/image 결속과 실제 현재
+  process·SCM 읽기·Unicode argv owner도 함께 점검하며 C argv와 cmd parser를 혼동하지 않는다.
+- **검증 경계.** macOS 전체 gate·Windows cross는 착지 전 판정이며 실제 Windows owner는 main push 뒤 CI다.
+  실제 SCM logon·Session 0·로그인 전 부팅·LSA·UAC는 Windows bootstrap 뒤 사용자 시험에 남는다.
+  I6 WIP는 별도 보존하며 이 후보에 포함하지 않는다.
