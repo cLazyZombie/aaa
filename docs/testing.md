@@ -720,6 +720,14 @@ L2 결함 검증은 이전 root 가져오기 생략, 재시작 전 applied 변�
 - `AAA_CHAT_FRAME_MS=25 AAA_E2E_THROTTLE=2 NODE_PATH=$(npm root -g) node web/e2e/web.e2e.mjs --spec 37 --repeat 3 --workers 3`으로 frame 점유(두 브라우저)·CPU 제한(Chromium) 아래 12조합을 반복한다. frame 점유는 시험 페이지 안에서만 돌며 context를 닫을 때 끝난다. 응답·DOM·scroll 사건과 기존 1px 단언, 300개 본문 상한, 2400개 처음 도달·400개 gap·복원·End 검사를 유지한다. 고정 sleep이나 재시도는 없다.
 - 조합별로 최신 줄·처음 도달·row40 복원·최신 gap·끝 따라가기의 경과 시간을 남겨 locator 실패 위치와 합계 상한을 구분한다. 실패하면 수신한 행 수·끝 세 행의 본문과 좌표·굴림 위치·빈 공간·오류·화면을 남겨 수신 누락과 끝 따라가기 실패를 구분한다.
 
+### E2E37 실패 산출물(t-0501)
+
+- 성공할 때는 진단 파일·추가 출력·추가 HTTP 요청·대기가 없다. 앞 기록 요청/응답과 논리적인 DOM 전이는 256개까지 메모리에 모은다. DOM 전이는 기존 두 animation frame 대기의 반환값으로 가져오며 frame·브라우저 왕복을 더하지 않는다. 가상 본문 mount 때마다 행을 세거나 높이를 재지 않는다.
+- 실패 지점은 기존 터미널 진단이 화면을 움직이기 전에 저장한다. 실험실 `diagnostics/pages-<browser>-<width>-<harness>/`의 `failure.json`에는 시작·실패 시각, 원래 오류, 요청 cursor·응답 before/history·첫/끝 ID·행 수·HTTP 수신 여부와 DOM 전이가 있다. `dom.json`은 실패 당시 HTML·위치·처음 표지 좌표와 남은 DOM 전이, `screen.png`는 화면, `host.log`·`agent.log`는 해당 조합 시작 이후 로그와 앞 다섯 줄이다. 인증 설정·DB·cookie는 복사하지 않고 실험실의 시작 fingerprint도 가린다.
+- renderer가 응답하지 않아도 먼저 받은 요청/응답·DOM 전이와 로그는 남는다. DOM·화면 수집이 실패하면 각각 `dom-error.txt`·`screen-error.txt`를 남긴다. 이 수집에만 별도 상한을 둔다(DOM은 기존 `inTime`의 5초 인수·6초 Node 울타리, 화면은 5초). 시험의 기존 제한·단언은 바뀌지 않는다. 단계 전체의 120초 실패도 같은 진단을 실행한다.
+- `bash scripts/ci-local.sh --only e2e --logs <폴더>`는 실패 진단을 `<폴더>/e2e-failures/aaw-<pid>/`에 복사하고 `e2e.log`에 경로를 남긴다. GitHub의 같은 명령(`--logs .`)은 `e2e.log`와 `e2e-failures/`를 `web-e2e-failure-<run>-<attempt>` artifact로 14일 보존한다. 실험실 전체는 업로드하지 않는다.
+- 산출물 점검은 첫 조합의 `처음 도달` 직후 예외를 한 번 주입해 공식 ci-local의 해당 E2E만 실패시킨다. 요청/응답·2,400행/처음이다 전이·DOM·PNG·host/agent 구간이 로그 폴더에 복사됐는지 본 뒤 소스를 bytes로 복원한다. 이 변형은 진단 경로의 검증이며 원래 간헐 실패의 재현이 아니다. 복원한 소스에서 전체 ci-local·check-public을 통과해야 한다. 다음 실제 실패의 artifact로 별도 원인 수리 thread를 연다.
+
 ### macOS 27 WebKit 끝 이동 경쟁(t-0474)
 
 - 별도로 남겼던 `기록 2800` locator 30초 실패는 제품의 끝 이동 경쟁이었다. 원본 전체 ci-local에서 WebKit 1280 Claude가 재현됐고, 2801행 수신·오류 없음·끝 세 행은 빈 가상 row인 상태였다. scrollTop 129322 / scrollHeight 334056 / clientHeight 794로 화면이 끝에서 이탈했다.
