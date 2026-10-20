@@ -4,9 +4,9 @@ use std::sync::atomic::{AtomicU32, Ordering};
 
 const CANARY: &str = "install-secret-canary-DO-NOT-PRINT";
 static SEQ: AtomicU32 = AtomicU32::new(0);
-pub(super) struct Lab(pub(super) PathBuf);
+pub(in crate::install::engine) struct Lab(pub(in crate::install::engine) PathBuf);
 impl Lab {
-    pub(super) fn new() -> Self {
+    pub(in crate::install::engine) fn new() -> Self {
         let path = std::env::temp_dir().canonicalize().unwrap().join(format!(
             "aaa-install-engine-{}-{}",
             std::process::id(),
@@ -72,13 +72,28 @@ impl Lab {
     pub(super) fn request(&self, state: &str, files: Vec<Proposed>) -> Request {
         Request { plan: self.plan(state), files, root: None, directories: Vec::new() }
     }
+    pub(in crate::install::engine) fn configured_service(&self) -> (InstallPlan, String) {
+        let mut plan = self.plan("state");
+        if cfg!(windows) {
+            plan.choices.service = Some(InstallService::WindowsScm);
+            plan.choices.service_account = Some(InstallAccount::CurrentUser);
+            plan.choices.startup = Some(InstallStartup::Auto);
+            plan.choices.service_password_source = Some(InstallPasswordSource::Prompt);
+        }
+        let plan = aaa_config::install::plan(plan.choices, plan.context).unwrap();
+        let mut tx = Transaction::create(prepare::install(plan.clone()).unwrap()).unwrap();
+        tx.run().unwrap();
+        (plan, tx.journal.id.clone())
+    }
 }
 impl Drop for Lab {
     fn drop(&mut self) {
         std::fs::remove_dir_all(&self.0).unwrap();
     }
 }
-pub(super) fn tree(path: &Path) -> BTreeMap<PathBuf, (Vec<u8>, u32, Option<std::time::SystemTime>)> {
+pub(in crate::install::engine) fn tree(
+    path: &Path,
+) -> BTreeMap<PathBuf, (Vec<u8>, u32, Option<std::time::SystemTime>)> {
     fn visit(root: &Path, path: &Path, out: &mut BTreeMap<PathBuf, (Vec<u8>, u32, Option<std::time::SystemTime>)>) {
         let meta = path.symlink_metadata().unwrap();
         out.insert(

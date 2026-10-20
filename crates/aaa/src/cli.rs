@@ -72,6 +72,14 @@ enum Cmd {
     },
     /// host backend 실행(보통 OS 감독자가 띄운다)
     Host,
+    /// (내부) SCM에서만 실행하는 고정 Windows 서비스 입구. console fallback은 없다.
+    #[command(hide = true)]
+    ServiceRun {
+        #[arg(long)]
+        context: PathBuf,
+        #[arg(long)]
+        context_sha256: String,
+    },
     /// agent backend 실행, 또는 host에 등록(enroll)
     Agent(AgentArgs),
     /// (내부) agent가 승인한 독립 복구 감시. 직접 실행 경로/명령은 받지 않는다.
@@ -1629,6 +1637,9 @@ pub fn main() -> ExitCode {
             cli.state_dir.as_deref(),
         );
     }
+    if let Cmd::ServiceRun { context, context_sha256 } = &cli.cmd {
+        return crate::install::service_dispatch(context, context_sha256);
+    }
     if let Some(name) = &cli.instance {
         // 하위 프로세스(session host·pane 안 CLI·launchd가 띄운 aaa)도 같은 인스턴스를 본다
         unsafe { std::env::set_var("AAA_INSTANCE", name) };
@@ -1675,6 +1686,7 @@ fn run(cli: Cli) -> Result<ExitCode> {
     let json = cli.json;
     match cli.cmd {
         Cmd::Install(_) => unreachable!("install은 환경 변경 전에 처리한다"),
+        Cmd::ServiceRun { .. } => unreachable!("SCM은 환경 변경 전에 연결한다"),
         Cmd::Host => {
             init_log("info");
             aaa_common::resource::raise_nofile_limit("host");
@@ -2645,6 +2657,14 @@ fn parse_minutes(s: &str) -> Result<u32> {
 }
 
 fn agent_cmd(a: AgentArgs) -> Result<ExitCode> {
+    agent_controlled(a, None, None)
+}
+
+fn agent_controlled(
+    a: AgentArgs,
+    ready: Option<tokio::sync::oneshot::Sender<()>>,
+    stop: Option<tokio::sync::watch::Receiver<bool>>,
+) -> Result<ExitCode> {
     let cfg = load_or_exit(aaa_config::load_agent(&aaa_config::paths::config_dir()))?;
     let root = aaa_config::paths::state_dir();
     // 인스턴스 폴더는 이름만큼 길다: 다른 Mac에서도 socket을 열 수 있는지 먼저 본다(plan §8.294)
@@ -2738,12 +2758,49 @@ fn agent_cmd(a: AgentArgs) -> Result<ExitCode> {
         agent.start_health(cfg.health.clone());
         let max = std::time::Duration::from_secs(cfg.reconnect.max_backoff_s);
         tokio::select! {
-            _ = aaa_agent::link::run(agent.clone(), target, max) => {}
+            _ = aaa_agent::link::run_with_ready(agent.clone(), target, max, ready) => {}
             _ = aaa_host::shutdown_signal() => tracing::info!("agent 종료(세션은 session host가 유지한다)"),
+            _ = supervised_stop(stop) => tracing::info!("서비스 agent 종료(세션은 session host가 유지한다)"),
         }
         anyhow::Ok(())
     })?;
     Ok(ExitCode::SUCCESS)
+}
+
+async fn supervised_stop(stop: Option<tokio::sync::watch::Receiver<bool>>) {
+    let Some(mut stop) = stop else { return std::future::pending().await };
+    loop {
+        if *stop.borrow_and_update() || stop.changed().await.is_err() {
+            return;
+        }
+    }
+}
+
+/// SCM의 고정 host/agent 역할만 실행한다. 임의 argv/셸을 받지 않는다.
+#[cfg(windows)]
+pub(crate) fn supervised_role(
+    role: aaa_proto::install::InstallRole,
+    ready: tokio::sync::oneshot::Sender<()>,
+    stop: tokio::sync::watch::Receiver<bool>,
+) -> Result<ExitCode> {
+    init_log("info");
+    aaa_common::resource::disable_core_dump("Windows service");
+    legacy_guard()?;
+    match role {
+        aaa_proto::install::InstallRole::Host => {
+            let cfg = load_or_exit(aaa_config::load_host(&aaa_config::paths::config_dir()))?;
+            runtime()?.block_on(async {
+                tokio::select! {
+                    result = aaa_host::run_with_ready(cfg, aaa_config::paths::state_dir(), Some(ready)) => result,
+                    _ = supervised_stop(Some(stop)) => Ok(()),
+                }
+            })?;
+            Ok(ExitCode::SUCCESS)
+        }
+        aaa_proto::install::InstallRole::Agent => {
+            agent_controlled(AgentArgs { cmd: None, host: None, name: None, dev_mode: false }, Some(ready), Some(stop))
+        }
+    }
 }
 
 /// routine 명령 승인: agent가 대신 승인하지 못하게, aaa 세션 안이거나 터미널이 아니면 거부하고 사람에게 이름을 치게 한다.

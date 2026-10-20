@@ -50,11 +50,21 @@ pub async fn connect(t: &Target) -> Result<LocalStream> {
 
 /// 끊기면 지수 backoff + jitter로 다시 연결한다. 끝나지 않는다.
 pub async fn run(agent: Arc<Agent>, target: Target, max_backoff: Duration) {
+    run_with_ready(agent, target, max_backoff, None).await
+}
+
+/// 신뢰한 host의 Welcome을 실제 처리한 뒤 감독자에 첫 연결을 알린다.
+pub async fn run_with_ready(
+    agent: Arc<Agent>,
+    target: Target,
+    max_backoff: Duration,
+    mut ready: Option<tokio::sync::oneshot::Sender<()>>,
+) {
     let mut backoff = Duration::from_millis(250);
     loop {
         let started = Instant::now();
         match connect(&target).await {
-            Ok(stream) => match session(&agent, stream).await {
+            Ok(stream) => match session_ready(&agent, stream, &mut ready).await {
                 Ok(()) => tracing::info!("host 연결이 닫혔다({target})"),
                 Err(e) => tracing::warn!("host 연결 끝: {e:#}"),
             },
@@ -133,7 +143,11 @@ pub fn hello(agent: &Agent) -> AgentHello {
     }
 }
 
-async fn session(agent: &Arc<Agent>, stream: LocalStream) -> Result<()> {
+async fn session_ready(
+    agent: &Arc<Agent>,
+    stream: LocalStream,
+    ready: &mut Option<tokio::sync::oneshot::Sender<()>>,
+) -> Result<()> {
     let (r, w) = tokio::io::split(stream);
     let tx = spawn_writer(w, MAX_FRAME);
     let mut rx = FrameRx::new(r, MAX_FRAME);
@@ -163,6 +177,9 @@ async fn session(agent: &Arc<Agent>, stream: LocalStream) -> Result<()> {
     };
     agent.host_health.store(health, std::sync::atomic::Ordering::Relaxed);
     agent.set_host(Some(tx.clone()), replay);
+    if let Some(ready) = ready.take() {
+        let _ = ready.send(());
+    }
     if let Some(identity) = host_identity {
         agent.observe_guards(aaa_proto::DeployService::Host, identity).await;
     }
@@ -290,15 +307,17 @@ mod post_tests {
         )
         .unwrap();
         let (stream, peer) = tokio::io::duplex(1 << 20);
+        let (ready, mut observed_ready) = tokio::sync::oneshot::channel();
         let running = tokio::spawn({
             let a = agent.clone();
-            async move { session(&a, Box::new(stream)).await }
+            async move { session_ready(&a, Box::new(stream), &mut Some(ready)).await }
         });
         let (r, w) = tokio::io::split(peer);
         let tx = spawn_writer(w, MAX_FRAME);
         let mut rx = FrameRx::new(r, MAX_FRAME);
         let LinkMsg::Hello(h) = rx.control().await.unwrap() else { panic!("hello가 없다") };
         assert!(h.features.iter().any(|f| f == "post.v1"));
+        assert_eq!(observed_ready.try_recv(), Err(tokio::sync::oneshot::error::TryRecvError::Empty));
         tx.json(&LinkMsg::Welcome(HostWelcome {
             identity: None,
             proto: AGENT_LINK,
@@ -307,6 +326,7 @@ mod post_tests {
         }))
         .await
         .unwrap();
+        tokio::time::timeout(Duration::from_secs(3), observed_ready).await.unwrap().unwrap();
         // Welcome 뒤 Post replay를 먼저 하고 Ping을 읽는다. Pong 앞에 모르는 post가 없어야 한다.
         tx.json(&LinkMsg::Ping { seq: 42 }).await.unwrap();
         assert_eq!(

@@ -2946,6 +2946,15 @@ impl Host {
 
 /// `aaa host` 실행
 pub async fn run(cfg: HostConfig, state_root: PathBuf) -> Result<()> {
+    run_with_ready(cfg, state_root, None).await
+}
+
+/// OS 감독자에는 실제 listener 준비 뒤에만 알린다. 서비스 등록 자체는 ready가 아니다.
+pub async fn run_with_ready(
+    cfg: HostConfig,
+    state_root: PathBuf,
+    ready: Option<tokio::sync::oneshot::Sender<()>>,
+) -> Result<()> {
     let host = Host::open(cfg, state_root.join("host"))?;
     let _ = host.config_dir.set(aaa_config::paths::config_dir());
     tracing::info!(host = %host.host_id, fp = %&host.identity.fingerprint[..16], "host 시작");
@@ -2962,6 +2971,9 @@ pub async fn run(cfg: HostConfig, state_root: PathBuf) -> Result<()> {
     host.resume_rollout();
     host.start_ticker();
     host.start_notifier();
+    if let Some(ready) = ready {
+        let _ = ready.send(());
+    }
     if host.cfg.local_agent.mode == LocalAgentMode::Child {
         let h = host.clone();
         let root = state_root.clone();
