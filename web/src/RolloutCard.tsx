@@ -1,4 +1,6 @@
 // 상태 정본은 host DB다. 웹은 받은 요약만 표시하며 배포 요청을 보내지 않는다.
+import { useId, useState } from "react";
+import { ChevronDown, ChevronUp } from "lucide-react";
 import type { Outcome, RolloutCard as Card, RolloutPhase, RolloutState, DeployGuardPhase } from "./gen/proto";
 import "./RolloutCard.css";
 export type RolloutSnapshot = Outcome<Card | null> | null;
@@ -17,9 +19,22 @@ const recovery: Record<DeployGuardPhase, string> = {
 };
 export function RolloutCard({ snapshot, connected }: { snapshot: RolloutSnapshot; connected: boolean }) {
   const card = snapshot && "ok" in snapshot ? snapshot.ok : null;
-  return <section className="rollout-card" data-testid="rollout-card" data-state={card?.state ?? "none"} aria-label="배포 상태">
-    <div className="rollout-heading"><h3>배포</h3>{card && <strong role="status">{states[card.state]}</strong>}</div>
+  // 접기는 이 화면의 표시 상태뿐이다. 새 배포·상태 전이는 다시 펼치며, 실패·복구는 접기 단추를 두지 않는다.
+  return <RolloutStatus key={`${card?.id}/${card?.state}`} snapshot={snapshot} connected={connected} />;
+}
+function RolloutStatus({ snapshot, connected }: { snapshot: RolloutSnapshot; connected: boolean }) {
+  const card = snapshot && "ok" in snapshot ? snapshot.ok : null;
+  const [folded, setFolded] = useState(false);
+  const detailsId = useId();
+  return <section className="rollout-card" data-testid="rollout-card" data-state={card?.state ?? "none"} data-updated={card?.updated_ms} aria-label="배포 상태">
+    <div className="rollout-heading"><h3>배포</h3>{card && <strong role="status">{states[card.state]}</strong>}
+      {card?.state === "done" && <button type="button" className="icon-button" aria-label={folded ? "배포 상세 펼치기" : "배포 상세 접기"}
+        title={folded ? "배포 상세 펼치기" : "배포 상세 접기"} aria-expanded={!folded} aria-controls={detailsId} onClick={() => setFolded(!folded)}>
+        {folded ? <ChevronDown aria-hidden="true" /> : <ChevronUp aria-hidden="true" />}
+      </button>}
+    </div>
     {!connected && <p className="rollout-offline" role="status">연결 끊김 · 마지막 수신 상태</p>}
+    <div id={detailsId} hidden={folded}>
     {snapshot === null ? <p>배포 기록을 읽는 중…</p> : "err" in snapshot ? <p role="alert">{snapshot.err.message}</p> : !card ? <p>배포 기록이 없습니다.</p> : <>
       <p className="rollout-version">{card.version ? `aaa ${card.version}` : "후보 검사 중"}</p>
       <p className="rollout-meta">{card.commit ? `커밋 ${card.commit.slice(0, 12)} · ` : ""}SHA {card.sha256.slice(0, 12)}</p>
@@ -49,5 +64,6 @@ export function RolloutCard({ snapshot, connected }: { snapshot: RolloutSnapshot
       </dl></details>
     </>}
     <p className="rollout-help">배포 시작은 coordinator에게 요청하세요.</p>
+    </div>
   </section>;
 }
