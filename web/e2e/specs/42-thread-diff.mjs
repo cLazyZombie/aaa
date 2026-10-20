@@ -24,10 +24,12 @@ async function openThread(p, files) {
 /** 패널이 다 읽었다(제품 표지) */
 const panelReady = (p) => domIs(p, "diff 패널 읽음", () => document.querySelector('[data-testid="diff-panel"]')?.dataset.diffStatus === "ready");
 
-/** diff 패널 머리 한 줄과 닫기 단추 자리 */
+/** diff 패널 머리 한 줄과 닫기 단추 자리. 휴대폰 sheet는 아래에서 올라온다(modal.css sheet-in): 다 올라온 뒤 잰다.
+ *  WebKit은 움직이는 동안 getBoundingClientRect 사이에도 움직임이 흘러 머리와 단추가 다른 자리로 잡힌다 */
 const panelLook = (p) =>
-  p.evaluate(() => {
+  p.evaluate(async () => {
     const panel = document.querySelector('[data-testid="diff-panel"]');
+    await Promise.all([panel, panel.closest(".modal-scrim")].flatMap((el) => el?.getAnimations() ?? []).map((a) => a.finished));
     const head = panel.querySelector(".diff-panel-head").getBoundingClientRect();
     const close = panel.querySelector(".diff-close").getBoundingClientRect();
     const box = panel.getBoundingClientRect();
