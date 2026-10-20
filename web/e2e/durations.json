@@ -30,5 +30,6 @@
   "31-render-guards": 11,
   "32-usage-limit": 14,
   "35-composer-send-height": 53,
-  "38-chat-report-close": 27
+  "38-chat-report-close": 27,
+  "41-compacting": 14
 }

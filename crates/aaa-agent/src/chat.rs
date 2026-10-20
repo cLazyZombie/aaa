@@ -337,6 +337,15 @@ fn compaction(harness: &str, v: &Value) -> Option<ChatMessage> {
     Some(ChatMessage { id: None, role: ChatRole::Compact, text: clip(&text), pending: false, receipt: None })
 }
 
+/// 기록 한 줄 → 보일 줄. 정리된 자리는 청했을 때만(`compact`)
+fn line(harness: &str, v: &Value, thinking: bool, compact: bool) -> Vec<ChatMessage> {
+    let parse: LineParser = if harness == "codex" { codex_line } else { claude_line };
+    match compaction(harness, v).filter(|_| compact) {
+        Some(m) => vec![m],
+        None => parse(v, thinking),
+    }
+}
+
 /// agent 요청 처리
 pub fn read(
     harness: &str,
@@ -347,12 +356,8 @@ pub fn read(
     before: Option<&str>,
 ) -> Result<pages::Page, String> {
     let path = path(harness, transcript, harness_session)?;
-    let parse: LineParser = if harness == "codex" { codex_line } else { claude_line };
     let failed = |e: std::io::Error| format!("기록을 읽지 못했다: {}", e.kind());
-    let mut page = pages::read(&path, before, |v| match compaction(harness, v).filter(|_| compact) {
-        Some(m) => vec![m],
-        None => parse(v, thinking),
-    })?;
+    let mut page = pages::read(&path, before, |v| line(harness, v, thinking, compact))?;
     if harness == "claude" && before.is_none() {
         page.messages.extend(claude_pending(&path).map_err(failed)?);
     }
@@ -618,10 +623,7 @@ mod tests {
         )
         .unwrap();
         let roles = |compact| -> Vec<(ChatRole, String)> {
-            pages::read(&path, None, |v| match compaction("claude", v).filter(|_| compact) {
-                Some(m) => vec![m],
-                None => claude_line(v, false),
-            })
+            pages::read(&path, None, |v| line("claude", v, false, compact))
             .unwrap()
             .messages
             .into_iter()
