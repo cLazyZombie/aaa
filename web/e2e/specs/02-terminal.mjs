@@ -344,7 +344,6 @@ process.stdin.resume();`;
     await submit("echo away", "away");
     await sized("다른 화면 크기(같이 쓰기)", otherSize, second);
     // 제품의 1초 규칙은 페이지 시계로 본다. 자동화·부하 시간이 타이머를 소비하지 않는다.
-    await op.clock.install();
     await op.clock.pauseAt(new Date());
     const beforeAway = await sentCount(op);
     await op.evaluate(() => {
