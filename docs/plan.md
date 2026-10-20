@@ -5946,3 +5946,12 @@ L4 후속(10-20 00시 사용자 관찰): 멈춤 상태의 후보 예약과 재�
 - **hash/안전.** 같은 실효 선택·같은 탐지 context는 재귀 key 정렬 compact UTF-8 JSON의 같은 SHA-256을 만든다. role·경로·공개 port·binary·요청 계정·실효 설정 hash를 묶고 yes/dry-run/출력 모드는 제외한다. 승인서 schema를 읽는 것은 권한 검증이 아니다. W0/기존 사람 전용 명령을 열지 않고 서명·발급자 pin·만료/nonce·일회 grant·worker는 I6에서 구현한다. dry-run은 암호 입력을 요구하지 않는다.
 - **참고/차이.** herdr OS/arch/checksum·사용자 bin, herdr-projects 소유 journal/동시 편집 보존, herdr-web-ui 기존 Serve 보존, t3code 데이터 보존 제거·서비스 진단을 읽었다. 자동 재시도/외부 설치기/PATH 자동 덮어쓰기는 채택하지 않으며 Windows SCM/Linux system unit은 확정 결정을 따른다.
 - **시험.** 순수 선택/필수값/상충·OS 서비스·한국어 Windows 경로·안전 env/비밀 원문 비노출·입력 모드·고정 canonical plan/hash를 검사한다. schema/TS drift와 공개/비공개 fixture·status/exit를 검사한다. 보안/hash owner 결함 주입 RED 후 bytes 복원과 GREEN을 보존한다. 공식 ci-local·deps·check-public을 실행하고 결과는 thread report/library에 남긴다. 운영 설정·서비스·launchd·계정·키체인은 변경하지 않는다.
+
+### 8.313 PR 없는 thread·gh 없는 머신의 PR 조회 생략(10-20, t-0492)
+
+- **목적:** PR 없이 main에 직접 착지하는 thread 때문에 gh 설치·로그인을 요구하거나 coordinator inbox에 장애를 쌓지 않는다. CI 감시의 조회 머신에는 기존 gh 요구와 장애 알림을 유지한다.
+- **branch 탐색:** thread 머신 agent가 원래 worktree의 origin과 `refs/remotes/origin/<branch>`를 읽는다. GitHub 원격이고 해당 원격 참조가 있을 때만 `gh pr list`를 부른다. 원격 참조는 push/fetch로 얻은 게시 근거다. 이를 확인하려고 fetch·원격 접속·인증을 새로 하지 않는다. GitHub 밖 원격·미게시 branch는 실제 조회로 세지 않는다. 사용자 정의 push 설정 등으로 로컬 원격 참조가 없다면 보고의 `PR:` 주소를 지정할 수 있다.
+- **명시한 PR:** 보고 표지 다음 줄의 `PR: https://github.com/<owner>/<repo>/pull/<number>`와 이미 찾은 PR은 원격 branch 탐색을 거치지 않고 계속 본다. 기존 PR head 소유 검사·상태 변경·pr-followup·병합 뒤 resolve 계약은 유지한다.
+- **사용 불가:** 실행 가능한 gh가 없거나 실행 시 ENOENT, gh 종료 코드 4(미인증)이면 agent가 정상 응답의 `unavailable`로 돌려준다. host는 그 pass에서 같은 머신의 남은 PR 추적을 생략하고 outage·회복 inbox를 만들지 않는다. 다음 정기 조회에서 다시 확인하며 성공하면 자동으로 사용한다. 일반 네트워크/API 실패·사라진 worktree 등은 기존 PR 장애 판정을 유지한다.
+- **상태:** `MachineView.pr_tracking`은 host 메모리의 마지막 PR 조회 결과다. `aaa doctor`는 머신마다 `PR 추적 <머신>: 사용 불가: <이유>` 또는 `사용 가능` 한 줄을 보인다. 아직 조회하지 않았거나 host를 다시 띄웠으면 아직 조회하지 않음으로 보인다. 끊긴 머신의 값도 마지막 관측값이다. CI 상태와 합치지 않는다.
+- **호환:** 기존 질문 종류를 그대로 쓰고 `PrAnswer.unavailable`·`skipped`, `MachineView.pr_tracking` 선택 필드만 더한다. 옛 agent 응답은 기존 실제 조회로 해석하고 옛 host/front는 새 필드를 버린다. gh 자격 증명 파일·토큰은 읽거나 복사하지 않는다.

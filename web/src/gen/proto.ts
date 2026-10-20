@@ -95,7 +95,11 @@ export type DeviceRole = "reader" | "controller" | "local";
 
 export type Connection = "connected" | "disconnected";
 
-export type MachineView = { id: string, name: string, local: boolean, connection: Connection, os: string | null, boot_id: string | null, dev_mode: boolean, last_seen_ms: number | null,
+export type MachineView = {
+/**
+ * 마지막 PR 조회의 머신별 사용 상태. 조회 전·옛 host는 생략한다.
+ */
+pr_tracking?: string, id: string, name: string, local: boolean, connection: Connection, os: string | null, boot_id: string | null, dev_mode: boolean, last_seen_ms: number | null,
 /**
  * 마지막 건강 보고(§8.10). 연결 중이 아니면 오래된 값이다.
  */

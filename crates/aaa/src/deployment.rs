@@ -213,6 +213,7 @@ mod tests {
                 if completes {
                     // 응답을 받는 동안 도착한 연결 사건도 FrontClient가 보존해야 한다.
                     let m = MachineView {
+                        pr_tracking: None,
                         id: "m".into(),
                         name: "mac-a".into(),
                         local: true,
