@@ -2615,6 +2615,38 @@ fn worker_session_cli_is_read_only() {
     assert!(next.contains("사람이 더한 줄") && !next.contains("thread가 더한 줄"), "{next}");
 }
 
+/// pairing은 실제 coordinator·worker pane의 프로세스 출처를 확인해 거부한다(환경 변수를 지워도 같다).
+#[test]
+fn web_pair_requires_a_person_outside_aaa_panes() {
+    let w = world();
+    let t =
+        w.start(&["--title", "pair", "--profile", "fake", "--kind", "dir", "--task-file", &w.task("pair.txt", "x")]);
+    let worker = t["pane"].as_str().unwrap();
+    let coord = w.h.new_pane(None, "labA", Some("coord"), &["/bin/sh"], Some(path_str(&w.projects.join("demo"))));
+    for (name, pane) in [("coordinator", coord.as_str()), ("worker", worker)] {
+        let out = w.lab.root.join(format!("pair-{name}.txt"));
+        let line = format!(
+            "env -u AAA_SESSION_ID -u AAA_HOOK_SOCK {} web pair > {} 2>&1; echo rc=$? >> {}",
+            lab::shell_word(lab::BIN),
+            lab::shell_word(path_str(&out)),
+            lab::shell_word(path_str(&out))
+        );
+        let line = if name == "worker" {
+            let script = w.lab.root.join("pair-probe.sh");
+            std::fs::write(&script, format!("#!/bin/sh\n{line}\n")).unwrap();
+            format!("post-probe {}", path_str(&script))
+        } else {
+            line
+        };
+        w.h.ok(&["pane", "run", pane, &line]);
+        let got =
+            wait_for("pane 안 pairing 끝", T, || std::fs::read_to_string(&out).ok().filter(|s| s.contains("rc=")));
+        assert!(got.contains("사람이 aaa 밖 터미널이나 웹에서") && got.ends_with("rc=1\n"), "{name}: {got}");
+    }
+    let outside = w.h.in_terminal(&["web", "pair"], &[], T);
+    assert!(!outside.contains("사람이 aaa 밖") && outside.contains("코드"), "{outside}");
+}
+
 /// 시험용(plan §8.164): 여러 길로 떼어 낸 뒤 나머지 인자를 실행하고, 그 프로세스와 자손이 끝날 때까지 기다렸다 끝난다.
 /// 기다림은 pipe다: 실행한 쪽이 쓰기 끝을 물려받아 모두 끝나면 읽기 쪽이 EOF를 받는다(정한 시간을 자지 않는다).
 const DETACH_PL: &str = r#"use strict;
@@ -3135,16 +3167,27 @@ fn host_starts_only_with_one_project() {
     let log = w.lab.log("host2");
     assert!(log.contains("이 host의 프로젝트") && log.contains("demo"), "{log}");
 
+    let e = w.h.json(&["project", "unarchive", "p2"]).expect_err("둘째 활성 프로젝트");
+    assert!(e.contains("demo") && e.contains("프로젝트 하나"), "{e}");
+    let all = w.h.ok(&["project", "list", "--all"]);
+    assert!(
+        all["projects"].as_array().unwrap().iter().any(|p| p["name"] == "p2" && p["status"] == "archived"),
+        "{all}"
+    );
+    // 하나를 보관하면 해제할 수 있다. 시작 검사는 옛 판이 남긴 둘째 폴더로 따로 확인한다.
+    w.h.ok(&["project", "archive", "demo"]);
     w.h.ok(&["project", "unarchive", "p2"]);
+    std::fs::create_dir_all(w.projects.join("p3")).unwrap();
+    std::fs::write(w.projects.join("p3/PROJECT.md"), "# p3\n").unwrap();
     w.lab.kill("host2");
     w.spawn_host("host3");
     assert!(!w.lab.wait_exit("host3", T).success(), "프로젝트 둘인데 host가 떴다");
     let log = w.lab.log("host3");
-    assert!(log.contains("보관하지 않은 프로젝트가 2개다: demo, p2"), "{log}");
+    assert!(log.contains("보관하지 않은 프로젝트가 2개다: p2, p3"), "{log}");
     assert!(log.contains("aaa project archive") && !log.contains("이 host의 프로젝트"), "{log}");
 
     std::fs::create_dir_all(w.projects.join(".trash")).unwrap();
-    std::fs::rename(w.projects.join("p2"), w.projects.join(".trash").join("p2-hand")).unwrap();
+    std::fs::rename(w.projects.join("p3"), w.projects.join(".trash").join("p3-hand")).unwrap();
     w.spawn_host("host4");
     let list = wait_for("하나로 줄인 뒤 host4", T, || w.h.json(&["project", "list"]).ok());
     assert_eq!(list["projects"].as_array().map(|a| a.len()), Some(1), "{list}");

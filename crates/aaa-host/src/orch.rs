@@ -671,6 +671,11 @@ pub(crate) fn write_skeleton(dir: &Path, name: &str, project_md: &str) -> std::i
 /// 표지 없는 AGENTS.md를 옮겨 두는 이름 끝(herdr-projects `.before-herdr-projects`)
 const KEPT: &str = ".before-aaa";
 
+/// 변환한 TOML도 기본 PR 규칙을 소유한다. doctor와 create가 옛 이름을 되살리지 않게 함께 본다.
+fn needs_default_followup(dir: &Path) -> bool {
+    !dir.join(crate::routine::PR_FOLLOWUP).exists() && !dir.join("automations/pr-followup.toml").exists()
+}
+
 /// 프로젝트 폴더의 aaa 파일에서 고칠 것(herdr-projects `priming_problems`). 빈 목록이면 맞다.
 /// AGENTS.md는 표지가 있으면 지금 안내와 같아야 하고, 표지가 없으면(옛 aaa·사람이 쓴 것) 옆에 옮겨 둘 것이다.
 pub(crate) fn files_problems(dir: &Path, name: &str) -> Vec<String> {
@@ -687,7 +692,7 @@ pub(crate) fn files_problems(dir: &Path, name: &str) -> Vec<String> {
     if !dir.join("uploads").is_dir() {
         problems.push("uploads/가 없다".into());
     }
-    if !dir.join(crate::routine::PR_FOLLOWUP).exists() {
+    if needs_default_followup(dir) {
         problems.push(format!("{}가 없다", crate::routine::PR_FOLLOWUP));
     }
     problems
@@ -713,7 +718,7 @@ pub(crate) fn write_files(dir: &Path, name: &str) -> std::io::Result<()> {
     }
     std::fs::create_dir_all(dir.join("uploads"))?;
     let followup = dir.join(crate::routine::PR_FOLLOWUP);
-    if !followup.exists() {
+    if needs_default_followup(dir) {
         write_atomic(&followup, crate::routine::PR_FOLLOWUP_TEMPLATE.as_bytes())?;
     }
     Ok(())
@@ -827,7 +832,7 @@ impl Host {
         // 기본 `pr` routine(herdr-projects `write_default_routine`). PROJECT.md가 마지막이 되게 뼈대보다 먼저 쓴다.
         // 옮기기(`migrate::convert`)는 0.2의 routine을 꺼서 넣으므로 여기서만 쓴다.
         let followup = dir.join(crate::routine::PR_FOLLOWUP);
-        if !followup.exists() {
+        if needs_default_followup(&dir) {
             write_atomic(&followup, crate::routine::PR_FOLLOWUP_TEMPLATE.as_bytes()).map_err(internal)?;
         }
         write_atomic(&dir.join("project.toml"), toml.as_bytes()).map_err(internal)?;

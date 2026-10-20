@@ -195,6 +195,17 @@ impl Host {
             (ProjectAction::Archive, _) => ProjectStatus::Archived,
             (ProjectAction::Resume | ProjectAction::Unarchive, _) => ProjectStatus::Active,
         };
+        if current == ProjectStatus::Archived && to != ProjectStatus::Archived {
+            match self.sole_project() {
+                Ok(None) => {}
+                Ok(Some(have)) => {
+                    return Err(bad(format!(
+                        "host는 프로젝트 하나만 맡는다: 이미 `{have}`가 있다. 먼저 보관한 뒤 `{project}`의 보관을 푼다"
+                    )));
+                }
+                Err(names) => return Err(bad(sole_project_refusal(&names))),
+            }
+        }
         let key = status_key(project);
         match to {
             ProjectStatus::Active => self.db.del_meta(&key),

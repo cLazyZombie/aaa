@@ -1,7 +1,7 @@
 // 자동화 보기의 주 경계: 실제 일정 판정 → DB 기록 → CLI/웹, 파일 enabled 편집, Reader, 휴대폰.
 import fs from "node:fs";
-import { root, aaa, step, browser, pairPage, until, domIs, drawerSettled, shot } from "../lib/harness.mjs";
-export const labEnv = { AAA_TEST_ROUTINE_SECONDS: "1" };
+import { root, aaa, step, browser, pairPage, until, domIs, drawerSettled, shot, usageRoutes } from "../lib/harness.mjs";
+export const labEnv = { AAA_TEST_ROUTINE_SECONDS: "1", AAA_TEST_USAGE_REFRESH_MS: "0" };
 let original;
 const file = () => `${root}/projects/auto-demo/routines/check.md`;
 export default async function ({ page }) {
@@ -118,6 +118,32 @@ export default async function ({ page }) {
     await dialog.waitFor({state:"hidden"});
     await domIs(page,"자동 시작 범위 승인 반영",()=>!document.querySelector('[data-testid="automation-auto-demo-start"]')?.textContent.includes("자동 시작 승인 필요"));
     if(aaa("routine","list").routines.find(r=>r.name==="start").start_approved!==true) throw new Error("승인이 내구 저장되지 않았다");
+  });
+
+  await step("사용량 확인 불가: 실제 구독 조회 실패가 규칙 대기 이유와 inbox에 나타난다", async () => {
+    usageRoutes["/api/oauth/usage"] = () => [503, {}, {}];
+    usageRoutes["/backend-api/wham/usage"] = () => [503, {}, {}];
+    await page.evaluate(async () => (await fetch("/api/v1/usage?refresh=1", { cache: "no-store" })).json());
+    const layout = aaa("tab", "create", "--machine", "labA", "--cwd", `${root}/projects/auto-demo`, "--label", "usage-coordinator", "--", "/bin/sh");
+    const coordinator = layout.tabs.at(-1).root.pane;
+    await until("일정 입력을 받을 coordinator pane", () => aaa("pane", "list").panes.some((p) => p.id === coordinator && p.cwd && fs.realpathSync(p.cwd) === fs.realpathSync(`${root}/projects/auto-demo`)));
+    fs.mkdirSync(`${root}/projects/auto-demo/automations`, { recursive: true });
+    fs.writeFileSync(`${root}/projects/auto-demo/automations/usage.toml`, '[on.schedule]\nevery="1s"\n[do.inbox]\ntext="문턱 뒤 처리"\n[limits]\nusage_session_below=5\n');
+    await until("host 사용량 확인 불가 판정", () => {
+      aaa("ticker", "tick");
+      return aaa("routine", "list").routines.some((r) => r.name === "usage" && r.last_result?.status === "waiting" && r.last_result.detail.startsWith("사용량"));
+    });
+    const waiting = aaa("routine", "list").routines.find((r) => r.name === "usage");
+    if (waiting.last_result?.detail !== "사용량 확인 불가") throw new Error(`확인 불가 이유 ${JSON.stringify(waiting.last_result)}`);
+    await page.getByRole("button", { name: "다시 읽기", exact: true }).click();
+    await domIs(page, "확인 불가 대기 표시", () => {
+      const row = document.querySelector('[data-testid="automation-auto-demo-usage"]');
+      return row?.dataset.status === "waiting" && row.textContent.includes("대기: 사용량 확인 불가");
+    });
+    const inbox = aaa("inbox", "list", "--peek").items.filter((i) => i.subject === "usage");
+    if (inbox.length !== 1 || inbox[0].event !== "usage unavailable" || !inbox[0].summary.includes("사용량 확인 불가")) throw new Error(`확인 불가 inbox ${JSON.stringify(inbox)}`);
+    await page.getByTestId("automation-auto-demo-usage").scrollIntoViewIfNeeded();
+    await shot(page, "automations-usage-unavailable");
   });
 
 }

@@ -1215,6 +1215,26 @@ impl Host {
         front: Option<&FrontRef>,
         req: FrontRequest,
     ) -> Result<FrontResponse, ErrorBody> {
+        // 기기·머신 신뢰와 공개 범위는 사람이 바꾼다. coordinator도 Local이지만 세션 안이다.
+        if matches!(
+            req,
+            FrontRequest::WebPair { .. }
+                | FrontRequest::EnrollOpen { .. }
+                | FrontRequest::EnrollApprove { .. }
+                | FrontRequest::MachineRevoke { .. }
+                | FrontRequest::DeviceRevoke { .. }
+                | FrontRequest::WebPublish
+                | FrontRequest::WebPublishOff
+        ) && (front::in_session(actor)
+            || actor.starts_with("worker:")
+            || actor.starts_with("evaluator:")
+            || actor.starts_with("detached:"))
+        {
+            return Err(err(
+                ErrorCode::Forbidden,
+                "기기·머신 등록과 폐기·웹 공개 변경은 사람이 aaa 밖 터미널이나 웹에서 한다",
+            ));
+        }
         if req.local_only() && role != DeviceRole::Local {
             return Err(err(ErrorCode::Forbidden, "이 머신의 CLI에서만 할 수 있다"));
         }
@@ -2968,6 +2988,52 @@ mod pairing_tests {
             FrontResponse::Devices { devices } => devices,
             other => panic!("{other:?}"),
         }
+    }
+
+    #[tokio::test]
+    async fn trust_management_requires_a_person_outside_the_session() {
+        let (h, _t) = host();
+        let requests = [
+            FrontRequest::WebPair { role: DeviceRole::Controller },
+            FrontRequest::EnrollOpen { minutes: 1 },
+            FrontRequest::EnrollApprove { name: "missing".into(), code: "000000".into() },
+            FrontRequest::MachineRevoke { name: "missing".into() },
+            FrontRequest::DeviceRevoke { id: "missing".into() },
+            FrontRequest::WebPublish,
+            FrontRequest::WebPublishOff,
+        ];
+        for actor in
+            ["local:cli@coordinator", "local:cli@unverified", "worker:thread", "evaluator:thread", "detached:cli"]
+        {
+            for request in &requests {
+                // actor 경계 자체가 Local 권한으로도 거부해야 한다.
+                let e = h.call(DeviceRole::Local, actor, request.clone()).await.expect_err(actor);
+                assert_eq!(e.code, ErrorCode::Forbidden, "{actor}: {request:?}: {e:?}");
+                assert!(e.message.contains("사람이 aaa 밖 터미널이나 웹에서"), "{e:?}");
+            }
+        }
+        for (role, actor) in [(DeviceRole::Local, "local:cli"), (DeviceRole::Controller, "device:person")] {
+            let code = match h.call(role, actor, requests[0].clone()).await.unwrap() {
+                FrontResponse::PairCode { code, .. } => code,
+                other => panic!("{other:?}"),
+            };
+            let (token, _) = h.redeem_pairing(&code, "person").unwrap();
+            let (id, _) = h.device_role(&token).unwrap();
+            h.call(role, actor, FrontRequest::DeviceRevoke { id }).await.unwrap();
+            assert!(h.device_role(&token).is_none());
+        }
+        h.call(DeviceRole::Local, "local:cli", requests[1].clone()).await.unwrap();
+        for request in &requests[2..4] {
+            assert_ne!(
+                h.call(DeviceRole::Local, "local:cli", request.clone()).await.unwrap_err().code,
+                ErrorCode::Forbidden
+            );
+        }
+        // W0는 기존 로컬 전용 API를 웹에 새로 열지 않는다(W5).
+        assert_eq!(
+            h.call(DeviceRole::Controller, "device:person", requests[1].clone()).await.unwrap_err().code,
+            ErrorCode::Forbidden
+        );
     }
 
     #[tokio::test]
