@@ -838,3 +838,110 @@ fn parallel_host_logins_finish_independently_and_cancel_returns_after_cleanup() 
     drop(held);
     assert!(hits(&[w.h.state.clone(), w.lab.root.join("host.log")], &needles(&token, &encoded), &|_| false).is_empty());
 }
+
+// 공식 저장 형식과 cwd 우선 조회를 흉내 낸다. 인증·키체인·실제 CLI는 열지 않는다.
+const TRUST_HARNESS: &str = r#"#!/usr/bin/env python3
+import os,sys,json,pathlib,socket,tomllib,subprocess,uuid
+if sys.argv[1:]==['--version']:
+    print('codex-cli 0.163.0');sys.exit(0)
+kind=os.environ['ACCOUNT_KIND']
+cwd=str(pathlib.Path.cwd().resolve())
+home=pathlib.Path(os.environ['CODEX_HOME' if kind=='codex' else 'CLAUDE_CONFIG_DIR'])
+assert home.is_relative_to(pathlib.Path(os.environ['ACCOUNT_PROOF']).parent), 'home escaped lab'
+if kind=='codex':
+    config=tomllib.loads((home/'config.toml').read_text())
+    projects=config.get('projects',{})
+    trusted=projects.get(cwd,{}).get('trust_level')=='trusted'
+else:
+    config=json.loads((home/'.claude.json').read_text())
+    assert config.get('hasCompletedOnboarding') is True
+    projects=config.get('projects',{})
+    trusted=projects.get(cwd,{}).get('hasTrustDialogAccepted') is True
+    # 격리 Claude 기록도 실제 hook → agent → 대화/계획 조회 경로를 거친다.
+    sid=str(uuid.uuid4())
+    transcript=home/'projects'/'fixture'/(sid+'.jsonl')
+    transcript.parent.mkdir(parents=True,exist_ok=True)
+    lines=[dict(type='assistant',message=dict(role='assistant',content=[dict(type='text',text='isolated-conversation-proof')])),
+        dict(type='assistant',message=dict(content=[dict(type='tool_use',id='plan-call',name='TaskCreate',input=dict(subject='read isolated history'))])),
+        dict(type='user',toolUseResult=dict(task=dict(id='1')),message=dict(content=[dict(type='tool_result',tool_use_id='plan-call',content='Task #1 created successfully')]))]
+    transcript.write_text(''.join(json.dumps(line,separators=(',',':'))+'\n' for line in lines))
+    subprocess.run([os.environ['ACCOUNT_AAA'],'hook','--agent','claude',json.dumps(dict(hook_event_name='SessionStart',session_id=sid,transcript_path=str(transcript),source='startup'))],check=True,stdout=subprocess.PIPE)
+print('account-trust-ready' if trusted else 'Trust this folder?',flush=True)
+h,p=os.environ['ACCOUNT_GATE'].split(':')
+s=socket.create_connection((h,int(p)),timeout=30)
+s.sendall((json.dumps(dict(tid=os.environ['AAA_THREAD'],phase=4,home=str(home),cwd=cwd,projects=projects,trusted=trusted))+'\n').encode())
+assert s.recv(1)==b'X'
+"#;
+
+#[test]
+fn account_threads_trust_only_their_cwd_when_coordinator_answers() {
+    let gate = Gate::new();
+    let mut w = world("http://127.0.0.1:1", &gate, "fake-local-token", TRUST_HARNESS);
+    w.add_remote();
+    let file = w.scripts.join("fake-auth.json");
+    std::fs::write(&file, r#"{"tokens":{"access_token":"fake-access-token","refresh_token":"fake-refresh-token"}}"#)
+        .unwrap();
+    w.h.ok(&["account", "import", "file", "--harness", "codex", "--file", path_str(&file)]);
+    let token = w.scripts.join("fake-token");
+    std::fs::write(&token, "fake-claude-token").unwrap();
+    w.h.ok(&["account", "import", "token", "--harness", "claude", "--file", path_str(&token)]);
+    w.h.ok(&["account", "default", "codex", "file"]);
+    w.h.ok(&["account", "default", "claude", "token"]);
+    // 실제 worktree여도 본 저장소·부모·이웃 작업은 신뢰 목록에 넣지 않는다.
+    git(&w.repo, &["init", "-b", "main"]);
+    git(&w.repo, &["config", "user.name", "Example"]);
+    git(&w.repo, &["config", "user.email", "test@example.com"]);
+    git(&w.repo, &["add", "."]);
+    git(&w.repo, &["commit", "-m", "fixture"]);
+    let task = w.task("trust-task.md", "가짜 신뢰 시작 검증");
+    for policy in ["coordinator", "user"] {
+        std::fs::write(w.projects.join("demo/project.toml"), format!("trust_screens = {policy:?}\n")).unwrap();
+        for profile in ["file", "token"] {
+            for machine in ["labA", "labB"] {
+                for kind in ["worktree", "dir"] {
+                    let mut args = vec![
+                        "--title",
+                        "격리 폴더 신뢰",
+                        "--profile",
+                        profile,
+                        "--machine",
+                        machine,
+                        "--kind",
+                        kind,
+                        "--task-file",
+                        &task,
+                    ];
+                    if kind == "worktree" {
+                        args.extend(["--repo", path_str(&w.repo)]);
+                    }
+                    let started = w.start(&args);
+                    let id = started["id"].as_str().unwrap();
+                    let ready = gate.take(1, 4);
+                    let proof = &ready[0].1;
+                    assert_eq!(
+                        proof["trusted"],
+                        policy == "coordinator",
+                        "{policy}/{profile}/{machine}/{kind}: {proof}"
+                    );
+                    let projects = proof["projects"].as_object().unwrap();
+                    if policy == "coordinator" {
+                        assert_eq!(projects.len(), 1, "{proof}");
+                        assert!(projects.contains_key(proof["cwd"].as_str().unwrap()), "{proof}");
+                    } else {
+                        assert!(projects.is_empty(), "{proof}");
+                        let pane = w.show(id)["pane"].as_str().unwrap().to_string();
+                        w.h.wait_output(&pane, "Trust this folder?", T);
+                    }
+                    if profile == "token" {
+                        let pane = w.show(id)["pane"].as_str().unwrap().to_string();
+                        let chat = w.h.ok(&["pane", "chat", &pane]);
+                        assert!(chat.to_string().contains("isolated-conversation-proof"), "{chat}");
+                        w.wait_show("격리 Claude 계획 조회", id, |v| v["agent"]["plan"]["total"] == 1);
+                    }
+                    Gate::release(ready, b'X');
+                    w.wait_show("가짜 신뢰 harness 종료", id, |v| v["agent"]["activity"] == "exited");
+                }
+            }
+        }
+    }
+}

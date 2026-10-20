@@ -5,7 +5,7 @@
 // 혼자 돌리기: node web/e2e/web.e2e.mjs --spec 51-slash-commands(새 실험실).
 import assert from "node:assert/strict";
 import fs from "node:fs";
-import { root, aaa, AA, step, inList, until, domIs, waitOutput, shot, webkit } from "../lib/harness.mjs";
+import { root, aaa, AA, step, inList, until, domIs, inTime, waitOutput, shot, webkit } from "../lib/harness.mjs";
 import { pairDevice } from "../lib/devices.mjs";
 
 export const labEnv = { AAA_TEST_DETECT_GRACE_MS: "0" };
@@ -94,6 +94,31 @@ async function typeIn(p, text) {
   await box(p).pressSequentially(text);
 }
 
+/** 다음 frame을 사건으로 보류한다. 사용자 편집 뒤 실제 RAF를 모두 실행하고 끝났음을 기다린다. */
+async function holdFrames(p, edit) {
+  await p.evaluate(() => {
+    const raf = window.requestAnimationFrame.bind(window);
+    const cancel = window.cancelAnimationFrame.bind(window);
+    const pending = new Map();
+    let id = -1;
+    window.requestAnimationFrame = (cb) => { const key = id--; pending.set(key, cb); return key; };
+    window.cancelAnimationFrame = (key) => { if (key < 0) pending.delete(key); else cancel(key); };
+    window.releaseComposerFrames = () => {
+      window.requestAnimationFrame = raf;
+      window.cancelAnimationFrame = cancel;
+      return new Promise((done) => raf((now) => {
+        for (const [key, cb] of pending) { pending.delete(key); cb(now); }
+        done();
+      }));
+    };
+  });
+  try {
+    return await edit();
+  } finally {
+    await inTime(p.evaluate(() => window.releaseComposerFrames()), 20_000, "보류한 frame 완료");
+  }
+}
+
 async function openChat(p) {
   await inList(p, `pane-${LABEL}`);
   if ((await p.getByTestId("chat").count()) === 0) {
@@ -163,6 +188,41 @@ export default async function ({ page }) {
       await typeIn(page, text);
       assert.equal(await page.getByTestId("slash-menu").count(), 0, text);
     }
+    await box(page).fill("");
+  });
+
+  await step("지연 frame: 명령 넣기·기록 부르기 뒤 새 선택·입력·focus를 덮지 않는다", async () => {
+    const before = bytes();
+    for (const source of ["command", "recall"]) {
+      for (const action of ["select", "edit", "focus"]) {
+        await typeIn(page, source === "command" ? "/conte" : "");
+        if (source === "command") await menuShown(page);
+        const value = source === "command" ? "/context " : "오류 처리를 정리해 줘";
+        const expected = await holdFrames(page, async () => {
+          await box(page).press(source === "command" ? "Tab" : "ArrowUp");
+          assert.equal(await box(page).inputValue(), value);
+          if (action === "select") {
+            await box(page).press("ControlOrMeta+a");
+          } else if (action === "edit") {
+            await box(page).press("ArrowLeft");
+            await box(page).press("ArrowLeft");
+            await box(page).pressSequentially("x");
+          } else {
+            await page.getByRole("button", { name: "그림 첨부", exact: true }).focus();
+          }
+          return box(page).evaluate((el) => ({ value: el.value, start: el.selectionStart, end: el.selectionEnd, focused: document.activeElement === el }));
+        });
+        if (action === "select") assert.deepEqual([expected.start, expected.end], [0, value.length]);
+        if (action === "edit") assert.equal(expected.value, `${value.slice(0, -2)}x${value.slice(-2)}`);
+        if (action === "focus") assert.equal(expected.focused, false);
+        assert.deepEqual(await box(page).evaluate((el) => ({ value: el.value, start: el.selectionStart, end: el.selectionEnd, focused: document.activeElement === el })), expected, `${source}/${action}: 늦은 커서 작업이 새 편집을 덮었다`);
+        if (action === "select") {
+          await box(page).press("Delete");
+          assert.equal(await box(page).inputValue(), "", "전체 선택 뒤 Delete는 글을 비운다");
+        }
+      }
+    }
+    assert.equal(bytes(), before, "편집만 하고 pane에 보내지 않는다");
     await box(page).fill("");
   });
 

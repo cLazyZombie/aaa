@@ -9,7 +9,8 @@ import type { OwnerChoice, TaskBoard, TaskThread, TaskView, ThreadStartPreview, 
 import { ApiError, call } from "./api";
 import { Markdown } from "./Markdown";
 import { TaskModal } from "./TaskDialogs";
-import { defaultMachine, docLinkCandidates, linkCandidates, ownerFixes, ownerLabel, REPO_DIR, repoMachines, type TaskAttachment, type ThreadGroups } from "./tasksModel";
+import { WhoChips } from "./TaskDetail";
+import { defaultMachine, docLinkCandidates, linkCandidates, ownerFixes, REPO_DIR, repoMachines, type TaskAttachment, type ThreadGroups } from "./tasksModel";
 
 const errText = (e: unknown) => (e instanceof ApiError || e instanceof Error ? e.message : String(e));
 
@@ -39,8 +40,8 @@ export function StartDialog({ task, owners, onStarted, onClose }: { task: TaskVi
       live = false;
     };
   }, [task.title, task.block_sha256]);
-  // owner가 정한 profile·머신은 고르지 못한다(host가 다른 값을 거부한다)
-  const fixed = ownerFixes(task.owner);
+  // task의 모델·머신 칸이 정한 값은 고르지 못한다(host가 다른 값을 거부한다)
+  const fixed = ownerFixes(task);
   const machines = (owners ?? []).filter((o) => o.connected);
   const byName = useMemo(() => (preview ? repoMachines(preview) : new Map<string, { machine: string; path: string }[]>()), [preview]);
   // 고른 저장소가 있는 머신(작업 폴더는 연결된 모든 머신)
@@ -56,7 +57,7 @@ export function StartDialog({ task, owners, onStarted, onClose }: { task: TaskVi
       : choice !== REPO_DIR && !byName.has(choice)
         ? `project.toml repos에 없는 저장소다: ${choice}`
         : ownerMachine !== null && choice !== REPO_DIR && !cands.includes(ownerMachine)
-          ? `owner 머신 ${ownerMachine}에 ${choice} 저장소가 없다(project.toml repos)`
+          ? `task 머신 ${ownerMachine}에 ${choice} 저장소가 없다(project.toml repos)`
           : null;
   const profiles = useMemo(() => {
     const on = where ? machines.filter((o) => o.machine === where) : machines;
@@ -93,7 +94,6 @@ export function StartDialog({ task, owners, onStarted, onClose }: { task: TaskVi
       setBusy(false);
     }
   };
-  const owner = ownerLabel(task);
   return (
     <TaskModal label={`「${task.title}」 바로 시작`} busy={busy} onClose={onClose} wide testid="task-start">
       <form
@@ -110,7 +110,7 @@ export function StartDialog({ task, owners, onStarted, onClose }: { task: TaskVi
         <div className="modal-body task-start-body">
           <p className="task-start-title">
             <strong>{task.title}</strong>
-            {owner && <span className="task-chip task-owner">owner · {owner}</span>}
+            <WhoChips t={task} labeled />
           </p>
           {!preview && !error && <p className="muted">시작할 값을 읽는 중</p>}
           {preview && (
@@ -154,7 +154,7 @@ export function StartDialog({ task, owners, onStarted, onClose }: { task: TaskVi
                   </select>
                 </label>
                 <label className="task-field">
-                  <span>profile</span>
+                  <span>모델</span>
                   <select className="input" value={profile} disabled={busy || fixed.profile} onChange={(e) => setProfile(e.target.value)} data-testid="task-start-profile">
                     {profiles.length === 0 && <option value="">기본 profile</option>}
                     {profiles.map((p) => (

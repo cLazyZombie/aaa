@@ -97,23 +97,28 @@ pub async fn start(host: &Arc<Host>) -> Result<()> {
     let path = host.state.join("front.sock");
     let listener = aaa_common::ipc::LocalListener::bind(&path).context("front socket")?;
     let host = host.clone();
-    tokio::spawn(async move {
-        loop {
-            let (s, pid) = match listener.accept_peer().await {
-                Ok(pair) => pair,
-                Err(e) => {
-                    host.resource_error("front accept", &e);
-                    tracing::warn!(error = %e, "front accept 실패");
-                    tokio::time::sleep(Duration::from_secs(1)).await;
-                    continue;
-                }
-            };
-            let host = host.clone();
-            tokio::spawn(async move {
-                if let Err(e) = serve(host, s, pid).await {
-                    tracing::debug!("front 연결 끝: {e:#}");
-                }
-            });
+    let listener = Arc::new(listener);
+    host.clone().supervise(crate::supervisor::Task::Front, move || {
+        let (host, listener) = (host.clone(), listener.clone());
+        async move {
+            host.task_progress(crate::supervisor::Task::Front);
+            loop {
+                let (s, pid) = match listener.accept_peer().await {
+                    Ok(pair) => pair,
+                    Err(e) => {
+                        host.resource_error("front accept", &e);
+                        tracing::warn!(error = %e, "front accept 실패");
+                        tokio::time::sleep(Duration::from_secs(1)).await;
+                        continue;
+                    }
+                };
+                let host = host.clone();
+                tokio::spawn(async move {
+                    if let Err(e) = serve(host, s, pid).await {
+                        tracing::debug!("front 연결 끝: {e:#}");
+                    }
+                });
+            }
         }
     });
     Ok(())
@@ -267,7 +272,7 @@ async fn serve_conn(host: Arc<Host>, tx: FrameTx, mut rx: impl FrontIn, conn: Co
                     },
                     n = notices.recv() => match n {
                         // 새 앱 전용 종류를 옛 CLI의 enum으로 보내지 않는다. CLI는 Welcome 경고를 읽는다.
-                        Ok(n) if matches!(n.kind, aaa_proto::NoticeKind::PostMuted | aaa_proto::NoticeKind::RolloutFinished | aaa_proto::NoticeKind::RolloutFailed) => continue,
+                        Ok(n) if matches!(n.kind, aaa_proto::NoticeKind::HostIssue | aaa_proto::NoticeKind::HostRecovered | aaa_proto::NoticeKind::PostMuted | aaa_proto::NoticeKind::RolloutFinished | aaa_proto::NoticeKind::RolloutFailed) => continue,
                         Ok(n) => FrontEvent::Notice(n),
                         Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => continue,
                         Err(_) => break,

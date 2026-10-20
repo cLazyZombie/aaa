@@ -29,18 +29,69 @@ pub async fn prepare(
     credential: AccountCredential,
     exe: &Path,
     tx: mpsc::Sender<BrokerRequest>,
+    resume: bool,
 ) -> Result<Prepared> {
     aaa_common::redact::remember_auth(&credential.harness, &credential.secret.0);
+    if credential.harness == "claude"
+        && (!aaa_proto::account_run_parts(&credential.run).is_some_and(|(_, task)| aaa_proto::valid_thread(task))
+            || (resume && !home.exists()))
+    {
+        // 도입 전 로컬 홈에 남긴 대화의 재개는 원래 기록 홈을 유지한다.
+        return Ok(Prepared {
+            env: vec![("CLAUDE_CODE_OAUTH_TOKEN".into(), credential.secret.0)],
+            home: None,
+            task: None,
+        });
+    }
+    if home.symlink_metadata().is_ok_and(|m| m.file_type().is_symlink()) {
+        bail!("인증 홈은 symlink일 수 없다")
+    }
+    aaa_common::util::ensure_private_dir(home)?;
+    // cwd를 먼저 대조한다. host의 허용 경로를 부모 repo나 다른 작업까지 넓히지 않는다.
+    let trusted = credential
+        .trust_cwd
+        .as_deref()
+        .map(|cwd| {
+            let path = Path::new(cwd);
+            anyhow::ensure!(path.is_absolute() && path.is_dir(), "신뢰할 작업 폴더가 없다");
+            std::fs::canonicalize(path).context("신뢰할 작업 폴더 확인 실패")
+        })
+        .transpose()?;
     match credential.harness.as_str() {
         "claude" => {
-            Ok(Prepared { env: vec![("CLAUDE_CODE_OAUTH_TOKEN".into(), credential.secret.0)], home: None, task: None })
+            let mut projects = serde_json::Map::new();
+            if let Some(cwd) = trusted {
+                projects
+                    .insert(cwd.to_string_lossy().into_owned(), serde_json::json!({"hasTrustDialogAccepted": true}));
+            }
+            // 로컬 .claude.json에는 인증도 있으므로 읽거나 복사하지 않는다. 이 실행의 전용 파일만 만든다.
+            let path = home.join(".claude.json");
+            anyhow::ensure!(
+                !path.symlink_metadata().is_ok_and(|m| m.file_type().is_symlink()),
+                "격리 Claude 설정은 symlink일 수 없다"
+            );
+            let mut config = match std::fs::read(&path) {
+                Ok(bytes) => serde_json::from_slice::<serde_json::Value>(&bytes)
+                    .map_err(|_| anyhow::anyhow!("격리 Claude 설정 형식 오류"))?,
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => serde_json::json!({}),
+                Err(_) => bail!("격리 Claude 설정 읽기 실패"),
+            };
+            let config = config.as_object_mut().context("격리 Claude 설정 형식 오류")?;
+            // host에서 로그인한 토큰으로 시작한다. 빈 격리 홈에서 로그인 안내를 다시 열지 않는다.
+            config.entry("hasCompletedOnboarding").or_insert(true.into());
+            config.insert("projects".into(), projects.into());
+            private(&path, &serde_json::to_vec(config)?)?;
+            Ok(Prepared {
+                env: vec![
+                    ("CLAUDE_CODE_OAUTH_TOKEN".into(), credential.secret.0),
+                    ("CLAUDE_CONFIG_DIR".into(), home.to_string_lossy().into_owned()),
+                ],
+                home: None,
+                task: None,
+            })
         }
         "codex" => {
             let home = home.to_path_buf();
-            if home.symlink_metadata().is_ok_and(|m| m.file_type().is_symlink()) {
-                bail!("인증 홈은 symlink일 수 없다")
-            }
-            aaa_common::util::ensure_private_dir(&home)?;
             let mut out = Prepared { env: vec![], home: Some(home.clone()), task: None };
             private(&home.join("auth.json"), credential.secret.0.as_bytes())?;
             let notify = serde_json::to_string(&vec![
@@ -49,10 +100,13 @@ pub async fn prepare(
                 "--agent".into(),
                 "codex".into(),
             ])?;
-            private(
-                &home.join("config.toml"),
-                format!("cli_auth_credentials_store = \"file\"\nnotify = {notify}\n").as_bytes(),
-            )?;
+            let mut config = format!("cli_auth_credentials_store = \"file\"\nnotify = {notify}\n");
+            if let Some(cwd) = trusted {
+                // JSON 문자열은 TOML basic string으로도 유효하다(따옴표·역슬래시를 escape).
+                let key = serde_json::to_string(&cwd.to_string_lossy())?;
+                config.push_str(&format!("\n[projects.{key}]\ntrust_level = \"trusted\"\n"));
+            }
+            private(&home.join("config.toml"), config.as_bytes())?;
             let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await?;
             let token = hex::encode(rand::random::<[u8; 32]>());
             let url = format!("http://{}/{token}", listener.local_addr()?);
@@ -187,3 +241,69 @@ pub const AUTH_ENV: &[&str] = &[
     "CLAUDE_CONFIG_DIR",
     "CODEX_HOME",
 ];
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    struct Lab(PathBuf);
+    impl Lab {
+        fn new() -> Self {
+            let root = std::env::temp_dir().join(format!("aaa-account-trust-{}", aaa_common::util::new_id()));
+            std::fs::create_dir_all(&root).unwrap();
+            Self(root)
+        }
+    }
+    impl Drop for Lab {
+        fn drop(&mut self) {
+            std::fs::remove_dir_all(&self.0).unwrap();
+        }
+    }
+    fn credential(cwd: Option<&Path>) -> AccountCredential {
+        AccountCredential {
+            run: "demo/t-0001".into(),
+            account: "fixture".into(),
+            harness: "claude".into(),
+            version: 1,
+            secret: SecretText("fake-test-credential".into()),
+            trust_cwd: cwd.map(|p| p.to_string_lossy().into_owned()),
+        }
+    }
+
+    #[tokio::test]
+    async fn isolated_claude_preserves_preferences_and_replaces_only_trust() {
+        let lab = Lab::new();
+        let home = lab.0.join("claude-home");
+        let cwd = lab.0.join("folder with spaces and 한글");
+        std::fs::create_dir_all(&cwd).unwrap();
+        std::fs::create_dir_all(&home).unwrap();
+        let config = home.join(".claude.json");
+        std::fs::write(&config, r#"{"hasCompletedOnboarding":true,"theme":"dark","projects":{"/unrelated":{"hasTrustDialogAccepted":true}}}"#).unwrap();
+        let (tx, _) = mpsc::channel(1);
+        let out = prepare(&home, credential(Some(&cwd)), Path::new("aaa"), tx.clone(), false).await.unwrap();
+        assert!(out.env.iter().any(|(k, v)| k == "CLAUDE_CONFIG_DIR" && v == &home.to_string_lossy()));
+        let read = || serde_json::from_slice::<serde_json::Value>(&std::fs::read(&config).unwrap()).unwrap();
+        let v = read();
+        assert_eq!(v["theme"], "dark");
+        assert_eq!(v["hasCompletedOnboarding"], true);
+        let projects = v["projects"].as_object().unwrap();
+        assert_eq!(projects.len(), 1);
+        assert_eq!(
+            projects[&std::fs::canonicalize(&cwd).unwrap().to_string_lossy().into_owned()]["hasTrustDialogAccepted"],
+            true
+        );
+        prepare(&home, credential(None), Path::new("aaa"), tx, true).await.unwrap();
+        assert!(read()["projects"].as_object().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn legacy_claude_resume_keeps_its_original_home() {
+        let lab = Lab::new();
+        let home = lab.0.join("absent-claude-home");
+        let (tx, _) = mpsc::channel(1);
+        let out = prepare(&home, credential(None), Path::new("aaa"), tx, true).await.unwrap();
+        assert_eq!(out.env.len(), 1);
+        assert_eq!(out.env[0].0, "CLAUDE_CODE_OAUTH_TOKEN");
+        assert!(!home.exists());
+    }
+}

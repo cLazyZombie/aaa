@@ -14,7 +14,8 @@ export function ChatRow({ id, role, virtual, children, onResize }: {
     const box = root?.getBoundingClientRect();
     const row = el.getBoundingClientRect();
     setVisible(!box || row.bottom >= box.top - 1000 && row.top <= box.bottom + 1000);
-    const observer = new IntersectionObserver(([entry]) => setVisible(entry?.isIntersecting ?? false), { root, rootMargin: "1000px 0px" });
+    // 한 줄도 통지가 늦으면 화면 밖→안 관측이 함께 온다. 마지막 관측을 써야 본문을 빈 채로 두지 않는다.
+    const observer = new IntersectionObserver((entries) => setVisible(entries.at(-1)?.isIntersecting ?? false), { root, rootMargin: "1000px 0px" });
     observer.observe(el);
     return () => observer.disconnect();
   }, [virtual]);

@@ -144,6 +144,7 @@ export default async function () {
     }
   });
 
+  // t-0541, plan §8.340: 메뉴 상태는 창별 기록이 아니라 이동 직전의 상태다.
   await step("메뉴를 연 채 뒤로·앞으로: 이동 직전의 열림·닫힘 유지(WebKit 390·430, Safari·홈 화면 앱)", async () => {
     const wk = await webkit.launch();
     const bad = [];
