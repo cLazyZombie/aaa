@@ -542,7 +542,7 @@ pub struct Host {
     /// 보고를 다시 확인하는 중인 thread(`<project>/<thread>`)와 그동안 또 확인을 부탁받았는지. 묶음 셈(transitions.rs)은
     /// 끝날 때까지 이 thread를 건너뛴다(orch.rs `refresh_report`)
     report_refresh: Mutex<HashMap<String, bool>>,
-    /// 재부팅 뒤 복원 중인 머신. 묶음 셈(transitions.rs)은 끝날 때까지 그 머신 thread를 건너뛴다(restore.rs)
+    /// Hello 상태 재생·재부팅 복원 중인 머신. 묶음 셈은 끝날 때까지 그 머신 thread를 건너뛴다(restore.rs)
     restoring: Mutex<HashSet<String>>,
     /// 이 host 실행에서 복원해 본 pane(한 번만 한다)
     restore_tried: Mutex<HashSet<String>>,
@@ -749,10 +749,10 @@ impl Host {
     pub fn agent_connected(self: &Arc<Self>, hello: &aaa_proto::AgentHello, local: bool, conn: AgentConn) {
         let _ = self.db.touch_machine(&hello.machine_id, &hello.os, &hello.boot_id);
         let generation = conn.generation;
-        // 재부팅 뒤 복원할 pane이 있으면 연결로 보이기 전부터 묶음 셈을 멈춘다(restore.rs `restore_after_reboot`이 푼다)
-        if hello.sessions.iter().any(|s| s.state == SessionState::Interrupted) {
-            self.restoring.lock().unwrap().insert(hello.machine_id.clone());
-        }
+        // 연결을 공개하기 전에 상태 복원 울타리를 친다. host 재시작 뒤에는 실행 중인 pane도 아직 agent=None이다.
+        // Hello의 모든 harness 상태를 재생하기 전 ticker가 보면 쉼(no agent)라는 거짓 전이가 생긴다.
+        // restore_after_reboot이 재부팅 복원까지 이어 맡고, 되살릴 pane이 없으면 바로 푼다.
+        self.restoring.lock().unwrap().insert(hello.machine_id.clone());
         let subscribe: Vec<(String, Option<u64>)>;
         // agent가 내려간 사이 스스로 끝난 셸 pane(host는 그 전에 실행 중을 봤다)
         let mut exited = Vec::new();
@@ -854,6 +854,8 @@ impl Host {
         self.rewatch(hello.machine_id.clone());
         self.sync_chat_watches_if_wanted();
         self.restore_after_reboot(&hello.machine_id, generation);
+        self.bump();
+        self.tick_wake.notify_one();
     }
 
     pub fn agent_disconnected(&self, machine_id: &str, generation: u64) {
