@@ -138,10 +138,10 @@ impl Host {
         let resolved = self.resolved_coordinator_profile(project, &mid, &profile)?;
         let account = self.default_account(&resolved.harness)?;
         let credential = account.as_ref().map(|name| self.accounts.credential(name)).transpose()?;
-        if let Some(c) = &credential {
-            if c.harness != resolved.harness || !self.machine_feature(&mid, "account_auth.v2") {
-                return Err(bad("coordinator 계정의 harness·agent 인증 지원을 확인한다"));
-            }
+        if let Some(c) = &credential
+            && (c.harness != resolved.harness || !self.machine_feature(&mid, "account_auth.v2"))
+        {
+            return Err(bad("coordinator 계정의 harness·agent 인증 지원을 확인한다"));
         }
         let name = match running.len() {
             0 => format!("{project} coordinator"),

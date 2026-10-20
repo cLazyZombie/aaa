@@ -1046,7 +1046,6 @@ impl Host {
     }
 
     fn pane_view(
-        &self,
         i: &Inner,
         id: &str,
         p: &PaneRt,
@@ -1071,7 +1070,7 @@ impl Host {
             None
         };
         PaneView {
-            account: self.pane_account(id).ok().flatten().map(|a| a.account),
+            account: None,
             id: id.to_string(),
             machine_id: p.machine_id.clone(),
             machine: m.map(|m| m.name.clone()).unwrap_or_default(),
@@ -1095,8 +1094,14 @@ impl Host {
 
     pub fn pane_views(&self, role: DeviceRole) -> Vec<PaneView> {
         let projects = self.coordinator_projects();
-        let i = self.inner.lock().unwrap();
-        let mut v: Vec<_> = i.panes.iter().map(|(id, p)| self.pane_view(&i, id, p, role, &projects)).collect();
+        let mut v: Vec<_> = {
+            let i = self.inner.lock().unwrap();
+            i.panes.iter().map(|(id, p)| Self::pane_view(&i, id, p, role, &projects)).collect()
+        };
+        // 상태 잠금을 잡은 채 DB를 조회하지 않는다.
+        for pane in &mut v {
+            pane.account = self.pane_account(&pane.id).ok().flatten().map(|a| a.account);
+        }
         // 처음 띄운 차례(ULID): 재개·재부팅 복원으로 새 ID가 되어도 처음 ID 자리에 남는다(목록이 옮겨 다니지 않는다)
         let first = |p: &PaneView| p.replaced.first().cloned().unwrap_or_else(|| p.id.clone());
         v.sort_by(|a, b| a.machine.cmp(&b.machine).then_with(|| first(a).cmp(&first(b))));
@@ -1105,8 +1110,12 @@ impl Host {
 
     pub fn pane_view_of(&self, id: &str, role: DeviceRole) -> Option<PaneView> {
         let projects = self.coordinator_projects();
-        let i = self.inner.lock().unwrap();
-        i.panes.get(id).map(|p| self.pane_view(&i, id, p, role, &projects))
+        let mut view = {
+            let i = self.inner.lock().unwrap();
+            i.panes.get(id).map(|p| Self::pane_view(&i, id, p, role, &projects))
+        }?;
+        view.account = self.pane_account(id).ok().flatten().map(|a| a.account);
+        Some(view)
     }
 
     fn coordinator_projects(&self) -> Vec<(String, std::path::PathBuf)> {
