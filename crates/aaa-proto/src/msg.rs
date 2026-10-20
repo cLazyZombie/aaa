@@ -20,7 +20,7 @@ use crate::orch::{
 };
 use crate::orch::{
     EvaluationView, EvaluatorView, MenuPick, NoticeView, TaskBoard, TaskConflict, TaskLogEntry, TaskLogFilter, TaskOp,
-    ThreadSummaryView,
+    ThreadStartPreview, ThreadSummaryView,
 };
 
 use crate::version::Version;
@@ -1815,6 +1815,26 @@ pub enum FrontRequest {
         /// TASKS.md의 task 제목(대소문자 무시). owner가 profile·machine의 기본값이 되고, 메모가 할 일에 붙는다.
         #[serde(default)]
         from_task: Option<String>,
+        /// 시작하면 그 task 줄 끝에 ` · t-NNNN`을 붙인다(FRONT_API 1.63, 할 일 T3). 연결은 시작할 때 읽은 블록 hash로 하고,
+        /// 그사이 블록이 바뀌었으면 시작은 그대로 두고 경고만 한다. 옛 host는 버린다(연결하지 않는다)
+        #[serde(default)]
+        #[ts(optional, as = "Option<bool>")]
+        link_task: bool,
+        /// 화면이 본 `from_task`의 블록 hash(FRONT_API 1.63). 지금 파일의 블록과 다르면 시작하지 않는다(본 것과 다른 일을 맡기지 않게)
+        #[serde(default)]
+        #[ts(optional, as = "Option<String>")]
+        task_block: Option<String>,
+    },
+    /// 할 일 「바로 시작」 확인창이 보일 것(FRONT_API 1.63, 조작 권한): `from_task`로 시작하면 쓸 제목·profile·머신·할 일 글과
+    /// 저장소 고르기, 열린 thread 수와 한도. 아무것도 시작하지 않는다
+    ThreadStartPreview {
+        #[serde(default)]
+        #[ts(optional, as = "Option<String>")]
+        project: String,
+        from_task: String,
+        #[serde(default)]
+        #[ts(optional, as = "Option<String>")]
+        task_block: Option<String>,
     },
     /// 사람이 이미 띄운 agent pane(Claude·Codex)을 이 프로젝트의 thread로 기록하고 brief를 안내한다(herdr-projects
     /// `thread adopt`). pane은 그대로 두고 그 폴더에 작업 폴더를 만든다
@@ -2335,6 +2355,7 @@ impl FrontRequest {
             | FrontRequest::TaskEdit { project, .. }
             | FrontRequest::TaskLog { project, .. }
             | FrontRequest::TaskLogPrune { project, .. }
+            | FrontRequest::ThreadStartPreview { project, .. }
             | FrontRequest::ThreadShow { project, .. }
             | FrontRequest::ThreadSummary { project, .. }
             | FrontRequest::ThreadSummarySet { project, .. }
@@ -2515,6 +2536,8 @@ pub enum FrontResponse {
         #[ts(type = "number[]")]
         log_ids: Vec<i64>,
     },
+    /// `thread_start_preview`의 답(FRONT_API 1.63)
+    ThreadStartPreview(ThreadStartPreview),
     /// `task_log`의 답(FRONT_API 1.62). `next`를 `before`로 주면 그 앞을 읽는다
     TaskLog {
         entries: Vec<TaskLogEntry>,

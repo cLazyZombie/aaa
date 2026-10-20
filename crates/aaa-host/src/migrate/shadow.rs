@@ -190,6 +190,7 @@ pub fn aaa_group(f: &Facts, now_s: i64) -> ThreadGroup {
         eval_batches: 0,
         eval_last_batch_ms: None,
         resolve_pending: None,
+        task_clean: Default::default(),
         prepare_started_ms: None,
         leftover: None,
         created_at_ms: (f.created_s.max(0) as u64) * 1000,

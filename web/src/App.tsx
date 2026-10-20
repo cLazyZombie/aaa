@@ -16,7 +16,9 @@ import { ActivityBar } from "./ActivityBar";
 import { SidebarResizer } from "./SidebarResizer";
 import { PANEL_LABEL, revealPanel, storedCollapsed, storedPanel, storeSidebar, type SidebarPanel } from "./sidebarPanel";
 import { ReportsView, type ReportRef } from "./ReportsView";
-import { TasksView, useTaskBoard } from "./TasksView";
+import { TasksView, useSeenMine, useTaskBoard } from "./TasksView";
+import { composerDrafts } from "./herdr/composerDraft.ts";
+import { readTerminalDraft, writeTerminalDraft } from "./herdr/terminalDraft.ts";
 import { taskBadge } from "./tasksModel";
 import { UpdateNotice } from "./UpdateNotice";
 import { ApiError, call, me, onSignedOut, pushedSince, pushInfo, signOut, tellAlert, watchEvents } from "./api";
@@ -786,6 +788,19 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
     goHash(openedHash.current.slice(1), replace);
     setSel(`thread:${threadKey(t)}`);
   };
+  // 할 일 「coordinator에게 맡기기」(t-0469 §3.4, plan §8.316): 도는 coordinator(없으면 기본 profile로 띄운 것, `project open`)의
+  // 입력칸에 글을 채우고 그 pane을 연다. 보내기는 사람이 누른다. 대화 보기 입력창과 터미널 입력줄 초안을 함께 채운다(그 pane을 어느
+  // 보기로 열든 보인다). 이미 쓴 초안은 덮지 않고 뒤에 붙인다
+  const handOff = async (text: string) => {
+    const r = await call({ op: "project_open" });
+    if (r.kind !== "project_opened") throw new Error(`예상하지 못한 응답: ${r.kind}`);
+    const p = r.pane;
+    const add = (cur: string) => (cur.includes(text) ? cur : cur.trim() === "" ? text : `${cur.trimEnd()}\n\n${text}`);
+    composerDrafts.set(`herdr-web-ui:composer-draft:${p.machine_id}:${p.id}`, add);
+    const line = `${p.machine}:${p.id}`;
+    writeTerminalDraft(line, add(readTerminalDraft(line)));
+    choose(p.id);
+  };
   // 모든 thread(끝난 것까지, herdr-projects popup Threads). 프로젝트 고르기는 없다(host는 프로젝트 하나, plan §8.291)
   const chooseThreads = () => {
     setDrawerOpen(false);
@@ -1004,6 +1019,7 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
   const threadGroups = useMemo(() => new Map(allThreads.map((t) => [t.id, t.group])), [threads]); // eslint-disable-line react-hooks/exhaustive-deps
   const openThreadIds = allThreads.filter((t) => t.group !== "resolved").map((t) => t.id).sort().join(" ");
   const taskBoard = useTaskBoard(up, openThreadIds, tasksShown);
+  const seenMine = useSeenMine(taskBoard.board);
   const shownThreads = allThreads.filter((t) => t.group !== "resolved");
   // pane → 그 pane에서 도는 thread(목록에서 pane 이름 대신 thread 제목을 보인다)
   const threadOfPane = new Map<string, ThreadView>();
@@ -1099,7 +1115,8 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
           unseenReports={unseenReports}
           tasks={tasksShown}
           onTasks={toggleTasks}
-          taskBadge={taskBadge(taskBoard.board)}
+          // 할 일 화면이 보이는 동안 me task는 이미 본 것이다(본 기록은 effect가 그린 뒤에 남겨 그 사이 배지가 튄다)
+          taskBadge={taskBadge(taskBoard.board, tasksShown ? null : seenMine.seen)}
           up={up}
           reader={role === "reader"}
           settings={<SettingsGear role={role} device={device} onSignedOut={signedOut} open={settingsOpen} onOpen={setSettingsOpen} />}
@@ -1180,6 +1197,8 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
               const t = allThreads.find((x) => x.id === id);
               if (t) chooseThread(t);
             }}
+            onSeenMine={seenMine.see}
+            onHandOff={canControl ? handOff : undefined}
           />
         )}
         {reportsShown || tasksShown ? null : currentThread ? (

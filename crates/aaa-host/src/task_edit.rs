@@ -367,12 +367,16 @@ pub(crate) fn apply(text: &str, ops: &[TaskOp], ctx: &Ctx) -> Result<Applied, Fa
         let bad = at_op(i);
         let op = &remap(op, &renames);
         match op {
-            TaskOp::Add { list, title, owner, person, notes, parent, before } => {
+            TaskOp::Add { list, title, owner, person, notes, parent, before, thread } => {
                 let title = tasks::check_title(title).map_err(&bad)?;
                 let owner = owner.as_deref().map(str::trim).filter(|o| !o.is_empty());
                 if let Some(o) = owner {
                     (ctx.owner_ok)(o, *person).map_err(&bad)?;
                 }
+                let thread = match thread.as_deref().map(str::trim).filter(|t| !t.is_empty()) {
+                    Some(t) => Some(tasks::check_thread(t).map_err(&bad)?),
+                    None => None,
+                };
                 let notes = check_notes(notes).map_err(&bad)?;
                 let list = if before.is_none() && parent.is_none() {
                     check_list_name_or_unnamed(list).map_err(&bad)?
@@ -380,12 +384,13 @@ pub(crate) fn apply(text: &str, ops: &[TaskOp], ctx: &Ctx) -> Result<Applied, Fa
                     String::new()
                 };
                 let (at, ws, list) = target(&mut d, &list, before.as_ref(), parent.as_ref(), i)?;
-                let line = tasks::task_line(&ws, ' ', &title, owner, None);
-                tasks::reads_back(&line, &title, owner, None).map_err(&bad)?;
+                let line = tasks::task_line(&ws, ' ', &title, owner, thread.as_deref());
+                tasks::reads_back(&line, &title, owner, thread.as_deref()).map_err(&bad)?;
                 let mut block = vec![line];
                 block.extend(notes.iter().map(|n| if n.is_empty() { String::new() } else { format!("{ws}  {n}") }));
                 let mut r = Record::new(TaskAction::Add, &list, &title);
                 r.after = Some(block.join("\n"));
+                r.thread = thread;
                 let block = d.with_eol(block);
                 d.insert(at, block);
                 records.push(r);
@@ -675,7 +680,7 @@ fn remap(op: &TaskOp, renames: &Renames) -> TaskOp {
     let r = |a: &TaskAnchor| renamed(a, renames);
     let ro = |a: &Option<TaskAnchor>| a.as_ref().map(r);
     match op {
-        TaskOp::Add { list, title, owner, person, notes, parent, before } => TaskOp::Add {
+        TaskOp::Add { list, title, owner, person, notes, parent, before, thread } => TaskOp::Add {
             list: list.clone(),
             title: title.clone(),
             owner: owner.clone(),
@@ -683,6 +688,7 @@ fn remap(op: &TaskOp, renames: &Renames) -> TaskOp {
             notes: notes.clone(),
             parent: ro(parent),
             before: ro(before),
+            thread: thread.clone(),
         },
         TaskOp::Update { at, title, owner, person, notes, thread, done } => TaskOp::Update {
             at: r(at),
@@ -898,6 +904,7 @@ mod tests {
             notes: notes.into_iter().map(str::to_string).collect(),
             parent: None,
             before: None,
+            thread: None,
         };
         for (op, why) in [
             (add("상태 메모 (S4 뒤)", None, false, vec![]), "`)`로 끝나면"),
@@ -1040,6 +1047,7 @@ mod tests {
                 notes: vec![],
                 parent: None,
                 before: None,
+                thread: None,
             }],
         )
         .unwrap();
