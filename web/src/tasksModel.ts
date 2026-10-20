@@ -2,7 +2,7 @@
 // 화면 동작 → host 동작(TaskOp), 「나중」 항목 나누기, 기록 차이. thread 연결(T3, §8.316)은 확인 필요 상태, coordinator에게 맡기는
 // 글, 맡길 수 있는 task, 잇기·풀기 동작, 자동 정리 알림.
 // host `tasks`(TaskBoard)는 TASKS.md를 그대로 읽은 것이고, 여기서는 판단하지 않고 보이는 차례와 표지만 정한다.
-import type { TaskAction, TaskAnchor, TaskBoard, TaskLogEntry, TaskOp, TaskView, ThreadGroup } from "./gen/proto";
+import type { TaskAction, TaskAnchor, TaskBoard, TaskLogEntry, TaskOp, TaskView, ThreadGroup, ThreadStartPreview } from "./gen/proto";
 
 /** 행 상태(`data-task-state`): 형식 어긋남 ▲ > 확인 필요 ⚠(이어진 thread가 끝났는데 완료로 판정하지 못함, host `attention`) >
  * 진행 중 ◉(열린 thread와 이어짐) > 대기 ○ */
@@ -194,6 +194,16 @@ export interface TaskDraft {
   parent: TaskAnchor | null;
   /** 새 task에 이을 thread(「task로 만들기」, T3) */
   thread: string | null;
+  /** 저장소 칸(plan §8.328): 저장소 이름·`작업 폴더`, 빈 글은 정하지 않음 */
+  repo: string;
+}
+
+/** 저장소 칸의 「저장소 없는 작업 폴더」(host `tasks::REPO_DIR`) */
+export const REPO_DIR = "작업 폴더";
+
+/** 저장소 경로의 마지막 이름(host `task_repo::repo_name`, `\`도 구분자) */
+export function repoName(path: string): string {
+  return path.replace(/[\/\\]+$/, "").split(/[\/\\]/).pop() ?? "";
 }
 
 /** 이 owner 글을 agent로 볼까: 맡길 수 있는 profile 목록에 있거나 `@`가 든 것. 그 밖의 이름은 사람이다 */
@@ -220,11 +230,12 @@ export function draftOf(t: TaskView, agents: readonly string[], parent: TaskAnch
     notes: t.notes.join("\n"),
     parent,
     thread: null,
+    repo: t.repo ?? "",
   };
 }
 
 export function emptyDraft(list: string, parent: TaskAnchor | null = null): TaskDraft {
-  return { title: "", list, ownerKind: "none", agent: "", person: "", notes: "", parent, thread: null };
+  return { title: "", list, ownerKind: "none", agent: "", person: "", notes: "", parent, thread: null, repo: "" };
 }
 
 /** 폼 owner → host owner 글(빈 글은 미할당)과 「사람으로 저장」 */
@@ -264,15 +275,16 @@ export function draftOps(t: TaskView | null, d: TaskDraft, wasParent: TaskAnchor
   const notes = noteLines(d.notes);
   const parent = d.parent;
   if (!t) {
-    return [{ op: "add", list: parent ? parent.list : d.list.trim(), title: d.title.trim(), owner: owner || null, person, notes, parent, before: null, thread: d.thread }];
+    return [{ op: "add", list: parent ? parent.list : d.list.trim(), title: d.title.trim(), owner: owner || null, person, notes, parent, before: null, thread: d.thread, repo: d.repo || null }];
   }
   const ops: TaskOp[] = [];
   const title = d.title.trim() !== t.title ? d.title.trim() : null;
   const was = t.owner === "agent" ? "" : (t.owner ?? "");
   const ownerChanged = owner !== was;
   const notesChanged = !sameNotes(notes, t.notes);
-  if (title !== null || ownerChanged || notesChanged) {
-    ops.push({ op: "update", at: anchorOf(t), title, owner: ownerChanged ? owner : null, person: ownerChanged && person, notes: notesChanged ? notes : null, thread: null, done: null });
+  const repoChanged = d.repo !== (t.repo ?? "");
+  if (title !== null || ownerChanged || notesChanged || repoChanged) {
+    ops.push({ op: "update", at: anchorOf(t), title, owner: ownerChanged ? owner : null, person: ownerChanged && person, notes: notesChanged ? notes : null, thread: null, done: null, repo: repoChanged ? d.repo : null });
   }
   if ((parent?.block_sha256 ?? null) !== (wasParent?.block_sha256 ?? null) || (parent === null && d.list.trim() !== t.list)) {
     ops.push(parent ? { op: "move", at: anchorOf(t), to_list: "", before: null, parent } : move(t, { to_list: d.list.trim() }));
@@ -281,10 +293,11 @@ export function draftOps(t: TaskView | null, d: TaskDraft, wasParent: TaskAnchor
 }
 
 /** 정규형 줄 미리보기(host `task_line`과 같은 꼴) */
-export function canonicalLine(title: string, owner: string | null, thread: string | null, done = false): string {
+export function canonicalLine(title: string, owner: string | null, repo: string | null, thread: string | null, done = false): string {
   const o = owner ? ` (${owner})` : "";
+  const r = repo ? ` [${repo}]` : "";
   const th = thread ? ` · ${thread}` : "";
-  return `- [${done ? "x" : " "}] ${title}${o}${th}`;
+  return `- [${done ? "x" : " "}] ${title}${o}${r}${th}`;
 }
 
 /** 「나중」 절의 줄을 항목으로 묶는다: 들여쓰지 않은 글머리(`- `·`* `·`1. `)가 새 항목이고, 들여쓴 줄·이어진 줄은 그 항목에 붙는다 */
@@ -391,9 +404,26 @@ export function ownerFixes(owner: string | null): { profile: boolean; machine: b
   return at < 0 ? { profile: true, machine: false } : { profile: at > 0, machine: at < owner.length - 1 };
 }
 
+/** 「바로 시작」의 저장소 이름마다 그 저장소가 있는 머신과 경로(plan §8.328). 머신이 빈 저장소 줄은 host 로컬 머신이다(없으면 뺀다) */
+export function repoMachines(p: Pick<ThreadStartPreview, "repos" | "local_machine">): Map<string, { machine: string; path: string }[]> {
+  const out = new Map<string, { machine: string; path: string }[]>();
+  for (const r of p.repos) {
+    const machine = r.machine ?? p.local_machine ?? null;
+    const name = repoName(r.path);
+    if (machine === null || name === "") continue;
+    out.set(name, [...(out.get(name) ?? []), { machine, path: r.path }]);
+  }
+  return out;
+}
+
+/** 「바로 시작」 기본 머신: 덜 붐비는 차례(`machine_order`)에서 후보에 든 첫 머신, 아니면 후보가 하나면 그것, 아니면 빈 글(host가 고른다) */
+export function defaultMachine(cands: readonly string[], order: readonly string[]): string {
+  return order.find((m) => cands.includes(m)) ?? (cands.length === 1 ? cands[0] : "");
+}
+
 /** 「task에 잇기」·「연결만 풀기」: thread 칸만 바꾼다(빈 글은 풀기) */
 export function linkOp(t: TaskView, thread: string): TaskOp {
-  return { op: "update", at: anchorOf(t), title: null, owner: null, person: false, notes: null, thread, done: null };
+  return { op: "update", at: anchorOf(t), title: null, owner: null, person: false, notes: null, thread, done: null, repo: null };
 }
 
 /** 「task에 잇기」 고르기 목록: 형식 어긋남이 없고 열린 thread와 이어지지 않은 task(줄을 다시 쓰면 제목 검사를 거친다) */

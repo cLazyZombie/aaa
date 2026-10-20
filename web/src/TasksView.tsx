@@ -87,6 +87,8 @@ const EDIT_API: readonly [number, number] = [1, 62];
 const LINK_API: readonly [number, number] = [1, 63];
 /** task 첨부 그림 올리기(plan §8.327) */
 const ATTACH_API: readonly [number, number] = [1, 71];
+/** task 저장소 칸(plan §8.328) */
+const REPO_API: readonly [number, number] = [1, 72];
 
 /** 이 기기가 알린 마지막 자동 정리 기록 id(기기마다, 없으면 처음 읽은 기록까지를 본 것으로 둔다) */
 const AUTO_SEEN_KEY = "aaa:tasks:auto-clean-seen";
@@ -253,6 +255,7 @@ export function TasksView({
   const canEdit = !reader && editApi;
   const linkApi = canEdit && apiAtLeast(frontApi, LINK_API);
   const attachApi = canEdit && apiAtLeast(frontApi, ATTACH_API);
+  const repoApi = canEdit && apiAtLeast(frontApi, REPO_API);
   // 「바로 시작」으로 시작한 thread(열기 단추와 host 경고)
   const [started, setStarted] = useState<{ id: string; warnings: string[] } | null>(null);
   // 자동 정리 알림 줄(t-0469 §4 「알림 한 줄(되살리기 단추)」): 이 기기가 아직 알리지 않은 자동 정리
@@ -376,7 +379,7 @@ export function TasksView({
       const after = noteLines(change(cur.notes.join("\n")));
       if (after.join("\n") === before.join("\n")) return;
       const owner = cur.owner === "agent" ? null : cur.owner;
-      const r = await edit([{ op: "update", at: anchorOf(cur), title: null, owner: null, person: false, notes: after, thread: null, done: null }], { title: cur.title, owner, thread: cur.thread, notes: after });
+      const r = await edit([{ op: "update", at: anchorOf(cur), title: null, owner: null, person: false, notes: after, thread: null, done: null, repo: null }], { title: cur.title, owner, thread: cur.thread, notes: after });
       if (r) boardRef.current = r.board;
     });
     notesChain.current = next.catch(() => undefined);
@@ -697,6 +700,7 @@ export function TasksView({
               onDelete={remove}
               linkApi={linkApi}
               attachApi={attachApi}
+              repoApi={repoApi}
               onChangeNotes={changeTaskNotes}
               onOpenAttachment={
                 onOpenAttachment
@@ -958,6 +962,11 @@ function TaskRow({
         {state === "problem" && <span className="task-chip task-problem">형식 어긋남</span>}
         {state === "check" && <span className="task-chip task-check">확인 필요</span>}
         {owner && <span className={`task-chip task-owner${owner === "미할당" ? " is-dim" : ""}`}>{owner}</span>}
+        {t.repo && (
+          <span className="task-chip task-repo" title="저장소">
+            {t.repo}
+          </span>
+        )}
         {withoutAttachments(t.notes.join("\n")) !== "" && (
           <span className="task-notes-mark" role="img" aria-label="메모 있음" title="메모 있음">
             ≡

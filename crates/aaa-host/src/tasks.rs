@@ -1,12 +1,14 @@
 //! TASKS.md 읽기(0.2.35 의미 그대로, 부록 A)와 쓰는 꼴(할 일 편집 T2, plan §8.311). 고치기는 `task_edit.rs`가 한다.
 //!
-//! - task 줄: `- [ ] 제목 (owner) · t-0001`. `- [x]`도 task다(완료는 줄을 지워 표시한다).
+//! - task 줄: `- [ ] 제목 (owner) [저장소] · t-0001`. `- [x]`도 task다(완료는 줄을 지워 표시한다).
+//! - 저장소 칸(plan §8.328): owner 뒤 대괄호에 `project.toml` repos 경로의 마지막 이름(`[aaa]`)이나 `[작업 폴더]`(저장소 없는 작업
+//!   폴더)를 쓴다. 비면 정하지 않은 것이다. 이름·`작업 폴더` 꼴이 아닌 끝 대괄호는 제목 글이다.
 //! - owner: 없음·`agent`는 미할당, `me`는 사용자, `profile`·`@machine`·`profile@machine`은 agent, 그 밖의 글은 사람.
 //!   옛 표기 `(agent → t-0007)`도 읽는다.
 //! - 메모: task 줄보다 깊게 들여쓴 줄(사이의 빈 줄 허용).
 //! - 형식 어긋남(할 일 보기 T1, plan §8.306): 끝 괄호에 상태 메모를 쓴 줄(`(t-0001 S4 뒤, 사용자 지시 시)`)을 사람 owner로
 //!   오독하지 않는다. owner 꼴이 아니면 owner로 쓰지 않고 괄호째 제목에 두며 `problems`에 까닭을 단다. 판단하지 않고 원문을 보인다.
-//! - 쓰는 꼴(정규형): `- [ ] 제목 (owner) · t-0001`. 저장 때 제목을 검사하고(`check_title`), 쓴 줄을 다시 읽어 같은 값인지 본다.
+//! - 쓰는 꼴(정규형): `- [ ] 제목 (owner) [저장소] · t-0001`. 저장 때 제목을 검사하고(`check_title`), 쓴 줄을 다시 읽어 같은 값인지 본다.
 //!   형식 어긋남 task에는 「정리 제안」(`suggest`)을 단다: 사람이 보고 「이대로 저장」해야 바뀐다.
 
 use aaa_proto::{TaskListView, TaskNotesSection, TaskSuggestion, TaskView};
@@ -50,6 +52,8 @@ pub(crate) const OWNER_SHAPE: &str = "owner 칸이 owner 꼴이 아님";
 const OWNER_MAX_CHARS: usize = 40;
 /// 이 길이를 넘는 제목은 메모로 옮길 후보다
 const TITLE_MAX_CHARS: usize = 120;
+/// 저장소 칸의 「저장소 없는 작업 폴더」
+pub(crate) const REPO_DIR: &str = "작업 폴더";
 /// 「나중」 파일은 이만큼까지 읽는다
 pub(crate) const NOTES_MAX_BYTES: u64 = 512 * 1024;
 
@@ -94,8 +98,31 @@ fn owner_shape(o: &str) -> Result<(), String> {
     if bad { Err(format!("{OWNER_SHAPE}: {}", head(o))) } else { Ok(()) }
 }
 
-/// 줄 본문 → (제목, owner, thread, 형식 어긋남)
-pub(crate) fn split_line(text: &str) -> (String, Option<String>, Option<String>, Vec<String>) {
+/// 저장소 칸 값 꼴인가: 저장소 이름이나 `작업 폴더`
+pub(crate) fn repo_like(s: &str) -> bool {
+    s == REPO_DIR || name_like(s)
+}
+
+/// 끝 대괄호 칸 `… [이름]`의 (앞 글, 이름). 이름 꼴이 아니면 없음(제목 글이다)
+fn repo_tail(s: &str) -> Option<(&str, &str)> {
+    let inner = s.strip_suffix(']')?;
+    let open = inner.rfind(" [")?;
+    let name = &inner[open + 2..];
+    repo_like(name).then(|| (inner[..open].trim_end(), name))
+}
+
+/// 읽은 task 줄 본문
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct Line {
+    pub title: String,
+    pub owner: Option<String>,
+    pub repo: Option<String>,
+    pub thread: Option<String>,
+    pub problems: Vec<String>,
+}
+
+/// 줄 본문 → 제목·owner·저장소·thread·형식 어긋남
+pub(crate) fn split_line(text: &str) -> Line {
     let mut rest = text.trim().to_string();
     let mut thread = None;
     let mut problems = Vec::new();
@@ -105,6 +132,11 @@ pub(crate) fn split_line(text: &str) -> (String, Option<String>, Option<String>,
             thread = Some(t.to_string());
             rest = head.trim().to_string();
         }
+    }
+    let mut repo = None;
+    if let Some((front, name)) = repo_tail(&rest) {
+        repo = Some(name.to_string());
+        rest = front.to_string();
     }
     let mut owner = None;
     if rest.ends_with(')')
@@ -139,7 +171,7 @@ pub(crate) fn split_line(text: &str) -> (String, Option<String>, Option<String>,
     if rest.chars().count() > TITLE_MAX_CHARS {
         problems.push("제목이 김(메모로 옮길 후보)".into());
     }
-    (rest, owner, thread, problems)
+    Line { title: rest, owner, repo, thread, problems }
 }
 
 /// 그 이름의 목록 자리(없으면 더한다)
@@ -190,7 +222,7 @@ pub(crate) fn parse_board(text: &str) -> (Vec<TaskListView>, Vec<TaskView>) {
         }
         let t = l.trim_start();
         let done = matches!(&t[3..4], "x" | "X");
-        let (title, owner, thread, problems) = split_line(&t[5..]);
+        let Line { title, owner, repo, thread, problems } = split_line(&t[5..]);
         let base = indent(l);
         let line = i as u32 + 1;
         while stack.last().is_some_and(|(d, _)| *d >= base) {
@@ -219,6 +251,7 @@ pub(crate) fn parse_board(text: &str) -> (Vec<TaskListView>, Vec<TaskView>) {
             list: list.clone(),
             title,
             owner,
+            repo,
             thread,
             notes,
             done,
@@ -252,6 +285,9 @@ pub(crate) fn check_title(title: &str) -> Result<String, String> {
     if t.ends_with(')') {
         return Err("제목이 `)`로 끝나면 owner로 읽힌다: 끝 괄호 글은 메모로 옮긴다".into());
     }
+    if repo_tail(t).is_some() {
+        return Err("제목이 `[이름]`으로 끝나면 저장소로 읽힌다: 끝 대괄호 글은 메모로 옮긴다".into());
+    }
     if let Some((_, tail)) = t.rsplit_once('·')
         && tail.trim_start().starts_with("t-")
     {
@@ -273,20 +309,37 @@ pub(crate) fn check_thread(id: &str) -> Result<String, String> {
     }
 }
 
-/// 정규형 task 줄(앞 들여쓰기 `ws`, 줄 끝 문자 없이): `- [ ] 제목 (owner) · t-0001`
-pub(crate) fn task_line(ws: &str, done: char, title: &str, owner: Option<&str>, thread: Option<&str>) -> String {
-    let owner = owner.filter(|o| !o.is_empty()).map(|o| format!(" ({o})")).unwrap_or_default();
-    let thread = thread.filter(|t| !t.is_empty()).map(|t| format!(" · {t}")).unwrap_or_default();
-    format!("{ws}- [{done}] {title}{owner}{thread}")
+/// task 줄의 칸들(제목 말고). 빈 글은 칸이 없는 것이다
+#[derive(Debug, Clone, Copy, Default)]
+pub(crate) struct Fields<'a> {
+    pub owner: Option<&'a str>,
+    pub repo: Option<&'a str>,
+    pub thread: Option<&'a str>,
 }
 
-/// 쓴 줄을 다시 읽은 값이 뜻한 값과 같은가(제목·owner·thread). 다르면 까닭
-pub(crate) fn reads_back(line: &str, title: &str, owner: Option<&str>, thread: Option<&str>) -> Result<(), String> {
+impl<'a> Fields<'a> {
+    fn get(v: Option<&'a str>) -> Option<&'a str> {
+        v.filter(|x| !x.is_empty())
+    }
+}
+
+/// 정규형 task 줄(앞 들여쓰기 `ws`, 줄 끝 문자 없이): `- [ ] 제목 (owner) [저장소] · t-0001`
+pub(crate) fn task_line(ws: &str, done: char, title: &str, f: Fields) -> String {
+    let owner = Fields::get(f.owner).map(|o| format!(" ({o})")).unwrap_or_default();
+    let repo = Fields::get(f.repo).map(|r| format!(" [{r}]")).unwrap_or_default();
+    let thread = Fields::get(f.thread).map(|t| format!(" · {t}")).unwrap_or_default();
+    format!("{ws}- [{done}] {title}{owner}{repo}{thread}")
+}
+
+/// 쓴 줄을 다시 읽은 값이 뜻한 값과 같은가(제목·owner·저장소·thread). 다르면 까닭
+pub(crate) fn reads_back(line: &str, title: &str, f: Fields) -> Result<(), String> {
     let t = line.trim_start();
-    let (rt, ro, rth, problems) = split_line(&t[5..]);
-    let owner = owner.filter(|o| !o.is_empty());
-    let thread = thread.filter(|t| !t.is_empty());
-    if rt != title || ro.as_deref() != owner || rth.as_deref() != thread {
+    let Line { title: rt, owner: ro, repo: rr, thread: rth, problems } = split_line(&t[5..]);
+    if rt != title
+        || ro.as_deref() != Fields::get(f.owner)
+        || rr.as_deref() != Fields::get(f.repo)
+        || rth.as_deref() != Fields::get(f.thread)
+    {
         return Err(format!("`{t}`가 다른 값으로 다시 읽힌다(제목 `{rt}`)"));
     }
     if let Some(p) = problems.iter().find(|p| p.starts_with(OWNER_SHAPE)) {
@@ -372,8 +425,9 @@ pub(crate) fn suggest(t: &TaskView, open_threads: &[String]) -> Option<TaskSugge
     if changes.is_empty() || check_title(&title).is_err() {
         return None;
     }
-    let line = task_line("", ' ', &title, owner.as_deref(), thread.as_deref());
-    reads_back(&line, &title, owner.as_deref(), thread.as_deref()).ok()?;
+    let fields = Fields { owner: owner.as_deref(), repo: t.repo.as_deref(), thread: thread.as_deref() };
+    let line = task_line("", ' ', &title, fields);
+    reads_back(&line, &title, fields).ok()?;
     moved.extend(t.notes.iter().cloned());
     Some(TaskSuggestion { title, owner, thread, notes: moved, line, changes })
 }
@@ -572,6 +626,45 @@ mod tests {
             assert_eq!((&back.title, &back.owner, &back.thread), (&s.title, &s.owner, &s.thread));
             assert!(back.problems.is_empty(), "{back:?}");
         }
+    }
+
+    /// 저장소 칸(plan §8.328): owner 뒤 대괄호. 이름·`작업 폴더` 꼴이 아닌 끝 대괄호는 제목 글이다
+    #[test]
+    fn repo_field_reads_and_writes() {
+        let md = "## A\n- [ ] 고치기 (claude) [aaa] · t-0518\n- [ ] 정리 [작업 폴더]\n- [ ] 맡김 (@mac-b) [rc-unity]\n\
+                  - [ ] 로그 보기 [긴급]\n- [ ] 순서 [aaa] (claude)\n- [ ] 빈 칸 (me)\n";
+        let t = parse(md);
+        let v: Vec<_> =
+            t.iter().map(|t| (t.title.as_str(), t.owner.as_deref(), t.repo.as_deref(), t.thread.as_deref())).collect();
+        assert_eq!(
+            v,
+            [
+                ("고치기", Some("claude"), Some("aaa"), Some("t-0518")),
+                ("정리", None, Some(REPO_DIR), None),
+                ("맡김", Some("@mac-b"), Some("rc-unity"), None),
+                ("로그 보기 [긴급]", None, None, None),
+                ("순서 [aaa]", Some("claude"), None, None),
+                ("빈 칸", Some("me"), None, None),
+            ]
+        );
+        // 쓴 줄은 다시 읽어도 같은 값이다
+        for f in [
+            Fields { owner: Some("claude"), repo: Some("aaa"), thread: Some("t-0518") },
+            Fields { owner: None, repo: Some(REPO_DIR), thread: None },
+            Fields { owner: Some("codex@mac-b"), repo: None, thread: Some("t-1") },
+        ] {
+            let line = task_line("  ", ' ', "고치기", f);
+            reads_back(&line, "고치기", f).unwrap();
+        }
+        assert_eq!(
+            task_line("", ' ', "고치기", Fields { owner: Some("claude"), repo: Some("aaa"), thread: Some("t-0518") }),
+            "- [ ] 고치기 (claude) [aaa] · t-0518"
+        );
+        assert!(check_title("릴리스 [v2]").unwrap_err().contains("저장소로 읽힌다"));
+        assert!(check_title("로그 보기 [긴급]").is_ok(), "저장소 꼴이 아닌 끝 대괄호는 제목이다");
+        // 「정리 제안」은 저장소 칸을 그대로 둔다
+        let s = suggest(&parse("- [ ] 실패 조사 (미할당) [aaa]\n")[0], &[]).unwrap();
+        assert_eq!(s.line, "- [ ] 실패 조사 [aaa]");
     }
 
     #[test]

@@ -55,9 +55,11 @@ pub(crate) struct Removed {
     pub text: String,
 }
 
-/// 동작이 묻는 바깥 판정: owner 검사(`assignable --check`, 사람이면 「사람으로 저장」)와 되살릴 기록
+/// 동작이 묻는 바깥 판정: owner 검사(`assignable --check`, 사람이면 「사람으로 저장」), 저장소 칸 값(경로는 이름으로 바꾼다)과
+/// 되살릴 기록
 pub(crate) struct Ctx<'a> {
     pub owner_ok: &'a dyn Fn(&str, bool) -> Result<(), String>,
+    pub repo_ok: &'a dyn Fn(&str) -> Result<String, String>,
     pub removed: &'a dyn Fn(i64) -> Result<Removed, String>,
 }
 
@@ -367,7 +369,7 @@ pub(crate) fn apply(text: &str, ops: &[TaskOp], ctx: &Ctx) -> Result<Applied, Fa
         let bad = at_op(i);
         let op = &remap(op, &renames);
         match op {
-            TaskOp::Add { list, title, owner, person, notes, parent, before, thread } => {
+            TaskOp::Add { list, title, owner, person, notes, parent, before, thread, repo } => {
                 let title = tasks::check_title(title).map_err(&bad)?;
                 let owner = owner.as_deref().map(str::trim).filter(|o| !o.is_empty());
                 if let Some(o) = owner {
@@ -377,6 +379,10 @@ pub(crate) fn apply(text: &str, ops: &[TaskOp], ctx: &Ctx) -> Result<Applied, Fa
                     Some(t) => Some(tasks::check_thread(t).map_err(&bad)?),
                     None => None,
                 };
+                let repo = match repo.as_deref().map(str::trim).filter(|r| !r.is_empty()) {
+                    Some(r) => Some((ctx.repo_ok)(r).map_err(&bad)?),
+                    None => None,
+                };
                 let notes = check_notes(notes).map_err(&bad)?;
                 let list = if before.is_none() && parent.is_none() {
                     check_list_name_or_unnamed(list).map_err(&bad)?
@@ -384,8 +390,9 @@ pub(crate) fn apply(text: &str, ops: &[TaskOp], ctx: &Ctx) -> Result<Applied, Fa
                     String::new()
                 };
                 let (at, ws, list) = target(&mut d, &list, before.as_ref(), parent.as_ref(), i)?;
-                let line = tasks::task_line(&ws, ' ', &title, owner, thread.as_deref());
-                tasks::reads_back(&line, &title, owner, thread.as_deref()).map_err(&bad)?;
+                let fields = tasks::Fields { owner, repo: repo.as_deref(), thread: thread.as_deref() };
+                let line = tasks::task_line(&ws, ' ', &title, fields);
+                tasks::reads_back(&line, &title, fields).map_err(&bad)?;
                 let mut block = vec![line];
                 block.extend(notes.iter().map(|n| if n.is_empty() { String::new() } else { format!("{ws}  {n}") }));
                 let mut r = Record::new(TaskAction::Add, &list, &title);
@@ -396,7 +403,7 @@ pub(crate) fn apply(text: &str, ops: &[TaskOp], ctx: &Ctx) -> Result<Applied, Fa
                 records.push(r);
                 titles.push(title);
             }
-            TaskOp::Update { at, title, owner, person, notes, thread, done } => {
+            TaskOp::Update { at, title, owner, person, notes, thread, done, repo } => {
                 let spans = d.spans();
                 let s = spans[find(&spans, at, i)?].clone();
                 let v = &s.view;
@@ -418,10 +425,19 @@ pub(crate) fn apply(text: &str, ops: &[TaskOp], ctx: &Ctx) -> Result<Applied, Fa
                     Some("") => None,
                     Some(t) => Some(tasks::check_thread(t).map_err(&bad)?),
                 };
+                let new_repo = match repo.as_deref().map(str::trim) {
+                    None => v.repo.clone(),
+                    Some("") => None,
+                    Some(r) if Some(r) == v.repo.as_deref() => v.repo.clone(),
+                    Some(r) => Some((ctx.repo_ok)(r).map_err(&bad)?),
+                };
                 let new_done = done.unwrap_or(v.done);
                 let raw = plain(&d.lines[s.idx]).to_string();
-                let line_changed =
-                    new_title != v.title || new_owner != v.owner || new_thread != v.thread || new_done != v.done;
+                let line_changed = new_title != v.title
+                    || new_owner != v.owner
+                    || new_repo != v.repo
+                    || new_thread != v.thread
+                    || new_done != v.done;
                 let ws = s.ws(&d).to_string();
                 let mut block: Vec<String> = Vec::new();
                 if line_changed {
@@ -434,8 +450,13 @@ pub(crate) fn apply(text: &str, ops: &[TaskOp], ctx: &Ctx) -> Result<Applied, Fa
                         (true, false) => 'x',
                         (false, true) => ' ',
                     };
-                    let line = tasks::task_line(&ws, c, &new_title, new_owner.as_deref(), new_thread.as_deref());
-                    tasks::reads_back(&line, &new_title, new_owner.as_deref(), new_thread.as_deref())
+                    let fields = tasks::Fields {
+                        owner: new_owner.as_deref(),
+                        repo: new_repo.as_deref(),
+                        thread: new_thread.as_deref(),
+                    };
+                    let line = tasks::task_line(&ws, c, &new_title, fields);
+                    tasks::reads_back(&line, &new_title, fields)
                         .map_err(|e| bad(format!("{e}. 제목을 고치거나 「정리 제안」을 쓴다")))?;
                     block.push(format!("{line}{}", d.eol));
                 } else {
@@ -680,7 +701,7 @@ fn remap(op: &TaskOp, renames: &Renames) -> TaskOp {
     let r = |a: &TaskAnchor| renamed(a, renames);
     let ro = |a: &Option<TaskAnchor>| a.as_ref().map(r);
     match op {
-        TaskOp::Add { list, title, owner, person, notes, parent, before, thread } => TaskOp::Add {
+        TaskOp::Add { list, title, owner, person, notes, parent, before, thread, repo } => TaskOp::Add {
             list: list.clone(),
             title: title.clone(),
             owner: owner.clone(),
@@ -689,8 +710,9 @@ fn remap(op: &TaskOp, renames: &Renames) -> TaskOp {
             parent: ro(parent),
             before: ro(before),
             thread: thread.clone(),
+            repo: repo.clone(),
         },
-        TaskOp::Update { at, title, owner, person, notes, thread, done } => TaskOp::Update {
+        TaskOp::Update { at, title, owner, person, notes, thread, done, repo } => TaskOp::Update {
             at: r(at),
             title: title.clone(),
             owner: owner.clone(),
@@ -698,6 +720,7 @@ fn remap(op: &TaskOp, renames: &Renames) -> TaskOp {
             notes: notes.clone(),
             thread: thread.clone(),
             done: *done,
+            repo: repo.clone(),
         },
         TaskOp::Delete { at } => TaskOp::Delete { at: r(at) },
         TaskOp::Move { at, to_list, before, parent } => {
@@ -804,12 +827,20 @@ mod tests {
         }
     }
 
+    fn ok_repo(r: &str) -> Result<String, String> {
+        match r {
+            "aaa" | tasks::REPO_DIR => Ok(r.to_string()),
+            "/work/aaa" => Ok("aaa".into()),
+            _ => Err(format!("project.toml repos에 없는 저장소다: {r}")),
+        }
+    }
+
     fn no_log(_: i64) -> Result<Removed, String> {
         Err("기록 없음".into())
     }
 
     fn run(text: &str, ops: Vec<TaskOp>) -> Result<Applied, Fail> {
-        apply(text, &ops, &Ctx { owner_ok: &ok_owner, removed: &no_log })
+        apply(text, &ops, &Ctx { owner_ok: &ok_owner, repo_ok: &ok_repo, removed: &no_log })
     }
 
     fn anchor(text: &str, title: &str) -> TaskAnchor {
@@ -818,7 +849,57 @@ mod tests {
     }
 
     fn update(at: TaskAnchor) -> TaskOp {
-        TaskOp::Update { at, title: None, owner: None, person: false, notes: None, thread: None, done: None }
+        TaskOp::Update {
+            at,
+            title: None,
+            owner: None,
+            person: false,
+            notes: None,
+            thread: None,
+            done: None,
+            repo: None,
+        }
+    }
+
+    /// 저장소 칸(plan §8.328): 더하기·바꾸기(`None` 그대로, 빈 글 비움)·경로는 이름으로·모르는 이름 거부
+    #[test]
+    fn repo_field_edits() {
+        let md = "## A\n- [ ] 하나 (claude) · t-1\n";
+        let add = |repo: &str| TaskOp::Add {
+            list: "A".into(),
+            title: "둘".into(),
+            owner: Some("me".into()),
+            person: false,
+            notes: vec![],
+            parent: None,
+            before: None,
+            thread: None,
+            repo: Some(repo.into()),
+        };
+        assert_eq!(run(md, vec![add("/work/aaa")]).unwrap().text, format!("{md}- [ ] 둘 (me) [aaa]\n"));
+        let e = run(md, vec![add("bbb")]).unwrap_err();
+        assert!(matches!(&e, Fail::Bad(m) if m.contains("없는 저장소")), "{e:?}");
+        let set = |text: &str, repo: Option<&str>, owner: Option<&str>| {
+            run(
+                text,
+                vec![TaskOp::Update {
+                    at: anchor(text, "하나"),
+                    title: None,
+                    owner: owner.map(Into::into),
+                    person: false,
+                    notes: None,
+                    thread: None,
+                    done: None,
+                    repo: repo.map(Into::into),
+                }],
+            )
+            .unwrap()
+            .text
+        };
+        let with = set(md, Some(tasks::REPO_DIR), None);
+        assert_eq!(with, "## A\n- [ ] 하나 (claude) [작업 폴더] · t-1\n");
+        assert_eq!(set(&with, None, Some("me")), "## A\n- [ ] 하나 (me) [작업 폴더] · t-1\n", "None은 그대로");
+        assert_eq!(set(&with, Some(""), None), md, "빈 글은 비움");
     }
 
     /// 목록 설명·빈 줄·모르는 줄·하위 task·CRLF·마지막 줄바꿈 없음이 든 파일
@@ -831,7 +912,16 @@ mod tests {
         let notes = Some(vec!["새 메모".into(), "".into(), "  들여쓴 줄".into()]);
         let out = run(
             MD,
-            vec![TaskOp::Update { at: a, title: None, owner: None, person: false, notes, thread: None, done: None }],
+            vec![TaskOp::Update {
+                at: a,
+                title: None,
+                owner: None,
+                person: false,
+                notes,
+                thread: None,
+                done: None,
+                repo: None,
+            }],
         )
         .unwrap();
         assert_eq!(
@@ -853,6 +943,7 @@ mod tests {
                 notes: Some(vec!["메모 A".into()]),
                 thread: None,
                 done: Some(false),
+                repo: None,
             }],
         )
         .unwrap();
@@ -869,6 +960,7 @@ mod tests {
                 notes: None,
                 thread: None,
                 done: None,
+                repo: None,
             }],
         )
         .unwrap();
@@ -905,6 +997,7 @@ mod tests {
             parent: None,
             before: None,
             thread: None,
+            repo: None,
         };
         for (op, why) in [
             (add("상태 메모 (S4 뒤)", None, false, vec![]), "`)`로 끝나면"),
@@ -941,6 +1034,7 @@ mod tests {
                 notes: None,
                 thread: None,
                 done: None,
+                repo: None,
             }],
         )
         .unwrap_err();
@@ -1048,6 +1142,7 @@ mod tests {
                 parent: None,
                 before: None,
                 thread: None,
+                repo: None,
             }],
         )
         .unwrap();
@@ -1073,7 +1168,7 @@ mod tests {
         let removed = move |id: i64| {
             if id == 7 { Ok(Removed { list: "A".into(), text: text.clone() }) } else { Err("없는 기록".into()) }
         };
-        let ctx = Ctx { owner_ok: &ok_owner, removed: &removed };
+        let ctx = Ctx { owner_ok: &ok_owner, repo_ok: &ok_repo, removed: &removed };
         let back = apply(&del.text, &[TaskOp::Restore { log_id: 7, list: None }], &ctx).unwrap();
         assert_eq!(back.text, "## A\n- [ ] 둘\n- [ ] 하나\n  - [ ] 하위\n");
         assert_eq!((back.records[0].title.as_str(), back.records[0].restored), ("하나", Some(7)));
@@ -1120,6 +1215,7 @@ mod tests {
                     notes: Some(vec!["메모".into()]),
                     thread: None,
                     done: None,
+                    repo: None,
                 },
                 TaskOp::Move { at: a.clone(), to_list: String::new(), before: None, parent: Some(anchor(md, "셋")) },
                 TaskOp::Update {
@@ -1130,6 +1226,7 @@ mod tests {
                     notes: None,
                     thread: None,
                     done: None,
+                    repo: None,
                 },
             ],
         )

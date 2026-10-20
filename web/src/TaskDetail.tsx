@@ -42,6 +42,7 @@ import {
   noteLines,
   ownerLabel,
   parentAnchor,
+  REPO_DIR,
   startable,
   taskDepth,
   taskState,
@@ -133,6 +134,8 @@ export interface DetailProps {
   onStart?: (t: TaskView) => void;
   /** host가 task 첨부를 안다(FRONT_API 1.71): 붙이기·떼기. 보기는 늘 한다 */
   attachApi?: boolean;
+  /** host가 task 저장소 칸을 안다(FRONT_API 1.72): 폼의 저장소 고르기 */
+  repoApi?: boolean;
   /** 첨부 문서 열기(올린 md·html, 보고서 안 문서: 파일 보기) */
   onOpenAttachment?: (a: TaskAttachment) => void;
   /** 손대지 않은 폼의 첨부 붙이기·떼기: 그 task 메모를 최신 판에서 고쳐 바로 저장한다(차례로 줄 세운다) */
@@ -190,6 +193,7 @@ function ReadOnly({ t, board, byLine, groups, onThread, onPick, onOpenAttachment
       <div className="task-detail-chips">
         <span className="task-chip">{TASK_STATE_LABEL[state]}</span>
         {owner && <span className={`task-chip task-owner${owner === "미할당" ? " is-dim" : ""}`}>owner · {owner}</span>}
+        {t.repo && <span className="task-chip task-repo">저장소 · {t.repo}</span>}
         {t.thread && <ThreadChip id={t.thread} groups={groups} onThread={onThread} />}
         {t.done && <span className="task-chip is-dim">[x] 완료 표시</span>}
       </div>
@@ -281,7 +285,7 @@ function Attention({ t, actions }: { t: TaskView; actions?: ReactNode }) {
 const NEW_LIST = "\u0000new";
 
 function TaskForm(props: DetailProps) {
-  const { t, board, byLine, groups, owners, log, onThread, onPick, onSave, onDelete, linkApi, onHandOff, onStart, attachApi, onOpenAttachment, onChangeNotes } = props;
+  const { t, board, byLine, groups, owners, log, onThread, onPick, onSave, onDelete, linkApi, onHandOff, onStart, attachApi, repoApi, onOpenAttachment, onChangeNotes } = props;
   const agents = useMemo(() => agentNames(owners), [owners]);
   // 편집을 시작한 판: 이 판의 블록 hash로 저장한다. 상위 task도 그 판의 고정점으로 든다(줄 번호는 그사이 밀릴 수 있다)
   const [base, setBase] = useState<TaskView | null>(t);
@@ -332,7 +336,7 @@ function TaskForm(props: DetailProps) {
   if (draft.ownerKind === "agent" && draft.agent && !agentChoices.some((a) => a.value === draft.agent)) agentChoices.unshift({ value: draft.agent, label: draft.agent, disabled: false });
   const mineOf = (d: TaskDraft): MyEdit => {
     const { owner } = draftOwner(d);
-    return { title: d.title.trim(), owner: owner || null, thread: base?.thread ?? null, notes: noteLines(d.notes) };
+    return { title: d.title.trim(), owner: owner || null, repo: d.repo || null, thread: base?.thread ?? null, notes: noteLines(d.notes) };
   };
   const mine = () => mineOf(draft);
   const run = async (ops: TaskOp[], edit: MyEdit | null) => {
@@ -443,6 +447,7 @@ function TaskForm(props: DetailProps) {
       person: false,
       notes: s.notes,
       thread: (s.thread ?? null) === base.thread ? null : (s.thread ?? ""),
+      repo: null,
       done: null,
     };
     void run([op], { title: s.title, owner: s.owner, thread: s.thread, notes: s.notes });
@@ -653,6 +658,21 @@ function TaskForm(props: DetailProps) {
             <input className="input" value={draft.person} disabled={busy} onChange={(e) => set({ person: e.target.value })} data-testid="task-field-person" />
           </label>
         )}
+        {repoApi && (
+          <label className="task-field">
+            <span>저장소</span>
+            <select className="input" value={draft.repo} disabled={busy} onChange={(e) => set({ repo: e.target.value })} data-testid="task-field-repo">
+              <option value="">정하지 않음(시작할 때 고른다)</option>
+              {(board.repos ?? []).map((r) => (
+                <option key={r} value={r}>
+                  {r}
+                </option>
+              ))}
+              <option value={REPO_DIR}>작업 폴더(저장소 없음)</option>
+              {draft.repo && draft.repo !== REPO_DIR && !(board.repos ?? []).includes(draft.repo) && <option value={draft.repo}>{draft.repo}(project.toml에 없음)</option>}
+            </select>
+          </label>
+        )}
       </div>
       <label className="task-field">
         <span>상위 task</span>
@@ -758,7 +778,7 @@ function TaskForm(props: DetailProps) {
             </pre>
             {dirty && (
               <p className="muted task-form-preview">
-                저장하면: <code>{canonicalLine(draft.title.trim(), draftOwner(draft).owner || null, t.thread)}</code>
+                저장하면: <code>{canonicalLine(draft.title.trim(), draftOwner(draft).owner || null, draft.repo || null, t.thread)}</code>
               </p>
             )}
           </section>

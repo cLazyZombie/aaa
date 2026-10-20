@@ -1430,6 +1430,10 @@ pub struct TaskView {
     pub title: String,
     /// 괄호 안 owner 원문(`me`, `claude`, `codex@mac-b`, 사람 이름 등)
     pub owner: Option<String>,
+    /// owner 뒤 대괄호의 저장소 칸(FRONT_API 1.72, plan §8.328): `project.toml` repos 경로의 마지막 이름이나 `작업 폴더`. 비면 정하지
+    /// 않은 task다(「바로 시작」 창에서 고른다). 옛 host는 생략한다
+    #[serde(default)]
+    pub repo: Option<String>,
     /// ` · t-0001`로 붙은 thread
     pub thread: Option<String>,
     /// task 줄 아래 들여쓴 메모
@@ -1508,8 +1512,11 @@ pub enum TaskOp {
         /// 이어 줄 thread(` · t-NNNN`, FRONT_API 1.63 「task로 만들기」). 옛 host는 버린다
         #[serde(default)]
         thread: Option<String>,
+        /// 저장소 칸(FRONT_API 1.72): 저장소 이름·경로나 `작업 폴더`. 경로는 host가 이름으로 바꿔 적는다. 비움 = 정하지 않음
+        #[serde(default)]
+        repo: Option<String>,
     },
-    /// 준 칸만 바꾼다(`None`은 그대로, owner·thread의 빈 글은 비움). 바뀌지 않은 줄은 바이트 그대로 둔다
+    /// 준 칸만 바꾼다(`None`은 그대로, owner·저장소·thread의 빈 글은 비움). 바뀌지 않은 줄은 바이트 그대로 둔다
     Update {
         at: TaskAnchor,
         #[serde(default)]
@@ -1524,6 +1531,9 @@ pub enum TaskOp {
         thread: Option<String>,
         #[serde(default)]
         done: Option<bool>,
+        /// 저장소 칸(FRONT_API 1.72, Add의 `repo`와 같은 값)
+        #[serde(default)]
+        repo: Option<String>,
     },
     /// task 블록을 하위 task와 함께 지운다(기록에 남아 되살릴 수 있다)
     Delete {
@@ -1738,6 +1748,8 @@ pub struct TaskBoard {
     pub notes_files: Vec<TaskNotesFile>,
     /// 파일 원문(원문 편집, FRONT_API 1.62). 옛 host는 생략한다
     pub text: String,
+    /// task 저장소 칸에 쓸 수 있는 이름(FRONT_API 1.72): `project.toml` repos 경로의 마지막 이름, 겹치지 않게 적힌 차례
+    pub repos: Vec<String>,
 }
 
 /// 할 일 「바로 시작」 확인창이 보일 것(FRONT_API 1.63, `thread_start_preview`). host가 `thread start --from-task`와 같은 규칙으로
@@ -1762,6 +1774,13 @@ pub struct ThreadStartPreview {
     pub max_parallel_threads: u32,
     /// 이미 열린 thread가 이 task를 맡았다 등
     pub warnings: Vec<String>,
+    /// task 저장소 칸(FRONT_API 1.72, `TaskView.repo`). 비면 창이 저장소나 작업 폴더를 고르게 한다
+    pub repo: Option<String>,
+    /// host 로컬 머신 이름(`RepoChoice.machine`이 빈 저장소의 머신)
+    pub local_machine: Option<String>,
+    /// 덜 붐비는 차례의 머신(연결·점검 이상 없음, 모든 프로젝트의 열린 thread 적은 차례 → 부하 → 이름). owner가 머신을 정하지 않았으면
+    /// 그 저장소가 있는 머신 가운데 앞의 것이 기본값이다
+    pub machine_order: Vec<String>,
 }
 
 /// thread를 시작할 저장소 하나(project.toml `repos`)
