@@ -977,6 +977,7 @@ impl Host {
             nudge: s.nudge,
             mute: s.mute,
             repos: s.repos.into_iter().map(|r| aaa_proto::RepoChoice { path: r.path, machine: r.machine }).collect(),
+            local_machine: self.machine_order().1,
             task_notes: s.task_notes,
         })
     }
@@ -1275,13 +1276,18 @@ impl Host {
         project: Option<&str>,
         after: u64,
         limit: Option<u32>,
+        tail: bool,
     ) -> Result<Vec<FlowEvent>, ErrorBody> {
         if let Some(p) = project
             && !valid_project(p)
         {
             return Err(bad("프로젝트 이름 형식이 아니다"));
         }
-        self.db.flow_after(project, after, limit.unwrap_or(500).min(5000)).map_err(internal)
+        let limit = limit.unwrap_or(500).min(5000);
+        if tail {
+            return self.db.flow_tail(project, after, limit).map_err(internal);
+        }
+        self.db.flow_after(project, after, limit).map_err(internal)
     }
 
     pub(crate) fn profile_config(&self) -> Result<aaa_config::HostConfig, ErrorBody> {

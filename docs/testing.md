@@ -794,6 +794,16 @@ CI/Git의 source outbox·중복 억제·재시작·outage는 기존 owner를 유
 - 「한 초안」 단계는 TOML을 고친 뒤 debounce를 기다리지 않고 폼 탭에서 칸을 고쳐 저장하고, 파일에 두 쪽 고침과 머리 주석이 모두 남는지 본다(탭 전환이 다른 쪽 고침을 먼저 검사한다).
 - 결함 심기: host 저장의 판 대조(사전 대조와 `file_rev` closure)를 빼면 `save_writes_only_the_seen_revision_and_never_resurrects_a_deleted_rule`이 「본 판이 아닌 저장」 단언에서 실패한다. 탭 전환의 먼저 검사를 빼면 E2E 55 「한 초안」이 실패한다(library/t-0538/w2-fault-replant).
 
+## 운영 화면: thread 관리·「이 aaa」·저장소·알림함(t-0538 관리 GUI W4, plan §8.333)
+
+- `cargo test -p aaa-host --lib project::tests::repo_edit_replaces_in_place_and_settings_view_reads_it`: 저장소 제자리 고치기의 차례·다른 칸 보존, 머신 빼기, 이미 있는 값·없는 값 거부, 설정 읽기의 파일 이름·숫자·저장소.
+- `cargo test -p aaa-host --lib library_links::tests::prune_apply_deletes_only_the_previewed_candidates`: 미리 본 뒤 기한을 넘은 사본이 늘면(시각 주입) `conflict`로 하나도 지우지 않고, 같으면 본 것만 지운다.
+- `cargo test -p aaa-host --lib db::flow_tests`: 흐름 사건 `tail`이 최근 N개를 오래된 것부터 준다.
+- `cargo test -p aaa --test m13 resolve_keeps_dirty_worktree_and_unmerged_branch`: 실제 agent·git으로 `thread resolve --dry-run`이 미커밋 1·base 대비 2·병합 안 됨·남기기 권함을 보이고, thread 상태와 흐름 사건 수를 바꾸지 않는다.
+- `node --test web/test/operateModel.test.mjs`: 동작 가능 판정(도는 세션·데려온 thread·준비 중·끝냄·정리 중·받은 brief), 끝내기 기본값과 요청, 저장소 인자·묶음, 숫자 범위, 알림함 배지와 「답할 것」으로 보낼 post.
+- `node web/e2e/web.e2e.mjs --spec 56-operate`: 저장소 더하기·제자리 고치기(파일 글과 차례)·빼기 확인 창·할 일 저장소 목록, 「이 aaa」 값 저장(파일 글)과 범위 밖 숫자, 멈춤·재개 확인 창, 위험한 thread(미커밋·branch 커밋·사본에 빠진 symlink) 끝내기 창의 위험 줄과 남기기 켬, 끝낸 뒤 worktree·branch 남음, 깨끗한 thread(새 파일·big.bin을 치우고 사본이 다 온 뒤)의 남기기 끔과 worktree 지움, 다시 열기·Next 더하기·보내기·요약 고치기·세션을 끈 뒤 다시 시작, 알림함 배지와 한 건 끝내기(화면이 읽어도 `seen`이 바뀌지 않음), 흐름 사건 맨 위가 최근 것, 정리 미리보기, 휴대폰 390 폭, 같은 「바로 시작」 두 번 → thread 하나, Reader에 쓰기 단추 없음. 사본 상태·세션 상태·파일 글로 기다리며 고정 sleep은 없다.
+- 결함 심기: library/t-0538/w4-fault-replant.
+
 ## 대화의 도구 호출 묶음(t-0477, plan §8.304)
 
 - `node --test web/test/toolGroups.test.mjs`: Claude·Codex 도구 이름 분류, 요약 문구(두 가지까지·우선순위·서로 다른 수정 파일·생각), 이어진 도구·생각 줄 묶기, 앞 쪽이 묶음 앞에 붙은 뒤에도 옛 첫 줄 id로 같은 묶음과 펼침을 찾는지 본다.

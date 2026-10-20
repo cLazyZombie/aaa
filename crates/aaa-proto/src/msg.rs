@@ -2562,9 +2562,14 @@ pub enum FrontRequest {
     Events {
         project: Option<String>,
         #[serde(default)]
+        #[ts(type = "number")]
         after: u64,
         #[serde(default)]
         limit: Option<u32>,
+        /// 가장 최근 `limit`개(차례는 그대로 오래된 것부터, FRONT_API 1.75). 웹 알림함 「흐름 사건」이 쓴다. 옛 host는 버린다
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        #[ts(optional, as = "Option<bool>")]
+        tail: bool,
     },
     /// 사후 평가자 지정(§8.13): 역할이 evaluator인 thread를 시작한다. 프로젝트당 하나다.
     EvaluatorAssign {
@@ -2823,6 +2828,10 @@ pub enum FrontResponse {
     },
     Posts {
         posts: Vec<crate::PostEnvelope>,
+        /// 음소거된 보낸 쪽(`post unmute`에 줄 이름, FRONT_API 1.75). 옛 host는 생략한다
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        #[ts(optional, as = "Option<Vec<String>>")]
+        muted: Vec<String>,
     },
     Status(HostStatus),
     Machines {
@@ -3090,6 +3099,9 @@ pub enum FrontEvent {
     /// FRONT_API 1.43. 보고서 목록이 바뀌었다(보내기·열기·지우기·thread 사본). 웹 events 연결에만, 열 때와 바뀔 때 보낸다.
     /// `unseen`은 열지 않은 사용자 보고서 수(활동 막대 보고서 배지)
     Reports { unseen: u32 },
+    /// FRONT_API 1.75. 알림함(inbox)이 바뀌었다(항목이 더해지거나 끝났다). 웹 events 연결에만, 열 때와 바뀔 때 보낸다.
+    /// 웹은 `inbox`(`peek`)를 다시 읽는다(배지·알림함 패널)
+    Inbox,
     /// FRONT_API 1.60. 프로젝트 TASKS.md가 바뀌었다(ticker가 크기·mtime을 보고 내용 hash로 확인한다). 웹은 `tasks`를 다시 읽는다.
     /// 옛 CLI는 모르는 사건을 풀지 못하므로 1.60 이상과 합의한 연결에만 보낸다.
     Tasks { project: String, sha256: String },

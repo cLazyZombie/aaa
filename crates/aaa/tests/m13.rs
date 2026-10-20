@@ -5470,12 +5470,14 @@ fn flow_events_go_out_in_seq_order() {
             result = response(&mut held, &held_id) => panic!("hold 없이 요청이 먼저 끝났다: {result:?}"),
         };
         assert_eq!(line, "Hhold: 켬\n", "저장 후 실제로 붙잡힌 사건");
-        let stored =
-            timeout(T, query.call(FrontRequest::Events { project: Some("demo".into()), after: 0, limit: None }))
-                .await
-                .expect("붙잡힌 사건 조회가 끝나지 않았다")
-                .unwrap()
-                .unwrap();
+        let stored = timeout(
+            T,
+            query.call(FrontRequest::Events { project: Some("demo".into()), after: 0, limit: None, tail: false }),
+        )
+        .await
+        .expect("붙잡힌 사건 조회가 끝나지 않았다")
+        .unwrap()
+        .unwrap();
         let FrontResponse::Events { events: stored } = stored else { panic!("사건 조회: {stored:?}") };
         assert!(stored.iter().any(|e| e.detail == "hold: 켬"), "hold 알림 전에 사건이 저장돼야 한다: {stored:?}");
 

@@ -1414,6 +1414,8 @@ pub struct ProjectSettingsView {
     pub mute: bool,
     /// 저장소 목록(`[[workspaces]]`·`[[repos]]`). 머신이 없으면 host 머신이다
     pub repos: Vec<RepoChoice>,
+    /// host 로컬 머신 이름(`RepoChoice.machine`이 빈 저장소의 머신, 모르면 없다)
+    pub local_machine: Option<String>,
     pub task_notes: Vec<String>,
 }
 

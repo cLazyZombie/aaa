@@ -2880,7 +2880,7 @@ fn events_cmd(json: bool, project: Option<String>, after: u64, follow: bool) -> 
     let rt = runtime()?;
     rt.block_on(async {
         let mut c = aaa_common::front::FrontClient::connect(&aaa_config::paths::state_dir()).await?;
-        let first = c.call(FrontRequest::Events { project: project.clone(), after, limit: None }).await?;
+        let first = c.call(FrontRequest::Events { project: project.clone(), after, limit: None, tail: false }).await?;
         let events = match first {
             Ok(FrontResponse::Events { events }) => events,
             Ok(_) => anyhow::bail!("예상하지 못한 응답"),
@@ -2925,7 +2925,12 @@ fn events_cmd(json: bool, project: Option<String>, after: u64, follow: bool) -> 
                 FollowStep::Refill { after: from } => {
                     let mut last = from;
                     while last < e.seq {
-                        let req = FrontRequest::Events { project: Some(e.project.clone()), after: last, limit: None };
+                        let req = FrontRequest::Events {
+                            project: Some(e.project.clone()),
+                            after: last,
+                            limit: None,
+                            tail: false,
+                        };
                         let Ok(FrontResponse::Events { events: mut got }) = c.call(req).await? else { break };
                         got.sort_by_key(|g| g.seq);
                         let before = last;
@@ -4186,7 +4191,7 @@ fn render_front(r: &FrontResponse) -> String {
         FrontResponse::Post { result } => {
             let _ = writeln!(s, "{}", serde_json::to_string(result).unwrap());
         }
-        FrontResponse::Posts { posts } => {
+        FrontResponse::Posts { posts, .. } => {
             for p in posts {
                 let _ = writeln!(s, "{}\t{}\t{}", p.id, p.input.to, p.input.title);
             }

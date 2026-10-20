@@ -205,7 +205,7 @@ export function loadRecent(read: (key: string) => string | null): string[] {
   }
 }
 
-export type SettingsPageId = "appearance" | "chat" | "terminal" | "alerts" | "usage" | "shortcuts" | "devices";
+export type SettingsPageId = "appearance" | "chat" | "terminal" | "alerts" | "usage" | "shortcuts" | "devices" | "project" | "repos";
 
 /** What the palette shows for one Settings page: its name and the words a user may look for it by. */
 export interface SettingsPageEntry {
@@ -223,6 +223,8 @@ export const SETTINGS_PAGE_ENTRIES: readonly SettingsPageEntry[] = [
   { id: "usage", label: "구독 사용량", aliases: "요금제 한도 할당량 미터" },
   { id: "shortcuts", label: "단축키", aliases: "키보드 키 단축키 바인딩" },
   { id: "devices", label: "폰 및 기기", aliases: "휴대폰 설치 화면 켜짐 유지 앱" },
+  { id: "project", label: "이 aaa", aliases: "프로젝트 목표 profile 멈춤 재개 nudge mute 정리 sweep 보고서 사본" },
+  { id: "repos", label: "저장소", aliases: "저장소 repo workspaces 머신 경로 작업 폴더" },
 ];
 
 /** Other words for the palette's actions, by action id: a name the user may remember instead of the label (참고 i18n.ko.ts). */
