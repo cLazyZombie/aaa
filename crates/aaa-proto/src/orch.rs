@@ -1364,6 +1364,10 @@ pub struct TaskView {
     /// 형식 어긋남 task의 「정리 제안」(FRONT_API 1.62): host가 만든 정규형 후보. 사람이 「이대로 저장」해야 바뀐다.
     #[serde(default)]
     pub suggestion: Option<TaskSuggestion>,
+    /// 「확인 필요」의 까닭(FRONT_API 1.63, 할 일 T3): 이어진 thread가 끝났는데 완료로 판정하지 못했다(보고 표지·버림·하위 task
+    /// 남음), 하위 task가 모두 끝났다 등. host가 지우지 않고 사람이 「끝남으로 지우기」·「다시 맡기기」·「연결만 풀기」로 정한다
+    #[serde(default)]
+    pub attention: Option<String>,
 }
 
 /// 「정리 제안」(할 일 편집 T2): 끝 괄호 글 → 메모, 본문 속 열린 thread 번호 → 연결, `미할당` → owner 비움
@@ -1412,6 +1416,9 @@ pub enum TaskOp {
         parent: Option<TaskAnchor>,
         #[serde(default)]
         before: Option<TaskAnchor>,
+        /// 이어 줄 thread(` · t-NNNN`, FRONT_API 1.63 「task로 만들기」). 옛 host는 버린다
+        #[serde(default)]
+        thread: Option<String>,
     },
     /// 준 칸만 바꾼다(`None`은 그대로, owner·thread의 빈 글은 비움). 바뀌지 않은 줄은 바이트 그대로 둔다
     Update {
@@ -1642,6 +1649,39 @@ pub struct TaskBoard {
     pub notes_files: Vec<TaskNotesFile>,
     /// 파일 원문(원문 편집, FRONT_API 1.62). 옛 host는 생략한다
     pub text: String,
+}
+
+/// 할 일 「바로 시작」 확인창이 보일 것(FRONT_API 1.63, `thread_start_preview`). host가 `thread start --from-task`와 같은 규칙으로
+/// 채운다(owner → profile·머신, 메모를 붙인 할 일 글). 아무것도 시작하지 않는다
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(default)]
+pub struct ThreadStartPreview {
+    /// task 제목(thread 제목이 된다)
+    pub title: String,
+    /// 지금 파일의 그 task 블록 hash(시작 요청의 `task_block`)
+    pub task_block: String,
+    /// thread에 줄 할 일 글(제목과 「Notes from the task list」 메모)
+    pub task: String,
+    /// owner가 정한 profile, 없으면 프로젝트 기본 thread profile
+    pub profile: String,
+    /// owner가 정한 머신(없으면 host가 저장소의 머신이나 로컬로 고른다)
+    pub machine: Option<String>,
+    /// project.toml `repos`(worktree로 시작할 저장소). 비면 작업 폴더로 시작한다
+    pub repos: Vec<RepoChoice>,
+    /// 열린(시작 중 포함) thread 수와 project.toml `max_parallel_threads`. 한도는 coordinator 규칙이라 host는 막지 않는다
+    pub open_threads: u32,
+    pub max_parallel_threads: u32,
+    /// 이미 열린 thread가 이 task를 맡았다 등
+    pub warnings: Vec<String>,
+}
+
+/// thread를 시작할 저장소 하나(project.toml `repos`)
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(default)]
+pub struct RepoChoice {
+    pub path: String,
+    /// 그 저장소가 있는 머신(없으면 host 로컬)
+    pub machine: Option<String>,
 }
 
 /// 머신 하나에서 thread를 맡길 수 있는 profile(host 허용 목록과 그 머신 agent.toml의 교집합)

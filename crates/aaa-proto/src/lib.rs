@@ -87,6 +87,8 @@ pub fn typescript_bindings() -> String {
         TaskAction::decl(&cfg),
         TaskLogEntry::decl(&cfg),
         TaskLogFilter::decl(&cfg),
+        ThreadStartPreview::decl(&cfg),
+        RepoChoice::decl(&cfg),
         OwnerChoice::decl(&cfg),
         ProjectContext::decl(&cfg),
         ToolCheck::decl(&cfg),

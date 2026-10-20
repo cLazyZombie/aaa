@@ -11,8 +11,8 @@ use std::path::Path;
 use std::sync::Arc;
 
 use aaa_proto::{
-    ErrorBody, ErrorCode, FrontResponse, MessageMode, OwnerChoice, ProjectContext, TaskBoard, TaskConflict,
-    TaskLogFilter, TaskNotesFile, TaskOp, TaskThread, ThreadGroup, ThreadStatus,
+    ErrorBody, ErrorCode, FrontResponse, MessageMode, OwnerChoice, ProjectContext, TaskAction, TaskBoard, TaskConflict,
+    TaskLogFilter, TaskNotesFile, TaskOp, TaskThread, TaskView, ThreadGroup, ThreadStatus,
 };
 
 use crate::file_rev::{self, Edit};
@@ -151,12 +151,24 @@ impl Host {
     }
 
     /// `thread start --from-task`: owner를 profile·machine 기본값으로, 메모를 할 일에 붙인다
-    /// 돌려주는 것은 경고 한 줄이다(이미 열린 thread가 맡은 task: 참고에는 그 거부가 없어 막지 않는다).
-    pub(crate) async fn apply_from_task(&self, a: &mut StartArgs, title: &str) -> Result<Option<String>, ErrorBody> {
+    /// 돌려주는 것은 경고 한 줄(이미 열린 thread가 맡은 task: 참고에는 그 거부가 없어 막지 않는다)과 읽은 task다(시작한 뒤 그 블록에
+    /// thread를 잇는다). `block`(화면이 본 블록 hash)을 주면 지금 파일의 블록이 같을 때만 받는다: 본 것과 다른 일을 맡기지 않는다.
+    pub(crate) async fn apply_from_task(
+        &self,
+        a: &mut StartArgs,
+        title: &str,
+        block: Option<&str>,
+    ) -> Result<(Option<String>, TaskView), ErrorBody> {
         let dir = self.project_dir(&a.project)?;
         let text = std::fs::read_to_string(dir.join("TASKS.md")).unwrap_or_default();
         let list = tasks::parse(&text);
         let t = tasks::find(&list, title).ok_or_else(|| bad(format!("TASKS.md에 없는 task: {title}")))?.clone();
+        if block.is_some_and(|b| b != t.block_sha256) {
+            return Err(err(
+                ErrorCode::Unavailable,
+                format!("「{}」 task가 그사이 바뀌었다. 할 일 화면에서 최신을 보고 다시 시작한다", t.title),
+            ));
+        }
         // 끝 괄호의 상태 메모를 사람 owner로 오인해 거부하지 않는다: 정확한 까닭으로 거부한다
         if tasks::owner_misread(&t) {
             return Err(bad(format!("owner 칸 형식 어긋남, 고친 뒤 시작: {}", t.title)));
@@ -198,7 +210,72 @@ impl Host {
         if !t.notes.is_empty() {
             a.task = format!("{}\n\n## Notes from the task list\n\n{}\n", a.task.trim_end(), t.notes.join("\n"));
         }
-        Ok(warning)
+        Ok((warning, t))
+    }
+
+    /// 시작한 thread를 그 task 줄 끝에 잇는다(`ThreadStart.link_task`, 할 일 T3). 시작할 때 읽은 블록 hash로 찾고, 그사이 바뀌었거나
+    /// 고칠 권한이 없으면 시작은 그대로 두고 경고 한 줄을 돌려준다
+    pub(crate) async fn link_started(&self, project: &str, t: &TaskView, thread: &str, actor: &str) -> Option<String> {
+        let at = aaa_proto::TaskAnchor {
+            list: t.list.clone(),
+            title: t.title.clone(),
+            block_sha256: t.block_sha256.clone(),
+            line: t.line,
+        };
+        let op = TaskOp::Update {
+            at,
+            title: None,
+            owner: None,
+            person: false,
+            notes: None,
+            thread: Some(thread.to_string()),
+            done: None,
+        };
+        let why = match self.task_edit(project, vec![op], None, actor).await {
+            Ok(FrontResponse::TaskEdited { conflict: None, .. }) => return None,
+            Ok(FrontResponse::TaskEdited { conflict: Some(c), .. }) => c.reason,
+            Ok(_) => "모르는 응답".into(),
+            Err(e) => e.message,
+        };
+        Some(format!("{thread}를 「{}」 task에 잇지 못했다({why}). 할 일 화면 「task에 잇기」로 잇는다", t.title))
+    }
+
+    /// 할 일 「바로 시작」 확인창(`thread_start_preview`): `thread start --from-task`와 같은 규칙으로 채운 값과 저장소·한도
+    pub(crate) async fn thread_start_preview(
+        &self,
+        project: &str,
+        from_task: &str,
+        block: Option<&str>,
+    ) -> Result<FrontResponse, ErrorBody> {
+        let mut a = StartArgs {
+            holds: vec![],
+            project: project.to_string(),
+            title: String::new(),
+            machine: None,
+            profile: String::new(),
+            kind: aaa_proto::ThreadKind::Dir,
+            repo: None,
+            base: None,
+            task: String::new(),
+            role: aaa_proto::Role::Worker,
+        };
+        let (warning, t) = self.apply_from_task(&mut a, from_task, block).await?;
+        if a.profile.is_empty() {
+            a.profile = self.default_thread_profile(project);
+        }
+        let set = self.settings(project);
+        let open_threads = self.open_worker_threads(project);
+        Ok(FrontResponse::ThreadStartPreview(aaa_proto::ThreadStartPreview {
+            title: a.title,
+            task_block: t.block_sha256,
+            task: a.task,
+            profile: a.profile,
+            machine: a.machine,
+            repos: set.repos.into_iter().map(|r| aaa_proto::RepoChoice { path: r.path, machine: r.machine }).collect(),
+            open_threads,
+            max_parallel_threads: set.max_parallel_threads,
+            warnings: warning.into_iter().collect(),
+        }))
     }
 
     /// 할 일 화면(`tasks`): TASKS.md 목록·task, task 없는 열린 thread, 「나중」 파일. 읽은 파일 상태를 ticker 기억에 심는다
@@ -217,6 +294,7 @@ impl Host {
         for t in &mut tasks {
             t.suggestion = tasks::suggest(t, &open_ids);
         }
+        self.fill_attention(project, &mut tasks);
         // 임무 thread는 특수 패널의 일이라 할 일과 잇지 않는다
         let unlinked_threads = open
             .into_iter()
@@ -297,13 +375,36 @@ impl Host {
             Ok(Removed { list: e.list, text: e.before.unwrap_or_default() })
         };
         let ctx = task_edit::Ctx { owner_ok: &owner_ok, removed: &removed };
+        let (conflict, log_ids) = self.task_write(project, &dir, &ops, base_sha256.as_deref(), &actor, &ctx, false)?;
+        let board = self.task_board(project)?;
+        let conflict = conflict.map(|(op, reason, title)| TaskConflict {
+            op: op as u32,
+            reason,
+            latest: (!title.is_empty()).then(|| tasks::find(&board.tasks, &title).cloned()).flatten(),
+        });
+        Ok(FrontResponse::TaskEdited { board, conflict, log_ids })
+    }
+
+    /// 할 일 쓰기(편집 `task_edit`과 끝난 thread의 자동 정리가 함께 쓴다): 동작을 최신 파일에 차례로 적용해 한 번에 쓰고, 기록·ticker
+    /// 기억·`tasks` 사건을 남긴다. 대상이 없으면 쓰지 않고 충돌(동작 차례, 까닭, 제목)을 돌려준다. `auto`면 지운 기록을 「자동 정리」로 남긴다
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn task_write(
+        &self,
+        project: &str,
+        dir: &Path,
+        ops: &[TaskOp],
+        base_sha256: Option<&str>,
+        actor: &str,
+        ctx: &task_edit::Ctx,
+        auto: bool,
+    ) -> Result<(Option<(usize, String, String)>, Vec<i64>), ErrorBody> {
         let path = dir.join("TASKS.md");
         let lock = self.file_locks.of(&path);
         let guard = lock.lock().unwrap();
         let mut conflict: Option<(usize, String, String)> = None;
         let saved = file_rev::save(&path, |rev| {
             conflict = None;
-            let expected = base_sha256.as_deref().or(match ops.as_slice() {
+            let expected = base_sha256.or(match ops {
                 [TaskOp::RawSave { expected_sha256, .. }] => Some(expected_sha256.as_str()),
                 _ => None,
             });
@@ -311,9 +412,17 @@ impl Host {
                 conflict = Some((0, "파일이 그사이 바뀌었다(전체 판이 다르다)".into(), String::new()));
                 return Ok(Edit::Keep(Vec::new()));
             }
-            match task_edit::apply(&rev.text, &ops, &ctx) {
+            match task_edit::apply(&rev.text, ops, ctx) {
                 Ok(a) if a.text == rev.text => Ok(Edit::Keep(Vec::new())),
-                Ok(a) => Ok(Edit::Write(a.text, a.records)),
+                Ok(mut a) => {
+                    // 끝난 thread의 자동 정리는 기록 화면에서 「자동 정리」로 거른다(되살리기는 삭제와 같다)
+                    if auto {
+                        for r in a.records.iter_mut().filter(|r| r.action == TaskAction::Delete) {
+                            r.action = TaskAction::AutoClean;
+                        }
+                    }
+                    Ok(Edit::Write(a.text, a.records))
+                }
                 Err(Fail::Conflict { op, reason, title }) => {
                     conflict = Some((op, reason, title));
                     Ok(Edit::Keep(Vec::new()))
@@ -343,7 +452,7 @@ impl Host {
                 }
             }
             for r in &saved.out {
-                match self.db.task_log_add(project, now, &actor, r) {
+                match self.db.task_log_add(project, now, actor, r) {
                     Ok(id) => log_ids.push(id),
                     Err(e) => tracing::warn!(error = %e, "할 일 기록 실패"),
                 }
@@ -351,7 +460,7 @@ impl Host {
             // 자기 쓰기를 다음 tick이 「파일 직접」으로 적지 않게 기억을 새 판으로 둔다. 크기·mtime은 비워 다음 tick이 다시 재게 한다
             // (rename과 이 기억 사이에 끼어든 직접 편집은 내용 hash가 달라 그대로 잡힌다)
             // 기억이 아직 없으면(host가 뜬 뒤 첫 tick 전) 새 판으로 심는다: 쓰기 전에 읽은 `tasks`가 옛 글을 심지 못하게
-            let notes = notes_stamps(&dir, &self.settings(project).task_notes);
+            let notes = notes_stamps(dir, &self.settings(project).task_notes);
             let mut seen = self.tasks_seen.lock().unwrap();
             let seen = seen.entry(project.to_string()).or_insert_with(|| TasksSeen {
                 len: u64::MAX,
@@ -364,20 +473,14 @@ impl Host {
             drop(guard);
             let _ = self.task_events.send((project.to_string(), after.sha256.clone()));
             self.db.audit(
-                &actor,
-                "task_edit",
+                actor,
+                if auto { "task_auto_clean" } else { "task_edit" },
                 &format!("{project} ops={} sha={}→{}", ops.len(), saved.before.sha256, after.sha256),
             );
         } else {
             drop(guard);
         }
-        let board = self.task_board(project)?;
-        let conflict = conflict.map(|(op, reason, title)| TaskConflict {
-            op: op as u32,
-            reason,
-            latest: (!title.is_empty()).then(|| tasks::find(&board.tasks, &title).cloned()).flatten(),
-        });
-        Ok(FrontResponse::TaskEdited { board, conflict, log_ids })
+        Ok((conflict, log_ids))
     }
 
     /// 할 일 기록(최신부터). `by`를 보이는 이름으로 바꾼다
@@ -462,7 +565,8 @@ impl Host {
     /// (본 항목은 다음 nudge에 다시 나오지 않는다).
     pub(crate) async fn context(self: &Arc<Self>, project: &str, peek: bool) -> Result<ProjectContext, ErrorBody> {
         let dir = self.project_dir(project)?;
-        let tasks = tasks::parse(&std::fs::read_to_string(dir.join("TASKS.md")).unwrap_or_default());
+        let mut tasks = tasks::parse(&std::fs::read_to_string(dir.join("TASKS.md")).unwrap_or_default());
+        self.fill_attention(project, &mut tasks);
         let mut threads: Vec<_> =
             self.threads_of(Some(project), None)?.into_iter().filter(|t| t.group != ThreadGroup::Resolved).collect();
         for t in &mut threads {

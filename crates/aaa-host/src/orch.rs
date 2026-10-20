@@ -116,6 +116,9 @@ pub(crate) struct ThreadRec {
     /// resolve의 의도. 정리 응답을 저장하기 전에는 지우지 않는다(끊기면 같은 resolve로 이어간다).
     #[serde(default)]
     pub resolve_pending: Option<ResolveOpts>,
+    /// 끝난 thread의 이어진 task 판정(할 일 T3, task_clean.rs). 이 칸 전에 끝난 thread는 `why`가 없어 판정하지 않는다
+    #[serde(default)]
+    pub task_clean: TaskClean,
     #[serde(default)]
     pub prepare_started_ms: Option<u64>,
     pub created_at_ms: u64,
@@ -183,6 +186,7 @@ impl ThreadRec {
             eval_last_batch_ms: None,
             leftover: None,
             resolve_pending: None,
+            task_clean: TaskClean::default(),
             prepare_started_ms: Some(now),
             created_at_ms: now,
             updated_at_ms: now,
@@ -196,6 +200,37 @@ pub(crate) enum ResolveWhy {
     Manual,
     Auto { days: u32 },
     Merged,
+}
+
+impl ResolveWhy {
+    /// 기록에 남기는 이름(`TaskClean.why`)
+    pub(crate) fn as_str(self) -> &'static str {
+        match self {
+            ResolveWhy::Manual => "manual",
+            ResolveWhy::Auto { .. } => "auto",
+            ResolveWhy::Merged => "merged",
+        }
+    }
+}
+
+/// 끝난 thread가 이어진 task를 어떻게 정리하나(할 일 T3, plan §8.312, t-0469 §4 P2). resolve가 끝날 때 `why`·`discard`를 적고,
+/// ticker가 한 번 판정한 뒤 `judged_ms`를 찍는다. 다시 열면 지운다(다음 끝남을 다시 판정한다)
+#[derive(Debug, Clone, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub(crate) struct TaskClean {
+    /// 끝난 까닭(`ResolveWhy::as_str`)
+    #[serde(default)]
+    pub why: Option<String>,
+    /// 마지막 사본 없이·집에 오지 않은 것을 버리고 끝냈다
+    #[serde(default)]
+    pub discard: bool,
+    #[serde(default)]
+    pub judged_ms: Option<u64>,
+    /// 완료로 판정해 지운 task 제목(되살린 task의 「확인 필요」 까닭을 가른다)
+    #[serde(default)]
+    pub cleaned: Vec<String>,
+    /// 하위 task가 모두 끝나 이 thread를 이어 「확인 필요」로 올린 상위 task 제목
+    #[serde(default)]
+    pub parents: Vec<String>,
 }
 
 /// `thread resolve`의 고르기(herdr-projects `ResolveArgs`). 저절로 끝낼 때는 모두 끈 것이다(`resolve_after_copy`)
@@ -442,8 +477,9 @@ thread가 키를 기다리는 화면(시작 때 신뢰 창, 질문 메뉴, 명�
 - 사용자는 웹 할 일 화면에서 고친다. 그 결과는 `aaa context`의 task 목록에 이미 들어 있다. 따로 묻지 않고 되돌리지 않는다.
 - owner를 쓰기 전에 `aaa assignable --check <owner>`로 확인한다(`aaa task`도 같은 판정을 한다).
 - 형식 어긋남(owner 칸의 상태 메모 등)은 `aaa task list`가 ▲로 보인다. 고칠지는 사용자에게 묻는다.
-- thread에 맡기면 줄 끝에 ` · <thread id>`를 붙인다(`aaa task edit \"<제목>\" --thread <id>`). 끝나거나 그만두면 줄을 지운다(메모도 함께).
-- 추가·할당·완료 같은 변경은 사용자가 요청할 때만 한다. 하나 예외는 아래 「thread가 끝나면」의 병합된 경우다(관찰이다).
+- task를 thread에 맡길 때는 `aaa thread start --from-task \"<제목>\" --link-task …`로 시작한다. host가 줄 끝에 ` · <thread id>`를
+  붙인다(따로 시작했으면 `aaa task edit \"<제목>\" --thread <id>`). 사용자가 그만둔다고 하면 줄을 지운다(메모도 함께).
+- 추가·할당·완료 같은 변경은 사용자가 요청할 때만 한다. 끝난 thread의 task 정리는 host가 한다(아래 「thread가 끝나면」).
 - 더하기: 사용자가 지금 시작하지 않는 일을 말하면 더한다. 나중에 할 일, 사용자 자신의 할 일, 사용자가 미룬 제안(「나중에」·
   「지금 말고」), `max_parallel_threads` 때문에 못 시작한 일이다. 채팅에서 아직 승인을 기다리는 제안은 넣지 않는다. 사용자가
   이름을 든 목록에, 없으면 `## Backlog`에 넣는다. owner는 사용자가 준 것(맞을 때)을 쓰고, 안 주면 agent 일은 비우고 사용자
@@ -454,8 +490,10 @@ thread가 키를 기다리는 화면(시작 때 신뢰 창, 질문 메뉴, 명�
 - 보이기: 사용자가 task를 보자고 하면 채팅으로 목록별로 답한다. task마다 owner(없으면 「미할당」), 메모가 있으면 짧은 한 줄,
   맡긴 task는 `aaa context`의 열린 thread에서 그 thread의 지금 묶음을 보인다. task 줄이 없는 열린 thread는 따로 머리를 두어
   보인다. 사용자를 기다리는 task를 말한다. 파일을 그대로 붙이지 않는다.
-- thread가 끝나면: 맡긴 task의 thread가 끝났거나 열린 thread에서 빠졌을 때, 그 thread의 `pr` 항목이 `상태 MERGED`면 task를
-  지우고 알린다. 아니면 끝났는지·owner에게 돌릴지·다시 맡길지 묻는다(그 task를 이미 물었으면 묻지 않는다).
+- thread가 끝나면: host가 그 thread에 이어진 task를 정리한다. PR이 병합됐거나 마지막 보고 첫 줄이 `[완료]`면 줄을 지우고
+  inbox에 `task auto-cleaned`로 알린다(되살리기 `aaa task restore <기록 id>`). 그 밖이면 줄을 남기고 「확인 필요」로 둔다
+  (`aaa task list`의 ⚠, inbox `task needs check`). 확인 필요로 남은 task만 사용자에게 끝났는지·다시 맡길지·연결만 풀지 묻는다
+  (그 task를 이미 물었으면 묻지 않는다). 하위 task가 남은 task는 지우지 않고, 하위가 모두 끝난 상위는 확인 필요로 올라온다.
 - 빈 자리: inbox 항목이 thread가 끝났음을 보인 턴(새 보고, 저절로 끝냄, 병합된 PR)에 미할당이나 agent owner task가 기다리면
   한 번 말하고 맡길지 묻는다. 다음 턴에 되풀이하지 않는다.
 
@@ -1539,17 +1577,21 @@ impl Host {
     /// 참고에 없는 배경 역할이라 세지 않는다.
     fn parallel_warning(&self, project: &str) -> Option<String> {
         let max = self.settings(project).max_parallel_threads;
-        let open = self
-            .db
+        let open = self.open_worker_threads(project);
+        (open >= max).then(|| {
+            format!("열린 thread가 이미 {open}개다(project.toml max_parallel_threads {max}). 한도는 coordinator가 지키는 규칙이라 시작은 했다")
+        })
+    }
+
+    /// 열린(시작 중 포함) thread 수. 사후 평가자는 세지 않는다(`max_parallel_threads`가 세는 것)
+    pub(crate) fn open_worker_threads(&self, project: &str) -> u32 {
+        self.db
             .threads(Some(project))
             .unwrap_or_default()
             .iter()
             .filter_map(|j| serde_json::from_str::<ThreadRec>(j).ok())
             .filter(|r| r.role != Role::Evaluator && matches!(r.status, ThreadStatus::Open | ThreadStatus::Starting))
-            .count();
-        (open as u32 >= max).then(|| {
-            format!("열린 thread가 이미 {open}개다(project.toml max_parallel_threads {max}). 한도는 coordinator가 지키는 규칙이라 시작은 했다")
-        })
+            .count() as u32
     }
 
     pub(crate) async fn screen_lines(&self, mid: &str, pane: &str) -> Option<Vec<String>> {
@@ -2292,10 +2334,17 @@ impl Host {
             let _ = self.update_rec(project, id, |r| r.error = Some(message.clone()));
             return Err(ErrorBody { message, ..e });
         }
+        // 이어진 task 판정(할 일 T3)은 ticker가 한다: 끝난 까닭과 버림을 남기고 tick을 깨운다
         self.update_rec(project, id, |r| {
             r.resolve_pending = None;
             r.error = None;
+            r.task_clean = crate::orch::TaskClean {
+                why: Some(why.as_str().into()),
+                discard: opts.skip_copy || opts.discard_uncopied,
+                ..Default::default()
+            };
         })?;
+        self.tick_wake.notify_one();
         self.flow(
             &rec,
             "thread_resolved",
@@ -2346,6 +2395,8 @@ impl Host {
             // 다음 셈은 처음 보는 것으로 친다(전이 항목을 내지 않는다). 병합을 본 때도 다시 잰다
             r.last_group = None;
             r.merged_seen_ms = None;
+            // 이어진 task는 다음 끝남에서 다시 판정한다(아직 판정 전이면 하지 않는다)
+            r.task_clean = TaskClean::default();
         })?;
         self.db.audit(actor, "thread_reopen", &format!("{project}/{id}"));
         self.reports_bump();
@@ -2492,6 +2543,7 @@ mod tests {
             eval_batches: 0,
             eval_last_batch_ms: None,
             resolve_pending: None,
+            task_clean: TaskClean::default(),
             prepare_started_ms: None,
             leftover: None,
             created_at_ms: NOW - 3_600_000,

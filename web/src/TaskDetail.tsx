@@ -1,12 +1,13 @@
 // 할 일 상세와 편집 폼(할 일 보기 T1 §8.306의 상세를 편집 T2 §8.311에서 폼으로 넓혔다). 칸은 t-0469 §3.4: 제목·목록(새 목록)·owner
 // (미할당·나·agent·사람)·메모(Markdown 미리보기)·상위 task·연결 thread. 폼 모양과 저장 흐름은 t3code ScheduledTasksSettings.tsx
-// `ScheduledTaskEditorForm`(948–1124: 저장 중 두 번 보내지 않음, 실패는 폼 안에, 닫지 않음)을 따른다. 「coordinator에게 맡기기」·
-// 「바로 시작」은 T3다. 보기 권한 기기는 T1의 읽기 전용 상세 그대로다.
+// `ScheduledTaskEditorForm`(948–1124: 저장 중 두 번 보내지 않음, 실패는 폼 안에, 닫지 않음)을 따른다. 보기 권한 기기는 T1의 읽기
+// 전용 상세 그대로다. thread 연결(T3, §8.312): 「coordinator에게 맡기기」(기본, herdr-projects popup.rs `task_key` `d`와 같은 뜻이나
+// 바로 보내지 않고 입력칸을 채운다)·「바로 시작」, 「확인 필요」 task의 「끝남으로 지우기」·「다시 맡기기」·「연결만 풀기」.
 //
 // 편집을 시작한 판(`base`)의 블록 hash로 저장한다: 그사이 파일에서 이 task가 바뀌면 host가 쓰지 않고 충돌로 돌려준다(t-0469 §2.3).
 // 손대지 않은 폼은 새 판을 따라가고, 손댄 폼은 「파일에서 바뀌었다」를 보인다.
-import { useEffect, useMemo, useRef, useState, type SyntheticEvent } from "react";
-import { ChevronLeft, Circle, CircleDot, Triangle, X } from "lucide-react";
+import { useEffect, useMemo, useRef, useState, type ReactNode, type SyntheticEvent } from "react";
+import { Bot, ChevronLeft, Circle, CircleDot, Play, Triangle, TriangleAlert, Unlink, X } from "lucide-react";
 import type { OwnerChoice, TaskAnchor, TaskBoard, TaskLogEntry, TaskOp, TaskView } from "./gen/proto";
 import { Markdown } from "./Markdown";
 import { GROUP_WORD } from "./sidebarModel";
@@ -23,9 +24,11 @@ import {
   draftOps,
   draftOwner,
   emptyDraft,
+  linkOp,
   noteLines,
   ownerLabel,
   parentAnchor,
+  startable,
   taskDepth,
   taskState,
   type TaskDraft,
@@ -37,7 +40,7 @@ import {
 export type SaveResult = { kind: "saved"; title: string } | { kind: "conflict" } | { kind: "none" };
 
 export function StateIcon({ state }: { state: TaskState }) {
-  const Icon = state === "problem" ? Triangle : state === "run" ? CircleDot : Circle;
+  const Icon = state === "problem" ? Triangle : state === "check" ? TriangleAlert : state === "run" ? CircleDot : Circle;
   return <Icon className={`task-state is-${state}`} aria-hidden="true" />;
 }
 
@@ -107,6 +110,12 @@ export interface DetailProps {
   gone?: boolean;
   /** 폼에 손댔는가(손댄 폼은 task가 파일에서 빠져도 닫지 않는다) */
   onDirty?: (dirty: boolean) => void;
+  /** host가 thread 연결을 안다(FRONT_API 1.63): 맡기기 단추와 「확인 필요」 단추 */
+  linkApi?: boolean;
+  /** 「coordinator에게 맡기기」(`again`: 「다시 맡기기」): coordinator 입력칸을 채우고 그 pane을 연다 */
+  onHandOff?: (t: TaskView, again: boolean) => Promise<void>;
+  /** 「바로 시작」 확인창을 연다 */
+  onStart?: (t: TaskView) => void;
 }
 
 export function TaskDetail(props: DetailProps) {
@@ -158,6 +167,7 @@ function ReadOnly({ t, byLine, groups, onThread, onPick }: DetailProps & { t: Ta
         {t.done && <span className="task-chip is-dim">[x] 완료 표시</span>}
       </div>
       {t.problems.length > 0 && <Problems t={t} />}
+      {t.attention && <Attention t={t} />}
       <section className="task-detail-section">
         <h3>메모</h3>
         {t.notes.length > 0 ? <Markdown className="task-notes">{t.notes.join("\n")}</Markdown> : <p className="muted">메모 없음</p>}
@@ -226,10 +236,24 @@ function Related({ t, byLine, groups, onPick }: { t: TaskView; byLine: ReadonlyM
   );
 }
 
+/** 「확인 필요」: 이어진 thread가 끝났는데 완료로 판정하지 못했다(host `attention`). 조작 기기는 끝남으로 지우기·다시 맡기기·연결만 풀기 */
+function Attention({ t, actions }: { t: TaskView; actions?: ReactNode }) {
+  return (
+    <section className="task-detail-section task-attention" data-testid="task-attention">
+      <h3>
+        <TriangleAlert aria-hidden="true" />
+        확인 필요
+      </h3>
+      <p>{t.attention}</p>
+      {actions && <div className="task-attention-actions">{actions}</div>}
+    </section>
+  );
+}
+
 const NEW_LIST = "\u0000new";
 
 function TaskForm(props: DetailProps) {
-  const { t, board, byLine, groups, owners, log, onThread, onPick, onSave, onDelete } = props;
+  const { t, board, byLine, groups, owners, log, onThread, onPick, onSave, onDelete, linkApi, onHandOff, onStart } = props;
   const agents = useMemo(() => agentNames(owners), [owners]);
   // 편집을 시작한 판: 이 판의 블록 hash로 저장한다. 상위 task도 그 판의 고정점으로 든다(줄 번호는 그사이 밀릴 수 있다)
   const [base, setBase] = useState<TaskView | null>(t);
@@ -318,6 +342,25 @@ function TaskForm(props: DetailProps) {
     };
     void run([op], { title: s.title, owner: s.owner, thread: s.thread, notes: s.notes });
   };
+  // thread로 맡기기(T3): 손대지 않은 폼의 task만(저장한 뒤 맡긴다). coordinator 입력칸 채우기는 pane을 열 때까지 막는다
+  const [handing, setHanding] = useState(false);
+  const handOff = (again: boolean) => {
+    if (!t || !onHandOff || handing) return;
+    setHanding(true);
+    setError(null);
+    void onHandOff(t, again).then(
+      () => setHanding(false),
+      (e: unknown) => {
+        setError(e instanceof Error ? e.message : String(e));
+        setHanding(false);
+      },
+    );
+  };
+  const canStart = !!linkApi && !!t && !!base && !dirty && startable(t, groups, agents);
+  const unlink = () => {
+    if (!base) return;
+    void run([linkOp(base, "")], { title: base.title, owner: base.owner === "agent" ? null : base.owner, thread: null, notes: base.notes });
+  };
   const history = t ? log.filter((e) => e.title === t.title || e.title === base?.title) : [];
   const pastThreads = [...new Set(history.flatMap((e) => (e.thread && e.thread !== t?.thread ? [e.thread] : [])))];
   const state = t ? taskState(t, groups) : "wait";
@@ -349,6 +392,58 @@ function TaskForm(props: DetailProps) {
         </div>
       )}
       {base && base.problems.length > 0 && <Problems t={base} />}
+      {t?.attention && (
+        <Attention
+          t={t}
+          actions={
+            linkApi ? (
+              <>
+                <button type="button" className="btn btn-danger" disabled={busy || dirty} data-testid="task-attention-delete" onClick={() => base && void onDelete(base).catch((e: unknown) => setError(e instanceof Error ? e.message : String(e)))}>
+                  끝남으로 지우기
+                </button>
+                <button type="button" className="btn" disabled={busy || dirty || handing || !onHandOff} data-testid="task-attention-again" onClick={() => handOff(true)}>
+                  <Bot aria-hidden="true" />
+                  다시 맡기기
+                </button>
+                <button type="button" className="btn btn-ghost" disabled={busy || dirty} data-testid="task-attention-unlink" onClick={unlink}>
+                  <Unlink aria-hidden="true" />
+                  연결만 풀기
+                </button>
+                {canStart && onStart && (
+                  <button type="button" className="linkish" disabled={busy} data-testid="task-attention-start" onClick={() => onStart(t)}>
+                    바로 다시 시작
+                  </button>
+                )}
+              </>
+            ) : undefined
+          }
+        />
+      )}
+      {canStart && !t?.attention && (onHandOff || onStart) && (
+        <section className="task-detail-section task-handoff" data-testid="task-handoff">
+          <h3>thread로 맡기기</h3>
+          <div className="task-handoff-actions">
+            {onHandOff && (
+              <button type="button" className="btn btn-primary" disabled={busy || handing} data-testid="task-handoff-coordinator" onClick={() => handOff(false)}>
+                <Bot aria-hidden="true" />
+                coordinator에게 맡기기
+              </button>
+            )}
+            {onStart && (
+              <button type="button" className="btn" disabled={busy || handing} data-testid="task-handoff-start" onClick={() => t && onStart(t)}>
+                <Play aria-hidden="true" />
+                바로 시작
+              </button>
+            )}
+          </div>
+          <p className="muted">coordinator 입력칸에 맡기는 글을 채워 연다(보내기는 직접 누른다). 「바로 시작」은 확인창에서 profile·저장소를 고른다.</p>
+        </section>
+      )}
+      {!t && draft.thread && (
+        <div className="task-detail-chips" data-testid="task-new-thread">
+          <span className="task-chip task-thread is-working">이을 thread · {draft.thread}</span>
+        </div>
+      )}
       {s && (
         <section className="task-detail-section task-suggestion" data-testid="task-suggestion">
           <h3>정리 제안</h3>
@@ -497,7 +592,7 @@ function TaskForm(props: DetailProps) {
           </button>
         )}
         <span className="spacer" />
-        {base && (
+        {base && !t?.attention && (
           <button
             type="button"
             className="btn btn-danger"

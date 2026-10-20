@@ -228,6 +228,7 @@ pub(crate) fn parse_board(text: &str) -> (Vec<TaskListView>, Vec<TaskView>) {
             parent,
             problems,
             suggestion: None,
+            attention: None,
         });
         // 멈춘 줄(다음 task·제목, 들여쓴 하위 task 포함)부터 다시 본다
         i = j;

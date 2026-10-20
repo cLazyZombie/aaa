@@ -1,28 +1,32 @@
 // 할 일 화면의 순수 규칙(할 일 보기 T1, plan §8.306): 행 상태, 거르기·검색, 활동 막대 배지, 하위 task 깊이. 편집(T2, §8.311)은
-// 화면 동작 → host 동작(TaskOp), 「나중」 항목 나누기, 기록 차이.
+// 화면 동작 → host 동작(TaskOp), 「나중」 항목 나누기, 기록 차이. thread 연결(T3, §8.312)은 확인 필요 상태, coordinator에게 맡기는
+// 글, 맡길 수 있는 task, 잇기·풀기 동작, 자동 정리 알림.
 // host `tasks`(TaskBoard)는 TASKS.md를 그대로 읽은 것이고, 여기서는 판단하지 않고 보이는 차례와 표지만 정한다.
 import type { TaskAction, TaskAnchor, TaskBoard, TaskLogEntry, TaskOp, TaskView, ThreadGroup } from "./gen/proto";
 
-/** 행 상태(`data-task-state`): 형식 어긋남 ▲ > 진행 중 ◉(열린 thread와 이어짐) > 대기 ○ */
-export type TaskState = "problem" | "run" | "wait";
+/** 행 상태(`data-task-state`): 형식 어긋남 ▲ > 확인 필요 ⚠(이어진 thread가 끝났는데 완료로 판정하지 못함, host `attention`) >
+ * 진행 중 ◉(열린 thread와 이어짐) > 대기 ○ */
+export type TaskState = "problem" | "check" | "run" | "wait";
 
-/** 거르기 칩: 전체·내 일(me)·미할당·진행 중 */
-export type TaskFilter = "all" | "mine" | "unassigned" | "running";
+/** 거르기 칩: 전체·내 일(me)·미할당·진행 중·확인 필요 */
+export type TaskFilter = "all" | "mine" | "unassigned" | "running" | "check";
 
 export const TASK_FILTERS: readonly { id: TaskFilter; label: string }[] = [
   { id: "all", label: "전체" },
   { id: "mine", label: "내 일" },
   { id: "unassigned", label: "미할당" },
   { id: "running", label: "진행 중" },
+  { id: "check", label: "확인 필요" },
 ];
 
-export const TASK_STATE_LABEL: Record<TaskState, string> = { problem: "형식 어긋남", run: "진행 중", wait: "대기" };
+export const TASK_STATE_LABEL: Record<TaskState, string> = { problem: "형식 어긋남", check: "확인 필요", run: "진행 중", wait: "대기" };
 
 /** thread id → 묶음(App이 가진 thread 목록). 없으면 모르는 thread다 */
 export type ThreadGroups = ReadonlyMap<string, ThreadGroup>;
 
 export function taskState(t: TaskView, groups: ThreadGroups): TaskState {
   if (t.problems.length > 0) return "problem";
+  if (t.attention) return "check";
   const g = t.thread ? groups.get(t.thread) : undefined;
   return g !== undefined && g !== "resolved" ? "run" : "wait";
 }
@@ -46,14 +50,29 @@ export function taskMatches(t: TaskView, filter: TaskFilter, query: string, grou
   if (filter === "mine" && t.owner !== "me") return false;
   if (filter === "unassigned" && !unassigned(t)) return false;
   if (filter === "running" && taskState(t, groups) !== "run") return false;
+  if (filter === "check" && taskState(t, groups) !== "check") return false;
   const needle = query.trim().toLowerCase();
   if (needle === "") return true;
   return has(needle, t.title) || has(needle, t.owner) || t.notes.some((n) => has(needle, n));
 }
 
-/** 활동 막대 「할 일」 배지: 형식 어긋남 task 수(확인 필요·새 me task는 T3에서 더한다) */
-export function taskBadge(board: TaskBoard | null): number {
-  return board ? board.tasks.filter((t) => t.problems.length > 0).length : 0;
+/**
+ * 활동 막대 「할 일」 배지(t-0469 §3.1): 사람이 볼 task 수. 확인 필요·형식 어긋남과, 이 기기가 할 일 화면에서 아직 보지 못한 `me`
+ * task다. 진행 중·대기는 세지 않는다. `seenMine`이 없으면(이 기기가 처음 읽는다) 새 me task를 세지 않는다
+ */
+export function taskBadge(board: TaskBoard | null, seenMine: ReadonlySet<string> | null = null): number {
+  if (!board) return 0;
+  return board.tasks.filter((t) => t.problems.length > 0 || t.attention || (seenMine !== null && t.owner === "me" && !seenMine.has(mineKey(t)))).length;
+}
+
+/** 본 me task를 가리키는 열쇠(제목은 파일 안에서 하나다) */
+export function mineKey(t: TaskView): string {
+  return t.title.toLowerCase();
+}
+
+/** 이 판의 me task 열쇠(할 일 화면을 열면 모두 본 것이 된다) */
+export function mineKeys(board: TaskBoard): string[] {
+  return board.tasks.filter((t) => t.owner === "me").map(mineKey);
 }
 
 /** 하위 task 깊이(상위 task 차례를 따라 올라간다). 없는 상위는 거기서 멈춘다 */
@@ -173,6 +192,8 @@ export interface TaskDraft {
   notes: string;
   /** 상위 task(고른 판의 블록 고정점, 없으면 맨 위 단계). 줄 번호로 들면 그사이 줄이 밀렸을 때 다른 task 밑으로 간다 */
   parent: TaskAnchor | null;
+  /** 새 task에 이을 thread(「task로 만들기」, T3) */
+  thread: string | null;
 }
 
 /** 이 owner 글을 agent로 볼까: 맡길 수 있는 profile 목록에 있거나 `@`가 든 것. 그 밖의 이름은 사람이다 */
@@ -198,11 +219,12 @@ export function draftOf(t: TaskView, agents: readonly string[], parent: TaskAnch
     person: kind === "person" ? (t.owner ?? "") : "",
     notes: t.notes.join("\n"),
     parent,
+    thread: null,
   };
 }
 
 export function emptyDraft(list: string, parent: TaskAnchor | null = null): TaskDraft {
-  return { title: "", list, ownerKind: "none", agent: "", person: "", notes: "", parent };
+  return { title: "", list, ownerKind: "none", agent: "", person: "", notes: "", parent, thread: null };
 }
 
 /** 폼 owner → host owner 글(빈 글은 미할당)과 「사람으로 저장」 */
@@ -242,7 +264,7 @@ export function draftOps(t: TaskView | null, d: TaskDraft, wasParent: TaskAnchor
   const notes = noteLines(d.notes);
   const parent = d.parent;
   if (!t) {
-    return [{ op: "add", list: parent ? parent.list : d.list.trim(), title: d.title.trim(), owner: owner || null, person, notes, parent, before: null }];
+    return [{ op: "add", list: parent ? parent.list : d.list.trim(), title: d.title.trim(), owner: owner || null, person, notes, parent, before: null, thread: d.thread }];
   }
   const ops: TaskOp[] = [];
   const title = d.title.trim() !== t.title ? d.title.trim() : null;
@@ -341,4 +363,44 @@ export function ago(atMs: number, now: number): string {
   if (s < 3600) return `${Math.floor(s / 60)}분 전`;
   if (s < 86_400) return `${Math.floor(s / 3600)}시간 전`;
   return `${Math.floor(s / 86_400)}일 전`;
+}
+
+// ───────────── thread 연결(할 일 T3, plan §8.312) ─────────────
+
+/** 「coordinator에게 맡기기」가 coordinator 입력칸에 채우는 글(t-0469 §3.4, 사람이 보내기를 누른다). 「다시 맡기기」는 앞 thread와 까닭을 붙인다 */
+export function handOffText(t: TaskView, again = false): string {
+  if (!again) return `「${t.title}」 task를 thread로 맡겨 줘`;
+  const why = t.attention ? `(앞 ${t.thread ?? "thread"}: ${t.attention})` : "";
+  return `「${t.title}」 task를 thread로 다시 맡겨 줘${why}`;
+}
+
+/**
+ * thread로 맡길 수 있는 task: owner가 미할당·agent이고(`me`·사람은 host가 거부한다, `--from-task`) 형식 어긋남이 없고 열린 thread와
+ * 이어지지 않았다. agent·사람 구분은 맡길 수 있는 profile 목록으로 한다(`ownerKindOf`)
+ */
+export function startable(t: TaskView, groups: ThreadGroups, agents: readonly string[]): boolean {
+  if (t.problems.length > 0 || taskState(t, groups) === "run") return false;
+  const kind = ownerKindOf(t.owner, agents);
+  return kind === "none" || kind === "agent";
+}
+
+/** 「task에 잇기」·「연결만 풀기」: thread 칸만 바꾼다(빈 글은 풀기) */
+export function linkOp(t: TaskView, thread: string): TaskOp {
+  return { op: "update", at: anchorOf(t), title: null, owner: null, person: false, notes: null, thread, done: null };
+}
+
+/** 「task에 잇기」 고르기 목록: 형식 어긋남이 없고 열린 thread와 이어지지 않은 task(줄을 다시 쓰면 제목 검사를 거친다) */
+export function linkCandidates(board: TaskBoard, groups: ThreadGroups, query: string): TaskView[] {
+  const needle = query.trim().toLowerCase();
+  return board.tasks.filter((t) => t.problems.length === 0 && taskState(t, groups) !== "run" && (needle === "" || has(needle, t.title) || t.notes.some((n) => has(needle, n))));
+}
+
+/** 아직 알리지 않은 자동 정리(되살리지 않은 것, `seen`보다 새 기록). 최신이 앞이다 */
+export function newAutoCleans(log: readonly TaskLogEntry[], seen: number): TaskLogEntry[] {
+  return log.filter((e) => e.action === "auto_clean" && e.restored_by === null && e.id > seen);
+}
+
+/** 기록의 가장 큰 id(처음 읽은 기기는 여기까지를 본 것으로 둔다) */
+export function lastLogId(log: readonly TaskLogEntry[]): number {
+  return log.reduce((n, e) => Math.max(n, e.id), 0);
 }
