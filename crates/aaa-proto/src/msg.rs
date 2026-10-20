@@ -18,7 +18,7 @@ use crate::orch::{
     ProjectChange, ProjectContext, ProjectFilesCheck, ProjectOpened, ProjectView, QuestionView, ReportSnapshot, Role,
     RoutineView, ThreadAdopt, ThreadAdopted, ThreadKind, ThreadPlacement, ThreadPrepare, ThreadReady, ThreadView,
 };
-use crate::orch::{EvaluationView, EvaluatorView, MenuPick, NoticeView, ThreadSummaryView};
+use crate::orch::{EvaluationView, EvaluatorView, MenuPick, NoticeView, TaskBoard, ThreadSummaryView};
 
 use crate::version::Version;
 
@@ -852,6 +852,14 @@ pub enum AgentRequest {
         cwd: String,
         query: PrQuery,
     },
+    /// diff.v1을 알린 agent만 thread worktree(`cwd`)의 바뀐 파일·patch를 읽는다(plan §8.305). `base`는 thread를 시작할 때
+    /// 잡은 기준 ref(`origin/main` 등)이고, 없으면 agent가 `origin/HEAD`·`main`·`master`에서 고른다
+    ThreadDiff {
+        cwd: String,
+        #[serde(default)]
+        base: Option<String>,
+        query: crate::DiffQuery,
+    },
 }
 
 /// `AgentRequest::PrQuery`가 묻는 것
@@ -966,6 +974,7 @@ pub enum AgentResponse {
     Ci(crate::CiAnswer),
     Git(crate::GitAnswer),
     History(HistoryChunk),
+    Diff(crate::DiffView),
 }
 
 /// routine 명령 실행 결과
@@ -1500,6 +1509,17 @@ pub enum FrontRequest {
         thread: String,
         path: String,
     },
+    /// FRONT_API 1.59. thread worktree의 바뀐 파일과 patch(plan §8.305): 그 thread의 머신 agent가 읽는다(diff.v1). 소스를
+    /// 보이므로 조작 기기만(`ThreadFile`과 같다)
+    ThreadDiff {
+        #[serde(default)]
+        #[ts(optional, as = "Option<String>")]
+        project: String,
+        thread: String,
+        #[serde(default)]
+        #[ts(optional, as = "Option<crate::DiffQuery>")]
+        query: crate::DiffQuery,
+    },
     /// 폴더 보기(파일 보기 안, 참고 `DirectoryBrowser`): pane이 지금 있는 폴더 기준으로 폴더 한 단계를 읽는다. 허용 폴더 안만,
     /// 조작 기기만(`PaneFile`과 같다)
     PaneDir {
@@ -1808,6 +1828,12 @@ pub enum FrontRequest {
         #[ts(optional, as = "Option<String>")]
         project: String,
         check: Option<String>,
+    },
+    /// 할 일 화면이 읽는 TASKS.md 전체(FRONT_API 1.60, Reader 가능). 형식 어긋남·줄 번호·블록 hash·「나중」 파일을 함께 준다.
+    Tasks {
+        #[serde(default)]
+        #[ts(optional, as = "Option<String>")]
+        project: String,
     },
     /// thread 목록. 기본은 사후 평가자를 빼고, `role`을 주면 그 역할만 보인다(§8.13).
     Threads {
@@ -2243,6 +2269,7 @@ impl FrontRequest {
             | FrontRequest::PostList { project, .. }
             | FrontRequest::PostUnmute { project, .. }
             | FrontRequest::ThreadFile { project, .. }
+            | FrontRequest::ThreadDiff { project, .. }
             | FrontRequest::ProjectSet { project, .. }
             | FrontRequest::ProjectOpen { project, .. }
             | FrontRequest::ThreadStart { project, .. }
@@ -2250,6 +2277,7 @@ impl FrontRequest {
             | FrontRequest::ThreadNext { project, .. }
             | FrontRequest::Context { project, .. }
             | FrontRequest::Assignable { project, .. }
+            | FrontRequest::Tasks { project }
             | FrontRequest::ThreadShow { project, .. }
             | FrontRequest::ThreadSummary { project, .. }
             | FrontRequest::ThreadSummarySet { project, .. }
@@ -2322,6 +2350,7 @@ impl FrontRequest {
                 | FrontRequest::ThreadNext { line: None, add: None, .. }
                 | FrontRequest::Context { peek: true, .. }
                 | FrontRequest::Assignable { .. }
+                | FrontRequest::Tasks { .. }
                 | FrontRequest::Events { .. }
                 | FrontRequest::Questions { .. }
                 | FrontRequest::Inbox { peek: true, .. }
@@ -2419,6 +2448,8 @@ pub enum FrontResponse {
         /// `check`가 통과했을 때 설명
         valid: Option<String>,
     },
+    /// `tasks`의 답(FRONT_API 1.60)
+    TaskBoard(TaskBoard),
     Screen(ScreenText),
     Read(ReadView),
     /// `thread read`·`thread keys`
@@ -2531,6 +2562,12 @@ pub enum FrontResponse {
         source: Option<crate::RoutineSource>,
     },
     Library(LibraryView),
+    /// `thread_diff`의 답
+    ThreadDiff {
+        project: String,
+        thread: String,
+        diff: crate::DiffView,
+    },
     LibraryLink(LinkView),
     LibraryReports {
         reports: Vec<LibraryReport>,
@@ -2613,6 +2650,9 @@ pub enum FrontEvent {
     /// FRONT_API 1.43. 보고서 목록이 바뀌었다(보내기·열기·지우기·thread 사본). 웹 events 연결에만, 열 때와 바뀔 때 보낸다.
     /// `unseen`은 열지 않은 사용자 보고서 수(활동 막대 보고서 배지)
     Reports { unseen: u32 },
+    /// FRONT_API 1.60. 프로젝트 TASKS.md가 바뀌었다(ticker가 크기·mtime을 보고 내용 hash로 확인한다). 웹은 `tasks`를 다시 읽는다.
+    /// 옛 CLI는 모르는 사건을 풀지 못하므로 1.60 이상과 합의한 연결에만 보낸다.
+    Tasks { project: String, sha256: String },
     /// 설치 앱 아이콘의 host 공통 수. 웹 events 연결에서 처음과 값이 바뀔 때만 보낸다.
     AppBadge { count: u32 },
     /// 웹 연결 처음과 배포 내구 상태가 바뀔 때 주는 최신 요약. 조회만 하며 진행기를 재개하지 않는다.
@@ -2966,6 +3006,11 @@ mod tests {
         assert!(!FrontRequest::PaneChat { pane: "p".into(), thinking: false, before: None }.needs_control());
         // 파일 보기는 조작 기기만(herdr-web-ui도 보기 전용 기기는 fs/ 403)
         assert!(FrontRequest::PaneFile { pane: "p".into(), path: "a.txt".into() }.needs_control());
+        // diff는 소스를 보인다: 보기 기기는 못 받는다(plan §8.305)
+        assert!(
+            FrontRequest::ThreadDiff { project: "p".into(), thread: "t-0001".into(), query: Default::default() }
+                .needs_control()
+        );
         assert!(
             FrontRequest::ThreadFile { project: "p".into(), thread: "t-0001".into(), path: "a.txt".into() }
                 .needs_control()

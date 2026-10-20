@@ -161,7 +161,69 @@ thread: string | null,
 /**
  * task 줄 아래 들여쓴 메모
  */
-notes: Array<string>, done: boolean, };
+notes: Array<string>, done: boolean,
+/**
+ * task 줄 번호(1부터, FRONT_API 1.60). 옛 host는 생략한다.
+ */
+line: number,
+/**
+ * task 줄 원문(앞 공백 제외)
+ */
+raw: string,
+/**
+ * task 블록(task 줄과 메모 줄, 블록 끝 빈 줄 제외, 줄 끝 문자 없이 `\n`으로 이음)의 sha256. 편집(T2)의 충돌 anchor다.
+ */
+block_sha256: string,
+/**
+ * 들여쓴 하위 task면 상위 task의 `line`
+ */
+parent: number | null,
+/**
+ * 형식 어긋남(owner 칸이 owner 꼴이 아님, 제목 안 thread 번호 등). 있으면 화면이 원문을 보이고 판단하지 않는다.
+ */
+problems: Array<string>, };
+
+export type TaskListView = {
+/**
+ * `##` 머리 이름. 첫 `##` 앞의 task·설명 줄은 이름 없는 목록(`""`)이다
+ */
+name: string,
+/**
+ * 머리 밑 체크박스 없는 줄(목록 설명). task 블록 안의 메모는 들지 않는다
+ */
+notes: Array<string>, };
+
+export type TaskThread = { id: string, title: string, group: ThreadGroup, };
+
+export type TaskNotesSection = {
+/**
+ * `##` 머리 이름. 첫 `##` 앞 줄은 이름 없는 절이다
+ */
+name: string, lines: Array<string>, };
+
+export type TaskNotesFile = {
+/**
+ * 프로젝트 폴더 기준 상대 경로
+ */
+path: string,
+/**
+ * 읽지 못한 까닭(없음·프로젝트 폴더 밖·너무 큼). 있으면 `sections`는 비어 있다
+ */
+error: string | null, sections: Array<TaskNotesSection>, };
+
+export type TaskBoard = { project: string,
+/**
+ * 파일 전체 바이트의 sha256(파일이 없으면 빈 글의 hash)
+ */
+sha256: string, lists: Array<TaskListView>, tasks: Array<TaskView>,
+/**
+ * 열린 thread 중 어느 task의 `thread`에도 없는 것
+ */
+unlinked_threads: Array<TaskThread>,
+/**
+ * project.toml `task_notes`의 파일마다(설정이 비면 비어 있다)
+ */
+notes_files: Array<TaskNotesFile>, };
 
 export type OwnerChoice = { machine: string, connected: boolean,
 /**
@@ -325,6 +387,62 @@ export type PostSender = { thread: string | null, role: Role, mission: string | 
 
 export type PostEnvelope = { id: string, project: string, from: PostSender, caused_by: Array<string>, body_sha256: string, created_ms: number, state: string, post_id: string, to: string, post_type: PostType, topic: string, title: string, body: string, needs_user: boolean, refs: Array<string>, };
 
+export type DiffScope = "branch" | "uncommitted";
+
+export type DiffFileRef = { path: string, old_path?: string, };
+
+export type DiffQuery = { scope?: DiffScope,
+/**
+ * `--ignore-all-space`(t3code 패널 기본 켬, 카드 숫자는 끔)
+ */
+ignore_whitespace?: boolean,
+/**
+ * patch도 읽는다. 끄면 파일 목록과 숫자만(카드)
+ */
+patch?: boolean,
+/**
+ * 이 파일의 patch만(파일 목록은 비운다)
+ */
+file?: DiffFileRef, };
+
+export type DiffStatus = "added" | "deleted" | "modified" | "renamed" | "copied" | "type_changed" | "unmerged" | "untracked";
+
+export type DiffFile = {
+/**
+ * 저장소 맨 위 기준 경로(`/`)
+ */
+path: string, old_path?: string, status: DiffStatus,
+/**
+ * 바이너리면 없다(numstat `-`)
+ */
+additions: number | null, deletions: number | null, };
+
+export type DiffView = { scope: DiffScope,
+/**
+ * 비교 기준의 이름: branch 범위는 base ref(`origin/main`), 미커밋은 `HEAD`
+ */
+base: string,
+/**
+ * 비교한 commit(merge-base 또는 HEAD). 첫 커밋 전이면 빈 tree
+ */
+base_sha: string,
+/**
+ * 지금 branch 이름(분리된 HEAD면 `HEAD`)
+ */
+head: string,
+/**
+ * 바뀐 파일(경로 차례). 너무 많으면 없다(`truncated`)
+ */
+files: Array<DiffFile> | null, patch: string | null,
+/**
+ * patch를 상한에서 잘랐거나 파일 목록이 모자라다
+ */
+truncated: boolean,
+/**
+ * 새 파일이 상한보다 많아 새 파일은 뺐다
+ */
+untracked_omitted: boolean, };
+
 export type FrontRequest = { "op": "debug_input", pane: string | null, thread: string | null, since_ms: bigint, } | { "op": "rollout_start", id: string, spec: RolloutSpec, } | { "op": "rollout_status", id: string, } | { "op": "deploy_context" } | { "op": "deploy_start", machine: string | null, id: string, action: DeployAction, } | { "op": "deploy_status", machine: string | null, id: string, } | { "op": "post", project?: string, input: PostInput, } | { "op": "post_status", project?: string, post_id: string, } | { "op": "post_list", project?: string, } | { "op": "post_unmute", project?: string, thread: string, } | { "op": "status" } | { "op": "machines" } | { "op": "panes", role: Role | null, } | { "op": "pane_run", machine: string | null, name: string | null, argv: Array<string>, cwd: string | null, cols: number | null, rows: number | null,
 /**
  * host 정본 profile로 harness를 띄운다(`argv`는 비운다, herdr-web-ui 새 세션의 agent 고르기)
@@ -337,7 +455,7 @@ thinking: boolean,
 /**
  * 이전 응답의 before. 생략하면 최신 쪽, 옛 상대는 무시한다.
  */
-before?: string, } | { "op": "pane_file", pane: string, path: string, } | { "op": "thread_file", project?: string, thread: string, path: string, } | { "op": "pane_dir", pane: string, path: string, hidden: boolean, } | { "op": "pane_send", pane: string, data: B64, } | { "op": "pane_read_text", pane: string, source: ReadSource,
+before?: string, } | { "op": "pane_file", pane: string, path: string, } | { "op": "thread_file", project?: string, thread: string, path: string, } | { "op": "thread_diff", project?: string, thread: string, query?: DiffQuery, } | { "op": "pane_dir", pane: string, path: string, hidden: boolean, } | { "op": "pane_send", pane: string, data: B64, } | { "op": "pane_read_text", pane: string, source: ReadSource,
 /**
  * 줄 수(기본: Recent 80줄, Visible은 화면 전부, 최대 1000)
  */
@@ -385,7 +503,7 @@ from_task: string | null, } | { "op": "thread_adopt", project?: string, pane: st
 /**
  * 할 일. 비면 「하던 일을 이어 하되 이제 이 프로젝트 thread다」
  */
-task: string, } | { "op": "thread_next", project?: string, thread: string, line: number | null, add: string | null, } | { "op": "context", project?: string, peek: boolean, } | { "op": "assignable", project?: string, check: string | null, } | { "op": "threads", project: string | null, role: Role | null, } | { "op": "thread_show", project?: string, thread: string, } | { "op": "thread_summary", project?: string, thread: string, } | { "op": "thread_summary_set", project?: string, thread: string, text: string, } | { "op": "thread_library", project?: string, thread: string, } | { "op": "library_link", project?: string, thread: string, days: number | null, } | { "op": "library_links", project: string | null, } | { "op": "library_link_revoke", id: string, } | { "op": "library_publish", project?: string, name: string, source: string, live: boolean,
+task: string, } | { "op": "thread_next", project?: string, thread: string, line: number | null, add: string | null, } | { "op": "context", project?: string, peek: boolean, } | { "op": "assignable", project?: string, check: string | null, } | { "op": "tasks", project?: string, } | { "op": "threads", project: string | null, role: Role | null, } | { "op": "thread_show", project?: string, thread: string, } | { "op": "thread_summary", project?: string, thread: string, } | { "op": "thread_summary_set", project?: string, thread: string, text: string, } | { "op": "thread_library", project?: string, thread: string, } | { "op": "library_link", project?: string, thread: string, days: number | null, } | { "op": "library_links", project: string | null, } | { "op": "library_link_revoke", id: string, } | { "op": "library_publish", project?: string, name: string, source: string, live: boolean,
 /**
  * FRONT_API 1.43. 사용자에게 보내는 웹 보고서(index.html 필수, 「내 보고서」·안 봄·사용자 알림 post)
  */
@@ -475,7 +593,7 @@ message: MessageView | null, } | { "kind": "context" } & ProjectContext | { "kin
 /**
  * `check`가 통과했을 때 설명
  */
-valid: string | null, } | { "kind": "screen" } & ScreenText | { "kind": "read" } & ReadView | { "kind": "thread_pane" } & ThreadPaneView | { "kind": "output_matched", matched_line: string, read: ReadView, } | { "kind": "workspaces", workspaces: Array<WorkspaceSummary>, } | { "kind": "chat" } & ChatView | { "kind": "pane_file", info: FileInfo | null, candidates: Array<string>, url: string | null, } | { "kind": "pane_dir", listing: DirListing, } | { "kind": "pending", pending: Array<PendingEnroll>, } | { "kind": "pair_code", code: string, role: DeviceRole, expires_in_s: number, } | { "kind": "publish" } & PublishState | { "kind": "devices", devices: Array<DeviceView>, } | { "kind": "workspace" } & Workspace | { "kind": "done" } | { "kind": "attached", path: string, inserted: boolean, note: string | null, } | { "kind": "projects", projects: Array<ProjectView>, } | { "kind": "instance", project: ProjectView | null, } | { "kind": "project" } & ProjectView | { "kind": "project_change" } & ProjectChange | { "kind": "project_opened" } & ProjectOpened | { "kind": "project_files", checks: Array<ProjectFilesCheck>, } | { "kind": "profiles", machine: string, profiles: Array<ProfileView>, } | { "kind": "profile_resolved", profile: ProfileView, } | { "kind": "threads", threads: Array<ThreadView>, } | { "kind": "thread" } & ThreadView | { "kind": "thread_summary" } & ThreadSummaryView | { "kind": "events", events: Array<FlowEvent>, } | { "kind": "questions", questions: Array<QuestionView>, } | { "kind": "question" } & QuestionView | { "kind": "message" } & MessageView | { "kind": "inbox", items: Array<InboxItem>,
+valid: string | null, } | { "kind": "task_board" } & TaskBoard | { "kind": "screen" } & ScreenText | { "kind": "read" } & ReadView | { "kind": "thread_pane" } & ThreadPaneView | { "kind": "output_matched", matched_line: string, read: ReadView, } | { "kind": "workspaces", workspaces: Array<WorkspaceSummary>, } | { "kind": "chat" } & ChatView | { "kind": "pane_file", info: FileInfo | null, candidates: Array<string>, url: string | null, } | { "kind": "pane_dir", listing: DirListing, } | { "kind": "pending", pending: Array<PendingEnroll>, } | { "kind": "pair_code", code: string, role: DeviceRole, expires_in_s: number, } | { "kind": "publish" } & PublishState | { "kind": "devices", devices: Array<DeviceView>, } | { "kind": "workspace" } & Workspace | { "kind": "done" } | { "kind": "attached", path: string, inserted: boolean, note: string | null, } | { "kind": "projects", projects: Array<ProjectView>, } | { "kind": "instance", project: ProjectView | null, } | { "kind": "project" } & ProjectView | { "kind": "project_change" } & ProjectChange | { "kind": "project_opened" } & ProjectOpened | { "kind": "project_files", checks: Array<ProjectFilesCheck>, } | { "kind": "profiles", machine: string, profiles: Array<ProfileView>, } | { "kind": "profile_resolved", profile: ProfileView, } | { "kind": "threads", threads: Array<ThreadView>, } | { "kind": "thread" } & ThreadView | { "kind": "thread_summary" } & ThreadSummaryView | { "kind": "events", events: Array<FlowEvent>, } | { "kind": "questions", questions: Array<QuestionView>, } | { "kind": "question" } & QuestionView | { "kind": "message" } & MessageView | { "kind": "inbox", items: Array<InboxItem>,
 /**
  * `inbox_done`이 끝낸 항목 수(그때 `items`는 남은 항목). 목록 요청에는 없다.
  */
@@ -499,9 +617,9 @@ plan_sha256: string, } | { "kind": "routine_runs", runs: Array<RoutineRun>,
 /**
  * 파일 원문(FRONT_API 1.58). 임무 조건·깨진 파일·옛 host는 없다.
  */
-source: RoutineSource | null, } | { "kind": "library" } & LibraryView | { "kind": "library_link" } & LinkView | { "kind": "library_reports", reports: Array<LibraryReport>, } | { "kind": "library_imported", reports: Array<LibraryReport>, skipped: Array<LibrarySkip>, } | { "kind": "library_pruned", removed: Array<string>, } | { "kind": "library_prune_preview" } & LibraryPrunePlan | { "kind": "library_rotated" } | { "kind": "library_usage", size: number, reports: number, live: number, problems: number, max_size: number, max_days: number, protected_size: number, } | { "kind": "library_links", links: Array<LinkView>, } | { "kind": "evaluators", evaluators: Array<EvaluatorView>, } | { "kind": "evaluations", evaluations: Array<EvaluationView>, } | { "kind": "evaluation" } & EvaluationView | { "kind": "preferences" } & SharedPreferences;
+source: RoutineSource | null, } | { "kind": "library" } & LibraryView | { "kind": "thread_diff", project: string, thread: string, diff: DiffView, } | { "kind": "library_link" } & LinkView | { "kind": "library_reports", reports: Array<LibraryReport>, } | { "kind": "library_imported", reports: Array<LibraryReport>, skipped: Array<LibrarySkip>, } | { "kind": "library_pruned", removed: Array<string>, } | { "kind": "library_prune_preview" } & LibraryPrunePlan | { "kind": "library_rotated" } | { "kind": "library_usage", size: number, reports: number, live: number, problems: number, max_size: number, max_days: number, protected_size: number, } | { "kind": "library_links", links: Array<LinkView>, } | { "kind": "evaluators", evaluators: Array<EvaluatorView>, } | { "kind": "evaluations", evaluations: Array<EvaluationView>, } | { "kind": "evaluation" } & EvaluationView | { "kind": "preferences" } & SharedPreferences;
 
-export type FrontEvent = { "ev": "state", machines: Array<MachineView>, panes: Array<PaneView>, } | { "ev": "workspace" } & Workspace | { "ev": "flow" } & FlowEvent | { "ev": "thread" } & ThreadView | { "ev": "question" } & QuestionView | { "ev": "preferences" } & SharedPreferences | { "ev": "pong", id: number, } | { "ev": "web", build: string, } | { "ev": "reports", unseen: number, } | { "ev": "app_badge", count: number, } | { "ev": "rollout", result: Outcome<RolloutCard | null>, } | { "ev": "notice" } & NoticeView | { "ev": "chat_changed", pane: string, signature: string, } | { "ev": "chat_watching", pane: string, live: boolean, };
+export type FrontEvent = { "ev": "state", machines: Array<MachineView>, panes: Array<PaneView>, } | { "ev": "workspace" } & Workspace | { "ev": "flow" } & FlowEvent | { "ev": "thread" } & ThreadView | { "ev": "question" } & QuestionView | { "ev": "preferences" } & SharedPreferences | { "ev": "pong", id: number, } | { "ev": "web", build: string, } | { "ev": "reports", unseen: number, } | { "ev": "tasks", project: string, sha256: string, } | { "ev": "app_badge", count: number, } | { "ev": "rollout", result: Outcome<RolloutCard | null>, } | { "ev": "notice" } & NoticeView | { "ev": "chat_changed", pane: string, signature: string, } | { "ev": "chat_watching", pane: string, live: boolean, };
 
 export type SubmitStage = "not_sent" | "no_enter" | "too_late";
 

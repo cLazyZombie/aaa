@@ -27,6 +27,7 @@ mod coord;
 mod ctrl_enter;
 pub mod db;
 mod deploy;
+mod diff;
 mod evaluator;
 mod files;
 pub mod front;
@@ -449,6 +450,10 @@ pub struct Host {
     pub question_events: broadcast::Sender<aaa_proto::QuestionView>,
     /// 앱 안 알림(턴 끝남·새 보고, notice.rs). 기록하지 않는다
     pub notice_events: broadcast::Sender<aaa_proto::NoticeView>,
+    /// 프로젝트 TASKS.md가 바뀌었다(프로젝트, 내용 sha256). ticker가 낸다(coord.rs `tasks_pass`)
+    pub task_events: broadcast::Sender<(String, String)>,
+    /// ticker가 마지막으로 본 프로젝트마다의 TASKS.md 상태
+    tasks_seen: Mutex<HashMap<String, coord::TasksSeen>>,
     /// ticker 묶음 셈까지 미룬 thread pane의 끝남(pane → 알림, notice.rs `turn_finished`)
     turn_ends: Mutex<HashMap<String, aaa_proto::NoticeView>>,
     /// 질문 저장과 화면 선택 창 붙이기(읽고 쓰기)를 차례로: 답한 질문을 선택 창 붙이기가 다시 열지 않는다
@@ -665,6 +670,8 @@ impl Host {
             mission_locks: Mutex::new(HashMap::new()),
             mission_start_lock: tokio::sync::Mutex::new(()),
             notice_events: broadcast::channel(64).0,
+            task_events: broadcast::channel(64).0,
+            tasks_seen: Mutex::new(HashMap::new()),
             turn_ends: Mutex::new(HashMap::new()),
             question_lock: std::sync::Mutex::new(()),
             preferences,
@@ -1375,6 +1382,7 @@ impl Host {
                 }
                 FrontResponse::Context(c)
             }),
+            FrontRequest::Tasks { project } => self.task_board(&project).map(FrontResponse::TaskBoard),
             FrontRequest::Assignable { project, check } => {
                 self.project_dir(&project)?;
                 let owners = self.assignable(&project).await;
@@ -1617,6 +1625,7 @@ impl Host {
             FrontRequest::ThreadFile { project, thread, path } => {
                 self.thread_file(actor, &project, &thread, &path).await
             }
+            FrontRequest::ThreadDiff { project, thread, query } => self.thread_diff(&project, &thread, query).await,
             FrontRequest::PaneDir { pane, path, hidden } => self.pane_dir(role, actor, &pane, &path, hidden).await,
             FrontRequest::PaneChat { pane, thinking, before } => {
                 let (id, mid) = self.resolve_pane(&pane)?;
