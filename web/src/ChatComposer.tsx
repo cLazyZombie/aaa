@@ -33,7 +33,8 @@ import {
 } from "react";
 import { ArrowUp, Clock, ImagePlus, Info, LoaderCircle, Square, TriangleAlert, X } from "lucide-react";
 import { uploadChatImage } from "./api";
-import type { ChatMessage, SubmitStage, InputTraceEvent, InputReceiptMethod, InputSubmitMeta } from "./gen/proto";
+import type { ChatMessage, ContextUsage, SubmitStage, InputTraceEvent, InputReceiptMethod, InputSubmitMeta } from "./gen/proto";
+import { ContextGauge } from "./ContextGauge";
 import { imageMention, insertLeadingMention } from "./herdr/composerImages";
 import { normalizeComposerImageFile } from "./herdr/composerImageMime";
 import "./herdr/Composer.css";
@@ -45,7 +46,7 @@ import { holdPageRef } from "./pageHold";
 import { quickReplyButtons } from "./preferences";
 import { useChatShared, useTerminalToggle } from "./settings";
 import { useAppearance } from "./theme";
-import { receiptMethod, receiptHash, inputTraceId } from "./inputReceipt";
+import { receiptMethod, receiptHash, inputTraceId, slashCommand } from "./inputReceipt";
 import { heldSend } from "./steerQueued";
 import { usePageVisible } from "./pageVisible";
 
@@ -148,6 +149,8 @@ export interface ChatComposerProps {
   asking?: boolean;
   /** coordinator pane의 입력창: 보라 테두리와 도는 빛으로 thread 입력창과 가른다(style.css `.composer-surface.is-coordinator`) */
   coordinator?: boolean;
+  /** 그 harness 세션의 컨텍스트 사용량(plan §8.319). 없으면 게이지를 그리지 않는다(옛 host·첫 응답 전) */
+  context?: ContextUsage | null;
 }
 
 export function ChatComposer({
@@ -172,6 +175,7 @@ export function ChatComposer({
   onInterrupt,
   asking = false,
   coordinator = false,
+  context = null,
 }: ChatComposerProps) {
   const { autoSendQueued, quickReplies, showQuickReplies } = useChatShared();
   const enterSends = useTerminalToggle("enterSends");
@@ -437,8 +441,9 @@ export function ChatComposer({
         messageQueues.remove(owner, f.queueId);
         messageQueues.endSend(owner, f.queueId);
       }
-      // 보낼 때 대화 기록을 읽지 못했으면(Claude 첫 hook 전 등) 기록 증거가 올 수 없다: host의 전달이 보내짐이다
-      if (seen(f) || f.before === null) settle(f, f.before === null ? "no_transcript" : undefined);
+      // 보낼 때 대화 기록을 읽지 못했으면(Claude 첫 hook 전 등) 기록 증거가 올 수 없다: host의 전달이 보내짐이다.
+      // harness 명령(게이지의 /compact 등)도 사람 글로 기록되지 않는다(plan §8.319)
+      if (seen(f) || f.before === null || slashCommand(f.text)) settle(f, f.before === null ? "no_transcript" : seen(f) ? undefined : "slash_command");
       else if (harness === "codex" && workingRef.current) {
         // Codex는 작업 중에 받은 글을 다음 도구 호출 뒤 읽을 때에야 기록한다: host의 전달이 보내짐이고 대화 끝 대기 말로 기다린다
         setPending((list) => [...list, { id: f.id, trace: f.trace, hash: f.hash, text: f.text, before: f.before, at: Date.now(), stale: false }]);
@@ -867,6 +872,24 @@ export function ChatComposer({
             </div>
           )}
           <div className="composer-controls composer-controls-right">
+            {context && (
+              <ContextGauge
+                context={context}
+                agentLabel={agentLabel}
+                typing={shown !== "" || attachments.length > 0}
+                compacting={compacting}
+                // 정리는 쉴 때만(herdr-web-ui compactCommandText·t3code: 작업 중이면 Claude는 턴 뒤로 미루고 Codex는 거절한다)
+                compactBlocked={
+                  !connected ? "연결이 끊겨 보낼 수 없다"
+                  : compacting ? "대화를 정리하는 중이다"
+                  : asking ? "확인창에 먼저 답한다"
+                  : working ? "작업 중에는 정리를 보내지 않는다. 끝나면 보낼 수 있다"
+                  : locked ? "보내는 중이다"
+                  : null
+                }
+                onCompact={() => send("/compact")}
+              />
+            )}
             {onInterrupt && working && !locked && connected && shown.trim() === "" && attachments.length === 0 ? (
               // 작업 중 빈 입력창: 보내기 자리가 중단이다(t3code 「Interrupt」, plan §8.266). Esc 한 번이라 묻지 않는다
               <button

@@ -83,7 +83,7 @@ history?: string, };
 
 export type InputTraceEvent = "receipt" | "preparing" | "ctrl_enter_blocked" | "unlocked" | "slow" | "unlock" | "cancel" | "failed" | "pending" | "stuck";
 
-export type InputReceiptMethod = "normal" | "pasted_content" | "queue_operation" | "codex_delivery" | "no_transcript" | "connection" | "rejected" | "unknown" | "held_draft" | "composing" | "readonly" | "locked" | "uploading" | "no_room" | "compacting";
+export type InputReceiptMethod = "normal" | "pasted_content" | "queue_operation" | "codex_delivery" | "no_transcript" | "connection" | "rejected" | "unknown" | "held_draft" | "composing" | "readonly" | "locked" | "uploading" | "no_room" | "compacting" | "slash_command";
 
 export type InputEvent = { at_ms: bigint, id: string, pane: string, thread: string | null, harness: string | null, working: boolean, event: string, detail: string, };
 
@@ -1057,6 +1057,27 @@ export type AgentActivity = "started" | "working" | "idle" | "question" | "error
 
 export type PlanSummary = { done: number, total: number, current: string | null, };
 
+export type ContextUsage = {
+/**
+ * 마지막 응답에 실린 컨텍스트 토큰(정리가 막 끝났으면 정리 뒤 크기)
+ */
+used: number,
+/**
+ * 창 크기. 기록으로 알 수 없으면 null(웹은 %가 아니라 토큰 수로 보인다)
+ */
+window: number | null,
+/**
+ * 사용량 %(그 harness 터미널과 같은 식: Claude 사용/창 반올림, Codex 기준 12k를 뺀 「left」의 나머지). 창을 모르거나
+ * 사용이 창보다 크면 null
+ */
+percent: number | null,
+/**
+ * 이 기록의 마지막 정리(compaction) 전후 크기. 정리가 없었거나 뒤 크기를 아직 모르면 null
+ */
+compaction: ContextCompaction | null, };
+
+export type ContextCompaction = { before: number, after: number, };
+
 export type AgentStatus = { activity: AgentActivity, since_ms: number, harness: string, message: string | null,
 /**
  * `aaa report --percent`
@@ -1092,7 +1113,11 @@ background_wait: boolean,
  * 작업 중이지만 harness가 대화를 정리(compaction)하는 중이다(화면 감지 사건 `compacting`, plan §8.309). 그동안 harness는 친 글과
  * 대기 글을 읽지 않고, 웹은 보낸 글을 이 기기에 붙잡았다가 끝나면 보낸다. 옛 host는 보내지 않는다(없으면 false, 1.61)
  */
-compacting: boolean, };
+compacting: boolean,
+/**
+ * 컨텍스트 사용량(plan §8.319, 1.65). 옛 host·첫 응답 전에는 null
+ */
+context: ContextUsage | null, };
 
 export type QuestionState = "open" | "answered" | "gone";
 

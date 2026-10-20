@@ -2083,7 +2083,7 @@ export function TermView({
         <HeadMore />
       </header>
       {flowNotices && notices}
-      {chatView && chatable && <ChatPanel pane={pane.id} status={paneAgentStatus(pane)} compacting={compacting} readNow={chatSent} onOpenFile={onOpenFile} onOpenLink={onOpenLink} onMessages={setChatMessages} findRequest={findRequest}
+      {chatView && chatable && <ChatPanel pane={pane.id} status={paneAgentStatus(pane)} compacting={compacting} compaction={pane.agent?.context?.compaction ?? null} readNow={chatSent} onOpenFile={onOpenFile} onOpenLink={onOpenLink} onMessages={setChatMessages} findRequest={findRequest}
         pending={pendingSends} harness={pane.agent?.harness === "codex" ? "codex" : "claude"} onDismissPending={(id) => setPendingSends((list) => list.filter((p) => p.id !== id))}
         steer={steerOpen === "hidden" ? undefined : { state: steer, ...steerOpen, onSteer: pressSteer, onInspect: () => setChatView(false) }} />}
       {/* data-direct-typing: 바로 입력이면 xterm 칸도 화면 키보드를 올린다(herdr/viewport.ts가 본다) */}
@@ -2222,6 +2222,7 @@ export function TermView({
           compacting={compacting}
           asking={paneAgentStatus(pane) === "blocked"}
           coordinator={pane.role === "coordinator"}
+          context={pane.agent?.context ?? null}
           onInterrupt={interruptAgent}
           messages={chatMessages}
           onInspect={() => setChatView(false)}

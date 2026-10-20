@@ -1182,6 +1182,57 @@ summary.chat-compact-head { cursor: pointer; }
 .chat-compact-head::before, .chat-compact-head::after { content: ""; flex: 1 1 auto; border-top: var(--hairline) solid var(--border); }
 .chat-compact-head::-webkit-details-marker { display: none; }
 .chat-compact-text { margin-top: var(--space-2); padding: var(--space-3); border: var(--hairline) solid var(--border); border-radius: var(--radius-lg); color: var(--text); }
+/* 마지막 정리의 전후 컨텍스트 크기(plan §8.319, t3code 「Context compacted A → B tokens」) */
+.chat-compact-sizes { font-family: var(--font-mono); font-variant-numeric: tabular-nums; }
+
+/* 입력칸 컨텍스트 게이지(plan §8.319, herdr-web-ui Composer.css `.composer-context` 링·t3code ContextWindowMeter 꼴).
+   글을 치는 동안은 자리를 그대로 두고 투명해진다: 단추 줄 폭이 바뀌지 않아 글 칸 폭·한 줄 판정이 흔들리지 않는다 */
+.context-gauge { display: inline-flex; flex: none; }
+.context-gauge-button {
+  display: inline-flex; align-items: center; gap: 5px; height: var(--space-8); padding: 0 8px 0 6px;
+  border: 0; border-radius: var(--radius-pill); background: transparent; color: var(--text-dim); font-size: var(--fs-xs); cursor: pointer;
+  transition: opacity var(--dur-fast) var(--ease-out), visibility 0s linear 0s;
+}
+@media (hover: hover) { .context-gauge-button:hover { background: var(--bg-hover); } }
+.context-gauge-button[aria-expanded="true"] { background: var(--bg-hover); }
+.context-gauge[data-hidden] .context-gauge-button {
+  opacity: 0; visibility: hidden; pointer-events: none;
+  transition: opacity var(--dur-fast) var(--ease-out), visibility 0s linear var(--dur-fast);
+}
+.context-gauge-ring { flex: none; width: 18px; height: 18px; }
+.context-gauge-ring circle { fill: none; stroke-width: 2.5; }
+.context-gauge-track { stroke: var(--border-strong); }
+.context-gauge-fill { stroke: var(--text-dim); stroke-linecap: round; transform: rotate(-90deg); transform-origin: 50% 50%; }
+.context-gauge-value { min-width: 4ch; font-family: var(--font-mono); font-variant-numeric: tabular-nums; white-space: nowrap; text-align: left; }
+.context-gauge:is([data-level="high"], [data-level="over"]) .context-gauge-fill { stroke: var(--blocked); }
+.context-gauge:is([data-level="high"], [data-level="over"]) .context-gauge-value { color: var(--blocked); }
+.context-gauge[data-level="unknown"] .context-gauge-track { stroke: var(--text-faint); }
+.context-gauge[data-compacting] .context-gauge-ring { animation: context-gauge-spin 1.2s linear infinite; }
+.context-gauge[data-compacting] .context-gauge-button > .context-gauge-value { opacity: 0.55; }
+@keyframes context-gauge-spin { to { transform: rotate(360deg); } }
+.context-pop {
+  position: absolute; right: var(--space-2); bottom: calc(100% + var(--space-2)); z-index: var(--z-popover);
+  width: 320px; max-width: calc(100% - 2 * var(--space-2));
+  display: flex; flex-direction: column; gap: var(--space-2); padding: var(--space-3);
+  background: var(--bg-panel); border: 1px solid var(--border); border-radius: var(--r-lg); box-shadow: var(--shadow-pop);
+  color: var(--text); font-size: var(--fs-xs); text-align: left;
+}
+.context-pop-head { display: flex; align-items: center; justify-content: space-between; gap: var(--space-2); color: var(--text-dim); font-size: var(--fs-2xs); font-weight: 600; letter-spacing: 0.06em; }
+.context-pop-big { display: flex; align-items: baseline; gap: var(--space-2); color: var(--text-dim); }
+.context-pop-big .context-gauge-value { min-width: 0; font-size: 22px; font-weight: 600; color: var(--text-strong); }
+.context-gauge:is([data-level="high"], [data-level="over"]) .context-pop-big .context-gauge-value { color: var(--blocked); }
+.context-pop .usage-bar { height: 6px; }
+.context-gauge:is([data-level="high"], [data-level="over"]) .context-pop .usage-bar > span { background: var(--blocked); }
+.context-pop-note { margin: 0; color: var(--text-dim); line-height: 1.45; }
+.context-pop-note.is-warn { color: var(--blocked); }
+.context-pop-foot { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: var(--space-2); padding-top: var(--space-2); border-top: 1px solid var(--border); color: var(--text-dim); font-size: var(--fs-2xs); }
+.context-pop-foot .btn { display: inline-flex; align-items: center; gap: 6px; height: 28px; padding: 0 10px; font-size: var(--fs-xs); }
+.context-pop-foot .btn svg { width: 14px; height: 14px; }
+.context-pop-foot code { font-family: var(--font-mono); }
+@media (prefers-reduced-motion: reduce) {
+  .context-gauge[data-compacting] .context-gauge-ring { animation: none; }
+  .context-gauge-button, .context-gauge[data-hidden] .context-gauge-button { transition: none; }
+}
 /* 대화 정리 중(plan §8.309): t3code `ContextCompactionTimelineRow`처럼 양쪽 가는 선 사이에 Minimize2·말, 정리 중이면 말이 반짝인다
    (참고 ActivityShimmerOverlay). 움직임을 줄인 기기는 반짝이지 않는다 */
 .chat-compacting { display: flex; align-items: center; gap: var(--space-3); margin: 0; padding: var(--space-1) 0; }

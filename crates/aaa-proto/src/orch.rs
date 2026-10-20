@@ -393,6 +393,34 @@ pub struct HarnessEvent {
     /// `kind = "plan"`일 때만: 아직 도는 배경 작업(하위 agent·배경 명령) 수. 0이면 None
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub background: Option<u32>,
+    /// `kind = "plan"`일 때만: 대화 기록에서 읽은 컨텍스트 사용량(plan §8.319). 아직 응답이 없으면 None
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub context: Option<ContextUsage>,
+}
+
+/// harness 세션이 지금 쓴 컨텍스트(plan §8.319). agent가 대화 기록의 마지막 응답에서 읽는다(Claude `usage`, Codex `token_count`).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+pub struct ContextUsage {
+    /// 마지막 응답에 실린 컨텍스트 토큰(정리가 막 끝났으면 정리 뒤 크기)
+    #[ts(type = "number")]
+    pub used: u64,
+    /// 창 크기. 기록으로 알 수 없으면 null(웹은 %가 아니라 토큰 수로 보인다)
+    #[ts(type = "number | null")]
+    pub window: Option<u64>,
+    /// 사용량 %(그 harness 터미널과 같은 식: Claude 사용/창 반올림, Codex 기준 12k를 뺀 「left」의 나머지). 창을 모르거나
+    /// 사용이 창보다 크면 null
+    pub percent: Option<u8>,
+    /// 이 기록의 마지막 정리(compaction) 전후 크기. 정리가 없었거나 뒤 크기를 아직 모르면 null
+    pub compaction: Option<ContextCompaction>,
+}
+
+/// 정리 전후 컨텍스트 크기(Claude `compactMetadata.preTokens`·`postTokens`, Codex 정리 앞뒤 `token_count`)
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+pub struct ContextCompaction {
+    #[ts(type = "number")]
+    pub before: u64,
+    #[ts(type = "number")]
+    pub after: u64,
 }
 
 /// pane 계획의 요약(herdr-web-ui `PlanSummary`): 끝난 단계 수·모든 단계 수·지금 하는 단계
@@ -437,6 +465,9 @@ pub struct AgentStatus {
     /// 대기 글을 읽지 않고, 웹은 보낸 글을 이 기기에 붙잡았다가 끝나면 보낸다. 옛 host는 보내지 않는다(없으면 false, 1.61)
     #[serde(default)]
     pub compacting: bool,
+    /// 컨텍스트 사용량(plan §8.319, 1.65). 옛 host·첫 응답 전에는 null
+    #[serde(default)]
+    pub context: Option<ContextUsage>,
 }
 
 fn seen_default() -> bool {

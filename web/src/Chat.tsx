@@ -13,7 +13,8 @@
 import { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { ArrowDown, ArrowUp, Brain, Check, ChevronDown, ChevronRight, Clock, Copy, Eye, Globe, Hammer, LoaderCircle, Minimize2, Search, SquarePen, Terminal, TriangleAlert, Wrench } from "lucide-react";
 import { ApiError, call, watchChat } from "./api";
-import type { ChatMessage, ChatView } from "./gen/proto";
+import type { ChatMessage, ChatView, ContextCompaction } from "./gen/proto";
+import { compactionText } from "./contextUsage";
 import { useChatShared } from "./settings";
 import { statusEdgeRead, type AgentStatus } from "./herdr/status.ts";
 import { linkFilePaths } from "./FilePathLink";
@@ -54,16 +55,18 @@ function CompactingRow() {
 
 /** 대화가 정리된 자리(plan §8.309, 사용자 10-20 「대화 정리됨 구분선으로 남겨」). herdr-web-ui ChatView.tsx 618~623줄 `chat-compact`
  * 그대로: 조용한 구분선이고 요약은 누르면 펼친다. 기록에 시각이 없어 시각은 없다. 요약이 없는(Codex) 정리는 구분선만이다 */
-function CompactedRow({ text }: { text: string }) {
+function CompactedRow({ text, sizes }: { text: string; sizes?: ContextCompaction | null }) {
+  // 마지막 정리에는 전후 컨텍스트 크기를 붙인다(plan §8.319, t3code 「Context compacted A → B tokens」)
+  const delta = sizes ? <span className="chat-compact-sizes" data-testid="chat-compact-sizes"> · {compactionText(sizes.before, sizes.after)}</span> : null;
   if (text.trim() === "")
     return (
       <div className="chat-compact" data-role="compact" role="separator" aria-label="대화 정리됨">
-        <span className="chat-compact-head">대화 정리됨</span>
+        <span className="chat-compact-head">대화 정리됨{delta}</span>
       </div>
     );
   return (
     <details className="chat-compact" data-role="compact">
-      <summary className="chat-compact-head">대화 정리됨</summary>
+      <summary className="chat-compact-head">대화 정리됨{delta}</summary>
       <div className="chat-compact-text"><Markdown>{text}</Markdown></div>
     </details>
   );
@@ -374,6 +377,7 @@ export function ChatPanel({
   pane,
   status,
   compacting = false,
+  compaction = null,
   readNow = 0,
   onOpenFile,
   onOpenLink,
@@ -388,6 +392,8 @@ export function ChatPanel({
   status?: AgentStatus;
   /** agent가 대화를 정리하는 중(plan §8.309): 대화 끝에 「대화 정리 중…」 줄 */
   compacting?: boolean;
+  /** 이 기록의 마지막 정리 전후 컨텍스트 크기(plan §8.319): 마지막 「대화 정리됨」 줄에 붙인다 */
+  compaction?: ContextCompaction | null;
   readNow?: number;
   /** 글 속 파일 경로를 연다(조작 기기만) */
   onOpenFile?: (path: string) => void;
@@ -873,12 +879,14 @@ export function ChatPanel({
           </p>
           {error && <div className="banner warn">{error}</div>}
           {chat && displayRows.map((row, n) => {
+            let lastCompact = chat.messages.length - 1;
+            while (lastCompact >= 0 && chat.messages[lastCompact]!.role !== "compact") lastCompact--;
             const message = (i: number, key: string) => {
               const m = chat.messages[i]!;
               return m.role === "thinking" ? (
                 <ThinkingRow key={key} text={m.text} />
               ) : m.role === "compact" ? (
-                <CompactedRow key={key} text={m.text} />
+                <CompactedRow key={key} text={m.text} sizes={i === lastCompact ? compaction : null} />
               ) : m.role === "user" ? (
                 <UserTurn key={key} text={unwrapPasted(m.text)} pane={pane} onOpenFile={onOpenFile} pending={m.pending ? { harness, steer: steerFor(`message-${i}`) } : undefined} />
               ) : m.role === "assistant" ? (

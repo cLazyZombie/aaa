@@ -2603,6 +2603,7 @@ mod tests {
             background: None,
             background_wait: false,
             compacting: false,
+            context: None,
         }
     }
 

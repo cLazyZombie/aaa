@@ -443,6 +443,7 @@ impl Agent {
             transcript: None,
             plan: None,
             background: None,
+            context: None,
         })
         .await;
     }
@@ -1842,6 +1843,7 @@ mod tests {
             transcript: None,
             plan: None,
             background: None,
+            context: None,
         };
         let mut sent = async |host_compacting: bool| {
             a.host_compacting.store(host_compacting, std::sync::atomic::Ordering::Relaxed);

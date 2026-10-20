@@ -284,6 +284,7 @@ impl Host {
                 background: None,
                 background_wait: false,
                 compacting: false,
+                context: None,
             });
             if ev.harness != "report" {
                 st.harness = ev.harness.clone();
@@ -312,10 +313,12 @@ impl Host {
             if ev.kind == "plan" {
                 st.plan = ev.plan.clone();
                 st.background = ev.background;
+                st.context = ev.context.clone();
             }
-            // harness가 끝나면 그 안에서 돌던 배경 작업도 끝났다
+            // harness가 끝나면 그 안에서 돌던 배경 작업도 끝났고, 그 세션의 컨텍스트도 더 쓰이지 않는다
             if next == Some(AgentActivity::Exited) {
                 st.background = None;
+                st.context = None;
             }
             // 새 harness 세션: 옛 진행 보고는 이 세션을 말하지 않는다(herdr-projects progress `respond` SessionStart)
             if ev.kind == "session_start" {
@@ -1265,6 +1268,7 @@ mod tests {
             transcript: None,
             plan: None,
             background: None,
+            context: None,
         };
         let idle = AgentStatus {
             activity: AgentActivity::Idle,
@@ -1280,6 +1284,7 @@ mod tests {
             background: None,
             background_wait: false,
             compacting: false,
+            context: None,
         };
         assert_eq!(next_activity(Some(&idle), &ev("turn_start", 1_000)), None);
         assert_eq!(next_activity(Some(&idle), &ev("working", 2_000)), Some(AgentActivity::Working));
@@ -1335,6 +1340,7 @@ mod tests {
             transcript: None,
             plan: None,
             background: None,
+            context: None,
         }
     }
 
@@ -1569,22 +1575,33 @@ mod tests {
             transcript: None,
             plan,
             background,
+            context: None,
         };
         h.on_harness("m", ev("working", 1_000, None, None));
         let plan = aaa_proto::PlanSummary { done: 1, total: 3, current: Some("고치는 중".into()) };
-        h.on_harness("m", ev("plan", 2_000, Some(plan.clone()), Some(2)));
+        // 컨텍스트 사용량도 같은 사건으로 온다(plan §8.319)
+        let context =
+            aaa_proto::ContextUsage { used: 43_922, window: Some(200_000), percent: Some(22), compaction: None };
+        h.on_harness(
+            "m",
+            HarnessEvent { context: Some(context.clone()), ..ev("plan", 2_000, Some(plan.clone()), Some(2)) },
+        );
         let a = h.pane_agent("s").unwrap();
         assert_eq!(
-            (a.activity, a.since_ms, a.plan, a.background),
-            (AgentActivity::Working, 1_000, Some(plan.clone()), Some(2))
+            (a.activity, a.since_ms, a.plan, a.background, a.context),
+            (AgentActivity::Working, 1_000, Some(plan.clone()), Some(2), Some(context.clone()))
         );
-        // 다른 상태 사건은 계획을 지우지 않는다
+        // 다른 상태 사건은 계획·컨텍스트를 지우지 않는다
         h.on_harness("m", ev("idle", 3_000, None, None));
         let a = h.pane_agent("s").unwrap();
-        assert_eq!((a.activity, a.plan.as_ref(), a.background), (AgentActivity::Idle, Some(&plan), Some(2)));
+        assert_eq!(
+            (a.activity, a.plan.as_ref(), a.background, a.context.as_ref()),
+            (AgentActivity::Idle, Some(&plan), Some(2), Some(&context))
+        );
+        // harness가 끝나면 배경 작업과 그 세션의 컨텍스트가 지워진다
         h.on_harness("m", ev("exited", 4_000, None, None));
         let a = h.pane_agent("s").unwrap();
-        assert_eq!((a.plan.as_ref(), a.background), (Some(&plan), None));
+        assert_eq!((a.plan.as_ref(), a.background, a.context), (Some(&plan), None, None));
         // 계획이 없어졌다는 사건
         h.on_harness("m", ev("plan", 5_000, None, None));
         assert_eq!(h.pane_agent("s").unwrap().plan, None);
@@ -1608,6 +1625,7 @@ mod tests {
             transcript: None,
             plan: None,
             background: None,
+            context: None,
         };
         h.on_harness("m", ev("question", 1_000));
         let mut q = h.open_question_of("s").expect("질문");
