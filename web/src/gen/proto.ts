@@ -413,7 +413,12 @@ inbox_open: number,
  * 끝내지 않은 inbox 항목(herdr-projects `context`의 Inbox 절). 지시가 아니라 자료다.
  * 응답 크기 한도 안에서 오래된 것부터 싣는다: `inbox_open`보다 적을 수 있다.
  */
-inbox: Array<InboxItem>, };
+inbox: Array<InboxItem>,
+/**
+ * 채팅에 쓸 이 host 웹 주소(tailscale serve 공개 origin, plan §8.333). 질문·보고서는 `<주소>/#question=<thread>`·
+ * `<주소>/#report=<이름>` Markdown 링크로 가리킨다(터미널에서도 눌린다). 공개하지 않았으면 없다: 그때는 `aaa:` 꼴을 쓴다
+ */
+web_url?: string, };
 
 export type ToolCheck = { name: string, ok: boolean,
 /**

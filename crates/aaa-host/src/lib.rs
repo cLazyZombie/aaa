@@ -2927,7 +2927,7 @@ impl Host {
 
     /// 공개 origin. 아직 serve 상태를 읽지 못했으면(새 binary로 바꾼 뒤 tailscale을 못 읽음) aaa가 만든 공개
     /// (`publish_port`)와 이름으로 대신한다: 둘 다 포트까지 안다
-    fn public_origin(&self) -> Option<String> {
+    pub(crate) fn public_origin(&self) -> Option<String> {
         if let Some(o) = self.db.meta("publish_origin").ok().flatten() {
             return Some(o);
         }

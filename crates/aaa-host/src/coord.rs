@@ -625,6 +625,7 @@ impl Host {
             assignable: self.assignable(project).await,
             inbox_open: page.items.len() as u32 + page.omitted_open,
             inbox: page.items,
+            web_url: self.public_origin(),
         })
     }
 }
