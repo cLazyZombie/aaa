@@ -61,6 +61,6 @@ describe("관리 W5c", () => {
     assert.equal(canSwitch(checked, "/work/next", ""), true);
     assert.equal(canSwitch(checked, " /work/next ", " "), true);
     assert.equal(canSwitch(checked, "/work/other", ""), false);
-    assert.equal(canSwitch(checked, "/work/next", "/Volumes/W"), false);
+    assert.equal(canSwitch(checked, "/work/next", "/mnt/disk"), false);
   });
 });
