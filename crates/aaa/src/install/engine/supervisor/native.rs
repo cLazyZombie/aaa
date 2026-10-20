@@ -213,25 +213,39 @@ fn token_information(token: HANDLE, class: TOKEN_INFORMATION_CLASS) -> Result<Ve
 pub(super) struct Identity {
     pub sid: String,
     pub profile: PathBuf,
+    pub image: PathBuf,
     pub session: u32,
     pub elevated: bool,
     pub created: u64,
 }
 pub(super) fn identity(pid: u32) -> Result<Identity> {
-    let process = Kernel(unsafe { OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, pid) });
+    let process = Kernel(unsafe { OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION | PROCESS_SYNCHRONIZE, 0, pid) });
     if process.0.is_null() {
         return Err(last());
+    }
+    process_identity(process.0)
+}
+// PID를 다시 열지 않는다. 신원·생성 시각·image는 같은 살아 있는 process object의 관찰이다.
+fn process_identity(process: HANDLE) -> Result<Identity> {
+    if unsafe { WaitForSingleObject(process, 0) } != WAIT_TIMEOUT {
+        return Err(failure("service_process_unverified", 3));
     }
     let mut created_time: FILETIME = unsafe { std::mem::zeroed() };
     let mut exit_time: FILETIME = unsafe { std::mem::zeroed() };
     let mut kernel_time: FILETIME = unsafe { std::mem::zeroed() };
     let mut user_time: FILETIME = unsafe { std::mem::zeroed() };
-    if unsafe { GetProcessTimes(process.0, &mut created_time, &mut exit_time, &mut kernel_time, &mut user_time) } == 0 {
+    if unsafe { GetProcessTimes(process, &mut created_time, &mut exit_time, &mut kernel_time, &mut user_time) } == 0 {
         return Err(last());
     }
     let created = (u64::from(created_time.dwHighDateTime) << 32) | u64::from(created_time.dwLowDateTime);
     let mut token = std::ptr::null_mut();
-    if unsafe { OpenProcessToken(process.0, TOKEN_QUERY, &mut token) } == 0 {
+    let mut image = vec![0u16; 32768];
+    let mut size = image.len() as u32;
+    if unsafe { QueryFullProcessImageNameW(process, 0, image.as_mut_ptr(), &mut size) } == 0 {
+        return Err(last());
+    }
+    let image = PathBuf::from(String::from_utf16(&image[..size as usize]).map_err(|_| Fault::conflict())?);
+    if unsafe { OpenProcessToken(process, TOKEN_QUERY, &mut token) } == 0 {
         return Err(last());
     }
     let token = Kernel(token);
@@ -245,9 +259,13 @@ pub(super) fn identity(pid: u32) -> Result<Identity> {
     let profile = PathBuf::from(unsafe { text(profile.as_ptr()) }?);
     let session = token_information(token.0, TokenSessionId)?;
     let elevation = token_information(token.0, TokenElevation)?;
+    if unsafe { WaitForSingleObject(process, 0) } != WAIT_TIMEOUT {
+        return Err(failure("service_process_unverified", 3));
+    }
     Ok(Identity {
         sid,
         profile,
+        image,
         session: unsafe { *session.as_ptr().cast::<u32>() },
         elevated: unsafe { (*elevation.as_ptr().cast::<TOKEN_ELEVATION>()).TokenIsElevated != 0 },
         created,
@@ -665,21 +683,12 @@ impl Manager for Scm {
     }
     fn process(&mut self, spec: &Spec, pid: u32) -> Result<Option<Process>> {
         let identity = identity(pid)?;
-        let handle = Kernel(unsafe { OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, pid) });
-        if handle.0.is_null() {
-            return Err(last());
-        }
-        let mut name = vec![0u16; 32768];
-        let mut size = name.len() as u32;
-        if unsafe { QueryFullProcessImageNameW(handle.0, 0, name.as_mut_ptr(), &mut size) } == 0 {
-            return Err(last());
-        }
-        let path = PathBuf::from(String::from_utf16(&name[..size as usize]).map_err(|_| Fault::conflict())?);
         Ok((identity.sid == spec.account
             && identity.session == 0
             && identity.profile.canonicalize().map_err(Fault::io)?
                 == spec.profile.canonicalize().map_err(Fault::io)?
-            && path.canonicalize().map_err(Fault::io)? == spec.executable.canonicalize().map_err(Fault::io)?)
+            && identity.image.canonicalize().map_err(Fault::io)?
+                == spec.executable.canonicalize().map_err(Fault::io)?)
         .then_some(Process { pid, created: identity.created, elevated: identity.elevated }))
     }
 }
@@ -687,6 +696,24 @@ impl Manager for Scm {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn process_observation_rejects_completed_process_with_its_handle_still_open() {
+        use std::os::windows::io::AsRawHandle;
+        use std::process::{Command, Stdio};
+        let command = PathBuf::from(std::env::var_os("SystemRoot").unwrap()).join("System32/cmd.exe");
+        let mut child = Command::new(command)
+            .args(["/D", "/Q", "/C", "exit 0"])
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .unwrap();
+        assert!(child.wait().unwrap().success());
+        let handle = child.as_raw_handle();
+        // 잘못된 handle이 아닌 실제 종료한 process가 부정 입력이어야 한다.
+        assert_eq!(unsafe { WaitForSingleObject(handle, 0) }, WAIT_OBJECT_0);
+        assert_eq!(process_identity(handle).err().unwrap().code, "service_process_unverified");
+    }
     #[test]
     fn status_change_subscription_reads_and_unsubscribes_from_a_real_windows_service() {
         let manager = manager(SC_MANAGER_CONNECT).unwrap();

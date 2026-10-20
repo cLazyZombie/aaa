@@ -223,6 +223,7 @@ fn native_windows_reads_real_identity_and_scm_and_preserves_quoted_unicode_argum
     let identity = native::identity(std::process::id()).unwrap();
     assert_eq!(identity.sid, crate::install::platform::account().unwrap());
     assert!(identity.profile.is_dir());
+    assert!(identity.image.canonicalize().unwrap() == std::env::current_exe().unwrap().canonicalize().unwrap());
     let mut spec = job.spec.clone();
     spec.instance = Some(format!("i5-{}", aaa_common::util::new_id().to_lowercase()));
     assert!(native::Scm.query(&spec).unwrap().is_none());

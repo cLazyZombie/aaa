@@ -6231,7 +6231,8 @@ L4 후속(10-20 00시 사용자 관찰): 멈춤 상태의 후보 예약과 재�
 - **Windows adapter.** 고정 ServiceMain/dispatcher·SCM 상태·stop/shutdown handler와 최소 Win32 권한의
   query/create/start/stop/delete/credential API를 둔다. console 호출은 backend fallback 없이 거부한다.
   CreateEnvironmentBlock(FALSE)의 실제 사용자 token 환경을 선택해 쓰며 helper 환경을 상속하지 않는다.
-  SID·프로필·Session0·실행 경로/SHA·process 생성 시각·실효 elevation을 대조한다. 서비스 상태 변화는
+  SID·프로필·Session0·실행 경로/SHA·process 생성 시각·실효 elevation을 대조한다. 신원과 image는
+  같은 process handle에서 읽고 조회 전후의 종료 신호를 즉시 확인한다. 서비스 상태 변화는
   SubscribeServiceChangeNotifications와 OS event로 기다리고 해제 시 진행 중 callback의 끝을 보장한다.
 - **준비와 연결.** 실제 host listener/agent 초기화 뒤 RUNNING을 보고한다. agent는 host가 없어도 실행하되
   실제 Welcome/replay·단절·재연결을 별도 proof에 반영한다. proof는 실제 backend가 만들고, 읽기 status는
