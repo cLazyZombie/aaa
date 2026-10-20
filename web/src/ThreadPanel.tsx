@@ -9,6 +9,7 @@ import { LIBRARY_SANDBOX } from "./FileViewer";
 import { LibraryLink } from "./LibraryLink";
 import { TaskAddButton, isDoc } from "./ReportsView";
 import { SummaryButton } from "./ThreadSummary";
+import { ThreadActions } from "./ThreadActions";
 import { ChangedFilesCard } from "./ChangedFiles";
 import { useDiffPanel } from "./useDiffPanel";
 import { useMediaQuery } from "./herdr/useMediaQuery";
@@ -135,6 +136,7 @@ export function ThreadPanel({
             확인(ack)
           </button>
         )}
+        {role !== "reader" && <ThreadActions t={t} running={!!onOpenPane} />}
         <HeadMore />
       </header>
       {msg && <div className="banner err">{msg}</div>}
