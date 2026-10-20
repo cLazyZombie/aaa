@@ -504,6 +504,7 @@ fn host_login_defaults_pin_threads_and_coordinators_without_exposing_credentials
     for machine in ["labA", "labB"] {
         jobs.push(w.start(&["--title", "기본", "--profile", "plain", "--machine", machine, "--task-file", &task]));
     }
+    w.h.in_terminal(&["safety", "set", "start_threads", "auto"], &[("[y/N]", "y")], T);
     // A4 이후 평가는 일반 자동화가 띄우는 worker다. 그 시작에도 같은 host 기본을 고른다.
     let rule_dir = w.projects.join("demo/automations");
     std::fs::create_dir_all(&rule_dir).unwrap();
@@ -550,6 +551,28 @@ fn host_login_defaults_pin_threads_and_coordinators_without_exposing_credentials
     Gate::release(gate.take(1, 1), b'X');
     w.wait_show("명시 작업 종료", explicit["id"].as_str().unwrap(), |v| v["agent"]["activity"] == "exited");
     w.h.ok(&["account", "default", "claude", "--off"]);
+
+    // worker pane을 직접 재개한 뒤 thread restart도 같은 인증 홈의 중복 CLI를 거부한다.
+    let file_worker = w.start(&["--title", "파일 인증 작업", "--profile", "file", "--task-file", &task]);
+    let worker_id = file_worker["id"].as_str().unwrap();
+    let original = w.wait_show("파일 인증 기록 연결", worker_id, |v| v["agent"]["harness_session"].is_string());
+    let worker_pane = original["pane"].as_str().unwrap();
+    Gate::release(gate.take(1, 0), b'1');
+    Gate::release(gate.take(1, 1), b'X');
+    w.wait_show("파일 인증 종료", worker_id, |v| v["agent"]["activity"] == "exited");
+    let worker_resume = w.h.ok(&["pane", "resume", worker_pane]);
+    let held = gate.take(1, 0);
+    assert_eq!(held[0].1["tid"], worker_id);
+    assert_eq!(held[0].1["resume"], true);
+    assert!(
+        w.h.json(&["thread", "restart", "demo", worker_id, "--resume"]).is_err(),
+        "재개된 worker의 인증 홈을 thread restart로 다시 사용하지 않는다"
+    );
+    Gate::release(held, b'1');
+    Gate::release(gate.take(1, 1), b'X');
+    wait_for("직접 재개 worker 종료", T, || {
+        (w.h.pane(worker_resume["id"].as_str().unwrap())["state"] == "exited").then_some(())
+    });
 
     // 새 coordinator, host 재시작, 중앙 갱신, 재부팅 복원, 수동 pane 재개가 같은 인증/기록 홈을 잇는다.
     let opened = w.h.ok(&["project", "open", "demo", "--profile", "file", "--new"]);

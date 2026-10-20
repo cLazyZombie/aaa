@@ -100,9 +100,7 @@ impl Host {
         self.db
             .update_meta_checked(&format!("account-run:{}", record.run), &[], |old| {
                 let old = old.map(|s| serde_json::from_str::<PaneAccount>(&s)).transpose()?;
-                if let Some(pane) = expected_pane
-                    && old.as_ref().and_then(|r| r.pane.as_deref()) != Some(pane)
-                {
+                if old.as_ref().is_some_and(|r| r.pane.is_none() || r.pane.as_deref() != expected_pane) {
                     anyhow::bail!("실행 인증 기록이 이미 바뀌었다");
                 }
                 if record.profile.is_none() {
@@ -124,6 +122,13 @@ impl Host {
         mut spec: SpawnSpec,
         actor: &str,
     ) -> Result<String, ErrorBody> {
+        // 인증 thread는 저장한 launch·작업 identity·감시를 함께 이어야 한다.
+        if let Some(rec) =
+            self.thread_of_pane(id).filter(|r| r.account.is_some() && r.kind != aaa_proto::ThreadKind::Adopted)
+        {
+            let resumed = self.thread_restart(&rec.project, &rec.id, true, None, actor).await?;
+            return resumed.pane.ok_or_else(fail);
+        }
         let Some(binding) = self.pane_account(id)? else {
             return self.spawn_on(mid, spec, actor).await;
         };

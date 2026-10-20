@@ -9,7 +9,8 @@
 `host_login_defaults_pin_threads_and_coordinators_without_exposing_credentials`는 공식 로그인 argv·격리 홈·원본 출력 차단,
 임시 인증 정리, 새 worker/자동화 평가/원격 작업의 기본 선택, 기존 로컬 작업 유지, 명시 계정 우선, 깨진 기본 거부,
 coordinator의 host 재시작 뒤 refresh·재부팅 복원·pane 재개와 같은 기록 홈을 확인한다.
-동시 pane 재개는 가짜 CLI 버전 확인을 socket에서 붙잡아 두고 두 번째 재개가 기동 전에 거부되는지 본다.
+동시 coordinator pane 재개는 가짜 CLI 버전 확인을 socket에서 붙잡아 두고 두 번째 재개가 기동 전에 거부되는지 본다.
+인증 worker의 pane 재개는 저장한 thread launch·identity를 이어 쓰고, 실행 중 thread restart가 같은 홈을 다시 쓰지 않는지 본다.
 로그인 실패·취소·host 정상 종료는 SIGHUP 무시 자식·PTY를 가진 자손을 포함해 종료와 폴더 정리를 기다린다. 가짜 자식 안에서 계정 관리 명령을
 실행해 aaa 세션에서는 로그인·기본 변경·삭제가 거부되는지도 확인한다.
 
