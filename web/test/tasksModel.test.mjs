@@ -1,7 +1,7 @@
 // 할 일 화면의 행 상태·거르기·검색·배지 셈(src/tasksModel.ts, 할 일 보기 T1, plan §8.306).
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { findTask, ownerLabel, taskBadge, taskDepth, taskMatches, taskSections, taskState, unassigned } from "../src/tasksModel.ts";
+import { anchorOf, canonicalLine, descendants, draftOf, draftOps, dropOp, emptyDraft, findTask, itemToTask, lineDiff, moveOp, noteItems, ownerKindOf, ownerLabel, parentAnchor, restorable, taskBadge, taskDepth, taskMatches, taskSections, taskState, toListOp, unassigned } from "../src/tasksModel.ts";
 
 const task = (over) => ({ list: "Backlog", title: "일", owner: null, thread: null, notes: [], done: false, line: 1, raw: "- [ ] 일", block_sha256: "", parent: null, problems: [], ...over });
 const MISREAD = "owner 칸이 owner 꼴이 아님: t-0001 S4 뒤";
@@ -67,5 +67,96 @@ describe("할 일 화면", () => {
     assert.equal(findTask(board, { title: "다른", line: 3 }).line, 9);
     assert.equal(findTask(board, { title: "없음", line: 1 }), null);
     assert.equal(findTask(null, { title: "같음", line: 2 }), null);
+  });
+});
+
+// 편집(T2, plan §8.311): 화면 동작 → host 동작
+describe("할 일 편집", () => {
+  // ## A: 하나(1) [하위 하나-1(2), 하위 하나-2(3)], 둘(4), 셋(5) / ## B: 넷(7)
+  const t = (line, title, list, parent = null) => task({ line, title, list, parent, block_sha256: `sha-${line}` });
+  const board = {
+    project: "demo", sha256: "", text: "", unlinked_threads: [], notes_files: [],
+    lists: [{ name: "A", notes: [] }, { name: "B", notes: [] }],
+    tasks: [t(1, "하나", "A"), t(2, "하위 하나-1", "A", 1), t(3, "하위 하나-2", "A", 1), t(4, "둘", "A"), t(5, "셋", "A"), t(7, "넷", "B")],
+  };
+  const by = (line) => board.tasks.find((x) => x.line === line);
+  const place = (op) => op && { before: op.before?.title ?? null, parent: op.parent?.title ?? null, to_list: op.to_list };
+
+  it("위로·아래로·맨 위로는 같은 상위 안에서, 끝으로 내리면 목록 끝·상위의 하위 끝", () => {
+    assert.deepEqual(place(moveOp(board, by(4), "up")), { before: "하나", parent: null, to_list: "" });
+    assert.deepEqual(place(moveOp(board, by(5), "top")), { before: "하나", parent: null, to_list: "" });
+    assert.deepEqual(place(moveOp(board, by(1), "down")), { before: "셋", parent: null, to_list: "" });
+    assert.deepEqual(place(moveOp(board, by(4), "down")), { before: null, parent: null, to_list: "A" });
+    assert.deepEqual(place(moveOp(board, by(2), "down")), { before: null, parent: "하나", to_list: "" });
+    assert.equal(moveOp(board, by(1), "up"), null);
+    assert.equal(moveOp(board, by(5), "down"), null);
+    assert.equal(moveOp(board, by(7), "top"), null);
+    assert.equal(moveOp(board, by(4), "up").at.block_sha256, "sha-4", "대상은 블록 hash로 찾는다");
+  });
+
+  it("끌어 놓기: 앞·뒤에 놓으면 그 task와 같은 상위가 되고, 자기 하위·같은 자리는 없음", () => {
+    assert.deepEqual(place(dropOp(board, by(5), by(1), "before")), { before: "하나", parent: null, to_list: "" });
+    assert.deepEqual(place(dropOp(board, by(5), by(2), "after")), { before: "하위 하나-2", parent: null, to_list: "" });
+    assert.deepEqual(place(dropOp(board, by(5), by(3), "after")), { before: null, parent: "하나", to_list: "" });
+    assert.deepEqual(place(dropOp(board, by(1), by(7), "after")), { before: null, parent: null, to_list: "B" });
+    assert.equal(dropOp(board, by(1), by(2), "before"), null, "자기 하위");
+    assert.equal(dropOp(board, by(4), by(4), "before"), null);
+    assert.equal(dropOp(board, by(4), by(1), "after"), null, "이미 하나 뒤");
+    assert.equal(dropOp(board, by(4), by(5), "before"), null, "이미 셋 앞");
+    assert.deepEqual([...descendants(board, by(1))].sort(), [2, 3]);
+    assert.deepEqual(place(toListOp(by(2), "A")), { before: null, parent: null, to_list: "A" }, "하위를 목록 맨 위 단계로");
+    assert.equal(toListOp(by(4), "A"), null);
+  });
+
+  it("폼 → 동작: 바뀐 칸만 고치고, 목록·상위가 바뀌면 옮긴다. 안 바뀌면 없음", () => {
+    const one = by(4);
+    const d = draftOf({ ...one, owner: "codex@mac-b", notes: ["메모"] }, [], null);
+    assert.equal(d.ownerKind, "agent");
+    assert.deepEqual(draftOps({ ...one, owner: "codex@mac-b", notes: ["메모"] }, d), []);
+    const ops = draftOps(one, { ...draftOf(one, [], null), title: " 둘 고침 ", ownerKind: "person", person: "Priya", notes: "a\n\n  b  \n\n", list: "B" });
+    assert.deepEqual(ops.map((o) => o.op), ["update", "move"]);
+    assert.deepEqual([ops[0].title, ops[0].owner, ops[0].person, ops[0].notes], ["둘 고침", "Priya", true, ["a", "", "  b"]]);
+    assert.equal(ops[1].to_list, "B");
+    const child = draftOps(one, { ...draftOf(one, [], null), parent: anchorOf(by(7)) });
+    assert.deepEqual(place(child[0]), { before: null, parent: "넷", to_list: "" });
+    const add = draftOps(null, { ...emptyDraft("새 목록"), title: "새 일", ownerKind: "me" });
+    assert.deepEqual([add[0].op, add[0].list, add[0].owner, add[0].parent], ["add", "새 목록", "me", null]);
+    // owner 목록 전에 만든 폼(`claude`를 사람으로 봄)도 보낼 동작이 없다(손대지 않은 폼)
+    assert.deepEqual(draftOps({ ...one, owner: "claude" }, draftOf({ ...one, owner: "claude" }, [], null)), []);
+    assert.equal(ownerKindOf("claude", ["claude"]), "agent");
+    assert.equal(ownerKindOf("Priya Rao", ["claude"]), "person");
+    assert.equal(ownerKindOf("agent", []), "none");
+    assert.equal(canonicalLine("일", "me", "t-0001"), "- [ ] 일 (me) · t-0001");
+  });
+
+  it("상위 task는 고른 판의 블록 고정점으로 든다: 그대로면 옮기지 않고, 더할 때 그 블록을 보낸다", () => {
+    const sub = by(2);
+    const was = parentAnchor(board, sub);
+    assert.deepEqual([was.title, was.block_sha256], ["하나", "sha-1"]);
+    assert.deepEqual(draftOps(sub, draftOf(sub, [], was), was), [], "상위를 그대로 두면 옮기지 않는다");
+    const add = draftOps(null, { ...emptyDraft("A", anchorOf(by(4))), title: "하위 새 일" });
+    assert.deepEqual([add[0].parent.title, add[0].parent.block_sha256], ["둘", "sha-4"], "줄 번호가 아니라 고른 판의 블록을 보낸다(줄이 밀려도 host가 블록 hash로 찾는다)");
+  });
+
+  it("「나중」 항목: 들여쓰지 않은 글머리마다 하나, 들여쓴 줄은 붙고 빈 줄은 끝에서 뗀다", () => {
+    const items = noteItems(["소개", "- 하나 `code`", "  이어진 줄", "", "- 둘", "1. 셋", ""]);
+    assert.deepEqual(items, [["소개"], ["- 하나 `code`", "  이어진 줄"], ["- 둘"], ["1. 셋"]]);
+    assert.deepEqual(itemToTask(items[1]), { title: "하나 `code`", notes: ["이어진 줄"] });
+    const long = itemToTask([`- ${"가".repeat(130)}`]);
+    assert.equal([...long.title].length, 120);
+    assert.equal(long.notes[0], "가".repeat(130));
+  });
+
+  it("기록: 줄 차이와 되살릴 수 있는 항목", () => {
+    assert.deepEqual(lineDiff("- [ ] a\n  메모", "- [ ] a (me)\n  메모"), [
+      { kind: "add", text: "- [ ] a (me)" },
+      { kind: "del", text: "- [ ] a" },
+      { kind: "same", text: "  메모" },
+    ]);
+    assert.deepEqual(lineDiff(null, "x"), [{ kind: "add", text: "x" }]);
+    const e = { action: "delete", restored_by: null };
+    assert.equal(restorable(e), true);
+    assert.equal(restorable({ ...e, restored_by: 3 }), false);
+    assert.equal(restorable({ ...e, action: "update" }), false);
   });
 });

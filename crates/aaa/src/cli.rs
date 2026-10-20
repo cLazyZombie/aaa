@@ -192,7 +192,7 @@ enum Cmd {
         #[arg(long)]
         check: Option<String>,
     },
-    /// TASKS.md 할 일 목록(웹 할 일 화면과 같은 읽기: 형식 어긋남·task 없는 열린 thread·「나중」 파일)
+    /// TASKS.md 할 일: 보기(list)와 고치기(add·edit·move·rm·restore·list-add 등, 바뀐 블록만 쓰고 충돌을 감지하며 기록을 남긴다)
     Task {
         #[command(subcommand)]
         cmd: TaskCmd,
@@ -503,8 +503,140 @@ enum MissionCmd {
 
 #[derive(Subcommand)]
 enum TaskCmd {
-    /// 목록별 task와 형식 어긋남(읽기만 한다. 고치기는 아직 TASKS.md를 직접 고친다)
+    /// 목록별 task와 형식 어긋남(읽기만 한다)
     List,
+    /// task를 더한다(정규형 `- [ ] 제목 (owner)`, 같은 제목은 거부)
+    Add {
+        title: String,
+        /// 목록(`##` 이름). 없으면 파일 끝에 만든다
+        #[arg(long, default_value = "Backlog")]
+        list: String,
+        /// owner: me·profile·@machine·profile@machine(`aaa assignable --check`와 같은 판정). 비우면 미할당
+        #[arg(long)]
+        owner: Option<String>,
+        /// owner가 사람 이름이다
+        #[arg(long)]
+        person: bool,
+        /// 메모 한 줄(여러 번)
+        #[arg(long = "note")]
+        notes: Vec<String>,
+        /// 이 task의 하위로
+        #[arg(long, value_name = "TITLE")]
+        parent: Option<String>,
+        /// 이 task 앞에
+        #[arg(long, value_name = "TITLE")]
+        before: Option<String>,
+    },
+    /// task 칸을 바꾼다(준 칸만, 나머지 줄은 바이트 그대로)
+    Edit {
+        /// 고칠 task 제목(대소문자 무시)
+        task: String,
+        /// 읽은 판의 블록 hash(`task list --json`의 `block_sha256`). 주면 그 블록이 그대로일 때만 고친다(아니면 revision_conflict)
+        #[arg(long, value_name = "SHA256")]
+        block: Option<String>,
+        #[arg(long)]
+        title: Option<String>,
+        /// 빈 글이면 미할당
+        #[arg(long)]
+        owner: Option<String>,
+        #[arg(long)]
+        person: bool,
+        /// 메모 전체를 이 줄들로(여러 번)
+        #[arg(long = "note")]
+        notes: Vec<String>,
+        /// 메모를 지운다
+        #[arg(long)]
+        clear_notes: bool,
+        /// 이은 thread(빈 글이면 연결을 푼다)
+        #[arg(long)]
+        thread: Option<String>,
+        #[arg(long, conflicts_with = "undone")]
+        done: bool,
+        #[arg(long)]
+        undone: bool,
+    },
+    /// task를 하위 task와 함께 옮긴다: --before 앞, --parent 하위 끝, 아니면 --list 끝
+    Move {
+        task: String,
+        /// 읽은 판의 블록 hash(`task list --json`의 `block_sha256`). 주면 그 블록이 그대로일 때만 고친다(아니면 revision_conflict)
+        #[arg(long, value_name = "SHA256")]
+        block: Option<String>,
+        #[arg(long, default_value = "")]
+        list: String,
+        #[arg(long, value_name = "TITLE")]
+        before: Option<String>,
+        #[arg(long, value_name = "TITLE")]
+        parent: Option<String>,
+    },
+    /// task를 하위 task와 함께 지운다(기록에 남아 `restore`로 되살린다)
+    Rm {
+        task: String,
+        /// 읽은 판의 블록 hash(`task list --json`의 `block_sha256`). 주면 그 블록이 그대로일 때만 고친다(아니면 revision_conflict)
+        #[arg(long, value_name = "SHA256")]
+        block: Option<String>,
+    },
+    /// 기록의 삭제 항목을 되살린다(원래 목록 끝, 또는 --list)
+    Restore {
+        log_id: i64,
+        #[arg(long)]
+        list: Option<String>,
+    },
+    /// 변경 기록(최신부터): 누가·언제·무엇
+    Log {
+        #[arg(long, default_value_t = 30)]
+        limit: u32,
+        /// 이 기록 id 앞의 것
+        #[arg(long)]
+        before: Option<i64>,
+        /// 삭제·자동 정리만(되살릴 수 있는 것)
+        #[arg(long)]
+        deleted: bool,
+    },
+    /// 새 목록(`##`, 파일 끝 또는 --after 목록 뒤)
+    ListAdd {
+        name: String,
+        #[arg(long)]
+        after: Option<String>,
+    },
+    /// 목록 이름 바꾸기
+    ListRename { name: String, to: String },
+    /// 목록의 task·설명 줄을 다른 목록 끝으로 옮기고 머리를 지운다
+    ListMerge { name: String, into: String },
+    /// task가 없는 목록을 지운다
+    ListRm { name: String },
+    /// 목록을 --before 목록 앞(없으면 파일 끝)으로
+    ListMove {
+        name: String,
+        #[arg(long)]
+        before: Option<String>,
+    },
+}
+
+/// 제목으로 찾는 대상(host가 제목으로 블록을 찾는다)
+fn task_at(title: &str) -> aaa_proto::TaskAnchor {
+    aaa_proto::TaskAnchor { title: title.to_string(), ..Default::default() }
+}
+
+/// `--block`을 주면 그 블록 hash로 찾는다(그사이 바뀌었으면 충돌)
+fn task_at_block(title: &str, block: Option<String>) -> aaa_proto::TaskAnchor {
+    aaa_proto::TaskAnchor { block_sha256: block.unwrap_or_default(), ..task_at(title) }
+}
+
+/// `aaa task` 고치기: 충돌이면 그 까닭과 지금 원문을 보이고 종료 코드 1이다
+fn task_edit_cmd(json: bool, ops: Vec<aaa_proto::TaskOp>) -> Result<ExitCode> {
+    let res = front_call(FrontRequest::TaskEdit { project: project_or_here(None)?, ops, base_sha256: None })?;
+    if let Ok(FrontResponse::TaskEdited { conflict: Some(c), .. }) = &res {
+        if json {
+            eprintln!("{}", serde_json::to_string(&serde_json::json!({ "conflict": c }))?);
+        } else {
+            eprintln!("aaa: revision_conflict: {}", c.reason);
+            if let Some(t) = &c.latest {
+                eprintln!("  지금 원문({}줄): {}", t.line, t.raw);
+            }
+        }
+        return Ok(ExitCode::from(1));
+    }
+    front_print(json, res)
 }
 
 #[derive(Subcommand)]
@@ -1539,6 +1671,61 @@ fn run(cli: Cli) -> Result<ExitCode> {
             front(json, FrontRequest::Context { project: project_or_here(project)?, peek })
         }
         Cmd::Task { cmd: TaskCmd::List } => front(json, FrontRequest::Tasks { project: project_or_here(None)? }),
+        Cmd::Task { cmd: TaskCmd::Log { limit, before, deleted } } => front(
+            json,
+            FrontRequest::TaskLog {
+                project: project_or_here(None)?,
+                before,
+                limit: Some(limit),
+                filter: deleted.then_some(aaa_proto::TaskLogFilter::Deleted),
+            },
+        ),
+        Cmd::Task { cmd } => {
+            use aaa_proto::TaskOp;
+            let op = match cmd {
+                TaskCmd::List | TaskCmd::Log { .. } => unreachable!(),
+                TaskCmd::Add { title, list, owner, person, notes, parent, before } => TaskOp::Add {
+                    list,
+                    title,
+                    owner,
+                    person,
+                    notes,
+                    parent: parent.as_deref().map(task_at),
+                    before: before.as_deref().map(task_at),
+                },
+                TaskCmd::Edit { task, block, title, owner, person, notes, clear_notes, thread, done, undone } => {
+                    TaskOp::Update {
+                        at: task_at_block(&task, block),
+                        title,
+                        owner,
+                        person,
+                        notes: if clear_notes { Some(Vec::new()) } else { (!notes.is_empty()).then_some(notes) },
+                        thread,
+                        done: if done {
+                            Some(true)
+                        } else if undone {
+                            Some(false)
+                        } else {
+                            None
+                        },
+                    }
+                }
+                TaskCmd::Move { task, block, list, before, parent } => TaskOp::Move {
+                    at: task_at_block(&task, block),
+                    to_list: list,
+                    before: before.as_deref().map(task_at),
+                    parent: parent.as_deref().map(task_at),
+                },
+                TaskCmd::Rm { task, block } => TaskOp::Delete { at: task_at_block(&task, block) },
+                TaskCmd::Restore { log_id, list } => TaskOp::Restore { log_id, list },
+                TaskCmd::ListAdd { name, after } => TaskOp::ListAdd { name, after },
+                TaskCmd::ListRename { name, to } => TaskOp::ListRename { name, to },
+                TaskCmd::ListMerge { name, into } => TaskOp::ListMerge { name, into },
+                TaskCmd::ListRm { name } => TaskOp::ListDelete { name },
+                TaskCmd::ListMove { name, before } => TaskOp::ListMove { name, before },
+            };
+            task_edit_cmd(json, vec![op])
+        }
         Cmd::Assignable { project, check } => {
             front(json, FrontRequest::Assignable { project: project_or_here(project)?, check })
         }
@@ -3202,6 +3389,36 @@ fn render_task_board(s: &mut String, b: &aaa_proto::TaskBoard) {
     }
 }
 
+/// `aaa task log`: `#id 언제 누가 동작 [목록] 제목`, 되살린 삭제는 표시한다
+fn render_task_log(s: &mut String, entries: &[aaa_proto::TaskLogEntry], next: Option<i64>) {
+    use std::fmt::Write as _;
+    if entries.is_empty() {
+        s.push_str("기록이 없다\n");
+    }
+    let now = aaa_common::util::now_ms();
+    for e in entries {
+        let ago = now.saturating_sub(e.at_ms) / 1000;
+        let when = match ago {
+            0..60 => format!("{ago}초 전"),
+            60..3600 => format!("{}분 전", ago / 60),
+            3600..86_400 => format!("{}시간 전", ago / 3600),
+            _ => format!("{}일 전", ago / 86_400),
+        };
+        let from = e.from_list.as_ref().map(|f| format!("{f} → ")).unwrap_or_default();
+        let list =
+            if e.list.is_empty() && e.from_list.is_none() { String::new() } else { format!(" [{from}{}]", e.list) };
+        let back = match (e.action.removes(), e.restored_by) {
+            (true, Some(by)) => format!(" (되살림 #{by})"),
+            (true, None) => format!(" (되살리기: aaa task restore {})", e.id),
+            _ => String::new(),
+        };
+        let _ = writeln!(s, "#{} {when} {} {}{list} {}{back}", e.id, e.by, e.action.as_str(), e.title);
+    }
+    if let Some(n) = next {
+        let _ = writeln!(s, "더 있다: aaa task log --before {n}");
+    }
+}
+
 fn render_context(s: &mut String, c: &aaa_proto::ProjectContext) {
     use std::fmt::Write as _;
     for w in &c.post_warnings {
@@ -3209,7 +3426,7 @@ fn render_context(s: &mut String, c: &aaa_proto::ProjectContext) {
     }
     let _ = writeln!(s, "프로젝트 {} ({})", c.project, c.path);
     let _ = writeln!(s, "thread 시작: start_threads={} (propose면 제안하고 승인을 기다린다)", c.start_threads);
-    let _ = writeln!(s, "\nTasks(TASKS.md, coordinator만 고친다):");
+    let _ = writeln!(s, "\nTasks(TASKS.md, coordinator와 사용자가 고친다: aaa task …, 웹 할 일 화면):");
     if c.tasks.is_empty() {
         s.push_str("  (없음)\n");
     }
@@ -3917,6 +4134,15 @@ fn render_front(r: &FrontResponse) -> String {
         },
         FrontResponse::Context(c) => render_context(&mut s, c),
         FrontResponse::TaskBoard(b) => render_task_board(&mut s, b),
+        FrontResponse::TaskEdited { board, log_ids, .. } => {
+            if log_ids.is_empty() {
+                let _ = writeln!(s, "바뀐 것이 없다(TASKS.md sha256 {})", board.sha256);
+            } else {
+                let ids: Vec<String> = log_ids.iter().map(|i| format!("#{i}")).collect();
+                let _ = writeln!(s, "저장했다: 기록 {} · TASKS.md sha256 {}", ids.join(" "), board.sha256);
+            }
+        }
+        FrontResponse::TaskLog { entries, next } => render_task_log(&mut s, entries, *next),
         FrontResponse::Evaluators { evaluators } => {
             if evaluators.is_empty() {
                 s.push_str("사후 평가자가 없다(aaa evaluator assign)\n");
