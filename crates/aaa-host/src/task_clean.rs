@@ -175,6 +175,8 @@ impl Host {
                 title: None,
                 owner: None,
                 person: false,
+                profile: None,
+                machine: None,
                 notes: None,
                 thread: Some(rec.id.clone()),
                 done: None,
@@ -225,7 +227,7 @@ fn no_input() -> task_edit::Ctx<'static> {
     fn removed(_: i64) -> Result<task_edit::Removed, String> {
         Err("자동 정리는 되살리지 않는다".into())
     }
-    task_edit::Ctx { owner_ok: &owner_ok, repo_ok: &repo_ok, removed: &removed }
+    task_edit::Ctx { owner_ok: &owner_ok, profiles: &[], repo_ok: &repo_ok, removed: &removed }
 }
 
 #[cfg(test)]

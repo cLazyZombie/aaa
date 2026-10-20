@@ -541,6 +541,9 @@ pub struct QuestionView {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "snake_case")]
 pub enum NoticeKind {
+    /// host 내부 감시의 이상·회복. 웹 앱 안 알림.
+    HostIssue,
+    HostRecovered,
     /// 배포의 최종 성공/중단. 웹 앱 안 알림만 보낸다.
     RolloutFinished,
     RolloutFailed,
@@ -900,7 +903,7 @@ pub struct ThreadQuestions {
     pub items: Vec<ThreadQuestion>,
     /// 답했으면 그 답(웹 카드·`aaa thread answer`). 모든 기기가 같은 값을 본다
     pub answer: Option<QuestionAnswerView>,
-    /// 본문 그림의 주소 앞부분(FRONT_API 1.74, plan §8.333): 본문의 `library/<경로>`는 `<files_base><경로>`로 읽는다.
+    /// 본문 그림의 주소 앞부분(FRONT_API 1.76, plan §8.337): 본문의 `library/<경로>`는 `<files_base><경로>`로 읽는다.
     /// 그 보고의 host 사본에서만 주고, 새 보고가 오면 옛 주소는 열리지 않는다. 옛 host는 생략한다
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
@@ -912,7 +915,7 @@ pub struct ThreadQuestions {
 pub struct ThreadQuestion {
     pub text: String,
     pub choices: Vec<QuestionChoice>,
-    /// `### N. 질문` 머리 아래의 Markdown 본문(FRONT_API 1.74, plan §8.333): 그림·표·code·링크. 옛 꼴과 옛 host는 생략한다
+    /// `### N. 질문` 머리 아래의 Markdown 본문(FRONT_API 1.76, plan §8.337): 그림·표·code·링크. 옛 꼴과 옛 host는 생략한다
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub body: Option<String>,
@@ -925,7 +928,7 @@ pub struct QuestionChoice {
     pub description: Option<String>,
     /// 「(추천)」 표지가 있었다
     pub recommended: bool,
-    /// 선택지 줄 아래 두 칸 들여쓴 Markdown(시안 그림 등, FRONT_API 1.74). 없으면 생략한다
+    /// 선택지 줄 아래 두 칸 들여쓴 Markdown(시안 그림 등, FRONT_API 1.76). 없으면 생략한다
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub body: Option<String>,
@@ -945,7 +948,7 @@ pub struct QuestionAnswerView {
     pub at_ms: u64,
 }
 
-/// 「답할 것」 기록의 종류(plan §8.333): thread 질문, coordinator 확인 필요 post, 할 일 확인 필요
+/// 「답할 것」 기록의 종류(plan §8.337): thread 질문, coordinator 확인 필요 post, 할 일 확인 필요
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "snake_case")]
 pub enum AskKind {
@@ -954,7 +957,7 @@ pub enum AskKind {
     Task,
 }
 
-/// 답한 것 하나(plan §8.333, FRONT_API 1.74). 답할 때의 원문을 보존한다: 새 보고가 질문을 비워도 남고, host가 14일 뒤 지운다
+/// 답한 것 하나(plan §8.337, FRONT_API 1.76). 답할 때의 원문을 보존한다: 새 보고가 질문을 비워도 남고, host가 14일 뒤 지운다
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 pub struct AskRecord {
     pub id: String,
@@ -988,7 +991,7 @@ pub struct AskRecord {
     pub files_base: Option<String>,
 }
 
-/// 열린 coordinator 확인 필요 post(`post user --request --needs-user`, plan §8.333). inbox 항목이 끝나지 않은 동안 「답할 것」이다
+/// 열린 coordinator 확인 필요 post(`post user --request --needs-user`, plan §8.337). inbox 항목이 끝나지 않은 동안 「답할 것」이다
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 pub struct UserRequestView {
     /// inbox 항목 ID(「답함으로 표시」가 끝낸다)
@@ -1103,7 +1106,7 @@ fn rich_question(text: String, block: &[String]) -> ThreadQuestion {
     ThreadQuestion { text, choices, body: body_of(&block[..start], QUESTION_BODY_MAX) }
 }
 
-/// 보고 `## Questions` 절의 질문(plan §8.329·§8.333). 두 꼴을 읽는다.
+/// 보고 `## Questions` 절의 질문(plan §8.329·§8.337). 두 꼴을 읽는다.
 /// - `### N. 질문` 머리: 그 아래 Markdown 본문(그림·표·code·링크), 끝에 열 0의 `- A 선택지 (추천) — 까닭` 목록, 선택지 그림은
 ///   그 줄 아래 두 칸 들여쓴 줄이다.
 /// - 옛 꼴 `N. 질문` 줄 아래 `- A 선택지 (추천) — 까닭` 줄(본문 없음).
@@ -1783,6 +1786,13 @@ pub struct TaskView {
     pub title: String,
     /// 괄호 안 owner 원문(`me`, `claude`, `codex@mac-b`, 사람 이름 등)
     pub owner: Option<String>,
+    /// agent에게 맡긴 task의 모델(profile) 칸(FRONT_API 1.75, plan §8.335): owner `모델@머신`의 앞. 맨 이름은 host가 아는 profile일
+    /// 때만 모델이다(아니면 사람). 비면 시작할 때 고른다. 옛 host는 생략한다
+    #[serde(default)]
+    pub profile: Option<String>,
+    /// agent에게 맡긴 task의 머신 칸(FRONT_API 1.75): owner `모델@머신`의 뒤. 비면 그 저장소가 있는 머신 중 덜 붐비는 곳이다
+    #[serde(default)]
+    pub machine: Option<String>,
     /// owner 뒤 대괄호의 저장소 칸(FRONT_API 1.73, plan §8.330): `project.toml` repos 경로의 마지막 이름이나 `작업 폴더`. 비면 정하지
     /// 않은 task다(「바로 시작」 창에서 고른다). 옛 host는 생략한다
     #[serde(default)]
@@ -1856,6 +1866,12 @@ pub enum TaskOp {
         /// owner가 사람 이름이다(「사람으로 저장」). 아니면 `assignable --check`와 같은 판정을 거친다
         #[serde(default)]
         person: bool,
+        /// 모델(profile) 칸(FRONT_API 1.75). 머신 칸과 함께 owner `모델@머신`으로 적는다. `owner`(me·사람)와 함께 주면 거부한다
+        #[serde(default)]
+        profile: Option<String>,
+        /// 머신 칸(FRONT_API 1.75)
+        #[serde(default)]
+        machine: Option<String>,
         #[serde(default)]
         notes: Vec<String>,
         #[serde(default)]
@@ -1878,6 +1894,12 @@ pub enum TaskOp {
         owner: Option<String>,
         #[serde(default)]
         person: bool,
+        /// 모델 칸(FRONT_API 1.75): `None`은 그대로, 빈 글은 비움. 머신 칸만 바꾸면 모델은 그대로 둔다
+        #[serde(default)]
+        profile: Option<String>,
+        /// 머신 칸(FRONT_API 1.75, `profile`과 같은 규칙)
+        #[serde(default)]
+        machine: Option<String>,
         #[serde(default)]
         notes: Option<Vec<String>>,
         #[serde(default)]
@@ -2174,7 +2196,7 @@ pub struct ProjectContext {
     /// 응답 크기 한도 안에서 오래된 것부터 싣는다: `inbox_open`보다 적을 수 있다.
     #[serde(default)]
     pub inbox: Vec<InboxItem>,
-    /// 채팅에 쓸 이 host 웹 주소(tailscale serve 공개 origin, plan §8.333). 질문·보고서는 `<주소>/#question=<thread>`·
+    /// 채팅에 쓸 이 host 웹 주소(tailscale serve 공개 origin, plan §8.337). 질문·보고서는 `<주소>/#question=<thread>`·
     /// `<주소>/#report=<이름>` Markdown 링크로 가리킨다(터미널에서도 눌린다). 공개하지 않았으면 없다: 그때는 `aaa:` 꼴을 쓴다
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]

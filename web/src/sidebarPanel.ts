@@ -3,7 +3,7 @@
 // 싣는다. aaa는 기기마다(brief: 마지막 패널·접힘은 기기별) localStorage에 둔다.
 
 // 「작업」은 예전 프로젝트·에이전트 두 패널을 합친 트리다(사용자 결정 10-19 안 A, plan §8.280). 「답할 것」은 맨 위다: thread 질문·
-// coordinator 확인 필요·할 일 확인 필요 목록이고 고른 것을 본문 카드로 연다(사용자 결정 10-21 1B, plan §8.333)
+// coordinator 확인 필요·할 일 확인 필요 목록이고 고른 것을 본문 카드로 연다(사용자 결정 10-21 1B, plan §8.337)
 export const PANELS = ["asks", "work", "machines", "automations"] as const;
 export type SidebarPanel = (typeof PANELS)[number];
 

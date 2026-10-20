@@ -271,7 +271,7 @@ export interface SidebarProps {
   banners?: ReactNode;
   /** 보이는 패널(활동 막대) */
   panel: SidebarPanel;
-  /** 「답할 것」 패널 목록(App이 그린다, plan §8.333) */
+  /** 「답할 것」 패널 목록(App이 그린다, plan §8.337) */
   asks?: ReactNode;
   /** 특수 패널: 임무·사후 평가자(App이 읽는다) */
   /** 임무 동작 뒤 다시 읽기 */

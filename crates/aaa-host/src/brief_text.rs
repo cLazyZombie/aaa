@@ -255,7 +255,7 @@ mod tests {
         let fence = brief.split("```\n").nth(1).unwrap();
         let qs = aaa_proto::report_questions(fence);
         assert_eq!((qs.len(), qs[0].choices.len(), qs[0].choices[0].recommended), (1, 2, true), "{fence}");
-        // 본문(그림·표)과 선택지 그림도 카드로 간다(plan §8.333)
+        // 본문(그림·표)과 선택지 그림도 카드로 간다(plan §8.337)
         let body = qs[0].body.as_deref().unwrap_or_default();
         assert!(body.contains("![지금](library/now.png)") && body.contains("| A |"), "{fence}");
         assert_eq!(qs[0].choices[1].body.as_deref(), Some("![B안](library/b.png)"));

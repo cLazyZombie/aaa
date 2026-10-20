@@ -326,22 +326,26 @@ impl Host {
 
     pub fn start_ticker(self: &Arc<Self>) {
         let me = self.clone();
-        tokio::spawn(async move {
-            let every = Duration::from_secs(me.cfg.projects.tick_secs.max(1));
-            loop {
-                // PR 조회 때가 더 이르면 그때까지만 잔다
-                let sleep = [me.pr_next_due(), me.ci_next_due(), me.git_next_due(), me.background_wait_due()]
-                    .into_iter()
-                    .flatten()
-                    .map(|d| d.saturating_duration_since(std::time::Instant::now()))
-                    .fold(every, Duration::min);
-                tokio::select! {
-                    _ = tokio::time::sleep(sleep) => {}
-                    _ = me.tick_wake.notified() => {}
+        self.supervise(crate::supervisor::Task::Ticker, move || {
+            let me = me.clone();
+            async move {
+                let every = Duration::from_secs(me.cfg.projects.tick_secs.max(1));
+                loop {
+                    // PR 조회 때가 더 이르면 그때까지만 잔다
+                    let sleep = [me.pr_next_due(), me.ci_next_due(), me.git_next_due(), me.background_wait_due()]
+                        .into_iter()
+                        .flatten()
+                        .map(|d| d.saturating_duration_since(std::time::Instant::now()))
+                        .fold(every, Duration::min);
+                    tokio::select! {
+                        _ = tokio::time::sleep(sleep) => {}
+                        _ = me.tick_wake.notified() => {}
+                    }
+                    let seq = me.tick_started.fetch_add(1, Ordering::SeqCst) + 1;
+                    me.tick().await;
+                    me.tick_done.send_replace(seq);
+                    me.task_progress(crate::supervisor::Task::Ticker);
                 }
-                me.tick_started.fetch_add(1, Ordering::SeqCst);
-                me.tick().await;
-                me.tick_done.send_modify(|n| *n += 1);
             }
         });
     }

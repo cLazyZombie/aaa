@@ -54,7 +54,7 @@ export function onTasksChanged(listener: (sha256: string) => void): () => void {
   return () => tasksListeners.delete(listener);
 }
 
-/** host `asks` 사건(확인 필요 post·답한 것 기록이 바뀜, FRONT_API 1.74, plan §8.333): 「답할 것」이 다시 읽는다 */
+/** host `asks` 사건(확인 필요 post·답한 것 기록이 바뀜, FRONT_API 1.76, plan §8.337): 「답할 것」이 다시 읽는다 */
 const asksListeners = new Set<() => void>();
 export function onAsksChanged(listener: () => void): () => void {
   asksListeners.add(listener);

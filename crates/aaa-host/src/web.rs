@@ -54,11 +54,15 @@ pub async fn start(host: &Arc<Host>) -> Result<()> {
     // 공개 주소(Host·Origin 허용)를 지금 serve 상태로 맞춘다. tailscale을 기다리지 않고 연다(그동안은 지난 값)
     let h = host.clone();
     tokio::spawn(async move { h.refresh_publish().await });
-    let app = router(host.clone());
-    let listener = ResourceListener { inner: listener, host: host.clone() };
-    tokio::spawn(async move {
-        if let Err(e) = axum::serve(listener, app).await {
-            tracing::error!("웹 서버 끝: {e}");
+    let listener = Arc::new(listener);
+    let host = host.clone();
+    host.clone().supervise(crate::supervisor::Task::Web, move || {
+        let host = host.clone();
+        let listener = ResourceListener { inner: listener.clone(), host: host.clone() };
+        async move {
+            host.task_progress(crate::supervisor::Task::Web);
+            // 오류의 원문은 외부 알림에 넣지 않는다. 정상 조기 종료도 supervisor가 이상으로 판정한다.
+            let _ = axum::serve(listener, router(host)).await;
         }
     });
     Ok(())
@@ -66,7 +70,7 @@ pub async fn start(host: &Arc<Host>) -> Result<()> {
 
 /// axum 기본 listener의 재시도(1초)를 유지하고 EMFILE을 시스템 inbox에도 남긴다.
 struct ResourceListener {
-    inner: tokio::net::TcpListener,
+    inner: Arc<tokio::net::TcpListener>,
     host: Arc<Host>,
 }
 impl axum::serve::Listener for ResourceListener {
@@ -504,7 +508,7 @@ async fn task_file_get(
     }
 }
 
-/// 「답할 것」 질문 본문의 그림·링크(plan §8.333, 보기 권한도): 열린 질문은 그 보고의 host 사본, 답한 것은 보존한 사본에서 준다.
+/// 「답할 것」 질문 본문의 그림·링크(plan §8.337, 보기 권한도): 열린 질문은 그 보고의 host 사본, 답한 것은 보존한 사본에서 준다.
 /// HTML은 결과물처럼 sandbox(opaque origin)로 보내 앱 cookie·API에 닿지 못하게 한다
 fn ask_file_response(
     host: &Host,
@@ -903,7 +907,7 @@ async fn events_loop(host: Arc<Host>, dev: String, role: DeviceRole, mut socket:
     let mut send_preferences = true;
     // 보고서 안 본 수(활동 막대 배지, plan §8.256): 열 때와 목록이 바뀔 때
     let mut send_reports = true;
-    // 「답할 것」(plan §8.333): 열 때와 확인 필요 post·답한 것이 바뀔 때
+    // 「답할 것」(plan §8.337): 열 때와 확인 필요 post·답한 것이 바뀔 때
     let mut send_asks = true;
     let mut send_rollout = true;
     let mut send_badge = true;

@@ -56,9 +56,10 @@ pub(crate) struct Removed {
 }
 
 /// 동작이 묻는 바깥 판정: owner 검사(`assignable --check`, 사람이면 「사람으로 저장」), 저장소 칸 값(경로는 이름으로 바꾼다)과
-/// 되살릴 기록
+/// 되살릴 기록. `profiles`는 host가 아는 profile 이름이다(모델 칸만 바꿀 때 지금 owner의 맨 이름이 모델인지 본다)
 pub(crate) struct Ctx<'a> {
     pub owner_ok: &'a dyn Fn(&str, bool) -> Result<(), String>,
+    pub profiles: &'a [String],
     pub repo_ok: &'a dyn Fn(&str) -> Result<String, String>,
     pub removed: &'a dyn Fn(i64) -> Result<Removed, String>,
 }
@@ -369,11 +370,15 @@ pub(crate) fn apply(text: &str, ops: &[TaskOp], ctx: &Ctx) -> Result<Applied, Fa
         let bad = at_op(i);
         let op = &remap(op, &renames);
         match op {
-            TaskOp::Add { list, title, owner, person, notes, parent, before, thread, repo } => {
+            TaskOp::Add { list, title, owner, person, profile, machine, notes, parent, before, thread, repo } => {
                 let title = tasks::check_title(title).map_err(&bad)?;
-                let owner = owner.as_deref().map(str::trim).filter(|o| !o.is_empty());
+                let owner =
+                    tasks::edited_owner(None, owner.as_deref(), profile.as_deref(), machine.as_deref(), ctx.profiles)
+                        .map_err(&bad)?
+                        .flatten();
+                let owner = owner.as_deref();
                 if let Some(o) = owner {
-                    (ctx.owner_ok)(o, *person).map_err(&bad)?;
+                    (ctx.owner_ok)(o, *person && profile.is_none() && machine.is_none()).map_err(&bad)?;
                 }
                 let thread = match thread.as_deref().map(str::trim).filter(|t| !t.is_empty()) {
                     Some(t) => Some(tasks::check_thread(t).map_err(&bad)?),
@@ -403,7 +408,7 @@ pub(crate) fn apply(text: &str, ops: &[TaskOp], ctx: &Ctx) -> Result<Applied, Fa
                 records.push(r);
                 titles.push(title);
             }
-            TaskOp::Update { at, title, owner, person, notes, thread, done, repo } => {
+            TaskOp::Update { at, title, owner, person, profile, machine, notes, thread, done, repo } => {
                 let spans = d.spans();
                 let s = spans[find(&spans, at, i)?].clone();
                 let v = &s.view;
@@ -411,13 +416,21 @@ pub(crate) fn apply(text: &str, ops: &[TaskOp], ctx: &Ctx) -> Result<Applied, Fa
                     Some(t) if t.trim() != v.title => tasks::check_title(t).map_err(&bad)?,
                     _ => v.title.clone(),
                 };
-                let new_owner = match owner.as_deref().map(str::trim) {
+                let edited = tasks::edited_owner(
+                    v.owner.as_deref(),
+                    owner.as_deref(),
+                    profile.as_deref(),
+                    machine.as_deref(),
+                    ctx.profiles,
+                )
+                .map_err(&bad)?;
+                let new_owner = match edited {
                     None => v.owner.clone(),
-                    Some("") => None,
-                    Some(o) if Some(o) == v.owner.as_deref() => v.owner.clone(),
-                    Some(o) => {
-                        (ctx.owner_ok)(o, *person).map_err(&bad)?;
-                        Some(o.to_string())
+                    Some(None) => None,
+                    Some(Some(o)) if Some(o.as_str()) == v.owner.as_deref() => v.owner.clone(),
+                    Some(Some(o)) => {
+                        (ctx.owner_ok)(&o, *person && profile.is_none() && machine.is_none()).map_err(&bad)?;
+                        Some(o)
                     }
                 };
                 let new_thread = match thread.as_deref().map(str::trim) {
@@ -701,22 +714,28 @@ fn remap(op: &TaskOp, renames: &Renames) -> TaskOp {
     let r = |a: &TaskAnchor| renamed(a, renames);
     let ro = |a: &Option<TaskAnchor>| a.as_ref().map(r);
     match op {
-        TaskOp::Add { list, title, owner, person, notes, parent, before, thread, repo } => TaskOp::Add {
-            list: list.clone(),
-            title: title.clone(),
-            owner: owner.clone(),
-            person: *person,
-            notes: notes.clone(),
-            parent: ro(parent),
-            before: ro(before),
-            thread: thread.clone(),
-            repo: repo.clone(),
-        },
-        TaskOp::Update { at, title, owner, person, notes, thread, done, repo } => TaskOp::Update {
+        TaskOp::Add { list, title, owner, person, profile, machine, notes, parent, before, thread, repo } => {
+            TaskOp::Add {
+                list: list.clone(),
+                title: title.clone(),
+                owner: owner.clone(),
+                person: *person,
+                profile: profile.clone(),
+                machine: machine.clone(),
+                notes: notes.clone(),
+                parent: ro(parent),
+                before: ro(before),
+                thread: thread.clone(),
+                repo: repo.clone(),
+            }
+        }
+        TaskOp::Update { at, title, owner, person, profile, machine, notes, thread, done, repo } => TaskOp::Update {
             at: r(at),
             title: title.clone(),
             owner: owner.clone(),
             person: *person,
+            profile: profile.clone(),
+            machine: machine.clone(),
             notes: notes.clone(),
             thread: thread.clone(),
             done: *done,
@@ -840,7 +859,7 @@ mod tests {
     }
 
     fn run(text: &str, ops: Vec<TaskOp>) -> Result<Applied, Fail> {
-        apply(text, &ops, &Ctx { owner_ok: &ok_owner, repo_ok: &ok_repo, removed: &no_log })
+        apply(text, &ops, &Ctx { owner_ok: &ok_owner, profiles: &[], repo_ok: &ok_repo, removed: &no_log })
     }
 
     fn anchor(text: &str, title: &str) -> TaskAnchor {
@@ -854,11 +873,76 @@ mod tests {
             title: None,
             owner: None,
             person: false,
+            profile: None,
+            machine: None,
             notes: None,
             thread: None,
             done: None,
             repo: None,
         }
+    }
+
+    /// 모델·머신 칸(plan §8.335): 칸마다 고치고(다른 칸은 그대로), 바뀌지 않은 옛 줄은 바이트 그대로, owner(me)와 함께 주면 거부
+    #[test]
+    fn model_machine_edits() {
+        fn ok(o: &str, _: bool) -> Result<(), String> {
+            if o == "nobody@mac-b" {
+                Err("mac-b에서 쓸 수 있는 profile이 아니다: nobody".into())
+            } else {
+                Ok(())
+            }
+        }
+        let profiles = vec!["claude".to_string(), "codex-fast".to_string()];
+        let go = |text: &str, ops: Vec<TaskOp>| {
+            apply(text, &ops, &Ctx { owner_ok: &ok, profiles: &profiles, repo_ok: &ok_repo, removed: &no_log })
+        };
+        let md = "## A\n- [ ] 일 (codex-fast@mac-a) [aaa] · t-0001\n  메모\n- [ ] 옛 줄 (codex-fast)  \n";
+        let set = |title: &str, p: Option<&str>, m: Option<&str>| {
+            let mut op = update(anchor(md, title));
+            if let TaskOp::Update { profile, machine, .. } = &mut op {
+                *profile = p.map(Into::into);
+                *machine = m.map(Into::into);
+            }
+            op
+        };
+        let line = |out: Applied| out.text.lines().nth(1).unwrap().to_string();
+        assert_eq!(line(go(md, vec![set("일", None, Some(""))]).unwrap()), "- [ ] 일 (codex-fast) [aaa] · t-0001");
+        assert_eq!(
+            line(go(md, vec![set("일", Some("claude"), None)]).unwrap()),
+            "- [ ] 일 (claude@mac-a) [aaa] · t-0001"
+        );
+        assert_eq!(line(go(md, vec![set("일", Some(""), None)]).unwrap()), "- [ ] 일 (@mac-a) [aaa] · t-0001");
+        assert_eq!(line(go(md, vec![set("일", Some(""), Some(""))]).unwrap()), "- [ ] 일 [aaa] · t-0001");
+        // 메모만 고치면 옛 줄은 바이트 그대로다(끝 공백까지)
+        let mut notes = update(anchor(md, "옛 줄"));
+        if let TaskOp::Update { notes: n, .. } = &mut notes {
+            *n = Some(vec!["새 메모".into()]);
+        }
+        assert!(go(md, vec![notes]).unwrap().text.contains("- [ ] 옛 줄 (codex-fast)  \n  새 메모\n"));
+        // 모델만 적힌 줄에 머신을 더한다
+        assert!(
+            go(md, vec![set("옛 줄", None, Some("mac-b"))]).unwrap().text.contains("- [ ] 옛 줄 (codex-fast@mac-b)\n")
+        );
+        // 더하기: 두 칸, 판정 거부, me와 함께 주면 거부
+        let add = |owner: Option<&str>, p: Option<&str>, m: Option<&str>| TaskOp::Add {
+            list: "A".into(),
+            title: "새 일".into(),
+            owner: owner.map(Into::into),
+            person: false,
+            profile: p.map(Into::into),
+            machine: m.map(Into::into),
+            notes: vec![],
+            parent: None,
+            before: None,
+            thread: None,
+            repo: None,
+        };
+        let out = go(md, vec![add(None, Some("claude"), Some("mac-b"))]).unwrap();
+        assert!(out.text.contains("- [ ] 새 일 (claude@mac-b)\n"), "{}", out.text);
+        let e = go(md, vec![add(None, Some("nobody"), Some("mac-b"))]).unwrap_err();
+        assert!(matches!(&e, Fail::Bad(m) if m.contains("쓸 수 있는 profile이 아니다")), "{e:?}");
+        let e = go(md, vec![add(Some("me"), Some("claude"), None)]).unwrap_err();
+        assert!(matches!(&e, Fail::Bad(m) if m.contains("함께 주지 않는다")), "{e:?}");
     }
 
     /// 저장소 칸(plan §8.330): 더하기·바꾸기(`None` 그대로, 빈 글 비움)·경로는 이름으로·모르는 이름 거부
@@ -870,6 +954,8 @@ mod tests {
             title: "둘".into(),
             owner: Some("me".into()),
             person: false,
+            profile: None,
+            machine: None,
             notes: vec![],
             parent: None,
             before: None,
@@ -887,6 +973,8 @@ mod tests {
                     title: None,
                     owner: owner.map(Into::into),
                     person: false,
+                    profile: None,
+                    machine: None,
                     notes: None,
                     thread: None,
                     done: None,
@@ -907,6 +995,8 @@ mod tests {
             title: None,
             owner: None,
             person: false,
+            profile: None,
+            machine: None,
             notes: None,
             thread: Some("t-2".into()),
             done: None,
@@ -918,6 +1008,8 @@ mod tests {
             title: "릴리스 [v2]".into(),
             owner: None,
             person: false,
+            profile: None,
+            machine: None,
             notes: vec![],
             parent: None,
             before: None,
@@ -943,6 +1035,8 @@ mod tests {
                 title: None,
                 owner: None,
                 person: false,
+                profile: None,
+                machine: None,
                 notes,
                 thread: None,
                 done: None,
@@ -966,6 +1060,8 @@ mod tests {
                 title: Some("상위".into()),
                 owner: Some("me".into()),
                 person: false,
+                profile: None,
+                machine: None,
                 notes: Some(vec!["메모 A".into()]),
                 thread: None,
                 done: Some(false),
@@ -983,6 +1079,8 @@ mod tests {
                 title: Some("끝난 일".into()),
                 owner: None,
                 person: false,
+                profile: None,
+                machine: None,
                 notes: None,
                 thread: None,
                 done: None,
@@ -1019,6 +1117,8 @@ mod tests {
             title: title.into(),
             owner: owner.map(str::to_string),
             person,
+            profile: None,
+            machine: None,
             notes: notes.into_iter().map(str::to_string).collect(),
             parent: None,
             before: None,
@@ -1057,6 +1157,8 @@ mod tests {
                 title: None,
                 owner: Some("me".into()),
                 person: false,
+                profile: None,
+                machine: None,
                 notes: None,
                 thread: None,
                 done: None,
@@ -1164,6 +1266,8 @@ mod tests {
                 title: "첫 일".into(),
                 owner: None,
                 person: false,
+                profile: None,
+                machine: None,
                 notes: vec![],
                 parent: None,
                 before: None,
@@ -1194,7 +1298,7 @@ mod tests {
         let removed = move |id: i64| {
             if id == 7 { Ok(Removed { list: "A".into(), text: text.clone() }) } else { Err("없는 기록".into()) }
         };
-        let ctx = Ctx { owner_ok: &ok_owner, repo_ok: &ok_repo, removed: &removed };
+        let ctx = Ctx { owner_ok: &ok_owner, profiles: &[], repo_ok: &ok_repo, removed: &removed };
         let back = apply(&del.text, &[TaskOp::Restore { log_id: 7, list: None }], &ctx).unwrap();
         assert_eq!(back.text, "## A\n- [ ] 둘\n- [ ] 하나\n  - [ ] 하위\n");
         assert_eq!((back.records[0].title.as_str(), back.records[0].restored), ("하나", Some(7)));
@@ -1238,6 +1342,8 @@ mod tests {
                     title: Some("하나 고침".into()),
                     owner: None,
                     person: false,
+                    profile: None,
+                    machine: None,
                     notes: Some(vec!["메모".into()]),
                     thread: None,
                     done: None,
@@ -1249,6 +1355,8 @@ mod tests {
                     title: None,
                     owner: Some("me".into()),
                     person: false,
+                    profile: None,
+                    machine: None,
                     notes: None,
                     thread: None,
                     done: None,

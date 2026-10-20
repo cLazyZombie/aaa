@@ -23,7 +23,7 @@ describe("앱 안 참조", () => {
     assert.equal(appRefOf("aaa:question/t-9 보기"), null);
     assert.equal(appRefOf("https://example.ts.net/"), null);
   });
-  it("같은 host 앱 주소 링크(plan §8.333)", () => {
+  it("같은 host 앱 주소 링크(plan §8.337)", () => {
     const o = "https://mac-a.example.ts.net:8443";
     assert.deepEqual(appLinkOf(`${o}/#question=t-0540`, o), q("t-0540"));
     assert.deepEqual(appLinkOf(`${o}/#report=ui-v2`, o), r("ui-v2"));

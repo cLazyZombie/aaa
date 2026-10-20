@@ -1633,7 +1633,7 @@ pub enum FrontRequest {
         #[ts(optional, as = "Option<String>")]
         project: String,
     },
-    /// 「답할 것」(FRONT_API 1.74, plan §8.333, 보기 권한): 열린 coordinator 확인 필요 post와 답한 것 기록
+    /// 「답할 것」(FRONT_API 1.76, plan §8.337, 보기 권한): 열린 coordinator 확인 필요 post와 답한 것 기록
     Asks {
         #[serde(default)]
         #[ts(optional, as = "Option<String>")]
@@ -2744,7 +2744,7 @@ pub enum FrontResponse {
     Posts {
         posts: Vec<crate::PostEnvelope>,
     },
-    /// 「답할 것」(FRONT_API 1.74): 열린 확인 필요 post, 답한 것(최신부터), 자동 정리 기간
+    /// 「답할 것」(FRONT_API 1.76): 열린 확인 필요 post, 답한 것(최신부터), 자동 정리 기간
     Asks {
         requests: Vec<crate::UserRequestView>,
         done: Vec<crate::AskRecord>,
@@ -2994,7 +2994,7 @@ pub enum FrontEvent {
     /// FRONT_API 1.43. 보고서 목록이 바뀌었다(보내기·열기·지우기·thread 사본). 웹 events 연결에만, 열 때와 바뀔 때 보낸다.
     /// `unseen`은 열지 않은 사용자 보고서 수(활동 막대 보고서 배지)
     Reports { unseen: u32 },
-    /// FRONT_API 1.74. 「답할 것」의 확인 필요 post나 답한 것 기록이 바뀌었다(웹은 `asks`를 다시 읽는다). 웹 events 연결에만, 열 때와
+    /// FRONT_API 1.76. 「답할 것」의 확인 필요 post나 답한 것 기록이 바뀌었다(웹은 `asks`를 다시 읽는다). 웹 events 연결에만, 열 때와
     /// 바뀔 때 보낸다. `requests`는 열린 확인 필요 post 수
     Asks { requests: u32 },
     /// FRONT_API 1.60. 프로젝트 TASKS.md가 바뀌었다(ticker가 크기·mtime을 보고 내용 hash로 확인한다). 웹은 `tasks`를 다시 읽는다.

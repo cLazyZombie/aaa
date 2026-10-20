@@ -6262,3 +6262,55 @@ L4 후속(10-20 00시 사용자 관찰): 멈춤 상태의 후보 예약과 재�
 - **실기 인수.** 실제 SCM 등록/logon·Session0·로그인 전 부팅·사용자 프로필·UAC·LSA Deny/GPO·암호 갱신·
   잠긴 exe·ConPTY/인증은 CI의 읽기 probe로 증명하지 않는다. Windows 최소 bootstrap 뒤 준비물·받기·명령·
   확인·되돌리기·가린 로그 절차를 확정해 사용자 PC에서 검증한다. 별도 VM/runner나 실제 계정/LSA 변경은 없다.
+
+### 8.334 host 핵심 작업 자기 감시와 이상 알림(10-20, t-0532)
+
+- **경계.** Agent link의 UDS/TLS 수신기·인증된 연결 처리, ticker, Front API 수신기, 웹 서버의 panic과 조기 종료를 감지한다. 운영 host 밖 감시자·시스템 설정은 만들지 않는다. panic 내용은 읽거나 알림에 복제하지 않는다. 위치 기록은 §8.332의 공통 panic hook 소유다. 감지한 panic은 `panic_log::latest()`의 안전한 Snapshot 중 현재 Tokio task ID와 일치하는 것만 작업 이름과 함께 로그에 연결한다. 동시 다른 task의 기록은 붙이지 않고, 정상 조기 종료에는 이전 panic을 붙이지 않는다.
+- **재실행.** listener를 `Arc`로 보존하여 같은 socket/port에서 1·2·4초 물러나 3회 다시 실행한다. 같은 사건의 네 번째 종료에서 멈추며 host 재시작이 필요하다. 소비한 link 스트림·명령을 재생하지 않는다. pinger·pending·세대별 연결을 정리하고 agent의 기존 재연결을 받아 복구한다. 같은 link 실패의 새 연결에도 물러남과 상한을 적용한다. 상한과 시작 시각·누적 횟수는 안전 로그에 남는다.
+- **판정.** agent 요청의 응답 시간 초과가 30초 창에 5건이면 한 이상이다. 떨어져 발생한 시간 초과는 창 밖으로 버린다. 실제 응답(오류 응답도 포함) 또는 재실행된 작업의 정상 진행 뒤 30초 동안 재발하지 않아야 회복이다. ticker가 실패한 회차는 완료로 세지 않고, 다음 성공 회차가 대기자를 풀게 한다.
+- **독립 전달.** 감시 상태와 알림 전달 task는 ticker와 따로 돈다. 이상·회복을 종류별 한 번씩 coordinator inbox에 저장한다. 열린 이상·시작 시각·누적 횟수와 미발행 사건을 host DB에 저장한다. 고정 항목 ID로 inbox INSERT와 발행 대기열 ACK를 같은 transaction에서 확정하므로 그 앞뒤 재시작·저장 실패에도 inbox를 잃거나 중복 발행하지 않고 회복을 이어 알린다. 앞 사건의 INSERT가 실패하면 뒤 사건도 보류하여 회복이 이상보다 먼저 발행되지 않게 한다. host 프로세스 전체의 종료·runtime 정지·OS 자원 소진·공유 상태 잠금의 poison을 자동 수리하는 경로는 아니다.
+- **외부 알림 예외.** §8.249의 coordinator 사용자 post 전용 규칙은 유지한다. 유일한 새 예외는 host supervisor가 정적인 작업 이름·시각·횟수로 만든 `host-health` 이상/회복이다. 임의 system/thread/inbox 항목을 외부로 보내지 않는다. 기존 쓰는 기기의 presence/focus 판정으로 앱을 쓰면 앱 안 알림, 닫으면 Web Push·webhook이다. 이 예외는 post 종류 선택·project mute에 묶지 않으며, 발송 실패는 재전송하지 않는다. 외부 알림이 설정되지 않았으면 inbox가 남는다.
+- **호환.** FRONT_API 1.74에 `host_issue`/`host_recovered` NoticeKind를 더한다. 옛 CLI에는 이 웹 알림을 보내지 않는다. Rust 정본에서 TypeScript를 생성한다. N-1 웹은 모르는 notice를 무시하며 새 웹에 다시 연결하면 받는다.
+- **근거와 시험.** 기존 `inbox::Outage`의 시각 인자·한 번 알림/회복 관례와 기존 `Viewing::user_in_use`, Web Push·webhook owner를 재사용한다. 실험실 전송체가 실제 link 읽기 중 panic하고, 실제 AgentConn 요청은 응답을 보류한다. 제품 결함 주입 flag나 고정 sleep은 없다. 상세 keeper·변형 RED·gate는 [시험](testing.md)의 t-0532 절을 따른다.
+
+### 8.335 task 모델·머신 칸(10-20, t-0531)
+
+- **요청.** 사용자 10-20 23:2x 「owner는 왜 있어?」 → 「수정해. 모델과 머신 따로 설정하게. UI도 좀 더 컴팩트하게 할 수 있으면(이건 필수 아냐).」 owner 한 칸이 사람 할 일(`me`)·모델·머신을 함께 담았고, 웹은 `profile@machine` 조합 하나를 골랐다. 결정 1A: 표기는 그대로 둔다.
+- **표기(`tasks.rs`).** 줄은 `- [ ] 제목 (모델@머신) [저장소] · t-NNNN` 그대로다(참고 herdr-projects COORDINATOR.md의 owner와 같다). 모델만 `(모델)`, 머신만 `(@머신)`, 사람 할 일은 `(me)`·`(이름)`, 비움은 미할당이다. 옛 줄은 바꿀 것이 없고, 칸을 고친 줄만 다시 쓴다(고치지 않은 줄은 바이트 그대로). 형식 검사(▲)·충돌 감지·기록·되살리기는 그대로다.
+- **나누기(`agent_parts`·`fill_agent`·`known_profiles`).** host가 owner를 `TaskView.profile`·`machine`으로 나눠 준다(할 일 화면·`context`). 맨 이름은 host가 아는 profile(host 정의 profile·기본 harness·프로젝트 `thread_profiles`)일 때만 모델이다. 예전에는 연결된 머신의 profile 목록으로만 판정해, 머신이 끊기면 `(codex-fast)`가 사람으로 읽혔다(`check_owner`·`--from-task`도 같은 목록을 더한다).
+- **쓰기(`edited_owner`).** `TaskOp` Add/Update `profile`·`machine`(FRONT_API 1.75): 주지 않은 칸은 지금 agent owner에서 가져오고(머신만 바꾸면 모델은 그대로), 빈 글은 그 칸만 비운다. 둘 다 비면 미할당이고, me·사람 task에 비울 칸만 오면 그대로 둔다. `owner`(me·사람)와 모델·머신을 함께 주거나 이름 꼴이 아닌 칸은 거부한다. 합친 owner는 지금처럼 `assignable --check`와 같은 판정을 거친다(칸 하나를 비워도 남은 칸을 다시 본다). CLI `aaa task add|edit --profile <모델> --machine <머신>`(`thread start`와 같은 이름), 사람 할 일은 `--owner me|<이름>`.
+- **보이기.** `aaa context`·`task list`는 agent task를 `(모델 X, 머신 Y)`로(빈 칸은 「자동」), 저장소 칸도 함께 보인다. coordinator 안내(AGENTS.md TASKS 절)는 새 옵션과 「머신이 비면 덜 붐비는 곳, 모델이 비면 프로젝트 기본」을 적는다. 있는 프로젝트의 AGENTS.md는 `aaa doctor files --fix`로 새 안내를 받는다.
+- **웹.** 할 일 폼은 「담당」(agent·나·사람…)을 고르고, agent면 「모델」(「자동」=프로젝트 기본, 연결된 머신의 profile, 머신을 골랐으면 그 머신의 것)·「머신」(「자동」=덜 붐비는 곳, 끊긴 머신은 고를 수 없다) 두 칸이다(「자동」의 뜻은 칸의 title). 미할당은 agent에 두 칸이 빈 것이다. 웹은 표기 그대로 `모델@머신` owner 글로 보낸다(옛 host도 같은 판정). 목록 줄은 담당 칩 대신 아이콘 칩 둘(모델·머신), 상세·「바로 시작」 창은 「모델 · X」·「머신 · Y」. 「바로 시작」은 정한 칸만 잠근다(옛 host는 owner 글을 나눈다).
+- **컴팩트(선택).** 폼은 목록·저장소를 한 줄에, 담당·모델·머신을 한 줄에 두어(데스크톱 상세 칸·휴대폰 390px) 저장 단추가 첫 화면에 들어온다. 저장소 「정하지 않음」 글을 줄였다. 목록 줄은 칸 이름을 아이콘으로 줄였다(휴대폰은 지금처럼 칩을 숨긴다).
+- **검증.** host 유닛 `tasks::tests::model_and_machine_fields`(나누기·끊긴 머신의 profile·칸별 고치기·거부·다시 읽기), `task_edit::tests::model_machine_edits`(칸별 고치기, 메모만 고친 옛 줄 바이트 그대로, 더하기·판정 거부·me와 함께 거부). m13 `coordinator_flow`(context 칸·글, `task add|edit --profile|--machine`, 거부 둘, `task list` 글, 안내). 웹 순수 시험 `tasksModel.test.mjs`(host 칸 우선·옛 host 나누기·폼 동작·잠금). 웹 E2E 54에 「모델·머신 칸」 단계(칸별 저장과 파일 줄, 칩, 바로 시작 잠금, 나로 바꾸기)와 데스크톱·iPhone 캡처.
+
+### 8.336 일을 맡기기 전 기존 task 검색과 동시 갱신(10-21, t-0539)
+
+- **안내.** coordinator는 새 thread를 시작하거나 열린 thread에 일을 넘기기 전에 TASKS.md에서 같은 일·겹치는 일을 찾는다. 있으면 그 task를 `--from-task … --link-task`로 시작하거나 이미 이어진 열린 thread에 넘기고, 사용자 말에 맞게 메모·모델·머신·저장소도 함께 고친다. 없으면 기존 시작 흐름을 따른다. §8.335의 모델·머신 분리 안내와 CLI는 유지한다. 안내 원본은 `aaa doctor files --fix`가 운영 AGENTS.md에 반영한다.
+- **보조 경고.** task 없이 제목으로 시작할 때 비슷한 열린 task와 연결 명령을 한 줄 알린다. 대소문자·구두점을 뺀 낱말 집합이 같거나, 두 낱말 이상 겹치고 합집합의 2/3 이상이 같을 때만 알리며 파일 순서상 첫 후보를 고른다. 완료 task는 제외한다. 형태소·동의어를 추측하지 않으며, 시작을 거부하거나 TASKS.md를 고치지 않는다. 기존 ThreadView 경고를 사용하므로 Front API 변경은 없다.
+- **검증.** 경고 유닛은 정규화·겹침 경계·완료 제외·명령의 셸 인용을, m13은 실제 CLI의 경고와 시작 성공·경고 없는 경로·원문 보존을 검사한다. 기존 안내 생성·갱신 keeper가 새 문구도 검사한다. 완료 제외를 제거하면 음성 시험이 실패해야 한다. 상세는 [시험](testing.md)의 t-0539 절을 따른다.
+
+### 8.337 「답할 것」 패널·질문 본문·답한 것 보존(10-21, t-0540)
+
+- **요청.** 사용자 10-21: 웹 왼쪽 활동 막대에서 「답할 것」을 보고서와 떼어 따로 둔다. 시안(library/t-0540 `index.html`)에 1B 2A 3A 4A 5A로 답했다: 1B 사이드바 패널 목록과 본문 가운데 카드 하나, 2A 답한 것은 14일 뒤 자동 정리, 3A thread 질문·coordinator 확인 필요 post·할 일 확인 필요를 모두 모음, 4A 지우면 모든 기기에서 지움, 5A coordinator 확인 필요에는 「대화에서 답하기」·「답함으로 표시」. 00:3x 「이제 보고서는 쓸일이 별로 없어야 해」: 질문 본문을 웹페이지처럼(그림·표·code·링크, 그림 크게 보기), 선택지마다 그림, thread 안내가 시안·근거를 질문에 싣게. 꼴은 1A `### 1. 질문` 머리 아래 자유 Markdown, 2B 선택지마다 큰 그림 카드(데스크톱 2열). 00:3x 화면 지적: 답한 뒤 새 보고가 질문을 비우면 대화 칩이 「답함」을 잃는다. 00:4x: coordinator는 채팅에 같은 host 웹 주소 Markdown 링크를 쓰고(터미널에서 눌림), 웹은 그 링크를 앱 안 칩으로 그린다.
+- **질문 꼴(`aaa_proto::report_questions`, §8.329를 넓힘).** `## Questions` 안 `### N. 질문` 머리부터 다음 `###`·`##`(code fence 밖)까지가 한 질문이다. 끝의 열 0 `- A 선택지 (추천) — 까닭` 목록이 선택지이고, 선택지 줄 아래 두 칸 들여쓴 줄은 그 선택지 본문(보통 `![A안](library/a.png)`)이다. 그 앞은 질문 본문(`QUESTION_BODY_MAX` 16KiB, 선택지 4KiB, 넘으면 글자 경계에서 자르고 열린 fence를 닫고 잘렸다고 적음). fence 안의 `- A` 줄은 선택지가 아니다. 옛 꼴 `N. 질문`은 그대로 읽는다. brief 「시작할 때 묻기」는 시안·근거를 보고서 대신 질문 본문에 싣고, 그림은 보고서 옆 `library/…`에 먼저 두고 보고를 마지막에 쓰라고 안내한다(예시 fence를 파서가 읽는 시험이 있다).
+- **proto(FRONT_API 1.76, 더하기만).** `ThreadQuestion.body`·`QuestionChoice.body`·`ThreadQuestions.files_base`(본문 `library/…`·`report.md`를 읽을 주소 앞부분). `AskRecord{id, kind: question|request|task, subject, title, asked_ms, done_ms, by, summary, items, answer, body, files_base}`, `UserRequestView`. 요청 `Asks`(보기 권한도)·`AskHandle{item}`·`AskForget{ids, all}` → `Asks{requests, done, keep_days}`, 사건 `asks`. `ProjectContext.web_url`.
+- **host(`asks.rs`).**
+  - 열린 확인 필요 post는 끝나지 않은 `post request for user` inbox 항목이다(앱 배지 수와 같은 기준). 답한 것은 DB `asks` 표(프로젝트 표, 스키마 판 그대로 `CREATE TABLE IF NOT EXISTS`)와 `<project>/asks/<id>/` 사본이다.
+  - 질문 답(`thread_answer`가 thread에 보낸 뒤): 질문·본문·선택지 전체·고른 답·때·기기와 그때 보고 사본 `report.md`, 본문·선택지가 가리킨 `library/` 파일(심볼 링크·`..` 거부, 합 64MiB)을 남긴다.
+  - 확인 필요 post: 웹 「답함으로 표시」(inbox done + coordinator inbox `request handled`)와 coordinator `inbox done` 모두 기록한다(by=기기·CLI). 할 일 확인 필요: 웹·CLI `task_edit`가 푼 것(끝남으로 지움·연결만 풂·다시 맡김·처리함)을 기록한다.
+  - ticker가 14일 지난 기록과 사본을 지운다. `AskForget`는 기록과 사본을 지운다(조작 권한만, 모든 기기가 `asks` 사건으로 다시 읽음).
+  - 파일 주소(기기 인증, sandbox CSP·nosniff·no-cache): 열린 질문 `/api/v1/projects/{p}/questions/{thread}/{hash}/{report.md|library/…}`는 지금 보고 hash일 때만, 답한 것은 `/api/v1/projects/{p}/asks/{id}/…`.
+  - `aaa context`: 「웹 주소: <공개 origin> (채팅의 질문·보고서 링크: …)」 한 줄, 공개하지 않으면 `aaa:` 꼴을 쓰라는 줄. coordinator 안내 「앱 안 참조」는 `[t-0001 질문](<웹 주소>/#question=t-0001)`·`[제목](<웹 주소>/#report=<이름>)` 링크, 웹 주소가 없으면 `aaa:` 꼴, 공유 주소는 요청받을 때만. 확인 필요·질문이 웹 「답할 것」에 모이고 `request handled`가 온다고 알린다.
+- **웹.**
+  - 활동 막대 맨 위 「답할 것」 패널(빨강 배지: 답할 것 수). 보고서 단추 배지는 안 본 보고서 수뿐이고 보고서 화면의 「지금」 줄·질문 카드(ThreadAsks)는 걷었다.
+  - 패널: 답할 것(질문 → 확인 필요 post → 할 일, 오래된 것부터)과 답한 것(최근부터, 「모두 지우기」, 14일 안내). 줄을 누르면 본문(`#ask=<열쇠>`: `q:`·`r:`·`t:`·`d:`)에 그 카드 하나. `#question=<thread>`(칩·알림·터미널 링크)는 답할 질문이면 그 카드, 답했으면 마지막 기록이고 사이드바도 「답할 것」으로 바꾼다. 넓은 창에서 막대 「답할 것」으로 패널을 펼치면 본문도 마지막 카드다. 답해서 목록에서 빠진 카드는 그 기록 카드로 바뀐다.
+  - 질문 카드: 본문 Markdown(HTML 해석 없음, 그림·링크는 `files_base` 아래 `library/…`·`report.md`만, 그 밖 그림은 대체 글), 본문 그림을 누르면 크게 보기(Esc·바깥·닫기), 선택지에 그림이 있으면 선택지마다 큰 그림 카드(769px 이상 2열, 그림은 칸보다 클 때만 줄임, 「크게」 단추는 고르지 않음). 고르기·추천대로 보내기는 §8.329 그대로.
+  - 확인 필요 카드: 제목·본문(Markdown 글), 「답함으로 표시」·「대화에서 답하기」(coordinator 입력칸에 「「제목」에 대한 답: 」을 채우고 그 pane을 연다). 할 일 카드: 「할 일에서 정하기」(할 일 화면에서 그 task 상세를 연다).
+  - 답한 카드: 답할 때의 질문·본문·선택지(고른 것 표시, 나머지 흐림)·직접 쓴 답·때·기기, 「그때 보고 보기」(보존한 report.md), 「지우기」(확인 창).
+  - 대화 칩: 새 보고가 질문을 비워도 마지막 답한 기록으로 「답함 · 1B 2A」이고 누르면 그때 원문이다. 같은 origin의 `/#question=<thread>`·`/#report=<이름>`(경로 `/`, query 없음) 링크도 칩이다(옛 `aaa:` 꼴도 칩, 다른 host는 보통 링크). 프로젝트 없는 `#report=<이름>`은 보고서 목록을 받은 뒤 그 보고서로 연다.
+- **검증.**
+  - proto 유닛 `report_questions_read_rich_bodies_and_choice_pictures`, host 유닛 `asks::tests`(library 참조 읽기, 확인 필요 post 열림·처리 기록, 답한 질문의 보고·그림 보존), `brief_text` 안내 fence(본문·선택지 그림을 파서가 읽음), 웹 유닛 `asksModel.test.mjs`(파일 주소 거부·열쇠 이어짐·목록 차례)·`appRef.test.mjs`(같은 origin 링크).
+  - 웹 E2E `53-thread-questions`: fake agent 「질문 카드 시험」 보고가 본문(글·그림·표)과 선택지 그림을 싣는다. 빨강 「답할 것」 배지, 대화의 `aaa:` 칩과 같은 host 링크 칩(다른 host는 보통 링크), 링크로 연 카드와 「답할 것」 목록, 본문·선택지 그림이 뜸(naturalWidth), 크게 보기와 Esc, 휴대폰·보기 권한 카드(보기 권한은 답·처리 forbidden, 지우기 단추 없음), 휴대폰 답 → 모든 기기 답한 카드(고른 답 BA, 그림 사본), 기록 내용, 질문 없는 새 보고(그 사이 thread library 그림 지움) 뒤에도 칩 「답함 · 1B 2A」와 그때 원문·그림·보고, 새 질문 보고는 다시 답할 것, 확인 필요 post → 카드 → 「답함으로 표시」 → 처리 기록·inbox `request handled`, 기록 지우기가 휴대폰 목록에서도 빠짐.
+  - §8.329의 「같은 host http 주소(`/#report=…`)는 §8.300 그대로」는 00:4x 지시로 바뀌었다: 웹 E2E `38-chat-report-close`의 앱 보고서 주소는 이제 칩이고, 누르면 보고서 화면, 뒤로가 같은 pane인지 본다(파일 보기·새 창이 아니다). `26-activity-bar`는 패널 단추 넷과 Home이 「답할 것」인지 본다.
+  - m13 `task_attachments_reach_a_remote_agent`의 brief 검사는 새 안내 예시 `![A안](library/a.png)`(thread 자기 library)에 걸려 첨부 경로 `](library/plan-report/`로 좁혔다.

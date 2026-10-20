@@ -1,4 +1,4 @@
-// 웹 E2E 「답할 것」과 앱 안 참조 칩(plan §8.329·§8.333, 사용자 결정 10-20 1A~4A·10-21 1B 2A 3A 4A 5A·1A 2B). thread가 보고
+// 웹 E2E 「답할 것」과 앱 안 참조 칩(plan §8.329·§8.337, 사용자 결정 10-20 1A~4A·10-21 1B 2A 3A 4A 5A·1A 2B). thread가 보고
 // `## Questions`에 남긴 `### N.` 질문은 사이드바 「답할 것」 목록의 한 줄과 본문 카드가 되고(본문 글·그림·표, 선택지마다 큰 그림),
 // 활동 막대 「답할 것」에 빨강 수가 붙는다(보고서 단추는 안 본 수뿐). coordinator 대화의 `aaa:question/<thread>`·`aaa:report/<이름>`과
 // 같은 host 링크 `<웹 주소>/#question=`·`#report=`는 칩이고 누르면 앱 안에서 그 카드·그 보고서를 연다. thread 대화 입력칸 위에는
@@ -48,7 +48,7 @@ const asksOf = (p) =>
   });
 
 export default async function ({ page }) {
-  await step("「답할 것」과 앱 안 칩(plan §8.329·§8.333): ### 질문은 목록 줄·본문 카드(그림·표·선택지 그림)·빨강 배지, 대화의 aaa: 참조와 같은 host 링크는 앱 안 칩, 입력칸 위 칩 한 줄, 카드 답은 thread에 한 번 가고 원문을 보존(새 보고 뒤에도 칩 답함), 확인 필요 post 답함으로 표시, 답한 것 지우기, 보기 권한은 못 함", async () => {
+  await step("「답할 것」과 앱 안 칩(plan §8.329·§8.337): ### 질문은 목록 줄·본문 카드(그림·표·선택지 그림)·빨강 배지, 대화의 aaa: 참조와 같은 host 링크는 앱 안 칩, 입력칸 위 칩 한 줄, 카드 답은 thread에 한 번 가고 원문을 보존(새 보고 뒤에도 칩 답함), 확인 필요 post 답함으로 표시, 답한 것 지우기, 보기 권한은 못 함", async () => {
     aaa("project", "create", "demo");
     fs.writeFileSync(`${root}/task-cards.md`, "로그인 화면 다듬기\n질문 카드 시험");
     const t = aaa("thread", "start", "demo", "--title", "로그인 화면 다듬기", "--machine", "labA", "--profile", "fake", "--kind", "dir", "--task-file", `${root}/task-cards.md`);

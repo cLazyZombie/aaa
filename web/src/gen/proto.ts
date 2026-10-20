@@ -167,6 +167,15 @@ list: string, title: string,
  */
 owner: string | null,
 /**
+ * agent에게 맡긴 task의 모델(profile) 칸(FRONT_API 1.75, plan §8.335): owner `모델@머신`의 앞. 맨 이름은 host가 아는 profile일
+ * 때만 모델이다(아니면 사람). 비면 시작할 때 고른다. 옛 host는 생략한다
+ */
+profile: string | null,
+/**
+ * agent에게 맡긴 task의 머신 칸(FRONT_API 1.75): owner `모델@머신`의 뒤. 비면 그 저장소가 있는 머신 중 덜 붐비는 곳이다
+ */
+machine: string | null,
+/**
  * owner 뒤 대괄호의 저장소 칸(FRONT_API 1.73, plan §8.330): `project.toml` repos 경로의 마지막 이름이나 `작업 폴더`. 비면 정하지
  * 않은 task다(「바로 시작」 창에서 고른다). 옛 host는 생략한다
  */
@@ -283,7 +292,15 @@ owner: string | null,
 /**
  * owner가 사람 이름이다(「사람으로 저장」). 아니면 `assignable --check`와 같은 판정을 거친다
  */
-person: boolean, notes: Array<string>, parent: TaskAnchor | null, before: TaskAnchor | null,
+person: boolean,
+/**
+ * 모델(profile) 칸(FRONT_API 1.75). 머신 칸과 함께 owner `모델@머신`으로 적는다. `owner`(me·사람)와 함께 주면 거부한다
+ */
+profile: string | null,
+/**
+ * 머신 칸(FRONT_API 1.75)
+ */
+machine: string | null, notes: Array<string>, parent: TaskAnchor | null, before: TaskAnchor | null,
 /**
  * 이어 줄 thread(` · t-NNNN`, FRONT_API 1.63 「task로 만들기」). 옛 host는 버린다
  */
@@ -291,7 +308,15 @@ thread: string | null,
 /**
  * 저장소 칸(FRONT_API 1.73): 저장소 이름·경로나 `작업 폴더`. 경로는 host가 이름으로 바꿔 적는다. 비움 = 정하지 않음
  */
-repo: string | null, } | { "op": "update", at: TaskAnchor, title: string | null, owner: string | null, person: boolean, notes: Array<string> | null, thread: string | null, done: boolean | null,
+repo: string | null, } | { "op": "update", at: TaskAnchor, title: string | null, owner: string | null, person: boolean,
+/**
+ * 모델 칸(FRONT_API 1.75): `None`은 그대로, 빈 글은 비움. 머신 칸만 바꾸면 모델은 그대로 둔다
+ */
+profile: string | null,
+/**
+ * 머신 칸(FRONT_API 1.75, `profile`과 같은 규칙)
+ */
+machine: string | null, notes: Array<string> | null, thread: string | null, done: boolean | null,
 /**
  * 저장소 칸(FRONT_API 1.73, Add의 `repo`와 같은 값)
  */
@@ -415,7 +440,7 @@ inbox_open: number,
  */
 inbox: Array<InboxItem>,
 /**
- * 채팅에 쓸 이 host 웹 주소(tailscale serve 공개 origin, plan §8.333). 질문·보고서는 `<주소>/#question=<thread>`·
+ * 채팅에 쓸 이 host 웹 주소(tailscale serve 공개 origin, plan §8.337). 질문·보고서는 `<주소>/#question=<thread>`·
  * `<주소>/#report=<이름>` Markdown 링크로 가리킨다(터미널에서도 눌린다). 공개하지 않았으면 없다: 그때는 `aaa:` 꼴을 쓴다
  */
 web_url?: string, };
@@ -1063,14 +1088,14 @@ report_hash: string, items: Array<ThreadQuestion>,
  */
 answer: QuestionAnswerView | null,
 /**
- * 본문 그림의 주소 앞부분(FRONT_API 1.74, plan §8.333): 본문의 `library/<경로>`는 `<files_base><경로>`로 읽는다.
+ * 본문 그림의 주소 앞부분(FRONT_API 1.76, plan §8.337): 본문의 `library/<경로>`는 `<files_base><경로>`로 읽는다.
  * 그 보고의 host 사본에서만 주고, 새 보고가 오면 옛 주소는 열리지 않는다. 옛 host는 생략한다
  */
 files_base?: string, };
 
 export type ThreadQuestion = { text: string, choices: Array<QuestionChoice>,
 /**
- * `### N. 질문` 머리 아래의 Markdown 본문(FRONT_API 1.74, plan §8.333): 그림·표·code·링크. 옛 꼴과 옛 host는 생략한다
+ * `### N. 질문` 머리 아래의 Markdown 본문(FRONT_API 1.76, plan §8.337): 그림·표·code·링크. 옛 꼴과 옛 host는 생략한다
  */
 body?: string, };
 
@@ -1084,7 +1109,7 @@ description: string | null,
  */
 recommended: boolean,
 /**
- * 선택지 줄 아래 두 칸 들여쓴 Markdown(시안 그림 등, FRONT_API 1.74). 없으면 생략한다
+ * 선택지 줄 아래 두 칸 들여쓴 Markdown(시안 그림 등, FRONT_API 1.76). 없으면 생략한다
  */
 body?: string, };
 
@@ -1304,7 +1329,7 @@ body: string | null, options: Array<MenuOption>, multi_select: boolean,
  */
 custom_option_index: number | null, };
 
-export type NoticeKind = "rollout_finished" | "rollout_failed" | "finished" | "post_muted" | "automation" | "report";
+export type NoticeKind = "host_issue" | "host_recovered" | "rollout_finished" | "rollout_failed" | "finished" | "post_muted" | "automation" | "report";
 
 export type NoticeView = { kind: NoticeKind,
 /**

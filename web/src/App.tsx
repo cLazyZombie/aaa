@@ -272,7 +272,7 @@ function storeSelection(sel: string): void {
 /**
  * 고른 것: `#pane=<id>`, `#thread=<id>`, 모든 thread `#threads`, 보고서 화면 `#reports`(목록)·`#report=<project>/<name>`(하나,
  * plan §8.240. 프로젝트 없는 `#report=<이름>`은 보고서 목록을 받은 뒤 채운다), 할 일 화면 `#tasks`(plan §8.306), 「답할 것」 `#asks`·
- * `#ask=<열쇠>`(asksModel, plan §8.333), thread 질문 `#question=<thread>`(「답할 것」의 그 질문 카드, 답했으면 그때 기록, plan §8.329). host는
+ * `#ask=<열쇠>`(asksModel, plan §8.337), thread 질문 `#question=<thread>`(「답할 것」의 그 질문 카드, 답했으면 그때 기록, plan §8.329). host는
  * 프로젝트 하나만 맡아(plan §8.291) 주소에 프로젝트가 없다. 옛 주소(이미 보낸 알림·저장한 링크)도 연다:
  * `#thread=<project>/<id>`는 그대로 받고, 프로젝트 고르기 `#projects`·프로젝트 thread 보기 `#project=<name>`은 `#threads`로 바꾼다.
  * 짧은 thread 주소는 thread 목록을 받은 뒤 내부 열쇠 `thread:<project>/<id>`로 바뀐다(App의 `sel` 정리).
@@ -563,6 +563,11 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
   // 모름)만 띄운다. 휴대폰 push는 없다. 새 보고는 위 thread 길이, 입력 필요는 질문 길이 맡는다. 기록하지 않는 사건이라 다시
   // 붙을 때 놓친 것을 읽지 않는다(참고 `seedStatuses`: 목록은 알리지 않는다)
   const noticeNews = (n: NoticeView) => {
+    if (n.kind === "host_issue" || n.kind === "host_recovered") {
+      showDroplet({ target: "threads", title: n.title, kind: n.kind === "host_recovered" ? "done" : "blocked", machine: null, agent: null });
+      return;
+    }
+
     if (n.kind === "rollout_finished" || n.kind === "rollout_failed") {
       showDroplet({ target: "deployment", title: n.title, kind: n.kind === "rollout_finished" ? "done" : "blocked", machine: null, agent: null });
       return;
@@ -830,7 +835,7 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
     if (sel?.startsWith("reports:")) setReportsAt(sel);
     else beforeReports.current = sel;
   }, [sel]);
-  // 「답할 것」 화면(plan §8.333, 사용자 결정 10-21 1B): 사이드바 「답할 것」 패널이 목록이고 본문은 고른 것 하나의 카드다. 질문 주소
+  // 「답할 것」 화면(plan §8.337, 사용자 결정 10-21 1B): 사이드바 「답할 것」 패널이 목록이고 본문은 고른 것 하나의 카드다. 질문 주소
   // (`question:<thread>`, 칩·알림·터미널 링크)도 이 화면이다. 한 번 연 뒤에는 숨긴 채 그려 둔다(쓰던 답·굴린 자리가 그대로)
   const asksShown = sel === "asks:" || sel?.startsWith("ask:") === true || sel?.startsWith("question:") === true;
   const [asksOpened, setAsksOpened] = useState(asksShown);
@@ -1060,7 +1065,7 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
   const taskBoard = useTaskBoard(up, openThreadIds, tasksShown);
   const seenMine = useSeenMine(taskBoard.board);
   const shownThreads = allThreads.filter((t) => t.group !== "resolved");
-  // 「답할 것」(plan §8.333): thread 질문·coordinator 확인 필요 post·할 일 확인 필요와 host가 남긴 답한 것 기록. 활동 막대 빨강 수,
+  // 「답할 것」(plan §8.337): thread 질문·coordinator 확인 필요 post·할 일 확인 필요와 host가 남긴 답한 것 기록. 활동 막대 빨강 수,
   // 대화의 칩(답한 질문은 새 보고 뒤에도 그 기록으로 「답함」)이 이것을 본다. 질문 답은 host가 한 번만 받고 thread에 보낸다
   const { data: asksData, put: putAsks } = useAsksData(up);
   const asksDone = asksData?.done ?? [];

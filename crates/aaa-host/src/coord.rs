@@ -119,10 +119,24 @@ impl Host {
         out
     }
 
+    /// owner의 맨 이름이 모델(profile)인지 볼 이름(plan §8.335): host가 정의한 profile, 기본 harness, 프로젝트 `thread_profiles`.
+    /// 머신 연결과 상관없다(끊긴 머신에 맡긴 `(codex-fast)`가 사람으로 읽히지 않게). 쓸 수 있는지는 `check_owner`가 따로 본다
+    pub(crate) fn known_profiles(&self, project: &str) -> Vec<String> {
+        let mut out: Vec<String> = aaa_config::profile_edit::BUILTINS.iter().map(|b| b.to_string()).collect();
+        if let Ok(cfg) = self.profile_config() {
+            out.extend(cfg.profiles.into_keys());
+        }
+        out.extend(self.safety(project).thread_profiles.into_iter().flatten().filter(|p| p != "*"));
+        out.sort();
+        out.dedup();
+        out
+    }
+
     /// TASKS.md owner로 써도 되는가(0.2.35 `assignable --check`). 맨 profile은 기본 머신(host 로컬)을 본다.
-    pub(crate) fn check_owner(&self, owners: &[OwnerChoice], raw: &str) -> Result<String, ErrorBody> {
+    pub(crate) fn check_owner(&self, project: &str, owners: &[OwnerChoice], raw: &str) -> Result<String, ErrorBody> {
         let raw = raw.trim().trim_start_matches('(').trim_end_matches(')').trim();
-        let all: Vec<String> = owners.iter().flat_map(|o| o.profiles.clone()).collect();
+        let mut all: Vec<String> = owners.iter().flat_map(|o| o.profiles.clone()).collect();
+        all.extend(self.known_profiles(project));
         let local = self.machine_views().into_iter().find(|m| m.local).map(|m| m.name);
         let on = |machine: &str| owners.iter().find(|o| o.machine == machine);
         match Owner::parse(Some(raw), &all) {
@@ -148,6 +162,13 @@ impl Host {
                 Ok(format!("`{raw}`는 쓸 수 있는 owner다"))
             }
         }
+    }
+
+    /// task 없이 시작할 때 TASKS.md의 비슷한 열린 task를 알린다. 파일이 없으면 평소처럼 시작한다.
+    pub(crate) fn task_start_warning(&self, project: &str, title: &str) -> Option<String> {
+        let dir = self.project_dir(project).ok()?;
+        let text = std::fs::read_to_string(dir.join("TASKS.md")).ok()?;
+        tasks::start_warning(&tasks::parse(&text), title)
     }
 
     /// `thread start --from-task`: owner를 profile·machine 기본값으로, 메모를 할 일에 붙인다
@@ -179,7 +200,8 @@ impl Host {
         {
             warning = Some(format!("열린 {tid}가 이미 이 task를 맡고 있다. 그래도 시작했다"));
         }
-        let all: Vec<String> = self.assignable(&a.project).await.into_iter().flat_map(|o| o.profiles).collect();
+        let mut all: Vec<String> = self.assignable(&a.project).await.into_iter().flat_map(|o| o.profiles).collect();
+        all.extend(self.known_profiles(&a.project));
         match Owner::parse(t.owner.as_deref(), &all) {
             Owner::Me => return Err(bad(format!("사용자의 할 일(me)이다: {}", t.title))),
             Owner::Person(p) => return Err(bad(format!("사람({p})이 맡은 task다: {}", t.title))),
@@ -234,6 +256,8 @@ impl Host {
             title: None,
             owner: None,
             person: false,
+            profile: None,
+            machine: None,
             notes: None,
             thread: Some(thread.to_string()),
             done: None,
@@ -300,6 +324,7 @@ impl Host {
         let notes = notes_stamps(&dir, &self.settings(project).task_notes);
         self.tasks_seen.lock().unwrap().entry(project.to_string()).or_insert(TasksSeen { notes, ..seen.clone() });
         let (lists, mut tasks) = tasks::parse_board(&text);
+        tasks::fill_agent(&mut tasks, &self.known_profiles(project));
         let linked: std::collections::HashSet<String> = tasks.iter().filter_map(|t| t.thread.clone()).collect();
         let open: Vec<_> =
             self.threads_of(Some(project), None)?.into_iter().filter(|t| t.group != ThreadGroup::Resolved).collect();
@@ -367,15 +392,16 @@ impl Host {
         if ops.is_empty() {
             return Err(bad("동작이 없다"));
         }
-        // 「답할 것」의 할 일 확인 필요(plan §8.333): 이 편집으로 풀린 것을 기록에 남긴다
+        // 「답할 것」의 할 일 확인 필요(plan §8.337): 이 편집으로 풀린 것을 기록에 남긴다
         let attention_before: Vec<(String, String, Option<String>)> = self
             .task_board(project)
             .map(|b| b.tasks.into_iter().filter_map(|t| Some((t.title.clone(), t.attention?, t.thread))).collect())
             .unwrap_or_default();
         // owner 판정에 쓸 목록(쓰기 lock 밖에서 한 번, 머신마다 묻는다)
         let checks_owner = ops.iter().any(|o| match o {
-            TaskOp::Add { owner, .. } | TaskOp::Update { owner, .. } => {
-                owner.as_deref().is_some_and(|o| !o.trim().is_empty())
+            TaskOp::Add { owner, profile, machine, .. } | TaskOp::Update { owner, profile, machine, .. } => {
+                // 칸 하나를 비워도 남은 칸(지금 머신 등)을 다시 판정한다
+                owner.as_deref().is_some_and(|o| !o.trim().is_empty()) || profile.is_some() || machine.is_some()
             }
             _ => false,
         });
@@ -384,7 +410,7 @@ impl Host {
             if person {
                 return tasks::check_person(o);
             }
-            self.check_owner(&owners, o).map(|_| ()).map_err(|e| {
+            self.check_owner(project, &owners, o).map(|_| ()).map_err(|e| {
                 if matches!(Owner::parse(Some(o), &[]), Owner::Person(_)) && !o.contains('@') {
                     format!("{}. 사람에게 맡기는 일이면 「사람으로 저장」을 고른다", e.message)
                 } else {
@@ -403,7 +429,8 @@ impl Host {
             Ok(Removed { list: e.list, text: e.before.unwrap_or_default() })
         };
         let repo_ok = |r: &str| self.task_repo_ok(project, r);
-        let ctx = task_edit::Ctx { owner_ok: &owner_ok, repo_ok: &repo_ok, removed: &removed };
+        let profiles = self.known_profiles(project);
+        let ctx = task_edit::Ctx { owner_ok: &owner_ok, profiles: &profiles, repo_ok: &repo_ok, removed: &removed };
         let (conflict, log_ids) = self.task_write(project, &dir, &ops, base_sha256.as_deref(), &actor, &ctx, false)?;
         let board = self.task_board(project)?;
         for (title, why, thread) in &attention_before {
@@ -608,6 +635,7 @@ impl Host {
     pub(crate) async fn context(self: &Arc<Self>, project: &str, peek: bool) -> Result<ProjectContext, ErrorBody> {
         let dir = self.project_dir(project)?;
         let mut tasks = tasks::parse(&std::fs::read_to_string(dir.join("TASKS.md")).unwrap_or_default());
+        tasks::fill_agent(&mut tasks, &self.known_profiles(project));
         self.fill_attention(project, &mut tasks);
         let mut threads: Vec<_> =
             self.threads_of(Some(project), None)?.into_iter().filter(|t| t.group != ThreadGroup::Resolved).collect();

@@ -1454,7 +1454,7 @@ impl Db {
         Ok(data.map(|d| serde_json::from_str(&d)).transpose()?)
     }
 
-    /// 「답할 것」 기록 하나를 넣는다(plan §8.333)
+    /// 「답할 것」 기록 하나를 넣는다(plan §8.337)
     pub(crate) fn ask_put(&self, project: &str, r: &aaa_proto::AskRecord) -> Result<()> {
         let kind = serde_json::to_value(r.kind)?.as_str().unwrap_or_default().to_string();
         self.conn.lock().unwrap().execute(
