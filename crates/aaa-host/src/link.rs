@@ -234,6 +234,8 @@ async fn serve(
             "post.v1".into(),
             "mission.v1".into(),
             "rollout_recovery.v1".into(),
+            // compacting.v1: 화면 감지 사건 `compacting`(정리 중, plan §8.309)을 읽는다. 옛 host에는 agent가 `working`으로 보낸다
+            "compacting.v1".into(),
         ],
     }))
     .await?;

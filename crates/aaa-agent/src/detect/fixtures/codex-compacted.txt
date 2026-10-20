@@ -1,0 +1,34 @@
+
+  >_ OpenAI Codex (v0.163.0)
+     /work/lab/work/demo/t-0001
+  permissions: YOLO mode
+
+  Tip: Use the desktop app. Run codex app to open it. It installs automatically if needed.
+
+
+› Reply with just the word ok.
+
+
+• ok
+
+  Worked for 2s • 12:45 PM
+
+• Context compacted · 6s
+
+  Worked for 6s • 12:45 PM
+
+
+› queued while compacting
+
+
+• Received.
+
+  Worked for 4s • 12:45 PM
+
+
+› Ask Codex to do anything
+
+  GPT-6.1-Sol high · /work/lab/work/demo/t-0001 · demo/t-0001…
+
+
+

@@ -16,7 +16,7 @@ use super::{DetectionInput, Detector, Harness, Published, State, Tick, question_
 /// 알릴 사건(`HarnessEvent`의 kind·본문·질문 종류)
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Report {
-    /// working·idle·question
+    /// working·compacting(대화 정리 중인 작업 중, plan §8.309)·idle·question
     pub kind: &'static str,
     pub message: Option<String>,
     pub question_kind: Option<&'static str>,
@@ -33,8 +33,8 @@ pub struct Watch {
     in_flight: Option<String>,
     n: u64,
     next: Instant,
-    /// 마지막으로 알린 (상태, 질문 본문)
-    sent: Option<(State, Option<String>)>,
+    /// 마지막으로 알린 (사건 kind, 질문 본문)
+    sent: Option<(&'static str, Option<String>)>,
 }
 
 impl Watch {
@@ -121,6 +121,7 @@ impl Watch {
 
     fn report(&mut self, p: Published, text: &str) -> Option<Report> {
         let (kind, question) = match p.state {
+            State::Working if p.compacting => ("compacting", None),
             State::Working => ("working", None),
             State::Idle => ("idle", None),
             State::Blocked => ("question", Some(question_of(p.rule.as_deref(), text))),
@@ -128,7 +129,7 @@ impl Watch {
             State::Unknown => return None,
         };
         let message = question.as_ref().map(|(_, m)| m.clone());
-        let now = (p.state, message.clone());
+        let now = (kind, message.clone());
         if self.sent.as_ref() == Some(&now) {
             return None;
         }
@@ -286,6 +287,29 @@ mod tests {
             );
             assert_eq!(report.map(|r| r.kind), expected, "{title}: {screen}");
         }
+    }
+
+    /// 대화 정리(plan §8.309): 표지가 보이면 「compacting」을 한 번 알리고, 요약 글이 오기 전(참고 규칙은 쉼)과 오는 중(작업 중)을
+    /// 오가도 다시 알리지 않는다. 표지가 사라지면 그때의 상태(쉼·작업 중)를 알린다. 정리 중에 다시 작업 중이 되는 것도 바뀜이다
+    #[test]
+    fn compaction_is_reported_once_and_ends_when_the_marker_goes() {
+        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/detect/fixtures");
+        let read = |f: &str| std::fs::read_to_string(dir.join(f)).unwrap();
+        let t0 = Instant::now();
+        let (mut w, _, _) = started(true, t0);
+        assert_eq!(w.answer(t0, detect(1, Some(CLAUDE_IDLE))).unwrap().kind, "idle");
+        let mut at = t0;
+        let mut step = |w: &mut Watch, seq, screen: &str| {
+            at += POLL;
+            w.due(at).unwrap();
+            w.answer(at, detect(seq, Some(screen))).map(|r| r.kind)
+        };
+        assert_eq!(step(&mut w, 2, &read("claude-compacting.txt")), Some("compacting"));
+        assert_eq!(step(&mut w, 3, &read("claude-compacting-queued.txt")), None, "글이 오는 중도 같은 정리다");
+        assert_eq!(step(&mut w, 4, &read("claude-compacting.txt")), None);
+        assert_eq!(step(&mut w, 5, CLAUDE_WORKING), Some("working"), "정리가 끝나 턴을 잇는다");
+        assert_eq!(step(&mut w, 6, &read("claude-compacting-queued.txt")), Some("compacting"), "턴 안 자동 정리");
+        assert_eq!(step(&mut w, 7, &read("claude-compacted.txt")), Some("idle"), "끝나 입력 상자");
     }
 
     #[test]

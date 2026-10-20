@@ -13,6 +13,8 @@ use std::time::{Duration, Instant};
 
 use super::{Detection, DetectionInput, Harness, State, detect};
 
+/// 정리 표지로 작업 중이 된 감지의 규칙 이름(log용, 참고 규칙에 없다)
+pub const COMPACTING_RULE: &str = "aaa_compacting";
 /// 평소 간격(herdr 감지 루프 `from_millis(300)`)
 pub const POLL: Duration = Duration::from_millis(300);
 /// 작업 중 → idle 확인 중 간격(`AGENT_PENDING_IDLE_RECHECK`)
@@ -38,6 +40,8 @@ struct PublishState {
     visible_idle: bool,
     visible_blocker: bool,
     visible_working: bool,
+    /// 대화 정리 중(aaa가 더한 표지, `super::compacting`): 작업 중 안에서 바뀌어도 알린다
+    compacting: bool,
 }
 
 #[derive(Debug, Default)]
@@ -100,6 +104,8 @@ pub struct Published {
     pub visible_idle: bool,
     pub visible_blocker: bool,
     pub visible_working: bool,
+    /// 대화 정리 중(작업 중일 때만)
+    pub compacting: bool,
     pub rule: Option<String>,
     /// 상태·표지가 바뀌었다(false면 그대로 떠 있는 확인창의 refresh)
     pub changed: bool,
@@ -126,6 +132,7 @@ impl Detector {
                 visible_idle: false,
                 visible_blocker: false,
                 visible_working: false,
+                compacting: false,
             },
             last_visible_signal_refresh: None,
             pending_idle: PendingIdle::default(),
@@ -175,11 +182,32 @@ impl Detector {
     /// `seq`는 그 화면의 변화 순번이다(모르면 None: 그러면 다음에도 늘 읽는다).
     pub fn observe(&mut self, now: Instant, seq: Option<u64>, input: DetectionInput<'_>) -> Option<Published> {
         self.last_scan_seq = seq;
-        let detection = detect(self.harness, input);
-        self.publish(now, detection)
+        let mut detection = detect(self.harness, input);
+        // 정리 표지가 보이면 작업 중이다(plan §8.309). 참고 규칙은 정리 화면을 작업 중과 쉼 사이에서 오간다: Claude spinner가
+        // 「(5s · ↓ 168 tokens)」면 `live_turn_working`, 요약 글이 아직 오지 않은 「(0s)」면 입력 상자(`live_prompt_box`)로 쉼이고,
+        // 그동안 창 제목도 작업 중 spinner가 아니다(10-20 실측 「✳ …」). 확인창·기록 보기는 그대로 둔다
+        let compacting = detection.state != State::Blocked
+            && !detection.skip_state_update
+            && super::compacting(self.harness, input.screen);
+        if compacting {
+            detection = Detection {
+                state: State::Working,
+                skip_state_update: false,
+                visible_idle: false,
+                visible_blocker: false,
+                visible_working: true,
+                rule: Some(COMPACTING_RULE.to_string()),
+            };
+        }
+        self.publish_marked(now, detection, compacting)
     }
 
+    #[cfg(test)]
     fn publish(&mut self, now: Instant, detection: Detection) -> Option<Published> {
+        self.publish_marked(now, detection, false)
+    }
+
+    fn publish_marked(&mut self, now: Instant, detection: Detection, compacting: bool) -> Option<Published> {
         if detection.skip_state_update {
             self.pending_idle.clear();
             return None;
@@ -190,6 +218,7 @@ impl Detector {
             visible_idle: detection.visible_idle && state == State::Idle,
             visible_blocker: detection.visible_blocker && state == State::Blocked,
             visible_working: detection.visible_working && state == State::Working,
+            compacting: compacting && state == State::Working,
         };
         let previous = self.published;
         let stable_visible_signal = next.visible_blocker && previous.visible_blocker;
@@ -211,6 +240,7 @@ impl Detector {
             visible_idle: next.visible_idle,
             visible_blocker: next.visible_blocker,
             visible_working: next.visible_working,
+            compacting: next.compacting,
             rule: detection.rule,
             changed,
         })
