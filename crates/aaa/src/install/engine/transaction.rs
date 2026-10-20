@@ -58,7 +58,7 @@ struct Request {
     directories: Vec<PathBuf>,
 }
 
-struct Locks(Vec<File>);
+pub(super) struct Locks(Vec<File>);
 impl Drop for Locks {
     fn drop(&mut self) {
         #[cfg(unix)]
@@ -78,7 +78,7 @@ struct Transaction {
     _locks: Locks,
 }
 
-fn real_directory(path: &Path) -> Result<PathBuf> {
+pub(super) fn real_directory(path: &Path) -> Result<PathBuf> {
     let real = aaa_agent::work_root::check(path, None).map_err(|_| Fault::conflict())?;
     if real.exists() && !real.is_dir() {
         return Err(Fault::conflict());
@@ -286,6 +286,11 @@ fn load(state: &Path, journal: &Journal) -> Result<Manifest> {
     Ok(manifest)
 }
 
+/// 감독자의 읽기 검증도 파일 엔진 정본에서 계획을 얻는다. 별도 승인/권한 입력은 만들지 않는다.
+pub(super) fn installed_plan(state: &Path, journal: &Journal) -> Result<InstallPlan> {
+    Ok(load(state, journal)?.plan)
+}
+
 pub(super) fn observe(state: &Path, journal: Journal) -> Result<InstallResult> {
     let manifest = load(state, &journal)?;
     if journal.phase == Phase::Configured
@@ -315,6 +320,11 @@ pub(super) fn observe(state: &Path, journal: Journal) -> Result<InstallResult> {
         }
     }
     Ok(journal.result())
+}
+/// 파일 단계가 끝난 뒤 감독자가 같은 config/root/binary 자원을 잠근 채 이어 간다.
+pub(super) fn journal_locks(state: &Path, journal: &Journal) -> Result<Locks> {
+    let manifest = load(state, journal)?;
+    locks(state, &manifest)
 }
 fn root_volume(root: &RootSpec) -> Result<()> {
     aaa_agent::work_root::check(&root.path, root.mount.as_deref()).map_err(|_| Fault::conflict())?;
@@ -713,4 +723,4 @@ fn replace(staged: &Path, target: &Path, existing: bool) -> Result<()> {
 }
 
 #[cfg(test)]
-mod tests;
+pub(super) mod tests;
