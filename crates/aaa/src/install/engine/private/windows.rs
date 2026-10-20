@@ -6,7 +6,7 @@ use std::os::windows::{
     io::{AsRawHandle, FromRawHandle},
 };
 use windows_sys::Win32::{
-    Foundation::{GENERIC_READ, GENERIC_WRITE, INVALID_HANDLE_VALUE, LocalFree},
+    Foundation::{ERROR_SHARING_VIOLATION, GENERIC_READ, GENERIC_WRITE, INVALID_HANDLE_VALUE, LocalFree},
     Security::{
         ACCESS_ALLOWED_ACE, ACE_HEADER,
         Authorization::{
@@ -17,7 +17,8 @@ use windows_sys::Win32::{
     },
     Storage::FileSystem::{
         BY_HANDLE_FILE_INFORMATION, CREATE_NEW, CreateDirectoryW, CreateFileW, FILE_ALL_ACCESS, FILE_ATTRIBUTE_NORMAL,
-        FILE_ATTRIBUTE_REPARSE_POINT, FILE_SHARE_DELETE, FILE_SHARE_READ, FILE_SHARE_WRITE, GetFileInformationByHandle,
+        FILE_ATTRIBUTE_REPARSE_POINT, FILE_FLAG_OPEN_REPARSE_POINT, FILE_SHARE_DELETE, FILE_SHARE_READ,
+        FILE_SHARE_WRITE, GetFileInformationByHandle, OPEN_ALWAYS,
     },
 };
 
@@ -81,6 +82,36 @@ pub(in crate::install::engine) fn new_file(path: &Path) -> io::Result<File> {
         return Err(io::Error::last_os_error());
     }
     Ok(unsafe { File::from_raw_handle(handle) })
+}
+
+/// 쓰기 handle 하나만 예약한다. 잠금 파일의 읽기 관찰은 허용하고 쓰기/삭제 handle은 거부한다.
+/// Windows 전체 byte-range lock은 같은 process의 두 번째 read handle까지 막아 status/snapshot이 실패한다.
+pub(super) fn lock(path: &Path) -> io::Result<File> {
+    let (_descriptor, attrs) = security(false)?;
+    // SAFETY: OPEN_ALWAYS는 기존 ACL을 바꾸지 않는다. reparse를 따라가지 않으며 반환 handle을 검증한다.
+    let handle = unsafe {
+        CreateFileW(
+            wide(path).as_ptr(),
+            GENERIC_READ | GENERIC_WRITE,
+            FILE_SHARE_READ,
+            &attrs,
+            OPEN_ALWAYS,
+            FILE_ATTRIBUTE_NORMAL | FILE_FLAG_OPEN_REPARSE_POINT,
+            std::ptr::null_mut(),
+        )
+    };
+    if handle == INVALID_HANDLE_VALUE {
+        let error = io::Error::last_os_error();
+        return Err(if error.raw_os_error() == Some(ERROR_SHARING_VIOLATION as i32) {
+            io::Error::new(io::ErrorKind::WouldBlock, "설치 자원을 다른 실행기가 사용 중입니다")
+        } else {
+            error
+        });
+    }
+    // SAFETY: 이 성공 handle의 소유권은 File 한 곳에만 넘긴다. 닫을 때 예약이 풀린다.
+    let file = unsafe { File::from_raw_handle(handle) };
+    verify(&file, false)?;
+    Ok(file)
 }
 fn sid_text(sid: *mut core::ffi::c_void) -> io::Result<String> {
     let mut text = std::ptr::null_mut();

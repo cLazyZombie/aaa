@@ -921,3 +921,9 @@ journal·로그·화면에 원문·8바이트 조각·base64/URL/JSON 변형이 
   repo 보존·root 읽기 대조·일반 journal 비밀 비노출의 결함 주입이 해당 owner에서 실패해야 한다.
   변형은 bytes로 복원하고 원본 owner 통과 뒤 전체 gate를 돌린다. Windows/Linux 실제 실행은
   main push 뒤 GitHub CI이며 cross clippy/build를 실제 실행 통과로 쓰지 않는다.
+
+I2 Windows 수리(plan §8.323): 같은 파일 owner를 세 OS에서 유지한다. `resource_locks_serialize_processes`는
+실제 자식 process 둘(같은 작업/같은 config의 다른 파일)을 거부하면서, 잠금 중 유효 status와 파일 snapshot이
+읽히고 바뀌지 않으며 해제 뒤 같은 ID 재개가 되는지 함께 본다. Windows는 읽기 공유만 허용하는 handle
+예약을 사용한다. stage/reverse flush는 Windows 쓰기 handle로 수행하고 원본 ACL/hardlink/복구 owner를 뺄 수 없다.
+Windows 실행이 없는 현지 cross 결과는 native GREEN이 아니며 다음 main CI 결과와 나눠 보고한다.
