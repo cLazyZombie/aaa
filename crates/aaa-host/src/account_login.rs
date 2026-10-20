@@ -9,7 +9,7 @@ use std::time::Duration;
 
 use aaa_proto::{AccountLoginView, ErrorBody, ErrorCode, FrontResponse};
 use portable_pty::{CommandBuilder, PtySize, native_pty_system};
-use tokio::sync::oneshot;
+use tokio::sync::{oneshot, watch};
 
 use crate::{Host, util};
 
@@ -39,7 +39,7 @@ fn kill_login(killer: &mut dyn portable_pty::ChildKiller, pid: Option<u32>) {
 pub(crate) struct LoginJob {
     view: Arc<Mutex<AccountLoginView>>,
     cancel: Option<oneshot::Sender<()>>,
-    finished: Arc<tokio::sync::Notify>,
+    finished: watch::Receiver<bool>,
 }
 
 struct Temp(PathBuf);
@@ -144,8 +144,9 @@ impl Host {
             AccountLoginView { id: id.clone(), account: name.into(), harness: harness.into(), state: "waiting".into() };
         let state = Arc::new(Mutex::new(view.clone()));
         let (cancel, mut cancelled) = oneshot::channel();
-        let finished = Arc::new(tokio::sync::Notify::new());
-        jobs.insert(id, LoginJob { view: state.clone(), cancel: Some(cancel), finished: finished.clone() });
+        let (done, finished) = watch::channel(false);
+        jobs.insert(id.clone(), LoginJob { view: state.clone(), cancel: Some(cancel), finished });
+        tracing::info!(login = %id, account = %name, %harness, child_pid = pid, browser = "provider_managed_unconfirmed", "계정 로그인 자식 시작");
         self.db.audit(actor, "account_login", name);
         let host = self.clone();
         tokio::spawn(async move {
@@ -187,15 +188,22 @@ impl Host {
                 bytes
             });
             let mut wait = tokio::task::spawn_blocking(move || child.wait());
+            let mut exit_code = None;
             let end = tokio::select! {
-                status = &mut wait => if matches!(status, Ok(Ok(ref s)) if s.success()) { "succeeded" } else { "failed" },
+                status = &mut wait => {
+                    if let Ok(Ok(ref s)) = status { exit_code = Some(s.exit_code()); }
+                    if matches!(status, Ok(Ok(ref s)) if s.success()) { "succeeded" } else { "failed" }
+                },
                 _ = &mut cancelled => "cancelled",
                 _ = tokio::time::sleep(Duration::from_secs(300)) => "failed",
             };
             if !wait.is_finished() {
                 kill_login(&mut *killer, pid);
-                let _ = wait.await;
+                if let Ok(Ok(status)) = wait.await {
+                    exit_code = Some(status.exit_code());
+                }
             }
+            tracing::info!(login = %id, child_pid = pid, ?exit_code, outcome = end, "계정 로그인 자식 종료");
             output_done.store(true, Ordering::Release);
             let bytes = output.await.unwrap_or_default();
             drop(pair.master);
@@ -223,7 +231,8 @@ impl Host {
                 "failed"
             }
             .into();
-            finished.notify_one();
+            tracing::info!(login = %id, state = %v.state, temporary_cleaned = cleaned, "계정 로그인 완료");
+            done.send_replace(true);
         });
         Ok(FrontResponse::AccountLogin { login: view })
     }
@@ -245,7 +254,7 @@ impl Host {
                 .collect::<Vec<_>>()
         };
         for done in finished {
-            done.notified().await;
+            let _ = login_finished(done).await;
         }
     }
 
@@ -255,16 +264,29 @@ impl Host {
         Ok(FrontResponse::AccountLogin { login: job.view.lock().unwrap().clone() })
     }
 
-    pub(crate) fn account_login_cancel(&self, id: &str) -> Result<FrontResponse, ErrorBody> {
-        let mut jobs = self.accounts.logins.lock().unwrap();
-        let job = jobs.get_mut(id).ok_or_else(fail)?;
-        if job.view.lock().unwrap().state == "waiting"
-            && let Some(cancel) = job.cancel.take()
-        {
-            let _ = cancel.send(());
-        }
-        Ok(FrontResponse::AccountLogin { login: job.view.lock().unwrap().clone() })
+    pub(crate) async fn account_login_cancel(&self, id: &str) -> Result<FrontResponse, ErrorBody> {
+        let (view, finished) = {
+            let mut jobs = self.accounts.logins.lock().unwrap();
+            let job = jobs.get_mut(id).ok_or_else(fail)?;
+            if job.view.lock().unwrap().state == "waiting"
+                && let Some(cancel) = job.cancel.take()
+            {
+                tracing::info!(login = %id, "계정 로그인 취소 요청");
+                let _ = cancel.send(());
+            }
+            (job.view.clone(), job.finished.clone())
+        };
+        // jobs/view 잠금을 놓고 기다린다. watch는 같은 ID의 여러 취소자·host 종료자 모두를 깨운다.
+        login_finished(finished).await?;
+        Ok(FrontResponse::AccountLogin { login: view.lock().unwrap().clone() })
     }
+}
+
+async fn login_finished(mut done: watch::Receiver<bool>) -> Result<(), ErrorBody> {
+    while !*done.borrow_and_update() {
+        done.changed().await.map_err(|_| fail())?;
+    }
+    Ok(())
 }
 
 fn login_secret(harness: &str, home: &std::path::Path, output: &[u8]) -> Result<String, ErrorBody> {
