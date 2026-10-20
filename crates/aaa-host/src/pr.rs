@@ -384,20 +384,34 @@ impl Host {
     /// 한 프로젝트의 열린 thread PR을 본다(herdr-projects steps.rs `pull_requests`)
     async fn pr_pass(self: &Arc<Self>, project: &str) {
         let Ok(dir) = self.project_dir(project) else { return };
+        let mut checked = false;
+        let mut failed = None;
         for rec in self.open_threads(project).into_iter().filter(|r| r.role == Role::Worker) {
-            self.pr_thread(project, &dir, rec).await;
+            let who = format!("{} · 머신 {}", rec.id, self.machine_name(&rec.machine_id));
+            match self.pr_thread(project, &dir, rec).await {
+                Ok(queried) => checked |= queried,
+                Err(why) => {
+                    checked = true;
+                    failed.get_or_insert_with(|| format!("{who}: {why}"));
+                }
+            }
+        }
+        // 프로젝트 안 모든 조회가 끝난 뒤 한 번 판정한다. 다른 thread의 성공으로 실패를 지우지 않는다.
+        // 조회할 thread가 없거나 머신이 모두 끊겼으면 회복을 주장하지 않는다.
+        if checked {
+            self.gh_result(project, failed.as_deref());
         }
     }
 
-    async fn pr_thread(self: &Arc<Self>, project: &str, dir: &Path, rec: ThreadRec) {
-        let Some(cwd) = rec.cwd.clone().or_else(|| rec.work_dir.clone()) else { return };
+    async fn pr_thread(self: &Arc<Self>, project: &str, dir: &Path, rec: ThreadRec) -> Result<bool, String> {
+        let Some(cwd) = rec.cwd.clone().or_else(|| rec.work_dir.clone()) else { return Ok(false) };
+        let mut queried = false;
         // 머신이 끊긴 것은 outage 항목이 알린다
-        let Some(conn) = self.conn_of(&rec.machine_id) else { return };
+        let Some(conn) = self.conn_of(&rec.machine_id) else { return Ok(false) };
         if !self.machine_feature(&rec.machine_id, "pr.v1") {
             let why =
                 format!("머신 {}의 agent가 PR 조회(pr.v1)를 모른다(옛 binary)", self.machine_name(&rec.machine_id));
-            self.gh_result(project, Some(&why));
-            return;
+            return Err(why);
         }
         // 집 보고 사본 첫 줄의 `PR:`
         let report = std::fs::read_to_string(dir.join("threads").join(format!("{}.md", rec.id))).unwrap_or_default();
@@ -421,14 +435,14 @@ impl Host {
         if url.is_empty() && rec.kind == ThreadKind::Worktree {
             let branch = rec.branch.clone().unwrap_or_default();
             if branch.is_empty() {
-                return;
+                return Ok(false);
             }
             match self.pr_ask(&conn, &cwd, PrQuery::Find { branch }).await {
                 Ok(a) => {
-                    self.gh_result(project, None);
+                    queried = true;
                     url = a.out;
                 }
-                Err(e) => return self.gh_result(project, Some(&e.message)),
+                Err(e) => return Err(e.message),
             }
         }
         if rec.pr.as_deref().unwrap_or("") != url {
@@ -436,14 +450,11 @@ impl Host {
             let _ = self.update_rec(project, &rec.id, |r| r.pr = found);
         }
         if url.is_empty() {
-            return;
+            return Ok(queried);
         }
         let answer = match self.pr_ask(&conn, &cwd, PrQuery::View { url: url.clone() }).await {
-            Ok(a) => {
-                self.gh_result(project, None);
-                a
-            }
-            Err(e) => return self.gh_result(project, Some(&e.message)),
+            Ok(a) => a,
+            Err(e) => return Err(e.message),
         };
         // 보고의 `#n`이 가리키는 저장소(herdr-projects thread `origin`, `other_pr_open`이 쓴다)
         let key = format!("pr_origin:{project}:{}", rec.id);
@@ -472,7 +483,7 @@ impl Host {
                 let old: Option<Summary> =
                     self.db.meta(&key).ok().flatten().and_then(|j| serde_json::from_str(&j).ok());
                 if old.as_ref() == Some(&summary) {
-                    return;
+                    return Ok(true);
                 }
                 let (state, review) = (summary.state.clone(), summary.review_decision.clone());
                 let rec = self
@@ -505,6 +516,7 @@ impl Host {
                 let _ = self.db.set_meta(&key, &serde_json::to_string(&summary).unwrap());
             }
         }
+        Ok(true)
     }
 
     /// 정리에 넘길 병합된 PR head(herdr-projects threads.rs `clean` 앞부분). 기록이 병합이면 마지막으로 본 head이고,

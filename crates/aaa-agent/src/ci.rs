@@ -36,10 +36,8 @@ pub async fn query(cwd: &str, q: &CiQuery) -> Result<CiAnswer> {
         }
         _ => (ci::api_args(&repo, q)?, false),
     };
-    let mut child = tokio::process::Command::new("gh")
+    let mut child = crate::gh::command()?
         .args(&args)
-        .current_dir(dir)
-        .env("GH_PROMPT_DISABLED", "1")
         .env("GH_HOST", "github.com")
         .env("NO_COLOR", "1")
         .stdin(Stdio::null())
@@ -73,6 +71,9 @@ pub async fn query(cwd: &str, q: &CiQuery) -> Result<CiAnswer> {
     })
     .await
     .context("CI gh 조회 시간 상한이다")??;
+    if status.code() == Some(4) {
+        crate::gh::check(status).context("CI gh")?;
+    }
     let out = String::from_utf8_lossy(&bytes);
     let mut answer = if log {
         if !status.success() {
