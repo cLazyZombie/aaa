@@ -312,6 +312,17 @@ web/e2e/specs/NN-기능.mjs  기능별 단계(01-http-pwa … 19-turn-alerts). e
 - `cargo test --locked -p aaa --bin aaa update::`는 임시 HTTP 서버와 실제 curl로 manifest 선택·SHA-256 거부·없는 OS/arch·전송 중단·같은 판 무동작·보관/rollback을 본다. 서버는 응답/연결 종료 사건으로 끝나며 운영 설정·키체인·신호·고정 sleep을 쓰지 않는다. 같은 시각에 version이 내려가는 보관 순서는 고정 `now`로 검사한다.
 - `cargo test --locked -p aaa --bin aaa cli::tests::update_accepts_release_version_and_keeps_local_and_subcommand_modes`는 공개 CLI의 release 판·로컬 파일·rollback 선택과 충돌을 본다.
 
+### 배포 후보의 바이트 보존(t-0525)
+
+`cargo test -p aaa-host --lib link::post_tests::deployment_bytes_survive_auth_redaction_and_a_partial_tail -- --exact`
+는 실제 host Agent link reader·요청 대기자를 작은 duplex 버퍼로 연결한다. 가짜 인증값의 원문과 인코딩을
+온전한 청크와 마지막 3,176바이트 부분 청크에 넣고, 모든 조각의 offset·길이·EOF와 합친 바이트의 SHA를 검사한다.
+EOF·요청 응답·연결 종료 사건으로 끝나며 고정 sleep, 실제 인증, 운영 서비스, 새 production 주입점은 쓰지 않는다.
+같은 연결의 파일 보기 응답은 계속 인증 조각을 가려야 한다.
+수정 전 host의 일반 JSON 가림은 배포 B64까지 디코딩해 바꾸므로 길이가 같은 채 EOF SHA 단언이 실패한다.
+`DeployChunk`의 가림 예외만 제거한 변형도 같은 단언에서 실패해야 한다. agent의 청크 쓰기·sync·EOF 검사와
+기존 rollout 설치·재시작 E2E는 그대로 둔다.
+
 ### update 후보 서명과 사람 터미널 출력(t-0488)
 
 - 기존 E2E `update_replaces_keeps_and_rolls_back`, m13 `coordinator_deployment_is_gated_and_survives_backend_restarts`, `rollout_preflights_all_targets_and_resumes_same_jobs_after_host_restart`가 실제 다음 실행·교체·보관·rollback과 재시작 수명을 계속 소유한다. macOS 후보는 바이트를 덧붙이지 않고 서로 다른 ad-hoc 서명 식별자를 써서 같은 version·다른 SHA·유효 strict 서명을 갖는다. 복사·서명은 자식 프로세스에서 끝내 병렬 fork에 쓰기 FD를 물려주지 않는다.
