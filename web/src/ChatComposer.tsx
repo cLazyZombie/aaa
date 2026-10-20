@@ -233,6 +233,7 @@ export function ChatComposer({
     };
   }, [pane, harness]);
   const [caret, setCaret] = useState(0);
+  const pendingCaret = useRef<{ value: string; at: number; focus: boolean } | null>(null);
   const [menuActive, setMenuActive] = useState(0);
   /** Esc로 닫은 때의 글: 글이 바뀌면 다시 연다 */
   const [menuClosed, setMenuClosed] = useState<string | null>(null);
@@ -273,15 +274,12 @@ export function ChatComposer({
   const pickCommand = (c: SlashCommand): void => {
     const rest = shown.slice(caret).replace(/^\s+/, "");
     const value = c.insert + rest;
+    const at = c.insert.length;
+    pendingCaret.current = { value, at, focus: true };
     textRef.current = value;
     setText(value);
     bumpUsage(c.name);
-    const at = c.insert.length;
     setCaret(at);
-    requestAnimationFrame(() => {
-      textareaRef.current?.focus();
-      textareaRef.current?.setSelectionRange(at, at);
-    });
   };
   useEffect(() => {
     mounted.current = true;
@@ -369,6 +367,16 @@ export function ChatComposer({
   const { appearance } = useAppearance();
   const surfaceRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  // 글과 커서는 같은 commit에서 끝낸다. 다음 frame까지 미루면 그 사이의 새 선택·입력·focus를 덮는다.
+  // 매 commit에서 한 번만 소비하므로 같은 글을 다시 불러도 동작하고, 뒤 편집에는 남지 않는다.
+  useLayoutEffect(() => {
+    const placement = pendingCaret.current;
+    pendingCaret.current = null;
+    const box = textareaRef.current;
+    if (!placement || !box || locked || box.value !== placement.value) return;
+    if (placement.focus) box.focus();
+    box.setSelectionRange(placement.at, placement.at);
+  });
   // 한 줄(one)이면 단추가 글 칸 옆에, 여러 줄(more)이면 글 칸이 상자 폭을 다 쓰고 단추는 밑 줄로 간다(t3code `resting`)
   const [lines, setLines] = useState<"one" | "more">("one");
   const [boxWidth, setBoxWidth] = useState(0);
@@ -662,11 +670,12 @@ export function ChatComposer({
     const step = recallStep({ direction, entries: recallEntries(messagesRef.current ?? []), position: recall.current, currentPrompt: textRef.current });
     if (!step) return false;
     recall.current = step.position;
+    const at = step.prompt.length;
+    pendingCaret.current = { value: step.prompt, at, focus: false };
     textRef.current = step.prompt;
     setText(step.prompt);
     setNote(null);
-    const at = step.prompt.length;
-    requestAnimationFrame(() => box.setSelectionRange(at, at));
+    setCaret(at);
     return true;
   };
 
