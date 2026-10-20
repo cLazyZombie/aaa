@@ -43,7 +43,7 @@ export interface ChatFindOptions {
   canOpen: boolean;
   /** 머리 돋보기·팔레트가 올리는 수: 바뀌면 연다 */
   openRequest: number;
-  /** 받지 않은 앞 기록이 남았다(chat.before): 개수 뒤에 「+」, 1단계는 받은 범위만 찾는다 */
+  /** 받지 않은 앞 기록이 남았다(chat.before, 앞 쪽을 못 읽는 옛 agent는 truncated): 개수 뒤에 「+」, 1단계는 받은 범위만 찾는다 */
   more: boolean;
 }
 

@@ -583,7 +583,7 @@ export function ChatPanel({
   // 그 말의 id가 곧 화면 줄 id다(도구 묶음은 찾지 않는다)
   const chatMessages = useMemo(() => chat?.messages ?? [], [chat]);
   const messageRowIds = useMemo(() => chatRowIds(chatMessages), [chatMessages]);
-  const find = useChatFind({ container: list, messages: chatMessages, rowIds: messageRowIds, canOpen: onOpenFile !== undefined, openRequest: findRequest, more: Boolean(chat?.before) });
+  const find = useChatFind({ container: list, messages: chatMessages, rowIds: messageRowIds, canOpen: onOpenFile !== undefined, openRequest: findRequest, more: Boolean(chat?.before || chat?.truncated) });
   // 맨 아래가 아니면 보던 줄과 그 줄 안 거리를 지킨다(plan §8.262, t3code timelineScrollAnchoring `rowId`·`offsetWithinRow`):
   // 새 말·앞 자름·입력창 높이·폭이 바뀌어도 그리기 전에 그 줄을 같은 거리로 되돌린다. 브라우저 굴림 고정(overflow-anchor)은 끈다
   // (iOS Safari에는 없고, 이것과 겹치면 두 번 옮긴다). 같은 자리를 이 pane의 읽던 자리로도 기억한다(plan §8.266, 참고 MessagesTimeline

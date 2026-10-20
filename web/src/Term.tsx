@@ -2052,7 +2052,7 @@ export function TermView({
         </div>
         {status}
         {chatView && chatable && (
-          <button type="button" className="ghost icon chat-find-open" data-testid="chat-find-open" aria-label="대화에서 찾기" title={`대화에서 찾기 (${modKeyLabel()}F)`}
+          <button type="button" className="ghost icon chat-find-open" data-testid="chat-find-open" aria-label="대화에서 찾기" title={`대화에서 찾기 (${modKeyLabel() === "⌘" ? "⌘F" : "Ctrl+F"})`}
             onPointerDown={(e) => e.preventDefault()} onClick={() => setFindRequest((n) => n + 1)}>
             <Search aria-hidden="true" />
           </button>
