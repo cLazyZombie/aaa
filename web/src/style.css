@@ -1197,7 +1197,7 @@ button.report-delete:hover:not(:disabled) { color: var(--danger-text); }
 
 .chat-transcript { padding-bottom: var(--chat-tail-space, 0px); }
 
-/* t-0460(plan §8.299): 파일·보고서 보기 머리 단추는 손가락 크기(44px)다. herdr/FileViewer.css의 coarse 규칙
+/* t-0460(plan §8.300): 파일·보고서 보기 머리 단추는 손가락 크기(44px)다. herdr/FileViewer.css의 coarse 규칙
    (.file-viewer-action 44px)은 같은 특이성의 primitives.css coarse `.icon-button`(40px)이 뒤에 와 밀렸다. 대화에서 연
    보고서를 닫는 길이라 휴대폰 폭의 닫기는 coarse가 아니어도 44px다 */
 @media (pointer: coarse) {

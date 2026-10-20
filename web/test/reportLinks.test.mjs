@@ -1,4 +1,4 @@
-// 대화 글의 링크 중 휴대폰에서 앱 안으로 여는 것(src/reportLinks.ts, plan §8.299). 같은 host의 보고서 보기 경로·앱 주소만 고르고,
+// 대화 글의 링크 중 휴대폰에서 앱 안으로 여는 것(src/reportLinks.ts, plan §8.300). 같은 host의 보고서 보기 경로·앱 주소만 고르고,
 // 다른 host·내려받기·파일 읽기 경로·API는 새 창 그대로다. 보조 키·가운데 단추는 브라우저 몫이다(t3code `resolveLinkTarget`과 같다).
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";

@@ -7,7 +7,7 @@
 // aaa가 다른 곳: 허용 폴더(§6.5) 밖이면 그 까닭을 말한다(참고는 서버 사용자가 읽을 수 있는 것을 다 연다).
 // thread 결과물도 이것으로 연다(차이 목록 R1): 결과물 목록의 보기 경로(`/v/`, opaque origin sandbox)로 읽고, 경로는 결과물
 // 안 상대 경로다. 문서 안 링크·그림은 결과물 맨 위를 `/`로 두고 풀어 결과물 밖으로 나가지 않는다(plan §8.168).
-// 대화 글의 보고서 주소(`/v/<cap>/…`, plan §8.299)도 같은 보기 경로라 목록 없이 그 주소의 HEAD(종류·크기)로 연다.
+// 대화 글의 보고서 주소(`/v/<cap>/…`, plan §8.300)도 같은 보기 경로라 목록 없이 그 주소의 HEAD(종류·크기)로 연다.
 import { lazy, Suspense, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { Braces, Check, Copy, Download, ExternalLink, TriangleAlert, X } from "lucide-react";
 
@@ -46,7 +46,7 @@ const MARKDOWN_CLASS: Record<MarkdownWidth, string> = {
 
 /**
  * 파일 보기가 읽는 곳: pane의 파일(허용 폴더 안), thread 결과물, thread 작업 폴더의 파일(보고서 안 링크, plan §8.171), 또는
- * 보기 경로 맨 위(`/v/<cap>/`, 대화의 보고서 주소, plan §8.299)
+ * 보기 경로 맨 위(`/v/<cap>/`, 대화의 보고서 주소, plan §8.300)
  */
 export type FileSource = { pane: string } | { project: string; thread: string } | { worktree: { project: string; thread: string } } | { view: string };
 /** 찾은 파일과 그 읽기 경로, 또는 같은 이름의 후보들 */

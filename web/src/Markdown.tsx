@@ -23,7 +23,7 @@ type MarkdownImageResolver = (src: string) => Promise<MarkdownImagePreview | nul
 export const MarkdownImageContext = createContext<MarkdownImageResolver | null>(null);
 
 /**
- * 링크를 새 창 대신 앱 안에서 연다(대화 보기, plan §8.299): 열었으면 true. 없거나 false면 링크 그대로(새 창)다. 보조 키·가운데
+ * 링크를 새 창 대신 앱 안에서 연다(대화 보기, plan §8.300): 열었으면 true. 없거나 false면 링크 그대로(새 창)다. 보조 키·가운데
  * 단추는 묻지 않고 브라우저 몫이다
  */
 export const OpenLinkContext = createContext<((href: string) => boolean) | null>(null);

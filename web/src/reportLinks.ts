@@ -1,4 +1,4 @@
-// 대화 글의 링크 중 휴대폰에서 앱 안으로 여는 것(plan §8.299). Markdown 링크는 새 창(`target=_blank`)인데, iPhone에서 새 창으로
+// 대화 글의 링크 중 휴대폰에서 앱 안으로 여는 것(plan §8.300). Markdown 링크는 새 창(`target=_blank`)인데, iPhone에서 새 창으로
 // 연 보고서에는 앱으로 돌아올 길이 없다(Safari 새 탭은 뒤로 칸이 없고, 홈 화면 앱은 뒤로 단추가 없다). 그래서 같은 host의
 // 보고서 보기 주소(`/v/<cap>/…`)와 앱 주소(`/#report=…`·`/#thread=…`)만 골라 앱 안에서 연다. 다른 host 주소는 그 문서를
 // 앱 안 frame에 넣을 수 없으니(host VIEW_CSP `frame-ancestors 'self'`) 새 창 그대로다.

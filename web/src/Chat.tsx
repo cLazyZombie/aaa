@@ -5,7 +5,7 @@
 // 번까지) 놓친 것은 10초마다, host가 알릴 수 없는 pane(옛 agent)이나 연결이 끊긴 동안은 2초마다 읽는다. agent 상태가 작업 중에
 // 들고 날 때(턴 시작·끝)와 이 화면이 보낸 뒤(`readNow`)에는 기다리지 않고 바로 읽는다. 가려진 탭은 알림으로 읽지 않는다.
 // 글 속 파일 경로는 그 pane의 파일 보기로 연다(참고 ChatView는 pane마다 `OpenFileContext`, 찾는 곳은 그 pane이 지금 있는 폴더,
-// plan §8.171). 보기 권한 화면은 열 곳이 없어 글 그대로다. 휴대폰에서는 같은 host 보고서·앱 주소 링크도 새 창 대신 앱 안에서 연다(`onOpenLink`, plan §8.299). 사람·답 말은 참고처럼 Markdown으로 그린다(참고 `UserMessage`의
+// plan §8.171). 보기 권한 화면은 열 곳이 없어 글 그대로다. 휴대폰에서는 같은 host 보고서·앱 주소 링크도 새 창 대신 앱 안에서 연다(`onOpenLink`, plan §8.300). 사람·답 말은 참고처럼 Markdown으로 그린다(참고 `UserMessage`의
 // `chat-bubble-body`·`Turn`의 답, plan §8.179): 사람 말은 무채색 카드, 답은 카드 없이. 도구 줄은 글 그대로 경로만 잇는다(`linkFilePaths`).
 // 말 둘레도 참고대로다(plan §8.182): 대화 기둥 폭(`.chat-transcript`), 긴 사람 말 접기(`UserMessage`, userMessageFold.ts), 사람 말 복사·답의
 // 마크다운/일반 텍스트 복사(`CopyButton`, 마우스면 올렸을 때). 참고와 다른 곳: 기록에 시각이 없어 시각은 없고, 접힘은 이 화면 안에서만 기억한다.
