@@ -1,6 +1,6 @@
 //! `aaa host`: host backend. 정본 목록·권한·Front API·웹을 갖고, 각 머신의 agent backend와 Agent link로 통신한다.
 //!
-//! - host는 자식 프로세스를 만들지 않는다. 예외: tailscale CLI, 개발 모드의 로컬 agent 기동(§4.2).
+//! - host의 자식 실행은 tailscale CLI, 개발 모드 로컬 agent(§4.2), 세션 밖 CLI가 요청한 격리 공식 로그인뿐이다.
 //! - pane 화면은 agent(session host)가 정본이다. host는 마지막 화면 mirror를 가져 agent가 끊겨도 읽기 전용으로 보여 준다.
 
 mod adopt;
@@ -14,6 +14,8 @@ pub fn automation_schema() -> String {
 pub fn mission_schema() -> String {
     serde_json::to_string_pretty(&mission::files::schema()).expect("schema serialize")
 }
+mod account_login;
+mod account_policy;
 mod accounts;
 mod auto_start;
 mod automation;
@@ -1044,6 +1046,7 @@ impl Host {
     }
 
     fn pane_view(
+        &self,
         i: &Inner,
         id: &str,
         p: &PaneRt,
@@ -1068,6 +1071,7 @@ impl Host {
             None
         };
         PaneView {
+            account: self.pane_account(id).ok().flatten().map(|a| a.account),
             id: id.to_string(),
             machine_id: p.machine_id.clone(),
             machine: m.map(|m| m.name.clone()).unwrap_or_default(),
@@ -1092,7 +1096,7 @@ impl Host {
     pub fn pane_views(&self, role: DeviceRole) -> Vec<PaneView> {
         let projects = self.coordinator_projects();
         let i = self.inner.lock().unwrap();
-        let mut v: Vec<_> = i.panes.iter().map(|(id, p)| Self::pane_view(&i, id, p, role, &projects)).collect();
+        let mut v: Vec<_> = i.panes.iter().map(|(id, p)| self.pane_view(&i, id, p, role, &projects)).collect();
         // 처음 띄운 차례(ULID): 재개·재부팅 복원으로 새 ID가 되어도 처음 ID 자리에 남는다(목록이 옮겨 다니지 않는다)
         let first = |p: &PaneView| p.replaced.first().cloned().unwrap_or_else(|| p.id.clone());
         v.sort_by(|a, b| a.machine.cmp(&b.machine).then_with(|| first(a).cmp(&first(b))));
@@ -1102,7 +1106,7 @@ impl Host {
     pub fn pane_view_of(&self, id: &str, role: DeviceRole) -> Option<PaneView> {
         let projects = self.coordinator_projects();
         let i = self.inner.lock().unwrap();
-        i.panes.get(id).map(|p| Self::pane_view(&i, id, p, role, &projects))
+        i.panes.get(id).map(|p| self.pane_view(&i, id, p, role, &projects))
     }
 
     fn coordinator_projects(&self) -> Vec<(String, std::path::PathBuf)> {
@@ -1238,10 +1242,17 @@ impl Host {
         front: Option<&FrontRef>,
         req: FrontRequest,
     ) -> Result<FrontResponse, ErrorBody> {
-        if matches!(&req, FrontRequest::AccountImport { .. } | FrontRequest::AccountRemove { .. })
-            && (role != DeviceRole::Local || front::in_session(actor) || !actor.starts_with("local:"))
+        if matches!(
+            &req,
+            FrontRequest::AccountImport { .. }
+                | FrontRequest::AccountRemove { .. }
+                | FrontRequest::AccountDefault { .. }
+                | FrontRequest::AccountLogin { .. }
+                | FrontRequest::AccountLoginStatus { .. }
+                | FrontRequest::AccountLoginCancel { .. }
+        ) && (role != DeviceRole::Local || front::in_session(actor) || !actor.starts_with("local:"))
         {
-            return Err(err(ErrorCode::Forbidden, "계정 등록·삭제는 host의 aaa 밖 터미널에서 한다"));
+            return Err(err(ErrorCode::Forbidden, "계정 로그인·변경은 host의 aaa 세션 밖 터미널에서 한다"));
         }
         let req = if matches!(&req, FrontRequest::AccountImport { .. }) { req } else { aaa_common::redact::json(req) };
         // 기기·머신 신뢰와 공개 범위는 사람이 바꾼다. coordinator도 Local이지만 세션 안이다.
@@ -1295,7 +1306,19 @@ impl Host {
                 Ok(FrontResponse::Accounts { accounts: self.accounts.list()? })
             }
             FrontRequest::AccountList => Ok(FrontResponse::Accounts { accounts: self.accounts.list()? }),
+            FrontRequest::AccountDefaults => Ok(FrontResponse::AccountDefaults { defaults: self.account_defaults()? }),
+            FrontRequest::AccountDefault { harness, account } => {
+                self.set_default_account(&harness, account.as_deref())?;
+                self.db.audit(actor, "account_default", &format!("{harness} {}", account.as_deref().unwrap_or("off")));
+                Ok(FrontResponse::AccountDefaults { defaults: self.account_defaults()? })
+            }
+            FrontRequest::AccountLogin { name, harness } => self.account_login(&name, &harness, actor),
+            FrontRequest::AccountLoginStatus { id } => self.account_login_status(&id),
+            FrontRequest::AccountLoginCancel { id } => self.account_login_cancel(&id),
             FrontRequest::AccountRemove { name } => {
+                if self.account_defaults()?.iter().any(|d| d.account == name) {
+                    return Err(err(ErrorCode::BadRequest, "기본 계정은 먼저 account default --off로 해제한다"));
+                }
                 self.accounts.remove(&name)?;
                 self.db.audit(actor, "account_remove", &name);
                 Ok(FrontResponse::Done)
@@ -2140,7 +2163,7 @@ impl Host {
         spec: SpawnSpec,
         actor: &str,
     ) -> Result<String, ErrorBody> {
-        let new_id = self.spawn_on(mid, spec, actor).await?;
+        let new_id = self.respawn_with_account(id, mid, spec, actor).await?;
         self.db.audit(actor, "pane_resume", &format!("{id} -> {new_id}"));
         self.replace_pane(id, &new_id, mid, actor).await;
         Ok(new_id)
@@ -2986,6 +3009,7 @@ pub async fn run(cfg: HostConfig, state_root: PathBuf) -> Result<()> {
         });
     }
     shutdown_signal().await;
+    host.cancel_account_logins().await;
     tracing::info!("host 종료(세션은 agent·session host가 계속 유지한다)");
     Ok(())
 }

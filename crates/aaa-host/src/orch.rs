@@ -130,6 +130,17 @@ pub(crate) struct ThreadRec {
 }
 
 impl ThreadRec {
+    /// 로컬 profile의 공식 인증 env도 agent에서 받은 뒤 저장하기 전에 가린다.
+    fn remember_auth_env(&self) {
+        if let Some(launch) = &self.launch {
+            for (key, value) in &launch.env {
+                if !value.contains("********") {
+                    aaa_common::redact::remember_env(key, value);
+                }
+            }
+        }
+    }
+
     pub(crate) fn is_builtin_evaluator(&self) -> bool {
         self.role == Role::Evaluator && self.mission.is_none()
     }
@@ -994,6 +1005,7 @@ impl Host {
 
     pub(crate) fn save(&self, rec: &mut ThreadRec) {
         rec.updated_at_ms = aaa_common::util::now_ms();
+        rec.remember_auth_env();
         let json = serde_json::to_string(&aaa_common::redact::json(rec.clone())).expect("thread 기록 직렬화");
         if let Err(e) = self.db.thread_save(&rec.project, &rec.id, rec.status.as_str(), &json) {
             tracing::error!(thread = %rec.id, "thread 기록 저장 실패: {e:#}");
@@ -1014,6 +1026,7 @@ impl Host {
         f(&mut r);
         // 이 성공 뒤 Kill·깨움을 보내는 호출자는 실제 DB 확정을 필요로 한다.
         r.updated_at_ms = aaa_common::util::now_ms();
+        r.remember_auth_env();
         let json = serde_json::to_string(&aaa_common::redact::json(r.clone())).map_err(internal)?;
         self.db.thread_save(project, id, r.status.as_str(), &json).map_err(internal)?;
         let _ = self.thread_events.send(self.thread_view(&r));
@@ -1557,6 +1570,9 @@ impl Host {
         } else {
             self.resolved_profile(Some(&a.project), &mid, &a.profile)?
         };
+        if a.account.is_none() {
+            a.account = self.default_account(&profile.harness)?;
+        }
         if let Some(account) = &a.account {
             let c = self.accounts.credential(account)?;
             if c.harness != profile.harness {

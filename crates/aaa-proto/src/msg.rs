@@ -1258,6 +1258,10 @@ pub struct LeaseView {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 pub struct PaneView {
+    /// host에 고정한 인증 별칭. 이전 판 thread의 인증은 ThreadView.account로 확인한다.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub account: Option<String>,
     pub id: String,
     pub machine_id: String,
     pub machine: String,
@@ -1457,6 +1461,21 @@ pub enum FrontRequest {
         secret: crate::SecretText,
     },
     AccountList,
+    AccountDefaults,
+    AccountDefault {
+        harness: String,
+        account: Option<String>,
+    },
+    AccountLogin {
+        name: String,
+        harness: String,
+    },
+    AccountLoginStatus {
+        id: String,
+    },
+    AccountLoginCancel {
+        id: String,
+    },
     AccountRemove {
         name: String,
     },
@@ -2437,6 +2456,8 @@ impl FrontRequest {
         !matches!(
             self,
             FrontRequest::AccountList
+                | FrontRequest::AccountDefaults
+                | FrontRequest::AccountLoginStatus { .. }
                 | FrontRequest::Status
                 | FrontRequest::DeployContext
                 | FrontRequest::DeployStatus { .. }
@@ -2493,6 +2514,10 @@ impl FrontRequest {
         matches!(
             self,
             FrontRequest::AccountImport { .. }
+                | FrontRequest::AccountDefault { .. }
+                | FrontRequest::AccountLogin { .. }
+                | FrontRequest::AccountLoginStatus { .. }
+                | FrontRequest::AccountLoginCancel { .. }
                 | FrontRequest::AccountRemove { .. }
                 | FrontRequest::DebugInput { .. }
                 | FrontRequest::EnrollOpen { .. }
@@ -2516,6 +2541,12 @@ impl FrontRequest {
 pub enum FrontResponse {
     Accounts {
         accounts: Vec<crate::AccountView>,
+    },
+    AccountDefaults {
+        defaults: Vec<crate::AccountDefault>,
+    },
+    AccountLogin {
+        login: crate::AccountLoginView,
     },
     InputEvents {
         events: Vec<crate::InputEvent>,
