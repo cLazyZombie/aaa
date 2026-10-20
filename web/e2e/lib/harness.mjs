@@ -434,7 +434,8 @@ async function inList(p, target) {
   await item.waitFor({ state: "attached" });
   // 닫히는 중인 drawer의 항목은 움직임이 끝날 때까지 보인다: 끝난 뒤에 본다(transition의 finished)
   await drawerSettled(p);
-  const toggle = p.locator(".view [data-testid='drawer-toggle']");
+  // 보고서·답할 것처럼 숨긴 채 그려 둔 화면의 단추도 DOM에는 남는다. 지금 보이는 화면의 단추만 누른다.
+  const toggle = p.locator(".view [data-testid='drawer-toggle']:visible");
   if (!(await item.isVisible()) && (await toggle.isVisible()) && (await toggle.getAttribute("aria-expanded")) !== "true") {
     await toggle.click();
     await p.locator("#workspace-drawer.is-open").waitFor();

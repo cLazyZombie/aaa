@@ -1,4 +1,4 @@
-//! 웹 「배포」의 권한·기록·요약(관리 GUI W6a, plan §8.359). rollout 진행 자체는 m13 `rollout`이 실제 host·agent로 본다.
+//! 웹 「배포」의 권한·기록·요약(관리 GUI W6a, plan §8.361). rollout 진행 자체는 m13 `rollout`이 실제 host·agent로 본다.
 use super::*;
 use aaa_proto::{AgentHello, DeviceRole, FrontRequest};
 
