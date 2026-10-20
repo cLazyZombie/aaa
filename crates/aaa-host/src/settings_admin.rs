@@ -158,6 +158,7 @@ impl Host {
                 (safety::Layers { own: default, default: Default::default(), legacy }, warnings)
             }
         };
+        let eff = layers.resolve();
         let rows = layers
             .rows(scope == SettingsScope::Project)
             .into_iter()
@@ -185,6 +186,8 @@ impl Host {
             rows,
             thread_profile,
             coordinator_profile,
+            thread_profiles: eff.thread_profiles,
+            coordinator_profiles: eff.coordinator_profiles,
             warnings,
             rev: self.host_toml_rev(dir)?.sha256,
             notes: Vec::new(),

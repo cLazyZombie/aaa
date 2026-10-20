@@ -13,12 +13,13 @@ import { ConfirmDialog } from "./ConfirmDialog";
 import { SettingsGroup } from "./herdr/SettingsControls.tsx";
 import { nativeModalOver, useFocusTrap } from "./herdr/useFocusTrap.ts";
 import { usePhoneSheetBack } from "./herdr/sheetHistory.ts";
+import { MachineSetup } from "./SettingsAdminPages";
 import { canAdmin, enrollCode, enrollLeft, liveLinks, newUploadId, onPublicAddress, otherRoutes, reportNameOk, uploadPlan } from "./adminModel.ts";
 
 const say = (e: unknown) => (e instanceof ApiError ? e.message : e instanceof Error ? e.message : String(e));
 
 /** 입력이 있는 창(PaneRename과 같은 꼴): Esc·바깥 누름·폰 「뒤로」는 닫기, 일하는 동안은 닫지 않는다 */
-function AdminDialog({ label, busy, onClose, children }: { label: string; busy: boolean; onClose: () => void; children: ReactNode }) {
+export function AdminDialog({ label, busy, onClose, children }: { label: string; busy: boolean; onClose: () => void; children: ReactNode }) {
   const surface = useFocusTrap<HTMLDivElement>(true);
   usePhoneSheetBack(() => {
     if (busy) return false;
@@ -197,6 +198,7 @@ export function MachinesPage({ role, machines }: { role: DeviceRole; machines: M
           </ul>
         </div>
       </SettingsGroup>
+      <MachineSetup role={role} machines={machines} />
       {approving && <ApproveDialog p={approving} onClose={() => setApproving(null)} onDone={load} />}
       {revoking && (
         <ConfirmDialog

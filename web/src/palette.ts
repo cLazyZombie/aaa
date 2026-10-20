@@ -205,7 +205,7 @@ export function loadRecent(read: (key: string) => string | null): string[] {
   }
 }
 
-export type SettingsPageId = "appearance" | "chat" | "terminal" | "alerts" | "usage" | "accounts" | "shortcuts" | "devices" | "machines" | "project" | "repos";
+export type SettingsPageId = "appearance" | "chat" | "terminal" | "alerts" | "usage" | "accounts" | "safety" | "profiles" | "shortcuts" | "devices" | "machines" | "project" | "repos";
 
 /** What the palette shows for one Settings page: its name and the words a user may look for it by. */
 export interface SettingsPageEntry {
@@ -222,9 +222,11 @@ export const SETTINGS_PAGE_ENTRIES: readonly SettingsPageEntry[] = [
   { id: "alerts", label: "알림", aliases: "알림 소리 푸시 벨 입력 필요 완료" },
   { id: "usage", label: "구독 사용량", aliases: "요금제 한도 할당량 미터" },
   { id: "accounts", label: "계정", aliases: "계정 로그인 다시 로그인 기본 계정 메일 인증 끊김 만료 claude codex" },
+  { id: "safety", label: "안전", aliases: "safety yolo 권한 건너뛰기 start_threads trust_screens 신뢰 창 배포 coordinator_deploy" },
+  { id: "profiles", label: "profile", aliases: "profile 프로필 harness model effort 인자 허용 목록 기본 profile claude codex" },
   { id: "shortcuts", label: "단축키", aliases: "키보드 키 단축키 바인딩" },
   { id: "devices", label: "폰 및 기기", aliases: "휴대폰 설치 화면 켜짐 유지 앱 웹 공개 tailscale 공개 끄기" },
-  { id: "machines", label: "머신", aliases: "머신 등록 승인 폐기 agent enroll 확인 코드" },
+  { id: "machines", label: "머신", aliases: "머신 등록 승인 폐기 agent enroll 확인 코드 작업 폴더 work root hook codex 연동" },
   { id: "project", label: "이 aaa", aliases: "프로젝트 목표 profile 멈춤 재개 nudge mute 정리 sweep 보고서 사본 공유 링크 키 교체" },
   { id: "repos", label: "저장소", aliases: "저장소 repo workspaces 머신 경로 작업 폴더" },
 ];

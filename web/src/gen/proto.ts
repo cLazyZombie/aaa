@@ -1642,6 +1642,10 @@ export type SafetyView = { scope: SettingsScope, project: string, rows: Array<Sa
  */
 thread_profile: string, coordinator_profile: string,
 /**
+ * thread·coordinator가 쓸 수 있는 profile 실효값(`None`이면 모든 profile). 허용 목록 고치기의 처음 값
+ */
+thread_profiles: Array<string> | null, coordinator_profiles: Array<string> | null,
+/**
  * 읽다 버린 값 등
  */
 warnings: Array<string>,
