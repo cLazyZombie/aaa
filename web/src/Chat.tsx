@@ -73,11 +73,18 @@ function ToolGroup({ messages, expanded, live, onToggle, children }: {
   const last = messages.at(-1)!;
   const label = live ? (last.role === "tool" ? last.text : "생각 중") : summarizeToolGroup(messages);
   const list = useRef<HTMLDivElement>(null);
-  const atEnd = useRef(true);
+  // 펼치면 맨 위부터 보인다. 목록이 다 들어가면 끝을 보는 것으로 친다: 그 뒤 붙는 줄을 따라간다(참고 appendState.follow)
+  const atEnd = useRef(false);
   useLayoutEffect(() => {
     const el = list.current;
-    if (el && atEnd.current) el.scrollTop = el.scrollHeight;
-  }, [messages.length, expanded]);
+    if (el) atEnd.current = el.scrollHeight - el.clientHeight <= 4;
+  }, [expanded]);
+  const count = useRef(messages.length);
+  useLayoutEffect(() => {
+    const el = list.current;
+    if (el && messages.length > count.current && atEnd.current) el.scrollTop = el.scrollHeight;
+    count.current = messages.length;
+  }, [messages.length]);
   const listId = useId();
   return (
     <div className={`chat-tool-group${live ? " is-live" : ""}`} data-role="tools">
@@ -795,16 +802,16 @@ export function ChatPanel({
           </p>
           {error && <div className="banner warn">{error}</div>}
           {chat && displayRows.map((row, n) => {
-            const message = (i: number) => {
+            const message = (i: number, key: string) => {
               const m = chat.messages[i]!;
               return m.role === "thinking" ? (
-                <ThinkingRow key={i} text={m.text} />
+                <ThinkingRow key={key} text={m.text} />
               ) : m.role === "user" ? (
-                <UserTurn key={i} text={unwrapPasted(m.text)} pane={pane} onOpenFile={onOpenFile} pending={m.pending ? { harness, steer: steerFor(`message-${i}`) } : undefined} />
+                <UserTurn key={key} text={unwrapPasted(m.text)} pane={pane} onOpenFile={onOpenFile} pending={m.pending ? { harness, steer: steerFor(`message-${i}`) } : undefined} />
               ) : m.role === "assistant" ? (
-                <AgentTurn key={i} text={m.text} />
+                <AgentTurn key={key} text={m.text} />
               ) : (
-                <div key={i} className={`chat-msg ${m.role}`} data-role={m.role}>
+                <div key={key} className={`chat-msg ${m.role}`} data-role={m.role}>
                   {linkFilePaths(m.text, onOpenFile ?? null)}
                 </div>
               );
@@ -814,9 +821,9 @@ export function ChatPanel({
                 {row.kind === "tools" ? (
                   <ToolGroup messages={row.indices.map((i) => chat.messages[i]!)} expanded={groupExpanded(row, expandedGroups)}
                     live={status === "working" && n === displayRows.length - 1} onToggle={() => toggleGroup(row)}>
-                    {row.indices.map(message)}
+                    {row.indices.map((i, k) => message(i, row.memberIds[k]!))}
                   </ToolGroup>
-                ) : message(row.index)}
+                ) : message(row.index, row.id)}
               </ChatRow>
             );
           })}

@@ -28,6 +28,7 @@ function chatPane() {
     say("빌드는 통과합니다.") +
     use("Write", { file_path: "docs/note.md", content: "x" }) +
     say("메모를 남겼습니다.") +
+    ask("테스트를 많이 돌려 줘") + Array.from({ length: 25 }, (_, n) => use("Bash", { command: `cargo test case_${n}` })).join("") + say("다 돌렸습니다.") +
     filler(12, 24) +
     ask("검색도 해 줘") +
     use("Grep", { pattern: "fn main" }) + use("Edit", { file_path: "src/a.rs" }) + use("Edit", { file_path: "src/a.rs" }) +
@@ -63,11 +64,11 @@ async function check(p, name) {
   const groups = chat.locator(".chat-tool-group");
   const heads = groups.locator(".chat-tool-group-head");
   const labels = await heads.evaluateAll((els) => els.map((e) => e.textContent.trim()));
-  const want = ["명령 2개 실행, 파일 3개 읽음", "코드 1번 검색, 파일 2개 수정, 그 밖의 동작 2개"];
+  const want = ["명령 2개 실행, 파일 3개 읽음", "명령 25개 실행", "코드 1번 검색, 파일 2개 수정, 그 밖의 동작 2개"];
   if (JSON.stringify(labels) !== JSON.stringify(want)) throw new Error(`${name}: 묶음 요약 ${JSON.stringify(labels)} ≠ ${JSON.stringify(want)}`);
   const visibleTools = () => chat.locator('[data-role="tool"]').evaluateAll((els) => els.map((e) => e.textContent.trim()));
   if (JSON.stringify(await visibleTools()) !== JSON.stringify(["Write: docs/note.md"])) throw new Error(`${name}: 접힌 뒤 보이는 도구 줄 ${JSON.stringify(await visibleTools())}`);
-  if ((await heads.evaluateAll((els) => els.map((e) => e.getAttribute("aria-expanded")))).join() !== "false,false") throw new Error(`${name}: 처음부터 펼친 묶음`);
+  if ((await heads.evaluateAll((els) => els.map((e) => e.getAttribute("aria-expanded")))).join() !== "false,false,false") throw new Error(`${name}: 처음부터 펼친 묶음`);
 
   // 끝이 아닌 곳: 펼치고 접어도 머리가 제자리(t3code disclosure anchoring)
   const head = heads.nth(0);
@@ -88,16 +89,29 @@ async function check(p, name) {
   await frames(p);
   if (Math.abs((await y()) - before) > 1) throw new Error(`${name}: 접은 뒤 머리 ${await y()} ≠ ${before}`);
 
+  // 긴 묶음은 높이 min(18rem, 50dvh) 안에서 굴리고 맨 위부터 보인다(참고 ExpandedWorkGroupEntries)
+  const long = heads.nth(1);
+  await long.evaluate((el) => el.scrollIntoView({ block: "start" }));
+  await frames(p);
+  await long.click();
+  await until("긴 묶음 펼침", async () => (await groups.nth(1).locator('[data-role="tool"]').count()) === 25);
+  await frames(p);
+  const box = await groups.nth(1).locator(".chat-tool-group-list").evaluate((el) => ({ top: el.scrollTop, scroll: el.scrollHeight, client: el.clientHeight, cap: Math.min(18 * parseFloat(getComputedStyle(document.documentElement).fontSize), innerHeight / 2) }));
+  if (box.top !== 0 || box.scroll <= box.client || box.client > box.cap + 1) throw new Error(`${name}: 긴 묶음 목록 ${JSON.stringify(box)} (맨 위, 굴림, 높이 상한)`);
+  await shot(p, `${name}-tools-long-expanded`);
+  await long.click();
+  await until("긴 묶음 접힘", async () => (await groups.nth(1).locator('[data-role="tool"]').count()) === 0);
+
   // 끝을 보던 사람: 마지막 묶음을 펼쳐도 끝에 남는다
   await chat.evaluate((el) => { el.scrollTop = el.scrollHeight; });
   await until("끝", () => chat.evaluate((el) => el.scrollHeight - el.scrollTop - el.clientHeight <= 1));
-  await heads.nth(1).click();
-  await until("끝 묶음 펼침", async () => (await groups.nth(1).locator('[data-role="tool"]').count()) === SECOND.length);
+  await heads.nth(2).click();
+  await until("끝 묶음 펼침", async () => (await groups.nth(2).locator('[data-role="tool"]').count()) === SECOND.length);
   await until("펼친 뒤 끝에 남음", () => chat.evaluate((el) => el.scrollHeight - el.scrollTop - el.clientHeight <= 1));
   await frames(p);
   await shot(p, `${name}-tools-end-expanded`);
-  await heads.nth(1).click();
-  await until("끝 묶음 접힘", async () => (await groups.nth(1).locator('[data-role="tool"]').count()) === 0);
+  await heads.nth(2).click();
+  await until("끝 묶음 접힘", async () => (await groups.nth(2).locator('[data-role="tool"]').count()) === 0);
 }
 
 export default async function () {
