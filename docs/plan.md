@@ -6018,7 +6018,7 @@ L4 후속(10-20 00시 사용자 관찰): 멈춤 상태의 후보 예약과 재�
 ### 8.319 대화창 컨텍스트 게이지 1단계(10-20, t-0502)
 
 - **요청.** 사용자 10-20 「대화창에서 사용한 컨텍스트를 보여주고 싶어」, 「%, over하면 실제 k」, 시안(library/t-0502) §7 「추천대로 해」(1단계는 안 A 입력칸 게이지만, 1,000k 넘으면 `1050k`, 휴대폰도 숫자를 늘 보임), 「타이핑시에는 보이지 않게도 가능해?」. slash 확인창·숨김(§7-3)은 2단계, 목록 줄 표지(안 C)는 3단계 선택으로 남긴다.
-- **실측: 붙여 넣은 `/compact`.** 실험실에서 실제 harness를 띄워 웹 입력칸이 보내는 꼴(bracketed paste + Enter)로 보냈다. Claude 2.1.304는 383ms에 정리 표지, 7.9초에 끝났다. Codex 0.163은 394ms에 표지, 3.5초에 끝났다. 둘 다 명령으로 받아 따로 보내는 길은 필요 없다. Claude 기록은 `<command-name>/compact</command-name>` 줄(사람 글이 아님)이고, Codex는 명령을 기록하지 않는다.
+- **실측: 붙여 넣은 `/compact`.** 실험실에서 실제 harness를 띄워 웹 입력칸이 보내는 꼴(bracketed paste + Enter)로 보냈다. Claude 2.1.304는 383ms에 정리 표지, 7.9초에 끝났다. Codex 0.163은 394ms에 표지, 3.5초에 끝났다. 둘 다 명령으로 받아 따로 보내는 길은 필요 없다. Claude 기록은 `<command-name>/compact</command-name>` 줄(사람 글이 아님)이고, Codex 실측 rollout에는 `/compact` 글이 없이 `compacted` 줄만 있다.
 - **값과 출처(agent `plan.rs`).** 2초마다 이어 읽던 대화 기록의 `plan` 사건에 `context`를 실어 `AgentStatus.context`로 보낸다(모든 기기·목록이 같은 값, 응답 뒤 2초 이하).
   - Claude: 본 대화(`isSidechain` 아님) assistant 줄의 `usage` 합(input + cache 생성 + cache 읽기). 합이 0인 합성 줄은 건너뛴다. 창은 `requestedModel`이 `claude-…[1m]`이면 1M, `claude-…`면 200k, 없으면 모른다. % = round(사용 / 창 × 100)으로 Claude Code 2.1.304 상태줄과 같다. 실측: 43,922 사용, `/compact` 뒤 `compact_boundary.compactMetadata` preTokens 43,926 → postTokens 7,910 = 4%. 이것은 터미널 「96% left」와 같다. 정리 뒤 다음 응답까지는 postTokens가 값이다.
   - Codex: `token_count`의 `info.last_token_usage.total_tokens`와 `model_context_window`. Codex TUI 식(기준 12,000: 남은 % = (창−12k − max(0, 사용−12k)) / (창−12k))의 나머지를 쓴다. `info: null`은 앞 값을 둔다. `compacted` 줄 뒤 첫 `token_count`가 정리 뒤 크기다(실측 18,861 → 12,274, 창 258,400).
