@@ -1,4 +1,4 @@
-// 자동화 한 줄의 상세(관리 GUI W1, plan §8.302): 요약·막힌 입력·설정·대상·승인 범위·적용 판·마지막 건너뜀·기록 50건·파일 원문.
+// 자동화 한 줄의 상세(관리 GUI W1, plan §8.303): 요약·막힌 입력·설정·대상·승인 범위·적용 판·마지막 건너뜀·기록 50건·파일 원문.
 // 읽기만 한다. 쓰는 것은 막힌 `do.message` 묶음 풀기(`automation_unblock`)와 자동 시작 범위 승인(목록과 같은 창)뿐이다.
 // 절 순서와 기록 줄 모양은 t3code ScheduledTasksSettings(상태 배지 · 시각 · 요약)와 herdr-projects `routine list`의 kind 낱말을 따른다.
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";

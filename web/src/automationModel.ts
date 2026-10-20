@@ -1,4 +1,4 @@
-// 자동화 상세·변환·막힌 큐의 판정(관리 GUI W1, plan §8.302). 화면은 이 결과만 그린다. 정본은 host다.
+// 자동화 상세·변환·막힌 큐의 판정(관리 GUI W1, plan §8.303). 화면은 이 결과만 그린다. 정본은 host다.
 import type { MissionView, RoutineRun, RoutineView } from "./gen/proto";
 
 /** host가 이 판(FRONT_API) 이상인가. 옛 host는 `/api/v1/me`에 판을 싣지 않는다(빈 값 = 옛 host) */

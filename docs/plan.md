@@ -5784,7 +5784,20 @@ L4 후속(10-20 00시 사용자 관찰): 멈춤 상태의 후보 예약과 재�
 - **검증.** 웹 E2E `39-phone-back`: WebKit iPhone 390·430 × Safari 탭·홈 화면 앱 흉내에서 첫 pane → bk3 → bk2 → bk1 → 대화의 보고서(파일 보기) → 앱 문서 칸까지 뒤로 끝까지의 화면 차례를 단언하고 빈 화면이 없음을 본다. 왼쪽 가장자리(x 4)에서 오른쪽 끝까지 쓸기(WebKit `document.createTouch`)는 앱 몸짓만이면 목록이 열리고 주소·기록 칸 수가 그대로, touchcancel 뒤 뒤로·쓸기 끝난 뒤 뒤로면 앞 pane이고 목록이 닫혔다. 닫힌 pane의 칸으로 뒤로는 머물고 알림, 「모든 thread」 닫기는 칸을 더하지 않고 휴대폰 문구·단추, 데스크톱 문구 그대로다. 고치기 전에는 뒤로 끝에서 「(주소 없음)+빈 화면」으로, 겹친 쓸기에서 목록이 열린 채로 실패했다. 웹 E2E 12의 「모든 thread」 닫기는 hashchange 대신 주소·빈 화면을 본다(replaceState는 hashchange를 내지 않는다). 38·04·16 유지.
 - **실기 확인 필요.** 실제 iOS가 가장자리 뒤로 몸짓에서 페이지에 주는 터치 사건(touchcancel 시점)과 홈 화면 앱에 가장자리 뒤로가 있는지는 헤드리스가 보이지 않는다.
 
-### 8.302 자동화 상세·옛 형식 변환·막힌 큐 풀기(10-20, t-0468 관리 GUI W1)
+### 8.302 휴대폰 파일 보기 머리 한 줄(10-20, t-0473)
+
+- **요청.** 사용자 「윗부분이 너무 위아래가 길어. 내용 보는곳이 줄어들어」(iPhone 세로, 대화에서 연 보고서 `index.html`). 머리가 세 줄이었다: 이름·크기·닫기, 그 아래 새 탭·내려받기·복사, 몸 맨 위의 「페이지 | 소스」.
+- **원인.** 참고(herdr-web-ui aa624cb `src/components/FileViewer.css` 247~269줄)를 그대로 옮긴 600px 이하 두 줄 grid(`file-viewer-header-stacked`, 단추가 둘 이상이면 이름 칸이 모자란다는 판단)와 `.modal-header`의 16px·20px 둘레, 44px 단추로 머리가 129px였다. HTML의 「페이지|소스」는 몸 안 iframe 위에 한 줄을 더했고, 손가락 기기의 페이지 iframe은 `화면 높이 − 170px`로 정해 몸이 한 번 더 굴렀다(390×844에서 페이지 80%).
+- **고침.**
+  - 머리는 어느 폭에서나 한 줄이다: 이름·크기(·폴더) | 단추들 | 닫기(오른쪽 모서리 그대로). 두 줄 class를 뗐고(참고 CSS는 그대로 두었다), 768px 이하·손가락 기기에서는 44px 단추가 제 여백이라 둘레(4px, 왼쪽 16px)와 단추 사이를 줄여 이름 칸을 남긴다(`style.css`). 단추는 44px 그대로(t-0460), 안전 영역은 창 둘레가 맡는 그대로다. 머리 53px(390·430 실측, 페이지 iframe은 화면의 91%·92%).
+  - HTML의 페이지·소스는 Markdown과 같은 머리의 `{}`「소스 보기」 토글(aria-pressed)이다. 데스크톱·패드도 같다(몸 위 한 줄이 없어진다).
+  - 손가락 기기의 페이지·PDF는 고정 뺄셈 대신 머리 아래를 다 채우고(flex), 몸은 구르지 않는다(페이지는 iframe 안에서만 구른다).
+  - ⋯ 메뉴는 두지 않았다: 390px에서 단추 다섯(Markdown)과 닫기를 두고도 이름 칸이 134px 남고(실측), 참고 t3code도 머리 단추를 펼쳐 둔다.
+- **굴리면 숨기기는 하지 않는다.** 참고 다섯(herdr·herdr-projects·herdr-web-ui·herdr-mobile-relay·t3code) 어디에도 없다. 그리고 보고서 HTML은 sandbox(opaque origin) iframe 안에서 굴러 앱이 그 굴림을 볼 수 없다.
+- **참고 위치.** t3code 4b1024da `apps/web/src/files/fileSurfaceChrome.tsx:10`(`h-10 px-3 gap-2` 한 줄)·`files/FilePreviewPanel.tsx:1203~1278`(rendered/source 등 아이콘 토글을 같은 줄에), herdr-mobile-relay `frontend/src/app.css:13·188~212`(머리 44px + 위 안전 영역, 한 줄 말줄임). herdr-web-ui aa624cb `FileViewer.tsx:325~360`·`FileViewer.css:252~269`가 옛 두 줄이다.
+- **검증.** 웹 E2E `38-chat-report-close`가 iPhone 390·430 × Safari 탭·홈 화면 앱(WebKit)의 다섯 링크마다 머리 64px 이하·머리 칸 겹침과 잘림 없음·이름 칸 64px 이상·몸이 화면 높이 85% 이상·페이지 iframe 85% 이상이고 몸이 구르지 않음을 단언한다. 고치기 전에는 첫 경우(390 Safari 맨 주소)에서 머리 129px·페이지 80%·몸 굴림으로 실패했다. E2E 16(데스크톱 HTML 소스 토글·휴대폰·iPad 화면 가득)·39 유지.
+
+### 8.303 자동화 상세·옛 형식 변환·막힌 큐 풀기(10-20, t-0468 관리 GUI W1)
 
 - **요청.** 사용자 10-20 「aaa admin 적인 기능들을 다 GUI에 넣고싶어 … cli에 접근하지 않는게 목표」, 관리 GUI 계획(t-0456 plan-revised §5 W1) 「추천대로」. 새 요청은 하나(막힌 큐), 나머지는 기존 Routines·RoutineRuns·MissionList·MissionShow·AutomationConvert를 쓴다.
 - **상세.** 자동화 줄의 이름·「자세히」가 상세를 연다: 요약·막힌 입력·설정(읽기)·대상·승인 범위·적용 판·마지막 건너뜀·기록 50건·파일 원문. 임무는 `mission_show`와 `mission:<이름>` 기록. 목록 줄의 접힌 최근 20건은 상세로 옮겼다. 규칙의 「적용 판」은 §3대로 따로 고정하지 않고 큐(대기 입력·처리 중 묶음)를 보인다. RoutineView에 `queue`, RoutineRuns 답에 `source`(파일 원문·sha256·참조 본문, 64KiB에서 자름)를 더했다.

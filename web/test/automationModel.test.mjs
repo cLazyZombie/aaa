@@ -1,4 +1,4 @@
-// 자동화 상세·변환·막힌 큐 판정(src/automationModel.ts, 관리 GUI W1, plan §8.302).
+// 자동화 상세·변환·막힌 큐 판정(src/automationModel.ts, 관리 GUI W1, plan §8.303).
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import { archiveDirs, canPreviewConvert, convertGroups, legacyFiles, legacyMission, legacyRule, lastSkip, ruleTargets, ruleTone, stuckBatch } from "../src/automationModel.ts";

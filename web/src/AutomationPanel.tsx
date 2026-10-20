@@ -1,5 +1,5 @@
 // 정의·승인·기록의 정본은 host. 이 패널은 목록·enabled 편집·자동 시작 범위 승인과, 줄마다 상세(AutomationDetail)·프로젝트마다
-// 옛 형식 변환(AutomationConvert)을 연다(관리 GUI W1, plan §8.302). 줄은 t3code ScheduledTaskRow처럼 짧게: 이름·배지·켜기,
+// 옛 형식 변환(AutomationConvert)을 연다(관리 GUI W1, plan §8.303). 줄은 t3code ScheduledTaskRow처럼 짧게: 이름·배지·켜기,
 // 조건 → 동작, 지난·다음 한 줄. 기록·원문·대상은 상세에 있다.
 import { useCallback, useEffect, useRef, useState } from "react";
 import { call, me } from "./api";

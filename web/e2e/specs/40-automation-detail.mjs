@@ -1,4 +1,4 @@
-// 자동화 상세·옛 형식 변환·막힌 큐 풀기(관리 GUI W1, plan §8.302). 실제 일정 판정·DB 기록·파일 변환·thread 전송 실패를 host가 만들고
+// 자동화 상세·옛 형식 변환·막힌 큐 풀기(관리 GUI W1, plan §8.303). 실제 일정 판정·DB 기록·파일 변환·thread 전송 실패를 host가 만들고
 // 웹은 그것을 읽고 사람의 결정만 보낸다. 시간은 기다리지 않는다: routine 기록·큐 상태·pane 출력을 기다린다.
 import fs from "node:fs";
 import { root, aaa, step, browser, pairPage, until, domIs, drawerSettled, shot } from "../lib/harness.mjs";
