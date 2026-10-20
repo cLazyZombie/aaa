@@ -46,6 +46,8 @@ export function TaskModal({ label, busy, onClose, wide, children, testid }: { la
 export interface MyEdit {
   title: string;
   owner: string | null;
+  /** 저장소 칸(plan §8.330). 칸을 고치지 않는 저장(메모 붙이기 등)은 비운다 */
+  repo?: string | null;
   thread: string | null;
   notes: string[];
 }
@@ -68,7 +70,7 @@ export function ConflictDialog({ conflict, mine, onReopen, onClose }: { conflict
             <h3>내 고침</h3>
             {mine ? (
               <pre className="task-raw" data-testid="task-conflict-mine">
-                <code>{[canonicalLine(mine.title, mine.owner, mine.thread), ...mine.notes.map((n) => (n ? `  ${n}` : ""))].join("\n")}</code>
+                <code>{[canonicalLine(mine.title, mine.owner, mine.repo ?? null, mine.thread), ...mine.notes.map((n) => (n ? `  ${n}` : ""))].join("\n")}</code>
               </pre>
             ) : (
               <p className="muted">목록 동작</p>

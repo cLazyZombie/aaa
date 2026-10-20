@@ -235,7 +235,8 @@ button.task-chip:disabled { cursor: default; color: var(--text-dim); }
   .task-detail-close .task-close-back { display: inline; }
   .task-detail-close { padding-left: 0; font-size: var(--fs-md); }
   .task-row > .task-thread { display: none; }
-  .task-row .task-owner { display: none; }
+  .task-row .task-owner,
+  .task-row .task-repo { display: none; }
 }
 
 /* 「나중」 탭: `##` 절을 접는 묶음 */

@@ -14,6 +14,11 @@ coordinator의 host 재시작 뒤 refresh·재부팅 복원·pane 재개와 같�
 로그인 실패·취소·host 정상 종료는 SIGHUP 무시 자식·PTY를 가진 자손을 포함해 종료와 폴더 정리를 기다린다. 가짜 자식 안에서 계정 관리 명령을
 실행해 aaa 세션에서는 로그인·기본 변경·삭제가 거부되는지도 확인한다.
 
+`parallel_host_logins_finish_independently_and_cancel_returns_after_cleanup`는 가짜 Claude/Codex를 동시에 보류한다.
+한쪽 성공/실패의 독립 종료, 이미 끝난 자식의 상태 정리, 같은 ID 중복 cancel과 다른 ID cancel의 동시 호출,
+두 로그인 중 host 정상 종료를 검사한다. cancel 응답 시 최종 상태·자식 PID 소멸·임시 홈 정리를 확인한다.
+원래 비동기 취소 응답은 waiting을 반환해 이 keeper가 실패한다.
+
 완료는 socket gate·CLI 상태·세션 종료 사건으로 판정한다. token은 해시만 비교하고 마지막에 DB/WAL·journal·
 상태 폴더·로그의 원문/8바이트 조각/인코딩 변형을 검사한다. 원래 코드에서 이 keeper는 로컬 profile의 공식 인증 env가
 host 실행 기록에 평문으로 저장되는 경로를 잡았다. host가 실행 환경을 저장하기 전에 가림 규칙을 등록해야 한다.
@@ -964,8 +969,18 @@ Windows 실행이 없는 현지 cross 결과는 native GREEN이 아니며 다음
   host 원본(올린 그림·보고서 문서)을 지운 뒤에도 `thread restart`가 되고 첫 사본이 남는지 본다. 첫 전송의 `sent` 표지를 저장하지
   않으면 이 다시 시작은 「아직 쓴 적 없는 첨부」로 보고 멈추므로 실패한다(표지 저장을 빼고 확인했다).
 
+## task 저장소 칸(t-0506, plan §8.330)
 
-I2 Windows 잔여 수리(plan §8.330): `unsafe_targets_readonly_and_untrusted_journals_preserve_originals`의
+- m13 `task_repo_field_picks_machine_and_path`는 labA(host 로컬)·labB(TLS 원격)에 이름이 같은 저장소(경로는 다름)를 project.toml repos로
+  두고, owner 머신이 정한 task는 그 머신 경로의 worktree로, 칸만 있는 task는 열린 thread가 적은 머신(labA)으로 띄우는지 본다.
+  덜 붐빔 차례를 뒤집으면 labB를 골라 실패한다(결함을 넣어 확인했다). 어긋남(`--repo`·`--kind`·없는 머신·repos에 없는 이름) 거부,
+  모르는 칸의 형식 어긋남, `task add|edit --repo`(경로 → 이름, 빈 글 비움, 모르는 이름 거부), 같은 머신에 같은 이름 저장소가 둘일 때의
+  거부와 끝 `/`를 붙인 `--repo` 경로로 띄우기도 본다.
+- 웹 E2E 54 `task-repo`는 labA 하나로 폼 「저장소」 고르기와 칩, 칸이 있는 task의 고정된 저장소·머신과 worktree 시작, 칸이 빈 task의
+  「고르기…」(시작 막힘) → 작업 폴더 시작과 줄에 적지 않음(iPhone)을 본다. 두 머신 사이 고르기는 m13과 웹 순수 시험이 맡는다.
+- 칸이 빈 task를 웹에서 시작하는 다른 spec(47·52)은 「작업 폴더」를 고른 뒤 시작한다(결정 4A).
+
+I2 Windows 잔여 수리(plan §8.331): `unsafe_targets_readonly_and_untrusted_journals_preserve_originals`의
 ParentDir 입력은 canonical Windows prefix에서도 `..`가 남도록 native separator를 OsString에 raw로 붙인다.
 fixture의 ParentDir 전제조건을 선행 단언한 뒤 target의 conflict 거부·escape 미생성·전체 tree 불변을 확인한다.
 `Path::join`은 Windows verbatim prefix에서 `..`를 먼저 정규화하므로 이 부정 입력을 만드는 데 쓰지 않는다.

@@ -6132,6 +6132,8 @@ L4 후속(10-20 00시 사용자 관찰): 멈춤 상태의 후보 예약과 재�
 - **프로토콜·검증·배포.** FRONT_API 1.70(로그인·기본 관리와 선택 `PaneView.account`), agent 기능 `account_auth.v2`(coordinator 실행 참조)를 더하며 AGENT_LINK/SESSION_IPC 버전은 유지한다. 미지원 coordinator agent는 인증 전달 전에 거부한다. 가짜 CLI·토큰·회전 서버 E2E가 두 머신·자동화 평가 작업·coordinator·기본 우선순위·기존 로컬 유지·실패/취소/종료 정리·재개·복원·비노출을 소유한다. 기본 제거·원본 출력 노출·인증 없는 coordinator 재개·준비 중 참조 허용 변형에서 실패와 바이트 원복을 확인한다. 착지 뒤 coordinator가 바로 배포하고 실제 host 브라우저 로그인·기본 지정과 새 작업의 적용을 사용자가 확인한다. 절차와 해제 방법은 [작업별 계정 인증](accounts.md)에 둔다. 사용량 카드·자동 배정·API 키 연결은 포함하지 않는다.
 
 
+- **운영 첫 취소 수리.** 동시 로그인 뒤 cancel이 종료·정리 전의 waiting snapshot을 반환하던 결함을 수리한다. 완료 상태를 여러 취소자와 host 종료자가 함께 기다리며, 이미 성공/실패한 결과는 유지한다. 새 가짜 PTY keeper가 두 harness의 독립 성공/실패·중복 동시 취소·두 작업 중 host 종료와 비노출을 검사한다. 로그인 PID·자식 종료·최종 정리 결과만 host 로그에 남긴다. waiting은 브라우저 열림 확인이 아니며 실제 브라우저 결과를 가짜 시험으로 대신 보증하지 않는다.
+
 ### 8.327 웹 할 일 첨부: 그림·md·html 문서·링크(10-20, t-0506)
 
 - **요청.** 사용자 10-20 18:1x 「할일에 이미지 첨부할수있게 해」, 덧붙임 「붙여넣기도 지원하게」(⌘V·Ctrl+V 필수, 메모를 쓰는 중이든 task를 고르고 있든 그 task에), 「폰에서 캡쳐 후 복사해서 바로 붙이게」(사진 고르기 없이 길게 눌러 「붙여넣기」), 18:3x 「md·html 문서도 task에 첨부(링크)」(계획서 → 피드백 → 바로 시작·할 일에 추가, 할 일 화면에서 바로 연다, thread에도 넘긴다).
@@ -6183,7 +6185,21 @@ L4 후속(10-20 00시 사용자 관찰): 멈춤 상태의 후보 예약과 재�
   - 결함 심기: 자리 잡기를 끄면(두 번째 답이 덮음) 「두 번째 답」에서, 칩으로 연 카드 펼침을 끄면 「질문 카드 펼침」에서 실패했고 되돌린 뒤 통과했다.
 
 
-### 8.330 aaa install I2 Windows ParentDir fixture 수리(10-20, t-0485)
+### 8.330 task 저장소 칸(10-20, t-0506)
+
+- **요청.** 사용자 10-20 20:5x 「506에 workspace 추가」: 할 일(task)에 저장소 칸을 더하고 CLI `aaa task add|edit --repo`, 웹 할 일 편집에서 고치며, 웹 「thread로 바로 시작」과 `aaa thread start --from-task`가 그 저장소로 띄운다. 머신마다 경로는 `project.toml` repos의 머신 매핑을 쓰고, 첫 저장소를 말없이 고르지 않는다. 21:0x 결정: 표기 1A, 이름 2A, 빈 칸 웹 4A·CLI 5A, 머신 3은 「host와 상관없이 덜 붐비는 곳」.
+- **표기(`tasks.rs`).** owner 뒤 대괄호 `- [ ] 제목 (owner) [aaa] · t-0518`. 값은 `project.toml` repos 경로의 마지막 이름(`\`도 구분자)이나 `[작업 폴더]`(저장소 없는 작업 폴더)다. 이름 꼴(영문·숫자·`.`·`_`·`-`)이나 `작업 폴더`가 아닌 끝 대괄호(`[긴급]`)는 제목 글이다. 이름 꼴인데 repos에 없는 칸(손으로 쓴 `[WIP]`)은 할 일 화면·`task list`에 형식 어긋남으로 보인다. 제목 끝 `[이름]`은 뒤에 owner·저장소 칸이 오면 제목으로 읽히므로(`배포 [v2] (claude)`) 그대로 고칠 수 있고, 칸 없이 쓰면 저장소로 읽히므로 저장을 거부한다(다시 읽기 검사). owner 없는 옛 줄 `배포 [v2]`는 표기상 저장소 칸으로 읽힌다(repos에 없으면 형식 어긋남으로 보인다). 「정리 제안」은 칸을 그대로 둔다.
+- **쓰기(`task_edit`·`task_repo::check_repo`).** `TaskOp` Add/Update `repo`(Update: 없음은 그대로, 빈 글은 비움). 경로를 받으면 repos 줄을 찾아 이름으로 적고, repos에 없는 이름은 거부한다(있는 이름을 알린다). 자동 정리는 칸을 바꾸지 않는다. CLI `aaa task add|edit --repo <이름|경로|작업 폴더>`, `task list`는 칸을 줄에 보인다.
+- **띄우기(`task_repo::apply_task_repo`, `--from-task`만).** `apply_from_task`(owner → profile·머신) 뒤에 칸을 옮긴다.
+  - 이름: 그 이름의 repos 줄(머신, 그 머신 경로) 가운데 owner·`--machine`의 머신이 있으면 그것(없으면 거부), 한 줄뿐이면 그것, 아니면 덜 붐비는 머신의 줄이다. 고를 수 있는 머신이 없으면 그 저장소가 있는 머신을 알리며 거부한다. 고른 머신에 같은 이름 저장소가 둘 이상이면 말없이 고르지 않고 경로(`--repo`)를 달라고 거부한다. `--repo` 경로는 끝 구분자를 무시하고 비교한다. 경로·머신을 정해 worktree로 띄운다. 머신이 빈 repos 줄은 host 로컬 머신이고, 로컬 agent가 없으면 그 까닭으로 거부한다.
+  - `작업 폴더`: 작업 폴더로, 머신은 owner·`--machine`, 아니면 덜 붐비는 머신이다.
+  - 빈 칸: 요청의 `--repo`를 칸처럼 쓴다(웹 창이 고른 이름). 그것도 없으면 작업 폴더로 띄우고, `--kind`를 주지 않았으면 경고 「task에 저장소 칸이 없어 작업 폴더로 띄웠다」를 단다. repos에 없는 경로를 주면 지금처럼 그 경로로 띄운다(일반 `thread start --repo`와 같다).
+  - 어긋남: 칸과 다른 `--repo`(이름으로 비교), 칸이 저장소인데 `--kind dir`, 칸이 작업 폴더인데 `--kind worktree`·`--repo`는 거부한다. `thread restart`는 처음 띄운 자리를 그대로 쓴다.
+- **덜 붐빔(`least_busy_order`).** 연결돼 있고 점검 이상(`problems`)이 없는 머신만, 모든 프로젝트의 열린(시작 중 포함) thread가 적은 차례 → health `load_x100`이 낮은 차례(모르면 뒤) → 이름순. 지금 고르는 기준이 코드에 따로 없어 coordinator가 이 기준을 확인했다.
+- **웹(FRONT_API 1.73).** `TaskBoard.repos`(칸에 쓸 이름), 할 일 폼 「저장소」 고르기(정하지 않음·이름·작업 폴더), 목록 줄과 상세의 칩. 「바로 시작」 미리보기는 `repo`(task 칸)·`local_machine`·`machine_order`(덜 붐비는 차례)를 더 준다. 창은 저장소를 이름으로 고르고, 칸이 있으면 고정, 비면 「고르기…」로 시작해 저장소나 작업 폴더를 고르기 전에는 「시작」을 막는다(고른 값은 task 줄에 적지 않는다). 머신은 그 저장소가 있는 머신만 보이고 owner의 머신, 아니면 `machine_order`에서 후보에 든 첫 머신이 기본이며 「(덜 붐빔)」으로 표시한다. 시작 요청은 고른 머신의 경로를 보낸다(그 머신에 같은 이름이 둘이면 이름을 보내 host가 거부하게 한다). 같은 창의 「host 머신」 항목은 별도 할 일이라 그대로 두었다.
+- **검증.** host 유닛 `tasks::tests::repo_field_reads_and_writes`(읽기·쓰기·제목 거부·정리 제안), `task_edit::tests::repo_field_edits`(경로 → 이름·비움·그대로·거부), `task_repo::tests`(이름·값 판정, 덜 붐빔 차례). m13 `task_repo_field_picks_machine_and_path`(labA·labB에 같은 이름 저장소: owner 머신 → 그 머신 경로, 칸만 → 덜 붐비는 labA, 작업 폴더, 어긋남 넷 거부, 모르는 칸의 형식 어긋남, `task add|edit --repo`)와 `start_defaults_profile_kind_and_task`(빈 칸 경고). 웹 E2E 54 `task-repo`(폼 고르기·칩, 고정된 저장소로 worktree, 빈 칸은 고르기 전 시작 막힘·작업 폴더·줄에 적지 않음, iPhone). 47·52는 빈 칸 task를 「작업 폴더」로 골라 시작한다. 웹 순수 시험 `tasksModel.test.mjs`(폼 동작, 이름별 머신 묶기, 기본 머신).
+
+### 8.331 aaa install I2 Windows ParentDir fixture 수리(10-20, t-0485)
 
 - **원문 판정.** Windows main CI의 잔여 `unsafe_targets_readonly_and_untrusted_journals_preserve_originals`
   실패는 invalid journal status 전후 tree 비교(302행)를 지난 뒤 303행의 ParentDir target 거부에서 났다.

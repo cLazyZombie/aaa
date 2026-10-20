@@ -419,13 +419,13 @@ if values.get('stubborn'):
     s.settimeout(None)
     if os.fork()==0:
         s.close();signal.pause();sys.exit(0)
-s.sendall((json.dumps(dict(tid='login',phase=8,home=str(home.parent)))+'\n').encode())
+s.sendall((json.dumps(dict(tid='login',phase=8,home=str(home.parent),harness=kind,pid=os.getpid()))+'\n').encode())
 assert s.recv(1)==b'1'
 value=values[kind]
 raw=value if isinstance(value,str) else json.dumps(value)
 print(raw,flush=True)
 print(raw,file=sys.stderr,flush=True)
-if values.get('fail'): sys.exit(1)
+if values.get('fail') or values.get('fail_for')==kind: sys.exit(1)
 if kind=='codex':
     p=home/'auth.json';p.write_text(raw);p.chmod(0o600)
 "#,
@@ -742,4 +742,99 @@ fn host_login_defaults_pin_threads_and_coordinators_without_exposing_credentials
         &|_| false,
     );
     assert!(leak.is_empty(), "인증 비밀이 남은 경로: {leak:?}");
+}
+
+#[test]
+fn parallel_host_logins_finish_independently_and_cancel_returns_after_cleanup() {
+    let (token, encoded) = canary("opaque");
+    let gate = Gate::new();
+    let upstream = Upstream::new(vec![]);
+    let mut w = world(&format!("http://{}", upstream.addr), &gate, &token, POLICY_HARNESS);
+    let values = serde_json::json!({"claude":format!("sk-ant-oat01-{token}"),"codex":{"tokens":{"access_token":token,"refresh_token":token}}});
+    let fixture = install_login_fixture(&w, &gate, &values);
+    let start = |harness: &str, suffix: &str| {
+        let v = w.h.ok(&["account", "login", &format!("parallel-{harness}-{suffix}"), "--harness", harness]);
+        v["login"]["id"].as_str().unwrap().to_string()
+    };
+    let a = start("claude", "done");
+    let b = start("codex", "done");
+    let mut held = gate.take(2, 8);
+    let b_at = held.iter().position(|(_, v)| v["harness"] == "codex").unwrap();
+    let waiting = held.remove(b_at);
+    let a_home = PathBuf::from(held[0].1["home"].as_str().unwrap());
+    Gate::release(held, b'1');
+    login_result(&w, &a, "succeeded");
+    assert!(!a_home.exists(), "다른 로그인이 진행 중이어도 종료한 자식의 자료를 정리한다");
+    assert_eq!(w.h.ok(&["account", "login-status", &b])["login"]["state"], "waiting");
+    let b_home = PathBuf::from(waiting.1["home"].as_str().unwrap());
+    Gate::release(vec![waiting], b'1');
+    login_result(&w, &b, "succeeded");
+    assert!(!b_home.exists());
+
+    assert_eq!(w.h.ok(&["account", "login-cancel", &a])["login"]["state"], "succeeded");
+    // 이미 자식이 실패해 끝난 작업도 다른 로그인과 독립적으로 waiting을 걷는다.
+    let mut failed_values = values.clone();
+    failed_values["fail_for"] = "claude".into();
+    std::fs::write(&fixture, serde_json::to_vec(&failed_values).unwrap()).unwrap();
+    let a = start("claude", "failed");
+    let b = start("codex", "held");
+    let mut held = gate.take(2, 8);
+    let a_at = held.iter().position(|(_, v)| v["harness"] == "claude").unwrap();
+    let done = held.remove(a_at);
+    let a_home = PathBuf::from(done.1["home"].as_str().unwrap());
+    Gate::release(vec![done], b'1');
+    login_result(&w, &a, "failed");
+    assert!(!a_home.exists());
+    assert_eq!(w.h.ok(&["account", "login-cancel", &a])["login"]["state"], "failed");
+    assert_eq!(w.h.ok(&["account", "login-status", &b])["login"]["state"], "waiting");
+    assert_eq!(w.h.ok(&["account", "login-cancel", &b])["login"]["state"], "cancelled");
+    assert!(!Path::new(held[0].1["home"].as_str().unwrap()).exists());
+    drop(held);
+
+    std::fs::write(
+        &fixture,
+        serde_json::to_vec(&serde_json::json!({"claude":token,"codex":values["codex"],"stubborn":true})).unwrap(),
+    )
+    .unwrap();
+    let a = start("claude", "cancel");
+    let b = start("codex", "cancel");
+    let held = gate.take(2, 8);
+    let ids = [&a, &a, &b];
+    let results = std::thread::scope(|scope| {
+        let barrier = Arc::new(std::sync::Barrier::new(ids.len()));
+        let calls: Vec<_> = ids
+            .iter()
+            .map(|id| {
+                let barrier = barrier.clone();
+                let node = &w.h;
+                scope.spawn(move || {
+                    barrier.wait();
+                    node.ok(&["account", "login-cancel", id])
+                })
+            })
+            .collect();
+        calls.into_iter().map(|c| c.join().unwrap()).collect::<Vec<_>>()
+    });
+    for v in results {
+        assert_eq!(v["login"]["state"], "cancelled", "cancel 응답은 자식 종료·자료 정리 뒤의 최종 상태여야 한다");
+    }
+    for (_, v) in &held {
+        assert!(!Path::new(v["home"].as_str().unwrap()).exists());
+        assert_ne!(
+            unsafe { libc::kill(v["pid"].as_i64().unwrap() as i32, 0) },
+            0,
+            "취소 응답 뒤 로그인 자식이 없어야 한다"
+        );
+    }
+    drop(held);
+    start("claude", "shutdown");
+    start("codex", "shutdown");
+    let held = gate.take(2, 8);
+    w.lab.signal("host", libc::SIGTERM);
+    assert!(w.lab.wait_exit("host", T).success());
+    for (_, v) in &held {
+        assert!(!Path::new(v["home"].as_str().unwrap()).exists());
+    }
+    drop(held);
+    assert!(hits(&[w.h.state.clone(), w.lab.root.join("host.log")], &needles(&token, &encoded), &|_| false).is_empty());
 }

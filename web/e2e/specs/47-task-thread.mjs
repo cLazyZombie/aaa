@@ -44,6 +44,8 @@ async function startFromDetail(p, title, shotName) {
   await detail.getByTestId("task-handoff-start").click();
   const dialog = p.getByTestId("task-start");
   await domIs(p, "바로 시작 값", () => document.querySelector('[data-testid="task-start"] form')?.dataset.startState === "ready");
+  // 저장소 칸이 빈 task는 고르기 전에는 시작하지 못한다(plan §8.330): 이 spec의 task는 작업 폴더로 띄운다
+  await dialog.getByTestId("task-start-repo").selectOption("작업 폴더");
   if (shotName) await shot(p, shotName);
   await dialog.getByTestId("task-start-go").click();
   await p.getByTestId("task-started").waitFor();
@@ -87,6 +89,7 @@ export default async function ({ page }) {
     const kept = read();
     const threads = aaa("thread", "list", "demo").threads.length;
     write(kept.replace("- [ ] 원격 일\n", "- [ ] 원격 일\n  그사이 더한 메모\n"));
+    await page.getByTestId("task-start-repo").selectOption("작업 폴더");
     await page.getByTestId("task-start-go").click();
     const error = page.getByTestId("task-start-error");
     await error.waitFor();
@@ -214,6 +217,7 @@ export default async function ({ page }) {
       await p.getByTestId("task-handoff-start").click();
       await domIs(p, "바로 시작 값", () => document.querySelector('[data-testid="task-start"] form')?.dataset.startState === "ready");
       await p.getByTestId("task-start-limit").waitFor();
+      await p.getByTestId("task-start-repo").selectOption("작업 폴더");
       if (!(await p.getByTestId("task-start-go").isDisabled())) throw new Error("한도를 넘기는데 확인 없이 시작할 수 있다");
       await shot(p, `thread-${kind}-start-limit`);
       await p.getByTestId("task-start-over").check();
