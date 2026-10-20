@@ -202,3 +202,29 @@ fn isolated_timeouts_expire_and_a_burst_requires_a_success_before_recovery() {
     assert_eq!(recovered.len(), 1);
     assert!(recovered[0].recovered);
 }
+
+#[tokio::test]
+async fn a_failed_inbox_commit_holds_later_recovery() {
+    let (_lab, h) = host(String::new());
+    h.view_presence(1, "desk", true);
+    h.touch_device("desk", "touch");
+    let mut notices = h.notice_events.subscribe();
+    let now = Instant::now();
+    h.task_failed(Task::Ticker);
+    h.health.lock().unwrap().progress(Task::Ticker, now);
+    let sql = rusqlite::Connection::open(h.state.join("host.db")).unwrap();
+    sql.execute_batch("CREATE TRIGGER refuse_failed BEFORE INSERT ON inbox WHEN NEW.kind='host-health' AND NEW.event='failed' BEGIN SELECT RAISE(ABORT, 'fixture storage failure'); END;").unwrap();
+    publish(&h, now + STABLE).await;
+    assert!(h.db.inbox_list(Some("demo"), true).unwrap().is_empty(), "이상 기록이 실패하면 뒤 회복도 기다려야 한다");
+    assert!(notices.try_recv().is_err());
+    sql.execute_batch("DROP TRIGGER refuse_failed;").unwrap();
+    drop(sql);
+    publish(&h, now + STABLE).await;
+    assert_eq!(notices.try_recv().unwrap().kind, aaa_proto::NoticeKind::HostIssue);
+    assert_eq!(notices.try_recv().unwrap().kind, aaa_proto::NoticeKind::HostRecovered);
+    assert!(notices.try_recv().is_err());
+    publish(&h, now + STABLE * 2).await;
+    assert!(notices.try_recv().is_err());
+    let items = h.db.inbox_list(Some("demo"), true).unwrap();
+    assert_eq!(items.iter().map(|i| i.event.as_str()).collect::<Vec<_>>(), ["failed", "recovered"]);
+}

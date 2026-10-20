@@ -526,7 +526,7 @@ impl Host {
     }
 
     /// post와 섞지 않는 유일한 예외. supervisor만 정적인 안전 필드로 이 항목을 만든다.
-    pub(crate) async fn publish_host_health(&self, event: crate::supervisor::Transition) {
+    pub(crate) async fn publish_host_health(&self, event: crate::supervisor::Transition) -> bool {
         let project = self.sole_project().ok().flatten().unwrap_or_default();
         let item = InboxItem {
             id: format!("host-health-{}", event.id),
@@ -547,10 +547,10 @@ impl Host {
                     self.inbox_publish(&item);
                 }
             }
-            Ok(false) => return, // 이미 내구 inbox에 확정했다. 외부 발송은 반복하지 않는다.
+            Ok(false) => return true, // 이미 내구 inbox에 확정했다. 외부 발송은 반복하지 않는다.
             Err(_) => {
                 tracing::error!("host 이상 inbox 저장 실패");
-                return;
+                return false;
             }
         }
         // 기존 '쓰는 기기' 판정 그대로. 앱을 쓰면 앱 안 알림 하나만 보낸다.
@@ -571,7 +571,7 @@ impl Host {
                 long: true,
                 at_ms: item.created_at_ms,
             });
-            return;
+            return true;
         }
         let place = Place::Project(project.clone());
         let titles = HashMap::new();
@@ -588,6 +588,7 @@ impl Host {
                 if ok { "host 이상 알림 전달" } else { "host 이상 알림 실패(재전송 없음)" },
             );
         }
+        true
     }
 
     pub fn start_notifier(self: &Arc<Self>) {

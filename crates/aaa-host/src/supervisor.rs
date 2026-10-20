@@ -316,7 +316,9 @@ impl Host {
             events
         };
         for event in events {
-            self.publish_host_health(event).await;
+            if !self.publish_host_health(event).await {
+                break;
+            }
         }
     }
 
