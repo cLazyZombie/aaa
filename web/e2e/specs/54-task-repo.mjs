@@ -1,4 +1,4 @@
-// task 저장소 칸(plan §8.328, 사용자 10-20 「506에 workspace 추가」): 할 일 폼에서 project.toml repos 이름이나 「작업 폴더」를 고르면
+// task 저장소 칸(plan §8.330, 사용자 10-20 「506에 workspace 추가」): 할 일 폼에서 project.toml repos 이름이나 「작업 폴더」를 고르면
 // task 줄 owner 뒤에 `[이름]`으로 적는다. 「바로 시작」은 그 저장소로 고정하고 그 저장소가 있는 머신을 기본으로 고른다(덜 붐비는
 // 머신 고르기는 m13 `task_repo_field_picks_machine_and_path`가 두 머신으로 본다). 칸이 빈 task는 저장소나 작업 폴더를 고르기 전에는
 // 시작하지 못하고, 고른 저장소로 띄우되 그 값은 task 줄에 적지 않는다. 시간은 기다리지 않는다: 화면 표지(`data-tasks-sha`·`data-start-state`)와 파일 글을 본다.

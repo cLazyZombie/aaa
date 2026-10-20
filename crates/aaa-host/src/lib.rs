@@ -4,6 +4,7 @@
 //! - pane 화면은 agent(session host)가 정본이다. host는 마지막 화면 mirror를 가져 agent가 끊겨도 읽기 전용으로 보여 준다.
 
 mod adopt;
+mod answer;
 mod app_badge;
 mod attach;
 /// 자동화 정본 타입의 편집기용 JSON Schema. host 상태를 읽지 않는다.
@@ -1569,6 +1570,9 @@ impl Host {
             .map(FrontResponse::Question),
             FrontRequest::ThreadMessage { project, thread, text, mode } => {
                 self.thread_message(&project, &thread, text, mode, actor).await.map(FrontResponse::Message)
+            }
+            FrontRequest::ThreadAnswer { project, thread, report_hash, picks, text } => {
+                self.thread_answer(&project, &thread, &report_hash, picks, text, actor).await.map(FrontResponse::Thread)
             }
             FrontRequest::Preferences => Ok(FrontResponse::Preferences(self.preferences.get())),
             FrontRequest::PreferencesSet { settings, pins } => {

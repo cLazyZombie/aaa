@@ -130,7 +130,7 @@ describe("할 일 편집", () => {
     assert.equal(canonicalLine("일", "me", "aaa", "t-0001"), "- [ ] 일 (me) [aaa] · t-0001");
   });
 
-  it("저장소 칸(plan §8.328): 폼은 바뀐 때만 보내고 빈 글은 비움, 「바로 시작」은 이름마다 머신을 묶고 덜 붐비는 머신이 기본", () => {
+  it("저장소 칸(plan §8.330): 폼은 바뀐 때만 보내고 빈 글은 비움, 「바로 시작」은 이름마다 머신을 묶고 덜 붐비는 머신이 기본", () => {
     const one = { ...by(4), repo: "aaa" };
     assert.deepEqual(draftOps(one, draftOf(one, [], null)), [], "그대로면 동작 없음");
     const cleared = draftOps(one, { ...draftOf(one, [], null), repo: "" });

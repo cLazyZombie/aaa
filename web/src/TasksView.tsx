@@ -87,8 +87,8 @@ const EDIT_API: readonly [number, number] = [1, 62];
 const LINK_API: readonly [number, number] = [1, 63];
 /** task 첨부 그림 올리기(plan §8.327) */
 const ATTACH_API: readonly [number, number] = [1, 71];
-/** task 저장소 칸(plan §8.328) */
-const REPO_API: readonly [number, number] = [1, 72];
+/** task 저장소 칸(plan §8.330) */
+const REPO_API: readonly [number, number] = [1, 73];
 
 /** 이 기기가 알린 마지막 자동 정리 기록 id(기기마다, 없으면 처음 읽은 기록까지를 본 것으로 둔다) */
 const AUTO_SEEN_KEY = "aaa:tasks:auto-clean-seen";

@@ -44,7 +44,7 @@ async function startFromDetail(p, title, shotName) {
   await detail.getByTestId("task-handoff-start").click();
   const dialog = p.getByTestId("task-start");
   await domIs(p, "바로 시작 값", () => document.querySelector('[data-testid="task-start"] form')?.dataset.startState === "ready");
-  // 저장소 칸이 빈 task는 고르기 전에는 시작하지 못한다(plan §8.328): 이 spec의 task는 작업 폴더로 띄운다
+  // 저장소 칸이 빈 task는 고르기 전에는 시작하지 못한다(plan §8.330): 이 spec의 task는 작업 폴더로 띄운다
   await dialog.getByTestId("task-start-repo").selectOption("작업 폴더");
   if (shotName) await shot(p, shotName);
   await dialog.getByTestId("task-start-go").click();

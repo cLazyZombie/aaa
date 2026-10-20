@@ -1034,7 +1034,7 @@ fn task_attachments_reach_a_remote_agent() {
     assert_eq!(std::fs::read(work.join("attachments").join(&png)).unwrap(), img, "첫 사본은 그대로다");
 }
 
-/// task 저장소 칸(plan §8.328): `[repo]` task는 그 이름의 project.toml repos 줄이 있는 머신에서 그 머신의 경로로 띄운다. owner
+/// task 저장소 칸(plan §8.330): `[repo]` task는 그 이름의 project.toml repos 줄이 있는 머신에서 그 머신의 경로로 띄운다. owner
 /// 머신이 있으면 그 머신이고(거기에 없으면 거부), 없으면 덜 붐비는(열린 thread가 적은) 머신이다. `--repo`·`--kind`가 칸과 어긋나면
 /// 거부하고, project.toml에 없는 이름은 할 일 목록에 형식 어긋남으로 보인다. `task add|edit --repo`는 경로를 이름으로 적는다.
 #[test]
@@ -1853,7 +1853,7 @@ fn start_defaults_profile_kind_and_task() {
         .unwrap();
     let c = w.start(&["--from-task", "새 일"]);
     assert_eq!((c["profile"].as_str(), c["title"].as_str()), (Some("fake"), Some("새 일")), "{c}");
-    // 저장소 칸이 빈 task는 작업 폴더로 띄우고 경고한다(plan §8.328, --kind를 주면 경고 없음)
+    // 저장소 칸이 빈 task는 작업 폴더로 띄우고 경고한다(plan §8.330, --kind를 주면 경고 없음)
     assert_eq!(c["thread_kind"], "dir", "{c}");
     assert_eq!(c["warnings"], serde_json::json!(["task에 저장소 칸이 없어 작업 폴더로 띄웠다"]), "{c}");
     let o = w.h.run(&["thread", "start", "demo", "--from-task", "맡긴 일"]);
@@ -4216,7 +4216,13 @@ fn coordinator_flow() {
             && guide.contains("`aaa post user --request")
             && !guide.contains("aaa post demo")
             && guide.contains("aaa project sweep demo")
-            && guide.contains("--from-task"),
+            && guide.contains("--from-task")
+            // thread의 시작 질문을 받는 쪽(plan §8.328): 채팅으로 묻고 턴을 끝낸다. harness 질문 창은 턴을 막아 쓰지 않는다
+            && guide.contains("시작할 때 모아 묻는 질문")
+            && guide.contains("턴을 끝내고 다른 일을 이어 간다")
+            && guide.contains("`aaa thread answer <id> 1A 2B`")
+            && guide.contains("## 앱 안 참조")
+            && guide.contains("harness의 질문 창(예: Claude Code AskUserQuestion)은 쓰지 않는다"),
         "{guide}"
     );
     let e = w.h.json(&["project", "create", "p2"]).expect_err("둘째 프로젝트");

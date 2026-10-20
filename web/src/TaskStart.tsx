@@ -21,7 +21,7 @@ export function StartDialog({ task, owners, onStarted, onClose }: { task: TaskVi
   const [profile, setProfile] = useState("");
   // 사용자가 고른 머신(없으면 기본값: owner의 머신 → 덜 붐비는 머신)
   const [picked, setPicked] = useState<string | null>(null);
-  // 저장소 칸(plan §8.328): 저장소 이름이나 `작업 폴더`. task 칸이 비면 빈 글로 시작해 고를 때까지 「시작」을 막는다
+  // 저장소 칸(plan §8.330): 저장소 이름이나 `작업 폴더`. task 칸이 비면 빈 글로 시작해 고를 때까지 「시작」을 막는다
   const [choice, setChoice] = useState("");
   const [overLimit, setOverLimit] = useState(false);
   useEffect(() => {

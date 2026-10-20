@@ -134,7 +134,7 @@ export interface DetailProps {
   onStart?: (t: TaskView) => void;
   /** host가 task 첨부를 안다(FRONT_API 1.71): 붙이기·떼기. 보기는 늘 한다 */
   attachApi?: boolean;
-  /** host가 task 저장소 칸을 안다(FRONT_API 1.72): 폼의 저장소 고르기 */
+  /** host가 task 저장소 칸을 안다(FRONT_API 1.73): 폼의 저장소 고르기 */
   repoApi?: boolean;
   /** 첨부 문서 열기(올린 md·html, 보고서 안 문서: 파일 보기) */
   onOpenAttachment?: (a: TaskAttachment) => void;

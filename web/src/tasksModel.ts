@@ -194,7 +194,7 @@ export interface TaskDraft {
   parent: TaskAnchor | null;
   /** 새 task에 이을 thread(「task로 만들기」, T3) */
   thread: string | null;
-  /** 저장소 칸(plan §8.328): 저장소 이름·`작업 폴더`, 빈 글은 정하지 않음 */
+  /** 저장소 칸(plan §8.330): 저장소 이름·`작업 폴더`, 빈 글은 정하지 않음 */
   repo: string;
 }
 
@@ -404,7 +404,7 @@ export function ownerFixes(owner: string | null): { profile: boolean; machine: b
   return at < 0 ? { profile: true, machine: false } : { profile: at > 0, machine: at < owner.length - 1 };
 }
 
-/** 「바로 시작」의 저장소 이름마다 그 저장소가 있는 머신과 경로(plan §8.328). 머신이 빈 저장소 줄은 host 로컬 머신이다(없으면 뺀다) */
+/** 「바로 시작」의 저장소 이름마다 그 저장소가 있는 머신과 경로(plan §8.330). 머신이 빈 저장소 줄은 host 로컬 머신이다(없으면 뺀다) */
 export function repoMachines(p: Pick<ThreadStartPreview, "repos" | "local_machine">): Map<string, { machine: string; path: string }[]> {
   const out = new Map<string, { machine: string; path: string }[]>();
   for (const r of p.repos) {

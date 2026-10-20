@@ -1,7 +1,7 @@
 //! TASKS.md 읽기(0.2.35 의미 그대로, 부록 A)와 쓰는 꼴(할 일 편집 T2, plan §8.311). 고치기는 `task_edit.rs`가 한다.
 //!
 //! - task 줄: `- [ ] 제목 (owner) [저장소] · t-0001`. `- [x]`도 task다(완료는 줄을 지워 표시한다).
-//! - 저장소 칸(plan §8.328): owner 뒤 대괄호에 `project.toml` repos 경로의 마지막 이름(`[aaa]`)이나 `[작업 폴더]`(저장소 없는 작업
+//! - 저장소 칸(plan §8.330): owner 뒤 대괄호에 `project.toml` repos 경로의 마지막 이름(`[aaa]`)이나 `[작업 폴더]`(저장소 없는 작업
 //!   폴더)를 쓴다. 비면 정하지 않은 것이다. 이름·`작업 폴더` 꼴이 아닌 끝 대괄호는 제목 글이다.
 //! - owner: 없음·`agent`는 미할당, `me`는 사용자, `profile`·`@machine`·`profile@machine`은 agent, 그 밖의 글은 사람.
 //!   옛 표기 `(agent → t-0007)`도 읽는다.
@@ -632,7 +632,7 @@ mod tests {
         }
     }
 
-    /// 저장소 칸(plan §8.328): owner 뒤 대괄호. 이름·`작업 폴더` 꼴이 아닌 끝 대괄호는 제목 글이다
+    /// 저장소 칸(plan §8.330): owner 뒤 대괄호. 이름·`작업 폴더` 꼴이 아닌 끝 대괄호는 제목 글이다
     #[test]
     fn repo_field_reads_and_writes() {
         let md = "## A\n- [ ] 고치기 (claude) [aaa] · t-0518\n- [ ] 정리 [작업 폴더]\n- [ ] 맡김 (@mac-b) [rc-unity]\n\

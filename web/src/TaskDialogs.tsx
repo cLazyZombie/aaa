@@ -46,7 +46,7 @@ export function TaskModal({ label, busy, onClose, wide, children, testid }: { la
 export interface MyEdit {
   title: string;
   owner: string | null;
-  /** 저장소 칸(plan §8.328). 칸을 고치지 않는 저장(메모 붙이기 등)은 비운다 */
+  /** 저장소 칸(plan §8.330). 칸을 고치지 않는 저장(메모 붙이기 등)은 비운다 */
   repo?: string | null;
   thread: string | null;
   notes: string[];
