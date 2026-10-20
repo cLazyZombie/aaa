@@ -45,7 +45,10 @@ fn account_items(h: &Host) -> Vec<aaa_proto::InboxItem> {
 #[test]
 fn codex_and_claude_logins_tell_email_plan_and_expiry_only_when_the_cli_does() {
     let id = codex_identity(&codex_auth("work@example.com", "plus"));
-    assert_eq!((id.email.as_deref(), id.plan.as_deref(), id.expires_ms), (Some("work@example.com"), Some("plus"), None));
+    assert_eq!(
+        (id.email.as_deref(), id.plan.as_deref(), id.expires_ms),
+        (Some("work@example.com"), Some("plus"), None)
+    );
     // id_token이 없거나 깨졌으면 모른다
     assert_eq!(codex_identity(r#"{"tokens":{"access_token":"x"}}"#), Identity::default());
     assert_eq!(codex_identity(r#"{"tokens":{"id_token":"a.!!!.b"}}"#), Identity::default());
@@ -55,7 +58,10 @@ fn codex_and_claude_logins_tell_email_plan_and_expiry_only_when_the_cli_does() {
     let now = 1_000 * DAY;
     let out = "✓ Long-lived authentication token created successfully!\nYour OAuth token (valid for 1 year):\n";
     // 메일을 남긴 파일이 없으면 메일은 모르고, 유효 기간만 읽는다
-    assert_eq!(claude_identity(out, &[&dir], now), Identity { expires_ms: Some(now + 365 * DAY), ..Default::default() });
+    assert_eq!(
+        claude_identity(out, &[&dir], now),
+        Identity { expires_ms: Some(now + 365 * DAY), ..Default::default() }
+    );
     std::fs::write(dir.join(".claude.json"), r#"{"oauthAccount":{"emailAddress":"me@example.com"}}"#).unwrap();
     assert_eq!(claude_identity("valid for 30 days", &[&dir], now).email.as_deref(), Some("me@example.com"));
     assert_eq!(claude_identity("valid for 30 days", &[&dir], now).expires_ms, Some(now + 30 * DAY));
@@ -67,7 +73,9 @@ fn codex_and_claude_logins_tell_email_plan_and_expiry_only_when_the_cli_does() {
 #[test]
 fn health_is_rejection_first_then_known_expiry() {
     let now = 100 * DAY;
-    let at = |e: Option<u64>, r: Option<u64>| health(&AccountMeta { expires_ms: e, rejected_ms: r, ..Default::default() }, now);
+    let at = |e: Option<u64>, r: Option<u64>| {
+        health(&AccountMeta { expires_ms: e, rejected_ms: r, ..Default::default() }, now)
+    };
     assert_eq!(at(None, None), AccountHealth::Ok, "만료를 모르면 정상");
     assert_eq!(at(Some(now + 8 * DAY), None), AccountHealth::Ok);
     assert_eq!(at(Some(now + 7 * DAY), None), AccountHealth::Expiring);
@@ -102,7 +110,10 @@ async fn people_log_in_from_the_web_but_only_controllers_and_local_cli_see_email
     }
     // 로그인·기본은 사람이: 웹 조작 기기는 경계를 지나고(가짜 harness 이름이라 BadRequest), 세션 안·보기 전용은 거부
     let login = FrontRequest::AccountLogin { name: "x".into(), harness: "nope".into() };
-    assert_eq!(h.call(DeviceRole::Controller, "device:phone", login.clone()).await.unwrap_err().code, ErrorCode::BadRequest);
+    assert_eq!(
+        h.call(DeviceRole::Controller, "device:phone", login.clone()).await.unwrap_err().code,
+        ErrorCode::BadRequest
+    );
     for (role, actor) in [
         (DeviceRole::Reader, "device:tv"),
         (DeviceRole::Local, "local:cli@coordinator"),
@@ -118,10 +129,11 @@ async fn people_log_in_from_the_web_but_only_controllers_and_local_cli_see_email
             assert_eq!(e.code, ErrorCode::Forbidden, "{actor}: {req:?}");
         }
     }
-    h.call(DeviceRole::Controller, "device:phone", FrontRequest::AccountDefault {
-        harness: "codex".into(),
-        account: Some("work".into()),
-    })
+    h.call(
+        DeviceRole::Controller,
+        "device:phone",
+        FrontRequest::AccountDefault { harness: "codex".into(), account: Some("work".into()) },
+    )
     .await
     .unwrap();
     assert_eq!(h.default_account("codex").unwrap().as_deref(), Some("work"));

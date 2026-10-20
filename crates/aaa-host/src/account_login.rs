@@ -89,11 +89,8 @@ impl Host {
             return Err(fail());
         }
         // 다시 로그인이면 그 별칭에 기록된 메일로 들어와야 한다(「이 메일로 로그인하세요」)
-        let expect_email = if self.accounts.list()?.iter().any(|a| a.name == name) {
-            self.account_meta(name).email
-        } else {
-            None
-        };
+        let expect_email =
+            if self.accounts.list()?.iter().any(|a| a.name == name) { self.account_meta(name).email } else { None };
         let mut jobs = self.accounts.logins.lock().unwrap();
         jobs.values().for_each(expire);
         if jobs.values().any(|j| {
@@ -268,7 +265,8 @@ impl Host {
             // 평문 정리에 실패하면 기존 금고 값을 바꾸지 않는다.
             let cleaned = std::fs::remove_dir_all(&temp.0).is_ok();
             drop(temp);
-            let other_email = matches!((&v.expect_email, &identity.email), (Some(a), Some(b)) if !a.eq_ignore_ascii_case(b));
+            let other_email =
+                matches!((&v.expect_email, &identity.email), (Some(a), Some(b)) if !a.eq_ignore_ascii_case(b));
             let mut result = Err(fail());
             if cleaned && let Ok(secret) = secret {
                 if other_email {
@@ -334,7 +332,12 @@ impl Host {
 
     /// 다시 로그인에 다른 메일이 들어온 뒤의 선택(FRONT_API 1.79): 바꾸면 이 별칭이 새 메일 인증이 되고(최초 인증 시각도 새로),
     /// 아니면 새 인증을 버린다. 감사 기록에는 별칭과 선택만 남긴다
-    pub(crate) fn account_login_confirm(&self, id: &str, switch: bool, actor: &str) -> Result<FrontResponse, ErrorBody> {
+    pub(crate) fn account_login_confirm(
+        &self,
+        id: &str,
+        switch: bool,
+        actor: &str,
+    ) -> Result<FrontResponse, ErrorBody> {
         let (view, pending) = {
             let jobs = self.accounts.logins.lock().unwrap();
             let job = jobs.get(id).ok_or_else(fail)?;
@@ -360,7 +363,11 @@ impl Host {
         } else {
             v.state = "kept".into();
         }
-        self.db.audit(actor, "account_login_confirm", &format!("{} {}", v.account, if switch { "switch" } else { "keep" }));
+        self.db.audit(
+            actor,
+            "account_login_confirm",
+            &format!("{} {}", v.account, if switch { "switch" } else { "keep" }),
+        );
         tracing::info!(login = %id, state = %v.state, "계정 로그인 메일 확인");
         let out = v.clone();
         drop(v);

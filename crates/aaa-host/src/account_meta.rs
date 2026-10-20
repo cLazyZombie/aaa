@@ -111,7 +111,9 @@ pub(crate) fn claude_identity(output: &str, dirs: &[&Path], now: u64) -> Identit
 
 /// 「valid for 1 year」·「valid for 30 days」·「valid for 8h」 같은 기간(ms). 읽지 못하면 없음
 fn valid_for_ms(text: &str) -> Option<u64> {
-    let re = regex::Regex::new(r"(?i)valid for\s+(\d{1,5})\s*(years?|yrs?|y|months?|mo|weeks?|w|days?|d|hours?|hrs?|h)\b").ok()?;
+    let re =
+        regex::Regex::new(r"(?i)valid for\s+(\d{1,5})\s*(years?|yrs?|y|months?|mo|weeks?|w|days?|d|hours?|hrs?|h)\b")
+            .ok()?;
     let c = re.captures(text)?;
     let n: u64 = c[1].parse().ok()?;
     let unit = c[2].to_ascii_lowercase();

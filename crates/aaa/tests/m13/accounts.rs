@@ -976,9 +976,7 @@ fn host_relogin_checks_the_email_and_asks_before_switching() {
     let upstream = Upstream::new(vec![]);
     let gate = Gate::new();
     let w = world(&format!("http://{}", upstream.addr), &gate, &legacy, POLICY_HARNESS);
-    let codex = |email: &str, plan: &str, n: u32| {
-        serde_json::json!({"tokens":{"access_token":format!("test-access-{n}-0123456789"),"refresh_token":format!("test-refresh-{n}-0123456789"),"id_token":id_token(email, plan)}})
-    };
+    let codex = |email: &str, plan: &str, n: u32| serde_json::json!({"tokens":{"access_token":format!("test-access-{n}-0123456789"),"refresh_token":format!("test-refresh-{n}-0123456789"),"id_token":id_token(email, plan)}});
     let mut values = serde_json::json!({
         "claude": format!("Your OAuth token (valid for 3 days):\nsk-ant-oat01-{raw}"),
         "claude_json": {"oauthAccount": {"emailAddress": "ci@example.com"}},
@@ -999,13 +997,19 @@ fn host_relogin_checks_the_email_and_asks_before_switching() {
     assert!(start["login"]["expect_email"].is_null(), "새 별칭은 확인할 메일이 없다");
     assert_eq!(done["login"]["email"], "work@example.com");
     let first = account("work");
-    assert_eq!((&first["email"], &first["plan"], &first["health"]), (&"work@example.com".into(), &"plus".into(), &"ok".into()));
+    assert_eq!(
+        (&first["email"], &first["plan"], &first["health"]),
+        (&"work@example.com".into(), &"plus".into(), &"ok".into())
+    );
     assert!(first["first_auth_ms"].is_u64() && first["first_auth_ms"] == first["last_auth_ms"], "{first}");
     assert!(first["expires_ms"].is_null(), "Codex는 갱신으로 이어 가 만료 시각을 모른다");
     // 사람이 읽는 목록: 메일·plan·날짜(UTC)·상태
     let text = String::from_utf8(w.h.run(&["account", "list"]).stdout).unwrap();
     let day = &aaa_common::util::utc_text(first["first_auth_ms"].as_u64().unwrap())[..10];
-    assert!(text.contains(&format!("work\tcodex\t판 1\twork@example.com\tplus\t최초 {day}\t최근 {day}\t정상")), "{text}");
+    assert!(
+        text.contains(&format!("work\tcodex\t판 1\twork@example.com\tplus\t최초 {day}\t최근 {day}\t정상")),
+        "{text}"
+    );
 
     // Claude: `.claude.json`의 메일과 「valid for 3 days」 → 곧 만료 알림(별칭만, 메일 없음)
     let (_, done, _) = login("ci", "claude", "succeeded");
@@ -1030,11 +1034,17 @@ fn host_relogin_checks_the_email_and_asks_before_switching() {
     values["codex"] = codex("other@example.com", "pro", 2);
     std::fs::write(&fixture, serde_json::to_vec(&values).unwrap()).unwrap();
     let (_, waiting, id) = login("work", "codex", "mismatch");
-    assert_eq!((&waiting["login"]["expect_email"], &waiting["login"]["email"]), (&"work@example.com".into(), &"other@example.com".into()));
+    assert_eq!(
+        (&waiting["login"]["expect_email"], &waiting["login"]["email"]),
+        (&"work@example.com".into(), &"other@example.com".into())
+    );
     let text = String::from_utf8(w.h.run(&["account", "login-status", &id]).stdout).unwrap();
     assert!(text.contains(&format!("aaa account login-confirm {id} --switch")), "{text}");
     assert_eq!(account("work")["version"], 2, "고르기 전에는 옛 인증 그대로");
-    assert!(w.h.json(&["account", "login", "work", "--harness", "codex"]).is_err(), "확인 대기 중 같은 별칭 로그인 거부");
+    assert!(
+        w.h.json(&["account", "login", "work", "--harness", "codex"]).is_err(),
+        "확인 대기 중 같은 별칭 로그인 거부"
+    );
     let kept = w.h.ok(&["account", "login-confirm", &id, "--keep"]);
     assert_eq!(kept["login"]["state"], "kept");
     assert_eq!((&account("work")["email"], &account("work")["version"]), (&"work@example.com".into(), &2.into()));
@@ -1048,12 +1058,21 @@ fn host_relogin_checks_the_email_and_asks_before_switching() {
     assert_eq!((&now["email"], &now["plan"], &now["version"]), (&"other@example.com".into(), &"pro".into(), &3.into()));
     assert!(now["first_auth_ms"].as_u64() > first["first_auth_ms"].as_u64(), "{now}");
 
-    // 메일은 화면·목록에만: 감사·알림함·로그·프로젝트 파일에 없다(host DB의 계정 기록과 fixture는 뺀다)
+    // 메일은 화면·목록에만: 감사 기록은 별칭과 선택만 남긴다
+    let db = w.h.state.join("host/host.db");
+    let audit: Vec<(String, String)> = {
+        let c = rusqlite::Connection::open_with_flags(&db, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY).unwrap();
+        let mut st = c.prepare("SELECT action, detail FROM audit WHERE action LIKE 'account%' ORDER BY ts").unwrap();
+        st.query_map([], |r| Ok((r.get(0)?, r.get(1)?))).unwrap().map(Result::unwrap).collect()
+    };
+    let confirms: Vec<_> =
+        audit.iter().filter(|(a, _)| a == "account_login_confirm").map(|(_, d)| d.as_str()).collect();
+    assert_eq!(confirms, ["work keep", "work switch"], "{audit:?}");
+    assert!(audit.iter().all(|(_, d)| !d.contains('@')), "{audit:?}");
+    // 알림함·로그·프로젝트 파일에도 없다(host DB의 계정 기록과 fixture는 뺀다)
     w.h.ticks(1);
-    let found = hits(
-        &[w.lab.root.clone()],
-        &[("메일".into(), b"@example.com".to_vec())],
-        &|p| p.starts_with(&w.scripts) || p.file_name().is_some_and(|n| n.to_string_lossy().starts_with("host.db")),
-    );
+    let found = hits(&[w.lab.root.clone()], &[("메일".into(), b"@example.com".to_vec())], &|p| {
+        p.starts_with(&w.scripts) || p.file_name().is_some_and(|n| n.to_string_lossy().starts_with("host.db"))
+    });
     assert!(found.is_empty(), "{found:?}");
 }
