@@ -1011,11 +1011,13 @@ impl Host {
     // ───────────── 보기 ─────────────
 
     pub fn machine_views(&self) -> Vec<MachineView> {
+        let availability = self.pr.lock().unwrap().availability.clone();
         let i = self.inner.lock().unwrap();
         let mut v: Vec<_> = i
             .machines
             .iter()
             .map(|(id, m)| MachineView {
+                pr_tracking: availability.get(id).cloned(),
                 id: id.clone(),
                 name: m.name.clone(),
                 local: m.local,

@@ -1,0 +1,181 @@
+[
+  {
+    "kind": "invocation",
+    "value": {
+      "choices": {
+        "role": "agent",
+        "name": "mac-b",
+        "host": "mac-a.example.ts.net:7430",
+        "work_root": "/srv/aaa-work",
+        "work_storage": "internal",
+        "harness": [
+          "codex"
+        ],
+        "hooks": "install",
+        "service": "auto",
+        "network": "tailscale",
+        "enroll": "grant"
+      },
+      "non_interactive": true,
+      "yes": true,
+      "json_stream": true,
+      "dry_run": true
+    }
+  },
+  {
+    "kind": "result",
+    "value": {
+      "schema": "aaa.install.v1",
+      "installation_id": "install-example-01",
+      "plan_sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+      "status": "needs_user",
+      "exit_code": 3,
+      "role": "agent",
+      "instance": null,
+      "platform": {
+        "os": "macos",
+        "arch": "aarch64"
+      },
+      "version": "0.1.2",
+      "binary_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "changes": [
+        {
+          "kind": "service",
+          "action": "register",
+          "state": "pending"
+        }
+      ],
+      "checks": [
+        {
+          "name": "host_connected",
+          "state": "not_run"
+        }
+      ],
+      "needs_user": [
+        {
+          "code": "macos_privacy_permission",
+          "target": "launcher",
+          "message": "안내한 권한을 허용한 뒤 같은 설치를 재개하세요"
+        }
+      ],
+      "error": null,
+      "rollback": {
+        "state": "not_requested",
+        "remaining": []
+      },
+      "resume": {
+        "installation_id": "install-example-01"
+      }
+    }
+  },
+  {
+    "kind": "authorization",
+    "value": {
+      "claims": {
+        "schema": "aaa.install.authorization.v1",
+        "installation_id": "install-example-01",
+        "plan_sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+        "platform": {
+          "os": "macos",
+          "arch": "aarch64"
+        },
+        "target_account": "uid:1001",
+        "instance": null,
+        "binary_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "permissions": [
+          {
+            "operation": "write_file",
+            "target": "agent_config",
+            "before_sha256": null,
+            "after_sha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+          }
+        ],
+        "issued_at_ms": 1000,
+        "expires_at_ms": 2000,
+        "nonce": "fixture-nonce-not-valid",
+        "issuer": "fixture-issuer-not-trusted"
+      },
+      "signature": "fixture-not-a-signature",
+      "enrollment": null
+    }
+  },
+  {
+    "kind": "grant",
+    "value": {
+      "schema": "aaa.install.enroll-grant.v1",
+      "installation_id": "install-example-01",
+      "plan_sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+      "agent_identity": "fixture-agent-identity",
+      "host_identity": "fixture-host-identity",
+      "issuer": "fixture-issuer-not-trusted",
+      "expires_at_ms": 2000,
+      "nonce": "fixture-grant-nonce",
+      "signature": "fixture-not-a-signature"
+    }
+  },
+  {
+    "kind": "stream",
+    "value": {
+      "schema": "aaa.install.event.v1",
+      "type": "event",
+      "installation_id": "install-example-01",
+      "seq": 1,
+      "phase": "preflight",
+      "state": "completed",
+      "code": "preflight_ok",
+      "message": "사전 검사를 마쳤습니다"
+    }
+  },
+  {
+    "kind": "stream",
+    "value": {
+      "schema": "aaa.install.event.v1",
+      "type": "result",
+      "installation_id": "install-example-01",
+      "seq": 2,
+      "result": {
+        "schema": "aaa.install.v1",
+        "installation_id": "install-example-01",
+        "plan_sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+        "status": "needs_user",
+        "exit_code": 3,
+        "role": "agent",
+        "instance": null,
+        "platform": {
+          "os": "macos",
+          "arch": "aarch64"
+        },
+        "version": "0.1.2",
+        "binary_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "changes": [
+          {
+            "kind": "service",
+            "action": "register",
+            "state": "pending"
+          }
+        ],
+        "checks": [
+          {
+            "name": "host_connected",
+            "state": "not_run"
+          }
+        ],
+        "needs_user": [
+          {
+            "code": "macos_privacy_permission",
+            "target": "launcher",
+            "message": "안내한 권한을 허용한 뒤 같은 설치를 재개하세요"
+          }
+        ],
+        "error": null,
+        "rollback": {
+          "state": "not_requested",
+          "remaining": []
+        },
+        "resume": {
+          "installation_id": "install-example-01"
+        }
+      }
+    }
+  }
+]

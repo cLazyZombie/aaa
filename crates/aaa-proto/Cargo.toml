@@ -10,6 +10,7 @@ rust-version.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
+schemars = "1.2.3"
 tokio = { workspace = true, features = ["io-util"] }
 base64.workspace = true
 ts-rs = { version = "12", default-features = false, features = ["serde-compat", "serde-json-impl"] }

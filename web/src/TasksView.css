@@ -404,7 +404,7 @@ button.task-chip:disabled { cursor: default; color: var(--text-dim); }
 .task-notes-item > .task-notes > :first-child { margin-top: 0; }
 .task-notes-item > .task-notes > :last-child { margin-bottom: 0; }
 
-/* thread 연결(T3, plan §8.312): 확인 필요 칸, thread로 맡기기, 바로 시작 확인창, task에 잇기, 시작 알림 */
+/* thread 연결(T3, plan §8.314): 확인 필요 칸, thread로 맡기기, 바로 시작 확인창, task에 잇기, 시작 알림 */
 .task-attention { padding: var(--space-2) var(--space-3); border: var(--hairline) solid var(--notice); border-radius: var(--radius-md); background: color-mix(in srgb, var(--notice) 12%, transparent); }
 .task-attention h3 { display: flex; align-items: center; gap: var(--space-1); color: var(--notice); }
 .task-attention h3 svg { width: 14px; height: 14px; }

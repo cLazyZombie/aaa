@@ -2,6 +2,7 @@
 
 pub mod ci;
 mod git_watch;
+pub mod install;
 pub use ci::*;
 pub use git_watch::*;
 pub mod deploy;
@@ -219,6 +220,7 @@ pub fn typescript_bindings() -> String {
         out.push_str(&d.lines().map(str::trim_end).collect::<Vec<_>>().join("\n"));
         out.push_str("\n\n");
     }
+    out.push_str(&install::typescript());
     out
 }
 
