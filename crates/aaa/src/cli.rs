@@ -4050,7 +4050,11 @@ fn render_front(r: &FrontResponse) -> String {
         FrontResponse::AccountLogin { login } => {
             let _ = writeln!(s, "{}\t{}\t{}\t{}", login.id, login.account, login.harness, login.state);
             if login.state == "waiting" {
-                let _ = writeln!(s, "host 브라우저에서 인증한다. 상태: aaa account login-status {}", login.id);
+                let _ = writeln!(
+                    s,
+                    "로그인 완료 대기 중이다(브라우저 열림을 보증하지 않는다). 상태: aaa account login-status {}",
+                    login.id
+                );
             }
         }
         FrontResponse::ThreadStartPreview(p) => {
