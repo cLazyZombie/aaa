@@ -167,12 +167,12 @@ list: string, title: string,
  */
 owner: string | null,
 /**
- * agent에게 맡긴 task의 모델(profile) 칸(FRONT_API 1.74, plan §8.333): owner `모델@머신`의 앞. 맨 이름은 host가 아는 profile일
+ * agent에게 맡긴 task의 모델(profile) 칸(FRONT_API 1.75, plan §8.335): owner `모델@머신`의 앞. 맨 이름은 host가 아는 profile일
  * 때만 모델이다(아니면 사람). 비면 시작할 때 고른다. 옛 host는 생략한다
  */
 profile: string | null,
 /**
- * agent에게 맡긴 task의 머신 칸(FRONT_API 1.74): owner `모델@머신`의 뒤. 비면 그 저장소가 있는 머신 중 덜 붐비는 곳이다
+ * agent에게 맡긴 task의 머신 칸(FRONT_API 1.75): owner `모델@머신`의 뒤. 비면 그 저장소가 있는 머신 중 덜 붐비는 곳이다
  */
 machine: string | null,
 /**
@@ -294,11 +294,11 @@ owner: string | null,
  */
 person: boolean,
 /**
- * 모델(profile) 칸(FRONT_API 1.74). 머신 칸과 함께 owner `모델@머신`으로 적는다. `owner`(me·사람)와 함께 주면 거부한다
+ * 모델(profile) 칸(FRONT_API 1.75). 머신 칸과 함께 owner `모델@머신`으로 적는다. `owner`(me·사람)와 함께 주면 거부한다
  */
 profile: string | null,
 /**
- * 머신 칸(FRONT_API 1.74)
+ * 머신 칸(FRONT_API 1.75)
  */
 machine: string | null, notes: Array<string>, parent: TaskAnchor | null, before: TaskAnchor | null,
 /**
@@ -310,11 +310,11 @@ thread: string | null,
  */
 repo: string | null, } | { "op": "update", at: TaskAnchor, title: string | null, owner: string | null, person: boolean,
 /**
- * 모델 칸(FRONT_API 1.74): `None`은 그대로, 빈 글은 비움. 머신 칸만 바꾸면 모델은 그대로 둔다
+ * 모델 칸(FRONT_API 1.75): `None`은 그대로, 빈 글은 비움. 머신 칸만 바꾸면 모델은 그대로 둔다
  */
 profile: string | null,
 /**
- * 머신 칸(FRONT_API 1.74, `profile`과 같은 규칙)
+ * 머신 칸(FRONT_API 1.75, `profile`과 같은 규칙)
  */
 machine: string | null, notes: Array<string> | null, thread: string | null, done: boolean | null,
 /**
@@ -1265,7 +1265,7 @@ body: string | null, options: Array<MenuOption>, multi_select: boolean,
  */
 custom_option_index: number | null, };
 
-export type NoticeKind = "rollout_finished" | "rollout_failed" | "finished" | "post_muted" | "automation" | "report";
+export type NoticeKind = "host_issue" | "host_recovered" | "rollout_finished" | "rollout_failed" | "finished" | "post_muted" | "automation" | "report";
 
 export type NoticeView = { kind: NoticeKind,
 /**

@@ -882,7 +882,7 @@ mod tests {
         }
     }
 
-    /// 모델·머신 칸(plan §8.333): 칸마다 고치고(다른 칸은 그대로), 바뀌지 않은 옛 줄은 바이트 그대로, owner(me)와 함께 주면 거부
+    /// 모델·머신 칸(plan §8.335): 칸마다 고치고(다른 칸은 그대로), 바뀌지 않은 옛 줄은 바이트 그대로, owner(me)와 함께 주면 거부
     #[test]
     fn model_machine_edits() {
         fn ok(o: &str, _: bool) -> Result<(), String> {

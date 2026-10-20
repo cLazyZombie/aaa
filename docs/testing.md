@@ -1045,3 +1045,31 @@ fixture의 ParentDir 전제조건을 선행 단언한 뒤 target의 conflict 거
 - 본문 출력 복원·원본 경로 출력·반복 횟수 초기화 결함은 각각 keeper의 비밀 비노출·경로·횟수 단언에서 RED여야 한다.
   stderr 쓰기 중 상태 잠금을 잡는 결함은 감시자가 출력 전에 위치를 읽는 계약에서 RED여야 한다.
   각 변형의 원본 bytes를 복구한 뒤 GREEN과 전체 ci-local·deps·TS 최신·check-public을 확인한다.
+
+## aaa install I5 Windows 감독자(t-0485, plan §8.333)
+
+- `cargo test -p aaa --bin aaa install::engine::supervisor --locked`: 공통 owner 7개는 세 OS에서 실행한다.
+  실제 I2 파일/receipt/잠금·감독자 journal로 등록 직후 중단/실제 manager 대조·같은 ID 재개·기존 암호 보존·
+  외부 서비스 보존·credential 중단/이전 process 미채택·보존 제거·읽기 status를 확인한다.
+- lifecycle owner는 별도 process의 실제 고정 host/agent backend와 실제 ready producer를 쓴다.
+  host가 없는 agent 초기화 → 실제 host 연결/Welcome → 단절/재연결 → 각각 stop을 사건으로 기다린다.
+  유효 proof를 받아 계정/context/SHA/PID/생성 시각/boot/session/연결/elevation을 변조해 거부를 본다.
+  실제 TCP listener 충돌은 RUNNING/ready를 낼 수 없다. 외부 SCM/token 관찰만 모형이고 준비 영수증을 fixture가 만들지 않는다.
+- Windows 추가 owner 4개는 실제 현재 token/profile/image/SCM query·EventLog 읽기 구독/해제 ABI·CommandLineToArgvW,
+  종료 process handle 거부·실제 configured I2 receipt와 context/active ID 대조다. Win32 API가 없는 Mac/Linux에서 이 ABI owner만 제외한다.
+  lifecycle Windows 자식은 CREATE_NO_WINDOW지만 실제 SCM Session0 logon 증거는 아니다.
+- `cargo test -p aaa --test install --locked`는 숨은 서비스 진입의 console fallback 거부와 무변경을 포함한다.
+  apply/resume 승인 차단·I1 읽기 keeper를 유지한다. agent link owner는 Welcome/replay 완료 전 연결을 공개하지 않는지 본다.
+- 실제 process 대조 제거·proof context 무시·credential 이전 process 허용·manifest 결속 제거·LSA Deny 무시·
+  Removed에서 실행 파일 강제 요구·restart stop 생략·listener 전 host ready 변형은 각각 기존 owner에서 실패해야 한다.
+  원본 bytes 복구 뒤 공통 owner GREEN을 확인하고 전수 gate를 실행한다. 비밀 canary는 private tree UTF-8/UTF-16와
+  정상 owner 출력에서 검사한다. 시험 허용 production flag/export·실제 SCM/LSA 쓰기·고정 sleep·재시도는 없다.
+- 전체 macOS ci-local·deps·check-public과 Windows workspace/all-targets cross Clippy/build를 구분해 기록한다.
+  Windows·Linux 실제 실행은 main push 뒤 CI(windows-2025·ubuntu-24.04)다. 실제 서비스 logon·부팅·권한·암호·
+  ConPTY/공식 인증은 Windows bootstrap 뒤 사용자 실기 인수의 준비물/명령/되돌리기/로그 항목으로 남긴다.
+
+## host 핵심 작업 감시(t-0532, plan §8.334)
+
+- `cargo test -p aaa-host --lib supervisor::tests --locked`: 실제 task의 panic/조기 종료 사건과 가상 backoff 시각으로 1·2·4초 뒤 세 번 재실행, 상한 중단, 한 번 알림을 검사한다. loopback HTTP 수신은 앱을 닫았을 때 이상·회복 각각 한 번, 앱을 쓰는 동안은 notice만 확인한다. 이상/회복 판정 저장 뒤 inbox commit 전 재시작, SQLite INSERT 실패 뒤 재개방, failed INSERT만 거부해 뒤 recovered가 기다리는 순서, 이미 발행한 이상의 재시작 무중복·회복 이어 알림도 같은 owner가 검사한다. 판정의 `now`로 30초 안정 경계·희소 시간 초과 만료·회복 중 새 시간 초과를 확인한다.
+- `cargo test -p aaa-host --lib link::supervision_tests --locked`: Hello/Welcome/Ping을 마친 실험실 link의 전송체가 읽기 중 panic한다. pending의 즉시 AgentDisconnected·세대별 연결 정리·재연결 처리·네 번째 종료 뒤 거부와 독립 감시기의 inbox/notice 한 번을 확인한다. 다른 keeper는 실제 AgentConn 요청을 받되 응답을 보류하여 다섯 deadline 사건을 만들고, 이후 같은 reader의 실제 응답을 확인한다. ticker는 띄우지 않으므로 전달이 ticker에 기대면 실패한다. panic 감지 경계는 공통 `panic_log::latest()` API를 호출하고, 안전한 위치·payload 비노출의 정본 keeper는 t-0533의 `panic_log::` 시험이다.
+- 감시 제거·pending 정리 제거·재실행 상한 변경·시간 초과 관측 제거·회복 판정 제거·중복 억제 제거를 각각 되심으면 owner 단언이 실패해야 한다. 변형마다 원본 바이트를 복원하고 원본 keeper를 통과시킨 뒤 전체 ci-local/deps/TS/public gate를 수행한다. 실제 OS/Web Push 제공자의 휴대폰 전달·host 프로세스 전체 정지는 이 실험실 keeper의 보증 범위 밖이다.

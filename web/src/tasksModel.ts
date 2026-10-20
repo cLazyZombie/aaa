@@ -46,14 +46,14 @@ export function ownerLabel(t: TaskView, agents: readonly string[] = []): string 
   return agentParts(t, agents) ? null : t.owner;
 }
 
-/** agent에게 맡긴 task의 모델·머신 칸(plan §8.333, 빈 칸은 null). agent 일이 아니면(미할당·나·사람) null */
+/** agent에게 맡긴 task의 모델·머신 칸(plan §8.335, 빈 칸은 null). agent 일이 아니면(미할당·나·사람) null */
 export interface AgentParts {
   profile: string | null;
   machine: string | null;
 }
 
 /**
- * owner → 모델·머신 칸. host가 나눠 준 값(FRONT_API 1.74 `TaskView.profile`·`machine`)을 쓰고, 옛 host(칸이 없다)면 `모델@머신` 글을
+ * owner → 모델·머신 칸. host가 나눠 준 값(FRONT_API 1.75 `TaskView.profile`·`machine`)을 쓰고, 옛 host(칸이 없다)면 `모델@머신` 글을
  * 나눈다(맨 이름은 맡길 수 있는 profile 목록에 있을 때만 모델, `ownerKindOf`)
  */
 export function agentParts(t: Pick<TaskView, "owner" | "profile" | "machine">, agents: readonly string[] = []): AgentParts | null {

@@ -228,12 +228,12 @@ describe("할 일 thread 연결(T3, plan §8.316)", () => {
     assert.deepEqual(ownerFixes(task({ owner: "claude" })), { profile: true, machine: false });
     assert.deepEqual(ownerFixes(task({ owner: "codex@mac-a" })), { profile: true, machine: true });
     assert.deepEqual(ownerFixes(task({ owner: "@mac-a" })), { profile: false, machine: true });
-    // 새 host(FRONT_API 1.74)는 나눠 준 칸을 쓴다: 모르는 맨 이름은 사람이라 잠그지 않는다
+    // 새 host(FRONT_API 1.75)는 나눠 준 칸을 쓴다: 모르는 맨 이름은 사람이라 잠그지 않는다
     assert.deepEqual(ownerFixes(task({ owner: "codex-fast", profile: "codex-fast", machine: null })), { profile: true, machine: false });
     assert.deepEqual(ownerFixes(task({ owner: "Priya", profile: null, machine: null })), { profile: false, machine: false });
   });
 
-  it("모델·머신 칸(plan §8.333): host가 나눈 값이 먼저, 옛 host는 owner 글을 나누고, 폼은 칸마다 고쳐 `모델@머신`으로 보낸다", () => {
+  it("모델·머신 칸(plan §8.335): host가 나눈 값이 먼저, 옛 host는 owner 글을 나누고, 폼은 칸마다 고쳐 `모델@머신`으로 보낸다", () => {
     // 끊긴 머신의 profile도 host가 모델로 읽어 준다(맡길 수 있는 목록이 비어도)
     assert.deepEqual(agentParts(task({ owner: "codex-fast", profile: "codex-fast", machine: null }), []), { profile: "codex-fast", machine: null });
     assert.equal(agentParts(task({ owner: "me", profile: null, machine: null }), ["me"]), null);

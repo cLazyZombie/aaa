@@ -50,11 +50,21 @@ pub async fn connect(t: &Target) -> Result<LocalStream> {
 
 /// 끊기면 지수 backoff + jitter로 다시 연결한다. 끝나지 않는다.
 pub async fn run(agent: Arc<Agent>, target: Target, max_backoff: Duration) {
+    run_with_state(agent, target, max_backoff, None).await
+}
+
+/// 실제 Welcome/replay 완료와 연결 종료를 감독자에 알린다. backend 기동 준비와는 별개다.
+pub async fn run_with_state(
+    agent: Arc<Agent>,
+    target: Target,
+    max_backoff: Duration,
+    state: Option<tokio::sync::watch::Sender<bool>>,
+) {
     let mut backoff = Duration::from_millis(250);
     loop {
         let started = Instant::now();
         match connect(&target).await {
-            Ok(stream) => match session(&agent, stream).await {
+            Ok(stream) => match session_state(&agent, stream, state.as_ref()).await {
                 Ok(()) => tracing::info!("host 연결이 닫혔다({target})"),
                 Err(e) => tracing::warn!("host 연결 끝: {e:#}"),
             },
@@ -139,7 +149,11 @@ pub fn hello(agent: &Agent) -> AgentHello {
     }
 }
 
-async fn session(agent: &Arc<Agent>, stream: LocalStream) -> Result<()> {
+async fn session_state(
+    agent: &Arc<Agent>,
+    stream: LocalStream,
+    state: Option<&tokio::sync::watch::Sender<bool>>,
+) -> Result<()> {
     let (r, w) = tokio::io::split(stream);
     let tx = spawn_writer(w, MAX_FRAME);
     let mut rx = FrameRx::new(r, MAX_FRAME);
@@ -216,9 +230,10 @@ async fn session(agent: &Arc<Agent>, stream: LocalStream) -> Result<()> {
             while replies.try_join_next().is_some() {}
             let next = tokio::select! {
                 biased;
-                ready = &mut initialize, if !initialized => {
-                    ready?;
+                initialized_result = &mut initialize, if !initialized => {
+                    initialized_result?;
                     initialized = true;
+                    if let Some(state) = state { state.send_replace(true); }
                     continue;
                 }
                 next = tokio::time::timeout_at(deadline, rx.next()) => next,
@@ -249,6 +264,9 @@ async fn session(agent: &Arc<Agent>, stream: LocalStream) -> Result<()> {
         }
     }
     .await;
+    if let Some(state) = state {
+        state.send_replace(false);
+    }
     pinger.abort();
     replies.abort_all();
     result
@@ -341,7 +359,7 @@ mod post_tests {
             let (stream, peer) = tokio::io::duplex(1 << 20);
             let running = tokio::spawn({
                 let agent = agent.clone();
-                async move { session(&agent, Box::new(stream)).await }
+                async move { session_state(&agent, Box::new(stream), None).await }
             });
             let (r, w) = tokio::io::split(peer);
             let tx = spawn_writer(w, MAX_FRAME);
@@ -392,7 +410,7 @@ mod post_tests {
             let (stream, peer) = tokio::io::duplex(64);
             let running = tokio::spawn({
                 let agent = agent.clone();
-                async move { session(&agent, Box::new(stream)).await }
+                async move { session_state(&agent, Box::new(stream), None).await }
             });
             let (r, w) = tokio::io::split(peer);
             let tx = spawn_writer(w, MAX_FRAME);
@@ -500,15 +518,17 @@ mod post_tests {
         )
         .unwrap();
         let (stream, peer) = tokio::io::duplex(1 << 20);
+        let (state, mut observed_ready) = tokio::sync::watch::channel(false);
         let running = tokio::spawn({
             let a = agent.clone();
-            async move { session(&a, Box::new(stream)).await }
+            async move { session_state(&a, Box::new(stream), Some(&state)).await }
         });
         let (r, w) = tokio::io::split(peer);
         let tx = spawn_writer(w, MAX_FRAME);
         let mut rx = FrameRx::new(r, MAX_FRAME);
         let LinkMsg::Hello(h) = rx.control().await.unwrap() else { panic!("hello가 없다") };
         assert!(h.features.iter().any(|f| f == "post.v1"));
+        assert!(!*observed_ready.borrow());
         tx.json(&LinkMsg::Welcome(HostWelcome {
             identity: None,
             proto: AGENT_LINK,
@@ -517,6 +537,12 @@ mod post_tests {
         }))
         .await
         .unwrap();
+        drop(
+            tokio::time::timeout(Duration::from_secs(3), observed_ready.wait_for(|ready| *ready))
+                .await
+                .unwrap()
+                .unwrap(),
+        );
         // Welcome 뒤 Post replay를 먼저 하고 Ping을 읽는다. Pong 앞에 모르는 post가 없어야 한다.
         tx.json(&LinkMsg::Ping { seq: 42 }).await.unwrap();
         assert_eq!(
