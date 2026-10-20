@@ -1,7 +1,7 @@
 // 웹 E2E 대화에서 연 보고서의 닫기(사용자 10-20 「iPhone에서 대화창에서 보고서 글을 열면 다시 대화로 돌아갈 방법이 없어」, plan §8.300).
-// 대화 글의 보고서 주소(`/v/<cap>/` 맨 주소·Markdown 링크·backtick 주소), 앱 보고서 주소(`/#report=`), 파일 경로(보고 사본)를
-// 휴대폰(Safari 탭·홈 화면 앱)에서 누르면 새 창이 아니라 앱 안 보기로 열리고, 닫기·뒤로(edge swipe)가 같은 pane·같은 굴림 자리로
-// 돌아온다. 데스크톱은 새 탭 습관 그대로다. 실제 iOS 홈 화면 앱이 새 창을 어떻게 띄우는지는 headless가 보이지 않는다(실기 확인).
+// 대화 글의 보고서 주소(`/v/<cap>/` 맨 주소·Markdown 링크·backtick 주소), 파일 경로(보고 사본)를 휴대폰(Safari 탭·홈 화면 앱)에서
+// 누르면 새 창이 아니라 앱 안 보기로 열리고, 닫기·뒤로(edge swipe)가 같은 pane·같은 굴림 자리로 돌아온다. 같은 host 앱 보고서
+// 주소(`/#report=`)는 앱 안 칩이고(plan §8.345) 누르면 보고서 화면, 뒤로가 같은 pane이다. 데스크톱은 새 탭 습관 그대로다. 실제 iOS 홈 화면 앱이 새 창을 어떻게 띄우는지는 headless가 보이지 않는다(실기 확인).
 // 혼자 돌리기: node web/e2e/web.e2e.mjs --spec 38-chat-report-close(새 실험실).
 
 import fs from "node:fs";
@@ -119,10 +119,9 @@ export default async function () {
       bare: { text: `보기: ${url}`, link: (chat) => chat.getByRole("link", { name: url }).first() },
       markdown: { text: `[대화 보고서 열기](${url}index.html)`, link: (chat) => chat.getByRole("link", { name: "대화 보고서 열기" }) },
       code: { text: `주소는 \`${url}\` 이다`, link: (chat) => chat.locator("a.markdown-code-link").first() },
-      app: { text: `[앱 보고서 화면](${base}#report=demo/chatrep)`, link: (chat) => chat.getByRole("link", { name: "앱 보고서 화면" }) },
       file: { text: `보고 사본: ${root}/files/report-copy.md`, link: (chat) => chat.getByRole("button", { name: "report-copy.md", exact: false }).first() },
     };
-    chatPane(Object.values(links).map((l) => l.text));
+    chatPane([...Object.values(links).map((l) => l.text), `[앱 보고서 화면](${base}#report=demo/chatrep)`]);
   });
 
   await step("대화에서 연 보고서: iPhone 390·430 Safari 탭·홈 화면 앱(WebKit)에서 닫기·뒤로가 같은 pane·같은 굴림 자리로 돌아온다", async () => {
@@ -140,6 +139,14 @@ export default async function () {
           for (const [kind, l] of Object.entries(links))
             for (const how of ["close", "back"])
               await openAndClose(p, l.link(chat), `${tag} ${kind}`, how, how === "close" && (kind === "bare" || kind === "file") ? `chat-report-${tag}-${kind}` : null);
+          // 같은 host 앱 보고서 주소는 칩: 보고서 화면을 열고 뒤로가 같은 pane이다(새 창·파일 보기가 아니다)
+          const chip = chat.locator('[data-testid="app-ref"][data-kind="report"][data-target="chatrep"]');
+          await chip.evaluate((el) => el.scrollIntoView({ block: "center" }));
+          await chip.click();
+          await until(`${tag} 앱 보고서 화면`, async () =>
+            (await p.getByTestId("report-detail").count()) === 1 && (await p.evaluate(() => location.hash)) === "#report=demo%2Fchatrep" && p.context().pages().length === 1);
+          await p.evaluate(() => history.back());
+          await until(`${tag} 칩 뒤로`, async () => (await p.evaluate(() => location.hash)) === pane && (await p.getByTestId("chat").count()) === 1);
           await domIs(p, "대화 그대로", () => document.querySelector('[data-testid="chat"]') !== null);
         } finally {
           await p.context().close();

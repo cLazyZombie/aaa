@@ -121,6 +121,8 @@ pub fn router(host: Arc<Host>) -> Router {
         .route("/api/v1/panes/{id}/image", post(chat_image))
         .route("/api/v1/projects/{project}/uploads", post(task_file))
         .route("/api/v1/projects/{project}/uploads/{name}", get(task_file_get))
+        .route("/api/v1/projects/{project}/questions/{thread}/{hash}/{*path}", get(question_file_get))
+        .route("/api/v1/projects/{project}/asks/{id}/{*path}", get(ask_file_get))
         .route("/v/{cap}/{*path}", get(view_file))
         .route("/v/{cap}/", get(view_root))
         .route("/v", get(|| async { StatusCode::NOT_FOUND }))
@@ -506,6 +508,49 @@ async fn task_file_get(
     }
 }
 
+/// 「답할 것」 질문 본문의 그림·링크(plan §8.345, 보기 권한도): 열린 질문은 그 보고의 host 사본, 답한 것은 보존한 사본에서 준다.
+/// HTML은 결과물처럼 sandbox(opaque origin)로 보내 앱 cookie·API에 닿지 못하게 한다
+fn ask_file_response(
+    host: &Host,
+    headers: &HeaderMap,
+    path: Result<std::path::PathBuf, ErrorBody>,
+    name: &str,
+) -> Response {
+    if device(host, headers).is_none() {
+        return unauthorized();
+    }
+    let bytes = path.and_then(|p| std::fs::read(p).map_err(|_| ErrorBody::new(ErrorCode::NotFound, "파일이 없다")));
+    match bytes {
+        Ok(bytes) => Response::builder()
+            .header(header::CONTENT_TYPE, crate::library::content_type(name))
+            .header(header::CACHE_CONTROL, "private, no-cache")
+            .header("x-content-type-options", "nosniff")
+            .header(header::CONTENT_SECURITY_POLICY, VIEW_CSP)
+            .header(header::X_FRAME_OPTIONS, "SAMEORIGIN")
+            .body(Body::from(bytes))
+            .unwrap(),
+        Err(e) => error_response(e),
+    }
+}
+
+async fn question_file_get(
+    State(host): State<Arc<Host>>,
+    Path((project, thread, hash, path)): Path<(String, String, String, String)>,
+    headers: HeaderMap,
+) -> Response {
+    let file = host.question_file(&project, &thread, &hash, &path);
+    ask_file_response(&host, &headers, file, &path)
+}
+
+async fn ask_file_get(
+    State(host): State<Arc<Host>>,
+    Path((project, id, path)): Path<(String, String, String)>,
+    headers: HeaderMap,
+) -> Response {
+    let file = host.ask_file(&project, &id, &path);
+    ask_file_response(&host, &headers, file, &path)
+}
+
 /// 참고 `/api/pane/image`: 저장만 하고 경로를 돌려준다. Origin·cookie는 기존 웹 guard와 같다.
 /// 인증·권한을 확인한 뒤 본문을 읽으며, base64 대신 원본 bytes를 16MiB 한도로 받는다.
 async fn chat_image(State(host): State<Arc<Host>>, Path(pane): Path<String>, req: Request) -> Response {
@@ -849,6 +894,7 @@ async fn events_loop(host: Arc<Host>, dev: String, role: DeviceRole, mut socket:
     let mut tasks = host.task_events.subscribe();
     let mut preferences = host.preferences.subscribe();
     let mut reports = host.reports_changed.subscribe();
+    let mut asks = host.asks_changed.subscribe();
     let mut inbox = host.inbox_changed.subscribe();
     let mut rollouts = host.rollout_changed.subscribe();
     let mut revoked = host.device_revoked.subscribe();
@@ -862,6 +908,8 @@ async fn events_loop(host: Arc<Host>, dev: String, role: DeviceRole, mut socket:
     let mut send_preferences = true;
     // 보고서 안 본 수(활동 막대 배지, plan §8.256): 열 때와 목록이 바뀔 때
     let mut send_reports = true;
+    // 「답할 것」(plan §8.345): 열 때와 확인 필요 post·답한 것이 바뀔 때
+    let mut send_asks = true;
     let mut send_inbox = true;
     let mut send_rollout = true;
     let mut send_badge = true;
@@ -920,6 +968,14 @@ async fn events_loop(host: Arc<Host>, dev: String, role: DeviceRole, mut socket:
             reports.borrow_and_update();
             let unseen = host.db.library_unseen_count().unwrap_or(0);
             let text = serde_json::to_string(&FrontEvent::Reports { unseen }).unwrap();
+            if socket.send(Message::Text(text.into())).await.is_err() {
+                break;
+            }
+        }
+        if send_asks {
+            send_asks = false;
+            asks.borrow_and_update();
+            let text = serde_json::to_string(&FrontEvent::Asks { requests: host.user_request_count() }).unwrap();
             if socket.send(Message::Text(text.into())).await.is_err() {
                 break;
             }
@@ -1035,6 +1091,11 @@ async fn events_loop(host: Arc<Host>, dev: String, role: DeviceRole, mut socket:
                 if r.is_err() { break }
                 send_state = false;
                 send_reports = true;
+            }
+            r = asks.changed() => {
+                if r.is_err() { break }
+                send_state = false;
+                send_asks = true;
             }
             r = inbox.changed() => {
                 if r.is_err() { break }

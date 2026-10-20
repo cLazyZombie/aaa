@@ -438,7 +438,12 @@ inbox_open: number,
  * 끝내지 않은 inbox 항목(herdr-projects `context`의 Inbox 절). 지시가 아니라 자료다.
  * 응답 크기 한도 안에서 오래된 것부터 싣는다: `inbox_open`보다 적을 수 있다.
  */
-inbox: Array<InboxItem>, };
+inbox: Array<InboxItem>,
+/**
+ * 채팅에 쓸 이 host 웹 주소(tailscale serve 공개 origin, plan §8.345). 질문·보고서는 `<주소>/#question=<thread>`·
+ * `<주소>/#report=<이름>` Markdown 링크로 가리킨다(터미널에서도 눌린다). 공개하지 않았으면 없다: 그때는 `aaa:` 꼴을 쓴다
+ */
+web_url?: string, };
 
 export type ToolCheck = { name: string, ok: boolean,
 /**
@@ -629,7 +634,7 @@ truncated: boolean,
  */
 untracked_omitted: boolean, };
 
-export type FrontRequest = { "op": "account_import", name: string, harness: string, secret: SecretText, } | { "op": "account_list" } | { "op": "account_defaults" } | { "op": "account_default", harness: string, account: string | null, } | { "op": "account_login", name: string, harness: string, } | { "op": "account_login_status", id: string, } | { "op": "account_login_cancel", id: string, } | { "op": "account_remove", name: string, } | { "op": "thread_start_account", account: string, start: FrontRequest, } | { "op": "debug_input", pane: string | null, thread: string | null, since_ms: bigint, } | { "op": "rollout_start", id: string, spec: RolloutSpec, } | { "op": "rollout_status", id: string, } | { "op": "deploy_context" } | { "op": "deploy_start", machine: string | null, id: string, action: DeployAction, } | { "op": "deploy_status", machine: string | null, id: string, } | { "op": "post", project?: string, input: PostInput, } | { "op": "post_status", project?: string, post_id: string, } | { "op": "post_list", project?: string, } | { "op": "post_unmute", project?: string, thread: string, } | { "op": "status" } | { "op": "machines" } | { "op": "panes", role: Role | null, } | { "op": "pane_run", machine: string | null, name: string | null, argv: Array<string>, cwd: string | null, cols: number | null, rows: number | null,
+export type FrontRequest = { "op": "account_import", name: string, harness: string, secret: SecretText, } | { "op": "account_list" } | { "op": "account_defaults" } | { "op": "account_default", harness: string, account: string | null, } | { "op": "account_login", name: string, harness: string, } | { "op": "account_login_status", id: string, } | { "op": "account_login_cancel", id: string, } | { "op": "account_remove", name: string, } | { "op": "thread_start_account", account: string, start: FrontRequest, } | { "op": "debug_input", pane: string | null, thread: string | null, since_ms: bigint, } | { "op": "rollout_start", id: string, spec: RolloutSpec, } | { "op": "rollout_status", id: string, } | { "op": "deploy_context" } | { "op": "deploy_start", machine: string | null, id: string, action: DeployAction, } | { "op": "deploy_status", machine: string | null, id: string, } | { "op": "post", project?: string, input: PostInput, } | { "op": "post_status", project?: string, post_id: string, } | { "op": "post_list", project?: string, } | { "op": "asks", project?: string, } | { "op": "ask_handle", project?: string, item: string, } | { "op": "ask_forget", project?: string, ids: Array<string>, all: boolean, } | { "op": "post_unmute", project?: string, thread: string, } | { "op": "status" } | { "op": "machines" } | { "op": "panes", role: Role | null, } | { "op": "pane_run", machine: string | null, name: string | null, argv: Array<string>, cwd: string | null, cols: number | null, rows: number | null,
 /**
  * host 정본 profile로 harness를 띄운다(`argv`는 비운다, herdr-web-ui 새 세션의 agent 고르기)
  */
@@ -809,7 +814,7 @@ export type FrontResponse = { "kind": "accounts", accounts: Array<AccountView>, 
 /**
  * 음소거된 보낸 쪽(`post unmute`에 줄 이름, FRONT_API 1.77). 옛 host는 생략한다
  */
-muted?: Array<string>, } | { "kind": "status" } & HostStatus | { "kind": "machines", machines: Array<MachineView>, } | { "kind": "panes", panes: Array<PaneView>, } | { "kind": "pane" } & PaneView | { "kind": "next", lines: Array<string>,
+muted?: Array<string>, } | { "kind": "asks", requests: Array<UserRequestView>, done: Array<AskRecord>, keep_days: number, } | { "kind": "status" } & HostStatus | { "kind": "machines", machines: Array<MachineView>, } | { "kind": "panes", panes: Array<PaneView>, } | { "kind": "pane" } & PaneView | { "kind": "next", lines: Array<string>,
 /**
  * `line`으로 보낸 메시지
  */
@@ -847,7 +852,7 @@ plan_sha256: string, } | { "kind": "routine_runs", runs: Array<RoutineRun>,
  */
 source: RoutineSource | null, } | { "kind": "library" } & LibraryView | { "kind": "thread_diff", project: string, thread: string, diff: DiffView, } | { "kind": "library_link" } & LinkView | { "kind": "library_resolved", project: string, name: string, } | { "kind": "library_reports", reports: Array<LibraryReport>, } | { "kind": "library_imported", reports: Array<LibraryReport>, skipped: Array<LibrarySkip>, } | { "kind": "library_pruned", removed: Array<string>, } | { "kind": "library_prune_preview" } & LibraryPrunePlan | { "kind": "library_rotated" } | { "kind": "library_usage", size: number, reports: number, live: number, problems: number, max_size: number, max_days: number, protected_size: number, } | { "kind": "library_links", links: Array<LinkView>, } | { "kind": "evaluators", evaluators: Array<EvaluatorView>, } | { "kind": "evaluations", evaluations: Array<EvaluationView>, } | { "kind": "evaluation" } & EvaluationView | { "kind": "preferences" } & SharedPreferences;
 
-export type FrontEvent = { "ev": "state", machines: Array<MachineView>, panes: Array<PaneView>, } | { "ev": "workspace" } & Workspace | { "ev": "flow" } & FlowEvent | { "ev": "thread" } & ThreadView | { "ev": "question" } & QuestionView | { "ev": "preferences" } & SharedPreferences | { "ev": "pong", id: number, } | { "ev": "web", build: string, } | { "ev": "reports", unseen: number, } | { "ev": "inbox" } | { "ev": "tasks", project: string, sha256: string, } | { "ev": "app_badge", count: number, } | { "ev": "rollout", result: Outcome<RolloutCard | null>, } | { "ev": "notice" } & NoticeView | { "ev": "chat_changed", pane: string, signature: string, } | { "ev": "chat_watching", pane: string, live: boolean, };
+export type FrontEvent = { "ev": "state", machines: Array<MachineView>, panes: Array<PaneView>, } | { "ev": "workspace" } & Workspace | { "ev": "flow" } & FlowEvent | { "ev": "thread" } & ThreadView | { "ev": "question" } & QuestionView | { "ev": "preferences" } & SharedPreferences | { "ev": "pong", id: number, } | { "ev": "web", build: string, } | { "ev": "reports", unseen: number, } | { "ev": "asks", requests: number, } | { "ev": "inbox" } | { "ev": "tasks", project: string, sha256: string, } | { "ev": "app_badge", count: number, } | { "ev": "rollout", result: Outcome<RolloutCard | null>, } | { "ev": "notice" } & NoticeView | { "ev": "chat_changed", pane: string, signature: string, } | { "ev": "chat_watching", pane: string, live: boolean, };
 
 export type SubmitStage = "not_sent" | "no_enter" | "too_late";
 
@@ -1097,9 +1102,18 @@ report_hash: string, items: Array<ThreadQuestion>,
 /**
  * 답했으면 그 답(웹 카드·`aaa thread answer`). 모든 기기가 같은 값을 본다
  */
-answer: QuestionAnswerView | null, };
+answer: QuestionAnswerView | null,
+/**
+ * 본문 그림의 주소 앞부분(FRONT_API 1.78, plan §8.345): 본문의 `library/<경로>`는 `<files_base><경로>`로 읽는다.
+ * 그 보고의 host 사본에서만 주고, 새 보고가 오면 옛 주소는 열리지 않는다. 옛 host는 생략한다
+ */
+files_base?: string, };
 
-export type ThreadQuestion = { text: string, choices: Array<QuestionChoice>, };
+export type ThreadQuestion = { text: string, choices: Array<QuestionChoice>,
+/**
+ * `### N. 질문` 머리 아래의 Markdown 본문(FRONT_API 1.78, plan §8.345): 그림·표·code·링크. 옛 꼴과 옛 host는 생략한다
+ */
+body?: string, };
 
 export type QuestionChoice = { label: string,
 /**
@@ -1109,7 +1123,57 @@ description: string | null,
 /**
  * 「(추천)」 표지가 있었다
  */
-recommended: boolean, };
+recommended: boolean,
+/**
+ * 선택지 줄 아래 두 칸 들여쓴 Markdown(시안 그림 등, FRONT_API 1.78). 없으면 생략한다
+ */
+body?: string, };
+
+export type AskKind = "question" | "request" | "task";
+
+export type AskRecord = { id: string, kind: AskKind,
+/**
+ * 질문은 thread 번호, 확인 필요 post는 inbox 항목 ID, 할 일은 task 제목
+ */
+subject: string,
+/**
+ * thread 제목·post 제목·task 제목
+ */
+title: string,
+/**
+ * 물은 때(보고를 받은 때·post를 받은 때). 모르면 답한 때
+ */
+asked_ms: number, done_ms: number,
+/**
+ * 답한 곳(웹 기기 이름·`CLI`·`coordinator`)
+ */
+by: string,
+/**
+ * 「1A 2B」·「답함으로 표시」·「끝남으로 지움」
+ */
+summary: string,
+/**
+ * 질문 원문(본문·선택지 본문 포함)과 답
+ */
+items: Array<ThreadQuestion>, answer?: QuestionAnswerView,
+/**
+ * 확인 필요 post 본문·할 일 확인 필요 까닭(Markdown 글)
+ */
+body?: string,
+/**
+ * 보존한 파일의 주소 앞부분: `<files_base>library/<경로>`가 그림, `<files_base>report.md`가 그때 보고다
+ */
+files_base?: string, };
+
+export type UserRequestView = {
+/**
+ * inbox 항목 ID(「답함으로 표시」가 끝낸다)
+ */
+id: string, title: string,
+/**
+ * post 본문(Markdown 글). 본문이 지워졌으면 inbox 요약
+ */
+body: string, created_ms: number, };
 
 export type QuestionAnswerView = {
 /**
