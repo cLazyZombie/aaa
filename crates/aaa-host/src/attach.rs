@@ -70,19 +70,17 @@ impl Host {
             return Err(err(ErrorCode::BadRequest, "그림은 1바이트부터 16MiB까지 붙여 넣는다"));
         }
         let ext = sniff(bytes).ok_or_else(|| err(ErrorCode::BadRequest, "PNG·JPEG·GIF·WebP 그림만 붙여 넣는다"))?;
-        let att = format!("{}.{ext}", hex::encode(rand::random::<[u8; 8]>()));
         let project = self
             .projects_all()
             .into_iter()
             .find(|p| self.coordinator_panes(std::path::Path::new(&p.path)).iter().any(|p| p.id == id));
         let path = if let Some(project) = project {
-            let dir = self.project_dir(&project.name)?.join("uploads");
-            let path = dir.join(&att);
-            std::fs::create_dir_all(&dir)
-                .and_then(|_| aaa_common::util::write_private(&path, bytes))
-                .map_err(|e| err(ErrorCode::Internal, e.to_string()))?;
-            path.to_string_lossy().into_owned()
+            // task 메모로도 넘기는 프로젝트 uploads는 저장 바이트의 hash로 이름을 붙인다.
+            // 같은 저장 경계를 써서 두 화면의 이름·중복·기존 원본 보호 규칙이 갈라지지 않게 한다.
+            let relative = self.task_file_save(role, actor, &project.name, None, bytes)?;
+            self.project_dir(&project.name)?.join(relative).to_string_lossy().into_owned()
         } else {
+            let att = format!("{}.{ext}", hex::encode(rand::random::<[u8; 8]>()));
             let conn = self.live_conn(&mid)?;
             let mut saved = None;
             for (i, chunk) in bytes.chunks(CHUNK).enumerate() {
@@ -108,7 +106,8 @@ impl Host {
         if actor.strip_prefix("device:").is_some_and(|d| self.is_revoked(d)) {
             return Err(err(ErrorCode::Unauthorized, "기기가 폐기됐다"));
         }
-        self.db.audit(actor, "chat_image", &format!("{id} {att} {} bytes", bytes.len()));
+        let name = path.rsplit(['/', '\\']).next().unwrap_or_default();
+        self.db.audit(actor, "chat_image", &format!("{id} {name} {} bytes", bytes.len()));
         Ok(path)
     }
 

@@ -1229,3 +1229,17 @@ macOS gate·Windows cross compile 결과와 별도로 보고한다. SCM 실제 l
 - 닫기 단추는 앞서 본 대화로, 빈 「답할 것」에서 닫기는 앞서 본 보고서로 돌아가야 한다. 가장자리 합성 touchcancel 뒤 popstate를 내는 경우에도 t-0541의 열린 drawer 유지 규칙을 검사한다. iOS 시스템 몸짓 자체는 헤드리스로 보증하지 않는다.
 - 대기는 data-shown·aria-current·popstate·drawer transition 완료 사건으로 끝낸다. 숨긴 채 그려 둔 화면에도 drawer 단추가 남으므로 공용 inList는 보이는 화면의 단추를 고른다. 목록 행 클릭도 inList로 drawer 닫힘이 끝난 뒤 본문을 잰다.
 - 35는 배포 실행기를 돌리지 않는다. 실제 Reader 세션의 WebSocket에 배포 상태만 주입해 WebKit 390·Chromium 1280에서 성공한 배포만 접기·펼치기, 높이 절반 미만 축소, 같은 배포 갱신·패널 전환 유지, 새 ID의 성공한 배포 재표시와 running·recovering·stopped·stopped_rolled_back·recovery_failed 상시 표시를 확인한다. 갱신 처리는 카드 data-updated로 기다린다. 기존 Reader 조작 거부·복구 재연결·긴 실패 원인 검사는 유지한다.
+
+## 대화 그림의 task 첨부 전달(t-0558, plan §8.360)
+
+- 웹 E2E23의 「대화 이미지」는 Chromium·WebKit 데스크톱·WebKit iPhone·iPad에서 붙여넣기·드롭·파일 선택으로 올린
+  원본 바이트의 SHA-256 앞 16자와 저장 이름이 같은지 본다. iPhone 파일 선택은 MIME이 빈 `IMG_0001.PNG`도 보낸다.
+  같은 그림을 task 업로드 API로 다시 보내면 같은 경로·파일 하나여야 한다. 각 기기의 대화 경로를 task 메모에 붙이고
+  `thread start --from-task --link-task` 뒤 실제 작업 폴더의 첨부 바이트·task/brief의 사본 경로·보고를 확인한다.
+- E2E23의 「옛 대화 첨부」는 무작위 이름의 fixture가 시작을 막으며 다시 첨부하라는 안내를 내는지, 원본을 다시 올려
+  메모 링크를 바꾸면 thread에 같은 바이트가 전달되는지 검사한다. 거부와 복구 모두 옛 원본의 이름·내용을 보존해야 한다.
+- m13 `task_attachments_reject_unverified_uploads_without_changing_them`은 옛 무작위 이름과 hash 이름의 원본을 실제로 바꾼
+  경우를 각각 거부하고 원본을 보존하는지 본다. 기존 원격 TLS 전달·첫 사본으로 다시 시작 시험도 함께 실행한다.
+- host `task_attach::tests::upload_rules`는 hash 이름의 기존 파일을 같은 길이의 다른 바이트로 바꾼 뒤 다시 올려도
+  성공하거나 덮어쓰지 않는지 본다. 대화도 이 저장 함수를 쓰므로 두 화면의 보호 규칙이 같다.
+- 수정 전 E2E23은 첫 Chrome 붙여넣기의 무작위 이름에서 실패했다. 시간 상한·재시도·해시 검사를 완화하지 않는다.
