@@ -84,7 +84,10 @@ async fn an_upload_becomes_one_report_and_its_folder_goes_away() {
     };
     assert_eq!(h.call(DeviceRole::Controller, "device:phone", gone).await.unwrap_err().code, ErrorCode::Conflict);
     h.call(DeviceRole::Controller, "device:phone", req(true, 3)).await.unwrap();
-    assert!(!dir.exists() && !mark(&h.state.join("library-uploads"), UP).exists(), "등록한 올리기 폴더와 그 표지는 지운다");
+    assert!(
+        !dir.exists() && !mark(&h.state.join("library-uploads"), UP).exists(),
+        "등록한 올리기 폴더와 그 표지는 지운다"
+    );
     let report = h.project_dir("demo").unwrap().join("library/plan-report");
     for f in ["index.html", "notes.md", "img/a.png"] {
         assert!(report.join(f).is_file(), "{f}");
