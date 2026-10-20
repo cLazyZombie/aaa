@@ -10,16 +10,24 @@ fn local_tui_entries_are_removed_before_connecting() {
     let lab = Lab::new();
     let node = lab.node("client", None);
     assert!(std::fs::read_dir(&node.state).unwrap().next().is_none());
-    for args in [
-        vec!["attach"],
-        vec!["tui"],
-        vec!["attach", "--remote", "https://mac-a.example.ts.net:8443"],
-        vec!["evaluator", "open", "demo"],
-    ] {
+    for args in [vec!["attach"], vec!["tui"], vec!["attach", "--remote", "https://mac-a.example.ts.net:8443"]] {
         let out = node.run(&args);
         let message = String::from_utf8_lossy(&out.stderr);
         assert!(!out.status.success(), "{args:?}");
         assert!(message.contains("TUI는 삭제됐다") && message.contains("aaa web status"), "{args:?}: {message}");
+    }
+    for args in [
+        vec!["mission", "list"],
+        vec!["mission", "start", "watch"],
+        vec!["evaluator", "open", "demo"],
+        vec!["evaluation", "list"],
+    ] {
+        let out = node.run(&args);
+        let message = String::from_utf8_lossy(&out.stderr);
+        assert!(
+            !out.status.success() && message.contains("없어짐") && message.contains("aaa automation convert"),
+            "{args:?}: {message}"
+        );
     }
     assert!(std::fs::read_dir(&node.state).unwrap().next().is_none(), "host 접속·pairing 전에 끝낸다");
 }

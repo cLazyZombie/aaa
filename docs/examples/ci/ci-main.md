@@ -4,7 +4,6 @@ repo = "aaa"
 branches = ["main"]
 workflows = []
 events = ["failed"]
-mission = "ci-watch"
 enabled = true
 +++
 

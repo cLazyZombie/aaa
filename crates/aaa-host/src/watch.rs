@@ -50,6 +50,9 @@ impl<'de, S: DeserializeOwned + Default> Deserialize<'de> for State<S> {
 }
 #[derive(Clone, Serialize, Deserialize)]
 pub(crate) struct Notice {
+    /// 이전 저장 문서의 제거된 목적지 등은 변환 전까지 바이트 의미를 보존한다.
+    #[serde(flatten)]
+    pub legacy: std::collections::BTreeMap<String, serde_json::Value>,
     pub id: String,
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub routine: String,
@@ -59,7 +62,6 @@ pub(crate) struct Notice {
     pub sha: String,
     pub owners: Vec<String>,
     pub text: String,
-    pub mission: Option<String>,
     pub wake: bool,
     pub record_only: bool,
     pub append: Option<String>,
@@ -73,7 +75,6 @@ pub(crate) struct Delivery {
     pub alert_kinds: &'static [&'static str],
     pub recovered_kind: &'static str,
     pub passed_after_recovery: Option<&'static str>,
-    pub missing_mission: &'static str,
 }
 fn internal(e: impl std::fmt::Display) -> ErrorBody {
     err(ErrorCode::Internal, e.to_string())
@@ -184,9 +185,9 @@ impl Host {
         publish: impl Fn(&Notice) -> Result<(), ErrorBody>,
         recovered: impl Fn(&Notice) -> Result<(), ErrorBody>,
     ) -> Result<(), ErrorBody> {
-        let mut waiting = Vec::new();
+        let mut waiting: Vec<Notice> = Vec::new();
         while let Some(n) = s.outbox.first().cloned() {
-            let common_rule = if !n.routine.is_empty()
+            let mut common_rule = if !n.routine.is_empty()
                 && !n.record_only
                 && n.skip_reason.is_none()
                 && (n.wake || policy.source == "git")
@@ -199,6 +200,19 @@ impl Host {
             } else {
                 None
             };
+            // 구 저장 문서의 목적지는 실행하지 않는다. 변환 뒤에만 일반 규칙으로 인계한다.
+            if common_rule.is_none()
+                && n.wake
+                && let Some(target) = n.legacy.get("mission").and_then(|v| v.as_str())
+            {
+                if let Some(name) = self.db.meta(&format!("mission_target:{p}:{target}")).map_err(internal)? {
+                    let (rules, _) = crate::routine::load_all(&self.project_dir(p)?);
+                    common_rule = rules.into_iter().find(|r| r.name == name);
+                }
+                if common_rule.is_none() {
+                    waiting.push(n.clone());
+                }
+            }
             let deploy = common_rule.as_ref().is_some_and(|r| matches!(r.action, crate::automation::Action::Deploy));
             let red = policy.alert_kinds.contains(&n.kind.as_str());
             if red && !n.record_only && !deploy {
@@ -258,45 +272,16 @@ impl Host {
                 passed.id.push_str(&format!("-{kind}"));
                 publish(&passed)?;
             }
-            let common = if let Some(rule) = common_rule {
+            if let Some(rule) = common_rule {
                 self.automation_submit(p, &rule, &n.id, n.text.clone(), n.owners.first().cloned())?;
-                true
-            } else {
-                false
-            };
-            if !common
-                && n.wake
-                && let Some(m) = &n.mission
-                && !self.mission_target_exists(p, m)
-            {
-                self.inbox_once(
-                    p,
-                    "config-error",
-                    m,
-                    &format!("{} mission missing", policy.label),
-                    policy.missing_mission,
-                );
-                waiting.push(n.clone());
-            } else if !common
-                && n.wake
-                && let Some(m) = &n.mission
-            {
-                self.mission_data_input(
-                    p,
-                    m,
-                    &format!("{}_input:{p}:{}", policy.source, n.id),
-                    &n.id,
-                    n.text.clone(),
-                    policy.source,
-                )?;
             }
             if !n.routine.is_empty() {
                 let (status, detail) = if waiting.iter().any(|w| w.id == n.id) {
-                    ("waiting", "대상 임무 없음".to_string())
+                    ("waiting", "옛 목적지 변환 대기".to_string())
                 } else if let Some(reason) = &n.skip_reason {
                     ("skipped", reason.clone())
                 } else {
-                    ("done", format!("{} {}{}", policy.label, n.kind, if n.wake { " · 임무 입력" } else { "" }))
+                    ("done", format!("{} {}{}", policy.label, n.kind, if n.wake { " · 자동화 입력" } else { "" }))
                 };
                 self.record_routine(p, &n.routine, &n.id, status, &detail, None);
             }

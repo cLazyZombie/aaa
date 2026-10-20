@@ -61,9 +61,12 @@ struct Request {
 pub(super) struct Locks(Vec<File>);
 impl Drop for Locks {
     fn drop(&mut self) {
+        #[cfg(unix)]
         for file in &self.0 {
             let _ = file.unlock();
         }
+        // Windows는 handle의 share reservation을 닫아 해제한다.
+        self.0.clear();
     }
 }
 struct Transaction {
@@ -561,7 +564,7 @@ impl Transaction {
             use std::os::unix::fs::PermissionsExt;
             std::fs::set_permissions(&staged, std::fs::Permissions::from_mode(f.mode)).map_err(Fault::io)?;
         }
-        File::open(&staged).map_err(Fault::io)?.sync_all().map_err(Fault::io)?;
+        private::sync_file(&staged).map_err(Fault::io)?;
         private::sync_parent(&staged).map_err(Fault::io)?;
         self.journal.entries[i].inode = Some(identity(&staged)?);
         self.journal.entries[i].state = Step::Staged;

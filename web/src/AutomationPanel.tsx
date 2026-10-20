@@ -4,11 +4,10 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { call, me } from "./api";
 import { ConfirmDialog } from "./ConfirmDialog";
-import type { MissionView, RoutineRun, RoutineView, ThreadView } from "./gen/proto";
-import { MissionDetail, RuleDetail, ThreadLink } from "./AutomationDetail";
+import type { RoutineRun, RoutineView, ThreadView } from "./gen/proto";
+import { RuleDetail, ThreadLink } from "./AutomationDetail";
 import { ConvertSheet } from "./AutomationConvert";
-import { canPreviewConvert, legacyFiles, legacyMission, legacyRule, ruleTone, runWord, stuckBatch } from "./automationModel";
-import { missionWord } from "./specialModel";
+import { canPreviewConvert, legacyFiles, legacyRule, ruleTone, runWord, stuckBatch } from "./automationModel";
 import "./AutomationPanel.css";
 
 const time = (at: number) => new Date(at).toLocaleString();
@@ -21,8 +20,8 @@ function Closing({ at }: { at: number }) {
   const minutes = Math.ceil(Math.max(0, at - now) / 60_000);
   return <span className="automation-dim" data-testid="automation-closing">{minutes > 0 ? `${minutes}분 뒤 끝남` : "곧 끝남"}</span>;
 }
-type Row = { project: string; rules: RoutineView[]; missions: MissionView[] };
-type Open = { kind: "rule"; project: string; name: string } | { kind: "mission"; project: string; name: string } | { kind: "convert"; project: string };
+type Row = { project: string; rules: RoutineView[] };
+type Open = { kind: "rule"; project: string; name: string } | { kind: "convert"; project: string };
 
 /**
  * `threads`: 열린 thread(사이드바 목록과 같은 것). 규칙 줄의 「열림」 칩이 그 규칙이 띄운 열린 thread를 보인다(plan t-0475 A1).
@@ -52,10 +51,9 @@ export function AutomationPanel({ canControl, threads = [], onThread = () => {},
       const next = await Promise.all(projects.projects.map(async (p) => {
         const result = await call({ op: "routines", project: p.name });
         if (result.kind !== "routines") throw new Error("자동화 목록 응답이 아니다");
-        const missions = await call({ op: "mission_list", project: p.name });
-        return { project: p.name, rules: result.routines, missions: missions.kind === "missions" ? missions.missions : [] };
+        return { project: p.name, rules: result.routines };
       }));
-      if (ticket === generation.current) { setRows(next); setError(null); }
+      if (ticket === generation.current) { setRows(next); setError(null); window.dispatchEvent(new Event("aaa:automations-changed")); }
     } catch (e) {
       if (ticket === generation.current) setError(String(e));
     } finally {
@@ -93,9 +91,9 @@ export function AutomationPanel({ canControl, threads = [], onThread = () => {},
     <div className="automation-tools"><span>조건 → 동작</span><button type="button" onClick={() => void load()}>다시 읽기</button></div>
     {error && <p role="alert">{error}</p>}
     {loading && <p role="status">읽는 중…</p>}
-    {!loading && rows.every((p) => p.rules.length === 0 && p.missions.length === 0) && <p>자동화가 없습니다.</p>}
-    {rows.filter((p) => p.rules.length > 0 || p.missions.length > 0).map(({ project, rules, missions }) => {
-      const legacy = legacyFiles(rules, missions).length;
+    {!loading && rows.every((p) => p.rules.length === 0) && <p>자동화가 없습니다.</p>}
+    {rows.filter((p) => p.rules.length > 0).map(({ project, rules }) => {
+      const legacy = legacyFiles(rules).length;
       return <section key={project} aria-label={`${project} 자동화`}>
         <h3>{project} · {rules.length}개</h3>
         {legacy > 0 && <div className="automation-legacy" data-testid={`automation-legacy-${project}`}>
@@ -107,24 +105,24 @@ export function AutomationPanel({ canControl, threads = [], onThread = () => {},
         {rules.map((r) => {
           const tone = ruleTone(r);
           const stuck = stuckBatch(r);
-          const title = r.title || r.name.replace(/^mission:/, "");
-          const detail = () => setOpen(r.origin === "mission" ? { kind: "mission", project, name: r.name.replace(/^mission:/, "") } : { kind: "rule", project, name: r.name });
+          const title = r.title || r.name;
+          const detail = () => setOpen({ kind: "rule", project, name: r.name });
           // 이 규칙이 띄워 아직 열린 thread(목록 줄에 호박색 막대)
           const running = threads.filter((t) => t.project === project && t.automation === r.name && t.group !== "resolved" && t.status !== "failed");
           return <article className="automation-row" key={r.name} data-testid={`automation-${project}-${r.name}`} data-status={tone === "stuck" ? "stuck" : !r.enabled ? "off" : r.error ? "failed" : r.last_result?.status ?? "ready"}>
             <div className="automation-heading"><span className="automation-indicator" role="img" aria-label={!r.enabled ? "꺼짐" : r.error ? "실패" : stuck ? "막힘" : r.last_result ? runWord[r.last_result.status] ?? r.last_result.status : "기록 없음"} />
               <button type="button" className="automation-name" onClick={detail}>{title}</button>
               {legacyRule(r) && <span className="automation-badge is-legacy">이전 형식</span>}
-              {r.origin === "mission" && <span>임무 파일에서</span>}
+
               <button type="button" role="switch" aria-checked={r.enabled} aria-label={`${project}/${r.name} 켜기`} disabled={!canControl || busy !== null || r.error != null} onClick={() => void toggle(project, r)}>{r.enabled ? "켬" : "끔"}</button>
             </div>
             <p className="automation-summary">{r.trigger || r.schedule} → {r.action || "동작 정보 없음"}</p>
             {running.length > 0 && <p className="automation-open">{running.map((t) => <span key={t.id}><button type="button" className="automation-open-chip" data-testid={`automation-open-${project}-${t.id}`} title={`${t.id} · ${t.title} 열기`} onClick={() => onThread(project, t.id)}>열림 {t.id}</button>{r.closing?.filter((c) => c.thread === t.id).map((c) => <Closing key={c.thread} at={c.close_at_ms} />)}</span>)}</p>}
-            {r.origin === "mission" && <p>임무 파일의 켜짐 상태입니다. 적용 사본이 다르면 특수 패널에서 다시 읽기를 확인하세요.</p>}
+
             {r.error ? <p role="alert">{r.error}</p> : <>
               {stuck && <p className="automation-stuck-line" role="alert">막힘 · 입력 전달 모름 · 확인 필요{stuck.thread ? ` (${stuck.thread})` : ""}</p>}
               {!r.enabled && <p>꺼짐</p>}
-              {r.origin === "mission" && !r.approved && <p className="automation-approval">임무 승인 필요</p>}
+
               {r.start_approved === false && <p className="automation-approval">자동 시작 승인 필요 {canControl && <button type="button" disabled={busy !== null} onClick={() => setApproval({ project, rule: r })}>승인 검토</button>}</p>}
               {r.command && (!r.approved || !r.commands_allowed) && <p>{!r.approved ? "승인 필요" : "routine_commands 꺼짐"}</p>}
               <p>지난 {r.last_result ? <Result run={r.last_result} onThread={(id) => onThread(project, id)} /> : "기록 없음"}</p>
@@ -134,22 +132,10 @@ export function AutomationPanel({ canControl, threads = [], onThread = () => {},
             <div className="automation-foot"><span className="automation-file">{r.file || `routines/${r.name}.md`}</span><button type="button" className="btn btn-ghost" aria-label={`${title} 자세히`} onClick={detail}>자세히</button></div>
           </article>;
         })}
-        {missions.length > 0 && <>
-          <h4 className="automation-subhead">임무 · {missions.length}개</h4>
-          {missions.map((m) => <article className="automation-row" key={`mission:${m.name}`} data-testid={`automation-mission-${project}-${m.name}`}>
-            <div className="automation-heading">
-              <button type="button" className="automation-name" onClick={() => setOpen({ kind: "mission", project, name: m.name })}>{m.title || m.name}</button>
-              {legacyMission(m) && <span className="automation-badge is-legacy">이전 형식</span>}
-            </div>
-            <p className="automation-summary">{missionWord(m)} · 깨움 오늘 {m.wakes_today} · 대기 입력 {m.pending}</p>
-            <div className="automation-foot"><span className="automation-file">{m.thread ? `${m.thread.id} · ${m.thread.machine}` : "시작 안 함"}</span><button type="button" className="btn btn-ghost" aria-label={`${m.title || m.name} 자세히`} onClick={() => setOpen({ kind: "mission", project, name: m.name })}>자세히</button></div>
-          </article>)}
-        </>}
       </section>;
     })}
     {open?.kind === "rule" && openRule && <RuleDetail project={open.project} rule={openRule} canControl={canControl} covered={approval !== null} onChanged={load} onApprove={() => setApproval({ project: open.project, rule: openRule })} onThread={(id) => { setOpen(null); onThread(open.project, id); }} onClose={() => setOpen(null)} />}
     {open?.kind === "rule" && !openRule && !loading && <ConfirmDialog title="자동화가 없습니다" body={`${open.project}/${open.name}은 지워졌거나 이름이 바뀌었습니다.`} confirmLabel="닫기" onClose={() => setOpen(null)} onConfirm={async () => setOpen(null)} />}
-    {open?.kind === "mission" && <MissionDetail project={open.project} name={open.name} onClose={() => setOpen(null)} />}
     {open?.kind === "convert" && <ConvertSheet project={open.project} canControl={canControl} onClose={() => setOpen(null)} onDone={load} />}
     {approval && <ConfirmDialog title={`${approval.rule.title || approval.rule.name} 자동 시작 범위`} body={`${approval.rule.start_scope || ""}\n\n처음·넓힌 조건과 대상에만 승인합니다. 작업 본문과 선택 예산은 승인 범위에 포함하지 않습니다.`} confirmLabel="승인" onClose={() => setApproval(null)} onConfirm={async () => {
       if (!approval.rule.start_approval_sha256) throw new Error("승인할 범위 hash가 없습니다.");

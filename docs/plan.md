@@ -2340,7 +2340,7 @@ coordinator 실기(10-18 00:58, iPhone 홈 화면 앱을 앞에 띄움, binary c
   - 사람이 붙인 pane 이름(§8.109)은 다시 띄운 pane이 잇는다(herdr `src/persist/restore.rs` `set_manual_label`). 셸·프로그램·thread pane 모두 layout 자리를 바꾸기 전에 새 세션에 붙인다(`replace_pane`, 이름의 정본은 agent `spec.json`). `pane resume`도 같은 길이다. 다시 띄울 때 이름은 비워 agent가 명령으로 짓게 한다: 붙인 이름을 지우면 명령 이름(`sh` 등)으로 돌아간다. 처음 띄울 때 준 이름(`--name`)으로는 돌아가지 않는다. agent가 `name`을 붙인 이름으로 덮어 알려 host가 처음 이름을 모르기 때문이다(그 이름을 그대로 주면 지워도 붙인 이름이 남는다).
 - **설정(herdr `[session]` 이름·기본값 그대로).** host.toml `[session] resume_agents_on_restore = true`, `startup_per_agent_delay_ms = 100`(이어가기 사이 간격, herdr `start_pending_agent_resumes`). 끄면 셸은 되살리고 대화는 잇지 않는다(셸 안의 agent는 빈 셸로, harness pane과 thread는 중단으로).
 - **결정 8-5와 다름.** 결정 8-5(정할 것 5)는 「자동 이어가기 꺼짐 + opt-in」이었다. 결정 20 D12가 「재부팅 뒤 대화 자동 이어가기」를 참고대로 하기로 바꿔 기본 켬이다. §8.3·§8.5의 턴 끝 자동 이어가기(문구 보내기)는 다른 것이라 그대로 없다.
-- **harness 세션 ID를 연결 즉시 안다.** agent가 세션별 마지막 harness 사건(`harness.json`)을 hello(`AgentHello.harness`)에 싣는다. host가 `harness_hello.v1`을 알리면 agent는 연결 뒤 같은 사건을 다시 보내지 않는다(옛 host에는 전처럼 보낸다). AGENT_LINK는 그대로(필드는 serde 기본값), session IPC도 그대로다.
+- **harness 세션 ID를 연결 즉시 안다.** agent가 세션별 마지막 harness 사건(`harness.json`)을 hello(`AgentHello.harness`)에 싣는다. host가 `harness_hello.v1`을 알리면 agent는 연결 뒤 같은 사건을 다시 보내지 않는다. 다만 Hello 스냅샷 뒤 Welcome 대기 중 갱신한 사건은 연결 직후 전달한다(t-0508). 변경분 전달과 새 사건의 기억·전송은 같은 울타리로 순서를 지켜 같은 밀리초에도 옛 상태가 뒤늦게 덮지 않는다. 이전 연결이 바뀌면 그 전송 큐에서 기다리던 사건도 대기를 끝내고, 큰 변경분을 보내는 동안에도 EOF·기존 응답 상한·요청을 계속 처리한다. 일반 요청의 응답 경로는 Welcome 직후 열고, Ping 답 전송 대기는 읽기 루프를 막지 않는다. 옛 host에는 최신 기억 전체를 보낸다. AGENT_LINK는 그대로(필드는 serde 기본값), session IPC도 그대로다.
 - **끊긴 pane에는 질문을 다시 열지 않는다(10-18, QA t-0337 Q20).** hello의 마지막 사건이 확인창(질문)이면, host는 살아 있지 않은 pane의 질문을 닫은 뒤 그 사건을 적용하며 옛 pane ID로 질문을 다시 열었다. 그 질문은 복원 뒤에도 남았다.
   - 이제 host는 끝난 세션(`Interrupted`·`Exited`·`Lost`)의 harness 사건으로는 질문을 열지 않는다(상태와 harness 세션 ID는 그대로 적는다). 참고 herdr-web-ui도 살아 있는 blocked pane 화면에서만 질문을 읽는다.
   - 시험 m12 `reboot_does_not_reopen_the_question_of_an_interrupted_pane`(가짜 claude `--ask`가 확인창을 띄운 채 재부팅 → 복원한 pane이 `--resume`을 받은 뒤 옛 pane 질문이 없다). 검사를 빼면 「끊긴 pane의 질문이 다시 열렸다」로 실패한다.
@@ -6042,7 +6042,7 @@ L4 후속(10-20 00시 사용자 관찰): 멈춤 상태의 후보 예약과 재�
 - **요청.** 사용자 10-20 「대화창에서 사용한 컨텍스트를 보여주고 싶어」, 「%, over하면 실제 k」, 시안(library/t-0502) §7 「추천대로 해」(1단계는 안 A 입력칸 게이지만, 1,000k 넘으면 `1050k`, 휴대폰도 숫자를 늘 보임), 「타이핑시에는 보이지 않게도 가능해?」. slash 확인창·숨김(§7-3)은 2단계, 목록 줄 표지(안 C)는 3단계 선택으로 남긴다.
 - **실측: 붙여 넣은 `/compact`.** 실험실에서 실제 harness를 띄워 웹 입력칸이 보내는 꼴(bracketed paste + Enter)로 보냈다. Claude 2.1.304는 383ms에 정리 표지, 7.9초에 끝났다. Codex 0.163은 394ms에 표지, 3.5초에 끝났다. 둘 다 명령으로 받아 따로 보내는 길은 필요 없다. Claude 기록은 `<command-name>/compact</command-name>` 줄(사람 글이 아님)이고, Codex 실측 rollout에는 `/compact` 글이 없이 `compacted` 줄만 있다.
 - **값과 출처(agent `plan.rs`).** 2초마다 이어 읽던 대화 기록의 `plan` 사건에 `context`를 실어 `AgentStatus.context`로 보낸다(모든 기기·목록이 같은 값, 응답 뒤 2초 이하).
-  - Claude: 본 대화(`isSidechain` 아님) assistant 줄의 `usage` 합(input + cache 생성 + cache 읽기). 합이 0인 합성 줄은 건너뛴다. 창은 `requestedModel`이 `claude-…[1m]`이면 1M, `claude-…`면 200k, 없으면 모른다. % = round(사용 / 창 × 100)으로 Claude Code 2.1.304 상태줄과 같다. 실측: 43,922 사용, `/compact` 뒤 `compact_boundary.compactMetadata` preTokens 43,926 → postTokens 7,910 = 4%. 이것은 터미널 「96% left」와 같다. 정리 뒤 다음 응답까지는 postTokens가 값이다.
+  - Claude: 본 대화(`isSidechain` 아님) assistant 줄의 `usage` 합(input + cache 생성 + cache 읽기). 합이 0인 합성 줄은 건너뛴다. 창은 `requestedModel`이 `claude-…[1m]`이면 1M, `claude-…`면 200k, 없으면 모른다(§8.323에서 고침: Claude 5 모델은 `[1m]` 없이도 1M이고 사용자 `autoCompactWindow`가 창을 줄인다). % = round(사용 / 창 × 100)으로 Claude Code 2.1.304 상태줄과 같다. 실측: 43,922 사용, `/compact` 뒤 `compact_boundary.compactMetadata` preTokens 43,926 → postTokens 7,910. 정리 뒤 다음 응답까지는 postTokens가 값이다.
   - Codex: `token_count`의 `info.last_token_usage.total_tokens`와 `model_context_window`. Codex TUI 식(기준 12,000: 남은 % = (창−12k − max(0, 사용−12k)) / (창−12k))의 나머지를 쓴다. `info: null`은 앞 값을 둔다. `compacted` 줄 뒤 첫 `token_count`가 정리 뒤 크기다(실측 18,861 → 12,274, 창 258,400).
   - 창을 모르거나 사용이 창보다 크면 `percent`가 없다.
 - **proto(FRONT_API 1.67, 더하기만).**
@@ -6070,3 +6070,54 @@ L4 후속(10-20 00시 사용자 관찰): 멈춤 상태의 후보 예약과 재�
 - **보존·복구.** 기존 integration 편집과 host 프로젝트 뼈대를 production 호출자와 공유한다. base/local TOML의 주석·알 수 없는 key·우선순위와 기존 repo를 보존한다. repair는 빠진 소유 파일을 저장 payload에서 복구하며 다른 내용은 conflict다. reinstall은 소유 binary를 다시 배치하고 현재 TOML·identity/pin·DB·repo/worktree를 보존한다. 기본 uninstall은 마지막 공유 참조만 제거/원본 복원하며 설정·작업 root·기록·backup을 남긴다. hook의 외부 추가/변경은 전체 파일 충돌로 보존하고 제거 성공으로 숨기지 않는다. 제거/rollback도 intent→stage→파일 완료→참조 완료를 내구화해 이미 끝난 파일 작업을 반복하지 않는다. 과거 job은 active ID와 다르면 재개하지 않고 config/root 경로도 파일과 함께 잠근다. rollback은 inode/내용이 입증된 stage만 정리하며 남긴 root·입증하지 못한 stage는 partial/remaining으로 표시한다. 버전 갱신·purge·서비스/PATH/등록/신뢰 작업은 이 경계에서 실행하지 않는다.
 - **후속 OS 검증.** I3(macOS)→I5(Windows)→I4(Linux)는 I6 승인 경로 전까지 실험실 owner가 실제 엔진과 고정 OS adapter를 직접 구동한다. CLI 승인 우회나 시험 전용 production flag/export를 넣지 않는다. 운영 서비스·계정·키체인을 변경하지 않고, 실제 OS 관리자 시험에 필요한 권한/환경은 각 단계 진입 전에 보고한다. Windows/Linux 실행은 별도 VM 없이 main push 뒤 GitHub CI의 windows-2025/ubuntu-24.04가 판정한다.
 - **시험.** 실제 파일 중단/rename·동시 편집·두 OS 프로세스 잠금·다른 instance·재실행 무변경·공유 마지막 참조·rollback/repair/reinstall·private 권한/link·root 읽기·프로젝트 보존 owner를 cargo test에 둔다. Windows에는 실제 handle link 수/DACL 거부 분기를 별도로 둔다. CLI owner는 임의 승인 파일/--yes에도 적용0·status 쓰기0을 지킨다. 보안·복구 검사를 제거한 변형 RED와 원본 bytes 복원 GREEN을 남긴다. 착지 판정은 macOS 전체 gate와 Windows cross clippy/build이며 실제 Windows/Linux는 main push 뒤 CI로 구분한다. FRONT_API/AGENT_LINK/schema는 바꾸지 않는다.
+
+### 8.323 입력칸 「/」 목록·명령 확인창·터미널 알림과 대화의 명령 줄(10-20, t-0502 2단계)
+
+- **요청.** 사용자 10-20 「slash command (/compact 등)」. 시안 library/t-0502 §5·§6 2단계와 §7 결정 3(확인창 `/clear`·Codex `/new`, 숨김+확인창 `/exit`·`/quit`·`/logout`·Codex `/delete`).
+- **실측(실험실, 실제 harness, 웹 입력칸에서 보냄).**
+  - Claude 2.1.304 `/context`: 명령 줄과 출력이 `system/local_command`로 남는다(`<command-name>`, 색 코드가 든 `<local-command-stdout>`). 마크다운판 `isMeta` 사람 줄도 남는다.
+  - 인자 없는 `/model`은 터미널 선택창을 연다. aaa 상태는 「입력 대기」 그대로이고 질문 카드도 없다. 선택창이 열린 동안 보낸 글은 선택창으로 갔다(`/clear`가 실행되지 않았다). Esc로 닫으면 「Kept model as …」가 남는다.
+  - `/clear`는 새 `session_id`·`transcript_path`로 SessionStart(`source: clear`)를 보낸다. aaa hook matcher가 이미 clear를 받으므로 대화 보기와 게이지(§8.321)는 새 기록으로 넘어간다.
+  - Codex 0.163 `/status`는 화면에만 나오고 rollout에는 남지 않는다.
+- **창 크기 수리(§8.321).** 모델마다 `/context`로 실측했다(API 호출 없음). Claude 5 모델(opus·sonnet·haiku·fable 5와 5.x)은 `[1m]` 없이도 1M이고, haiku-4-5는 200k다. 사용자 설정 `modelSettings.<모델>.autoCompactWindow`가 있으면 `/context`가 그 값을 창으로 보인다(이 Mac의 opus-5-5는 500000이라 `[1m]`이어도 500k). 1단계는 Haiku 5.5 43,922를 22%로 보였지만 실제는 4%다. agent는 `$CLAUDE_CONFIG_DIR|~/.claude/settings.json`을 모델마다 한 번 읽는다(읽기만).
+- **목록(agent `slash.rs`, `commands.v1`, `AgentRequest::Commands`).**
+  - harness 버전에 묶인 내장 표(Claude 2.1.304, Codex 0.163)를 쓰고 `builtin_version`으로 알린다.
+  - 파일: Claude 사용자·프로젝트 명령(`commands/**/*.md`, 하위 폴더는 `a:b`)과 skill(`skills/*/SKILL.md`, `user-invocable: false`는 뺀다), Codex skill(`$이름`을 넣는다). 프로젝트는 세션 폴더(앞 프로그램 기준)에서 git root까지 본다.
+  - 파일은 앞 16KB만 읽는다(frontmatter `name`·`description`·`argument-hint`, 없으면 첫 줄). 폴더마다 300개, 깊이 4가 상한이다. 내장 이름은 파일이 가리지 않는다.
+  - plugin·MCP prompt·Codex `prompts/`(deprecated)는 이 머신에 실례가 없어 뺐다.
+  - 분류(`CommandKind`): `send`, `picker`(인자 없이 보내면 선택창, `/model` 등), `screen`(결과가 화면에만, Codex `/status` 등), `confirm`(Claude `/clear`와 다른 이름 `/reset`·`/new`, Codex `/new`·`/clear`), `danger`(`/exit`·`/quit`·`/logout`, Codex `/delete`). `idle_only`는 작업 중 목록에서 뺀다(Codex `available_during_task`, Claude `/compact`).
+- **proto(FRONT_API 1.68, 더하기만).** `pane_commands` → `CommandList{harness, builtin_version, commands[SlashCommand{name, description, source, kind, hint, aliases, idle_only, insert}]}`. `PaneChat.commands`·`AgentRequest::Chat.commands`와 `ChatRole::Command`·`CommandOutput`. AGENT_LINK는 1.9 그대로이고 새 요청은 기능 표시로만 보낸다. 옛 host·agent면 웹은 목록·확인창 없이 지금처럼 글로 보낸다.
+- **웹 입력칸.** herdr-web-ui를 따른다: 입력칸 위 listbox, 빈 「/」만 출처 머리(기본·skill·내 명령·프로젝트), 치면 순위 한 목록(앞 < 단어 경계 < 부분 < 글자 순서 < 설명, 같은 순위는 이 기기에서 고른 횟수), ↑↓·Tab·Enter 넣기(보내지 않음)·Esc 닫기, IME 조합 중 무시. 다르게 하는 곳은 아래와 같다.
+  - 메시지 맨 앞의 「/이름」에서만 연다(t3code). 줄 중간·경로(`/Users/…`)에서는 열지 않는다.
+  - 다 친 이름에서 Enter는 넣지 않고 보낸다. 넣어도 같은 글이고, Claude TUI의 Enter 실행과 같다.
+  - 줄 끝 표지: `터미널`(picker·screen), `확인`(confirm).
+  - 다 친 숨은 명령(`/exit`)에서는 빈 목록을 띄우지 않는다.
+  - 확인창(`ConfirmDialog`): confirm·danger는 보내기 전에 묻는다. 취소면 아무것도 보내지 않고 글은 입력칸에 남는다. 숨은 명령도 직접 쳐서 보내면 묻는다.
+  - 터미널 알림: 인자 없는 picker와 screen은 보낸 뒤 입력칸 위에 「터미널 보기」 알림을 보인다. picker 알림은 「닫기 전에는 다음 글이 선택창으로 갑니다」와 인자형 안내(`/model sonnet`)다.
+  - 목록은 pane을 열 때와 5분마다 다시 묻는다.
+- **대화의 명령 줄.** agent `chat.rs`가 Claude `<command-name>` 봉투를 `Command`(「/이름 인자」)로, `<local-command-stdout|stderr>`와 `system/informational`(「Unknown command: /x」)을 색 코드를 뺀 `CommandOutput`으로 읽는다. `/compact`는 정리 자리가 대신하므로 뺀다.
+  - 웹은 조용한 명령 한 줄과 고정폭 결과를 보인다. 결과가 여섯 줄을 넘으면 접는다.
+  - 쪽 읽기의 칸 고르기가 `subtype`을 버려 `system` 줄을 읽지 못하던 것도 고쳤다.
+- **참고와 다른 것.** herdr-web-ui·t3code에는 확인창이 없다. 여기는 휴대폰에서 thread를 다루고 thread의 harness가 끝나면 맡긴 일이 멈춰 확인창을 둔다(사용자 결정). 화면 메뉴를 카드로 바꾸기(herdr-web-ui `prompt.ts`)와 `/context` 범주 펼침은 3단계다.
+- **알려진 한계.** 목록을 받기 전(pane을 연 직후·옛 agent)에는 확인창도 없다. 선택창이 열린 것을 aaa는 모르고 알림만 한다. `autoCompactWindow`는 사용자 `settings.json`만 읽는다(Claude가 함께 보는 프로젝트 `.claude/settings.json`·`settings.local.json`의 값은 반영하지 않는다). E2E는 가짜 Claude만 쓴다: Codex 표·`$` skill·`screen` 분류는 유닛으로만 본다.
+- **검증.**
+  - agent 유닛: `slash::tests`(내장 분류·다른 이름, 사용자·프로젝트 명령·skill·숨은 skill·git root·내장 이름 보호, Codex `$` skill). `chat::tests::claude_commands_and_their_output_only_when_asked`는 실측 줄을 실제 쪽 읽기 길로 읽는다(`subtype`을 빼면 실패). `plan::tests::claude_window_names_and_setting_forms`와 `claude_context_…`(Haiku 5.5 43,922 = 4%, `autoCompactWindow` 500k).
+  - host 유닛(PaneChat이 `commands`를 agent에 넘김), 웹 유닛 `slashCommands.test.mjs`(맨 앞만·경로 제외, 순위, 숨김·작업 중, 확인창·알림 판정).
+  - 웹 E2E `51-slash-commands`: 실험실 설정 폴더의 내 명령·skill과 pane 폴더의 프로젝트 명령, 가짜 Claude가 실측 꼴로 기록한다. 출처 묶음과 숨김, 표지, 걸러내기·↓·Tab·Esc, 줄 중간·경로, `/context` 명령 줄과 색 코드 없는 결과·입력칸 풀림, `/model` 알림과 Esc 뒤 결과, `/exit` 취소(bytes 그대로)·`/clear` 보내기와 새 기록(대화·게이지 비움), 작업 중 `/compact` 숨김, iPhone 눌러 넣기를 본다.
+  - 결함 되심기: 확인창 판정을 끄면 E2E가 「확인창」 단계에서 실패했고, 되돌린 뒤 통과했다. E2E 50(Haiku 4.5의 200k로 바꿈)·45·37도 다시 통과했다.
+
+### 8.324 임무·평가자·특수 패널 제거 A4(10-20, t-0507)
+
+- **범위.** 확정 기획 t-0475 §5.1 A4·§4.2. 임무 실행·reset·평가자·전용 권한·do.wake·host 임무 상한·특수 패널을 제거한다. 일반 자동화의 시작·이어 보내기·기억·짧은 종료는 유지한다. 운영 이관 A3는 coordinator가 완료한 뒤 착지한다.
+- **호환.** FRONT_API 1.69에서 옛 요청은 한 판 동안 제거 오류, mission_list는 빈 목록이다. ProjectContext와 ThreadView에서 특수 필드를 제거하고 옛 DTO는 legacy_special에 격리한다. Role::Evaluator 값과 evaluations 표는 보존하며 새 실행에는 쓰지 않는다. 열린 옛 행은 일반 목록에 표시하고 시작 때 inbox로 안내한다. 일반 ticker의 저장이 변환 전 원본 필드를 버리지 않는다.
+- **파일 전송.** AGENT_LINK 1.10의 work_files.v1은 WorkFile 이름을 사용한다. 1.9 agent는 기존 파일 태그로 입력·기억·미처리 여부를 전송한다. 전용 mission_permissions와 SessionStart 포인터를 제거한다. 일반 safety와 기존 파일 경계·hash 검사를 유지한다.
+- **변환.** 옛 임무 파일은 실행하지 않고 inbox 한 번과 doctor files에 제거 안내를 낸다. AutomationConvert의 미리보기·hash·원본 사본을 유지하며 do.start(reuse=open, memory)·brief·기억으로 옮긴다. 기억·이력·pending·cursor와 전달 모름을 이전하고 파일 공개 전 journal로 중단 후 큐 이전을 마친다. 옛 source outbox도 변환 전 보존한다. 서로 다른 조건은 각각 규칙이 되며 원본 pending은 한 규칙에 한 번 옮긴다. 규칙은 시작 범위 승인 뒤 켠다.
+- **웹.** 활동 막대는 작업·머신·자동화 셋이며 저장된 special은 work다. 자동화 배지는 막힌 큐·승인 필요 규칙을 중복 없이 센다. 옛 evaluator도 작업 목록에 표시한다. 데스크톱·휴대폰의 전후 캡처와 실제 상호작용은 thread library에 둔다.
+- **검증.** 기존 A1/A2 keeper는 automation::start_tests로 옮긴다. m13이 옛 파일 비실행·한 번 안내·Front 제거 응답·미리보기 무쓰기·기억/이력/큐 이전을 검사하고 1.9 fake가 옛 파일 프레임만 받는지 확인한다. N-1 변환을 끄거나 pending 이전을 빼면 각각 keeper가 실패하며 원본 bytes를 복구한다. E2E26/40/48/49와 전체 ci-local·deps·TS 생성물·automation schema·공개 검사를 실행한다.
+
+### 8.325 aaa install I2 Windows 파일 내구·읽기 잠금 수리(10-20, t-0485)
+
+- **실제 실패.** I2 main push 뒤 Windows CI의 파일 owner가 실패했다. cross build는 실제 Windows 실행을 증명하지 않는다. 읽기 handle의 `sync_all`은 Windows `FlushFileBuffers`가 요구하는 쓰기 권한이 없어 적용/reverse 단계에서 실패했다. 전체 byte-range 독점 잠금은 같은 process의 별도 read handle도 막아 잠금 중 상태 snapshot이 실패했다.
+- **수리.** 이미 입증한 stage의 마지막 flush를 공통 helper로 모으고 Windows만 쓰기 handle을 요청한다. Unix 읽기 flush 의미는 유지한다. Windows의 자원 ticket은 read 공유만 허용하는 쓰기 handle 예약으로 두 process의 writer/deleter를 막고 읽기 관찰은 허용한다. 기존 owner/DACL/nlink/reparse·before SHA/mode/inode·journal·backup·원자 교체 경계는 유지한다. 기존 ACL이나 OS 정책을 바꾸지 않는다.
+- **owner.** 원본 파일/복구/ACL owner를 제외하거나 완화하지 않는다. 두 process 잠금 owner에 잠금 중 유효 status/snapshot의 전후 불변을 더하고, contention 거부·해제 뒤 같은 ID 재개를 유지한다. 잠금 오류를 무시하는 변형은 이 owner에서 실패해야 한다. 실제 Windows 원본 실패와 수리 후 macOS gate/cross를 나눠 기록하고, Windows 수리 후 실제 실행은 다음 main CI로 판정한다.
+- **순서.** I2 Windows 수리를 따로 착지한 뒤 사용자 최신 순서인 I5 Windows→I6 승인·대화형→Windows 최소 bootstrap→사용자 시험 PC 인수→I3 macOS→I4 Linux→I7 최종 인수로 간다. I5/I6의 공통 감독자·승인 경계와 I7 Windows 부분을 앞당기며 미구현 OS adapter는 성공으로 채우지 않는다. 사용자 인수에는 준비물·받기·명령·확인·되돌리기·문제 로그와 CI가 못 보는 SCM logon/Session 0/부팅/LSA/UAC를 명시한다.

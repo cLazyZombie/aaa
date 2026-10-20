@@ -3,7 +3,6 @@ on = "git"
 repo = "app"
 branches = ["main"]
 events = ["pushed", "forced", "deleted"]
-mission = "repo-watch"
 enabled = true
 +++
 저장소 변화 자료를 분류한다.
