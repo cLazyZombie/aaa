@@ -885,7 +885,7 @@ while IFS= read -r line; do
         printf 'fake> '
         continue
       fi
-      # 「질문 카드 시험」: 보고 \`## Questions\`에 \`### N.\` 질문 둘(53 「질문 카드」, plan §8.329·§8.337). 1번은 본문(글·그림·표)과
+      # 「질문 카드 시험」: 보고 \`## Questions\`에 \`### N.\` 질문 둘(53 「질문 카드」, plan §8.329·§8.345). 1번은 본문(글·그림·표)과
       # 선택지 그림이 있다(그림은 보고서 옆 library). 답 메시지는 입력 줄로 화면에 남는다
       if grep -q '질문 카드 시험' "$dir/brief.md"; then
         mkdir -p "$dir/library" && cp "${root}/pic.png" "$dir/library/"

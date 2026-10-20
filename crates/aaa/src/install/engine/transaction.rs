@@ -80,10 +80,15 @@ struct Transaction {
 
 pub(super) fn real_directory(path: &Path) -> Result<PathBuf> {
     let real = aaa_agent::work_root::check(path, None).map_err(|_| Fault::conflict())?;
-    if real.exists() && !real.is_dir() {
-        return Err(Fault::conflict());
+    for ancestor in real.ancestors() {
+        match ancestor.symlink_metadata() {
+            Ok(meta) if meta.is_dir() => return Ok(real),
+            Ok(_) => return Err(Fault::conflict()),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+            Err(e) => return Err(Fault::io(e)),
+        }
     }
-    Ok(real)
+    Err(Fault::conflict())
 }
 fn target(path: &Path) -> Result<PathBuf> {
     if !path.is_absolute() || path.components().any(|part| part == std::path::Component::ParentDir) {
@@ -111,7 +116,12 @@ fn snapshot(path: &Path) -> Result<(Option<String>, Option<u32>)> {
     let meta = match path.symlink_metadata() {
         Ok(m) if m.is_file() => m,
         Ok(_) => return Err(Fault::conflict()),
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok((None, None)),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+            // Windows의 PATH_NOT_FOUND는 일반 파일 아래 경로에도 올 수 있다.
+            // proposal과 실제 적용이 같은 디렉터리 조상 규칙으로 없음 여부를 판정한다.
+            real_directory(path.parent().ok_or_else(Fault::conflict)?)?;
+            return Ok((None, None));
+        }
         Err(e) => return Err(Fault::io(e)),
     };
     #[cfg(unix)]

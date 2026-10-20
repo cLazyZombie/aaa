@@ -1,4 +1,4 @@
-//! 「답할 것」(plan §8.337): 웹 왼쪽 막대의 한 패널에 thread 질문·coordinator 확인 필요 post·할 일 확인 필요를 모으고, 답한 것은
+//! 「답할 것」(plan §8.345): 웹 왼쪽 막대의 한 패널에 thread 질문·coordinator 확인 필요 post·할 일 확인 필요를 모으고, 답한 것은
 //! 그때의 원문으로 남긴다.
 //!
 //! - 열린 질문은 thread 기록(`ThreadView.questions`), 할 일은 `TaskView.attention`, 확인 필요 post는 끝내지 않은 inbox 항목이다

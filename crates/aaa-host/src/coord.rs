@@ -392,7 +392,7 @@ impl Host {
         if ops.is_empty() {
             return Err(bad("동작이 없다"));
         }
-        // 「답할 것」의 할 일 확인 필요(plan §8.337): 이 편집으로 풀린 것을 기록에 남긴다
+        // 「답할 것」의 할 일 확인 필요(plan §8.345): 이 편집으로 풀린 것을 기록에 남긴다
         let attention_before: Vec<(String, String, Option<String>)> = self
             .task_board(project)
             .map(|b| b.tasks.into_iter().filter_map(|t| Some((t.title.clone(), t.attention?, t.thread))).collect())

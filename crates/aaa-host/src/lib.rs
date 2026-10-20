@@ -434,8 +434,10 @@ pub struct Host {
     pub changed: tokio_watch::Sender<u64>,
     /// 보고서 목록이 바뀌었다(보내기·열기·지우기·thread 사본, plan §8.256). 웹 events가 안 본 수를 다시 보낸다
     pub reports_changed: tokio_watch::Sender<u64>,
-    /// 「답할 것」의 확인 필요 post·답한 것 기록이 바뀌었다(plan §8.337). 웹 events가 `asks` 사건을 보낸다
+    /// 「답할 것」의 확인 필요 post·답한 것 기록이 바뀌었다(plan §8.345). 웹 events가 `asks` 사건을 보낸다
     pub asks_changed: tokio_watch::Sender<u64>,
+    /// 알림함이 바뀐 횟수(웹 알림함 배지가 다시 읽는다)
+    pub inbox_changed: tokio_watch::Sender<u64>,
     /// EMFILE 중에는 파일을 더 열지 않고, ticker가 여유가 생긴 뒤 시스템 경고를 저장한다.
     resource_exhausted: std::sync::atomic::AtomicBool,
     health: Mutex<supervisor::Health>,
@@ -668,6 +670,7 @@ impl Host {
             changed: tokio_watch::channel(0).0,
             reports_changed: tokio_watch::channel(0).0,
             asks_changed: tokio_watch::channel(0).0,
+            inbox_changed: tokio_watch::channel(0).0,
             enroll: Mutex::new(Enroll::default()),
             pairing: Mutex::new(Pairing::default()),
             agent_listen: Mutex::new(None),
@@ -749,6 +752,10 @@ impl Host {
     /// 보고서 목록이 바뀌었다(plan §8.256)
     pub(crate) fn reports_bump(&self) {
         self.reports_changed.send_modify(|v| *v += 1);
+    }
+
+    pub(crate) fn inbox_bump(&self) {
+        self.inbox_changed.send_modify(|v| *v += 1);
     }
 
     // ───────────── agent 연결 ─────────────
@@ -1283,6 +1290,7 @@ impl Host {
                 | FrontRequest::DeviceRevoke { .. }
                 | FrontRequest::WebPublish
                 | FrontRequest::WebPublishOff
+                | FrontRequest::RoutineApprove { .. }
         ) && (front::in_session(actor)
             || actor.starts_with("worker:")
             || actor.starts_with("evaluator:")
@@ -1290,7 +1298,11 @@ impl Host {
         {
             return Err(err(
                 ErrorCode::Forbidden,
-                "기기·머신 등록과 폐기·웹 공개 변경은 사람이 aaa 밖 터미널이나 웹에서 한다",
+                if matches!(req, FrontRequest::RoutineApprove { .. }) {
+                    "routine 명령 승인은 사람이 aaa 밖 터미널이나 웹(조작 기기)에서 한다(이 연결은 aaa 세션 안에서 왔다)"
+                } else {
+                    "기기·머신 등록과 폐기·웹 공개 변경은 사람이 aaa 밖 터미널이나 웹에서 한다"
+                },
             ));
         }
         if req.local_only() && role != DeviceRole::Local {
@@ -1357,11 +1369,7 @@ impl Host {
             FrontRequest::PostStatus { project, post_id } => {
                 self.post_status(&project, &post_id, actor).map(|result| FrontResponse::Post { result })
             }
-            FrontRequest::PostList { project } => self
-                .db
-                .post_list(&project)
-                .map(|posts| FrontResponse::Posts { posts })
-                .map_err(|e| err(ErrorCode::Internal, e.to_string())),
+            FrontRequest::PostList { project } => self.post_list(&project),
             FrontRequest::PostUnmute { project, thread } => self.post_unmute(&project, &thread, actor),
             FrontRequest::Asks { project } => self.asks_view(&project),
             FrontRequest::AskHandle { project, item } => self.ask_handle(&project, &item, actor),
@@ -1639,31 +1647,61 @@ impl Host {
             | FrontRequest::MissionReload { .. }
             | FrontRequest::MissionRestart { .. }
             | FrontRequest::MissionOpen { .. } => Err(legacy_mission::removed()),
-            FrontRequest::Routines { project } => {
-                self.routines(&project).map(|routines| FrontResponse::Routines { routines })
+            FrontRequest::Routines { project } => self.routines_reply(&project, self.routines(&project)),
+            FrontRequest::AutomationApprove { project, name, approval_sha256 } => {
+                self.routines_reply(&project, self.automation_approve(&project, &name, &approval_sha256, actor))
             }
-            FrontRequest::AutomationApprove { project, name, approval_sha256 } => self
-                .automation_approve(&project, &name, &approval_sha256, actor)
-                .map(|routines| FrontResponse::Routines { routines }),
+            FrontRequest::AutomationRead { project, name } => {
+                self.automation_read(&project, &name).map(|doc| FrontResponse::AutomationDoc { doc })
+            }
+            FrontRequest::AutomationValidate { project, name, text, form, body } => self
+                .automation_validate(&project, &name, text, form, body)
+                .map(|(text, check)| FrontResponse::AutomationChecked { text, check }),
+            FrontRequest::AutomationSave { project, name, text, expected_sha256, body, body_expected_sha256 } => self
+                .automation_save(&project, &name, text, expected_sha256, body, body_expected_sha256, actor)
+                .await
+                .map(|doc| FrontResponse::AutomationDoc { doc }),
+            FrontRequest::AutomationDelete { project, name, expected_sha256 } => {
+                let deleted = self.automation_delete(&project, &name, &expected_sha256, actor).await;
+                self.routines_reply(&project, deleted.and_then(|_| self.routines(&project)))
+            }
+            FrontRequest::AutomationRestore { project, id } => {
+                let restored = self.automation_restore(&project, &id, actor).await;
+                self.routines_reply(&project, restored.and_then(|_| self.routines(&project)))
+            }
+            FrontRequest::AutomationRun { project, name, key } => self
+                .automation_run(&project, &name, &key, actor)
+                .await
+                .map(|(accepted, detail)| FrontResponse::AutomationRan { accepted, detail }),
+            FrontRequest::ProjectSettings { project } => {
+                self.project_settings_view(&project).map(FrontResponse::ProjectSettings)
+            }
+            FrontRequest::ProjectRepoEdit { project, from, to } => self.project_repo_edit(&project, &from, &to, actor),
+            FrontRequest::ThreadResolvePreview { project, thread } => {
+                self.thread_resolve_preview(&project, &thread).await.map(FrontResponse::ResolvePreview)
+            }
+            FrontRequest::LibraryPruneApply { project, older_than_days, expected } => {
+                self.library_prune_apply(project.as_deref(), older_than_days, &expected, util::now_ms(), actor)
+            }
             FrontRequest::AutomationConvert { project, dry_run, plan_sha256 } => self
                 .automation_convert(&project, dry_run, plan_sha256.as_deref(), actor)
                 .await
                 .map(|(files, plan_sha256)| FrontResponse::AutomationConverted { files, dry_run, plan_sha256 }),
-            FrontRequest::AutomationUnblock { project, name, batch, discard } => self
-                .automation_unblock(&project, &name, &batch, discard, actor)
-                .and_then(|_| self.routines(&project))
-                .map(|routines| FrontResponse::Routines { routines }),
+            FrontRequest::AutomationUnblock { project, name, batch, discard } => self.routines_reply(
+                &project,
+                self.automation_unblock(&project, &name, &batch, discard, actor).and_then(|_| self.routines(&project)),
+            ),
             FrontRequest::RoutineRuns { project, name } => self.routine_runs(&project, &name).and_then(|runs| {
                 Ok(FrontResponse::RoutineRuns { runs, source: self.routine_source(&project, &name)? })
             }),
             FrontRequest::RoutineToggle { project, name, on } => {
-                self.routine_toggle(&project, &name, on, actor).map(|routines| FrontResponse::Routines { routines })
+                self.routines_reply(&project, self.routine_toggle(&project, &name, on, actor))
             }
-            FrontRequest::RoutineApprove { project, name, command_sha256 } => self
-                .routine_approve(&project, &name, &command_sha256, actor)
-                .map(|routines| FrontResponse::Routines { routines }),
-            FrontRequest::Events { project, after, limit } => {
-                self.events(project.as_deref(), after, limit).map(|events| FrontResponse::Events { events })
+            FrontRequest::RoutineApprove { project, name, command_sha256 } => {
+                self.routines_reply(&project, self.routine_approve(&project, &name, &command_sha256, actor))
+            }
+            FrontRequest::Events { project, after, limit, tail } => {
+                self.events(project.as_deref(), after, limit, tail).map(|events| FrontResponse::Events { events })
             }
             FrontRequest::EvaluatorAssign { .. }
             | FrontRequest::EvaluatorStatus { .. }

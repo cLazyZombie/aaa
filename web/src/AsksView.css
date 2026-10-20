@@ -1,4 +1,4 @@
-/* 「답할 것」(plan §8.337): 사이드바 목록과 본문 카드. 카드는 화면 선택 창 카드(PromptCard.css)를 바탕으로 쓰고 본문 Markdown·
+/* 「답할 것」(plan §8.345): 사이드바 목록과 본문 카드. 카드는 화면 선택 창 카드(PromptCard.css)를 바탕으로 쓰고 본문 Markdown·
    선택지 그림 카드(2B)·크게 보기를 더한다 */
 
 .asks-panel { display: flex; flex-direction: column; gap: 2px; padding: var(--space-2); overflow-y: auto; min-height: 0; flex: 1 1 0; }

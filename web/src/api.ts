@@ -54,11 +54,18 @@ export function onTasksChanged(listener: (sha256: string) => void): () => void {
   return () => tasksListeners.delete(listener);
 }
 
-/** host `asks` 사건(확인 필요 post·답한 것 기록이 바뀜, FRONT_API 1.76, plan §8.337): 「답할 것」이 다시 읽는다 */
+/** host `asks` 사건(확인 필요 post·답한 것 기록이 바뀜, FRONT_API 1.78, plan §8.345): 「답할 것」이 다시 읽는다 */
 const asksListeners = new Set<() => void>();
 export function onAsksChanged(listener: () => void): () => void {
   asksListeners.add(listener);
   return () => asksListeners.delete(listener);
+}
+
+/** host `inbox` 사건(알림함이 바뀜, FRONT_API 1.77): 알림함 배지와 패널이 다시 읽는다. 연결을 열 때도 한 번 온다 */
+const inboxListeners = new Set<() => void>();
+export function onInboxChanged(listener: () => void): () => void {
+  inboxListeners.add(listener);
+  return () => inboxListeners.delete(listener);
 }
 
 async function unwrap<T>(res: Response): Promise<T> {
@@ -432,6 +439,7 @@ export function watchEvents(
       else if (ev.ev === "reports") onReports(ev.unseen);
       else if (ev.ev === "tasks") for (const listener of tasksListeners) listener(ev.sha256);
       else if (ev.ev === "asks") for (const listener of asksListeners) listener();
+      else if (ev.ev === "inbox") for (const listener of inboxListeners) listener();
       else if (ev.ev === "app_badge") onAppBadge(ev.count);
       else if (ev.ev === "rollout") onRollout(ev.result);
       else if (ev.ev === "chat_changed") tellChat(ev.pane, { changed: true });

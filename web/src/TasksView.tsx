@@ -197,7 +197,7 @@ type Dialog =
 
 /** 할 일 화면 밖에서 여는 새 task: 명령 팔레트 「할 일 더하기」(link 없음), 보고서·thread 결과물 「할 일에 추가」(그 문서, plan §8.327) */
 export type TaskAddRequest = { seq: number; link: TaskAttachment | null };
-/** 할 일 화면 밖에서 여는 task(「답할 것」의 할 일 확인 필요 「할 일에서 정하기」, plan §8.337): 바뀌면 그 제목의 상세를 연다 */
+/** 할 일 화면 밖에서 여는 task(「답할 것」의 할 일 확인 필요 「할 일에서 정하기」, plan §8.345): 바뀌면 그 제목의 상세를 연다 */
 export type TaskFocusRequest = { seq: number; title: string | null };
 
 export function TasksView({

@@ -1531,7 +1531,7 @@ summary.chat-compact-head { cursor: pointer; }
 .app-ref:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 .dock-ref { display: flex; max-width: 1120px; margin: 0 0 var(--space-2); }
 
-/* 「답할 것」 질문 카드(plan §8.329·§8.337). 카드는 화면 선택 창 카드(PromptCard) 꼴이고 패널이 굴러가니 높이를 묶지 않는다 */
+/* 「답할 것」 질문 카드(plan §8.329·§8.345). 카드는 화면 선택 창 카드(PromptCard) 꼴이고 패널이 굴러가니 높이를 묶지 않는다 */
 .prompt-card.thread-ask-card { max-height: none; gap: var(--space-3); overflow: visible; }
 .thread-ask-q { display: flex; flex-direction: column; gap: var(--space-2); }
 .thread-ask-q + .thread-ask-q { border-top: var(--hairline) solid var(--border); padding-top: var(--space-3); }

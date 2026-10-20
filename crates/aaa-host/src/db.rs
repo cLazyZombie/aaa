@@ -842,6 +842,20 @@ impl Db {
         Ok(rows)
     }
 
+    /// `flow_after`의 가장 최근 `limit`개(같은 차례: 오래된 것부터)
+    pub fn flow_tail(&self, project: Option<&str>, after: u64, limit: u32) -> Result<Vec<aaa_proto::FlowEvent>> {
+        let c = self.conn.lock().unwrap();
+        let mut st = c.prepare(
+            "SELECT project,seq,at_ms,boot_id,kind,thread,role,profile,machine,evidence,detail,repo,actor FROM flow_events
+             WHERE (?1 IS NULL OR project=?1) AND seq>?2 ORDER BY at_ms DESC, project DESC, seq DESC LIMIT ?3",
+        )?;
+        let mut rows = st
+            .query_map(params![project, after as i64, limit as i64], Self::flow_from)?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        rows.reverse();
+        Ok(rows)
+    }
+
     fn flow_from(r: &rusqlite::Row) -> rusqlite::Result<aaa_proto::FlowEvent> {
         Ok(aaa_proto::FlowEvent {
             project: r.get(0)?,
@@ -1454,7 +1468,7 @@ impl Db {
         Ok(data.map(|d| serde_json::from_str(&d)).transpose()?)
     }
 
-    /// 「답할 것」 기록 하나를 넣는다(plan §8.337)
+    /// 「답할 것」 기록 하나를 넣는다(plan §8.345)
     pub(crate) fn ask_put(&self, project: &str, r: &aaa_proto::AskRecord) -> Result<()> {
         let kind = serde_json::to_value(r.kind)?.as_str().unwrap_or_default().to_string();
         self.conn.lock().unwrap().execute(
@@ -1713,5 +1727,38 @@ mod audit_env_tests {
         assert_eq!(again, got, "다시 열어도 그대로");
         drop(db);
         let _ = std::fs::remove_dir_all(&root);
+    }
+}
+
+#[cfg(test)]
+mod flow_tests {
+    use super::*;
+
+    /// 웹 알림함 「흐름 사건」(FRONT_API 1.77 `tail`): 가장 최근 N개를 오래된 것부터 보인다
+    #[test]
+    fn flow_tail_returns_the_latest_in_order() {
+        let db = Db::open(Path::new(":memory:")).unwrap();
+        for n in 1..=5u64 {
+            db.flow_insert(&aaa_proto::FlowEvent {
+                project: "demo".into(),
+                seq: 0,
+                at_ms: n,
+                boot_id: "b".into(),
+                kind: format!("k{n}"),
+                thread: None,
+                repo: None,
+                actor: None,
+                role: None,
+                profile: None,
+                machine: None,
+                evidence: None,
+                detail: String::new(),
+            })
+            .unwrap();
+        }
+        let kinds = |v: Vec<aaa_proto::FlowEvent>| v.into_iter().map(|e| e.kind).collect::<Vec<_>>();
+        assert_eq!(kinds(db.flow_tail(Some("demo"), 0, 2).unwrap()), ["k4", "k5"]);
+        assert_eq!(kinds(db.flow_after(Some("demo"), 0, 2).unwrap()), ["k1", "k2"]);
+        assert!(db.flow_tail(Some("other"), 0, 2).unwrap().is_empty());
     }
 }

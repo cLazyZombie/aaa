@@ -1,4 +1,4 @@
-// 「답할 것」 모델(src/asksModel.ts, plan §8.337): 질문 본문이 여는 파일 주소는 그 질문의 `library/…`·`report.md`뿐이고, 주소의
+// 「답할 것」 모델(src/asksModel.ts, plan §8.345): 질문 본문이 여는 파일 주소는 그 질문의 `library/…`·`report.md`뿐이고, 주소의
 // 질문·답할 것 열쇠는 답한 뒤에도 그때 남긴 기록으로 이어진다(새 보고 뒤의 칩·「답함으로 표시」 뒤의 카드).
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";

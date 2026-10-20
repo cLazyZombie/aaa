@@ -118,7 +118,7 @@ impl Host {
         }
         self.db.audit(actor, "thread_answer", &format!("{project}/{id} {summary}"));
         let rec = self.load(project, id)?;
-        // 답할 때의 원문을 남긴다(plan §8.337): 새 보고가 질문을 비워도 「답한 것」과 대화 칩이 읽는다
+        // 답할 때의 원문을 남긴다(plan §8.345): 새 보고가 질문을 비워도 「답한 것」과 대화 칩이 읽는다
         if let Some(a) = rec.question_answer.as_ref().filter(|a| a.at_ms == answer.at_ms) {
             self.record_answer(&rec, a);
         }

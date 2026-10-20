@@ -36,6 +36,7 @@ import { ListChecks, Menu, Settings } from "lucide-react";
 import { Icon } from "./icons";
 import { hasAgentMark } from "./herdr/AgentMark.tsx";
 import { Sidebar } from "./Sidebar";
+import { useInboxBadge } from "./InboxPanel";
 import type { RolloutSnapshot } from "./RolloutCard";
 import { needsYou, paneAgentStatus, rosterRows, shortPath, threadKey } from "./sidebarModel";
 import { useShortcuts } from "./herdr/shortcuts.ts";
@@ -272,7 +273,7 @@ function storeSelection(sel: string): void {
 /**
  * 고른 것: `#pane=<id>`, `#thread=<id>`, 모든 thread `#threads`, 보고서 화면 `#reports`(목록)·`#report=<project>/<name>`(하나,
  * plan §8.240. 프로젝트 없는 `#report=<이름>`은 보고서 목록을 받은 뒤 채운다), 할 일 화면 `#tasks`(plan §8.306), 「답할 것」 `#asks`·
- * `#ask=<열쇠>`(asksModel, plan §8.337), thread 질문 `#question=<thread>`(「답할 것」의 그 질문 카드, 답했으면 그때 기록, plan §8.329). host는
+ * `#ask=<열쇠>`(asksModel, plan §8.345), thread 질문 `#question=<thread>`(「답할 것」의 그 질문 카드, 답했으면 그때 기록, plan §8.329). host는
  * 프로젝트 하나만 맡아(plan §8.291) 주소에 프로젝트가 없다. 옛 주소(이미 보낸 알림·저장한 링크)도 연다:
  * `#thread=<project>/<id>`는 그대로 받고, 프로젝트 고르기 `#projects`·프로젝트 thread 보기 `#project=<name>`은 `#threads`로 바꾼다.
  * 짧은 thread 주소는 thread 목록을 받은 뒤 내부 열쇠 `thread:<project>/<id>`로 바뀐다(App의 `sel` 정리).
@@ -410,6 +411,7 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
   const [threadsSync, setThreadsSync] = useState(0);
   const threadReload = useRef(new ThreadReload());
   const [automationBadge, setAutomationBadge] = useState(0);
+  const inboxBadge = useInboxBadge();
   const automationLoading = useRef(false);
   const automationReload = useRef(false);
   const loadAutomations = () => {
@@ -748,9 +750,8 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
       ownHash.current = null;
       const next = selectedFromHash();
       if (!own) {
-        // 브라우저 뒤로·앞으로·알림이 연 곳: iPhone 왼쪽 가장자리 쓸기는 목록 drawer 쓸기와 Safari 뒤로가 함께 일어난다. 뒤로가 이기고
-        // 목록은 닫는다(참고 onPop → selectTarget의 setDrawerOpen(false), App.tsx 715줄)
-        setDrawerOpen(false);
+        // 브라우저 뒤로·앞으로는 이동 직전 drawer 상태를 유지한다(창마다 기억하지 않는다, plan §8.340). 목록 줄을 직접 고를 때는
+        // choose·chooseThread 등이 닫는다. 가장자리 쓸기가 drawer를 열고 Safari 뒤로와 겹쳐도 그 열린 상태를 유지한다.
         // 고른 것이 없는 칸(옛 첫 칸·「고른 것 없음」)이나 닫힌 pane의 칸에 닿으면 지금 화면에 머물고 그 칸에 지금 주소를 쓴다(참고
         // onPop: pane이 없으면 그대로, 닿은 칸에는 보이는 곳을 쓴다). 빈 「하나를 고른다」로 떨어지지 않는다
         const { sel: shown, panes, loaded } = now.current;
@@ -835,7 +836,7 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
     if (sel?.startsWith("reports:")) setReportsAt(sel);
     else beforeReports.current = sel;
   }, [sel]);
-  // 「답할 것」 화면(plan §8.337, 사용자 결정 10-21 1B): 사이드바 「답할 것」 패널이 목록이고 본문은 고른 것 하나의 카드다. 질문 주소
+  // 「답할 것」 화면(plan §8.345, 사용자 결정 10-21 1B): 사이드바 「답할 것」 패널이 목록이고 본문은 고른 것 하나의 카드다. 질문 주소
   // (`question:<thread>`, 칩·알림·터미널 링크)도 이 화면이다. 한 번 연 뒤에는 숨긴 채 그려 둔다(쓰던 답·굴린 자리가 그대로)
   const asksShown = sel === "asks:" || sel?.startsWith("ask:") === true || sel?.startsWith("question:") === true;
   const [asksOpened, setAsksOpened] = useState(asksShown);
@@ -1065,7 +1066,7 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
   const taskBoard = useTaskBoard(up, openThreadIds, tasksShown);
   const seenMine = useSeenMine(taskBoard.board);
   const shownThreads = allThreads.filter((t) => t.group !== "resolved");
-  // 「답할 것」(plan §8.337): thread 질문·coordinator 확인 필요 post·할 일 확인 필요와 host가 남긴 답한 것 기록. 활동 막대 빨강 수,
+  // 「답할 것」(plan §8.345): thread 질문·coordinator 확인 필요 post·할 일 확인 필요와 host가 남긴 답한 것 기록. 활동 막대 빨강 수,
   // 대화의 칩(답한 질문은 새 보고 뒤에도 그 기록으로 「답함」)이 이것을 본다. 질문 답은 host가 한 번만 받고 thread에 보낸다
   const { data: asksData, put: putAsks } = useAsksData(up);
   const asksDone = asksData?.done ?? [];
@@ -1201,6 +1202,7 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
     work: { count: needThreads.length + waitingAgents.length, label: "확인 필요·검토 대기·답을 기다림" },
     machines: { count: highMachines(machines), label: `CPU·MEM ${HIGH_STAT}% 넘음` },
     automations: { count: automationBadge, label: "막힌 큐·승인 필요" },
+    inbox: { count: inboxBadge, label: "끝내지 않은 알림" },
   };
   // 탭 아이콘의 안 본 알림 수(faviconBadge.ts, plan §8.266): 창에 focus가 오면 지운다
   useEffect(() => watchBadgeFocus(), []);
@@ -1279,6 +1281,7 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
           onThreadId={openThreadId}
           ruleAsk={ruleAsk}
           onRuleAsked={() => setRuleAsk(null)}
+          onAsks={() => showPanel("asks")}
           asks={
             <AsksPanel
               open={askList}

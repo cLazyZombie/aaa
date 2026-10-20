@@ -211,6 +211,7 @@ impl Host {
         if crate::asks::is_user_request(item) {
             self.asks_bump();
         }
+        self.inbox_bump(); // 웹 알림함 배지·패널도
         let dir = self.inbox_dir(&item.project);
         if let Err(e) = std::fs::create_dir_all(&dir)
             .and_then(|_| std::fs::write(dir.join(format!("{}.md", item.id)), render_item(item)))
@@ -319,6 +320,7 @@ impl Host {
             let _ = std::fs::create_dir_all(dir.join("done"));
             let _ = std::fs::rename(dir.join(format!("{}.md", i.id)), dir.join("done").join(format!("{}.md", i.id)));
         }
+        self.inbox_bump();
         Ok(())
     }
 
