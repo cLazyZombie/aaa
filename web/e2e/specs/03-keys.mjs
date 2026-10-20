@@ -648,7 +648,14 @@ export default async function ({ ctl, page }) {
     // 둘째 화면이 크기를 가져간다(키 막대 없는 데스크톱: 터미널 누름은 클릭 보고도 보낸다)
     await sp.getByTestId("terminal").click();
     await until("둘째 화면 크기", () => pcols() < dcols);
-    await sleep(500);
+    const shared = aaa("pane", "list").panes.find((p) => p.name === "mouseapp");
+    // host가 바뀐 직후에는 첫 화면에 앞 state가 남을 수 있다. 그 화면도 새 grid를 받고 맞추기를 판단한 뒤 키를 친다.
+    await domIs(dp, "둘째 화면 크기를 첫 화면에 적용", ({ cols, rows }) => {
+      const term = document.querySelector('[data-testid="terminal"]');
+      return document.querySelector(".term-title .muted")?.textContent.includes(`${cols}×${rows}`) &&
+        document.querySelector(".xterm-rows")?.children.length === rows &&
+        term?.dataset.fit === "other" && !term.hasAttribute("data-fit-pending");
+    }, { cols: shared.cols, rows: shared.rows });
     // 보낸 순서는 이 화면이 WebSocket에 쓴 순서로 본다(프로그램 쪽은 SIGWINCH와 입력 읽기의 순서가 정해지지 않는다).
     // 화면 안 기록(sentFrames, init script)으로 읽는다: 연 뒤에 단 Playwright framesent는 그 전에 열린 WebSocket을 놓친다
     const mark = await sentCount(dp);

@@ -3,7 +3,7 @@
 
 import path from "node:path";
 import {
-  repo, root, aaa, until, waitOutput, screenText, shot, fontOk, pairPage, base, step, browser, openSettings, sentFrames, sentCount, inList,
+  repo, root, aaa, until, waitOutput, screenText, shot, fontOk, pairPage, base, step, browser, openSettings, sentFrames, sentCount, inList, domIs,
 } from "../lib/harness.mjs";
 
 export default async function ({ ctl, page }) {
@@ -254,24 +254,45 @@ process.stdin.resume();`;
   });
 
   await step("두 controller(herdr 모델): 가져오기 없이 바로 입력, 입력·focus를 얻은 화면이 크기를 다시 건다, 가려지면 바로 놓는다", async () => {
-    // 이 화면이 WebSocket에 쓴 글 frame. 첫 화면이 pane을 열며 붙는 WebSocket부터 듣는다
-    const opFrames = [];
-    const listen = (op) =>
-      op.on("websocket", (ws) =>
-        ws.on("framesent", (f) => {
-          if (typeof f.payload !== "string") return;
-          try {
-            opFrames.push({ ...JSON.parse(f.payload), at: Date.now() });
-          } catch {}
-        }),
-      );
-    const other = await pairPage(browser, aaa("web", "pair").code, { width: 1000, height: 640 }, { line: true, onPage: listen });
+    const other = await pairPage(browser, aaa("web", "pair").code, { width: 1000, height: 640 }, { line: true });
     const op = other.page;
+    const pane = () => aaa("pane", "list").panes.find((x) => x.name === "t1");
     const t1size = () => {
-      const p = aaa("pane", "list").panes.find((x) => x.name === "t1");
+      const p = pane();
       return `${p.cols}x${p.rows}`;
     };
-    const holder = () => aaa("pane", "list").panes.find((x) => x.name === "t1").lease?.label ?? null;
+    const holder = () => pane().lease?.label ?? null;
+    // resize는 글·Enter 전송보다 먼저 온다. host의 submitted를 받은 입력줄(보낸 글 지움·단추 다시 켬)과
+    // PTY 출력까지 기다려야 다음 focus·blur·숨김이 앞 전송의 Enter와 경쟁하지 않는다.
+    const submit = async (text, output) => {
+      await op.getByLabel("보낼 글").fill(text);
+      await op.getByRole("button", { name: "터미널에 보내기", exact: true }).click();
+      await domIs(op, "보내기 확인 처리", () => {
+        const line = document.querySelector('[aria-label="보낼 글"]');
+        const enter = document.querySelector('[aria-label="터미널에 Enter 보내기"]');
+        return line?.value === "" && enter && !enter.disabled;
+      });
+      await until(`${output} 출력`, async () => (await screenText(op)).includes(output));
+    };
+    // host 크기만 먼저 바뀐 순간을 다음 단계의 기준으로 쓰지 않는다. 두 화면도 그 state를 받고 맞추기까지
+    // 판단한 뒤여야 focus를 넘긴다(그리기는 xterm 출력 큐 뒤에 온다).
+    const sized = async (what, size, owner, ms = 20_000) => {
+      await until(what, async () => {
+        const p = pane();
+        if (`${p.cols}x${p.rows}` !== size || (p.lease?.label ?? null) !== owner) return false;
+        for (const view of [page, op]) {
+          const ready = await view.evaluate((size) => {
+            const term = document.querySelector('[data-testid="terminal"]');
+            const title = document.querySelector(".term-title .muted")?.textContent;
+            const rows = document.querySelector(".xterm-rows")?.children.length;
+            return title?.includes(size.replace("x", "×")) && rows === Number(size.split("x")[1]) &&
+              !term?.hasAttribute("data-fit-pending") && ["same", "other", "off", "released"].includes(term?.dataset.fit);
+          }, size);
+          if (!ready) return false;
+        }
+        return true;
+      }, ms);
+    };
     // 원래 화면이 t1을 쓰는 중에서 시작한다(앞 단계가 t1에 입력했는지에 기대지 않는다)
     await page.locator(".xterm-screen").click();
     await page.keyboard.type("echo own-$((1+2))\n");
@@ -299,58 +320,61 @@ process.stdin.resume();`;
     if (decided !== "other" || claimed.length || t1size() !== held || holder() !== first)
       throw new Error(`열기만 했는데 크기·쓰는 화면이 바뀌었다: ${held} → ${t1size()}, 판단 ${decided}, 보낸 것 ${JSON.stringify(claimed)}`);
     // 1) 입력하면 바로 들어가고, 그 화면이 지금 쓰는 화면이 되어 자기 칸 크기로 맞춘다
-    await op.getByLabel("보낼 글").fill("echo direct-$((3*7))");
-    await op.getByRole("button", { name: "보내기" }).click();
+    await submit("echo direct-$((3*7))", "direct-21");
     await until("다른 화면 입력", async () => (await screenText(page)).includes("direct-21"));
     await until("입력한 화면 크기", () => t1size() !== held && holder() !== first);
     const otherSize = t1size();
+    const second = holder();
+    await sized("입력한 두 화면 크기", otherSize, second);
     await shot(page, "desktop-lease-held");
     // 2) 번갈아 입력하면 크기가 그때마다 바뀐다(지금 규칙): 원래 화면 터미널에 직접 친다
     await page.locator(".xterm-screen").click();
     await page.keyboard.type("echo back-$((2*5))\n");
     await until("원래 화면 입력", async () => (await screenText(page)).includes("back-10"));
-    await until("원래 화면 크기로", () => t1size() === held && holder() === first);
-    await op.getByLabel("보낼 글").fill("echo again-$((4*4))");
-    await op.getByRole("button", { name: "보내기" }).click();
-    await until("다시 다른 화면 크기", () => t1size() === otherSize);
+    await sized("원래 화면 크기로", held, first);
+    await submit("echo again-$((4*4))", "again-16");
+    await sized("다시 다른 화면 크기", otherSize, second);
     // 3) focus를 얻은 화면이 크기를 다시 건다(입력 없이)
     await page.evaluate(() => window.dispatchEvent(new Event("focus")));
-    await until("focus 얻은 화면 크기", () => t1size() === held && holder() === first);
+    await sized("focus 얻은 화면 크기", held, first);
     // 3b) 「다른 웹 화면과 같이 쓰기」(herdr-web-ui releasePaneAway, 기본 꺼짐): 켜면 다른 창으로 옮기고 1초 뒤 크기를 놓고
     // 보기만 한다(띠). 남은 화면이 크기를 되찾고, 이 화면을 누르면 다시 이 화면 크기다
     await (await openSettings(op, "터미널")).getByRole("switch", { name: "다른 웹 화면과 같이 쓰기" }).click();
     await op.keyboard.press("Escape");
-    await op.getByLabel("보낼 글").fill("echo away");
-    await op.getByRole("button", { name: "보내기" }).click();
-    await until("다른 화면 크기(같이 쓰기)", () => t1size() === otherSize);
-    const beforeAway = opFrames.length;
+    await submit("echo away", "away");
+    await sized("다른 화면 크기(같이 쓰기)", otherSize, second);
+    // 제품의 1초 규칙은 페이지 시계로 본다. 자동화·부하 시간이 타이머를 소비하지 않는다.
+    await op.clock.install();
+    await op.clock.pauseAt(new Date());
+    const beforeAway = await sentCount(op);
     await op.evaluate(() => {
       document.hasFocus = () => false;
       window.dispatchEvent(new Event("blur"));
     });
-    const blurAt = Date.now();
-    await until("다른 창으로 옮기고 놓음", () => opFrames.slice(beforeAway).find((f) => f.t === "release"), 5000);
-    const awayRelease = opFrames.slice(beforeAway).find((f) => f.t === "release");
-    if (awayRelease.at - blurAt < 900) throw new Error(`1초를 기다리지 않고 놓았다(${awayRelease.at - blurAt}ms)`);
+    await op.clock.runFor(999);
+    if ((await sentFrames(op, beforeAway)).some((f) => f.t === "release")) throw new Error("1초 전에 크기를 놓았다");
+    await op.clock.runFor(1);
+    if (!(await sentFrames(op, beforeAway)).some((f) => f.t === "release")) throw new Error("1초 뒤 크기를 놓지 않았다");
+    await op.clock.resume();
     await op.getByTestId("released-banner").waitFor();
     await shot(op, "desktop-released");
-    await until("같이 쓰기로 놓은 뒤 남은 화면 크기", () => t1size() === held && holder() === first, 5000);
+    await sized("같이 쓰기로 놓은 뒤 남은 화면 크기", held, first, 5000);
     await op.evaluate(() => delete document.hasFocus);
     await op.locator(".xterm-screen").click();
-    await until("누르면 다시 이 화면 크기", () => t1size() === otherSize && holder() !== first);
+    await sized("누르면 다시 이 화면 크기", otherSize, second);
     if ((await op.getByTestId("released-banner").count()) !== 0) throw new Error("되찾은 뒤에도 보기만 띠가 있다");
     // 4) 쓰던 화면이 가려지면 바로 놓고(참고 keepSize(hidden), 전에는 1초 뒤), 보이고 focus 있는 화면이 자기 크기로 맞춘다
-    await op.getByLabel("보낼 글").fill("echo hide");
-    await op.getByRole("button", { name: "보내기" }).click();
-    await until("다른 화면 크기", () => t1size() === otherSize);
-    const beforeHide = opFrames.length;
-    await op.evaluate(() => {
+    await submit("echo hide", "hide");
+    await sized("다른 화면 크기", otherSize, second);
+    const beforeHide = await sentCount(op);
+    const hiddenFrames = await op.evaluate((from) => {
       Object.defineProperty(document, "visibilityState", { configurable: true, get: () => "hidden" });
       document.dispatchEvent(new Event("visibilitychange"));
-    });
-    // 1초 타이머가 아니라 바로 놓는다(700ms 안에 release frame)
-    await until("가려지자 바로 놓음", () => opFrames.slice(beforeHide).some((f) => f.t === "release"), 700);
-    await until("가려진 화면이 놓음 → 남은 화면 크기", () => t1size() === held && holder() === first, 5000);
+      // 같은 task 안에서 기록을 닫는다. 자동화가 다음 evaluate를 보내기 전에 돈 타이머는 포함하지 않는다.
+      return window.__aaaSent.slice(from);
+    }, beforeHide);
+    if (!hiddenFrames.some((f) => f.t === "release")) throw new Error("가려진 사건에서 바로 크기를 놓지 않았다");
+    await sized("가려진 화면이 놓음 → 남은 화면 크기", held, first, 5000);
     if (other.errors.length) throw new Error(other.errors.join("; "));
     await other.page.context().close();
     if (await page.getByLabel("보낼 글").isDisabled()) throw new Error("입력 막대가 꺼져 있다");
