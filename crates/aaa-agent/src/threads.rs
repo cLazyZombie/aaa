@@ -186,6 +186,9 @@ fn uuid_v4() -> String {
 pub fn resolve(name: &str, p: &Profile) -> Result<Launch> {
     let base = |default: &str| if p.command.is_empty() { vec![default.to_string()] } else { p.command.clone() };
     let env: Vec<(String, String)> = p.env.iter().map(|(k, v)| (k.clone(), v.clone())).collect();
+    for (key, value) in &env {
+        aaa_common::redact::remember_env(key, value);
+    }
     let (argv, resume_argv, session_key) = match p.harness.as_str() {
         "claude" => {
             let flags = aaa_config::profile_edit::launch_flags(p);
@@ -322,6 +325,15 @@ pub async fn adopt(exe: &Path, p: ThreadAdopt, cwd: &Path) -> Result<ThreadAdopt
     })
 }
 
+/// 재개 argv를 바꾸지 않고 현재 인증 env만 복원할 때도 같은 덮어쓰기 순서를 쓴다.
+pub(crate) fn local_env(cfg: &ThreadsConfig, spec: &aaa_proto::ResolvedProfile) -> BTreeMap<String, String> {
+    let mut env = spec.env.clone();
+    if let Some(local) = cfg.harnesses.get(&spec.harness) {
+        env.extend(local.env.clone());
+    }
+    env
+}
+
 /// host 정의에 머신 실행 경로·환경만 덮어쓴다. 없는 harness로 조용히 바꾸지 않는다.
 pub(crate) fn local_profile(cfg: &ThreadsConfig, spec: &aaa_proto::ResolvedProfile) -> Result<Profile> {
     let mut p = Profile {
@@ -330,14 +342,13 @@ pub(crate) fn local_profile(cfg: &ThreadsConfig, spec: &aaa_proto::ResolvedProfi
         effort: spec.effort.clone(),
         args: spec.args.clone(),
         command: spec.command.clone(),
-        env: spec.env.clone(),
+        env: local_env(cfg, spec),
         description: String::new(),
     };
-    if let Some(local) = cfg.harnesses.get(&p.harness) {
-        if !local.command.is_empty() {
-            p.command = local.command.clone();
-        }
-        p.env.extend(local.env.clone());
+    if let Some(local) = cfg.harnesses.get(&p.harness)
+        && !local.command.is_empty()
+    {
+        p.command = local.command.clone();
     }
     let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/sh".into());
     let exe =
@@ -941,7 +952,8 @@ fn mission_state_path(work_dir: &str, rel: &str) -> Result<PathBuf> {
     }
     let allowed = matches!(rel, "state.md" | "processed.txt")
         || rel.starts_with("inbox/") && rel.ends_with(".json")
-        || rel.starts_with("history/");
+        || rel.starts_with("history/")
+        || rel.starts_with("memory/");
     if !allowed || rel.len() > 1024 {
         bail!("임무 상태 파일이 아니다");
     }
@@ -961,7 +973,7 @@ pub fn mission_state_list(work_dir: &str) -> Result<Vec<aaa_proto::LibFile>> {
     use sha2::Digest;
     let dir = check_work_dir(work_dir)?;
     let mut paths = vec!["state.md".to_string(), "processed.txt".into()];
-    for sub in ["inbox", "history"] {
+    for sub in ["inbox", "history", "memory"] {
         let mut dirs = vec![dir.join(sub)];
         while let Some(at) = dirs.pop() {
             if let Ok(m) = at.symlink_metadata()
@@ -1317,8 +1329,11 @@ mod mission_tests {
         std::fs::write(Path::new(from).join("processed.txt"), "p-00000001.json\n").unwrap();
         std::fs::write(Path::new(from).join("state.md"), "이어 갈 판단").unwrap();
         assert_eq!(mission_inbox_pending(from).unwrap().len(), 1);
+        std::fs::create_dir_all(Path::new(from).join("memory/history")).unwrap();
+        std::fs::write(Path::new(from).join("memory/memory.md"), "자동화 기억").unwrap();
+        std::fs::write(Path::new(from).join("memory/history/day.md"), "원문").unwrap();
         let files = mission_state_list(from).unwrap();
-        assert_eq!(files.len(), 4);
+        assert_eq!(files.len(), 6);
         for f in &files {
             let (data, eof) = mission_state_read(from, &f.path, 0).unwrap();
             assert!(eof);

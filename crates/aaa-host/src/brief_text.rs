@@ -18,7 +18,7 @@ pub(crate) struct BriefInput<'a> {
     pub uploads_path: &'a str,
     /// thread가 host 머신이 아닌 곳에서 돈다
     pub remote: bool,
-    /// 작업 폴더 `attachments/`로 넘긴 task 첨부(그림·문서) 수(plan §8.319)
+    /// 작업 폴더 `attachments/`로 넘긴 task 첨부(그림·문서) 수(plan §8.323)
     pub attachments: usize,
     /// 사후 평가자면 thread 규칙 대신 평가자 규칙
     pub guide: &'a str,

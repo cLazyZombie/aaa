@@ -45,7 +45,7 @@ export function ReportsView({
   rev: number;
   /** 보고서 하나를 연다·목록으로(주소를 바꾼다) */
   onOpen: (report: ReportRef | null) => void;
-  /** 「할 일에 추가」: 보고서 안 md·html 문서를 링크한 task(조작 권한만, plan §8.319) */
+  /** 「할 일에 추가」: 보고서 안 md·html 문서를 링크한 task(조작 권한만, plan §8.323) */
   onAddDoc?: (name: string, path: string) => void;
 }) {
   // 목록은 보고서를 연 동안에도 그려 둔다. 숨으면 굴린 자리를 잃는 브라우저가 있어(display:none) 열 때 적고 돌아올 때 놓는다

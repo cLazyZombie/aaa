@@ -14,8 +14,10 @@ pub fn automation_schema() -> String {
 pub fn mission_schema() -> String {
     serde_json::to_string_pretty(&mission::files::schema()).expect("schema serialize")
 }
+mod accounts;
 mod auto_start;
 mod automation;
+mod automation_thread;
 mod bgwait;
 mod brief;
 mod brief_text;
@@ -320,6 +322,7 @@ impl FrontRef {
 }
 
 pub use aaa_proto::DEFAULT_WORKSPACE;
+pub use orch::{ProjectScaffold, project_scaffold};
 
 struct Inner {
     machines: HashMap<String, MachineRt>,
@@ -407,6 +410,7 @@ pub fn normalize_device_label(value: &str, fallback: &str) -> String {
 
 pub struct Host {
     pub cfg: HostConfig,
+    accounts: accounts::Accounts,
     pub state: PathBuf,
     pub host_id: String,
     pub db: db::Db,
@@ -585,6 +589,7 @@ pub fn validate_thread_summary(text: &str) -> std::result::Result<(), ErrorBody>
 impl Host {
     pub fn open(cfg: HostConfig, state: PathBuf) -> Result<Arc<Host>> {
         util::ensure_private_dir(&state)?;
+        let accounts = accounts::Accounts::new(&state).map_err(|e| anyhow::anyhow!(e.message))?;
         let db = db::Db::open(&state.join("host.db")).context("host DB")?;
         let library_signing = library_links::SigningKey::open(&state)?;
         let host_id = match db.meta("host_id")? {
@@ -641,6 +646,7 @@ impl Host {
         let web_port = cfg.web.listen.rsplit_once(':').and_then(|(_, p)| p.parse().ok()).unwrap_or(0);
         let dev_mode = cfg.local_agent.mode == LocalAgentMode::Child;
         Ok(Arc::new(Host {
+            accounts,
             cfg,
             state,
             host_id,
@@ -1233,6 +1239,12 @@ impl Host {
         front: Option<&FrontRef>,
         req: FrontRequest,
     ) -> Result<FrontResponse, ErrorBody> {
+        if matches!(&req, FrontRequest::AccountImport { .. } | FrontRequest::AccountRemove { .. })
+            && (role != DeviceRole::Local || front::in_session(actor) || !actor.starts_with("local:"))
+        {
+            return Err(err(ErrorCode::Forbidden, "계정 등록·삭제는 host의 aaa 밖 터미널에서 한다"));
+        }
+        let req = if matches!(&req, FrontRequest::AccountImport { .. }) { req } else { aaa_common::redact::json(req) };
         // 기기·머신 신뢰와 공개 범위는 사람이 바꾼다. coordinator도 Local이지만 세션 안이다.
         if matches!(
             req,
@@ -1262,7 +1274,15 @@ impl Host {
                 format!("보기 권한으로는 조작할 수 없다{}", front::reader_reason(actor)),
             ));
         }
-        let mut req = req;
+        let (mut req, selected_account) = match req {
+            FrontRequest::ThreadStartAccount { account, start } => {
+                if !matches!(&*start, FrontRequest::ThreadStart { .. }) {
+                    return Err(err(ErrorCode::BadRequest, "계정 지정은 thread 시작 요청에만 쓴다"));
+                }
+                (*start, Some(account))
+            }
+            other => (other, None),
+        };
         // 프로젝트를 생략한 요청(FRONT_API 1.50, plan §8.288): host가 맡은 프로젝트 하나로 채운다
         if let Some(project) = req.project_mut()
             && project.is_empty()
@@ -1270,6 +1290,18 @@ impl Host {
             *project = self.instance_project()?;
         }
         match req {
+            FrontRequest::AccountImport { name, harness, secret } => {
+                self.accounts.import(&name, &harness, secret.0.trim())?;
+                self.db.audit(actor, "account_import", &name);
+                Ok(FrontResponse::Accounts { accounts: self.accounts.list()? })
+            }
+            FrontRequest::AccountList => Ok(FrontResponse::Accounts { accounts: self.accounts.list()? }),
+            FrontRequest::AccountRemove { name } => {
+                self.accounts.remove(&name)?;
+                self.db.audit(actor, "account_remove", &name);
+                Ok(FrontResponse::Done)
+            }
+            FrontRequest::ThreadStartAccount { .. } => unreachable!(),
             FrontRequest::Instance => Ok(FrontResponse::Instance { project: self.instance_view() }),
             FrontRequest::DebugInput { pane, thread, since_ms } => self.debug_input(pane, thread, since_ms),
             FrontRequest::RolloutStart { id, spec } => self.rollout_start(actor, id, spec).await,
@@ -1357,6 +1389,7 @@ impl Host {
                     aaa_proto::ThreadKind::Dir
                 });
                 let mut a = orch::StartArgs {
+                    account: selected_account,
                     holds,
                     project,
                     title,
@@ -1689,6 +1722,7 @@ impl Host {
                 let conn = self.live_conn(&mid)?;
                 match conn
                     .request(AgentRequest::Chat {
+                        session: Some(id.clone()),
                         harness: harness.clone(),
                         transcript,
                         harness_session,

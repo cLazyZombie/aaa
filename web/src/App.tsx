@@ -520,7 +520,8 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
     });
   };
   // seenReports: thread마다 알린(또는 처음 볼 때 이미 검토 대기였던) 보고 hash
-  const reviewHash = (t: ThreadView) => (t.report_attention && t.report_hash !== t.acked_hash ? t.report_hash : null);
+  // 자동화 완료는 host가 저절로 확인한다. 사본 사건과 ack 사이에도 알림을 띄우지 않는다(A2).
+  const reviewHash = (t: ThreadView) => (t.automation && t.report_attention === "completed" ? null : t.report_attention && t.report_hash !== t.acked_hash ? t.report_hash : null);
   const reportNews = (t: ThreadView, replayFrom: number | null = null) => {
     const key = threadKey(t);
     const target = `thread=${encodeURIComponent(key)}`;
@@ -848,7 +849,7 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
   }, [sel]);
   const toggleTasks = () => goSel(tasksShown ? beforeTasks.current : "tasks:");
   // 명령 팔레트 「할 일 더하기」: 할 일 화면을 열고 새 task 폼을 연다(plan §8.311). 보고서·thread 결과물의 「할 일에 추가」는 그 문서를
-  // 링크한 새 task나 있는 task에 링크하는 창을 연다(plan §8.319)
+  // 링크한 새 task나 있는 task에 링크하는 창을 연다(plan §8.323)
   const [taskAdds, setTaskAdds] = useState<TaskAddRequest>({ seq: 0, link: null });
   const addTask = (link: TaskAttachment | null) => {
     if (!tasksShown) toggleTasks();
@@ -1230,7 +1231,7 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
             fileOpen={fileViewing !== null}
             onHandOff={canControl ? handOff : undefined}
             onOpenAttachment={async (project, a) => {
-              // task 첨부 문서(plan §8.319): 올린 md·html은 uploads 주소, 보고서 문서는 그 보고서 보기 경로 안에서 파일 보기로 연다
+              // task 첨부 문서(plan §8.323): 올린 md·html은 uploads 주소, 보고서 문서는 그 보고서 보기 경로 안에서 파일 보기로 연다
               if (a.kind === "upload") openFile({ path: a.target.replace(/^uploads\//, ""), pane: null, view: uploadsBase(project) });
               const doc = a.kind === "report" ? reportDoc(a.target) : null;
               if (!doc) return;

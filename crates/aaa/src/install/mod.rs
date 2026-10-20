@@ -1,4 +1,4 @@
-//! I1: 읽기 전용 탐지·계획만 수행한다. 적용 경로는 연결하지 않는다.
+//! 탐지·계획·상태 조회. 쓰기 CLI는 I6의 검증된 승인 executor까지 needs_user로 닫는다.
 use std::io::{IsTerminal, Write};
 use std::path::Path;
 use std::process::ExitCode;
@@ -7,6 +7,7 @@ use aaa_proto::install::*;
 
 mod args;
 mod detect;
+mod engine;
 mod platform;
 mod profiles;
 mod services;
@@ -63,20 +64,44 @@ pub fn run(args: &Args, json: bool, instance: Option<&str>, config: Option<&Path
             r.error = Some(e);
             r
         })?;
-        if invocation.status.is_some() || invocation.resume.is_some() {
-            return Err(error("install_resume_not_available", 5));
+        if let Some(id) = &invocation.status {
+            if invocation.events_file.is_some() {
+                return Err(error("status_is_read_only", 2));
+            }
+            let state = state
+                .or(state_env.as_deref())
+                .map(std::path::PathBuf::from)
+                .unwrap_or_else(|| aaa_config::paths::default_state_dir_for(instance.as_deref()));
+            return engine::status(&state, instance.as_deref(), id);
+        }
+        if let Some(id) = &invocation.resume {
+            engine::validate_id(id)?;
+            return Ok(authorization_required(None));
         }
         if invocation.dry_run && invocation.events_file.is_some() {
             return Err(error("dry_run_events_file_forbidden", 2));
         }
         let r = detect::plan(&invocation)?;
         if !invocation.dry_run {
-            return Err(error("install_apply_not_available", 5));
+            return Ok(authorization_required(Some(r)));
         }
         Ok(r)
     })()
     .unwrap_or_else(|r| *r);
     emit(result, json, args.stream())
+}
+
+fn authorization_required(result: Option<InstallResult>) -> InstallResult {
+    let mut result = result.unwrap_or_else(|| *error("authorization_required", 3));
+    result.error = None;
+    result.status = InstallStatus::NeedsUser;
+    result.exit_code = 3;
+    result.needs_user.push(InstallNeedsUser {
+        code: "installation_authorization_required".into(),
+        target: "installation".into(),
+        message: "검증된 설치 승인 경로가 필요합니다. --yes와 입력 파일은 권한이 아닙니다.".into(),
+    });
+    result
 }
 
 pub fn emit(result: InstallResult, json: bool, stream: bool) -> ExitCode {
@@ -86,7 +111,7 @@ pub fn emit(result: InstallResult, json: bool, stream: bool) -> ExitCode {
     let written = if stream {
         let item = InstallStreamItem::Result {
             schema: InstallEventSchema::V1,
-            installation_id: None,
+            installation_id: result.installation_id.clone(),
             seq: 1,
             result: Box::new(result),
         };

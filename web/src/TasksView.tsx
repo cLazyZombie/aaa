@@ -85,8 +85,8 @@ type Tab = "tasks" | "later" | "log";
 const EDIT_API: readonly [number, number] = [1, 62];
 /** host가 thread 연결(`thread_start_preview`·`link_task`·`attention`)을 아는 FRONT_API */
 const LINK_API: readonly [number, number] = [1, 63];
-/** task 첨부 그림 올리기(plan §8.319) */
-const ATTACH_API: readonly [number, number] = [1, 65];
+/** task 첨부 그림 올리기(plan §8.323) */
+const ATTACH_API: readonly [number, number] = [1, 68];
 
 /** 이 기기가 알린 마지막 자동 정리 기록 id(기기마다, 없으면 처음 읽은 기록까지를 본 것으로 둔다) */
 const AUTO_SEEN_KEY = "aaa:tasks:auto-clean-seen";
@@ -194,7 +194,7 @@ type Dialog =
   | { kind: "link"; thread: TaskThread }
   | { kind: "doc-add"; link: TaskAttachment };
 
-/** 할 일 화면 밖에서 여는 새 task: 명령 팔레트 「할 일 더하기」(link 없음), 보고서·thread 결과물 「할 일에 추가」(그 문서, plan §8.319) */
+/** 할 일 화면 밖에서 여는 새 task: 명령 팔레트 「할 일 더하기」(link 없음), 보고서·thread 결과물 「할 일에 추가」(그 문서, plan §8.323) */
 export type TaskAddRequest = { seq: number; link: TaskAttachment | null };
 
 export function TasksView({
@@ -228,7 +228,7 @@ export function TasksView({
   onHandOff?: (text: string) => Promise<void>;
   /** 할 일 화면에서 본 `me` task(활동 막대 배지의 「새 me task」를 걷는다) */
   onSeenMine?: (keys: string[]) => void;
-  /** 첨부 문서 열기(파일 보기, plan §8.319) */
+  /** 첨부 문서 열기(파일 보기, plan §8.323) */
   onOpenAttachment?: (project: string, a: TaskAttachment) => Promise<void>;
   /** 앱 파일 보기가 떠 있다(상세 시트는 그동안 뒤로 기록을 내준다) */
   fileOpen?: boolean;
@@ -359,7 +359,7 @@ export function TasksView({
     setOpError(null);
     void edit(ops, null).catch((e: unknown) => setOpError(e instanceof Error ? e.message : String(e)));
   };
-  // 첨부를 바로 저장하는 메모 고치기(plan §8.319): 차례로 줄 세워 그때의 최신 판에 쓴다. 저장 중에 또 붙여도(빠른 두 번 붙여넣기)
+  // 첨부를 바로 저장하는 메모 고치기(plan §8.323): 차례로 줄 세워 그때의 최신 판에 쓴다. 저장 중에 또 붙여도(빠른 두 번 붙여넣기)
   // 앞 저장이 끝난 판의 블록으로 이어 쓴다. 판은 편집 응답의 board로 바로 넘긴다(부모가 다시 그리기를 기다리지 않는다)
   const boardRef = useRef(board);
   const boardProp = useRef(board);

@@ -532,6 +532,23 @@ impl Host {
                     Ok(count) => view.today = count,
                     Err(e) => view.error = Some(e.message),
                 };
+                if let crate::automation::Action::Start(a) = &r.action {
+                    if a.memory {
+                        match self.automation_memory_view(project, &r.name) {
+                            Ok(memory) => view.memory = Some(memory),
+                            Err(e) => view.error = Some(e.message),
+                        }
+                    }
+                    view.closing = self
+                        .open_threads(project)
+                        .iter()
+                        .filter(|t| t.automation.as_deref() == Some(&r.name))
+                        .filter_map(|t| {
+                            self.automation_close_at(t)
+                                .map(|at| aaa_proto::AutomationClosing { thread: t.id.clone(), close_at_ms: at })
+                        })
+                        .collect();
+                }
                 view.max_per_day = r.limits.max_per_day.filter(|n| *n > 0);
                 match self.automation_queue(project, &r.name) {
                     Ok(queue) => view.queue = Some(queue),

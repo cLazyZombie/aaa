@@ -1,4 +1,4 @@
-//! task 첨부(plan §8.319, 사용자 10-20 「할일에 이미지 첨부할수있게 해」, 18:3x 「md·html 문서도 task에 첨부(링크)」).
+//! task 첨부(plan §8.323, 사용자 10-20 「할일에 이미지 첨부할수있게 해」, 18:3x 「md·html 문서도 task에 첨부(링크)」).
 //!
 //! - 올린 파일은 coordinator 대화 첨부와 같은 프로젝트 `uploads/`에 둔다(새 저장소를 만들지 않는다). 이름은 내용 sha256 앞 16자 +
 //!   확장자라 같은 파일을 두 번 붙여도 하나다. 그림은 signature로 확장자를 정하고(PNG·JPEG·GIF·WebP), 문서(md·html)는 웹이 알린
@@ -297,6 +297,7 @@ mod tests {
             base: None,
             task: "첨부 일\n![그림](attachments/0123456789abcdef.png)".into(),
             role: aaa_proto::Role::Worker,
+            account: None,
             attachments: vec![TaskFile { name: "0123456789abcdef.png".into(), src: "uploads/0123456789abcdef.png".into() }],
         };
         let e = h.thread_start(start, "test").await.unwrap_err();

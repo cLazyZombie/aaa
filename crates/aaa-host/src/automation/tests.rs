@@ -601,3 +601,16 @@ fn automation_title_reads_rule_title_and_falls_back_to_name() {
     assert_eq!(h.automation_title("demo", "plain"), "plain");
     assert_eq!(h.automation_title("demo", "gone"), "gone");
 }
+
+#[test]
+fn start_reuse_memory_and_close_idle_are_validated_in_public_toml() {
+    let p = Project::new();
+    let base = "[on.thread]\nevents=['thread_failed']\n[do.start]\ntitle='점검'\ntext='분류'\nprofiles=['fake']\nmachines=['mac-a']\n";
+    for invalid in ["memory=true", "close_idle='30m'", "reuse='other'", "reuse='open'\nclose_idle='bad'"] {
+        assert!(parse(&p.0, "check", &format!("{base}{invalid}\n")).is_err(), "{invalid}");
+    }
+    let r =
+        parse(&p.0, "check", &format!("{base}reuse='open'\nmemory=true\nreports=true\nclose_idle='30m'\n")).unwrap();
+    let Action::Start(a) = r.action else { panic!() };
+    assert!(a.memory && a.reports && a.reuse == Reuse::Open);
+}

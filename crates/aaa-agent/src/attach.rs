@@ -3,7 +3,7 @@
 //! - 이름은 host가 정한다(`<hex>.<png|jpg|gif|webp>`, task 첨부 문서는 `md|html`). 다른 이름·경로는 받지 않는다.
 //! - `.part`에 이어 쓰고 마지막 조각에서 이름을 바꾼다. 폴더 0700, 파일 0600(unix).
 //! - 세션 기록을 지우면(`forget`) 폴더와 함께 사라진다.
-//! - task 첨부(plan §8.319)는 thread 작업 폴더 `attachments/`에 같은 꼴로 쓴다(`write_work`). 이름이 내용 hash라 다시 시작하면
+//! - task 첨부(plan §8.323)는 thread 작업 폴더 `attachments/`에 같은 꼴로 쓴다(`write_work`). 이름이 내용 hash라 다시 시작하면
 //!   같은 이름을 덮어쓴다.
 
 use std::io::Write;

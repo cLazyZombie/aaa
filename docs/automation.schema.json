@@ -419,6 +419,13 @@
       ],
       "type": "string"
     },
+    "Reuse": {
+      "enum": [
+        "new",
+        "open"
+      ],
+      "type": "string"
+    },
     "Scheduled": {
       "additionalProperties": false,
       "oneOf": [
@@ -465,6 +472,47 @@
     },
     "Start": {
       "additionalProperties": false,
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "memory": {
+                "const": true
+              }
+            },
+            "required": [
+              "memory"
+            ]
+          },
+          "then": {
+            "properties": {
+              "reuse": {
+                "const": "open"
+              }
+            },
+            "required": [
+              "reuse"
+            ]
+          }
+        },
+        {
+          "if": {
+            "required": [
+              "close_idle"
+            ]
+          },
+          "then": {
+            "properties": {
+              "reuse": {
+                "const": "open"
+              }
+            },
+            "required": [
+              "reuse"
+            ]
+          }
+        }
+      ],
       "oneOf": [
         {
           "not": {
@@ -531,6 +579,12 @@
             "null"
           ]
         },
+        "close_idle": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
         "machine_pick": {
           "$ref": "#/$defs/MachinePick",
           "default": "idlest"
@@ -540,6 +594,10 @@
             "type": "string"
           },
           "type": "array"
+        },
+        "memory": {
+          "default": false,
+          "type": "boolean"
         },
         "profile_pick": {
           "$ref": "#/$defs/ProfilePick",
@@ -556,6 +614,14 @@
             "string",
             "null"
           ]
+        },
+        "reports": {
+          "default": false,
+          "type": "boolean"
+        },
+        "reuse": {
+          "$ref": "#/$defs/Reuse",
+          "default": "new"
         },
         "text": {
           "type": [

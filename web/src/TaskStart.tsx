@@ -239,7 +239,7 @@ export function LinkDialog({ thread, board, groups, onLink, onClose }: { thread:
 }
 
 /**
- * 「할 일에 추가」(plan §8.319 2단계): 보고서·thread 결과물의 md·html 문서를 링크한 새 task 폼을 열거나(「새 task로」), 있는 task의
+ * 「할 일에 추가」(plan §8.323 2단계): 보고서·thread 결과물의 md·html 문서를 링크한 새 task 폼을 열거나(「새 task로」), 있는 task의
  * 메모에 그 문서 첨부 줄을 붙인다(「task에 링크」). 이미 그 문서를 링크한 task와 형식 어긋난 task는 고를 수 없다
  */
 export function DocAddDialog({ link, board, onNew, onLink, onClose }: { link: TaskAttachment; board: TaskBoard; onNew: () => void; onLink: (t: TaskView) => Promise<void>; onClose: () => void }) {

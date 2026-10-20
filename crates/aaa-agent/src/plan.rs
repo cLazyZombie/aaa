@@ -10,6 +10,10 @@
 //!   다시 깨운 agent·하위 agent가 띄운 배경 명령·토큰은 뺐다(plan §8.151).
 //! - 배경 작업은 그것을 띄운 Claude 프로세스 안에서 돈다: 지금 프로세스가 시작하기 전에 띄운 것은 세지 않는다(`since_ms`:
 //!   Claude SessionStart startup·resume를 받은 때, 모르면 aaa 세션이 시작한 때).
+//! - 컨텍스트 사용량(plan §8.321): Claude는 본 대화(sidechain 아님) assistant 줄의 `usage`(input + cache 생성 + cache 읽기,
+//!   Claude Code 상태줄 `total_input_tokens`와 같은 합)와 `requestedModel`(`…[1m]`이면 창 1M, 아니면 200k), 정리 끝
+//!   `compact_boundary.compactMetadata`(preTokens·postTokens). Codex는 `token_count`의 `last_token_usage.total_tokens`와
+//!   `model_context_window`, 정리(`compacted`) 뒤 첫 `token_count`가 정리 뒤 크기다. %는 그 harness 터미널과 같은 식으로 낸다.
 //! - 기록은 처음부터 읽되 한 번에 `budget`만큼만, 그 뒤로는 늘어난 만큼만 읽는다. 처음 읽기가 끝에 닿기 전에는 계획을 말하지 않는다.
 //! - 다른 파일로 바뀐 것은 unix에서 dev·inode로 안다. 그 밖(Windows)에서는 줄어든 것만 안다: 같은 경로가 같거나 큰 새 파일로
 //!   바뀌면 이어 읽는다(새 harness 세션은 경로가 달라 처음부터 읽으므로 드물다).
@@ -20,7 +24,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use aaa_proto::{HarnessEvent, PlanSummary};
+use aaa_proto::{ContextCompaction, ContextUsage, HarnessEvent, PlanSummary};
 use serde_json::Value;
 
 /// 파일 하나를 한 번에 읽는 상한. 이보다 긴 한 줄(요청 원문 등)은 건너뛴다
@@ -30,6 +34,11 @@ pub const POLL_BUDGET: u64 = 32 << 20;
 const MAX_STEPS: usize = 200;
 const MAX_NAMES: usize = 5000;
 const WORDS: usize = 300;
+/// Claude Code의 기본 창과 1M 창(2.1.304 statusline 입력 `context_window_size`)
+const CLAUDE_WINDOW: u64 = 200_000;
+const CLAUDE_LONG_WINDOW: u64 = 1_000_000;
+/// Codex 「N% context left」가 창과 사용 양쪽에서 빼는 고정분(codex-rs/protocol/src/protocol.rs `BASELINE_TOKENS`)
+const CODEX_BASELINE: u64 = 12_000;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Source {
@@ -68,6 +77,7 @@ struct Step {
 pub struct Snapshot {
     pub plan: Option<PlanSummary>,
     pub background: Option<u32>,
+    pub context: Option<ContextUsage>,
 }
 
 /// 기록 하나를 따라 읽는 상태
@@ -89,6 +99,41 @@ pub struct Reader {
     agents: HashMap<String, String>,
     /// 알림이나 멈춤으로 끝난 것(같은 알림이 여러 번 실린다)
     ended: HashSet<String>,
+    /// 마지막 응답의 컨텍스트 토큰과 창(모르면 None)
+    used: Option<u64>,
+    window: Option<u64>,
+    /// 마지막 정리 전후 크기
+    compaction: Option<ContextCompaction>,
+    /// Codex: 정리(`compacted`)를 보았고 뒤 크기(다음 `token_count`)를 기다린다. 값은 정리 전 크기
+    compacted_from: Option<u64>,
+}
+
+/// Claude 기록 줄의 `requestedModel`이 말하는 창. Claude 모델이 아니거나 칸이 없으면 모른다
+fn claude_window(model: Option<&str>) -> Option<u64> {
+    let m = model?.to_ascii_lowercase();
+    if !m.starts_with("claude-") {
+        return None;
+    }
+    Some(if m.ends_with("[1m]") { CLAUDE_LONG_WINDOW } else { CLAUDE_WINDOW })
+}
+
+/// 사용량 %: 그 harness 터미널과 같은 식. 창을 모르거나 사용이 창보다 크면 None(웹은 토큰 수로 보인다)
+fn percent(source: Source, used: u64, window: Option<u64>) -> Option<u8> {
+    let window = window.filter(|w| *w > 0 && used <= *w)?;
+    let p = match source {
+        // Claude Code statusline `used_percentage`: round(사용 / 창 × 100)
+        Source::Claude => (used as f64 / window as f64 * 100.0).round(),
+        // Codex `percent_of_context_window_remaining`의 나머지
+        Source::Codex => {
+            if window <= CODEX_BASELINE {
+                return Some(100);
+            }
+            let effective = (window - CODEX_BASELINE) as f64;
+            let left = ((effective - used.saturating_sub(CODEX_BASELINE) as f64).max(0.0) / effective * 100.0).round();
+            100.0 - left.clamp(0.0, 100.0)
+        }
+    };
+    Some(p.clamp(0.0, 100.0) as u8)
 }
 
 fn words(v: Option<&Value>) -> Option<String> {
@@ -208,6 +253,10 @@ impl Reader {
             running: HashMap::new(),
             agents: HashMap::new(),
             ended: HashSet::new(),
+            used: None,
+            window: None,
+            compaction: None,
+            compacted_from: None,
         }
     }
 
@@ -244,7 +293,13 @@ impl Reader {
             }
         });
         let n = self.running.values().filter(|at| **at >= since_ms).count() as u32;
-        Snapshot { plan, background: (n > 0).then_some(n) }
+        let context = self.used.map(|used| ContextUsage {
+            used,
+            window: self.window,
+            percent: percent(self.source, used, self.window),
+            compaction: self.compaction,
+        });
+        Snapshot { plan, background: (n > 0).then_some(n), context }
     }
 
     /// 한 조각을 읽어 끝난 줄만 처리한다. 처리한(넘긴) 바이트 수
@@ -296,6 +351,11 @@ impl Reader {
     }
 
     fn claude_line(&mut self, line: &str) {
+        if (line.contains(r#""type":"assistant""#) && line.contains(r#""usage""#))
+            || line.contains(r#""compact_boundary""#)
+        {
+            self.claude_context(line);
+        }
         let planning = line.contains(r#""name":"TaskCreate""#) || line.contains(r#""name":"TaskUpdate""#);
         let answering = line.contains(r#""tool_result""#);
         let background = line.contains("<task-notification>")
@@ -390,6 +450,50 @@ impl Reader {
         }
     }
 
+    /// 컨텍스트: 본 대화 응답의 usage, 정리 끝의 전후 크기
+    fn claude_context(&mut self, line: &str) {
+        let Ok(e) = serde_json::from_str::<Value>(line) else { return };
+        match e.get("type").and_then(Value::as_str) {
+            Some("assistant") => {
+                // 하위 agent의 응답은 그 agent의 컨텍스트다. 합성 줄(`<synthetic>`, 오류·중단)은 usage가 0이다
+                if e.get("isSidechain") == Some(&Value::Bool(true)) {
+                    return;
+                }
+                let Some(u) = e.pointer("/message/usage") else { return };
+                let n = |k: &str| u.get(k).and_then(Value::as_u64).unwrap_or(0);
+                let used = n("input_tokens") + n("cache_creation_input_tokens") + n("cache_read_input_tokens");
+                if used == 0 {
+                    return;
+                }
+                self.used = Some(used);
+                self.window = claude_window(e.get("requestedModel").and_then(Value::as_str));
+            }
+            Some("system") if e.get("subtype").and_then(Value::as_str) == Some("compact_boundary") => {
+                let m = e.get("compactMetadata");
+                let tokens = |k: &str| m.and_then(|m| m.get(k)).and_then(Value::as_u64);
+                let Some(after) = tokens("postTokens") else { return };
+                // 다음 응답 전까지 컨텍스트는 정리 뒤 크기다(Claude 상태줄도 정리 직후 줄어든다)
+                self.used = Some(after);
+                self.compaction = tokens("preTokens").map(|before| ContextCompaction { before, after });
+            }
+            _ => {}
+        }
+    }
+
+    fn codex_context(&mut self, line: &str) {
+        let Ok(e) = serde_json::from_str::<Value>(line) else { return };
+        // 사용량이 없는 줄(`info: null`, 한도만 알림)은 앞 값을 둔다
+        let Some(info) = e.pointer("/payload/info").filter(|i| i.is_object()) else { return };
+        let Some(used) = info.pointer("/last_token_usage/total_tokens").and_then(Value::as_u64) else { return };
+        if let Some(window) = info.get("model_context_window").and_then(Value::as_u64) {
+            self.window = Some(window);
+        }
+        self.used = Some(used);
+        if let Some(before) = self.compacted_from.take() {
+            self.compaction = Some(ContextCompaction { before, after: used });
+        }
+    }
+
     fn launch(&mut self, key: &str, at: i64) {
         if self.ended.contains(key) || self.running.len() >= MAX_NAMES {
             return;
@@ -446,6 +550,16 @@ impl Reader {
     }
 
     fn codex_line(&mut self, line: &str) {
+        if line.contains(r#""type":"token_count""#) {
+            self.codex_context(line);
+            return;
+        }
+        // 정리 줄은 남긴 기록 전체를 실어 크다: 읽지 않고 표지만 본다(글 안의 따옴표는 `\"`라 이 꼴은 JSON 칸뿐이다).
+        // 뒤 크기는 다음 token_count다
+        if line.contains(r#""type":"compacted""#) {
+            self.compacted_from = self.used;
+            return;
+        }
         if !line.contains("update_plan") {
             return;
         }
@@ -487,13 +601,18 @@ pub(crate) struct Track {
 }
 
 /// harness 세션 사건이 알린 기록 파일. 기록 폴더 밖이면 없다(chat.rs와 같은 검사: hook은 세션 안 누구나 보낸다)
-fn locate(harness: &str, transcript: Option<&str>, harness_session: Option<&str>) -> Option<(Source, PathBuf)> {
+fn locate(
+    codex_root: &std::path::Path,
+    harness: &str,
+    transcript: Option<&str>,
+    harness_session: Option<&str>,
+) -> Option<(Source, PathBuf)> {
     match harness {
         "claude" => Some((
             Source::Claude,
             crate::chat::inside(&crate::chat::claude_root(), std::path::Path::new(transcript?)).ok()?,
         )),
-        "codex" => Some((Source::Codex, crate::chat::codex_file(&crate::chat::codex_root(), harness_session?).ok()?)),
+        "codex" => Some((Source::Codex, crate::chat::codex_file(codex_root, harness_session?).ok()?)),
         _ => None,
     }
 }
@@ -537,10 +656,11 @@ impl crate::Agent {
             let Some(ev) = list.iter().find(|e| matches!(e.kind.as_str(), "session_start" | "session")) else {
                 continue;
             };
-            let kept = list
-                .iter()
-                .find(|e| e.kind == "plan")
-                .map(|e| Snapshot { plan: e.plan.clone(), background: e.background });
+            let kept = list.iter().find(|e| e.kind == "plan").map(|e| Snapshot {
+                plan: e.plan.clone(),
+                background: e.background,
+                context: e.context.clone(),
+            });
             wanted.push((session.clone(), ev.harness.clone(), ev.transcript.clone(), ev.harness_session.clone(), kept));
         }
         let since = self.plan_since.lock().unwrap().clone();
@@ -567,8 +687,13 @@ impl crate::Agent {
             }
             if t.reader.is_none() && t.looked.is_none_or(|at| at.elapsed() >= RETRY) {
                 t.looked = Some(Instant::now());
-                t.reader = locate(&harness, transcript.as_deref(), harness_session.as_deref())
-                    .map(|(src, p)| Reader::new(src, p));
+                t.reader = locate(
+                    &self.codex_root_for(Some(&session)),
+                    &harness,
+                    transcript.as_deref(),
+                    harness_session.as_deref(),
+                )
+                .map(|(src, p)| Reader::new(src, p));
             }
             let Some(r) = t.reader.as_mut() else { continue };
             let from = since.get(&session).copied().unwrap_or(running[&session]);
@@ -589,6 +714,7 @@ impl crate::Agent {
                 transcript: None,
                 plan: snap.plan,
                 background: snap.background,
+                context: snap.context,
             });
         }
         out
@@ -779,5 +905,95 @@ mod tests {
         assert_eq!(stamp_ms("2026-10-18T09:17:01.123Z"), Some(1_792_315_021_123));
         assert_eq!(stamp_ms("2000-02-29T12:00:00.5Z"), Some(951_825_600_500));
         assert_eq!(stamp_ms("2026-10-18 09:17:01Z"), None);
+    }
+
+    /// 실측 꼴(10-20 Claude 2.1.304 /compact): 본 대화 응답의 usage 합, `requestedModel`의 창, 정리 끝의 전후 크기
+    #[test]
+    fn claude_context_is_the_last_main_answer_and_the_compaction_sizes() {
+        let said = |model: &str, input: u64, created: u64, read: u64| {
+            json!({"type":"assistant","requestedModel":model,"isSidechain":false,"message":{"model":"claude-haiku-5-5","content":[{"type":"text","text":"OK"}],
+                "usage":{"input_tokens":input,"cache_creation_input_tokens":created,"cache_read_input_tokens":read,"output_tokens":4}}})
+        };
+        let p = file(
+            "claude-context",
+            &[json!({"type":"user","message":{"role":"user","content":"Reply with exactly: OK"}})],
+        );
+        let mut r = Reader::new(Source::Claude, p.clone());
+        // 아직 응답이 없다
+        assert_eq!(poll(&mut r).context, None);
+        append(&p, &[said("claude-haiku-5-5", 2, 11_748, 32_172)]);
+        let c = poll(&mut r).context.unwrap();
+        assert_eq!((c.used, c.window, c.percent, c.compaction), (43_922, Some(200_000), Some(22), None));
+        // 하위 agent의 응답·합성 줄(usage 0)은 이 세션의 컨텍스트가 아니다
+        let mut side = said("claude-haiku-5-5", 1, 0, 150_000);
+        side["isSidechain"] = json!(true);
+        let synthetic = json!({"type":"assistant","message":{"model":"<synthetic>","content":[],"usage":{"input_tokens":0,"output_tokens":0}}});
+        append(&p, &[side, synthetic]);
+        assert_eq!(poll(&mut r).context.unwrap().used, 43_922);
+        // 정리가 끝나면 다음 응답 전에도 정리 뒤 크기다
+        append(
+            &p,
+            &[json!({"type":"system","subtype":"compact_boundary","content":"Conversation compacted",
+            "compactMetadata":{"trigger":"manual","preTokens":43_926,"postTokens":7_910,"durationMs":7_100}})],
+        );
+        let c = poll(&mut r).context.unwrap();
+        assert_eq!(
+            (c.used, c.percent, c.compaction),
+            (7_910, Some(4), Some(ContextCompaction { before: 43_926, after: 7_910 }))
+        );
+        // 1M 창, 창을 넘은 사용(창 추정이 틀린 경우: %가 없다), 창을 모르는 모델
+        append(&p, &[said("claude-opus-5-5[1m]", 2, 986, 89_361)]);
+        let c = poll(&mut r).context.unwrap();
+        assert_eq!((c.used, c.window, c.percent), (90_349, Some(1_000_000), Some(9)));
+        append(&p, &[said("claude-opus-5-5", 2, 30_000, 200_000)]);
+        assert_eq!(poll(&mut r).context.unwrap().percent, None);
+        let mut unnamed = said("x", 2, 0, 84_000);
+        unnamed.as_object_mut().unwrap().remove("requestedModel");
+        append(&p, &[unnamed]);
+        let c = poll(&mut r).context.unwrap();
+        assert_eq!((c.used, c.window, c.percent), (84_002, None, None));
+    }
+
+    /// 실측 꼴(10-20 Codex 0.163 /compact): token_count의 마지막 응답 크기와 창, 정리 앞뒤 token_count
+    #[test]
+    fn codex_context_follows_token_count_and_the_compaction() {
+        let count = |total: u64, window: u64| {
+            format!(
+                r#"{{"timestamp":"2026-10-20T08:47:38.000Z","type":"event_msg","payload":{{"type":"token_count","info":{{"total_token_usage":{{"total_tokens":{total}}},"last_token_usage":{{"input_tokens":{total},"cached_input_tokens":0,"output_tokens":0,"total_tokens":{total}}},"model_context_window":{window}}},"rate_limits":null}}}}"#
+            )
+        };
+        let raw = |p: &Path, lines: &[String]| {
+            use std::io::Write;
+            let mut f = std::fs::OpenOptions::new().append(true).open(p).unwrap();
+            for l in lines {
+                writeln!(f, "{l}").unwrap();
+            }
+        };
+        let p = file("codex-context", &[]);
+        raw(&p, &[count(18_861, 258_400)]);
+        let mut r = Reader::new(Source::Codex, p.clone());
+        let c = poll(&mut r).context.unwrap();
+        // Codex 터미널: 기준 12k를 빼고 left = round((246400 − 6861) / 246400 × 100) = 97 → 사용 3%
+        assert_eq!((c.used, c.window, c.percent, c.compaction), (18_861, Some(258_400), Some(3), None));
+        // 사용량이 없는 줄(한도만)은 앞 값을 둔다
+        raw(&p, &[r#"{"timestamp":"2026-10-20T08:47:39.000Z","type":"event_msg","payload":{"type":"token_count","info":null,"rate_limits":{"primary":null}}}"#.to_string()]);
+        assert_eq!(poll(&mut r).context.unwrap().used, 18_861);
+        // 정리 줄(남긴 기록을 실어 크다) 뒤 첫 token_count가 정리 뒤 크기다
+        raw(&p, &[
+            r#"{"timestamp":"2026-10-20T08:47:41.000Z","type":"compacted","payload":{"message":"","replacement_history":[{"type":"compaction","encrypted_content":"x"}]}}"#.to_string(),
+            count(12_274, 258_400),
+        ]);
+        let c = poll(&mut r).context.unwrap();
+        assert_eq!(
+            (c.used, c.percent, c.compaction),
+            (12_274, Some(0), Some(ContextCompaction { before: 18_861, after: 12_274 }))
+        );
+        // 창보다 큰 사용은 %가 없다
+        raw(&p, &[count(480_000, 475_000)]);
+        let c = poll(&mut r).context.unwrap();
+        assert_eq!((c.used, c.window, c.percent), (480_000, Some(475_000), None));
+        // 운영 rollout 실측: 350,245 / 475,000 → Codex 「27% left」 → 사용 73%
+        raw(&p, &[count(350_245, 475_000)]);
+        assert_eq!(poll(&mut r).context.unwrap().percent, Some(73));
     }
 }

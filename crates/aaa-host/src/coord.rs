@@ -210,7 +210,7 @@ impl Host {
         if !t.notes.is_empty() {
             a.task = format!("{}\n\n## Notes from the task list\n\n{}\n", a.task.trim_end(), t.notes.join("\n"));
         }
-        // 메모의 그림은 그 머신 작업 폴더 `attachments/`로 넘긴다(plan §8.319): 할 일 글도 그 경로를 가리킨다
+        // 메모의 그림은 그 머신 작업 폴더 `attachments/`로 넘긴다(plan §8.323): 할 일 글도 그 경로를 가리킨다
         let (attachments, missing) = self.task_attachments(&a.project, &mut a.task);
         a.attachments = attachments;
         let warning = match (warning, missing.into_iter().next()) {
@@ -255,6 +255,7 @@ impl Host {
         block: Option<&str>,
     ) -> Result<FrontResponse, ErrorBody> {
         let mut a = StartArgs {
+            account: None,
             holds: vec![],
             project: project.to_string(),
             title: String::new(),

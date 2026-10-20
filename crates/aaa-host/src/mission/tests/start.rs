@@ -311,3 +311,142 @@ async fn start_changed_scope_cancels_old_input_and_body_updates_keep_approval() 
             .any(|r| r.id == "action:old" && r.status == "skipped")
     );
 }
+
+/// A2의 runtime owner: 33건은 한 번에 32건만 전달하고, propose는 기존 thread의 이어 보내기를 막지 않는다.
+#[tokio::test]
+async fn reuse_open_batches_32_and_queues_without_new_thread_even_in_propose() {
+    let l = Lab::new();
+    let a = l.fake(vec!["mission.v1".into()]).await;
+    let b = l.fake_on("b", "mac-b", vec!["mission.v1".into()]).await;
+    let mut r = rule(&l, "reuse='open'");
+    r.trigger = crate::routine::Trigger::Thread(automation::Threads {
+        events: vec!["thread_failed".into()],
+        repos: vec![],
+        include_automation: false,
+    });
+    std::fs::write(
+        l.h.project_dir("demo").unwrap().join("automations/check.toml"),
+        toml::to_string(&automation::File::from_routine(&r)).unwrap(),
+    )
+    .unwrap();
+    approve(&l, &r);
+    let older = seed(&l, "m", &[]);
+    let newer = seed(&l, "b", &[]);
+    l.h.on_session("b", info("s1"), false);
+    l.h.on_harness(
+        "b",
+        serde_json::from_value(
+            serde_json::json!({"session":"s1","harness":"claude","kind":"idle","at_ms":util::now_ms()}),
+        )
+        .unwrap(),
+    );
+    for (id, at) in [(&older.id, 1), (&newer.id, 2)] {
+        l.h.update_rec("demo", id, |t| {
+            t.automation = Some("check".into());
+            t.created_at_ms = at;
+            t.pane = Some("s1".into());
+            t.work_dir = Some("/lab/.aaa/demo-t-0001".into());
+        })
+        .unwrap();
+    }
+    for n in 0..33 {
+        l.h.automation_submit("demo", &r, &format!("input-{n}"), format!("body-{n}"), None).unwrap();
+    }
+    // 승인 hash는 이어 보내기·기억·보고 첨부·끝내기 설정에 영향받지 않는다.
+    let mut next = r.clone();
+    let Action::Start(s) = &mut next.action else { panic!() };
+    s.memory = true;
+    s.reports = true;
+    s.close_idle = Some("30m".into());
+    assert_eq!(
+        l.h.automation_start_approval("demo", &r).unwrap(),
+        l.h.automation_start_approval("demo", &next).unwrap()
+    );
+    l.h.automation_drain("demo", &r).await.unwrap();
+    let queue = l.h.automation_queue("demo", "check").unwrap();
+    assert_eq!((queue.pending, queue.inflight), (1, None));
+    let writes: Vec<_> = b
+        .requests
+        .lock()
+        .unwrap()
+        .iter()
+        .filter_map(|q| match q {
+            AgentRequest::WorkFileWrite { data, .. } => Some(data.0.clone()),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(writes.len(), 1);
+    let body: serde_json::Value = serde_json::from_slice(&writes[0]).unwrap();
+    assert_eq!(body["inputs"].as_array().unwrap().len(), 32);
+    assert!(l.h.routine_runs("demo", "check").unwrap().iter().all(|run| run.thread.as_deref() == Some(&newer.id)));
+    l.h.automation_drain("demo", &r).await.unwrap();
+    assert_eq!(l.h.automation_queue("demo", "check").unwrap().pending, 0);
+    assert_eq!(starts(&a) + starts(&b), 0);
+    // 같은 입력 receipt는 다시 전달하지 않는다.
+    l.h.automation_submit("demo", &r, "input-32", "body-32".into(), None).unwrap();
+    assert_eq!(l.h.automation_queue("demo", "check").unwrap().pending, 0);
+    for id in [&older.id, &newer.id] {
+        l.h.update_rec("demo", id, |r| r.status = ThreadStatus::Resolved).unwrap();
+    }
+    l.h.automation_submit("demo", &r, "fresh", "다음 입력".into(), None).unwrap();
+    l.h.automation_drain("demo", &r).await.unwrap();
+    assert!(l.h.routine_runs("demo", "check").unwrap().iter().any(|r| r.detail.contains("제안")));
+    assert_eq!(starts(&a) + starts(&b), 0);
+}
+
+#[tokio::test]
+async fn reuse_rejects_codex_without_compaction_reentry_hook() {
+    let mut l = Lab::new();
+    Arc::get_mut(&mut l.h)
+        .unwrap()
+        .cfg
+        .profiles
+        .insert("builder".into(), aaa_config::Profile { harness: "codex".into(), ..Default::default() });
+    let _a = l.fake(vec![]).await;
+    let _b = l.fake_on("b", "mac-b", vec![]).await;
+    let mut r = rule(&l, "reuse='open'");
+    let Action::Start(a) = &mut r.action else { panic!() };
+    a.profiles = vec!["builder".into()];
+    assert!(l.h.automation_start_approval("demo", &r).unwrap_err().message.contains("compaction"));
+}
+
+#[tokio::test]
+async fn start_reports_are_optional_capped_snapshots_of_source_threads() {
+    let l = auto_lab();
+    let _a = l.fake(vec![]).await;
+    let _b = l.fake_on("b", "mac-b", vec![]).await;
+    let mut r = rule(&l, "");
+    let root = l.h.project_dir("demo").unwrap();
+    std::fs::write(root.join("threads/t-0099.md"), "x".repeat(70000)).unwrap();
+    for (id, reports) in [("without", false), ("with", true)] {
+        let Action::Start(a) = &mut r.action else { panic!() };
+        a.reports = reports;
+        // 서로 다른 사건을 받기 위해 일정 coalescing은 쓰지 않는다.
+        r.trigger = crate::routine::Trigger::Thread(automation::Threads {
+            events: vec!["thread_failed".into()],
+            repos: vec![],
+            include_automation: false,
+        });
+        l.h.automation_submit(
+            "demo",
+            &r,
+            id,
+            serde_json::json!({"owners":["t-0099","../../outside"],"reports":{"stale":"old"}}).to_string(),
+            Some("t-0099".into()),
+        )
+        .unwrap();
+    }
+    let Action::Start(a) = &mut r.action else { panic!() };
+    a.reuse = automation::Reuse::Open;
+    let error = l.h.automation_submit("demo", &r, "oversized", "x".repeat(512 * 1024), None).unwrap_err();
+    assert!(error.message.contains("512KiB"));
+    let raw: serde_json::Value = serde_json::from_str(&l.h.db.meta("automation:demo:check").unwrap().unwrap()).unwrap();
+    assert_eq!(raw["pending"].as_array().unwrap().len(), 2, "거부한 입력은 접수하지 않는다");
+    let first: serde_json::Value = serde_json::from_str(raw["pending"][0]["body"].as_str().unwrap()).unwrap();
+    assert!(first.get("reports").is_none());
+    let second: serde_json::Value = serde_json::from_str(raw["pending"][1]["body"].as_str().unwrap()).unwrap();
+    assert_eq!(second["reports"]["t-0099"].as_str().unwrap().len(), 65536);
+    assert_eq!(second["reports"].as_object().unwrap().len(), 1);
+    std::fs::write(root.join("threads/t-0099.md"), "changed").unwrap();
+    assert!(second["reports"]["t-0099"].as_str().unwrap().bytes().all(|b| b == b'x'));
+}

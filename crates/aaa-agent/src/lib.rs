@@ -120,7 +120,13 @@ async fn connect_session(paths: &SessionPaths, spec: &SpecFile) -> Result<Sessio
         Err(e) => return Err(ConnectError::Retry(anyhow::Error::new(e).context("welcome 대기"))),
     };
     match welcome {
-        SessionMsg::Welcome { proto, info } => Ok(SessionConn { tx, rx, proto, info }),
+        SessionMsg::Welcome { proto, info, account_rules } => {
+            if let Some(rules) = account_rules {
+                aaa_common::redact::restore(&rules.0)
+                    .map_err(|_| ConnectError::Rejected(anyhow::anyhow!("인증 가림 규칙 오류")))?;
+            }
+            Ok(SessionConn { tx, rx, proto, info })
+        }
         SessionMsg::Reject(e) => Err(ConnectError::Rejected(anyhow::anyhow!("session host가 거부했다: {e}"))),
         other => Err(ConnectError::Retry(anyhow::anyhow!("예상하지 못한 응답: {other:?}"))),
     }
@@ -261,6 +267,7 @@ impl Agent {
                         Ok(out) => format!("ok\n{}", out.unwrap_or_default()),
                         Err(e) => format!("error: {e:#}\n"),
                     };
+                    let reply = aaa_common::redact::text(&reply);
                     let _ = tokio::io::AsyncWriteExt::write_all(&mut s, reply.as_bytes()).await;
                     let _ = tokio::io::AsyncWriteExt::shutdown(&mut s).await;
                 });
@@ -443,6 +450,7 @@ impl Agent {
             transcript: None,
             plan: None,
             background: None,
+            context: None,
         })
         .await;
     }
@@ -593,6 +601,29 @@ impl Agent {
         }
     }
 
+    pub(crate) fn codex_root_for(&self, session: Option<&str>) -> PathBuf {
+        let run = session
+            .filter(|s| !s.is_empty() && s.bytes().all(|b| b.is_ascii_alphanumeric()))
+            .and_then(|s| util::read_json::<SpecFile>(&SessionPaths::new(&self.state, s).spec()).ok())
+            .and_then(|s| s.account_run);
+        run.and_then(|r| aaa_session::files::account_home(&self.state, &r).ok())
+            .map(|h| h.join("sessions"))
+            .unwrap_or_else(chat::codex_root)
+    }
+    fn chat_path(
+        &self,
+        session: Option<&str>,
+        harness: &str,
+        transcript: Option<&str>,
+        harness_session: Option<&str>,
+    ) -> Result<PathBuf, String> {
+        if harness == "codex" {
+            chat::codex_file(&self.codex_root_for(session), harness_session.ok_or("Codex thread-id가 없다")?)
+        } else {
+            chat::path(harness, transcript, harness_session)
+        }
+    }
+
     /// 대화 기록 파일을 `CHAT_STAT_EVERY`마다 보고 바뀌면 host에 알린다(차이 목록 C3, herdr-web-ui `server/conversation-monitor.ts`
     /// `ConversationMonitor`). 켜면 지금 값을 한 번 보낸다. 경로는 찾았으면 `CHAT_RESOLVE_EVERY`, 아직 없으면
     /// `CHAT_MISSING_RESOLVE_EVERY`마다 다시 푼다(Codex 기록은 첫 턴 뒤에 생긴다). 파일이 사라지면 바로 다시 푼다
@@ -613,10 +644,12 @@ impl Agent {
                 let now = tokio::time::Instant::now();
                 let resolve = now >= resolve_at;
                 let (h, t, s, known) = (harness.clone(), transcript.clone(), harness_session.clone(), path.clone());
+                let m = me.clone();
+                let session = k.clone();
                 let (found, seen) = tokio::task::spawn_blocking(move || {
                     let found = match known {
                         Some(p) if !resolve => p,
-                        _ => chat::path(&h, t.as_deref(), s.as_deref()),
+                        _ => m.chat_path(Some(&session), &h, t.as_deref(), s.as_deref()),
                     };
                     let seen = match &found {
                         Ok(p) => format!("{}\0{}", p.display(), chat::identity(p)),
@@ -732,7 +765,15 @@ impl Agent {
 
     async fn send_host(&self, msg: &LinkMsg) {
         if let Some(tx) = self.host_tx() {
-            let _ = tx.json(msg).await;
+            // 실행 환경은 실행 입력이다. ThreadReady/Relaunch는 기록 경계에서만 가린다.
+            let clean = match msg {
+                LinkMsg::Res {
+                    result: Outcome::Ok(AgentResponse::ThreadReady(_) | AgentResponse::Relaunch(_)),
+                    ..
+                } => msg.clone(),
+                _ => aaa_common::redact::json(msg.clone()),
+            };
+            let _ = tx.json(&clean).await;
         }
     }
 
@@ -959,6 +1000,10 @@ impl Agent {
                                     self.send_host(&LinkMsg::Res { id: host_id, result }).await;
                                 }
                             }
+                            Ok(SessionMsg::AccountRefresh(mut request)) => {
+                                request.session=id.clone();
+                                self.send_host(&LinkMsg::Event(AgentEvent::AccountRefresh(request))).await;
+                            }
                             Ok(SessionMsg::Updated(info)) => {
                                 let info = self.labeled(info);
                                 if let Some(e) = self.sessions.lock().unwrap().get_mut(&id) { e.info = info.clone(); }
@@ -1082,7 +1127,29 @@ impl Agent {
     }
 
     /// 새 세션: spec을 쓰고 session host를 분리된 프로세스로 띄운 뒤 붙는다.
-    pub async fn spawn_session(self: &Arc<Self>, mut spec: SpawnSpec) -> Result<SessionInfo> {
+    pub async fn spawn_session(self: &Arc<Self>, spec: SpawnSpec) -> Result<SessionInfo> {
+        self.spawn_session_inner(spec, None).await
+    }
+    async fn spawn_session_inner(
+        self: &Arc<Self>,
+        mut spec: SpawnSpec,
+        credential: Option<aaa_proto::AccountCredential>,
+    ) -> Result<SessionInfo> {
+        if let Some(c) = &credential {
+            aaa_common::redact::remember_auth(&c.harness, &c.secret.0);
+        }
+
+        if credential.as_ref().is_some_and(|c| c.harness == "codex") {
+            // 이 비공개 override를 실제 지원하는 버전만 인증을 받는다. unknown CLI로 직접 refresh하지 않는다.
+            let executable = spec.argv.first().context("Codex 실행 파일이 없다")?;
+            let mut command = tokio::process::Command::new(executable);
+            command.arg("--version").stdin(std::process::Stdio::null()).kill_on_drop(true);
+            let result = tokio::time::timeout(Duration::from_secs(5), command.output()).await;
+            anyhow::ensure!(
+                matches!(result, Ok(Ok(ref out)) if out.status.success() && out.stdout == b"codex-cli 0.163.0\n"),
+                "계정 Codex는 refresh 중계가 확인된 0.163.0이 필요하다"
+            );
+        }
         let id = util::new_id();
         let paths = SessionPaths::new(&self.state, &id);
         util::ensure_private_dir(&paths.dir)?;
@@ -1128,6 +1195,22 @@ impl Agent {
                 spec.name = name;
             }
         }
+        if spec.profile.is_none()
+            && let Some(resolved) = &spec.resolved_profile
+        {
+            // 저장 때 가린 env만 복원한다. 일반 env와 재개 argv는 종전 값이 유지된다.
+            if spec.env.iter().any(|(_, value)| value.contains("********")) {
+                let cfg = self.threads_cfg.lock().unwrap().clone().fresh()?;
+                for (key, value) in threads::local_env(&cfg, resolved) {
+                    if let Some((_, old)) = spec.env.iter_mut().find(|(k, v)| k == &key && v.contains("********")) {
+                        *old = value;
+                    }
+                }
+            }
+        }
+        for (key, value) in &spec.env {
+            aaa_common::redact::remember_env(key, value);
+        }
         // profile 없는 tab create와 저장된 Codex resume도 같은 pane 안에서 실행한다.
         if detect::Harness::of_session(None, &spec.argv) == Some(detect::Harness::Codex) {
             threads::ensure_codex_local(&mut spec.argv, 1);
@@ -1151,12 +1234,14 @@ impl Agent {
             spec,
             label: None,
             colors: *self.term_colors.lock().unwrap(),
+            account_run: credential.as_ref().map(|c| c.run.clone()),
         };
         util::write_json(&paths.spec(), &file)?;
         let log = std::fs::File::create(paths.log())?;
         let mut cmd = std::process::Command::new(&self.exe);
         cmd.arg("session-host").arg("--dir").arg(&paths.dir);
-        cmd.stdin(std::process::Stdio::null()).stdout(log.try_clone()?).stderr(log);
+        cmd.arg("--startup-stdin").stdin(std::process::Stdio::piped());
+        cmd.stdout(log.try_clone()?).stderr(log);
         #[cfg(windows)]
         {
             use std::os::windows::process::CommandExt;
@@ -1165,6 +1250,13 @@ impl Agent {
             cmd.creation_flags(DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP);
         }
         let mut child = cmd.spawn().context("session host 실행")?;
+        {
+            use std::io::Write;
+            let startup = aaa_session::files::Startup { spec: file.spec.clone(), credential };
+            let mut pipe = child.stdin.take().context("실행 전달 pipe가 없다")?;
+            pipe.write_all(&serde_json::to_vec(&startup).map_err(|_| anyhow::anyhow!("실행 전달 형식 오류"))?)
+                .context("실행 전달 pipe 오류")?;
+        }
         let pid = child.id();
         // 좀비가 남지 않게 기다리는 thread. agent가 먼저 끝나면 OS 감독자가 거둔다.
         std::thread::spawn(move || {
@@ -1233,6 +1325,17 @@ impl Agent {
                 self.post_ack(&post_id, result);
                 return;
             }
+            AgentRequest::SpawnAccount { spec, credential } => self
+                .spawn_session_inner(spec, Some(credential))
+                .await
+                .map(AgentResponse::Session)
+                .map_err(|_| ErrorBody::new(ErrorCode::BadRequest, "계정 pane을 시작하지 못했다")),
+            AgentRequest::AccountRefreshed { session, result } => {
+                if let Some(v) = &result.response {
+                    aaa_common::redact::remember_auth("codex", &v.0);
+                }
+                return self.to_session(id, &session, SessionRequest::AccountRefreshed(result)).await;
+            }
             AgentRequest::Spawn(spec) => self
                 .spawn_session(spec)
                 .await
@@ -1282,16 +1385,11 @@ impl Agent {
                 .and_then(|r| r.map_err(|e| ErrorBody::new(ErrorCode::NotFound, format!("{e:#}"))))
                 .map(|(data, eof)| AgentResponse::FileChunk { data: B64(data), eof })
             }
-            AgentRequest::Chat { harness, transcript, harness_session, thinking, compact, before } => {
+            AgentRequest::Chat { session, harness, transcript, harness_session, thinking, compact, before } => {
+                let path =
+                    self.chat_path(session.as_deref(), &harness, transcript.as_deref(), harness_session.as_deref());
                 tokio::task::spawn_blocking(move || {
-                    chat::read(
-                        &harness,
-                        transcript.as_deref(),
-                        harness_session.as_deref(),
-                        thinking,
-                        compact,
-                        before.as_deref(),
-                    )
+                    chat::read_path(&harness, path?, thinking, compact, before.as_deref())
                 })
                 .await
                 .map_err(|e| ErrorBody::new(ErrorCode::Internal, e.to_string()))
@@ -1856,6 +1954,7 @@ mod tests {
             transcript: None,
             plan: None,
             background: None,
+            context: None,
         };
         let mut sent = async |host_compacting: bool| {
             a.host_compacting.store(host_compacting, std::sync::atomic::Ordering::Relaxed);
@@ -1912,7 +2011,7 @@ mod tests {
             let tx = spawn_writer(w, MAX_FRAME);
             let mut rx = FrameRx::new(r, MAX_FRAME);
             assert!(matches!(rx.control::<SessionMsg>().await.unwrap(), SessionMsg::Hello { .. }));
-            tx.json(&SessionMsg::Welcome { proto: SESSION_IPC, info }).await.unwrap();
+            tx.json(&SessionMsg::Welcome { proto: SESSION_IPC, info, account_rules: None }).await.unwrap();
             std::future::pending::<()>().await;
             drop((tx, rx, listener));
         });
@@ -1964,6 +2063,7 @@ mod tests {
                 spec,
                 label: None,
                 colors: None,
+                account_run: None,
             },
             info,
         )
@@ -2050,7 +2150,9 @@ mod tests {
                 if n > 1 && !open.load(std::sync::atomic::Ordering::SeqCst) {
                     continue;
                 }
-                tx.json(&SessionMsg::Welcome { proto: SESSION_IPC, info: info.clone() }).await.unwrap();
+                tx.json(&SessionMsg::Welcome { proto: SESSION_IPC, info: info.clone(), account_rules: None })
+                    .await
+                    .unwrap();
                 if n == 1 {
                     match first {
                         FirstEnd::Eof => {}
@@ -2307,6 +2409,7 @@ mod mission_tests {
             created_at_ms: 0,
             label: None,
             colors: None,
+            account_run: None,
             spec: SpawnSpec {
                 name: "감시".into(),
                 argv: vec![],

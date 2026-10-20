@@ -10,7 +10,7 @@ use super::*;
 use base64::Engine;
 use sha2::Digest;
 
-fn canary(tag: &str) -> (String, String) {
+pub(super) fn canary(tag: &str) -> (String, String) {
     let mut b = [0u8; 16];
     std::io::Read::read_exact(&mut std::fs::File::open("/dev/urandom").unwrap(), &mut b).unwrap();
     let hex = hex::encode(b);
@@ -18,7 +18,7 @@ fn canary(tag: &str) -> (String, String) {
 }
 
 /// 찾는 꼴: 원문, 무작위 부분의 8자 조각, base64(표준·URL, 앞 0~2바이트 정렬마다 끝 4자를 뺀 가운데), URL 인코딩, JSON escape
-fn needles(value: &str, hex: &str) -> Vec<(String, Vec<u8>)> {
+pub(super) fn needles(value: &str, hex: &str) -> Vec<(String, Vec<u8>)> {
     let mut out = vec![("원문".to_string(), value.as_bytes().to_vec())];
     for i in 0..=hex.len() - 8 {
         out.push((format!("조각 {i}"), hex.as_bytes()[i..i + 8].to_vec()));
@@ -51,7 +51,7 @@ fn needles(value: &str, hex: &str) -> Vec<(String, Vec<u8>)> {
 }
 
 /// `files`(폴더면 그 아래 모두, `skip`에 걸린 경로는 뺀다)에서 찾은 곳: 「파일 @바이트 (꼴)」
-fn hits(files: &[PathBuf], needles: &[(String, Vec<u8>)], skip: &dyn Fn(&Path) -> bool) -> Vec<String> {
+pub(super) fn hits(files: &[PathBuf], needles: &[(String, Vec<u8>)], skip: &dyn Fn(&Path) -> bool) -> Vec<String> {
     let mut all = Vec::new();
     let mut stack: Vec<PathBuf> = files.to_vec();
     while let Some(p) = stack.pop() {
@@ -72,7 +72,7 @@ fn hits(files: &[PathBuf], needles: &[(String, Vec<u8>)], skip: &dyn Fn(&Path) -
     all
 }
 
-fn sha(v: &str) -> String {
+pub(super) fn sha(v: &str) -> String {
     hex::encode(sha2::Sha256::digest(v.as_bytes()))
 }
 

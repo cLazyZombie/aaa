@@ -586,6 +586,15 @@ pub enum LinkMsg {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "op", rename_all = "snake_case")]
 pub enum AgentRequest {
+    /// account_auth.v1. 비밀을 spec·journal에 넣지 않는 전용 spawn.
+    SpawnAccount {
+        spec: SpawnSpec,
+        credential: crate::AccountCredential,
+    },
+    AccountRefreshed {
+        session: String,
+        result: crate::AccountRefreshed,
+    },
     /// deploy_stage.v1: provenance가 있는 빌드 폴더의 aaa만 읽는다.
     DeployFetch {
         path: String,
@@ -706,6 +715,8 @@ pub enum AgentRequest {
     },
     /// harness 대화 기록의 끝부분(§8.27). agent는 자기 Claude·Codex 기록 폴더 안의 파일만 읽는다.
     Chat {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        session: Option<String>,
         harness: String,
         /// Claude hook이 알린 기록 파일
         transcript: Option<String>,
@@ -799,7 +810,7 @@ pub enum AgentRequest {
         data: B64,
         eof: bool,
     },
-    /// task 첨부(plan §8.319): thread 작업 폴더 `attachments/`에 `AttachWrite`와 같은 꼴로 쓴다(같은 이름은 덮어쓴다). 답도 같다.
+    /// task 첨부(plan §8.323): thread 작업 폴더 `attachments/`에 `AttachWrite`와 같은 꼴로 쓴다(같은 이름은 덮어쓴다). 답도 같다.
     /// agent 기능 `work_attach.v1`이 있을 때만 보낸다(옛 agent는 모르는 요청에 연결을 끊는다)
     WorkAttachWrite {
         work_dir: String,
@@ -1015,6 +1026,7 @@ pub struct CommandRan {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "ev", rename_all = "snake_case")]
 pub enum AgentEvent {
+    AccountRefresh(crate::AccountRefresh),
     DeploymentChanged {
         job: crate::DeployJob,
     },
@@ -1062,6 +1074,7 @@ pub enum AgentEvent {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "t", rename_all = "snake_case")]
 pub enum SessionMsg {
+    AccountRefresh(crate::AccountRefresh),
     Hello {
         proto: Version,
         token: String,
@@ -1069,6 +1082,8 @@ pub enum SessionMsg {
     Welcome {
         proto: Version,
         info: SessionInfo,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        account_rules: Option<crate::SecretText>,
     },
     Reject(ErrorBody),
     Req {
@@ -1088,6 +1103,7 @@ pub enum SessionMsg {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "op", rename_all = "snake_case")]
 pub enum SessionRequest {
+    AccountRefreshed(crate::AccountRefreshed),
     Subscribe {
         from: Option<u64>,
     },
@@ -1443,6 +1459,21 @@ pub struct HostStatus {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(tag = "op", rename_all = "snake_case")]
 pub enum FrontRequest {
+    /// 등록은 host의 세션 밖 Local만. 비밀값은 반환하거나 감사 기록에 넣지 않는다.
+    AccountImport {
+        name: String,
+        harness: String,
+        secret: crate::SecretText,
+    },
+    AccountList,
+    AccountRemove {
+        name: String,
+    },
+    /// 옛 host가 account 필드를 버리고 기본 인증으로 실행하지 않게 별도 요청을 쓴다.
+    ThreadStartAccount {
+        account: String,
+        start: Box<FrontRequest>,
+    },
     /// 로컬 입력 진단. 본문·화면을 담지 않는다.
     DebugInput {
         pane: Option<String>,
@@ -2023,7 +2054,7 @@ pub enum FrontRequest {
         project: String,
         name: String,
     },
-    /// FRONT_API 1.65. 보고서 보기 주소(`/v/<cap>/…`)의 cap이 이 프로젝트의 어느 보고서인지(task 첨부가 붙인 주소를 앱 안
+    /// FRONT_API 1.68. 보고서 보기 주소(`/v/<cap>/…`)의 cap이 이 프로젝트의 어느 보고서인지(task 첨부가 붙인 주소를 앱 안
     /// 보고서 문서로 바꾼다). 조작 권한만
     LibraryResolve {
         #[serde(default)]
@@ -2355,6 +2386,7 @@ impl FrontRequest {
     /// 프로젝트 자체를 바꾸는 요청(lifecycle·delete·rename·sweep)은 이름을 늘 받으므로 여기 없다.
     pub fn project_mut(&mut self) -> Option<&mut String> {
         match self {
+            FrontRequest::ThreadStartAccount { start, .. } => start.project_mut(),
             FrontRequest::Post { project, .. }
             | FrontRequest::PostStatus { project, .. }
             | FrontRequest::PostList { project, .. }
@@ -2422,7 +2454,8 @@ impl FrontRequest {
     pub fn needs_control(&self) -> bool {
         !matches!(
             self,
-            FrontRequest::Status
+            FrontRequest::AccountList
+                | FrontRequest::Status
                 | FrontRequest::DeployContext
                 | FrontRequest::DeployStatus { .. }
                 | FrontRequest::PostStatus { .. }
@@ -2477,7 +2510,9 @@ impl FrontRequest {
     pub fn local_only(&self) -> bool {
         matches!(
             self,
-            FrontRequest::DebugInput { .. }
+            FrontRequest::AccountImport { .. }
+                | FrontRequest::AccountRemove { .. }
+                | FrontRequest::DebugInput { .. }
                 | FrontRequest::EnrollOpen { .. }
                 | FrontRequest::EnrollPending
                 | FrontRequest::EnrollApprove { .. }
@@ -2497,6 +2532,9 @@ impl FrontRequest {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum FrontResponse {
+    Accounts {
+        accounts: Vec<crate::AccountView>,
+    },
     InputEvents {
         events: Vec<crate::InputEvent>,
     },

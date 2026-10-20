@@ -19,7 +19,9 @@ pub(crate) fn write<T: serde::Serialize>(path: &Path, value: &T) -> Result<()> {
     }
     let mut file = opts.open(&tmp)?;
     use std::io::Write;
-    file.write_all(&serde_json::to_vec(value)?)?;
+    let mut value = serde_json::to_value(value)?;
+    aaa_common::redact::value(&mut value);
+    file.write_all(&serde_json::to_vec(&value)?)?;
     file.sync_all()?;
     drop(file);
     // Windows에서도 기존 journal을 원자적으로 교체한다.

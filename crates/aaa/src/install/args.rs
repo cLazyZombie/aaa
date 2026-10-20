@@ -162,7 +162,11 @@ impl Args {
             ("config_dir", config.map(|p| p.to_string_lossy().into_owned())),
             ("state_dir", state.map(|p| p.to_string_lossy().into_owned())),
         ] {
-            choices[key] = text.into();
+            // status의 instance/config/state는 조회 위치이며 변경 선택이 아니다.
+            // 명시한 role 등 나머지 선택은 남겨 공통 read-only 검증기가 거부하게 한다.
+            if self.status.is_none() {
+                choices[key] = text.into();
+            }
         }
         let mut envs = vec![];
         for text in &self.choices.harness_env {
