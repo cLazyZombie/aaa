@@ -19,6 +19,8 @@
 - **대화**: Claude·Codex pane은 「대화」로 기록을 읽기 전용으로 봅니다. 휴대폰은 agent pane을 처음부터 대화로 엽니다(설정 → 채팅 「패널 기본 화면」). 「생각 표시」를 켜면 agent의 생각도 접힌 줄로 보입니다. 대화 아래 입력창에서 바로 보내고, 「대기 메시지 자동 전송」을 끄면 작업 중에 쓴 글은 「지금 보내기」까지 붙잡아 둡니다. 빠른 답장 칩도 켤 수 있습니다.
 - **머신 등록**: 설정 → 머신에서 「등록 창 열기」 뒤 새 머신에서 `aaa agent enroll <host 주소> --name <이름>`을 실행합니다. 대기 목록의 「승인…」에 새 머신 화면의 6자리 코드를 넣고 이름을 맞춰 봅니다(세 번 틀리면 그 요청을 버립니다). 등록된 머신은 같은 곳에서 폐기합니다. host 머신은 폐기하지 않습니다.
 - **웹 공개**: 설정 → 폰 및 기기의 「tailnet에 공개」·「공개 끄기」(tailscale serve). 공개 주소로 연 화면에서 끄면 그 화면이 끊길 수 있어, 끈 뒤 들어올 다른 경로를 보이고 「다른 경로를 확인했다」를 켜야 끕니다.
+- **안전·profile**: 설정 → 안전에서 safety 값과 출처를 보고 yolo·start_threads·trust_screens·coordinator_deploy를 바꿉니다(yolo 켜기는 한 번 더 확인). 설정 → profile에서 claude·codex·shell profile을 더하고 고치고 지우며, 허용 목록·기본 profile을 바꿉니다. 모두 「적용할까요?」 창에서 실제 실행 인자를 본 뒤 씁니다. custom profile(실행 명령)과 `thread_agent_args`·`coordinator_agent_args`·`routine_commands`는 host의 aaa 세션 밖 터미널에서만 바꿉니다. 그사이 host.toml이 바뀌었으면 쓰지 않고 다시 읽습니다.
+- **작업 폴더·hook**: 설정 → 머신 아래 「작업 폴더·hook」에서 머신을 고르고, 절대 경로를 「점검…」(검사 파일을 쓰고 읽고 지움) 한 뒤 「전환…」합니다. 다음 agent 시작부터 쓰고 지금 도는 thread는 그대로입니다. Codex 전역 hook은 같은 곳에서 설치·제거합니다(Claude는 실행마다 넣어 설치할 것이 없습니다).
 - **알림 켜기**: 설정 → 알림에서 켜고 「테스트 알림」으로 확인합니다. 기기 알림(Web Push)은 coordinator가 보낸 「확인 필요」·「전체 완료」 post만 받습니다. thread 질문·보고는 앱 안 알림으로 확인합니다. iPhone은 홈 화면 앱(Safari 공유 → 홈 화면에 추가)에서만 켤 수 있습니다.
 
 보고서 발행(`library publish --to-user`)의 「새 보고서」 알림은 post 한도를 쓰지 않습니다. host가 확인한 프로젝트 coordinator의 「확인 필요」(`user-action`)·「전체 완료」(`task-complete`)는 합쳐서 분당 30·시간당 60·하루 300건이며 자동 음소거되지 않습니다(24시간 같은 글 중복은 거부). 일반 post 음소거는 다음 coordinator CLI 출력·`aaa context` 맨 위와 웹 앱 안 알림에 표시됩니다. 원인을 확인한 뒤 조작 권한으로 `aaa post unmute <출처>`를 실행합니다.

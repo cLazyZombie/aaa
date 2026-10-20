@@ -33,7 +33,7 @@ describe("관리 W5c", () => {
       assert.equal(needsYoloConfirm(k, v), false, `${k} ${v}`);
   });
   it("인자는 줄마다 하나라 빈칸이 든 인자도 하나로 간다", () => {
-    assert.deepEqual(argsFromText("--settings\n {\"a\": 1} \n\n-v\n"), ["--settings", '{"a": 1}', "-v"]);
+    assert.deepEqual(argsFromText('--settings\n {"a": 1} \n\n-v\n'), ["--settings", '{"a": 1}', "-v"]);
   });
   it("기본 profile을 고치면 같은 이름으로 더해 대신한다", () => {
     const builtin = row({ name: "codex", harness: "codex", model: "", effort: "", args: [], builtin: true });
