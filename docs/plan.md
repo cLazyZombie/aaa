@@ -6262,3 +6262,38 @@ L4 후속(10-20 00시 사용자 관찰): 멈춤 상태의 후보 예약과 재�
 - **실기 인수.** 실제 SCM 등록/logon·Session0·로그인 전 부팅·사용자 프로필·UAC·LSA Deny/GPO·암호 갱신·
   잠긴 exe·ConPTY/인증은 CI의 읽기 probe로 증명하지 않는다. Windows 최소 bootstrap 뒤 준비물·받기·명령·
   확인·되돌리기·가린 로그 절차를 확정해 사용자 PC에서 검증한다. 별도 VM/runner나 실제 계정/LSA 변경은 없다.
+
+### 8.334 host 핵심 작업 자기 감시와 이상 알림(10-20, t-0532)
+
+- **경계.** Agent link의 UDS/TLS 수신기·인증된 연결 처리, ticker, Front API 수신기, 웹 서버의 panic과 조기 종료를 감지한다. 운영 host 밖 감시자·시스템 설정은 만들지 않는다. panic 내용은 읽거나 알림에 복제하지 않는다. 위치 기록은 §8.332의 공통 panic hook 소유다. 감지한 panic은 `panic_log::latest()`의 안전한 Snapshot 중 현재 Tokio task ID와 일치하는 것만 작업 이름과 함께 로그에 연결한다. 동시 다른 task의 기록은 붙이지 않고, 정상 조기 종료에는 이전 panic을 붙이지 않는다.
+- **재실행.** listener를 `Arc`로 보존하여 같은 socket/port에서 1·2·4초 물러나 3회 다시 실행한다. 같은 사건의 네 번째 종료에서 멈추며 host 재시작이 필요하다. 소비한 link 스트림·명령을 재생하지 않는다. pinger·pending·세대별 연결을 정리하고 agent의 기존 재연결을 받아 복구한다. 같은 link 실패의 새 연결에도 물러남과 상한을 적용한다. 상한과 시작 시각·누적 횟수는 안전 로그에 남는다.
+- **판정.** agent 요청의 응답 시간 초과가 30초 창에 5건이면 한 이상이다. 떨어져 발생한 시간 초과는 창 밖으로 버린다. 실제 응답(오류 응답도 포함) 또는 재실행된 작업의 정상 진행 뒤 30초 동안 재발하지 않아야 회복이다. ticker가 실패한 회차는 완료로 세지 않고, 다음 성공 회차가 대기자를 풀게 한다.
+- **독립 전달.** 감시 상태와 알림 전달 task는 ticker와 따로 돈다. 이상·회복을 종류별 한 번씩 coordinator inbox에 저장한다. 열린 이상·시작 시각·누적 횟수와 미발행 사건을 host DB에 저장한다. 고정 항목 ID로 inbox INSERT와 발행 대기열 ACK를 같은 transaction에서 확정하므로 그 앞뒤 재시작·저장 실패에도 inbox를 잃거나 중복 발행하지 않고 회복을 이어 알린다. 앞 사건의 INSERT가 실패하면 뒤 사건도 보류하여 회복이 이상보다 먼저 발행되지 않게 한다. host 프로세스 전체의 종료·runtime 정지·OS 자원 소진·공유 상태 잠금의 poison을 자동 수리하는 경로는 아니다.
+- **외부 알림 예외.** §8.249의 coordinator 사용자 post 전용 규칙은 유지한다. 유일한 새 예외는 host supervisor가 정적인 작업 이름·시각·횟수로 만든 `host-health` 이상/회복이다. 임의 system/thread/inbox 항목을 외부로 보내지 않는다. 기존 쓰는 기기의 presence/focus 판정으로 앱을 쓰면 앱 안 알림, 닫으면 Web Push·webhook이다. 이 예외는 post 종류 선택·project mute에 묶지 않으며, 발송 실패는 재전송하지 않는다. 외부 알림이 설정되지 않았으면 inbox가 남는다.
+- **호환.** FRONT_API 1.74에 `host_issue`/`host_recovered` NoticeKind를 더한다. 옛 CLI에는 이 웹 알림을 보내지 않는다. Rust 정본에서 TypeScript를 생성한다. N-1 웹은 모르는 notice를 무시하며 새 웹에 다시 연결하면 받는다.
+- **근거와 시험.** 기존 `inbox::Outage`의 시각 인자·한 번 알림/회복 관례와 기존 `Viewing::user_in_use`, Web Push·webhook owner를 재사용한다. 실험실 전송체가 실제 link 읽기 중 panic하고, 실제 AgentConn 요청은 응답을 보류한다. 제품 결함 주입 flag나 고정 sleep은 없다. 상세 keeper·변형 RED·gate는 [시험](testing.md)의 t-0532 절을 따른다.
+
+### 8.335 task 모델·머신 칸(10-20, t-0531)
+
+- **요청.** 사용자 10-20 23:2x 「owner는 왜 있어?」 → 「수정해. 모델과 머신 따로 설정하게. UI도 좀 더 컴팩트하게 할 수 있으면(이건 필수 아냐).」 owner 한 칸이 사람 할 일(`me`)·모델·머신을 함께 담았고, 웹은 `profile@machine` 조합 하나를 골랐다. 결정 1A: 표기는 그대로 둔다.
+- **표기(`tasks.rs`).** 줄은 `- [ ] 제목 (모델@머신) [저장소] · t-NNNN` 그대로다(참고 herdr-projects COORDINATOR.md의 owner와 같다). 모델만 `(모델)`, 머신만 `(@머신)`, 사람 할 일은 `(me)`·`(이름)`, 비움은 미할당이다. 옛 줄은 바꿀 것이 없고, 칸을 고친 줄만 다시 쓴다(고치지 않은 줄은 바이트 그대로). 형식 검사(▲)·충돌 감지·기록·되살리기는 그대로다.
+- **나누기(`agent_parts`·`fill_agent`·`known_profiles`).** host가 owner를 `TaskView.profile`·`machine`으로 나눠 준다(할 일 화면·`context`). 맨 이름은 host가 아는 profile(host 정의 profile·기본 harness·프로젝트 `thread_profiles`)일 때만 모델이다. 예전에는 연결된 머신의 profile 목록으로만 판정해, 머신이 끊기면 `(codex-fast)`가 사람으로 읽혔다(`check_owner`·`--from-task`도 같은 목록을 더한다).
+- **쓰기(`edited_owner`).** `TaskOp` Add/Update `profile`·`machine`(FRONT_API 1.75): 주지 않은 칸은 지금 agent owner에서 가져오고(머신만 바꾸면 모델은 그대로), 빈 글은 그 칸만 비운다. 둘 다 비면 미할당이고, me·사람 task에 비울 칸만 오면 그대로 둔다. `owner`(me·사람)와 모델·머신을 함께 주거나 이름 꼴이 아닌 칸은 거부한다. 합친 owner는 지금처럼 `assignable --check`와 같은 판정을 거친다(칸 하나를 비워도 남은 칸을 다시 본다). CLI `aaa task add|edit --profile <모델> --machine <머신>`(`thread start`와 같은 이름), 사람 할 일은 `--owner me|<이름>`.
+- **보이기.** `aaa context`·`task list`는 agent task를 `(모델 X, 머신 Y)`로(빈 칸은 「자동」), 저장소 칸도 함께 보인다. coordinator 안내(AGENTS.md TASKS 절)는 새 옵션과 「머신이 비면 덜 붐비는 곳, 모델이 비면 프로젝트 기본」을 적는다. 있는 프로젝트의 AGENTS.md는 `aaa doctor files --fix`로 새 안내를 받는다.
+- **웹.** 할 일 폼은 「담당」(agent·나·사람…)을 고르고, agent면 「모델」(「자동」=프로젝트 기본, 연결된 머신의 profile, 머신을 골랐으면 그 머신의 것)·「머신」(「자동」=덜 붐비는 곳, 끊긴 머신은 고를 수 없다) 두 칸이다(「자동」의 뜻은 칸의 title). 미할당은 agent에 두 칸이 빈 것이다. 웹은 표기 그대로 `모델@머신` owner 글로 보낸다(옛 host도 같은 판정). 목록 줄은 담당 칩 대신 아이콘 칩 둘(모델·머신), 상세·「바로 시작」 창은 「모델 · X」·「머신 · Y」. 「바로 시작」은 정한 칸만 잠근다(옛 host는 owner 글을 나눈다).
+- **컴팩트(선택).** 폼은 목록·저장소를 한 줄에, 담당·모델·머신을 한 줄에 두어(데스크톱 상세 칸·휴대폰 390px) 저장 단추가 첫 화면에 들어온다. 저장소 「정하지 않음」 글을 줄였다. 목록 줄은 칸 이름을 아이콘으로 줄였다(휴대폰은 지금처럼 칩을 숨긴다).
+- **검증.** host 유닛 `tasks::tests::model_and_machine_fields`(나누기·끊긴 머신의 profile·칸별 고치기·거부·다시 읽기), `task_edit::tests::model_machine_edits`(칸별 고치기, 메모만 고친 옛 줄 바이트 그대로, 더하기·판정 거부·me와 함께 거부). m13 `coordinator_flow`(context 칸·글, `task add|edit --profile|--machine`, 거부 둘, `task list` 글, 안내). 웹 순수 시험 `tasksModel.test.mjs`(host 칸 우선·옛 host 나누기·폼 동작·잠금). 웹 E2E 54에 「모델·머신 칸」 단계(칸별 저장과 파일 줄, 칩, 바로 시작 잠금, 나로 바꾸기)와 데스크톱·iPhone 캡처.
+
+### 8.336 일을 맡기기 전 기존 task 검색과 동시 갱신(10-21, t-0539)
+
+- **안내.** coordinator는 새 thread를 시작하거나 열린 thread에 일을 넘기기 전에 TASKS.md에서 같은 일·겹치는 일을 찾는다. 있으면 그 task를 `--from-task … --link-task`로 시작하거나 이미 이어진 열린 thread에 넘기고, 사용자 말에 맞게 메모·모델·머신·저장소도 함께 고친다. 없으면 기존 시작 흐름을 따른다. §8.335의 모델·머신 분리 안내와 CLI는 유지한다. 안내 원본은 `aaa doctor files --fix`가 운영 AGENTS.md에 반영한다.
+- **보조 경고.** task 없이 제목으로 시작할 때 비슷한 열린 task와 연결 명령을 한 줄 알린다. 대소문자·구두점을 뺀 낱말 집합이 같거나, 두 낱말 이상 겹치고 합집합의 2/3 이상이 같을 때만 알리며 파일 순서상 첫 후보를 고른다. 완료 task는 제외한다. 형태소·동의어를 추측하지 않으며, 시작을 거부하거나 TASKS.md를 고치지 않는다. 기존 ThreadView 경고를 사용하므로 Front API 변경은 없다.
+- **검증.** 경고 유닛은 정규화·겹침 경계·완료 제외·명령의 셸 인용을, m13은 실제 CLI의 경고와 시작 성공·경고 없는 경로·원문 보존을 검사한다. 기존 안내 생성·갱신 keeper가 새 문구도 검사한다. 완료 제외를 제거하면 음성 시험이 실패해야 한다. 상세는 [시험](testing.md)의 t-0539 절을 따른다.
+
+
+### 8.337 대화 찾기·가상 줄의 관측 묶음 수리(10-21, t-0542)
+
+- **실패.** 앞 기록을 처음까지 찾은 뒤 첫 찾음으로 이동할 때 개수 7·차례 0은 바뀌지만 `revealed=false`로 멈췄다. 최초 착지 실패의 DOM·관측 배열은 없어 그 실행의 실제 배열 자체는 미확인이다.
+- **원인과 수리.** `ChatRow`는 한 줄마다 IntersectionObserver를 쓴다. 통지가 늦어 같은 줄의 화면 밖(false)·안(true) 관측이 한 배열에 오면 첫 관측만 읽던 코드는 본문을 빈 채로 둔다. 새 교차도 본문 DOM 변화도 없어 찾기 위치 맞추기가 이어지지 않는다. 마지막 관측으로 보임을 정한다. 느린 통지 중 사용자가 찾거나 스크롤할 때도 생길 수 있는 제품 결함이다. 찾기 개수·이동 시한·가상화 범위·프로토콜은 바꾸지 않는다.
+- **재현 owner.** 기존 E2E44의 멈춤·이어 찾기 시나리오를 재사용하는 별도 단계가 첫 찾음 줄의 실제 화면 밖 관측만 보류하고, Enter로 이동할 때 생긴 실제 화면 안 관측과 시간순으로 묶어 전달한다. 보류 표지와 `false,true` 전달을 확인하고 기존 강조 Range 보임·개수 일치·가상화 단언을 유지한다. 두 단계가 같은 기록을 쓰므로 울타리 문구는 구분해 이번 append의 commit을 기다린다. 제품 주입 flag·가짜 entry·좌표·시계·고정 sleep은 없다.
+- **검증.** 원래 제품과 첫 관측 사용 변형은 같은 20초 첫 찾음 대기에서 같은 표지로 RED, 마지막 관측 반영은 같은 주입 GREEN이다. 주입 회귀 병렬 6/6과 CPU 4배 지연·6개 병렬의 원본 포함 E2E44 전체 6/6을 확인했다. main 통합 뒤 전체 ci-local·check-public을 실행한다. 상세는 [시험](testing.md)의 t-0542 절을 따른다.
