@@ -961,6 +961,57 @@ fn remote_dir_thread_survives_host_restart() {
     wait_for("outage recovered", T, || (outage("recovered") == 1).then_some(()));
     assert_eq!(outage("down"), 1);
 }
+/// task 첨부(plan §8.319): `--from-task`로 다른 머신(TLS, 상태 폴더가 다른 labB)에 thread를 띄우면 메모가 가리키는 host 파일
+/// (올린 그림·보고서 안 문서)을 그 머신 작업 폴더 `attachments/`에 복사하고, 할 일 글·brief는 그 머신에서 열 수 있는 경로만 쓴다
+#[test]
+fn task_attachments_reach_a_remote_agent() {
+    let mut w = world();
+    w.add_remote();
+    let demo = w.projects.join("demo");
+    std::fs::create_dir_all(demo.join("uploads")).unwrap();
+    let img = b"\x89PNG\r\n\x1a\n\0\0\0\rIHDR task attach".to_vec();
+    std::fs::write(demo.join("uploads/0123456789abcdef.png"), &img).unwrap();
+    let report = w.lab.root.join("plan-report");
+    std::fs::create_dir_all(&report).unwrap();
+    std::fs::write(report.join("index.html"), "<!doctype html><title>계획</title>").unwrap();
+    std::fs::write(report.join("plan.md"), "# 계획서\n\n- 첫 단계\n").unwrap();
+    w.h.ok(&["library", "publish", path_str(&report), "--project", "demo", "--name", "plan-report"]);
+    std::fs::write(
+        demo.join("TASKS.md"),
+        "# Tasks\n\n## Backlog\n- [ ] 첨부 일\n  고칠 화면\n  ![그림](uploads/0123456789abcdef.png)\n  \
+         [계획서](library/plan-report/plan.md)\n  [없는 그림](uploads/fedcba9876543210.png)\n",
+    )
+    .unwrap();
+    let v = w.start(&["--from-task", "첨부 일", "--machine", "labB", "--profile", "fake", "--kind", "dir"]);
+    let id = v["id"].as_str().unwrap().to_string();
+    let warnings = v["warnings"].to_string();
+    assert!(warnings.contains("uploads/fedcba9876543210.png"), "host에 없는 첨부는 경고로 알린다: {v}");
+    let v = w.wait_show("원격 brief 받음", &id, |v| v["brief"] == "delivered");
+    let work = PathBuf::from(v["work_dir"].as_str().unwrap());
+    assert!(work.starts_with(w.lab.root.join("workB")), "labB 작업 폴더가 아니다: {}", work.display());
+    let names: Vec<String> = std::fs::read_dir(work.join("attachments"))
+        .unwrap()
+        .map(|e| e.unwrap().file_name().into_string().unwrap())
+        .collect();
+    assert_eq!(names.len(), 2, "그림·보고서 문서 둘만 넘긴다: {names:?}");
+    assert_eq!(std::fs::read(work.join("attachments/0123456789abcdef.png")).unwrap(), img);
+    let doc = names.iter().find(|n| n.ends_with(".md")).expect("보고서 문서 사본");
+    assert_eq!(std::fs::read_to_string(work.join("attachments").join(doc)).unwrap(), "# 계획서\n\n- 첫 단계\n");
+    let brief = std::fs::read_to_string(work.join("brief.md")).unwrap();
+    let task = std::fs::read_to_string(demo.join("threads").join(format!("{id}.task.md"))).unwrap();
+    // brief 머리의 uploads 줄(「host 머신에만 있다」)은 원래 안내다. 첨부 자체는 host 경로·host 상대 경로로 가리키지 않는다
+    assert!(!task.contains(path_str(&w.projects)), "할 일에 host 경로가 있다:\n{task}");
+    for host in ["](uploads/0123456789abcdef.png)", "](library/", "uploads/0123456789abcdef.png`"] {
+        assert!(!brief.contains(host), "brief가 첨부를 host 쪽으로 가리킨다({host}):\n{brief}");
+    }
+    assert!(task.contains("![그림](attachments/0123456789abcdef.png)") && task.contains(&format!("[계획서](attachments/{doc})")), "{task}");
+    assert!(task.contains("[없는 그림](uploads/fedcba9876543210.png)"), "넘기지 못한 줄은 그대로 둔다: {task}");
+    assert!(
+        brief.contains(&format!("- task 첨부 2개(할 일의 `attachments/…`): `{}`", work.join("attachments").display())),
+        "{brief}"
+    );
+}
+
 
 /// 안내를 보내도 화면이 바뀌지 않으면 unknown으로 남기고 자동으로 다시 보내지 않는다(§8.5 a)
 /// 입력창을 읽을 수 없는 harness(`mute`: 화면이 바뀌지 않는다): ticker는 한 번 보내고, 다시 보내기 전에 화면으로 앞

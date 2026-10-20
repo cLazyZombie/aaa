@@ -482,6 +482,8 @@ thread가 키를 기다리는 화면(시작 때 신뢰 창, 질문 메뉴, 명�
   남긴다(지운 task는 `aaa task restore`로 되살린다). 파일을 직접 고쳐도 되지만 충돌 감지가 없다.
 - 사용자는 웹 할 일 화면에서 고친다. 그 결과는 `aaa context`의 task 목록에 이미 들어 있다. 따로 묻지 않고 되돌리지 않는다.
 - owner를 쓰기 전에 `aaa assignable --check <owner>`로 확인한다(`aaa task`도 같은 판정을 한다).
+- 메모의 첨부 줄(`![그림](uploads/…)`·`[제목](uploads/….md)`·`[제목](library/<보고서>/<경로>)`·`[제목](https://…)`)은 사용자가
+  웹에서 붙인 그림·문서다. `aaa task edit --notes`는 메모 전체를 바꾸니 그 줄을 함께 남긴다. `--from-task`가 그 파일을 thread에 넘긴다.
 - 형식 어긋남(owner 칸의 상태 메모 등)은 `aaa task list`가 ▲로 보인다. 고칠지는 사용자에게 묻는다.
 - task를 thread에 맡길 때는 `aaa thread start --from-task \"<제목>\" --link-task …`로 시작한다. host가 줄 끝에 ` · <thread id>`를
   붙인다(따로 시작했으면 `aaa task edit \"<제목>\" --thread <id>`). 사용자가 그만둔다고 하면 줄을 지운다(메모도 함께).

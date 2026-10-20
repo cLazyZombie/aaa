@@ -257,4 +257,52 @@ mod tests {
         }
         assert_eq!((doc_ext("htm"), doc_ext("markdown"), doc_ext("pdf")), (Some("html"), Some("md"), None));
     }
+
+    /// 첨부를 받지 못하는 옛 agent(`work_attach.v1` 없음)에는 thread 기록을 만들기 전에 거부한다: 넘기지 못한 host 경로를
+    /// brief에 남기지 않는다. 받는 agent로 넘기는 길은 m13 `task_attachments_reach_a_remote_agent`가 본다
+    #[tokio::test]
+    async fn old_agent_is_refused_before_a_record() {
+        let state = std::env::temp_dir().join(format!("aaa-task-attach-{}", aaa_common::util::new_id()));
+        let mut cfg = aaa_config::HostConfig::default();
+        cfg.notify.web_push = false;
+        cfg.projects.root = state.join("projects").display().to_string();
+        let h = Host::open(cfg, state.clone()).unwrap();
+        h.project_create("demo", Default::default(), "test").unwrap();
+        h.agent_connected(
+            &aaa_proto::AgentHello {
+                proto: aaa_proto::AGENT_LINK,
+                machine_id: "m".into(),
+                machine_name: "mac-a".into(),
+                boot_id: "boot".into(),
+                os: "test".into(),
+                arch: "test".into(),
+                software: "test".into(),
+                features: vec![],
+                dev_mode: false,
+                selfcheck: None,
+                sessions: vec![],
+                harness: vec![],
+            },
+            false,
+            crate::AgentConn::new(aaa_common::conn::spawn_writer(tokio::io::sink(), aaa_proto::MAX_FRAME), 1),
+        );
+        let start = crate::orch::StartArgs {
+            holds: vec![],
+            project: "demo".into(),
+            title: "첨부 일".into(),
+            machine: Some("mac-a".into()),
+            profile: String::new(),
+            kind: aaa_proto::ThreadKind::Dir,
+            repo: None,
+            base: None,
+            task: "첨부 일\n![그림](attachments/0123456789abcdef.png)".into(),
+            role: aaa_proto::Role::Worker,
+            attachments: vec![TaskFile { name: "0123456789abcdef.png".into(), src: "uploads/0123456789abcdef.png".into() }],
+        };
+        let e = h.thread_start(start, "test").await.unwrap_err();
+        assert_eq!(e.code, ErrorCode::Unavailable, "{e:?}");
+        assert!(e.message.contains("mac-a") && e.message.contains(FEATURE), "{}", e.message);
+        assert!(h.db.threads(Some("demo")).unwrap().is_empty(), "거부한 시작이 thread 기록을 남겼다");
+        let _ = std::fs::remove_dir_all(&state);
+    }
 }
