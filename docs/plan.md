@@ -5806,3 +5806,23 @@ L4 후속(10-20 00시 사용자 관찰): 멈춤 상태의 후보 예약과 재�
 - **참고 위치.** t3code 4b1024da `apps/web/src/components/settings/ScheduledTasksSettings.tsx`: 목록 줄 `ScheduledTaskRow`(:558-679, 이름·배지·켜기와 상태 한 줄), 상태 배지 색(:238-243, `ui/badge.tsx:30-36` 옅은 바탕), 기록 줄 `[배지] 시각 요약`(:767-791), 원문 블록 `DeliveryBlock`(:816-825 `pre max-h-64 … whitespace-pre-wrap`), Dialog의 모바일 아래 sheet(`ui/dialog.tsx:63-87`). 따르지 않은 것: 삭제·지금 실행을 확인 없이 하는 것(:582-601) 대신 막힌 큐 풀기·변환은 확인을 거친다. herdr-projects 0.2.35 `src/routine.rs:92-107`(`last … · next … · skipped`)·`:299-325`(list의 승인 kind 낱말)를 줄 글과 승인 범위에 썼다. herdr-web-ui에는 자동화 화면이 없고 `components/BackgroundTasks.tsx:17-22,190`의 상태 낱말만 참고했다. 상세 틀은 이 저장소 herdr modal.css(데스크톱 가운데 창·휴대폰 아래 sheet, 뒤로·아래로 밀기 닫기)다.
 - **FRONT_API 1.58.** 옛 front는 새 칸을 버린다. 옛 host는 `queue`·`source`·`front_api`를 생략해 웹이 큐·원문·변환 단추를 숨기고, `automation_unblock`은 모르는 요청으로 거절한다. agent wire는 바뀌지 않는다.
 - **검증.** host 유닛(automation::tests): 미리보기 무기록(폴더 전체 비교)·Reader 미리보기 허용/변환 거부·다른 hash·미리보기 뒤 원본 변경 거부·미리보기 목록 = 실제 변환 목록, 풀기의 actor 거부 4종·다른 묶음 거부·계속(묶음만)·버리기(뒤 입력까지)·닫은 입력 재수락 없음·다른 동작 묶음 거부, 원문·본문 참조·글자 경계 자르기. 웹 유닛 `automationModel.test.mjs`. 웹 E2E `40-automation-detail`: 실제 일정 판정 기록으로 상세 절·기록 수(host 50건과 같음)·원문, 미리보기가 파일을 바꾸지 않음·생기는 규칙·보존 위치·변환 뒤 보존 사본 = 원본, Reader 미리보기만, 대상 pane을 끝내 실제 전송 실패로 막힌 묶음(다시 판정해도 같은 묶음·실패 기록 그대로), 휴대폰 Reader 상세 폭과 풀기 거부, 「계속 보내기」 → 다음 입력이 실제로 시도되어 새 묶음으로 다시 막힘 → 「버리기」 → 규칙 끈 뒤 tick 울타리 뒤 빈 큐·두 묶음의 입력 모두 「다시 보내지 않음」 기록. 패드 820 상세가 화면 안. `34-automations`는 기록 확인을 상세로 옮겼다.
+
+### 8.304 대화의 도구 호출 묶음(10-20, t-0477)
+
+- **요청.** 사용자 「진행해.」(t-0403 t3code 조사 UI·UX 추천 2). 대화 보기에서 도구가 하나에 한 줄씩 길게 늘어서 휴대폰에서 대화 흐름이 묻혔다.
+- **고침.** 사람·답 말 사이에 이어진 도구·생각 줄이 둘 이상이면 한 줄로 접는다: 그림 + 「명령 2개 실행, 파일 3개 읽음」. 누르면 그 줄들이 바로 아래에 펼쳐지고 다시 누르면 접힌다. 도구 하나는 지금처럼 한 줄 그대로다. 묶기·요약은 순수 모듈 `web/src/toolGroups.ts`, 그리기는 `Chat.tsx` `ToolGroup`이다. agent·proto는 그대로다(도구 줄 「이름: 대표 인자」, chat.rs `tool_line`).
+- **참고에서 그대로 옮긴 것(t3code 4b1024daf).**
+  - 묶기: `apps/web/src/components/chat/MessagesTimeline.logic.ts:1594~1716`. 이어진 work 항목을 모으고, 하나뿐이면 묶지 않고, 둘 이상이면 접힌 `work-toggle`(처음엔 접힘)과 펼친 `work` 줄. 묶음 id는 첫 항목 id(`workGroupId`).
+  - 동작 분류: `packages/client-runtime/src/work-log/presentation.ts:417` `toolGroupAction`, `packages/shared/src/toolActivity.ts:246~300` `toolNameToken`(소문자, `_`·`-`·빈칸 뺌, `__`·`.`·`/`가 든 MCP 이름은 분류하지 않음)·`classifyToolActivity`(bash·shell·terminal=명령, read=읽기, grep·glob·find·rg·ls=코드 검색).
+  - 요약: 같은 파일 `toolGroupActionCount`(수정은 서로 다른 파일 수 + 파일 모르는 수정), `summaryActionPriority`(명령·수정 0, 그 밖의 도구 2, 나머지 1), `summarizeToolGroup`(우선순위로 두 가지를 골라 나온 차례로, 나머지는 「그 밖의 동작 N개」, 생각은 세지 않고 생각만이면 「생각 (×N)」).
+  - 머리: `MessagesTimeline.tsx:3834` `toolGroupSummaryIconName`(명령 terminal·읽기 eye·수정 square-pen·코드 검색 search·웹 globe·그 밖 wrench·생각 brain·섞임 hammer)·`WorkGroupHeader`(그림 + 말줄임 한 줄, 펼침 화살표 없음).
+  - 펼친 목록: `ExpandedWorkGroupEntries` 높이 `min(18rem, 50dvh)` 안에서 굴리고, 끝을 보고 있었으면 새 줄을 따라간다(`shouldFollowWorkGroupAppend`).
+  - 펼침 기억: thread(pane)마다(`rememberedPosition.disclosures.workGroups`). 펼치고 접을 때 끝을 보던 사람은 끝에 남고, 아니면 보던 자리가 그대로다(`suspendEndScrollMaintenanceForDisclosure`). aaa는 이미 있는 보던 줄 고정(§8.262 `holdAnchor`)과 끝 따라가기가 같은 일을 한다.
+  - 작업 중 맨 끝 묶음(`work-live`, logic.ts:1440~1500): 요약 대신 마지막 도구 줄을 빛나는 글자(`live-tool-shine`)로 보인다.
+- **다르게 한 곳.**
+  - 문구는 한국어이고 이음은 「, 」다(참고는 「 and 」·「, and 」). 브리프의 「명령 2개 실행, 파일 3개 읽음」대로.
+  - Claude·Codex 도구 이름을 이름표로 나눈다(참고는 서버가 준 item type). 수정(Edit·Write·MultiEdit·NotebookEdit·apply_patch), 읽기(view_image·NotebookRead 더함), 명령(exec_command·local_shell 더함), 웹(WebSearch·WebFetch)을 aaa 기록 이름에 맞춰 더했다. Agent·Task·TodoWrite·MCP는 「도구 N개 사용」이다.
+  - 실패 표시(빨간 그림)·시각·「Running …」 같은 진행 동사는 없다: aaa 기록에는 도구 결과·시각이 없다(agent가 뺀다). 작업 중 표시는 pane의 agent 상태(working)와 「기록 맨 끝 묶음」으로 가린다.
+  - 펼친 목록은 가상 목록(LegendList) 대신 보통 DOM이다: 묶음은 짧고, 대화 전체는 이미 줄 단위로 보이는 곳만 그린다(ChatRow, §8.298).
+  - 줄 id·자리 기억: 묶음은 화면에서 한 줄이라 굴림 기준 줄 목록(`rowIds`)에도 하나다. 앞 쪽을 읽어 묶음 앞에 도구 줄이 붙으면 첫 줄 id가 바뀌므로, 보던 줄·기억한 자리·펼침은 묶음 안 어느 줄 id로도 같은 묶음을 찾는다(`rowIndexById`, 참고는 같은 경우 묶음 id가 바뀐다).
+- **검증.** 단위 `web/test/toolGroups.test.mjs`(분류·요약·묶기·앞 쪽이 붙은 뒤 같은 묶음과 펼침). 웹 E2E `41-chat-tool-groups`가 데스크톱 Chromium 1280·패드 WebKit 820·휴대폰 WebKit 390에서 묶음 요약 두 줄, 접힌 동안 보이는 도구 줄은 한 줄짜리 Write뿐, 펼친 줄의 글과 차례, 끝이 아닌 곳에서 펼치고 접어도 머리가 1px 안 제자리, 끝을 보던 사람은 끝 묶음을 펼친 뒤에도 끝임을, 25줄 묶음은 펼치면 목록이 맨 위(scrollTop 0)에서 높이 상한 안에 굴림임을 단언한다(처음 구현은 끝에서 열려 실패했다). 둘째 단계는 가짜 Claude 작업 화면(입력 한 줄에 턴을 열고 다음 줄에 닫는다)으로 작업 중 맨 끝 묶음이 마지막 도구 줄(「Read: src/z.rs」)을 빛나는 글자로 보이고 턴이 끝나면 요약으로 돌아옴을 단언한다(작업 중 판정을 끄면 실패한다). 고치기 전 코드로는 「묶음 요약 []」로 실패했다. E2E 11·22·29·30·38·37(12조합, t-0474 수리 뒤) 유지. 가상화 판정(300줄)은 화면 줄(묶음은 한 줄) 수로 하고, row와 끝 이동이 같은 판정을 쓴다(t-0474).

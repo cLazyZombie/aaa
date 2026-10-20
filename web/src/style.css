@@ -663,6 +663,30 @@ svg.i { width: 16px; height: 16px; flex-shrink: 0; fill: none; stroke: currentCo
   .chat-msg.user { max-width: 92%; }
 }
 .chat-msg.tool { align-self: flex-start; padding: 2px var(--space-3); font: calc(var(--fs-xs) * var(--chat-scale, 1))/1.5 var(--font-mono); color: var(--text-dim); background: transparent; }
+/* 도구 호출 묶음(plan §8.304, t3code WorkLog.tsx `WorkLogButton`·MessagesTimeline.tsx `ExpandedWorkGroupEntries`): 그림 + 한 줄 요약(넘치면
+   말줄임), 펼친 줄은 요약 글자와 같은 선에서 시작해 min(18rem, 50dvh) 안에서 굴린다. 손가락이면 머리를 누를 만한 높이로 */
+.chat-tool-group { display: flex; flex-direction: column; min-width: 0; }
+.chat-tool-group .chat-tool-group-head { display: flex; align-items: center; justify-content: flex-start; gap: var(--space-2); width: 100%; min-width: 0; height: auto; min-height: calc(var(--control-h) - var(--space-2)); padding: 0 var(--space-3); border: 0; border-radius: var(--r-sm); background: transparent; color: var(--text-dim); font: calc(var(--fs-sm) * var(--chat-scale, 1))/1.5 var(--font-ui); text-align: left; cursor: pointer; }
+@media (hover: hover) {
+  .chat-tool-group .chat-tool-group-head:hover { background: var(--bg-hover); color: var(--text); }
+}
+.chat-tool-group-icon { flex: none; width: var(--fs-md); height: var(--fs-md); }
+.chat-tool-group-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.chat-tool-group-list { display: flex; flex-direction: column; max-height: min(18rem, 50dvh); overflow-y: auto; overscroll-behavior: contain; padding-left: calc(var(--fs-md) + var(--space-2)); border-radius: var(--r-sm); }
+.chat-tool-group-list > .chat-msg.tool { max-width: 100%; overflow-wrap: anywhere; }
+@media (pointer: coarse) {
+  .chat-tool-group .chat-tool-group-head { min-height: var(--touch-target); }
+}
+/* 작업 중 맨 끝 묶음(참고 `live-tool-shine`): 글자 위로 빛이 지나간다. 움직임을 줄인 기기는 멈춘 글자 */
+.chat-tool-group.is-live .chat-tool-group-label {
+  background: linear-gradient(90deg, var(--text-dim) 0%, var(--text-dim) 40%, var(--text) 50%, var(--text-dim) 60%, var(--text-dim) 100%) 0 0 / 300% 100%;
+  -webkit-background-clip: text; background-clip: text; color: transparent;
+  animation: chat-tool-shine 2s linear infinite;
+}
+@keyframes chat-tool-shine { from { background-position: 100% 0; } to { background-position: 0 0; } }
+@media (prefers-reduced-motion: reduce) {
+  .chat-tool-group.is-live .chat-tool-group-label { animation: none; color: var(--text); background: none; }
+}
 .chat-btn[aria-pressed="true"] { color: var(--accent); }
 /* 붙잡은 메시지는 입력창 기둥에(herdr/Composer.css `.terminal-stack.is-chat .composer-queue`: aaa의 pane 칸은 .term) */
 .term .composer-queue { width: min(calc(100% - 2 * var(--space-4)), var(--chat-w)); margin: 0 auto; }
