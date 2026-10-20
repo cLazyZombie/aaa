@@ -623,7 +623,12 @@ export function ChatPanel({
   // 맨 아래를 보고 있었으면 새 줄이 오면 따라 내려간다(그리기 전에, 참고 herdr-web-ui ChatView.tsx useLayoutEffect). 아니면 보던 줄을 지킨다
   useLayoutEffect(() => {
     const el = list.current;
-    if (el === null || Math.abs(el.scrollTop - lastScrollTop.current) > 1) return;
+    if (el === null) return;
+    // 기록이 짧아져 브라우저가 옛 위치를 새 끝으로 줄인 것은 손의 이동이 아니다.
+    // 늦은 scroll 사건이 앞 쪽 읽기 중 따라가기를 다시 켜지 않게, 그리기 직후 반영한다.
+    const end = Math.max(0, el.scrollHeight - el.clientHeight);
+    if (lastScrollTop.current > end && Math.abs(el.scrollTop - end) <= 1) lastScrollTop.current = el.scrollTop;
+    if (Math.abs(el.scrollTop - lastScrollTop.current) > 1) return;
     if (atBottom.current) {
       el.style.removeProperty("--chat-tail-space");
       el.scrollTop = el.scrollHeight;
