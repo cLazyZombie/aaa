@@ -28,19 +28,37 @@ fn bad(e: anyhow::Error) -> ErrorBody {
     ErrorBody::new(ErrorCode::BadRequest, format!("{e:#}"))
 }
 
+/// 파일 I/O(끊긴 볼륨의 canonicalize·검사 파일)는 blocking thread에서 한다: link를 돌리는 runtime을 붙잡지 않는다
+async fn blocking<T: Send + 'static>(
+    work: impl FnOnce() -> Result<T, ErrorBody> + Send + 'static,
+) -> Result<T, ErrorBody> {
+    tokio::task::spawn_blocking(work)
+        .await
+        .unwrap_or_else(|e| Err(ErrorBody::new(ErrorCode::Internal, format!("설정 작업이 끝나지 못했다: {e}"))))
+}
+
 pub(crate) async fn work_root(state: &Path, action: WorkRootOp) -> Result<AgentResponse, ErrorBody> {
     let dir = aaa_config::paths::config_dir();
+    let state_owned = state.to_path_buf();
     match action {
-        WorkRootOp::Show => admin::show(&dir, state).map(|s| AgentResponse::WorkRoot(view(&s))).map_err(bad),
-        WorkRootOp::Check { path, mount } => admin::check(&dir, state, path.as_deref(), mount.as_deref())
-            .map(|c| {
-                AgentResponse::WorkRootChecked(WorkRootCheckView {
-                    path: text(&c.path),
-                    real_path: text(&c.real_path),
-                    mount: c.mount.as_deref().map(text),
-                })
+        WorkRootOp::Show => {
+            blocking(move || admin::show(&dir, &state_owned).map(|s| AgentResponse::WorkRoot(view(&s))).map_err(bad))
+                .await
+        }
+        WorkRootOp::Check { path, mount } => {
+            blocking(move || {
+                admin::check(&dir, &state_owned, path.as_deref(), mount.as_deref())
+                    .map(|c| {
+                        AgentResponse::WorkRootChecked(WorkRootCheckView {
+                            path: text(&c.path),
+                            real_path: text(&c.real_path),
+                            mount: c.mount.as_deref().map(text),
+                        })
+                    })
+                    .map_err(bad)
             })
-            .map_err(bad),
+            .await
+        }
         WorkRootOp::Set { path, mount } => {
             let done = admin::set(&dir, state, &path, mount.as_deref()).await.map_err(bad)?;
             let mut v = view(&done.shown);
@@ -51,17 +69,29 @@ pub(crate) async fn work_root(state: &Path, action: WorkRootOp) -> Result<AgentR
     }
 }
 
-pub(crate) fn codex_hook(install: Option<bool>) -> Result<AgentResponse, ErrorBody> {
+/// Codex 설정 오류는 맨 위 까닭만 싣는다: 아래 TOML 오류 글은 그 줄 원문(비밀 값일 수 있다)을 함께 찍는다
+fn hook_problem(e: anyhow::Error) -> String {
+    e.to_string()
+}
+
+pub(crate) async fn codex_hook(install: Option<bool>) -> Result<AgentResponse, ErrorBody> {
     let exe = std::env::current_exe()
         .map_err(|e| ErrorBody::new(ErrorCode::Internal, format!("agent 실행 파일을 모른다: {e}")))?;
-    let home = crate::integration::codex_home;
-    let backups = match install {
-        None => None,
-        Some(install) => Some(crate::integration::configure(home(), &exe, !install).map_err(bad)?.len() as u32),
-    };
-    let (codex_installed, codex_problem) = match crate::integration::healthy(home(), &exe) {
-        Ok(ok) => (ok, None),
-        Err(e) => (false, Some(format!("{e:#}"))),
-    };
-    Ok(AgentResponse::Hook(HookView { codex_installed, codex_problem, backups }))
+    blocking(move || {
+        let home = crate::integration::codex_home;
+        let backups = match install {
+            None => None,
+            Some(install) => Some(
+                crate::integration::configure(home(), &exe, !install)
+                    .map_err(|e| ErrorBody::new(ErrorCode::BadRequest, hook_problem(e)))?
+                    .len() as u32,
+            ),
+        };
+        let (codex_installed, codex_problem) = match crate::integration::healthy(home(), &exe) {
+            Ok(ok) => (ok, None),
+            Err(e) => (false, Some(hook_problem(e))),
+        };
+        Ok(AgentResponse::Hook(HookView { codex_installed, codex_problem, backups }))
+    })
+    .await
 }

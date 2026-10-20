@@ -84,7 +84,8 @@ export function SafetyPage({ role }: { role: DeviceRole }) {
   const [view, setView] = useState<SafetyView | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
-  const [yolo, setYolo] = useState(false);
+  /** 확인을 기다리는 yolo 값(on 또는 「기본」으로 켜짐) */
+  const [yolo, setYolo] = useState<string | null>(null);
   const seq = useRef(0);
   const shown = role !== "reader" && admin === true;
   const load = useCallback(
@@ -156,7 +157,7 @@ export function SafetyPage({ role }: { role: DeviceRole }) {
                       data-testid={`safety-set-${r.key}`}
                       onChange={(e) => {
                         const v = e.target.value === "default" ? null : e.target.value;
-                        if (needsYoloConfirm(r.key, v)) setYolo(true);
+                        if (needsYoloConfirm(r.key, v, r)) setYolo(v ?? "default");
                         else void set(r.key, v);
                       }}
                     >
@@ -188,13 +189,13 @@ export function SafetyPage({ role }: { role: DeviceRole }) {
       {yolo && view && (
         <ConfirmDialog
           title={`${scope === "global" ? "모든 프로젝트" : view.project}의 yolo를 켤까요?`}
-          body="thread를 묻지 않고 시작하고, thread·coordinator agent를 harness의 권한 건너뛰기 인자로 띄운다. agent가 묻지 않고 명령을 실행하고 파일을 고친다. 이미 도는 agent는 다시 띄울 때까지 옛 인자다."
+          body={`${yolo === "default" ? "이 표의 yolo를 지우면 아래 층 값(on)을 따라 켜진다. " : ""}thread를 묻지 않고 시작하고, thread·coordinator agent를 harness의 권한 건너뛰기 인자로 띄운다. agent가 묻지 않고 명령을 실행하고 파일을 고친다. 이미 도는 agent는 다시 띄울 때까지 옛 인자다.`}
           confirmLabel="yolo 켜기"
           onConfirm={async () => {
-            await set("yolo", "on");
-            setYolo(false);
+            await set("yolo", yolo === "default" ? null : "on");
+            setYolo(null);
           }}
-          onClose={() => setYolo(false)}
+          onClose={() => setYolo(null)}
         />
       )}
     </div>
@@ -222,23 +223,31 @@ export function ProfilesPage({ role }: { role: DeviceRole }) {
   const load = useCallback(() => {
     if (!shown) return;
     const mine = ++seq.current;
-    Promise.all([call({ op: "profile_admin" }), call({ op: "safety_show", scope })])
-      .then(([p, s]) => {
-        if (mine !== seq.current) return;
-        if (p.kind === "profile_admin") setView(p);
-        if (s.kind === "safety") setSafety(s);
-      })
+    // 따로 읽는다: 허용 목록(프로젝트 표)을 읽지 못해도 profile 목록은 보인다
+    call({ op: "profile_admin" })
+      .then((p) => mine === seq.current && p.kind === "profile_admin" && setView(p))
+      .catch((e: unknown) => mine === seq.current && setError(say(e)));
+    call({ op: "safety_show", scope })
+      .then((s) => mine === seq.current && s.kind === "safety" && setSafety(s))
       .catch((e: unknown) => mine === seq.current && setError(say(e)));
   }, [shown, scope]);
   useEffect(() => load(), [load]);
-  /** 미리보기를 받아 확인 창을 연다(쓰지 않는다) */
-  const preview = async (change: ProfileChangeReq) => {
+  /**
+   * 미리보기를 받아 확인 창을 연다(쓰지 않는다). `base`는 이 바꾸기를 고른 화면이 읽은 host.toml 판이다: 그사이 바뀌었으면 옛 화면을
+   * 바탕으로 미리 보지 않고 다시 읽는다(적용은 미리보기 판과 대조한다)
+   */
+  const preview = async (change: ProfileChangeReq, base: string | undefined) => {
     const r = await call({ op: "profile_plan", change });
-    if (r.kind === "profile_plan") setPlanned({ change, plan: r });
+    if (r.kind !== "profile_plan") return;
+    if (base !== undefined && r.rev !== base) {
+      load();
+      throw new Error(conflictNote);
+    }
+    setPlanned({ change, plan: r });
   };
-  const ask = (change: ProfileChangeReq) => {
+  const ask = (change: ProfileChangeReq, base: string | undefined) => {
     setError(null);
-    preview(change).catch((e: unknown) => setError(say(e)));
+    preview(change, base).catch((e: unknown) => setError(say(e)));
   };
   if (!shown)
     return (
@@ -273,7 +282,9 @@ export function ProfilesPage({ role }: { role: DeviceRole }) {
                   {[p.harness === "custom" ? "(실행 명령)" : p.harness, ...p.launch].join(" ")}
                 </code>
                 {p.env_names.length > 0 && <span className="op-muted">env {p.env_names.join(", ")}</span>}
-                {p.custom ? (
+                {p.local ? (
+                  <span className="op-muted">host.local.toml에서</span>
+                ) : p.custom ? (
                   <span className="op-muted">host 터미널에서</span>
                 ) : (
                   <span className="admin-actions">
@@ -281,7 +292,7 @@ export function ProfilesPage({ role }: { role: DeviceRole }) {
                       고치기
                     </button>
                     {!p.builtin && (
-                      <button type="button" className="btn small" onClick={() => ask({ change: "remove", name: p.name })} aria-label={`${p.name} 지우기`}>
+                      <button type="button" className="btn small" onClick={() => ask({ change: "remove", name: p.name }, view?.rev)} aria-label={`${p.name} 지우기`}>
                         지우기
                       </button>
                     )}
@@ -296,13 +307,22 @@ export function ProfilesPage({ role }: { role: DeviceRole }) {
         </div>
       </SettingsGroup>
       {/* 고치던 칸은 그 값이 바뀔 때만 새로 채운다(profile을 더해 판만 바뀌면 그대로) */}
-      {safety && <AllowGroup key={JSON.stringify([scope, safety.thread_profiles, safety.coordinator_profiles, safety.thread_profile, safety.coordinator_profile])} safety={safety} scope={scope} onScope={setScope} names={names} onPreview={ask} />}
+      {safety && (
+        <AllowGroup
+          key={JSON.stringify([scope, safety.thread_profiles, safety.coordinator_profiles, safety.thread_profile, safety.coordinator_profile])}
+          safety={safety}
+          scope={scope}
+          onScope={setScope}
+          names={names}
+          onPreview={(c) => ask(c, safety.rev)}
+        />
+      )}
       {editing && (
         <ProfileDialog
           before={editing.before}
           onClose={() => setEditing(null)}
           onPreview={async (change) => {
-            await preview(change);
+            await preview(change, view?.rev);
             setEditing(null);
           }}
         />
@@ -537,7 +557,7 @@ function PlanDialog({
   return (
     <AdminDialog label="적용할까요?" busy={busy} onClose={onClose}>
       <div className="modal-body" data-testid="profile-plan">
-        <p>{plan.message}</p>
+        <p className="op-muted">적용 뒤 알림: {plan.message}</p>
         {(plan.before || plan.after) && (
           <dl className="admin-plan">
             <dt>지금 실행 인자</dt>

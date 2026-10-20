@@ -27,8 +27,14 @@ export const SAFETY_WORDS: Record<string, string> = {
   coordinator_profiles: "coordinator가 쓸 수 있는 profile",
 };
 
-/** yolo를 켜는 바꾸기만 한 번 더 확인한다(사용자 답 2A) */
-export const needsYoloConfirm = (key: string, value: string | null): boolean => key === "yolo" && value === "on";
+/**
+ * yolo를 켜는 바꾸기만 한 번 더 확인한다(사용자 답 2A). 「기본」(`value` null)도 그 표의 값을 지운 결과(`row.below`, host가 준다)가
+ * on이고 지금 꺼져 있으면 켜는 것이다
+ */
+export function needsYoloConfirm(key: string, value: string | null, row: { value: string; below?: string | null }): boolean {
+  if (key !== "yolo") return false;
+  return value === "on" || (value === null && row.below === "on" && row.value !== "on");
+}
 
 /** 웹에서 만드는 harness(답 1A: custom은 host CLI) */
 export const WEB_HARNESSES = ["claude", "codex", "shell"] as const;
@@ -99,14 +105,16 @@ export function profileChange(before: ProfileAdminRow | null, d: ProfileDraft): 
       args,
     };
   }
+  // 고친 칸만 보낸다: 화면을 연 뒤 다른 곳(터미널)에서 고친 칸을 옛 값으로 되돌리지 않는다
+  const changed = <T>(now: T, was: T): T | null => (JSON.stringify(now) === JSON.stringify(was) ? null : now);
   return {
     change: "edit",
     name: before.name,
-    harness: d.harness,
-    model,
-    effort,
-    description: d.description.trim(),
-    args,
+    harness: changed(d.harness, before.harness),
+    model: changed(model, before.model),
+    effort: changed(effort, before.effort),
+    description: changed(d.description.trim(), before.description),
+    args: changed(args, before.args),
   };
 }
 

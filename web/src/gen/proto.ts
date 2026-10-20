@@ -1634,7 +1634,11 @@ note: string,
 /**
  * 웹에서 바꿀 수 있는 key(yolo·start_threads·trust_screens·coordinator_deploy)
  */
-editable: boolean, };
+editable: boolean,
+/**
+ * 바꿀 수 있는 key만: 이 표의 값을 지우면(「기본」) 되는 값. 웹은 이것이 yolo on이면 한 번 더 확인한다
+ */
+below: string | null, };
 
 export type SafetyView = { scope: SettingsScope, project: string, rows: Array<SafetyRowView>,
 /**
@@ -1663,6 +1667,10 @@ export type ProfileAdminRow = { name: string, harness: string, model: string, ef
  * host.toml에 표가 없는 기본 profile(claude·codex)
  */
 builtin: boolean,
+/**
+ * host.local.toml이 정한 profile: 웹에서 고치지 않는다(그 파일이 필드마다 덮는다)
+ */
+local: boolean,
 /**
  * custom harness(실행 명령이 있다): 웹에서 고치지 않는다
  */

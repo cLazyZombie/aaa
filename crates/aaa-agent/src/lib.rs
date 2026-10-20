@@ -1688,7 +1688,7 @@ impl Agent {
                 .map(AgentResponse::Diff)
                 .map_err(|e| ErrorBody::new(ErrorCode::BadRequest, format!("{e:#}"))),
             AgentRequest::WorkRoot { action } => settings_jobs::work_root(&self.state, action).await,
-            AgentRequest::CodexHook { install } => settings_jobs::codex_hook(install),
+            AgentRequest::CodexHook { install } => settings_jobs::codex_hook(install).await,
         };
         if let Some(reply) = reply {
             let _ = reply.json(&LinkMsg::Res { id, result: direct.into() }).await;

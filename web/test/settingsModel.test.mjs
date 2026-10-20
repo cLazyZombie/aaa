@@ -23,14 +23,17 @@ describe("관리 W5c", () => {
     for (const v of [undefined, null, "1.80", "2.81"]) assert.equal(canSettings(v), false, String(v));
     for (const v of ["1.81", "1.90"]) assert.equal(canSettings(v), true, v);
   });
-  it("yolo를 켤 때만 한 번 더 묻는다", () => {
-    assert.equal(needsYoloConfirm("yolo", "on"), true);
-    for (const [k, v] of [
-      ["yolo", "off"],
-      ["yolo", null],
-      ["start_threads", "auto"],
+  it("yolo를 켤 때만 한 번 더 묻는다: 「기본」도 아래 층이 on이면 켜는 것이다", () => {
+    const off = { value: "off", below: "off" };
+    assert.equal(needsYoloConfirm("yolo", "on", off), true);
+    assert.equal(needsYoloConfirm("yolo", null, { value: "off", below: "on" }), true);
+    for (const [k, v, r] of [
+      ["yolo", "off", off],
+      ["yolo", null, off],
+      ["yolo", null, { value: "on", below: "on" }],
+      ["start_threads", "auto", { value: "propose", below: "auto" }],
     ])
-      assert.equal(needsYoloConfirm(k, v), false, `${k} ${v}`);
+      assert.equal(needsYoloConfirm(k, v, r), false, `${k} ${v} ${JSON.stringify(r)}`);
   });
   it("인자는 줄마다 하나라 빈칸이 든 인자도 하나로 간다", () => {
     assert.deepEqual(argsFromText('--settings\n {"a": 1} \n\n-v\n'), ["--settings", '{"a": 1}', "-v"]);
@@ -41,11 +44,16 @@ describe("관리 W5c", () => {
     assert.deepEqual(c, { change: "add", name: "codex", harness: "codex", model: "", effort: "high", description: "", args: [] });
     assert.equal(profileChange(row(), draftOf(row())).change, "edit");
   });
+  it("고치기는 고친 칸만 보낸다(그사이 터미널에서 고친 다른 칸을 되돌리지 않는다)", () => {
+    const c = profileChange(row(), { ...draftOf(row()), args: "--verbose\n--x" });
+    assert.deepEqual(c, { change: "edit", name: "opus", harness: null, model: null, effort: null, description: null, args: ["--verbose", "--x"] });
+  });
   it("harness를 바꾸면 그 harness가 받지 않는 model·effort는 비운다", () => {
     const c = profileChange(row(), { ...draftOf(row()), harness: "shell" });
-    assert.deepEqual([c.harness, c.model, c.effort, c.args], ["shell", "", "", ["--verbose"]]);
-    // codex는 claude의 effort 중 받는 값만 남긴다
-    assert.equal(profileChange(row({ effort: "max" }), { ...draftOf(row({ effort: "max" })), harness: "codex" }).effort, "max");
+    assert.deepEqual([c.harness, c.model, c.effort, c.args], ["shell", "", "", null]);
+    // codex가 받는 effort는 그대로 둔다(보내지 않는다)
+    const max = row({ effort: "max" });
+    assert.equal(profileChange(max, { ...draftOf(max), harness: "codex" }).effort, null);
   });
   it("profile 이름은 host `validate_name`과 같다", () => {
     for (const ok of ["opus", "gpt-5.5", "a_b"]) assert.equal(profileNameOk(ok), true, ok);

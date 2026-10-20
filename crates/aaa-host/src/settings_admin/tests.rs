@@ -32,6 +32,12 @@ impl Lab {
     }
 }
 fn lab(host_toml: &str) -> Lab {
+    let lab = bare(host_toml);
+    lab.h.project_create("demo", Default::default(), "local:cli").unwrap();
+    lab
+}
+/// 프로젝트가 아직 없는 host
+fn bare(host_toml: &str) -> Lab {
     let root = std::env::temp_dir().join(format!("aaa-settings-admin-{}", aaa_common::util::new_id()));
     std::fs::create_dir_all(root.join("c")).unwrap();
     std::fs::write(root.join("c/host.toml"), host_toml).unwrap();
@@ -40,7 +46,6 @@ fn lab(host_toml: &str) -> Lab {
     cfg.notify.web_push = false;
     let h = Host::open(cfg, root.join("host")).unwrap();
     h.config_dir.set(root.join("c")).unwrap();
-    h.project_create("demo", Default::default(), "local:cli").unwrap();
     Lab { root, h }
 }
 
@@ -251,4 +256,149 @@ async fn work_root_takes_only_absolute_paths() {
             .unwrap_err();
         assert_eq!(e.code, ErrorCode::NotFound, "{path}: 머신이 없어서만 거부된다: {}", e.message);
     }
+}
+
+/// host.local.toml이 정한 profile은 웹에서 더하거나 고치거나 지우지 않는다: local이 필드마다 덮어 custom 실행 명령에 웹 인자가
+/// 붙거나(1A 우회) 겹친 결과가 검증에 실패해 host 설정이 통째로 읽히지 않는다
+#[tokio::test]
+async fn profiles_from_host_local_toml_stay_out_of_web_edits() {
+    let lab = lab("schema = 1\n\n[profiles.fast]\nagent = \"codex\"\n");
+    std::fs::write(
+        lab.root.join("c/host.local.toml"),
+        "schema = 1\n\n[profiles.tool]\nagent = \"custom\"\ncommand = [\"/opt/tool\"]\n\n[profiles.fast]\neffort = \"low\"\n",
+    )
+    .unwrap();
+    let v = lab.profiles().await;
+    for name in ["tool", "fast"] {
+        assert!(v.profiles.iter().any(|p| p.name == name && p.local), "{name}: {:?}", v.profiles);
+    }
+    let before = lab.host_toml();
+    let add = ProfileChangeReq::Add {
+        name: "tool".into(),
+        harness: "claude".into(),
+        model: String::new(),
+        effort: String::new(),
+        description: String::new(),
+        args: vec!["--x".into()],
+    };
+    let edit = ProfileChangeReq::Edit {
+        name: "fast".into(),
+        harness: Some("shell".into()),
+        model: None,
+        effort: None,
+        description: None,
+        args: None,
+    };
+    for change in [add, edit, ProfileChangeReq::Remove { name: "fast".into() }] {
+        let e = lab
+            .call(FrontRequest::ProfileApply {
+                project: "demo".into(),
+                change: change.clone(),
+                expected: v.rev.clone(),
+            })
+            .await
+            .unwrap_err();
+        assert!(e.code == ErrorCode::Forbidden && e.message.contains("host.local.toml"), "{change:?}: {}", e.message);
+    }
+    assert_eq!(lab.host_toml(), before);
+    lab.profiles().await;
+}
+
+/// 모든 프로젝트 기본을 고쳐도 이 프로젝트 표가 그 key를 정하면 닿지 않는다고 알리고, 「기본」으로 지우면 될 값을 준다
+#[tokio::test]
+async fn global_edits_warn_when_the_project_table_wins_and_rows_tell_the_value_below() {
+    let lab = lab("schema = 1\n\n[safety.default]\nyolo = true\n\n[safety.demo]\nyolo = false\n");
+    let p = lab.safety(SettingsScope::Project).await;
+    let yolo = p.rows.iter().find(|r| r.key == "yolo").unwrap();
+    assert_eq!((yolo.value.as_str(), yolo.below.as_deref()), ("off", Some("on")), "「기본」은 yolo를 켠다");
+    let g = lab.safety(SettingsScope::Global).await;
+    let FrontResponse::Safety(after) = lab
+        .call(FrontRequest::SafetySet {
+            project: "demo".into(),
+            scope: SettingsScope::Global,
+            key: "trust_screens".into(),
+            value: Some("user".into()),
+            expected: g.rev.clone(),
+        })
+        .await
+        .unwrap()
+    else {
+        panic!()
+    };
+    assert!(after.warnings.is_empty(), "{:?}", after.warnings);
+    let FrontResponse::Safety(after) = lab
+        .call(FrontRequest::SafetySet {
+            project: "demo".into(),
+            scope: SettingsScope::Global,
+            key: "yolo".into(),
+            value: Some("off".into()),
+            expected: after.rev,
+        })
+        .await
+        .unwrap()
+    else {
+        panic!()
+    };
+    assert!(after.warnings.iter().any(|w| w.contains("[safety.demo] yolo")), "{:?}", after.warnings);
+}
+
+/// TOML 오류는 줄·까닭만: toml_edit 오류 글은 그 줄 원문(env 값)을 찍는다
+#[tokio::test]
+async fn toml_errors_do_not_carry_the_broken_line() {
+    let lab =
+        lab("schema = 1\n\n[profiles.opus]\nagent = \"claude\"\nenv = { API_TOKEN = \"zq-broken-secret-value }\n");
+    let rev = crate::file_rev::sha256(lab.host_toml().as_bytes());
+    let change = ProfileChangeReq::Remove { name: "opus".into() };
+    let e = lab.call(FrontRequest::ProfilePlan { project: "demo".into(), change }).await.unwrap_err();
+    assert!(e.message.contains("5번째 줄") && !e.message.contains("zq-broken"), "{}", e.message);
+    let e = lab
+        .call(FrontRequest::SafetySet {
+            project: "demo".into(),
+            scope: SettingsScope::Project,
+            key: "yolo".into(),
+            value: Some("off".into()),
+            expected: rev,
+        })
+        .await
+        .unwrap_err();
+    assert!(!e.message.contains("zq-broken"), "{}", e.message);
+}
+
+/// 프로젝트가 아직 없는 host에서도 모든 프로젝트 기본과 profile 자체는 고친다
+#[tokio::test]
+async fn a_host_without_a_project_still_edits_global_safety_and_profiles() {
+    let lab = bare("schema = 1\n");
+    let call = |req| lab.h.call(DeviceRole::Controller, "device:c", req);
+    let FrontResponse::Safety(g) =
+        call(FrontRequest::SafetyShow { project: String::new(), scope: SettingsScope::Global }).await.unwrap()
+    else {
+        panic!()
+    };
+    call(FrontRequest::SafetySet {
+        project: String::new(),
+        scope: SettingsScope::Global,
+        key: "start_threads".into(),
+        value: Some("auto".into()),
+        expected: g.rev,
+    })
+    .await
+    .unwrap();
+    let change = ProfileChangeReq::Add {
+        name: "fast".into(),
+        harness: "codex".into(),
+        model: String::new(),
+        effort: String::new(),
+        description: String::new(),
+        args: vec![],
+    };
+    let FrontResponse::ProfilePlan(plan) =
+        call(FrontRequest::ProfilePlan { project: String::new(), change: change.clone() }).await.unwrap()
+    else {
+        panic!()
+    };
+    call(FrontRequest::ProfileApply { project: String::new(), change, expected: plan.rev }).await.unwrap();
+    assert!(lab.host_toml().contains("[profiles.fast]"), "{}", lab.host_toml());
+    // 프로젝트 표는 프로젝트가 있어야 한다
+    let e = call(FrontRequest::SafetyShow { project: String::new(), scope: SettingsScope::Project }).await.unwrap_err();
+    assert_eq!(e.code, ErrorCode::NotFound, "{}", e.message);
 }

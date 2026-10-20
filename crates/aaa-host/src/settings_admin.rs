@@ -39,17 +39,29 @@ fn base(text: &str) -> String {
     if text.trim().is_empty() { format!("schema = {}\n", aaa_config::SCHEMA) } else { text.to_string() }
 }
 
-/// host.toml 글의 profile(값이 틀린 파일은 읽지 않는다)
+/// host.toml이 TOML로 읽히는가. 오류는 줄과 까닭만 싣는다: toml_edit 오류 글은 그 줄 원문(env 값일 수 있다)을 함께 찍는다
+fn toml_ok(text: &str) -> Result<(), ErrorBody> {
+    text.parse::<toml_edit::DocumentMut>().map(|_| ()).map_err(|e| {
+        let line = e.span().map(|s| text[..s.start.min(text.len())].lines().count().max(1)).unwrap_or(0);
+        bad(format!(
+            "host.toml {line}번째 줄을 TOML로 읽지 못했다({}): host 터미널에서 `aaa config check`로 본다",
+            e.message().trim()
+        ))
+    })
+}
+
+/// host.toml 글의 profile(값이 틀린 파일은 읽지 않는다). 형식 오류의 글은 값을 담을 수 있어 웹에 싣지 않는다
 fn profiles_in(text: &str) -> Result<std::collections::BTreeMap<String, Profile>, ErrorBody> {
     if text.trim().is_empty() {
         return Ok(Default::default());
     }
+    toml_ok(text)?;
     toml_edit::de::from_str::<aaa_config::HostConfig>(text)
         .map(|c| c.profiles)
-        .map_err(|e| bad(format!("host.toml을 읽지 못했다: {e}")))
+        .map_err(|_| bad("host.toml의 설정 형식이 맞지 않다: host 터미널에서 `aaa config check`로 본다"))
 }
 
-fn row(name: &str, p: &Profile, builtin: bool) -> ProfileAdminRow {
+fn row(name: &str, p: &Profile, builtin: bool, local: bool) -> ProfileAdminRow {
     ProfileAdminRow {
         name: name.to_string(),
         harness: p.harness.clone(),
@@ -59,6 +71,7 @@ fn row(name: &str, p: &Profile, builtin: bool) -> ProfileAdminRow {
         args: p.args.clone(),
         env_names: p.env.keys().cloned().collect(),
         builtin,
+        local,
         custom: p.harness == "custom",
         launch: profile_edit::launch_flags(p),
     }
@@ -67,8 +80,8 @@ fn row(name: &str, p: &Profile, builtin: bool) -> ProfileAdminRow {
 /// 이 profile 정의(host.toml에 없으면 기본 profile)
 fn profile_row(profiles: &std::collections::BTreeMap<String, Profile>, name: &str) -> Option<ProfileAdminRow> {
     match profiles.get(name) {
-        Some(p) => Some(row(name, p, false)),
-        None => profile_edit::builtin(name).map(|p| row(name, &p, true)),
+        Some(p) => Some(row(name, p, false, false)),
+        None => profile_edit::builtin(name).map(|p| row(name, &p, true, false)),
     }
 }
 
@@ -76,20 +89,43 @@ fn read_in(dir: &Path, file: &str) -> String {
     std::fs::read_to_string(dir.join(file)).unwrap_or_default()
 }
 
-/// host.local.toml이 같은 key를 덮거나, 프로젝트 표를 고칠 때 `[safety]` 표 하나에 같은 key가 있으면 알린다(CLI `shadowed`와 같다)
-fn shadowed(dir: &Path, table: &str, key: &str) -> Option<String> {
+/// host.local.toml이 같은 key를 덮거나, `[safety]` 표 하나에 같은 key가 있으면 알린다(CLI `shadowed`와 같다). 모든 프로젝트
+/// 표(`default`)를 고칠 때는 이 host 프로젝트(`project`)의 표가 그 key를 정해 이 값이 닿지 않는 것도 알린다
+fn shadowed(dir: &Path, table: &str, key: &str, project: &str) -> Option<String> {
     let local = read_in(dir, "host.local.toml");
     if safety::has_key(&local, table, key) {
         return Some(format!("host.local.toml의 [safety.{table}] {key}가 이 값을 덮는다: 그 파일에서도 고친다"));
     }
-    if table == safety::DEFAULT_TABLE {
+    let files = ["host.toml", "host.local.toml"];
+    if let Some(f) = files.into_iter().find(|f| safety::has_top_key(&read_in(dir, f), key)) {
+        return Some(format!(
+            "{f}의 [safety] {key}가 이 값을 덮는다([safety] 표 하나가 프로젝트 표보다 앞선다): 그 줄을 지우거나 고친다"
+        ));
+    }
+    if table != safety::DEFAULT_TABLE || project.is_empty() || project == safety::DEFAULT_TABLE {
         return None;
     }
-    ["host.toml", "host.local.toml"].into_iter().find(|f| safety::has_top_key(&read_in(dir, f), key)).map(|f| {
-        format!(
-            "{f}의 [safety] {key}가 이 값을 덮는다([safety] 표 하나가 프로젝트 표보다 앞선다): 그 줄을 지우거나 고친다"
-        )
+    files.into_iter().find(|f| safety::has_key(&read_in(dir, f), project, key)).map(|f| {
+        format!("{f}의 [safety.{project}] {key}가 이 프로젝트에서는 모든 프로젝트 기본보다 앞선다: 이 프로젝트 값은 그대로다")
     })
+}
+
+/// 이 표의 `key`를 지우면(「기본」) 실제로 어떤 값이 되나: 웹이 yolo를 켜게 되는 「기본」을 확인한다. `[safety]` 표 하나가 그
+/// key를 정하면 그것이 앞서 그대로다
+fn below(layers: &safety::Layers, key: &str, top: bool) -> Option<String> {
+    if !WEB_SAFETY_KEYS.contains(&key) {
+        return None;
+    }
+    let mut l = layers.clone();
+    if !top {
+        match key {
+            "yolo" => l.own.yolo = None,
+            "start_threads" => l.own.start_threads = None,
+            "trust_screens" => l.own.trust_screens = None,
+            _ => l.own.coordinator_deploy = None,
+        }
+    }
+    l.rows(true).into_iter().find(|r| r.key == key).map(|r| r.value)
 }
 
 /// host.local.toml이 `[<table>.<name>]`이나 `[<table>] <name>`을 정의하는가(profile·기본값이 local에 덮이는가)
@@ -151,6 +187,8 @@ impl Host {
     pub(crate) fn safety_show(&self, project: &str, scope: SettingsScope) -> Result<SafetyView, ErrorBody> {
         let dir = self.settings_dir()?;
         self.safety_table(project, scope)?;
+        // 판을 먼저 읽는다: 내용을 읽기 전에 다른 쓰기가 끼면 이 판은 낡아 고치기가 conflict로 끝난다(새 내용에 옛 판을 붙이지 않는다)
+        let rev = self.host_toml_rev(dir)?.sha256;
         let (layers, warnings) = match scope {
             SettingsScope::Project => self.safety_layers(Some(project)),
             SettingsScope::Global => {
@@ -163,6 +201,11 @@ impl Host {
             .rows(scope == SettingsScope::Project)
             .into_iter()
             .map(|r| SafetyRowView {
+                below: below(
+                    &layers,
+                    r.key,
+                    ["host.toml", "host.local.toml"].iter().any(|f| safety::has_top_key(&read_in(dir, f), r.key)),
+                ),
                 key: r.key.to_string(),
                 value: r.value,
                 source: r.source.to_string(),
@@ -189,7 +232,7 @@ impl Host {
             thread_profiles: eff.thread_profiles,
             coordinator_profiles: eff.coordinator_profiles,
             warnings,
-            rev: self.host_toml_rev(dir)?.sha256,
+            rev,
             notes: Vec::new(),
         })
     }
@@ -219,6 +262,7 @@ impl Host {
             if rev.sha256 != expected {
                 return Err(conflict());
             }
+            toml_ok(&rev.text)?;
             let text = safety::set_in(&base(&rev.text), &table, key, item.clone()).map_err(bad)?;
             Ok(if text == rev.text { Edit::Keep(()) } else { Edit::Write(text, ()) })
         })
@@ -234,19 +278,22 @@ impl Host {
         } else {
             safety::RESTART_NOTE.into()
         });
-        view.warnings.extend(shadowed(dir, &table, key));
+        let here = self.instance_project().unwrap_or_default();
+        view.warnings.extend(shadowed(dir, &table, key, &here));
         Ok(view)
     }
 
     pub(crate) fn profile_admin(&self) -> Result<ProfileAdminView, ErrorBody> {
         let dir = self.settings_dir()?;
+        let rev = self.host_toml_rev(dir)?.sha256;
         let cfg = self.profile_config()?;
-        let mut profiles: Vec<ProfileAdminRow> = cfg.profiles.iter().map(|(n, p)| row(n, p, false)).collect();
+        let mut profiles: Vec<ProfileAdminRow> =
+            cfg.profiles.iter().map(|(n, p)| row(n, p, false, local_defines(dir, "profiles", n))).collect();
         for name in profile_edit::BUILTINS.iter().filter(|n| !cfg.profiles.contains_key(**n)) {
             profiles.extend(profile_row(&cfg.profiles, name));
         }
         profiles.sort_by(|a, b| a.name.cmp(&b.name));
-        Ok(ProfileAdminView { profiles, rev: self.host_toml_rev(dir)?.sha256 })
+        Ok(ProfileAdminView { profiles, rev })
     }
 
     /// 허용 목록·기본값에 넣는 이름: host.toml(local 포함) profile이나 기본 profile만
@@ -283,9 +330,21 @@ impl Host {
                 Ok(())
             }
         };
+        // host.local.toml이 정한 profile은 host.toml만 고쳐서는 실제 값을 알 수 없다(local이 필드마다 덮는다: custom 실행 명령에
+        // 웹 인자가 붙거나 겹친 결과가 검증에 실패해 host 설정 전체가 읽히지 않을 수 있다). 그 파일에서 사람이 고친다
+        let not_local = |name: &str| {
+            if local_defines(dir, "profiles", name) {
+                Err(forbidden(format!(
+                    "`{name}`는 host.local.toml이 정한 profile이라 웹에서 더하거나 고치거나 지우지 않는다: host 터미널에서 그 파일을 고친다"
+                )))
+            } else {
+                Ok(())
+            }
+        };
         let mut warnings = Vec::new();
         let (edited, message, name, audit) = match change {
             ProfileChangeReq::Add { name, harness, model, effort, description, args } => {
+                not_local(name)?;
                 web_harness(harness)?;
                 let profile = Profile {
                     harness: harness.clone(),
@@ -301,6 +360,7 @@ impl Host {
                 (t, m, Some(name.as_str()), format!("add {name}"))
             }
             ProfileChangeReq::Edit { name, harness, model, effort, description, args } => {
+                not_local(name)?;
                 no_custom(name)?;
                 if let Some(h) = harness {
                     web_harness(h)?;
@@ -320,6 +380,7 @@ impl Host {
                 (t, m, Some(name.as_str()), format!("edit {name}"))
             }
             ProfileChangeReq::Remove { name } => {
+                not_local(name)?;
                 no_custom(name)?;
                 let (t, m) = profile_edit::apply_in(text, &profile_edit::ProfileChange::Remove { name: name.clone() })
                     .map_err(bad)?;
@@ -345,7 +406,7 @@ impl Host {
                     Some(l) if l.is_empty() => format!("{who}는 {where_}에서 어떤 profile도 쓸 수 없다"),
                     Some(l) => format!("{who}는 {where_}에서 {}를 쓸 수 있다", l.join(", ")),
                 };
-                warnings.extend(shadowed(dir, &table, key));
+                warnings.extend(shadowed(dir, &table, key, project));
                 let list = names.as_ref().map(|l| l.join(",")).unwrap_or_else(|| "*".into());
                 (t, m, None, format!("allow [safety.{table}] {key} = {list}"))
             }
@@ -376,13 +437,7 @@ impl Host {
             }
         };
         let (before, after) = match name {
-            Some(n) => {
-                if local_defines(dir, "profiles", n) {
-                    warnings
-                        .push(format!("host.local.toml의 [profiles.{n}]가 이 profile을 덮는다: 그 파일에서도 고친다"));
-                }
-                (profile_row(&current, n), profile_row(&profiles_in(&edited)?, n))
-            }
+            Some(n) => (profile_row(&current, n), profile_row(&profiles_in(&edited)?, n)),
             None => (None, None),
         };
         Ok(Planned { text: edited, message, warnings, before, after, audit })

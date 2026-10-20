@@ -1378,10 +1378,24 @@ impl Host {
             other => (other, None),
         };
         // 프로젝트를 생략한 요청(FRONT_API 1.50, plan §8.288): host가 맡은 프로젝트 하나로 채운다
+        // 모든 프로젝트 기본·profile 자체를 고치는 설정 관리(W5c)는 프로젝트가 아직 없는 host에서도 된다(그때는 빈 채로 둔다)
+        let needs_project = !matches!(
+            &req,
+            FrontRequest::SafetyShow { scope: aaa_proto::SettingsScope::Global, .. }
+                | FrontRequest::SafetySet { scope: aaa_proto::SettingsScope::Global, .. }
+        ) && !matches!(
+            &req,
+            FrontRequest::ProfilePlan { change, .. } | FrontRequest::ProfileApply { change, .. }
+                if !matches!(change, aaa_proto::ProfileChangeReq::Allow { scope: aaa_proto::SettingsScope::Project, .. })
+        );
         if let Some(project) = req.project_mut()
             && project.is_empty()
         {
-            *project = self.instance_project()?;
+            match self.instance_project() {
+                Ok(p) => *project = p,
+                Err(e) if needs_project => return Err(e),
+                Err(_) => {}
+            }
         }
         match req {
             FrontRequest::AccountImport { name, harness, secret } => {

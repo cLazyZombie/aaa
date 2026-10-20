@@ -25,6 +25,8 @@ pub struct SafetyRowView {
     pub note: String,
     /// 웹에서 바꿀 수 있는 key(yolo·start_threads·trust_screens·coordinator_deploy)
     pub editable: bool,
+    /// 바꿀 수 있는 key만: 이 표의 값을 지우면(「기본」) 되는 값. 웹은 이것이 yolo on이면 한 번 더 확인한다
+    pub below: Option<String>,
 }
 
 /// `safety_show`·`safety_set`의 답
@@ -60,6 +62,8 @@ pub struct ProfileAdminRow {
     pub env_names: Vec<String>,
     /// host.toml에 표가 없는 기본 profile(claude·codex)
     pub builtin: bool,
+    /// host.local.toml이 정한 profile: 웹에서 고치지 않는다(그 파일이 필드마다 덮는다)
+    pub local: bool,
     /// custom harness(실행 명령이 있다): 웹에서 고치지 않는다
     pub custom: bool,
     /// harness 실행 파일 뒤에 붙는 인자 전체(model·effort 플래그와 제 인자). custom은 앞 명령을 빼고 보인다
