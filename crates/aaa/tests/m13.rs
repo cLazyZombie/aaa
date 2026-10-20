@@ -5993,3 +5993,43 @@ fn summary_file_is_validated_before_start_or_message() {
     assert_eq!(summary["goal"], "검증 뒤 한 번 보내기");
     assert_eq!(summary["pending"], 0);
 }
+
+/// macOS: 표준 FD가 먼저 닫혀도 controlling TTY의 미수집 출력을 보존해야 한다.
+#[test]
+#[cfg(target_os = "macos")]
+fn terminal_capture_keeps_output_after_stdio_close_before_reading() {
+    let lab = Lab::new();
+    let source = lab.root.join("stdio-close.c");
+    let bin = lab.root.join("stdio-close");
+    let closed = lab.root.join("closed");
+    std::fs::write(
+        &source,
+        r#"
+#include <unistd.h>
+#include <fcntl.h>
+int main(int argc, char **argv) {
+    if (argc != 2) return 2;
+    const char out[] = "pty-output-before-close";
+    const char err[] = "\033[31msecret-prefix-tail\033[0m";
+    if (write(1, out, sizeof(out)-1) != sizeof(out)-1) return 3;
+    if (write(2, err, sizeof(err)-1) != sizeof(err)-1) return 4;
+    close(0); close(1); close(2);
+    int done = open(argv[1], O_WRONLY | O_CREAT | O_EXCL, 0600);
+    if (done < 0) return 5;
+    if (write(done, "closed", 6) != 6) return 6;
+    close(done);
+    return 0;
+}
+"#,
+    )
+    .unwrap();
+    let compiled = Command::new("cc").arg(&source).arg("-o").arg(&bin).output().unwrap();
+    assert!(compiled.status.success(), "{}", String::from_utf8_lossy(&compiled.stderr));
+    let mut command = lab::terminal_command(&bin);
+    command.arg(&closed);
+    let terminal = lab::Terminal::spawn(command);
+    // 자식이 표준 FD를 모두 닫았다는 사건이 reader보다 먼저다. 시간·스케줄러에 기대지 않는다.
+    wait_for("표준 FD 닫힘 영수증", T, || std::fs::read(&closed).ok().filter(|b| b == b"closed"));
+    let output = terminal.read(&["stdio-close"], &[], T);
+    assert_eq!(output, "pty-output-before-close\x1b[31msecret-prefix-tail\x1b[0m");
+}

@@ -1520,6 +1520,13 @@ pub fn main() -> ExitCode {
             return ExitCode::FAILURE;
         }
     };
+    use aaa_common::panic_log::{ProcessKind, set_process};
+    set_process(match &cli.cmd {
+        Cmd::Host => ProcessKind::Host,
+        Cmd::Agent(AgentArgs { cmd: None, .. }) | Cmd::DeploymentGuard { .. } => ProcessKind::Agent,
+        Cmd::SessionHost { .. } => ProcessKind::SessionHost,
+        _ => ProcessKind::Cli,
+    });
     if let Cmd::Install(args) = &cli.cmd {
         return crate::install::run(
             args,
@@ -2662,6 +2669,11 @@ pub(crate) fn supervised_role(
     connection: tokio::sync::watch::Sender<bool>,
     stop: tokio::sync::watch::Receiver<bool>,
 ) -> Result<ExitCode> {
+    use aaa_common::panic_log::{ProcessKind, set_process};
+    set_process(match role {
+        aaa_proto::install::InstallRole::Host => ProcessKind::Host,
+        aaa_proto::install::InstallRole::Agent => ProcessKind::Agent,
+    });
     init_log("info");
     aaa_common::resource::disable_core_dump("Windows service");
     legacy_guard()?;

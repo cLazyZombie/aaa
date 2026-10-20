@@ -5934,6 +5934,7 @@ L4 후속(10-20 00시 사용자 관찰): 멈춤 상태의 후보 예약과 재�
 - **proto(FRONT_API 1.62, 더하기만).** 요청 `task_edit{ops, base_sha256}` → `task_edited{board, conflict, log_ids}`, `task_log{before, limit, filter}` → `task_log{entries, next}`, `task_log_prune{before_ms}`. `TaskView.suggestion`(정리 제안: 끝 괄호 글을 메모로, `(미할당)` 비움, 열린 thread 번호 연결, 긴 제목 나눔), `TaskBoard.text`(원문 편집용). 웹은 host가 1.62 미만이면 편집 UI를 숨긴다.
 - **CLI.** `aaa task add|edit|move|rm|restore|log`, `aaa task list-add|list-rename|list-merge|list-rm|list-move`. 대상은 제목(대소문자 무시)이고, `--block <sha256>`을 주면 그 판의 블록으로 고정한다(충돌이면 stderr JSON `{"conflict":…}`, 끝 코드 1). coordinator 안내(AGENTS.md)의 TASKS.md 절이 이 명령과 「웹 편집은 context에 이미 반영됨」을 적는다.
 - **웹.** 도구줄 「+ 할 일」·원문 편집, 탭 「할 일 | 나중 | 기록」. 행은 끌기 손잡이·⋯ 메뉴(위로·아래로·맨 위로·다른 목록으로·하위 task 더하기·끝남으로 지우기)·Alt+↑↓, 목록 머리 ⋯(더하기·이름 바꾸기·위로/아래로·합치기·새 목록·빈 목록 지우기), 목록 끝 「새 목록」. 상세는 편집 폼이다(제목·목록(+새 목록)·owner(미할당·나·agent·사람)·상위 task·메모(메모가 있으면 그린 Markdown부터, 「고치기」로 입력 칸)·원문 줄·「저장하면:」 정규형 미리보기·최근 기록). 편집을 시작한 판의 블록 hash로 저장한다. 상위 task도 고른 판의 블록 고정점으로 들어(줄 번호는 그사이 밀릴 수 있다) 그 상위가 바뀌었으면 host가 충돌로 돌려준다. 고쳤는지는 보낼 동작이 있는지로 본다(owner 목록이 늦게 와 agent·사람 구분만 달라진 폼은 손대지 않은 폼이다). 손대지 않은 폼은 새 판을 따라가며, 손댄 폼은 「파일에서 바뀌었다」 띠를 보인다(task가 빠져도 닫지 않는다). 충돌 창은 「내 고침」·「지금 파일」을 나란히 보이고 「최신으로 다시 열기」를 준다(자동 병합 없음). 지운 뒤 화면 아래 「되살리기」 줄, 기록 탭(거르기 전체·삭제만·자동 정리만, 줄마다 전후 차이, 되살리기, 더 보기, 30일 지난 기록 지우기). 「나중」 항목 ⋯(할 일로 옮기기·복사): 새 task 폼을 채우고 메모 끝에 출처 줄을 단다. 「나중」 파일은 고치지 않는다. 명령 팔레트 「할 일 더하기」(할 일 화면을 처음 여는 요청도 host 판을 받은 뒤 폼을 연다). 루트 표지 `data-can-edit`는 host 판을 받기 전 `pending`이다. 휴대폰은 떠 있는 「+」, 폼은 전체 화면 시트, 메뉴는 아래 시트이고 순서는 메뉴로 바꾼다. 보기 권한 기기는 T1의 읽기 전용 상세 그대로다.
+- **터치 입력 크기(t-0530).** 휴대폰 폭 또는 터치 기기(가로 화면 포함)의 할 일 화면·할 일 대화창은 입력·선택·메모·첨부 붙여넣기 글자를 공통 `--fs-input`(16px) 이상으로 둔다. 작은 글자/밀도 설정으로도 이 하한을 낮추지 않고 큰 글자 설정은 따른다. iPhone 입력 초점 때의 자동 확대 원인이던 폼의 13px 덮어쓰기를 막는다.
 - **T1에서 바꾼 것.** 할 일 화면을 열 때마다 board를 다시 읽는다(연 뒤 만든 프로젝트의 「아직 프로젝트가 없다」가 남던 빈틈. 첫 tick은 기억만 해 사건이 없다). `tasks` 사건은 hash가 같아도 다시 읽는다(「나중」 파일·설정만 바뀐 사건은 TASKS.md hash가 같다). 편집 응답의 board를 넣어도 그 편집의 사건이 시작한 읽기는 버리지 않는다(편집 둘의 응답이 거꾸로 와도 최신 판으로 덮인다).
 - **참고 위치.** 편집 폼과 저장 흐름(저장 중 두 번 보내지 않음, 실패는 폼 안에, 닫지 않음): t3code 4b1024da `apps/web/src/components/settings/ScheduledTasksSettings.tsx` `ScheduledTaskEditorForm`(948–1124). 기록 목록(묶음 목록, 줄마다 되살리기, 누른 뒤 다시 읽기): t3code `apps/web/src/components/settings/SettingsPanels.tsx` `ArchivedThreadsPanel`(3294–3560). 지운 뒤 되살리기 한 번: t3code `apps/web/src/hooks/showThreadUndoNotice.ts`. 행·목록 ⋯ 메뉴(휴대폰 아래 시트): herdr-web-ui aa624cb `src/components/RowMenu.tsx`. 끌어 놓기와 Alt+↑↓: herdr-web-ui `src/components/Sidebar.tsx`(483–491, 580–584). 이름 창: herdr-web-ui `src/components/PaneCanvas.tsx` `PaneRename`. 다르게 한 것: 충돌 창은 참고 넷에 없어(t-0469 §1.3) 나란히 보기를 herdr-web-ui `src/components/RepoDiffViewer.tsx`(118–174)의 좁은 화면 한 줄 접기로 했다. 휴대폰은 터치 끌기가 스크롤과 다퉈 끌기 대신 메뉴의 위로·아래로·맨 위로로 순서를 바꾼다(t-0469 §3.3). 되살리기 줄은 시간으로 사라지지 않는다(기록 화면에도 남는다).
 - **검증.** host 유닛 `task_edit::tests`(바이트 보존, 대상만 충돌, 저장 검사, 하위 묶음 지우기·옮기기, 목록 동작, 되살리기, 파일 직접 차이, 한 요청 안 고치고 옮기기, 원문 저장 홀로)·`file_rev`·`tasks::tests::suggestions_for_misread_lines`. 여러 프로세스 `m13 task_edit_keeps_bytes_conflicts_and_logs`(CLI 더하기 바이트·사건, `--block` 충돌, 지운 task 고치기 충돌, 묻힐 뻔한 직접 편집 기록, 되살리기 한 번, 저장 검사, worker·확인되지 않은 셸 거부와 coordinator pane 허용, 확인된 사람 셸 pane 거부)·`task_memory_forgets_deleted_project`. 웹 순수 규칙 `tasksModel.test.mjs`, 웹 E2E `46-task-edit`. 결함 심기: host가 블록 hash 대신 제목으로 대상을 찾게 하면 `block_anchor_conflicts_only_on_the_target`·`update_then_move_in_one_request`와 E2E 46이 실패하고, 웹 폼이 편집을 시작한 판 대신 최신 판 hash로 저장하게 하면 E2E 46 「충돌」 단계가 실패한다(덮어쓴다). finish 리뷰로 더한 것: 확인된 pane을 허용하게 느슨히 하면 m13 권한 단언이, 지울 때 기억을 남기면 `task_memory_forgets_deleted_project`가, 팔레트 요청 수를 mount 때 값으로 두면 E2E 46 「명령 팔레트」 단계가 실패한다.
@@ -6216,8 +6217,15 @@ L4 후속(10-20 00시 사용자 관찰): 멈춤 상태의 후보 예약과 재�
 - **근거.** [Rust PathBuf::push](https://doc.rust-lang.org/std/path/struct.PathBuf.html#method.push),
   [Path::join](https://doc.rust-lang.org/std/path/struct.Path.html#method.join)의 verbatim prefix 정규화 규칙.
 
+### 8.332 비밀 없는 panic 위치 진단(10-20, t-0533)
 
-### 8.332 aaa install I5 Windows SCM 기반·읽기 상태(10-20, t-0485)
+- **요청.** 장애 때 panic 본문을 숨기면서 위치까지 사라져 디버거가 필요했다. 본문·payload·환경·backtrace를 읽거나 포맷하지 않고 진단 가능한 위치와 실행 정보만 남긴다.
+- **공통 진입점.** 단일 실행 파일이 `aaa_common::panic_log::install()`을 먼저 호출한다. 파싱한 명령으로 CLI·host·agent·session host를 구분하며, 등록용 `agent enroll`은 CLI, 복구 감시는 agent다.
+- **안전한 필드.** Git에서 추적하는 Rust 파일 목록에서 고른 저장소 상대 경로·줄·열, 고정 허용 thread 이름·런타임 숫자 ID, Tokio task 숫자 ID, 프로세스 종류, 빌드 HEAD SHA, 같은 원본 위치의 프로세스 수명 내 반복 횟수만 JSON 한 줄로 stderr에 쓴다. 동적 thread 이름은 `other`로 숨긴다. stable Tokio API에 task 이름이 없어 ID를 쓴다. 모르는 외부·생성 파일은 `external`, Git 없는 소스 배포의 판은 `unknown`이다. 빌드 생성물에도 홈 절대 경로를 넣지 않는다.
+- **감시 API.** `panic_log::latest()`는 마지막 안전한 `Snapshot`만 반환한다. 본문과 임의 이름을 보관하지 않는다. 상태를 먼저 공개하고 상태 잠금을 푼 뒤 stderr에 쓰므로 출력 소비자가 막혀도 감시자가 위치를 읽는다. hook은 알림을 직접 전송하지 않으며 host 자기 감시는 이 API를 쓸 수 있다.
+- **검증.** `cargo test -p aaa-common --lib panic_log::`가 별도 프로세스에서 네 역할·비밀 String과 비문자열 payload·동적 이름·환경·backtrace 설정·실제 Tokio task·서로 다른 thread의 같은 위치 반복을 확인한다. stderr를 잠근 동안에도 감시자가 위치를 관측하는 사건을 받아야 한다. Windows·Unix 절대 경로는 허용된 상대 경로로 줄이고 모르는 경로는 숨긴다. 운영 panic 스위치를 추가하지 않는다. 본문 출력·원본 경로·횟수 초기화·stderr 쓰기 중 상태 잠금의 네 결함이 RED, bytes 원복 뒤 GREEN이어야 한다. 전체 ci-local·deps·TS 최신·check-public을 통과한 뒤 착지한다. 새 웹 동작이 없어 웹 E2E 파일은 추가하지 않는다.
+
+### 8.333 aaa install I5 Windows SCM 기반·읽기 상태(10-21, t-0485)
 
 - **단계 순서.** I2 뒤 Windows(I5) → 대화형·승인/Windows apply(I6) → Windows 최소 bootstrap(I7 일부) →
   사용자 Windows PC 인수 → macOS(I3) → Linux(I4) → I7 최종 인수다. I3/I4에 두려던 감독자 내구 경계와
@@ -6238,7 +6246,8 @@ L4 후속(10-20 00시 사용자 관찰): 멈춤 상태의 후보 예약과 재�
   실제 Welcome/replay·단절·재연결을 별도 proof에 반영한다. proof는 실제 backend가 만들고, 읽기 status는
   SCM PID·실제 process token/생성 시각·context/계정/프로필/SHA/boot/session/연결을 대조한다.
   RUNNING 또는 private proof 하나만으로 완료를 만들지 않는다. 서비스 stop은 host/agent backend만 끝낸다.
-  host 서비스 종료에도 최신 로그인 취소/정리 경로를 유지한다.
+  host 서비스 종료에도 최신 로그인 취소/정리 경로를 유지한다. SCM backend 진입에서도 §8.332의 안전한 panic 진단을
+  검증한 고정 역할(host/agent)로 분류한다.
 - **계정·암호.** 요청 SID와 계정명을 왕복 확인하고 잘못된 암호/정책은 needs_user로 거부한다.
   사용자·유효 그룹·서비스 SID의 SeDenyServiceLogonRight가 우선하며 disabled/deny-only 그룹의 Allow를
   채택하지 않는다. 필요한 경우만 SeServiceLogonRight를 더하고 다른 서비스 권한 제거를 추정하지 않는다.

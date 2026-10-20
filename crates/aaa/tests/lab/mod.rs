@@ -126,6 +126,7 @@ impl Node {
     }
 
     /// `in_terminal`과 같되 환경 변수를 더 준다(예: 가짜 `launchctl`을 PATH 앞에, HOME을 실험실에)
+    #[cfg(unix)]
     pub fn in_terminal_env(
         &self,
         args: &[&str],
@@ -137,6 +138,7 @@ impl Node {
     }
 
     /// `in_terminal_env`와 같되 실행 파일을 고른다(`aaa update`는 지금 도는 실행 파일을 바꾸므로 실험실 사본을 띄운다)
+    #[cfg(unix)]
     pub fn in_terminal_bin(
         &self,
         bin: &Path,
@@ -145,9 +147,7 @@ impl Node {
         answers: &[(&str, &str)],
         timeout: Duration,
     ) -> String {
-        use portable_pty::{CommandBuilder, PtySize, native_pty_system};
-        let pair = native_pty_system().openpty(PtySize::default()).expect("시험 PTY 열기");
-        let mut c = CommandBuilder::new(bin);
+        let mut c = terminal_command(bin);
         // script와 같은 cwd를 쓴다. PTY 기본값인 HOME은 시험에서 아직 없는 격리 폴더일 수 있다.
         c.cwd(std::env::current_dir().unwrap());
         c.args(args);
@@ -164,47 +164,7 @@ impl Node {
         for (key, value) in env {
             c.env(key, value);
         }
-        let mut child = pair.slave.spawn_command(c).expect("시험 CLI 실행");
-        // 부모의 slave 사본이 남으면 자식이 끝나도 master에 EOF가 오지 않는다.
-        drop(pair.slave);
-        let seen = std::sync::Arc::new(std::sync::Mutex::new(Vec::<u8>::new()));
-        let mut out = pair.master.try_clone_reader().unwrap();
-        let s2 = seen.clone();
-        let (done_tx, done_rx) = std::sync::mpsc::channel();
-        let reader = std::thread::spawn(move || {
-            let mut b = [0u8; 256];
-            let result = loop {
-                match std::io::Read::read(&mut out, &mut b) {
-                    Ok(0) => break Ok(()),
-                    Ok(n) => s2.lock().unwrap().extend_from_slice(&b[..n]),
-                    Err(e) if e.kind() == std::io::ErrorKind::Interrupted => continue,
-                    Err(e) => break Err(e),
-                }
-            };
-            let _ = done_tx.send(result);
-        });
-        let text = || String::from_utf8_lossy(&seen.lock().unwrap()).to_string();
-        let mut stdin = pair.master.take_writer().unwrap();
-        for (prompt, typed) in answers {
-            wait_for_diag(&format!("물음 {prompt:?}"), timeout, || text().contains(prompt).then_some(()), text);
-            std::io::Write::write_all(&mut stdin, format!("{typed}\n").as_bytes()).unwrap();
-        }
-        match done_rx.recv_timeout(timeout) {
-            Ok(Ok(())) => {}
-            failed => {
-                let _ = child.kill();
-                let _ = child.wait();
-                panic!("{args:?} PTY 출력이 {timeout:?} 안에 끝나지 않았다: {failed:?}\n{}", text());
-            }
-        }
-        let status = child.wait().unwrap();
-        drop(stdin);
-        reader.join().unwrap();
-        let output = text();
-        if output.is_empty() {
-            eprintln!("PTY 종료: {args:?}, {status:?}, EOF까지 읽은 출력 0바이트");
-        }
-        output
+        Terminal::spawn(c).read(args, answers, timeout)
     }
 
     /// 보이는 화면 글(`pane read --source visible`)
@@ -680,4 +640,79 @@ pub fn read_line_containing(out: &mut impl BufRead, needle: &str) -> String {
 
 pub fn path_str(p: &Path) -> &str {
     p.to_str().unwrap()
+}
+
+/// 시험 CLI를 직접 실행한다. PTY 준비와 수집을 나눠 늦은 reader 순서도 검증한다.
+#[cfg(unix)]
+pub fn terminal_command(bin: &Path) -> portable_pty::CommandBuilder {
+    #[cfg(target_os = "macos")]
+    {
+        // XNU의 cttyopen이 session의 S_CTTYREF를 잡아야 stdio close가 미수집 출력을
+        // flush하지 않는다. exec 뒤에도 이 참조는 남아 종료 때 master의 drain을 기다린다.
+        let mut command = portable_pty::CommandBuilder::new("/bin/sh");
+        command.env_remove("BASH_ENV");
+        command.env_remove("ENV");
+        command.args(["-c", "exec 3<>/dev/tty || exit 125; exec 3>&-; exec \"$@\"", "aaa-test-pty"]);
+        command.arg(bin);
+        command
+    }
+    #[cfg(not(target_os = "macos"))]
+    portable_pty::CommandBuilder::new(bin)
+}
+
+#[cfg(unix)]
+pub struct Terminal {
+    master: Box<dyn portable_pty::MasterPty + Send>,
+    child: Box<dyn portable_pty::Child + Send + Sync>,
+}
+#[cfg(unix)]
+impl Terminal {
+    pub fn spawn(command: portable_pty::CommandBuilder) -> Self {
+        use portable_pty::{PtySize, native_pty_system};
+        let pair = native_pty_system().openpty(PtySize::default()).expect("시험 PTY 열기");
+        let child = pair.slave.spawn_command(command).expect("시험 CLI 실행");
+        // 부모의 slave 사본이 남으면 자식이 끝나도 master에 EOF가 오지 않는다.
+        drop(pair.slave);
+        Self { master: pair.master, child }
+    }
+    pub fn read(mut self, args: &[&str], answers: &[(&str, &str)], timeout: Duration) -> String {
+        let seen = std::sync::Arc::new(std::sync::Mutex::new(Vec::<u8>::new()));
+        let mut out = self.master.try_clone_reader().unwrap();
+        let s2 = seen.clone();
+        let (done_tx, done_rx) = std::sync::mpsc::channel();
+        let reader = std::thread::spawn(move || {
+            let mut b = [0u8; 256];
+            let result = loop {
+                match std::io::Read::read(&mut out, &mut b) {
+                    Ok(0) => break Ok(()),
+                    Ok(n) => s2.lock().unwrap().extend_from_slice(&b[..n]),
+                    Err(e) if e.kind() == std::io::ErrorKind::Interrupted => continue,
+                    Err(e) => break Err(e),
+                }
+            };
+            let _ = done_tx.send(result);
+        });
+        let text = || String::from_utf8_lossy(&seen.lock().unwrap()).to_string();
+        let mut stdin = self.master.take_writer().unwrap();
+        for (prompt, typed) in answers {
+            wait_for_diag(&format!("물음 {prompt:?}"), timeout, || text().contains(prompt).then_some(()), text);
+            std::io::Write::write_all(&mut stdin, format!("{typed}\n").as_bytes()).unwrap();
+        }
+        match done_rx.recv_timeout(timeout) {
+            Ok(Ok(())) => {}
+            failed => {
+                let _ = self.child.kill();
+                let _ = self.child.wait();
+                panic!("{args:?} PTY 출력이 {timeout:?} 안에 끝나지 않았다: {failed:?}\n{}", text());
+            }
+        }
+        let status = self.child.wait().unwrap();
+        drop(stdin);
+        reader.join().unwrap();
+        let output = text();
+        if output.is_empty() {
+            eprintln!("PTY 종료: {args:?}, {status:?}, EOF까지 읽은 출력 0바이트");
+        }
+        output
+    }
 }

@@ -317,6 +317,44 @@ web/e2e/specs/NN-기능.mjs  기능별 단계(01-http-pwa … 19-turn-alerts). e
 - `cargo test --locked -p aaa --bin aaa update::`는 임시 HTTP 서버와 실제 curl로 manifest 선택·SHA-256 거부·없는 OS/arch·전송 중단·같은 판 무동작·보관/rollback을 본다. 서버는 응답/연결 종료 사건으로 끝나며 운영 설정·키체인·신호·고정 sleep을 쓰지 않는다. 같은 시각에 version이 내려가는 보관 순서는 고정 `now`로 검사한다.
 - `cargo test --locked -p aaa --bin aaa cli::tests::update_accepts_release_version_and_keeps_local_and_subcommand_modes`는 공개 CLI의 release 판·로컬 파일·rollback 선택과 충돌을 본다.
 
+### 배포 후보의 바이트 보존(t-0525)
+
+`cargo test -p aaa-host --lib link::post_tests::deployment_bytes_survive_auth_redaction_and_a_partial_tail -- --exact`
+는 실제 host Agent link reader·요청 대기자를 작은 duplex 버퍼로 연결한다. 가짜 인증값의 원문과 인코딩을
+온전한 청크와 마지막 3,176바이트 부분 청크에 넣고, 모든 조각의 offset·길이·EOF와 합친 바이트의 SHA를 검사한다.
+EOF·요청 응답·연결 종료 사건으로 끝나며 고정 sleep, 실제 인증, 운영 서비스, 새 production 주입점은 쓰지 않는다.
+같은 연결의 파일 보기 응답은 계속 인증 조각을 가려야 한다.
+수정 전 host의 일반 JSON 가림은 배포 B64까지 디코딩해 바꾸므로 길이가 같은 채 EOF SHA 단언이 실패한다.
+`DeployChunk`의 가림 예외만 제거한 변형도 같은 단언에서 실패해야 한다. agent의 청크 쓰기·sync·EOF 검사와
+기존 rollout 설치·재시작 E2E는 그대로 둔다.
+
+### 인증 가림의 B64·실패 처리·청크 경계(t-0525)
+
+`cargo test -p aaa-common --lib redact::tests::`는 실제 protocol `B64`의 인코딩 글자에만 인증 조각이
+겹치는 경우와 실제 바이트에 비밀이 있는 경우(8바이트 부분 포함)를 구분한다. 일반 글이 우연히 B64처럼 보여도
+원문 비밀과 8바이트 조각의 짧은 인코딩도 가려야 한다. B64는 serde newtype 이름으로 구별하고 JSON wire·TS 모양은 그대로 둔다.
+형식을 엄격히 검사하는 값과 직렬화 오류는 panic·원문 반환 없이 오류여야 하며, 오류에 비밀을 넣지 않고 기존
+안전한 기록 파일도 덮지 않아야 한다. 실패 이유만 남기고 agent 송신 메시지·host 수신 연결·Front 요청을 거부하거나
+Front 응답을 안전한 오류로 바꾼다. thread·journal 기록은 원문을 쓰지 않는다.
+
+원래 B64 글자 가림은 `Invalid symbol 42` panic에서 RED였다. 원문 fallback·B64 타입 구분 제거·옛 스트림 복원
+변형은 각각 이 keeper에서 실패해야 한다. 스트림은 비밀과 CSI ANSI를 섞은 입력의 모든 청크 경계에서 같은 가림과
+끝 flush를 내야 한다. 원문과 가림 표시를 분리해 겹치는 인증 창의 끝을 보존하며, 단독 ESC도 다음 청크까지 잡는다.
+기존 agent 연결 변경 시험은 snapshot 응답으로, host 배포 시험은 일반 파일 보기 응답과 뒤따르는 Pong으로
+실제 송수신자가 B64 충돌 뒤에도 살아 있음을 검사한다. 실제 계정·로그인·갱신·기록 검증은 기존 m13 accounts keeper가 맡는다.
+
+### macOS 시험 PTY의 마지막 출력(t-0525)
+
+`cargo test -p aaa --test m13 terminal_capture_keeps_output_after_stdio_close_before_reading -- --exact`
+는 작은 C 자식이 stdout·stderr에 글과 ANSI를 쓰고 표준 FD를 모두 닫았다는 파일 사건 뒤에 reader를 시작한다.
+기존 helper는 exit 0·출력 0바이트로 RED다. macOS helper는 exec 전에 `/dev/tty`를 한 번 열어 controlling TTY의
+참조를 잡고 닫는다. XNU의 종료 drain이 master 수집을 기다리므로 늦은 reader도 모든 바이트를 받아야 한다.
+이 준비만 제거한 변형은 같은 단언에서 실패해야 한다. timeout·원래 profile 제거 출력 단언은 그대로다.
+이 CLI 성공 출력은 `println!`→직접 PTY reader 경로이며 Agent link·session-host 가림을 지나지 않는다.
+커널 경계 근거: [cttyopen의 참조](https://github.com/apple-oss-distributions/xnu/blob/main/bsd/kern/tty_tty.c),
+[종료 시 drain·revoke](https://github.com/apple-oss-distributions/xnu/blob/main/bsd/kern/kern_exit.c),
+[ttyclose의 flush](https://github.com/apple-oss-distributions/xnu/blob/main/bsd/kern/tty.c).
+
 ### update 후보 서명과 사람 터미널 출력(t-0488)
 
 - 기존 E2E `update_replaces_keeps_and_rolls_back`, m13 `coordinator_deployment_is_gated_and_survives_backend_restarts`, `rollout_preflights_all_targets_and_resumes_same_jobs_after_host_restart`가 실제 다음 실행·교체·보관·rollback과 재시작 수명을 계속 소유한다. macOS 후보는 바이트를 덧붙이지 않고 서로 다른 ad-hoc 서명 식별자를 써서 같은 version·다른 SHA·유효 strict 서명을 갖는다. 복사·서명은 자식 프로세스에서 끝내 병렬 fork에 쓰기 FD를 물려주지 않는다.
@@ -767,6 +805,7 @@ CI/Git의 source outbox·중복 억제·재시작·outage는 기존 owner를 유
 - `cargo test -p aaa --test m13 task_memory_forgets_deleted_project`: 지운 프로젝트를 같은 이름으로 다시 만들면 첫 tick은 기억만 하고 「파일 직접」 기록을 지어내지 않는다(지울 때 기억을 남기면 실패).
 - `node --test web/test/tasksModel.test.mjs`: 메뉴·끌기 → host 동작, 폼 → 동작(상위는 고른 판의 블록 고정점, owner 목록 전 폼은 동작 없음), 「나중」 항목, 기록 차이.
 - `node web/e2e/web.e2e.mjs --spec 46-task-edit`: 폼으로 더하기·고치고 옮기기(파일 글 전체를 기대값과 바이트로 비교), 사람 이름 owner 거부, 정리 제안, 행 메뉴·끌기·Alt+↓·목록 이름 바꾸기·빈 목록 지우기·새 목록, 두 브라우저 충돌 창과 「최신으로 다시 열기」, 폼을 고치는 동안 다른 task가 파일에서 바뀌어도 저장됨(대상만 충돌), 지우기·되살리기 줄·기록 거르기·기록에서 되살리기, 저장만으로 thread가 시작되지 않음(`ticker tick` 울타리 뒤 흐름 사건·thread 수), 보기 권한 기기에 편집 UI 없음(host 판 판정이 끝난 `data-can-edit="false"` 뒤에 본다. 판정 전은 `pending`), 명령 팔레트 「할 일 더하기」(할 일 화면을 연 적 없는 기기), 휴대폰 「+」·전체 화면 폼·메뉴 시트, 패드 세로 오른쪽 시트(상자 좌표로 단언), 「나중」 할 일로 옮기기(「나중」 파일 그대로), 원문 편집의 판 대조. 저장이 끝났는지는 시간이 아니라 화면 `data-tasks-sha`가 새 판이 되고 `data-task-saving`이 없어진 뒤 그 판이 파일 sha와 같은지로 본다.
+- 같은 E2E 46의 「터치 입력 글자」는 Chromium·WebKit의 iPhone 세로/가로에서 검색·제목·메모·선택·새 목록·사람 이름·첨부 붙여넣기·원문·목록 이름의 실제 계산 글자가 16px 이상인지 본다(t-0530). 폼의 13px 덮어쓰기를 복원하면 실패한다. headless는 iOS 키보드의 초점 확대를 재현하지 않으므로 실제 iPhone에서 입력·키보드 내림 뒤 배율 유지 확인은 별도다.
 - 결함 심기: 웹 폼이 편집을 시작한 판 대신 최신 판 hash로 저장하게 하면 E2E 46 「충돌」 단계가, 팔레트 요청 수를 mount 때 값으로 두면 「명령 팔레트」 단계가 실패한다. 웹 결함은 `npm run build`가 dist를 다시 만든 뒤 `cargo build -p aaa`로 binary에 넣어 돈다.
 
 ## 웹 할 일 thread 연결과 자동 정리(t-0493, plan §8.316)
@@ -987,8 +1026,27 @@ fixture의 ParentDir 전제조건을 선행 단언한 뒤 target의 conflict 거
 기존 invalid journal status의 bytes/권한/mtime·비밀 비노출 검사를 유지하며, 거부 분기를 허용으로 바꾼
 결함 변형은 conflict 단언에서 실패해야 한다. Windows 실제 통과 판정은 main CI가 맡는다.
 
+## 비밀 없는 panic 위치(t-0533)
 
-## aaa install I5 Windows 감독자(t-0485, plan §8.332)
+- `cargo test -p aaa-common --lib panic_log::`는 실제 hook을 별도 시험 프로세스에서 설치한다.
+  CLI·host·agent·session host 네 종류마다 비밀 String·비문자열 payload·동적 thread 이름·환경변수를 두고,
+  `RUST_BACKTRACE=full`이어도 stdout/stderr와 알림용 snapshot에 비밀이 없는지 검사한다.
+  같은 소스 위치를 서로 다른 thread에서 세 번 실행해 횟수 1·2·3, 다른 위치는 1,
+  실제 Tokio task의 숫자 ID와 파일·줄·열·빌드 SHA를 확인한다. stderr를 실제로 잠근 동안에도
+  감시자가 `latest()`를 읽는 사건을 받아야 한다. 종료·join·관측 사건으로 끝내며 sleep은 없다.
+- `panic_log::latest()`는 마지막 안전한 `Snapshot`을 반환한다. hook은 알림을 전송하지 않는다.
+  단일 실행 파일 진입점에서 hook을 설치하고, 파싱한 명령으로 프로세스 종류를 정한다.
+  등록용 `agent enroll` 등 일반 명령은 CLI, 복구 감시는 agent로 분류한다.
+- 임의 thread 이름은 `other`로 숨기고 런타임 숫자 ID로 구분한다. 고정 이름(main·aaa-cli·Tokio worker)만 허용한다.
+  Tokio의 안정 API에는 task 이름이 없어 숫자 task ID를 쓴다. payload·환경·backtrace는 읽거나 포맷하지 않는다.
+- build script는 Git HEAD SHA와 추적된 Rust 파일 목록만 생성물에 넣는다. HEAD·현재 ref·index·packed-refs를 감시한다.
+  절대 경로는 허용된 저장소 상대 경로로 줄이고, 모르는 의존성·생성 파일 위치는 `external`로 숨긴다.
+  Git 없는 소스 배포는 SHA `unknown`, 경로 `external`로 숨긴다. 줄·열과 원본 위치별 횟수는 계속 남긴다.
+- 본문 출력 복원·원본 경로 출력·반복 횟수 초기화 결함은 각각 keeper의 비밀 비노출·경로·횟수 단언에서 RED여야 한다.
+  stderr 쓰기 중 상태 잠금을 잡는 결함은 감시자가 출력 전에 위치를 읽는 계약에서 RED여야 한다.
+  각 변형의 원본 bytes를 복구한 뒤 GREEN과 전체 ci-local·deps·TS 최신·check-public을 확인한다.
+
+## aaa install I5 Windows 감독자(t-0485, plan §8.333)
 
 - `cargo test -p aaa --bin aaa install::engine::supervisor --locked`: 공통 owner 7개는 세 OS에서 실행한다.
   실제 I2 파일/receipt/잠금·감독자 journal로 등록 직후 중단/실제 manager 대조·같은 ID 재개·기존 암호 보존·

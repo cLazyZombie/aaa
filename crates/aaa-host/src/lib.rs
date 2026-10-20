@@ -1248,7 +1248,11 @@ impl Host {
         {
             return Err(err(ErrorCode::Forbidden, "계정 로그인·변경은 host의 aaa 세션 밖 터미널에서 한다"));
         }
-        let req = if matches!(&req, FrontRequest::AccountImport { .. }) { req } else { aaa_common::redact::json(req) };
+        let req = if matches!(&req, FrontRequest::AccountImport { .. }) {
+            req
+        } else {
+            aaa_common::redact::json(req).map_err(|_| err(ErrorCode::BadRequest, "요청 가림 실패로 처리를 거부했다"))?
+        };
         // 기기·머신 신뢰와 공개 범위는 사람이 바꾼다. coordinator도 Local이지만 세션 안이다.
         if matches!(
             req,

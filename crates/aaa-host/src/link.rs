@@ -273,8 +273,10 @@ async fn serve(
                 Ok(Ok(None)) => return Ok(()),
                 Ok(Ok(Some(Incoming::Terminal(c)))) => host.on_chunk(&mid, c),
                 Ok(Ok(Some(Incoming::Control(b)))) => match match serde_json::from_slice::<LinkMsg>(&b)? {
-                    msg @ LinkMsg::Res { result: Outcome::Ok(AgentResponse::ThreadReady(_) | AgentResponse::Relaunch(_)), .. } => msg,
-                    msg => aaa_common::redact::json(msg),
+                    // 실행 입력과 배포 후보는 표시용 글이 아니다. B64 안의 인증 조각을 가리면
+                    // 길이는 같아도 바이너리 SHA가 달라져 마지막 EOF 검증에서 멈춘다.
+                    msg @ LinkMsg::Res { result: Outcome::Ok(AgentResponse::ThreadReady(_) | AgentResponse::Relaunch(_) | AgentResponse::DeployChunk { .. }), .. } => msg,
+                    msg => aaa_common::redact::json(msg).map_err(|_| anyhow::anyhow!("agent 메시지 가림 거부"))?,
                 } {
                     LinkMsg::Event(AgentEvent::AccountRefresh(request)) => {
                         let h=host.clone();let m=mid.clone();tokio::spawn(async move {h.account_refresh(m,request).await;});
@@ -352,6 +354,144 @@ async fn register_local(host: &Host, hello: &AgentHello, tx: &FrameTx) -> Result
 mod post_tests {
     use super::*;
     use aaa_proto::{PostInput, PostType};
+    #[tokio::test]
+    async fn deployment_bytes_survive_auth_redaction_and_a_partial_tail() {
+        use aaa_proto::{AgentRequest, B64, DEPLOY_CHUNK};
+        use base64::Engine;
+        use sha2::{Digest, Sha256};
+
+        let path = std::env::temp_dir().join(format!("aaa-link-tail-{}", util::new_id()));
+        let mut cfg = aaa_config::HostConfig::default();
+        cfg.projects.root = path.join("projects").to_string_lossy().into();
+        cfg.notify.web_push = false;
+        let host = Host::open(cfg, path.clone()).unwrap();
+        let secret = "fixture-deployment-auth-value-0525";
+        aaa_common::redact::remember_auth("codex", &serde_json::json!({"access_token":secret}).to_string());
+        let encoded = base64::engine::general_purpose::STANDARD.encode(secret);
+        let mut bytes: Vec<u8> = (0..DEPLOY_CHUNK * 2 + 3176).map(|i| (i % 251) as u8).collect();
+        // 인증과 겹치는 바이트를 온전한 조각·마지막 부분 조각에 둔다. 실제 인증은 읽지 않는다.
+        for at in [23, DEPLOY_CHUNK * 2 + 17] {
+            bytes[at..at + secret.len()].copy_from_slice(secret.as_bytes());
+            bytes[at + 100..at + 100 + encoded.len()].copy_from_slice(encoded.as_bytes());
+        }
+        let expected = hex::encode(Sha256::digest(&bytes));
+        let (stream, peer) = tokio::io::duplex(1024);
+        let running = tokio::spawn(serve(host.clone(), Box::new(stream), None, None));
+        let (r, w) = tokio::io::split(peer);
+        let tx = spawn_writer(w, MAX_FRAME);
+        let mut rx = FrameRx::new(r, MAX_FRAME);
+        tx.json(&LinkMsg::Hello(AgentHello {
+            proto: AGENT_LINK,
+            machine_id: "transfer-agent".into(),
+            machine_name: "mac-a".into(),
+            boot_id: "boot".into(),
+            os: "test".into(),
+            arch: "test".into(),
+            software: "fixture".into(),
+            features: vec!["terminal.v1".into(), "deploy_stage.v1".into()],
+            dev_mode: true,
+            selfcheck: None,
+            sessions: vec![],
+            harness: vec![],
+        }))
+        .await
+        .unwrap();
+        assert!(matches!(rx.control::<LinkMsg>().await.unwrap(), LinkMsg::Welcome(_)));
+        tx.json(&LinkMsg::Ping { seq: 525 }).await.unwrap();
+        assert_eq!(rx.control::<LinkMsg>().await.unwrap(), LinkMsg::Pong { seq: 525 });
+        let conn = host.live_conn("transfer-agent").unwrap();
+        let mut received = Vec::new();
+        for chunk in bytes.chunks(DEPLOY_CHUNK) {
+            let offset = received.len() as u64;
+            let eof = offset + chunk.len() as u64 == bytes.len() as u64;
+            let request = AgentRequest::DeployFetch {
+                path: "/build/aaa".into(),
+                offset,
+                len: DEPLOY_CHUNK as u32,
+                sha256: expected.clone(),
+            };
+            let (response, ()) = tokio::join!(conn.request(request.clone()), async {
+                let LinkMsg::Req { id, body, .. } = rx.control::<LinkMsg>().await.unwrap() else {
+                    panic!("요청이어야 한다")
+                };
+                assert_eq!(body, request);
+                tx.json(&LinkMsg::Res {
+                    id,
+                    result: Outcome::Ok(AgentResponse::DeployChunk {
+                        offset,
+                        data: B64(chunk.to_vec()),
+                        eof,
+                        total: bytes.len() as u64,
+                    }),
+                })
+                .await
+                .unwrap();
+            });
+            let AgentResponse::DeployChunk { offset: got, data, eof: done, total } = response.unwrap() else {
+                panic!("조각이어야 한다")
+            };
+            assert_eq!((got, done, total, data.0.len()), (offset, eof, bytes.len() as u64, chunk.len()));
+            received.extend(data.0);
+        }
+        // 파일 보기 응답은 여전히 가린다. 전송 보존 때문에 표시 경계의 가림을 끄면 안 된다.
+        let (visible, ()) = tokio::join!(
+            conn.request(AgentRequest::FileView {
+                path: "/build/readme.txt".into(),
+                offset: 0,
+                len: DEPLOY_CHUNK as u32,
+                page: false,
+            }),
+            async {
+                let LinkMsg::Req { id, .. } = rx.control::<LinkMsg>().await.unwrap() else {
+                    panic!("요청이어야 한다")
+                };
+                tx.json(&LinkMsg::Res {
+                    id,
+                    result: Outcome::Ok(AgentResponse::FileChunk { data: B64(secret.as_bytes().to_vec()), eof: true }),
+                })
+                .await
+                .unwrap();
+            }
+        );
+        let AgentResponse::FileChunk { data, .. } = visible.unwrap() else { panic!("보기 조각이어야 한다") };
+        assert!(
+            !data.0.windows(8).any(|s| secret.as_bytes().windows(8).any(|n| s == n)),
+            "파일 보기에서 인증이 노출됐다"
+        );
+        // host 일반 응답의 B64 글자만 겹쳐도 reader가 살아 있어야 한다.
+        aaa_common::redact::remember("QkxPQ0tTRUNSRVQ5host-fixture0525");
+        let snapshot = base64::engine::general_purpose::STANDARD.decode("QkxPQ0tTRUNSRVQ5AAAA").unwrap();
+        let (visible, ()) = tokio::join!(
+            conn.request(AgentRequest::FileView {
+                path: "/build/snapshot.bin".into(),
+                offset: 0,
+                len: DEPLOY_CHUNK as u32,
+                page: false,
+            }),
+            async {
+                let LinkMsg::Req { id, .. } = rx.control::<LinkMsg>().await.unwrap() else {
+                    panic!("요청이어야 한다")
+                };
+                tx.json(&LinkMsg::Res {
+                    id,
+                    result: Outcome::Ok(AgentResponse::FileChunk { data: B64(snapshot.clone()), eof: true }),
+                })
+                .await
+                .unwrap();
+            }
+        );
+        assert!(matches!(visible.unwrap(), AgentResponse::FileChunk { data, .. } if data.0 == snapshot));
+        tx.json(&LinkMsg::Ping { seq: 526 }).await.unwrap();
+        assert_eq!(rx.control::<LinkMsg>().await.unwrap(), LinkMsg::Pong { seq: 526 });
+        drop(conn);
+        drop(tx);
+        drop(rx);
+        running.await.unwrap().unwrap();
+        drop(host);
+        std::fs::remove_dir_all(path).unwrap();
+        assert_eq!(hex::encode(Sha256::digest(&received)), expected, "전송 EOF SHA-256/크기 불일치");
+        assert_eq!(received, bytes);
+    }
     #[tokio::test]
     async fn post_ack_is_never_sent_to_agent_without_feature() {
         let path = std::env::temp_dir().join(format!("aap-host-{}", util::new_id()));

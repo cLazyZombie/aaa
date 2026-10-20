@@ -233,9 +233,10 @@ pub fn write_private(p: &Path, bytes: &[u8]) -> std::io::Result<()> {
 }
 
 pub fn write_json<T: serde::Serialize>(p: &Path, v: &T) -> std::io::Result<()> {
-    let mut value = serde_json::to_value(v).expect("JSON 직렬화");
-    crate::redact::value(&mut value);
-    write_private(p, &serde_json::to_vec_pretty(&value).expect("JSON 직렬화"))
+    let value = crate::redact::to_value(v).map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
+    let bytes = serde_json::to_vec_pretty(&value)
+        .map_err(|_| std::io::Error::new(std::io::ErrorKind::InvalidData, "가림 기록 직렬화 거부"))?;
+    write_private(p, &bytes)
 }
 
 pub fn read_json<T: serde::de::DeserializeOwned>(p: &Path) -> anyhow::Result<T> {

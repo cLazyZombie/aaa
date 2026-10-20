@@ -780,7 +780,10 @@ impl Agent {
                     result: Outcome::Ok(AgentResponse::ThreadReady(_) | AgentResponse::Relaunch(_)),
                     ..
                 } => msg.clone(),
-                _ => aaa_common::redact::json(msg.clone()),
+                _ => match aaa_common::redact::json(msg.clone()) {
+                    Ok(clean) => clean,
+                    Err(_) => return, // 가림 실패는 기록한 뒤 메시지를 거부한다. 원문은 보내지 않는다.
+                },
             };
             // 읽기를 멈춘 옛 host의 큐가 차 있어도 새 연결의 replay 울타리를 붙잡지 않는다.
             // 기억한 harness 상태는 다음 연결이 최신 snapshot으로 전달한다.
@@ -2013,7 +2016,25 @@ mod tests {
         for seq in 0..512 {
             old.json(&LinkMsg::Ping { seq }).await.unwrap();
         }
-        let message = LinkMsg::Ping { seq: 513 };
+        // agent의 일반 전달도 B64 글자 충돌로 panic하거나 응답을 잃지 않아야 한다.
+        use base64::Engine;
+        aaa_common::redact::remember("QkxPQ0tTRUNSRVQ5agent-fixture0525");
+        let snapshot = base64::engine::general_purpose::STANDARD.decode("QkxPQ0tTRUNSRVQ5AAAA").unwrap();
+        let message = LinkMsg::Res {
+            id: "snapshot-request".into(),
+            result: Outcome::Ok(AgentResponse::Subscribed {
+                session: "snapshot-session".into(),
+                offset: snapshot.len() as u64,
+                snapshot: Some(aaa_proto::Snapshot {
+                    session: "snapshot-session".into(),
+                    offset: snapshot.len() as u64,
+                    cols: 80,
+                    rows: 24,
+                    replay: B64(snapshot),
+                    history_more: false,
+                }),
+            }),
+        };
         let mut sending = std::pin::pin!(a.send_host(&message));
         std::future::poll_fn(|cx| {
             assert!(sending.as_mut().poll(cx).is_pending(), "가득 찬 옛 전송 큐에서 기다려야 한다");
