@@ -72,6 +72,29 @@ function CompactedRow({ text, sizes }: { text: string; sizes?: ContextCompaction
   );
 }
 
+/** 사람이 친 harness 명령(plan §8.322, herdr-web-ui conversation.ts가 숨기는 명령 echo를 조용한 한 줄로). `/compact`는 정리 자리가 대신한다 */
+function CommandRow({ text }: { text: string }) {
+  return (
+    <div className="chat-msg chat-command" data-role="command" data-testid="chat-command">
+      <Terminal aria-hidden="true" />
+      <code>{text}</code>
+    </div>
+  );
+}
+
+/** 명령의 결과 글(herdr-web-ui conversation.ts 345~352줄 local_command → notice). 여섯 줄이 넘으면 첫 줄만 보이고 누르면 펼친다 */
+function CommandOutputRow({ text }: { text: string }) {
+  const lines = text.split("\n");
+  if (lines.length <= 6)
+    return <div className="chat-msg chat-command-output" data-role="command_output" data-testid="chat-command-output"><pre>{text}</pre></div>;
+  return (
+    <details className="chat-msg chat-command-output" data-role="command_output" data-testid="chat-command-output">
+      <summary>{lines[0]!.trim() || "결과"} <span className="chat-command-more">· {lines.length}줄</span></summary>
+      <pre>{text}</pre>
+    </details>
+  );
+}
+
 /** 참고 `ThinkingRow`: 「생각」 머리만 보이고 누르면 펼친다 */
 function ThinkingRow({ text }: { text: string }) {
   const [open, setOpen] = useState(false);
@@ -473,7 +496,7 @@ export function ChatPanel({
     setOlderState("idle");
     refresh.setRead(async () => {
       try {
-        const r = await call({ op: "pane_chat", pane, thinking: showThinking, compact: true });
+        const r = await call({ op: "pane_chat", pane, thinking: showThinking, compact: true, commands: true });
         if (!alive) return;
         if (r.kind === "chat") {
           // 최신 쪽이 통째로 앞으로 이동했어도 사이 기록을 버리지 않는다(참고 ChatView gap fill).
@@ -483,7 +506,7 @@ export function ChatPanel({
             const known = new Set(held.messages.flatMap((m) => m.id ? [m.id] : []));
             let gap = r;
             while (gap.before && !gap.messages.some((m) => m.id && known.has(m.id))) {
-              const previous = await call({ op: "pane_chat", pane, thinking: showThinking, compact: true, before: gap.before });
+              const previous = await call({ op: "pane_chat", pane, thinking: showThinking, compact: true, commands: true, before: gap.before });
               if (!alive || epoch.current !== generation) return;
               if (previous.kind !== "chat" || previous.history !== r.history) break;
               if (previous.before === gap.before) throw new Error("앞 기록 위치가 전진하지 않습니다");
@@ -494,7 +517,7 @@ export function ChatPanel({
           // 앞 쪽을 읽다가 pane을 떠났다면 기억한 row까지 다시 채운 뒤 한 번에 복원한다.
           if (restoring.current && restoreFrom?.rowId.startsWith(`${r.history}:`)) {
             while (newest.before && !newest.messages.some((m) => m.id === restoreFrom.rowId)) {
-              const previous = await call({ op: "pane_chat", pane, thinking: showThinking, compact: true, before: newest.before });
+              const previous = await call({ op: "pane_chat", pane, thinking: showThinking, compact: true, commands: true, before: newest.before });
               if (!alive || epoch.current !== generation) return;
               if (previous.kind !== "chat" || previous.history !== r.history) break;
               if (previous.before === newest.before) throw new Error("앞 기록 위치가 전진하지 않습니다");
@@ -549,7 +572,7 @@ export function ChatPanel({
     try {
       const response = await refresh.page(async () => {
         if (epoch.current !== generation) throw new Error("이 대화 읽기는 끝났습니다");
-        return call({ op: "pane_chat", pane, thinking: showThinking, compact: true, before });
+        return call({ op: "pane_chat", pane, thinking: showThinking, compact: true, commands: true, before });
       });
       if (epoch.current !== generation) return "gone";
       if (response.kind !== "chat" || !response.history) {
@@ -887,6 +910,10 @@ export function ChatPanel({
                 <ThinkingRow key={key} text={m.text} />
               ) : m.role === "compact" ? (
                 <CompactedRow key={key} text={m.text} sizes={i === lastCompact ? compaction : null} />
+              ) : m.role === "command" ? (
+                <CommandRow key={key} text={m.text} />
+              ) : m.role === "command_output" ? (
+                <CommandOutputRow key={key} text={m.text} />
               ) : m.role === "user" ? (
                 <UserTurn key={key} text={unwrapPasted(m.text)} pane={pane} onOpenFile={onOpenFile} pending={m.pending ? { harness, steer: steerFor(`message-${i}`) } : undefined} />
               ) : m.role === "assistant" ? (

@@ -1228,6 +1228,42 @@ summary.chat-compact-head { cursor: pointer; }
 .context-pop-foot { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: var(--space-2); padding-top: var(--space-2); border-top: 1px solid var(--border); color: var(--text-dim); font-size: var(--fs-2xs); }
 .context-pop-foot .btn { display: inline-flex; align-items: center; gap: 6px; height: 28px; padding: 0 10px; font-size: var(--fs-xs); }
 .context-pop-foot .btn svg { width: 14px; height: 14px; }
+
+/* 입력칸 「/」 목록(plan §8.322, herdr-web-ui Composer.tsx listbox 꼴): 입력칸 위에 붙는다. 줄은 「/이름 안내 · 설명」과 끝 표지 */
+.slash-menu {
+  position: absolute; left: 0; right: 0; bottom: calc(100% + var(--space-2)); z-index: var(--z-popover);
+  max-height: min(18rem, 45vh); overflow-y: auto; overscroll-behavior: contain; padding: var(--space-1);
+  background: var(--bg-panel); border: 1px solid var(--border); border-radius: var(--r-lg); box-shadow: var(--shadow-pop);
+  color: var(--text); font-size: var(--fs-xs); text-align: left;
+}
+.slash-menu.is-empty { padding: var(--space-2) var(--space-3); color: var(--text-dim); }
+.slash-group { padding: var(--space-2) var(--space-2) 2px; color: var(--text-faint); font-size: var(--fs-2xs); font-weight: 600; letter-spacing: 0.06em; }
+.slash-item {
+  display: grid; grid-template-columns: auto auto minmax(0, 1fr) auto; align-items: baseline; column-gap: var(--space-2);
+  padding: 6px var(--space-2); border-radius: var(--r-md); cursor: pointer;
+}
+.slash-item.is-active { background: var(--accent-tint); }
+.slash-item-name { font-family: var(--font-mono); font-weight: 600; color: var(--text-strong); white-space: nowrap; }
+.slash-item-hint { font-family: var(--font-mono); color: var(--text-faint); white-space: nowrap; }
+.slash-item-desc { min-width: 0; color: var(--text-dim); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.slash-item-tags { display: inline-flex; gap: 4px; }
+.slash-tag { padding: 0 6px; border: 1px solid var(--border); border-radius: var(--r-sm); color: var(--text-dim); font-size: var(--fs-2xs); line-height: 1.6; white-space: nowrap; }
+.slash-tag.is-terminal { color: var(--accent); border-color: var(--accent-tint); }
+.slash-tag.is-confirm { color: var(--blocked); border-color: currentColor; }
+/* 좁은 화면: 안내는 빼고 설명은 둘째 줄 */
+@media (max-width: 600px) {
+  .slash-item { grid-template-columns: auto minmax(0, 1fr) auto; row-gap: 2px; }
+  .slash-item-hint { display: none; }
+  .slash-item-desc { grid-column: 1 / -1; grid-row: 2; }
+}
+/* 대화의 harness 명령 줄과 결과(plan §8.322): 조용한 한 줄, 결과는 고정폭 글 */
+.chat-msg.chat-command { align-self: flex-start; display: inline-flex; align-items: center; gap: 6px; padding: 2px var(--space-3); background: transparent; color: var(--text-dim); font: calc(var(--fs-xs) * var(--chat-scale, 1))/1.5 var(--font-mono); }
+.chat-msg.chat-command svg { width: 13px; height: 13px; flex: none; }
+.chat-msg.chat-command code { color: var(--text); }
+.chat-msg.chat-command-output { align-self: flex-start; margin: 0 0 0 var(--space-3); padding: var(--space-1) var(--space-3); border-left: 2px solid var(--border); border-radius: 0; background: transparent; color: var(--text-dim); font-size: calc(var(--fs-xs) * var(--chat-scale, 1)); }
+.chat-msg.chat-command-output pre { margin: 0; font: inherit; font-family: var(--font-mono); white-space: pre-wrap; overflow-wrap: anywhere; }
+.chat-msg.chat-command-output summary { cursor: pointer; font-family: var(--font-mono); }
+.chat-command-more { color: var(--text-faint); }
 .context-pop-foot code { font-family: var(--font-mono); }
 @media (prefers-reduced-motion: reduce) {
   .context-gauge[data-compacting] .context-gauge-ring { animation: none; }
