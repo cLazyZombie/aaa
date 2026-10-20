@@ -715,9 +715,9 @@ export default async function ({ page }) {
     const wide = await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
     if (wide > 0) throw new Error(`휴대폰 폭에서 화면이 ${wide}px 옆으로 밀린다`);
     await shot(page, "phone-project-threads");
-    const closed = hashIs(page, "");
+    // 닫기(고른 것 없음)는 지금 칸을 바꾼다(replaceState, hashchange 없음, plan §8.301): 주소와 빈 화면을 본다
     await view.getByRole("button", { name: "닫기" }).click();
-    await closed;
+    await domIs(page, "닫은 뒤 주소 없음·빈 화면", () => location.hash === "" && document.querySelector(".empty-view") !== null);
     await page.setViewportSize({ width: 1280, height: 800 });
     await inList(page, "pane-t1");
     await until("t1 터미널", async () => (await screenText(page)).includes("t1-42"));
