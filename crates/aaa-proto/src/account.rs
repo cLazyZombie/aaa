@@ -16,7 +16,52 @@ impl std::fmt::Debug for SecretText {
 pub struct AccountView {
     pub name: String,
     pub harness: String,
+    #[ts(type = "number")]
     pub version: u64,
+    /// 공식 CLI가 로그인 때 알린 메일(FRONT_API 1.78, 관리 GUI W5a). 조작 기기와 host의 세션 밖 CLI에만 싣는다. 모르면 생략
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub email: Option<String>,
+    /// 구독 plan(Codex 인증의 계정 정보). 메일과 같은 곳에만 싣는다
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub plan: Option<String>,
+    /// aaa가 처음 기록한 인증 시각(ms). 이 기록 전에 등록한 계정은 생략(모름)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional, type = "number")]
+    pub first_auth_ms: Option<u64>,
+    /// 마지막으로 로그인에 성공한 시각(ms)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional, type = "number")]
+    pub last_auth_ms: Option<u64>,
+    /// 인증에 적힌 만료 시각(ms). 공식 CLI가 알린 것만(Claude `setup-token`의 유효 기간). 모르면 생략
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional, type = "number")]
+    pub expires_ms: Option<u64>,
+    /// 인증 상태. 옛 host는 생략한다
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub health: Option<AccountHealth>,
+}
+
+/// 계정 인증 상태(plan §8.344). 판정은 실제 쓰임(Codex 갱신 거부)과 알려진 만료 시각뿐이다: 제공자에게 따로 묻지 않는다
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+pub enum AccountHealth {
+    /// 거부·만료를 본 적 없다(만료 시각을 모르면 이것이다)
+    Ok,
+    /// 만료 7일 전부터
+    Expiring,
+    /// 끊김: 만료 시각이 지났다
+    Expired,
+    /// 끊김: 제공자가 인증 갱신을 거부했다
+    Rejected,
+}
+
+impl AccountHealth {
+    pub fn broken(self) -> bool {
+        matches!(self, AccountHealth::Expired | AccountHealth::Rejected)
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -60,7 +105,17 @@ pub struct AccountLoginView {
     pub id: String,
     pub account: String,
     pub harness: String,
+    /// waiting·succeeded·failed·cancelled, 그리고 `mismatch`(다시 로그인에 다른 메일이 들어왔다: `account_login_confirm`을 기다린다)·
+    /// `kept`(바꾸지 않고 옛 인증을 남겼다)
     pub state: String,
+    /// 다시 로그인할 때 그 별칭에 기록된 메일(「이 메일로 로그인하세요」, FRONT_API 1.78). 조작 기기·세션 밖 CLI에만
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub expect_email: Option<String>,
+    /// 로그인한 메일(끝난 뒤, 공식 CLI가 알렸을 때)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub email: Option<String>,
 }
 
 /// coordinator는 thread와 다른 이름 공간을 쓴다. 경로 탈출은 양쪽 모두 거부한다.

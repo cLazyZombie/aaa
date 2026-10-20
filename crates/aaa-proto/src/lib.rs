@@ -52,6 +52,7 @@ pub fn typescript_bindings() -> String {
     let decls = [
         SecretText::decl(&cfg),
         AccountView::decl(&cfg),
+        AccountHealth::decl(&cfg),
         AccountDefault::decl(&cfg),
         AccountLoginView::decl(&cfg),
         Version::decl(&cfg),

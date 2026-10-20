@@ -36,7 +36,17 @@ impl Sealed {
         format!("aaa-account/v1\0{}\0{}\0{}", self.name, self.harness, self.version).into_bytes()
     }
     fn view(&self) -> AccountView {
-        AccountView { name: self.name.clone(), harness: self.harness.clone(), version: self.version }
+        AccountView {
+            name: self.name.clone(),
+            harness: self.harness.clone(),
+            version: self.version,
+            email: None,
+            plan: None,
+            first_auth_ms: None,
+            last_auth_ms: None,
+            expires_ms: None,
+            health: None,
+        }
     }
 }
 
@@ -185,6 +195,15 @@ impl Store {
     }
 }
 
+/// Codex 갱신이 어떻게 끝났나(계정 상태 판정, plan §8.344). 제공자가 거부한 것(400·401)만 끊김이다: 망·시한·5xx는 모른다
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum RefreshOutcome {
+    /// 새 인증을 받았거나 이미 더 새 판을 줬다
+    Renewed,
+    Rejected,
+    Failed,
+}
+
 pub struct Accounts {
     pub(crate) logins: Mutex<HashMap<String, crate::account_login::LoginJob>>,
     store: Mutex<Store>,
@@ -251,18 +270,34 @@ impl Accounts {
         regular(&p)?;
         std::fs::remove_file(p).map_err(|_| fail())
     }
-    pub async fn refresh(&self, name: &str, version: u64, request: &SecretText) -> AccountRefreshed {
+    pub(crate) async fn refresh(
+        &self,
+        name: &str,
+        version: u64,
+        request: &SecretText,
+    ) -> (AccountRefreshed, RefreshOutcome) {
         let gate = self.gates.lock().unwrap().entry(name.into()).or_default().clone();
         let _guard = gate.lock().await;
-        let result = self.refresh_inner(name, version, request).await;
+        let mut rejected = false;
+        let result = self.refresh_inner(name, version, request, &mut rejected).await;
         match result {
-            Ok((version, response)) => {
-                AccountRefreshed { id: String::new(), version, response: Some(SecretText(response)) }
-            }
-            Err(_) => AccountRefreshed { id: String::new(), version, response: None },
+            Ok((version, response)) => (
+                AccountRefreshed { id: String::new(), version, response: Some(SecretText(response)) },
+                RefreshOutcome::Renewed,
+            ),
+            Err(_) => (
+                AccountRefreshed { id: String::new(), version, response: None },
+                if rejected { RefreshOutcome::Rejected } else { RefreshOutcome::Failed },
+            ),
         }
     }
-    async fn refresh_inner(&self, name: &str, version: u64, request: &SecretText) -> Result<(u64, String), ErrorBody> {
+    async fn refresh_inner(
+        &self,
+        name: &str,
+        version: u64,
+        request: &SecretText,
+        rejected: &mut bool,
+    ) -> Result<(u64, String), ErrorBody> {
         let c = self.credential(name)?;
         if c.harness != "codex" || version > c.version {
             return Err(fail());
@@ -293,6 +328,7 @@ impl Accounts {
         .map_err(|_| fail())?;
         redact::remember_auth("codex", &String::from_utf8_lossy(&response.body));
         if response.status != 200 {
+            *rejected = matches!(response.status, 400 | 401);
             return Err(fail());
         }
         let tokens: serde_json::Value = serde_json::from_slice(&response.body).map_err(|_| fail())?;
@@ -413,7 +449,11 @@ impl crate::Host {
                 .and_then(|r| r.account)
         });
         let mut result = match account {
-            Some(a) => self.accounts.refresh(&a, request.version, &request.request).await,
+            Some(a) => {
+                let (result, outcome) = self.accounts.refresh(&a, request.version, &request.request).await;
+                self.account_refresh_seen(&a, outcome);
+                result
+            }
             None => AccountRefreshed { id: String::new(), version: request.version, response: None },
         };
         result.id = request.id;

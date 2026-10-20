@@ -167,7 +167,10 @@ pub const AGENT_LINK: Version = Version { major: 1, minor: 10 };
 // 1.77: 운영 화면(관리 GUI W4, plan §8.343): `project_settings`·`project_repo_edit`·`thread_resolve_preview`·
 // `library_prune_apply`, `Posts.muted`, `events.tail`, 웹 events `inbox`. 옛 host는 새 요청을 모르는 요청으로 거절해 웹이 설정·저장소
 // 페이지, 끝내기 미리보기, 보고서 정리 실행, 최근 흐름 사건을 그리지 않는다. Agent link 변경 없음.
-pub const FRONT_API: Version = Version { major: 1, minor: 77 };
+// 1.78: host 계정 화면(관리 GUI W5a, plan §8.344): 웹 조작 기기의 `account_login`·`account_login_status`·`account_login_cancel`·
+// `account_default`, 새 `account_login_confirm`, `AccountView`의 메일·plan·인증 시각·만료·`health`, `AccountLoginView`의
+// `expect_email`·`email`, 웹 events `accounts`. 옛 host는 웹 계정 요청을 거부하고 새 칸을 생략해 웹이 목록만 그린다. Agent link 변경 없음.
+pub const FRONT_API: Version = Version { major: 1, minor: 78 };
 /// agent ↔ session host(내부). 세션이 몇 주 이어질 수 있으므로 이전 session host와 호환해야 한다.
 /// 1.1: `SessionRequest::Detect`(harness 상태 감지 입력). agent는 1.0 session host에 보내지 않고 `Screen`을 쓴다.
 /// 1.2: `SessionRequest::Colors`(색 질의에 답할 화면 색, plan §8.187). agent는 1.1 이하 session host에 보내지 않는다.

@@ -47,6 +47,14 @@ enum AccountCmd {
     LoginCancel {
         id: String,
     },
+    /// 다시 로그인에 다른 메일이 들어왔을 때(`mismatch`): --switch면 이 별칭을 새 메일 인증으로 바꾸고, --keep이면 옛 인증을 남긴다
+    LoginConfirm {
+        id: String,
+        #[arg(long, conflicts_with = "keep", required_unless_present = "keep")]
+        switch: bool,
+        #[arg(long)]
+        keep: bool,
+    },
     /// harness별 기본 계정. 이름을 생략하면 조회하고 --off면 해제한다.
     Default {
         #[arg(value_parser=["claude", "codex"])]
@@ -1644,6 +1652,9 @@ fn run(cli: Cli) -> Result<ExitCode> {
             AccountCmd::Login { name, harness } => front(json, FrontRequest::AccountLogin { name, harness }),
             AccountCmd::LoginStatus { id } => front(json, FrontRequest::AccountLoginStatus { id }),
             AccountCmd::LoginCancel { id } => front(json, FrontRequest::AccountLoginCancel { id }),
+            AccountCmd::LoginConfirm { id, switch, keep: _ } => {
+                front(json, FrontRequest::AccountLoginConfirm { id, switch })
+            }
             AccountCmd::Default { harness, account, off } => {
                 if off || account.is_some() {
                     front(json, FrontRequest::AccountDefault { harness, account })
@@ -4259,9 +4270,30 @@ fn render_front(r: &FrontResponse) -> String {
         FrontResponse::Context(c) => render_context(&mut s, c),
         FrontResponse::TaskBoard(b) => render_task_board(&mut s, b),
         FrontResponse::Accounts { accounts } => {
-            s.push_str(
-                &accounts.iter().map(|a| format!("{}\t{}\t판 {}\n", a.name, a.harness, a.version)).collect::<String>(),
-            );
+            for a in accounts {
+                let _ = write!(s, "{}\t{}\t판 {}", a.name, a.harness, a.version);
+                // 1.78 host는 메일·plan·인증일(UTC 날짜)·상태를 준다. 옛 host는 셋째 칸까지다
+                if let Some(h) = a.health {
+                    let day = |ms: Option<u64>| ms.map(|ms| aaa_common::util::utc_text(ms)[..10].to_string());
+                    let state = match h {
+                        aaa_proto::AccountHealth::Ok => "정상".to_string(),
+                        aaa_proto::AccountHealth::Expiring => {
+                            format!("곧 만료({})", day(a.expires_ms).unwrap_or_default())
+                        }
+                        aaa_proto::AccountHealth::Expired => "끊김(만료)".into(),
+                        aaa_proto::AccountHealth::Rejected => "끊김(갱신 거부)".into(),
+                    };
+                    let _ = write!(
+                        s,
+                        "\t{}\t{}\t최초 {}\t최근 {}\t{state}",
+                        a.email.as_deref().unwrap_or("메일 모름"),
+                        a.plan.as_deref().unwrap_or("-"),
+                        day(a.first_auth_ms).as_deref().unwrap_or("모름"),
+                        day(a.last_auth_ms).as_deref().unwrap_or("모름"),
+                    );
+                }
+                s.push('\n');
+            }
         }
         FrontResponse::AccountDefaults { defaults } => {
             for harness in ["claude", "codex"] {
@@ -4273,9 +4305,22 @@ fn render_front(r: &FrontResponse) -> String {
         FrontResponse::AccountLogin { login } => {
             let _ = writeln!(s, "{}\t{}\t{}\t{}", login.id, login.account, login.harness, login.state);
             if login.state == "waiting" {
+                if let Some(e) = &login.expect_email {
+                    let _ = writeln!(s, "이 메일로 로그인한다: {e}");
+                }
                 let _ = writeln!(
                     s,
                     "로그인 완료 대기 중이다(브라우저 열림을 보증하지 않는다). 상태: aaa account login-status {}",
+                    login.id
+                );
+            }
+            if login.state == "mismatch" {
+                let _ = writeln!(
+                    s,
+                    "기록된 메일({})과 다른 메일({})로 로그인했다. 옛 인증은 그대로다.\n바꾸기: aaa account login-confirm {} --switch\n그대로 두기: aaa account login-confirm {} --keep",
+                    login.expect_email.as_deref().unwrap_or("모름"),
+                    login.email.as_deref().unwrap_or("모름"),
+                    login.id,
                     login.id
                 );
             }
