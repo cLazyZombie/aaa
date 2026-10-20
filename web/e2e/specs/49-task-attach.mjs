@@ -50,6 +50,13 @@ async function pasteOn(p, selector, files, text) {
   );
 }
 const png = (bytes, name = "image.png") => ({ bytes, name, type: "image/png" });
+/** 공유 설정의 테마(모든 기기가 따른다): 밝음·어두움 캡처 */
+async function setTheme(page, scheme) {
+  const d = await openSettings(page, "모양");
+  await d.getByRole("group", { name: "테마" }).getByRole("button", { name: scheme === "light" ? "밝게" : "어둡게" }).click();
+  await page.keyboard.press("Escape");
+  await domIs(page, `테마 ${scheme}`, (s) => document.documentElement.dataset.theme === s, scheme);
+}
 /** 그림이 실제로 그려졌다(host가 준 바이트를 브라우저가 풀었다) */
 const thumbsDrawn = (p, n) =>
   domIs(p, `썸네일 ${n}개 그려짐`, (n) => [...document.querySelectorAll('[data-testid="task-attach-item"] img')].filter((i) => i.complete && i.naturalWidth > 0).length === n, n);
@@ -247,7 +254,14 @@ export default async function ({ page }) {
 
   await step("휴대폰·패드(밝음·어두움): 상세 시트의 붙여넣기 칸을 길게 눌러 붙인 그림이 바로 첨부되고, 문서를 눌러 연다", async () => {
     for (const [kind, scheme] of [["iphone", "light"], ["iphone", "dark"], ["ipad", "light"], ["ipad", "dark"]]) {
+      await setTheme(page, scheme);
+      if (kind === "iphone" && scheme === "light") {
+        await pick(page, "계획 반영");
+        await page.getByTestId("task-attach").scrollIntoViewIfNeeded();
+        await shot(page, "attach-desktop-light-docs");
+      }
       const { page: p } = await pairDevice(browser, aaa("web", "pair").code, kind, { hash: "#tasks", colorScheme: scheme });
+      await domIs(p, `테마 ${scheme}`, (s) => document.documentElement.dataset.theme === s, scheme);
       await shaIs(p, sha(read()));
       await shot(p, `attach-${kind}-${scheme}-list`);
       await pick(p, "폰에서 붙이기");

@@ -688,19 +688,6 @@ function TaskForm(props: DetailProps) {
           <textarea ref={notesInput} className="input task-notes-input" value={memoText(draft.notes)} disabled={busy} rows={5} onChange={(e) => { const text = e.target.value; setDraft((d) => ({ ...d, notes: withMemoText(d.notes, text) })); }} onPaste={pasteIntoNotes} aria-label="메모" data-testid="task-field-notes" placeholder={canAttach ? "여러 줄 Markdown. 그림·문서를 붙여 넣으면 아래 첨부에 붙는다" : "여러 줄 Markdown. thread로 맡길 때 할 일 끝에 붙는다"} />
         )}
       </div>
-      <TaskAttachments
-        project={board.project}
-        notes={draft.notes}
-        saved={base ? base.notes.join("\n") : ""}
-        canEdit={canAttach}
-        busy={busy}
-        pending={pending}
-        onFiles={(files) => void attachFiles(files)}
-        onLink={canAttach ? (a) => attach([a]) : undefined}
-        onRemove={(a) => removeFile(a.target)}
-        onOpen={onOpenAttachment}
-        onCover={props.onCover}
-      />
       {error && (
         <p className="task-form-error" role="alert" data-testid="task-form-error">
           {error}
@@ -739,6 +726,19 @@ function TaskForm(props: DetailProps) {
           </button>
         )}
       </div>
+      <TaskAttachments
+        project={board.project}
+        notes={draft.notes}
+        saved={base ? base.notes.join("\n") : ""}
+        canEdit={canAttach}
+        busy={busy}
+        pending={pending}
+        onFiles={(files) => void attachFiles(files)}
+        onLink={canAttach ? (a) => attach([a]) : undefined}
+        onRemove={(a) => removeFile(a.target)}
+        onOpen={onOpenAttachment}
+        onCover={props.onCover}
+      />
       {t && (
         <>
           <section className="task-detail-section">

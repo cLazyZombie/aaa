@@ -457,7 +457,7 @@ export function withoutAttachments(notes: string): string {
 /** 메모에 적을 첨부 줄. 제목의 `[`·`]`·줄바꿈은 줄 꼴을 깨므로 바꾼다 */
 export function attachmentLine(a: TaskAttachment): string {
   if (a.kind === "image") return `![그림](${a.target})`;
-  const label = a.label.replace(/[[\]\n\r]+/g, " ").trim() || a.target;
+  const label = a.label.replace(/[[\]\s]+/g, " ").trim() || a.target;
   return `[${label}](${a.target})`;
 }
 
