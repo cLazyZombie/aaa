@@ -69,6 +69,11 @@ async function openAndClose(p, link, name, how, shotName) {
   const vp = p.viewportSize();
   if (!box || box.y < 0 || box.x < 0 || box.x + box.width > vp.width + 1 || box.y + box.height > vp.height || box.width < 44 || box.height < 44)
     throw new Error(`${name}: 닫기 단추 자리·크기 ${JSON.stringify(box)} (화면 ${vp.width}×${vp.height}, 44px 이상)`);
+  // 손가락(coarse)이면 머리 단추 모두 44px 이상(herdr/FileViewer.css 규칙이 primitives.css에 밀리지 않게)
+  const small = await viewer.evaluate((el) => matchMedia("(pointer: coarse)").matches
+    ? [...el.querySelectorAll(".file-viewer-header .file-viewer-action")].map((b) => b.getBoundingClientRect()).filter((r) => r.width < 44 || r.height < 44).map((r) => r.width)
+    : []);
+  if (small.length) throw new Error(`${name}: 44px보다 작은 머리 단추 ${JSON.stringify(small)}`);
   if (shotName) await shot(p, shotName);
   if (how === "close") await close.click();
   else await p.evaluate(() => history.back());

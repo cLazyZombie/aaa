@@ -937,7 +937,10 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
   // 길이 없다(Safari 새 탭은 뒤로 칸이 없고, 홈 화면 앱은 뒤로 단추가 없다). 보고서는 파일 보기의 기록 한 칸이라 닫기·뒤로·가장자리
   // 쓸기가 대화로 돌아오고, 대화는 그 밑에 그대로 있어 같은 pane·같은 굴림 자리다. 넓은 창은 새 탭 습관 그대로다
   const homeScreenApp = useMediaQuery("(display-mode: standalone)") || (navigator as { standalone?: boolean }).standalone === true;
-  const openLink = (href: string): boolean => {
+  // 대화의 Markdown이 매 그리기마다 새 문맥 값을 받지 않게 ref로 읽는다(FileViewer onOpenRef와 같다)
+  const openLinkRef = useRef<(href: string) => boolean>(() => false);
+  const openLink = useCallback((href: string) => openLinkRef.current(href), []);
+  openLinkRef.current = (href: string): boolean => {
     if (wideScreen && !homeScreenApp) return false;
     const link = inAppLink(href, location.origin);
     if (link === null) return false;
