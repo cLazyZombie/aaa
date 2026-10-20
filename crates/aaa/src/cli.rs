@@ -35,6 +35,8 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Cmd {
+    /// 설치를 읽기 탐지하고 계획한다. I1은 --dry-run만 지원한다
+    Install(Box<crate::install::Args>),
     /// harness 전역 연동을 설치하거나 제거한다(기존 사용자 hook은 보존)
     Integration {
         #[command(subcommand)]
@@ -1565,17 +1567,35 @@ fn mission_work(m: &aaa_proto::MissionView) -> String {
 }
 
 pub fn main() -> ExitCode {
+    let install_output = crate::install::requested_output();
     let cli = match with_cli_stack(|| {
         let version: &'static str =
             Box::leak(aaa_common::util::software().trim_start_matches("aaa ").to_string().into_boxed_str());
-        Cli::from_arg_matches(&Cli::command().version(version).get_matches()).unwrap()
+        Cli::command().version(version).try_get_matches().and_then(|m| Cli::from_arg_matches(&m))
     }) {
-        Ok(cli) => cli,
+        Ok(Ok(cli)) => cli,
+        Ok(Err(e)) => {
+            if !matches!(e.kind(), clap::error::ErrorKind::DisplayHelp | clap::error::ErrorKind::DisplayVersion)
+                && let Some((json, stream)) = install_output
+            {
+                return crate::install::emit(aaa_proto::install::InstallResult::invalid(), json, stream);
+            }
+            e.exit()
+        }
         Err(e) => {
             eprintln!("aaa: 명령줄 해석 thread를 시작하지 못했다: {e}");
             return ExitCode::FAILURE;
         }
     };
+    if let Cmd::Install(args) = &cli.cmd {
+        return crate::install::run(
+            args,
+            cli.json,
+            cli.instance.as_deref(),
+            cli.config_dir.as_deref(),
+            cli.state_dir.as_deref(),
+        );
+    }
     if let Some(name) = &cli.instance {
         // 하위 프로세스(session host·pane 안 CLI·launchd가 띄운 aaa)도 같은 인스턴스를 본다
         unsafe { std::env::set_var("AAA_INSTANCE", name) };
@@ -1621,6 +1641,7 @@ fn runtime() -> Result<tokio::runtime::Runtime> {
 fn run(cli: Cli) -> Result<ExitCode> {
     let json = cli.json;
     match cli.cmd {
+        Cmd::Install(_) => unreachable!("install은 환경 변경 전에 처리한다"),
         Cmd::Host => {
             init_log("info");
             aaa_common::resource::raise_nofile_limit("host");

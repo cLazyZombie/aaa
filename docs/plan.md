@@ -5946,3 +5946,12 @@ L4 후속(10-20 00시 사용자 관찰): 멈춤 상태의 후보 예약과 재�
 - **hash/안전.** 같은 실효 선택·같은 탐지 context는 재귀 key 정렬 compact UTF-8 JSON의 같은 SHA-256을 만든다. role·경로·공개 port·binary·요청 계정·실효 설정 hash를 묶고 yes/dry-run/출력 모드는 제외한다. 승인서 schema를 읽는 것은 권한 검증이 아니다. W0/기존 사람 전용 명령을 열지 않고 서명·발급자 pin·만료/nonce·일회 grant·worker는 I6에서 구현한다. dry-run은 암호 입력을 요구하지 않는다.
 - **참고/차이.** herdr OS/arch/checksum·사용자 bin, herdr-projects 소유 journal/동시 편집 보존, herdr-web-ui 기존 Serve 보존, t3code 데이터 보존 제거·서비스 진단을 읽었다. 자동 재시도/외부 설치기/PATH 자동 덮어쓰기는 채택하지 않으며 Windows SCM/Linux system unit은 확정 결정을 따른다.
 - **시험.** 순수 선택/필수값/상충·OS 서비스·한국어 Windows 경로·안전 env/비밀 원문 비노출·입력 모드·고정 canonical plan/hash를 검사한다. schema/TS drift와 공개/비공개 fixture·status/exit를 검사한다. 보안/hash owner 결함 주입 RED 후 bytes 복원과 GREEN을 보존한다. 공식 ci-local·deps·check-public을 실행하고 결과는 thread report/library에 남긴다. 운영 설정·서비스·launchd·계정·키체인은 변경하지 않는다.
+
+### 8.315 aaa install I1 읽기 탐지·계획(10-20, t-0485)
+
+- **범위.** I0(§8.312)의 공통 DTO/순수 검증/hash를 실제 install CLI에 연결한다. 환경 변경 전에 install을 처리하며 JSON/NDJSON 문법 오류도 입력 원문 없이 고정 code로 반환한다. FRONT_API/AGENT_LINK/schema는 변경하지 않는다. 적용·재개·조회·마법사는 단계 미지원으로 명시한다.
+- **읽기.** 현지 OS/arch·UID/Windows SID·현재/선택 binary SHA·실효 base/local 설정과 관련 파일 hash, 정규화 경로/mount·여유 공간, repo/harness/profile·기존 설치 충돌을 읽는다. root 체크는 읽기 helper만 사용하고 기존 CLI check/probe/init에 위임하지 않는다. missing mount에 대체 폴더를 만들지 않는다. 같은 shared binary는 보존하고 출처/내용이 다른 binary는 충돌이다.
+- **관찰 한계.** 서비스 ready·연결·등록/승인·pairing·실제 쓰기 probe는 not_run, 관찰하지 않은 ACL/안정 volume ID/소유권·원격 repo·harness 인증/판은 unknown이다. harness는 --version도 실행하지 않는다. 계획이 설치 완료/unchanged를 뜻하지 않는다. I2의 receipt/소유 대조, OS별 실제 관리자 검증, I6의 질문/승인과 구분한다.
+- **profile/비밀.** 새 profile-file은 기존 host schema/[profiles]와 공통 profile 검증을 쓰며 secret env·shell/custom·command override를 거부한다. 기존 설정과 타 profile은 보존 대상으로 읽고 private hash에만 묶는다. stdout/stderr/stream에 TOML·OS/Git 오류·argv·경로·계정·pin/인증 원문을 복사하지 않는다.
+- **참고/차이.** herdr의 OS/arch/checksum·사용자 bin, herdr-projects의 기존 설정 보존, herdr-web-ui의 기존 Serve 충돌, t3code의 데이터 보존·서비스 진단을 따른다. 외부 설치기/자동 fallback·clone·hook trust/PATH 변경은 연결하지 않는다. 자세한 현재 범위는 install-contract.md I1 절이다.
+- **시험.** 실제 CLI owner가 JSON/NDJSON/exit·fake secret 비노출·전후 파일 snapshot·local override/hash·실제 mount/repo·선택 파일/harness 무실행·profile 경계를 소유한다. mkdir/argv leak/context hash 무시/profile guard 제거/harness --version 실행 변형 RED와 bytes 복원 GREEN을 보존한다. macOS gate와 Windows cross-check를 실제 Windows/Linux 실행 증거로 바꾸어 쓰지 않는다.

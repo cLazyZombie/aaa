@@ -1,9 +1,9 @@
 # aaa install 공통 계약 v1
 
-I0(t-0485)의 정본이다. `aaa.install.v1`은 CLI 설치 계약이며 FRONT_API/AGENT_LINK와 독립이다.
-현재 단계는 **공유 타입·순수 선택 검증·계획 hash·schema fixture**까지다. `aaa install` 진입점과 탐지는 I1,
-파일 적용·재개는 I2, 실제 감독자는 macOS → Windows → Linux, 대화형/승인 executor는 I6에서 연결한다.
-아래 명령은 완성된 설치 명령의 계약이며 I0에서 실행 가능한 명령이 아니다.
+I0/I1(t-0485)의 정본이다. `aaa.install.v1`은 CLI 설치 계약이며 FRONT_API/AGENT_LINK와 독립이다.
+I1은 **공유 검증·읽기 탐지·계획 hash·dry-run CLI**까지다. 파일 적용·재개는 I2,
+실제 감독자는 macOS → Windows → Linux, 대화형/승인 executor는 I6에서 연결한다.
+아래 전체 계약 중 현재 실행 가능한 범위와 미지원 결과는 끝의 I1 절에 구분한다.
 
 ## 두 기획의 차이와 채택 기준
 
@@ -156,3 +156,39 @@ Rust 타입 → JSON schema/TS를 생성하고 drift를 시험한다. role·조�
 JSON Schema는 shape, enum, 알려진 key를 검사하는 도구이며 실제 권한/서명/OS 지원을 증명하지 않는다.
 새 계약/보안 시험은 해당 owner에 결함을 심어 RED, 원본 복원 뒤 GREEN을 남긴다.
 I3 진입 전 실제 LaunchAgent 시험에 필요한 깨끗한 계정/GUI/권한을 보고하고 운영 설정에는 손대지 않는다.
+
+## I1에서 실행 가능한 범위
+
+자동화/세션 안에서는 `--dry-run --json` 또는 `--dry-run --json-stream`으로 읽기 계획을 얻는다.
+`--json`은 결과 하나, stream은 현재 계획의 최종 result 한 줄(seq=1)을 flush한다. 적용 사건·설치 ID를 만들지 않는다.
+
+```sh
+aaa install --role agent --name mac-a --host example.ts.net:7430 \
+  --network direct --enroll skip --work-root /work/aaa --work-storage internal \
+  --harness none --service none --start deferred --dry-run --json
+```
+
+- 누락/상충/문법/잘못된 설정은 exit 2, 현지 OS/arch·binary 형식 불일치/미지원 기능은 5,
+  기존 설치 fresh·다른 내용의 target binary·Serve port 충돌은 4다. 없는 harness는 needs_user/3이다.
+  하위 clap·TOML·OS·Git 원문은 stdout/stderr/JSON에 복사하지 않는다. 전역 instance 오류도 같은 envelope다.
+- 현재 실행 binary를 SHA-256하고 요청 UID/Windows SID와 정규화 경로를 묶는다. from은 SHA/형식만 읽고 실행하지 않는다.
+  from의 판은 unknown이며 result.version=null이다. 현재 판 외 release 조회/받기는 지원하지 않아 exit 5다.
+- 기본/local TOML은 기존 loader로 읽고 실효값과 관련 파일 내용 hash를 private context에 넣는다.
+  기존 min-free-gb는 명시 override가 없으면 보존한다. 내용 변경도 계획을 무효화하므로 주석 변경에 hash가 달라질 수 있다.
+  binary 공유 위치의 같은 내용은 보존하고 다른 내용은 소유 증명/갱신 절차 전까지 충돌로 둔다.
+- 존재하는 조상부터 실제 경로·mount를 확인한다. 빠진 mount 자리의 일반 폴더와 볼륨 밖 symlink를 통과시키지 않는다.
+  Mac /Volumes 선택에는 명시 mount가 필요하다. 없는 작업 root/config/state를 만들지 않으며 lock/probe/기록도 만들지 않는다.
+  여유 공간·Unix access만 사전 관찰한다. Windows ACL 쓰기 가능성, 안정 volume UUID, root 소유권은 unknown이다.
+  device/volume serial 관찰은 계획 hash에 묶지만 적용 직전 안정 신원 재검사를 대신하지 않는다.
+- repo는 Git rev-parse를 고정 argv·fsmonitor 비활성·optional lock 없음·상한으로 읽는다. clone·checkout·trust 설정을 하지 않는다.
+  remote repo, 실제 포트 bind, 서비스 ready/연결/등록/pairing/승인, harness 판·로그인·hook 신뢰는 관찰 범위에 따라 unknown/not_run이다.
+  harness는 실행 권한/경로/내용만 읽는다. --version/로그인 명령도 설정을 만들 수 있어 dry-run에서 실행하지 않는다.
+- profile-file은 `schema = 1`과 `[profiles.<이름>]`만 있는 host TOML이다. 기존 profile 검증을 공유하고
+  새 import는 claude/codex·model/effort/args와 LANG/LC_ALL/LC_CTYPE/TZ/TERM만 허용한다.
+  secret env·shell/custom·command override는 거부한다. 실행 경로는 typed claude-path/codex-path로 고른다.
+  기존 사용자의 다른 profile은 읽어 hash에 묶고 보존한다. 허용 범위 확대는 적용 승인 전까지 실행하지 않는다.
+- I1의 planned는 읽기 계획 성공이다. configured/completed/unchanged, 실제 연결/서비스 정상 또는 세 OS 실행 검증 완료를 뜻하지 않는다.
+  기존 완료 receipt/소유 증명과 unchanged는 I2가 실물을 대조한 뒤 제공한다. repair/reinstall도 I1에서는 계획뿐이다.
+- apply·resume·status는 각각 install_apply_not_available/install_resume_not_available(exit 5)로 거부한다.
+  마법사는 아직 없어 기본 비TTY 무인자는 non_interactive_required/2다. dry-run+events-file은 2로 거부한다.
+  승인 파일/암호 stdin/handle을 소비하거나 OS 권한을 올리지 않는다. `--yes`로 이 경계를 열 수 없다.
