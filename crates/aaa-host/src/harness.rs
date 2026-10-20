@@ -1677,7 +1677,12 @@ mod tests {
             .call(
                 crate::DeviceRole::Reader,
                 "test",
-                FrontRequest::PaneChat { pane: "s".into(), thinking: false, before: Some("older".into()) },
+                FrontRequest::PaneChat {
+                    pane: "s".into(),
+                    thinking: false,
+                    compact: false,
+                    before: Some("older".into()),
+                },
             )
             .await
             .unwrap_err();
@@ -1690,12 +1695,14 @@ mod tests {
                 (Some("boundary"), None, Some("file"), "첫 쪽"),
                 (None, Some("grown-boundary"), Some("file"), "파일이 자람"),
             ] {
-                let LinkMsg::Req { id, body: AgentRequest::Chat { before, harness, .. }, .. } =
+                let LinkMsg::Req { id, body: AgentRequest::Chat { before, harness, compact, .. }, .. } =
                     rx.control::<LinkMsg>().await.unwrap()
                 else {
                     panic!("chat 요청이 아니다")
                 };
                 assert_eq!(harness, "codex");
+                // 정리된 자리는 그것을 청한 front에만 싣는다(옛 front는 모르는 role로 답을 읽지 못한다)
+                assert!(compact);
                 assert_eq!(before.as_deref(), asked);
                 let reply = AgentResponse::Chat {
                     messages: vec![ChatMessage {
@@ -1728,7 +1735,12 @@ mod tests {
                 .call(
                     crate::DeviceRole::Reader,
                     "test",
-                    FrontRequest::PaneChat { pane: "s".into(), thinking: false, before: before.map(str::to_string) },
+                    FrontRequest::PaneChat {
+                        pane: "s".into(),
+                        thinking: false,
+                        compact: true,
+                        before: before.map(str::to_string),
+                    },
                 )
                 .await
                 .unwrap();

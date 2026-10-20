@@ -40,7 +40,7 @@ import "./herdr/Composer.css";
 import { composerDrafts } from "./herdr/composerDraft.ts";
 import { caretOnVisualEdge, recallEntries, recallStep, type RecallPosition } from "./composerRecall";
 import { hiddenNote, HIDDEN_ONLY, stripHidden } from "./hiddenChars";
-import { messageQueues } from "./herdr/messageQueue.ts";
+import { compactionStep, composerOpenIn, messageQueues, openComposer, TAB_ID } from "./herdr/messageQueue.ts";
 import { holdPageRef } from "./pageHold";
 import { quickReplyButtons } from "./preferences";
 import { useChatShared, useTerminalToggle } from "./settings";
@@ -361,9 +361,7 @@ export function ChatComposer({
     if (f.source === "box") { clearAttachments(f.attachments); pasted.current = false; }
   };
   /** 정리 뒤 차례대로 보낼 글의 표지를 모두 뗀다: 이제 사람이 보낸다 */
-  const releaseCompactionHolds = (): void => {
-    for (const m of messageQueues.read(owner)) if (m.after === "compaction") messageQueues.release(owner, m.id);
-  };
+  const releaseCompactionHolds = (): void => messageQueues.release(owner);
   /** 가지 않았거나 갔는지 모른다: 글을 입력창(대기 메시지는 그 칸)에 돌려놓고 까닭을 말한다 */
   const fail = (f: Flight, note: Note, method: InputReceiptMethod = "unknown"): void => {
     if (!finish(f)) return;
@@ -638,16 +636,26 @@ export function ChatComposer({
   };
   // 정리가 끝났다: 정리 중에 붙잡은 글을 차례대로 보낸다(plan §8.306). 앞 글이 보내져야 다음 글이다(입력창 잠금과 같은 한 줄 비행).
   // 질문 중이면 답한 뒤, 끊겼으면 다시 붙은 뒤에 보낸다. 작업 중이고 「대기 메시지 자동 전송」을 껐으면 그 설정대로 보통 붙잡은 글로 둔다.
-  // 이 기기 보관함은 localStorage라 정리 중에 앱을 닫았어도 다시 열 때 보낸다
+  // 이 기기 보관함은 localStorage라 정리 중에 앱을 닫았어도 다시 열 때 보낸다. 같은 브라우저의 탭이 함께 보므로 글을 넣은 탭만 보내고,
+  // 그 탭에 이 pane 입력창이 없으면(닫힘·새로고침·다른 pane) 물어본 뒤 넘겨받는다: 두 탭이 같은 글을 보내지 않는다
+  useEffect(() => openComposer(owner), [owner]);
   useEffect(() => {
     if (compacting || !connected || asking || flight !== null) return;
-    const next = queued.find((m) => m.after === "compaction" && !messageQueues.isSending(m.id));
-    if (!next) return;
-    if (working && !autoSendQueued) {
+    const step = compactionStep(queued, (id) => messageQueues.isSending(id), TAB_ID, working && !autoSendQueued);
+    if (step === null) return;
+    if (step === "release") {
       releaseCompactionHolds();
       return;
     }
-    sendQueued(next.id, next.text);
+    if ("send" in step) {
+      sendQueued(step.send.id, step.send.text);
+      return;
+    }
+    let live = true;
+    void composerOpenIn(step.adopt, owner).then((open) => {
+      if (live && !open) messageQueues.adopt(owner, step.adopt);
+    });
+    return () => { live = false; };
   }, [compacting, connected, asking, flight, queued, working, autoSendQueued]);
 
   const placeholder = connected

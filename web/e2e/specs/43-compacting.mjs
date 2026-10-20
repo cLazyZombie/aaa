@@ -68,7 +68,8 @@ const bytes = () => fs.readFileSync(`${directory}/${LABEL}.bytes`, "utf8");
 /** 기록에 적힌 사람 말(차례대로, 정리 요약 빼고) */
 const said = () => fs.readFileSync(transcript, "utf8").trim().split("\n").map((l) => JSON.parse(l)).filter((r) => r.type === "user" && !r.isCompactSummary).map((r) => r.message.content);
 /** 대화 보기의 줄: 사람 말은 글, 정리된 자리는 「정리됨」 */
-const rows = (p) => p.evaluate(() => [...document.querySelectorAll('[data-role="user"], [data-role="compact"]')].map((el) => el.dataset.role === "compact" ? "정리됨" : el.textContent.trim()));
+const rowsOf = () => [...document.querySelectorAll('[data-role="user"], [data-role="compact"]')].map((el) => el.dataset.role === "compact" ? "정리됨" : el.textContent.trim());
+const rows = (p) => p.evaluate(rowsOf);
 
 /** 상단 상태 표지(AgentChip)가 정리 중인가·대화 끝 줄이 있는가 */
 const shows = (p) => p.evaluate(() => ({
@@ -174,13 +175,55 @@ export default async function ({ page }) {
     await domIs(page, "보관함이 비고 정리 줄이 사라짐", () => !document.querySelector('[data-testid="chat-queue"]') && !document.querySelector('[data-testid="chat-compacting"]'));
     assert.ok(bytes().slice(before.length).includes("정리 뒤 첫째"), "정리가 끝난 뒤 pane이 받았다");
     // 끝난 정리는 그 자리에 「대화 정리됨」 구분선으로 남고(herdr-web-ui chat-compact), 누르면 요약을 펼친다
-    await domIs(page, "정리된 자리 둘", () => document.querySelectorAll('[data-role="compact"]').length === 2);
-    assert.deepEqual(await rows(page), ["정리됨", "작업 중 추가", "정리됨", "정리 뒤 첫째", "정리 뒤 둘째"]);
+    // 기록을 다시 읽어 마지막 사람 말까지 그려질 때까지 기다린다(보관함은 전달 확인에 비고, 기록은 그 뒤에 읽는다)
+    const expected = ["정리됨", "작업 중 추가", "정리됨", "정리 뒤 첫째", "정리 뒤 둘째"];
+    await domIs(page, "정리된 자리 둘과 사람 말", `(want) => JSON.stringify((${rowsOf})()) === JSON.stringify(want)`, expected)
+      .catch(async (e) => { throw new Error(`${e.message}: ${JSON.stringify(await rows(page))}`); });
     const divider = page.locator('[data-role="compact"]').last();
     assert.equal((await divider.locator("summary").textContent()).trim(), "대화 정리됨");
     await divider.locator("summary").click();
     await domIs(page, "요약 펼침", () => [...document.querySelectorAll('[data-role="compact"]')].at(-1)?.open === true);
     assert.match(await divider.locator(".chat-compact-text").textContent(), /앞 대화를 줄였다/);
     await shot(page, "43-after-compacting-desktop");
+  });
+  await step("같은 브라우저의 탭 둘(보관함 localStorage를 함께 본다): 정리 뒤 글은 넣은 탭만 한 번 보내고, 넣은 탭을 닫았으면 남은 탭이 넘겨받아 한 번 보낸다", async () => {
+    const other = await page.context().newPage();
+    try {
+      await other.goto(page.url());
+      await openChat(other);
+      const heldIn = (p, n) => domIs(p, `보관함 ${n}`, (want) => document.querySelectorAll('[data-testid="chat-queue"] li[data-after="compaction"]').length === want, n);
+      const emptyIn = (p) => domIs(p, "보관함 빔", () => !document.querySelector('[data-testid="chat-queue"]'));
+      // 두 탭이 함께 보내면 두 붙여 넣기가 한 사람 말로 붙거나(「두 탭 하나두 탭 하나」) 둘이 된다: 그 글을 품은 말이 꼭 하나다
+      const containing = (text) => said().filter((t) => t.includes(text));
+      await key("f5", "compacting");
+      for (const p of [page, other]) await domIs(p, "정리 중 표지", () => document.querySelector('[data-testid="agent-chip"]')?.dataset.compacting === "true");
+      const box = (p) => p.getByTestId("chat-composer").getByRole("textbox", { name: "메시지" });
+      await box(page).fill("두 탭 하나");
+      await box(page).press("Enter");
+      await heldIn(other, 1);
+      await key("f6", "idle");
+      await until("정리 뒤 글이 기록에", () => containing("두 탭 하나").length > 0);
+      assert.deepEqual(containing("두 탭 하나"), ["두 탭 하나"]);
+      for (const p of [page, other]) await emptyIn(p);
+      // 다른 탭이 같은 글을 보내고 있었다면 그 탭의 다음 글보다 먼저 간다(입력창은 앞 글이 보내질 때까지 잠긴다)
+      await box(other).fill("두 탭 확인");
+      await box(other).press("Enter");
+      await until("다른 탭의 다음 글", () => said().includes("두 탭 확인"));
+      assert.deepEqual(containing("두 탭 하나"), ["두 탭 하나"]);
+
+      // 넣은 탭을 닫았다: 남은 탭이 그 탭에 입력창이 없음을 확인하고 넘겨받는다
+      await key("f5", "compacting");
+      for (const p of [page, other]) await domIs(p, "정리 중 표지", () => document.querySelector('[data-testid="agent-chip"]')?.dataset.compacting === "true");
+      await box(other).fill("닫힌 탭 글");
+      await box(other).press("Enter");
+      await heldIn(page, 1);
+      await other.close();
+      await key("f6", "idle");
+      await until("넘겨받은 글이 기록에", () => containing("닫힌 탭 글").length > 0);
+      await emptyIn(page);
+      assert.deepEqual(containing("닫힌 탭 글"), ["닫힌 탭 글"]);
+    } finally {
+      if (!other.isClosed()) await other.close();
+    }
   });
 }

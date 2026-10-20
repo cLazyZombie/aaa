@@ -327,9 +327,12 @@ fn compaction(harness: &str, v: &Value) -> Option<ChatMessage> {
         "codex" if v["type"] == "compacted" => v["payload"]["message"].as_str().unwrap_or("").to_string(),
         "claude" if v["isCompactSummary"] == true && v["type"] == "user" => match &v["message"]["content"] {
             Value::String(s) => s.clone(),
-            Value::Array(blocks) => {
-                blocks.iter().filter(|b| b["type"] == "text").filter_map(|b| b["text"].as_str()).collect::<Vec<_>>().join("\n")
-            }
+            Value::Array(blocks) => blocks
+                .iter()
+                .filter(|b| b["type"] == "text")
+                .filter_map(|b| b["text"].as_str())
+                .collect::<Vec<_>>()
+                .join("\n"),
             _ => String::new(),
         },
         _ => return None,
@@ -624,22 +627,29 @@ mod tests {
         .unwrap();
         let roles = |compact| -> Vec<(ChatRole, String)> {
             pages::read(&path, None, |v| line("claude", v, false, compact))
-            .unwrap()
-            .messages
-            .into_iter()
-            .map(|m| (m.role, m.text))
-            .collect()
+                .unwrap()
+                .messages
+                .into_iter()
+                .map(|m| (m.role, m.text))
+                .collect()
         };
         assert_eq!(
             roles(true),
-            [(ChatRole::User, "앞 질문".into()), (ChatRole::Compact, summary.into()), (ChatRole::User, "뒤 질문".into())]
+            [
+                (ChatRole::User, "앞 질문".into()),
+                (ChatRole::Compact, summary.into()),
+                (ChatRole::User, "뒤 질문".into())
+            ]
         );
         assert_eq!(roles(false), [(ChatRole::User, "앞 질문".into()), (ChatRole::User, "뒤 질문".into())]);
         let codex = serde_json::json!({"type":"compacted","payload":{"message":"","replacement_history":[{"type":"message","role":"user"}]}});
         let m = compaction("codex", &codex).unwrap();
         assert_eq!((m.role, m.text.as_str(), m.receipt.is_none()), (ChatRole::Compact, "", true));
         assert!(compaction("claude", &codex).is_none());
-        assert!(compaction("codex", &serde_json::json!({"type":"user","isCompactSummary":true,"message":{"content":"x"}})).is_none());
+        assert!(
+            compaction("codex", &serde_json::json!({"type":"user","isCompactSummary":true,"message":{"content":"x"}}))
+                .is_none()
+        );
         std::fs::remove_dir_all(&root).unwrap();
     }
 }

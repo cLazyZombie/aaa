@@ -1476,6 +1476,10 @@ pub enum FrontRequest {
         /// 생각도 싣는다(웹 설정 「생각 표시」, plan §8.129)
         #[serde(default)]
         thinking: bool,
+        /// 정리된 자리(`ChatRole::Compact`, plan §8.306, 1.60)도 싣는다. 옛 front는 생략해 그 줄을 받지 않는다(모르는 role로 답 전체를
+        /// 읽지 못하므로)
+        #[serde(default)]
+        compact: bool,
         /// 이전 응답의 before. 생략하면 최신 쪽, 옛 상대는 무시한다.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         #[ts(optional)]
@@ -2979,7 +2983,9 @@ mod tests {
             !FrontRequest::ThreadRead { project: project.clone(), thread: thread.clone(), lines: None }.needs_control()
         );
         assert!(FrontRequest::ThreadKeys { project, thread, keys: vec!["enter".into()], text: None }.needs_control());
-        assert!(!FrontRequest::PaneChat { pane: "p".into(), thinking: false, before: None }.needs_control());
+        assert!(
+            !FrontRequest::PaneChat { pane: "p".into(), thinking: false, compact: true, before: None }.needs_control()
+        );
         // 파일 보기는 조작 기기만(herdr-web-ui도 보기 전용 기기는 fs/ 403)
         assert!(FrontRequest::PaneFile { pane: "p".into(), path: "a.txt".into() }.needs_control());
         // diff는 소스를 보인다: 보기 기기는 못 받는다(plan §8.305)
@@ -3104,8 +3110,9 @@ mod tests {
         }
         let old = r#"{"op":"pane_chat","pane":"p","thinking":false}"#;
         let request: FrontRequest = serde_json::from_str(old).unwrap();
-        assert!(matches!(request, FrontRequest::PaneChat { before: None, .. }));
-        let new = FrontRequest::PaneChat { pane: "p".into(), thinking: true, before: Some("cursor".into()) };
+        assert!(matches!(request, FrontRequest::PaneChat { before: None, compact: false, .. }));
+        let new =
+            FrontRequest::PaneChat { pane: "p".into(), thinking: true, compact: true, before: Some("cursor".into()) };
         let OldRequest::PaneChat { pane, thinking } =
             serde_json::from_value(serde_json::to_value(new).unwrap()).unwrap();
         assert_eq!(pane, "p");

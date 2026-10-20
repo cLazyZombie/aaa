@@ -455,7 +455,7 @@ export function ChatPanel({
     setOlderState("idle");
     refresh.setRead(async () => {
       try {
-        const r = await call({ op: "pane_chat", pane, thinking: showThinking });
+        const r = await call({ op: "pane_chat", pane, thinking: showThinking, compact: true });
         if (!alive) return;
         if (r.kind === "chat") {
           // 최신 쪽이 통째로 앞으로 이동했어도 사이 기록을 버리지 않는다(참고 ChatView gap fill).
@@ -465,7 +465,7 @@ export function ChatPanel({
             const known = new Set(held.messages.flatMap((m) => m.id ? [m.id] : []));
             let gap = r;
             while (gap.before && !gap.messages.some((m) => m.id && known.has(m.id))) {
-              const previous = await call({ op: "pane_chat", pane, thinking: showThinking, before: gap.before });
+              const previous = await call({ op: "pane_chat", pane, thinking: showThinking, compact: true, before: gap.before });
               if (!alive || epoch.current !== generation) return;
               if (previous.kind !== "chat" || previous.history !== r.history) break;
               if (previous.before === gap.before) throw new Error("앞 기록 위치가 전진하지 않습니다");
@@ -476,7 +476,7 @@ export function ChatPanel({
           // 앞 쪽을 읽다가 pane을 떠났다면 기억한 row까지 다시 채운 뒤 한 번에 복원한다.
           if (restoring.current && restoreFrom?.rowId.startsWith(`${r.history}:`)) {
             while (newest.before && !newest.messages.some((m) => m.id === restoreFrom.rowId)) {
-              const previous = await call({ op: "pane_chat", pane, thinking: showThinking, before: newest.before });
+              const previous = await call({ op: "pane_chat", pane, thinking: showThinking, compact: true, before: newest.before });
               if (!alive || epoch.current !== generation) return;
               if (previous.kind !== "chat" || previous.history !== r.history) break;
               if (previous.before === newest.before) throw new Error("앞 기록 위치가 전진하지 않습니다");
@@ -522,7 +522,7 @@ export function ChatPanel({
     try {
       const response = await refresh.page(async () => {
         if (epoch.current !== generation) throw new Error("이 대화 읽기는 끝났습니다");
-        return call({ op: "pane_chat", pane, thinking: showThinking, before });
+        return call({ op: "pane_chat", pane, thinking: showThinking, compact: true, before });
       });
       if (epoch.current !== generation) return;
       if (response.kind !== "chat" || !response.history) {

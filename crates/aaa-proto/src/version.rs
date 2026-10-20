@@ -126,9 +126,9 @@ pub const AGENT_LINK: Version = Version { major: 1, minor: 8 };
 // 1.59: `thread_diff`(thread worktree의 바뀐 파일·patch, plan §8.305). 그 머신 agent의 diff.v1이 읽는다. 옛 host는 모르는 요청으로
 // 거절해 웹이 변경 파일 카드를 그리지 않는다.
 // 1.60: 대화 정리 표지(`AgentStatus.compacting`)와 대기 메시지 「지금 보내기」의 정리 중 거절(`SteerRefusal::Compacting`, plan §8.306),
-// 정리된 자리 `ChatRole::Compact`(host가 agent에 `Chat.compact`로 청할 때만).
-// 옛 host는 표지를 보내지 않아 웹이 정리를 모르고 전처럼 보낸다(harness가 정리 뒤 읽는다). 옛 웹은 새 칸을 버리고, 모르는 거절은
-// 「보내지 못했습니다」로 보인다.
+// 정리된 자리 `ChatRole::Compact`(front가 `pane_chat.compact`로 청할 때만, 옛 front는 모르는 role로 답을 읽지 못한다).
+// 옛 host는 표지를 보내지 않아 웹이 정리를 모르고 전처럼 보낸다(harness가 정리 뒤 읽는다). 옛 웹은 새 칸을 버리고, 모르는 거절에는
+// 까닭 글 없는 실패 줄을 그린다(옛 `refusalText`에 기본 갈래가 없다).
 pub const FRONT_API: Version = Version { major: 1, minor: 60 };
 /// agent ↔ session host(내부). 세션이 몇 주 이어질 수 있으므로 이전 session host와 호환해야 한다.
 /// 1.1: `SessionRequest::Detect`(harness 상태 감지 입력). agent는 1.0 session host에 보내지 않고 `Screen`을 쓴다.

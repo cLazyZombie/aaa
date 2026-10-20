@@ -112,27 +112,26 @@ pub fn text_from_screen(lines: &[String], cursor_row: u16) -> String {
     format!("{}\n", rows.join("\n"))
 }
 
-/// 정리 표지를 찾는 범위(화면 끝에서 내용 줄 수). Claude는 표지 아래에 입력 상자·대기 글·상태 줄을 둔다(실측 9줄).
-const COMPACTING_ROWS: usize = 16;
-
 /// 대화 정리(compaction) 중인가(plan §8.306). 참고 herdr의 규칙에는 정리 상태가 없어(정리 중 화면은 작업 중이다) aaa가 더한다.
 /// 표지는 실제 harness 화면이다(`fixtures/*compact*`, 10-20 실측): Claude 2.1.304 spinner 줄
 /// `✽ Compacting conversation… (5s · ↓ 168 tokens)`(manual·auto 같은 글), Codex 0.163 `• Compacting context (4s • esc to interrupt)`.
-/// 줄 맨 앞(Claude spinner 글자, Codex `•`)부터 맞춰 사람 글·답 글(`❯ `·`⏺ `·`› `로 시작)이 흉내 내지 못하게 한다.
+/// 줄 맨 앞(Claude spinner 글자, Codex `•`)부터 맞춰 사람 글·Claude 답 글(`❯ `·`⏺ `·`› `로 시작)이 흉내 내지 못하게 한다. Codex 답 글도
+/// `• `로 시작하므로 Codex는 표지 끝의 「• esc to interrupt)」까지 맞춘다. 화면 전체에서 찾는다: 표지 아래 입력 상자는 초안만큼
+/// 자라고, 정리가 끝나면 표지 줄은 지워진다(`⎿ Compacted`·`• Context compacted`가 남는다).
 /// 화면 표지는 300ms마다 다시 읽는 상태라 끝 신호를 놓치지 않는다: 표지가 사라지면 정리가 끝났다(hook은 쓰지 않는다).
 pub fn compacting(harness: Harness, screen: &str) -> bool {
     use std::sync::LazyLock;
     static CLAUDE: LazyLock<regex::Regex> = LazyLock::new(|| {
-        regex::Regex::new(r"^[\x{002A}\x{00B7}\x{2722}\x{2733}\x{2736}\x{273B}\x{273D}]\s+Compacting conversation…").unwrap()
+        regex::Regex::new(r"^[\x{002A}\x{00B7}\x{2722}\x{2733}\x{2736}\x{273B}\x{273D}]\s+Compacting conversation…")
+            .unwrap()
     });
     static CODEX: LazyLock<regex::Regex> =
-        LazyLock::new(|| regex::Regex::new(r"^•\s+Compacting context \(\d+[smh]").unwrap());
+        LazyLock::new(|| regex::Regex::new(r"^•\s+Compacting context \(\d+[smh][^)]*•\s+esc to interrupt\)").unwrap());
     let marker = match harness {
         Harness::Claude => &*CLAUDE,
         Harness::Codex => &*CODEX,
     };
-    let rows: Vec<&str> = screen.lines().filter(|l| !l.trim().is_empty()).collect();
-    rows[rows.len().saturating_sub(COMPACTING_ROWS)..].iter().any(|l| marker.is_match(l))
+    screen.lines().any(|l| marker.is_match(l))
 }
 
 /// 질문 본문을 찾는 범위(화면 끝에서 내용 줄 수). host `modal_of`의 선택 창 범위(`DIALOG_ROWS`)와 같다.
@@ -231,13 +230,28 @@ mod tests {
         }
         // 참고 규칙의 판정(그래서 표지를 덧댄다): 요약 글이 오기 전 Claude는 쉼, 글이 오는 중이면 작업 중
         let read = |f: &str| std::fs::read_to_string(dir.join(f)).unwrap();
-        let reference = |h, f: &str| detect(h, DetectionInput { screen: &read(f), osc_title: "", osc_progress: "" }).state;
+        let reference =
+            |h, f: &str| detect(h, DetectionInput { screen: &read(f), osc_title: "", osc_progress: "" }).state;
         assert_eq!(reference(Harness::Claude, "claude-compacting.txt"), State::Idle);
         assert_eq!(reference(Harness::Claude, "claude-compacting-queued.txt"), State::Working);
         // 사람 글·답 글 안의 같은 말은 표지가 아니다
         let quoted = "❯ ✻ Compacting conversation… (3s)\n⏺ ✻ Compacting conversation… 라고 보였다\n";
         assert!(!compacting(Harness::Claude, quoted));
         assert!(!compacting(Harness::Codex, "› • Compacting context (3s • esc to interrupt)\n"));
+        // Codex 답 글도 `• `로 시작한다: 실제 표지는 끝에 「• esc to interrupt)」가 있다
+        assert!(!compacting(
+            Harness::Codex,
+            "• Compacting context (3s) 표지를 이렇게 찾는다\n\n› Ask Codex to do anything\n"
+        ));
+        // 정리 중 입력 상자에 여러 줄 초안을 쳐도 표지 아래로 밀려나지 않는다(입력 상자는 초안만큼 자란다)
+        let draft: String = (1..=20).map(|n| format!("  초안 {n}째 줄\n")).collect();
+        let tall = read("claude-compacting-queued.txt").replacen(
+            "Press up to edit queued messages",
+            &format!("초안\n{}", draft.trim_end()),
+            1,
+        );
+        assert!(tall.contains("초안 20째 줄"));
+        assert!(compacting(Harness::Claude, &tall));
     }
 
     #[test]

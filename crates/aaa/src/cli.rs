@@ -1981,7 +1981,7 @@ fn pane_cmd(json: bool, cmd: PaneCmd) -> Result<ExitCode> {
             );
         }
         PaneCmd::Chat { pane, thinking } => {
-            return front(json, FrontRequest::PaneChat { pane, thinking, before: None });
+            return front(json, FrontRequest::PaneChat { pane, thinking, compact: true, before: None });
         }
         PaneCmd::Split { target, pane, current: _, direction, ratio, cwd, machine, workspace, argv } => {
             let pane = match target {

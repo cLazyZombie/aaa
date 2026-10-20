@@ -391,6 +391,11 @@ profile?: string, } | { "op": "pane_read", pane: string, } | { "op": "pane_chat"
  */
 thinking: boolean,
 /**
+ * 정리된 자리(`ChatRole::Compact`, plan §8.306, 1.60)도 싣는다. 옛 front는 생략해 그 줄을 받지 않는다(모르는 role로 답 전체를
+ * 읽지 못하므로)
+ */
+compact: boolean,
+/**
  * 이전 응답의 before. 생략하면 최신 쪽, 옛 상대는 무시한다.
  */
 before?: string, } | { "op": "pane_file", pane: string, path: string, } | { "op": "thread_file", project?: string, thread: string, path: string, } | { "op": "thread_diff", project?: string, thread: string, query?: DiffQuery, } | { "op": "pane_dir", pane: string, path: string, hidden: boolean, } | { "op": "pane_send", pane: string, data: B64, } | { "op": "pane_read_text", pane: string, source: ReadSource,
