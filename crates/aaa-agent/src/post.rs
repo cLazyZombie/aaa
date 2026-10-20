@@ -89,7 +89,7 @@ impl Agent {
                 PostResult::Queued { post_id: id.into() }
             }
         } else {
-            let input: PostInput = aaa_common::redact::json(serde_json::from_value::<PostInput>(msg.payload)?);
+            let input: PostInput = aaa_common::redact::json(serde_json::from_value::<PostInput>(msg.payload)?)?;
             ensure!(valid_id(&input.post_id), "post ID 형식이 아니다");
             // host도 검사한다. 여기서는 디스크 상한을 넘기기 전에 큰 글을 막는다.
             ensure!(

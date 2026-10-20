@@ -115,18 +115,31 @@ pub fn remember_auth(harness: &str, value: &str) {
 #[derive(Default)]
 pub struct Stream {
     pending: Vec<u8>,
+    masked: Vec<bool>,
 }
 impl Stream {
     pub fn push(&mut self, bytes: &[u8], end: bool) -> Vec<u8> {
         self.pending.extend_from_slice(bytes);
+        self.masked.resize(self.pending.len(), false);
         let rules = RULES.read().unwrap_or_else(|e| e.into_inner());
         if rules.needles.is_empty() {
+            self.masked.clear();
             return std::mem::take(&mut self.pending);
+        }
+        // 원문과 가림 표시를 분리한다. 겹치는 8바이트 창의 끝을 다음 청크에서도 검사해야 한다.
+        for (at, needle) in self.pending.windows(8).enumerate() {
+            if rules.needles.contains(<&[u8; 8]>::try_from(needle).unwrap()) {
+                self.masked[at..at + 8].fill(true);
+            }
         }
         let mut visible = Vec::new();
         let mut i = 0;
         let mut incomplete = None;
         while i < self.pending.len() {
+            if self.pending[i] == 27 && self.pending.get(i + 1).is_none() {
+                incomplete = Some(i);
+                break;
+            }
             if self.pending[i] == 27 && self.pending.get(i + 1) == Some(&b'[') {
                 let start = i;
                 i += 2;
@@ -149,7 +162,7 @@ impl Stream {
         for (at, n) in text.windows(8).enumerate() {
             if rules.needles.contains(<&[u8; 8]>::try_from(n).unwrap()) {
                 for (raw, _) in &visible[at..at + 8] {
-                    self.pending[*raw] = b'*';
+                    self.masked[*raw] = true;
                 }
             }
         }
@@ -157,16 +170,25 @@ impl Stream {
         if !end {
             for n in 1..=7.min(text.len()) {
                 let start = text.len() - n;
-                let suffix: Vec<u8> = visible[start..].iter().map(|(at, _)| self.pending[*at]).collect();
+                let suffix: Vec<u8> = visible[start..].iter().map(|(_, byte)| *byte).collect();
                 if rules.prefixes.contains(&suffix) {
                     cut = cut.min(visible[start].0);
+                }
+            }
+            for n in 1..=7.min(self.pending.len()) {
+                if rules.prefixes.contains(&self.pending[self.pending.len() - n..]) {
+                    cut = cut.min(self.pending.len() - n);
                 }
             }
             if let Some(at) = incomplete {
                 cut = cut.min(at);
             }
         }
-        self.pending.drain(..cut).collect()
+        self.pending
+            .drain(..cut)
+            .zip(self.masked.drain(..cut))
+            .map(|(byte, masked)| if masked { b'*' } else { byte })
+            .collect()
     }
 }
 
@@ -177,46 +199,37 @@ pub fn text(value: &str) -> String {
     String::from_utf8_lossy(&bytes(value.as_bytes())).into_owned()
 }
 
-/// JSON 문자열을 가린다. B64 파일·기록 응답도 디코딩한 바이트에서 검사한다.
-pub fn value(v: &mut serde_json::Value) {
-    if RULES.read().unwrap_or_else(|e| e.into_inner()).needles.is_empty() {
-        return;
-    }
-    match v {
-        serde_json::Value::String(s) => {
-            let mut out = text(s);
-            if s.len() >= 16
-                && s.len().is_multiple_of(4)
-                && let Ok(raw) = base64::engine::general_purpose::STANDARD.decode(s.as_bytes())
-            {
-                let clean = bytes(&raw);
-                if clean != raw {
-                    out = base64::engine::general_purpose::STANDARD.encode(clean);
-                }
-            }
-            *s = out;
-        }
-        serde_json::Value::Array(a) => {
-            for v in a {
-                value(v)
-            }
-        }
-        serde_json::Value::Object(o) => {
-            for v in o.values_mut() {
-                value(v)
-            }
-        }
-        _ => {}
+mod wire;
+
+/// 가림 실패의 이유만 남긴다. serde 오류에는 원문이 들어갈 수 있어 보관하지 않는다.
+#[derive(Debug, thiserror::Error)]
+pub enum Error {
+    #[error("가림 직렬화 거부")]
+    Serialize,
+    #[error("가림 뒤 형식 복원 거부")]
+    Shape,
+}
+impl serde::ser::Error for Error {
+    fn custom<T: std::fmt::Display>(_: T) -> Self {
+        Self::Serialize
     }
 }
 
-pub fn json<T: serde::Serialize + serde::de::DeserializeOwned>(input: T) -> T {
-    if RULES.read().unwrap_or_else(|e| e.into_inner()).needles.is_empty() {
-        return input;
+/// 타입을 읽는 동안 B64와 글을 구별한다. 형식이 깨진 값을 원문으로 되돌리지 않는다.
+pub fn to_value<T: serde::Serialize + ?Sized>(input: &T) -> Result<serde_json::Value, Error> {
+    let result = input.serialize(wire::Guard);
+    if let Err(reason) = &result {
+        tracing::warn!(%reason, "가림 실패: 메시지·기록을 거부한다");
     }
-    let mut v = serde_json::to_value(input).expect("가림 JSON");
-    value(&mut v);
-    serde_json::from_value(v).expect("가림 JSON 형식")
+    result
+}
+
+pub fn json<T: serde::Serialize + serde::de::DeserializeOwned>(input: T) -> Result<T, Error> {
+    let value = to_value(&input)?;
+    serde_json::from_value(value).map_err(|_| {
+        tracing::warn!(reason = "형식 복원", "가림 실패: 메시지·기록을 거부한다");
+        Error::Shape
+    })
 }
 
 /// tracing은 이벤트 하나의 writer에 전체 줄을 쓴다. flush/drop 때만 stderr에 내보낸다.
@@ -236,5 +249,106 @@ impl Write for LogWriter {
 impl Drop for LogWriter {
     fn drop(&mut self) {
         let _ = self.flush();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use aaa_proto::B64;
+
+    #[derive(serde::Serialize, serde::Deserialize)]
+    struct Msg {
+        text: String,
+        raw: B64,
+    }
+
+    // c3137ed8의 운영 회귀를 실제 protocol B64 타입으로 검사한다.
+    #[test]
+    fn json_keeps_b64_bytes_when_only_the_encoded_text_matches() {
+        remember("QkxPQ0tTRUNSRVQ5redact0525");
+        let raw = base64::engine::general_purpose::STANDARD.decode("QkxPQ0tTRUNSRVQ5AAAA").unwrap();
+        let out = std::panic::catch_unwind(|| {
+            json(Msg { text: "key QkxPQ0tTRUNSRVQ5redact0525".into(), raw: B64(raw.clone()) })
+        });
+        assert!(out.is_ok(), "B64 가림이 panic했다");
+        let out = out.unwrap().unwrap();
+        assert_eq!(out.raw.0, raw);
+        assert!(!out.text.contains("QkxPQ0tT"));
+        // 모든 B64처럼 보이는 글을 건너뛰면 원문 비밀이 유출된다. 실제 B64만 예외다.
+        let secret = "QkxPQ0tTRUNSRVQ5AAAA";
+        remember(secret);
+        let out = json(Msg { text: secret.into(), raw: B64(raw.clone()) }).unwrap();
+        assert_eq!(out.raw.0, raw);
+        assert!(!out.text.contains("QkxPQ0tT"));
+    }
+
+    #[test]
+    fn json_masks_actual_binary_secrets_including_short_fragments() {
+        let secret = "binary-fixture-secret-0525";
+        remember(secret);
+        for raw in [secret.as_bytes(), &secret.as_bytes()[..8]] {
+            let out = json(B64(raw.to_vec())).unwrap();
+            assert_eq!(out.0, vec![b'*'; raw.len()]);
+            // 일반 JSON serializer의 B64 wire는 그대로다.
+            let encoded = serde_json::to_string(&out).unwrap();
+            assert_eq!(serde_json::from_str::<B64>(&encoded).unwrap(), out);
+            let encoded_text = base64::engine::general_purpose::STANDARD.encode(raw);
+            let clean_text = json(encoded_text).unwrap();
+            assert_eq!(base64::engine::general_purpose::STANDARD.decode(clean_text).unwrap(), vec![b'*'; raw.len()]);
+        }
+    }
+
+    #[test]
+    fn failed_redaction_rejects_messages_and_records_without_the_original_or_error_text() {
+        use serde::{Deserialize, de::Error as _};
+        fn strict<'de, D: serde::Deserializer<'de>>(d: D) -> Result<String, D::Error> {
+            let value = String::deserialize(d)?;
+            if value.contains('*') {
+                return Err(D::Error::custom("fixture rejects mask"));
+            }
+            Ok(value)
+        }
+        #[derive(serde::Serialize, serde::Deserialize)]
+        struct Strict(#[serde(deserialize_with = "strict")] String);
+        let secret = "reject-fixture-secret-0525";
+        remember(secret);
+        let result = std::panic::catch_unwind(|| json(Strict(secret.into())));
+        assert!(result.is_ok(), "가림 실패가 panic했다");
+        assert!(matches!(result.unwrap(), Err(Error::Shape)), "원문을 통과시켰다");
+
+        #[derive(serde::Deserialize)]
+        struct BadSerialize;
+        impl serde::Serialize for BadSerialize {
+            fn serialize<S: serde::Serializer>(&self, _: S) -> Result<S::Ok, S::Error> {
+                Err(serde::ser::Error::custom("reject-fixture-secret-0525"))
+            }
+        }
+        assert!(matches!(json(BadSerialize), Err(Error::Serialize)));
+        let root = std::env::temp_dir().join(format!("aaa-redact-{}", crate::util::new_id()));
+        std::fs::create_dir_all(&root).unwrap();
+        let record = root.join("record.json");
+        std::fs::write(&record, b"previous safe record").unwrap();
+        let error = crate::util::write_json(&record, &BadSerialize).unwrap_err();
+        assert!(!error.to_string().contains("reject-fixture"));
+        assert_eq!(std::fs::read(&record).unwrap(), b"previous safe record");
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn stream_keeps_no_secret_across_any_ansi_or_chunk_boundary_and_flushes_the_tail() {
+        let secret = "redaction-stream-secret0525";
+        remember(secret);
+        let input = b"before redaction-\x1b[31mstream-secret0525\x1b[0m after-prefix";
+        let expected = bytes(input);
+        for cut in 0..=input.len() {
+            let mut stream = Stream::default();
+            let mut out = stream.push(&input[..cut], false);
+            out.extend(stream.push(&input[cut..], false));
+            out.extend(stream.push(&[], true));
+            assert_eq!(out, expected, "chunk cut {cut}");
+            assert!(out.ends_with(b" after-prefix"));
+        }
+        assert!(!String::from_utf8_lossy(&expected).contains("stream-secret0525"));
     }
 }
