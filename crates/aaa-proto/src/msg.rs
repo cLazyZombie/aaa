@@ -587,7 +587,7 @@ pub struct AgentHello {
     #[serde(default)]
     pub sessions: Vec<SessionInfo>,
     /// 세션별 마지막 harness 사건(agent가 `harness.json`에 둔 것). host가 연결 즉시 harness 세션 ID를 알아 재부팅 뒤
-    /// 대화를 이어 띄운다. host가 `harness_hello.v1`을 알리면 agent는 연결 뒤 같은 사건을 다시 보내지 않는다.
+    /// 대화를 이어 띄운다. host가 `harness_hello.v1`을 알리면 agent는 연결 뒤 이 스냅샷 이후 변경분만 보낸다.
     #[serde(default)]
     pub harness: Vec<HarnessEvent>,
 }
