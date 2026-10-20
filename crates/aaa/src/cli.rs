@@ -666,6 +666,12 @@ enum AutomationCmd {
         #[arg(long)]
         discard: bool,
     },
+    /// 조건을 기다리지 않고 동작을 한 번 돌린다(명령 조건은 명령을 지금 돌린다). 꺼짐·승인되지 않은 범위는 거부한다
+    Run { name: String },
+    /// 끈 뒤 automations/.trash/로 옮긴다. 대기 입력은 취소하고 기록·본문 파일은 둔다
+    Delete { name: String },
+    /// 지운 자동화를 꺼진 채로 되살린다. id는 `routine list`의 「지운 자동화」 줄이다
+    Restore { id: String },
     /// Rust 정본 타입에서 JSON Schema를 출력한다
     Schema {
         #[arg(long)]
@@ -1792,6 +1798,22 @@ fn run(cli: Cli) -> Result<ExitCode> {
             crate::person::require("aaa automation unblock")?;
             front(json, FrontRequest::AutomationUnblock { project: project_or_here(None)?, name, batch, discard })
         }
+        Cmd::Automation { cmd: AutomationCmd::Run { name } } => front(
+            json,
+            FrontRequest::AutomationRun { project: project_or_here(None)?, name, key: aaa_common::util::new_id() },
+        ),
+        Cmd::Automation { cmd: AutomationCmd::Delete { name } } => {
+            let project = project_or_here(None)?;
+            // 지금 판을 읽고 그 판을 지운다(그 사이 바뀌면 host가 거부한다)
+            let doc = match front_call(FrontRequest::AutomationRead { project: project.clone(), name: name.clone() })? {
+                Ok(FrontResponse::AutomationDoc { doc }) => doc,
+                other => return front_print(json, other),
+            };
+            front(json, FrontRequest::AutomationDelete { project, name, expected_sha256: doc.sha256 })
+        }
+        Cmd::Automation { cmd: AutomationCmd::Restore { id } } => {
+            front(json, FrontRequest::AutomationRestore { project: project_or_here(None)?, id })
+        }
         Cmd::Automation { cmd: AutomationCmd::Schema { mission } } => {
             if mission {
                 anyhow::bail!("없어짐: 자동화로 바꿨다(aaa automation convert)");
@@ -2737,7 +2759,7 @@ fn routine_approve(json: bool, project: String, name: String) -> Result<ExitCode
         c.call(FrontRequest::Routines { project: project.clone() }).await
     })?;
     let routines = match list {
-        Ok(FrontResponse::Routines { routines }) => routines,
+        Ok(FrontResponse::Routines { routines, .. }) => routines,
         Ok(_) => anyhow::bail!("예상하지 못한 응답"),
         Err(e) => anyhow::bail!("{e}"),
     };
@@ -3934,9 +3956,19 @@ fn render_front(r: &FrontResponse) -> String {
         }
         FrontResponse::Missions { .. } => {}
         FrontResponse::Mission { .. } => s.push_str("없어짐: 자동화로 바꿨다(aaa automation convert)"),
-        FrontResponse::Routines { routines } => {
+        FrontResponse::Routines { routines, trash } => {
             if routines.is_empty() {
                 s.push_str("routine이 없다\n");
+            }
+            for t in trash {
+                let _ = writeln!(
+                    s,
+                    "지운 자동화 {}\t{} · {} · 되살리기 `aaa automation restore {}`",
+                    t.name,
+                    t.title,
+                    aaa_common::util::utc_text(t.deleted_at_ms),
+                    t.id
+                );
             }
             for r in routines {
                 if let Some(sha) = &r.start_approval_sha256 {
@@ -3995,6 +4027,23 @@ fn render_front(r: &FrontResponse) -> String {
                     );
                 }
             }
+        }
+        FrontResponse::AutomationDoc { doc } => {
+            let _ = writeln!(s, "{} · {} · sha256 {}", doc.name, doc.file, doc.sha256);
+            for e in doc.check.errors.iter().chain(&doc.check.warnings) {
+                let _ = writeln!(s, "  {e}");
+            }
+        }
+        FrontResponse::AutomationChecked { check, .. } => {
+            if check.errors.is_empty() {
+                s.push_str("검사 통과\n");
+            }
+            for e in check.errors.iter().chain(&check.warnings) {
+                let _ = writeln!(s, "{e}");
+            }
+        }
+        FrontResponse::AutomationRan { accepted, detail } => {
+            let _ = writeln!(s, "{}: {detail}", if *accepted { "받음" } else { "이미 받음" });
         }
         FrontResponse::AutomationConverted { files, .. } => {
             if files.is_empty() {

@@ -1334,6 +1334,72 @@ pub struct RoutineSource {
     pub body_truncated: bool,
 }
 
+/// 편집할 자동화 파일 하나(관리 GUI W2, FRONT_API 1.76). 원문과 판(sha256)을 함께 준다. 저장은 그 판일 때만 쓴다.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(default)]
+pub struct AutomationDoc {
+    pub name: String,
+    /// `automations/<이름>.toml`, 옛 형식이면 `routines/<이름>.md`
+    pub file: String,
+    pub text: String,
+    pub sha256: String,
+    /// 옛 `.md` 규칙: 웹은 읽기만 하고 저장·삭제를 거부한다
+    pub legacy: bool,
+    /// `text_file`·`brief_file`이 가리키는 본문 파일과 그 판(없는 파일이면 `body_sha256`이 없다)
+    pub body_file: Option<String>,
+    pub body: Option<String>,
+    pub body_sha256: Option<String>,
+    pub check: AutomationCheck,
+}
+
+/// 초안 검사 결과. `form`은 원문을 정본 Rust 타입으로 읽은 값(TOML과 같은 모양)이며 TOML 문법·타입 오류면 없다.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(default)]
+pub struct AutomationCheck {
+    #[ts(type = "Record<string, unknown> | null")]
+    pub form: Option<serde_json::Value>,
+    /// `파일:줄:열 칸: 이유`. 하나라도 있으면 저장하지 않는다
+    pub errors: Vec<String>,
+    /// 저장은 되지만 실행 때 막히는 것(시작 후보 머신·저장소·profile을 지금 풀지 못함 등)
+    pub warnings: Vec<String>,
+    pub review: Option<AutomationReview>,
+}
+
+/// 검토 화면: 이 초안을 저장하면 무엇이 일어나는가
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(default)]
+pub struct AutomationReview {
+    pub enabled: bool,
+    /// 조건·동작 낱말(목록 줄과 같다)
+    pub trigger: String,
+    pub action: String,
+    /// safety `start_threads`(propose·auto): 자동 시작이 바로 띄우는지, 제안 한 줄만 남기는지
+    pub start_threads: String,
+    pub start_scope: Option<String>,
+    pub start_approval_sha256: Option<String>,
+    /// 지금 승인한 범위 안인가(시작 동작만)
+    pub start_approved: Option<bool>,
+    /// 명령 조건의 명령·머신과 그 hash(승인 대상)
+    pub command: String,
+    pub machine: Option<String>,
+    pub command_sha256: String,
+    pub command_approved: bool,
+    /// safety `routine_commands`
+    pub commands_allowed: bool,
+}
+
+/// 지운 자동화(`automations/.trash/`). 되살리면 꺼진 채로 돌아온다.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(default)]
+pub struct AutomationTrashEntry {
+    /// `.trash/` 안 파일 이름(되살리기 요청에 쓴다)
+    pub id: String,
+    pub name: String,
+    pub title: String,
+    #[ts(type = "number")]
+    pub deleted_at_ms: u64,
+}
+
 /// 프로젝트 이름: 영문 소문자·숫자·`-`·`_`(경로에 쓰므로 엄격히 본다)
 pub fn valid_project(s: &str) -> bool {
     !s.is_empty()
