@@ -1647,6 +1647,16 @@ impl Host {
                 .automation_run(&project, &name, &key, actor)
                 .await
                 .map(|(accepted, detail)| FrontResponse::AutomationRan { accepted, detail }),
+            FrontRequest::ProjectSettings { project } => {
+                self.project_settings_view(&project).map(FrontResponse::ProjectSettings)
+            }
+            FrontRequest::ProjectRepoEdit { project, from, to } => self.project_repo_edit(&project, &from, &to, actor),
+            FrontRequest::ThreadResolvePreview { project, thread } => {
+                self.thread_resolve_preview(&project, &thread).await.map(FrontResponse::ResolvePreview)
+            }
+            FrontRequest::LibraryPruneApply { project, older_than_days, expected } => {
+                self.library_prune_apply(project.as_deref(), older_than_days, &expected, util::now_ms(), actor)
+            }
             FrontRequest::AutomationConvert { project, dry_run, plan_sha256 } => self
                 .automation_convert(&project, dry_run, plan_sha256.as_deref(), actor)
                 .await

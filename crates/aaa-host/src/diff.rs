@@ -3,7 +3,10 @@
 
 use std::time::Duration;
 
-use aaa_proto::{AgentRequest, AgentResponse, DiffQuery, ErrorBody, ErrorCode, FrontResponse};
+use aaa_proto::{
+    AgentRequest, AgentResponse, DiffQuery, DiffScope, ErrorBody, ErrorCode, FrontResponse, ResolvePreview, ThreadKind,
+    ThreadStatus,
+};
 
 use crate::{Host, err};
 
@@ -32,5 +35,74 @@ impl Host {
             AgentResponse::Diff(diff) => Ok(FrontResponse::ThreadDiff { project: rec.project, thread: rec.id, diff }),
             other => Err(err(ErrorCode::Internal, format!("예상하지 못한 응답: {other:?}"))),
         }
+    }
+}
+
+impl Host {
+    /// 끝내기 전 확인(관리 GUI W4, plan §8.333): 커밋하지 않은 파일·base 대비 바뀐 파일·사본 상태. 기록·inbox를 고치지 않는다:
+    /// PR은 기록된 상태만 본다(`merged_head`는 PR을 다시 찾아 기록을 고친다). 읽지 못한 것은 모름이고, 모르면 남기기가 기본이다.
+    pub(crate) async fn thread_resolve_preview(
+        &self,
+        project: &str,
+        thread: &str,
+    ) -> Result<ResolvePreview, ErrorBody> {
+        let rec = self.load(project, thread)?;
+        let worktree = rec.kind == ThreadKind::Worktree && rec.cwd.is_some();
+        let merged = rec.pr_state.as_deref().is_some_and(|s| s.eq_ignore_ascii_case("merged"));
+        let count = |r: Result<FrontResponse, ErrorBody>| -> Result<u32, String> {
+            match r {
+                Ok(FrontResponse::ThreadDiff { diff, .. }) => match diff.files {
+                    Some(f) => Ok(f.len() as u32),
+                    None => Err("바뀐 파일이 너무 많아 다 세지 못했다".into()),
+                },
+                Ok(other) => Err(format!("예상하지 못한 응답: {other:?}")),
+                Err(e) => Err(e.message),
+            }
+        };
+        let (mut uncommitted, mut changed, mut unknown) = (None, None, None);
+        if rec.repo.is_some() && rec.cwd.is_some() {
+            let ask = |scope| self.thread_diff(project, thread, DiffQuery { scope, ..Default::default() });
+            let (u, c) = tokio::join!(ask(DiffScope::Uncommitted), ask(DiffScope::Branch));
+            match (count(u), count(c)) {
+                (Ok(u), Ok(c)) => (uncommitted, changed) = (Some(u), Some(c)),
+                (Err(e), _) | (_, Err(e)) => unknown = Some(e),
+            }
+        } else if worktree {
+            unknown = Some("git 저장소 기록이 없다".into());
+        }
+        let mut risks = Vec::new();
+        if rec.status == ThreadStatus::Starting {
+            risks.push("준비 중이라 지금은 끝낼 수 없다".into());
+        }
+        if let Some(n) = uncommitted.filter(|n| *n > 0) {
+            risks.push(format!("커밋하지 않은 파일 {n}개: worktree를 지우면 잃는다"));
+        }
+        if !merged && changed.is_some_and(|c| c > uncommitted.unwrap_or(0)) {
+            risks.push(format!(
+                "base({}) 대비 병합되지 않은 변경이 있다: branch는 남지만 worktree 밖에는 사본이 없을 수 있다",
+                rec.base.as_deref().unwrap_or("기준")
+            ));
+        }
+        if rec.copy.as_deref() == Some("partial") {
+            risks.push(format!("사본에 빠진 것이 있다: {}", rec.copy_notes.join("; ")));
+        }
+        if let Some(why) = unknown.as_ref().filter(|_| worktree) {
+            risks.push(format!("worktree 상태를 모른다: {why}"));
+        }
+        Ok(ResolvePreview {
+            project: rec.project.clone(),
+            thread: rec.id.clone(),
+            thread_kind: rec.kind,
+            worktree,
+            branch: rec.branch.clone(),
+            merged,
+            copy: rec.copy.clone(),
+            copy_notes: rec.copy_notes.clone(),
+            uncommitted,
+            changed,
+            unknown,
+            keep_default: worktree && !risks.is_empty(),
+            risks,
+        })
     }
 }

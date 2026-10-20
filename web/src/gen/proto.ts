@@ -726,7 +726,7 @@ picks: Array<number | null>, text: string | null, } | { "op": "preferences" } | 
 /**
  * 본문 파일의 본 판. 없으면 그 파일이 아직 없어야 한다
  */
-body_expected_sha256?: string, } | { "op": "automation_delete", project?: string, name: string, expected_sha256: string, } | { "op": "automation_restore", project?: string, id: string, } | { "op": "automation_run", project?: string, name: string, key: string, } | { "op": "routine_runs", project?: string, name: string, } | { "op": "routine_approve", project?: string, name: string, command_sha256: string, } | { "op": "routine_toggle", project?: string, name: string, on: boolean | null, } | { "op": "events", project: string | null, after: bigint, limit: number | null, } | { "op": "evaluator_assign", project?: string, profile: string, machine: string | null,
+body_expected_sha256?: string, } | { "op": "automation_delete", project?: string, name: string, expected_sha256: string, } | { "op": "automation_restore", project?: string, id: string, } | { "op": "automation_run", project?: string, name: string, key: string, } | { "op": "project_settings", project?: string, } | { "op": "project_repo_edit", project?: string, from: string, to: string, } | { "op": "thread_resolve_preview", project?: string, thread: string, } | { "op": "library_prune_apply", project: string | null, older_than_days: number | null, expected: Array<string>, } | { "op": "routine_runs", project?: string, name: string, } | { "op": "routine_approve", project?: string, name: string, command_sha256: string, } | { "op": "routine_toggle", project?: string, name: string, on: boolean | null, } | { "op": "events", project: string | null, after: bigint, limit: number | null, } | { "op": "evaluator_assign", project?: string, profile: string, machine: string | null,
 /**
  * 개선을 직접 고칠 repo(없으면 repo 없는 작업 폴더)
  */
@@ -800,7 +800,7 @@ omitted_done: number, } | { "kind": "ticker", runs: bigint, } | { "kind": "routi
 /**
  * 지운 자동화(FRONT_API 1.74). 옛 host는 생략한다
  */
-trash?: Array<AutomationTrashEntry>, } | { "kind": "automation_doc", doc: AutomationDoc, } | { "kind": "automation_checked", text: string, check: AutomationCheck, } | { "kind": "automation_ran", accepted: boolean, detail: string, } | { "kind": "automation_converted", files: Array<string>,
+trash?: Array<AutomationTrashEntry>, } | { "kind": "automation_doc", doc: AutomationDoc, } | { "kind": "automation_checked", text: string, check: AutomationCheck, } | { "kind": "automation_ran", accepted: boolean, detail: string, } | { "kind": "project_settings" } & ProjectSettingsView | { "kind": "resolve_preview" } & ResolvePreview | { "kind": "automation_converted", files: Array<string>,
 /**
  * 쓰지 않은 계획이다(FRONT_API 1.58). `files`는 실제 변환과 같은 모양(새 파일과 `.converted/` 보존 사본)이다.
  */
@@ -1465,6 +1465,54 @@ export type AutomationTrashEntry = {
  * `.trash/` 안 파일 이름(되살리기 요청에 쓴다)
  */
 id: string, name: string, title: string, deleted_at_ms: number, };
+
+export type ProjectSettingsView = { project: string,
+/**
+ * 설정 파일 이름(`aaa.toml`, 없으면 옛 `project.toml`)
+ */
+file: string, status: ProjectStatus, goal: string, thread_profile: string, coordinator_profile: string, max_parallel_threads: number, auto_resolve_days: number, nudge: boolean, mute: boolean,
+/**
+ * 저장소 목록(`[[workspaces]]`·`[[repos]]`). 머신이 없으면 host 머신이다
+ */
+repos: Array<RepoChoice>, task_notes: Array<string>, };
+
+export type ResolvePreview = { project: string, thread: string,
+/**
+ * thread 종류(응답 꼬리표 `kind`와 겹치지 않게 이름이 다르다)
+ */
+thread_kind: ThreadKind,
+/**
+ * 끝내면 지울 수 있는 worktree가 있다(worktree thread이고 작업 폴더 기록이 있다)
+ */
+worktree: boolean, branch: string | null,
+/**
+ * 기록된 PR 상태가 병합이다(끝낼 때 branch를 지울 수 있다)
+ */
+merged: boolean,
+/**
+ * 마지막 사본 상태(`complete`·`partial`, 없으면 아직 사본 없음)
+ */
+copy: string | null, copy_notes: Array<string>,
+/**
+ * HEAD 대비 커밋하지 않은 파일 수
+ */
+uncommitted: number | null,
+/**
+ * base(`origin/main` 등) 대비 바뀐 파일 수(커밋하지 않은 것 포함)
+ */
+changed: number | null,
+/**
+ * git을 읽지 못한 까닭(머신 끊김·옛 agent·저장소 없음)
+ */
+unknown: string | null,
+/**
+ * 끝내기 창이 보일 위험(한 줄씩)
+ */
+risks: Array<string>,
+/**
+ * 위험이 있거나 모르면 「worktree 남기기」를 기본으로 켠다
+ */
+keep_default: boolean, };
 
 export type LibraryFile = {
 /**

@@ -406,6 +406,8 @@ enum ProjectCmd {
     /// project.toml 값 하나를 바꾼다(herdr-projects `set`): goal, thread_profile, coordinator_profile,
     /// max_parallel_threads, auto_resolve_days, repos.add, repos.remove, nudge, mute, task_notes.add, task_notes.remove
     Set { project: String, key: String, value: String },
+    /// 지금 설정 값(`set`이 고치는 key 모두, 잘못된 값은 host가 쓰는 기본값으로)
+    Show { project: String },
     /// 멈춘다: ticker가 건너뛰고 `thread start`를 거부한다. 도는 agent는 멈추지 않는다
     Pause { project: String },
     /// 멈춘 프로젝트를 다시 돌린다
@@ -857,6 +859,9 @@ enum ThreadCmd {
         /// 집에 다 오지 않았어도 worktree를 지운다
         #[arg(long)]
         discard_uncopied: bool,
+        /// 끝내지 않고 잃을 수 있는 것(커밋하지 않은 파일·병합되지 않은 변경·사본 상태)만 보인다
+        #[arg(long, conflicts_with_all = ["reopen", "keep_worktree", "skip_copy", "discard_uncopied"])]
+        dry_run: bool,
     },
     /// brief 안내를 사람이 다시 보낸다(자동 재전송은 하지 않는다)
     Brief {
@@ -1886,7 +1891,11 @@ fn run(cli: Cli) -> Result<ExitCode> {
                     let (project, thread) = on_target(thread, legacy)?;
                     FrontRequest::ThreadAck { project, thread }
                 }
-                ThreadCmd::Resolve { thread, legacy, keep_worktree, reopen, skip_copy, discard_uncopied } => {
+                ThreadCmd::Resolve { thread, legacy, dry_run: true, .. } => {
+                    let (project, thread) = on_target(thread, legacy)?;
+                    FrontRequest::ThreadResolvePreview { project, thread }
+                }
+                ThreadCmd::Resolve { thread, legacy, keep_worktree, reopen, skip_copy, discard_uncopied, .. } => {
                     let (project, thread) = on_target(thread, legacy)?;
                     FrontRequest::ThreadResolve { project, thread, keep_worktree, reopen, skip_copy, discard_uncopied }
                 }
@@ -2718,6 +2727,7 @@ fn project_cmd(json: bool, cmd: ProjectCmd) -> Result<ExitCode> {
             let repos = repos.iter().map(|r| local_repo_path(r)).collect();
             front(json, FrontRequest::ProjectCreate { name, goal, repos, thread_profile, coordinator_profile })
         }
+        ProjectCmd::Show { project } => front(json, FrontRequest::ProjectSettings { project }),
         ProjectCmd::Set { project, key, value } => {
             let value = if key.starts_with("repos.") { local_repo_path(&value) } else { value };
             let res = front_call(FrontRequest::ProjectSet {
@@ -3925,6 +3935,46 @@ fn render_front(r: &FrontResponse) -> String {
         }
         FrontResponse::AutomationRan { accepted, detail } => {
             let _ = writeln!(s, "{}: {detail}", if *accepted { "받음" } else { "이미 받음" });
+        }
+        FrontResponse::ProjectSettings(v) => {
+            let _ = writeln!(s, "{} ({}, {:?})", v.project, v.file, v.status);
+            let _ = writeln!(s, "goal: {}", v.goal);
+            let _ = writeln!(s, "thread_profile: {}", v.thread_profile);
+            let _ = writeln!(s, "coordinator_profile: {}", v.coordinator_profile);
+            let _ = writeln!(s, "max_parallel_threads: {}", v.max_parallel_threads);
+            let _ = writeln!(s, "auto_resolve_days: {}", v.auto_resolve_days);
+            let _ = writeln!(s, "nudge: {}", v.nudge);
+            let _ = writeln!(s, "mute: {}", v.mute);
+            for r in &v.repos {
+                let _ = writeln!(
+                    s,
+                    "repo: {}{}",
+                    r.path,
+                    r.machine.as_deref().map(|m| format!("@{m}")).unwrap_or_default()
+                );
+            }
+            for n in &v.task_notes {
+                let _ = writeln!(s, "task_notes: {n}");
+            }
+        }
+        FrontResponse::ResolvePreview(p) => {
+            let n = |v: Option<u32>| v.map(|n| n.to_string()).unwrap_or_else(|| "모름".into());
+            let _ = writeln!(
+                s,
+                "{}/{}: 커밋하지 않은 파일 {} · base 대비 바뀐 파일 {} · 사본 {} · PR {}",
+                p.project,
+                p.thread,
+                n(p.uncommitted),
+                n(p.changed),
+                p.copy.as_deref().unwrap_or("없음"),
+                if p.merged { "병합됨" } else { "병합 안 됨" }
+            );
+            for r in &p.risks {
+                let _ = writeln!(s, "위험: {r}");
+            }
+            if p.keep_default {
+                s.push_str("worktree 남기기를 권한다(--keep-worktree)\n");
+            }
         }
         FrontResponse::AutomationConverted { files, .. } => {
             if files.is_empty() {

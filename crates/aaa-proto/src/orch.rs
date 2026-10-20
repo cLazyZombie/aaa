@@ -1397,6 +1397,54 @@ pub struct AutomationTrashEntry {
     pub deleted_at_ms: u64,
 }
 
+/// `project_settings`의 답(관리 GUI W4, plan §8.333): 「이 aaa」·「저장소」 설정 화면이 읽는 프로젝트 설정. 값이 잘못된 key는
+/// host가 쓰는 기본값이다(`aaa project set`이 고치는 값과 같다).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+pub struct ProjectSettingsView {
+    pub project: String,
+    /// 설정 파일 이름(`aaa.toml`, 없으면 옛 `project.toml`)
+    pub file: String,
+    pub status: ProjectStatus,
+    pub goal: String,
+    pub thread_profile: String,
+    pub coordinator_profile: String,
+    pub max_parallel_threads: u32,
+    pub auto_resolve_days: u32,
+    pub nudge: bool,
+    pub mute: bool,
+    /// 저장소 목록(`[[workspaces]]`·`[[repos]]`). 머신이 없으면 host 머신이다
+    pub repos: Vec<RepoChoice>,
+    pub task_notes: Vec<String>,
+}
+
+/// `thread_resolve_preview`의 답(관리 GUI W4): 끝내기 전에 잃을 수 있는 것. host는 기록을 고치지 않고, git은 그 머신 agent가
+/// 읽는다(diff.v1). 읽지 못한 것은 `None`(모름)이다.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+pub struct ResolvePreview {
+    pub project: String,
+    pub thread: String,
+    /// thread 종류(응답 꼬리표 `kind`와 겹치지 않게 이름이 다르다)
+    pub thread_kind: ThreadKind,
+    /// 끝내면 지울 수 있는 worktree가 있다(worktree thread이고 작업 폴더 기록이 있다)
+    pub worktree: bool,
+    pub branch: Option<String>,
+    /// 기록된 PR 상태가 병합이다(끝낼 때 branch를 지울 수 있다)
+    pub merged: bool,
+    /// 마지막 사본 상태(`complete`·`partial`, 없으면 아직 사본 없음)
+    pub copy: Option<String>,
+    pub copy_notes: Vec<String>,
+    /// HEAD 대비 커밋하지 않은 파일 수
+    pub uncommitted: Option<u32>,
+    /// base(`origin/main` 등) 대비 바뀐 파일 수(커밋하지 않은 것 포함)
+    pub changed: Option<u32>,
+    /// git을 읽지 못한 까닭(머신 끊김·옛 agent·저장소 없음)
+    pub unknown: Option<String>,
+    /// 끝내기 창이 보일 위험(한 줄씩)
+    pub risks: Vec<String>,
+    /// 위험이 있거나 모르면 「worktree 남기기」를 기본으로 켠다
+    pub keep_default: bool,
+}
+
 /// 프로젝트 이름: 영문 소문자·숫자·`-`·`_`(경로에 쓰므로 엄격히 본다)
 pub fn valid_project(s: &str) -> bool {
     !s.is_empty()

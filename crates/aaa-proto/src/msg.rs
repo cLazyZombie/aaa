@@ -2503,6 +2503,36 @@ pub enum FrontRequest {
         name: String,
         key: String,
     },
+    /// FRONT_API 1.75. 「이 aaa」·「저장소」 설정 화면이 읽는 프로젝트 설정(관리 GUI W4, plan §8.333). Reader 가능
+    ProjectSettings {
+        #[serde(default)]
+        #[ts(optional, as = "Option<String>")]
+        project: String,
+    },
+    /// FRONT_API 1.75. 저장소 하나를 제자리에서 바꾼다(`PATH[@MACHINE]`, `repos.remove`+`repos.add`를 한 번에, 차례는 그대로)
+    ProjectRepoEdit {
+        #[serde(default)]
+        #[ts(optional, as = "Option<String>")]
+        project: String,
+        from: String,
+        to: String,
+    },
+    /// FRONT_API 1.75. 끝내기 전에 잃을 수 있는 것(미커밋·미병합·사본 상태)을 읽는다. 기록을 고치지 않는다. 바뀐 파일 수를
+    /// 그 머신 agent가 읽으므로 조작 기기만(`ThreadDiff`와 같다)
+    ThreadResolvePreview {
+        #[serde(default)]
+        #[ts(optional, as = "Option<String>")]
+        project: String,
+        thread: String,
+    },
+    /// FRONT_API 1.75. 미리보기(`library_prune_preview`)와 같은 판정으로 지우되, 후보가 `expected`(`project/name`)와 같을 때만
+    /// 지운다(그 사이 바뀌면 `conflict`). 웹 「보고서 정리」의 실행이다. 지우는 것은 `library_delete`보다 좁다(report.md
+    /// 사본·thread 기록은 남는다)
+    LibraryPruneApply {
+        project: Option<String>,
+        older_than_days: Option<u32>,
+        expected: Vec<String>,
+    },
     /// 최근 실행·건너뜀 기록, 최대 50건(Reader 가능).
     RoutineRuns {
         #[serde(default)]
@@ -2653,6 +2683,9 @@ impl FrontRequest {
             | FrontRequest::AutomationDelete { project, .. }
             | FrontRequest::AutomationRestore { project, .. }
             | FrontRequest::AutomationRun { project, .. }
+            | FrontRequest::ProjectSettings { project }
+            | FrontRequest::ProjectRepoEdit { project, .. }
+            | FrontRequest::ThreadResolvePreview { project, .. }
             | FrontRequest::RoutineToggle { project, .. }
             | FrontRequest::EvaluatorAssign { project, .. }
             | FrontRequest::EvaluatorUnassign { project, .. }
@@ -2706,6 +2739,7 @@ impl FrontRequest {
                 | FrontRequest::AutomationConvert { dry_run: true, .. }
                 | FrontRequest::AutomationRead { .. }
                 | FrontRequest::AutomationValidate { .. }
+                | FrontRequest::ProjectSettings { .. }
                 | FrontRequest::ThreadRead { .. }
                 | FrontRequest::PaneRead { .. }
                 | FrontRequest::PaneReadText { .. }
@@ -2943,6 +2977,10 @@ pub enum FrontResponse {
         accepted: bool,
         detail: String,
     },
+    /// `project_settings`·`project_repo_edit`의 답
+    ProjectSettings(crate::ProjectSettingsView),
+    /// `thread_resolve_preview`의 답
+    ResolvePreview(crate::ResolvePreview),
     AutomationConverted {
         files: Vec<String>,
         /// 쓰지 않은 계획이다(FRONT_API 1.58). `files`는 실제 변환과 같은 모양(새 파일과 `.converted/` 보존 사본)이다.

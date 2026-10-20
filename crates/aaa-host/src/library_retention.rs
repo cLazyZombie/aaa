@@ -92,6 +92,36 @@ impl Host {
         )
     }
 
+    /// 웹 「보고서 정리」 실행(관리 GUI W4, plan §8.333): 미리보기와 같은 판정(기한·용량)으로 다시 셈해, 후보가 사람이 본 목록
+    /// (`expected`, `project/name`)과 같을 때만 지운다. 그 사이 사본이 바뀌었으면 하나도 지우지 않고 `conflict`다.
+    pub(crate) fn library_prune_apply(
+        &self,
+        project: Option<&str>,
+        days: Option<u32>,
+        expected: &[String],
+        now: u64,
+        actor: &str,
+    ) -> Result<FrontResponse, ErrorBody> {
+        let _lock = self.library_ops.lock().unwrap();
+        let plan = self.retention_plan(
+            project,
+            days.map(u64::from).unwrap_or(self.cfg.projects.library_max_days),
+            self.cfg.projects.library_max_mb.saturating_mul(1024 * 1024),
+            now,
+        )?;
+        let mut found: Vec<String> = plan.candidates.iter().map(|c| format!("{}/{}", c.project, c.name)).collect();
+        let mut seen = expected.to_vec();
+        found.sort();
+        seen.sort();
+        if found != seen {
+            return Err(err(
+                ErrorCode::Conflict,
+                format!("미리 본 뒤 정리 후보가 바뀌었다(지금 {}개): 다시 미리 보고 지운다", found.len()),
+            ));
+        }
+        self.remove_copies(&plan, actor).map(|removed| FrontResponse::LibraryPruned { removed })
+    }
+
     pub(crate) fn library_usage(&self) -> Result<FrontResponse, ErrorBody> {
         let _lock = self.library_ops.lock().unwrap();
         let reports = self.library_reports(None, false)?;

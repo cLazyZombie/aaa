@@ -960,6 +960,49 @@ impl Host {
         Ok(FrontResponse::Project(self.project_view(project, &dir)))
     }
 
+    /// 「이 aaa」·「저장소」 설정 화면이 읽는 값(관리 GUI W4). 잘못된 값은 host가 쓰는 기본값으로 보인다
+    pub(crate) fn project_settings_view(&self, project: &str) -> Result<aaa_proto::ProjectSettingsView, ErrorBody> {
+        let dir = self.project_dir(project)?;
+        let path = aaa_config::project_settings_file(&dir);
+        let s = crate::project::ProjectSettings::load(&dir);
+        Ok(aaa_proto::ProjectSettingsView {
+            project: project.to_string(),
+            file: path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default(),
+            status: self.project_status(project),
+            goal: s.goal,
+            thread_profile: s.thread_profile,
+            coordinator_profile: s.coordinator_profile,
+            max_parallel_threads: s.max_parallel_threads,
+            auto_resolve_days: s.auto_resolve_days,
+            nudge: s.nudge,
+            mute: s.mute,
+            repos: s.repos.into_iter().map(|r| aaa_proto::RepoChoice { path: r.path, machine: r.machine }).collect(),
+            task_notes: s.task_notes,
+        })
+    }
+
+    /// 저장소 하나를 제자리에서 바꾼다(웹 「저장소」 페이지의 고치기). 머신 없는 경로는 `repos.add`처럼 host 정본 경로로 바꾼다
+    pub(crate) fn project_repo_edit(
+        &self,
+        project: &str,
+        from: &str,
+        to: &str,
+        actor: &str,
+    ) -> Result<FrontResponse, ErrorBody> {
+        let dir = self.project_dir(project)?;
+        let to = self.repo_arg(to);
+        let path = aaa_config::project_settings_file(&dir);
+        {
+            let _guard = PROJECT_TOML.lock().unwrap();
+            let text = std::fs::read_to_string(&path).unwrap_or_else(|_| "schema = 1\n".into());
+            let edited =
+                crate::project::replace_repo_in(&text, from, &to, crate::project::repos_table(&path)).map_err(bad)?;
+            write_atomic(&path, edited.as_bytes()).map_err(internal)?;
+        }
+        self.db.audit(actor, "project_set", &format!("{project} repos.edit={} -> {to}", from.trim()));
+        self.project_settings_view(project).map(FrontResponse::ProjectSettings)
+    }
+
     /// 머신이 없는 저장소 경로는 host 머신 정본 경로로(참고 `create`·`set_in`: 없는 경로는 그대로)
     fn repo_arg(&self, arg: &str) -> String {
         let r = crate::project::parse_repo_arg(arg.trim());
