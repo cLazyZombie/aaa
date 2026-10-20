@@ -208,13 +208,15 @@ impl Host {
     }
 
     /// Codex 갱신 결과(쓰임으로 본 상태). 거부면 끊김, 성공이면 끊김을 지우고 새 id_token의 plan·메일을 읽는다
-    pub(crate) fn account_refresh_seen(&self, name: &str, outcome: crate::accounts::RefreshOutcome) {
+    /// `version`은 갱신을 청한 판이다: 거부는 기록하는 지금도 금고가 그 판일 때만 끊김이다(그 사이 다시 로그인했으면 옛 인증의 거부다)
+    pub(crate) fn account_refresh_seen(&self, name: &str, outcome: crate::accounts::RefreshOutcome, version: u64) {
         use crate::accounts::RefreshOutcome;
         let gate = self.account_meta_gate.lock().unwrap();
         let mut m = self.account_meta(name);
         match outcome {
             RefreshOutcome::Rejected => {
-                if m.rejected_ms.is_some() {
+                let current = self.accounts.list().ok().and_then(|l| l.into_iter().find(|a| a.name == name));
+                if m.rejected_ms.is_some() || current.is_none_or(|a| a.version != version) {
                     return;
                 }
                 tracing::warn!(account = %name, "제공자가 계정 인증 갱신을 거부했다: 끊김");

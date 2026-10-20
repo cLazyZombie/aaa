@@ -285,12 +285,15 @@ impl Host {
                         Some(Pending { secret, identity, deadline: std::time::Instant::now() + CONFIRM_FOR });
                     result = Ok(true);
                     // 아무도 묻지 않아도 시한에 새 인증을 버리고 화면에 알린다
-                    let (view, pending, host) = (state.clone(), pending.clone(), host.clone());
+                    // host를 붙잡지 않는다(약한 참조): 그 전에 host가 끝나면 할 일이 없다
+                    let (view, pending, host) = (state.clone(), pending.clone(), Arc::downgrade(&host));
                     tokio::spawn(async move {
                         tokio::time::sleep(CONFIRM_FOR).await;
                         if expire_parts(&view, &pending) {
                             tracing::info!(login = %view.lock().unwrap().id, "다른 메일 확인 시한: 새 인증을 버렸다");
-                            host.accounts_bump();
+                            if let Some(host) = host.upgrade() {
+                                host.accounts_bump();
+                            }
                         }
                     });
                 } else {

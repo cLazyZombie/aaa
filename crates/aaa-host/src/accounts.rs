@@ -455,7 +455,7 @@ impl crate::Host {
         let mut result = match account {
             Some(a) => {
                 let (result, outcome) = self.accounts.refresh(&a, request.version, &request.request).await;
-                self.account_refresh_seen(&a, outcome);
+                self.account_refresh_seen(&a, outcome, request.version);
                 result
             }
             None => AccountRefreshed { id: String::new(), version: request.version, response: None },

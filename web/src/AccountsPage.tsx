@@ -28,7 +28,14 @@ function useAccounts(loginId: string | null) {
       const full = canAccounts(m?.front_api);
       const [list, defaults] = await Promise.all([call({ op: "account_list" }), call({ op: "account_defaults" })]);
       // 보던 로그인을 host가 잊었으면(다시 시작·오래된 작업 정리) 목록은 그대로 새로 읽고 카드만 「더 읽지 못함」으로 둔다
-      const status = full && loginId ? await call({ op: "account_login_status", id: loginId }).catch(() => "lost" as const) : null;
+      // host가 답한 거부만 「잃음」이다. 전송 실패는 아래 catch가 오류로 알리고 카드를 그대로 둔다
+      const status =
+        full && loginId
+          ? await call({ op: "account_login_status", id: loginId }).catch((e: unknown) => {
+              if (e instanceof ApiError) return "lost" as const;
+              throw e;
+            })
+          : null;
       if (mine !== seq.current) return;
       setData({
         accounts: list.kind === "accounts" ? list.accounts : [],

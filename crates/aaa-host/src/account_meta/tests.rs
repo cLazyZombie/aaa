@@ -150,10 +150,10 @@ fn broken_and_expiring_accounts_raise_one_alert_without_email_and_logging_in_cle
     h.account_logged_in("work", &codex_identity(&codex_auth("work@example.com", "plus")), false);
     assert!(account_items(h).is_empty(), "정상은 알리지 않는다");
     // 제공자가 갱신을 거부했다 → 끊김 한 번. 망 실패는 끊김이 아니다
-    h.account_refresh_seen("work", RefreshOutcome::Failed);
+    h.account_refresh_seen("work", RefreshOutcome::Failed, 1);
     assert!(account_items(h).is_empty());
-    h.account_refresh_seen("work", RefreshOutcome::Rejected);
-    h.account_refresh_seen("work", RefreshOutcome::Rejected);
+    h.account_refresh_seen("work", RefreshOutcome::Rejected, 1);
+    h.account_refresh_seen("work", RefreshOutcome::Rejected, 1);
     h.account_health_pass();
     let items = account_items(h);
     assert_eq!(items.len(), 1, "{items:?}");
@@ -207,12 +207,15 @@ async fn an_old_version_served_from_the_vault_does_not_clear_a_rejection() {
     let h = &lab.h;
     h.accounts.import("work", "codex", &codex_auth("work@example.com", "plus")).unwrap();
     h.accounts.import("work", "codex", &codex_auth("work@example.com", "plus")).unwrap();
-    h.account_refresh_seen("work", RefreshOutcome::Rejected);
+    // 옛 판(1)의 거부는 그 사이 다시 로그인한 판 2를 끊김으로 만들지 않는다
+    h.account_refresh_seen("work", RefreshOutcome::Rejected, 1);
+    assert_eq!(health(&h.account_meta("work"), util::now_ms()), AccountHealth::Ok);
+    h.account_refresh_seen("work", RefreshOutcome::Rejected, 2);
     // 옛 판(1) 요청에는 제공자에게 묻지 않고 금고의 판 2를 준다: 거부된 인증이 다시 살아난 것이 아니다
     let request = aaa_proto::SecretText(r#"{"grant_type":"refresh_token"}"#.into());
     let (served, outcome) = h.accounts.refresh("work", 1, &request).await;
     assert_eq!((served.version, outcome), (2, RefreshOutcome::Served));
-    h.account_refresh_seen("work", outcome);
+    h.account_refresh_seen("work", outcome, 1);
     assert_eq!(health(&h.account_meta("work"), util::now_ms()), AccountHealth::Rejected);
     assert_eq!(account_items(h).iter().filter(|i| !i.done).count(), 1, "끊김 항목이 그대로 하나");
 }
