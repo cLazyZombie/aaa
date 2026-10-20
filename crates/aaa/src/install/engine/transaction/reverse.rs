@@ -107,6 +107,21 @@ impl Transaction {
                 change,
             });
         }
+        self.journal.rollback_remaining.clear();
+        if rollback {
+            if self.manifest.root.as_ref().is_some_and(|root| root.path.exists()) {
+                self.journal.rollback_remaining.push("work_root_preserved".into());
+            }
+            if self
+                .journal
+                .entries
+                .iter()
+                .enumerate()
+                .any(|(i, entry)| entry.inode.is_none() && self.stage_path(i).symlink_metadata().is_ok())
+            {
+                self.journal.rollback_remaining.push("staging_unverified".into());
+            }
+        }
         let reverse = Reverse { schema: 1, rollback, actions };
         let bytes = json_bytes(&reverse)?;
         private::write(&self.dir.join("reverse.json"), &bytes).map_err(Fault::io)?;
@@ -208,6 +223,21 @@ impl Transaction {
         self.journal.reverse[slot].state = Step::Applied;
         self.save()
     }
+    fn discard_stage(&self, index: usize) -> Result<()> {
+        let Some(expected) = &self.journal.entries[index].inode else { return Ok(()) };
+        let stage = self.stage_path(index);
+        match stage.symlink_metadata() {
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+            Err(e) => return Err(Fault::io(e)),
+            Ok(_) => {}
+        }
+        let file = &self.manifest.files[index];
+        if identity(&stage)? != *expected || snapshot(&stage)? != (Some(file.after.clone()), Some(file.mode)) {
+            return Err(Fault::conflict());
+        }
+        std::fs::remove_file(&stage).map_err(Fault::io)?;
+        private::sync_parent(&stage).map_err(Fault::io)
+    }
     pub(super) fn reverse_advance(&mut self) -> Result<bool> {
         if matches!(self.journal.phase, Phase::Uninstalled | Phase::RolledBack) {
             return Ok(false);
@@ -218,6 +248,9 @@ impl Transaction {
                 Step::Pending => self.reverse_stage(slot, action)?,
                 Step::Staged => self.reverse_commit(slot, action)?,
                 Step::Applied => {
+                    if reverse.rollback {
+                        self.discard_stage(action.index)?;
+                    }
                     let f = &self.manifest.files[action.index];
                     if f.shared {
                         let current = references::read(f)?.as_ref().map(json_bytes).transpose()?;
@@ -243,7 +276,7 @@ impl Transaction {
                         }
                     }
                     self.journal.reverse[slot].state = Step::Reverted;
-                    if reverse.rollback && action.change {
+                    if reverse.rollback {
                         self.journal.entries[action.index].state = Step::Reverted;
                     }
                     self.save()?;
@@ -398,5 +431,59 @@ mod tests {
         assert_eq!(identity(&file).unwrap(), inode, "복원 rename 뒤 중단은 다시 쓰지 않는다");
         assert!(!lab.0.join("config/new").exists());
         assert!(resumed.dir.join("backup-0").is_file());
+        let roots = Lab::new();
+        let plan = roots.plan("state");
+        let root = PathBuf::from(plan.choices.work_root.clone().unwrap());
+        let mut tx = Transaction::create(prepare::install(plan).unwrap()).unwrap();
+        while tx.journal.root != Some(Step::Applied) {
+            assert!(tx.advance().unwrap());
+        }
+        let dirty = roots.put("state-work/dirty", b"uncopied work");
+        let result = tx.rollback().unwrap();
+        assert_eq!(result.rollback.state, InstallRollbackState::Partial);
+        assert!(result.rollback.remaining.iter().any(|code| code == "work_root_preserved"));
+        assert_eq!(std::fs::read(dirty).unwrap(), b"uncopied work");
+        assert!(root.join(".aaa-root-owner.json").exists());
+    }
+}
+
+#[cfg(test)]
+mod staging_tests {
+    use super::super::tests::Lab;
+    use super::*;
+
+    #[test]
+    fn rollback_cleans_only_proven_staging_and_reports_unproven_leftovers() {
+        let lab = Lab::new();
+        let original = lab.put("config/value", b"original");
+        let mut tx = Transaction::create(lab.request("state", vec![lab.edit("config/value", b"installer")])).unwrap();
+        tx.stage(0).unwrap();
+        let stage = tx.stage_path(0);
+        assert!(stage.is_file());
+        assert_eq!(tx.rollback().unwrap().rollback.state, InstallRollbackState::Completed);
+        assert!(!stage.exists(), "소유 stage를 rollback이 정리한다");
+        assert_eq!(std::fs::read(original).unwrap(), b"original");
+
+        let unknown = Lab::new();
+        let mut tx =
+            Transaction::create(unknown.request("state", vec![unknown.edit("config/new", b"installer")])).unwrap();
+        let stage = tx.stage_path(0);
+        private::parents(stage.parent().unwrap()).unwrap();
+        private::write(&stage, b"external temporary file").unwrap();
+        let result = tx.rollback().unwrap();
+        assert_eq!(result.rollback.state, InstallRollbackState::Partial);
+        assert!(result.rollback.remaining.iter().any(|code| code == "staging_unverified"));
+        assert_eq!(std::fs::read(&stage).unwrap(), b"external temporary file");
+        assert!(!unknown.0.join("config/new").exists());
+        let edited = Lab::new();
+        let original = edited.put("config/value", b"original");
+        let mut tx =
+            Transaction::create(edited.request("state", vec![edited.edit("config/value", b"installer")])).unwrap();
+        tx.stage(0).unwrap();
+        let stage = tx.stage_path(0);
+        std::fs::write(&stage, b"external stage edit").unwrap();
+        assert_eq!(tx.rollback().err(), Some(Fault::conflict()));
+        assert_eq!(std::fs::read(stage).unwrap(), b"external stage edit");
+        assert_eq!(std::fs::read(original).unwrap(), b"original");
     }
 }

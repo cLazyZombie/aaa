@@ -175,8 +175,11 @@ fn resource_key(path: &Path) -> String {
         hash(path.as_os_str().as_encoded_bytes())
     }
 }
-fn locks(state: &Path, files: &[FileSpec]) -> Result<Locks> {
-    let mut resources: Vec<_> = files.iter().map(|f| f.path.clone()).chain([state.to_owned()]).collect();
+fn locks(state: &Path, manifest: &Manifest) -> Result<Locks> {
+    let config = real_directory(Path::new(&manifest.plan.context.config_dir))?;
+    let root = manifest.root.as_ref().map(|root| real_directory(&root.path)).transpose()?;
+    let mut resources: Vec<_> =
+        manifest.files.iter().map(|f| f.path.clone()).chain([state.to_owned(), config]).chain(root).collect();
     resources.sort();
     resources.dedup();
     let mut held = Locks(Vec::new());
@@ -413,7 +416,7 @@ impl Transaction {
                 _locks: Locks(Vec::new()),
             });
         }
-        let held = locks(&state, &manifest.files)?;
+        let held = locks(&state, &manifest)?;
         if let Some(id) = pointer(&state.join("install/active.json"))? {
             let previous = read_journal(&state, &id, manifest.plan.choices.instance.as_deref())?;
             if !matches!(previous.phase, Phase::Configured | Phase::RolledBack | Phase::Uninstalled)
@@ -475,6 +478,7 @@ impl Transaction {
             root: manifest.root.as_ref().map(|_| Step::Pending),
             reverse_sha256: None,
             reverse: Vec::new(),
+            rollback_remaining: Vec::new(),
         };
         let tx = Self { state, dir, manifest, journal, reused: false, _locks: held };
         tx.save()?;
@@ -488,10 +492,15 @@ impl Transaction {
         let state = real_directory(state)?;
         let journal = read_journal(&state, id, instance)?;
         let manifest = load(&state, &journal)?;
-        let held = locks(&state, &manifest.files)?;
+        let held = locks(&state, &manifest)?;
         let current = read_journal(&state, id, instance)?;
         if json_bytes(&current)? != json_bytes(&journal)? {
             return Err(Fault::conflict());
+        }
+        match pointer(&state.join("install/active.json"))? {
+            Some(active) if active != id => return Err(Fault::conflict()),
+            None => private::write(&state.join("install/active.json"), &json_bytes(&id)?).map_err(Fault::io)?,
+            _ => {}
         }
         Ok(Self { dir: journal_dir(&state, id), state, manifest, journal, reused: false, _locks: held })
     }

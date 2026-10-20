@@ -875,7 +875,8 @@ L2 결함 검증은 이전 root 가져오기 생략, 재시작 전 applied 변�
 - `cargo test -p aaa --bin aaa install::engine::transaction --locked`: 실험실 실제 파일을 stage/commit하고
   rename 뒤 journal 전 중단, 같은 ID 재개, 외부 편집/같은 내용의 외부 inode 교체, 두 프로세스 OS 잠금,
   다른 instance, 반복 unchanged의 bytes/권한/mtime 불변, 공유 마지막 참조 제거/원본 hook 복원,
-  제거·rollback 중단, missing repair·reinstall 데이터 보존, 프로젝트 뼈대/기존 repo를 검사한다.
+  제거·rollback 중단, missing repair·reinstall 데이터 보존, 과거 ID 재개 거부, 같은 config의 별도 파일/job 잠금,
+  root 보존 partial/remaining, 소유 stage 정리·외부 stage 보존, 프로젝트 뼈대/기존 repo를 검사한다.
   실패 주입 flag/export 없이 실제 파일 작업과 production 단계 경계를 사용한다.
 - 일반 journal/공개 결과에는 fake secret이 없어야 하고 원본 backup은 별도 private 파일이어야 한다.
   status는 실제 파일·root 소유 기록을 읽으며 lock/probe/기록 보정 없이 전후 snapshot이 같아야 한다.

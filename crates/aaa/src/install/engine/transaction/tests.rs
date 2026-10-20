@@ -165,19 +165,40 @@ fn edits_before_prepare_or_between_stage_and_commit_are_preserved() {
 fn resource_locks_serialize_processes() {
     if let Some(state) = std::env::var_os("AAA_INSTALL_TEST_LOCK_STATE") {
         let id = std::env::var("AAA_INSTALL_TEST_LOCK_ID").unwrap();
-        let error = Transaction::resume(Path::new(&state), &id, Some("lab")).err().unwrap();
+        let state = Path::new(&state);
+        let error = if std::env::var("AAA_INSTALL_TEST_LOCK_SAME_CONFIG").as_deref() == Ok("1") {
+            let journal = read_journal(state, &id, Some("lab")).unwrap();
+            let mut plan = load(state, &journal).unwrap().plan;
+            let path = Path::new(&plan.context.config_dir).join("different-file");
+            let other_state = state.with_file_name("other-state");
+            plan.context.state_dir = other_state.to_string_lossy().into_owned();
+            plan.choices.state_dir = Some(plan.context.state_dir.clone());
+            let file =
+                prepare::proposal(path, Kind::Config, None, b"other installer".to_vec(), None, true, false).unwrap();
+            Transaction::create(Request { plan, files: vec![file], root: None, directories: Vec::new() }).err().unwrap()
+        } else {
+            Transaction::resume(state, &id, Some("lab")).err().unwrap()
+        };
         assert_eq!(error.code, "installation_resource_busy");
         return;
     }
     let lab = Lab::new();
     let tx = Transaction::create(lab.request("state", vec![lab.edit("config/value", b"new")])).unwrap();
-    let out = std::process::Command::new(std::env::current_exe().unwrap())
-        .args(["--exact", "install::engine::transaction::tests::resource_locks_serialize_processes", "--nocapture"])
-        .env("AAA_INSTALL_TEST_LOCK_STATE", &tx.state)
-        .env("AAA_INSTALL_TEST_LOCK_ID", &tx.journal.id)
-        .output()
-        .unwrap();
-    assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stdout));
+    for same_config in [false, true] {
+        let out = std::process::Command::new(std::env::current_exe().unwrap())
+            .args(["--exact", "install::engine::transaction::tests::resource_locks_serialize_processes", "--nocapture"])
+            .env("AAA_INSTALL_TEST_LOCK_STATE", &tx.state)
+            .env("AAA_INSTALL_TEST_LOCK_ID", &tx.journal.id)
+            .env("AAA_INSTALL_TEST_LOCK_SAME_CONFIG", if same_config { "1" } else { "0" })
+            .output()
+            .unwrap();
+        assert!(
+            out.status.success(),
+            "same_config={same_config}: {} {}",
+            String::from_utf8_lossy(&out.stdout),
+            String::from_utf8_lossy(&out.stderr)
+        );
+    }
     let state = tx.state.clone();
     let id = tx.journal.id.clone();
     drop(tx);

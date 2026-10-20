@@ -214,3 +214,6 @@ repair는 빠진 소유 파일을 복원하고, reinstall은 소유 binary를 �
 기본 제거는 마지막 참조의 소유 binary/hook만 정리하고 TOML·identity/pin·DB·repo/worktree·root·backup을 남긴다.
 외부에서 편집한 hook은 conflict로 보존한다. 버전 갱신·purge·서비스/PATH/등록/신뢰 변경은 후속 경계다.
 I3~I5 실험실 owner는 I6 전까지 엔진/고정 adapter를 직접 호출하며 CLI 승인 우회 기능을 넣지 않는다.
+
+재개는 현재 active job의 같은 ID만 허용한다. rollback은 소유를 입증한 stage만 정리하며,
+보존한 root나 입증하지 못한 stage가 있으면 `rollback.state=partial`과 고정 remaining code로 남긴다.

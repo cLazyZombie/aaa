@@ -115,6 +115,7 @@ struct Journal {
     root: Option<Step>,
     reverse_sha256: Option<String>,
     reverse: Vec<ReverseEntry>,
+    rollback_remaining: Vec<String>,
 }
 
 fn journal_dir(state: &Path, id: &str) -> PathBuf {
@@ -137,6 +138,10 @@ fn read_journal(state: &Path, id: &str, instance: Option<&str>) -> Result<Journa
         || j.instance.as_deref() != instance
         || j.entries.len() > 128
         || j.reverse.len() > j.entries.len()
+        || j.rollback_remaining.len() > 2
+        || j.rollback_remaining
+            .iter()
+            .any(|code| !matches!(code.as_str(), "work_root_preserved" | "staging_unverified"))
         || j.reverse_sha256.as_ref().is_some_and(|s| !digest_ok(s))
         || j.reverse.iter().any(|e| e.index >= j.entries.len())
         || !digest_ok(&j.plan_sha256)
@@ -215,7 +220,12 @@ impl Journal {
                 result.exit_code = 4;
             }
             Phase::RolledBack => {
-                result.rollback.state = InstallRollbackState::Completed;
+                result.rollback.state = if self.rollback_remaining.is_empty() {
+                    InstallRollbackState::Completed
+                } else {
+                    InstallRollbackState::Partial
+                };
+                result.rollback.remaining = self.rollback_remaining.clone();
             }
             Phase::Preparing | Phase::Applying | Phase::RollingBack | Phase::Uninstalling => {
                 result.status = InstallStatus::NeedsUser;

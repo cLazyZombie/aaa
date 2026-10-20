@@ -103,5 +103,23 @@ mod tests {
         let before = tree(&lab.0);
         assert_eq!(Transaction::recover(&state, &id, Some("lab"), true).err(), Some(Fault::conflict()));
         assert_eq!(tree(&lab.0), before, "소유 증명이 다른 실행 파일을 덮지 않는다");
+        let receipts = Lab::new();
+        let mut original = Transaction::create(prepare::install(receipts.plan("state")).unwrap()).unwrap();
+        original.run().unwrap();
+        let old_id = original.journal.id.clone();
+        let state = original.state.clone();
+        drop(original);
+        let mut current = Transaction::recover(&state, &old_id, Some("lab"), true).unwrap();
+        current.run().unwrap();
+        let new_id = current.journal.id.clone();
+        drop(current);
+        let before = tree(&receipts.0);
+        assert_eq!(
+            Transaction::resume(&state, &old_id, Some("lab")).err(),
+            Some(Fault::conflict()),
+            "과거 job 재개로 현재 receipt를 되돌리지 않는다"
+        );
+        assert_eq!(pointer(&state.join("install/receipt.json")).unwrap().as_deref(), Some(new_id.as_str()));
+        assert_eq!(tree(&receipts.0), before);
     }
 }
