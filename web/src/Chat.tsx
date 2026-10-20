@@ -50,6 +50,23 @@ function CompactingRow() {
   );
 }
 
+/** 대화가 정리된 자리(plan §8.304, 사용자 10-20 「대화 정리됨 구분선으로 남겨」). herdr-web-ui ChatView.tsx 618~623줄 `chat-compact`
+ * 그대로: 조용한 구분선이고 요약은 누르면 펼친다. 기록에 시각이 없어 시각은 없다. 요약이 없는(Codex) 정리는 구분선만이다 */
+function CompactedRow({ text }: { text: string }) {
+  if (text.trim() === "")
+    return (
+      <div className="chat-compact" data-role="compact" role="separator" aria-label="대화 정리됨">
+        <span className="chat-compact-head">대화 정리됨</span>
+      </div>
+    );
+  return (
+    <details className="chat-compact" data-role="compact">
+      <summary className="chat-compact-head">대화 정리됨</summary>
+      <div className="chat-compact-text"><Markdown>{text}</Markdown></div>
+    </details>
+  );
+}
+
 /** 참고 `ThinkingRow`: 「생각」 머리만 보이고 누르면 펼친다 */
 function ThinkingRow({ text }: { text: string }) {
   const [open, setOpen] = useState(false);
@@ -749,6 +766,8 @@ export function ChatPanel({
             <ChatRow key={rowIds[i]} id={rowIds[i]!} role={m.role} virtual={chat.messages.length > 300} onResize={onRowResize}>
             {m.role === "thinking" ? (
               <ThinkingRow key={rowIds[i]} text={m.text} />
+            ) : m.role === "compact" ? (
+              <CompactedRow key={rowIds[i]} text={m.text} />
             ) : m.role === "user" ? (
               <UserTurn key={rowIds[i]} text={unwrapPasted(m.text)} pane={pane} onOpenFile={onOpenFile} pending={m.pending ? { harness, steer: steerFor(`message-${i}`) } : undefined} />
             ) : m.role === "assistant" ? (

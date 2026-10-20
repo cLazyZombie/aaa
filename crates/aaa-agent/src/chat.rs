@@ -320,18 +320,39 @@ pub fn path(harness: &str, transcript: Option<&str>, harness_session: Option<&st
     }
 }
 
+/// 대화가 정리된 자리(plan §8.304). herdr-web-ui conversation.ts가 Claude `isCompactSummary` 사람 줄을 「정리 요약」 구분선으로
+/// 보이는 것을 옮기고, Codex rollout의 `compacted`(정리 뒤 남은 기록과 요약 message)도 같은 자리로 본다. 요약은 4000자까지
+fn compaction(harness: &str, v: &Value) -> Option<ChatMessage> {
+    let text = match harness {
+        "codex" if v["type"] == "compacted" => v["payload"]["message"].as_str().unwrap_or("").to_string(),
+        "claude" if v["isCompactSummary"] == true && v["type"] == "user" => match &v["message"]["content"] {
+            Value::String(s) => s.clone(),
+            Value::Array(blocks) => {
+                blocks.iter().filter(|b| b["type"] == "text").filter_map(|b| b["text"].as_str()).collect::<Vec<_>>().join("\n")
+            }
+            _ => String::new(),
+        },
+        _ => return None,
+    };
+    Some(ChatMessage { id: None, role: ChatRole::Compact, text: clip(&text), pending: false, receipt: None })
+}
+
 /// agent 요청 처리
 pub fn read(
     harness: &str,
     transcript: Option<&str>,
     harness_session: Option<&str>,
     thinking: bool,
+    compact: bool,
     before: Option<&str>,
 ) -> Result<pages::Page, String> {
     let path = path(harness, transcript, harness_session)?;
     let parse: LineParser = if harness == "codex" { codex_line } else { claude_line };
     let failed = |e: std::io::Error| format!("기록을 읽지 못했다: {}", e.kind());
-    let mut page = pages::read(&path, before, |v| parse(v, thinking))?;
+    let mut page = pages::read(&path, before, |v| match compaction(harness, v).filter(|_| compact) {
+        Some(m) => vec![m],
+        None => parse(v, thinking),
+    })?;
     if harness == "claude" && before.is_none() {
         page.messages.extend(claude_pending(&path).map_err(failed)?);
     }
@@ -434,8 +455,8 @@ mod tests {
         }
         for flag in ["isMeta", "isCompactSummary", "isSynthetic"] {
             for mut record in [
-                json!({"type":"user","origin":{"kind":"human"},"message":{"content":"내부 안내"}}),
-                json!({"type":"attachment","attachment":{"type":"queued_command","commandMode":"prompt","origin":{"kind":"human"},"prompt":"내부 안내"}}),
+                serde_json::json!({"type":"user","origin":{"kind":"human"},"message":{"content":"내부 안내"}}),
+                serde_json::json!({"type":"attachment","attachment":{"type":"queued_command","commandMode":"prompt","origin":{"kind":"human"},"prompt":"내부 안내"}}),
             ] {
                 record[flag] = json!(true);
                 assert!(claude_line(&record, false).is_empty(), "구조 필드가 글 모양보다 우선한다: {flag}");
@@ -573,6 +594,50 @@ mod tests {
         assert_eq!(codex_file(&sessions, id).unwrap(), std::fs::canonicalize(&roll).unwrap());
         assert!(codex_file(&sessions, "../../etc").is_err());
         assert!(codex_file(&sessions, "01900000-0000-7000-8000-00000000a002").is_err());
+        std::fs::remove_dir_all(&root).unwrap();
+    }
+
+    /// 정리된 자리(plan §8.304): Claude `isCompactSummary` 사람 줄(10-20 실측 「This session is being continued …」)과 Codex
+    /// `compacted`는 host가 청할 때만 「정리됨」 줄이다. 청하지 않으면 전처럼 아무것도 싣지 않는다(옛 host는 이 역할을 모른다).
+    /// 요약 글은 사람 말·받음 증거가 아니다
+    #[test]
+    fn compaction_rows_only_when_asked() {
+        let root = dir("compaction");
+        let path = root.join("s.jsonl");
+        let summary = "This session is being continued from a previous conversation that ran out of context.";
+        std::fs::write(
+            &path,
+            [
+                serde_json::json!({"type":"user","message":{"content":"앞 질문"}}).to_string(),
+                serde_json::json!({"type":"system","subtype":"compact_boundary","content":"Conversation compacted"}).to_string(),
+                serde_json::json!({"type":"user","isCompactSummary":true,"message":{"content":[{"type":"text","text":summary}]}}).to_string(),
+                serde_json::json!({"type":"user","message":{"content":"뒤 질문"}}).to_string(),
+            ]
+            .join("\n")
+                + "\n",
+        )
+        .unwrap();
+        let roles = |compact| -> Vec<(ChatRole, String)> {
+            pages::read(&path, None, |v| match compaction("claude", v).filter(|_| compact) {
+                Some(m) => vec![m],
+                None => claude_line(v, false),
+            })
+            .unwrap()
+            .messages
+            .into_iter()
+            .map(|m| (m.role, m.text))
+            .collect()
+        };
+        assert_eq!(
+            roles(true),
+            [(ChatRole::User, "앞 질문".into()), (ChatRole::Compact, summary.into()), (ChatRole::User, "뒤 질문".into())]
+        );
+        assert_eq!(roles(false), [(ChatRole::User, "앞 질문".into()), (ChatRole::User, "뒤 질문".into())]);
+        let codex = serde_json::json!({"type":"compacted","payload":{"message":"","replacement_history":[{"type":"message","role":"user"}]}});
+        let m = compaction("codex", &codex).unwrap();
+        assert_eq!((m.role, m.text.as_str(), m.receipt.is_none()), (ChatRole::Compact, "", true));
+        assert!(compaction("claude", &codex).is_none());
+        assert!(compaction("codex", &serde_json::json!({"type":"user","isCompactSummary":true,"message":{"content":"x"}})).is_none());
         std::fs::remove_dir_all(&root).unwrap();
     }
 }

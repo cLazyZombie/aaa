@@ -50,7 +50,7 @@ export type PaneDirection = "left" | "right" | "up" | "down";
 
 export type WorkspaceSummary = { name: string, tabs: number, panes: number, };
 
-export type ChatRole = "user" | "assistant" | "tool" | "thinking";
+export type ChatRole = "user" | "assistant" | "tool" | "thinking" | "compact";
 
 export type ChatMessage = {
 /**

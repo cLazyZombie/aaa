@@ -360,13 +360,18 @@ export function ChatComposer({
     onInputTrace(f.trace, "unlocked");
     if (f.source === "box") { clearAttachments(f.attachments); pasted.current = false; }
   };
+  /** 정리 뒤 차례대로 보낼 글의 표지를 모두 뗀다: 이제 사람이 보낸다 */
+  const releaseCompactionHolds = (): void => {
+    for (const m of messageQueues.read(owner)) if (m.after === "compaction") messageQueues.release(owner, m.id);
+  };
   /** 가지 않았거나 갔는지 모른다: 글을 입력창(대기 메시지는 그 칸)에 돌려놓고 까닭을 말한다 */
   const fail = (f: Flight, note: Note, method: InputReceiptMethod = "unknown"): void => {
     if (!finish(f)) return;
     onInputTrace(f.trace, "failed", method);
     if (f.source === "queue" && f.queueId !== undefined) {
-      // 정리 뒤 저절로 보내던 글이면 표지를 뗀다: 다시 저절로 보내지 않고 사람이 까닭을 보고 보낸다
-      messageQueues.release(owner, f.queueId);
+      // 정리 뒤 저절로 보내던 글이면 남은 것까지 표지를 뗀다: 차례가 뒤집히지 않게 다시 저절로 보내지 않고 사람이 까닭을 보고
+      // 보낸다(참고 herdr-web-ui pending-input.ts `holdRemaining`: 「review and send the remaining messages explicitly」)
+      releaseCompactionHolds();
       messageQueues.endSend(owner, f.queueId);
       setQueueError({ id: f.queueId, text: note.text, inspect: note.inspect || method === "rejected" });
       return;
@@ -622,7 +627,7 @@ export function ChatComposer({
   const sendQueued = (id: string, raw: string, steer = false): void => {
     const { text: message, removed } = stripHidden(raw);
     if (message.trim() === "") {
-      messageQueues.release(owner, id);
+      releaseCompactionHolds();
       setQueueError({ id, text: HIDDEN_ONLY });
       return;
     }
@@ -639,7 +644,7 @@ export function ChatComposer({
     const next = queued.find((m) => m.after === "compaction" && !messageQueues.isSending(m.id));
     if (!next) return;
     if (working && !autoSendQueued) {
-      for (const m of queued) if (m.after === "compaction") messageQueues.release(owner, m.id);
+      releaseCompactionHolds();
       return;
     }
     sendQueued(next.id, next.text);

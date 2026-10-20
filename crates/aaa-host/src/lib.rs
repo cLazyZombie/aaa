@@ -1654,6 +1654,7 @@ impl Host {
                         transcript,
                         harness_session,
                         thinking,
+                        compact: true,
                         before,
                     })
                     .await?

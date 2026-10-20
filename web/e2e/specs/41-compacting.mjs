@@ -33,7 +33,12 @@ function draw() {
   s += '\r\n────────────────────────\r\n❯ ' + (draft || (queue.length ? '\x1b[2mPress up to edit queued messages\x1b[0m' : '')) + '\r\n────────────────────────\r\n  ? for shortcuts\r\n';
   process.stdout.write('\x1b[2J\x1b[H' + s);
 }
-const KEYS = { '\x1b[15~': () => { mode = 'compacting'; }, '\x1b[17~': () => { mode = 'idle'; dequeue(); }, '\x1b[18~': () => { mode = 'working'; } };
+// 정리 끝은 실제 Claude 2.1.304 기록 차례대로 적는다: compact_boundary → 요약(isCompactSummary 사람 줄) → 대기열 꺼냄
+const compacted = () => {
+  write({ type: 'system', subtype: 'compact_boundary', content: 'Conversation compacted' });
+  write({ type: 'user', isCompactSummary: true, message: { role: 'user', content: 'This session is being continued from a previous conversation. 요약: 앞 대화를 줄였다' } });
+};
+const KEYS = { '\x1b[15~': () => { mode = 'compacting'; }, '\x1b[17~': () => { compacted(); mode = 'idle'; dequeue(); }, '\x1b[18~': () => { mode = 'working'; } };
 process.stdin.on('data', (data) => {
   fs.appendFileSync(bytes, data); count += data.length;
   let text = data.toString().replaceAll('\x1b[200~', '').replaceAll('\x1b[201~', '');
@@ -60,8 +65,10 @@ const LABEL = "compact1";
 const directory = `${root}/compacting`;
 const transcript = `${root}/claude/projects/-lab-${LABEL}/s1.jsonl`;
 const bytes = () => fs.readFileSync(`${directory}/${LABEL}.bytes`, "utf8");
-/** 기록에 적힌 사람 말(차례대로) */
-const said = () => fs.readFileSync(transcript, "utf8").trim().split("\n").map((l) => JSON.parse(l)).filter((r) => r.type === "user").map((r) => r.message.content);
+/** 기록에 적힌 사람 말(차례대로, 정리 요약 빼고) */
+const said = () => fs.readFileSync(transcript, "utf8").trim().split("\n").map((l) => JSON.parse(l)).filter((r) => r.type === "user" && !r.isCompactSummary).map((r) => r.message.content);
+/** 대화 보기의 줄: 사람 말은 글, 정리된 자리는 「정리됨」 */
+const rows = (p) => p.evaluate(() => [...document.querySelectorAll('[data-role="user"], [data-role="compact"]')].map((el) => el.dataset.role === "compact" ? "정리됨" : el.textContent.trim()));
 
 /** 상단 상태 표지(AgentChip)가 정리 중인가·대화 끝 줄이 있는가 */
 const shows = (p) => p.evaluate(() => ({
@@ -166,6 +173,14 @@ export default async function ({ page }) {
     assert.ok(list.indexOf("정리 뒤 첫째") < list.indexOf("정리 뒤 둘째"), JSON.stringify(list));
     await domIs(page, "보관함이 비고 정리 줄이 사라짐", () => !document.querySelector('[data-testid="chat-queue"]') && !document.querySelector('[data-testid="chat-compacting"]'));
     assert.ok(bytes().slice(before.length).includes("정리 뒤 첫째"), "정리가 끝난 뒤 pane이 받았다");
+    // 끝난 정리는 그 자리에 「대화 정리됨」 구분선으로 남고(herdr-web-ui chat-compact), 누르면 요약을 펼친다
+    await domIs(page, "정리된 자리 둘", () => document.querySelectorAll('[data-role="compact"]').length === 2);
+    assert.deepEqual(await rows(page), ["정리됨", "작업 중 추가", "정리됨", "정리 뒤 첫째", "정리 뒤 둘째"]);
+    const divider = page.locator('[data-role="compact"]').last();
+    assert.equal((await divider.locator("summary").textContent()).trim(), "대화 정리됨");
+    await divider.locator("summary").click();
+    await domIs(page, "요약 펼침", () => [...document.querySelectorAll('[data-role="compact"]')].at(-1)?.open === true);
+    assert.match(await divider.locator(".chat-compact-text").textContent(), /앞 대화를 줄였다/);
     await shot(page, "41-after-compacting-desktop");
   });
 }
