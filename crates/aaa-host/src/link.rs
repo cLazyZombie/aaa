@@ -1,6 +1,9 @@
 //! host 쪽 Agent link listener. 로컬 agent는 UDS(peer UID), 원격 agent는 TCP+TLS 1.3(장치 키 fingerprint).
 //! 등록되지 않은 인증서는 등록 창이 열려 있을 때만 enrollment로 받아들인다.
 
+use crate::supervisor::Task;
+use futures_util::FutureExt;
+use std::panic::AssertUnwindSafe;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -29,24 +32,30 @@ pub async fn start(host: &Arc<Host>) -> Result<()> {
     let local = aaa_common::ipc::LocalListener::bind(&local_socket(host))
         .context("로컬 agent socket(이미 host가 실행 중인가?)")?;
     {
+        let local = Arc::new(local);
         let host = host.clone();
-        tokio::spawn(async move {
-            loop {
-                let (s, pid) = match local.accept_peer().await {
-                    Ok(pair) => pair,
-                    Err(e) => {
-                        host.resource_error("local agent accept", &e);
-                        tracing::warn!(error = %e, "로컬 agent accept 실패");
-                        tokio::time::sleep(Duration::from_secs(1)).await;
-                        continue;
-                    }
-                };
-                let host = host.clone();
-                tokio::spawn(async move {
-                    if let Err(e) = serve(host, s, None, pid).await {
-                        tracing::info!("로컬 agent 연결 끝: {e:#}");
-                    }
-                });
+        host.clone().supervise(Task::LocalLink, move || {
+            let host = host.clone();
+            let local = local.clone();
+            async move {
+                host.task_progress(Task::LocalLink);
+                loop {
+                    let (s, pid) = match local.accept_peer().await {
+                        Ok(pair) => pair,
+                        Err(e) => {
+                            host.resource_error("local agent accept", &e);
+                            tracing::warn!(error = %e, "로컬 agent accept 실패");
+                            tokio::time::sleep(Duration::from_secs(1)).await;
+                            continue;
+                        }
+                    };
+                    let host = host.clone();
+                    tokio::spawn(async move {
+                        if let Err(e) = serve(host, s, None, pid).await {
+                            tracing::info!("로컬 agent 연결 끝: {e:#}");
+                        }
+                    });
+                }
             }
         });
     }
@@ -60,49 +69,54 @@ pub async fn start(host: &Arc<Host>) -> Result<()> {
         let acceptor = tokio_rustls::TlsAcceptor::from(tls::server_config(&host.identity)?);
         let gate = Arc::new(Semaphore::new(PREAUTH_LIMIT));
         let host = host.clone();
-        tokio::spawn(async move {
-            loop {
-                let (tcp, peer) = match listener.accept().await {
-                    Ok(pair) => pair,
-                    Err(e) => {
-                        host.resource_error("agent link accept", &e);
-                        tracing::warn!(error = %e, "agent link accept 실패");
-                        tokio::time::sleep(Duration::from_secs(1)).await;
+        let listener = Arc::new(listener);
+        host.clone().supervise(Task::RemoteLink, move || {
+            let (host, listener, gate, acceptor) = (host.clone(), listener.clone(), gate.clone(), acceptor.clone());
+            async move {
+                host.task_progress(Task::RemoteLink);
+                loop {
+                    let (tcp, peer) = match listener.accept().await {
+                        Ok(pair) => pair,
+                        Err(e) => {
+                            host.resource_error("agent link accept", &e);
+                            tracing::warn!(error = %e, "agent link accept 실패");
+                            tokio::time::sleep(Duration::from_secs(1)).await;
+                            continue;
+                        }
+                    };
+                    let Ok(permit) = gate.clone().try_acquire_owned() else {
+                        tracing::warn!(%peer, "인증 전 연결이 너무 많아 끊었다");
                         continue;
-                    }
-                };
-                let Ok(permit) = gate.clone().try_acquire_owned() else {
-                    tracing::warn!(%peer, "인증 전 연결이 너무 많아 끊었다");
-                    continue;
-                };
-                let (host, acceptor) = (host.clone(), acceptor.clone());
-                tokio::spawn(async move {
-                    let _ = tcp.set_nodelay(true);
-                    let tls = match tokio::time::timeout(Duration::from_secs(10), acceptor.accept(tcp)).await {
-                        Ok(Ok(s)) => s,
-                        _ => {
-                            tracing::debug!(%peer, "TLS handshake 실패");
-                            return;
+                    };
+                    let (host, acceptor) = (host.clone(), acceptor.clone());
+                    tokio::spawn(async move {
+                        let _ = tcp.set_nodelay(true);
+                        let tls = match tokio::time::timeout(Duration::from_secs(10), acceptor.accept(tcp)).await {
+                            Ok(Ok(s)) => s,
+                            _ => {
+                                tracing::debug!(%peer, "TLS handshake 실패");
+                                return;
+                            }
+                        };
+                        let (fp, sas_base) = {
+                            let (_, c) = tls.get_ref();
+                            let fp = tls::peer_fingerprint(c).unwrap_or_default();
+                            let sas = tls::sas(c, &host.identity.fingerprint, &fp).unwrap_or_default();
+                            (fp, sas)
+                        };
+                        let known = host.db.machine_by_fingerprint(&fp).ok().flatten();
+                        let res = match known {
+                            Some(m) => {
+                                drop(permit);
+                                serve(host, Box::new(tls), Some(m.id), None).await
+                            }
+                            None => enroll(host, tls, &fp, &sas_base).await,
+                        };
+                        if let Err(e) = res {
+                            tracing::info!(%peer, "agent 연결 끝: {e:#}");
                         }
-                    };
-                    let (fp, sas_base) = {
-                        let (_, c) = tls.get_ref();
-                        let fp = tls::peer_fingerprint(c).unwrap_or_default();
-                        let sas = tls::sas(c, &host.identity.fingerprint, &fp).unwrap_or_default();
-                        (fp, sas)
-                    };
-                    let known = host.db.machine_by_fingerprint(&fp).ok().flatten();
-                    let res = match known {
-                        Some(m) => {
-                            drop(permit);
-                            serve(host, Box::new(tls), Some(m.id), None).await
-                        }
-                        None => enroll(host, tls, &fp, &sas_base).await,
-                    };
-                    if let Err(e) = res {
-                        tracing::info!(%peer, "agent 연결 끝: {e:#}");
-                    }
-                });
+                    });
+                }
             }
         });
     }
@@ -180,11 +194,51 @@ fn already_enrolled(name: &str) -> String {
 
 /// 인증된 agent: hello → welcome → 요청·사건·출력 처리. `known`은 TLS로 확인한 머신 ID(로컬은 None), `pid`는 로컬 agent
 /// 프로세스(socket peer credential).
+type Cleanup = (String, u64, super::Pending, tokio::task::JoinHandle<()>);
+
 async fn serve(
     host: Arc<Host>,
     stream: aaa_common::ipc::LocalStream,
     known: Option<String>,
     pid: Option<u32>,
+) -> Result<()> {
+    if !host.task_allowed(Task::AgentLink) {
+        bail!("agent-link 자동 복구 상한: host 재시작 필요");
+    }
+    tokio::time::sleep(host.task_retry_delay(Task::AgentLink)).await;
+    if !host.task_allowed(Task::AgentLink) {
+        bail!("agent-link 자동 복구 상한: host 재시작 필요");
+    }
+    let mut cleanup = None;
+    let result =
+        AssertUnwindSafe(serve_connection(host.clone(), stream, known, pid, &mut cleanup)).catch_unwind().await;
+    let panicked = result.is_err();
+    if panicked {
+        host.task_panicked(Task::AgentLink);
+    }
+    // 정리 중 poison 등으로 또 panic해도 감시 기록은 남는다. 새 generation을 끊지 않는다.
+    let cleaned = std::panic::catch_unwind(AssertUnwindSafe(|| {
+        if let Some((mid, generation, pending, pinger)) = cleanup {
+            pinger.abort();
+            pending.lock().unwrap().clear();
+            host.agent_disconnected(&mid, generation);
+        }
+    }));
+    if cleaned.is_err() && !panicked {
+        host.task_panicked(Task::AgentLink);
+    }
+    match result {
+        Ok(result) if cleaned.is_ok() => result,
+        _ => bail!("agent-link panic: 내용 숨김"),
+    }
+}
+
+async fn serve_connection(
+    host: Arc<Host>,
+    stream: aaa_common::ipc::LocalStream,
+    known: Option<String>,
+    pid: Option<u32>,
+    cleanup: &mut Option<Cleanup>,
 ) -> Result<()> {
     let local = known.is_none();
     let (r, w) = tokio::io::split(stream);
@@ -243,13 +297,8 @@ async fn serve(
     let generation = host.next_gen();
     let mut conn = AgentConn::new(tx.clone(), generation);
     conn.timeouts = host.cfg.host.clone();
+    conn.health_host = Arc::downgrade(&host);
     let pending = conn.pending.clone();
-    host.agent_connected(&hello, local, conn);
-    if local {
-        host.note_agent_pid(&hello.machine_id, pid);
-    }
-    tracing::info!(machine = %hello.machine_name, sessions = hello.sessions.len(), local, pid = ?pid, "agent 연결");
-
     let pinger = {
         let tx = tx.clone();
         tokio::spawn(async move {
@@ -264,6 +313,14 @@ async fn serve(
         })
     };
     let mid = hello.machine_id.clone();
+    *cleanup = Some((mid.clone(), generation, pending.clone(), pinger));
+    host.agent_connected(&hello, local, conn);
+    if local {
+        host.note_agent_pid(&hello.machine_id, pid);
+    }
+    tracing::info!(machine = %hello.machine_name, sessions = hello.sessions.len(), local, pid = ?pid, "agent 연결");
+
+    host.task_progress(Task::AgentLink);
     let result: Result<()> = async {
         loop {
             let next = tokio::time::timeout(DEAD_AFTER, rx.next()).await;
@@ -325,11 +382,11 @@ async fn serve(
                     other => tracing::debug!("무시한 agent 메시지: {other:?}"),
                 },
             }
+            host.task_progress(Task::AgentLink);
         }
     }
     .await;
-    pinger.abort();
-    host.agent_disconnected(&mid, generation);
+
     tracing::info!(machine = %hello.machine_name, "agent 연결 끊김");
     result
 }
@@ -550,3 +607,6 @@ mod post_tests {
         std::fs::remove_dir_all(path).unwrap();
     }
 }
+
+#[cfg(test)]
+mod supervision_tests;

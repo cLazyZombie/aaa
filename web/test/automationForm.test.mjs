@@ -1,12 +1,12 @@
-// 자동화 편집 초안 규칙(src/automationForm.ts, 관리 GUI W2, plan §8.332). 합치기·검사의 정본은 host 유닛 automation::edit이다.
+// 자동화 편집 초안 규칙(src/automationForm.ts, 관리 GUI W2, plan §8.342). 합치기·검사의 정본은 host 유닛 automation::edit이다.
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import { actionKind, bodyOf, canEditAutomations, conditionKind, lineDiff, newForm, parseList, parsePercent, setAction, setCondition, setField, USAGE_DEFAULTS, validName } from "../src/automationForm.ts";
 
 describe("자동화 편집 초안", () => {
-  it("편집은 1.74 이상 host만: 옛 host는 새 요청을 모른다", () => {
-    for (const v of [undefined, null, "", "1.73", "2.74"]) assert.equal(canEditAutomations(v), false, String(v));
-    for (const v of ["1.74", "1.80"]) assert.equal(canEditAutomations(v), true, v);
+  it("편집은 1.76 이상 host만: 옛 host는 새 요청을 모른다", () => {
+    for (const v of [undefined, null, "", "1.75", "2.76"]) assert.equal(canEditAutomations(v), false, String(v));
+    for (const v of ["1.76", "1.80"]) assert.equal(canEditAutomations(v), true, v);
   });
   it("새 초안은 사용량 문턱 기본값(5시간 5%·주간 10%)을 채우고 횟수 제한은 두지 않는다", () => {
     const f = newForm();

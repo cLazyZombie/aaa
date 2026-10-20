@@ -1,4 +1,4 @@
-// 자동화 만들기·고치기(관리 GUI W2, plan §8.332). 폼과 TOML 고급 편집이 한 초안을 함께 쓴다: 폼을 고치면 host가 바뀐 칸만
+// 자동화 만들기·고치기(관리 GUI W2, plan §8.342). 폼과 TOML 고급 편집이 한 초안을 함께 쓴다: 폼을 고치면 host가 바뀐 칸만
 // 원문에 합쳐 돌려주고(`automation_validate`), TOML을 고치면 host가 읽은 값으로 폼을 다시 그린다. 저장은 본 판(sha256)일 때만
 // 쓰고, 다르면 host가 `conflict`로 거부한다: 그때 지금 파일과 내 초안의 차이를 보이고 사람이 고른다(자동 병합 없음).
 // 틀은 상세 창과 같은 AutomationSheet(t3code ScheduledTasksSettings의 Dialog → 휴대폰 sheet), 검토 절은 계획 §2.2 「사건마다 새 thread」.

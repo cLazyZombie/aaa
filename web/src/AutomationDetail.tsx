@@ -1,5 +1,5 @@
 // 자동화 한 줄의 상세(관리 GUI W1, plan §8.303): 요약·막힌 입력·설정·대상·승인 범위·적용 판·마지막 건너뜀·기록 50건·파일 원문.
-// 쓰는 것: 막힌 `do.message` 묶음 풀기(`automation_unblock`), 자동 시작 범위 승인(목록과 같은 창), 그리고 W2(plan §8.332)의
+// 쓰는 것: 막힌 `do.message` 묶음 풀기(`automation_unblock`), 자동 시작 범위 승인(목록과 같은 창), 그리고 W2(plan §8.342)의
 // 고치기(편집 창)·지금 실행(`automation_run`)·지우기(`automation_delete`)·명령 승인(`routine_approve`, 확인 창에 명령·머신·hash).
 // 절 순서와 기록 줄 모양은 t3code ScheduledTasksSettings(상태 배지 · 시각 · 요약)와 herdr-projects `routine list`의 kind 낱말을 따른다.
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
@@ -66,7 +66,7 @@ function useRuns(project: string, name: string, stamp: unknown) {
 
 export function RuleDetail({ project, rule, canControl, canEdit = false, onEdit = () => {}, covered = false, onChanged, onApprove, onThread, onClose }: {
   project: string;
-  /** host가 편집·지금 실행을 안다(FRONT_API 1.74) */
+  /** host가 편집·지금 실행을 안다(FRONT_API 1.76) */
   canEdit?: boolean;
   onEdit?: () => void;
   /** 기록의 thread 번호를 누르면(창을 닫고 그 thread를 연다) */
@@ -138,7 +138,7 @@ export function RuleDetail({ project, rule, canControl, canEdit = false, onEdit 
         !!rule.command && ["명령", <code key="c">{rule.command}</code>],
         ["하루 상한", rule.max_per_day ? `${rule.max_per_day}번` : "없음"],
       ]} />
-      {!canEdit && <p className="automation-dim">이 host는 웹 편집을 모른다(1.74 이전). 파일 원문을 본다.</p>}
+      {!canEdit && <p className="automation-dim">이 host는 웹 편집을 모른다(1.76 이전). 파일 원문을 본다.</p>}
     </Section>
     <Section title="대상">
       <ul className="automation-list">{ruleTargets(rule).map((t) => <li key={t}>{t}</li>)}</ul>

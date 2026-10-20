@@ -90,7 +90,7 @@
 
 .automation-open > span { display: inline-flex; align-items: center; gap: .5rem; flex-wrap: wrap; }
 
-/* 편집 창(관리 GUI W2, plan §8.332): 폼·TOML·검토 탭이 한 초안을 쓴다. 휴대폰에서는 칸이 한 줄씩 */
+/* 편집 창(관리 GUI W2, plan §8.342): 폼·TOML·검토 탭이 한 초안을 쓴다. 휴대폰에서는 칸이 한 줄씩 */
 .automations .automation-tools > h3 { margin: 18px 0 8px; }
 .automation-tabs { display: flex; gap: 4px; margin: 4px 0 8px; border-bottom: 1px solid var(--border); }
 .automation-tabs > button { all: unset; cursor: pointer; padding: 8px 12px; min-height: 20px; border-bottom: 2px solid transparent; color: var(--text-dim); }

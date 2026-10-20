@@ -439,7 +439,7 @@ pub(crate) fn edit_enabled(text: &str, on: Option<bool>) -> Result<(String, bool
 }
 
 impl Host {
-    /// 자동화 목록 답: 지운 자동화도 함께 싣는다(FRONT_API 1.74)
+    /// 자동화 목록 답: 지운 자동화도 함께 싣는다(FRONT_API 1.76)
     pub(crate) fn routines_reply(
         &self,
         project: &str,
@@ -583,7 +583,7 @@ impl Host {
         actor: &str,
     ) -> Result<Vec<RoutineView>, ErrorBody> {
         // 사람만: CLI의 사람 문(`person.rs`)은 env를 보지만, host는 연결한 프로세스로 aaa pane 안인지 판정한다(plan §8.164).
-        // 웹 조작 기기(Controller)도 확인 화면에서 승인한다(관리 GUI W2, plan §8.332). 요청 경계(`call_from`)가 worker 등도 거부한다
+        // 웹 조작 기기(Controller)도 확인 화면에서 승인한다(관리 GUI W2, plan §8.342). 요청 경계(`call_from`)가 worker 등도 거부한다
         if crate::front::in_session(actor) {
             return Err(err(
                 ErrorCode::Forbidden,

@@ -132,6 +132,7 @@ impl Store {
             harness: r.harness,
             version: r.version,
             secret: SecretText(value),
+            trust_cwd: None,
         })
     }
     fn write(&self, name: &str, harness: &str, version: u64, value: &str) -> Result<AccountView, ErrorBody> {

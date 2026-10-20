@@ -26,6 +26,9 @@ pub struct AccountCredential {
     pub harness: String,
     pub version: u64,
     pub secret: SecretText,
+    /// host가 허용한 thread 자기 폴더만 미리 신뢰한다. 생략하면 사용자 신뢰 창을 유지한다.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub trust_cwd: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

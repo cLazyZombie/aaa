@@ -2439,7 +2439,7 @@ pub enum FrontRequest {
         #[serde(default)]
         discard: bool,
     },
-    /// 자동화 파일 원문·판·본문과 검사 결과(관리 GUI W2, FRONT_API 1.74, Reader 가능)
+    /// 자동화 파일 원문·판·본문과 검사 결과(관리 GUI W2, FRONT_API 1.76, Reader 가능)
     AutomationRead {
         #[serde(default)]
         #[ts(optional, as = "Option<String>")]
@@ -2924,7 +2924,7 @@ pub enum FrontResponse {
     },
     Routines {
         routines: Vec<RoutineView>,
-        /// 지운 자동화(FRONT_API 1.74). 옛 host는 생략한다
+        /// 지운 자동화(FRONT_API 1.76). 옛 host는 생략한다
         #[serde(default, skip_serializing_if = "Vec::is_empty")]
         #[ts(optional, as = "Option<Vec<crate::AutomationTrashEntry>>")]
         trash: Vec<crate::AutomationTrashEntry>,
