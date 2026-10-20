@@ -10,8 +10,8 @@
 // 말 둘레도 참고대로다(plan §8.182): 대화 기둥 폭(`.chat-transcript`), 긴 사람 말 접기(`UserMessage`, userMessageFold.ts), 사람 말 복사·답의
 // 마크다운/일반 텍스트 복사(`CopyButton`, 마우스면 올렸을 때). 참고와 다른 곳: 기록에 시각이 없어 시각은 없고, 접힘은 이 화면 안에서만 기억한다.
 // 문구는 참고 i18n.ko.ts.
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { ArrowDown, ArrowUp, Check, ChevronDown, ChevronRight, Clock, Copy, LoaderCircle, TriangleAlert } from "lucide-react";
+import { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { ArrowDown, ArrowUp, Brain, Check, ChevronDown, ChevronRight, Clock, Copy, Eye, Globe, Hammer, LoaderCircle, Search, SquarePen, Terminal, TriangleAlert, Wrench } from "lucide-react";
 import { ApiError, call, watchChat } from "./api";
 import type { ChatMessage, ChatView } from "./gen/proto";
 import { useChatShared } from "./settings";
@@ -28,6 +28,7 @@ import { unwrapPasted } from "./pastedContent";
 import { ChatRow } from "./ChatRow";
 import { mergeChatPage } from "./chatPages";
 import { steerLabel, type SteerState } from "./steerQueued";
+import { groupChatRows, groupExpanded, readExpandedGroups, rememberExpandedGroups, rowIndexById, summarizeToolGroup, toggleExpanded, toolGroupKind, type ChatDisplayRow, type ToolGroupKind } from "./toolGroups";
 
 /** 기록 줄 요소(말마다 하나, 끝에 대기 말). 머리 안내·경고는 줄이 아니다 */
 function chatRows(el: HTMLElement): NodeListOf<HTMLElement> {
@@ -47,6 +48,52 @@ function ThinkingRow({ text }: { text: string }) {
         <span className="work-row-name">생각</span>
       </button>
       {open && <div className="work-thinking-text">{text}</div>}
+    </div>
+  );
+}
+
+// 참고 t3code `toolGroupSummaryIconName`(MessagesTimeline.tsx:3834)
+const GROUP_ICONS: Readonly<Record<ToolGroupKind, typeof Terminal>> = {
+  command: Terminal, read: Eye, edit: SquarePen, "code-search": Search, search: Globe, other: Wrench, reasoning: Brain, mixed: Hammer,
+};
+
+/**
+ * 이어진 도구·생각 줄 묶음(plan §8.303, 참고 t3code `WorkGroupHeader`·`ExpandedWorkGroupEntries`): 그림과 요약 한 줄, 누르면 그 줄들을
+ * 펼친다. 펼친 목록은 높이 min(18rem, 50dvh) 안에서 굴리고, 그 끝을 보고 있었으면 새 줄을 따라간다(참고 shouldFollowWorkGroupAppend).
+ * agent가 작업 중이고 기록 맨 끝 묶음이면 요약 대신 마지막 줄을 빛나게 보인다(참고 `work-live`)
+ */
+function ToolGroup({ messages, expanded, live, onToggle, children }: {
+  messages: ChatMessage[];
+  expanded: boolean;
+  live: boolean;
+  onToggle: () => void;
+  children: ReactNode;
+}) {
+  const Icon = GROUP_ICONS[toolGroupKind(messages)];
+  const last = messages.at(-1)!;
+  const label = live ? (last.role === "tool" ? last.text : "생각 중") : summarizeToolGroup(messages);
+  const list = useRef<HTMLDivElement>(null);
+  const atEnd = useRef(true);
+  useLayoutEffect(() => {
+    const el = list.current;
+    if (el && atEnd.current) el.scrollTop = el.scrollHeight;
+  }, [messages.length, expanded]);
+  const listId = useId();
+  return (
+    <div className={`chat-tool-group${live ? " is-live" : ""}`} data-role="tools">
+      <button type="button" className="chat-tool-group-head" aria-expanded={expanded} aria-controls={expanded ? listId : undefined} onClick={onToggle}>
+        <Icon className="chat-tool-group-icon" aria-hidden="true" />
+        <span className="chat-tool-group-label">{label}</span>
+      </button>
+      {expanded && (
+        <div ref={list} id={listId} className="chat-tool-group-list" role="region" aria-label="도구 호출" tabIndex={0}
+          onScroll={(e) => {
+            const el = e.currentTarget;
+            atEnd.current = el.scrollHeight - el.scrollTop - el.clientHeight <= 4;
+          }}>
+          {children}
+        </div>
+      )}
     </div>
   );
 }
@@ -471,10 +518,30 @@ export function ChatPanel({
 
   // 줄 id(chatScroll.ts): React key이자 읽던 자리의 기준이다. 차례 번호를 key로 쓰면 agent가 기록 앞을 자를 때마다 같은 DOM에
   // 다음 말이 들어가 보던 화면이 밀린다(사용자 10-19 16:5x 「위를 보고 있으면 거기에 멈춰 있게」)
+  // 이어진 도구·생각 줄은 한 줄(묶음)이다(plan §8.303). 묶음 id는 첫 줄 id고, 찾을 때는 묶음 안 어느 줄 id로도 찾는다(`rowAt`)
+  const displayRows = useMemo(() => {
+    const messages = chat?.messages ?? [];
+    return groupChatRows(messages, chatRowIds(messages));
+  }, [chat]);
   const rowIds = useMemo(
-    () => [...chatRowIds(chat?.messages ?? []), ...pending.map((p) => `pending:${p.id}`)],
-    [chat, pending],
+    () => [...displayRows.map((row) => row.id), ...pending.map((p) => `pending:${p.id}`)],
+    [displayRows, pending],
   );
+  const rowAt = useMemo(() => {
+    const at = rowIndexById(displayRows);
+    pending.forEach((p, n) => at.set(`pending:${p.id}`, displayRows.length + n));
+    return at;
+  }, [displayRows, pending]);
+  const rowAtRef = useRef(rowAt);
+  rowAtRef.current = rowAt;
+  // 펼친 묶음은 pane마다 기억한다(참고 rememberedPosition.disclosures.workGroups). 펼치고 접어도 보던 줄 고정(holdAnchor)이
+  // 머리를 제자리에 두고, 끝을 보던 사람은 끝에 남는다(참고 suspendEndScrollMaintenanceForDisclosure)
+  const [expandedGroups, setExpandedGroups] = useState(() => readExpandedGroups(pane));
+  const toggleGroup = (row: Extract<ChatDisplayRow, { kind: "tools" }>) => {
+    const next = toggleExpanded(row, expandedGroups);
+    rememberExpandedGroups(pane, next);
+    setExpandedGroups(next);
+  };
   // 「지금 보내기」는 대기 묶음 맨 끝 말 하나에 단다(키가 대기열 전부를 보낸다). 기록의 대기 말(Claude) 뒤에 이 화면이 붙든
   // 대기 말이 온다. 기록에 없는(stale) 말은 대기열에 있는지 모르므로 세지 않는다
   const steerTarget = useMemo(() => {
@@ -514,7 +581,7 @@ export function ChatPanel({
     if (at === null || restoring.current) return;
     // scroll 사건보다 먼저 ResizeObserver가 올 수 있다. 아직 반영 안 된 손의 이동을 덮지 않는다.
     if (Math.abs(el.scrollTop - lastScrollTop.current) > 1) return;
-    const index = rowIdsRef.current.indexOf(at.rowId);
+    const index = rowAtRef.current.get(at.rowId) ?? -1;
     const row = index < 0 ? undefined : chatRows(el)[index];
     if (row === undefined) return;
     const top = row.getBoundingClientRect().top - el.getBoundingClientRect().top + el.scrollTop;
@@ -566,7 +633,7 @@ export function ChatPanel({
     el.addEventListener("pointerdown", finish, { passive: true });
     el.ownerDocument.addEventListener("keydown", onKey);
     cancelRestore.current = finish;
-    const index = rowIdsRef.current.indexOf(restoreFrom.rowId);
+    const index = rowAtRef.current.get(restoreFrom.rowId) ?? -1;
     const target = () => {
       const row = index < 0 ? undefined : chatRows(el)[index];
       if (row === undefined) return restoreFrom.scrollOffset;
@@ -727,21 +794,32 @@ export function ChatPanel({
             ) : chat?.truncated ? "앞 기록을 읽으려면 host와 agent를 갱신하세요." : null}
           </p>
           {error && <div className="banner warn">{error}</div>}
-          {chat?.messages.map((m, i) => (
-            <ChatRow key={rowIds[i]} id={rowIds[i]!} role={m.role} virtual={chat.messages.length > 300} onResize={onRowResize}>
-            {m.role === "thinking" ? (
-              <ThinkingRow key={rowIds[i]} text={m.text} />
-            ) : m.role === "user" ? (
-              <UserTurn key={rowIds[i]} text={unwrapPasted(m.text)} pane={pane} onOpenFile={onOpenFile} pending={m.pending ? { harness, steer: steerFor(`message-${i}`) } : undefined} />
-            ) : m.role === "assistant" ? (
-              <AgentTurn key={rowIds[i]} text={m.text} />
-            ) : (
-              <div key={rowIds[i]} className={`chat-msg ${m.role}`} data-role={m.role}>
-                {linkFilePaths(m.text, onOpenFile ?? null)}
-              </div>
-            )}
-            </ChatRow>
-          ))}
+          {chat && displayRows.map((row, n) => {
+            const message = (i: number) => {
+              const m = chat.messages[i]!;
+              return m.role === "thinking" ? (
+                <ThinkingRow key={i} text={m.text} />
+              ) : m.role === "user" ? (
+                <UserTurn key={i} text={unwrapPasted(m.text)} pane={pane} onOpenFile={onOpenFile} pending={m.pending ? { harness, steer: steerFor(`message-${i}`) } : undefined} />
+              ) : m.role === "assistant" ? (
+                <AgentTurn key={i} text={m.text} />
+              ) : (
+                <div key={i} className={`chat-msg ${m.role}`} data-role={m.role}>
+                  {linkFilePaths(m.text, onOpenFile ?? null)}
+                </div>
+              );
+            };
+            return (
+              <ChatRow key={row.id} id={row.id} role={row.kind === "tools" ? "tools" : chat.messages[row.index]!.role} virtual={displayRows.length > 300} onResize={onRowResize}>
+                {row.kind === "tools" ? (
+                  <ToolGroup messages={row.indices.map((i) => chat.messages[i]!)} expanded={groupExpanded(row, expandedGroups)}
+                    live={status === "working" && n === displayRows.length - 1} onToggle={() => toggleGroup(row)}>
+                    {row.indices.map(message)}
+                  </ToolGroup>
+                ) : message(row.index)}
+              </ChatRow>
+            );
+          })}
           {pending.map((p) => (
             <UserTurn key={`pending-${p.id}`} text={p.text} pane={pane} onOpenFile={onOpenFile}
               pending={{ harness, stale: p.stale, onDismiss: onDismissPending && (() => onDismissPending(p.id)), steer: steerFor(`pending-${p.id}`) }} />
