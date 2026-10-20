@@ -792,6 +792,15 @@ pub struct ThreadView {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub mission: Option<String>,
+    /// 이 thread를 띄운 자동화 규칙 이름(`do.start`, FRONT_API 1.64, plan t-0475 A1). 사람이 띄운 thread와 옛 host는 생략한다.
+    /// 웹 「작업」 목록이 줄 왼쪽 호박색 막대와 `자동 · <규칙 제목>` 표지로 보인다
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub automation: Option<String>,
+    /// 그 규칙의 제목(FRONT_API 1.64). 규칙 파일이 없어졌거나 제목이 비면 이름이다. `automation`이 없으면 없다
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub automation_title: Option<String>,
     pub status: ThreadStatus,
     /// 끝남 기록 뒤 아직 정리 응답을 확정하지 못했다. 같은 resolve로 이어간다.
     #[serde(default, skip_serializing_if = "Option::is_none")]

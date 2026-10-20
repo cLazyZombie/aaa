@@ -69,7 +69,7 @@ text = "바뀐 범위를 검토한다."
 batch = "1m"
 ```
 
-조건은 `on.schedule`(every 또는 daily·catch_up), `on.command`(every/daily·command·machine), `on.thread`(events·repos), `on.pr`(events), `on.ci`(repo·branches·workflows·events·machine), `on.git`(repo·branches·events·machine) 중 하나다. `on.thread`는 처음 읽을 때 현재 flow를 기준으로 잡고 이후 사건만 받는다. thread 없는 사건의 repos 필터는 사건 repo를 쓴다. 평가자/임무·post·메시지 등 자기 동작을 다시 깨우는 사건은 받지 않는다.
+조건은 `on.schedule`(every 또는 daily·catch_up), `on.command`(every/daily·command·machine), `on.thread`(events·repos), `on.pr`(events), `on.ci`(repo·branches·workflows·events·machine), `on.git`(repo·branches·events·machine) 중 하나다. `on.thread`는 처음 읽을 때 현재 flow를 기준으로 잡고 이후 사건만 받는다. thread 없는 사건의 repos 필터는 사건 repo를 쓴다. 평가자/임무·post·메시지 등 자기 동작을 다시 깨우는 사건은 받지 않는다. 자동화(`do.start`)가 띄운 thread의 사건도 기본으로 받지 않는다: 그 thread의 보고가 규칙을 깨워 다시 thread를 띄우는 고리를 막는다. 다른 규칙이 띄운 thread의 사건까지 받으려면 `include_automation = true`를 적는다. 그래도 그 규칙 자신이 띄운 thread의 사건은 늘 뺀다. 임무와 임무를 바꾼 규칙은 지금처럼 자동화 thread의 사건도 받는다(plan §8.318).
 
 동작은 `do.inbox`(coordinator 안내), `do.message`(thread="owner" 또는 t-NNNN), `do.wake`(mission), `do.start`(일반 Worker 시작) 중 하나다. 짧은 글은 `text = """…"""`, 긴 글은 `text_file = "automations/check.md"`로 쓴다. 두 칸을 함께 쓰면 오류다. 글 파일은 UTF-8·1MiB 이하·프로젝트 내부 상대 경로의 일반 파일이며 중간 폴더를 포함한 symlink·절대 경로·상위 경로 이동을 받지 않는다. inbox/message/wake의 글은 입력과 함께 고정한다. start는 고정한 승인 범위가 현재와 같을 때 현재 작업 본문을 쓰며 아래 L5 규칙을 따른다. command 자료는 자료임을 밝힌 fenced 본문으로 전달한다.
 
@@ -178,6 +178,8 @@ wait = ["timing"]
 측정 작업은 `aaa thread start --holds timing ...`으로 표지를 단다. 그 thread가 Starting/Open인 동안 같은 머신을 후보에서 제외한다. 모든 후보가 표지/연결/profile 때문에 막히면 입력과 까닭을 보존하고 기다린다. 표지 thread를 끝내면 다시 고른다. 동적으로 표지를 바꾸는 명령은 이 단계에 포함하지 않는다.
 
 횟수·간격·동시성·기다림 시간은 기본 제한이 없다. `[limits] max_running`·`max_per_day`·`min_gap`, host `[projects] max_auto_threads`, `do.start.wait_max`는 적었을 때만 사용하며 생략·0은 없음이다. 앞 자동 thread가 열려 있어도 다른 사건은 실행한다. 명시 wait_max를 넘으면 그 차례만 건너뛰고 inbox 한 번을 남긴다. usage 문턱·batch·dedupe는 유지한다.
+
+자동으로 띄운 thread는 기록에 규칙 이름을 남긴다(`aaa thread show`의 `automation`·`automation_title`). 웹 「작업」 목록은 그 줄을 사람이 띄운 thread와 같은 폴더·차례에 두고 왼쪽 호박색 막대와 둘째 줄 「자동 · <규칙 제목>」 표지로 구별한다(누르면 그 규칙 상세). 자동화 패널의 규칙 줄은 그 규칙의 열린 thread를 「열림 t-NNNN」 칩으로 보이고, 「모든 thread」는 「자동화만」으로 거른다. 할 일 화면의 「task 없는 열린 thread」에는 넣지 않는다(출처가 규칙이다).
 
 일정형은 coordinator pane 없이 실행하고, 같은 예정 차례는 한 번만 시작한다. 기다리는 동안 다음 일정은 catch_up once로 묶는다. thread 기록과 시작 key를 같은 DB transaction에 저장하고, 그 직전에도 holds/명시 동시 상한을 확인한다. 최종 전달 영수증 저장이 실패해도 내구 시작 key로 재생성을 막는다. 시작 후 실패한 thread는 일반 thread의 restart/정리 절차를 따른다. flow thread_started.actor는 routine:<이름>, 실행 기록에는 thread id가 남는다.
 

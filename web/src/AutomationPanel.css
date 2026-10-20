@@ -81,3 +81,10 @@
   .automation-facts dd { margin-bottom: 6px; }
   .automation-actions .btn { flex: 1 1 100%; min-height: 44px; }
 }
+
+/* 규칙이 띄운 열린 thread 칩·기록의 thread 번호(plan t-0475 A1): 누르면 그 thread. 칩은 목록 줄 막대와 같은 호박색 테두리 */
+.automation-open { display: flex; flex-wrap: wrap; gap: 6px; }
+.automation-open-chip { all: unset; cursor: pointer; display: inline-flex; align-items: center; min-height: 24px; padding: 0 8px; border: 1px solid var(--automation, var(--border)); border-radius: var(--radius-sm); font-size: var(--fs-xs); color: var(--text); }
+.automation-open-chip:hover { background: var(--bg-hover); }
+.automation-open-chip:focus-visible, .automation-thread-link:focus-visible { outline: var(--ring); outline-offset: 2px; }
+.automation-thread-link { all: unset; cursor: pointer; text-decoration: underline; text-underline-offset: 2px; }
