@@ -527,3 +527,11 @@ button.task-chip:disabled { cursor: default; color: var(--text-dim); }
 .task-link-form { display: flex; flex-direction: column; gap: var(--space-2); margin-top: var(--space-2); padding: var(--space-2) var(--space-3); border: var(--hairline) solid var(--border); border-radius: var(--radius-md); }
 /* 상세의 목록 들여쓰기(.task-detail-section ul)를 받지 않는다 */
 .task-attach ul.task-attach-grid, .task-attach ul.task-docs { padding: 0; }
+
+/* iOS 초점 확대를 막는 공통 입력 하한. 터치 기기는 가로 화면에서도 적용한다.
+   폼의 작은 글자 규칙 뒤에서 덮고, 글자를 크게 고른 설정은 그대로 받는다. */
+@media (max-width: 640px), (pointer: coarse) {
+  :is(.tasks-view, .task-modal) :is(input.input, select.input, textarea.input, [contenteditable="true"]) {
+    font-size: max(var(--fs-input), var(--fs-sm));
+  }
+}
