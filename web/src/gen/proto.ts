@@ -1232,7 +1232,19 @@ error: string | null,
 /**
  * 내구 입력 큐(FRONT_API 1.58). 옛 host는 생략한다.
  */
-queue: AutomationQueue | null, };
+queue: AutomationQueue | null,
+/**
+ * 자동화 기억의 host 사본. 옛 host는 생략한다.
+ */
+memory: AutomationMemory | null,
+/**
+ * 입력 처리·완료 보고·Idle가 갖춰진 thread의 끝남 예정 시각.
+ */
+closing: Array<AutomationClosing>, };
+
+export type AutomationMemory = { text: string, bytes: number, truncated: boolean, thread: string | null, updated_at_ms: number | null, };
+
+export type AutomationClosing = { thread: string, close_at_ms: number, };
 
 export type RoutineRun = { id: string, at_ms: number,
 /**

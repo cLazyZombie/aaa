@@ -205,3 +205,22 @@ max_per_day = 2
 임계값은 source가 새 head를 받을 때 판정한다. 이미 내구 큐에 받은 제안 자료는 이후 임계값 편집으로 ACK 재개가 막히지 않는다. batch/하루/사용량 실행 예산은 기존 공통 queue 규칙을 따른다.
 
 `automations/pr-followup.toml`로 변환한 기본 PR 규칙은 `project create`와 `doctor files --fix`가 보존한다. `routines/pr-followup.md`를 다시 만들지 않으며, 이미 두 파일이 겹친 경우에는 기존 충돌 진단을 유지한다.
+
+## 열린 thread에 이어 보내기·기억·짧은 끝내기(A2)
+
+`do.start.reuse = "open"`이면 같은 규칙이 만든 가장 최근 Starting/Open thread로 입력을 모은다. 기본 `new`는 사건마다 새 thread다.
+`memory = true`, `close_idle = "30m"`, `reports = true`를 선택할 수 있다. memory·close_idle는 open에서만 받으며 reports는 승인 범위 hash를 바꾸지 않는다.
+Codex profile의 open은 거부한다. 기존 임무의 제한은 대화 길이가 아니라 compaction 뒤 지시를 재독시킬 hook이 없는 데서 왔다.
+
+한 사건 자체가 512KiB를 넘으면 접수를 거부해 source 원본·커서를 보존한다. 입력은 최대 32건·512KiB 묶음으로 작업 폴더 inbox에 먼저 기록하고 Queue 메시지로 알린다. 확인창 동안 파일을 보존하며,
+전달 여부를 모르면 막힌 큐에 남긴다. 자동으로 다시 보내지 않는다. 「확인하고 풀기」는 기존 상세 화면에서 한다.
+propose는 새 thread 만들기만 제안으로 바꾸며, 열린 thread에 이어 보내기는 그대로 한다. reports는 사건 thread 보고 앞 64KiB를 붙인다.
+
+기억은 host 프로젝트 `automations/<규칙>.memory/`에 보존한다. 새 thread의 `memory/memory.md`와 history에 먼저 넣고,
+보고 사본과 resolve 전 마지막 사본 때 되가져온다. processed.txt도 보존한다. 이동은 기존 상태 전송의 8MiB·1000개 한도와 hash·symlink 검사를 쓴다.
+memory.md가 64KiB를 넘거나 끝내기까지 바뀌지 않으면 inbox에 한 번 알린다. 웹 상세의 「기억」은 읽기만 한다.
+
+close_idle는 마지막 입력 뒤 새로 쓴 `[완료]`, agent의 Idle, 빈 내구 큐, 빈 미처리 inbox를 모두 확인한다.
+보고 묶음이 검토/쉼인지는 판정에 쓰지 않는다. 입력 전 보고 hash도 대조하여 늦게 회수한 옛 완료로 끝내지 않는다.
+자동화 `[완료]`는 저절로 확인하고 inbox 한 줄만 남긴다. 웹/푸시 완료 알림을 내지 않으며, 확인 필요 보고는 기존 알림을 유지한다.
+「열림」 칩 옆 끝남 예정은 보고·활동·처리 상태 사건에 따라 바뀐다.

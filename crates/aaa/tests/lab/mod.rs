@@ -72,6 +72,7 @@ impl Node {
             // aaa pane에서 시험을 돌려도 실험실 CLI가 운영 thread의 호출자·hook을 물려받지 않는다.
             // worker 권한을 보는 시험은 자기 실험실의 값을 다시 넣는다.
             .env_remove("AAA_SESSION_ID")
+            .env("AAA_TEST_AUTOMATION_CLOCK_FILE", self.cfg.join("automation-clock"))
             .env_remove("AAA_PROJECT")
             .env_remove("AAA_THREAD")
             .env_remove("AAA_HOOK_SOCK")

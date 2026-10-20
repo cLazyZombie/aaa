@@ -1130,6 +1130,29 @@ pub struct RoutineView {
     /// 내구 입력 큐(FRONT_API 1.58). 옛 host는 생략한다.
     #[serde(default)]
     pub queue: Option<AutomationQueue>,
+    /// 자동화 기억의 host 사본. 옛 host는 생략한다.
+    pub memory: Option<AutomationMemory>,
+    /// 입력 처리·완료 보고·Idle가 갖춰진 thread의 끝남 예정 시각.
+    pub closing: Vec<AutomationClosing>,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(default)]
+pub struct AutomationMemory {
+    pub text: String,
+    #[ts(type = "number")]
+    pub bytes: u64,
+    pub truncated: bool,
+    pub thread: Option<String>,
+    #[ts(type = "number | null")]
+    pub updated_at_ms: Option<u64>,
+}
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(default)]
+pub struct AutomationClosing {
+    pub thread: String,
+    #[ts(type = "number")]
+    pub close_at_ms: u64,
 }
 
 /// 규칙의 내구 입력 큐. 보낸 뒤 결과를 모르는 `do.message` 묶음은 사람이 확인하고 푼다(`automation_unblock`).

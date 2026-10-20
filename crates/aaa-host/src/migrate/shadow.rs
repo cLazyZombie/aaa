@@ -145,6 +145,7 @@ pub fn aaa_group(f: &Facts, now_s: i64) -> ThreadGroup {
         holds: vec![],
         started_by: None,
         automation: None,
+        automation_run: None,
         project: String::new(),
         id: "t-0000".into(),
         title: String::new(),

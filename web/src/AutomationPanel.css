@@ -88,3 +88,5 @@
 .automation-open-chip:hover { background: var(--bg-hover); }
 .automation-open-chip:focus-visible, .automation-thread-link:focus-visible { outline: var(--ring); outline-offset: 2px; }
 .automation-thread-link { all: unset; cursor: pointer; text-decoration: underline; text-underline-offset: 2px; }
+
+.automation-open > span { display: inline-flex; align-items: center; gap: .5rem; flex-wrap: wrap; }
