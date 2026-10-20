@@ -19,6 +19,9 @@
 // Ctrl+Enter(사용자 10-19 15:3x, plan §8.239 후속)는 안내 없이 글을 steering으로 보낸다: 같은 보내기 길에 `steer`를 붙인다(`ctrlEnter`).
 // plan §8.266(t3code 참고): 작업 중이고 입력창이 비면 보내기 자리가 「중단」(Esc, 키 막대와 같은 길)이고, 빈 입력창의 ↑·↓는 이 대화
 // 기록의 사람 글을 다시 부르며(t3code composerPromptHistory.ts), 보내는 글의 보이지 않는 문자는 빼고 몇 개를 뺐는지 알린다(hiddenChars.ts).
+// 대화 정리 중(plan §8.304, 사용자 10-20 「이때 동안은 보내지 못하게」): 보낸 글(Ctrl+Enter 포함)은 pane에 치지 않고 이 기기 보관함에
+// 「정리가 끝나면 보냄」 표지로 붙잡았다가, 정리가 끝나면 차례대로 보통 보내기로 보낸다(t3code는 정리 중 보내기를 대기열로 돌린다:
+// composerDispatch.ts `canSteer: !isCompacting` → queue, CommandPolicy.ts). 그동안 「지금 보내기」는 끄고 10초 오래 걸림은 세지 않는다.
 import {
   useCallback,
   useEffect,
@@ -118,6 +121,8 @@ export interface ChatComposerProps {
   connected: boolean;
   /** agent가 작업 중(참고 `composerDelivery`의 queue 자리) */
   working: boolean;
+  /** agent가 대화를 정리하는 중(작업 중일 때만, plan §8.304): 보낸 글을 붙잡았다가 끝나면 보낸다 */
+  compacting?: boolean;
   /** Claude는 대기열에 넣자마자 기록에 적고, Codex는 실제로 읽을 때 적는다 */
   harness: "claude" | "codex";
   /** 작업 중에 보낸 글(대화 보기가 끝에 그린다). pane마다 Term이 갖는다 */
@@ -152,6 +157,7 @@ export function ChatComposer({
   agentLabel,
   connected,
   working,
+  compacting = false,
   harness,
   pending,
   setPending,
@@ -194,6 +200,8 @@ export function ChatComposer({
   messagesRef.current = messages;
   const workingRef = useRef(working);
   workingRef.current = working;
+  const compactingRef = useRef(compacting);
+  compactingRef.current = compacting;
   const pasted = useRef(false);
   const picker = useRef<HTMLInputElement>(null);
   const [composing, setComposing] = useState(false);
@@ -357,6 +365,8 @@ export function ChatComposer({
     if (!finish(f)) return;
     onInputTrace(f.trace, "failed", method);
     if (f.source === "queue" && f.queueId !== undefined) {
+      // 정리 뒤 저절로 보내던 글이면 표지를 뗀다: 다시 저절로 보내지 않고 사람이 까닭을 보고 보낸다
+      messageQueues.release(owner, f.queueId);
       messageQueues.endSend(owner, f.queueId);
       setQueueError({ id: f.queueId, text: note.text, inspect: note.inspect || method === "rejected" });
       return;
@@ -465,15 +475,21 @@ export function ChatComposer({
     textareaRef.current?.focus();
   };
 
-  // 3초 동안 전달 답이 없으면 탈출구, 전달됨에서 10초 동안 보내짐 증거가 없으면 오래 걸림. 늦게 걸린 타이머도 시작 때부터 잰다
+  // 3초 동안 전달 답이 없으면 탈출구, 전달됨에서 10초 동안 보내짐 증거가 없으면 오래 걸림. 늦게 걸린 타이머도 시작 때부터 잰다.
+  // 대화 정리 중에는 harness가 글을 읽지 않으므로 오래 걸림을 세지 않고, 정리가 끝난 때부터 다시 잰다(plan §8.304)
+  const wasCompacting = useRef(compacting);
   useEffect(() => {
+    const ended = wasCompacting.current && !compacting;
+    wasCompacting.current = compacting;
     if (flight?.phase !== "sending" && flight?.phase !== "sent") return;
     // 멈춤이 늦어 돌아온 보내기는 다시 탈출구를 보이지 않는다
     if (flight.phase === "sending" && flight.escaped) return;
+    if (flight.phase === "sent" && compacting) return;
+    if (flight.phase === "sent" && ended) { step(flight, "sent"); return; }
     const [wait, phase]: [number, Phase] = flight.phase === "sending" ? [STUCK_MS, "stuck"] : [SLOW_MS, "slow"];
     const timer = window.setTimeout(() => step(flight, phase), Math.max(0, flight.at + wait - Date.now()));
     return () => window.clearTimeout(timer);
-  }, [flight]);
+  }, [flight, compacting]);
   // 기록에 같은 새 사람 글이 보이면(늦게라도) 비우고 푼다. 대기 말도 기록에 오른 것은 지운다
   useEffect(() => {
     if (flight && (flight.phase === "sent" || flight.phase === "slow") && seen(flight, messages)) settle(flight);
@@ -513,8 +529,12 @@ export function ChatComposer({
     const sentAttachments = attachments;
     setNote(null);
     recall.current = null;
+    // 대화 정리 중: steering(Ctrl+Enter)도 받지 않는다. 붙잡았다가 정리가 끝나면 차례대로 보낸다(plan §8.304)
+    if (compactingRef.current) {
+      messageQueues.add(owner, message, "compaction");
+      if (given === undefined) { setText(""); clearAttachments(sentAttachments); }
     // 참고 composerSend: 작업 중이고 자동 전송이 꺼져 있으면 붙잡는다(hold, 설정으로 켜는 이 기기의 보관함)
-    if (working && !autoSendQueued && !steer) {
+    } else if (working && !autoSendQueued && !steer) {
       messageQueues.add(owner, message);
       if (given === undefined) { setText(""); clearAttachments(sentAttachments); }
     } else deliver({ text: message, source: given === undefined ? "box" : "reply", attachments: given === undefined ? sentAttachments : [], ctrlEnter, ...(steer ? { steer } : {}) });
@@ -536,6 +556,8 @@ export function ChatComposer({
       return;
     }
     if (!workingRef.current) { onCtrlEnter(); return; }
+    // 정리 중에는 대기 글을 지금 보낼 수 없다(harness가 정리 뒤에 읽는다)
+    if (compactingRef.current) { blocked("compacting"); setNote({ text: "대화 정리가 끝나면 대기 글이 이어서 읽힙니다", quiet: true }); return; }
     const first = messageQueues.read(owner).find((m) => m.text.trim() !== "" && !messageQueues.isSending(m.id));
     if (first) sendQueued(first.id, first.text, true);
     else {
@@ -600,6 +622,7 @@ export function ChatComposer({
   const sendQueued = (id: string, raw: string, steer = false): void => {
     const { text: message, removed } = stripHidden(raw);
     if (message.trim() === "") {
+      messageQueues.release(owner, id);
       setQueueError({ id, text: HIDDEN_ONLY });
       return;
     }
@@ -608,6 +631,19 @@ export function ChatComposer({
     deliver({ text: message, source: "queue", queueId: id, attachments: [], ...(steer ? { steer } : {}) });
     if (removed > 0) setNote({ text: hiddenNote(removed), quiet: true });
   };
+  // 정리가 끝났다: 정리 중에 붙잡은 글을 차례대로 보낸다(plan §8.304). 앞 글이 보내져야 다음 글이다(입력창 잠금과 같은 한 줄 비행).
+  // 질문 중이면 답한 뒤, 끊겼으면 다시 붙은 뒤에 보낸다. 작업 중이고 「대기 메시지 자동 전송」을 껐으면 그 설정대로 보통 붙잡은 글로 둔다.
+  // 이 기기 보관함은 localStorage라 정리 중에 앱을 닫았어도 다시 열 때 보낸다
+  useEffect(() => {
+    if (compacting || !connected || asking || flight !== null) return;
+    const next = queued.find((m) => m.after === "compaction" && !messageQueues.isSending(m.id));
+    if (!next) return;
+    if (working && !autoSendQueued) {
+      for (const m of queued) if (m.after === "compaction") messageQueues.release(owner, m.id);
+      return;
+    }
+    sendQueued(next.id, next.text);
+  }, [compacting, connected, asking, flight, queued, working, autoSendQueued]);
 
   const placeholder = connected
     ? `${agentLabel}에게 메시지…`
@@ -620,6 +656,7 @@ export function ChatComposer({
           className={`composer-queue${working ? "" : " is-ready"}`}
           aria-label="대기 메시지"
           data-testid="chat-queue"
+          data-compacting={compacting || undefined}
         >
           <div className="composer-queue-heading">
             <strong className="visually-hidden">{`대기 메시지 ${queued.length}개`}</strong>
@@ -627,7 +664,9 @@ export function ChatComposer({
               <Clock />
             </span>
             <span className="composer-queue-caption">
-              {working
+              {queued.some((m) => m.after === "compaction")
+                ? "대화 정리가 끝나면 차례대로 보냅니다"
+                : working
                 ? "에이전트가 준비될 때까지 보관"
                 : "보관된 메시지. 확인하고 보내세요"}
               {queued.length > 1 && ` · 메시지 ${queued.length}개`}
@@ -646,9 +685,9 @@ export function ChatComposer({
           )}
           <ol className="composer-queue-list">
             {queued.map((message, index) => {
-              const held = heldSend({ working, asking, connected, busy: flight !== null, empty: message.text.trim().length === 0, harness });
+              const held = heldSend({ working, asking, compacting, connected, busy: flight !== null, empty: message.text.trim().length === 0, harness });
               return (
-              <li className="composer-queue-item" key={message.id}>
+              <li className="composer-queue-item" key={message.id} data-after={message.after}>
                 <textarea
                   className="composer-queue-text"
                   value={message.text}

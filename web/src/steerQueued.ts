@@ -22,14 +22,19 @@ export const STEER_IDLE: SteerState = { phase: "idle" };
 /** 다른 글을 보내는 중이라 잠깐 못 누르는 까닭. 대기 말 단추와 이 기기 보관함 단추가 같은 말을 쓴다 */
 export const STEER_BUSY = "보내는 중인 글이 전달된 뒤 누를 수 있습니다";
 
-/** 단추를 보일까. 쉬는 agent는 대기 글을 곧 읽으므로 숨기고, 질문 중·다른 글을 보내는 중이면 까닭과 함께 끈다.
- * `hint`는 단추 아래 안내다: 질문 중만 둔다(보내는 중은 0.3~0.5초라 줄이 깜박이지 않게 title로만) */
-export function steerAvailability(status: AgentStatus | undefined, busy: boolean): "hidden" | { blocked: string | null; hint: string | null } {
+/** 대화 정리 중(plan §8.304)에는 harness가 대기 글을 읽지 않는다: 대기 말·이 기기 보관함 단추가 같은 말을 쓴다 */
+export const STEER_COMPACTING = "대화 정리가 끝나면 대기 글이 이어서 읽힙니다";
+
+/** 단추를 보일까. 쉬는 agent는 대기 글을 곧 읽으므로 숨기고, 질문 중·대화 정리 중·다른 글을 보내는 중이면 까닭과 함께 끈다.
+ * `hint`는 단추 아래 안내다: 질문 중·정리 중만 둔다(보내는 중은 0.3~0.5초라 줄이 깜박이지 않게 title로만).
+ * 정리 중은 t3code처럼 steering을 받지 않는다(`CommandPolicy.ts` 「Compaction … turns cannot take steering input」) */
+export function steerAvailability(status: AgentStatus | undefined, busy: boolean, compacting = false): "hidden" | { blocked: string | null; hint: string | null } {
   if (status === "blocked") {
     const why = "질문에 답하면 대기 글이 이어서 읽힙니다";
     return { blocked: why, hint: why };
   }
   if (status !== "working") return "hidden";
+  if (compacting) return { blocked: STEER_COMPACTING, hint: STEER_COMPACTING };
   return { blocked: busy ? STEER_BUSY : null, hint: null };
 }
 
@@ -41,7 +46,7 @@ const HELD_STEER = {
 /** 이 기기 보관함(composer-queue)의 「지금 보내기」(plan §8.273, 사용자 결정 10-19 19:36): 대기 말 단추와 같은 뜻이 되게 작업 중이면
  * Ctrl+Enter처럼 steer로 보내 지금 턴에 넣고(`steer`), 쉬면 보통 보내기다. 못 누르는 까닭은 대기 말 단추와 같은 차례·말이다:
  * 질문 중이면 끄고 단추 아래에 안내(`hint`, 글이 질문의 답으로 들어가지 않게), 끊김·다른 글을 보내는 중·빈 글은 title로만 */
-export function heldSend(o: { working: boolean; asking: boolean; connected: boolean; busy: boolean; empty: boolean; harness: "claude" | "codex" }): {
+export function heldSend(o: { working: boolean; asking: boolean; compacting?: boolean; connected: boolean; busy: boolean; empty: boolean; harness: "claude" | "codex" }): {
   steer: boolean;
   blocked: string | null;
   hint: string | null;
@@ -51,6 +56,11 @@ export function heldSend(o: { working: boolean; asking: boolean; connected: bool
   const title = steer ? HELD_STEER[o.harness] : "보통 보내기와 같습니다";
   if (o.asking) {
     const why = "질문에 답한 뒤 보낼 수 있습니다";
+    return { steer, blocked: why, hint: why, title: why };
+  }
+  // 정리 중: 보내도 harness가 정리 뒤에 읽는다. 끝나면 입력창이 차례대로 보낸다(plan §8.304)
+  if (o.compacting) {
+    const why = "대화 정리가 끝나면 차례대로 보냅니다";
     return { steer, blocked: why, hint: why, title: why };
   }
   const blocked = !o.connected ? "연결되면 보낼 수 있습니다" : o.busy ? STEER_BUSY : o.empty ? "빈 메시지는 보낼 수 없습니다" : null;
@@ -78,15 +88,22 @@ export function refusalText(reason: SteerRefusal | null, message: string | null,
       return { text: "이 프로그램에는 지금 보내기를 쓸 수 없습니다", inspect: false };
     case "failed":
       return { text: `보내지 못했습니다: ${message ?? "알 수 없는 오류"}`, inspect: true };
+    case "compacting":
+      return { text: STEER_COMPACTING, inspect: false };
     case null:
       return { text: "연결이 끊겨 보냈는지 확인하지 못했습니다", inspect: true };
+    // 새 host가 더한 까닭(옛 웹)
+    default:
+      return { text: `보내지 못했습니다: ${message ?? String(reason)}`, inspect: true };
   }
 }
 
-/** 보낸 뒤: 대기 말이 줄면 끝(기록이 그 글을 보통 사람 말로 보인다), 오래 줄지 않으면 알린다. 그 밖은 그대로 */
-export function steerSettled(state: SteerState, pending: number, now: number): SteerState {
+/** 보낸 뒤: 대기 말이 줄면 끝(기록이 그 글을 보통 사람 말로 보인다), 오래 줄지 않으면 알린다. 그 밖은 그대로.
+ * 대화 정리 중(`compacting`)은 harness가 대기 글을 읽지 않으므로 오래 걸림을 세지 않는다: 정리가 끝난 때부터 다시 잰다(plan §8.304) */
+export function steerSettled(state: SteerState, pending: number, now: number, compacting = false): SteerState {
   if (state.phase !== "sent") return state;
   if (pending < state.before) return STEER_IDLE;
+  if (compacting) return state;
   if (now - state.at >= STEER_SLOW_MS) {
     return { phase: "failed", text: "보냈지만 10초가 지나도 대기 글이 그대로입니다 · 터미널을 확인하세요", inspect: true };
   }

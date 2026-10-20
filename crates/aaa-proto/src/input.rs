@@ -34,6 +34,8 @@ pub enum InputReceiptMethod {
     Locked,
     Uploading,
     NoRoom,
+    /// 대화 정리 중이라 보내지 않았다(plan §8.304, FRONT_API 1.59)
+    Compacting,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]

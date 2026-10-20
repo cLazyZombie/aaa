@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { it } from "node:test";
-import { heldSend, refusalText, STEER_BUSY, steerAvailability, steerLabel, steerSettled, STEER_IDLE, STEER_SLOW_MS } from "../src/steerQueued.ts";
+import { heldSend, refusalText, STEER_BUSY, STEER_COMPACTING, steerAvailability, steerLabel, steerSettled, STEER_IDLE, STEER_SLOW_MS } from "../src/steerQueued.ts";
 
 it("단추는 작업 중에만 보이고, 질문 중·다른 글을 보내는 중이면 까닭과 함께 꺼진다", () => {
   assert.deepEqual(steerAvailability("working", false), { blocked: null, hint: null });
@@ -57,4 +57,21 @@ it("이 기기 보관함 「지금 보내기」: 작업 중이면 steer(지금 �
   assert.match(heldSend({ ...base, connected: false, busy: true }).blocked, /연결되면/);
   assert.match(heldSend({ ...base, empty: true }).blocked, /빈 메시지/);
   assert.equal(heldSend({ ...base, empty: true }).title, heldSend({ ...base, empty: true }).blocked);
+});
+
+it("대화 정리 중(plan §8.304): 대기 말·보관함 「지금 보내기」를 까닭과 함께 끄고, 거절 까닭은 터미널 보기 없이 알리며, 10초 오래 걸림을 세지 않는다", () => {
+  const compacting = steerAvailability("working", false, true);
+  assert.equal(compacting.blocked, STEER_COMPACTING);
+  assert.equal(compacting.hint, STEER_COMPACTING, "단추 아래에 안내한다");
+  assert.match(steerAvailability("blocked", false, true).blocked, /질문에 답하면/, "질문이 먼저다");
+  assert.equal(steerAvailability("idle", false, true), "hidden");
+  const held = heldSend({ working: true, asking: false, compacting: true, connected: true, busy: false, empty: false, harness: "claude" });
+  assert.match(held.blocked, /대화 정리가 끝나면 차례대로 보냅니다/);
+  assert.equal(held.hint, held.blocked);
+  assert.deepEqual(refusalText("compacting", null, "Claude"), { text: STEER_COMPACTING, inspect: false });
+  assert.match(refusalText("새_까닭", null, "Claude").text, /보내지 못했습니다: 새_까닭/, "새 host의 모르는 까닭");
+  const sent = { phase: "sent", at: 1_000, before: 1 };
+  assert.equal(steerSettled(sent, 1, 1_000 + STEER_SLOW_MS * 6, true), sent, "정리 중에는 세지 않는다");
+  assert.equal(steerSettled(sent, 0, 2_000, true), STEER_IDLE, "읽히면 끝");
+  assert.equal(steerSettled(sent, 1, 1_000 + STEER_SLOW_MS, false).phase, "failed");
 });

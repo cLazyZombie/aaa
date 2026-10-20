@@ -1,5 +1,7 @@
-/** Held messages are explicitly sent, never dispatched by reconnects or status changes. */
-export interface HeldMessage { id: string; text: string }
+/** Held messages are explicitly sent, never dispatched by reconnects or status changes.
+ * aaa의 예외(plan §8.304): 대화 정리 중에 보낸 글(`after: "compaction"`)은 정리가 끝나면 입력창이 차례대로 보낸다. 보내다 실패하면
+ * 표지를 떼어 보통 붙잡은 글이 된다(다시 저절로 보내지 않는다). */
+export interface HeldMessage { id: string; text: string; after?: "compaction" }
 type QueueStorage = Pick<Storage, "getItem" | "setItem" | "removeItem">;
 const newId = () => globalThis.crypto?.randomUUID?.() ?? `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
 
@@ -56,6 +58,7 @@ export class MessageQueueStore {
           if (!item || typeof item !== "object") return false;
           const value = item as HeldMessage;
           if (typeof value.id !== "string" || typeof value.text !== "string" || ids.has(value.id)) return false;
+          if (value.after !== undefined && value.after !== "compaction") delete value.after;
           ids.add(value.id); return true;
         });
       }
@@ -78,9 +81,18 @@ export class MessageQueueStore {
     for (const listener of this.listeners) listener();
   }
 
-  add(owner: string, text: string): void {
+  add(owner: string, text: string, after?: HeldMessage["after"]): void {
     this.refresh(owner);
-    this.write(owner, [...this.read(owner), { id: newId(), text }]);
+    this.write(owner, [...this.read(owner), { id: newId(), text, ...(after ? { after } : {}) }]);
+  }
+  /** 저절로 보낼 표지를 뗀다: 이제 사람이 보낸다 */
+  release(owner: string, id: string): void {
+    this.refresh(owner);
+    this.write(owner, this.read(owner).map((message) => {
+      if (message.id !== id || message.after === undefined) return message;
+      const { after: _after, ...held } = message;
+      return held;
+    }));
   }
   edit(owner: string, id: string, text: string): void {
     this.refresh(owner);

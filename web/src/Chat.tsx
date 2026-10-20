@@ -11,7 +11,7 @@
 // 마크다운/일반 텍스트 복사(`CopyButton`, 마우스면 올렸을 때). 참고와 다른 곳: 기록에 시각이 없어 시각은 없고, 접힘은 이 화면 안에서만 기억한다.
 // 문구는 참고 i18n.ko.ts.
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { ArrowDown, ArrowUp, Check, ChevronDown, ChevronRight, Clock, Copy, LoaderCircle, TriangleAlert } from "lucide-react";
+import { ArrowDown, ArrowUp, Check, ChevronDown, ChevronRight, Clock, Copy, LoaderCircle, Minimize2, TriangleAlert } from "lucide-react";
 import { ApiError, call, watchChat } from "./api";
 import type { ChatMessage, ChatView } from "./gen/proto";
 import { useChatShared } from "./settings";
@@ -34,6 +34,21 @@ function chatRows(el: HTMLElement): NodeListOf<HTMLElement> {
   return el.querySelectorAll<HTMLElement>(":scope > .chat-transcript > :not(.chat-note):not(.banner)");
 }
 const SCROLL_KEYS = ["ArrowUp", "ArrowDown", "PageUp", "PageDown", "Home", "End", " "];
+
+/** 대화 정리 중(plan §8.304): 대화 끝의 구분선. t3code `ContextCompactionTimelineRow`(MessagesTimeline.tsx 1980~2010줄, 가로선·
+ * Minimize2·「Compacting context」 반짝임)를 옮겼다. 굴림 기준 줄(`chatRows`)에 들지 않게 chat-note다: 정리가 끝나면 사라진다 */
+function CompactingRow() {
+  return (
+    <div className="chat-note chat-compacting" role="status" data-testid="chat-compacting">
+      <span className="chat-compacting-rule" aria-hidden="true" />
+      <span className="chat-compacting-label">
+        <Minimize2 aria-hidden="true" />
+        대화 정리 중…
+      </span>
+      <span className="chat-compacting-rule" aria-hidden="true" />
+    </div>
+  );
+}
 
 /** 참고 `ThinkingRow`: 「생각」 머리만 보이고 누르면 펼친다 */
 function ThinkingRow({ text }: { text: string }) {
@@ -278,6 +293,7 @@ function AgentTurn({ text }: { text: string }) {
 export function ChatPanel({
   pane,
   status,
+  compacting = false,
   readNow = 0,
   onOpenFile,
   onOpenLink,
@@ -289,6 +305,8 @@ export function ChatPanel({
 }: {
   pane: string;
   status?: AgentStatus;
+  /** agent가 대화를 정리하는 중(plan §8.304): 대화 끝에 「대화 정리 중…」 줄 */
+  compacting?: boolean;
   readNow?: number;
   /** 글 속 파일 경로를 연다(조작 기기만) */
   onOpenFile?: (path: string) => void;
@@ -746,7 +764,8 @@ export function ChatPanel({
             <UserTurn key={`pending-${p.id}`} text={p.text} pane={pane} onOpenFile={onOpenFile}
               pending={{ harness, stale: p.stale, onDismiss: onDismissPending && (() => onDismissPending(p.id)), steer: steerFor(`pending-${p.id}`) }} />
           ))}
-          {chat && chat.messages.length === 0 && pending.length === 0 && !error && <p className="chat-note">아직 대화가 없다.</p>}
+          {chat && chat.messages.length === 0 && pending.length === 0 && !error && !compacting && <p className="chat-note">아직 대화가 없다.</p>}
+          {compacting && <CompactingRow />}
         </div>
         {/* 「맨 아래로」(참고 ChatView.tsx:8074 「Scroll to end」): 대화 아래 가운데에 뜬다. 입력창 focus를 뺏지 않는다 */}
         {showJump && (

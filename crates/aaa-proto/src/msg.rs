@@ -2727,6 +2727,8 @@ pub enum SteerRefusal {
     Unsupported,
     /// 보내다 실패했다(권한·pane 끝남·연결)
     Failed,
+    /// agent가 대화를 정리하는 중이다(plan §8.304, 1.59): harness가 정리가 끝날 때까지 대기 글을 읽지 않는다
+    Compacting,
 }
 
 /// 멈춘 submit이 어디까지 갔나(`SubmitCancelled`)

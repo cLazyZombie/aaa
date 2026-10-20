@@ -83,7 +83,7 @@ history?: string, };
 
 export type InputTraceEvent = "receipt" | "preparing" | "ctrl_enter_blocked" | "unlocked" | "slow" | "unlock" | "cancel" | "failed" | "pending" | "stuck";
 
-export type InputReceiptMethod = "normal" | "pasted_content" | "queue_operation" | "codex_delivery" | "no_transcript" | "connection" | "rejected" | "unknown" | "held_draft" | "composing" | "readonly" | "locked" | "uploading" | "no_room";
+export type InputReceiptMethod = "normal" | "pasted_content" | "queue_operation" | "codex_delivery" | "no_transcript" | "connection" | "rejected" | "unknown" | "held_draft" | "composing" | "readonly" | "locked" | "uploading" | "no_room" | "compacting";
 
 export type InputEvent = { at_ms: bigint, id: string, pane: string, thread: string | null, harness: string | null, working: boolean, event: string, detail: string, };
 
@@ -505,7 +505,7 @@ export type FrontEvent = { "ev": "state", machines: Array<MachineView>, panes: A
 
 export type SubmitStage = "not_sent" | "no_enter" | "too_late";
 
-export type SteerRefusal = "not_working" | "question" | "draft" | "no_queue" | "unknown_screen" | "unsupported" | "failed";
+export type SteerRefusal = "not_working" | "question" | "draft" | "no_queue" | "unknown_screen" | "unsupported" | "failed" | "compacting";
 
 export type TermServerMsg = { "t": "snapshot", replay: B64, cols: number, rows: number, readonly: boolean, stream: number,
 /**
@@ -823,7 +823,12 @@ background: number | null,
  * 쉬지만 그 턴이 띄운 배경 작업을 기다린다(herdr-web-ui `background_wait`, host `bgwait.rs`, 차이 목록 S1): 목록은 끝남·쉼
  * 대신 BG다. 옛 host는 보내지 않는다(없으면 false)
  */
-background_wait: boolean, };
+background_wait: boolean,
+/**
+ * 작업 중이지만 harness가 대화를 정리(compaction)하는 중이다(화면 감지 사건 `compacting`, plan §8.304). 그동안 harness는 친 글과
+ * 대기 글을 읽지 않고, 웹은 보낸 글을 이 기기에 붙잡았다가 끝나면 보낸다. 옛 host는 보내지 않는다(없으면 false, 1.59)
+ */
+compacting: boolean, };
 
 export type QuestionState = "open" | "answered" | "gone";
 

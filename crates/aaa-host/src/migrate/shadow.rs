@@ -209,6 +209,7 @@ pub fn aaa_group(f: &Facts, now_s: i64) -> ThreadGroup {
         plan: None,
         background: None,
         background_wait: false,
+        compacting: false,
     });
     thread_group(&rec, f.pane_exists, agent.as_ref(), now_ms)
 }
