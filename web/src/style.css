@@ -1384,7 +1384,7 @@ summary.chat-compact-head { cursor: pointer; }
   border: 1px solid var(--border-strong); border-radius: var(--radius-pill);
   background: var(--bg-elevated); box-shadow: var(--shadow-pop);
 }
-/* 앞 기록도 찾기(plan §8.309): 칸 아래 오른쪽의 작은 줄. 받는 동안 쪽 수와 멈춤 */
+/* 앞 기록도 찾기(plan §8.310): 칸 아래 오른쪽의 작은 줄. 받는 동안 쪽 수와 멈춤 */
 .chat-find-earlier {
   display: inline-flex; align-items: center; gap: var(--space-2);
   height: 28px; padding: 0 var(--space-1) 0 var(--space-3);

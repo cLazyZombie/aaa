@@ -523,7 +523,7 @@ export function ChatPanel({
     refresh.refresh();
   }, [pane, showThinking, pollKey, readNow, refresh]);
 
-  // 앞 쪽 하나를 받아 붙인다. 찾기의 「앞 기록도 찾기」(plan §8.309)는 결과를 보고 다음 쪽을 부른다. 이미 받는 중이면 그 결과를 기다린다
+  // 앞 쪽 하나를 받아 붙인다. 찾기의 「앞 기록도 찾기」(plan §8.310)는 결과를 보고 다음 쪽을 부른다. 이미 받는 중이면 그 결과를 기다린다
   const olderRun = useRef<Promise<OlderOutcome> | null>(null);
   const pageOlder = (keepFollowing = false): Promise<OlderOutcome> => {
     if (olderBusy.current && olderRun.current) return olderRun.current;

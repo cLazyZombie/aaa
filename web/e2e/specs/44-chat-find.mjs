@@ -2,7 +2,7 @@
 // 실제 lab Claude 기록(사람 말·답·도구 줄·긴 code·긴 사람 말·표, 400줄) → agent → host → 웹. 앞 쪽을 처음까지 읽어 300줄을 넘겨
 // 화면 밖 줄의 본문이 없는(가상화) 상태에서 찾는다. 데스크톱 Chromium(⌘F·Enter·Shift+Enter·Esc)과 iPhone WebKit(머리 돋보기)을 본다.
 // 기다림은 제품 표지(`data-find-count`·`data-find-active`·`data-find-revealed`, 줄의 `data-find-count`·`data-find-dom`)다.
-// 「앞 기록도 찾기」(plan §8.309)는 최신 쪽만 받은 상태에서 처음까지 쪽을 이어 받으며 센다(`data-find-earlier`·`data-find-pages`). Claude·Codex.
+// 「앞 기록도 찾기」(plan §8.310)는 최신 쪽만 받은 상태에서 처음까지 쪽을 이어 받으며 센다(`data-find-earlier`·`data-find-pages`). Claude·Codex.
 // 혼자 돌리기: node web/e2e/web.e2e.mjs --spec 44-chat-find
 import fs from "node:fs";
 import { aaa, AA, root, step, webkit, browser, inList, domIs, until, shot, pairPage } from "../lib/harness.mjs";

@@ -58,7 +58,7 @@ export interface ChatFindOptions {
 /** 앞 쪽 하나를 받은 결과: 붙였다·처음이다·실패·이 대화 읽기가 끝났다(pane 바뀜) */
 export type OlderOutcome = "loaded" | "done" | "failed" | "gone";
 
-/** 「앞 기록도 찾기」(plan §8.309): 쉼·받는 중·실패와 이번에 받은 쪽 수 */
+/** 「앞 기록도 찾기」(plan §8.310): 쉼·받는 중·실패와 이번에 받은 쪽 수 */
 export interface EarlierState {
   state: "idle" | "loading" | "failed";
   pages: number;
@@ -78,7 +78,7 @@ export function useChatFind({ container, messages, rowIds, canOpen, openRequest,
   // 참고처럼 친 말이 100ms 머문 뒤에 찾는다. 그 사이에는 앞 결과를 그대로 둔다
   const searched = open ? debounced : "";
 
-  // 줄마다 센 수는 같은 말·같은 글이면 다시 세지 않는다: 앞 쪽을 이어 받는 동안 새 쪽의 말만 센다(받는 쪽과 세는 쪽을 나눔, plan §8.309)
+  // 줄마다 센 수는 같은 말·같은 글이면 다시 세지 않는다: 앞 쪽을 이어 받는 동안 새 쪽의 말만 센다(받는 쪽과 세는 쪽을 나눔, plan §8.310)
   const counted = useRef<{ key: string; byId: Map<string, { text: string; count: number }> }>({ key: "", byId: new Map() });
   const rows = useMemo(() => {
     if (searched === "") return [];
@@ -107,7 +107,7 @@ export function useChatFind({ container, messages, rowIds, canOpen, openRequest,
     const el = container.current;
     if (el === null) return null;
     const top = el.getBoundingClientRect().top;
-    // 줄은 위에서 아래 차례다: 화면 맨 위에 걸친 줄을 둘로 나눠 찾는다(수만 줄을 받은 뒤 끝을 보면서 말을 바꿔도 굳지 않게, plan §8.309)
+    // 줄은 위에서 아래 차례다: 화면 맨 위에 걸친 줄을 둘로 나눠 찾는다(수만 줄을 받은 뒤 끝을 보면서 말을 바꿔도 굳지 않게, plan §8.310)
     const nodes = new Map<string, Element>();
     for (const node of el.querySelectorAll(".chat-row[data-chat-id]")) nodes.set(node.getAttribute("data-chat-id")!, node);
     const found = list.flatMap((row) => {
@@ -157,7 +157,7 @@ export function useChatFind({ container, messages, rowIds, canOpen, openRequest,
     setFocusRequest((n) => n + 1);
     setStartedFor(null);
   }, [open]);
-  // 「앞 기록도 찾기」(plan §8.309, 참고 t3code useThreadFindNavigation `onLoadEarlier`): 처음까지 앞 쪽을 차례로 받는다. 쪽마다 위
+  // 「앞 기록도 찾기」(plan §8.310, 참고 t3code useThreadFindNavigation `onLoadEarlier`): 처음까지 앞 쪽을 차례로 받는다. 쪽마다 위
   // rows가 새 말만 세어 개수가 는다. 멈춤·닫기·실패·처음이면 그친다. 받던 쪽 하나는 끝까지 붙인다(그 쪽도 센다)
   const [earlier, setEarlier] = useState<EarlierState>({ state: "idle", pages: 0 });
   const earlierRun = useRef(0);

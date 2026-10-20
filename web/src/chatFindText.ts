@@ -173,7 +173,7 @@ export function markdownFindSegments(markdown: string, canOpen: boolean): string
 
 /**
  * 한 말(사람·답)의 찾을 글. 기록 전체를 쿼리마다 다시 뽑지 않게 그 말(받아 둔 기록의 객체)에 붙여 기억한다. 기록에서 빠진 말과
- * 함께 사라지므로 수만 줄을 앞까지 받아도 상한에 걸려 처음부터 다시 뽑지 않는다(plan §8.309)
+ * 함께 사라지므로 수만 줄을 앞까지 받아도 상한에 걸려 처음부터 다시 뽑지 않는다(plan §8.310)
  */
 const segmentCache = new WeakMap<object, { text: string; canOpen: boolean; segments: string[] }>();
 export function messageFindSegments(message: object, text: string, canOpen: boolean): string[] {
