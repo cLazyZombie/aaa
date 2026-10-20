@@ -975,6 +975,15 @@ impl Host {
             delivered_ms,
             (self.cfg.host.thread_prepare_timeout_secs + 60) * 1000,
         );
+        // Hello 상태 재생 중 agent=None은 아직 모른다는 뜻이다. 알려 둔 묶음을 쉼으로 바꾸지 않는다.
+        let group = if r.status == ThreadStatus::Open
+            && agent.is_none()
+            && self.restoring.lock().unwrap().contains(&r.machine_id)
+        {
+            r.last_group.unwrap_or(group)
+        } else {
+            group
+        };
         ThreadView {
             project: r.project.clone(),
             id: r.id.clone(),
