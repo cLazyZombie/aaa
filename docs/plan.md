@@ -6198,3 +6198,20 @@ L4 후속(10-20 00시 사용자 관찰): 멈춤 상태의 후보 예약과 재�
 - **덜 붐빔(`least_busy_order`).** 연결돼 있고 점검 이상(`problems`)이 없는 머신만, 모든 프로젝트의 열린(시작 중 포함) thread가 적은 차례 → health `load_x100`이 낮은 차례(모르면 뒤) → 이름순. 지금 고르는 기준이 코드에 따로 없어 coordinator가 이 기준을 확인했다.
 - **웹(FRONT_API 1.73).** `TaskBoard.repos`(칸에 쓸 이름), 할 일 폼 「저장소」 고르기(정하지 않음·이름·작업 폴더), 목록 줄과 상세의 칩. 「바로 시작」 미리보기는 `repo`(task 칸)·`local_machine`·`machine_order`(덜 붐비는 차례)를 더 준다. 창은 저장소를 이름으로 고르고, 칸이 있으면 고정, 비면 「고르기…」로 시작해 저장소나 작업 폴더를 고르기 전에는 「시작」을 막는다(고른 값은 task 줄에 적지 않는다). 머신은 그 저장소가 있는 머신만 보이고 owner의 머신, 아니면 `machine_order`에서 후보에 든 첫 머신이 기본이며 「(덜 붐빔)」으로 표시한다. 시작 요청은 고른 머신의 경로를 보낸다(그 머신에 같은 이름이 둘이면 이름을 보내 host가 거부하게 한다). 같은 창의 「host 머신」 항목은 별도 할 일이라 그대로 두었다.
 - **검증.** host 유닛 `tasks::tests::repo_field_reads_and_writes`(읽기·쓰기·제목 거부·정리 제안), `task_edit::tests::repo_field_edits`(경로 → 이름·비움·그대로·거부), `task_repo::tests`(이름·값 판정, 덜 붐빔 차례). m13 `task_repo_field_picks_machine_and_path`(labA·labB에 같은 이름 저장소: owner 머신 → 그 머신 경로, 칸만 → 덜 붐비는 labA, 작업 폴더, 어긋남 넷 거부, 모르는 칸의 형식 어긋남, `task add|edit --repo`)와 `start_defaults_profile_kind_and_task`(빈 칸 경고). 웹 E2E 54 `task-repo`(폼 고르기·칩, 고정된 저장소로 worktree, 빈 칸은 고르기 전 시작 막힘·작업 폴더·줄에 적지 않음, iPhone). 47·52는 빈 칸 task를 「작업 폴더」로 골라 시작한다. 웹 순수 시험 `tasksModel.test.mjs`(폼 동작, 이름별 머신 묶기, 기본 머신).
+
+### 8.331 aaa install I2 Windows ParentDir fixture 수리(10-20, t-0485)
+
+- **원문 판정.** Windows main CI의 잔여 `unsafe_targets_readonly_and_untrusted_journals_preserve_originals`
+  실패는 invalid journal status 전후 tree 비교(302행)를 지난 뒤 303행의 ParentDir target 거부에서 났다.
+  status가 파일을 바꿨다는 가설은 원문과 맞지 않는다. 엔진의 읽기·잠금·권한 동작을 변경하지 않는다.
+- **원인과 수리.** 실험실의 canonical Windows 경로는 verbatim prefix를 가진다. 여기에
+  `Path::join("config/../escape")`를 쓰면 Rust가 `..`를 미리 지워 정상 경로가 엔진에 들어간다.
+  fixture는 native separator를 사용해 OsString에 raw suffix를 붙인 뒤 PathBuf로 변환하고,
+  ParentDir component가 실제로 남았음을 먼저 단언한다. 같은 owner에서 conflict 거부·escape 미생성·
+  전후 전체 tree 불변을 확인한다. status의 bytes/권한/mtime 비교·secret 비노출·readonly 거부는 유지한다.
+- **검증 경계.** 기존 Windows CI의 실패 원문을 RED로 보존한다. ParentDir 거부 분기를 허용으로 바꾼
+  결함 변형은 같은 owner의 conflict 단언에서 실패해야 하며 소스를 바이트 단위로 복구한다.
+  공통 owner를 Windows cfg로 빼거나 기대값·timeout을 완화하지 않는다. macOS 전체 gate와 Windows
+  cross clippy/build 뒤 별도 수리분으로 착지하며, Windows·Linux 실제 실행은 main push 뒤 CI다.
+- **근거.** [Rust PathBuf::push](https://doc.rust-lang.org/std/path/struct.PathBuf.html#method.push),
+  [Path::join](https://doc.rust-lang.org/std/path/struct.Path.html#method.join)의 verbatim prefix 정규화 규칙.
