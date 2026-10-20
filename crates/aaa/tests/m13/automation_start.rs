@@ -111,3 +111,70 @@ fn automation_start_holds_approval_two_agents_and_restart_receipt() {
     w.wait_show("다른 원인 준비", second["id"].as_str().unwrap(), |v| v["brief"] == "delivered");
     wait_for("서로 다른 사건 두 번째 시작", T, || (automatic(&w).len() == 2).then_some(()));
 }
+
+/// 자기 사건 거르기(plan t-0475 A1 §3.5): `on.thread`+`do.start` 규칙이 띄운 thread가 보고(`report_ready`)해도 그 규칙은 다시
+/// thread를 띄우지 않는다. 사람이 띄운 thread의 보고는 그대로 받는다. 끝은 시간이 아니라 사건이다: 자동 thread가 보고한 뒤 사람이
+/// 띄운 둘째 원인의 보고로 둘째 시작이 오면, 규칙은 그 앞의 자동 thread 보고를 이미 지나갔다(흐름 사건은 순서대로 고른다).
+/// 결함 되심기: runtime.rs `automation_flow_events`의 자동화 thread 거르기를 빼면 자동 thread 보고가 새 시작을 만들어 실패한다.
+#[test]
+fn automation_thread_reports_do_not_wake_their_own_rule() {
+    let w = world();
+    w.h.in_terminal(&["safety", "set", "start_threads", "auto"], &[("[y/N]", "y")], T);
+    w.h.ok(&["project", "set", "demo", "repos.add", path_str(&w.repo)]);
+    let dir = w.projects.join("demo/automations");
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(
+        dir.join("check.toml"),
+        "title='보고 점검'\n[on.thread]\nevents=['report_ready']\nrepos=['repo']\n[do.start]\ntitle='자동 점검'\nrepo='repo'\ntext='자동 점검 보고'\nprofiles=['fake']\nmachines=['labA']\n",
+    )
+    .unwrap();
+    w.h.ticks(2);
+    let listed = w.h.ok(&["routine", "list", "demo"]);
+    let r = listed["routines"].as_array().unwrap().iter().find(|r| r["name"] == "check").unwrap().clone();
+    w.h.in_terminal(&["automation", "approve", "check", r["start_approval_sha256"].as_str().unwrap()], &[], T);
+    let human = |title: &str| {
+        let task = w.task(&format!("{title}.md"), &format!("{title} 보고"));
+        let v = w.start(&["--title", title, "--profile", "fake", "--repo", path_str(&w.repo), "--task-file", &task]);
+        let id = v["id"].as_str().unwrap().to_string();
+        w.wait_show(&format!("{title} 보고"), &id, |v| v["report_hash"].is_string());
+        id
+    };
+    // 자동 thread의 할 일에는 원인 사건(조건 자료)이 들어 있다: 어느 thread의 보고로 시작했는지 그것으로 안다
+    let cause = |id: &str| {
+        // 막 시작한 thread는 아직 작업 폴더가 없다(다음 판정에서 다시 본다)
+        let shown = w.show(id);
+        let brief = shown["work_dir"]
+            .as_str()
+            .and_then(|d| std::fs::read_to_string(std::path::Path::new(d).join("brief.md")).ok())
+            .unwrap_or_default();
+        ["t-0001", "t-0002", "t-0003", "t-0004", "t-0005"]
+            .into_iter()
+            .filter(|t| brief.contains(&format!("\"thread\":\"{t}\"")))
+            .map(str::to_string)
+            .collect::<Vec<_>>()
+    };
+    let started = || automatic(&w).iter().map(|e| e["thread"].as_str().unwrap().to_string()).collect::<Vec<_>>();
+    let first = human("첫 원인");
+    let auto = wait_for("첫 원인 보고로 자동 시작", T, || {
+        w.h.ticks(1);
+        started().first().cloned()
+    });
+    let shown = w.wait_show("자동 thread 보고", &auto, |v| v["report_hash"].is_string());
+    assert_eq!((shown["automation"].as_str(), shown["automation_title"].as_str()), (Some("check"), Some("보고 점검")));
+    assert_eq!(cause(&auto), [first.clone()]);
+    assert!(w.show(&first)["automation"].is_null(), "사람이 띄운 thread에는 출처가 없다");
+    let board = w.h.ok(&["task", "list"]);
+    let unlinked: Vec<_> =
+        board["unlinked_threads"].as_array().unwrap().iter().map(|t| t["id"].as_str().unwrap()).collect();
+    assert!(unlinked.contains(&first.as_str()) && !unlinked.contains(&auto.as_str()), "{unlinked:?}");
+    let second = human("둘째 원인");
+    let next = wait_for("둘째 원인 보고로 자동 시작", T, || {
+        w.h.ticks(1);
+        started().into_iter().find(|id| *id != auto && cause(id).contains(&second))
+    });
+    let all = started();
+    assert_eq!(all, [auto.clone(), next.clone()], "자동 thread 보고는 규칙을 다시 깨우지 않는다");
+    for id in &all {
+        assert!(!cause(id).contains(&auto), "{id}가 자동 thread {auto}의 보고로 시작했다");
+    }
+}

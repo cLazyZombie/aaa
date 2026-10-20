@@ -75,6 +75,10 @@ pub(crate) struct Threads {
     pub events: Vec<String>,
     #[serde(default)]
     pub repos: Vec<String>,
+    /// 자동화가 띄운 thread의 사건도 받는다(plan t-0475 §3.5). 기본은 뺀다: 자동화 thread의 보고가 규칙을 깨워 다시 thread를 띄우는
+    /// 고리를 막는다. 켜도 이 규칙이 띄운 thread의 사건은 늘 뺀다
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub include_automation: bool,
 }
 
 #[derive(Debug, Default, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
