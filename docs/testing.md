@@ -792,7 +792,9 @@ CI/Git의 source outbox·중복 억제·재시작·outage는 기존 owner를 유
 ## 휴대폰 뒤로 기록(t-0466, plan §8.301)
 
 - `node web/e2e/web.e2e.mjs --spec 39-phone-back`: WebKit iPhone 390·430 × Safari 탭·홈 화면 앱 흉내에서 pane 셋과 대화의 보고서를 연 뒤 앱 문서 칸(init script가 적은 `history.length`)까지 `history.back()`을 popstate 사건마다 하고 화면 차례를 단언한다. 왼쪽 가장자리 쓸기는 `document.createTouch`로 touchstart·touchmove(frame마다)·touchend/touchcancel을 내고, 겹친 뒤로는 손가락을 뗀 뒤 popstate를 기다린다. 닫힌 pane 칸·「모든 thread」 닫기의 기록 칸 수와 휴대폰·데스크톱 빈 화면 문구도 본다. 고정 sleep은 없고 popstate·DOM·animation frame·drawer transition 사건으로 끝낸다.
-- 고치기 전 코드로는 첫 단계가 「(주소 없음)+빈 화면」으로, 쓸기 단계가 목록이 열린 채 뒤로로 실패했다.
+- t-0466 수정 전 코드로는 첫 단계가 「(주소 없음)+빈 화면」으로 실패했다. 당시 쓸기 겹침의 「목록 닫힘」 규칙은 t-0541 사용자 답변 1A·2A로 아래 유지 규칙으로 바뀌었다. 뒤로 화면 순서·빈 화면 방지·기록 칸 수 단언은 유지한다.
+- t-0541(plan §8.340) 메뉴 상태는 창마다 기억하지 않는다. 1→2→3에서 메뉴를 열고 쓸기로 2로 돌아간 뒤 1→2→3을 뒤로·앞으로 순회해도 열린 채이고, 메뉴를 닫은 뒤 같은 창들을 순회하면 닫힌 채다. WebKit 390·430 × Safari 탭·홈 화면 앱 흉내에서 popstate·선택 줄의 aria-current·drawer transition 완료로 기다린다. 메뉴 토글이 기록 칸을 추가하지 않는지도 본다. 수정 전 네 조합 모두 메뉴 유지 단언에서 실패하며 휴대폰 전후 화면을 남긴다. WebKit 데스크톱 1280·패드 820에서는 사이드바 펼침·접힘이 양방향 이동 중 유지되는지도 확인한다.
+- 헤드리스는 Safari 시스템 몸짓 자체를 실행하지 못한다. 오른쪽 쓸기는 합성 touchstart·touchmove·touchcancel 뒤 history.back으로, 일반 뒤로·앞으로는 history.go로 같은 문서의 기록 순회를 흉내 낸다. 실제 iPhone Safari·홈 화면 앱의 운영체제 몸짓까지 대신 보증하지 않는다.
 
 ## 자동화 상세·변환·막힌 큐(t-0468, plan §8.303)
 
