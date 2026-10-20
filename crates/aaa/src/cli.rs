@@ -35,6 +35,27 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum AccountCmd {
+    /// host의 격리된 공식 CLI로 로그인한다. 인증값은 출력하지 않는다.
+    Login {
+        name: String,
+        #[arg(long, value_parser=["claude", "codex"])]
+        harness: String,
+    },
+    LoginStatus {
+        id: String,
+    },
+    LoginCancel {
+        id: String,
+    },
+    /// harness별 기본 계정. 이름을 생략하면 조회하고 --off면 해제한다.
+    Default {
+        #[arg(value_parser=["claude", "codex"])]
+        harness: String,
+        #[arg(conflicts_with = "off")]
+        account: Option<String>,
+        #[arg(long)]
+        off: bool,
+    },
     /// 결과 파일에서 읽어 암호화 보관한다. 토큰을 argv로 받지 않는다.
     Import {
         name: String,
@@ -51,7 +72,7 @@ enum AccountCmd {
 
 #[derive(Subcommand)]
 enum Cmd {
-    /// host에 준비한 계정 인증 결과만 등록한다(로그인은 aaa 밖에서 한다)
+    /// host에서 로그인하고 새 작업의 기본 인증을 정한다(aaa 세션 밖 CLI)
     Account {
         #[command(subcommand)]
         cmd: AccountCmd,
@@ -1561,6 +1582,16 @@ fn run(cli: Cli) -> Result<ExitCode> {
             front(json, FrontRequest::DebugInput { pane, thread, since_ms })
         }
         Cmd::Account { cmd } => match cmd {
+            AccountCmd::Login { name, harness } => front(json, FrontRequest::AccountLogin { name, harness }),
+            AccountCmd::LoginStatus { id } => front(json, FrontRequest::AccountLoginStatus { id }),
+            AccountCmd::LoginCancel { id } => front(json, FrontRequest::AccountLoginCancel { id }),
+            AccountCmd::Default { harness, account, off } => {
+                if off || account.is_some() {
+                    front(json, FrontRequest::AccountDefault { harness, account })
+                } else {
+                    front(json, FrontRequest::AccountDefaults)
+                }
+            }
             AccountCmd::List => front(json, FrontRequest::AccountList),
             AccountCmd::Remove { name } => front(json, FrontRequest::AccountRemove { name }),
             AccountCmd::Import { name, harness, file } => {
@@ -3124,6 +3155,7 @@ fn render_thread(s: &mut String, t: &aaa_proto::ThreadView) {
         t.machine,
         t.brief.as_str()
     );
+    let _ = writeln!(s, "인증: {}", t.account.as_deref().unwrap_or("로컬 로그인"));
     if let Some(e) = &t.error {
         let _ = writeln!(s, "  오류: {e}");
     }
@@ -3476,6 +3508,7 @@ fn render_front(r: &FrontResponse) -> String {
         }
         FrontResponse::Pane(p) => {
             let _ = writeln!(s, "{}\t{}\t{}\t{}", p.id, p.machine, p.name, state_label(&p.state));
+            let _ = writeln!(s, "인증: {}", p.account.as_deref().unwrap_or("기존 인증 환경"));
         }
         FrontResponse::Attached { path, inserted, note } => {
             let _ = writeln!(s, "{path}");
@@ -3948,6 +3981,19 @@ fn render_front(r: &FrontResponse) -> String {
             s.push_str(
                 &accounts.iter().map(|a| format!("{}\t{}\t판 {}\n", a.name, a.harness, a.version)).collect::<String>(),
             );
+        }
+        FrontResponse::AccountDefaults { defaults } => {
+            for harness in ["claude", "codex"] {
+                let name =
+                    defaults.iter().find(|d| d.harness == harness).map(|d| d.account.as_str()).unwrap_or("로컬 로그인");
+                let _ = writeln!(s, "{harness}\t{name}");
+            }
+        }
+        FrontResponse::AccountLogin { login } => {
+            let _ = writeln!(s, "{}\t{}\t{}\t{}", login.id, login.account, login.harness, login.state);
+            if login.state == "waiting" {
+                let _ = writeln!(s, "host 브라우저에서 인증한다. 상태: aaa account login-status {}", login.id);
+            }
         }
         FrontResponse::ThreadStartPreview(p) => {
             let _ = writeln!(s, "제목: {}\nprofile: {}", p.title, p.profile);

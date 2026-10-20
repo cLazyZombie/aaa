@@ -136,6 +136,13 @@ impl Host {
         }
         // host가 safety(coordinator 몫)까지 푼다. host_profiles.v1을 모르는 agent면 정의를 잃은 채 이름만 보내지 않고 거부한다
         let resolved = self.resolved_coordinator_profile(project, &mid, &profile)?;
+        let account = self.default_account(&resolved.harness)?;
+        let credential = account.as_ref().map(|name| self.accounts.credential(name)).transpose()?;
+        if let Some(c) = &credential
+            && (c.harness != resolved.harness || !self.machine_feature(&mid, "account_auth.v2"))
+        {
+            return Err(bad("coordinator 계정의 harness·agent 인증 지원을 확인한다"));
+        }
         let name = match running.len() {
             0 => format!("{project} coordinator"),
             n => format!("{project} coordinator {}", n + 1),
@@ -153,7 +160,12 @@ impl Host {
             profile: Some(profile.clone()),
             resolved_profile: Some(resolved),
         };
-        let id = self.spawn_on(&mid, spec, actor).await?;
+        let id = if let Some(mut credential) = credential {
+            credential.run = format!("{project}/c-{}", util::new_id());
+            self.spawn_account_on(&mid, spec, credential, actor, None).await?
+        } else {
+            self.spawn_on(&mid, spec, actor).await?
+        };
         // spawn 사이에 다른 layout 변경이 있었을 수 있다: 최신을 읽어 붙인다
         let mut w = self.workspace(project);
         w.tabs.push(Tab {

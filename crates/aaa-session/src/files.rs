@@ -105,7 +105,6 @@ pub struct Startup {
 }
 
 pub fn account_home(state: &Path, run: &str) -> anyhow::Result<PathBuf> {
-    let (project, thread) = run.split_once('/').ok_or_else(|| anyhow::anyhow!("계정 작업 참조 오류"))?;
-    anyhow::ensure!(aaa_proto::valid_project(project) && aaa_proto::valid_thread(thread), "계정 작업 참조 오류");
+    let (project, thread) = aaa_proto::account_run_parts(run).ok_or_else(|| anyhow::anyhow!("계정 작업 참조 오류"))?;
     Ok(state.join("account-runs").join(project).join(thread).join("codex-home"))
 }

@@ -150,7 +150,8 @@ pub const AGENT_LINK: Version = Version { major: 1, minor: 10 };
 // 1.68: 입력칸 「/」 목록(`pane_commands` → `CommandList`), 대화의 harness 명령 줄(`PaneChat.commands`, `ChatRole::Command`·
 // `CommandOutput`, plan §8.323). 옛 host는 `pane_commands`를 모르는 요청으로 거절해 웹이 목록 없이 보내고, 명령 줄을 싣지 않는다.
 // 1.69: 특수 패널·임무·평가자 제거. 옛 요청은 한 판 동안 제거 안내(목록은 빈 목록).
-pub const FRONT_API: Version = Version { major: 1, minor: 69 };
+// 1.70: host 로그인·기본 계정 관리, PaneView.account, coordinator 계정 실행 참조(account_auth.v2).
+pub const FRONT_API: Version = Version { major: 1, minor: 70 };
 /// agent ↔ session host(내부). 세션이 몇 주 이어질 수 있으므로 이전 session host와 호환해야 한다.
 /// 1.1: `SessionRequest::Detect`(harness 상태 감지 입력). agent는 1.0 session host에 보내지 않고 `Screen`을 쓴다.
 /// 1.2: `SessionRequest::Colors`(색 질의에 답할 화면 색, plan §8.187). agent는 1.1 이하 session host에 보내지 않는다.
