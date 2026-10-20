@@ -299,10 +299,18 @@ fn parse_in(name: &str, text: &str, seconds: bool) -> Result<Routine, String> {
         name: name.to_string(),
         title: name.to_string(),
         file: format!("routines/{name}.md"),
-        action: crate::automation::Action::Inbox(crate::automation::Inbox {
-            text: Some(body.trim().into()),
-            ..Default::default()
-        }),
+        action: if matches!(trigger, Trigger::Pr(_)) {
+            crate::automation::Action::Message(crate::automation::Message {
+                thread: "owner".into(),
+                text: Some(body.trim().into()),
+                text_file: None,
+            })
+        } else {
+            crate::automation::Action::Inbox(crate::automation::Inbox {
+                text: Some(body.trim().into()),
+                ..Default::default()
+            })
+        },
         limits: Default::default(),
         catch_up: Default::default(),
         trigger,

@@ -366,7 +366,7 @@ impl Plan {
             }
             let mut pending = data.get("pending").and_then(|v| v.as_array()).cloned().unwrap_or_default();
             let old_key = format!("automation:{p}:mission:{target}");
-            if imported.len() > 0
+            if !imported.is_empty()
                 && self.targets.iter().find(|(t, _)| t == &target).is_some_and(|(_, n)| n == &name)
                 && let Some(old) = h.db.meta(&old_key).map_err(|e| bad(e.to_string()))?
             {

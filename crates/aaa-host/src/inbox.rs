@@ -229,7 +229,6 @@ impl Host {
     /// launch(not launched). 메시지 전달 모름은 aaa에만 있다(메시지를 대기열로 보낸다).
     pub(crate) fn inbox_from_flow(&self, e: &FlowEvent) {
         let Some(thread) = &e.thread else { return };
-        // 사후 평가자의 알림은 평가 기록(`evaluation`)으로 따로 알린다. 실패는 그대로 알린다.
 
         let p = &e.project;
         let (event, summary) = match e.kind.as_str() {
@@ -323,7 +322,7 @@ impl Host {
         tokio::spawn(async move {
             let every = Duration::from_secs(me.cfg.projects.tick_secs.max(1));
             loop {
-                // 사후 평가자 묶음·PR 조회 때가 더 이르면 그때까지만 잔다
+                // PR 조회 때가 더 이르면 그때까지만 잔다
                 let sleep = [me.pr_next_due(), me.ci_next_due(), me.git_next_due(), me.background_wait_due()]
                     .into_iter()
                     .flatten()

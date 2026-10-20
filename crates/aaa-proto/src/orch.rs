@@ -1121,7 +1121,7 @@ pub struct RoutineView {
     pub name: String,
     pub trigger: String,
     pub action: String,
-    /// routine 또는 mission. mission:<이름>은 임무 파일의 조건 보기다.
+    /// automation·routine·legacy. legacy는 변환 안내용 옛 파일이다.
     pub origin: String,
     pub file: String,
     pub last_result: Option<RoutineRun>,

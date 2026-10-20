@@ -630,6 +630,35 @@ fn week_profile<'a>(profiles: &'a [(String, String)], report: &aaa_proto::UsageR
     Some(comparable[0].2)
 }
 
+pub(crate) fn fenced(s: &str) -> String {
+    let n = s.split(|c| c != '`').map(str::len).max().unwrap_or(0);
+    let fence = "`".repeat(n.max(2) + 1);
+    format!("{fence}text\n{s}\n{fence}")
+}
+pub(crate) fn text_diff(old: &str, new: &str) -> String {
+    if old == new {
+        return String::new();
+    }
+    let a: Vec<_> = old.lines().collect();
+    let b: Vec<_> = new.lines().collect();
+    let prefix = a.iter().zip(&b).take_while(|(x, y)| x == y).count();
+    let suffix = a[prefix..].iter().rev().zip(b[prefix..].iter().rev()).take_while(|(x, y)| x == y).count();
+    let mut out = format!(
+        "--- 적용 사본\n+++ 후보 파일\n@@ -{},{} +{},{} @@\n",
+        prefix + 1,
+        a.len() - prefix - suffix,
+        prefix + 1,
+        b.len() - prefix - suffix
+    );
+    for l in &a[prefix..a.len() - suffix] {
+        out.push_str(&format!("-{l}\n"));
+    }
+    for l in &b[prefix..b.len() - suffix] {
+        out.push_str(&format!("+{l}\n"));
+    }
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -688,33 +717,4 @@ mod tests {
             assert_eq!(week_profile(&profiles, &report), Some("reviewer"), "{report:?}");
         }
     }
-}
-
-pub(crate) fn fenced(s: &str) -> String {
-    let n = s.split(|c| c != '`').map(str::len).max().unwrap_or(0);
-    let fence = "`".repeat(n.max(2) + 1);
-    format!("{fence}text\n{s}\n{fence}")
-}
-pub(crate) fn text_diff(old: &str, new: &str) -> String {
-    if old == new {
-        return String::new();
-    }
-    let a: Vec<_> = old.lines().collect();
-    let b: Vec<_> = new.lines().collect();
-    let prefix = a.iter().zip(&b).take_while(|(x, y)| x == y).count();
-    let suffix = a[prefix..].iter().rev().zip(b[prefix..].iter().rev()).take_while(|(x, y)| x == y).count();
-    let mut out = format!(
-        "--- 적용 사본\n+++ 후보 파일\n@@ -{},{} +{},{} @@\n",
-        prefix + 1,
-        a.len() - prefix - suffix,
-        prefix + 1,
-        b.len() - prefix - suffix
-    );
-    for l in &a[prefix..a.len() - suffix] {
-        out.push_str(&format!("-{l}\n"));
-    }
-    for l in &b[prefix..b.len() - suffix] {
-        out.push_str(&format!("+{l}\n"));
-    }
-    out
 }

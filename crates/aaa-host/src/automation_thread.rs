@@ -1,4 +1,4 @@
-//! 자동화 thread의 입력·기억·짧은 수명. Agent link는 기존 mission.v1 파일 전송을 함께 쓴다.
+//! 자동화 thread의 입력·기억·짧은 수명. work_files.v1과 N-1 파일 전송을 함께 지원한다.
 use crate::{
     AgentConn, Host,
     automation::Start,
@@ -431,6 +431,12 @@ impl Host {
     }
 }
 
+impl Host {
+    fn work_file_request(&self, machine: &str, request: AgentRequest) -> AgentRequest {
+        if self.machine_feature(machine, "work_files.v1") { request } else { request.legacy_work_file() }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -483,11 +489,5 @@ mod tests {
                 }
             }
         }
-    }
-}
-
-impl Host {
-    fn work_file_request(&self, machine: &str, request: AgentRequest) -> AgentRequest {
-        if self.machine_feature(machine, "work_files.v1") { request } else { request.legacy_work_file() }
     }
 }

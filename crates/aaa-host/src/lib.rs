@@ -524,9 +524,6 @@ pub struct Host {
     viewing: Mutex<seen::Viewing>,
     /// 기기마다 최근에 push로 보낸 항목(push.rs `PushedLog`)
     pub(crate) pushed: Mutex<push::PushedLog>,
-    /// 사후 평가자: 프로젝트별 다음 묶음 확인 때
-    /// 사후 평가자 묶음은 한 번에 하나씩 만든다
-    /// 평가 기록 채택·보류는 한 번에 하나씩
     /// thread 기록 다시 읽어 고치기(`update_rec`)는 한 번에 하나씩
     rec_lock: Mutex<()>,
     /// brief 배경 task가 도는 thread(`<project>/<thread>`, 하나만 돈다)

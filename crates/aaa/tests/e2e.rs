@@ -34,9 +34,6 @@ listen = ""
 mode = "none"
 "#;
 
-/// 잘못 친 승인 확인에는 승인 대상과 입력해야 할 이름이 보여야 하고 승인 상태는 남지 않는다.
-/// 운영 임무 대신 꺼진 합성 임무와 임시 host만 쓴다.
-
 /// 쉬고 있는 가짜 Claude: SessionStart hook(대화 기록 위치)과 진행 보고를 내고 입력 상자를 그린 채 기다린다.
 /// `$1`은 aaa 실행 파일, `$2`는 hook JSON이다.
 const IDLE_CLAUDE: &str = r#"#!/bin/sh

@@ -113,10 +113,6 @@ mod tests {
         t.acked_hash = t.report_hash.clone();
         h.save(&mut t);
         assert_eq!(h.app_badge_count().unwrap(), 0, "처리한 결정 보고");
-        t.role = Role::Evaluator;
-        t.report_hash = None;
-        h.save(&mut t);
-        assert_eq!(h.app_badge_count().unwrap(), 0, "자동 평가자는 사용자 결정이 아니다");
         drop(h);
         std::fs::remove_dir_all(path).unwrap();
     }

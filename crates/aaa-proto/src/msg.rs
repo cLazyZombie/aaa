@@ -3085,6 +3085,21 @@ pub enum EventsClientMsg {
     ChatWatch { pane: String, enabled: bool },
 }
 
+impl AgentRequest {
+    /// 1.9 agent와 파일 전송을 계속한다. 새 기능이 없는 상대에게 새 태그를 보내지 않는다.
+    pub fn legacy_work_file(self) -> Self {
+        match self {
+            Self::WorkFileInboxStatus { work_dir } => Self::MissionInboxStatus { work_dir },
+            Self::WorkFileList { work_dir } => Self::MissionStateList { work_dir },
+            Self::WorkFileRead { work_dir, path, offset } => Self::MissionStateRead { work_dir, path, offset },
+            Self::WorkFileWriteChunk { work_dir, path, offset, data, eof, sha256 } => {
+                Self::MissionStateWrite { work_dir, path, offset, data, eof, sha256 }
+            }
+            other => other,
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -3320,20 +3335,5 @@ mod tests {
         assert!(old.truncated);
         let agent: AgentResponse = serde_json::from_str(r#"{"kind":"chat","messages":[],"truncated":true}"#).unwrap();
         assert!(matches!(agent, AgentResponse::Chat { before: None, history: None, .. }));
-    }
-}
-
-impl AgentRequest {
-    /// 1.9 agent와 파일 전송을 계속한다. 새 기능이 없는 상대에게 새 태그를 보내지 않는다.
-    pub fn legacy_work_file(self) -> Self {
-        match self {
-            Self::WorkFileInboxStatus { work_dir } => Self::MissionInboxStatus { work_dir },
-            Self::WorkFileList { work_dir } => Self::MissionStateList { work_dir },
-            Self::WorkFileRead { work_dir, path, offset } => Self::MissionStateRead { work_dir, path, offset },
-            Self::WorkFileWriteChunk { work_dir, path, offset, data, eof, sha256 } => {
-                Self::MissionStateWrite { work_dir, path, offset, data, eof, sha256 }
-            }
-            other => other,
-        }
     }
 }

@@ -972,31 +972,6 @@ impl Host {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    #[test]
-    fn rule_budget_uses_first_input_last_start_and_durable_day_count() {
-        let l =
-            Limits { batch: Some("1m".into()), min_gap: Some("2m".into()), max_per_day: Some(2), ..Default::default() };
-        assert_eq!(wait_reason(&l, 1000, None, 0, 60999, false), Some("입력 묶는 중"));
-        assert_eq!(wait_reason(&l, 1000, Some(1000), 1, 61000, false), Some("최소 간격"));
-        assert_eq!(wait_reason(&l, 1000, Some(1000), 2, 121000, false), Some("하루 상한"));
-        assert_eq!(wait_reason(&l, 1000, Some(1000), 1, 121000, true), Some("사용량 문턱 또는 확인 불가"));
-        assert_eq!(wait_reason(&l, 1000, Some(1000), 1, 121000, false), None);
-    }
-}
-
-#[cfg(test)]
-#[test]
-fn omitted_and_zero_rule_budget_are_unlimited() {
-    for limit in [None, Some(0)] {
-        let limits = Limits { max_per_day: limit, ..Default::default() };
-        assert_eq!(wait_reason(&limits, 0, Some(1), u32::MAX, 2, false), None);
-        assert_eq!(wait_reason(&limits, 0, Some(1), 99, 2, true), Some("사용량 문턱 또는 확인 불가"));
-    }
-}
-
 impl Host {
     /// 변환의 파일 공개 전에 journal을 남긴다. 원본 DB는 지우지 않고, 새 큐와 완료 표지를 한 transaction으로 확정한다.
     pub(crate) fn automation_import_legacy(
@@ -1071,5 +1046,30 @@ impl Host {
             })
             .map_err(internal)?;
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn rule_budget_uses_first_input_last_start_and_durable_day_count() {
+        let l =
+            Limits { batch: Some("1m".into()), min_gap: Some("2m".into()), max_per_day: Some(2), ..Default::default() };
+        assert_eq!(wait_reason(&l, 1000, None, 0, 60999, false), Some("입력 묶는 중"));
+        assert_eq!(wait_reason(&l, 1000, Some(1000), 1, 61000, false), Some("최소 간격"));
+        assert_eq!(wait_reason(&l, 1000, Some(1000), 2, 121000, false), Some("하루 상한"));
+        assert_eq!(wait_reason(&l, 1000, Some(1000), 1, 121000, true), Some("사용량 문턱 또는 확인 불가"));
+        assert_eq!(wait_reason(&l, 1000, Some(1000), 1, 121000, false), None);
+    }
+}
+
+#[cfg(test)]
+#[test]
+fn omitted_and_zero_rule_budget_are_unlimited() {
+    for limit in [None, Some(0)] {
+        let limits = Limits { max_per_day: limit, ..Default::default() };
+        assert_eq!(wait_reason(&limits, 0, Some(1), u32::MAX, 2, false), None);
+        assert_eq!(wait_reason(&limits, 0, Some(1), 99, 2, true), Some("사용량 문턱 또는 확인 불가"));
     }
 }

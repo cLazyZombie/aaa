@@ -106,7 +106,6 @@ pub(crate) struct ThreadRec {
     pub merged_seen_ms: Option<u64>,
     #[serde(default)]
     pub error: Option<String>,
-    /// 사후 평가자: 마지막으로 넘긴 사건 seq, 넘긴 묶음 수, 마지막 묶음 시각(§8.13)
     /// resolve 때 남긴 worktree·branch(`project sweep`이 다시 정리한다). None은 모른다(이 필드 전에 끝난 thread)
     #[serde(default)]
     pub leftover: Option<crate::lifecycle::Leftover>,

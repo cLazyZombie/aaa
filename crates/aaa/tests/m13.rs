@@ -1253,8 +1253,6 @@ fn progress_seen(ev: &mut Events, id: &str, text: &str) {
     });
 }
 
-/// 실제 가짜 Claude의 확인창→답→일함→Idle 뒤 routine 입력을 임무가 한 번만 받는다.
-
 /// 화면으로 아는 harness 상태(herdr 0.9.5 감지, plan §8.110), 확인창 질문의 원격 응답, 메시지 queue·interrupt(§8.3~8.5).
 /// 기다림은 모두 host가 밀어 주는 사건(thread 기록·질문·흐름)으로 끝난다.
 #[test]
@@ -4592,9 +4590,6 @@ fn doctor_files_brings_the_coordinator_guide_to_existing_projects() {
     let v = w.h.ok(&["doctor", "files"]);
     assert!(v["checks"].as_array().unwrap().iter().all(|c| c["problems"] == serde_json::json!([])), "{v}");
 }
-
-/// 사후 평가자(§8.13): 목록에 섞이지 않고, 착지·완료 사건 묶음을 받아 평가 기록을 내며, 평가자 세션은 보기만 한다.
-/// 평가자는 가짜 agent(`fake`)이고, 묶음 알림 줄(`inbox/<seq>.json`)을 받으면 평가 기록과 보고를 쓴다.
 
 /// 가짜 `gh`: 받은 인자를 남기고 `$GH_STUB`의 파일로 답한다. 계정은 thread-bot이다.
 /// `pr list`는 `--author`(내 열린 PR)면 open.json, `--head=<branch>`의 list-<branch, /는 _>.json이 있으면 그것, 없으면

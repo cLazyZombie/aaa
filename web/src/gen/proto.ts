@@ -1215,7 +1215,7 @@ seen: boolean, created_at_ms: number, done_at_ms: number | null, };
 
 export type RoutineView = { title: string, name: string, trigger: string, action: string,
 /**
- * routine 또는 mission. mission:<이름>은 임무 파일의 조건 보기다.
+ * automation·routine·legacy. legacy는 변환 안내용 옛 파일이다.
  */
 origin: string, file: string, last_result: RoutineRun | null, last_skip: RoutineRun | null, today: number, max_per_day: number | null,
 /**
