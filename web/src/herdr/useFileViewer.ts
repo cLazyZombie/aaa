@@ -4,6 +4,7 @@ import { outsideSettings } from "./settingsHistory.ts";
 // herdr-web-ui src/lib/useFileViewer.ts(aa624cb). aaa: pane ID가 host 전체에서 하나라 머신 ID 대신 pane만 둔다.
 // thread 결과물(차이 목록 R1)은 pane 대신 그 thread(`library`)를 둔다: 경로는 결과물 안 상대 경로다.
 // 보고서 안 파일 링크(plan §8.171)는 그 thread(`worktree`)를 둔다: 경로는 thread 작업 폴더 기준이다.
+// 대화의 보고서 주소(plan §8.300)는 그 보기 경로 맨 위(`view`, `/v/<cap>/`)를 둔다: 경로는 그 안 상대 경로다.
 
 type ThreadRef = { project: string; thread: string };
 interface FilePreview {
@@ -11,6 +12,7 @@ interface FilePreview {
   pane: string | null;
   library?: ThreadRef;
   worktree?: ThreadRef;
+  view?: string;
 }
 
 function threadRef(value: unknown): ThreadRef | null {
@@ -32,6 +34,10 @@ function previewFromState(state: unknown): FilePreview | null {
     const ref = threadRef(value[key]);
     if (ref === null) return null;
     shown[key] = ref;
+  }
+  if (value.view !== undefined) {
+    if (typeof value.view !== "string" || !value.view.startsWith("/v/")) return null;
+    shown.view = value.view;
   }
   return shown;
 }
