@@ -1635,6 +1635,29 @@ pub enum FrontRequest {
         #[ts(optional, as = "Option<String>")]
         project: String,
     },
+    /// 「답할 것」(FRONT_API 1.78, plan §8.345, 보기 권한): 열린 coordinator 확인 필요 post와 답한 것 기록
+    Asks {
+        #[serde(default)]
+        #[ts(optional, as = "Option<String>")]
+        project: String,
+    },
+    /// coordinator 확인 필요 post를 「답함으로 표시」한다: 그 inbox 항목을 끝내고 기록에 남긴다
+    AskHandle {
+        #[serde(default)]
+        #[ts(optional, as = "Option<String>")]
+        project: String,
+        item: String,
+    },
+    /// 답한 것 기록을 지운다(모든 기기). `all`이면 모두
+    AskForget {
+        #[serde(default)]
+        #[ts(optional, as = "Option<String>")]
+        project: String,
+        #[serde(default)]
+        ids: Vec<String>,
+        #[serde(default)]
+        all: bool,
+    },
     PostUnmute {
         #[serde(default)]
         #[ts(optional, as = "Option<String>")]
@@ -2503,6 +2526,36 @@ pub enum FrontRequest {
         name: String,
         key: String,
     },
+    /// FRONT_API 1.77. 「이 aaa」·「저장소」 설정 화면이 읽는 프로젝트 설정(관리 GUI W4, plan §8.343). Reader 가능
+    ProjectSettings {
+        #[serde(default)]
+        #[ts(optional, as = "Option<String>")]
+        project: String,
+    },
+    /// FRONT_API 1.77. 저장소 하나를 제자리에서 바꾼다(`PATH[@MACHINE]`, `repos.remove`+`repos.add`를 한 번에, 차례는 그대로)
+    ProjectRepoEdit {
+        #[serde(default)]
+        #[ts(optional, as = "Option<String>")]
+        project: String,
+        from: String,
+        to: String,
+    },
+    /// FRONT_API 1.77. 끝내기 전에 잃을 수 있는 것(미커밋·미병합·사본 상태)을 읽는다. 기록을 고치지 않는다. 바뀐 파일 수를
+    /// 그 머신 agent가 읽으므로 조작 기기만(`ThreadDiff`와 같다)
+    ThreadResolvePreview {
+        #[serde(default)]
+        #[ts(optional, as = "Option<String>")]
+        project: String,
+        thread: String,
+    },
+    /// FRONT_API 1.77. 미리보기(`library_prune_preview`)와 같은 판정으로 지우되, 후보가 `expected`(`project/name`)와 같을 때만
+    /// 지운다(그 사이 바뀌면 `conflict`). 웹 「보고서 정리」의 실행이다. 지우는 것은 `library_delete`보다 좁다(report.md
+    /// 사본·thread 기록은 남는다)
+    LibraryPruneApply {
+        project: Option<String>,
+        older_than_days: Option<u32>,
+        expected: Vec<String>,
+    },
     /// 최근 실행·건너뜀 기록, 최대 50건(Reader 가능).
     RoutineRuns {
         #[serde(default)]
@@ -2532,9 +2585,14 @@ pub enum FrontRequest {
     Events {
         project: Option<String>,
         #[serde(default)]
+        #[ts(type = "number")]
         after: u64,
         #[serde(default)]
         limit: Option<u32>,
+        /// 가장 최근 `limit`개(차례는 그대로 오래된 것부터, FRONT_API 1.77). 웹 알림함 「흐름 사건」이 쓴다. 옛 host는 버린다
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        #[ts(optional, as = "Option<bool>")]
+        tail: bool,
     },
     /// 사후 평가자 지정(§8.13): 역할이 evaluator인 thread를 시작한다. 프로젝트당 하나다.
     EvaluatorAssign {
@@ -2596,6 +2654,9 @@ impl FrontRequest {
             FrontRequest::Post { project, .. }
             | FrontRequest::PostStatus { project, .. }
             | FrontRequest::PostList { project, .. }
+            | FrontRequest::Asks { project, .. }
+            | FrontRequest::AskHandle { project, .. }
+            | FrontRequest::AskForget { project, .. }
             | FrontRequest::PostUnmute { project, .. }
             | FrontRequest::ThreadFile { project, .. }
             | FrontRequest::ThreadDiff { project, .. }
@@ -2653,6 +2714,9 @@ impl FrontRequest {
             | FrontRequest::AutomationDelete { project, .. }
             | FrontRequest::AutomationRestore { project, .. }
             | FrontRequest::AutomationRun { project, .. }
+            | FrontRequest::ProjectSettings { project }
+            | FrontRequest::ProjectRepoEdit { project, .. }
+            | FrontRequest::ThreadResolvePreview { project, .. }
             | FrontRequest::RoutineToggle { project, .. }
             | FrontRequest::EvaluatorAssign { project, .. }
             | FrontRequest::EvaluatorUnassign { project, .. }
@@ -2674,6 +2738,7 @@ impl FrontRequest {
                 | FrontRequest::DeployContext
                 | FrontRequest::DeployStatus { .. }
                 | FrontRequest::PostStatus { .. }
+                | FrontRequest::Asks { .. }
                 | FrontRequest::Machines
                 | FrontRequest::Panes { .. }
                 | FrontRequest::Projects { .. }
@@ -2706,6 +2771,7 @@ impl FrontRequest {
                 | FrontRequest::AutomationConvert { dry_run: true, .. }
                 | FrontRequest::AutomationRead { .. }
                 | FrontRequest::AutomationValidate { .. }
+                | FrontRequest::ProjectSettings { .. }
                 | FrontRequest::ThreadRead { .. }
                 | FrontRequest::PaneRead { .. }
                 | FrontRequest::PaneReadText { .. }
@@ -2789,6 +2855,16 @@ pub enum FrontResponse {
     },
     Posts {
         posts: Vec<crate::PostEnvelope>,
+        /// 음소거된 보낸 쪽(`post unmute`에 줄 이름, FRONT_API 1.77). 옛 host는 생략한다
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        #[ts(optional, as = "Option<Vec<String>>")]
+        muted: Vec<String>,
+    },
+    /// 「답할 것」(FRONT_API 1.78): 열린 확인 필요 post, 답한 것(최신부터), 자동 정리 기간
+    Asks {
+        requests: Vec<crate::UserRequestView>,
+        done: Vec<crate::AskRecord>,
+        keep_days: u32,
     },
     Status(HostStatus),
     Machines {
@@ -2943,6 +3019,10 @@ pub enum FrontResponse {
         accepted: bool,
         detail: String,
     },
+    /// `project_settings`·`project_repo_edit`의 답
+    ProjectSettings(crate::ProjectSettingsView),
+    /// `thread_resolve_preview`의 답
+    ResolvePreview(crate::ResolvePreview),
     AutomationConverted {
         files: Vec<String>,
         /// 쓰지 않은 계획이다(FRONT_API 1.58). `files`는 실제 변환과 같은 모양(새 파일과 `.converted/` 보존 사본)이다.
@@ -3052,6 +3132,12 @@ pub enum FrontEvent {
     /// FRONT_API 1.43. 보고서 목록이 바뀌었다(보내기·열기·지우기·thread 사본). 웹 events 연결에만, 열 때와 바뀔 때 보낸다.
     /// `unseen`은 열지 않은 사용자 보고서 수(활동 막대 보고서 배지)
     Reports { unseen: u32 },
+    /// FRONT_API 1.78. 「답할 것」의 확인 필요 post나 답한 것 기록이 바뀌었다(웹은 `asks`를 다시 읽는다). 웹 events 연결에만, 열 때와
+    /// 바뀔 때 보낸다. `requests`는 열린 확인 필요 post 수
+    Asks { requests: u32 },
+    /// FRONT_API 1.77. 알림함(inbox)이 바뀌었다(항목이 더해지거나 끝났다). 웹 events 연결에만, 열 때와 바뀔 때 보낸다.
+    /// 웹은 `inbox`(`peek`)를 다시 읽는다(배지·알림함 패널)
+    Inbox,
     /// FRONT_API 1.60. 프로젝트 TASKS.md가 바뀌었다(ticker가 크기·mtime을 보고 내용 hash로 확인한다). 웹은 `tasks`를 다시 읽는다.
     /// 옛 CLI는 모르는 사건을 풀지 못하므로 1.60 이상과 합의한 연결에만 보낸다.
     Tasks { project: String, sha256: String },

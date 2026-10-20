@@ -4744,8 +4744,8 @@ primary 근거:
     단추 옆 폭에서 줄이 넘치면 `data-lines="more"`로 참고 herdr-web-ui 배치(글 칸 전체 폭, 단추는 밑 줄)로 간다. 같은 textarea라 focus·caret이 그대로다.
 - **참고와 다른 점.**
   - t3code resting은 데스크톱·기존 thread·긴 대화·굴려 접힘에만 쓰고 휴대폰은 따로 접는다(`shouldUseRestingComposerLayout`). 여기는 사용자 요청대로 세 기기 모두 글만 본다.
-  - t3code는 펼친 폭과 비교해 판정해서 단추 옆 폭보다 길고 펼친 폭보다 짧은 글은 한 줄 칸에서 잘린다. 여기는 두 배치 모두 **단추 옆 폭**에서 잰다
-    (펼친 배치에서는 같은 그리기 안에서 글 칸 폭을 잠시 그 폭으로 줄여 잰다). 판정이 배치와 무관해 오가며 튀지 않고 잘리지도 않는다.
+  - t3code는 펼친 폭과 비교해 판정해서 단추 옆 폭보다 길고 펼친 폭보다 짧은 글은 한 줄 칸에서 잘린다. 여기는 처음에 두 배치 모두 **단추 옆 폭**에서
+    쟀으나, 그 사이 글이 펼친 한 줄에 놓이고 밑 줄엔 단추만 남아 §8.348에서 펼친 폭 판정으로 바꿨다(자르지 않고 단추 옆에서 접는다).
   - 높이 한도: 참고 `max-height: 10lh`에 참고 손잡이 한도(`.composer-text.is-sized`의 보이는 높이 절반)를 더했다. 휴대폰 가로(402px)에서 10줄이면
     입력창이 화면 3/4을 덮고 화면 키보드가 오르면 대화가 남지 않는다.
   - 한 줄 배치에서 긴 placeholder(「재연결 중…」)는 말줄임으로 끝난다(t3code resting placeholder `whitespace-nowrap overflow-hidden`). 그렇지 않으면
@@ -6358,7 +6358,95 @@ L4 후속(10-20 00시 사용자 관찰): 멈춤 상태의 후보 예약과 재�
 - **참고 위치.** t3code 4b1024da `ScheduledTasksSettings.tsx` `ScheduledTaskEditorForm`(948–1124: 저장 중 두 번 보내지 않음, 실패는 폼 안, 닫지 않음)과 「Run now」. 다르게 한 것: 참고는 지우기·지금 실행을 확인 없이 하지만 여기서는 확인 창을 거친다(계획 §3 삭제·W1과 같은 결). 충돌 창은 참고에 없어 할 일 T2(§8.311)의 나란히 보기 대신 줄 차이 한 칸으로 했다(자동화 파일은 짧다).
 - **검증.** host 유닛 `automation::edit::tests`(7)·`automation::tests`(W2 다섯), 웹 유닛 `automationForm.test.mjs`, 웹 E2E `55-automation-edit`(데스크톱·둘째 브라우저·Reader 390·휴대폰 조작 기기). 결함 심기: 판 대조를 빼면 host 유닛이 실패한다. 절차는 [시험](testing.md).
 
-### 8.343 자동화 기억 회수의 동시 편집 보존(10-21, t-0548)
+### 8.343 운영 화면: thread 관리·「이 aaa」·저장소·알림함(10-21, t-0538 관리 GUI W4)
+
+- **요청.** 확정 계획 t-0456 plan-revised §5 W4(API가 이미 있는 운영 화면)와 brief 더한 범위(저장소 화면에 머신별 경로 보기·추가·고치기, 저장소 없는 작업 폴더). 시작 때 물은 넷은 추천대로 정했다(10-21, 1A 2A 3A 4A): 「이 aaa」·「저장소」는 설정 창 페이지, 알림함·흐름 사건·post는 활동 막대 「알림함」 패널, 끝내기 창은 host가 잃을 수 있는 것을 미리 읽어 위험하면 「남기기」가 기본, 정리 sweep·보고서 정리는 미리보기 뒤 확인 창으로 실행. coordinator 조율(같은 날): 알림함은 inbox·흐름 사건 위주로 두고, 사용자가 답할 요청 post는 t-0540 「답할 것」이 다루므로 post 탭에서는 수만 보이고 그리로 보낸다.
+- **proto(FRONT_API 1.77, 더하기만).** `project_settings`(Reader 가능, 설정 파일 이름·상태·`set`이 고치는 key 모두·저장소·host 머신 이름), `project_repo_edit`(저장소 하나를 제자리에서 바꾼다: `repos.remove`+`repos.add`를 한 lock·한 쓰기로, 차례와 그 표의 다른 칸은 그대로), `thread_resolve_preview`(조작 기기만), `library_prune_apply`(미리보기와 같은 판정으로 다시 셈해 후보가 사람이 본 목록과 같을 때만 지운다, 다르면 `conflict`). `Posts.muted`(음소거된 보낸 쪽), `events`의 `tail`(최근 N개, 차례는 오래된 것부터), 웹 events 사건 `inbox`(알림함이 바뀜: 더함·끝냄). 옛 host는 새 요청을 모르는 요청으로 거절하므로 웹은 `front_api` 1.77 이상일 때만 설정 페이지 값·끝내기 미리보기를 그린다(옛 host의 끝내기 창은 남기기가 기본이다).
+- **끝내기 미리보기.** host는 기록을 고치지 않는다: PR은 기록된 상태(`pr_state`)만 본다. `merged_head`는 PR을 다시 찾아 기록과 inbox를 고치므로 쓰지 않는다. 그 머신 agent의 diff.v1로 미커밋(HEAD 대비)과 base 대비 바뀐 파일 수를 함께 읽고, 사본 상태·빠진 것과 묶어 위험 줄을 만든다. 위험(미커밋 > 0, 병합 안 됐는데 base 대비 바뀐 파일이 미커밋보다 많음, 사본 partial)이 있거나 git을 읽지 못하면 worktree thread의 `keep_default`가 참이다. CLI는 `aaa thread resolve <t> --dry-run`.
+- **보고서 정리 실행.** 계획 §5 W4는 미리보기까지였으나 사용자 4A로 실행까지 한다. 수동 `library_prune`(기한만, local_only)은 그대로 두고 새 요청을 더했다: 미리보기와 같은 기한·용량 판정으로 셈해 보인 것만 지운다. 웹 조작 기기는 이미 보고서 지우기(`library_delete`, report.md 사본까지)를 할 수 있어 신뢰 경계를 넓히지 않는다(정리는 그보다 좁다). sweep은 원래 Controller 허용이고 웹은 dry-run 줄을 보인 뒤 확인 창으로 실행한다.
+- **웹.** thread 화면 머리 「관리」 메뉴(끝내기·다시 열기·다시 시작(새 대화/이어 가기·profile)·brief 다시 보내기(받기 전만)·Next 보기·보내기·더하기·작업 요약 고치기). 설정 창 「이 aaa」(목표·thread/coordinator profile·동시 thread 경고·자동 끝내기 일수·nudge·mute, 멈춤·재개, 끝난 thread 자리 정리, 보고서 사본 정리)와 「저장소」(할 일 저장소 칸 이름마다 머신별 경로, 더하기·제자리 고치기·빼기, 끝에 「작업 폴더(저장소 없음)」). 활동 막대 「알림함」(탭: 알림함·흐름 사건·post, 배지는 끝내지 않은 항목 수). 알림함은 늘 `peek`로 읽어 화면이 읽어도 「봤다」가 되지 않는다(coordinator 묶음 알림이 그대로 간다). 보기 권한 기기는 값만 보고 쓰기 단추·post 탭이 없다.
+- **검증.** host 유닛 `project::tests::repo_edit_replaces_in_place_and_settings_view_reads_it`·`library_links::tests::prune_apply_deletes_only_the_previewed_candidates`·`db::flow_tests`, m13 `resolve_keeps_dirty_worktree_and_unmerged_branch`의 미리보기 단언, 웹 유닛 `operateModel.test.mjs`, 웹 E2E `56-operate`(데스크톱·휴대폰 390·Reader), `26-activity-bar`(막대 단추 넷). 절차는 [시험](testing.md).
+
+### 8.344 project 명령의 프로젝트 이름 인자 정리(10-21, t-0544 S5)
+
+- **범위.** S1~S4 뒤 남은 `project pause|resume|archive|delete|sweep`은 이름 없이, `project rename <새 이름>`은 새 이름만 받아 host가 맡은 프로젝트 하나를 쓴다. S1의 `project_or_here`·`on_target`을 그대로 쓰며 Front API·proto 요청의 프로젝트 칸과 backend 동작은 바꾸지 않는다.
+- **호환.** 옛 꼴의 프로젝트 인자는 도움말에서 숨긴다. 현재 프로젝트와 같은 이름이면 표준 오류에 경고 한 줄을 쓰고, 다른 이름이면 거부한다. 보관한 프로젝트·여럿이 남은 옛 상태의 이름은 S1처럼 그대로 받는다. 생략할 수 있는 보관하지 않은 프로젝트가 없으면 기존 오류를 돌려준다. `project unarchive <이름>`은 이번 여섯 명령 밖이며 그대로 이름을 받는다.
+- **안내.** 사용자 문서의 명령 표와 coordinator 안내 원본 「설정」의 `project pause|resume`·`project sweep`에서 이름을 뺀다. 설정 오류의 rename 안내와 멈춘 thread의 resume 안내도 새 꼴이다. 배포 뒤 coordinator가 `aaa doctor files --fix`로 운영 안내를 갱신한다.
+- **검증.** CLI 유닛은 새 꼴·옛 꼴·넘치는 인자·rename의 필수 새 이름과 도움말을 검사한다. m13 `project_lifecycle`은 여섯 명령의 새 꼴로 실제 상태·이름·휴지통·청소를 확인한다. `project_cli_keeps_legacy_names_with_a_stderr_warning`은 옛 꼴 여섯 명령의 경고와 JSON 분리, 다른 이름 거부 뒤 상태 보존, 새 꼴의 무경고와 보관 뒤 생략 거부를 확인한다. 안내 생성·doctor 갱신 keeper도 새 꼴을 검사한다.
+
+### 8.345 「답할 것」 패널·질문 본문·답한 것 보존(10-21, t-0540)
+
+- **요청.** 사용자 10-21: 웹 왼쪽 활동 막대에서 「답할 것」을 보고서와 떼어 따로 둔다. 시안(library/t-0540 `index.html`)에 1B 2A 3A 4A 5A로 답했다: 1B 사이드바 패널 목록과 본문 가운데 카드 하나, 2A 답한 것은 14일 뒤 자동 정리, 3A thread 질문·coordinator 확인 필요 post·할 일 확인 필요를 모두 모음, 4A 지우면 모든 기기에서 지움, 5A coordinator 확인 필요에는 「대화에서 답하기」·「답함으로 표시」. 00:3x 「이제 보고서는 쓸일이 별로 없어야 해」: 질문 본문을 웹페이지처럼(그림·표·code·링크, 그림 크게 보기), 선택지마다 그림, thread 안내가 시안·근거를 질문에 싣게. 꼴은 1A `### 1. 질문` 머리 아래 자유 Markdown, 2B 선택지마다 큰 그림 카드(데스크톱 2열). 00:3x 화면 지적: 답한 뒤 새 보고가 질문을 비우면 대화 칩이 「답함」을 잃는다. 00:4x: coordinator는 채팅에 같은 host 웹 주소 Markdown 링크를 쓰고(터미널에서 눌림), 웹은 그 링크를 앱 안 칩으로 그린다.
+- **질문 꼴(`aaa_proto::report_questions`, §8.329를 넓힘).** `## Questions` 안 `### N. 질문` 머리부터 다음 `###`·`##`(code fence 밖)까지가 한 질문이다. 끝의 열 0 `- A 선택지 (추천) — 까닭` 목록이 선택지이고, 선택지 줄 아래 두 칸 들여쓴 줄은 그 선택지 본문(보통 `![A안](library/a.png)`)이다. 그 앞은 질문 본문(`QUESTION_BODY_MAX` 16KiB, 선택지 4KiB, 넘으면 글자 경계에서 자르고 열린 fence를 닫고 잘렸다고 적음). fence 안의 `- A` 줄은 선택지가 아니다. 옛 꼴 `N. 질문`은 그대로 읽는다. brief 「시작할 때 묻기」는 시안·근거를 보고서 대신 질문 본문에 싣고, 그림은 보고서 옆 `library/…`에 먼저 두고 보고를 마지막에 쓰라고 안내한다(예시 fence를 파서가 읽는 시험이 있다).
+- **proto(FRONT_API 1.78, 더하기만).** `ThreadQuestion.body`·`QuestionChoice.body`·`ThreadQuestions.files_base`(본문 `library/…`·`report.md`를 읽을 주소 앞부분). `AskRecord{id, kind: question|request|task, subject, title, asked_ms, done_ms, by, summary, items, answer, body, files_base}`, `UserRequestView`. 요청 `Asks`(보기 권한도)·`AskHandle{item}`·`AskForget{ids, all}` → `Asks{requests, done, keep_days}`, 사건 `asks`. `ProjectContext.web_url`.
+- **host(`asks.rs`).**
+  - 열린 확인 필요 post는 끝나지 않은 `post request for user` inbox 항목이다(앱 배지 수와 같은 기준). 답한 것은 DB `asks` 표(프로젝트 표, 스키마 판 그대로 `CREATE TABLE IF NOT EXISTS`)와 `<project>/asks/<id>/` 사본이다.
+  - 질문 답(`thread_answer`가 thread에 보낸 뒤): 질문·본문·선택지 전체·고른 답·때·기기와 그때 보고 사본 `report.md`, 본문·선택지가 가리킨 `library/` 파일(심볼 링크·`..` 거부, 합 64MiB)을 남긴다.
+  - 확인 필요 post: 웹 「답함으로 표시」(inbox done + coordinator inbox `request handled`)와 coordinator `inbox done` 모두 기록한다(by=기기·CLI). 할 일 확인 필요: 웹·CLI `task_edit`가 푼 것(끝남으로 지움·연결만 풂·다시 맡김·처리함)을 기록한다.
+  - ticker가 14일 지난 기록과 사본을 지운다. `AskForget`는 기록과 사본을 지운다(조작 권한만, 모든 기기가 `asks` 사건으로 다시 읽음).
+  - 파일 주소(기기 인증, sandbox CSP·nosniff·no-cache): 열린 질문 `/api/v1/projects/{p}/questions/{thread}/{hash}/{report.md|library/…}`는 지금 보고 hash일 때만, 답한 것은 `/api/v1/projects/{p}/asks/{id}/…`.
+  - `aaa context`: 「웹 주소: <공개 origin> (채팅의 질문·보고서 링크: …)」 한 줄, 공개하지 않으면 `aaa:` 꼴을 쓰라는 줄. coordinator 안내 「앱 안 참조」는 `[t-0001 질문](<웹 주소>/#question=t-0001)`·`[제목](<웹 주소>/#report=<이름>)` 링크, 웹 주소가 없으면 `aaa:` 꼴, 공유 주소는 요청받을 때만. 확인 필요·질문이 웹 「답할 것」에 모이고 `request handled`가 온다고 알린다.
+- **웹.**
+  - 활동 막대 맨 위 「답할 것」 패널(빨강 배지: 답할 것 수). 보고서 단추 배지는 안 본 보고서 수뿐이고 보고서 화면의 「지금」 줄·질문 카드(ThreadAsks)는 걷었다.
+  - 패널: 답할 것(질문 → 확인 필요 post → 할 일, 오래된 것부터)과 답한 것(최근부터, 「모두 지우기」, 14일 안내). 줄을 누르면 본문(`#ask=<열쇠>`: `q:`·`r:`·`t:`·`d:`)에 그 카드 하나. `#question=<thread>`(칩·알림·터미널 링크)는 답할 질문이면 그 카드, 답했으면 마지막 기록이고 사이드바도 「답할 것」으로 바꾼다. 넓은 창에서 막대 「답할 것」으로 패널을 펼치면 본문도 마지막 카드다. 답해서 목록에서 빠진 카드는 그 기록 카드로 바뀐다.
+  - 질문 카드: 본문 Markdown(HTML 해석 없음, 그림·링크는 `files_base` 아래 `library/…`·`report.md`만, 그 밖 그림은 대체 글), 본문 그림을 누르면 크게 보기(Esc·바깥·닫기), 선택지에 그림이 있으면 선택지마다 큰 그림 카드(769px 이상 2열, 그림은 칸보다 클 때만 줄임, 「크게」 단추는 고르지 않음). 고르기·추천대로 보내기는 §8.329 그대로.
+  - 확인 필요 카드: 제목·본문(Markdown 글), 「답함으로 표시」·「대화에서 답하기」(coordinator 입력칸에 「「제목」에 대한 답: 」을 채우고 그 pane을 연다). 할 일 카드: 「할 일에서 정하기」(할 일 화면에서 그 task 상세를 연다).
+  - 답한 카드: 답할 때의 질문·본문·선택지(고른 것 표시, 나머지 흐림)·직접 쓴 답·때·기기, 「그때 보고 보기」(보존한 report.md), 「지우기」(확인 창).
+  - 활동 막대(W4 알림함 §8.343 위에 통합): 패널 단추는 답할 것·작업·머신·자동화·알림함, 그 아래 보고서·할 일(사용자가 고른 B 시안처럼 「답할 것」이 맨 위). 사용자가 답할 요청 post의 inbox 항목(`post request for user`)은 「답할 것」 배지만 세고, 알림함은 배지·목록·「모두 끝내기」에서 빼고 post 탭처럼 「사용자가 답할 요청 N건은 「답할 것」에서 다룬다 · 답할 것 열기」만 보인다(같은 항목을 두 곳에서 세거나 끝내지 않는다). 응답 한도로 싣지 못한 항목 수(`omitted_open`)는 종류를 몰라 그대로 더한다.
+  - 대화 칩: 새 보고가 질문을 비워도 마지막 답한 기록으로 「답함 · 1B 2A」이고 누르면 그때 원문이다. 같은 origin의 `/#question=<thread>`·`/#report=<이름>`(경로 `/`, query 없음) 링크도 칩이다(옛 `aaa:` 꼴도 칩, 다른 host는 보통 링크). 프로젝트 없는 `#report=<이름>`은 보고서 목록을 받은 뒤 그 보고서로 연다.
+- **검증.**
+  - proto 유닛 `report_questions_read_rich_bodies_and_choice_pictures`, host 유닛 `asks::tests`(library 참조 읽기, 확인 필요 post 열림·처리 기록, 답한 질문의 보고·그림 보존), `brief_text` 안내 fence(본문·선택지 그림을 파서가 읽음), 웹 유닛 `asksModel.test.mjs`(파일 주소 거부·열쇠 이어짐·목록 차례)·`appRef.test.mjs`(같은 origin 링크).
+  - 웹 E2E `53-thread-questions`: fake agent 「질문 카드 시험」 보고가 본문(글·그림·표)과 선택지 그림을 싣는다. 빨강 「답할 것」 배지, 대화의 `aaa:` 칩과 같은 host 링크 칩(다른 host는 보통 링크), 링크로 연 카드와 「답할 것」 목록, 본문·선택지 그림이 뜸(naturalWidth), 크게 보기와 Esc, 휴대폰·보기 권한 카드(보기 권한은 답·처리 forbidden, 지우기 단추 없음), 휴대폰 답 → 모든 기기 답한 카드(고른 답 BA, 그림 사본), 기록 내용, 질문 없는 새 보고(그 사이 thread library 그림 지움) 뒤에도 칩 「답함 · 1B 2A」와 그때 원문·그림·보고, 새 질문 보고는 다시 답할 것, 확인 필요 post → 카드 → 「답함으로 표시」 → 처리 기록·inbox `request handled`, 기록 지우기가 휴대폰 목록에서도 빠짐.
+  - 웹 E2E 53은 확인 필요 post를 올린 뒤 알림함 배지가 그대로이고 알림함 목록에 없으며 「답할 것 열기」가 「답할 것」 화면을 여는지 본다. 웹 유닛 `operateModel.test.mjs`의 알림함 배지 수도 같다.
+  - §8.329의 「같은 host http 주소(`/#report=…`)는 §8.300 그대로」는 00:4x 지시로 바뀌었다: 웹 E2E `38-chat-report-close`의 앱 보고서 주소는 이제 칩이고, 누르면 보고서 화면, 뒤로가 같은 pane인지 본다(파일 보기·새 창이 아니다). `26-activity-bar`는 패널 단추 다섯과 Home이 「답할 것」, End가 「알림함」인지 본다.
+  - m13 `task_attachments_reach_a_remote_agent`의 brief 검사는 새 안내 예시 `![A안](library/a.png)`(thread 자기 library)에 걸려 첨부 경로 `](library/plan-report/`로 좁혔다.
+
+### 8.346 A4 뒤 남은 옛 평가자·임무 종료 pane 숨김(10-21, t-0545)
+
+- **원인.** 옛 임무도 `evaluator` 역할 pane을 사용했다. agent가 세션의 `spec.json`·종료 기록을 복원해 Hello로 host pane 목록을 채우면, A4 뒤 공통 `roster`가 thread에 연결되지 않은 종료 기록을 「기타」로 분류했다.
+- **범위.** 「기타」에서 `role=evaluator`이면서 `state=exited`인 pane만 제외한다. 실행 중·중단·유실 pane, 사용자 종료 기록, 연결된 thread 줄은 유지한다. 같은 `roster`를 쓰는 단축키·명령 팔레트에도 적용한다. 파일·host 기록·보고 사본을 지우지 않아 CLI와 웹 주소 직접 열람은 유지되며, 변환 명령을 따로 실행할 필요가 없다. Front API·DB schema는 바꾸지 않는다.
+- **새 막대 통합.** §8.343 W4와 §8.345의 답할 것·작업·머신·자동화·알림함 다섯 패널을 유지한다. 「답할 것」→「알림함」→「작업」을 오간 뒤에도 같은 숨김 규칙을 쓴다. 종료 여부·역할 외에 이름이나 명령을 보고 옛 특수 pane으로 추측하지 않는다.
+- **검증.** `roster.test.mjs`는 옛 종료 pane 18개 노출을 수정 전 RED로 재현하며 정렬·단축키와 보존할 줄을 함께 본다. 기존 main의 E2E55·56과 번호를 나눠 `57-legacy-special-panes`가 실제 agent의 옛 세션 복원, 새 막대 전환, 18개 숨김과 살아 있는 사용자·평가자 pane, 사용자 종료 기록, 원본 파일 바이트·CLI 읽기·웹 주소 직접 열람 보존을 확인한다. 운영 host에는 닿지 않는다. 준비·종료·출력·DOM 사건으로 끝내며 시간 상한·기대값을 완화하지 않는다. 상세는 [시험](testing.md)의 자동화 A4 절을 따른다.
+
+
+### 8.347 계정 Claude thread의 첫 우회 권한 경고 준비(10-21, t-0551)
+
+- **원인.** §8.339의 계정 격리 홈은 초기 안내 완료만 기록했다. Claude의 초기 안내와 우회 경고는 별개이며, 공식 Claude 2.1.304의 시작·설정 코드에서 `.claude.json`의 `hasCompletedOnboarding`과 `settings.json`의 `skipDangerousModePermissionPrompt`를 각각 확인했다.
+- **범위.** session은 safety/profile을 합친 최종 argv에서 명시적 우회 실행·허용 옵션만 판정한다. `--dangerously-skip-permissions`, `--allow-dangerously-skip-permissions`, 두 가지 `--permission-mode bypassPermissions` 표기일 때만 격리 settings.json에 수락 키를 쓴다. 명시적 우회 허용도 Claude가 같은 경고를 열므로 포함한다. 권한 모드나 다른 안내 수락은 새로 정하지 않는다. 기존 초기 안내·폴더 신뢰 정책은 유지한다.
+- **보존.** 일반 실행은 settings.json을 새로 만들지 않고, 비우회 재개는 이전 자동 수락 키만 제거한다. 격리 홈의 다른 설정은 보존하며 symlink·깨진 JSON은 거부한다. 사용자 홈의 실제 로그인·인증 파일·토큰·키체인·다른 설정은 읽거나 복사하지 않는다. 도입 전 Claude 대화·coordinator의 홈과 인증 전달 경로는 유지한다.
+- **Codex.** 공식 0.163.0 시작·onboarding 소스에는 대응하는 우회 경고 수락 단계가 없어 추가 설정을 만들지 않는다. 로그인·폴더 신뢰·Windows 샌드박스 안내는 별개다. 저장 키와 근거는 [계정](accounts.md#계정-claude-thread의-첫-실행-안내)에 적었다.
+- **검증.** 계정 유닛은 옵션·비우회 파일 미생성·수락 제거·기존 설정 보존·인증 비기록·0600·symlink/JSON 거부를 검사한다. m13은 실제 host·로컬/원격 agent·session·PTY와 가짜 Claude로 새 홈 10개를 시작하여 첫 경고 부재·비우회 수락 없음·가짜 원본 인증/설정 비복사·원본 불변을 확인한다. 수락 준비 누락과 무조건 수락 변형이 각각 RED이며 원본 bytes 복구 뒤 GREEN을 확인했다. 고정 sleep·재시도·실제 제공자 인증 없이 사건으로 끝내며, 착지 기준 ed0a4d7e를 통합한 후보의 전체 ci-local·check-public을 실행한다. 상세는 [시험](testing.md)의 t-0551 절을 따른다.
+
+### 8.348 웹 대화 입력칸 한 줄 높이 수리(10-21, t-0546, 사용자 10-20 「한 줄을 다 채우지 않았는데 두 줄 높이」)
+
+- **원인.** §8.215의 한 줄 판정은 **단추 옆 폭**(상자 폭 − 그림 단추 칸 − 보내기 칸)에서 쟀다. 그 폭보다 길고 펼친 글 칸 폭보다 짧은 글은
+  여러 줄 배치로 가서 펼친 한 줄에 다 들어가고, 밑 줄엔 그림·보내기 단추만 남았다. 데스크톱 상자 818px에서 글 폭 690~780px,
+  iPhone 세로 상자 364px에서 252~340px 구간이다. 사용자 캡처의 글(약 695px)이 이 구간이며 상자는 44px 대신 96px였다.
+- **수리.** `ChatComposer` 한 줄 판정을 배치와 무관하게 **펼친 폭**(상자 안 폭, 여러 줄 배치의 글 칸 폭)에서 잰다(t3code
+  `useComposerMultilinePrompt.ts`와 같은 기준). 한 줄 배치면 같은 그리기 안에서 글 칸을 잠시 그 폭으로 넓혀 잰다. 펼친 한 줄에 드는 글이
+  단추 옆 칸보다 길면 t3code처럼 자르지 않고 단추 옆에서 접는다(높이 66px, 단추는 가운데). 펼친 한 줄을 넘을 때만 여러 줄 배치로 간다.
+  그래서 단추만 있는 밑 줄은 글이 펼친 줄을 채운 뒤에만 생긴다. 보내기 칸 폭(맥락 게이지 유무)은 판정에 들지 않는다.
+- **시험.** 웹 E2E 22 「대화 입력창 높이」에 휴대폰 가로·세로·데스크톱마다 두 폭 사이(가운데) 글·펼친 폭 1.2배 글·다시 사이 글을 더했다.
+  사이 글은 한 줄 표지이고 보내기 단추가 글 칸 밑 줄에 홀로 있지 않으며 두 줄을 넘지 않고 잘리지 않는다. 고치기 전 빌드에서 세 기기 모두
+  표지 more·단추 홀로 밑 줄로 실패했다. 한 글자씩 늘이고 줄인 측정에서 전환 지점이 같아 배치가 튀지 않는다.
+
+### 8.349 배포 빌드 작업 공간을 system temp 밖으로 이동(10-21, t-0547)
+
+- **범위.** `scripts/deploy-build.sh`의 기본 부모 폴더를 호출한 저장소의 `target/deploy-build`로 옮긴다.
+  다른 디스크는 `AAA_DEPLOY_BUILD_ROOT`로 지정하며 상대 경로는 호출 폴더 기준이다. `TMPDIR`와 공용
+  `CARGO_TARGET_DIR`에 기대지 않고 빌드마다 새 detached source·target을 함께 만든다.
+- **보존.** origin/main 조상 검사·한 번 빌드·커밋 salt·판/SHA/provenance 계약은 유지한다. 성공·실패 모두
+  이번 scratch와 worktree 등록만 지우고 이웃 파일은 보존한다. 기존 출력은 덮어쓰지 않으며 실패 중 만든
+  부분 출력은 기존처럼 남긴다. 사용할 수 없는 부모면 temp로 우회하거나 재시도하지 않고 실패한다.
+- **검증.** 기존 스크립트 keeper가 기본/명시 부모·공백·호출 폴더 기준 상대 경로·TMPDIR와 공용 target 무시,
+  npm/Cargo/판 검증 실패의 단일 호출·정리·부분 출력 보존을 확인한다. 원래 temp 선택은 기본 위치 단언에서
+  RED다. 같은 커밋의 temp 밖 실빌드 두 경로에서 판·실제 SHA와 provenance 일치를 확인했으며,
+  착지 기준 f7ff5bb7 통합 뒤 전체 ci-local·check-public을 실행한다. 상세는 [시험](testing.md)의 배포 자동화 절을 따른다.
+- **진단 한계.** temp 밖에서도 build-script SIGKILL과 AMFI 서명 검사 실패를 관측했다. 위치 변경이 macOS
+  서명 검사기의 오류까지 해소한다는 주장은 하지 않는다. syspolicyd 오류24(EMFILE) 근거는 비공개 보고에
+  보존하고 시스템 조치 여부는 별도 사용자 판단으로 남긴다. 이번 착지는 스크립트 변경이며 운영 배포는 없다.
+
+### 8.350 자동화 기억 회수의 동시 편집 보존(10-21, t-0548)
 
 - **문제.** 열린 자동화 thread에 넘긴 기억 폴더를 보고·종료 때 통째로 되가져와 coordinator가 host 원문에 덧붙인 줄을 지웠다. host `automation_prepare`가 agent의 work_files.v1/N-1 Mission 파일 쓰기로 넘기고, 보고 수집·resolve의 `automation_copy_memory`가 목록·조각·hash를 검증한 뒤 host 폴더를 바꾸는 경로다. agent는 바이트 전송만 맡으므로 host에서 수리한다.
 - **판정.** 시작할 때 파일별 SHA-256 공통 판을 Run에 저장한다. 회수할 때 파일별 3-way로 한쪽 변경·추가·삭제를 반영하고, 같은 파일의 다른 변경·파일/폴더 경로 충돌은 host를 유지한다. 서로 합의한 파일만 기준을 갱신하므로 반복 보고와 마지막 회수가 바깥 편집을 뒤늦게 덮지 않는다. DB 재시작 뒤에도 기준을 유지하며 기준 없는 옛 실행은 다른 내용을 보수적으로 충돌 처리한다.

@@ -273,10 +273,22 @@ aaa safety set demo coordinator_deploy on
 
 ```sh
 scripts/deploy-build.sh <origin/main의-조상-커밋> --out /opt/aaa/candidate
+# 빌드 작업 공간을 다른 디스크에 두려면 부모 폴더를 명시한다(TMPDIR와 별개).
+# AAA_DEPLOY_BUILD_ROOT=/opt/aaa/builds scripts/deploy-build.sh <커밋> --out /opt/aaa/candidate
 # L2: 빌드 머신 mac-b의 출력 폴더에 aaa와 provenance.json을 함께 둔다.
 aaa deploy start --file mac-b:/opt/aaa/candidate/aaa --sha256 <provenance.json의-SHA> --commit <40자리-커밋>
 aaa deploy status <출력된-rollout-ID> --wait
 ```
+
+빌드의 기본 부모 폴더는 호출한 저장소의 `target/deploy-build`다. macOS system temp에서
+build-script가 SIGKILL된 사례가 있어 `TMPDIR`나 외부 `CARGO_TARGET_DIR`는 작업 공간 선택에 쓰지 않는다.
+`AAA_DEPLOY_BUILD_ROOT`는 실행 가능한 파일시스템의 부모 폴더이며, 상대 경로는 호출한 작업 폴더 기준이다.
+매번 그 아래 새 `aaa-deploy-build.*` 폴더에 detached source와 target을 함께 만들고 성공·실패 모두
+그 폴더와 worktree 등록만 지운다. 부모 폴더의 다른 파일은 보존한다. 사용할 수 없는 부모 폴더면
+temp로 우회하거나 재시도하지 않고 실패한다. 기존처럼 `--out`이 이미 있으면 거부하며, 실패 중 만든
+부분 출력은 보존하므로 provenance 없는 후보를 배포하지 않는다. 빌드 중간 파일은 실패해도 보존하지 않는다.
+이 위치 선택은 macOS 서명 검사기의 오류까지 해결하지 않는다. temp 밖에서도 SIGKILL이면 최초 빌드 로그와
+해당 시각의 `log show --info --debug`에서 AMFI·syspolicyd 기록을 함께 확인한다.
 
 L2의 `--file`은 `<머신>:<절대 경로>/aaa` 또는 `<머신>:~/후보폴더/aaa`다. 파일명aaa와 옆 provenance.json의 SHA가 맞아야 하며 symlink·일반 파일이 아닌 입력·256MiB 초과는 거부한다. source와 모든 대상에 `deploy_stage.v1`이 있어야 한다. 첫 반영은 이 기능을 아는 host/agent를 기존 방식으로 설치한 뒤 한다. 기존 `--from <절대 경로>`는 같은 경로에 미리 둔 L1 후보로 유지된다. 전송은256KiB 조각 하나씩이며 모든 대상의 전송/SHA/self-check와 사전 검사가 끝나야 첫 교체를 한다. host 재시작/답 유실은 agent가 실제 저장한 길이를 조회해 같은 rollout의 offset부터 잇는다. 설치는 rollout ID로 자기 상태 폴더 후보만 해석한다. 완료 후 마지막 후보 하나를 보관하며 정리 실패는 로그에 남기고 다음 전송 때 다시 제한한다.
 

@@ -561,7 +561,7 @@ E2E28은 실제 host·agent의 pane→thread 대응을 거쳐, ⋯ 메뉴로 고
   - 있으면 그것을 읽고, `[[workspaces]]`에 더하고 뺀다(`workspaces.remove`). project.toml은 그대로다.
   - 옛 이름 `[[repos]]`가 있는 글은 그 목록을 고친다.
   - 쓰기 자리를 project.toml로 되돌린 결함을 심어 실패를 확인했다.
-- 안내: m13 `coordinator_flow`·`doctor_files_brings_the_coordinator_guide_to_existing_projects`·`project_lifecycle`이 `aaa post user`와 남은 `aaa project sweep <p>`를 본다.
+- 안내: m13 `coordinator_flow`·`doctor_files_brings_the_coordinator_guide_to_existing_projects`·`project_lifecycle`이 `aaa post user`·`aaa project pause|resume`·`aaa project sweep`처럼 이름 없는 안내를 본다.
 
 ## 웹의 프로젝트 층 없애기(§8.291)
 
@@ -600,6 +600,11 @@ E2E03 「크기 되찾기」의 보낸 순서(resize가 키보다 먼저)는 화
 - host `rollout::tests::transition_receipts_require_success_hash_and_new_process`는 단계 전이 표, 실패·중단 중지, 영수증 ID/요청/소속, SHA·판과 새 프로세스 판정의 owner다.
 - macOS m13 `rollout_preflights_all_targets_and_resumes_same_jobs_after_host_restart`는 격리 사본 host·TLS agent 둘과 기록하는 launchctl로 승인 거부, 사전 SHA 불일치 무교체, 모든 대상 dry-run 뒤 host부터 순차 실행, 실제 host/agent 프로세스 재시작 뒤 같은 job ID 유지, 안내 갱신·coordinator pane PID 지속을 확인한다. 서비스 호출 기록·연결 사건·출력 표지로 끝내며 고정 sleep은 없다. 실제 운영 launchd에 닿지 않는다.
 - `python3 -m unittest scripts.test_deploy_build`는 임시 origin/main과 기록하는 빌드 도구로 조상 거부·격리·빌드 1회·salt·provenance를 확인한다. Unix 공식 ci-local test 단계에 포함한다.
+- t-0547의 같은 시험은 기본 `target/deploy-build`가 `TMPDIR`·공용 Cargo target과 무관한지,
+  명시 부모의 절대/호출 폴더 기준 상대 경로·공백·빌드마다 새 source/target을 확인한다.
+  npm·Cargo·판 검증 실패를 각각 한 번 일으켜 worktree/중간 파일 정리·이웃 파일 보존과 기존 부분 출력 보존을 검사한다.
+  부모가 파일이면 빌드 전 실패해야 하며 temp로 우회하지 않는다. 원래 temp 선택을 되살리면 기본 위치 단언에서 실패해야 한다.
+  실제 macOS SIGKILL 사유는 가짜 도구 시험이 보증하지 않으며, 해당 머신의 빌드/OS 로그 대조와 구분한다.
 - 기존 coordinator_deployment 시험이 worker·위장 coordinator·safety 철회·원시 rollback 권한을 계속 소유한다. L3의 실패 머신 자동 rollback과 host 감시는 이 단계에서 검증했다고 주장하지 않는다.
 - 결함 심기는 재개 ID 변경, SHA 대조 누락, 실패 뒤 진행을 각각 독립 실행해 keeper 실패를 보존한 뒤 원복한다. 전체 검증은 scripts/ci-local.sh와 check-public.sh다.
 
@@ -810,6 +815,16 @@ CI/Git의 source outbox·중복 억제·재시작·outage는 기존 owner를 유
 - 「한 초안」 단계는 TOML을 고친 뒤 debounce를 기다리지 않고 폼 탭에서 칸을 고쳐 저장하고, 파일에 두 쪽 고침과 머리 주석이 모두 남는지 본다(탭 전환이 다른 쪽 고침을 먼저 검사한다).
 - 결함 심기: host 저장의 판 대조(사전 대조와 `file_rev` closure)를 빼면 `save_writes_only_the_seen_revision_and_never_resurrects_a_deleted_rule`이 「본 판이 아닌 저장」 단언에서 실패한다. 탭 전환의 먼저 검사를 빼면 E2E 55 「한 초안」이 실패한다(library/t-0538/w2-fault-replant).
 
+## 운영 화면: thread 관리·「이 aaa」·저장소·알림함(t-0538 관리 GUI W4, plan §8.343)
+
+- `cargo test -p aaa-host --lib project::tests::repo_edit_replaces_in_place_and_settings_view_reads_it`: 저장소 제자리 고치기의 차례·다른 칸 보존, 머신 빼기, 이미 있는 값·없는 값 거부, 설정 읽기의 파일 이름·숫자·저장소.
+- `cargo test -p aaa-host --lib library_links::tests::prune_apply_deletes_only_the_previewed_candidates`: 미리 본 뒤 기한을 넘은 사본이 늘면(시각 주입) `conflict`로 하나도 지우지 않고, 같으면 본 것만 지운다.
+- `cargo test -p aaa-host --lib db::flow_tests`: 흐름 사건 `tail`이 최근 N개를 오래된 것부터 준다.
+- `cargo test -p aaa --test m13 resolve_keeps_dirty_worktree_and_unmerged_branch`: 실제 agent·git으로 `thread resolve --dry-run`이 미커밋 1·base 대비 2·병합 안 됨·남기기 권함을 보이고, thread 상태와 흐름 사건 수를 바꾸지 않는다.
+- `node --test web/test/operateModel.test.mjs`: 동작 가능 판정(도는 세션·데려온 thread·준비 중·끝냄·정리 중·받은 brief), 끝내기 기본값과 요청, 저장소 인자·묶음, 숫자 범위, 알림함 배지와 「답할 것」으로 보낼 post.
+- `node web/e2e/web.e2e.mjs --spec 56-operate`: 저장소 더하기·제자리 고치기(파일 글과 차례)·빼기 확인 창·할 일 저장소 목록, 「이 aaa」 값 저장(파일 글)과 범위 밖 숫자, 멈춤·재개 확인 창, 위험한 thread(미커밋·branch 커밋·사본에 빠진 symlink) 끝내기 창의 위험 줄과 남기기 켬, 끝낸 뒤 worktree·branch 남음, 깨끗한 thread(새 파일·big.bin을 치우고 사본이 다 온 뒤)의 남기기 끔과 worktree 지움, 다시 열기·Next 더하기·보내기·요약 고치기·세션을 끈 뒤 다시 시작, 알림함 배지와 한 건 끝내기(화면이 읽어도 `seen`이 바뀌지 않음), 흐름 사건 맨 위가 최근 것, 정리 미리보기, 휴대폰 390 폭, 같은 「바로 시작」 두 번 → thread 하나, Reader에 쓰기 단추 없음. 사본 상태·세션 상태·파일 글로 기다리며 고정 sleep은 없다.
+- 결함 심기: library/t-0538/w4-fault-replant.
+
 ## 대화의 도구 호출 묶음(t-0477, plan §8.304)
 
 - `node --test web/test/toolGroups.test.mjs`: Claude·Codex 도구 이름 분류, 요약 문구(두 가지까지·우선순위·서로 다른 수정 파일·생각), 이어진 도구·생각 줄 묶기, 앞 쪽이 묶음 앞에 붙은 뒤에도 옛 첫 줄 id로 같은 묶음과 펼침을 찾는지 본다.
@@ -949,7 +964,7 @@ CI/Git의 source outbox·중복 억제·재시작·outage는 기존 owner를 유
 - E2E49 `49-automation-memory`: 실제 report/Idle 사건으로 기억/크기/마지막 갱신 thread와 끝남 예정 표시를 본다. 데스크톱·390px에서 상세를 열고 캡처하며 가로 넘침과 자동화 완료 droplet 없음도 검사한다.
 - 결함 되심기: close_at의 마지막 입력보다 뒤인 보고 조건(시각과 입력 전 hash)을 제거하면 m13의 옛 완료 보호 단계에서 open 대신 resolved로 실패한다. 원본을 바이트 단위로 복구한다.
 
-### 자동화 기억의 동시 편집(t-0548)
+### 자동화 기억의 동시 편집(t-0548, plan §8.350)
 
 - `cargo test -p aaa-host --lib memory`는 실제 host·DB와 새 work_files/N-1 Mission frame fixture로 전달 뒤 host 덧붙이기와 thread 요약 변경을 겹친다. host 줄·양쪽 보존 사본·history 두 쪽·충돌 inbox 한 건을 검사하며, 저장한 공통 판을 새 host owner가 읽고 오래된 ThreadRec으로 반복 회수해도 원문을 덮지 않아야 한다. 각각 상한 아래인 양쪽 history를 합쳤을 때 1000개를 넘으면 회수를 거부하고 양쪽 원문을 유지해야 한다. 원래 제품은 「열린 동안 host에서 쓴 줄이 회수로 사라졌다」에서 실패했다.
 - 순수 판정은 독립 추가·삭제, 같은 변경, 수정/삭제 충돌, 기준 없는 옛 실행, 파일/폴더 경로 충돌, 되풀이한 압축, host만 고친 뒤 나중에 thread도 고치는 순서와 수동 해소를 검사한다.
@@ -1013,6 +1028,7 @@ journal·로그·화면에 원문·8바이트 조각·base64/URL/JSON 변형이 
 
 ## 자동화 A4: 특수 실행 제거(t-0507)
 
+- A4 뒤 남은 종료 pane(t-0545, plan §8.346): `web/test/roster.test.mjs`는 옛 평가자·임무의 `evaluator` pane 18개가 「기타」·단축키에서 빠지고, 실행 중·중단·유실·사용자 종료 기록과 연결된 thread 줄은 남는지 본다. `web/e2e/specs/57-legacy-special-panes.mjs`는 격리된 실제 agent의 옛 세션 파일을 복원해 화면에서 18개가 빠지는지, 실제 실행 중인 사용자·평가자 pane과 사용자 종료 기록이 남는지 검사한다. t-0540·W4의 막대 단추 다섯과 「답할 것」→「알림함」→「작업」 전환 뒤에도 같은 숨김을 확인한다. 숨긴 기록의 파일 바이트·CLI 읽기·주소로 직접 보기를 함께 확인한다. 종료 기록은 지우지 않으며 새 변환 명령 없이 목록에서만 숨긴다. 준비 완료·종료·출력·DOM 사건으로 끝낸다.
 - `cargo test -p aaa --test m13 automation_start::legacy_mission_files_are_inert_and_convert_with_memory_and_pending_input -- --exact`: 실제 host·agent·CLI·Front API에서 옛 파일 비실행, 완료 처리 뒤에도 한 번인 제거 안내, doctor 진단, mission_list 빈 목록/mission_start 제거 오류, 열린 옛 evaluator 표시, 미리보기 무쓰기, 기억·이력 hash 회수, 원본 보존·대기 입력 이전·tick 뒤 무복제를 확인한다.
 - `cargo test -p aaa-host previous_agent_keeps_input_and_memory_transfer_with_legacy_file_frames --lib`: AGENT_LINK 1.9/mission.v1 fake가 입력 쓰기와 기억 주입·회수·처리 여부 조회를 받는다. 새 WorkFile 태그가 옛 상대에 닿으면 실패한다. 실제 agent의 파일·hash·symlink keeper는 `threads::work_file_tests`가 계속 맡는다.
 - E2E26은 패널 셋과 저장된 special→work를, E2E40은 승인 규칙+막힌 규칙 배지와 기존 변환/Reader/큐 풀기를 검사한다. E2E48·49는 기존 자동화 줄과 기억을 유지한다. 캡처는 데스크톱·390px, 실제 host·agent를 사용한다.
@@ -1141,3 +1157,20 @@ Claude SessionStart가 알린 격리 홈의 대화는 pane chat으로, TaskCreat
   기존 cmd/인수/환경/stdio/creation flags와 success·signaled process·유효한 열린 handle의 거부 단언을 유지한다.
   실패 메시지에 종료 코드(Debug/십진수/32-bit hex)만 더해 main CI가 원인 진단 값을 남기게 한다.
   native는 진단만, 수리는 다음 착지다. macOS와 cross 통과를 이 Windows owner의 실제 GREEN으로 부르지 않는다.
+
+## project 명령의 프로젝트 이름 인자 정리(S5, §8.344)
+
+- CLI 유닛 `project_lifecycle_help_omits_legacy_project_arguments`: 여섯 명령의 도움말에서 프로젝트·호환 인자를 숨기며, 새 꼴과 옛 꼴만 받고 넘치는 인자는 거부한다. rename의 새 이름은 여전히 필수다.
+- m13 `project_lifecycle`: 이름 없는 pause·resume·archive·rename·delete·sweep으로 실제 상태 전이·거부·이름 변경·기록 이동·휴지통·worktree와 병합된 branch 청소를 본다. 보관한 프로젝트를 직접 지정하는 호환 경로도 유지한다.
+- m13 `project_cli_keeps_legacy_names_with_a_stderr_warning`: 옛 꼴 여섯 명령은 경고 한 줄을 표준 오류에만 쓰고 JSON은 그대로 파싱된다. 다른 이름은 모두 거부하며 상태를 바꾸지 않는다. 새 꼴 sweep은 경고 없이 같은 결과, 옛 꼴 rename은 실제 이름을 바꾸고 새 꼴로 되돌린다. 보관 뒤 이름 생략은 기존 오류이며 폴더를 보존한다.
+- pause에서 주어진 이름을 무시하고 현재 프로젝트를 쓰는 결함을 심으면 다른 이름 거부 단언에서 실패한다. 원본 바이트를 복원한 뒤 같은 keeper를 다시 확인한다.
+- m13 `coordinator_flow`·`doctor_files_brings_the_coordinator_guide_to_existing_projects`·`project_lifecycle`: 새로 만들거나 doctor로 갱신하거나 이름을 바꾼 AGENTS.md에 이름 없는 pause·resume·sweep 안내가 들어간다.
+- 실험실 host·가짜 agent만 쓰며 운영 프로젝트·설정·host는 건드리지 않는다. 고정 sleep이나 새 시험 전용 제품 경로는 더하지 않는다.
+
+
+## 계정 Claude 첫 실행 우회 경고(t-0551, plan §8.347)
+
+- `cargo test -p aaa --test m13 accounts::fresh_account_claude_initializes_only_authorized_bypass_consent --locked -- --exact`는 실제 host·로컬/원격 agent·session·PTY와 가짜 Claude를 사용한다. yolo 켜기/끄기, profile의 두 permission-mode 표기와 일반 모드로 새 홈 10개를 시작한다. 안내 완료와 우회 수락 키, 첫 경고 부재, 가짜 원본 홈의 인증·다른 설정 비복사와 원본 불변을 확인한다. 폴더 신뢰는 별도 정책이므로 실험실에 `trust_screens=coordinator`를 명시한다. 기본값을 coordinator로 가정했던 첫 시험 실패는 제품 결함으로 분류하지 않는다.
+- 가짜 시작 화면은 설치된 공식 Claude 2.1.304의 시작 조건과 저장 키를 따른다. 실제 제공자 CLI·키체인·인증 파일·외부 로그인은 실행하지 않는다. 완료는 socket gate·harness 종료 사건으로 판정하며 고정 sleep·재시도는 없다. 이 시험이 실제 제공자 인증이나 이후 새 버전의 추가 안내를 보증하지는 않는다.
+- `cargo test -p aaa-session --lib account::tests:: --locked`는 명시적 우회/허용 옵션, 마지막 permission-mode, `--` 뒤 문자열 제외, 일반 실행의 파일 미생성, 기존 환경설정 보존, 비우회 재개 시 자동 수락 제거, 인증 비기록, Unix 0600·symlink 대상 보존·깨진 JSON 거부를 확인한다.
+- 수락 준비 제거와 비우회에도 무조건 수락하는 변형은 각각 위 m13의 settings 단언에서 RED여야 한다. 매번 원본 bytes를 복구한 뒤 정상 owner와 전체 ci-local·check-public을 실행한다.

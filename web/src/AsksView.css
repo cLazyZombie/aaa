@@ -1,0 +1,101 @@
+/* 「답할 것」(plan §8.345): 사이드바 목록과 본문 카드. 카드는 화면 선택 창 카드(PromptCard.css)를 바탕으로 쓰고 본문 Markdown·
+   선택지 그림 카드(2B)·크게 보기를 더한다 */
+
+.asks-panel { display: flex; flex-direction: column; gap: 2px; padding: var(--space-2); overflow-y: auto; min-height: 0; flex: 1 1 0; }
+.asks-panel-head {
+  display: flex; align-items: center; gap: var(--space-2);
+  margin: var(--space-3) var(--space-2) var(--space-1);
+  font-size: var(--fs-xs); font-weight: var(--fw-semibold); color: var(--text-dim);
+}
+.asks-panel-head:first-child { margin-top: var(--space-1); }
+.asks-panel-head > span { font-variant-numeric: tabular-nums; }
+.asks-panel-head > span.is-ask { min-width: 18px; padding: 0 6px; border-radius: var(--radius-pill); background: var(--status-blocked); color: var(--on-accent, #fff); text-align: center; line-height: 18px; }
+.asks-forget-all { margin-inline-start: auto; color: var(--danger-text); gap: 4px; }
+.asks-forget-all svg { width: 14px; height: 14px; }
+.asks-panel-empty, .asks-panel-note { margin: var(--space-1) var(--space-2); font-size: var(--fs-xs); color: var(--text-dim); }
+.asks-panel-note { margin-top: var(--space-3); line-height: var(--lh-base); }
+
+.ask-row {
+  display: flex; align-items: flex-start; justify-content: flex-start; gap: var(--space-2); width: 100%;
+  min-height: var(--touch-target); padding: 8px var(--space-2);
+  border: 0; border-radius: var(--radius-md); background: transparent; color: inherit;
+  font: inherit; font-size: var(--fs-sm); text-align: start; cursor: pointer;
+}
+.ask-row:hover { background: var(--bg-hover); }
+.ask-row.is-selected { background: var(--bg-hover); box-shadow: inset 2px 0 0 var(--accent); }
+.ask-row-mark { flex: none; display: inline-flex; align-items: center; justify-content: center; width: 22px; height: 22px; border-radius: 6px; margin-top: 1px; }
+.ask-row-mark svg { width: 14px; height: 14px; }
+.ask-row.is-question .ask-row-mark { color: var(--status-blocked); background: var(--status-blocked-tint); }
+.ask-row.is-request .ask-row-mark { color: var(--accent); background: var(--accent-tint); }
+.ask-row.is-task .ask-row-mark { color: var(--status-working); background: var(--status-working-tint); }
+.ask-row.is-done .ask-row-mark { color: var(--status-done); background: var(--status-done-tint); }
+.ask-row-text { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.ask-row-title { color: var(--text-strong); overflow-wrap: anywhere; }
+.ask-row.is-done .ask-row-title { color: var(--text); }
+.ask-row-meta { color: var(--text-dim); font-size: var(--fs-xs); }
+
+/* 본문 */
+.asks-view .asks-col { padding-block: var(--space-4) var(--space-8); }
+.asks-empty { color: var(--text-dim); font-size: var(--fs-sm); }
+.prompt-card.ask-card { padding: var(--space-4) var(--space-4) 0; gap: var(--space-3); }
+.prompt-card.ask-card::after { display: none; }
+.ask-card .prompt-card-header { flex-wrap: wrap; }
+.ask-card .prompt-card-where { color: var(--text-dim); font-size: var(--fs-xs); }
+.ask-card button.prompt-card-where { padding: 0; border: 0; background: none; cursor: pointer; text-align: start; }
+.ask-card button.prompt-card-where:hover { color: var(--text); text-decoration: underline; }
+.ask-card-title { margin: 0; font-size: var(--fs-lg); font-weight: var(--fw-semibold); color: var(--text-strong); overflow-wrap: anywhere; }
+.ask-card-text { margin: 0; font-size: var(--fs-sm); line-height: var(--lh-prose); }
+.ask-card .thread-ask-foot { padding-bottom: var(--space-4); }
+.ask-buttons { display: flex; gap: var(--space-2); flex-wrap: wrap; }
+.ask-kind {
+  display: inline-flex; align-items: center; gap: 4px; padding: 1px 8px;
+  border-radius: var(--radius-pill); font-size: var(--fs-xs); font-weight: var(--fw-semibold); white-space: nowrap;
+}
+.ask-kind svg { width: 13px; height: 13px; }
+.ask-kind.is-question { background: var(--status-blocked-tint); color: var(--status-blocked); }
+.ask-kind.is-request { background: var(--accent-tint); color: var(--accent); }
+.ask-kind.is-task { background: var(--status-working-tint); color: var(--status-working); }
+.ask-kind.is-done { background: var(--status-done-tint); color: var(--status-done); }
+.ask-question { font-size: var(--fs-md); }
+.ask-done-when { margin: 0; font-size: var(--fs-xs); color: var(--text-dim); }
+.ask-done-text { margin: 0; font-size: var(--fs-sm); }
+
+/* 질문 본문(웹페이지처럼): 그림은 칸 너비까지, 누르면 크게 */
+.ask-markdown { font-size: var(--fs-sm); line-height: var(--lh-prose); color: var(--text); min-width: 0; overflow-wrap: anywhere; }
+.ask-markdown img { max-width: 100%; height: auto; border-radius: var(--radius-md); border: var(--hairline) solid var(--border); cursor: zoom-in; }
+.ask-markdown table { display: block; max-width: 100%; overflow-x: auto; }
+.ask-report { border-top: var(--hairline) solid var(--border); padding-top: var(--space-3); }
+
+/* 선택지: 그림이 있으면 큰 그림 카드(데스크톱 2열, 사용자 결정 2B) */
+.ask-choices.has-pictures { display: grid; grid-template-columns: minmax(0, 1fr); gap: var(--space-3); }
+@media (min-width: 769px) {
+  .ask-choices.has-pictures { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+.prompt-card-option.ask-choice { flex-direction: column; align-items: stretch; gap: var(--space-2); }
+.ask-choice-line { display: flex; align-items: flex-start; gap: var(--space-2); }
+.ask-choices.has-pictures .prompt-card-option.ask-choice { padding: var(--space-2); border: var(--hairline) solid var(--border); border-radius: var(--radius-lg); }
+.ask-choices.has-pictures .prompt-card-option.ask-choice.is-checked { border-color: var(--accent); }
+.ask-choice-picture { position: relative; display: block; border-radius: var(--radius-md); overflow: hidden; background: var(--bg); }
+/* 작은 그림은 늘리지 않는다(흐려진다): 칸보다 크면 칸 너비로 줄인다 */
+.ask-choice-picture img { display: block; max-width: 100%; height: auto; max-height: 420px; margin-inline: auto; object-fit: contain; }
+.ask-zoom {
+  position: absolute; top: var(--space-2); inset-inline-end: var(--space-2);
+  display: inline-flex; align-items: center; justify-content: center; width: 32px; height: 32px;
+  border-radius: var(--radius-md); background: color-mix(in srgb, var(--bg) 78%, transparent); color: var(--text-strong);
+  border: var(--hairline) solid var(--border); cursor: zoom-in;
+}
+.ask-zoom svg { width: 16px; height: 16px; }
+.ask-choice-rest { display: block; text-align: start; }
+.ask-choice.is-static { cursor: default; }
+.ask-choice.is-other { opacity: .6; }
+.ask-choice.is-picked { border-color: var(--status-done) !important; background: var(--status-done-tint) !important; }
+.ask-picked { display: inline-block; padding: 0 6px; border-radius: var(--radius-pill); background: var(--status-done); color: var(--bg); font-size: var(--fs-2xs); font-weight: var(--fw-semibold); }
+
+.ask-lightbox {
+  position: fixed; inset: 0; z-index: var(--z-modal);
+  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: var(--space-2);
+  padding: var(--space-6) var(--space-4); background: color-mix(in srgb, #000 82%, transparent);
+}
+.ask-lightbox img { max-width: 100%; max-height: calc(100% - 48px); object-fit: contain; border-radius: var(--radius-md); cursor: zoom-out; }
+.ask-lightbox-caption { margin: 0; color: #eee; font-size: var(--fs-sm); }
+.ask-lightbox-close { position: absolute; top: var(--space-3); inset-inline-end: var(--space-3); color: #fff; }

@@ -266,12 +266,43 @@ pub(crate) fn set_in_table(text: &str, key: &str, value: &str, repos: &str) -> R
                 (_, None) => return Err(format!("{value}는 `task_notes`에 없다")),
             }
         }
-        "name" => return Err("aaa 프로젝트 이름은 폴더 이름이다: `aaa project rename <프로젝트> <새 이름>`".into()),
+        "name" => return Err("aaa 프로젝트 이름은 폴더 이름이다: `aaa project rename <새 이름>`".into()),
         other => {
             return Err(format!(
                 "없는 설정 `{other}`: {}",
                 KEYS.iter().map(|(k, v)| format!("{k}({v})")).collect::<Vec<_>>().join(", ")
             ));
+        }
+    }
+    Ok(doc.to_string())
+}
+
+/// 저장소 하나를 제자리에서 바꾼다(`repos.remove`+`repos.add`를 한 번에, 목록 차례와 그 표의 다른 칸은 그대로)
+pub(crate) fn replace_repo_in(text: &str, from: &str, to: &str, repos: &str) -> Result<String, String> {
+    use toml_edit::Item;
+    let mut doc =
+        text.parse::<toml_edit::DocumentMut>().map_err(|e| format!("설정 파일을 읽지 못한다: {}", e.message()))?;
+    let (old, new) = (parse_repo_arg(from.trim()), parse_repo_arg(to.trim()));
+    if old.path.is_empty() || new.path.is_empty() {
+        return Err("저장소 경로를 준다".into());
+    }
+    let list = ["workspaces", "repos"].into_iter().find(|t| doc.contains_key(t)).unwrap_or(repos);
+    normalize_repos(&mut doc, list)?;
+    let tables = doc[list].as_array_of_tables_mut().ok_or_else(|| format!("`{list}`는 [[{list}]] 표여야 한다"))?;
+    let same = |t: &toml_edit::Table, r: &Repo| {
+        t.get("path").and_then(Item::as_str) == Some(r.path.as_str())
+            && t.get("machine").and_then(Item::as_str) == r.machine.as_deref()
+    };
+    if old != new && tables.iter().any(|t| same(t, &new)) {
+        return Err(format!("{}는 이미 있다", to.trim()));
+    }
+    let t =
+        tables.iter_mut().find(|t| same(t, &old)).ok_or_else(|| format!("{}는 `[[{list}]]`에 없다", from.trim()))?;
+    t["path"] = toml_edit::value(new.path.as_str());
+    match &new.machine {
+        Some(m) => t["machine"] = toml_edit::value(m.as_str()),
+        None => {
+            t.remove("machine");
         }
     }
     Ok(doc.to_string())
@@ -453,6 +484,52 @@ mod tests {
         // aaa.toml에 옛 이름 [[repos]]가 있으면 그것을 고친다
         let t = set_in_table("[[repos]]\npath = \"/a\"\n", "repos.add", "/b", "workspaces").unwrap();
         assert!(t.contains("[[repos]]\npath = \"/b\"") && !t.contains("workspaces"), "{t}");
+        drop(h);
+        std::fs::remove_dir_all(&state).unwrap();
+    }
+
+    /// 웹 「저장소」 페이지의 고치기(관리 GUI W4): 한 번에 제자리에서 바꾸고(차례·다른 칸 그대로), 설정 읽기가 그것을 보인다
+    #[test]
+    fn repo_edit_replaces_in_place_and_settings_view_reads_it() {
+        let text = "schema = 1\n\n[[workspaces]]\npath = \"/work/app\"\nnote = \"앞\"\n\n[[workspaces]]\npath = \"/work/lib\"\nmachine = \"mac-b\"\n";
+        let t = replace_repo_in(text, "/work/app", "/work/app2@mac-a", "workspaces").unwrap();
+        let s = ProjectSettings::from_table(&t.parse().unwrap());
+        assert_eq!(
+            s.repos,
+            vec![
+                Repo { path: "/work/app2".into(), machine: Some("mac-a".into()) },
+                Repo { path: "/work/lib".into(), machine: Some("mac-b".into()) },
+            ]
+        );
+        assert!(t.contains("note = \"앞\""), "그 표의 다른 칸은 남는다: {t}");
+        let t = replace_repo_in(&t, "/work/lib@mac-b", "/work/lib", "workspaces").unwrap();
+        assert!(!t.contains("mac-b"), "머신을 빼면 host 머신이다: {t}");
+        assert!(replace_repo_in(&t, "/work/lib", "/work/app2@mac-a", "workspaces").unwrap_err().contains("이미"));
+        assert!(replace_repo_in(&t, "/work/none", "/work/x", "workspaces").unwrap_err().contains("없다"));
+
+        let state = std::env::temp_dir().join(format!("aaa-settings-{}", aaa_common::util::new_id()));
+        let mut cfg = aaa_config::HostConfig::default();
+        cfg.projects.root = state.join("projects").display().to_string();
+        cfg.notify.web_push = false;
+        let h = crate::Host::open(cfg, state.clone()).unwrap();
+        h.project_create("demo", Default::default(), "test").unwrap();
+        h.project_set("demo", "repos.add", "/work/app@mac-a", "test").unwrap();
+        h.project_set("demo", "repos.add", "/work/lib@mac-b", "test").unwrap();
+        h.project_set("demo", "max_parallel_threads", "4", "test").unwrap();
+        let aaa_proto::FrontResponse::ProjectSettings(v) =
+            h.project_repo_edit("demo", "/work/app@mac-a", "/work/web@mac-a", "test").unwrap()
+        else {
+            panic!("설정 응답")
+        };
+        assert_eq!((v.file.as_str(), v.max_parallel_threads, v.nudge), ("project.toml", 4, true));
+        assert_eq!(
+            v.repos.iter().map(|r| format!("{}@{}", r.path, r.machine.as_deref().unwrap_or(""))).collect::<Vec<_>>(),
+            vec!["/work/web@mac-a", "/work/lib@mac-b"]
+        );
+        assert!(
+            h.project_repo_edit("demo", "/work/app@mac-a", "/work/x@mac-a", "test").is_err(),
+            "바꾼 옛 값은 이제 없다"
+        );
         drop(h);
         std::fs::remove_dir_all(&state).unwrap();
     }
