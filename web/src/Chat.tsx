@@ -565,6 +565,8 @@ export function ChatPanel({
     steer && steerTarget?.row === row ? { ...steer, count: steerTarget.count } : undefined;
   const rowIdsRef = useRef(rowIds);
   rowIdsRef.current = rowIds;
+  // 가상화 판정은 화면 줄(묶음은 한 줄) 수로 한다. row와 끝 이동이 같은 판정을 쓴다(t-0474)
+  const virtual = displayRows.length > 300;
   // 맨 아래가 아니면 보던 줄과 그 줄 안 거리를 지킨다(plan §8.262, t3code timelineScrollAnchoring `rowId`·`offsetWithinRow`):
   // 새 말·앞 자름·입력창 높이·폭이 바뀌어도 그리기 전에 그 줄을 같은 거리로 되돌린다. 브라우저 굴림 고정(overflow-anchor)은 끈다
   // (iOS Safari에는 없고, 이것과 겹치면 두 번 옮긴다). 같은 자리를 이 pane의 읽던 자리로도 기억한다(plan §8.266, 참고 MessagesTimeline
@@ -684,7 +686,10 @@ export function ChatPanel({
     const el = list.current;
     if (el !== null) {
       el.style.removeProperty("--chat-tail-space");
-      el.scrollTo({ top: el.scrollHeight, behavior: animated ? "smooth" : "auto" });
+      // 가상 row는 이동하면서 추정 높이가 실측 높이로 바뀐다. WebKit의 smooth 이동 중
+      // row 실측이 즉시 끝 보정을 끼우면 옛 애니메이션이 다시 위로 옮겨 따라가기를 잃는다.
+      // 목적지가 계속 바뀌는 긴 대화는 바로 끝으로 간 뒤 실측마다 끝을 맞춘다.
+      el.scrollTo({ top: el.scrollHeight, behavior: animated && !virtual ? "smooth" : "auto" });
       lastScrollTop.current = el.scrollTop;
     }
   };
@@ -817,7 +822,7 @@ export function ChatPanel({
               );
             };
             return (
-              <ChatRow key={row.id} id={row.id} role={row.kind === "tools" ? "tools" : chat.messages[row.index]!.role} virtual={displayRows.length > 300} onResize={onRowResize}>
+              <ChatRow key={row.id} id={row.id} role={row.kind === "tools" ? "tools" : chat.messages[row.index]!.role} virtual={virtual} onResize={onRowResize}>
                 {row.kind === "tools" ? (
                   <ToolGroup messages={row.indices.map((i) => chat.messages[i]!)} expanded={groupExpanded(row, expandedGroups)}
                     live={status === "working" && n === displayRows.length - 1} onToggle={() => toggleGroup(row)}>
