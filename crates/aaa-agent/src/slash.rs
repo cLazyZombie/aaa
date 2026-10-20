@@ -36,7 +36,7 @@ const CLAUDE: &[Builtin] = &[
     ("review", Send, false, Some("[지시]"), &[], "변경을 리뷰한다"),
     ("add-dir", Send, false, Some("<경로>"), &[], "작업 폴더를 더한다"),
     ("agents", Send, false, None, &[], "하위 agent 안내를 보인다"),
-    ("model", Picker, false, Some("/model sonnet"), &[], "모델을 바꾼다(인자 없이 보내면 터미널 선택창)"),
+    ("model", Picker, false, Some("/model sonnet"), &[], "모델을 바꾼다"),
     ("effort", Picker, false, Some("/effort high"), &[], "생각 수준을 바꾼다"),
     ("config", Picker, false, Some("/config key=value"), &["settings"], "설정을 연다"),
     ("resume", Picker, false, Some("/resume <id|이름>"), &[], "이전 대화를 잇는다"),
@@ -64,17 +64,17 @@ const CODEX: &[Builtin] = &[
     ("plan", Send, true, Some("/plan <지시>"), &[], "계획 모드로 지시한다"),
     ("goal", Send, false, Some("/goal <목표>"), &[], "목표를 정한다"),
     ("stop", Send, false, None, &["clean"], "배경 터미널을 모두 끝낸다"),
-    ("status", Screen, false, None, &[], "설정·토큰·한도(결과는 터미널 화면)"),
-    ("diff", Screen, false, None, &[], "git diff(결과는 터미널 화면)"),
-    ("mcp", Screen, false, None, &[], "MCP 도구 목록(결과는 터미널 화면)"),
-    ("recap", Screen, true, None, &[], "지금까지를 요약한다(결과는 터미널 화면)"),
-    ("model", Picker, false, None, &[], "모델·생각 수준을 고른다(터미널 선택창)"),
-    ("permissions", Picker, false, None, &[], "승인 방식을 고른다(터미널 선택창)"),
-    ("review", Picker, true, Some("/review <지시>"), &[], "변경을 리뷰한다(인자 없이 보내면 터미널 선택창)"),
+    ("status", Screen, false, None, &[], "설정·토큰·한도"),
+    ("diff", Screen, false, None, &[], "git diff"),
+    ("mcp", Screen, false, None, &[], "MCP 도구 목록"),
+    ("recap", Screen, true, None, &[], "지금까지를 요약한다"),
+    ("model", Picker, false, None, &[], "모델·생각 수준을 고른다"),
+    ("permissions", Picker, false, None, &[], "승인 방식을 고른다"),
+    ("review", Picker, true, Some("/review <지시>"), &[], "변경을 리뷰한다"),
     ("resume", Picker, false, Some("/resume <id|이름>"), &[], "이전 세션을 잇는다"),
     ("rename", Picker, false, Some("/rename <이름>"), &[], "세션 이름을 바꾼다"),
-    ("skills", Picker, false, None, &[], "skill 메뉴(터미널 선택창)"),
-    ("archive", Picker, false, None, &[], "세션을 보관한다(터미널 확인창)"),
+    ("skills", Picker, false, None, &[], "skill 메뉴"),
+    ("archive", Picker, false, None, &[], "세션을 보관한다"),
     ("new", Confirm, true, Some("[이름]"), &[], "새 채팅을 시작한다"),
     ("clear", Confirm, true, None, &[], "화면을 지우고 새 채팅을 시작한다"),
     ("quit", Danger, false, None, &["exit"], "Codex를 끝낸다"),
@@ -226,7 +226,7 @@ fn front(path: &Path) -> Head {
     if lines.peek().map(|l| l.trim()) == Some("---") {
         lines.next();
         let mut fields: Vec<(String, String)> = Vec::new();
-        while let Some(line) = lines.next() {
+        for line in lines.by_ref() {
             if line.trim() == "---" {
                 break;
             }

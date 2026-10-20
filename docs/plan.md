@@ -6099,7 +6099,7 @@ L4 후속(10-20 00시 사용자 관찰): 멈춤 상태의 후보 예약과 재�
   - 웹은 조용한 명령 한 줄과 고정폭 결과를 보인다. 결과가 여섯 줄을 넘으면 접는다.
   - 쪽 읽기의 칸 고르기가 `subtype`을 버려 `system` 줄을 읽지 못하던 것도 고쳤다.
 - **참고와 다른 것.** herdr-web-ui·t3code에는 확인창이 없다. 여기는 휴대폰에서 thread를 다루고 thread의 harness가 끝나면 맡긴 일이 멈춰 확인창을 둔다(사용자 결정). 화면 메뉴를 카드로 바꾸기(herdr-web-ui `prompt.ts`)와 `/context` 범주 펼침은 3단계다.
-- **알려진 한계.** 목록을 받기 전(pane을 연 직후·옛 agent)에는 확인창도 없다. 선택창이 열린 것을 aaa는 모르고 알림만 한다.
+- **알려진 한계.** 목록을 받기 전(pane을 연 직후·옛 agent)에는 확인창도 없다. 선택창이 열린 것을 aaa는 모르고 알림만 한다. `autoCompactWindow`는 사용자 `settings.json`만 읽는다(Claude가 함께 보는 프로젝트 `.claude/settings.json`·`settings.local.json`의 값은 반영하지 않는다). E2E는 가짜 Claude만 쓴다: Codex 표·`$` skill·`screen` 분류는 유닛으로만 본다.
 - **검증.**
   - agent 유닛: `slash::tests`(내장 분류·다른 이름, 사용자·프로젝트 명령·skill·숨은 skill·git root·내장 이름 보호, Codex `$` skill). `chat::tests::claude_commands_and_their_output_only_when_asked`는 실측 줄을 실제 쪽 읽기 길로 읽는다(`subtype`을 빼면 실패). `plan::tests::claude_window_names_and_setting_forms`와 `claude_context_…`(Haiku 5.5 43,922 = 4%, `autoCompactWindow` 500k).
   - host 유닛(PaneChat이 `commands`를 agent에 넘김), 웹 유닛 `slashCommands.test.mjs`(맨 앞만·경로 제외, 순위, 숨김·작업 중, 확인창·알림 판정).

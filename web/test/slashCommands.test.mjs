@@ -22,7 +22,7 @@ it("메시지 맨 앞의 「/이름」에서만 연다(줄 중간·경로·인�
   assert.equal(slashQuery("/", 1), "");
   assert.equal(slashQuery("/co", 3), "co");
   assert.equal(slashQuery("/co 지시", 3), "co");
-  for (const [text, caret] of [["a /co", 5], ["/Users/me", 9], ["/tmp/x", 4], ["/compact 지시", 12], ["/coX", 3], ["", 0]])
+  for (const [text, caret] of [["a /co", 5], ["/Users/me/a", 12], ["/tmp/x", 4], ["/compact 지시", 12], ["/coX", 3], ["", 0]])
     assert.equal(slashQuery(text, caret), null, `${text}@${caret}`);
 });
 

@@ -420,10 +420,11 @@ fn line(harness: &str, v: &Value, thinking: bool, compact: bool, commands: bool)
     if let Some(m) = compaction(harness, v).filter(|_| compact) {
         return vec![m];
     }
-    if commands && harness == "claude" {
-        if let Some(m) = claude_command(v) {
-            return vec![m];
-        }
+    if commands
+        && harness == "claude"
+        && let Some(m) = claude_command(v)
+    {
+        return vec![m];
     }
     parse(v, thinking)
 }
