@@ -41,7 +41,7 @@ import { GROUP_WORD } from "./sidebarModel";
 import { RowMenu, type RowMenuItem } from "./RowMenu";
 import { copyText } from "./herdr/clipboard";
 import { useMediaQuery } from "./herdr/useMediaQuery";
-import { StateIcon, TaskDetail, ThreadChip, type SaveResult } from "./TaskDetail";
+import { StateIcon, TaskDetail, ThreadChip, WhoChips, type SaveResult } from "./TaskDetail";
 import { ConflictDialog, NameDialog, RawEditor, type MyEdit } from "./TaskDialogs";
 import { DocAddDialog, LinkDialog, StartDialog } from "./TaskStart";
 import { TaskLogView } from "./TaskLogView";
@@ -60,7 +60,6 @@ import {
   moveOp,
   newAutoCleans,
   noteItems,
-  ownerLabel,
   taskDepth,
   taskSections,
   taskState,
@@ -379,7 +378,7 @@ export function TasksView({
       const after = noteLines(change(cur.notes.join("\n")));
       if (after.join("\n") === before.join("\n")) return;
       const owner = cur.owner === "agent" ? null : cur.owner;
-      const r = await edit([{ op: "update", at: anchorOf(cur), title: null, owner: null, person: false, notes: after, thread: null, done: null, repo: null }], { title: cur.title, owner, thread: cur.thread, notes: after });
+      const r = await edit([{ op: "update", at: anchorOf(cur), title: null, owner: null, person: false, profile: null, machine: null, notes: after, thread: null, done: null, repo: null }], { title: cur.title, owner, thread: cur.thread, notes: after });
       if (r) boardRef.current = r.board;
     });
     notesChain.current = next.catch(() => undefined);
@@ -514,7 +513,7 @@ export function TasksView({
           <>
             <label className="tasks-search">
               <Search aria-hidden="true" />
-              <input className="input" type="search" value={query} placeholder="제목·메모·owner 검색" aria-label="할 일 검색" data-testid="tasks-search" onChange={(e) => setQuery(e.target.value)} />
+              <input className="input" type="search" value={query} placeholder="제목·메모·담당 검색" aria-label="할 일 검색" data-testid="tasks-search" onChange={(e) => setQuery(e.target.value)} />
             </label>
             <div className="tasks-filters" role="group" aria-label="거르기">
               {TASK_FILTERS.map((f) => (
@@ -925,7 +924,6 @@ function TaskRow({
   onDragOver: (e: DragEvent<HTMLElement>) => void;
   onDrop: (e: DragEvent<HTMLElement>) => void;
 }) {
-  const owner = ownerLabel(t);
   const attachments = attachmentsOf(t.notes.join("\n")).length;
   return (
     <li
@@ -961,7 +959,7 @@ function TaskRow({
         </span>
         {state === "problem" && <span className="task-chip task-problem">형식 어긋남</span>}
         {state === "check" && <span className="task-chip task-check">확인 필요</span>}
-        {owner && <span className={`task-chip task-owner${owner === "미할당" ? " is-dim" : ""}`}>{owner}</span>}
+        <WhoChips t={t} />
         {t.repo && (
           <span className="task-chip task-repo" title="저장소">
             {t.repo}
