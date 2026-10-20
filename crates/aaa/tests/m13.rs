@@ -2623,9 +2623,22 @@ fn worker_session_cli_is_read_only() {
 #[test]
 fn web_pair_requires_a_person_outside_aaa_panes() {
     let w = world();
+    let mut ev = Events::connect(&w.h);
     let t =
         w.start(&["--title", "pair", "--profile", "fake", "--kind", "dir", "--task-file", &w.task("pair.txt", "x")]);
     let worker = t["pane"].as_str().unwrap();
+    // brief도 글과 Enter를 따로 보낸다. 그 사이 probe를 치면 brief 줄에 붙어 실행되지 않는다.
+    ev.wait("worker의 brief 수신·처리", T, |e| match e {
+        FrontEvent::Thread(v)
+            if v.project == "demo"
+                && v.id == t["id"].as_str().unwrap()
+                && v.brief == aaa_proto::BriefState::Delivered
+                && v.report_hash.is_some() =>
+        {
+            Some(())
+        }
+        _ => None,
+    });
     let coord = w.h.new_pane(None, "labA", Some("coord"), &["/bin/sh"], Some(path_str(&w.projects.join("demo"))));
     for (name, pane) in [("coordinator", coord.as_str()), ("worker", worker)] {
         let out = w.lab.root.join(format!("pair-{name}.txt"));
@@ -2643,8 +2656,19 @@ fn web_pair_requires_a_person_outside_aaa_panes() {
             line
         };
         w.h.ok(&["pane", "run", pane, &line]);
-        let got =
-            wait_for("pane 안 pairing 끝", T, || std::fs::read_to_string(&out).ok().filter(|s| s.contains("rc=")));
+        let got = wait_for_diag(
+            &format!("{name} pane 안 pairing 끝"),
+            T,
+            || std::fs::read_to_string(&out).ok().filter(|s| s.contains("rc=")),
+            || {
+                format!(
+                    "probe: {:?}\npane: {}\n화면:\n{}",
+                    std::fs::read_to_string(&out),
+                    w.h.pane(pane),
+                    w.h.screen(pane)
+                )
+            },
+        );
         assert!(got.contains("사람이 aaa 밖 터미널이나 웹에서") && got.ends_with("rc=1\n"), "{name}: {got}");
     }
     let outside = w.h.in_terminal(&["web", "pair"], &[], T);
