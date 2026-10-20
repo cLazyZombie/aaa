@@ -1878,6 +1878,8 @@ pub enum FrontRequest {
     EnrollOpen {
         minutes: u32,
     },
+    /// FRONT_API 1.80. 등록 창을 시한 전에 닫는다(대기 중인 요청은 그대로, 새 요청만 막는다)
+    EnrollClose,
     EnrollPending,
     EnrollApprove {
         name: String,
@@ -2201,6 +2203,22 @@ pub enum FrontRequest {
         older_than_days: Option<u32>,
     },
     LibraryRotate,
+    /// FRONT_API 1.80. 웹으로 올린 파일 묶음(`POST /api/v1/projects/<p>/library-uploads/<upload>?path=…`)을 보고서 하나로 등록한다
+    /// (관리 GUI W5b). 등록하면 올린 자리는 지운다. 사용자 보고서(`to_user`)는 맨 위 index.html이 있어야 한다.
+    /// `files`는 웹이 올린 파일 수다: 올린 자리의 파일 수가 다르면(오래돼 치워진 뒤 나머지만 올라온 경우) `conflict`로 거부한다
+    LibraryUploadPublish {
+        #[serde(default)]
+        #[ts(optional, as = "Option<String>")]
+        project: String,
+        upload: String,
+        name: String,
+        files: u32,
+        #[serde(default)]
+        to_user: bool,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        #[ts(optional)]
+        title: Option<String>,
+    },
     /// 링크는 조작 권한에만 싣는다. 앱 안 열기는 읽기 권한도 된다.
     LibraryReports {
         project: Option<String>,
@@ -2684,6 +2702,7 @@ impl FrontRequest {
             | FrontRequest::ThreadLibrary { project, .. }
             | FrontRequest::LibraryLink { project, .. }
             | FrontRequest::LibraryPublish { project, .. }
+            | FrontRequest::LibraryUploadPublish { project, .. }
             | FrontRequest::LibraryImport { project, .. }
             | FrontRequest::LibraryOpen { project, .. }
             | FrontRequest::LibraryResolve { project, .. }
@@ -2801,17 +2820,10 @@ impl FrontRequest {
             FrontRequest::AccountImport { .. }
                 | FrontRequest::AccountRemove { .. }
                 | FrontRequest::DebugInput { .. }
-                | FrontRequest::EnrollOpen { .. }
-                | FrontRequest::EnrollPending
-                | FrontRequest::EnrollApprove { .. }
-                | FrontRequest::MachineRevoke { .. }
-                | FrontRequest::WebPublish
-                | FrontRequest::WebPublishOff
                 | FrontRequest::TickerTick
                 | FrontRequest::LibraryPublish { .. }
                 | FrontRequest::LibraryImport { .. }
                 | FrontRequest::LibraryPrune { .. }
-                | FrontRequest::LibraryRotate
         )
     }
 }
@@ -2930,6 +2942,10 @@ pub enum FrontResponse {
     },
     Pending {
         pending: Vec<PendingEnroll>,
+        /// 등록 창이 열려 있으면 닫히는 시각(ms, FRONT_API 1.80). 닫혔으면 생략
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        #[ts(optional, type = "number")]
+        open_until_ms: Option<u64>,
     },
     PairCode {
         code: String,
@@ -3142,6 +3158,9 @@ pub enum FrontEvent {
     /// FRONT_API 1.79. host 계정이 바뀌었다(로그인 진행·끝, 기본, 메일·상태). 웹 events 연결에만, 열 때와 바뀔 때 보낸다.
     /// 웹은 `account_list`·`account_defaults`와 보던 로그인의 `account_login_status`를 다시 읽는다
     Accounts,
+    /// FRONT_API 1.80. 머신 등록 창·대기 목록이 바뀌었다(열기·닫기·새 요청·승인·거부). 웹 events 연결에만, 열 때와 바뀔 때 보낸다.
+    /// 웹은 `enroll_pending`을 다시 읽는다
+    Enroll,
     /// FRONT_API 1.60. 프로젝트 TASKS.md가 바뀌었다(ticker가 크기·mtime을 보고 내용 hash로 확인한다). 웹은 `tasks`를 다시 읽는다.
     /// 옛 CLI는 모르는 사건을 풀지 못하므로 1.60 이상과 합의한 연결에만 보낸다.
     Tasks { project: String, sha256: String },

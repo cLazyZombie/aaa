@@ -45,6 +45,7 @@ mod library;
 mod library_links;
 mod library_publish;
 mod library_retention;
+mod library_upload;
 mod lifecycle;
 pub mod link;
 pub mod migrate;
@@ -441,8 +442,12 @@ pub struct Host {
     pub inbox_changed: tokio_watch::Sender<u64>,
     /// host 계정이 바뀐 횟수(로그인 진행·끝, 기본, 메일·상태). 웹 계정 페이지가 다시 읽는다
     pub accounts_changed: tokio_watch::Sender<u64>,
+    /// 머신 등록 창·대기 목록이 바뀐 횟수(웹 「머신」 페이지가 다시 읽는다)
+    pub enroll_changed: tokio_watch::Sender<u64>,
     /// 계정 기록(`account-meta:*`) 읽고-고쳐-쓰기를 하나씩(로그인 끝·갱신 결과·ticker 상태 pass가 겹친다)
     account_meta_gate: Mutex<()>,
+    /// 웹 기기 폐기의 「마지막 조작 기기」 세기와 폐기를 묶는다
+    device_gate: Mutex<()>,
     /// EMFILE 중에는 파일을 더 열지 않고, ticker가 여유가 생긴 뒤 시스템 경고를 저장한다.
     resource_exhausted: std::sync::atomic::AtomicBool,
     health: Mutex<supervisor::Health>,
@@ -677,7 +682,9 @@ impl Host {
             asks_changed: tokio_watch::channel(0).0,
             inbox_changed: tokio_watch::channel(0).0,
             accounts_changed: tokio_watch::channel(0).0,
+            enroll_changed: tokio_watch::channel(0).0,
             account_meta_gate: Mutex::new(()),
+            device_gate: Mutex::new(()),
             enroll: Mutex::new(Enroll::default()),
             pairing: Mutex::new(Pairing::default()),
             agent_listen: Mutex::new(None),
@@ -762,6 +769,10 @@ impl Host {
     /// 보고서 목록이 바뀌었다(plan §8.256)
     pub(crate) fn reports_bump(&self) {
         self.reports_changed.send_modify(|v| *v += 1);
+    }
+
+    pub(crate) fn enroll_bump(&self) {
+        self.enroll_changed.send_modify(|v| *v += 1);
     }
 
     pub(crate) fn accounts_bump(&self) {
@@ -1310,11 +1321,14 @@ impl Host {
             req,
             FrontRequest::WebPair { .. }
                 | FrontRequest::EnrollOpen { .. }
+                | FrontRequest::EnrollClose
                 | FrontRequest::EnrollApprove { .. }
                 | FrontRequest::MachineRevoke { .. }
                 | FrontRequest::DeviceRevoke { .. }
                 | FrontRequest::WebPublish
                 | FrontRequest::WebPublishOff
+                | FrontRequest::LibraryRotate
+                | FrontRequest::LibraryUploadPublish { .. }
                 | FrontRequest::RoutineApprove { .. }
         ) && (front::in_session(actor)
             || actor.starts_with("worker:")
@@ -1326,7 +1340,7 @@ impl Host {
                 if matches!(req, FrontRequest::RoutineApprove { .. }) {
                     "routine 명령 승인은 사람이 aaa 밖 터미널이나 웹(조작 기기)에서 한다(이 연결은 aaa 세션 안에서 왔다)"
                 } else {
-                    "기기·머신 등록과 폐기·웹 공개 변경은 사람이 aaa 밖 터미널이나 웹에서 한다"
+                    "기기·머신 등록과 폐기·웹 공개 변경·보고서 키 교체·올리기는 사람이 aaa 밖 터미널이나 웹에서 한다"
                 },
             ));
         }
@@ -1577,7 +1591,14 @@ impl Host {
             FrontRequest::LibraryPrunePreview { project, older_than_days } => self
                 .library_prune_preview(project.as_deref(), older_than_days, util::now_ms())
                 .map(FrontResponse::LibraryPrunePreview),
-            FrontRequest::LibraryRotate => self.library_rotate(actor),
+            FrontRequest::LibraryRotate => {
+                let out = self.library_rotate(actor)?;
+                self.reports_bump();
+                Ok(out)
+            }
+            FrontRequest::LibraryUploadPublish { project, upload, name, files, to_user, title } => {
+                self.library_upload_publish(&project, &upload, &name, files, to_user, title.as_deref(), actor)
+            }
             FrontRequest::LibraryReports { project } => self
                 .library_reports(project.as_deref(), role.can_control())
                 .map(|reports| FrontResponse::LibraryReports { reports }),
@@ -2011,10 +2032,20 @@ impl Host {
                 self.enroll.lock().unwrap().open_until =
                     Some(Instant::now() + Duration::from_secs(minutes as u64 * 60));
                 self.db.audit(actor, "enroll_open", &format!("{minutes}m"));
+                self.enroll_bump();
+                Ok(FrontResponse::Done)
+            }
+            FrontRequest::EnrollClose => {
+                self.enroll.lock().unwrap().open_until = None;
+                self.db.audit(actor, "enroll_close", "");
+                self.enroll_bump();
                 Ok(FrontResponse::Done)
             }
             FrontRequest::EnrollPending => {
                 let e = self.enroll.lock().unwrap();
+                let now = Instant::now();
+                let open_until_ms =
+                    e.open_until.filter(|t| *t > now).map(|t| util::now_ms() + (t - now).as_millis() as u64);
                 let pending = e
                     .pending
                     .iter()
@@ -2025,10 +2056,19 @@ impl Host {
                         since_ms: p.since_ms,
                     })
                     .collect();
-                Ok(FrontResponse::Pending { pending })
+                Ok(FrontResponse::Pending { pending, open_until_ms })
             }
             FrontRequest::EnrollApprove { name, code } => self.approve(&name, &code, actor),
             FrontRequest::MachineRevoke { name } => {
+                // 웹에서는 host 머신 자신을 폐기하지 않는다(그 머신의 agent·화면이 함께 끊긴다: host 터미널에서 한다)
+                if actor.starts_with("device:")
+                    && self.inner.lock().unwrap().machines.values().any(|m| m.local && m.name == name)
+                {
+                    return Err(err(
+                        ErrorCode::Forbidden,
+                        "host 머신은 웹에서 폐기하지 않는다(host 터미널의 aaa machine revoke)",
+                    ));
+                }
                 let id = self.db.revoke_machine(&name).map_err(|e| err(ErrorCode::Internal, e.to_string()))?;
                 let Some(id) = id else { return Err(err(ErrorCode::NotFound, format!("머신이 없다: {name}"))) };
                 let conn = {
@@ -2072,6 +2112,20 @@ impl Host {
                 Ok(FrontResponse::Done)
             }
             FrontRequest::DeviceRevoke { id } => {
+                // 마지막 조작 기기는 웹에서 폐기하지 않는다(사용자 답 W5b 2A): 웹으로 관리할 길이 닫힌다. host 터미널은 된다.
+                // 세기와 폐기를 한 잠금 안에서 한다(두 조작 기기가 서로를 함께 폐기하면 둘 다 통과한다)
+                let _gate = self.device_gate.lock().unwrap();
+                if actor.starts_with("device:") {
+                    let rows = self.db.devices().map_err(|e| err(ErrorCode::Internal, e.to_string()))?;
+                    let controllers: Vec<_> =
+                        rows.iter().filter(|d| d.role != "reader").map(|d| d.id.as_str()).collect();
+                    if controllers == [id.as_str()] {
+                        return Err(err(
+                            ErrorCode::Forbidden,
+                            "마지막 조작 기기는 웹에서 폐기하지 않는다: 다른 조작 기기를 먼저 짝짓거나 host 터미널의 aaa web revoke",
+                        ));
+                    }
+                }
                 if !self.revoke_device(&id)? {
                     return Err(err(ErrorCode::NotFound, "그런 기기가 없다"));
                 }
@@ -2785,6 +2839,8 @@ impl Host {
                 accept: Some(tx),
             },
         );
+        drop(e);
+        self.enroll_bump();
         Ok(rx)
     }
 
@@ -2792,6 +2848,8 @@ impl Host {
         let mut e = self.enroll.lock().unwrap();
         if e.pending.get(name).is_some_and(|p| p.fingerprint == fingerprint) {
             e.pending.remove(name);
+            drop(e);
+            self.enroll_bump();
         }
     }
 
@@ -2806,6 +2864,7 @@ impl Host {
             if p.attempts >= 3 {
                 e.pending.remove(name); // sender drop → agent 쪽은 거부로 끝난다
                 self.db.audit(actor, "enroll_reject", name);
+                self.enroll_bump();
                 return Err(err(ErrorCode::EnrollCodeMismatch, "확인 코드가 3번 틀려 이 등록 요청을 버렸다"));
             }
             return Err(err(ErrorCode::EnrollCodeMismatch, "확인 코드가 다르다(agent 화면의 코드를 입력한다)"));
@@ -2836,6 +2895,7 @@ impl Host {
         }
         self.db.audit(actor, "enroll_approve", name);
         drop(e);
+        self.enroll_bump();
         self.bump();
         Ok(FrontResponse::Done)
     }
@@ -3204,6 +3264,9 @@ mod pairing_tests {
                 assert!(e.message.contains("사람이 aaa 밖 터미널이나 웹에서"), "{e:?}");
             }
         }
+        // 웹에서 폐기할 기기 밖에 조작 기기 하나를 남긴다(W5b: 마지막 조작 기기는 웹에서 폐기하지 않는다)
+        let spare = mint(&h, DeviceRole::Local, DeviceRole::Controller).await.unwrap();
+        h.redeem_pairing(&spare, "spare").unwrap();
         for (role, actor) in [(DeviceRole::Local, "local:cli"), (DeviceRole::Controller, "device:person")] {
             let code = match h.call(role, actor, requests[0].clone()).await.unwrap() {
                 FrontResponse::PairCode { code, .. } => code,
@@ -3221,11 +3284,63 @@ mod pairing_tests {
                 ErrorCode::Forbidden
             );
         }
-        // W0는 기존 로컬 전용 API를 웹에 새로 열지 않는다(W5).
+        // W5b(FRONT_API 1.80)부터 머신 등록 창은 웹 조작 기기도 연다. 보기 기기는 여전히 못 한다
+        h.call(DeviceRole::Controller, "device:person", requests[1].clone()).await.unwrap();
         assert_eq!(
-            h.call(DeviceRole::Controller, "device:person", requests[1].clone()).await.unwrap_err().code,
+            h.call(DeviceRole::Reader, "device:viewer", requests[1].clone()).await.unwrap_err().code,
             ErrorCode::Forbidden
         );
+    }
+
+    /// 관리 GUI W5b(사용자 답 2A): 마지막 조작 기기는 웹에서 폐기하지 않고(host 터미널은 된다), host 머신도 웹에서 폐기하지 않는다
+    #[tokio::test]
+    async fn the_web_keeps_its_last_controller_and_the_host_machine() {
+        let (h, _t) = host();
+        let pair = |role| {
+            let h = h.clone();
+            async move {
+                let code = mint(&h, DeviceRole::Local, role).await.unwrap();
+                let (token, _) = h.redeem_pairing(&code, "기기").unwrap();
+                h.device_role(&token).unwrap().0
+            }
+        };
+        let first = pair(DeviceRole::Controller).await;
+        let viewer = pair(DeviceRole::Reader).await;
+        let revoke = |id: &str| FrontRequest::DeviceRevoke { id: id.into() };
+        let e = h.call(DeviceRole::Controller, &format!("device:{first}"), revoke(&first)).await.unwrap_err();
+        assert_eq!(e.code, ErrorCode::Forbidden, "보기 기기가 있어도 조작 기기는 하나뿐이다: {e:?}");
+        let second = pair(DeviceRole::Controller).await;
+        h.call(DeviceRole::Controller, &format!("device:{second}"), revoke(&first)).await.unwrap();
+        h.call(DeviceRole::Controller, &format!("device:{second}"), revoke(&viewer)).await.unwrap();
+        assert_eq!(
+            h.call(DeviceRole::Controller, &format!("device:{second}"), revoke(&second)).await.unwrap_err().code,
+            ErrorCode::Forbidden
+        );
+        h.call(DeviceRole::Local, "local:cli", revoke(&second)).await.unwrap();
+        assert!(devices(&h).await.is_empty(), "host 터미널은 마지막 기기도 폐기한다");
+
+        h.inner.lock().unwrap().machines.insert(
+            "m-local".into(),
+            MachineRt {
+                name: "mac-a".into(),
+                local: true,
+                os: None,
+                boot_id: None,
+                dev_mode: false,
+                conn: None,
+                last_seen_ms: None,
+                health: None,
+                health_sent: None,
+                features: vec![],
+                agent_pid: None,
+                colors: None,
+            },
+        );
+        let e = h
+            .call(DeviceRole::Controller, "device:x", FrontRequest::MachineRevoke { name: "mac-a".into() })
+            .await
+            .unwrap_err();
+        assert_eq!(e.code, ErrorCode::Forbidden, "{e:?}");
     }
 
     #[tokio::test]

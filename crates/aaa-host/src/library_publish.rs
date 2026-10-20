@@ -336,7 +336,9 @@ impl Host {
             }
             return Ok(Some(t.into()));
         }
-        let parts = source.iter().rev().filter_map(|c| c.to_str());
+        // 웹 올리기의 원본은 host 상태 폴더다: 사람이 고른 경로가 아니라 경로의 thread 번호를 근원으로 읽지 않는다
+        let uploaded = std::fs::canonicalize(self.state.join("library-uploads")).is_ok_and(|r| source.starts_with(r));
+        let parts = source.iter().rev().filter_map(|c| c.to_str()).filter(|_| !uploaded);
         for t in std::iter::once(name).chain(parts).flat_map(thread_numbers) {
             if known(&t)? {
                 return Ok(Some(t));

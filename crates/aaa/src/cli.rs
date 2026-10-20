@@ -1239,6 +1239,9 @@ enum MachineCmd {
     Enroll {
         #[arg(long, default_value = "10m")]
         open: String,
+        /// 등록 창을 시한 전에 닫는다(대기 중인 요청은 그대로)
+        #[arg(long, conflicts_with = "open")]
+        close: bool,
     },
     /// 승인을 기다리는 등록
     Pending,
@@ -2083,7 +2086,8 @@ fn run(cli: Cli) -> Result<ExitCode> {
             json,
             match cmd {
                 MachineCmd::List => FrontRequest::Machines,
-                MachineCmd::Enroll { open } => FrontRequest::EnrollOpen { minutes: parse_minutes(&open)? },
+                MachineCmd::Enroll { close: true, .. } => FrontRequest::EnrollClose,
+                MachineCmd::Enroll { open, .. } => FrontRequest::EnrollOpen { minutes: parse_minutes(&open)? },
                 MachineCmd::Pending => FrontRequest::EnrollPending,
                 MachineCmd::Approve { name, code } => FrontRequest::EnrollApprove { name, code },
                 MachineCmd::Revoke { name } => FrontRequest::MachineRevoke { name },
@@ -3823,7 +3827,10 @@ fn render_front(r: &FrontResponse) -> String {
                 let _ = writeln!(s, "{l}");
             }
         }
-        FrontResponse::Pending { pending } => {
+        FrontResponse::Pending { pending, open_until_ms } => {
+            if let Some(until) = open_until_ms {
+                let _ = writeln!(s, "등록 창이 열려 있다({}까지)", aaa_common::util::utc_text(*until));
+            }
             if pending.is_empty() {
                 let _ = writeln!(s, "대기 중인 등록이 없다");
             }
