@@ -823,9 +823,6 @@ pub struct ThreadView {
     /// 명시한 실행 대기 표지. timing이면 그 머신의 측정이 끝날 때까지 자동 시작이 기다릴 수 있다.
     #[serde(default)]
     pub holds: Vec<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[ts(optional)]
-    pub mission: Option<String>,
     /// 이 thread를 띄운 자동화 규칙 이름(`do.start`, FRONT_API 1.64, plan t-0475 A1). 사람이 띄운 thread와 옛 host는 생략한다.
     /// 웹 「작업」 목록이 줄 왼쪽 호박색 막대와 `자동 · <규칙 제목>` 표지로 보인다
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -1028,13 +1025,13 @@ pub const BRIEF_EXE: &str = "{{aaa:exe}}";
 pub const BRIEF_INBOX_LIST: &str = "{{aaa:inbox_list}}";
 pub const BRIEF_GIT_READS: &str = "{{aaa:git_reads}}";
 
-pub fn mission_inbox_list_command(work_dir: &str) -> String {
+pub fn work_inbox_list_command(work_dir: &str) -> String {
     let path = format!("{}/inbox", work_dir.replace('\\', "/").trim_end_matches('/'));
     format!("ls -1 -- '{}'", path.replace('\'', "'\\''"))
 }
 
 /// 자기 worktree와 읽기 옵션을 고정한다. 가변 ref/path는 옵션 종료 표지 뒤에서만 받는다.
-pub fn mission_git_read_commands(work_dir: &str) -> Vec<String> {
+pub fn work_git_read_commands(work_dir: &str) -> Vec<String> {
     let path = work_dir.replace('\\', "/");
     let Some((cwd, leaf)) = path.rsplit_once("/.aaa/") else { return vec![] };
     if cwd.is_empty() || leaf.is_empty() || leaf.contains('/') || cwd.contains('*') {
@@ -1057,9 +1054,9 @@ pub fn fill_brief(brief: &str, work_dir: &str, exe: &str) -> String {
     brief
         .replace(
             BRIEF_GIT_READS,
-            &mission_git_read_commands(work_dir).iter().map(|s| format!("- `{s}`")).collect::<Vec<_>>().join("\n"),
+            &work_git_read_commands(work_dir).iter().map(|s| format!("- `{s}`")).collect::<Vec<_>>().join("\n"),
         )
-        .replace(BRIEF_INBOX_LIST, &mission_inbox_list_command(work_dir))
+        .replace(BRIEF_INBOX_LIST, &work_inbox_list_command(work_dir))
         .replace(BRIEF_WORK_DIR, work_dir)
         .replace(BRIEF_EXE, &exe)
 }
@@ -1258,6 +1255,32 @@ pub fn slug(title: &str) -> String {
     s
 }
 
+/// FRONT_API 1.40. 자동 정리와 dry-run이 공유하는 판정 결과(크기는 실시간 원본 제외).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+pub struct LibraryPrunePlan {
+    #[ts(type = "number")]
+    pub size: u64,
+    #[ts(type = "number")]
+    pub remaining_size: u64,
+    #[ts(type = "number")]
+    pub protected_size: u64,
+    #[ts(type = "number")]
+    pub max_size: u64,
+    #[ts(type = "number")]
+    pub max_days: u64,
+    pub candidates: Vec<LibraryPruneEntry>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+pub struct LibraryPruneEntry {
+    pub project: String,
+    pub name: String,
+    #[ts(type = "number")]
+    pub size: u64,
+    /// 「기한」 또는 「용량」. 기한 정리 뒤 용량을 판정한다.
+    pub reason: String,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1394,8 +1417,8 @@ mod tests {
         let reads = fill_brief(BRIEF_GIT_READS, "/work/it's a folder/.aaa/demo-t-0001", "");
         assert!(reads.contains("git -C '/work/it'\\''s a folder' --no-pager --no-optional-locks"));
         assert!(reads.contains("--end-of-options") && reads.contains("status --short --"));
-        assert!(mission_git_read_commands("/work/other").is_empty());
-        assert!(mission_git_read_commands("/work/*/.aaa/demo-t-0001").is_empty());
+        assert!(work_git_read_commands("/work/other").is_empty());
+        assert!(work_git_read_commands("/work/*/.aaa/demo-t-0001").is_empty());
     }
 }
 
@@ -1779,165 +1802,4 @@ pub struct ProjectContext {
     /// 응답 크기 한도 안에서 오래된 것부터 싣는다: `inbox_open`보다 적을 수 있다.
     #[serde(default)]
     pub inbox: Vec<InboxItem>,
-    /// 사후 평가자(지정했을 때만)
-    #[serde(default)]
-    pub evaluator: Option<Box<EvaluatorView>>,
-    #[serde(default)]
-    pub missions: Vec<crate::MissionView>,
-}
-
-// ───────────────────────── 사후 평가자(M3, §8.13) ─────────────────────────
-
-/// 사후 평가자 상태. 평가자 thread는 thread 목록에 섞지 않고 이것으로 따로 본다.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
-pub struct EvaluatorView {
-    pub project: String,
-    pub thread: ThreadView,
-    /// 세션이 돌고 있다(아니면 `thread restart`로 다시 띄운다)
-    pub running: bool,
-    /// 마지막으로 넘긴 사건 seq
-    #[ts(type = "number")]
-    pub cursor: u64,
-    /// 아직 넘기지 않은 사건 수(평가자 자신의 사건 제외)
-    pub pending: u32,
-    /// 넘긴 사건 묶음 수
-    pub batches: u32,
-    #[ts(type = "number | null")]
-    pub last_batch_ms: Option<u64>,
-    /// 받은 평가 기록 수
-    pub evaluations: u32,
-    /// 채택·보류를 정하지 않은 개선안 수
-    pub undecided: u32,
-}
-
-/// 평가자가 쓰는 평가 기록(`library/evaluations/<이름>.json`). host가 검사해 받는다.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
-pub struct EvaluationDoc {
-    /// 평가한 thread ID
-    #[serde(default)]
-    pub targets: Vec<String>,
-    /// 근거로 읽은 사건 묶음 파일 이름
-    #[serde(default)]
-    pub batches: Vec<String>,
-    /// 흐름 효율 판정 한두 줄
-    pub summary: String,
-    /// 단계별 시간
-    #[serde(default)]
-    pub stages: Vec<EvalStage>,
-    /// 재작업(횟수·원인)
-    #[serde(default)]
-    pub rework: Vec<String>,
-    /// 막힌 곳(기다린 것과 그 시간)
-    #[serde(default)]
-    pub blocked: Vec<String>,
-    #[serde(default)]
-    pub tool_issues: Vec<String>,
-    /// 결함을 누가 어느 단계에서 잡았나
-    #[serde(default)]
-    pub defects: Vec<EvalDefect>,
-    #[serde(default)]
-    pub proposals: Vec<Proposal>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
-pub struct EvalStage {
-    pub thread: String,
-    pub stage: String,
-    /// 걸린 시간
-    #[serde(default)]
-    pub minutes: Option<Minutes>,
-}
-
-/// 분. 평가자가 쓴 소수는 반올림해 받는다.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, TS)]
-pub struct Minutes(pub u32);
-
-impl<'de> Deserialize<'de> for Minutes {
-    fn deserialize<D: serde::Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
-        let m = f64::deserialize(d)?;
-        if !(0.0..=1e6).contains(&m) {
-            return Err(serde::de::Error::custom(format!("minutes 범위 밖: {m}")));
-        }
-        Ok(Minutes(m.round() as u32))
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
-pub struct EvalDefect {
-    pub what: String,
-    /// 잡은 쪽(사람·coordinator·thread·CI·E2E …)
-    #[serde(default)]
-    pub found_by: String,
-    #[serde(default)]
-    pub stage: String,
-}
-
-/// 개선안 하나. `decision`은 host가 채운다(평가자가 쓴 값은 버린다).
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
-pub struct Proposal {
-    pub id: String,
-    pub text: String,
-    /// 예상 효과
-    #[serde(default)]
-    pub effect: String,
-    /// 대상 도구
-    #[serde(default)]
-    pub tool: String,
-    #[serde(default)]
-    pub decision: Option<ProposalDecision>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
-pub struct ProposalDecision {
-    pub adopted: bool,
-    pub by: String,
-    #[ts(type = "number")]
-    pub at_ms: u64,
-    pub note: Option<String>,
-}
-
-/// 받은 평가 기록 하나
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
-pub struct EvaluationView {
-    pub project: String,
-    /// 평가자가 정한 파일 이름(프로젝트 안에서 하나)
-    pub id: String,
-    /// 평가자 thread ID
-    pub evaluator: String,
-    #[ts(type = "number")]
-    pub created_at_ms: u64,
-    /// 사람이 읽는 본문(프로젝트 폴더 기준 `evaluations/<id>.md`)
-    pub file: String,
-    pub doc: EvaluationDoc,
-}
-
-/// 평가 기록 이름(파일 이름): 영문·숫자·`-`·`_`, 64자까지
-pub fn valid_evaluation_id(s: &str) -> bool {
-    !s.is_empty() && s.len() <= 64 && s.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
-}
-
-/// FRONT_API 1.40. 자동 정리와 dry-run이 공유하는 판정 결과(크기는 실시간 원본 제외).
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
-pub struct LibraryPrunePlan {
-    #[ts(type = "number")]
-    pub size: u64,
-    #[ts(type = "number")]
-    pub remaining_size: u64,
-    #[ts(type = "number")]
-    pub protected_size: u64,
-    #[ts(type = "number")]
-    pub max_size: u64,
-    #[ts(type = "number")]
-    pub max_days: u64,
-    pub candidates: Vec<LibraryPruneEntry>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
-pub struct LibraryPruneEntry {
-    pub project: String,
-    pub name: String,
-    #[ts(type = "number")]
-    pub size: u64,
-    /// 「기한」 또는 「용량」. 기한 정리 뒤 용량을 판정한다.
-    pub reason: String,
 }

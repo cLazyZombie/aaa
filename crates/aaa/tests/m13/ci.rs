@@ -91,7 +91,7 @@ fn ci_events(w: &World) -> Vec<Value> {
 }
 
 #[test]
-fn ci_conditional_failure_mission_restart_catchup_and_outage() {
+fn ci_conditional_failure_restart_catchup_and_outage() {
     let mut w = world_setup("tick_secs=1\nci_poll_secs=1\npr_poll_secs=3600\noutage_secs=0\n", false, fake_ci);
     w.add_remote();
     // 원격 agent가 재시작 뒤에도 같은 host 주소로 붙는다.
@@ -108,21 +108,11 @@ fn ci_conditional_failure_mission_restart_catchup_and_outage() {
             .unwrap()
             .success()
     );
-    std::fs::create_dir_all(project.join("missions")).unwrap();
-    std::fs::write(project.join("missions/ci-watch.md"),"+++\nprofile=\"resumable\"\nmachine=\"labB\"\nbatch_s=0\nmin_gap=\"1s\"\nmax_wakes=20\nmax_minutes=15\nreset_after_wakes=3\nwithdrawal=\"none\"\n+++\nCI 입력을 읽고 분류한다.\n").unwrap();
-    let approved = w.h.in_terminal(&["mission", "approve", "demo", "ci-watch"], &[("그대로 입력한다:", "ci-watch")], T);
-    assert!(!approved.contains("일치하지"), "{approved}");
-    w.h.ok(&["mission", "start", "demo", "ci-watch"]);
-    let mission = wait_for("임무 brief 전달", T, || {
-        let m = w.h.ok(&["mission", "show", "demo", "ci-watch"]);
-        (m["mission"]["thread"]["brief"] == "delivered").then_some(m)
-    });
-    let work = PathBuf::from(mission["mission"]["thread"]["work_dir"].as_str().unwrap());
     let mut flow = w.lab.follow("ci-flow", &w.h, "demo");
     std::fs::write(
         project.join("routines/ci-main.md"),
         format!(
-            "+++\non=\"ci\"\nrepo={:?}\nbranches=[\"main\"]\nmission=\"ci-watch\"\n+++\nCI 실패를 분류한다.\n",
+            "+++\non=\"ci\"\nrepo={:?}\nbranches=[\"main\"]\n+++\nCI 실패를 분류한다.\n",
             w.repo.file_name().unwrap().to_str().unwrap()
         ),
     )
@@ -136,26 +126,13 @@ fn ci_conditional_failure_mission_restart_catchup_and_outage() {
     assert_eq!(ci_events(&w).len(), count, "304는 흐름 사건도 만들지 않는다");
     write_runs(&stub, "red", vec![run(2, 'b', "failure"), run(1, 'a', "success")]);
     phase(&stub, "red");
-    flow.until("CI 실패 임무 깨움", T, |e| e["kind"] == "mission_wake");
-    wait_for("임무 CI 입력 파일", T, || {
-        std::fs::read_dir(work.join("inbox")).ok()?.filter_map(Result::ok).find_map(|e| {
-            let v: Value = serde_json::from_slice(&std::fs::read(e.path()).ok()?).ok()?;
-            (v["source"] == "ci").then_some(v)
-        })
-    });
-    w.h.wait_output(mission["mission"]["thread"]["pane"].as_str().unwrap(), "got: [aaa 임무 ci-watch]", T);
+    flow.until("CI 실패 사건", T, |e| e["kind"] == "ci_failed");
     quiet_barrier(&w, &stub, "red");
     let items = ci_items(&w, true);
     assert_eq!(items.len(), 1);
     let body = items[0]["body"].as_str().unwrap();
     assert!(body.contains("t-0042") && body.contains("t-0043") && body.contains("test failure tail"));
     assert!(body.contains("\"truncated\":true"));
-    assert_eq!(w.h.ok(&["mission", "show", "demo", "ci-watch"])["mission"]["wakes_today"], 1);
-    assert_eq!(
-        w.h.ok(&["mission", "show", "demo", "ci-watch"])["mission"]["pending"],
-        1,
-        "처리하지 않은 최초 입력 한 건 외의 새 CI 입력이 없어야 한다"
-    );
     let delivery_runs = |w: &World| -> Vec<Value> {
         w.h.ok(&["routine", "runs", "demo", "ci-main"])["runs"]
             .as_array()
@@ -172,12 +149,6 @@ fn ci_conditional_failure_mission_restart_catchup_and_outage() {
     wait_for("재연결", T, || (w.h.connected("labA") && w.h.connected("labB")).then_some(()));
     quiet_barrier(&w, &stub, "red");
     assert_eq!(ci_items(&w, true).len(), 1);
-    assert_eq!(w.h.ok(&["mission", "show", "demo", "ci-watch"])["mission"]["wakes_today"], 1);
-    assert_eq!(
-        w.h.ok(&["mission", "show", "demo", "ci-watch"])["mission"]["pending"],
-        1,
-        "처리하지 않은 최초 입력 한 건 외의 새 CI 입력이 없어야 한다"
-    );
     assert!(calls(&stub).iter().any(|c| {
         c["args"]
             .as_array()
@@ -192,12 +163,6 @@ fn ci_conditional_failure_mission_restart_catchup_and_outage() {
     quiet_barrier(&w, &stub, "same");
     assert_eq!(ci_items(&w, true).len(), 1);
     assert!(ci_items(&w, true)[0]["body"].as_str().unwrap().contains(&"c".repeat(40)));
-    assert_eq!(w.h.ok(&["mission", "show", "demo", "ci-watch"])["mission"]["wakes_today"], 1);
-    assert_eq!(
-        w.h.ok(&["mission", "show", "demo", "ci-watch"])["mission"]["pending"],
-        1,
-        "처리하지 않은 최초 입력 한 건 외의 새 CI 입력이 없어야 한다"
-    );
     assert_eq!(w.h.ok(&["routine", "runs", "demo", "ci-main"])["runs"][0]["detail"], "같은 실패 집합");
     // 꺼진 사이 실패→회복을 함께 받으면 새 깨움 없이 앞 CI 항목을 닫는다.
     w.lab.kill("host2");
@@ -208,12 +173,6 @@ fn ci_conditional_failure_mission_restart_catchup_and_outage() {
     quiet_barrier(&w, &stub, "fixed");
     assert!(ci_items(&w, false).is_empty());
     assert!(ci_items(&w, true).iter().all(|i| i["event"] == "CI fixed"));
-    assert_eq!(w.h.ok(&["mission", "show", "demo", "ci-watch"])["mission"]["wakes_today"], 1);
-    assert_eq!(
-        w.h.ok(&["mission", "show", "demo", "ci-watch"])["mission"]["pending"],
-        1,
-        "처리하지 않은 최초 입력 한 건 외의 새 CI 입력이 없어야 한다"
-    );
     assert!(ci_events(&w).iter().any(|e| e["kind"] == "ci_fixed"));
     phase(&stub, "outage");
     wait_for("CI 조회 outage", T, || {
@@ -250,7 +209,6 @@ fn ci_conditional_failure_mission_restart_catchup_and_outage() {
             .cloned()
     });
     // CI 작업 때문에 새로운 thread를 만들거나 기존 착지 thread를 되살리지 않는다.
-    assert_eq!(w.h.ok(&["thread", "list", "demo", "--role", "evaluator"])["threads"].as_array().unwrap().len(), 1);
     assert_eq!(w.h.ok(&["thread", "list", "demo"])["threads"].as_array().unwrap().len(), 0);
 }
 

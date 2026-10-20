@@ -247,9 +247,9 @@ web/e2e/specs/NN-기능.mjs  기능별 단계(01-http-pwa … 19-turn-alerts). e
 - 신호 시험 금지 작업에서는 workspace 전체 test·기존 lab 기반 m13·웹 E2E를 실행하지 않는다(그 실험실의 정리가 신호를 쓴다).
   fmt·전체 target build/clippy·deps·위 경계 시험·공개 검사는 실행하고, 제한한 검증 범위를 보고서에 적는다.
 
-## 특수 임무 시험(2단계, §8.205)
+## 제거된 특수 기능
 
-`cargo test -p aaa-host -p aaa-agent mission`의 host 시험은 OS 프로세스나 신호를 새로 쓰지 않는다. agent의 Git 권한 keeper는 자기 임시 저장소의 Git 자식 명령만 실행하며 신호·sleep은 쓰지 않는다. 실제 host·DB·frame owner에 가짜 agent를 연결해 승인/적용 사본, 범위·debounce·예산, Kill 전 durable 표지·끝남 사건 뒤 새 대화, 막힘/끝남, mission post·쌍 한도, 무한대/철수 제안, 기존 사용량 값에 따른 입력/cursor 보존과 reset 뒤 재개, 옛 상대 무송신을 본다. agent에서는 상태 파일의 처리 셈·조각 이동/hash와 Claude SessionStart 포인터를 본다. 재부팅 중 pause 보존·reset 후보 profile 일치, 같은 repo 경로의 다른 머신 승인, DB 저장 실패 시 routine hash/입력 원자성과 reset·깨움 무전송도 검사한다. 기존 m13의 evaluator_flow·routines·reboot_resumes_threads와 웹 12의 「특수 임무」 단계는 같은 공식 전체 gate에 남긴다. 새로운 실제 Kill 시험은 만들지 않는다.
+임무 실행·reset·평가자·특수 패널 전용 시험은 A4에서 제품 계약과 함께 제거했다. 파일 전송과 A1/A2 keeper는 아래 「자동화 A4」의 owner로 옮겼다.
 
 ## Codex 신뢰·메시지 받음 회귀(§8.206)
 
@@ -634,37 +634,8 @@ L2 결함 검증은 이전 root 가져오기 생략, 재시작 전 applied 변�
 
 ## 순수 TOML·공통 자동화(L4)
 
-- host automation keeper는 옛/새 형식의 같은 조건·동작·명령 승인 값, 동명 양쪽 차단, 잘못된 키/둘 이상의 조건·글 칸, Unicode 위치 오류, 최종/중간 symlink 거부를 확인한다. 스키마는 Rust 생성값과 고정 산출물을 비교한다.
-- 변환은 긴 글·원본 보존·임무 조건 분리·동등성·이름 충돌 전체 무변경·재실행 무음을 확인한다. 실제 host 변환은 옛 mission cursor를 새 조건에 넘기고 변환 뒤 사건을 한 번 받는지 본다. 예산/간격/usage keeper와 실제 DB 재오픈은 pending·하루 횟수 보존을 검사한다. SQLite 저장 실패는 source hash/cursor나 통지 표식만 먼저 전진시키지 않아야 한다.
-- 기존 routine·PR·CI/Git·임무 m13을 유지한다. source에서 공통 큐로 인계한 뒤 실제 action pass의 자료 보존·한 번 전달을 관찰한다. CI 회복이 지연된 실패 대기를 취소하는 회귀를 포함한다. 웹 E2E34는 CLI 변환→실제 목록 출처 변경·새 파일 enabled만 편집·Reader의 변환 차단도 확인한다.
-- 운영 상한 안내 회귀는 실제 mission_tick→12/12 안내→done→논리90/180/270초 tick→완료 기록 정리→DB 재오픈을 거쳐 같은 날 무안내를 확인한다. 다음 날 예산 초기화 때 무안내, 다시 상한 도달 때 한 번, 구판 완료 항목 이행도 검사한다. 임무가 아닌 helper 호출만으로 반복 결함을 검사하지 않는다.
-- 결함 심기는 당일 표식 제거와 알림보다 표식 먼저 쓰기를 독립 적용해 각각 done 뒤 1→2와 DB 실패 확정 단언 RED를 확인하고 원본 bytes/mtime 복구 뒤 PASS한다. 다른 변형도 승인 정규화·동명 차단·공통 상한·변환 인계 경계에서 기존 keeper가 실제 실패해야 한다. 원래 실패 증거를 보존하고 최종 ci-local·check-public은 복구 뒤 수행한다.
-
-
-### L4 기본 제한 없음(사용자23:3x)
-
-- 생략/0인 임무와 공통 규칙이 기본12/20 상한으로 막히는 첫 RED를 보존한 뒤 무제한을 확인한다. 숫자0 최소 간격도 받는다. 명시한 옛 양수 상한·사용량 대기는 유지한다.
-- 실제 임무를 상한 대기·기존 inbox51건으로 만들고 파일의 상한/간격을 없앤다. repo 재승인 없이 같은 tick에 보존 입력 한 번 깨움, 2시간 뒤 시간/철수 안내 없음, 기본 host 동시 상한 없이 승인 임무3개 시작을 검사한다. 낮은 frame의 text+Enter는 한 번 깨움의 두 요청이므로 고정 깨움 본문을 센다.
-- 이전 예산 증가 승인 거부 기대는 새 사용자 원칙으로 바꾼다. 실제 repo 경로 변경의 승인 거부·명시 거절 상태에서 재시작 전 Kill 없음은 유지한다. host max_pending을 공유하던 사후 평가자의 0도 무제한으로 읽어, 설정 변경이 전달을 전부 막지 않는지 기존 회귀로 확인한다.
-
-
-### L4 운영 reload·임무 권한 후속
-
-- 명시 하루 상한1/1에서도 승인된 동일 상한 새 본문의 reload가 Kill→종료 확인→새 후보 적용으로 이어지는지 본다. 수리 전 cap의 앞선 return으로 Kill0(기대1) RED를 보존한다. Working 때는 적용 예약과 이유를 즉시 보이고, 실제 작업 종료·안전한 Idle 전에는 Kill/새 대화가 없어야 한다. 예약 뒤 다른 파일 판·pause/확인창/초안/보는 화면도 구분한다.
-- 사용자의23:5x 결정에 따라 이전 manual 강제 기대를 교체한다. 기존 host 승인 start와 reset frame 시험은 실제 ThreadPrepare/ThreadRebrief의 profile args가 일반 thread safety 결과와 같은지 검사한다. agent launch keeper는 Claude/Codex 각각 yolo off/on, launch/resume argv, hook/자기 문맥/일반 thread 분리/링크 쓰기 거부를 유지한다. 강제 manual 또는 bypass 차단이 남아 있으면 RED여야 한다.
-- 운영 파일·승인 기록·현재 pane은 사용하지 않는다. 가짜 frame owner와 임시 작업 폴더에서만 인자를 확인한다.
-
-
-- 자정 경계 회귀: 기존 mission_debounce 예산 시험은 23:59대 now+60001이 다음 날짜가 되어 같은 날 상한 기대가 실패했다. 첫 로그를 보존하고 그 시험의 논리 시각·reset 기준을 다음 날 정오에 고정해 같은 예산 날짜의 간격·범위·상한을 검사한다. 날짜 초기화는 별도 notice/day keeper가 계속 소유한다. 기대값이나 시한을 늘리지 않는다.
-- 과거 최소 execpolicy 검증은 manual 모드의 증거다. 사용자23:5x 뒤에는 추가 allow-list와 실행 문맥만 유지하고 실제 승인/sandbox 모드는 일반 thread safety 결과가 정본이다. 임무만 push가 harness에서 막힌다고 가정하지 않으며 금지는 임무 지침에 남는다.
-
-
-### L4 재개·시간 상한·무제한 표시 후속
-
-- `resumed_mission_time_budget_counts_work_in_the_wake_not_elapsed_wall_time`은 실제 host·DB와 frame owner에서 누적19분/옛 깨움2시간/오늘 깨움0 재개를 검사한다. 경과 시간식은 첫 무알림 단언 RED여야 한다. 관찰 작업59분 무음→멈춤 시간 제외→61분 한 번 안내→done 뒤 무반복과 별도 실제 새 입력의 깨움별 셈 초기화를 검사한다. 실제 input hook과 논리 시각을 섞지 않도록 새 전달 사례는 새 임무의 실제 시각에서 시작한다.
-- 기존 reload keeper에 pause 상태의 reload/restart 예약과 멈춤 이유, 무Kill/무Spawn, resume 뒤 동일 후보 적용을 추가한다. 기존 상한 제거 keeper는 resume 전에 상한0 반영과 pause 보존을 함께 검사한다.
-- 기존 변환 인계 keeper는 변환 직후 첫 새 source 판정 전에 사건을 넣어 실제 전달 한 번·과거 무재전달을 검사한다. DB 표식 유무만으로 통과시키지 않는다. 옛 mission 사건 조건을 함께 실행하거나 새 cursor seed를 제거하면 실패해야 한다.
-- 웹12의 실제 특수 패널은 생략·옛 최대 정수·상한3/60을 읽어 무제한 분모 없음과 명시 N/M을 검사한다. 실제 CLI m13 임무의 list/show도 같은 규칙을 검사한다. 큰 수를 무제한 생성 예시로 쓰지 않는다. 시간 상한은 깨움별 작업에 붙이고 누적 작업은 분리한다.
+`cargo test -p aaa-host automation::`는 실제 파일 파싱·스키마·안전한 본문 경로·이름 충돌·원본 보존·미리보기 hash·Reader 거부와 공통 큐의 예산·전달 모름을 검사한다.
+CI/Git의 source outbox·중복 억제·재시작·outage는 기존 owner를 유지한다. 상주 실행과 reset은 A4에서 제거했으며 옛 파일·저장 형식은 변환 owner로만 읽는다.
 
 ## 웹 배포 조회 카드 L4 A안(§8.293)
 
@@ -837,7 +808,7 @@ L2 결함 검증은 이전 root 가져오기 생략, 재시작 전 applied 변�
 - `cargo test -p aaa --test m13 pr_environment::`: 실제 host↔agent↔가짜 gh에서 미게시 branch의 호출 0, 게시 branch 탐색, 미게시 branch의 명시한 보고 PR 추적, 미인증의 inbox 0·머신 상태·자동 사용 재개, 실행 파일 ENOENT의 조용한 생략, 일반 API 오류의 장애·회복 경계를 본다. 앞의 미게시 thread가 사용 불가 상태 때문에 뒤의 인증 회복 조회를 막지 않아야 한다. 호출 기록의 뒤 pass 시작, 보고 수신, 머신 상태로 기다리며 고정 sleep은 없다.
 - gh 없는 경계는 `cargo test -p aaa-agent --lib gh::tests::`의 실제 실행 가능 파일 검색(사용자 PATH·서비스 fallback·아무 실행 파일도 없음)과 위 ENOENT 통합 시험이 나누어 맡는다. ENOENT는 시험 gh의 없는 interpreter로 만들며 운영 gh·로그인·시스템 설정에 닿지 않는다.
 - 기존 `project_lifecycle`의 PR 청소·`pr_followup`·`merged_pr_resolves_the_thread`·`merged_resolve_waits_for_the_routine_prompt`·`resolve_looks_up_the_pull_request_once_more`는 가짜 GitHub가 게시된 branch라고 답할 때 그 원격 참조도 fixture에 둔다. 기존 PR 상태·후속 메시지·병합·정리 단언은 유지한다.
-- `cargo test -p aaa --test m13 ci_conditional_failure_mission_restart_catchup_and_outage`: 기존 HTTP 실패·중복 억제·복구에 이어 별도 인증 실패(gh 종료 코드 4)의 CI outage를 확인한다. PR 생략 때문에 CI 실패를 숨기면 안 된다.
+- `cargo test -p aaa --test m13 ci_conditional_failure_restart_catchup_and_outage`: 기존 HTTP 실패·중복 억제·복구에 이어 별도 인증 실패(gh 종료 코드 4)의 CI outage를 확인한다. PR 생략 때문에 CI 실패를 숨기면 안 된다.
 - 수정 전에는 미게시 branch의 불필요 호출과 미인증 PR outage가 각각 실패했다. 게시 조건 제거·사용 불가 오류를 다시 실패로 전달·머신 상태 저장 제거·CI outage 전달 제거를 각각 심어 keeper 실패를 확인하고 원본 bytes로 복원한다. 마지막 검증은 전체 ci-local과 check-public이다.
 
 
@@ -873,7 +844,7 @@ L2 결함 검증은 이전 root 가져오기 생략, 재시작 전 applied 변�
 
 ## 자동화 A2: 이어 보내기·기억·짧은 끝내기(t-0504)
 
-- host의 기존 `mission::tests::start` fixture로 최근 열린 thread, propose의 이어 보내기, 33건의 32+1 전달, receipt, Codex 거부와 보고 첨부의 64KiB와 단일 입력의 512KiB 초과 거부를 검사한다. 종료 owner 판정표는 표지 6종·보고/입력 시각·활동·내구/파일 입력·검토/쉼을 교차한다. 기존 report boundary keeper는 자동화 완료의 앱 안 알림 없음과 확인 필요 알림 유지를 함께 본다.
+- host의 `automation::start_tests` fixture로 최근 열린 thread, propose의 이어 보내기, 33건의 32+1 전달, receipt, Codex 거부와 보고 첨부의 64KiB와 단일 입력의 512KiB 초과 거부를 검사한다. 종료 owner 판정표는 표지 6종·보고/입력 시각·활동·내구/파일 입력·검토/쉼을 교차한다. 기존 report boundary keeper는 자동화 완료의 앱 안 알림 없음과 확인 필요 알림 유지를 함께 본다.
 - m13 `ci::automation_ci_reuses_open_thread_and_closes_only_after_new_report_with_memory`: 서로 다른 fake CI 두 건을 batch에 보존 → 한 thread → 셋째 Queue 전달 → 옛 완료로 끝내지 않음 → 새 완료 뒤 resolve/기억 사본 → 다음 thread 기억 → 전달 모름/무재전송. FIFO로 화면 진행을 허용하며 host가 Working/Idle를 관측한 뒤 다음 단계로 간다.
 - `AAA_TEST_AUTOMATION_CLOCK_FILE`에 Unix ms를 쓰면 자동화 batch·close_idle의 판정 시계만 움직인다. 실제 보고/입력 시각과 agent 활동 시각은 바꾸지 않는다. m13 Lab의 설정 폴더 안 파일만 사용한다. 고정 sleep·timeout 연장은 없다.
 - E2E49 `49-automation-memory`: 실제 report/Idle 사건으로 기억/크기/마지막 갱신 thread와 끝남 예정 표시를 본다. 데스크톱·390px에서 상세를 열고 캡처하며 가로 넘침과 자동화 완료 droplet 없음도 검사한다.
@@ -901,3 +872,10 @@ journal·로그·화면에 원문·8바이트 조각·base64/URL/JSON 변형이 
   - spec이 기록에 assistant usage 줄을 더하면 게이지 글이 바뀔 때까지 `domIs`로 기다린다(agent는 2초마다 읽는다).
   - 숨김은 `data-hidden`과 게이지·글 칸 폭이 같은지로 본다. 정리 단추는 pane이 받은 bytes와 입력칸 잠금 풀림으로 본다. 휴대폰은 WebKit `pairDevice`. 고정 sleep은 없다.
   - `AAA_E2E_SHOTS`를 주면 데스크톱·iPhone 빈/치는 중·펼침·정리 중·정리 뒤 그림을 남긴다.
+
+## 자동화 A4: 특수 실행 제거(t-0507)
+
+- `cargo test -p aaa --test m13 automation_start::legacy_mission_files_are_inert_and_convert_with_memory_and_pending_input -- --exact`: 실제 host·agent·CLI·Front API에서 옛 파일 비실행, 완료 처리 뒤에도 한 번인 제거 안내, doctor 진단, mission_list 빈 목록/mission_start 제거 오류, 열린 옛 evaluator 표시, 미리보기 무쓰기, 기억·이력 hash 회수, 원본 보존·대기 입력 이전·tick 뒤 무복제를 확인한다.
+- `cargo test -p aaa-host previous_agent_keeps_input_and_memory_transfer_with_legacy_file_frames --lib`: AGENT_LINK 1.9/mission.v1 fake가 입력 쓰기와 기억 주입·회수·처리 여부 조회를 받는다. 새 WorkFile 태그가 옛 상대에 닿으면 실패한다. 실제 agent의 파일·hash·symlink keeper는 `threads::work_file_tests`가 계속 맡는다.
+- E2E26은 패널 셋과 저장된 special→work를, E2E40은 승인 규칙+막힌 규칙 배지와 기존 변환/Reader/큐 풀기를 검사한다. E2E48·49는 기존 자동화 줄과 기억을 유지한다. 캡처는 데스크톱·390px, 실제 host·agent를 사용한다.
+- `Role::Evaluator`와 구 Front/Agent DTO는 한 판 호환 경계에만 남는다. 옛 outbox의 모르는 칸과 ThreadRec의 원본 데이터는 변환 전까지 보존하며, L0 snapshot keeper의 기대 문서는 바꾸지 않는다.

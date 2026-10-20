@@ -876,36 +876,6 @@ impl Db {
         Ok(v as u64)
     }
 
-    /// 평가 기록(받은 것은 `open`·`decided`, 받지 않은 것은 `invalid`)
-    pub fn eval_put(&self, project: &str, id: &str, state: &str, sha256: &str, data: &str) -> Result<()> {
-        let c = self.conn.lock().unwrap();
-        c.execute(
-            "INSERT INTO evaluations(project,id,state,sha256,data,created_at) VALUES(?1,?2,?3,?4,?5,?6)
-             ON CONFLICT(project,id) DO UPDATE SET state=excluded.state, data=excluded.data",
-            params![project, id, state, sha256, data, aaa_common::util::now_ms() as i64],
-        )?;
-        Ok(())
-    }
-
-    /// (state, sha256, data)
-    pub fn eval_get(&self, project: &str, id: &str) -> Result<Option<(String, String, String)>> {
-        let c = self.conn.lock().unwrap();
-        Ok(c.query_row("SELECT state,sha256,data FROM evaluations WHERE project=?1 AND id=?2", [project, id], |r| {
-            Ok((r.get(0)?, r.get(1)?, r.get(2)?))
-        })
-        .optional()?)
-    }
-
-    /// (state, data), 받은 순서대로
-    pub fn eval_list(&self, project: &str) -> Result<Vec<(String, String)>> {
-        let c = self.conn.lock().unwrap();
-        let mut st = c.prepare(
-            "SELECT state,data FROM evaluations WHERE project=?1 AND state!='invalid' ORDER BY created_at, id",
-        )?;
-        let rows = st.query_map([project], |r| Ok((r.get(0)?, r.get(1)?)))?.collect::<rusqlite::Result<Vec<_>>>()?;
-        Ok(rows)
-    }
-
     /// 질문·메시지 기록(JSON). `table`은 questions·messages만.
     pub fn rec_put(&self, table: &str, id: &str, state: &str, data: &str, extra: (&str, &str)) -> Result<()> {
         let c = self.conn.lock().unwrap();
@@ -1484,66 +1454,7 @@ impl Db {
     }
 }
 
-impl Db {
-    pub(crate) fn post_pair_count(&self, p: &str, sender: &str, to: &str, since: u64) -> Result<u32> {
-        Ok(self.conn.lock().unwrap().query_row("SELECT COUNT(*) FROM posts WHERE project=?1 AND sender=?2 AND created_ms>=?3 AND json_extract(data,'$.to')=?4",params![p,sender,since,to],|r|r.get(0))?)
-    }
-    pub(crate) fn mission_posts(&self, project: &str, name: &str) -> Result<Vec<aaa_proto::PostEnvelope>> {
-        let c = self.conn.lock().unwrap();
-        let mut st=c.prepare("SELECT data FROM posts WHERE project=?1 AND json_extract(data,'$.to')=?2 AND json_extract(data,'$.state')='pending' ORDER BY seq")?;
-        let rows = st
-            .query_map(params![project, format!("mission:{name}")], |r| r.get::<_, String>(0))?
-            .collect::<rusqlite::Result<Vec<_>>>()?;
-        rows.iter().map(|s| serde_json::from_str(s).map_err(Into::into)).collect()
-    }
-    pub(crate) fn mission_post_delivered(&self, project: &str, id: &str) -> Result<()> {
-        self.conn.lock().unwrap().execute("UPDATE posts SET data=json_set(data,'$.state','delivered') WHERE project=?1 AND json_extract(data,'$.id')=?2",params![project,id])?;
-        Ok(())
-    }
-}
-
-impl Db {
-    /// 임무 routine의 출력 확정과 입력 기록은 함께 commit한다. 어느 쪽만 남으면 같은 출력을 놓친다.
-    pub(crate) fn mission_routine_commit(
-        &self,
-        project: &str,
-        id: &str,
-        status: &str,
-        data: &str,
-        key: &str,
-        hash: &str,
-    ) -> Result<()> {
-        let mut c = self.conn.lock().unwrap();
-        let tx = c.transaction()?;
-        let saved = tx.execute(
-            "UPDATE threads SET status=?3,data=?4,updated_at=?5 WHERE project=?1 AND id=?2",
-            params![project, id, status, data, aaa_common::util::now_ms() as i64],
-        )?;
-        anyhow::ensure!(saved == 1, "routine 대상 임무가 없어졌다");
-        tx.execute(
-            "INSERT INTO meta(key,value) VALUES(?1,?2) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
-            [key, hash],
-        )?;
-        tx.commit()?;
-        Ok(())
-    }
-
-    /// routine·schedule 입력 번호. 같은 host의 여러 임무에서 겹치지 않는다.
-    pub(crate) fn mission_next_input(&self, prefix: &str) -> Result<String> {
-        let mut c = self.conn.lock().unwrap();
-        let tx = c.transaction()?;
-        let last: Option<String> =
-            tx.query_row("SELECT value FROM meta WHERE key='mission_input_seq'", [], |r| r.get(0)).optional()?;
-        let seq = last
-            .and_then(|s| s.parse::<u64>().ok())
-            .unwrap_or(0)
-            .checked_add(1)
-            .ok_or_else(|| anyhow::anyhow!("임무 입력 번호가 찼다"))?;
-        tx.execute("INSERT INTO meta(key,value) VALUES('mission_input_seq',?1) ON CONFLICT(key) DO UPDATE SET value=excluded.value",[seq.to_string()])?;
-        tx.commit()?;
-        Ok(format!("{prefix}-{seq:012}"))
-    }
-}
+impl Db {}
 
 #[cfg(test)]
 mod input_tests {

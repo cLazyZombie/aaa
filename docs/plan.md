@@ -6061,3 +6061,12 @@ L4 후속(10-20 00시 사용자 관찰): 멈춤 상태의 후보 예약과 재�
   - 웹 유닛 `contextUsage.test.mjs`(%·k·1050k·숨김 규칙)·`inputReceipt.test.mjs`(명령 한 줄 판정).
   - 웹 E2E `50-context-gauge`: 가짜 Claude가 실제 꼴 usage·`compact_boundary` 줄을 적고, 실제 agent가 읽는다. 38% → 230k → 84k → 86%를 본다. 치는 중 숨김에서는 게이지·글 칸 폭이 그대로이고, 86%는 보이며, 비면 다시 보인다. 펼침, 작업 중 단추 꺼짐과 까닭, 단추 → pane이 `/compact` bytes를 받고 입력칸이 풀리는 것, 정리 중 표지, 14%와 구분선 「· 164k → 28k」, iPhone Safari도 본다.
   - 결함 되심기: 명령 판정을 끄면 E2E가 「입력칸 잠금 풀림」에서 실패했고, 되돌린 뒤 통과했다.
+
+### 8.323 임무·평가자·특수 패널 제거 A4(10-20, t-0507)
+
+- **범위.** 확정 기획 t-0475 §5.1 A4·§4.2. 임무 실행·reset·평가자·전용 권한·do.wake·host 임무 상한·특수 패널을 제거한다. 일반 자동화의 시작·이어 보내기·기억·짧은 종료는 유지한다. 운영 이관 A3는 coordinator가 완료한 뒤 착지한다.
+- **호환.** FRONT_API 1.68에서 옛 요청은 한 판 동안 제거 오류, mission_list는 빈 목록이다. ProjectContext와 ThreadView에서 특수 필드를 제거하고 옛 DTO는 legacy_special에 격리한다. Role::Evaluator 값과 evaluations 표는 보존하며 새 실행에는 쓰지 않는다. 열린 옛 행은 일반 목록에 표시하고 시작 때 inbox로 안내한다. 일반 ticker의 저장이 변환 전 원본 필드를 버리지 않는다.
+- **파일 전송.** AGENT_LINK 1.10의 work_files.v1은 WorkFile 이름을 사용한다. 1.9 agent는 기존 파일 태그로 입력·기억·미처리 여부를 전송한다. 전용 mission_permissions와 SessionStart 포인터를 제거한다. 일반 safety와 기존 파일 경계·hash 검사를 유지한다.
+- **변환.** 옛 임무 파일은 실행하지 않고 inbox 한 번과 doctor files에 제거 안내를 낸다. AutomationConvert의 미리보기·hash·원본 사본을 유지하며 do.start(reuse=open, memory)·brief·기억으로 옮긴다. 기억·이력·pending·cursor와 전달 모름을 이전하고 파일 공개 전 journal로 중단 후 큐 이전을 마친다. 옛 source outbox도 변환 전 보존한다. 서로 다른 조건은 각각 규칙이 되며 원본 pending은 한 규칙에 한 번 옮긴다. 규칙은 시작 범위 승인 뒤 켠다.
+- **웹.** 활동 막대는 작업·머신·자동화 셋이며 저장된 special은 work다. 자동화 배지는 막힌 큐·승인 필요 규칙을 중복 없이 센다. 옛 evaluator도 작업 목록에 표시한다. 데스크톱·휴대폰의 전후 캡처와 실제 상호작용은 thread library에 둔다.
+- **검증.** 기존 A1/A2 keeper는 automation::start_tests로 옮긴다. m13이 옛 파일 비실행·한 번 안내·Front 제거 응답·미리보기 무쓰기·기억/이력/큐 이전을 검사하고 1.9 fake가 옛 파일 프레임만 받는지 확인한다. N-1 변환을 끄거나 pending 이전을 빼면 각각 keeper가 실패하며 원본 bytes를 복구한다. E2E26/40/48/49와 전체 ci-local·deps·TS 생성물·automation schema·공개 검사를 실행한다.

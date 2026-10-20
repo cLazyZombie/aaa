@@ -38,7 +38,6 @@
 .automation-badge.is-failed, .automation-badge.is-stuck { background: var(--status-blocked-tint); color: var(--status-blocked); }
 .automation-badge.is-notice, .automation-badge.is-waiting, .automation-badge.is-skipped { background: var(--accent-tint); color: var(--notice); }
 .automation-badge.is-legacy { background: var(--accent-tint); color: var(--accent); }
-.automation-badge.is-mission { background: var(--status-working-tint); color: var(--status-working); }
 
 /* 상세·변환 창: 데스크톱은 넓은 가운데 창, 휴대폰은 modal.css의 아래 sheet */
 .automation-sheet { width: min(100%, 760px); }

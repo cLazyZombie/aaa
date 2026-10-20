@@ -1,7 +1,6 @@
 use super::*;
-use crate::{mission::MissionRun, orch::ThreadRec};
 use aaa_common::conn::spawn_writer;
-use aaa_proto::{AGENT_LINK, AgentHello, MAX_FRAME, Role, ThreadKind, ThreadStatus};
+use aaa_proto::{AGENT_LINK, AgentHello, MAX_FRAME};
 struct Lab {
     root: std::path::PathBuf,
     h: Arc<Host>,
@@ -47,7 +46,7 @@ impl Drop for Lab {
     }
 }
 #[tokio::test]
-async fn query_machine_defaults_to_host_and_can_be_overridden_independently_of_mission() {
+async fn query_machine_defaults_to_host_and_can_be_overridden_independently_of_repo() {
     for global in [None, Some("mac-b")] {
         let lab = Lab::new(global);
         lab.connect("mac-a", true);
@@ -60,7 +59,11 @@ async fn query_machine_defaults_to_host_and_can_be_overridden_independently_of_m
         .unwrap();
         for (machine, want) in [(None, global.unwrap_or("mac-a")), (Some("mac-a"), "mac-a"), (Some("mac-b"), "mac-b")] {
             let machine = machine.map(|m| format!("machine={m:?}\n")).unwrap_or_default();
-            let r=crate::routine::parse("ci",&format!("+++\non=\"ci\"\nrepo=\"aaa\"\nbranches=[\"main\"]\nmission=\"remote-diagnosis\"\n{machine}+++\n자료")).unwrap();
+            let r = crate::routine::parse(
+                "ci",
+                &format!("+++\non=\"ci\"\nrepo=\"aaa\"\nbranches=[\"main\"]\n{machine}+++\n자료"),
+            )
+            .unwrap();
             let Trigger::Ci(c) = &r.trigger else { panic!() };
             let (_, cwd, mid) = lab.h.ci_target(&dir, &r, c).unwrap();
             assert_eq!((cwd.as_str(), mid.as_str()), ("/work/aaa", want));
@@ -72,6 +75,7 @@ async fn durable_outbox_replay_deduplicates_inbox_flow_and_mission_pending() {
     let lab = Lab::new(None);
     let h = &lab.h;
     let n = Notice {
+        legacy: Default::default(),
         id: "ci-proof".into(),
         routine: "ci-main".into(),
         skip_reason: None,
@@ -79,7 +83,6 @@ async fn durable_outbox_replay_deduplicates_inbox_flow_and_mission_pending() {
         sha: "a".repeat(40),
         owners: vec!["t-0042".into()],
         text: serde_json::json!({"source":"ci","repo":"aaa","branch":"main","already_recovered":false,"reports":{"t-0042":"보고 본문"}}).to_string(),
-        mission: Some("watch".into()),
         wake: true,
         record_only: false,
         append: None,
@@ -92,19 +95,11 @@ async fn durable_outbox_replay_deduplicates_inbox_flow_and_mission_pending() {
     std::fs::create_dir_all(h.project_dir("demo").unwrap().join("automations")).unwrap();
     std::fs::write(
         h.project_dir("demo").unwrap().join("automations/ci-main.toml"),
-        "[on.ci]\nrepo='aaa'\nbranches=['main']\n[do.wake]\nmission='watch'\ntext='확인 메모'\nreports=false\n",
+        "[on.ci]\nrepo='aaa'\nbranches=['main']\n[do.inbox]\ntext='확인 메모'\n",
     )
     .unwrap();
     h.ci_drain("demo", "ci:demo:test", &mut s).unwrap();
     assert!(s.outbox.is_empty(), "공통 내구 큐에 인계한 뒤 source를 비운다");
-    h.automation_pass("demo").await;
-    let saved = h.db.meta("automation:demo:ci-main").unwrap().unwrap();
-    assert!(saved.contains("ci-proof"), "없는 임무의 입력은 공통 큐에 보존한다");
-    let mut r = ThreadRec::starting("demo", "감시", "m", "cheap", Role::Evaluator, ThreadKind::Dir, util::now_ms());
-    r.id = "t-0001".into();
-    r.status = ThreadStatus::Open;
-    r.mission = Some(MissionRun { name: "watch".into(), ..Default::default() });
-    h.db.thread_import("demo", &r.id, "open", &serde_json::to_string(&r).unwrap()).unwrap();
     h.automation_pass("demo").await;
     s.outbox.push(n);
     h.ci_drain("demo", "ci:demo:test", &mut s).unwrap();
@@ -121,17 +116,6 @@ async fn durable_outbox_replay_deduplicates_inbox_flow_and_mission_pending() {
     assert_eq!(delivered.len(), 1, "실패한 전달 기록과 별개로 사건은 한 번 완료한다");
     assert_eq!(history.today, 1);
     assert_eq!(delivered[0].status, "done");
-    let pending = h.mission_rec("demo", "watch").unwrap().mission.unwrap().pending;
-    assert_eq!(pending.len(), 1);
-    assert_eq!(pending[0].source, "ci");
-    let delivered: serde_json::Value = serde_json::from_str(&pending[0].text).unwrap();
-    assert_eq!(delivered["memo"], "확인 메모", "단일 사건에도 동작의 메모를 붙인다");
-    assert!(delivered.get("reports").is_none(), "reports=false는 임무 입력의 보고 사본을 뺀다");
-    h.mission_ci_recovered("demo", r#"{"repo":"aaa","branch":"main","sha":"fixed"}"#).unwrap();
-    let pending = h.mission_rec("demo", "watch").unwrap().mission.unwrap().pending;
-    assert_eq!(pending.len(), 1);
-    let v: serde_json::Value = serde_json::from_str(&pending[0].text).unwrap();
-    assert_eq!(v["already_recovered"], true);
 }
 #[test]
 fn ci_registration_rejects_mixed_commands_and_invalid_events() {
@@ -216,7 +200,7 @@ async fn recovery_cancels_failure_still_waiting_in_rule_batch() {
     let r = crate::automation::parse(
         &dir,
         "check",
-        "[on.ci]\nrepo='app'\nbranches=['main']\n[do.wake]\nmission='watch'\n[limits]\nbatch='1m'\n",
+        "[on.ci]\nrepo='app'\nbranches=['main']\n[do.inbox]\n[limits]\nbatch='1m'\n",
     )
     .unwrap();
     lab.h

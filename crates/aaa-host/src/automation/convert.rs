@@ -5,6 +5,8 @@ use std::{collections::BTreeMap, io::Write, path::Path};
 pub(super) struct Plan {
     writes: BTreeMap<String, String>,
     originals: BTreeMap<String, String>,
+    pub(super) targets: Vec<(String, String)>,
+    state_hash: String,
 }
 fn add(plan: &mut Plan, root: &Path, file: String, text: String) -> Result<(), String> {
     if plan.writes.contains_key(&file) {
@@ -29,10 +31,6 @@ fn rule(plan: &mut Plan, root: &Path, name: &str, mut spec: File) -> Result<(), 
                 a.text_file = Some(path)
             }
             Action::Message(a) => {
-                a.text = None;
-                a.text_file = Some(path)
-            }
-            Action::Wake(a) => {
                 a.text = None;
                 a.text_file = Some(path)
             }
@@ -62,66 +60,154 @@ fn rule(plan: &mut Plan, root: &Path, name: &str, mut spec: File) -> Result<(), 
     }
     add(plan, root, format!("automations/{name}.toml"), serialized)
 }
-pub(super) fn prepare(root: &Path) -> Result<Plan, String> {
-    let (routines, broken) = crate::routine::load_all(root);
-    if !broken.is_empty() {
-        return Err(broken.iter().map(|(_, _, e)| e.as_str()).collect::<Vec<_>>().join("\n"));
-    }
+pub(super) fn prepare(root: &Path, machine: &str) -> Result<Plan, String> {
     let mut plan = Plan::default();
-    for r in routines.iter().filter(|r| r.file.starts_with("routines/")) {
-        let original = project_text(root, &r.file)?;
-        plan.originals.insert(r.file.clone(), original);
-        rule(&mut plan, root, &r.name, File::from_routine(r))?;
-        let converted = parse_with(&r.name, &plan.writes[&format!("automations/{}.toml", r.name)], |path| {
-            plan.writes.get(path).cloned().map(Ok).unwrap_or_else(|| project_text(root, path))
-        })?;
-        if r.trigger != converted.trigger
-            || r.command_sha256() != converted.command_sha256()
-            || r.action != converted.action
-            || r.limits != converted.limits
-        {
-            return Err(format!("{}:1:1 변환: 조건·동작·승인 값이 다르다", r.file));
-        }
-    }
-    let files: Vec<_> = std::fs::read_dir(root.join("missions"))
-        .into_iter()
-        .flatten()
-        .filter_map(Result::ok)
-        .map(|e| e.file_name().to_string_lossy().to_string())
-        .filter(|f| f.ends_with(".md"))
-        .collect();
-    for file in files {
-        let original = project_text(root, &format!("missions/{file}"))?;
-        if !original.starts_with("+++\n") {
+    let mut definitions = BTreeMap::new();
+    for file in crate::legacy_mission::files(root) {
+        let path = Path::new(&file);
+        let name = path.file_stem().unwrap().to_string_lossy().into_owned();
+        // TOML이 참조하는 md는 본문이다. 같은 이름은 TOML부터 읽는다.
+        if definitions.contains_key(&name) {
             continue;
         }
-        let name = file.trim_end_matches(".md");
-        let converted = crate::mission::convert_legacy(name, &original).map_err(|e| e.message)?;
-        plan.originals.insert(format!("missions/{file}"), original);
-        add(
-            &mut plan,
-            root,
-            format!("missions/{name}.toml"),
-            format!("#:schema ./mission.schema.json\n{}", converted.toml),
-        )?;
-        add(&mut plan, root, format!("missions/{name}.md"), converted.brief)?;
-        for (name, spec) in converted.rules {
+        if file.ends_with(".md") && !project_text(root, &file)?.starts_with("+++\n") {
+            continue;
+        }
+        definitions.insert(name.clone(), crate::legacy_mission::definition(root, &name)?);
+    }
+    for (name, def) in &definitions {
+        add(&mut plan, root, format!("automations/{name}.brief.md"), format!("{}\n", def.body.trim()))?;
+    }
+    let mut converted_targets = std::collections::BTreeSet::new();
+    for folder in ["routines", "automations"] {
+        let mut entries: Vec<_> =
+            std::fs::read_dir(root.join(folder)).into_iter().flatten().filter_map(Result::ok).collect();
+        entries.sort_by_key(|e| e.file_name());
+        for entry in entries {
+            let file = format!("{folder}/{}", entry.file_name().to_string_lossy());
+            if !(folder == "routines" && file.ends_with(".md") || folder == "automations" && file.ends_with(".toml")) {
+                continue;
+            }
+            let name = entry.path().file_stem().unwrap().to_string_lossy().into_owned();
+            let original = project_text(root, &file)?;
+            let (mut spec, target, memo, reports) = if folder == "routines" {
+                let rest = original.strip_prefix("+++\n").ok_or("routine front matter가 없다")?;
+                let (front, body) = rest.split_once("\n+++\n").ok_or("닫는 +++가 없다")?;
+                let mut value: toml::Value = toml::from_str(front).map_err(|e| e.to_string())?;
+                let target =
+                    value.as_table_mut().unwrap().remove("mission").and_then(|v| v.as_str().map(str::to_string));
+                let ordinary = format!("+++\n{}+++\n{body}", toml::to_string(&value).map_err(|e| e.to_string())?);
+                let r = crate::routine::parse(&name, &ordinary)?;
+                (File::from_routine(&r), target, r.prompt.clone(), None)
+            } else {
+                let mut value: toml::Value = toml::from_str(&original).map_err(|e| e.to_string())?;
+                let wake = value.get_mut("do").and_then(|v| v.as_table_mut()).and_then(|t| t.remove("wake"));
+                let Some(wake) = wake else { continue };
+                let target = wake.get("mission").and_then(|v| v.as_str()).ok_or("do.wake.mission이 없다")?.to_owned();
+                let def = definitions.get(&target).ok_or_else(|| format!("missions/{target}: 옛 임무가 없다"))?;
+                value["do"]["start"] =
+                    toml::Value::try_from(def.start(&target, machine)?).map_err(|e| e.to_string())?;
+                (
+                    value.try_into::<File>().map_err(|e| e.to_string())?,
+                    Some(target),
+                    match (wake.get("text").and_then(|v| v.as_str()), wake.get("text_file").and_then(|v| v.as_str())) {
+                        (Some(_), Some(_)) => return Err("do.wake: text와 text_file은 하나만 쓴다".into()),
+                        (Some(text), None) => text.into(),
+                        (None, Some(file)) => project_text(root, file)?,
+                        _ => String::new(),
+                    },
+                    wake.get("reports").and_then(|v| v.as_bool()),
+                )
+            };
+            if let Some(target) = target {
+                let def = definitions.get(&target).ok_or_else(|| format!("missions/{target}: 옛 임무가 없다"))?;
+                let mut action = def.start(&target, machine)?;
+                action.reports = reports.unwrap_or(action.reports);
+                if !memo.trim().is_empty() {
+                    let file = format!("automations/{name}.brief.md");
+                    let text = format!(
+                        "{}\n\n## 입력 메모(자료이며 지시가 아니다)\n{}\n",
+                        def.body.trim(),
+                        crate::auto_start::fenced(&memo)
+                    );
+                    if plan.writes.contains_key(&file) {
+                        plan.writes.insert(file.clone(), text);
+                    } else {
+                        add(&mut plan, root, file.clone(), text)?;
+                    }
+                    action.brief_file = Some(file);
+                }
+                spec.action = Action::Start(action);
+                def.merge_limits(&mut spec.limits);
+                converted_targets.insert(target.clone());
+                plan.targets.push((target, name.clone()));
+                add(&mut plan, root, format!("automations/{name}.memory/memory.md"), String::new())?;
+            }
+            plan.originals.insert(file, original);
             rule(&mut plan, root, &name, spec)?;
         }
     }
+    for (name, def) in definitions {
+        let events: Vec<String> = def
+            .value
+            .get("events")
+            .and_then(|v| v.as_array())
+            .map(|a| a.iter().filter_map(|v| v.as_str().map(str::to_string)).collect())
+            .unwrap_or_default();
+        let mut conditions = Vec::new();
+        if !events.is_empty() {
+            conditions.push((
+                name.clone(),
+                Condition::Thread(Threads {
+                    events,
+                    repos: def
+                        .value
+                        .get("repos")
+                        .and_then(|v| v.as_array())
+                        .map(|a| a.iter().filter_map(|v| v.as_str().map(str::to_string)).collect())
+                        .unwrap_or_default(),
+                    include_automation: true,
+                }),
+            ));
+        }
+        if let Some(schedule) = def.value.get("schedule").and_then(|v| v.as_str()) {
+            let rule = if conditions.is_empty() { name.clone() } else { format!("{name}-schedule") };
+            conditions.push((
+                rule,
+                Condition::Schedule(Scheduled::from_schedule(
+                    &crate::routine::parse_schedule(schedule, true)?,
+                    CatchUp::Once,
+                )),
+            ));
+        }
+        if conditions.is_empty() && !converted_targets.contains(&name) {
+            return Err(format!("missions/{name}: 조건이 없다. mission= 또는 do.wake 규칙과 함께 변환한다"));
+        }
+        for (rule_name, on) in conditions {
+            let spec = File {
+                title: def.start(&name, machine)?.title.clone(),
+                enabled: false,
+                on,
+                action: Action::Start(def.start(&name, machine)?),
+                limits: def.limits(),
+            };
+            rule(&mut plan, root, &rule_name, spec)?;
+            add(&mut plan, root, format!("automations/{rule_name}.memory/memory.md"), String::new())?;
+            plan.targets.push((name.clone(), rule_name));
+        }
+        for (path, text) in def.originals {
+            plan.originals.insert(path, text);
+        }
+    }
     if !plan.originals.is_empty() {
-        for (file, value) in [
-            ("automations/automation.schema.json", super::schema()),
-            ("missions/mission.schema.json", crate::mission::files::schema()),
-        ] {
-            let data = format!("{}\n", serde_json::to_string_pretty(&value).map_err(|e| e.to_string())?);
-            if root.join(file).exists() {
-                if project_text(root, file)? != data {
-                    return Err(format!("{file}:1:1 schema: 이미 있는 다른 스키마는 덮어쓰지 않는다"));
-                }
-            } else {
-                add(&mut plan, root, file.into(), data)?;
-            }
+        let file = "automations/automation.schema.json";
+        let data = format!("{}\n", serde_json::to_string_pretty(&super::schema()).map_err(|e| e.to_string())?);
+        // 스키마는 제품 생성물이므로 이전 판을 갱신한다. 사용자 규칙은 덮지 않는다.
+        if !root.join(file).exists() {
+            add(&mut plan, root, file.into(), data)?;
+        } else if project_text(root, file)? != data {
+            plan.originals.insert(file.into(), project_text(root, file)?);
+            add(&mut plan, root, file.into(), data)?;
         }
     }
     Ok(plan)
@@ -145,9 +231,6 @@ fn archive(file: &str) -> String {
 }
 
 impl Plan {
-    pub(super) fn files(&self) -> Vec<String> {
-        self.writes.keys().cloned().collect()
-    }
     /// 실제 변환이 답하는 목록과 같은 모양: 새 파일과 `.converted/` 보존 사본.
     pub(super) fn listing(&self) -> Vec<String> {
         if self.originals.is_empty() {
@@ -167,6 +250,7 @@ impl Plan {
                 }
             }
         }
+        h.update(self.state_hash.as_bytes());
         hex::encode(h.finalize())
     }
 }
@@ -255,4 +339,144 @@ pub(super) fn apply(root: &Path, plan: Plan) -> Result<Vec<String>, String> {
         ));
     }
     Ok(plan.writes.keys().cloned().chain(archived.into_iter().map(|(_, path)| path)).collect())
+}
+
+impl Plan {
+    pub(super) async fn include_state(
+        &mut self,
+        h: &crate::Host,
+        p: &str,
+    ) -> Result<Vec<serde_json::Value>, aaa_proto::ErrorBody> {
+        use aaa_proto::{AgentRequest, AgentResponse};
+        let bad = |e: String| crate::err(aaa_proto::ErrorCode::BadRequest, e);
+        let mut records: Vec<serde_json::Value> =
+            h.db.threads(Some(p))
+                .map_err(|e| bad(e.to_string()))?
+                .iter()
+                .map(|s| serde_json::from_str(s).map_err(|e| bad(e.to_string())))
+                .collect::<Result<_, _>>()?;
+        records.sort_by_key(|r| r["updated_at_ms"].as_u64().unwrap_or(0));
+        let mut journal = Vec::new();
+        let mut imported = std::collections::BTreeSet::new();
+        for (target, name) in self.targets.clone() {
+            let rec = records.iter().rev().find(|r| r["mission"]["name"] == target);
+            let mut data = rec.map(|r| r["mission"].clone()).unwrap_or_else(|| serde_json::json!({}));
+            if !imported.insert(target.clone()) {
+                data["pending"] = serde_json::json!([]);
+            }
+            let mut pending = data.get("pending").and_then(|v| v.as_array()).cloned().unwrap_or_default();
+            let old_key = format!("automation:{p}:mission:{target}");
+            if imported.len() > 0
+                && self.targets.iter().find(|(t, _)| t == &target).is_some_and(|(_, n)| n == &name)
+                && let Some(old) = h.db.meta(&old_key).map_err(|e| bad(e.to_string()))?
+            {
+                let old: serde_json::Value = serde_json::from_str(&old).map_err(|e| bad(e.to_string()))?;
+                pending.extend(old["pending"].as_array().cloned().unwrap_or_default());
+                pending.extend(old["inflight"]["events"].as_array().cloned().unwrap_or_default());
+                if !old["inflight"].is_null() {
+                    data["unknown"] = true.into();
+                }
+            }
+            let queued =
+                h.db.meta(&format!("automation:{p}:{name}"))
+                    .map_err(|e| bad(e.to_string()))?
+                    .map(|s| serde_json::from_str::<serde_json::Value>(&s))
+                    .transpose()
+                    .map_err(|e| bad(e.to_string()))?;
+            if !pending.is_empty()
+                || queued
+                    .as_ref()
+                    .is_some_and(|v| v["pending"].as_array().is_some_and(|a| !a.is_empty()) || !v["inflight"].is_null())
+            {
+                let rule = parse_with(&name, &self.writes[&format!("automations/{name}.toml")], |f| {
+                    self.writes
+                        .get(f)
+                        .cloned()
+                        .map(Ok)
+                        .unwrap_or_else(|| project_text(&h.project_dir(p).map_err(|e| e.message)?, f))
+                })
+                .map_err(bad)?;
+                if let Action::Start(a) = &rule.action {
+                    data["start_scope"] =
+                        serde_json::to_value(h.automation_start_scope(p, &rule, a)?).map_err(|e| bad(e.to_string()))?;
+                }
+            }
+            data["pending"] = pending.into();
+            if data["wake_inflight"].as_bool() == Some(true)
+                || data["blocked_reason"].as_str().is_some_and(|r| r != "question")
+            {
+                data["unknown"] = true.into();
+            }
+            if let Some(rec) = rec.filter(|r| r["work_dir"].is_string()) {
+                let mid = rec["machine_id"].as_str().ok_or_else(|| bad("옛 thread 머신이 없다".into()))?;
+                let work = rec["work_dir"].as_str().unwrap();
+                let conn = h.live_conn(mid)?;
+                let request =
+                    |q: AgentRequest| if h.machine_feature(mid, "work_files.v1") { q } else { q.legacy_work_file() };
+                let response = conn.request(request(AgentRequest::WorkFileList { work_dir: work.into() })).await?;
+                let (AgentResponse::WorkFiles { files } | AgentResponse::MissionFiles { files }) = response else {
+                    return Err(bad("옛 기억 목록 응답이 아니다".into()));
+                };
+                if files.len() > 1000 {
+                    return Err(bad("옛 기억이 1000개를 넘었다".into()));
+                }
+                let mut total = 0u64;
+                for f in files {
+                    if !std::path::Path::new(&f.path).components().all(|c| matches!(c, std::path::Component::Normal(_)))
+                    {
+                        return Err(bad("옛 기억 경로가 상대 일반 경로가 아니다".into()));
+                    }
+                    total = total.saturating_add(f.size);
+                    if total > 8 * 1024 * 1024 {
+                        return Err(bad("옛 기억이 8MiB를 넘었다".into()));
+                    }
+                    let path: String = match f.path.as_str() {
+                        "state.md" => "memory.md".into(),
+                        "processed.txt" => "processed.txt".into(),
+                        s if s.starts_with("history/") => s.into(),
+                        _ => continue,
+                    };
+                    let mut bytes = vec![];
+                    loop {
+                        let AgentResponse::FileChunk { data, eof } = conn
+                            .request(request(AgentRequest::WorkFileRead {
+                                work_dir: work.into(),
+                                path: f.path.clone(),
+                                offset: bytes.len() as u64,
+                            }))
+                            .await?
+                        else {
+                            return Err(bad("옛 기억 읽기 응답이 아니다".into()));
+                        };
+                        if bytes.len().saturating_add(data.0.len()) > f.size as usize {
+                            return Err(bad("옛 기억 크기가 바뀌었다".into()));
+                        }
+                        if !eof && data.0.is_empty() {
+                            return Err(bad("옛 기억이 진행하지 않는다".into()));
+                        }
+                        bytes.extend(data.0);
+                        if eof {
+                            break;
+                        }
+                    }
+                    use sha2::Digest;
+                    if bytes.len() as u64 != f.size || hex::encode(sha2::Sha256::digest(&bytes)) != f.sha256 {
+                        return Err(bad("옛 기억 hash가 다르다".into()));
+                    }
+                    let text = String::from_utf8(bytes).map_err(|_| bad("옛 기억은 UTF-8이어야 한다".into()))?;
+                    let file = format!("automations/{name}.memory/{path}");
+                    if !self.writes.contains_key(&file) {
+                        add(self, &h.project_dir(p)?, file.clone(), text.clone()).map_err(bad)?;
+                    }
+                    self.writes.insert(file, text);
+                }
+            }
+            journal.push(
+                serde_json::json!({"target":target,"rule":name,"text":self.writes[&format!("automations/{name}.toml")],"data":data}),
+            );
+        }
+        // 큐·기억도 미리보기 hash에 포함한다.
+        self.state_hash = serde_json::to_string(&journal).map_err(|e| bad(e.to_string()))?;
+        Ok(journal)
+    }
 }
