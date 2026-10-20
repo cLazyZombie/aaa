@@ -323,22 +323,33 @@ impl Host {
         Ok(if s.day == day(aaa_common::util::now_ms()) { s.count } else { 0 })
     }
 
+    /// `rule`(이 사건을 받는 규칙 이름) 뒤의 흐름 사건 중 받을 것. 자동화가 띄운 thread의 사건은 기본으로 빼고(자기 사건 거르기,
+    /// plan t-0475 §3.5) `include_automation`일 때만 받는다. 이 규칙이 띄운 thread의 사건은 늘 뺀다. 흐름 기록 형식은 그대로라
+    /// 사건 thread의 기록(`ThreadRec.automation`)을 읽어 가린다
     pub(crate) fn automation_flow_events(
         &self,
         p: &str,
         cursor: u64,
         wanted: &super::Threads,
+        rule: &str,
     ) -> Result<(u64, Vec<aaa_proto::FlowEvent>), ErrorBody> {
         let all = self.db.flow_after(Some(p), cursor, 200).map_err(internal)?;
         let target = all.last().map_or(cursor, |e| e.seq);
+        let mut recs = std::collections::HashMap::new();
         let selected = all
             .into_iter()
             .filter(|e| e.role != Some(aaa_proto::Role::Evaluator) && wanted.events.contains(&e.kind))
             .filter(|e| {
+                let rec = e
+                    .thread
+                    .as_deref()
+                    .and_then(|t| recs.entry(t.to_string()).or_insert_with(|| self.load(p, t).ok()).clone());
+                let mine = rec.as_ref().and_then(|r| r.automation.as_deref());
+                if mine.is_some_and(|a| a == rule || !wanted.include_automation) {
+                    return false;
+                }
                 wanted.repos.is_empty()
-                    || e.thread
-                        .as_deref()
-                        .and_then(|t| self.load(p, t).ok())
+                    || rec
                         .and_then(|r| r.repo)
                         .or_else(|| e.thread.is_none().then(|| e.repo.clone()).flatten())
                         .is_some_and(|repo| {
@@ -365,7 +376,7 @@ impl Host {
                 .map_err(internal)?;
             return Ok(());
         };
-        let (target, flow) = self.automation_flow_events(p, cursor, wanted)?;
+        let (target, flow) = self.automation_flow_events(p, cursor, wanted, &r.name)?;
         let start_scope =
             if let Action::Start(a) = &r.action { Some(self.automation_start_scope(p, r, a)?) } else { None };
         let mut events = Vec::new();

@@ -15,9 +15,10 @@ import { CoordinatorOpen } from "./CoordinatorOpen";
 /** popup `Group::DISPLAY_ORDER` */
 const DISPLAY_ORDER = ["waiting_on_you", "ready_for_review", "landing", "working", "idle", "resolved"];
 
-/** popup `thread_line`: 상태 줄, 머신, agent(profile), 남은 Next 수 */
+/** popup `thread_line`: 상태 줄, 머신, agent(profile), 남은 Next 수. 자동화가 띄운 thread는 앞에 「자동 · 규칙」(plan t-0475 A1) */
 function threadFacts(t: ThreadView, now: number): string {
   const parts = [t.group === "resolved" ? GROUP_WORD.resolved : stateLine(t, true, now)];
+  if (t.automation) parts.unshift(`자동 · ${t.automation_title ?? t.automation}`);
   if (t.machine) parts.push(t.machine);
   if (t.profile) parts.push(t.profile);
   if (t.group !== "resolved" && t.next.length > 0) parts.push(`next ${t.next.length}`);
@@ -26,12 +27,18 @@ function threadFacts(t: ThreadView, now: number): string {
 
 const matches = (needle: string, ...texts: string[]) => needle === "" || texts.some((x) => x.toLowerCase().includes(needle));
 
-function Filter({ value, onChange, label }: { value: string; onChange: (v: string) => void; label: string }) {
+function Filter({ value, onChange, label, automationOnly, onAutomationOnly }: { value: string; onChange: (v: string) => void; label: string; automationOnly: boolean; onAutomationOnly: (on: boolean) => void }) {
   return (
-    <label className="project-filter">
-      <Search aria-hidden="true" />
-      <input className="input" type="search" value={value} placeholder="거르기" aria-label={label} onChange={(e) => onChange(e.target.value)} />
-    </label>
+    <div className="project-filter-row">
+      <label className="project-filter">
+        <Search aria-hidden="true" />
+        <input className="input" type="search" value={value} placeholder="거르기" aria-label={label} onChange={(e) => onChange(e.target.value)} />
+      </label>
+      {/* 자동화가 띄운 thread만(끝난 것까지, plan t-0475 A1) */}
+      <button type="button" className="btn project-filter-toggle" aria-pressed={automationOnly} data-testid="threads-automation-only" onClick={() => onAutomationOnly(!automationOnly)}>
+        자동화만
+      </button>
+    </div>
   );
 }
 
@@ -51,6 +58,7 @@ export function ProjectThreads({
   // host가 맡은 프로젝트 하나(`instance`, FRONT_API 1.50): 멈춤 표시와 coordinator 열기에 쓴다
   const [instance, setInstance] = useState<ProjectView | null>(null);
   const [filter, setFilter] = useState("");
+  const [automationOnly, setAutomationOnly] = useState(false);
   const [error, setError] = useState<string | null>(null);
   useEffect(() => {
     let live = true;
@@ -67,7 +75,7 @@ export function ProjectThreads({
   const needle = filter.trim().toLowerCase();
   const now = Date.now();
   // 프로젝트는 하나다(plan §8.291): 옮겨 온 기록만 있는 다른 이름의 thread가 남았으면 그것도 보인다
-  const mine = threads.filter((t) => matches(needle, t.id, t.title));
+  const mine = threads.filter((t) => matches(needle, t.id, t.title) && (!automationOnly || t.automation != null));
   const groups = DISPLAY_ORDER.map((g) => ({
     g,
     rows: mine.filter((t) => t.group === g).sort((a, b) => b.updated_at_ms - a.updated_at_ms),
@@ -83,7 +91,7 @@ export function ProjectThreads({
       )}
       groups={other.length > 0 ? [...groups, { g: "other", rows: other }] : groups}
       empty={threads.length === 0 ? "thread 없음" : mine.length === 0 ? "맞는 thread 없음" : null}
-      filter={<Filter value={filter} onChange={setFilter} label="thread 거르기" />}
+      filter={<Filter value={filter} onChange={setFilter} label="thread 거르기" automationOnly={automationOnly} onAutomationOnly={setAutomationOnly} />}
       now={now}
       onThread={onThread}
       onBack={onBack}
