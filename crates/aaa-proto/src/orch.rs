@@ -1107,7 +1107,10 @@ pub struct RoutineSource {
     /// `text_file`·`brief_file`이 가리키는 본문
     pub body_file: Option<String>,
     pub body: String,
+    /// 원문(`text`)을 잘랐다
     pub truncated: bool,
+    /// 본문(`body`)을 잘랐다
+    pub body_truncated: bool,
 }
 
 /// 프로젝트 이름: 영문 소문자·숫자·`-`·`_`(경로에 쓰므로 엄격히 본다)

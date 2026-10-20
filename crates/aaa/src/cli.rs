@@ -3676,7 +3676,7 @@ fn render_front(r: &FrontResponse) -> String {
                 if let Some(b) = r.queue.as_ref().and_then(|q| q.inflight.as_ref()).filter(|b| b.unknown) {
                     let _ = writeln!(
                         s,
-                        "  막힘: 입력 전달 모름 · {}에 보내던 {}건 · 묶음 {} · 대상 thread를 확인한 뒤                          `aaa automation unblock {} --batch {} [--discard]`",
+                        "  막힘: 입력 전달 모름 · {}에 보내던 {}건 · 묶음 {} · 대상 thread를 확인한 뒤 `aaa automation unblock {} --batch {} [--discard]`",
                         b.thread.as_deref().unwrap_or("대상 thread"),
                         b.events,
                         b.id,

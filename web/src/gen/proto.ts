@@ -999,7 +999,15 @@ export type RoutineSource = { file: string, text: string, sha256: string,
 /**
  * `text_file`·`brief_file`이 가리키는 본문
  */
-body_file: string | null, body: string, truncated: boolean, };
+body_file: string | null, body: string,
+/**
+ * 원문(`text`)을 잘랐다
+ */
+truncated: boolean,
+/**
+ * 본문(`body`)을 잘랐다
+ */
+body_truncated: boolean, };
 
 export type LibraryFile = {
 /**

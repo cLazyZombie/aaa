@@ -79,17 +79,15 @@ impl Host {
         } else {
             return Ok(None);
         };
-        let mut truncated = false;
-        let mut cut = |text: String| {
+        let cut = |text: String| {
             if text.len() <= MAX {
-                return text;
+                return (text, false);
             }
-            truncated = true;
             let mut end = MAX;
             while !text.is_char_boundary(end) {
                 end -= 1;
             }
-            text[..end].to_string()
+            (text[..end].to_string(), true)
         };
         let raw = crate::automation::project_text(&root, &file).unwrap_or_default();
         // 읽은 규칙은 본문 파일을 글로 풀어 두므로 참조는 원문 TOML에서 찾는다
@@ -99,10 +97,10 @@ impl Host {
             .flatten()
             .and_then(|f| f.action.texts().1.map(str::to_owned));
         let sha256 = hex::encode(sha2::Sha256::digest(raw.as_bytes()));
-        let text = cut(raw);
+        let (text, truncated) = cut(raw);
         let body = body_file.as_deref().map(|f| crate::automation::project_text(&root, f).unwrap_or_default());
-        let body = body.map(&mut cut).unwrap_or_default();
-        Ok(Some(aaa_proto::RoutineSource { file, text, sha256, body_file, body, truncated }))
+        let (body, body_truncated) = body.map(cut).unwrap_or_default();
+        Ok(Some(aaa_proto::RoutineSource { file, text, sha256, body_file, body, truncated, body_truncated }))
     }
     pub(crate) fn record_routine(
         &self,

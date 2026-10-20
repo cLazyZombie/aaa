@@ -70,13 +70,15 @@ export function RuleDetail({ project, rule, canControl, covered = false, onChang
   onClose: () => void;
 }) {
   const { runs, source, error, loading, load } = useRuns(project, rule.name, rule.last_result?.at_ms);
-  const [unblock, setUnblock] = useState<{ discard: boolean } | null>(null);
+  const [unblock, setUnblock] = useState<{ batch: string; discard: boolean } | null>(null);
   const tone = ruleTone(rule);
   const stuck = stuckBatch(rule);
   const skip = lastSkip(rule, runs);
   const legacy = legacyRule(rule);
   const queue = rule.queue;
-  return <AutomationSheet title={rule.title || rule.name} subtitle={<><span className={`automation-badge is-${tone}`}>{toneWord[tone]}</span>{legacy && <span className="automation-badge is-legacy">이전 형식</span>}<span className="automation-dim">{project} · {rule.name}</span></>} onClose={onClose} covered={covered || unblock !== null} testid="automation-detail">
+  // 확인창은 고른 그 묶음이 아직 막혀 있을 때만 뜬다(다른 기기·CLI가 먼저 풀면 닫힌다)
+  const asked = unblock && stuck?.id === unblock.batch ? unblock : null;
+  return <AutomationSheet title={rule.title || rule.name} subtitle={<><span className={`automation-badge is-${tone}`}>{toneWord[tone]}</span>{legacy && <span className="automation-badge is-legacy">이전 형식</span>}<span className="automation-dim">{project} · {rule.name}</span></>} onClose={onClose} covered={covered || asked !== null} testid="automation-detail">
     {error && <p role="alert">{error}</p>}
     <Section title="요약">
       <Facts rows={[
@@ -95,8 +97,8 @@ export function RuleDetail({ project, rule, canControl, covered = false, onChang
         <p>{stuck.thread ? `${stuck.thread}에` : "대상 thread에"} 보내던 글 묶음({stuck.events}건, {time(stuck.at_ms)}부터)이 닿았는지 모릅니다. 자동으로 다시 보내지 않습니다. 대상 thread 화면에서 글이 왔는지 확인한 뒤 고릅니다. 이 묶음은 어느 쪽이든 다시 보내지 않습니다.</p>
         <p>뒤에 쌓인 입력 {queue?.pending ?? 0}건</p>
         {canControl ? <div className="automation-actions">
-          <button type="button" className="btn" onClick={() => setUnblock({ discard: false })}>확인함 · 남은 입력 계속 보내기</button>
-          <button type="button" className="btn btn-danger" onClick={() => setUnblock({ discard: true })}>확인함 · 남은 입력 버리기</button>
+          <button type="button" className="btn" onClick={() => setUnblock({ batch: stuck.id, discard: false })}>확인함 · 남은 입력 계속 보내기</button>
+          <button type="button" className="btn btn-danger" onClick={() => setUnblock({ batch: stuck.id, discard: true })}>확인함 · 남은 입력 버리기</button>
         </div> : <p className="automation-dim">보기 권한에서는 풀 수 없습니다.</p>}
       </div>
     </Section>}
@@ -140,16 +142,16 @@ export function RuleDetail({ project, rule, canControl, covered = false, onChang
     <Section title="파일 원문" testid="automation-source">
       {source ? <>
         <Source file={source.file} text={source.text} truncated={source.truncated} />
-        {source.body_file && <Source file={`본문 · ${source.body_file}`} text={source.body} />}
+        {source.body_file && <Source file={`본문 · ${source.body_file}`} text={source.body} truncated={source.body_truncated} />}
       </> : <p className="automation-dim">{loading ? "읽는 중…" : "원문 없음"}</p>}
     </Section>
-    {unblock && stuck && <ConfirmDialog
-      title={unblock.discard ? "남은 입력 버리기" : "남은 입력 계속 보내기"}
-      body={`${stuck.thread ?? "대상 thread"}에 보내던 묶음 ${stuck.events}건은 다시 보내지 않습니다.\n${unblock.discard ? `뒤에 쌓인 입력 ${queue?.pending ?? 0}건도 버립니다. 되돌릴 수 없습니다.` : `뒤에 쌓인 입력 ${queue?.pending ?? 0}건은 다음 차례에 보냅니다.`}`}
-      confirmLabel={unblock.discard ? "버리기" : "계속 보내기"}
+    {asked && <ConfirmDialog
+      title={asked.discard ? "남은 입력 버리기" : "남은 입력 계속 보내기"}
+      body={`${stuck?.thread ?? "대상 thread"}에 보내던 묶음 ${stuck?.events}건은 다시 보내지 않습니다.\n${asked.discard ? `뒤에 쌓인 입력 ${queue?.pending ?? 0}건도 버립니다. 되돌릴 수 없습니다.` : `뒤에 쌓인 입력 ${queue?.pending ?? 0}건은 다음 차례에 보냅니다.`}`}
+      confirmLabel={asked.discard ? "버리기" : "계속 보내기"}
       onClose={() => setUnblock(null)}
       onConfirm={async () => {
-        await call({ op: "automation_unblock", project, name: rule.name, batch: stuck.id, discard: unblock.discard });
+        await call({ op: "automation_unblock", project, name: rule.name, batch: asked.batch, discard: asked.discard });
         setUnblock(null);
         await onChanged();
         await load();

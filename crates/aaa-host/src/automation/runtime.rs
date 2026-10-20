@@ -559,6 +559,8 @@ impl Host {
                     } else {
                         selected = Some(batch.clone());
                     }
+                } else if before.inflight.is_some() {
+                    // 판정 사이에 사람이 막힌 묶음을 풀었다: 대상 thread 확인부터 다음 판정에서 다시 한다
                 } else if let Some(first) = s.pending.first() {
                     if s.day != day(now) {
                         s.day = day(now);

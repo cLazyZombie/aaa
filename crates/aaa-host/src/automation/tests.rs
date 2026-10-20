@@ -453,10 +453,14 @@ async fn unblock_releases_only_the_seen_message_batch_and_never_resends_it() {
         (inflight.id.as_str(), inflight.events, inflight.thread.as_deref(), inflight.unknown),
         ("automation-seen", 2, Some("t-0007"), true)
     );
-    // 세션 안 CLI·worker·평가자·보기 권한은 풀 수 없다(사람이 대상 thread를 확인한다)
-    for (role, actor) in
-        [(Local, "local:p1@labA"), (Local, "worker:t-0001"), (Local, "evaluator:t-0002"), (Reader, "device:r")]
-    {
+    // 세션 안 CLI·worker·평가자·분리 실행·보기 권한은 풀 수 없다(사람이 대상 thread를 확인한다)
+    for (role, actor) in [
+        (Local, "local:p1@labA"),
+        (Local, "worker:t-0001"),
+        (Local, "evaluator:t-0002"),
+        (Local, "detached:t-0003"),
+        (Reader, "device:r"),
+    ] {
         let e = h.call(role, actor, unblock("msg", "automation-seen", false)).await.unwrap_err();
         assert_eq!(e.code, ErrorCode::Forbidden, "{actor}");
     }
@@ -522,8 +526,8 @@ async fn routine_runs_carries_rule_source_and_body_file() {
     use sha2::Digest;
     assert_eq!(s.sha256, hex::encode(sha2::Sha256::digest(rule.as_bytes())));
     assert!(
-        s.truncated && s.body.len() <= 64 * 1024 && s.body.chars().all(|c| c == '가'),
-        "본문은 글자 경계에서 자른다"
+        !s.truncated && s.body_truncated && s.body.len() <= 64 * 1024 && s.body.chars().all(|c| c == '가'),
+        "짧은 원문은 그대로, 본문만 글자 경계에서 자른다"
     );
     let Ok(FrontResponse::RoutineRuns { source: None, .. }) = h.call(Reader, "device:r", runs("mission:watch")).await
     else {
