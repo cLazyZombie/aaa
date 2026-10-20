@@ -407,7 +407,7 @@ label: string, };
 
 export type PaneView = {
 /**
- * host에 고정한 인증 별칭. 없으면 기존 머신 로컬 인증이다.
+ * host에 고정한 인증 별칭. 이전 판 thread의 인증은 ThreadView.account로 확인한다.
  */
 account?: string, id: string, machine_id: string, machine: string, name: string, argv: Array<string>, cwd: string | null, connection: Connection,
 /**
