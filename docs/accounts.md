@@ -110,3 +110,28 @@ session IPC로 메모리 가림 규칙을 복원한다. 인증 전달과 실행 
 검증은 빈 포트·임시 폴더·가짜 OAuth 제공자와 harness만 사용한다. 실계정 로그인이나 실제 인증
 파일을 읽지 않는다. `m13::accounts`가 두 머신 네 작업의 동시 회전·부분 응답·거부·기록 조회·재개·
 정상 청소·미전송 post·로그/DB/화면 비노출을 소유한다.
+
+## 계정 thread의 폴더 신뢰
+
+계정 Codex는 새 `codex-home/config.toml`을 만들므로 로컬 설정의 신뢰 기록을 물려받지 않는다.
+Claude 계정은 원래 토큰만 주입했고, 인증 환경 정리에서 기존 `CLAUDE_CONFIG_DIR`도 제거해
+기본 로컬 홈으로 돌아갔다. 이제 새 Claude 계정 thread는
+`account-runs/<project>/<thread>/claude-home`을 `CLAUDE_CONFIG_DIR`로 사용한다.
+coordinator와 로컬 로그인 thread의 설정 홈은 그대로다. 도입 전에 로컬 홈에서 시작한 Claude 대화의
+재개도 원래 홈을 유지한다. 새 격리 홈의 대화·계획 조회와 재개는 같은 홈을 사용한다.
+로컬 로그인·인증 파일·키체인을 읽거나 설정 홈 전체를 복사하지 않는다.
+
+host의 유효한 safety `trust_screens`가 `coordinator`이면 thread의 실제 실행 폴더 한 곳만 미리 기록한다.
+`user`이면 미리 신뢰하지 않는다. 재시작 때도 현재 정책으로 신뢰 목록을 새로 만들므로
+`coordinator`에서 `user`로 바꾸면 이전 자동 기록이 남지 않는다. 격리 Claude 홈의 나머지 환경설정은 보존한다.
+Codex는 `config.toml`의 `projects.<절대 경로>.trust_level = "trusted"`, Claude는
+격리 홈 `.claude.json`의 `projects[절대 경로].hasTrustDialogAccepted = true`를 사용한다.
+경로는 정규화한 cwd 하나이며 부모 폴더·본 저장소·다른 worktree를 추가하지 않는다.
+Codex는 cwd 기록을 저장소 루트보다 먼저 조회하므로 worktree에서도 본 저장소 신뢰를 넓힐 필요가 없다.
+session은 허용 경로와 실제 cwd가 다르거나 thread가 아닌 실행의 사전 신뢰 요청을 거부한다.
+
+저장 형식은 [Codex 공식 설정 문서](https://developers.openai.com/codex/config-reference/),
+cwd 우선 조회는 [Codex 0.163.0 소스](https://github.com/openai/codex/blob/rust-v0.163.0/codex-rs/config/src/config_toml.rs),
+Claude의 설정 홈·신뢰 기록은 [Claude 공식 설정 문서](https://code.claude.com/docs/en/settings)를 근거로 한다.
+Claude의 cwd·조상 조회와 격리 홈 `.claude.json` 경로는 설치된 공식 CLI 코드에서도 확인했다.
+시험은 실제 CLI 로그인 대신 임시 홈의 가짜 harness로 시작과 조회 계약을 검사한다.

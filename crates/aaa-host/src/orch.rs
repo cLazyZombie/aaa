@@ -1752,6 +1752,9 @@ impl Host {
                 return Err(bad("계정 인증을 지원하지 않는 agent다"));
             }
             credential.run = format!("{}/{}", rec.project, rec.id);
+            if self.trust_screens(&rec.project) == crate::trust_screen::COORDINATOR {
+                credential.trust_cwd = rec.cwd.clone();
+            }
             self.spawn_account_on(&rec.machine_id, spec, credential, actor, rec.pane.as_deref()).await?
         } else {
             self.spawn_on(&rec.machine_id, spec, actor).await?

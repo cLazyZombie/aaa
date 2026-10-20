@@ -610,6 +610,18 @@ impl Agent {
             .map(|h| h.join("sessions"))
             .unwrap_or_else(chat::codex_root)
     }
+    pub(crate) fn claude_root_for(&self, session: Option<&str>) -> PathBuf {
+        let run = session
+            .filter(|s| !s.is_empty() && s.bytes().all(|b| b.is_ascii_alphanumeric()))
+            .and_then(|s| util::read_json::<SpecFile>(&SessionPaths::new(&self.state, s).spec()).ok())
+            .filter(|s| s.spec.harness.as_deref() == Some("claude"))
+            .and_then(|s| s.account_run)
+            .filter(|r| aaa_proto::account_run_parts(r).is_some_and(|(_, task)| aaa_proto::valid_thread(task)));
+        run.and_then(|r| aaa_session::files::account_home(&self.state, &r).ok())
+            .map(|h| h.with_file_name("claude-home").join("projects"))
+            .filter(|h| h.parent().is_some_and(Path::is_dir))
+            .unwrap_or_else(chat::claude_root)
+    }
     fn chat_path(
         &self,
         session: Option<&str>,
@@ -619,6 +631,9 @@ impl Agent {
     ) -> Result<PathBuf, String> {
         if harness == "codex" {
             chat::codex_file(&self.codex_root_for(session), harness_session.ok_or("Codex thread-id가 없다")?)
+        } else if harness == "claude" {
+            let transcript = transcript.ok_or("Claude가 아직 기록 위치를 알리지 않았다(첫 hook 사건 전)")?;
+            chat::inside(&self.claude_root_for(session), Path::new(transcript))
         } else {
             chat::path(harness, transcript, harness_session)
         }
