@@ -23,6 +23,8 @@ fn mask_hides_env_secret_keys_and_secret_looking_values_but_keeps_the_rest() {
 listen = "127.0.0.1:7431"
 [notify]
 webhook = "https://hooks.example.com/abc123"
+[mcp.auth]
+value = "header-secret"
 [profiles.work.env]
 PLAIN = "visible-under-env"
 [profiles.home]
@@ -37,8 +39,6 @@ tokens = [
   "array-secret-1",
   "array-secret-2",
 ]
-[mcp.auth]
-value = "header-secret"
 after = "kept-value"
 "#;
     let (lines, hidden) = mask(text);
@@ -62,7 +62,7 @@ after = "kept-value"
     assert_eq!(lines.len(), text.lines().count());
     assert_eq!(lines[1], r#"listen = "127.0.0.1:7431""#);
     assert_eq!(lines[3], format!("webhook = {HIDDEN}"));
-    assert_eq!(lines[10], format!("# old_token = {HIDDEN}"));
+    assert_eq!(lines[12], format!("# old_token = {HIDDEN}"));
     assert_eq!(lines.last().unwrap(), r#"after = "kept-value""#);
     assert!(lines.contains(&"[profiles.work.env]".to_string()));
 }
