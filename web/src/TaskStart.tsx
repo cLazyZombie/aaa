@@ -9,7 +9,7 @@ import type { OwnerChoice, TaskBoard, TaskThread, TaskView, ThreadStartPreview, 
 import { ApiError, call } from "./api";
 import { Markdown } from "./Markdown";
 import { TaskModal } from "./TaskDialogs";
-import { docLinkCandidates, linkCandidates, ownerFixes, ownerLabel, type TaskAttachment, type ThreadGroups } from "./tasksModel";
+import { defaultMachine, docLinkCandidates, linkCandidates, ownerFixes, ownerLabel, REPO_DIR, repoMachines, type TaskAttachment, type ThreadGroups } from "./tasksModel";
 
 const errText = (e: unknown) => (e instanceof ApiError || e instanceof Error ? e.message : String(e));
 
@@ -19,9 +19,10 @@ export function StartDialog({ task, owners, onStarted, onClose }: { task: TaskVi
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [profile, setProfile] = useState("");
-  const [machine, setMachine] = useState("");
-  // 고른 저장소(빈 글이면 저장소 없는 작업 폴더)
-  const [repo, setRepo] = useState("");
+  // 사용자가 고른 머신(없으면 기본값: owner의 머신 → 덜 붐비는 머신)
+  const [picked, setPicked] = useState<string | null>(null);
+  // 저장소 칸(plan §8.330): 저장소 이름이나 `작업 폴더`. task 칸이 비면 빈 글로 시작해 고를 때까지 「시작」을 막는다
+  const [choice, setChoice] = useState("");
   const [overLimit, setOverLimit] = useState(false);
   useEffect(() => {
     let live = true;
@@ -31,23 +32,32 @@ export function StartDialog({ task, owners, onStarted, onClose }: { task: TaskVi
         const { kind: _kind, ...p } = r;
         setPreview(p);
         setProfile(p.profile);
-        // owner가 머신을 정했으면 그 머신의 저장소, 아니면 첫 저장소(host 기본: 저장소가 있으면 worktree)
-        const first = p.repos.find((x) => p.machine === null || x.machine === p.machine) ?? null;
-        setRepo(first?.path ?? "");
-        setMachine(p.machine ?? first?.machine ?? "");
+        setChoice(p.repo ?? "");
       })
       .catch((e: unknown) => live && setError(errText(e)));
     return () => {
       live = false;
     };
   }, [task.title, task.block_sha256]);
-  // owner가 정한 profile·머신은 고르지 못한다(host가 다른 값을 거부한다). 머신이 정해졌으면 다른 머신의 저장소도 빠진다
+  // owner가 정한 profile·머신은 고르지 못한다(host가 다른 값을 거부한다)
   const fixed = ownerFixes(task.owner);
-  const repos = (preview?.repos ?? []).filter((x) => !fixed.machine || x.machine === null || x.machine === preview?.machine);
-  const repoMachine = repos.find((x) => x.path === repo)?.machine ?? null;
-  // 저장소가 머신을 정하면 그 머신이다(다른 머신에서 그 경로를 찾지 않는다)
-  const where = repoMachine ?? machine;
   const machines = (owners ?? []).filter((o) => o.connected);
+  const byName = useMemo(() => (preview ? repoMachines(preview) : new Map<string, { machine: string; path: string }[]>()), [preview]);
+  // 고른 저장소가 있는 머신(작업 폴더는 연결된 모든 머신)
+  const cands = choice === REPO_DIR ? machines.map((o) => o.machine) : (byName.get(choice) ?? []).map((x) => x.machine);
+  const ownerMachine = fixed.machine ? (preview?.machine ?? null) : null;
+  const where = ownerMachine ?? (picked !== null && cands.includes(picked) ? picked : defaultMachine(cands, preview?.machine_order ?? []));
+  // 고른 머신의 그 저장소 경로. 한 머신에 같은 이름이 둘이면 이름을 보내 host가 까닭과 함께 거부하게 한다(말없이 고르지 않는다)
+  const onWhere = (byName.get(choice) ?? []).filter((x) => x.machine === where);
+  const repoPath = onWhere.length === 1 ? onWhere[0].path : choice;
+  const problem =
+    choice === ""
+      ? "저장소나 작업 폴더를 고른다"
+      : choice !== REPO_DIR && !byName.has(choice)
+        ? `project.toml repos에 없는 저장소다: ${choice}`
+        : ownerMachine !== null && choice !== REPO_DIR && !cands.includes(ownerMachine)
+          ? `owner 머신 ${ownerMachine}에 ${choice} 저장소가 없다(project.toml repos)`
+          : null;
   const profiles = useMemo(() => {
     const on = where ? machines.filter((o) => o.machine === where) : machines;
     const names = [...new Set(on.flatMap((o) => o.profiles))];
@@ -56,7 +66,7 @@ export function StartDialog({ task, owners, onStarted, onClose }: { task: TaskVi
   }, [machines, where, profile]); // eslint-disable-line react-hooks/exhaustive-deps
   const over = preview !== null && preview.open_threads >= preview.max_parallel_threads;
   const start = async () => {
-    if (!preview || busy || (over && !overLimit)) return;
+    if (!preview || busy || problem !== null || (over && !overLimit)) return;
     setBusy(true);
     setError(null);
     try {
@@ -67,8 +77,8 @@ export function StartDialog({ task, owners, onStarted, onClose }: { task: TaskVi
         title: "",
         machine: where || null,
         profile,
-        kind: repo ? "worktree" : "dir",
-        repo: repo || null,
+        kind: choice === REPO_DIR ? "dir" : "worktree",
+        repo: choice === REPO_DIR ? null : repoPath,
         base: null,
         task: "",
         from_task: preview.title,
@@ -108,25 +118,38 @@ export function StartDialog({ task, owners, onStarted, onClose }: { task: TaskVi
               <div className="task-field-row">
                 <label className="task-field">
                   <span>저장소</span>
-                  <select className="input" value={repo} disabled={busy} onChange={(e) => setRepo(e.target.value)} data-testid="task-start-repo">
-                    {repos.map((x) => (
-                      <option key={`${x.machine ?? ""}:${x.path}`} value={x.path}>
-                        {x.path}
-                        {x.machine ? ` @${x.machine}` : ""}(worktree)
+                  <select
+                    className="input"
+                    value={choice}
+                    disabled={busy || !!preview.repo}
+                    onChange={(e) => {
+                      setChoice(e.target.value);
+                      setPicked(null);
+                    }}
+                    data-testid="task-start-repo"
+                  >
+                    {choice === "" && <option value="">고르기…</option>}
+                    {[...byName.keys()].map((name) => (
+                      <option key={name} value={name}>
+                        {name}(worktree)
                       </option>
                     ))}
-                    <option value="">저장소 없음(작업 폴더)</option>
+                    {choice !== "" && choice !== REPO_DIR && !byName.has(choice) && <option value={choice}>{choice}(project.toml에 없음)</option>}
+                    <option value={REPO_DIR}>작업 폴더(저장소 없음)</option>
                   </select>
                 </label>
                 <label className="task-field">
                   <span>머신</span>
-                  <select className="input" value={where} disabled={busy || repoMachine !== null || fixed.machine} onChange={(e) => setMachine(e.target.value)} data-testid="task-start-machine">
+                  <select className="input" value={where} disabled={busy || ownerMachine !== null || cands.length <= 1} onChange={(e) => setPicked(e.target.value)} data-testid="task-start-machine">
                     <option value="">host 머신</option>
-                    {machines.map((o) => (
-                      <option key={o.machine} value={o.machine}>
-                        {o.machine}
-                      </option>
-                    ))}
+                    {machines
+                      .filter((o) => choice === "" || cands.includes(o.machine))
+                      .map((o) => (
+                        <option key={o.machine} value={o.machine}>
+                          {o.machine}
+                          {o.machine === defaultMachine(cands, preview.machine_order ?? []) && cands.length > 1 ? "(덜 붐빔)" : ""}
+                        </option>
+                      ))}
                     {where && !machines.some((o) => o.machine === where) && <option value={where}>{where}(끊김)</option>}
                   </select>
                 </label>
@@ -142,6 +165,11 @@ export function StartDialog({ task, owners, onStarted, onClose }: { task: TaskVi
                   </select>
                 </label>
               </div>
+              {problem !== null && choice !== "" && (
+                <p className="banner task-start-warning" role="alert" data-testid="task-start-problem">
+                  {problem}
+                </p>
+              )}
               {preview.warnings.map((w) => (
                 <p key={w} className="banner task-start-warning" role="status">
                   {w}
@@ -174,7 +202,7 @@ export function StartDialog({ task, owners, onStarted, onClose }: { task: TaskVi
           <button type="button" className="btn" disabled={busy} onClick={onClose}>
             취소
           </button>
-          <button className="btn btn-primary" disabled={!preview || busy || (over && !overLimit)} data-testid="task-start-go">
+          <button className="btn btn-primary" disabled={!preview || busy || problem !== null || (over && !overLimit)} title={problem ?? undefined} data-testid="task-start-go">
             {busy ? "시작하는 중" : over ? "한도를 넘겨 시작" : "시작"}
           </button>
         </footer>

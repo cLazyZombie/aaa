@@ -167,6 +167,11 @@ list: string, title: string,
  */
 owner: string | null,
 /**
+ * owner 뒤 대괄호의 저장소 칸(FRONT_API 1.73, plan §8.330): `project.toml` repos 경로의 마지막 이름이나 `작업 폴더`. 비면 정하지
+ * 않은 task다(「바로 시작」 창에서 고른다). 옛 host는 생략한다
+ */
+repo: string | null,
+/**
  * ` · t-0001`로 붙은 thread
  */
 thread: string | null,
@@ -248,7 +253,11 @@ notes_files: Array<TaskNotesFile>,
 /**
  * 파일 원문(원문 편집, FRONT_API 1.62). 옛 host는 생략한다
  */
-text: string, };
+text: string,
+/**
+ * task 저장소 칸에 쓸 수 있는 이름(FRONT_API 1.73): `project.toml` repos 경로의 마지막 이름, 겹치지 않게 적힌 차례
+ */
+repos: Array<string>, };
 
 export type TaskSuggestion = { title: string, owner: string | null, thread: string | null,
 /**
@@ -278,7 +287,15 @@ person: boolean, notes: Array<string>, parent: TaskAnchor | null, before: TaskAn
 /**
  * 이어 줄 thread(` · t-NNNN`, FRONT_API 1.63 「task로 만들기」). 옛 host는 버린다
  */
-thread: string | null, } | { "op": "update", at: TaskAnchor, title: string | null, owner: string | null, person: boolean, notes: Array<string> | null, thread: string | null, done: boolean | null, } | { "op": "delete", at: TaskAnchor, } | { "op": "move", at: TaskAnchor, to_list: string, before: TaskAnchor | null, parent: TaskAnchor | null, } | { "op": "list_add", name: string, after: string | null, } | { "op": "list_rename", name: string, to: string, } | { "op": "list_merge", name: string, into: string, } | { "op": "list_delete", name: string, } | { "op": "list_move", name: string, before: string | null, } | { "op": "restore", log_id: number, list: string | null, } | { "op": "raw_save", expected_sha256: string, text: string, };
+thread: string | null,
+/**
+ * 저장소 칸(FRONT_API 1.73): 저장소 이름·경로나 `작업 폴더`. 경로는 host가 이름으로 바꿔 적는다. 비움 = 정하지 않음
+ */
+repo: string | null, } | { "op": "update", at: TaskAnchor, title: string | null, owner: string | null, person: boolean, notes: Array<string> | null, thread: string | null, done: boolean | null,
+/**
+ * 저장소 칸(FRONT_API 1.73, Add의 `repo`와 같은 값)
+ */
+repo: string | null, } | { "op": "delete", at: TaskAnchor, } | { "op": "move", at: TaskAnchor, to_list: string, before: TaskAnchor | null, parent: TaskAnchor | null, } | { "op": "list_add", name: string, after: string | null, } | { "op": "list_rename", name: string, to: string, } | { "op": "list_merge", name: string, into: string, } | { "op": "list_delete", name: string, } | { "op": "list_move", name: string, before: string | null, } | { "op": "restore", log_id: number, list: string | null, } | { "op": "raw_save", expected_sha256: string, text: string, };
 
 export type TaskConflict = {
 /**
@@ -348,7 +365,20 @@ open_threads: number, max_parallel_threads: number,
 /**
  * 이미 열린 thread가 이 task를 맡았다 등
  */
-warnings: Array<string>, };
+warnings: Array<string>,
+/**
+ * task 저장소 칸(FRONT_API 1.73, `TaskView.repo`). 비면 창이 저장소나 작업 폴더를 고르게 한다
+ */
+repo: string | null,
+/**
+ * host 로컬 머신 이름(`RepoChoice.machine`이 빈 저장소의 머신)
+ */
+local_machine: string | null,
+/**
+ * 덜 붐비는 차례의 머신(연결·점검 이상 없음, 모든 프로젝트의 열린 thread 적은 차례 → 부하 → 이름). owner가 머신을 정하지 않았으면
+ * 그 저장소가 있는 머신 가운데 앞의 것이 기본값이다
+ */
+machine_order: Array<string>, };
 
 export type RepoChoice = { path: string,
 /**
