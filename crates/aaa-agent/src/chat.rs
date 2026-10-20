@@ -23,8 +23,13 @@ fn env_dir(name: &str) -> Option<PathBuf> {
     std::env::var_os(name).filter(|v| !v.is_empty()).map(PathBuf::from)
 }
 
+/// Claude 설정 폴더(`$CLAUDE_CONFIG_DIR`|`~/.claude`). agent는 읽기만 한다
+pub(crate) fn claude_home() -> PathBuf {
+    env_dir("CLAUDE_CONFIG_DIR").unwrap_or_else(|| aaa_config::paths::home().join(".claude"))
+}
+
 pub(crate) fn claude_root() -> PathBuf {
-    env_dir("CLAUDE_CONFIG_DIR").unwrap_or_else(|| aaa_config::paths::home().join(".claude")).join("projects")
+    claude_home().join("projects")
 }
 
 pub(crate) fn codex_root() -> PathBuf {
