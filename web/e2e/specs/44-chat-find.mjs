@@ -12,7 +12,8 @@ const LINES = 400;
 const L = (o) => JSON.stringify(o) + "\n";
 /** n번째 기록 줄: 짝수는 사람 말, 홀수는 답. 찾을 말은 일곱 곳(도구 줄의 것은 세지 않는다) */
 function line(n) {
-  if (n === 5) return L({ type: "assistant", message: { content: [{ type: "tool_use", id: "t5", name: "Bash", input: { command: `echo ${NEEDLE}` } }] } });
+  // 이어진 도구 호출 둘은 한 묶음(한 화면 줄)이다: 그 뒤 말의 차례와 화면 줄 차례가 어긋난다(plan §8.304)
+  if (n === 5) return L({ type: "assistant", message: { content: [{ type: "tool_use", id: "t5", name: "Bash", input: { command: `echo ${NEEDLE}` } }, { type: "tool_use", id: "t5b", name: "Bash", input: { command: "ls" } }] } });
   if (n % 2 === 0) {
     if (n === 12) return L({ type: "user", message: { role: "user", content: [...Array.from({ length: 60 }, (_, i) => `긴 사람 말 ${i}`), `끝에 ${NEEDLE.toLowerCase()}`].join("\n") } });
     return L({ type: "user", message: { role: "user", content: `질문 ${n}: 빌드 오류를 확인해 줘` } });
