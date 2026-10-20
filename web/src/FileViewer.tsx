@@ -412,7 +412,7 @@ export function FileViewer({ path: asked, source: from, onClose, onOpen }: { pat
   return (
     <div className="modal-scrim file-viewer-scrim" onMouseDown={(event) => event.target === event.currentTarget && onClose()}>
       <section className={virtualBody ? "modal file-viewer file-viewer-virtual" : "modal file-viewer"} role="dialog" aria-modal="true" aria-label={info?.name ?? path} ref={surface} tabIndex={-1} data-testid="file-viewer">
-        {/* 머리는 어느 폭에서나 한 줄이다(plan §8.303): 참고의 좁은 화면 두 줄(file-viewer-header-stacked)은 휴대폰 내용 칸을 줄였다 */}
+        {/* 머리는 어느 폭에서나 한 줄이다(plan §8.302): 참고의 좁은 화면 두 줄(file-viewer-header-stacked)은 휴대폰 내용 칸을 줄였다 */}
         <header className="modal-header file-viewer-header">
           <div className="file-viewer-title">
             <h2 className="modal-title">
@@ -445,7 +445,7 @@ export function FileViewer({ path: asked, source: from, onClose, onOpen }: { pat
             </p>
           </div>
           <div className="file-viewer-actions">
-            {/* HTML의 페이지·소스도 Markdown과 같은 머리 토글이다(참고 t3code FilePreviewPanel의 rendered/source 토글, plan §8.303) */}
+            {/* HTML의 페이지·소스도 Markdown과 같은 머리 토글이다(참고 t3code FilePreviewPanel의 rendered/source 토글, plan §8.302) */}
             {(markdown || htmlPage) && (
               <div className="file-viewer-group">
                 <button

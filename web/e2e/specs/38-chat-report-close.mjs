@@ -75,7 +75,7 @@ async function openAndClose(p, link, name, how, shotName) {
     : []);
   if (small.length) throw new Error(`${name}: 44px보다 작은 머리 단추 ${JSON.stringify(small)}`);
   if (shotName) await shot(p, shotName);
-  // 머리는 한 줄이고 내용이 화면 대부분을 쓴다(사용자 10-20 「윗부분이 너무 위아래가 길어」, plan §8.303): 머리 칸들은 서로 겹치거나
+  // 머리는 한 줄이고 내용이 화면 대부분을 쓴다(사용자 10-20 「윗부분이 너무 위아래가 길어」, plan §8.302): 머리 칸들은 서로 겹치거나
   // 머리 밖으로 잘리지 않고, 이름 칸이 남으며, 내용 칸(굴리는 몸)이 화면 높이의 85% 이상이다. 페이지는 iframe 안에서만 구른다
   const room = await viewer.evaluate((el) => {
     const r = (n) => n.getBoundingClientRect();
