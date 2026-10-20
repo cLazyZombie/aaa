@@ -47,7 +47,7 @@ export function reportSignedOut(): void {
   for (const listener of signedOutListeners) listener();
 }
 
-/** host `tasks` 사건(TASKS.md가 바뀜, FRONT_API 1.59): 할 일 화면과 배지가 다시 읽는다 */
+/** host `tasks` 사건(TASKS.md가 바뀜, FRONT_API 1.60): 할 일 화면과 배지가 다시 읽는다 */
 const tasksListeners = new Set<(sha256: string) => void>();
 export function onTasksChanged(listener: (sha256: string) => void): () => void {
   tasksListeners.add(listener);

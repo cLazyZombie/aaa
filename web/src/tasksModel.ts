@@ -1,4 +1,4 @@
-// 할 일 화면의 순수 규칙(할 일 보기 T1, plan §8.305): 행 상태, 거르기·검색, 활동 막대 배지, 하위 task 깊이.
+// 할 일 화면의 순수 규칙(할 일 보기 T1, plan §8.306): 행 상태, 거르기·검색, 활동 막대 배지, 하위 task 깊이.
 // host `tasks`(TaskBoard)는 TASKS.md를 그대로 읽은 것이고, 여기서는 판단하지 않고 보이는 차례와 표지만 정한다.
 import type { TaskBoard, TaskView, ThreadGroup } from "./gen/proto";
 

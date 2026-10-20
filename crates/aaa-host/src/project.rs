@@ -43,7 +43,7 @@ pub(crate) struct ProjectSettings {
     /// 처음 보는 inbox 항목 묶음을 coordinator에 한 줄로 알린다(herdr-projects `nudge`, 기본 켬). 끄면 묶음을 본 것으로만
     /// 적고 항목은 coordinator의 다음 턴 `context`가 보인다(사건마다 가는 알림은 그대로다).
     pub nudge: bool,
-    /// 할 일 화면 「나중」 탭이 읽기만 하는 Markdown 파일(프로젝트 폴더 기준 상대 경로, 예 `memory/later.md`, plan §8.305)
+    /// 할 일 화면 「나중」 탭이 읽기만 하는 Markdown 파일(프로젝트 폴더 기준 상대 경로, 예 `memory/later.md`, plan §8.306)
     pub task_notes: Vec<String>,
 }
 

@@ -53,7 +53,7 @@ export interface PaletteActions {
   openThreads: () => void;
   /** 본문 보고서 화면(활동 막대 「보고서」, plan §8.240) */
   openReports: () => void;
-  /** 본문 할 일 화면(활동 막대 「할 일」, plan §8.305) */
+  /** 본문 할 일 화면(활동 막대 「할 일」, plan §8.306) */
   openTasks: () => void;
   /** 사이드바 접기·펴기(휴대폰은 목록 drawer, 참고 CommandPalette `sidebar`) */
   toggleSidebar: () => void;

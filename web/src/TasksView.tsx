@@ -1,5 +1,5 @@
 // 본문(오른쪽) 할 일 화면(할 일 보기 T1, 사용자 10-20 「하기로 했던 기능들을 다 볼수 있고 (왼쪽에 아이콘이 있어서 거기서 들어가게)」,
-// plan §8.305). 활동 막대 「할 일」·`#tasks`가 연다. host `tasks`(TaskBoard)를 읽기만 한다: 고치기는 T2, thread로 맡기기는 T3다.
+// plan §8.306). 활동 막대 「할 일」·`#tasks`가 연다. host `tasks`(TaskBoard)를 읽기만 한다: 고치기는 T2, thread로 맡기기는 T3다.
 // 행 모양과 상태 아이콘은 t3code ComposerTasksBadge.tsx(Circle·CircleDot, 상태별 글자색, 낭독기용 상태 문구), 목록 머리(이름·수)와 메모 표지
 // `≡`은 herdr-projects popup.rs `build`(Section::Tasks)·`task_detail`을 따른다. 상세는 넓은 본문에서 오른쪽 칸, 좁은 본문(패드 세로)에서
 // 오른쪽 시트, 휴대폰에서 전체 화면 시트(Back으로 닫기, herdr-web-ui·sheetHistory.ts)다.

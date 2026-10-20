@@ -163,7 +163,7 @@ thread: string | null,
  */
 notes: Array<string>, done: boolean,
 /**
- * task 줄 번호(1부터, FRONT_API 1.59). 옛 host는 생략한다.
+ * task 줄 번호(1부터, FRONT_API 1.60). 옛 host는 생략한다.
  */
 line: number,
 /**

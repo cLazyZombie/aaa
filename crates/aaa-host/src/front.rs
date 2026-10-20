@@ -221,8 +221,8 @@ async fn serve(host: Arc<Host>, s: aaa_common::ipc::LocalStream, pid: Option<u32
 /// handshake 뒤 한 front 연결: 사건을 보내고 요청을 처리한다
 async fn serve_conn(host: Arc<Host>, tx: FrameTx, mut rx: impl FrontIn, conn: Conn) -> Result<()> {
     let Conn { role, actor, front, proto } = conn;
-    // `tasks` 사건(1.59): 옛 CLI는 모르는 사건을 풀지 못해 연결이 끊긴다
-    let tasks_known = (proto.major, proto.minor) >= (1, 59);
+    // `tasks` 사건(1.60): 옛 CLI는 모르는 사건을 풀지 못해 연결이 끊긴다
+    let tasks_known = (proto.major, proto.minor) >= (1, 60);
 
     // workspace layout 변경을 이 연결에 보낸다
     let layout_task = {

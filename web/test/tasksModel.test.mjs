@@ -1,4 +1,4 @@
-// 할 일 화면의 행 상태·거르기·검색·배지 셈(src/tasksModel.ts, 할 일 보기 T1, plan §8.305).
+// 할 일 화면의 행 상태·거르기·검색·배지 셈(src/tasksModel.ts, 할 일 보기 T1, plan §8.306).
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import { findTask, ownerLabel, taskBadge, taskDepth, taskMatches, taskSections, taskState, unassigned } from "../src/tasksModel.ts";

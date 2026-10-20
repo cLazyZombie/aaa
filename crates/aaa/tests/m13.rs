@@ -4124,7 +4124,7 @@ fn coordinator_flow() {
     assert!(!w.projects.join("p2").exists(), "거부한 프로젝트 폴더를 남기지 않는다");
 }
 
-/// 할 일 보기(T1, plan §8.305): `tasks`(`aaa task list`)가 목록·형식 어긋남·task 없는 열린 thread·「나중」 파일을 주고, 보기 권한
+/// 할 일 보기(T1, plan §8.306): `tasks`(`aaa task list`)가 목록·형식 어긋남·task 없는 열린 thread·「나중」 파일을 주고, 보기 권한
 /// 세션도 읽는다. 파일을 직접 고치면 다음 tick이 `tasks` 사건(새 sha)을 내고, 고치지 않은 tick은 내지 않는다. `--from-task`는 owner 칸이
 /// 상태 메모인 task를 사람 owner로 오인하지 않고 정확한 까닭으로 거부한다.
 #[test]

@@ -1244,7 +1244,7 @@ pub struct TaskView {
     /// task 줄 아래 들여쓴 메모
     pub notes: Vec<String>,
     pub done: bool,
-    /// task 줄 번호(1부터, FRONT_API 1.59). 옛 host는 생략한다.
+    /// task 줄 번호(1부터, FRONT_API 1.60). 옛 host는 생략한다.
     #[serde(default)]
     pub line: u32,
     /// task 줄 원문(앞 공백 제외)
@@ -1261,7 +1261,7 @@ pub struct TaskView {
     pub problems: Vec<String>,
 }
 
-/// TASKS.md의 `##` 목록 하나(FRONT_API 1.59). task가 없는 목록도 있다.
+/// TASKS.md의 `##` 목록 하나(FRONT_API 1.60). task가 없는 목록도 있다.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(default)]
 pub struct TaskListView {
@@ -1299,7 +1299,7 @@ pub struct TaskNotesFile {
     pub sections: Vec<TaskNotesSection>,
 }
 
-/// `tasks` 답(FRONT_API 1.59): 할 일 화면이 읽는 TASKS.md 전체
+/// `tasks` 답(FRONT_API 1.60): 할 일 화면이 읽는 TASKS.md 전체
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(default)]
 pub struct TaskBoard {

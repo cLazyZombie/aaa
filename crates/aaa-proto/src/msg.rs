@@ -1790,7 +1790,7 @@ pub enum FrontRequest {
         project: String,
         check: Option<String>,
     },
-    /// 할 일 화면이 읽는 TASKS.md 전체(FRONT_API 1.59, Reader 가능). 형식 어긋남·줄 번호·블록 hash·「나중」 파일을 함께 준다.
+    /// 할 일 화면이 읽는 TASKS.md 전체(FRONT_API 1.60, Reader 가능). 형식 어긋남·줄 번호·블록 hash·「나중」 파일을 함께 준다.
     Tasks {
         #[serde(default)]
         #[ts(optional, as = "Option<String>")]
@@ -2408,7 +2408,7 @@ pub enum FrontResponse {
         /// `check`가 통과했을 때 설명
         valid: Option<String>,
     },
-    /// `tasks`의 답(FRONT_API 1.59)
+    /// `tasks`의 답(FRONT_API 1.60)
     TaskBoard(TaskBoard),
     Screen(ScreenText),
     Read(ReadView),
@@ -2604,8 +2604,8 @@ pub enum FrontEvent {
     /// FRONT_API 1.43. 보고서 목록이 바뀌었다(보내기·열기·지우기·thread 사본). 웹 events 연결에만, 열 때와 바뀔 때 보낸다.
     /// `unseen`은 열지 않은 사용자 보고서 수(활동 막대 보고서 배지)
     Reports { unseen: u32 },
-    /// FRONT_API 1.59. 프로젝트 TASKS.md가 바뀌었다(ticker가 크기·mtime을 보고 내용 hash로 확인한다). 웹은 `tasks`를 다시 읽는다.
-    /// 옛 CLI는 모르는 사건을 풀지 못하므로 1.59 이상과 합의한 연결에만 보낸다.
+    /// FRONT_API 1.60. 프로젝트 TASKS.md가 바뀌었다(ticker가 크기·mtime을 보고 내용 hash로 확인한다). 웹은 `tasks`를 다시 읽는다.
+    /// 옛 CLI는 모르는 사건을 풀지 못하므로 1.60 이상과 합의한 연결에만 보낸다.
     Tasks { project: String, sha256: String },
     /// 설치 앱 아이콘의 host 공통 수. 웹 events 연결에서 처음과 값이 바뀔 때만 보낸다.
     AppBadge { count: u32 },

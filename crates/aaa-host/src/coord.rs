@@ -1,7 +1,7 @@
 //! coordinator 일 흐름(부록 A, 0.2.35 의미): `context`, `thread next`, `assignable`, `thread start --from-task`.
 //!
 //! - TASKS.md는 coordinator가 쓰고 aaa는 읽기만 한다. 완료는 줄을 지워 표시한다. 웹 할 일 화면은 `tasks`(TaskBoard)로 읽고
-//!   ticker가 파일 변화를 `tasks` 사건으로 알린다(할 일 보기 T1, plan §8.305).
+//!   ticker가 파일 변화를 `tasks` 사건으로 알린다(할 일 보기 T1, plan §8.306).
 //! - `start_threads`(safety, propose·auto)는 coordinator가 따르는 안내 값이다. aaa가 강제하지 않는다(0.2.35와 같다).
 //! - 권한을 건너뛰는 실행 인자는 사람만 바꾸는 host.toml `[safety.*]`(yolo·thread_agent_args)와 그 머신 agent.toml의 profile
 //!   `args`에 둔다(coordinator가 바꿀 수 없다, plan §8.163).

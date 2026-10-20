@@ -1,4 +1,4 @@
-/* 할 일 화면(TasksView.tsx, plan §8.305). 색·크기는 herdr-web-ui token만 쓴다. 행은 t3code ComposerTasksBadge 행(아이콘·글·오른쪽
+/* 할 일 화면(TasksView.tsx, plan §8.306). 색·크기는 herdr-web-ui token만 쓴다. 행은 t3code ComposerTasksBadge 행(아이콘·글·오른쪽
    칩), 목록 머리는 herdr-projects popup 머리(이름·수). 상세는 본문 폭으로 정한다: 넓으면(패드 가로·데스크톱) 오른쪽 칸, 좁으면(패드 세로)
    오른쪽에서 밀려 나온 시트, 휴대폰은 전체 화면 시트(herdr/sheets.ts SHEET_QUERY 640px). */
 .tasks-view {
