@@ -1,16 +1,23 @@
 // 실제 lab JSONL → agent → host → 웹. 앞 쪽 도달과 prepend 위치는 브라우저가 소유한다.
 import fs from "node:fs";
 import { root, aaa, AA, step, inList, until, domIs, shot, pairPage, browser, webkit, inTime } from "../lib/harness.mjs";
+import { ChatDiagnostics } from "../lib/chatDiagnostics.mjs";
 export const labEnv = { CODEX_HOME: `${root}/codex` };
 const line = (harness, n) => JSON.stringify(harness === "claude"
   ? { type: n % 2 ? "assistant" : "user", message: { content: [{ type: "text", text: `기록 ${n} · ${"긴 대화 줄 ".repeat(n % 5 + 1)}` }] } }
   : { type: "response_item", payload: { type: "message", role: n % 2 ? "assistant" : "user", content: [{ type: n % 2 ? "output_text" : "input_text", text: `기록 ${n} · ${"긴 대화 줄 ".repeat(n % 5 + 1)}` }] } }) + "\n";
-const frame = (page) => page.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+// 기존 두 frame 대기에서 전이 기록도 가져온다. 진단 때문에 왕복이나 frame을 더 기다리지 않는다.
+const frame = (page, diagnostics) => page.evaluate(() => new Promise((resolve) =>
+  requestAnimationFrame(() => requestAnimationFrame(() => resolve(window.takeChatStates())))))
+  .then((states) => diagnostics.remember(states));
 export default async function () {
   const safari = await webkit.launch({ headless: true });
   const releases = new Set();
+  let diagnostics;
+  const failure = { diagnose: (error) => diagnostics?.save(error, inTime) };
   const check = async (engine, width, harness) => {
     const label = `pages-${engine.browserType().name()}-${width}-${harness}`;
+    diagnostics = new ChatDiagnostics(root, label);
     const started = Date.now();
     const phase = (name) => console.log(`${label}: ${name} (${Date.now() - started}ms)`);
     const id = "01900000-0000-7000-8000-00000000a045";
@@ -27,6 +34,7 @@ export default async function () {
     const ph = await pairPage(engine, aaa("web", "pair").code, { width, height: 900 }, {
       serviceWorkers: "block",
       setup: async (context) => {
+        diagnostics.watch(context);
         if (!process.env.AAA_CHAT_FRAME_MS) return;
         await context.addInitScript((ms) => {
           const busy = () => {
@@ -49,19 +57,44 @@ export default async function () {
           disconnect() { callbacks.delete(this); super.disconnect(); }
         };
         window.flushChatResize = () => { for (const callback of callbacks.values()) callback(); };
+        // 논리적인 쪽 commit만 센다. 가상 본문 mount·글자 크기 변화는 다시 세거나 실측하지 않는다.
+        let chat, transcript, note, previous;
+        const states = [];
+        window.takeChatStates = () => states.splice(0);
+        new MutationObserver((mutations) => {
+          const next = chat?.isConnected ? chat : document.querySelector('[data-testid="chat"]');
+          const replaced = next !== chat;
+          if (!replaced && !mutations.some((m) => m.target === chat || m.target === transcript || note?.contains(m.target))) return;
+          chat = next;
+          transcript = chat?.querySelector(".chat-transcript");
+          note = chat?.querySelector('[data-testid="chat-history-start"]');
+          const state = { present: Boolean(chat), note: note?.textContent, busy: chat?.getAttribute("aria-busy"),
+            rows: transcript?.querySelectorAll(":scope > [data-chat-id]").length,
+            first: transcript?.querySelector("[data-chat-id]")?.getAttribute("data-chat-id") };
+          const key = JSON.stringify(state);
+          if (key === previous) return;
+          previous = key;
+          states.push({ at: Date.now(), ...state });
+          if (states.length > 256) states.shift();
+        }).observe(document, { subtree: true, childList: true, characterData: true, attributes: true, attributeFilter: ["aria-busy"] });
       },
       route: ["**/api/v1/call", async (route) => {
         const request = route.request().postDataJSON();
+        const entry = diagnostics.request(route.request(), request);
         if (request?.op === "pane_chat" && request.before && gate) {
           const held = gate; gate = null;
           const response = await route.fetch();
-          held.arrive(await response.json());
+          const body = await response.json();
+          diagnostics.reply(entry, body);
+          held.arrive(body);
           await held.released;
           await route.fulfill({ response });
         } else await route.continue();
       }],
     });
     const page = ph.page;
+    diagnostics.page = page;
+    diagnostics.errors = ph.errors;
     await inList(page, `pane-${label}`);
     const toggle = page.getByTestId("chat-toggle");
     await toggle.waitFor();
@@ -79,7 +112,7 @@ export default async function () {
       gate = { arrive, released };
       await chat.evaluate((el) => { el.scrollTop = 0; window.flushChatResize(); el.dispatchEvent(new Event("scroll", { bubbles: true })); });
       const body = await inTime(arrived, 20_000, `${label} 이전 쪽 요청`);
-      await frame(page);
+      await frame(page, diagnostics);
       // 응답은 아직 gate 뒤다. 동작 전의 원래 row와 좌표를 잡는다.
       const first = chat.locator(".chat-transcript > [data-chat-id]").first();
       const oldId = await first.getAttribute("data-chat-id");
@@ -88,7 +121,7 @@ export default async function () {
       const added = body.ok?.messages[0]?.id;
       if (!added) throw new Error(`${label}: 메시지 없는 합성 쪽`);
       await chat.locator(`[data-chat-id="${added}"]`).waitFor({ state: "attached" });
-      await frame(page);
+      await frame(page, diagnostics);
       if (oldId) {
         const after = await chat.locator(`[data-chat-id="${oldId}"]`).boundingBox();
         if (!after || Math.abs(after.y - oldTop) > 1) throw new Error(`${label}: prepend 위치 ${oldTop} → ${after?.y}`);
@@ -104,7 +137,7 @@ export default async function () {
     await chat.getByText("처음이다", { exact: true }).waitFor();
     phase("처음 도달");
     if ((await chat.innerText()).includes("앞부분은 생략했다")) throw new Error("처음에서 생략 안내");
-    await frame(page);
+    await frame(page, diagnostics);
     const startBox = await chat.getByText("처음이다", { exact: true }).boundingBox();
     const viewBox = await chat.boundingBox();
     if (!startBox || startBox.y < viewBox.y || startBox.y + startBox.height > viewBox.y + viewBox.height) throw new Error(`${label}: 처음 표지가 viewport 밖`);
@@ -114,7 +147,7 @@ export default async function () {
     const restoreRow = chat.locator(".chat-row").nth(40);
     // shell은 항상 있다. 실제 스크롤로 본문이 화면 근처에서 mount되게 한다.
     await restoreRow.evaluate((row) => { const el = row.closest(".chat"); el.scrollTop += row.getBoundingClientRect().top - el.getBoundingClientRect().top + 20; el.dispatchEvent(new Event("scroll", { bubbles: true })); });
-    await frame(page);
+    await frame(page, diagnostics);
     const restoreId = await restoreRow.getAttribute("data-chat-id");
     const restoreY = (await restoreRow.boundingBox()).y;
     await inList(page, "pane-t1");
@@ -122,7 +155,7 @@ export default async function () {
     phase("row40 복원");
     await page.getByTestId("chat").and(page.locator('[aria-busy="false"]')).waitFor();
     await page.getByTestId("chat").locator(`[data-chat-id="${restoreId}"] .markdown`).waitFor();
-    await frame(page);
+    await frame(page, diagnostics);
     const restoredY = (await page.getByTestId("chat").locator(`[data-chat-id="${restoreId}"]`).boundingBox()).y;
     if (Math.abs(restoredY - restoreY) > 1) throw new Error(`${label}: pane 왕복 row40 위치 ${restoreY} → ${restoredY}`);
     await chat.evaluate((el) => { el.scrollTop = 0; window.flushChatResize(); el.dispatchEvent(new Event("scroll", { bubbles: true })); });
@@ -131,7 +164,7 @@ export default async function () {
     fs.appendFileSync(tr, Array.from({ length: 400 }, (_, n) => line(harness, 2400 + n)).join(""));
     phase("최신 gap");
     await until("최신 gap도 전부 합침", async () => (await chat.locator(".chat-row").count()) === 2800);
-    await frame(page);
+    await frame(page, diagnostics);
     const firstAt = await chat.getByText("기록 0 ·", { exact: false }).first().boundingBox();
     if (!firstAt || firstAt.y < (await chat.boundingBox()).y) throw new Error("위를 읽는 중 최신 gap이 자리를 바꿈");
     await page.getByTestId("chat-jump").click();
@@ -154,7 +187,7 @@ export default async function () {
     // 즉시 끝 이동(End)도 pane별 따라가기 기억에 반영한다. smooth 단추 경로는 기존 E2E30이 소유한다.
     await chat.evaluate((el) => { el.scrollTop = 0; el.dispatchEvent(new Event("scroll", { bubbles: true })); });
     await chat.getByText("기록 0 ·", { exact: false }).first().waitFor();
-    await frame(page);
+    await frame(page, diagnostics);
     await chat.focus();
     await page.keyboard.press("End");
     await domIs(page, "End로 즉시 실제 끝", () => { const e = document.querySelector('[data-testid="chat"]'); return e.scrollHeight - e.scrollTop - e.clientHeight <= 40; });
@@ -199,13 +232,13 @@ export default async function () {
       await inTime(arrived, 20_000, `${label} 짧은 최신 쪽 자동 채움`);
       const short = chat.getByText("기록 9000 ·", { exact: false }).first();
       await short.waitFor();
-      await frame(page);
+      await frame(page, diagnostics);
       const beforeY = (await short.boundingBox()).y;
       const clamped = await inTime(page.evaluate(() => window.shortScroll), 20_000, "짧은 쪽으로 줄며 생긴 scroll");
       await page.evaluate(() => window.releaseShortScroll());
       release();
       await domIs(page, "짧은 최신 쪽의 이전 쪽 commit", () => document.querySelectorAll('[data-testid="chat"] .chat-row').length === 151);
-      await frame(page);
+      await frame(page, diagnostics);
       const afterY = (await short.boundingBox()).y;
       await page.evaluate(() => { window.shortCpuDone = true; });
       const closes = await page.evaluate(() => window.__aaaTermLog.filter((entry) => entry.e === "ws close 1006").length);
@@ -222,23 +255,24 @@ export default async function () {
       fs.unlinkSync(`${tr}.old`);
     }
     if (ph.errors.length) throw new Error(ph.errors.join("; "));
+    diagnostics.stop();
     await page.context().close();
     aaa("pane", "kill", label);
     fs.unlinkSync(tr);
   };
   try {
     // 독립된 조합마다 같은 상한을 적용한다. literal 이름으로 --list/--grep에도 모두 보인다.
-  await step("긴 대화 앞 쪽: Chromium 1280 claude", async () => check(browser, 1280, "claude"));
-  await step("긴 대화 앞 쪽: Chromium 1280 codex", async () => check(browser, 1280, "codex"));
-  await step("긴 대화 앞 쪽: Chromium 390 claude", async () => check(browser, 390, "claude"));
-  await step("긴 대화 앞 쪽: Chromium 390 codex", async () => check(browser, 390, "codex"));
-  await step("긴 대화 앞 쪽: Chromium 820 claude", async () => check(browser, 820, "claude"));
-  await step("긴 대화 앞 쪽: Chromium 820 codex", async () => check(browser, 820, "codex"));
-  await step("긴 대화 앞 쪽: WebKit 1280 claude", async () => check(safari, 1280, "claude"));
-  await step("긴 대화 앞 쪽: WebKit 1280 codex", async () => check(safari, 1280, "codex"));
-  await step("긴 대화 앞 쪽: WebKit 390 claude", async () => check(safari, 390, "claude"));
-  await step("긴 대화 앞 쪽: WebKit 390 codex", async () => check(safari, 390, "codex"));
-  await step("긴 대화 앞 쪽: WebKit 820 claude", async () => check(safari, 820, "claude"));
-  await step("긴 대화 앞 쪽: WebKit 820 codex", async () => check(safari, 820, "codex"));
+  await step("긴 대화 앞 쪽: Chromium 1280 claude", async () => check(browser, 1280, "claude"), failure);
+  await step("긴 대화 앞 쪽: Chromium 1280 codex", async () => check(browser, 1280, "codex"), failure);
+  await step("긴 대화 앞 쪽: Chromium 390 claude", async () => check(browser, 390, "claude"), failure);
+  await step("긴 대화 앞 쪽: Chromium 390 codex", async () => check(browser, 390, "codex"), failure);
+  await step("긴 대화 앞 쪽: Chromium 820 claude", async () => check(browser, 820, "claude"), failure);
+  await step("긴 대화 앞 쪽: Chromium 820 codex", async () => check(browser, 820, "codex"), failure);
+  await step("긴 대화 앞 쪽: WebKit 1280 claude", async () => check(safari, 1280, "claude"), failure);
+  await step("긴 대화 앞 쪽: WebKit 1280 codex", async () => check(safari, 1280, "codex"), failure);
+  await step("긴 대화 앞 쪽: WebKit 390 claude", async () => check(safari, 390, "claude"), failure);
+  await step("긴 대화 앞 쪽: WebKit 390 codex", async () => check(safari, 390, "codex"), failure);
+  await step("긴 대화 앞 쪽: WebKit 820 claude", async () => check(safari, 820, "claude"), failure);
+  await step("긴 대화 앞 쪽: WebKit 820 codex", async () => check(safari, 820, "codex"), failure);
   } finally { for (const release of releases) release(); await safari.close(); }
 }

@@ -18,17 +18,21 @@ function Section({ title, children, testid }: { title: string; children: ReactNo
 function Facts({ rows }: { rows: Array<[string, ReactNode] | null | false> }) {
   return <dl className="automation-facts">{rows.filter((r): r is [string, ReactNode] => !!r).map(([k, v]) => <div key={k}><dt>{k}</dt><dd>{v}</dd></div>)}</dl>;
 }
-export function RunLine({ run }: { run: RoutineRun }) {
+/** 기록의 thread 번호: 누르면 그 thread(열려 있으면 pane, 끝났으면 보고, plan t-0475 A1) */
+export function ThreadLink({ id, onThread }: { id: string; onThread: (id: string) => void }) {
+  return <button type="button" className="automation-thread-link" data-testid={`automation-thread-${id}`} onClick={() => onThread(id)}>{id}</button>;
+}
+export function RunLine({ run, onThread }: { run: RoutineRun; onThread?: (id: string) => void }) {
   return <>
     <span className={`automation-badge is-${runTone(run)}`}>{runWord[run.status] ?? run.status}</span>
     <time dateTime={new Date(run.at_ms).toISOString()}>{time(run.at_ms)}</time>
-    <span className="automation-run-detail">{run.detail}{run.thread && ` · ${run.thread}`}</span>
+    <span className="automation-run-detail">{run.detail}{run.thread && (onThread ? <> · <ThreadLink id={run.thread} onThread={onThread} /></> : ` · ${run.thread}`)}</span>
   </>;
 }
-function Runs({ runs, loading }: { runs: RoutineRun[]; loading: boolean }) {
+function Runs({ runs, loading, onThread }: { runs: RoutineRun[]; loading: boolean; onThread?: (id: string) => void }) {
   if (loading && runs.length === 0) return <p role="status">읽는 중…</p>;
   if (runs.length === 0) return <p className="automation-dim">기록 없음</p>;
-  return <ol className="automation-runs">{runs.map((run) => <li key={`${run.id}:${run.at_ms}`}><RunLine run={run} /></li>)}</ol>;
+  return <ol className="automation-runs">{runs.map((run) => <li key={`${run.id}:${run.at_ms}`}><RunLine run={run} onThread={onThread} /></li>)}</ol>;
 }
 function Source({ file, text, truncated }: { file: string; text: string; truncated?: boolean }) {
   return <figure className="automation-source"><figcaption>{file}{truncated && " · 64KiB에서 자름"}</figcaption><pre>{text || "(비었다)"}</pre></figure>;
@@ -59,8 +63,10 @@ function useRuns(project: string, name: string, stamp: unknown) {
   return { runs, source, error, loading, load };
 }
 
-export function RuleDetail({ project, rule, canControl, covered = false, onChanged, onApprove, onClose }: {
+export function RuleDetail({ project, rule, canControl, covered = false, onChanged, onApprove, onThread, onClose }: {
   project: string;
+  /** 기록의 thread 번호를 누르면(창을 닫고 그 thread를 연다) */
+  onThread?: (id: string) => void;
   /** 목록의 승인 확인창이 위에 떠 있다 */
   covered?: boolean;
   rule: RoutineView;
@@ -137,7 +143,7 @@ export function RuleDetail({ project, rule, canControl, covered = false, onChang
     </Section>
     <Section title={`기록 · 최근 ${runs.length}건(최대 50)`} testid="automation-runs">
       <div className="automation-tools"><button type="button" className="btn" onClick={() => void load()}>기록 다시 읽기</button></div>
-      <Runs runs={runs} loading={loading} />
+      <Runs runs={runs} loading={loading} onThread={onThread} />
     </Section>
     <Section title="파일 원문" testid="automation-source">
       {source ? <>

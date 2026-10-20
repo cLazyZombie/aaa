@@ -23,7 +23,7 @@ import {
   type MouseEvent,
   type ReactNode,
 } from "react";
-import { ChevronDown, ChevronRight, CircleDashed, Ellipsis, Eraser, FileText, Folder, FolderOpen, Layers, ListChecks, Monitor, Pause, Pencil, Pin, PinOff, Play, Plus, RotateCcw, RotateCw, ScanEye, ShieldCheck, Terminal, Trash2, TriangleAlert, X } from "lucide-react";
+import { ChevronDown, ChevronRight, CircleDashed, Ellipsis, Eraser, FileText, Folder, FolderOpen, Layers, ListChecks, Monitor, Pause, Pencil, Pin, PinOff, Play, Plus, RotateCcw, RotateCw, ScanEye, ShieldCheck, Terminal, Trash2, TriangleAlert, Workflow, X } from "lucide-react";
 import type { EvaluatorView, FrontRequest, MachineView, MissionView, PaneView, PlanSummary, ThreadView } from "./gen/proto";
 import { ApiError, call } from "./api";
 import { ConfirmDialog } from "./ConfirmDialog";
@@ -261,6 +261,13 @@ export interface SidebarProps {
   onNewShell: (m: MachineView) => void;
   /** 모든 thread(끝난 것까지) 화면 */
   onThreads: () => void;
+  /** 자동화 패널을 보이고 그 규칙 상세를 연다(thread 줄 「자동 · 규칙」 표지, plan t-0475 A1) */
+  onAutomation: (project: string, name: string) => void;
+  /** thread 번호로 연다(자동화 패널의 「열림」 칩·기록 번호): 끝난 thread는 보고 */
+  onThreadId: (project: string, id: string) => void;
+  /** 자동화 패널이 열 규칙 상세. 패널이 받으면 `onRuleAsked`로 지운다 */
+  ruleAsk: { project: string; name: string } | null;
+  onRuleAsked: () => void;
   /** 목록 위에 띄울 알림 띠(연결 끊김·오류) */
   banners?: ReactNode;
   /** 보이는 패널(활동 막대) */
@@ -321,7 +328,7 @@ export function Sidebar(props: SidebarProps) {
         <SpecialSection {...props} />
       </div>
       <div {...panelProps("automations", props.panel)} className="sidebar-panel automations-panel">
-        {props.panel === "automations" && <AutomationPanel canControl={props.canControl} />}
+        {props.panel === "automations" && <AutomationPanel canControl={props.canControl} threads={props.threads} onThread={props.onThreadId} ask={props.ruleAsk} onAsked={props.onRuleAsked} />}
       </div>
       {menu && <RowMenu anchor={menu.anchor} point={menu.point} restoreFocusTo={menu.previousFocus} title={menu.title} subtitle={menu.place} header={menu.header} items={menu.items()} onClose={closeMenu} />}
       {confirm && (
@@ -756,6 +763,7 @@ function PaneRow({ pane: p, online, machine, twoLine, move, ...props }: SidebarP
   return (
     <li
       className={`workspace workspace-group pane-item${p.coordinator_project ? " is-coordinator" : ""}${selected ? " is-selected" : ""}${p.state !== "running" ? " is-ended" : ""}${online ? "" : " is-offline"}${move?.dragging ? " is-dragging" : ""}${move?.lifted ? " is-lifted" : ""}`}
+      data-origin={p.coordinator_project ? "coordinator" : undefined}
       inert={!online}
       data-pane={p.id}
       data-pin-key={pinKey}
@@ -1004,12 +1012,30 @@ function ThreadRow({ t, online, machine, twoLine, ...props }: SidebarProps & { t
           : [pinned
             ? { id: "unpin", label: "고정 해제", icon: PinOff, run: () => rows.togglePin(pinKey, menuFrom.current) }
             : { id: "pin", label: "고정", icon: Pin, run: () => rows.togglePin(pinKey, menuFrom.current) }]),
+        ...(t.automation ? [{ id: "automation", label: "자동화 규칙", icon: Workflow, run: () => props.onAutomation(t.project, t.automation!) }] : []),
         { id: "threads", label: "모든 thread", icon: ListChecks, run: props.onThreads },
       ],
     });
   };
+  // 자동화가 띄운 thread(plan t-0475 A1): 둘째 줄 앞 「자동 · 규칙 제목」. 누르면 줄(pane 열기) 대신 그 규칙 상세. 키보드는 ⋯ 메뉴
+  // 「자동화 규칙」으로 간다(줄 안에 단추를 겹쳐 두지 않는다)
+  const rule = t.automation_title ?? t.automation;
+  const origin = t.automation ? (
+    <span
+      className="thread-origin"
+      data-testid={`thread-origin-${t.project}-${t.id}`}
+      title={`자동화 「${rule}」가 띄운 thread · 눌러 규칙 보기`}
+      onClick={(e) => {
+        e.stopPropagation();
+        props.onAutomation(t.project, t.automation!);
+      }}
+    >
+      {/* 줄 앞 공백은 flex 항목에서 사라지므로 떨어지지 않는 공백으로 띄운다 */}
+      자동<span className="thread-origin-rule">{"\u00a0· "}{rule}</span>
+    </span>
+  ) : null;
   return (
-    <li className={`workspace workspace-group pane-item${selected ? " is-selected" : ""}${online ? "" : " is-offline"}`} inert={!online} data-thread={threadKey(t)} data-group={t.group} data-pin-key={pinKey ?? undefined}>
+    <li className={`workspace workspace-group pane-item${selected ? " is-selected" : ""}${online ? "" : " is-offline"}`} inert={!online} data-thread={threadKey(t)} data-group={t.group} data-origin={t.automation ? "automation" : undefined} data-pin-key={pinKey ?? undefined}>
       <div className="workspace-header" onMouseDownCapture={keepFocusOnMenuPress} onContextMenu={(e) => onRowContextMenu(e, toggleMenu)}>
         <div
           className="pane-select workspace-select"
@@ -1031,6 +1057,7 @@ function ThreadRow({ t, online, machine, twoLine, ...props }: SidebarProps & { t
                 {online && paneOpen && <AgentCounts pane={pane} />}
               </span>
               <span className="workspace-place thread-place">
+                {origin}
                 <span className={`thread-state is-${t.group}`} data-tone={tone} data-testid={`thread-state-${t.project}-${t.id}`}>
                   {line}
                   <WorkingDuration startedMs={workingStartedAt(tone, paneOpen ? pane : undefined)} />

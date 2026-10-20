@@ -1056,6 +1056,8 @@ impl Host {
             thread_kind: r.kind,
             holds: r.holds.clone(),
             mission: r.mission.as_ref().map(|m| m.name.clone()),
+            automation: r.automation.clone(),
+            automation_title: r.automation.as_deref().map(|n| self.automation_title(&r.project, n)),
             status: r.status,
             cleanup_pending: r.resolve_pending.is_some().then_some(true),
             group,
@@ -1082,6 +1084,18 @@ impl Host {
             repo: r.repo.clone(),
             limited_until_ms: self.usage_limit(&r.project, &r.id),
         }
+    }
+
+    /// thread를 띄운 자동화 규칙의 제목(plan t-0475 A1). 줄마다 부르므로 그 규칙 파일의 `title` 칸만 읽는다. 파일이 없어졌거나
+    /// 읽지 못하거나 제목이 비면 이름이다(옛 routine 파일에는 제목이 없다)
+    pub(crate) fn automation_title(&self, project: &str, name: &str) -> String {
+        self.project_dir(project)
+            .ok()
+            .and_then(|dir| crate::automation::project_text(&dir, &format!("automations/{name}.toml")).ok())
+            .and_then(|text| text.parse::<toml::Table>().ok())
+            .and_then(|t| t.get("title").and_then(|v| v.as_str()).map(str::trim).map(str::to_string))
+            .filter(|t| !t.is_empty())
+            .unwrap_or_else(|| name.to_string())
     }
 
     /// thread 목록. 기본(`role` 없음)은 사후 평가자를 뺀다(§8.13).

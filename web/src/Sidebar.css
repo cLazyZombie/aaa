@@ -71,10 +71,23 @@
 [data-palette="github-dark"] .sidebar-shell,
 [data-palette="github-dark-dimmed"] .sidebar-shell { --coordinator: #bc8cff; }
 [data-palette="github-light"] .sidebar-shell { --coordinator: #8250df; }
-/* 막대는 줄 머리가 아니라 내용(select) 시작에 붙여 표지와 4px을 띄운다: 프로젝트가 하나면 머리 없이 들여쓰기 0이라 머리 기준 9px
-   막대가 Claude 표지(칸 34px 가운데 18px, 8px부터)를 덮었다(사용자 10-19 「보라 세로선이 claude 아이콘을 가려」, plan §8.286) */
-.workspace.is-coordinator > .workspace-header > .workspace-select { position: relative; }
-.workspace.is-coordinator > .workspace-header > .workspace-select::before {
+/* 자동화가 띄운 thread(plan t-0475 A1, 사용자 결정 10-20 Q4 호박색): coordinator와 같은 막대를 호박색으로. 경고 글(사용량 한도 등
+   --notice)도 노랑 계열이지만 막대는 줄 왼쪽 끝 2px이고 경고는 둘째 줄 글자라 자리가 다르며, 「자동 · 규칙」 글 표지를 함께 둔다.
+   GitHub 팔레트는 GitHub의 attention 색 */
+.sidebar-shell { --automation: #e3b341; }
+[data-theme="light"] .sidebar-shell { --automation: #9a6700; }
+[data-theme="dark"][data-palette="catppuccin"] .sidebar-shell { --automation: #f9e2af; }
+[data-theme="light"][data-palette="catppuccin"] .sidebar-shell { --automation: #a86b00; }
+[data-palette="github-dark"] .sidebar-shell { --automation: #d29922; }
+[data-palette="github-dark-dimmed"] .sidebar-shell { --automation: #c69026; }
+[data-palette="github-light"] .sidebar-shell { --automation: #9a6700; }
+/* 줄의 출처 막대(data-origin): coordinator는 보라, 자동화 thread는 호박색. 막대는 줄 머리가 아니라 내용(select) 시작에 붙여 표지와
+   4px을 띄운다: 프로젝트가 하나면 머리 없이 들여쓰기 0이라 머리 기준 9px 막대가 Claude 표지(칸 34px 가운데 18px, 8px부터)를
+   덮었다(사용자 10-19 「보라 세로선이 claude 아이콘을 가려」, plan §8.286) */
+.workspace[data-origin="coordinator"] { --origin-bar: var(--coordinator); }
+.workspace[data-origin="automation"] { --origin-bar: var(--automation); }
+.workspace[data-origin] > .workspace-header > .workspace-select { position: relative; }
+.workspace[data-origin] > .workspace-header > .workspace-select::before {
   content: "";
   position: absolute;
   left: max(0px, calc((var(--side-box) - var(--icon-size)) / 2 - 6px));
@@ -82,7 +95,24 @@
   bottom: 7px;
   width: 2px;
   border-radius: 1px;
-  background: var(--coordinator);
+  background: var(--origin-bar);
+}
+/* 「자동 · 규칙 제목」 표지(둘째 줄 앞): 조용한 글(배지·숫자 없이, herdr-web-ui DESIGN 「배지가 아니다」). 누르면 그 규칙 상세.
+   좁은 목록(휴대폰·좁힌 사이드바)에서는 규칙 제목을 빼고 「자동」만 남는다 */
+.thread-origin {
+  flex: 0 1 auto;
+  min-width: 0;
+  max-width: 55%;
+  display: inline-flex;
+  overflow: hidden;
+  white-space: nowrap;
+  color: var(--text-dim);
+  cursor: pointer;
+}
+.thread-origin:hover { text-decoration: underline; }
+.thread-origin-rule { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+@media (max-width: 768px) {
+  .thread-origin-rule { display: none; }
 }
 .project-thread-head {
   display: flex;

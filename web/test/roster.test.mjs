@@ -2,7 +2,7 @@
 // 목록(Sidebar Roster)도 같은 roster로 그리므로, 여기서는 차례 규칙과 thread 줄이 여는 것을 본다.
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { paneProblem, rosterRows } from "../src/sidebarModel.ts";
+import { paneProblem, roster, rosterRows } from "../src/sidebarModel.ts";
 
 const ma = { id: "m1", name: "mac-a", connection: "connected" };
 const mb = { id: "m2", name: "mac-b", connection: "connected" };
@@ -56,6 +56,19 @@ describe("단축키 줄 차례", () => {
     const threads = [thread("p", "t-1", "working", "w"), { ...thread("p", "t-2", "idle", "m"), mission: "ci-watch" }];
     const keys = rosterRows([ma], [pane("w"), pane("m"), pane("shell")], threads).map((r) => r.keys[0]);
     assert.deepEqual(keys, ["thread:p/t-1", "pane:shell"]);
+  });
+
+  it("자동화가 띄운 thread는 따로 모으지 않고 사람이 띄운 thread와 같은 폴더·같은 rank 차례에 선다(plan t-0475 Q5)", () => {
+    const auto = (t, rule) => ({ ...t, automation: rule, automation_title: rule });
+    const threads = [
+      { ...thread("p", "t-1", "working", null, 5), repo: "/w/aaa" },
+      { ...auto(thread("p", "t-2", "waiting_on_you"), "ci-main"), repo: "/w/aaa" },
+      { ...auto(thread("p", "t-3", "working", null, 9), "rc-verify"), repo: "/w/aaa" },
+      thread("p", "t-4", "idle"),
+      auto(thread("p", "t-5", "idle", null, 3), "ci-main"),
+    ];
+    const r = roster([ma], [], threads);
+    assert.deepEqual(r.folders.map((f) => [f.name, f.threads.map((t) => t.id)]), [["aaa", ["t-2", "t-3", "t-1"]], ["작업 폴더", ["t-5", "t-4"]]]);
   });
 
   it("폴더 안 활동순: 답을 기다리는 thread가 먼저, 그다음 상태가 최근 바뀐 것", () => {
