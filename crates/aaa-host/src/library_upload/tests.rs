@@ -90,7 +90,8 @@ fn a_stale_upload_goes_away_but_the_one_being_written_stays() {
     let h = &lab.h;
     const OLD: &str = "ffffffffffffffffffffffffffffffff";
     h.library_upload_put(DeviceRole::Controller, "demo", OLD, "a.md", b"a").unwrap();
-    h.library_upload_put(DeviceRole::Controller, "demo", UP, "a.md", b"a").unwrap();
+    // 하위 폴더를 미리 만든다: 그 안에 더 써도 맨 위 폴더 항목은 그대로라 OS가 시각을 바꾸지 않는다
+    h.library_upload_put(DeviceRole::Controller, "demo", UP, "sub/a.md", b"a").unwrap();
     let root = h.state.join("library-uploads");
     let day_ago = std::time::SystemTime::now() - std::time::Duration::from_secs(25 * 3600);
     for id in [OLD, UP] {
