@@ -61,7 +61,17 @@ jobs:
       - name: 웹 빌드
         run: bash scripts/ci-local.sh --only web --logs . --tee
       - name: 웹 E2E(aaa 빌드 포함)
+        id: e2e
         run: bash scripts/ci-local.sh --only e2e --logs . --tee
+      - name: 웹 E2E 실패 산출물
+        if: ${{ failure() && steps.e2e.outcome == 'failure' }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: web-e2e-failure-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            e2e.log
+            e2e-failures/
+          retention-days: 14
       - name: 실패 요약
         if: failure()
         run: |
