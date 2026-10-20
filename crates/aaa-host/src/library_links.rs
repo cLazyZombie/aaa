@@ -944,11 +944,16 @@ mod tests {
                     prefix: String::new(),
                 },
                 FrontRequest::LibraryPrune { project: None, older_than_days: 30 },
-                FrontRequest::LibraryRotate,
             ] {
                 assert_eq!(lab.h.call(role, "device:test", req).await.unwrap_err().code, ErrorCode::Forbidden);
             }
         }
+        // 키 교체는 웹 조작 기기도 한다(관리 GUI W5b 5A). 보기 권한은 못 한다
+        assert_eq!(
+            lab.h.call(DeviceRole::Reader, "device:test", FrontRequest::LibraryRotate).await.unwrap_err().code,
+            ErrorCode::Forbidden
+        );
+        lab.h.call(DeviceRole::Controller, "device:test", FrontRequest::LibraryRotate).await.unwrap();
         publish(&lab, "page", &source, false).await;
         let FrontResponse::LibraryReports { reports } = lab
             .h

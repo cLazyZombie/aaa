@@ -12,7 +12,7 @@ pub(crate) const FILE_MAX: u64 = 16 << 20;
 pub(crate) const TOTAL_MAX: u64 = 64 << 20;
 const FILES_MAX: usize = 1000;
 const STALE_MS: u64 = 24 * 3600 * 1000;
-/// 올리기 쓰기는 하나씩(합계 상한을 셀 때 겹치지 않게)
+/// 올리기 쓰기·등록은 하나씩(합계 상한을 셀 때 겹치지 않게, 등록이 읽는 동안 다른 쓰기의 치우기가 지우지 않게)
 static PUTTING: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
 /// 웹이 만든 올리기 이름: 소문자 hex 32자
@@ -123,15 +123,19 @@ impl Host {
         if !valid_upload(upload) {
             return Err(err(ErrorCode::BadRequest, "올리기 이름이 아니다"));
         }
+        if files == 0 {
+            return Err(err(ErrorCode::BadRequest, "올린 파일이 없다"));
+        }
+        let _one = PUTTING.lock().unwrap();
         let dir = self.uploads_root().join(upload);
         let have = usage(&dir).0;
-        if have == 0 {
-            return Err(err(ErrorCode::NotFound, "올린 파일이 없다"));
-        }
+        // 하나도 없어도(통째로 치워짐) 같은 답: 웹은 새 자리에 처음부터 올린다
         if have != files as usize {
             return Err(err(
                 ErrorCode::Conflict,
-                format!("올린 파일이 {files}개 중 {have}개다(오래돼 치워졌을 수 있다): 처음부터 다시 올린다"),
+                format!(
+                    "올린 파일이 {files}개 중 {have}개다(오래돼 치워졌거나 대소문자만 다른 이름이 겹쳤다): 처음부터 다시 올린다"
+                ),
             ));
         }
         let source = dir.to_str().ok_or_else(|| err(ErrorCode::BadRequest, "경로가 글이 아니다"))?;

@@ -20,7 +20,8 @@ fn lab() -> Lab {
     h.project_create("demo", Default::default(), "local:cli").unwrap();
     Lab { root, h }
 }
-const UP: &str = "0123456789abcdef0123456789abcdef";
+// 다른 시험이 등록한 가짜 비밀(`…0123456789`)의 조각과 겹치지 않는 값: 요청 가림(redact::json)이 그 조각을 지운다
+const UP: &str = "a7c3e9b1d5f2084c6e1a9b3d7f5c2e80";
 
 #[test]
 fn uploads_check_role_path_and_size_before_writing() {
@@ -71,6 +72,17 @@ async fn an_upload_becomes_one_report_and_its_folder_goes_away() {
     // 웹이 올린 수와 올린 자리가 다르면(치워진 뒤 나머지만 온 경우) 등록하지 않는다
     let e = h.call(DeviceRole::Controller, "device:phone", req(true, 4)).await.unwrap_err();
     assert_eq!(e.code, ErrorCode::Conflict, "{e:?}");
+    // 통째로 치워진 올리기도 같은 답(웹이 새 자리에 처음부터 올린다)
+    const GONE: &str = "b7c3e9b1d5f2084c6e1a9b3d7f5c2e80";
+    let gone = FrontRequest::LibraryUploadPublish {
+        project: "demo".into(),
+        upload: GONE.into(),
+        name: "gone".into(),
+        files: 2,
+        to_user: false,
+        title: None,
+    };
+    assert_eq!(h.call(DeviceRole::Controller, "device:phone", gone).await.unwrap_err().code, ErrorCode::Conflict);
     h.call(DeviceRole::Controller, "device:phone", req(true, 3)).await.unwrap();
     assert!(!dir.exists(), "등록한 올리기 폴더는 지운다");
     let report = h.project_dir("demo").unwrap().join("library/plan-report");

@@ -204,13 +204,20 @@ export default async function ({ page }) {
     const body = `${root}/request-body.md`;
     fs.writeFileSync(body, "배포 전에 **승인**이 필요하다.\n\n- 바뀐 것: 로그인 화면\n");
     const inboxBadge = () => page.evaluate(() => document.querySelector('[data-testid="activity-badge-inbox"]')?.textContent ?? "0");
-    const inboxBefore = await inboxBadge();
     aaa("post", "demo", "user", "--request", "--needs-user", "--topic", "user-action", "--title", "배포 승인", "--body-file", body);
     await until("빨강 배지 둘", async () => (await badge(page)).startsWith("ask 2 "));
     // 같은 항목을 두 배지가 세지 않는다: 알림함은 그 요청을 「답할 것」으로 보낸다(plan §8.343·§8.345)
     await page.getByTestId("activity-inbox").click();
     await until("알림함의 답할 요청 수", async () => (await page.getByTestId("inbox-answers").innerText().catch(() => "")).includes("1건"));
-    if ((await inboxBadge()) !== inboxBefore) throw new Error(`알림함 배지가 답할 요청을 셌다: ${inboxBefore} → ${await inboxBadge()}`);
+    // 배지는 host가 아는 끝내지 않은 항목에서 이 요청 하나를 뺀 수다. 앞 단계 보고의 「확인 필요」 같은 항목이 늦게 와도
+    // 둘이 함께 바뀐다(앞뒤 배지만 대조하면 그 항목이 사이에 와서 틀렸다: ci 부하에서 5 → 6)
+    const hostOpen = () => {
+      const r = aaa("inbox", "list", "demo", "--peek");
+      return r.items.filter((i) => !i.done).length + (r.omitted_open ?? 0);
+    };
+    await until("알림함 배지가 답할 요청을 세지 않음", async () => Number(await inboxBadge()) === hostOpen() - 1).catch(async (e) => {
+      throw new Error(`알림함 배지가 답할 요청을 셌다: 배지 ${await inboxBadge()}, host 끝내지 않은 항목 ${hostOpen()}(요청 1 포함) — ${e.message}`);
+    });
     if (await page.locator('[data-testid="inbox-item"]', { hasText: "배포 승인" }).count()) throw new Error("알림함 목록에 답할 요청이 있다");
     await page.getByTestId("inbox-answers").getByRole("button", { name: "답할 것 열기" }).click();
     await until("답할 것으로", async () =>

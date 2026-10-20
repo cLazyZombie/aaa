@@ -73,12 +73,23 @@ export function uploadPlan(files: Picked[]): { paths: { path: string; index: num
     paths.push({ path: rel, index });
     total += f.size;
   });
+  // host(macOS 기본 볼륨)는 대소문자·유니코드 정규화만 다른 이름을 한 파일로 본다: 하나가 덮이기 전에 막는다
+  const seen = new Map<string, string>();
+  let same: string | null = null;
+  for (const p of paths) {
+    const key = p.path.normalize("NFC").toLowerCase();
+    const before = seen.get(key);
+    if (before !== undefined && same === null) same = `${before}·${p.path}: 대소문자나 글자 조합만 다른 이름은 함께 올리지 못한다`;
+    seen.set(key, p.path);
+  }
   // 뺀 숨은 파일(`.git` 묶음 등)은 크기를 따지지 않는다
   const big = paths.map((p) => files[p.index]!).find((f) => f.size > FILE_MAX);
   const error =
     paths.length === 0
       ? "올릴 파일이 없다"
-      : big
+      : same
+        ? same
+        : big
         ? `${big.name}: 파일 하나는 16MB까지다`
         : total > TOTAL_MAX
           ? "합계 64MB까지 올린다"

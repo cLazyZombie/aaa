@@ -67,6 +67,17 @@ describe("관리 W5b", () => {
     ]);
     assert.equal(packed.error, null);
     assert.deepEqual(packed.skipped, ["r/.git/p.pack"]);
+    // 대소문자·정규화만 다른 이름은 host(macOS)에서 한 파일이 된다
+    const caseOnly = uploadPlan([
+      { name: "README.md", relative: "", size: 1 },
+      { name: "readme.md", relative: "", size: 1 },
+    ]);
+    assert.match(caseOnly.error, /README\.md·readme\.md: 대소문자/);
+    const nfd = uploadPlan([
+      { name: "가.md", relative: "", size: 1 },
+      { name: "가.md".normalize("NFD"), relative: "", size: 1 },
+    ]);
+    assert.match(nfd.error, /글자 조합/);
     assert.match(uploadPlan([{ name: "big.bin", relative: "", size: 16 * MB + 1 }]).error, /big\.bin: 파일 하나는 16MB/);
     const five = Array.from({ length: 5 }, (_, i) => ({ name: `${i}.bin`, relative: "", size: 16 * MB }));
     assert.equal(uploadPlan(five.slice(0, 4)).error, null);
