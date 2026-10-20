@@ -4176,6 +4176,16 @@ fn render_front(r: &FrontResponse) -> String {
                 let _ = writeln!(s, "{}\t{}\t{}", p.id, p.input.to, p.input.title);
             }
         }
+        // 「답할 것」(웹 화면이 쓴다): CLI는 확인 필요 post와 답한 것을 한 줄씩 보인다
+        FrontResponse::Asks { requests, done, keep_days } => {
+            for r in requests {
+                let _ = writeln!(s, "답할 것\t{}\t{}", r.id, r.title);
+            }
+            for d in done {
+                let _ = writeln!(s, "답한 것\t{}\t{}\t{}\t{}", d.id, d.title, d.summary, d.by);
+            }
+            let _ = writeln!(s, "(답한 것은 {keep_days}일 뒤 지운다)");
+        }
         // 웹 화면들의 공유 설정: CLI는 문서를 그대로 보인다
         FrontResponse::Preferences(p) => {
             let _ = writeln!(s, "{}", serde_json::to_string_pretty(p).unwrap_or_default());
