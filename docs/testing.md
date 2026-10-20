@@ -344,24 +344,9 @@ Ctrl+Enter는 agent가 작업 중일 때만 steering하고 줄바꿈을 넣지 �
 
 기존 E2E 11의 「그림 붙여 넣기·끌어 놓기」가 소유한다. Ctrl+V는 어느 OS에서나 브라우저 붙여넣기 몫이다(그림 읽기는 사용자 결정으로 되돌렸다). 실제 host·agent와 raw PTY에서 Mac Chrome·WebKit·Windows·iPad·iPhone의 Ctrl+V(누름·꾹 누름)가 clipboard를 읽지 않고, 뒤따르는 표준 글 paste가 `^V` 없이 PTY에 닿으며(같은 연결 순서가 「보내지 않았다」의 울타리), 그림 paste는 이번 경로·bytes로 닿는지 본다. 페이지의 Clipboard API만 읽기 수를 세는 가짜여서 사람의 clipboard나 OS 권한 설정에 닿지 않는다. `--spec 11 --grep '그림 붙여 넣기'`로 좁게 돌린다.
 
-## 임무 입력 안내와 조회 권한(§8.246)
+## 옛 임무 입력 안내·권한 시험
 
-기존 host `approved_start_attaches_mission_before_preparing_special_brief`, agent `mission_launch_scopes_permissions_for_both_harnesses`·`mission_settings_do_not_write_through_links`, proto `fill_brief_puts_the_machine_paths`가 입력이 없는 첫 prepare/rebrief의 inbox·자기 임무 문맥·실제 머신 경로로 채운 brief·정확한 목록 및 조회 규칙을 검사한다. 일반 thread에는 임무 권한을 남기지 않고, symlink inbox로 폴더 밖에 쓰지 않으며, 넓은 ls/find/aaa 허용을 넣지 않는다. 새 신호 시험·고정 sleep·production 시험 seam은 없다. `cargo test -p aaa-host -p aaa-agent mission`과 `cargo test -p aaa-proto fill_brief_puts_the_machine_paths` 뒤 공식 전체 gate를 실행한다.
-
-
-## 임무 빈 입력 우선과 자기 worktree Git 읽기(§8.251)
-
-- 기존 host 승인/brief keeper는 임무 본문 뒤에도 입력 우선 규칙이 와서 빈 입력일 때 즉시 턴을 끝내고,
-  초기화·참고 이력 조사·polling을 하지 않는 계약을 본다. 실제 모델의 지시 준수는 배포 뒤 운영 관찰로 확인한다.
-- 기존 agent launch keeper는 자기 worktree에 고정된 log/show/status 세 규칙과 일반 thread에 권한이 남지 않음을 본다.
-  proto keeper는 brief와 규칙의 같은 경로 quoting·옵션 종료 표지·잘못된 경로의 무허용을 확인한다.
-- agent `mission_git_reads_keep_option_and_index_boundaries`는 실제 Git과 공백·따옴표 경로에서
-  commit diff·blob·status 읽기를 실행한다. fsmonitor·textconv callback을 설정해 실행되지 않고 index 바이트도
-  그대로인지 본다. log/show 뒤 `--output`을 붙여도 쓰지 못해야 한다. 옵션 종료 표지를 제거한 변형이 이 쓰기 경계에서
-  실패한 뒤 원본으로 복원됐다. 소유한 임시 폴더만 쓰며 신호·고정 sleep·production 시험 seam은 없다.
-- 격리한 실제 Claude CLI(default permission mode)는 로컬 합성 provider가 돌려준 Bash 도구 호출을 처리한다.
-  인증·운영 설정을 사용하지 않고, 다른 허용 자료 폴더로 cwd가 바뀐 뒤 옛 cd+git의 trust 거절과 새 git -C 세 읽기의
-  무승인 성공을 구분한다. 이것은 권한 엔진 검증이며 실제 모델의 빈 입력 대기 판단을 대신하지 않는다.
+임무의 전용 입력 안내·추가 허용 목록·빈 입력 실행 순서는 A4에서 실행 코드와 함께 제거했다. 일반 파일 전송의 경로·hash·symlink와 구 Agent link 호환은 아래 A4 owner를 따른다. 과거 권한 실험은 plan §8.246·§8.251의 이력이다.
 
 ## resolve 뒤 종료된 pane 제거(§8.254)
 
@@ -370,7 +355,7 @@ Ctrl+Enter는 agent가 작업 중일 때만 steering하고 줄바꿈을 넣지 �
 
 ## 삭제된 TUI의 접속 거절
 
-`cargo test -p aaa --test tui_removed`는 host 없는 로컬 `attach`·`tui`·`evaluator open`이 삭제 안내와 실패 코드로 끝나는지, 실제 host socket이 옛 `tui`·`tui@…` hello를 거절하고 CLI 상태 조회를 계속 받는지 본다. 웹 E2E 01의 「옛 TUI WebSocket 거절·웹 API 유지」는 인증한 브라우저에서 옛 `/api/v1/front`에 접속해 분명한 Reject frame을 받고 일반 웹 API가 정상인지 본다. 웹 터미널·Ctrl+Enter·입출력 회귀는 기존 웹 E2E와 host·CLI 시험이 계속 맡는다.
+`cargo test -p aaa --test tui_removed`는 host 없는 로컬 `attach`·`tui`가 TUI 삭제 안내와 실패 코드로 끝나는지, 실제 host socket이 옛 `tui`·`tui@…` hello를 거절하고 CLI 상태 조회를 계속 받는지 본다. 폐지된 `mission`·`evaluator`·`evaluation`은 접속 전에 자동화 변환 안내로 끝나는지 같은 owner가 검사한다. 웹 E2E 01의 「옛 TUI WebSocket 거절·웹 API 유지」는 인증한 브라우저에서 옛 `/api/v1/front`에 접속해 분명한 Reject frame을 받고 일반 웹 API가 정상인지 본다. 웹 터미널·Ctrl+Enter·입출력 회귀는 기존 웹 E2E와 host·CLI 시험이 계속 맡는다.
 
 TUI PTY·native clipboard·vendored crossterm 검사는 코드와 함께 제거했다. 목록과 보존 tag `tui-last`는 [삭제 기록](removed-tui.md)에 있다.
 
