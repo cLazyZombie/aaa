@@ -414,6 +414,8 @@ enum ProjectCmd {
     /// project.toml 값 하나를 바꾼다(herdr-projects `set`): goal, thread_profile, coordinator_profile,
     /// max_parallel_threads, auto_resolve_days, repos.add, repos.remove, nudge, mute, task_notes.add, task_notes.remove
     Set { project: String, key: String, value: String },
+    /// 지금 설정 값(`set`이 고치는 key 모두, 잘못된 값은 host가 쓰는 기본값으로)
+    Show { project: String },
     /// 멈춘다: ticker가 건너뛰고 `thread start`를 거부한다. 도는 agent는 멈추지 않는다
     Pause {
         /// (옛 꼴의 프로젝트, 생략한다)
@@ -684,6 +686,12 @@ enum AutomationCmd {
         #[arg(long)]
         discard: bool,
     },
+    /// 조건을 기다리지 않고 동작을 한 번 돌린다(명령 조건은 명령을 지금 돌린다). 꺼짐·승인되지 않은 범위는 거부한다
+    Run { name: String },
+    /// 끈 뒤 automations/.trash/로 옮긴다. 대기 입력은 취소하고 기록·본문 파일은 둔다
+    Delete { name: String },
+    /// 지운 자동화를 꺼진 채로 되살린다. id는 `routine list`의 「지운 자동화」 줄이다
+    Restore { id: String },
     /// Rust 정본 타입에서 JSON Schema를 출력한다
     Schema {
         #[arg(long)]
@@ -889,6 +897,9 @@ enum ThreadCmd {
         /// 집에 다 오지 않았어도 worktree를 지운다
         #[arg(long)]
         discard_uncopied: bool,
+        /// 끝내지 않고 잃을 수 있는 것(커밋하지 않은 파일·병합되지 않은 변경·사본 상태)만 보인다
+        #[arg(long, conflicts_with_all = ["reopen", "keep_worktree", "skip_copy", "discard_uncopied"])]
+        dry_run: bool,
     },
     /// brief 안내를 사람이 다시 보낸다(자동 재전송은 하지 않는다)
     Brief {
@@ -1810,6 +1821,22 @@ fn run(cli: Cli) -> Result<ExitCode> {
             crate::person::require("aaa automation unblock")?;
             front(json, FrontRequest::AutomationUnblock { project: project_or_here(None)?, name, batch, discard })
         }
+        Cmd::Automation { cmd: AutomationCmd::Run { name } } => front(
+            json,
+            FrontRequest::AutomationRun { project: project_or_here(None)?, name, key: aaa_common::util::new_id() },
+        ),
+        Cmd::Automation { cmd: AutomationCmd::Delete { name } } => {
+            let project = project_or_here(None)?;
+            // 지금 판을 읽고 그 판을 지운다(그 사이 바뀌면 host가 거부한다)
+            let doc = match front_call(FrontRequest::AutomationRead { project: project.clone(), name: name.clone() })? {
+                Ok(FrontResponse::AutomationDoc { doc }) => doc,
+                other => return front_print(json, other),
+            };
+            front(json, FrontRequest::AutomationDelete { project, name, expected_sha256: doc.sha256 })
+        }
+        Cmd::Automation { cmd: AutomationCmd::Restore { id } } => {
+            front(json, FrontRequest::AutomationRestore { project: project_or_here(None)?, id })
+        }
         Cmd::Automation { cmd: AutomationCmd::Schema { mission } } => {
             if mission {
                 anyhow::bail!("없어짐: 자동화로 바꿨다(aaa automation convert)");
@@ -1931,7 +1958,11 @@ fn run(cli: Cli) -> Result<ExitCode> {
                     let (project, thread) = on_target(thread, legacy)?;
                     FrontRequest::ThreadAck { project, thread }
                 }
-                ThreadCmd::Resolve { thread, legacy, keep_worktree, reopen, skip_copy, discard_uncopied } => {
+                ThreadCmd::Resolve { thread, legacy, dry_run: true, .. } => {
+                    let (project, thread) = on_target(thread, legacy)?;
+                    FrontRequest::ThreadResolvePreview { project, thread }
+                }
+                ThreadCmd::Resolve { thread, legacy, keep_worktree, reopen, skip_copy, discard_uncopied, .. } => {
                     let (project, thread) = on_target(thread, legacy)?;
                     FrontRequest::ThreadResolve { project, thread, keep_worktree, reopen, skip_copy, discard_uncopied }
                 }
@@ -2755,7 +2786,7 @@ fn routine_approve(json: bool, project: String, name: String) -> Result<ExitCode
         c.call(FrontRequest::Routines { project: project.clone() }).await
     })?;
     let routines = match list {
-        Ok(FrontResponse::Routines { routines }) => routines,
+        Ok(FrontResponse::Routines { routines, .. }) => routines,
         Ok(_) => anyhow::bail!("예상하지 못한 응답"),
         Err(e) => anyhow::bail!("{e}"),
     };
@@ -2826,6 +2857,7 @@ fn project_cmd(json: bool, cmd: ProjectCmd) -> Result<ExitCode> {
             let repos = repos.iter().map(|r| local_repo_path(r)).collect();
             front(json, FrontRequest::ProjectCreate { name, goal, repos, thread_profile, coordinator_profile })
         }
+        ProjectCmd::Show { project } => front(json, FrontRequest::ProjectSettings { project }),
         ProjectCmd::Set { project, key, value } => {
             let value = if key.starts_with("repos.") { local_repo_path(&value) } else { value };
             let res = front_call(FrontRequest::ProjectSet {
@@ -2978,7 +3010,7 @@ fn events_cmd(json: bool, project: Option<String>, after: u64, follow: bool) -> 
     let rt = runtime()?;
     rt.block_on(async {
         let mut c = aaa_common::front::FrontClient::connect(&aaa_config::paths::state_dir()).await?;
-        let first = c.call(FrontRequest::Events { project: project.clone(), after, limit: None }).await?;
+        let first = c.call(FrontRequest::Events { project: project.clone(), after, limit: None, tail: false }).await?;
         let events = match first {
             Ok(FrontResponse::Events { events }) => events,
             Ok(_) => anyhow::bail!("예상하지 못한 응답"),
@@ -3023,7 +3055,12 @@ fn events_cmd(json: bool, project: Option<String>, after: u64, follow: bool) -> 
                 FollowStep::Refill { after: from } => {
                     let mut last = from;
                     while last < e.seq {
-                        let req = FrontRequest::Events { project: Some(e.project.clone()), after: last, limit: None };
+                        let req = FrontRequest::Events {
+                            project: Some(e.project.clone()),
+                            after: last,
+                            limit: None,
+                            tail: false,
+                        };
                         let Ok(FrontResponse::Events { events: mut got }) = c.call(req).await? else { break };
                         got.sort_by_key(|g| g.seq);
                         let before = last;
@@ -3956,9 +3993,19 @@ fn render_front(r: &FrontResponse) -> String {
         }
         FrontResponse::Missions { .. } => {}
         FrontResponse::Mission { .. } => s.push_str("없어짐: 자동화로 바꿨다(aaa automation convert)"),
-        FrontResponse::Routines { routines } => {
+        FrontResponse::Routines { routines, trash } => {
             if routines.is_empty() {
                 s.push_str("routine이 없다\n");
+            }
+            for t in trash {
+                let _ = writeln!(
+                    s,
+                    "지운 자동화 {}\t{} · {} · 되살리기 `aaa automation restore {}`",
+                    t.name,
+                    t.title,
+                    aaa_common::util::utc_text(t.deleted_at_ms),
+                    t.id
+                );
             }
             for r in routines {
                 if let Some(sha) = &r.start_approval_sha256 {
@@ -4016,6 +4063,63 @@ fn render_front(r: &FrontResponse) -> String {
                         b.id
                     );
                 }
+            }
+        }
+        FrontResponse::AutomationDoc { doc } => {
+            let _ = writeln!(s, "{} · {} · sha256 {}", doc.name, doc.file, doc.sha256);
+            for e in doc.check.errors.iter().chain(&doc.check.warnings) {
+                let _ = writeln!(s, "  {e}");
+            }
+        }
+        FrontResponse::AutomationChecked { check, .. } => {
+            if check.errors.is_empty() {
+                s.push_str("검사 통과\n");
+            }
+            for e in check.errors.iter().chain(&check.warnings) {
+                let _ = writeln!(s, "{e}");
+            }
+        }
+        FrontResponse::AutomationRan { accepted, detail } => {
+            let _ = writeln!(s, "{}: {detail}", if *accepted { "받음" } else { "이미 받음" });
+        }
+        FrontResponse::ProjectSettings(v) => {
+            let _ = writeln!(s, "{} ({}, {:?})", v.project, v.file, v.status);
+            let _ = writeln!(s, "goal: {}", v.goal);
+            let _ = writeln!(s, "thread_profile: {}", v.thread_profile);
+            let _ = writeln!(s, "coordinator_profile: {}", v.coordinator_profile);
+            let _ = writeln!(s, "max_parallel_threads: {}", v.max_parallel_threads);
+            let _ = writeln!(s, "auto_resolve_days: {}", v.auto_resolve_days);
+            let _ = writeln!(s, "nudge: {}", v.nudge);
+            let _ = writeln!(s, "mute: {}", v.mute);
+            for r in &v.repos {
+                let _ = writeln!(
+                    s,
+                    "repo: {}{}",
+                    r.path,
+                    r.machine.as_deref().map(|m| format!("@{m}")).unwrap_or_default()
+                );
+            }
+            for n in &v.task_notes {
+                let _ = writeln!(s, "task_notes: {n}");
+            }
+        }
+        FrontResponse::ResolvePreview(p) => {
+            let n = |v: Option<u32>| v.map(|n| n.to_string()).unwrap_or_else(|| "모름".into());
+            let _ = writeln!(
+                s,
+                "{}/{}: 커밋하지 않은 파일 {} · base 대비 바뀐 파일 {} · 사본 {} · PR {}",
+                p.project,
+                p.thread,
+                n(p.uncommitted),
+                n(p.changed),
+                p.copy.as_deref().unwrap_or("없음"),
+                if p.merged { "병합됨" } else { "병합 안 됨" }
+            );
+            for r in &p.risks {
+                let _ = writeln!(s, "위험: {r}");
+            }
+            if p.keep_default {
+                s.push_str("worktree 남기기를 권한다(--keep-worktree)\n");
             }
         }
         FrontResponse::AutomationConverted { files, .. } => {
@@ -4228,7 +4332,7 @@ fn render_front(r: &FrontResponse) -> String {
         FrontResponse::Post { result } => {
             let _ = writeln!(s, "{}", serde_json::to_string(result).unwrap());
         }
-        FrontResponse::Posts { posts } => {
+        FrontResponse::Posts { posts, .. } => {
             for p in posts {
                 let _ = writeln!(s, "{}\t{}\t{}", p.id, p.input.to, p.input.title);
             }

@@ -5632,7 +5632,7 @@ primary 근거:
 - 임무도 missions/*.toml+brief_file을 받는다. 적용 사본은 글까지 고정하며 승인 범위는 값으로 비교한다. 옛 임무 조건은 숨은 규칙으로 공통 처리하고, 변환 때 cursor·일정 기준·당일 횟수를 인계한다. 운영 변환은 배포 뒤 coordinator가 한다.
 - CLI automation schema/convert, FRONT_API1.52·TS 재생성. 변환은 전체 값·충돌을 검증한 뒤 쓰고 .converted 원본을 보존한다. 프로젝트 저장소의 한 커밋은 coordinator가 남긴다. host에서 git을 실행하지 않는다.
 - 별도 운영 수리: inbox_once의 open 전용 중복 판정 때문에 임무 하루 상한 안내가 done 뒤 재생성됐다. 날짜별 통지 표식+inbox INSERT를 같은 transaction에 넣어 하루 한 번으로 제한하고 완료 기록 정리·재시작·구판 done 이행을 보존한다. 저장 실패는 통지 완료로 확정하지 않는다.
-- [운영/형식/변환](automations.md)·[시험](testing.md)을 따른다. 웹 칸별 폼과 지금 실행은 미구현이며 목록·출처·토글은 새 파일 형식을 읽는다.
+- [운영/형식/변환](automations.md)·[시험](testing.md)을 따른다. 웹 칸별 폼과 지금 실행은 §8.342(W2)이며 목록·출처·토글은 새 파일 형식을 읽는다.
 
 
 - **L4 사용자23:3x 수정.** 임무 max_wakes/max_minutes/min_gap/retire_cap_days 및 자동화의 횟수·동시성은 기본 제한을 없앤다. 생략·0은 제한 없음, 옛 파일의 명시 값은 유지한다. 임무 host 동시/밀린 입력 상한도 기본0이며 명시 값만 지킨다. 기본 철수 일수도0으로 두고 명시 기준만 제안한다. 예산은 승인 hash에서 빼며 기존 승인 기록의 repo/머신 범위는 이어받는다. 예산 변경은 다음 tick에 적용하고 기존 예산 대기는 범위 승인 없이 해제한다. 모델 사용량 문턱·batch·reset·중복 방지는 유지한다. 생성 안내·CI/Git 예시에서 기본 상한 줄을 제거하고 CLI/웹은 무제한으로 표시한다.
@@ -5782,6 +5782,7 @@ L4 후속(10-20 00시 사용자 관찰): 멈춤 상태의 후보 예약과 재�
 - **고침(참고 herdr-web-ui aa624cb `src/App.tsx` 1091줄·1120~1146줄, `src/lib/deepLink.ts` `isNavigation`).** 다른 pane·thread·화면으로 가는 것만 칸을 쌓는다. 앱이 스스로 고른 첫 화면(목록 첫 줄·기억한 pane·thread·닫힌 링크 대신 연 줄)과 「고른 것 없음」은 지금 칸을 바꾼다(`goHash(…, replace)`, replaceState). 뒤로·앞으로가 고른 것이 없는 칸(이미 열린 탭의 옛 첫 칸)이나 닫힌 pane의 칸에 닿으면 지금 화면에 머물고 그 칸에 지금 주소를 쓴다(닫힌 pane이면 머리에 「그 pane은 닫혔습니다」). 앱 밖에서 온 주소 바꿈(뒤로·앞으로·알림)은 목록 drawer를 닫는다(참고 onPop → selectTarget의 `setDrawerOpen(false)`): 겹친 몸짓은 뒤로 하나만 남는다. 그래서 뒤로를 끝까지 하면 연 화면을 거꾸로 지나 첫 pane에서 멈추고, 더 뒤로는 Safari에서 앞 페이지로 나가며 홈 화면 앱에서는 아무 일도 없다. brief의 예시(휴대폰 첫 칸은 목록)는 참고에 없어 따르지 않았다. pane을 오갈 때마다 칸이 쌓이는 것은 참고와 같다(같은 pane은 쌓지 않는다).
 - **빈 화면 문구.** 768px 이하는 「목록에서 하나를 고른다」와 44px 「목록 열기」 단추(drawer를 연다). 넓은 창은 「왼쪽에서 하나를 고른다」 그대로다.
 - **검증.** 웹 E2E `39-phone-back`: WebKit iPhone 390·430 × Safari 탭·홈 화면 앱 흉내에서 첫 pane → bk3 → bk2 → bk1 → 대화의 보고서(파일 보기) → 앱 문서 칸까지 뒤로 끝까지의 화면 차례를 단언하고 빈 화면이 없음을 본다. 왼쪽 가장자리(x 4)에서 오른쪽 끝까지 쓸기(WebKit `document.createTouch`)는 앱 몸짓만이면 목록이 열리고 주소·기록 칸 수가 그대로, touchcancel 뒤 뒤로·쓸기 끝난 뒤 뒤로면 앞 pane이고 목록이 닫혔다. 닫힌 pane의 칸으로 뒤로는 머물고 알림, 「모든 thread」 닫기는 칸을 더하지 않고 휴대폰 문구·단추, 데스크톱 문구 그대로다. 고치기 전에는 뒤로 끝에서 「(주소 없음)+빈 화면」으로, 겹친 쓸기에서 목록이 열린 채로 실패했다. 웹 E2E 12의 「모든 thread」 닫기는 hashchange 대신 주소·빈 화면을 본다(replaceState는 hashchange를 내지 않는다). 38·04·16 유지.
+- **메뉴 규칙 변경.** 위 t-0466의 목록 닫기 규칙은 사용자 1A·2A에 따라 이동 직전 상태 유지로 바뀌었다(§8.340, t-0541). 뒤로 끝의 빈 화면 방지·기록 칸 관리와 파일 보기 복귀는 유지한다.
 - **실기 확인 필요.** 실제 iOS가 가장자리 뒤로 몸짓에서 페이지에 주는 터치 사건(touchcancel 시점)과 홈 화면 앱에 가장자리 뒤로가 있는지는 헤드리스가 보이지 않는다.
 
 ### 8.302 휴대폰 파일 보기 머리 한 줄(10-20, t-0473)
@@ -6290,7 +6291,83 @@ L4 후속(10-20 00시 사용자 관찰): 멈춤 상태의 후보 예약과 재�
 - **보조 경고.** task 없이 제목으로 시작할 때 비슷한 열린 task와 연결 명령을 한 줄 알린다. 대소문자·구두점을 뺀 낱말 집합이 같거나, 두 낱말 이상 겹치고 합집합의 2/3 이상이 같을 때만 알리며 파일 순서상 첫 후보를 고른다. 완료 task는 제외한다. 형태소·동의어를 추측하지 않으며, 시작을 거부하거나 TASKS.md를 고치지 않는다. 기존 ThreadView 경고를 사용하므로 Front API 변경은 없다.
 - **검증.** 경고 유닛은 정규화·겹침 경계·완료 제외·명령의 셸 인용을, m13은 실제 CLI의 경고와 시작 성공·경고 없는 경로·원문 보존을 검사한다. 기존 안내 생성·갱신 keeper가 새 문구도 검사한다. 완료 제외를 제거하면 음성 시험이 실패해야 한다. 상세는 [시험](testing.md)의 t-0539 절을 따른다.
 
-### 8.337 project 명령의 프로젝트 이름 인자 정리(10-21, t-0544 S5)
+
+### 8.337 대화 찾기·가상 줄의 관측 묶음 수리(10-21, t-0542)
+
+- **실패.** 앞 기록을 처음까지 찾은 뒤 첫 찾음으로 이동할 때 개수 7·차례 0은 바뀌지만 `revealed=false`로 멈췄다. 최초 착지 실패의 DOM·관측 배열은 없어 그 실행의 실제 배열 자체는 미확인이다.
+- **원인과 수리.** `ChatRow`는 한 줄마다 IntersectionObserver를 쓴다. 통지가 늦어 같은 줄의 화면 밖(false)·안(true) 관측이 한 배열에 오면 첫 관측만 읽던 코드는 본문을 빈 채로 둔다. 새 교차도 본문 DOM 변화도 없어 찾기 위치 맞추기가 이어지지 않는다. 마지막 관측으로 보임을 정한다. 느린 통지 중 사용자가 찾거나 스크롤할 때도 생길 수 있는 제품 결함이다. 찾기 개수·이동 시한·가상화 범위·프로토콜은 바꾸지 않는다.
+- **재현 owner.** 기존 E2E44의 멈춤·이어 찾기 시나리오를 재사용하는 별도 단계가 첫 찾음 줄의 실제 화면 밖 관측만 보류하고, Enter로 이동할 때 생긴 실제 화면 안 관측과 시간순으로 묶어 전달한다. 보류 표지와 `false,true` 전달을 확인하고 기존 강조 Range 보임·개수 일치·가상화 단언을 유지한다. 두 단계가 같은 기록을 쓰므로 울타리 문구는 구분해 이번 append의 commit을 기다린다. 제품 주입 flag·가짜 entry·좌표·시계·고정 sleep은 없다.
+- **검증.** 원래 제품과 첫 관측 사용 변형은 같은 20초 첫 찾음 대기에서 같은 표지로 RED, 마지막 관측 반영은 같은 주입 GREEN이다. 주입 회귀 병렬 6/6과 CPU 4배 지연·6개 병렬의 원본 포함 E2E44 전체 6/6을 확인했다. main 통합 뒤 전체 ci-local·check-public을 실행한다. 상세는 [시험](testing.md)의 t-0542 절을 따른다.
+
+### 8.338 웹 대화 입력칸 지연 커서 경합 수리(10-21, t-0536)
+
+- **원인.** 슬래시 명령을 넣은 뒤 다음 RAF에서 실행하던 커서 복원이 그 사이의 새 전체 선택을 끝 커서로 덮는다.
+  원본 웹 E2E 51에서 Tab frame 정렬·선택 완료 응답 지연을 넣으면 `/context `가 지워지지 않고 `/context /he`가 남아
+  원래 목록 대기가 실패한다. 실제 키로 전체 선택한 경우도 덮인다. 자연 재현과 최초 I5 실패의 동일 원인 여부는 확정하지 않는다.
+- **수리.** 명령 넣기와 기록 다시 부르기의 커서 요청은 글이 반영되는 layout effect에서 한 번 소비한다.
+  입력칸 글이 요청과 다르거나 잠겨 있으면 버린다. 다음 frame에 새 선택·입력·focus를 덮는 작업을 남기지 않는다.
+- **검증.** 기존 E2E `51-slash-commands`에 frame을 보류한 동안 실제 키로 전체 선택·중간 입력·focus 이동을 하는 keeper를 더한다.
+  보류한 콜백이 실제 RAF에서 끝난 뒤 글·선택·focus 보존과 Delete로 비우기를 확인한다. 원래 커서 RAF를 되살리면 선택 단언이 RED여야 한다.
+  별도 transport 지연 진단의 수정 전 RED·수정 후 GREEN과 바이트 동일 원본 spec 3회 GREEN을 보존한다.
+  기존 시한·단언·재시도 규칙을 바꾸지 않으며 전체 ci-local·check-public 뒤 착지한다. 새 E2E 번호는 만들지 않는다.
+
+### 8.339 새 계정 thread의 자기 폴더 신뢰 준비(10-21, t-0543)
+
+- **원인.** Codex 계정 실행은 새 격리 `codex-home/config.toml`에 신뢰 기록이 없었다. Claude 계정 실행은 토큰만 주입하고 인증 환경 정리에서 기존 `CLAUDE_CONFIG_DIR`도 지워 기본 설정 홈으로 돌아갔다. 실제 사용자 로그인·인증 파일·키체인은 조사하거나 복사하지 않는다.
+- **정책과 범위.** host는 유효한 safety `trust_screens=coordinator`일 때만 thread 자기 cwd를 전용 인증 요청의 선택 필드 `trust_cwd`로 보낸다. session은 실제 cwd와 같고 thread 실행인지 확인한다. 정규화한 cwd 한 곳만 기록하며 부모·main checkout·다른 worktree는 더하지 않는다. Codex는 cwd 신뢰를 저장소 루트보다 먼저 조회하므로 본 저장소 전체를 신뢰할 필요가 없다. 옛 agent는 선택 필드를 무시해 기존 신뢰 창을 유지한다. Front API 변경은 없다.
+- **격리와 재개.** Codex는 `projects.<cwd>.trust_level="trusted"`, 새 Claude 계정 thread는 전용 `claude-home/.claude.json`의 `projects[cwd].hasTrustDialogAccepted=true`를 사용한다. Claude 계정 토큰이 준비된 새 홈의 로그인 안내만 완료로 초기화하며 로컬 설정 전체를 복사하지 않는다. `user`이면 미리 신뢰하지 않고, 재시작 때 현재 정책으로 목록을 새로 만들어 이전 자동 신뢰도 제거한다. 격리 Claude의 다른 설정은 보존하고 대화·계획 조회는 같은 홈을 읽는다. 도입 전 Claude 계정 대화의 재개와 coordinator의 홈은 유지한다.
+- **검증.** 실제 host·로컬/원격 agent·session·PTY와 임시 홈의 가짜 Claude/Codex로 두 harness × 두 머신 × worktree/일반 폴더 × 두 정책을 검사한다. 계정은 host 기본값을 쓰며 신뢰 목록은 coordinator일 때 자기 cwd 하나, user일 때 빈 목록과 신뢰 화면이어야 한다. Claude 격리 대화와 TaskCreate 계획도 공개 조회 경로로 확인한다. 소켓 gate·종료·계획 사건으로 끝내며 실제 제공자 인증은 하지 않는다. 신뢰 전달 제거와 user 정책 무시 변형은 각각 첫 해당 worktree에서 RED여야 한다. 격리 설정 보존·자동 신뢰 제거·옛 대화 홈 유지 유닛과 전체 ci-local·check-public을 통과한 뒤 착지한다. 상세는 [계정](accounts.md#계정-thread의-폴더-신뢰)과 [시험](testing.md)의 t-0543 절을 따른다.
+
+
+### 8.340 휴대폰 뒤로·앞으로 이동 때 메뉴 상태 유지(10-21, t-0541)
+
+- **요청과 결정.** 사용자 「1→2→3으로 이동하고 3에서 왼쪽 메뉴를 연 뒤 2로 쓸어 돌아가면 메뉴가 사라진다」. 사용자 답변 1A·2A: 이동 직전의 열림·닫힘을 뒤로·앞으로 모두 유지하며 창마다 상태를 기억하지 않는다.
+- **원인과 수정.** `App.tsx`는 브라우저 뒤로·앞으로 등 주소 변경 때 drawer를 명시적으로 닫았다. 이 강제 닫기 한 곳만 제거한다. 목록 줄 선택·메뉴 토글·drawer 쓸기와 §8.301의 기록 관리 코드는 그대로 쓴다. 가장자리 쓸기가 메뉴를 열고 Safari 뒤로와 겹쳐도 그 열린 상태를 유지한다.
+- **검증.** 새 번호 없이 기존 E2E `39-phone-back`에 WebKit 390·430 × Safari 탭·홈 화면 앱 흉내의 메뉴 열림·닫힘 양방향 이동과 기록 칸 수 단언, WebKit 데스크톱 1280·패드 820의 사이드바 펼침·접힘 단언을 더한다. 수정 전 네 휴대폰 조합 모두 메뉴 유지 단언에서 실패했고 전후 캡처를 남겼다. 기존 쓸기 겹침의 「목록 닫힘」은 이번 결정의 「이동 직전 상태 유지」로 바꾸며 화면 차례·빈 화면 방지·닫힌 pane 처리·시간 상한은 유지한다. 파일 보기 복귀(E2E 38)와 전체 ci-local·check-public으로 함께 확인한다. 실제 iOS 시스템 몸짓은 헤드리스의 합성 터치·history 순회로 대신하며 실기 확인과 구분한다.
+
+### 8.341 aaa install I2 Windows 파일 조상 거부(10-21, t-0485)
+
+- **원문과 원인.** Windows CI의 `unsafe_targets_readonly_and_untrusted_journals_preserve_originals`는
+  파일 아래 proposal을 거부하는 마지막 단언에서 실패했다. `snapshot`이 `NotFound`를 즉시 없음으로
+  취급했으며 Windows에서는 파일 아래 경로도 그 오류로 분류될 수 있다. 정확한 raw 오류 코드는
+  원문에 없으므로 추정하지 않는다. [Rust Windows 오류 분류](https://github.com/rust-lang/rust/blob/b940084d7/library/std/src/sys/io/error/windows.rs)를 근거로 삼는다.
+- **공통 규칙.** `real_directory`는 가장 가까운 기존 조상이 실제 디렉터리인지 확인한다. `snapshot`의
+  없음 판정도 같은 검사를 거쳐, 직접 자식뿐 아니라 여러 미생성 단계 아래의 파일 조상을 거부한다.
+  proposal과 실제 create/stage/commit에서 같은 규칙을 사용하며 거부 전에 journal/자원 잠금을 만들지 않는다.
+  정상 미생성 디렉터리 아래 파일은 계속 허용하고 검사 자체는 읽기만 한다.
+- **owner와 증거.** 같은 owner의 readonly·불신 journal·ParentDir·원본/tree 보존 단언을 유지하고,
+  직접/여러 단계 proposal 및 proposal 뒤 부모 교체의 실제 적용 거부를 확장한다. Windows native RED를
+  보존하고, 다른 OS의 오류 분류 제어 진단은 Windows 실제 실행과 구분한다. snapshot 부모 확인·
+  가까운 조상 확인·쓰기 전 확인 생략 변형은 각각 owner에서 RED여야 하고 바이트 복구 뒤 GREEN을 확인한다.
+  macOS 전체 gate와 Windows cross를 검증하며 Windows·Linux 실제 실행은 main push 뒤 CI다.
+- **동반 native 진단.** 같은 착지에 I5 Windows 종료 process owner의 실패 메시지에만
+  `wait` 종료 코드(Debug/십진수/32-bit hex)를 더한다. cmd 생성 조건·성공 전제·열린 handle 확인·
+  `process_identity`의 거부 단언은 유지한다. 기존 main CI 실패 로그가 종료 코드를 버렸으므로
+  native는 진단만, 수리는 다음 착지다. 이번 main push 뒤 windows-2025 값으로 원인을 확정하며
+  승인 없는 branch push/PR·별도 runner/VM으로 미리 CI를 실행하지 않는다.
+
+### 8.342 자동화 만들기·고치기·지우기·지금 실행(10-21, t-0538 관리 GUI W2)
+
+- **요청.** 사용자 10-20 23:5x 「w2부터 계속 다 진행해」, 확정 계획 t-0456 plan-revised §3(저장·적용 계약)·§5 W2. W3(상주 agent 마법사)는 t-0475 Q6대로 지웠다. 동작은 do.wake 제거(A4) 뒤라 4종이다(계획의 「5종」은 do.wake가 있던 때 수).
+- **proto(FRONT_API 1.76, 더하기만).** `automation_read`(원문·sha256·본문 파일과 판·검사), `automation_validate`(쓰지 않음, Reader 가능, `form`을 주면 원문에 합친다), `automation_save`(`expected_sha256` 없음 = 새로 만들기, 있음 = 그 판일 때만), `automation_delete`(본 판일 때만), `automation_restore`, `automation_run`(key). `Routines.trash`, 새 오류 코드 `conflict`. `routine_approve`는 local_only에서 빼고 요청 경계의 「사람이 여는 신뢰 경계」 묶음(§8.299)에 넣었다: 웹 Controller와 aaa 밖 Local만 된다. 옛 host는 새 요청을 모르는 요청으로 거절하고 `trash`를 생략하므로 웹은 `/api/v1/me`의 `front_api`가 1.76 이상일 때만 편집·실행 단추를 그린다.
+- **합치기(`automation/edit.rs` `merge_form`).** 폼 값(TOML과 같은 모양의 JSON)을 정본 타입 `File`로 읽고, 원문을 읽은 값과 칸마다 비교해 다른 칸만 toml_edit로 고친다. 값 뒤 주석·키 앞 주석·칸 순서는 그대로, 바뀐 조건 종류는 표를 갈아 끼운다. 새로 넣은 칸은 지워도 같은 값으로 읽히면(기본값) 뺀다. 맨 위 주석 줄은 따로 쥐었다 붙인다(첫 칸이나 숨은 표가 사라지면 toml_edit가 그 decor를 함께 버린다). 새 파일은 정본 타입의 칸 순서와 `#:schema` 머리로 쓴다. 정수인 실수(사용량 문턱)는 정수로 쓴다. 합친 글은 다시 읽어 폼 값과 같은지 본다.
+- **저장·삭제·되살리기.** 쓰기는 공용 저장 helper(§8.311 `file_rev`)로 한다: 파일마다 lock, closure가 판을 대조, rename 직전 다시 읽어 바뀌었으면 다시 대조. 본문 파일을 먼저, 규칙을 마지막에 쓴다. 웹이 새로 만드는 본문 파일은 `automations/` 안만 받는다(이미 가리키던 파일은 그 자리). 삭제는 끈 판을 쓰고 `.trash/<이름>-<ms>.toml`로 옮긴 뒤 대기 입력을 cancelled receipt로 닫는다(처리 중 묶음·기록·본문·기억은 둔다). 되살리기는 같은 이름이 없을 때 꺼진 채로 쓴다. 지운 규칙은 낡은 판 저장으로 되살아나지 않는다(t3code `requireExisting`과 같은 뜻, NotFound). `automation_sources` lock으로 ticker 판정과 줄 세운다. 감사 기록·흐름 사건(`automation_saved`·`automation_deleted`·`automation_restored`·`automation_run`)을 남긴다.
+- **지금 실행.** 출처 `manual`의 사건 하나를 id `manual:<key>`로 공통 큐에 넣는다. 같은 id는 큐와 receipt로 한 번만 받는다(`automation_accept`가 새로 받았는지 돌려주게 했다). 일정 규칙의 「쌓인 차례 하나」 합치기에서 빼고, 묶는 시간만 건너뛴다(사용량 문턱·하루 상한·간격은 그대로). 명령 조건은 명령을 지금 돌린다(승인·`routine_commands` 필요, key는 meta로 한 번). 꺼짐·파일 오류·주인 thread·배포 제안·승인되지 않은 시작 범위는 큐에 넣기 전에 거부한다.
+- **웹.** `AutomationEditor`(폼·TOML·검토 탭, 본문 Markdown 미리보기, 충돌 창의 줄 차이(본문 파일 차이 포함)와 두 선택), 상세의 고치기·지금 실행·지우기·명령 승인 확인 창, 목록의 「새 자동화」·「지운 자동화」. 키마다 부르지 않고 고침이 멈춘 뒤 host 검사를 부른다. 고칠 때마다 검사 차례를 올려 늦은 응답이 새 고침을 덮지 않고, 탭을 바꾸거나 저장하기 전에 기다리던 고침을 먼저 검사한다(그동안 칸을 잠근다). 휴대폰은 같은 sheet, 입력 글자 16px.
+- **finish 리뷰로 고친 것.** 검사 응답 경합(위), 저장이 말없이 끝나던 경우(그사이 바뀌면 알림), 명령 지금 실행이 「돌고 있음」 거부 때 key를 먼저 써 다시 누를 수 없던 것, 본문 경로로 규칙 TOML·`.trash/`·`.converted/`를 덮을 수 있던 것(새 본문은 `automations/` 안 `.md`), 본문 충돌에서 「내 초안으로 저장」이 옛 본문 판을 보내 빠져나갈 수 없던 것, 지우기와 지금 실행이 겹쳐 지운 규칙의 입력이 남던 것(둘 다 `automation_sources` lock 안).
+- **참고 위치.** t3code 4b1024da `ScheduledTasksSettings.tsx` `ScheduledTaskEditorForm`(948–1124: 저장 중 두 번 보내지 않음, 실패는 폼 안, 닫지 않음)과 「Run now」. 다르게 한 것: 참고는 지우기·지금 실행을 확인 없이 하지만 여기서는 확인 창을 거친다(계획 §3 삭제·W1과 같은 결). 충돌 창은 참고에 없어 할 일 T2(§8.311)의 나란히 보기 대신 줄 차이 한 칸으로 했다(자동화 파일은 짧다).
+- **검증.** host 유닛 `automation::edit::tests`(7)·`automation::tests`(W2 다섯), 웹 유닛 `automationForm.test.mjs`, 웹 E2E `55-automation-edit`(데스크톱·둘째 브라우저·Reader 390·휴대폰 조작 기기). 결함 심기: 판 대조를 빼면 host 유닛이 실패한다. 절차는 [시험](testing.md).
+
+### 8.343 운영 화면: thread 관리·「이 aaa」·저장소·알림함(10-21, t-0538 관리 GUI W4)
+
+- **요청.** 확정 계획 t-0456 plan-revised §5 W4(API가 이미 있는 운영 화면)와 brief 더한 범위(저장소 화면에 머신별 경로 보기·추가·고치기, 저장소 없는 작업 폴더). 시작 때 물은 넷은 추천대로 정했다(10-21, 1A 2A 3A 4A): 「이 aaa」·「저장소」는 설정 창 페이지, 알림함·흐름 사건·post는 활동 막대 「알림함」 패널, 끝내기 창은 host가 잃을 수 있는 것을 미리 읽어 위험하면 「남기기」가 기본, 정리 sweep·보고서 정리는 미리보기 뒤 확인 창으로 실행. coordinator 조율(같은 날): 알림함은 inbox·흐름 사건 위주로 두고, 사용자가 답할 요청 post는 t-0540 「답할 것」이 다루므로 post 탭에서는 수만 보이고 그리로 보낸다.
+- **proto(FRONT_API 1.77, 더하기만).** `project_settings`(Reader 가능, 설정 파일 이름·상태·`set`이 고치는 key 모두·저장소·host 머신 이름), `project_repo_edit`(저장소 하나를 제자리에서 바꾼다: `repos.remove`+`repos.add`를 한 lock·한 쓰기로, 차례와 그 표의 다른 칸은 그대로), `thread_resolve_preview`(조작 기기만), `library_prune_apply`(미리보기와 같은 판정으로 다시 셈해 후보가 사람이 본 목록과 같을 때만 지운다, 다르면 `conflict`). `Posts.muted`(음소거된 보낸 쪽), `events`의 `tail`(최근 N개, 차례는 오래된 것부터), 웹 events 사건 `inbox`(알림함이 바뀜: 더함·끝냄). 옛 host는 새 요청을 모르는 요청으로 거절하므로 웹은 `front_api` 1.77 이상일 때만 설정 페이지 값·끝내기 미리보기를 그린다(옛 host의 끝내기 창은 남기기가 기본이다).
+- **끝내기 미리보기.** host는 기록을 고치지 않는다: PR은 기록된 상태(`pr_state`)만 본다. `merged_head`는 PR을 다시 찾아 기록과 inbox를 고치므로 쓰지 않는다. 그 머신 agent의 diff.v1로 미커밋(HEAD 대비)과 base 대비 바뀐 파일 수를 함께 읽고, 사본 상태·빠진 것과 묶어 위험 줄을 만든다. 위험(미커밋 > 0, 병합 안 됐는데 base 대비 바뀐 파일이 미커밋보다 많음, 사본 partial)이 있거나 git을 읽지 못하면 worktree thread의 `keep_default`가 참이다. CLI는 `aaa thread resolve <t> --dry-run`.
+- **보고서 정리 실행.** 계획 §5 W4는 미리보기까지였으나 사용자 4A로 실행까지 한다. 수동 `library_prune`(기한만, local_only)은 그대로 두고 새 요청을 더했다: 미리보기와 같은 기한·용량 판정으로 셈해 보인 것만 지운다. 웹 조작 기기는 이미 보고서 지우기(`library_delete`, report.md 사본까지)를 할 수 있어 신뢰 경계를 넓히지 않는다(정리는 그보다 좁다). sweep은 원래 Controller 허용이고 웹은 dry-run 줄을 보인 뒤 확인 창으로 실행한다.
+- **웹.** thread 화면 머리 「관리」 메뉴(끝내기·다시 열기·다시 시작(새 대화/이어 가기·profile)·brief 다시 보내기(받기 전만)·Next 보기·보내기·더하기·작업 요약 고치기). 설정 창 「이 aaa」(목표·thread/coordinator profile·동시 thread 경고·자동 끝내기 일수·nudge·mute, 멈춤·재개, 끝난 thread 자리 정리, 보고서 사본 정리)와 「저장소」(할 일 저장소 칸 이름마다 머신별 경로, 더하기·제자리 고치기·빼기, 끝에 「작업 폴더(저장소 없음)」). 활동 막대 「알림함」(탭: 알림함·흐름 사건·post, 배지는 끝내지 않은 항목 수). 알림함은 늘 `peek`로 읽어 화면이 읽어도 「봤다」가 되지 않는다(coordinator 묶음 알림이 그대로 간다). 보기 권한 기기는 값만 보고 쓰기 단추·post 탭이 없다.
+- **검증.** host 유닛 `project::tests::repo_edit_replaces_in_place_and_settings_view_reads_it`·`library_links::tests::prune_apply_deletes_only_the_previewed_candidates`·`db::flow_tests`, m13 `resolve_keeps_dirty_worktree_and_unmerged_branch`의 미리보기 단언, 웹 유닛 `operateModel.test.mjs`, 웹 E2E `56-operate`(데스크톱·휴대폰 390·Reader), `26-activity-bar`(막대 단추 넷). 절차는 [시험](testing.md).
+
+### 8.344 project 명령의 프로젝트 이름 인자 정리(10-21, t-0544 S5)
 
 - **범위.** S1~S4 뒤 남은 `project pause|resume|archive|delete|sweep`은 이름 없이, `project rename <새 이름>`은 새 이름만 받아 host가 맡은 프로젝트 하나를 쓴다. S1의 `project_or_here`·`on_target`을 그대로 쓰며 Front API·proto 요청의 프로젝트 칸과 backend 동작은 바꾸지 않는다.
 - **호환.** 옛 꼴의 프로젝트 인자는 도움말에서 숨긴다. 현재 프로젝트와 같은 이름이면 표준 오류에 경고 한 줄을 쓰고, 다른 이름이면 거부한다. 보관한 프로젝트·여럿이 남은 옛 상태의 이름은 S1처럼 그대로 받는다. 생략할 수 있는 보관하지 않은 프로젝트가 없으면 기존 오류를 돌려준다. `project unarchive <이름>`은 이번 여섯 명령 밖이며 그대로 이름을 받는다.

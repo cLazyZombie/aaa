@@ -46,6 +46,7 @@ import "./herdr/Sidebar.css";
 import "./herdr/Machines.css";
 import "./Sidebar.css";
 import { AutomationPanel } from "./AutomationPanel";
+import { InboxPanel } from "./InboxPanel";
 import { RolloutCard, type RolloutSnapshot } from "./RolloutCard";
 import { MachineMeters } from "./MachineMeters";
 import { machineStats } from "./machineStats";
@@ -322,6 +323,9 @@ export function Sidebar(props: SidebarProps) {
       </div>
       <div {...panelProps("automations", props.panel)} className="sidebar-panel automations-panel">
         {props.panel === "automations" && <AutomationPanel canControl={props.canControl} threads={props.threads} onThread={props.onThreadId} ask={props.ruleAsk} onAsked={props.onRuleAsked} />}
+      </div>
+      <div {...panelProps("inbox", props.panel)} className="sidebar-panel inbox-sidebar">
+        {props.panel === "inbox" && <InboxPanel canControl={props.canControl} onThread={props.onThreadId} />}
       </div>
       {menu && <RowMenu anchor={menu.anchor} point={menu.point} restoreFocusTo={menu.previousFocus} title={menu.title} subtitle={menu.place} header={menu.header} items={menu.items()} onClose={closeMenu} />}
       {confirm && (

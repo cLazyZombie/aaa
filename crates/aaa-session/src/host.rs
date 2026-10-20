@@ -362,8 +362,17 @@ async fn run(dir: PathBuf, startup: Option<super::files::Startup>) -> Result<()>
     let mut prepared = match credential {
         Some(c) => {
             let state = dir.parent().and_then(|p| p.parent()).context("agent 상태 폴더 오류")?;
-            let home = super::files::account_home(state, &c.run)?;
-            Some(crate::account::prepare(&home, c, &std::env::current_exe()?, broker_tx).await?)
+            let mut home = super::files::account_home(state, &c.run)?;
+            if c.harness == "claude" {
+                home.set_file_name("claude-home");
+            }
+            if let Some(trust) = &c.trust_cwd {
+                anyhow::ensure!(s.cwd.as_ref() == Some(trust), "신뢰 폴더와 실행 폴더가 다르다");
+                let (_, task) = aaa_proto::account_run_parts(&c.run).context("계정 작업 참조 오류")?;
+                anyhow::ensure!(aaa_proto::valid_thread(task), "thread 폴더만 미리 신뢰한다");
+            }
+            let resume = s.argv.iter().any(|a| a == "--resume");
+            Some(crate::account::prepare(&home, c, &std::env::current_exe()?, broker_tx, resume).await?)
         }
         None => None,
     };

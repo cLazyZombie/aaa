@@ -161,7 +161,13 @@ pub const AGENT_LINK: Version = Version { major: 1, minor: 10 };
 // 1.74: host 내부 감시의 host_issue/host_recovered 앱 안 알림. 옛 CLI에는 보내지 않는다.
 // 1.75: task 모델·머신 칸(plan §8.335): `TaskView.profile`·`machine`(owner `모델@머신`을 나눈 값), `TaskOp` Add/Update
 // `profile`·`machine`. 표기는 그대로다. 옛 host는 새 칸을 생략·무시하므로 웹은 owner 글로 보낸다. Agent link 변경 없음.
-pub const FRONT_API: Version = Version { major: 1, minor: 75 };
+// 1.76: 자동화 편집(관리 GUI W2, plan §8.342): `automation_read`·`automation_validate`·`automation_save`·`automation_delete`·
+// `automation_restore`·`automation_run`, `Routines.trash`, 오류 코드 `conflict`, 명령 승인(`routine_approve`)의 웹 Controller 허용.
+// 옛 host는 새 요청을 모르는 요청으로 거절하고 `trash`를 생략해 웹이 편집·지금 실행·지운 목록을 그리지 않는다. Agent link 변경 없음.
+// 1.77: 운영 화면(관리 GUI W4, plan §8.343): `project_settings`·`project_repo_edit`·`thread_resolve_preview`·
+// `library_prune_apply`, `Posts.muted`, `events.tail`, 웹 events `inbox`. 옛 host는 새 요청을 모르는 요청으로 거절해 웹이 설정·저장소
+// 페이지, 끝내기 미리보기, 보고서 정리 실행, 최근 흐름 사건을 그리지 않는다. Agent link 변경 없음.
+pub const FRONT_API: Version = Version { major: 1, minor: 77 };
 /// agent ↔ session host(내부). 세션이 몇 주 이어질 수 있으므로 이전 session host와 호환해야 한다.
 /// 1.1: `SessionRequest::Detect`(harness 상태 감지 입력). agent는 1.0 session host에 보내지 않고 `Screen`을 쓴다.
 /// 1.2: `SessionRequest::Colors`(색 질의에 답할 화면 색, plan §8.187). agent는 1.1 이하 session host에 보내지 않는다.

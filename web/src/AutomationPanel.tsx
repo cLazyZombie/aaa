@@ -4,9 +4,11 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { call, me } from "./api";
 import { ConfirmDialog } from "./ConfirmDialog";
-import type { RoutineRun, RoutineView, ThreadView } from "./gen/proto";
+import type { AutomationTrashEntry, RoutineRun, RoutineView, ThreadView } from "./gen/proto";
 import { RuleDetail, ThreadLink } from "./AutomationDetail";
 import { ConvertSheet } from "./AutomationConvert";
+import { AutomationEditor } from "./AutomationEditor";
+import { canEditAutomations } from "./automationForm";
 import { canPreviewConvert, legacyFiles, legacyRule, ruleTone, runWord, stuckBatch } from "./automationModel";
 import "./AutomationPanel.css";
 
@@ -20,8 +22,8 @@ function Closing({ at }: { at: number }) {
   const minutes = Math.ceil(Math.max(0, at - now) / 60_000);
   return <span className="automation-dim" data-testid="automation-closing">{minutes > 0 ? `${minutes}분 뒤 끝남` : "곧 끝남"}</span>;
 }
-type Row = { project: string; rules: RoutineView[] };
-type Open = { kind: "rule"; project: string; name: string } | { kind: "convert"; project: string };
+type Row = { project: string; rules: RoutineView[]; trash: AutomationTrashEntry[] };
+type Open = { kind: "rule"; project: string; name: string } | { kind: "convert"; project: string } | { kind: "edit"; project: string; name?: string };
 
 /**
  * `threads`: 열린 thread(사이드바 목록과 같은 것). 규칙 줄의 「열림」 칩이 그 규칙이 띄운 열린 thread를 보인다(plan t-0475 A1).
@@ -51,7 +53,7 @@ export function AutomationPanel({ canControl, threads = [], onThread = () => {},
       const next = await Promise.all(projects.projects.map(async (p) => {
         const result = await call({ op: "routines", project: p.name });
         if (result.kind !== "routines") throw new Error("자동화 목록 응답이 아니다");
-        return { project: p.name, rules: result.routines };
+        return { project: p.name, rules: result.routines, trash: result.trash ?? [] };
       }));
       if (ticket === generation.current) { setRows(next); setError(null); window.dispatchEvent(new Event("aaa:automations-changed")); }
     } catch (e) {
@@ -81,6 +83,14 @@ export function AutomationPanel({ canControl, threads = [], onThread = () => {},
     } catch (e) { setError(String(e)); }
     finally { setBusy(null); }
   };
+  const restore = async (project: string, t: AutomationTrashEntry) => {
+    setBusy(`${project}/${t.id}`);
+    try {
+      await call({ op: "automation_restore", project, id: t.id });
+      await load();
+    } catch (e) { setError(String(e)); }
+    finally { setBusy(null); }
+  };
   useEffect(() => {
     if (!ask) return;
     setOpen({ kind: "rule", project: ask.project, name: ask.name });
@@ -92,10 +102,12 @@ export function AutomationPanel({ canControl, threads = [], onThread = () => {},
     {error && <p role="alert">{error}</p>}
     {loading && <p role="status">읽는 중…</p>}
     {!loading && rows.every((p) => p.rules.length === 0) && <p>자동화가 없습니다.</p>}
-    {rows.filter((p) => p.rules.length > 0).map(({ project, rules }) => {
+    {rows.filter((p) => p.rules.length > 0 || p.trash.length > 0 || (canControl && canEditAutomations(frontApi))).map(({ project, rules, trash }) => {
       const legacy = legacyFiles(rules).length;
       return <section key={project} aria-label={`${project} 자동화`}>
-        <h3>{project} · {rules.length}개</h3>
+        <div className="automation-tools"><h3>{project} · {rules.length}개</h3>
+          {canControl && canEditAutomations(frontApi) && <button type="button" className="btn" data-testid={`automation-new-${project}`} onClick={() => setOpen({ kind: "edit", project })}>새 자동화</button>}
+        </div>
         {legacy > 0 && <div className="automation-legacy" data-testid={`automation-legacy-${project}`}>
           <span><span className="automation-badge is-legacy">이전 형식</span> {legacy}개 · 웹은 새 형식(TOML)만 고친다</span>
           {canPreviewConvert(frontApi)
@@ -132,9 +144,15 @@ export function AutomationPanel({ canControl, threads = [], onThread = () => {},
             <div className="automation-foot"><span className="automation-file">{r.file || `routines/${r.name}.md`}</span><button type="button" className="btn btn-ghost" aria-label={`${title} 자세히`} onClick={detail}>자세히</button></div>
           </article>;
         })}
+        {trash.length > 0 && <details className="automation-trash" data-testid={`automation-trash-${project}`}>
+          <summary>지운 자동화 {trash.length}개</summary>
+          <ul className="automation-list">{trash.map((t) => <li key={t.id}><span>{t.title} · {t.name} · {time(t.deleted_at_ms)}</span>
+            {canControl && <button type="button" className="btn btn-ghost" disabled={busy !== null} onClick={() => void restore(project, t)}>꺼진 채로 되살리기</button>}</li>)}</ul>
+        </details>}
       </section>;
     })}
-    {open?.kind === "rule" && openRule && <RuleDetail project={open.project} rule={openRule} canControl={canControl} covered={approval !== null} onChanged={load} onApprove={() => setApproval({ project: open.project, rule: openRule })} onThread={(id) => { setOpen(null); onThread(open.project, id); }} onClose={() => setOpen(null)} />}
+    {open?.kind === "edit" && <AutomationEditor project={open.project} name={open.name} onClose={() => setOpen(null)} onSaved={async (name) => { await load(); if (!open.name) window.setTimeout(() => setOpen({ kind: "rule", project: open.project, name }), 0); }} />}
+    {open?.kind === "rule" && openRule && <RuleDetail project={open.project} rule={openRule} canControl={canControl} canEdit={canEditAutomations(frontApi)} onEdit={() => setOpen({ kind: "edit", project: open.project, name: open.name })} covered={approval !== null} onChanged={load} onApprove={() => setApproval({ project: open.project, rule: openRule })} onThread={(id) => { setOpen(null); onThread(open.project, id); }} onClose={() => setOpen(null)} />}
     {open?.kind === "rule" && !openRule && !loading && <ConfirmDialog title="자동화가 없습니다" body={`${open.project}/${open.name}은 지워졌거나 이름이 바뀌었습니다.`} confirmLabel="닫기" onClose={() => setOpen(null)} onConfirm={async () => setOpen(null)} />}
     {open?.kind === "convert" && <ConvertSheet project={open.project} canControl={canControl} onClose={() => setOpen(null)} onDone={load} />}
     {approval && <ConfirmDialog title={`${approval.rule.title || approval.rule.name} 자동 시작 범위`} body={`${approval.rule.start_scope || ""}\n\n처음·넓힌 조건과 대상에만 승인합니다. 작업 본문과 선택 예산은 승인 범위에 포함하지 않습니다.`} confirmLabel="승인" onClose={() => setApproval(null)} onConfirm={async () => {

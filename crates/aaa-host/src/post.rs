@@ -422,6 +422,12 @@ impl Host {
         }
         Ok(row.result)
     }
+    /// 최근 post와 음소거된 보낸 쪽(웹 알림함 post 탭이 음소거 해제 단추를 그린다)
+    pub(crate) fn post_list(&self, project: &str) -> Result<FrontResponse, ErrorBody> {
+        let posts = self.db.post_list(project).map_err(|e| ErrorBody::new(ErrorCode::Internal, e.to_string()))?;
+        let muted = self.db.meta_suffixes(&format!("post_muted:{project}:")).map_err(|e| bad(e.to_string()))?;
+        Ok(FrontResponse::Posts { posts, muted })
+    }
     pub(crate) fn post_unmute(&self, project: &str, thread: &str, actor: &str) -> Result<FrontResponse, ErrorBody> {
         let _gate = self.post_gate.lock().unwrap();
         self.db.del_meta(&format!("post_muted:{project}:{thread}")).map_err(|e| bad(e.to_string()))?;

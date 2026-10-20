@@ -36,6 +36,7 @@ import { ListChecks, Menu, Settings } from "lucide-react";
 import { Icon } from "./icons";
 import { hasAgentMark } from "./herdr/AgentMark.tsx";
 import { Sidebar } from "./Sidebar";
+import { useInboxBadge } from "./InboxPanel";
 import type { RolloutSnapshot } from "./RolloutCard";
 import { needsYou, paneAgentStatus, rosterRows, shortPath, threadKey } from "./sidebarModel";
 import { useShortcuts } from "./herdr/shortcuts.ts";
@@ -405,6 +406,7 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
   const [threadsSync, setThreadsSync] = useState(0);
   const threadReload = useRef(new ThreadReload());
   const [automationBadge, setAutomationBadge] = useState(0);
+  const inboxBadge = useInboxBadge();
   const automationLoading = useRef(false);
   const automationReload = useRef(false);
   const loadAutomations = () => {
@@ -743,9 +745,8 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
       ownHash.current = null;
       const next = selectedFromHash();
       if (!own) {
-        // 브라우저 뒤로·앞으로·알림이 연 곳: iPhone 왼쪽 가장자리 쓸기는 목록 drawer 쓸기와 Safari 뒤로가 함께 일어난다. 뒤로가 이기고
-        // 목록은 닫는다(참고 onPop → selectTarget의 setDrawerOpen(false), App.tsx 715줄)
-        setDrawerOpen(false);
+        // 브라우저 뒤로·앞으로는 이동 직전 drawer 상태를 유지한다(창마다 기억하지 않는다, plan §8.340). 목록 줄을 직접 고를 때는
+        // choose·chooseThread 등이 닫는다. 가장자리 쓸기가 drawer를 열고 Safari 뒤로와 겹쳐도 그 열린 상태를 유지한다.
         // 고른 것이 없는 칸(옛 첫 칸·「고른 것 없음」)이나 닫힌 pane의 칸에 닿으면 지금 화면에 머물고 그 칸에 지금 주소를 쓴다(참고
         // onPop: pane이 없으면 그대로, 닿은 칸에는 보이는 곳을 쓴다). 빈 「하나를 고른다」로 떨어지지 않는다
         const { sel: shown, panes, loaded } = now.current;
@@ -1160,6 +1161,7 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
     work: { count: needThreads.length + waitingAgents.length, label: "확인 필요·검토 대기·답을 기다림" },
     machines: { count: highMachines(machines), label: `CPU·MEM ${HIGH_STAT}% 넘음` },
     automations: { count: automationBadge, label: "막힌 큐·승인 필요" },
+    inbox: { count: inboxBadge, label: "끝내지 않은 알림" },
   };
   // 탭 아이콘의 안 본 알림 수(faviconBadge.ts, plan §8.266): 창에 focus가 오면 지운다
   useEffect(() => watchBadgeFocus(), []);

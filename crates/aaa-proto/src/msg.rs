@@ -74,6 +74,8 @@ pub enum ErrorCode {
     SubscriptionGone,
     /// 받을 수 있는 크기를 넘었다(공유 설정 64KB, herdr-web-ui `too_large`)
     TooLarge,
+    /// 본 판과 지금 파일이 다르다(자동화 저장 등). 다시 읽고 차이를 본 뒤 고친다
+    Conflict,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
@@ -2437,6 +2439,100 @@ pub enum FrontRequest {
         #[serde(default)]
         discard: bool,
     },
+    /// 자동화 파일 원문·판·본문과 검사 결과(관리 GUI W2, FRONT_API 1.76, Reader 가능)
+    AutomationRead {
+        #[serde(default)]
+        #[ts(optional, as = "Option<String>")]
+        project: String,
+        name: String,
+    },
+    /// 초안을 쓰지 않고 검사한다(Reader 가능). `form`(TOML과 같은 모양의 값)을 주면 host가 그 값을 원문에 합친다:
+    /// 바뀐 칸만 고치고 주석·나머지 칸은 그대로 둔다. `body`는 `text_file`·`brief_file`이 가리킬 본문 초안이다.
+    AutomationValidate {
+        #[serde(default)]
+        #[ts(optional, as = "Option<String>")]
+        project: String,
+        name: String,
+        text: String,
+        #[serde(default)]
+        #[ts(optional, type = "Record<string, unknown>")]
+        form: Option<serde_json::Value>,
+        #[serde(default)]
+        #[ts(optional)]
+        body: Option<String>,
+    },
+    /// 검사한 초안을 쓴다. `expected_sha256`이 없으면 새로 만들기(그 이름 파일이 있으면 거부), 있으면 그 판일 때만 고친다
+    /// (지운 규칙은 되살리지 않는다). 다르면 `conflict`로 거부하고 아무것도 쓰지 않는다. 본문 파일은 먼저, 규칙은 마지막에 쓴다.
+    AutomationSave {
+        #[serde(default)]
+        #[ts(optional, as = "Option<String>")]
+        project: String,
+        name: String,
+        text: String,
+        #[serde(default)]
+        #[ts(optional)]
+        expected_sha256: Option<String>,
+        #[serde(default)]
+        #[ts(optional)]
+        body: Option<String>,
+        /// 본문 파일의 본 판. 없으면 그 파일이 아직 없어야 한다
+        #[serde(default)]
+        #[ts(optional)]
+        body_expected_sha256: Option<String>,
+    },
+    /// 끈 뒤 `automations/.trash/`로 옮긴다. 대기 입력은 취소하고 처리 중 묶음·기록은 둔다. 본문 파일은 그대로 둔다.
+    AutomationDelete {
+        #[serde(default)]
+        #[ts(optional, as = "Option<String>")]
+        project: String,
+        name: String,
+        expected_sha256: String,
+    },
+    /// 지운 자동화를 꺼진 채로 되살린다. 같은 이름이 있으면 거부한다.
+    AutomationRestore {
+        #[serde(default)]
+        #[ts(optional, as = "Option<String>")]
+        project: String,
+        id: String,
+    },
+    /// 조건을 기다리지 않고 동작을 한 번 돌린다(수동 사건 하나). 같은 `key`는 한 번만 받는다. 꺼짐·파일 오류·승인되지 않은 범위는 거부한다.
+    AutomationRun {
+        #[serde(default)]
+        #[ts(optional, as = "Option<String>")]
+        project: String,
+        name: String,
+        key: String,
+    },
+    /// FRONT_API 1.77. 「이 aaa」·「저장소」 설정 화면이 읽는 프로젝트 설정(관리 GUI W4, plan §8.343). Reader 가능
+    ProjectSettings {
+        #[serde(default)]
+        #[ts(optional, as = "Option<String>")]
+        project: String,
+    },
+    /// FRONT_API 1.77. 저장소 하나를 제자리에서 바꾼다(`PATH[@MACHINE]`, `repos.remove`+`repos.add`를 한 번에, 차례는 그대로)
+    ProjectRepoEdit {
+        #[serde(default)]
+        #[ts(optional, as = "Option<String>")]
+        project: String,
+        from: String,
+        to: String,
+    },
+    /// FRONT_API 1.77. 끝내기 전에 잃을 수 있는 것(미커밋·미병합·사본 상태)을 읽는다. 기록을 고치지 않는다. 바뀐 파일 수를
+    /// 그 머신 agent가 읽으므로 조작 기기만(`ThreadDiff`와 같다)
+    ThreadResolvePreview {
+        #[serde(default)]
+        #[ts(optional, as = "Option<String>")]
+        project: String,
+        thread: String,
+    },
+    /// FRONT_API 1.77. 미리보기(`library_prune_preview`)와 같은 판정으로 지우되, 후보가 `expected`(`project/name`)와 같을 때만
+    /// 지운다(그 사이 바뀌면 `conflict`). 웹 「보고서 정리」의 실행이다. 지우는 것은 `library_delete`보다 좁다(report.md
+    /// 사본·thread 기록은 남는다)
+    LibraryPruneApply {
+        project: Option<String>,
+        older_than_days: Option<u32>,
+        expected: Vec<String>,
+    },
     /// 최근 실행·건너뜀 기록, 최대 50건(Reader 가능).
     RoutineRuns {
         #[serde(default)]
@@ -2466,9 +2562,14 @@ pub enum FrontRequest {
     Events {
         project: Option<String>,
         #[serde(default)]
+        #[ts(type = "number")]
         after: u64,
         #[serde(default)]
         limit: Option<u32>,
+        /// 가장 최근 `limit`개(차례는 그대로 오래된 것부터, FRONT_API 1.77). 웹 알림함 「흐름 사건」이 쓴다. 옛 host는 버린다
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        #[ts(optional, as = "Option<bool>")]
+        tail: bool,
     },
     /// 사후 평가자 지정(§8.13): 역할이 evaluator인 thread를 시작한다. 프로젝트당 하나다.
     EvaluatorAssign {
@@ -2581,6 +2682,15 @@ impl FrontRequest {
             | FrontRequest::AutomationApprove { project, .. }
             | FrontRequest::AutomationConvert { project, .. }
             | FrontRequest::AutomationUnblock { project, .. }
+            | FrontRequest::AutomationRead { project, .. }
+            | FrontRequest::AutomationValidate { project, .. }
+            | FrontRequest::AutomationSave { project, .. }
+            | FrontRequest::AutomationDelete { project, .. }
+            | FrontRequest::AutomationRestore { project, .. }
+            | FrontRequest::AutomationRun { project, .. }
+            | FrontRequest::ProjectSettings { project }
+            | FrontRequest::ProjectRepoEdit { project, .. }
+            | FrontRequest::ThreadResolvePreview { project, .. }
             | FrontRequest::RoutineToggle { project, .. }
             | FrontRequest::EvaluatorAssign { project, .. }
             | FrontRequest::EvaluatorUnassign { project, .. }
@@ -2632,6 +2742,9 @@ impl FrontRequest {
                 | FrontRequest::Routines { .. }
                 | FrontRequest::RoutineRuns { .. }
                 | FrontRequest::AutomationConvert { dry_run: true, .. }
+                | FrontRequest::AutomationRead { .. }
+                | FrontRequest::AutomationValidate { .. }
+                | FrontRequest::ProjectSettings { .. }
                 | FrontRequest::ThreadRead { .. }
                 | FrontRequest::PaneRead { .. }
                 | FrontRequest::PaneReadText { .. }
@@ -2664,7 +2777,6 @@ impl FrontRequest {
                 | FrontRequest::EnrollPending
                 | FrontRequest::EnrollApprove { .. }
                 | FrontRequest::MachineRevoke { .. }
-                | FrontRequest::RoutineApprove { .. }
                 | FrontRequest::WebPublish
                 | FrontRequest::WebPublishOff
                 | FrontRequest::TickerTick
@@ -2716,6 +2828,10 @@ pub enum FrontResponse {
     },
     Posts {
         posts: Vec<crate::PostEnvelope>,
+        /// 음소거된 보낸 쪽(`post unmute`에 줄 이름, FRONT_API 1.77). 옛 host는 생략한다
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        #[ts(optional, as = "Option<Vec<String>>")]
+        muted: Vec<String>,
     },
     Status(HostStatus),
     Machines {
@@ -2851,7 +2967,29 @@ pub enum FrontResponse {
     },
     Routines {
         routines: Vec<RoutineView>,
+        /// 지운 자동화(FRONT_API 1.76). 옛 host는 생략한다
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        #[ts(optional, as = "Option<Vec<crate::AutomationTrashEntry>>")]
+        trash: Vec<crate::AutomationTrashEntry>,
     },
+    /// `automation_read`·`automation_save`의 답
+    AutomationDoc {
+        doc: crate::AutomationDoc,
+    },
+    /// `automation_validate`의 답: 합친 원문과 검사 결과
+    AutomationChecked {
+        text: String,
+        check: crate::AutomationCheck,
+    },
+    /// `automation_run`의 답. `accepted`가 거짓이면 같은 key를 이미 받았다
+    AutomationRan {
+        accepted: bool,
+        detail: String,
+    },
+    /// `project_settings`·`project_repo_edit`의 답
+    ProjectSettings(crate::ProjectSettingsView),
+    /// `thread_resolve_preview`의 답
+    ResolvePreview(crate::ResolvePreview),
     AutomationConverted {
         files: Vec<String>,
         /// 쓰지 않은 계획이다(FRONT_API 1.58). `files`는 실제 변환과 같은 모양(새 파일과 `.converted/` 보존 사본)이다.
@@ -2961,6 +3099,9 @@ pub enum FrontEvent {
     /// FRONT_API 1.43. 보고서 목록이 바뀌었다(보내기·열기·지우기·thread 사본). 웹 events 연결에만, 열 때와 바뀔 때 보낸다.
     /// `unseen`은 열지 않은 사용자 보고서 수(활동 막대 보고서 배지)
     Reports { unseen: u32 },
+    /// FRONT_API 1.77. 알림함(inbox)이 바뀌었다(항목이 더해지거나 끝났다). 웹 events 연결에만, 열 때와 바뀔 때 보낸다.
+    /// 웹은 `inbox`(`peek`)를 다시 읽는다(배지·알림함 패널)
+    Inbox,
     /// FRONT_API 1.60. 프로젝트 TASKS.md가 바뀌었다(ticker가 크기·mtime을 보고 내용 hash로 확인한다). 웹은 `tasks`를 다시 읽는다.
     /// 옛 CLI는 모르는 사건을 풀지 못하므로 1.60 이상과 합의한 연결에만 보낸다.
     Tasks { project: String, sha256: String },

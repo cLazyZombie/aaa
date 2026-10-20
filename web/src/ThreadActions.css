@@ -1,0 +1,58 @@
+/* 운영 화면 공용(관리 GUI W4): thread 관리 창, 「이 aaa」·「저장소」 설정 페이지, 알림함. 틀은 AutomationSheet·설정 창 그대로 */
+.thread-manage { display: inline-flex; align-items: center; gap: 4px; }
+.thread-manage svg { width: 16px; height: 16px; }
+@media (max-width: 640px) {
+  .thread-manage-label { display: none; }
+}
+
+.op-lead { margin: 0 0 10px; }
+.op-muted { margin: 6px 0; color: var(--text-dim); }
+.op-note { margin: 8px 0 0; color: var(--text-dim); }
+.op-warn { margin: 6px 0; color: var(--status-blocked); }
+.op-facts { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: 4px 12px; margin: 8px 0; }
+.op-facts dt { color: var(--text-dim); }
+.op-facts dd { margin: 0; min-width: 0; overflow-wrap: anywhere; }
+.op-risks { margin: 8px 0; padding: 8px 12px 8px 28px; border-radius: var(--radius-md); background: var(--status-blocked-tint); }
+.op-risks li { margin: 3px 0; }
+.op-options { border: 0; margin: 10px 0 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
+.op-check { display: flex; align-items: flex-start; gap: 8px; min-height: 28px; }
+.op-check input { margin-top: 3px; flex: none; }
+.op-field { display: flex; flex-direction: column; gap: 4px; }
+.op-field > span { color: var(--text-dim); font-size: var(--fs-xs); }
+.op-field input, .op-field select, .op-field textarea, .op-add input { min-height: 36px; padding: 6px 8px; border: 1px solid var(--border); border-radius: var(--radius-md); background: var(--bg); color: inherit; font: inherit; }
+.op-textarea { width: 100%; box-sizing: border-box; padding: 8px; border: 1px solid var(--border); border-radius: var(--radius-md); background: var(--bg); color: inherit; font-family: var(--font-mono); font-size: var(--fs-xs); resize: vertical; }
+.op-next { margin: 0; padding-left: 22px; }
+.op-next li { display: flex; align-items: center; gap: 8px; padding: 4px 0; border-top: 1px solid var(--border); }
+.op-next li:first-child { border-top: 0; }
+.op-next-text { flex: 1 1 auto; min-width: 0; overflow-wrap: anywhere; }
+.op-next .btn svg { width: 14px; height: 14px; }
+.op-add { display: flex; gap: 8px; margin-top: 10px; }
+.op-add input { flex: 1 1 auto; min-width: 0; }
+
+/* 설정 페이지(「이 aaa」·「저장소」) */
+.op-page { display: flex; flex-direction: column; gap: 14px; }
+.op-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: end; gap: 8px; }
+.op-row .op-field { min-width: 0; }
+.op-section { border-top: 1px solid var(--border); padding-top: 12px; }
+.op-section:first-child { border-top: 0; padding-top: 0; }
+.op-section h3 { margin: 0 0 8px; font-size: var(--fs-sm); color: var(--text-strong); }
+.op-section p { margin: 4px 0; }
+.op-buttons { display: flex; flex-wrap: wrap; gap: 8px; }
+.op-buttons .btn { min-height: 36px; }
+.op-repos { list-style: none; margin: 0; padding: 0; }
+.op-repos > li { padding: 8px 0; border-top: 1px solid var(--border); }
+.op-repos > li:first-child { border-top: 0; }
+.op-repo-name { font-weight: 600; }
+.op-repo-row { display: grid; grid-template-columns: max-content minmax(0, 1fr) auto; align-items: center; gap: 4px 10px; padding: 4px 0; }
+.op-repo-row .mono { font-family: var(--font-mono); font-size: var(--fs-xs); overflow-wrap: anywhere; min-width: 0; }
+.op-repo-row .op-buttons .btn { min-height: 32px; }
+.op-repo-edit { display: grid; grid-template-columns: minmax(0, 1fr) max-content; gap: 8px; margin-top: 6px; }
+.op-prune { list-style: none; margin: 6px 0; padding: 0; max-height: 14rem; overflow: auto; font-size: var(--fs-xs); }
+.op-prune li { display: flex; justify-content: space-between; gap: 8px; padding: 2px 0; }
+.op-prune .mono { font-family: var(--font-mono); overflow-wrap: anywhere; min-width: 0; }
+@media (max-width: 640px) {
+  .op-repo-row { grid-template-columns: minmax(0, 1fr) auto; }
+  .op-repo-row .op-repo-machine { grid-column: 1 / -1; }
+  .op-repo-edit { grid-template-columns: minmax(0, 1fr); }
+  .op-row { grid-template-columns: minmax(0, 1fr); }
+}

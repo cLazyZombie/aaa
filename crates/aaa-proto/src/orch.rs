@@ -1334,6 +1334,122 @@ pub struct RoutineSource {
     pub body_truncated: bool,
 }
 
+/// 편집할 자동화 파일 하나(관리 GUI W2, FRONT_API 1.76). 원문과 판(sha256)을 함께 준다. 저장은 그 판일 때만 쓴다.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(default)]
+pub struct AutomationDoc {
+    pub name: String,
+    /// `automations/<이름>.toml`, 옛 형식이면 `routines/<이름>.md`
+    pub file: String,
+    pub text: String,
+    pub sha256: String,
+    /// 옛 `.md` 규칙: 웹은 읽기만 하고 저장·삭제를 거부한다
+    pub legacy: bool,
+    /// `text_file`·`brief_file`이 가리키는 본문 파일과 그 판(없는 파일이면 `body_sha256`이 없다)
+    pub body_file: Option<String>,
+    pub body: Option<String>,
+    pub body_sha256: Option<String>,
+    pub check: AutomationCheck,
+}
+
+/// 초안 검사 결과. `form`은 원문을 정본 Rust 타입으로 읽은 값(TOML과 같은 모양)이며 TOML 문법·타입 오류면 없다.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(default)]
+pub struct AutomationCheck {
+    #[ts(type = "Record<string, unknown> | null")]
+    pub form: Option<serde_json::Value>,
+    /// `파일:줄:열 칸: 이유`. 하나라도 있으면 저장하지 않는다
+    pub errors: Vec<String>,
+    /// 저장은 되지만 실행 때 막히는 것(시작 후보 머신·저장소·profile을 지금 풀지 못함 등)
+    pub warnings: Vec<String>,
+    pub review: Option<AutomationReview>,
+}
+
+/// 검토 화면: 이 초안을 저장하면 무엇이 일어나는가
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(default)]
+pub struct AutomationReview {
+    pub enabled: bool,
+    /// 조건·동작 낱말(목록 줄과 같다)
+    pub trigger: String,
+    pub action: String,
+    /// safety `start_threads`(propose·auto): 자동 시작이 바로 띄우는지, 제안 한 줄만 남기는지
+    pub start_threads: String,
+    pub start_scope: Option<String>,
+    pub start_approval_sha256: Option<String>,
+    /// 지금 승인한 범위 안인가(시작 동작만)
+    pub start_approved: Option<bool>,
+    /// 명령 조건의 명령·머신과 그 hash(승인 대상)
+    pub command: String,
+    pub machine: Option<String>,
+    pub command_sha256: String,
+    pub command_approved: bool,
+    /// safety `routine_commands`
+    pub commands_allowed: bool,
+}
+
+/// 지운 자동화(`automations/.trash/`). 되살리면 꺼진 채로 돌아온다.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(default)]
+pub struct AutomationTrashEntry {
+    /// `.trash/` 안 파일 이름(되살리기 요청에 쓴다)
+    pub id: String,
+    pub name: String,
+    pub title: String,
+    #[ts(type = "number")]
+    pub deleted_at_ms: u64,
+}
+
+/// `project_settings`의 답(관리 GUI W4, plan §8.343): 「이 aaa」·「저장소」 설정 화면이 읽는 프로젝트 설정. 값이 잘못된 key는
+/// host가 쓰는 기본값이다(`aaa project set`이 고치는 값과 같다).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+pub struct ProjectSettingsView {
+    pub project: String,
+    /// 설정 파일 이름(`aaa.toml`, 없으면 옛 `project.toml`)
+    pub file: String,
+    pub status: ProjectStatus,
+    pub goal: String,
+    pub thread_profile: String,
+    pub coordinator_profile: String,
+    pub max_parallel_threads: u32,
+    pub auto_resolve_days: u32,
+    pub nudge: bool,
+    pub mute: bool,
+    /// 저장소 목록(`[[workspaces]]`·`[[repos]]`). 머신이 없으면 host 머신이다
+    pub repos: Vec<RepoChoice>,
+    /// host 로컬 머신 이름(`RepoChoice.machine`이 빈 저장소의 머신, 모르면 없다)
+    pub local_machine: Option<String>,
+    pub task_notes: Vec<String>,
+}
+
+/// `thread_resolve_preview`의 답(관리 GUI W4): 끝내기 전에 잃을 수 있는 것. host는 기록을 고치지 않고, git은 그 머신 agent가
+/// 읽는다(diff.v1). 읽지 못한 것은 `None`(모름)이다.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+pub struct ResolvePreview {
+    pub project: String,
+    pub thread: String,
+    /// thread 종류(응답 꼬리표 `kind`와 겹치지 않게 이름이 다르다)
+    pub thread_kind: ThreadKind,
+    /// 끝내면 지울 수 있는 worktree가 있다(worktree thread이고 작업 폴더 기록이 있다)
+    pub worktree: bool,
+    pub branch: Option<String>,
+    /// 기록된 PR 상태가 병합이다(끝낼 때 branch를 지울 수 있다)
+    pub merged: bool,
+    /// 마지막 사본 상태(`complete`·`partial`, 없으면 아직 사본 없음)
+    pub copy: Option<String>,
+    pub copy_notes: Vec<String>,
+    /// HEAD 대비 커밋하지 않은 파일 수
+    pub uncommitted: Option<u32>,
+    /// base(`origin/main` 등) 대비 바뀐 파일 수(커밋하지 않은 것 포함)
+    pub changed: Option<u32>,
+    /// git을 읽지 못한 까닭(머신 끊김·옛 agent·저장소 없음)
+    pub unknown: Option<String>,
+    /// 끝내기 창이 보일 위험(한 줄씩)
+    pub risks: Vec<String>,
+    /// 위험이 있거나 모르면 「worktree 남기기」를 기본으로 켠다
+    pub keep_default: bool,
+}
+
 /// 프로젝트 이름: 영문 소문자·숫자·`-`·`_`(경로에 쓰므로 엄격히 본다)
 pub fn valid_project(s: &str) -> bool {
     !s.is_empty()

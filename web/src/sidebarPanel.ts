@@ -3,10 +3,11 @@
 // 싣는다. aaa는 기기마다(brief: 마지막 패널·접힘은 기기별) localStorage에 둔다.
 
 // 「작업」은 예전 프로젝트·에이전트 두 패널을 합친 트리다(사용자 결정 10-19 안 A, plan §8.280)
-export const PANELS = ["work", "machines", "automations"] as const;
+// 「알림함」은 coordinator inbox·흐름 사건·post(관리 GUI W4, plan §8.343)
+export const PANELS = ["work", "machines", "automations", "inbox"] as const;
 export type SidebarPanel = (typeof PANELS)[number];
 
-export const PANEL_LABEL: Record<SidebarPanel, string> = { work: "작업", machines: "머신", automations: "자동화" };
+export const PANEL_LABEL: Record<SidebarPanel, string> = { work: "작업", machines: "머신", automations: "자동화", inbox: "알림함" };
 
 /** 예전 패널 이름(프로젝트·에이전트)으로 남긴 기억은 합친 「작업」으로 연다 */
 const OLD_PANELS: Record<string, SidebarPanel> = { projects: "work", agents: "work", special: "work" };
