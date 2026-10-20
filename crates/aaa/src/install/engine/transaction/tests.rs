@@ -300,8 +300,16 @@ fn unsafe_targets_readonly_and_untrusted_journals_preserve_originals() {
     assert_eq!(error.exit_code, 2);
     assert!(!serde_json::to_string(&error).unwrap().contains(CANARY));
     assert_eq!(tree(&lab.0), before);
-    assert!(target(&lab.0.join("config/../escape")).is_err());
+    // Windows canonical 경로의 join은 verbatim prefix 뒤 `..`를 먼저 지운다.
+    // OS 문자열을 그대로 붙여 target이 검증할 실제 ParentDir 입력을 보존한다.
+    let mut unsafe_path = lab.0.as_os_str().to_os_string();
+    let separator = std::path::MAIN_SEPARATOR;
+    unsafe_path.push(format!("{separator}config{separator}..{separator}escape"));
+    let unsafe_path = PathBuf::from(unsafe_path);
+    assert!(unsafe_path.components().any(|part| part == std::path::Component::ParentDir));
+    assert_eq!(target(&unsafe_path).err(), Some(Fault::conflict()));
     assert!(!lab.0.join("escape").exists());
+    assert_eq!(tree(&lab.0), before);
     let parent = lab.put("file-parent", b"not directory");
     assert!(prepare::proposal(parent.join("child"), Kind::Config, None, b"new".to_vec(), None, true, false).is_err());
 }

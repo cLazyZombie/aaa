@@ -6181,3 +6181,21 @@ L4 후속(10-20 00시 사용자 관찰): 멈춤 상태의 후보 예약과 재�
   - proto 유닛 `report_questions_read_numbered_questions_and_lettered_choices`, host 유닛 `answer::tests::compose_checks_every_question_and_writes_the_short_form`·`post::tests`(제목의 참조는 글에서 빠지고 url `/#question=t-0512`)·`brief_text::tests::brief_order_and_memory_cap`(안내 fence를 `report_questions`가 읽음), CLI `answer_picks_read_question_numbers_and_letters`, m13 안내 문구, 웹 유닛 `appRef.test.mjs`·`reportLinks.test.mjs`(`/#question=`).
   - 웹 E2E `53-thread-questions`: fake agent가 「질문 카드 시험」에 `## Questions` 두 질문 보고를 쓴다. 빨강 배지 1, coordinator 대화(Claude 기록)의 질문·보고서·모르는 보고서 칩, 질문 칩 → `#question=` 그 카드 펼침, 보고서 칩 → 앱 안 보고서, 입력칸 위 칩, 휴대폰은 알림 주소로 연 펼친 카드, 보기 권한은 단추 꺼짐·host forbidden, 휴대폰 1B + 「추천대로 보내기」 → pane에 「사용자 답(1B 2A)」, 기록 `[1,0]`, 휴대폰·보기 권한 카드와 입력칸 위 칩이 답함, 배지는 안 본 수로, CLI 두 번째 답은 「이미 답함」, inbox `question answered`, 새 보고가 오면 다시 답할 것·빨강 배지·옛 hash 답은 「질문이 바뀌었다」.
   - 결함 심기: 자리 잡기를 끄면(두 번째 답이 덮음) 「두 번째 답」에서, 칩으로 연 카드 펼침을 끄면 「질문 카드 펼침」에서 실패했고 되돌린 뒤 통과했다.
+
+
+### 8.330 aaa install I2 Windows ParentDir fixture 수리(10-20, t-0485)
+
+- **원문 판정.** Windows main CI의 잔여 `unsafe_targets_readonly_and_untrusted_journals_preserve_originals`
+  실패는 invalid journal status 전후 tree 비교(302행)를 지난 뒤 303행의 ParentDir target 거부에서 났다.
+  status가 파일을 바꿨다는 가설은 원문과 맞지 않는다. 엔진의 읽기·잠금·권한 동작을 변경하지 않는다.
+- **원인과 수리.** 실험실의 canonical Windows 경로는 verbatim prefix를 가진다. 여기에
+  `Path::join("config/../escape")`를 쓰면 Rust가 `..`를 미리 지워 정상 경로가 엔진에 들어간다.
+  fixture는 native separator를 사용해 OsString에 raw suffix를 붙인 뒤 PathBuf로 변환하고,
+  ParentDir component가 실제로 남았음을 먼저 단언한다. 같은 owner에서 conflict 거부·escape 미생성·
+  전후 전체 tree 불변을 확인한다. status의 bytes/권한/mtime 비교·secret 비노출·readonly 거부는 유지한다.
+- **검증 경계.** 기존 Windows CI의 실패 원문을 RED로 보존한다. ParentDir 거부 분기를 허용으로 바꾼
+  결함 변형은 같은 owner의 conflict 단언에서 실패해야 하며 소스를 바이트 단위로 복구한다.
+  공통 owner를 Windows cfg로 빼거나 기대값·timeout을 완화하지 않는다. macOS 전체 gate와 Windows
+  cross clippy/build 뒤 별도 수리분으로 착지하며, Windows·Linux 실제 실행은 main push 뒤 CI다.
+- **근거.** [Rust PathBuf::push](https://doc.rust-lang.org/std/path/struct.PathBuf.html#method.push),
+  [Path::join](https://doc.rust-lang.org/std/path/struct.Path.html#method.join)의 verbatim prefix 정규화 규칙.
