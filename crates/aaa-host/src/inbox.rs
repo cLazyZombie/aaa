@@ -704,133 +704,142 @@ impl Outage {
 mod tests {
     use super::*;
 
-    #[tokio::test]
-    async fn ticker_refreshes_usage_without_a_browser_and_releases_pending_input() {
+    #[test]
+    fn ticker_refreshes_usage_without_a_browser_and_releases_pending_input() {
         use std::sync::atomic::AtomicU64;
         use tokio::io::{AsyncReadExt, AsyncWriteExt};
         let root = std::env::temp_dir().join(format!("aaa-usage-tick-{}", aaa_common::util::new_id()));
-        let home = root.join("home");
-        std::fs::create_dir_all(home.join(".claude")).unwrap();
-        let now = aaa_common::util::now_ms();
-        let clock = Arc::new(AtomicU64::new(now));
-        std::fs::write(
-            home.join(".claude/.credentials.json"),
-            serde_json::json!({"claudeAiOauth":{"accessToken":"test-only","expiresAt":now+86400000}}).to_string(),
-        )
-        .unwrap();
-        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let origin = format!("http://{}", listener.local_addr().unwrap());
-        let (requests, mut received) = tokio::sync::mpsc::unbounded_channel();
-        let (release, stalled) = tokio::sync::oneshot::channel();
-        let mut stalled = Some(stalled);
-        let server = tokio::spawn(async move {
-            for (status, used) in [(200, 99), (200, 50), (503, 0), (200, 50)] {
-                let (mut stream, _) = listener.accept().await.unwrap();
-                let mut buf = [0; 4096];
-                let mut request = Vec::new();
-                while !request.windows(4).any(|w| w == b"\r\n\r\n") {
-                    let read = stream.read(&mut buf).await.unwrap();
-                    assert_ne!(read, 0, "구독 HTTP 요청을 다 받기 전에 연결이 끝났다");
-                    request.extend_from_slice(&buf[..read]);
-                }
-                requests.send(()).unwrap();
-                if let Some(stalled) = stalled.take() {
-                    stalled.await.unwrap();
-                }
-                let body = serde_json::json!({"five_hour":{"utilization":used,"resets_at":aaa_common::util::utc_iso(now+3600000)}}).to_string();
-                stream
-                    .write_all(
-                        format!(
-                            "HTTP/1.1 {status} Test\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
-                            body.len()
-                        )
-                        .as_bytes(),
-                    )
-                    .await
-                    .unwrap();
-            }
-        });
-        let mut cfg = aaa_config::HostConfig::default();
-        cfg.projects.root = root.join("projects").display().to_string();
-        cfg.notify.web_push = false;
-        cfg.projects.tick_secs = 1;
-        let mut h = Host::open(cfg, root.join("host")).unwrap();
-        let time = clock.clone();
-        Arc::get_mut(&mut h).unwrap().usage = crate::usage::UsageService::new(crate::usage::UsageContext {
-            home,
-            env: Default::default(),
-            darwin: false,
-            origin: Some(origin),
-            keychain: Arc::new(|_, _| crate::usage::KeychainRead::Missing),
-            run: Arc::new(|_| None),
-            now: Arc::new(move || time.load(Ordering::SeqCst)),
-        });
-        h.project_create("demo", Default::default(), "local:cli").unwrap();
-        let dir = root.join("projects/demo");
-        std::fs::create_dir_all(dir.join("automations")).unwrap();
-        let text = "[on.schedule]\nevery='1h'\n[do.inbox]\ntext='입력 처리됨'\n[limits]\nusage_session_below=5\n";
-        std::fs::write(dir.join("automations/check.toml"), text).unwrap();
-        let rule = crate::automation::parse(&dir, "check", text).unwrap();
-        h.automation_submit("demo", &rule, "pending-1", "보존할 입력".into(), None).unwrap();
-        h.start_ticker();
-        let mut release = Some(release);
-        for (round, expected) in [(0, 99.0), (1, 50.0), (2, 50.0), (3, 50.0)] {
-            clock.store(now + round * crate::usage::FRESH_MS, Ordering::SeqCst);
-            tokio::time::timeout(Duration::from_secs(5), h.ticker_tick()).await.expect("조회 중에도 ticker가 끝난다");
-            tokio::time::timeout(Duration::from_secs(5), async {
-                received.recv().await.expect("ticker가 구독을 조회한다");
-                if let Some(release) = release.take() {
-                    // 응답을 막아 둔 사이 다음 tick도 외부 조회를 기다리지 않는다.
-                    h.ticker_tick().await;
-                    release.send(()).unwrap();
-                }
-                loop {
-                    let report = h.usage.cached().await;
-                    if report.providers.first().is_some_and(|p| {
-                        p.windows.first().is_some_and(|w| w.used_percent == expected)
-                            && (p.problem.is_some() == (round == 2))
-                    }) {
-                        break;
+        let runtime = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
+        let host_lifetime = runtime.block_on(async {
+            let home = root.join("home");
+            std::fs::create_dir_all(home.join(".claude")).unwrap();
+            let now = aaa_common::util::now_ms();
+            let clock = Arc::new(AtomicU64::new(now));
+            std::fs::write(
+                home.join(".claude/.credentials.json"),
+                serde_json::json!({"claudeAiOauth":{"accessToken":"test-only","expiresAt":now+86400000}}).to_string(),
+            )
+            .unwrap();
+            let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let origin = format!("http://{}", listener.local_addr().unwrap());
+            let (requests, mut received) = tokio::sync::mpsc::unbounded_channel();
+            let (release, stalled) = tokio::sync::oneshot::channel();
+            let mut stalled = Some(stalled);
+            let server = tokio::spawn(async move {
+                for (status, used) in [(200, 99), (200, 50), (503, 0), (200, 50)] {
+                    let (mut stream, _) = listener.accept().await.unwrap();
+                    let mut buf = [0; 4096];
+                    let mut request = Vec::new();
+                    while !request.windows(4).any(|w| w == b"\r\n\r\n") {
+                        let read = stream.read(&mut buf).await.unwrap();
+                        assert_ne!(read, 0, "구독 HTTP 요청을 다 받기 전에 연결이 끝났다");
+                        request.extend_from_slice(&buf[..read]);
                     }
-                    tokio::task::yield_now().await;
+                    requests.send(()).unwrap();
+                    if let Some(stalled) = stalled.take() {
+                        stalled.await.unwrap();
+                    }
+                    let body = serde_json::json!({"five_hour":{"utilization":used,"resets_at":aaa_common::util::utc_iso(now+3600000)}}).to_string();
+                    stream
+                        .write_all(
+                            format!(
+                                "HTTP/1.1 {status} Test\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                                body.len()
+                            )
+                            .as_bytes(),
+                        )
+                        .await
+                        .unwrap();
                 }
-            })
-            .await
-            .expect("브라우저 없이 구독 갱신 완료");
-            if round == 2 {
-                h.automation_submit("demo", &rule, "pending-2", "확인 불가 입력".into(), None).unwrap();
-            }
-            h.automation_drain("demo", &rule).await.unwrap();
-            let items = h.db.inbox_list(Some("demo"), true).unwrap();
-            let done = items.iter().filter(|i| i.body == "보존할 입력").count();
-            assert_eq!(done, usize::from(round > 0), "{items:?}");
-            assert_eq!(
-                items.iter().filter(|i| i.body == "확인 불가 입력").count(),
-                usize::from(round == 3),
-                "확인 불가 중 보존한 입력은 회복 뒤 한 번 처리한다: {items:?}"
-            );
-            if round == 2 {
+            });
+            let mut cfg = aaa_config::HostConfig::default();
+            cfg.projects.root = root.join("projects").display().to_string();
+            cfg.notify.web_push = false;
+            cfg.projects.tick_secs = 1;
+            let mut h = Host::open(cfg, root.join("host")).unwrap();
+            let time = clock.clone();
+            Arc::get_mut(&mut h).unwrap().usage = crate::usage::UsageService::new(crate::usage::UsageContext {
+                home,
+                env: Default::default(),
+                darwin: false,
+                origin: Some(origin),
+                keychain: Arc::new(|_, _| crate::usage::KeychainRead::Missing),
+                run: Arc::new(|_| None),
+                now: Arc::new(move || time.load(Ordering::SeqCst)),
+            });
+            h.project_create("demo", Default::default(), "local:cli").unwrap();
+            let dir = root.join("projects/demo");
+            std::fs::create_dir_all(dir.join("automations")).unwrap();
+            let text = "[on.schedule]\nevery='1h'\n[do.inbox]\ntext='입력 처리됨'\n[limits]\nusage_session_below=5\n";
+            std::fs::write(dir.join("automations/check.toml"), text).unwrap();
+            let rule = crate::automation::parse(&dir, "check", text).unwrap();
+            h.automation_submit("demo", &rule, "pending-1", "보존할 입력".into(), None).unwrap();
+            h.start_ticker();
+            let mut release = Some(release);
+            for (round, expected) in [(0, 99.0), (1, 50.0), (2, 50.0), (3, 50.0)] {
+                clock.store(now + round * crate::usage::FRESH_MS, Ordering::SeqCst);
+                tokio::time::timeout(Duration::from_secs(5), h.ticker_tick()).await.expect("조회 중에도 ticker가 끝난다");
+                tokio::time::timeout(Duration::from_secs(5), async {
+                    received.recv().await.expect("ticker가 구독을 조회한다");
+                    if let Some(release) = release.take() {
+                        // 응답을 막아 둔 사이 다음 tick도 외부 조회를 기다리지 않는다.
+                        h.ticker_tick().await;
+                        release.send(()).unwrap();
+                    }
+                    loop {
+                        let report = h.usage.cached().await;
+                        if report.providers.first().is_some_and(|p| {
+                            p.windows.first().is_some_and(|w| w.used_percent == expected)
+                                && (p.problem.is_some() == (round == 2))
+                        }) {
+                            break;
+                        }
+                        tokio::task::yield_now().await;
+                    }
+                })
+                .await
+                .expect("브라우저 없이 구독 갱신 완료");
+                if round == 2 {
+                    h.automation_submit("demo", &rule, "pending-2", "확인 불가 입력".into(), None).unwrap();
+                }
                 h.automation_drain("demo", &rule).await.unwrap();
+                let items = h.db.inbox_list(Some("demo"), true).unwrap();
+                let done = items.iter().filter(|i| i.body == "보존할 입력").count();
+                assert_eq!(done, usize::from(round > 0), "{items:?}");
                 assert_eq!(
-                    h.db.inbox_list(Some("demo"), true)
-                        .unwrap()
-                        .iter()
-                        .filter(|i| i.event == "usage unavailable")
-                        .count(),
-                    1
+                    items.iter().filter(|i| i.body == "확인 불가 입력").count(),
+                    usize::from(round == 3),
+                    "확인 불가 중 보존한 입력은 회복 뒤 한 번 처리한다: {items:?}"
                 );
-                assert!(
-                    items
-                        .iter()
-                        .any(|i| i.item_kind == "usage" && i.subject == "check" && i.summary.contains("확인 불가")),
-                    "{items:?}"
-                );
-                let view = h.routines("demo").unwrap();
-                assert!(format!("{view:?}").contains("확인 불가"), "{view:?}");
+                if round == 2 {
+                    h.automation_drain("demo", &rule).await.unwrap();
+                    assert_eq!(
+                        h.db.inbox_list(Some("demo"), true)
+                            .unwrap()
+                            .iter()
+                            .filter(|i| i.event == "usage unavailable")
+                            .count(),
+                        1
+                    );
+                    assert!(
+                        items
+                            .iter()
+                            .any(|i| i.item_kind == "usage" && i.subject == "check" && i.summary.contains("확인 불가")),
+                        "{items:?}"
+                    );
+                    let view = h.routines("demo").unwrap();
+                    assert!(format!("{view:?}").contains("확인 불가"), "{view:?}");
+                }
             }
-        }
-        server.await.unwrap();
-        drop(h);
+            server.await.unwrap();
+            let host_lifetime = Arc::downgrade(&h);
+            drop(h);
+            host_lifetime
+        });
+        // ticker와 그가 띄운 task도 Host를 보유한다. runtime 종료로 모두 놓은 뒤 지운다.
+        // Windows의 SQLite 열린 핸들은 삭제 공유를 허용하지 않아, drop(h)만으로는 부족하다.
+        drop(runtime);
+        assert!(host_lifetime.upgrade().is_none(), "정리 전에 ticker와 배경 task가 Host·DB를 놓아야 한다");
         std::fs::remove_dir_all(root).unwrap();
     }
 
