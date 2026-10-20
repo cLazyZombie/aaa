@@ -1,4 +1,4 @@
-// 관리 GUI W5c(plan §8.356): 설정 「안전」(safety 실효값·출처, 웹은 yolo·start_threads·trust_screens·coordinator_deploy만 바꾼다),
+// 관리 GUI W5c(plan §8.357): 설정 「안전」(safety 실효값·출처, 웹은 yolo·start_threads·trust_screens·coordinator_deploy만 바꾼다),
 // 「profile」(profile 더하기·고치기·지우기와 허용 목록·기본값, 미리보기 → 적용), 「머신」의 작업 폴더(보기·점검·전환)와 Codex hook
 // (설치·제거). host가 판정한다(조작 기기만, custom profile·명령 인자 거부, 본 판과 다르면 conflict, 절대 경로만). 웹 조작 기기가 임의
 // 명령을 심지 못하게 custom profile의 실행 명령과 `*_agent_args`·`routine_commands`는 host CLI로만 바꾼다(사용자 답 1A·2A).

@@ -844,7 +844,7 @@ CI/Git의 source outbox·중복 억제·재시작·outage는 기존 owner를 유
 - `node web/e2e/web.e2e.mjs --spec 60-admin`: PATH 앞 가짜 `tailscale`(serve 상태는 실험실 파일, 실제 tailscale을 부르지 않는다)과 같은 Mac에서 다른 설정·상태 폴더로 띄운 둘째 agent(host `agent_listen`을 loopback에 연다). 등록 창 열기 → `aaa agent enroll`이 찍은 확인 코드 → 대기 목록(enroll 사건) → 틀린 코드의 말 → 맞는 코드로 승인 → enroll 끝 코드 0 → 연결(state 사건) → 창 닫기, host 머신에 폐기 단추 없음, 폐기 확인 창 → 목록·host에서 빠짐, 마지막 조작 기기의 폐기 단추 꺼짐, 공개 켜기(확인 창)와 loopback 화면의 끄기(다른 경로만), 공개 주소로 연 화면(실험실은 TLS 공개 주소를 열 수 없어 `web_status` 답의 주소만 이 화면 origin으로 바꾼다)의 「이 화면이 끊길 수 있음」과 확인 전 끄기 꺼짐, 폴더 올리기(맨 위 폴더·숨은 파일 빠짐, 사용자 보고서·제목, 올리기 폴더 지움)와 여러 파일(index.html 없는 사용자 보고서 막음 → 작업 보고), 키 교체 확인 창의 살아 있는 링크 수와 옛 링크가 열리지 않음, Reader에 등록·폐기·공개·올리기·키 교체 없음, 휴대폰 390 폭과 이 기기 폐기 확인 → pairing 화면. 화면 표지·host 기록·프로세스 출력과 끝으로 기다리며 sleep은 없다.
 - 이 단계 ci-local에서 E2E 53(t-0540)의 「알림함 배지가 답할 요청을 세지 않음」이 5 → 6으로 실패했다. 실험실 DB를 보니 앞 단계 보고의 「report needs user」 항목이 요청 post 16ms 전에 들어와 앞뒤 배지 대조 사이에 끼었다. 대조를 「배지 = host의 끝내지 않은 항목 − 요청 1」로 바꿨다(늦게 온 항목은 둘을 함께 바꾼다). 배지가 요청을 세게 결함을 심으면 이 단계가 실패한다.
 
-## 웹 profile·safety·작업 폴더·hook(t-0538 관리 GUI W5c, plan §8.356)
+## 웹 profile·safety·작업 폴더·hook(t-0538 관리 GUI W5c, plan §8.357)
 
 - `cargo test -p aaa-host --lib settings_admin::`: 웹이 바꾸는 safety key는 넷뿐(`*_agent_args`·`routine_commands`는 `forbidden`, 파일 그대로), 프로젝트 표·모든 프로젝트 표(`[safety.default]`)에 쓰고 「기본」은 그 key를 지움, 앞 판(`expected`)으로 보내면 `conflict`이고 파일 그대로, 주석 보존. custom profile 만들기·고치기·harness를 custom으로·지우기 거부, 목록 JSON에 env 값과 custom 실행 명령이 없음, 미리보기는 쓰지 않고 적용 뒤 실행 인자가 미리보기와 같음, 낡은 판 적용은 `conflict`. 허용 목록·기본값은 없는 이름 거부, 적용 뒤 host의 thread 허용·coordinator 기본이 바뀜. 세션 안 agent·worker·detached의 바꾸기 다섯 가지 거부와 Reader의 읽기 거부. 작업 root는 `~`·상대·`C:work`를 agent에 닿기 전 거부. `profiles_from_host_local_toml_stay_out_of_web_edits`는 host.local.toml의 custom 이름으로 더하기·local이 effort를 덮는 profile을 shell로 고치기·지우기를 거부하고 파일과 설정 읽기가 그대로인지, `global_edits_warn_when_the_project_table_wins_and_rows_tell_the_value_below`는 프로젝트 표가 이기는 모든 프로젝트 기본 고치기의 경고와 「기본」으로 yolo가 켜지는 `below`(host.local.toml이 같은 key를 정하면 그대로)를, `toml_errors_do_not_carry_the_broken_line`은 깨진 줄·형식(타입) 오류의 env 값이 오류 글에 없고 줄 첫 칸 오류도 그 줄 번호인지, `a_host_without_a_project_still_edits_global_safety_and_profiles`는 프로젝트 없는 host를 본다.
 - `cargo test -p aaa-proto control_classification`: 설정 관리 읽기도 조작 권한.
@@ -1205,9 +1205,12 @@ Claude SessionStart가 알린 격리 홈의 대화는 pane chat으로, TaskCreat
 ## install I5 Windows 종료 process fixture(t-0485)
 
 `install::engine::supervisor::native::tests::process_observation_rejects_completed_process_with_its_handle_still_open`은
-`cmd /D /Q /C exit 0`의 고정 token을 별도 인수로 전달한다. cmd 명령문 전체를 C argv 한 개로 감싸지 않는다.
+현재 시험 실행 파일을 `--list`로 직접 실행해 시험 본체의 실행·재귀 없이 성공 종료시킨다(§8.356).
+cmd 인수 분리(§8.352)는 실제 Windows CI에서도 실패했으므로 셸 해석에 기대지 않는다.
+stdout은 null로 두고 stderr는 reader thread가 읽어 자식 종료를 막지 않으며, 실패하면 status·code·32-bit hex·stderr 첫 줄을
+panic 앞 `eprintln!` 한 줄로 남긴다. `wait_with_output`으로 Child를 소비하지 않아 같은 process handle이 남는다.
 자식의 성공 종료·아직 열린 유효 handle의 `WAIT_OBJECT_0`·제품 `service_process_unverified`를 모두 검사하며
-고정 sleep·재시도·stdio 변경은 없다. 같은 native/상위 supervisor의 현재 image·SID·profile·SCM 읽기와
+고정 sleep·재시도·timeout·production 변경은 없다. 같은 native/상위 supervisor의 현재 image·SID·profile·SCM 읽기와
 Unicode argv 왕복 owner도 Windows cargo test에 남긴다. 이들은 Win32 전용이며 실제 실행은 main push 뒤 windows-2025,
 macOS gate·Windows cross compile 결과와 별도로 보고한다. SCM 실제 logon·UAC/LSA는 실기 인수 경계다.
 

@@ -1,4 +1,4 @@
-//! 웹 설정 관리(관리 GUI W5c, plan §8.356): profile·safety 읽기·편집(host가 host.toml을 `toml_edit`로 고친다), 머신마다 작업
+//! 웹 설정 관리(관리 GUI W5c, plan §8.357): profile·safety 읽기·편집(host가 host.toml을 `toml_edit`로 고친다), 머신마다 작업
 //! root 보기·점검·전환(agent work_root.manage.v1), Codex hook 연동 상태·설치·제거(agent hook.manage.v1).
 //! 웹 조작 기기는 임의 명령을 심지 못한다(사용자 답 1A·2A): custom profile의 `command`·`env`는 이 요청에 칸이 없고, safety의
 //! 명령·인자 목록(`*_agent_args`, `routine_commands`)은 읽기만 한다. host.toml 글은 웹에 보내지 않는다(env 값이 들어 있다).

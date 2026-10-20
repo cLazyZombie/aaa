@@ -6506,7 +6506,21 @@ L4 후속(10-20 00시 사용자 관찰): 멈춤 상태의 후보 예약과 재�
 - **웹.** 설정 창 「머신」(폰 및 기기 다음): 등록 창 열기(5·10·30·60분)·남은 분·닫기, 승인을 기다리는 머신(이름·fingerprint 앞부분)과 「승인…」 창(6자리 코드, 공백·하이픈 무시), 등록된 머신(연결·끊김은 host `state` 사건, host 머신은 폐기 단추 없음)과 폐기 확인 창. 「폰 및 기기」: 마지막 조작 기기의 폐기 단추를 끄고 까닭을 적음, 이 기기 폐기 확인 창, 「tailnet에 공개」(확인 창)·「공개 끄기」(aaa가 만든 공개만; 끈 뒤 다른 경로는 host Mac의 loopback 주소와 그리로의 ssh 포트 전달 — host가 tailnet 이름의 http Host를 받지 않으므로 그것은 경로로 내지 않는다). 보고서 화면 「보고서 올리기」 창(파일·폴더 고르기, 올릴 목록과 뺀 숨은 파일 수, 이름·사용자 보고서·제목, 파일마다 올린 수). 「이 aaa」 → 「공유 링크」 → 「키 교체…」.
 - **검증.** host 유닛 `library_upload::tests`(권한·경로·이름·합계 상한·다시 올리기, 등록과 폴더 지움, 사용자 보고서 index.html, 세션 안·Reader 거부)·`pairing_tests::the_web_keeps_its_last_controller_and_the_host_machine`·`pairing_tests::trust_management_requires_a_person_outside_the_session`(조작 기기가 등록 창을 열고 Reader는 거부), 웹 유닛 `adminModel.test.mjs`, 웹 E2E `60-admin`(가짜 `tailscale`·같은 Mac의 둘째 agent, 데스크톱·Reader·휴대폰 390). 절차는 [시험](testing.md).
 
-### 8.356 웹 profile·safety·작업 폴더·hook 관리(10-21, t-0538 관리 GUI W5c)
+### 8.356 aaa install I5 종료 process fixture의 셸 의존 제거(10-21, t-0485)
+
+- **실패 보존.** §8.352의 cmd 인수 분리 뒤에도 실제 Windows CI에서 같은 성공 종료 단언이 실패했다.
+  인용 가설을 확정 원인이나 수리 성공으로 보지 않는다. 시험 목적은 종료했지만 handle이 아직 열린
+  process의 거부이므로 cmd 해석을 fixture의 전제에서 뺀다.
+- **fixture.** supervisor lifecycle의 자식 실행 관례처럼 `current_exe()`를 직접 실행한다. libtest의
+  `--list`는 시험 본체를 실행하지 않고 성공 종료하므로 재귀·운영 쓰기·별도 시험용 제품 진입점이 없다.
+  부모는 자식의 stderr를 별도 reader로 읽고 종료를 기다린 뒤 같은 Child의 handle을 계속 보유한다.
+  실패하면 status·code·32-bit hex·stderr 첫 줄을 panic 전 한 줄로 남긴다.
+- **보존·검증.** 성공 종료·`WAIT_OBJECT_0`·`service_process_unverified` 단언, production, timeout은
+  그대로다. 같은 모듈의 실제 SCM 구독·현재 process 신원과 상위 supervisor의 handle 결속·argv owner도
+  유지한다. 전체 macOS gate·Windows cross·공개 검사 뒤 착지 창을 기다리며 실제 Windows 통과는
+  main push 뒤 windows-2025 CI로만 판정한다. I6 WIP는 별도 보존한다.
+
+### 8.357 웹 profile·safety·작업 폴더·hook 관리(10-21, t-0538 관리 GUI W5c)
 
 - **요청.** 확정 계획 t-0456 plan-revised §5 W5의 셋째 묶음(§8.351의 1A로 나눔): profile·safety·work root·hook을 웹 조작 기기에서. 인수 조건 「임의 경로·명령 거부」를 어디까지 적용할지 물은 넷은 추천대로 정했다(10-21, 사용자 위임 1A~4A): 웹은 모든 profile의 실효값을 보고 claude·codex·shell profile의 더하기·인자 고치기·지우기와 thread·coordinator 허용 목록을 미리보기 → 적용(파일 판 대조)으로 하되 custom profile의 실행 명령은 host CLI로만, safety는 모든 key의 값·출처를 보이고 yolo·start_threads·trust_screens·coordinator_deploy만 바꿈(yolo 켜기는 한 번 더 확인, `*_agent_args`·`routine_commands`는 읽기만), work root는 머신마다 다음 시작 설정·마지막 시작 기록을 보고 「점검」(「검사 파일을 만듭니다」 안내 뒤 쓰기·읽기·삭제) 뒤 같은 화면에서 점검을 통과한 절대 경로만 저장(다음 agent 시작부터), hook은 머신마다 상태와 「설치」·「제거」(그 머신 agent의 인자 없는 고정 작업).
 - **proto(FRONT_API 1.81, 더하기만).** Front `safety_show{project?, scope}`·`safety_set{project?, scope, key, value?, expected}`·`profile_admin`·`profile_plan{project?, change}`·`profile_apply{project?, change, expected}`·`work_root_show|check|set{machine, …}`·`hook_status{machine}`·`hook_set{machine, install}`, 답 `safety`·`profile_admin`·`profile_plan`·`profile_applied`·`work_root`·`work_root_checked`·`hook`. `scope`는 이 host 프로젝트(`[safety.<p>]`) 또는 모든 프로젝트 기본(`[safety.default]`). `expected`는 웹이 읽은 host.toml sha256이고 다르면 `conflict`다(`file_rev`로 파일마다 하나씩 쓴다). Agent `work_root{action: show|check|set}`(기능 `work_root.manage.v1`)·`codex_hook{install?}`(`hook.manage.v1`). 옛 agent는 기능이 없어 host가 `unavailable`(그 머신 aaa 갱신 안내)로 답하고, 웹은 1.81 미만 host면 이 쪽을 그리지 않는다.

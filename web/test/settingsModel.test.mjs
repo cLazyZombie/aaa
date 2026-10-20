@@ -1,4 +1,4 @@
-// 「안전」·「profile」·작업 폴더 규칙(src/settingsModel.ts, 관리 GUI W5c, plan §8.356). 웹이 바꾸는 key·custom 거부·판 대조·절대 경로의
+// 「안전」·「profile」·작업 폴더 규칙(src/settingsModel.ts, 관리 GUI W5c, plan §8.357). 웹이 바꾸는 key·custom 거부·판 대조·절대 경로의
 // 정본은 host다(crates/aaa-host/src/settings_admin/tests.rs). 여기는 화면이 보낼 요청을 정하는 규칙이다.
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";

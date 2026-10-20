@@ -1,4 +1,4 @@
-// 설정 「안전」·「profile」·머신 작업 폴더·hook의 순수 규칙(관리 GUI W5c, plan §8.356). 판정의 정본은 host다(웹이 바꾸는 safety
+// 설정 「안전」·「profile」·머신 작업 폴더·hook의 순수 규칙(관리 GUI W5c, plan §8.357). 판정의 정본은 host다(웹이 바꾸는 safety
 // key 넷, custom profile 거부, 판 대조, 절대 경로). 화면은 고를 수 있는 것만 보인다.
 import { apiAtLeast } from "./automationModel.ts";
 import type { ProfileAdminRow, ProfileChangeReq } from "./gen/proto";

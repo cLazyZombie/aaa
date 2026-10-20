@@ -177,7 +177,7 @@ pub const AGENT_LINK: Version = Version { major: 1, minor: 10 };
 // `enroll_approve`·`machine_revoke`·`web_publish`·`web_publish_off`·`library_rotate`, 새 `enroll_close`·`library_upload_publish`(+ 웹
 // 올리기 주소), `Pending.open_until_ms`, 웹 events `enroll`, 마지막 조작 기기 폐기 거부. 옛 host는 웹 요청을 거부해 웹이 그리지 않는다.
 // Agent link 변경 없음.
-// 1.81: profile·safety·작업 root·hook(관리 GUI W5c, plan §8.356): `safety_show`·`safety_set`(웹은 yolo·start_threads·trust_screens·
+// 1.81: profile·safety·작업 root·hook(관리 GUI W5c, plan §8.357): `safety_show`·`safety_set`(웹은 yolo·start_threads·trust_screens·
 // coordinator_deploy만), `profile_admin`·`profile_plan`·`profile_apply`(claude·codex·shell만, custom 명령·env 칸 없음),
 // `work_root_show`·`work_root_check`·`work_root_set`, `hook_status`·`hook_set`. host.toml 판 대조로 동시 편집은 conflict.
 // Agent link: 새 기능 work_root.manage.v1·hook.manage.v1(`AgentRequest::WorkRoot`·`CodexHook`), 알리지 않은 agent에는 보내지 않는다.
