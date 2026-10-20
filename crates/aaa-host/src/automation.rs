@@ -172,9 +172,25 @@ pub(crate) enum MachinePick {
     #[default]
     Idlest,
 }
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum Reuse {
+    #[default]
+    New,
+    Open,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct Start {
+    #[serde(default)]
+    pub reuse: Reuse,
+    #[serde(default)]
+    pub memory: bool,
+    #[serde(default)]
+    pub reports: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub close_idle: Option<String>,
     pub title: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub repo: Option<String>,
@@ -416,6 +432,12 @@ pub(crate) fn parse_with(
     .to_string();
     spec.action.set_text(prompt.clone());
     if let Action::Start(a) = &spec.action {
+        if a.reuse != Reuse::Open && (a.memory || a.close_idle.is_some()) {
+            return Err(bad("do.start.reuse", "memory·close_idle는 reuse = open에서만 쓴다"));
+        }
+        if let Some(value) = &a.close_idle {
+            duration_ms(value).map_err(|e| bad("do.start.close_idle", &e))?;
+        }
         if a.title.trim().is_empty() {
             return Err(bad("do.start.title", "제목이 비었다"));
         }
@@ -582,6 +604,10 @@ pub(crate) fn schema() -> serde_json::Value {
         {"required":["text"],"not":{"anyOf":[{"required":["text_file"]},{"required":["brief_file"]}]}},
         {"required":["text_file"],"not":{"anyOf":[{"required":["text"]},{"required":["brief_file"]}]}},
         {"required":["brief_file"],"not":{"anyOf":[{"required":["text"]},{"required":["text_file"]}]}}
+    ]);
+    schema["$defs"]["Start"]["allOf"] = serde_json::json!([
+        {"if":{"required":["memory"],"properties":{"memory":{"const":true}}},"then":{"required":["reuse"],"properties":{"reuse":{"const":"open"}}}},
+        {"if":{"required":["close_idle"]},"then":{"required":["reuse"],"properties":{"reuse":{"const":"open"}}}}
     ]);
     schema["$defs"]["Limits"]["properties"]["min_commits"]["minimum"] = 1.into();
     schema["$defs"]["Limits"]["properties"]["min_commits"]["maximum"] = 100.into();

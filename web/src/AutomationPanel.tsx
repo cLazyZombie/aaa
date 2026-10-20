@@ -15,6 +15,12 @@ const time = (at: number) => new Date(at).toLocaleString();
 function Result({ run, onThread }: { run: RoutineRun; onThread: (id: string) => void }) {
   return <span>{time(run.at_ms)} · {runWord[run.status] ?? run.status}: {run.detail}{run.thread && <> · <ThreadLink id={run.thread} onThread={onThread} /></>}</span>;
 }
+function Closing({ at }: { at: number }) {
+  const [now, setNow] = useState(Date.now);
+  useEffect(() => { const timer = window.setInterval(() => setNow(Date.now()), 30_000); return () => window.clearInterval(timer); }, [at]);
+  const minutes = Math.ceil(Math.max(0, at - now) / 60_000);
+  return <span className="automation-dim" data-testid="automation-closing">{minutes > 0 ? `${minutes}분 뒤 끝남` : "곧 끝남"}</span>;
+}
 type Row = { project: string; rules: RoutineView[]; missions: MissionView[] };
 type Open = { kind: "rule"; project: string; name: string } | { kind: "mission"; project: string; name: string } | { kind: "convert"; project: string };
 
@@ -66,6 +72,9 @@ export function AutomationPanel({ canControl, threads = [], onThread = () => {},
     document.addEventListener("visibilitychange", refresh);
     return () => { ++generation.current; clearInterval(timer); window.removeEventListener("focus", refresh); document.removeEventListener("visibilitychange", refresh); };
   }, [load]);
+  // 보고·Idle·입력 처리 사건으로 남은 시간을 다시 읽는다. 시계 표시는 아래 Closing이 갱신한다.
+  const threadStamp = threads.map((t) => `${t.id}:${t.updated_at_ms}:${t.report_hash}:${t.group}:${t.agent?.activity}`).join("|");
+  useEffect(() => { void load(); }, [load, threadStamp]);
   const toggle = async (project: string, rule: RoutineView) => {
     setBusy(`${project}/${rule.name}`);
     try {
@@ -110,7 +119,7 @@ export function AutomationPanel({ canControl, threads = [], onThread = () => {},
               <button type="button" role="switch" aria-checked={r.enabled} aria-label={`${project}/${r.name} 켜기`} disabled={!canControl || busy !== null || r.error != null} onClick={() => void toggle(project, r)}>{r.enabled ? "켬" : "끔"}</button>
             </div>
             <p className="automation-summary">{r.trigger || r.schedule} → {r.action || "동작 정보 없음"}</p>
-            {running.length > 0 && <p className="automation-open">{running.map((t) => <button type="button" key={t.id} className="automation-open-chip" data-testid={`automation-open-${project}-${t.id}`} title={`${t.id} · ${t.title} 열기`} onClick={() => onThread(project, t.id)}>열림 {t.id}</button>)}</p>}
+            {running.length > 0 && <p className="automation-open">{running.map((t) => <span key={t.id}><button type="button" className="automation-open-chip" data-testid={`automation-open-${project}-${t.id}`} title={`${t.id} · ${t.title} 열기`} onClick={() => onThread(project, t.id)}>열림 {t.id}</button>{r.closing?.filter((c) => c.thread === t.id).map((c) => <Closing key={c.thread} at={c.close_at_ms} />)}</span>)}</p>}
             {r.origin === "mission" && <p>임무 파일의 켜짐 상태입니다. 적용 사본이 다르면 특수 패널에서 다시 읽기를 확인하세요.</p>}
             {r.error ? <p role="alert">{r.error}</p> : <>
               {stuck && <p className="automation-stuck-line" role="alert">막힘 · 입력 전달 모름 · 확인 필요{stuck.thread ? ` (${stuck.thread})` : ""}</p>}

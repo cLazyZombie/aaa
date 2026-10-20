@@ -38,6 +38,8 @@ pub(crate) struct ThreadRec {
     pub started_by: Option<String>,
     #[serde(default)]
     pub automation: Option<String>,
+    #[serde(default)]
+    pub automation_run: Option<crate::automation_thread::Run>,
     pub repo: Option<String>,
     pub base: Option<String>,
     #[serde(default)]
@@ -151,6 +153,7 @@ impl ThreadRec {
             holds: vec![],
             started_by: None,
             automation: None,
+            automation_run: None,
             repo: None,
             base: None,
             branch: None,
@@ -198,7 +201,7 @@ impl ThreadRec {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum ResolveWhy {
     Manual,
-    Auto { days: u32 },
+    Auto { days: Option<u32> },
     Merged,
 }
 
@@ -247,6 +250,7 @@ pub(crate) struct ResolveOpts {
 pub(crate) struct StartOrigin {
     pub key: String,
     pub rule: String,
+    pub run: crate::automation_thread::Run,
     pub admission: crate::db::StartAdmission,
 }
 
@@ -1541,6 +1545,7 @@ impl Host {
             holds: a.holds.clone(),
             started_by: Some(actor.into()),
             automation: origin.map(|o| o.rule.clone()),
+            automation_run: origin.map(|o| o.run.clone()),
             repo: a.repo.clone(),
             base: a.base.clone(),
             ..ThreadRec::starting(&a.project, a.title.trim(), &mid, &a.profile, a.role, a.kind, now)
@@ -1675,6 +1680,7 @@ impl Host {
         actor: &str,
     ) -> Result<(), ErrorBody> {
         self.mission_transfer_state(rec).await?;
+        self.automation_prepare(rec).await?;
         let launch = rec.launch.clone().ok_or_else(|| internal("launch 기록이 없다"))?;
         let mut env = launch.env.clone();
         env.push(("AAA_PROJECT".into(), rec.project.clone()));
@@ -2117,6 +2123,7 @@ impl Host {
                 self.reports_bump();
             }
             let skipped: Vec<String> = snap.skipped.iter().map(|s| format!("{}: {}", s.path, s.reason)).collect();
+            self.automation_copy_memory(&rec, last).await?;
             let copy = if skipped.is_empty() { "complete" } else { "partial" };
             Ok(Some((snap.hash, skipped, copy.to_string(), snap.report.0, changed)))
         }
@@ -2160,6 +2167,10 @@ impl Host {
                 let mut detail = format!("사본 {copy}");
                 if !skipped.is_empty() {
                     detail.push_str(&format!(", 건너뜀: {}", skipped.join("; ")));
+                }
+                if rec.automation.is_some() && crate::report_mark::marker(&text) == Some("[완료]") {
+                    self.thread_ack(project, id, "automation")?;
+                    self.new_report_item(project, &self.load(project, id)?);
                 }
                 self.flow(&rec, "report_ready", Some(format!("threads/{id}.md")), detail);
                 // 보고 첫 줄 `PR:`이 생겼을 수 있다: 간격을 기다리지 않고 본다
@@ -2375,9 +2386,14 @@ impl Host {
             notes.join("; "),
         );
         let mut summary = match why {
+            ResolveWhy::Auto { days: None } => format!(
+                "{}: 자동화 {}의 완료 뒤 쉼 시간이 지나 저절로 끝냈다",
+                crate::transitions::label(&rec),
+                rec.automation.as_deref().unwrap_or("")
+            ),
             ResolveWhy::Manual => format!("{}: 끝냈다(보고와 library는 남는다)", crate::transitions::label(&rec)),
             // herdr-projects steps.rs `resolve_after_copy`의 auto 문구
-            ResolveWhy::Auto { days } => format!(
+            ResolveWhy::Auto { days: Some(days) } => format!(
                 "{}: 쉼으로 auto_resolve_days({days}일)가 지나 저절로 끝냈다. `aaa thread resolve {project} {id} --reopen`으로 되돌린다",
                 crate::transitions::label(&rec)
             ),
@@ -2540,6 +2556,7 @@ mod tests {
             holds: vec![],
             started_by: None,
             automation: None,
+            automation_run: None,
             project: "p".into(),
             id: "t-0001".into(),
             title: "t".into(),

@@ -108,6 +108,13 @@ export function RuleDetail({ project, rule, canControl, covered = false, onChang
         </div> : <p className="automation-dim">보기 권한에서는 풀 수 없습니다.</p>}
       </div>
     </Section>}
+    {rule.memory && <Section title="기억" testid="automation-memory">
+      <Facts rows={[
+        ["크기", `${rule.memory.bytes.toLocaleString()}바이트`],
+        ["마지막 갱신", rule.memory.thread ? <>{onThread ? <ThreadLink id={rule.memory.thread} onThread={onThread} /> : rule.memory.thread}{rule.memory.updated_at_ms != null && ` · ${time(rule.memory.updated_at_ms)}`}</> : "아직 사본 없음"],
+      ]} />
+      <Source file="memory.md" text={rule.memory.text} truncated={rule.memory.truncated} />
+    </Section>}
     <Section title="설정">
       <Facts rows={[
         ["조건", rule.trigger || rule.schedule || "—"],

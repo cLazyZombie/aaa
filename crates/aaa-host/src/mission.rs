@@ -1739,18 +1739,13 @@ impl Host {
         }
         let work = rec.work_dir.clone().ok_or_else(|| bad("작업 폴더가 없다"))?;
         let conn = self.live_conn(&rec.machine_id)?;
+        crate::automation_thread::write_inputs(
+            &conn,
+            &work,
+            run.pending.iter().map(|i| (i.id.clone(), i.text.clone())).collect::<Vec<_>>(),
+        )
+        .await?;
         for i in &run.pending {
-            match conn
-                .request(AgentRequest::WorkFileWrite {
-                    work_dir: work.clone(),
-                    path: format!("inbox/{}.json", i.id),
-                    data: aaa_proto::B64(i.text.as_bytes().to_vec()),
-                })
-                .await?
-            {
-                AgentResponse::Done => {}
-                _ => return Err(internal("입력 파일 쓰기 응답이 아니다")),
-            }
             if i.source == "post" {
                 self.db.mission_post_delivered(p, &i.id).map_err(internal)?;
             }
