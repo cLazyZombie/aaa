@@ -1,7 +1,7 @@
 // 웹 E2E 입력줄: send-text·여러 줄·보내는 동안 친 글.
 // 혼자 돌리기: node web/e2e/web.e2e.mjs --spec 08-input-line(새 실험실). 준비(host·agent·t1·첫 화면)는 lib/harness.mjs runSpec.
 
-import { root, sleep, aaa, waitOutput, until, screenText, pairPage, step, browser, sentFrames, sentCount, inList } from "../lib/harness.mjs";
+import { root, aaa, waitOutput, until, screenText, pairPage, step, browser, sentFrames, sentCount, inList } from "../lib/harness.mjs";
 
 export default async function ({ ctl, page }) {
   await step("입력줄: 여러 줄은 bracketed paste, Enter 보내기·Shift+Enter 줄바꿈, 조합 중 Enter 무시, 초안 보존, 휴대폰도 Enter는 보내기", async () => {
@@ -71,6 +71,10 @@ export default async function ({ ctl, page }) {
       await until("조합 중 보내기", () => since().includes('GOT:"real 한글"') && since().includes('GOT:"\\r"'));
       await cdp.detach();
       if (!(await line.evaluate((el) => el === document.activeElement))) throw new Error("보낸 뒤 입력칸이 focus를 잃었다");
+      await until("보내기 확인 처리", () => send.isEnabled());
+      // 조합 확정 기한은 페이지 시계로 본다. 느린 자동화 왕복이 300ms 기한을 대신 소비하지 않는다.
+      await page.clock.install();
+      await page.clock.pauseAt(new Date());
       // 2) 기다리는 사이 확정: 확정된 글을 한 번 보낸다(compositionend와 값 바꾸기가 같은 task여도)
       await mark();
       await line.fill("commit 한");
@@ -84,39 +88,45 @@ export default async function ({ ctl, page }) {
         setValue.call(el, "commit 한글");
         el.dispatchEvent(new InputEvent("input", { bubbles: true, data: "글", inputType: "insertFromComposition" }));
       });
+      await page.clock.runFor(1); // compositionend가 건 뒤따르는 task
       await until("확정 뒤 보냄", () => since().includes('GOT:"commit 한글"') && since().includes('GOT:"\\r"'));
+      await until("보내기 확인 처리", () => send.isEnabled());
       // 3) 확정 전에 지워짐: 글 보내기였으니 Enter도 보내지 않는다
       await mark();
       await line.fill("한");
       await line.dispatchEvent("compositionstart", { data: "" });
       await send.click();
       await until("기다림 표시", async () => (await banner()) === "글자를 마치는 중…");
+      const emptyMark = await sentCount(page);
       await line.evaluate((el) => {
         const setValue = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value").set;
         el.dispatchEvent(new CompositionEvent("compositionend", { bubbles: true, data: "" }));
         setValue.call(el, "");
         el.dispatchEvent(new InputEvent("input", { bubbles: true, inputType: "deleteCompositionText" }));
       });
-      await sleep(400);
-      if (since().includes("GOT:")) throw new Error(`빈 확정에 보냈다: ${since()}`);
+      await page.clock.runFor(400);
+      const emptySent = (await sentFrames(page, emptyMark)).filter((f) => f.t === "submit" || f.t === "input");
+      if (emptySent.length || since().includes("GOT:")) throw new Error(`빈 확정에 보냈다: ${JSON.stringify(emptySent)} ${since()}`);
       // 4) 조합이 이어져도 누른 때부터의 기한을 넘기지 않는다
       await line.fill("chain 한");
       await line.dispatchEvent("compositionstart", { data: "" });
       await send.click();
       await until("기다림 표시", async () => (await banner()) === "글자를 마치는 중…");
-      const t0 = Date.now();
-      while (Date.now() - t0 < 450) {
+      const expiredMark = await sentCount(page);
+      for (let elapsed = 0; elapsed < 450; elapsed += 50) {
         await line.evaluate((el) => {
           el.dispatchEvent(new CompositionEvent("compositionend", { bubbles: true, data: "한" }));
           el.dispatchEvent(new CompositionEvent("compositionstart", { bubbles: true, data: "" }));
         });
-        await sleep(40);
+        await page.clock.runFor(50);
       }
       if ((await banner()) !== "글자를 마친 뒤 보낸다") throw new Error(`기한 뒤 표시: ${await banner()}`);
       await line.dispatchEvent("compositionend", { data: "한" });
-      await sleep(100);
-      if (since().includes("GOT:")) throw new Error(`기한 넘은 조합을 보냈다: ${since()}`);
+      await page.clock.runFor(100);
+      const expiredSent = (await sentFrames(page, expiredMark)).filter((f) => f.t === "submit" || f.t === "input");
+      if (expiredSent.length || since().includes("GOT:")) throw new Error(`기한 넘은 조합을 보냈다: ${JSON.stringify(expiredSent)} ${since()}`);
       await line.fill("");
+      await page.clock.resume();
     }
     // 휴대폰(터치)도 Enter는 보내기다(herdr-web-ui TerminalInput: enterKeyHint="send", Shift+Enter만 줄바꿈)
     const mob = await pairPage(browser, aaa("web", "pair").code, { width: 390, height: 844 }, { line: true });
