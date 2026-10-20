@@ -4,14 +4,14 @@
 // 그림과 파일 열기는 그것을 주는 곳(파일 보기: `MarkdownImageContext`·`OpenFileContext`)에서만 된다. 그 밖(보고서 등)은
 // 참고의 「그림을 그리지 않는 곳」처럼 대체 글, 「열 수 없는 곳」처럼 이름 뒤 경로다.
 // 문구는 참고 i18n.ko.ts 그대로다.
-import { createContext, Fragment, memo, useCallback, useContext, useEffect, useId, useMemo, useState, type CSSProperties, type MouseEvent, type ReactNode } from "react";
+import { createContext, Fragment, memo, useCallback, useContext, useEffect, useId, useMemo, useRef, useState, type CSSProperties, type MouseEvent, type ReactNode } from "react";
 import { Check, Copy, ImageOff } from "lucide-react";
 import { foldCode, parseMarkdown, type InlineNode, type ListBlock, type MarkdownBlock } from "./herdr/markdown.ts";
 import { codeIsFilePath, OpenFileContext, splitFilePaths } from "./herdr/filePaths.ts";
 import { fileUriPath } from "./herdr/terminalFileLinks.ts";
 import { imageSlotStyle, standaloneImage } from "./herdr/imageBox.ts";
 import type { MarkdownImagePreview } from "./herdr/markdownImages.ts";
-import { CHAT_HIGHLIGHT_LIMIT, languageForFence } from "./herdr/highlight.ts";
+import { CHAT_HIGHLIGHT_LIMIT, languageForFence, normalizeCode } from "./herdr/highlight.ts";
 import { FilePathLink } from "./FilePathLink.tsx";
 import { formatBytes } from "./formatBytes.ts";
 import { HighlightedCode } from "./HighlightedCode.tsx";
@@ -214,6 +214,23 @@ function List({ block }: { block: ListBlock }) {
 /** A fence in no language, or in one that says plain output (a log, a command's answer): the files it names open. */
 const PLAIN_FENCE = /^(?:|text|txt|plain|plaintext|log|console|output|shell-session)$/i;
 
+/**
+ * 접힌 code의 가린 꼬리: 글만 `hidden="until-found"`로 둔다. 대화 안 찾기(chatFindText.ts)와 브라우저 찾기가 이 글을 찾으면 `beforematch`로
+ * 편다(참고 t3code `data-thread-find-fold`·revealFolded). 강조 표시는 펼친 뒤에 한다
+ */
+function FoldedTail({ value, head, onReveal }: { value: string; head: string; onReveal: () => void }) {
+  const tail = useMemo(() => normalizeCode(value).split("\n").slice(head.split("\n").length).join("\n"), [value, head]);
+  const reveal = useRef(onReveal);
+  reveal.current = onReveal;
+  const attach = useCallback((node: HTMLPreElement | null) => {
+    if (node === null) return;
+    // React는 hidden을 참·거짓으로만 쓴다: 값은 여기서 둔다
+    node.setAttribute("hidden", "until-found");
+    node.addEventListener("beforematch", () => reveal.current());
+  }, []);
+  return <pre ref={attach} className="hl-code markdown-code-tail" data-chat-find-fold=""><code>{tail}</code></pre>;
+}
+
 /** code block: 머리에 언어와 복사, 긴 것은 접고 「n줄 모두 보기」(참고 CodeBlock, 안쪽 스크롤 없음) */
 function CodeBlock({ language, value }: { language: string; value: string }) {
   const open = useContext(OpenFileContext);
@@ -238,21 +255,22 @@ function CodeBlock({ language, value }: { language: string; value: string }) {
   };
   return (
     <div className="markdown-code" data-language={language}>
-      <div className="markdown-code-header">
+      <div className="markdown-code-header" data-chat-find-ignore="">
         <span>{language || "text"}</span>
         <button type="button" className="icon-button markdown-code-copy" onClick={() => void copy()} aria-label={copied ? "코드 복사됨" : "코드 복사"}>
           {copied ? <Check aria-hidden="true" /> : <Copy aria-hidden="true" />}
         </button>
       </div>
       {copyFailed && (
-        <p className="markdown-code-error" role="alert">
+        <p className="markdown-code-error" role="alert" data-chat-find-ignore="">
           복사하지 못했습니다. 텍스트를 선택해 직접 복사하세요.
         </p>
       )}
       {/* a block in no language is output (a log, a command's answer): the files it names open */}
       <HighlightedCode code={fold !== null && !expanded ? fold.head : value} language={grammar} limit={CHAT_HIGHLIGHT_LIMIT} open={plain ? open : null} />
+      {fold !== null && !expanded && <FoldedTail value={value} head={fold.head} onReveal={() => setExpanded(true)} />}
       {fold !== null && (
-        <button type="button" className="markdown-code-more" aria-expanded={expanded} onClick={() => setExpanded(!expanded)}>
+        <button type="button" className="markdown-code-more" data-chat-find-ignore="" aria-expanded={expanded} onClick={() => setExpanded(!expanded)}>
           {expanded ? "접기" : `${fold.lines}줄 모두 보기`}
         </button>
       )}

@@ -116,7 +116,7 @@ export const HighlightedCode = memo(function HighlightedCode({ code, language, l
   return (
     <>
       <CodeLines lines={lines} open={links ? open : null} />
-      {tooLong && <p className="hl-note">너무 길어 강조 표시를 생략했습니다</p>}
+      {tooLong && <p className="hl-note" data-chat-find-ignore="">너무 길어 강조 표시를 생략했습니다</p>}
     </>
   );
 });
