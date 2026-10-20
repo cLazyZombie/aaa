@@ -179,6 +179,35 @@ impl Host {
         Ok(FrontResponse::PaneDir { listing })
     }
 
+    /// 입력칸 「/」 목록(plan §8.323). 보기 범위는 pane 보기와 같고, harness는 host가 아는 pane 상태(Claude·Codex)다. 목록은 이름과
+    /// 설명뿐이라 감사 기록에 남기지 않는다
+    pub(crate) async fn pane_commands(&self, role: DeviceRole, pane: &str) -> Result<FrontResponse, ErrorBody> {
+        let (id, mid) = self.resolve_pane(pane)?;
+        if self.pane_view_of(&id, role).is_none() {
+            return Err(err(ErrorCode::NotFound, format!("pane이 없다: {pane}")));
+        }
+        let (harness, knows) = {
+            let i = self.inner.lock().unwrap();
+            let harness =
+                i.panes.get(&id).and_then(|p| p.agent.as_ref()).map(|a| a.harness.clone()).unwrap_or_default();
+            (harness, i.machines.get(&mid).is_some_and(|m| m.features.iter().any(|f| f == "commands.v1")))
+        };
+        if !matches!(harness.as_str(), "claude" | "codex") {
+            return Err(err(ErrorCode::NotFound, "명령 목록은 Claude·Codex pane만 있다"));
+        }
+        if !knows {
+            return Err(err(
+                ErrorCode::Unavailable,
+                "그 머신 agent가 명령 목록을 아직 모른다(agent binary를 바꿔야 한다)",
+            ));
+        }
+        let conn = self.live_conn(&mid)?;
+        match conn.request(AgentRequest::Commands { session: id, harness }).await? {
+            AgentResponse::Commands(list) => Ok(FrontResponse::PaneCommands { list }),
+            other => Err(err(ErrorCode::Internal, format!("예상하지 못한 응답: {other:?}"))),
+        }
+    }
+
     /// 읽기 경로의 파일과 그 머신 연결
     pub(crate) fn file_cap(&self, cap: &str) -> Result<(AgentConn, FileInfo), ErrorBody> {
         let (mid, info) = {

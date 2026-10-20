@@ -7,10 +7,10 @@ describe("연 줄의 패널", () => {
   it("「작업」 트리에 있는 줄이면 「작업」으로(VS Code explorer.autoReveal)", () => {
     assert.equal(revealPanel("work", true), "work");
     assert.equal(revealPanel("machines", true), "work");
-    assert.equal(revealPanel("special", true), "work");
+    assert.equal(revealPanel("automations", true), "work");
   });
-  it("트리에 없는 줄(평가자·임무 pane)은 패널을 바꾸지 않는다", () => {
+  it("트리에 없는 줄(트리 밖 pane)은 패널을 바꾸지 않는다", () => {
     assert.equal(revealPanel("machines", false), "machines");
-    assert.equal(revealPanel("special", false), "special");
+    assert.equal(revealPanel("automations", false), "automations");
   });
 });

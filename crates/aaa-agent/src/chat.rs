@@ -23,12 +23,22 @@ fn env_dir(name: &str) -> Option<PathBuf> {
     std::env::var_os(name).filter(|v| !v.is_empty()).map(PathBuf::from)
 }
 
+/// Claude 설정 폴더(`$CLAUDE_CONFIG_DIR`|`~/.claude`). agent는 읽기만 한다
+pub(crate) fn claude_home() -> PathBuf {
+    env_dir("CLAUDE_CONFIG_DIR").unwrap_or_else(|| aaa_config::paths::home().join(".claude"))
+}
+
 pub(crate) fn claude_root() -> PathBuf {
-    env_dir("CLAUDE_CONFIG_DIR").unwrap_or_else(|| aaa_config::paths::home().join(".claude")).join("projects")
+    claude_home().join("projects")
+}
+
+/// Codex 설정 폴더(`$CODEX_HOME`|`~/.codex`)
+pub(crate) fn codex_home() -> PathBuf {
+    env_dir("CODEX_HOME").unwrap_or_else(|| aaa_config::paths::home().join(".codex"))
 }
 
 pub(crate) fn codex_root() -> PathBuf {
-    env_dir("CODEX_HOME").unwrap_or_else(|| aaa_config::paths::home().join(".codex")).join("sessions")
+    codex_home().join("sessions")
 }
 
 /// root 안의 일반 `.jsonl` 파일인지 실제 위치로 확인한다
@@ -340,13 +350,83 @@ fn compaction(harness: &str, v: &Value) -> Option<ChatMessage> {
     Some(ChatMessage { id: None, role: ChatRole::Compact, text: clip(&text), pending: false, receipt: None })
 }
 
-/// 기록 한 줄 → 보일 줄. 정리된 자리는 청했을 때만(`compact`)
-fn line(harness: &str, v: &Value, thinking: bool, compact: bool) -> Vec<ChatMessage> {
-    let parse: LineParser = if harness == "codex" { codex_line } else { claude_line };
-    match compaction(harness, v).filter(|_| compact) {
-        Some(m) => vec![m],
-        None => parse(v, thinking),
+/// 사람이 친 harness 명령과 그 결과(plan §8.323). Claude 2.1.304는 `system/local_command`에, 앞 판과 `/compact`는 사람 줄에 같은
+/// 봉투(`<command-name>`·`<local-command-stdout>`)를 적는다. `/compact`는 정리 자리가 대신하므로 뺀다. `informational`은 「Unknown
+/// command: /x」 같은 harness 알림이다. Codex는 명령을 기록하지 않는다(실측 0.163)
+fn claude_command(v: &Value) -> Option<ChatMessage> {
+    let text = match (v["type"].as_str()?, v["subtype"].as_str()) {
+        ("system", Some("local_command")) => v["content"].as_str()?,
+        ("system", Some("informational")) => return msg(ChatRole::CommandOutput, &plain(v["content"].as_str()?)),
+        ("user", _) if v["isMeta"] != true && v["isSidechain"] != true => v["message"]["content"].as_str()?,
+        _ => return None,
+    };
+    let text = text.trim_start();
+    if let Some(name) = tag(text, "command-name") {
+        if name.trim() == "/compact" {
+            return None;
+        }
+        let args = tag(text, "command-args").unwrap_or_default();
+        return msg(ChatRole::Command, &format!("{} {}", name.trim(), args.trim()));
     }
+    let out = tag(text, "local-command-stdout").or_else(|| tag(text, "local-command-stderr"))?;
+    let out = plain(&out);
+    // `/compact`의 「Compacted (ctrl+o to see full summary)」
+    if out.trim().starts_with("Compacted (") {
+        return None;
+    }
+    msg(ChatRole::CommandOutput, &out)
+}
+
+/// `<이름>…</이름>` 안 글
+fn tag(text: &str, name: &str) -> Option<String> {
+    let start = text.find(&format!("<{name}>"))? + name.len() + 2;
+    let end = text[start..].find(&format!("</{name}>"))? + start;
+    Some(text[start..end].to_string())
+}
+
+/// 터미널 색·커서 코드(ESC [ … 끝 글자, ESC ] … BEL)를 뺀 글
+fn plain(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    let mut chars = text.chars().peekable();
+    while let Some(c) = chars.next() {
+        if c != '\u{1b}' {
+            out.push(c);
+            continue;
+        }
+        match chars.next() {
+            Some('[') => {
+                for c in chars.by_ref() {
+                    if ('@'..='~').contains(&c) {
+                        break;
+                    }
+                }
+            }
+            Some(']') => {
+                while let Some(c) = chars.next() {
+                    if c == '\u{7}' || (c == '\u{1b}' && chars.next_if_eq(&'\\').is_some()) {
+                        break;
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+    out
+}
+
+/// 기록 한 줄 → 보일 줄. 정리된 자리(`compact`)·harness 명령(`commands`)은 청했을 때만
+fn line(harness: &str, v: &Value, thinking: bool, compact: bool, commands: bool) -> Vec<ChatMessage> {
+    let parse: LineParser = if harness == "codex" { codex_line } else { claude_line };
+    if let Some(m) = compaction(harness, v).filter(|_| compact) {
+        return vec![m];
+    }
+    if commands
+        && harness == "claude"
+        && let Some(m) = claude_command(v)
+    {
+        return vec![m];
+    }
+    parse(v, thinking)
 }
 
 /// agent 요청 처리: 검증한 pane 기록 경로만 읽는다.
@@ -355,10 +435,11 @@ pub(crate) fn read_path(
     path: PathBuf,
     thinking: bool,
     compact: bool,
+    commands: bool,
     before: Option<&str>,
 ) -> Result<pages::Page, String> {
     let failed = |e: std::io::Error| format!("기록을 읽지 못했다: {}", e.kind());
-    let mut page = pages::read(&path, before, |v| line(harness, v, thinking, compact))?;
+    let mut page = pages::read(&path, before, |v| line(harness, v, thinking, compact, commands))?;
     if harness == "claude" && before.is_none() {
         page.messages.extend(claude_pending(&path).map_err(failed)?);
     }
@@ -624,7 +705,7 @@ mod tests {
         )
         .unwrap();
         let roles = |compact| -> Vec<(ChatRole, String)> {
-            pages::read(&path, None, |v| line("claude", v, false, compact))
+            pages::read(&path, None, |v| line("claude", v, false, compact, false))
                 .unwrap()
                 .messages
                 .into_iter()
@@ -648,6 +729,59 @@ mod tests {
             compaction("codex", &serde_json::json!({"type":"user","isCompactSummary":true,"message":{"content":"x"}}))
                 .is_none()
         );
+        std::fs::remove_dir_all(&root).unwrap();
+    }
+
+    /// 실측(10-20 Claude 2.1.304): 웹에서 보낸 `/context`·`/model`·`/compact`가 남긴 줄과, 앞 판의 알림 줄
+    #[test]
+    fn claude_commands_and_their_output_only_when_asked() {
+        let echo = |name: &str, args: &str| {
+            format!(
+                "<command-name>{name}</command-name>\n            <command-message>{}</command-message>\n            <command-args>{args}</command-args>",
+                &name[1..]
+            )
+        };
+        let lines = [
+            serde_json::json!({"type":"user","message":{"role":"user","content":"Reply with exactly: OK"},"origin":{"kind":"human"}}),
+            serde_json::json!({"type":"system","subtype":"local_command","content":echo("/context",""),"level":"info","isMeta":false}),
+            serde_json::json!({"type":"system","subtype":"local_command","content":"<local-command-stdout> \u{1b}[1mContext Usage\u{1b}[22m\n\u{1b}[38;2;153;153;153m43.9k/1m tokens (4%)\u{1b}[39m</local-command-stdout>","level":"info","isMeta":false}),
+            serde_json::json!({"type":"user","isMeta":true,"message":{"role":"user","content":"## Context Usage\n\n**Tokens:** 43.9k / 1m (4%)"}}),
+            serde_json::json!({"type":"system","subtype":"local_command","content":echo("/model","sonnet"),"level":"info","isMeta":false}),
+            serde_json::json!({"type":"system","subtype":"local_command","content":"<local-command-stdout>Set model to `Sonnet 5.5`</local-command-stdout>","level":"info","isMeta":false}),
+            serde_json::json!({"type":"user","isMeta":true,"message":{"role":"user","content":"<local-command-caveat>The command below was run directly in Claude Code</local-command-caveat>"}}),
+            serde_json::json!({"type":"user","message":{"role":"user","content":echo("/compact","")}}),
+            serde_json::json!({"type":"user","message":{"role":"user","content":"<local-command-stdout>\u{1b}[2mCompacted (ctrl+o to see full summary)\u{1b}[22m</local-command-stdout>"}}),
+            serde_json::json!({"type":"system","subtype":"informational","content":"Unknown command: /ultraplan","level":"info"}),
+        ];
+        // 실제 읽기 길(쪽 읽기의 칸 고르기까지)로 읽는다
+        let root = std::env::temp_dir().join(format!("aaa-chat-commands-{}", std::process::id()));
+        std::fs::create_dir_all(&root).unwrap();
+        let path = root.join("s.jsonl");
+        std::fs::write(&path, lines.iter().map(|v| format!("{v}\n")).collect::<String>()).unwrap();
+        let rows = |commands: bool| -> Vec<(ChatRole, String)> {
+            read_path("claude", path.clone(), false, false, commands, None)
+                .unwrap()
+                .messages
+                .into_iter()
+                .map(|m| (m.role, m.text))
+                .collect()
+        };
+        assert_eq!(
+            rows(true),
+            [
+                (ChatRole::User, "Reply with exactly: OK".into()),
+                (ChatRole::Command, "/context".into()),
+                (ChatRole::CommandOutput, "Context Usage\n43.9k/1m tokens (4%)".into()),
+                (ChatRole::Command, "/model sonnet".into()),
+                (ChatRole::CommandOutput, "Set model to `Sonnet 5.5`".into()),
+                (ChatRole::CommandOutput, "Unknown command: /ultraplan".into()),
+            ]
+        );
+        // 청하지 않으면(옛 host·front) 지금처럼 사람 말만
+        assert_eq!(rows(false), [(ChatRole::User, "Reply with exactly: OK".into())]);
+        // Codex는 명령을 기록하지 않는다: 같은 꼴의 줄이 와도 명령 줄로 읽지 않는다
+        assert!(line("codex", &lines[1], false, false, true).is_empty());
+        assert_eq!(plain("a\u{1b}]8;;http://x\u{7}link\u{1b}]8;;\u{1b}\\b"), "alinkb");
         std::fs::remove_dir_all(&root).unwrap();
     }
 }

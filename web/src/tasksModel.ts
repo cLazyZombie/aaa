@@ -412,7 +412,7 @@ export function lastLogId(log: readonly TaskLogEntry[]): number {
   return log.reduce((n, e) => Math.max(n, e.id), 0);
 }
 
-// task 첨부(plan §8.323): 메모의 한 줄이 첨부 하나다. 그림 `![그림](uploads/<16 hex>.<ext>)`, 올린 문서 `[제목](uploads/<16 hex>.md|html)`,
+// task 첨부(plan §8.327): 메모의 한 줄이 첨부 하나다. 그림 `![그림](uploads/<16 hex>.<ext>)`, 올린 문서 `[제목](uploads/<16 hex>.md|html)`,
 // 보고서 안 문서 `[제목](library/<보고서>/<경로>.md|html)`, 바깥 주소 `[제목](https://…)`. 올린 파일은 프로젝트 uploads/에 있고(host가
 // 내용 hash로 이름을 정한다) 메모 줄을 고쳐 붙이고 뗀다. 줄 가운데 섞인 참조는 메모 글로 둔다(Markdown이 그린다).
 const IMAGE_LINE = /^\s*!\[([^\]\n]*)\]\((uploads\/[0-9a-f]{16}\.(?:png|jpg|gif|webp))\)\s*$/;
@@ -512,7 +512,7 @@ export function linkFromText(text: string, label?: string): TaskAttachment | nul
 }
 
 /**
- * 붙인 주소가 aaa 보고서 주소면 그 꼴(plan §8.323): 보기 경로 `/v/<cap>/<경로>`(공유 링크·앱 보기 경로. cap 48자가 보고서를 가리므로
+ * 붙인 주소가 aaa 보고서 주소면 그 꼴(plan §8.327): 보기 경로 `/v/<cap>/<경로>`(공유 링크·앱 보기 경로. cap 48자가 보고서를 가리므로
  * host 이름은 보지 않는다)와 이 앱의 `/#report=<프로젝트>/<이름>`(reportLinks `inAppLink`와 같은 꼴). 첨부 `library/<이름>/<경로>`로
  * 바꾸는 것은 host가 cap을 풀어 준 뒤다(TaskAttachments `resolveReportLink`)
  */

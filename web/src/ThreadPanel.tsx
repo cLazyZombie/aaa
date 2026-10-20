@@ -54,7 +54,7 @@ export function ThreadPanel({
   onOpenFile: (path: string) => void;
   /** 보고서 안 파일 경로·링크를 그 thread의 머신·작업 폴더 기준으로 연다(plan §8.171). 보기 권한 기기는 없다(열 수 없다) */
   onOpenReportFile?: (path: string) => void;
-  /** 「할 일에 추가」: 결과물 md·html 문서를 링크한 task(조작 권한만, plan §8.323) */
+  /** 「할 일에 추가」: 결과물 md·html 문서를 링크한 task(조작 권한만, plan §8.327) */
   onAddDoc?: (path: string) => void;
 }) {
   const statusLabel = t.status === "starting" ? "준비 중" : t.cleanup_pending ? "정리 중" : GROUP_LABEL[t.group] ?? t.group;

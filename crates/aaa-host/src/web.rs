@@ -448,7 +448,7 @@ fn error_response(e: ErrorBody) -> Response {
     (status, Json(Outcome::<()>::Err(e))).into_response()
 }
 
-/// task 첨부(plan §8.323, 그림·md·html 문서): 프로젝트 uploads/에 쓰고 메모에 적을 `uploads/<이름>`을 돌려준다. 대화 첨부와 같이 인증·권한을
+/// task 첨부(plan §8.327, 그림·md·html 문서): 프로젝트 uploads/에 쓰고 메모에 적을 `uploads/<이름>`을 돌려준다. 대화 첨부와 같이 인증·권한을
 /// 확인한 뒤 원본 bytes를 16MiB 한도로 읽는다. 메모 줄은 웹이 `task_edit`로 쓴다
 #[derive(serde::Deserialize)]
 struct TaskFileQuery {

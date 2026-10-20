@@ -11,7 +11,7 @@
 //! - 배경 작업은 그것을 띄운 Claude 프로세스 안에서 돈다: 지금 프로세스가 시작하기 전에 띄운 것은 세지 않는다(`since_ms`:
 //!   Claude SessionStart startup·resume를 받은 때, 모르면 aaa 세션이 시작한 때).
 //! - 컨텍스트 사용량(plan §8.321): Claude는 본 대화(sidechain 아님) assistant 줄의 `usage`(input + cache 생성 + cache 읽기,
-//!   Claude Code 상태줄 `total_input_tokens`와 같은 합)와 `requestedModel`(`…[1m]`이면 창 1M, 아니면 200k), 정리 끝
+//!   Claude Code 상태줄 `total_input_tokens`와 같은 합)와 `requestedModel`이 말하는 창, 정리 끝
 //!   `compact_boundary.compactMetadata`(preTokens·postTokens). Codex는 `token_count`의 `last_token_usage.total_tokens`와
 //!   `model_context_window`, 정리(`compacted`) 뒤 첫 `token_count`가 정리 뒤 크기다. %는 그 harness 터미널과 같은 식으로 낸다.
 //! - 기록은 처음부터 읽되 한 번에 `budget`만큼만, 그 뒤로는 늘어난 만큼만 읽는다. 처음 읽기가 끝에 닿기 전에는 계획을 말하지 않는다.
@@ -34,7 +34,8 @@ pub const POLL_BUDGET: u64 = 32 << 20;
 const MAX_STEPS: usize = 200;
 const MAX_NAMES: usize = 5000;
 const WORDS: usize = 300;
-/// Claude Code의 기본 창과 1M 창(2.1.304 statusline 입력 `context_window_size`)
+/// Claude Code의 기본 창과 1M 창. 2.1.304 `/context` 실측(plan §8.321): Claude 5 모델(opus·sonnet·haiku·fable 5·5.x)은
+/// `[1m]` 없이도 1M, 그 앞 모델(haiku-4-5 등)은 200k, `[1m]`이면 1M이다
 const CLAUDE_WINDOW: u64 = 200_000;
 const CLAUDE_LONG_WINDOW: u64 = 1_000_000;
 /// Codex 「N% context left」가 창과 사용 양쪽에서 빼는 고정분(codex-rs/protocol/src/protocol.rs `BASELINE_TOKENS`)
@@ -106,15 +107,46 @@ pub struct Reader {
     compaction: Option<ContextCompaction>,
     /// Codex: 정리(`compacted`)를 보았고 뒤 크기(다음 `token_count`)를 기다린다. 값은 정리 전 크기
     compacted_from: Option<u64>,
+    /// Claude 사용자 설정(`settings.json`): 모델별 `autoCompactWindow`가 창을 줄인다
+    claude_settings: PathBuf,
+    /// 모델 → 창(설정을 모델마다 한 번 읽는다)
+    windows: HashMap<String, Option<u64>>,
 }
 
-/// Claude 기록 줄의 `requestedModel`이 말하는 창. Claude 모델이 아니거나 칸이 없으면 모른다
-fn claude_window(model: Option<&str>) -> Option<u64> {
+/// Claude 기록 줄의 `requestedModel`이 말하는 창. Claude 모델이 아니거나 칸이 없으면 모른다.
+/// 사용자 설정 `modelSettings.<모델>.autoCompactWindow`가 있으면 그보다 크지 않다: Claude Code `/context`도 그 값을 창으로 보인다
+fn claude_window(model: Option<&str>, settings: Option<&Value>) -> Option<u64> {
     let m = model?.to_ascii_lowercase();
-    if !m.starts_with("claude-") {
-        return None;
-    }
-    Some(if m.ends_with("[1m]") { CLAUDE_LONG_WINDOW } else { CLAUDE_WINDOW })
+    let base = m.strip_suffix("[1m]").unwrap_or(&m);
+    let family = base.strip_prefix("claude-")?;
+    // 이름이 `<종류>-5`나 `<종류>-5-<n>`이면 Claude 5 모델이다(`claude-3-5-sonnet` 같은 옛 이름은 아니다)
+    let mut parts = family.split('-');
+    let five = parts.next().is_some_and(|k| !k.is_empty() && k.chars().all(|c| c.is_ascii_alphabetic()))
+        && parts.next() == Some("5");
+    let native = if m.ends_with("[1m]") || five { CLAUDE_LONG_WINDOW } else { CLAUDE_WINDOW };
+    let cap =
+        settings.and_then(|s| s.pointer(&format!("/modelSettings/{base}/autoCompactWindow"))).and_then(compact_window);
+    Some(cap.map_or(native, |c| c.min(native)))
+}
+
+/// `autoCompactWindow` 값: 수, 또는 `500k`·`1m`·`200`(천 단위 줄임)·`auto`(설정 없음). 100k~1M 밖은 Claude가 받지 않는다
+fn compact_window(v: &Value) -> Option<u64> {
+    let n = match v {
+        Value::Number(n) => n.as_u64()?,
+        Value::String(s) => {
+            let s = s.trim().to_ascii_lowercase();
+            let (digits, unit) = match s.chars().last()? {
+                'k' => (&s[..s.len() - 1], 1_000.0),
+                'm' => (&s[..s.len() - 1], 1_000_000.0),
+                _ => (s.as_str(), 1.0),
+            };
+            let x: f64 = digits.trim().parse().ok()?;
+            let x = if unit == 1.0 && x < 1_000.0 { x * 1_000.0 } else { x * unit };
+            x.round() as u64
+        }
+        _ => return None,
+    };
+    (100_000..=CLAUDE_LONG_WINDOW).contains(&n).then_some(n)
 }
 
 /// 사용량 %: 그 harness 터미널과 같은 식. 창을 모르거나 사용이 창보다 크면 None(웹은 토큰 수로 보인다)
@@ -257,6 +289,8 @@ impl Reader {
             window: None,
             compaction: None,
             compacted_from: None,
+            claude_settings: crate::chat::claude_home().join("settings.json"),
+            windows: HashMap::new(),
         }
     }
 
@@ -266,7 +300,9 @@ impl Reader {
         let id = identity(&meta);
         // 다른 파일이 되었거나 줄었다: 처음부터
         if self.file != Some(id) || meta.len() < self.offset {
+            let settings = std::mem::take(&mut self.claude_settings);
             *self = Reader::new(self.source, std::mem::take(&mut self.path));
+            self.claude_settings = settings;
             self.file = Some(id);
         }
         while self.offset < meta.len() && *budget > 0 {
@@ -466,7 +502,18 @@ impl Reader {
                     return;
                 }
                 self.used = Some(used);
-                self.window = claude_window(e.get("requestedModel").and_then(Value::as_str));
+                let model = e.get("requestedModel").and_then(Value::as_str);
+                self.window = match self.windows.get(model.unwrap_or("")) {
+                    Some(w) => *w,
+                    None => {
+                        let settings = std::fs::read(&self.claude_settings)
+                            .ok()
+                            .and_then(|b| serde_json::from_slice::<Value>(&b).ok());
+                        let w = claude_window(model, settings.as_ref());
+                        self.windows.insert(model.unwrap_or("").to_string(), w);
+                        w
+                    }
+                };
             }
             Some("system") if e.get("subtype").and_then(Value::as_str) == Some("compact_boundary") => {
                 let m = e.get("compactMetadata");
@@ -919,11 +966,14 @@ mod tests {
             &[json!({"type":"user","message":{"role":"user","content":"Reply with exactly: OK"}})],
         );
         let mut r = Reader::new(Source::Claude, p.clone());
+        // 사용자 설정이 없는 Claude(실제 ~/.claude는 읽지 않는다)
+        r.claude_settings = p.with_extension("settings.json");
         // 아직 응답이 없다
         assert_eq!(poll(&mut r).context, None);
+        // 실측(10-20 Claude 2.1.304 Haiku 5.5): `/context`가 「43.9k/1m tokens (4%)」였다. Claude 5 모델은 `[1m]` 없이도 1M이다
         append(&p, &[said("claude-haiku-5-5", 2, 11_748, 32_172)]);
         let c = poll(&mut r).context.unwrap();
-        assert_eq!((c.used, c.window, c.percent, c.compaction), (43_922, Some(200_000), Some(22), None));
+        assert_eq!((c.used, c.window, c.percent, c.compaction), (43_922, Some(1_000_000), Some(4), None));
         // 하위 agent의 응답·합성 줄(usage 0)은 이 세션의 컨텍스트가 아니다
         let mut side = said("claude-haiku-5-5", 1, 0, 150_000);
         side["isSidechain"] = json!(true);
@@ -939,19 +989,56 @@ mod tests {
         let c = poll(&mut r).context.unwrap();
         assert_eq!(
             (c.used, c.percent, c.compaction),
-            (7_910, Some(4), Some(ContextCompaction { before: 43_926, after: 7_910 }))
+            (7_910, Some(1), Some(ContextCompaction { before: 43_926, after: 7_910 }))
         );
-        // 1M 창, 창을 넘은 사용(창 추정이 틀린 경우: %가 없다), 창을 모르는 모델
+        // `[1m]`, Claude 5 앞 모델의 200k, 창을 넘은 사용(창 추정이 틀린 경우: %가 없다), 창을 모르는 모델
         append(&p, &[said("claude-opus-5-5[1m]", 2, 986, 89_361)]);
         let c = poll(&mut r).context.unwrap();
         assert_eq!((c.used, c.window, c.percent), (90_349, Some(1_000_000), Some(9)));
-        append(&p, &[said("claude-opus-5-5", 2, 30_000, 200_000)]);
+        append(&p, &[said("claude-haiku-4-5", 2, 998, 75_000)]);
+        let c = poll(&mut r).context.unwrap();
+        assert_eq!((c.window, c.percent), (Some(200_000), Some(38)));
+        append(&p, &[said("claude-haiku-4-5", 2, 30_000, 200_000)]);
         assert_eq!(poll(&mut r).context.unwrap().percent, None);
         let mut unnamed = said("x", 2, 0, 84_000);
         unnamed.as_object_mut().unwrap().remove("requestedModel");
         append(&p, &[unnamed]);
         let c = poll(&mut r).context.unwrap();
         assert_eq!((c.used, c.window, c.percent), (84_002, None, None));
+
+        // 사용자 설정 `modelSettings.<모델>.autoCompactWindow`가 창을 줄인다(실측: 이 설정 500000이면 Opus 5.5는 `[1m]`이어도
+        // `/context`가 500k를 창으로 보인다). 설정은 모델마다 처음 한 번 읽는다
+        std::fs::write(&r.claude_settings, r#"{"modelSettings":{"claude-opus-5-5":{"autoCompactWindow":500000}}}"#)
+            .unwrap();
+        let mut capped = Reader::new(Source::Claude, p.clone());
+        capped.claude_settings = r.claude_settings.clone();
+        append(&p, &[said("claude-opus-5-5[1m]", 2, 11_748, 32_172)]);
+        let c = poll(&mut capped).context.unwrap();
+        assert_eq!((c.window, c.percent), (Some(500_000), Some(9)));
+        append(&p, &[said("claude-haiku-5-5", 2, 11_748, 32_172)]);
+        assert_eq!(poll(&mut capped).context.unwrap().window, Some(1_000_000));
+    }
+
+    #[test]
+    fn claude_window_names_and_setting_forms() {
+        let w = |m: &str| claude_window(Some(m), None);
+        assert_eq!(
+            [
+                w("claude-opus-5-5"),
+                w("claude-fable-5"),
+                w("claude-sonnet-5-5[1m]"),
+                w("claude-haiku-4-5"),
+                w("claude-3-5-sonnet-20241022")
+            ],
+            [Some(1_000_000), Some(1_000_000), Some(1_000_000), Some(200_000), Some(200_000)]
+        );
+        assert_eq!([claude_window(Some("gpt-6"), None), claude_window(None, None)], [None, None]);
+        let forms =
+            [json!(500_000), json!("500k"), json!("1m"), json!("200"), json!("auto"), json!(50_000), json!("2m")];
+        assert_eq!(
+            forms.iter().map(compact_window).collect::<Vec<_>>(),
+            [Some(500_000), Some(500_000), Some(1_000_000), Some(200_000), None, None, None]
+        );
     }
 
     /// 실측 꼴(10-20 Codex 0.163 /compact): token_count의 마지막 응답 크기와 창, 정리 앞뒤 token_count

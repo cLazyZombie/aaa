@@ -949,29 +949,6 @@ export default async function ({ page }) {
     for (const n of ["ord1", "ord2", "ord3"]) aaa("pane", "kill", n);
   });
 
-  await step("사후 평가자: 목록에 섞이지 않고 활동 막대 「특수」 패널의 줄로 보인다(plan §8.258) → 누르면 평가자 화면", async () => {
-    const v = aaa("evaluator", "assign", "demo", "--profile", "fake", "--machine", "labA").evaluators[0];
-    const id = v.thread.id;
-    const badge = page.getByTestId("evaluator-demo");
-    await until("평가자 줄", async () => (await badge.count()) === 1);
-    await until("평가자 brief 전달", () => aaa("thread", "show", "demo", id).brief === "delivered");
-    if ((await page.getByTestId(`thread-demo-${id}`).count()) !== 0) throw new Error("평가자가 thread 목록에 보인다");
-    if ((await page.getByTestId(`pane-demo/${id}`).count()) !== 0) throw new Error("평가자가 머신 목록에 보인다");
-    await inList(page, badge);
-    const text = await badge.innerText();
-    if (!/사후 평가자/.test(text) || !/정할 개선안 0/.test(text)) throw new Error(`평가자 줄: ${text}`);
-    // 확인창이 아닌 평가자는 활동 막대 배지에 세지 않는다
-    if ((await page.getByTestId("activity-badge-special").count()) !== 0) throw new Error("확인창 없는 평가자가 배지에 셌다");
-    await badge.locator(".pane-select").click();
-    const pane = aaa("thread", "show", "demo", id).pane;
-    await until("평가자 화면 선택", async () => (await page.evaluate(() => location.hash)) === `#pane=${pane}`);
-    await until("평가자 터미널", async () => (await screenText(page)).includes("fake>"));
-    await shot(page, "desktop-evaluator");
-    aaa("evaluator", "unassign", "demo");
-    await until("끝낸 평가자 줄 사라짐", async () => (await badge.count()) === 0);
-    await inList(page, "pane-t1");
-    await until("t1 터미널", async () => (await screenText(page)).includes("t1-42"));
-  });
 
   await step("프로젝트 멈춤(herdr-projects sidebar.rs project_line 「paused」, 차이 목록 4장 G #592): 멈추면 모든 thread 머리가 「멈춤」, 되살리면 돌아온다. host는 프로젝트 하나라(plan §8.285) 보관·삭제는 m13 project_lifecycle이 본다", async () => {
     // 머리 둘째 줄(묶음 셈 또는 「멈춤」): 멈춤은 host `instance`가 말한다(plan §8.291)
@@ -1097,101 +1074,6 @@ export default async function ({ page }) {
     await row.getByRole("img", { name: "보고서 공유 링크 QR 코드" }).waitFor();
     await row.getByRole("button", { name: "링크 폐기" }).click();
     await domIs(page, "빈 결과물 링크 폐기", () => document.querySelector('[data-testid="library-link"]')?.dataset.state === "revoked");
-  });
-
-  await step("특수 임무: 「특수」 패널 줄(plan §8.258)의 메뉴가 좁은 창·휴대폰·데스크톱에서 화면 안에 있고, 줄을 누르면 임무 보기일 뿐 시작·승인하지 않으며, 승인 필요는 활동 막대 배지이고 Controller가 승인한다", async () => {
-    fs.mkdirSync(`${root}/projects/demo/missions`, { recursive: true });
-    fs.writeFileSync(`${root}/projects/demo/missions/ci-watch.md`, '+++\nprofile="fake"\ntitle="rc 검증·병합 시간 최적화 감시"\nwithdrawal="none"\n+++\n새 입력을 자료로 읽고 감시한다.\n');
-    aaa("ticker", "tick");
-    const item = page.getByTestId("mission-demo-ci-watch");
-    await domIs(page, "임무 줄", () => !!document.querySelector('[data-testid="mission-demo-ci-watch"]'));
-    await page.setViewportSize({ width: 1280, height: 800 });
-    await showPanel(page, "special");
-    await domIs(page, "승인 필요 배지 1", () => document.querySelector('[data-testid="activity-badge-special"]')?.textContent === "1");
-    if (!/승인 필요/.test(await item.innerText())) throw new Error(`임무 줄: ${await item.innerText()}`);
-    const clipped = [];
-    for (const [name, width, height] of [["phone", 390, 844], ["narrow", 500, 800], ["desktop", 1280, 800]]) {
-      // 각 크기를 새 탭에서 연다. 이전 크기의 퇴장 sheet 픽셀을 다음 캡처에 섞지 않는다.
-      const pg = await page.context().newPage();
-      await pg.setViewportSize({ width, height });
-      await pg.goto(page.url());
-      const item = pg.getByTestId("mission-demo-ci-watch");
-      await item.waitFor({ state: "attached" });
-      try {
-        const toggle = pg.locator(".view [data-testid='drawer-toggle']");
-        if (await toggle.isVisible() && await toggle.getAttribute("aria-expanded") !== "true") await toggle.click();
-        await drawerSettled(pg);
-        await item.locator(".workspace-header").click({ button: "right" });
-        const menu = pg.locator(".row-menu, .row-sheet");
-        await menu.waitFor();
-        await menu.evaluate(async (el) => { await Promise.all(el.getAnimations().map((a) => a.finished.catch(() => null))); });
-        await shot(pg, `${name}-mission-menu`);
-        const layout = await menu.evaluate((el) => {
-          const r = el.getBoundingClientRect();
-          const inScreen = (b) => b.left >= 0 && b.top >= 0 && b.right <= innerWidth && b.bottom <= innerHeight;
-          const paragraphs = [...el.querySelectorAll("p")].map((p) => {
-            const range = document.createRange(); range.selectNodeContents(p);
-            return { text: p.textContent, visible: [...range.getClientRects()].every(inScreen) };
-          });
-          const actions = [...el.querySelectorAll("button")].map((b) => {
-            const r = b.getBoundingClientRect();
-            return { text: b.textContent, visible: inScreen(r) && b.contains(document.elementFromPoint((r.left + r.right) / 2, (r.top + r.bottom) / 2)) };
-          });
-          return { left: r.left, top: r.top, right: r.right, bottom: r.bottom, inside: inScreen(r), paragraphs, actions };
-        });
-        const countsVisible = layout.paragraphs.some((x) => x.text.includes("일한 분 0") && x.text.includes("post 처리 0/0") && x.text.includes("입력 0"));
-        const allActions = ["임무 보기", "시작", "다시 읽기", "승인 검토"].every((label) => layout.actions.some((x) => x.text === label));
-        if (!countsVisible || !allActions || !layout.inside || layout.paragraphs.some((x) => !x.visible) || layout.actions.some((x) => !x.visible)) clipped.push({ name, ...layout });
-        // 휴대폰 sheet는 모달이다. 바깥 anchor 대신 실제 닫기 동작을 쓴다.
-        await pg.keyboard.press("Escape");
-        await menu.waitFor({ state: "hidden" });
-        if (await toggle.isVisible() && await toggle.getAttribute("aria-expanded") === "true") await toggle.click();
-        await drawerSettled(pg);
-      } finally { await pg.close(); }
-    }
-    if (clipped.length) throw new Error(`승인 메뉴가 화면 밖이다: ${JSON.stringify(clipped)}`);
-    await page.setViewportSize({ width: 1280, height: 800 });
-    // pane이 없는 임무 줄을 누르면 임무 보기다(시작하지 않는다)
-    await item.locator(".pane-select").click();
-    const view = page.getByRole("alertdialog");
-    await view.waitFor();
-    if (!(await view.innerText()).includes("새 입력을 자료로 읽고 감시한다.")) throw new Error("임무 후보 본문이 보이지 않는다");
-    await view.getByRole("button", { name: "확인", exact: true }).click();
-    if (aaa("mission", "show", "ci-watch").mission.thread !== null) throw new Error("줄을 눌러 임무가 시작됐다");
-    await item.locator(".workspace-header").click({ button: "right" });
-    await page.getByRole("menuitem", { name: "승인 검토" }).click();
-    await page.getByRole("alertdialog").waitFor();
-    await shot(page, "desktop-mission-approval");
-    await page.getByRole("alertdialog").getByRole("button", { name: "승인", exact: true }).click();
-    await until("Controller 승인 저장", () => aaa("mission", "show", "ci-watch").mission.approved === true);
-    if (aaa("mission", "show", "ci-watch").mission.thread !== null) throw new Error("승인만으로 임무가 실행됐다");
-    await domIs(page, "승인 뒤 배지 없음", () => document.querySelector('[data-testid="activity-badge-special"]') === null);
-    // 실제 임무 파일 → host 정규화 → 특수 패널. 생략·옛 무제한 표기·명시 상한을 함께 본다.
-    for (const [name, limits] of [["legacy-unlimited", "max_wakes=4294967295\nmax_minutes=4294967295\n"], ["limited", "max_wakes=3\nmax_minutes=60\n"]]) {
-      fs.writeFileSync(`${root}/projects/demo/missions/${name}.md`, `+++\nprofile="fake"\n${limits}+++\n감시 자료를 읽는다.\n`);
-    }
-    aaa("ticker", "tick");
-    for (const [name, wake, time] of [["ci-watch", "깨움 0", "일한 분 0"], ["legacy-unlimited", "깨움 0", "일한 분 0"], ["limited", "깨움 0/3", "깨움 작업 0/60분"]]) {
-      const row = page.getByTestId(`mission-demo-${name}`);
-      await row.waitFor();
-      const text = await row.textContent();
-      if (!text.includes(wake)) throw new Error(`임무 횟수 표시 ${name}: ${text}`);
-      if (name !== "limited" && (/깨움 0\//.test(text) || text.includes("무제한") || text.includes("4294967295"))) throw new Error(`무제한의 분모를 표시했다: ${text}`);
-      // 작업 요약은 줄 메뉴에 표시한다. 줄의 숨은 구현이 아니라 실제 사용자 표시를 연다.
-      await row.locator(".workspace-header").click({ button: "right" });
-      const menu = page.locator(".row-menu, .row-sheet");
-      await menu.waitFor();
-      const summary = await menu.textContent();
-      if (!summary.includes(time)) throw new Error(`임무 시간 표시 ${name}: ${summary}`);
-      if (name !== "limited" && (summary.includes("깨움 작업") || summary.includes("4294967295") || summary.includes("무제한"))) throw new Error(`무제한의 시간 분모를 표시했다: ${summary}`);
-      await shot(page, `desktop-mission-counts-${name}`);
-      await page.keyboard.press("Escape");
-      await menu.waitFor({ state: "hidden" });
-    }
-    if (aaa("mission", "show", "legacy-unlimited").mission.max_wakes !== 0) throw new Error("옛 최대 정수 상한이 정규화되지 않았다");
-    await shot(page, "desktop-mission-counts");
-    for (const name of ["legacy-unlimited", "limited"]) fs.unlinkSync(`${root}/projects/demo/missions/${name}.md`);
-    aaa("ticker", "tick");
   });
 
 

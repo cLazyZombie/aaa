@@ -445,7 +445,7 @@ button.task-chip:disabled { cursor: default; color: var(--text-dim); }
 }
 .task-link-body .tasks-search { flex: 0 0 auto; }
 
-/* 첨부 그림(§8.323): 썸네일 줄·업로드 중 칸·×는 GitHub·Linear 설명 칸 첨부 */
+/* 첨부 그림(§8.327): 썸네일 줄·업로드 중 칸·×는 GitHub·Linear 설명 칸 첨부 */
 .task-row .task-attach-mark { display: inline-flex; flex: 0 0 auto; align-items: center; gap: 2px; color: var(--text-dim); font-size: var(--fs-xs); }
 .task-attach-mark svg { width: 13px; height: 13px; }
 .task-attach h3 { display: flex; align-items: center; gap: var(--space-1); }

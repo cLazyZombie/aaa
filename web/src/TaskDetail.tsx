@@ -7,7 +7,7 @@
 // 편집을 시작한 판(`base`)의 블록 hash로 저장한다: 그사이 파일에서 이 task가 바뀌면 host가 쓰지 않고 충돌로 돌려준다(t-0469 §2.3).
 // 손대지 않은 폼은 새 판을 따라가고, 손댄 폼은 「파일에서 바뀌었다」를 보인다.
 //
-// 첨부 그림(§8.323, TaskAttachments.tsx): 손대지 않은 폼에 붙이면 메모 끝에 첨부 줄을 더해 바로 저장한다(사진 고르기 없이 「붙여넣기」
+// 첨부 그림(§8.327, TaskAttachments.tsx): 손대지 않은 폼에 붙이면 메모 끝에 첨부 줄을 더해 바로 저장한다(사진 고르기 없이 「붙여넣기」
 // 한 번으로 그 task에 붙는다). 고치는 중인 폼(손댄 폼·새 task)은 초안 메모에 더하고 「저장」 때 함께 쓴다:
 // 그사이 바로 저장하면 편집을 시작한 판의 블록 hash가 낡아 폼 저장이 충돌로 돌아온다. 메모 입력칸은 첨부 줄을 빼고 보이며(첨부 칸이
 // 보인다) 첨부 줄은 메모 끝에 둔다.
@@ -131,7 +131,7 @@ export interface DetailProps {
   onHandOff?: (t: TaskView, again: boolean) => Promise<void>;
   /** 「바로 시작」 확인창을 연다 */
   onStart?: (t: TaskView) => void;
-  /** host가 task 첨부를 안다(FRONT_API 1.68): 붙이기·떼기. 보기는 늘 한다 */
+  /** host가 task 첨부를 안다(FRONT_API 1.71): 붙이기·떼기. 보기는 늘 한다 */
   attachApi?: boolean;
   /** 첨부 문서 열기(올린 md·html, 보고서 안 문서: 파일 보기) */
   onOpenAttachment?: (a: TaskAttachment) => void;
@@ -355,7 +355,7 @@ function TaskForm(props: DetailProps) {
     if (!dirty || draft.title.trim() === "" || (draft.ownerKind === "person" && draft.person.trim() === "")) return;
     void run(draftOps(base, draft, baseParent), mine());
   };
-  // 첨부(§8.323). 올리는 동안 폼이 바뀔 수 있어 붙일 때의 값을 ref로 본다
+  // 첨부(§8.327). 올리는 동안 폼이 바뀔 수 있어 붙일 때의 값을 ref로 본다
   const [pending, setPending] = useState<PendingUpload[]>([]);
   const latest = useRef({ base, dirty });
   latest.current = { base, dirty };

@@ -5,6 +5,10 @@ export type SecretText = string;
 
 export type AccountView = { name: string, harness: string, version: bigint, };
 
+export type AccountDefault = { harness: string, account: string, };
+
+export type AccountLoginView = { id: string, account: string, harness: string, state: string, };
+
 export type Version = { major: number, minor: number, };
 
 export type B64 = string;
@@ -54,7 +58,7 @@ export type PaneDirection = "left" | "right" | "up" | "down";
 
 export type WorkspaceSummary = { name: string, tabs: number, panes: number, };
 
-export type ChatRole = "user" | "assistant" | "tool" | "thinking" | "compact";
+export type ChatRole = "user" | "assistant" | "tool" | "thinking" | "compact" | "command" | "command_output";
 
 export type ChatMessage = {
 /**
@@ -379,11 +383,7 @@ inbox_open: number,
  * 끝내지 않은 inbox 항목(herdr-projects `context`의 Inbox 절). 지시가 아니라 자료다.
  * 응답 크기 한도 안에서 오래된 것부터 싣는다: `inbox_open`보다 적을 수 있다.
  */
-inbox: Array<InboxItem>,
-/**
- * 사후 평가자(지정했을 때만)
- */
-evaluator: EvaluatorView | null, missions: Array<MissionView>, };
+inbox: Array<InboxItem>, };
 
 export type ToolCheck = { name: string, ok: boolean,
 /**
@@ -401,7 +401,11 @@ front: string,
  */
 label: string, };
 
-export type PaneView = { id: string, machine_id: string, machine: string, name: string, argv: Array<string>, cwd: string | null, connection: Connection,
+export type PaneView = {
+/**
+ * host에 고정한 인증 별칭. 이전 판 thread의 인증은 ThreadView.account로 확인한다.
+ */
+account?: string, id: string, machine_id: string, machine: string, name: string, argv: Array<string>, cwd: string | null, connection: Connection,
 /**
  * 지금 입력할 수 없으면 true(끊김·종료·권한). lease는 따로 본다.
  */
@@ -570,7 +574,7 @@ truncated: boolean,
  */
 untracked_omitted: boolean, };
 
-export type FrontRequest = { "op": "account_import", name: string, harness: string, secret: SecretText, } | { "op": "account_list" } | { "op": "account_remove", name: string, } | { "op": "thread_start_account", account: string, start: FrontRequest, } | { "op": "debug_input", pane: string | null, thread: string | null, since_ms: bigint, } | { "op": "rollout_start", id: string, spec: RolloutSpec, } | { "op": "rollout_status", id: string, } | { "op": "deploy_context" } | { "op": "deploy_start", machine: string | null, id: string, action: DeployAction, } | { "op": "deploy_status", machine: string | null, id: string, } | { "op": "post", project?: string, input: PostInput, } | { "op": "post_status", project?: string, post_id: string, } | { "op": "post_list", project?: string, } | { "op": "post_unmute", project?: string, thread: string, } | { "op": "status" } | { "op": "machines" } | { "op": "panes", role: Role | null, } | { "op": "pane_run", machine: string | null, name: string | null, argv: Array<string>, cwd: string | null, cols: number | null, rows: number | null,
+export type FrontRequest = { "op": "account_import", name: string, harness: string, secret: SecretText, } | { "op": "account_list" } | { "op": "account_defaults" } | { "op": "account_default", harness: string, account: string | null, } | { "op": "account_login", name: string, harness: string, } | { "op": "account_login_status", id: string, } | { "op": "account_login_cancel", id: string, } | { "op": "account_remove", name: string, } | { "op": "thread_start_account", account: string, start: FrontRequest, } | { "op": "debug_input", pane: string | null, thread: string | null, since_ms: bigint, } | { "op": "rollout_start", id: string, spec: RolloutSpec, } | { "op": "rollout_status", id: string, } | { "op": "deploy_context" } | { "op": "deploy_start", machine: string | null, id: string, action: DeployAction, } | { "op": "deploy_status", machine: string | null, id: string, } | { "op": "post", project?: string, input: PostInput, } | { "op": "post_status", project?: string, post_id: string, } | { "op": "post_list", project?: string, } | { "op": "post_unmute", project?: string, thread: string, } | { "op": "status" } | { "op": "machines" } | { "op": "panes", role: Role | null, } | { "op": "pane_run", machine: string | null, name: string | null, argv: Array<string>, cwd: string | null, cols: number | null, rows: number | null,
 /**
  * host 정본 profile로 harness를 띄운다(`argv`는 비운다, herdr-web-ui 새 세션의 agent 고르기)
  */
@@ -585,9 +589,13 @@ thinking: boolean,
  */
 compact: boolean,
 /**
+ * harness 명령과 결과(`ChatRole::Command`·`CommandOutput`, plan §8.323, 1.68)도 싣는다. 옛 front는 생략한다
+ */
+commands: boolean,
+/**
  * 이전 응답의 before. 생략하면 최신 쪽, 옛 상대는 무시한다.
  */
-before?: string, } | { "op": "pane_file", pane: string, path: string, } | { "op": "thread_file", project?: string, thread: string, path: string, } | { "op": "thread_diff", project?: string, thread: string, query?: DiffQuery, } | { "op": "pane_dir", pane: string, path: string, hidden: boolean, } | { "op": "pane_send", pane: string, data: B64, } | { "op": "pane_read_text", pane: string, source: ReadSource,
+before?: string, } | { "op": "pane_commands", pane: string, } | { "op": "pane_file", pane: string, path: string, } | { "op": "thread_file", project?: string, thread: string, path: string, } | { "op": "thread_diff", project?: string, thread: string, query?: DiffQuery, } | { "op": "pane_dir", pane: string, path: string, hidden: boolean, } | { "op": "pane_send", pane: string, data: B64, } | { "op": "pane_read_text", pane: string, source: ReadSource,
 /**
  * 줄 수(기본: Recent 80줄, Visible은 화면 전부, 최대 1000)
  */
@@ -726,7 +734,7 @@ export type RolloutCard = { id: string, state: RolloutState, version: string | n
 
 export type RolloutCardStep = { machine: string, phase: RolloutPhase, completed: boolean, started_ms: number, transferred_bytes: number, total_bytes: number, };
 
-export type FrontResponse = { "kind": "accounts", accounts: Array<AccountView>, } | { "kind": "input_events", events: Array<InputEvent>, } | { "kind": "deploy_context", project: string | null, session: boolean, allowed: boolean, } | { "kind": "rollout", rollout: RolloutView, } | { "kind": "deployment", machine: string, job: DeployJob, running_software: string, running_sha256: string, } | { "kind": "missions", missions: Array<MissionView>, } | { "kind": "mission", mission: MissionView, } | { "kind": "post", result: PostResult, } | { "kind": "posts", posts: Array<PostEnvelope>, } | { "kind": "status" } & HostStatus | { "kind": "machines", machines: Array<MachineView>, } | { "kind": "panes", panes: Array<PaneView>, } | { "kind": "pane" } & PaneView | { "kind": "next", lines: Array<string>,
+export type FrontResponse = { "kind": "accounts", accounts: Array<AccountView>, } | { "kind": "account_defaults", defaults: Array<AccountDefault>, } | { "kind": "account_login", login: AccountLoginView, } | { "kind": "input_events", events: Array<InputEvent>, } | { "kind": "deploy_context", project: string | null, session: boolean, allowed: boolean, } | { "kind": "rollout", rollout: RolloutView, } | { "kind": "deployment", machine: string, job: DeployJob, running_software: string, running_sha256: string, } | { "kind": "missions", missions: Array<MissionView>, } | { "kind": "mission", mission: MissionView, } | { "kind": "post", result: PostResult, } | { "kind": "posts", posts: Array<PostEnvelope>, } | { "kind": "status" } & HostStatus | { "kind": "machines", machines: Array<MachineView>, } | { "kind": "panes", panes: Array<PaneView>, } | { "kind": "pane" } & PaneView | { "kind": "next", lines: Array<string>,
 /**
  * `line`으로 보낸 메시지
  */
@@ -734,7 +742,7 @@ message: MessageView | null, } | { "kind": "context" } & ProjectContext | { "kin
 /**
  * `check`가 통과했을 때 설명
  */
-valid: string | null, } | { "kind": "task_board" } & TaskBoard | { "kind": "task_edited", board: TaskBoard, conflict: TaskConflict | null, log_ids: number[], } | { "kind": "thread_start_preview" } & ThreadStartPreview | { "kind": "task_log", entries: Array<TaskLogEntry>, next: number | null, } | { "kind": "screen" } & ScreenText | { "kind": "read" } & ReadView | { "kind": "thread_pane" } & ThreadPaneView | { "kind": "output_matched", matched_line: string, read: ReadView, } | { "kind": "workspaces", workspaces: Array<WorkspaceSummary>, } | { "kind": "chat" } & ChatView | { "kind": "pane_file", info: FileInfo | null, candidates: Array<string>, url: string | null, } | { "kind": "pane_dir", listing: DirListing, } | { "kind": "pending", pending: Array<PendingEnroll>, } | { "kind": "pair_code", code: string, role: DeviceRole, expires_in_s: number, } | { "kind": "publish" } & PublishState | { "kind": "devices", devices: Array<DeviceView>, } | { "kind": "workspace" } & Workspace | { "kind": "done" } | { "kind": "attached", path: string, inserted: boolean, note: string | null, } | { "kind": "projects", projects: Array<ProjectView>, } | { "kind": "instance", project: ProjectView | null, } | { "kind": "project" } & ProjectView | { "kind": "project_change" } & ProjectChange | { "kind": "project_opened" } & ProjectOpened | { "kind": "project_files", checks: Array<ProjectFilesCheck>, } | { "kind": "profiles", machine: string, profiles: Array<ProfileView>, } | { "kind": "profile_resolved", profile: ProfileView, } | { "kind": "threads", threads: Array<ThreadView>, } | { "kind": "thread" } & ThreadView | { "kind": "thread_summary" } & ThreadSummaryView | { "kind": "events", events: Array<FlowEvent>, } | { "kind": "questions", questions: Array<QuestionView>, } | { "kind": "question" } & QuestionView | { "kind": "message" } & MessageView | { "kind": "inbox", items: Array<InboxItem>,
+valid: string | null, } | { "kind": "task_board" } & TaskBoard | { "kind": "task_edited", board: TaskBoard, conflict: TaskConflict | null, log_ids: number[], } | { "kind": "thread_start_preview" } & ThreadStartPreview | { "kind": "task_log", entries: Array<TaskLogEntry>, next: number | null, } | { "kind": "screen" } & ScreenText | { "kind": "read" } & ReadView | { "kind": "thread_pane" } & ThreadPaneView | { "kind": "output_matched", matched_line: string, read: ReadView, } | { "kind": "workspaces", workspaces: Array<WorkspaceSummary>, } | { "kind": "chat" } & ChatView | { "kind": "pane_file", info: FileInfo | null, candidates: Array<string>, url: string | null, } | { "kind": "pane_dir", listing: DirListing, } | { "kind": "pane_commands", list: CommandList, } | { "kind": "pending", pending: Array<PendingEnroll>, } | { "kind": "pair_code", code: string, role: DeviceRole, expires_in_s: number, } | { "kind": "publish" } & PublishState | { "kind": "devices", devices: Array<DeviceView>, } | { "kind": "workspace" } & Workspace | { "kind": "done" } | { "kind": "attached", path: string, inserted: boolean, note: string | null, } | { "kind": "projects", projects: Array<ProjectView>, } | { "kind": "instance", project: ProjectView | null, } | { "kind": "project" } & ProjectView | { "kind": "project_change" } & ProjectChange | { "kind": "project_opened" } & ProjectOpened | { "kind": "project_files", checks: Array<ProjectFilesCheck>, } | { "kind": "profiles", machine: string, profiles: Array<ProfileView>, } | { "kind": "profile_resolved", profile: ProfileView, } | { "kind": "threads", threads: Array<ThreadView>, } | { "kind": "thread" } & ThreadView | { "kind": "thread_summary" } & ThreadSummaryView | { "kind": "events", events: Array<FlowEvent>, } | { "kind": "questions", questions: Array<QuestionView>, } | { "kind": "question" } & QuestionView | { "kind": "message" } & MessageView | { "kind": "inbox", items: Array<InboxItem>,
 /**
  * `inbox_done`이 끝낸 항목 수(그때 `items`는 남은 항목). 목록 요청에는 없다.
  */
@@ -931,7 +939,7 @@ thread_kind: ThreadKind,
 /**
  * 명시한 실행 대기 표지. timing이면 그 머신의 측정이 끝날 때까지 자동 시작이 기다릴 수 있다.
  */
-holds: Array<string>, mission?: string,
+holds: Array<string>,
 /**
  * 이 thread를 띄운 자동화 규칙 이름(`do.start`, FRONT_API 1.64, plan t-0475 A1). 사람이 띄운 thread와 옛 host는 생략한다.
  * 웹 「작업」 목록이 줄 왼쪽 호박색 막대와 `자동 · <규칙 제목>` 표지로 보인다
@@ -1219,7 +1227,7 @@ seen: boolean, created_at_ms: number, done_at_ms: number | null, };
 
 export type RoutineView = { title: string, name: string, trigger: string, action: string,
 /**
- * routine 또는 mission. mission:<이름>은 임무 파일의 조건 보기다.
+ * automation·routine·legacy. legacy는 변환 안내용 옛 파일이다.
  */
 origin: string, file: string, last_result: RoutineRun | null, last_skip: RoutineRun | null, today: number, max_per_day: number | null,
 /**
@@ -1400,6 +1408,38 @@ export type FileKind = "image" | "video" | "audio" | "pdf" | "text" | "binary";
 export type FileInfo = { path: string, name: string, size: number, modified_ms: number, mime: string, kind: FileKind, };
 
 export type DirListing = { path: string, parent: string | null, home: string, directories: Array<string>, files: Array<DirFile>, truncated: boolean, };
+
+export type CommandList = { harness: string,
+/**
+ * 내장 표가 기준으로 삼은 harness 버전(`2.1.304`, `0.163`)
+ */
+builtin_version: string, commands: Array<SlashCommand>, };
+
+export type SlashCommand = {
+/**
+ * 트리거 뒤 이름(`compact`, `frontend:review`, `plugin:skill`)
+ */
+name: string, description: string, source: CommandSource, kind: CommandKind,
+/**
+ * 인자 안내(`[지시]`) 또는 선택창을 건너뛰는 꼴(`/model sonnet`)
+ */
+hint: string | null,
+/**
+ * 같은 명령의 다른 이름(Claude `/reset`·`/new`는 `/clear`)
+ */
+aliases: Array<string>,
+/**
+ * 작업 중에는 목록에서 뺀다(harness가 막거나 턴 뒤로 미룬다)
+ */
+idle_only: boolean,
+/**
+ * 고르면 입력칸에 넣을 글(`/compact `, Codex skill은 `$name `)
+ */
+insert: string, };
+
+export type CommandSource = "builtin" | "user" | "project" | "skill" | "plugin";
+
+export type CommandKind = "send" | "picker" | "screen" | "confirm" | "danger";
 
 export type DirFile = { name: string, size: number, };
 

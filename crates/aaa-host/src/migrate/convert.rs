@@ -119,8 +119,8 @@ pub(crate) fn thread_rec(
     let next = report.map(|b| next_lines(&String::from_utf8_lossy(b))).unwrap_or_default();
     let created = aaa_common::util::parse_iso(&t.created).unwrap_or(now_ms);
     ThreadRec {
+        legacy: Default::default(),
         account: None,
-        mission: None,
         holds: vec![],
         started_by: None,
         automation: None,
@@ -164,10 +164,6 @@ pub(crate) fn thread_rec(
         report_changed_ms: None,
         merged_seen_ms: None,
         error: opt(&t.error),
-        eval_cursor: 0,
-        eval_inputs: vec![],
-        eval_batches: 0,
-        eval_last_batch_ms: None,
         resolve_pending: None,
         task_clean: Default::default(),
         attachments: Vec::new(),

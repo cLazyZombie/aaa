@@ -1,4 +1,4 @@
-// task 첨부 줄 규칙(src/tasksModel.ts, plan §8.323): 메모의 한 줄이 첨부 하나다(그림·올린 문서·보고서 문서·바깥 주소).
+// task 첨부 줄 규칙(src/tasksModel.ts, plan §8.327): 메모의 한 줄이 첨부 하나다(그림·올린 문서·보고서 문서·바깥 주소).
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import { addAttachment, attachmentOfLine, attachmentsOf, fileKind, linkFromText, memoText, pickAttachable, removeAttachment, reportDoc, reportDocLink, reportUrlOf, withMemoText, withoutAttachments } from "../src/tasksModel.ts";

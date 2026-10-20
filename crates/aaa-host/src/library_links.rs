@@ -606,7 +606,7 @@ mod tests {
         }
     }
 
-    /// task 첨부(plan §8.323): 붙인 보고서 주소를 그 보고서로 알아보고, live 공개 문서도 thread로 넘길 사본을 읽는다
+    /// task 첨부(plan §8.327): 붙인 보고서 주소를 그 보고서로 알아보고, live 공개 문서도 thread로 넘길 사본을 읽는다
     #[tokio::test]
     async fn task_link_resolves_report_urls_and_reads_live_docs() {
         let lab = Lab::new();

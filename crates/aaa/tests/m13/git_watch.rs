@@ -52,7 +52,7 @@ fn failed_queries(trace: &Path) -> usize {
         .count()
 }
 #[test]
-fn git_push_mission_repo_filter_restart_force_delete_and_outage() {
+fn git_push_restart_force_delete_and_outage() {
     let mut w = world_with("tick_secs=1\ngit_poll_secs=1\npr_poll_secs=3600\noutage_secs=0\n");
     w.add_remote();
     let trace = w.lab.root.join("git-trace.json");
@@ -70,16 +70,6 @@ fn git_push_mission_repo_filter_restart_force_delete_and_outage() {
     std::fs::write(w.h.cfg.join("host.toml"), config).unwrap();
     w.h.ok(&["project", "set", "demo", "repos.add", &format!("{}@labB", w.repo.display())]);
     let project = w.projects.join("demo");
-    std::fs::create_dir_all(project.join("missions")).unwrap();
-    for (name, repo) in [("git-watch", "repo"), ("other-watch", "unrelated")] {
-        std::fs::write(project.join(format!("missions/{name}.md")), format!("+++\nprofile=\"resumable\"\nmachine=\"labA\"\nevents=[\"git_pushed\"]\nrepos=[{repo:?}]\nbatch_s=0\nmin_gap=\"1s\"\nmax_wakes=20\nmax_minutes=15\nreset_after_wakes=3\nwithdrawal=\"none\"\n+++\n변화 자료를 분류한다.\n")).unwrap();
-        let approved = w.h.in_terminal(&["mission", "approve", "demo", name], &[("그대로 입력한다:", name)], T);
-        assert!(!approved.contains("일치하지"), "{approved}");
-        w.h.ok(&["mission", "start", "demo", name]);
-        wait_for("임무 brief 전달", T, || {
-            (w.h.ok(&["mission", "show", "demo", name])["mission"]["thread"]["brief"] == "delivered").then_some(())
-        });
-    }
     std::fs::write(
         project.join("routines/git-main.md"),
         "+++\non=\"git\"\nrepo=\"repo\"\nbranches=[\"main\"]\n+++\n변화를 기록한다.\n",
@@ -101,7 +91,7 @@ fn git_push_mission_repo_filter_restart_force_delete_and_outage() {
     let origin = w.lab.root.join("origin.git");
     let mut flow = w.lab.follow("git-flow", &w.h, "demo");
     git(&seed, &["push", "-q", path_str(&origin), "HEAD:main"]);
-    flow.until("Git 사건 임무 깨움", T, |e| e["kind"] == "mission_wake");
+    flow.until("Git 사건", T, |e| e["kind"] == "git_pushed");
     quiet(&w, &db, &key);
     let events = git_events(&w);
     assert_eq!(events.len(), 1);
@@ -120,8 +110,6 @@ fn git_push_mission_repo_filter_restart_force_delete_and_outage() {
     assert_eq!(data["change"]["after"], pushed);
     assert_eq!(data["change"]["changed_files"], 1);
     assert!(data["change"]["commits"][0]["subject"].as_str().unwrap().contains("t-0042"));
-    assert_eq!(w.h.ok(&["mission", "show", "demo", "git-watch"])["mission"]["wakes_today"], 1);
-    assert_eq!(w.h.ok(&["mission", "show", "demo", "other-watch"])["mission"]["wakes_today"], 0);
     assert_eq!(head(&w.repo), base, "조회 fetch가 checkout HEAD를 움직이지 않는다");
     let tracking =
         Command::new("git").arg("-C").arg(&w.repo).args(["rev-parse", "refs/remotes/origin/main"]).output().unwrap();
@@ -147,7 +135,6 @@ fn git_push_mission_repo_filter_restart_force_delete_and_outage() {
     quiet(&w, &db, &key);
     assert_eq!(git_events(&w).len(), 1, "재시작 뒤 같은 SHA는 무음");
     assert_eq!(delivery_runs(&w), history);
-    assert_eq!(w.h.ok(&["mission", "show", "demo", "git-watch"])["mission"]["wakes_today"], 1);
     git(&seed, &["reset", "--hard", &base]);
     std::fs::write(seed.join("forced.txt"), "force\n").unwrap();
     git(&seed, &["add", "."]);
@@ -190,7 +177,6 @@ fn git_push_mission_repo_filter_restart_force_delete_and_outage() {
             .count(),
         1
     );
-    assert_eq!(w.h.ok(&["mission", "show", "demo", "git-watch"])["mission"]["wakes_today"], 1);
 }
 
 #[test]

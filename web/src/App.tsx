@@ -2,8 +2,6 @@ import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties }
 import type {
   AgentActivity,
   DeviceRole,
-  EvaluatorView,
-  MissionView,
   MachineView,
   MenuPick,
   NoticeView,
@@ -60,7 +58,7 @@ import { inAppLink } from "./reportLinks.ts";
 import { watchDrawerSwipe } from "./herdr/edgeSwipe.ts";
 import { DrawerContext, DrawerToggle, HeadContext, HeadMore, HeadNote } from "./drawer";
 import { highMachines, HIGH_STAT } from "./machineStats";
-import { specialAttention } from "./specialModel";
+import { automationAttention } from "./automationModel";
 import { ErrorBoundary } from "./ErrorBoundary";
 import { setAppBadge } from "./appBadge";
 import { watchBadgeFocus } from "./faviconBadge";
@@ -402,28 +400,23 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
   const [threads, setThreads] = useState<Map<string, ThreadView>>(new Map());
   const [threadsSync, setThreadsSync] = useState(0);
   const threadReload = useRef(new ThreadReload());
-  // 임무·사후 평가자: 목록에 섞지 않고 활동 막대 「특수」 패널에 보인다(§8.13, §8.258)
-  const [missions, setMissions] = useState<MissionView[]>([]);
-  const missionLoading = useRef(false);
-  const missionReload = useRef(false);
-  const loadMissions = () => {
-    if (missionLoading.current) { missionReload.current = true; return; }
-    missionLoading.current = true;
-    call({ op: "mission_list", project: null }).then((r) => { if (r.kind === "missions") setMissions(r.missions); }).catch(() => {}).finally(() => {
-      missionLoading.current = false;
-      if (missionReload.current) { missionReload.current = false; loadMissions(); }
+  const [automationBadge, setAutomationBadge] = useState(0);
+  const automationLoading = useRef(false);
+  const automationReload = useRef(false);
+  const loadAutomations = () => {
+    if (automationLoading.current) { automationReload.current = true; return; }
+    automationLoading.current = true;
+    call({ op: "projects" }).then(async (r) => {
+      if (r.kind !== "projects") return;
+      const lists = await Promise.all(r.projects.map((p) => call({ op: "routines", project: p.name })));
+      setAutomationBadge(lists.reduce((n, r) => n + (r.kind === "routines" ? automationAttention(r.routines) : 0), 0));
+    }).catch(() => {}).finally(() => {
+      automationLoading.current = false;
+      if (automationReload.current) { automationReload.current = false; loadAutomations(); }
     });
   };
-  const [evaluators, setEvaluators] = useState<EvaluatorView[]>([]);
-  const loadEvaluators = () =>
-    call({ op: "evaluator_status", project: null })
-      .then((r) => {
-        if (r.kind === "evaluators") setEvaluators(r.evaluators);
-      })
-      .catch(() => {});
   const putThread = (t: ThreadView) => {
     threadReload.current.note(t);
-    if (t.role === "evaluator") { loadEvaluators(); loadMissions(); }
     setThreads((old) => {
       const next = new Map(old);
       next.set(threadKey(t), t);
@@ -506,7 +499,7 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
     const until = limitedUntil.current.get(key);
     if (t.limited_until_ms != null) return void limitedUntil.current.set(key, t.limited_until_ms);
     limitedUntil.current.delete(key);
-    if (until === undefined || until > Date.now() || t.role === "evaluator") return;
+    if (until === undefined || until > Date.now()) return;
     const { sel, panes } = now.current;
     raiseAlert({
       kind: "reset",
@@ -530,13 +523,12 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
     if (!seenReports.current.has(key)) {
       seenReports.current.set(key, reviewHash(t));
       // 처음 보는 thread는 새 소식이 아니다. 검토 대기 보고면 무엇을 하지 않았는지 남긴다(목록을 읽기 전에 온 사건도 여기다)
-      if (reviewHash(t) !== null && t.role !== "evaluator") told("처음 본 thread라 알리지 않음");
+      if (reviewHash(t) !== null) told("처음 본 thread라 알리지 않음");
       return;
     }
     const hash = reviewHash(t);
     if (hash === null || hash === seenReports.current.get(key)) return;
     seenReports.current.set(key, hash);
-    if (t.role === "evaluator") return;
     if (!alertKinds.current?.has("thread-state")) return told(alertKinds.current ? "host 알림 종류에 없음" : "host 알림 종류 아직 모름");
     const show = (libraryUrl: string | null) => {
       const { sel, panes } = now.current;
@@ -608,7 +600,7 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
     () =>
       watchEvents(
         (ev) => {
-          loadMissions();
+          loadAutomations();
           setMachines(ev.machines);
           setPanes(ev.panes);
           setLoaded(true);
@@ -644,7 +636,7 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
               })
               .catch(() => questionReload.current.failed(read));
           }
-          if (on) { loadEvaluators(); loadMissions(); }
+          if (on) { loadAutomations(); }
           if (on) {
             const read = threadReload.current.begin();
             call({ op: "threads", project: null, role: null })
@@ -727,7 +719,7 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
   const reveal = (target: string | null) => {
     if (target === null || !(target.startsWith("pane:") || target.startsWith("thread:"))) return;
     const { panes, threads, machines } = now.current;
-    const listed = [...threads.values()].filter((t) => t.group !== "resolved" && t.role !== "evaluator" && t.project_status !== "archived");
+    const listed = [...threads.values()].filter((t) => t.group !== "resolved" && t.project_status !== "archived");
     // 「작업」 트리의 줄(Sidebar Roster): 예전 에이전트 패널의 줄(도는 agent pane)도 모두 이 트리에 있다
     const inWork = rosterRows(machines, panes, listed, currentSidebarShared().paneOrder).some((r) => r.keys.includes(target));
     setPanel((current) => revealPanel(current, inWork));
@@ -849,7 +841,7 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
   }, [sel]);
   const toggleTasks = () => goSel(tasksShown ? beforeTasks.current : "tasks:");
   // 명령 팔레트 「할 일 더하기」: 할 일 화면을 열고 새 task 폼을 연다(plan §8.311). 보고서·thread 결과물의 「할 일에 추가」는 그 문서를
-  // 링크한 새 task나 있는 task에 링크하는 창을 연다(plan §8.323)
+  // 링크한 새 task나 있는 task에 링크하는 창을 연다(plan §8.327)
   const [taskAdds, setTaskAdds] = useState<TaskAddRequest>({ seq: 0, link: null });
   const addTask = (link: TaskAttachment | null) => {
     if (!tasksShown) toggleTasks();
@@ -900,7 +892,7 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
         // 목록 차례로, 끝에서 처음으로(참고는 고른 PC의 snapshot pane 차례). 목록이 프로젝트 먼저라(plan §8.195) 머신을 넘어
         // 목록 전체를 돈다. 끊긴 머신의 줄은 열 수 없다
         const { sel, panes, threads, machines } = now.current;
-        const shown = [...threads.values()].filter((t) => t.group !== "resolved" && t.role !== "evaluator" && t.project_status !== "archived");
+        const shown = [...threads.values()].filter((t) => t.group !== "resolved" && t.project_status !== "archived");
         const rows = rosterRows(machines, panes, shown, currentSidebarShared().paneOrder, currentAppearance().agentOrder === "activity");
         if (rows.length === 0) return;
         const index = rows.findIndex((r) => sel !== null && r.keys.includes(sel));
@@ -965,7 +957,7 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
     if (asked !== null && !asked.startsWith("pane:")) return;
     // 목록 차례로 첫 줄(붙은 머신의 첫 thread·pane)
     const pickFirst = (auto: boolean) => {
-      const shown = [...threads.values()].filter((t) => t.group !== "resolved" && t.role !== "evaluator");
+      const shown = [...threads.values()].filter((t) => t.group !== "resolved");
       const first = rosterRows(machines, panes, shown, currentSidebarShared().paneOrder, currentAppearance().agentOrder === "activity")[0];
       if (!first) return;
       if ("pane" in first.open) choose(first.open.pane, auto, true);
@@ -1028,7 +1020,7 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
   };
   // 목록은 열린 thread만(herdr-projects sidebar.rs), 모든 thread 화면은 끝난 것까지(popup.rs Section::Threads).
   // 보관한(지웠거나 이름을 바꾼) 프로젝트의 thread는 어디에도 보이지 않는다(참고 archive는 sidebar token을 지운다)
-  const allThreads = [...threads.values()].filter((t) => t.role !== "evaluator" && t.project_status !== "archived");
+  const allThreads = [...threads.values()].filter((t) => t.project_status !== "archived");
   /** thread 번호로 연다(자동화 패널의 「열림」 칩·기록 번호, plan t-0475 A1): 목록 줄과 같게 agent pane이 돌면 그 pane, 아니면 보고 */
   const openThreadId = (project: string, id: string) => {
     const t = allThreads.find((x) => x.project === project && x.id === id);
@@ -1093,17 +1085,16 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
 
   // 막대 단추의 배지(VS Code activity bar badge): 접었거나 다른 패널을 보는 동안에도 볼 일이 보인다
   // 「작업」은 예전 프로젝트·에이전트 두 배지의 합집합이다(plan §8.280): 확인 필요·검토 대기 thread와, 그 밖에 답을 기다리는 agent pane.
-  // 임무 thread·pane은 트리에 없어 특수 배지가 센다
-  const missionPanes = new Set(shownThreads.flatMap((t) => (t.mission && t.pane ? [t.pane] : [])));
-  const needThreads = shownThreads.filter((t) => !t.mission && needsYou(t.group));
+  const needThreads = shownThreads.filter((t) => needsYou(t.group));
   const needPanes = new Set(needThreads.flatMap((t) => (t.pane ? [t.pane] : [])));
   const waitingAgents = panes.filter(
-    (p) => p.connection === "connected" && p.role !== "evaluator" && !missionPanes.has(p.id) && !needPanes.has(p.id) && paneAgentStatus(p) === "blocked" && agentOf(p, threadOfPane.get(p.id)) !== null,
+    (p) => p.connection === "connected" && !needPanes.has(p.id) && paneAgentStatus(p) === "blocked" && agentOf(p, threadOfPane.get(p.id)) !== null,
   );
+  useEffect(() => { const refresh = () => loadAutomations(); window.addEventListener("aaa:automations-changed", refresh); return () => window.removeEventListener("aaa:automations-changed", refresh); }, []);
   const badges = {
     work: { count: needThreads.length + waitingAgents.length, label: "확인 필요·검토 대기·답을 기다림" },
     machines: { count: highMachines(machines), label: `CPU·MEM ${HIGH_STAT}% 넘음` },
-    special: { count: specialAttention(missions, evaluators, panes), label: "막힘·오류·승인 필요" },
+    automations: { count: automationBadge, label: "막힌 큐·승인 필요" },
   };
   // 탭 아이콘의 안 본 알림 수(faviconBadge.ts, plan §8.266): 창에 focus가 오면 지운다
   useEffect(() => watchBadgeFocus(), []);
@@ -1181,9 +1172,6 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
           onThreadId={openThreadId}
           ruleAsk={ruleAsk}
           onRuleAsked={() => setRuleAsk(null)}
-          missions={missions}
-          evaluators={evaluators}
-          onMissionsChanged={loadMissions}
           banners={
             <>
               {!up && loaded && <div className="banner warn">host와 연결이 끊겼다. 다시 연결하는 중</div>}
@@ -1231,7 +1219,7 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
             fileOpen={fileViewing !== null}
             onHandOff={canControl ? handOff : undefined}
             onOpenAttachment={async (project, a) => {
-              // task 첨부 문서(plan §8.323): 올린 md·html은 uploads 주소, 보고서 문서는 그 보고서 보기 경로 안에서 파일 보기로 연다
+              // task 첨부 문서(plan §8.327): 올린 md·html은 uploads 주소, 보고서 문서는 그 보고서 보기 경로 안에서 파일 보기로 연다
               if (a.kind === "upload") openFile({ path: a.target.replace(/^uploads\//, ""), pane: null, view: uploadsBase(project) });
               const doc = a.kind === "report" ? reportDoc(a.target) : null;
               if (!doc) return;
