@@ -4,7 +4,7 @@
 //! - owner: 없음·`agent`는 미할당, `me`는 사용자, `profile`·`@machine`·`profile@machine`은 agent, 그 밖의 글은 사람.
 //!   옛 표기 `(agent → t-0007)`도 읽는다.
 //! - 메모: task 줄보다 깊게 들여쓴 줄(사이의 빈 줄 허용).
-//! - 형식 어긋남(할 일 보기 T1, plan §8.304): 끝 괄호에 상태 메모를 쓴 줄(`(t-0001 S4 뒤, 사용자 지시 시)`)을 사람 owner로
+//! - 형식 어긋남(할 일 보기 T1, plan §8.305): 끝 괄호에 상태 메모를 쓴 줄(`(t-0001 S4 뒤, 사용자 지시 시)`)을 사람 owner로
 //!   오독하지 않는다. owner 꼴이 아니면 owner로 쓰지 않고 괄호째 제목에 두며 `problems`에 까닭을 단다. 판단하지 않고 원문을 보인다.
 
 use aaa_proto::{TaskListView, TaskNotesSection, TaskView};

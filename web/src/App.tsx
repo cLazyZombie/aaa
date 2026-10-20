@@ -263,7 +263,7 @@ function storeSelection(sel: string): void {
 
 /**
  * 고른 것: `#pane=<id>`, `#thread=<id>`, 모든 thread `#threads`, 보고서 화면 `#reports`(목록)·`#report=<project>/<name>`(하나,
- * plan §8.240), 할 일 화면 `#tasks`(plan §8.304). host는 프로젝트 하나만 맡아(plan §8.291) 주소에 프로젝트가 없다. 옛 주소(이미 보낸 알림·저장한 링크)도 연다:
+ * plan §8.240), 할 일 화면 `#tasks`(plan §8.305). host는 프로젝트 하나만 맡아(plan §8.291) 주소에 프로젝트가 없다. 옛 주소(이미 보낸 알림·저장한 링크)도 연다:
  * `#thread=<project>/<id>`는 그대로 받고, 프로젝트 고르기 `#projects`·프로젝트 thread 보기 `#project=<name>`은 `#threads`로 바꾼다.
  * 짧은 thread 주소는 thread 목록을 받은 뒤 내부 열쇠 `thread:<project>/<id>`로 바뀐다(App의 `sel` 정리).
  */
@@ -818,7 +818,7 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
     if (reportsShown) goSel(beforeReports.current);
     else goSel(reportsAt ?? "reports:");
   };
-  // 할 일 화면(plan §8.304): 보고서와 같은 꼴. 다시 누르면 그 앞 화면으로, 한 번 연 화면은 숨긴 채 그려 둔다(거르기·접은 목록이 그대로)
+  // 할 일 화면(plan §8.305): 보고서와 같은 꼴. 다시 누르면 그 앞 화면으로, 한 번 연 화면은 숨긴 채 그려 둔다(거르기·접은 목록이 그대로)
   const tasksShown = sel === "tasks:";
   const [tasksOpened, setTasksOpened] = useState(tasksShown);
   const beforeTasks = useRef<string | null>(null);
