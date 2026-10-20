@@ -138,6 +138,7 @@ pub fn typescript_bindings() -> String {
         DeployCandidateView::decl(&cfg),
         RolloutTargetView::decl(&cfg),
         RolloutPlanView::decl(&cfg),
+        DeployWork::decl(&cfg),
         DeployJobCard::decl(&cfg),
         FrontResponse::decl(&cfg),
         FrontEvent::decl(&cfg),

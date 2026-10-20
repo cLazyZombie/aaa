@@ -11,7 +11,7 @@ import { ApiError, call, me, onRolloutChanged } from "./api";
 import { ConfirmDialog } from "./ConfirmDialog";
 import { SettingsGroup } from "./herdr/SettingsControls.tsx";
 import { RolloutCard } from "./RolloutCard";
-import { canDeploy, canStart, candidatePathOk, jobState, jobWhat, newDeployId, restartAction, rolloutSpec, sizeText, type PlanInput } from "./deployModel.ts";
+import { canDeploy, canStart, candidatePathOk, jobState, jobWhat, newDeployId, refused, restartAction, rolloutSpec, rolloutTargets, sizeText, type PlanInput } from "./deployModel.ts";
 
 const say = (e: unknown) => (e instanceof ApiError ? e.message : e instanceof Error ? e.message : String(e));
 
@@ -89,7 +89,7 @@ export function DeployPage({ role, machines }: { role: DeviceRole; machines: Mac
             {jobs.map((j) => (
               <li key={j.id} data-job={j.id} data-state={j.state ?? "unknown"}>
                 <span>
-                  {j.machine} · {jobWhat(j.action)}
+                  {j.machine} · {jobWhat(j.work)}
                   {j.web ? "" : " (coordinator)"}
                 </span>
                 <span className="op-muted">
@@ -110,17 +110,27 @@ export function DeployPage({ role, machines }: { role: DeviceRole; machines: Mac
 function NewRollout({ machines, onStarted }: { machines: MachineView[]; onStarted: () => void }) {
   const live = machines.filter((m) => m.connection === "connected");
   const host = machines.find((m) => m.local);
-  const [source, setSource] = useState<string>(() => host?.name ?? live[0]?.name ?? "");
+  const [picking, setSource] = useState<string>(() => host?.name ?? live[0]?.name ?? "");
+  // 처음 그릴 때 머신 목록이 비었거나 고른 머신이 끊기면 연결된 머신으로
+  const source = live.some((m) => m.name === picking) ? picking : (live.find((m) => m.local)?.name ?? live[0]?.name ?? "");
   const [path, setPath] = useState("");
   // host 머신은 늘 맨 앞이라 고르지 않는다. 처음에는 등록된 모든 머신(CLI의 all과 같다)
   const [picked, setPicked] = useState<Set<string>>(() => new Set(machines.filter((m) => !m.local).map((m) => m.name)));
   const [plan, setPlan] = useState<{ input: PlanInput; view: RolloutPlanView } | null>(null);
   const [checking, setChecking] = useState(false);
-  const [asking, setAsking] = useState(false);
+  // 확인 창 하나에 rollout ID 하나: 응답을 잃고 다시 눌러도 같은 ID라 host가 같은 rollout을 돌려준다
+  const [asking, setAsking] = useState<string | null>(null);
   const [started, setStarted] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const others = machines.filter((m) => !m.local);
-  const input: PlanInput = { source, path, machines: others.filter((m) => picked.has(m.name)).map((m) => m.name) };
+  const input: PlanInput = {
+    source,
+    path,
+    machines: rolloutTargets(
+      host?.name,
+      others.filter((m) => picked.has(m.name)).map((m) => m.name),
+    ),
+  };
   const check = async () => {
     setChecking(true);
     setError(null);
@@ -181,7 +191,7 @@ function NewRollout({ machines, onStarted }: { machines: MachineView[]; onStarte
           <button type="button" className="btn" disabled={checking || !candidatePathOk(path) || source === ""} onClick={check} data-testid="deploy-check">
             {checking ? "점검 중…" : "점검"}
           </button>
-          <button type="button" className="btn btn-primary" disabled={!ready} onClick={() => setAsking(true)} data-testid="deploy-start">
+          <button type="button" className="btn btn-primary" disabled={!ready} onClick={() => setAsking(newDeployId())} data-testid="deploy-start">
             배포 시작…
           </button>
         </div>
@@ -237,20 +247,20 @@ function NewRollout({ machines, onStarted }: { machines: MachineView[]; onStarte
             body={`SHA-256 ${plan.view.candidate.sha256}. 대상: ${plan.view.targets.map((t) => t.machine).join(" → ")}. 모든 대상에 후보를 보내 사전 검사(dry-run)를 마친 뒤 host부터 하나씩 교체하고 다시 띄운다. 새 판이 확인되지 않으면 그 머신을 이전 실행으로 되돌린다.`}
             confirmLabel="배포 시작"
             onConfirm={async () => {
-              // ID는 보내기 전에 보인다: 응답이 끊겨도 같은 ID로 이어 본다. host가 거절했으면 시작하지 않은 것이다
-              const id = newDeployId();
+              // ID는 보내기 전에 보인다: 응답이 끊겨도 같은 ID로 이어 본다. host가 확정으로 거절했으면 시작하지 않은 것이다
+              const id = asking;
               setStarted(id);
               try {
                 await call({ op: "rollout_start", id, spec: rolloutSpec(plan.view, plan.input.machines) });
               } catch (e) {
-                if (e instanceof ApiError) setStarted(null);
+                if (e instanceof ApiError && refused(e.body.code)) setStarted(null);
                 throw e;
               }
-              setAsking(false);
+              setAsking(null);
               setPlan(null);
               onStarted();
             }}
-            onClose={() => setAsking(false)}
+            onClose={() => setAsking(null)}
           />
         )}
       </div>
@@ -259,7 +269,7 @@ function NewRollout({ machines, onStarted }: { machines: MachineView[]; onStarte
 }
 
 function Restarts({ machines, onStarted }: { machines: MachineView[]; onStarted: () => void }) {
-  const [asking, setAsking] = useState<{ machine: string; service: "host" | "agent" } | null>(null);
+  const [asking, setAsking] = useState<{ machine: string; service: "host" | "agent"; id: string } | null>(null);
   const live = machines.filter((m) => m.connection === "connected");
   return (
     <>
@@ -267,11 +277,11 @@ function Restarts({ machines, onStarted }: { machines: MachineView[]; onStarted:
         {live.map((m) => (
           <li key={m.id} data-machine={m.name}>
             <span>{m.name}</span>
-            <button type="button" className="btn" onClick={() => setAsking({ machine: m.name, service: "agent" })}>
+            <button type="button" className="btn" onClick={() => setAsking({ machine: m.name, service: "agent", id: newDeployId() })}>
               agent 재시작…
             </button>
             {m.local && (
-              <button type="button" className="btn" onClick={() => setAsking({ machine: m.name, service: "host" })}>
+              <button type="button" className="btn" onClick={() => setAsking({ machine: m.name, service: "host", id: newDeployId() })}>
                 host 재시작…
               </button>
             )}
@@ -288,7 +298,7 @@ function Restarts({ machines, onStarted }: { machines: MachineView[]; onStarted:
           }
           confirmLabel="다시 띄우기"
           onConfirm={async () => {
-            await call({ op: "deploy_start", machine: asking.machine, id: newDeployId(), action: restartAction(asking.service) });
+            await call({ op: "deploy_start", machine: asking.machine, id: asking.id, action: restartAction(asking.service) });
             setAsking(null);
             onStarted();
           }}

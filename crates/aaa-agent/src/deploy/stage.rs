@@ -78,6 +78,12 @@ impl Manager {
         match req {
             AgentRequest::DeployFetch { path, offset, len, sha256 } => fetch(&path, offset, len, &sha256),
             AgentRequest::DeployCandidate { path } => {
+                // 실행기의 staging 파일 이름은 agent PID 하나다: 배포 작업과 겹치지 않게 작업 gate를 쥐고, 도는 작업이 있으면 거부한다.
+                // 전송 끝의 dry-run과는 stage_gate로 이미 차례를 지킨다
+                let _jobs = self.gate.lock().unwrap();
+                if let Some(id) = self.unfinished()? {
+                    return Err(error(format!("배포 작업 {id}가 진행 중이다. 끝난 뒤 다시 점검한다")));
+                }
                 let execute = (*self.executor.lock().unwrap()).ok_or_else(|| error("배포 실행기가 없다"))?;
                 inspect(exe, execute, &path)
             }
@@ -408,6 +414,25 @@ mod tests {
         std::fs::write(&candidate, b"tampered").unwrap();
         assert!(inspect(&exe, never, path).unwrap_err().message.contains("SHA-256"));
         assert!(inspect(&exe, never, root.join("other").to_str().unwrap()).is_err(), "aaa가 아닌 이름을 읽었다");
+        std::fs::remove_dir_all(root).unwrap();
+    }
+    #[test]
+    fn candidate_inspection_waits_for_no_running_job() {
+        // 실행기 staging 이름은 agent PID 하나다: 도는 배포 작업이 있으면 점검이 그 작업과 겹치지 않게 거부한다
+        let root = std::env::temp_dir().join(format!("aaa-candidate-busy-{}", aaa_common::util::new_id()));
+        std::fs::create_dir_all(&root).unwrap();
+        let exe = root.join("installed");
+        std::fs::write(&exe, b"old").unwrap();
+        std::fs::write(root.join("aaa"), b"candidate").unwrap();
+        let hash = hex::encode(Sha256::digest(b"candidate"));
+        std::fs::write(root.join("provenance.json"), serde_json::json!({"sha256":hash}).to_string()).unwrap();
+        let manager = Manager::new(&root, &exe).unwrap();
+        manager.configure(&exe, never).unwrap();
+        let restart = DeployAction::Restart { service: aaa_proto::DeployService::Agent };
+        manager.prepare(&exe, aaa_common::util::new_id(), "demo".into(), restart).unwrap();
+        let ask = AgentRequest::DeployCandidate { path: root.join("aaa").to_string_lossy().into() };
+        assert!(manager.transport(&exe, ask).unwrap_err().message.contains("진행 중"));
+        drop(manager);
         std::fs::remove_dir_all(root).unwrap();
     }
     #[test]

@@ -317,12 +317,31 @@ pub struct RolloutPlanView {
     /// 진행 중인 rollout이 있어 지금은 시작하지 못한다
     pub busy: bool,
 }
+/// 개별 배포 작업의 종류. 후보 경로·보관 이름 같은 작업 원문은 웹에 싣지 않는다
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum DeployWork {
+    Restart { service: DeployService },
+    Update,
+    Rollback,
+}
+impl From<&DeployAction> for DeployWork {
+    fn from(a: &DeployAction) -> Self {
+        match a {
+            DeployAction::Restart { service } => Self::Restart { service: *service },
+            DeployAction::Rollback { .. } | DeployAction::CheckedRollback { .. } => Self::Rollback,
+            DeployAction::Update { .. } | DeployAction::CheckedUpdate { .. } | DeployAction::UpdateStaged { .. } => {
+                Self::Update
+            }
+        }
+    }
+}
 /// 웹 조회용 개별 배포 작업 요약(재시작). 실행기 PID·결과 원문·actor는 싣지 않는다
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 pub struct DeployJobCard {
     pub id: String,
     pub machine: String,
-    pub action: DeployAction,
+    pub work: DeployWork,
     /// 그 머신 agent에게 물은 상태. 연결이 끊겼거나 기록을 읽지 못하면 None
     pub state: Option<DeployState>,
     /// 실패·중단일 때 화면에 보일 까닭(원문은 coordinator의 배포 기록에만 있다)

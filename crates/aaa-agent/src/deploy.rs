@@ -151,6 +151,25 @@ impl Manager {
         )
         .map_err(error)
     }
+    /// 대기·진행 중인 작업 ID. `gate`를 쥐고 부른다
+    fn unfinished(&self) -> Result<Option<String>, ErrorBody> {
+        for entry in std::fs::read_dir(&self.root).map_err(error)? {
+            let entry = entry.map_err(error)?;
+            if entry.path().extension().is_none_or(|s| s != "json") {
+                continue;
+            }
+            let Some(id) = entry.path().file_stem().and_then(|s| s.to_str()).map(str::to_string) else {
+                continue;
+            };
+            if valid(&id) {
+                let job = self.status(&id)?;
+                if matches!(job.state, DeployState::Queued | DeployState::Running) {
+                    return Ok(Some(job.id));
+                }
+            }
+        }
+        Ok(None)
+    }
     fn prepare(
         &self,
         exe: &Path,
@@ -170,20 +189,8 @@ impl Manager {
         if self.executor.lock().unwrap().is_none() {
             return Err(error("이 agent에는 배포 실행기가 없다"));
         }
-        for entry in std::fs::read_dir(&self.root).map_err(error)? {
-            let entry = entry.map_err(error)?;
-            if entry.path().extension().is_none_or(|s| s != "json") {
-                continue;
-            }
-            let Some(id) = entry.path().file_stem().and_then(|s| s.to_str()).map(str::to_string) else {
-                continue;
-            };
-            if valid(&id) {
-                let job = self.status(&id)?;
-                if matches!(job.state, DeployState::Queued | DeployState::Running) {
-                    return Err(error(format!("배포 작업 {}가 진행 중이다", job.id)));
-                }
-            }
+        if let Some(id) = self.unfinished()? {
+            return Err(error(format!("배포 작업 {id}가 진행 중이다")));
         }
         let now = aaa_common::util::now_ms();
         let job = DeployJob {

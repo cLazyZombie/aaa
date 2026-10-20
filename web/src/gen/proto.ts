@@ -887,7 +887,9 @@ export type RolloutPlanView = { candidate: DeployCandidateView, targets: Array<R
  */
 busy: boolean, };
 
-export type DeployJobCard = { id: string, machine: string, action: DeployAction,
+export type DeployWork = { "kind": "restart", service: DeployService, } | { "kind": "update" } | { "kind": "rollback" };
+
+export type DeployJobCard = { id: string, machine: string, work: DeployWork,
 /**
  * 그 머신 agent에게 물은 상태. 연결이 끊겼거나 기록을 읽지 못하면 None
  */

@@ -2,8 +2,8 @@
 //! 웹 조작 기기는 서비스 재시작만 연다(관리 GUI W6a). 실행 파일 교체는 rollout으로만 한다.
 use crate::{Host, err};
 use aaa_proto::{
-    AgentRequest, AgentResponse, DeployAction, DeployJob, DeployJobCard, DeployState, DeviceRole, ErrorBody, ErrorCode,
-    FrontResponse,
+    AgentRequest, AgentResponse, DeployAction, DeployJob, DeployJobCard, DeployState, DeployWork, DeviceRole,
+    ErrorBody, ErrorCode, FrontResponse,
 };
 use std::time::Duration;
 
@@ -31,10 +31,10 @@ pub(crate) fn job_card(
     DeployJobCard {
         id,
         machine,
-        action: job
-            .map(|j| j.action.clone())
-            .or_else(|| serde_json::from_value(record["action"].clone()).ok())
-            .unwrap_or(DeployAction::Rollback { name: None, dry_run: true }),
+        work: job
+            .map(|j| DeployWork::from(&j.action))
+            .or_else(|| serde_json::from_value::<DeployAction>(record["action"].clone()).ok().map(|a| (&a).into()))
+            .unwrap_or(DeployWork::Update),
         state: job.map(|j| j.state),
         error: job.and_then(|j| match j.state {
             DeployState::Failed => {

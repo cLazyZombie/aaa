@@ -3741,7 +3741,7 @@ fn render_front(r: &FrontResponse) -> String {
         }
         FrontResponse::DeployJobs { jobs } => {
             for j in jobs {
-                let _ = writeln!(s, "배포 {} · {} · {:?} · {:?}", j.id, j.machine, j.action, j.state);
+                let _ = writeln!(s, "배포 {} · {} · {:?} · {:?}", j.id, j.machine, j.work, j.state);
             }
         }
         FrontResponse::DeployContext { project, session, allowed } => {

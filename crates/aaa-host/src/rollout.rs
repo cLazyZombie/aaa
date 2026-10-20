@@ -365,6 +365,10 @@ impl Host {
             return Err(err(ErrorCode::Forbidden, "배포 점검은 웹 조작 기기나 사람의 aaa 밖 터미널에서 한다"));
         }
         self.instance_project()?;
+        // 진행 중에는 시작하지 못하고, 빌드 머신의 dry-run이 그 rollout 단계와 겹친다
+        if self.rollout_busy()? {
+            return Err(err(ErrorCode::BadRequest, "진행 중인 rollout이 있다. 끝난 뒤 다시 점검한다"));
+        }
         if !(Path::new(&path).is_absolute() || path.starts_with("~/")) {
             return Err(err(ErrorCode::BadRequest, "후보는 빌드 머신의 절대 경로나 ~/로 시작하는 경로다"));
         }

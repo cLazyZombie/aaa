@@ -1,7 +1,7 @@
 // 웹 「배포」의 순수 규칙(관리 GUI W6a, plan §8.359). 판정의 정본은 host다(조작 기기만, 빌드 머신에 이미 있는 후보만, 웹은 서비스 재시작만
 // 개별로 연다, 진행 중 rollout이 있으면 거부). 화면은 점검을 통과한 그 후보·대상일 때만 시작을 연다.
 import { apiAtLeast } from "./automationModel.ts";
-import type { DeployAction, DeployJobCard, DeployState, RolloutPlanView, RolloutSpec } from "./gen/proto";
+import type { DeployAction, DeployJobCard, DeployState, DeployWork, ErrorCode, RolloutPlanView, RolloutSpec } from "./gen/proto";
 
 /** 웹 배포·재시작은 1.82 이상 host만 안다 */
 export const canDeploy = (frontApi: string | null | undefined): boolean => apiAtLeast(frontApi, 1, 82);
@@ -36,10 +36,21 @@ export function rolloutSpec(plan: RolloutPlanView, machines: string[]): RolloutS
 
 export const restartAction = (service: "host" | "agent"): DeployAction => ({ action: "restart", service });
 
-export function jobWhat(action: DeployAction): string {
-  if (action.action === "restart") return `${action.service} 재시작`;
-  if (action.action === "rollback" || action.action === "checked_rollback") return "되돌리기";
-  return "실행 파일 교체";
+export function jobWhat(work: DeployWork): string {
+  return work.kind === "restart" ? `${work.service} 재시작` : work.kind === "rollback" ? "되돌리기" : "실행 파일 교체";
+}
+
+/**
+ * 보낼 대상: host 머신을 늘 맨 앞에 넣는다. 빈 목록은 host가 「등록된 모든 머신」으로 읽으므로, 다른 머신을 모두 풀었을 때
+ * host만 가게 한다
+ */
+export function rolloutTargets(host: string | undefined, picked: string[]): string[] {
+  return host ? [host, ...picked.filter((m) => m !== host)] : picked;
+}
+
+/** host가 확정으로 거절한 답(시작하지 않았다). 연결·내부 오류는 닿았는지 모르므로 보인 ID를 그대로 둔다 */
+export function refused(code: ErrorCode): boolean {
+  return ["bad_request", "forbidden", "not_found", "unsupported_version", "agent_disconnected", "conflict"].includes(code);
 }
 
 const JOB_STATES: Record<DeployState, string> = { queued: "대기", running: "진행 중", completed: "완료", failed: "실패", interrupted: "중단" };

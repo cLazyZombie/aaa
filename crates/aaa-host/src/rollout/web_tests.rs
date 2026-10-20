@@ -153,6 +153,11 @@ async fn web_approval_lasts_the_rollout_and_web_reads_only_display_cards() {
     assert_eq!(h.call(DeviceRole::Reader, "device:tv", status()).await.unwrap_err().code, ErrorCode::Forbidden);
     let theirs = FrontRequest::RolloutStatus { id: other.id.clone() };
     assert_eq!(h.call(DeviceRole::Controller, WEB, theirs).await.unwrap_err().code, ErrorCode::Forbidden);
+    // 진행 중인 rollout이 있으면 점검하지 않는다(빌드 머신의 dry-run이 그 단계와 겹친다)
+    h.db.set_meta("rollout:active", &new.id).unwrap();
+    let plan = FrontRequest::RolloutPlan { source_machine: "mac-a".into(), path: "~/c/aaa".into(), machines: vec![] };
+    let e = h.call(DeviceRole::Controller, WEB, plan).await.unwrap_err();
+    assert!(e.code == ErrorCode::BadRequest && e.message.contains("진행 중"), "{}", e.message);
     drop(h);
     std::fs::remove_dir_all(root).unwrap();
 }
@@ -164,7 +169,13 @@ async fn web_job_list_is_newest_first_and_hides_executor_details() {
     let put = |id: &str, v: serde_json::Value| h.db.set_meta(&format!("deploy:{id}"), &v.to_string()).unwrap();
     let (a, b, legacy, other) = (new_id(), new_id(), new_id(), new_id());
     put(&a, serde_json::json!({"project":"demo","machine":"m","action":action,"created_ms":10,"web":true}));
-    put(&b, serde_json::json!({"project":"demo","machine":"m","action":action,"created_ms":20,"web":false}));
+    // coordinator의 개별 교체: 후보 경로는 웹에 가지 않는다(종류만)
+    let update = DeployAction::CheckedUpdate {
+        from: "/private/candidate-marker/aaa".into(),
+        sha256: "a".repeat(64),
+        dry_run: false,
+    };
+    put(&b, serde_json::json!({"project":"demo","machine":"m","action":update,"created_ms":20,"web":false}));
     // 시각·출처를 남기기 전의 coordinator 기록
     put(&legacy, serde_json::json!({"project":"demo","machine":"m","action":action}));
     put(&other, serde_json::json!({"project":"elsewhere","machine":"m","action":action,"created_ms":30}));
@@ -184,6 +195,9 @@ async fn web_job_list_is_newest_first_and_hides_executor_details() {
     assert_eq!(jobs.iter().map(|j| j.id.as_str()).collect::<Vec<_>>(), vec![b.as_str(), a.as_str(), legacy.as_str()]);
     assert_eq!(jobs.iter().map(|j| j.web).collect::<Vec<_>>(), vec![false, true, false]);
     assert!(jobs.iter().all(|j| j.state.is_none() && j.machine == "mac-a"), "끊긴 머신의 상태는 모른다고 보인다");
+    assert_eq!(jobs[0].work, DeployWork::Update);
+    assert_eq!(jobs[1].work, DeployWork::Restart { service: DeployService::Agent });
+    assert!(!serde_json::to_string(&jobs).unwrap().contains("candidate-marker"), "작업 원문(후보 경로)이 웹에 갔다");
     // agent 영수증이 있으면 상태와 고정 까닭만: PID·결과 원문은 싣지 않는다
     let job = DeployJob {
         id: a.clone(),
