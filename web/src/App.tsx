@@ -78,8 +78,11 @@ export function App() {
   const check = useCallback(() => {
     me()
       .then((m) => setAuth(m ? { state: "in", role: m.role, device: m.device } : { state: "pair" }))
-      // fetch가 던진 TypeError는 네트워크에 닿지 못한 것이다(브라우저마다 말이 다르다: Failed to fetch·Load failed)
-      .catch((e: unknown) => setAuth({ state: "error", msg: e instanceof TypeError ? "네트워크에 닿지 않는다." : String(e) }));
+      // fetch가 던진 TypeError는 네트워크에 닿지 못한 것이다(브라우저마다 말이 다르다: Failed to fetch·Load failed).
+      // host의 답(안전 모드의 unavailable 등)은 그 말을 그대로 보인다
+      .catch((e: unknown) =>
+        setAuth({ state: "error", msg: e instanceof TypeError ? "네트워크에 닿지 않는다." : e instanceof ApiError ? e.message : String(e) }),
+      );
   }, []);
   useEffect(check, [check]);
   // 취소·로그아웃(401, WebSocket 4401): host에 다시 물어 gate를 보인다
