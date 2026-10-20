@@ -94,8 +94,12 @@ pub(super) fn prepare(root: &Path, machine: &str) -> Result<Plan, String> {
                 let rest = original.strip_prefix("+++\n").ok_or("routine front matter가 없다")?;
                 let (front, body) = rest.split_once("\n+++\n").ok_or("닫는 +++가 없다")?;
                 let mut value: toml::Value = toml::from_str(front).map_err(|e| e.to_string())?;
-                let target =
-                    value.as_table_mut().unwrap().remove("mission").and_then(|v| v.as_str().map(str::to_string));
+                let target = value
+                    .as_table_mut()
+                    .unwrap()
+                    .remove("mission")
+                    .map(|v| v.as_str().map(str::to_string).ok_or("mission: 문자열이어야 한다"))
+                    .transpose()?;
                 let ordinary = format!("+++\n{}+++\n{body}", toml::to_string(&value).map_err(|e| e.to_string())?);
                 let r = crate::routine::parse(&name, &ordinary)?;
                 (File::from_routine(&r), target, r.prompt.clone(), None)
@@ -103,6 +107,7 @@ pub(super) fn prepare(root: &Path, machine: &str) -> Result<Plan, String> {
                 let mut value: toml::Value = toml::from_str(&original).map_err(|e| e.to_string())?;
                 let wake = value.get_mut("do").and_then(|v| v.as_table_mut()).and_then(|t| t.remove("wake"));
                 let Some(wake) = wake else { continue };
+                crate::legacy_mission::validate_wake(&wake)?;
                 let target = wake.get("mission").and_then(|v| v.as_str()).ok_or("do.wake.mission이 없다")?.to_owned();
                 let def = definitions.get(&target).ok_or_else(|| format!("missions/{target}: 옛 임무가 없다"))?;
                 value["do"]["start"] =

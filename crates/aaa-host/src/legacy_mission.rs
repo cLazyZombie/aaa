@@ -49,6 +49,113 @@ impl Host {
     }
 }
 
+// 잘못된 형식을 기본값으로 바꾸지 않는다. 옛 파일의 타입 계약도 변환 전에 검사한다.
+fn validate(value: &toml::Value) -> Result<(), String> {
+    let fields = value.as_table().ok_or("임무: TOML 표여야 한다")?;
+    let known = [
+        "title",
+        "enabled",
+        "profile",
+        "machine",
+        "repo",
+        "brief_file",
+        "limits",
+        "reset",
+        "withdrawal",
+        "retire_no_posts_days",
+        "retire_cap_days",
+        "events",
+        "repos",
+        "reports",
+        "batch_s",
+        "min_gap",
+        "schedule",
+        "max_wakes",
+        "max_minutes",
+        "reset_after_wakes",
+        "usage_session_below",
+        "usage_week_below",
+    ];
+    for key in fields.keys() {
+        if !known.contains(&key.as_str()) {
+            return Err(format!("{key}: 없는 임무 필드다"));
+        }
+    }
+    for key in ["title", "profile", "machine", "repo", "brief_file", "withdrawal", "schedule"] {
+        if fields.get(key).is_some_and(|v| !v.is_str()) {
+            return Err(format!("{key}: 문자열이어야 한다"));
+        }
+    }
+    for key in ["enabled", "reports"] {
+        if fields.get(key).is_some_and(|v| !v.is_bool()) {
+            return Err(format!("{key}: 참/거짓이어야 한다"));
+        }
+    }
+    for key in ["events", "repos"] {
+        if fields.get(key).is_some_and(|v| v.as_array().is_none_or(|a| a.iter().any(|v| !v.is_str()))) {
+            return Err(format!("{key}: 문자열 목록이어야 한다"));
+        }
+    }
+    if fields.get("reset").is_some_and(|v| !v.is_str() && !v.is_table()) {
+        return Err("reset: 문자열 또는 표여야 한다".into());
+    }
+    let limits = fields.get("limits").map(|v| v.as_table().ok_or("limits: 표여야 한다")).transpose()?;
+    if let Some(limits) = limits {
+        for key in limits.keys() {
+            if !["batch", "min_gap", "max_wakes", "max_minutes", "usage_session_below", "usage_week_below"]
+                .contains(&key.as_str())
+            {
+                return Err(format!("limits.{key}: 없는 한도 필드다"));
+            }
+        }
+    }
+    for (prefix, table) in std::iter::once(("", fields)).chain(limits.map(|t| ("limits.", t))) {
+        for key in
+            ["max_wakes", "max_minutes", "retire_no_posts_days", "retire_cap_days", "reset_after_wakes", "batch_s"]
+        {
+            if table.get(key).is_some_and(|v| v.as_integer().is_none_or(|n| n < 0 || n > u32::MAX as i64)) {
+                return Err(format!("{prefix}{key}: 0 이상의 32비트 정수여야 한다"));
+            }
+        }
+        for key in ["usage_session_below", "usage_week_below"] {
+            if let Some(v) = table.get(key) {
+                let n = v.as_float().or_else(|| v.as_integer().map(|n| n as f64));
+                if n.is_none_or(|n| !n.is_finite() || !(0.0..=100.0).contains(&n)) {
+                    return Err(format!("{prefix}{key}: 0~100 숫자여야 한다"));
+                }
+            }
+        }
+        for key in ["batch", "min_gap"] {
+            if let Some(v) = table.get(key) {
+                if key == "min_gap" && v.as_integer() == Some(0) {
+                    continue;
+                }
+                let text = v.as_str().ok_or_else(|| format!("{prefix}{key}: 기간 문자열이어야 한다"))?;
+                crate::automation::duration_ms(text).map_err(|e| format!("{prefix}{key}: {e}"))?;
+            }
+        }
+    }
+    Ok(())
+}
+
+pub(crate) fn validate_wake(value: &toml::Value) -> Result<(), String> {
+    let fields = value.as_table().ok_or("do.wake: 표여야 한다")?;
+    for key in fields.keys() {
+        if !["mission", "reports", "text", "text_file"].contains(&key.as_str()) {
+            return Err(format!("do.wake.{key}: 없는 필드다"));
+        }
+    }
+    for key in ["mission", "text", "text_file"] {
+        if fields.get(key).is_some_and(|v| !v.is_str()) {
+            return Err(format!("do.wake.{key}: 문자열이어야 한다"));
+        }
+    }
+    if fields.get("reports").is_some_and(|v| !v.is_bool()) {
+        return Err("do.wake.reports: 참/거짓이어야 한다".into());
+    }
+    Ok(())
+}
+
 pub(crate) struct Definition {
     pub value: toml::Value,
     pub body: String,
@@ -74,6 +181,7 @@ pub(crate) fn definition(root: &Path, name: &str) -> Result<Definition, String> 
         let value = toml::from_str(front).map_err(|e| e.to_string())?;
         (value, body.to_owned(), vec![(path, text)])
     };
+    validate(&value)?;
     Ok(Definition { value, body, originals })
 }
 impl Definition {
@@ -87,6 +195,10 @@ impl Definition {
         if self.body.trim().is_empty() {
             return Err("옛 임무 본문이 비었다".into());
         }
+        let machine = string("machine").unwrap_or_else(|| machine.into());
+        if machine.trim().is_empty() {
+            return Err("machine: 명시한 머신도 로컬 agent도 없다".into());
+        }
         Ok(Start {
             reuse: Reuse::Open,
             memory: true,
@@ -95,7 +207,7 @@ impl Definition {
             title: string("title").filter(|v| !v.is_empty()).unwrap_or_else(|| name.into()),
             repo: string("repo"),
             profiles: vec![profile],
-            machines: vec![string("machine").unwrap_or_else(|| machine.into())],
+            machines: vec![machine],
             profile_pick: Default::default(),
             machine_pick: Default::default(),
             wait: vec![],
@@ -144,7 +256,7 @@ impl Definition {
             max_per_day: get("max_wakes")
                 .and_then(|v| v.as_integer())
                 .and_then(|n| u32::try_from(n).ok())
-                .filter(|n| *n > 0),
+                .filter(|n| *n > 0 && *n < u32::MAX),
             usage_session_below: get("usage_session_below")
                 .and_then(|v| v.as_float().or_else(|| v.as_integer().map(|n| n as f64))),
             usage_week_below: get("usage_week_below")
@@ -163,6 +275,9 @@ impl Host {
         };
         let journal: Vec<serde_json::Value> =
             serde_json::from_str(&text).map_err(|e| err(ErrorCode::Internal, e.to_string()))?;
+        if journal.is_empty() {
+            return Ok(());
+        }
         let root = self.project_dir(p)?;
         for item in journal {
             let name = item["rule"].as_str().ok_or_else(removed)?;

@@ -612,3 +612,51 @@ fn start_reuse_memory_and_close_idle_are_validated_in_public_toml() {
     let Action::Start(a) = r.action else { panic!() };
     assert!(a.memory && a.reports && a.reuse == Reuse::Open);
 }
+
+#[test]
+fn converter_rejects_malformed_legacy_values_before_writing() {
+    for (field, input) in [
+        ("machine", "machine=17"),
+        ("repo", "repo=17"),
+        ("events", "events=['thread_failed',17]"),
+        ("reports", "reports='yes'"),
+        ("schedule", "schedule=17"),
+        ("limits.batch", "limits={batch=17}"),
+        ("limits.usage_session_below", "limits={usage_session_below='unknown'}"),
+        ("unknown", "unknown=17"),
+    ] {
+        let p = Project::new();
+        let source = format!(
+            "+++\nprofile='fake'\n{}{}{}\n+++\n자료\n",
+            if field == "machine" { "" } else { "machine='mac-a'\n" },
+            if field == "events" { "" } else { "events=['thread_failed']\n" },
+            input
+        );
+        p.write("missions/watch.md", &source);
+        let error = super::convert::prepare(&p.0, "mac-a").err().expect("잘못된 옛 값이 기본값으로 변환됐다");
+        assert!(error.contains(field), "{field}: {error}");
+        assert_eq!(std::fs::read_to_string(p.0.join("missions/watch.md")).unwrap(), source);
+        assert!(!p.0.join("automations").exists());
+    }
+}
+
+#[test]
+fn converter_rejects_malformed_legacy_targets_before_writing() {
+    for (path, source, field) in [
+        ("routines/check.md", "+++\nmission=17\nschedule='every 10m'\n+++\n자료\n", "mission"),
+        (
+            "automations/check.toml",
+            "[on.schedule]\nevery='10m'\n[do.wake]\nmission='watch'\nreports='yes'\n",
+            "do.wake.reports",
+        ),
+    ] {
+        let p = Project::new();
+        p.write("missions/watch.md", "+++\nprofile='fake'\nmachine='mac-a'\nevents=['thread_failed']\n+++\n자료\n");
+        p.write(path, source);
+        let error = super::convert::prepare(&p.0, "mac-a").err().expect("잘못된 옛 대상이 기본값으로 변환됐다");
+        assert!(error.contains(field), "{field}: {error}");
+        assert_eq!(std::fs::read_to_string(p.0.join(path)).unwrap(), source);
+        assert!(!p.0.join("missions/.converted").exists());
+        assert!(!p.0.join("automations/watch.toml").exists());
+    }
+}
