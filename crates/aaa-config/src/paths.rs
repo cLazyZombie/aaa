@@ -101,6 +101,11 @@ pub fn state_dir() -> PathBuf {
     env_dir("AAA_STATE_DIR").unwrap_or_else(|| default_state_dir(&instance_name("aaa")))
 }
 
+/// 환경을 바꾸지 않고 다른 인스턴스의 상태 기본 위치를 계산한다(install 읽기 계획).
+pub fn default_state_dir_for(instance: Option<&str>) -> PathBuf {
+    default_state_dir(&named("aaa", instance))
+}
+
 fn default_state_dir(name: &str) -> PathBuf {
     #[cfg(windows)]
     {

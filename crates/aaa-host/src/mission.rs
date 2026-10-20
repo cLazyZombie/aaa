@@ -714,9 +714,11 @@ impl Host {
         r.name = format!("mission:{n}");
         r.title = m.def.title.clone();
         r.file = files::path(&self.project_dir(p)?, n);
+        // 임무는 A4까지 지금대로 자동화 thread의 사건도 받는다(임무 thread는 평가자라 자기 사건은 따로 빠진다, plan t-0475 A1)
         r.trigger = crate::routine::Trigger::Thread(crate::automation::Threads {
             events: m.def.events.clone(),
             repos: m.def.repos.clone(),
+            include_automation: true,
         });
         r.action = crate::automation::Action::Wake(crate::automation::Wake {
             mission: n.into(),
@@ -1466,9 +1468,12 @@ impl Host {
         let source_guard = self.automation_sources.lock().await;
         let legacy_conditions = !files::path(&self.project_dir(p)?, n).ends_with(".toml");
         let hidden = self.mission_automation_rule(p, n, &applied)?;
-        let wanted =
-            crate::automation::Threads { events: applied.def.events.clone(), repos: applied.def.repos.clone() };
-        let (target, events) = self.automation_flow_events(p, run.cursor, &wanted)?;
+        let wanted = crate::automation::Threads {
+            events: applied.def.events.clone(),
+            repos: applied.def.repos.clone(),
+            include_automation: true,
+        };
+        let (target, events) = self.automation_flow_events(p, run.cursor, &wanted, &format!("mission:{n}"))?;
         if legacy_conditions && !events.is_empty() {
             let id = format!("e-{:012}-{:012}", events.first().unwrap().seq, events.last().unwrap().seq);
             if !inputs.iter().any(|i| i.id == id) {
@@ -1735,18 +1740,13 @@ impl Host {
         }
         let work = rec.work_dir.clone().ok_or_else(|| bad("작업 폴더가 없다"))?;
         let conn = self.live_conn(&rec.machine_id)?;
+        crate::automation_thread::write_inputs(
+            &conn,
+            &work,
+            run.pending.iter().map(|i| (i.id.clone(), i.text.clone())).collect::<Vec<_>>(),
+        )
+        .await?;
         for i in &run.pending {
-            match conn
-                .request(AgentRequest::WorkFileWrite {
-                    work_dir: work.clone(),
-                    path: format!("inbox/{}.json", i.id),
-                    data: aaa_proto::B64(i.text.as_bytes().to_vec()),
-                })
-                .await?
-            {
-                AgentResponse::Done => {}
-                _ => return Err(internal("입력 파일 쓰기 응답이 아니다")),
-            }
             if i.source == "post" {
                 self.db.mission_post_delivered(p, &i.id).map_err(internal)?;
             }
@@ -2008,7 +2008,12 @@ pub(crate) fn convert_legacy(name: &str, text: &str) -> Result<Conversion, Error
             a::File {
                 title: format!("{} 사건", d.title),
                 enabled: d.enabled,
-                on: a::Condition::Thread(a::Threads { events: d.events.clone(), repos: d.repos.clone() }),
+                // 임무와 같게 받는다: 바꾼 규칙도 자동화 thread의 사건을 받는다
+                on: a::Condition::Thread(a::Threads {
+                    events: d.events.clone(),
+                    repos: d.repos.clone(),
+                    include_automation: true,
+                }),
                 action: action.clone(),
                 limits: limits.clone(),
             },

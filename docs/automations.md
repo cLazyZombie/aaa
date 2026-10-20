@@ -69,7 +69,7 @@ text = "바뀐 범위를 검토한다."
 batch = "1m"
 ```
 
-조건은 `on.schedule`(every 또는 daily·catch_up), `on.command`(every/daily·command·machine), `on.thread`(events·repos), `on.pr`(events), `on.ci`(repo·branches·workflows·events·machine), `on.git`(repo·branches·events·machine) 중 하나다. `on.thread`는 처음 읽을 때 현재 flow를 기준으로 잡고 이후 사건만 받는다. thread 없는 사건의 repos 필터는 사건 repo를 쓴다. 평가자/임무·post·메시지 등 자기 동작을 다시 깨우는 사건은 받지 않는다.
+조건은 `on.schedule`(every 또는 daily·catch_up), `on.command`(every/daily·command·machine), `on.thread`(events·repos), `on.pr`(events), `on.ci`(repo·branches·workflows·events·machine), `on.git`(repo·branches·events·machine) 중 하나다. `on.thread`는 처음 읽을 때 현재 flow를 기준으로 잡고 이후 사건만 받는다. thread 없는 사건의 repos 필터는 사건 repo를 쓴다. 평가자/임무·post·메시지 등 자기 동작을 다시 깨우는 사건은 받지 않는다. 자동화(`do.start`)가 띄운 thread의 사건도 기본으로 받지 않는다: 그 thread의 보고가 규칙을 깨워 다시 thread를 띄우는 고리를 막는다. 다른 규칙이 띄운 thread의 사건까지 받으려면 `include_automation = true`를 적는다. 그래도 그 규칙 자신이 띄운 thread의 사건은 늘 뺀다. 임무와 임무를 바꾼 규칙은 지금처럼 자동화 thread의 사건도 받는다(plan §8.318).
 
 동작은 `do.inbox`(coordinator 안내), `do.message`(thread="owner" 또는 t-NNNN), `do.wake`(mission), `do.start`(일반 Worker 시작) 중 하나다. 짧은 글은 `text = """…"""`, 긴 글은 `text_file = "automations/check.md"`로 쓴다. 두 칸을 함께 쓰면 오류다. 글 파일은 UTF-8·1MiB 이하·프로젝트 내부 상대 경로의 일반 파일이며 중간 폴더를 포함한 symlink·절대 경로·상위 경로 이동을 받지 않는다. inbox/message/wake의 글은 입력과 함께 고정한다. start는 고정한 승인 범위가 현재와 같을 때 현재 작업 본문을 쓰며 아래 L5 규칙을 따른다. command 자료는 자료임을 밝힌 fenced 본문으로 전달한다.
 
@@ -179,6 +179,8 @@ wait = ["timing"]
 
 횟수·간격·동시성·기다림 시간은 기본 제한이 없다. `[limits] max_running`·`max_per_day`·`min_gap`, host `[projects] max_auto_threads`, `do.start.wait_max`는 적었을 때만 사용하며 생략·0은 없음이다. 앞 자동 thread가 열려 있어도 다른 사건은 실행한다. 명시 wait_max를 넘으면 그 차례만 건너뛰고 inbox 한 번을 남긴다. usage 문턱·batch·dedupe는 유지한다.
 
+자동으로 띄운 thread는 기록에 규칙 이름을 남긴다(`aaa thread show`의 `automation`·`automation_title`). 웹 「작업」 목록은 그 줄을 사람이 띄운 thread와 같은 폴더·차례에 두고 왼쪽 호박색 막대와 둘째 줄 「자동 · <규칙 제목>」 표지로 구별한다(누르면 그 규칙 상세). 자동화 패널의 규칙 줄은 그 규칙의 열린 thread를 「열림 t-NNNN」 칩으로 보이고, 「모든 thread」는 「자동화만」으로 거른다. 할 일 화면의 「task 없는 열린 thread」에는 넣지 않는다(출처가 규칙이다).
+
 일정형은 coordinator pane 없이 실행하고, 같은 예정 차례는 한 번만 시작한다. 기다리는 동안 다음 일정은 catch_up once로 묶는다. thread 기록과 시작 key를 같은 DB transaction에 저장하고, 그 직전에도 holds/명시 동시 상한을 확인한다. 최종 전달 영수증 저장이 실패해도 내구 시작 key로 재생성을 막는다. 시작 후 실패한 thread는 일반 thread의 restart/정리 절차를 따른다. flow thread_started.actor는 routine:<이름>, 실행 기록에는 thread id가 남는다.
 
 확인: `aaa routine runs check`의 승인/holds/연결/profile/명시 상한 대기 까닭과 thread id를 본다. 기다림 중 파일 범위를 고쳤으면 이전 차례 취소 기록을 확인한다. DB/시작 key를 지워 재실행시키지 않는다.
@@ -203,3 +205,22 @@ max_per_day = 2
 임계값은 source가 새 head를 받을 때 판정한다. 이미 내구 큐에 받은 제안 자료는 이후 임계값 편집으로 ACK 재개가 막히지 않는다. batch/하루/사용량 실행 예산은 기존 공통 queue 규칙을 따른다.
 
 `automations/pr-followup.toml`로 변환한 기본 PR 규칙은 `project create`와 `doctor files --fix`가 보존한다. `routines/pr-followup.md`를 다시 만들지 않으며, 이미 두 파일이 겹친 경우에는 기존 충돌 진단을 유지한다.
+
+## 열린 thread에 이어 보내기·기억·짧은 끝내기(A2)
+
+`do.start.reuse = "open"`이면 같은 규칙이 만든 가장 최근 Starting/Open thread로 입력을 모은다. 기본 `new`는 사건마다 새 thread다.
+`memory = true`, `close_idle = "30m"`, `reports = true`를 선택할 수 있다. memory·close_idle는 open에서만 받으며 reports는 승인 범위 hash를 바꾸지 않는다.
+Codex profile의 open은 거부한다. 기존 임무의 제한은 대화 길이가 아니라 compaction 뒤 지시를 재독시킬 hook이 없는 데서 왔다.
+
+한 사건 자체가 512KiB를 넘으면 접수를 거부해 source 원본·커서를 보존한다. 입력은 최대 32건·512KiB 묶음으로 작업 폴더 inbox에 먼저 기록하고 Queue 메시지로 알린다. 확인창 동안 파일을 보존하며,
+전달 여부를 모르면 막힌 큐에 남긴다. 자동으로 다시 보내지 않는다. 「확인하고 풀기」는 기존 상세 화면에서 한다.
+propose는 새 thread 만들기만 제안으로 바꾸며, 열린 thread에 이어 보내기는 그대로 한다. reports는 사건 thread 보고 앞 64KiB를 붙인다.
+
+기억은 host 프로젝트 `automations/<규칙>.memory/`에 보존한다. 새 thread의 `memory/memory.md`와 history에 먼저 넣고,
+보고 사본과 resolve 전 마지막 사본 때 되가져온다. processed.txt도 보존한다. 이동은 기존 상태 전송의 8MiB·1000개 한도와 hash·symlink 검사를 쓴다.
+memory.md가 64KiB를 넘거나 끝내기까지 바뀌지 않으면 inbox에 한 번 알린다. 웹 상세의 「기억」은 읽기만 한다.
+
+close_idle는 마지막 입력 뒤 새로 쓴 `[완료]`, agent의 Idle, 빈 내구 큐, 빈 미처리 inbox를 모두 확인한다.
+보고 묶음이 검토/쉼인지는 판정에 쓰지 않는다. 입력 전 보고 hash도 대조하여 늦게 회수한 옛 완료로 끝내지 않는다.
+자동화 `[완료]`는 저절로 확인하고 inbox 한 줄만 남긴다. 웹/푸시 완료 알림을 내지 않으며, 확인 필요 보고는 기존 알림을 유지한다.
+「열림」 칩 옆 끝남 예정은 보고·활동·처리 상태 사건에 따라 바뀐다.

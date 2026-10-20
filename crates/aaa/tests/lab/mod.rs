@@ -19,6 +19,27 @@ pub mod watch;
 pub const BIN: &str = env!("CARGO_BIN_EXE_aaa");
 static SEQ: AtomicU32 = AtomicU32::new(0);
 
+/// 같은 프로그램·version이면서 SHA가 다른 시험 실행 파일. macOS는 서명 식별자로 구분한다.
+/// 실행 파일을 쓰는 FD가 병렬 시험의 fork에 물려가지 않도록 복사·수정은 자식 프로세스에서 한다.
+#[cfg(unix)]
+pub fn variant_binary(source: &Path, target: &Path, variant: &str) {
+    assert!(Command::new("cp").args([source, target]).status().unwrap().success());
+    #[cfg(target_os = "macos")]
+    for args in [vec!["--force", "--sign", "-", "--identifier", variant], vec!["--verify", "--strict"]] {
+        let out = Command::new("codesign").args(args).arg(target).output().unwrap();
+        assert!(out.status.success(), "시험 실행 파일 서명: {}", String::from_utf8_lossy(&out.stderr));
+    }
+    #[cfg(not(target_os = "macos"))]
+    assert!(
+        Command::new("/bin/sh")
+            .args(["-c", r#"printf '%s' "$1" >> "$2""#, "fixture", variant])
+            .arg(target)
+            .status()
+            .unwrap()
+            .success()
+    );
+}
+
 pub struct Lab {
     pub root: PathBuf,
     procs: Vec<(String, Child)>,
@@ -51,6 +72,7 @@ impl Node {
             // aaa pane에서 시험을 돌려도 실험실 CLI가 운영 thread의 호출자·hook을 물려받지 않는다.
             // worker 권한을 보는 시험은 자기 실험실의 값을 다시 넣는다.
             .env_remove("AAA_SESSION_ID")
+            .env("AAA_TEST_AUTOMATION_CLOCK_FILE", self.cfg.join("automation-clock"))
             .env_remove("AAA_PROJECT")
             .env_remove("AAA_THREAD")
             .env_remove("AAA_HOOK_SOCK")
@@ -96,8 +118,8 @@ impl Node {
         self.json(args).unwrap_or_else(|e| panic!("aaa {} 실패: {e}", args.join(" ")))
     }
 
-    /// 사람이 터미널(aaa 세션 밖)에서 친 것처럼 실행한다(사람만 하는 명령의 시험, `crates/aaa/src/person.rs`): `script`로
-    /// PTY를 만들고, `answers`의 물음(`(보일 글, 칠 줄)`)이 보이면 차례로 친다. 표준 출력과 오류를 이어 돌려준다.
+    /// 사람이 터미널(aaa 세션 밖)에서 친 것처럼 실행한다. 직접 연 PTY를 EOF까지 읽고 자식 종료를 기다린다.
+    /// 중간 전달 프로세스(script)는 자식 종료를 먼저 보면 PTY에 남은 출력을 버릴 수 있다.
     #[cfg(unix)]
     pub fn in_terminal(&self, args: &[&str], answers: &[(&str, &str)], timeout: Duration) -> String {
         self.in_terminal_env(args, &[], answers, timeout)
@@ -123,62 +145,66 @@ impl Node {
         answers: &[(&str, &str)],
         timeout: Duration,
     ) -> String {
-        let bin = bin.to_str().expect("실행 파일 경로");
-        let mut c = Command::new("script");
-        if cfg!(target_os = "macos") {
-            c.args(["-q", "/dev/null", bin]).args(args);
-        } else {
-            let line = std::iter::once(bin).chain(args.iter().copied()).map(shell_word).collect::<Vec<_>>().join(" ");
-            c.args(["-qec", &line, "/dev/null"]);
+        use portable_pty::{CommandBuilder, PtySize, native_pty_system};
+        let pair = native_pty_system().openpty(PtySize::default()).expect("시험 PTY 열기");
+        let mut c = CommandBuilder::new(bin);
+        // script와 같은 cwd를 쓴다. PTY 기본값인 HOME은 시험에서 아직 없는 격리 폴더일 수 있다.
+        c.cwd(std::env::current_dir().unwrap());
+        c.args(args);
+        c.env("AAA_CONFIG_DIR", &self.cfg);
+        c.env("AAA_STATE_DIR", &self.state);
+        c.env("AAA_TEST_BUILTINS", "");
+        // ticker도 실험실 안 빈 사용량 폴더만 본다.
+        c.env("AAA_USAGE_HOME", self.cfg.join("usage-home"));
+        for key in
+            ["AAA_USAGE_ORIGIN", "AAA_SESSION_ID", "AAA_HOOK_SOCK", "AAA_HOOK_TOKEN", "AAA_PROJECT", "AAA_THREAD"]
+        {
+            c.env_remove(key);
         }
-        c.env("AAA_CONFIG_DIR", &self.cfg)
-            .env("AAA_STATE_DIR", &self.state)
-            .env("AAA_TEST_BUILTINS", "")
-            // ticker도 사용량을 읽는다. 실제 CLI 로그인·keychain·외부 구독에 닿지 않는다.
-            .env("AAA_USAGE_HOME", self.cfg.join("usage-home"))
-            .env_remove("AAA_USAGE_ORIGIN")
-            .env_remove("AAA_SESSION_ID")
-            .env_remove("AAA_HOOK_SOCK")
-            .env_remove("AAA_HOOK_TOKEN")
-            .env_remove("AAA_PROJECT")
-            .env_remove("AAA_THREAD")
-            .envs(env.iter().copied())
-            .stdin(Stdio::piped())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped());
-        let mut child = c.spawn().expect("script 실행");
+        for (key, value) in env {
+            c.env(key, value);
+        }
+        let mut child = pair.slave.spawn_command(c).expect("시험 CLI 실행");
+        // 부모의 slave 사본이 남으면 자식이 끝나도 master에 EOF가 오지 않는다.
+        drop(pair.slave);
         let seen = std::sync::Arc::new(std::sync::Mutex::new(Vec::<u8>::new()));
-        let mut out = child.stdout.take().unwrap();
+        let mut out = pair.master.try_clone_reader().unwrap();
         let s2 = seen.clone();
         let (done_tx, done_rx) = std::sync::mpsc::channel();
         let reader = std::thread::spawn(move || {
             let mut b = [0u8; 256];
-            while let Ok(n) = std::io::Read::read(&mut out, &mut b) {
-                if n == 0 {
-                    break;
+            let result = loop {
+                match std::io::Read::read(&mut out, &mut b) {
+                    Ok(0) => break Ok(()),
+                    Ok(n) => s2.lock().unwrap().extend_from_slice(&b[..n]),
+                    Err(e) if e.kind() == std::io::ErrorKind::Interrupted => continue,
+                    Err(e) => break Err(e),
                 }
-                s2.lock().unwrap().extend_from_slice(&b[..n]);
-            }
-            let _ = done_tx.send(());
+            };
+            let _ = done_tx.send(result);
         });
         let text = || String::from_utf8_lossy(&seen.lock().unwrap()).to_string();
-        let mut stdin = child.stdin.take().unwrap();
-        // 물음이 보인 뒤에 친다(script는 입력이 끝나면 바로 EOF를 넣는다)
+        let mut stdin = pair.master.take_writer().unwrap();
         for (prompt, typed) in answers {
             wait_for_diag(&format!("물음 {prompt:?}"), timeout, || text().contains(prompt).then_some(()), text);
             std::io::Write::write_all(&mut stdin, format!("{typed}\n").as_bytes()).unwrap();
         }
-        // 출력이 끝날(명령이 끝날) 때까지. 답하지 않은 물음에서 기다리면 멈추지 않고 실패로 끝낸다(입력을 닫으면 macOS
-        // script가 친 답보다 EOF를 먼저 넣기도 해 닫지 않는다)
-        if done_rx.recv_timeout(timeout).is_err() {
-            let _ = child.kill();
-            let _ = child.wait();
-            panic!("{args:?}가 {timeout:?} 안에 끝나지 않았다(답하지 않은 물음?):\n{}", text());
+        match done_rx.recv_timeout(timeout) {
+            Ok(Ok(())) => {}
+            failed => {
+                let _ = child.kill();
+                let _ = child.wait();
+                panic!("{args:?} PTY 출력이 {timeout:?} 안에 끝나지 않았다: {failed:?}\n{}", text());
+            }
         }
-        let o = child.wait_with_output().unwrap();
+        let status = child.wait().unwrap();
         drop(stdin);
         reader.join().unwrap();
-        format!("{}{}", text(), String::from_utf8_lossy(&o.stderr))
+        let output = text();
+        if output.is_empty() {
+            eprintln!("PTY 종료: {args:?}, {status:?}, EOF까지 읽은 출력 0바이트");
+        }
+        output
     }
 
     /// 보이는 화면 글(`pane read --source visible`)

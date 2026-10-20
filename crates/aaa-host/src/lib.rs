@@ -17,6 +17,7 @@ pub fn mission_schema() -> String {
 mod accounts;
 mod auto_start;
 mod automation;
+mod automation_thread;
 mod bgwait;
 mod brief;
 mod brief_text;

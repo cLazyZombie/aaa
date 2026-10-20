@@ -185,6 +185,8 @@ pub fn typescript_bindings() -> String {
         MessageView::decl(&cfg),
         InboxItem::decl(&cfg),
         RoutineView::decl(&cfg),
+        AutomationMemory::decl(&cfg),
+        AutomationClosing::decl(&cfg),
         RoutineRun::decl(&cfg),
         AutomationQueue::decl(&cfg),
         AutomationInflight::decl(&cfg),

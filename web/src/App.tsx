@@ -365,6 +365,8 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
   // 접힘은 769px부터만 뜻이 있다(좁은 창의 사이드바는 drawer이고 같은 단추가 drawer를 닫는다)
   const [panel, setPanel] = useState<SidebarPanel>(storedPanel);
   const [collapsed, setCollapsed] = useState(storedCollapsed);
+  // 자동화 패널에 열어 달라고 한 규칙 상세(thread 줄 「자동 · 규칙」 표지). 패널이 받으면 지운다
+  const [ruleAsk, setRuleAsk] = useState<{ project: string; name: string } | null>(null);
   useEffect(() => storeSidebar(panel, collapsed), [panel, collapsed]);
   const panelRef = useRef(panel);
   panelRef.current = panel;
@@ -518,7 +520,8 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
     });
   };
   // seenReports: thread마다 알린(또는 처음 볼 때 이미 검토 대기였던) 보고 hash
-  const reviewHash = (t: ThreadView) => (t.report_attention && t.report_hash !== t.acked_hash ? t.report_hash : null);
+  // 자동화 완료는 host가 저절로 확인한다. 사본 사건과 ack 사이에도 알림을 띄우지 않는다(A2).
+  const reviewHash = (t: ThreadView) => (t.automation && t.report_attention === "completed" ? null : t.report_attention && t.report_hash !== t.acked_hash ? t.report_hash : null);
   const reportNews = (t: ThreadView, replayFrom: number | null = null) => {
     const key = threadKey(t);
     const target = `thread=${encodeURIComponent(key)}`;
@@ -1015,6 +1018,20 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
   // 목록은 열린 thread만(herdr-projects sidebar.rs), 모든 thread 화면은 끝난 것까지(popup.rs Section::Threads).
   // 보관한(지웠거나 이름을 바꾼) 프로젝트의 thread는 어디에도 보이지 않는다(참고 archive는 sidebar token을 지운다)
   const allThreads = [...threads.values()].filter((t) => t.role !== "evaluator" && t.project_status !== "archived");
+  /** thread 번호로 연다(자동화 패널의 「열림」 칩·기록 번호, plan t-0475 A1): 목록 줄과 같게 agent pane이 돌면 그 pane, 아니면 보고 */
+  const openThreadId = (project: string, id: string) => {
+    const t = allThreads.find((x) => x.project === project && x.id === id);
+    if (!t) return;
+    const pane = t.pane ? panes.find((p) => p.id === t.pane && p.state === "running") : undefined;
+    if (pane) choose(pane.id);
+    else chooseThread(t);
+  };
+  /** 줄의 「자동 · 규칙」 표지: 자동화 패널을 보이고 그 규칙 상세를 연다(접은 사이드바는 편다) */
+  const openRule = (project: string, name: string) => {
+    setPanel("automations");
+    setCollapsed(false);
+    setRuleAsk({ project, name });
+  };
   // 할 일 화면의 thread 칩(묶음)과 「task 없는 열린 thread」: 열린 thread 모음이 바뀌면 board를 다시 읽는다
   const threadGroups = useMemo(() => new Map(allThreads.map((t) => [t.id, t.group])), [threads]); // eslint-disable-line react-hooks/exhaustive-deps
   const openThreadIds = allThreads.filter((t) => t.group !== "resolved").map((t) => t.id).sort().join(" ");
@@ -1152,6 +1169,10 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
           onThread={(t) => chooseThread(t)}
           onNewShell={newShell}
           onThreads={chooseThreads}
+          onAutomation={openRule}
+          onThreadId={openThreadId}
+          ruleAsk={ruleAsk}
+          onRuleAsked={() => setRuleAsk(null)}
           missions={missions}
           evaluators={evaluators}
           onMissionsChanged={loadMissions}

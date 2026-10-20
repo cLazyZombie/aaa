@@ -185,6 +185,12 @@ impl Lab {
                         }
                         AgentResponse::Relaunch(launch)
                     }
+                    AgentRequest::ReportCollect { .. } => AgentResponse::Report(ReportSnapshot {
+                        hash: sha(""),
+                        report: B64(vec![]),
+                        files: vec![],
+                        skipped: vec![],
+                    }),
                     AgentRequest::RunCommand { .. } => AgentResponse::CommandRan(CommandRan {
                         exit_code: Some(0),
                         timed_out: false,

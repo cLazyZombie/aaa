@@ -468,7 +468,7 @@ fn service_stop_start_restart_wrap_launchctl() {
 }
 
 /// `aaa update`(plan §8.180, herdr `update`): 실험실에 둔 실행 파일 사본을 띄워 그것을 바꾼다(시험 binary는 건드리지 않는다).
-/// 「다른 빌드」는 시험 binary 뒤에 바이트를 덧붙인 사본이다(같은 version, 다른 sha256, 그대로 돈다).
+/// 「다른 빌드」는 같은 version·다른 sha256의 사본이다. macOS에서도 유효한 코드 서명을 유지한다.
 #[cfg(unix)]
 #[test]
 fn update_replaces_keeps_and_rolls_back() {
@@ -478,15 +478,12 @@ fn update_replaces_keeps_and_rolls_back() {
     let bin = lab.root.join("bin");
     std::fs::create_dir_all(&bin).unwrap();
     let exe = bin.join("aaa");
-    std::fs::copy(lab::BIN, &exe).unwrap();
+    assert!(std::process::Command::new("cp").args([std::path::Path::new(lab::BIN), &exe]).status().unwrap().success());
     let original = std::fs::read(lab::BIN).unwrap();
     let version = env!("CARGO_PKG_VERSION");
     let build = |name: &str| {
         let p = lab.root.join(name);
-        let mut b = original.clone();
-        b.extend_from_slice(format!("aaa-test-{name}").as_bytes());
-        std::fs::write(&p, b).unwrap();
-        std::fs::set_permissions(&p, std::fs::Permissions::from_mode(0o755)).unwrap();
+        lab::variant_binary(std::path::Path::new(lab::BIN), &p, &format!("aaa-test-{name}"));
         p
     };
     let script = |name: &str, body: &str| {

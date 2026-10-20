@@ -124,6 +124,7 @@ pub(crate) fn thread_rec(
         holds: vec![],
         started_by: None,
         automation: None,
+        automation_run: None,
         project: project.to_string(),
         id: t.id.clone(),
         title: t.title.clone(),

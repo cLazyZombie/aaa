@@ -40,6 +40,8 @@ pub(crate) struct ThreadRec {
     pub started_by: Option<String>,
     #[serde(default)]
     pub automation: Option<String>,
+    #[serde(default)]
+    pub automation_run: Option<crate::automation_thread::Run>,
     pub repo: Option<String>,
     pub base: Option<String>,
     #[serde(default)]
@@ -154,6 +156,7 @@ impl ThreadRec {
             holds: vec![],
             started_by: None,
             automation: None,
+            automation_run: None,
             repo: None,
             base: None,
             branch: None,
@@ -201,7 +204,7 @@ impl ThreadRec {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum ResolveWhy {
     Manual,
-    Auto { days: u32 },
+    Auto { days: Option<u32> },
     Merged,
 }
 
@@ -250,6 +253,7 @@ pub(crate) struct ResolveOpts {
 pub(crate) struct StartOrigin {
     pub key: String,
     pub rule: String,
+    pub run: crate::automation_thread::Run,
     pub admission: crate::db::StartAdmission,
 }
 
@@ -1042,6 +1046,8 @@ impl Host {
             thread_kind: r.kind,
             holds: r.holds.clone(),
             mission: r.mission.as_ref().map(|m| m.name.clone()),
+            automation: r.automation.clone(),
+            automation_title: r.automation.as_deref().map(|n| self.automation_title(&r.project, n)),
             status: r.status,
             cleanup_pending: r.resolve_pending.is_some().then_some(true),
             group,
@@ -1068,6 +1074,18 @@ impl Host {
             repo: r.repo.clone(),
             limited_until_ms: self.usage_limit(&r.project, &r.id),
         }
+    }
+
+    /// thread를 띄운 자동화 규칙의 제목(plan t-0475 A1). 줄마다 부르므로 그 규칙 파일의 `title` 칸만 읽는다. 파일이 없어졌거나
+    /// 읽지 못하거나 제목이 비면 이름이다(옛 routine 파일에는 제목이 없다)
+    pub(crate) fn automation_title(&self, project: &str, name: &str) -> String {
+        self.project_dir(project)
+            .ok()
+            .and_then(|dir| crate::automation::project_text(&dir, &format!("automations/{name}.toml")).ok())
+            .and_then(|text| text.parse::<toml::Table>().ok())
+            .and_then(|t| t.get("title").and_then(|v| v.as_str()).map(str::trim).map(str::to_string))
+            .filter(|t| !t.is_empty())
+            .unwrap_or_else(|| name.to_string())
     }
 
     /// thread 목록. 기본(`role` 없음)은 사후 평가자를 뺀다(§8.13).
@@ -1135,10 +1153,10 @@ impl Host {
         let kind = kind.as_str();
         let _order = match self.flow_order.try_lock() {
             Ok(g) => g,
-            Err(_) => {
-                test_flow_waiting();
-                blocking(|| self.flow_order.lock().unwrap_or_else(|p| p.into_inner()))
-            }
+            Err(_) => blocking(|| {
+                test_flow_waiting(&e);
+                self.flow_order.lock().unwrap_or_else(|p| p.into_inner())
+            }),
         };
         match self.db.flow_insert(&e) {
             Ok(seq) => {
@@ -1542,6 +1560,7 @@ impl Host {
             holds: a.holds.clone(),
             started_by: Some(actor.into()),
             automation: origin.map(|o| o.rule.clone()),
+            automation_run: origin.map(|o| o.run.clone()),
             repo: a.repo.clone(),
             base: a.base.clone(),
             ..ThreadRec::starting(&a.project, a.title.trim(), &mid, &a.profile, a.role, a.kind, now)
@@ -1676,6 +1695,7 @@ impl Host {
         actor: &str,
     ) -> Result<(), ErrorBody> {
         self.mission_transfer_state(rec).await?;
+        self.automation_prepare(rec).await?;
         let launch = rec.launch.clone().ok_or_else(|| internal("launch 기록이 없다"))?;
         let mut env = launch.env.clone();
         env.push(("AAA_PROJECT".into(), rec.project.clone()));
@@ -2131,6 +2151,7 @@ impl Host {
                 self.reports_bump();
             }
             let skipped: Vec<String> = snap.skipped.iter().map(|s| format!("{}: {}", s.path, s.reason)).collect();
+            self.automation_copy_memory(&rec, last).await?;
             let copy = if skipped.is_empty() { "complete" } else { "partial" };
             Ok(Some((snap.hash, skipped, copy.to_string(), snap.report.0, changed)))
         }
@@ -2174,6 +2195,10 @@ impl Host {
                 let mut detail = format!("사본 {copy}");
                 if !skipped.is_empty() {
                     detail.push_str(&format!(", 건너뜀: {}", skipped.join("; ")));
+                }
+                if rec.automation.is_some() && crate::report_mark::marker(&text) == Some("[완료]") {
+                    self.thread_ack(project, id, "automation")?;
+                    self.new_report_item(project, &self.load(project, id)?);
                 }
                 self.flow(&rec, "report_ready", Some(format!("threads/{id}.md")), detail);
                 // 보고 첫 줄 `PR:`이 생겼을 수 있다: 간격을 기다리지 않고 본다
@@ -2389,9 +2414,14 @@ impl Host {
             notes.join("; "),
         );
         let mut summary = match why {
+            ResolveWhy::Auto { days: None } => format!(
+                "{}: 자동화 {}의 완료 뒤 쉼 시간이 지나 저절로 끝냈다",
+                crate::transitions::label(&rec),
+                rec.automation.as_deref().unwrap_or("")
+            ),
             ResolveWhy::Manual => format!("{}: 끝냈다(보고와 library는 남는다)", crate::transitions::label(&rec)),
             // herdr-projects steps.rs `resolve_after_copy`의 auto 문구
-            ResolveWhy::Auto { days } => format!(
+            ResolveWhy::Auto { days: Some(days) } => format!(
                 "{}: 쉼으로 auto_resolve_days({days}일)가 지나 저절로 끝냈다. `aaa thread resolve {project} {id} --reopen`으로 되돌린다",
                 crate::transitions::label(&rec)
             ),
@@ -2470,19 +2500,24 @@ impl Host {
     }
 }
 
-/// 시험에서만(`AAA_TEST_FLOW_HOLD=<파일>`): 글이 `hold:`로 시작하는 흐름 사건을 저장한 뒤 그 파일이 생길 때까지(30초까지)
-/// 알리지 않는다. 두 사건이 동시에 기록되는 때를 시간에 기대지 않고 만든다(m13 `flow_events_go_out_in_seq_order`)
+/// 시험에서만(`AAA_TEST_FLOW_HOLD=<Unix socket>`): 저장한 사건을 알리기 전 시험에 H<detail>을 보내고 R을 기다린다.
+/// 시간이 지났다고 조용히 풀면 두 사건이 겹치지 않아도 순서 시험이 통과하므로, 제어 연결 실패는 시험 실패다.
 fn test_flow_hold(e: &FlowEvent) {
-    let Some(release) = std::env::var_os("AAA_TEST_FLOW_HOLD") else { return };
-    if !e.detail.starts_with("hold:") {
+    if std::env::var_os("AAA_TEST_FLOW_HOLD").is_none() {
         return;
     }
-    let until = std::time::Instant::now() + std::time::Duration::from_secs(30);
-    blocking(|| {
-        while !std::path::Path::new(&release).exists() && std::time::Instant::now() < until {
-            std::thread::sleep(std::time::Duration::from_millis(10));
-        }
-    });
+    #[cfg(unix)]
+    if e.detail.starts_with("hold:") {
+        blocking(|| {
+            if let Some(mut control) = test_flow_signal(b'H', e) {
+                let mut release = [0];
+                std::io::Read::read_exact(&mut control, &mut release).expect("flow 시험의 해제 사건");
+                assert_eq!(release, [b'R'], "flow 시험의 해제 표지");
+            }
+        });
+    }
+    #[cfg(not(unix))]
+    let _ = e;
 }
 
 /// 막히는 일을 tokio worker에서 할 때 runtime에 알린다(그 worker에 줄 선 작업을 다른 worker가 맡는다). 여러 스레드 runtime
@@ -2494,13 +2529,22 @@ fn blocking<R>(f: impl FnOnce() -> R) -> R {
     }
 }
 
-/// 시험에서만: 다른 흐름 사건이 끝나기를 기다리게 된 사건이 있다고 `<파일>.waiting`을 남긴다(시험이 그 사건이 들어온 것을 안다)
-fn test_flow_waiting() {
-    if let Some(release) = std::env::var_os("AAA_TEST_FLOW_HOLD") {
-        let mut p = release;
-        p.push(".waiting");
-        let _ = std::fs::write(p, "");
-    }
+/// 시험에서만: 어떤 사건이 flow_order를 기다리는지 W<detail>로 알린다.
+fn test_flow_waiting(e: &FlowEvent) {
+    #[cfg(unix)]
+    drop(test_flow_signal(b'W', e));
+    #[cfg(not(unix))]
+    let _ = e;
+}
+
+#[cfg(unix)]
+fn test_flow_signal(phase: u8, e: &FlowEvent) -> Option<std::os::unix::net::UnixStream> {
+    let path = std::env::var_os("AAA_TEST_FLOW_HOLD")?;
+    let mut control = std::os::unix::net::UnixStream::connect(path).expect("flow 시험 제어 연결");
+    control.set_read_timeout(Some(std::time::Duration::from_secs(30))).unwrap();
+    std::io::Write::write_all(&mut control, format!("{}{}\n", phase as char, e.detail).as_bytes())
+        .expect("flow 시험 단계 알림");
+    Some(control)
 }
 
 /// 두 폴더가 같은 상대 경로에 같은 바이트의 파일을 가졌나(library 사본이 바뀌었는지 볼 때). 없는 폴더는 빈 폴더와 다르다.
@@ -2541,6 +2585,7 @@ mod tests {
             holds: vec![],
             started_by: None,
             automation: None,
+            automation_run: None,
             project: "p".into(),
             id: "t-0001".into(),
             title: "t".into(),

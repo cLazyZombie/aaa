@@ -795,6 +795,15 @@ pub struct ThreadView {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub mission: Option<String>,
+    /// 이 thread를 띄운 자동화 규칙 이름(`do.start`, FRONT_API 1.64, plan t-0475 A1). 사람이 띄운 thread와 옛 host는 생략한다.
+    /// 웹 「작업」 목록이 줄 왼쪽 호박색 막대와 `자동 · <규칙 제목>` 표지로 보인다
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub automation: Option<String>,
+    /// 그 규칙의 제목(FRONT_API 1.64). 규칙 파일이 없어졌거나 제목이 비면 이름이다. `automation`이 없으면 없다
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub automation_title: Option<String>,
     pub status: ThreadStatus,
     /// 끝남 기록 뒤 아직 정리 응답을 확정하지 못했다. 같은 resolve로 이어간다.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -1124,6 +1133,29 @@ pub struct RoutineView {
     /// 내구 입력 큐(FRONT_API 1.58). 옛 host는 생략한다.
     #[serde(default)]
     pub queue: Option<AutomationQueue>,
+    /// 자동화 기억의 host 사본. 옛 host는 생략한다.
+    pub memory: Option<AutomationMemory>,
+    /// 입력 처리·완료 보고·Idle가 갖춰진 thread의 끝남 예정 시각.
+    pub closing: Vec<AutomationClosing>,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(default)]
+pub struct AutomationMemory {
+    pub text: String,
+    #[ts(type = "number")]
+    pub bytes: u64,
+    pub truncated: bool,
+    pub thread: Option<String>,
+    #[ts(type = "number | null")]
+    pub updated_at_ms: Option<u64>,
+}
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(default)]
+pub struct AutomationClosing {
+    pub thread: String,
+    #[ts(type = "number")]
+    pub close_at_ms: u64,
 }
 
 /// 규칙의 내구 입력 큐. 보낸 뒤 결과를 모르는 `do.message` 묶음은 사람이 확인하고 푼다(`automation_unblock`).

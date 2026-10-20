@@ -534,3 +534,83 @@ async fn routine_runs_carries_rule_source_and_body_file() {
         panic!("임무 조건은 mission_show가 원문을 준다")
     };
 }
+
+/// 자기 사건 거르기(plan t-0475 A1 §3.5): 규칙 a가 띄운 thread의 report_ready는 a도, include_automation 없는 b도 깨우지 않는다.
+/// include_automation인 b는 받고, 그래도 b 자신이 띄운 thread의 사건은 늘 뺀다. 사람이 띄운 thread의 사건은 그대로 받는다.
+#[test]
+fn thread_events_skip_automation_threads_unless_included_and_never_the_rules_own() {
+    let p = Project::new();
+    let h = demo_host(&p);
+    let thread = |id: &str, automation: Option<&str>| {
+        let mut r = crate::orch::ThreadRec::starting(
+            "demo",
+            id,
+            "m",
+            "fake",
+            aaa_proto::Role::Worker,
+            aaa_proto::ThreadKind::Dir,
+            1,
+        );
+        r.id = id.into();
+        r.automation = automation.map(str::to_string);
+        assert!(h.db.thread_import("demo", id, "open", &serde_json::to_string(&r).unwrap()).unwrap());
+        h.db.flow_insert(&aaa_proto::FlowEvent {
+            project: "demo".into(),
+            seq: 0,
+            at_ms: 1,
+            boot_id: "b".into(),
+            kind: "report_ready".into(),
+            thread: Some(id.into()),
+            repo: None,
+            actor: None,
+            role: Some(aaa_proto::Role::Worker),
+            profile: None,
+            machine: None,
+            evidence: None,
+            detail: String::new(),
+        })
+        .unwrap();
+    };
+    thread("t-0001", None);
+    thread("t-0002", Some("a"));
+    thread("t-0003", Some("b"));
+    let seen = |rule: &str, include_automation: bool| {
+        let wanted = Threads { events: vec!["report_ready".into()], repos: vec![], include_automation };
+        let (target, events) = h.automation_flow_events("demo", 0, &wanted, rule).unwrap();
+        assert_eq!(target, 3, "건너뛴 사건도 cursor는 지나간다");
+        events.into_iter().map(|e| e.thread.unwrap()).collect::<Vec<_>>()
+    };
+    assert_eq!(seen("a", false), ["t-0001"]);
+    assert_eq!(seen("b", false), ["t-0001"]);
+    assert_eq!(seen("b", true), ["t-0001", "t-0002"]);
+    assert_eq!(seen("a", true), ["t-0001", "t-0003"]);
+    assert_eq!(seen("c", true), ["t-0001", "t-0002", "t-0003"]);
+}
+
+/// 줄 표지에 쓰는 규칙 제목: 파일의 title, 비었거나 파일이 없어지면 이름
+#[test]
+fn automation_title_reads_rule_title_and_falls_back_to_name() {
+    let p = Project::new();
+    let h = demo_host(&p);
+    p.write(
+        "projects/demo/automations/ci-main.toml",
+        "title = \"CI 분류\"\n[on.schedule]\nevery='1h'\n[do.inbox]\ntext='x'\n",
+    );
+    p.write("projects/demo/automations/plain.toml", "[on.schedule]\nevery='1h'\n[do.inbox]\ntext='x'\n");
+    assert_eq!(h.automation_title("demo", "ci-main"), "CI 분류");
+    assert_eq!(h.automation_title("demo", "plain"), "plain");
+    assert_eq!(h.automation_title("demo", "gone"), "gone");
+}
+
+#[test]
+fn start_reuse_memory_and_close_idle_are_validated_in_public_toml() {
+    let p = Project::new();
+    let base = "[on.thread]\nevents=['thread_failed']\n[do.start]\ntitle='점검'\ntext='분류'\nprofiles=['fake']\nmachines=['mac-a']\n";
+    for invalid in ["memory=true", "close_idle='30m'", "reuse='other'", "reuse='open'\nclose_idle='bad'"] {
+        assert!(parse(&p.0, "check", &format!("{base}{invalid}\n")).is_err(), "{invalid}");
+    }
+    let r =
+        parse(&p.0, "check", &format!("{base}reuse='open'\nmemory=true\nreports=true\nclose_idle='30m'\n")).unwrap();
+    let Action::Start(a) = r.action else { panic!() };
+    assert!(a.memory && a.reports && a.reuse == Reuse::Open);
+}

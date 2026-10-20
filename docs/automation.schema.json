@@ -419,6 +419,13 @@
       ],
       "type": "string"
     },
+    "Reuse": {
+      "enum": [
+        "new",
+        "open"
+      ],
+      "type": "string"
+    },
     "Scheduled": {
       "additionalProperties": false,
       "oneOf": [
@@ -465,6 +472,47 @@
     },
     "Start": {
       "additionalProperties": false,
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "memory": {
+                "const": true
+              }
+            },
+            "required": [
+              "memory"
+            ]
+          },
+          "then": {
+            "properties": {
+              "reuse": {
+                "const": "open"
+              }
+            },
+            "required": [
+              "reuse"
+            ]
+          }
+        },
+        {
+          "if": {
+            "required": [
+              "close_idle"
+            ]
+          },
+          "then": {
+            "properties": {
+              "reuse": {
+                "const": "open"
+              }
+            },
+            "required": [
+              "reuse"
+            ]
+          }
+        }
+      ],
       "oneOf": [
         {
           "not": {
@@ -531,6 +579,12 @@
             "null"
           ]
         },
+        "close_idle": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
         "machine_pick": {
           "$ref": "#/$defs/MachinePick",
           "default": "idlest"
@@ -540,6 +594,10 @@
             "type": "string"
           },
           "type": "array"
+        },
+        "memory": {
+          "default": false,
+          "type": "boolean"
         },
         "profile_pick": {
           "$ref": "#/$defs/ProfilePick",
@@ -556,6 +614,14 @@
             "string",
             "null"
           ]
+        },
+        "reports": {
+          "default": false,
+          "type": "boolean"
+        },
+        "reuse": {
+          "$ref": "#/$defs/Reuse",
+          "default": "new"
         },
         "text": {
           "type": [
@@ -606,6 +672,10 @@
             "type": "string"
           },
           "type": "array"
+        },
+        "include_automation": {
+          "description": "자동화가 띄운 thread의 사건도 받는다(plan t-0475 §3.5). 기본은 뺀다: 자동화 thread의 보고가 규칙을 깨워 다시 thread를 띄우는\n고리를 막는다. 켜도 이 규칙이 띄운 thread의 사건은 늘 뺀다",
+          "type": "boolean"
         },
         "repos": {
           "default": [],

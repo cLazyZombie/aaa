@@ -296,10 +296,10 @@ impl Host {
             t.suggestion = tasks::suggest(t, &open_ids);
         }
         self.fill_attention(project, &mut tasks);
-        // 임무 thread는 특수 패널의 일이라 할 일과 잇지 않는다
+        // 임무 thread는 특수 패널의 일이고, 자동화 thread는 출처(규칙)가 있어 task가 필요 없다(plan t-0475 §5.3): 할 일과 잇지 않는다
         let unlinked_threads = open
             .into_iter()
-            .filter(|t| t.mission.is_none() && !linked.contains(&t.id))
+            .filter(|t| t.mission.is_none() && t.automation.is_none() && !linked.contains(&t.id))
             .map(|t| TaskThread { id: t.id, title: t.title, group: t.group })
             .collect();
         let notes_files = self.settings(project).task_notes.iter().map(|p| notes_file(&dir, p)).collect();

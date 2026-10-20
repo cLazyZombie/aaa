@@ -715,7 +715,7 @@ const only = process.env.AAA_E2E_ONLY ? new RegExp(process.env.AAA_E2E_ONLY) : n
  * 실패하고, runSpec이 화면·host·agent를 내린다 */
 const STEP_LIMIT_MS = 120_000;
 
-async function step(name, fn, { always = false } = {}) {
+async function step(name, fn, { always = false, diagnose } = {}) {
   if (only && !always && !only.test(name)) return;
   const t0 = Date.now();
   let limit;
@@ -728,6 +728,9 @@ async function step(name, fn, { always = false } = {}) {
     ]).finally(() => clearTimeout(limit));
     steps.push(`ok   ${name} (${Date.now() - t0}ms)`);
   } catch (e) {
+    // viewport를 움직이는 기존 termDiag보다 먼저 실패 지점의 산출물을 저장한다.
+    try { await diagnose?.(e); }
+    catch (error) { console.log(`실패 진단 저장 오류: ${error}`); }
     const diags = [];
     for (const p of openPages) {
       const d = await Promise.race([termDiag(p).catch((x) => String(x)), sleep(5000).then(() => "시간 넘김")]);
@@ -1134,6 +1137,12 @@ async function runSpec(spec, labEnv = {}) {
     console.log(steps.join("\n"));
     if (failed) {
       console.log(`실험실 기록을 남겼다: ${root}`);
+      const diagnostics = path.join(root, "diagnostics");
+      if (env.AAA_E2E_ARTIFACTS && fs.existsSync(diagnostics)) {
+        const target = path.join(env.AAA_E2E_ARTIFACTS, path.basename(root));
+        fs.cpSync(diagnostics, target, { recursive: true });
+        console.log(`E2E 실패 산출물: ${target}`);
+      }
       process.exitCode = 1;
     } else {
       fs.rmSync(root, { recursive: true, force: true });

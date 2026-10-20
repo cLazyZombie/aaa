@@ -18,7 +18,7 @@
 #   e2e        웹 E2E(web/e2e/web.e2e.mjs, Playwright Chromium·WebKit, 한글 IME 기록 재생 포함). Unix만.
 #              playwright는 전역 npm 모듈로 찾는다(NODE_PATH=$(npm root -g)).
 #              spec 파일은 worker 여러 개가 함께 돈다(core 8개마다 셋, 많아야 6). AAA_E2E_WORKERS=1이면 차례로.
-#              같은 실행에서 build가 통과했으면 그 target/debug/aaa를 그대로 쓴다(함께 도는 test·clippy와 cargo 잠금을 다투지 않는다).
+#              병렬 단계 전에 이번 build의 실행 파일을 별도 사본으로 고정한다(test의 Cargo 링크 갱신과 겹치지 않는다).
 #              아니면 스스로 빌드하고(바뀐 것이 없으면 그대로), web 없이 돌면 web/dist가 웹 소스보다 새것인지 본다.
 #   public     scripts/check-public.sh(공개 저장소 검사). AAA_PUBLIC_BASE가 있으면 그 ref 이후 커밋의 메시지·author를 본다
 #              (없으면 origin/main. CI는 push의 before나 PR base를 준다)
@@ -83,8 +83,28 @@ step_test() {
   if [ "$OS" != windows ]; then python3 -m unittest scripts.test_deploy_build scripts.test_check_public || return 1; fi
   cargo test --workspace --locked --no-fail-fast || return 1
 }
+E2E_BIN_DIR=""
+E2E_BIN=""
+E2E_PREP_FAILED=""
+cleanup_e2e_bin() {
+  if [ -n "$E2E_BIN_DIR" ]; then
+    rm -f "$E2E_BIN_DIR/aaa"
+    rmdir "$E2E_BIN_DIR"
+  fi
+}
+trap cleanup_e2e_bin EXIT
+prepare_e2e_bin() {
+  # Cargo는 fresh test 빌드에서도 target/debug/aaa를 지우고 다시 연결한다. 병렬 단계보다 먼저 사본을 만든다.
+  if [ "$(result_of build)" != ok ]; then cargo build --locked -p aaa --bin aaa || return 1; fi
+  E2E_BIN_DIR=$(mktemp -d /tmp/aaa-ci-e2e.XXXXXX) || return 1
+  E2E_BIN="$E2E_BIN_DIR/aaa"
+  cp "$ROOT/target/debug/aaa" "$E2E_BIN" || return 1
+  cmp "$ROOT/target/debug/aaa" "$E2E_BIN" || return 1
+  echo "이번 빌드의 웹 E2E 실행 사본: $E2E_BIN"
+}
 step_e2e() {
   local root newer
+  if [ -n "$E2E_PREP_FAILED" ]; then cat "$LOGS/e2e-binary.log"; return 1; fi
   # 옛 번들·옛 binary로 시험하지 않는다(--only e2e처럼 web·build 없이 돌 때). host 실행 파일은 web/dist를 넣어 빌드된다
   if [ -z "$(result_of web)" ]; then
     [ -f web/dist/index.html ] || { echo "web/dist가 없다: web 단계를 함께 돈다(--only web,e2e)"; return 1; }
@@ -92,14 +112,12 @@ step_e2e() {
       web/tsconfig.json web/xterm-source.mjs -newer web/dist/index.html -print 2>/dev/null | head -1)
     [ -z "$newer" ] || { echo "web/dist가 ${newer}보다 오래됐다: web 단계를 함께 돈다(--only web,e2e)"; return 1; }
   fi
-  # e2e는 target/debug/aaa만 쓴다. 이번 build 단계가 만든 것이면 그대로(같은 binary, 10-18 e2e 로그에 Compiling 없음)
-  if [ "$(result_of build)" != ok ]; then cargo build --locked -p aaa --bin aaa || return 1; fi
   root=$(npm root -g) || return 1
   if ! NODE_PATH="$root" node -e 'require("playwright")' 2>/dev/null; then
     echo "playwright가 전역 npm 모듈에 없다: npm install -g playwright@1.59.1 && npx playwright@1.59.1 install chromium webkit"
     return 1
   fi
-  NODE_PATH="$root" node web/e2e/web.e2e.mjs
+  AAA_BIN="$E2E_BIN" AAA_E2E_ARTIFACTS="$LOGS/e2e-failures" NODE_PATH="$root" node web/e2e/web.e2e.mjs
 }
 step_public() { bash scripts/check-public.sh ${AAA_PUBLIC_BASE:+"$AAA_PUBLIC_BASE"}; }
 
@@ -193,6 +211,9 @@ for s in web fmt build; do
 done
 go=""
 for s in $TOGETHER; do skipped "$s" || go="$go $s"; done
+case " $go " in
+  *" e2e "*) prepare_e2e_bin >"$LOGS/e2e-binary.log" 2>&1 || E2E_PREP_FAILED=1 ;;
+esac
 if [ -n "$TEE" ] || [ "$(echo $go | wc -w)" -lt 2 ]; then
   for s in $ALL; do
     case " $go " in *" $s "*) run_step "$s"; collect "$s" ;; esac
