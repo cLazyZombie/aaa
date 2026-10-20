@@ -6477,3 +6477,16 @@ L4 후속(10-20 00시 사용자 관찰): 멈춤 상태의 후보 예약과 재�
 - **검증 경계.** macOS 전체 gate·Windows cross는 착지 전 판정이며 실제 Windows owner는 main push 뒤 CI다.
   실제 SCM logon·Session 0·로그인 전 부팅·LSA·UAC는 Windows bootstrap 뒤 사용자 시험에 남는다.
   I6 WIP는 별도 보존하며 이 후보에 포함하지 않는다.
+
+### 8.353 보고서 그림 눌러 크게 보기(10-21, t-0552)
+
+- **요청.** 사용자 10-20 20:3x: 시안·보고서 그림을 눌러도 커지지 않는다(Safari 탓 아님, 보고서 img에 링크·확대 없음). 웹 보고서 화면에서 모든 보고서 그림을 눌러 전체 화면·두 손가락 확대·닫기·넘기기. t-0540의 「답할 것」 크게 보기를 다시 쓴다.
+- **결정(10-21 1A, 사용자 위임 중 coordinator).** 보고서 index.html은 opaque origin sandbox iframe(§8.7·§8.197)이라 앱이 그 안의 누름을 볼 길이 없다(브라우저에 cross-origin iframe 안 사건을 부모가 듣는 기능이 없다). brief의 「script를 보고서에 주입하지 않고」는 coordinator가 붙인 조건이었고 사용자 요청이 우선이라, host가 보고서 HTML 끝에 그림 누름 알림 script를 붙인다. 조건:
+  - 같은 sandbox 권한 그대로다. `VIEW_CSP`·iframe `sandbox` 속성을 바꾸지 않고, script는 그 문서 안에서 보고서 제 script와 같은 권한으로 돈다.
+  - HTML 문서 탐색 응답에만 붙인다(`report_images_bridge`: `text/html`, `Sec-Fetch-Mode: navigate`·`Sec-Fetch-Dest: document|iframe|frame`, Range·`?download=1` 아님, GET). 원본 파일·내려받기·Range·fetch(파일 보기 소스)·HEAD·그림은 원본 바이트 그대로다. `Content-Length`는 붙인 만큼 늘린다.
+  - 앱은 그 iframe(`e.source === iframe.contentWindow`)에서 온, 그 보고서 보기 경로 `/v/<cap>/` 아래 같은 origin 주소만 받는다(`reportImages.ts`: `..`·`%2e%2e`는 URL이 풀어 둔 경로로 본다, data:·blob:·다른 보고서·API·다른 origin은 버림, 누른 그림이 걸러지면 열지 않음, 500장 넘으면 누른 그림 둘레만). 보고서 제 script가 같은 꼴을 흉내 내도 할 수 있는 일은 「제 그림을 앱 크게 보기로 연다」뿐이다.
+- **알림 script(`aaa-host/src/report_images.js`, inline).** 부모가 없으면(공유 링크 최상위 탭) 아무것도 하지 않는다. 링크·단추 안 그림, 보고서가 처리한 누름(`defaultPrevented`), 보조 키·가운데 단추는 건드리지 않는다. 누르면 `{type: "aaa:report-image", at, images: [{src, alt}]}`를 `location.origin`으로 부모에게 보낸다. 그림에 `cursor: zoom-in`. iOS(WebKit 터치)는 click을 듣는 요소에서만 누름을 click으로 만들어 window 위임만으로는 그림 누름이 오지 않는다: 그림마다(뒤에 생긴 그림도 MutationObserver로) 빈 click listener를 단다.
+- **공용 크게 보기(`web/src/Lightbox.tsx`·`lightboxGesture.ts`).** t-0540 `AsksView` Lightbox와 task 첨부 `Viewer`를 하나로 합쳤다(새 보기를 따로 만들지 않음). 문서 맨 위(portal), 머리 「n / N · 설명 · 원본 · 닫기」, 앞뒤 단추·←→, Esc·바깥 누름·닫기·아래로 쓸기·휴대폰 뒤로(`usePhoneSheetBack`, §8.301의 기록 칸 규칙 그대로)로 닫음, 옆으로 쓸어 넘김(너비 12%·48px 이상), 두 손가락 확대·끌기(1~6배, 무대 밖으로 빠지지 않음), 두 번 누름 2.5배·맞춤, 데스크톱 ctrl+바퀴(trackpad 벌리기)·키운 동안 바퀴 옮기기. 무대는 `touch-action: none`이라 페이지 확대·굴림이 아니고, 목록 drawer 가장자리 쓸기는 `aria-modal` 위에서 멈춘다(§8.301). 표지 `data-at`·`data-count`·`data-scale`.
+- **쓰는 곳.** 보고서 화면 index.html·보고 글(report.md), thread 화면 「보고」 글·결과물 index.html, 파일 보기의 결과물 HTML 페이지와 Markdown(t-0506 문서 열기), 「답할 것」 본문(같은 본문 그림으로 넘김)·선택지 「크게」, task 첨부 그림. 보고 글의 `library/…` 그림은 이제 그 보고서 보기 경로로 그린다(전에는 대체 글만 보였다, `reportMarkdownImage`는 질문 본문과 같은 거름). iframe 요소 표지 `data-messages`(본 메시지 수)·`data-opened`(연 수).
+- **남은 것.** headless WebKit(Playwright 1.58)은 iframe `sandbox` 속성과 CSP `sandbox` 머리가 겹친 문서에서 `img-src 'self'` 그림을 그리지 않는다(둘 중 하나만이면 그린다, Chromium은 늘 그린다. CSP를 `img-src <명시 origin>`으로 쓰면 그린다). main도 같다. 실제 iOS·macOS Safari에서 앱 안 보고서 그림·CSS가 보이는지 실기 확인이 필요하고, 같으면 `/v/` CSP의 `'self'`를 guard가 아는 origin으로 바꾸는 후속이 필요하다. 크게 보기는 앱 문서에서 그림을 읽어 영향이 없다. data: 그림(보고서에 박아 넣은 그림)은 보기 경로 밖이라 크게 보지 않는다. 실제 iOS 손가락이 어떤 pointer 사건으로 오는지는 headless가 보이지 않는다(실기 확인).
+- **검증.** host 유닛 `report_images_bridge_goes_only_on_html_navigation`, 웹 유닛 `reportImages.test.mjs`(뿌리·주소 거름·흉내·상한·보고 글 그림)·`lightboxGesture.test.mjs`(두 손가락·묶기·두 번 누름·바퀴·쓸기). 웹 E2E `59-report-images`와 52·53의 크게 보기 testid(`lightbox`·`lightbox-close`). 상세는 [시험](testing.md)의 t-0552 절.

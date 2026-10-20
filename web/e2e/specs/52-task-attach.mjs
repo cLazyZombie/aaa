@@ -100,10 +100,10 @@ export default async function ({ page }) {
     if (read() !== before) throw new Error(`같은 그림이 두 번 붙었다:\n${read()}`);
     // 크게 보기: 누르면 화면을 덮고 Esc는 보기만 닫는다(상세는 남는다)
     await page.getByTestId("task-attach-item").first().locator("button").first().click();
-    await page.getByTestId("task-viewer").waitFor();
+    await page.getByTestId("lightbox").waitFor();
     await shot(page, "attach-desktop-viewer");
     await page.keyboard.press("Escape");
-    await page.getByTestId("task-viewer").waitFor({ state: "detached" });
+    await page.getByTestId("lightbox").waitFor({ state: "detached" });
     await page.getByTestId("task-detail").waitFor();
   });
 
@@ -354,9 +354,9 @@ export default async function ({ page }) {
       await p.getByTestId("task-attach").scrollIntoViewIfNeeded();
       await shot(p, `attach-${kind}-${scheme}-pasted`);
       await p.getByTestId("task-attach-item").first().locator("button").first().click();
-      await p.getByTestId("task-viewer").waitFor();
+      await p.getByTestId("lightbox").waitFor();
       await shot(p, `attach-${kind}-${scheme}-viewer`);
-      await p.getByTestId("task-viewer-close").click();
+      await p.getByTestId("lightbox-close").click();
       await p.getByTestId("task-attach-remove").first().click();
       await until(`${kind} 뗀 줄`, () => notesOf("폰에서 붙이기").length === 0);
       // 문서 열기(계획 반영의 보고서 문서)

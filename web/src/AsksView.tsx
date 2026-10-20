@@ -3,15 +3,16 @@
 // (Markdown html=false), 그림·링크는 host가 준 그 질문의 파일 주소(`files_base`) 아래 `library/…`만 연다. 그림을 누르면 크게 본다.
 // 선택지에 그림이 있으면 선택지마다 큰 그림 카드(데스크톱 2열, 2B)다. 답한 것은 답할 때의 원문(질문·본문·선택지 전체와 까닭·
 // 고른 답·때·기기)과 「그때 보고」를 보인다. 질문 카드 꼴은 화면 선택 창 카드(PromptCard, herdr-web-ui)를 따른다.
-import { useCallback, useEffect, useId, useMemo, useRef, useState, type MouseEvent, type Ref } from "react";
-import { Check, ChevronRight, CircleQuestionMark, ListChecks, Maximize2, MessageSquareReply, Send, Trash2, X, Bot } from "lucide-react";
+import { useCallback, useEffect, useId, useMemo, useRef, useState, type MouseEvent } from "react";
+import { Check, ChevronRight, CircleQuestionMark, ListChecks, Maximize2, MessageSquareReply, Send, Trash2, Bot } from "lucide-react";
 import type { AskRecord, FrontResponse, ThreadQuestion, ThreadQuestions, ThreadView } from "./gen/proto";
 import { ApiError, call, onAsksChanged } from "./api";
 import { Markdown, MarkdownImageContext } from "./Markdown";
 import { OpenFileContext } from "./herdr/filePaths";
 import { DrawerToggle, HeadMore, HeadNote } from "./drawer";
 import { ConfirmDialog } from "./ConfirmDialog";
-import { useFocusTrap } from "./herdr/useFocusTrap";
+import { useLightbox } from "./Lightbox";
+import { markdownImages } from "./reportImages";
 import { askFileUrl, choicePicture, doneMeta, doneOf, doneTitle, openMeta, type AsksData, type OpenAsk } from "./asksModel";
 import "./herdr/PromptCard.css";
 import "./AsksView.css";
@@ -133,7 +134,8 @@ export function AsksView({
   onOpenTask: (title: string) => void;
   onThread: (id: string) => void;
 }) {
-  const [zoom, setZoom] = useState<{ src: string; alt: string } | null>(null);
+  const lightbox = useLightbox();
+  const setZoom = (z: { src: string; alt: string }) => lightbox.open({ items: [z], at: 0 });
   const body = useRef<HTMLDivElement>(null);
   const key = selection.kind === "open" ? selection.ask.key : selection.kind === "done" ? `d:${selection.record.id}` : "";
   useEffect(() => {
@@ -149,13 +151,13 @@ export function AsksView({
       : selection.kind === "done"
         ? { title: doneTitle(selection.record), sub: `답한 것 · ${selection.record.summary}` }
         : { title: "답할 것", sub: "질문·확인 필요·할 일" };
-  // 본문 그림을 누르면 크게(선택지 단추 안의 그림은 그 단추가 고르기다: 따로 「크게」 단추가 있다)
+  // 본문 그림을 누르면 크게, 같은 본문의 다른 그림으로 넘긴다(선택지 단추 안의 그림은 그 단추가 고르기다: 따로 「크게」 단추가 있다)
   const onBodyClick = (e: MouseEvent<HTMLDivElement>) => {
-    const img = (e.target as HTMLElement).closest("img");
-    if (!img || !(img instanceof HTMLImageElement) || img.closest("button")) return;
-    if (!img.closest(".ask-markdown")) return;
+    const root = e.target instanceof Element ? e.target.closest(".ask-markdown") : null;
+    const got = root ? markdownImages(root, e.target) : null;
+    if (!got) return;
     e.preventDefault();
-    setZoom({ src: img.currentSrc || img.src, alt: img.alt });
+    lightbox.open(got);
   };
   return (
     <div className={`thread-view asks-view${shown ? "" : " is-hidden"}`} inert={!shown} data-testid="asks-view" data-shown={shown ? "true" : "false"} data-key={key}>
@@ -200,7 +202,7 @@ export function AsksView({
           )}
         </div>
       </div>
-      {zoom && <Lightbox src={zoom.src} alt={zoom.alt} onClose={() => setZoom(null)} />}
+      {lightbox.node}
     </div>
   );
 }
@@ -513,35 +515,6 @@ function DoneCard({ r, canControl, onForget, onZoom, onThread }: {
           onConfirm={onForget} onClose={() => setConfirm(false)} />
       )}
     </section>
-  );
-}
-
-/** 그림 크게 보기: Esc·바깥 누름·닫기로 닫고 연 곳으로 focus를 돌린다 */
-function Lightbox({ src, alt, onClose }: { src: string; alt: string; onClose: () => void }) {
-  const close = useRef<HTMLButtonElement>(null);
-  const surface = useFocusTrap<HTMLDivElement>(true, { initialFocus: close });
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") {
-        e.preventDefault();
-        e.stopPropagation();
-        onClose();
-      }
-    };
-    window.addEventListener("keydown", onKey, true);
-    return () => window.removeEventListener("keydown", onKey, true);
-  }, [onClose]);
-  return (
-    <div className="ask-lightbox" role="dialog" aria-modal="true" aria-label={alt || "그림"} ref={surface as Ref<HTMLDivElement>} data-testid="ask-lightbox"
-      onClick={(e) => {
-        if (e.target === e.currentTarget) onClose();
-      }}>
-      <button type="button" ref={close} className="icon-button ask-lightbox-close" aria-label="닫기" onClick={onClose}>
-        <X aria-hidden="true" />
-      </button>
-      <img src={src} alt={alt} onClick={onClose} />
-      {alt && <p className="ask-lightbox-caption">{alt}</p>}
-    </div>
   );
 }
 
