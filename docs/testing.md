@@ -805,6 +805,7 @@ CI/Git의 source outbox·중복 억제·재시작·outage는 기존 owner를 유
 - `cargo test -p aaa --test m13 task_memory_forgets_deleted_project`: 지운 프로젝트를 같은 이름으로 다시 만들면 첫 tick은 기억만 하고 「파일 직접」 기록을 지어내지 않는다(지울 때 기억을 남기면 실패).
 - `node --test web/test/tasksModel.test.mjs`: 메뉴·끌기 → host 동작, 폼 → 동작(상위는 고른 판의 블록 고정점, owner 목록 전 폼은 동작 없음), 「나중」 항목, 기록 차이.
 - `node web/e2e/web.e2e.mjs --spec 46-task-edit`: 폼으로 더하기·고치고 옮기기(파일 글 전체를 기대값과 바이트로 비교), 사람 이름 owner 거부, 정리 제안, 행 메뉴·끌기·Alt+↓·목록 이름 바꾸기·빈 목록 지우기·새 목록, 두 브라우저 충돌 창과 「최신으로 다시 열기」, 폼을 고치는 동안 다른 task가 파일에서 바뀌어도 저장됨(대상만 충돌), 지우기·되살리기 줄·기록 거르기·기록에서 되살리기, 저장만으로 thread가 시작되지 않음(`ticker tick` 울타리 뒤 흐름 사건·thread 수), 보기 권한 기기에 편집 UI 없음(host 판 판정이 끝난 `data-can-edit="false"` 뒤에 본다. 판정 전은 `pending`), 명령 팔레트 「할 일 더하기」(할 일 화면을 연 적 없는 기기), 휴대폰 「+」·전체 화면 폼·메뉴 시트, 패드 세로 오른쪽 시트(상자 좌표로 단언), 「나중」 할 일로 옮기기(「나중」 파일 그대로), 원문 편집의 판 대조. 저장이 끝났는지는 시간이 아니라 화면 `data-tasks-sha`가 새 판이 되고 `data-task-saving`이 없어진 뒤 그 판이 파일 sha와 같은지로 본다.
+- 같은 E2E 46의 「터치 입력 글자」는 Chromium·WebKit의 iPhone 세로/가로에서 검색·제목·메모·선택·새 목록·사람 이름·첨부 붙여넣기·원문·목록 이름의 실제 계산 글자가 16px 이상인지 본다(t-0530). 폼의 13px 덮어쓰기를 복원하면 실패한다. headless는 iOS 키보드의 초점 확대를 재현하지 않으므로 실제 iPhone에서 입력·키보드 내림 뒤 배율 유지 확인은 별도다.
 - 결함 심기: 웹 폼이 편집을 시작한 판 대신 최신 판 hash로 저장하게 하면 E2E 46 「충돌」 단계가, 팔레트 요청 수를 mount 때 값으로 두면 「명령 팔레트」 단계가 실패한다. 웹 결함은 `npm run build`가 dist를 다시 만든 뒤 `cargo build -p aaa`로 binary에 넣어 돈다.
 
 ## 웹 할 일 thread 연결과 자동 정리(t-0493, plan §8.316)

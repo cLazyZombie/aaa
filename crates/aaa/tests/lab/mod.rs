@@ -126,6 +126,7 @@ impl Node {
     }
 
     /// `in_terminal`과 같되 환경 변수를 더 준다(예: 가짜 `launchctl`을 PATH 앞에, HOME을 실험실에)
+    #[cfg(unix)]
     pub fn in_terminal_env(
         &self,
         args: &[&str],
@@ -137,6 +138,7 @@ impl Node {
     }
 
     /// `in_terminal_env`와 같되 실행 파일을 고른다(`aaa update`는 지금 도는 실행 파일을 바꾸므로 실험실 사본을 띄운다)
+    #[cfg(unix)]
     pub fn in_terminal_bin(
         &self,
         bin: &Path,
