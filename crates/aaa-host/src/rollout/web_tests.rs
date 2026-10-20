@@ -168,6 +168,14 @@ async fn web_job_list_is_newest_first_and_hides_executor_details() {
     // 시각·출처를 남기기 전의 coordinator 기록
     put(&legacy, serde_json::json!({"project":"demo","machine":"m","action":action}));
     put(&other, serde_json::json!({"project":"elsewhere","machine":"m","action":action,"created_ms":30}));
+    // 작업이 끝나면 웹이 목록을 다시 읽게 `rollout` 사건을 보낸다(재시작은 응답보다 늦게 끝날 수 있다)
+    let mut changed = h.rollout_changed.subscribe();
+    changed.borrow_and_update();
+    let finished: DeployJob = serde_json::from_value(serde_json::json!({"id":a,"project":"demo","action":action,"state":"completed",
+        "instance":"agent","executor_pid":1,"expected_sha256":"a".repeat(64),"result":null,"created_ms":10,"updated_ms":11}))
+    .unwrap();
+    h.deployment_changed("m", finished);
+    assert!(changed.has_changed().unwrap(), "작업 끝을 웹에 알리지 않았다");
     let FrontResponse::DeployJobs { jobs } =
         h.call(DeviceRole::Reader, "device:tv", FrontRequest::DeployJobs).await.unwrap()
     else {
