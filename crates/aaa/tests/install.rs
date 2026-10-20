@@ -159,6 +159,38 @@ fn install_errors_are_sanitized_and_never_prompt_or_write() {
 }
 
 #[test]
+fn install_status_is_read_only_and_input_authorization_cannot_open_writes() {
+    let lab = Lab::new();
+    let authorization = lab.0.join("authorization.json");
+    std::fs::write(&authorization, format!("{{\"approved\":true,\"secret\":\"{CANARY}\"}}")).unwrap();
+    let before = snapshot(&lab.0);
+    let id = "00000000000000000000000000";
+    let mut args = lab.args();
+    args.retain(|a| a != "--dry-run");
+    args.extend([
+        "--json".into(),
+        "--yes".into(),
+        "--authorization-file".into(),
+        authorization.to_string_lossy().into_owned(),
+    ]);
+    for out in [lab.run(&args), lab.cmd(&["install", "--resume", id, "--yes", "--json"])] {
+        let v = json(&out);
+        assert_eq!(v["exit_code"], 3);
+        assert_eq!(v["status"], "needs_user");
+        assert!(v["needs_user"].as_array().unwrap().iter().any(|n| n["code"] == "installation_authorization_required"));
+        assert!(v["installation_id"].is_null(), "시작하지 않은 내구 job을 지어내지 않는다");
+        assert_eq!(snapshot(&lab.0), before);
+    }
+    let missing = json(&lab.cmd(&["install", "--status", id, "--json"]));
+    assert_eq!(missing["exit_code"], 2);
+    assert_eq!(missing["error"]["code"], "installation_not_found");
+    let invalid = json(&lab.cmd(&["install", "--status", "../outside", "--json"]));
+    assert_eq!(invalid["exit_code"], 2);
+    assert_eq!(invalid["error"]["code"], "invalid_installation_id");
+    assert_eq!(snapshot(&lab.0), before, "status/apply/resume은 승인 없이 lock/journal/probe도 만들지 않는다");
+}
+
+#[test]
 fn install_dry_run_is_read_only_and_stream_has_the_same_plan() {
     let lab = Lab::new();
     let before = snapshot(&lab.0);
@@ -288,8 +320,9 @@ fn install_does_not_apply_or_execute_selected_files_and_reads_repos_without_writ
     args.retain(|s| s != "--dry-run");
     args.extend(["--json".into(), "--yes".into()]);
     let v = json(&lab.run(&args));
-    assert_eq!(v["exit_code"], 5);
-    assert_eq!(v["error"]["code"], "install_apply_not_available");
+    assert_eq!(v["exit_code"], 3);
+    assert_eq!(v["status"], "needs_user");
+    assert!(v["needs_user"].as_array().unwrap().iter().any(|n| n["code"] == "installation_authorization_required"));
     assert_eq!(snapshot(&lab.0), before);
     let repo = lab.0.join("repo");
     assert!(Command::new("git").args(["init", "--quiet"]).arg(&repo).status().unwrap().success());
