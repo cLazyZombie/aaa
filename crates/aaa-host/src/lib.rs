@@ -2903,14 +2903,15 @@ impl Host {
 
 /// `aaa host` 실행
 pub async fn run(cfg: HostConfig, state_root: PathBuf) -> Result<()> {
-    run_with_ready(cfg, state_root, None).await
+    run_with_shutdown(cfg, state_root, None, shutdown_signal()).await
 }
 
 /// OS 감독자에는 실제 listener 준비 뒤에만 알린다. 서비스 등록 자체는 ready가 아니다.
-pub async fn run_with_ready(
+pub async fn run_with_shutdown(
     cfg: HostConfig,
     state_root: PathBuf,
     ready: Option<tokio::sync::oneshot::Sender<()>>,
+    shutdown: impl std::future::Future<Output = ()>,
 ) -> Result<()> {
     let host = Host::open(cfg, state_root.join("host"))?;
     let _ = host.config_dir.set(aaa_config::paths::config_dir());
@@ -2954,7 +2955,7 @@ pub async fn run_with_ready(
             }
         });
     }
-    shutdown_signal().await;
+    shutdown.await;
     tracing::info!("host 종료(세션은 agent·session host가 계속 유지한다)");
     Ok(())
 }

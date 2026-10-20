@@ -4,6 +4,8 @@ use std::collections::BTreeMap;
 
 #[cfg(windows)]
 mod native;
+#[cfg(any(windows, test))]
+mod runner;
 #[cfg(windows)]
 mod runtime;
 
@@ -36,6 +38,23 @@ impl Drop for Password {
     }
 }
 
+#[derive(Default)]
+struct LogonRights {
+    allowed: bool,
+}
+impl LogonRights {
+    fn observe(&mut self, rights: &[String], allow_eligible: bool) -> Result<()> {
+        if rights.iter().any(|r| r == "SeDenyServiceLogonRight") {
+            return Err(failure("service_logon_denied", 3));
+        }
+        self.allowed |= allow_eligible && rights.iter().any(|r| r == "SeServiceLogonRight");
+        Ok(())
+    }
+    fn grant_required(&self) -> bool {
+        !self.allowed
+    }
+}
+
 #[derive(Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 struct Spec {
@@ -59,6 +78,7 @@ impl Spec {
             InstallRole::Agent => "agent",
         }
     }
+    #[cfg(windows)]
     fn name(&self) -> String {
         self.instance
             .as_ref()
@@ -110,12 +130,55 @@ impl Spec {
         }
         Ok(())
     }
-    fn guard_paths(&self) -> Result<()> {
+    fn verify_plan(&self, plan: &InstallPlan) -> Result<()> {
+        if plan.context.target_account != self.account
+            || plan.context.binary_sha256 != self.binary_sha256
+            || transaction::real_directory(Path::new(&plan.context.bin_path).parent().ok_or_else(Fault::conflict)?)?
+                .join(Path::new(&plan.context.bin_path).file_name().ok_or_else(Fault::conflict)?)
+                != self.executable
+            || Path::new(&plan.context.config_dir).canonicalize().map_err(Fault::io)? != self.config
+            || Path::new(&plan.context.state_dir).canonicalize().map_err(Fault::io)? != self.state
+            || plan.choices.instance != self.instance
+            || (plan.choices.role != Some(self.role)
+                && !(plan.choices.role == Some(InstallRole::Host)
+                    && self.role == InstallRole::Agent
+                    && plan.choices.local_agent == Some(InstallToggle::Enabled)))
+        {
+            return Err(Fault::conflict());
+        }
+        Ok(())
+    }
+    #[cfg(windows)]
+    fn verify_files(&self) -> Result<()> {
+        let journal = read_journal(&self.state, &self.id, self.instance.as_deref())?;
+        if journal.phase != Phase::Configured {
+            return Err(Fault::conflict());
+        }
+        let active = private::read(&self.state.join("install/active.json"), 128 * 1024).map_err(Fault::io)?;
+        if serde_json::from_slice::<String>(&active).map_err(|_| Fault::conflict())? != self.id {
+            return Err(Fault::conflict());
+        }
+        let plan = transaction::installed_plan(&self.state, &journal)?;
+        if plan.context.platform.os != InstallOs::Windows
+            || plan.choices.service != Some(InstallService::WindowsScm)
+            || plan.choices.service_account != Some(InstallAccount::CurrentUser)
+        {
+            return Err(Fault::conflict());
+        }
+        self.verify_plan(&plan)?;
+        transaction::observe(&self.state, journal)?;
+        Ok(())
+    }
+    fn guard_directories(&self) -> Result<()> {
         for path in [&self.profile, &self.config, &self.state, &self.directory()] {
             if transaction::real_directory(path)? != *path {
                 return Err(Fault::conflict());
             }
         }
+        Ok(())
+    }
+    fn guard_paths(&self) -> Result<()> {
+        self.guard_directories()?;
         if self.executable.canonicalize().map_err(Fault::io)? != self.executable {
             return Err(Fault::conflict());
         }
@@ -161,6 +224,13 @@ impl Configuration {
         hash(&serde_json::to_vec(self).expect("고정 SCM config"))
     }
 }
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+struct Process {
+    pid: u32,
+    created: u64,
+    elevated: bool,
+}
 struct Observation {
     configuration: Configuration,
     running: bool,
@@ -172,9 +242,10 @@ trait Manager {
     fn query(&mut self, spec: &Spec) -> Result<Option<Observation>>;
     fn create(&mut self, spec: &Spec, password: &Password) -> Result<()>;
     fn start(&mut self, spec: &Spec) -> Result<Observation>;
+    fn stop(&mut self, spec: &Spec) -> Result<()>;
     fn remove(&mut self, spec: &Spec) -> Result<()>;
     fn credentials(&mut self, spec: &Spec, password: &Password) -> Result<()>;
-    fn process_matches(&mut self, spec: &Spec, pid: u32) -> Result<bool>;
+    fn process(&mut self, spec: &Spec, pid: u32) -> Result<Option<Process>>;
 }
 
 #[derive(Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
@@ -198,6 +269,8 @@ struct Record {
     owned: bool,
     logon_right_may_remain: bool,
     credentials_pending: bool,
+    credentials_restart_unverified: bool,
+    credentials_process_before: Option<Process>,
     phase: ServicePhase,
 }
 #[derive(Serialize, Deserialize)]
@@ -209,9 +282,18 @@ struct Ready {
     profile_sha256: String,
     binary_sha256: String,
     pid: u32,
+    connected: bool,
+    process_created: u64,
     session: u32,
     elevated: bool,
     boot: String,
+}
+
+fn credentials_verified(record: &Record, process: Process) -> bool {
+    !record.credentials_restart_unverified
+        || record
+            .credentials_process_before
+            .is_none_or(|before| (before.pid, before.created) != (process.pid, process.created))
 }
 
 struct Job {
@@ -255,7 +337,11 @@ impl Job {
             return Err(Fault::conflict());
         }
         let files = transaction::journal_locks(state, &journal)?;
-        transaction::observe(state, journal)?;
+        let current = read_journal(state, id, plan.choices.instance.as_deref())?;
+        if current.phase != Phase::Configured || current.plan_sha256 != journal.plan_sha256 {
+            return Err(Fault::conflict());
+        }
+        transaction::observe(state, current)?;
         let spec = Spec {
             schema: 1,
             id: id.into(),
@@ -309,6 +395,8 @@ impl Job {
                 owned: false,
                 logon_right_may_remain: false,
                 credentials_pending: false,
+                credentials_restart_unverified: false,
+                credentials_process_before: None,
                 phase: ServicePhase::Pending,
             }
         };
@@ -368,9 +456,24 @@ impl Job {
         self.save()?;
         let observed = manager.start(&self.spec)?;
         self.verify_configuration(&observed)?;
-        verify_ready(&self.spec, manager, &observed)?;
+        let process = verify_ready(&self.spec, manager, &observed)?;
+        if !credentials_verified(&self.record, process) {
+            return Err(failure("service_credentials_restart_unverified", 3));
+        }
+        self.record.credentials_restart_unverified = false;
+        self.record.credentials_process_before = None;
         self.record.phase = ServicePhase::Ready;
         self.save()
+    }
+    fn restart(&mut self, manager: &mut impl Manager) -> Result<()> {
+        if !matches!(self.record.phase, ServicePhase::Registered | ServicePhase::Starting | ServicePhase::Ready) {
+            return Err(Fault::conflict());
+        }
+        self.verify_configuration(&manager.query(&self.spec)?.ok_or_else(Fault::conflict)?)?;
+        self.record.phase = ServicePhase::Starting;
+        self.save()?;
+        manager.stop(&self.spec)?;
+        self.start(manager)
     }
     fn remove(&mut self, manager: &mut impl Manager) -> Result<()> {
         if self.record.phase == ServicePhase::Removed {
@@ -389,27 +492,40 @@ impl Job {
             return Err(failure("service_removal_pending", 3));
         }
         self.record.phase = ServicePhase::Removed;
+        self.record.credentials_pending = false;
+        self.record.credentials_restart_unverified = false;
+        self.record.credentials_process_before = None;
         self.save()
     }
     fn credentials(&mut self, manager: &mut impl Manager, password: &Password) -> Result<()> {
-        self.verify_configuration(&manager.query(&self.spec)?.ok_or_else(Fault::conflict)?)?;
+        let observed = manager.query(&self.spec)?.ok_or_else(Fault::conflict)?;
+        self.verify_configuration(&observed)?;
         if !self.record.owned || matches!(self.record.phase, ServicePhase::Removing | ServicePhase::Removed) {
             return Err(Fault::conflict());
         }
         // OS의 옛 암호를 읽어 백업하지 않는다. 중단/실패는 새 보호 입력으로 다시 확인해야 한다.
+        let before = if observed.running {
+            Some(manager.process(&self.spec, observed.pid)?.ok_or_else(Fault::conflict)?)
+        } else {
+            None
+        };
+        self.record.credentials_process_before = before;
+        self.record.credentials_restart_unverified = true;
         self.record.credentials_pending = true;
         self.save()?;
         manager.credentials(&self.spec, password)?;
+        self.verify_configuration(&manager.query(&self.spec)?.ok_or_else(Fault::conflict)?)?;
         self.record.credentials_pending = false;
         self.save()
     }
 }
-fn verify_ready(spec: &Spec, manager: &mut impl Manager, observed: &Observation) -> Result<()> {
+fn verify_ready(spec: &Spec, manager: &mut impl Manager, observed: &Observation) -> Result<Process> {
     let bytes = private::read(&spec.directory().join("ready.json"), 128 * 1024)
         .map_err(|_| failure("service_ready_unverified", 3))?;
     let ready: Ready = serde_json::from_slice(&bytes).map_err(|_| Fault::conflict())?;
     if !observed.running
         || observed.pid == 0
+        || !ready.connected
         || ready.schema != 1
         || ready.pid != observed.pid
         || ready.context_sha256 != spec.sha()
@@ -418,26 +534,107 @@ fn verify_ready(spec: &Spec, manager: &mut impl Manager, observed: &Observation)
         || ready.binary_sha256 != spec.binary_sha256
         || ready.session != 0
         || ready.boot != aaa_common::util::boot_id()
-        || !manager.process_matches(spec, ready.pid)?
+        || manager.process(spec, ready.pid)?
+            != Some(Process { pid: ready.pid, created: ready.process_created, elevated: ready.elevated })
     {
         return Err(failure("service_ready_unverified", 3));
     }
-    Ok(())
+    Ok(Process { pid: ready.pid, created: ready.process_created, elevated: ready.elevated })
 }
 
-impl Drop for Job {
-    fn drop(&mut self) {
-        let _ = self._lock.unlock();
+fn incomplete(result: &mut InstallResult, id: &str, code: &str) {
+    result.status = InstallStatus::NeedsUser;
+    result.exit_code = 3;
+    result.error = None;
+    result.needs_user.push(InstallNeedsUser {
+        code: code.into(),
+        target: "service".into(),
+        message: "서비스의 실제 상태와 필요한 승인/인증을 확인하세요".into(),
+    });
+    result.resume = Some(InstallResume { installation_id: id.into() });
+}
+fn record_status(spec: &Spec, record: &Record, check: InstallCheckState, result: &mut InstallResult) {
+    result.checks.push(InstallCheck { name: format!("service_{}_ready", spec.role()), state: check });
+    result.changes.push(InstallChange {
+        kind: "service".into(),
+        action: "register".into(),
+        state: match record.phase {
+            ServicePhase::Removed => InstallChangeState::Reverted,
+            ServicePhase::Ready if check == InstallCheckState::Passed => InstallChangeState::Applied,
+            _ => InstallChangeState::Pending,
+        },
+    });
+    if !matches!(record.phase, ServicePhase::Ready | ServicePhase::Removed)
+        || (record.phase == ServicePhase::Ready && check != InstallCheckState::Passed)
+        || record.credentials_pending
+    {
+        incomplete(result, &spec.id, "service_setup_incomplete");
     }
 }
-
-/// status는 고정한 두 역할의 기록/SCM만 읽는다. 잠금·probe·보정/기록 쓰기를 하지 않는다.
+fn observe_service(spec: &Spec, record: &Record, manager: &mut impl Manager, result: &mut InstallResult) -> Result<()> {
+    if record.phase == ServicePhase::Removed {
+        record_status(spec, record, InstallCheckState::NotRequested, result);
+        return Ok(());
+    }
+    let mut ready = InstallCheckState::NotRun;
+    let observation = manager.query(spec);
+    match observation {
+        Ok(Some(observed)) => {
+            if observed.configuration != Configuration::desired(spec) {
+                return Err(Fault::conflict());
+            }
+            result.checks.push(InstallCheck {
+                name: format!("service_{}_registered", spec.role()),
+                state: InstallCheckState::Passed,
+            });
+            result.checks.push(InstallCheck {
+                name: format!("service_{}_running", spec.role()),
+                state: if observed.running { InstallCheckState::Passed } else { InstallCheckState::Failed },
+            });
+            if record.phase == ServicePhase::Ready {
+                match verify_ready(spec, manager, &observed) {
+                    Ok(process) => {
+                        ready = InstallCheckState::Passed;
+                        result.checks.push(InstallCheck {
+                            name: format!(
+                                "service_{}_token_{}",
+                                spec.role(),
+                                if process.elevated { "elevated" } else { "standard" }
+                            ),
+                            state: InstallCheckState::Passed,
+                        });
+                        if !credentials_verified(record, process) {
+                            incomplete(result, &spec.id, "service_credentials_restart_unverified");
+                        }
+                    }
+                    Err(e) if e.exit == 3 => {
+                        ready = InstallCheckState::Failed;
+                        incomplete(result, &spec.id, e.code);
+                    }
+                    Err(e) => return Err(e),
+                }
+            }
+        }
+        Ok(None) => incomplete(result, &spec.id, "service_registration_missing"),
+        Err(e) if e.exit == 3 => {
+            ready = InstallCheckState::Unknown;
+            incomplete(result, &spec.id, e.code);
+        }
+        Err(e) => return Err(e),
+    }
+    record_status(spec, record, ready, result);
+    Ok(())
+}
+/// status는 실제 기록/SCM을 읽기만 한다. 잠금·probe·보정/기록 쓰기를 하지 않는다.
 pub(super) fn observe(
     state: &Path,
     instance: Option<&str>,
     id: &str,
     mut result: InstallResult,
 ) -> Result<InstallResult> {
+    let journal = read_journal(state, id, instance)?;
+    let plan = transaction::installed_plan(state, &journal)?;
+    let mut seen = Vec::new();
     for role in ["host", "agent"] {
         let directory = journal_dir(state, id).join("services").join(role);
         let path = directory.join("journal.json");
@@ -449,7 +646,12 @@ pub(super) fn observe(
         let bytes = private::read(&directory.join("context.json"), 128 * 1024).map_err(Fault::io)?;
         let spec: Spec = serde_json::from_slice(&bytes).map_err(|_| Fault::conflict())?;
         spec.validate()?;
-        spec.guard_paths()?;
+        if record.phase == ServicePhase::Removed {
+            spec.guard_directories()?;
+        } else {
+            spec.guard_paths()?;
+        }
+        spec.verify_plan(&plan)?;
         if record.schema != 1
             || record.account_sha256 != account_hash()?
             || record.context_sha256 != hash(&bytes)
@@ -462,43 +664,29 @@ pub(super) fn observe(
         {
             return Err(Fault::conflict());
         }
-        #[cfg(not(windows))]
-        if record.phase == ServicePhase::Ready {
-            return Err(failure("unsupported_service_platform", 5));
-        }
-        let mut check = InstallCheckState::NotRun;
+        seen.push(role);
         #[cfg(windows)]
-        if record.phase == ServicePhase::Ready {
-            let mut manager = native::Scm;
-            let observed = manager.query(&spec)?.ok_or_else(Fault::conflict)?;
-            if observed.configuration != Configuration::desired(&spec) {
-                return Err(Fault::conflict());
+        observe_service(&spec, &record, &mut native::Scm, &mut result)?;
+        #[cfg(not(windows))]
+        {
+            if record.phase == ServicePhase::Ready {
+                return Err(failure("unsupported_service_platform", 5));
             }
-            // 같은 검증을 읽기 조회에서도 공유한다. Job/잠금/영수증 갱신은 만들지 않는다.
-            verify_ready(&spec, &mut manager, &observed)?;
-            check = InstallCheckState::Passed;
+            record_status(&spec, &record, InstallCheckState::NotRun, &mut result);
         }
-        let _ = &mut check;
-        result.checks.push(InstallCheck { name: format!("service_{role}_ready"), state: check });
-        result.changes.push(InstallChange {
-            kind: "service".into(),
-            action: "register".into(),
-            state: match record.phase {
-                ServicePhase::Removed => InstallChangeState::Reverted,
-                ServicePhase::Ready => InstallChangeState::Applied,
-                _ => InstallChangeState::Pending,
-            },
-        });
-        if !matches!(record.phase, ServicePhase::Ready | ServicePhase::Removed) || record.credentials_pending {
-            result.status = InstallStatus::NeedsUser;
-            result.exit_code = 3;
-            result.error = None;
-            result.needs_user.push(InstallNeedsUser {
-                code: "service_setup_incomplete".into(),
-                target: "service".into(),
-                message: "서비스의 실제 상태와 필요한 승인/인증을 확인하세요".into(),
-            });
-            result.resume = Some(InstallResume { installation_id: id.into() });
+    }
+    if journal.phase == Phase::Configured && plan.choices.service == Some(InstallService::WindowsScm) {
+        for (role, wanted) in [
+            ("host", plan.choices.role == Some(InstallRole::Host)),
+            (
+                "agent",
+                plan.choices.role == Some(InstallRole::Agent)
+                    || plan.choices.local_agent == Some(InstallToggle::Enabled),
+            ),
+        ] {
+            if wanted && !seen.contains(&role) {
+                incomplete(&mut result, id, "service_setup_incomplete");
+            }
         }
     }
     Ok(result)

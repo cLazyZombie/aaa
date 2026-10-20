@@ -2466,12 +2466,13 @@ fn parse_minutes(s: &str) -> Result<u32> {
 }
 
 fn agent_cmd(a: AgentArgs) -> Result<ExitCode> {
-    agent_controlled(a, None, None)
+    agent_controlled(a, None, None, None)
 }
 
 fn agent_controlled(
     a: AgentArgs,
     ready: Option<tokio::sync::oneshot::Sender<()>>,
+    connection: Option<tokio::sync::watch::Sender<bool>>,
     stop: Option<tokio::sync::watch::Receiver<bool>>,
 ) -> Result<ExitCode> {
     let cfg = load_or_exit(aaa_config::load_agent(&aaa_config::paths::config_dir()))?;
@@ -2566,9 +2567,13 @@ fn agent_controlled(
         aaa_agent::start_selfcheck(&agent, &cfg.selfcheck);
         agent.start_health(cfg.health.clone());
         let max = std::time::Duration::from_secs(cfg.reconnect.max_backoff_s);
+        if let Some(ready) = ready {
+            let _ = ready.send(());
+        }
+        let supervised = stop.is_some();
         tokio::select! {
-            _ = aaa_agent::link::run_with_ready(agent.clone(), target, max, ready) => {}
-            _ = aaa_host::shutdown_signal() => tracing::info!("agent 종료(세션은 session host가 유지한다)"),
+            _ = aaa_agent::link::run_with_state(agent.clone(), target, max, connection) => {}
+            _ = aaa_host::shutdown_signal(), if !supervised => tracing::info!("agent 종료(세션은 session host가 유지한다)"),
             _ = supervised_stop(stop) => tracing::info!("서비스 agent 종료(세션은 session host가 유지한다)"),
         }
         anyhow::Ok(())
@@ -2586,10 +2591,11 @@ async fn supervised_stop(stop: Option<tokio::sync::watch::Receiver<bool>>) {
 }
 
 /// SCM의 고정 host/agent 역할만 실행한다. 임의 argv/셸을 받지 않는다.
-#[cfg(windows)]
+#[cfg(any(windows, test))]
 pub(crate) fn supervised_role(
     role: aaa_proto::install::InstallRole,
     ready: tokio::sync::oneshot::Sender<()>,
+    connection: tokio::sync::watch::Sender<bool>,
     stop: tokio::sync::watch::Receiver<bool>,
 ) -> Result<ExitCode> {
     init_log("info");
@@ -2598,17 +2604,20 @@ pub(crate) fn supervised_role(
     match role {
         aaa_proto::install::InstallRole::Host => {
             let cfg = load_or_exit(aaa_config::load_host(&aaa_config::paths::config_dir()))?;
-            runtime()?.block_on(async {
-                tokio::select! {
-                    result = aaa_host::run_with_ready(cfg, aaa_config::paths::state_dir(), Some(ready)) => result,
-                    _ = supervised_stop(Some(stop)) => Ok(()),
-                }
-            })?;
+            runtime()?.block_on(aaa_host::run_with_shutdown(
+                cfg,
+                aaa_config::paths::state_dir(),
+                Some(ready),
+                supervised_stop(Some(stop)),
+            ))?;
             Ok(ExitCode::SUCCESS)
         }
-        aaa_proto::install::InstallRole::Agent => {
-            agent_controlled(AgentArgs { cmd: None, host: None, name: None, dev_mode: false }, Some(ready), Some(stop))
-        }
+        aaa_proto::install::InstallRole::Agent => agent_controlled(
+            AgentArgs { cmd: None, host: None, name: None, dev_mode: false },
+            Some(ready),
+            Some(connection),
+            Some(stop),
+        ),
     }
 }
 

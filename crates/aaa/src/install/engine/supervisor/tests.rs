@@ -6,14 +6,26 @@ use super::*;
 struct Os {
     config: Option<Configuration>,
     creates: usize,
+    running: bool,
+    stops: usize,
     updates: usize,
     removes: usize,
     fail_after_create: bool,
     credentials_fail: bool,
+    query_error: Option<Fault>,
+    pid: u32,
+    verified_pids: Vec<u32>,
 }
 impl Manager for Os {
     fn query(&mut self, _: &Spec) -> Result<Option<Observation>> {
-        Ok(self.config.clone().map(|configuration| Observation { configuration, running: true, pid: 17 }))
+        if let Some(e) = self.query_error {
+            return Err(e);
+        }
+        Ok(self.config.clone().map(|configuration| Observation {
+            configuration,
+            running: self.running,
+            pid: if self.pid == 0 { 17 } else { self.pid },
+        }))
     }
     fn create(&mut self, spec: &Spec, password: &Password) -> Result<()> {
         assert!(!password.0.is_empty());
@@ -25,7 +37,13 @@ impl Manager for Os {
         Ok(())
     }
     fn start(&mut self, spec: &Spec) -> Result<Observation> {
+        self.running = true;
         self.query(spec)?.ok_or_else(Fault::conflict)
+    }
+    fn stop(&mut self, _: &Spec) -> Result<()> {
+        self.stops += 1;
+        self.running = false;
+        Ok(())
     }
     fn remove(&mut self, _: &Spec) -> Result<()> {
         self.removes += 1;
@@ -39,8 +57,8 @@ impl Manager for Os {
         self.updates += 1;
         Ok(())
     }
-    fn process_matches(&mut self, _: &Spec, _: u32) -> Result<bool> {
-        Ok(false)
+    fn process(&mut self, _: &Spec, pid: u32) -> Result<Option<Process>> {
+        Ok(self.verified_pids.contains(&pid).then_some(Process { pid, created: u64::from(pid), elevated: false }))
     }
 }
 fn reopen(lab: &Lab, plan: &InstallPlan, id: &str) -> Result<Job> {
@@ -123,6 +141,9 @@ fn service_phase_keeps_file_resource_locks_and_removal_and_credentials_resume_pr
     assert!(reopen(&lab, &plan, &id).is_err());
     let mut os = Os::default();
     job.register(&mut os, Some(&password())).unwrap();
+    os.running = true;
+    os.pid = 17;
+    os.verified_pids.push(17);
     os.credentials_fail = true;
     assert!(job.credentials(&mut os, &password()).is_err());
     assert!(job.record.credentials_pending);
@@ -132,11 +153,27 @@ fn service_phase_keeps_file_resource_locks_and_removal_and_credentials_resume_pr
     job.credentials(&mut os, &password()).unwrap();
     assert_eq!(os.updates, 1);
     assert!(!job.record.credentials_pending);
+    let previous = Process { pid: 17, created: 17, elevated: false };
+    assert!(!credentials_verified(&job.record, previous), "SCM에 저장했어도 옛 process가 새 암호 검증은 아니다");
+    assert!(!credentials_verified(&job.record, Process { elevated: true, ..previous }));
+    assert!(
+        credentials_verified(&job.record, Process { created: 18, ..previous }),
+        "PID를 재사용해도 새 process 생성 시각을 검증한다"
+    );
     job.remove(&mut os).unwrap();
     job.remove(&mut os).unwrap();
     assert_eq!(os.removes, 1);
     assert!(Path::new(&plan.context.bin_path).is_file(), "서비스 제거가 사용자 파일/작업을 지우지 않는다");
     assert!(job.record.logon_right_may_remain, "LSA 권한 제거를 추정하지 않는다");
+    drop(job);
+    lab.uninstall_service_files(&plan, &id);
+    assert!(!Path::new(&plan.context.bin_path).exists());
+    let before = tree(&lab.0);
+    let result =
+        super::super::status(Path::new(&plan.context.state_dir), plan.choices.instance.as_deref(), &id).unwrap();
+    assert_eq!(result.status, InstallStatus::Configured);
+    assert!(result.valid_exit());
+    assert_eq!(tree(&lab.0), before, "제거 뒤 조회가 실행 파일/서비스를 되살리지 않는다");
 }
 
 #[test]
@@ -152,6 +189,8 @@ fn ready_record_cannot_substitute_for_actual_pid_account_context_or_process_obse
         profile_sha256: hash(job.spec.profile.to_string_lossy().as_bytes()),
         binary_sha256: job.spec.binary_sha256.clone(),
         pid: 17,
+        connected: true,
+        process_created: 17,
         session: 0,
         elevated: false,
         boot: aaa_common::util::boot_id(),
@@ -185,7 +224,7 @@ fn native_windows_reads_real_identity_and_scm_and_preserves_quoted_unicode_argum
     spec.instance = Some(format!("i5-{}", aaa_common::util::new_id().to_lowercase()));
     assert!(native::Scm.query(&spec).unwrap().is_none());
     assert!(
-        !native::Scm.process_matches(&spec, std::process::id()).unwrap(),
+        native::Scm.process(&spec, std::process::id()).unwrap().is_none(),
         "다른 실행 파일 process를 이 설치의 서비스 증거로 쓰지 않는다"
     );
     // 실제 OS argv 파서가 임의 셸 실행 없이 공백·한글·따옴표·끝 역슬래시를 보존한다.
@@ -207,4 +246,46 @@ fn native_windows_reads_real_identity_and_scm_and_preserves_quoted_unicode_argum
         LocalFree(ptr.cast());
     }
     assert_eq!(values, args);
+}
+
+mod lifecycle;
+
+#[test]
+fn service_status_denied_is_valid_needs_user_and_remains_read_only() {
+    let lab = Lab::new();
+    let (mut job, plan, id) = prepare(&lab);
+    let mut os = Os::default();
+    job.register(&mut os, Some(&password())).unwrap();
+    os.query_error = Some(failure("administrator_approval_required", 3));
+    let mut result = read_journal(Path::new(&plan.context.state_dir), &id, Some("lab")).unwrap().result();
+    assert_eq!(result.status, InstallStatus::Configured);
+    let before = tree(&lab.0);
+    observe_service(&job.spec, &job.record, &mut os, &mut result).unwrap();
+    assert!(result.valid_exit());
+    assert_eq!(result.status, InstallStatus::NeedsUser);
+    assert_eq!(result.exit_code, 3);
+    assert!(result.error.is_none());
+    assert!(result.needs_user.iter().any(|n| n.code == "administrator_approval_required"));
+    assert_eq!(tree(&lab.0), before);
+    let mut altered = job.spec.clone();
+    altered.binary_sha256 = "0".repeat(64);
+    private::write(&altered.context(), &serde_json::to_vec(&altered).unwrap()).unwrap();
+    job.record.context_sha256 = altered.sha();
+    job.save().unwrap();
+    let before = tree(&lab.0);
+    assert_eq!(super::super::status(Path::new(&plan.context.state_dir), Some("lab"), &id).unwrap_err().exit_code, 4);
+    assert_eq!(tree(&lab.0), before, "manifest 불일치는 읽기만 거부한다");
+}
+#[test]
+fn service_logon_deny_wins_and_disabled_or_deny_only_groups_cannot_supply_allow() {
+    let allow = vec!["SeServiceLogonRight".to_owned()];
+    let deny = vec!["SeDenyServiceLogonRight".to_owned()];
+    let mut rights = LogonRights::default();
+    rights.observe(&allow, false).unwrap();
+    assert!(rights.grant_required());
+    rights.observe(&allow, true).unwrap();
+    assert!(!rights.grant_required());
+    assert_eq!(rights.observe(&deny, false).unwrap_err().code, "service_logon_denied");
+    let mut rights = LogonRights::default();
+    assert_eq!(rights.observe(&[allow[0].clone(), deny[0].clone()], true).unwrap_err().code, "service_logon_denied");
 }

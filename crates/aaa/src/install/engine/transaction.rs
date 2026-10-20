@@ -286,6 +286,11 @@ fn load(state: &Path, journal: &Journal) -> Result<Manifest> {
     Ok(manifest)
 }
 
+/// 감독자의 읽기 검증도 파일 엔진 정본에서 계획을 얻는다. 별도 승인/권한 입력은 만들지 않는다.
+pub(super) fn installed_plan(state: &Path, journal: &Journal) -> Result<InstallPlan> {
+    Ok(load(state, journal)?.plan)
+}
+
 pub(super) fn observe(state: &Path, journal: Journal) -> Result<InstallResult> {
     let manifest = load(state, &journal)?;
     if journal.phase == Phase::Configured

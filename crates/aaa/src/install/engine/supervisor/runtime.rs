@@ -75,6 +75,7 @@ fn read_spec(invocation: &Invocation) -> Result<Spec> {
     let spec: Spec = serde_json::from_slice(&bytes).map_err(|_| Fault::conflict())?;
     spec.validate()?;
     spec.guard_paths()?;
+    spec.verify_files()?;
     if spec.context() != invocation.context || spec.sha() != invocation.sha {
         return Err(Fault::conflict());
     }
@@ -89,7 +90,7 @@ fn entry(argc: u32, argv: *mut *mut u16) -> Result<()> {
     if service_name.is_null() {
         return Err(Fault::conflict());
     }
-    let (stop, stop_rx) = tokio::sync::watch::channel(false);
+    let (stop, _) = tokio::sync::watch::channel(false);
     let handle = unsafe { RegisterServiceCtrlHandlerExW(service_name, Some(handler), std::ptr::null_mut()) };
     if handle.is_null() {
         return Err(failure("service_controller_unavailable", 1));
@@ -130,8 +131,20 @@ fn entry(argc: u32, argv: *mut *mut u16) -> Result<()> {
     {
         return Err(failure("service_execution_context_mismatch", 4));
     }
-    // SCM은 셸 startup 환경을 로드하지 않는다. 계획에서 검토한 비밀 없는 환경/경로만 복원한다.
+    let environment = native::user_environment()?;
+    if Path::new(&environment["USERPROFILE"]).canonicalize().map_err(Fault::io)?
+        != spec.profile.canonicalize().map_err(Fault::io)?
+    {
+        return Err(Fault::conflict());
+    }
+    // 아래 변경은 이 서비스 process에만 적용한다. 사용자/시스템 환경 설정은 쓰지 않는다.
     unsafe {
+        for (key, _) in std::env::vars_os() {
+            std::env::remove_var(key);
+        }
+        for (key, value) in &environment {
+            std::env::set_var(key, value);
+        }
         std::env::set_var("USERPROFILE", &spec.profile);
         std::env::set_var("HOME", &spec.profile);
         std::env::set_var("AAA_CONFIG_DIR", &spec.config);
@@ -145,6 +158,7 @@ fn entry(argc: u32, argv: *mut *mut u16) -> Result<()> {
             std::env::set_var(key, value);
         }
     }
+    std::env::set_current_dir(&spec.profile).map_err(Fault::io)?;
     let log = service_log(&spec.directory().join("service.log"))?;
     use std::os::windows::io::AsRawHandle;
     if unsafe { SetStdHandle(STD_OUTPUT_HANDLE, log.as_raw_handle()) } == 0
@@ -152,63 +166,14 @@ fn entry(argc: u32, argv: *mut *mut u16) -> Result<()> {
     {
         return Err(failure("service_log_unavailable", 1));
     }
-    let (ready, receiver) = tokio::sync::oneshot::channel();
-    let role = spec.role;
-    let backend = std::thread::Builder::new()
-        .name("aaa-service-role".into())
-        .spawn(move || crate::cli::supervised_role(role, ready, stop_rx))
-        .map_err(Fault::io)?;
-    let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().map_err(Fault::io)?;
-    let prepared = rt.block_on(async { tokio::time::timeout(std::time::Duration::from_secs(30), receiver).await });
-    let prepared = matches!(prepared, Ok(Ok(())));
-    let mut running = false;
-    if prepared && !*control.stop.borrow() {
-        let ready = Ready {
-            schema: 1,
-            context_sha256: spec.sha(),
-            account_sha256: hash(spec.account.as_bytes()),
-            profile_sha256: hash(spec.profile.to_string_lossy().as_bytes()),
-            binary_sha256: spec.binary_sha256.clone(),
-            pid: std::process::id(),
-            session: identity.session,
-            elevated: identity.elevated,
-            boot: aaa_common::util::boot_id(),
-        };
-        running = private::write(
-            &spec.directory().join("ready.json"),
-            &serde_json::to_vec(&ready).map_err(|_| Fault::conflict())?,
-        )
-        .is_ok()
-            && control.state(SERVICE_RUNNING, 0);
-        if !running {
-            let _ = control.stop.send(true);
-        }
-    } else {
-        let _ = control.stop.send(true);
-    }
-    let result = backend.join();
-    // 다음 process의 proof를 지우지 않도록 현재 context/PID를 확인한다.
-    let path = spec.directory().join("ready.json");
-    if private::read(&path, 128 * 1024)
-        .ok()
-        .and_then(|b| serde_json::from_slice::<Ready>(&b).ok())
-        .is_some_and(|proof| proof.pid == std::process::id() && proof.context_sha256 == spec.sha())
-    {
-        std::fs::remove_file(&path).map_err(Fault::io)?;
-        private::sync_parent(&path).map_err(Fault::io)?;
-    }
+    let result =
+        super::runner::run(&spec, identity.session, identity.elevated, identity.created, control.stop.clone(), || {
+            control.state(SERVICE_RUNNING, 0)
+        });
     drop(log);
-    if !prepared {
-        return Err(failure("service_backend_not_ready", 3));
-    }
-    if !running {
-        return Err(failure("service_status_failed", 1));
-    }
-    match result {
-        Ok(Ok(code)) if code == std::process::ExitCode::SUCCESS => Ok(()),
-        _ => Err(failure("service_backend_failed", 1)),
-    }
+    result
 }
+
 fn service_log(path: &Path) -> Result<File> {
     use std::os::windows::fs::OpenOptionsExt;
     match private::new_file(path) {
@@ -244,4 +209,45 @@ pub(super) fn dispatch(context: &Path, sha: &str) -> std::process::ExitCode {
         return std::process::ExitCode::from(3);
     }
     std::process::ExitCode::SUCCESS
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::install::engine::transaction::tests::{Lab, tree};
+    #[test]
+    fn service_context_requires_the_actual_configured_i2_receipt_and_plan() {
+        let lab = Lab::new();
+        let (plan, id) = lab.configured_service();
+        let job = Job::prepare(&plan, &id, InstallRole::Agent, lab.0.clone(), BTreeMap::new()).unwrap();
+        let context = job.spec.context();
+        let invocation = Invocation { context: context.clone(), sha: job.spec.sha() };
+        assert!(read_spec(&invocation).unwrap() == job.spec);
+        let alternative = lab.0.join("alternative");
+        private::directory(&alternative).unwrap();
+        for field in ["account", "binary_sha256", "instance", "config"] {
+            let mut value = serde_json::to_value(&job.spec).unwrap();
+            value[field] = match field {
+                "binary_sha256" => serde_json::json!("0".repeat(64)),
+                "instance" => serde_json::json!("another"),
+                "config" => serde_json::json!(alternative),
+                _ => serde_json::json!("another-account"),
+            };
+            let altered: Spec = serde_json::from_value(value).unwrap();
+            let bytes = serde_json::to_vec(&altered).unwrap();
+            private::write(&context, &bytes).unwrap();
+            let before = tree(&lab.0);
+            assert!(read_spec(&Invocation { context: context.clone(), sha: hash(&bytes) }).is_err(), "{field}");
+            assert_eq!(tree(&lab.0), before, "읽기가 원본을 고치지 않는다");
+        }
+        private::write(&context, &serde_json::to_vec(&job.spec).unwrap()).unwrap();
+        private::write(
+            &job.spec.state.join("install/active.json"),
+            &serde_json::to_vec(&aaa_common::util::new_id()).unwrap(),
+        )
+        .unwrap();
+        let before = tree(&lab.0);
+        assert!(read_spec(&invocation).is_err(), "다른 active job의 서비스를 재실행하지 않는다");
+        assert_eq!(tree(&lab.0), before);
+    }
 }

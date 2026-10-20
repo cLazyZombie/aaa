@@ -72,6 +72,11 @@ impl Lab {
     pub(super) fn request(&self, state: &str, files: Vec<Proposed>) -> Request {
         Request { plan: self.plan(state), files, root: None, directories: Vec::new() }
     }
+    pub(in crate::install::engine) fn uninstall_service_files(&self, plan: &InstallPlan, id: &str) {
+        let mut tx =
+            Transaction::resume(Path::new(&plan.context.state_dir), id, plan.choices.instance.as_deref()).unwrap();
+        tx.uninstall(false).unwrap();
+    }
     pub(in crate::install::engine) fn configured_service(&self) -> (InstallPlan, String) {
         let mut plan = self.plan("state");
         if cfg!(windows) {

@@ -5,7 +5,12 @@ use windows_sys::Win32::{
     Foundation::*,
     Security::{Authentication::Identity::*, Authorization::*, *},
     Storage::FileSystem::DELETE,
-    System::{Services::*, Threading::*},
+    System::{
+        Environment::*,
+        Services::*,
+        SystemServices::{SE_GROUP_ENABLED, SE_GROUP_USE_FOR_DENY_ONLY},
+        Threading::*,
+    },
     UI::Shell::GetUserProfileDirectoryW,
 };
 
@@ -57,6 +62,7 @@ fn error(code: u32) -> Fault {
         | ERROR_ACCOUNT_LOCKED_OUT => failure("service_account_auth_unavailable", 3),
         ERROR_LOGON_TYPE_NOT_GRANTED => failure("service_logon_denied", 3),
         ERROR_SERVICE_EXISTS | ERROR_DUPLICATE_SERVICE_NAME => Fault::conflict(),
+        ERROR_SERVICE_MARKED_FOR_DELETE => failure("service_removal_pending", 3),
         _ => failure("service_operation_failed", 1),
     }
 }
@@ -209,12 +215,21 @@ pub(super) struct Identity {
     pub profile: PathBuf,
     pub session: u32,
     pub elevated: bool,
+    pub created: u64,
 }
 pub(super) fn identity(pid: u32) -> Result<Identity> {
     let process = Kernel(unsafe { OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, pid) });
     if process.0.is_null() {
         return Err(last());
     }
+    let mut created_time: FILETIME = unsafe { std::mem::zeroed() };
+    let mut exit_time: FILETIME = unsafe { std::mem::zeroed() };
+    let mut kernel_time: FILETIME = unsafe { std::mem::zeroed() };
+    let mut user_time: FILETIME = unsafe { std::mem::zeroed() };
+    if unsafe { GetProcessTimes(process.0, &mut created_time, &mut exit_time, &mut kernel_time, &mut user_time) } == 0 {
+        return Err(last());
+    }
+    let created = (u64::from(created_time.dwHighDateTime) << 32) | u64::from(created_time.dwLowDateTime);
     let mut token = std::ptr::null_mut();
     if unsafe { OpenProcessToken(process.0, TOKEN_QUERY, &mut token) } == 0 {
         return Err(last());
@@ -235,8 +250,85 @@ pub(super) fn identity(pid: u32) -> Result<Identity> {
         profile,
         session: unsafe { *session.as_ptr().cast::<u32>() },
         elevated: unsafe { (*elevation.as_ptr().cast::<TOKEN_ELEVATION>()).TokenIsElevated != 0 },
+        created,
     })
 }
+struct Environment(*mut core::ffi::c_void);
+impl Drop for Environment {
+    fn drop(&mut self) {
+        unsafe {
+            DestroyEnvironmentBlock(self.0);
+        }
+    }
+}
+/// SCM/helper의 환경 대신 실제 서비스 token의 사용자 환경을 읽는다. 비밀 이름은 전달하지 않는다.
+pub(super) fn user_environment() -> Result<BTreeMap<String, String>> {
+    let mut token = std::ptr::null_mut();
+    if unsafe { OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY | TOKEN_DUPLICATE, &mut token) } == 0 {
+        return Err(last());
+    }
+    let token = Kernel(token);
+    let mut block = std::ptr::null_mut();
+    if unsafe { CreateEnvironmentBlock(&mut block, token.0, 0) } == 0 {
+        return Err(denied());
+    }
+    let block = Environment(block);
+    let ptr = block.0.cast::<u16>();
+    let mut offset = 0;
+    let mut values = BTreeMap::new();
+    while offset < 1024 * 1024 && unsafe { *ptr.add(offset) } != 0 {
+        let item = unsafe { text(ptr.add(offset)) }?;
+        offset += item.encode_utf16().count() + 1;
+        let Some((key, value)) = item.split_once('=') else {
+            return Err(denied());
+        };
+        let key = key.to_ascii_uppercase();
+        if matches!(
+            key.as_str(),
+            "SYSTEMROOT"
+                | "WINDIR"
+                | "COMSPEC"
+                | "PATHEXT"
+                | "TEMP"
+                | "TMP"
+                | "USERNAME"
+                | "USERDOMAIN"
+                | "USERDNSDOMAIN"
+                | "LOGONSERVER"
+                | "USERPROFILE"
+                | "HOMEDRIVE"
+                | "HOMEPATH"
+                | "APPDATA"
+                | "LOCALAPPDATA"
+                | "PROGRAMDATA"
+                | "PROGRAMFILES"
+                | "PROGRAMFILES(X86)"
+                | "PROGRAMW6432"
+                | "COMMONPROGRAMFILES"
+                | "COMMONPROGRAMFILES(X86)"
+                | "COMMONPROGRAMW6432"
+                | "PATH"
+                | "LANG"
+                | "LC_ALL"
+                | "LC_CTYPE"
+                | "TZ"
+                | "TERM"
+                | "CODEX_HOME"
+                | "CLAUDE_CONFIG_DIR"
+        ) {
+            values.insert(key, value.to_owned());
+        }
+    }
+    if offset >= 1024 * 1024
+        || ["USERPROFILE", "APPDATA", "LOCALAPPDATA", "PATH", "SYSTEMROOT", "TEMP", "TMP"]
+            .iter()
+            .any(|key| values.get(*key).is_none_or(String::is_empty))
+    {
+        return Err(denied());
+    }
+    Ok(values)
+}
+
 fn policy(access: i32) -> Result<Policy> {
     let mut attributes: LSA_OBJECT_ATTRIBUTES = unsafe { std::mem::zeroed() };
     attributes.Length = std::mem::size_of::<LSA_OBJECT_ATTRIBUTES>() as u32;
@@ -282,7 +374,7 @@ fn rights(policy: &Policy, sid: PSID) -> Result<Vec<String>> {
 
 /// 네트워크 logon token으로 요청자의 실제 SID/그룹을 확인한다. Deny를 만나면 LSA를 쓰지 않는다.
 /// Network logon 자체가 정책으로 금지되면 needs_user다. 그 결과를 서비스 logon 통과라 하지 않는다.
-fn logon_right(spec: &Spec, name: &str, password: &Password) -> Result<()> {
+fn account_token(spec: &Spec, name: &str, password: &Password) -> Result<Kernel> {
     let mut token = std::ptr::null_mut();
     let (domain, user) = name.rsplit_once('\\').ok_or_else(denied)?;
     if unsafe {
@@ -304,6 +396,12 @@ fn logon_right(spec: &Spec, name: &str, password: &Password) -> Result<()> {
     if unsafe { sid_text(user_sid) }? != spec.account {
         return Err(denied());
     }
+    Ok(token)
+}
+fn logon_right(spec: &Spec, name: &str, password: &Password) -> Result<()> {
+    let token = account_token(spec, name, password)?;
+    let user = token_information(token.0, TokenUser)?;
+    let user_sid = unsafe { (*user.as_ptr().cast::<TOKEN_USER>()).User.Sid };
     let groups = token_information(token.0, TokenGroups)?;
     let groups = unsafe { &*groups.as_ptr().cast::<TOKEN_GROUPS>() };
     if groups.GroupCount > 4096 {
@@ -311,16 +409,23 @@ fn logon_right(spec: &Spec, name: &str, password: &Password) -> Result<()> {
     }
     let groups = unsafe { std::slice::from_raw_parts(groups.Groups.as_ptr(), groups.GroupCount as usize) };
     let read = policy(POLICY_LOOKUP_NAMES)?;
-    let mut allow = false;
-    for sid in std::iter::once(user_sid).chain(groups.iter().map(|g| g.Sid)) {
-        for right in rights(&read, sid)? {
-            if right == "SeDenyServiceLogonRight" {
-                return Err(failure("service_logon_denied", 3));
-            }
-            allow |= right == "SeServiceLogonRight";
-        }
+    let mut decision = LogonRights::default();
+    decision.observe(&rights(&read, user_sid)?, true)?;
+    for group in groups {
+        let eligible = group.Attributes & (SE_GROUP_ENABLED as u32) != 0
+            && group.Attributes & (SE_GROUP_USE_FOR_DENY_ONLY as u32) == 0;
+        decision.observe(&rights(&read, group.Sid)?, eligible)?;
     }
-    if !allow {
+    // Network token에는 없는 Service logon SID의 Deny도 읽고, 서비스 전체 정책을 우회하지 않는다.
+    let mut service_sid = [0usize; 16];
+    let mut size = std::mem::size_of_val(&service_sid) as u32;
+    if unsafe { CreateWellKnownSid(WinServiceSid, std::ptr::null_mut(), service_sid.as_mut_ptr().cast(), &mut size) }
+        == 0
+    {
+        return Err(last());
+    }
+    decision.observe(&rights(&read, service_sid.as_mut_ptr().cast())?, false)?;
+    if decision.grant_required() {
         let write = policy(POLICY_LOOKUP_NAMES | POLICY_CREATE_ACCOUNT)?;
         let mut value = w("SeServiceLogonRight");
         let right = LSA_UNICODE_STRING {
@@ -376,32 +481,70 @@ fn status(handle: &Service) -> Result<SERVICE_STATUS_PROCESS> {
     }
     Ok(value)
 }
-fn wait_state(handle: &Service, desired: u32) -> Result<SERVICE_STATUS_PROCESS> {
-    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
-    let event = Kernel(unsafe { CreateEventW(std::ptr::null(), 1, 0, std::ptr::null()) });
+// Unsubscribe는 진행 중 callback이 끝날 때까지 기다린다. event보다 먼저 해제한다.
+struct Changes {
+    subscription: PSC_NOTIFICATION_REGISTRATION,
+    _event: Kernel,
+}
+impl Drop for Changes {
+    fn drop(&mut self) {
+        unsafe { UnsubscribeServiceChangeNotifications(self.subscription) };
+    }
+}
+unsafe extern "system" fn changed(_: u32, context: *const core::ffi::c_void) {
+    // callback은 OS 사건을 알리기만 한다. SCM RPC/파일 I/O는 기다리는 thread가 수행한다.
+    unsafe {
+        SetEvent(context as HANDLE);
+    }
+}
+fn changes(handle: &Service) -> Result<Changes> {
+    let event = Kernel(unsafe { CreateEventW(std::ptr::null(), 0, 0, std::ptr::null()) });
     if event.0.is_null() {
         return Err(last());
     }
-    // 조건 기반 OS 대기다. 테스트를 정한 시간 재우거나 시한을 늘리지 않는다.
+    let mut subscription = 0;
+    let code = unsafe {
+        SubscribeServiceChangeNotifications(
+            handle.0,
+            SC_EVENT_STATUS_CHANGE,
+            Some(changed),
+            event.0.cast_const(),
+            &mut subscription,
+        )
+    };
+    if code != ERROR_SUCCESS {
+        return Err(error(code));
+    }
+    Ok(Changes { subscription, _event: event })
+}
+fn wait_state(handle: &Service, desired: u32) -> Result<SERVICE_STATUS_PROCESS> {
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+    // 구독 뒤 조회해 두 호출 사이의 상태 변화를 놓치지 않는다. 고정 간격 polling은 없다.
+    let changes = changes(handle)?;
     loop {
         let value = status(handle)?;
         if value.dwCurrentState == desired {
             return Ok(value);
         }
         if desired == SERVICE_RUNNING && value.dwCurrentState == SERVICE_STOPPED {
-            return Err(
-                if value.dwWin32ExitCode == ERROR_SERVICE_SPECIFIC_ERROR && value.dwServiceSpecificExitCode == 3 {
-                    failure("service_backend_needs_user", 3)
-                } else {
-                    error(value.dwWin32ExitCode)
-                },
-            );
+            return Err(if value.dwWin32ExitCode == ERROR_SERVICE_SPECIFIC_ERROR {
+                match value.dwServiceSpecificExitCode {
+                    3 => failure("service_backend_needs_user", 3),
+                    4 => Fault::conflict(),
+                    _ => failure("service_operation_failed", 1),
+                }
+            } else {
+                error(value.dwWin32ExitCode)
+            });
         }
-        if std::time::Instant::now() >= deadline {
+        let remaining = deadline.saturating_duration_since(std::time::Instant::now());
+        if remaining.is_zero() {
             return Err(failure("service_transition_pending", 3));
         }
-        unsafe {
-            WaitForSingleObject(event.0, 25);
+        match unsafe { WaitForSingleObject(changes._event.0, remaining.as_millis().min(u32::MAX as u128) as u32) } {
+            WAIT_OBJECT_0 => {}
+            WAIT_TIMEOUT => return Err(failure("service_transition_pending", 3)),
+            _ => return Err(last()),
         }
     }
 }
@@ -461,8 +604,8 @@ impl Manager for Scm {
         let value = wait_state(&handle, SERVICE_RUNNING)?;
         Ok(Observation { configuration: configuration(&handle)?, running: true, pid: value.dwProcessId })
     }
-    fn remove(&mut self, spec: &Spec) -> Result<()> {
-        let Some(handle) = open(spec, SERVICE_STOP | SERVICE_QUERY_STATUS | SERVICE_QUERY_CONFIG | DELETE)? else {
+    fn stop(&mut self, spec: &Spec) -> Result<()> {
+        let Some(handle) = open(spec, SERVICE_STOP | SERVICE_QUERY_STATUS | SERVICE_QUERY_CONFIG)? else {
             return Ok(());
         };
         if configuration(&handle)? != Configuration::desired(spec) {
@@ -471,14 +614,26 @@ impl Manager for Scm {
         if status(&handle)?.dwCurrentState != SERVICE_STOPPED {
             let mut value: SERVICE_STATUS = unsafe { std::mem::zeroed() };
             if unsafe { ControlService(handle.0, SERVICE_CONTROL_STOP, &mut value) } == 0 {
-                return Err(last());
+                let code = unsafe { GetLastError() };
+                if code != ERROR_SERVICE_NOT_ACTIVE {
+                    return Err(error(code));
+                }
             }
             wait_state(&handle, SERVICE_STOPPED)?;
+        }
+        Ok(())
+    }
+    fn remove(&mut self, spec: &Spec) -> Result<()> {
+        self.stop(spec)?;
+        let Some(handle) = open(spec, SERVICE_QUERY_CONFIG | DELETE)? else {
+            return Ok(());
+        };
+        if configuration(&handle)? != Configuration::desired(spec) {
+            return Err(Fault::conflict());
         }
         if unsafe { DeleteService(handle.0) } == 0 {
             return Err(last());
         }
-        // handle을 닫아 SCM 삭제가 완료되도록 한다. LSA 권한은 다른 서비스가 쓸 수 있어 제거하지 않는다.
         Ok(())
     }
     fn credentials(&mut self, spec: &Spec, password: &Password) -> Result<()> {
@@ -486,6 +641,8 @@ impl Manager for Scm {
         if configuration(&handle)? != Configuration::desired(spec) {
             return Err(Fault::conflict());
         }
+        let name = account_name(&spec.account)?;
+        let _verified = account_token(spec, &name, password)?;
         if unsafe {
             ChangeServiceConfigW(
                 handle.0,
@@ -496,7 +653,7 @@ impl Manager for Scm {
                 std::ptr::null(),
                 std::ptr::null_mut(),
                 std::ptr::null(),
-                std::ptr::null(),
+                w(&name).as_ptr(),
                 password.0.as_ptr(),
                 std::ptr::null(),
             )
@@ -506,7 +663,7 @@ impl Manager for Scm {
         }
         Ok(())
     }
-    fn process_matches(&mut self, spec: &Spec, pid: u32) -> Result<bool> {
+    fn process(&mut self, spec: &Spec, pid: u32) -> Result<Option<Process>> {
         let identity = identity(pid)?;
         let handle = Kernel(unsafe { OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, pid) });
         if handle.0.is_null() {
@@ -518,9 +675,31 @@ impl Manager for Scm {
             return Err(last());
         }
         let path = PathBuf::from(String::from_utf16(&name[..size as usize]).map_err(|_| Fault::conflict())?);
-        Ok(identity.sid == spec.account
+        Ok((identity.sid == spec.account
             && identity.session == 0
-            && identity.profile.canonicalize().map_err(Fault::io)? == spec.profile.canonicalize().map_err(Fault::io)?
+            && identity.profile.canonicalize().map_err(Fault::io)?
+                == spec.profile.canonicalize().map_err(Fault::io)?
             && path.canonicalize().map_err(Fault::io)? == spec.executable.canonicalize().map_err(Fault::io)?)
+        .then_some(Process { pid, created: identity.created, elevated: identity.elevated }))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn status_change_subscription_reads_and_unsubscribes_from_a_real_windows_service() {
+        let manager = manager(SC_MANAGER_CONNECT).unwrap();
+        // Windows Event Log는 읽기 probe다. 이 owner는 등록/start/stop/정책 변경을 하지 않는다.
+        let handle = Service(unsafe { OpenServiceW(manager.0, w("EventLog").as_ptr(), SERVICE_QUERY_STATUS) });
+        assert!(!handle.0.is_null());
+        let environment = user_environment().unwrap();
+        let identity = identity(std::process::id()).unwrap();
+        assert!(
+            Path::new(&environment["USERPROFILE"]).canonicalize().unwrap() == identity.profile.canonicalize().unwrap()
+        );
+        let current = status(&handle).unwrap();
+        let observed = wait_state(&handle, current.dwCurrentState).unwrap();
+        assert_eq!(observed.dwCurrentState, current.dwCurrentState);
     }
 }
