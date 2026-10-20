@@ -123,7 +123,8 @@ impl Host {
                 return Err(err(ErrorCode::Unavailable, reason));
             }
             for (i, (t, r)) in clean.iter().enumerate() {
-                let restore = log_ids.get(i).map(|id| format!(" 되살리기: `aaa task restore {id}`")).unwrap_or_default();
+                let restore =
+                    log_ids.get(i).map(|id| format!(" 되살리기: `aaa task restore {id}`")).unwrap_or_default();
                 self.inbox_add(
                     project,
                     "task",
@@ -187,7 +188,9 @@ impl Host {
                     );
                     raised.push(p.title.clone());
                 }
-                Ok((Some((_, reason, _)), _)) => tracing::warn!(project, task = %p.title, "상위 task를 올리지 못했다: {reason}"),
+                Ok((Some((_, reason, _)), _)) => {
+                    tracing::warn!(project, task = %p.title, "상위 task를 올리지 못했다: {reason}")
+                }
                 Err(e) => tracing::warn!(project, task = %p.title, "상위 task를 올리지 못했다: {}", e.message),
             }
         }
@@ -271,7 +274,10 @@ mod tests {
         open.status = ThreadStatus::Open;
         assert_eq!(attention(&t, &open, Some("[결정 필요]"), false), None);
         assert_eq!(attention(&t, &rec(Some("merged"), false), None, false), None, "곧 지운다");
-        assert_eq!(attention(&t, &rec(None, false), Some("[완료]"), false).unwrap(), "t-0007가 끝났다. 끝났는지 정한다");
+        assert_eq!(
+            attention(&t, &rec(None, false), Some("[완료]"), false).unwrap(),
+            "t-0007가 끝났다. 끝났는지 정한다"
+        );
         assert_eq!(
             attention(&t, &rec(Some("manual"), true), Some("[착지]"), false).unwrap(),
             "t-0007 끝남: 보고 표지 [착지]"

@@ -20,8 +20,7 @@ use crate::orch::{
 };
 use crate::orch::{
     EvaluationView, EvaluatorView, MenuPick, NoticeView, TaskBoard, TaskConflict, TaskLogEntry, TaskLogFilter, TaskOp,
-    ThreadStartPreview,
-    ThreadSummaryView,
+    ThreadStartPreview, ThreadSummaryView,
 };
 
 use crate::version::Version;
