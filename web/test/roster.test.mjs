@@ -58,6 +58,30 @@ describe("단축키 줄 차례", () => {
     assert.deepEqual(keys, ["thread:p/t-1", "thread:p/t-2", "pane:shell"]);
   });
 
+  it("A4 뒤 종료된 옛 평가자·임무 pane은 기타·단축키에서 빠지고, 살아 있거나 복원할 pane·사용자 기록·thread 줄은 남는다", () => {
+    // 옛 임무도 evaluator 역할이었다. 이름·argv로 사용자 pane을 추측하지 않는다.
+    const ended = Array.from({ length: 18 }, (_, i) => ({ ...pane(`old-${i}`, i % 2 ? "m2" : "m1", "exited", "evaluator"), code: i % 2 }));
+    const kept = [
+      pane("live-evaluator", "m1", "running", "evaluator"),
+      pane("interrupted", "m1", "interrupted", "evaluator"),
+      pane("lost", "m2", "lost", "evaluator"),
+      pane("mission-user", "m1", "exited", null),
+      pane("worker", "m2", "exited", "worker"),
+    ];
+    const linked = pane("thread-pane", "m1", "exited", "evaluator");
+    const threads = [{ ...thread("p", "old-thread", "idle", linked.id), role: "evaluator" }];
+    const panes = [...ended, ...kept, linked];
+    // 옛 정렬 설정이 있어도 되살리지 않는다. 입력 기록은 고치지 않는다.
+    const before = structuredClone(panes);
+    for (const byActivity of [false, true]) {
+      const order = ["m1:old-0", "m2:old-1"];
+      const expected = ["live-evaluator", "interrupted", "mission-user", "lost", "worker"];
+      assert.deepEqual(roster([ma, mb], panes, threads, order, byActivity).panes.map((p) => p.id), expected);
+      assert.deepEqual(rosterRows([ma, mb], panes, threads, order, byActivity).map((r) => r.keys[0]), ["thread:p/old-thread", ...expected.map((id) => `pane:${id}`)]);
+    }
+    assert.deepEqual(panes, before);
+  });
+
   it("자동화가 띄운 thread는 따로 모으지 않고 사람이 띄운 thread와 같은 폴더·같은 rank 차례에 선다(plan t-0475 Q5)", () => {
     const auto = (t, rule) => ({ ...t, automation: rule, automation_title: rule });
     const threads = [

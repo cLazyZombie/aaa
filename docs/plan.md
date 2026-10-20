@@ -4744,8 +4744,8 @@ primary 근거:
     단추 옆 폭에서 줄이 넘치면 `data-lines="more"`로 참고 herdr-web-ui 배치(글 칸 전체 폭, 단추는 밑 줄)로 간다. 같은 textarea라 focus·caret이 그대로다.
 - **참고와 다른 점.**
   - t3code resting은 데스크톱·기존 thread·긴 대화·굴려 접힘에만 쓰고 휴대폰은 따로 접는다(`shouldUseRestingComposerLayout`). 여기는 사용자 요청대로 세 기기 모두 글만 본다.
-  - t3code는 펼친 폭과 비교해 판정해서 단추 옆 폭보다 길고 펼친 폭보다 짧은 글은 한 줄 칸에서 잘린다. 여기는 두 배치 모두 **단추 옆 폭**에서 잰다
-    (펼친 배치에서는 같은 그리기 안에서 글 칸 폭을 잠시 그 폭으로 줄여 잰다). 판정이 배치와 무관해 오가며 튀지 않고 잘리지도 않는다.
+  - t3code는 펼친 폭과 비교해 판정해서 단추 옆 폭보다 길고 펼친 폭보다 짧은 글은 한 줄 칸에서 잘린다. 여기는 처음에 두 배치 모두 **단추 옆 폭**에서
+    쟀으나, 그 사이 글이 펼친 한 줄에 놓이고 밑 줄엔 단추만 남아 §8.348에서 펼친 폭 판정으로 바꿨다(자르지 않고 단추 옆에서 접는다).
   - 높이 한도: 참고 `max-height: 10lh`에 참고 손잡이 한도(`.composer-text.is-sized`의 보이는 높이 절반)를 더했다. 휴대폰 가로(402px)에서 10줄이면
     입력창이 화면 3/4을 덮고 화면 키보드가 오르면 대화가 남지 않는다.
   - 한 줄 배치에서 긴 placeholder(「재연결 중…」)는 말줄임으로 끝난다(t3code resting placeholder `whitespace-nowrap overflow-hidden`). 그렇지 않으면
@@ -6401,8 +6401,71 @@ L4 후속(10-20 00시 사용자 관찰): 멈춤 상태의 후보 예약과 재�
   - §8.329의 「같은 host http 주소(`/#report=…`)는 §8.300 그대로」는 00:4x 지시로 바뀌었다: 웹 E2E `38-chat-report-close`의 앱 보고서 주소는 이제 칩이고, 누르면 보고서 화면, 뒤로가 같은 pane인지 본다(파일 보기·새 창이 아니다). `26-activity-bar`는 패널 단추 다섯과 Home이 「답할 것」, End가 「알림함」인지 본다.
   - m13 `task_attachments_reach_a_remote_agent`의 brief 검사는 새 안내 예시 `![A안](library/a.png)`(thread 자기 library)에 걸려 첨부 경로 `](library/plan-report/`로 좁혔다.
 
+### 8.346 A4 뒤 남은 옛 평가자·임무 종료 pane 숨김(10-21, t-0545)
 
-### 8.346 aaa install I5 Windows 종료 process fixture 인수 분리(10-21, t-0485)
+- **원인.** 옛 임무도 `evaluator` 역할 pane을 사용했다. agent가 세션의 `spec.json`·종료 기록을 복원해 Hello로 host pane 목록을 채우면, A4 뒤 공통 `roster`가 thread에 연결되지 않은 종료 기록을 「기타」로 분류했다.
+- **범위.** 「기타」에서 `role=evaluator`이면서 `state=exited`인 pane만 제외한다. 실행 중·중단·유실 pane, 사용자 종료 기록, 연결된 thread 줄은 유지한다. 같은 `roster`를 쓰는 단축키·명령 팔레트에도 적용한다. 파일·host 기록·보고 사본을 지우지 않아 CLI와 웹 주소 직접 열람은 유지되며, 변환 명령을 따로 실행할 필요가 없다. Front API·DB schema는 바꾸지 않는다.
+- **새 막대 통합.** §8.343 W4와 §8.345의 답할 것·작업·머신·자동화·알림함 다섯 패널을 유지한다. 「답할 것」→「알림함」→「작업」을 오간 뒤에도 같은 숨김 규칙을 쓴다. 종료 여부·역할 외에 이름이나 명령을 보고 옛 특수 pane으로 추측하지 않는다.
+- **검증.** `roster.test.mjs`는 옛 종료 pane 18개 노출을 수정 전 RED로 재현하며 정렬·단축키와 보존할 줄을 함께 본다. 기존 main의 E2E55·56과 번호를 나눠 `57-legacy-special-panes`가 실제 agent의 옛 세션 복원, 새 막대 전환, 18개 숨김과 살아 있는 사용자·평가자 pane, 사용자 종료 기록, 원본 파일 바이트·CLI 읽기·웹 주소 직접 열람 보존을 확인한다. 운영 host에는 닿지 않는다. 준비·종료·출력·DOM 사건으로 끝내며 시간 상한·기대값을 완화하지 않는다. 상세는 [시험](testing.md)의 자동화 A4 절을 따른다.
+
+
+### 8.347 계정 Claude thread의 첫 우회 권한 경고 준비(10-21, t-0551)
+
+- **원인.** §8.339의 계정 격리 홈은 초기 안내 완료만 기록했다. Claude의 초기 안내와 우회 경고는 별개이며, 공식 Claude 2.1.304의 시작·설정 코드에서 `.claude.json`의 `hasCompletedOnboarding`과 `settings.json`의 `skipDangerousModePermissionPrompt`를 각각 확인했다.
+- **범위.** session은 safety/profile을 합친 최종 argv에서 명시적 우회 실행·허용 옵션만 판정한다. `--dangerously-skip-permissions`, `--allow-dangerously-skip-permissions`, 두 가지 `--permission-mode bypassPermissions` 표기일 때만 격리 settings.json에 수락 키를 쓴다. 명시적 우회 허용도 Claude가 같은 경고를 열므로 포함한다. 권한 모드나 다른 안내 수락은 새로 정하지 않는다. 기존 초기 안내·폴더 신뢰 정책은 유지한다.
+- **보존.** 일반 실행은 settings.json을 새로 만들지 않고, 비우회 재개는 이전 자동 수락 키만 제거한다. 격리 홈의 다른 설정은 보존하며 symlink·깨진 JSON은 거부한다. 사용자 홈의 실제 로그인·인증 파일·토큰·키체인·다른 설정은 읽거나 복사하지 않는다. 도입 전 Claude 대화·coordinator의 홈과 인증 전달 경로는 유지한다.
+- **Codex.** 공식 0.163.0 시작·onboarding 소스에는 대응하는 우회 경고 수락 단계가 없어 추가 설정을 만들지 않는다. 로그인·폴더 신뢰·Windows 샌드박스 안내는 별개다. 저장 키와 근거는 [계정](accounts.md#계정-claude-thread의-첫-실행-안내)에 적었다.
+- **검증.** 계정 유닛은 옵션·비우회 파일 미생성·수락 제거·기존 설정 보존·인증 비기록·0600·symlink/JSON 거부를 검사한다. m13은 실제 host·로컬/원격 agent·session·PTY와 가짜 Claude로 새 홈 10개를 시작하여 첫 경고 부재·비우회 수락 없음·가짜 원본 인증/설정 비복사·원본 불변을 확인한다. 수락 준비 누락과 무조건 수락 변형이 각각 RED이며 원본 bytes 복구 뒤 GREEN을 확인했다. 고정 sleep·재시도·실제 제공자 인증 없이 사건으로 끝내며, 착지 기준 ed0a4d7e를 통합한 후보의 전체 ci-local·check-public을 실행한다. 상세는 [시험](testing.md)의 t-0551 절을 따른다.
+
+### 8.348 웹 대화 입력칸 한 줄 높이 수리(10-21, t-0546, 사용자 10-20 「한 줄을 다 채우지 않았는데 두 줄 높이」)
+
+- **원인.** §8.215의 한 줄 판정은 **단추 옆 폭**(상자 폭 − 그림 단추 칸 − 보내기 칸)에서 쟀다. 그 폭보다 길고 펼친 글 칸 폭보다 짧은 글은
+  여러 줄 배치로 가서 펼친 한 줄에 다 들어가고, 밑 줄엔 그림·보내기 단추만 남았다. 데스크톱 상자 818px에서 글 폭 690~780px,
+  iPhone 세로 상자 364px에서 252~340px 구간이다. 사용자 캡처의 글(약 695px)이 이 구간이며 상자는 44px 대신 96px였다.
+- **수리.** `ChatComposer` 한 줄 판정을 배치와 무관하게 **펼친 폭**(상자 안 폭, 여러 줄 배치의 글 칸 폭)에서 잰다(t3code
+  `useComposerMultilinePrompt.ts`와 같은 기준). 한 줄 배치면 같은 그리기 안에서 글 칸을 잠시 그 폭으로 넓혀 잰다. 펼친 한 줄에 드는 글이
+  단추 옆 칸보다 길면 t3code처럼 자르지 않고 단추 옆에서 접는다(높이 66px, 단추는 가운데). 펼친 한 줄을 넘을 때만 여러 줄 배치로 간다.
+  그래서 단추만 있는 밑 줄은 글이 펼친 줄을 채운 뒤에만 생긴다. 보내기 칸 폭(맥락 게이지 유무)은 판정에 들지 않는다.
+- **시험.** 웹 E2E 22 「대화 입력창 높이」에 휴대폰 가로·세로·데스크톱마다 두 폭 사이(가운데) 글·펼친 폭 1.2배 글·다시 사이 글을 더했다.
+  사이 글은 한 줄 표지이고 보내기 단추가 글 칸 밑 줄에 홀로 있지 않으며 두 줄을 넘지 않고 잘리지 않는다. 고치기 전 빌드에서 세 기기 모두
+  표지 more·단추 홀로 밑 줄로 실패했다. 한 글자씩 늘이고 줄인 측정에서 전환 지점이 같아 배치가 튀지 않는다.
+
+### 8.349 배포 빌드 작업 공간을 system temp 밖으로 이동(10-21, t-0547)
+
+- **범위.** `scripts/deploy-build.sh`의 기본 부모 폴더를 호출한 저장소의 `target/deploy-build`로 옮긴다.
+  다른 디스크는 `AAA_DEPLOY_BUILD_ROOT`로 지정하며 상대 경로는 호출 폴더 기준이다. `TMPDIR`와 공용
+  `CARGO_TARGET_DIR`에 기대지 않고 빌드마다 새 detached source·target을 함께 만든다.
+- **보존.** origin/main 조상 검사·한 번 빌드·커밋 salt·판/SHA/provenance 계약은 유지한다. 성공·실패 모두
+  이번 scratch와 worktree 등록만 지우고 이웃 파일은 보존한다. 기존 출력은 덮어쓰지 않으며 실패 중 만든
+  부분 출력은 기존처럼 남긴다. 사용할 수 없는 부모면 temp로 우회하거나 재시도하지 않고 실패한다.
+- **검증.** 기존 스크립트 keeper가 기본/명시 부모·공백·호출 폴더 기준 상대 경로·TMPDIR와 공용 target 무시,
+  npm/Cargo/판 검증 실패의 단일 호출·정리·부분 출력 보존을 확인한다. 원래 temp 선택은 기본 위치 단언에서
+  RED다. 같은 커밋의 temp 밖 실빌드 두 경로에서 판·실제 SHA와 provenance 일치를 확인했으며,
+  착지 기준 f7ff5bb7 통합 뒤 전체 ci-local·check-public을 실행한다. 상세는 [시험](testing.md)의 배포 자동화 절을 따른다.
+- **진단 한계.** temp 밖에서도 build-script SIGKILL과 AMFI 서명 검사 실패를 관측했다. 위치 변경이 macOS
+  서명 검사기의 오류까지 해소한다는 주장은 하지 않는다. syspolicyd 오류24(EMFILE) 근거는 비공개 보고에
+  보존하고 시스템 조치 여부는 별도 사용자 판단으로 남긴다. 이번 착지는 스크립트 변경이며 운영 배포는 없다.
+
+### 8.350 자동화 기억 회수의 동시 편집 보존(10-21, t-0548)
+
+- **문제.** 열린 자동화 thread에 넘긴 기억 폴더를 보고·종료 때 통째로 되가져와 coordinator가 host 원문에 덧붙인 줄을 지웠다. host `automation_prepare`가 agent의 work_files.v1/N-1 Mission 파일 쓰기로 넘기고, 보고 수집·resolve의 `automation_copy_memory`가 목록·조각·hash를 검증한 뒤 host 폴더를 바꾸는 경로다. agent는 바이트 전송만 맡으므로 host에서 수리한다.
+- **판정.** 시작할 때 파일별 SHA-256 공통 판을 Run에 저장한다. 회수할 때 파일별 3-way로 한쪽 변경·추가·삭제를 반영하고, 같은 파일의 다른 변경·파일/폴더 경로 충돌은 host를 유지한다. 서로 합의한 파일만 기준을 갱신하므로 반복 보고와 마지막 회수가 바깥 편집을 뒤늦게 덮지 않는다. DB 재시작 뒤에도 기준을 유지하며 기준 없는 옛 실행은 다른 내용을 보수적으로 충돌 처리한다.
+- **보존.** 양쪽 tree와 충돌 경로를 `<이름>.memory-conflicts/<thread>/<충돌판>/`에 먼저 보존하고 inbox로 알린다. 충돌 파일의 양쪽 hash로 판을 정해 같은 충돌을 반복 복사하지 않는다. 보존 폴더는 전송 대상 밖에 둔다. 줄 병합·충돌 표지로 4KiB 요약이나 history 정리 결과를 추측하지 않는 단순한 방식을 택했다. 기존 8MiB·1000개 전송·합친 tree 상한, 64KiB 초과 안내는 유지한다. host 회수는 기억 폴더별 lock 안에서 최신 DB 판을 읽고 교체 직전 원문을 다시 대조한다.
+- **검증.** 수정 전 실제 host 회귀의 줄 유실을 RED로 확인한다. 파일별 판정 유닛·새/N-1 frame host 시험·기존 CI 자동화 m13의 마지막 회수/4KiB/history/inbox/다음 실행을 확장한다. 전체 ci-local·check-public 뒤 착지 창을 기다린다. 상세 절차는 [시험](testing.md)의 t-0548 절을 따른다.
+
+### 8.351 host 계정 화면: 로그인·기본·메일·인증일·끊김·다시 로그인(10-21, t-0538 관리 GUI W5a)
+
+- **요청.** 확정 계획 t-0456 plan-revised §5 W5에 사용자가 더한 계정 화면(23:5x와 그 뒤 더함): host 로그인(브라우저 인증)·진행·취소, 기본 지정·해제, 계정마다 최초 인증일·최근 인증된 날(날짜만, 비밀은 가림), 끊김·곧 만료 표시와 확인 필요 알림, harness별 목록에 별칭마다 공식 CLI가 로그인 때 알린 메일(과 plan), 「다시 로그인」의 「이 메일로 로그인하세요」와 다른 메일이면 경고하고 바꿀지 묻기. 시작 때 물은 다섯은 추천대로 정했다(10-21, 1A~5A): W5를 셋(W5a 계정 → W5b 머신 등록·웹 공개·보고서 → W5c profile·safety·work root·hook)으로 나눠 따로 착지, 끊김은 실제 쓰임과 알 수 있는 만료로만, 이 기록 전 계정은 저장된 인증에서 읽을 수 있는 메일·plan만 채우고 날짜는 모름, 브라우저 인증은 host Mac에서만(웹에 주소를 보이지 않음), 메일은 조작 기기와 host의 세션 밖 CLI에만. 키 관리자(K1~K3)는 범위 밖이다.
+- **proto(FRONT_API 1.79, 더하기만).** 웹 조작 기기에 `account_login`·`account_login_status`·`account_login_cancel`·`account_default`를 연다(이전엔 host 세션 밖 CLI만). 새 `account_login_confirm{id, switch}`. `AccountView`에 `email`·`plan`·`first_auth_ms`·`last_auth_ms`·`expires_ms`·`health`(ok·expiring·expired·rejected), `AccountLoginView`에 `expect_email`·`email`과 상태 `mismatch`·`kept`, 웹 events 사건 `accounts`. 옛 host는 웹 계정 요청을 거부하고 새 칸을 생략해 웹은 목록만 그린다. `account_import`·`account_remove`(인증 파일 넣고 빼기)는 그대로 host 세션 밖 CLI만이다.
+- **권한.** 로그인·상태·취소·확인·기본 변경은 `device:` 조작 기기나 `local:` 세션 밖 CLI만: pane 안 agent·worker·evaluator·detached와 보기 전용 기기는 Local이어도 거부한다(`account_meta::shows_email`). 같은 판정으로 메일·plan을 싣는다: 보기 전용과 세션 안 호출의 `account_list`에서는 host가 지운다(웹이 숨기는 것이 아니다). 감사 기록은 별칭과 선택(`switch`·`keep`)만 남긴다.
+- **기록.** 금고 파일 모양(`Sealed`, AAD)은 바꾸지 않는다(키 관리 K는 별도). host DB meta `account-meta:<별칭>`에 메일·plan·최초/최근 인증 시각·만료·거부 시각·알린 상태를 둔다. 메일·plan은 Codex `auth.json` id_token 본문(`email`, `https://api.openai.com/auth`의 `chatgpt_plan_type`; 서명은 보지 않는다 — 화면 표시용)과, Claude는 로그인 폴더 `.claude.json`의 `oauthAccount.emailAddress`가 있을 때만 읽는다. `claude setup-token`은 메일을 출력하지 않아(공식 CLI 문자열로 확인) 그 파일이 없으면 메일은 모른다. 만료는 `setup-token`의 「valid for N 단위」만 읽는다. 최근 인증된 날은 로그인 성공이며 Codex 갱신은 날짜를 바꾸지 않는다(갱신 성공은 끊김을 지우고 새 id_token의 메일·plan만 읽는다). host 시작 때 이 기록이 없는 Codex 계정은 저장된 인증에서 메일·plan을 채운다(날짜는 모름).
+- **끊김.** 제공자가 Codex 갱신을 400·401로 거부하면 끊김(갱신 거부). 망·시한·5xx는 끊김이 아니다. 알려진 만료가 지났으면 끊김(만료), 7일 안이면 곧 만료. 제공자에게 따로 묻지 않으므로(사용자 2A) Claude 토큰이 만료 전에 취소되면 쓰기 전까지 모르고, 화면 감지에도 인증 오류 상태가 없다. 상태가 바뀌면 ticker·갱신·로그인 때 알림함 `account` 항목(확인 필요, 별칭·harness만)을 한 번 내고, 정상으로 돌아오면 끝낸다.
+- **다시 로그인.** 같은 별칭 로그인이다. 그 별칭에 메일이 있으면 시작 때 `expect_email`을 싣는다. 로그인한 메일이 다르면(둘 다 알 때만, 대소문자 무시) 새 인증을 금고에 넣지 않고 메모리에 두며 `mismatch`로 기다린다: `switch`면 그 인증을 넣고 최초 인증 시각도 새로(다른 계정이 됐다), 아니면 버리고 `kept`. 5분이 지나거나 취소·host 종료면 버린다. 기다리는 동안 같은 별칭의 새 로그인은 거부하고, 16개 작업 정리에서 빼지 않는다.
+- **웹.** 설정 창 「계정」(구독 사용량 다음): harness마다 별칭·기본·상태 배지, 조작 기기에는 메일·plan, 최초 인증일·최근 인증된 날·만료(이 기기 시간대 날짜), 「다시 로그인」·「기본으로/기본 해제」, 「새 계정 로그인」(별칭·harness). 진행 카드는 「host Mac 브라우저에서 인증을 마치세요」·「이 메일로 로그인하세요」·취소, 다른 메일이면 「새 메일로 바꾸기」·「옛 인증 그대로 두기」. host `accounts` 사건으로 다시 읽는다(시간 polling 없음). CLI는 `aaa account list`에 메일·plan·날짜(UTC)·상태 칸과 `aaa account login-confirm <id> --switch|--keep`.
+- **검증.** host 유닛 `account_meta::tests`(메일·plan·만료 읽기, 상태 판정, 웹 조작 기기 허용·세션 안·보기 전용 거부와 메일 가림, 끊김·곧 만료 알림 한 번과 로그인으로 끝냄, 메일이 바뀌면 최초 시각 새로), m13 `host_relogin_checks_the_email_and_asks_before_switching`(가짜 공식 CLI로 메일·plan·날짜·곧 만료 알림, 같은 메일 다시 로그인, 다른 메일 → 그대로 두기·바꾸기, 감사·알림·로그·프로젝트 파일에 메일 없음)과 `account_credentials_parallel_refresh_and_all_records_are_redacted`의 거부된 갱신 → 끊김·알림 한 번, 웹 유닛 `accountsModel.test.mjs`, 웹 E2E `58-accounts`(데스크톱·휴대폰 390·Reader). 절차는 [시험](testing.md).
+
+
+### 8.352 aaa install I5 Windows 종료 process fixture 인수 분리(10-21, t-0485)
 
 - **실제 실패.** Windows CI의 종료 process owner가 제품 관찰 전에 cmd 자식의 exit code 1로 실패했다.
   CI와 같은 Rust std는 단일 `exit 0` 인수에 따옴표를 더한다. `/C` 이후는 cmd 명령문이므로
