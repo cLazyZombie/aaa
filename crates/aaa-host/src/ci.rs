@@ -26,7 +26,6 @@ const DELIVERY: Delivery = Delivery {
     alert_kinds: &["failed", "stuck"],
     recovered_kind: "fixed",
     passed_after_recovery: Some("passed"),
-    missing_mission: "CI 대상 임무가 없다. 조회는 계속하고 실패 입력은 보존한다",
 };
 #[derive(Default, Serialize, Deserialize)]
 #[serde(default)]
@@ -361,6 +360,7 @@ impl Host {
                     && latest_terminal.as_ref() == Some(&sha)
                     && c.events.iter().any(|e| e == kind || recovered && e == "fixed");
                 s.outbox.push(Notice {
+                    legacy: Default::default(),
                     id: id.clone(),
                     routine: r.name.clone(),
                     skip_reason: if historical || latest_terminal.as_ref() != Some(&sha) {
@@ -374,7 +374,6 @@ impl Host {
                     sha: sha.clone(),
                     owners,
                     text: payload,
-                    mission: r.mission.clone(),
                     wake,
                     record_only: historical || latest_terminal.as_ref() != Some(&sha),
                     append: if red && !historical { track.open.clone() } else { None },
@@ -401,7 +400,7 @@ impl Host {
         Ok(())
     }
     fn ci_drain(&self, p: &str, key: &str, s: &mut State) -> Result<(), ErrorBody> {
-        self.watch_drain(p, key, s, &DELIVERY, |n| self.ci_publish(p, n), |n| self.mission_ci_recovered(p, &n.text))
+        self.watch_drain(p, key, s, &DELIVERY, |n| self.ci_publish(p, n), |_| Ok(()))
     }
     fn ci_publish(&self, p: &str, n: &Notice) -> Result<(), ErrorBody> {
         let v: serde_json::Value = serde_json::from_str(&n.text).map_err(internal)?;

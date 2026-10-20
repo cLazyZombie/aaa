@@ -1,6 +1,234 @@
-//! L5 owner 계약: 실제 host/DB와 기존 agent frame fixture를 사용한다.
-use super::*;
-use crate::automation::{self, Action};
+//! 새 OS 프로세스나 신호 없이 실제 host·DB·frame owner를 검사한다.
+use crate::{
+    Host,
+    automation::{self, Action},
+    orch::ThreadRec,
+};
+use aaa_common::util;
+use sha2::{Digest, Sha256};
+use std::sync::Arc;
+fn sha(s: &str) -> String {
+    hex::encode(Sha256::digest(s.as_bytes()))
+}
+use aaa_common::conn::{FrameRx, spawn_writer};
+use aaa_proto::*;
+use std::sync::Mutex;
+
+struct Lab {
+    h: Arc<Host>,
+    root: std::path::PathBuf,
+}
+impl Drop for Lab {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.root);
+    }
+}
+impl Lab {
+    fn new() -> Self {
+        let root = std::env::temp_dir().join(format!("aaa-automation-{}", util::new_id()));
+        let mut cfg = aaa_config::HostConfig::default();
+        cfg.projects.root = root.join("projects").to_string_lossy().into();
+        cfg.notify.web_push = false;
+        let h = Host::open(cfg, root.join("host")).unwrap();
+        h.project_create("demo", Default::default(), "local:cli").unwrap();
+        Self { h, root }
+    }
+    async fn fake(&self, features: Vec<String>) -> Fake {
+        self.fake_on("m", "mac-a", features).await
+    }
+    async fn fake_on(&self, mid: &str, name: &str, mut features: Vec<String>) -> Fake {
+        let machine = mid.to_string();
+        features.push("host_profiles.v1".into());
+        let (a, b) = tokio::io::duplex(2 << 20);
+        let (ar, aw) = tokio::io::split(a);
+        drop(ar);
+        let tx = spawn_writer(aw, MAX_FRAME);
+        let conn = crate::AgentConn::new(tx, 1);
+        let requests = Arc::new(Mutex::new(vec![]));
+        let log = requests.clone();
+        let h = self.h.clone();
+        let pending = conn.pending.clone();
+        let screen = Arc::new(Mutex::new(
+            std::fs::read_to_string(format!(
+                "{}/tests/fixtures/prompt_box/claude-empty.ansi",
+                env!("CARGO_MANIFEST_DIR")
+            ))
+            .unwrap(),
+        ));
+        let inbox_names = Arc::new(Mutex::new(Vec::<String>::new()));
+        let seen_names = inbox_names.clone();
+        let shown = screen.clone();
+        let prepared_root = self.root.join("prepared");
+        let handle = tokio::spawn(async move {
+            let mut rx = FrameRx::new(b, MAX_FRAME);
+            let mut spawns = 0;
+            while let Ok(msg) = rx.control::<LinkMsg>().await {
+                let LinkMsg::Req { id, body, .. } = msg else { continue };
+                log.lock().unwrap().push(body.clone());
+                let answer = match body {
+                    AgentRequest::MissionInboxStatus { .. } | AgentRequest::WorkFileInboxStatus { .. } => {
+                        let names = seen_names.lock().unwrap().clone();
+                        AgentResponse::MissionInbox { pending: names.len() as u32, names }
+                    }
+                    AgentRequest::ThreadPrepare(p) => {
+                        let cwd = prepared_root.join(&p.thread);
+                        let work = cwd.join(".aaa").join(format!("{}-{}", p.project, p.thread));
+                        std::fs::create_dir_all(&work).unwrap();
+                        AgentResponse::ThreadReady(ThreadReady {
+                            cwd: cwd.to_string_lossy().into(),
+                            work_dir: work.to_string_lossy().into(),
+                            branch: None,
+                            base: None,
+                            launch: Launch {
+                                profile: p.profile,
+                                harness: p.resolved_profile.map(|r| r.harness).unwrap_or_else(|| "claude".into()),
+                                argv: vec!["fake".into()],
+                                env: vec![],
+                                resume_argv: vec!["fake-resume".into()],
+                                session_key: None,
+                            },
+                        })
+                    }
+                    AgentRequest::MissionStateList { work_dir } | AgentRequest::WorkFileList { work_dir } => {
+                        let mut files = vec![];
+                        for path in ["state.md", "processed.txt", "memory/memory.md"] {
+                            if let Ok(bytes) = std::fs::read(std::path::Path::new(&work_dir).join(path)) {
+                                files.push(LibFile {
+                                    path: path.into(),
+                                    size: bytes.len() as u64,
+                                    sha256: hex::encode(Sha256::digest(&bytes)),
+                                });
+                            }
+                        }
+                        AgentResponse::MissionFiles { files }
+                    }
+                    AgentRequest::MissionStateRead { work_dir, path, offset }
+                    | AgentRequest::WorkFileRead { work_dir, path, offset } => {
+                        let bytes = std::fs::read(std::path::Path::new(&work_dir).join(path)).unwrap();
+                        AgentResponse::FileChunk { data: B64(bytes[offset as usize..].to_vec()), eof: true }
+                    }
+                    AgentRequest::MissionStateWrite { work_dir, path, data, .. }
+                    | AgentRequest::WorkFileWriteChunk { work_dir, path, data, .. } => {
+                        let dest = std::path::Path::new(&work_dir).join(path);
+                        std::fs::create_dir_all(dest.parent().unwrap()).unwrap();
+                        std::fs::write(dest, data.0).unwrap();
+                        AgentResponse::Done
+                    }
+                    AgentRequest::Screen { session } => {
+                        let ansi = shown.lock().unwrap().clone();
+                        AgentResponse::Screen(ScreenText {
+                            session,
+                            cols: 120,
+                            rows: 32,
+                            lines: ansi.lines().map(str::to_string).collect(),
+                            cursor_row: 0,
+                            cursor_col: 0,
+                            ansi,
+                        })
+                    }
+                    AgentRequest::Input { session, data } => {
+                        if data.0 == b"\r" || data.0 == b"\n" {
+                            h.on_harness(&machine,serde_json::from_value(serde_json::json!({"session":session,"harness":"claude","kind":"working","at_ms":util::now_ms()})).unwrap());
+                        } else {
+                            let mut s = shown.lock().unwrap();
+                            *s = format!("{}\n{}", String::from_utf8_lossy(&data.0), *s);
+                        }
+                        AgentResponse::Done
+                    }
+                    AgentRequest::ThreadRebrief { brief, mut launch, profile, resolved_profile, .. } => {
+                        assert!(brief.contains("적용 판"));
+                        if let Some(profile) = profile {
+                            launch.profile = profile;
+                        }
+                        if let Some(profile) = resolved_profile {
+                            launch.harness = profile.harness;
+                        }
+                        AgentResponse::Relaunch(launch)
+                    }
+                    AgentRequest::ReportCollect { .. } => AgentResponse::Report(ReportSnapshot {
+                        hash: sha(""),
+                        report: B64(vec![]),
+                        files: vec![],
+                        skipped: vec![],
+                    }),
+                    AgentRequest::RunCommand { .. } => AgentResponse::CommandRan(CommandRan {
+                        exit_code: Some(0),
+                        timed_out: false,
+                        output: "같은 결과".into(),
+                        truncated: false,
+                    }),
+                    AgentRequest::Spawn(spec) => {
+                        spawns += 1;
+                        let mut s = info(&if machine == "m" {
+                            format!("new{spawns}")
+                        } else {
+                            format!("{machine}-new{spawns}")
+                        });
+                        s.role = spec.role;
+                        s.argv = spec.argv;
+                        AgentResponse::Session(s)
+                    }
+                    _ => AgentResponse::Done,
+                };
+                if let Some(tx) = pending.lock().unwrap().remove(&id) {
+                    let _ = tx.send(Outcome::Ok(answer));
+                }
+            }
+        });
+        self.h.agent_connected(
+            &AgentHello {
+                proto: if features.iter().any(|f| f == "work_files.v1") {
+                    AGENT_LINK
+                } else {
+                    Version { major: 1, minor: 9 }
+                },
+                machine_id: mid.into(),
+                machine_name: name.into(),
+                boot_id: "boot".into(),
+                os: "test".into(),
+                arch: "test".into(),
+                software: "test".into(),
+                features,
+                dev_mode: true,
+                selfcheck: None,
+                sessions: vec![],
+                harness: vec![],
+            },
+            mid == "m",
+            conn,
+        );
+        Fake { requests, _screen: screen, handle }
+    }
+}
+struct Fake {
+    requests: Arc<Mutex<Vec<AgentRequest>>>,
+    _screen: Arc<Mutex<String>>,
+    handle: tokio::task::JoinHandle<()>,
+}
+impl Drop for Fake {
+    fn drop(&mut self) {
+        self.handle.abort();
+    }
+}
+fn info(id: &str) -> SessionInfo {
+    SessionInfo {
+        id: id.into(),
+        name: "감시".into(),
+        argv: vec!["fake".into()],
+        cwd: None,
+        pid: None,
+        started_at_ms: 0,
+        boot_id: "boot".into(),
+        cols: 120,
+        rows: 32,
+        state: SessionState::Running,
+        role: Some(Role::Worker),
+        label: None,
+        harness: Some("claude".into()),
+    }
+}
+
+// L5 owner 계약: 실제 host/DB와 기존 agent frame fixture를 사용한다.
 
 fn rule(l: &Lab, extra: &str) -> crate::routine::Routine {
     let dir = l.h.project_dir("demo").unwrap();
@@ -99,7 +327,6 @@ async fn start_waits_for_approval_and_holds_then_creates_each_occurrence_once() 
     assert_eq!(automatic[0].machine_id, "b");
     assert_eq!(automatic[0].role, Role::Worker);
     assert_eq!(automatic[0].started_by.as_deref(), Some("routine:check"));
-    assert!(automatic[0].mission.is_none());
     assert!(
         std::fs::read_to_string(
             l.h.project_dir("demo").unwrap().join("threads").join(format!("{}.task.md", automatic[0].id))
@@ -449,4 +676,55 @@ async fn start_reports_are_optional_capped_snapshots_of_source_threads() {
     assert_eq!(second["reports"].as_object().unwrap().len(), 1);
     std::fs::write(root.join("threads/t-0099.md"), "changed").unwrap();
     assert!(second["reports"]["t-0099"].as_str().unwrap().bytes().all(|b| b == b'x'));
+}
+
+#[tokio::test]
+async fn previous_agent_keeps_input_and_memory_transfer_with_legacy_file_frames() {
+    let l = auto_lab();
+    let peer = l.fake(vec!["mission.v1".into()]).await;
+    let rule = rule(&l, "reuse='open'\nmemory=true\nclose_idle='30m'");
+    let Action::Start(a) = &rule.action else { panic!() };
+    let mut rec = seed(&l, "m", &[]);
+    let work = l.root.join("work/.aaa/demo-old");
+    std::fs::create_dir_all(&work).unwrap();
+    let memory = l.h.project_dir("demo").unwrap().join("automations/check.memory");
+    std::fs::create_dir_all(&memory).unwrap();
+    std::fs::write(memory.join("memory.md"), "이전 판단\n").unwrap();
+    rec =
+        l.h.update_rec("demo", &rec.id, |r| {
+            r.automation = Some("check".into());
+            r.work_dir = Some(work.to_string_lossy().into());
+            let mut run = crate::automation_thread::Run::new(a, util::now_ms());
+            run.first_input = Some(("old-input".into(), "CI 자료".into()));
+            r.automation_run = Some(run);
+        })
+        .unwrap();
+    l.h.automation_prepare(&rec).await.unwrap();
+    assert_eq!(std::fs::read_to_string(work.join("memory/memory.md")).unwrap(), "이전 판단\n");
+    // unchunked input write is part of the old link too.
+    assert!(
+        peer.requests
+            .lock()
+            .unwrap()
+            .iter()
+            .any(|q| matches!(q,AgentRequest::WorkFileWrite{path,..} if path=="inbox/old-input.json"))
+    );
+    std::fs::write(work.join("memory/memory.md"), "갱신 판단\n").unwrap();
+    l.h.automation_copy_memory(&l.h.load("demo", &rec.id).unwrap(), false).await.unwrap();
+    assert_eq!(std::fs::read_to_string(memory.join("memory.md")).unwrap(), "갱신 판단\n");
+    l.h.automation_close_pass("demo").await;
+    let log = peer.requests.lock().unwrap();
+    assert!(log.iter().any(|q| matches!(q, AgentRequest::MissionStateWrite { .. })));
+    assert!(log.iter().any(|q| matches!(q, AgentRequest::MissionStateRead { .. })));
+    assert!(log.iter().any(|q| matches!(q, AgentRequest::MissionInboxStatus { .. })));
+    assert!(
+        !log.iter().any(|q| matches!(
+            q,
+            AgentRequest::WorkFileRead { .. }
+                | AgentRequest::WorkFileList { .. }
+                | AgentRequest::WorkFileWriteChunk { .. }
+                | AgentRequest::WorkFileInboxStatus { .. }
+        )),
+        "1.9 agent에 새 태그를 보냈다"
+    );
 }

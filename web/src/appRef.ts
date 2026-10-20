@@ -1,4 +1,4 @@
-// 앱 안 참조(plan §8.324): coordinator가 채팅·post 제목에 쓰는 `aaa:question/<thread>`(그 thread의 질문 카드)와
+// 앱 안 참조(plan §8.329): coordinator가 채팅·post 제목에 쓰는 `aaa:question/<thread>`(그 thread의 질문 카드)와
 // `aaa:report/<이름>`(보고서 패널의 그 보고서). 웹 대화는 이것을 누르면 앱 안에서 여는 칩으로 그리고, 터미널에서는 글 그대로 읽힌다.
 // 대상 글자는 host `notify::app_ref`와 같다(영문·숫자·`-`·`_`·`.`). 글 속에서는 앞이 낱말 글자가 아니어야 하고, 꼬리의 `.`는
 // 문장 끝으로 본다(「…aaa:report/demo.」). 한국어 조사(「aaa:question/t-0001에」)는 대상 글자가 아니라 저절로 끊긴다.

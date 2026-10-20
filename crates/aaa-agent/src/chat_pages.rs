@@ -146,6 +146,8 @@ impl<'de> serde::de::Visitor<'de> for Select<'_> {
                 matches!(
                     key.as_str(),
                     "type"
+                        // harness 명령의 `system/local_command`·`informational`(plan §8.323)
+                        | "subtype"
                         | "message"
                         | "content"
                         | "role"

@@ -1,4 +1,4 @@
-// 앱 안 참조(src/appRef.ts, plan §8.324): coordinator가 쓰는 `aaa:question/<thread>`·`aaa:report/<이름>`을 글에서 골라 칩으로
+// 앱 안 참조(src/appRef.ts, plan §8.329): coordinator가 쓰는 `aaa:question/<thread>`·`aaa:report/<이름>`을 글에서 골라 칩으로
 // 그린다. 대상 글자는 host `notify::app_ref`와 같고, 문장 끝 점·조사·괄호는 참조가 아니다.
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";

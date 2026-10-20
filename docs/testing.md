@@ -2,6 +2,24 @@
 
 새 기능을 만드는 thread가 따르는 짧은 규칙이다. 근거는 참고 넷(herdr 0.9.5·herdr-projects 0.2.35·herdr-web-ui `aa624cb`·t3code `4b1024da`)과 이 저장소에서 실제로 난 간헐 실패다. 전략과 도구 목록은 [plan §13](plan.md#13-테스트-전략과-직접-만들-e2e-도구)에 있다.
 
+## host 로그인·기본 계정(t-0510)
+
+`cargo test -p aaa --test m13 accounts::`는 실제 인증을 읽지 않고 가짜 공식 CLI·토큰·갱신 서버만 쓴다.
+기존 keeper가 로컬/원격 네 Codex 작업의 기본 계정 전달·동시 회전·기본 해제 뒤 pinned resume와 모든 기록 비노출을 확인한다.
+`host_login_defaults_pin_threads_and_coordinators_without_exposing_credentials`는 공식 로그인 argv·격리 홈·원본 출력 차단,
+임시 인증 정리, 새 worker/자동화 평가/원격 작업의 기본 선택, 기존 로컬 작업 유지, 명시 계정 우선, 깨진 기본 거부,
+coordinator의 host 재시작 뒤 refresh·재부팅 복원·pane 재개와 같은 기록 홈을 확인한다.
+동시 coordinator pane 재개는 가짜 CLI 버전 확인을 socket에서 붙잡아 두고 두 번째 재개가 기동 전에 거부되는지 본다.
+인증 worker의 pane 재개는 저장한 thread launch·identity를 이어 쓰고, 실행 중 thread restart가 같은 홈을 다시 쓰지 않는지 본다.
+로그인 실패·취소·host 정상 종료는 SIGHUP 무시 자식·PTY를 가진 자손을 포함해 종료와 폴더 정리를 기다린다. 가짜 자식 안에서 계정 관리 명령을
+실행해 aaa 세션에서는 로그인·기본 변경·삭제가 거부되는지도 확인한다.
+
+완료는 socket gate·CLI 상태·세션 종료 사건으로 판정한다. token은 해시만 비교하고 마지막에 DB/WAL·journal·
+상태 폴더·로그의 원문/8바이트 조각/인코딩 변형을 검사한다. 원래 코드에서 이 keeper는 로컬 profile의 공식 인증 env가
+host 실행 기록에 평문으로 저장되는 경로를 잡았다. host가 실행 환경을 저장하기 전에 가림 규칙을 등록해야 한다.
+기본 선택 제거·로그인 원본 출력 노출·coordinator 인증 없이 재개·준비 중 인증 참조 허용 변형은 각각 이 keeper를 실패시켜야 한다.
+실제 host 브라우저 인증은 배포 뒤 사용자가 확인하며 이 가짜 시험이 대신 보증하지 않는다.
+
 ## host·agent 재시작과 상태 복원(t-0491)
 
 `cargo test -p aaa-host --lib transitions::tests::hello_replay_does_not_publish_idle_between_panes -- --exact`
@@ -22,6 +40,28 @@ session 재연결에 Esc를 넣는 변형은 `local-back: inputs` 단언에서 �
 대신 검증하지 않는다. 턴이 중단됐다는 진단은 화면 관측과 rollout의 후속 실행·`turn_aborted`·턴 경계를 함께 대조한다.
 끝 20줄의 `esc to interrupt` 부재나 짧은 화면 무변화만으로 중단을 확정하지 않는다. 긴 추론 요약이 그 줄을 대신하는
 실측 화면에서도 도구 실행은 이어졌다. 연결 직후 `no agent`는 상태 복원이 끝났는지도 먼저 확인한다.
+
+## agent 재연결 중 상태 전달(t-0508)
+
+`cargo test -p aaa-agent --lib link::post_tests::harness_changes_while_waiting_for_welcome_reach_the_host -- --exact`
+는 실제 link 세션의 Hello를 받은 뒤 Welcome을 보류한다. 그 사이 기억한 Idle이 연결 뒤 전달되어야 한다.
+Hello를 읽는 host에는 바뀐 사건만, 옛 host에는 최신 기억 전체를 보내며 Ping/Pong으로 앞선 전달의 끝을 확인한다.
+연결 뒤 같은 밀리초의 새 Working도 뒤에 전달한다. `harness_hello.v1`이면 변경분을 생략하는 원래 결함을
+되심으면 Idle 누락 단언에서 실패해야 한다. 새 production 시험 주입점은 없다.
+
+기존 `cargo test -p aaa --test e2e stale_working_left_by_hooks_turns_idle_from_the_screen -- --exact`
+는 재시작한 실제 agent의 연결 하나만 실험실 UDS로 중계한다. Hello의 옛 Working을 확인하고, 실제 감지기가
+`harness.json`에 새 Idle을 적을 때까지 Welcome을 보류한 뒤 연다. host의 새 Idle 사건과 파일 기억을 모두 검사한다.
+시간 상한·감지 간격은 그대로다. 원래 제품과 변경분 전송을 제거한 변형은 같은 host Idle 대기에서 실패해야 한다.
+전송 계약의 세부 표는 link 시험이 맡고, 이 E2E는 화면 감지·저장·프로세스 재시작 경계를 맡는다.
+
+`link::post_tests::live_hook_waits_for_the_replay_to_finish`는 작은 실제 duplex 전송 버퍼와 여러 pane의
+기억 fixture로 replay를 멈춘 동안 실제 `prompt_submit` 전달을 진행한다. 재생 뒤 live hook이 빠짐없이 오고,
+없는 세션의 실제 Screen 요청도 NotFound 응답을 받아야 한다.
+상대가 Ping 뒤 write half만 닫으면 읽기 half가 남아도 세션이 끝나야 한다. 잠금 제거·replay와 reader 직렬화 변형은
+각각 live 누락·EOF 대기에서 실패한다. 디스크 저장을 이 시험에서 반복하지 않는다.
+`tests::pending_host_send_lets_go_when_the_connection_changes`는 옛 bounded 큐를 가득 둔 채 연결을 바꿔
+옛 전송 대기가 끝나고 새 전송이 가는지 본다. 연결 변경 시 취소를 빼면 옛 전송 대기에서 실패한다.
 
 ## 원칙
 
@@ -247,9 +287,9 @@ web/e2e/specs/NN-기능.mjs  기능별 단계(01-http-pwa … 19-turn-alerts). e
 - 신호 시험 금지 작업에서는 workspace 전체 test·기존 lab 기반 m13·웹 E2E를 실행하지 않는다(그 실험실의 정리가 신호를 쓴다).
   fmt·전체 target build/clippy·deps·위 경계 시험·공개 검사는 실행하고, 제한한 검증 범위를 보고서에 적는다.
 
-## 특수 임무 시험(2단계, §8.205)
+## 제거된 특수 기능
 
-`cargo test -p aaa-host -p aaa-agent mission`의 host 시험은 OS 프로세스나 신호를 새로 쓰지 않는다. agent의 Git 권한 keeper는 자기 임시 저장소의 Git 자식 명령만 실행하며 신호·sleep은 쓰지 않는다. 실제 host·DB·frame owner에 가짜 agent를 연결해 승인/적용 사본, 범위·debounce·예산, Kill 전 durable 표지·끝남 사건 뒤 새 대화, 막힘/끝남, mission post·쌍 한도, 무한대/철수 제안, 기존 사용량 값에 따른 입력/cursor 보존과 reset 뒤 재개, 옛 상대 무송신을 본다. agent에서는 상태 파일의 처리 셈·조각 이동/hash와 Claude SessionStart 포인터를 본다. 재부팅 중 pause 보존·reset 후보 profile 일치, 같은 repo 경로의 다른 머신 승인, DB 저장 실패 시 routine hash/입력 원자성과 reset·깨움 무전송도 검사한다. 기존 m13의 evaluator_flow·routines·reboot_resumes_threads와 웹 12의 「특수 임무」 단계는 같은 공식 전체 gate에 남긴다. 새로운 실제 Kill 시험은 만들지 않는다.
+임무 실행·reset·평가자·특수 패널 전용 시험은 A4에서 제품 계약과 함께 제거했다. 파일 전송과 A1/A2 keeper는 아래 「자동화 A4」의 owner로 옮겼다.
 
 ## Codex 신뢰·메시지 받음 회귀(§8.206)
 
@@ -344,24 +384,9 @@ Ctrl+Enter는 agent가 작업 중일 때만 steering하고 줄바꿈을 넣지 �
 
 기존 E2E 11의 「그림 붙여 넣기·끌어 놓기」가 소유한다. Ctrl+V는 어느 OS에서나 브라우저 붙여넣기 몫이다(그림 읽기는 사용자 결정으로 되돌렸다). 실제 host·agent와 raw PTY에서 Mac Chrome·WebKit·Windows·iPad·iPhone의 Ctrl+V(누름·꾹 누름)가 clipboard를 읽지 않고, 뒤따르는 표준 글 paste가 `^V` 없이 PTY에 닿으며(같은 연결 순서가 「보내지 않았다」의 울타리), 그림 paste는 이번 경로·bytes로 닿는지 본다. 페이지의 Clipboard API만 읽기 수를 세는 가짜여서 사람의 clipboard나 OS 권한 설정에 닿지 않는다. `--spec 11 --grep '그림 붙여 넣기'`로 좁게 돌린다.
 
-## 임무 입력 안내와 조회 권한(§8.246)
+## 옛 임무 입력 안내·권한 시험
 
-기존 host `approved_start_attaches_mission_before_preparing_special_brief`, agent `mission_launch_scopes_permissions_for_both_harnesses`·`mission_settings_do_not_write_through_links`, proto `fill_brief_puts_the_machine_paths`가 입력이 없는 첫 prepare/rebrief의 inbox·자기 임무 문맥·실제 머신 경로로 채운 brief·정확한 목록 및 조회 규칙을 검사한다. 일반 thread에는 임무 권한을 남기지 않고, symlink inbox로 폴더 밖에 쓰지 않으며, 넓은 ls/find/aaa 허용을 넣지 않는다. 새 신호 시험·고정 sleep·production 시험 seam은 없다. `cargo test -p aaa-host -p aaa-agent mission`과 `cargo test -p aaa-proto fill_brief_puts_the_machine_paths` 뒤 공식 전체 gate를 실행한다.
-
-
-## 임무 빈 입력 우선과 자기 worktree Git 읽기(§8.251)
-
-- 기존 host 승인/brief keeper는 임무 본문 뒤에도 입력 우선 규칙이 와서 빈 입력일 때 즉시 턴을 끝내고,
-  초기화·참고 이력 조사·polling을 하지 않는 계약을 본다. 실제 모델의 지시 준수는 배포 뒤 운영 관찰로 확인한다.
-- 기존 agent launch keeper는 자기 worktree에 고정된 log/show/status 세 규칙과 일반 thread에 권한이 남지 않음을 본다.
-  proto keeper는 brief와 규칙의 같은 경로 quoting·옵션 종료 표지·잘못된 경로의 무허용을 확인한다.
-- agent `mission_git_reads_keep_option_and_index_boundaries`는 실제 Git과 공백·따옴표 경로에서
-  commit diff·blob·status 읽기를 실행한다. fsmonitor·textconv callback을 설정해 실행되지 않고 index 바이트도
-  그대로인지 본다. log/show 뒤 `--output`을 붙여도 쓰지 못해야 한다. 옵션 종료 표지를 제거한 변형이 이 쓰기 경계에서
-  실패한 뒤 원본으로 복원됐다. 소유한 임시 폴더만 쓰며 신호·고정 sleep·production 시험 seam은 없다.
-- 격리한 실제 Claude CLI(default permission mode)는 로컬 합성 provider가 돌려준 Bash 도구 호출을 처리한다.
-  인증·운영 설정을 사용하지 않고, 다른 허용 자료 폴더로 cwd가 바뀐 뒤 옛 cd+git의 trust 거절과 새 git -C 세 읽기의
-  무승인 성공을 구분한다. 이것은 권한 엔진 검증이며 실제 모델의 빈 입력 대기 판단을 대신하지 않는다.
+임무의 전용 입력 안내·추가 허용 목록·빈 입력 실행 순서는 A4에서 실행 코드와 함께 제거했다. 일반 파일 전송의 경로·hash·symlink와 구 Agent link 호환은 아래 A4 owner를 따른다. 과거 권한 실험은 plan §8.246·§8.251의 이력이다.
 
 ## resolve 뒤 종료된 pane 제거(§8.254)
 
@@ -370,7 +395,7 @@ Ctrl+Enter는 agent가 작업 중일 때만 steering하고 줄바꿈을 넣지 �
 
 ## 삭제된 TUI의 접속 거절
 
-`cargo test -p aaa --test tui_removed`는 host 없는 로컬 `attach`·`tui`·`evaluator open`이 삭제 안내와 실패 코드로 끝나는지, 실제 host socket이 옛 `tui`·`tui@…` hello를 거절하고 CLI 상태 조회를 계속 받는지 본다. 웹 E2E 01의 「옛 TUI WebSocket 거절·웹 API 유지」는 인증한 브라우저에서 옛 `/api/v1/front`에 접속해 분명한 Reject frame을 받고 일반 웹 API가 정상인지 본다. 웹 터미널·Ctrl+Enter·입출력 회귀는 기존 웹 E2E와 host·CLI 시험이 계속 맡는다.
+`cargo test -p aaa --test tui_removed`는 host 없는 로컬 `attach`·`tui`가 TUI 삭제 안내와 실패 코드로 끝나는지, 실제 host socket이 옛 `tui`·`tui@…` hello를 거절하고 CLI 상태 조회를 계속 받는지 본다. 폐지된 `mission`·`evaluator`·`evaluation`은 접속 전에 자동화 변환 안내로 끝나는지 같은 owner가 검사한다. 웹 E2E 01의 「옛 TUI WebSocket 거절·웹 API 유지」는 인증한 브라우저에서 옛 `/api/v1/front`에 접속해 분명한 Reject frame을 받고 일반 웹 API가 정상인지 본다. 웹 터미널·Ctrl+Enter·입출력 회귀는 기존 웹 E2E와 host·CLI 시험이 계속 맡는다.
 
 TUI PTY·native clipboard·vendored crossterm 검사는 코드와 함께 제거했다. 목록과 보존 tag `tui-last`는 [삭제 기록](removed-tui.md)에 있다.
 
@@ -634,37 +659,8 @@ L2 결함 검증은 이전 root 가져오기 생략, 재시작 전 applied 변�
 
 ## 순수 TOML·공통 자동화(L4)
 
-- host automation keeper는 옛/새 형식의 같은 조건·동작·명령 승인 값, 동명 양쪽 차단, 잘못된 키/둘 이상의 조건·글 칸, Unicode 위치 오류, 최종/중간 symlink 거부를 확인한다. 스키마는 Rust 생성값과 고정 산출물을 비교한다.
-- 변환은 긴 글·원본 보존·임무 조건 분리·동등성·이름 충돌 전체 무변경·재실행 무음을 확인한다. 실제 host 변환은 옛 mission cursor를 새 조건에 넘기고 변환 뒤 사건을 한 번 받는지 본다. 예산/간격/usage keeper와 실제 DB 재오픈은 pending·하루 횟수 보존을 검사한다. SQLite 저장 실패는 source hash/cursor나 통지 표식만 먼저 전진시키지 않아야 한다.
-- 기존 routine·PR·CI/Git·임무 m13을 유지한다. source에서 공통 큐로 인계한 뒤 실제 action pass의 자료 보존·한 번 전달을 관찰한다. CI 회복이 지연된 실패 대기를 취소하는 회귀를 포함한다. 웹 E2E34는 CLI 변환→실제 목록 출처 변경·새 파일 enabled만 편집·Reader의 변환 차단도 확인한다.
-- 운영 상한 안내 회귀는 실제 mission_tick→12/12 안내→done→논리90/180/270초 tick→완료 기록 정리→DB 재오픈을 거쳐 같은 날 무안내를 확인한다. 다음 날 예산 초기화 때 무안내, 다시 상한 도달 때 한 번, 구판 완료 항목 이행도 검사한다. 임무가 아닌 helper 호출만으로 반복 결함을 검사하지 않는다.
-- 결함 심기는 당일 표식 제거와 알림보다 표식 먼저 쓰기를 독립 적용해 각각 done 뒤 1→2와 DB 실패 확정 단언 RED를 확인하고 원본 bytes/mtime 복구 뒤 PASS한다. 다른 변형도 승인 정규화·동명 차단·공통 상한·변환 인계 경계에서 기존 keeper가 실제 실패해야 한다. 원래 실패 증거를 보존하고 최종 ci-local·check-public은 복구 뒤 수행한다.
-
-
-### L4 기본 제한 없음(사용자23:3x)
-
-- 생략/0인 임무와 공통 규칙이 기본12/20 상한으로 막히는 첫 RED를 보존한 뒤 무제한을 확인한다. 숫자0 최소 간격도 받는다. 명시한 옛 양수 상한·사용량 대기는 유지한다.
-- 실제 임무를 상한 대기·기존 inbox51건으로 만들고 파일의 상한/간격을 없앤다. repo 재승인 없이 같은 tick에 보존 입력 한 번 깨움, 2시간 뒤 시간/철수 안내 없음, 기본 host 동시 상한 없이 승인 임무3개 시작을 검사한다. 낮은 frame의 text+Enter는 한 번 깨움의 두 요청이므로 고정 깨움 본문을 센다.
-- 이전 예산 증가 승인 거부 기대는 새 사용자 원칙으로 바꾼다. 실제 repo 경로 변경의 승인 거부·명시 거절 상태에서 재시작 전 Kill 없음은 유지한다. host max_pending을 공유하던 사후 평가자의 0도 무제한으로 읽어, 설정 변경이 전달을 전부 막지 않는지 기존 회귀로 확인한다.
-
-
-### L4 운영 reload·임무 권한 후속
-
-- 명시 하루 상한1/1에서도 승인된 동일 상한 새 본문의 reload가 Kill→종료 확인→새 후보 적용으로 이어지는지 본다. 수리 전 cap의 앞선 return으로 Kill0(기대1) RED를 보존한다. Working 때는 적용 예약과 이유를 즉시 보이고, 실제 작업 종료·안전한 Idle 전에는 Kill/새 대화가 없어야 한다. 예약 뒤 다른 파일 판·pause/확인창/초안/보는 화면도 구분한다.
-- 사용자의23:5x 결정에 따라 이전 manual 강제 기대를 교체한다. 기존 host 승인 start와 reset frame 시험은 실제 ThreadPrepare/ThreadRebrief의 profile args가 일반 thread safety 결과와 같은지 검사한다. agent launch keeper는 Claude/Codex 각각 yolo off/on, launch/resume argv, hook/자기 문맥/일반 thread 분리/링크 쓰기 거부를 유지한다. 강제 manual 또는 bypass 차단이 남아 있으면 RED여야 한다.
-- 운영 파일·승인 기록·현재 pane은 사용하지 않는다. 가짜 frame owner와 임시 작업 폴더에서만 인자를 확인한다.
-
-
-- 자정 경계 회귀: 기존 mission_debounce 예산 시험은 23:59대 now+60001이 다음 날짜가 되어 같은 날 상한 기대가 실패했다. 첫 로그를 보존하고 그 시험의 논리 시각·reset 기준을 다음 날 정오에 고정해 같은 예산 날짜의 간격·범위·상한을 검사한다. 날짜 초기화는 별도 notice/day keeper가 계속 소유한다. 기대값이나 시한을 늘리지 않는다.
-- 과거 최소 execpolicy 검증은 manual 모드의 증거다. 사용자23:5x 뒤에는 추가 allow-list와 실행 문맥만 유지하고 실제 승인/sandbox 모드는 일반 thread safety 결과가 정본이다. 임무만 push가 harness에서 막힌다고 가정하지 않으며 금지는 임무 지침에 남는다.
-
-
-### L4 재개·시간 상한·무제한 표시 후속
-
-- `resumed_mission_time_budget_counts_work_in_the_wake_not_elapsed_wall_time`은 실제 host·DB와 frame owner에서 누적19분/옛 깨움2시간/오늘 깨움0 재개를 검사한다. 경과 시간식은 첫 무알림 단언 RED여야 한다. 관찰 작업59분 무음→멈춤 시간 제외→61분 한 번 안내→done 뒤 무반복과 별도 실제 새 입력의 깨움별 셈 초기화를 검사한다. 실제 input hook과 논리 시각을 섞지 않도록 새 전달 사례는 새 임무의 실제 시각에서 시작한다.
-- 기존 reload keeper에 pause 상태의 reload/restart 예약과 멈춤 이유, 무Kill/무Spawn, resume 뒤 동일 후보 적용을 추가한다. 기존 상한 제거 keeper는 resume 전에 상한0 반영과 pause 보존을 함께 검사한다.
-- 기존 변환 인계 keeper는 변환 직후 첫 새 source 판정 전에 사건을 넣어 실제 전달 한 번·과거 무재전달을 검사한다. DB 표식 유무만으로 통과시키지 않는다. 옛 mission 사건 조건을 함께 실행하거나 새 cursor seed를 제거하면 실패해야 한다.
-- 웹12의 실제 특수 패널은 생략·옛 최대 정수·상한3/60을 읽어 무제한 분모 없음과 명시 N/M을 검사한다. 실제 CLI m13 임무의 list/show도 같은 규칙을 검사한다. 큰 수를 무제한 생성 예시로 쓰지 않는다. 시간 상한은 깨움별 작업에 붙이고 누적 작업은 분리한다.
+`cargo test -p aaa-host automation::`는 실제 파일 파싱·스키마·안전한 본문 경로·이름 충돌·원본 보존·미리보기 hash·Reader 거부와 공통 큐의 예산·전달 모름을 검사한다.
+CI/Git의 source outbox·중복 억제·재시작·outage는 기존 owner를 유지한다. 상주 실행과 reset은 A4에서 제거했으며 옛 파일·저장 형식은 변환 owner로만 읽는다.
 
 ## 웹 배포 조회 카드 L4 A안(§8.293)
 
@@ -837,7 +833,7 @@ L2 결함 검증은 이전 root 가져오기 생략, 재시작 전 applied 변�
 - `cargo test -p aaa --test m13 pr_environment::`: 실제 host↔agent↔가짜 gh에서 미게시 branch의 호출 0, 게시 branch 탐색, 미게시 branch의 명시한 보고 PR 추적, 미인증의 inbox 0·머신 상태·자동 사용 재개, 실행 파일 ENOENT의 조용한 생략, 일반 API 오류의 장애·회복 경계를 본다. 앞의 미게시 thread가 사용 불가 상태 때문에 뒤의 인증 회복 조회를 막지 않아야 한다. 호출 기록의 뒤 pass 시작, 보고 수신, 머신 상태로 기다리며 고정 sleep은 없다.
 - gh 없는 경계는 `cargo test -p aaa-agent --lib gh::tests::`의 실제 실행 가능 파일 검색(사용자 PATH·서비스 fallback·아무 실행 파일도 없음)과 위 ENOENT 통합 시험이 나누어 맡는다. ENOENT는 시험 gh의 없는 interpreter로 만들며 운영 gh·로그인·시스템 설정에 닿지 않는다.
 - 기존 `project_lifecycle`의 PR 청소·`pr_followup`·`merged_pr_resolves_the_thread`·`merged_resolve_waits_for_the_routine_prompt`·`resolve_looks_up_the_pull_request_once_more`는 가짜 GitHub가 게시된 branch라고 답할 때 그 원격 참조도 fixture에 둔다. 기존 PR 상태·후속 메시지·병합·정리 단언은 유지한다.
-- `cargo test -p aaa --test m13 ci_conditional_failure_mission_restart_catchup_and_outage`: 기존 HTTP 실패·중복 억제·복구에 이어 별도 인증 실패(gh 종료 코드 4)의 CI outage를 확인한다. PR 생략 때문에 CI 실패를 숨기면 안 된다.
+- `cargo test -p aaa --test m13 ci_conditional_failure_restart_catchup_and_outage`: 기존 HTTP 실패·중복 억제·복구에 이어 별도 인증 실패(gh 종료 코드 4)의 CI outage를 확인한다. PR 생략 때문에 CI 실패를 숨기면 안 된다.
 - 수정 전에는 미게시 branch의 불필요 호출과 미인증 PR outage가 각각 실패했다. 게시 조건 제거·사용 불가 오류를 다시 실패로 전달·머신 상태 저장 제거·CI outage 전달 제거를 각각 심어 keeper 실패를 확인하고 원본 bytes로 복원한다. 마지막 검증은 전체 ci-local과 check-public이다.
 
 
@@ -873,7 +869,7 @@ L2 결함 검증은 이전 root 가져오기 생략, 재시작 전 applied 변�
 
 ## 자동화 A2: 이어 보내기·기억·짧은 끝내기(t-0504)
 
-- host의 기존 `mission::tests::start` fixture로 최근 열린 thread, propose의 이어 보내기, 33건의 32+1 전달, receipt, Codex 거부와 보고 첨부의 64KiB와 단일 입력의 512KiB 초과 거부를 검사한다. 종료 owner 판정표는 표지 6종·보고/입력 시각·활동·내구/파일 입력·검토/쉼을 교차한다. 기존 report boundary keeper는 자동화 완료의 앱 안 알림 없음과 확인 필요 알림 유지를 함께 본다.
+- host의 `automation::start_tests` fixture로 최근 열린 thread, propose의 이어 보내기, 33건의 32+1 전달, receipt, Codex 거부와 보고 첨부의 64KiB와 단일 입력의 512KiB 초과 거부를 검사한다. 종료 owner 판정표는 표지 6종·보고/입력 시각·활동·내구/파일 입력·검토/쉼을 교차한다. 기존 report boundary keeper는 자동화 완료의 앱 안 알림 없음과 확인 필요 알림 유지를 함께 본다.
 - m13 `ci::automation_ci_reuses_open_thread_and_closes_only_after_new_report_with_memory`: 서로 다른 fake CI 두 건을 batch에 보존 → 한 thread → 셋째 Queue 전달 → 옛 완료로 끝내지 않음 → 새 완료 뒤 resolve/기억 사본 → 다음 thread 기억 → 전달 모름/무재전송. FIFO로 화면 진행을 허용하며 host가 Working/Idle를 관측한 뒤 다음 단계로 간다.
 - `AAA_TEST_AUTOMATION_CLOCK_FILE`에 Unix ms를 쓰면 자동화 batch·close_idle의 판정 시계만 움직인다. 실제 보고/입력 시각과 agent 활동 시각은 바꾸지 않는다. m13 Lab의 설정 폴더 안 파일만 사용한다. 고정 sleep·timeout 연장은 없다.
 - E2E49 `49-automation-memory`: 실제 report/Idle 사건으로 기억/크기/마지막 갱신 thread와 끝남 예정 표시를 본다. 데스크톱·390px에서 상세를 열고 캡처하며 가로 넘침과 자동화 완료 droplet 없음도 검사한다.
@@ -921,3 +917,49 @@ journal·로그·화면에 원문·8바이트 조각·base64/URL/JSON 변형이 
   repo 보존·root 읽기 대조·일반 journal 비밀 비노출의 결함 주입이 해당 owner에서 실패해야 한다.
   변형은 bytes로 복원하고 원본 owner 통과 뒤 전체 gate를 돌린다. Windows/Linux 실제 실행은
   main push 뒤 GitHub CI이며 cross clippy/build를 실제 실행 통과로 쓰지 않는다.
+
+## 입력칸 「/」 목록과 명령 줄(t-0502, plan §8.323)
+
+- `cargo test -p aaa-agent --lib -- slash:: chat::tests::claude_commands plan::`: 임시 폴더에 명령·skill 파일과 실측 기록 줄을 두고, 대화 줄은 실제 쪽 읽기(`read_path`)로 읽는다. 창 크기 시험은 사용자 설정 파일 자리를 임시 경로로 바꿔 실제 `~/.claude`를 읽지 않는다.
+- `node --test web/test/slashCommands.test.mjs`: 여는 자리, 순위, 숨김, 확인창·알림 판정.
+- `node web/e2e/web.e2e.mjs --spec 51-slash-commands`:
+  - 실험실 `CLAUDE_CONFIG_DIR`의 `commands/`·`skills/`와 pane 폴더(`.git`이 있는 git root)의 `.claude/commands/`를 agent가 읽는다.
+  - 가짜 Claude는 F7(작업 중)·F5(쉼)과 Enter 글을 받는다. `/context`는 실측 꼴의 명령·출력 줄을 적고, `/model`은 선택창을 그렸다가 Esc에 결과를 적고, `/clear`는 새 기록으로 SessionStart(clear) hook을 보낸다.
+  - 「보내지 않았다」는 pane이 받은 bytes로, 상태 전이는 가짜가 그린 「mode …」를 `waitOutput`으로, 화면은 `domIs`로 기다린다. 휴대폰은 WebKit `pairDevice`. 고정 sleep은 없다.
+
+## 자동화 A4: 특수 실행 제거(t-0507)
+
+- `cargo test -p aaa --test m13 automation_start::legacy_mission_files_are_inert_and_convert_with_memory_and_pending_input -- --exact`: 실제 host·agent·CLI·Front API에서 옛 파일 비실행, 완료 처리 뒤에도 한 번인 제거 안내, doctor 진단, mission_list 빈 목록/mission_start 제거 오류, 열린 옛 evaluator 표시, 미리보기 무쓰기, 기억·이력 hash 회수, 원본 보존·대기 입력 이전·tick 뒤 무복제를 확인한다.
+- `cargo test -p aaa-host previous_agent_keeps_input_and_memory_transfer_with_legacy_file_frames --lib`: AGENT_LINK 1.9/mission.v1 fake가 입력 쓰기와 기억 주입·회수·처리 여부 조회를 받는다. 새 WorkFile 태그가 옛 상대에 닿으면 실패한다. 실제 agent의 파일·hash·symlink keeper는 `threads::work_file_tests`가 계속 맡는다.
+- E2E26은 패널 셋과 저장된 special→work를, E2E40은 승인 규칙+막힌 규칙 배지와 기존 변환/Reader/큐 풀기를 검사한다. E2E48·49는 기존 자동화 줄과 기억을 유지한다. 캡처는 데스크톱·390px, 실제 host·agent를 사용한다.
+- `Role::Evaluator`와 구 Front/Agent DTO는 한 판 호환 경계에만 남는다. 옛 outbox의 모르는 칸과 ThreadRec의 원본 데이터는 변환 전까지 보존하며, L0 snapshot keeper의 기대 문서는 바꾸지 않는다.
+
+I2 Windows 수리(plan §8.325): 같은 파일 owner를 세 OS에서 유지한다. `resource_locks_serialize_processes`는
+실제 자식 process 둘(같은 작업/같은 config의 다른 파일)을 거부하면서, 잠금 중 유효 status와 파일 snapshot이
+읽히고 바뀌지 않으며 해제 뒤 같은 ID 재개가 되는지 함께 본다. Windows는 읽기 공유만 허용하는 handle
+예약을 사용한다. stage/reverse flush는 Windows 쓰기 handle로 수행하고 원본 ACL/hardlink/복구 owner를 뺄 수 없다.
+Windows 실행이 없는 현지 cross 결과는 native GREEN이 아니며 다음 main CI 결과와 나눠 보고한다.
+
+
+## 웹 할 일 첨부(t-0506, plan §8.327)
+
+- 웹 E2E 52 `task-attach`가 실제 host·agent에서 Chromium 데스크톱·iPhone·iPad(밝음·어두움)로 붙여 넣기(⌘V·붙여넣기 칸), 고치는 중 초안,
+  떼기, md 올리기·보고서 문서 고르기·주소, 파일 보기 열기(md는 그린 Markdown, html은 sandbox 페이지), 「바로 시작」 복사, 「할 일에 추가」
+  (보고서 머리·thread 결과물 줄 → 새 task·있는 task에 링크), 보고서 주소 알아보기(공유 링크·앱 보고서 주소·풀 수 없는 주소), 보기 권한을
+  본다. 올린 html은 GET 응답의 sandbox CSP·`nosniff`·글 종류를 본다. 끝은 화면 표지(`data-tasks-sha`·`data-count`)와 TASKS.md·작업
+  폴더 파일로 정한다. 시간은 기다리지 않는다.
+- iOS 길게 누름 메뉴와 클립보드 허용 말풍선은 headless가 그리지 못한다. 그 메뉴 뒤 브라우저가 내는 `ClipboardEvent`를 붙여넣기 칸에
+  재생한다. iPhone 실기기 확인은 배포 뒤 사용자가 한다(보고의 절차).
+- 휴대폰 단계는 상세 시트 위 파일 보기를 닫기 단추로 닫은 뒤 상세가 남고, 다른 화면으로 가도 파일 보기가 되살아나지 않는지 본다.
+  상세 시트가 파일 보기 동안 기록을 내주지 않으면(`usePhoneSheetBack(…, !fileOpen)`을 빼면) 이 단계가 실패한다.
+- 웹 순수 시험 `web/test/taskAttach.test.mjs`는 첨부 줄 규칙·입력칸 글·붙인 글과 파일 판정(주소의 괄호는 풀어 쓰고 괄호 든 보고서
+  경로는 받지 않는다)·「할 일에 추가」 단추를 둘 문서·보고서 주소 꼴을 본다.
+- host `task_attach::tests::upload_rules`는 보기 권한·폐기한 기기를 파일을 쓰기 전에 거부하고(옛 순서는 폐기 기기의 파일을 남겼다),
+  signature 없는 그림·NUL·UTF-8 아닌 문서·모르는 문서 종류를 거부하며, 같은 내용은 파일 하나, 읽기는 이름 꼴만·symlink 거부인지 본다.
+- host `library_links::tests::task_link_resolves_report_urls_and_reads_live_docs`는 공유 링크·앱 보기 경로의 cap 풀기, 보기 권한·
+  다른 프로젝트·없는 cap·폐기 거부, live 공개 문서 사본 읽기를 본다. `task_attach::tests::old_agent_is_refused_before_a_record`는
+  `work_attach.v1`이 없는 agent에 thread 기록을 만들기 전에 거부하는지 본다(앞 확인을 빼면 실패한다).
+- m13 `task_attachments_reach_a_remote_agent`는 TLS 원격 agent(다른 상태 폴더 labB)에 `--from-task`로 띄워 그림·보고서 문서를
+  그 작업 폴더 `attachments/`에 같은 바이트로 쓰고, 할 일 글이 그 경로만 가리키며 host에 없는 첨부는 경고로 알리는지 본다. 이어서
+  host 원본(올린 그림·보고서 문서)을 지운 뒤에도 `thread restart`가 되고 첫 사본이 남는지 본다. 첫 전송의 `sent` 표지를 저장하지
+  않으면 이 다시 시작은 「아직 쓴 적 없는 첨부」로 보고 멈추므로 실패한다(표지 저장을 빼고 확인했다).

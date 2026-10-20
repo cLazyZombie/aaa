@@ -3,14 +3,13 @@
 // 싣는다. aaa는 기기마다(brief: 마지막 패널·접힘은 기기별) localStorage에 둔다.
 
 // 「작업」은 예전 프로젝트·에이전트 두 패널을 합친 트리다(사용자 결정 10-19 안 A, plan §8.280)
-export const PANELS = ["work", "machines", "special", "automations"] as const;
+export const PANELS = ["work", "machines", "automations"] as const;
 export type SidebarPanel = (typeof PANELS)[number];
 
-// 특수(임무·사후 평가자)는 사용자 결정 10-19로 목록 머리 칩에서 막대 단추로 옮겼다(plan §8.258)
-export const PANEL_LABEL: Record<SidebarPanel, string> = { work: "작업", machines: "머신", special: "특수", automations: "자동화" };
+export const PANEL_LABEL: Record<SidebarPanel, string> = { work: "작업", machines: "머신", automations: "자동화" };
 
 /** 예전 패널 이름(프로젝트·에이전트)으로 남긴 기억은 합친 「작업」으로 연다 */
-const OLD_PANELS: Record<string, SidebarPanel> = { projects: "work", agents: "work" };
+const OLD_PANELS: Record<string, SidebarPanel> = { projects: "work", agents: "work", special: "work" };
 
 const PANEL_KEY = "aaa:sidebar-panel";
 const COLLAPSED_KEY = "aaa:sidebar-collapsed";
@@ -44,7 +43,7 @@ export function storeSidebar(panel: SidebarPanel, collapsed: boolean): void {
 
 /**
  * 단축키·팔레트·알림이 연 줄을 보일 패널(VS Code `explorer.autoReveal`: 보이는 explorer에서 드러낸다). 「작업」 트리에 그 줄이 있으면
- * 「작업」으로, 없는 줄(평가자·임무 pane)은 지금 패널 그대로.
+ * 「작업」으로, 없는 줄은 지금 패널 그대로.
  */
 export function revealPanel(current: SidebarPanel, inWork: boolean): SidebarPanel {
   return inWork ? "work" : current;

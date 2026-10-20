@@ -1,4 +1,4 @@
-// 앱 안 참조 칩(plan §8.324, 사용자 결정 10-20 1A): 대화 글의 `aaa:question/<thread>`·`aaa:report/<이름>`을 누르면 앱 안에서
+// 앱 안 참조 칩(plan §8.329, 사용자 결정 10-20 1A): 대화 글의 `aaa:question/<thread>`·`aaa:report/<이름>`을 누르면 앱 안에서
 // 여는 칩으로 그린다. http 주소가 아니라 새 창 규칙(넓은 창은 새 탭)을 따르지 않고 늘 앱 안이다: 질문은 보고서 화면 「답할 것」의
 // 그 카드를 펼치고(2A), 보고서는 보고서 화면의 그 보고서를 연다. 칩의 상태(답할 것·답함)는 App이 thread 기록으로 정한다.
 import { createContext, useContext } from "react";

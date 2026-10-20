@@ -1,6 +1,6 @@
 //! `aaa host`: host backend. 정본 목록·권한·Front API·웹을 갖고, 각 머신의 agent backend와 Agent link로 통신한다.
 //!
-//! - host는 자식 프로세스를 만들지 않는다. 예외: tailscale CLI, 개발 모드의 로컬 agent 기동(§4.2).
+//! - host의 자식 실행은 tailscale CLI, 개발 모드 로컬 agent(§4.2), 세션 밖 CLI가 요청한 격리 공식 로그인뿐이다.
 //! - pane 화면은 agent(session host)가 정본이다. host는 마지막 화면 mirror를 가져 agent가 끊겨도 읽기 전용으로 보여 준다.
 
 mod adopt;
@@ -11,10 +11,8 @@ mod attach;
 pub fn automation_schema() -> String {
     serde_json::to_string_pretty(&automation::schema()).expect("schema serialize")
 }
-/// 임무 TOML 파일의 편집기용 JSON Schema.
-pub fn mission_schema() -> String {
-    serde_json::to_string_pretty(&mission::files::schema()).expect("schema serialize")
-}
+mod account_login;
+mod account_policy;
 mod accounts;
 mod auto_start;
 mod automation;
@@ -31,7 +29,6 @@ mod ctrl_enter;
 pub mod db;
 mod deploy;
 mod diff;
-mod evaluator;
 mod file_rev;
 mod files;
 pub mod front;
@@ -41,6 +38,7 @@ mod health;
 mod http;
 mod inbox;
 mod input_log;
+mod legacy_mission;
 mod library;
 mod library_links;
 mod library_publish;
@@ -48,7 +46,6 @@ mod library_retention;
 mod lifecycle;
 pub mod link;
 pub mod migrate;
-mod mission;
 mod notice;
 mod notify;
 mod open;
@@ -70,6 +67,7 @@ mod routine_runs;
 mod seen;
 mod summary;
 pub mod tailscale;
+mod task_attach;
 mod task_clean;
 mod task_edit;
 mod tasks;
@@ -445,8 +443,6 @@ pub struct Host {
     rollout_instance: String,
     rollout_started_ms: u64,
     running_sha256: String,
-    mission_locks: Mutex<HashMap<String, Arc<tokio::sync::Mutex<()>>>>,
-    mission_start_lock: tokio::sync::Mutex<()>,
     pub flow_events: broadcast::Sender<aaa_proto::FlowEvent>,
     /// 흐름 사건 하나를 저장(seq를 정함)부터 broadcast까지 한 번에 하나씩 한다(`orch.rs` `flow_event`)
     flow_order: Mutex<()>,
@@ -532,12 +528,6 @@ pub struct Host {
     viewing: Mutex<seen::Viewing>,
     /// 기기마다 최근에 push로 보낸 항목(push.rs `PushedLog`)
     pub(crate) pushed: Mutex<push::PushedLog>,
-    /// 사후 평가자: 프로젝트별 다음 묶음 확인 때
-    eval_due: Mutex<HashMap<(String, String), Instant>>,
-    /// 사후 평가자 묶음은 한 번에 하나씩 만든다
-    eval_lock: tokio::sync::Mutex<()>,
-    /// 평가 기록 채택·보류는 한 번에 하나씩
-    eval_decide_lock: Mutex<()>,
     /// thread 기록 다시 읽어 고치기(`update_rec`)는 한 번에 하나씩
     rec_lock: Mutex<()>,
     /// brief 배경 task가 도는 thread(`<project>/<thread>`, 하나만 돈다)
@@ -679,8 +669,6 @@ impl Host {
             rollout_instance: util::new_id(),
             rollout_started_ms: util::now_ms(),
             running_sha256: rollout::running_sha()?,
-            mission_locks: Mutex::new(HashMap::new()),
-            mission_start_lock: tokio::sync::Mutex::new(()),
             notice_events: broadcast::channel(64).0,
             task_events: broadcast::channel(64).0,
             tasks_seen: Mutex::new(HashMap::new()),
@@ -722,9 +710,6 @@ impl Host {
             in_use: std::sync::atomic::AtomicUsize::new(0),
             viewing: Mutex::new(seen::Viewing::default()),
             pushed: Mutex::new(push::PushedLog::default()),
-            eval_due: Mutex::new(HashMap::new()),
-            eval_lock: tokio::sync::Mutex::new(()),
-            eval_decide_lock: Mutex::new(()),
             rec_lock: Mutex::new(()),
             brief_loops: Mutex::new(HashSet::new()),
             thread_ops: Mutex::new(HashMap::new()),
@@ -1069,6 +1054,7 @@ impl Host {
             None
         };
         PaneView {
+            account: None,
             id: id.to_string(),
             machine_id: p.machine_id.clone(),
             machine: m.map(|m| m.name.clone()).unwrap_or_default(),
@@ -1092,8 +1078,14 @@ impl Host {
 
     pub fn pane_views(&self, role: DeviceRole) -> Vec<PaneView> {
         let projects = self.coordinator_projects();
-        let i = self.inner.lock().unwrap();
-        let mut v: Vec<_> = i.panes.iter().map(|(id, p)| Self::pane_view(&i, id, p, role, &projects)).collect();
+        let mut v: Vec<_> = {
+            let i = self.inner.lock().unwrap();
+            i.panes.iter().map(|(id, p)| Self::pane_view(&i, id, p, role, &projects)).collect()
+        };
+        // 상태 잠금을 잡은 채 DB를 조회하지 않는다.
+        for pane in &mut v {
+            pane.account = self.pane_account(&pane.id).ok().flatten().map(|a| a.account);
+        }
         // 처음 띄운 차례(ULID): 재개·재부팅 복원으로 새 ID가 되어도 처음 ID 자리에 남는다(목록이 옮겨 다니지 않는다)
         let first = |p: &PaneView| p.replaced.first().cloned().unwrap_or_else(|| p.id.clone());
         v.sort_by(|a, b| a.machine.cmp(&b.machine).then_with(|| first(a).cmp(&first(b))));
@@ -1102,8 +1094,12 @@ impl Host {
 
     pub fn pane_view_of(&self, id: &str, role: DeviceRole) -> Option<PaneView> {
         let projects = self.coordinator_projects();
-        let i = self.inner.lock().unwrap();
-        i.panes.get(id).map(|p| Self::pane_view(&i, id, p, role, &projects))
+        let mut view = {
+            let i = self.inner.lock().unwrap();
+            i.panes.get(id).map(|p| Self::pane_view(&i, id, p, role, &projects))
+        }?;
+        view.account = self.pane_account(id).ok().flatten().map(|a| a.account);
+        Some(view)
     }
 
     fn coordinator_projects(&self) -> Vec<(String, std::path::PathBuf)> {
@@ -1239,10 +1235,17 @@ impl Host {
         front: Option<&FrontRef>,
         req: FrontRequest,
     ) -> Result<FrontResponse, ErrorBody> {
-        if matches!(&req, FrontRequest::AccountImport { .. } | FrontRequest::AccountRemove { .. })
-            && (role != DeviceRole::Local || front::in_session(actor) || !actor.starts_with("local:"))
+        if matches!(
+            &req,
+            FrontRequest::AccountImport { .. }
+                | FrontRequest::AccountRemove { .. }
+                | FrontRequest::AccountDefault { .. }
+                | FrontRequest::AccountLogin { .. }
+                | FrontRequest::AccountLoginStatus { .. }
+                | FrontRequest::AccountLoginCancel { .. }
+        ) && (role != DeviceRole::Local || front::in_session(actor) || !actor.starts_with("local:"))
         {
-            return Err(err(ErrorCode::Forbidden, "계정 등록·삭제는 host의 aaa 밖 터미널에서 한다"));
+            return Err(err(ErrorCode::Forbidden, "계정 로그인·변경은 host의 aaa 세션 밖 터미널에서 한다"));
         }
         let req = if matches!(&req, FrontRequest::AccountImport { .. }) { req } else { aaa_common::redact::json(req) };
         // 기기·머신 신뢰와 공개 범위는 사람이 바꾼다. coordinator도 Local이지만 세션 안이다.
@@ -1296,7 +1299,19 @@ impl Host {
                 Ok(FrontResponse::Accounts { accounts: self.accounts.list()? })
             }
             FrontRequest::AccountList => Ok(FrontResponse::Accounts { accounts: self.accounts.list()? }),
+            FrontRequest::AccountDefaults => Ok(FrontResponse::AccountDefaults { defaults: self.account_defaults()? }),
+            FrontRequest::AccountDefault { harness, account } => {
+                self.set_default_account(&harness, account.as_deref())?;
+                self.db.audit(actor, "account_default", &format!("{harness} {}", account.as_deref().unwrap_or("off")));
+                Ok(FrontResponse::AccountDefaults { defaults: self.account_defaults()? })
+            }
+            FrontRequest::AccountLogin { name, harness } => self.account_login(&name, &harness, actor),
+            FrontRequest::AccountLoginStatus { id } => self.account_login_status(&id),
+            FrontRequest::AccountLoginCancel { id } => self.account_login_cancel(&id),
             FrontRequest::AccountRemove { name } => {
+                if self.account_defaults()?.iter().any(|d| d.account == name) {
+                    return Err(err(ErrorCode::BadRequest, "기본 계정은 먼저 account default --off로 해제한다"));
+                }
                 self.accounts.remove(&name)?;
                 self.db.audit(actor, "account_remove", &name);
                 Ok(FrontResponse::Done)
@@ -1339,7 +1354,7 @@ impl Host {
                     .pane_views(role)
                     .into_iter()
                     .filter(|p| match want {
-                        None => p.role != Some(aaa_proto::Role::Evaluator),
+                        None => true,
                         Some(r) => p.role == Some(r),
                     })
                     .collect();
@@ -1400,6 +1415,7 @@ impl Host {
                     base,
                     task,
                     role: aaa_proto::Role::Worker,
+                    attachments: Vec::new(),
                 };
                 let (warning, picked) = match from_task {
                     Some(t) => {
@@ -1415,7 +1431,11 @@ impl Host {
                         a.repo.as_ref().and_then(|r| repos.into_iter().find(|x| &x.path == r)).and_then(|x| x.machine);
                 }
                 let project = a.project.clone();
-                let mut v = self.thread_start_mode(a, actor, None, background).await?;
+                let mut v = if background {
+                    self.thread_start_mode(a, actor, true).await?
+                } else {
+                    self.thread_start(a, actor).await?
+                };
                 v.warnings.extend(warning);
                 // 시작에 성공했으면 그 task 줄 끝에 thread를 잇는다(할 일 T3, 시작할 때 읽은 블록으로)
                 if link_task && let Some(t) = &picked {
@@ -1491,6 +1511,7 @@ impl Host {
                 self.library_opened(&project, &name);
                 Ok(FrontResponse::Library(view))
             }
+            FrontRequest::LibraryResolve { project, cap } => self.library_resolve(&project, &cap),
             FrontRequest::LibraryUsage => self.library_usage(),
             FrontRequest::LibraryLink { project, thread, days } => {
                 self.library_link(&project, &thread, days, actor).map(FrontResponse::LibraryLink)
@@ -1576,34 +1597,17 @@ impl Host {
                 })
             }
             FrontRequest::TickerTick => Ok(FrontResponse::Ticker { runs: self.ticker_tick().await }),
-            FrontRequest::MissionList { project } => {
-                self.mission_list(project.as_deref()).map(|missions| FrontResponse::Missions { missions })
-            }
-            FrontRequest::MissionShow { project, name } => {
-                self.mission_show(&project, &name).map(|m| FrontResponse::Mission { mission: Box::new(m) })
-            }
-            FrontRequest::MissionApprove { project, name, approval_sha256 } => self
-                .mission_approve(&project, &name, &approval_sha256, actor)
-                .map(|m| FrontResponse::Mission { mission: Box::new(m) }),
-            FrontRequest::MissionReject { project, name } => {
-                self.mission_reject(&project, &name, actor).map(|m| FrontResponse::Mission { mission: Box::new(m) })
-            }
-            FrontRequest::MissionStart { project, name } => self
-                .mission_start(&project, &name, actor)
-                .await
-                .map(|m| FrontResponse::Mission { mission: Box::new(m) }),
-            FrontRequest::MissionStop { project, name } => self.mission_control(&project, &name, "stop", actor).await,
-            FrontRequest::MissionPause { project, name } => self.mission_control(&project, &name, "pause", actor).await,
-            FrontRequest::MissionResume { project, name } => {
-                self.mission_control(&project, &name, "resume", actor).await
-            }
-            FrontRequest::MissionReload { project, name } => {
-                self.mission_control(&project, &name, "reload", actor).await
-            }
-            FrontRequest::MissionRestart { project, name } => {
-                self.mission_control(&project, &name, "restart", actor).await
-            }
-            FrontRequest::MissionOpen { project, name } => self.mission_control(&project, &name, "open", actor).await,
+            FrontRequest::MissionList { .. } => Ok(FrontResponse::Missions { missions: vec![] }),
+            FrontRequest::MissionShow { .. }
+            | FrontRequest::MissionApprove { .. }
+            | FrontRequest::MissionReject { .. }
+            | FrontRequest::MissionStart { .. }
+            | FrontRequest::MissionStop { .. }
+            | FrontRequest::MissionPause { .. }
+            | FrontRequest::MissionResume { .. }
+            | FrontRequest::MissionReload { .. }
+            | FrontRequest::MissionRestart { .. }
+            | FrontRequest::MissionOpen { .. } => Err(legacy_mission::removed()),
             FrontRequest::Routines { project } => {
                 self.routines(&project).map(|routines| FrontResponse::Routines { routines })
             }
@@ -1630,26 +1634,12 @@ impl Host {
             FrontRequest::Events { project, after, limit } => {
                 self.events(project.as_deref(), after, limit).map(|events| FrontResponse::Events { events })
             }
-            FrontRequest::EvaluatorAssign { project, profile, machine, repo, note } => self
-                .evaluator_assign(&project, profile, machine, repo, note, actor)
-                .await
-                .map(|v| FrontResponse::Evaluators { evaluators: vec![v] }),
-            FrontRequest::EvaluatorStatus { project } => {
-                self.evaluator_views(project.as_deref()).map(|evaluators| FrontResponse::Evaluators { evaluators })
-            }
-            FrontRequest::EvaluatorUnassign { project } => self
-                .evaluator_unassign(&project, actor)
-                .await
-                .map(|v| FrontResponse::Evaluators { evaluators: vec![v] }),
-            FrontRequest::Evaluations { project, all } => {
-                self.evaluations(&project, all).map(|evaluations| FrontResponse::Evaluations { evaluations })
-            }
-            FrontRequest::EvaluationShow { project, id } => {
-                self.evaluation(&project, &id).map(|v| FrontResponse::Evaluation(Box::new(v)))
-            }
-            FrontRequest::EvaluationDecide { project, id, proposals, adopt, note } => self
-                .evaluation_decide(&project, &id, &proposals, adopt, note, actor)
-                .map(|v| FrontResponse::Evaluation(Box::new(v))),
+            FrontRequest::EvaluatorAssign { .. }
+            | FrontRequest::EvaluatorStatus { .. }
+            | FrontRequest::EvaluatorUnassign { .. }
+            | FrontRequest::Evaluations { .. }
+            | FrontRequest::EvaluationShow { .. }
+            | FrontRequest::EvaluationDecide { .. } => Err(legacy_mission::removed()),
             FrontRequest::PaneRun { machine, name, argv, cwd, cols, rows, profile } => {
                 let mid = self.resolve_machine(machine.as_deref())?;
                 let resolved_profile =
@@ -1691,7 +1681,8 @@ impl Host {
             }
             FrontRequest::ThreadDiff { project, thread, query } => self.thread_diff(&project, &thread, query).await,
             FrontRequest::PaneDir { pane, path, hidden } => self.pane_dir(role, actor, &pane, &path, hidden).await,
-            FrontRequest::PaneChat { pane, thinking, compact, before } => {
+            FrontRequest::PaneCommands { pane } => self.pane_commands(role, &pane).await,
+            FrontRequest::PaneChat { pane, thinking, compact, commands, before } => {
                 let (id, mid) = self.resolve_pane(&pane)?;
                 // 보기 범위(§8.25)는 pane 보기와 같다
                 if self.pane_view_of(&id, role).is_none() {
@@ -1729,6 +1720,7 @@ impl Host {
                         harness_session,
                         thinking,
                         compact,
+                        commands,
                         before,
                     })
                     .await?
@@ -2144,7 +2136,7 @@ impl Host {
         spec: SpawnSpec,
         actor: &str,
     ) -> Result<String, ErrorBody> {
-        let new_id = self.spawn_on(mid, spec, actor).await?;
+        let new_id = self.respawn_with_account(id, mid, spec, actor).await?;
         self.db.audit(actor, "pane_resume", &format!("{id} -> {new_id}"));
         self.replace_pane(id, &new_id, mid, actor).await;
         Ok(new_id)
@@ -2990,6 +2982,7 @@ pub async fn run(cfg: HostConfig, state_root: PathBuf) -> Result<()> {
         });
     }
     shutdown_signal().await;
+    host.cancel_account_logins().await;
     tracing::info!("host 종료(세션은 agent·session host가 계속 유지한다)");
     Ok(())
 }

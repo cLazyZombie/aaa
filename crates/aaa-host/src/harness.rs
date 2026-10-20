@@ -408,15 +408,6 @@ impl Host {
         // 끝남은 보고 확인을 건 뒤에 미룬다(notice.rs `turn_finished`): ticker는 확인 중인 thread를 셈하지 않는다
         if activity.is_some() || ev.kind == "progress" {
             let thread = self.thread_of_pane(&ev.session);
-            if let Some(r) = thread.as_ref().filter(|r| r.mission.is_some()) {
-                let now = aaa_common::util::now_ms();
-                let _ = self.update_rec(&r.project, &r.id, |r| {
-                    let m = r.mission.as_mut().unwrap();
-                    if activity.is_some() {
-                        m.observe_work(activity, now, &self.boot_id);
-                    }
-                });
-            }
             match &thread {
                 Some(r) if r.status == ThreadStatus::Open => self.refresh_report(&r.project, &r.id),
                 _ => self.tick_wake.notify_one(),
@@ -1078,7 +1069,6 @@ impl Host {
         // thread.rs `append_follow_up`). 입력 전에 거부됐으면(Err) 남기지 않는다.
         if r.is_ok()
             && !m.text.starts_with("[aaa ")
-            && !self.load(&m.project, &m.thread).is_ok_and(|r| r.mission.is_some())
             && let Err(e) = self.append_follow_up(&m.project, &m.thread, &m.text)
         {
             tracing::warn!(project = %m.project, thread = %m.thread, "Follow-ups를 쓰지 못했다: {e}");
@@ -1699,6 +1689,7 @@ mod tests {
                     pane: "s".into(),
                     thinking: false,
                     compact: false,
+                    commands: false,
                     before: Some("older".into()),
                 },
             )
@@ -1713,7 +1704,7 @@ mod tests {
                 (Some("boundary"), None, Some("file"), "첫 쪽"),
                 (None, Some("grown-boundary"), Some("file"), "파일이 자람"),
             ] {
-                let LinkMsg::Req { id, body: AgentRequest::Chat { before, harness, compact, .. }, .. } =
+                let LinkMsg::Req { id, body: AgentRequest::Chat { before, harness, compact, commands, .. }, .. } =
                     rx.control::<LinkMsg>().await.unwrap()
                 else {
                     panic!("chat 요청이 아니다")
@@ -1721,6 +1712,8 @@ mod tests {
                 assert_eq!(harness, "codex");
                 // 정리된 자리는 그것을 청한 front에만 싣는다(옛 front는 모르는 role로 답을 읽지 못한다)
                 assert!(compact);
+                // 명령 줄(plan §8.323)도 청한 front에만
+                assert!(commands);
                 assert_eq!(before.as_deref(), asked);
                 let reply = AgentResponse::Chat {
                     messages: vec![ChatMessage {
@@ -1757,6 +1750,7 @@ mod tests {
                         pane: "s".into(),
                         thinking: false,
                         compact: true,
+                        commands: true,
                         before: before.map(str::to_string),
                     },
                 )

@@ -210,6 +210,13 @@ impl Host {
         if !t.notes.is_empty() {
             a.task = format!("{}\n\n## Notes from the task list\n\n{}\n", a.task.trim_end(), t.notes.join("\n"));
         }
+        // 메모의 그림은 그 머신 작업 폴더 `attachments/`로 넘긴다(plan §8.327): 할 일 글도 그 경로를 가리킨다
+        let (attachments, missing) = self.task_attachments(&a.project, &mut a.task);
+        a.attachments = attachments;
+        let warning = match (warning, missing.into_iter().next()) {
+            (Some(w), Some(m)) => Some(format!("{w}. {m}")),
+            (w, m) => w.or(m),
+        };
         Ok((warning, t))
     }
 
@@ -259,6 +266,7 @@ impl Host {
             base: None,
             task: String::new(),
             role: aaa_proto::Role::Worker,
+            attachments: Vec::new(),
         };
         let (warning, t) = self.apply_from_task(&mut a, from_task, block).await?;
         if a.profile.is_empty() {
@@ -299,7 +307,7 @@ impl Host {
         // 임무 thread는 특수 패널의 일이고, 자동화 thread는 출처(규칙)가 있어 task가 필요 없다(plan t-0475 §5.3): 할 일과 잇지 않는다
         let unlinked_threads = open
             .into_iter()
-            .filter(|t| t.mission.is_none() && t.automation.is_none() && !linked.contains(&t.id))
+            .filter(|t| t.automation.is_none() && !linked.contains(&t.id))
             .map(|t| TaskThread { id: t.id, title: t.title, group: t.group })
             .collect();
         let notes_files = self.settings(project).task_notes.iter().map(|p| notes_file(&dir, p)).collect();
@@ -576,7 +584,6 @@ impl Host {
         let page = self.inbox(project, false, peek)?;
         Ok(ProjectContext {
             post_warnings: self.post_warnings(project)?,
-            missions: self.mission_list(Some(project))?,
             project: project.to_string(),
             path: dir.display().to_string(),
             start_threads: self.safety(project).start_threads,
@@ -585,7 +592,6 @@ impl Host {
             assignable: self.assignable(project).await,
             inbox_open: page.items.len() as u32 + page.omitted_open,
             inbox: page.items,
-            evaluator: self.evaluator_rec(project).map(|r| Box::new(self.evaluator_view(&r))),
         })
     }
 }

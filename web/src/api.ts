@@ -95,6 +95,15 @@ export async function uploadChatImage(pane: string, image: File): Promise<string
   return (await unwrap<{ path: string }>(response)).path;
 }
 
+/** task 첨부(plan §8.327): 프로젝트 uploads/에 쓰고 메모에 적을 `uploads/<이름>`을 받는다. `kind`는 문서(md·html), 없으면 그림.
+ * 메모 줄은 `task_edit`로 쓴다 */
+export async function uploadTaskFile(project: string, file: File, kind?: "md" | "html"): Promise<string> {
+  const response = await fetch(`/api/v1/projects/${encodeURIComponent(project)}/uploads${kind ? `?kind=${kind}` : ""}`, {
+    method: "POST", body: file, credentials: "same-origin",
+  });
+  return (await unwrap<{ path: string }>(response)).path;
+}
+
 /** 이 host의 웹 화면들이 함께 쓰는 설정과 고정(plan §8.79, herdr-web-ui api.ts `fetchPreferences`·`savePreferences`) */
 export async function loadPreferences(): Promise<SharedPreferences> {
   const r = await call({ op: "preferences" });

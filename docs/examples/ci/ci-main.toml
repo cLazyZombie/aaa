@@ -1,0 +1,17 @@
+title = "CI 실패 분류"
+enabled = false
+[on.ci]
+repo = "aaa"
+branches = ["main"]
+events = ["failed"]
+[do.start]
+title = "CI 실패 분류"
+profiles = ["reviewer"]
+machines = ["mac-a"]
+brief_file = "automations/ci-watch.md"
+reuse = "open"
+memory = true
+close_idle = "30m"
+[limits]
+usage_session_below = 5
+usage_week_below = 10

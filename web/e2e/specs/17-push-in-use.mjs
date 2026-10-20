@@ -1,4 +1,4 @@
-// 웹 E2E 쓰는 화면·쓰는 기기에 따른 push 판정(plan §8.69·§8.105·§8.119): 보는 동안·두 기기·죽은 연결·쓰는 기기·기기별 알림 종류·시작 질문(§8.323).
+// 웹 E2E 쓰는 화면·쓰는 기기에 따른 push 판정(plan §8.69·§8.105·§8.119): 보는 동안·두 기기·죽은 연결·쓰는 기기·기기별 알림 종류·시작 질문(§8.328).
 // 혼자 돌리기: node web/e2e/web.e2e.mjs --spec 17-push-in-use(새 실험실). 준비는 runSpec과 pushLab(서명 키·구독 하나·demo):
 // 단계는 서로 기대지 않아 하나만 골라(--grep) 돌 수 있다
 import crypto from "node:crypto";
@@ -511,7 +511,7 @@ export default async function ({ page }) {
     await until("본 화면 다시 씀", async () => (await pushInUse(page)) === 1);
   });
 
-  await step("시작 질문(plan §8.323): thread가 구현 전에 [결정 필요]로 모아 묻고, coordinator가 확인 필요 post(제목은 질문 요약·추천)로 사용자에게 넘긴다. 앱을 보는 동안은 thread 표지의 앱 안 알림 하나뿐이고 post push는 건너뛴다. 앱을 닫은 동안은 앱 안 알림 없이 post push 하나가 가린 질문 요약·추천을 싣는다", async () => {
+  await step("시작 질문(plan §8.328): thread가 구현 전에 [결정 필요]로 모아 묻고, coordinator가 확인 필요 post(제목은 질문 요약·추천)로 사용자에게 넘긴다. 앱을 보는 동안은 thread 표지의 앱 안 알림 하나뿐이고 post push는 건너뛴다. 앱을 닫은 동안은 앱 안 알림 없이 post push 하나가 가린 질문 요약·추천을 싣는다", async () => {
     const dev = pushDevice("push/dev-ask");
     const devPath = new URL(dev.json.endpoint).pathname;
     const toDev = (from) => pushes.slice(from).filter((x) => x.path === devPath);

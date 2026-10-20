@@ -402,20 +402,10 @@ pub(crate) fn with_hooks(
     work_dir: &Path,
     command_len: usize,
 ) -> Result<Launch> {
-    let project = launch.env.iter().find(|(k, _)| k == "AAA_MISSION_PROJECT_DIR").map(|(_, v)| PathBuf::from(v));
-    let queries = if let Some(project) = &project {
-        mission_permissions::prepare_inbox(work_dir)?;
-        mission_permissions::queries(&launch, project)?
-    } else {
-        vec![]
-    };
     if launch.harness == "claude" {
         // 실행마다 hook 설정을 준다(사용자 ~/.claude 설정은 고치지 않는다). resume도 같은 설정을 쓴다.
         let settings = work_dir.join("claude-settings.json");
-        let mut value = crate::hooks::claude_settings(&cfg.exe);
-        if let Some(project) = &project {
-            mission_permissions::claude(&mut value, &cfg.exe, work_dir, project, &queries);
-        }
+        let value = crate::hooks::claude_settings(&cfg.exe);
         std::fs::write(&settings, serde_json::to_vec_pretty(&value)?)?;
         let s = settings.to_string_lossy().to_string();
         for argv in [&mut launch.argv, &mut launch.resume_argv] {
@@ -424,9 +414,6 @@ pub(crate) fn with_hooks(
         }
     }
     if launch.harness == "codex" {
-        if project.is_some() {
-            mission_permissions::codex(&mut launch, &cfg.exe, work_dir, &queries)?;
-        }
         // 전역 hook도 pane의 env·peer 계보에서 돌아야 한다. 사용자 notify는 그대로 둔다.
         for argv in [&mut launch.argv, &mut launch.resume_argv] {
             ensure_codex_local(argv, command_len);
@@ -434,9 +421,6 @@ pub(crate) fn with_hooks(
     }
     Ok(launch)
 }
-
-#[path = "mission_permissions.rs"]
-mod mission_permissions;
 
 /// 공유 daemon은 pane의 AAA 환경·peer 계보를 잃는다(§8.2). resume 앞의 전역 옵션으로 준다.
 /// Codex는 commentary 출력 중 Working 줄을 숨긴다. 애니메이션과 별개인 run-state를 OSC 제목에 넣어 감지한다.
@@ -471,7 +455,7 @@ pub fn report_hash(work_dir: &Path) -> Option<String> {
 }
 
 /// work_dir가 thread 작업 폴더 형식인가(host가 준 경로를 그대로 믿지 않는다)
-fn check_work_dir(work_dir: &str) -> Result<PathBuf> {
+pub(crate) fn check_work_dir(work_dir: &str) -> Result<PathBuf> {
     let p = PathBuf::from(work_dir);
     let ok = p.is_absolute()
         && p.parent().and_then(|d| d.file_name()).is_some_and(|n| n == ".aaa")
@@ -915,7 +899,7 @@ subprocess.run(config['notify'] + [payload], check=True)
 }
 
 /// 임무 입력의 처리 여부는 agent가 작업 폴더에서 읽는다. symlink는 따라가지 않는다.
-pub fn mission_inbox_pending(work_dir: &str) -> Result<Vec<String>> {
+pub fn work_file_inbox_pending(work_dir: &str) -> Result<Vec<String>> {
     let dir = check_work_dir(work_dir)?;
     let processed = dir.join("processed.txt");
     if let Ok(m) = processed.symlink_metadata()
@@ -943,7 +927,7 @@ pub fn mission_inbox_pending(work_dir: &str) -> Result<Vec<String>> {
     Ok(names)
 }
 
-fn mission_state_path(work_dir: &str, rel: &str) -> Result<PathBuf> {
+fn work_file_state_path(work_dir: &str, rel: &str) -> Result<PathBuf> {
     use std::path::Component;
     let dir = check_work_dir(work_dir)?;
     let path = Path::new(rel);
@@ -969,7 +953,7 @@ fn mission_state_path(work_dir: &str, rel: &str) -> Result<PathBuf> {
     Ok(at)
 }
 /// 새 작업 폴더에 넘길 상태. source는 세션이 끝난 뒤 읽으며 원본을 지우지 않는다.
-pub fn mission_state_list(work_dir: &str) -> Result<Vec<aaa_proto::LibFile>> {
+pub fn work_file_state_list(work_dir: &str) -> Result<Vec<aaa_proto::LibFile>> {
     use sha2::Digest;
     let dir = check_work_dir(work_dir)?;
     let mut paths = vec!["state.md".to_string(), "processed.txt".into()];
@@ -1006,7 +990,7 @@ pub fn mission_state_list(work_dir: &str) -> Result<Vec<aaa_proto::LibFile>> {
     let mut files = vec![];
     let mut size = 0;
     for rel in paths {
-        let path = mission_state_path(work_dir, &rel)?;
+        let path = work_file_state_path(work_dir, &rel)?;
         if !path.exists() {
             continue;
         }
@@ -1023,9 +1007,9 @@ pub fn mission_state_list(work_dir: &str) -> Result<Vec<aaa_proto::LibFile>> {
     }
     Ok(files)
 }
-pub fn mission_state_read(work_dir: &str, rel: &str, offset: u64) -> Result<(Vec<u8>, bool)> {
+pub fn work_file_state_read(work_dir: &str, rel: &str, offset: u64) -> Result<(Vec<u8>, bool)> {
     use std::io::{Read, Seek, SeekFrom};
-    let mut f = std::fs::File::open(mission_state_path(work_dir, rel)?)?;
+    let mut f = std::fs::File::open(work_file_state_path(work_dir, rel)?)?;
     let size = f.metadata()?.len();
     if offset > size {
         bail!("임무 상태 읽기 offset이 범위를 넘었다");
@@ -1036,16 +1020,16 @@ pub fn mission_state_read(work_dir: &str, rel: &str, offset: u64) -> Result<(Vec
     let eof = offset + b.len() as u64 == size;
     Ok((b, eof))
 }
-pub fn mission_state_write(work_dir: &str, rel: &str, offset: u64, data: &[u8], eof: bool, sha: &str) -> Result<()> {
+pub fn work_file_state_write(work_dir: &str, rel: &str, offset: u64, data: &[u8], eof: bool, sha: &str) -> Result<()> {
     use sha2::Digest;
     use std::io::Write;
     if data.len() > 384 * 1024 || offset.saturating_add(data.len() as u64) > 8 * 1024 * 1024 {
         bail!("임무 상태 조각 상한이다");
     }
-    let path = mission_state_path(work_dir, rel)?;
+    let path = work_file_state_path(work_dir, rel)?;
     let parent = path.parent().context("임무 상태 부모가 없다")?;
     std::fs::create_dir_all(parent)?;
-    let tmp = parent.join(format!(".mission-{}.tmp", path.file_name().unwrap().to_string_lossy()));
+    let tmp = parent.join(format!(".work-file-{}.tmp", path.file_name().unwrap().to_string_lossy()));
     if tmp.symlink_metadata().is_ok_and(|m| !m.is_file()) {
         bail!("임무 상태 임시 파일이 일반 파일이 아니다");
     }
@@ -1073,251 +1057,15 @@ pub fn mission_state_write(work_dir: &str, rel: &str, offset: u64, data: &[u8], 
 }
 
 #[cfg(test)]
-mod mission_tests {
+mod work_file_tests {
     use super::*;
 
     /// Git 자체에서 옵션 종료 경계와 fsmonitor·textconv·index 갱신 차단을 검증한다.
     #[cfg(unix)]
-    #[test]
-    fn mission_git_reads_keep_option_and_index_boundaries() {
-        use std::os::unix::fs::PermissionsExt;
-        use std::process::Command;
-        let root = std::env::temp_dir().join(format!("aaa-mission-git-{}", aaa_common::util::new_id()));
-        let repo = root.join("repo 'quoted");
-        std::fs::create_dir_all(&repo).unwrap();
-        let empty = root.join("empty-config");
-        std::fs::write(&empty, "").unwrap();
-        let git = |args: &[&str]| {
-            let out = Command::new("git")
-                .arg("-c")
-                .arg("init.templateDir=")
-                .arg("-c")
-                .arg("core.hooksPath=/dev/null")
-                .args(args)
-                .current_dir(&repo)
-                .env("GIT_CONFIG_GLOBAL", &empty)
-                .env("GIT_CONFIG_NOSYSTEM", "1")
-                .output()
-                .unwrap();
-            assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
-        };
-        git(&["init", "-q"]);
-        std::fs::write(repo.join("one.txt"), "one\n").unwrap();
-        git(&["add", "one.txt"]);
-        git(&["-c", "user.name=Test", "-c", "user.email=test@example.com", "commit", "-qm", "first"]);
-        let marker = root.join("callback-ran");
-        let callback = root.join("callback");
-        std::fs::write(&callback, format!("#!/bin/sh\ntouch '{}'\n", marker.display())).unwrap();
-        std::fs::set_permissions(&callback, std::fs::Permissions::from_mode(0o700)).unwrap();
-        for name in ["core.fsmonitor", "core.pager", "diff.external", "gpg.program"] {
-            git(&["config", name, callback.to_str().unwrap()]);
-        }
-        git(&["config", "diff.fixture.textconv", callback.to_str().unwrap()]);
-        std::fs::create_dir_all(repo.join(".git/info")).unwrap();
-        std::fs::write(repo.join(".git/info/attributes"), "*.txt diff=fixture\n").unwrap();
-        git(&["config", "log.showSignature", "true"]);
-        git(&["config", "core.untrackedCache", "true"]);
-        let index = std::fs::read(repo.join(".git/index")).unwrap();
-        let commands = aaa_proto::mission_git_read_commands(&repo.join(".aaa/demo-t-0001").to_string_lossy());
-        assert_eq!(commands.len(), 3);
-        for (i, command) in commands.iter().enumerate() {
-            let suffix = if i < 2 { " HEAD" } else { "" };
-            let run = |text: &str| {
-                Command::new("/bin/sh")
-                    .args(["-c", text])
-                    .env("GIT_CONFIG_GLOBAL", &empty)
-                    .env("GIT_CONFIG_NOSYSTEM", "1")
-                    .output()
-                    .unwrap()
-            };
-            let out = run(&format!("{command}{suffix}"));
-            assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
-            if i == 1 {
-                assert!(String::from_utf8_lossy(&out.stdout).contains("+one"));
-                let blob = run(&format!("{command} HEAD:one.txt"));
-                assert!(blob.status.success());
-                assert_eq!(blob.stdout, b"one\n");
-            }
-            assert!(!marker.exists(), "읽기에서 외부 callback을 실행하면 안 된다");
-            assert_eq!(std::fs::read(repo.join(".git/index")).unwrap(), index);
-            if i < 2 {
-                let outside = root.join(format!("output-{i}"));
-                let out = run(&format!("{command} --output='{}' HEAD", outside.display()));
-                assert!(!outside.exists(), "옵션 종료 뒤 --output을 켜면 안 된다");
-                assert!(!out.status.success());
-            }
-        }
-        std::fs::remove_dir_all(root).unwrap();
-    }
-
-    /// 실행별 권한 계약: 임무만 보고·post·자료 읽기·자기 폴더 쓰기를 허용한다.
-    #[test]
-    fn mission_launch_scopes_permissions_for_both_harnesses() {
-        let root = std::env::temp_dir().join(format!("aaa-mission-policy-{}", aaa_common::util::new_id()));
-        let work = root.join("repo/.aaa/demo-t-0001");
-        let project = root.join("projects/demo");
-        std::fs::create_dir_all(&work).unwrap();
-        let cfg = ThreadsConfig { exe: "/opt/aaa tools/aaa".into(), ..Default::default() };
-        for (harness, yolo) in [("claude", false), ("claude", true), ("codex", false), ("codex", true)] {
-            let mut profile = aaa_proto::ResolvedProfile {
-                harness: harness.into(),
-                model: String::new(),
-                effort: String::new(),
-                args: aaa_config::safety::apply_yolo(
-                    yolo,
-                    harness,
-                    &if yolo {
-                        vec![]
-                    } else if harness == "codex" {
-                        vec![
-                            "--sandbox".into(),
-                            "workspace-write".into(),
-                            "--ask-for-approval".into(),
-                            "on-request".into(),
-                        ]
-                    } else {
-                        vec!["--permission-mode".into(), "acceptEdits".into()]
-                    },
-                ),
-                command: vec![std::env::current_exe().unwrap().to_string_lossy().into_owned()],
-                env: [
-                    ("AAA_MISSION_PROJECT_DIR".into(), project.to_string_lossy().into()),
-                    ("AAA_MISSION_NAME".into(), "watch".into()),
-                ]
-                .into(),
-            };
-            let previous = Launch {
-                profile: "watch".into(),
-                harness: harness.into(),
-                argv: vec![],
-                env: vec![],
-                resume_argv: vec![],
-                session_key: None,
-            };
-            let launch =
-                rebrief(&cfg, work.to_str().unwrap(), "임무", previous, Some("watch"), None, Some(&profile)).unwrap();
-            for argv in [&launch.argv, &launch.resume_argv] {
-                for arg in &profile.args {
-                    assert!(argv.contains(arg), "임무도 일반 thread의 시작 인자를 보존한다: {arg} {argv:?}");
-                }
-            }
-            assert!(work.join("inbox").is_dir(), "입력이 없어도 자기 inbox 위치는 존재한다");
-            assert!(mission_inbox_pending(work.to_str().unwrap()).unwrap().is_empty());
-            if harness == "claude" {
-                let settings: serde_json::Value =
-                    serde_json::from_slice(&std::fs::read(work.join("claude-settings.json")).unwrap()).unwrap();
-                assert!(settings["permissions"].get("defaultMode").is_none());
-                assert!(settings["permissions"].get("disableBypassPermissionsMode").is_none());
-                let allow = settings["permissions"]["allow"].as_array().expect("임무 허용 목록");
-                assert!(allow.contains(&serde_json::json!("Bash(aaa report *)")));
-                assert!(allow.contains(&serde_json::json!("Bash(aaa mission show demo watch --json)")));
-                assert!(
-                    allow.contains(&serde_json::json!(r#"Bash("/opt/aaa tools/aaa" mission show demo watch --json)"#))
-                );
-                assert!(allow.contains(&serde_json::json!("Bash(aaa mission --help)")));
-                assert!(allow.contains(&serde_json::json!("Bash(aaa --help)")));
-                assert!(allow.contains(&serde_json::json!(format!(
-                    "Bash(ls -1 -- '{}/inbox')",
-                    work.to_string_lossy().replace('\\', "/")
-                ))));
-                assert!(!allow.iter().any(|v| {
-                    v.as_str().is_some_and(|s| s.starts_with("Bash(find ") || s == "Bash(aaa *)" || s == "Bash(ls *)")
-                }));
-                assert!(allow.contains(&serde_json::json!("Bash(aaa post coordinator *)")));
-                let reads: Vec<_> =
-                    allow.iter().filter_map(|v| v.as_str()).filter(|s| s.starts_with("Bash(git -C ")).collect();
-                assert_eq!(reads.len(), 3, "자기 worktree의 log/show/status만 허용한다");
-                assert!(reads.iter().all(|s| s.contains(&root.join("repo").to_string_lossy().replace('\\', "/"))));
-                assert!(reads.iter().any(|s| {
-                    s.ends_with("log --no-ext-diff --no-textconv --oneline --max-count=100 --end-of-options *)")
-                }));
-                assert!(
-                    reads
-                        .iter()
-                        .any(|s| s.ends_with("show --no-ext-diff --no-textconv --format=fuller --end-of-options *)"))
-                );
-                assert!(reads.iter().any(|s| s.ends_with("status --short -- *)")));
-                let path = work.to_string_lossy().replace('\\', "/");
-                assert!(allow.contains(&serde_json::json!(format!("Edit(//{}/**)", path.trim_start_matches('/')))));
-                assert!(!allow.contains(&serde_json::json!("Bash")));
-                assert!(!allow.contains(&serde_json::json!("Edit")));
-                assert!(
-                    settings["permissions"]["additionalDirectories"]
-                        .as_array()
-                        .unwrap()
-                        .contains(&serde_json::json!(project.join("threads")))
-                );
-                assert!(settings["hooks"]["SessionStart"].is_array());
-            } else {
-                for argv in [&launch.argv, &launch.resume_argv] {
-                    assert!(
-                        !argv.iter().any(|a| a.starts_with("default_permissions=")
-                            || a.starts_with("permissions.aaa_mission=")
-                            || a == "approvals_reviewer=\"user\""),
-                        "임무만 manual 권한을 강제하지 않는다: {argv:?}"
-                    );
-                }
-                let rules = std::fs::read_to_string(work.join(".codex/rules/aaa-mission.rules")).unwrap();
-                assert!(rules.contains(r#"["aaa","report"]"#));
-                assert!(rules.contains(r#"["aaa","mission","show","demo","watch","--json"]"#));
-                assert!(rules.contains(r#"["aaa","mission","--help"]"#));
-                assert!(rules.contains(r#"["aaa","post","coordinator"]"#));
-                assert!(!rules.contains("push"));
-            }
-            profile.env.clear();
-            let normal =
-                rebrief(&cfg, work.to_str().unwrap(), "일반 작업", launch, Some("normal"), None, Some(&profile))
-                    .unwrap();
-            assert!(!normal.argv.iter().any(|a| a.starts_with("default_permissions=")));
-            if harness == "claude" {
-                let settings: serde_json::Value =
-                    serde_json::from_slice(&std::fs::read(work.join("claude-settings.json")).unwrap()).unwrap();
-                assert!(settings.get("permissions").is_none(), "일반 thread에 임무 허용 목록을 주지 않는다");
-            }
-            std::fs::remove_dir(work.join("inbox")).unwrap();
-        }
-        std::fs::remove_dir_all(root).unwrap();
-    }
-
-    #[cfg(unix)]
-    #[test]
-    fn mission_settings_do_not_write_through_links() {
-        let root = std::env::temp_dir().join(format!("aaa-mission-links-{}", aaa_common::util::new_id()));
-        let work = root.join("work");
-        let outside = root.join("outside");
-        std::fs::create_dir_all(&work).unwrap();
-        std::fs::create_dir(&outside).unwrap();
-        let cfg = ThreadsConfig { exe: "/opt/aaa".into(), ..Default::default() };
-        let launch = Launch {
-            profile: "watch".into(),
-            harness: "codex".into(),
-            argv: vec!["codex".into()],
-            env: vec![("AAA_MISSION_PROJECT_DIR".into(), outside.to_string_lossy().into())],
-            resume_argv: vec!["codex".into(), "resume".into()],
-            session_key: None,
-        };
-        std::os::unix::fs::symlink(&outside, work.join("inbox")).unwrap();
-        assert!(with_hooks(&cfg, launch.clone(), &work, 1).is_err());
-        assert_eq!(std::fs::read_dir(&outside).unwrap().count(), 0);
-        std::fs::remove_file(work.join("inbox")).unwrap();
-        std::os::unix::fs::symlink(&outside, work.join(".codex")).unwrap();
-        assert!(with_hooks(&cfg, launch.clone(), &work, 1).is_err());
-        assert_eq!(std::fs::read_dir(&outside).unwrap().count(), 0);
-        std::fs::remove_file(work.join(".codex")).unwrap();
-        with_hooks(&cfg, launch.clone(), &work, 1).unwrap();
-        let original = outside.join("config.toml");
-        std::fs::write(&original, "원래 파일").unwrap();
-        let target = work.join(".codex/config.toml");
-        std::fs::remove_file(&target).unwrap();
-        std::fs::hard_link(&original, &target).unwrap();
-        with_hooks(&cfg, launch, &work, 1).unwrap();
-        assert_eq!(std::fs::read_to_string(original).unwrap(), "원래 파일");
-        std::fs::remove_dir_all(root).unwrap();
-    }
     use sha2::Digest;
     #[test]
-    fn mission_inbox_counts_processed_and_state_transfer_is_exact() {
-        let root = std::env::temp_dir().join(format!("aaa-mission-files-{}", aaa_common::util::new_id()));
+    fn work_file_inbox_counts_processed_and_state_transfer_is_exact() {
+        let root = std::env::temp_dir().join(format!("aaa-work-files-{}", aaa_common::util::new_id()));
         let from = root.join("from/.aaa/demo-t-0001");
         let to = root.join("to/.aaa/demo-t-0001");
         std::fs::create_dir_all(&from).unwrap();
@@ -1328,25 +1076,25 @@ mod mission_tests {
         write_inbox(from, "inbox/r-00000002.json", "둘째 입력".as_bytes()).unwrap();
         std::fs::write(Path::new(from).join("processed.txt"), "p-00000001.json\n").unwrap();
         std::fs::write(Path::new(from).join("state.md"), "이어 갈 판단").unwrap();
-        assert_eq!(mission_inbox_pending(from).unwrap().len(), 1);
+        assert_eq!(work_file_inbox_pending(from).unwrap().len(), 1);
         std::fs::create_dir_all(Path::new(from).join("memory/history")).unwrap();
         std::fs::write(Path::new(from).join("memory/memory.md"), "자동화 기억").unwrap();
         std::fs::write(Path::new(from).join("memory/history/day.md"), "원문").unwrap();
-        let files = mission_state_list(from).unwrap();
+        let files = work_file_state_list(from).unwrap();
         assert_eq!(files.len(), 6);
         for f in &files {
-            let (data, eof) = mission_state_read(from, &f.path, 0).unwrap();
+            let (data, eof) = work_file_state_read(from, &f.path, 0).unwrap();
             assert!(eof);
-            mission_state_write(to, &f.path, 0, &data, eof, &f.sha256).unwrap();
+            work_file_state_write(to, &f.path, 0, &data, eof, &f.sha256).unwrap();
             assert_eq!(
                 std::fs::read(Path::new(from).join(&f.path)).unwrap(),
                 std::fs::read(Path::new(to).join(&f.path)).unwrap()
             );
         }
-        assert_eq!(mission_inbox_pending(to).unwrap().len(), 1);
-        assert!(mission_state_write(to, "../escape", 0, b"x", true, "bad").is_err());
+        assert_eq!(work_file_inbox_pending(to).unwrap().len(), 1);
+        assert!(work_file_state_write(to, "../escape", 0, b"x", true, "bad").is_err());
         assert!(
-            mission_state_write(
+            work_file_state_write(
                 to,
                 "state.md",
                 0,

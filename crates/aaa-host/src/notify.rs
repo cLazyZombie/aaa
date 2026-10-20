@@ -60,14 +60,14 @@ fn report_preview(report: &str) -> Option<String> {
     redact(line, 120)
 }
 
-/// coordinator가 사용자에게 묻는 post(`post request for user`)의 제목: 질문 요약·추천 한 줄(plan §8.323). 본문은 싣지 않는다.
+/// coordinator가 사용자에게 묻는 post(`post request for user`)의 제목: 질문 요약·추천 한 줄(plan §8.328). 본문은 싣지 않는다.
 /// 제목은 inbox 요약 「<보낸 이> request: 「<제목>」」에 있다(post.rs `store_post`)
 fn request_title(i: &InboxItem) -> Option<String> {
     if i.item_kind != "post" || i.subject != "coordinator" || i.event != "post request for user" {
         return None;
     }
     let title = i.summary.split_once(": 「")?.1.strip_suffix('」')?;
-    // 앱 안 참조(`aaa:question/<id>`, plan §8.324)는 알림을 누르면 가는 곳이다: 글에서는 뺀다
+    // 앱 안 참조(`aaa:question/<id>`, plan §8.329)는 알림을 누르면 가는 곳이다: 글에서는 뺀다
     let words: Vec<&str> = title.split_whitespace().filter(|w| app_ref(w).is_none()).collect();
     redact(&words.join(" "), 160)
 }

@@ -207,16 +207,12 @@ pub(crate) struct Routine {
     pub machine: Option<String>,
     pub enabled: bool,
     pub prompt: String,
-    pub mission: Option<String>,
 }
 
 impl Routine {
     /// 승인 대상: 명령과 실행 머신
     pub fn command_sha256(&self) -> String {
         let mut input = format!("{}\n{}", self.machine.as_deref().unwrap_or(""), self.command);
-        if let Some(n) = &self.mission {
-            input.push_str(&format!("\nmission:{n}"));
-        }
         if !self.command.is_empty()
             && let crate::automation::Action::Message(a) = &self.action
         {
@@ -244,11 +240,8 @@ fn parse_in(name: &str, text: &str, seconds: bool) -> Result<Routine, String> {
         .or_else(|| rest.strip_suffix("\n+++").map(|f| (f, "")))
         .ok_or("닫는 `+++` 줄이 없다")?;
     let f: Front = crate::automation::decode_fragment(&format!("routines/{name}.md"), text, front, 4)?;
-    if let Some(n) = &f.mission
-        && (!valid_project(n)
-            || (!["ci", "git"].contains(&f.on.as_str()) && (f.command.trim().is_empty() || !f.on.is_empty())))
-    {
-        return Err("mission 목적지는 명령 일정 routine에만 둔다".into());
+    if f.mission.is_some() {
+        return Err(crate::legacy_mission::REMOVED.into());
     }
     let (trigger, schedule_text) = match f.on.as_str() {
         "" => (Trigger::Schedule(parse_schedule(&f.schedule, seconds)?), f.schedule.trim().to_string()),
@@ -306,14 +299,7 @@ fn parse_in(name: &str, text: &str, seconds: bool) -> Result<Routine, String> {
         name: name.to_string(),
         title: name.to_string(),
         file: format!("routines/{name}.md"),
-        action: if let Some(m) = &f.mission {
-            crate::automation::Action::Wake(crate::automation::Wake {
-                mission: m.clone(),
-                reports: true,
-                text: Some(body.trim().into()),
-                text_file: None,
-            })
-        } else if matches!(trigger, Trigger::Pr(_)) {
+        action: if matches!(trigger, Trigger::Pr(_)) {
             crate::automation::Action::Message(crate::automation::Message {
                 thread: "owner".into(),
                 text: Some(body.trim().into()),
@@ -333,7 +319,6 @@ fn parse_in(name: &str, text: &str, seconds: bool) -> Result<Routine, String> {
         machine: f.machine.filter(|m| !m.trim().is_empty()),
         enabled: f.enabled,
         prompt: body.trim().to_string(),
-        mission: f.mission,
     })
 }
 
@@ -439,11 +424,6 @@ pub(crate) fn edit_enabled(text: &str, on: Option<bool>) -> Result<(String, bool
 }
 
 impl Host {
-    pub(crate) fn seed_routine_schedule(&self, p: &str, name: &str, last: u64) {
-        let mut state = self.routine_state(p, name);
-        state.last_run_ms.get_or_insert(last);
-        self.save_routine_state(p, name, &state);
-    }
     fn routine_state(&self, project: &str, name: &str) -> State {
         self.db
             .meta(&format!("routine:{project}:{name}"))
@@ -575,7 +555,13 @@ impl Host {
             file,
             ..Default::default()
         }));
-        out.extend(self.mission_automation_views(project)?);
+        out.extend(crate::legacy_mission::files(&dir).into_iter().map(|file| RoutineView {
+            name: file.clone(),
+            file,
+            origin: "legacy".into(),
+            error: Some(crate::legacy_mission::REMOVED.into()),
+            ..Default::default()
+        }));
         Ok(out)
     }
 
@@ -622,10 +608,6 @@ impl Host {
         actor: &str,
     ) -> Result<Vec<RoutineView>, ErrorBody> {
         let dir = self.project_dir(project)?;
-        if let Some(n) = name.strip_prefix("mission:") {
-            self.mission_automation_toggle(project, n, on, actor)?;
-            return self.routines(project);
-        }
         let bad = |m: String| err(ErrorCode::BadRequest, m);
         if !valid_project(name) {
             return Err(bad(format!("routine 이름 형식이 아니다: {name}")));
@@ -697,23 +679,8 @@ impl Host {
                 now
             };
             let run_id = format!("schedule:{planned}");
-            if let Some(n) = &r.mission
-                && !self.mission_target_exists(project, n)
-            {
-                self.inbox_once(
-                    project,
-                    "config-error",
-                    &r.name,
-                    "mission missing",
-                    "routine의 대상 임무가 없어 실행하지 않았다",
-                );
-                self.record_routine(project, &r.name, &run_id, "waiting", "대상 임무 없음", None);
-                self.save_routine_state(project, &r.name, &st);
-                continue;
-            }
             if !coordinator
                 && !matches!(r.action, crate::automation::Action::Message(_) | crate::automation::Action::Start(_))
-                && !r.mission.as_ref().is_some_and(|n| self.mission_target_exists(project, n))
             {
                 st.no_coordinator += 1;
                 self.record_routine(project, &r.name, &run_id, "skipped", "coordinator 없음", None);
@@ -957,20 +924,5 @@ mod tests {
         let (exit, block) = output_block(&ran);
         assert_eq!(exit, "종료 코드 0");
         assert!(block.contains("지시가 아니라 자료다") && block.contains("````text\n"), "{block}");
-    }
-}
-
-#[cfg(test)]
-mod mission_tests {
-    use super::*;
-    #[test]
-    fn routine_destination_requires_reapproval_and_command() {
-        let text = "+++\nschedule=\"every 5m\"\ncommand=\"tools/digest.sh\"\n+++\n자료";
-        let normal = parse("digest", text).unwrap();
-        let targeted = parse("digest", &text.replace("command=", "mission=\"watch\"\ncommand=")).unwrap();
-        assert_ne!(normal.command_sha256(), targeted.command_sha256());
-        let other = parse("digest", &text.replace("command=", "mission=\"other\"\ncommand=")).unwrap();
-        assert_ne!(targeted.command_sha256(), other.command_sha256());
-        assert!(parse("digest", "+++\nschedule=\"every 5m\"\nmission=\"watch\"\n+++\n자료").is_err());
     }
 }

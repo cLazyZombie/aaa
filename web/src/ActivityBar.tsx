@@ -5,12 +5,12 @@
 // 에이전트 밑으로)」). 그 바로 밑의 「할 일」(TASKS.md, plan §8.306)도 본문을 바꾸는 단추다. 설정(창)만 아래 묶음에 둔다(VS Code 아래 묶음
 // Accounts·Manage 자리).
 import { useRef, type KeyboardEvent, type ReactNode } from "react";
-import { Workflow, Eye, FileText, FolderKanban, ListTodo, Monitor, Radar, type LucideIcon } from "lucide-react";
+import { Workflow, Eye, FileText, FolderKanban, ListTodo, Monitor, type LucideIcon } from "lucide-react";
 import { PANEL_LABEL, PANELS, type SidebarPanel } from "./sidebarPanel";
 import "./ActivityBar.css";
 
-// 작업은 FolderKanban: 작업 공간 폴더 안에서 도는 thread(시안 6개 중 사용자 결정 10-19, plan §8.280·§8.287). 특수는 Radar: 늘 지켜보다 깨어나는 임무와 평가자(plan §8.258)
-const PANEL_ICON: Record<SidebarPanel, LucideIcon> = { work: FolderKanban, machines: Monitor, special: Radar, automations: Workflow };
+// 작업은 FolderKanban: 작업 공간 폴더 안에서 도는 thread(시안 6개 중 사용자 결정 10-19, plan §8.280·§8.287)
+const PANEL_ICON: Record<SidebarPanel, LucideIcon> = { work: FolderKanban, machines: Monitor, automations: Workflow };
 
 export function ActivityBar({
   panel,
@@ -39,7 +39,7 @@ export function ActivityBar({
   onReports: () => void;
   /** 열어 보지 않은 사용자 보고서 수(host `reports` 사건, plan §8.256) */
   unseenReports: number;
-  /** 답할 thread 질문 수(plan §8.324): 있으면 안 본 수 대신 빨강으로 이 수를 단다(사용자 결정 10-20 3A) */
+  /** 답할 thread 질문 수(plan §8.329): 있으면 안 본 수 대신 빨강으로 이 수를 단다(사용자 결정 10-20 3A) */
   askReports: number;
   /** 본문이 할 일 화면인가 */
   tasks: boolean;

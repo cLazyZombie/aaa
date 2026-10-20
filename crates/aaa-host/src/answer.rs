@@ -1,4 +1,4 @@
-//! thread 질문 카드의 답(plan §8.324). thread가 보고 `## Questions`에 남긴 질문에 웹 카드·`aaa thread answer`로 답한다.
+//! thread 질문 카드의 답(plan §8.329). thread가 보고 `## Questions`에 남긴 질문에 웹 카드·`aaa thread answer`로 답한다.
 //!
 //! - 답은 그 보고(hash)의 질문에만 맞는다. 새 보고가 오면 질문을 다시 읽고 답을 비운다(orch.rs 사본).
 //! - 한 번만 받는다: 기록에 먼저 자리를 잡고(`question_answer`) 보낸다. 다른 기기가 늦게 누르면 「이미 답함」이다. 보내지

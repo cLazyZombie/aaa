@@ -97,7 +97,7 @@ function Inline({ nodes, interactive = true, standalone = false }: { nodes: Inli
   const open = interactive ? context : null;
   const imageResolver = useContext(MarkdownImageContext);
   const openLink = useContext(OpenLinkContext);
-  // 앱 안 참조(`aaa:question/…`·`aaa:report/…`, plan §8.324)는 칩이다. 링크 안(interactive=false)에서는 누를 것을 겹치지 않는다
+  // 앱 안 참조(`aaa:question/…`·`aaa:report/…`, plan §8.329)는 칩이다. 링크 안(interactive=false)에서는 누를 것을 겹치지 않는다
   const refContext = useContext(AppRefContext);
   const refs = interactive ? refContext : null;
   const follow = (href: string) =>

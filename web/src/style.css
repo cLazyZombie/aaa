@@ -848,6 +848,15 @@ svg.i { width: 16px; height: 16px; flex-shrink: 0; fill: none; stroke: currentCo
 .files a { color: var(--text-strong); text-decoration: none; overflow-wrap: anywhere; font-family: var(--font-mono); font-size: calc(var(--fs-xs) * 12.5 / 12); }
 .files a:hover { color: var(--accent); text-decoration: underline; }
 .files .size { margin-left: auto; color: var(--text-dim); font-size: var(--fs-xs); font-variant-numeric: tabular-nums; white-space: nowrap; }
+/* 결과물 md·html 줄의 「할 일에」(plan §8.327): 크기 뒤 끝에 둔다. 휴대폰은 글 없이 아이콘만(손가락 칸은 44px) */
+.files .file-task-add { flex: 0 0 auto; display: inline-flex; align-items: center; gap: 4px; color: var(--text-dim); }
+.files .file-task-add:hover { color: var(--accent); }
+@media (max-width: 640px) {
+  .files .file-task-add { min-width: 44px; min-height: 38px; justify-content: center; }
+  .files .file-task-add .label { display: none; }
+  /* 보고서 머리는 이름이 먼저다: 「할 일에 추가」는 아이콘만 */
+  .report-task-add .label { display: none; }
+}
 .library-frame { width: 100%; height: 56vh; border: 1px solid var(--border); border-radius: var(--r-md); background: #fff; }
 
 /* 빈 화면 머리: 좁은 창의 목록 drawer 단추, 머리 알림, 「더 보기」 */
@@ -1228,6 +1237,42 @@ summary.chat-compact-head { cursor: pointer; }
 .context-pop-foot { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: var(--space-2); padding-top: var(--space-2); border-top: 1px solid var(--border); color: var(--text-dim); font-size: var(--fs-2xs); }
 .context-pop-foot .btn { display: inline-flex; align-items: center; gap: 6px; height: 28px; padding: 0 10px; font-size: var(--fs-xs); }
 .context-pop-foot .btn svg { width: 14px; height: 14px; }
+
+/* 입력칸 「/」 목록(plan §8.323, herdr-web-ui Composer.tsx listbox 꼴): 입력칸 위에 붙는다. 줄은 「/이름 안내 · 설명」과 끝 표지 */
+.slash-menu {
+  position: absolute; left: 0; right: 0; bottom: calc(100% + var(--space-2)); z-index: var(--z-popover);
+  max-height: min(18rem, 45vh); overflow-y: auto; overscroll-behavior: contain; padding: var(--space-1);
+  background: var(--bg-panel); border: 1px solid var(--border); border-radius: var(--r-lg); box-shadow: var(--shadow-pop);
+  color: var(--text); font-size: var(--fs-xs); text-align: left;
+}
+.slash-menu.is-empty { padding: var(--space-2) var(--space-3); color: var(--text-dim); }
+.slash-group { padding: var(--space-2) var(--space-2) 2px; color: var(--text-faint); font-size: var(--fs-2xs); font-weight: 600; letter-spacing: 0.06em; }
+.slash-item {
+  display: grid; grid-template-columns: auto auto minmax(0, 1fr) auto; align-items: baseline; column-gap: var(--space-2);
+  padding: 6px var(--space-2); border-radius: var(--r-md); cursor: pointer;
+}
+.slash-item.is-active { background: var(--accent-tint); }
+.slash-item-name { font-family: var(--font-mono); font-weight: 600; color: var(--text-strong); white-space: nowrap; }
+.slash-item-hint { font-family: var(--font-mono); color: var(--text-faint); white-space: nowrap; }
+.slash-item-desc { min-width: 0; color: var(--text-dim); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.slash-item-tags { display: inline-flex; gap: 4px; }
+.slash-tag { padding: 0 6px; border: 1px solid var(--border); border-radius: var(--r-sm); color: var(--text-dim); font-size: var(--fs-2xs); line-height: 1.6; white-space: nowrap; }
+.slash-tag.is-terminal { color: var(--accent); border-color: var(--accent-tint); }
+.slash-tag.is-confirm { color: var(--blocked); border-color: currentColor; }
+/* 좁은 화면: 안내는 빼고 설명은 둘째 줄 */
+@media (max-width: 600px) {
+  .slash-item { grid-template-columns: auto minmax(0, 1fr) auto; row-gap: 2px; }
+  .slash-item-hint { display: none; }
+  .slash-item-desc { grid-column: 1 / -1; grid-row: 2; }
+}
+/* 대화의 harness 명령 줄과 결과(plan §8.323): 조용한 한 줄, 결과는 고정폭 글 */
+.chat-msg.chat-command { align-self: flex-start; display: inline-flex; align-items: center; gap: 6px; padding: 2px var(--space-3); background: transparent; color: var(--text-dim); font: calc(var(--fs-xs) * var(--chat-scale, 1))/1.5 var(--font-mono); }
+.chat-msg.chat-command svg { width: 13px; height: 13px; flex: none; }
+.chat-msg.chat-command code { color: var(--text); }
+.chat-msg.chat-command-output { align-self: flex-start; margin: 0 0 0 var(--space-3); padding: var(--space-1) var(--space-3); border-left: 2px solid var(--border); border-radius: 0; background: transparent; color: var(--text-dim); font-size: calc(var(--fs-xs) * var(--chat-scale, 1)); }
+.chat-msg.chat-command-output pre { margin: 0; font: inherit; font-family: var(--font-mono); white-space: pre-wrap; overflow-wrap: anywhere; }
+.chat-msg.chat-command-output summary { cursor: pointer; font-family: var(--font-mono); }
+.chat-command-more { color: var(--text-faint); }
 .context-pop-foot code { font-family: var(--font-mono); }
 @media (prefers-reduced-motion: reduce) {
   .context-gauge[data-compacting] .context-gauge-ring { animation: none; }
@@ -1472,7 +1517,7 @@ summary.chat-compact-head { cursor: pointer; }
 ::highlight(aaa-chat-find) { background-color: color-mix(in srgb, var(--accent) 32%, transparent); color: var(--text-strong); }
 ::highlight(aaa-chat-find-active) { background-color: var(--accent); color: var(--bg); }
 
-/* 앱 안 참조 칩(plan §8.324): 대화 글의 `aaa:question/…`·`aaa:report/…`. 링크가 아니라 앱 안에서 연다 */
+/* 앱 안 참조 칩(plan §8.329): 대화 글의 `aaa:question/…`·`aaa:report/…`. 링크가 아니라 앱 안에서 연다 */
 .app-ref { display: inline-flex; align-items: center; gap: 6px; max-width: 100%; height: 26px; padding: 0 10px 0 8px; margin: 0 2px; border-radius: var(--radius-pill); border: var(--hairline) solid var(--border-strong); background: var(--bg-elevated); color: var(--text-strong); font: inherit; font-size: var(--fs-sm); font-weight: var(--fw-medium); line-height: 1; vertical-align: middle; cursor: pointer; white-space: nowrap; overflow: hidden; }
 .app-ref svg { width: 14px; height: 14px; flex: none; }
 .app-ref-label { overflow: hidden; text-overflow: ellipsis; }
@@ -1486,7 +1531,7 @@ summary.chat-compact-head { cursor: pointer; }
 .app-ref:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 .dock-ref { display: flex; max-width: 1120px; margin: 0 0 var(--space-2); }
 
-/* 보고서 화면 위 「지금」 줄과 「답할 것」(plan §8.324). 카드는 화면 선택 창 카드(PromptCard) 꼴이고 패널이 굴러가니 높이를 묶지 않는다 */
+/* 보고서 화면 위 「지금」 줄과 「답할 것」(plan §8.329). 카드는 화면 선택 창 카드(PromptCard) 꼴이고 패널이 굴러가니 높이를 묶지 않는다 */
 .thread-asks { display: flex; flex-direction: column; gap: var(--space-2); margin: 0 0 var(--space-4); }
 .thread-asks-now { display: flex; flex-wrap: wrap; gap: var(--space-2); }
 .thread-asks-now span { font-size: var(--fs-xs); padding: 2px 10px; border-radius: var(--radius-pill); background: var(--bg-elevated); border: var(--hairline) solid var(--border); color: var(--text); }

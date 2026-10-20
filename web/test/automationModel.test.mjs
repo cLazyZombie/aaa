@@ -1,7 +1,7 @@
 // 자동화 상세·변환·막힌 큐 판정(src/automationModel.ts, 관리 GUI W1, plan §8.303).
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { archiveDirs, canPreviewConvert, convertGroups, legacyFiles, legacyMission, legacyRule, lastSkip, ruleTargets, ruleTone, stuckBatch } from "../src/automationModel.ts";
+import { archiveDirs, canPreviewConvert, convertGroups, legacyFiles, legacyRule, lastSkip, ruleTargets, ruleTone, stuckBatch } from "../src/automationModel.ts";
 
 const rule = (over) => ({ enabled: true, error: null, queue: null, last_result: null, last_skip: null, ...over });
 const inflight = (over) => ({ id: "automation-1", events: 2, at_ms: 1, thread: "t-0001", unknown: true, ...over });
@@ -16,12 +16,9 @@ describe("자동화 상세", () => {
     assert.equal(legacyRule({ file: "missions/watch.md" }), true);
     assert.equal(legacyRule({ file: "automations/check.toml" }), false);
     assert.equal(legacyRule({ file: "routines/.converted/check.md" }), false);
-    assert.equal(legacyMission({ file_text: '+++\nprofile="x"\n+++\n본문' }), true);
-    assert.equal(legacyMission({ file_text: 'profile = "x"\n' }), false);
     // 옛 임무의 조건 줄과 임무는 같은 파일 하나다
     const rules = [{ file: "routines/check.md" }, { file: "missions/watch.md" }, { file: "automations/new.toml" }];
-    const missions = [{ name: "watch", file_text: "+++\n" }, { name: "next", file_text: "profile='x'\n" }];
-    assert.deepEqual(legacyFiles(rules, missions), ["missions/watch.md", "routines/check.md"]);
+    assert.deepEqual(legacyFiles(rules), ["missions/watch.md", "routines/check.md"]);
   });
   it("막힌 큐는 보낸 결과를 모르는 묶음만이며 줄 색에서 마지막 결과보다 먼저다. 꺼짐·파일 오류가 그보다 먼저다", () => {
     assert.equal(stuckBatch(rule({ queue: { pending: 1, inflight: inflight({ unknown: false }) } })), null);
@@ -39,29 +36,12 @@ describe("자동화 상세", () => {
     assert.deepEqual(targets, ["새 thread · 점검", "mac-a · 작업 폴더(저장소 없음)", "profile: fake", "보내던 thread: t-0009"]);
     assert.deepEqual(ruleTargets({ action: "coordinator 안내", command: "git status", machine: null, start_scope: null, queue: null }), ["coordinator 안내", "명령 실행 머신: host 머신"]);
   });
-  it("변환 계획 묶음: 임무 파일이 있을 때만 <임무>-events·-schedule을 생기는 규칙으로, 보존 사본·스키마·긴 본문은 따로", () => {
-    const files = [
-      "automations/automation.schema.json",
-      "automations/check.toml",
-      "automations/watch-events.toml",
-      "automations/watch-schedule.toml",
-      "automations/other-events.toml",
-      "automations/long.md",
-      "missions/mission.schema.json",
-      "missions/watch.md",
-      "missions/watch.toml",
-      "routines/.converted/check.md",
-      "missions/.converted/watch.md",
-    ];
-    const g = Object.fromEntries(convertGroups(files).map((x) => [x.key, x.files]));
-    assert.deepEqual(g.rules, ["automations/check.toml", "automations/other-events.toml"]);
-    assert.deepEqual(g.derived, ["automations/watch-events.toml", "automations/watch-schedule.toml"]);
-    assert.deepEqual(g.missions, ["missions/watch.md", "missions/watch.toml"]);
-    assert.deepEqual(g.bodies, ["automations/long.md"]);
-    assert.deepEqual(g.archived, ["routines/.converted/check.md", "missions/.converted/watch.md"]);
-    assert.deepEqual(g.schema, ["automations/automation.schema.json", "missions/mission.schema.json"]);
-    assert.deepEqual(archiveDirs(files), ["routines/.converted/", "missions/.converted/"]);
-    assert.deepEqual(convertGroups([]), []);
+  it("변환 계획은 규칙·brief·기억·보존 사본을 묶는다", () => {
+    const g = Object.fromEntries(convertGroups(["automations/check.toml", "automations/check.brief.md", "automations/check.memory/memory.md", "missions/.converted/watch.md"]).map((x) => [x.key,x.files]));
+    assert.deepEqual(g.rules,["automations/check.toml"]);
+    assert.deepEqual(g.memory,["automations/check.memory/memory.md"]);
+    assert.deepEqual(g.bodies,["automations/check.brief.md"]);
+    assert.deepEqual(archiveDirs(g.archived),["missions/.converted/"]);
   });
   it("마지막 건너뜀은 host 값이 먼저, 없으면 기록의 첫 건너뜀·대기", () => {
     const runs = [{ id: "a", status: "done" }, { id: "b", status: "waiting" }, { id: "c", status: "skipped" }];

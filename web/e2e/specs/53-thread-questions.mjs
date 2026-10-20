@@ -1,9 +1,9 @@
-// 웹 E2E thread 질문 카드와 앱 안 참조 칩(plan §8.324, 사용자 결정 10-20 20:3x·1A·2A·3A·4A). thread가 보고 `## Questions`에 남긴
+// 웹 E2E thread 질문 카드와 앱 안 참조 칩(plan §8.329, 사용자 결정 10-20 20:3x·1A·2A·3A·4A). thread가 보고 `## Questions`에 남긴
 // 질문은 보고서 화면 위 「답할 것」의 카드가 되고, 활동 막대 보고서 단추에 빨강 수가 붙는다. coordinator 대화의
 // `aaa:question/<thread>`·`aaa:report/<이름>`은 칩이고 누르면 앱 안에서 그 카드(그것만 펼침)·그 보고서를 연다. thread 대화 입력칸
 // 위에는 그 질문의 칩 한 줄이 있다. 카드로 답하면 host가 한 번만 받아 thread에 「사용자 답(1B 2A)」를 보내고, 다른 기기의 카드·칩·
 // 배지도 「답함」이 된다. 보기 권한 기기는 답할 수 없다. 알림 주소 `/#question=<thread>`(post push url)는 그 카드를 펼쳐 연다.
-// 혼자 돌리기: node web/e2e/web.e2e.mjs --spec 51-thread-questions(새 실험실).
+// 혼자 돌리기: node web/e2e/web.e2e.mjs --spec 53-thread-questions(새 실험실).
 import fs from "node:fs";
 import { root, aaa, until, step, browser, pairPage, inList, waitOutput, shot, AA } from "../lib/harness.mjs";
 
@@ -32,7 +32,7 @@ const badge = (p) =>
   });
 
 export default async function ({ page }) {
-  await step("질문 카드와 앱 안 칩(plan §8.324): 보고 ## Questions는 「답할 것」 카드·빨강 배지, 대화의 aaa:question·aaa:report는 앱 안 칩, 입력칸 위 칩 한 줄, 카드 답은 thread에 한 번 가고 모든 기기가 답함, 보기 권한은 못 답함", async () => {
+  await step("질문 카드와 앱 안 칩(plan §8.329): 보고 ## Questions는 「답할 것」 카드·빨강 배지, 대화의 aaa:question·aaa:report는 앱 안 칩, 입력칸 위 칩 한 줄, 카드 답은 thread에 한 번 가고 모든 기기가 답함, 보기 권한은 못 답함", async () => {
     aaa("project", "create", "demo");
     fs.writeFileSync(`${root}/task-cards.md`, "로그인 화면 다듬기\n질문 카드 시험");
     const t = aaa("thread", "start", "demo", "--title", "로그인 화면 다듬기", "--machine", "labA", "--profile", "fake", "--kind", "dir", "--task-file", `${root}/task-cards.md`);
@@ -59,13 +59,13 @@ export default async function ({ page }) {
     }
     const want = [`question/${t.id} ask ${t.id} 질문 2개답할 것`, "report/login-v2 report 로그인 시안", "report/gone-1 report gone-1"];
     await until("대화 칩", async () => JSON.stringify(await chips(page)) === JSON.stringify(want));
-    await shot(page, "51-chat-chips");
+    await shot(page, "53-chat-chips");
     // 질문 칩: 보고서 화면 「답할 것」의 그 카드만 펼친다(2A)
     await page.locator(`[data-testid="chat"] [data-testid="app-ref"][data-kind="question"]`).click();
     await until("질문 카드 펼침", async () =>
       (await page.evaluate((id) => location.hash === `#question=${id}` && document.querySelector(`[data-testid="thread-ask-${id}"]`)?.dataset.state === "open"
         && !!document.querySelector(`[data-testid="thread-ask-${id}"] [data-testid="thread-ask-send"]`), t.id)));
-    await shot(page, "51-card-desktop");
+    await shot(page, "53-card-desktop");
     if ((await page.getByTestId("thread-asks-count").innerText()) !== "답할 것 1") throw new Error(`지금 줄: ${await page.getByTestId("thread-asks-count").innerText()}`);
     // 보고서 칩: 앱 안 보고서 화면(넓은 창도 새 탭이 아니다)
     await page.goBack();
@@ -79,7 +79,7 @@ export default async function ({ page }) {
     await page.evaluate((id) => (location.hash = `pane=${encodeURIComponent(id)}`), t.pane);
     await until("입력칸 위 질문 칩", async () =>
       (await page.evaluate(() => document.querySelector('[data-testid="dock-question"] [data-testid="app-ref"]')?.dataset.tone)) === "ask");
-    await shot(page, "51-dock-chip");
+    await shot(page, "53-dock-chip");
 
     // 휴대폰(조작)은 알림 주소로 연다: 그 카드가 펼쳐진다. 보기 권한 기기는 카드를 보지만 답할 수 없고 host도 거절한다
     const phone = await pairPage(browser, aaa("web", "pair").code, { width: 390, height: 844 }, { hash: `#question=${t.id}` });
@@ -97,7 +97,7 @@ export default async function ({ page }) {
 
     // 휴대폰에서 1B만 고르고 「추천대로 보내기」: 2번은 추천(A)으로 채워 thread에 한 번 간다
     await pp.getByTestId("thread-ask-pick-1B").click();
-    await shot(pp, "51-card-phone");
+    await shot(pp, "53-card-phone");
     if ((await pp.getByTestId("thread-ask-send").innerText()).trim() !== "추천대로 보내기") throw new Error(`보내기 단추: ${await pp.getByTestId("thread-ask-send").innerText()}`);
     await pp.getByTestId("thread-ask-send").click();
     await waitOutput(t.pane, "사용자 답(1B 2A)");
@@ -112,7 +112,7 @@ export default async function ({ page }) {
     await until("답한 뒤 배지 없음", async () => (await badge(page)) === null);
     aaa("library", "publish", input, "--name", "login-v3", "--to-user", "--title", "로그인 시안 2");
     await until("배지는 안 본 보고서 수", async () => (await badge(page)) === "unseen 1");
-    await shot(pp, "51-answered-phone");
+    await shot(pp, "53-answered-phone");
     // 같은 질문에 또 답하면 거절한다(다른 기기·CLI가 늦게 눌렀다)
     let again = null;
     try {

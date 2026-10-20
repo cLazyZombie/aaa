@@ -185,6 +185,10 @@ fn resource_locks_serialize_processes() {
     let lab = Lab::new();
     let tx = Transaction::create(lab.request("state", vec![lab.edit("config/value", b"new")])).unwrap();
     for same_config in [false, true] {
+        let before = tree(&lab.0);
+        let result = crate::install::engine::status(&tx.state, Some("lab"), &tx.journal.id).unwrap();
+        assert!(result.status == InstallStatus::NeedsUser);
+        assert_eq!(tree(&lab.0), before, "다른 적용은 막되 읽기 status/snapshot은 가능해야 한다");
         let out = std::process::Command::new(std::env::current_exe().unwrap())
             .args(["--exact", "install::engine::transaction::tests::resource_locks_serialize_processes", "--nocapture"])
             .env("AAA_INSTALL_TEST_LOCK_STATE", &tx.state)
