@@ -1111,3 +1111,19 @@ Claude SessionStart가 알린 격리 홈의 대화는 pane chat으로, TaskCreat
 빼면 시작 증명의 trusted 단언에서 실패해야 한다. 정책을 무시하고 늘 기록하면 user 단언에서 실패해야 한다.
 `cargo test -p aaa-session --lib account::tests::`는 격리 Claude의 환경설정 보존,
 재개 시 자동 신뢰 제거, 도입 전 Claude 대화의 원래 홈 유지도 확인한다.
+
+## aaa install I2 파일 조상 경로(t-0485, plan §8.341)
+
+- `unsafe_targets_readonly_and_untrusted_journals_preserve_originals`는 세 OS 공통 owner다.
+  기존 readonly stage/원본 bytes, 불신 journal 읽기의 exit·비밀 비노출·tree 불변, raw ParentDir 거부를 유지한다.
+  파일 아래 직접 자식/여러 단계 proposal은 거부하고 정상 미생성 디렉터리 아래 proposal은 tree 변경 없이 허용한다.
+  유효 proposal 뒤 부모를 일반 파일로 교체한 실제 `Transaction::create`는 journal과 다른 자원 잠금 생성 전에 거부한다.
+- 기존 Windows CI 실패는 native RED다. Unix의 NotADirectory를 Windows식 NotFound로 임시 분류한 진단은
+  native Windows 실행으로 부르지 않는다. 시험용 production flag/export를 만들지 않고 원본 bytes를 복구한다.
+- snapshot 부모 검사·가장 가까운 조상 검사 생략은 오류 분류 진단에서 proposal 거부 단언을 실패시켜야 한다.
+  실제 create의 쓰기 전 확인 생략은 native owner의 전체 tree 보존 단언을 실패시켜야 한다.
+  각 변형 복구 뒤 엔진 owner·전체 ci-local·Windows cross와 비밀 canary 비노출을 확인한다.
+- 동반 Windows native owner `process_observation_rejects_completed_process_with_its_handle_still_open`은
+  기존 cmd/인수/환경/stdio/creation flags와 success·signaled process·유효한 열린 handle의 거부 단언을 유지한다.
+  실패 메시지에 종료 코드(Debug/십진수/32-bit hex)만 더해 main CI가 원인 진단 값을 남기게 한다.
+  native는 진단만, 수리는 다음 착지다. macOS와 cross 통과를 이 Windows owner의 실제 GREEN으로 부르지 않는다.

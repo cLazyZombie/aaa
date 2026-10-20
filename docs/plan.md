@@ -6324,3 +6324,24 @@ L4 후속(10-20 00시 사용자 관찰): 멈춤 상태의 후보 예약과 재�
 - **요청과 결정.** 사용자 「1→2→3으로 이동하고 3에서 왼쪽 메뉴를 연 뒤 2로 쓸어 돌아가면 메뉴가 사라진다」. 사용자 답변 1A·2A: 이동 직전의 열림·닫힘을 뒤로·앞으로 모두 유지하며 창마다 상태를 기억하지 않는다.
 - **원인과 수정.** `App.tsx`는 브라우저 뒤로·앞으로 등 주소 변경 때 drawer를 명시적으로 닫았다. 이 강제 닫기 한 곳만 제거한다. 목록 줄 선택·메뉴 토글·drawer 쓸기와 §8.301의 기록 관리 코드는 그대로 쓴다. 가장자리 쓸기가 메뉴를 열고 Safari 뒤로와 겹쳐도 그 열린 상태를 유지한다.
 - **검증.** 새 번호 없이 기존 E2E `39-phone-back`에 WebKit 390·430 × Safari 탭·홈 화면 앱 흉내의 메뉴 열림·닫힘 양방향 이동과 기록 칸 수 단언, WebKit 데스크톱 1280·패드 820의 사이드바 펼침·접힘 단언을 더한다. 수정 전 네 휴대폰 조합 모두 메뉴 유지 단언에서 실패했고 전후 캡처를 남겼다. 기존 쓸기 겹침의 「목록 닫힘」은 이번 결정의 「이동 직전 상태 유지」로 바꾸며 화면 차례·빈 화면 방지·닫힌 pane 처리·시간 상한은 유지한다. 파일 보기 복귀(E2E 38)와 전체 ci-local·check-public으로 함께 확인한다. 실제 iOS 시스템 몸짓은 헤드리스의 합성 터치·history 순회로 대신하며 실기 확인과 구분한다.
+
+### 8.341 aaa install I2 Windows 파일 조상 거부(10-21, t-0485)
+
+- **원문과 원인.** Windows CI의 `unsafe_targets_readonly_and_untrusted_journals_preserve_originals`는
+  파일 아래 proposal을 거부하는 마지막 단언에서 실패했다. `snapshot`이 `NotFound`를 즉시 없음으로
+  취급했으며 Windows에서는 파일 아래 경로도 그 오류로 분류될 수 있다. 정확한 raw 오류 코드는
+  원문에 없으므로 추정하지 않는다. [Rust Windows 오류 분류](https://github.com/rust-lang/rust/blob/b940084d7/library/std/src/sys/io/error/windows.rs)를 근거로 삼는다.
+- **공통 규칙.** `real_directory`는 가장 가까운 기존 조상이 실제 디렉터리인지 확인한다. `snapshot`의
+  없음 판정도 같은 검사를 거쳐, 직접 자식뿐 아니라 여러 미생성 단계 아래의 파일 조상을 거부한다.
+  proposal과 실제 create/stage/commit에서 같은 규칙을 사용하며 거부 전에 journal/자원 잠금을 만들지 않는다.
+  정상 미생성 디렉터리 아래 파일은 계속 허용하고 검사 자체는 읽기만 한다.
+- **owner와 증거.** 같은 owner의 readonly·불신 journal·ParentDir·원본/tree 보존 단언을 유지하고,
+  직접/여러 단계 proposal 및 proposal 뒤 부모 교체의 실제 적용 거부를 확장한다. Windows native RED를
+  보존하고, 다른 OS의 오류 분류 제어 진단은 Windows 실제 실행과 구분한다. snapshot 부모 확인·
+  가까운 조상 확인·쓰기 전 확인 생략 변형은 각각 owner에서 RED여야 하고 바이트 복구 뒤 GREEN을 확인한다.
+  macOS 전체 gate와 Windows cross를 검증하며 Windows·Linux 실제 실행은 main push 뒤 CI다.
+- **동반 native 진단.** 같은 착지에 I5 Windows 종료 process owner의 실패 메시지에만
+  `wait` 종료 코드(Debug/십진수/32-bit hex)를 더한다. cmd 생성 조건·성공 전제·열린 handle 확인·
+  `process_identity`의 거부 단언은 유지한다. 기존 main CI 실패 로그가 종료 코드를 버렸으므로
+  native는 진단만, 수리는 다음 착지다. 이번 main push 뒤 windows-2025 값으로 원인을 확정하며
+  승인 없는 branch push/PR·별도 runner/VM으로 미리 CI를 실행하지 않는다.
