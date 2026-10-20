@@ -197,3 +197,20 @@ aaa install --role agent --name mac-a --host example.ts.net:7430 \
 - apply·resume·status는 각각 install_apply_not_available/install_resume_not_available(exit 5)로 거부한다.
   마법사는 아직 없어 기본 비TTY 무인자는 non_interactive_required/2다. dry-run+events-file은 2로 거부한다.
   승인 파일/암호 stdin/handle을 소비하거나 OS 권한을 올리지 않는다. `--yes`로 이 경계를 열 수 없다.
+
+## I2의 파일 엔진과 CLI 경계
+
+`install --status <ID>`는 전역 `--state-dir`/`--instance`로 소유 job을 찾는 읽기 조회다.
+ID·schema·계정/instance·private 파일 권한·manifest hash·실제 파일/진행 상태를 대조한다.
+설정/사건 파일·lock/probe/journal을 만들거나 고치지 않는다. 모르는 ID는 installation_not_found/2,
+잘못된 ID는 invalid_installation_id/2, 신뢰할 수 없는 권한/내용·실제 상태 충돌은 4다.
+
+apply/resume은 자동화·SSH·외부 TTY 모두 `needs_user: installation_authorization_required`/3으로 닫혀 있다.
+`--yes`·임의 승인 JSON/파일은 권한이 아니며 승인 입력을 실행하거나 신뢰하지 않는다.
+내구 job을 만들기 전에는 설치 ID/resume을 꾸며내지 않는다. 서명·issuer pin·worker/executor·발급은 I6다.
+
+private 파일 엔진의 configured/unchanged는 이 단계의 파일 결과다. 서비스 ready·연결·pairing 완료를 뜻하지 않는다.
+repair는 빠진 소유 파일을 복원하고, reinstall은 소유 binary를 다시 배치하며 현재 사용자 TOML/데이터를 보존한다.
+기본 제거는 마지막 참조의 소유 binary/hook만 정리하고 TOML·identity/pin·DB·repo/worktree·root·backup을 남긴다.
+외부에서 편집한 hook은 conflict로 보존한다. 버전 갱신·purge·서비스/PATH/등록/신뢰 변경은 후속 경계다.
+I3~I5 실험실 owner는 I6 전까지 엔진/고정 adapter를 직접 호출하며 CLI 승인 우회 기능을 넣지 않는다.

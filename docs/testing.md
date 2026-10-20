@@ -861,3 +861,22 @@ L2 결함 검증은 이전 root 가져오기 생략, 재시작 전 applied 변�
   Windows·Linux 실제 실행: main push 뒤 CI(windows-2025·ubuntu-24.04)의 cargo test가 판정한다.
   사전 branch/PR push·별도 runner/VM은 쓰지 않는다. 착지 전은 macOS 전체 gate와 Windows cross clippy/build이며,
   I1을 완료로 부르지 않는다. 서비스 등록·boot/login/PTY는 후속 단계의 별도 증거다.
+
+## aaa install I2 파일·상태 owner(t-0485, plan §8.319)
+
+- `cargo test -p aaa --bin aaa install::engine::transaction --locked`: 실험실 실제 파일을 stage/commit하고
+  rename 뒤 journal 전 중단, 같은 ID 재개, 외부 편집/같은 내용의 외부 inode 교체, 두 프로세스 OS 잠금,
+  다른 instance, 반복 unchanged의 bytes/권한/mtime 불변, 공유 마지막 참조 제거/원본 hook 복원,
+  제거·rollback 중단, missing repair·reinstall 데이터 보존, 프로젝트 뼈대/기존 repo를 검사한다.
+  실패 주입 flag/export 없이 실제 파일 작업과 production 단계 경계를 사용한다.
+- 일반 journal/공개 결과에는 fake secret이 없어야 하고 원본 backup은 별도 private 파일이어야 한다.
+  status는 실제 파일·root 소유 기록을 읽으며 lock/probe/기록 보정 없이 전후 snapshot이 같아야 한다.
+  Unix owner는 mode/소유권/nlink/symlink를, Windows 전용 owner는 실제 NTFS hardlink와 열린 DACL을
+  사용한다. 공통 파일 owner는 OS cfg로 빼지 않는다. Unix 전용 1개는 Unix mode/symlink를 검사하며
+  Windows는 그 대신 handle link 수와 현재 SID+SYSTEM DACL을 실제 CI에서 검사한다.
+- `cargo test -p aaa --test install --locked`: I1 owner에 status routing과 `--yes`/임의 승인 JSON의
+  쓰기 차단을 더한다. 자동·SSH·외부 TTY apply/resume은 검증된 I6 승인 경로 전까지 needs_user/3이다.
+- baseline/rename 소유 증명·잠금·private 읽기·마지막 참조·uninstall 편집 대조·reinstall TOML 보존·active job·
+  repo 보존·root 읽기 대조·일반 journal 비밀 비노출의 결함 주입이 해당 owner에서 실패해야 한다.
+  변형은 bytes로 복원하고 원본 owner 통과 뒤 전체 gate를 돌린다. Windows/Linux 실제 실행은
+  main push 뒤 GitHub CI이며 cross clippy/build를 실제 실행 통과로 쓰지 않는다.

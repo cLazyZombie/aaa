@@ -181,8 +181,13 @@ pub fn healthy(home: PathBuf, exe: &Path) -> Result<bool> {
     Ok(desired == f.hooks && config(f.config_text.as_deref())?.0)
 }
 
-/// 파일마다 쓰기 전 백업·snapshot 비교·같은 폴더 rename. 여러 파일 전체의 transaction은 아니다.
-pub fn configure(home: PathBuf, exe: &Path, remove: bool) -> Result<Vec<PathBuf>> {
+/// install 파일 엔진과 기존 integration CLI가 같은 소유 hook 편집을 사용한다.
+pub(crate) struct Edit {
+    pub path: PathBuf,
+    pub before: Option<String>,
+    pub after: Option<String>,
+}
+pub(crate) fn plan(home: PathBuf, exe: &Path, remove: bool) -> Result<Vec<Edit>> {
     let mut f = Files::load(home, exe, !remove)?;
     let (enabled, new_config) = if remove { (true, String::new()) } else { config(f.config_text.as_deref())? };
     let hooks = edit_hooks(f.hooks.clone(), &f.commands, &f.current, remove);
@@ -205,16 +210,22 @@ pub fn configure(home: PathBuf, exe: &Path, remove: bool) -> Result<Vec<PathBuf>
     if !remove && !enabled {
         changes.push((f.home.join("config.toml"), f.config_text, Some(new_config)));
     }
+    Ok(changes.into_iter().map(|(path, before, after)| Edit { path, before, after }).collect())
+}
+
+/// 파일마다 쓰기 전 백업·snapshot 비교·같은 폴더 rename. 여러 파일 전체의 transaction은 아니다.
+pub fn configure(home: PathBuf, exe: &Path, remove: bool) -> Result<Vec<PathBuf>> {
+    let changes = plan(home, exe, remove)?;
     let mut backups = Vec::new();
     // 어느 설정도 쓰기 전에 모든 변경 대상의 snapshot·쓰기 권한을 확인한다.
-    for (path, before, after) in &changes {
+    for Edit { path, before, after } in &changes {
         if before != after && before.is_some() {
             ensure!(&read(path)? == before, "{}: 설치 중 파일이 바뀌었다", path.display());
             ensure!(!fs::metadata(path)?.permissions().readonly(), "{}: 읽기 전용 파일이다", path.display());
             OpenOptions::new().write(true).open(path)?;
         }
     }
-    for (path, before, after) in changes {
+    for Edit { path, before, after } in changes {
         if before != after
             && let Some(after) = after
             && let Some(backup) = replace(&path, &before, &after)?

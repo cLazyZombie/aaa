@@ -695,7 +695,8 @@ fn restart_plan(rec: &ThreadRec, resume: bool, running: bool) -> Result<RestartP
 /// 프로젝트 폴더 뼈대. 이미 있는 파일은 두고, PROJECT.md를 마지막에 써서 중간에 멈춘 폴더는 프로젝트로 치지 않는다
 /// (`project create`와 옮기기 `migrate::convert`가 함께 쓴다).
 pub(crate) fn write_skeleton(dir: &Path, name: &str, project_md: &str) -> std::io::Result<()> {
-    for sub in ["memory", "routines", "threads", "library", "inbox", "uploads"] {
+    let skeleton = project_scaffold(name, project_md, false);
+    for sub in skeleton.directories {
         std::fs::create_dir_all(dir.join(sub))?;
     }
     let put = |f: &str, body: &str| -> std::io::Result<()> {
@@ -704,11 +705,29 @@ pub(crate) fn write_skeleton(dir: &Path, name: &str, project_md: &str) -> std::i
         }
         Ok(())
     };
-    put("MEMORY.md", "# Memory\n")?;
-    put("TASKS.md", "# Tasks\n\n## Backlog\n")?;
-    put("project.toml", "schema = 1\n")?;
-    put("AGENTS.md", &coordinator_guide(name))?;
-    put("PROJECT.md", project_md)
+    for (path, body) in skeleton.files {
+        put(path, &body)?;
+    }
+    Ok(())
+}
+
+/// host 생성·옮기기와 install 파일 journal이 공유하는 실제 프로젝트 뼈대.
+pub struct ProjectScaffold {
+    pub directories: &'static [&'static str],
+    pub files: Vec<(&'static str, String)>,
+}
+pub fn project_scaffold(name: &str, project_md: &str, include_default_pr: bool) -> ProjectScaffold {
+    let mut files = vec![
+        ("MEMORY.md", "# Memory\n".into()),
+        ("TASKS.md", "# Tasks\n\n## Backlog\n".into()),
+        ("project.toml", "schema = 1\n".into()),
+        ("AGENTS.md", coordinator_guide(name)),
+    ];
+    if include_default_pr {
+        files.push((crate::routine::PR_FOLLOWUP, crate::routine::PR_FOLLOWUP_TEMPLATE.into()));
+    }
+    files.push(("PROJECT.md", project_md.into()));
+    ProjectScaffold { directories: &["memory", "routines", "threads", "library", "inbox", "uploads"], files }
 }
 
 /// 표지 없는 AGENTS.md를 옮겨 두는 이름 끝(herdr-projects `.before-herdr-projects`)
