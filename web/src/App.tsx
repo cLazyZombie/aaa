@@ -1374,6 +1374,7 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
             groups={threadGroups}
             machines={machines}
             stages={new Map(allThreads.map(t => [t.id, t.stage]))}
+            overLimits={new Map(allThreads.map(t => [t.id, t.over_limit]))}
             reader={role === "reader"}
             addRequest={taskAdds}
             focusRequest={taskFocus}

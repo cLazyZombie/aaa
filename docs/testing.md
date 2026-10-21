@@ -2,13 +2,64 @@
 
 새 기능을 만드는 thread가 따르는 짧은 규칙이다. 근거는 참고 넷(herdr 0.9.5·herdr-projects 0.2.35·herdr-web-ui `aa624cb`·t3code `4b1024da`)과 이 저장소에서 실제로 난 간헐 실패다. 전략과 도구 목록은 [plan §13](plan.md#13-테스트-전략과-직접-만들-e2e-도구)에 있다.
 
-## 입력 중 숨긴 게이지 자리 회수(t-0622, plan §8.393)
+## 입력 중 숨긴 게이지 자리 회수(t-0622, plan §8.398)
 
 - 사용자 1A에 따라 숨긴 게이지의 폭과 보내기 단추 사이 간격을 글 칸에 돌려준다. 첫 입력·전체 삭제 때만 폭이 바뀌며, 글이 늘어 여러 줄로 접힐 때는 유지한다. 기존 §8.321의 자리 유지 단언은 이 선택으로 대체한다.
 - E2E50의 실제 Claude 기록에서 보통(38%)·창 모름(84k) 게이지를 숨기면 폭이 0이고 글 칸이 게이지 폭과 간격만큼 넓어지는지 검사한다. 전체 삭제하면 원래 폭이 돌아오고 높은 사용량(86%)은 입력 중에도 폭을 유지한다. 기존 펼침·정리·iPad·휴대폰 및 700px 경계 검사를 유지한다.
 - E2E66은 실제 usage가 있는 기록을 읽어 38% 게이지가 생긴 뒤 시작한다. Chromium·WebKit × 데스크톱·휴대폰 네 조합에서 빈 입력칸과 첫 입력의 폭 차이를 실제 게이지 폭·간격과 대조하고, 이전 폭에서 접히던 한글이 한 줄에 들어가는지 확인한다. 조합 입력 중·확정·긴 영문·붙여넣기·창 축소/회전·지우기의 native textarea 줄 수, 단추 옆 배치, focus와 전송 없음 검사를 유지한다. 지운 뒤에는 빈 입력칸의 폭과 줄 경계가 돌아와야 한다.
 - `NODE_PATH=$(npm root -g) node web/e2e/web.e2e.mjs --spec 50-context-gauge,66-composer-wrap --workers 1`로 실행한다. 입력·DOM·ResizeObserver 사건으로 끝내며 고정 sleep·재시도·시한 연장은 없다. 기존 E2E22·35·51과 전체 `nice -n 15 bash scripts/ci-local.sh`를 함께 확인한다.
 - 수정 전 내장 웹에서 E2E66은 데스크톱 Chromium 약 73.89px·WebKit 약 74.67px의 미회수 공간과 이전 한글 첫 줄 경계의 줄바꿈으로 실패한다. 휴대폰에서는 이미 게이지가 없어 회수할 폭이 0이다. 수정 후에도 같은 폭·줄 경계 단언을 쓴다.
+
+## 한도 초과 직접 시작(t-0619, plan §8.397)
+
+착지 전체 검증은 E2E 정리 도구의 전체 `ps command` 출력이 Node의 1 MiB 버퍼를 넘는 ENOBUFS를 드러냈다.
+전체 목록은 PID·부모·상태만 읽고, 명령줄은 실제 정리 후보 PID별로 조회한다. 기존 신원 재대조·부모 정지·자손 종료는 유지한다.
+`node --test web/test/session-cleanup.test.mjs`는 관계없는 실제 프로세스 열 개의 argv 합계를 1 MiB보다 크게 만들며,
+원래 도구의 ENOBUFS RED와 수정 도구의 session/writer 종료·관계없는 프로세스 보존 GREEN을 확인한다.
+버퍼·대기 시한·시험 기대값은 늘리지 않는다.
+
+
+- `cargo test -p aaa-host --lib over_limit_start_requires_a_direct_user_or_verified_coordinator --locked`는
+  직접 CLI·웹과 다른 세션·작업자·자동화·빈/여러 줄/긴 근거를 구분한다.
+- `cargo test -p aaa --test m13 explicit_over_limit_start_keeps_queue_waiting_and_requires_coordinator_user_request --locked`는
+  실제 한도가 찬 상태에서 기본 시작 거부·CLI 강제 시작·coordinator pane의 근거 없는 거부와 명시 지시 시작을 검사한다.
+  host 재시작 뒤 같은 요청자·시각을 보존하고, 강제 시작이 모두 자리를 반환할 때까지 예약은 시작하지 않는다.
+- E2E47은 실제 host·agent와 Chromium 데스크톱·WebKit iPhone·iPad에서 추가 확인·돌아가기·실제 기동·출처와 표지·예약 대기를 확인하고
+  `thread-<기기>-start-limit`·`over-confirm`·`over-started` 화면을 남긴다. 관측은 DOM·task 연결·ticker 완료이며 고정 sleep은 없다.
+- 전체 필수 검증은 `nice -n 15 bash scripts/ci-local.sh`다. 기존 E2E 번호·시한·자동 예약 정책은 유지한다.
+- 이 작업의 전체 실행에서는 기존 rollout transfer keeper가 원격 agent 교체 중 30초 사건 시한을 넘겼다.
+  16코어에서 load average 139.27·126.31, 전송/사전 검사 99.382초였고 영속 작업은 오류 없이 Running이었다.
+  같은 시한·단언의 단독 실행은 전체 100.04초·전송/사전 검사 65.354초로 통과했다.
+  부하 근거와 단독 결과를 함께 기록하며 배포 로직·시험 시한은 바꾸지 않는다.
+
+## thread 목록 상태 점 정렬(t-0620, plan §8.396)
+
+- `node web/e2e/web.e2e.mjs <캡처 폴더> --spec 48 --workers 1`: 실제 coordinator·자동화·일반 thread를
+  각각 선택하고 1280·820·390px에서 상태 칸 중심의 x 좌표가 0.5px 안에서 같은지 검사한다.
+  실제 머신 연결은 유지한 채 표시 글만 짧고 긴 이름으로 바꾸어 내용이 상태 칸을 침범하지 않는지도 확인한다.
+- 기존 자동화 막대·agent 표지 간격·휴대폰의 자동화 표지·규칙 이동 검사를 유지한다.
+  선택 후 서랍과 DOM 사건을 기다리며 고정 sleep·재시도·시한 연장은 없다. `status-column-*.png`에 폭별 화면을 남긴다.
+- 원래 데스크톱 CSS의 위치 기준을 다시 적용한 별도 실험실은 coordinator·자동화 305px, 일반 thread 339px로
+  같은 정렬 단언에서 실패한다. 첫 수정의 휴대폰 선택 줄 10px 이동도 이 검사에서 잡아 메뉴의 flex 칸까지 고정했다.
+- 모든 select가 같은 위치 기준과 상태 칸 여백을 가지며, 터치·좁은 창의 메뉴 칸은 선택 여부와 무관하게 확보한다.
+  전체 검증은 `nice -n 15 bash scripts/ci-local.sh`다.
+
+
+## install 승인 PTY의 종료 수명(t-0485, plan §8.395)
+
+- `cargo test -p aaa --test install --locked`: 기존 승인·취소·worker 수명 단언을 유지한다. 실제 자식 종료 사건으로 master를 닫고 reader 완료까지 수집하며, 두 사건 모두 총 60초 안에 와야 한다. EOF만 온 뒤 살아 있는 자식도 무한 wait하지 않는다.
+- `authorization::terminal_lifecycle::child_exit_closes_terminal_owner_before_eof_and_preserves_final_output`은 Unix의 실제 PTY 뒤에 소유자가 writer를 보관하는 실제 UnixStream을 잇는다. 실제 자식이 종료한 뒤에도 EOF가 안 오는 ConPTY 수명을 재현하며 종료 코드 7과 마지막 출력 300줄을 모두 검사한다. 자식 종료 때 master를 닫는 수리를 제거하면 60초 RED, 복구하면 GREEN이어야 한다. 이 keeper의 Unix cfg는 재현 fixture의 POSIX shell/UnixStream 때문이며 Windows의 기존 install owner들은 실제 ConPTY에서 같은 driver를 검증한다.
+- Windows cross는 실행 증거가 아니다. macOS 로컬 통과와 macOS CI의 yes 뒤 정지·target 미상의 15분 종료를 구별하고, Windows/macOS 실제 CI 결과는 착지 뒤 감시 결과로 판정한다.
+
+## 할 일 한 목록·예약 맨 위(t-0611, plan §8.393)
+
+- `node web/e2e/web.e2e.mjs --spec 76-task-one-list --workers 1`: 자리 한도를 채운 실제 host에 CLI로 예약을 넣고, Chromium 1280px에서
+  맨 위 예약 차례·하위 함께·확인 필요의 노란 표지와 상세의 까닭을 본다. 끌기로 예약 차례 바꾸기·일반 → 예약(내용 확인 뒤 그 자리)·
+  예약 → 아래(풀기와 원래 자리 알림)를 하고 host `task queue` 차례와 대조한다. 「예약」 칩·저장소 거르기의 숨은 예약 줄, 거른 채
+  Alt+↓, 새로고침 뒤 기억을 확인한다. 휴대폰(Chromium·WebKit 390px)은 맨 위 차례와 「순서」 ▲▼·⋯ 시트 풀기를 확인한다.
+- `node --test web/test/tasksModel.test.mjs`의 「할 일 한 목록과 예약」은 행 배치(2A·crumb·숨은 예약 줄), 예약 순번(끌어 놓기·
+  보이는 이웃과 바꾸기), 예약 푼 자리, 옛 `##` 틈의 옮기기 규칙을 검사한다. 43·46·67은 목록 머리 대신 한 목록 차례를 본다.
+- DOM·host 기록으로 끝내며 고정 sleep·재시도·시한 연장은 없다.
 
 ## owner 목록 갱신과 저장소 선택 경계(t-0616, plan §8.392)
 
@@ -365,6 +416,23 @@ Hello를 읽는 host에는 바뀐 사건만, 옛 host에는 최신 기억 전체
   session host만 죽이는 원래 정리는 writer 생존 단언에서 실패한다. 웹 E2E 13의 재부팅 흉내도 같은 완료를 기다린다.
 
 ## 어디에 두나
+
+Windows M4p(t-0613, plan §8.394)는 `cargo test -p aaa-common --lib windows_acl_tests::`와
+`cargo test -p aaa-common --lib ipc::tests::`로 실행한다. 실제 state/TLS 폴더·키·원자 교체 파일과 첫 Pipe·accept 뒤
+두 인스턴스의 OS DACL을 읽고, Authz의 그룹 조회 없는 SID context로 현재 사용자 허용과 Everyone·Authenticated Users·
+Users·Administrators·별도 SID 거부를 판정한다. 파일의 SYSTEM 예외와 Pipe의 SYSTEM 거부도 구분한다.
+공개 ACL fixture는 실제로 Everyone 접근이 되는지 먼저 판정한 뒤 기존 키 재읽기·신원 보존·권한 이행을 본다.
+상위 폴더 ACL 보존·hard link·잘못된 종류 거부·같은 사용자 바이트 전송·peer PID·중복 bind 거부를 함께 검사한다.
+계정·시스템 정책·실제 사용자 설정을 바꾸지 않고, 고정 sleep 없이 연결·읽기 완료로 끝낸다.
+웹 `node --test web/test/machineDetail.test.mjs`는 연결/끊김 Windows에만 제한 안내가 나오는지 검사한다.
+이 시험들은 기존 workspace test에 포함되어 GitHub CI windows-2025에서 실행된다. macOS의
+`cargo xwin clippy --workspace --all-targets --target x86_64-pc-windows-msvc --locked --keep-going -- -D warnings`와
+같은 대상의 `cargo xwin build --workspace --all-targets --target x86_64-pc-windows-msvc --locked`는 실행 결과가 아니다.
+
+M4p의 전체 검증에서 발견한 E2E 49의 기억 본문 검사는 focus 이후 새 routines 응답의 DOM 반영을 기다린다.
+기준 판의 실제 새 응답을 gate로 보류하면 host에는 새 기억이 있어도 기존 상세는 비어 있고, 즉시 검사하던 시험이
+「기억 본문 없음」으로 실패한다. E2E 46은 다른 기기가 저장하기 전에 둘째 폼의 제목·저장 가능 상태로 편집 반영을 확인한다.
+원래 본문·갱신 thread·충돌·파일 보존 단언과 시한을 유지하며 sleep이나 재실행으로 통과시키지 않는다.
 
 Windows named pipe BUSY 회귀는 `cargo test -p aaa-common --lib ipc::tests::`로 실행한다. 실제 `LocalListener`를
 한 연결로 점유하고 두 번째 연결의 OS 오류 231, 계속 점유할 때의 제한된 실패, accept 뒤 다음 연결과 바이트·peer PID를

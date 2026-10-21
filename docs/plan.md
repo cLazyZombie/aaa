@@ -292,8 +292,8 @@ Front API와 Agent link는 서로 다른 계약이다. 둘 다 다음 원칙을 
 | 셸 | 사용자 zsh/bash, argv 실행 우선 | 사용자 shell, argv 우선 | PowerShell/pwsh/cmd 명시, CreateProcessW 인용, UTF-16 경로 |
 | 경로·환경 | POSIX path·HOME, 외장 볼륨(전체 디스크 접근 필요) | POSIX bytes path·HOME·locale | drive/UNC·backslash·LOCALAPPDATA·대소문자·UTF-16 |
 | 줄바꿈·문자 | LF·raw bytes | 같음, locale 검증 | CRLF·codepage/UTF-8. 단순 LF 치환 금지 |
-| local IPC | user-only UDS·peer UID | 같음 | user SID 제한 Named Pipe·ACL(M1-1은 기본 DACL, 제한 ACL은 M2) |
-| 키 저장 | 상태 디렉터리의 0600 파일(키체인 잠금에 의존하지 않음) | 0600 파일 | 사용자 DPAPI |
+| local IPC | user-only UDS·peer UID | 같음 | 현재 user SID만 허용하는 protected DACL·원격 연결 거부(§8.394 M4p) |
+| 키 저장 | 상태 디렉터리의 0600 파일(키체인 잠금에 의존하지 않음) | 0600 파일 | 현재 user SID+SYSTEM만 허용하는 protected DACL(§8.394 M4p) |
 | 실행 검사·속도 | 필수 gate(§10) | 해당 없음 | Defender·SmartScreen 지연을 doctor에서 관측 |
 
 - **portable-pty만으로는 부족하다.** API가 있다는 것만으로 수명 관리가 해결되지 않는다. Windows의 handle·job·ConPTY 입출력 deadlock, 부모 종료 뒤 생존은 native E2E로 확인한다.
@@ -6871,8 +6871,61 @@ FRONT_API 1.96는 기본 검수 표지와 답 기록의 r 참조를 더한다. E
 - 전체 검증에서 드러난 E2E54 실패는 변경 없는 main `35f6ce96`의 제품 코드로 원인을 제어 재현했다. 단독 원본은 통과했지만 실제 owner 응답의 DOM 반영 직후 저장소를 선택하면 effect의 옛 dirty 값이 선택을 덮었다. 상태 updater 안에서 최신 draft의 수정 여부를 검사하여 편집을 보존한다. E2E54가 실제 응답·MutationObserver·두 렌더 frame 뒤 선택·저장 가능·파일 반영을 검사하고 E2E46·75의 기존 경계를 유지한다.
 - 착지 기준 origin/main `e66a02a4`에서 마지막 §8.391·FRONT_API 1.97·AGENT_LINK 1.11·E2E75를 직접 확인했다. 이 작업은 §8.392로 더하고 API 버전·기존 E2E54·67·75 번호를 유지한다. 새 E2E 파일·요청은 없다. 전체 ci-local·공개 검사 뒤 병합하고 배포는 coordinator가 맡는다.
 
-### 8.393 입력 중 숨긴 맥락 게이지 자리 회수(t-0622)
+### 8.393 할 일 한 목록·예약 맨 위(t-0611)
+
+- 사용자 승인 시안(t-0580 3판, 10-21)대로 웹 할 일 화면의 「## 목록」 나누기와 위쪽 「▼ 예약 N」 칸을 없애고 한 목록으로 보인다. 예약(자리 대기·확인 필요)은 맨 위에 host 예약 차례대로 숫자·「예약 N」 글 없이 보라 표지만 두고(확인 필요는 노랑), 그 밑에 일반 할 일을 파일 차례로 둔다. 차례의 정본은 host 예약 기록이다(t-0564).
+- 시작 중·진행 중이 된 예약은 원래 자리에 ◉로 보인다(1A). 상위를 예약하면 하위가 그 밑에 함께 올라가고(2A), 하위만 예약하면 상위 경로가 붙고 상위 행에 「하위 N 예약됨」이 붙는다. 머신 연결 대기·확인 필요 같은 특별한 까닭과 풀면 돌아갈 자리는 상세에만 보인다.
+- 끌기는 놓은 영역이 값이다: 예약끼리 차례 바꾸기, 일반 → 예약 영역(내용 확인 창을 연 뒤 그 차례로 예약), 예약 → 아래 영역(예약 풀기, 원래 자리에서 「↩ 원래 자리로 돌아옴」). 일반 순서 끌기·Alt+↑↓는 그대로다. 휴대폰은 ⋯ 시트(예약 위로·아래로·맨 앞으로·풀기, 일반은 「자리 나면 시작 예약」)와 「순서」 모드의 ▲▼를 쓴다.
+- 거르기 칩에 「예약」을 더하고 칩마다 수를 보인다. 「저장소: 전체 ▾」(휴대폰은 칩 줄 맨 앞, 시트)는 상태 칩과 함께 걸리고 프로젝트마다 이 기기에 기억한다. 숨은 다른 저장소 예약은 흐린 한 줄로 남긴다. 거른 채 옮기면 보이는 행 바로 위·아래로 들어가고 숨은 항목의 차례는 그대로이며, 「맨 앞으로」·「맨 위로」는 전체 맨 앞이다.
+- 이주·호환: TASKS.md는 이주하지 않는다. 옛 파일의 `##` 머리·설명 줄은 host가 지금처럼 읽고 쓰며, 웹만 나누어 보이지 않는다. 맨 위 단계 순서 바꾸기는 머리를 넘어 움직이고, 두 이웃의 목록이 다른 틈에 놓으면 앞 이웃의 목록 끝에 붙는다(머리를 새로 만들거나 지우지 않는다). 새 task는 지금처럼 `Backlog`(없으면 첫 목록) 끝에 든다. 웹의 목록 머리 메뉴·「새 목록」·폼의 목록 칸은 없앴고, CLI `--list`·`task list-*`는 그대로 받는다.
+- 예약을 그 자리에 넣는 것은 기존 `reserve`(맨 뒤) 뒤 `move`(순번)로 한다. 프로토콜 변경이 없어 FRONT_API는 유지한다. E2E76은 실제 host 예약 기록으로 데스크톱 끌기 세 가지·「예약」 칩·저장소 거르기와 기기 기억·휴대폰 순서 모드와 시트를 확인한다. 43·46·67은 한 목록에 맞췄다.
+- 착지 기준 origin/main `89e3f676`에서 마지막 §8.392·FRONT_API 1.97·E2E75를 직접 확인했다. 이 작업은 §8.393·E2E76으로 더하고 API 버전은 유지한다. t-0600·t-0609·t-0616의 할 일 화면 변경(머신 연결 재조회·owner 응답 뒤 편집 보존·「병합 중」 표지)과 함께 통합했다.
+
+### 8.394 Windows agent 비밀·Named Pipe 보호(t-0613, 웹 머신 추가 M4p)
+
+- Windows 머신을 웹으로 추가하는 M4의 선행 수리다. DPAPI 대신 설치기의 private 파일과 같은 현재 사용자 SID+SYSTEM DACL을 쓴다. 일반 사용자·그룹·Administrators ACE와 상위 폴더 상속은 허용하지 않는다.
+- `util::ensure_private_dir`는 빠진 부모를 생성 순간부터 보호한다. 기존 state·TLS 폴더와 비밀 파일은 실제 handle에서 종류·현재 사용자 소유권을 확인한 뒤 protected DACL로 좁힌다. 승격 token의 기본 소유자가 그룹이면 그 token의 기본 소유권과 일치할 때만 실제 객체를 다시 열어 사용자 소유로 좁힌다. 기존 상위 폴더·OS 정책은 바꾸지 않는다. reparse point·다중 hard link·그 밖의 소유자는 거부한다.
+- `write_private`는 매번 고유한 CREATE_NEW 임시 파일에 보호 DACL을 붙여 생성하고 sync→rename한다. TLS는 기존 키를 다시 읽을 때도 먼저 보호하며 바이트와 신원을 유지한다. agent identity·host pin도 비밀 읽기를 쓴다. 설치기의 승인/status 경로는 기존대로 권한을 검증만 한다.
+- Named Pipe는 처음과 accept 뒤의 모든 인스턴스에 현재 SID 하나만 허용하는 DACL을 생성 시 전달하고 원격 클라이언트를 거부한다. 첫 인스턴스 점유 거부·peer PID·BUSY 대기 규칙은 유지한다.
+- 머신 상세에 「Windows 제한」으로 셸 안 harness 자동 감지 없음과 세션 자손의 Job Object 수명 관리 미지원을 표시한다. 두 기능의 구현은 이 단계에서 바꾸지 않는다. FRONT_API·AGENT_LINK와 E2E 번호는 바꾸지 않는다.
+- 실제 파일·Pipe DACL을 읽어 Authz로 현재 SID의 허용, 다른 SID·그룹의 거부, SYSTEM 예외를 검사하는 Windows 전용 시험을 둔다. macOS에서는 Windows 교차 build/clippy로 컴파일·링크를 확인한다. 실제 실행 판정은 착지 뒤 기존 CI windows-2025, 실제 PC 인수는 후속 Windows 머신 시험이다.
+
+- 착지 기준 origin/main `57bc997e`에서 마지막 §8.393·FRONT_API 1.97·AGENT_LINK 1.11·E2E76을 직접 확인했다. 이 작업은 §8.394로 맞추고 기존 API 버전·E2E 번호를 유지한다. E2E49는 main의 새 기억 본문·갱신 thread 동시 대기를 유지한다.
+- 통합 후보의 Windows 교차 clippy가 main의 `update.rs` 시험용 `sha2::Digest` import를 미사용으로 검출했다. 실제 사용처가 Unix 전용 rollback 시험이므로 import도 `cfg(all(test, unix))`로 맞춘다. 시험 내용·업데이트 동작은 유지한다.
+
+### 8.395 install 승인 시험의 자식 종료와 PTY 출력 종료(10-21, t-0485)
+
+- **원인·범위.** Windows CI는 승인서 발급·설치 ID 출력 뒤에도 시험 소유 ConPTY의 EOF를 기다렸다. `portable-pty` master가 출력 pipe의 소유자를 유지하므로 자식 종료만으로 EOF가 오지 않는다. 제품 worker의 stdio는 이미 pipe/null이며 이 수리는 시험 터미널에 한정한다.
+- **종료 계약.** Unix `waitid(WEXITED | WNOWAIT)`와 Windows 복제 process handle의 종료 사건을 reader와 같은 채널로 받는다. 실제 자식을 wait한 뒤 master를 닫고 reader의 마지막 출력까지 모은다. 출력이 먼저 닫혀도 자식 종료를 기다리며 총 상한 60초·기존 승인/취소/비밀 비노출/worker 수명 단언은 유지한다. 상한 진단 끝에는 자식 종료 코드 유무와 reader 완료도 남긴다.
+- **회귀 owner.** 실제 PTY와 실제 UnixStream writer의 보관 수명으로 ConPTY의 EOF 지연을 Unix에서 재현한다. 기존 helper는 자식이 끝나고 마지막 출력까지 나와도 60초 RED다. 수리 뒤 같은 종료 코드와 300줄 전부를 수집해 GREEN이다. Windows의 기존 install owner들은 실제 ConPTY를 계속 사용한다.
+- **판정 한계·번호.** macOS CI의 yes 직후 무출력은 Windows의 완료 출력 뒤 EOF 대기와 구별한다. 로컬의 실제 CLI는 yes 뒤 계획 SHA 재검증 스택을 거쳐 승인서 발급·정상 종료했으며 macOS CI 원인은 아직 확정하지 않는다. target이 기록되지 않은 15분 job 종료도 install로 단정하지 않는다. 실제 Windows/macOS CI 판정은 착지 뒤 결과로 확인한다. 착지 기준 origin/main `90799c7a`의 마지막 §8.394·FRONT_API 1.97·AGENT_LINK 1.11·E2E76을 직접 확인했다. 별도 worktree에서 통합·검증하며 이번 수리는 §8.395로 옮기고 API 판과 기존 웹 E2E 번호는 유지한다.
+
+- **다음 단계.** 이 수리 착지 뒤에는 macOS I3의 승인된 `apply --service launchd` 감독자를 Windows bootstrap보다 먼저 구현한다. 웹 머신 추가 M3가 현재 `unsupported_service_platform` 경계를 기다린다. Windows bootstrap·사용자 Windows PC 인수·Linux I4·최종 I7은 그 뒤다.
+
+### 8.396 thread 목록의 상태 점 열 고정(t-0620)
+
+- coordinator·자동화·일반 thread 줄의 상태 칸은 모두 같은 select 오른쪽을 기준으로 삼고, select 안에 상태 칸 여백을 확보한다. 출처 막대를 위한 위치 기준 때문에 일부 줄만 오른쪽 끝이 달라지던 문제를 고친다.
+- 터치·좁은 창에서는 ⋯ 메뉴의 flex 칸을 선택·hover 여부와 관계없이 확보한다. 기존 단추 표시 조건과 출처 막대·agent 표지 간격은 유지하며, 메뉴가 보이는 줄의 상태 점만 왼쪽으로 이동하지 않게 한다.
+- 기존 E2E48에서 실제 Claude 작업 화면을 내는 가짜 harness로 세 줄의 파란 점을 확인하고 1280·820·390px에서 각 줄을 선택해 중심 x 좌표와 내용 침범을 검사한다. 머신 표시 글의 짧음·길음도 대조하고 폭별 화면을 남긴다. FRONT_API 1.97·AGENT_LINK 1.11·E2E76은 유지한다. 새 E2E 파일은 추가하지 않는다.
+
+- 착지 기준 origin/main `dd6e5b82`의 마지막 §8.395·FRONT_API 1.97·AGENT_LINK 1.11·E2E76을 직접 확인했다. 이번 수리는 §8.396으로 옮기고 기존 번호·main의 수리를 보존한다.
+
+### 8.397 사용자가 확인한 한도 초과 시작(t-0619)
+
+- 웹 「thread로 바로 시작」은 한도가 찼을 때 「자리 대기」 옆에 「한도 무시하고 시작」을 보인다. 누르면 task·열린 수·한도·예약 대기 영향을 다시 확인하고 「확인하고 시작」으로 기동한다. 돌아가기는 아무것도 시작하지 않는다.
+- CLI는 `aaa thread start --from-task <ID> --link-task --over-limit`다. 웹 조작 기기·세션 밖 CLI만 직접 쓰며, 해당 프로젝트 coordinator는 사용자가 채팅에서 그 task의 강제 시작을 명시한 경우에만 `--from-task`와 `--user-request '<사용자 지시 근거>'`를 함께 쓴다. 근거 없는 요청·다른 pane·작업자·자동 시작·예약 우회는 거부한다. 기존 예약 task는 예약을 취소한 뒤 직접 시작한다.
+- FRONT_API 1.98: `thread_start.over_limit`·`user_request`와 `ThreadView.over_limit`을 더한다. 시작 기록은 요청자·시각·지시 근거를 보존하고 감사 `thread_start_over_limit`·시작 사건에도 남긴다. 웹 할 일·사이드바·thread 목록·상세와 CLI 상세에 「한도 초과로 시작」을 보인다. 이전 host에는 웹 조작을 숨기고 CLI는 새 옵션을 보내지 않는다. AGENT_LINK 변경·새 E2E 번호는 없다.
+- 우회는 명시한 직접 시작의 DB 선점 한 번에만 적용한다. 그 thread는 기존 사용자·coordinator Worker와 같은 자리 계산을 따르고, 예약 dispatch·자동 시작은 계속 한도를 지킨다. 한도를 넘긴 수와 출처는 host 재시작 뒤에도 유지한다.
+- 검증은 host 요청자·근거 경계 유닛, m13 실제 CLI·coordinator·예약·재시작 keeper, 기존 E2E47의 데스크톱·iPhone·iPad 확인·취소·실제 기동·표지·예약 대기와 화면 캡처다. 착지 창에서 plan 절·API·E2E 번호를 main과 다시 대조한다.
+
+- 착지 기준 origin/main `f6a7585d`의 마지막 §8.396·FRONT_API 1.97·AGENT_LINK 1.11·E2E76을 직접 확인했다. 이번 기능은 §8.397·FRONT_API 1.98로 맞추고 E2E47 확장과 기존 E2E76을 유지한다. main의 Starting 선점 잠금·병합 중 표지·할 일 한 목록·상태 점 정렬을 보존하며 전체 ci-local·공개 검사 뒤 착지한다.
+
+- 착지 통합 검증에서 E2E session 정리의 전체 프로세스 명령줄 수집이 Node 기본 버퍼를 넘는 ENOBUFS를 확인했다. 목록은 PID·부모·상태만, 명령줄은 정리 후보 PID만 조회하도록 좁혔다. 실제 관계없는 긴 argv 1 MiB 초과 fixture로 원래 코드의 실패와 수정 뒤 대상 자손 종료·외부 프로세스 보존을 확인하며 버퍼·시한을 늘리지 않는다.
+
+### 8.398 입력 중 숨긴 맥락 게이지 자리 회수(t-0622)
 
 - 사용자 1A(q-1102): 입력창 오른쪽이 너무 일찍 접히는 문제는 숨긴 맥락 게이지 자리만 회수한다. §8.321의 투명하게 숨기되 자리를 유지하던 배치를 바꾸고, §8.364의 첨부·보내기 단추를 글 옆에 두는 선택은 유지한다.
 - 게이지의 `data-hidden` 상태에서 바깥 요소를 배치에서 빼 게이지 폭과 단추 사이 간격을 글 칸으로 돌려준다. 첫 글자 입력·전체 삭제 때 폭이 바뀌며, 입력이 여러 줄로 늘어나는 동안은 같은 폭이다. 기존 ResizeObserver가 실제 폭에 맞춰 줄 수와 높이를 다시 잰다. 높은 사용량·창 넘음 경고는 계속 표시하고, 700px 이하 휴대폰에서는 기존처럼 항상 숨긴다.
 - 기존 E2E50은 보통·창 모름 값의 폭 회수, 전체 삭제의 복원, 경고의 폭 유지와 iPad·휴대폰 표시를 검사한다. E2E66에는 실제 usage를 넣어 Chromium·WebKit의 데스크톱·휴대폰 네 조합에서 회수한 폭과 한글 첫 줄 경계, 조합 입력·영문·붙여넣기·회전·focus·높이·전송 없음을 검사한다. 새 E2E 번호나 API 변경은 없다.
+
+- 착지 기준 origin/main `6d9e3e41`에서 마지막 §8.397·FRONT_API 1.98·AGENT_LINK 1.11·E2E76을 직접 확인했다. 이번 수리는 §8.398로 옮기고 API 버전과 기존 E2E50·66·76 번호를 유지한다. main의 할 일 한 목록·한도 초과 시작·상태 점 정렬과 시험 수리를 보존하며 통합 후보의 전체 ci-local·공개 검사 뒤 병합한다.
