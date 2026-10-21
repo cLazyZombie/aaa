@@ -6600,3 +6600,44 @@ L4 후속(10-20 00시 사용자 관찰): 멈춤 상태의 후보 예약과 재�
 - **계정.** 기본 계정은 새 작업에만 적용하는 §8.351 정책을 유지한다. 고정 계정과 새 profile의 harness가 다르면 profile·launch·brief를 바꾸기 전에 거부하고 새 thread 시작·새 harness의 기본 계정·명시 `--account`를 안내한다. 같은 harness의 profile 변경은 원래 계정을 쓴다. 계정이 고정되지 않은 thread의 기존 로컬 인증 정책은 그대로다.
 - **다른 경로.** 직접 `pane resume`는 계정 없는 일반 thread를 새 pane에 연결하지 않던 경로도 있었다. 모든 일반 thread를 저장한 대화·작업 identity·감시를 잇는 `thread_restart --resume`으로 보낸다. 계정 pane 재개와 재부팅 복원의 중복 교체는 없앤다. adopted pane은 기존 일반 pane 재개와 `replace_pane`의 thread 결속을 쓴다. resolve는 이미 종료된 pane도 정리한다. 사람이 열거나 kill로 남긴 일반 pane의 「기타」 표시는 유지한다.
 - **호환·검증.** 새 요청·프로토콜·옵션은 없다. 기존 §8.364·웹 E2E 66을 보존하고 이 수리는 §8.365를 쓴다. FRONT_API 1.83·AGENT_LINK 1.10은 유지한다. 기존 m13과 로컬 UDS·원격 TLS 회귀에서 profile 변경·새 대화·resume·직접 pane resume·host 재연결·spawn 실패·이름과 탭 보존·다른 pane 보존·계정 사전 거부를 검사한다. 원본 재현과 결함 되심기는 [시험](testing.md)의 t-0567 절을 따른다. 운영 pane·thread에는 접근하지 않는다.
+
+### 8.366 질문 카드·사용자 post의 처리 상태 통합(10-21, t-0565)
+
+- 제목에 `aaa:question/<thread>`가 붙은 확인 필요 post는 열린 질문 카드 한 줄로 묶는다. 답의 정본은 카드다.
+  카드·`thread answer`가 실제로 답을 전하면 연결 post도 끝내고 `request handled`를 남긴다. 전송 실패는 그대로 둔다.
+- 질문 없는 새 보고는 이전 질문을 선택한 답 없이 닫고 연결 post도 끝낸다. ticker는 구판에서 남은 알림을 보고 시각과
+  성공한 답 기록으로 정리한다. 끝난 카드에 늦게 온 post도 즉시 정리한다. 다음 질문이 열렸으면 옛 답으로 닫지 않으며, 카드가 없는 post는 독립 요청으로 남긴다.
+- `aaa post handled <p-번호 또는 발신 ID>`는 사용자 답을 받았다는 처리 표시만 한다. 질문의 선택·승인·작업 실행을 만들지 않는다.
+  `inbox done`과 처리 상태를 공유하고 `post status`·목록도 그 상태를 본다. 전송 영수증 accepted/refused는 바꾸지 않는다.
+- 카드에 없는 C를 post에만 추천하지 않는다. 새 안은 보고부터 고치고, 이미 받은 C·채팅 자유 답은
+  `thread answer --text`로 원문을 보존한다. coordinator가 기존 A/B를 임의로 대신 고르지 않는다.
+- FRONT_API 1.84는 `post_handled`와 선택 칸 `Post.handled`를 더한다. main의 §8.363~8.365와 E2E 65·66은 유지하고 기존 E2E 53을 확장한다. Agent link는 그대로다. 실행·검증은 testing.md의 t-0565 절에 둔다.
+
+### 8.367 task 예약 자동 시작·완료 보관(t-0564)
+
+TASKS.md의 줄 끝 `<!-- aaa-task:ID -->`가 제목과 독립된 ID다. 예약/완료 보관의 명시 쓰기에서만 기존 task에 최소 이행하며
+읽기는 파일을 고치지 않는다. 메모·첨부·task 밖 글·줄 끝을 보존한다. Rust proto의 예약 승인판·고정 모델/effort·차례·상태·기동 ID와
+연결 thread를 host SQLite에 저장한다. 차례 변경 전후와 주체·시각도 저장한다. 검색·화면 정렬은 실행 차례를 바꾸지 않는다.
+
+예약 dispatch와 직접 시작·재시작·다시 열기·adopt가 DB의 같은 자리 검사를 거친다. coordinator pane은 별도 생명주기이며
+worker 자리 수에 포함하지 않는다. 평가자는 새 기동 대상이 아니다. Starting/Open과 resolve_pending은 자리를 보유한다.
+외부 Spawn 전 송신 의도를 기록한다. host가 죽었거나 응답이 유실됐으면 실제 세션의 머신·기동 이름·cwd를 대조하고
+불명 상태에서 새 기동을 보내지 않는다. DB 선점만으로 외부 exactly-once를 보장하지 않는다.
+
+완료 보관은 기존 좁은 완료/부모 보호 판정을 사용한다. task 블록·보고서 경로·이력을 먼저 저장하고 활성 블록을 제거한다.
+파일 제거 뒤 DB 확정 전 중단은 저장한 제거 후 파일 hash로 복구한다. 완료 보관과 삭제 기록은 별도이며 보관은 log prune 대상이 아니다.
+복원은 같은 ID·내용·첨부를 유지하고 thread 연결과 실행 승인은 되살리지 않는다. worktree/branch 생명주기는 기존 규칙을 따른다.
+사용자 결정 1A에 따라 정해진 모델·머신 변경은 사용자 웹/aaa 밖 CLI만 허용한다. coordinator 원문 쓰기는 거부한다.
+
+예약의 실행 승인판과 선택 변경의 출처는 별도로 보존한다. 빈 모델 칸에서 해석한 기본 모델도 승인 후에는 고정 선택이다.
+사용자가 웹/aaa 밖 CLI로 모델·머신 칸을 바꾸면 새 선택의 요청자·시각을 기록하되 과거 실행 승인은 갱신하지 않는다.
+내용 확인 뒤 명시 예약 갱신이 필요하다. 파일 직접 수정 뒤 coordinator가 재예약하는 것은 사용자 변경 출처로 인정하지 않는다.
+
+- **번호·호환.** main의 §8.362~8.366·E2E 64~66·질문 E2E 53 확장을 유지한다. 이 기능은 FRONT_API 1.85와 E2E `67-task-queue`를 쓴다. AGENT_LINK는 1.10 그대로다.
+
+### 8.368 quota RPC 갱신 거부와 웹 E2E writer 정리(10-21, t-0568)
+
+- **quota 원인·수리.** 갱신 거부 서버가 POST 본문을 읽기 전에 401을 쓰고 TCP를 닫아 가짜 RPC에 BrokenPipe/Reset이 생겼다. 기존 Axum HTTP 처리로 크기를 제한해 본문을 소비한 뒤 401을 보낸다. 본문·인증은 저장·기록하지 않는다. 여섯 모드의 단언에는 mode·snapshot과 가짜 Python 예외 종류/errno를 남긴다. macOS 독립 전송 실험과 main `4260b096`의 macos-15 재발(t-0571)도 이 경로에 부합하며, 당시 CI mode는 기록이 없어 소급 확정하지 않는다.
+- **정리 순서.** 웹 E2E는 meta·명령줄로 확인한 실험실 session host와 자손을 부모부터 멈춰 새 fork를 막고, 그 PID들이 종료된 것을 관측한 뒤 root를 한 번 지운다. E2E 13의 재부팅 흉내도 같은 완료를 기다린다. 별도 그룹의 writer 자손을 남긴 채 session host에만 종료 신호를 보내던 정리를 고쳤다.
+- **회귀.** quota TCP owner는 `Expect: 100-continue` → 본문 → 401과 EOF를 확인한다. 원래 서버는 첫 401 응답 단언에서 RED여야 한다. 웹 유닛은 실제 writer 자손 종료·무관한 PID 보존·재시도 없는 삭제를 확인하며 원래 정리는 writer 생존 단언에서 RED여야 한다. 원본 bytes 복원 뒤 정상 owner와 정본 ci-local 전체·공개 검사를 수행한다. 실제 로그인·실제 인증·시한 연장·재시도·직렬화는 쓰지 않는다. Ubuntu native 판정은 착지 뒤 main CI에 맡긴다.
+- **번호·호환.** main의 §8.367과 E2E `67-task-queue`를 유지한다. 새 E2E 파일이나 프로토콜 칸은 없으며 기존 E2E 13·54·65와 새 순수 Node 회귀를 쓴다. FRONT_API 1.85·AGENT_LINK 1.10은 그대로다. 시험 절차는 [testing](testing.md)에 둔다.

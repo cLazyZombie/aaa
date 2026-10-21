@@ -10,6 +10,7 @@ import http from "node:http";
 import net from "node:net";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { terminateSessionHosts } from "./session-cleanup.mjs";
 
 const require = createRequire(path.join(process.env.NODE_PATH ?? process.cwd(), "noop.js"));
 const { chromium, webkit } = require("playwright");
@@ -156,20 +157,8 @@ function freePort() {
   });
 }
 
-/** session host는 setsid로 분리돼 있다. meta.json의 PID 중 명령줄이 이 실험실을 가리키는 것만 끝낸다. */
-function killSessionHosts() {
-  const dir = `${root}/s/agent/sessions`;
-  if (!fs.existsSync(dir)) return;
-  for (const id of fs.readdirSync(dir)) {
-    try {
-      const meta = JSON.parse(fs.readFileSync(`${dir}/${id}/meta.json`, "utf8"));
-      const cmd = execFileSync("ps", ["-o", "command=", "-p", String(meta.host_pid)], { encoding: "utf8" });
-      if (cmd.includes(`${dir}/${id}`)) process.kill(meta.host_pid, "SIGKILL");
-    } catch {
-      // 이미 끝났다
-    }
-  }
-}
+/** session host와 파일을 쓰는 자손이 모두 끝난 뒤 돌아온다. */
+const killSessionHosts = () => terminateSessionHosts(`${root}/s/agent/sessions`);
 
 const screenText = (page) => page.locator(".xterm-rows").innerText();
 /**
@@ -1152,7 +1141,7 @@ async function runSpec(spec, labEnv = {}) {
     pushServer.close();
     usageServer.close();
     for (const tag of [...procs.keys()]) await stop(tag);
-    killSessionHosts();
+    await killSessionHosts();
     console.log(steps.join("\n"));
     if (failed) {
       console.log(`실험실 기록을 남겼다: ${root}`);

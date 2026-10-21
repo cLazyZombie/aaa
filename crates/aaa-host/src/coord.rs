@@ -7,6 +7,8 @@
 //! - 권한을 건너뛰는 실행 인자는 사람만 바꾸는 host.toml `[safety.*]`(yolo·thread_agent_args)와 그 머신 agent.toml의 profile
 //!   `args`에 둔다(coordinator가 바꿀 수 없다, plan §8.163).
 
+use crate::orch::internal;
+
 use std::path::Path;
 use std::sync::Arc;
 
@@ -280,6 +282,7 @@ impl Host {
         block: Option<&str>,
     ) -> Result<FrontResponse, ErrorBody> {
         let mut a = StartArgs {
+            reservation: None,
             account: None,
             holds: vec![],
             project: project.to_string(),
@@ -297,10 +300,14 @@ impl Host {
         if a.profile.is_empty() {
             a.profile = self.default_thread_profile(project);
         }
+        let (model, effort, profile_revision) = crate::task_queue::model_selection(self, &a.profile)?;
         let set = self.settings(project);
         let open_threads = self.open_worker_threads(project);
         let (machine_order, local_machine) = self.machine_order();
         Ok(FrontResponse::ThreadStartPreview(aaa_proto::ThreadStartPreview {
+            model,
+            effort,
+            profile_revision,
             title: a.title,
             task_block: t.block_sha256,
             task: a.task,
@@ -349,6 +356,7 @@ impl Host {
             .collect();
         let notes_files = self.settings(project).task_notes.iter().map(|p| notes_file(&dir, p)).collect();
         Ok(TaskBoard {
+            queue: self.db.queue_list(project).map_err(crate::orch::internal)?,
             project: project.to_string(),
             sha256: seen.sha256,
             lists,
@@ -362,7 +370,7 @@ impl Host {
 
     /// 할 일을 고쳐도 되는 actor(t-0469 §5): 조작 권한은 요청 판정(`needs_control`)이 이미 봤다. aaa 세션 안에서는 그 프로젝트의
     /// coordinator pane만 된다(thread pane·남의 프로젝트 pane·사람의 셸 pane 거부). 기록에 남길 actor를 돌려준다.
-    fn task_writer(&self, project: &str, actor: &str) -> Result<String, ErrorBody> {
+    pub(crate) fn task_writer(&self, project: &str, actor: &str) -> Result<String, ErrorBody> {
         if !front::in_session(actor) {
             return Ok(actor.to_string());
         }
@@ -389,6 +397,13 @@ impl Host {
         let dir = self.project_dir(project)?;
         let by = self.answered_by(actor);
         let actor = self.task_writer(project, actor)?;
+        if actor.starts_with("coordinator:") && ops.iter().any(|o| matches!(o, TaskOp::RawSave { .. })) {
+            return Err(err(
+                ErrorCode::Forbidden,
+                "coordinator는 원문 편집으로 선택 보호를 우회하지 않는다. task 편집 명령을 쓴다",
+            ));
+        }
+
         if ops.is_empty() {
             return Err(bad("동작이 없다"));
         }
@@ -484,10 +499,92 @@ impl Host {
             match task_edit::apply(&rev.text, ops, ctx) {
                 Ok(a) if a.text == rev.text => Ok(Edit::Keep(Vec::new())),
                 Ok(mut a) => {
+                    self.protect_task_choices(&rev.text, &a.text, actor)?;
+                    for r in &a.records {
+                        if r.action == TaskAction::Update {
+                            self.protect_task_choices(
+                                r.before.as_deref().unwrap_or_default(),
+                                r.after.as_deref().unwrap_or_default(),
+                                actor,
+                            )?;
+                        }
+                    }
                     // 끝난 thread의 자동 정리는 기록 화면에서 「자동 정리」로 거른다(되살리기는 삭제와 같다)
                     if auto {
                         for r in a.records.iter_mut().filter(|r| r.action == TaskAction::Delete) {
-                            r.action = TaskAction::AutoClean;
+                            let task = tasks::parse(&rev.text)
+                                .into_iter()
+                                .find(|t| t.title == r.title)
+                                .ok_or_else(|| internal("완료 task가 없다"))?;
+                            let id = task.id.clone().ok_or_else(|| internal("완료 보관에는 task ID가 필요하다"))?;
+                            let report = task.thread.as_ref().map(|t| format!("threads/{t}.md"));
+                            let reason = task
+                                .thread
+                                .as_ref()
+                                .and_then(|tid| self.load(project, tid).ok())
+                                .map(|rec| {
+                                    if rec.task_clean.why.as_deref() == Some("merged") {
+                                        "PR 병합"
+                                    } else {
+                                        "보고 [완료]"
+                                    }
+                                })
+                                .unwrap_or("완료 판정")
+                                .to_string();
+                            let marker = format!("<!-- aaa-task:{id} -->");
+                            let mut history = self
+                                .db
+                                .task_log_list(project, None, u32::MAX, None)
+                                .map_err(internal)?
+                                .into_iter()
+                                .filter(|h| {
+                                    h.title == task.title
+                                        || h.before.as_ref().is_some_and(|s| s.contains(&marker))
+                                        || h.after.as_ref().is_some_and(|s| s.contains(&marker))
+                                })
+                                .collect::<Vec<_>>();
+                            // 복원 뒤 다시 완료해도 이전 완료·결과와 보관 안의 유일한 이력을 남긴다.
+                            if let Some(old) =
+                                self.db.archive_list(project).map_err(internal)?.into_iter().find(|a| a.task_id == id)
+                            {
+                                for h in old.history {
+                                    if !history.iter().any(|n| n.id == h.id && n.at_ms == h.at_ms) {
+                                        history.push(h);
+                                    }
+                                }
+                                history.push(aaa_proto::TaskLogEntry {
+                                    id: 0,
+                                    at_ms: old.completed_ms,
+                                    actor: "host".into(),
+                                    by: "host 완료 보관".into(),
+                                    action: TaskAction::Completed,
+                                    list: old.task.list,
+                                    from_list: None,
+                                    title: old.task.title,
+                                    before: Some(old.body),
+                                    after: None,
+                                    thread: old.task.thread,
+                                    restored_by: None,
+                                });
+                            }
+                            self.db
+                                .archive_save(
+                                    project,
+                                    &aaa_proto::ArchivedTask {
+                                        task_id: id,
+                                        task,
+                                        body: r.before.clone().unwrap_or_default(),
+                                        reason,
+                                        report,
+                                        completed_ms: aaa_common::util::now_ms(),
+                                        restored: false,
+                                        committed: false,
+                                        removed_sha256: tasks::sha256(&a.text),
+                                        history,
+                                    },
+                                )
+                                .map_err(internal)?;
+                            r.action = TaskAction::Completed;
                         }
                     }
                     Ok(Edit::Write(a.text, a.records))
@@ -505,6 +602,10 @@ impl Host {
         })?;
         let mut log_ids = Vec::new();
         if let Some(after) = &saved.after {
+            self.record_task_choices(project, &saved.before.text, &after.text, actor)?;
+            if auto {
+                self.archive_recover(project)?;
+            }
             let now = aaa_common::util::now_ms();
             // ticker가 아직 못 본 직접 편집이 이 쓰기에 묻히지 않게 먼저 「파일 직접」으로 적는다
             let unseen = self
@@ -541,6 +642,7 @@ impl Host {
             (seen.len, seen.mtime, seen.sha256, seen.text) = (u64::MAX, None, after.sha256.clone(), after.text.clone());
             drop(guard);
             let _ = self.task_events.send((project.to_string(), after.sha256.clone()));
+            self.tick_wake.notify_one();
             self.db.audit(
                 actor,
                 if auto { "task_auto_clean" } else { "task_edit" },

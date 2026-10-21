@@ -14,6 +14,7 @@
 import { useEffect, useMemo, useRef, useState, type ClipboardEvent, type ReactNode, type SyntheticEvent } from "react";
 import { Bot, ChevronLeft, Circle, CircleDot, Monitor, Play, Triangle, TriangleAlert, Unlink, X } from "lucide-react";
 import type { OwnerChoice, TaskAnchor, TaskBoard, TaskLogEntry, TaskOp, TaskView } from "./gen/proto";
+import { QueueControls } from "./TaskQueue";
 import { Markdown } from "./Markdown";
 import { uploadTaskFile } from "./api";
 import { TaskAttachments, dragHasFiles, filesOf, resolveReportLink, type PendingUpload } from "./TaskAttachments";
@@ -141,6 +142,7 @@ export function agentNames(owners: readonly OwnerChoice[] | null): string[] {
 }
 
 export interface DetailProps {
+  queueApi?: boolean;
   /** 고른 task(새 task를 만드는 중이면 없음) */
   t: TaskView | null;
   board: TaskBoard;
@@ -212,6 +214,7 @@ export function TaskDetail(props: DetailProps) {
         </button>
         <span className="task-detail-list">{t ? `${t.list || "(목록 없음)"} · ${t.line}줄` : props.gone ? "파일에서 빠짐" : "새 할 일"}</span>
       </header>
+      {t && props.queueApi && <QueueControls task={t} board={props.board} canEdit={props.canEdit} />}
       {props.canEdit ? <TaskForm {...props} onCover={setCovered} /> : t && <ReadOnly {...props} onCover={setCovered} t={t} />}
     </aside>
   );

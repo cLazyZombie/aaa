@@ -416,6 +416,7 @@ mod tests {
             crate::AgentConn::new(aaa_common::conn::spawn_writer(tokio::io::sink(), aaa_proto::MAX_FRAME), 1),
         );
         let start = crate::orch::StartArgs {
+            reservation: None,
             holds: vec![],
             project: "demo".into(),
             title: "첨부 일".into(),

@@ -1,5 +1,7 @@
 //! aaa의 경계 계약. Rust 타입이 정본이고 웹 TypeScript 타입은 여기서 생성한다(`web/src/gen/proto.ts`).
 
+pub mod task_queue;
+pub use task_queue::*;
 pub mod account;
 pub mod quota;
 pub use quota::*;
@@ -94,6 +96,11 @@ pub fn typescript_bindings() -> String {
         MachineView::decl(&cfg),
         MachineHealth::decl(&cfg),
         HealthProblem::decl(&cfg),
+        QueueState::decl(&cfg),
+        QueueOp::decl(&cfg),
+        TaskChoicePin::decl(&cfg),
+        TaskReservation::decl(&cfg),
+        ArchivedTask::decl(&cfg),
         TaskView::decl(&cfg),
         TaskListView::decl(&cfg),
         TaskThread::decl(&cfg),
