@@ -300,8 +300,10 @@ done
     let working = w.wait_show("첫 brief 작업 화면", &id, |v| v["agent"]["activity"] == "working");
     let gate = Path::new(working["work_dir"].as_str().unwrap()).join("turn");
     std::fs::write(&gate, "go\n").unwrap();
-    let first =
-        w.wait_show("첫 완료와 Idle", &id, |v| v["report_hash"].is_string() && v["agent"]["activity"] == "idle");
+    // 보고 hash 저장과 자동 ack는 별도 기록이다. Idle만으로 ack 완료를 추정하지 않는다.
+    let first = w.wait_show("첫 완료의 자동 확인과 Idle", &id, |v| {
+        v["report_hash"].is_string() && v["agent"]["activity"] == "idle" && v["acked_hash"] == v["report_hash"]
+    });
     let work = PathBuf::from(first["work_dir"].as_str().unwrap());
     let initial: Vec<_> = std::fs::read_dir(work.join("inbox")).unwrap().map(|e| e.unwrap().path()).collect();
     assert_eq!(initial.len(), 1);
