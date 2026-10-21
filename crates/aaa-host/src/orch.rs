@@ -291,6 +291,9 @@ pub(crate) struct TaskClean {
     pub discard: bool,
     #[serde(default)]
     pub judged_ms: Option<u64>,
+    /// repo 머신 agent가 실제 origin/main의 조상으로 확인한 커밋.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub merged_main: Option<String>,
     /// 완료로 판정해 지운 task 제목(되살린 task의 「확인 필요」 까닭을 가른다)
     #[serde(default)]
     pub cleaned: Vec<String>,
@@ -647,7 +650,7 @@ thread가 키를 기다리는 화면(시작 때 신뢰 창, 질문 메뉴, 명�
   이름을 든 목록에, 없으면 `## Backlog`에 넣는다. 모델·머신은 사용자가 준 것(맞을 때)을 쓰고, 안 주면 agent 일은 비우고
   사용자 자신의 할 일은 `me`로 둔다.
 - 목록(`##` 머리): 사용자가 요청하면 만들고, 이름을 바꾸고, 합치고, 지우고, task를 목록 사이로 옮긴다.
-- 끝남: PR 병합·보고 [완료]로 resolve한 task는 host가 완료 보관한다. `aaa task archive`에서 결과를 찾고
+- 끝남: PR 병합·origin/main 조상 확인·보고 [완료]로 resolve한 task는 host가 완료 보관한다. `aaa task archive`에서 결과를 찾고
   `aaa task archive --restore <task ID>`로 같은 ID를 복원한다. 복원은 재예약·재기동 승인이 아니다. 그만둠·명시 삭제는
   별도 `aaa task rm`이며 옛 삭제 기록의 `aaa task restore`와 구별한다. 하위가 남은 부모는 자동 보관하지 않는다.
 - 보이기: 사용자가 task를 보자고 하면 채팅으로 목록별로 답한다. task마다 맡은 쪽(모델·머신, `me`·사람, 없으면 「미할당」), 메모가 있으면 짧은 한 줄,
@@ -2909,8 +2912,14 @@ impl Host {
             let _ = self.update_rec(project, id, |r| r.error = Some(message.clone()));
             return Err(ErrorBody { message, ..e });
         }
-        // 이어진 task 판정(할 일 T3)은 ticker가 한다(끝낸 까닭과 버림은 위에서 적었다): 정리가 끝났으니 tick을 깨운다
+        // resolve_pending 중에는 확인 카드를 만들지 않는다. pane 정리가 끝난 뒤 병합을 확인하고
+        // 그 근거와 종료 확정을 함께 저장해야 ticker 전에도 불필요한 확인 카드가 보이지 않는다.
+        let merged_main = self.task_main_merge(&rec).await;
+        // 이어진 task 완료 보관은 ticker가 한다.
         self.update_rec(project, id, |r| {
+            if merged_main.is_some() {
+                r.task_clean.merged_main = merged_main.clone();
+            }
             r.resolve_pending = None;
             r.error = None;
         })?;

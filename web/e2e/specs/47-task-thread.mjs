@@ -6,6 +6,7 @@ import { editTaskContent } from "../lib/task-content.mjs";
 // 시간은 기다리지 않는다: 화면 표지(`data-tasks-sha`·`data-task-state`·`data-start-state`)와 파일 글, `ticker tick`을 본다.
 import fs from "node:fs";
 import crypto from "node:crypto";
+import { execFileSync } from "node:child_process";
 import { root, aaa, until, step, browser, domIs, shot, openSettings } from "../lib/harness.mjs";
 import { pairDevice } from "../lib/devices.mjs";
 
@@ -263,5 +264,45 @@ export default async function ({ page }) {
     }
     aaa("task", "unreserve", waitingId);
     aaa("thread", "resolve", "demo", busy);
+  });
+
+  await step("직접 병합: [착지]여도 origin/main 조상이면 완료 보관하고 답할 것에 넣지 않는다", async () => {
+    const repo = `${root}/merged-app`;
+    const origin = `${root}/merged-origin.git`;
+    const git = (cwd, ...args) => execFileSync("git", ["-C", cwd, "-c", "user.name=Test", "-c", "user.email=test@example.com", ...args], { encoding: "utf8", stdio: "pipe" }).trim();
+    fs.mkdirSync(repo);
+    git(root, "init", "-q", "--bare", "-b", "main", origin);
+    git(repo, "init", "-q", "-b", "main");
+    git(repo, "commit", "--allow-empty", "-qm", "fixture");
+    git(repo, "remote", "add", "origin", origin);
+    git(repo, "push", "-qu", "origin", "main");
+    fs.writeFileSync(`${root}/landing-task.md`, "사람을 기다림\n");
+    const threads = [];
+    for (const title of ["직접 병합 완료", "직접 미병합"]) {
+      const t = aaa("thread", "start", "demo", "--title", title, "--profile", "fake", "--machine", "labA", "--repo", repo, "--task-file", `${root}/landing-task.md`);
+      await until(`${title} brief`, () => aaa("thread", "show", "demo", t.id).brief === "delivered");
+      const rec = aaa("thread", "show", "demo", t.id);
+      git(rec.cwd, "commit", "--allow-empty", "-qm", title);
+      if (title === "직접 병합 완료") {
+        git(repo, "merge", "--no-ff", "-m", "병합: 시험", rec.branch);
+        git(repo, "push", "-q", "origin", "main");
+      }
+      fs.writeFileSync(`${rec.work_dir}/report.md`, "[착지] 직접 병합 확인\n\n## Report\n결과\n\n## Next\n");
+      aaa("task", "add", title, "--thread", t.id);
+      aaa("thread", "resolve", "demo", t.id, "--keep-worktree");
+      threads.push(t.id);
+    }
+    aaa("ticker", "tick");
+    await gone(page, "직접 병합 완료");
+    await stateIs(page, "직접 미병합", "check");
+    const archived = aaa("task", "archive").entries.find((a) => a.task.title === "직접 병합 완료");
+    if (archived?.reason !== "origin/main 병합") throw new Error(`직접 병합 보관 근거: ${JSON.stringify(archived)}`);
+    const notices = aaa("inbox", "list", "demo", "--all", "--peek").items.filter((i) => i.item_kind === "task" && i.subject === threads[0]);
+    if (notices.length !== 1 || notices[0].event !== "task auto-cleaned") throw new Error(`병합 확인 알림: ${JSON.stringify(notices)}`);
+    await page.getByTestId("activity-asks").click();
+    await page.locator('[data-testid="ask-row"][data-key="t:직접 미병합"]').waitFor();
+    if (await page.locator('[data-testid="ask-row"][data-key="t:직접 병합 완료"]').count()) throw new Error("병합된 할 일에 확인 카드가 있다");
+    await shot(page, "thread-direct-merge-asks");
+    await page.getByTestId("activity-tasks").click();
   });
 }
