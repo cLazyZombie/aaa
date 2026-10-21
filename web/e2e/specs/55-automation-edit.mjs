@@ -11,10 +11,10 @@ const sha = (text) => crypto.createHash("sha256").update(text).digest("hex");
 const call = (p, req) => p.evaluate(async (body) => (await fetch("/api/v1/call", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) })).json(), req);
 const runs = (name) => aaa("routine", "runs", "demo", name).runs;
 const rule = (name) => aaa("routine", "list").routines.find((r) => r.name === name);
-/** 편집 창이 휴대폰 폭 안에 있고 옆으로 넘치지 않는다 */
+/** 본문 편집 화면이 휴대폰 폭 안에 있고 옆으로 넘치지 않는다(떠 있는 창이 아니다, t-0628) */
 const fits = (p, selector) => p.evaluate((sel) => {
   const sheet = document.querySelector(sel);
-  const body = sheet?.querySelector(".modal-body");
+  const body = sheet?.querySelector(".automation-view-body");
   const box = sheet?.getBoundingClientRect();
   return sheet && body && box.left >= 0 && box.right <= innerWidth + 0.5 && body.scrollWidth <= body.clientWidth + 1 ? true : JSON.stringify({ box, sw: body?.scrollWidth, cw: body?.clientWidth, w: innerWidth });
 }, selector);
@@ -28,10 +28,16 @@ async function openPanel(p) {
   await p.getByTestId("automations").waitFor();
 }
 async function openDetail(p, name) {
-  await p.getByTestId(`automation-demo-${name}`).getByRole("button", { name: / 자세히$/ }).click();
+  await p.getByTestId(`automation-demo-${name}`).click();
   const sheet = p.getByTestId("automation-detail");
   await sheet.waitFor();
   return sheet;
+}
+/** 본문 설정 화면을 닫는다(앞 화면으로) */
+async function closeDetail(p) {
+  const sheet = p.getByTestId("automation-detail");
+  await sheet.getByTestId("automation-close").click();
+  await sheet.waitFor({ state: "hidden" });
 }
 
 export default async function ({ page }) {
@@ -63,12 +69,13 @@ export default async function ({ page }) {
     await shot(page, "automation-edit-new-review");
     await sheet.getByTestId("automation-save").click();
     await sheet.waitFor({ state: "detached" });
-    // 저장 뒤 상세가 열린다. 파일은 검사가 보인 원문 그대로다
+    // 저장 뒤 같은 본문 자리에 그 규칙 설정이 열린다(주소도 그 규칙). 파일은 검사가 보인 원문 그대로다
     const detail = page.getByTestId("automation-detail");
     await detail.waitFor();
+    if ((await page.evaluate(() => location.hash)) !== `#automation=${encodeURIComponent("demo/watch")}`) throw new Error(`저장 뒤 주소 ${await page.evaluate(() => location.hash)}`);
+    if (await page.locator(".modal-scrim").count()) throw new Error("편집이 떠 있는 창으로 열렸다");
     if (fs.readFileSync(file("watch"), "utf8") !== text) throw new Error("저장한 파일이 검사 원문과 다르다");
-    await page.keyboard.press("Escape");
-    await detail.waitFor({ state: "detached" });
+    await closeDetail(page);
     aaa("ticker", "tick");
     aaa("ticker", "tick");
     if (runs("watch").length !== 0) throw new Error(`저장만으로 돌았다: ${JSON.stringify(runs("watch"))}`);
@@ -118,13 +125,14 @@ export default async function ({ page }) {
       await conflict.getByRole("button", { name: /내 초안으로 저장/ }).click();
       await sheetA.waitFor({ state: "detached" });
       if (!fs.readFileSync(file("watch"), "utf8").includes('title = "a 둘째 제목"')) throw new Error("고른 뒤 a 초안 저장");
-      await page.keyboard.press("Escape");
+      // 저장하면 편집 화면이 그 규칙 설정으로 돌아온다
+      await page.getByTestId("automation-detail").waitFor();
+      await closeDetail(page);
       if (b.errors.length) throw new Error(b.errors.join("\n"));
     } finally { await b.page.context().close(); }
   });
 
   await step("지우기·되살리기: 지운 규칙은 낡은 편집기의 저장으로 되살아나지 않고, 「지운 자동화」에서 꺼진 채로 돌아온다", async () => {
-    await page.getByTestId("automation-detail").waitFor({ state: "detached" });
     const sheetA = page.getByTestId("automation-editor");
     const d = await openDetail(page, "watch");
     await d.getByRole("button", { name: "고치기", exact: true }).click();
@@ -138,7 +146,8 @@ export default async function ({ page }) {
       await db.getByRole("button", { name: "지우기", exact: true }).click();
       const confirm = b.page.getByRole("alertdialog");
       await confirm.getByRole("button", { name: "지우기", exact: true }).click();
-      await db.waitFor({ state: "detached" });
+      // 지우면 설정 화면을 닫고 앞 화면으로 간다
+      await db.waitFor({ state: "hidden" });
       if (fs.existsSync(file("watch"))) throw new Error("지운 파일이 남았다");
       const trash = fs.readdirSync(`${dir()}/automations/.trash`);
       if (trash.length !== 1 || !fs.readFileSync(`${dir()}/automations/.trash/${trash[0]}`, "utf8").includes("enabled = false")) throw new Error(`.trash ${trash}`);
@@ -152,6 +161,8 @@ export default async function ({ page }) {
     if (fs.existsSync(file("watch"))) throw new Error("지운 규칙이 저장으로 되살아났다");
     await sheetA.getByRole("button", { name: "닫기", exact: true }).last().click();
     await sheetA.waitFor({ state: "detached" });
+    // 편집을 닫으면 지워진 규칙이라 「지워졌다」 안내다
+    await page.getByTestId("automation-missing").waitFor();
     await page.getByRole("button", { name: "다시 읽기", exact: true }).click();
     const trash = page.getByTestId("automation-trash-demo");
     await trash.locator("summary").click();
@@ -179,8 +190,7 @@ export default async function ({ page }) {
     await sheet.waitFor({ state: "detached" });
     const saved = fs.readFileSync(file("both"), "utf8");
     if (!saved.includes('every = "2d"') || !saved.includes('title = "둘 다 고침"') || !saved.startsWith("#:schema ./automation.schema.json\n# 머리 주석\n")) throw new Error(`두 쪽 고침 ${saved}`);
-    await page.keyboard.press("Escape");
-    await page.getByTestId("automation-detail").waitFor({ state: "detached" });
+    await closeDetail(page);
   });
 
   await step("지금 실행: 같은 key는 한 번만 받고, 승인되지 않은 시작 범위·꺼진 규칙은 거부한다", async () => {
@@ -205,7 +215,7 @@ export default async function ({ page }) {
     aaa("ticker", "tick");
     if (aaa("inbox", "list", "demo", "--peek").items.filter((i) => i.subject === "note").length !== 2) throw new Error("같은 key가 두 번 돌았다");
     if (!item) throw new Error("안내");
-    await page.keyboard.press("Escape");
+    await closeDetail(page);
     // 시작 범위를 승인하지 않은 규칙은 큐에 넣지 않고 거부한다
     const refused = await call(page, { op: "automation_run", project: "demo", name: "go", key: "e2e-go" });
     if (refused.err?.code !== "forbidden" || !refused.err.message.includes("승인")) throw new Error(`미승인 실행 ${JSON.stringify(refused)}`);
@@ -218,7 +228,7 @@ export default async function ({ page }) {
     fs.writeFileSync(file("cmd"), '[on.command]\nevery = "1d"\ncommand = "echo e2e"\n[do.inbox]\ntext = "출력 바뀜"\n');
     await page.getByRole("button", { name: "다시 읽기", exact: true }).click();
     const d = await openDetail(page, "cmd");
-    await d.getByRole("button", { name: "명령 승인 검토", exact: true }).click();
+    await d.getByTestId("automation-command-approval").getByRole("button", { name: "명령 승인 검토", exact: true }).click();
     const confirm = page.getByRole("alertdialog");
     const body = await confirm.textContent();
     const hash = rule("cmd").command_sha256;
@@ -227,7 +237,8 @@ export default async function ({ page }) {
     await confirm.getByRole("button", { name: "승인", exact: true }).click();
     await confirm.waitFor({ state: "detached" });
     await until("명령 승인", () => rule("cmd").approved === true);
-    await page.keyboard.press("Escape");
+    await d.getByTestId("automation-command-approval").waitFor({ state: "detached" });
+    await closeDetail(page);
 
     const dev = await pairPage(browser, aaa("web", "pair", "--reader").code, { width: 390, height: 844 }, { touch: true });
     try {
