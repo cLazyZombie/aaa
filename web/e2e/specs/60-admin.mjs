@@ -1,4 +1,5 @@
-// 웹 관리 W5b(plan §8.355): 설정 「머신」에서 등록 창 열기·닫기, 새 머신 승인(6자리 코드: 틀리면 말하고 맞으면 등록), host 머신은 폐기
+// 웹 관리 W5b(plan §8.355): 설정 「머신」에서 등록 창 열기·닫기, 「직접 설치」 안내의 명령으로 새 머신 등록(M1, plan §8.373: 주소·이름·
+// host 지문), 새 머신 승인(6자리 코드: 틀리면 말하고 맞으면 등록), host 머신은 폐기
 // 단추 없음, 머신 상세(M0, plan §8.372: OS·판·실행 파일 SHA-256·기능, 보기 기기도 봄), 다른 머신 폐기. 「폰 및 기기」의 마지막 조작
 // 기기(폐기 꺼짐)·이 기기 폐기 확인(「이 화면이 끊깁니다」), tailnet 공개
 // 켜기(확인 창)·끄기(공개 주소로 연 화면은 「다른 경로를 확인했다」를 켜야 열림). 보고서 올리기(폴더·여러 파일), 공유 링크 키 교체
@@ -68,13 +69,28 @@ export default async function ({ page }) {
     if (await mp.getByRole("button", { name: "labA 폐기" }).count()) throw new Error("host 머신에 폐기 단추");
     await mp.getByTestId("enroll-open-button").click();
     await mp.getByTestId("enroll-open").waitFor();
-    // 새 머신 화면: 확인 코드 줄을 읽는다(그 머신 사람이 보는 것)
-    const p = spawn(AA, ["agent", "enroll", addr, "--name", "labB"], { env: { ...env, ...nodeB }, stdio: ["ignore", "pipe", "pipe"] });
+    // 「직접 설치」 안내(M1, plan §8.373): host가 연 주소(실험실은 loopback)와 이름을 넣은 명령을 그대로 새 머신에서 친다
+    const guide = mp.getByTestId("enroll-guide");
+    await guide.locator("summary").click();
+    await guide.getByTestId("enroll-guide-address").locator(`option[value="${addr}"]`).waitFor({ state: "attached" });
+    await guide.getByText("host 머신 안에서만 닿는다").waitFor();
+    await guide.getByTestId("enroll-guide-name").fill("labA");
+    await guide.getByText("이미 있는 머신 이름이다").waitFor();
+    await guide.getByTestId("enroll-guide-name").fill("labB");
+    const steps = guide.getByTestId("enroll-guide-steps");
+    const enrollCmd = (await steps.locator("li").nth(1).locator("code").innerText()).trim();
+    if (enrollCmd !== `~/.local/bin/aaa agent enroll ${addr} --name labB`) throw new Error(`안내 명령 ${enrollCmd}`);
+    const fpShown = (await steps.locator("li").nth(2).innerText()).match(/fingerprint가 ([0-9a-f]{16})…/)?.[1];
+    await shot(page, "60-enroll-guide-desktop");
+    // 새 머신 화면: 확인 코드 줄을 읽는다(그 머신 사람이 보는 것). 안내 명령의 실행 파일 자리만 실험실 binary로 바꾼다
+    const p = spawn(AA, enrollCmd.split(" ").slice(1), { env: { ...env, ...nodeB }, stdio: ["ignore", "pipe", "pipe"] });
     procs.set("enroll", p);
     const exited = new Promise((done) => p.once("exit", done));
+    let fpSeen = null;
     const code = await inTime(
       new Promise((done, fail) => {
         readline.createInterface({ input: p.stdout }).on("line", (l) => {
+          fpSeen = l.match(/host fingerprint ([0-9a-f]{16})…/)?.[1] ?? fpSeen;
           const m = l.match(/--code (\d{6})/);
           if (m) done(m[1]);
         });
@@ -98,6 +114,8 @@ export default async function ({ page }) {
     await ap.waitFor({ state: "detached" });
     const c = await inTime(exited, 20_000, "enroll 끝");
     if (c !== 0) throw new Error(`enroll 끝 코드 ${c}`);
+    // 새 머신 화면의 host 지문이 안내가 보인 것과 같다(사람이 맞춰 보는 것)
+    if (!fpShown || fpShown !== fpSeen) throw new Error(`host 지문: 안내 ${fpShown} · 새 머신 ${fpSeen}`);
     start("agentB", nodeB, "agent", "--host", addr, "--name", "labB");
     await until("labB 연결", () => aaa("machine", "list").machines.some((m) => m.name === "labB" && m.connection === "connected"));
     // 머신 목록은 host state 사건을 따른다: 연결이 바로 보인다
@@ -250,6 +268,7 @@ export default async function ({ page }) {
     const p = d.getByTestId("settings-machines");
     await p.getByTestId("machine-list").locator('[data-name="labA"]').waitFor();
     if ((await p.getByTestId("enroll-open-button").count()) || (await p.getByRole("button", { name: /폐기/ }).count())) throw new Error("보기 기기에 등록·폐기");
+    if (await p.getByTestId("enroll-guide").count()) throw new Error("보기 기기에 직접 설치 안내(host 주소·지문)");
     // 상세는 읽기만이라 보기 기기도 본다
     await p.getByRole("button", { name: "labA 자세히" }).click();
     await p.getByTestId("machine-detail-labA").locator('[data-label="연결"] dd').filter({ hasText: "host 머신" }).waitFor();
@@ -270,7 +289,9 @@ export default async function ({ page }) {
     const { page: ph } = await pairPage(browser, aaa("web", "pair").code, { width: 390, height: 844 });
     let d = await openSettings(ph, "머신");
     await d.getByTestId("machine-list").locator('[data-name="labA"]').waitFor();
-    // 상세를 펼친 채로 잰다: SHA-256 64자는 폭 안에서 줄을 바꾼다
+    // 상세·직접 설치 안내를 펼친 채로 잰다: SHA-256 64자와 긴 명령은 폭 안에서 줄을 바꾼다
+    await d.getByTestId("enroll-guide").locator("summary").click();
+    await d.getByTestId("enroll-guide-steps").locator("code").first().waitFor();
     await d.getByRole("button", { name: "labA 자세히" }).click();
     await d.getByTestId("machine-detail-labA").locator('[data-label="SHA-256"] dd').waitFor();
     const fits = await ph.evaluate(() => {

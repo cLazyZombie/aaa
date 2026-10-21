@@ -1,13 +1,13 @@
 // 관리 GUI W5b(plan §8.355): 설정 「머신」(등록 창·대기·승인·폐기), 「폰 및 기기」의 웹 공개 켜기·끄기, 보고서 「올리기」 창,
 // 「이 aaa」의 공유 링크 키 교체. host가 판정한다(웹 조작 기기만, 마지막 조작 기기·host 머신 폐기 거부, 등록 코드 3번 틀리면 버림).
 // 머신 등록은 새 머신 화면의 6자리 코드를 넣어야 승인한다(사용자 답 1A: CLI와 같은 보증). 등록 창·대기 목록은 host `enroll` 사건으로
-// 다시 읽는다. M1(웹 머신 추가)은 같은 요청(`enroll_*`·`machine_revoke`)을 쓴다.
+// 다시 읽는다. M1(웹 머신 추가)은 같은 요청(`enroll_*`·`machine_revoke`)을 쓰고 「직접 설치」 안내(`enroll_guide`, plan §8.373)를 더한다.
 import "./ThreadActions.css";
 import "./AdminPages.css";
 
 import { type ReactNode, useCallback, useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import type { DeviceRole, LinkView, MachineView, PendingEnroll, PublishState } from "./gen/proto";
+import type { DeviceRole, EnrollGuide, LinkView, MachineView, PendingEnroll, PublishState } from "./gen/proto";
 import { ApiError, call, me, onEnrollChanged, uploadReportFile } from "./api";
 import { ConfirmDialog } from "./ConfirmDialog";
 import { SettingsGroup } from "./herdr/SettingsControls.tsx";
@@ -15,6 +15,8 @@ import { nativeModalOver, useFocusTrap } from "./herdr/useFocusTrap.ts";
 import { usePhoneSheetBack } from "./herdr/sheetHistory.ts";
 import { MachineSetup } from "./SettingsAdminPages";
 import { machineLine, machineRows } from "./machineDetail.ts";
+import { canGuide, guideSteps, machineNameOk, SOURCE } from "./enrollGuide.ts";
+import { copyText } from "./herdr/clipboard";
 import { canAdmin, enrollCode, enrollLeft, liveLinks, newUploadId, onPublicAddress, otherRoutes, reportNameOk, uploadPlan } from "./adminModel.ts";
 
 const say = (e: unknown) => (e instanceof ApiError ? e.message : e instanceof Error ? e.message : String(e));
@@ -131,7 +133,7 @@ export function MachinesPage({ role, machines }: { role: DeviceRole; machines: M
       {canEdit && (
         <SettingsGroup
           title="새 머신 등록"
-          note="등록 창을 연 뒤 새 머신에서 aaa agent enroll <host 주소> --name <이름>을 실행한다. 새 머신 화면에 나온 6자리 코드를 여기 넣어 승인한다."
+          note="등록 창을 연 뒤 새 머신에서 aaa agent enroll <host 주소> --name <이름>을 실행한다(아래 「직접 설치 안내」가 명령을 만든다). 새 머신 화면에 나온 6자리 코드를 여기 넣어 승인한다."
         >
           <div className="settings-item">
             {left !== null ? (
@@ -180,6 +182,7 @@ export function MachinesPage({ role, machines }: { role: DeviceRole; machines: M
                 ))}
               </ul>
             )}
+            <InstallGuide machines={machines} />
           </div>
         </SettingsGroup>
       )}
@@ -235,6 +238,96 @@ export function MachinesPage({ role, machines }: { role: DeviceRole; machines: M
         />
       )}
     </div>
+  );
+}
+
+/**
+ * 「직접 설치」 안내(SSH 없이, plan §8.373): 새 머신에서 칠 명령을 차례로 보이고 복사한다. 처음 펼칠 때 host 주소 후보·지문·판을 읽는다
+ * (옛 host는 주소 칸을 직접 넣는다). 등록 승인은 위 「승인…」이 한다
+ */
+function InstallGuide({ machines }: { machines: MachineView[] }) {
+  const [guide, setGuide] = useState<EnrollGuide | null>(null);
+  const [asked, setAsked] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [address, setAddress] = useState("");
+  const [name, setName] = useState("");
+  const [copied, setCopied] = useState<number | null>(null);
+  const load = () => {
+    if (asked) return;
+    setAsked(true);
+    me()
+      .then((m) => (canGuide(m?.front_api) ? call({ op: "enroll_guide" }) : null))
+      .then((r) => {
+        if (r?.kind !== "enroll_guide") return;
+        setGuide(r.guide);
+        setAddress((a) => a || r.guide.addresses[0]?.address || "");
+      })
+      .catch((e: unknown) => setError(say(e)));
+  };
+  const taken = machines.some((m) => m.name === name);
+  const nameNote = name === "" ? null : !machineNameOk(name) ? "영문·숫자·.·-·_ 64자까지" : taken ? "이미 있는 머신 이름이다" : null;
+  const steps = guideSteps(guide, address, taken ? "" : name);
+  const picked = guide?.addresses.find((a) => a.address === address);
+  return (
+    <details className="admin-guide" data-testid="enroll-guide" onToggle={(e) => (e.currentTarget.open ? load() : undefined)}>
+      <summary>직접 설치 안내(새 머신 터미널에서)</summary>
+      {error && (
+        <p className="op-warn" role="alert">
+          {error}
+        </p>
+      )}
+      {guide && guide.listen === null && (
+        <p className="op-warn" data-testid="enroll-guide-closed">
+          host가 agent 연결을 받지 않는다: host.toml [host] agent_listen을 정하고 host를 다시 띄운다.
+        </p>
+      )}
+      <div className="admin-line">
+        <label className="op-field">
+          <span>host 주소</span>
+          {guide && guide.addresses.length > 0 ? (
+            <select value={address} onChange={(e) => setAddress(e.target.value)} data-testid="enroll-guide-address">
+              {guide.addresses.map((a) => (
+                <option key={a.address} value={a.address}>
+                  {a.address} · {SOURCE[a.source] ?? a.source}
+                </option>
+              ))}
+            </select>
+          ) : (
+            <input value={address} onChange={(e) => setAddress(e.target.value.trim())} placeholder="mac-a.example.ts.net:7430" data-testid="enroll-guide-address" />
+          )}
+        </label>
+        <label className="op-field">
+          <span>새 머신 이름</span>
+          <input value={name} onChange={(e) => setName(e.target.value.trim())} placeholder="mac-b" autoCapitalize="off" spellCheck={false} data-testid="enroll-guide-name" />
+        </label>
+      </div>
+      {picked?.source === "loopback" && <p className="machine-warn">이 주소는 host 머신 안에서만 닿는다. 다른 머신은 host가 다른 주소로 열어야 한다.</p>}
+      {nameNote && <p className="machine-warn">{nameNote}</p>}
+      <ol className="admin-steps" data-testid="enroll-guide-steps">
+        {steps.map((st, i) => (
+          <li key={i}>
+            <span>{st.title}</span>
+            {st.command && (
+              <span className="admin-command">
+                <code className="mono">{st.command}</code>
+                <button
+                  type="button"
+                  className="btn small"
+                  aria-label={`${i + 1}단계 명령 복사`}
+                  onClick={(e) => {
+                    const code = e.currentTarget.previousElementSibling as HTMLElement | null;
+                    void copyText(st.command!, code).then((ok) => ok && setCopied(i));
+                  }}
+                >
+                  {copied === i ? "복사됨" : "복사"}
+                </button>
+              </span>
+            )}
+            {st.note && <span className="op-muted">{st.note}</span>}
+          </li>
+        ))}
+      </ol>
+    </details>
   );
 }
 

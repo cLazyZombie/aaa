@@ -6693,3 +6693,12 @@ FRONT_API 1.87은 질문 ID·부분 답과 `ask_answer`·`question_reply`를 더
 - **웹.** 설정 「머신」 → 「등록된 머신」 줄마다 OS · CPU 종류 · 판(host와 다르면 주의 색)과 문제 수, 「자세히」(aria-expanded)로 펼치는 읽기 전용 상세: 연결(host 머신·연결됨·끊김과 마지막 본 때), OS, 판, SHA-256(고정폭, 줄바꿈), 개발 모드, 연결 중이면 작업 디스크·부하·전원·toolchain·시계 차이·주의, 문제, 시작 점검(통과·실패 이유), 접어 둔 agent 기능 목록. 보기 기기도 상세를 본다. 휴대폰은 이름 아래 값이 온다.
 - **검증.** host 유닛 `machine_view_tests`(hello 값이 실리고 판이 다르면 표시, 모르는 꼴의 점검은 버림, host를 다시 열어도 판·SHA·CPU 종류는 남고 기능·점검은 빈다), 웹 유닛 `machineDetail.test.mjs`, 웹 E2E `60-admin` 확장(둘째 agent의 SHA가 실행 파일의 SHA와 같고 화면에 그대로, 보기 기기 상세, 휴대폰 390 폭). 절차는 [시험](testing.md).
 - **번호·호환.** main의 §8.369(t-0574)·§8.370(t-0538 W6b)·§8.371(t-0576)과 FRONT_API 1.86·1.87을 유지하고 이 기능은 1.88·§8.372를 쓴다. AGENT_LINK는 1.10 그대로다(hello 선택 칸만 더함).
+
+### 8.373 「직접 설치」 안내: host 주소 후보·지문을 넣은 새 머신 명령(10-21, t-0578 웹 머신 추가 M1)
+
+- **요청.** t-0471 확정 기획의 M1(웹 등록 승인·폐기). 등록 창·대기·6자리 코드 승인·폐기·host 머신과 마지막 조작 기기 폐기 거부는 W5b(§8.355)가 이미 같은 요청으로 했다. M1에 남은 것은 SSH가 없는 머신을 위한 「직접 설치」 안내다: 새 머신에서 칠 명령을 웹이 실제 host 주소·이름으로 채운다(기획 §1.11. install 비대화 모드가 착지하면 그 한 줄로 바꾼다).
+- **proto(FRONT_API 1.89, 더하기만).** 조작 기기의 `enroll_guide` → `EnrollGuide{listen?, addresses[{address, source}], host_fingerprint, software}`. Reader는 거부한다(host 주소·지문). 읽기만이라 사람 판정 목록에는 넣지 않는다. 옛 host는 모르는 요청으로 거절하고 웹은 1.89 미만이면 묻지 않고 주소 칸을 직접 받는다. Agent link 변경 없음.
+- **주소 후보.** host가 실제로 연 `agent_listen`에서만 만든다: 모든 주소(0.0.0.0·[::])면 tailnet 이름(`tailscale status`)과 이 머신 이름, tailnet 주소(100.64.0.0/10·fd7a:115c:a1e0::/48)면 tailnet 이름과 그 주소, 다른 IP면 그 주소만(tailnet 이름은 그 IP가 아니다), loopback은 「이 host 머신 안에서만」으로 표시, 이름으로 연 설정은 그대로. 닫혀 있으면 빈 목록과 「agent_listen을 정한다」 안내.
+- **웹.** 설정 「머신」 → 「새 머신 등록」 아래 「직접 설치 안내」(펼칠 때 읽음): host 주소 고르기(옛 host는 입력), 새 머신 이름(host 규칙, 이미 있는 이름은 알림), 차례 ① 같은 판 설치 ② `aaa agent enroll <주소> --name <이름>` ③ 새 머신 화면의 host fingerprint 앞 16자 맞추기와 「승인…」 ④ `agent.toml`의 host ⑤ macOS 서비스 설치(다른 OS는 `aaa agent` 직접). 명령마다 「복사」. 쓸 수 없는 이름·주소 글자는 `<이름>`·`<host 주소>` 자리표시로 둬 틀린 명령이 복사되지 않는다.
+- **검증.** host 유닛 `enroll_guide::tests`(연 주소별 후보), proto `control_classification`(조작 기기만), 웹 유닛 `enrollGuide.test.mjs`, 웹 E2E `60-admin`(안내 명령을 화면에서 읽어 그대로 실행해 등록, 안내의 host 지문 = 새 머신 화면의 지문, 이미 있는 이름 알림, Reader에 안내 없음, 휴대폰 390 폭).
+- **번호·호환.** main의 §8.372(M0)·FRONT_API 1.88 다음이다. AGENT_LINK 1.10 그대로.
