@@ -110,6 +110,25 @@
 /* 답할 thread 질문(plan §8.329): 안 본 보고서 수 대신 빨강 */
 .activity-badge.is-ask { background: var(--status-blocked); color: var(--on-accent); }
 
+/* 수가 없는 점(coordinator, t-0621): 아이콘 오른쪽 아래, 막대 바탕색 테두리로 아이콘 선과 떨어진다 */
+.activity-badge.is-dot {
+  top: 27px;
+  right: 10px;
+  min-width: 0;
+  width: 10px;
+  height: 10px;
+  padding: 0;
+  border: 2px solid var(--bg-panel);
+  box-sizing: content-box;
+}
+
+/* coordinator를 띄우는 동안(ProjectThreads.css 「coordinator」 단추와 같은 돌기) */
+.activity-bar button.activity-item > svg.is-spinning { animation: activity-spin var(--dur-spin) steps(8) infinite; }
+@keyframes activity-spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) {
+  .activity-bar button.activity-item > svg.is-spinning { animation: none; }
+}
+
 /* 좁은 창: 막대는 사이드바와 함께 drawer 안이고 drawer는 화면 머리줄(이미 상태 막대를 비킨) 아래다(style.css 768px 규칙) */
 @media (max-width: 768px) {
   .activity-brand { height: var(--head); padding-top: 0; }
