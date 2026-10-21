@@ -123,6 +123,71 @@ impl Lab {
 }
 
 #[tokio::test]
+async fn reports_update_progress_preserve_goal_and_keep_later_instructions_across_recollection_and_restart() {
+    let lab = Lab::with_report(
+        0,
+        b"",
+        "unused",
+        b"",
+        "[진행 중] 확인\n## 진행\n- [x] 구현\n- [~] 검증\n## Decisions\n- 짧게 표시\n",
+    );
+    let h = &lab.h;
+    let dir = h.project_dir("p").unwrap();
+    let task = dir.join("threads/t-0001.task.md");
+    let first = "# 일\n## Follow-ups\n### 2026-10-22T01:00:00Z\n첫 지시\n";
+    std::fs::write(&task, first).unwrap();
+    h.thread_summary_set(
+        "p",
+        "t-0001",
+        "# 목표\n원래 목표\n## 진행\n- [ ] 처음 뼈대\n## 정함\n- 사용자 화면 유지",
+        "test",
+    )
+    .unwrap();
+    h.collect_if_changed("p", "t-0001").await;
+    let v = h.thread_summary("p", "t-0001").unwrap();
+    assert_eq!(v.progress.len(), 2);
+    assert_eq!(v.progress[0].state, aaa_proto::SummaryStepState::Done);
+    assert_eq!(v.goal.as_deref(), Some("원래 목표"));
+    assert_eq!(v.decided[0].text, "화면 유지");
+    assert_eq!(v.decisions, ["짧게 표시"]);
+    assert_eq!((v.pending, v.by.as_deref()), (0, Some("agent")));
+
+    let second = format!("{first}### 2026-10-22T01:01:00Z\n추가 지시\n");
+    std::fs::write(&task, &second).unwrap();
+    h.summary_follow_ups("p", "t-0001", &second);
+    h.collect("p", "t-0001", true).await.unwrap();
+    assert_eq!(h.summary_mark("p", "t-0001").unwrap().pending, 1, "같은 보고 재수집은 새 지시를 지우지 않는다");
+    let restarted = Host::open(h.cfg.clone(), lab.root.join("host")).unwrap();
+    assert_eq!(restarted.thread_summary("p", "t-0001").unwrap().progress, v.progress);
+    assert_eq!(restarted.summary_mark("p", "t-0001").unwrap().pending, 1);
+
+    // 수집 시작 뒤 새 지시가 들어온 차례를 고정한다. 수신 순간의 전체 수로 덮어쓰면 실패한다.
+    let seen = h.summary_report_seen(&dir, "t-0001");
+    let third = format!("{second}### 2026-10-22T01:02:00Z\n전송 중 지시\n");
+    std::fs::write(&task, &third).unwrap();
+    h.summary_follow_ups("p", "t-0001", &third);
+    h.summary_report_received("p", "t-0001", "## 진행\n- [x] 구현\n- [x] 검증", "next", seen).unwrap();
+    let v = h.thread_summary("p", "t-0001").unwrap();
+    assert_eq!(v.pending, 1);
+    assert_eq!(v.pending_lines[0].text, "전송 중 지시");
+    assert!(v.progress.iter().all(|s| s.state == aaa_proto::SummaryStepState::Done));
+    h.summary_report_received("p", "t-0001", "## 진행\n- 잘못된 목록", "invalid", 3).unwrap();
+    assert_eq!(h.thread_summary("p", "t-0001").unwrap().progress, v.progress);
+    assert_eq!(h.summary_mark("p", "t-0001").unwrap().pending, 1);
+    h.thread_summary_set("p", "t-0001", "# 목표\n바뀐 목표\n## 진행\n- [ ] 새 뼈대", "test").unwrap();
+    assert_eq!(
+        h.thread_summary("p", "t-0001").unwrap().progress,
+        v.progress,
+        "coordinator의 목표·결정 편집은 보고한 진행을 덮지 않는다"
+    );
+    h.summary_report_received("p", "t-0001", "## 진행\n- [~] 새 작업", "new-direction", 3).unwrap();
+    let v = h.thread_summary("p", "t-0001").unwrap();
+    assert_eq!(v.goal.as_deref(), Some("바뀐 목표"));
+    assert_eq!(v.progress[0].text, "새 작업");
+    assert_eq!(v.pending, 0);
+}
+
+#[tokio::test]
 async fn question_format_warning_keeps_even_empty_cards_blocks_all_answers_and_notifies_once() {
     for report in [
         "[결정 필요] 질문 1개: 진행\n## Questions\n### 1. 진행\n- **A 진행\n- B 보류\n- C 멈춤\n",

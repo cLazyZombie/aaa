@@ -72,7 +72,19 @@ async function newAutomation(page, name, title, fill) {
   await fill(sheet);
   await sheet.getByTestId("automation-form-usage-session").fill("");
   await sheet.getByTestId("automation-form-usage-week").fill("");
-  await sheet.getByTestId("automation-save").click();
+  try {
+    await sheet.getByTestId("automation-save").click();
+  } catch (error) {
+    const state = await sheet.evaluate((el) => ({
+      hash: location.hash,
+      shown: el.closest('[data-testid="automation-view"]')?.getAttribute("data-shown"),
+      name: el.querySelector('[data-testid="automation-form-name"]')?.value,
+      invalid: el.querySelector('[data-testid="automation-form-name"]')?.getAttribute("aria-invalid"),
+      fields: [...el.querySelectorAll("input,select,textarea")].map((x) => ({ id: x.dataset.testid, value: x.value, disabled: x.disabled })),
+      text: el.innerText,
+    }));
+    throw new Error(`${error.message}\n자동화 저장 직전: ${JSON.stringify(state)}`);
+  }
   await sheet.waitFor({ state: "detached" });
   const detail = page.getByTestId("automation-detail");
   await detail.waitFor();

@@ -643,6 +643,7 @@ mod tests {
             percent: None,
             progress: None,
             progress_at_ms: None,
+            progress_since_ms: None,
             harness_session: None,
             seen: true,
             plan: None,
