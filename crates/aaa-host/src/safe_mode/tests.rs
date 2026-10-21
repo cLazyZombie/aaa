@@ -126,6 +126,10 @@ DATABASE_URL = "postgres://u:pw@db/x"
     }
     assert_eq!(lines.len(), text.lines().count());
     assert!(shown.contains("#   \"--verbose\","), "주석 줄 원소는 비밀이 아니면 남는다:\n{shown}");
+    // 주석으로 꺼 둔 비밀 배열은 그 줄만 가린다: 주석 안의 `]`로 닫히지 않아 뒤의 표·값까지 가리면 원문 표시가 망가진다
+    let (lines, _) = mask("# tokens = [\n#   \"t-1\",\n# ]\n[web]\nlisten = \"127.0.0.1:7431\"\n");
+    assert_eq!(lines[0], format!("# tokens = {HIDDEN}"));
+    assert_eq!(&lines[3..], ["[web]", "listen = \"127.0.0.1:7431\""]);
 }
 
 #[test]
