@@ -10,8 +10,17 @@ const WEB: &str = "device:phone";
 fn in_lab<F: std::future::Future<Output = ()>>(body: impl FnOnce(Arc<Host>) -> F) {
     in_lab_with(None, body)
 }
-/// 붙어 있는 가짜 agent: hello에 알린 실행 신원과, 감시를 세우라는 요청에 「설치 파일이 지금 실행 판과 다르다」로 답하는가
-type LiveAgent = (Option<aaa_proto::RuntimeIdentity>, bool);
+/// 붙어 있는 가짜 agent: hello에 알린 실행 신원, 감시를 세우라는 요청에 「설치 파일이 지금 실행 판과 다르다」로 답하는가,
+/// 취소한 감시 ID
+#[derive(Clone, Default)]
+struct LiveAgent {
+    identity: Option<aaa_proto::RuntimeIdentity>,
+    installed_changed: bool,
+    cancelled: Arc<std::sync::Mutex<Vec<String>>>,
+}
+fn live(identity: Option<aaa_proto::RuntimeIdentity>, installed_changed: bool) -> LiveAgent {
+    LiveAgent { identity, installed_changed, ..Default::default() }
+}
 /// `agent`가 있으면 그 agent가 붙어 있는 실험실(재시작 rollout 시작). 없으면 기능을 알린 머신이 끊긴 뒤
 fn in_lab_with<F: std::future::Future<Output = ()>>(agent: Option<LiveAgent>, body: impl FnOnce(Arc<Host>) -> F) {
     let root = std::env::temp_dir().join(format!("aaa-rollout-web-{}", aaa_common::util::new_id()));
@@ -49,7 +58,7 @@ fn lab(root: &std::path::Path, agent: Option<LiveAgent>) -> Arc<Host> {
             dev_mode: true,
             selfcheck: None,
             sessions: vec![],
-            identity: agent.clone().and_then(|(identity, _)| identity),
+            identity: agent.as_ref().and_then(|a| a.identity.clone()),
             harness: vec![],
         },
         true,
@@ -57,43 +66,61 @@ fn lab(root: &std::path::Path, agent: Option<LiveAgent>) -> Arc<Host> {
     );
     match agent {
         None => h.agent_disconnected("m", 1),
-        Some((_, installed_changed)) => {
-            tokio::spawn(answer_guard_arms(conn, reader, installed_changed));
+        Some(agent) => {
+            tokio::spawn(answer_guards(conn, reader, agent));
         }
     }
     h
 }
-/// 감시를 세우라는 요청에만 답한다(세운 감시 또는 `conflict`). 나머지 요청은 답하지 않는다
-async fn answer_guard_arms(conn: crate::AgentConn, reader: tokio::io::DuplexStream, installed_changed: bool) {
-    use aaa_proto::{DeployGuardPhase, DeployGuardView, LinkMsg, Outcome};
+/// 감시 세우기(세운 감시 또는 `conflict`)와 세운 감시의 취소에만 답한다. 나머지 요청은 답하지 않는다
+async fn answer_guards(conn: crate::AgentConn, reader: tokio::io::DuplexStream, agent: LiveAgent) {
+    use aaa_proto::{DeployGuardControl, DeployGuardPhase, DeployGuardView, LinkMsg, Outcome};
+    let view = |spec, phase| DeployGuardView {
+        spec,
+        phase,
+        worker_pid: 1,
+        deadline_ms: 1,
+        install_started: false,
+        activated: false,
+        restore_started: false,
+        restart_index: 0,
+        restart_started: false,
+        host_restart_ms: 0,
+        agent_restart_ms: 0,
+        observed: vec![],
+        installed_sha256: String::new(),
+        error: None,
+        pending_web: None,
+    };
+    let mut armed = std::collections::HashMap::new();
     let mut rx = aaa_common::conn::FrameRx::new(reader, aaa_proto::MAX_FRAME);
     while let Ok(msg) = rx.control::<LinkMsg>().await {
-        let LinkMsg::Req { id, body: AgentRequest::DeployGuardArm { spec }, .. } = msg else { continue };
-        let answer = if installed_changed {
-            Outcome::Err(ErrorBody::new(ErrorCode::Conflict, "설치 파일이 지금 실행 판과 다르다"))
-        } else {
-            Outcome::Ok(AgentResponse::DeployGuard {
-                guard: Box::new(DeployGuardView {
-                    spec,
-                    phase: DeployGuardPhase::Armed,
-                    worker_pid: 1,
-                    deadline_ms: 1,
-                    install_started: false,
-                    activated: false,
-                    restore_started: false,
-                    restart_index: 0,
-                    restart_started: false,
-                    host_restart_ms: 0,
-                    agent_restart_ms: 0,
-                    observed: vec![],
-                    installed_sha256: String::new(),
-                    error: None,
-                    pending_web: None,
-                }),
-            })
+        let answer = match msg {
+            LinkMsg::Req { id, body: AgentRequest::DeployGuardArm { .. }, .. } if agent.installed_changed => {
+                (id, Outcome::Err(ErrorBody::new(ErrorCode::Conflict, "설치 파일이 지금 실행 판과 다르다")))
+            }
+            LinkMsg::Req { id, body: AgentRequest::DeployGuardArm { spec }, .. } => {
+                armed.insert(spec.id.clone(), spec.clone());
+                (id, Outcome::Ok(AgentResponse::DeployGuard { guard: Box::new(view(spec, DeployGuardPhase::Armed)) }))
+            }
+            LinkMsg::Req {
+                id,
+                body: AgentRequest::DeployGuardControl { id: guard, control: DeployGuardControl::Cancel },
+                ..
+            } => {
+                let Some(spec) = armed.get(&guard).cloned() else { continue };
+                agent.cancelled.lock().unwrap().push(guard);
+                (
+                    id,
+                    Outcome::Ok(AgentResponse::DeployGuard {
+                        guard: Box::new(view(spec, DeployGuardPhase::Cancelled)),
+                    }),
+                )
+            }
+            _ => continue,
         };
-        if let Some(waiting) = conn.pending.lock().unwrap().remove(&id) {
-            let _ = waiting.send(answer);
+        if let Some(waiting) = conn.pending.lock().unwrap().remove(&answer.0) {
+            let _ = waiting.send(answer.1);
         }
     }
 }
@@ -186,7 +213,7 @@ fn restart_rollouts_pin_the_identity_before_restart_on_one_machine() {
         web: None,
     };
     let changed = agent.clone();
-    in_lab_with(Some((Some(agent.clone()), false)), |h| async move {
+    in_lab_with(Some(live(Some(agent.clone()), false)), |h| async move {
         // 개별 재시작은 감시 없이 돌지 않는다: coordinator도 재시작 rollout으로 보낸다
         let direct = FrontRequest::DeployStart { machine: None, id: new_id(), action: restart() };
         let e = h.call(DeviceRole::Local, "local:cli@coordinator", direct).await.unwrap_err();
@@ -224,7 +251,7 @@ fn restart_rollouts_pin_the_identity_before_restart_on_one_machine() {
         assert!(e.message.contains("진행 중"), "{}", e.message);
     });
     // 실행 신원을 알리지 않는 옛 agent는 재시작 rollout의 대상이 아니다. host 재시작은 host 자신의 신원으로 세운다
-    in_lab_with(Some((None, false)), |h| async move {
+    in_lab_with(Some(live(None, false)), |h| async move {
         let agent = FrontRequest::RolloutStart { id: new_id(), spec: restart_spec(&["mac-a"], DeployService::Agent) };
         assert_eq!(h.call(DeviceRole::Controller, WEB, agent).await.unwrap_err().code, ErrorCode::UnsupportedVersion);
         let id = new_id();
@@ -241,12 +268,32 @@ fn restart_rollouts_pin_the_identity_before_restart_on_one_machine() {
     });
     // 설치 파일이 지금 실행 판과 다르면(개별 교체 뒤) 순수 재시작이 아니다: 웹은 `conflict`로 거부하고 아무것도 기록하지 않는다
     // (coordinator는 그 파일을 띄우는 개별 재시작으로 간다: m13 `coordinator_deployment…`)
-    in_lab_with(Some((Some(changed), true)), |h| async move {
+    in_lab_with(Some(live(Some(changed.clone()), true)), |h| async move {
         let id = new_id();
         let start = FrontRequest::RolloutStart { id: id.clone(), spec: restart_spec(&["mac-a"], DeployService::Agent) };
         let e = h.call(DeviceRole::Controller, WEB, start).await.unwrap_err();
         assert_eq!(e.code, ErrorCode::Conflict, "{}", e.message);
         assert!(h.load_rollout(&id).is_err() && !h.rollout_busy().unwrap());
+    });
+    // 같은 ID가 동시에 오면 둘 다 감시를 세우고 먼저 기록한 쪽만 쓴다: 진 쪽은 같은 기록을 돌려주고 자기 감시를 취소한다
+    // (재시작 전 감시가 그 머신의 다른 감시 세우기를 시한까지 막지 않게)
+    let agent = live(Some(changed), false);
+    let cancelled = agent.cancelled.clone();
+    in_lab_with(Some(agent), |h| async move {
+        let id = new_id();
+        let start =
+            || FrontRequest::RolloutStart { id: id.clone(), spec: restart_spec(&["mac-a"], DeployService::Agent) };
+        let (a, b) =
+            tokio::join!(h.call(DeviceRole::Controller, WEB, start()), h.call(DeviceRole::Controller, WEB, start()));
+        let cards = |r: Result<FrontResponse, ErrorBody>| match r.unwrap() {
+            FrontResponse::RolloutCards { cards } => cards,
+            other => panic!("{other:?}"),
+        };
+        let (a, b) = (cards(a), cards(b));
+        assert_eq!(a, b);
+        let kept = h.load_rollout(&id).unwrap().steps[0].guard.clone().unwrap().id;
+        let cancelled = cancelled.lock().unwrap().clone();
+        assert!(cancelled.len() == 1 && cancelled[0] != kept, "진 쪽 감시만 취소: {cancelled:?} (남긴 감시 {kept})");
     });
 }
 

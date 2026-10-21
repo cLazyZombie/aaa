@@ -444,16 +444,24 @@ impl Host {
             return Err(err(ErrorCode::BadRequest, "독립 복구 감시가 준비되지 않았다"));
         }
         r.steps[0].guard_ready = true;
-        // 감시를 세우는 사이 다른 시작이 끼었으면 이 감시는 시한에 스스로 취소된다(설치하지 않았다)
-        let _gate = self.deployment_gate.lock().unwrap();
-        if let Ok(old) = self.load_rollout(&r.id) {
-            return self.same_restart(old, &r.project, &mid, service).map(respond);
+        let lost = {
+            let _gate = self.deployment_gate.lock().unwrap();
+            match self.load_rollout(&r.id) {
+                Ok(old) => Some(self.same_restart(old, &r.project, &mid, service).map(respond)),
+                Err(_) if self.rollout_busy()? => Some(Err(err(ErrorCode::BadRequest, "진행 중인 rollout이 있다"))),
+                Err(_) => {
+                    self.db.start_rollout(&r.id, &serde_json::to_string(&r).map_err(internal)?).map_err(internal)?;
+                    self.save_rollout(&mut r)?;
+                    None
+                }
+            }
+        };
+        // 감시를 세우는 사이 다른 시작이 끼었다: 세운 감시는 재시작 전이니 취소한다(그 머신의 다른 감시 세우기를 시한까지
+        // 막지 않게). 취소가 닿지 않아도 재시작 전 감시는 시한에 스스로 취소된다
+        if let Some(answer) = lost {
+            let _ = self.guard_control(&mid, &spec, DeployGuardControl::Cancel).await;
+            return answer;
         }
-        if self.rollout_busy()? {
-            return Err(err(ErrorCode::BadRequest, "진행 중인 rollout이 있다"));
-        }
-        self.db.start_rollout(&r.id, &serde_json::to_string(&r).map_err(internal)?).map_err(internal)?;
-        self.save_rollout(&mut r)?;
         self.resume_rollout();
         Ok(respond(r))
     }

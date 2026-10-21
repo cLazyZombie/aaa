@@ -15,7 +15,7 @@ pub(super) fn guard_spec(r: &RolloutView, cursor: usize) -> Option<DeployGuardSp
     r.steps.iter().find(|s| s.machine == step.machine && s.phase == phase)?.guard.clone()
 }
 impl Host {
-    async fn guard_control(
+    pub(super) async fn guard_control(
         &self,
         machine: &str,
         spec: &DeployGuardSpec,
