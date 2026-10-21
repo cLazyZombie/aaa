@@ -15,7 +15,7 @@ pub(super) fn guard_spec(r: &RolloutView, cursor: usize) -> Option<DeployGuardSp
     r.steps.iter().find(|s| s.machine == step.machine && s.phase == phase)?.guard.clone()
 }
 impl Host {
-    pub(super) async fn guard_control(
+    async fn guard_control(
         &self,
         machine: &str,
         spec: &DeployGuardSpec,
@@ -168,7 +168,9 @@ impl Host {
             return self.save_rollout(r);
         };
         let machine = r.steps[cursor].machine.clone();
-        if matches!(r.steps[cursor].phase, RolloutPhase::HostUpdate | RolloutPhase::AgentUpdate)
+        // 감시를 세우기 전(교체 전, 재시작 rollout은 재시작 전)이면 아무것도 바꾸지 않았다
+        if (matches!(r.steps[cursor].phase, RolloutPhase::HostUpdate | RolloutPhase::AgentUpdate)
+            || r.spec.restart.is_some())
             && !r.steps.iter().any(|s| s.job_id == spec.id && s.guard_ready)
         {
             r.state = RolloutState::Stopped;

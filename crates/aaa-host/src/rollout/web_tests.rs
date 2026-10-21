@@ -11,12 +11,14 @@ fn in_lab<F: std::future::Future<Output = ()>>(body: impl FnOnce(Arc<Host>) -> F
     in_lab_with(None, body)
 }
 /// 붙어 있는 가짜 agent: hello에 알린 실행 신원, 감시를 세우라는 요청에 「설치 파일이 지금 실행 판과 다르다」로 답하는가,
-/// 취소한 감시 ID
+/// 첫 세우기의 답이 끊기는가(host에는 시한), 세우라고 받은 감시 ID, 감시 세우기 밖에 받은 요청
 #[derive(Clone, Default)]
 struct LiveAgent {
     identity: Option<aaa_proto::RuntimeIdentity>,
     installed_changed: bool,
-    cancelled: Arc<std::sync::Mutex<Vec<String>>>,
+    first_lost: bool,
+    others: Arc<std::sync::Mutex<Vec<String>>>,
+    armed: Arc<std::sync::Mutex<Vec<String>>>,
 }
 fn live(identity: Option<aaa_proto::RuntimeIdentity>, installed_changed: bool) -> LiveAgent {
     LiveAgent { identity, installed_changed, ..Default::default() }
@@ -72,9 +74,9 @@ fn lab(root: &std::path::Path, agent: Option<LiveAgent>) -> Arc<Host> {
     }
     h
 }
-/// 감시 세우기(세운 감시 또는 `conflict`)와 세운 감시의 취소에만 답한다. 나머지 요청은 답하지 않는다
+/// 감시 세우기에만 답한다(세운 감시 또는 `conflict`). 나머지 요청은 답하지 않는다
 async fn answer_guards(conn: crate::AgentConn, reader: tokio::io::DuplexStream, agent: LiveAgent) {
-    use aaa_proto::{DeployGuardControl, DeployGuardPhase, DeployGuardView, LinkMsg, Outcome};
+    use aaa_proto::{DeployGuardPhase, DeployGuardView, LinkMsg, Outcome};
     let view = |spec, phase| DeployGuardView {
         spec,
         phase,
@@ -92,32 +94,21 @@ async fn answer_guards(conn: crate::AgentConn, reader: tokio::io::DuplexStream, 
         error: None,
         pending_web: None,
     };
-    let mut armed = std::collections::HashMap::new();
     let mut rx = aaa_common::conn::FrameRx::new(reader, aaa_proto::MAX_FRAME);
     while let Ok(msg) = rx.control::<LinkMsg>().await {
-        let answer = match msg {
-            LinkMsg::Req { id, body: AgentRequest::DeployGuardArm { .. }, .. } if agent.installed_changed => {
-                (id, Outcome::Err(ErrorBody::new(ErrorCode::Conflict, "설치 파일이 지금 실행 판과 다르다")))
-            }
-            LinkMsg::Req { id, body: AgentRequest::DeployGuardArm { spec }, .. } => {
-                armed.insert(spec.id.clone(), spec.clone());
-                (id, Outcome::Ok(AgentResponse::DeployGuard { guard: Box::new(view(spec, DeployGuardPhase::Armed)) }))
-            }
-            LinkMsg::Req {
-                id,
-                body: AgentRequest::DeployGuardControl { id: guard, control: DeployGuardControl::Cancel },
-                ..
-            } => {
-                let Some(spec) = armed.get(&guard).cloned() else { continue };
-                agent.cancelled.lock().unwrap().push(guard);
-                (
-                    id,
-                    Outcome::Ok(AgentResponse::DeployGuard {
-                        guard: Box::new(view(spec, DeployGuardPhase::Cancelled)),
-                    }),
-                )
-            }
-            _ => continue,
+        let LinkMsg::Req { id, body, .. } = msg else { continue };
+        let AgentRequest::DeployGuardArm { spec } = body else {
+            agent.others.lock().unwrap().push(format!("{body:?}"));
+            continue;
+        };
+        let first = agent.armed.lock().unwrap().is_empty();
+        agent.armed.lock().unwrap().push(spec.id.clone());
+        let answer = if first && agent.first_lost {
+            (id, Outcome::Err(ErrorBody::new(ErrorCode::Timeout, "답이 끊겼다")))
+        } else if agent.installed_changed {
+            (id, Outcome::Err(ErrorBody::new(ErrorCode::Conflict, "설치 파일이 지금 실행 판과 다르다")))
+        } else {
+            (id, Outcome::Ok(AgentResponse::DeployGuard { guard: Box::new(view(spec, DeployGuardPhase::Armed)) }))
         };
         if let Some(waiting) = conn.pending.lock().unwrap().remove(&answer.0) {
             let _ = waiting.send(answer.1);
@@ -266,19 +257,45 @@ fn restart_rollouts_pin_the_identity_before_restart_on_one_machine() {
         assert_eq!((baseline.sha256, baseline.instance), (h.running_sha256.clone(), h.rollout_instance.clone()));
         assert!(r.steps[0].guard_ready, "감시를 세운 뒤에 기록한다");
     });
-    // 설치 파일이 지금 실행 판과 다르면(개별 교체 뒤) 순수 재시작이 아니다: 웹은 `conflict`로 거부하고 아무것도 기록하지 않는다
-    // (coordinator는 그 파일을 띄우는 개별 재시작으로 간다: m13 `coordinator_deployment…`)
+    // 설치 파일이 지금 실행 판과 다르면(개별 교체 뒤) 순수 재시작이 아니다: 재시작하지 않고 중단으로 남기며 웹은 `conflict`다
+    // (coordinator는 같은 ID의 감시 밖 개별 재시작으로 간다: m13 `coordinator_deployment…`)
     in_lab_with(Some(live(Some(changed.clone()), true)), |h| async move {
         let id = new_id();
         let start = FrontRequest::RolloutStart { id: id.clone(), spec: restart_spec(&["mac-a"], DeployService::Agent) };
         let e = h.call(DeviceRole::Controller, WEB, start).await.unwrap_err();
         assert_eq!(e.code, ErrorCode::Conflict, "{}", e.message);
-        assert!(h.load_rollout(&id).is_err() && !h.rollout_busy().unwrap());
+        let r = h.load_rollout(&id).unwrap();
+        assert_eq!((r.state, r.steps[0].guard_ready), (RolloutState::Stopped, false));
+        assert!(r.error.unwrap().contains("재시작하지 않았다") && !h.rollout_busy().unwrap());
     });
-    // 같은 ID가 동시에 오면 둘 다 감시를 세우고 먼저 기록한 쪽만 쓴다: 진 쪽은 같은 기록을 돌려주고 자기 감시를 취소한다
-    // (재시작 전 감시가 그 머신의 다른 감시 세우기를 시한까지 막지 않게)
+    // 감시 세우기의 답을 못 받으면 기록을 둔 채 진행 루프가 같은 정본으로 다시 세운다. 그때 설치 파일이 바뀌었다는 답이면
+    // 재시작하지 않고 중단이다(감시 없이 재시작하거나 없는 감시의 복구로 가지 않는다)
+    let agent = LiveAgent { first_lost: true, ..live(Some(changed.clone()), true) };
+    let (armed, others) = (agent.armed.clone(), agent.others.clone());
+    in_lab_with(Some(agent), |h| async move {
+        let id = new_id();
+        let mut changes = h.rollout_changed.subscribe();
+        let start = FrontRequest::RolloutStart { id: id.clone(), spec: restart_spec(&["mac-a"], DeployService::Agent) };
+        assert!(matches!(
+            h.call(DeviceRole::Controller, WEB, start).await.unwrap(),
+            FrontResponse::RolloutCards { .. }
+        ));
+        let r = loop {
+            let r = h.load_rollout(&id).unwrap();
+            if r.state != RolloutState::Running {
+                break r;
+            }
+            changes.changed().await.unwrap();
+        };
+        assert_eq!((r.state, r.steps[0].guard_ready), (RolloutState::Stopped, false), "{:?}", r.error);
+        let guard = r.steps[0].guard.clone().unwrap().id;
+        assert_eq!(*armed.lock().unwrap(), [guard.clone(), guard]);
+        assert!(others.lock().unwrap().is_empty(), "재시작을 보냈다: {:?}", others.lock().unwrap());
+    });
+    // 같은 ID가 동시에 와도 기록과 감시는 하나다: 뒤 요청은 감시를 세우지 않고 먼저 남긴 기록을 돌려준다(기록 없이 남는 감시가
+    // 개별 교체를 시한에 되돌리지 않게)
     let agent = live(Some(changed), false);
-    let cancelled = agent.cancelled.clone();
+    let armed = agent.armed.clone();
     in_lab_with(Some(agent), |h| async move {
         let id = new_id();
         let start =
@@ -289,11 +306,9 @@ fn restart_rollouts_pin_the_identity_before_restart_on_one_machine() {
             FrontResponse::RolloutCards { cards } => cards,
             other => panic!("{other:?}"),
         };
-        let (a, b) = (cards(a), cards(b));
-        assert_eq!(a, b);
+        assert_eq!(cards(a)[0].id, cards(b)[0].id);
         let kept = h.load_rollout(&id).unwrap().steps[0].guard.clone().unwrap().id;
-        let cancelled = cancelled.lock().unwrap().clone();
-        assert!(cancelled.len() == 1 && cancelled[0] != kept, "진 쪽 감시만 취소: {cancelled:?} (남긴 감시 {kept})");
+        assert_eq!(*armed.lock().unwrap(), [kept]);
     });
 }
 

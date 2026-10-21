@@ -422,46 +422,66 @@ impl Host {
             created_ms: now,
             updated_ms: now,
         };
-        // 기록하기 전에 감시를 세운다. 설치 파일이 지금 실행 판과 다르면(개별 update·rollback 뒤) 순수 재시작이 아니다:
-        // coordinator에게는 그 파일을 띄우는 개별 재시작(감시 밖, 답 1A)으로 보내고, 웹은 거부한다
         self.set_guard_spec(&mut r, 0)?;
         let spec = r.steps[0].guard.clone().ok_or_else(|| internal("재시작 감시 정본이 없다"))?;
-        let armed = match self.live_conn(&mid)?.request(AgentRequest::DeployGuardArm { spec: spec.clone() }).await {
-            Ok(response) => self.guard_receipt(&spec, response)?,
-            Err(e) if e.code == ErrorCode::Conflict && !web => {
-                let machine = Some(mid);
-                return self.individual_deployment(actor, machine, r.id, DeployAction::Restart { service }).await;
-            }
-            Err(e) if e.code == ErrorCode::Conflict => {
-                return Err(err(
-                    ErrorCode::Conflict,
-                    "설치 파일이 지금 실행 판과 다르다(개별 교체 뒤). 그 파일은 coordinator나 host 터미널에서 띄운다",
-                ));
-            }
-            Err(e) => return Err(e),
-        };
-        if armed.phase.terminal() {
-            return Err(err(ErrorCode::BadRequest, "독립 복구 감시가 준비되지 않았다"));
-        }
-        r.steps[0].guard_ready = true;
-        let lost = {
+        // 감시를 세우는 동안 진행 루프가 이 기록을 집지 않게 한다. 진행 중 rollout이 없으면 루프는 곧 끝난다
+        let driving = self.rollout_gate.lock().await;
+        {
+            // 기록을 먼저 남긴다: 진행 중 rollout이 개별 update·rollback을 막고, 같은 ID는 이 기록으로 답한다
             let _gate = self.deployment_gate.lock().unwrap();
-            match self.load_rollout(&r.id) {
-                Ok(old) => Some(self.same_restart(old, &r.project, &mid, service).map(respond)),
-                Err(_) if self.rollout_busy()? => Some(Err(err(ErrorCode::BadRequest, "진행 중인 rollout이 있다"))),
-                Err(_) => {
-                    self.db.start_rollout(&r.id, &serde_json::to_string(&r).map_err(internal)?).map_err(internal)?;
-                    self.save_rollout(&mut r)?;
-                    None
-                }
+            if let Ok(old) = self.load_rollout(&r.id) {
+                return self.same_restart(old, &r.project, &mid, service).map(respond);
             }
-        };
-        // 감시를 세우는 사이 다른 시작이 끼었다: 세운 감시는 재시작 전이니 취소한다(그 머신의 다른 감시 세우기를 시한까지
-        // 막지 않게). 취소가 닿지 않아도 재시작 전 감시는 시한에 스스로 취소된다
-        if let Some(answer) = lost {
-            let _ = self.guard_control(&mid, &spec, DeployGuardControl::Cancel).await;
-            return answer;
+            if self.rollout_busy()? {
+                return Err(err(ErrorCode::BadRequest, "진행 중인 rollout이 있다"));
+            }
+            self.db.start_rollout(&r.id, &serde_json::to_string(&r).map_err(internal)?).map_err(internal)?;
+            self.save_rollout(&mut r)?;
         }
+        match self.live_conn(&mid)?.request(AgentRequest::DeployGuardArm { spec: spec.clone() }).await {
+            Ok(response) => {
+                // 영수증이 어긋나면 진행 루프가 같은 정본으로 다시 세워 본다(기록은 이미 있다)
+                let armed = match self.guard_receipt(&spec, response) {
+                    Ok(armed) => armed,
+                    Err(e) => {
+                        drop(driving);
+                        self.resume_rollout();
+                        return Err(e);
+                    }
+                };
+                if armed.phase.terminal() {
+                    r.state = RolloutState::Stopped;
+                    r.error = Some("독립 복구 감시가 준비되지 않아 재시작하지 않았다".into());
+                } else {
+                    r.steps[0].guard_ready = true;
+                }
+                self.save_rollout(&mut r)?;
+            }
+            // 설치 파일이 지금 실행 판과 다르다(개별 update·rollback 뒤): 같은 판 확인이 아니라 바뀐 파일 띄우기라 감시가 대조할
+            // 기대값이 없다. 재시작하지 않고 중단으로 남긴다. coordinator에게는 같은 ID의 감시 밖 개별 재시작을 보낸다(답 1A의
+            // 「개별 update·rollback은 guard 밖」)
+            Err(e) if e.code == ErrorCode::Conflict => {
+                let machine = self.machine_name(&mid);
+                r.state = RolloutState::Stopped;
+                r.error = Some(if web {
+                    "설치 파일이 지금 실행 판과 다르다(개별 교체 뒤). 재시작하지 않았다: 그 파일은 coordinator나 그 머신 터미널에서 띄운다".into()
+                } else {
+                    format!(
+                        "설치 파일이 지금 실행 판과 다르다(개별 교체 뒤). 감시 밖 개별 재시작으로 보냈다: `aaa update status {} --machine {machine} --wait`",
+                        r.id
+                    )
+                });
+                self.save_rollout(&mut r)?;
+                drop(driving);
+                if web {
+                    return Err(err(ErrorCode::Conflict, r.error.unwrap_or_default()));
+                }
+                return self.individual_deployment(actor, Some(mid), r.id, DeployAction::Restart { service }).await;
+            }
+            // 답을 못 받았다(끊김·시한): 진행 루프가 같은 감시 정본으로 다시 세운다. 세우지 못하면 재시작 전 중단이다
+            Err(_) => {}
+        }
+        drop(driving);
         self.resume_rollout();
         Ok(respond(r))
     }
