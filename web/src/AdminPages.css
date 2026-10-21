@@ -55,3 +55,11 @@
 .setup-keys { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
 .setup-keys > li { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; }
 .setup-keys code { overflow-wrap: anywhere; min-width: 0; }
+/* 「SSH로 추가」 설치 설정·계획 확인(M3, plan §8.420). 칸은 한 줄에 하나(휴대폰 폭에서도 넘치지 않게) */
+.setup-form { display: flex; flex-direction: column; gap: 8px; }
+.setup-form .op-field input, .setup-form .op-field select { width: 100%; min-width: 0; }
+.setup-harness { border: 0; margin: 0; padding: 0; display: flex; flex-wrap: wrap; gap: 6px 14px; align-items: center; }
+.setup-harness legend { padding: 0; margin-bottom: 4px; }
+.setup-review { display: flex; flex-direction: column; gap: 6px; border-left: 3px solid var(--primary); padding-left: 8px; }
+.setup-changes { margin: 0; padding-left: 18px; }
+.setup-changes li { overflow-wrap: anywhere; }

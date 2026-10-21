@@ -1528,7 +1528,13 @@ summary.chat-compact-head { cursor: pointer; }
 .app-ref.is-report svg { color: var(--accent); }
 @media (hover: hover) { .app-ref:hover { border-color: var(--accent); } }
 .app-ref:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
-.dock-ref { display: flex; max-width: 1120px; margin: 0 0 var(--space-2); }
+/* dock 바깥 여백은 입력칸과 같게, 칩은 설정의 대화 열 너비를 따른다. */
+.dock:has(> .dock-ref) { padding-inline: var(--space-4); }
+.dock-ref { display: flex; width: min(100%, var(--chat-w)); margin: 0 auto var(--space-2); }
+.dock-ref > .app-ref { margin-inline: 0; }
+@media (max-width: 480px) {
+  .dock:has(> .dock-ref) { padding-inline: var(--space-3); }
+}
 
 /* 「답할 것」 질문 카드(plan §8.329·§8.345). 카드는 화면 선택 창 카드(PromptCard) 꼴이고 패널이 굴러가니 높이를 묶지 않는다 */
 .prompt-card.thread-ask-card { max-height: none; gap: var(--space-3); overflow: visible; }

@@ -520,16 +520,17 @@ pane이 없어졌거나 시작이 실패한 thread는 `aaa thread restart <id>`�
 ## 작업 요약(웹 카드)
 웹은 thread 줄에 마우스를 올리거나 thread 화면의 「요약」 단추를 누르면 `threads/<id>.summary.md`를 보인다. 사용자가 순간
 훑어보는 카드다: 길면 안 된다. 쉽고 빨리 읽히게 쓴다.
-- 쓸 때: thread를 시작할 때(`aaa thread start … --summary-file <파일>`), 큰 작업의 상태가 바뀔 때, 방향을 바꾸는 말을 보낼 때
+- 쓸 때: thread를 시작할 때(`aaa thread start … --summary-file <파일>`), 방향을 바꾸는 말을 보낼 때
   (`aaa thread message <id> --text … --summary-file <파일>`). 요약만 고치면 `aaa thread summary <id> --file <파일>`.
-  단순 진행 조회만으로 상태를 추측하지 않는다. thread 보고 등 근거로 갱신하며 매번 통째로 다시 쓴다.
+  coordinator는 처음 목표·작업 뼈대와 사용자 결정(정함·바뀜)을 쓴다. 진행은 thread 보고의 `## 진행`으로 host가 자동 갱신한다.
+  상태를 추측해 덮어쓰지 않는다. 방향을 바꾼 뒤 thread가 다음 보고에서 진행 목록을 고친다.
 - `## 진행`에 큰 작업 3~5개(최대 5개)를 순서대로 둔다. `[x]` 완료·`[~]` 진행 중·`[ ]` 대기다.
   완료한 항목도 지우거나 아래로 옮기지 않는다. 세부 명령을 나열하지 않으며 개수를 시간 비율로 환산하지 않는다.
 - 지금 유효한 것만 쓴다. 쉬운 말의 짧은 구로 쓴다(한 줄 30자, 문장·내부 ID·해시·약어 나열 금지). 진행 외 목록은 한 절 3줄이다.
   뒤집힌 결정은 `~~줄 긋기~~`로 두고, 가장 최근에 바뀐 것은 `## 바뀜` 맨 아래에 둔다.
-- 카드는 목표·전체 진행 목록·완료 개수·상태를 보인다. 정함·바뀜은 「요약」 단추를 눌러야 펼쳐진다.
+- 카드는 목표·전체 진행 목록·완료 개수·지금 활동과 진행률·시작 후 시간·활동 시간을 보인다. 정함·바뀜은 「요약」 단추를 눌러야 펼쳐진다.
   옛 `## 지금`·`## 끝남`도 읽지만 새 요약에는 `## 진행`을 쓴다. 상태가 없던 항목의 완료 여부는 추측하지 않는다.
-- `aaa context`에 「요약 고칠 것」으로 나온 thread(요약 뒤에 지시를 보냈거나 요약이 없다)는 그 턴에 고친다.
+- 새 지시 경고는 다음 정상 진행 보고가 오면 자동으로 줄어든다. 수집 중 들어온 지시는 다음 보고까지 남는다.
 
 좋은 예:
 ```
@@ -899,9 +900,11 @@ pub fn project_scaffold(name: &str, project_md: &str, include_default_pr: bool) 
 /// 표지 없는 AGENTS.md를 옮겨 두는 이름 끝(herdr-projects `.before-herdr-projects`)
 const KEPT: &str = ".before-aaa";
 
-/// 변환한 TOML도 기본 PR 규칙을 소유한다. doctor와 create가 옛 이름을 되살리지 않게 함께 본다.
+/// 변환본 또는 보존 사본이 있으면 doctor와 create가 옛 기본 규칙을 되살리지 않는다.
 fn needs_default_followup(dir: &Path) -> bool {
-    !dir.join(crate::routine::PR_FOLLOWUP).exists() && !dir.join("automations/pr-followup.toml").exists()
+    !dir.join(crate::routine::PR_FOLLOWUP).exists()
+        && !dir.join("automations/pr-followup.toml").exists()
+        && !dir.join("routines/.converted/pr-followup.md").exists()
 }
 
 /// 프로젝트 폴더의 aaa 파일에서 고칠 것(herdr-projects `priming_problems`). 빈 목록이면 맞다.
@@ -2531,6 +2534,7 @@ impl Host {
         let dir = self.project_dir(project)?;
         let work_dir = rec.work_dir.clone().ok_or_else(|| bad("작업 폴더가 없다"))?;
         let conn = self.live_conn(&rec.machine_id)?;
+        let summary_seen = self.summary_report_seen(&dir, id);
         // Ok(None): 이미 받은 보고와 같다
         // (보고 hash, 건너뛴 것, 사본 상태, 보고, library가 앞 사본과 달라졌나)
         type Got = Option<(String, Vec<String>, String, Vec<u8>, bool, Vec<String>, Vec<String>)>;
@@ -2717,6 +2721,7 @@ impl Host {
                 self.library_link(project, id, None, "host")?;
                 // 같은 원본 판의 재수집도 저장 사본을 복구한다. 옛 host의 가린 본문에는 별도 hash가 없을 수 있다.
                 write_atomic(&dir.join("threads").join(format!("{id}.md")), &report).map_err(internal)?;
+                self.summary_report_received(project, id, &String::from_utf8_lossy(&report), &hash, summary_seen)?;
                 // 마지막 사본인데 보고가 그대로면 library만 새로 받은 것이다: 보고 사건·평가 수집은 다시 하지 않고,
                 // library가 앞 사본과 달라졌을 때만 알린다
                 if rec.report_hash.as_ref() == Some(&hash) {
@@ -3246,6 +3251,7 @@ mod tests {
             percent: None,
             progress: None,
             progress_at_ms: None,
+            progress_since_ms: None,
             harness_session: None,
             seen: true,
             plan: None,
@@ -3418,6 +3424,7 @@ mod tests {
             progress: Some(activity.into()),
             percent,
             progress_at_ms: Some(NOW - age * 1000),
+            progress_since_ms: None,
             ..agent(state, 0)
         })
     }

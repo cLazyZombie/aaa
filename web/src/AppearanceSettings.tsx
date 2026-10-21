@@ -1,6 +1,8 @@
 // 설정 → 모양(herdr-web-ui SettingsDialog.tsx `AppearancePage`·`PaletteSelect` 235~290줄). 문구는 참고 i18n.ko.ts 그대로다.
 // 옮긴 줄: 테마·색상(시스템이면 라이트·다크 색상 따로)·밀도·사이드바 행·상태 표시, 「타이포그래피」의 인터페이스 글자 크기(차이 목록 T4).
 // Agents 순서·로고 색은 그 기능을 옮길 때 넣는다. 언어는 두지 않는다(한국어 고정, 사용자 결정, plan §8.169). 밀도·글자 크기는 참고처럼 이 기기 설정이다(SETTING_SCOPE "device").
+import { FontFamilyInput } from "./FontFamilyInput";
+import { setUiFontFamily, setMonoFontFamily, useUiFontFamily, useMonoFontFamily } from "./settings";
 import { Segmented, SettingsGroup, SettingsRow, Stepper } from "./herdr/SettingsControls.tsx";
 import { UI_FONT_MAX, UI_FONT_MIN } from "./herdr/typography.ts";
 import { uiFontSize, updateAppearance, useAppearance, type Palette } from "./theme";
@@ -21,6 +23,8 @@ function PaletteSelect({ id, value, onChange }: { id: string; value: Palette; on
 export function AppearanceSettings() {
   const { appearance: a, resolvedPalette } = useAppearance();
   const uiSize = uiFontSize(a);
+  const uiFontFamily = useUiFontFamily();
+  const monoFontFamily = useMonoFontFamily();
   return (
     <>
       <SettingsGroup>
@@ -102,6 +106,12 @@ export function AppearanceSettings() {
         </SettingsRow>
       </SettingsGroup>
       <SettingsGroup title="타이포그래피" section="typography">
+        <SettingsRow label="화면 글꼴" description="메뉴·목록·대화에 적용됩니다. 쉼표로 구분하며 이 기기에 없는 글꼴은 기본 글꼴로 대체합니다. 이 기기에만 저장됩니다." wide>
+          <FontFamilyInput value={uiFontFamily} label="화면 글꼴" onCommit={setUiFontFamily} monospace={false} />
+        </SettingsRow>
+        <SettingsRow label="고정폭 글꼴" description="코드·경로·숫자에 적용됩니다. 이 기기에 없는 글꼴은 기본 글꼴로 대체하고 아이콘 글꼴은 유지합니다. 이 기기에만 저장됩니다." wide>
+          <FontFamilyInput value={monoFontFamily} label="고정폭 글꼴" onCommit={setMonoFontFamily} />
+        </SettingsRow>
         <SettingsRow label="인터페이스 글자 크기" description="메뉴, 목록, 대화 상자, 사이드바에 적용됩니다. 채팅은 별도 크기를 정하기 전까지 이 크기를 따르고, 터미널은 자체 크기를 유지합니다.">
           <Stepper
             label="인터페이스 글자 크기"

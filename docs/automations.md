@@ -126,6 +126,21 @@ CI/Git 사건 자체의 이력·inbox와 규칙 동작은 다른 경계다. 이�
 기억·이력은 agent에서 hash를 대조해 가져오며, DB에 남은 미전달 입력은 내구 큐로 옮긴다. 전달 여부가 불명확한 입력은 막힌 묶음으로 남긴다.
 미리보기는 파일·DB를 쓰지 않으며 원본·기억·큐가 바뀌면 본 계획 hash로 실행할 수 없다. 변환 도중 중단되면 journal과 원본 DB로 큐 이전을 마친다.
 
+`.converted/`에 같은 바이트의 사본이 있으면 재사용한다. 내용이 다르면 `<이름>.1.<확장자>`, `.2.` 순으로 첫 빈 번호에 보존하며 기존 사본은 덮지 않는다. 보존 위치와 재사용 여부도 미리보기 hash에 포함한다. 새 TOML과 기존 TOML의 이름 충돌은 계속 거부한다. 웹은 미리보기·실행 실패를 창 제목과 오류 본문으로 알리고, 「미리보기 다시 읽기」로 현재 계획을 다시 확인할 수 있다.
+
+옛 `on = "pr"` routine의 새 정본은 `automations/<이름>.toml`의 `[on.pr]`와 `[do.message] thread = "owner"`다. events·enabled·본문과 실행 제한을 그대로 옮기며 PR 주인 thread에 보낸다. 예를 들어 기본 규칙은 다음 모양이다(본문은 현재 routine의 글을 유지한다).
+
+```toml
+enabled = true
+[on.pr]
+events = ["checks-failed", "review"]
+[do.message]
+thread = "owner"
+text = "PR의 실패한 check를 고치고 새 리뷰 댓글에 답한다."
+```
+
+기존 보존 사본 때문에 변환이 막혔던 프로젝트는 수리한 판을 배포한 뒤 웹의 「새 형식으로 바꾸기」에서 새 계획을 확인해 변환한다. CLI는 `aaa automation convert <프로젝트>`를 쓴다. 기존 영문 사본과 현재 한글 본문이 다르면 두 판을 모두 남긴다. 완료 후 `aaa doctor files --fix`가 옛 규칙을 만들지 않는지 확인하고, 새 TOML과 보존 사본을 프로젝트 저장소에 함께 기록한다.
+
 `mission`·`evaluator`·`evaluation` CLI는 한 판 동안 제거 안내만 출력한다. 옛 Front 요청도 제거 오류를 반환하고 `mission_list`만 빈 목록을 반환한다.
 `Role::Evaluator` 직렬화 값과 평가 기록 표는 호환을 위해 남기며 새 실행에 쓰지 않는다. DB의 열린 옛 행은 일반 작업 목록에 표시하고 시작 때 inbox에 알린다.
 Agent link 1.10은 `work_files.v1`을 사용한다. 1.9 agent에는 기존 파일 전송 태그로 이어 보내기·기억 회수를 계속한다.
@@ -191,7 +206,7 @@ max_per_day = 2
 
 임계값은 source가 새 head를 받을 때 판정한다. 이미 내구 큐에 받은 제안 자료는 이후 임계값 편집으로 ACK 재개가 막히지 않는다. batch/하루/사용량 실행 예산은 기존 공통 queue 규칙을 따른다.
 
-`automations/pr-followup.toml`로 변환한 기본 PR 규칙은 `project create`와 `doctor files --fix`가 보존한다. `routines/pr-followup.md`를 다시 만들지 않으며, 이미 두 파일이 겹친 경우에는 기존 충돌 진단을 유지한다.
+`automations/pr-followup.toml` 또는 `routines/.converted/pr-followup.md`가 있으면 `project create`와 `doctor files --fix`는 `routines/pr-followup.md`를 다시 만들지 않는다. 변환 후 TOML을 지운 경우에도 옛 기본 규칙을 되살리지 않는다. 이미 새 TOML과 옛 routine이 겹친 경우에는 기존 충돌 진단을 유지한다.
 
 ## 열린 thread에 이어 보내기·기억·짧은 끝내기(A2)
 

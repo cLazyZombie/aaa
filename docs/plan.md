@@ -6180,11 +6180,12 @@ L4 후속(10-20 00시 사용자 관찰): 멈춤 상태의 후보 예약과 재�
   - 주소 `#question=<thread>`(알림 url, 칩)는 보고서 목록에서 그 카드만 펼친다(2A). 다른 카드는 한 줄이고 누르면 펼친다. 같은 칩을 다시 누르면 접은 카드를 다시 펼친다.
   - 활동 막대 보고서 단추: 답할 질문이 있으면 빨강 수(답할 thread 수), 없으면 안 본 보고서 수(3A).
   - 대화 글(Markdown)의 `aaa:question/<thread>`·`aaa:report/<이름>`(글 속·backtick·링크 주소)은 칩이다: 질문은 「t-0001 질문 2개 · 답할 것」(빨강)·「답함 · 1B 2A」(초록), 보고서는 보고서 제목. 누르면 넓은 창도 새 탭이 아니라 앱 안(질문 카드·보고서 화면)이다. 모르는 보고서는 보고서 목록으로 가고 머리에 말한다. 칩 상태가 바뀔 때만 대화가 다시 그린다. 같은 host의 http 주소(`/v/…`·`/#report=…`)는 §8.300 그대로 둔다.
-  - thread pane(터미널·대화 보기) 입력칸 위에 그 thread 질문의 칩 한 줄(4A).
+  - thread pane(터미널·대화 보기) 입력칸 위에 그 thread 질문의 칩 한 줄(4A). t-0687: 입력칸과 같은 대화 열 너비·왼쪽 끝을 따르며, 답한 뒤 dock 칩은 숨긴다. 답한 기록은 대화 칩·질문 카드에 남는다.
+- **t-0687 착지 통합.** 기준 origin/main `7857be5f`의 마지막 §8.420·FRONT_API 1.103·AGENT_LINK 1.11·E2E 83을 확인했다. 기존 §8.329·E2E 53을 보강하며 API 판·E2E 번호는 유지한다.
 - **coordinator 안내.** 질문 post 제목 끝에 `aaa:question/<thread>`(알림을 누르면 그 카드, 글에서는 빠진다: host `notify::app_ref`·`request_question`, push url `/#question=<thread>`). 채팅에도 같은 참조를 적고, 카드로 답하면 host가 전하니 다시 묻거나 전하지 않는다. 채팅 답은 `aaa thread answer`. 「앱 안 참조」 절: 보고서·질문은 공유 주소 대신 이 꼴로 가리키고 공유 주소는 사용자가 밖으로 보내 달라고 할 때만.
 - **검증.**
   - proto 유닛 `report_questions_read_numbered_questions_and_lettered_choices`, host 유닛 `answer::tests::compose_checks_every_question_and_writes_the_short_form`·`post::tests`(제목의 참조는 글에서 빠지고 url `/#question=t-0512`)·`brief_text::tests::brief_order_and_memory_cap`(안내 fence를 `report_questions`가 읽음), CLI `answer_picks_read_question_numbers_and_letters`, m13 안내 문구, 웹 유닛 `appRef.test.mjs`·`reportLinks.test.mjs`(`/#question=`).
-  - 웹 E2E `53-thread-questions`: fake agent가 「질문 카드 시험」에 `## Questions` 두 질문 보고를 쓴다. 빨강 배지 1, coordinator 대화(Claude 기록)의 질문·보고서·모르는 보고서 칩, 질문 칩 → `#question=` 그 카드 펼침, 보고서 칩 → 앱 안 보고서, 입력칸 위 칩, 휴대폰은 알림 주소로 연 펼친 카드, 보기 권한은 단추 꺼짐·host forbidden, 휴대폰 1B + 「추천대로 보내기」 → pane에 「사용자 답(1B 2A)」, 기록 `[1,0]`, 휴대폰·보기 권한 카드와 입력칸 위 칩이 답함, 배지는 안 본 수로, CLI 두 번째 답은 「이미 답함」, inbox `question answered`, 새 보고가 오면 다시 답할 것·빨강 배지·옛 hash 답은 「질문이 바뀌었다」.
+  - 웹 E2E `53-thread-questions`: fake agent가 「질문 카드 시험」에 `## Questions` 두 질문 보고를 쓴다. 빨강 배지 1, coordinator 대화(Claude 기록)의 질문·보고서·모르는 보고서 칩, 질문 칩 → `#question=` 그 카드 펼침, 보고서 칩 → 앱 안 보고서, 입력칸 위 칩, 휴대폰은 알림 주소로 연 펼친 카드, 보기 권한은 단추 꺼짐·host forbidden, 휴대폰 1B + 「추천대로 보내기」 → pane에 「사용자 답(1B 2A)」, 기록 `[1,0]`, 휴대폰·보기 권한 카드는 답함, 입력칸 위 칩은 숨김, 배지는 안 본 수로, CLI 두 번째 답은 「이미 답함」, inbox `question answered`, 새 보고가 오면 다시 답할 것·빨강 배지·옛 hash 답은 「질문이 바뀌었다」.
   - 결함 심기: 자리 잡기를 끄면(두 번째 답이 덮음) 「두 번째 답」에서, 칩으로 연 카드 펼침을 끄면 「질문 카드 펼침」에서 실패했고 되돌린 뒤 통과했다.
 
 
@@ -7166,8 +7167,57 @@ FRONT_API 1.96는 기본 검수 표지와 답 기록의 r 참조를 더한다. E
 
 - **실제 listener 경로.** TERM 보존 후보의 hp CI에서 등록과 host 시작 뒤 service_backend_not_ready가 반복됐다. 같은 canonical state의 실제 LocalListener bind는 105바이트에서 SUN_LEN 오류로 로컬 RED였다. launchd 실험실 root를 기존 backend lifecycle owner와 같은 `/tmp`로 맞추고 로컬 승인/계획 owner에 실제 agent/front listener bind/drop을 더한다. production IPC·ready 판정·600초 상한·기존 실제 등록/재개/공유 instance 단언은 유지한다. 실제 후속 성공은 변경 후보의 hp CI가 판정한다.
 
-### 8.420 연결 안내의 0.5초 지연(t-0686)
+### 8.420 SSH로 설치·등록: aaa·launcher 전송·원격 install 계획·서명 승인·grant 등록·LaunchAgent 시작(10-22, t-0578 웹 머신 추가 M3)
+
+- **요청.** t-0471 확정 기획의 M3(SSH 설치·등록, macOS 먼저). 원격 설치 단계는 install(t-0485)의 검증 SSH 입구(`install-probe`·`install-bootstrap`·`install --resume`)가 맡고, 이 절은 그 앞뒤만 한다. 사용자 결정(10-21): install 순서를 바꿔 macOS 감독자(I3)를 Windows bootstrap보다 앞당긴다. I3이 main(f1023cbc)에 와서 M3를 `--service launchd`로 맞췄다. 이 Mac에서는 원격 install을 대본으로 시험하고 root sshd 경로는 GitHub CI에서 본다. 시스템 설정은 바꾸지 않는다.
+- **aaa 전송.** 대상 OS·CPU가 host와 같으면 host가 실행 중인 파일, 다르면 같은 판 release 파일, `+커밋` 개발 판 host면 다른 종류에는 거절. release는 `aaa update`와 같은 규칙으로 받는다: 정확한 판의 manifest만(latest 아님), asset 주소는 그 판의 공개 GitHub release 파일, 받은 파일 SHA-256 = manifest. host 상태 폴더 `ssh/release/v<판>/<os>-<arch>/aaa`(0700)에 두고 같은 SHA면 다시 받지 않는다. SSH stdin으로 원격 `mktemp -d`(umask 077) 폴더에 쓰고 원격 `shasum -a 256`/`sha256sum`과 `--version`으로 같은 파일·판인지 본다. 어긋나면 그 폴더만 지운다. 폴더 이름은 `aaa-setup.` 꼴·안전한 글자만 받아 지우기 명령에 넣는다. **launcher.** macOS LaunchAgent는 실행 파일 옆 `aaa-launcher-macos-<CPU>.json`(같은 판·같은 SHA에 묶인 고정 package, I3)을 install이 읽는다. host는 보낼 실행 파일 옆의 package(사람이 둔 것·CI 시험)를 쓰고 그 판·platform·실행 파일 SHA가 보낼 파일과 묶이지 않았으면 멈춘다. 옆에 없으면 같은 판 release manifest `launchers`(같은 주소·SHA 규칙, 캐시는 실행 파일 옆 0600)에서 받아 묶였을 때만 쓴다. 옛 release에 없거나 받지 못했거나 host가 그 release 실행 파일이 아니면(같은 판 번호의 개발 빌드) 보내지 않는다: 원격에 launcher가 있으면 install이 보존하고, 없으면 install의 사람 일(`installation_launcher_asset_required`)에 host가 「host 실행 파일 옆에 두거나 release 판 host에서 한다」와 release 쪽 까닭을 덧붙인다. 보낼 때는 원격 임시 폴더의 `aaa` 옆에 같은 방식으로 놓아 SHA를 확인한다. 개발 빌드 host는 `AAA_TEST_RELEASE_BASE`로 release 주소를 바꿀 수 있다(웹 E2E가 실제 GitHub에 가지 않게).
+- **계획.** 준비된 작업에 사람이 설정(머신 이름·host 주소·작업 root·외장 mount·harness·로그인)을 넣으면 host가 install choices(role agent, enroll grant, 상태·실행 파일 자리는 감지한 HOME 아래 install 기본 자리, `--service launchd`·`--launcher-policy install`·`--start now`. launcher 경로는 원격 install이 그 HOME의 `~/Applications/aaa-launcher.app` 기본 자리로 채우고, 이미 있는 다른 launcher는 보존한다). 감독자가 아직 없는 OS(Linux I4·Windows)는 host와 웹이 「macOS부터」로 거절한다로 옮겨 원격 `install-probe`에 stdin으로 준다. 돌아온 계획(경로·계정이 든 private 원문)은 host 작업 폴더의 0600 파일에만 두고, 화면에는 install 공개 결과(바꿀 것·검사·사람 일)·operation 이름·plan hash·보낸 판/SHA만 보인다. 계획이 실패하거나 사람 일이 남으면 원격 임시 폴더를 바로 지운다.
+- **적용.** 사람이 화면의 plan hash로 「설치하고 등록」을 누르면 host가 자기 install 발급자로 그 계획에 서명한다(`install_approve`, 조작 기기·세션 밖 사람만). package를 원격 `install-bootstrap`에 주면 원격이 issuer pin을 받고 agent 신원을 준비해 알린다. host는 그 신원에 묶은 등록 grant를 더해 다시 서명하고 한 번 더 전한 뒤 원격 `install --resume <ID> --json-stream`을 읽는다(진행 글은 작업에, 마지막 결과는 종료 코드와 대조). 원격 worker가 grant로 host에 등록한다(host가 TLS 신원·grant·계획을 대조). install이 현재 사용자 gui domain에 LaunchAgent(`dev.aaa.agent`)를 등록·시작하고 agent가 host에 실제로 붙어야 ready다(I3). GUI 로그인 세션이 없으면 install의 사람 일로 멈춘다. 결과가 끝남이고 host 머신 목록에 그 이름이 있으면 「설치·등록됨」. 원격 임시 폴더와 계획 파일은 끝나면 지운다.
+- **끝 확인·로그인(계획 §1.8a·Q5·Q11).** 설치·등록되고 agent가 연결된 머신에 「끝 확인」이 shell pane 하나를 작업 root에서 띄워 고정 스크립트로 작업 폴더·git·claude/codex 실행 파일·PATH를 적는다(모델 비용 없음, harness 실행 없음). host가 그 화면의 표지 사이를 읽어 작업에 남기고 pane은 사람이 열어 본다. 「claude/codex 로그인 pane」은 그 머신에 `claude`·`codex login` pane을 열고 웹이 그 pane으로 간다(OAuth는 사람이 그 pane에서). agent가 아직 연결되지 않았으면 까닭을 보인다.
+- **proto(FRONT_API 1.103, 더하기만).** `machine_setup_plan{job, settings}`·`machine_setup_apply{job, plan_sha256}`·`machine_setup_check{job}`·`machine_setup_login{job, harness}`(사람만, §8.333 목록), `MachineSetupView`의 선택 칸 `settings`·`review`·`install`(+`checks`·`check_pane`), 단계 `planning`·`review`·`installing`·`needs_user`·`installed`. Agent link 변경 없음.
+- **웹.** 「SSH로 추가」의 준비된 작업에 설치 설정 폼(기본: 대상 별칭 이름, `enroll_guide` 주소 후보, HOME/aaa-work), 「계획 보기」, 계획 확인(바꿀 것·승인 범위·hash 앞 12자·보낸 판)과 「설치하고 등록…」 확인 창, 진행 글과 결과. 설치 중에는 지우기가 없다. 보기 기기는 목록·단계만. macOS가 아닌 감지 결과에는 설정 폼 대신 거절 까닭을 보인다.
+- **검증.** host 유닛 `machine_setup::tests`: 실험실 sshd로 aaa 전송·확인·어긋남 정리, 설정 → choices 규칙, 원격 명령 고정 글, 그리고 원격 install 대본(실제 ssh로 보낸 shell 대본이 install 답을 냄)으로 계획 → 다른 hash·보기 기기·세션 안 거부 → 서명 → bootstrap(grant 없음) → 신원에 묶은 grant로 다시 → 적용 중 grant 등록(host `install_enroll`) → 설치·등록됨, 원격 install이 이 SSH를 거부(exit 3)하면 까닭과 정리. release 받기(임시 HTTP 서버: 정상·캐시·SHA 다름·판 다름·다른 주소·없는 종류·옛 manifest의 launcher 없음)와 다른 CPU 감지 때 release 실행 파일·launcher를 받아 원격 실행 파일 옆에 놓고 확인, 계획의 choices가 launchd·지금 시작이고 원격 실행 파일 옆에 보낸 launcher package가 있음, 다른 실행 파일에 묶인 package는 원격 계획 전에 멈추고 정리, 개발 판 host 옆에 없으면 보내지 않고 사람 일에 준비할 것을 덧붙임, 끝 확인 스크립트를 이 머신에서 실제로 돌린 출력, 가짜 agent(duplex)에 Spawn argv·cwd와 화면 표지 읽기·로그인 pane, 끝나지 않은 작업·보기 기기·연결 안 된 머신 거부. 웹 E2E `72-machine-add`는 실제 host 실행 파일을 보내 실제 install이 비특권 sshd를 거부하는 까닭과 원격 임시 폴더 정리를 본다. **CI 실제 경로(macos-15 일회성 runner, 필수 단계).** `scripts/ci-root-sshd.sh`가 sudo로 시스템 `/usr/sbin/sshd`를 loopback 빈 포트·실험실 키로 띄우고(`SetEnv HOME=<실험실>/home`), ignored 시험 `m13 ssh_install::…`이 실제 host(실행 파일 옆 launcher package) → 접속·지문 믿음·감지(원격 HOME = 실험실) → 계획 → 적용(검증 SSH 입구·서명·bootstrap·grant·LaunchAgent 시작) → agent 연결 → 끝 확인 줄을 본다. 설치 자리·plist·launcher는 실험실 HOME 아래이고 runner 실제 HOME 자리는 전후가 같아야 한다. gui domain label `dev.aaa.agent`는 적용 전 없어야 하고 끝나면 bootout한다. 이 Mac에서는 같은 시험을 비특권 실험실 sshd로 돌려 계획 단계(검증 SSH 입구 거절)까지 확인했다(시스템 설정·운영 launchd 변경 없음).
+- **install 검증 SSH 입구 수리(첫 hp/ CI, 10-22).** root sshd로 연 세션에서도 원격 install이 exit 3으로 거절했다. macOS `PROC_PIDTBSDINFO`는 다른 사용자(root) 프로세스에 EPERM이라 `aaa_common::process::parent`의 조상 추적이 첫 root 조상(sshd-session 감시자)에서 끊기고, `system_sshd`의 root 확인도 같은 호출이라 늘 거짓이었다(실제 「원격 로그인」도 같다). 부모·uid를 같은 사용자 검사 없이 읽히는 `PROC_PIDT_SHORTBSDINFO`(`ps`와 같은 값)로 읽는다(`process::uid` 추가). 이 Mac에서 일반 사용자로 launchd·configd·syslogd를 읽어 TBSDINFO EPERM, SHORTBSDINFO 성공을 확인했고 `root_processes_are_readable_by_any_user`가 지킨다. 받아들이는 image·root 조건은 그대로다(install t-0485 경계, 같은 판정을 더 정확히 읽을 뿐). CI 스크립트는 원격 명령의 조상 사슬을 먼저 적는다.
+- **HOME 길이(둘째 hp/ CI).** 실제 root sshd로 계획·적용·LaunchAgent·agent 연결까지 통과한 뒤 끝 확인 pane에서 원격 agent가 `session socket: path must be shorter than SUN_LEN`으로 멈췄다(CI 실험실 HOME이 길었다). agent의 가장 긴 socket `<상태>/agent/run/b<ID>.sock`(`aaa init`과 같은 잣대)이 104자 안이어야 하므로 macOS HOME은 28자까지다. host가 계획 전에 이 길이를 재 넘으면 까닭을 보이고 멈춘다. CI 실험실 HOME은 `/private/tmp/ar.XXXXX/h`(23자)다.
+- **CI 실제 경로(hp/ 세 번, 10-22).** 착지 직전 coordinator 확인으로 `hp/t-0578-m3`를 올렸다. 첫째는 위 검증 SSH 입구 결함·Linux 실험실 host 종류·Windows 시험 cfg, 둘째는 HOME 길이로 실패해 고쳤다. 셋째(`a04949b3`)에서 macos-15 「SSH로 설치·등록 실제 root sshd·LaunchAgent」가 통과했다(조상: runner sshd-session → root sshd-session → root `/usr/sbin/sshd` listener, 끝 확인 줄·runner 실제 HOME 전후 같음). 같은 run의 web-e2e `52-task-attach` 「바로 시작」 20초 시한 초과는 SSH 설치와 닿지 않고 따로 두 번 통과해 CI 일시 실패로 기록했다. 각 hp/ branch는 확인 뒤 지웠다.
+- **남은 것.** GUI 로그인 세션 없음 등 적용 중 사람 일 뒤 같은 설치 ID로 재개하는 단추는 아직 없다(계획을 다시 만든다). Linux·Windows는 M5·M4.
+- **번호.** 착지 기준 origin/main `1b8fa9fb`(install I3 실제 등록 시험 수리)에서 마지막 §8.419·FRONT_API 1.102·AGENT_LINK 1.11·E2E 83을 직접 확인해 §8.420·FRONT_API 1.103을 이어 쓴다. E2E는 M2의 `72-machine-add`에 더한다. AGENT_LINK 그대로.
+
+### 8.421 기본 PR routine 재변환과 보존 사본(t-0684)
+
+- **문제.** 기본 PR routine을 변환한 뒤 보존 사본만 있고 TOML이 없는 프로젝트는 doctor가 옛 파일을 다시 만든다. 기존 `.converted/pr-followup.md`와 새 routine이 함께 있으면 변환 실행이 사본 충돌로 막혔다. 기존 TOML 보존 보호는 유지한다.
+- **정본과 보존.** `on = "pr"`은 새 `automations/pr-followup.toml`의 `on.pr`와 owner 대상 `do.message`로 옮기며 조건·켜짐·본문을 유지한다. doctor/create는 TOML 또는 기본 보존 사본이 있으면 옛 routine을 만들지 않는다. 변환은 동일 바이트 사본을 재사용하고 다른 판은 첫 빈 `.1.md`·`.2.md` 이름에 보존한다. 경로·재사용 여부도 계획 hash에 묶고, 사본 변경·symlink·기존 TOML 충돌은 무쓰기 거부한다. 실패 복구는 재사용한 사본을 지우지 않는다.
+- **웹.** 미리보기와 실행 실패는 창 제목·alert로 명확히 보이고 「미리보기 다시 읽기」로 현재 계획을 확인한다. Reader는 계속 미리보기만 본다. 기존 E2E40을 확장하며 FRONT_API·AGENT_LINK·schema는 변경하지 않는다.
+- **검증·운영.** 격리 파일/host keeper와 실제 host 웹 E2E40으로 원인·보존·복구·실패 표시를 확인한다. 전체 ci-local과 공개 검사를 통과한 뒤 착지 창을 기다린다. 운영 projects의 규칙은 수정하지 않으며 수리 배포 뒤 변환 방법은 automations.md에 남긴다.
+
+- **착지 통합.** 기준 origin/main `a30dbf65`의 마지막 plan §8.420·FRONT_API 1.103·AGENT_LINK 1.11·E2E 83을 확인했다. 이 변경은 빈 §8.421에 두며 기존 E2E40을 확장한다. API 판과 E2E 번호는 main 그대로 유지한다.
+
+### 8.422 thread 보고의 작업 요약 자동 갱신(10-22, t-0682, 사용자 A안)
+
+- **작성 책임.** coordinator는 처음 목표·작업 뼈대와 사용자 결정(정함·바뀜)을 쓴다. thread brief는 매 보고에 `## 진행`을 요구한다. 완료하면 맡긴 일이 끝났다고 볼 작업 3~5개(최대 5개), 항목 30자 이하와 `[x]`·`[~]`·`[ ]`를 쓴다. 새 지시는 다음 보고에서 목록에 반영한다.
+- **host.** 정상 보고의 독립된 진행 절만 읽어 기존 `ThreadSummaryView.progress`에 우선 반영한다. 목표·처음·정함·바뀜은 coordinator 원문을 보존하고, 목표·결정 편집이 보고한 진행을 덮지 않는다. 목록이 없는 옛 보고·잘못된 목록·코드 예제는 마지막 정상 목록을 보존한다. 보고 hash·수신 시각·반영 지시 수·목록을 thread별 진행 영수증에 원자적으로 보존한다. 같은 hash 재수집과 host 재시작은 나중 지시를 지우지 않는다. 수집 시작의 지시 수를 고정해 전송 도중 새 지시는 경고에 남긴다. 목록·상세는 같은 표지/경고를 쓰며 CLI context도 자동 반영 대기를 안내한다.
+- **활동과 시간.** hover·팝오버·휴대폰 시트에 실제 `aaa report` 활동 글·진행률(없으면 미정), thread 생성부터 시작 후 시간, 현재 활동 시작부터 활동 시간을 보인다. 공유 초 시계로 열린 카드만 갱신하며 요약을 다시 요청하지 않는다. 목록 줄 시간의 tooltip은 현재 작업 상태 진입부터의 경과 시간임을 밝힌다. 같은 활동의 재보고는 활동 시작을 유지하고 활동 변경·새 세션·대기 답변에서 고친다. 옛 host가 시작을 주지 않으면 활동 시간을 추측하지 않는다.
+- **계약·검증.** FRONT_API 1.104은 선택 `AgentStatus.progress_since_ms`만 추가한다. Agent link 1.11·기존 진행 상태 타입과 E2E 28을 유지한다. 실제 host 수집·수신 중 새 지시·재시작·harness 사건·웹 규칙 유닛과 Chromium/WebKit Reader E2E로 확인한다. 절차는 testing.md에 둔다. 병합·push는 착지 창을 받은 뒤에 한다.
+
+- **착지 통합.** 기준 origin/main `8ddca9dc`의 마지막 plan §8.421·FRONT_API 1.103·AGENT_LINK 1.11·E2E 83을 직접 확인했다. 이 변경은 빈 §8.422·FRONT_API 1.104를 쓰고 Agent link와 기존 E2E 28·82 번호는 유지한다.
+- **착지 검증.** 통합본 전체 ci-local이 217초에 모든 단계를 통과했다(웹 유닛 471개·Rust 전체·deps·웹 E2E 85개 파일·공개 검사). E2E 82 저장 단추 비활성 실패는 재발하지 않았고 전체 20.5초에 통과했다. 예전 실패 원문·추가 진단은 보존하며 원인이 밝혀졌다고 해석하지 않는다. 배포는 coordinator가 맡는다.
+
+### 8.423 화면·고정폭·터미널 글꼴 설정(t-0683)
+
+- 「모양 → 타이포그래피」에 화면·고정폭 글꼴을 터미널과 같은 입력으로 둔다. 세 칸마다 「기본값으로」를 둔다.
+- 세 값은 localStorage의 기기별 설정이며 host 공유 설정/API에는 넣지 않는다. 최초 렌더 전에 복원하고,
+  입력 확정·다른 탭의 storage 사건에 바로 적용한다. Enter·blur·닫기에서 확정하는 기존 동작을 유지한다.
+- 화면·고정폭 기본 목록은 tokens.css 정본을 참조하고, 고른 목록 뒤에 붙인다.
+  고정폭은 Symbols Nerd Font Mono를 맨 앞에 둔다. 화면의 설치 글꼴 선택에는 비례폭도 허용한다.
+- E2E 06에서 Chromium 1280px·WebKit 390px의 즉시 적용·없는 글꼴 대체·아이콘 우선·기기 분리·탭 동기화·
+  새로고침·기본값 복원과 설정 폭을 확인하고 두 기기의 모양·터미널 화면을 남긴다. 통신 계약은 그대로다.
+
+- **착지 통합.** 기준 origin/main `4a8a3a1f`의 마지막 §8.422·FRONT_API 1.104·AGENT_LINK 1.11·E2E 83을 직접 확인했다. 빈 §8.423을 사용하고 통신 계약은 main 그대로 유지한다. 기존 E2E 06에 검사를 더하므로 새 파일 번호는 사용하지 않는다. main의 SSH 설치·PR routine 변환·작업 요약 자동 갱신을 보존하고 전체 ci-local과 공개 검사를 수행한다.
+
+### 8.424 연결 안내의 0.5초 지연(t-0686)
 
 - 대화·터미널 공통 연결 안내는 연결 대기가 500ms 이어졌을 때만 보인다. 연결 성공·중단·pane 전환은 표시 타이머를 정리한다. 끊김 뒤 재시도의 closed → connecting 전환은 같은 대기로 세어 표시를 다시 숨기지 않는다.
 - WebSocket 상태 판정·재시도·입력 허용·읽기 전용 사유와 오류 표시는 기존 동작을 유지한다. proto·FRONT_API·AGENT_LINK 변경은 없다.
 - E2E84는 실제 2,400행 Claude 기록과 pane 연결을 Chromium 1280px·WebKit 390px에서 연다. open/message 사건을 보류하고 브라우저 시계를 제어해 499ms 미표시·500ms 표시, 빠른 연결의 순간 표시 없음, 끊김·재시도·복구를 확인한다.
+
+- **착지 통합.** origin/main `efe5b1ab`의 마지막 plan §8.423·FRONT_API 1.104·AGENT_LINK 1.11·E2E83을 확인했다. 이 변경은 빈 §8.424·E2E84를 사용하며 API 판은 main 그대로 유지한다.

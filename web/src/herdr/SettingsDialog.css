@@ -404,6 +404,10 @@
   min-width: 0;
 }
 
+.settings-font-reset {
+  align-self: flex-start;
+}
+
 .settings-font-browse {
   flex: 0 0 auto;
 }
