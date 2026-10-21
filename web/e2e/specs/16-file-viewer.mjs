@@ -30,6 +30,14 @@ async function textPoint(page, text) {
 /** 링크 위에서 누르고 놓는다. 마우스를 올리면 xterm이 링크를 찾아 손가락 커서를 단다. xterm은 칸이 바뀔 때만 다시 찾고
  *  터미널 밖으로 나갔다 와도 마지막 칸을 기억하므로(같은 링크를 닫은 뒤 다시 누를 때) 옆 칸을 거쳐 온다 */
 async function clickLink(page, text) {
+  // 첫 출력은 초기 snapshot 크기로도 그려진다. 뒤늦은 resize는 xterm의 링크 커서를 지우므로
+  // 이 화면의 맞추기와 그리드 적용이 끝난 뒤 좌표를 잰다(시한·링크 단언은 그대로다).
+  await domIs(page, `${text} 좌표를 재기 전 크기 맞춤`, () => {
+    const term = document.querySelector('[data-testid="terminal"]');
+    const size = /(\d+)×(\d+)/.exec(document.querySelector(".term-title .muted")?.textContent ?? "");
+    return term?.dataset.fit === "same" && !term.hasAttribute("data-fit-pending") &&
+      document.querySelector(".xterm-rows")?.childElementCount === Number(size?.[2]);
+  });
   const { x, y, w } = await textPoint(page, text);
   await page.mouse.move(x - w, y);
   await page.mouse.move(x, y);

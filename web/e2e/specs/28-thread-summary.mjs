@@ -2,7 +2,7 @@
 // thread 줄의 hover 카드(마우스 기기만, 6줄 안팎)와 thread 화면 머리 「요약」 단추(데스크톱 팝오버·휴대폰 아래 시트, 접힌 절).
 // 요약 뒤 지시는 단추 점과 접힌 절로 보인다. 휴대폰에는 hover 대안이 없다(사용자 결정).
 import fs from "node:fs";
-import { root, aaa, step, browser, pairPage, inList, domIs, until, shot, claudeSh, claudeIdle, waitOutput } from "../lib/harness.mjs";
+import { root, aaa, step, browser, webkit, pairPage, inList, domIs, until, shot, claudeSh, claudeIdle, waitOutput } from "../lib/harness.mjs";
 
 const SUMMARY = `# 목표
 웹 왼쪽 패널 다듬기
@@ -171,5 +171,83 @@ export default async function ({ page }) {
     } finally {
       await p.context().close();
     }
+  });
+
+  await step("전체 진행 목록: 순서·완료 개수·실시간 갱신·새 지시 보존, Reader 휴대폰에서도 읽기 전용", async () => {
+    // 공백 많은 29자는 270px 안에 들어갈 수 있다. 한글 29자로 실제 한 줄 너비를 넘긴다.
+    const names = ["표시 조건 확인", "휴대폰에서만 숨김", "PC·휴대폰 확인", "이전 설정 보존", "작업목록에서긴항목도원래순서대로모두확인하고변경을적용하기"];
+    const file = `${root}/progress-summary.md`;
+    const set = (marks) => {
+      fs.writeFileSync(file, `# 목표\n휴대폰 채팅 중 context 표시 숨기기\n## 진행\n${names.map((n, i) => `- [${marks[i]}] ${n}`).join("\n")}\n`);
+      return aaa("thread", "summary", "demo", id, "--file", file);
+    };
+    const initial = set(["x", "~", " ", "x", " "]);
+    if (initial.progress.length !== 5) throw new Error("실제 host가 전체 목록을 전달하지 않았다");
+    await page.getByTestId(`thread-demo-${id}`).hover();
+    const hover = page.getByTestId("summary-hover");
+    await hover.waitFor();
+    const progress = hover.getByTestId("summary-progress");
+    await progress.waitFor();
+    const states = await progress.getByRole("listitem").evaluateAll((ls) => ls.map((l) => l.dataset.state));
+    if (JSON.stringify(states) !== JSON.stringify(["done", "working", "pending", "done", "pending"])) throw new Error(`진행 순서 ${JSON.stringify(states)}`);
+    const labels = await progress.locator(".summary-step-text").allTextContents();
+    if (JSON.stringify(labels) !== JSON.stringify(names)) throw new Error(`전체 목록 ${JSON.stringify(labels)}`);
+    if (!(await progress.innerText()).includes("2/5 완료")) throw new Error("완료 개수");
+    if (await progress.getByRole("checkbox").count() || await progress.getByRole("button").count()) throw new Error("읽기 전용 목록에 편집 조작");
+    const layout = await progress.locator("li").evaluateAll((ls) => ls.map((l) => ({ height: l.getBoundingClientRect().height, clipped: l.querySelector(".summary-step-text").scrollWidth > l.querySelector(".summary-step-text").clientWidth })));
+    if (layout.some((l) => l.height > 30) || !layout.at(-1).clipped) throw new Error(`hover의 긴 이름은 한 줄 ${JSON.stringify(layout)}`);
+    await shot(page, "summary-progress-hover");
+
+    // 카드를 열어 둔 채 실제 CLI가 요약을 갱신한다. 목록 순서·캐시와 완료 개수를 함께 본다.
+    set(["x", "x", "~", "x", " "]);
+    await domIs(page, "열린 카드 진행 갱신", () => document.querySelector('[data-testid="summary-hover"] [data-testid="summary-progress"]')?.textContent.includes("3/5 완료"));
+    const updated = await progress.getByRole("listitem").evaluateAll((ls) => ls.map((l) => l.dataset.state));
+    if (JSON.stringify(updated) !== JSON.stringify(["done", "done", "working", "done", "pending"])) throw new Error(`갱신 순서 ${JSON.stringify(updated)}`);
+    aaa("thread", "message", "demo", id, "--text", "태블릿 조건도 확인해 줘");
+    await domIs(page, "진행 목록 옆 새 지시 경고", () => document.querySelector('[data-testid="summary-hover"] .summary-warn')?.textContent.includes("요약 뒤 지시 1개"));
+    if (!(await progress.innerText()).includes("3/5 완료")) throw new Error("새 지시로 완료 개수가 바뀌었다");
+    await shot(page, "summary-progress-pending");
+    await page.mouse.move(1000, 600);
+    await hover.waitFor({ state: "detached" });
+
+    // 실제 Reader 권한의 Chromium과 iPhone WebKit. 네트워크에서 받은 목록을 같은 상세에 표시한다.
+    const wk = await webkit.launch({ headless: true });
+    try {
+      for (const [engine, width] of [[browser, 320], [wk, 390]]) {
+        const pane = aaa("thread", "show", "demo", id).pane;
+        const dev = await pairPage(engine, aaa("web", "pair", "--reader").code, { width, height: 844 }, { touch: true, hash: `#pane=${encodeURIComponent(pane)}` });
+        const p = dev.page;
+        try {
+          await p.getByTestId("summary-open").click();
+          const sheet = p.getByTestId("summary-sheet");
+          await sheet.getByTestId("summary-progress").waitFor();
+          await sheet.evaluate((el) => Promise.all(el.closest(".modal-scrim").getAnimations({ subtree: true }).map((a) => a.finished)));
+          const lines = await sheet.locator(".summary-step-text").allTextContents();
+          if (JSON.stringify(lines) !== JSON.stringify(names)) throw new Error(`Reader 전체 목록 ${JSON.stringify(lines)}`);
+          if (!(await sheet.innerText()).includes("3/5 완료") || !(await sheet.innerText()).includes("요약 뒤 지시")) throw new Error("Reader 완료 개수·새 지시");
+          const box = await sheet.evaluate((el) => ({ width: innerWidth, left: el.getBoundingClientRect().left, right: el.getBoundingClientRect().right, overflow: el.scrollWidth > el.clientWidth + 1, lastHeight: el.querySelector("li:last-child .summary-step-text").getBoundingClientRect().height }));
+          if (box.left < 0 || box.right > width + 1 || box.overflow || box.lastHeight <= 20) throw new Error(`휴대폰 줄바꿈·넘침 ${JSON.stringify(box)}`);
+          const refusal = await p.evaluate(async ([thread]) => (await fetch("/api/v1/call", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ op: "thread_summary_set", project: "demo", thread, text: "# 목표\n보기 기기 쓰기 금지" }) })).json(), [id]);
+          if (refusal.err?.code !== "forbidden") throw new Error(`Reader가 요약을 썼다: ${JSON.stringify(refusal)}`);
+          if (aaa("thread", "summary", "demo", id).goal !== "휴대폰 채팅 중 context 표시 숨기기") throw new Error("Reader 쓰기 거부 뒤 원본 변경");
+          await shot(p, `summary-progress-reader-${width}`);
+        } finally { await p.context().close(); }
+      }
+    } finally { await wk.close(); }
+
+    // 모두 완료해도 목록을 없애거나 재정렬하지 않는다. 요약을 다시 쓰면 이전 지시는 반영된다.
+    set(["x", "x", "x", "x", "x"]);
+    await page.getByTestId("summary-open").click();
+    const pop = page.getByTestId("summary-pop");
+    await domIs(page, "모든 단계 완료", () => document.querySelector('[data-testid="summary-pop"] [data-testid="summary-progress"]')?.textContent.includes("5/5 완료"));
+    if ((await pop.locator('.summary-step[data-state="done"]').count()) !== 5 || await pop.locator(".summary-warn").count()) throw new Error("완료 목록 보존·반영한 지시");
+    await shot(page, "summary-progress-done");
+    // 새 형식을 쓴 뒤에도 옛 형식으로 돌아갈 수 있다. 열린 상세의 캐시도 갱신된다.
+    fs.writeFileSync(file, "# 목표\n목록 준비 중\n");
+    aaa("thread", "summary", "demo", id, "--file", file);
+    await domIs(page, "목록 없는 요약", () => document.querySelector('[data-testid="summary-pop"]')?.textContent.includes("아직 작업 목록 없음"));
+    if (await pop.getByTestId("summary-progress").count()) throw new Error("옛 상태로 만든 완료 개수");
+    await page.keyboard.press("Escape");
+    await pop.waitFor({ state: "detached" });
   });
 }
