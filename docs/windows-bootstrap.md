@@ -12,7 +12,7 @@ ARM64/32비트 Windows, 소스 빌드 대체, 다른 기존 실행 파일 교체
 - 자기 계정의 외부 Windows Terminal/PowerShell. aaa pane·SSH·자동화·`--yes`는 사용자 승인을 대신하지 않는다.
 - 실행 계정의 실제 암호(Windows Hello PIN과 다름), SCM 생성 권한이 필요한 경우 사용자가 확인한 UAC 경로.
   다른 관리자 계정으로 전환해 SID가 바뀌면 같은 승인으로 진행하지 않는다.
-- 기존 서비스·실행 파일의 판/SHA/설정/데이터 백업. 비어 있는 `install-acceptance` instance와 별도 작업 폴더,
+- 기존 서비스·실행 파일의 판/SHA/설정/데이터 백업. 비어 있는 `install-check` instance와 별도 작업 폴더,
   쓰지 않는 포트, 연결할 host의 실제 주소/등록 창. 공개 예시의 주소는 실제 연결 대상이 아니다.
 - 처음은 PATH/hook/Serve/프로젝트 변경을 끈 좁은 계획으로 시험한다. 실제 운영 설치와 대상이 겹치면 중단한다.
 
@@ -56,9 +56,9 @@ bootstrap은 같은 판 manifest의 고정 Windows URL·SHA·PE x86_64·실제 `
 ```powershell
 $HostAddress = '<사용할 host 주소:포트>'
 if ($HostAddress.StartsWith('<')) { throw '실제 host 주소를 먼저 정하세요' }
-$Work = Join-Path $env:USERPROFILE 'aaa-install-acceptance-work'
-$Choices = @('--instance', 'install-acceptance', '--role', 'agent', '--name', 'windows-a',
-    '--host', $HostAddress, '--network', 'direct', '--work-root', $Work, '--work-storage', 'internal',
+$Work = Join-Path $env:USERPROFILE 'aaa-install-check-work'
+$Choices = @('--instance', 'install-check', '--role', 'agent', '--name', 'windows-a',
+    '--host', $HostAddress, '--network', 'direct', '--enroll', 'wait', '--work-root', $Work, '--work-storage', 'internal',
     '--harness', 'none', '--login', 'defer', '--hooks', 'skip', '--path', 'preserve',
     '--service', 'windows-scm', '--startup', 'auto', '--start', 'now', '--prompt', 'plain')
 & $Bootstrap -Version $Release -InstallArgs ($Choices + @('--dry-run'))
@@ -75,9 +75,9 @@ $Choices = @('--instance', 'install-acceptance', '--role', 'agent', '--name', 'w
 
 ```powershell
 $Id = '<출력된 installation_id>'
-& $Aaa --instance install-acceptance install --status $Id --json
-& $Aaa --instance install-acceptance install --resume $Id --prompt plain
-Get-CimInstance Win32_Service -Filter "Name='aaa-install-acceptance-agent'" |
+& $Aaa --instance install-check install --status $Id --json
+& $Aaa --instance install-check install --resume $Id --prompt plain
+Get-CimInstance Win32_Service -Filter "Name='aaa-install-check-agent'" |
     Select-Object Name,State,StartName,PathName,ProcessId,StartMode
 ```
 
@@ -98,9 +98,9 @@ SeServiceLogonRight/SeDenyServiceLogonRight·조직 GPO, UAC 거부, Windows Hel
 
 ```powershell
 # 위의 소유 대조를 마친 새 시험 서비스에만 실행한다.
-Stop-Service -Name 'aaa-install-acceptance-agent' -ErrorAction Stop
-(Get-Service -Name 'aaa-install-acceptance-agent').WaitForStatus('Stopped', [TimeSpan]::FromSeconds(30))
-sc.exe delete aaa-install-acceptance-agent
+Stop-Service -Name 'aaa-install-check-agent' -ErrorAction Stop
+(Get-Service -Name 'aaa-install-check-agent').WaitForStatus('Stopped', [TimeSpan]::FromSeconds(30))
+sc.exe delete aaa-install-check-agent
 if ($LASTEXITCODE -ne 0) { throw '서비스 제거 실패: 오류를 보존하세요' }
 ```
 
