@@ -30,6 +30,12 @@
   무관한 초기 30초를 사용한다.
 - 고정 sleep·실패 재시도·시한 증가 없이 검사한다. 전체 필수 검증은 정본 `nice -n 15 bash scripts/ci-local.sh`와 공개 검사다.
 
+## Windows 짧은 state 경로와 IPC 완료 수명(t-0485, plan §8.418)
+
+- 기존 Windows IPC owner의 모든 주소/반복·DACL·peer PID·byte·동시 첫 instance 거부·동일 주소 단일 rebind를 유지한다. GetShortPathNameW가 돌려준 실제 부모/canonical 양방향도 검사한다. 8.3 이름이 없는 파일시스템에서는 API가 같은 긴 이름을 돌려주며, 해당 환경에서 8.3 차이를 검증했다고 부르지 않는다.
+- EOF 뒤 Rust 값 drop은 IOCP 합성 readiness가 소유한 Arc 해제와 다르다. 연결을 소유한 전용 runtime을 종료해 completion drain을 끝낸 뒤 새 runtime에서 같은 이름으로 한 번 rebind한다. 재시도·sleep 없이 실제 첫 instance 획득을 단언한다. 기존 연결/EOF 3초와 BUSY250ms·승인60초는 유지한다.
+- 3933e4cb 실제 Windows RED를 보존한다. 로컬 macOS install·전체 ci-local·Windows cross clippy/build·check-public을 확인하고, Windows 실제 통과는 승인 착지 뒤 main CI만 판정한다.
+
 ## Windows install pairing·IPC 해제 owner(t-0485, plan §8.415)
 
 - 원문 c249e316 Windows run의 pairing 조기 종료와 IPC bind OS5를 보존한다. PTY 실패 끝은 answered/전체·needle·child_exit, IPC 실패는 조합/반복·경로·OS 오류/해제 단계로 구분한다. 기존 승인/수명/비밀 가림 단언과60초를 유지한다.
