@@ -1,8 +1,9 @@
 # aaa install 공통 계약 v1
 
-I0~I2와 I5(t-0485)의 정본이다. `aaa.install.v1`은 CLI 설치 계약이며 FRONT_API/AGENT_LINK와 독립이다.
+I0~I6의 공통 경계와 OS별 구현(t-0485)의 정본이다. `aaa.install.v1`은 CLI 설치 계약이며 FRONT_API/AGENT_LINK와 독립이다.
 I1은 **공유 검증·읽기 탐지·계획 hash·dry-run CLI**, I2는 private 파일 적용·재개다.
-순서는 Windows(I5) → 대화형/승인 executor(I6) → Windows 최소 bootstrap/사용자 인수 → macOS(I3) → Linux(I4)다.
+최신 순서는 Windows(I5)·승인(I6) → macOS(I3) → Windows 최소 bootstrap·사용자 PC 인수 → Linux(I4) → I7 최종 인수다.
+아래 I0~I5 절의 미지원 설명은 해당 단계 당시 경계이며, 현재 승인 경로와 Mac 감독자는 뒤 I6/I3 절을 따른다.
 아래 전체 계약 중 현재 실행 가능한 범위와 미지원 결과는 끝의 단계별 절에 구분한다.
 
 ## 두 기획의 차이와 채택 기준
@@ -231,3 +232,38 @@ SCM 접근 승인이 없거나 실행/연결 proof를 확인하지 못하면 고
 
 Windows·Linux 실제 실행은 main push 뒤 CI다. 실제 SCM logon·Session0·로그인 전 부팅·UAC/LSA·암호 변경·
 ConPTY/인증은 사용자 Windows PC 인수로 확인한다. CI/cross만으로 실제 설치를 완료했다고 부르지 않는다.
+
+
+## I6 승인과 I3 macOS 감독자
+
+I6 이후에는 외부 TTY의 계획 검토·정확한 yes, private issuer pin과 Ed25519 승인, 대상/범위/만료/nonce 검증을
+통과한 고정 worker만 apply/resume을 연다. `--yes`나 임의 승인 JSON만으로 권한을 얻지 못한다.
+승인 물음·보호 표시와 OS 권한은 별개이며 자동화가 개발자 도구·전체 디스크 접근·키체인 권한을 부여하지 않는다.
+
+macOS `--service launchd`는 현재 사용자 `gui/<uid>`의 LaunchAgent를 사용한다.
+고정 launcher → 설치된 aaa의 `service-run` → 고정 host/agent backend이며 임의 shell/argv executor가 아니다.
+GUI 로그인 도메인이 없으면 `service_gui_session_required`/needs_user로 멈춘다. daemon·root·다른 계정으로 대체하지 않는다.
+
+- `--launcher-policy preserve`는 기존 launcher를 보존한다. 없으면 `installation_launcher_required`다.
+  `install`은 선택한 실행 파일 옆 `aaa-launcher-macos-aarch64.json` 또는 `aaa-launcher-macos-x86_64.json`을 읽는다.
+  새 package는 같은 release 판·OS/CPU·선택 binary SHA와 고정 네 파일을 대조한다. 다운로드/게시 자체는 bootstrap/release 단계다.
+  I1의 `--from`은 실행하지 않아 판이 unknown이다. 이 경우 새 launcher는 현재 installer와 SHA가 같은 원본 사본만
+  알려진 현재 판으로 대조한다. 다른 원본은 `installation_launcher_binary_unverified`로 멈춘다.
+  이미 있는 다른 launcher는 교체하지 않는다. 보존 파일도 before=after SHA의 StageLauncher 범위에 묶어
+  승인 뒤 bytes가 바뀌면 파일 transaction 전에 거부한다. 새/기존 launcher 모두 권한·내용과 codesign을 검증한 뒤 등록한다.
+- launcher 네 파일은 I2의 실제 파일 transaction·StageLauncher 승인·내구 journal·공유 참조를 쓴다.
+  서명 번들 내부에는 영구 lock/reference를 만들지 않고 바로 바깥에 둔다. 기존 파일이나 다른 instance의 app은 바꾸지 않는다.
+- label은 `dev.aaa.<instance>.<host|agent>`(기본 instance는 중간 이름 없음)이다.
+  소유 private plist를 원자 create-new하며, 외부 plist/등록·동시 편집은 충돌로 보존한다.
+  등록 중단 뒤 같은 ID는 실제 등록 상태와 journal을 대조한다. status는 launchctl print와 파일만 읽는다.
+- ready는 RUNNING/PID만으로 성공하지 않는다. I2 receipt·context hash·계정·profile·실행 SHA·boot와
+  커널 PID/생성 시각/session·launchd가 시작한 불변 launcher 부모·자식 image를 함께 대조한다.
+  agent는 실제 host 연결 뒤 ready다. 종료된 이전 proof나 수동 service-run은 성공 증명이 아니다.
+- 시작은 bootstrap/kickstart, 종료는 bootout과 소유 PID의 종료 사건을 쓴다. 고정 sleep·등록 재시도·권한 자동 확대는 없다.
+  GUI/키체인/개발자 도구/FDA 안내는 [설치 점검표](install-runbook.md#12-install의-macos-launchd-경로)를 따른다.
+  exact-port Serve·공개 소유권·pairing은 I6의 기존 고정 executor를 그대로 사용한다.
+
+실제 등록 owner는 사용자가 승인한 기존 GitHub macos-15 일회성 계정의 필수 별도 단계다.
+로컬 cargo test는 읽기 CLI·실제 임시 파일/서명·승인·중단/공유·가짜 proof 거부를 실행하고 실제 등록 시험은 ignored다.
+CI 단계는 그 시험을 `--ignored --exact`로 반드시 실행하며 GUI 부재도 실패다. Windows/Linux는 Mac ABI/launchd owner만
+cfg로 제외하고 공통 시험을 유지한다. macOS 로컬 통과·Windows cross는 macos-15 실제 등록 통과를 대신하지 않는다.

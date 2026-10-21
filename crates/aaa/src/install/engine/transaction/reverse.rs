@@ -268,10 +268,10 @@ impl Transaction {
                                 return Err(Fault::conflict());
                             }
                             if let Some(bytes) = &desired {
-                                private::write(&references::path(f), bytes).map_err(Fault::io)?;
+                                private::write(&references::path(f)?, bytes).map_err(Fault::io)?;
                             } else {
-                                std::fs::remove_file(references::path(f)).map_err(Fault::io)?;
-                                private::sync_parent(&references::path(f)).map_err(Fault::io)?;
+                                std::fs::remove_file(references::path(f)?).map_err(Fault::io)?;
+                                private::sync_parent(&references::path(f)?).map_err(Fault::io)?;
                             }
                         }
                     }

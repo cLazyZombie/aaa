@@ -3024,8 +3024,8 @@ async fn supervised_stop(stop: Option<tokio::sync::watch::Receiver<bool>>) {
     }
 }
 
-/// SCM의 고정 host/agent 역할만 실행한다. 임의 argv/셸을 받지 않는다.
-#[cfg(any(windows, test))]
+/// OS 감독자의 고정 host/agent 역할만 실행한다. 임의 argv/셸을 받지 않는다.
+#[cfg(any(windows, target_os = "macos", test))]
 pub(crate) fn supervised_role(
     role: aaa_proto::install::InstallRole,
     ready: tokio::sync::oneshot::Sender<()>,
@@ -3038,7 +3038,7 @@ pub(crate) fn supervised_role(
         aaa_proto::install::InstallRole::Agent => ProcessKind::Agent,
     });
     init_log("info");
-    aaa_common::resource::disable_core_dump("Windows service");
+    aaa_common::resource::disable_core_dump("supervised service");
     legacy_guard()?;
     match role {
         aaa_proto::install::InstallRole::Host => {

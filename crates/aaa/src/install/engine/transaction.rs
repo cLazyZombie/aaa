@@ -99,7 +99,7 @@ pub(super) fn real_directory(path: &Path) -> Result<PathBuf> {
     }
     Err(Fault::conflict())
 }
-fn target(path: &Path) -> Result<PathBuf> {
+pub(super) fn target(path: &Path) -> Result<PathBuf> {
     if !path.is_absolute() || path.components().any(|part| part == std::path::Component::ParentDir) {
         return Err(Fault::conflict());
     }
@@ -197,16 +197,29 @@ fn resource_key(path: &Path) -> String {
         hash(path.as_os_str().as_encoded_bytes())
     }
 }
+// 서명된 .app에는 stage 완료 뒤에도 남는 lock/reference를 넣지 않는다.
+// 파일별 자원 key는 그대로 두고 bundle 바로 바깥에서 instance 간 공유한다.
+fn metadata_parent(file: &FileSpec) -> Result<PathBuf> {
+    if file.kind == Kind::Launcher
+        && let Some(app) = file.path.ancestors().skip(1).find(|p| p.extension().is_some_and(|ext| ext == "app"))
+    {
+        return Ok(app.parent().ok_or_else(Fault::conflict)?.to_owned());
+    }
+    Ok(file.path.parent().ok_or_else(Fault::conflict)?.to_owned())
+}
 fn locks(state: &Path, manifest: &Manifest) -> Result<Locks> {
     let config = real_directory(Path::new(&manifest.plan.context.config_dir))?;
     let root = manifest.root.as_ref().map(|root| real_directory(&root.path)).transpose()?;
     let mut resources: Vec<_> =
-        manifest.files.iter().map(|f| f.path.clone()).chain([state.to_owned(), config]).chain(root).collect();
+        manifest.files.iter().map(|f| Ok((f.path.clone(), metadata_parent(f)?))).collect::<Result<_>>()?;
+    for directory in [state.to_owned(), config].into_iter().chain(root) {
+        resources.push((directory.clone(), directory.parent().ok_or_else(Fault::conflict)?.to_owned()));
+    }
     resources.sort();
     resources.dedup();
     let mut held = Locks(Vec::new());
-    for resource in resources {
-        let parent = real_directory(resource.parent().ok_or_else(Fault::conflict)?)?;
+    for (resource, parent) in resources {
+        let parent = real_directory(&parent)?;
         private::parents(&parent).map_err(Fault::io)?;
         let key = resource_key(&resource);
         let path = parent.join(format!(".aaa-install-resource-{key}.lock"));
