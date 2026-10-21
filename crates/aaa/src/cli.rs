@@ -345,7 +345,7 @@ enum Cmd {
     /// (harness hook) 세션 안에서 harness 사건을 이 머신 agent에 보낸다. 사건 JSON은 인자 또는 표준 입력
     #[command(hide = true)]
     Hook {
-        #[arg(long, value_parser = ["claude", "codex"])]
+        #[arg(long, value_parser = ["claude", "codex", "quota"])]
         agent: String,
         payload: Option<String>,
     },
@@ -404,8 +404,13 @@ enum QuestionCmd {
         #[arg(long)]
         all: bool,
     },
-    /// 답한다(예: yes·no). host가 질문이 아직 열려 있는지 다시 확인한다
-    Answer { id: String, choice: String },
+    /// 질문 ID에 답한다(A·B 또는 --text). 기존 확인창의 yes·no도 받는다
+    Answer {
+        id: String,
+        choice: Option<String>,
+        #[arg(long)]
+        text: Option<String>,
+    },
 }
 
 #[derive(Subcommand)]
@@ -545,7 +550,26 @@ enum InboxCmd {
 
 #[derive(Subcommand)]
 enum TaskCmd {
-    /// 목록별 task와 형식 어긋남(읽기만 한다)
+    /// 예약과 실행 연결을 읽는다
+    Queue,
+    /// 현재 내용으로 실행을 승인하고 자리 대기에 넣는다(같은 예약의 내용 갱신도 이 명령)
+    Reserve {
+        task: String,
+        #[arg(long)]
+        block: Option<String>,
+        #[arg(long)]
+        profile: Option<String>,
+    },
+    /// 아직 시작하지 않은 예약을 취소한다(실행 중 thread는 그대로)
+    Unreserve { task_id: String },
+    /// 예약 순번을 바꾼다(1부터, 0은 맨 앞)
+    QueueMove { task_id: String, position: u32 },
+    /// 완료 보관을 읽거나 같은 task ID로 복원한다(재예약하지 않음)
+    Archive {
+        #[arg(long)]
+        restore: Option<String>,
+    },
+    /// 목록별 task ID와 형식 어긋남
     List,
     /// task를 더한다(정규형 `- [ ] 제목 (모델@머신) [저장소]`, 같은 제목은 거부)
     Add {
@@ -569,10 +593,10 @@ enum TaskCmd {
         #[arg(long = "note")]
         notes: Vec<String>,
         /// 이 task의 하위로
-        #[arg(long, value_name = "TITLE")]
+        #[arg(long, value_name = "ID_OR_TITLE")]
         parent: Option<String>,
         /// 이 task 앞에
-        #[arg(long, value_name = "TITLE")]
+        #[arg(long, value_name = "ID_OR_TITLE")]
         before: Option<String>,
         /// 이어 줄 thread(` · t-NNNN`, task 없는 열린 thread를 task로 만들 때)
         #[arg(long)]
@@ -583,7 +607,7 @@ enum TaskCmd {
     },
     /// task 칸을 바꾼다(준 칸만, 나머지 줄은 바이트 그대로)
     Edit {
-        /// 고칠 task 제목(대소문자 무시)
+        /// 고칠 task ID(d-0001·ULID) 또는 제목(대소문자 무시)
         task: String,
         /// 읽은 판의 블록 hash(`task list --json`의 `block_sha256`). 주면 그 블록이 그대로일 때만 고친다(아니면 revision_conflict)
         #[arg(long, value_name = "SHA256")]
@@ -626,9 +650,9 @@ enum TaskCmd {
         block: Option<String>,
         #[arg(long, default_value = "")]
         list: String,
-        #[arg(long, value_name = "TITLE")]
+        #[arg(long, value_name = "ID_OR_TITLE")]
         before: Option<String>,
-        #[arg(long, value_name = "TITLE")]
+        #[arg(long, value_name = "ID_OR_TITLE")]
         parent: Option<String>,
     },
     /// task를 하위 task와 함께 지운다(기록에 남아 `restore`로 되살린다)
@@ -640,12 +664,15 @@ enum TaskCmd {
     },
     /// 기록의 삭제 항목을 되살린다(원래 목록 끝, 또는 --list)
     Restore {
-        log_id: i64,
+        /// 삭제 기록 번호, d-0001, ULID 또는 제목
+        task: String,
         #[arg(long)]
         list: Option<String>,
     },
     /// 변경 기록(최신부터): 누가·언제·무엇
     Log {
+        /// d-0001·ULID 또는 제목(생략하면 모든 기록)
+        task: Option<String>,
         #[arg(long, default_value_t = 30)]
         limit: u32,
         /// 이 기록 id 앞의 것
@@ -767,7 +794,7 @@ enum RoutineCmd {
 
 #[derive(Args)]
 struct PostArgs {
-    /// 목적지(user·coordinator) 또는 status·list·unmute. 프로젝트는 생략한다(옛 꼴은 앞에 프로젝트)
+    /// 목적지(user·coordinator) 또는 status·handled·list·unmute. handled는 사용자 답의 처리 표시만 한다
     first: String,
     second: Option<String>,
     third: Option<String>,
@@ -779,7 +806,7 @@ struct PostArgs {
     notice: bool,
     #[arg(long)]
     needs_user: bool,
-    /// 전송할 때 필수인 주제(--request·--data·--notice). list·status·unmute에서는 생략한다
+    /// 전송할 때 필수인 주제(--request·--data·--notice). list·status·handled·unmute에서는 생략한다
     #[arg(long)]
     topic: Option<String>,
     #[arg(long)]
@@ -889,12 +916,13 @@ enum ThreadCmd {
         #[arg(hide = true)]
         legacy: Option<String>,
     },
-    /// 작업 요약(웹 hover 카드·「요약」 단추). --file이면 통째로 다시 쓴다(coordinator가 방향이 바뀔 때마다).
+    /// 작업 요약(웹 hover 카드·「요약」 단추). --file이면 통째로 다시 쓴다(큰 작업의 상태·방향이 바뀔 때).
     /// 쉬운 말의 짧은 구로 몇 줄만 쓴다. 형식:
     ///
-    /// # 목표 / 목표 한 줄 / 처음: 처음 일(선택) / ## 지금 / - 할 것(3줄 이하) / ## 정함 / - 사용자 15:0x 정한 것 /
-    /// ## 바뀜 / - ~~사용자 14:0x 무효가 된 것~~ / - 사용자 14:1x 최근 바뀐 것(맨 아래) / ## 끝남 / - 끝난 일.
-    /// 한 줄 30자, 한 절 3줄, 전체 1KB까지
+    /// # 목표 / 목표 한 줄 / 처음: 처음 일(선택) / ## 진행 / - [x] 완료 / - [~] 진행 중 / - [ ] 대기 /
+    /// ## 정함 / - 사용자 15:0x 정한 것 / ## 바뀜 / - ~~사용자 14:0x 무효가 된 것~~ / - 사용자 14:1x 최근 바뀐 것(맨 아래).
+    /// 큰 작업 3~5개(최대 5개)를 순서대로 두고 완료해도 남긴다. 한 줄 30자, 진행 외 한 절 3줄, 전체 1KB까지.
+    /// 옛 ## 지금 / ## 끝남도 읽는다. 상태 없는 항목은 완료 여부를 추측하지 않는다.
     Summary {
         thread: String,
         /// (옛 꼴 `<프로젝트> <대상>`의 대상)
@@ -1688,8 +1716,12 @@ fn run(cli: Cli) -> Result<ExitCode> {
             aaa_common::resource::raise_nofile_limit("host");
             aaa_common::resource::disable_core_dump("host");
             legacy_guard()?;
-            let cfg = load_or_exit(aaa_config::load_host(&aaa_config::paths::config_dir()))?;
-            runtime()?.block_on(aaa_host::run(cfg, aaa_config::paths::state_dir()))?;
+            runtime()?.block_on(aaa_host::run(
+                aaa_config::paths::config_dir(),
+                aaa_config::paths::state_dir(),
+                None,
+                aaa_host::shutdown_signal(),
+            ))?;
             Ok(ExitCode::SUCCESS)
         }
         Cmd::Agent(a) => {
@@ -1765,20 +1797,68 @@ fn run(cli: Cli) -> Result<ExitCode> {
         Cmd::Context { project, peek } => {
             front(json, FrontRequest::Context { project: project_or_here(project)?, peek })
         }
+        Cmd::Task { cmd: TaskCmd::Queue } => {
+            front(json, FrontRequest::TaskQueue { project: project_or_here(None)?, action: aaa_proto::QueueOp::List })
+        }
+        Cmd::Task { cmd: TaskCmd::Reserve { task, block, profile } } => {
+            let project = project_or_here(None)?;
+            let response = front_call(FrontRequest::ThreadStartPreview {
+                project: project.clone(),
+                from_task: task.clone(),
+                task_block: block,
+            })?
+            .map_err(|e| anyhow::anyhow!(e.message))?;
+            let FrontResponse::ThreadStartPreview(p) = response else {
+                anyhow::bail!("예약 미리보기 응답이 아니다")
+            };
+            front(
+                json,
+                FrontRequest::TaskQueue {
+                    project,
+                    action: aaa_proto::QueueOp::Reserve {
+                        task,
+                        block: p.task_block,
+                        profile: profile.unwrap_or(p.profile),
+                        profile_revision: p.profile_revision,
+                    },
+                },
+            )
+        }
+        Cmd::Task { cmd: TaskCmd::Unreserve { task_id } } => front(
+            json,
+            FrontRequest::TaskQueue { project: project_or_here(None)?, action: aaa_proto::QueueOp::Cancel { task_id } },
+        ),
+        Cmd::Task { cmd: TaskCmd::QueueMove { task_id, position } } => front(
+            json,
+            FrontRequest::TaskQueue {
+                project: project_or_here(None)?,
+                action: aaa_proto::QueueOp::Move { task_id, position },
+            },
+        ),
+        Cmd::Task { cmd: TaskCmd::Archive { restore } } => {
+            front(json, FrontRequest::TaskArchive { project: project_or_here(None)?, restore })
+        }
         Cmd::Task { cmd: TaskCmd::List } => front(json, FrontRequest::Tasks { project: project_or_here(None)? }),
-        Cmd::Task { cmd: TaskCmd::Log { limit, before, deleted } } => front(
+        Cmd::Task { cmd: TaskCmd::Log { task, limit, before, deleted } } => front(
             json,
             FrontRequest::TaskLog {
                 project: project_or_here(None)?,
                 before,
                 limit: Some(limit),
                 filter: deleted.then_some(aaa_proto::TaskLogFilter::Deleted),
+                task,
             },
         ),
         Cmd::Task { cmd } => {
             use aaa_proto::TaskOp;
             let op = match cmd {
-                TaskCmd::List | TaskCmd::Log { .. } => unreachable!(),
+                TaskCmd::List
+                | TaskCmd::Log { .. }
+                | TaskCmd::Queue
+                | TaskCmd::Reserve { .. }
+                | TaskCmd::Unreserve { .. }
+                | TaskCmd::QueueMove { .. }
+                | TaskCmd::Archive { .. } => unreachable!(),
                 TaskCmd::Add { title, list, profile, machine, owner, person, notes, parent, before, thread, repo } => {
                     TaskOp::Add {
                         list,
@@ -1833,7 +1913,36 @@ fn run(cli: Cli) -> Result<ExitCode> {
                     parent: parent.as_deref().map(task_at),
                 },
                 TaskCmd::Rm { task, block } => TaskOp::Delete { at: task_at_block(&task, block) },
-                TaskCmd::Restore { log_id, list } => TaskOp::Restore { log_id, list },
+                TaskCmd::Restore { task, list } => {
+                    let log_id = if let Ok(id) = task.parse::<i64>() {
+                        id
+                    } else {
+                        let project = project_or_here(None)?;
+                        let response = front_call(FrontRequest::TaskLog {
+                            project: project.clone(),
+                            before: None,
+                            limit: Some(500),
+                            filter: Some(aaa_proto::TaskLogFilter::Deleted),
+                            task: Some(task.clone()),
+                        })?
+                        .map_err(|e| anyhow::anyhow!(e.message))?;
+                        let FrontResponse::TaskLog { entries, .. } = response else {
+                            anyhow::bail!("기록 응답이 아니다")
+                        };
+                        if let Some(e) = entries.iter().find(|e| e.restored_by.is_none()) {
+                            e.id
+                        } else {
+                            // 완료 보관은 별도 복원 경로다. ID·제목을 모두 host가 해석한다.
+                            if list.is_some() {
+                                anyhow::bail!(
+                                    "완료 보관은 원래 목록에 복원한다. --list 없이 복원한 뒤 task move로 옮긴다"
+                                );
+                            }
+                            return front(json, FrontRequest::TaskArchive { project, restore: Some(task) });
+                        }
+                    };
+                    TaskOp::Restore { log_id, list }
+                }
                 TaskCmd::ListAdd { name, after } => TaskOp::ListAdd { name, after },
                 TaskCmd::ListRename { name, to } => TaskOp::ListRename { name, to },
                 TaskCmd::ListMerge { name, into } => TaskOp::ListMerge { name, into },
@@ -2047,6 +2156,18 @@ fn run(cli: Cli) -> Result<ExitCode> {
                 }
                 ThreadCmd::Answer { thread, mut answers, text } => {
                     let (project, thread) = shift_project(thread, &mut answers)?;
+                    if thread.strip_prefix("q-").is_some_and(|n| n.len() >= 4 && n.bytes().all(|b| b.is_ascii_digit()))
+                    {
+                        return front(
+                            json,
+                            FrontRequest::QuestionReply {
+                                project,
+                                id: thread,
+                                choice: (!answers.is_empty()).then(|| answers.join(" ")),
+                                text,
+                            },
+                        );
+                    }
                     let view = match front_call(FrontRequest::ThreadShow {
                         project: project.clone(),
                         thread: thread.clone(),
@@ -2119,8 +2240,17 @@ fn run(cli: Cli) -> Result<ExitCode> {
             json,
             match cmd {
                 QuestionCmd::List { all } => FrontRequest::Questions { all },
-                QuestionCmd::Answer { id, choice } => {
-                    FrontRequest::QuestionAnswer { id, choice, menu: None, pick: None }
+                QuestionCmd::Answer { id, choice, text } => {
+                    if id.strip_prefix("q-").is_some_and(|n| n.len() >= 4 && n.bytes().all(|b| b.is_ascii_digit())) {
+                        FrontRequest::QuestionReply { project: project_or_here(None)?, id, choice, text }
+                    } else {
+                        FrontRequest::QuestionAnswer {
+                            id,
+                            choice: choice.or(text).ok_or_else(|| anyhow::anyhow!("답이 필요하다"))?,
+                            menu: None,
+                            pick: None,
+                        }
+                    }
                 }
             },
         ),
@@ -2818,9 +2948,8 @@ pub(crate) fn supervised_role(
     legacy_guard()?;
     match role {
         aaa_proto::install::InstallRole::Host => {
-            let cfg = load_or_exit(aaa_config::load_host(&aaa_config::paths::config_dir()))?;
-            runtime()?.block_on(aaa_host::run_with_shutdown(
-                cfg,
+            runtime()?.block_on(aaa_host::run(
+                aaa_config::paths::config_dir(),
                 aaa_config::paths::state_dir(),
                 Some(ready),
                 supervised_stop(Some(stop)),
@@ -3039,6 +3168,9 @@ fn shift_project(first: String, rest: &mut Vec<String>) -> Result<(String, Strin
 pub(crate) fn front_call(req: FrontRequest) -> Result<Result<FrontResponse, aaa_proto::ErrorBody>> {
     runtime()?.block_on(async {
         let mut c = aaa_common::front::FrontClient::connect(&aaa_config::paths::state_dir()).await?;
+        if matches!(&req, FrontRequest::TaskLog { task: Some(_), .. }) && c.proto.minor < 89 {
+            anyhow::bail!("ID로 기록을 찾으려면 Front API 1.89 이상 host가 필요하다");
+        }
         c.call(req).await
     })
 }
@@ -3193,7 +3325,7 @@ fn render_question(s: &mut String, q: &aaa_proto::QuestionView) {
     let _ = writeln!(
         s,
         "{}\t{}\t{}@{}\t{state}{}\t{}\t답: {}",
-        q.id,
+        q.short_id.as_deref().unwrap_or(&q.id),
         q.question_kind,
         at,
         q.machine,
@@ -3231,6 +3363,10 @@ fn post_cmd(json: bool, a: PostArgs) -> Result<ExitCode> {
         let (project, thread) = on_target(a.second.context("thread가 필요하다")?, a.third)?;
         return front(json, FrontRequest::PostUnmute { project, thread });
     }
+    if a.first == "handled" {
+        let (project, post_id) = on_target(a.second.context("post ID가 필요하다")?, a.third)?;
+        return front(json, FrontRequest::PostHandled { project, post_id });
+    }
     let rt = runtime()?;
     // 세션 안: 조작 권한으로 붙으면(coordinator·사람의 셸 pane) Front로, 보기 권한(thread pane)이면 hook으로 보낸다.
     // 프로젝트는 생략한다(plan §8.288): Front 길이면 host가 맡은 하나를 채운다
@@ -3242,6 +3378,7 @@ fn post_cmd(json: bool, a: PostArgs) -> Result<ExitCode> {
         None
     };
     let use_hook = session && control.is_none();
+    let mut handled = None;
     let result = if a.first == "status" {
         if use_hook {
             let id = a.third.or(a.second).context("post ID가 필요하다")?;
@@ -3249,7 +3386,10 @@ fn post_cmd(json: bool, a: PostArgs) -> Result<ExitCode> {
         } else {
             let (project, post_id) = on_target(a.second.context("post ID가 필요하다")?, a.third)?;
             match post_front_call(&rt, &mut control, FrontRequest::PostStatus { project, post_id })? {
-                Ok(FrontResponse::Post { result }) => result,
+                Ok(FrontResponse::Post { result, handled: state }) => {
+                    handled = state;
+                    result
+                }
                 Ok(_) => anyhow::bail!("post 응답이 아니다"),
                 Err(e) => anyhow::bail!("{}", e.message),
             }
@@ -3286,7 +3426,7 @@ fn post_cmd(json: bool, a: PostArgs) -> Result<ExitCode> {
         } else {
             let project = project_or_here(project)?;
             match post_front_call(&rt, &mut control, FrontRequest::Post { project, input })? {
-                Ok(FrontResponse::Post { result }) => result,
+                Ok(FrontResponse::Post { result, .. }) => result,
                 Ok(_) => anyhow::bail!("post 응답이 아니다"),
                 Err(e) => anyhow::bail!("{}", e.message),
             }
@@ -3298,10 +3438,21 @@ fn post_cmd(json: bool, a: PostArgs) -> Result<ExitCode> {
         PostResult::Queued { .. } => 2,
     };
     if json {
-        println!("{}", serde_json::to_string(&result)?);
+        let mut value = serde_json::to_value(&result)?;
+        if let Some(handled) = handled {
+            value["handled"] = serde_json::json!(handled);
+        }
+        println!("{}", value);
     } else {
         match result {
-            PostResult::Accepted { id } => println!("ok {id}"),
+            PostResult::Accepted { id } => println!(
+                "ok {id}{}",
+                match handled {
+                    Some(true) => " · 처리됨",
+                    Some(false) => " · 미처리",
+                    None => "",
+                }
+            ),
             PostResult::Refused { reason, existing } => {
                 eprintln!("err {reason}{}", existing.map(|s| format!(" (기존 {s})")).unwrap_or_default())
             }
@@ -3593,7 +3744,8 @@ fn render_task_board(s: &mut String, b: &aaa_proto::TaskBoard) {
             let repo = t.repo.as_ref().map(|r| format!(" [{r}]")).unwrap_or_default();
             let thread = t.thread.as_ref().map(|x| format!(" · {x}")).unwrap_or_default();
             let pad = "  ".repeat(depth(t) + 1);
-            let _ = writeln!(s, "{pad}{mark} {}{owner}{repo}{thread}  [{}줄]", t.title, t.line);
+            let id = t.short_id.as_deref().map(|s| format!("{s} ")).unwrap_or_default();
+            let _ = writeln!(s, "{pad}{mark} {id}{}{owner}{repo}{thread}  [{}줄]", t.title, t.line);
             for p in &t.problems {
                 let _ = writeln!(s, "{pad}    형식 어긋남: {p}");
             }
@@ -3675,7 +3827,8 @@ fn render_context(s: &mut String, c: &aaa_proto::ProjectContext) {
         let repo = t.repo.as_ref().map(|r| format!(" [{r}]")).unwrap_or_default();
         let thread = t.thread.as_ref().map(|x| format!(" · {x}")).unwrap_or_default();
         let done = if t.done { " [x]" } else { "" };
-        let _ = writeln!(s, "  [{}] {}{owner}{repo}{thread}{done}", t.list, t.title);
+        let id = t.short_id.as_deref().map(|id| format!("{id} ")).unwrap_or_default();
+        let _ = writeln!(s, "  [{}] {id}{}{owner}{repo}{thread}{done}", t.list, t.title);
         if !t.notes.is_empty() {
             let n: String = t.notes.join(" ").chars().take(60).collect();
             let _ = writeln!(s, "    notes: {n}");
@@ -3774,6 +3927,30 @@ fn render_front(r: &FrontResponse) -> String {
                 rollout.steps.len(),
                 rollout.error.as_deref().unwrap_or("")
             );
+        }
+        // 웹 「배포」의 응답(관리 GUI W6a). CLI 명령은 보내지 않지만 `--json` 없이 받으면 한 줄씩 보인다
+        FrontResponse::RolloutCards { cards } => {
+            for c in cards {
+                let _ = writeln!(s, "{} {:?}: {}/{} · SHA-256 {}", c.id, c.state, c.cursor, c.steps.len(), c.sha256);
+            }
+        }
+        FrontResponse::RolloutPlan { plan } => {
+            let c = &plan.candidate;
+            let _ = writeln!(s, "후보 {}:{} · aaa {} · SHA-256 {}", c.machine, c.path, c.version, c.sha256);
+            for t in &plan.targets {
+                let _ = writeln!(
+                    s,
+                    "  {}{} {}",
+                    t.machine,
+                    if t.host { "(host)" } else { "" },
+                    t.problem.as_deref().unwrap_or("준비됨")
+                );
+            }
+        }
+        FrontResponse::DeployJobs { jobs } => {
+            for j in jobs {
+                let _ = writeln!(s, "배포 {} · {} · {:?} · {:?}", j.id, j.machine, j.work, j.state);
+            }
         }
         FrontResponse::DeployContext { project, session, allowed } => {
             let _ = writeln!(s, "coordinator {:?} · 세션 {session} · 배포 허용 {allowed}", project);
@@ -4164,6 +4341,42 @@ fn render_front(r: &FrontResponse) -> String {
         FrontResponse::AutomationRan { accepted, detail } => {
             let _ = writeln!(s, "{}: {detail}", if *accepted { "받음" } else { "이미 받음" });
         }
+        FrontResponse::Safety(v) => {
+            for r in &v.rows {
+                let note = if r.note.is_empty() { String::new() } else { format!(" ({})", r.note) };
+                let _ = writeln!(s, "{}\t{}{note}\t[{}]", r.key, r.value, r.source);
+            }
+            for w in v.warnings.iter().chain(&v.notes) {
+                let _ = writeln!(s, "{w}");
+            }
+        }
+        FrontResponse::ProfileAdmin(v) | FrontResponse::ProfileApplied { view: v, .. } => {
+            if let FrontResponse::ProfileApplied { message, warnings, .. } = r {
+                for line in std::iter::once(message).chain(warnings) {
+                    let _ = writeln!(s, "{line}");
+                }
+            }
+            for p in &v.profiles {
+                let _ = writeln!(s, "{}\t{}\t{}", p.name, p.harness, p.launch.join(" "));
+            }
+        }
+        FrontResponse::ProfilePlan(v) => {
+            for line in std::iter::once(&v.message).chain(&v.warnings) {
+                let _ = writeln!(s, "{line}");
+            }
+        }
+        FrontResponse::WorkRoot(v) => {
+            let _ = writeln!(s, "{}{}", v.path, if v.restart_required { "\t다음 agent 시작부터" } else { "" });
+        }
+        FrontResponse::WorkRootChecked(v) => {
+            let _ = writeln!(s, "점검 통과: {}", v.real_path);
+        }
+        FrontResponse::Hook(v) => {
+            let _ = writeln!(s, "codex hook: {}", if v.codex_installed { "설치됨" } else { "없음" });
+            if let Some(p) = &v.codex_problem {
+                let _ = writeln!(s, "{p}");
+            }
+        }
         FrontResponse::ProjectSettings(v) => {
             let _ = writeln!(s, "{} ({}, {:?})", v.project, v.file, v.status);
             let _ = writeln!(s, "goal: {}", v.goal);
@@ -4361,6 +4574,32 @@ fn render_front(r: &FrontResponse) -> String {
             }
         },
         FrontResponse::Context(c) => render_context(&mut s, c),
+        FrontResponse::TaskQueue { entries } => {
+            for q in entries {
+                s.push_str(&format!(
+                    "{} · {} · {:?} · {} · 모델 {} · 머신 {} · {}{}\n",
+                    q.position,
+                    q.task.title,
+                    q.state,
+                    q.task.short_id.as_deref().unwrap_or(&q.task_id),
+                    q.profile,
+                    q.machine.as_deref().unwrap_or("자동"),
+                    q.reason,
+                    q.thread.as_ref().map(|t| format!(" · {t}")).unwrap_or_default()
+                ));
+            }
+        }
+        FrontResponse::TaskArchive { entries } => {
+            for a in entries {
+                s.push_str(&format!(
+                    "{} · {} · {}\n{}\n",
+                    a.task.short_id.as_deref().unwrap_or(&a.task_id),
+                    a.task.title,
+                    a.reason,
+                    a.body
+                ));
+            }
+        }
         FrontResponse::TaskBoard(b) => render_task_board(&mut s, b),
         FrontResponse::Accounts { accounts } => {
             for a in accounts {
@@ -4445,12 +4684,12 @@ fn render_front(r: &FrontResponse) -> String {
         FrontResponse::Evaluators { .. } | FrontResponse::Evaluations { .. } | FrontResponse::Evaluation(_) => {
             s.push_str("없어짐: 자동화로 바꿨다(aaa automation convert)")
         }
-        FrontResponse::Post { result } => {
+        FrontResponse::Post { result, .. } => {
             let _ = writeln!(s, "{}", serde_json::to_string(result).unwrap());
         }
         FrontResponse::Posts { posts, .. } => {
             for p in posts {
-                let _ = writeln!(s, "{}\t{}\t{}", p.id, p.input.to, p.input.title);
+                let _ = writeln!(s, "{}\t{}\t{}\t{}", p.id, p.state, p.input.to, p.input.title);
             }
         }
         // 「답할 것」(웹 화면이 쓴다): CLI는 확인 필요 post와 답한 것을 한 줄씩 보인다

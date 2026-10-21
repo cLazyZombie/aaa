@@ -89,6 +89,7 @@ pub fn hello(agent: &Agent) -> AgentHello {
         os: std::env::consts::OS.into(),
         arch: std::env::consts::ARCH.into(),
         software: aaa_common::util::software(),
+        sha256: Some(agent.deployments.running_sha256().into()),
         // cwd.v1: `AgentRequest::Cwd`(옛 agent는 모르는 요청에 연결을 끊으므로 host는 이 표시를 보고 보낸다), rename.v1: `AgentRequest::Rename`,
         // history.v1: `AgentRequest::History`(plan §8.118)
         // file.v1: 파일 보기 `FileLocate`·`FileView`(plan §8.125), profile.v1: `SpawnSpec.profile`(plan §8.126)
@@ -106,6 +107,7 @@ pub fn hello(agent: &Agent) -> AgentHello {
             "commands.v1".into(),
             "account_auth.v1".into(),
             "account_auth.v2".into(),
+            "account_quota.v1".into(),
             "terminal.v1".into(),
             "deployment.v1".into(),
             #[cfg(target_os = "macos")]
@@ -114,6 +116,9 @@ pub fn hello(agent: &Agent) -> AgentHello {
             "deploy_stage.v1".into(),
             #[cfg(target_os = "macos")]
             "rollout_recovery.v1".into(),
+            // 웹 「배포」의 빌드 후보 읽기(`AgentRequest::DeployCandidate`, 관리 GUI W6a)
+            #[cfg(target_os = "macos")]
+            "deploy_candidate.v1".into(),
             "post.v1".into(),
             "mission.v1".into(), // N-1 host의 파일 전송
             "work_files.v1".into(),
@@ -141,6 +146,9 @@ pub fn hello(agent: &Agent) -> AgentHello {
             "diff.v1".into(),
             // task 첨부를 thread 작업 폴더로 받는다(WorkAttachWrite, plan §8.327)
             "work_attach.v1".into(),
+            // 웹 설정 관리(관리 GUI W5c): 작업 root 보기·점검·전환, Codex hook 상태·설치·제거
+            "work_root.manage.v1".into(),
+            "hook.manage.v1".into(),
         ],
         dev_mode: agent.dev_mode,
         selfcheck: agent.selfcheck.lock().unwrap().clone(),

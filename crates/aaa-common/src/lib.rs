@@ -11,6 +11,7 @@ pub mod ipc;
 pub mod panic_log;
 pub mod pr;
 pub mod process;
+pub mod quota;
 pub mod redact;
 pub mod resource;
 pub mod tls;

@@ -20,12 +20,15 @@ mod git_watch;
 mod health;
 pub mod hooks;
 pub mod identity;
+pub mod integration;
 mod journal;
 pub mod link;
 mod page;
 mod plan;
 pub mod post;
 mod pr;
+mod quota;
+mod settings_jobs;
 mod slash;
 pub mod threads;
 pub mod work_root;
@@ -332,9 +335,11 @@ impl Agent {
             }
             return result.map(Some);
         }
-        if msg.harness == "codex" {
+        if matches!(msg.harness.as_str(), "codex" | "quota") {
             // 옛 notify는 harness를 선언하지 않은 aaa 셸에서도 왔다. token·peer 검사는 계속 적용한다.
-            if msg.payload.get("type").and_then(|v| v.as_str()) != Some("agent-turn-complete") {
+            if msg.harness == "quota" {
+                anyhow::ensure!(spec.spec.harness.as_deref() == Some("claude"), "Claude 상태줄이 아니다");
+            } else if msg.payload.get("type").and_then(|v| v.as_str()) != Some("agent-turn-complete") {
                 anyhow::ensure!(
                     detect::Harness::of_session(spec.spec.harness.as_deref(), &spec.spec.argv)
                         == Some(detect::Harness::Codex),
@@ -367,6 +372,9 @@ impl Agent {
                     == aaa_common::caller::Caller::Pane(msg.session.clone())),
                 "hook peer가 이 세션 안에 없다"
             );
+        }
+        if msg.harness == "quota" {
+            return self.record_quota(&spec, &msg.payload).map(Some);
         }
         if msg.harness == "claude"
             && msg.payload.get("hook_event_name").and_then(|v| v.as_str()) == Some("SessionStart")
@@ -1258,6 +1266,18 @@ impl Agent {
                 .map(|a| a.rsplit(['/', '\\']).next().unwrap_or(a).to_string())
                 .unwrap_or_else(|| "shell".into());
         }
+        if credential.as_ref().is_some_and(|c| c.harness == "claude" && c.auth_generation.is_some()) {
+            let mut settings = hooks::claude_settings(&self.exe);
+            settings["statusLine"] = serde_json::json!({"type":"command","command":format!("'{}' hook --agent quota", self.exe.to_string_lossy().replace('\'', "'\\''"))});
+            let path = paths.dir.join("quota-settings.json");
+            util::write_json(&path, &settings)?;
+            let path = path.to_string_lossy().to_string();
+            if let Some(i) = spec.argv.iter().rposition(|a| a == "--settings").filter(|i| i + 1 < spec.argv.len()) {
+                spec.argv[i + 1] = path;
+            } else {
+                spec.argv.splice(1..1, ["--settings".into(), path]);
+            }
+        }
         let token = hex::encode(rand::random::<[u8; 16]>());
         // 세션 안의 `aaa hook`·`aaa report`가 이 agent에 사건을 보낼 곳
         spec.env.push((hooks::ENV_SOCK.into(), hooks::socket(&self.state).to_string_lossy().to_string()));
@@ -1271,6 +1291,7 @@ impl Agent {
             label: None,
             colors: *self.term_colors.lock().unwrap(),
             account_run: credential.as_ref().map(|c| c.run.clone()),
+            account_generation: credential.as_ref().and_then(|c| c.auth_generation.clone()),
         };
         util::write_json(&paths.spec(), &file)?;
         let log = std::fs::File::create(paths.log())?;
@@ -1344,6 +1365,7 @@ impl Agent {
                 self.guard_request(req).await
             }
             req @ (AgentRequest::DeployFetch { .. }
+            | AgentRequest::DeployCandidate { .. }
             | AgentRequest::DeployStage { .. }
             | AgentRequest::DeployStageStatus { .. }
             | AgentRequest::DeployStageClean { .. }) => {
@@ -1361,6 +1383,10 @@ impl Agent {
                 self.post_ack(&post_id, result);
                 return;
             }
+            AgentRequest::AccountQuota { session, generation } => self
+                .quota_snapshot(&session, &generation)
+                .map(|snapshot| AgentResponse::AccountQuota { snapshot })
+                .map_err(|_| ErrorBody::new(ErrorCode::BadRequest, "사용량 관측을 읽지 못했다")),
             AgentRequest::SpawnAccount { spec, credential } => self
                 .spawn_session_inner(spec, Some(credential))
                 .await
@@ -1685,6 +1711,8 @@ impl Agent {
                 .await
                 .map(AgentResponse::Diff)
                 .map_err(|e| ErrorBody::new(ErrorCode::BadRequest, format!("{e:#}"))),
+            AgentRequest::WorkRoot { action } => settings_jobs::work_root(&self.state, action).await,
+            AgentRequest::CodexHook { install } => settings_jobs::codex_hook(install).await,
         };
         if let Some(reply) = reply {
             let _ = reply.json(&LinkMsg::Res { id, result: direct.into() }).await;
@@ -2195,6 +2223,7 @@ mod tests {
                 label: None,
                 colors: None,
                 account_run: None,
+                account_generation: None,
             },
             info,
         )

@@ -13,3 +13,24 @@
 .admin-dialog .modal-body p, .admin-dialog .modal-body ul { margin: 0; }
 .admin-dialog .modal-body ul { padding-left: 18px; overflow-wrap: anywhere; }
 .admin-files { max-height: 180px; overflow: auto; padding: 6px 8px 6px 24px !important; border: 1px solid var(--border); border-radius: var(--radius-md); font-size: var(--fs-xs); }
+/* 「안전」·「profile」·작업 폴더·hook(관리 GUI W5c) */
+.admin-select { min-height: 32px; margin-left: auto; }
+.admin-actions { display: flex; gap: 6px; margin-left: auto; }
+.admin-argv { flex-basis: 100%; font-size: var(--fs-xs); overflow-wrap: anywhere; color: var(--text-muted); }
+.admin-fieldset { border: 1px solid var(--border); border-radius: var(--radius-md); margin: 10px 0 0; padding: 8px 10px; display: flex; flex-direction: column; gap: 6px; align-items: flex-start; }
+.admin-fieldset legend { font-size: var(--fs-sm); padding: 0 4px; }
+.admin-plan { display: grid; grid-template-columns: max-content 1fr; gap: 4px 12px; margin: 6px 0; }
+.admin-plan dt { color: var(--text-muted); font-size: var(--fs-sm); }
+.admin-plan dd { margin: 0; overflow-wrap: anywhere; }
+.admin-block { margin-top: 12px; }
+.settings-notes { margin: 8px 0 0; padding-left: 18px; font-size: var(--fs-sm); }
+@media (max-width: 640px) { .admin-plan { grid-template-columns: 1fr; } .admin-plan dd { margin-bottom: 6px; } }
+/* 머신 줄 요약·상세(웹 머신 추가 M0, plan §8.372). dl은 줄마다 div로 묶어 휴대폰에서 이름 아래 값이 온다 */
+.machine-line { font-size: var(--fs-sm); overflow-wrap: anywhere; }
+.machine-detail { flex-basis: 100%; padding: 4px 0 2px; }
+.machine-detail .admin-plan { margin: 0; }
+.machine-row { display: contents; }
+.machine-warn { color: var(--status-blocked); }
+.machine-detail .mono { font-family: var(--font-mono); font-size: var(--fs-xs); overflow-wrap: anywhere; }
+.machine-features { margin-top: 8px; font-size: var(--fs-sm); }
+.machine-features p { margin: 6px 0 0; font-size: var(--fs-xs); overflow-wrap: anywhere; color: var(--text-muted); }

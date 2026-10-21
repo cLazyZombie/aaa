@@ -1,6 +1,10 @@
 //! aaa의 경계 계약. Rust 타입이 정본이고 웹 TypeScript 타입은 여기서 생성한다(`web/src/gen/proto.ts`).
 
+pub mod task_queue;
+pub use task_queue::*;
 pub mod account;
+pub mod quota;
+pub use quota::*;
 pub mod ci;
 pub use account::*;
 mod git_watch;
@@ -21,6 +25,8 @@ pub mod orch;
 pub mod post;
 pub use legacy_special::*;
 pub use post::*;
+pub mod settings_admin;
+pub use settings_admin::*;
 pub mod usage;
 pub mod version;
 
@@ -52,6 +58,14 @@ pub fn typescript_bindings() -> String {
     let decls = [
         SecretText::decl(&cfg),
         AccountView::decl(&cfg),
+        QuotaSource::decl(&cfg),
+        QuotaProblem::decl(&cfg),
+        QuotaFreshness::decl(&cfg),
+        QuotaWindow::decl(&cfg),
+        QuotaSnapshot::decl(&cfg),
+        AccountQuotaWindow::decl(&cfg),
+        AccountQuota::decl(&cfg),
+        AccountQuotaReport::decl(&cfg),
         AccountHealth::decl(&cfg),
         AccountDefault::decl(&cfg),
         AccountLoginView::decl(&cfg),
@@ -81,7 +95,13 @@ pub fn typescript_bindings() -> String {
         Connection::decl(&cfg),
         MachineView::decl(&cfg),
         MachineHealth::decl(&cfg),
+        MachineSelfcheck::decl(&cfg),
         HealthProblem::decl(&cfg),
+        QueueState::decl(&cfg),
+        QueueOp::decl(&cfg),
+        TaskChoicePin::decl(&cfg),
+        TaskReservation::decl(&cfg),
+        ArchivedTask::decl(&cfg),
         TaskView::decl(&cfg),
         TaskListView::decl(&cfg),
         TaskThread::decl(&cfg),
@@ -133,6 +153,11 @@ pub fn typescript_bindings() -> String {
         RolloutView::decl(&cfg),
         RolloutCard::decl(&cfg),
         RolloutCardStep::decl(&cfg),
+        DeployCandidateView::decl(&cfg),
+        RolloutTargetView::decl(&cfg),
+        RolloutPlanView::decl(&cfg),
+        DeployWork::decl(&cfg),
+        DeployJobCard::decl(&cfg),
         FrontResponse::decl(&cfg),
         FrontEvent::decl(&cfg),
         SubmitStage::decl(&cfg),
@@ -178,6 +203,8 @@ pub fn typescript_bindings() -> String {
         QuestionAnswerView::decl(&cfg),
         SummaryEntry::decl(&cfg),
         FollowUpLine::decl(&cfg),
+        SummaryStepState::decl(&cfg),
+        SummaryStep::decl(&cfg),
         ThreadSummaryView::decl(&cfg),
         FlowEvent::decl(&cfg),
         AgentActivity::decl(&cfg),
@@ -208,6 +235,16 @@ pub fn typescript_bindings() -> String {
         AutomationReview::decl(&cfg),
         AutomationTrashEntry::decl(&cfg),
         ProjectSettingsView::decl(&cfg),
+        SettingsScope::decl(&cfg),
+        SafetyRowView::decl(&cfg),
+        SafetyView::decl(&cfg),
+        ProfileAdminRow::decl(&cfg),
+        ProfileAdminView::decl(&cfg),
+        ProfileChangeReq::decl(&cfg),
+        ProfilePlanView::decl(&cfg),
+        WorkRootView::decl(&cfg),
+        WorkRootCheckView::decl(&cfg),
+        HookView::decl(&cfg),
         ResolvePreview::decl(&cfg),
         LibraryFile::decl(&cfg),
         LibraryView::decl(&cfg),
@@ -254,6 +291,19 @@ pub fn typescript_bindings() -> String {
 
 #[cfg(test)]
 mod ts_tests {
+    #[test]
+    fn old_summary_response_has_no_invented_progress() {
+        let old = serde_json::json!({
+            "project": "demo", "thread": "t-0001", "text": "# 목표\n표시 확인", "goal": "표시 확인",
+            "origin": null, "now": ["화면 확인"], "done": ["준비"], "decided": [], "changed": [], "decisions": [],
+            "at_ms": 1, "by": "coordinator", "follow_ups": 0, "pending": 0, "pending_lines": [], "task": null
+        });
+        let v: super::ThreadSummaryView = serde_json::from_value(old).unwrap();
+        assert!(v.progress.is_empty());
+        assert_eq!(v.now, ["화면 확인"]);
+        assert_eq!(v.done, ["준비"]);
+    }
+
     /// 생성된 TS 타입이 Rust 정본과 같은지 본다. 다르면 AAA_UPDATE_TS=1로 다시 만든다.
     #[test]
     fn typescript_bindings_are_current() {

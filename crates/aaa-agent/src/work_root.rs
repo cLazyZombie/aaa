@@ -4,6 +4,7 @@ use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result, bail};
 
+pub mod admin;
 mod registry;
 pub(crate) use registry::{Lease, shared};
 pub use registry::{RootInfo, RootState, RootTransaction, activate, inspect, probe};

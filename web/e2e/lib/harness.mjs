@@ -10,6 +10,7 @@ import http from "node:http";
 import net from "node:net";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { terminateSessionHosts } from "./session-cleanup.mjs";
 
 const require = createRequire(path.join(process.env.NODE_PATH ?? process.cwd(), "noop.js"));
 const { chromium, webkit } = require("playwright");
@@ -156,20 +157,8 @@ function freePort() {
   });
 }
 
-/** session host는 setsid로 분리돼 있다. meta.json의 PID 중 명령줄이 이 실험실을 가리키는 것만 끝낸다. */
-function killSessionHosts() {
-  const dir = `${root}/s/agent/sessions`;
-  if (!fs.existsSync(dir)) return;
-  for (const id of fs.readdirSync(dir)) {
-    try {
-      const meta = JSON.parse(fs.readFileSync(`${dir}/${id}/meta.json`, "utf8"));
-      const cmd = execFileSync("ps", ["-o", "command=", "-p", String(meta.host_pid)], { encoding: "utf8" });
-      if (cmd.includes(`${dir}/${id}`)) process.kill(meta.host_pid, "SIGKILL");
-    } catch {
-      // 이미 끝났다
-    }
-  }
-}
+/** session host와 파일을 쓰는 자손이 모두 끝난 뒤 돌아온다. */
+const killSessionHosts = () => terminateSessionHosts(`${root}/s/agent/sessions`);
 
 const screenText = (page) => page.locator(".xterm-rows").innerText();
 /**
@@ -434,7 +423,8 @@ async function inList(p, target) {
   await item.waitFor({ state: "attached" });
   // 닫히는 중인 drawer의 항목은 움직임이 끝날 때까지 보인다: 끝난 뒤에 본다(transition의 finished)
   await drawerSettled(p);
-  const toggle = p.locator(".view [data-testid='drawer-toggle']");
+  // 보고서·답할 것처럼 숨긴 채 그려 둔 화면의 단추도 DOM에는 남는다. 지금 보이는 화면의 단추만 누른다.
+  const toggle = p.locator(".view [data-testid='drawer-toggle']:visible");
   if (!(await item.isVisible()) && (await toggle.isVisible()) && (await toggle.getAttribute("aria-expanded")) !== "true") {
     await toggle.click();
     await p.locator("#workspace-drawer.is-open").waitFor();
@@ -1092,14 +1082,14 @@ async function pushLab(page) {
 
 /** 실제 coordinator pane 자식 CLI로 사용자 post를 보낸다. 웹·밖 CLI가 coordinator를 자칭하지 않는다. 기본은 전체 완료,
  * `request`면 확인 필요(제목은 질문 요약·추천) */
-async function coordinatorPost({ request = false, title = "전체 완료" } = {}) {
+async function coordinatorPost({ request = false, title = "전체 완료", body } = {}) {
   const opened = aaa("project", "open", "demo", "--profile", "fake");
   const coord = opened.pane.id;
   await waitOutput(coord, "fake>");
   const id = crypto.randomBytes(16).toString("hex");
   const file = `${root}/post-${id}`;
   const quote = (s) => `'${s.replaceAll("'", "'\\''")}'`;
-  fs.writeFileSync(`${file}.body`, id);
+  fs.writeFileSync(`${file}.body`, body ?? id);
   const kind = request ? "--request --needs-user --topic user-action" : "--notice --topic task-complete";
   fs.writeFileSync(`${file}.sh`, `${quote(AA)} --json post user ${kind} --title ${quote(title)} --body-file ${quote(`${file}.body`)} --post-id ${id} > ${quote(`${file}.out`)} 2>&1\nprintf 'post-${id}-done\\n'\n`);
   aaa("pane", "run", coord, `post-probe ${file}.sh`);
@@ -1151,7 +1141,7 @@ async function runSpec(spec, labEnv = {}) {
     pushServer.close();
     usageServer.close();
     for (const tag of [...procs.keys()]) await stop(tag);
-    killSessionHosts();
+    await killSessionHosts();
     console.log(steps.join("\n"));
     if (failed) {
       console.log(`실험실 기록을 남겼다: ${root}`);

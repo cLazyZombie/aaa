@@ -126,6 +126,48 @@ fn fd_count(pid: u32) -> usize {
     }
 }
 
+/// 시간 상한·판정은 그대로 두고, 실패한 그 host와 단발 Front 요청의 상태를 보존한다.
+/// 웹 EMFILE과 Front 접속 사이에 fd가 풀렸는지, 요청이 성공했는지/연결 전 실패했는지 구분할 근거다.
+fn wait_emfile(lab: &Lab, pid: u32, source: &str, pending: Option<u32>) {
+    fn command_state(name: &str, result: std::io::Result<std::process::Output>) {
+        match result {
+            Ok(out) => eprintln!(
+                "{name}: {}\n{}{}",
+                out.status,
+                String::from_utf8_lossy(&out.stdout),
+                String::from_utf8_lossy(&out.stderr)
+            ),
+            Err(e) => eprintln!("{name} 조회 실패: {e}"),
+        }
+    }
+    let marker = format!("source=\"{source}\"");
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        wait_for(&format!("{source} 실제 EMFILE"), T, || lab.log("host").contains(&marker).then_some(()));
+    }));
+    if let Err(failure) = result {
+        eprintln!("EMFILE 진단: source={source}, host_pid={pid}, pending_front_pid={pending:?}");
+        eprintln!("단발 Front 요청 stdout·stderr:\n{}", lab.log("pending-front"));
+        eprintln!("host 로그:\n{}", lab.log("host"));
+        #[cfg(target_os = "linux")]
+        match std::fs::read_dir(format!("/proc/{pid}/fd")) {
+            Ok(entries) => {
+                for entry in entries.flatten() {
+                    eprintln!("host fd {:?}: {:?}", entry.file_name(), std::fs::read_link(entry.path()));
+                }
+            }
+            Err(e) => eprintln!("host fd 조회 실패: {e}"),
+        }
+        #[cfg(not(target_os = "linux"))]
+        command_state("host OS fd 목록", Command::new("lsof").args(["-nP", "-p", &pid.to_string()]).output());
+        let pids = pending.map_or_else(|| pid.to_string(), |p| format!("{pid},{p}"));
+        command_state(
+            "관측한 host·Front PID 상태",
+            Command::new("ps").args(["-o", "pid,ppid,stat,etime,command", "-p", &pids]).output(),
+        );
+        std::panic::resume_unwind(failure);
+    }
+}
+
 #[test]
 fn low_soft_limit_is_raised_for_host_and_agent_and_web_bursts_release_fds() {
     let (mut lab, node, pid, addr) = setup(8192);
@@ -166,12 +208,11 @@ fn exhausted_hard_limit_warns_once_and_acceptors_recover() {
     burst.ready();
     wait_for("실제 EMFILE", T, || lab.log("host").contains("host 파일 한도 소진").then_some(()));
     // EMFILE 중 Front 접속도 시도한다. 예전 while-let accept는 이 오류에 listener를 영구히 끝냈다.
-    let (_, pending_front) = lab.spawn_piped("pending-front", &node, &["--json", "status"]);
-    wait_for("Front accept도 EMFILE", T, || lab.log("host").contains("source=\"front accept\"").then_some(()));
+    let pending_front = lab.spawn_command("pending-front", node.cmd(&["--json", "status"]));
+    wait_emfile(&lab, pid, "front accept", Some(pending_front));
     burst.close();
     // macOS accept의 EMFILE은 그때 대기하던 socket을 닫을 수 있다. 그 요청의 성공을 약속하지 않고,
     // 종료를 울타리로 삼아 이후 새 Front 요청이 처리되는지를 아래에서 확인한다.
-    drop(pending_front);
     let _ = lab.wait_exit("pending-front", T);
     wait_for("EMFILE 뒤 fd 회수", T, || (fd_count(pid) <= baseline + 2).then_some(()));
     let items = wait_for("시스템 경고 저장", T, || {

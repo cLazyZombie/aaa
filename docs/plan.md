@@ -6041,6 +6041,7 @@ L4 후속(10-20 00시 사용자 관찰): 멈춤 상태의 후보 예약과 재�
 
 ### 8.321 대화창 컨텍스트 게이지 1단계(10-20, t-0502)
 
+- **10-21 변경(t-0570).** 휴대폰 폭(기존 휴대폰 배치와 같은 700px 이하)에서는 대화 입력칸의 컨텍스트 게이지 전체를 숨긴다. 빈 입력칸·focus·키보드·사용량에 관계없이 적용한다. 패드·데스크톱은 아래의 기존 표시·치는 중 숨김·펼침을 유지한다. 이전에는 글/첨부 여부만 보았고 휴대폰 전용 숨김 조건이 없어 빈 입력칸에 고리가 나타났다.
 - **요청.** 사용자 10-20 「대화창에서 사용한 컨텍스트를 보여주고 싶어」, 「%, over하면 실제 k」, 시안(library/t-0502) §7 「추천대로 해」(1단계는 안 A 입력칸 게이지만, 1,000k 넘으면 `1050k`, 휴대폰도 숫자를 늘 보임), 「타이핑시에는 보이지 않게도 가능해?」. slash 확인창·숨김(§7-3)은 2단계, 목록 줄 표지(안 C)는 3단계 선택으로 남긴다.
 - **실측: 붙여 넣은 `/compact`.** 실험실에서 실제 harness를 띄워 웹 입력칸이 보내는 꼴(bracketed paste + Enter)로 보냈다. Claude 2.1.304는 383ms에 정리 표지, 7.9초에 끝났다. Codex 0.163은 394ms에 표지, 3.5초에 끝났다. 둘 다 명령으로 받아 따로 보내는 길은 필요 없다. Claude 기록은 `<command-name>/compact</command-name>` 줄(사람 글이 아님)이고, Codex 실측 rollout에는 `/compact` 글이 없이 `compacted` 줄만 있다.
 - **값과 출처(agent `plan.rs`).** 2초마다 이어 읽던 대화 기록의 `plan` 사건에 `context`를 실어 `AgentStatus.context`로 보낸다(모든 기기·목록이 같은 값, 응답 뒤 2초 이하).
@@ -6419,6 +6420,7 @@ L4 후속(10-20 00시 사용자 관찰): 멈춤 상태의 후보 예약과 재�
 
 ### 8.348 웹 대화 입력칸 한 줄 높이 수리(10-21, t-0546, 사용자 10-20 「한 줄을 다 채우지 않았는데 두 줄 높이」)
 
+- 아래 펼친 폭 판정은 §8.364(t-0563)의 사용자 선택 1A로 대체됐다. 짧으면 한 줄 높이와 단추만 있는 밑 줄 금지는 유지하며, 긴 글에서도 단추를 옆에 둔다.
 - **원인.** §8.215의 한 줄 판정은 **단추 옆 폭**(상자 폭 − 그림 단추 칸 − 보내기 칸)에서 쟀다. 그 폭보다 길고 펼친 글 칸 폭보다 짧은 글은
   여러 줄 배치로 가서 펼친 한 줄에 다 들어가고, 밑 줄엔 그림·보내기 단추만 남았다. 데스크톱 상자 818px에서 글 폭 690~780px,
   iPhone 세로 상자 364px에서 252~340px 구간이다. 사용자 캡처의 글(약 695px)이 이 구간이며 상자는 44px 대신 96px였다.
@@ -6502,7 +6504,7 @@ L4 후속(10-20 00시 사용자 관찰): 멈춤 상태의 후보 예약과 재�
 - **요청.** 확정 계획 t-0456 plan-revised §5 W5의 둘째 묶음(§8.351의 1A로 나눔): 머신 등록 승인·폐기, 웹 공개, 보고서 올리기·가져오기·키 교체를 웹 조작 기기에서. 등록 승인은 M1(웹 머신 추가)이 다시 쓸 공용 요청으로 둔다. 시작 때 물은 다섯은 추천대로 정했다(10-21, 1A~5A): 웹 승인도 새 머신 화면의 6자리 코드와 이름 확인, 마지막 조작 기기는 웹에서 폐기하지 않고(host CLI만) 이 기기 자신의 폐기는 「이 화면이 끊깁니다」 확인, 공개 주소로 연 화면에서 끄면 「이 화면이 끊길 수 있음」과 다른 경로를 보이고 「다른 경로를 확인했다」를 켜야 끄기가 열림(켜기는 확인 창 하나), 올리기는 파일 여러 개나 폴더 하나(파일당 16MB·합계 64MB, 사용자 보고서는 맨 위 index.html), 가져오기(`library import`)는 웹에 넣지 않고 키 교체 확인 창에 살아 있는 공유 링크 수와 「모두 끊긴다」.
 - **proto(FRONT_API 1.80, 더하기만).** 웹 조작 기기에 `enroll_open`·`enroll_pending`·`enroll_approve`·`machine_revoke`·`web_publish`·`web_publish_off`·`library_rotate`를 연다(이전엔 host 세션 밖 CLI만). 새 `enroll_close`(CLI `aaa machine enroll --close`), `library_upload_publish{project?, upload, name, files, to_user, title?}`, `pending`에 `open_until_ms`(등록 창이 닫히는 시각), 웹 events 사건 `enroll`(창 열기·닫기, 요청 들어옴·취소, 승인·거부). 옛 host는 웹 요청을 거부하고 웹은 1.80 미만이면 이 단추들을 그리지 않는다.
 - **권한.** 사람 판정(§8.333의 `call_from`)은 그대로: pane 안 `local:…@…`·worker·evaluator·detached는 Local이어도 거부하고 `enroll_close`·`library_rotate`·`library_upload_publish`도 더했다. Reader는 모두 거부한다. 웹(`device:`)에서 host 머신을 폐기하거나, 남은 조작 기기가 하나일 때 그 기기를 폐기하면 host가 `forbidden`으로 거부한다(host 터미널의 `aaa web revoke`는 그대로). 세기와 폐기는 한 잠금 안이라 두 조작 기기가 서로를 함께 폐기해도 하나는 남는다. 등록 코드는 세 번 틀리면 그 요청을 버린다(기존).
-- **올리기.** `POST /api/v1/projects/<p>/library-uploads/<올리기>?path=<보고서 안 경로>`(조작 기기, 본문 16MiB)는 host 상태 폴더 `library-uploads/<올리기>/<경로>`에 임시 파일 뒤 rename으로 쓴다. 올리기 이름은 웹이 만든 소문자 hex 32자, 경로는 library 사본 규칙(`safe_rel`: 숨은 이름·`..`·절대·역슬래시 거부). 한 올리기에 합계 64MiB·1000개(같은 경로를 다시 올리면 그 파일을 빼고 센다). `library_upload_publish`는 그 폴더를 CLI와 같은 `library_publish`(사본, 이름 규칙·사용자 보고서 index.html·library 상한·사용자 알림)로 등록하고 성공하면 폴더를 지운다. 실패하면 두어 고쳐 다시 등록한다. 손대지 않은 지 하루 넘은 올리기는 다음 올리기 때 지운다(쓰는 중인 올리기는 두고, 쓸 때마다 그 폴더 시각을 새로 한다). 등록 요청의 `files`(웹이 올린 수)와 올린 자리의 파일 수가 다르면(통째로 치워져 0이어도) `conflict`로 거부하고 웹은 다음 「올리기」를 새 자리에 처음부터 한다: 치워진 뒤 나머지만 올라온 반쪽 보고서를 등록하지 않는다. 등록은 쓰기와 같은 잠금 안이라 읽는 동안 다른 쓰기의 치우기가 지우지 않는다. host(macOS 기본 볼륨)가 한 파일로 보는 대소문자·유니코드 정규화만 다른 이름은 웹이 고를 때 막는다. 원본이 host 상태 폴더라 경로 성분의 thread 번호를 근원 thread로 읽지 않는다(이름의 번호만). 감사 기록 `library_upload`.
+- **올리기.** `POST /api/v1/projects/<p>/library-uploads/<올리기>?path=<보고서 안 경로>`(조작 기기, 본문 16MiB)는 host 상태 폴더 `library-uploads/<올리기>/<경로>`에 임시 파일 뒤 rename으로 쓴다. 올리기 이름은 웹이 만든 소문자 hex 32자, 경로는 library 사본 규칙(`safe_rel`: 숨은 이름·`..`·절대·역슬래시 거부). 한 올리기에 합계 64MiB·1000개(같은 경로를 다시 올리면 그 파일을 빼고 센다). `library_upload_publish`는 그 폴더를 CLI와 같은 `library_publish`(사본, 이름 규칙·사용자 보고서 index.html·library 상한·사용자 알림)로 등록하고 성공하면 폴더를 지운다. 실패하면 두어 고쳐 다시 등록한다. 손대지 않은 지 하루 넘은 올리기는 다음 올리기 때 지운다(쓰는 중인 올리기는 두고, 쓸 때마다 그 시각을 새로 한다. 시각은 §8.358의 표지 파일). 등록 요청의 `files`(웹이 올린 수)와 올린 자리의 파일 수가 다르면(통째로 치워져 0이어도) `conflict`로 거부하고 웹은 다음 「올리기」를 새 자리에 처음부터 한다: 치워진 뒤 나머지만 올라온 반쪽 보고서를 등록하지 않는다. 등록은 쓰기와 같은 잠금 안이라 읽는 동안 다른 쓰기의 치우기가 지우지 않는다. host(macOS 기본 볼륨)가 한 파일로 보는 대소문자·유니코드 정규화만 다른 이름은 웹이 고를 때 막는다. 원본이 host 상태 폴더라 경로 성분의 thread 번호를 근원 thread로 읽지 않는다(이름의 번호만). 감사 기록 `library_upload`.
 - **웹.** 설정 창 「머신」(폰 및 기기 다음): 등록 창 열기(5·10·30·60분)·남은 분·닫기, 승인을 기다리는 머신(이름·fingerprint 앞부분)과 「승인…」 창(6자리 코드, 공백·하이픈 무시), 등록된 머신(연결·끊김은 host `state` 사건, host 머신은 폐기 단추 없음)과 폐기 확인 창. 「폰 및 기기」: 마지막 조작 기기의 폐기 단추를 끄고 까닭을 적음, 이 기기 폐기 확인 창, 「tailnet에 공개」(확인 창)·「공개 끄기」(aaa가 만든 공개만; 끈 뒤 다른 경로는 host Mac의 loopback 주소와 그리로의 ssh 포트 전달 — host가 tailnet 이름의 http Host를 받지 않으므로 그것은 경로로 내지 않는다). 보고서 화면 「보고서 올리기」 창(파일·폴더 고르기, 올릴 목록과 뺀 숨은 파일 수, 이름·사용자 보고서·제목, 파일마다 올린 수). 「이 aaa」 → 「공유 링크」 → 「키 교체…」.
 - **검증.** host 유닛 `library_upload::tests`(권한·경로·이름·합계 상한·다시 올리기, 등록과 폴더 지움, 사용자 보고서 index.html, 세션 안·Reader 거부)·`pairing_tests::the_web_keeps_its_last_controller_and_the_host_machine`·`pairing_tests::trust_management_requires_a_person_outside_the_session`(조작 기기가 등록 창을 열고 Reader는 거부), 웹 유닛 `adminModel.test.mjs`, 웹 E2E `60-admin`(가짜 `tailscale`·같은 Mac의 둘째 agent, 데스크톱·Reader·휴대폰 390). 절차는 [시험](testing.md).
 
@@ -6520,7 +6522,186 @@ L4 후속(10-20 00시 사용자 관찰): 멈춤 상태의 후보 예약과 재�
   유지한다. 전체 macOS gate·Windows cross·공개 검사 뒤 착지 창을 기다리며 실제 Windows 통과는
   main push 뒤 windows-2025 CI로만 판정한다. I6 WIP는 별도 보존한다.
 
-### 8.357 aaa install I6 대화형 검토·계획 결속 승인(10-21, t-0485)
+### 8.357 웹 profile·safety·작업 폴더·hook 관리(10-21, t-0538 관리 GUI W5c)
+
+- **요청.** 확정 계획 t-0456 plan-revised §5 W5의 셋째 묶음(§8.351의 1A로 나눔): profile·safety·work root·hook을 웹 조작 기기에서. 인수 조건 「임의 경로·명령 거부」를 어디까지 적용할지 물은 넷은 추천대로 정했다(10-21, 사용자 위임 1A~4A): 웹은 모든 profile의 실효값을 보고 claude·codex·shell profile의 더하기·인자 고치기·지우기와 thread·coordinator 허용 목록을 미리보기 → 적용(파일 판 대조)으로 하되 custom profile의 실행 명령은 host CLI로만, safety는 모든 key의 값·출처를 보이고 yolo·start_threads·trust_screens·coordinator_deploy만 바꿈(yolo 켜기는 한 번 더 확인, `*_agent_args`·`routine_commands`는 읽기만), work root는 머신마다 다음 시작 설정·마지막 시작 기록을 보고 「점검」(「검사 파일을 만듭니다」 안내 뒤 쓰기·읽기·삭제) 뒤 같은 화면에서 점검을 통과한 절대 경로만 저장(다음 agent 시작부터), hook은 머신마다 상태와 「설치」·「제거」(그 머신 agent의 인자 없는 고정 작업).
+- **proto(FRONT_API 1.81, 더하기만).** Front `safety_show{project?, scope}`·`safety_set{project?, scope, key, value?, expected}`·`profile_admin`·`profile_plan{project?, change}`·`profile_apply{project?, change, expected}`·`work_root_show|check|set{machine, …}`·`hook_status{machine}`·`hook_set{machine, install}`, 답 `safety`·`profile_admin`·`profile_plan`·`profile_applied`·`work_root`·`work_root_checked`·`hook`. `scope`는 이 host 프로젝트(`[safety.<p>]`) 또는 모든 프로젝트 기본(`[safety.default]`). `expected`는 웹이 읽은 host.toml sha256이고 다르면 `conflict`다(`file_rev`로 파일마다 하나씩 쓴다). Agent `work_root{action: show|check|set}`(기능 `work_root.manage.v1`)·`codex_hook{install?}`(`hook.manage.v1`). 옛 agent는 기능이 없어 host가 `unavailable`(그 머신 aaa 갱신 안내)로 답하고, 웹은 1.81 미만 host면 이 쪽을 그리지 않는다.
+- **코드 자리.** CLI `aaa work-root`·`aaa integration install|uninstall codex`의 본체를 aaa-agent로 옮겼다(`work_root::admin`·`integration`, CLI 출력은 그대로). host `settings_admin`은 CLI `aaa safety`·`aaa profile`과 같은 `aaa_config` 함수(`safety::set_in`·`set_profiles_in`·`set_default_profile_in`·`profile_edit::apply_in`)를 쓰고, host.local.toml·`[safety]` 표 하나가 고친 값을 덮으면 CLI `shadowed`와 같은 경고를 답에 싣는다.
+- **임의 명령 막기.** 웹 요청에는 profile의 `command`·`env` 칸이 없다. host는 custom profile을 웹에서 만들기·고치기(harness를 custom으로 바꾸기 포함)·지우기를 `forbidden`으로 거부하고, safety는 넷 밖의 key를 거부한다. host.local.toml이 정한 profile도 웹에서 더하기·고치기·지우기를 거부하고 「host.local.toml에서」로 보인다: local은 필드마다 덮으므로 host.toml만 고치면 custom 실행 명령에 웹 인자가 붙거나 겹친 결과가 검증에 실패해 host 설정 전체가 읽히지 않을 수 있다. host.toml 글과 env 값은 웹에 보내지 않는다(env는 이름만, custom 실행 명령은 「(실행 명령)」). TOML 오류는 줄 번호(바이트로 세어 `aaa config check`와 같다)와 까닭만 싣고, 겹친 설정의 형식(타입) 오류는 까닭 없이 `aaa config check` 안내만 싣는다(toml_edit 오류 글은 그 줄 원문을, serde 형식 오류 글은 값 자체를 찍어 env 값이 나갈 수 있다). Codex 설정 오류도 맨 위 까닭만 싣는다. **남는 한계:** claude·codex profile의 인자는 웹에서 고칠 수 있다. 그 harness가 받는 인자(claude `--settings`의 hook·`--mcp-config`, codex `-c`)로 명령을 띄울 수 있어 `*_agent_args`와 같은 힘이다. 1A는 인자 고치기를 웹에 열었으므로 막지 않고, 적용 전 미리보기에 실제 실행 인자(`launch_flags`)를 보인다.
+- **권한.** 바꾸는 요청(`safety_set`·`profile_apply`·`work_root_check`·`work_root_set`·`hook_set`)은 사람 판정(§8.333의 `call_from`)에 더했다: pane 안 `local:…@…`·worker·evaluator·detached는 Local이어도 거부한다. 읽기(`safety_show`·`profile_admin`·`profile_plan`·`work_root_show`·`hook_status`)도 조작 권한이다(Reader 거부): host 설정 경로·실행 인자·머신 폴더를 보인다. 감사 기록 `safety_set`·`profile_apply`·`work_root_check`·`work_root_set`·`hook_install`·`hook_uninstall`.
+- **덮임과 「기본」.** 고친 값이 닿지 않으면 답의 경고로 알린다: host.local.toml의 같은 표·key, `[safety]` 표 하나의 같은 key, 모든 프로젝트 기본을 고칠 때 이 host 프로젝트 표의 같은 key. safety 줄마다 이 표의 값을 지웠을 때(「기본」) 되는 값(`below`)을 주고, 웹은 그것이 yolo on이면 「기본」 고르기도 yolo 켜기 확인을 받는다. 보기·목록은 판(sha256)을 내용보다 먼저 읽는다(사이에 쓰기가 끼면 낡은 판이라 conflict로 끝난다). 웹 고치기는 고친 칸만 보내고, 미리보기 판이 화면이 읽은 판과 다르면 다시 읽는다(그사이 터미널에서 고친 다른 칸을 되돌리지 않는다). `below`는 host.local.toml의 같은 표·key와 (프로젝트 표면) `[safety]` 표 하나가 그 key를 정하면 지금 값 그대로다(웹은 host.toml만 지운다). 프로젝트가 아직 없는 host에서도 모든 프로젝트 기본과 profile 자체(더하기·고치기·지우기·기본값)는 되고, 웹 허용 목록은 모든 프로젝트 기본으로 연다.
+- **작업 폴더.** host는 `~`·상대 경로를 agent에 보내기 전에 거부한다(Unix `/…`, Windows `C:\…`·`C:/…`만). agent는 `set`에서 저장 전에 같은 점검을 다시 하고 `agent.local.toml`의 두 key만 쓴다(CLI `aaa work-root set`과 같다). agent는 보기·점검·전환·hook의 파일 I/O를 blocking thread에서 한다(끊긴 볼륨이 link runtime을 붙잡지 않는다). 도는 agent·thread는 그대로이고 다음 agent 시작부터 닿는다. host.toml은 바꾸지 않는다.
+- **웹.** 설정 창 「안전」(계정 다음): 이 프로젝트·모든 프로젝트 기본 고르기, key마다 값·뜻·출처·까닭, 넷은 「바꾸기…」(값 또는 「기본」), yolo 켜기 확인 창, 바꾼 뒤 적용 시점 알림과 덮임 경고, 그사이 바뀐 판은 「그사이 host 설정이 바뀌어 쓰지 않았다」 뒤 다시 읽음. 「profile」: profile마다 harness·실제 실행 인자·env 이름, 「고치기」·「지우기」(custom은 「host 터미널에서」, 기본 profile 고치기는 같은 이름 더하기), 「profile 더하기」 창(harness claude·codex·shell, model, effort, 설명, 인자 줄마다 하나) → 「적용할까요?」 창(지금·적용 뒤 실행 인자, 경고) → 적용, 허용 목록(모든 profile 또는 고른 profile)·기본 profile도 미리보기 → 적용. 「머신」 아래 「작업 폴더·hook」: 연결된 머신 고르기, 다음 시작·마지막 시작 기록·이전 폴더·재시작 필요, 절대 경로·mount 칸, 「점검…」(검사 파일 안내) → 「전환…」(점검한 그 경로·mount일 때만), Claude는 실행마다 주입이라는 안내와 Codex 전역 hook 「설치…」·「제거…」(설치 뒤 Codex 신뢰는 그 머신에서 사람이 답한다는 안내).
+- **검증.** host 유닛 `settings_admin::tests`(host.local.toml profile 거부, 모든 프로젝트 기본의 덮임 경고와 「기본」 값, TOML 오류에 원문 없음, 프로젝트 없는 host, 넷만 바꿈·판 대조·표 고르기·default로 지우기, custom 만들기·고치기·지우기 거부와 env 값·실행 명령 안 보임, 미리보기는 쓰지 않음·적용은 미리 본 실행 인자, 허용 목록·기본값은 있는 이름만, 세션 안 agent·Reader 거부, 절대 경로만), `msg.rs` `control_classification`, 웹 유닛 `settingsModel.test.mjs`, 웹 E2E `61-settings-admin`(실험실 CODEX_HOME, 데스크톱·Reader·휴대폰 390). 절차는 [시험](testing.md).
+
+### 8.358 웹 올리기 「쓰는 중」 시각을 표지 파일로(10-21, t-0538, W5b Windows 수리)
+
+- **실제 실패.** main 0a8c294f의 windows-2025 CI에서 `library_upload::tests::a_stale_upload_goes_away_but_the_one_being_written_stays`가 `Access is denied`(os error 5)로 실패했다. 시험은 폴더를 `File::open`해 시각을 바꾸는데, Windows는 폴더를 그렇게 열지 못한다.
+- **제품도 같은 결함.** `library_upload_put`도 같은 방식(`File::open(폴더).set_modified(지금)`)으로 쓰는 중인 올리기의 시각을 새로 하고 오류를 버렸다. 그래서 Windows host에서는 하위 폴더에만 이어 쓰는 올리기의 시각이 처음 그대로라, 하루 넘게 걸린 올리기를 다른 올리기의 치우기가 지울 수 있었다(§8.355의 「쓰는 중인 올리기는 둔다」가 Windows에서 깨짐). macOS·Linux도 폴더 시각은 하위 폴더 쓰기에 바뀌지 않아 이 갱신에 기대고 있었다.
+- **수리.** 폴더 시각을 쓰지 않는다. 올리기마다 폴더 옆에 표지 `library-uploads/<올리기>.put`를 두고, 파일을 쓸 때마다 그 내용을 지금 시각(ms)으로 다시 쓴다(못 쓰면 실패로 답한다). 치우기는 표지의 시각을 보고, 표지가 없는 올리기(수리 전에 만든 것)만 폴더 시각을 본다. 폴더 없이 남은 표지도 같은 시각으로 치우고, 등록하면 폴더와 함께 지운다. 표지는 올리기 폴더 밖이라 올린 파일 수(등록 때 대조)에 들지 않는다.
+- **검증.** 시험은 표지 내용으로 하루 지난 올리기를 만든다(파일 시스템 시각 API를 쓰지 않는다): 버려진 올리기와 표지는 치우고, 하위 폴더에만 이어 쓴 올리기는 두고 시각을 새로 하며, 다음 올리기의 치우기도 그것을 남긴다. 등록 뒤 표지가 지워지는지도 본다. 결함 넷(표지 안 씀·치우기가 쓰는 올리기를 지움·옛 폴더 시각 방식·등록 뒤 표지 남김)이 모두 실패한다. Windows 통과는 착지 뒤 main CI로 판정한다.
+
+### 8.359 휴대폰 「답할 것」 닫기와 끝난 배포 접기(10-21, t-0559)
+
+- **원인.** 「답할 것」은 한 번 연 뒤 숨긴 채 그려 두지만 `is-hidden`의 CSS가 빠져 있었다. 다른 pane을 골라도 숨긴 화면이 본문의 flex 공간을 차지해, 위에는 「답할 것」·아래에는 대화가 함께 남았다. 보고서·할 일과 같은 absolute·visibility·pointer-events 숨김 규칙을 적용한다.
+- **닫기·이동.** 머리의 「답할 것 닫기」는 보고서·할 일처럼 앞서 보던 본문을 기억해 돌아간다(카드 사이 이동은 그 앞 화면을 바꾸지 않음). 다른 pane을 고르면 그 pane이 본문 전체를 차지한다. 브라우저 뒤로·앞으로와 Safari 가장자리 뒤로는 기존 주소 기록을 따른다. drawer의 열림·접힘은 t-0541 규칙 그대로 유지한다.
+- **순서.** 활동 막대는 작업 → 머신 → 자동화 → 알림함 → 답할 것 → 보고서 → 할 일이다. 「답할 것」은 패널 묶음의 마지막, 보고서 바로 위이고 Home·End focus도 이 순서를 따른다.
+- **배포.** 머신 패널의 `done` 배포만 「배포 상세 접기·펼치기」를 둔다. 접으면 제목·완료 상태와 펼치기만 남고 연결 끊김 안내는 계속 보인다. 같은 배포의 갱신·패널 전환은 접기를 유지하되 새 ID나 상태 전이는 다시 펼친다. 진행·실패·복구 중·복구 실패는 접을 수 없다. 표시 상태만 바꾸며 host DB와 배포 실행에는 닿지 않는다.
+- **검증.** E2E 62는 실제 host·agent와 Claude 대화 기록으로 WebKit 390·430 × Safari·홈 화면 앱, 데스크톱 1280에서 본문 세 점의 화면 소유자·숨김 CSS·주소 차례를 확인한다. 빈 「답할 것」 닫기·보고서로 복귀·쓸기와 drawer 유지·막대 이웃 배치도 검사한다. E2E 35는 실제 Reader 세션의 배포 사건만 주입해 접기·새 배포·실패 보존을 검사한다. 실행·한계는 testing.md에 적는다.
+
+### 8.360 대화 그림의 task 첨부 전달 규칙 통일(10-21, t-0558)
+
+- **원인.** 프로젝트 대화창은 `uploads/`에 무작위 16자리 hex 이름으로 저장했지만, 할 일 업로드는 저장 바이트 SHA-256 앞 16자리로 이름을 정하고 thread 전송도 이 내용 해시를 검사했다. 같은 폴더의 두 저장 경로가 달라 대화창에서 올린 원본을 변경된 파일로 거부했다. 그림 변환이 원인은 아니다.
+- **수리·보호.** 프로젝트 대화 첨부도 `task_file_save`로 저장해 이름·중복·권한·기존 파일 보호를 공유한다. 이름이 같은 기존 파일은 바이트까지 같을 때만 재사용하고 다르면 덮지 않는다. thread 전송 전 이름 해시 검사와 agent 저장 뒤 전체 SHA-256 확인은 유지한다. 프로젝트 밖 pane 첨부는 기존 agent 세션 저장을 쓴다.
+- **옛 첨부.** 무작위 이름의 옛 기록에는 저장 당시 내용 해시가 없어 출처만으로 변경 여부를 검증할 수 없다. 자동 허용·삭제·이름 변경 대신, 원본 확인 뒤 할 일에 다시 첨부하고 메모의 옛 링크를 새 링크로 바꾸라고 안내한다. 운영 원본은 읽기만 한다.
+- **검증·번호.** E2E 23의 Chromium·WebKit 데스크톱·iPhone·iPad 대화 업로드 → task 메모 → `--from-task --link-task` 시작, 옛 파일 재첨부 복구와 E2E 52의 할 일 화면 회귀를 확인한다. m13은 바뀐 원본 거부·원격 TLS 전달·첫 사본 재시작, host는 기존 바이트 충돌 거부를 맡는다. 새 E2E 파일이나 프로토콜 칸을 더하지 않으므로 t-0559의 E2E 62와 겹치지 않고 FRONT_API는 1.81 그대로다. 시험 절차는 [testing](testing.md)의 t-0558 절에 둔다.
+
+### 8.361 웹 배포·재시작(10-21, t-0538 관리 GUI W6a)
+
+- **요청.** 확정 계획 t-0456 plan-revised §5 W6(Q5 「웹에서 배포·재시작 허용, rollout·guard 재사용」). 시작 때 물은 넷은 추천대로 정했다(10-21, 사용자 위임 1A~4A): W6를 W6a 웹 배포·재시작 → W6b 안전 모드 → W6c guard 웹 응답으로 나눠 따로 착지, 웹은 이미 머신에 있는 후보만 골라 SHA 전체·대상·dry-run 결과를 보인 뒤 확인 창 하나로 시작(웹에서 실행 파일을 올리지 않음), 안전 모드 원문은 env·비밀처럼 보이는 값을 가림(W6b), 새 판의 웹이 ready 시한 안에 답하지 않으면 자동 되돌림(W6c). 이 절은 W6a다.
+- **후보와 dry-run(답 2A의 해석).** 머신에 후보 목록을 따로 등록하는 곳은 없다(`deploy-build.sh --out`은 자유 경로). 웹은 CLI `--file <머신>:<폴더>/aaa`와 같은 자리, 곧 빌드 머신과 후보 경로를 받는다. 확인 창의 「dry-run 결과」는 빌드 머신 agent의 후보 점검이다: `provenance.json`(16KiB 이하, symlink·다른 이름 거부)의 SHA를 파일과 대조하고, rollout 전송 끝과 같은 실행기 `CheckedUpdate{dry_run:true}`로 self-check·판 고정을 본다(설치 파일은 바꾸지 않고 작업 기록도 없다). provenance 커밋이 있으면 판 끝의 `+커밋 12자리`와 맞아야 한다. 대상 머신의 사전 검사(dry-run)는 rollout의 Preflight가 교체 전에 모든 대상에서 한다. Preflight 뒤 「승인 대기」로 멈추는 새 `RolloutState`는 옛 CLI의 `deploy status` 역직렬화를 깨서 넣지 않았다.
+- **proto(FRONT_API 1.82, 더하기만).** Front `rollout_plan{source_machine, path, machines}` → `rollout_plan{plan: RolloutPlanView{candidate: DeployCandidateView, targets: [RolloutTargetView{machine, host, problem}], busy}}`, `rollouts` → `rollout_cards{cards}`(이 프로젝트 최근 10개, 새것부터), `deploy_jobs` → `deploy_jobs{jobs: [DeployJobCard{…, work: DeployWork}]}`(`DeployWork`는 `restart{service}`·`update`·`rollback`, 작업 원문 없음). 웹 조작 기기의 `rollout_start`·`rollout_status` 답은 `rollout_cards`, `deploy_start`·`deploy_status` 답은 `deploy_jobs`다(사람 터미널·coordinator는 정본 `rollout`·`deployment` 그대로). Agent `deploy_candidate{path}` → `deploy_candidate{sha256, commit, version, total_bytes, built_at}`, 기능 `deploy_candidate.v1`(macOS, 알리지 않은 agent에는 보내지 않는다). 옛 host는 웹 요청을 거부하고, 웹은 1.82 미만 host면 「배포」를 그리지 않는다.
+- **권한.** 웹 조작 기기 = `Controller` 역할의 `device:<id>` actor(보기 전용 기기도 `device:`라 역할로 가른다). `rollout_start`: 사람 터미널(`person:`)·웹 조작 기기는 이 aaa의 프로젝트, 그 밖은 coordinator+safety 그대로. 웹은 빌드 머신 후보(`source_machine`)만 받는다(미리 복사한 경로 L1은 거부). `rollout_permitted`는 사람·웹 기기 actor면 coordinator_deploy가 꺼져 있어도 그 rollout 끝까지 승인을 유지한다(actor가 DB 정본에 남아 host 재시작 뒤에도 같다). `rollout_plan`은 빌드 머신에서 후보를 실행하므로 웹 조작 기기와 사람 터미널만 받고, 진행 중 rollout이 있으면 거부한다(세션 안 agent·coordinator가 다른 머신에서 실행 파일을 띄우는 길이 되지 않게, 그리고 빌드 머신의 dry-run이 그 rollout 단계와 겹치지 않게). agent도 대기·진행 중 작업이 있으면 점검을 거부하고(거절 글에 작업 ID는 싣지 않는다), 점검하는 동안 들어온 작업은 바로 거부한다: 실행기의 staging 파일 이름(`.aaa-update-<pid>.tmp`)이 agent 하나에 하나라 배포 작업과 겹치면 한쪽이 실패한다. 작업 gate는 「점검 중」 표지를 세우는 동안만 쥐고 self-check는 lock 밖에서 돌린다(async `deploy_start`를 붙잡지 않는다). 같은 rollout ID 재전송은 빌드 머신 연결 검사 전에 기존 기록을 돌려준다(rollout 중 그 agent가 잠시 끊겨도). `deploy_start`의 웹 경로는 `Restart`만 받고(교체는 rollout으로만), 진행 중 rollout이면 거부는 그대로다. `rollouts`·`deploy_jobs`는 보기 전용 기기도 본다(표시용 요약만).
+- **웹에 가는 것.** rollout은 기존 카드(`card_of`, L4와 같다)만: actor·후보 경로·단계 작업 ID·오류 원문은 싣지 않는다. 개별 작업 요약은 머신 이름·작업 종류(후보 경로·보관 이름은 빼고)·상태(그 머신 agent에 5초 안에 물음, 끊겼으면 없음)·고정 까닭·웹 출처·시각이고, 실행기 PID·결과 원문은 싣지 않는다. 개별 작업 기록 `deploy:<id>`에 `created_ms`·`web`을 더했다(같은 ID 재전송은 대상·작업만 대조한다, 옛 기록은 시각 없이 맨 뒤). 작업이 바뀌면 `rollout` 사건을 다시 보내 웹이 다시 읽는다.
+- **웹.** 설정 「배포」(머신 다음): 「새 배포」(빌드 머신·후보 경로·대상 고르기, 「점검」 → 후보·판·SHA 전체·커밋·크기·빌드 시각과 대상 순서·준비, 대상은 host 머신을 늘 맨 앞에 넣어 보낸다(빈 목록은 host가 「모든 머신」으로 읽는다), 「배포 시작…」 확인 창 → 보내기 전에 rollout ID 표시, 확인 창 하나에 ID 하나라 응답을 잃고 다시 눌러도 같은 rollout, host가 확정으로 거절했을 때만 표시를 지움), 「배포 기록」(새것부터, 펼치면 기존 배포 카드), 「서비스 재시작」(연결된 머신마다 agent, host 머신은 host도, 확인 창, 최근 작업 상태). 기존 배포 카드의 안내를 「설정 「배포」(조작 기기)나 coordinator」로 바꿨다.
+- **남은 것.** 웹 재시작은 아직 독립 복구 감시(guard) 밖이다(W6c에서 update·rollback·restart를 guard 아래로 옮긴다).
+- **검증.** host 유닛 `rollout::web_tests`(웹은 재시작만·기록의 시각·출처와 같은 ID 대조, Reader·세션 안 연결의 점검 거부와 조작 기기의 경로 검사, 웹 rollout은 빌드 머신 후보만, 사람·웹 승인 유지와 coordinator는 safety, 목록·같은 ID 조회는 이 프로젝트 요약만, 작업 목록 순서·끊긴 머신·원문 숨김), agent 유닛 `deploy::stage::tests::candidate_inspection_matches_provenance_and_dry_runs_before_answering`, 웹 유닛 `deployModel.test.mjs`, 웹 E2E `63-deploy`(실험실 HOME·가짜 launchctl, 데스크톱·Reader·휴대폰 390). 절차는 [시험](testing.md).
+
+### 8.362 자동화 파일 오류와 실행 실패 구분·배포 중 입력 보존(10-21, t-0560)
+
+- **원인.** 웹의 자동화 상태 판정이 `RoutineView.error`와 `last_result.status=failed`를 같은 값으로 묶고 상세 화면에서 모두 「파일 오류」로 번역했다. `start:config`·`flow:error`라는 기록 ID를 파일 종류로 해석한 문제는 아니다. 또 `reuse=open`의 승인 범위 계산에서 host profile의 harness를 읽는 함수가 연결 agent의 `host_profiles.v1`까지 요구해, 배포 중 기능이 잠시 빠지면 승인 조회·흐름 입력 수집도 실패했다.
+- **표시.** 파일을 읽지 못한 `error`는 「파일 오류」, 정상 파일의 지난 `failed`는 「실행 실패」다. 파싱 실패로 `enabled=false`가 되어도 파일 오류를 먼저 보인다. 목록의 접근성 이름·점과 상세 칩·요약은 같은 판정을 쓰며, 지난 결과·기록에는 host가 준 원인을 그대로 보인다. CLI와 웹은 같은 host 조회 값으로 상태를 판단한다.
+- **입력과 승인.** 승인 범위는 host 설정의 profile 정의로 계산한다. 실제 시작 후보를 고를 때 연결·기능을 검사하며, 필요한 기능이 없으면 원인과 「agent 갱신·재연결 뒤 다시 시도 가능·입력 보존」을 대기 기록에 남긴다. 기존 내구 큐가 다음 판정에서 이어 처리하고 시작 영수증이 같은 입력의 중복 생성을 막는다. 혼재한 후보 중 기능이 있는 머신은 계속 고를 수 있다. 명시한 기다림 상한과 실행 예산은 유지한다. 운영 규칙·설정·기존 이력은 자동으로 고치거나 지우지 않는다.
+- **번호·호환.** 새 프로토콜 칸·요청은 없다. W6a의 FRONT_API 1.82를 유지한다. 웹 E2E는 `64-automation-failure`로 두어 t-0559의 62와 W6a의 63을 피한다.
+- **검증.** host의 `automation::start_tests::rollout_`는 구판 기능 Hello에서 승인·흐름 입력 보존과 대기 원인, host 재시작·신판 Hello 뒤 한 번 시작·receipt 재생·시작 예산, 구판과 신판 후보의 선택을 검사한다. 배경 기동은 실제 Open 전이로 기다린다. 웹 단위 시험은 지난 실패 ID들과 파일 오류를 구분한다. E2E64는 격리된 실제 host의 실행 실패와 TOML 파싱 실패를 CLI·웹에서 비교하고 휴대폰 WebKit 390×844를 촬영한다. 원래 승인 경계와 웹 오표시를 각각 되심으면 keeper가 실패한다. 절차는 [시험](testing.md)에 둔다.
+
+### 8.363 계정별 사용량 수집과 웹 카드(10-21, t-0561, 멀티 계정 A2)
+
+- **범위.** 확정 계획 t-0500 §1.4·§3.2·§5의 A2를 W5a 계정 화면에 붙인다. 계정·창마다 남은 양, 리셋·관측 시각, 머신·출처, 최신·오래됨·모름·실패를 보인다. A3 자동 배정과 실험 Claude get_usage는 넣지 않는다.
+- **수집.** 등록 계정만 읽는다. Codex 0.163.0 공식 app-server를 격리 홈에서 실행하고 initialize → initialized → account/rateLimits/read만 보낸다(thread/start·turn/start 0회). 별도 helper의 인증 갱신은 자기 loopback에서 거부하고 중앙 갱신을 유지한다. Claude는 계정 pane에 주입한 상태줄의 창별 원래 관측 시각만 쓰며 관측 없으면 사용량 모름이다. 원격 agent에는 account_quota.v1을 알린 경우에만 결속된 pane snapshot을 묻는다.
+- **세대·보호.** 로그인마다 토큰과 무관한 무작위 세대를 암호문 AAD·pane spec·cache에 묶어 재등록 후 옛 관측·늦은 응답을 거부한다. §8.351의 기존 금고는 세대 없는 AAD로 계속 읽고 첫 재암호화에도 같은 세대를 유지한다. 계정 메일·인증 원문·원본 RPC를 새 응답·기록에 넣지 않는다. 버킷 이름·stderr·알림에도 가림을 적용하며 임시 인증 홈·자식은 정리한다.
+- **판정.** 자동 조회 60초·수동 조회 하한 30초와 429 재조회 시각을 지킨다. 실패 때 마지막 값과 원래 시각을 남긴다. 2분까지 최신·10분까지 오래됨, 리셋 경계·너무 오래됨·시계 차이는 모름으로 둔다. 빠진 창은 새 시각으로 갱신하지 않고 기간 모름·모델 창을 나누며 같은 시각 충돌에는 작은 잔량을 쓴다. NaN·범위 밖 숫자를 100%로 만들지 않는다.
+- **호환.** FRONT_API 1.83의 GET /api/v1/account-usage[?refresh=1]은 인증된 보기 기기도 읽는다(no-store). 웹은 1.83 미만 host에서 카드를 그리지 않는다. AGENT_LINK 1.10은 유지하며 account_quota.v1로만 새 요청을 보낸다. W6a의 1.82·plan §8.361과 t-0560 §8.362는 유지한다. 웹 E2E는 기존 62~64와 겹치지 않게 65-account-quota로 옮겼다.
+- **검증.** 가짜 홈·공식 RPC·상태줄만 사용한다. 무작업 RPC 기록과 이를 깨는 thread/start 변형, 401·429·잠김·끊김·누락·NaN·시계 차이·동시 계정·로그인 세대·구형 AAD·reset 경계를 Rust owner로 검사한다. 웹 E2E65는 실제 CLI 상태줄 → agent → host와 Reader 비노출, 320/390/768px를 본다. 절차는 [시험](testing.md), 실제 로그인·운영 quota는 이 가짜 검증의 보증 범위 밖이다.
+
+### 8.364 입력 중 줄바꿈 폭 고정(10-21, t-0563, 사용자 선택 1A)
+
+- **원인.** §8.348은 한 줄 여부를 펼친 폭에서 재고 실제 글은 단추 사이의 좁은 폭에서 접었다. 더 입력해 여러 줄 배치가 되면 글 칸이 넓어져 이미 접힌 줄의 경계가 다시 움직였다. 같은 입력의 Chromium·WebKit 데스크톱에서 글 칸 728→818px·첫 줄 경계 54→61글자, 휴대폰에서 276→364px·19→25글자를 재현했다. 숨은 측정 요소나 IME만의 글꼴 차이가 원인은 아니다.
+- **선택.** 사용자 1A에 따라 그림·맥락·보내기 단추를 모든 길이에서 글 칸 옆에 둔다. 긴 글도 단추 칸을 글에 쓰지 않는다. 짧은 글의 한 줄 높이·단추만 있는 밑 줄 금지는 유지한다.
+- **수리.** CSS grid·글 칸 padding이 줄 수에 따라 바뀌지 않는다. 높이와 줄 수는 실제 textarea의 scrollHeight로만 잰다. ResizeObserver도 실제 textarea 폭을 관찰해 창·옆 목록·단추 칸 폭 변경을 반영한다. §8.338의 같은 commit 커서 적용은 그대로다.
+- **검증.** 새 E2E 66은 두 엔진 × 데스크톱·휴대폰의 한글 조합 중·확정·영문·긴 토큰·붙여넣기·창 폭 변경과 복원을 검사한다. 실제 textarea와 같은 폭·계산 CSS를 가진 시험용 native textarea로 줄 수와 첫 줄 경계를 대조한다. 기존 코드에서 폭·경계 이동 RED, 수리 뒤 폭 고정 GREEN을 확인했다. E2E 22는 사용자 선택에 맞춰 단추가 옆에 있는지를 보며 짧은 높이·10줄 상한·focus·아래끝·잘림 단언을 유지한다. E2E 35의 전송 높이와 51의 지연 커서 회귀도 유지한다.
+- **번호·호환.** main의 §8.360~8.363·E2E 63~65를 보존하고 이번 수리는 §8.364·E2E 66으로 통합했다. 새 요청·DTO·프로토콜 칸이 없어 FRONT_API 1.83과 AGENT_LINK 1.10을 유지한다.
+- **실행 환경.** 초기 macOS 빌드는 서명 검사(SIGKILL)와 syspolicyd EMFILE로 막혔으나 시스템 서비스는 바꾸지 않았다. 사용자 지시로 다른 머신의 새 clone·target에서 구현 후보 a5100fbb의 정본 ci-local 7단계와 별도 공개 검사를 통과했다(웹 E2E 65개 파일 전체). 초기 진단용 웹 loader는 최종 검증에 쓰지 않는다. 착지 때는 main 통합 후보를 다시 새 실험 폴더에서 전체 검증한다. 상세는 testing.md와 비공개 작업 보고에 남긴다.
+- **통합 회귀.** 기존 E2E 25·51은 pane 연결 준비 사건을 기다린 뒤 키를 한 번만 보내도록 정리했다. E2E 61은 safety 충돌 후 새 판 재조회를 기다리지 않고 busy를 풀던 관리 화면 경합을 드러냈다. 재조회 Promise가 끝날 때까지 입력을 잠그고, 실제 재조회 답을 gate로 보류해 새 판 전 입력 금지와 해제 후 원래 저장을 검증한다. 옛 제품은 이 gate의 입력 금지 단언에서 실패한다. host 판 대조·권한·시험 기대값·시한은 유지한다.
+
+### 8.365 thread 재시작의 옛 pane 정리(10-21, t-0567)
+
+- **원인·선택.** `pane kill`은 세션만 끝내고 기록과 layout을 남긴다. `thread restart`는 새 pane에 thread를 연결하면서 옛 pane을 정리하지 않아 웹 「기타」에 남겼다. 실행 중인 세션을 자동 종료하는 새 동작 대신 기존 실행 중 거부·명시 kill을 유지하고, 기동 성공 뒤 공통 `replace_pane`으로 이름·layout·화면 추적 ID를 잇고 host·agent의 옛 기록을 지운다. spawn 실패 때는 옛 기록과 자리를 유지한다.
+- **계정.** 기본 계정은 새 작업에만 적용하는 §8.351 정책을 유지한다. 고정 계정과 새 profile의 harness가 다르면 profile·launch·brief를 바꾸기 전에 거부하고 새 thread 시작·새 harness의 기본 계정·명시 `--account`를 안내한다. 같은 harness의 profile 변경은 원래 계정을 쓴다. 계정이 고정되지 않은 thread의 기존 로컬 인증 정책은 그대로다.
+- **다른 경로.** 직접 `pane resume`는 계정 없는 일반 thread를 새 pane에 연결하지 않던 경로도 있었다. 모든 일반 thread를 저장한 대화·작업 identity·감시를 잇는 `thread_restart --resume`으로 보낸다. 계정 pane 재개와 재부팅 복원의 중복 교체는 없앤다. adopted pane은 기존 일반 pane 재개와 `replace_pane`의 thread 결속을 쓴다. resolve는 이미 종료된 pane도 정리한다. 사람이 열거나 kill로 남긴 일반 pane의 「기타」 표시는 유지한다.
+- **호환·검증.** 새 요청·프로토콜·옵션은 없다. 기존 §8.364·웹 E2E 66을 보존하고 이 수리는 §8.365를 쓴다. FRONT_API 1.83·AGENT_LINK 1.10은 유지한다. 기존 m13과 로컬 UDS·원격 TLS 회귀에서 profile 변경·새 대화·resume·직접 pane resume·host 재연결·spawn 실패·이름과 탭 보존·다른 pane 보존·계정 사전 거부를 검사한다. 원본 재현과 결함 되심기는 [시험](testing.md)의 t-0567 절을 따른다. 운영 pane·thread에는 접근하지 않는다.
+
+### 8.366 질문 카드·사용자 post의 처리 상태 통합(10-21, t-0565)
+
+- 제목에 `aaa:question/<thread>`가 붙은 확인 필요 post는 열린 질문 카드 한 줄로 묶는다. 답의 정본은 카드다.
+  카드·`thread answer`가 실제로 답을 전하면 연결 post도 끝내고 `request handled`를 남긴다. 전송 실패는 그대로 둔다.
+- 질문 없는 새 보고는 이전 질문을 선택한 답 없이 닫고 연결 post도 끝낸다. ticker는 구판에서 남은 알림을 보고 시각과
+  성공한 답 기록으로 정리한다. 끝난 카드에 늦게 온 post도 즉시 정리한다. 다음 질문이 열렸으면 옛 답으로 닫지 않으며, 카드가 없는 post는 독립 요청으로 남긴다.
+- `aaa post handled <p-번호 또는 발신 ID>`는 사용자 답을 받았다는 처리 표시만 한다. 질문의 선택·승인·작업 실행을 만들지 않는다.
+  `inbox done`과 처리 상태를 공유하고 `post status`·목록도 그 상태를 본다. 전송 영수증 accepted/refused는 바꾸지 않는다.
+- 카드에 없는 C를 post에만 추천하지 않는다. 새 안은 보고부터 고치고, 이미 받은 C·채팅 자유 답은
+  `thread answer --text`로 원문을 보존한다. coordinator가 기존 A/B를 임의로 대신 고르지 않는다.
+- FRONT_API 1.84는 `post_handled`와 선택 칸 `Post.handled`를 더한다. main의 §8.363~8.365와 E2E 65·66은 유지하고 기존 E2E 53을 확장한다. Agent link는 그대로다. 실행·검증은 testing.md의 t-0565 절에 둔다.
+
+### 8.367 task 예약 자동 시작·완료 보관(t-0564)
+
+TASKS.md의 줄 끝 `<!-- aaa-task:ID -->`가 제목과 독립된 ID다. 예약/완료 보관의 명시 쓰기에서만 기존 task에 최소 이행하며
+읽기는 파일을 고치지 않는다. 메모·첨부·task 밖 글·줄 끝을 보존한다. Rust proto의 예약 승인판·고정 모델/effort·차례·상태·기동 ID와
+연결 thread를 host SQLite에 저장한다. 차례 변경 전후와 주체·시각도 저장한다. 검색·화면 정렬은 실행 차례를 바꾸지 않는다.
+
+예약 dispatch와 직접 시작·재시작·다시 열기·adopt가 DB의 같은 자리 검사를 거친다. coordinator pane은 별도 생명주기이며
+worker 자리 수에 포함하지 않는다. 평가자는 새 기동 대상이 아니다. Starting/Open과 resolve_pending은 자리를 보유한다.
+외부 Spawn 전 송신 의도를 기록한다. host가 죽었거나 응답이 유실됐으면 실제 세션의 머신·기동 이름·cwd를 대조하고
+불명 상태에서 새 기동을 보내지 않는다. DB 선점만으로 외부 exactly-once를 보장하지 않는다.
+
+완료 보관은 기존 좁은 완료/부모 보호 판정을 사용한다. task 블록·보고서 경로·이력을 먼저 저장하고 활성 블록을 제거한다.
+파일 제거 뒤 DB 확정 전 중단은 저장한 제거 후 파일 hash로 복구한다. 완료 보관과 삭제 기록은 별도이며 보관은 log prune 대상이 아니다.
+복원은 같은 ID·내용·첨부를 유지하고 thread 연결과 실행 승인은 되살리지 않는다. worktree/branch 생명주기는 기존 규칙을 따른다.
+사용자 결정 1A에 따라 정해진 모델·머신 변경은 사용자 웹/aaa 밖 CLI만 허용한다. coordinator 원문 쓰기는 거부한다.
+
+예약의 실행 승인판과 선택 변경의 출처는 별도로 보존한다. 빈 모델 칸에서 해석한 기본 모델도 승인 후에는 고정 선택이다.
+사용자가 웹/aaa 밖 CLI로 모델·머신 칸을 바꾸면 새 선택의 요청자·시각을 기록하되 과거 실행 승인은 갱신하지 않는다.
+내용 확인 뒤 명시 예약 갱신이 필요하다. 파일 직접 수정 뒤 coordinator가 재예약하는 것은 사용자 변경 출처로 인정하지 않는다.
+
+- **번호·호환.** main의 §8.362~8.366·E2E 64~66·질문 E2E 53 확장을 유지한다. 이 기능은 FRONT_API 1.85와 E2E `67-task-queue`를 쓴다. AGENT_LINK는 1.10 그대로다.
+
+### 8.368 quota RPC 갱신 거부와 웹 E2E writer 정리(10-21, t-0568)
+
+- **quota 원인·수리.** 갱신 거부 서버가 POST 본문을 읽기 전에 401을 쓰고 TCP를 닫아 가짜 RPC에 BrokenPipe/Reset이 생겼다. 기존 Axum HTTP 처리로 크기를 제한해 본문을 소비한 뒤 401을 보낸다. 본문·인증은 저장·기록하지 않는다. 여섯 모드의 단언에는 mode·snapshot과 가짜 Python 예외 종류/errno를 남긴다. macOS 독립 전송 실험과 main `4260b096`의 macos-15 재발(t-0571)도 이 경로에 부합하며, 당시 CI mode는 기록이 없어 소급 확정하지 않는다.
+- **정리 순서.** 웹 E2E는 meta·명령줄로 확인한 실험실 session host와 자손을 부모부터 멈춰 새 fork를 막고, 그 PID들이 종료된 것을 관측한 뒤 root를 한 번 지운다. E2E 13의 재부팅 흉내도 같은 완료를 기다린다. 별도 그룹의 writer 자손을 남긴 채 session host에만 종료 신호를 보내던 정리를 고쳤다.
+- **회귀.** quota TCP owner는 `Expect: 100-continue` → 본문 → 401과 EOF를 확인한다. 원래 서버는 첫 401 응답 단언에서 RED여야 한다. 웹 유닛은 실제 writer 자손 종료·무관한 PID 보존·재시도 없는 삭제를 확인하며 원래 정리는 writer 생존 단언에서 RED여야 한다. 원본 bytes 복원 뒤 정상 owner와 정본 ci-local 전체·공개 검사를 수행한다. 실제 로그인·실제 인증·시한 연장·재시도·직렬화는 쓰지 않는다. Ubuntu native 판정은 착지 뒤 main CI에 맡긴다.
+- **번호·호환.** main의 §8.367과 E2E `67-task-queue`를 유지한다. 새 E2E 파일이나 프로토콜 칸은 없으며 기존 E2E 13·54·65와 새 순수 Node 회귀를 쓴다. FRONT_API 1.85·AGENT_LINK 1.10은 그대로다. 시험 절차는 [testing](testing.md)에 둔다.
+
+### 8.369 요약의 전체 작업과 진행상황(10-21, t-0574, 사용자 1A)
+
+- **표시.** hover 카드에서 큰 작업을 모두 펼친다. `할 일 · N/M 완료` 아래에 작성 순서대로 완료(체크)·진행 중(점 있는 원·글자)·대기(빈 원)를 보인다. 완료한 항목도 원래 자리에 남긴다. 상세 팝오버와 휴대폰 아래 시트도 같은 목록을 쓰며 읽기 전용이다. 진행 목록이 있으면 hover의 예전 ‘지금’·최근 변경은 상세에서 읽어 길이를 줄인다.
+- **작성.** coordinator 요약에 `## 진행`과 `- [x] 완료`·`- [~] 진행 중`·`- [ ] 대기`를 더한다. 큰 작업 3~5개를 권하고 최대 5개, 이름 30자·전체 1KB 상한은 host가 검사한다. 보고 등 근거로 상태가 바뀔 때 요약을 통째로 갱신한다. 완료 개수는 작업 개수이며 시간·퍼센트로 환산하지 않는다.
+- **호환.** FRONT_API 1.86은 `ThreadSummaryView.progress`(순서 있는 `SummaryStep` 목록)를 더한다. 옛 host 응답에는 선택 칸, Rust 읽기에는 빈 배열 기본값이다. 옛 `## 지금`·`## 끝남`과 처음·결정·변경·지시 경고는 보존한다. 상태 없는 목록에 체크를 추측해 붙이지 않으며, 목록이 없으면 ‘아직 작업 목록 없음’을 보인다. 새로운 지시는 목록을 임의로 고치지 않고 기존 ‘요약 뒤 지시’로 남는다. Agent link는 바꾸지 않는다.
+- **경계.** frontend는 aaa-proto의 상태만 표시한다. host가 파일을 검증·저장하며 기존 요약 쓰기 권한을 유지한다. hover는 한 줄 생략, 상세는 줄바꿈한다. 기존 E2E 28을 확장하고 시험 절차는 testing.md에 둔다.
+- **착지 검증 보수.** 전체 gate에서 E2E 16의 초기 크기 맞춤과 링크 커서 경합을 확인했다. 제품 링크 정책은 그대로 두고, 시험은 맞추기·실제 행 수 적용 뒤 좌표를 잰다. 소켓 gate 진단과 같은 파일의 원래 시나리오로 확인하며 E2E 번호·시한·링크 단언은 바꾸지 않는다.
+
+### 8.370 안전 모드(10-21, t-0538 관리 GUI W6b)
+
+- **요청.** 확정 계획 t-0456 plan-revised §5 W6, 답 3A(10-21, 사용자 위임): 설정을 읽지 못한 host가 웹으로 오류를 보이고 「마지막 정상 설정으로 되돌리기」를 준다. 원문은 env 값과 비밀처럼 보이는 key 값을 가리고 오류 줄을 표시한다. 되돌리기는 지금 파일을 먼저 옆에 백업한다.
+- **진입.** `aaa host`(launchd·Windows 서비스 공통 `aaa_host::run`)는 설정 폴더를 읽어 성공하면 정상 host, 실패하면 `safe_mode::run`이다. 안전 모드가 「되돌림·다시 읽기로 설정을 읽을 수 있다」로 끝나면 같은 프로세스가 다시 읽어 정상 host로 이어 가고, 종료 신호면 끝난다. 감독자 ready는 먼저 연 쪽(안전 모드 웹이든 정상 host든)이 한 번만 보낸다. 안전 모드는 `Host`를 열지 않는다(세션·agent link·front socket·ticker 없음): host DB만 열어 기기 인증·공개 주소를 읽는다. host DB가 없거나(처음 시작) 웹을 끈 설정이면 예전처럼 오류로 끝난다.
+- **주소.** 정상 host가 실제로 연 웹 주소를 DB meta `web_listen_last`에 적는다(웹을 끈 설정으로 시작하면 빈 값: 다음 안전 모드도 웹을 열지 않는다). 안전 모드는 그 주소 → 보관 설정의 `web.listen` 순으로 뜬다(설정 자체를 못 읽으므로). 둘 다 없으면(이 판으로 정상 시작한 적이 없는 업그레이드 직후) 기본 주소로 짐작하지 않고 예전처럼 오류로 끝난다: 기본 port는 다른 aaa의 것일 수 있다. Host·Origin 판정은 정상 웹과 같은 `web_origin_in`(loopback 그 port·`publish_*` 공개 origin)이다.
+- **마지막 정상 설정.** 정상 시작이 웹까지 연 뒤 그때 실제로 읽은 `host.toml`·`host.local.toml`을 같은 설정 폴더의 `last-good/`(0700, 파일 0600)에 두고(상태 폴더에 두지 않는다: 평문 env 값·인증 값은 원래 설정 폴더에만 있고 상태 폴더·DB·로그·내보내기에 남기지 않는다는 §8.307 K0·계정 시험의 계약) 시작한 뒤 다시 읽는 것이라, 옆 폴더(`last-good-next`)에 먼저 써서 `load_host`로 읽히는지 본 뒤에만 보관본을 바꾼다(그사이 사람이 고치다 깨진 파일이 보관본을 덮지 않는다). `files.json`에 목록을 마지막에 쓴다(없던 local은 없는 채로 기록). 평문 env 값이 든 설정이면 같은 설정 폴더 안에 사본이 하나 더 생긴다(처음에는 상태 폴더에 두었으나 K0·계정 m13 시험이 상태 폴더의 env·인증 값을 잡아 옮겼다). 되돌리기는 보관본을 다 읽고 바뀐 파일의 남기기를 모두 만든 뒤(하나라도 실패하면 만든 남기기를 치우고 아무 파일도 바꾸지 않는다, 오류 글에는 파일 이름만), 바꾸다 실패하면 이미 바꾼 파일을 원래 내용으로 되돌리고, 그것이 모두 되었을 때만 남기기를 치운다(원래대로 돌리지 못하면 남긴 사본이 고치던 원문의 유일한 사본이라 남기고 오류 글에 이름을 적는다), 바뀐 파일만 지금 것을 `<이름>.broken-<UTC>`(create_new, 0600, 같은 이름이 있으면 거부)로 남기고 보관본으로 바꾼다. 보관 때 없던 local은 남긴 뒤 치운다. 다른 파일(agent.toml 등)은 건드리지 않는다.
+- **화면.** JS 없이 서버가 그린 HTML과 form POST만(CSP `default-src 'none'`, `form-action 'self'`, Referrer-Policy `same-origin`: `no-referrer`면 브라우저가 form POST의 Origin을 `null`로 보내 Origin 검사가 막는다). 503으로 답해 service worker가 셸로 두지 않는다. 조작 기기: 오류 목록(파일 이름:줄:열, TOML 원문 조각 `|` 줄·큰따옴표 값·가린 값을 뺀 글), 「마지막 정상 설정으로 되돌리기」(보관이 있을 때), 「다시 읽기」, 원문(파일 이름만, 줄 번호, 오류 줄 표시). Reader는 안내만, 짝 없는(취소된) 기기는 host Mac 터미널(`aaa config check`) 안내만. 안전 모드에서는 짝짓기가 없다.
+- **가림(줄 단위, 파싱이 안 되는 글에도, 줄 수 그대로).** 한 줄 값은 표 머리를 따라가며 env 표(`…env…`) 아래 값, `env`가 든 key·인라인 표, 표 머리·key 조각이 `secret_like`(KEY·TOKEN·SECRET·PASSWORD)이거나 AUTH·CREDENTIAL·COOKIE·PRIVATE·WEBHOOK·PASSWD를 담으면, 값 글에 그런 낱말이 들면 가린다(예: `keychain_service`도 가린다). 주석으로 꺼 둔 `key = 값`도 같다. 여러 줄 값(배열·문자열·인라인 표)의 이어지는 줄은 비밀 여부와 상관없이 모두 가린다: 원소를 줄마다 하나씩 쓰면 `"--api-key",` 다음 줄의 값에는 비밀 낱말이 없고, 닫는 표시가 빠진 바로 그때(파싱 오류로 안전 모드에 들어온 경우) 뒤의 표를 값으로 읽게 된다. 닫히지 않은 여러 줄 문자열은 파일 끝까지 가리고, 여러 줄 배열은 괄호가 닫히거나 따옴표 없는 key 이름만 든 표 머리(`[a.b]`, 뒤에 붙은 `#` 주석은 뗌)가 나오면 끝난다(`["…"]` 원소 줄은 머리가 아니다). 주석으로 연 여러 줄 값은 이어지는 주석 줄을 모두 가린다(주석 안의 `]`·`"""`는 닫는 표시로 셀 수 없다, 사이의 빈 줄은 건넌다). 화면 가림과 오류 글에서 지울 목록은 다르다: 이어지는 줄은 여는 줄이 비밀이거나, 이어지는 줄에 비밀 낱말이 나온 뒤거나, 닫히지 않은 문자열 안에 표 머리가 나온 뒤에만 목록에 넣는다. 비밀이 아닌 배열의 `"claude"` 같은 원소까지 넣으면 검증 오류의 보통 낱말·key 경로가 «가림»으로 바뀐다. 대입이 아닌 줄(주석 등)은 env 표 아래거나 비밀 낱말이 있으면 가린다. 처음의 「비밀이 아닌 여러 줄 값은 보인다」 규칙은 리뷰마다 새 빈틈(닫히지 않은 값 뒤의 env 표, 줄마다 하나씩 쓴 인자, 주석 배열)이 나와 버리고 이렇게 넓혔다.
+- **API.** `/api/*`는 모두 503 `unavailable`(「안전 모드」, 새로 고치면 화면이 열린다는 안내). 열린 웹 앱은 끊긴 뒤 다시 붙기 전의 기기 확인(`me`)이 이 답을 받으면 다시 붙지 않고 첫 화면을 다시 물어 연결 실패 화면에 그 글을 보인다. W6c의 새 판 확인은 이 답을 준비되지 않음으로 본다. `POST /api/v1/safe/restore`·`/api/v1/safe/retry`는 조작 기기·이 origin만이며 감사 기록 `safe_restore`(남긴 파일 이름)·`safe_retry`를 남긴다. 다시 읽어 되면 안내 화면(Refresh 3초 → `/`)을 보내고 웹을 graceful하게 닫은 뒤 정상 host로 이어 간다.
+- **남은 것.** 안전 모드 로그에는 예전처럼 설정 오류 전체(`render`)를 남긴다(원문 조각 포함, 운영 로그는 같은 사용자만 읽는다). agent 설정 오류는 대상이 아니다.
+- **검증.** host 유닛 `safe_mode::tests`(가림·오류 글·보관·되돌리기·주소 순서·기기별 화면·POST 권한·감사), 웹 E2E `68-safe-mode`(실제 binary를 깨진 설정으로 다시 띄워 안전 모드 → 되돌리기 → 같은 프로세스가 정상 host). 절차는 [시험](testing.md).
+
+### 8.371 coordinator 선택 질문·짧은 q-ID(t-0576, 1단계)
+
+coordinator의 `post user --request --needs-user` 본문에 thread 보고와 같은 `## Questions`·`### N.`·
+`- A … (추천) — 까닭`을 쓴다. host는 같은 파서를 쓰고 웹은 같은 QuestionCard를 렌더링한다. 본문·표·그림·
+선택지 그림·추천·직접 답도 같다. 기존 평문 post는 기존 표시와 처리 단추를 유지한다. 그림은 먼저 publish한
+`library/<이름>/<파일>`만 인증된 경로에서 읽으며, 답한 뒤 본문과 참조 파일을 사본으로 남긴다.
+
+질문 하나마다 프로젝트별 `q-1000`부터 영속 순번을 발급한다. 새 보고 판의 질문은 새 번호다.
+원장은 답한 것·post 보존 기간과 독립되어 지워도 재사용하지 않는다. 부분 답 초안은 완료·새 보고에서 비워
+삭제한 답 원문이 번호 원장에 남지 않게 한다. 기존 무작위 확인창 ID·post의 p-번호·thread ID는
+호환 참조로 남긴다. 확인창 목록에는 짧은 별칭도 주며 내부 ID·menu 검증은 바꾸지 않는다.
+`aaa question list`는 확인창·thread·coordinator 질문을 보이고 `question answer q-1000 A`·
+`thread answer q-1000 A`·`question answer q-1000 --text '답'`을 받는다. 여러 질문이 든 카드는 질문마다 답을
+보관하고 모두 답했을 때 기존 전달 경로를 따른다. 카드 전체에 답하는 기존 `1A 2B`도 유지한다.
+
+post의 답 기록·inbox 전달 원문·요청 종료는 한 DB 트랜잭션으로 묶어 두 기기가 동시에 제출해도 한 번만 남긴다.
+coordinator inbox에는 `question answered`와 ID·선택·자유 답 원문이 남는다. 채팅 답을 이미 전달했다면
+`post handled q-1000`으로 처리만 표시한다. 선택·승인·실행을 만들지 않는다. thread에 연결된 알림은 기존처럼
+같은 카드로 묶고 카드 답이 연결 post를 닫는다. push 제목과 inbox에는 q-ID를 싣고 기존 참조 링크를 유지한다.
+
+FRONT_API 1.87은 질문 ID·부분 답과 `ask_answer`·`question_reply`를 더한다. Agent link 변경은 없다.
+접두사는 t=thread, q=질문, d=할 일, r=보고서다. r-ID·보고 판별 사본·CI 내부 run 이름 분리는 2단계로 나눈다.
+
+### 8.372 머신 상세: CPU 종류·판·실행 파일 SHA·기능·시작 점검(10-21, t-0578 웹 머신 추가 M0)
+
+- **요청.** t-0471 확정 기획(웹 「머신 추가」, SSH)의 첫 단계 M0. 새 머신을 웹으로 붙이기 전에, 이미 붙은 머신이 무엇을 돌리는지(OS·CPU 종류·aaa 판·실행 파일)를 설정 「머신」에서 읽기만으로 보인다. 사용자 10-21 「A부터」: M0 → M1 → M2를 단계마다 착지한다.
+- **proto(FRONT_API 1.88, 더하기만).** `MachineView`에 `arch`·`software`·`sha256`·`software_differs`(판이 host와 다르면 true, 모르면 생략)·`features`·`selfcheck{pass, reasons}`. 옛 host는 생략하고 웹은 OS만 보인다. Agent link: hello의 선택 칸 `sha256`(agent가 시작 때 읽은 자기 실행 파일 SHA-256, 배포 관리자가 이미 쓰는 값). AGENT_LINK 1.10을 올리지 않는다: 옛 agent는 보내지 않아 「모름」이고, 옛 host는 버린다.
+- **저장.** host는 hello마다 `machines` 행에 OS·부팅과 함께 `arch`·`software`·`sha256`을 쓴다(열만 더함, 옛 aaa도 같은 DB를 연다). 그래서 끊긴 머신과 host 재시작 뒤에도 마지막 판을 보인다. 기능·시작 점검은 이 host 실행 중 마지막 연결의 것만 메모리에 둔다(다시 붙기 전에는 비었다). 시작 점검은 agent가 hello 뒤에 끝내는 일이 많아 그때는 다음 연결에 실린다(link 변경 없이 둔 한계).
+- **웹.** 설정 「머신」 → 「등록된 머신」 줄마다 OS · CPU 종류 · 판(host와 다르면 주의 색)과 문제 수, 「자세히」(aria-expanded)로 펼치는 읽기 전용 상세: 연결(host 머신·연결됨·끊김과 마지막 본 때), OS, 판, SHA-256(고정폭, 줄바꿈), 개발 모드, 연결 중이면 작업 디스크·부하·전원·toolchain·시계 차이·주의, 문제, 시작 점검(통과·실패 이유), 접어 둔 agent 기능 목록. 보기 기기도 상세를 본다. 휴대폰은 이름 아래 값이 온다.
+- **검증.** host 유닛 `machine_view_tests`(hello 값이 실리고 판이 다르면 표시, 모르는 꼴의 점검은 버림, host를 다시 열어도 판·SHA·CPU 종류는 남고 기능·점검은 빈다), 웹 유닛 `machineDetail.test.mjs`, 웹 E2E `60-admin` 확장(둘째 agent의 SHA가 실행 파일의 SHA와 같고 화면에 그대로, 보기 기기 상세, 휴대폰 390 폭). 절차는 [시험](testing.md).
+- **번호·호환.** main의 §8.369(t-0574)·§8.370(t-0538 W6b)·§8.371(t-0576)과 FRONT_API 1.86·1.87을 유지하고 이 기능은 1.88·§8.372를 쓴다. AGENT_LINK는 1.10 그대로다(hello 선택 칸만 더함).
+
+### 8.373 할 일 표시 ID d-NNNN(10-21, t-0575)
+
+- **표시·선택.** 웹 할 일·상세·예약·완료 보관과 CLI list·context에 `d-0001` 같은 ID를 보인다. edit·move·rm·restore·log·thread start --from-task·예약·완료 보관 복원은 ID와 기존 제목을 모두 받는다. 번호가 발급된 문자열은 ID를 우선하며 내부 ULID 입력도 유지한다. coordinator 생성 안내에 ID 사용을 권한다.
+- **영속·이주.** 프로젝트마다 1부터 발급하고 제목·목록·순서 변경과 host 재시작 뒤에도 유지한다. 삭제·기록 정리·완료 보관 뒤 재사용하지 않고 복원 시 원래 번호를 쓴다. host DB `task_ids`가 기존 ULID와 번호를 연결하며 프로젝트 이름 변경·휴지통 내보내기·복원에 포함된다. 첫 읽기와 새 항목 쓰기는 없는 ULID 주석만 추가하고 기존 ULID·메모·들여쓰기·줄 끝 문자를 유지한다. 중복 ULID는 거부한다.
+- **호환.** FRONT_API 1.89에서 선택 칸 `TaskView.short_id`와 `TaskLog.task` 필터를 더한다. 새 CLI의 기록 필터는 1.89 이상 host에만 보낸다. ULID 기반 연결과 제목 입력은 유지하고 AGENT_LINK 1.10은 그대로다. TASKS.md만 다른 host로 옮기면 번호는 새로 발급되므로 번호까지 보존하려면 host DB를 함께 보존한다.
+- **검증.** DB·host 동시 이주와 비재사용·복원 owner, 실제 host·agent·CLI의 변경·이동·삭제·예약·재시작·완료 보관 통합 시험, 웹 E2E `70-task-ids`의 CLI 교차 편집과 320/390/768px 표시·검색·가로 넘침을 검사한다. main의 E2E 68·69와 §8.372까지 유지한다. 절차는 [시험](testing.md), 사용법은 [할 일 ID](task-ids.md)에 둔다.
+
+### 8.374 aaa install I6 대화형 검토·계획 결속 승인(10-21, t-0485)
 
 I5 위에 외부 TTY의 inquire/plain 마법사와 명시 인자·private 초안을 연결한다. 두 UI는 동일 choices/계획을 제출한다. dry-run은 저장·발급·nonce·실제 적용을 하지 않으며 Ctrl+C/EOF는 cancelled/130이다. `--yes`·임의 JSON·세션/SSH 환경 변수는 권한이 아니다. 검토한 계획/실행 SHA/계정/instance/변경 전후의 정확 scope를 Ed25519 서명과 사용자 전용 issuer pin·짧은 만료·한 번의 nonce로 결속한다. 발급/비밀 입력은 공개 결과·NDJSON에 넣지 않는다.
 
@@ -6530,6 +6711,6 @@ host 등록은 TLS peer와 결속한 일회 grant 또는 기존 W0 SAS를 쓰고
 
 Windows 사용자 PATH는 기본 preserve이고 명시 user만 현재 HKCU 값의 type/순서/빈 항목/UTF-16 원문을 유지하며 transaction 안에서 before를 다시 확인한다. Serve는 정확 선택 포트와 예상 mapping hash를 서명하고 Windows 보호 LocalAPI의 ETag/If-Match로만 적용한다. 다른 앱/포트/Funnel을 덮거나 조건 없는 CLI 쓰기로 대체하지 않는다. mapping과 현재 host instance의 공개 HTTPS 응답, 첫 Controller를 각각 확인한다. Front의 좁은 InstallPublish 요청은 실제 파일 적용 중인 동일 worker 증명만 수락하며 기존 W0 변경 권한은 그대로다.
 
-공개 결과의 optional service/web 요약은 등록·running·application_ready와 외부/내부 포트·재사용/소유·pairing을 나눠 표시한다. SID/home/인증 파일 존재로 실제 서비스 harness 인증을 추정하지 않는다. require가 미확인이면 unknown/needs_user, 사용자가 새 계획에서 명시한 login=defer는 configured 범위다. URL·암호·키·코드는 결과에 없다. FRONT_API 1.81, AGENT_LINK 1.11/install_enroll.v1과 TS/schema를 함께 갱신하며 기능 없는 구판을 성공으로 처리하지 않는다.
+공개 결과의 optional service/web 요약은 등록·running·application_ready와 외부/내부 포트·재사용/소유·pairing을 나눠 표시한다. SID/home/인증 파일 존재로 실제 서비스 harness 인증을 추정하지 않는다. require가 미확인이면 unknown/needs_user, 사용자가 새 계획에서 명시한 login=defer는 configured 범위다. URL·암호·키·코드는 결과에 없다. FRONT_API 1.90, AGENT_LINK 1.11/install_enroll.v1과 TS/schema를 함께 갱신하며 기능 없는 구판을 성공으로 처리하지 않는다.
 
 검증은 macOS 전체 gate와 Windows strict cross다. Windows·Linux 실제 실행은 main push 뒤 CI이며 실제 SCM logon/Session0/로그인 전 부팅/LSA/UAC/인증·사용자 Windows PC 인수와 혼동하지 않는다. 이 단계 뒤 Windows 최소 bootstrap/사용자 Windows PC 사용자 시험→macOS→Linux→최종 I7 순서로 간다. 별도 runner/VM·branch/PR CI push는 두지 않는다. 절/API 번호는 착지 창에서 최신 main과 다시 대조한다.

@@ -40,10 +40,9 @@ export default async function () {
       await sidebarIs(p,{panel:"work",collapsed:false},"옛 special 기억은 작업 패널");
       if (await p.getByTestId("activity-special").count()) throw new Error("특수 단추가 남았다");
       same(await sidebar(p), { panel: "work", collapsed: false, column: "flex", selected: "activity-work", title: "작업" }, "처음");
-      // 예전 프로젝트·에이전트 두 패널은 「작업」 하나다(plan §8.280): L3 자동화·W4 알림함(plan §8.343)과 맨 위 「답할 것」(plan §8.345)을
-      // 더해 막대 패널 단추는 답할 것·작업·머신·자동화·알림함 다섯
+      // 예전 프로젝트·에이전트 두 패널은 「작업」 하나다(plan §8.280). 「답할 것」은 패널 끝, 보고서 바로 위다(§8.359).
       const tabs = await p.evaluate(() => [...document.querySelectorAll('.activity-bar [role="tab"]')].map((e) => e.dataset.testid).join(","));
-      if (tabs !== "activity-asks,activity-work,activity-machines,activity-automations,activity-inbox") throw new Error(`패널 단추: ${tabs}`);
+      if (tabs !== "activity-work,activity-machines,activity-automations,activity-inbox,activity-asks") throw new Error(`패널 단추: ${tabs}`);
       await p.getByTestId("pane-t1").waitFor();
       const viewWidth = () => p.evaluate(() => Math.round(document.querySelector(".view").getBoundingClientRect().width));
       const wide = await viewWidth();
@@ -71,9 +70,9 @@ export default async function () {
       await p.keyboard.press("Enter");
       await sidebarIs(p, { panel: "machines", collapsed: false }, "Enter로 머신");
       await p.keyboard.press("End");
-      await focusIs(p, "End 알림함 단추", '[data-testid="activity-inbox"]');
+      await focusIs(p, "End 답할 것 단추", '[data-testid="activity-asks"]');
       await p.keyboard.press("Home");
-      await focusIs(p, "Home 답할 것 단추", '[data-testid="activity-asks"]');
+      await focusIs(p, "Home 작업 단추", '[data-testid="activity-work"]');
       const tabStops = await p.evaluate(() => [...document.querySelectorAll('.activity-bar [role="tab"]')].map((e) => ({ id: e.dataset.testid, stop: e.tabIndex })));
       if (!tabStops.some((t) => t.id === "activity-machines") || tabStops.some((t) => t.stop !== (t.id === "activity-machines" ? 0 : -1))) throw new Error(`Tab이 머무는 단추가 고른 패널 하나가 아니다: ${JSON.stringify(tabStops)}`);
       // Mod+Shift+B(참고 toggle-sidebar): 터미널에 focus가 있어도 앱이 가져가 접고 편다
@@ -337,7 +336,7 @@ export default async function () {
     }
   });
 
-  await step("막대·바닥 줄 배치(사용자 요청 10-19 「앱 설치는 설정 안으로, 보고서는 왼쪽 위로(에이전트 밑으로), 사용량은 오른쪽으로」): 보고서는 위 묶음의 패널 단추(마지막 「특수」) 바로 밑(패널 tablist 밖), 아래 묶음은 설정만, 바닥 줄에 설치 단추 없이 사용량 칩이 오른쪽 끝, 데스크톱·좁은 창·휴대폰 세로·가로와 기본·GitHub Dark", async () => {
+  await step("막대·바닥 줄 배치(사용자 요청 10-19 「앱 설치는 설정 안으로, 보고서는 왼쪽 위로(에이전트 밑으로), 사용량은 오른쪽으로」): 보고서는 위 묶음의 패널 단추(마지막 「답할 것」) 바로 밑(패널 tablist 밖), 아래 묶음은 설정만, 바닥 줄에 설치 단추 없이 사용량 칩이 오른쪽 끝, 데스크톱·좁은 창·휴대폰 세로·가로와 기본·GitHub Dark", async () => {
     const VIEWS = [
       ["desktop", { width: 1280, height: 800 }, false],
       ["narrow", { width: 700, height: 800 }, false],
@@ -347,15 +346,15 @@ export default async function () {
     const layout = (p) =>
       p.evaluate(() => {
         const box = (s) => document.querySelector(s).getBoundingClientRect();
-        // 보고서는 패널 단추 묶음 바로 밑: 「자동화」(plan §8.281)·「알림함」(plan §8.343)까지 더해진 묶음 아래다
-        const special = box('[data-testid="activity-inbox"]');
+        // 보고서는 패널 단추 묶음의 마지막 「답할 것」 바로 밑이다(§8.359).
+        const lastPanel = box('[data-testid="activity-asks"]');
         const reports = box('[data-testid="activity-reports"]');
         const foot = document.querySelector(".list-foot");
         const footBox = foot.getBoundingClientRect();
         const strip = box('[data-testid="usage-strip"]');
         return {
-          reportsGap: Math.round(reports.top - special.bottom),
-          reportsLeft: Math.round(reports.left - special.left),
+          reportsGap: Math.round(reports.top - lastPanel.bottom),
+          reportsLeft: Math.round(reports.left - lastPanel.left),
           inTablist: document.querySelector('[role="tablist"] [data-testid="activity-reports"]') !== null,
           bottom: [...document.querySelectorAll(".activity-bottom [data-testid]")].map((e) => e.dataset.testid).join(","),
           footButtons: [...foot.querySelectorAll("button")].map((e) => e.dataset.testid ?? e.textContent.trim()).join(","),

@@ -5,8 +5,10 @@ impl Host {
         let Some(id) = self.db.meta("rollout:active").map_err(internal)? else {
             return Ok(None);
         };
-        let r = self.load_rollout(&id)?;
-        Ok(Some(RolloutCard {
+        Ok(Some(self.card_of(self.load_rollout(&id)?)))
+    }
+    pub(crate) fn card_of(&self, r: RolloutView) -> RolloutCard {
+        RolloutCard {
             id: r.id,
             state: r.state,
             version: r.version,
@@ -36,7 +38,7 @@ impl Host {
             recovery_sha256: r.recovery.as_ref().map(|g| g.spec.baseline.sha256.clone()),
             created_ms: r.created_ms,
             updated_ms: r.updated_ms,
-        }))
+        }
     }
     pub(super) fn announce_rollout_finished(&self, r: &RolloutView, item: &InboxItem) {
         // 내구 정본/inbox 뒤 투영/깨움, 앱 안 알림. 외부 push/webhook은 호출하지 않는다.

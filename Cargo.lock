@@ -58,6 +58,7 @@ dependencies = [
  "tokio",
  "tokio-rustls",
  "toml",
+ "toml_edit",
  "tracing",
  "windows-sys 0.60.2",
 ]

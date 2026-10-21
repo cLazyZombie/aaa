@@ -122,13 +122,6 @@ impl Host {
         mut spec: SpawnSpec,
         actor: &str,
     ) -> Result<String, ErrorBody> {
-        // 인증 thread는 저장한 launch·작업 identity·감시를 함께 이어야 한다.
-        if let Some(rec) =
-            self.thread_of_pane(id).filter(|r| r.account.is_some() && r.kind != aaa_proto::ThreadKind::Adopted)
-        {
-            let resumed = self.thread_restart(&rec.project, &rec.id, true, None, actor).await?;
-            return resumed.pane.ok_or_else(fail);
-        }
         let Some(binding) = self.pane_account(id)? else {
             return self.spawn_on(mid, spec, actor).await;
         };
@@ -198,6 +191,7 @@ mod tests {
                 features: vec!["account_auth.v2".into()],
                 agent_pid: None,
                 colors: None,
+                build: Default::default(),
             },
         );
         let binding = PaneAccount {
@@ -216,6 +210,7 @@ mod tests {
             version: 1,
             secret: SecretText("fixture-only".into()),
             trust_cwd: None,
+            auth_generation: None,
         };
         let spec = SpawnSpec {
             name: "coordinator".into(),

@@ -146,14 +146,10 @@ impl Host {
         }
         for profile in &a.profiles {
             self.check_profile_allowed(p, profile)?;
-            if a.reuse == crate::automation::Reuse::Open {
-                for machine in targets.keys() {
-                    if self.resolved_profile(Some(p), machine, profile)?.harness == "codex" {
-                        return Err(bad(
-                            "do.start.reuse: Codex는 compaction 뒤 기억 재독 hook이 없어 open을 지원하지 않는다",
-                        ));
-                    }
-                }
+            if a.reuse == crate::automation::Reuse::Open
+                && self.configured_thread_profile(Some(p), profile)?.harness == "codex"
+            {
+                return Err(bad("do.start.reuse: Codex는 compaction 뒤 기억 재독 hook이 없어 open을 지원하지 않는다"));
             }
         }
         let mut source_repos = BTreeSet::new();
@@ -459,6 +455,10 @@ impl Host {
                 blocked.push(format!("{name} 연결 없음"));
                 continue;
             }
+            if !self.machine_feature(&mid, "host_profiles.v1") {
+                blocked.push(format!("{name} host_profiles.v1 없음 · agent 갱신·재연결 뒤 다시 시도 가능 · 입력 보존"));
+                continue;
+            }
             if let Some(t) = active.iter().find(|t| t.machine_id == mid && t.holds.iter().any(|h| a.wait.contains(h))) {
                 blocked.push(format!(
                     "{name} {}({})",
@@ -576,6 +576,7 @@ impl Host {
             },
         };
         let args = crate::orch::StartArgs {
+            reservation: None,
             account: None,
             holds: vec![],
             project: p.into(),

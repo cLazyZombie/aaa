@@ -45,6 +45,10 @@ const CSP: &str = "default-src 'self'; script-src 'self'; style-src 'self' 'unsa
 pub async fn start(host: &Arc<Host>) -> Result<()> {
     let addr = host.cfg.web.listen.clone();
     if addr.is_empty() {
+        // 웹을 끈 설정: 다음 시작의 안전 모드도 웹을 열지 않는다(지난 주소를 남기지 않는다)
+        if let Err(e) = host.db.set_meta(crate::safe_mode::LISTEN_KEY, "") {
+            tracing::warn!("웹 주소 기록 실패: {e:#}");
+        }
         return Ok(());
     }
     let listener = tokio::net::TcpListener::bind(&addr).await.with_context(|| format!("웹 listen {addr}"))?;
@@ -56,6 +60,10 @@ pub(crate) fn start_bound(host: &Arc<Host>, listener: tokio::net::TcpListener) -
     let addr = listener.local_addr()?;
     host.web_port.store(listener.local_addr()?.port(), std::sync::atomic::Ordering::Relaxed);
     *host.web_listen.lock().unwrap() = Some(listener.local_addr()?.to_string());
+    // 설정을 읽지 못한 다음 시작의 안전 모드가 같은 주소(tailscale serve가 가리키는 포트)에 뜨도록 실제로 연 주소를 남긴다
+    if let Err(e) = host.db.set_meta(crate::safe_mode::LISTEN_KEY, &listener.local_addr()?.to_string()) {
+        tracing::warn!("웹 주소 기록 실패: {e:#}");
+    }
     tracing::info!(%addr, "웹 listen(loopback)");
     // 공개 주소(Host·Origin 허용)를 지금 serve 상태로 맞춘다. tailscale을 기다리지 않고 연다(그동안은 지난 값)
     let h = host.clone();
@@ -124,12 +132,14 @@ pub fn router(host: Arc<Host>) -> Router {
         .route("/api/v1/push/test", post(push_test))
         .route("/api/v1/diag/input", post(diag_input))
         .route("/api/v1/usage", get(usage_report))
+        .route("/api/v1/account-usage", get(account_quota_report))
         .route("/api/v1/panes/{id}/ws", get(pane_ws))
         .route("/api/v1/panes/{id}/image", post(chat_image))
         .route("/api/v1/projects/{project}/uploads", post(task_file))
         .route("/api/v1/projects/{project}/library-uploads/{upload}", post(library_upload))
         .route("/api/v1/projects/{project}/uploads/{name}", get(task_file_get))
         .route("/api/v1/projects/{project}/questions/{thread}/{hash}/{*path}", get(question_file_get))
+        .route("/api/v1/projects/{project}/requests/{item}/{hash}/{*path}", get(request_file_get))
         .route("/api/v1/projects/{project}/asks/{id}/{*path}", get(ask_file_get))
         .route("/v/{cap}/{*path}", get(view_file))
         .route("/v/{cap}/", get(view_root))
@@ -141,7 +151,7 @@ pub fn router(host: Arc<Host>) -> Router {
         .with_state(host)
 }
 
-fn host_header(h: &HeaderMap) -> String {
+pub(crate) fn host_header(h: &HeaderMap) -> String {
     h.get(header::HOST).and_then(|v| v.to_str().ok()).unwrap_or("").to_string()
 }
 
@@ -157,7 +167,7 @@ fn is_loopback_host(host: &str) -> bool {
 }
 
 /// 요청이 HTTPS(serve) 경유인가: 브라우저가 보는 주소가 loopback이 아니거나 proxy가 https라고 알린다.
-fn via_https(h: &HeaderMap) -> bool {
+pub(crate) fn via_https(h: &HeaderMap) -> bool {
     let proto = h.get("x-forwarded-proto").and_then(|v| v.to_str().ok());
     proto == Some("https") || !is_loopback_host(&host_header(h))
 }
@@ -445,7 +455,7 @@ async fn serve_view(
 
 /// 장치 cookie 이름. cookie는 포트를 가리지 않아 같은 hostname의 두 인스턴스가 한 이름을 쓰면 서로의 로그인을 덮는다.
 /// 그래서 인스턴스는 이름에 꼬리를 단다(`__Host-aaa-work`, plan §8.294). 기본 인스턴스는 지금 이름 그대로다
-fn cookie_name(https: bool) -> String {
+pub(crate) fn cookie_name(https: bool) -> String {
     cookie_name_in(aaa_config::paths::instance().as_deref(), https)
 }
 
@@ -457,7 +467,7 @@ fn cookie_name_in(instance: Option<&str>, https: bool) -> String {
 /// 장치 cookie. HTTPS에서는 `__Host-aaa`만 본다: prefix 없는 `aaa`는 같은 이름의 다른 서비스(다른 포트)나
 /// 하위 경로가 심을 수 있다. `=`이 없는 등 깨진 항목은 건너뛴다(herdr-web-ui `parseCookies`: 남의 cookie 하나가
 /// 주인을 막지 않는다)
-fn cookie_token(h: &HeaderMap) -> Option<String> {
+pub(crate) fn cookie_token(h: &HeaderMap) -> Option<String> {
     let name = cookie_name(via_https(h));
     for v in h.get_all(header::COOKIE) {
         let Ok(s) = v.to_str() else { continue };
@@ -615,6 +625,15 @@ async fn ask_file_get(
     headers: HeaderMap,
 ) -> Response {
     let file = host.ask_file(&project, &id, &path);
+    ask_file_response(&host, &headers, file, &path)
+}
+
+async fn request_file_get(
+    State(host): State<Arc<Host>>,
+    Path((project, item, hash, path)): Path<(String, String, String, String)>,
+    headers: HeaderMap,
+) -> Response {
+    let file = host.request_file(&project, &item, &hash, &path);
     ask_file_response(&host, &headers, file, &path)
 }
 
@@ -886,6 +905,20 @@ async fn usage_report(
     }
     let report = host.usage.report(q.refresh.as_deref() == Some("1")).await;
     let mut res = Json(Outcome::Ok(report)).into_response();
+    res.headers_mut().insert(header::CACHE_CONTROL, HeaderValue::from_static("no-store"));
+    res
+}
+
+/// 등록 계정의 창별 사용량. 메일·원문 응답·인증 경로는 이 응답에 없다.
+async fn account_quota_report(
+    State(host): State<Arc<Host>>,
+    headers: HeaderMap,
+    axum::extract::Query(q): axum::extract::Query<UsageQuery>,
+) -> Response {
+    if device(&host, &headers).is_none() {
+        return unauthorized();
+    }
+    let mut res = Json(Outcome::from(host.quota_report(q.refresh.as_deref() == Some("1")).await)).into_response();
     res.headers_mut().insert(header::CACHE_CONTROL, HeaderValue::from_static("no-store"));
     res
 }

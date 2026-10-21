@@ -12,7 +12,8 @@ impl Host {
         for t in self.threads_of(None, None)? {
             if t.status != ThreadStatus::Resolved
                 && (t.group == ThreadGroup::WaitingOnYou
-                    || (t.report_attention == Some(ReportAttention::NeedsUser) && t.report_hash != t.acked_hash))
+                    || (t.report_attention == Some(ReportAttention::NeedsUser) && t.report_hash != t.acked_hash)
+                    || t.questions.as_ref().is_some_and(|q| q.answer.is_none()))
             {
                 panes.insert(t.pane.unwrap_or_else(|| format!("{}/{}", t.project, t.id)));
             }
@@ -24,6 +25,7 @@ impl Host {
             .map_err(internal)?
             .into_iter()
             .filter(|i| i.item_kind == "post" && i.event == "post request for user")
+            .filter(|i| !self.request_has_open_question(i))
             .count();
         Ok(reports.saturating_add(panes.len() as u32).saturating_add(posts as u32))
     }
@@ -62,6 +64,7 @@ mod tests {
         t.brief = BriefState::Delivered;
         h.db.thread_import("demo", &t.id, "open", &serde_json::to_string(&t).unwrap()).unwrap(); // pane이 없어 확인 필요
         let mut q = QuestionView {
+            short_id: None,
             id: "q1".into(),
             pane: "p1".into(),
             machine: "mac-a".into(),

@@ -26,6 +26,16 @@ describe("「답할 것」 파일 주소", () => {
 });
 
 describe("「답할 것」 열쇠", () => {
+  it("같은 질문을 가리키는 알림 여러 개는 카드 한 줄이고, 카드 없는 post는 남는다", () => {
+    const titles = ["요약 aaa:question/t-1", "보충 aaa:question/t-1", "아침 정리", "없는 질문 aaa:question/t-9", "보고서 aaa:report/t-1", "t-1 이름만 언급", "답한 질문 aaa:question/t-2"];
+    const data = { requests: titles.map((title, i) => ({ id: `i${i}`, title, body: "aaa:question/t-1", created_ms: i })), done: [], keepDays: 14 };
+    const threads = [thread("t-1", open), thread("t-2", { ...open, answer: { summary: "1A" } })];
+    assert.deepEqual(openAsks(threads, data, []).map((a) => a.key), ["q:t-1", "r:i2", "r:i3", "r:i4", "r:i5"]);
+    // 질문이나 보존한 카드가 없으면 평소 post로 남긴다.
+    assert.equal(openAsks([], data, []).length, titles.length);
+    assert.deepEqual(openAsks([], { ...data, done: [rec("done", "question", "t-9", 1)] }, []).map((a) => a.key), ["r:i0", "r:i1", "r:i2", "r:i4", "r:i5", "r:i6"]);
+  });
+
   it("질문 주소는 열린 질문, 답했으면 마지막 답한 기록, 둘 다 없으면 없음", () => {
     const done = [rec("old", "question", "t-1", 1), rec("new", "question", "t-1", 5), rec("x", "request", "t-1", 9)];
     assert.equal(questionKey("t-1", [thread("t-1", open)], done), "q:t-1");
@@ -48,4 +58,19 @@ describe("「답할 것」 열쇠", () => {
     const keys = openAsks([thread("t-1", open), thread("t-2", { ...open, answer: { summary: "1A" } })], data, tasks).map((a) => a.key);
     assert.deepEqual(keys, ["q:t-1", "r:i1", "r:i2", "t:볼 일"]);
   });
+});
+
+// 짧은 질문 ID는 기존 thread 참조와 같은 카드로, post·보존본으로도 이어진다.
+it("q ID 링크와 연결 post는 같은 항목 하나로 묶는다", () => {
+  const t = thread("t-1", { ...open, items: [{ id: "q-1000", text: "자리", choices: [] }] });
+  const r = { id: "i1", title: "요약 aaa:question/q-1000", body: "알림", created_ms: 1, question_id: "q-1000" };
+  assert.equal(questionKey("q-1000", [t], []), "q:t-1");
+  assert.deepEqual(openAsks([t], { requests: [r], done: [], keepDays: 14 }, []).map((a) => a.key), ["q:t-1"]);
+  const standalone = { ...r, title: "직접 질문", question_id: "q-1001" };
+  assert.equal(questionKey("q-1001", [], [], [standalone]), "r:i1");
+  const done = { ...rec("answer", "request", "i1", 1), question_id: "q-1001" };
+  assert.equal(questionKey("q-1001", [], [done]), "d:answer");
+  assert.equal(questionKey("q-1000", [], [{ ...done, items: [{ id: "q-1000", text: "자리", choices: [] }] }]), "d:answer");
+  const history = { ...rec("answered", "question", "t-1", 1), items: [{ id: "q-1000", text: "자리", choices: [] }] };
+  assert.deepEqual(openAsks([], { requests: [r], done: [history], keepDays: 14 }, []), []);
 });

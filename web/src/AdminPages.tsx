@@ -13,12 +13,14 @@ import { ConfirmDialog } from "./ConfirmDialog";
 import { SettingsGroup } from "./herdr/SettingsControls.tsx";
 import { nativeModalOver, useFocusTrap } from "./herdr/useFocusTrap.ts";
 import { usePhoneSheetBack } from "./herdr/sheetHistory.ts";
+import { MachineSetup } from "./SettingsAdminPages";
+import { machineLine, machineRows } from "./machineDetail.ts";
 import { canAdmin, enrollCode, enrollLeft, liveLinks, newUploadId, onPublicAddress, otherRoutes, reportNameOk, uploadPlan } from "./adminModel.ts";
 
 const say = (e: unknown) => (e instanceof ApiError ? e.message : e instanceof Error ? e.message : String(e));
 
 /** 입력이 있는 창(PaneRename과 같은 꼴): Esc·바깥 누름·폰 「뒤로」는 닫기, 일하는 동안은 닫지 않는다 */
-function AdminDialog({ label, busy, onClose, children }: { label: string; busy: boolean; onClose: () => void; children: ReactNode }) {
+export function AdminDialog({ label, busy, onClose, children }: { label: string; busy: boolean; onClose: () => void; children: ReactNode }) {
   const surface = useFocusTrap<HTMLDivElement>(true);
   usePhoneSheetBack(() => {
     if (busy) return false;
@@ -76,6 +78,7 @@ export function MachinesPage({ role, machines }: { role: DeviceRole; machines: M
   const [minutes, setMinutes] = useState("10");
   const [approving, setApproving] = useState<PendingEnroll | null>(null);
   const [revoking, setRevoking] = useState<string | null>(null);
+  const [detail, setDetail] = useState<string | null>(null);
   const [, tick] = useState(0);
   const seq = useRef(0);
   const canEdit = role !== "reader" && admin === true;
@@ -183,20 +186,40 @@ export function MachinesPage({ role, machines }: { role: DeviceRole; machines: M
       <SettingsGroup title="등록된 머신">
         <div className="settings-item">
           <ul className="admin-list" data-testid="machine-list">
-            {machines.map((m) => (
-              <li key={m.id} data-name={m.name}>
-                <span className="admin-name">{m.name}</span>
-                <span className="op-muted">{m.local ? "host 머신" : m.connection === "connected" ? "연결됨" : "끊김"}</span>
-                {canEdit && !m.local && (
-                  <button type="button" className="btn small" disabled={busy} onClick={() => setRevoking(m.name)} aria-label={`${m.name} 폐기`}>
-                    폐기
-                  </button>
-                )}
-              </li>
-            ))}
+            {machines.map((m) => {
+              const shown = detail === m.id;
+              const line = machineLine(m);
+              return (
+                <li key={m.id} data-name={m.name}>
+                  <span className="admin-name">{m.name}</span>
+                  <span className="op-muted">{m.local ? "host 머신" : m.connection === "connected" ? "연결됨" : "끊김"}</span>
+                  {line && <span className={m.software_differs ? "machine-warn machine-line" : "op-muted machine-line"}>{line}</span>}
+                  {m.problems.length > 0 && <span className="machine-warn">문제 {m.problems.length}</span>}
+                  <span className="admin-actions">
+                    <button
+                      type="button"
+                      className="btn small"
+                      aria-expanded={shown}
+                      aria-controls={`machine-detail-${m.id}`}
+                      aria-label={`${m.name} 자세히`}
+                      onClick={() => setDetail(shown ? null : m.id)}
+                    >
+                      자세히
+                    </button>
+                    {canEdit && !m.local && (
+                      <button type="button" className="btn small" disabled={busy} onClick={() => setRevoking(m.name)} aria-label={`${m.name} 폐기`}>
+                        폐기
+                      </button>
+                    )}
+                  </span>
+                  {shown && <MachineDetail m={m} />}
+                </li>
+              );
+            })}
           </ul>
         </div>
       </SettingsGroup>
+      <MachineSetup role={role} machines={machines} />
       {approving && <ApproveDialog p={approving} onClose={() => setApproving(null)} onDone={load} />}
       {revoking && (
         <ConfirmDialog
@@ -210,6 +233,29 @@ export function MachinesPage({ role, machines }: { role: DeviceRole; machines: M
           }}
           onClose={() => setRevoking(null)}
         />
+      )}
+    </div>
+  );
+}
+
+/** 머신 상세(읽기만, plan §8.372): 연결·OS·판·SHA·건강·자가 점검, 마지막 연결이 알린 기능 */
+function MachineDetail({ m }: { m: MachineView }) {
+  const rows = machineRows(m, Date.now());
+  return (
+    <div className="machine-detail" id={`machine-detail-${m.id}`} data-testid={`machine-detail-${m.name}`}>
+      <dl className="admin-plan">
+        {rows.map((r, i) => (
+          <div key={i} className="machine-row" data-label={r.label}>
+            <dt>{r.label}</dt>
+            <dd className={[r.warn ? "machine-warn" : "", r.mono ? "mono" : ""].filter(Boolean).join(" ") || undefined}>{r.value}</dd>
+          </div>
+        ))}
+      </dl>
+      {(m.features?.length ?? 0) > 0 && (
+        <details className="machine-features">
+          <summary>agent 기능 {m.features!.length}개</summary>
+          <p className="mono">{m.features!.join(" ")}</p>
+        </details>
       )}
     </div>
   );

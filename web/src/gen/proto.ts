@@ -29,6 +29,34 @@ expires_ms?: number,
  */
 health?: AccountHealth, };
 
+export type QuotaSource = "codex_rpc" | "claude_statusline";
+
+export type QuotaProblem = "unknown" | "expired" | "rate_limited" | "locked" | "disconnected" | "unsupported" | "failed" | "clock_skew";
+
+export type QuotaFreshness = "fresh" | "stale" | "unknown";
+
+export type QuotaWindow = { limit_id: string,
+/**
+ * 기간을 모르는 서로 다른 창도 합치지 않기 위한 제공자 창 이름.
+ */
+window_id: string, scope: string | null, duration_mins: number | null, used_percent: number, observed_at_ms: number, resets_at_ms: number | null, };
+
+export type QuotaSnapshot = {
+/**
+ * 로그인·등록 때 새로 만드는 세대. 토큰의 해시가 아니다.
+ */
+generation: string, source: QuotaSource, sampled_at_ms: number, windows: Array<QuotaWindow>, problem: QuotaProblem | null, retry_at_ms: number | null, };
+
+export type AccountQuotaWindow = { machine: string, source: QuotaSource, received_at_ms: number, freshness: QuotaFreshness, problem: QuotaProblem | null, conflict: boolean, limit_id: string,
+/**
+ * 기간을 모르는 서로 다른 창도 합치지 않기 위한 제공자 창 이름.
+ */
+window_id: string, scope: string | null, duration_mins: number | null, used_percent: number, observed_at_ms: number, resets_at_ms: number | null, };
+
+export type AccountQuota = { account: string, harness: string, windows: Array<AccountQuotaWindow>, problem: QuotaProblem | null, retry_at_ms: number | null, };
+
+export type AccountQuotaReport = { accounts: Array<AccountQuota>, };
+
 export type AccountHealth = "ok" | "expiring" | "expired" | "rejected";
 
 export type AccountDefault = { harness: string, account: string, };
@@ -158,7 +186,31 @@ clock_skew_ms: number | null,
 /**
  * 새 세션을 거부하는 이유(연결 중일 때만). 비었으면 정상이다.
  */
-problems: Array<HealthProblem>, };
+problems: Array<HealthProblem>,
+/**
+ * 마지막 hello의 CPU 종류(`aarch64`·`x86_64`). 아래 넷과 같이 1.88부터 싣고, 옛 host·아직 붙지 않은 머신은 생략한다(plan §8.372)
+ */
+arch?: string,
+/**
+ * 마지막 hello의 aaa 판(`aaa --version`의 판 글)
+ */
+software?: string,
+/**
+ * 마지막 hello의 실행 파일 SHA-256(소문자 hex). 옛 agent는 보내지 않는다
+ */
+sha256?: string,
+/**
+ * 판이 host와 다르다(판을 모르면 false)
+ */
+software_differs?: boolean,
+/**
+ * 이 host 실행 중 마지막 연결이 알린 agent 기능(host 재시작 뒤 다시 붙기 전에는 비었다)
+ */
+features?: Array<string>,
+/**
+ * 마지막 연결의 시작 자가 점검(§10.4 6) 요약. 점검이 hello보다 늦게 끝났으면 다음 연결 때 온다
+ */
+selfcheck?: MachineSelfcheck, };
 
 export type MachineHealth = {
 /**
@@ -194,9 +246,41 @@ problems: Array<HealthProblem>,
  */
 warnings: Array<string>, };
 
+export type MachineSelfcheck = { pass: boolean, reasons: Array<string>, };
+
 export type HealthProblem = { code: string, text: string, };
 
+export type QueueState = "queued" | "check" | "starting" | "running" | "finished" | "cancelled";
+
+export type QueueOp = { "op": "list" } | { "op": "reserve", task: string, block: string, profile: string, profile_revision: string, } | { "op": "cancel", task_id: string, } | { "op": "move", task_id: string, position: number, };
+
+export type TaskChoicePin = { owner: string | null, profile: string, machine: string | null, actor: string, at_ms: number, };
+
+export type TaskReservation = { selection: TaskChoicePin, task_id: string, task: TaskView, approved_block: string, profile: string, model: string, effort: string, profile_revision: string, machine: string | null, position: number, state: QueueState, reason: string,
+/**
+ * 선점과 함께 발급한 기동 ID. 외부 기동의 exactly-once 보증은 아니다.
+ */
+launch_id: string | null, thread: string | null, actor: string, created_ms: number, updated_ms: number, };
+
+export type ArchivedTask = { task_id: string, task: TaskView,
+/**
+ * 복원할 블록 원문. 첨부 참조는 프로젝트의 같은 경로다.
+ */
+body: string, reason: string, report: string | null, completed_ms: number, restored: boolean,
+/**
+ * 본문 제거 뒤의 파일 판과 대조하는 복구 영수증.
+ */
+committed: boolean, removed_sha256: string, history: Array<TaskLogEntry>, };
+
 export type TaskView = {
+/**
+ * 프로젝트별 영구 표시 ID(`d-0001`). 내부 연결은 기존 ULID를 유지한다.
+ */
+short_id: string | null,
+/**
+ * 제목과 독립된 내부 ULID. 기존 task는 host의 식별 이주 때 주석으로 부여한다.
+ */
+id: string | null,
 /**
  * 속한 `## ` 목록 이름
  */
@@ -285,7 +369,7 @@ path: string,
  */
 error: string | null, sections: Array<TaskNotesSection>, };
 
-export type TaskBoard = { project: string,
+export type TaskBoard = { queue: Array<TaskReservation>, project: string,
 /**
  * 파일 전체 바이트의 sha256(파일이 없으면 빈 글의 hash)
  */
@@ -371,7 +455,7 @@ op: number, reason: string,
  */
 latest: TaskView | null, };
 
-export type TaskAction = "add" | "update" | "delete" | "move" | "list_add" | "list_rename" | "list_merge" | "list_delete" | "list_move" | "restore" | "raw" | "auto_clean";
+export type TaskAction = "add" | "update" | "delete" | "move" | "list_add" | "list_rename" | "list_merge" | "list_delete" | "list_move" | "restore" | "raw" | "auto_clean" | "completed";
 
 export type TaskLogEntry = { id: number, at_ms: number,
 /**
@@ -397,7 +481,7 @@ restored_by: number | null, };
 
 export type TaskLogFilter = "deleted" | "auto";
 
-export type ThreadStartPreview = {
+export type ThreadStartPreview = { profile_revision: string, model: string, effort: string,
 /**
  * task 제목(thread 제목이 된다)
  */
@@ -673,7 +757,11 @@ truncated: boolean,
  */
 untracked_omitted: boolean, };
 
-export type FrontRequest = { "op": "install_approve", request: InstallApprovalRequest, } | { "op": "account_import", name: string, harness: string, secret: SecretText, } | { "op": "account_list" } | { "op": "account_defaults" } | { "op": "account_default", harness: string, account: string | null, } | { "op": "account_login", name: string, harness: string, } | { "op": "account_login_status", id: string, } | { "op": "account_login_cancel", id: string, } | { "op": "account_login_confirm", id: string, switch: boolean, } | { "op": "account_remove", name: string, } | { "op": "thread_start_account", account: string, start: FrontRequest, } | { "op": "debug_input", pane: string | null, thread: string | null, since_ms: bigint, } | { "op": "rollout_start", id: string, spec: RolloutSpec, } | { "op": "rollout_status", id: string, } | { "op": "deploy_context" } | { "op": "deploy_start", machine: string | null, id: string, action: DeployAction, } | { "op": "deploy_status", machine: string | null, id: string, } | { "op": "post", project?: string, input: PostInput, } | { "op": "post_status", project?: string, post_id: string, } | { "op": "post_list", project?: string, } | { "op": "asks", project?: string, } | { "op": "ask_handle", project?: string, item: string, } | { "op": "ask_forget", project?: string, ids: Array<string>, all: boolean, } | { "op": "post_unmute", project?: string, thread: string, } | { "op": "status" } | { "op": "machines" } | { "op": "panes", role: Role | null, } | { "op": "pane_run", machine: string | null, name: string | null, argv: Array<string>, cwd: string | null, cols: number | null, rows: number | null,
+export type FrontRequest = { "op": "install_approve", request: InstallApprovalRequest, } | { "op": "account_import", name: string, harness: string, secret: SecretText, } | { "op": "account_list" } | { "op": "account_defaults" } | { "op": "account_default", harness: string, account: string | null, } | { "op": "account_login", name: string, harness: string, } | { "op": "account_login_status", id: string, } | { "op": "account_login_cancel", id: string, } | { "op": "account_login_confirm", id: string, switch: boolean, } | { "op": "account_remove", name: string, } | { "op": "thread_start_account", account: string, start: FrontRequest, } | { "op": "debug_input", pane: string | null, thread: string | null, since_ms: bigint, } | { "op": "rollout_start", id: string, spec: RolloutSpec, } | { "op": "rollout_status", id: string, } | { "op": "deploy_context" } | { "op": "deploy_start", machine: string | null, id: string, action: DeployAction, } | { "op": "deploy_status", machine: string | null, id: string, } | { "op": "rollout_plan", source_machine: string, path: string,
+/**
+ * 비었으면 등록된 모든 머신
+ */
+machines: Array<string>, } | { "op": "rollouts" } | { "op": "deploy_jobs" } | { "op": "post", project?: string, input: PostInput, } | { "op": "post_status", project?: string, post_id: string, } | { "op": "post_handled", project?: string, post_id: string, } | { "op": "post_list", project?: string, } | { "op": "asks", project?: string, } | { "op": "ask_handle", project?: string, item: string, } | { "op": "ask_answer", project?: string, item: string, body_hash: string, picks: Array<number | null>, text: string | null, } | { "op": "question_reply", project?: string, id: string, choice: string | null, text: string | null, } | { "op": "ask_forget", project?: string, ids: Array<string>, all: boolean, } | { "op": "post_unmute", project?: string, thread: string, } | { "op": "status" } | { "op": "machines" } | { "op": "panes", role: Role | null, } | { "op": "pane_run", machine: string | null, name: string | null, argv: Array<string>, cwd: string | null, cols: number | null, rows: number | null,
 /**
  * host 정본 profile로 harness를 띄운다(`argv`는 비운다, herdr-web-ui 새 세션의 agent 고르기)
  */
@@ -702,7 +790,7 @@ lines: number | null, format: ReadFormat, } | { "op": "pane_send_text", pane: st
 /**
  * 없으면 끝없이 기다린다(herdr와 같다)
  */
-timeout_ms: number | null, } | { "op": "pane_get", pane: string, } | { "op": "pane_close", pane: string, } | { "op": "workspaces" } | { "op": "workspace_close", name: string, } | { "op": "workspace_rename", name: string, to: string, } | { "op": "pane_resize", pane: string, cols: number, rows: number, } | { "op": "pane_kill", pane: string, } | { "op": "pane_input", pane: string, data: B64, } | { "op": "pane_ctrl_enter", pane: string, trace: string | null, } | { "op": "pane_paste", pane: string, text: string, } | { "op": "pane_take", pane: string, } | { "op": "pane_release", pane: string, } | { "op": "pane_attach", pane: string, offset: number, total: number, sha256: string, data: B64, } | { "op": "pane_resume", pane: string, } | { "op": "pane_forget", pane: string, } | { "op": "pane_rename", pane: string, label: string | null, } | { "op": "workspace", name: string | null, } | { "op": "layout_apply", workspace: string | null, change: LayoutChange, } | { "op": "enroll_open", minutes: number, } | { "op": "enroll_close" } | { "op": "enroll_pending" } | { "op": "enroll_approve", name: string, code: string, } | { "op": "machine_revoke", name: string, } | { "op": "web_pair", role: DeviceRole, } | { "op": "devices" } | { "op": "device_rename", id: string, label: string, } | { "op": "device_revoke", id: string, } | { "op": "install_publish", installation_id: string, } | { "op": "install_publish_status", installation_id: string, } | { "op": "web_publish" } | { "op": "web_publish_off" } | { "op": "web_status" } | { "op": "project_create", name: string, goal: string,
+timeout_ms: number | null, } | { "op": "pane_get", pane: string, } | { "op": "pane_close", pane: string, } | { "op": "workspaces" } | { "op": "workspace_close", name: string, } | { "op": "workspace_rename", name: string, to: string, } | { "op": "pane_resize", pane: string, cols: number, rows: number, } | { "op": "pane_kill", pane: string, } | { "op": "pane_input", pane: string, data: B64, } | { "op": "pane_ctrl_enter", pane: string, trace: string | null, } | { "op": "pane_paste", pane: string, text: string, } | { "op": "pane_take", pane: string, } | { "op": "pane_release", pane: string, } | { "op": "pane_attach", pane: string, offset: number, total: number, sha256: string, data: B64, } | { "op": "pane_resume", pane: string, } | { "op": "pane_forget", pane: string, } | { "op": "pane_rename", pane: string, label: string | null, } | { "op": "workspace", name: string | null, } | { "op": "layout_apply", workspace: string | null, change: LayoutChange, } | { "op": "enroll_open", minutes: number, } | { "op": "enroll_close" } | { "op": "safety_show", project?: string, scope: SettingsScope, } | { "op": "safety_set", project?: string, scope: SettingsScope, key: string, value: string | null, expected: string, } | { "op": "profile_admin" } | { "op": "profile_plan", project?: string, change: ProfileChangeReq, } | { "op": "profile_apply", project?: string, change: ProfileChangeReq, expected: string, } | { "op": "work_root_show", machine: string, } | { "op": "work_root_check", machine: string, path: string | null, mount: string | null, } | { "op": "work_root_set", machine: string, path: string, mount: string | null, } | { "op": "hook_status", machine: string, } | { "op": "hook_set", machine: string, install: boolean, } | { "op": "enroll_pending" } | { "op": "enroll_approve", name: string, code: string, } | { "op": "machine_revoke", name: string, } | { "op": "web_pair", role: DeviceRole, } | { "op": "devices" } | { "op": "device_rename", id: string, label: string, } | { "op": "device_revoke", id: string, } | { "op": "install_publish", installation_id: string, } | { "op": "install_publish_status", installation_id: string, } | { "op": "web_publish" } | { "op": "web_publish_off" } | { "op": "web_status" } | { "op": "project_create", name: string, goal: string,
 /**
  * `PATH` 또는 `PATH@MACHINE`(머신이 없으면 host 머신, 상대 경로는 CLI가 절대 경로로 바꿔 보낸다)
  */
@@ -736,7 +824,7 @@ kind: ThreadKind | null, repo: string | null, base: string | null,
  */
 task: string,
 /**
- * TASKS.md의 task 제목(대소문자 무시). owner가 profile·machine의 기본값이 되고, 메모가 할 일에 붙는다.
+ * TASKS.md의 task ID(d-0001·ULID) 또는 제목(대소문자 무시). owner가 profile·machine의 기본값이 되고, 메모가 할 일에 붙는다.
  */
 from_task: string | null,
 /**
@@ -751,7 +839,15 @@ task_block?: string, } | { "op": "thread_start_preview", project?: string, from_
 /**
  * 할 일. 비면 「하던 일을 이어 하되 이제 이 프로젝트 thread다」
  */
-task: string, } | { "op": "thread_next", project?: string, thread: string, line: number | null, add: string | null, } | { "op": "context", project?: string, peek: boolean, } | { "op": "assignable", project?: string, check: string | null, } | { "op": "tasks", project?: string, } | { "op": "task_edit", project?: string, ops: Array<TaskOp>, base_sha256: string | null, } | { "op": "task_log", project?: string, before: number | null, limit: number | null, filter: TaskLogFilter | null, } | { "op": "task_log_prune", project?: string, before_ms: number, } | { "op": "threads", project: string | null, role: Role | null, } | { "op": "thread_show", project?: string, thread: string, } | { "op": "thread_summary", project?: string, thread: string, } | { "op": "thread_summary_set", project?: string, thread: string, text: string, } | { "op": "thread_library", project?: string, thread: string, } | { "op": "library_link", project?: string, thread: string, days: number | null, } | { "op": "library_links", project: string | null, } | { "op": "library_link_revoke", id: string, } | { "op": "library_publish", project?: string, name: string, source: string, live: boolean,
+task: string, } | { "op": "thread_next", project?: string, thread: string, line: number | null, add: string | null, } | { "op": "context", project?: string, peek: boolean, } | { "op": "assignable", project?: string, check: string | null, } | { "op": "tasks", project?: string, } | { "op": "task_queue", project?: string, action: QueueOp, } | { "op": "task_archive", project?: string,
+/**
+ * 비면 보기, 있으면 같은 ID로 활성 목록에 복원(예약은 복원하지 않는다).
+ */
+restore: string | null, } | { "op": "task_edit", project?: string, ops: Array<TaskOp>, base_sha256: string | null, } | { "op": "task_log", project?: string, before: number | null, limit: number | null, filter: TaskLogFilter | null,
+/**
+ * 표시 ID·ULID 또는 제목으로 기록을 거른다.
+ */
+task?: string, } | { "op": "task_log_prune", project?: string, before_ms: number, } | { "op": "threads", project: string | null, role: Role | null, } | { "op": "thread_show", project?: string, thread: string, } | { "op": "thread_summary", project?: string, thread: string, } | { "op": "thread_summary_set", project?: string, thread: string, text: string, } | { "op": "thread_library", project?: string, thread: string, } | { "op": "library_link", project?: string, thread: string, days: number | null, } | { "op": "library_links", project: string | null, } | { "op": "library_link_revoke", id: string, } | { "op": "library_publish", project?: string, name: string, source: string, live: boolean,
 /**
  * FRONT_API 1.43. 사용자에게 보내는 웹 보고서(index.html 필수, 「내 보고서」·안 봄·사용자 알림 post)
  */
@@ -849,7 +945,61 @@ export type RolloutCard = { id: string, state: RolloutState, version: string | n
 
 export type RolloutCardStep = { machine: string, phase: RolloutPhase, completed: boolean, started_ms: number, transferred_bytes: number, total_bytes: number, };
 
-export type FrontResponse = { "kind": "install_published", publication: InstallPublication, } | { "kind": "install_approval", approval: InstallApprovalView, } | { "kind": "accounts", accounts: Array<AccountView>, } | { "kind": "account_defaults", defaults: Array<AccountDefault>, } | { "kind": "account_login", login: AccountLoginView, } | { "kind": "input_events", events: Array<InputEvent>, } | { "kind": "deploy_context", project: string | null, session: boolean, allowed: boolean, } | { "kind": "rollout", rollout: RolloutView, } | { "kind": "deployment", machine: string, job: DeployJob, running_software: string, running_sha256: string, } | { "kind": "missions", missions: Array<MissionView>, } | { "kind": "mission", mission: MissionView, } | { "kind": "post", result: PostResult, } | { "kind": "posts", posts: Array<PostEnvelope>,
+export type DeployCandidateView = {
+/**
+ * 빌드 머신 이름
+ */
+machine: string,
+/**
+ * 받은 그대로의 후보 경로(`<절대 경로>/aaa` 또는 `~/<폴더>/aaa`)
+ */
+path: string, sha256: string,
+/**
+ * provenance의 40자리 커밋(없으면 None)
+ */
+commit: string | null,
+/**
+ * self-check가 답한 판(`0.1.2+<커밋 12자리>`)
+ */
+version: string, total_bytes: number,
+/**
+ * provenance의 빌드 시각(RFC 3339, 없으면 None)
+ */
+built_at: string | null, };
+
+export type RolloutTargetView = { machine: string,
+/**
+ * host 머신(늘 맨 앞)
+ */
+host: boolean, problem: string | null, };
+
+export type RolloutPlanView = { candidate: DeployCandidateView, targets: Array<RolloutTargetView>,
+/**
+ * 진행 중인 rollout이 있어 지금은 시작하지 못한다
+ */
+busy: boolean, };
+
+export type DeployWork = { "kind": "restart", service: DeployService, } | { "kind": "update" } | { "kind": "rollback" };
+
+export type DeployJobCard = { id: string, machine: string, work: DeployWork,
+/**
+ * 그 머신 agent에게 물은 상태. 연결이 끊겼거나 기록을 읽지 못하면 None
+ */
+state: DeployState | null,
+/**
+ * 실패·중단일 때 화면에 보일 까닭(원문은 coordinator의 배포 기록에만 있다)
+ */
+error: string | null,
+/**
+ * 웹 조작 기기가 시작했다(아니면 coordinator)
+ */
+web: boolean, created_ms: number, updated_ms: number, };
+
+export type FrontResponse = { "kind": "install_published", publication: InstallPublication, } | { "kind": "install_approval", approval: InstallApprovalView, } | { "kind": "accounts", accounts: Array<AccountView>, } | { "kind": "account_defaults", defaults: Array<AccountDefault>, } | { "kind": "account_login", login: AccountLoginView, } | { "kind": "input_events", events: Array<InputEvent>, } | { "kind": "deploy_context", project: string | null, session: boolean, allowed: boolean, } | { "kind": "rollout", rollout: RolloutView, } | { "kind": "rollout_cards", cards: Array<RolloutCard>, } | { "kind": "rollout_plan", plan: RolloutPlanView, } | { "kind": "deploy_jobs", jobs: Array<DeployJobCard>, } | { "kind": "deployment", machine: string, job: DeployJob, running_software: string, running_sha256: string, } | { "kind": "missions", missions: Array<MissionView>, } | { "kind": "mission", mission: MissionView, } | { "kind": "post", result: PostResult,
+/**
+ * status 조회에서 확인한 inbox 처리 상태(FRONT_API 1.84). 옛 host는 생략한다.
+ */
+handled?: boolean, } | { "kind": "posts", posts: Array<PostEnvelope>,
 /**
  * 음소거된 보낸 쪽(`post unmute`에 줄 이름, FRONT_API 1.77). 옛 host는 생략한다
  */
@@ -861,7 +1011,7 @@ message: MessageView | null, } | { "kind": "context" } & ProjectContext | { "kin
 /**
  * `check`가 통과했을 때 설명
  */
-valid: string | null, } | { "kind": "task_board" } & TaskBoard | { "kind": "task_edited", board: TaskBoard, conflict: TaskConflict | null, log_ids: number[], } | { "kind": "thread_start_preview" } & ThreadStartPreview | { "kind": "task_log", entries: Array<TaskLogEntry>, next: number | null, } | { "kind": "screen" } & ScreenText | { "kind": "read" } & ReadView | { "kind": "thread_pane" } & ThreadPaneView | { "kind": "output_matched", matched_line: string, read: ReadView, } | { "kind": "workspaces", workspaces: Array<WorkspaceSummary>, } | { "kind": "chat" } & ChatView | { "kind": "pane_file", info: FileInfo | null, candidates: Array<string>, url: string | null, } | { "kind": "pane_dir", listing: DirListing, } | { "kind": "pane_commands", list: CommandList, } | { "kind": "pending", pending: Array<PendingEnroll>,
+valid: string | null, } | { "kind": "task_board" } & TaskBoard | { "kind": "task_queue", entries: Array<TaskReservation>, } | { "kind": "task_archive", entries: Array<ArchivedTask>, } | { "kind": "task_edited", board: TaskBoard, conflict: TaskConflict | null, log_ids: number[], } | { "kind": "thread_start_preview" } & ThreadStartPreview | { "kind": "task_log", entries: Array<TaskLogEntry>, next: number | null, } | { "kind": "screen" } & ScreenText | { "kind": "read" } & ReadView | { "kind": "thread_pane" } & ThreadPaneView | { "kind": "output_matched", matched_line: string, read: ReadView, } | { "kind": "workspaces", workspaces: Array<WorkspaceSummary>, } | { "kind": "chat" } & ChatView | { "kind": "pane_file", info: FileInfo | null, candidates: Array<string>, url: string | null, } | { "kind": "pane_dir", listing: DirListing, } | { "kind": "pane_commands", list: CommandList, } | { "kind": "pending", pending: Array<PendingEnroll>,
 /**
  * 등록 창이 열려 있으면 닫히는 시각(ms, FRONT_API 1.80). 닫혔으면 생략
  */
@@ -881,7 +1031,7 @@ omitted_done: number, } | { "kind": "ticker", runs: bigint, } | { "kind": "routi
 /**
  * 지운 자동화(FRONT_API 1.76). 옛 host는 생략한다
  */
-trash?: Array<AutomationTrashEntry>, } | { "kind": "automation_doc", doc: AutomationDoc, } | { "kind": "automation_checked", text: string, check: AutomationCheck, } | { "kind": "automation_ran", accepted: boolean, detail: string, } | { "kind": "project_settings" } & ProjectSettingsView | { "kind": "resolve_preview" } & ResolvePreview | { "kind": "automation_converted", files: Array<string>,
+trash?: Array<AutomationTrashEntry>, } | { "kind": "automation_doc", doc: AutomationDoc, } | { "kind": "automation_checked", text: string, check: AutomationCheck, } | { "kind": "automation_ran", accepted: boolean, detail: string, } | { "kind": "project_settings" } & ProjectSettingsView | { "kind": "safety" } & SafetyView | { "kind": "profile_admin" } & ProfileAdminView | { "kind": "profile_plan" } & ProfilePlanView | { "kind": "profile_applied", message: string, warnings: Array<string>, view: ProfileAdminView, } | { "kind": "work_root" } & WorkRootView | { "kind": "work_root_checked" } & WorkRootCheckView | { "kind": "hook" } & HookView | { "kind": "resolve_preview" } & ResolvePreview | { "kind": "automation_converted", files: Array<string>,
 /**
  * 쓰지 않은 계획이다(FRONT_API 1.58). `files`는 실제 변환과 같은 모양(새 파일과 `.converted/` 보존 사본)이다.
  */
@@ -1150,9 +1300,17 @@ answer: QuestionAnswerView | null,
  * 본문 그림의 주소 앞부분(FRONT_API 1.78, plan §8.345): 본문의 `library/<경로>`는 `<files_base><경로>`로 읽는다.
  * 그 보고의 host 사본에서만 주고, 새 보고가 오면 옛 주소는 열리지 않는다. 옛 host는 생략한다
  */
-files_base?: string, };
+files_base?: string,
+/**
+ * 짧은 질문 ID로 일부만 답한 경우의 답. 전체 답은 answer에 남는다.
+ */
+draft?: QuestionAnswerView, };
 
-export type ThreadQuestion = { text: string, choices: Array<QuestionChoice>,
+export type ThreadQuestion = {
+/**
+ * 프로젝트별 영속 순번(q-1000부터). 옛 보고 파서·host는 생략한다.
+ */
+id?: string, text: string, choices: Array<QuestionChoice>,
 /**
  * `### N. 질문` 머리 아래의 Markdown 본문(FRONT_API 1.78, plan §8.345): 그림·표·code·링크. 옛 꼴과 옛 host는 생략한다
  */
@@ -1174,7 +1332,7 @@ body?: string, };
 
 export type AskKind = "question" | "request" | "task";
 
-export type AskRecord = { id: string, kind: AskKind,
+export type AskRecord = { id: string, question_id?: string, kind: AskKind,
 /**
  * 질문은 thread 번호, 확인 필요 post는 inbox 항목 ID, 할 일은 task 제목
  */
@@ -1210,13 +1368,21 @@ files_base?: string, };
 
 export type UserRequestView = {
 /**
+ * 평문 요청도 포함한 짧은 질문 ID(여러 질문이면 첫 ID).
+ */
+question_id?: string,
+/**
  * inbox 항목 ID(「답함으로 표시」가 끝낸다)
  */
 id: string, title: string,
 /**
  * post 본문(Markdown 글). 본문이 지워졌으면 inbox 요약
  */
-body: string, created_ms: number, };
+body: string, created_ms: number,
+/**
+ * post 본문의 `## Questions`(FRONT_API 1.87). 없으면 기존 평문 카드다. report_hash는 본문 hash다.
+ */
+questions?: ThreadQuestions, };
 
 export type QuestionAnswerView = {
 /**
@@ -1244,6 +1410,10 @@ at: string | null, text: string, dropped: boolean, };
 
 export type FollowUpLine = { at_ms: number | null, text: string, };
 
+export type SummaryStepState = "pending" | "working" | "done";
+
+export type SummaryStep = { text: string, state: SummaryStepState, };
+
 export type ThreadSummaryView = { project: string, thread: string,
 /**
  * 요약 파일 글(없으면 None)
@@ -1252,7 +1422,11 @@ text: string | null, goal: string | null,
 /**
  * 목표가 바뀌었을 때 처음 시킨 것
  */
-origin: string | null, now: Array<string>, decided: Array<SummaryEntry>, changed: Array<SummaryEntry>, done: Array<string>,
+origin: string | null,
+/**
+ * 전체 큰 작업(최대 5개, FRONT_API 1.86). 옛 요약·옛 host는 목록이 없다.
+ */
+progress?: Array<SummaryStep>, now: Array<string>, decided: Array<SummaryEntry>, changed: Array<SummaryEntry>, done: Array<string>,
 /**
  * thread 보고 `## Decisions` 줄(agent가 정한 것)
  */
@@ -1360,7 +1534,11 @@ context: ContextUsage | null, };
 
 export type QuestionState = "open" | "answered" | "gone";
 
-export type QuestionView = { id: string, pane: string, machine: string, project: string | null, thread: string | null,
+export type QuestionView = { id: string,
+/**
+ * 프로젝트별 짧은 별칭. id는 기존 확인창 참조로 유지한다.
+ */
+short_id?: string, pane: string, machine: string, project: string | null, thread: string | null,
 /**
  * permission·trust(FrontResponse 태그 `kind`와 겹치지 않게 이름을 바꿨다)
  */
@@ -1620,6 +1798,110 @@ repos: Array<RepoChoice>,
  */
 local_machine: string | null, task_notes: Array<string>, };
 
+export type SettingsScope = "project" | "global";
+
+export type SafetyRowView = { key: string, value: string,
+/**
+ * 프로젝트·모든 프로젝트·옛 자리·기본값
+ */
+source: string,
+/**
+ * 적힌 값과 다른 까닭(yolo가 start_threads를 auto로 만든다 등)
+ */
+note: string,
+/**
+ * 웹에서 바꿀 수 있는 key(yolo·start_threads·trust_screens·coordinator_deploy)
+ */
+editable: boolean,
+/**
+ * 바꿀 수 있는 key만: 이 표의 값을 지우면(「기본」) 되는 값. 웹은 이것이 yolo on이면 한 번 더 확인한다
+ */
+below: string | null, };
+
+export type SafetyView = { scope: SettingsScope, project: string, rows: Array<SafetyRowView>,
+/**
+ * thread·coordinator 기본 profile(프로젝트 설정 → host.toml [defaults] → claude)
+ */
+thread_profile: string, coordinator_profile: string,
+/**
+ * thread·coordinator가 쓸 수 있는 profile 실효값(`None`이면 모든 profile). 허용 목록 고치기의 처음 값
+ */
+thread_profiles: Array<string> | null, coordinator_profiles: Array<string> | null,
+/**
+ * 읽다 버린 값 등
+ */
+warnings: Array<string>,
+/**
+ * host.toml 판(sha256). 고칠 때 이 값을 돌려준다(그사이 바뀌었으면 conflict)
+ */
+rev: string,
+/**
+ * 바꾼 뒤 알림(적용 시점, host.local.toml이 덮음 등). 읽기에는 없다
+ */
+notes: Array<string>, };
+
+export type ProfileAdminRow = { name: string, harness: string, model: string, effort: string, description: string, args: Array<string>, env_names: Array<string>,
+/**
+ * host.toml에 표가 없는 기본 profile(claude·codex)
+ */
+builtin: boolean,
+/**
+ * host.local.toml이 정한 profile: 웹에서 고치지 않는다(그 파일이 필드마다 덮는다)
+ */
+local: boolean,
+/**
+ * custom harness(실행 명령이 있다): 웹에서 고치지 않는다
+ */
+custom: boolean,
+/**
+ * harness 실행 파일 뒤에 붙는 인자 전체(model·effort 플래그와 제 인자). custom은 앞 명령을 빼고 보인다
+ */
+launch: Array<string>, };
+
+export type ProfileAdminView = { profiles: Array<ProfileAdminRow>, rev: string, };
+
+export type ProfileChangeReq = { "change": "add", name: string, harness: string, model: string, effort: string, description: string, args: Array<string>, } | { "change": "edit", name: string, harness: string | null, model: string | null, effort: string | null, description: string | null,
+/**
+ * 인자 전체를 바꾼다(빈 목록이면 지운다)
+ */
+args: Array<string> | null, } | { "change": "remove", name: string, } | { "change": "allow", scope: SettingsScope,
+/**
+ * thread 또는 coordinator
+ */
+role: string, names: Array<string> | null, } | { "change": "default", role: string, name: string, };
+
+export type ProfilePlanView = { message: string, before: ProfileAdminRow | null, after: ProfileAdminRow | null,
+/**
+ * 경고(host.local.toml이 덮음, 허용 목록에 없는 profile 등)
+ */
+warnings: Array<string>, rev: string, };
+
+export type WorkRootView = { path: string, mount: string | null, last_start: string | null, last_start_mount: string | null, previous_roots: Array<string>,
+/**
+ * 다음 시작 설정과 마지막 시작 기록이 다르다(agent를 다시 띄워야 닿는다)
+ */
+restart_required: boolean,
+/**
+ * 전환했을 때만: 설정을 바꿨나, 가져온 준비 기록 수
+ */
+changed?: boolean, imported?: number, };
+
+export type WorkRootCheckView = { path: string, real_path: string, mount: string | null, };
+
+export type HookView = {
+/**
+ * aaa Codex 전역 hook이 있고 hooks 기능이 켜져 있다
+ */
+codex_installed: boolean,
+/**
+ * 상태를 읽지 못한 까닭(Codex 설정 파일이 깨짐 등)
+ */
+codex_problem: string | null,
+/**
+ * 설치·제거 뒤 만든 백업 수
+ */
+backups?: number, };
+
 export type ResolvePreview = { project: string, thread: string,
 /**
  * thread 종류(응답 꼬리표 `kind`와 겹치지 않게 이름이 다르다)
@@ -1714,7 +1996,7 @@ title?: string,
  */
 unseen: boolean,
 /**
- * FRONT_API 1.43. 끝나지 않은(resolve 전) thread의 사본이라 지울 수 없다
+ * FRONT_API 1.43. 진행 중 thread 또는 완료 보관이 참조하는 사본이라 지울 수 없다
  */
 busy: boolean,
 /**

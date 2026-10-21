@@ -44,6 +44,7 @@ import { useMediaQuery } from "./herdr/useMediaQuery";
 import { StateIcon, TaskDetail, ThreadChip, WhoChips, type SaveResult } from "./TaskDetail";
 import { ConflictDialog, NameDialog, RawEditor, type MyEdit } from "./TaskDialogs";
 import { DocAddDialog, LinkDialog, StartDialog } from "./TaskStart";
+import { TaskQueuePanel } from "./TaskQueue";
 import { TaskLogView } from "./TaskLogView";
 import {
   TASK_FILTERS,
@@ -506,6 +507,7 @@ export function TasksView({
         </div>
         <HeadMore />
       </header>
+      {board && apiAtLeast(frontApi,[1,85]) && <TaskQueuePanel board={board} canEdit={canEdit} onThread={onThread} />}
       <div className="tasks-toolbar">
         <div className="tasks-tabs" role="tablist" aria-label="할 일 탭">
           <button type="button" role="tab" aria-selected={tab === "tasks"} className={`tasks-tab${tab === "tasks" ? " is-on" : ""}`} data-testid="tasks-tab-tasks" onClick={() => setTab("tasks")}>
@@ -527,7 +529,7 @@ export function TasksView({
           <>
             <label className="tasks-search">
               <Search aria-hidden="true" />
-              <input className="input" type="search" value={query} placeholder="제목·메모·담당 검색" aria-label="할 일 검색" data-testid="tasks-search" onChange={(e) => setQuery(e.target.value)} />
+              <input className="input" type="search" value={query} placeholder="ID·제목·메모·담당 검색" aria-label="할 일 검색" data-testid="tasks-search" onChange={(e) => setQuery(e.target.value)} />
             </label>
             <div className="tasks-filters" role="group" aria-label="거르기">
               {TASK_FILTERS.map((f) => (
@@ -714,6 +716,7 @@ export function TasksView({
               linkApi={linkApi}
               attachApi={attachApi}
               repoApi={repoApi}
+              queueApi={apiAtLeast(frontApi,[1,85])}
               onChangeNotes={changeTaskNotes}
               onOpenAttachment={
                 onOpenAttachment
@@ -969,6 +972,7 @@ function TaskRow({
         <StateIcon state={state} />
         <span className="task-title">
           <span className="sr-only">{TASK_STATE_LABEL[state]}: </span>
+          {t.short_id && <span className="task-short-id" data-testid="task-short-id">{t.short_id}</span>}
           {t.title}
         </span>
         {state === "problem" && <span className="task-chip task-problem">형식 어긋남</span>}

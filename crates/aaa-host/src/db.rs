@@ -6,6 +6,10 @@ use std::sync::Mutex;
 use anyhow::Result;
 use rusqlite::{Connection, OptionalExtension, params};
 
+mod question_ids;
+mod task_ids;
+mod task_queue;
+
 pub const SCHEMA_VERSION: i64 = 1;
 
 pub(crate) struct StartAdmission {
@@ -75,6 +79,10 @@ pub struct MachineRow {
     pub os: Option<String>,
     pub boot_id: Option<String>,
     pub last_seen_ms: Option<u64>,
+    /// 마지막 hello의 CPU 종류·판·실행 파일 SHA-256(웹 머신 상세, plan §8.372)
+    pub arch: Option<String>,
+    pub software: Option<String>,
+    pub sha256: Option<String>,
 }
 
 /// Web Push 구독. endpoint는 비밀값처럼 다룬다(로그에 남기지 않는다).
@@ -119,6 +127,34 @@ pub struct DeviceRow {
 pub const DEVICE_LABEL_FALLBACK: &str = "기기";
 
 impl Db {
+    /// 발신자의 32자리 ID와 화면의 p-번호를 모두 받는다. 중복 전송 판정은 원래 post_row만 쓴다.
+    pub(crate) fn post_by_ref(&self, id: &str) -> Result<Option<PostRow>> {
+        if !id.starts_with("p-") {
+            return self.post_row(id);
+        }
+        let key: Option<String> = self
+            .conn
+            .lock()
+            .unwrap()
+            .query_row("SELECT post_id FROM posts WHERE json_extract(result,'$.id')=?1", [id], |r| r.get(0))
+            .optional()?;
+        key.map(|key| self.post_row(&key)).transpose().map(Option::flatten)
+    }
+
+    pub(crate) fn post_inbox(&self, project: &str, id: &str) -> Result<Option<aaa_proto::InboxItem>> {
+        let data: Option<String> = self
+            .conn
+            .lock()
+            .unwrap()
+            .query_row(
+                "SELECT data FROM inbox WHERE project=?1 AND id LIKE ?2",
+                params![project, format!("%-post-{id}")],
+                |r| r.get(0),
+            )
+            .optional()?;
+        data.map(|data| serde_json::from_str(&data).map_err(Into::into)).transpose()
+    }
+
     pub(crate) fn library_report(&self, project: &str, name: &str) -> Result<Option<LibraryReportRow>> {
         Ok(self
             .conn
@@ -288,11 +324,19 @@ impl Db {
              CREATE TABLE IF NOT EXISTS evaluations(
                project TEXT NOT NULL, id TEXT NOT NULL, state TEXT NOT NULL, sha256 TEXT NOT NULL, data TEXT NOT NULL,
                created_at INTEGER NOT NULL, PRIMARY KEY(project, id));
+             CREATE TABLE IF NOT EXISTS task_ids(project TEXT NOT NULL, task_id TEXT NOT NULL, number INTEGER NOT NULL, PRIMARY KEY(project,task_id), UNIQUE(project,number));
+             CREATE TABLE IF NOT EXISTS task_queue(project TEXT NOT NULL, task_id TEXT NOT NULL, data TEXT NOT NULL, PRIMARY KEY(project,task_id));
+             CREATE TABLE IF NOT EXISTS task_queue_log(id INTEGER PRIMARY KEY, project TEXT NOT NULL, actor TEXT NOT NULL, at_ms INTEGER NOT NULL, before TEXT NOT NULL, after TEXT NOT NULL);
+             CREATE TABLE IF NOT EXISTS task_archive(project TEXT NOT NULL, task_id TEXT NOT NULL, data TEXT NOT NULL, PRIMARY KEY(project,task_id));
              CREATE TABLE IF NOT EXISTS task_log(
                id INTEGER PRIMARY KEY AUTOINCREMENT, project TEXT NOT NULL, at_ms INTEGER NOT NULL, actor TEXT NOT NULL,
                action TEXT NOT NULL, list TEXT NOT NULL, from_list TEXT, title TEXT NOT NULL, before TEXT, after TEXT,
                thread TEXT, restored_by INTEGER);
              CREATE INDEX IF NOT EXISTS task_log_project ON task_log(project, id);
+             CREATE TABLE IF NOT EXISTS question_ids(
+               project TEXT NOT NULL, seq INTEGER NOT NULL, id TEXT NOT NULL, kind TEXT NOT NULL,
+               subject TEXT NOT NULL, revision TEXT NOT NULL, position INTEGER NOT NULL, draft TEXT,
+               PRIMARY KEY(project,id), UNIQUE(project,kind,subject,revision,position), UNIQUE(project,seq));
              CREATE TABLE IF NOT EXISTS asks(
                project TEXT NOT NULL, id TEXT NOT NULL, kind TEXT NOT NULL, subject TEXT NOT NULL,
                done_ms INTEGER NOT NULL, data TEXT NOT NULL, PRIMARY KEY(project, id));
@@ -334,6 +378,15 @@ impl Db {
                  ALTER TABLE library_reports ADD COLUMN title TEXT;
                  ALTER TABLE library_reports ADD COLUMN sent_at INTEGER;
                  ALTER TABLE library_reports ADD COLUMN seen_at INTEGER;",
+            )?;
+        }
+        // 머신의 CPU 종류·판·실행 파일 SHA-256(plan §8.372). 위와 같이 열만 더한다
+        let has_arch = conn.prepare("SELECT 1 FROM pragma_table_info('machines') WHERE name='arch'")?.exists([])?;
+        if !has_arch {
+            conn.execute_batch(
+                "ALTER TABLE machines ADD COLUMN arch TEXT;
+                 ALTER TABLE machines ADD COLUMN software TEXT;
+                 ALTER TABLE machines ADD COLUMN sha256 TEXT;",
             )?;
         }
         // 보고서를 낸 thread(사용자 요청 10-20). 위와 같이 열만 더한다
@@ -485,10 +538,13 @@ impl Db {
             os: r.get(4)?,
             boot_id: r.get(5)?,
             last_seen_ms: r.get::<_, Option<i64>>(6)?.map(|v| v as u64),
+            arch: r.get(7)?,
+            software: r.get(8)?,
+            sha256: r.get(9)?,
         })
     }
 
-    const MACHINE_COLS: &str = "id,name,fingerprint,local,os,boot_id,last_seen";
+    const MACHINE_COLS: &str = "id,name,fingerprint,local,os,boot_id,last_seen,arch,software,sha256";
 
     pub fn machines(&self) -> Result<Vec<MachineRow>> {
         let c = self.conn.lock().unwrap();
@@ -586,11 +642,20 @@ impl Db {
         Ok(())
     }
 
-    pub fn touch_machine(&self, id: &str, os: &str, boot_id: &str) -> Result<()> {
+    /// hello를 받을 때마다 그 머신의 OS·부팅·판을 남긴다(끊긴 뒤·host 재시작 뒤에도 마지막 값을 보인다)
+    pub fn touch_machine(&self, hello: &aaa_proto::AgentHello) -> Result<()> {
         let c = self.conn.lock().unwrap();
         c.execute(
-            "UPDATE machines SET os=?2, boot_id=?3, last_seen=?4 WHERE id=?1",
-            params![id, os, boot_id, aaa_common::util::now_ms() as i64],
+            "UPDATE machines SET os=?2, boot_id=?3, last_seen=?4, arch=?5, software=?6, sha256=?7 WHERE id=?1",
+            params![
+                hello.machine_id,
+                hello.os,
+                hello.boot_id,
+                aaa_common::util::now_ms() as i64,
+                hello.arch,
+                hello.software,
+                hello.sha256
+            ],
         )?;
         Ok(())
     }
@@ -731,6 +796,19 @@ impl Db {
         admission: Option<&StartAdmission>,
         make: impl FnOnce(&str) -> String,
     ) -> Result<(String, bool)> {
+        self.thread_insert_admitted(project, key, admission, None, None, make)
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn thread_insert_admitted(
+        &self,
+        project: &str,
+        key: Option<&str>,
+        admission: Option<&StartAdmission>,
+        limit: Option<u32>,
+        reservation: Option<(&str, &str)>,
+        make: impl FnOnce(&str) -> String,
+    ) -> Result<(String, bool)> {
         let mut c = self.conn.lock().unwrap();
         let tx = c.transaction()?;
         if let Some(key) = key
@@ -770,6 +848,12 @@ impl Db {
                 "start_wait: 명시한 프로젝트 자동 thread 상한"
             );
         }
+        if let Some(limit) = limit {
+            anyhow::ensure!(
+                task_queue::slots(&tx, project, None)? < limit,
+                "start_wait: 프로젝트 실행 한도 {limit}. `aaa task reserve`로 예약한다"
+            );
+        }
         let max: Option<i64> =
             tx.query_row("SELECT MAX(CAST(SUBSTR(id, 3) AS INTEGER)) FROM threads WHERE project=?1", [project], |r| {
                 r.get(0)
@@ -779,6 +863,9 @@ impl Db {
             "INSERT INTO threads(project,id,status,data,updated_at) VALUES(?1,?2,'starting',?3,?4)",
             params![project, id, make(&id), aaa_common::util::now_ms() as i64],
         )?;
+        if let Some((task, block)) = reservation {
+            task_queue::queue_claim(&tx, project, task, block, &id)?;
+        }
         if let Some(key) = key {
             tx.execute("INSERT INTO meta(key,value) VALUES(?1,?2)", params![key, id])?;
         }
@@ -1227,6 +1314,14 @@ impl Db {
         );
     }
 
+    /// 감사 기록의 (actor, action)을 쓴 순서대로(시험용)
+    #[cfg(test)]
+    pub(crate) fn audit_actions(&self) -> Vec<(String, String)> {
+        let c = self.conn.lock().unwrap();
+        let mut st = c.prepare("SELECT actor, action FROM audit ORDER BY rowid").unwrap();
+        st.query_map([], |r| Ok((r.get(0)?, r.get(1)?))).unwrap().map(|r| r.unwrap()).collect()
+    }
+
     /// 프로젝트 하나의 기록(아래 [`PROJECT_TABLES`]의 행과 `<종류>:<프로젝트>…` meta)을 JSON으로. `project delete`가 휴지통 폴더에 둔다.
     /// thread 기록의 launch env는 이름만 남긴다(plan §8.307).
     pub fn project_export(&self, project: &str) -> Result<serde_json::Value> {
@@ -1377,7 +1472,7 @@ fn scrub_audit_env(conn: &mut Connection) -> Result<()> {
 }
 
 /// project 열이 있는 표(옛 db에 남은 `merge_queue`는 읽지 않아 옮기지 않는다, 새 db에는 없다 — §8.135)
-const PROJECT_TABLES: [&str; 10] = [
+const PROJECT_TABLES: [&str; 14] = [
     "threads",
     "flow_events",
     "messages",
@@ -1387,6 +1482,10 @@ const PROJECT_TABLES: [&str; 10] = [
     "library_reports",
     "posts",
     "task_log",
+    "task_ids",
+    "task_queue",
+    "task_queue_log",
+    "task_archive",
     "asks",
 ];
 
@@ -1537,6 +1636,49 @@ impl Db {
         Ok(())
     }
 
+    /// 요청 종료·답 보존·coordinator 전달을 한 번에 기록한다. 다른 기기에서 끝냈으면 false다.
+    pub(crate) fn request_answer(
+        &self,
+        item: &aaa_proto::InboxItem,
+        record: &aaa_proto::AskRecord,
+        notice: &aaa_proto::InboxItem,
+    ) -> Result<bool> {
+        let mut c = self.conn.lock().unwrap();
+        let tx = c.transaction()?;
+        let mut done = item.clone();
+        done.done = true;
+        done.done_at_ms = Some(record.done_ms);
+        let n = tx.execute(
+            "UPDATE inbox SET done=1, done_at=?3, data=?4 WHERE project=?1 AND id=?2 AND done=0",
+            params![item.project, item.id, record.done_ms as i64, serde_json::to_string(&done)?],
+        )?;
+        if n == 0 {
+            return Ok(false);
+        }
+        tx.execute(
+            "INSERT INTO asks(project,id,kind,subject,done_ms,data) VALUES(?1,?2,'request',?3,?4,?5)",
+            params![item.project, record.id, record.subject, record.done_ms as i64, serde_json::to_string(record)?],
+        )?;
+        tx.execute(
+            "INSERT INTO inbox(id,project,kind,subject,event,done,created_at,data) VALUES(?1,?2,?3,?4,?5,0,?6,?7)",
+            params![
+                notice.id,
+                notice.project,
+                notice.item_kind,
+                notice.subject,
+                notice.event,
+                notice.created_at_ms as i64,
+                serde_json::to_string(notice)?
+            ],
+        )?;
+        tx.execute(
+            "UPDATE question_ids SET draft=NULL WHERE project=?1 AND kind='post' AND subject=?2",
+            params![item.project, item.id],
+        )?;
+        tx.commit()?;
+        Ok(true)
+    }
+
     /// 프로젝트의 기록, 최신부터
     pub(crate) fn ask_list(&self, project: &str) -> Result<Vec<aaa_proto::AskRecord>> {
         let c = self.conn.lock().unwrap();
@@ -1574,17 +1716,22 @@ impl Db {
 
     pub(crate) fn post_list(&self, project: &str) -> Result<Vec<aaa_proto::PostEnvelope>> {
         let c = self.conn.lock().unwrap();
-        let mut st =
-            c.prepare("SELECT data FROM posts WHERE project=?1 AND data IS NOT NULL ORDER BY seq DESC LIMIT 100")?;
-        let rows = st.query_map([project], |r| r.get::<_, String>(0))?.collect::<rusqlite::Result<Vec<_>>>()?;
+        let mut st = c.prepare("SELECT data, EXISTS(SELECT 1 FROM inbox i WHERE i.project=posts.project AND i.done=1 AND i.id LIKE '%-post-' || json_extract(posts.data,'$.id')) FROM posts WHERE project=?1 AND data IS NOT NULL ORDER BY seq DESC LIMIT 100")?;
+        let rows = st
+            .query_map([project], |r| Ok((r.get::<_, String>(0)?, r.get::<_, bool>(1)?)))?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
         let mut bytes = 0;
         let mut posts = Vec::new();
-        for s in rows {
+        for (s, handled) in rows {
             if bytes + s.len() > 512 * 1024 {
                 break;
             }
             bytes += s.len();
-            posts.push(serde_json::from_str(&s)?);
+            let mut post: aaa_proto::PostEnvelope = serde_json::from_str(&s)?;
+            if handled {
+                post.state = "handled".into();
+            }
+            posts.push(post);
         }
         Ok(posts)
     }

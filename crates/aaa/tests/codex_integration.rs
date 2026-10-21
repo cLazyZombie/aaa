@@ -64,6 +64,7 @@ async fn codex_trust_detection_question_and_answer_share_the_front_path() {
             software: "test".into(),
             features: vec!["terminal.v1".into()],
             dev_mode: true,
+            sha256: None,
             selfcheck: None,
             harness: vec![event],
             sessions: vec![SessionInfo {
@@ -409,6 +410,7 @@ async fn codex_hook_cli_reaches_host_and_returns_guidance() {
             label: None,
             colors: None,
             account_run: None,
+            account_generation: None,
             spec: SpawnSpec {
                 name: "codex".into(),
                 argv: vec!["codex".into()],

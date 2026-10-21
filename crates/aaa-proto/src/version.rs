@@ -37,6 +37,7 @@ impl std::fmt::Display for Version {
 // 같은 1.9에 `AgentRequest::Commands`(commands.v1을 알린 agent에만, plan §8.323)와 `Chat.commands`(옛 agent는 버리고 명령 줄을
 // 싣지 않는다)를 더한다.
 // 1.10: work_files.v1의 일반 작업 파일 전송. 1.9 agent에는 옛 파일 태그로 보낸다.
+// 같은 1.10에 hello 선택 칸 `sha256`(실행 파일 SHA-256, plan §8.372)을 더한다. 옛 agent는 보내지 않고 옛 host는 버린다.
 // 1.11: install_enroll.v1의 설치 grant 기능 협상·TLS peer 결속·같은 ID 소비 결과 조회.
 pub const AGENT_LINK: Version = Version { major: 1, minor: 11 };
 /// front ↔ host. 1.4: CLI pane·tab·workspace(plan §8.75), 1.5: 새 탭 이름(`NewTab.label`)·cwd 따라가기(`NewTab.from`)(plan §8.76),
@@ -178,8 +179,25 @@ pub const AGENT_LINK: Version = Version { major: 1, minor: 11 };
 // `enroll_approve`·`machine_revoke`·`web_publish`·`web_publish_off`·`library_rotate`, 새 `enroll_close`·`library_upload_publish`(+ 웹
 // 올리기 주소), `Pending.open_until_ms`, 웹 events `enroll`, 마지막 조작 기기 폐기 거부. 옛 host는 웹 요청을 거부해 웹이 그리지 않는다.
 // Agent link 변경 없음.
-/// 1.81: install_approve의 계획/실제 범위 hash 결속. raw 승인서는 private executor가 전달한다.
-pub const FRONT_API: Version = Version { major: 1, minor: 81 };
+// 1.81: profile·safety·작업 root·hook(관리 GUI W5c, plan §8.357): `safety_show`·`safety_set`(웹은 yolo·start_threads·trust_screens·
+// coordinator_deploy만), `profile_admin`·`profile_plan`·`profile_apply`(claude·codex·shell만, custom 명령·env 칸 없음),
+// `work_root_show`·`work_root_check`·`work_root_set`, `hook_status`·`hook_set`. host.toml 판 대조로 동시 편집은 conflict.
+// Agent link: 새 기능 work_root.manage.v1·hook.manage.v1(`AgentRequest::WorkRoot`·`CodexHook`), 알리지 않은 agent에는 보내지 않는다.
+// 1.82: 웹 배포·재시작(관리 GUI W6a, plan §8.361): 웹 조작 기기의 `rollout_start`(응답은 `rollout_cards`)·`rollout_status`, 새
+// `rollout_plan`(빌드 머신 후보의 provenance·SHA·dry-run과 대상)·`rollouts`·`deploy_jobs`, `deploy_start`·`deploy_status`의 재시작
+// (응답은 `deploy_jobs`). 웹은 실행 파일을 올리지 않는다. 옛 host는 웹 요청을 거부해 웹이 「배포」를 그리지 않는다.
+// Agent link: 새 기능 deploy_candidate.v1(`AgentRequest::DeployCandidate`), 알리지 않은 agent에는 보내지 않는다.
+// 1.83: 등록 계정 사용량 HTTP /api/v1/account-usage(A2, plan §8.363). Agent link account_quota.v1은 비밀 없는 원격 관측만 읽는다.
+// 1.84: 질문 연결 post 자동 처리·채팅 답의 처리 표시(`post_handled` → Done), `Post.handled` 선택 칸(plan §8.366).
+// 옛 host는 새 요청을 모르는 요청으로 거절하고 상태 칸을 생략한다. Agent link 변경 없음.
+// 1.85: task 예약·기동 연결·완료 보관, task ID(plan §8.367). 옛 host에는 새 조작을 보내지 않는다.
+/// 1.86: 작업 요약에 순서를 유지하는 큰 작업 목록(progress)과 완료·진행·대기 상태를 더한다.
+/// 1.87: coordinator 구조화 질문·영속 q-ID와 부분 답, ask_answer·question_reply를 더한다. Agent link 변경 없음.
+// 1.88: 머신 상세(웹 머신 추가 M0, plan §8.372): `MachineView`의 `arch`·`software`·`sha256`·`software_differs`·`features`·
+// `selfcheck`. 옛 host는 생략해 웹이 OS만 보인다. Agent link: hello의 선택 칸 `sha256`(옛 agent는 보내지 않고 옛 host는 버린다).
+// 1.89: task 표시 ID(d-0001)·ID 선택자·TaskLog.task(plan §8.373). ULID와 기존 제목 입력은 유지한다.
+/// 1.90: install_approve의 계획/실제 범위 hash 결속. raw 승인서는 private executor가 전달한다.
+pub const FRONT_API: Version = Version { major: 1, minor: 90 };
 /// agent ↔ session host(내부). 세션이 몇 주 이어질 수 있으므로 이전 session host와 호환해야 한다.
 /// 1.1: `SessionRequest::Detect`(harness 상태 감지 입력). agent는 1.0 session host에 보내지 않고 `Screen`을 쓴다.
 /// 1.2: `SessionRequest::Colors`(색 질의에 답할 화면 색, plan §8.187). agent는 1.1 이하 session host에 보내지 않는다.

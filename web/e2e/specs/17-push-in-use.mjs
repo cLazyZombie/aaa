@@ -590,7 +590,9 @@ export default async function ({ page }) {
     await until("가려진 휴대폰", async () => (await pushInUse(page)) === 0);
     await ask("배치 질문 닫은 동안", "질문 1개 · 추천: A안(기존과 같음) ~/work/plan.md");
     const { msg } = await nextPush(dev, start, "닫은 동안 질문 push");
-    const want = { title: "demo", body: "coordinator 사용자 결정 요청 · 질문 1개 · 추천: A안(기존과 같음) [숨김]", url: "/#threads", tag: "aaa-demo" };
+    const qid = aaa("question", "list").questions.find((q) => q.text === "질문 1개 · 추천: A안(기존과 같음) ~/work/plan.md")?.id;
+    if (!/^q-\d{4,}$/.test(qid ?? "")) throw new Error(`질문 push의 영속 ID가 없다: ${qid}`);
+    const want = { title: `demo · ${qid}`, body: `coordinator 사용자 결정 요청 · ${qid} 질문 1개 · 추천: A안(기존과 같음) [숨김]`, url: "/#threads", tag: "aaa-demo" };
     for (const [k, v] of Object.entries(want)) if (msg[k] !== v) throw new Error(`질문 push ${k}: ${JSON.stringify(msg)}`);
     await pp.evaluate(() => new Promise((r) => setTimeout(r)));
     if ((await pp.locator(".droplet").count()) !== 0) throw new Error("닫은 동안 앱 안 알림이 내려왔다");

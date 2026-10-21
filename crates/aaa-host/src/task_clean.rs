@@ -93,6 +93,7 @@ impl Host {
     }
 
     fn task_clean_one(&self, project: &str, dir: &Path, rec: &ThreadRec) -> Result<(), ErrorBody> {
+        self.task_identify(project)?;
         let text = std::fs::read_to_string(dir.join("TASKS.md")).unwrap_or_default();
         let (_, all) = tasks::parse_board(&text);
         let marker = self.report_marker(rec);
@@ -110,19 +111,19 @@ impl Host {
         let mut parents = Vec::new();
         if !clean.is_empty() {
             let ops: Vec<TaskOp> = clean.iter().map(|(t, _)| TaskOp::Delete { at: anchor(t) }).collect();
-            let (conflict, log_ids) = self.task_write(project, dir, &ops, None, HOST_ACTOR, &no_input(), true)?;
+            let (conflict, _log_ids) = self.task_write(project, dir, &ops, None, HOST_ACTOR, &no_input(), true)?;
             if let Some((_, reason, _)) = conflict {
                 return Err(err(ErrorCode::Unavailable, reason));
             }
-            for (i, (t, r)) in clean.iter().enumerate() {
+            for (t, r) in &clean {
                 let restore =
-                    log_ids.get(i).map(|id| format!(" 되살리기: `aaa task restore {id}`")).unwrap_or_default();
+                    format!(" 되살리기: `aaa task archive --restore {}`", t.id.as_deref().unwrap_or_default());
                 self.inbox_add(
                     project,
                     "task",
                     &rec.id,
                     "task auto-cleaned",
-                    &format!("「{}」 task를 지웠다({} 완료: {r}).{restore}", t.title, rec.id),
+                    &format!("「{}」 task를 완료 보관했다({} 완료: {r}).{restore}", t.title, rec.id),
                 );
                 cleaned.push(t.title.clone());
             }
@@ -146,6 +147,12 @@ impl Host {
             r.task_clean.cleaned = cleaned.clone();
             r.task_clean.parents = parents.clone();
         })?;
+        // task_write의 파일 사건은 판정 저장보다 먼저 나간다. 그 사건으로 읽은 board는 올린 상위의
+        // attention이 아직 없을 수 있다. 파일 hash가 같아도 DB 판정 확정 뒤 다시 읽게 한다.
+        if !clean.is_empty() || !check.is_empty() {
+            let text = std::fs::read_to_string(dir.join("TASKS.md")).unwrap_or_default();
+            let _ = self.task_events.send((project.to_string(), tasks::sha256(&text)));
+        }
         Ok(())
     }
 
@@ -274,6 +281,62 @@ mod tests {
 
     fn task(title: &str) -> TaskView {
         tasks::parse(&format!("## Backlog\n- [ ] {title} · t-0007\n")).remove(0)
+    }
+
+    /// 파일 사건 직후 읽은 화면은 아직 미판정이다. DB 판정 저장 뒤에도 다시 읽을 사건이 있어야 한다.
+    #[test]
+    fn parent_attention_is_published_after_the_verdict_is_saved() {
+        let root = std::env::temp_dir().join(format!("aaa-clean-{}", aaa_common::util::new_id()));
+        let mut cfg = aaa_config::HostConfig::default();
+        cfg.projects.root = root.join("projects").display().to_string();
+        cfg.notify.web_push = false;
+        let h = Host::open(cfg, root.join("host")).unwrap();
+        h.project_create("demo", Default::default(), "local:cli").unwrap();
+        let dir = h.project_dir("demo").unwrap();
+        std::fs::write(dir.join("TASKS.md"), "## Backlog\n- [ ] 상위\n  - [ ] 하위 · t-0001\n").unwrap();
+        h.task_identify("demo").unwrap();
+        let id =
+            h.db.thread_insert_next("demo", |id| {
+                let mut r = rec(Some("merged"), false);
+                r.project = "demo".into();
+                r.id = id.into();
+                serde_json::to_string(&r).unwrap()
+            })
+            .unwrap();
+        h.update_rec("demo", &id, |r| r.status = ThreadStatus::Resolved).unwrap();
+        let r = h.load("demo", &id).unwrap();
+        let mut events = h.task_events.subscribe();
+        // 실제 update_rec 잠금에서 마지막 DB 저장만 보류한다. 파일 쓰기·사건·board 읽기는 실제 경로다.
+        let gate = h.rec_lock.lock().unwrap();
+        let worker_host = h.clone();
+        let worker_dir = dir.clone();
+        let worker = std::thread::spawn(move || worker_host.task_clean_one("demo", &worker_dir, &r));
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        let before = rt
+            .block_on(async {
+                tokio::time::timeout(std::time::Duration::from_secs(5), async {
+                    loop {
+                        let (_, sha256) = events.recv().await.unwrap();
+                        let b = h.task_board("demo").unwrap();
+                        if b.sha256 == sha256 && b.tasks.len() == 1 && b.tasks[0].thread.as_deref() == Some(id.as_str())
+                        {
+                            break b;
+                        }
+                    }
+                })
+                .await
+            })
+            .unwrap();
+        assert!(before.tasks[0].attention.is_none(), "파일 사건이 DB 판정보다 먼저 왔다");
+        drop(gate);
+        worker.join().unwrap().unwrap();
+        let final_event = events.try_recv().expect("판정 저장 뒤 tasks 사건이 빠졌다");
+        let after = h.task_board("demo").unwrap();
+        assert_eq!(final_event, ("demo".into(), after.sha256.clone()));
+        assert_eq!(before.sha256, after.sha256, "파일은 그대로이고 판정만 바뀐다");
+        assert_eq!(after.tasks[0].attention.as_deref(), Some("하위 task가 모두 끝났다(마지막 t-0001)"));
+        drop(h);
+        std::fs::remove_dir_all(root).unwrap();
     }
 
     /// 「확인 필요」 까닭: 열린 thread·판정 전 완료는 없음, 옛 thread는 판정 없이 확인 필요, 되살린 task와 올린 상위는 그 까닭

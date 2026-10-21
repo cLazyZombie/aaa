@@ -584,6 +584,9 @@ pub struct AgentHello {
     pub os: String,
     pub arch: String,
     pub software: String,
+    /// 실행 파일 SHA-256(소문자 hex, 웹 머신 상세, plan §8.372). AGENT_LINK를 올리지 않는 선택 칸이다: 옛 agent는 보내지 않고 옛 host는 버린다
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sha256: Option<String>,
     #[serde(default)]
     pub features: Vec<String>,
     #[serde(default)]
@@ -681,6 +684,11 @@ pub enum LinkMsg {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "op", rename_all = "snake_case")]
 pub enum AgentRequest {
+    /// account_quota.v1: 해당 pane이 관측한 비밀 없는 창만 읽는다.
+    AccountQuota {
+        session: String,
+        generation: String,
+    },
     /// account_auth.v1. 비밀을 spec·journal에 넣지 않는 전용 spawn.
     SpawnAccount {
         spec: SpawnSpec,
@@ -708,6 +716,11 @@ pub enum AgentRequest {
     },
     DeployStageStatus {
         rollout: String,
+    },
+    /// deploy_candidate.v1: 빌드 폴더의 `aaa`와 옆 `provenance.json`을 대조하고 dry-run으로 self-check한다(관리 GUI W6a).
+    /// 작업 기록·교체는 없다
+    DeployCandidate {
+        path: String,
     },
     DeployStageClean {
         rollout: String,
@@ -1013,6 +1026,15 @@ pub enum AgentRequest {
         base: Option<String>,
         query: crate::DiffQuery,
     },
+    /// work_root.manage.v1을 알린 agent만: 그 머신 작업 root 보기·점검·전환(관리 GUI W5c, `aaa work-root`와 같다)
+    WorkRoot {
+        action: crate::WorkRootOp,
+    },
+    /// hook.manage.v1을 알린 agent만: Codex 전역 hook 상태(`install` 없음)·설치(true)·제거(false). 고정 작업이라 다른 인자는 없다
+    CodexHook {
+        #[serde(default)]
+        install: Option<bool>,
+    },
 }
 
 /// `AgentRequest::PrQuery`가 묻는 것
@@ -1047,6 +1069,9 @@ pub struct PrAnswer {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum AgentResponse {
+    AccountQuota {
+        snapshot: Option<crate::QuotaSnapshot>,
+    },
     DeployGuard {
         guard: Box<crate::DeployGuardView>,
     },
@@ -1058,6 +1083,13 @@ pub enum AgentResponse {
     },
     DeployStage {
         stage: crate::DeployStageView,
+    },
+    DeployCandidate {
+        sha256: String,
+        commit: Option<String>,
+        version: String,
+        total_bytes: u64,
+        built_at: Option<String>,
     },
     Deployment {
         job: crate::DeployJob,
@@ -1143,6 +1175,9 @@ pub enum AgentResponse {
     Git(crate::GitAnswer),
     History(HistoryChunk),
     Diff(crate::DiffView),
+    WorkRoot(crate::WorkRootView),
+    WorkRootChecked(crate::WorkRootCheckView),
+    Hook(crate::HookView),
 }
 
 /// routine 명령 실행 결과
@@ -1337,6 +1372,38 @@ pub struct MachineView {
     pub clock_skew_ms: Option<i64>,
     /// 새 세션을 거부하는 이유(연결 중일 때만). 비었으면 정상이다.
     pub problems: Vec<HealthProblem>,
+    /// 마지막 hello의 CPU 종류(`aarch64`·`x86_64`). 아래 넷과 같이 1.88부터 싣고, 옛 host·아직 붙지 않은 머신은 생략한다(plan §8.372)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub arch: Option<String>,
+    /// 마지막 hello의 aaa 판(`aaa --version`의 판 글)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub software: Option<String>,
+    /// 마지막 hello의 실행 파일 SHA-256(소문자 hex). 옛 agent는 보내지 않는다
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub sha256: Option<String>,
+    /// 판이 host와 다르다(판을 모르면 false)
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    #[ts(optional, as = "Option<bool>")]
+    pub software_differs: bool,
+    /// 이 host 실행 중 마지막 연결이 알린 agent 기능(host 재시작 뒤 다시 붙기 전에는 비었다)
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    #[ts(optional, as = "Option<Vec<String>>")]
+    pub features: Vec<String>,
+    /// 마지막 연결의 시작 자가 점검(§10.4 6) 요약. 점검이 hello보다 늦게 끝났으면 다음 연결 때 온다
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub selfcheck: Option<MachineSelfcheck>,
+}
+
+/// agent 시작 자가 점검 요약(hello `selfcheck`에서 host가 읽은 것). 실패 이유는 agent가 쓴 글 그대로다
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+pub struct MachineSelfcheck {
+    pub pass: bool,
+    #[serde(default)]
+    pub reasons: Vec<String>,
 }
 
 /// agent가 주기적으로 보내는 머신 건강(§8.10)
@@ -1659,6 +1726,18 @@ pub enum FrontRequest {
         machine: Option<String>,
         id: String,
     },
+    /// FRONT_API 1.82. 웹 「배포」의 시작 전 점검: 빌드 머신 후보의 provenance·SHA·dry-run self-check와 대상(host 먼저)
+    RolloutPlan {
+        source_machine: String,
+        path: String,
+        /// 비었으면 등록된 모든 머신
+        #[serde(default)]
+        machines: Vec<String>,
+    },
+    /// FRONT_API 1.82. 이 프로젝트의 최근 rollout 요약(새것부터)
+    Rollouts,
+    /// FRONT_API 1.82. 이 프로젝트의 최근 개별 배포 작업(재시작) 요약(새것부터)
+    DeployJobs,
     Post {
         #[serde(default)]
         #[ts(optional, as = "Option<String>")]
@@ -1666,6 +1745,13 @@ pub enum FrontRequest {
         input: crate::PostInput,
     },
     PostStatus {
+        #[serde(default)]
+        #[ts(optional, as = "Option<String>")]
+        project: String,
+        post_id: String,
+    },
+    /// 사용자 답을 받은 확인 필요 post를 처리됨으로 표시한다. 질문 선택·승인·실행은 하지 않는다.
+    PostHandled {
         #[serde(default)]
         #[ts(optional, as = "Option<String>")]
         project: String,
@@ -1688,6 +1774,25 @@ pub enum FrontRequest {
         #[ts(optional, as = "Option<String>")]
         project: String,
         item: String,
+    },
+    /// coordinator post의 구조화 질문에 답하고 요청을 닫는다(FRONT_API 1.87).
+    AskAnswer {
+        #[serde(default)]
+        #[ts(optional, as = "Option<String>")]
+        project: String,
+        item: String,
+        body_hash: String,
+        picks: Vec<Option<u32>>,
+        text: Option<String>,
+    },
+    /// 사람이 읽는 질문 ID로 선택·직접 답을 기록한다. 일부만 답하면 나머지는 열린 채로 남는다.
+    QuestionReply {
+        #[serde(default)]
+        #[ts(optional, as = "Option<String>")]
+        project: String,
+        id: String,
+        choice: Option<String>,
+        text: Option<String>,
     },
     /// 답한 것 기록을 지운다(모든 기기). `all`이면 모두
     AskForget {
@@ -1915,6 +2020,68 @@ pub enum FrontRequest {
     },
     /// FRONT_API 1.80. 등록 창을 시한 전에 닫는다(대기 중인 요청은 그대로, 새 요청만 막는다)
     EnrollClose,
+    /// FRONT_API 1.81(관리 GUI W5c). safety 실효값과 출처. `scope`가 global이면 모든 프로젝트 기본 표
+    SafetyShow {
+        #[serde(default)]
+        #[ts(optional, as = "Option<String>")]
+        project: String,
+        #[serde(default)]
+        scope: crate::SettingsScope,
+    },
+    /// FRONT_API 1.81. safety 값 하나를 바꾼다(웹은 yolo·start_threads·trust_screens·coordinator_deploy만). `value`가 없으면
+    /// 그 표의 값을 지워 아래 층을 따른다. `expected`는 읽은 host.toml 판
+    SafetySet {
+        #[serde(default)]
+        #[ts(optional, as = "Option<String>")]
+        project: String,
+        #[serde(default)]
+        scope: crate::SettingsScope,
+        key: String,
+        value: Option<String>,
+        expected: String,
+    },
+    /// FRONT_API 1.81. host.toml profile 목록(env는 이름만)과 판
+    ProfileAdmin,
+    /// FRONT_API 1.81. profile·허용 목록·기본값 바꾸기 미리보기(쓰지 않는다)
+    ProfilePlan {
+        #[serde(default)]
+        #[ts(optional, as = "Option<String>")]
+        project: String,
+        change: crate::ProfileChangeReq,
+    },
+    /// FRONT_API 1.81. 미리 본 바꾸기를 쓴다. `expected`와 host.toml 판이 다르면 conflict
+    ProfileApply {
+        #[serde(default)]
+        #[ts(optional, as = "Option<String>")]
+        project: String,
+        change: crate::ProfileChangeReq,
+        expected: String,
+    },
+    /// FRONT_API 1.81. 머신 작업 root 보기(그 머신 agent의 work_root.manage.v1)
+    WorkRootShow {
+        machine: String,
+    },
+    /// FRONT_API 1.81. 작업 root 점검(검사 파일을 만들고 쓰기·읽기·삭제, 없는 root는 만든다). `path`가 없으면 지금 설정
+    WorkRootCheck {
+        machine: String,
+        path: Option<String>,
+        mount: Option<String>,
+    },
+    /// FRONT_API 1.81. 다음 agent 시작의 작업 root를 바꾼다(절대 경로, agent가 다시 점검한 뒤 저장)
+    WorkRootSet {
+        machine: String,
+        path: String,
+        mount: Option<String>,
+    },
+    /// FRONT_API 1.81. 그 머신 harness hook 연동 상태
+    HookStatus {
+        machine: String,
+    },
+    /// FRONT_API 1.81. 그 머신 agent의 고정 작업으로 Codex 전역 hook을 설치(true)·제거(false)한다
+    HookSet {
+        machine: String,
+        install: bool,
+    },
     EnrollPending,
     EnrollApprove {
         name: String,
@@ -2053,7 +2220,7 @@ pub enum FrontRequest {
         base: Option<String>,
         /// 할 일(threads/<id>.task.md로 저장하고 brief에 넣는다)
         task: String,
-        /// TASKS.md의 task 제목(대소문자 무시). owner가 profile·machine의 기본값이 되고, 메모가 할 일에 붙는다.
+        /// TASKS.md의 task ID(d-0001·ULID) 또는 제목(대소문자 무시). owner가 profile·machine의 기본값이 되고, 메모가 할 일에 붙는다.
         #[serde(default)]
         from_task: Option<String>,
         /// 시작하면 그 task 줄 끝에 ` · t-NNNN`을 붙인다(FRONT_API 1.63, 할 일 T3). 연결은 시작할 때 읽은 블록 hash로 하고,
@@ -2119,6 +2286,20 @@ pub enum FrontRequest {
         #[ts(optional, as = "Option<String>")]
         project: String,
     },
+    /// 예약 읽기·등록/내용 갱신·취소·순서 변경. 등록은 해당 내용의 실행 승인이다.
+    TaskQueue {
+        #[serde(default)]
+        #[ts(optional, as = "Option<String>")]
+        project: String,
+        action: crate::QueueOp,
+    },
+    TaskArchive {
+        #[serde(default)]
+        #[ts(optional, as = "Option<String>")]
+        project: String,
+        /// 비면 보기, 있으면 같은 ID로 활성 목록에 복원(예약은 복원하지 않는다).
+        restore: Option<String>,
+    },
     /// 할 일 편집(FRONT_API 1.62, 조작 권한). 동작을 차례로 적용해 한 번에 쓴다. 세션 안에서는 그 프로젝트 coordinator만 된다.
     /// `base_sha256`을 주면 파일 전체가 그 판일 때만 쓴다. 답은 `task_edited`(충돌이면 `conflict`, 쓰지 않음)
     TaskEdit {
@@ -2141,6 +2322,10 @@ pub enum FrontRequest {
         limit: Option<u32>,
         #[serde(default)]
         filter: Option<TaskLogFilter>,
+        /// 표시 ID·ULID 또는 제목으로 기록을 거른다.
+        #[serde(default)]
+        #[ts(optional)]
+        task: Option<String>,
     },
     /// 이 시각(ms)보다 오래된 할 일 기록을 지운다(FRONT_API 1.62, 조작 권한)
     TaskLogPrune {
@@ -2719,9 +2904,12 @@ impl FrontRequest {
             FrontRequest::ThreadStartAccount { start, .. } => start.project_mut(),
             FrontRequest::Post { project, .. }
             | FrontRequest::PostStatus { project, .. }
+            | FrontRequest::PostHandled { project, .. }
             | FrontRequest::PostList { project, .. }
             | FrontRequest::Asks { project, .. }
             | FrontRequest::AskHandle { project, .. }
+            | FrontRequest::AskAnswer { project, .. }
+            | FrontRequest::QuestionReply { project, .. }
             | FrontRequest::AskForget { project, .. }
             | FrontRequest::PostUnmute { project, .. }
             | FrontRequest::ThreadFile { project, .. }
@@ -2734,6 +2922,8 @@ impl FrontRequest {
             | FrontRequest::Context { project, .. }
             | FrontRequest::Assignable { project, .. }
             | FrontRequest::Tasks { project }
+            | FrontRequest::TaskQueue { project, .. }
+            | FrontRequest::TaskArchive { project, .. }
             | FrontRequest::TaskEdit { project, .. }
             | FrontRequest::TaskLog { project, .. }
             | FrontRequest::TaskLogPrune { project, .. }
@@ -2745,6 +2935,10 @@ impl FrontRequest {
             | FrontRequest::LibraryLink { project, .. }
             | FrontRequest::LibraryPublish { project, .. }
             | FrontRequest::LibraryUploadPublish { project, .. }
+            | FrontRequest::SafetyShow { project, .. }
+            | FrontRequest::SafetySet { project, .. }
+            | FrontRequest::ProfilePlan { project, .. }
+            | FrontRequest::ProfileApply { project, .. }
             | FrontRequest::LibraryImport { project, .. }
             | FrontRequest::LibraryOpen { project, .. }
             | FrontRequest::LibraryResolve { project, .. }
@@ -2803,6 +2997,8 @@ impl FrontRequest {
                 | FrontRequest::Status
                 | FrontRequest::DeployContext
                 | FrontRequest::DeployStatus { .. }
+                | FrontRequest::Rollouts
+                | FrontRequest::DeployJobs
                 | FrontRequest::PostStatus { .. }
                 | FrontRequest::Asks { .. }
                 | FrontRequest::Machines
@@ -2826,6 +3022,8 @@ impl FrontRequest {
                 | FrontRequest::Context { peek: true, .. }
                 | FrontRequest::Assignable { .. }
                 | FrontRequest::Tasks { .. }
+                | FrontRequest::TaskQueue { action: crate::QueueOp::List, .. }
+                | FrontRequest::TaskArchive { restore: None, .. }
                 | FrontRequest::TaskLog { .. }
                 | FrontRequest::Events { .. }
                 | FrontRequest::Questions { .. }
@@ -2901,6 +3099,17 @@ pub enum FrontResponse {
     Rollout {
         rollout: crate::RolloutView,
     },
+    /// 웹 조작 기기의 rollout 시작·조회와 `rollouts`. 표시용 요약만 싣는다
+    RolloutCards {
+        cards: Vec<crate::RolloutCard>,
+    },
+    RolloutPlan {
+        plan: crate::RolloutPlanView,
+    },
+    /// 웹 조작 기기의 재시작 시작·조회와 `deploy_jobs`
+    DeployJobs {
+        jobs: Vec<crate::DeployJobCard>,
+    },
     Deployment {
         machine: String,
         job: crate::DeployJob,
@@ -2915,6 +3124,10 @@ pub enum FrontResponse {
     },
     Post {
         result: crate::PostResult,
+        /// status 조회에서 확인한 inbox 처리 상태(FRONT_API 1.84). 옛 host는 생략한다.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        #[ts(optional)]
+        handled: Option<bool>,
     },
     Posts {
         posts: Vec<crate::PostEnvelope>,
@@ -2950,6 +3163,12 @@ pub enum FrontResponse {
     },
     /// `tasks`의 답(FRONT_API 1.60)
     TaskBoard(TaskBoard),
+    TaskQueue {
+        entries: Vec<crate::TaskReservation>,
+    },
+    TaskArchive {
+        entries: Vec<crate::ArchivedTask>,
+    },
     /// `task_edit`의 답(FRONT_API 1.62): 쓴 뒤(또는 충돌이면 지금) board. `log_ids`는 이 편집이 남긴 기록
     TaskEdited {
         board: TaskBoard,
@@ -3088,6 +3307,18 @@ pub enum FrontResponse {
     },
     /// `project_settings`·`project_repo_edit`의 답
     ProjectSettings(crate::ProjectSettingsView),
+    Safety(crate::SafetyView),
+    ProfileAdmin(crate::ProfileAdminView),
+    ProfilePlan(crate::ProfilePlanView),
+    /// profile을 바꾼 뒤: 알림 글과 경고, 새 목록
+    ProfileApplied {
+        message: String,
+        warnings: Vec<String>,
+        view: crate::ProfileAdminView,
+    },
+    WorkRoot(crate::WorkRootView),
+    WorkRootChecked(crate::WorkRootCheckView),
+    Hook(crate::HookView),
     /// `thread_resolve_preview`의 답
     ResolvePreview(crate::ResolvePreview),
     AutomationConverted {
@@ -3642,6 +3873,11 @@ mod tests {
             .needs_control()
         );
         assert!(FrontRequest::ThreadAck { project: "p".into(), thread: "t".into() }.needs_control());
+        // 설정 관리(W5c)는 읽기도 조작 기기만: host 설정 경로·profile 인자·머신 폴더를 보인다
+        assert!(FrontRequest::ProfileAdmin.needs_control());
+        assert!(FrontRequest::SafetyShow { project: "p".into(), scope: Default::default() }.needs_control());
+        assert!(FrontRequest::WorkRootShow { machine: "m".into() }.needs_control());
+        assert!(FrontRequest::HookStatus { machine: "m".into() }.needs_control());
         assert!(!FrontRequest::Questions { all: true }.needs_control());
         assert!(
             FrontRequest::QuestionAnswer { id: "q".into(), choice: "yes".into(), menu: None, pick: None }

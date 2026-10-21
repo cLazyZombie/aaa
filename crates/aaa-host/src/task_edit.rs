@@ -306,7 +306,11 @@ fn renamed(a: &TaskAnchor, renames: &Renames) -> TaskAnchor {
 fn find(spans: &[Span], a: &TaskAnchor, op: usize) -> Result<usize, Fail> {
     if a.block_sha256.is_empty() {
         let want = a.title.trim().to_lowercase();
-        let same: Vec<usize> = (0..spans.len()).filter(|&i| spans[i].view.title.to_lowercase() == want).collect();
+        let same: Vec<usize> = (0..spans.len())
+            .filter(|&i| {
+                spans[i].view.id.as_deref() == Some(a.title.trim()) || spans[i].view.title.to_lowercase() == want
+            })
+            .collect();
         return match same.as_slice() {
             [one] => Ok(*one),
             [] => Err(Fail::Conflict { op, reason: format!("없는 task: {}", a.title), title: a.title.clone() }),
@@ -454,9 +458,13 @@ pub(crate) fn apply(text: &str, ops: &[TaskOp], ctx: &Ctx) -> Result<Applied, Fa
                 let ws = s.ws(&d).to_string();
                 let mut block: Vec<String> = Vec::new();
                 if line_changed {
-                    // 줄을 새로 쓰면 그대로 둔 제목도 정규형 검사를 거친다(끝 괄호 상태 메모가 그대로 남지 않게)
-                    tasks::check_title(&new_title)
-                        .map_err(|e| bad(format!("{e}. 제목을 고치거나 「정리 제안」을 쓴다")))?;
+                    // 바뀐 제목은 위에서 검사했다. 기존 제목은 실제 owner·저장소·thread와 함께
+                    // reads_back으로 검사한다(명시 owner 앞의 괄호 제목도 그대로 보존한다).
+                    // owner로 읽을 수 없던 상태 메모는 owner를 뒤에 붙여 묻어 두지 않는다.
+                    if tasks::owner_misread(v) {
+                        tasks::check_title(&new_title)
+                            .map_err(|e| bad(format!("{e}. 제목을 고치거나 「정리 제안」을 쓴다")))?;
+                    }
                     let mark = raw.trim_start().chars().nth(3).unwrap_or(' ');
                     let c = match (new_done, v.done) {
                         (true, true) | (false, false) => mark,
@@ -471,7 +479,7 @@ pub(crate) fn apply(text: &str, ops: &[TaskOp], ctx: &Ctx) -> Result<Applied, Fa
                     let line = tasks::task_line(&ws, c, &new_title, fields);
                     tasks::reads_back(&line, &new_title, fields)
                         .map_err(|e| bad(format!("{e}. 제목을 고치거나 「정리 제안」을 쓴다")))?;
-                    block.push(format!("{line}{}", d.eol));
+                    block.push(format!("{line}{}{}", crate::task_queue::id_suffix(v.id.as_deref()), d.eol));
                 } else {
                     block.push(d.lines[s.idx].clone());
                 }
@@ -683,6 +691,9 @@ pub(crate) fn apply(text: &str, ops: &[TaskOp], ctx: &Ctx) -> Result<Applied, Fa
                     return Err(bad("되살릴 task 줄이 기록에 없다".into()));
                 };
                 let have = d.spans();
+                if root.spans().iter().any(|r| r.view.id.is_some() && have.iter().any(|h| h.view.id == r.view.id)) {
+                    return Err(bad("같은 ID의 활성 task가 이미 있다".into()));
+                }
                 if let Some(t) =
                     restored.iter().find(|t| have.iter().any(|s| s.view.title.to_lowercase() == t.to_lowercase()))
                 {

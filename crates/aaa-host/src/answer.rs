@@ -37,7 +37,14 @@ pub(crate) fn compose(
                     .get(*i as usize)
                     .ok_or_else(|| format!("{}번 질문에 {}번 선택지가 없다", n + 1, i + 1))?;
                 short.push(format!("{}{}", n + 1, letter(*i)));
-                lines.push(format!("{}{}. {} — {}", n + 1, letter(*i), q.text, c.label));
+                lines.push(format!(
+                    "{}{}. {}{} — {}",
+                    n + 1,
+                    letter(*i),
+                    q.id.as_ref().map(|id| format!("{id} ")).unwrap_or_default(),
+                    q.text,
+                    c.label
+                ));
             }
             None if text.is_some() => {}
             None => return Err(format!("{}번 질문에 답이 없다(고르거나 직접 쓴다)", n + 1)),
@@ -85,6 +92,7 @@ impl Host {
         }
         let (message, summary) =
             compose(&rec.questions, &picks, text.as_deref()).map_err(|e| err(ErrorCode::BadRequest, e))?;
+        let requests = self.question_requests(project, id)?;
         let by = self.answered_by(actor);
         let answer = QuestionAnswerView {
             picks: picks.clone(),
@@ -122,6 +130,7 @@ impl Host {
         if let Some(a) = rec.question_answer.as_ref().filter(|a| a.at_ms == answer.at_ms) {
             self.record_answer(&rec, a);
         }
+        self.handle_question_requests(project, requests, &by, "질문 카드로 답해")?;
         self.flow(&rec, "question_answered", Some(format!("threads/{id}.md")), format!("{summary} · {by}"));
         if actor.starts_with("device:") {
             self.inbox_add(
@@ -129,7 +138,10 @@ impl Host {
                 "thread-state",
                 id,
                 "question answered",
-                &format!("{id} 질문에 답함({by}): {summary}"),
+                &format!(
+                    "{id} {} 질문에 답함({by}): {summary}",
+                    rec.questions.iter().filter_map(|q| q.id.as_deref()).collect::<Vec<_>>().join(" ")
+                ),
             );
         }
         Ok(self.thread_view(&rec))

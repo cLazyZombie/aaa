@@ -2,6 +2,7 @@
 // 한 목록에 모으고, 답한 것은 host 기록(답할 때의 원문)이다. 주소 `#ask=<열쇠>`가 고른 것 하나를 본문 카드로 연다. 열쇠는 종류 글자와
 // 대상이다: `q:<thread>` 열린 질문, `r:<inbox 항목>` 확인 필요 post, `t:<task 제목>` 할 일, `d:<기록>` 답한 것.
 import type { AskRecord, TaskView, ThreadQuestions, ThreadView, UserRequestView } from "./gen/proto";
+import { appRefOf } from "./appRef.ts";
 
 export type AsksData = { requests: UserRequestView[]; done: AskRecord[]; keepDays: number };
 
@@ -15,8 +16,17 @@ export const asks = (t: ThreadView): t is ThreadView & { questions: ThreadQuesti
 
 /** 답할 것: 질문, 확인 필요 post, 할 일 확인 필요 순, 그 안에서는 오래된 것부터 */
 export function openAsks(threads: ThreadView[], data: AsksData | null, tasks: TaskView[]): OpenAsk[] {
-  const qs: OpenAsk[] = threads.filter(asks).map((t) => ({ kind: "question", key: `q:${t.id}`, at: t.updated_at_ms, thread: t }));
-  const rs: OpenAsk[] = (data?.requests ?? []).map((r) => ({ kind: "request", key: `r:${r.id}`, at: r.created_ms, request: r }));
+  const questionThreads = threads.filter(asks);
+  const qs: OpenAsk[] = questionThreads.map((t) => ({ kind: "question", key: `q:${t.id}`, at: t.updated_at_ms, thread: t }));
+  // 제목의 질문 참조는 그 카드의 알림이다. 카드가 없으면 평소 확인 필요 post로 남긴다.
+  const questionCards = new Set([
+    ...threads.filter((t) => t.questions).flatMap((t) => [t.id, ...t.questions!.items.flatMap((q) => q.id ? [q.id] : [])]),
+    ...(data?.done ?? []).filter((r) => r.kind === "question").flatMap((r) => [r.subject, ...r.items.flatMap((q) => q.id ? [q.id] : [])]),
+  ]);
+  const rs: OpenAsk[] = (data?.requests ?? []).filter((r) => !r.title.split(/\s+/).some((word) => {
+    const ref = appRefOf(word);
+    return ref?.kind === "question" && questionCards.has(ref.target);
+  })).map((r) => ({ kind: "request", key: `r:${r.id}`, at: r.created_ms, request: r }));
   const ts: OpenAsk[] = tasks.filter((t) => t.attention).map((t) => ({ kind: "task", key: `t:${t.title}`, at: 0, task: t }));
   const byAt = (a: OpenAsk, b: OpenAsk) => a.at - b.at;
   return [...qs.sort(byAt), ...rs.sort(byAt), ...ts];
@@ -43,7 +53,13 @@ export function doneOf(key: string, done: AskRecord[]): AskRecord | null {
  * 주소의 질문(`#question=<thread>`, 알림·칩·터미널 링크)을 열쇠로: 답할 질문이 있으면 그 카드, 없으면 마지막으로 답한 그 질문,
  * 둘 다 없으면 null(목록만)
  */
-export function questionKey(thread: string, threads: ThreadView[], done: AskRecord[]): string | null {
+export function questionKey(thread: string, threads: ThreadView[], done: AskRecord[], requests: UserRequestView[] = []): string | null {
+  const t = threads.find((t) => asks(t) && t.questions.items.some((q) => q.id === thread));
+  if (t) return `q:${t.id}`;
+  const request = requests.find((r) => r.question_id === thread || r.questions?.items.some((q) => q.id === thread));
+  if (request) return `r:${request.id}`;
+  const record = done.find((r) => r.question_id === thread || r.items.some((q) => q.id === thread));
+  if (record) return `d:${record.id}`;
   if (threads.some((t) => t.id === thread && asks(t))) return `q:${thread}`;
   const r = lastAnswer(done, thread);
   return r ? `d:${r.id}` : null;

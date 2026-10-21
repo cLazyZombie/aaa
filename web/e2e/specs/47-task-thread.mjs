@@ -1,3 +1,4 @@
+import { editTaskContent } from "../lib/task-content.mjs";
 // 할 일 thread 연결과 자동 정리(T3, 사용자 10-20 「작업이 시작되면 (끝나면? 지금 정책에 따라) 삭제도 되고」, plan §8.316). 상세의
 // 「바로 시작」은 host `thread_start_preview`로 채운 확인창에서 시작하고 그 task 줄 끝에 thread를 잇는다(`link_task`). 이어진 thread가
 // 끝나면 ticker가 한 번 판정한다: 보고 [완료]면 줄을 지우고(자동 정리, 되살리기 알림 줄), 보고가 없으면 줄을 남기고 「확인 필요」다.
@@ -13,7 +14,8 @@ const sha = (text) => crypto.createHash("sha256").update(text).digest("hex");
 const read = () => fs.readFileSync(file(), "utf8");
 const write = (text) => {
   fs.writeFileSync(file(), text);
-  return sha(text);
+  // 화면 관측 전에 식별 주석 이주를 마친 fixture를 준비한다.
+  return aaa("task", "list").sha256;
 };
 const START = `# Tasks
 
@@ -35,7 +37,7 @@ const stateIs = (p, title, want) =>
 const gone = (p, title) => domIs(p, `「${title}」 없음`, (t) => document.querySelector(`.task-row[data-title="${t}"]`) === null && document.querySelector('[data-testid="tasks-view"]') !== null, title);
 const pick = (p, title) => row(p, title).locator(".task-pick").click();
 /** 줄 끝 thread 번호(` · t-NNNN`)를 파일에서 */
-const linked = (title) => new RegExp(`^\\s*- \\[ \\] ${title}.* · (t-\\d{4})$`, "m").exec(read())?.[1] ?? null;
+const linked = (title) => new RegExp(`^\\s*- \\[ \\] ${title}.* · (t-\\d{4})(?: <!-- aaa-task:[A-Z0-9]{26} -->)?$`, "m").exec(read())?.[1] ?? null;
 
 /** 상세 「바로 시작」 → 확인창이 host 값으로 채워지면 시작. 시작한 thread 번호 */
 async function startFromDetail(p, title, shotName) {
@@ -88,7 +90,7 @@ export default async function ({ page }) {
     await domIs(page, "바로 시작 값", () => document.querySelector('[data-testid="task-start"] form')?.dataset.startState === "ready");
     const kept = read();
     const threads = aaa("thread", "list", "demo").threads.length;
-    write(kept.replace("- [ ] 원격 일\n", "- [ ] 원격 일\n  그사이 더한 메모\n"));
+    write(editTaskContent(kept, "- [ ] 원격 일\n", "- [ ] 원격 일\n  그사이 더한 메모\n"));
     await page.getByTestId("task-start-repo").selectOption("작업 폴더");
     await page.getByTestId("task-start-go").click();
     const error = page.getByTestId("task-start-error");
@@ -101,27 +103,28 @@ export default async function ({ page }) {
     await shaIs(page, md);
   });
 
-  await step("자동 정리: 보고 [완료]로 끝난 thread의 task는 다음 tick에 지워지고 알림 줄 「되살리기」로 돌아오면 「확인 필요」다", async () => {
+  await step("완료 보관: 같은 ID·본문·결과를 보관하고 복원하면 실행 연결 없이 대기로 돌아온다", async () => {
     await until(`${done} 보고`, () => aaa("thread", "show", "demo", done).report_hash);
     aaa("thread", "resolve", "demo", done);
     aaa("ticker", "tick");
-    if (linked("로그인 고치기") !== null || read().includes("로그인 고치기")) throw new Error(`자동 정리하지 않았다:\n${read()}`);
-    const log = aaa("task", "log", "--limit", "5").entries;
-    const auto = log.find((e) => e.action === "auto_clean" && e.title === "로그인 고치기");
-    if (!auto || auto.by !== "host 자동 정리" || auto.thread !== done) throw new Error(`자동 정리 기록: ${JSON.stringify(log)}`);
-    await gone(page, "로그인 고치기");
-    const note = page.getByTestId("task-auto-clean");
-    await note.waitFor();
-    await shot(page, "thread-desktop-auto-clean");
-    await note.getByTestId("task-auto-clean-restore").click();
-    await stateIs(page, "로그인 고치기", "check");
-    await note.waitFor({ state: "detached" });
-    const detail = page.getByTestId("task-detail");
-    await detail.getByTestId("task-attention").waitFor();
-    if (!(await detail.getByTestId("task-attention").textContent()).includes("되살렸다")) throw new Error("되살린 task의 까닭이 다르다");
-    // 같은 thread는 한 번만 판정한다: 다시 tick해도 되살린 줄은 남는다
-    aaa("ticker", "tick");
-    if (!read().includes(`로그인 고치기 (fake@labA) · ${done}`)) throw new Error(`되살린 줄이 다시 지워졌다:\n${read()}`);
+    if (read().includes("로그인 고치기")) throw new Error(`완료 보관하지 않았다:\n${read()}`);
+    const log=aaa("task","log","--limit","5").entries;
+    const completed=log.find(e=>e.action==="completed"&&e.title==="로그인 고치기");
+    const stored=aaa("task","archive").entries.find(a=>a.task.title==="로그인 고치기");
+    if(!completed||!stored||stored.task.thread!==done||!stored.body.includes("테스트 먼저 쓴다")||!stored.report)throw new Error(`완료 보관 계약: ${JSON.stringify({completed,stored})}`);
+    await gone(page,"로그인 고치기");
+    await page.getByTestId("task-detail-close").click();
+    await page.getByTestId("task-archive-open").click();
+    const archived=page.getByTestId(`archive-${stored.task_id}`);
+    await archived.waitFor();
+    await shot(page,"thread-desktop-archive");
+    await archived.getByRole("button",{name:"활성 목록으로 복원"}).click();
+    await stateIs(page,"로그인 고치기","wait");
+    await archived.waitFor({state:"detached"});
+    const t=aaa("task","list").tasks.find(t=>t.title==="로그인 고치기");
+    if(t.id!==stored.task_id||t.thread!==null||aaa("task","queue").entries.length)throw new Error(`복원 계약: ${JSON.stringify(t)}`);
+    aaa("ticker","tick");
+    if(!read().includes("로그인 고치기 (fake@labA) <!-- aaa-task:"))throw new Error(`복원한 ID를 잃었다:\n${read()}`);
   });
 
   await step("확인 필요: 보고 없이 끝난 thread의 task는 줄이 남고 ⚠, 「연결만 풀기」면 대기로 돌아간다", async () => {
@@ -141,7 +144,7 @@ export default async function ({ page }) {
     const before = await page.getByTestId("tasks-view").getAttribute("data-tasks-sha");
     await detail.getByTestId("task-attention-unlink").click();
     await domIs(page, "새 판", (b) => document.querySelector('[data-testid="tasks-view"]')?.dataset.tasksSha !== b, before);
-    if (!read().includes("- [ ] 문서 정리 (fake@labA)\n")) throw new Error(`연결을 풀지 않았다:\n${read()}`);
+    if (!read().includes("- [ ] 문서 정리 (fake@labA) <!-- aaa-task:")) throw new Error(`연결을 풀지 않았다:\n${read()}`);
     await page.getByTestId("tasks-filter-all").click();
     await stateIs(page, "문서 정리", "wait");
   });
@@ -192,11 +195,12 @@ export default async function ({ page }) {
       ([m, mid, id]) => [localStorage.getItem(`herdr-web-ui:terminal-line:${m}:${id}`), localStorage.getItem(`herdr-web-ui:composer-draft:${mid}:${id}`)],
       [opened.pane.machine, opened.pane.machine_id, opened.pane.id],
     );
-    for (const d of drafts) if (!d?.startsWith("「원격 일」 task를 thread로 다시 맡겨 줘")) throw new Error(`입력칸 초안: ${JSON.stringify(drafts)}`);
+    const taskId = aaa("task", "list").tasks.find(t => t.title === "원격 일").short_id;
+    for (const d of drafts) if (!d?.startsWith(`${taskId} task를 thread로 다시 맡겨 줘`)) throw new Error(`입력칸 초안: ${JSON.stringify(drafts)}`);
     await shot(page, "thread-desktop-coordinator");
   });
 
-  await step("휴대폰·패드: 상세 시트의 맡기기와 확인 필요, 바로 시작 확인창과 한도 넘김 확인", async () => {
+  await step("휴대폰·패드: 상세 시트의 맡기기와 확인 필요, 바로 시작 확인창과 실제 한도 거부", async () => {
     aaa("project", "set", "demo", "max_parallel_threads", "1");
     fs.writeFileSync(`${root}/task-47b.md`, "사람을 기다림");
     const busy = aaa("thread", "start", "demo", "--title", "한도 채우는 일", "--machine", "labA", "--profile", "fake", "--kind", "dir", "--task-file", `${root}/task-47b.md`).id;
@@ -220,8 +224,7 @@ export default async function ({ page }) {
       await p.getByTestId("task-start-repo").selectOption("작업 폴더");
       if (!(await p.getByTestId("task-start-go").isDisabled())) throw new Error("한도를 넘기는데 확인 없이 시작할 수 있다");
       await shot(p, `thread-${kind}-start-limit`);
-      await p.getByTestId("task-start-over").check();
-      if (await p.getByTestId("task-start-go").isDisabled()) throw new Error("한도 넘김을 확인해도 시작할 수 없다");
+      if(await p.getByTestId("task-start-over").count())throw new Error("한도 우회 조작이 남았다");
       await p.keyboard.press("Escape");
       await p.getByTestId("task-start").waitFor({ state: "detached" });
       await p.close();

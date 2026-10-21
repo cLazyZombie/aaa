@@ -325,6 +325,14 @@ impl Host {
         if !r.copy_notes.is_empty() {
             summary.push_str(&format!("; 다 옮기지 못했다: {}", r.copy_notes.join("; ")));
         }
+        let ids = self
+            .thread_view(r)
+            .questions
+            .map(|q| q.items.iter().filter_map(|q| q.id.as_deref()).collect::<Vec<_>>().join(" "))
+            .unwrap_or_default();
+        if !ids.is_empty() {
+            summary = format!("{ids} {summary}");
+        }
         let hash = r.report_hash.clone();
         if self.update_rec(project, &r.id, |x| x.review_item_hash = hash).is_err() {
             return false;
@@ -446,6 +454,7 @@ mod tests {
                         software: "test".into(),
                         features: vec![],
                         dev_mode: true,
+                        sha256: None,
                         selfcheck: None,
                         sessions: sessions.to_vec(),
                         harness: vec![event("first", "working", 1), event("s", "working", 1)],

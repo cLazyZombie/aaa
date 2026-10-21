@@ -68,6 +68,13 @@ export function onEnrollChanged(listener: () => void): () => void {
   return () => enrollListeners.delete(listener);
 }
 
+/** host `rollout` 사건(배포 기록·개별 배포 작업이 바뀜): 설정 「배포」가 기록을 다시 읽는다. 연결을 열 때도 한 번 온다(관리 GUI W6a) */
+const rolloutListeners = new Set<() => void>();
+export function onRolloutChanged(listener: () => void): () => void {
+  rolloutListeners.add(listener);
+  return () => rolloutListeners.delete(listener);
+}
+
 /** host `accounts` 사건(계정이 바뀜: 로그인 진행·끝, 기본, 메일·상태, FRONT_API 1.79): 설정 「계정」이 다시 읽는다. 연결을 열 때도 한 번 온다 */
 const accountsListeners = new Set<() => void>();
 export function onAccountsChanged(listener: () => void): () => void {
@@ -465,7 +472,10 @@ export function watchEvents(
       else if (ev.ev === "accounts") for (const listener of accountsListeners) listener();
       else if (ev.ev === "enroll") for (const listener of enrollListeners) listener();
       else if (ev.ev === "app_badge") onAppBadge(ev.count);
-      else if (ev.ev === "rollout") onRollout(ev.result);
+      else if (ev.ev === "rollout") {
+        onRollout(ev.result);
+        for (const listener of rolloutListeners) listener();
+      }
       else if (ev.ev === "chat_changed") tellChat(ev.pane, { changed: true });
       else if (ev.ev === "chat_watching") tellChat(ev.pane, { live: ev.live });
       else if (ev.ev === "pong" && probeIds.has(ev.id)) {
@@ -496,8 +506,13 @@ export function watchEvents(
                 reportSignedOut();
               } else open();
             })
-            .catch(() => {
-              if (!stopped) open();
+            .catch((e: unknown) => {
+              if (stopped) return;
+              // host가 설정을 읽지 못해 안전 모드로 떴다(503 unavailable, plan §8.370): 다시 붙지 않고 App이 다시 물어 그 글을 보인다
+              if (e instanceof ApiError && e.body.code === "unavailable") {
+                stopped = true;
+                reportSignedOut();
+              } else open();
             });
         }, delay);
       delay = Math.min(delay * 2, 10_000);

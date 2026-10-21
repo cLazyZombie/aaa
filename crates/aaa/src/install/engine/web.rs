@@ -77,7 +77,7 @@ async fn publication(plan: &InstallPlan, id: &str, writing: bool) -> Result<Inst
             .await
             .map_err(|_| Fault { code: "installation_host_unavailable", exit: 3 })?;
         // 이 요청이 처음 추가된 판을 고정한다. 미래 minor와 비교하지 않는다.
-        if client.proto.major != 1 || client.proto.minor < 81 {
+        if client.proto.major != 1 || client.proto.minor < 90 {
             return Err(Fault { code: "installation_host_upgrade_required", exit: 3 });
         }
         match client.call(request).await {

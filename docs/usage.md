@@ -17,8 +17,11 @@
   - 키 줄은 Esc·Tab·Ctrl·Alt·방향키 등입니다. 그림은 붙여 넣거나 끌어 놓습니다.
 - **크기와 입력(가져오기 없음)**: 보기 권한이 아니면 언제나 입력됩니다. PTY 크기는 「지금 쓰는 화면」이 정합니다. 입력하거나 터미널을 누르거나 창 focus를 얻은 화면이 자기 크기로 다시 겁니다. 탭이 1초 넘게 가려지면 놓습니다. 「화면에 맞추기」로 직접 맞출 수도 있습니다.
 - **대화**: Claude·Codex pane은 「대화」로 기록을 읽기 전용으로 봅니다. 휴대폰은 agent pane을 처음부터 대화로 엽니다(설정 → 채팅 「패널 기본 화면」). 「생각 표시」를 켜면 agent의 생각도 접힌 줄로 보입니다. 대화 아래 입력창에서 바로 보내고, 「대기 메시지 자동 전송」을 끄면 작업 중에 쓴 글은 「지금 보내기」까지 붙잡아 둡니다. 빠른 답장 칩도 켤 수 있습니다.
+- **대화 그림을 할 일로 넘기기**: 프로젝트 대화창과 할 일 첨부는 저장한 파일 내용으로 이름을 정합니다. 메모의 `![그림](uploads/…)`는 thread 시작 때 작업 폴더로 복사됩니다. 예전 대화창이 무작위 이름으로 저장한 그림은 「이름과 내용 해시가 다르다」로 거부될 수 있습니다. 원본을 확인한 뒤 할 일에 다시 첨부하고 메모의 옛 링크를 새 링크로 바꾸세요. 원본 파일은 지우거나 이름을 바꾸지 않습니다.
 - **머신 등록**: 설정 → 머신에서 「등록 창 열기」 뒤 새 머신에서 `aaa agent enroll <host 주소> --name <이름>`을 실행합니다. 대기 목록의 「승인…」에 새 머신 화면의 6자리 코드를 넣고 이름을 맞춰 봅니다(세 번 틀리면 그 요청을 버립니다). 등록된 머신은 같은 곳에서 폐기합니다. host 머신은 폐기하지 않습니다.
 - **웹 공개**: 설정 → 폰 및 기기의 「tailnet에 공개」·「공개 끄기」(tailscale serve). 공개 주소로 연 화면에서 끄면 그 화면이 끊길 수 있어, 끈 뒤 들어올 다른 경로를 보이고 「다른 경로를 확인했다」를 켜야 끕니다.
+- **안전·profile**: 설정 → 안전에서 safety 값과 출처를 보고 yolo·start_threads·trust_screens·coordinator_deploy를 바꿉니다(yolo 켜기는 한 번 더 확인). 설정 → profile에서 claude·codex·shell profile을 더하고 고치고 지우며, 허용 목록·기본 profile을 바꿉니다. 모두 「적용할까요?」 창에서 실제 실행 인자를 본 뒤 씁니다. custom profile(실행 명령)과 `thread_agent_args`·`coordinator_agent_args`·`routine_commands`는 host의 aaa 세션 밖 터미널에서만 바꿉니다. 그사이 host.toml이 바뀌었으면 쓰지 않고 다시 읽습니다.
+- **작업 폴더·hook**: 설정 → 머신 아래 「작업 폴더·hook」에서 머신을 고르고, 절대 경로를 「점검…」(검사 파일을 쓰고 읽고 지움) 한 뒤 「전환…」합니다. 다음 agent 시작부터 쓰고 지금 도는 thread는 그대로입니다. Codex 전역 hook은 같은 곳에서 설치·제거합니다(Claude는 실행마다 넣어 설치할 것이 없습니다).
 - **알림 켜기**: 설정 → 알림에서 켜고 「테스트 알림」으로 확인합니다. 기기 알림(Web Push)은 coordinator가 보낸 「확인 필요」·「전체 완료」 post만 받습니다. thread 질문·보고는 앱 안 알림으로 확인합니다. iPhone은 홈 화면 앱(Safari 공유 → 홈 화면에 추가)에서만 켤 수 있습니다.
 
 보고서 발행(`library publish --to-user`)의 「새 보고서」 알림은 post 한도를 쓰지 않습니다. host가 확인한 프로젝트 coordinator의 「확인 필요」(`user-action`)·「전체 완료」(`task-complete`)는 합쳐서 분당 30·시간당 60·하루 300건이며 자동 음소거되지 않습니다(24시간 같은 글 중복은 거부). 일반 post 음소거는 다음 coordinator CLI 출력·`aaa context` 맨 위와 웹 앱 안 알림에 표시됩니다. 원인을 확인한 뒤 조작 권한으로 `aaa post unmute <출처>`를 실행합니다.
@@ -55,8 +58,8 @@ host는 프로젝트 하나만 맡으므로 명령의 프로젝트 인자는 생
 | `aaa question list` · `aaa question answer <id> yes` | 확인창 질문 보기·답하기 |
 | `aaa project create <p> --goal "…" --repo <경로>[@머신] --thread-profile codex` · `aaa context` | 프로젝트 만들기 · coordinator 요약(할 일·열린 thread·inbox). host는 보관하지 않은 프로젝트 하나만 맡는다: 둘째 만들기는 거부하고(§8.285), 둘 이상이면 다시 띄울 때 시작하지 않고 줄일 목록을 말한다(§8.283). 인스턴스에서는 이름을 생략하면 인스턴스 이름이다(§8.294) |
 | `aaa set <key> <값>` | 설정 값 하나 바꾸기(aaa.toml, 없으면 project.toml: goal·thread_profile·coordinator_profile·max_parallel_threads·auto_resolve_days·repos.add·repos.remove, workspaces.add·remove도 같다, task_notes.add·remove: 할 일 화면 「나중」 탭이 읽는 프로젝트 폴더 안 Markdown) |
-| `aaa task list` | 할 일 목록(TASKS.md) 읽기: 목록별 task, 형식 어긋남, task 없는 열린 thread, 「나중」 파일. 웹은 활동 막대 「할 일」(§8.306) |
-| `aaa task add "<제목>" [--list 목록] [--profile 모델] [--machine 머신] [--owner me\|이름] [--repo 저장소]` · `aaa task edit "<제목>" [--title …] [--profile …] [--machine …] [--owner …] [--repo …] [--thread t-NNNN]` · `aaa task move\|rm "<제목>"` · `aaa task restore <기록 id>` · `aaa task log` | 할 일 고치기: 바뀐 task 줄만 다시 쓰고 나머지 줄은 그대로 둔다. `--block <sha256>`이면 그 판의 블록으로 고정하고, 그사이 바뀌었으면 쓰지 않는다(충돌). 지운 task는 기록에서 되살린다. `--repo`는 저장소 칸(project.toml repos 경로나 그 마지막 이름, 또는 `작업 폴더`, §8.330)이고 `--from-task`가 그 저장소로 띄운다. `--profile`·`--machine`은 agent에게 맡길 모델·머신 칸이고(§8.335, 줄에는 `(모델@머신)`으로 적는다) 칸마다 따로 고친다(빈 글이면 그 칸만 비운다). 사람의 할 일은 `--owner me`(사람 이름은 `--person`)이다. 목록은 `aaa task list-add\|list-rename\|list-merge\|list-rm\|list-move`. aaa 세션 안에서는 그 프로젝트 coordinator만 고친다. 웹은 할 일 화면의 폼·⋯ 메뉴·「기록」 탭(§8.311) |
+| `aaa task list` | 할 일 목록(TASKS.md) 읽기: 목록별 task ID(`d-0001`)·제목, 형식 어긋남, task 없는 열린 thread, 「나중」 파일. 웹은 활동 막대 「할 일」(§8.306) |
+| `aaa task add "<제목>" [--list 목록] [--profile 모델] [--machine 머신] [--owner me\|이름] [--repo 저장소]` · `aaa task edit <task ID\|제목> [--title …] [--profile …] [--machine …] [--owner …] [--repo …] [--thread t-NNNN]` · `aaa task move\|rm <task ID\|제목>` · `aaa task restore <task ID\|기록 id>` · `aaa task log [task ID\|제목]` | 할 일 고치기: 바뀐 task 줄만 다시 쓰고 나머지 줄은 그대로 둔다. `--block <sha256>`이면 그 판의 블록으로 고정하고, 그사이 바뀌었으면 쓰지 않는다(충돌). 지운 task는 기록에서 되살린다. `--repo`는 저장소 칸(project.toml repos 경로나 그 마지막 이름, 또는 `작업 폴더`, §8.330)이고 `--from-task`가 그 저장소로 띄운다. `--profile`·`--machine`은 agent에게 맡길 모델·머신 칸이고(§8.335, 줄에는 `(모델@머신)`으로 적는다) 칸마다 따로 고친다(빈 글이면 그 칸만 비운다). 사람의 할 일은 `--owner me`(사람 이름은 `--person`)이다. 목록은 `aaa task list-add\|list-rename\|list-merge\|list-rm\|list-move`. aaa 세션 안에서는 그 프로젝트 coordinator만 고친다. 웹은 할 일 화면의 폼·⋯ 메뉴·「기록」 탭(§8.311) |
 | `aaa coordinator open [--profile 이름] [--new]` | coordinator 열기: 돌고 있으면 그 pane을 알리고, 없으면 host 머신에서 프로젝트 폴더로 띄워 workspace `<p>`의 탭 coordinator에 둠(profile 기본: project.toml → `aaa profile default coordinator` → claude) |
 | `aaa project pause\|resume\|archive` · `aaa project unarchive <p>` | 멈추기(ticker·thread start 멈춤) · 보관(목록에서 숨기고 pane을 닫음). 보관 해제는 다른 활성·멈춤 프로젝트가 없을 때만 가능 |
 | `aaa project rename <새 이름>` · `aaa project delete` · `aaa project sweep` | 이름 바꾸기 · 휴지통으로(worktree·branch는 그대로) · 끝난 thread가 남긴 worktree·병합된 branch 치우기 |
@@ -118,4 +121,27 @@ aaa work-root set '/Volumes/<disk>/aaa-work' --mount '/Volumes/<disk>'
 
 웹 활동 막대 「자동화」의 조건·동작·실행 기록·토글은 [자동화 운영 확인](automations.md)을 본다.
 
-사람은 aaa 밖 host 터미널에서 `aaa deploy start --file mac-b:~/aaa-candidate/aaa --sha256 <SHA> --commit <40자리커밋>`의 후보/대상을 읽고 정확히 `yes`를 입력한다(FRONT1.55 이상). coordinator_deploy 설정은 바꾸지 않는다. 같은 `aaa deploy status <ID> --wait`로 재시작을 넘는다. TOML `do="deploy"`는 배포 제안과 빌드 안내만 만든다([자동화](automations.md#배포는-제안까지만l5)).
+사람은 aaa 밖 host 터미널에서 `aaa deploy start --file mac-b:~/aaa-candidate/aaa --sha256 <SHA> --commit <40자리커밋>`의 후보/대상을 읽고 정확히 `yes`를 입력한다(FRONT1.55 이상). coordinator_deploy 설정은 바꾸지 않는다. 같은 `aaa deploy status <ID> --wait`로 재시작을 넘는다. TOML `do="deploy"`는 배포 제안과 빌드 안내만 만든다([자동화](automations.md#배포는-제안까지만l5)). 웹 조작 기기는 설정 「배포」에서 빌드 머신의 후보를 「점검」(provenance·SHA 대조와 dry-run)한 뒤 확인 창 하나로 시작하고, 같은 rollout ID를 「배포 기록」에서 다시 보며, 머신마다 agent·host를 다시 띄운다(FRONT_API 1.82, [설치 안내](install-runbook.md#웹에서-배포재시작관리-gui-w6a-front_api-182)). host 설정이 깨지면 host는 같은 웹 주소에 안전 모드 화면만 열어 오류 줄과 가린 원문을 보이고, 조작 기기에서 「마지막 정상 설정으로 되돌리기」(지금 파일은 `.broken-<시각>`으로 남김)나 「다시 읽기」로 정상 host로 돌아온다([설치 안내](install-runbook.md#설정이-깨졌을-때-안전-모드관리-gui-w6b)).
+
+할 일은 웹 목록·`aaa task list`·`aaa context`에 보이는 `d-0001` 같은 ID로 가리킨다.
+제목 변경·이동·삭제·복원에도 같은 번호이며, 지운 번호는 재사용하지 않는다. 제목 입력도 계속 받는다.
+이주·보관·복원의 자세한 규칙은 [할 일 ID](task-ids.md)에 있다.
+
+할 일을 자리 나면 시작하려면 설명·완료 범위 메모와 저장소(또는 `작업 폴더`)를 저장한 뒤
+`aaa task reserve d-0001`로 그 내용의 실행을 승인한다. 기본 모델도 예약 시점에 고정한다.
+`aaa task queue`는 차례·모델/effort·머신·대기 사유·실제 thread를 읽는다.
+`aaa task unreserve <task ID>`는 예약을 취소하며 실행 중인 thread는 그대로 둔다.
+`aaa task queue-move <task ID> <순번>`으로 차례를 바꾼다(1부터, 0은 맨 앞).
+내용을 고쳤으면 확인 후 같은 `reserve` 명령으로 승인판을 갱신한다. 파일 직접 수정도 이전 승인으로 시작하지 않는다.
+
+host는 `max_parallel_threads`를 실제 한도로 집행한다. 검토·답 대기·Idle·보고 [완료]에도 자리를 보유하며
+resolve 정리를 마쳐야 반환한다. 한도가 차면 새 기동을 보내지 않는다. 앞 예약의 고정 머신이 끊겼으면 가능한 뒤 예약을 먼저 시작한다.
+coordinator와 웹이 닫혀도 host가 시작하며, 알려지지 않은 모델·없어진 저장소·첨부 문제·시작 실패는 확인 필요로 남긴다.
+정해진 모델·머신 변경은 사용자가 웹이나 aaa 밖 CLI에서 직접 한다. coordinator는 원문 편집으로 우회할 수 없다.
+
+PR 병합·보고 [완료]의 좁은 완료 판정을 유지하면서 결과는 `aaa task archive`에 보관한다.
+`aaa task archive --restore <task ID>`는 같은 ID·내용·첨부를 활성 목록에 돌리고 실행 연결은 푼다. 자동 재예약·재기동은 하지 않는다.
+옛 삭제 기록의 `aaa task restore <기록 ID>`는 별도다. 보관 저장에 실패하면 활성 task를 지우지 않는다.
+보관의 결과물과 메모가 참조하는 보고서 사본은 기한·용량 정리와 보고서 삭제에서 보호한다. 같은 ID로 복원해도 완료 당시 결과는 남긴다.
+웹 할 일 상세에서 예약 내용을 확인·예약·갱신·취소·위/아래/맨 앞으로를 조작하고, 「완료 보관」에서 결과를 보고 복원한다.
+일반 의존성과 저장소별 착지 gate는 아직 제공하지 않는다.
