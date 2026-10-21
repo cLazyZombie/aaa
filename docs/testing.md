@@ -2,6 +2,23 @@
 
 새 기능을 만드는 thread가 따르는 짧은 규칙이다. 근거는 참고 넷(herdr 0.9.5·herdr-projects 0.2.35·herdr-web-ui `aa624cb`·t3code `4b1024da`)과 이 저장소에서 실제로 난 간헐 실패다. 전략과 도구 목록은 [plan §13](plan.md#13-테스트-전략과-직접-만들-e2e-도구)에 있다.
 
+## thread 재시작의 pane 교체(t-0567)
+
+- `cargo test -p aaa --test m13 restart_replaces_exited_panes_locally_and_remotely --locked -- --exact`:
+  실제 host·로컬 UDS/원격 TLS agent에서 kill 뒤 profile 변경, 자발적 exit 뒤 새 대화·resume·직접 pane resume를
+  연속 실행한다. thread 결속, 옛 pane 제거, 이름·탭·화면 추적 ID, 다른 실행 중 pane 보존을 본다.
+  host 재시작 뒤 두 agent의 Hello에도 옛 pane이 돌아오면 실패한다. host의 임시 TLS 포트는 재시작 전에 고정한다.
+- `restart_spawn_failure_keeps_the_old_pane_until_a_successful_replacement`: 존재하지 않는 fixture 실행 파일로 기동을
+  실패시켜 옛 pane·layout 보존을 확인한 뒤 설정을 고친다. 성공한 교체 뒤에만 옛 기록이 없어져야 한다.
+- 기존 `accounts::host_login_defaults_pin_threads_and_coordinators_without_exposing_credentials`:
+  로컬·원격의 고정 Claude 계정에서 Codex profile 변경은 기본 Codex 계정이 있어도 거부하고 brief bytes·profile·pane·계정을
+  보존한다. 같은 harness의 다른 profile은 원래 인증으로 기동하고 옛 pane을 지운다. 가짜 인증·socket gate만 쓴다.
+- 기존 `restart_with_another_profile`, `memory_and_restart`, `reboot_resumes_threads`, 계정 pane 재개·복원 keeper가
+  실행 중 거부, brief 다시 쓰기, 저장 대화 이어가기와 재부팅 경계를 맡는다. 사건·출력·세션 상태로 기다린다.
+
+수정 전 첫 keeper는 `labA/profile: 옛 pane이 기타로 남았다`에서 실패한다. pane 교체 누락·계정 사전 검사 누락·
+일반 thread의 pane resume 우회를 각각 되심으면 해당 owner 단언이 실패해야 한다. 제품과 시험의 시한은 늘리지 않는다.
+
 ## 계정별 사용량(A2, t-0561)
 
 - `cargo test -p aaa-common --lib quota`: 공식 camelCase RPC·Claude 상태줄 fixture, 누락·NaN·범위 밖
@@ -901,7 +918,7 @@ CI/Git의 source outbox·중복 억제·재시작·outage는 기존 owner를 유
 
 ## 웹 배포·재시작(t-0538 관리 GUI W6a, plan §8.361)
 
-- `cargo test -p aaa-host --lib rollout::web_tests`: 웹 조작 기기의 `deploy_start`는 재시작만(교체는 `forbidden`), 재시작은 권한을 지나 `deploy:<id>`에 프로젝트·`web`·시각을 남기고 같은 ID 재전송은 처음 시각 그대로·다른 작업이면 `bad_request`. 세션 안 coordinator·worker·Reader의 `rollout_plan` 거부, 조작 기기는 상대 경로 `bad_request` → 끊긴 빌드 머신 `agent_disconnected`, 웹 rollout에 빌드 머신 없는 후보는 `bad_request`. 사람·웹 기기 actor는 coordinator_deploy가 꺼져도 승인 유지, coordinator·빈 `device:`는 아님. `rollouts`는 이 프로젝트만 새것부터, 조작 기기의 같은 ID 조회는 요약(actor·후보 경로·오류 원문·작업 ID 없음), Reader·다른 프로젝트 거부. 진행 중 rollout이 있으면 점검 거부, 같은 ID 재전송은 빌드 머신이 끊겨 있어도 기존 요약. `deploy_jobs`는 새것부터·옛 기록(시각 없음)은 맨 뒤·다른 프로젝트 빠짐·끊긴 머신은 상태 없음·coordinator 교체 작업은 종류만(후보 경로 없음), 작업 끝 `deployment_changed`가 `rollout` 사건을 보냄, 실패 영수증은 고정 까닭만(PID·결과 원문 없음). 끊긴 머신(기능만 남음)이라 agent에 닿기 전에 끝나며 시간을 기다리지 않는다.
+- `cargo test -p aaa-host --lib rollout::web_tests`: 웹 조작 기기의 `deploy_start`는 재시작만(교체는 `forbidden`), 재시작은 권한을 지나 `deploy:<id>`에 프로젝트·`web`·시각을 남기고 같은 ID 재전송은 처음 시각 그대로·다른 작업이면 `bad_request`. 세션 안 coordinator·worker·Reader의 `rollout_plan` 거부, 조작 기기는 상대 경로 `bad_request` → 끊긴 빌드 머신 `agent_disconnected`, 웹 rollout에 빌드 머신 없는 후보는 `bad_request`. 사람·웹 기기 actor는 coordinator_deploy가 꺼져도 승인 유지, coordinator·빈 `device:`는 아님. `rollouts`는 이 프로젝트만 새것부터, 조작 기기의 같은 ID 조회는 요약(actor·후보 경로·오류 원문·작업 ID 없음), Reader·다른 프로젝트 거부. 진행 중 rollout이 있으면 점검 거부, 같은 ID 재전송은 빌드 머신이 끊겨 있어도 기존 요약. `deploy_jobs`는 새것부터·옛 기록(시각 없음)은 맨 뒤·다른 프로젝트 빠짐·끊긴 머신은 상태 없음·coordinator 교체 작업은 종류만(후보 경로 없음), 작업 끝 `deployment_changed`가 `rollout` 사건을 보냄, 실패 영수증은 고정 까닭만(PID·결과 원문 없음). 끊긴 머신(기능만 남음)이라 agent에 닿기 전에 끝나며 시간을 기다리지 않는다. 시험 몸은 따로 만든 runtime에서 돌리고, runtime을 끝내 `agent_connected`가 띄운 task(한 번도 돌지 않은 `rewatch`)가 쥔 Host가 닫혔는지 본 뒤 상태 폴더를 지운다(Windows는 열린 host DB가 든 폴더를 지우지 못한다, os error 32).
 - `cargo test -p aaa-agent --lib candidate_inspection`: 대기 중인 배포 작업이 있으면 점검 거부(거절 글에 작업 ID 없음, 실행기 staging 이름이 겹친다)와 점검 중에 들어온 작업 거부. 후보 읽기가 provenance의 SHA·커밋·빌드 시각과 dry-run 판을 답하고, 판의 커밋 표시가 다르거나 커밋이 40자리가 아니면 거부, 실행기 실패는 고정 글(경로·후보 출력 없음), provenance와 다른 파일은 실행하지 않고 거부, `aaa`가 아닌 이름 거부. 가짜 실행기를 쓴다.
 - `node --test web/test/deployModel.test.mjs`: 1.82 판정, ID가 host `valid_id`(영숫자 26자), 후보 경로 형식, 대상은 host 맨 앞(다른 머신을 모두 풀면 host만), 확정 거절일 때만 보인 ID를 지움, 시작은 점검한 그 후보·대상이 모두 준비되고 진행 중 rollout이 없을 때만, 보낼 rollout의 SHA·커밋은 점검 결과 그대로.
 - `node web/e2e/web.e2e.mjs --spec 63-deploy`: 실험실 집(`HOME`)과 PATH 앞 가짜 `launchctl`(재시작이 이 Mac의 실제 aaa 서비스에 닿지 않는다, 감독자 plist도 실험실 집). 후보는 허용 표지가 있을 때만 self-check를 통과하는 셸 파일과 provenance.json이다. provenance SHA가 다르면 점검 오류·시작 꺼짐 → 맞으면 SHA 전체·판·대상 「labA (host 먼저) · 준비됨」·시작 열림, 점검 뒤 경로를 바꾸면 시작 꺼짐. 표지를 지운 뒤 확인 창(SHA) → rollout ID 표시 → 기록에 `stopped`(대상 전송의 dry-run에서 멈춤), 실험실 실행 파일 SHA 그대로·launchctl 호출 없음. 화면을 다시 열면 같은 ID의 카드(「배포 중단」, 끝난 단계는 전송뿐, 후보 경로 없음). agent 재시작 확인 창 → 작업 「완료」·가짜 launchctl의 `kickstart -k gui/<uid>/dev.aaa.agent`. Reader는 기록·작업만 보고 시작·재시작 단추 없음, 휴대폰 390 가로 넘침 없음. 화면 표지·파일·host 사건으로 끝내며 sleep은 없다.
@@ -1310,3 +1327,45 @@ macOS gate·Windows cross compile 결과와 별도로 보고한다. SCM 실제 l
 - 통합 후보의 첫 전체 실행에서 E2E 51 준비가 실패했다. 입력칸은 그려졌지만 새 pane의 WebSocket이 아직 readonly를 해제하기 전이었고 가짜 agent의 수신은 0바이트·대화 기록도 비어 있었다. 준비에서 첫 Enter 전에 제품 보내기 단추의 disabled 해제 사건을 기다린다. 입력은 한 번만 보내며 답과 38% 게이지·지연 커서 단언·20초 상한은 유지한다. 연결 전 Enter가 글을 두고 보내지 않는 제품 계약은 기존 E2E 08이 계속 검사한다.
 - 수정 후보에서 51은 통과했으나 E2E 25의 빠른 pane 전환도 같은 준비 누락을 드러냈다. Codex 수신은 앞 단계의 6바이트 그대로였고 새 입력의 submit은 없었으며 키 입력 뒤에 새 snapshot·readonly 통지가 왔다. 터미널은 현재 pane 이름·data-readonly=false, 대화는 기존 23처럼 그림 첨부 단추의 disabled 해제 사건을 기다린다. 두 대화 진입 helper를 함께 정리하며 Ctrl+Enter 키·기대 바이트·host 판정·시한은 유지한다.
 - 이어진 전체 실행의 E2E 61은 safety 충돌 뒤 새 판 읽기가 끝나기 전에 입력을 다시 여는 제품 경합을 잡았다. SafetyPage는 재조회 Promise가 끝날 때까지 busy를 유지한다. 기존 충돌 시험에서 실제 safety_show 답만 gate로 보류해 그동안 선택이 꺼져 있는지 검사하고, 해제 뒤 원래 user 값 저장·사용자 주석 보존을 확인한다. 재조회 대기를 제거하면 새 판을 읽기 전 입력 금지 단언이 실패해야 한다. host의 판 대조·권한·기대값·시한은 바꾸지 않는다.
+
+## 질문 카드와 확인 필요 post 묶기(t-0565)
+
+- `node --test web/test/asksModel.test.mjs`는 제목의 `aaa:question/<thread>`가 열린 카드와 일치할 때만 post 여러 개를
+  질문 한 줄로 묶는지 본다. 답한 카드의 늦은 알림도 묶는다. 카드 없음·보고서 참조·본문에만 참조가 있는 post는 그대로 남긴다.
+- `cargo test -p aaa-host --lib asks::tests --locked`는 카드 대신 post를 처리하는 API 거부, 답 전송 경로의 거부 뒤
+  질문·post 보존, 연결 post만 처리, 전송 중 새 알림 보존, `request handled`와 답한 질문 하나를 검사한다.
+  `post handled`는 원래 발신 ID·화면 p-번호로 같은 항목을 처리하고 반복해도 한 번 기록한다. `inbox done`도
+  post 목록·status의 처리 상태에 반영돼야 한다. 둘 다 질문 답·선택·승인을 만들지 않는다.
+  옛 버전이 남긴 post는 새 보고로 질문이 닫힌 시각이나 성공한 답 기록으로 정리한다. 임시 답 claim은 성공으로 보지 않는다. 끝난 카드에 늦게 도착한 알림은 즉시 닫고 다음 질문의 알림은 유지한다.
+- `node web/e2e/web.e2e.mjs --spec 53-thread-questions`는 실제 host·agent에 질문 카드와 연결 post 두 개를 만든다.
+  수정 전은 빨강 배지 1개 검사에서 실패한다. Chromium 데스크톱, WebKit iPhone 390 Safari·430 홈 화면 앱에서
+  한 줄·한 배지, 카드 답 뒤 post 둘의 inbox done과 `request handled`, 「답한 것」 한 줄을 확인한다.
+  실제 coordinator post에만 있는 C는 `thread answer --text`로 원문을 전하고 A/B 선택지 수·선택하지 않은 picks를 보존한다.
+  `post handled`만으로 카드 답이 생기면 실패한다. 새 보고로 질문이 닫히면 post도 닫히고 답 없는 닫힘 기록을 남겨야 한다.
+  원문·그림 보존·새 질문·보기 권한·독립 post의 웹 처리·다른 기기에서 기록 지우기도 기존대로 검사한다.
+- `cargo test -p aaa --test m13 worker_session_cli_is_read_only --locked`는 실제 worker pane의 새 `post handled` 명령도
+  다른 쓰기와 같이 거부하는지 본다. 새 Front 요청은 조작 권한이 필요하고 승인·배포 요청과 연결하지 않는다.
+- 외부 푸시의 참조 해석은 그대로다. `cargo test -p aaa-host --lib post::tests --locked`의 기존 사용자 post 시험이
+  coordinator 검증·푸시 큐 유지·제목의 참조 제거와 `/#question=<thread>` 목적지를 확인한다.
+  iOS 실제 푸시 수신과 시스템 Safari 자체는 헤드리스 시험이 보증하지 않는다.
+
+## task 예약·완료 보관(t-0564)
+
+- host `task_queue::tests`는 ID의 원문/CRLF 보존·편집 후 유지·중복 거부, coordinator 선택 변경 거부와 사용자 직접 변경,
+  12개의 동시 DB 선점에서 6자리 상한·resolve_pending 보유, 내용 변경 뒤 확인 필요·취소의 재개방 보존을 검사한다.
+  완료 보관은 실제 SQLite INSERT 실패 trigger에서 활성 파일·미판정 상태가 보존되는지, 정상 저장 뒤 같은 ID·본문·결과·첨부,
+  이력 prune 뒤 보관 보존·같은 ID 복원·기동 연결 해제·재예약 없음도 확인한다. 완료 결과와 메모의 보고서 파일은 실제 기한 정리/삭제에서 보호되고, 관련 없는 사본은 정리되는지도 검사한다. 고정 sleep은 없다.
+- m13 `task_queue_runs_possible_fifo_after_resolve_without_coordinator`는 실제 host·agent·CLI·PTY로 6개의 자리를 채우고,
+  보고 [완료]·host 재시작에도 두 예약의 새 기동이 없는지 본다. resolve 완료 사건 뒤 coordinator/웹/수동 tick 없이
+  고정 머신이 끊긴 앞 예약을 남기고 가능한 뒤 예약이 실제 pane으로 기동하고 같은 task ID에 연결되는지 기다린다.
+- 기존 m13 `parallel_threads_enforce_capacity_before_launch`는 한도 초과 직접 요청의 실패·thread 수·pane 수를 함께 본다.
+  `task_thread_link_and_auto_clean`은 기존 확인 필요·부모 보호·옛 delete restore를 유지하며 완료 보관의 ID·본문·보고서·복원을 관측한다.
+- 웹은 실제 host의 예약 상태와 완료 보관만 읽는다. 실패의 상한·재시도·기대값을 바꿔 통과시키지 않는다.
+- 추가 source owner는 기본 모델 칸이 비어 있어도 승인된 선택을 coordinator가 바꾸지 못하는지, 직접 파일 수정 뒤
+  coordinator의 재예약이 거부되는지, 사용자 API의 선택 변경만 새 출처로 기록되고 명시 갱신 전에는 과거 승인으로 실행되지 않는지 본다.
+  기동 전 중단의 자리 회수/옛 송신 불명 보존·실패 예약 취소 후 tick 무변경·파일 제거 뒤 DB 확정 전 중단의 복구도 사건으로 확인한다.
+- 웹 E2E `67-task-queue`는 데스크톱 예약 확인·두 기기의 같은 차례·휴대폰 맨 앞으로/취소·새로고침 보존·resolve 뒤 실제 기동·
+  완료 보관/같은 ID 복원을 본다. 기존 47은 한도 우회 단추 부재와 완료 보관의 본문/결과/ID를 검사한다.
+- 시작/재시작은 같은 기동 오류 판정을 쓴다. 송신 결과 불명은 Starting으로 자리를 유지하고, 확실한 새 기동 실패는 원인과 함께
+  Failed로 남긴다. 이미 가진 Open 자리를 재시작할 때는 기동 전 중단에도 그 원래 자리를 유지하며 중복 선점하지 않는다.
+- 완료 보관을 복원한 뒤 제목을 바꾸고 다시 완료하는 경우도 검사한다. 일반 이력이 정리된 뒤에도 이전 완료의 본문·thread와 그 결과물 참조는 보관 이력으로 이어진다.

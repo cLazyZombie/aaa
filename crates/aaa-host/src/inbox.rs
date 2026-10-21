@@ -289,7 +289,7 @@ impl Host {
         }
         let pick: Vec<InboxItem> = open.into_iter().filter(|i| all || ids.contains(&i.id)).collect();
         let n = pick.len();
-        self.inbox_finish(project, pick, &self.answered_by(actor)).map_err(internal)?;
+        self.inbox_finish(project, pick, &self.answered_by(actor), true).map_err(internal)?;
         self.db.audit(actor, "inbox_done", &format!("{project} {n}"));
         Ok((n as u32, fit_inbox(self.db.inbox_list(Some(project), false).map_err(internal)?, INBOX_REPLY_BYTES)))
     }
@@ -299,14 +299,20 @@ impl Host {
         let pick: Vec<InboxItem> =
             self.db.inbox_list(Some(project), false).unwrap_or_default().into_iter().filter(|i| f(i)).collect();
         if !pick.is_empty()
-            && let Err(e) = self.inbox_finish(project, pick, "host")
+            && let Err(e) = self.inbox_finish(project, pick, "host", true)
         {
             tracing::warn!("inbox 항목을 끝내지 못했다: {e:#}");
         }
     }
 
     /// `by`는 끝낸 곳(확인 필요 post의 「답한 것」 기록에 남는다)
-    fn inbox_finish(&self, project: &str, items: Vec<InboxItem>, by: &str) -> anyhow::Result<()> {
+    pub(crate) fn inbox_finish(
+        &self,
+        project: &str,
+        items: Vec<InboxItem>,
+        by: &str,
+        record_requests: bool,
+    ) -> anyhow::Result<()> {
         let dir = self.inbox_dir(project);
         let now = aaa_common::util::now_ms();
         for mut i in items {
@@ -314,7 +320,10 @@ impl Host {
             i.done_at_ms = Some(now);
             self.db.inbox_put(&i)?;
             if crate::asks::is_user_request(&i) {
-                self.record_request(&i, by, now);
+                if record_requests {
+                    self.record_request(&i, by, now);
+                }
+                self.asks_bump();
             }
             self.bump(); // 이미 처리한 사용자 요청은 다른 기기에서도 줄어든다
             let _ = std::fs::create_dir_all(dir.join("done"));
@@ -381,6 +390,7 @@ impl Host {
         for p in &projects {
             self.check_project_config(&p.name, Path::new(&p.path));
             self.check_old_decisions(&p.name, Path::new(&p.path));
+            self.recover_launches(&p.name);
             self.thread_pass(&p.name);
             self.retry_report_copies(&p.name, aaa_common::util::now_ms());
             self.legacy_mission_notice(&p.name);
@@ -398,6 +408,13 @@ impl Host {
             self.git_tick(&p.name);
             self.tasks_pass(&p.name, dir);
             self.task_clean_pass(&p.name, dir);
+            if let Err(e) = self.reconcile_question_requests(&p.name) {
+                tracing::warn!("닫힌 질문의 알림 정리 실패: {}", e.message);
+            }
+            if let Err(e) = self.queue_pass(&p.name).await {
+                tracing::warn!(project=%p.name,"예약 판정 실패: {}",e.message);
+            }
+
             self.nudge(&p.name, dir).await;
         }
         self.ask_prune_pass(aaa_common::util::now_ms());

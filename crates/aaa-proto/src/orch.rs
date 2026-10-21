@@ -310,7 +310,7 @@ pub struct LibraryReport {
     /// FRONT_API 1.43. 사용자 보고서를 보낸(다시 보낸) 뒤 아직 열지 않았다
     #[serde(default)]
     pub unseen: bool,
-    /// FRONT_API 1.43. 끝나지 않은(resolve 전) thread의 사본이라 지울 수 없다
+    /// FRONT_API 1.43. 진행 중 thread 또는 완료 보관이 참조하는 사본이라 지울 수 없다
     #[serde(default)]
     pub busy: bool,
     /// FRONT_API 1.56. 보고서를 낸 thread(`t-NNNN`, 사용자 요청 10-20). 근원을 모르면 없다
@@ -1897,6 +1897,9 @@ mod tests {
 /// TASKS.md의 task 한 줄(0.2.35 형식). aaa는 읽기만 한다.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 pub struct TaskView {
+    /// 제목과 독립된 task ID. 기존 task는 명시 쓰기 때 부여한다.
+    #[serde(default)]
+    pub id: Option<String>,
     /// 속한 `## ` 목록 이름
     pub list: String,
     pub title: String,
@@ -2106,6 +2109,7 @@ pub enum TaskAction {
     Raw,
     /// 끝난 thread의 task를 host가 지웠다(T3)
     AutoClean,
+    Completed,
 }
 
 impl TaskAction {
@@ -2123,6 +2127,7 @@ impl TaskAction {
             TaskAction::Restore => "restore",
             TaskAction::Raw => "raw",
             TaskAction::AutoClean => "auto_clean",
+            TaskAction::Completed => "completed",
         }
     }
 
@@ -2140,6 +2145,7 @@ impl TaskAction {
             TaskAction::Restore,
             TaskAction::Raw,
             TaskAction::AutoClean,
+            TaskAction::Completed,
         ]
         .into_iter()
         .find(|a| a.as_str() == s)
@@ -2228,6 +2234,8 @@ pub struct TaskNotesFile {
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(default)]
 pub struct TaskBoard {
+    #[serde(default)]
+    pub queue: Vec<crate::TaskReservation>,
     pub project: String,
     /// 파일 전체 바이트의 sha256(파일이 없으면 빈 글의 hash)
     pub sha256: String,
@@ -2248,6 +2256,9 @@ pub struct TaskBoard {
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(default)]
 pub struct ThreadStartPreview {
+    pub profile_revision: String,
+    pub model: String,
+    pub effort: String,
     /// task 제목(thread 제목이 된다)
     pub title: String,
     /// 지금 파일의 그 task 블록 hash(시작 요청의 `task_block`)

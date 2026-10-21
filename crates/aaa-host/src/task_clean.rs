@@ -93,6 +93,7 @@ impl Host {
     }
 
     fn task_clean_one(&self, project: &str, dir: &Path, rec: &ThreadRec) -> Result<(), ErrorBody> {
+        self.task_identify(project)?;
         let text = std::fs::read_to_string(dir.join("TASKS.md")).unwrap_or_default();
         let (_, all) = tasks::parse_board(&text);
         let marker = self.report_marker(rec);
@@ -110,19 +111,19 @@ impl Host {
         let mut parents = Vec::new();
         if !clean.is_empty() {
             let ops: Vec<TaskOp> = clean.iter().map(|(t, _)| TaskOp::Delete { at: anchor(t) }).collect();
-            let (conflict, log_ids) = self.task_write(project, dir, &ops, None, HOST_ACTOR, &no_input(), true)?;
+            let (conflict, _log_ids) = self.task_write(project, dir, &ops, None, HOST_ACTOR, &no_input(), true)?;
             if let Some((_, reason, _)) = conflict {
                 return Err(err(ErrorCode::Unavailable, reason));
             }
-            for (i, (t, r)) in clean.iter().enumerate() {
+            for (t, r) in &clean {
                 let restore =
-                    log_ids.get(i).map(|id| format!(" 되살리기: `aaa task restore {id}`")).unwrap_or_default();
+                    format!(" 되살리기: `aaa task archive --restore {}`", t.id.as_deref().unwrap_or_default());
                 self.inbox_add(
                     project,
                     "task",
                     &rec.id,
                     "task auto-cleaned",
-                    &format!("「{}」 task를 지웠다({} 완료: {r}).{restore}", t.title, rec.id),
+                    &format!("「{}」 task를 완료 보관했다({} 완료: {r}).{restore}", t.title, rec.id),
                 );
                 cleaned.push(t.title.clone());
             }
