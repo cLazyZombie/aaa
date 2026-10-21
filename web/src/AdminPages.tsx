@@ -238,7 +238,7 @@ export function MachinesPage({ role, machines }: { role: DeviceRole; machines: M
   );
 }
 
-/** 머신 상세(읽기만, plan §8.370): 연결·OS·판·SHA·건강·자가 점검, 마지막 연결이 알린 기능 */
+/** 머신 상세(읽기만, plan §8.372): 연결·OS·판·SHA·건강·자가 점검, 마지막 연결이 알린 기능 */
 function MachineDetail({ m }: { m: MachineView }) {
   const rows = machineRows(m, Date.now());
   return (

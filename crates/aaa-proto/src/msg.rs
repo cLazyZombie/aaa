@@ -584,7 +584,7 @@ pub struct AgentHello {
     pub os: String,
     pub arch: String,
     pub software: String,
-    /// 실행 파일 SHA-256(소문자 hex, 웹 머신 상세, plan §8.370). AGENT_LINK를 올리지 않는 선택 칸이다: 옛 agent는 보내지 않고 옛 host는 버린다
+    /// 실행 파일 SHA-256(소문자 hex, 웹 머신 상세, plan §8.372). AGENT_LINK를 올리지 않는 선택 칸이다: 옛 agent는 보내지 않고 옛 host는 버린다
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub sha256: Option<String>,
     #[serde(default)]
@@ -1341,7 +1341,7 @@ pub struct MachineView {
     pub clock_skew_ms: Option<i64>,
     /// 새 세션을 거부하는 이유(연결 중일 때만). 비었으면 정상이다.
     pub problems: Vec<HealthProblem>,
-    /// 마지막 hello의 CPU 종류(`aarch64`·`x86_64`). 아래 넷과 같이 1.87부터 싣고, 옛 host·아직 붙지 않은 머신은 생략한다(plan §8.370)
+    /// 마지막 hello의 CPU 종류(`aarch64`·`x86_64`). 아래 넷과 같이 1.88부터 싣고, 옛 host·아직 붙지 않은 머신은 생략한다(plan §8.372)
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub arch: Option<String>,
@@ -1739,6 +1739,25 @@ pub enum FrontRequest {
         #[ts(optional, as = "Option<String>")]
         project: String,
         item: String,
+    },
+    /// coordinator post의 구조화 질문에 답하고 요청을 닫는다(FRONT_API 1.87).
+    AskAnswer {
+        #[serde(default)]
+        #[ts(optional, as = "Option<String>")]
+        project: String,
+        item: String,
+        body_hash: String,
+        picks: Vec<Option<u32>>,
+        text: Option<String>,
+    },
+    /// 사람이 읽는 질문 ID로 선택·직접 답을 기록한다. 일부만 답하면 나머지는 열린 채로 남는다.
+    QuestionReply {
+        #[serde(default)]
+        #[ts(optional, as = "Option<String>")]
+        project: String,
+        id: String,
+        choice: Option<String>,
+        text: Option<String>,
     },
     /// 답한 것 기록을 지운다(모든 기기). `all`이면 모두
     AskForget {
@@ -2843,6 +2862,8 @@ impl FrontRequest {
             | FrontRequest::PostList { project, .. }
             | FrontRequest::Asks { project, .. }
             | FrontRequest::AskHandle { project, .. }
+            | FrontRequest::AskAnswer { project, .. }
+            | FrontRequest::QuestionReply { project, .. }
             | FrontRequest::AskForget { project, .. }
             | FrontRequest::PostUnmute { project, .. }
             | FrontRequest::ThreadFile { project, .. }

@@ -8,6 +8,7 @@ mod answer;
 mod app_badge;
 mod asks;
 mod attach;
+mod question_ids;
 /// 자동화 정본 타입의 편집기용 JSON Schema. host 상태를 읽지 않는다.
 pub fn automation_schema() -> String {
     serde_json::to_string_pretty(&automation::schema()).expect("schema serialize")
@@ -69,6 +70,7 @@ mod restore;
 mod rollout;
 mod routine;
 mod routine_runs;
+pub mod safe_mode;
 mod seen;
 mod settings_admin;
 mod summary;
@@ -240,7 +242,7 @@ struct MachineRt {
     agent_pid: Option<u32>,
     /// 이 연결에 화면 색을 차례로 보내는 곳(agent 기능 `term_colors.v1`, colors.rs). 놓으면 보내던 task가 끝난다
     colors: Option<tokio::sync::mpsc::UnboundedSender<colors::ColorPush>>,
-    /// 마지막 hello의 CPU 종류·판·SHA·자가 점검(웹 머신 상세, plan §8.370)
+    /// 마지막 hello의 CPU 종류·판·SHA·자가 점검(웹 머신 상세, plan §8.372)
     build: MachineBuild,
 }
 
@@ -1497,6 +1499,12 @@ impl Host {
             FrontRequest::PostUnmute { project, thread } => self.post_unmute(&project, &thread, actor),
             FrontRequest::Asks { project } => self.asks_view(&project),
             FrontRequest::AskHandle { project, item } => self.ask_handle(&project, &item, actor),
+            FrontRequest::QuestionReply { project, id, choice, text } => {
+                self.reply_by_id(&project, &id, choice.as_deref(), text, actor).await
+            }
+            FrontRequest::AskAnswer { project, item, body_hash, picks, text } => {
+                self.ask_answer(&project, &item, &body_hash, picks, text, actor)
+            }
             FrontRequest::AskForget { project, ids, all } => self.ask_forget(&project, &ids, all, actor),
             FrontRequest::Status => Ok(FrontResponse::Status(HostStatus {
                 host_id: self.host_id.clone(),
@@ -1770,12 +1778,28 @@ impl Host {
             FrontRequest::ThreadKeys { project, thread, keys, text } => {
                 self.thread_keys(&project, &thread, &keys, text, actor).await
             }
-            FrontRequest::Questions { all } => Ok(FrontResponse::Questions { questions: self.questions(all) }),
-            FrontRequest::QuestionAnswer { id, choice, menu, pick } => match (menu, pick) {
-                (Some(menu), Some(pick)) => self.answer_menu(&id, &menu, pick, actor).await,
-                _ => self.answer(&id, &choice, actor).await,
+            FrontRequest::Questions { all } => Ok(FrontResponse::Questions { questions: self.question_catalog(all)? }),
+            FrontRequest::QuestionAnswer { id, choice, menu, pick } => {
+                if let Some(t) = self.db.question_target(None, &id).map_err(orch::internal)? {
+                    if t.kind != "harness" || menu.is_none() {
+                        return self.reply_by_id(&t.project, &id, Some(&choice), None, actor).await;
+                    }
+                    return self
+                        .answer_menu(
+                            &t.subject,
+                            &menu.unwrap(),
+                            pick.ok_or_else(|| err(ErrorCode::BadRequest, "선택이 없다"))?,
+                            actor,
+                        )
+                        .await
+                        .map(FrontResponse::Question);
+                }
+                match (menu, pick) {
+                    (Some(menu), Some(pick)) => self.answer_menu(&id, &menu, pick, actor).await,
+                    _ => self.answer(&id, &choice, actor).await,
+                }
+                .map(FrontResponse::Question)
             }
-            .map(FrontResponse::Question),
             FrontRequest::ThreadMessage { project, thread, text, mode } => {
                 self.thread_message(&project, &thread, text, mode, actor).await.map(FrontResponse::Message)
             }
@@ -3214,25 +3238,11 @@ impl Host {
     /// (`https://<이름>[:포트]`, 443은 포트 없이) 둘뿐이고 포트까지 같아야 한다(§6.3, herdr-web-ui `sameOrigin`이
     /// 요청 주소의 origin 전체를 비교하는 것과 같다). 아니면 None
     pub fn web_origin(&self, host_header: &str) -> Option<String> {
-        let loopback = format!("127.0.0.1:{}", self.web_port());
-        if host_header == loopback {
-            return Some(format!("http://{loopback}"));
-        }
-        let public = self.public_origin()?;
-        let asked = host_header.to_ascii_lowercase();
-        let asked = asked.strip_suffix(":443").unwrap_or(&asked);
-        (format!("https://{asked}") == public).then_some(public)
+        web_origin_in(self.web_port(), &self.db, host_header)
     }
 
-    /// 공개 origin. 아직 serve 상태를 읽지 못했으면(새 binary로 바꾼 뒤 tailscale을 못 읽음) aaa가 만든 공개
-    /// (`publish_port`)와 이름으로 대신한다: 둘 다 포트까지 안다
     pub(crate) fn public_origin(&self) -> Option<String> {
-        if let Some(o) = self.db.meta("publish_origin").ok().flatten() {
-            return Some(o);
-        }
-        let dns = self.db.meta("publish_dns").ok().flatten()?;
-        let port = self.db.meta("publish_port").ok().flatten()?.parse().ok()?;
-        Some(tailscale::https_url(&dns, port).to_ascii_lowercase())
+        public_origin_in(&self.db)
     }
 
     pub fn host_allowed(&self, host_header: &str) -> bool {
@@ -3254,20 +3264,69 @@ impl Host {
     }
 }
 
-/// `aaa host` 실행
-pub async fn run(cfg: HostConfig, state_root: PathBuf) -> Result<()> {
-    run_with_shutdown(cfg, state_root, None, shutdown_signal()).await
+/// Host 헤더가 가리키는 이 host의 origin(`Host::web_origin`). 안전 모드도 같은 판정을 쓴다(설정 없이 DB만 연다)
+pub(crate) fn web_origin_in(web_port: u16, db: &db::Db, host_header: &str) -> Option<String> {
+    let loopback = format!("127.0.0.1:{web_port}");
+    if host_header == loopback {
+        return Some(format!("http://{loopback}"));
+    }
+    let public = public_origin_in(db)?;
+    let asked = host_header.to_ascii_lowercase();
+    let asked = asked.strip_suffix(":443").unwrap_or(&asked);
+    (format!("https://{asked}") == public).then_some(public)
 }
 
-/// OS 감독자에는 실제 listener 준비 뒤에만 알린다. 서비스 등록 자체는 ready가 아니다.
-pub async fn run_with_shutdown(
+/// 공개 origin. 아직 serve 상태를 읽지 못했으면(새 binary로 바꾼 뒤 tailscale을 못 읽음) aaa가 만든 공개
+/// (`publish_port`)와 이름으로 대신한다: 둘 다 포트까지 안다
+pub(crate) fn public_origin_in(db: &db::Db) -> Option<String> {
+    if let Some(o) = db.meta("publish_origin").ok().flatten() {
+        return Some(o);
+    }
+    let dns = db.meta("publish_dns").ok().flatten()?;
+    let port = db.meta("publish_port").ok().flatten()?.parse().ok()?;
+    Some(tailscale::https_url(&dns, port).to_ascii_lowercase())
+}
+
+/// `aaa host` 실행: 설정 폴더를 읽어 host를 띄운다. 읽지 못하면 끝내지 않고 안전 모드(plan §8.372)로 웹만 열며, 되돌리거나
+/// 다시 읽어 설정이 맞으면 정상 host로 이어 간다. OS 감독자에는 실제 listener 준비 뒤에만(안전 모드 웹이든 정상 host든 한 번) 알린다.
+/// 서비스 등록 자체는 ready가 아니다.
+pub async fn run(
+    config_dir: PathBuf,
+    state_root: PathBuf,
+    mut ready: Option<tokio::sync::oneshot::Sender<()>>,
+    shutdown: impl std::future::Future<Output = ()>,
+) -> Result<()> {
+    tokio::pin!(shutdown);
+    loop {
+        match aaa_config::load_host(&config_dir) {
+            Ok(loaded) => {
+                for w in &loaded.warnings {
+                    eprintln!("{w}");
+                }
+                return run_host(loaded.config, config_dir, &loaded.files, state_root, ready.take(), shutdown).await;
+            }
+            Err(errors) => {
+                match safe_mode::run(errors, config_dir.clone(), state_root.clone(), ready.take(), shutdown.as_mut())
+                    .await?
+                {
+                    safe_mode::SafeExit::Reload => continue,
+                    safe_mode::SafeExit::Shutdown => return Ok(()),
+                }
+            }
+        }
+    }
+}
+
+async fn run_host(
     cfg: HostConfig,
+    config_dir: PathBuf,
+    files: &[PathBuf],
     state_root: PathBuf,
     ready: Option<tokio::sync::oneshot::Sender<()>>,
     shutdown: impl std::future::Future<Output = ()>,
 ) -> Result<()> {
     let host = Host::open(cfg, state_root.join("host"))?;
-    let _ = host.config_dir.set(aaa_config::paths::config_dir());
+    let _ = host.config_dir.set(config_dir.clone());
     tracing::info!(host = %host.host_id, fp = %&host.identity.fingerprint[..16], "host 시작");
     // 한 host는 프로젝트 하나(plan §8.283): 입구를 열기 전에 본다. 보관 상태가 DB에 있어 open 뒤에야 셀 수 있다
     match host.sole_project() {
@@ -3280,6 +3339,10 @@ pub async fn run_with_shutdown(
     link::start(&host).await?;
     front::start(&host).await?;
     web::start(&host).await?;
+    // 입구가 다 열렸다: 이 설정을 안전 모드의 「마지막 정상 설정」으로 보관한다
+    if let Err(e) = safe_mode::keep_last_good(&config_dir, files) {
+        tracing::warn!("마지막 정상 설정을 보관하지 못했다: {e:#}");
+    }
     host.resume_rollout();
     host.start_ticker();
     host.start_notifier();

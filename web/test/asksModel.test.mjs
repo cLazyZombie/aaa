@@ -59,3 +59,18 @@ describe("「답할 것」 열쇠", () => {
     assert.deepEqual(keys, ["q:t-1", "r:i1", "r:i2", "t:볼 일"]);
   });
 });
+
+// 짧은 질문 ID는 기존 thread 참조와 같은 카드로, post·보존본으로도 이어진다.
+it("q ID 링크와 연결 post는 같은 항목 하나로 묶는다", () => {
+  const t = thread("t-1", { ...open, items: [{ id: "q-1000", text: "자리", choices: [] }] });
+  const r = { id: "i1", title: "요약 aaa:question/q-1000", body: "알림", created_ms: 1, question_id: "q-1000" };
+  assert.equal(questionKey("q-1000", [t], []), "q:t-1");
+  assert.deepEqual(openAsks([t], { requests: [r], done: [], keepDays: 14 }, []).map((a) => a.key), ["q:t-1"]);
+  const standalone = { ...r, title: "직접 질문", question_id: "q-1001" };
+  assert.equal(questionKey("q-1001", [], [], [standalone]), "r:i1");
+  const done = { ...rec("answer", "request", "i1", 1), question_id: "q-1001" };
+  assert.equal(questionKey("q-1001", [], [done]), "d:answer");
+  assert.equal(questionKey("q-1000", [], [{ ...done, items: [{ id: "q-1000", text: "자리", choices: [] }] }]), "d:answer");
+  const history = { ...rec("answered", "question", "t-1", 1), items: [{ id: "q-1000", text: "자리", choices: [] }] };
+  assert.deepEqual(openAsks([], { requests: [r], done: [history], keepDays: 14 }, []), []);
+});

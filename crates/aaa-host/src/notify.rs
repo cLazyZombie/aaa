@@ -263,6 +263,17 @@ pub(crate) fn alert_text(place: &Place, items: &[InboxItem], titles: &HashMap<St
             tag: format!("aaa-host-{}", first.subject),
         };
     }
+    let question_ids = items
+        .iter()
+        .filter_map(request_title)
+        .flat_map(|title| {
+            title
+                .split_whitespace()
+                .filter(|w| w.strip_prefix("q-").is_some_and(|n| n.len() >= 4 && n.bytes().all(|b| b.is_ascii_digit())))
+                .map(str::to_string)
+                .collect::<Vec<_>>()
+        })
+        .collect::<Vec<_>>();
     match place {
         Place::Project(project) => {
             let one = items
@@ -281,7 +292,11 @@ pub(crate) fn alert_text(place: &Place, items: &[InboxItem], titles: &HashMap<St
                     tag: format!("aaa-{project}/{t}"),
                 },
                 None => AlertText {
-                    title: project.clone(),
+                    title: if question_ids.is_empty() {
+                        project.clone()
+                    } else {
+                        format!("{project} · {}", question_ids.join(" "))
+                    },
                     lines: lines(true),
                     // 질문을 가리키는 post 하나면 그 질문 카드(보고서 패널 「답할 것」), 그 밖의 post 묶음은 모든 thread
                     url: match items.iter().filter_map(request_question).collect::<Vec<_>>().as_slice() {
@@ -672,6 +687,19 @@ mod tests {
     }
 
     /// 보내기 직전: 끝낸 항목과 지난 일(stale)은 빠지고 나머지는 남는다
+    #[test]
+    fn short_question_ids_reach_push_titles_without_changing_legacy_question_links() {
+        let mut i = item("coordinator", "post request for user");
+        i.item_kind = "post".into();
+        i.summary = "coordinator request: 「q-1000 q-1001 진행 안 aaa:question/t-0001」".into();
+        let text = alert_text(&Place::Project("demo".into()), &[i.clone()], &HashMap::new());
+        assert_eq!(text.title, "demo · q-1000 q-1001");
+        assert_eq!(text.url, "/#question=t-0001");
+        assert!(!text.lines.join(" ").contains("aaa:"));
+        i.summary = "coordinator request: 「q-1000 진행 안 aaa:question/q-1000」".into();
+        assert_eq!(alert_text(&Place::Project("demo".into()), &[i], &HashMap::new()).url, "/#question=q-1000");
+    }
+
     #[test]
     fn drops_what_was_done_or_stale_meanwhile() {
         let mut q = item("t-0001", "blocked on a prompt");

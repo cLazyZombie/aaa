@@ -380,8 +380,13 @@ enum QuestionCmd {
         #[arg(long)]
         all: bool,
     },
-    /// 답한다(예: yes·no). host가 질문이 아직 열려 있는지 다시 확인한다
-    Answer { id: String, choice: String },
+    /// 질문 ID에 답한다(A·B 또는 --text). 기존 확인창의 yes·no도 받는다
+    Answer {
+        id: String,
+        choice: Option<String>,
+        #[arg(long)]
+        text: Option<String>,
+    },
 }
 
 #[derive(Subcommand)]
@@ -1663,8 +1668,12 @@ fn run(cli: Cli) -> Result<ExitCode> {
             aaa_common::resource::raise_nofile_limit("host");
             aaa_common::resource::disable_core_dump("host");
             legacy_guard()?;
-            let cfg = load_or_exit(aaa_config::load_host(&aaa_config::paths::config_dir()))?;
-            runtime()?.block_on(aaa_host::run(cfg, aaa_config::paths::state_dir()))?;
+            runtime()?.block_on(aaa_host::run(
+                aaa_config::paths::config_dir(),
+                aaa_config::paths::state_dir(),
+                None,
+                aaa_host::shutdown_signal(),
+            ))?;
             Ok(ExitCode::SUCCESS)
         }
         Cmd::Agent(a) => {
@@ -2069,6 +2078,18 @@ fn run(cli: Cli) -> Result<ExitCode> {
                 }
                 ThreadCmd::Answer { thread, mut answers, text } => {
                     let (project, thread) = shift_project(thread, &mut answers)?;
+                    if thread.strip_prefix("q-").is_some_and(|n| n.len() >= 4 && n.bytes().all(|b| b.is_ascii_digit()))
+                    {
+                        return front(
+                            json,
+                            FrontRequest::QuestionReply {
+                                project,
+                                id: thread,
+                                choice: (!answers.is_empty()).then(|| answers.join(" ")),
+                                text,
+                            },
+                        );
+                    }
                     let view = match front_call(FrontRequest::ThreadShow {
                         project: project.clone(),
                         thread: thread.clone(),
@@ -2141,8 +2162,17 @@ fn run(cli: Cli) -> Result<ExitCode> {
             json,
             match cmd {
                 QuestionCmd::List { all } => FrontRequest::Questions { all },
-                QuestionCmd::Answer { id, choice } => {
-                    FrontRequest::QuestionAnswer { id, choice, menu: None, pick: None }
+                QuestionCmd::Answer { id, choice, text } => {
+                    if id.strip_prefix("q-").is_some_and(|n| n.len() >= 4 && n.bytes().all(|b| b.is_ascii_digit())) {
+                        FrontRequest::QuestionReply { project: project_or_here(None)?, id, choice, text }
+                    } else {
+                        FrontRequest::QuestionAnswer {
+                            id,
+                            choice: choice.or(text).ok_or_else(|| anyhow::anyhow!("답이 필요하다"))?,
+                            menu: None,
+                            pick: None,
+                        }
+                    }
                 }
             },
         ),
@@ -2840,9 +2870,8 @@ pub(crate) fn supervised_role(
     legacy_guard()?;
     match role {
         aaa_proto::install::InstallRole::Host => {
-            let cfg = load_or_exit(aaa_config::load_host(&aaa_config::paths::config_dir()))?;
-            runtime()?.block_on(aaa_host::run_with_shutdown(
-                cfg,
+            runtime()?.block_on(aaa_host::run(
+                aaa_config::paths::config_dir(),
                 aaa_config::paths::state_dir(),
                 Some(ready),
                 supervised_stop(Some(stop)),
@@ -3215,7 +3244,7 @@ fn render_question(s: &mut String, q: &aaa_proto::QuestionView) {
     let _ = writeln!(
         s,
         "{}\t{}\t{}@{}\t{state}{}\t{}\t답: {}",
-        q.id,
+        q.short_id.as_deref().unwrap_or(&q.id),
         q.question_kind,
         at,
         q.machine,

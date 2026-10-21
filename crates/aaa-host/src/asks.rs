@@ -85,9 +85,46 @@ fn file_under(root: &Path, path: &str) -> Result<PathBuf, ErrorBody> {
 }
 
 impl Host {
+    pub(crate) fn request_question_thread(&self, item: &InboxItem) -> Option<String> {
+        let id = crate::notify::request_question(item)?;
+        match self.db.question_target(Some(&item.project), &id).ok().flatten() {
+            Some(t) if t.kind == "thread" => Some(t.subject),
+            Some(_) => None,
+            None => Some(id),
+        }
+    }
+
+    pub(crate) fn post_question_ids(
+        &self,
+        item: &InboxItem,
+        post: &aaa_proto::PostEnvelope,
+    ) -> Result<Vec<String>, ErrorBody> {
+        if let Some(thread) = self.request_question_thread(item)
+            && let Ok(rec) = self.load(&item.project, &thread)
+            && let Some(hash) = rec.report_hash.as_ref()
+            && !rec.questions.is_empty()
+        {
+            return Ok(self
+                .identify_questions(&item.project, "thread", &thread, hash, &rec.questions)?
+                .into_iter()
+                .filter_map(|q| q.id)
+                .collect());
+        }
+        let items = aaa_proto::report_questions(&post.input.body);
+        if items.is_empty() {
+            return Ok(vec![
+                self.db.question_id(&item.project, "post", &item.id, &post.body_sha256, 0).map_err(internal)?,
+            ]);
+        }
+        Ok(self
+            .identify_questions(&item.project, "post", &item.id, &post.body_sha256, &items)?
+            .into_iter()
+            .filter_map(|q| q.id)
+            .collect())
+    }
     /// 같은 프로젝트의 열린 질문 카드가 정본이다. post 처리만으로 질문의 답을 만들지 않는다.
     pub(crate) fn request_has_open_question(&self, item: &InboxItem) -> bool {
-        crate::notify::request_question(item).and_then(|id| self.load(&item.project, &id).ok()).is_some_and(|r| {
+        self.request_question_thread(item).and_then(|id| self.load(&item.project, &id).ok()).is_some_and(|r| {
             r.status != aaa_proto::ThreadStatus::Resolved
                 && r.report_hash.is_some()
                 && !r.questions.is_empty()
@@ -102,7 +139,7 @@ impl Host {
             .inbox_list(Some(project), false)
             .map_err(internal)?
             .into_iter()
-            .filter(|i| crate::notify::request_question(i).as_deref() == Some(thread))
+            .filter(|i| self.request_question_thread(i).as_deref() == Some(thread))
             .collect())
     }
 
@@ -140,7 +177,7 @@ impl Host {
         let finished = items
             .into_iter()
             .filter(|i| {
-                let Some(thread) = crate::notify::request_question(i) else { return false };
+                let Some(thread) = self.request_question_thread(i) else { return false };
                 let mut history = done.iter().filter(|r| r.kind == AskKind::Question && r.subject == thread);
                 let Ok(rec) = self.load(project, &thread) else { return history.next().is_some() };
                 if rec.questions.is_empty() {
@@ -162,6 +199,7 @@ impl Host {
         self.ask_save(
             &rec.project,
             &AskRecord {
+                question_id: None,
                 id: aaa_common::util::new_id(),
                 kind: AskKind::Question,
                 subject: rec.id.clone(),
@@ -170,7 +208,15 @@ impl Host {
                 done_ms: aaa_common::util::now_ms(),
                 by: "host".into(),
                 summary: "새 보고로 질문 닫힘".into(),
-                items: rec.questions.clone(),
+                items: self
+                    .identify_questions(
+                        &rec.project,
+                        "thread",
+                        &rec.id,
+                        rec.report_hash.as_deref().unwrap_or_default(),
+                        &rec.questions,
+                    )
+                    .unwrap_or_else(|_| rec.questions.clone()),
                 answer: None,
                 body: None,
                 files_base: None,
@@ -185,19 +231,41 @@ impl Host {
     /// 열린 확인 필요 post(오래된 것부터)
     pub(crate) fn user_requests(&self, project: &str) -> Result<Vec<UserRequestView>, ErrorBody> {
         let items = self.db.inbox_list(Some(project), false).map_err(internal)?;
-        let mut out: Vec<UserRequestView> = items
-            .into_iter()
-            .filter(is_user_request)
-            .map(|i| {
-                let post = self.db.post_of_item(project, &i.id).ok().flatten();
-                UserRequestView {
-                    title: post.as_ref().map(|p| p.input.title.clone()).unwrap_or_else(|| i.summary.clone()),
-                    body: post.map(|p| p.input.body).unwrap_or_else(|| i.summary.clone()),
-                    created_ms: i.created_at_ms,
-                    id: i.id,
-                }
-            })
-            .collect();
+        let mut out = Vec::new();
+        for i in items.into_iter().filter(is_user_request) {
+            let post = self.db.post_of_item(project, &i.id).map_err(internal)?;
+            let question_id = post
+                .as_ref()
+                .map(|p| self.post_question_ids(&i, p))
+                .transpose()?
+                .and_then(|ids| ids.into_iter().next());
+            let questions = if let Some(p) = post.as_ref().filter(|_| !self.request_has_open_question(&i)) {
+                let items = self.identify_questions(
+                    project,
+                    "post",
+                    &i.id,
+                    &p.body_sha256,
+                    &aaa_proto::report_questions(&p.input.body),
+                )?;
+                (!items.is_empty()).then(|| aaa_proto::ThreadQuestions {
+                    report_hash: p.body_sha256.clone(),
+                    draft: self.question_draft(project, &items),
+                    items,
+                    answer: None,
+                    files_base: Some(format!("/api/v1/projects/{project}/requests/{}/{}/", i.id, p.body_sha256)),
+                })
+            } else {
+                None
+            };
+            out.push(UserRequestView {
+                question_id,
+                title: post.as_ref().map(|p| p.input.title.clone()).unwrap_or_else(|| i.summary.clone()),
+                body: post.map(|p| p.input.body).unwrap_or_else(|| i.summary.clone()),
+                created_ms: i.created_at_ms,
+                id: i.id,
+                questions,
+            });
+        }
         out.sort_by_key(|r| r.created_ms);
         Ok(out)
     }
@@ -237,6 +305,128 @@ impl Host {
             &format!("사용자가 확인 필요 post를 답함으로 표시했다({by}): 「{title}」. 답이 채팅에 없으면 다시 묻지 말고 처리된 것으로 본다"),
         );
         self.asks_view(project)
+    }
+
+    /// 같은 질문 검증·답 조합 규칙을 쓰되 coordinator inbox로 전한다. 한 트랜잭션으로 답 기록과 요청 종료를 묶는다.
+    pub(crate) fn ask_answer(
+        &self,
+        project: &str,
+        item: &str,
+        body_hash: &str,
+        picks: Vec<Option<u32>>,
+        text: Option<String>,
+        actor: &str,
+    ) -> Result<FrontResponse, ErrorBody> {
+        let open = self.db.inbox_list(Some(project), false).map_err(internal)?;
+        let i = open
+            .iter()
+            .find(|i| i.id == item && is_user_request(i))
+            .ok_or_else(|| err(ErrorCode::NotFound, "열린 확인 필요 post가 아니다(이미 처리했을 수 있다)"))?;
+        if self.request_has_open_question(i) {
+            return Err(err(ErrorCode::BadRequest, "연결된 질문 카드에서 답한다. 답하면 이 post도 함께 처리된다"));
+        }
+        let post = self
+            .db
+            .post_of_item(project, item)
+            .map_err(internal)?
+            .ok_or_else(|| err(ErrorCode::NotFound, "post 본문이 없다"))?;
+        if post.body_sha256 != body_hash {
+            return Err(err(ErrorCode::BadRequest, "질문 본문이 다르다. 다시 읽고 답한다"));
+        }
+        let mut parsed = aaa_proto::report_questions(&post.input.body);
+        if parsed.is_empty() {
+            parsed.push(aaa_proto::ThreadQuestion {
+                id: None,
+                text: post.input.title.clone(),
+                body: Some(post.input.body.clone()),
+                choices: Vec::new(),
+            });
+        }
+        let items = self.identify_questions(project, "post", item, &post.body_sha256, &parsed)?;
+        let (message, summary) =
+            crate::answer::compose(&items, &picks, text.as_deref()).map_err(|e| err(ErrorCode::BadRequest, e))?;
+        let by = self.answered_by(actor);
+        let now = aaa_common::util::now_ms();
+        let id = aaa_common::util::new_id();
+        let dir = self.project_dir(project)?;
+        let root = dir.join("asks").join(&id);
+        if let Err(e) = self.snapshot_request(&dir, &root, &post.input.body) {
+            let _ = std::fs::remove_dir_all(&root);
+            return Err(internal(e));
+        }
+        let record = AskRecord {
+            question_id: items.first().and_then(|q| q.id.clone()),
+            id: id.clone(),
+            kind: AskKind::Request,
+            subject: item.to_string(),
+            title: post.input.title.clone(),
+            asked_ms: i.created_at_ms,
+            done_ms: now,
+            by: by.clone(),
+            summary: summary.clone(),
+            items,
+            answer: Some(QuestionAnswerView {
+                picks,
+                text: text.map(|t| t.trim().to_string()).filter(|t| !t.is_empty()),
+                summary,
+                by: by.clone(),
+                at_ms: now,
+            }),
+            body: Some(post.input.body),
+            files_base: Some(record_files_base(project, &id)),
+        };
+        let notice = InboxItem {
+            id: format!("{}-thread-state-coordinator-{}", aaa_common::util::utc_compact(now), id),
+            project: project.into(),
+            item_kind: "thread-state".into(),
+            subject: "coordinator".into(),
+            event: "question answered".into(),
+            summary: format!(
+                "{} {}: 「{}」 질문에 답함({by}): {}",
+                record.items.iter().filter_map(|q| q.id.as_deref()).collect::<Vec<_>>().join(" "),
+                post.id,
+                post.input.title,
+                record.summary
+            )
+            .chars()
+            .take(300)
+            .collect(),
+            body: message,
+            done: false,
+            seen: false,
+            created_at_ms: now,
+            done_at_ms: None,
+        };
+        let saved = self.db.request_answer(i, &record, &notice).map_err(internal);
+        if !matches!(saved, Ok(true)) {
+            let _ = std::fs::remove_dir_all(&root);
+            return saved.and_then(|_| Err(err(ErrorCode::BadRequest, "이미 답함")));
+        }
+        // DB 종료 뒤 파일 이동과 상태 사건도 기존 inbox 경로를 따른다. 답 기록은 위에서 이미 남겼다.
+        self.inbox_finish(project, vec![i.clone()], &by, false).map_err(internal)?;
+        self.inbox_publish(&notice);
+        self.db.audit(actor, "ask_answer", &format!("{project}/{item}"));
+        self.asks_view(project)
+    }
+
+    /// coordinator가 미리 publish한 `library/<이름>/<파일>`만 복사한다. 외부·symlink는 열지 않는다.
+    fn snapshot_request(&self, dir: &Path, root: &Path, body: &str) -> std::io::Result<()> {
+        std::fs::create_dir_all(root)?;
+        std::fs::write(root.join("report.md"), body)?;
+        let mut total = 0u64;
+        for rel in library_refs(body) {
+            let path = format!("library/{rel}");
+            let Ok(from) = file_under(dir, &path) else { continue };
+            let size = std::fs::metadata(&from)?.len();
+            if total + size > SNAPSHOT_MAX {
+                continue;
+            }
+            total += size;
+            let to = root.join(path);
+            std::fs::create_dir_all(to.parent().unwrap_or(root))?;
+            std::fs::copy(from, to)?;
+        }
+        Ok(())
     }
 
     pub(crate) fn ask_forget(
@@ -294,6 +484,7 @@ impl Host {
         self.ask_save(
             project,
             &AskRecord {
+                question_id: None,
                 id: id.clone(),
                 kind: AskKind::Question,
                 subject: rec.id.clone(),
@@ -302,12 +493,25 @@ impl Host {
                 done_ms: answer.at_ms,
                 by: answer.by.clone(),
                 summary: answer.summary.clone(),
-                items: rec.questions.clone(),
+                items: self
+                    .identify_questions(
+                        &rec.project,
+                        "thread",
+                        &rec.id,
+                        rec.report_hash.as_deref().unwrap_or_default(),
+                        &rec.questions,
+                    )
+                    .unwrap_or_else(|_| rec.questions.clone()),
                 answer: Some(answer.clone()),
                 body: None,
                 files_base: Some(record_files_base(project, &id)),
             },
         );
+        if let Err(e) =
+            self.db.question_clear_drafts(project, "thread", &rec.id, rec.report_hash.as_deref().unwrap_or_default())
+        {
+            tracing::warn!("질문 초안을 정리하지 못했다: {e:#}");
+        }
     }
 
     fn snapshot_question(&self, dir: &Path, rec: &ThreadRec, root: &Path) -> std::io::Result<()> {
@@ -348,10 +552,37 @@ impl Host {
             return;
         }
         let post = self.db.post_of_item(&item.project, &item.id).ok().flatten();
+        let body = post.as_ref().map(|p| p.input.body.clone()).unwrap_or_else(|| item.summary.clone());
+        let items = post
+            .as_ref()
+            .and_then(|p| {
+                self.identify_questions(
+                    &item.project,
+                    "post",
+                    &item.id,
+                    &p.body_sha256,
+                    &aaa_proto::report_questions(&body),
+                )
+                .ok()
+            })
+            .unwrap_or_default();
+        let id = aaa_common::util::new_id();
+        let files_base = if !items.is_empty() {
+            self.project_dir(&item.project)
+                .ok()
+                .and_then(|dir| self.snapshot_request(&dir, &dir.join("asks").join(&id), &body).ok())
+                .map(|_| record_files_base(&item.project, &id))
+        } else {
+            None
+        };
         self.ask_save(
             &item.project,
             &AskRecord {
-                id: aaa_common::util::new_id(),
+                question_id: post
+                    .as_ref()
+                    .and_then(|p| self.post_question_ids(item, p).ok())
+                    .and_then(|ids| ids.into_iter().next()),
+                id,
                 kind: AskKind::Request,
                 subject: item.id.clone(),
                 title: post.as_ref().map(|p| p.input.title.clone()).unwrap_or_else(|| item.summary.clone()),
@@ -359,12 +590,17 @@ impl Host {
                 done_ms: now_ms,
                 by: by.to_string(),
                 summary: "답함으로 표시".into(),
-                items: Vec::new(),
+                items,
                 answer: None,
-                body: Some(post.map(|p| p.input.body).unwrap_or_else(|| item.summary.clone())),
-                files_base: None,
+                body: Some(body),
+                files_base,
             },
         );
+        if let Some(p) = post.as_ref()
+            && let Err(e) = self.db.question_clear_drafts(&item.project, "post", &item.id, &p.body_sha256)
+        {
+            tracing::warn!("post 질문 초안을 정리하지 못했다: {e:#}");
+        }
     }
 
     /// 할 일의 확인 필요가 풀렸다(끝남으로 지우기·연결만 풀기·다시 맡기기)
@@ -373,6 +609,7 @@ impl Host {
         self.ask_save(
             project,
             &AskRecord {
+                question_id: None,
                 id: aaa_common::util::new_id(),
                 kind: AskKind::Task,
                 subject: title.to_string(),
@@ -416,6 +653,18 @@ impl Host {
             return Err(err(ErrorCode::BadRequest, "library 상대 경로가 아니다"));
         }
         Ok(crate::library::local_file(&dir, thread, rel)?.0)
+    }
+
+    /// 열린 coordinator 질문의 프로젝트 library 파일
+    pub(crate) fn request_file(&self, project: &str, item: &str, hash: &str, path: &str) -> Result<PathBuf, ErrorBody> {
+        let open = self.user_requests(project)?;
+        if !open.iter().any(|r| r.id == item && r.questions.as_ref().is_some_and(|q| q.report_hash == hash)) {
+            return Err(err(ErrorCode::NotFound, "열린 post 질문이 아니다"));
+        }
+        if !path.starts_with("library/") {
+            return Err(err(ErrorCode::BadRequest, "library/ 아래 경로만 연다"));
+        }
+        file_under(&self.project_dir(project)?, path)
     }
 
     /// 답한 것 사본의 파일
@@ -754,6 +1003,7 @@ mod tests {
             body: body.map(str::to_string),
         };
         rec.questions = vec![ThreadQuestion {
+            id: None,
             text: "시안".into(),
             body: Some("![지금](library/now.png)".into()),
             choices: vec![choice("A", Some("![A](library/mock/a.png)")), choice("B", None)],
@@ -768,7 +1018,9 @@ mod tests {
         h.record_answer(&rec, &answer);
         let done = h.db.ask_list("demo").unwrap();
         assert_eq!((done.len(), done[0].subject.as_str(), done[0].summary.as_str()), (1, "t-0001", "1A"));
-        assert_eq!(done[0].items, rec.questions);
+        let mut expected = rec.questions.clone();
+        expected[0].id = Some("q-1000".into());
+        assert_eq!(done[0].items, expected);
         let id = done[0].id.clone();
         assert_eq!(done[0].files_base.as_deref(), Some(format!("/api/v1/projects/demo/asks/{id}/").as_str()));
         // 새 보고가 원본을 바꾸고 지워도 사본이 남는다. 가리키지 않은 파일은 두지 않는다

@@ -78,8 +78,11 @@ export function App() {
   const check = useCallback(() => {
     me()
       .then((m) => setAuth(m ? { state: "in", role: m.role, device: m.device } : { state: "pair" }))
-      // fetch가 던진 TypeError는 네트워크에 닿지 못한 것이다(브라우저마다 말이 다르다: Failed to fetch·Load failed)
-      .catch((e: unknown) => setAuth({ state: "error", msg: e instanceof TypeError ? "네트워크에 닿지 않는다." : String(e) }));
+      // fetch가 던진 TypeError는 네트워크에 닿지 못한 것이다(브라우저마다 말이 다르다: Failed to fetch·Load failed).
+      // host의 답(안전 모드의 unavailable 등)은 그 말을 그대로 보인다
+      .catch((e: unknown) =>
+        setAuth({ state: "error", msg: e instanceof TypeError ? "네트워크에 닿지 않는다." : e instanceof ApiError ? e.message : String(e) }),
+      );
   }, []);
   useEffect(check, [check]);
   // 취소·로그아웃(401, WebSocket 4401): host에 다시 물어 gate를 보인다
@@ -640,7 +643,7 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
             call({ op: "questions", all: false })
               .then((r) => {
                 if (r.kind !== "questions") return questionReload.current.failed(read);
-                const next = questionReload.current.finish(read, r.questions);
+                const next = questionReload.current.finish(read, r.questions.filter((q) => q.pane !== ""));
                 if (next === null) return; // 다시 붙은 뒤 더 늦게 돌아온 옛 연결의 응답
                 // 처음 붙을 때 읽은 것은 새 소식이 아니다. 다시 붙을 때는 끊긴 동안 열린 질문을 알린다(t3code(MIT)
                 // packages/client-runtime/src/state/threads.ts `afterSequence`처럼 놓친 사건을 잇는다, plan §8.84)
@@ -1079,7 +1082,7 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
   const askKey = sel?.startsWith("ask:")
     ? sel.slice("ask:".length)
     : sel?.startsWith("question:")
-      ? (questionKey(sel.slice("question:".length), shownThreads, asksDone) ?? `q:${sel.slice("question:".length)}`)
+      ? (questionKey(sel.slice("question:".length), shownThreads, asksDone, asksData?.requests ?? []) ?? `q:${sel.slice("question:".length)}`)
       : null;
   const askSelection = useAskSelection(askKey, askList, asksDone);
   const askSelected = askSelection.kind === "open" ? askSelection.ask.key : askSelection.kind === "done" ? `d:${askSelection.record.id}` : null;
@@ -1334,6 +1337,7 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
             selection={askSelection}
             canControl={canControl}
             onAnswer={answerThread}
+            onRequestAnswer={async (r, picks, text) => putAsks(await call({ op: "ask_answer", item: r.id, body_hash: r.questions!.report_hash, picks, text }))}
             onHandle={async (item) => putAsks(await call({ op: "ask_handle", item }))}
             onReply={(title) => handOff(`「${title}」에 대한 답: `)}
             onForget={async (id) => putAsks(await call({ op: "ask_forget", ids: [id], all: false }))}

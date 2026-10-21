@@ -1,4 +1,4 @@
-//! 머신 상세(웹 머신 추가 M0, plan §8.370): hello의 CPU 종류·판·SHA·기능·자가 점검이 `MachineView`에 실리고, 앞의 셋은 host를 다시 열어도
+//! 머신 상세(웹 머신 추가 M0, plan §8.372): hello의 CPU 종류·판·SHA·기능·자가 점검이 `MachineView`에 실리고, 앞의 셋은 host를 다시 열어도
 //! 남는다. 판이 host와 다르면 표시한다.
 use super::*;
 use aaa_proto::AgentHello;
