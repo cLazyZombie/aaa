@@ -188,7 +188,8 @@ pub const AGENT_LINK: Version = Version { major: 1, minor: 10 };
 // 1.83: 등록 계정 사용량 HTTP /api/v1/account-usage(A2, plan §8.363). Agent link account_quota.v1은 비밀 없는 원격 관측만 읽는다.
 // 1.84: 질문 연결 post 자동 처리·채팅 답의 처리 표시(`post_handled` → Done), `Post.handled` 선택 칸(plan §8.366).
 // 옛 host는 새 요청을 모르는 요청으로 거절하고 상태 칸을 생략한다. Agent link 변경 없음.
-pub const FRONT_API: Version = Version { major: 1, minor: 84 };
+// 1.85: task 예약·기동 연결·완료 보관, task ID(plan §8.367). 옛 host에는 새 조작을 보내지 않는다.
+pub const FRONT_API: Version = Version { major: 1, minor: 85 };
 /// agent ↔ session host(내부). 세션이 몇 주 이어질 수 있으므로 이전 session host와 호환해야 한다.
 /// 1.1: `SessionRequest::Detect`(harness 상태 감지 입력). agent는 1.0 session host에 보내지 않고 `Screen`을 쓴다.
 /// 1.2: `SessionRequest::Colors`(색 질의에 답할 화면 색, plan §8.187). agent는 1.1 이하 session host에 보내지 않는다.

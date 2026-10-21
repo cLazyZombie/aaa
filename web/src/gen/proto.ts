@@ -224,7 +224,33 @@ warnings: Array<string>, };
 
 export type HealthProblem = { code: string, text: string, };
 
+export type QueueState = "queued" | "check" | "starting" | "running" | "finished" | "cancelled";
+
+export type QueueOp = { "op": "list" } | { "op": "reserve", task: string, block: string, profile: string, profile_revision: string, } | { "op": "cancel", task_id: string, } | { "op": "move", task_id: string, position: number, };
+
+export type TaskChoicePin = { owner: string | null, profile: string, machine: string | null, actor: string, at_ms: number, };
+
+export type TaskReservation = { selection: TaskChoicePin, task_id: string, task: TaskView, approved_block: string, profile: string, model: string, effort: string, profile_revision: string, machine: string | null, position: number, state: QueueState, reason: string,
+/**
+ * 선점과 함께 발급한 기동 ID. 외부 기동의 exactly-once 보증은 아니다.
+ */
+launch_id: string | null, thread: string | null, actor: string, created_ms: number, updated_ms: number, };
+
+export type ArchivedTask = { task_id: string, task: TaskView,
+/**
+ * 복원할 블록 원문. 첨부 참조는 프로젝트의 같은 경로다.
+ */
+body: string, reason: string, report: string | null, completed_ms: number, restored: boolean,
+/**
+ * 본문 제거 뒤의 파일 판과 대조하는 복구 영수증.
+ */
+committed: boolean, removed_sha256: string, history: Array<TaskLogEntry>, };
+
 export type TaskView = {
+/**
+ * 제목과 독립된 task ID. 기존 task는 명시 쓰기 때 부여한다.
+ */
+id: string | null,
 /**
  * 속한 `## ` 목록 이름
  */
@@ -313,7 +339,7 @@ path: string,
  */
 error: string | null, sections: Array<TaskNotesSection>, };
 
-export type TaskBoard = { project: string,
+export type TaskBoard = { queue: Array<TaskReservation>, project: string,
 /**
  * 파일 전체 바이트의 sha256(파일이 없으면 빈 글의 hash)
  */
@@ -399,7 +425,7 @@ op: number, reason: string,
  */
 latest: TaskView | null, };
 
-export type TaskAction = "add" | "update" | "delete" | "move" | "list_add" | "list_rename" | "list_merge" | "list_delete" | "list_move" | "restore" | "raw" | "auto_clean";
+export type TaskAction = "add" | "update" | "delete" | "move" | "list_add" | "list_rename" | "list_merge" | "list_delete" | "list_move" | "restore" | "raw" | "auto_clean" | "completed";
 
 export type TaskLogEntry = { id: number, at_ms: number,
 /**
@@ -425,7 +451,7 @@ restored_by: number | null, };
 
 export type TaskLogFilter = "deleted" | "auto";
 
-export type ThreadStartPreview = {
+export type ThreadStartPreview = { profile_revision: string, model: string, effort: string,
 /**
  * task 제목(thread 제목이 된다)
  */
@@ -783,7 +809,11 @@ task_block?: string, } | { "op": "thread_start_preview", project?: string, from_
 /**
  * 할 일. 비면 「하던 일을 이어 하되 이제 이 프로젝트 thread다」
  */
-task: string, } | { "op": "thread_next", project?: string, thread: string, line: number | null, add: string | null, } | { "op": "context", project?: string, peek: boolean, } | { "op": "assignable", project?: string, check: string | null, } | { "op": "tasks", project?: string, } | { "op": "task_edit", project?: string, ops: Array<TaskOp>, base_sha256: string | null, } | { "op": "task_log", project?: string, before: number | null, limit: number | null, filter: TaskLogFilter | null, } | { "op": "task_log_prune", project?: string, before_ms: number, } | { "op": "threads", project: string | null, role: Role | null, } | { "op": "thread_show", project?: string, thread: string, } | { "op": "thread_summary", project?: string, thread: string, } | { "op": "thread_summary_set", project?: string, thread: string, text: string, } | { "op": "thread_library", project?: string, thread: string, } | { "op": "library_link", project?: string, thread: string, days: number | null, } | { "op": "library_links", project: string | null, } | { "op": "library_link_revoke", id: string, } | { "op": "library_publish", project?: string, name: string, source: string, live: boolean,
+task: string, } | { "op": "thread_next", project?: string, thread: string, line: number | null, add: string | null, } | { "op": "context", project?: string, peek: boolean, } | { "op": "assignable", project?: string, check: string | null, } | { "op": "tasks", project?: string, } | { "op": "task_queue", project?: string, action: QueueOp, } | { "op": "task_archive", project?: string,
+/**
+ * 비면 보기, 있으면 같은 ID로 활성 목록에 복원(예약은 복원하지 않는다).
+ */
+restore: string | null, } | { "op": "task_edit", project?: string, ops: Array<TaskOp>, base_sha256: string | null, } | { "op": "task_log", project?: string, before: number | null, limit: number | null, filter: TaskLogFilter | null, } | { "op": "task_log_prune", project?: string, before_ms: number, } | { "op": "threads", project: string | null, role: Role | null, } | { "op": "thread_show", project?: string, thread: string, } | { "op": "thread_summary", project?: string, thread: string, } | { "op": "thread_summary_set", project?: string, thread: string, text: string, } | { "op": "thread_library", project?: string, thread: string, } | { "op": "library_link", project?: string, thread: string, days: number | null, } | { "op": "library_links", project: string | null, } | { "op": "library_link_revoke", id: string, } | { "op": "library_publish", project?: string, name: string, source: string, live: boolean,
 /**
  * FRONT_API 1.43. 사용자에게 보내는 웹 보고서(index.html 필수, 「내 보고서」·안 봄·사용자 알림 post)
  */
@@ -947,7 +977,7 @@ message: MessageView | null, } | { "kind": "context" } & ProjectContext | { "kin
 /**
  * `check`가 통과했을 때 설명
  */
-valid: string | null, } | { "kind": "task_board" } & TaskBoard | { "kind": "task_edited", board: TaskBoard, conflict: TaskConflict | null, log_ids: number[], } | { "kind": "thread_start_preview" } & ThreadStartPreview | { "kind": "task_log", entries: Array<TaskLogEntry>, next: number | null, } | { "kind": "screen" } & ScreenText | { "kind": "read" } & ReadView | { "kind": "thread_pane" } & ThreadPaneView | { "kind": "output_matched", matched_line: string, read: ReadView, } | { "kind": "workspaces", workspaces: Array<WorkspaceSummary>, } | { "kind": "chat" } & ChatView | { "kind": "pane_file", info: FileInfo | null, candidates: Array<string>, url: string | null, } | { "kind": "pane_dir", listing: DirListing, } | { "kind": "pane_commands", list: CommandList, } | { "kind": "pending", pending: Array<PendingEnroll>,
+valid: string | null, } | { "kind": "task_board" } & TaskBoard | { "kind": "task_queue", entries: Array<TaskReservation>, } | { "kind": "task_archive", entries: Array<ArchivedTask>, } | { "kind": "task_edited", board: TaskBoard, conflict: TaskConflict | null, log_ids: number[], } | { "kind": "thread_start_preview" } & ThreadStartPreview | { "kind": "task_log", entries: Array<TaskLogEntry>, next: number | null, } | { "kind": "screen" } & ScreenText | { "kind": "read" } & ReadView | { "kind": "thread_pane" } & ThreadPaneView | { "kind": "output_matched", matched_line: string, read: ReadView, } | { "kind": "workspaces", workspaces: Array<WorkspaceSummary>, } | { "kind": "chat" } & ChatView | { "kind": "pane_file", info: FileInfo | null, candidates: Array<string>, url: string | null, } | { "kind": "pane_dir", listing: DirListing, } | { "kind": "pane_commands", list: CommandList, } | { "kind": "pending", pending: Array<PendingEnroll>,
 /**
  * 등록 창이 열려 있으면 닫히는 시각(ms, FRONT_API 1.80). 닫혔으면 생략
  */
@@ -1904,7 +1934,7 @@ title?: string,
  */
 unseen: boolean,
 /**
- * FRONT_API 1.43. 끝나지 않은(resolve 전) thread의 사본이라 지울 수 없다
+ * FRONT_API 1.43. 진행 중 thread 또는 완료 보관이 참조하는 사본이라 지울 수 없다
  */
 busy: boolean,
 /**

@@ -122,3 +122,22 @@ aaa work-root set '/Volumes/<disk>/aaa-work' --mount '/Volumes/<disk>'
 웹 활동 막대 「자동화」의 조건·동작·실행 기록·토글은 [자동화 운영 확인](automations.md)을 본다.
 
 사람은 aaa 밖 host 터미널에서 `aaa deploy start --file mac-b:~/aaa-candidate/aaa --sha256 <SHA> --commit <40자리커밋>`의 후보/대상을 읽고 정확히 `yes`를 입력한다(FRONT1.55 이상). coordinator_deploy 설정은 바꾸지 않는다. 같은 `aaa deploy status <ID> --wait`로 재시작을 넘는다. TOML `do="deploy"`는 배포 제안과 빌드 안내만 만든다([자동화](automations.md#배포는-제안까지만l5)). 웹 조작 기기는 설정 「배포」에서 빌드 머신의 후보를 「점검」(provenance·SHA 대조와 dry-run)한 뒤 확인 창 하나로 시작하고, 같은 rollout ID를 「배포 기록」에서 다시 보며, 머신마다 agent·host를 다시 띄운다(FRONT_API 1.82, [설치 안내](install-runbook.md#웹에서-배포재시작관리-gui-w6a-front_api-182)).
+
+할 일을 자리 나면 시작하려면 설명·완료 범위 메모와 저장소(또는 `작업 폴더`)를 저장한 뒤
+`aaa task reserve "제목"`으로 그 내용의 실행을 승인한다. 기본 모델도 예약 시점에 고정한다.
+`aaa task queue`는 차례·모델/effort·머신·대기 사유·실제 thread를 읽는다.
+`aaa task unreserve <task ID>`는 예약을 취소하며 실행 중인 thread는 그대로 둔다.
+`aaa task queue-move <task ID> <순번>`으로 차례를 바꾼다(1부터, 0은 맨 앞).
+내용을 고쳤으면 확인 후 같은 `reserve` 명령으로 승인판을 갱신한다. 파일 직접 수정도 이전 승인으로 시작하지 않는다.
+
+host는 `max_parallel_threads`를 실제 한도로 집행한다. 검토·답 대기·Idle·보고 [완료]에도 자리를 보유하며
+resolve 정리를 마쳐야 반환한다. 한도가 차면 새 기동을 보내지 않는다. 앞 예약의 고정 머신이 끊겼으면 가능한 뒤 예약을 먼저 시작한다.
+coordinator와 웹이 닫혀도 host가 시작하며, 알려지지 않은 모델·없어진 저장소·첨부 문제·시작 실패는 확인 필요로 남긴다.
+정해진 모델·머신 변경은 사용자가 웹이나 aaa 밖 CLI에서 직접 한다. coordinator는 원문 편집으로 우회할 수 없다.
+
+PR 병합·보고 [완료]의 좁은 완료 판정을 유지하면서 결과는 `aaa task archive`에 보관한다.
+`aaa task archive --restore <task ID>`는 같은 ID·내용·첨부를 활성 목록에 돌리고 실행 연결은 푼다. 자동 재예약·재기동은 하지 않는다.
+옛 삭제 기록의 `aaa task restore <기록 ID>`는 별도다. 보관 저장에 실패하면 활성 task를 지우지 않는다.
+보관의 결과물과 메모가 참조하는 보고서 사본은 기한·용량 정리와 보고서 삭제에서 보호한다. 같은 ID로 복원해도 완료 당시 결과는 남긴다.
+웹 할 일 상세에서 예약 내용을 확인·예약·갱신·취소·위/아래/맨 앞으로를 조작하고, 「완료 보관」에서 결과를 보고 복원한다.
+일반 의존성과 저장소별 착지 gate는 아직 제공하지 않는다.

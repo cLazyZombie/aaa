@@ -1041,6 +1041,9 @@ fn account_threads_trust_only_their_cwd_when_coordinator_answers() {
                     }
                     Gate::release(ready, b'X');
                     w.wait_show("가짜 신뢰 harness 종료", id, |v| v["agent"]["activity"] == "exited");
+                    // 2A: harness 종료는 자리를 반환하지 않는다. 각 관찰을 마친 뒤 실제 resolve로 정리한다.
+                    let resolved = w.h.ok(&["thread", "resolve", "demo", id, "--skip-copy", "--keep-worktree"]);
+                    assert_eq!(resolved["status"], "resolved");
                 }
             }
         }

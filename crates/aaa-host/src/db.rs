@@ -6,6 +6,8 @@ use std::sync::Mutex;
 use anyhow::Result;
 use rusqlite::{Connection, OptionalExtension, params};
 
+mod task_queue;
+
 pub const SCHEMA_VERSION: i64 = 1;
 
 pub(crate) struct StartAdmission {
@@ -316,6 +318,9 @@ impl Db {
              CREATE TABLE IF NOT EXISTS evaluations(
                project TEXT NOT NULL, id TEXT NOT NULL, state TEXT NOT NULL, sha256 TEXT NOT NULL, data TEXT NOT NULL,
                created_at INTEGER NOT NULL, PRIMARY KEY(project, id));
+             CREATE TABLE IF NOT EXISTS task_queue(project TEXT NOT NULL, task_id TEXT NOT NULL, data TEXT NOT NULL, PRIMARY KEY(project,task_id));
+             CREATE TABLE IF NOT EXISTS task_queue_log(id INTEGER PRIMARY KEY, project TEXT NOT NULL, actor TEXT NOT NULL, at_ms INTEGER NOT NULL, before TEXT NOT NULL, after TEXT NOT NULL);
+             CREATE TABLE IF NOT EXISTS task_archive(project TEXT NOT NULL, task_id TEXT NOT NULL, data TEXT NOT NULL, PRIMARY KEY(project,task_id));
              CREATE TABLE IF NOT EXISTS task_log(
                id INTEGER PRIMARY KEY AUTOINCREMENT, project TEXT NOT NULL, at_ms INTEGER NOT NULL, actor TEXT NOT NULL,
                action TEXT NOT NULL, list TEXT NOT NULL, from_list TEXT, title TEXT NOT NULL, before TEXT, after TEXT,
@@ -701,6 +706,19 @@ impl Db {
         admission: Option<&StartAdmission>,
         make: impl FnOnce(&str) -> String,
     ) -> Result<(String, bool)> {
+        self.thread_insert_admitted(project, key, admission, None, None, make)
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn thread_insert_admitted(
+        &self,
+        project: &str,
+        key: Option<&str>,
+        admission: Option<&StartAdmission>,
+        limit: Option<u32>,
+        reservation: Option<(&str, &str)>,
+        make: impl FnOnce(&str) -> String,
+    ) -> Result<(String, bool)> {
         let mut c = self.conn.lock().unwrap();
         let tx = c.transaction()?;
         if let Some(key) = key
@@ -740,6 +758,12 @@ impl Db {
                 "start_wait: 명시한 프로젝트 자동 thread 상한"
             );
         }
+        if let Some(limit) = limit {
+            anyhow::ensure!(
+                task_queue::slots(&tx, project, None)? < limit,
+                "start_wait: 프로젝트 실행 한도 {limit}. `aaa task reserve`로 예약한다"
+            );
+        }
         let max: Option<i64> =
             tx.query_row("SELECT MAX(CAST(SUBSTR(id, 3) AS INTEGER)) FROM threads WHERE project=?1", [project], |r| {
                 r.get(0)
@@ -749,6 +773,9 @@ impl Db {
             "INSERT INTO threads(project,id,status,data,updated_at) VALUES(?1,?2,'starting',?3,?4)",
             params![project, id, make(&id), aaa_common::util::now_ms() as i64],
         )?;
+        if let Some((task, block)) = reservation {
+            task_queue::queue_claim(&tx, project, task, block, &id)?;
+        }
         if let Some(key) = key {
             tx.execute("INSERT INTO meta(key,value) VALUES(?1,?2)", params![key, id])?;
         }
@@ -1347,7 +1374,7 @@ fn scrub_audit_env(conn: &mut Connection) -> Result<()> {
 }
 
 /// project 열이 있는 표(옛 db에 남은 `merge_queue`는 읽지 않아 옮기지 않는다, 새 db에는 없다 — §8.135)
-const PROJECT_TABLES: [&str; 10] = [
+const PROJECT_TABLES: [&str; 13] = [
     "threads",
     "flow_events",
     "messages",
@@ -1357,6 +1384,9 @@ const PROJECT_TABLES: [&str; 10] = [
     "library_reports",
     "posts",
     "task_log",
+    "task_queue",
+    "task_queue_log",
+    "task_archive",
     "asks",
 ];
 

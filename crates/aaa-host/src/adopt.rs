@@ -110,11 +110,19 @@ impl Host {
         };
         let id = self
             .db
-            .thread_insert_next(project, |id| {
-                let mut r = rec.clone();
-                r.id = id.to_string();
-                serde_json::to_string(&r).unwrap()
-            })
+            .thread_insert_admitted(
+                project,
+                None,
+                None,
+                Some(self.settings(project).max_parallel_threads),
+                None,
+                |id| {
+                    let mut r = rec.clone();
+                    r.id = id.to_string();
+                    serde_json::to_string(&r).unwrap()
+                },
+            )
+            .map(|(id, _)| id)
             .map_err(internal)?;
         rec.id = id.clone();
         self.db.audit(actor, "thread_adopt", &format!("{project}/{id} pane {pane} @{}", self.machine_name(&mid)));

@@ -390,6 +390,7 @@ impl Host {
         for p in &projects {
             self.check_project_config(&p.name, Path::new(&p.path));
             self.check_old_decisions(&p.name, Path::new(&p.path));
+            self.recover_launches(&p.name);
             self.thread_pass(&p.name);
             self.retry_report_copies(&p.name, aaa_common::util::now_ms());
             self.legacy_mission_notice(&p.name);
@@ -410,6 +411,10 @@ impl Host {
             if let Err(e) = self.reconcile_question_requests(&p.name) {
                 tracing::warn!("닫힌 질문의 알림 정리 실패: {}", e.message);
             }
+            if let Err(e) = self.queue_pass(&p.name).await {
+                tracing::warn!(project=%p.name,"예약 판정 실패: {}",e.message);
+            }
+
             self.nudge(&p.name, dir).await;
         }
         self.ask_prune_pass(aaa_common::util::now_ms());

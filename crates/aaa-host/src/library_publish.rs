@@ -302,7 +302,10 @@ impl Host {
             if v.busy {
                 return Err(err(
                     ErrorCode::BadRequest,
-                    format!("끝나지 않은(resolve 전) thread의 보고는 지울 수 없다: {}/{}", r.project, r.name),
+                    format!(
+                        "끝나지 않은(resolve 전) thread 또는 완료 보관이 참조하는 보고는 지울 수 없다: {}/{}",
+                        r.project, r.name
+                    ),
                 ));
             }
             views.push(v);
