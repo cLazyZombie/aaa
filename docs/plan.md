@@ -7159,3 +7159,9 @@ FRONT_API 1.96는 기본 검수 표지와 답 기록의 r 참조를 더한다. E
 - **검증.** 파일 엔진/CLI owner·실제 임시 app 서명·공유/재개·외부 plist/가짜 proof 거부가 로컬 경계다. 실제 등록은 사용자가 고른 기존 macos-15 CI 일회성 계정의 필수 별도 단계에서 두 고유 label·ready·같은 ID resume·다른 instance 보존·해제를 검증한다. GUI 부재는 실패이고 로컬 통과/cross로 실제 등록 성공을 주장하지 않는다. Windows/Linux는 Mac native 시험만 cfg 제외, 공통 시험은 유지한다. FRONT_API/AGENT_LINK/schema와 웹 E2E 번호는 변경하지 않는다.
 
 - **I3 착지 통합.** origin/main071090d5(t-0670)의 마지막 plan§8.418·FRONT_API1.102·AGENT_LINK1.11·웹E2E83을 직접 확인했다. I3는 빈§8.419를 유지하고 API/웹 번호는 올리지 않는다. t-0670의 Rust CPU 예약·실측 우선 배치·웹 10 worker 및 diff 임시 index 충돌 수리를 그대로 보존한다. 통합본 전체 ci-local·Windows cross·공개 검사를 새 로그에 기록한다. 실제 LaunchAgent 등록은 승인된 기존 macos-15 main CI에서 판정한다.
+
+- **실제 등록 CI의 승인 인자 수리.** main ef315cbb macos-15의 실제 등록 owner가 승인 전에 exit2/invalid_arguments·answered0/1로 끝났다. launchd 시험만 install 상위 옵션 `--prompt plain`을 `authorize --out` 뒤에 붙인 결함이다. 두 instance가 쓰는 조립을 시험 지원 helper로 공유하고 실제 `Cli::try_parse_from`에서 잘못된 순서 RED→앞선 순서 GREEN을 남긴다. production·기존 승인/ready/resume/공유 보존 단언과 시한은 유지한다. 실제 후속 단계는 사용자가 승인한 hp branch의 기존 macos-15 CI에서 착지 전에 한 번 확인하며, 로컬 운영 LaunchAgent는 변경하지 않는다.
+
+- **승인 뒤 환경 보존.** hp argv 수리 후보의 첫 CI에서 승인은 통과했으나 apply가 installation_content_conflict로 닫혔다. 승인 PTY만 TERM=xterm-256color였고, 환경을 비운 apply는 TERM이 없었다. TERM을 포함한 service_environment의 승인 해시 대조는 유지하고 시험의 비대화형 apply/resume을 승인과 같은 환경으로 맞춘다. 실제 PTY 승인→읽기 dry-run의 해시 불일치 RED/일치 GREEN과 다른 TERM의 해시 변경·무쓰기 대조를 로컬에서 남긴다. 실제 등록 후속 단계는 바뀐 후보의 hp macos-15 CI에서 판정한다.
+
+- **실제 listener 경로.** TERM 보존 후보의 hp CI에서 등록과 host 시작 뒤 service_backend_not_ready가 반복됐다. 같은 canonical state의 실제 LocalListener bind는 105바이트에서 SUN_LEN 오류로 로컬 RED였다. launchd 실험실 root를 기존 backend lifecycle owner와 같은 `/tmp`로 맞추고 로컬 승인/계획 owner에 실제 agent/front listener bind/drop을 더한다. production IPC·ready 판정·600초 상한·기존 실제 등록/재개/공유 instance 단언은 유지한다. 실제 후속 성공은 변경 후보의 hp CI가 판정한다.
