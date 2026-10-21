@@ -7074,3 +7074,13 @@ FRONT_API 1.96는 기본 검수 표지와 답 기록의 r 참조를 더한다. E
 - **호환.** FRONT_API 1.101: `/api/v1/me`의 `passkey`, `DeviceView.passkey`, 오류 코드 `passkey_required`, `/api/v1/passkey/*`. 옛 웹은 오류 글을 보인다. Agent link 변경 없음.
 - **검증.** host 유닛 `passkey::tests`(소프트웨어 인증기 ES256·EdDSA로 등록·승인을 끝까지, UV 없음·다른 화면 주소·다른 RP·다른 challenge·남의 키·모르는 credential·다시 쓴 op·다른 기기 거부, 10분 시한·보기 기기·loopback 등록 거부, 폐기 때 삭제, CBOR 경계)와 `web::guard_tests::only_a_direct_loopback_screen_approves_without_a_passkey`(serve를 거친 loopback Host), 웹 유닛 `passkey.test.mjs`, E2E `79-passkey`(Chromium 가상 인증기, debug host의 `AAA_TEST_WEB_LOCALHOST`로 `http://localhost:<port>`를 공개 주소처럼 쓴다). 결함 심기는 library `w7-fault/README.md`.
 - **착지 통합.** origin/main `555a69ea`에서 마지막 §8.409·FRONT_API 1.100·AGENT_LINK 1.11·E2E78을 직접 확인했다. 이 변경은 §8.410·FRONT_API 1.101·E2E79로 옮기고 AGENT_LINK는 그대로 둔다.
+
+
+### 8.411 install Windows 시험 Job·부모 종료·state 경로 별칭(t-0485)
+
+- **CI 확정 근거.** §8.403 진단 뒤 전체 Windows 로그에서 worker 시작 실패 네 건의 OS 오류5(AccessDenied)·Job 소속true·제한8192(0x2000, KILL_ON_JOB_CLOSE)를 확인했다. 일반 실행의 직접 부모 Job은 breakaway를 허용하지 않았다. 생산 worker의 CREATE_BREAKAWAY_FROM_JOB·거부 시 needs_user 정책을 유지하고 양성 시험의 install 실행기만 시험 소유 nested Job(BREAKAWAY_OK)으로 구성한다. runner 바깥 Job은 변경하거나 탈출하지 않는다. 같은 worker 수명 owner의 금지 Job 사례는 그대로 거부를 검증한다. Windows nested Job의 [breakaway 규칙](https://learn.microsoft.com/en-us/windows/win32/procthread/nested-jobs)을 따른다.
+- **부모 소멸 owner.** 기존 CI에서는 worker가 부모 소멸 뒤 자기 실행 기록에 exit3을 쓴 것까지 통과하고 부모 code!=0만 실제0으로 실패했다. Job close는 종료 코드의 비정상 여부 계약이 없으므로 소유 Job을 [TerminateJobObject](https://learn.microsoft.com/en-us/windows/win32/api/jobapi2/nf-jobapi2-terminatejobobject)로 명시적1 종료 후 닫는다. 직전 부모 생존을 확인하고 기존 worker 생존·exit3 내구 기록·같은 ID status·부모 code!=0 단언과 시한을 모두 유지한다.
+- **state IPC.** pairing의 승인 전 installation_external_tty_required를 추적하면 Windows 일반 state와 canonical state의 verbatim 경로가 서로 다른 Named Pipe 해시였다. 기존 서버 이름·hash와 우선 연결을 바꾸지 않고, NotFound 때만 실제 parent 디렉터리를 canonicalize해 같은 위치인 경로 별칭 하나로 연결한다. 기존 host 주소와 canonical 주소 양방향을 지원한다. AccessDenied를 우회하지 않으며 ACL·OS peer PID·BUSY250ms 시한은 유지한다. Windows IPC owner의 원래 동일 경로 사례에 일반/canonical 양방향의 실제 ACL·peer·byte 전송을 더한다.
+- **판정 경계.** macOS 이번 main CI의 reap 회귀·worker 수명·install26개는 모두 통과했다. Windows 실제 RED는 main23328f7e의 install6/22다. 이 후보의 Windows 실행 GREEN은 다음 승인 착지 뒤 main CI로 확인한다. 로컬 macOS와 Windows 교차 lint/build는 그 대체가 아니다. 승인 우회용 seam·시험 제외·기대값 완화·시한 증가는 없다. I3는 나머지 Windows 판정 뒤다. 기존 report transfer sharing violation은 main §8.409의 별도 수리를 보존한다.
+
+- **착지 통합.** origin/main `8bcc9ce9`에서 마지막 §8.410·FRONT_API 1.101·AGENT_LINK 1.11·E2E79를 직접 확인했다. 이 절은 §8.411로 옮기고 API 판·기존 E2E 번호는 유지한다. main의 passkey·보고 전송 종료·계정 기록·목록 쓸기 수리를 보존하며 통합본 전체 ci-local·Windows 교차 clippy/build·공개 검사를 다시 수행한다.
