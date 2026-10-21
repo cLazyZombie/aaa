@@ -654,6 +654,7 @@ impl Host {
                 continue;
             }
             let mut a = StartArgs {
+                pool: None,
                 over_limit: None,
                 reservation: Some((row.task_id.clone(), row.approved_block.clone())),
                 account: None,

@@ -155,6 +155,7 @@ export function ThreadPanel({
             <h1><ThreadStageBadge stage={t.stage} /><ThreadLimitBadge start={t.over_limit} />{t.title}</h1>
             {t.over_limit && <p className="muted" data-testid="thread-over-limit-origin">{t.over_limit.actor} · {new Date(t.over_limit.at_ms).toLocaleString()}{t.over_limit.user_request && ` · 사용자 지시: ${t.over_limit.user_request}`}</p>}
             <div className="t-meta">
+              {t.account && <span data-testid="thread-account">계정 {t.account}</span>}
               <span className={`chip meta-chip ${t.group}`}>{statusLabel}</span>
               <span className="mono">
                 {t.project}/{t.id}
@@ -165,6 +166,7 @@ export function ThreadPanel({
               {t.branch && <span className="mono">{t.branch}</span>}
               {t.agent?.percent != null && <span>{t.agent.percent}%</span>}
             </div>
+            {t.account_selection && <p className="muted" data-testid="thread-account-selection">{t.account_selection.reason} · 한도 그룹 {t.account_selection.group} · 예상 예약 {({ small: 5, medium: 15, large: 30 })[t.account_selection.size]}%p</p>}
           </div>
           {t.automation && <section className="card" data-testid="thread-automation-origin">
             <h2>자동화 thread</h2>

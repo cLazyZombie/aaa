@@ -28,6 +28,8 @@ fn old_launch_unknown() -> bool {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub(crate) struct ThreadRec {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub account_allocation: Option<crate::account_pool::Allocation>,
     /// Spawn 전 영속화. 응답 유실 때 새 기동을 막는다.
     #[serde(default = "old_launch_unknown")]
     pub launch_sent: bool,
@@ -198,6 +200,7 @@ impl ThreadRec {
         now: u64,
     ) -> ThreadRec {
         ThreadRec {
+            account_allocation: None,
             legacy: Default::default(),
             project: project.to_string(),
             id: String::new(),
@@ -317,7 +320,9 @@ pub(crate) struct StartOrigin {
     pub admission: crate::db::StartAdmission,
 }
 
+#[derive(Clone, Serialize, Deserialize)]
 pub struct StartArgs {
+    pub(crate) pool: Option<crate::account_pool::PoolRequest>,
     pub over_limit: Option<aaa_proto::ThreadLimitOverride>,
     pub(crate) reservation: Option<(String, String)>,
     pub account: Option<String>,
@@ -1266,6 +1271,7 @@ impl Host {
             group
         };
         ThreadView {
+            account_selection: r.account_allocation.as_ref().map(|a| a.selection.clone()),
             over_limit: r.over_limit.clone(),
             project: r.project.clone(),
             id: r.id.clone(),
@@ -1794,6 +1800,12 @@ impl Host {
         background: bool,
         origin: Option<&StartOrigin>,
     ) -> Result<ThreadView, ErrorBody> {
+        let pool_key = a.pool.as_ref().map(|p| crate::account_pool::receipt(&a.project, &p.id));
+        if let Some(key) = &pool_key
+            && let Some(id) = self.db.meta(key).map_err(internal)?
+        {
+            return self.thread_show(&a.project, &id);
+        }
         if a.over_limit.is_some() && (origin.is_some() || a.reservation.is_some() || a.role != Role::Worker) {
             return Err(bad("예약·자동 시작은 실행 한도를 무시할 수 없다"));
         }
@@ -1847,8 +1859,12 @@ impl Host {
             ));
         }
         let profile = self.resolved_profile(Some(&a.project), &mid, &a.profile)?;
-        if a.account.is_none() {
+        let auto_account = a.account.is_none() && (a.pool.is_some() || self.pool_project_enabled(&a.project)?);
+        if a.account.is_none() && !auto_account {
             a.account = self.default_account(&profile.harness)?;
+        }
+        if auto_account && !self.machine_feature(&mid, "account_auth.v1") {
+            return Err(bad("이 머신 agent는 계정 인증 전달을 지원하지 않는다"));
         }
         if let Some(account) = &a.account {
             let c = self.accounts.credential(account)?;
@@ -1859,6 +1875,17 @@ impl Host {
                 return Err(bad("이 머신 agent는 계정 인증 전달을 지원하지 않는다"));
             }
         }
+        let selection = if auto_account || a.account.is_some() {
+            self.account_selection_input(
+                &a.project,
+                &profile,
+                a.account.as_deref(),
+                a.pool.as_ref().map_or(aaa_proto::AccountTaskSize::Medium, |p| p.size),
+            )
+            .await?
+        } else {
+            None
+        };
         let resolved_profile = Some(profile);
         let warnings = Vec::new();
         let now = aaa_common::util::now_ms();
@@ -1889,13 +1916,22 @@ impl Host {
         let mut claim_error = None;
         let inserted = self
             .db
-            .try_thread_insert_admitted(
+            .thread_insert_transaction(
                 &a.project,
-                origin.map(|o| o.key.as_str()),
+                pool_key.as_deref().or_else(|| origin.map(|o| o.key.as_str())),
                 origin.map(|o| &o.admission),
                 a.over_limit.is_none().then(|| self.settings(&a.project).max_parallel_threads),
                 a.reservation.as_ref().map(|(id, b)| (id.as_str(), b.as_str())),
-                |id| {
+                |tx, id| {
+                    if let Some(input) = &selection {
+                        let (account, allocation) = input.select(tx, aaa_common::util::now_ms())?;
+                        anyhow::ensure!(
+                            self.accounts.generation(&account).ok().as_deref() == Some(&allocation.generation),
+                            "start_wait: 계정 인증 세대 변경 · 새 관측 대기"
+                        );
+                        rec.account = Some(account);
+                        rec.account_allocation = Some(allocation);
+                    }
                     guard = Some(self.claim_thread(&a.project, id).map_err(|error| {
                         let message = error.message.clone();
                         claim_error = Some(error);
@@ -2075,6 +2111,13 @@ impl Host {
         };
         let pane = if let Some(name) = &rec.account {
             let mut credential = self.accounts.credential(name)?;
+            if rec
+                .account_allocation
+                .as_ref()
+                .is_some_and(|a| credential.auth_generation.as_deref() != Some(&a.generation))
+            {
+                return Err(bad("기동 전 계정 인증 세대가 바뀌었다. 새 인증으로 명시 재시작한다"));
+            }
             if credential.harness != launch.harness {
                 return Err(bad("계정과 profile의 harness가 다르다"));
             }
@@ -2204,6 +2247,19 @@ impl Host {
             )
             .map_err(|e| err(ErrorCode::Unavailable, e.to_string()))?;
         let result: Result<ThreadView, ErrorBody> = async {
+            if let Some(account) = &rec.account
+                && let Some(generation) = self.accounts.credential(account)?.auth_generation
+            {
+                rec = self.update_rec(project, id, |r| {
+                    if let Some(a) = &mut r.account_allocation {
+                        a.generation = generation;
+                        a.ended_at_ms = None;
+                        a.released = false;
+                        a.selection.selected_at_ms = aaa_common::util::now_ms();
+                        a.selection.reason = "처음 선택한 계정으로 명시 재시작".into();
+                    }
+                })?;
+            }
             let profile_note = profile.as_ref().map(|p| format!(", profile {p}")).unwrap_or_default();
             if plan == RestartPlan::Create {
                 let dir = self.project_dir(project)?;
@@ -3092,6 +3148,7 @@ mod tests {
 
     fn open_thread() -> ThreadRec {
         ThreadRec {
+            account_allocation: None,
             legacy: Default::default(),
             account: None,
             holds: vec![],

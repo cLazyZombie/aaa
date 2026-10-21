@@ -213,7 +213,8 @@ pub const AGENT_LINK: Version = Version { major: 1, minor: 11 };
 /// `DeployGuardView.pending_web` 선택 칸. 새 host 감시는 실행 신원이 맞아도 그 웹의 `/api/v1/me`가 답해야 새 판 준비다.
 /// 재시작만 하는 rollout `RolloutSpec.restart`·`RolloutCard.restart`(웹은 1.100 미만 host에 재시작을 그리지 않는다).
 /// Agent link는 1.11 그대로다: host가 같은 머신 agent의 Welcome 신원에만 싣고, 옛 agent·옛 감시는 모르는 칸을 버린다.
-pub const FRONT_API: Version = Version { major: 1, minor: 100 };
+/// 1.101: host 공통 계정 풀·프로젝트 참여·자동 배정과 내구 대기. Agent link는 그대로다.
+pub const FRONT_API: Version = Version { major: 1, minor: 101 };
 /// agent ↔ session host(내부). 세션이 몇 주 이어질 수 있으므로 이전 session host와 호환해야 한다.
 /// 1.1: `SessionRequest::Detect`(harness 상태 감지 입력). agent는 1.0 session host에 보내지 않고 `Screen`을 쓴다.
 /// 1.2: `SessionRequest::Colors`(색 질의에 답할 화면 색, plan §8.187). agent는 1.1 이하 session host에 보내지 않는다.
