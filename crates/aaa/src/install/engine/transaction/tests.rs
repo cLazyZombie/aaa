@@ -21,7 +21,7 @@ impl Lab {
         private::write(&path, bytes).unwrap();
         path
     }
-    pub(super) fn plan(&self, state: &str) -> InstallPlan {
+    pub(in crate::install::engine) fn plan(&self, state: &str) -> InstallPlan {
         let source = self.put("source", b"verified executable bytes");
         let state = self.0.join(state);
         let cfg = self.0.join(format!("{}-config", state.file_name().unwrap().to_string_lossy()));

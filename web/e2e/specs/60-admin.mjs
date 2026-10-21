@@ -1,4 +1,4 @@
-// 웹 관리 W5b(plan §8.355): 설정 「머신」에서 등록 창 열기·닫기, 「직접 설치」 안내의 명령으로 새 머신 등록(M1, plan §8.374: 주소·이름·
+// 웹 관리 W5b(plan §8.355): 설정 「머신」에서 등록 창 열기·닫기, 「직접 설치」 안내의 명령으로 새 머신 등록(M1, plan §8.383: 주소·이름·
 // host 지문), 새 머신 승인(6자리 코드: 틀리면 말하고 맞으면 등록), host 머신은 폐기
 // 단추 없음, 머신 상세(M0, plan §8.372: OS·판·실행 파일 SHA-256·기능, 보기 기기도 봄), 다른 머신 폐기. 「폰 및 기기」의 마지막 조작
 // 기기(폐기 꺼짐)·이 기기 폐기 확인(「이 화면이 끊깁니다」), tailnet 공개
@@ -69,7 +69,7 @@ export default async function ({ page }) {
     if (await mp.getByRole("button", { name: "labA 폐기" }).count()) throw new Error("host 머신에 폐기 단추");
     await mp.getByTestId("enroll-open-button").click();
     await mp.getByTestId("enroll-open").waitFor();
-    // 「직접 설치」 안내(M1, plan §8.374): host가 연 주소(실험실은 loopback)와 이름을 넣은 명령을 그대로 새 머신에서 친다
+    // 「직접 설치」 안내(M1, plan §8.383): host가 연 주소(실험실은 loopback)와 이름을 넣은 명령을 그대로 새 머신에서 친다
     const guide = mp.getByTestId("enroll-guide");
     await guide.locator("summary").click();
     await guide.getByTestId("enroll-guide-address").locator(`option[value="${addr}"]`).waitFor({ state: "attached" });

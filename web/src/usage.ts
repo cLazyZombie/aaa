@@ -1,3 +1,4 @@
+import { apiFetch } from "./apiRequest";
 // 구독 사용량(plan 한도) 화면 쪽. herdr-web-ui `src/lib/usage.ts`(aa624cb)를 옮겼다.
 // 그대로 복사하지 못한 까닭: 참고는 api.ts·settings.ts·i18n·visibility를 부른다. aaa에 맞춰 그 import만 바꾸고
 // 문구를 한국어로 옮겼다(함수와 규칙은 같다). chat 입력칸의 `composerUsage`는 aaa에 chat 입력칸이 없어 뺐다.
@@ -115,7 +116,7 @@ export function moveInOrder(shown: readonly string[], saved: readonly string[], 
 }
 
 async function fetchUsage(refresh: boolean): Promise<UsageReport> {
-  const res = await fetch(`/api/v1/usage${refresh ? "?refresh=1" : ""}`, { credentials: "same-origin", cache: "no-store" });
+  const res = await apiFetch(`/api/v1/usage${refresh ? "?refresh=1" : ""}`, { credentials: "same-origin", cache: "no-store" });
   const out = (await res.json()) as Outcome<UsageReport>;
   if ("err" in out) throw new Error(out.err.message);
   return out.ok;

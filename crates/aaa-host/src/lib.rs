@@ -42,6 +42,7 @@ mod health;
 mod http;
 mod inbox;
 mod input_log;
+pub mod installation;
 mod legacy_mission;
 mod library;
 mod library_links;
@@ -66,6 +67,7 @@ mod push;
 mod quota;
 mod quota_rpc;
 mod report_mark;
+mod report_sandbox;
 mod resource;
 mod restore;
 mod rollout;
@@ -357,6 +359,7 @@ const REPLACED_KEEP: usize = 8;
 pub struct FrontRef {
     pub id: String,
     pub label: String,
+    pub(crate) peer_pid: Option<u32>,
 }
 
 impl FrontRef {
@@ -378,6 +381,7 @@ struct Inner {
 }
 
 struct PendingRt {
+    installation: Option<aaa_proto::install::InstallEnrollmentBinding>,
     machine_id: String,
     fingerprint: String,
     sas: String,
@@ -485,6 +489,7 @@ pub struct Host {
     health_wake: tokio::sync::Notify,
     enroll: Mutex<Enroll>,
     pairing: Mutex<Pairing>,
+    install_probes: Mutex<HashMap<String, (String, Instant)>>,
     pub agent_listen: Mutex<Option<String>>,
     pub web_listen: Mutex<Option<String>>,
     workspaces: Mutex<HashMap<String, Workspace>>,
@@ -721,6 +726,7 @@ impl Host {
             device_gate: Mutex::new(()),
             enroll: Mutex::new(Enroll::default()),
             pairing: Mutex::new(Pairing::default()),
+            install_probes: Mutex::new(HashMap::new()),
             agent_listen: Mutex::new(None),
             web_listen: Mutex::new(None),
             workspaces: Mutex::new(workspaces),
@@ -1442,6 +1448,13 @@ impl Host {
             }
         }
         match req {
+            FrontRequest::InstallApprove { request } => self.install_approve(role, actor, *request),
+            FrontRequest::InstallPublish { installation_id } => {
+                self.install_publish(front.and_then(|f| f.peer_pid), &installation_id).await
+            }
+            FrontRequest::InstallPublishStatus { installation_id } => {
+                self.install_publish_status(&installation_id).await
+            }
             FrontRequest::AccountImport { name, harness, secret } => {
                 let secret = secret.0.trim();
                 self.accounts.import(&name, &harness, secret)?;
@@ -2331,7 +2344,7 @@ impl Host {
     // ───────────── 조작 lease(§4.5) ─────────────
 
     pub fn new_front(&self, label: String) -> FrontRef {
-        FrontRef { id: format!("f{}", self.front_seq.fetch_add(1, Ordering::Relaxed) + 1), label }
+        FrontRef { id: format!("f{}", self.front_seq.fetch_add(1, Ordering::Relaxed) + 1), label, peer_pid: None }
     }
 
     fn lease_set(&self, id: &str, to: Option<FrontRef>) {
@@ -2986,6 +2999,24 @@ impl Host {
         fingerprint: &str,
         sas: &str,
     ) -> Result<oneshot::Receiver<()>, ErrorBody> {
+        self.enroll_request_bound(name, machine_id, fingerprint, sas, None)
+    }
+    pub(crate) fn enroll_request_bound(
+        &self,
+        name: &str,
+        machine_id: &str,
+        fingerprint: &str,
+        sas: &str,
+        installation: Option<aaa_proto::install::InstallEnrollmentBinding>,
+    ) -> Result<oneshot::Receiver<()>, ErrorBody> {
+        if installation.as_ref().is_some_and(|b| {
+            b.installation_id.len() != 26
+                || !b.installation_id.bytes().all(|c| c.is_ascii_uppercase() || c.is_ascii_digit())
+                || b.plan_sha256.len() != 64
+                || !b.plan_sha256.bytes().all(|c| c.is_ascii_hexdigit())
+        }) {
+            return Err(err(ErrorCode::BadRequest, "설치 등록 ID·계획 hash를 확인하세요"));
+        }
         if !self.enroll_open() {
             return Err(err(
                 ErrorCode::EnrollClosed,
@@ -3008,6 +3039,7 @@ impl Host {
         e.pending.insert(
             name.to_string(),
             PendingRt {
+                installation,
                 machine_id: machine_id.to_string(),
                 fingerprint: fingerprint.to_string(),
                 sas: sas.to_string(),
@@ -3030,6 +3062,27 @@ impl Host {
         }
     }
 
+    /// DB가 확정한 등록만 runtime 목록에 반영한다. 재전달이 살아 있는 연결을 지우지 않는다.
+    fn machine_registered(&self, id: &str, name: &str) {
+        let mut inner = self.inner.lock().unwrap();
+        let machine = inner.machines.entry(id.into()).or_insert_with(|| MachineRt {
+            name: name.into(),
+            local: false,
+            os: None,
+            boot_id: None,
+            dev_mode: false,
+            conn: None,
+            last_seen_ms: None,
+            health: None,
+            health_sent: None,
+            features: vec![],
+            agent_pid: None,
+            colors: None,
+            build: Default::default(),
+        });
+        machine.name = name.into();
+    }
+
     fn approve(&self, name: &str, code: &str, actor: &str) -> Result<FrontResponse, ErrorBody> {
         let mut e = self.enroll.lock().unwrap();
         let Some(p) = e.pending.get_mut(name) else {
@@ -3047,27 +3100,23 @@ impl Host {
             return Err(err(ErrorCode::EnrollCodeMismatch, "확인 코드가 다르다(agent 화면의 코드를 입력한다)"));
         }
         let p = e.pending.remove(name).unwrap();
-        self.db
-            .upsert_machine(&p.machine_id, name, Some(&p.fingerprint), false)
-            .map_err(|e| err(ErrorCode::Internal, e.to_string()))?;
-        self.inner.lock().unwrap().machines.insert(
-            p.machine_id.clone(),
-            MachineRt {
-                name: name.to_string(),
-                local: false,
-                os: None,
-                boot_id: None,
-                dev_mode: false,
-                conn: None,
-                last_seen_ms: None,
-                health: None,
-                health_sent: None,
-                features: vec![],
-                agent_pid: None,
-                colors: None,
-                build: Default::default(),
-            },
-        );
+        if let Some(binding) = &p.installation {
+            self.db
+                .install_enroll(
+                    &binding.installation_id,
+                    &binding.plan_sha256,
+                    &util::new_id(),
+                    &p.fingerprint,
+                    &p.machine_id,
+                    name,
+                )
+                .map_err(|_| err(ErrorCode::Forbidden, "설치 등록의 기존 신원·폐기 상태가 다릅니다"))?;
+        } else {
+            self.db
+                .upsert_machine(&p.machine_id, name, Some(&p.fingerprint), false)
+                .map_err(|e| err(ErrorCode::Internal, e.to_string()))?;
+        }
+        self.machine_registered(&p.machine_id, name);
         if let Some(tx) = p.accept {
             let _ = tx.send(());
         }
@@ -3138,6 +3187,7 @@ impl Host {
             .add_device(&id, role_s, &token_hash(&token), &label)
             .map_err(|e| err(ErrorCode::Internal, e.to_string()))?;
         self.db.audit(&format!("device:{id}"), "web_paired", role_s);
+        self.bump();
         Ok((token, role))
     }
 
@@ -3159,6 +3209,7 @@ impl Host {
         if done {
             self.revoked_devices.lock().unwrap().insert(id.to_string());
             let _ = self.device_revoked.send(id.to_string());
+            self.bump();
         }
         Ok(done)
     }
@@ -3172,7 +3223,8 @@ impl Host {
 
     async fn publish_status(&self) -> PublishState {
         let out = tailscale::read().await;
-        let plan = tailscale::plan(out.as_ref(), self.web_port(), &self.cfg.web.publish_ports);
+        let selected = self.db.meta("publish_selected_port").ok().flatten().and_then(|s| s.parse::<u16>().ok());
+        let plan = tailscale::installation_plan(out.as_ref(), self.web_port(), &self.cfg.web.publish_ports, selected);
         let owned = self.db.meta("publish_port").ok().flatten().and_then(|p| p.parse().ok());
         if let Some(dns) = &plan.dns_name {
             let _ = self.db.set_meta("publish_dns", dns);
@@ -3206,6 +3258,8 @@ impl Host {
         if self.web_port() == 0 {
             return Err(err(ErrorCode::BadRequest, "host.toml의 web.listen이 꺼져 있다"));
         }
+        // 사람이 W0로 자동 공개를 새로 요청하면 설치의 명시 포트 선호를 해제한다.
+        self.db.del_meta("publish_selected_port").map_err(|_| err(ErrorCode::Unavailable, "공개 선택을 확인하세요"))?;
         let out = tailscale::read().await;
         let plan = tailscale::plan(out.as_ref(), self.web_port(), &self.cfg.web.publish_ports);
         if plan.state != "running" {

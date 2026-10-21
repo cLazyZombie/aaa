@@ -475,6 +475,7 @@ impl Host {
         }
         let owners =
             if rows.iter().any(|r| r.state == S::Queued) { self.assignable(project).await } else { Vec::new() };
+        let mut capacity_exhausted = false;
         for row in rows {
             if row.state == S::Cancelled {
                 continue;
@@ -542,7 +543,11 @@ impl Host {
                 self.queue_status(project, &row.task_id, S::Check, reason)?;
                 continue;
             }
-            if self.open_worker_threads(project) >= self.settings(project).max_parallel_threads {
+            // 앞 예약이 자리 부족으로 멈춘 순회에서는 뒤 예약도 기다린다. resolve가 그사이
+            // 자리를 돌려줘도 뒤쪽만 추월하지 않고, 다음 순회에서 차례대로 다시 판정한다.
+            // 이미 기동한 예약의 상태 대조와 내용 검사는 뒤쪽도 계속한다.
+            if capacity_exhausted || self.open_worker_threads(project) >= self.settings(project).max_parallel_threads {
+                capacity_exhausted = true;
                 self.queue_status(project, &row.task_id, S::Queued, "자리 대기")?;
                 continue;
             }
@@ -592,6 +597,8 @@ impl Host {
                     self.queue_changed(project);
                 }
                 Err(e) => {
+                    // 사전 확인 뒤 직접 기동이 마지막 자리를 선점한 경우에도 같은 차례를 지킨다.
+                    capacity_exhausted |= e.message.starts_with("start_wait:");
                     let transient = matches!(e.code, ErrorCode::AgentDisconnected | ErrorCode::Unavailable)
                         || e.message.starts_with("start_wait:");
                     self.queue_status(project, &row.task_id, if transient { S::Queued } else { S::Check }, &e.message)?;

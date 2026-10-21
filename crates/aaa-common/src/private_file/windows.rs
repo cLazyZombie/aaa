@@ -35,7 +35,7 @@ fn wide(path: &Path) -> Vec<u16> {
     path.as_os_str().encode_wide().chain(Some(0)).collect()
 }
 fn security(directory: bool) -> io::Result<(Descriptor, SECURITY_ATTRIBUTES)> {
-    let sid = crate::install::platform::account().ok_or_else(denied)?;
+    let sid = super::account().ok_or_else(denied)?;
     let inheritance = if directory { "OICI" } else { "" };
     let text: Vec<_> = format!("O:{sid}D:P(A;{inheritance};FA;;;SY)(A;{inheritance};FA;;;{sid})")
         .encode_utf16()
@@ -56,7 +56,7 @@ fn security(directory: bool) -> io::Result<(Descriptor, SECURITY_ATTRIBUTES)> {
     };
     Ok((Descriptor(descriptor), attrs))
 }
-pub(in crate::install::engine) fn create_directory(path: &Path) -> io::Result<()> {
+pub(super) fn create_directory(path: &Path) -> io::Result<()> {
     let (_descriptor, attrs) = security(true)?;
     // SAFETY: path와 attrs는 호출이 끝날 때까지 살아 있다.
     if unsafe { CreateDirectoryW(wide(path).as_ptr(), &attrs) } == 0 {
@@ -64,7 +64,7 @@ pub(in crate::install::engine) fn create_directory(path: &Path) -> io::Result<()
     }
     Ok(())
 }
-pub(in crate::install::engine) fn new_file(path: &Path) -> io::Result<File> {
+pub fn new_file(path: &Path) -> io::Result<File> {
     let (_descriptor, attrs) = security(false)?;
     // SAFETY: CREATE_NEW만 사용하고 handle 소유권을 File에 한 번 넘긴다.
     let handle = unsafe {
@@ -131,7 +131,7 @@ fn sid_text(sid: *mut core::ffi::c_void) -> io::Result<String> {
     }
     Ok(result)
 }
-pub(in crate::install::engine) fn verify(file: &File, directory: bool) -> io::Result<()> {
+pub fn verify(file: &File, directory: bool) -> io::Result<()> {
     let meta = file.metadata()?;
     if meta.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT != 0
         || if directory { !meta.is_dir() } else { !meta.is_file() }
@@ -147,7 +147,7 @@ pub(in crate::install::engine) fn verify(file: &File, directory: bool) -> io::Re
             return Err(denied());
         }
     }
-    let account = crate::install::platform::account().ok_or_else(denied)?;
+    let account = super::account().ok_or_else(denied)?;
     let mut owner = std::ptr::null_mut();
     let mut dacl = std::ptr::null_mut();
     let mut descriptor = std::ptr::null_mut();

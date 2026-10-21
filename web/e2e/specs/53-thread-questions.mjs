@@ -8,7 +8,7 @@
 // 사라진다. 보기 권한 기기는 답·처리·지우기를 할 수 없다. 알림 주소 `/#question=<thread>`(post push url)는 그 카드를 연다.
 // 혼자 돌리기: node web/e2e/web.e2e.mjs --spec 53-thread-questions(새 실험실).
 import fs from "node:fs";
-import { root, aaa, until, step, browser, webkit, pairPage, inList, waitOutput, shot, coordinatorPost, AA } from "../lib/harness.mjs";
+import { root, aaa, until, step, browser, webkit, pairPage, inList, showPanel, waitOutput, shot, coordinatorPost, AA } from "../lib/harness.mjs";
 
 import { pairDevice } from "../lib/devices.mjs";
 
@@ -284,23 +284,11 @@ export default async function ({ page }) {
     // 보기 권한 기기는 처리·지우기를 할 수 없다
     const body = `${root}/request-body.md`;
     fs.writeFileSync(body, "배포 전에 **승인**이 필요하다.\n\n- 바뀐 것: 로그인 화면\n");
-    const inboxBadge = () => page.evaluate(() => document.querySelector('[data-testid="activity-badge-inbox"]')?.textContent ?? "0");
     aaa("post", "demo", "user", "--request", "--needs-user", "--topic", "user-action", "--title", "배포 승인", "--body-file", body);
     await until("빨강 배지 둘", async () => (await badge(page)).startsWith("ask 2 "));
-    // 같은 항목을 두 배지가 세지 않는다: 알림함은 그 요청을 「답할 것」으로 보낸다(plan §8.343·§8.345)
-    await page.getByTestId("activity-inbox").click();
-    await until("알림함의 답할 요청 수", async () => (await page.getByTestId("inbox-answers").innerText().catch(() => "")).includes("1건"));
-    // 배지는 host가 아는 끝내지 않은 항목에서 이 요청 하나를 뺀 수다. 앞 단계 보고의 「확인 필요」 같은 항목이 늦게 와도
-    // 둘이 함께 바뀐다(앞뒤 배지만 대조하면 그 항목이 사이에 와서 틀렸다: ci 부하에서 5 → 6)
-    const hostOpen = () => {
-      const r = aaa("inbox", "list", "demo", "--peek");
-      return r.items.filter((i) => !i.done).length + (r.omitted_open ?? 0);
-    };
-    await until("알림함 배지가 답할 요청을 세지 않음", async () => Number(await inboxBadge()) === hostOpen() - 1).catch(async (e) => {
-      throw new Error(`알림함 배지가 답할 요청을 셌다: 배지 ${await inboxBadge()}, host 끝내지 않은 항목 ${hostOpen()}(요청 1 포함) — ${e.message}`);
-    });
-    if (await page.locator('[data-testid="inbox-item"]', { hasText: "배포 승인" }).count()) throw new Error("알림함 목록에 답할 요청이 있다");
-    await page.getByTestId("inbox-answers").getByRole("button", { name: "답할 것 열기" }).click();
+    // coordinator 알림함은 숨겨도 사용자 확인 필요 post는 「답할 것」에 그대로 보인다(t-0590).
+    if (await page.locator('[data-testid="activity-inbox"], [data-testid="activity-badge-inbox"]').count()) throw new Error("알림함 단추·배지가 남았다");
+    await showPanel(page, "asks");
     await until("답할 것으로", async () =>
       (await page.evaluate(() => document.querySelector(".app")?.dataset.sidebar === "asks" && document.querySelector('[data-testid="asks-view"]')?.dataset.shown === "true")));
     const reqKey = await until("확인 필요 줄", () => page.evaluate(() => [...document.querySelectorAll('[data-testid="ask-row"]')].map((r) => r.dataset.key).find((k) => k.startsWith("r:"))));

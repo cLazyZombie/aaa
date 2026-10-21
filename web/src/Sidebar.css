@@ -72,7 +72,7 @@
 [data-palette="github-dark-dimmed"] .sidebar-shell { --coordinator: #bc8cff; }
 [data-palette="github-light"] .sidebar-shell { --coordinator: #8250df; }
 /* 자동화가 띄운 thread(plan t-0475 A1, 사용자 결정 10-20 Q4 호박색): coordinator와 같은 막대를 호박색으로. 경고 글(사용량 한도 등
-   --notice)도 노랑 계열이지만 막대는 줄 왼쪽 끝 2px이고 경고는 둘째 줄 글자라 자리가 다르며, 「자동 · 규칙」 글 표지를 함께 둔다.
+   --notice)도 노랑 계열이지만 막대는 줄 왼쪽 끝 2px이고 경고는 둘째 줄 글자라 자리가 다르며, 「자동화 thread」 글 표지를 함께 둔다.
    GitHub 팔레트는 GitHub의 attention 색 */
 .sidebar-shell { --automation: #e3b341; }
 [data-theme="light"] .sidebar-shell { --automation: #9a6700; }
@@ -97,23 +97,14 @@
   border-radius: 1px;
   background: var(--origin-bar);
 }
-/* 「자동 · 규칙 제목」 표지(둘째 줄 앞): 조용한 글(배지·숫자 없이, herdr-web-ui DESIGN 「배지가 아니다」). 누르면 그 규칙 상세.
-   좁은 목록(휴대폰·좁힌 사이드바)에서는 규칙 제목을 빼고 「자동」만 남는다 */
+/* 자동화 thread 표지는 좁은 화면에서도 같은 이름이다. 출처는 tooltip·상세에서 읽는다. */
 .thread-origin {
-  flex: 0 1 auto;
-  min-width: 0;
-  max-width: 55%;
-  display: inline-flex;
-  overflow: hidden;
+  flex: 0 0 auto;
   white-space: nowrap;
   color: var(--text-dim);
   cursor: pointer;
 }
 .thread-origin:hover { text-decoration: underline; }
-.thread-origin-rule { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
-@media (max-width: 768px) {
-  .thread-origin-rule { display: none; }
-}
 .project-thread-head {
   display: flex;
   align-items: flex-end;

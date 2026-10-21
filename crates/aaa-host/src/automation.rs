@@ -212,6 +212,7 @@ pub(crate) struct Limits {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub max_per_day: Option<u32>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    /// do.start 규칙별 동시 한도. 생략·0은 1개(자동화 thread는 일반 실행 한도에서 빠진다).
     pub max_running: Option<u32>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub usage_session_below: Option<f64>,

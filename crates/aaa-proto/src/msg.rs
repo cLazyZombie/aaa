@@ -617,6 +617,9 @@ pub struct EnrollRequest {
     pub proto: Version,
     pub machine_id: String,
     pub machine_name: String,
+    /// install_enroll.v1 협상 뒤만 사용한다. host의 사람이 SAS를 승인할 때 결과를 이 ID에 결속한다.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub installation: Option<crate::install::InstallEnrollmentBinding>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -625,6 +628,34 @@ pub enum LinkMsg {
     Hello(AgentHello),
     Welcome(HostWelcome),
     Enroll(EnrollRequest),
+    /// 등록 전 기능 협상. 구판에는 grant를 보내지 않는다.
+    InstallEnrollCapabilities {
+        proto: Version,
+        features: Vec<String>,
+    },
+    InstallEnrollProbe {
+        proto: Version,
+    },
+    InstallEnroll(Box<crate::install::InstallEnrollRequest>),
+    InstallEnrollLookup {
+        proto: Version,
+        installation_id: String,
+        plan_sha256: String,
+    },
+    /// 기존 agent 자기 신원만 읽는다. 설치 grant/등록창 권한을 쓰지 않는다.
+    InstallAgentQuery {
+        proto: Version,
+        machine_id: String,
+        machine_name: String,
+    },
+    InstallAgentKnown {
+        machine_id: String,
+    },
+    InstallEnrollUnknown,
+    InstallEnrolled {
+        installation_id: String,
+        machine_id: String,
+    },
     /// host가 등록 요청을 받아 사용자의 확인을 기다린다.
     EnrollPending,
     EnrollAccepted {
@@ -1591,7 +1622,7 @@ pub struct PendingEnroll {
     pub since_ms: u64,
 }
 
-/// 「직접 설치」 안내(plan §8.374): 새 머신이 host agent 연결에 닿을 주소 후보와, 새 머신 화면에 나올 host 지문
+/// 「직접 설치」 안내(plan §8.383): 새 머신이 host agent 연결에 닿을 주소 후보와, 새 머신 화면에 나올 host 지문
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 pub struct EnrollGuide {
     /// host가 실제로 연 agent 연결 주소(`agent_listen`). 닫혀 있으면 None이고 새 머신은 붙지 못한다
@@ -1652,6 +1683,10 @@ pub struct HostStatus {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(tag = "op", rename_all = "snake_case")]
 pub enum FrontRequest {
+    /// 설치 전용 서명 승인. Controller 또는 세션 밖 Local만, raw 승인서는 응답하지 않는다.
+    InstallApprove {
+        request: Box<crate::install::InstallApprovalRequest>,
+    },
     /// 등록은 host의 세션 밖 Local만. 비밀값은 반환하거나 감사 기록에 넣지 않는다.
     AccountImport {
         name: String,
@@ -2068,7 +2103,7 @@ pub enum FrontRequest {
         install: bool,
     },
     EnrollPending,
-    /// FRONT_API 1.90. 새 머신에서 칠 「직접 설치」 명령에 넣을 host 주소 후보·host 지문·판(웹 머신 추가 M1, plan §8.374)
+    /// FRONT_API 1.92. 새 머신에서 칠 「직접 설치」 명령에 넣을 host 주소 후보·host 지문·판(웹 머신 추가 M1, plan §8.383)
     EnrollGuide,
     EnrollApprove {
         name: String,
@@ -2091,6 +2126,13 @@ pub enum FrontRequest {
     /// 기기를 취소한다. 그 기기의 열린 연결은 바로 닫히고 push 구독도 지워진다
     DeviceRevoke {
         id: String,
+    },
+    /// W0와 별개로, 실제 승인된 같은 머신 worker의 한 포트 범위만 검증한다.
+    InstallPublish {
+        installation_id: String,
+    },
+    InstallPublishStatus {
+        installation_id: String,
     },
     WebPublish,
     WebPublishOff,
@@ -3024,6 +3066,8 @@ impl FrontRequest {
                 | FrontRequest::PaneGet { .. }
                 | FrontRequest::PaneChat { .. }
                 | FrontRequest::Workspace { .. }
+                | FrontRequest::InstallPublish { .. }
+                | FrontRequest::InstallPublishStatus { .. }
                 | FrontRequest::WebStatus
                 | FrontRequest::Devices
                 | FrontRequest::EvaluatorStatus { .. }
@@ -3051,6 +3095,12 @@ impl FrontRequest {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum FrontResponse {
+    InstallPublished {
+        publication: crate::install::InstallPublication,
+    },
+    InstallApproval {
+        approval: crate::install::InstallApprovalView,
+    },
     Accounts {
         accounts: Vec<crate::AccountView>,
     },
@@ -3823,7 +3873,7 @@ mod tests {
         assert!(FrontRequest::DeviceRename { id: "d".into(), label: "x".into() }.needs_control());
         assert!(FrontRequest::DeviceRevoke { id: "d".into() }.needs_control());
         assert!(!FrontRequest::Panes { role: None }.local_only());
-        // 「직접 설치」 안내는 host 주소·지문을 보이므로 조작 기기만(웹 허용, plan §8.374)
+        // 「직접 설치」 안내는 host 주소·지문을 보이므로 조작 기기만(웹 허용, plan §8.383)
         assert!(FrontRequest::EnrollGuide.needs_control() && !FrontRequest::EnrollGuide.local_only());
         assert!(!FrontRequest::Threads { project: None, role: None }.needs_control());
         // 사후 평가자 세션은 Reader로 다룬다: 평가 보기는 되고, 지정·채택·메시지는 안 된다(§8.13)

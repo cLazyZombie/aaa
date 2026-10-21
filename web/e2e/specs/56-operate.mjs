@@ -1,10 +1,10 @@
 // 운영 화면(관리 GUI W4, plan §8.343): 설정 창 「저장소」·「이 aaa」, thread 관리(끝내기·다시 열기·다시 시작·brief·Next·요약),
-// 활동 막대 「알림함」(inbox·흐름 사건·post), 정리 미리보기 → 확인 창 실행, 보기 권한 기기. 실제 host·agent·git 저장소로 본다.
+// 사용자 화면의 알림함 숨김과 coordinator CLI 보존, 정리 미리보기 → 확인 창 실행, 보기 권한 기기. 실제 host·agent·git 저장소로 본다.
 // 끝내기 창은 host가 미리 읽은 커밋하지 않은 파일·병합되지 않은 변경·사본 상태로 「남기기」 기본을 정한다: 위험한 thread는 켠 채,
 // 깨끗한 thread는 끈 채 열린다. 시간은 기다리지 않는다: 파일 글·thread 기록·화면 표지를 본다.
 import fs from "node:fs";
 import { execFileSync } from "node:child_process";
-import { root, aaa, step, browser, pairPage, until, domIs, shot, openSettings, showPanel, inList } from "../lib/harness.mjs";
+import { root, aaa, step, browser, pairPage, until, domIs, shot, openSettings, inList } from "../lib/harness.mjs";
 
 const settingsFile = () => `${root}/projects/demo/project.toml`;
 const git = (dir, ...a) => execFileSync("git", ["-C", dir, "-c", "user.name=e2e", "-c", "user.email=e2e@example.com", ...a], { encoding: "utf8" }).trim();
@@ -187,32 +187,18 @@ export default async function ({ page }) {
     await until(`${id} 다시 띄움`, () => aaa("pane", "list").panes.some((p) => p.id === show(id).pane && p.state === "running"));
   });
 
-  await step("알림함: 끝내지 않은 항목 수가 막대 배지이고, 한 건 끝내면 배지가 준다. 흐름 사건은 최근 것이 위, post 탭이 있다", async () => {
-    const before = openInbox().length;
-    if (before < 2) throw new Error(`끝낸 thread의 알림이 없다: ${before}`);
-    await showPanel(page, "inbox");
-    await domIs(page, `알림함 배지 ${before}`, (n) => document.querySelector('[data-testid="activity-badge-inbox"]')?.textContent === String(n), before);
-    const panel = page.getByTestId("inbox-panel");
-    await panel.getByTestId("inbox-list").waitFor();
-    await panel.getByTestId("inbox-item").first().getByRole("button", { name: /끝내기$/ }).click();
-    await until("한 건 끝냄", () => openInbox().length === before - 1);
-    await domIs(page, `알림함 배지 ${before - 1}`, (n) => document.querySelector('[data-testid="activity-badge-inbox"]')?.textContent === String(n), before - 1);
-    // 화면이 읽어도(peek) 「봤다」가 되지 않는다: coordinator 묶음 알림이 그대로 간다
-    if (openInbox().some((i) => i.seen)) throw new Error("알림함 화면이 항목을 봤다로 바꿨다");
-    await shot(page, "56-inbox-desktop");
-    // 최근 것이 위: 화면을 읽기 전에 잡은 가장 늦은 사건(시각, 순번)이 맨 위이거나 그보다 늦다. host 차례는 시각 먼저다
-    // (순번은 기록할 때 정해져 같은 무렵 사건끼리 시각과 어긋날 수 있다)
-    const all = aaa("events", "demo").events;
-    if (all.length >= 500) throw new Error("실험실 사건이 한 번에 다 오지 않는다");
-    const key = (e) => [e.at_ms, e.seq];
-    const later = (a, b) => a[0] > b[0] || (a[0] === b[0] && a[1] >= b[1]);
-    const newest = all.map(key).reduce((m, k) => (later(k, m) ? k : m));
-    await panel.getByTestId("inbox-tab-events").click();
-    await panel.getByTestId("event-list").waitFor();
-    const keys = await panel.getByTestId("event-item").evaluateAll((els) => els.map((e) => [Number(e.dataset.at), Number(e.dataset.seq)]));
-    if (!later(keys[0], newest) || keys.some((k, i) => i > 0 && !later(keys[i - 1], k))) throw new Error(`흐름 사건 차례: ${JSON.stringify(keys.slice(0, 5))} / 읽기 전 최근 ${newest}`);
-    await panel.getByTestId("inbox-tab-posts").click();
-    await until("post 탭", async () => /post가 없다|post-item/.test(await panel.innerHTML()));
+  await step("알림함 숨김: 활동 막대 단추·배지·패널이 없고 coordinator CLI의 조회·끝내기는 그대로다", async () => {
+    const before = openInbox();
+    if (before.length < 2) throw new Error(`끝낸 thread의 알림이 없다: ${before.length}`);
+    await page.getByTestId("activity-bar").waitFor();
+    if (await page.locator('[data-testid="activity-inbox"], [data-testid="activity-badge-inbox"], #sidebar-panel-inbox').count()) throw new Error("알림함이 화면에 남았다");
+    // 화면을 열어도 coordinator의 처리 상태를 바꾸지 않는다. 끝내기는 기존 CLI로 한다.
+    if (before.some((i) => i.seen)) throw new Error("화면이 알림을 봤다로 바꿨다");
+    const id = before[0].id;
+    aaa("inbox", "done", "demo", id);
+    if (openInbox().some((i) => i.id === id)) throw new Error("CLI로 끝낸 항목이 남았다");
+    if (!aaa("inbox", "list", "demo", "--all", "--peek").items.some((i) => i.id === id && i.done)) throw new Error("CLI로 끝낸 기록이 없다");
+    await shot(page, "56-no-inbox-desktop");
   });
 
   await step("보고서 정리와 끝난 thread 자리 정리: 미리 보고 확인 창으로 실행한다", async () => {
@@ -228,14 +214,11 @@ export default async function ({ page }) {
     await page.keyboard.press("Escape");
   });
 
-  await step("휴대폰: 알림함·끝내기 창·저장소 페이지가 폭 안에 들어간다", async () => {
+  await step("휴대폰: 알림함 단추가 없고 끝내기 창·저장소 페이지가 폭 안에 들어간다", async () => {
     const { page: ph } = await pairPage(browser, aaa("web", "pair").code, { width: 390, height: 844 });
-    await inList(ph, "activity-inbox");
-    await showPanel(ph, "inbox");
-    await ph.getByTestId("inbox-list").waitFor();
-    const inbox = await fits(ph, '[data-testid="inbox-panel"]');
-    if (inbox !== true) throw new Error(`알림함이 넘친다: ${inbox}`);
-    await shot(ph, "56-inbox-phone");
+    await inList(ph, "activity-work");
+    if (await ph.locator('[data-testid="activity-inbox"], [data-testid="activity-badge-inbox"], #sidebar-panel-inbox').count()) throw new Error("휴대폰에 알림함이 남았다");
+    await shot(ph, "56-no-inbox-phone");
     await manage(ph, risky.id, "끝내기");
     await ph.getByTestId("resolve-facts").waitFor();
     const ok = await fits(ph, '[data-testid="resolve-dialog"]');
@@ -265,15 +248,12 @@ export default async function ({ page }) {
     if (same.length !== 1) throw new Error(`두 번 눌러 thread ${same.length}개: ${same.map((t) => t.id)}`);
   });
 
-  await step("보기 권한 기기: thread 관리·알림함 끝내기·post 탭·설정 쓰기 단추가 없다", async () => {
+  await step("보기 권한 기기: 알림함이 없고 thread 관리·설정 쓰기 단추가 없다", async () => {
     const { page: rd } = await pairPage(browser, aaa("web", "pair", "--reader").code, { width: 1280, height: 800 });
     await rd.evaluate((h) => (location.hash = h), `#thread=demo%2F${risky.id}`);
     await rd.getByTestId("thread-view").waitFor();
     if ((await rd.getByTestId("thread-manage").count()) !== 0) throw new Error("보기 기기에 thread 관리");
-    await showPanel(rd, "inbox");
-    await rd.getByTestId("inbox-list").waitFor();
-    if ((await rd.getByTestId("inbox-panel").getByRole("button", { name: /끝내기$/ }).count()) !== 0) throw new Error("보기 기기에 끝내기");
-    if ((await rd.getByTestId("inbox-tab-posts").count()) !== 0) throw new Error("보기 기기에 post 탭");
+    if (await rd.locator('[data-testid="activity-inbox"], [data-testid="activity-badge-inbox"], #sidebar-panel-inbox').count()) throw new Error("보기 기기에 알림함이 남았다");
     const dialog = await openSettings(rd, "이 aaa");
     const pane = dialog.getByTestId("settings-this-aaa");
     await pane.getByTestId("set-goal").waitFor();
