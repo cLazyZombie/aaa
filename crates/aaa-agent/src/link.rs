@@ -109,6 +109,7 @@ pub fn hello(agent: &Agent) -> AgentHello {
             "account_auth.v2".into(),
             "account_quota.v1".into(),
             "terminal.v1".into(),
+            "report_copy.v2".into(),
             "deployment.v1".into(),
             #[cfg(target_os = "macos")]
             "rollout.v1".into(),

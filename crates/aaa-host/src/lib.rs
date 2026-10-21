@@ -150,9 +150,10 @@ impl AgentConn {
                 Duration::from_secs(self.timeouts.thread_prepare_timeout_secs)
             }
             AgentRequest::ThreadCleanup { .. } => Duration::from_secs(self.timeouts.thread_cleanup_timeout_secs),
-            AgentRequest::FileRead { .. } | AgentRequest::ReportCollect { .. } => {
-                Duration::from_secs(self.timeouts.file_request_timeout_secs)
-            }
+            AgentRequest::FileRead { .. }
+            | AgentRequest::ReportCollect { .. }
+            | AgentRequest::ReportFileRead { .. }
+            | AgentRequest::ReportTransfer { .. } => Duration::from_secs(self.timeouts.file_request_timeout_secs),
             _ => REQUEST_TIMEOUT,
         };
         self.request_timeout(body, wait).await
@@ -518,8 +519,8 @@ pub struct Host {
     flow_order: Mutex<()>,
     /// thread 기록이 바뀌었다
     pub thread_events: broadcast::Sender<aaa_proto::ThreadView>,
-    /// 보고 사본은 한 번에 하나씩 한다
-    collect_lock: tokio::sync::Mutex<()>,
+    /// 같은 thread의 보고·resolve만 직렬화한다. 다른 머신의 전송은 서로 기다리지 않는다.
+    collect_locks: Mutex<HashMap<String, Arc<tokio::sync::Mutex<()>>>>,
     /// 확인창 질문이 열리거나 바뀌었다
     pub question_events: broadcast::Sender<aaa_proto::QuestionView>,
     /// 앱 안 알림(턴 끝남·새 보고, notice.rs). 기록하지 않는다
@@ -744,7 +745,7 @@ impl Host {
             flow_events: broadcast::channel(256).0,
             flow_order: Mutex::new(()),
             thread_events: broadcast::channel(256).0,
-            collect_lock: tokio::sync::Mutex::new(()),
+            collect_locks: Mutex::new(HashMap::new()),
             question_events: broadcast::channel(256).0,
             post_gate: std::sync::Mutex::new(()),
             deployment_gate: std::sync::Mutex::new(()),

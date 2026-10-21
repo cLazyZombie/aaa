@@ -190,3 +190,73 @@ async fn host_report_write_failure_is_retried_after_the_storage_recovers() {
     assert_eq!(r.copy_retry_at_ms, 0);
     assert!(path.is_file());
 }
+
+#[tokio::test]
+async fn broken_library_does_not_freeze_the_report_or_its_ack() {
+    let lab = Lab::new(0, b"bad appended");
+    lab.h.collect_if_changed("p", "t-0001").await;
+    let rec = lab.h.load("p", "t-0001").unwrap();
+    assert_eq!(rec.copy.as_deref(), Some("failed"));
+    assert_ne!(rec.report_hash.as_deref(), Some("previous"));
+    assert_eq!(lab.h.verified_report(&rec).as_deref(), Some("[진행 중] 시험 중\n"));
+    let dir = lab.h.project_dir("p").unwrap();
+    let files = lab.h.manifest(&dir, "t-0001");
+    assert_eq!(files.len(), 1);
+    assert!(files[0].on_agent, "실패한 파일을 검증한 사본으로 표시하면 안 된다");
+    let revision = lab.h.thread_report_id("p", "t-0001", rec.report_hash.as_deref()).unwrap();
+    assert!(!dir.join("library").join(&revision).join("test.log").exists());
+    lab.h.thread_ack("p", "t-0001", "test").unwrap();
+    let acked = lab.h.load("p", "t-0001").unwrap().acked_hash;
+    lab.h.collect_if_changed("p", "t-0001").await;
+    assert_eq!(lab.h.load("p", "t-0001").unwrap().acked_hash, acked);
+    assert_eq!(
+        lab.h.inbox("p", true, true).unwrap().items.iter().filter(|i| i.item_kind == "report-copy-failed").count(),
+        1
+    );
+}
+
+#[tokio::test]
+async fn another_thread_collects_while_a_report_transfer_is_held() {
+    let lab = Lab::new(0, b"");
+    let mut other = lab.h.load("p", "t-0001").unwrap();
+    other.id = "t-0002".into();
+    lab.h.db.thread_import("p", &other.id, "open", &serde_json::to_string(&other).unwrap()).unwrap();
+    let lock = lab.h.report_collect_lock("p", "t-0001");
+    let held = lock.lock().await;
+    lab.h.refresh_report("p", "t-0001");
+    // 2번의 실제 회수를 끝낸 뒤에도 1번의 소유권은 그대로다. 고정 sleep·성능 상한이 아니다.
+    tokio::time::timeout(std::time::Duration::from_secs(10), lab.h.collect_if_changed("p", "t-0002")).await.unwrap();
+    assert_eq!(lab.h.load("p", "t-0002").unwrap().copy.as_deref(), Some("complete"));
+    assert_eq!(lab.h.load("p", "t-0001").unwrap().report_hash.as_deref(), Some("previous"));
+    drop(held);
+    tokio::time::timeout(std::time::Duration::from_secs(10), async {
+        while lab.h.report_refresh.lock().unwrap().contains_key("p/t-0001") {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .unwrap();
+    assert_eq!(lab.h.load("p", "t-0001").unwrap().copy.as_deref(), Some("complete"));
+}
+
+#[tokio::test]
+async fn same_revision_recovery_repairs_the_body_and_keeps_ack() {
+    let lab = Lab::new(0, b"");
+    lab.h.collect_if_changed("p", "t-0001").await;
+    lab.h.thread_ack("p", "t-0001", "test").unwrap();
+    let previous = lab.h.load("p", "t-0001").unwrap();
+    let path = lab.h.project_dir("p").unwrap().join("threads/t-0001.md");
+    std::fs::write(&path, "obsolete").unwrap();
+    lab.h
+        .update_rec("p", "t-0001", |r| {
+            r.copy = Some("failed".into());
+            r.report_copy_hash = None;
+        })
+        .unwrap();
+    lab.h.collect_if_changed("p", "t-0001").await;
+    let rec = lab.h.load("p", "t-0001").unwrap();
+    assert_eq!(rec.copy.as_deref(), Some("complete"));
+    assert_eq!(rec.report_hash, previous.report_hash);
+    assert_eq!(rec.acked_hash, previous.acked_hash);
+    assert_eq!(lab.h.verified_report(&rec).as_deref(), Some("[진행 중] 시험 중\n"));
+}

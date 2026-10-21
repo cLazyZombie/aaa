@@ -44,7 +44,7 @@ impl Host {
             .sum()
     }
 
-    /// 호출자는 publish의 library_ops 또는 thread collect_lock으로 원본 판 교체를 직렬화한다.
+    /// 호출자는 publish의 library_ops 또는 thread별 collect lock으로 원본 판 교체를 직렬화한다.
     /// 예약은 먼저 영속화한다. 도중 오류·재시작의 빈 번호는 다시 쓰지 않고, ready 뒤에만 노출한다.
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn snapshot_report_version(
