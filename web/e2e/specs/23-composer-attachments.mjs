@@ -625,6 +625,22 @@ draw();
           const sent = await sentFrames(p, before);
           if (sent.some((f) => ["input", "submit", "attach"].includes(f.t))) throw new Error(`보내기 전에 pane에 입력했다 ${JSON.stringify(sent)}`);
           await composer.locator(".composer-attachment img").evaluate((img) => img.decode());
+          if (method === "paste") {
+            // 대화 → 터미널은 입력창을 실제로 내린다. 초안 경로와 썸네일을 함께 복원해야 한다.
+            await p.getByTestId("chat-toggle").click();
+            await composer.waitFor({ state: "detached" });
+            await p.getByTestId("chat-toggle").click();
+            await composer.waitFor();
+            await inList(p, "activity-reports");
+            await domIs(p, "보고서 화면", () => document.querySelector('[data-testid="reports-view"]')?.dataset.shown === "true");
+            await openChat(p);
+          } else {
+            await p.reload();
+            await openChat(p);
+          }
+          assert.equal(await box.inputValue(), text, `${name} ${method}: 화면 이동 뒤 첨부 초안`);
+          await composer.locator(".composer-attachment img").evaluate((img) => img.decode());
+          assert.equal(await composer.locator(".composer-attachment").count(), 1, `${name} ${method}: 복원한 미리보기 하나`);
           if (method === "paste") await shot(p, `composer-image-${name}`);
           const got = await submit(p);
           if (got.images.length !== 1 || got.images[0].path !== path || got.images[0].sha256 !== digest || !got.text.includes(`그림 확인 ${name} ${method}`)) throw new Error(`coordinator가 읽은 그림/글 ${JSON.stringify(got)}`);
@@ -671,8 +687,20 @@ draw();
         // 삭제와 거부도 같은 입력 경계에서: 저장된 그림의 mention은 삭제되고 형식 오류 때 초안은 남는다.
         await fileEvent(box, "paste", png);
         await domIs(p, "삭제할 첨부 완료", () => document.querySelector(".composer-attachment")?.classList.contains("is-ready"));
+        await p.reload();
+        await openChat(p);
+        await composer.locator(".composer-attachment img").evaluate((img) => img.decode());
+        // 복원한 그림 뒤에 새 그림을 붙여도 ID가 겹치지 않고 하나씩 지워진다.
+        await fileEvent(box, "paste", Buffer.concat([png, Buffer.from([0])]));
+        await domIs(p, "복원 뒤 새 첨부 완료", () => document.querySelectorAll(".composer-attachment.is-ready").length === 2);
+        await composer.getByRole("button", { name: `${digest.slice(0, 16)}.png 첨부 삭제`, exact: true }).click();
+        assert.equal(await composer.locator(".composer-attachment").count(), 1, `${name}: 복원한 그림만 삭제`);
+        assert.ok(!(await box.inputValue()).includes(`${digest.slice(0, 16)}.png`), `${name}: 삭제한 경로 제거`);
         await composer.getByRole("button", { name: "clipboard.png 첨부 삭제" }).click();
         if ((await box.inputValue()) !== "") throw new Error("삭제한 그림의 경로가 남았다");
+        await p.reload();
+        await openChat(p);
+        assert.equal(await composer.locator(".composer-attachment").count(), 0, `${name}: 지운 미리보기가 돌아오지 않음`);
         await box.fill("실패해도 남을 글");
         await fileEvent(box, "paste", Buffer.from("invalid-image"));
         await composer.getByRole("alert").waitFor();

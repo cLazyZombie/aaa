@@ -40,7 +40,7 @@ import { ConfirmDialog } from "./ConfirmDialog";
 import { ContextGauge } from "./ContextGauge";
 import { SlashMenu, slashOptionId } from "./SlashMenu";
 import { bumpUsage, commandOf, groups, listed, rank, readUsage, sendAction, slashQuery } from "./slashCommands";
-import { imageMention, insertLeadingMention } from "./herdr/composerImages";
+import { imageMention, imagePaths, insertLeadingMention } from "./herdr/composerImages";
 import { normalizeComposerImageFile } from "./herdr/composerImageMime";
 import "./herdr/Composer.css";
 import { composerDrafts } from "./herdr/composerDraft.ts";
@@ -106,10 +106,28 @@ interface Note {
 }
 interface Attachment {
   id: number;
-  file: File;
-  preview: string;
+  name: string;
+  preview?: string;
   state: "uploading" | "waiting" | "ready" | "error" | "no-room";
   path?: string;
+}
+
+/** 화면을 다시 열면 blob URL 대신 host가 허용한 파일 URL로 초안의 그림을 읽는다. */
+function AttachmentImage({ pane, attachment: a }: { pane: string; attachment: Attachment }) {
+  const [url, setUrl] = useState(a.preview ?? null);
+  const [error, setError] = useState(false);
+  useEffect(() => {
+    if (a.preview || !a.path) return;
+    let live = true;
+    void call({ op: "pane_file", pane, path: a.path }).then((r) => {
+      if (!live) return;
+      if (r.kind === "pane_file" && r.info?.kind === "image" && r.info.size <= 20 * 1024 * 1024 && r.url !== null) setUrl(r.url);
+      else setError(true);
+    }, () => { if (live) setError(true); });
+    return () => { live = false; };
+  }, [pane, a.path, a.preview]);
+  return url && !error ? <img src={url} alt={a.name} onError={() => setError(true)} />
+    : <span role="status">{error ? "그림을 표시할 수 없음" : "그림 여는 중…"}</span>;
 }
 
 /** 글 칸이 지금 폭에서 몇 줄인가(높이를 auto로 둔 뒤 잰다) */
@@ -250,10 +268,13 @@ export function ChatComposer({
   const picker = useRef<HTMLInputElement>(null);
   const [composing, setComposing] = useState(false);
   const [dragging, setDragging] = useState(false);
-  const [attachments, setAttachments] = useState<Attachment[]>([]);
+  // 초안의 @경로가 첨부 원본이다. pane 이동·터미널 전환·새로고침 뒤에도 같은 경로로 복원한다.
+  const [attachments, setAttachments] = useState<Attachment[]>(() => imagePaths(text).map((path, id) => ({
+    id: id + 1, name: path.split(/[\\/]/).at(-1)!, path, state: "ready",
+  })));
   const attachmentsRef = useRef(attachments);
   attachmentsRef.current = attachments;
-  const sequence = useRef(0);
+  const sequence = useRef(attachments.length);
   const uploads = useRef(Promise.resolve());
   const removed = useRef(new Set<number>());
   const mounted = useRef(true);
@@ -285,7 +306,7 @@ export function ChatComposer({
     mounted.current = true;
     return () => {
       mounted.current = false;
-      for (const a of attachmentsRef.current) URL.revokeObjectURL(a.preview);
+      for (const a of attachmentsRef.current) if (a.preview) URL.revokeObjectURL(a.preview);
     };
   }, []);
   // 참고 waitingMentions: IME가 끝나고 온전한 경로가 들어갈 자리가 있을 때 앞에 넣는다.
@@ -324,16 +345,17 @@ export function ChatComposer({
       setNote({ text: "그림은 1바이트부터 16MiB까지 붙여 넣습니다. 이 묶음은 올리지 않았습니다." });
       return;
     }
-    const added: Attachment[] = files.map((source) => {
+    const added = files.map((source) => {
       const file = normalizeComposerImageFile(source);
-      return { id: ++sequence.current, file, preview: URL.createObjectURL(file), state: "uploading" };
+      const attachment: Attachment = { id: ++sequence.current, name: file.name, preview: URL.createObjectURL(file), state: "uploading" };
+      return { file, attachment };
     });
     setNote(null);
-    setAttachments((current) => [...current, ...added]);
-    for (const a of added) uploads.current = uploads.current.then(async () => {
+    setAttachments((current) => [...current, ...added.map((a) => a.attachment)]);
+    for (const { file, attachment: a } of added) uploads.current = uploads.current.then(async () => {
       if (!mounted.current || removed.current.has(a.id)) return;
       try {
-        const path = await uploadChatImage(pane, a.file);
+        const path = await uploadChatImage(pane, file);
         if (mounted.current && !removed.current.has(a.id)) setAttachments((current) => current.map((item) => item.id === a.id ? { ...item, path, state: "waiting" } : item));
       } catch (error) {
         if (!mounted.current || removed.current.has(a.id)) return;
@@ -343,7 +365,7 @@ export function ChatComposer({
     });
   };
   const clearAttachments = (sent: Attachment[]) => {
-    for (const a of sent) { removed.current.add(a.id); URL.revokeObjectURL(a.preview); }
+    for (const a of sent) { removed.current.add(a.id); if (a.preview) URL.revokeObjectURL(a.preview); }
     setAttachments((current) => current.filter((a) => !removed.current.has(a.id)));
   };
   const flightSequence = useRef(0);
@@ -911,9 +933,9 @@ export function ChatComposer({
           )}
           {attachments.length > 0 && <div className="composer-attachments" aria-label="첨부한 그림">
             {attachments.map((a) => <div className={`composer-attachment is-${a.state}`} key={a.id}>
-              <img src={a.preview} alt={a.file.name} />
+              <AttachmentImage pane={pane} attachment={a} />
               <span className="composer-attachment-state">{a.state === "ready" ? "첨부됨" : a.state === "error" ? "실패" : a.state === "no-room" ? "글을 줄여 주세요" : "올리는 중"}</span>
-              <button type="button" aria-label={`${a.file.name} 첨부 삭제`} disabled={locked} onClick={() => {
+              <button type="button" aria-label={`${a.name} 첨부 삭제`} disabled={locked} onClick={() => {
                 clearAttachments([a]);
                 if (a.path) setText(textRef.current.replace(imageMention(a.path), ""));
               }}><X aria-hidden="true" /></button>
