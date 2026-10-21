@@ -316,7 +316,7 @@ impl Host {
         let attention = self.report_attention(r);
         if !matches!(r.last_group, Some(ThreadGroup::ReadyForReview | ThreadGroup::Landing))
             && attention.is_none()
-            && self.report_marker(r) != Some("[착지]")
+            && !matches!(self.report_marker(r), Some("[착지]" | "[병합 준비됨]"))
         {
             return false;
         }
@@ -332,6 +332,9 @@ impl Host {
             .unwrap_or_default();
         if !ids.is_empty() {
             summary = format!("{ids} {summary}");
+        }
+        if let Some(id) = self.thread_report_id(project, &r.id, r.report_hash.as_deref()) {
+            summary = format!("{id} {summary}");
         }
         let hash = r.report_hash.clone();
         if self.update_rec(project, &r.id, |x| x.review_item_hash = hash).is_err() {
@@ -545,6 +548,13 @@ mod tests {
             assert!(h.new_report_item("p", &r));
             let items = h.inbox("p", true, true).unwrap().items;
             assert_eq!(items.iter().filter(|i| i.subject == id && i.event == "new report").count(), 2);
+            r = h.load("p", id).unwrap();
+            write(&mut r, "[병합 준비됨] 전체 확인 뒤 착지 창 대기\n");
+            assert_eq!(h.thread_view(&r).report_attention, None);
+            assert!(h.new_report_item("p", &r), "병합 대기도 coordinator inbox에 남긴다");
+            r = h.load("p", id).unwrap();
+            assert!(!h.new_report_item("p", &r));
+            assert!(notifications.try_recv().is_err(), "병합 대기로 외부 push를 만들지 않는다");
             for (mark, attention, event) in [
                 ("[완료]", aaa_proto::ReportAttention::Completed, "new report"),
                 ("[결정 필요]", aaa_proto::ReportAttention::NeedsUser, "report needs user"),

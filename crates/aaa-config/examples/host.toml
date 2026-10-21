@@ -10,6 +10,8 @@ agent_listen = "0.0.0.0:7430"
 thread_prepare_timeout_secs = 600
 thread_cleanup_timeout_secs = 600
 file_request_timeout_secs = 120
+# 웹 「SSH로 머신 추가」가 ssh -F로 줄 설정 파일(비우면 ~/.ssh/config). host는 이미 있는 키·ssh-agent·설정만 쓴다
+ssh_config = ""
 
 
 [web]

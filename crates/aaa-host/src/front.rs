@@ -262,7 +262,7 @@ async fn serve_conn(host: Arc<Host>, tx: FrameTx, mut rx: impl FrontIn, conn: Co
                         Err(_) => break,
                     },
                     t = threads.recv() => match t {
-                        Ok(t) => FrontEvent::Thread(t),
+                        Ok(t) => FrontEvent::Thread(Box::new(t)),
                         Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => continue,
                         Err(_) => break,
                     },

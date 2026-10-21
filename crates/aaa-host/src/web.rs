@@ -1192,7 +1192,7 @@ async fn events_loop(host: Arc<Host>, dev: String, role: DeviceRole, mut socket:
                 send_badge = true;
                 match t {
                     Ok(t) => {
-                        let text = serde_json::to_string(&FrontEvent::Thread(t)).unwrap();
+                        let text = serde_json::to_string(&FrontEvent::Thread(Box::new(t))).unwrap();
                         if socket.send(Message::Text(text.into())).await.is_err() {
                             break;
                         }

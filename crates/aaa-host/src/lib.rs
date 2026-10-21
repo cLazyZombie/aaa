@@ -32,6 +32,7 @@ mod ctrl_enter;
 pub mod db;
 mod deploy;
 mod diff;
+mod enroll_guide;
 mod file_rev;
 mod files;
 pub mod front;
@@ -50,6 +51,7 @@ mod library_retention;
 mod library_upload;
 mod lifecycle;
 pub mod link;
+mod machine_setup;
 pub mod migrate;
 mod notice;
 mod notify;
@@ -65,6 +67,7 @@ mod prompt_box;
 mod push;
 mod quota;
 mod quota_rpc;
+mod report_ids;
 mod report_mark;
 mod report_sandbox;
 mod resource;
@@ -478,6 +481,8 @@ pub struct Host {
     pub accounts_changed: tokio_watch::Sender<u64>,
     /// 머신 등록 창·대기 목록이 바뀐 횟수(웹 「머신」 페이지가 다시 읽는다)
     pub enroll_changed: tokio_watch::Sender<u64>,
+    /// SSH 머신 추가 작업을 읽고 바꾸는 한 차례(machine_setup.rs)
+    setup_gate: Mutex<()>,
     /// 계정 기록(`account-meta:*`) 읽고-고쳐-쓰기를 하나씩(로그인 끝·갱신 결과·ticker 상태 pass가 겹친다)
     account_meta_gate: Mutex<()>,
     /// 웹 기기 폐기의 「마지막 조작 기기」 세기와 폐기를 묶는다
@@ -721,6 +726,7 @@ impl Host {
             inbox_changed: tokio_watch::channel(0).0,
             accounts_changed: tokio_watch::channel(0).0,
             enroll_changed: tokio_watch::channel(0).0,
+            setup_gate: Mutex::new(()),
             account_meta_gate: Mutex::new(()),
             device_gate: Mutex::new(()),
             enroll: Mutex::new(Enroll::default()),
@@ -800,6 +806,9 @@ impl Host {
         });
         // 이 기록 전에 등록한 Codex 계정의 메일·plan(관리 GUI W5a, 사용자 답 3A)
         host.account_meta_backfill();
+        host.backfill_report_stages()?;
+        // 진행 중에 내려간 SSH 머신 추가 작업(plan §8.384)
+        host.setup_recover();
         Ok(host)
     }
 
@@ -1374,6 +1383,10 @@ impl Host {
                 | FrontRequest::EnrollClose
                 | FrontRequest::EnrollApprove { .. }
                 | FrontRequest::MachineRevoke { .. }
+                | FrontRequest::MachineSetupStart { .. }
+                | FrontRequest::MachineSetupTrust { .. }
+                | FrontRequest::MachineSetupChoose { .. }
+                | FrontRequest::MachineSetupCancel { .. }
                 | FrontRequest::DeviceRevoke { .. }
                 | FrontRequest::WebPublish
                 | FrontRequest::WebPublishOff
@@ -1624,7 +1637,7 @@ impl Host {
                                 ));
                             }
                             if let Some(tid) = &q.thread {
-                                return self.thread_show(&a.project, tid).map(FrontResponse::Thread);
+                                return self.thread_show(&a.project, tid).map(Box::new).map(FrontResponse::Thread);
                             }
                             return Err(err(
                                 ErrorCode::Conflict,
@@ -1664,13 +1677,13 @@ impl Host {
                 if link_task && let Some(t) = &picked {
                     v.warnings.extend(self.link_started(&project, t, &v.id, actor).await);
                 }
-                Ok(FrontResponse::Thread(v))
+                Ok(FrontResponse::Thread(Box::new(v)))
             }
             FrontRequest::ThreadStartPreview { project, from_task, task_block } => {
                 self.thread_start_preview(&project, &from_task, task_block.as_deref()).await
             }
             FrontRequest::ThreadAdopt { project, pane, title, task } => {
-                self.thread_adopt(&project, &pane, &title, &task, actor).await.map(FrontResponse::Thread)
+                self.thread_adopt(&project, &pane, &title, &task, actor).await.map(Box::new).map(FrontResponse::Thread)
             }
             FrontRequest::ThreadNext { project, thread, line, add } => {
                 self.thread_next(&project, &thread, line, add, actor).await
@@ -1706,7 +1719,7 @@ impl Host {
                 self.threads_of(project.as_deref(), want).map(|threads| FrontResponse::Threads { threads })
             }
             FrontRequest::ThreadShow { project, thread } => {
-                self.thread_show(&project, &thread).map(FrontResponse::Thread)
+                self.thread_show(&project, &thread).map(Box::new).map(FrontResponse::Thread)
             }
             FrontRequest::ThreadSummary { project, thread } => {
                 self.thread_summary(&project, &thread).map(FrontResponse::ThreadSummary)
@@ -1759,10 +1772,10 @@ impl Host {
                 self.library_link_revoke(&id, actor).map(FrontResponse::LibraryLink)
             }
             FrontRequest::ThreadAck { project, thread } => {
-                self.thread_ack(&project, &thread, actor).map(FrontResponse::Thread)
+                self.thread_ack(&project, &thread, actor).map(Box::new).map(FrontResponse::Thread)
             }
             FrontRequest::ThreadResolve { project, thread, reopen: true, .. } => {
-                self.thread_reopen(&project, &thread, actor).map(FrontResponse::Thread)
+                self.thread_reopen(&project, &thread, actor).map(Box::new).map(FrontResponse::Thread)
             }
             FrontRequest::ThreadResolve {
                 project,
@@ -1780,15 +1793,18 @@ impl Host {
                     actor,
                 )
                 .await
+                .map(Box::new)
                 .map(FrontResponse::Thread),
             FrontRequest::ThreadStop { project, thread } => {
-                self.thread_stop(&project, &thread, actor).await.map(FrontResponse::Thread)
+                self.thread_stop(&project, &thread, actor).await.map(Box::new).map(FrontResponse::Thread)
             }
-            FrontRequest::ThreadRestart { project, thread, resume, profile } => {
-                self.thread_restart(&project, &thread, resume, profile, actor).await.map(FrontResponse::Thread)
-            }
+            FrontRequest::ThreadRestart { project, thread, resume, profile } => self
+                .thread_restart(&project, &thread, resume, profile, actor)
+                .await
+                .map(Box::new)
+                .map(FrontResponse::Thread),
             FrontRequest::ThreadBrief { project, thread } => {
-                self.thread_brief(&project, &thread, actor).await.map(FrontResponse::Thread)
+                self.thread_brief(&project, &thread, actor).await.map(Box::new).map(FrontResponse::Thread)
             }
             FrontRequest::ThreadRead { project, thread, lines } => self.thread_read(&project, &thread, lines).await,
             FrontRequest::ThreadKeys { project, thread, keys, text } => {
@@ -1819,9 +1835,11 @@ impl Host {
             FrontRequest::ThreadMessage { project, thread, text, mode } => {
                 self.thread_message(&project, &thread, text, mode, actor).await.map(FrontResponse::Message)
             }
-            FrontRequest::ThreadAnswer { project, thread, report_hash, picks, text } => {
-                self.thread_answer(&project, &thread, &report_hash, picks, text, actor).await.map(FrontResponse::Thread)
-            }
+            FrontRequest::ThreadAnswer { project, thread, report_hash, picks, text } => self
+                .thread_answer(&project, &thread, &report_hash, picks, text, actor)
+                .await
+                .map(Box::new)
+                .map(FrontResponse::Thread),
             FrontRequest::Preferences => Ok(FrontResponse::Preferences(self.preferences.get())),
             FrontRequest::PreferencesSet { settings, pins } => {
                 let change = prefs::change_body(settings, pins)?;
@@ -2221,6 +2239,18 @@ impl Host {
                 self.enroll_bump();
                 Ok(FrontResponse::Done)
             }
+            FrontRequest::EnrollGuide => Ok(FrontResponse::EnrollGuide { guide: self.enroll_guide().await }),
+            FrontRequest::MachineSetupStart { target } => {
+                self.setup_start(&target, actor).map(|setup| FrontResponse::MachineSetup { setup })
+            }
+            FrontRequest::MachineSetupTrust { job, host_key_sha256 } => {
+                self.setup_trust(&job, &host_key_sha256, actor).await.map(|setup| FrontResponse::MachineSetup { setup })
+            }
+            FrontRequest::MachineSetupChoose { job, os, arch } => {
+                self.setup_choose(&job, &os, &arch, actor).map(|setup| FrontResponse::MachineSetup { setup })
+            }
+            FrontRequest::MachineSetupCancel { job } => self.setup_cancel(&job, actor).map(|_| FrontResponse::Done),
+            FrontRequest::MachineSetupList => self.setup_list().map(|setups| FrontResponse::MachineSetups { setups }),
             FrontRequest::EnrollPending => {
                 let e = self.enroll.lock().unwrap();
                 let now = Instant::now();
@@ -3391,6 +3421,8 @@ async fn run_host(
         Err(names) => anyhow::bail!(lifecycle::sole_project_refusal(&names)),
     }
     // 옛 판이 남긴 보내던 메시지는 입구를 열기 전에 잊는다(연 뒤면 막 기록한 새 메시지까지 「모른다」로 바뀐다)
+    host.backfill_report_ids().map_err(|e| anyhow::anyhow!(e.message))?;
+    host.backfill_review_questions().map_err(|e| anyhow::anyhow!(e.message))?;
     host.forget_queued_messages();
     host.start_supervisor();
     link::start(&host).await?;

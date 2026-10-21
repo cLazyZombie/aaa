@@ -260,7 +260,11 @@ export type TaskReservation = { selection: TaskChoicePin, task_id: string, task:
 /**
  * 선점과 함께 발급한 기동 ID. 외부 기동의 exactly-once 보증은 아니다.
  */
-launch_id: string | null, thread: string | null, actor: string, created_ms: number, updated_ms: number, };
+launch_id: string | null, thread: string | null,
+/**
+ * 연결된 thread의 현재 작업 단계. 예약 저장값 대신 host가 조회 때 채운다.
+ */
+stage?: ThreadStage, actor: string, created_ms: number, updated_ms: number, };
 
 export type ArchivedTask = { task_id: string, task: TaskView,
 /**
@@ -351,7 +355,7 @@ name: string,
  */
 notes: Array<string>, };
 
-export type TaskThread = { id: string, title: string, group: ThreadGroup, };
+export type TaskThread = { id: string, title: string, group: ThreadGroup, stage?: ThreadStage, };
 
 export type TaskNotesSection = {
 /**
@@ -507,7 +511,7 @@ machine: string | null,
  */
 repos: Array<RepoChoice>,
 /**
- * 사용자·coordinator가 띄운 열린 Worker 수(시작·정리 중 포함)와 host가 집행하는 한도. 자동화 thread는 뺀다.
+ * 사용자·coordinator가 띄운 열린 Worker 수(시작·정리 중 포함)와 host가 집행하는 한도. 자동화·병합 대기·착지 한 자리는 뺀다.
  */
 open_threads: number, max_parallel_threads: number,
 /**
@@ -640,6 +644,88 @@ export type PendingEnroll = { name: string, machine_id: string,
  * 상대 인증서 fingerprint 앞부분(참고용). 확인 코드는 agent 화면에만 보인다.
  */
 fingerprint_prefix: string, since_ms: number, };
+
+export type EnrollGuide = {
+/**
+ * host가 실제로 연 agent 연결 주소(`agent_listen`). 닫혀 있으면 None이고 새 머신은 붙지 못한다
+ */
+listen: string | null,
+/**
+ * 새 머신에서 칠 `<주소>:<포트>` 후보. 앞이 추천이다. 빈 목록이면 host 밖에서 닿을 주소가 없다(닫힘·loopback)
+ */
+addresses: Array<EnrollAddress>,
+/**
+ * host 인증서 SHA-256 전체(소문자 hex). 새 머신 `aaa agent enroll` 화면은 앞 16자를 보인다
+ */
+host_fingerprint: string,
+/**
+ * host 판(`aaa --version`). 새 머신에 같은 판을 넣는다
+ */
+software: string, };
+
+export type EnrollAddress = { address: string,
+/**
+ * 어디서 온 후보인가: `tailnet`(tailscale 이름)·`listen`(연 주소 그대로)·`hostname`(이 머신 이름)
+ */
+source: string, };
+
+export type MachineSetupView = { job: string,
+/**
+ * 사람이 넣은 SSH 대상(별칭 또는 `user@host:port`)
+ */
+target: string, phase: MachineSetupPhase,
+/**
+ * `ssh -G`로 푼 접속(사용자·주소·포트, ProxyJump를 거치는가)
+ */
+ssh: SshResolved | null,
+/**
+ * 접속 때 받은 host key(인증 전). 사람이 지문을 보고 믿는다
+ */
+host_keys: Array<HostKeyView>,
+/**
+ * 받은 키가 이미 믿는 키인가: `known` | `new` | `changed`(fail-closed)
+ */
+host_key_state: string | null, detected: MachineDetected | null,
+/**
+ * 실패·멈춤의 까닭(사람이 읽는 글)
+ */
+error: string | null, created_ms: number, updated_ms: number, };
+
+export type MachineSetupPhase = "connecting" | "trust" | "detecting" | "choose" | "ready" | "unsupported" | "failed";
+
+export type SshResolved = { user: string, host: string, port: number, proxy_jump: boolean, };
+
+export type HostKeyView = {
+/**
+ * `ssh-ed25519` 등
+ */
+kind: string,
+/**
+ * `SHA256:<base64>`(ssh-keygen -l와 같은 꼴)
+ */
+sha256: string, };
+
+export type MachineDetected = {
+/**
+ * `macos` | `linux` | `windows`(MachineView.os와 같은 말)
+ */
+os: string,
+/**
+ * `aarch64` | `x86_64`
+ */
+arch: string,
+/**
+ * 원격이 말한 그대로(`Darwin arm64`, `Windows AMD64`). 사람이 고른 것이면 빈 글
+ */
+raw: string,
+/**
+ * 사람이 골랐다(감지 실패)
+ */
+chosen: boolean, home: string | null, shell: string | null,
+/**
+ * 원격에 이미 있는 aaa 판(`aaa --version` 첫 줄)
+ */
+aaa: string | null, };
 
 export type PublishState = {
 /**
@@ -790,7 +876,7 @@ lines: number | null, format: ReadFormat, } | { "op": "pane_send_text", pane: st
 /**
  * 없으면 끝없이 기다린다(herdr와 같다)
  */
-timeout_ms: number | null, } | { "op": "pane_get", pane: string, } | { "op": "pane_close", pane: string, } | { "op": "workspaces" } | { "op": "workspace_close", name: string, } | { "op": "workspace_rename", name: string, to: string, } | { "op": "pane_resize", pane: string, cols: number, rows: number, } | { "op": "pane_kill", pane: string, } | { "op": "pane_input", pane: string, data: B64, } | { "op": "pane_ctrl_enter", pane: string, trace: string | null, } | { "op": "pane_paste", pane: string, text: string, } | { "op": "pane_take", pane: string, } | { "op": "pane_release", pane: string, } | { "op": "pane_attach", pane: string, offset: number, total: number, sha256: string, data: B64, } | { "op": "pane_resume", pane: string, } | { "op": "pane_forget", pane: string, } | { "op": "pane_rename", pane: string, label: string | null, } | { "op": "workspace", name: string | null, } | { "op": "layout_apply", workspace: string | null, change: LayoutChange, } | { "op": "enroll_open", minutes: number, } | { "op": "enroll_close" } | { "op": "safety_show", project?: string, scope: SettingsScope, } | { "op": "safety_set", project?: string, scope: SettingsScope, key: string, value: string | null, expected: string, } | { "op": "profile_admin" } | { "op": "profile_plan", project?: string, change: ProfileChangeReq, } | { "op": "profile_apply", project?: string, change: ProfileChangeReq, expected: string, } | { "op": "work_root_show", machine: string, } | { "op": "work_root_check", machine: string, path: string | null, mount: string | null, } | { "op": "work_root_set", machine: string, path: string, mount: string | null, } | { "op": "hook_status", machine: string, } | { "op": "hook_set", machine: string, install: boolean, } | { "op": "enroll_pending" } | { "op": "enroll_approve", name: string, code: string, } | { "op": "machine_revoke", name: string, } | { "op": "web_pair", role: DeviceRole, } | { "op": "devices" } | { "op": "device_rename", id: string, label: string, } | { "op": "device_revoke", id: string, } | { "op": "install_publish", installation_id: string, } | { "op": "install_publish_status", installation_id: string, } | { "op": "web_publish" } | { "op": "web_publish_off" } | { "op": "web_status" } | { "op": "project_create", name: string, goal: string,
+timeout_ms: number | null, } | { "op": "pane_get", pane: string, } | { "op": "pane_close", pane: string, } | { "op": "workspaces" } | { "op": "workspace_close", name: string, } | { "op": "workspace_rename", name: string, to: string, } | { "op": "pane_resize", pane: string, cols: number, rows: number, } | { "op": "pane_kill", pane: string, } | { "op": "pane_input", pane: string, data: B64, } | { "op": "pane_ctrl_enter", pane: string, trace: string | null, } | { "op": "pane_paste", pane: string, text: string, } | { "op": "pane_take", pane: string, } | { "op": "pane_release", pane: string, } | { "op": "pane_attach", pane: string, offset: number, total: number, sha256: string, data: B64, } | { "op": "pane_resume", pane: string, } | { "op": "pane_forget", pane: string, } | { "op": "pane_rename", pane: string, label: string | null, } | { "op": "workspace", name: string | null, } | { "op": "layout_apply", workspace: string | null, change: LayoutChange, } | { "op": "enroll_open", minutes: number, } | { "op": "enroll_close" } | { "op": "safety_show", project?: string, scope: SettingsScope, } | { "op": "safety_set", project?: string, scope: SettingsScope, key: string, value: string | null, expected: string, } | { "op": "profile_admin" } | { "op": "profile_plan", project?: string, change: ProfileChangeReq, } | { "op": "profile_apply", project?: string, change: ProfileChangeReq, expected: string, } | { "op": "work_root_show", machine: string, } | { "op": "work_root_check", machine: string, path: string | null, mount: string | null, } | { "op": "work_root_set", machine: string, path: string, mount: string | null, } | { "op": "hook_status", machine: string, } | { "op": "hook_set", machine: string, install: boolean, } | { "op": "enroll_pending" } | { "op": "machine_setup_start", target: string, } | { "op": "machine_setup_trust", job: string, host_key_sha256: string, } | { "op": "machine_setup_choose", job: string, os: string, arch: string, } | { "op": "machine_setup_cancel", job: string, } | { "op": "machine_setup_list" } | { "op": "enroll_guide" } | { "op": "enroll_approve", name: string, code: string, } | { "op": "machine_revoke", name: string, } | { "op": "web_pair", role: DeviceRole, } | { "op": "devices" } | { "op": "device_rename", id: string, label: string, } | { "op": "device_revoke", id: string, } | { "op": "install_publish", installation_id: string, } | { "op": "install_publish_status", installation_id: string, } | { "op": "web_publish" } | { "op": "web_publish_off" } | { "op": "web_status" } | { "op": "project_create", name: string, goal: string,
 /**
  * `PATH` 또는 `PATH@MACHINE`(머신이 없으면 host 머신, 상대 경로는 CLI가 절대 경로로 바꿔 보낸다)
  */
@@ -1011,7 +1097,7 @@ message: MessageView | null, } | { "kind": "context" } & ProjectContext | { "kin
 /**
  * `check`가 통과했을 때 설명
  */
-valid: string | null, } | { "kind": "task_board" } & TaskBoard | { "kind": "task_queue", entries: Array<TaskReservation>, } | { "kind": "task_archive", entries: Array<ArchivedTask>, } | { "kind": "task_edited", board: TaskBoard, conflict: TaskConflict | null, log_ids: number[], } | { "kind": "thread_start_preview" } & ThreadStartPreview | { "kind": "task_log", entries: Array<TaskLogEntry>, next: number | null, } | { "kind": "screen" } & ScreenText | { "kind": "read" } & ReadView | { "kind": "thread_pane" } & ThreadPaneView | { "kind": "output_matched", matched_line: string, read: ReadView, } | { "kind": "workspaces", workspaces: Array<WorkspaceSummary>, } | { "kind": "chat" } & ChatView | { "kind": "pane_file", info: FileInfo | null, candidates: Array<string>, url: string | null, } | { "kind": "pane_dir", listing: DirListing, } | { "kind": "pane_commands", list: CommandList, } | { "kind": "pending", pending: Array<PendingEnroll>,
+valid: string | null, } | { "kind": "task_board" } & TaskBoard | { "kind": "task_queue", entries: Array<TaskReservation>, } | { "kind": "task_archive", entries: Array<ArchivedTask>, } | { "kind": "task_edited", board: TaskBoard, conflict: TaskConflict | null, log_ids: number[], } | { "kind": "thread_start_preview" } & ThreadStartPreview | { "kind": "task_log", entries: Array<TaskLogEntry>, next: number | null, } | { "kind": "screen" } & ScreenText | { "kind": "read" } & ReadView | { "kind": "thread_pane" } & ThreadPaneView | { "kind": "output_matched", matched_line: string, read: ReadView, } | { "kind": "workspaces", workspaces: Array<WorkspaceSummary>, } | { "kind": "chat" } & ChatView | { "kind": "pane_file", info: FileInfo | null, candidates: Array<string>, url: string | null, } | { "kind": "pane_dir", listing: DirListing, } | { "kind": "pane_commands", list: CommandList, } | { "kind": "enroll_guide", guide: EnrollGuide, } | { "kind": "machine_setup", setup: MachineSetupView, } | { "kind": "machine_setups", setups: Array<MachineSetupView>, } | { "kind": "pending", pending: Array<PendingEnroll>,
 /**
  * 등록 창이 열려 있으면 닫히는 시각(ms, FRONT_API 1.80). 닫혔으면 생략
  */
@@ -1208,7 +1294,13 @@ export type ThreadGroup = "waiting_on_you" | "ready_for_review" | "landing" | "w
 
 export type ReportAttention = "completed" | "needs_user";
 
-export type ThreadView = { project: string, id: string, title: string, machine: string, profile: string, account?: string, role: Role,
+export type ThreadStage = "merge_ready" | "landing";
+
+export type ThreadView = {
+/**
+ * FRONT_API 1.95. 보고의 특정 판을 여는 프로젝트별 영속 번호(r-0001부터).
+ */
+report_id?: string, project: string, id: string, title: string, machine: string, profile: string, account?: string, role: Role,
 /**
  * (FrontResponse 태그 `kind`와 겹치지 않게 이름을 달리한다)
  */
@@ -1237,7 +1329,11 @@ cleanup_pending?: boolean, group: ThreadGroup, brief: BriefState, pane: string |
 /**
  * 추적하는 PR(§8.80)
  */
-pr: ThreadPr | null, report_hash: string | null, report_attention?: ReportAttention, acked_hash: string | null,
+pr: ThreadPr | null, report_hash: string | null, report_attention?: ReportAttention,
+/**
+ * 회수한 보고의 작업 단계. 옛 host·표지 없는 보고·끝난 thread는 생략한다.
+ */
+stage?: ThreadStage, acked_hash: string | null,
 /**
  * report.md `## Next` 줄
  */
@@ -1293,6 +1389,10 @@ pending: number, };
 
 export type ThreadQuestions = {
 /**
+ * FRONT_API 1.96. Questions 없는 검수 대기에 host가 만든 기본 검수 카드. B는 고칠 점을 글로 적는다.
+ */
+review: boolean,
+/**
  * 이 질문이 든 보고 사본의 hash. 답은 이 hash가 지금 보고일 때만 받는다
  */
 report_hash: string, items: Array<ThreadQuestion>,
@@ -1336,7 +1436,11 @@ body?: string, };
 
 export type AskKind = "question" | "request" | "task";
 
-export type AskRecord = { id: string, question_id?: string, kind: AskKind,
+export type AskRecord = {
+/**
+ * FRONT_API 1.96. 답할 때의 보고 판. 새 보고 뒤에도 같은 원문을 연다.
+ */
+report_id?: string, id: string, question_id?: string, kind: AskKind,
 /**
  * 질문은 thread 번호, 확인 필요 post는 inbox 항목 ID, 할 일은 task 제목
  */
@@ -1958,7 +2062,15 @@ on_agent: boolean,
  */
 mime: string, kind: FileKind, };
 
-export type LibraryView = { project: string, thread: string,
+export type LibraryView = {
+/**
+ * FRONT_API 1.95. 같은 이름·thread의 보고 판(최신 번호부터).
+ */
+versions: Array<string>,
+/**
+ * FRONT_API 1.95. 보고의 특정 판을 여는 프로젝트별 영속 번호(r-0001부터).
+ */
+report_id?: string, project: string, thread: string,
 /**
  * 회수한 report.md(없으면 None)
  */
@@ -1972,7 +2084,11 @@ link: LinkView | null,
  */
 from_thread?: string, };
 
-export type LinkView = { id: string, project: string, thread: string, base: string,
+export type LinkView = {
+/**
+ * FRONT_API 1.95. 보고의 특정 판을 여는 프로젝트별 영속 번호(r-0001부터).
+ */
+report_id?: string, id: string, project: string, thread: string, base: string,
 /**
  * 공개했을 때만 있는 절대 HTTPS 주소. loopback은 밖 알림에 싣지 않는다.
  */
@@ -1982,7 +2098,19 @@ url: string | null, created_at_ms: number, expires_at_ms: number, last_opened_at
  */
 size: number, };
 
-export type LibraryReport = { project: string, name: string, size: number, updated_at_ms: number, live: boolean,
+export type LibraryReport = {
+/**
+ * FRONT_API 1.95. 특정 판 사본의 보존 용량. size는 기존 최신 사본 크기다.
+ */
+history_size: number,
+/**
+ * FRONT_API 1.95. 같은 이름·thread의 보고 판(최신 번호부터).
+ */
+versions: Array<string>,
+/**
+ * FRONT_API 1.95. 보고의 특정 판을 여는 프로젝트별 영속 번호(r-0001부터).
+ */
+report_id?: string, project: string, name: string, size: number, updated_at_ms: number, live: boolean,
 /**
  * 읽기 실패·상한 초과도 목록에서 감추지 않는다.
  */

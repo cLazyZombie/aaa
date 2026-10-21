@@ -364,7 +364,7 @@ impl Host {
         let unlinked_threads = open
             .into_iter()
             .filter(|t| t.automation.is_none() && !linked.contains(&t.id))
-            .map(|t| TaskThread { id: t.id, title: t.title, group: t.group })
+            .map(|t| TaskThread { id: t.id, title: t.title, group: t.group, stage: t.stage })
             .collect();
         let notes_files = self.settings(project).task_notes.iter().map(|p| notes_file(&dir, p)).collect();
         Ok(TaskBoard {
