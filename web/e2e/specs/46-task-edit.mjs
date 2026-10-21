@@ -59,7 +59,7 @@ const expectFile = (got, want, what) => {
 
 export default async function ({ page }) {
   let md;
-  await step("편집 폼: 새 task 더하기, 제목·owner(사람으로 저장)·목록 바꾸기. 파일은 바뀐 블록만 바뀐다", async () => {
+  await step("편집 폼: 새 task 더하기, 제목·owner(사람으로 저장) 바꾸기(목록 칸은 없다, §8.389). 파일은 바뀐 블록만 바뀐다", async () => {
     // 앱 안 알림이 도구줄을 덮지 않게(43-tasks와 같다)
     const dialog = await openSettings(page, "알림");
     await dialog.getByRole("switch", { name: "앱 안에서" }).click();
@@ -84,18 +84,18 @@ export default async function ({ page }) {
     let want = START.replace("<!-- 모르는 줄 -->\n", "<!-- 모르는 줄 -->\n- [ ] 새 일 (me)\n  첫 줄\n  둘째 줄\n");
     expectFile(text, want, "더하기");
     await domIs(page, "더한 task 상세", () => document.querySelector('[data-testid="task-detail"]')?.getAttribute("aria-label") === "할 일 새 일");
-    // 있는 task: 제목·owner(사람)·목록 → 한 번에 고치고 옮긴다
+    // 있는 task: 제목·owner(사람)를 한 번에 고친다. 한 목록이라 폼에 목록 칸이 없고 자리는 그대로다
     await pickRow(page, "배포");
     await detail.getByTestId("task-field-title").fill("배포 준비");
     await detail.getByTestId("task-field-owner").selectOption("person");
     await detail.getByTestId("task-field-person").fill("Priya Rao");
-    await detail.getByTestId("task-field-list").selectOption("In progress");
+    if ((await detail.getByTestId("task-field-list").count()) !== 0) throw new Error("폼에 목록 칸이 남았다");
     await shot(page, "edit-desktop-form");
     before = await shaOf(page);
     await detail.getByTestId("task-save").click();
     text = await saved(page, before);
-    want = want.replace("- [ ] 배포 (me)\n", "").replace("  - 메모: 테스트 먼저\n", "  - 메모: 테스트 먼저\n- [ ] 배포 준비 (Priya Rao)\n");
-    expectFile(text, want, "고치고 옮기기");
+    want = want.replace("- [ ] 배포 (me)\n", "- [ ] 배포 준비 (Priya Rao)\n");
+    expectFile(text, want, "제자리 고치기");
     // 사람 이름을 「사람으로 저장」 없이 owner로 쓰면 거부하고 폼 안에 까닭을 보인다
     await pickRow(page, "원격 일");
     await detail.getByTestId("task-field-owner").selectOption("person");
@@ -122,57 +122,51 @@ export default async function ({ page }) {
     md = sha(text);
   });
 
-  await step("행 메뉴·끌기·Alt+↓: 같은 상위 안 순서와 목록 옮기기, 목록 머리 메뉴: 이름 바꾸기·빈 목록 지우기·새 목록", async () => {
+  await step("행 메뉴·끌기·Alt+↓: 한 목록 안 순서. 옛 `##` 머리를 넘어 옮기면 앞 이웃의 목록에 들고, 목록 머리 조작은 없다", async () => {
     const order = (text, list) => {
       const block = taskContent(text).split("## ").find((b) => b.startsWith(`${list}\n`)) ?? "";
       return block.split("\n").filter((l) => l.startsWith("- [")).map((l) => l.replace(/^- \[.\] /, "").replace(/ \(.*$/, ""));
     };
+    const lists = (text) => `${order(text, "In progress").join("|")} / ${order(text, "Backlog").join("|")}`;
     // 「문서 정리」 ⋯ → 위로
     let before = await shaOf(page);
     await row(page, "문서 정리").locator("[data-testid^='task-menu-']").click();
     await shot(page, "edit-desktop-row-menu");
     await page.getByRole("menuitem", { name: "위로", exact: true }).click();
     let text = await saved(page, before);
-    if (order(text, "Backlog").join("|") !== "정리|문서 정리|원격 일|새 일") throw new Error(`위로 ${order(text, "Backlog")}`);
-    // 끌기: 「원격 일」 손잡이를 「정리」 위 절반에 놓으면 그 앞
+    if (lists(text) !== "로그인 고치기 / 정리|배포 준비|문서 정리|원격 일|새 일") throw new Error(`위로 ${lists(text)}`);
+    // 끌기: 「원격 일」 손잡이를 「정리」 위 절반에 놓으면 그 앞. 앞 이웃(로그인 고치기)과 목록이 갈리는 틈이라 앞 목록 끝에 든다
     before = await shaOf(page);
     const target = row(page, "정리");
     const box = await target.boundingBox();
     await row(page, "원격 일").locator(".task-grip").dragTo(target, { targetPosition: { x: 40, y: 3 } });
     text = await saved(page, before);
-    if (order(text, "Backlog").join("|") !== "원격 일|정리|문서 정리|새 일") throw new Error(`끌기 ${order(text, "Backlog")} (${JSON.stringify(box)})`);
+    if (lists(text) !== "로그인 고치기|원격 일 / 정리|배포 준비|문서 정리|새 일") throw new Error(`끌기 ${lists(text)} (${JSON.stringify(box)})`);
     // Alt+↓: 키보드로 한 칸 아래
     before = await shaOf(page);
     await row(page, "원격 일").locator(".task-pick").focus();
     await page.keyboard.press("Alt+ArrowDown");
     text = await saved(page, before);
-    if (order(text, "Backlog").join("|") !== "정리|원격 일|문서 정리|새 일") throw new Error(`Alt+↓ ${order(text, "Backlog")}`);
-    // 목록 머리 ⋯ → 이름 바꾸기
+    if (lists(text) !== "로그인 고치기 / 정리|원격 일|배포 준비|문서 정리|새 일") throw new Error(`Alt+↓ ${lists(text)}`);
+    // 옛 목록 머리를 넘어 위로: 「정리」는 「로그인 고치기」 앞(In progress)으로
     before = await shaOf(page);
-    await page.getByTestId("task-list-menu-빈 목록").click();
-    await page.getByRole("menuitem", { name: "이름 바꾸기", exact: true }).click();
-    await page.getByTestId("task-name-input").fill("보관");
-    await page.getByTestId("task-name-save").click();
+    await row(page, "정리").locator("[data-testid^='task-menu-']").click();
+    await page.getByRole("menuitem", { name: "위로", exact: true }).click();
     text = await saved(page, before);
-    if (!taskContent(text).endsWith("## 보관\n") || text.includes("## 빈 목록")) throw new Error(text);
-    // 빈 목록 지우기, 새 목록
+    if (lists(text) !== "정리|로그인 고치기 / 원격 일|배포 준비|문서 정리|새 일") throw new Error(`머리 넘어 위로 ${lists(text)}`);
+    // 다시 한 칸 아래: 두 이웃의 목록이 다르면 앞 이웃(로그인 고치기)의 목록 끝에 남는다. 화면 차례는 로그인 고치기 → 정리 → 원격 일
     before = await shaOf(page);
-    await page.getByTestId("task-list-menu-보관").click();
-    await page.getByRole("menuitem", { name: "빈 목록 지우기", exact: true }).click();
+    await row(page, "정리").locator(".task-pick").focus();
+    await page.keyboard.press("Alt+ArrowDown");
     text = await saved(page, before);
-    if (text.includes("## 보관")) throw new Error(text);
-    before = await shaOf(page);
-    await page.getByTestId("tasks-list-add").click();
-    await page.getByTestId("task-name-input").fill("다음 주");
-    await page.getByTestId("task-name-save").click();
-    text = await saved(page, before);
-    if (!taskContent(text).endsWith("\n## 다음 주\n")) throw new Error(text);
-    // 다른 목록으로(메뉴)
-    before = await shaOf(page);
-    await row(page, "문서 정리").locator("[data-testid^='task-menu-']").click();
-    await page.getByRole("menuitem", { name: "다음 주(으)로 옮기기", exact: true }).click();
-    text = await saved(page, before);
-    if (!taskContent(text).endsWith("## 다음 주\n- [ ] 문서 정리\n")) throw new Error(text);
+    if (lists(text) !== "로그인 고치기|정리 / 원격 일|배포 준비|문서 정리|새 일") throw new Error(`머리 넘어 아래로 ${lists(text)}`);
+    const shown = await page.getByTestId("tasks-rest").locator(".task-row").evaluateAll((els) => els.map((e) => e.dataset.title.replace(/ \(.*$/, "")));
+    if (shown.slice(0, 3).join("|") !== "로그인 고치기|정리|원격 일") throw new Error(`화면 차례 ${shown}`);
+    // 한 목록: 목록 머리·머리 메뉴·「새 목록」이 없고, 파일의 옛 머리(task 없는 「빈 목록」 포함)는 그대로 남는다
+    for (const sel of ['[data-testid^="task-list-menu-"]', '[data-testid="tasks-list-add"]', ".task-list-toggle"]) {
+      if ((await page.getByTestId("tasks-list").locator(sel).count()) !== 0) throw new Error(`목록 머리 조작 ${sel}`);
+    }
+    if (!taskContent(text).includes("## In progress\n") || !taskContent(text).endsWith("## 빈 목록\n")) throw new Error(text);
     md = sha(text);
   });
 
@@ -339,7 +333,7 @@ export default async function ({ page }) {
       before = await shaOf(p);
       await sheet.getByRole("button", { name: "맨 위로" }).click();
       text = await saved(p, before);
-      if (!taskContent(text).includes("나중 일은 memory/later.md에 모은다\n- [ ] 휴대폰 일\n- [ ] 정리\n")) throw new Error(text);
+      if (!taskContent(text).includes("## In progress\n- [ ] 휴대폰 일\n- [ ] 로그인 고치기 (me)\n")) throw new Error(text);
       md = sha(text);
     } finally {
       await p.context().close();
@@ -365,8 +359,6 @@ export default async function ({ page }) {
           await p.getByTestId("task-field-notes").fill("메모 입력 확인");
           await p.getByTestId("task-field-owner").selectOption("person");
           await p.getByTestId("task-field-person").fill("담당자");
-          await p.getByTestId("task-field-list").selectOption({ label: "+ 새 목록…" });
-          await p.getByTestId("task-field-new-list").fill("새 목록");
           await readable(p.getByTestId("task-detail"));
           await shot(p, `input-font-${name}-phone`);
           await p.setViewportSize({ width: 844, height: 390 });
@@ -377,9 +369,6 @@ export default async function ({ page }) {
           await p.getByTestId("task-raw-text").fill("# 원문 입력 확인\n");
           await readable(p.getByTestId("task-raw-editor"));
           await p.keyboard.press("Escape");
-          await p.getByTestId("tasks-list-add").click();
-          await p.getByTestId("task-name-input").fill("목록 입력 확인");
-          await readable(p.getByTestId("task-name-dialog"));
         } finally {
           await p.context().close();
         }

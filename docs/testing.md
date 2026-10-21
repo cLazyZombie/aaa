@@ -2,6 +2,16 @@
 
 새 기능을 만드는 thread가 따르는 짧은 규칙이다. 근거는 참고 넷(herdr 0.9.5·herdr-projects 0.2.35·herdr-web-ui `aa624cb`·t3code `4b1024da`)과 이 저장소에서 실제로 난 간헐 실패다. 전략과 도구 목록은 [plan §13](plan.md#13-테스트-전략과-직접-만들-e2e-도구)에 있다.
 
+## 할 일 한 목록·예약 맨 위(t-0611, plan §8.389)
+
+- `node web/e2e/web.e2e.mjs --spec 76-task-one-list --workers 1`: 자리 한도를 채운 실제 host에 CLI로 예약을 넣고, Chromium 1280px에서
+  맨 위 예약 차례·하위 함께·확인 필요의 노란 표지와 상세의 까닭을 본다. 끌기로 예약 차례 바꾸기·일반 → 예약(내용 확인 뒤 그 자리)·
+  예약 → 아래(풀기와 원래 자리 알림)를 하고 host `task queue` 차례와 대조한다. 「예약」 칩·저장소 거르기의 숨은 예약 줄, 거른 채
+  Alt+↓, 새로고침 뒤 기억을 확인한다. 휴대폰(Chromium·WebKit 390px)은 맨 위 차례와 「순서」 ▲▼·⋯ 시트 풀기를 확인한다.
+- `node --test web/test/tasksModel.test.mjs`의 「할 일 한 목록과 예약」은 행 배치(2A·crumb·숨은 예약 줄), 예약 순번(끌어 놓기·
+  보이는 이웃과 바꾸기), 예약 푼 자리, 옛 `##` 틈의 옮기기 규칙을 검사한다. 43·46·67은 목록 머리 대신 한 목록 차례를 본다.
+- DOM·host 기록으로 끝내며 고정 sleep·재시도·시한 연장은 없다.
+
 ## 할 일 머신 연결 목록(t-0600, plan §8.388)
 
 - `node web/e2e/web.e2e.mjs --spec 75-task-owners --workers 1`: 실제 실험실 agent를 끊은 동안 할 일을 처음 열고,

@@ -2,20 +2,21 @@
 // 화면 동작 → host 동작(TaskOp), 「나중」 항목 나누기, 기록 차이. thread 연결(T3, §8.316)은 확인 필요 상태, coordinator에게 맡기는
 // 글, 맡길 수 있는 task, 잇기·풀기 동작, 자동 정리 알림.
 // host `tasks`(TaskBoard)는 TASKS.md를 그대로 읽은 것이고, 여기서는 판단하지 않고 보이는 차례와 표지만 정한다.
-import type { TaskAction, TaskAnchor, TaskBoard, TaskLogEntry, TaskOp, TaskView, ThreadGroup, ThreadStartPreview } from "./gen/proto";
+import type { TaskAction, TaskAnchor, TaskBoard, TaskLogEntry, TaskOp, TaskReservation, TaskView, ThreadGroup, ThreadStartPreview } from "./gen/proto";
 
 /** 행 상태(`data-task-state`): 형식 어긋남 ▲ > 확인 필요 ⚠(이어진 thread가 끝났는데 완료로 판정하지 못함, host `attention`) >
  * 진행 중 ◉(열린 thread와 이어짐) > 대기 ○ */
 export type TaskState = "problem" | "check" | "run" | "wait";
 
-/** 거르기 칩: 전체·내 일(me)·미할당·진행 중·확인 필요 */
-export type TaskFilter = "all" | "mine" | "unassigned" | "running" | "check";
+/** 거르기 칩: 전체·내 일(me)·미할당·진행 중·예약(자리 나면 시작, 한 목록 §8.389)·확인 필요 */
+export type TaskFilter = "all" | "mine" | "unassigned" | "running" | "reserved" | "check";
 
 export const TASK_FILTERS: readonly { id: TaskFilter; label: string }[] = [
   { id: "all", label: "전체" },
   { id: "mine", label: "내 일" },
   { id: "unassigned", label: "미할당" },
   { id: "running", label: "진행 중" },
+  { id: "reserved", label: "예약" },
   { id: "check", label: "확인 필요" },
 ];
 
@@ -119,12 +120,159 @@ export function taskDepth(t: TaskView, byLine: ReadonlyMap<number, TaskView>): n
   return depth;
 }
 
-/** 목록(`##`)마다 맞는 task. 모든 목록을 파일 차례대로 둔다(거르기로 비면 `tasks`가 빈 목록) */
-export function taskSections(board: TaskBoard, filter: TaskFilter, query: string, groups: ThreadGroups): { name: string; notes: string[]; total: number; tasks: TaskView[] }[] {
-  return board.lists.map((l) => {
-    const mine = board.tasks.filter((t) => t.list === l.name);
-    return { name: l.name, notes: l.notes, total: mine.length, tasks: mine.filter((t) => taskMatches(t, filter, query, groups)) };
-  });
+// ───────────── 한 목록(plan §8.389, t-0611) ─────────────
+// 「## 목록」 머리로 나누지 않고 파일 차례 그대로 한 목록이다(옛 파일의 `##`는 그대로 읽고 쓴다). 맨 위에 host 예약 차례대로 예약을,
+// 그 밑에 일반 할 일을 둔다. 예약 차례의 정본은 host 예약 기록이다(t-0564): 화면은 차례를 들고 있지 않고 `board.queue`를 그대로 따른다.
+
+/** 아직 시작하지 않은 예약(자리 대기·확인 필요), 예약 차례대로. 시작한(시작 중·진행) 예약은 원래 자리에 진행 중으로 보인다(1A) */
+export function pendingQueue(board: TaskBoard | null): TaskReservation[] {
+  return (board?.queue ?? []).filter((q) => q.state === "queued" || q.state === "check").sort((a, b) => a.position - b.position);
+}
+
+/** 예약을 기다리게 하는 특별한 까닭(머신 연결 대기·확인 필요 등). 그냥 자리 대기면 없음: 행에는 쓰지 않고 상세에만 보인다 */
+export function queueWhy(q: TaskReservation): string | null {
+  return q.state === "check" || q.reason !== "자리 대기" ? q.reason : null;
+}
+
+/** 저장소 거르기 값: 저장소 이름·`작업 폴더`, 정하지 않은 task는 빈 글 */
+export function repoKey(t: Pick<TaskView, "repo">): string {
+  return t.repo ?? "";
+}
+
+/** 저장소 거르기 고르기(전체 다음): project.toml 차례의 저장소, 작업 폴더, 목록에만 있는 이름, 정하지 않음. task 수를 함께 */
+export function repoChoices(board: TaskBoard | null): { key: string; label: string; n: number }[] {
+  if (!board) return [];
+  const count = (k: string) => board.tasks.filter((t) => repoKey(t) === k).length;
+  const keys = [...(board.repos ?? [])];
+  for (const k of [REPO_DIR, ...board.tasks.map(repoKey).filter((k) => k !== "")]) if (!keys.includes(k) && (k === REPO_DIR ? count(k) > 0 : true)) keys.push(k);
+  const out = keys.map((k) => ({ key: k, label: k, n: count(k) }));
+  if (count("") > 0) out.push({ key: "", label: "정하지 않음", n: count("") });
+  return out;
+}
+
+/** 한 목록의 행. `reserved`는 맨 위 예약(차례대로), `under`는 예약한 상위를 따라 올라온 하위(2A), `gap`은 저장소로 거를 때 사이에 숨은 예약,
+ * `task`는 일반 할 일(파일 차례) */
+export type TaskListRow =
+  | { kind: "reserved"; key: string; t: TaskView; q: TaskReservation; crumb: TaskView | null; missing: boolean }
+  | { kind: "under"; key: string; t: TaskView; depth: number }
+  | { kind: "gap"; key: string; n: number; repos: string[] }
+  | { kind: "task"; key: string; t: TaskView; depth: number; reservedKids: number };
+
+export interface TaskListModel {
+  /** 맨 위 예약 묶음(예약·따라 올라온 하위·숨은 예약 줄) */
+  top: TaskListRow[];
+  /** 그 밑 일반 할 일 */
+  rest: TaskListRow[];
+  /** 거르기 칩 수(저장소 거르기 안에서) */
+  counts: Record<TaskFilter, number>;
+  /** 저장소 거르기 안의 task 수 */
+  inRepo: number;
+}
+
+/**
+ * 한 목록(plan §8.389): 예약은 맨 위 예약 차례대로, 그 밑에 일반 할 일이 파일 차례로. 상위를 예약하면 하위가 그 밑에 함께 올라가고(2A),
+ * 하위만 예약하면 상위 경로(crumb)가 붙고 상위 행에 「하위 N 예약됨」이 붙는다. 상태 거르기와 저장소 거르기는 함께 걸린다. 저장소로 걸러
+ * 숨은 예약은 그 자리에 흐린 한 줄(`gap`)로 남긴다(차례는 그대로다). `repo`가 null이면 전체다.
+ */
+export function taskList(board: TaskBoard, filter: TaskFilter, query: string, repo: string | null, groups: ThreadGroups): TaskListModel {
+  const byLine = new Map(board.tasks.map((t) => [t.line, t]));
+  const byId = new Map(board.tasks.filter((t) => t.id).map((t) => [t.id!, t]));
+  const pending = pendingQueue(board);
+  const reservedLines = new Set(pending.flatMap((q) => { const t = byId.get(q.task_id); return t ? [t.line] : []; }));
+  const inRepo = (t: TaskView) => repo === null || repoKey(t) === repo;
+  const matches = (t: TaskView) => taskMatches(t, filter === "reserved" ? "all" : filter, query, groups);
+  // 예약한 조상이 있나(있으면 그 예약 밑에 따라 올라간다)
+  const underReserved = (t: TaskView) => {
+    const seen = new Set<number>();
+    for (let up = t.parent; up !== null && !seen.has(up); up = byLine.get(up)?.parent ?? null) {
+      seen.add(up);
+      if (reservedLines.has(up)) return true;
+    }
+    return false;
+  };
+  const top: TaskListRow[] = [];
+  let hidden: TaskView[] = [];
+  const flush = () => {
+    if (hidden.length > 0) top.push({ kind: "gap", key: `gap:${top.length}`, n: hidden.length, repos: [...new Set(hidden.map((t) => repoKey(t) || "정하지 않음"))] });
+    hidden = [];
+  };
+  for (const q of pending) {
+    const live = byId.get(q.task_id);
+    const t = live ?? q.task;
+    if (!inRepo(t)) {
+      hidden.push(t);
+      continue;
+    }
+    if (!matches(t)) continue;
+    flush();
+    const parent = live && t.parent !== null ? (byLine.get(t.parent) ?? null) : null;
+    top.push({ kind: "reserved", key: `q:${q.task_id}`, t, q, crumb: parent, missing: !live });
+    if (!live || filter === "reserved") continue;
+    // 하위는 따로 예약한 것이 아니면 상위 밑에 함께(2A). 따로 예약한 하위는 제 차례에 보인다
+    const kids = descendants(board, t);
+    const depth = taskDepth(t, byLine);
+    for (const k of board.tasks) {
+      if (kids.has(k.line) && !reservedLines.has(k.line) && inRepo(k) && matches(k)) top.push({ kind: "under", key: `u:${k.line}`, t: k, depth: taskDepth(k, byLine) - depth });
+    }
+  }
+  if (top.some((r) => r.kind === "reserved")) flush();
+  else top.length = 0;
+  const rest: TaskListRow[] = [];
+  if (filter !== "reserved") {
+    for (const t of board.tasks) {
+      if (reservedLines.has(t.line) || underReserved(t) || !inRepo(t) || !matches(t)) continue;
+      let reservedKids = 0;
+      for (const l of descendants(board, t)) if (reservedLines.has(l)) reservedKids += 1;
+      rest.push({ kind: "task", key: `t:${t.line}`, t, depth: taskDepth(t, byLine), reservedKids });
+    }
+  }
+  const scoped = board.tasks.filter(inRepo);
+  const counts: Record<TaskFilter, number> = {
+    all: scoped.length,
+    mine: scoped.filter((t) => t.owner === "me").length,
+    unassigned: scoped.filter(unassigned).length,
+    running: scoped.filter((t) => taskState(t, groups) === "run").length,
+    reserved: pending.filter((q) => inRepo(byId.get(q.task_id) ?? q.task)).length,
+    check: scoped.filter((t) => taskState(t, groups) === "check").length,
+  };
+  return { top, rest, counts, inRepo: scoped.length };
+}
+
+/**
+ * 예약 차례 바꾸기의 host 순번(`QueueOp::Move`의 `position`, 1부터). `id`를 빼고 남은 차례에서 `target` 앞·뒤에 넣는다. 아직 예약하지
+ * 않은 task(일반 → 예약 끌기)는 `id`가 차례에 없다. 거른 채 옮겨도 보이는 행 바로 위·아래로 들어가고 숨은 예약의 차례는 그대로다.
+ * 같은 자리·없는 대상이면 null
+ */
+export function queueDropPosition(order: readonly string[], id: string, target: string, side: "before" | "after"): number | null {
+  const others = order.filter((x) => x !== id);
+  const at = others.indexOf(target);
+  if (at < 0 || target === id) return null;
+  const i = side === "before" ? at : at + 1;
+  if (order.includes(id) && order.indexOf(id) === i) return null;
+  return i + 1;
+}
+
+/** 예약 위로·아래로·맨 앞으로의 host 순번. 위로·아래로는 보이는(`visible`) 이웃 예약과 자리를 바꾸고 사이에 숨은 예약은 그대로 둔다.
+ * 맨 앞으로는 전체 맨 앞이다. 더 갈 곳이 없으면 null */
+export function queueStep(order: readonly string[], id: string, dir: MoveDir, visible: (id: string) => boolean = () => true): number | null {
+  const at = order.indexOf(id);
+  if (at < 0) return null;
+  if (dir === "top") return at === 0 ? null : 1;
+  const seen = order.filter((x) => x === id || visible(x));
+  const k = seen.indexOf(id);
+  const other = seen[dir === "up" ? k - 1 : k + 1];
+  return other === undefined ? null : queueDropPosition(order, id, other, dir === "up" ? "before" : "after");
+}
+
+/** 예약을 풀면 돌아갈 자리(예약 전 자리, 파일 차례): 같은 상위의 다음 일반 할 일 바로 위, 없으면 상위의 하위 끝·목록 맨 끝 */
+export function unreserveHome(board: TaskBoard, t: TaskView): string {
+  const reserved = new Set(pendingQueue(board).map((q) => q.task_id));
+  const sibs = siblings(board, t);
+  const next = sibs.slice(sibs.findIndex((x) => x.line === t.line) + 1).find((x) => !x.id || !reserved.has(x.id));
+  const name = (x: TaskView) => (x.short_id ? `${x.short_id} ${x.title}` : x.title);
+  if (next) return `${name(next)} 바로 위`;
+  const parent = t.parent !== null ? board.tasks.find((x) => x.line === t.parent) : undefined;
+  return parent ? `${name(parent)} 하위 끝` : "목록 맨 끝";
 }
 
 /** 상세가 가리키는 task(제목은 파일 안에서 하나다: `--from-task`가 제목으로 찾는다). 같은 제목이 둘이면 줄이 같은 것 */
@@ -142,9 +290,9 @@ export function anchorOf(t: TaskView): TaskAnchor {
   return { list: t.list, title: t.title, block_sha256: t.block_sha256, line: t.line };
 }
 
-/** 같은 목록·같은 상위의 task(파일 차례) */
+/** 같은 상위의 task(파일 차례). 맨 위 단계는 `##` 목록을 가리지 않는다(한 목록, §8.389) */
 export function siblings(board: TaskBoard, t: TaskView): TaskView[] {
-  return board.tasks.filter((x) => x.list === t.list && x.parent === t.parent);
+  return board.tasks.filter((x) => x.parent === t.parent);
 }
 
 /** 그 task 아래의 모든 하위 task 줄 */
@@ -171,22 +319,39 @@ const move = (t: TaskView, place: { to_list?: string; before?: TaskView; parent?
   parent: place.parent ? anchorOf(place.parent) : null,
 });
 
-/** 그 자리(같은 상위)의 끝으로: 하위면 상위의 하위 끝, 아니면 목록 끝 */
+/** 그 자리(같은 상위)의 끝으로: 하위면 상위의 하위 끝, 아니면 `of`가 든 `##` 목록 끝 */
 function toEnd(board: TaskBoard, t: TaskView, of: TaskView): TaskOp {
   const parent = of.parent !== null ? board.tasks.find((x) => x.line === of.parent) : undefined;
   return parent ? move(t, { parent }) : move(t, { to_list: of.list });
 }
 
+/**
+ * 같은 상위의 `prev`와 `next` 사이로. 화면은 한 목록이지만 파일에는 옛 `##` 목록이 남아 있을 수 있다: 두 이웃의 목록이 다르면 앞 이웃의
+ * 목록 끝에 붙인다(옮긴 task의 목록이 뒤 목록 머리 밑으로 바뀌지 않게). 보이는 차례는 어느 쪽이든 같다
+ */
+function between(board: TaskBoard, t: TaskView, prev: TaskView | undefined, next: TaskView | undefined): TaskOp | null {
+  if (next && (!prev || prev.list === next.list || next.parent !== null)) return move(t, { before: next });
+  return prev ? toEnd(board, t, prev) : null;
+}
+
 export type MoveDir = "up" | "down" | "top";
 
-/** 행 메뉴의 위로·아래로·맨 위로(휴대폰은 끌기 대신 이것, t-0469 §3.3). 그 자리면 없음 */
-export function moveOp(board: TaskBoard, t: TaskView, dir: MoveDir): TaskOp | null {
+/**
+ * 행 메뉴의 위로·아래로·맨 위로(휴대폰은 끌기 대신 이것, t-0469 §3.3). 그 자리면 없음. `visible`이면 거른 채 보이는 이웃과 자리를 바꾸고
+ * 사이에 숨은 task의 차례는 그대로 둔다(§8.389). 맨 위로는 전체 맨 위다
+ */
+export function moveOp(board: TaskBoard, t: TaskView, dir: MoveDir, visible: (x: TaskView) => boolean = () => true): TaskOp | null {
   const sibs = siblings(board, t);
   const i = sibs.findIndex((x) => x.line === t.line);
   if (i < 0) return null;
-  if (dir === "up" || dir === "top") return i > 0 ? move(t, { before: sibs[dir === "up" ? i - 1 : 0] }) : null;
-  if (i >= sibs.length - 1) return null;
-  return i + 2 < sibs.length ? move(t, { before: sibs[i + 2] }) : toEnd(board, t, t);
+  if (dir === "top") return i > 0 ? move(t, { before: sibs[0] }) : null;
+  const seen = sibs.filter((x) => x.line === t.line || visible(x));
+  const k = seen.findIndex((x) => x.line === t.line);
+  const other = seen[dir === "up" ? k - 1 : k + 1];
+  if (!other) return null;
+  const rest = sibs.filter((x) => x.line !== t.line);
+  const j = rest.findIndex((x) => x.line === other.line);
+  return dir === "up" ? between(board, t, rest[j - 1], other) : between(board, t, other, rest[j + 1]);
 }
 
 /** 끌어 놓기: `target` 앞이나 뒤(그 task와 같은 상위가 된다). 자기·자기 하위 위, 지금 자리면 없음 */
@@ -194,17 +359,12 @@ export function dropOp(board: TaskBoard, dragged: TaskView, target: TaskView, si
   if (target.line === dragged.line || descendants(board, dragged).has(target.line)) return null;
   const sibs = siblings(board, target).filter((x) => x.line !== dragged.line);
   const i = sibs.findIndex((x) => x.line === target.line);
-  const next = side === "before" ? sibs[i] : sibs[i + 1];
+  const [prev, next] = side === "before" ? [sibs[i - 1], sibs[i]] : [sibs[i], sibs[i + 1]];
   const same = siblings(board, dragged);
   const at = same.findIndex((x) => x.line === dragged.line);
   // 같은 자리에 다시 놓았다
-  if (dragged.list === target.list && dragged.parent === target.parent && (next ? same[at + 1]?.line === next.line : at === same.length - 1)) return null;
-  return next ? move(dragged, { before: next }) : toEnd(board, dragged, target);
-}
-
-/** 목록 머리에 놓기·「다른 목록으로」: 그 목록 끝(맨 위 단계) */
-export function toListOp(t: TaskView, list: string): TaskOp | null {
-  return t.list === list && t.parent === null ? null : move(t, { to_list: list });
+  if (dragged.parent === target.parent && (next ? same[at + 1]?.line === next.line : at === same.length - 1)) return null;
+  return between(board, dragged, prev, next);
 }
 
 /** owner 글의 종류: 미할당·나·agent(모델·머신)·사람 이름 */
