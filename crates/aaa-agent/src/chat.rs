@@ -1,13 +1,14 @@
 //! harness 대화 기록 보기(§8.27, 읽기 전용). Claude·Codex가 남긴 jsonl 기록의 끝부분에서 사람이 읽을 줄만 골라 낸다.
 //!
-//! - 경로는 믿지 않는다. hook은 세션 안에서 누구나 보낼 수 있다. 그래서 이 agent 프로세스의 환경으로 정한 기록 폴더
-//!   (`$CLAUDE_CONFIG_DIR`|`~/.claude`의 `projects/`, `$CODEX_HOME`|`~/.codex`의 `sessions/`) 안의 일반 `.jsonl` 파일만 읽는다.
+//! - 경로는 믿지 않는다. hook은 세션 안에서 누구나 보낼 수 있다. 그래서 저장된 실행 spec의 계정 홈·CODEX_HOME 또는
+//!   agent 환경의 기록 폴더(`$CLAUDE_CONFIG_DIR`|`~/.claude`의 `projects/`, `$CODEX_HOME`|`~/.codex`의 `sessions/`) 안의
+//!   일반 `.jsonl` 파일만 읽는다.
 //!   symlink는 실제 위치로 풀어 본다.
 //! - 터미널보다 많이 보이지 않는다: 도구 결과 본문·하위 agent(sidechain)·시스템이 끼운 글은 뺀다. 생각(thinking)은 웹 「생각 표시」를
 //!   켠 화면이 청할 때만 싣는다(herdr-web-ui `showThinking`, plan §8.129).
 //! - 기록은 byte/블록 cursor로 앞으로 읽는다(chat_pages). host는 별도 대화 사본을 보관하지 않는다.
 
-use std::io::{Read, Seek, SeekFrom};
+use std::io::{BufRead, Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
 
 use aaa_proto::{ChatMessage, ChatRole};
@@ -78,6 +79,59 @@ pub(crate) fn codex_file(root: &Path, id: &str) -> Result<PathBuf, String> {
         }
     }
     Err("Codex 기록 파일을 찾지 못했다".into())
+}
+
+/// 계정 실행의 전용 홈에서만 ID가 다른 SessionStart를 보완한다. 공유 홈에서는 추측하지 않는다.
+/// 같은 실행 이후 시작한 CLI 기록의 cwd를 대조하며, 둘 이상이면 고르지 않는다.
+pub(crate) fn codex_account_file(root: &Path, id: &str, cwd: &Path, started_ms: u64) -> Result<PathBuf, String> {
+    if let Ok(path) = codex_file(root, id) {
+        return Ok(path);
+    }
+    if !aaa_common::util::harness_session_ok(id) {
+        return Err("Codex thread-id 형식이 아니다".into());
+    }
+    let cwd = std::fs::canonicalize(cwd).map_err(|_| "실행 작업 폴더가 없다")?;
+    let mut found = None;
+    let mut dirs = vec![(root.to_path_buf(), 0)];
+    while let Some((dir, depth)) = dirs.pop() {
+        let Ok(rd) = std::fs::read_dir(dir) else { continue };
+        for entry in rd.flatten() {
+            let Ok(kind) = entry.file_type() else { continue };
+            if kind.is_dir() && depth < 3 {
+                dirs.push((entry.path(), depth + 1));
+                continue;
+            }
+            let name = entry.file_name().to_string_lossy().into_owned();
+            if !kind.is_file() || !name.starts_with("rollout-") || !name.ends_with(".jsonl") {
+                continue;
+            }
+            let Ok(path) = inside(root, &entry.path()) else { continue };
+            let Ok(file) = std::fs::File::open(&path) else { continue };
+            // session_meta 첫 줄만 읽는다. 손상된 거대 줄·FIFO·symlink를 따라가지 않는다.
+            let mut bytes = Vec::new();
+            if std::io::BufReader::new(file.take(CHUNK)).read_until(b'\n', &mut bytes).is_err()
+                || bytes.last() != Some(&b'\n')
+            {
+                continue;
+            }
+            let Ok(meta) = serde_json::from_slice::<Value>(&bytes) else { continue };
+            let p = &meta["payload"];
+            if meta["type"] != "session_meta"
+                || p["source"] != "cli"
+                || !p["timestamp"].as_str().and_then(aaa_common::util::parse_iso).is_some_and(|t| t >= started_ms)
+                || !p["id"]
+                    .as_str()
+                    .is_some_and(|s| aaa_common::util::harness_session_ok(s) && name.ends_with(&format!("-{s}.jsonl")))
+                || !p["cwd"].as_str().and_then(|s| std::fs::canonicalize(s).ok()).is_some_and(|p| p == cwd)
+            {
+                continue;
+            }
+            if found.replace(path).is_some() {
+                return Err("이 실행의 Codex 기록 후보가 여러 개라 고르지 못했다".into());
+            }
+        }
+    }
+    found.ok_or_else(|| "Codex 기록 파일을 찾지 못했다".into())
 }
 
 fn clip(t: &str) -> String {

@@ -598,7 +598,9 @@ mod post_tests {
         assert_eq!(std::fs::read(dir.join("library").join(&rid).join("stable.bin")).unwrap(), clean);
         assert_eq!(std::fs::read_to_string(dir.join("threads").join(format!("{rid}.md"))).unwrap(), stored);
         fake.abort();
-        running.abort();
+        // 취소 완료로 peer를 닫고 연결 정리까지 기다려야 Windows에서도 DB 핸들이 풀린다.
+        assert!(fake.await.unwrap_err().is_cancelled());
+        running.await.unwrap().unwrap();
         drop(host);
         std::fs::remove_dir_all(path).unwrap();
     }

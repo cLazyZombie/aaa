@@ -493,7 +493,7 @@ async function openSettings(p, pageName) {
 // setup(ctx): 화면을 열기 전에 context에 건다(lib/devices.mjs가 기기 기록 binding과 그 기기의 규칙을 건다)
 // hash: 처음 여는 주소(`#pane=<id>`: 첫 화면이 그 pane이다, `paneHash`). 없으면 첫 화면은 기억한 것·첫 pane(App.tsx firstPick).
 // onPage(page): 주소를 열기 전에(첫 화면이 여는 WebSocket까지 듣게)
-// at: 실험실 주소 대신 열 주소(끝 `/`까지, 78-passkey의 `http://localhost:<port>/`). 없으면 base
+// at: 실험실 주소 대신 열 주소(끝 `/`까지, 79-passkey의 `http://localhost:<port>/`). 없으면 base
 async function pairPage(browser, code, viewport, { userAgent, platform, colorScheme, deviceScaleFactor, touch, init, line, wsRoute, route, serviceWorkers, setup, hash, onPage, at } = {}) {
   const ctx = await browser.newContext({
     viewport,

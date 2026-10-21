@@ -6,7 +6,7 @@ import os from "node:os";
 import path from "node:path";
 import { test } from "node:test";
 import { setTimeout as delay } from "node:timers/promises";
-import { terminateSessionHosts } from "../e2e/lib/session-cleanup.mjs";
+import { terminateSessionHosts, terminateDeployGuards } from "../e2e/lib/session-cleanup.mjs";
 
 function alive(pid) {
   const out = execFileSync("ps", ["-axo", "pid=,stat="], { encoding: "utf8" });
@@ -89,4 +89,32 @@ test("session host뿐 아니라 분리된 writer 자손의 종료 뒤 폴더를 
   for (const child of children.slice(2)) assert.equal(alive(child.pid), true, "관계없는 긴 argv 프로세스를 보존한다");
   fs.rmSync(root, { recursive: true });
   assert.equal(fs.existsSync(root), false, "재시도 없이 한 번에 폴더를 지운다");
+});
+
+test("배포 감시는 기록 PID의 명령줄을 조회하고 다른 프로세스는 보존한다", { skip: process.platform === "win32", timeout: 30_000 }, async (t) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "aaa-guard-cleanup-"));
+  const dir = path.join(root, "agent", "deployments");
+  fs.mkdirSync(dir, { recursive: true });
+  const children = [];
+  t.after(async () => {
+    for (const child of children) {
+      if (child.exitCode === null && child.signalCode === null) {
+        const ended = once(child, "exit");
+        child.kill("SIGKILL");
+        await ended;
+      }
+    }
+    fs.rmSync(root, { recursive: true });
+  });
+  for (const [name, args] of [["owned", ["deployment-guard", root]], ["foreign", ["unrelated"]]]) {
+    const child = spawn(process.execPath, ["-e", "process.send('ready'); process.stdin.resume();", ...args], {
+      stdio: ["pipe", "ignore", "inherit", "ipc"],
+    });
+    children.push(child);
+    await once(child, "message");
+    fs.writeFileSync(path.join(dir, `${name}.guard.json`), JSON.stringify({ worker_pid: child.pid }));
+  }
+  await terminateDeployGuards(root);
+  assert.equal(alive(children[0].pid), false, "소유한 배포 감시 종료를 기다린다");
+  assert.equal(alive(children[1].pid), true, "기록 PID여도 명령줄이 다르면 보존한다");
 });
