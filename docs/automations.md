@@ -91,6 +91,14 @@ batch = "1m"
 
 조건은 `on.schedule`(every 또는 daily·catch_up), `on.command`(every/daily·command·machine), `on.thread`(events·repos), `on.pr`(events), `on.ci`(repo·branches·workflows·events·machine), `on.git`(repo·branches·events·machine) 중 하나다. `on.thread`는 처음 읽을 때 현재 flow를 기준으로 잡고 이후 사건만 받는다. thread 없는 사건의 repos 필터는 사건 repo를 쓴다. post·메시지 등 자기 동작을 다시 깨우는 사건은 받지 않는다. 자동화(`do.start`)가 띄운 thread의 사건도 기본으로 받지 않는다: 그 thread의 보고가 규칙을 깨워 다시 thread를 띄우는 고리를 막는다. 다른 규칙이 띄운 thread의 사건까지 받으려면 `include_automation = true`를 적는다. 그래도 그 규칙 자신이 띄운 thread의 사건은 늘 뺀다. 변환된 규칙은 include_automation을 명시해 기존 사건 범위를 유지한다.
 
+`on.git` + `do.start`도 자기 착지로 다시 thread를 띄우는 고리를 기본으로 막는다. `pushed`의 새 커밋 목록에서
+`병합:`으로 시작하는 첫 줄들을 보고, 끝의 `(t-NNNN)`에 해당하는 thread의 저장된 자동화 출처가 모두
+이 규칙이면 시작을 건너뛴다. 다른 규칙이나 사람이 띄운 thread의 병합이 하나라도 섞이면 사건 전체를 그대로 받는다.
+병합 안의 일반 커밋은 이 판정에서 빼며, 병합이 없거나 번호·출처가 불명확하거나 목록이 잘렸으면 그대로 받는다.
+건너뛴 사건도 감시 head를 전진시키고 규칙 기록과 `routine list`의 최근 건너뜀에 `자기 착지`를 남긴다.
+`on.thread`의 자기 thread 항상 제외 원칙과 맞춰 `skip_own` 선택 칸은 두지 않는다. `forced`·`deleted`와
+`do.inbox`·`do.message`·`do = "deploy"`는 기존대로 받는다. 규칙·승인 범위의 직렬화 구조는 바뀌지 않아 기존 승인 hash를 유지한다.
+
 동작은 `do.inbox`(coordinator 안내), `do.message`(thread="owner" 또는 t-NNNN), `do.start`(일반 Worker 시작) 중 하나다. 짧은 글은 `text = """…"""`, 긴 글은 `text_file = "automations/check.md"`로 쓴다. 두 칸을 함께 쓰면 오류다. 글 파일은 UTF-8·1MiB 이하·프로젝트 내부 상대 경로의 일반 파일이며 중간 폴더를 포함한 symlink·절대 경로·상위 경로 이동을 받지 않는다. inbox/message의 글은 입력과 함께 고정한다. start는 고정한 승인 범위가 현재와 같을 때 현재 작업 본문을 쓰며 아래 L5 규칙을 따른다. command 자료는 자료임을 밝힌 fenced 본문으로 전달한다.
 
 `aaa automation schema`는 Rust 타입에서 만든 JSON Schema를 출력하고 `--mission`은 제거 안내를 출력한다. 변환기는 각 폴더에 스키마도 둔다. 저장소 기준 산출물은 [automation.schema.json](automation.schema.json)이다. 호스트는 스키마의 구조 검사에 더해 일정·이름·파일 경계를 검사한다. 웹 편집은 아래 W2 절을 따른다.
