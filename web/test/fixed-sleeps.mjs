@@ -9,7 +9,7 @@
 // - 0ms(차례 넘기기)
 // - 일부러 고정한 기다림이 그 줄이나 바로 윗줄에 `// fixed wait: <이유>`로 말하는 것(「아무것도 오지 않음」 증명 등)
 //
-// 세는 곳: web/e2e·web/test·web/src(JS·TS), crates/*/tests(Rust), crates/*/src의 `#[cfg(test)]` 뒤.
+// 세는 곳: web/e2e·web/test·web/src(JS·TS), crates/*/tests(Rust), crates/*/src의 `#[cfg(test)]` 항목 안.
 // fixed-sleeps.test.mjs가 파일마다 fixed-sleeps.json의 수를 넘지 않게 하고, 그 수는 줄기만 한다.
 // `node web/test/fixed-sleeps.mjs`가 지금 수를 보인다(`--list`면 줄마다).
 
@@ -276,13 +276,43 @@ function rsBoundedLoop(code, at) {
   }
 }
 
+/** cfg(test)가 붙은 항목만 남긴다. 필드·초기화·use 뒤의 제품 코드로 범위를 넓히지 않는다. */
+function rsTestItems(code) {
+  let out = "", from = 0;
+  const blank = (text) => text.replace(/[^\n]/g, " ");
+  for (const match of code.matchAll(/#\s*\[\s*cfg\s*\(\s*test\s*\)\s*\]/g)) {
+    if (match.index < from) continue; // 바깥 test module에 이미 포함됐다.
+    let head = match.index + match[0].length;
+    // #[tokio::test]처럼 뒤따르는 attribute를 넘겨 실제 항목의 머리를 본다.
+    while (/^\s*#\s*\[/.test(code.slice(head))) {
+      head = code.indexOf("[", head) + 1;
+      for (let depth = 1; depth && head < code.length; head++) depth += code[head] === "[" ? 1 : code[head] === "]" ? -1 : 0;
+    }
+    const bodyItem = /^\s*\{/.test(code.slice(head)) || /^\s*(?:pub(?:\([^)]*\))?\s+)?(?:(?:async|unsafe|const|extern(?:\s*"[^"]*")?)\s+)*(?:fn|mod|impl|trait|struct|enum)\b/.test(code.slice(head));
+    const stack = [];
+    let initialized = false, end = head;
+    for (; end < code.length; end++) {
+      const ch = code[end];
+      if (!stack.length && ch === "=") initialized = true;
+      const generic = ch === "<" && !stack.includes("{") && (!initialized || code.slice(head, end).trimEnd().endsWith("::"));
+      if (["(", "[", "{"].includes(ch) || generic) stack.push(ch);
+      else if (")]}>".includes(ch) && !(ch === ">" && code[end - 1] === "-")) {
+        const open = { ")": "(", "]": "[", "}": "{", ">": "<" }[ch];
+        if (stack.at(-1) === open) stack.pop();
+        if (bodyItem && ch === "}" && !stack.length) { end++; break; }
+      } else if (!stack.length && (ch === ";" || ch === "," && !bodyItem)) { end++; break; }
+    }
+    out += blank(code.slice(from, match.index)) + code.slice(match.index, end);
+    from = end;
+  }
+  return out + blank(code.slice(from));
+}
+
 function rsFixedSleeps(file, text) {
   let code = stripRust(text);
-  // 제품 코드(src)는 `#[cfg(test)]` 뒤만 본다: 그 앞의 sleep은 시험의 기다림이 아니라 제품의 주기다
+  // 제품 코드(src)는 test 항목 안만 본다. 운영 타이머는 시험의 기다림이 아니다.
   if (/^crates\/[^/]+\/src\//.test(file) && !/\/tests?\.rs$|\/tests\//.test(file)) {
-    const at = code.search(/#\[cfg\(test\)\]/);
-    if (at < 0) return [];
-    code = code.slice(0, at).replace(/[^\n]/g, " ") + code.slice(at);
+    code = rsTestItems(code);
   }
   const lines = text.split("\n");
   const found = [];

@@ -180,7 +180,8 @@ esac
     wait_for("사본 host 준비", T, || w.h.json(&["status"]).ok());
     w.lab.spawn_command(a_tag, agent_cmd(&w.h, &a_exe, "a", "local", "labA"));
     w.lab.spawn_command(b_tag, agent_cmd(&b, &b_exe, "b", &proxy.addr, "labB"));
-    wait_for("사본 agent 둘 연결", T, || {
+    // t-0578 부하 실패의 사본 프로세스 시작만 여유를 둔다. 이후 배포 단계별 30초는 유지한다.
+    wait_for("사본 agent 둘 연결", lab::LOAD_TIMEOUT, || {
         (w.lab.log(a_tag).contains("host에 연결했다")
             && w.lab.log(b_tag).contains("host에 연결했다")
             && w.h.connected("labA")
@@ -250,16 +251,20 @@ esac
     };
     // 서비스 대기 상한에 앞선 사전 검사·설치 시간을 섞지 않는다. 실제 단계 진행만 다음 대기로 넘어간다.
     // 같은 rollout의 같은 cursor/시작 표지를 되풀이하는 사건은 한도를 새로 시작하지 않는다.
-    let phase_started = |id: &str, phase: aaa_proto::RolloutPhase| {
+    let job_started = |id: &str, job: &str| {
+        // 재기동한 host가 아직 listen하기 전에도 이 helper를 부른다.
+        // Front 준비와 그 뒤의 job 진행은 각각 기존 상한으로 기다린다.
+        wait_for("rollout host의 Front 준비", T, || w.h.json(&["status"]).ok());
         let mut events = Events::connect(&w.h);
         let load = || -> aaa_proto::RolloutView {
             serde_json::from_str(&db.meta(&format!("rollout:{id}")).unwrap().unwrap()).unwrap()
         };
         let mut view = load();
-        let target = view.steps.iter().rposition(|s| s.phase == phase).expect("기다릴 rollout 단계");
+        let target = view.steps.iter().position(|s| s.job_id == job).expect("기다릴 rollout job");
+        let phase = view.steps[target].phase;
         loop {
             eprintln!(
-                "rollout {id}: cursor={} started={} state={:?}, 기다릴 단계={phase:?}",
+                "rollout {id}: cursor={} started={} state={:?}, 기다릴 단계={phase:?} job={job}",
                 view.cursor,
                 view.steps.get(view.cursor as usize).is_some_and(|s| s.started_ms != 0),
                 view.state
@@ -280,6 +285,23 @@ esac
                 (advanced || next.state != aaa_proto::RolloutState::Running).then_some(next)
             });
         }
+    };
+    let load_rollout = |id: &str| -> aaa_proto::RolloutView {
+        serde_json::from_str(&db.meta(&format!("rollout:{id}")).unwrap().unwrap()).unwrap()
+    };
+    let phase_started = |id: &str, phase: aaa_proto::RolloutPhase| {
+        let view = load_rollout(id);
+        let job = &view.steps.iter().rfind(|s| s.phase == phase).expect("기다릴 rollout 단계").job_id;
+        job_started(id, job);
+    };
+    let local_restart_started = |id: &str| {
+        let view = load_rollout(id);
+        let host = &view.steps.iter().find(|s| s.phase == aaa_proto::RolloutPhase::HostRestart).unwrap().machine;
+        let mut steps =
+            view.steps.iter().filter(|s| s.phase == aaa_proto::RolloutPhase::AgentRestart && &s.machine == host);
+        let job = &steps.next().expect("로컬 agent 재시작 단계").job_id;
+        assert!(steps.next().is_none(), "로컬 agent 재시작 단계는 하나다");
+        job_started(id, job);
     };
     let digest = |p: &Path| hex::encode(Sha256::digest(std::fs::read(p).unwrap()));
     let copy = |from: &Path, to: &Path| {
@@ -464,6 +486,7 @@ esac
         wait_for("새 host와 agent 둘 재연결", T, || {
             (w.h.connected("labA") && w.h.connected("labB")).then_some(())
         });
+        local_restart_started(&id);
         let restart = next_call(1);
         assert!(
             restart.starts_with("a ") && restart.ends_with("/dev.aaa.agent"),
@@ -526,6 +549,7 @@ esac
         assert!(next_call(3).ends_with("/dev.aaa.host"));
         w.lab.kill("rollout-host-new");
         w.lab.spawn_command("rollout-host-second", w.h.cmd_bin(&a_exe, &["host"]));
+        local_restart_started(second_id);
         let restart = next_call(4);
         assert!(restart.starts_with("a ") && restart.ends_with("/dev.aaa.agent"), "{restart}");
         assert!(
@@ -584,6 +608,7 @@ esac
         assert!(next_call(5).ends_with("/dev.aaa.host"));
         w.lab.kill("rollout-host-second");
         w.lab.spawn_command("rollout-host-third", w.h.cmd_bin(&a_exe, &["host"]));
+        local_restart_started(third_id);
         assert!(next_call(6).starts_with("a "));
         w.lab.kill("rollout-a-second");
         w.lab.spawn_command("rollout-a-third", agent_cmd(&w.h, &a_exe, "a", "local", "labA"));
@@ -719,6 +744,7 @@ esac
     assert!(next_call(11).ends_with("/dev.aaa.host"));
     w.lab.kill("rollout-host-restored");
     w.lab.spawn_command("rollout-host-fifth", w.h.cmd_bin(&a_exe, &["host"]));
+    local_restart_started(fifth_id);
     assert!(next_call(12).ends_with("/dev.aaa.agent"));
     w.lab.kill("rollout-a-third");
     w.lab.spawn_command("rollout-a-wrong", agent_cmd(&w.h, &old_a, "a", "local", "labA"));

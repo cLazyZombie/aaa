@@ -39,6 +39,9 @@ for (const key of ["AAA_SESSION_ID", "AAA_PROJECT", "AAA_THREAD", "AAA_HOOK_SOCK
 const procs = new Map();
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+// t-0578 동시 검증(load 28.96)의 후보 점검 결과 대기만 30초→60초로 둔다(docs/testing.md).
+// 실패 상한이며 표지가 오면 바로 끝난다. 기본 locator·단계 전체 시한은 그대로다.
+const LOAD_TIMEOUT_MS = 60_000;
 
 function aaa(...args) {
   // --json은 맨 앞에: `pane run <pane> <글…>`처럼 뒤 인자를 모두 글로 받는 명령에 섞이지 않게
@@ -1159,6 +1162,7 @@ async function runSpec(spec, labEnv = {}) {
 }
 
 export {
+  LOAD_TIMEOUT_MS,
   inList,
   showPanel,
   drawerSettled,
