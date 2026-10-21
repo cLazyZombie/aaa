@@ -45,7 +45,7 @@ function useAccounts(loginId: string | null) {
         defaults: defaults.kind === "account_defaults" ? defaults.defaults : [],
         full,
         quota: apiAtLeast(m?.front_api, 1, 83),
-        pool: apiAtLeast(m?.front_api, 1, 101),
+        pool: apiAtLeast(m?.front_api, 1, 102),
       });
       if (status === "lost") setLogin((prev) => (prev ? { ...prev, state: "lost" } : prev));
       else if (status?.kind === "account_login") setLogin(status.login);

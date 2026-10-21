@@ -128,6 +128,7 @@ pub fn hello(agent: &Agent) -> AgentHello {
             "pr.v2".into(),
             "ci.v1".into(),
             "git.v1".into(),
+            "git_merged.v1".into(),
             "rename.v1".into(),
             "history.v1".into(),
             "profiles.v2".into(),

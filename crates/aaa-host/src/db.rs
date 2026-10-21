@@ -6,6 +6,7 @@ use std::sync::Mutex;
 use anyhow::Result;
 use rusqlite::{Connection, OptionalExtension, params};
 
+mod library_catalog;
 mod question_ids;
 mod report_ids;
 mod task_ids;
@@ -447,6 +448,12 @@ impl Db {
             Some(Ok(SCHEMA_VERSION)) => {}
             Some(other) => anyhow::bail!("host DB schema {other:?}을 이 aaa(schema {SCHEMA_VERSION})가 모른다"),
         }
+        // 조작 기기 passkey(관리 GUI W7): 옛 aaa는 이 표를 모르고 지나간다(공개 주소 승인은 그때 passkey 없이 한다)
+        conn.execute_batch(
+            "CREATE TABLE IF NOT EXISTS passkeys (
+            credential TEXT PRIMARY KEY, device TEXT NOT NULL, rp_id TEXT NOT NULL, cose BLOB NOT NULL,
+            sign_count INTEGER NOT NULL DEFAULT 0, created_at INTEGER NOT NULL, last_used INTEGER)",
+        )?;
         conn.execute_batch(
             "CREATE TABLE IF NOT EXISTS install_grants (
             installation TEXT PRIMARY KEY, plan TEXT NOT NULL, nonce TEXT NOT NULL UNIQUE,
@@ -802,8 +809,84 @@ impl Db {
         let n = c.execute("UPDATE devices SET revoked=1 WHERE id=?1 AND revoked=0", [id])?;
         if n > 0 {
             c.execute("DELETE FROM push_subs WHERE device=?1", [id])?;
+            c.execute("DELETE FROM passkeys WHERE device=?1", [id])?;
         }
         Ok(n > 0)
+    }
+
+    /// 시험: 짝지은 때를 옮긴다(passkey 등록 시한)
+    #[cfg(test)]
+    pub fn set_device_created(&self, id: &str, ms: u64) {
+        self.conn
+            .lock()
+            .unwrap()
+            .execute("UPDATE devices SET created_at=?2 WHERE id=?1", params![id, ms as i64])
+            .unwrap();
+    }
+
+    /// 취소하지 않은 기기 하나
+    pub fn device(&self, id: &str) -> Result<Option<DeviceRow>> {
+        let c = self.conn.lock().unwrap();
+        Ok(c.query_row(
+            "SELECT id,role,label,created_at,last_seen FROM devices WHERE id=?1 AND revoked=0",
+            [id],
+            Self::device_from,
+        )
+        .optional()?)
+    }
+
+    // ───────────── 조작 기기 passkey(관리 GUI W7) ─────────────
+
+    /// 이 기기의 이 RP passkey를 새 credential로 바꾼다(기기마다 하나). 다른 기기가 쓰는 credential이면 false
+    pub fn passkey_put(
+        &self,
+        credential: &str,
+        device: &str,
+        rp_id: &str,
+        cose: &[u8],
+        sign_count: u32,
+    ) -> Result<bool> {
+        let mut c = self.conn.lock().unwrap();
+        let tx = c.transaction()?;
+        let owner: Option<String> =
+            tx.query_row("SELECT device FROM passkeys WHERE credential=?1", [credential], |r| r.get(0)).optional()?;
+        if owner.is_some_and(|o| o != device) {
+            return Ok(false);
+        }
+        tx.execute("DELETE FROM passkeys WHERE device=?1 AND rp_id=?2", params![device, rp_id])?;
+        tx.execute(
+            "INSERT OR REPLACE INTO passkeys(credential,device,rp_id,cose,sign_count,created_at) VALUES(?1,?2,?3,?4,?5,?6)",
+            params![credential, device, rp_id, cose, sign_count as i64, aaa_common::util::now_ms() as i64],
+        )?;
+        tx.commit()?;
+        Ok(true)
+    }
+
+    /// 이 기기의 이 RP passkey: (credential, COSE 공개키, 서명 횟수)
+    pub fn passkeys(&self, device: &str, rp_id: &str) -> Result<Vec<(String, Vec<u8>, u32)>> {
+        let c = self.conn.lock().unwrap();
+        let mut st = c.prepare("SELECT credential,cose,sign_count FROM passkeys WHERE device=?1 AND rp_id=?2")?;
+        let rows = st
+            .query_map(params![device, rp_id], |r| Ok((r.get(0)?, r.get(1)?, r.get::<_, i64>(2)? as u32)))?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        Ok(rows)
+    }
+
+    /// 이 RP passkey가 있는 기기
+    pub fn passkey_devices(&self, rp_id: &str) -> Result<std::collections::HashSet<String>> {
+        let c = self.conn.lock().unwrap();
+        let mut st = c.prepare("SELECT DISTINCT device FROM passkeys WHERE rp_id=?1")?;
+        let rows = st.query_map([rp_id], |r| r.get(0))?.collect::<rusqlite::Result<_>>()?;
+        Ok(rows)
+    }
+
+    pub fn passkey_used(&self, credential: &str, sign_count: u32, now_ms: u64) -> Result<()> {
+        let c = self.conn.lock().unwrap();
+        c.execute(
+            "UPDATE passkeys SET sign_count=?2, last_used=?3 WHERE credential=?1",
+            params![credential, sign_count as i64, now_ms as i64],
+        )?;
+        Ok(())
     }
 
     // ───────────── Web Push 구독(§8.26) ─────────────

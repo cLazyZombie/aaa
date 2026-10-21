@@ -25,6 +25,7 @@ impl std::fmt::Display for Version {
 /// `AgentRequest::WorkAttachWrite`(agent 기능 `work_attach.v1`이 있을 때만 보낸다, §8.327).
 /// `Post`·`PostRejected`·`PostAck`는 post.v1을 양쪽이 알렸을 때만 쓴다(§8.199).
 /// 1.8 host의 N-1은 1.7이다. 1.6 이하 agent는 먼저 1.7 이상으로 갱신해야 한다.
+// git_merged.v1: origin/main 조상 판정은 이 기능을 알린 agent에만 보낸다.
 // git.v1: repo 머신 agent의 head/변화 조회를 이 기능을 알린 상대에만 보낸다.
 // ci.v1: 조건부 GitHub CI 조회는 이 기능을 알린 agent에만 보낸다(1.5부터).
 // 1.5: 특수 임무. mission.v1을 알린 상대에만 임무 세션을 만든다.
@@ -213,8 +214,11 @@ pub const AGENT_LINK: Version = Version { major: 1, minor: 11 };
 /// `DeployGuardView.pending_web` 선택 칸. 새 host 감시는 실행 신원이 맞아도 그 웹의 `/api/v1/me`가 답해야 새 판 준비다.
 /// 재시작만 하는 rollout `RolloutSpec.restart`·`RolloutCard.restart`(웹은 1.100 미만 host에 재시작을 그리지 않는다).
 /// Agent link는 1.11 그대로다: host가 같은 머신 agent의 Welcome 신원에만 싣고, 옛 agent·옛 감시는 모르는 칸을 버린다.
-/// 1.101: host 공통 계정 풀·프로젝트 참여·자동 배정과 내구 대기. Agent link는 그대로다.
-pub const FRONT_API: Version = Version { major: 1, minor: 101 };
+/// 1.101: 조작 기기 passkey(관리 GUI W7): 공개 주소로 연 조작 기기의 승인 필요 동작은 `passkey_required`로 거부하고
+/// `/api/v1/passkey/approve`(사용자 확인 UV)로만 한다. `/api/v1/me`의 `passkey`, `DeviceView.passkey`, 등록 `/api/v1/passkey/register`
+/// (짝지은 뒤 10분 안). loopback 화면과 CLI는 그대로다. 옛 웹은 오류 글을 보인다. Agent link 변경 없음.
+/// 1.102: host 공통 계정 풀·프로젝트 참여·자동 배정과 내구 대기. Agent link는 그대로다.
+pub const FRONT_API: Version = Version { major: 1, minor: 102 };
 /// agent ↔ session host(내부). 세션이 몇 주 이어질 수 있으므로 이전 session host와 호환해야 한다.
 /// 1.1: `SessionRequest::Detect`(harness 상태 감지 입력). agent는 1.0 session host에 보내지 않고 `Screen`을 쓴다.
 /// 1.2: `SessionRequest::Colors`(색 질의에 답할 화면 색, plan §8.187). agent는 1.1 이하 session host에 보내지 않는다.

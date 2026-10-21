@@ -76,6 +76,9 @@ pub enum ErrorCode {
     TooLarge,
     /// 본 판과 지금 파일이 다르다(자동화 저장 등). 다시 읽고 차이를 본 뒤 고친다
     Conflict,
+    /// 공개 주소로 연 조작 기기의 승인 필요 동작: 이 기기 passkey의 사용자 확인(UV)과 함께 다시 보낸다(관리 GUI W7).
+    /// passkey가 없으면 message가 다시 짝짓기를 안내한다
+    PasskeyRequired,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
@@ -1759,6 +1762,9 @@ pub struct DeviceView {
     /// 마지막으로 들어온 때(1분 단위로 적는다). 아직 한 번도 안 들어왔으면 없다
     #[ts(type = "number | null")]
     pub last_seen_ms: Option<u64>,
+    /// 지금 공개 주소의 passkey가 있다(관리 GUI W7). 옛 host는 보내지 않는다
+    #[serde(default)]
+    pub passkey: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]

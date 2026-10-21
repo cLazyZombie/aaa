@@ -132,7 +132,7 @@ export default async function ({ page }) {
       const dump = await phone.evaluate(async () => JSON.stringify(await (await fetch('/api/v1/call', { method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({op:'account_pool'}) })).json()));
       for (const token of canaries) assert.ok(!dump.includes(token));
       assert.ok(!(await p.innerText()).includes("@example.com"));
-      await shot(phone, "79-account-pool-phone"); await phone.context().close();
+      await shot(phone, "81-account-pool-phone"); await phone.context().close();
     } finally { await engine.close(); }
     const scan = (dir) => { for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
       const path = `${dir}/${e.name}`; if(e.isDirectory())scan(path);

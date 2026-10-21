@@ -23,9 +23,48 @@ pub struct LocalListener {
 
 #[cfg(windows)]
 fn pipe_name(path: &Path) -> String {
+    // Win32의 두 구분자를 같은 주소로 쓴다. 기존 역슬래시 경로의 이름은 유지한다.
+    legacy_pipe_name(Path::new(&path.to_string_lossy().replace('/', "\\")))
+}
+
+#[cfg(windows)]
+fn legacy_pipe_name(path: &Path) -> String {
     use sha2::Digest;
     let h = sha2::Sha256::digest(path.to_string_lossy().as_bytes());
     format!(r"\\.\pipe\aaa-{}", hex::encode(&h[..12]))
+}
+
+#[cfg(windows)]
+fn pipe_alias(path: &Path) -> Option<String> {
+    // 기존 pipe 이름을 바꾸지 않는다. install의 canonical state(\\?\...)와
+    // 이미 실행 중인 host의 DOS state가 같은 실제 디렉터리일 때만 별칭을 찾는다.
+    let parent = path.parent()?.canonicalize().ok()?;
+    let leaf = path.file_name()?;
+    let text = leaf.to_str()?;
+    if text.ends_with(['.', ' ']) || text.contains(':') {
+        return None;
+    }
+    let canonical = parent.join(leaf);
+    let alias = if canonical != path {
+        canonical
+    } else {
+        let text = canonical.to_str()?;
+        if let Some(rest) = text.strip_prefix(r"\\?\UNC\") {
+            PathBuf::from(format!(r"\\{rest}"))
+        } else {
+            let rest = text.strip_prefix(r"\\?\")?;
+            if !matches!(canonical.components().next(), Some(std::path::Component::Prefix(p)) if matches!(p.kind(), std::path::Prefix::VerbatimDisk(_)))
+            {
+                return None;
+            }
+            PathBuf::from(rest)
+        }
+    };
+    // verbatim 이름의 DOS 해석이 다른 경로를 가리키면 확장하지 않는다.
+    if alias.parent()?.canonicalize().ok()? != parent {
+        return None;
+    }
+    (alias != path).then(|| pipe_name(&alias))
 }
 
 #[cfg(windows)]
@@ -160,12 +199,27 @@ async fn native_connect(path: &Path) -> io::Result<NativeClient> {
         use tokio::time::{Instant, sleep_until};
         use windows_sys::Win32::Foundation::ERROR_PIPE_BUSY;
 
-        let name = pipe_name(path);
+        let mut name = pipe_name(path);
+        let legacy = legacy_pipe_name(path);
+        let mut legacy_checked = legacy == name;
+        let mut alias_checked = false;
         // accept가 다음 인스턴스를 만들기 전의 BUSY만 기다린다. hook 전체의 3초 한도는 유지한다.
         let deadline = Instant::now() + Duration::from_millis(250);
         loop {
             match ClientOptions::new().open(&name) {
                 Ok(stream) => return Ok(stream),
+                Err(error) if error.kind() == io::ErrorKind::NotFound && !legacy_checked => {
+                    // 옛 host가 같은 입력의 섞인 구분자를 그대로 해시한 주소도 읽는다.
+                    legacy_checked = true;
+                    name.clone_from(&legacy);
+                }
+                Err(error) if error.kind() == io::ErrorKind::NotFound && !alias_checked => {
+                    alias_checked = true;
+                    match pipe_alias(path) {
+                        Some(alias) => name = alias,
+                        None => return Err(error),
+                    }
+                }
                 Err(error) if error.raw_os_error() == Some(ERROR_PIPE_BUSY as i32) && Instant::now() < deadline => {
                     sleep_until((Instant::now() + Duration::from_millis(5)).min(deadline)).await;
                 }
@@ -188,23 +242,54 @@ mod tests {
     async fn every_pipe_instance_has_only_the_current_sid_and_transports_bytes() {
         use std::os::windows::io::AsRawHandle;
         let path = std::env::temp_dir().join(format!("aaa-pipe-acl-{}", ulid::Ulid::new()));
-        let listener = LocalListener::bind(&path).unwrap();
-        assert!(LocalListener::bind(&path).is_err(), "다른 listener가 첫 instance를 빼앗지 못한다");
-        for _ in 0..3 {
-            crate::windows_acl_tests::assert_private(listener.inner.lock().await.as_raw_handle(), false);
-            let (client, server) = tokio::time::timeout(Duration::from_secs(3), async {
-                tokio::try_join!(connect(&path), listener.accept_peer())
-            })
-            .await
-            .unwrap()
-            .unwrap();
-            let (mut server, pid) = server;
-            assert_eq!(pid, Some(std::process::id()));
-            let mut client = client;
-            client.write_all(b"private").await.unwrap();
-            let mut bytes = [0; 7];
-            server.read_exact(&mut bytes).await.unwrap();
-            assert_eq!(&bytes, b"private");
+        let canonical = path.parent().unwrap().canonicalize().unwrap().join(path.file_name().unwrap());
+        let mixed = PathBuf::from(path.to_string_lossy().replace('\\', "/"));
+        assert_ne!(path, canonical, "일반 state와 canonical state를 실제로 대조한다");
+        for (case, (server_path, client_path)) in
+            [(&path, &path), (&path, &canonical), (&canonical, &path), (&mixed, &canonical), (&canonical, &mixed)]
+                .into_iter()
+                .enumerate()
+        {
+            let listener = LocalListener::bind(server_path).unwrap_or_else(|error| {
+                panic!(
+                    "pipe bind: case={}, server={server_path:?}, client={client_path:?}, os_error={:?}, error={error}",
+                    case + 1,
+                    error.raw_os_error()
+                )
+            });
+            assert!(LocalListener::bind(server_path).is_err(), "다른 listener가 첫 instance를 빼앗지 못한다");
+            for repeat in 1..=3 {
+                crate::windows_acl_tests::assert_private(listener.inner.lock().await.as_raw_handle(), false);
+                let (client, server) = tokio::time::timeout(Duration::from_secs(3), async {
+                    tokio::try_join!(connect(client_path), listener.accept_peer())
+                })
+                .await
+                .unwrap_or_else(|error| panic!("pipe event: case={}, repeat={repeat}, server={server_path:?}, client={client_path:?}, error={error}", case + 1))
+                .unwrap_or_else(|error| panic!("pipe connect/accept: case={}, repeat={repeat}, server={server_path:?}, client={client_path:?}, os_error={:?}, error={error}", case + 1, error.raw_os_error()));
+                let (mut server, pid) = server;
+                assert_eq!(pid, Some(std::process::id()));
+                let mut client = client;
+                client.write_all(b"private").await.unwrap();
+                let mut bytes = [0; 7];
+                server.read_exact(&mut bytes).await.unwrap();
+                assert_eq!(&bytes, b"private");
+                // Mio는 read 뒤 다음 overlapped read를 이미 걸어 둔다. client drop의
+                // 취소 완료/handle close를 서버 EOF로 확인한 뒤 서버를 닫는다.
+                drop(client);
+                let mut trailing = Vec::new();
+                tokio::time::timeout(Duration::from_secs(3), server.read_to_end(&mut trailing))
+                    .await
+                    .unwrap_or_else(|error| panic!("pipe EOF: case={}, repeat={repeat}, server={server_path:?}, client={client_path:?}, error={error}", case + 1))
+                    .unwrap_or_else(|error| panic!("pipe EOF read: case={}, repeat={repeat}, server={server_path:?}, client={client_path:?}, os_error={:?}, error={error}", case + 1, error.raw_os_error()));
+                assert!(trailing.is_empty(), "예상하지 않은 추가 byte: case={}, repeat={repeat}", case + 1);
+                drop(server);
+            }
+            drop(listener);
+            // 닫힌 Rust 값만 보는 대신 같은 주소의 첫 instance를 실제로 다시 잡는다.
+            let rebound = LocalListener::bind(server_path).unwrap_or_else(|error| {
+                panic!("pipe released rebind: case={}, server={server_path:?}, client={client_path:?}, os_error={:?}, error={error}", case + 1, error.raw_os_error())
+            });
+            drop(rebound);
         }
     }
 

@@ -25,7 +25,7 @@ export function StartDialog({ project, task, owners, allowOverLimit, onStarted, 
   const [error, setError] = useState<string | null>(null);
   useEffect(() => {
     let active = true;
-    void me().then((m) => apiAtLeast(m?.front_api, 1, 101) ? call({ op: "account_pool" }) : null)
+    void me().then((m) => apiAtLeast(m?.front_api, 1, 102) ? call({ op: "account_pool" }) : null)
       .then((r) => { if (active && r?.kind === "account_pool") setPoolEnabled(r.pool.projects.includes(project)); })
       .catch((e) => active && setError(errText(e)));
     return () => { active = false; };

@@ -294,6 +294,9 @@ pub(crate) struct TaskClean {
     pub discard: bool,
     #[serde(default)]
     pub judged_ms: Option<u64>,
+    /// repo 머신 agent가 실제 origin/main의 조상으로 확인한 커밋.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub merged_main: Option<String>,
     /// 완료로 판정해 지운 task 제목(되살린 task의 「확인 필요」 까닭을 가른다)
     #[serde(default)]
     pub cleaned: Vec<String>,
@@ -652,7 +655,7 @@ thread가 키를 기다리는 화면(시작 때 신뢰 창, 질문 메뉴, 명�
   이름을 든 목록에, 없으면 `## Backlog`에 넣는다. 모델·머신은 사용자가 준 것(맞을 때)을 쓰고, 안 주면 agent 일은 비우고
   사용자 자신의 할 일은 `me`로 둔다.
 - 목록(`##` 머리): 사용자가 요청하면 만들고, 이름을 바꾸고, 합치고, 지우고, task를 목록 사이로 옮긴다.
-- 끝남: PR 병합·보고 [완료]로 resolve한 task는 host가 완료 보관한다. `aaa task archive`에서 결과를 찾고
+- 끝남: PR 병합·origin/main 조상 확인·보고 [완료]로 resolve한 task는 host가 완료 보관한다. `aaa task archive`에서 결과를 찾고
   `aaa task archive --restore <task ID>`로 같은 ID를 복원한다. 복원은 재예약·재기동 승인이 아니다. 그만둠·명시 삭제는
   별도 `aaa task rm`이며 옛 삭제 기록의 `aaa task restore`와 구별한다. 하위가 남은 부모는 자동 보관하지 않는다.
 - 보이기: 사용자가 task를 보자고 하면 채팅으로 목록별로 답한다. task마다 맡은 쪽(모델·머신, `me`·사람, 없으면 「미할당」), 메모가 있으면 짧은 한 줄,
@@ -2558,6 +2561,19 @@ impl Host {
                 return Ok(None);
             }
             // library: 임시 폴더에 받고 hash를 확인한 뒤 바꿔 넣는다
+            // 옛 agent는 숨은 폴더까지 manifest에 넣는다. 정책상 열지 않는 경로는
+            // 받거나 host 경로에 붙이지 않고 건너뛰며, 정상 첨부·본문은 계속 갱신한다.
+            snap.files.retain(|f| {
+                if crate::library::safe_rel(&f.path) {
+                    return true;
+                }
+                snap.skipped.push(aaa_proto::Skipped {
+                    path: f.path.clone(),
+                    reason: "host에서 허용하지 않는 library 상대 경로".into(),
+                    lazy_size: None,
+                });
+                false
+            });
             let lib_root = dir.join("library");
             let tmp = lib_root.join(format!(".{id}.tmp-{}", aaa_common::util::new_id()));
             let mut sandbox_notes = Vec::new();
@@ -2565,9 +2581,6 @@ impl Host {
             let fetch = async {
                 std::fs::create_dir_all(&tmp).map_err(internal)?;
                 for f in &snap.files {
-                    if !crate::library::safe_rel(&f.path) {
-                        return Err(bad(format!("이상한 library 경로: {}", f.path)));
-                    }
                     let target = tmp.join(&f.path);
                     let received = async {
                         std::fs::create_dir_all(target.parent().unwrap()).map_err(internal)?;
@@ -2631,7 +2644,7 @@ impl Host {
                 let _ = std::fs::remove_dir_all(&tmp);
                 return Err(e);
             }
-            let failures: Vec<String> = failed_files.iter().map(|(_, reason)| reason.clone()).collect();
+            let mut failures: Vec<String> = failed_files.iter().map(|(_, reason)| reason.clone()).collect();
             snap.files.retain(|f| !failed_files.iter().any(|(failed, _)| failed.path == f.path));
             snap.skipped.extend(failed_files.into_iter().map(|(f, reason)| aaa_proto::Skipped {
                 path: f.path,
@@ -2647,6 +2660,7 @@ impl Host {
             std::fs::rename(&tmp, &dest).map_err(internal)?;
             crate::library::write_manifest(&dir, id, &snap).map_err(internal)?;
             let changed = !same_files || std::fs::read(crate::library::manifest_path(&dir, id)).ok() != old_manifest;
+            let mut version_created = false;
             if rec.report_hash.as_ref() != Some(&snap.hash)
                 || changed
                 || self.thread_report_id(project, id, Some(&snap.hash)).is_none()
@@ -2659,10 +2673,18 @@ impl Host {
                     from_thread: Some(id.into()),
                     ..Default::default()
                 };
-                self.snapshot_report_version(project, id, &snap.hash, &dest, &files, Some(&snap.report.0), &meta)?;
+                match self.snapshot_report_version(project, id, &snap.hash, &dest, &files, Some(&snap.report.0), &meta)
+                {
+                    Ok(_) => version_created = true,
+                    Err(e) => {
+                        // 판 보존의 실패도 첨부 전송 실패처럼 기록한다. 최신 본문·단계·ack 처리는
+                        // 계속하고, 불완전한 r 판은 snapshot_report_version이 공개하지 않는다.
+                        failures.push(format!("보고 판 보존 실패: {}", e.message));
+                    }
+                }
             }
 
-            if changed || old_manifest.is_none() {
+            if changed || old_manifest.is_none() || version_created {
                 // 보고서 화면 「작업 보고」(plan §8.256)
                 self.reports_bump();
             }
@@ -2965,8 +2987,14 @@ impl Host {
             let _ = self.update_rec(project, id, |r| r.error = Some(message.clone()));
             return Err(ErrorBody { message, ..e });
         }
-        // 이어진 task 판정(할 일 T3)은 ticker가 한다(끝낸 까닭과 버림은 위에서 적었다): 정리가 끝났으니 tick을 깨운다
+        // resolve_pending 중에는 확인 카드를 만들지 않는다. pane 정리가 끝난 뒤 병합을 확인하고
+        // 그 근거와 종료 확정을 함께 저장해야 ticker 전에도 불필요한 확인 카드가 보이지 않는다.
+        let merged_main = self.task_main_merge(&rec).await;
+        // 이어진 task 완료 보관은 ticker가 한다.
         self.update_rec(project, id, |r| {
+            if merged_main.is_some() {
+                r.task_clean.merged_main = merged_main.clone();
+            }
             r.resolve_pending = None;
             r.error = None;
         })?;

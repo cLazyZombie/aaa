@@ -9,6 +9,9 @@ use serde_json::Value;
 const BIN: &str = env!("CARGO_BIN_EXE_aaa");
 const CANARY: &str = "install-secret-canary-DO-NOT-PRINT";
 static SEQ: AtomicU32 = AtomicU32::new(0);
+#[cfg(windows)]
+#[path = "install/job.rs"]
+mod job;
 struct Lab(PathBuf);
 impl Lab {
     fn instance(&self) -> String {
@@ -18,6 +21,8 @@ impl Lab {
         Self::in_dir(&std::env::temp_dir())
     }
     fn in_dir(parent: &Path) -> Self {
+        #[cfg(windows)]
+        job::prepare_runner();
         let p = parent.join(format!("aaa-install-{}-{}", std::process::id(), SEQ.fetch_add(1, Ordering::Relaxed)));
         std::fs::create_dir(&p).unwrap();
         Self(p)

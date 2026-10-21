@@ -9,6 +9,9 @@ import type {
   FrontResponse,
   NoticeView,
   Outcome,
+  PasskeyChallenge,
+  PasskeyCreation,
+  PasskeyState,
   QuestionView,
   RolloutCard,
   SharedPreferences,
@@ -16,6 +19,7 @@ import type {
 } from "./gen/proto";
 import type { PreferencesChange } from "./herdr/preferences.ts";
 import { pageInUse } from "./herdr/presence";
+import { createPasskey, signPasskey, withGesture } from "./passkey";
 
 export class ApiError extends Error {
   constructor(public body: ErrorBody) {
@@ -103,8 +107,9 @@ async function unwrap<T>(res: Response): Promise<T> {
   return out.ok;
 }
 
-/** `front_api`: host의 FRONT_API(1.58부터, 옛 host는 없다) */
-export type Me = { role: DeviceRole; device: string; front_api?: string };
+/** `front_api`: host의 FRONT_API(1.58부터, 옛 host는 없다). `passkey`: 공개 주소로 연 화면의 passkey 상태(관리 GUI W7),
+ * loopback 화면·옛 host는 없다 */
+export type Me = { role: DeviceRole; device: string; front_api?: string; passkey?: PasskeyState };
 
 export async function me(): Promise<Me | null> {
   const res = await apiFetch("/api/v1/me", { credentials: "same-origin" });
@@ -120,7 +125,23 @@ export async function signOut(): Promise<void> {
   const res = await apiFetch("/api/v1/me", { method: "DELETE", credentials: "same-origin" });
   if (!res.ok) throw new ApiError({ code: "internal", message: `HTTP ${res.status}` });
 }
-export const call = (req: FrontRequest, keepalive = false) => post<FrontResponse>("/api/v1/call", req, keepalive);
+/** 공개 주소로 연 조작 기기의 승인 필요 동작(관리 GUI W7): host가 `passkey_required`로 답하면 이 기기 passkey의 사용자
+ * 확인(UV)으로 다시 보낸다. host는 begin 때 받은 요청만 실행한다. passkey가 없으면 begin이 등록 안내로 거부한다 */
+export async function call(req: FrontRequest, keepalive = false): Promise<FrontResponse> {
+  try {
+    return await post<FrontResponse>("/api/v1/call", req, keepalive);
+  } catch (e) {
+    if (!(e instanceof ApiError) || e.body.code !== "passkey_required") throw e;
+    const challenge = await post<PasskeyChallenge>("/api/v1/passkey/approve/begin", req);
+    return post<FrontResponse>("/api/v1/passkey/approve", await withGesture("승인", () => signPasskey(challenge)));
+  }
+}
+
+/** 이 기기에 passkey를 등록한다(짝지은 뒤 10분 안, 공개 주소의 조작 기기만) */
+export async function registerPasskey(): Promise<void> {
+  const creation = await post<PasskeyCreation>("/api/v1/passkey/register/begin", {});
+  await post<null>("/api/v1/passkey/register", await withGesture("등록", () => createPasskey(creation)));
+}
 
 /** herdr-web-ui uploadPaneImage: 저장된 경로는 초안에 넣고, 보내기 전에는 pane에 입력하지 않는다. */
 export async function uploadChatImage(pane: string, image: File): Promise<string> {

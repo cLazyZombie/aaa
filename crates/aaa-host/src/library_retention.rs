@@ -63,7 +63,7 @@ impl Host {
         }
         reports.sort_by(|a, b| (a.updated_at_ms, &a.project, &a.name).cmp(&(b.updated_at_ms, &b.project, &b.name)));
         let size = reports.iter().map(|r| r.size).sum();
-        let protected_size = reports.iter().filter(|r| r.live || self.protected_copy(r)).map(|r| r.size).sum();
+        let protected_size = reports.iter().filter(|r| r.live || r.busy).map(|r| r.size).sum();
         let mut plan = LibraryPrunePlan {
             size,
             remaining_size: size,
@@ -78,7 +78,7 @@ impl Host {
         let cutoff = now.saturating_sub(days.saturating_mul(DAY_MS));
         let mut capacity = Vec::new();
         for r in reports {
-            if r.live || self.protected_copy(&r) || project.is_some_and(|p| p != r.project) {
+            if r.live || r.busy || project.is_some_and(|p| p != r.project) {
                 continue;
             }
             if days > 0 && r.updated_at_ms < cutoff {
@@ -168,7 +168,7 @@ impl Host {
             max_days: self.cfg.projects.library_max_days,
             protected_size: reports
                 .iter()
-                .filter(|r| r.live || self.protected_copy(r))
+                .filter(|r| r.live || r.busy)
                 .map(|r| if r.live { r.history_size } else { r.size.saturating_add(r.history_size) })
                 .sum(),
         })

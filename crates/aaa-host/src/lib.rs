@@ -46,6 +46,7 @@ mod input_log;
 pub mod installation;
 mod legacy_mission;
 mod library;
+mod library_catalog;
 mod library_links;
 mod library_publish;
 mod library_retention;
@@ -59,6 +60,7 @@ mod notify;
 mod open;
 mod orch;
 mod output;
+mod passkey;
 mod post;
 mod pr;
 mod prefs;
@@ -548,6 +550,8 @@ pub struct Host {
     pub device_revoked: broadcast::Sender<String>,
     /// 이 host가 돌면서 취소한 기기. 열린 연결이 사건을 받기 전에 온 입력도 거른다
     revoked_devices: Mutex<std::collections::HashSet<String>>,
+    /// passkey 등록·승인의 begin과 finish 사이(관리 GUI W7). host를 다시 띄우면 처음부터 한다
+    passkey_ops: passkey::Ops,
     /// pane별 harness 사건 대기자
     waiters: Mutex<harness::Waiters>,
     /// 메시지 전달은 한 번에 하나씩 한다
@@ -625,9 +629,10 @@ pub struct Host {
     restore_tried: Mutex<HashSet<String>>,
 }
 
-fn device_view(d: db::DeviceRow) -> aaa_proto::DeviceView {
+fn device_view(d: db::DeviceRow, passkey: bool) -> aaa_proto::DeviceView {
     aaa_proto::DeviceView {
         role: if d.role == "reader" { DeviceRole::Reader } else { DeviceRole::Controller },
+        passkey,
         id: d.id,
         label: d.label,
         created_at_ms: d.created_ms,
@@ -773,6 +778,7 @@ impl Host {
             preferences,
             device_revoked: broadcast::channel(64).0,
             revoked_devices: Mutex::new(Default::default()),
+            passkey_ops: Default::default(),
             waiters: Mutex::new(HashMap::new()),
             deliver_lock: tokio::sync::Mutex::new(()),
             held: Mutex::new(HashMap::new()),
@@ -2364,7 +2370,16 @@ impl Host {
             }
             FrontRequest::Devices => {
                 let rows = self.db.devices().map_err(|e| err(ErrorCode::Internal, e.to_string()))?;
-                Ok(FrontResponse::Devices { devices: rows.into_iter().map(device_view).collect() })
+                let passkeys = self.passkey_devices();
+                Ok(FrontResponse::Devices {
+                    devices: rows
+                        .into_iter()
+                        .map(|d| {
+                            let has = passkeys.contains(&d.id);
+                            device_view(d, has)
+                        })
+                        .collect(),
+                })
             }
             FrontRequest::DeviceRename { id, label } => {
                 let label = normalize_device_label(&label, db::DEVICE_LABEL_FALLBACK);
@@ -3411,10 +3426,19 @@ pub(crate) fn web_origin_in(web_port: u16, db: &db::Db, host_header: &str) -> Op
     if host_header == loopback {
         return Some(format!("http://{loopback}"));
     }
+    if test_localhost_public() && host_header == format!("localhost:{web_port}") {
+        return Some(format!("http://{host_header}"));
+    }
     let public = public_origin_in(db)?;
     let asked = host_header.to_ascii_lowercase();
     let asked = asked.strip_suffix(":443").unwrap_or(&asked);
     (format!("https://{asked}") == public).then_some(public)
+}
+
+/// 시험에서만(debug 빌드 `AAA_TEST_WEB_LOCALHOST`): `http://localhost:<port>`를 공개 주소처럼 받는다. 브라우저 passkey는
+/// IP 주소에 묶이지 못해 실험실(127.0.0.1)에서는 RP ID `localhost`로 시험한다(관리 GUI W7 E2E)
+pub(crate) fn test_localhost_public() -> bool {
+    cfg!(debug_assertions) && std::env::var_os("AAA_TEST_WEB_LOCALHOST").is_some()
 }
 
 /// 공개 origin. 아직 serve 상태를 읽지 못했으면(새 binary로 바꾼 뒤 tailscale을 못 읽음) aaa가 만든 공개
