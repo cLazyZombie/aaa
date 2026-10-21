@@ -1195,22 +1195,19 @@ summary.chat-compact-head { cursor: pointer; }
 .chat-compact-sizes { font-family: var(--font-mono); font-variant-numeric: tabular-nums; }
 
 /* 입력칸 컨텍스트 게이지(plan §8.321, herdr-web-ui Composer.css `.composer-context` 링·t3code ContextWindowMeter 꼴).
-   글을 치는 동안은 자리를 그대로 두고 투명해진다: 단추 줄 폭이 바뀌지 않아 글 칸 폭·한 줄 판정이 흔들리지 않는다 */
+   입력 중 숨긴 게이지의 폭과 단추 사이 간격은 글 칸으로 돌려준다(t-0622 사용자 1A).
+   첫 입력·전체 삭제 때 폭이 바뀌고, 글이 여러 줄로 늘어도 단추는 옆에 그대로 둔다. */
 .context-gauge { display: inline-flex; flex: none; }
+.context-gauge[data-hidden] { display: none; }
 /* 휴대폰에서는 빈 입력칸·focus·사용량에 관계없이 숨긴다(사용자 10-21).
    기존 휴대폰 배치와 같은 700px 기준이며 패드·데스크톱의 치는 중 숨김은 그대로 둔다. */
 @media (max-width: 700px) { .context-gauge { display: none; } }
 .context-gauge-button {
   display: inline-flex; align-items: center; gap: 5px; height: var(--space-8); padding: 0 8px 0 6px;
   border: 0; border-radius: var(--radius-pill); background: transparent; color: var(--text-dim); font-size: var(--fs-xs); cursor: pointer;
-  transition: opacity var(--dur-fast) var(--ease-out), visibility 0s linear 0s;
 }
 @media (hover: hover) { .context-gauge-button:hover { background: var(--bg-hover); } }
 .context-gauge-button[aria-expanded="true"] { background: var(--bg-hover); }
-.context-gauge[data-hidden] .context-gauge-button {
-  opacity: 0; visibility: hidden; pointer-events: none;
-  transition: opacity var(--dur-fast) var(--ease-out), visibility 0s linear var(--dur-fast);
-}
 .context-gauge-ring { flex: none; width: 18px; height: 18px; }
 .context-gauge-ring circle { fill: none; stroke-width: 2.5; }
 .context-gauge-track { stroke: var(--border-strong); }
@@ -1279,7 +1276,6 @@ summary.chat-compact-head { cursor: pointer; }
 .context-pop-foot code { font-family: var(--font-mono); }
 @media (prefers-reduced-motion: reduce) {
   .context-gauge[data-compacting] .context-gauge-ring { animation: none; }
-  .context-gauge-button, .context-gauge[data-hidden] .context-gauge-button { transition: none; }
 }
 /* 대화 정리 중(plan §8.309): t3code `ContextCompactionTimelineRow`처럼 양쪽 가는 선 사이에 Minimize2·말, 정리 중이면 말이 반짝인다
    (참고 ActivityShimmerOverlay). 움직임을 줄인 기기는 반짝이지 않는다 */
