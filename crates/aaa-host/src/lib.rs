@@ -61,6 +61,8 @@ mod project;
 mod prompt;
 mod prompt_box;
 mod push;
+mod quota;
+mod quota_rpc;
 mod report_mark;
 mod resource;
 mod restore;
@@ -551,6 +553,7 @@ pub struct Host {
     vapid: Option<push::Vapid>,
     /// 구독 사용량(웹이 물을 때만 읽는다)
     usage: usage::UsageService,
+    account_quota: tokio::sync::Mutex<quota::Cache>,
     /// 알림 webhook 대기열(설정이 켜져 있을 때)
     notify_tx: Mutex<Option<tokio::sync::mpsc::UnboundedSender<aaa_proto::InboxItem>>>,
     /// 지금 쓰는(보이고 focus가 있는) 웹 화면 수(events WS `presence`). 하나라도 있으면 Web Push를 보내지 않는다
@@ -745,6 +748,7 @@ impl Host {
             file_caps: Mutex::new(HashMap::new()),
             vapid,
             usage: usage::UsageService::new(usage::UsageContext::system()),
+            account_quota: Default::default(),
             notify_tx: Mutex::new(None),
             in_use: std::sync::atomic::AtomicUsize::new(0),
             viewing: Mutex::new(seen::Viewing::default()),
@@ -2353,6 +2357,14 @@ impl Host {
         spec: SpawnSpec,
         actor: &str,
     ) -> Result<String, ErrorBody> {
+        // managed thread는 인증 유무와 관계없이 launch·identity·감시를 함께 잇는다.
+        // thread_restart가 자리 교체와 옛 기록 정리도 맡으므로 여기서 두 번 교체하지 않는다.
+        if let Some(rec) = self.thread_of_pane(id).filter(|r| r.kind != aaa_proto::ThreadKind::Adopted) {
+            let resumed = self.thread_restart(&rec.project, &rec.id, true, None, actor).await?;
+            let new_id = resumed.pane.ok_or_else(|| err(ErrorCode::Internal, "thread 세션이 없다"))?;
+            self.db.audit(actor, "pane_resume", &format!("{id} -> {new_id}"));
+            return Ok(new_id);
+        }
         let new_id = self.respawn_with_account(id, mid, spec, actor).await?;
         self.db.audit(actor, "pane_resume", &format!("{id} -> {new_id}"));
         self.replace_pane(id, &new_id, mid, actor).await;

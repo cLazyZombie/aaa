@@ -29,6 +29,34 @@ expires_ms?: number,
  */
 health?: AccountHealth, };
 
+export type QuotaSource = "codex_rpc" | "claude_statusline";
+
+export type QuotaProblem = "unknown" | "expired" | "rate_limited" | "locked" | "disconnected" | "unsupported" | "failed" | "clock_skew";
+
+export type QuotaFreshness = "fresh" | "stale" | "unknown";
+
+export type QuotaWindow = { limit_id: string,
+/**
+ * 기간을 모르는 서로 다른 창도 합치지 않기 위한 제공자 창 이름.
+ */
+window_id: string, scope: string | null, duration_mins: number | null, used_percent: number, observed_at_ms: number, resets_at_ms: number | null, };
+
+export type QuotaSnapshot = {
+/**
+ * 로그인·등록 때 새로 만드는 세대. 토큰의 해시가 아니다.
+ */
+generation: string, source: QuotaSource, sampled_at_ms: number, windows: Array<QuotaWindow>, problem: QuotaProblem | null, retry_at_ms: number | null, };
+
+export type AccountQuotaWindow = { machine: string, source: QuotaSource, received_at_ms: number, freshness: QuotaFreshness, problem: QuotaProblem | null, conflict: boolean, limit_id: string,
+/**
+ * 기간을 모르는 서로 다른 창도 합치지 않기 위한 제공자 창 이름.
+ */
+window_id: string, scope: string | null, duration_mins: number | null, used_percent: number, observed_at_ms: number, resets_at_ms: number | null, };
+
+export type AccountQuota = { account: string, harness: string, windows: Array<AccountQuotaWindow>, problem: QuotaProblem | null, retry_at_ms: number | null, };
+
+export type AccountQuotaReport = { accounts: Array<AccountQuota>, };
+
 export type AccountHealth = "ok" | "expiring" | "expired" | "rejected";
 
 export type AccountDefault = { harness: string, account: string, };
@@ -905,7 +933,7 @@ web: boolean, created_ms: number, updated_ms: number, };
 
 export type FrontResponse = { "kind": "accounts", accounts: Array<AccountView>, } | { "kind": "account_defaults", defaults: Array<AccountDefault>, } | { "kind": "account_login", login: AccountLoginView, } | { "kind": "input_events", events: Array<InputEvent>, } | { "kind": "deploy_context", project: string | null, session: boolean, allowed: boolean, } | { "kind": "rollout", rollout: RolloutView, } | { "kind": "rollout_cards", cards: Array<RolloutCard>, } | { "kind": "rollout_plan", plan: RolloutPlanView, } | { "kind": "deploy_jobs", jobs: Array<DeployJobCard>, } | { "kind": "deployment", machine: string, job: DeployJob, running_software: string, running_sha256: string, } | { "kind": "missions", missions: Array<MissionView>, } | { "kind": "mission", mission: MissionView, } | { "kind": "post", result: PostResult,
 /**
- * status 조회에서 확인한 inbox 처리 상태(FRONT_API 1.83). 옛 host는 생략한다.
+ * status 조회에서 확인한 inbox 처리 상태(FRONT_API 1.84). 옛 host는 생략한다.
  */
 handled?: boolean, } | { "kind": "posts", posts: Array<PostEnvelope>,
 /**

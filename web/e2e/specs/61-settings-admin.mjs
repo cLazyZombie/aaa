@@ -4,7 +4,7 @@
 // Codex 설정은 실험실 폴더(CODEX_HOME)다: 실제 ~/.codex는 건드리지 않는다.
 import fs from "node:fs";
 import { isDeepStrictEqual } from "node:util";
-import { root, aaa, step, browser, pairPage, shot, openSettings } from "../lib/harness.mjs";
+import { root, aaa, step, browser, pairPage, shot, openSettings, inTime } from "../lib/harness.mjs";
 
 const codex = `${root}/codex`;
 fs.mkdirSync(codex, { recursive: true });
@@ -51,13 +51,49 @@ export default async function ({ page }) {
     // 사람이 터미널에서 host.toml을 고친 뒤 화면이 본 판으로 바꾸면 거부된다(파일 그대로)
     fs.appendFileSync(hostToml, "\n# 사람이 고침\n");
     const edited = read(hostToml);
-    await row(sp, "trust_screens").locator("select").selectOption("user");
-    await sp.getByRole("alert").getByText("그사이 host 설정이 바뀌어").waitFor();
-    if (read(hostToml) !== edited) throw new Error("바뀐 판에 썼다");
-    // 새로 읽은 판에는 쓴다
-    await row(sp, "trust_screens").locator("select").selectOption("user");
-    await row(sp, "trust_screens").getByTestId("safety-value").filter({ hasText: "user" }).waitFor();
-    if (!read(hostToml).includes("# 사람이 고침")) throw new Error("사람이 고친 줄이 사라졌다");
+    // 충돌 뒤 재조회 답만 보류한다. 새 rev를 읽기 전에 입력을 다시 열면 옛 판으로 다음 저장을 보낸다.
+    let release;
+    let reached;
+    let finished;
+    let reloadError;
+    const gate = new Promise((done) => { release = done; });
+    const refreshing = new Promise((done) => { reached = done; });
+    const handled = new Promise((done) => { finished = done; });
+    let held = false;
+    const holdReload = async (route) => {
+      if (held || route.request().postDataJSON()?.op !== "safety_show") return route.fallback();
+      held = true;
+      try {
+        const response = await route.fetch();
+        reached();
+        await gate;
+        await route.fulfill({ response });
+      } catch (e) {
+        reloadError = e;
+        reached();
+      } finally {
+        finished();
+      }
+    };
+    await page.route("**/api/v1/call", holdReload);
+    try {
+      await row(sp, "trust_screens").locator("select").selectOption("user");
+      await sp.getByRole("alert").getByText("그사이 host 설정이 바뀌어").waitFor();
+      await inTime(refreshing, 20_000, "충돌 뒤 새 판 재조회");
+      if (reloadError) throw reloadError;
+      if (read(hostToml) !== edited) throw new Error("바뀐 판에 썼다");
+      if (!(await row(sp, "trust_screens").locator("select").isDisabled())) throw new Error("새 판을 읽기 전에 다음 저장을 열었다");
+      release();
+      // 새로 읽은 판에는 쓴다(선택 가능 사건까지 Playwright가 기다린다).
+      await row(sp, "trust_screens").locator("select").selectOption("user");
+      await row(sp, "trust_screens").getByTestId("safety-value").filter({ hasText: "user" }).waitFor();
+      if (!read(hostToml).includes("# 사람이 고침")) throw new Error("사람이 고친 줄이 사라졌다");
+    } finally {
+      release();
+      if (held) await inTime(handled, 20_000, "보류한 재조회 응답 완료");
+      await page.unroute("**/api/v1/call", holdReload);
+      if (reloadError) throw reloadError;
+    }
     await shot(page, "61-safety-desktop");
   });
 

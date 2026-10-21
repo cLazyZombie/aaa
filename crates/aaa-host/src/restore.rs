@@ -234,7 +234,6 @@ impl Host {
             return match restarted {
                 Ok(v) => {
                     let new = v.pane.clone().unwrap_or_default();
-                    self.replace_pane(id, &new, mid, ACTOR).await;
                     let rec = self.load(&rec.project, &rec.id).unwrap_or(rec);
                     let how = if resume { "대화를 이어 띄웠다" } else { "brief 전이라 새로 띄웠다" };
                     self.flow(&rec, "session_restored", None, format!("재부팅 뒤 {how}: {id} → {new}"));

@@ -650,6 +650,11 @@ pub enum LinkMsg {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "op", rename_all = "snake_case")]
 pub enum AgentRequest {
+    /// account_quota.v1: 해당 pane이 관측한 비밀 없는 창만 읽는다.
+    AccountQuota {
+        session: String,
+        generation: String,
+    },
     /// account_auth.v1. 비밀을 spec·journal에 넣지 않는 전용 spawn.
     SpawnAccount {
         spec: SpawnSpec,
@@ -1030,6 +1035,9 @@ pub struct PrAnswer {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum AgentResponse {
+    AccountQuota {
+        snapshot: Option<crate::QuotaSnapshot>,
+    },
     DeployGuard {
         guard: Box<crate::DeployGuardView>,
     },
@@ -2988,7 +2996,7 @@ pub enum FrontResponse {
     },
     Post {
         result: crate::PostResult,
-        /// status 조회에서 확인한 inbox 처리 상태(FRONT_API 1.83). 옛 host는 생략한다.
+        /// status 조회에서 확인한 inbox 처리 상태(FRONT_API 1.84). 옛 host는 생략한다.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         #[ts(optional)]
         handled: Option<bool>,

@@ -409,7 +409,9 @@ pane이 없어졌거나 시작이 실패한 thread는 `aaa thread restart <id>`�
   작업 폴더다. 쓸 수 있는 profile은 `aaa profile list --project`가 보인다.
 - 보고 확인: `aaa thread show <id>`, `aaa thread library <id>`, 다 봤으면 `aaa thread ack <id>`, 끝나면 `aaa thread resolve <id>`.
 - 세션이 끝났거나 시작이 실패한 thread는 `aaa thread restart <id>`로 다시 띄운다. `--profile <이름>`이면 다른(허용된) profile로
-  띄운다. 도는 thread의 model은 harness의 `/model`로 바꾼다.
+  띄운다. 도는 세션은 먼저 `aaa pane kill <pane>`으로 끝내고 종료를 확인한다. 새 pane이 뜨면 옛 pane 기록은 정리된다.
+  고정 계정과 harness가 다른 profile은 새 thread로 시작한다(새 harness의 기본 계정 또는 `--account`).
+  도는 thread의 model은 harness의 `/model`로 바꾼다.
 - 쉼으로 project.toml `auto_resolve_days`(기본 7, 0이면 끔)가 지난 thread는 저절로 끝난다. 끝낸 thread는
   `aaa thread resolve <id> --reopen`으로 다시 연다(아무것도 띄우지 않는다).
 - 다음 지시: `aaa thread next <id>`로 Next 목록을 보고 `--line N`으로 그 줄을 보낸다. thread가 자기 도구로 한다. 줄을 더할
@@ -1813,6 +1815,7 @@ impl Host {
         self.automation_prepare(rec).await?;
         self.task_attach_transfer(rec).await?;
         let launch = rec.launch.clone().ok_or_else(|| internal("launch 기록이 없다"))?;
+        let old_pane = rec.pane.clone();
         let mut env = launch.env.clone();
         env.push(("AAA_PROJECT".into(), rec.project.clone()));
         env.push(("AAA_THREAD".into(), rec.id.clone()));
@@ -1851,6 +1854,11 @@ impl Host {
             r.status = ThreadStatus::Open;
             r.error = None;
         })?;
+        if let Some(old) =
+            old_pane.filter(|old| old != &pane && self.pane_view_of(old, aaa_proto::DeviceRole::Local).is_some())
+        {
+            self.replace_pane(&old, &pane, &rec.machine_id, actor).await;
+        }
         if let (Ok(conn), Some(wd)) = (self.live_conn(&rec.machine_id), rec.work_dir.clone()) {
             let _ = conn
                 .request(AgentRequest::ThreadWatch { thread: format!("{}/{}", rec.project, rec.id), work_dir: wd })
@@ -1872,7 +1880,8 @@ impl Host {
     }
 
     /// 끝났거나 시작이 실패한 thread 세션을 다시 띄운다(herdr-projects threads.rs `restart_plan`). 실행 중이면 거부한다(먼저
-    /// `aaa pane kill`). 시작 중이거나 끝낸 thread도 거부한다.
+    /// `aaa pane kill`). 새 pane 기동에 성공하면 옛 pane의 자리·이름을 잇고 기록을 정리한다.
+    /// 시작 중이거나 끝낸 thread도 거부한다.
     /// - 기본: task(Follow-ups 포함)·프로젝트 지침·memory를 다시 읽어 brief를 새로 쓰고 새 대화로 띄운 뒤 안내한다.
     /// - 자리를 만들지 못하고 실패한 thread(launch 기록이 없다)는 자리 만들기부터 다시 한다(`RestartPlan::Create`).
     /// - resume: 저장된 대화를 잇는다(brief 안내 없음). harness 세션 ID를 모르면 거부한다.
@@ -1898,13 +1907,35 @@ impl Host {
         if rec.status == ThreadStatus::Starting {
             rec.status = ThreadStatus::Failed;
         }
-        let plan = restart_plan(&rec, resume, running)?;
         if let Some(p) = &profile {
             if resume {
                 return Err(bad("--profile은 새 대화로 다시 시작할 때만 쓴다(--resume과 함께 쓰지 않는다)"));
             }
             self.check_profile_allowed(project, p)?;
         }
+        // 고정 계정은 새 작업의 기본 계정으로 바꾸지 않는다. 거부는 brief·launch·profile을 쓰기 전에 끝낸다.
+        let resolved_profile = if resume {
+            None
+        } else {
+            let again = profile.as_deref().unwrap_or(&rec.profile);
+            if !again.is_empty() {
+                self.check_profile_allowed(project, again)?;
+            }
+            let p = self.resolved_profile(Some(project), &rec.machine_id, again)?;
+            if let Some(account) = &rec.account {
+                let credential = self.accounts.credential(account)?;
+                if credential.harness != p.harness {
+                    return Err(bad(format!(
+                        "고정 계정의 harness({})와 profile의 harness({})가 다르다. 기존 thread의 계정은 바꾸지 않는다. \
+                         새 harness로 새 thread를 시작한다(`aaa thread start {project} --profile {again} --task-file <파일>`). \
+                         새 thread는 그 harness의 기본 계정을 쓰며 --account로 직접 고를 수 있다",
+                        credential.harness, p.harness
+                    )));
+                }
+            }
+            Some(p)
+        };
+        let plan = restart_plan(&rec, resume, running)?;
         let conn = self.live_conn(&rec.machine_id)?;
         self.check_health(&rec.machine_id)?;
         let profile_note = profile.as_ref().map(|p| format!(", profile {p}")).unwrap_or_default();
@@ -1917,14 +1948,6 @@ impl Host {
                 }
                 r.brief = BriefState::Pending;
                 r.brief_attempts = 0;
-            })?;
-            // 자리부터 다시 만들 때도 host가 profile을 다시 푼다: 허용 목록·safety를 다시 본다(새 대화 restart와 같다, §8.163)
-            if profile.is_none() && !rec.profile.is_empty() {
-                self.check_profile_allowed(project, &rec.profile)?;
-            }
-            let p = self.resolved_profile(Some(project), &rec.machine_id, &rec.profile)?;
-            let resolved_profile = Some(p);
-            rec = self.update_rec(project, id, |r| {
                 r.status = ThreadStatus::Starting;
                 r.prepare_started_ms = Some(aaa_common::util::now_ms());
                 r.error = None;
@@ -1969,9 +1992,6 @@ impl Host {
             let work_dir = rec.work_dir.clone().ok_or_else(|| internal("작업 폴더 기록이 없다"))?;
             // 새 대화는 host 정본과 지금 safety를 다시 읽는다. --resume은 위의 저장된 launch를 쓴다.
             let again = profile.clone().unwrap_or_else(|| rec.profile.clone());
-            self.check_profile_allowed(project, &again)?;
-            let p = self.resolved_profile(Some(project), &rec.machine_id, &again)?;
-            let resolved_profile = Some(p);
             let safety = None;
             let relaunched = match conn
                 .request(AgentRequest::ThreadRebrief {
