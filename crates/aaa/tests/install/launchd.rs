@@ -78,6 +78,13 @@ fn service_tail(root: &Path) -> String {
     }
     lines.join("\n")
 }
+fn launchd_command(lab: &Lab, args: &[&str]) -> Command {
+    let mut command = lab.command(args);
+    // 승인 PTY와 같은 서비스 환경을 사용한다. TERM도 검토한 계획의 해시에 묶인다.
+    command.env("TERM", "xterm-256color");
+    command
+}
+
 fn authorize_apply(lab: &Lab, instance: &str, source: &Path, launcher: &Path) -> Value {
     let mut args = arguments(lab, instance, source, launcher);
     let approval = lab.0.join(instance).with_extension("approval.json");
@@ -91,7 +98,7 @@ fn authorize_apply(lab: &Lab, instance: &str, source: &Path, launcher: &Path) ->
         "--yes".into(),
         "--json".into(),
     ]);
-    let output = lab.run(&args);
+    let output = launchd_command(lab, &args.iter().map(String::as_str).collect::<Vec<_>>()).output().unwrap();
     assert!(
         output.status.success(),
         "launchd apply status={:?}, stdout={}, stderr={}, service_tail={}",
@@ -169,6 +176,31 @@ fn launchd_plan_requires_the_matching_launcher_without_registering_or_creating_i
 }
 
 #[test]
+fn launchd_authorization_and_apply_preserve_the_reviewed_service_environment_without_registering() {
+    let lab = Lab::new();
+    let (source, launcher) = package(&lab);
+    let mut args = arguments(&lab, "review", &source, &launcher);
+    let approval = lab.0.join("approval.json");
+    let issue = launchd_args::authorize(args.clone(), &approval);
+    let (code, text) = terminal_steps(&lab, &issue, &[("정확히 yes", "yes\r")], false);
+    assert_eq!(code, 0, "{text}");
+    let authorization: Value = serde_json::from_slice(&std::fs::read(approval).unwrap()).unwrap();
+    args.extend(["--dry-run".into(), "--json".into()]);
+    let args: Vec<_> = args.iter().map(String::as_str).collect();
+    let before = snapshot(&lab.0);
+    let output = launchd_command(&lab, &args).output().unwrap();
+    let current = json(&output);
+    assert_eq!(current["exit_code"], 0, "{current}");
+    assert_eq!(current["plan_sha256"], authorization["claims"]["plan_sha256"], "승인과 apply의 서비스 환경");
+    // 실제 실행 환경을 바꿨다면 기존 승인으로 허용하지 않는 경계를 유지한다.
+    let output = launchd_command(&lab, &args).env("TERM", "dumb").output().unwrap();
+    let changed = json(&output);
+    assert_eq!(changed["exit_code"], 0, "{changed}");
+    assert_ne!(changed["plan_sha256"], authorization["claims"]["plan_sha256"]);
+    assert_eq!(snapshot(&lab.0), before, "등록 없이 읽기 계획만 비교한다");
+}
+
+#[test]
 #[ignore = "실제 GUI LaunchAgent 변경은 승인된 macos-15 CI 전용 필수 단계에서 실행"]
 fn launchd_real_registration_ready_resume_and_second_instance_preserve_the_shared_launcher() {
     assert_eq!(
@@ -196,8 +228,9 @@ fn launchd_real_registration_ready_resume_and_second_instance_preserve_the_share
     let state = lab.0.join(&one).join("state");
     let stopped = ctl(&["bootout", &labels.0[0]]);
     assert!(stopped.status.success(), "first stop: {}", String::from_utf8_lossy(&stopped.stderr));
-    let resumed = lab
-        .command(&[
+    let resumed = launchd_command(
+        &lab,
+        &[
             "install",
             "--instance",
             &one,
@@ -208,9 +241,10 @@ fn launchd_real_registration_ready_resume_and_second_instance_preserve_the_share
             "--non-interactive",
             "--yes",
             "--json",
-        ])
-        .output()
-        .unwrap();
+        ],
+    )
+    .output()
+    .unwrap();
     assert!(
         resumed.status.success(),
         "same-ID resume: {} / {}",
@@ -234,10 +268,12 @@ fn launchd_real_registration_ready_resume_and_second_instance_preserve_the_share
     assert_eq!(second["exit_code"], 0);
     assert_eq!(std::fs::read(&launcher).unwrap(), bytes);
     assert_eq!(std::fs::read(first_plist).unwrap(), before);
-    let output = lab
-        .command(&["install", "--instance", &one, "--state-dir", state.to_str().unwrap(), "--status", id, "--json"])
-        .output()
-        .unwrap();
+    let output = launchd_command(
+        &lab,
+        &["install", "--instance", &one, "--state-dir", state.to_str().unwrap(), "--status", id, "--json"],
+    )
+    .output()
+    .unwrap();
     assert!(output.status.success(), "status: {}", String::from_utf8_lossy(&output.stdout));
     // 정상 사용자 service 해제 경로로 자신의 두 label/plist만 제거한다.
     for instance in [&one, &two] {

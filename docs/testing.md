@@ -12,6 +12,7 @@
   OS manager만 대체하며 파일 transaction·ready 판정·journal은 실제 owner를 사용한다.
 - `nice -n 15 cargo test -p aaa --test install --locked`: 읽기 launchd 계획과 package 누락의 무쓰기 경계를 포함한다.
   실제 등록 시험 하나는 로컬에서 ignored이며 운영 LaunchAgent를 변경하지 않는다.
+- `launchd_authorization_and_apply_preserve_the_reviewed_service_environment_without_registering`은 실제 PTY 승인 뒤 apply와 같은 명령 환경의 dry-run 해시를 비교한다. TERM 누락의 RED와 같은 TERM의 GREEN, 다른 TERM의 해시 변경·무쓰기를 검사한다. 실제 등록은 실행하지 않는다.
 - 승인된 기존 macos-15 CI 단계는 `cargo test -p aaa --test install --locked launchd::launchd_real_registration_ready_resume_and_second_instance_preserve_the_shared_launcher -- --ignored --exact --nocapture`를 필수 실행한다.
   고유 두 label의 실제 등록·ready·bootout 뒤 같은 ID resume·두 번째 instance와 launcher 보존·정상 해제, 실패 시 자기 label만 정리한다.
   GUI 도메인이 없으면 실패이며 skip/fake-ready로 바꾸지 않는다. 다른 OS에서는 Mac native owner만 cfg 제외한다.

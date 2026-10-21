@@ -7161,3 +7161,5 @@ FRONT_API 1.96는 기본 검수 표지와 답 기록의 r 참조를 더한다. E
 - **I3 착지 통합.** origin/main071090d5(t-0670)의 마지막 plan§8.418·FRONT_API1.102·AGENT_LINK1.11·웹E2E83을 직접 확인했다. I3는 빈§8.419를 유지하고 API/웹 번호는 올리지 않는다. t-0670의 Rust CPU 예약·실측 우선 배치·웹 10 worker 및 diff 임시 index 충돌 수리를 그대로 보존한다. 통합본 전체 ci-local·Windows cross·공개 검사를 새 로그에 기록한다. 실제 LaunchAgent 등록은 승인된 기존 macos-15 main CI에서 판정한다.
 
 - **실제 등록 CI의 승인 인자 수리.** main ef315cbb macos-15의 실제 등록 owner가 승인 전에 exit2/invalid_arguments·answered0/1로 끝났다. launchd 시험만 install 상위 옵션 `--prompt plain`을 `authorize --out` 뒤에 붙인 결함이다. 두 instance가 쓰는 조립을 시험 지원 helper로 공유하고 실제 `Cli::try_parse_from`에서 잘못된 순서 RED→앞선 순서 GREEN을 남긴다. production·기존 승인/ready/resume/공유 보존 단언과 시한은 유지한다. 실제 후속 단계는 사용자가 승인한 hp branch의 기존 macos-15 CI에서 착지 전에 한 번 확인하며, 로컬 운영 LaunchAgent는 변경하지 않는다.
+
+- **승인 뒤 환경 보존.** hp argv 수리 후보의 첫 CI에서 승인은 통과했으나 apply가 installation_content_conflict로 닫혔다. 승인 PTY만 TERM=xterm-256color였고, 환경을 비운 apply는 TERM이 없었다. TERM을 포함한 service_environment의 승인 해시 대조는 유지하고 시험의 비대화형 apply/resume을 승인과 같은 환경으로 맞춘다. 실제 PTY 승인→읽기 dry-run의 해시 불일치 RED/일치 GREEN과 다른 TERM의 해시 변경·무쓰기 대조를 로컬에서 남긴다. 실제 등록 후속 단계는 바뀐 후보의 hp macos-15 CI에서 판정한다.
