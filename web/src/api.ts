@@ -508,7 +508,7 @@ export function watchEvents(
             })
             .catch((e: unknown) => {
               if (stopped) return;
-              // host가 설정을 읽지 못해 안전 모드로 떴다(503 unavailable, plan §8.369): 다시 붙지 않고 App이 다시 물어 그 글을 보인다
+              // host가 설정을 읽지 못해 안전 모드로 떴다(503 unavailable, plan §8.370): 다시 붙지 않고 App이 다시 물어 그 글을 보인다
               if (e instanceof ApiError && e.body.code === "unavailable") {
                 stopped = true;
                 reportSignedOut();
