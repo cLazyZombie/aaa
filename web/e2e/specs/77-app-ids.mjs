@@ -132,13 +132,15 @@ export default async function ({ page }) {
     aaa("task", "rm", d);
     await page.getByTestId("task-missing").waitFor();
     await chat(page);
-    await domIs(page, "지운 번호는 글 그대로", (d) => !document.querySelector(`[data-testid="chat"] [data-testid="app-id"][data-target="${d}"]`), d);
+    await domIs(page, "지운 번호는 글 그대로", (d) => document.querySelector('[data-testid="chat"]')?.textContent.includes(d)
+      && !document.querySelector(`[data-testid="chat"] [data-testid="app-id"][data-target="${d}"]`), d);
     assert.ok((await page.getByTestId("chat").textContent()).includes(d));
     aaa("task", "restore", d);
     await domIs(page, "복원한 번호는 다시 링크", (d) => !!document.querySelector(`[data-testid="chat"] [data-testid="app-id"][data-target="${d}"]`), d);
     aaa("thread", "resolve", t.id);
     await chat(page);
-    await domIs(page, "끝난 thread의 보존하지 않은 질문은 글 그대로", (id) => !document.querySelector(`[data-testid="chat"] [data-testid="app-id"][data-target="${id}"]`), threadQ);
+    await domIs(page, "끝난 thread의 보존하지 않은 질문은 글 그대로", (id) => document.querySelector('[data-testid="chat"]')?.textContent.includes(id)
+      && !document.querySelector(`[data-testid="chat"] [data-testid="app-id"][data-target="${id}"]`), threadQ);
     assert.ok((await page.getByTestId("chat").textContent()).includes(threadQ));
     fs.writeFileSync(`${root}/archive-task.md`, "완료 보관 시험");
     const completed = aaa("thread", "start", "demo", "--title", "보관할 일", "--machine", "labA", "--profile", "fake", "--kind", "dir", "--task-file", `${root}/archive-task.md`);
