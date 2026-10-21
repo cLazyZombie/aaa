@@ -6892,3 +6892,12 @@ FRONT_API 1.96는 기본 검수 표지와 답 기록의 r 참조를 더한다. E
 
 - 착지 기준 origin/main `57bc997e`에서 마지막 §8.393·FRONT_API 1.97·AGENT_LINK 1.11·E2E76을 직접 확인했다. 이 작업은 §8.394로 맞추고 기존 API 버전·E2E 번호를 유지한다. E2E49는 main의 새 기억 본문·갱신 thread 동시 대기를 유지한다.
 - 통합 후보의 Windows 교차 clippy가 main의 `update.rs` 시험용 `sha2::Digest` import를 미사용으로 검출했다. 실제 사용처가 Unix 전용 rollback 시험이므로 import도 `cfg(all(test, unix))`로 맞춘다. 시험 내용·업데이트 동작은 유지한다.
+
+### 8.395 install 승인 시험의 자식 종료와 PTY 출력 종료(10-21, t-0485)
+
+- **원인·범위.** Windows CI는 승인서 발급·설치 ID 출력 뒤에도 시험 소유 ConPTY의 EOF를 기다렸다. `portable-pty` master가 출력 pipe의 소유자를 유지하므로 자식 종료만으로 EOF가 오지 않는다. 제품 worker의 stdio는 이미 pipe/null이며 이 수리는 시험 터미널에 한정한다.
+- **종료 계약.** Unix `waitid(WEXITED | WNOWAIT)`와 Windows 복제 process handle의 종료 사건을 reader와 같은 채널로 받는다. 실제 자식을 wait한 뒤 master를 닫고 reader의 마지막 출력까지 모은다. 출력이 먼저 닫혀도 자식 종료를 기다리며 총 상한 60초·기존 승인/취소/비밀 비노출/worker 수명 단언은 유지한다. 상한 진단 끝에는 자식 종료 코드 유무와 reader 완료도 남긴다.
+- **회귀 owner.** 실제 PTY와 실제 UnixStream writer의 보관 수명으로 ConPTY의 EOF 지연을 Unix에서 재현한다. 기존 helper는 자식이 끝나고 마지막 출력까지 나와도 60초 RED다. 수리 뒤 같은 종료 코드와 300줄 전부를 수집해 GREEN이다. Windows의 기존 install owner들은 실제 ConPTY를 계속 사용한다.
+- **판정 한계·번호.** macOS CI의 yes 직후 무출력은 Windows의 완료 출력 뒤 EOF 대기와 구별한다. 로컬의 실제 CLI는 yes 뒤 계획 SHA 재검증 스택을 거쳐 승인서 발급·정상 종료했으며 macOS CI 원인은 아직 확정하지 않는다. target이 기록되지 않은 15분 job 종료도 install로 단정하지 않는다. 실제 Windows/macOS CI 판정은 착지 뒤 결과로 확인한다. 착지 기준 origin/main `90799c7a`의 마지막 §8.394·FRONT_API 1.97·AGENT_LINK 1.11·E2E76을 직접 확인했다. 별도 worktree에서 통합·검증하며 이번 수리는 §8.395로 옮기고 API 판과 기존 웹 E2E 번호는 유지한다.
+
+- **다음 단계.** 이 수리 착지 뒤에는 macOS I3의 승인된 `apply --service launchd` 감독자를 Windows bootstrap보다 먼저 구현한다. 웹 머신 추가 M3가 현재 `unsupported_service_platform` 경계를 기다린다. Windows bootstrap·사용자 Windows PC 인수·Linux I4·최종 I7은 그 뒤다.
