@@ -1,6 +1,6 @@
 """Cargo가 준비한 모든 시험 binary를 격리된 묶음으로 실행한다. doctest도 별도로 유지한다."""
 import argparse
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
 from dataclasses import dataclass
 import json
 import os
@@ -8,7 +8,6 @@ from pathlib import Path
 import re
 import subprocess
 import sys
-import threading
 import time
 
 
@@ -59,7 +58,7 @@ def prepare(logs):
     return artifacts
 
 
-def plan(artifacts, workers):
+def plan(artifacts, workers, durations=None):
     jobs = []
     for artifact in artifacts:
         executable = artifact["executable"]
@@ -75,8 +74,10 @@ def plan(artifacts, workers):
                 jobs.append(Job(f"m13-{index + 1}", [executable, "--exact", *group], cwd, group))
         else:
             jobs.append(Job(name, [executable], cwd))
-    # 독립 프로세스로 긴 m13을 먼저 시작한다. 다른 binary는 빈 자리부터 이어 실행한다.
-    jobs.sort(key=lambda job: not job.name.startswith("m13-"))
+    # m13 여섯 묶음을 먼저 시작하고, 빈 자리에는 실측상 긴 binary부터 넣는다.
+    # 새 binary는 시간이 없으므로 먼저 실행한다. 시간은 순서에만 쓰고 선택·시한에는 쓰지 않는다.
+    durations = {} if durations is None else durations
+    jobs.sort(key=lambda job: (not job.name.startswith("m13-"), -durations.get(job.name, float("inf"))))
     return jobs
 
 
@@ -85,17 +86,13 @@ def execute(jobs, logs, workers, threads, cpu_budget=None):
     if cpu_budget < 1:
         raise ValueError("CPU 예산은 1 이상이어야 한다")
     available = cpu_budget
-    changed = threading.Condition()
     epoch = time.monotonic()
 
-    def run(index, job, submitted):
-        nonlocal available
+    def slots_for(job):
         # exact 한 시험뿐인 rollout이 libtest 기본 thread 수만큼 자리를 예약하지 않는다.
-        slots = min(cpu_budget, threads, len(job.tests) if job.tests is not None else threads)
-        slots = max(1, slots)
-        with changed:
-            changed.wait_for(lambda: available >= slots)
-            available -= slots
+        return max(1, min(cpu_budget, threads, len(job.tests) if job.tests is not None else threads))
+
+    def run(index, job, slots):
         started = time.monotonic()
         log = logs / f"{index:02d}-{job.name}.log"
         env = {**os.environ, "RUST_TEST_THREADS": str(threads)}
@@ -108,9 +105,6 @@ def execute(jobs, logs, workers, threads, cpu_budget=None):
                     code = 1
         finally:
             finished = time.monotonic()
-            with changed:
-                available += slots
-                changed.notify_all()
         text = log.read_text(errors="replace")
         if job.tests is not None:
             match = re.search(r"^running (\d+) tests?$", text, re.MULTILINE)
@@ -119,17 +113,32 @@ def execute(jobs, logs, workers, threads, cpu_budget=None):
                 code = 1
                 log.write_text(text)
         return dict(name=job.name, exit=code, seconds=finished - started,
-                    start_seconds=started - epoch, queue_seconds=started - submitted,
+                    start_seconds=started - epoch, queue_seconds=started - epoch,
                     cpu_slots=slots, log=log.name, output=text)
 
     results = []
     with ThreadPoolExecutor(max_workers=workers) as pool:
-        pending = [pool.submit(run, index, job, time.monotonic()) for index, job in enumerate(jobs)]
-        for future in as_completed(pending):
-            result = future.result()
-            print(f"\nRunning {result['name']} ({result['seconds']:.2f}초, exit={result['exit']})", flush=True)
-            print(result.pop("output"), end="", flush=True)
-            results.append(result)
+        pending = list(enumerate(jobs))
+        running = {}
+        while pending or running:
+            # CPU 자리가 있는 작업만 worker에 보낸다. 큰 작업의 자리 대기가 worker를
+            # 차지해, 뒤의 실행 가능한 작은 작업까지 막거나 긴 작업의 순서를 뒤집지 않는다.
+            for index, job in pending.copy():
+                if len(running) == workers:
+                    break
+                slots = slots_for(job)
+                if slots > available:
+                    continue
+                available -= slots
+                pending.remove((index, job))
+                running[pool.submit(run, index, job, slots)] = slots
+            done, _ = wait(running, return_when=FIRST_COMPLETED)
+            for future in done:
+                available += running.pop(future)
+                result = future.result()
+                print(f"\nRunning {result['name']} ({result['seconds']:.2f}초, exit={result['exit']})", flush=True)
+                print(result.pop("output"), end="", flush=True)
+                results.append(result)
     return results
 
 
@@ -144,7 +153,8 @@ def main():
     args.logs = args.logs.resolve()
     started = time.monotonic()
     artifacts = prepare(args.logs)
-    jobs = plan(artifacts, args.workers)
+    durations = json.loads(Path(__file__).with_name("rust-test-durations.json").read_text())
+    jobs = plan(artifacts, args.workers, durations)
     # doctest를 binary 실행으로 대신하지 않는다. 기존 Cargo의 전체 workspace doc 범위를 그대로 실행한다.
     jobs.append(Job("doctests", ["cargo", "test", "--workspace", "--doc", "--locked", "--no-fail-fast"], Path.cwd()))
     # 여섯 m13 프로세스는 1+1+1+4+4+4=15자리다(16 CPU). 나머지는 CPU 예산 안에서 들어온다.

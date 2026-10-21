@@ -8,7 +8,6 @@ use anyhow::{Context, Result, bail};
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use std::process::{ExitStatus, Stdio};
-use std::sync::atomic::{AtomicU64, Ordering};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
 pub async fn query(cwd: &str, base: Option<&str>, q: &DiffQuery) -> Result<DiffView> {
@@ -107,9 +106,8 @@ impl Drop for TempIndex {
 }
 
 async fn temp_index(git: &Git<'_>, head: bool) -> Result<TempIndex> {
-    static N: AtomicU64 = AtomicU64::new(0);
-    let dir =
-        std::env::temp_dir().join(format!("aaa-diff-{}-{}", std::process::id(), N.fetch_add(1, Ordering::Relaxed)));
+    // PID는 재사용된다. 이전 프로세스의 잔여 폴더와 겹치지 않게 비교마다 새 ID로 한 번 만든다.
+    let dir = std::env::temp_dir().join(format!("aaa-diff-{}", aaa_common::util::new_id()));
     std::fs::create_dir(&dir).context("임시 index 폴더를 만들지 못했다")?;
     let path = |b: Vec<u8>| PathBuf::from(String::from_utf8_lossy(&b).trim());
     let objects = path(git.ok(&["rev-parse", "--path-format=absolute", "--git-path", "objects"]).await?);
@@ -425,6 +423,45 @@ mod tests {
         let extra: Vec<_> = names(&after).into_iter().filter(|n| !names(&before).contains(n)).collect();
         assert_eq!(names(&after), names(&before), "파일 목록이 바뀌었다: {extra:?}");
         assert!(after.files == before.files, "파일 내용이 바뀌었다");
+    }
+
+    /// PID가 다시 배정돼도 이전 프로세스의 임시 index 폴더를 건드리지 않고 비교한다.
+    #[tokio::test]
+    async fn stale_pid_temp_index_never_blocks_a_new_process() {
+        const CHILD: &str = "AAA_TEST_DIFF_PID_REUSE_CHILD";
+        if std::env::var_os(CHILD).is_some() {
+            // 새 시험 프로세스라 옛 실행기의 첫 순번은 0이다. 남의 잔여 폴더를 지우거나 재사용하면 안 된다.
+            let legacy = std::env::temp_dir().join(format!("aaa-diff-{}-0", std::process::id()));
+            std::fs::create_dir(&legacy).unwrap();
+            std::fs::write(legacy.join("keep"), b"left by an earlier process").unwrap();
+            let r = Repo::new();
+            r.write("one.txt", "one\n");
+            r.git(&["add", "-A"]);
+            r.git(&["commit", "-qm", "first"]);
+            r.write("one.txt", "two\n");
+            let v = query(&r.dir.to_string_lossy(), None, &q(DiffScope::Uncommitted, true)).await.unwrap();
+            assert!(v.patch.unwrap().contains("+two"));
+            assert_eq!(std::fs::read(legacy.join("keep")).unwrap(), b"left by an earlier process");
+            return;
+        }
+        // TMP 계열은 자식 환경에만 둔다. 다른 병렬 시험의 전역 환경·임시 폴더를 바꾸지 않는다.
+        let root = std::env::temp_dir().join(format!("aaa-diff-pid-owner-{}", aaa_common::util::new_id()));
+        std::fs::create_dir(&root).unwrap();
+        let out = Command::new(std::env::current_exe().unwrap())
+            .args(["--exact", "diff::tests::stale_pid_temp_index_never_blocks_a_new_process", "--nocapture"])
+            .env(CHILD, "1")
+            .env("TMPDIR", &root)
+            .env("TMP", &root)
+            .env("TEMP", &root)
+            .output()
+            .unwrap();
+        std::fs::remove_dir_all(root).unwrap();
+        assert!(
+            out.status.success(),
+            "{}{}",
+            String::from_utf8_lossy(&out.stdout),
+            String::from_utf8_lossy(&out.stderr)
+        );
     }
 
     /// 큰 비교는 patch 없이 목록만 주고(웹이 파일마다 읽는다), 파일 하나도 frame 안으로 줄 경계에서 자른다.

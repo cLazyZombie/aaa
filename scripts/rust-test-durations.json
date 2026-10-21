@@ -1,0 +1,22 @@
+{
+  "aaa": 8.8,
+  "aaa_agent": 9.9,
+  "aaa_common": 0.1,
+  "aaa_config": 0.1,
+  "aaa_doctor": 0.0,
+  "aaa_host": 21.5,
+  "aaa_proto": 0.0,
+  "aaa_session": 0.1,
+  "aaa_vt": 0.5,
+  "codex_integration": 1.4,
+  "deps": 0.0,
+  "e2e": 17.3,
+  "install": 40.3,
+  "m12": 12.3,
+  "post_cli": 0.1,
+  "real": 0.0,
+  "report_copy": 3.9,
+  "resource_limits": 2.1,
+  "smoke": 1.6,
+  "tui_removed": 0.8
+}
