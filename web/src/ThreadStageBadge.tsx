@@ -1,7 +1,7 @@
 import type { ThreadStage } from "./gen/proto";
 import "./ThreadStageBadge.css";
 
-export const STAGE_WORD: Record<ThreadStage, string> = { merge_ready: "병합 대기", landing: "착지 중" };
+export const STAGE_WORD: Record<ThreadStage, string> = { merge_ready: "병합 대기", landing: "병합 중" };
 
 /** host가 회수한 첫 줄의 단계만 표시한다. harness 상태·진행률과 별개다. */
 export function ThreadStageBadge({ stage }: { stage?: ThreadStage | null }) {

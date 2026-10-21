@@ -103,7 +103,7 @@ describe("할 일 편집", () => {
     assert.equal(moveOp(board, by(1), "up"), null);
     assert.equal(moveOp(board, by(7), "down"), null);
     assert.equal(moveOp(board, by(1), "top"), null);
-    // 한 목록(§8.389): 맨 위 단계는 `##` 목록을 넘어 움직이고, 목록이 갈리는 틈에서는 앞 이웃의 목록 끝에 붙는다
+    // 한 목록(§8.393): 맨 위 단계는 `##` 목록을 넘어 움직이고, 목록이 갈리는 틈에서는 앞 이웃의 목록 끝에 붙는다
     assert.deepEqual(place(moveOp(board, by(5), "down")), { before: null, parent: null, to_list: "B" });
     assert.deepEqual(place(moveOp(board, by(7), "up")), { before: "셋", parent: null, to_list: "" });
     assert.deepEqual(place(moveOp(board, by(7), "top")), { before: "하나", parent: null, to_list: "" });
@@ -290,7 +290,7 @@ describe("할 일 thread 연결(T3, plan §8.316)", () => {
   });
 });
 
-// 한 목록의 예약(plan §8.389, t-0611): 맨 위 host 예약 차례, 하위 함께(2A), 저장소 거르기, 차례 순번
+// 한 목록의 예약(plan §8.393, t-0611): 맨 위 host 예약 차례, 하위 함께(2A), 저장소 거르기, 차례 순번
 describe("할 일 한 목록과 예약", () => {
   const t = (line, title, over = {}) => task({ line, title, id: `ID${line}`, short_id: `d-${String(line).padStart(4, "0")}`, block_sha256: `sha-${line}`, repo: "aaa", ...over });
   const q = (line, position, over = {}) => ({ task_id: `ID${line}`, task: t(line, `옛 ${line}`), position, state: "queued", reason: "자리 대기", ...over });

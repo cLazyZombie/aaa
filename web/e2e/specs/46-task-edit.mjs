@@ -59,7 +59,7 @@ const expectFile = (got, want, what) => {
 
 export default async function ({ page }) {
   let md;
-  await step("편집 폼: 새 task 더하기, 제목·owner(사람으로 저장) 바꾸기(목록 칸은 없다, §8.389). 파일은 바뀐 블록만 바뀐다", async () => {
+  await step("편집 폼: 새 task 더하기, 제목·owner(사람으로 저장) 바꾸기(목록 칸은 없다, §8.393). 파일은 바뀐 블록만 바뀐다", async () => {
     // 앱 안 알림이 도구줄을 덮지 않게(43-tasks와 같다)
     const dialog = await openSettings(page, "알림");
     await dialog.getByRole("switch", { name: "앱 안에서" }).click();
@@ -97,9 +97,32 @@ export default async function ({ page }) {
     want = want.replace("- [ ] 배포 (me)\n", "- [ ] 배포 준비 (Priya Rao)\n");
     expectFile(text, want, "제자리 고치기");
     // 사람 이름을 「사람으로 저장」 없이 owner로 쓰면 거부하고 폼 안에 까닭을 보인다
-    await pickRow(page, "원격 일");
-    await detail.getByTestId("task-field-owner").selectOption("person");
-    await detail.getByTestId("task-field-person").fill("me");
+    // 상세를 열며 시작한 owner 조회를 사람 선택 뒤에 돌려준다. 빈 사람 이름도 고치던 폼이다.
+    let releaseOwners;
+    const ownerGate = new Promise((resolve) => { releaseOwners = resolve; });
+    const holdOwners = async (route) => {
+      if (route.request().postDataJSON()?.op !== "assignable") return route.fallback();
+      await ownerGate;
+      await route.continue();
+    };
+    await page.route("**/api/v1/call", holdOwners);
+    try {
+      const requested = page.waitForRequest((r) => r.url().endsWith("/api/v1/call") && r.postDataJSON()?.op === "assignable");
+      await pickRow(page, "원격 일");
+      const request = await requested;
+      await detail.getByTestId("task-field-owner").selectOption("person");
+      await detail.getByTestId("task-field-person").waitFor();
+      releaseOwners();
+      const response = await request.response();
+      if (!response?.ok()) throw new Error("사람 선택 뒤 owner 조회 실패");
+      await response.finished();
+      // 조회 응답 뒤 React가 폼을 다시 그리는 frame을 지난 다음에도 이름 칸이 남아야 한다.
+      await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+      await detail.getByTestId("task-field-person").fill("me");
+    } finally {
+      releaseOwners();
+      await page.unroute("**/api/v1/call", holdOwners);
+    }
     await detail.getByTestId("task-save").click();
     await detail.getByTestId("task-form-error").waitFor();
     if (!(await detail.getByTestId("task-form-error").textContent()).includes("사람 이름으로 쓰지 않는다")) throw new Error(await detail.getByTestId("task-form-error").textContent());

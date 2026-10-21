@@ -1,5 +1,5 @@
 /* 할 일 화면(TasksView.tsx, plan §8.306). 색·크기는 herdr-web-ui token만 쓴다. 행은 t3code ComposerTasksBadge 행(아이콘·글·오른쪽
-   칩). 한 목록(plan §8.389): 예약은 맨 위 보라 표지 행, 점선 한 줄 밑에 일반 할 일(t-0580 시안 3판). 상세는 본문 폭으로 정한다: 넓으면(패드 가로·데스크톱) 오른쪽 칸, 좁으면(패드 세로)
+   칩). 한 목록(plan §8.393): 예약은 맨 위 보라 표지 행, 점선 한 줄 밑에 일반 할 일(t-0580 시안 3판). 상세는 본문 폭으로 정한다: 넓으면(패드 가로·데스크톱) 오른쪽 칸, 좁으면(패드 세로)
    오른쪽에서 밀려 나온 시트, 휴대폰은 전체 화면 시트(herdr/sheets.ts SHEET_QUERY 640px). */
 .tasks-view {
   display: flex;
@@ -537,7 +537,7 @@ button.task-chip:disabled { cursor: default; color: var(--text-dim); }
 .task-queue-move { border-color: var(--reserved-line); color: var(--reserved); }
 .task-queue-cancel { border-color: var(--status-blocked); color: var(--status-blocked); }
 
-/* 한 목록(§8.389): 예약 색은 Primer done(보라). 테마 token에 없는 색이라 여기서 정한다 */
+/* 한 목록(§8.393): 예약 색은 Primer done(보라). 테마 token에 없는 색이라 여기서 정한다 */
 .tasks-view { --reserved: #a371f7; --reserved-tint: rgba(163, 113, 247, 0.14); --reserved-line: rgba(163, 113, 247, 0.55); }
 [data-theme="light"] .tasks-view { --reserved: #8250df; --reserved-tint: rgba(130, 80, 223, 0.10); --reserved-line: rgba(130, 80, 223, 0.45); }
 .task-reserved-dot { display: inline-block; flex: 0 0 auto; width: 12px; height: 12px; margin: 2px; border-radius: 50%; background: var(--reserved); box-shadow: 0 0 0 2px var(--reserved-tint); }

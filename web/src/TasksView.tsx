@@ -3,7 +3,7 @@ import { ThreadStageBadge } from "./ThreadStageBadge";
 // 있어서 거기서 들어가게), 필요하면 수정, 삭제 할수 있고」). 활동 막대 「할 일」·`#tasks`가 연다. host `tasks`(TaskBoard)를 읽고
 // `task_edit`로 고친다(바뀐 블록만 쓰고 블록 hash로 충돌을 감지한다). thread 연결(T3, §8.316): 상세의 「coordinator에게 맡기기」·
 // 「바로 시작」(TaskStart.tsx), 「task 없는 열린 thread」의 「task에 잇기」·「task로 만들기」, 끝난 thread의 자동 정리 알림 줄(되살리기).
-// 행 모양과 상태 아이콘은 t3code ComposerTasksBadge.tsx, 메모 표지 `≡`은 herdr-projects popup.rs `build`. 한 목록(plan §8.389, t-0611):
+// 행 모양과 상태 아이콘은 t3code ComposerTasksBadge.tsx, 메모 표지 `≡`은 herdr-projects popup.rs `build`. 한 목록(plan §8.393, t-0611):
 // 「## 목록」 머리로 나누지 않고, 예약은 맨 위에 host 예약 차례대로(보라 표지만), 그 밑에 일반 할 일을 둔다(승인 시안 t-0580 3판).
 // 예약 끌기는 놓은 영역이 곧 값이다(Jira·GitHub Projects): 예약 영역에 놓으면 예약(내용 확인 뒤), 아래에 놓으면 예약 풀기.
 // 행·목록 머리의 ⋯ 메뉴는 herdr-web-ui RowMenu(휴대폰은 아래 시트), 끌기는 herdr-web-ui Sidebar.tsx 483–491의 HTML 끌어 놓기와
@@ -120,7 +120,7 @@ function writeAutoSeen(id: number): void {
   }
 }
 
-/** 저장소 거르기(§8.389): 이 기기에 프로젝트마다 기억한다. 없으면 전체(null), 빈 글은 「정하지 않음」 */
+/** 저장소 거르기(§8.393): 이 기기에 프로젝트마다 기억한다. 없으면 전체(null), 빈 글은 「정하지 않음」 */
 const REPO_KEY = (project: string) => `aaa:tasks:repo:${project}`;
 function readRepo(project: string): string | null {
   try {

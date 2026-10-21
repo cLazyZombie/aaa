@@ -8,7 +8,7 @@ import type { TaskAction, TaskAnchor, TaskBoard, TaskLogEntry, TaskOp, TaskReser
  * 진행 중 ◉(열린 thread와 이어짐) > 대기 ○ */
 export type TaskState = "problem" | "check" | "run" | "wait";
 
-/** 거르기 칩: 전체·내 일(me)·미할당·진행 중·예약(자리 나면 시작, 한 목록 §8.389)·확인 필요 */
+/** 거르기 칩: 전체·내 일(me)·미할당·진행 중·예약(자리 나면 시작, 한 목록 §8.393)·확인 필요 */
 export type TaskFilter = "all" | "mine" | "unassigned" | "running" | "reserved" | "check";
 
 export const TASK_FILTERS: readonly { id: TaskFilter; label: string }[] = [
@@ -120,7 +120,7 @@ export function taskDepth(t: TaskView, byLine: ReadonlyMap<number, TaskView>): n
   return depth;
 }
 
-// ───────────── 한 목록(plan §8.389, t-0611) ─────────────
+// ───────────── 한 목록(plan §8.393, t-0611) ─────────────
 // 「## 목록」 머리로 나누지 않고 파일 차례 그대로 한 목록이다(옛 파일의 `##`는 그대로 읽고 쓴다). 맨 위에 host 예약 차례대로 예약을,
 // 그 밑에 일반 할 일을 둔다. 예약 차례의 정본은 host 예약 기록이다(t-0564): 화면은 차례를 들고 있지 않고 `board.queue`를 그대로 따른다.
 
@@ -170,7 +170,7 @@ export interface TaskListModel {
 }
 
 /**
- * 한 목록(plan §8.389): 예약은 맨 위 예약 차례대로, 그 밑에 일반 할 일이 파일 차례로. 상위를 예약하면 하위가 그 밑에 함께 올라가고(2A),
+ * 한 목록(plan §8.393): 예약은 맨 위 예약 차례대로, 그 밑에 일반 할 일이 파일 차례로. 상위를 예약하면 하위가 그 밑에 함께 올라가고(2A),
  * 하위만 예약하면 상위 경로(crumb)가 붙고 상위 행에 「하위 N 예약됨」이 붙는다. 상태 거르기와 저장소 거르기는 함께 걸린다. 저장소로 걸러
  * 숨은 예약은 그 자리에 흐린 한 줄(`gap`)로 남긴다(차례는 그대로다). `repo`가 null이면 전체다.
  */
@@ -290,7 +290,7 @@ export function anchorOf(t: TaskView): TaskAnchor {
   return { list: t.list, title: t.title, block_sha256: t.block_sha256, line: t.line };
 }
 
-/** 같은 상위의 task(파일 차례). 맨 위 단계는 `##` 목록을 가리지 않는다(한 목록, §8.389) */
+/** 같은 상위의 task(파일 차례). 맨 위 단계는 `##` 목록을 가리지 않는다(한 목록, §8.393) */
 export function siblings(board: TaskBoard, t: TaskView): TaskView[] {
   return board.tasks.filter((x) => x.parent === t.parent);
 }
@@ -338,7 +338,7 @@ export type MoveDir = "up" | "down" | "top";
 
 /**
  * 행 메뉴의 위로·아래로·맨 위로(휴대폰은 끌기 대신 이것, t-0469 §3.3). 그 자리면 없음. `visible`이면 거른 채 보이는 이웃과 자리를 바꾸고
- * 사이에 숨은 task의 차례는 그대로 둔다(§8.389). 맨 위로는 전체 맨 위다
+ * 사이에 숨은 task의 차례는 그대로 둔다(§8.393). 맨 위로는 전체 맨 위다
  */
 export function moveOp(board: TaskBoard, t: TaskView, dir: MoveDir, visible: (x: TaskView) => boolean = () => true): TaskOp | null {
   const sibs = siblings(board, t);

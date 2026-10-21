@@ -66,7 +66,7 @@ export default async function ({ page }) {
     const want = { [LINE.login]: "run", [LINE.sub]: "wait", [LINE.tidy]: "problem", [LINE.probe]: "problem", [LINE.web]: "problem", [LINE.deploy]: "wait", [LINE.remote]: "wait" };
     for (const [line, state] of Object.entries(want)) if ((await stateOf(page, line)) !== state) throw new Error(`${line}줄 상태 ${await stateOf(page, line)} ≠ ${state}`);
     if ((await page.getByTestId("activity-badge-tasks").textContent()) !== "3") throw new Error("배지는 형식 어긋남 3");
-    // 한 목록(plan §8.389): 「## 목록」 머리 없이 파일 차례 그대로, 하위는 들여쓴다
+    // 한 목록(plan §8.393): 「## 목록」 머리 없이 파일 차례 그대로, 하위는 들여쓴다
     if ((await page.getByTestId("tasks-list").locator(".task-list-name").count()) !== 0) throw new Error("목록 머리가 남았다");
     const order = await page.getByTestId("tasks-rest").locator(".task-row").evaluateAll((els) => els.map((e) => e.dataset.testid));
     if (order.join() !== Object.values(LINE).map((l) => `task-${l}`).join()) throw new Error(`한 목록 차례 ${order}`);

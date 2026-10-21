@@ -1,5 +1,5 @@
 import { ThreadStageBadge } from "./ThreadStageBadge";
-// 예약의 정본은 host다. 이 컴포넌트에는 scheduler나 별도 저장을 두지 않는다. 할 일 한 목록(plan §8.389): 예약 행은 숫자·까닭 글 없이
+// 예약의 정본은 host다. 이 컴포넌트에는 scheduler나 별도 저장을 두지 않는다. 할 일 한 목록(plan §8.393): 예약 행은 숫자·까닭 글 없이
 // 보라 표지만 보이고, 기다리는 특별한 까닭(머신 연결 대기·확인 필요)과 풀면 돌아갈 자리는 여기 상세에만 보인다.
 import { useEffect, useRef, useState } from "react";
 import { call, onTasksChanged } from "./api";
@@ -91,7 +91,7 @@ export function QueueControls({ task, board, canEdit, request, onStep, onUnreser
   </section>;
 }
 
-/** 완료 보관 단추와 목록. 예약은 따로 칸을 두지 않고 할 일 한 목록 맨 위에 있다(§8.389) */
+/** 완료 보관 단추와 목록. 예약은 따로 칸을 두지 않고 할 일 한 목록 맨 위에 있다(§8.393) */
 export function TaskQueuePanel({ board, canEdit, onThread }: { board: TaskBoard; canEdit: boolean; onThread: (id:string)=>void }) {
   const [show, setShow] = useState(false);
   const [entries, setEntries] = useState<ArchivedTask[]>([]);
