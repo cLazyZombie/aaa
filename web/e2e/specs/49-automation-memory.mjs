@@ -70,8 +70,11 @@ done
     await page.getByTestId(`automation-${project}-check`).getByRole("button", { name: "실패 분류 자세히" }).click();
     const memory = page.getByTestId("automation-memory");
     await memory.waitFor();
-    if (!(await memory.textContent()).includes("입력 뒤에 보고")) throw new Error("기억 본문 없음");
-    if (!(await memory.textContent()).includes(thread.id)) throw new Error("마지막 갱신 thread 없음");
+    // focus는 조회 시작 사건이다. host 사본을 본 뒤 실제 화면의 새 본문·thread 반영까지 기다린다.
+    await domIs(page, "새 기억 본문과 갱신 thread", (id) => {
+      const text = document.querySelector('[data-testid="automation-memory"]')?.textContent ?? "";
+      return text.includes("입력 뒤에 보고") && text.includes(id);
+    }, thread.id);
     await page.keyboard.press("Escape");
     await page.getByTestId("automation-detail").waitFor({ state: "detached" });
     if (await page.getByTestId("automation-closing").count()) throw new Error("아직 작업 중인데 끝남 표시");

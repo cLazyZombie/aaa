@@ -345,7 +345,9 @@ function TaskForm(props: DetailProps) {
   const [error, setError] = useState<string | null>(null);
   const submitting = useRef(false);
   // 고쳤는지는 보낼 동작이 있는지로 본다: owner 목록이 늦게 와 agent·사람 구분만 달라진 폼은 손대지 않은 폼이다
-  const dirty = base ? draftOps(base, draft, baseParent).length > 0 : draft.title.trim() !== "";
+  // 사람을 고른 직후에는 아직 저장할 owner가 없어도 편집 중이다. 늦은 목록이 이름 칸을 지우지 않게 한다.
+  const emptyPerson = draft.who === "person" && draft.person.trim() === "";
+  const dirty = base ? emptyPerson || draftOps(base, draft, baseParent).length > 0 : draft.title.trim() !== "";
   const rebase = (x: TaskView) => {
     const p = parentAnchor(board, x);
     setBase(x);

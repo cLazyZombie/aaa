@@ -609,6 +609,9 @@ enum TaskCmd {
     Edit {
         /// 고칠 task ID(d-0001·ULID) 또는 제목(대소문자 무시)
         task: String,
+        /// 사용자 지시로 모델·머신을 바꾸는 근거 한 줄. --profile·--machine 변경에만 쓴다(예약 유지)
+        #[arg(long, value_name = "REASON")]
+        user_request: Option<String>,
         /// 읽은 판의 블록 hash(`task list --json`의 `block_sha256`). 주면 그 블록이 그대로일 때만 고친다(아니면 revision_conflict)
         #[arg(long, value_name = "SHA256")]
         block: Option<String>,
@@ -713,8 +716,9 @@ fn task_at_block(title: &str, block: Option<String>) -> aaa_proto::TaskAnchor {
 }
 
 /// `aaa task` 고치기: 충돌이면 그 까닭과 지금 원문을 보이고 종료 코드 1이다
-fn task_edit_cmd(json: bool, ops: Vec<aaa_proto::TaskOp>) -> Result<ExitCode> {
-    let res = front_call(FrontRequest::TaskEdit { project: project_or_here(None)?, ops, base_sha256: None })?;
+fn task_edit_cmd(json: bool, ops: Vec<aaa_proto::TaskOp>, user_request: Option<String>) -> Result<ExitCode> {
+    let res =
+        front_call(FrontRequest::TaskEdit { project: project_or_here(None)?, ops, base_sha256: None, user_request })?;
     if let Ok(FrontResponse::TaskEdited { conflict: Some(c), .. }) = &res {
         if json {
             eprintln!("{}", serde_json::to_string(&serde_json::json!({ "conflict": c }))?);
@@ -1854,6 +1858,7 @@ fn run(cli: Cli) -> Result<ExitCode> {
         ),
         Cmd::Task { cmd } => {
             use aaa_proto::TaskOp;
+            let mut user_request = None;
             let op = match cmd {
                 TaskCmd::List
                 | TaskCmd::Log { .. }
@@ -1878,6 +1883,7 @@ fn run(cli: Cli) -> Result<ExitCode> {
                     }
                 }
                 TaskCmd::Edit {
+                    user_request: reason,
                     task,
                     block,
                     title,
@@ -1891,24 +1897,27 @@ fn run(cli: Cli) -> Result<ExitCode> {
                     repo,
                     done,
                     undone,
-                } => TaskOp::Update {
-                    at: task_at_block(&task, block),
-                    title,
-                    owner,
-                    person,
-                    profile,
-                    machine,
-                    notes: if clear_notes { Some(Vec::new()) } else { (!notes.is_empty()).then_some(notes) },
-                    thread,
-                    done: if done {
-                        Some(true)
-                    } else if undone {
-                        Some(false)
-                    } else {
-                        None
-                    },
-                    repo,
-                },
+                } => {
+                    user_request = reason;
+                    TaskOp::Update {
+                        at: task_at_block(&task, block),
+                        title,
+                        owner,
+                        person,
+                        profile,
+                        machine,
+                        notes: if clear_notes { Some(Vec::new()) } else { (!notes.is_empty()).then_some(notes) },
+                        thread,
+                        done: if done {
+                            Some(true)
+                        } else if undone {
+                            Some(false)
+                        } else {
+                            None
+                        },
+                        repo,
+                    }
+                }
                 TaskCmd::Move { task, block, list, before, parent } => TaskOp::Move {
                     at: task_at_block(&task, block),
                     to_list: list,
@@ -1952,7 +1961,7 @@ fn run(cli: Cli) -> Result<ExitCode> {
                 TaskCmd::ListRm { name } => TaskOp::ListDelete { name },
                 TaskCmd::ListMove { name, before } => TaskOp::ListMove { name, before },
             };
-            task_edit_cmd(json, vec![op])
+            task_edit_cmd(json, vec![op], user_request)
         }
         Cmd::Assignable { project, check } => {
             front(json, FrontRequest::Assignable { project: project_or_here(project)?, check })

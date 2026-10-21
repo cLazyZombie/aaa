@@ -1699,8 +1699,8 @@ impl Host {
             FrontRequest::TaskArchive { project, restore } => {
                 self.task_archive(&project, restore.as_deref(), actor).await
             }
-            FrontRequest::TaskEdit { project, ops, base_sha256 } => {
-                self.task_edit(&project, ops, base_sha256, actor).await
+            FrontRequest::TaskEdit { project, ops, base_sha256, user_request } => {
+                self.task_edit(&project, ops, base_sha256, user_request, actor).await
             }
             FrontRequest::TaskLog { project, before, limit, filter, task } => {
                 self.task_log(&project, before, limit, filter, task.as_deref())

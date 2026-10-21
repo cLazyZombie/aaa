@@ -49,7 +49,8 @@ export default async function ({ page }) {
         await frameImage.tap();
         await p.getByTestId("lightbox-img").evaluate((i) => i.decode());
         await shot(p, `74-review-picture-phone-${theme}`);
-        await p.keyboard.press("Escape");
+        // 휴대폰은 iframe에 남은 키보드 focus 대신 실제 닫기 단추를 누른다(E2E59와 같은 경로).
+        await p.getByTestId("lightbox-close").tap();
         await p.getByTestId("lightbox").waitFor({ state: "detached" });
       }
       await domIs(p, "카드 가로 넘침 없음", () => document.documentElement.scrollWidth <= innerWidth);
