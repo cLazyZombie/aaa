@@ -14,6 +14,7 @@ import { SettingsGroup } from "./herdr/SettingsControls.tsx";
 import { nativeModalOver, useFocusTrap } from "./herdr/useFocusTrap.ts";
 import { usePhoneSheetBack } from "./herdr/sheetHistory.ts";
 import { MachineSetup } from "./SettingsAdminPages";
+import { MachineSetupPanel } from "./MachineSetupPanel";
 import { machineLine, machineRows } from "./machineDetail.ts";
 import { canGuide, guideSteps, machineNameOk, SOURCE } from "./enrollGuide.ts";
 import { copyText } from "./herdr/clipboard";
@@ -186,6 +187,7 @@ export function MachinesPage({ role, machines }: { role: DeviceRole; machines: M
           </div>
         </SettingsGroup>
       )}
+      {admin === true && <MachineSetupPanel role={role} />}
       <SettingsGroup title="등록된 머신">
         <div className="settings-item">
           <ul className="admin-list" data-testid="machine-list">

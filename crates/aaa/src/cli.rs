@@ -4088,6 +4088,28 @@ fn render_front(r: &FrontResponse) -> String {
                 let _ = writeln!(s, "{}\t{}", a.address, a.source);
             }
         }
+        FrontResponse::MachineSetup { setup } => {
+            let _ = writeln!(
+                s,
+                "{}\t{}\t{:?}\t{}",
+                setup.job,
+                setup.target,
+                setup.phase,
+                setup.error.as_deref().unwrap_or("")
+            );
+        }
+        FrontResponse::MachineSetups { setups } => {
+            for setup in setups {
+                let _ = writeln!(
+                    s,
+                    "{}\t{}\t{:?}\t{}",
+                    setup.job,
+                    setup.target,
+                    setup.phase,
+                    setup.error.as_deref().unwrap_or("")
+                );
+            }
+        }
         FrontResponse::Pending { pending, open_until_ms } => {
             if let Some(until) = open_until_ms {
                 let _ = writeln!(s, "등록 창이 열려 있다({}까지)", aaa_common::util::utc_text(*until));

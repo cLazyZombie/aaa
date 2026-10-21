@@ -45,3 +45,13 @@
 .admin-command { display: flex; align-items: flex-start; gap: 6px; }
 .admin-command code { flex: 1; min-width: 0; padding: 6px 8px; border: 1px solid var(--border); border-radius: var(--radius-md); font-family: var(--font-mono); font-size: var(--fs-xs); overflow-wrap: anywhere; white-space: pre-wrap; user-select: all; }
 .admin-command .btn { flex: none; min-height: 32px; }
+/* 「SSH로 추가」(웹 머신 추가 M2, plan §8.384): 사람이 할 단계는 왼쪽 띠로, 지문은 고정폭 줄바꿈 */
+.admin-grow { flex: 1 1 220px; }
+.admin-grow input { width: 100%; }
+.setup-list > li.setup-needs { border-left: 3px solid var(--primary); padding-left: 8px; }
+.setup-body { flex-basis: 100%; display: flex; flex-direction: column; gap: 6px; font-size: var(--fs-sm); }
+.setup-body p { margin: 0; overflow-wrap: anywhere; }
+.setup-body .mono { font-family: var(--font-mono); font-size: var(--fs-xs); }
+.setup-keys { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+.setup-keys > li { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; }
+.setup-keys code { overflow-wrap: anywhere; min-width: 0; }
