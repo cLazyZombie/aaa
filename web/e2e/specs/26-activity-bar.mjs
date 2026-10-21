@@ -1,7 +1,7 @@
 // 왼쪽 활동 막대(사용자 요청 10-19 「vs code 처럼 … 같은 버튼 한번 더 누르면 숨겨지고」, plan §8.240): 패널 바꾸기·다시 눌러 접기·
 // 기기별 기억·키보드·Mod+Shift+B·단축키·팔레트·알림이 연 줄의 패널·보고서 본문 화면·설정 톱니·휴대폰 drawer·막대와 바닥 줄 배치(§8.248),
 // 사이드바 폭 손잡이(사용자 요청 10-19 「왼쪽 창 … 좌우 resize」, plan §8.257).
-import { root, aaa, step, browser, pairPage, claudeSh, claudeAsk, claudeIdle, waitOutput, domIs, hashIs, focusIs, inList, until, drawerSettled, shot, openSettings } from "../lib/harness.mjs";
+import { root, aaa, step, browser, pairPage, claudeSh, claudeAsk, claudeIdle, claudeWorking, waitOutput, domIs, hashIs, focusIs, inList, until, drawerSettled, shot, openSettings } from "../lib/harness.mjs";
 import fs from "node:fs";
 
 /** 패널·접힘·고른 단추를 한 번에 읽는다 */
@@ -337,6 +337,110 @@ export default async function () {
     } finally {
       await p.context().close();
       await other.page.context().close();
+    }
+  });
+
+  await step("맨 위 「coordinator」(사용자 요청 10-21 「왼쪽 제일 위로 (버튼 중에 제일 위)」, t-0621): 로고 바로 밑·패널 단추 위(tablist 밖)이고, 도는 coordinator가 없으면 기본 profile로 띄워 그 pane을 열며, 있으면 띄우지 않고 연다. 그 pane을 보는 동안 고른 단추다. 질문·확인창은 빨강 점, 안 본 끝난 턴은 강조색 점이고 열면 걷힌다. 휴대폰 drawer에서도 맨 위이고 누르면 drawer를 닫는다", async () => {
+    // host는 프로젝트 하나만 맡는다: 앞 단계(보고서)가 만든 것을 쓰고, 이 단계만 돌면 만든다
+    const project = aaa("project", "list").projects[0]?.name ?? (aaa("project", "create", "demo"), "demo");
+    aaa("project", "set", project, "coordinator_profile", "fake");
+    const $ = (id) => `[data-testid="${id}"]`;
+    const openCall = (p) => p.waitForResponse((r) => r.url().endsWith("/api/v1/call") && r.request().postDataJSON()?.op === "project_open").then((r) => r.json());
+    const coordinators = () => aaa("pane", "list").panes.filter((x) => x.coordinator_project === project && x.state === "running");
+    const dev = await pairPage(browser, aaa("web", "pair").code, { width: 1280, height: 800 });
+    const p = dev.page;
+    const button = p.getByTestId("activity-coordinator");
+    const at = () =>
+      p.evaluate(() => {
+        const box = (s) => document.querySelector(s).getBoundingClientRect();
+        const b = box('[data-testid="activity-coordinator"]');
+        return {
+          afterBrand: Math.round(b.top - box('[data-testid="activity-brand"]').bottom),
+          beforeTabs: Math.round(box('[role="tablist"] [role="tab"]').top - b.bottom),
+          left: Math.round(b.left),
+          inTablist: document.querySelector('[role="tablist"] [data-testid="activity-coordinator"]') !== null,
+          first: document.querySelector(".activity-bar button.activity-item")?.dataset.testid,
+        };
+      });
+    try {
+      await p.getByTestId("pane-t1").waitFor();
+      // 1. 자리: 막대 단추 가운데 맨 위
+      const where = await at();
+      if (JSON.stringify(where) !== JSON.stringify({ afterBrand: 0, beforeTabs: 0, left: 0, inTablist: false, first: "activity-coordinator" })) throw new Error(`자리 ${JSON.stringify(where)}`);
+      if ((await button.getAttribute("title")) !== "coordinator" || (await button.getAttribute("aria-label")) !== "coordinator") throw new Error("이름이 coordinator가 아니다");
+      // 2. 없으면 기본 profile로 띄워 연다
+      await inList(p, "pane-t1");
+      const started = openCall(p);
+      await button.click();
+      const one = (await started).ok;
+      if (!one?.started || one.profile !== "fake") throw new Error(`띄우기 ${JSON.stringify(one)}`);
+      await hashIs(p, `#pane=${encodeURIComponent(one.pane.id)}`);
+      await domIs(p, "고른 단추", (q) => document.querySelector(q)?.getAttribute("aria-pressed") === "true" && document.querySelector(q).classList.contains("is-active"), $("activity-coordinator"));
+      await shot(p, "activity-coordinator-open");
+      // 3. 다른 pane으로 가면 고르지 않은 단추, 다시 누르면 띄우지 않고 그 pane(host에 묻지 않는다)
+      await inList(p, "pane-t1");
+      await domIs(p, "고르지 않음", (q) => document.querySelector(q)?.getAttribute("aria-pressed") === "false", $("activity-coordinator"));
+      let asked = 0;
+      const count = (r) => r.url().endsWith("/api/v1/call") && r.request().postDataJSON()?.op === "project_open" && asked++;
+      p.on("response", count);
+      await button.click();
+      await hashIs(p, `#pane=${encodeURIComponent(one.pane.id)}`);
+      p.off("response", count);
+      if (asked !== 0 || coordinators().length !== 1) throw new Error(`다시 열기: project_open ${asked}번, coordinator ${JSON.stringify(coordinators())}`);
+      // 4. 배지: Claude처럼 그리는 coordinator(프로젝트 홈에서 도는 agent)로 바꾼다
+      aaa("pane", "kill", one.pane.id);
+      await until("fake coordinator 끝남", () => coordinators().length === 0);
+      aaa("pane", "forget", one.pane.id);
+      await inList(p, "pane-t1");
+      const script = `stty -echo; ${claudeIdle}; echo coord-ready; while read a; do case "$a" in ask) ${claudeAsk("make test")};; go) ${claudeWorking};; *) ${claudeIdle};; esac; done`;
+      const coord = aaa("tab", "create", "--machine", "labA", "--label", "coord", "--cwd", `${root}/projects/${project}`, "--", claudeSh, "-c", script).tabs.at(-1).root.pane;
+      await waitOutput(coord, "coord-ready");
+      await until("coordinator 소속", () => coordinators().some((x) => x.id === coord));
+      const badge = (want) =>
+        domIs(p, `coordinator 배지 ${want}`, ([q, want]) => (document.querySelector(q)?.dataset.kind ?? null) === want, [$("activity-badge-coordinator"), want]);
+      await badge(null);
+      aaa("pane", "run", coord, "ask");
+      await badge("ask");
+      if ((await button.getAttribute("aria-label")) !== "coordinator, 질문") throw new Error(`질문 이름 ${await button.getAttribute("aria-label")}`);
+      const red = await p.evaluate((q) => getComputedStyle(document.querySelector(q)).backgroundColor, $("activity-badge-coordinator"));
+      await shot(p, "activity-coordinator-ask");
+      aaa("pane", "run", coord, "go");
+      await badge(null);
+      aaa("pane", "run", coord, "end");
+      await badge("reply");
+      if ((await button.getAttribute("aria-label")) !== "coordinator, 새 답") throw new Error(`새 답 이름 ${await button.getAttribute("aria-label")}`);
+      const accent = await p.evaluate((q) => getComputedStyle(document.querySelector(q)).backgroundColor, $("activity-badge-coordinator"));
+      if (accent === red) throw new Error(`새 답 점이 질문 점과 같은 색 ${accent}`);
+      const dot = await p.evaluate((q) => { const b = document.querySelector(q).getBoundingClientRect(); return [Math.round(b.width), Math.round(b.height)]; }, $("activity-badge-coordinator"));
+      if (JSON.stringify(dot) !== "[14,14]") throw new Error(`점 크기(테두리 포함) ${dot}`);
+      await shot(p, "activity-coordinator-reply");
+      // 열면 봤다: 점이 걷히고 고른 단추
+      await button.click();
+      await hashIs(p, `#pane=${encodeURIComponent(coord)}`);
+      await badge(null);
+    } finally {
+      await p.context().close();
+    }
+    // 5. 휴대폰: drawer 안 막대에서도 맨 위, 누르면 drawer를 닫고 그 pane
+    const phone = await pairPage(browser, aaa("web", "pair").code, { width: 390, height: 844 }, { touch: true });
+    const q = phone.page;
+    try {
+      // 다른 pane(t1)에서 시작한다: 누르면 주소가 coordinator pane으로 바뀌어야 한다
+      await inList(q, "pane-t1");
+      await hashIs(q, `#pane=${encodeURIComponent(aaa("pane", "list").panes.find((x) => x.name === "t1").id)}`);
+      const toggle = q.locator(".view [data-testid='drawer-toggle']");
+      await toggle.click();
+      await q.locator("#workspace-drawer.is-open").waitFor();
+      await drawerSettled(q);
+      const first = await q.evaluate(() => document.querySelector(".activity-bar button.activity-item")?.dataset.testid);
+      if (first !== "activity-coordinator") throw new Error(`휴대폰 맨 위 단추 ${first}`);
+      await shot(q, "phone-activity-coordinator");
+      const coord = coordinators()[0].id;
+      await q.getByTestId("activity-coordinator").click();
+      await hashIs(q, `#pane=${encodeURIComponent(coord)}`);
+      await domIs(q, "drawer 닫힘", () => !document.querySelector("#workspace-drawer.is-open"));
+    } finally {
+      await q.context().close();
     }
   });
 

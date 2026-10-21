@@ -848,6 +848,15 @@ impl ThreadStage {
     }
 }
 
+/// 사용자가 직접 허용한 한도 초과 시작. 시작 시각·요청자·coordinator가 인용한 지시를 보존한다.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+pub struct ThreadLimitOverride {
+    pub actor: String,
+    #[ts(type = "number")]
+    pub at_ms: u64,
+    pub user_request: Option<String>,
+}
+
 /// 검증한 보고 사본 첫 줄의 알림 의도. 묶음·진행률과 별개다.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "snake_case")]
@@ -858,6 +867,10 @@ pub enum ReportAttention {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 pub struct ThreadView {
+    /// 명시적으로 실행 한도를 무시한 시작의 출처. 옛 기록은 생략한다(FRONT_API 1.98).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub over_limit: Option<ThreadLimitOverride>,
     /// FRONT_API 1.95. 보고의 특정 판을 여는 프로젝트별 영속 번호(r-0001부터).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
@@ -957,6 +970,10 @@ pub struct ThreadView {
 /// thread가 구현 전에 모아 묻는 질문 묶음(plan §8.329). 그 보고에 묶인다: 새 보고가 오면 새 질문이고 답도 비운다
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 pub struct ThreadQuestions {
+    /// 형식 확인 필요: 질문·선택지 누락이나 글자 순서 불일치가 있어 답 전송을 막는다. 옛 host는 생략한다.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub format_warning: Option<String>,
     /// FRONT_API 1.96. Questions 없는 검수 대기에 host가 만든 기본 검수 카드. B는 고칠 점을 글로 적는다.
     #[serde(default)]
     pub review: bool,
@@ -979,6 +996,10 @@ pub struct ThreadQuestions {
 /// 질문 하나: 글과 선택지(앞에서부터 A·B·C…)
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 pub struct ThreadQuestion {
+    /// 선택지 뒤의 Markdown 설명·그림(FRONT_API 1.99). 선택지 그림과 섞거나 버리지 않는다.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub after: Option<String>,
     /// 프로젝트별 영속 순번(q-1000부터). 옛 보고 파서·host는 생략한다.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
@@ -1101,20 +1122,44 @@ fn fence_line(line: &str) -> bool {
     t.starts_with("```") || t.starts_with("~~~")
 }
 
-/// `- A 선택지 (추천) — 까닭` 꼴 줄의 선택지. 앞 공백은 부르는 쪽이 정한다
+/// 질문·선택지 맨 앞의 Markdown 강조를 푼다. 본문 속 별표와 밑줄은 보존한다.
+fn unmark_leading(text: &str) -> String {
+    let mut out = text.trim().to_string();
+    while let Some(mark) = ["**", "__", "*", "_"].into_iter().find(|m| out.starts_with(m)) {
+        let Some(end) = out[mark.len()..].find(mark).map(|i| i + mark.len()) else { break };
+        out.replace_range(end..end + mark.len(), "");
+        out.replace_range(..mark.len(), "");
+    }
+    out
+}
+
+/// A~Z 후보는 엄격한 선택지 파싱과 별도로 센다. 잘못된 구두점·강조 때문에 버린 줄도 경고한다.
+fn choice_letter(text: &str) -> Option<char> {
+    let item = text.trim().strip_prefix("- ").or_else(|| text.trim().strip_prefix("* "))?;
+    let item = item.trim_start_matches(['*', '_']);
+    let mut chars = item.chars();
+    let letter = chars.next()?;
+    (letter.is_ascii_alphabetic() && chars.next().is_none_or(|c| !c.is_ascii_alphabetic()))
+        .then_some(letter.to_ascii_uppercase())
+}
+
+/// `- A 선택지 (추천) — 까닭`, `- **A(추천)** …` 등. 앞 공백은 부르는 쪽이 정한다.
 fn choice_line(text: &str) -> Option<QuestionChoice> {
-    let item = text.strip_prefix("- ").or_else(|| text.strip_prefix("* "))?;
+    let item = unmark_leading(text.strip_prefix("- ").or_else(|| text.strip_prefix("* "))?);
     let mut chars = item.chars();
     let (Some(letter), Some(sep)) = (chars.next(), chars.next()) else { return None };
-    if !letter.is_ascii_alphabetic() || !matches!(sep, ' ' | ')' | '.') {
+    if !letter.is_ascii_alphabetic() || !matches!(sep, ' ' | ')' | '.' | '(') {
         return None;
     }
-    let rest = chars.as_str().trim_start_matches([' ', ')', '.']).trim();
+    let rest = &item[letter.len_utf8()..];
+    if sep == '(' && !["(추천)", "(Recommended)", "(recommended)"].iter().any(|m| rest.starts_with(m)) {
+        return None;
+    }
+    let rest = rest.trim_start_matches([' ', ')', '.']).trim();
     let (label, description) = match rest.split_once(" — ") {
         Some((l, d)) => (l.trim(), Some(d.trim().to_string()).filter(|d| !d.is_empty())),
         None => (rest, None),
     };
-    // Claude 메뉴처럼 영어 표지도 받는다(PromptCard `labelOf`)
     let mut recommended = false;
     let mut label = label.to_string();
     for mark in ["(추천)", "(Recommended)", "(recommended)"] {
@@ -1123,7 +1168,7 @@ fn choice_line(text: &str) -> Option<QuestionChoice> {
             label = label.replace(mark, "");
         }
     }
-    let label = label.split_whitespace().collect::<Vec<_>>().join(" ");
+    let label = unmark_leading(&label).split_whitespace().collect::<Vec<_>>().join(" ");
     (!label.is_empty()).then_some(QuestionChoice { label, description, recommended, body: None })
 }
 
@@ -1149,8 +1194,8 @@ fn body_of(lines: &[String], max: usize) -> Option<String> {
     Some(out)
 }
 
-/// `### N. 질문` 블록: 끝의 선택지 목록(열 0의 `- A …` 줄과 그 아래 들여쓴 줄)을 떼고 그 앞은 본문이다. 본문 안의 보통 글머리나
-/// code fence 안 줄은 선택지로 읽지 않는다(꼬리 목록만)
+/// 본문·선택지 목록·그 뒤의 설명을 분리한다. 선택지 그림은 들여쓴 줄로 그 선택지에 남기고,
+/// 목록 뒤의 열 0 설명·그림은 after로 보존한다. code fence 안 줄은 선택지가 아니다.
 fn rich_question(text: String, block: &[String]) -> ThreadQuestion {
     let mut fenced = vec![false; block.len()];
     let mut inside = false;
@@ -1163,19 +1208,30 @@ fn rich_question(text: String, block: &[String]) -> ThreadQuestion {
         }
     }
     let is_choice = |i: usize| !fenced[i] && choice_line(&block[i]).is_some();
-    let mut start = None;
-    for i in (0..block.len()).rev() {
-        let l = &block[i];
+    let mut runs = Vec::new();
+    let mut active: Option<(usize, usize, usize)> = None;
+    for (i, line) in block.iter().enumerate() {
         if is_choice(i) {
-            start = Some(i);
-        } else if !(l.trim().is_empty() || l.starts_with(' ') || l.starts_with('\t')) {
-            break;
+            let run = active.get_or_insert((i, i, 0));
+            run.1 = i + 1;
+            run.2 += 1;
+        } else if line.trim().is_empty() || line.starts_with(' ') || line.starts_with('\t') {
+            if let Some(run) = active.as_mut() {
+                run.1 = i + 1;
+            }
+        } else if let Some(run) = active.take() {
+            runs.push(run);
         }
     }
-    let start = start.unwrap_or(block.len());
+    if let Some(run) = active {
+        runs.push(run);
+    }
+    // 본문의 보통 글머리 하나보다 끝의 A/B 목록을 우선한다. 여러 목록이면 진단의 후보 수 대조가 경고한다.
+    let (start, end, _) =
+        runs.iter().rev().find(|r| r.2 >= 2).or(runs.last()).copied().unwrap_or((block.len(), block.len(), 0));
     let mut choices: Vec<QuestionChoice> = Vec::new();
     let mut extra: Vec<Vec<String>> = Vec::new();
-    for (i, l) in block.iter().enumerate().skip(start) {
+    for (i, l) in block.iter().enumerate().take(end).skip(start) {
         if is_choice(i) {
             choices.push(choice_line(l).expect("선택지 줄"));
             extra.push(Vec::new());
@@ -1188,80 +1244,137 @@ fn rich_question(text: String, block: &[String]) -> ThreadQuestion {
         c.body = body_of(lines, CHOICE_BODY_MAX);
     }
     choices.truncate(QUESTION_MAX);
-    ThreadQuestion { id: None, text, choices, body: body_of(&block[..start], QUESTION_BODY_MAX) }
+    ThreadQuestion {
+        id: None,
+        text,
+        choices,
+        body: body_of(&block[..start], QUESTION_BODY_MAX),
+        after: body_of(&block[end..], QUESTION_BODY_MAX),
+    }
 }
 
-/// 보고 `## Questions` 절의 질문(plan §8.329·§8.345). 두 꼴을 읽는다.
-/// - `### N. 질문` 머리: 그 아래 Markdown 본문(그림·표·code·링크), 끝에 열 0의 `- A 선택지 (추천) — 까닭` 목록, 선택지 그림은
-///   그 줄 아래 두 칸 들여쓴 줄이다.
-/// - 옛 꼴 `N. 질문` 줄 아래 `- A 선택지 (추천) — 까닭` 줄(본문 없음).
-///
-/// 선택지가 둘이 안 되는 질문은 버린다(카드로 답할 수 없다). 글자는 차례로 읽고 표시는 자리로 다시 붙인다
-pub fn report_questions(report: &str) -> Vec<ThreadQuestion> {
-    let mut out: Vec<ThreadQuestion> = Vec::new();
+/// 보고를 읽은 결과와 누락·글자 불일치 진단. 경고가 있으면 host는 카드 답을 받지 않는다.
+#[derive(Debug, Default)]
+pub struct ParsedReportQuestions {
+    pub items: Vec<ThreadQuestion>,
+    pub warning: Option<String>,
+}
+
+/// `### N. 질문`과 `N. **질문**` 모두 본문과 끝의 선택지 목록을 읽는다.
+/// 후보 줄은 별도로 세어 누락·상한 초과·A부터 이어지지 않는 글자를 경고한다.
+pub fn parse_report_questions(report: &str) -> ParsedReportQuestions {
+    let mut out = ParsedReportQuestions::default();
     let mut inside = false;
-    // 지금 모으는 `###` 질문(머리 글, 줄)과 그 안의 code fence
-    let mut rich: Option<(String, Vec<String>)> = None;
     let mut fenced = false;
-    let finish = |rich: &mut Option<(String, Vec<String>)>, out: &mut Vec<ThreadQuestion>| {
-        if let Some((text, block)) = rich.take() {
-            out.push(rich_question(text, &block));
+    let mut current: Option<(String, Vec<String>, bool, usize)> = None;
+    let mut question_count = 0;
+    let mut source_choices = 0;
+    let mut card_choices = 0;
+    let mut bad_order = false;
+    let finish = |current: &mut Option<(String, Vec<String>, bool, usize)>,
+                  out: &mut ParsedReportQuestions,
+                  source_choices: &mut usize,
+                  card_choices: &mut usize,
+                  bad_order: &mut bool| {
+        let Some((text, block, rich, _)) = current.take() else { return };
+        let mut code = false;
+        let letters: Vec<_> = block
+            .iter()
+            .filter_map(|l| {
+                if fence_line(l) {
+                    code = !code;
+                    return None;
+                }
+                (!code).then(|| choice_letter(l)).flatten()
+            })
+            .collect();
+        *source_choices += letters.len();
+        *bad_order |= letters.iter().enumerate().any(|(i, c)| *c as usize != 'A' as usize + i);
+        // 옛 번호 목록은 들여쓴 선택지도 지원한다.
+        let block = if rich {
+            block
+        } else {
+            block
+                .into_iter()
+                .map(|l| if choice_letter(&l).is_some() { l.trim_start().to_string() } else { l })
+                .collect()
+        };
+        let q = rich_question(unmark_leading(&text), &block);
+        *bad_order |= q.choices.len() < 2;
+        if out.items.len() < QUESTION_MAX {
+            *card_choices += q.choices.len();
+            out.items.push(q);
         }
     };
     for line in report.lines() {
         if !fenced && let Some(head) = line.strip_prefix("## ") {
-            finish(&mut rich, &mut out);
+            finish(&mut current, &mut out, &mut source_choices, &mut card_choices, &mut bad_order);
             inside = head.trim() == "Questions";
             continue;
-        }
-        if inside
-            && !fenced
-            && let Some(head) = line.strip_prefix("### ")
-        {
-            let head = head.trim();
-            if let Some((n, rest)) = head.split_once(". ")
-                && !n.is_empty()
-                && n.chars().all(|c| c.is_ascii_digit())
-                && !rest.trim().is_empty()
-            {
-                finish(&mut rich, &mut out);
-                rich = Some((rest.trim().to_string(), Vec::new()));
-                continue;
-            }
-        }
-        if let Some((_, block)) = rich.as_mut() {
-            if fence_line(line) {
-                fenced = !fenced;
-            }
-            block.push(line.to_string());
-            continue;
-        }
-        if line.starts_with('#') {
-            inside = false;
         }
         if !inside {
             continue;
         }
-        let text = line.trim();
-        if let Some((n, rest)) = text.split_once(". ")
-            && !n.is_empty()
-            && n.chars().all(|c| c.is_ascii_digit())
-            && !rest.trim().is_empty()
-        {
-            out.push(ThreadQuestion { id: None, text: rest.trim().to_string(), choices: Vec::new(), body: None });
-            continue;
+        if !fenced {
+            let head = line.strip_prefix("### ").unwrap_or(line).trim();
+            if let Some((n, rest)) = head.split_once(". ")
+                && !n.is_empty()
+                && n.chars().all(|c| c.is_ascii_digit())
+                && !rest.trim().is_empty()
+                // ### 본문의 번호 목록은 본문으로 둔다. 선택지가 끝난 뒤의 N.은 다음 질문이다.
+                && (line.starts_with("### ") || current.as_ref().is_none_or(|(_, _, rich, tail_choices)| !rich || *tail_choices >= 2))
+            {
+                finish(&mut current, &mut out, &mut source_choices, &mut card_choices, &mut bad_order);
+                question_count += 1;
+                bad_order |= n.parse::<usize>().ok() != Some(question_count);
+                current = Some((rest.trim().to_string(), Vec::new(), line.starts_with("### "), 0));
+                continue;
+            }
+            if line.starts_with("# ") {
+                finish(&mut current, &mut out, &mut source_choices, &mut card_choices, &mut bad_order);
+                inside = false;
+                continue;
+            }
         }
-        let Some(q) = out.last_mut() else { continue };
-        if let Some(c) = choice_line(text)
-            && q.choices.len() < QUESTION_MAX
-        {
-            q.choices.push(c);
+        if fence_line(line) {
+            fenced = !fenced;
+        }
+        if let Some((_, block, _, tail_choices)) = current.as_mut() {
+            if !fenced && choice_line(line).is_some() {
+                *tail_choices += 1;
+            } else if fence_line(line) || !(line.trim().is_empty() || line.starts_with(' ') || line.starts_with('\t')) {
+                *tail_choices = 0;
+            }
+            block.push(line.to_string());
+        } else if !fenced && choice_letter(line).is_some() {
+            source_choices += 1;
         }
     }
-    finish(&mut rich, &mut out);
-    out.retain(|q| q.choices.len() >= 2);
-    out.truncate(QUESTION_MAX);
+    finish(&mut current, &mut out, &mut source_choices, &mut card_choices, &mut bad_order);
+    // 첫 줄이 선언한 수 역시 검사한다. 일반 보고 글의 숫자는 질문 수로 읽지 않는다.
+    let declared = report
+        .lines()
+        .next()
+        .and_then(|l| l.split_once("질문 "))
+        .and_then(|(_, r)| r.split_once("개"))
+        .and_then(|(n, _)| n.parse::<usize>().ok());
+    if question_count != out.items.len()
+        || source_choices != card_choices
+        || bad_order
+        || declared.is_some_and(|n| n != out.items.len())
+    {
+        out.warning = Some(format!(
+            "형식 확인 필요: 질문 {question_count}개 중 {}개, 선택지 {source_choices}개 중 {card_choices}개를 읽었다. 질문 번호·A부터 이어지는 선택지 글자·질문당 선택지 2~9개를 확인한다{}.",
+            out.items.len(),
+            declared.map(|n| format!("(선언한 질문 {n}개)")).unwrap_or_default()
+        ));
+    }
     out
+}
+
+/// 진단이 필요 없는 기존 호출용. 카드·답 전송 경계는 `parse_report_questions`의 warning을 함께 확인한다.
+pub fn report_questions(report: &str) -> Vec<ThreadQuestion> {
+    parse_report_questions(report).items
 }
 
 /// thread 작업 요약 표지(plan §8.259). 줄·머리 단추가 요약을 읽지 않고 「낡았다」를 안다
@@ -1393,7 +1506,7 @@ pub fn section_lines(report: &str, name: &str) -> Vec<String> {
             continue;
         }
         if !inside || line.starts_with('#') {
-            if line.starts_with('#') {
+            if line.starts_with("# ") {
                 inside = false;
             }
             continue;
@@ -1919,7 +2032,7 @@ mod tests {
         assert_eq!(next_lines("## Next\n- 하나\n# 다른 절\n- 둘\n"), ["하나"]);
     }
 
-    /// `## Questions`(plan §8.329): 번호 줄이 질문, 글자 줄이 선택지. 추천 표지·까닭을 떼고, 선택지가 둘이 안 되는 질문은 버린다
+    /// 번호 줄이 질문, 글자 줄이 선택지다. 선택지가 모자라도 질문 제목은 보존하고 진단한다.
     #[test]
     fn report_questions_read_numbered_questions_and_lettered_choices() {
         let report = "[결정 필요] 질문 2개: 배치\n\n## Report\n- 1. 이것은 질문이 아니다\n\n## Questions\n\
@@ -1928,7 +2041,10 @@ mod tests {
             3. 비밀번호 보기\n   - A 넣는다(Recommended)\n   - B 넣지 않는다\n\
             - Z 질문 밖 줄은 앞 질문 것이다\n\n## Next\n- 1. 다음 절\n";
         let qs = report_questions(report);
-        assert_eq!(qs.len(), 2, "{qs:?}");
+        assert_eq!(qs.len(), 3, "선택지가 모자란 질문 제목도 남긴다: {qs:?}");
+        assert_eq!(qs[1].text, "선택지 하나뿐");
+        assert_eq!(qs[1].choices.len(), 1);
+        assert!(parse_report_questions(report).warning.is_some());
         assert_eq!(qs[0].text, "로그인 단추 자리");
         let c = &qs[0].choices;
         assert_eq!(
@@ -1937,10 +2053,131 @@ mod tests {
         );
         assert_eq!((c[1].label.as_str(), c[1].recommended), ("가운데 큰 단추", false));
         assert_eq!((c[2].label.as_str(), c[2].description.as_deref()), ("입력칸 바로 아래", None));
-        assert_eq!(qs[1].text, "비밀번호 보기");
-        assert_eq!((qs[1].choices[0].label.as_str(), qs[1].choices[0].recommended), ("넣는다", true));
-        assert_eq!(qs[1].choices.len(), 3, "글자 줄은 그 앞 질문에 붙는다");
+        assert_eq!(qs[2].text, "비밀번호 보기");
+        assert_eq!((qs[2].choices[0].label.as_str(), qs[2].choices[0].recommended), ("넣는다", true));
+        assert_eq!(qs[2].choices.len(), 3, "글자 줄은 그 앞 질문에 붙는다");
         assert!(report_questions("## Report\n1. 질문\n- A 하나\n- B 둘\n").is_empty());
+    }
+
+    #[test]
+    fn report_questions_keep_emphasized_letters_and_numbered_m3_questions() {
+        // host가 보존한 t-0578 답변 당시 Questions 원문이다.
+        let report = include_str!("../tests/fixtures/m3-questions.md");
+        let qs = report_questions(report);
+        assert_eq!(qs.len(), 2, "{qs:?}");
+        assert_eq!(qs[0].choices.len(), 3);
+        assert_eq!(qs[1].choices.len(), 2);
+        assert!(qs[0].choices[0].recommended);
+        assert!(qs[0].choices[0].label.starts_with("install I3이 main에 올 때까지"));
+        assert!(qs[0].choices[2].label.starts_with("install 순서를 바꿔"));
+        assert!(qs[1].text.starts_with("M3 끝까지 시험할 곳:"));
+    }
+
+    #[test]
+    fn report_questions_accept_choice_emphasis_and_recommendation_spacing() {
+        for a in ["**A(추천)**", "**A** (추천)", "*A* (추천)", "A(추천)", "A (추천)", "__A(추천)__", "_A_ (추천)"]
+        {
+            let report = format!("## Questions\n### 1. 진행\n- {a} 진행한다\n- B 멈춘다\n");
+            let parsed = parse_report_questions(&report);
+            assert!(parsed.warning.is_none(), "{a}: {parsed:?}");
+            assert_eq!(parsed.items[0].choices[0].label, "진행한다", "{a}");
+            assert!(parsed.items[0].choices[0].recommended, "{a}");
+        }
+    }
+
+    #[test]
+    fn report_questions_warn_instead_of_silently_relabeling_or_dropping() {
+        for report in [
+            "## Questions\n### 1. 진행\n- **A 진행\n- B 보류\n- C 멈춤\n",
+            "## Questions\n### 1. 진행\n- B 보류\n- C 멈춤\n",
+            "## Questions\n### 1. 진행\n- A 진행\n- C 멈춤\n",
+            "## Questions\n### 1. 진행\n- A 진행\n- A 보류\n",
+            "## Questions\n### 1. 진행\n- A 진행\n### 2. 색\n- A 파랑\n- B 회색\n",
+            "## Questions\n### 1. 진행\n- A 진행\n- B 보류\n### 둘째 질문\n- A 파랑\n- B 회색\n",
+            "## Questions\n### 1. 진행\n- A 진행\n- B 보류\n#### 2. 잘못된 질문 머리\n- A 파랑\n- B 회색\n",
+            "[결정 필요] 질문 2개: 색\n## Questions\n1. 색\n- A 파랑\n- B 회색\n",
+            "## Questions\n질문 제목만\n- A 파랑\n- B 회색\n",
+            "## Questions\n2. 색\n- A 파랑\n- B 회색\n",
+        ] {
+            let parsed = parse_report_questions(report);
+            assert!(parsed.warning.as_deref().is_some_and(|w| w.contains("형식 확인 필요")), "{report}: {parsed:?}");
+        }
+        let too_many = (0..10).map(|i| format!("- {} 선택\n", (b'A' + i) as char)).collect::<String>();
+        assert!(parse_report_questions(&format!("## Questions\n1. 많음\n{too_many}")).warning.is_some());
+        let ten = (1..=10).map(|i| format!("### {i}. 질문\n- A 진행\n- B 보류\n")).collect::<String>();
+        assert!(parse_report_questions(&format!("## Questions\n{ten}")).warning.is_some());
+        let code = "## Questions\n### 1. 진행\n```md\n2. 코드 속 번호\n- X 코드 속 글자\n```\n- A 진행\n- B 보류\n";
+        assert!(parse_report_questions(code).warning.is_none());
+        assert!(parse_report_questions("## Report\n- A 본문\n- B 본문\n").warning.is_none());
+        assert!(parse_report_questions(include_str!("../tests/fixtures/m3-questions.md")).warning.is_none());
+    }
+
+    #[test]
+    fn rich_question_keeps_numbered_body_lists_and_accepts_a_numbered_next_question() {
+        let report = "## Questions\n### 1. 순서\n1. 먼저 읽는다\n2. 다음 확인한다\n\n- A 진행 (추천)\n- B 보류\n\n2. **시험할 곳**\n- A 여기\n- B 실험실\n";
+        let parsed = parse_report_questions(report);
+        assert!(parsed.warning.is_none(), "{parsed:?}");
+        assert_eq!(parsed.items.len(), 2);
+        assert_eq!(parsed.items[0].text, "순서");
+        assert_eq!(parsed.items[0].body.as_deref(), Some("1. 먼저 읽는다\n2. 다음 확인한다"));
+        assert_eq!(parsed.items[1].text, "시험할 곳");
+    }
+
+    #[test]
+    fn t0621_trailing_icon_notes_do_not_drop_the_first_question() {
+        let report = include_str!("../tests/fixtures/t0621-questions.md");
+        let parsed = parse_report_questions(report);
+        assert_eq!(parsed.items.len(), 2, "{parsed:?}");
+        assert_eq!(parsed.items[0].choices.len(), 4);
+        assert_eq!(parsed.items[1].choices.len(), 3);
+        assert!(parsed.warning.is_none(), "{parsed:?}");
+        let q = &parsed.items[0];
+        assert_eq!(q.text, "단추 아이콘");
+        assert!(q.after.as_deref().unwrap().contains("E·F안 그림:"));
+        assert!(q.after.as_deref().unwrap().contains("![E안](library/icon-e.png)"));
+        assert!(q.after.as_deref().unwrap().contains("![F안](library/icon-f.png)"));
+        assert_eq!(q.choices[3].body.as_deref(), Some("![D안](library/icon-d.png)"));
+        let broken = report.replace("- B BotMessageSquare", "- **B BotMessageSquare");
+        assert!(parse_report_questions(&broken).warning.is_some(), "줄이 빠지면 경고한다");
+    }
+
+    #[test]
+    fn t0621_table_rows_and_indented_pictures_do_not_limit_choices_to_four() {
+        let original = include_str!("../tests/fixtures/t0621-questions.md");
+        let start = original.find("\nE·F안 그림:").unwrap();
+        let end = original[start..].find("\n### 2.").unwrap() + start;
+        let no_after = format!("{}{}", &original[..start], &original[end..]);
+        let four_rows = original
+            .lines()
+            .filter(|l| !l.starts_with("| E |") && !l.starts_with("| F |"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        let no_choice_images = original.lines().filter(|l| !l.starts_with("  ![")).collect::<Vec<_>>().join("\n");
+        let tail_text_only = original
+            .lines()
+            .filter(|l| !l.starts_with("![E안]") && !l.starts_with("![F안]"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        let six = no_after.replace(
+            "\n### 2.",
+            "\n- E TowerControl\n  ![E](library/icon-e.png)\n- F Headset\n  ![F](library/icon-f.png)\n\n### 2.",
+        );
+        for (report, count) in
+            [(original, 4), (&four_rows, 4), (&no_choice_images, 4), (&tail_text_only, 4), (&no_after, 4), (&six, 6)]
+        {
+            let parsed = parse_report_questions(report);
+            assert_eq!(parsed.items.len(), 2, "{parsed:?}");
+            assert_eq!(parsed.items[0].choices.len(), count, "{parsed:?}");
+            assert!(parsed.warning.is_none(), "{parsed:?}");
+        }
+        let bad = parse_report_questions("## Questions\n### 1. 단추 아이콘\n- A Bot\n");
+        assert_eq!(bad.items[0].text, "단추 아이콘");
+        assert_eq!(bad.items[0].choices.len(), 1);
+        assert!(bad.warning.is_some());
+        let ten = (b'A'..=b'J').map(|c| format!("- {} 아이콘\n", c as char)).collect::<String>();
+        let over = parse_report_questions(&format!("## Questions\n### 1. 단추 아이콘\n{ten}"));
+        assert_eq!(over.items[0].text, "단추 아이콘");
+        assert!(over.warning.is_some(), "상한 초과도 제목과 경고를 남긴다");
     }
 
     #[test]

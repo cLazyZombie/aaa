@@ -1562,6 +1562,20 @@ impl Agent {
                 }
                 Ok(AgentResponse::Done)
             }
+            AgentRequest::ReportTransfer { work_dir, max_library_bytes } => {
+                tokio::task::spawn_blocking(move || threads::collect(&work_dir, max_library_bytes))
+                    .await
+                    .map_err(|e| ErrorBody::new(ErrorCode::Internal, e.to_string()))
+                    .and_then(|r| r.map_err(|e| ErrorBody::new(ErrorCode::NotFound, format!("{e:#}"))))
+                    .map(AgentResponse::ReportTransfer)
+            }
+            AgentRequest::ReportFileRead { work_dir, path, offset, len } => {
+                tokio::task::spawn_blocking(move || threads::read_chunk(&work_dir, &path, offset, len))
+                    .await
+                    .map_err(|e| ErrorBody::new(ErrorCode::Internal, e.to_string()))
+                    .and_then(|r| r.map_err(|e| ErrorBody::new(ErrorCode::NotFound, format!("{e:#}"))))
+                    .map(|(data, eof)| AgentResponse::ReportFileChunk { data: B64(data), eof })
+            }
             AgentRequest::ReportCollect { work_dir, max_library_bytes } => {
                 tokio::task::spawn_blocking(move || threads::collect(&work_dir, max_library_bytes))
                     .await

@@ -64,7 +64,7 @@ export default async function () {
           const chat = page.getByTestId("chat");
           await chat.getByText("Codex 기록 파일을 찾지 못했다", { exact: true }).waitFor();
           assert.match(await chat.locator(".chat-note").first().innerText(), /^Codex가 남긴/);
-          await shot(page, `77-account-chat-${width}-missing`);
+          await shot(page, `78-account-chat-${width}-missing`);
           aaa("pane", "send-keys", thread.pane, "F6");
           await chat.getByText(`${thread.id} 기록 300`, { exact: true }).waitFor();
           await domIs(page, "오류를 지움", () => !document.querySelector('[data-testid="chat"] .banner.warn'));
@@ -82,7 +82,7 @@ export default async function () {
           const other = threads[1 - index].id;
           assert.ok(!(await chat.innerText()).includes(`${other} 기록`));
           assert.ok(!fs.existsSync(`${root}/unused-codex/sessions`), "공유 홈에는 기록이 없다");
-          await shot(page, `77-account-chat-${width}-loaded`);
+          await shot(page, `78-account-chat-${width}-loaded`);
           assert.deepEqual(errors, []);
         } finally { await page.context().close(); }
     };

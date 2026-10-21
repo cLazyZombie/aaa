@@ -10,7 +10,7 @@ import http from "node:http";
 import net from "node:net";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { terminateSessionHosts } from "./session-cleanup.mjs";
+import { terminateDeployGuards, terminateSessionHosts } from "./session-cleanup.mjs";
 
 const require = createRequire(path.join(process.env.NODE_PATH ?? process.cwd(), "noop.js"));
 const { chromium, webkit } = require("playwright");
@@ -1145,6 +1145,7 @@ async function runSpec(spec, labEnv = {}) {
     usageServer.close();
     for (const tag of [...procs.keys()]) await stop(tag);
     await killSessionHosts();
+    await terminateDeployGuards(`${root}/s`);
     console.log(steps.join("\n"));
     if (failed) {
       console.log(`실험실 기록을 남겼다: ${root}`);

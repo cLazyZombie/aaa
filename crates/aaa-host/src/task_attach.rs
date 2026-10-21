@@ -411,12 +411,14 @@ mod tests {
                 sha256: None,
                 selfcheck: None,
                 sessions: vec![],
+                identity: None,
                 harness: vec![],
             },
             false,
             crate::AgentConn::new(aaa_common::conn::spawn_writer(tokio::io::sink(), aaa_proto::MAX_FRAME), 1),
         );
         let start = crate::orch::StartArgs {
+            over_limit: None,
             reservation: None,
             holds: vec![],
             project: "demo".into(),

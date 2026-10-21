@@ -1,7 +1,7 @@
 // 입력칸 컨텍스트 게이지(plan §8.321, 사용자 10-20 「대화창에서 사용한 컨텍스트를 보여주고 싶어」·「%, over하면 실제 k」·
 // 「타이핑시에는 보이지 않게」). 가짜 Claude가 대화 기록에 실제 Claude 2.1.304 꼴의 usage 줄·정리 줄을 적고, agent가 그 기록을
-// 읽어 host 상태로 보낸 값을 웹이 보인다: 38% → 230k(창 넘음) → 84k(창 모름) → 86%(위험). 글을 치는 동안은 자리를 둔 채 숨고
-// (입력칸 폭이 그대로), 80% 이상은 치는 중에도 보인다. 펼침의 「/compact 정리」는 쉴 때만 켜지고 pane에 /compact를 보내며,
+// 읽어 host 상태로 보낸 값을 웹이 보인다: 38% → 230k(창 넘음) → 84k(창 모름) → 86%(위험). 글을 치는 동안은 숨긴 자리를
+// 글 칸에 돌려주고(t-0622 사용자 1A), 80% 이상은 치는 중에도 보인다. 펼침의 「/compact 정리」는 쉴 때만 켜지고 pane에 /compact를 보내며,
 // 입력칸은 전달로 풀리고(명령은 사람 글로 기록되지 않는다), 정리 중 표지 → 정리 뒤 값 14%와 「대화 정리됨 · 164k → 28k」로 이어진다.
 // 사용자 10-21(t-0570): 휴대폰(700px 이하)은 입력칸이 비거나 높은 값이어도 게이지를 숨긴다. 패드·데스크톱은 기존 동작을 유지한다.
 // 혼자 돌리기: node web/e2e/web.e2e.mjs --spec 50-context-gauge(새 실험실).
@@ -74,7 +74,8 @@ const gauge = (p) => p.evaluate(() => {
   const box = document.querySelector('[data-testid="chat-composer"] textarea');
   return g && { text: g.querySelector('[data-testid="context-gauge-value"]').textContent, level: g.dataset.level, hidden: g.dataset.hidden === "true",
     compacting: g.dataset.compacting === "true", title: button.title, gaugeWidth: button.getBoundingClientRect().width,
-    boxWidth: box.getBoundingClientRect().width, visibility: getComputedStyle(button).visibility };
+    boxWidth: box.getBoundingClientRect().width, visibility: getComputedStyle(button).visibility,
+    gap: parseFloat(getComputedStyle(g.parentElement).columnGap) };
 });
 /** 게이지 글이 그것이 될 때까지(agent가 2초마다 기록을 읽는다) */
 const shows = (p, text) => domIs(p, `게이지 ${text}`, (t) => document.querySelector('[data-testid="context-gauge-value"]')?.textContent === t, text);
@@ -94,14 +95,16 @@ async function key(name, mode) {
   await waitOutput(LABEL, `mode ${mode}`);
 }
 
-/** 글을 치는 동안: 보통 값이면 숨되 자리(게이지 폭·글 칸 폭)는 그대로다 */
+/** 글을 치는 동안: 숨긴 게이지와 간격을 글 칸에 돌려준다. */
 async function typingHides(p, label) {
   const empty = await gauge(p);
   assert.equal(empty.hidden, false, label);
   await box(p).fill("오류 처리를 이어서");
   await domIs(p, `${label} 치는 중 숨김`, () => document.querySelector('[data-testid="context-gauge"]')?.dataset.hidden === "true");
   const typing = await gauge(p);
-  assert.deepEqual([typing.gaugeWidth, typing.boxWidth], [empty.gaugeWidth, empty.boxWidth], `${label}: 치는 중에도 자리는 그대로`);
+  assert.equal(typing.gaugeWidth, 0, `${label}: 숨긴 게이지의 자리를 회수`);
+  assert.ok(Math.abs(typing.boxWidth - empty.boxWidth - empty.gaugeWidth - empty.gap) < 0.5, `${label}: 게이지 폭과 간격을 글 칸으로 회수`);
+  assert.equal(await p.getByRole("button", { name: /^컨텍스트 .*사용/ }).count(), 0, `${label}: 숨긴 게이지는 접근성 트리에도 없음`);
   return typing;
 }
 
@@ -153,19 +156,28 @@ export default async function ({ page }) {
     assert.equal((await gauge(page)).level, "high");
   });
 
-  await step("치는 동안: 80% 이상은 그대로 보이고, 보통 값은 자리를 둔 채 숨었다가 입력칸이 비면 다시 보인다", async () => {
+  await step("치는 동안: 80% 이상은 그대로 보이고, 보통·창 모름 값은 숨긴 자리를 회수했다가 입력칸이 비면 복원한다", async () => {
+    const highEmpty = await gauge(page);
     await box(page).fill("정리할까");
     const high = await gauge(page);
     assert.deepEqual([high.hidden, high.visibility], [false, "visible"], "86%는 치는 중에도 보인다");
+    assert.deepEqual([high.gaugeWidth, high.boxWidth], [highEmpty.gaugeWidth, highEmpty.boxWidth], "경고 게이지는 자리를 유지");
     await shot(page, "50-high-typing-desktop");
+    await box(page).fill("");
+    answer(84_000, null);
+    await shows(page, "84k");
+    await typingHides(page, "창 크기 모름");
     await box(page).fill("");
     answer(76_000);
     await shows(page, "38%");
+    const normalEmpty = await gauge(page);
     await shot(page, "50-empty-desktop");
     await typingHides(page, "데스크톱");
     await shot(page, "50-typing-desktop");
     await box(page).fill("");
     await domIs(page, "빈 입력칸에서 다시 보임", () => document.querySelector('[data-testid="context-gauge"]')?.dataset.hidden === undefined);
+    const restored = await gauge(page);
+    assert.deepEqual([restored.gaugeWidth, restored.boxWidth], [normalEmpty.gaugeWidth, normalEmpty.boxWidth], "전체 삭제 뒤 빈 입력칸 폭 복원");
   });
 
   await step("펼침: 사용·창, 작업 중에는 정리 단추가 까닭과 함께 꺼진다", async () => {
