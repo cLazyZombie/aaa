@@ -417,18 +417,36 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
   const inboxBadge = useInboxBadge();
   const automationLoading = useRef(false);
   const automationReload = useRef(false);
+  const automationActive = useRef(true);
   const loadAutomations = () => {
+    if (!automationActive.current) return;
     if (automationLoading.current) { automationReload.current = true; return; }
     automationLoading.current = true;
     call({ op: "projects" }).then(async (r) => {
-      if (r.kind !== "projects") return;
+      if (!automationActive.current || r.kind !== "projects") return;
       const lists = await Promise.all(r.projects.map((p) => call({ op: "routines", project: p.name })));
-      setAutomationBadge(lists.reduce((n, r) => n + (r.kind === "routines" ? automationAttention(r.routines) : 0), 0));
-    }).catch(() => {}).finally(() => {
+      if (automationActive.current) setAutomationBadge(lists.reduce((n, r) => n + (r.kind === "routines" ? automationAttention(r.routines) : 0), 0));
+    }).catch(() => {
+      // WebKit은 reload 때 pagehide 전에 요청을 취소할 수 있다. 실패한 읽기의 예약을 재실행하지 않는다.
+      automationReload.current = false;
+    }).finally(() => {
       automationLoading.current = false;
       if (automationReload.current) { automationReload.current = false; loadAutomations(); }
     });
   };
+  useEffect(() => {
+    automationActive.current = true;
+    // reload가 진행 중 요청을 취소해도 finally의 예약 조회가 끝나는 문서에서 새 fetch를 시작하면 안 된다.
+    const hide = () => { automationActive.current = false; automationReload.current = false; };
+    const show = () => { automationActive.current = true; loadAutomations(); };
+    window.addEventListener("pagehide", hide);
+    window.addEventListener("pageshow", show);
+    return () => {
+      hide();
+      window.removeEventListener("pagehide", hide);
+      window.removeEventListener("pageshow", show);
+    };
+  }, []);
   const putThread = (t: ThreadView) => {
     threadReload.current.note(t);
     setThreads((old) => {
