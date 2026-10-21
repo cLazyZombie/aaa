@@ -1374,8 +1374,14 @@ macOS gate·Windows cross compile 결과와 별도로 보고한다. SCM 실제 l
   완료 보관은 실제 SQLite INSERT 실패 trigger에서 활성 파일·미판정 상태가 보존되는지, 정상 저장 뒤 같은 ID·본문·결과·첨부,
   이력 prune 뒤 보관 보존·같은 ID 복원·기동 연결 해제·재예약 없음도 확인한다. 완료 결과와 메모의 보고서 파일은 실제 기한 정리/삭제에서 보호되고, 관련 없는 사본은 정리되는지도 검사한다. 고정 sleep은 없다.
 - m13 `task_queue_runs_possible_fifo_after_resolve_without_coordinator`는 실제 host·agent·CLI·PTY로 6개의 자리를 채우고,
-  보고 [완료]·host 재시작에도 두 예약의 새 기동이 없는지 본다. resolve 완료 사건 뒤 coordinator/웹/수동 tick 없이
-  고정 머신이 끊긴 앞 예약을 남기고 가능한 뒤 예약이 실제 pane으로 기동하고 같은 task ID에 연결되는지 기다린다.
+  보고 [완료]·host 재시작에도 세 예약의 새 기동이 없는지 본다. 가장 늦게 등록한 예약을 CLI `queue-move`로 1번에 옮기고,
+  저장된 차례·생성 시각 보존과 재시작 뒤 차례를 확인한다. resolve 완료 사건 뒤 coordinator/웹/수동 tick 없이 옮긴 1번의
+  실제 pane 기동과 다른 예약의 대기를 확인하고, 그 thread도 resolve한 뒤 고정 머신이 끊긴 앞 예약을 남기고 가능한 뒤 예약의
+  실제 pane·같은 task ID 연결을 기다린다.
+- host `slot_released_during_queue_scan_does_not_bypass_the_moved_front`는 앞 예약의 `자리 대기` DB 기록 직후
+  다른 thread가 자리를 반환하는 경합을 임시 SQLite trigger로 고정한다. 같은 순회의 뒤 예약이 머신 선택·기동으로 넘어가면
+  실패하며, 다음 순회에는 앞에서부터 새 자리를 판정한다. 원래 코드는 뒤 예약만 머신 가용성 판정으로 넘어가 실패한다.
+  기동 중 예약의 상태 대조·내용 검사는 계속하며, 끊긴 머신 등 시작 조건이 막힌 앞 예약을 건너뛰는 계약은 유지한다.
 - 기존 m13 `parallel_threads_enforce_capacity_before_launch`는 한도 초과 직접 요청의 실패·thread 수·pane 수를 함께 본다.
   `task_thread_link_and_auto_clean`은 기존 확인 필요·부모 보호·옛 delete restore를 유지하며 완료 보관의 ID·본문·보고서·복원을 관측한다.
 - 웹은 실제 host의 예약 상태와 완료 보관만 읽는다. 실패의 상한·재시도·기대값을 바꿔 통과시키지 않는다.
