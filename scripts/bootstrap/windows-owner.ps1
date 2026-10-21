@@ -49,6 +49,17 @@ Assert ((Invoke-AaaBootstrap '1.2.3' @('unchanged')) -eq 23) 'identical reuse'
 Assert ([IO.File]::GetLastWriteTimeUtc($target) -eq $mtime) 'same binary mtime changed'
 Assert ($script:downloads -eq $count) 'same binary downloaded again'
 
+# Negative control at the real entry: naive joining must corrupt native argv.
+$quoteOwner = (Get-Item Function:\ConvertTo-AaaCommandLine).ScriptBlock
+try {
+    Set-Item Function:\ConvertTo-AaaCommandLine { param([string[]]$Arguments) return ($Arguments -join ' ') }
+    $mutantTarget = New-Profile 'mutant-argv'
+    Assert ((Invoke-AaaBootstrap '1.2.3' @('two words', '', 'quote"middle')) -eq 23) 'mutation did not reach native argv'
+    $mutantOutput = [IO.File]::ReadAllText($env:AAA_BOOTSTRAP_ARGV)
+    $intact = "696e7374616c6c`n74776f20776f726473`n`n71756f7465226d6964646c65`n"
+    Assert ($mutantOutput -cne $intact) 'native owner missed naive quoting regression'
+} finally { Set-Item Function:\ConvertTo-AaaCommandLine $quoteOwner }
+
 # Rejections retain target bytes/mtime and unrelated files, never execute payload.
 foreach ($case in @('version', 'url', 'hash', 'pe', 'machine', 'binary-version', 'existing', 'parent-file', 'arch', 'nul')) {
     $target = New-Profile $case

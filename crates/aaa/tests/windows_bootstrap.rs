@@ -74,7 +74,13 @@ fn main() {
         use std::io::Write;
         child.stdin.take().unwrap().write_all(b"external-console-input\n").unwrap();
         let output = child.wait_with_output().unwrap();
-        assert!(output.status.success(), "bootstrap owner {shell}: {output:?}");
+        assert!(
+            output.status.success(),
+            "bootstrap owner {shell}: status={} stdout={} stderr={}",
+            output.status,
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
         let text = String::from_utf8_lossy(&output.stdout);
         assert!(text.contains("inherited-stdio-ok"), "console inheritance {shell}: {text}");
         assert!(text.contains("bootstrap-owner-ok"), "owner completion {shell}: {text}");
