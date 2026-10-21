@@ -219,7 +219,7 @@ fn approved_worker_outlives_its_cli_and_records_the_same_id_after_private_displa
         assert!(assigned, "worker 생성 전에 실제 부모 Job/종료 경계를 준비한다");
         if allowed {
             assert!(ended, "{}", redact_private(&text));
-            assert_ne!(code, 0);
+            assert_ne!(code, 0, "종료한 부모 CLI 결과: {}", redact_private(&text));
             let record: Value =
                 serde_json::from_slice(&aaa_common::private_file::read(&record_path.unwrap(), 128 * 1024).unwrap())
                     .unwrap();
