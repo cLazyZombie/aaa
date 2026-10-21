@@ -2,6 +2,9 @@
 use super::authorization::terminal_steps;
 use super::*;
 
+#[path = "launchd_args.rs"]
+mod launchd_args;
+
 fn ctl(args: &[&str]) -> Output {
     Command::new("/bin/launchctl").args(args).output().unwrap()
 }
@@ -78,14 +81,7 @@ fn service_tail(root: &Path) -> String {
 fn authorize_apply(lab: &Lab, instance: &str, source: &Path, launcher: &Path) -> Value {
     let mut args = arguments(lab, instance, source, launcher);
     let approval = lab.0.join(instance).with_extension("approval.json");
-    let mut issue = args.clone();
-    issue.extend([
-        "authorize".into(),
-        "--out".into(),
-        approval.to_string_lossy().into_owned(),
-        "--prompt".into(),
-        "plain".into(),
-    ]);
+    let issue = launchd_args::authorize(args.clone(), &approval);
     let (code, text) = terminal_steps(lab, &issue, &[("정확히 yes", "yes\r")], false);
     assert_eq!(code, 0, "{text}");
     args.extend([
