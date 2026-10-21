@@ -1462,6 +1462,16 @@ xterm은 buffer resize에서 현재 링크를 지우고 다음 mousemove에서 �
 전체 정본은 `bash scripts/ci-local.sh`이며 공개 검사는 새 파일을 추적한 상태에서 `bash scripts/check-public.sh`로 확인한다.
 운영 host·agent·설정·인증에는 닿지 않는다. 보고서 r-ID는 별도 2단계다.
 
+### 페이지 종료 뒤 예약 조회 재개(t-0584 착지, 사용자 1A)
+
+E2E23의 「재로딩 중 예약된 자동화 조회」는 WebKit의 첫 `projects` 요청을 route gate로 붙잡고 events 연결·첫 snapshot의
+갱신을 합친 뒤 reload한다. 종료로 첫 요청이 취소된 뒤 `finally`가 예약된 조회를 다시 보내던 원래 제품은
+`Fetch API cannot load … due to access control checks` 페이지 오류에서 실패한다. `pagehide`에서 후속 조회를 막는 제품은
+오류 없이 새 문서를 연다. WebKit의 요청 취소는 `pagehide` 전에 올 수 있어, 실패한 읽기의 `catch`도 예약을 비워야 한다.
+종료한 문서의 갱신 사건은 fetch를 보내지 않고, `pageshow`는 실제 새 `projects` 요청으로 끝난다.
+route gate는 service worker를 차단한 실험실에서만 쓴다. 고정 sleep·시한 연장·페이지 오류 무시는 없다.
+기존 E2E23의 그림 전송·복원·해제·권한·Chrome/Safari/iPhone/iPad 검사는 그대로 함께 돈다.
+
 ## 머신 상세(t-0578 웹 머신 추가 M0, plan §8.372)
 
 - host 유닛 `cargo test -p aaa-host machine_view_tests`: 실제 host DB를 연 실험실에서 hello(CPU 종류·판·SHA·기능·시작 점검)가 `MachineView`에 실리는지, 다른 판으로 다시 붙으면 `software_differs`, 모르는 꼴의 점검은 버리는지 본다. runtime을 끝내 Host가 닫힌 것을 확인한 뒤 같은 상태 폴더로 다시 열어 판·SHA·CPU 종류는 DB에서 남고 기능·점검은 빈 것을 본다.
