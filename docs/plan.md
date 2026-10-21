@@ -6892,3 +6892,11 @@ FRONT_API 1.96는 기본 검수 표지와 답 기록의 r 참조를 더한다. E
 
 - 착지 기준 origin/main `57bc997e`에서 마지막 §8.393·FRONT_API 1.97·AGENT_LINK 1.11·E2E76을 직접 확인했다. 이 작업은 §8.394로 맞추고 기존 API 버전·E2E 번호를 유지한다. E2E49는 main의 새 기억 본문·갱신 thread 동시 대기를 유지한다.
 - 통합 후보의 Windows 교차 clippy가 main의 `update.rs` 시험용 `sha2::Digest` import를 미사용으로 검출했다. 실제 사용처가 Unix 전용 rollback 시험이므로 import도 `cfg(all(test, unix))`로 맞춘다. 시험 내용·업데이트 동작은 유지한다.
+
+### 8.395 할 일 깊은 주소와 짧은 ID 자동 링크(t-0624)
+
+- `#task=d-NNNN`과 `#task=<project>/d-NNNN`은 할 일 화면에서 검색·상태·저장소 거르기를 풀고 해당 행을 찾아 강조하며 상세를 연다. 새로고침·새 탭에서도 같은 곳을 연다. 지운·완료 보관한 번호와 다른 프로젝트 번호는 「없음」으로 표시한다. `#thread=<id>`는 기존 동작을 유지한다.
+- coordinator·thread 대화와 보고서 Markdown에서 실제 host 목록에 있는 `t-NNNN`·`d-NNNN`·`q-NNNN`·`r-NNNN`을 원문 그대로 앱 안 링크로 그린다. 코드 블록·주소·파일 경로·이미 있는 링크 내부·없는 ID는 바꾸지 않는다. 인라인 코드의 ID 하나는 코드 모양으로 링크한다. 보조 키·가운데 누름은 브라우저의 새 탭 동작을 유지한다. 터미널 출력은 그대로다.
+- 존재 여부는 기존 thread·할 일·질문/답한 기록·보고서 판 목록으로 판단하며 새 API·프로토콜 버전은 없다(FRONT_API 1.97 유지). 삭제·복원·질문 답·보고서 갱신 사건 뒤 링크도 따라 바뀐다. 기존 `aaa:question/…`·`aaa:report/…`·같은 host Markdown 링크와 칩은 호환한다.
+- coordinator 안내의 「앱 안 참조」·「사용자 알림」과 thread brief 생성 원본, CLI context 안내는 채팅·보고의 thread·할 일·보고서를 ID만 쓰도록 한다. 사용자가 답할 질문만 `[q-NNNN 질문](<웹 주소>/#question=q-NNNN)` 링크를 쓴다. `doctor files --fix`는 기존 프로젝트도 같은 안내로 갱신한다.
+- 웹 유닛은 경계·원문 보존·존재 여부·프로젝트 주소를 검사한다. E2E77은 실제 host 데이터로 직접 주소·새로고침·새 탭·뒤로·네 종류 이동·답한 질문·삭제/복원·완료 보관·WebKit 휴대폰·Reader를 확인한다. m13 기존 프로젝트 안내 갱신과 brief 생성 시험도 새 규칙을 확인한다. 전체 ci-local·check-public 후 착지 창을 기다린다.

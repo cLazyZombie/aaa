@@ -47,6 +47,13 @@ pub(crate) const THREAD_GUIDE: &str = "\
 - 아래 지침과 memory는 네가 하는 모든 일에 적용된다.
 - memory를 고치지 않는다. 남길 만한 교훈은 보고의 `## Remember`에 적는다. 무엇을 남길지는 coordinator가 정한다.
 
+## 앱 안 참조
+
+채팅·보고에서 thread·할 일·보고서는 `t-NNNN`·`d-NNNN`·`r-NNNN`처럼 ID만 쓴다.
+웹은 실제로 있는 ID를 앱 안 링크로 그리며, 터미널에는 짧은 ID만 남는다. 코드 블록·주소 안은 자동 링크하지 않는다.
+사용자가 답해야 하는 질문만 `[q-NNNN 질문](<웹 주소>/#question=q-NNNN)` 링크를 건다.
+웹 주소는 `aaa context`, 질문 번호는 `aaa question list`로 확인한다. 웹 주소를 공개하지 않았으면 q-NNNN만 쓴다.
+
 ## 시작할 때 묻기
 
 할 일을 읽고 코드·기획을 짧게 훑은 뒤, 결과를 바꿀 만큼 모호한 것이 있으면 구현 전에 한 번 모아 묻는다. 보고 첫 줄을 `[결정 필요] 질문 N개: <한 줄 요약>`으로 쓰고, `## Questions` 절에 아래 꼴로 적은 뒤 멈춘다. 사용자는 웹 「답할 것」 카드로 고르고, 답은 「보고의 질문에 대한 사용자 답(1A 2B)」 메시지로 온다.
@@ -258,6 +265,8 @@ mod tests {
         assert!(
             brief.contains("`[결정 필요] 질문 N개: <한 줄 요약>`") && brief.contains("어느 harness든 보고로 묻는다")
         );
+        assert!(brief.contains("thread·할 일·보고서는 `t-NNNN`·`d-NNNN`·`r-NNNN`처럼 ID만"));
+        assert!(brief.contains("[q-NNNN 질문](<웹 주소>/#question=q-NNNN)"));
         // 안내의 꼴 그대로 쓴 보고를 host가 카드로 읽는다(plan §8.329)
         let fence = brief.split("```\n").nth(1).unwrap();
         let qs = aaa_proto::report_questions(fence);

@@ -57,6 +57,7 @@ import { passingFolder, recentDirectories } from "./herdr/recent-directories.ts"
 import { useMediaQuery } from "./herdr/useMediaQuery.ts";
 import { inAppLink } from "./reportLinks.ts";
 import type { AppRef } from "./appRef";
+import type { AppId } from "./appIds";
 import { AppRefChip, AppRefContext, type AppRefLook, type AppRefs } from "./AppRefChip";
 import { AsksPanel, AsksView, useAskSelection, useAsksData } from "./AsksView";
 import { lastAnswer, openAsks, questionKey } from "./asksModel";
@@ -288,7 +289,7 @@ function selectedFromHash(): string | null {
   if (location.hash === "#asks") return "asks:";
   const r = /^#report=(.+)$/.exec(location.hash);
   if (r) return `reports:${decodeURIComponent(r[1])}`;
-  const m = /^#(pane|thread|question|ask)=(.+)$/.exec(location.hash);
+  const m = /^#(pane|thread|task|question|ask)=(.+)$/.exec(location.hash);
   return m ? `${m[1]}:${decodeURIComponent(m[2])}` : null;
 }
 
@@ -881,13 +882,14 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
     else goSel(reportsAt ?? "reports:");
   };
   // 할 일 화면(plan §8.306): 보고서와 같은 꼴. 다시 누르면 그 앞 화면으로, 한 번 연 화면은 숨긴 채 그려 둔다(거르기·접은 목록이 그대로)
-  const tasksShown = sel === "tasks:";
+  const tasksShown = sel === "tasks:" || sel?.startsWith("task:") === true;
+  const taskAt = sel?.startsWith("task:") ? sel.slice(5) : null;
   const [tasksOpened, setTasksOpened] = useState(tasksShown);
   const beforeTasks = useRef<string | null>(null);
   useEffect(() => {
-    if (sel === "tasks:") setTasksOpened(true);
+    if (tasksShown) setTasksOpened(true);
     else beforeTasks.current = sel;
-  }, [sel]);
+  }, [sel, tasksShown]);
   const toggleTasks = () => goSel(tasksShown ? beforeTasks.current : "tasks:");
   // 명령 팔레트 「할 일 더하기」: 할 일 화면을 열고 새 task 폼을 연다(plan §8.311). 보고서·thread 결과물의 「할 일에 추가」는 그 문서를
   // 링크한 새 task나 있는 task에 링크하는 창을 연다(plan §8.327)
@@ -1137,14 +1139,30 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
     const r = reportNames.get(sel.slice("reports:".length));
     if (r) setSel(`reports:${r.project}/${r.name}`);
   }, [sel, reportNames]); // eslint-disable-line react-hooks/exhaustive-deps
-  // 칩이 그리는 상태가 바뀔 때만 새 값이다(대화 Markdown이 thread 사건마다 다시 그리지 않게)
+  const knownIds = useMemo(() => new Set([
+    ...allThreads.map((t) => t.id),
+    ...(taskBoard.board?.tasks ?? []).flatMap((t) => t.short_id ? [t.short_id] : []),
+    ...[...reportNames.values()].flatMap((r) => r.report_id ? [r.report_id] : []),
+    ...askList.flatMap((a) => a.kind === "question" ? a.thread.questions.items.map((q) => q.id) : []),
+    ...(asksData?.requests ?? []).flatMap((r) => [r.question_id, ...r.questions?.items.map((q) => q.id) ?? []]),
+    ...asksDone.flatMap((r) => [r.question_id, ...r.items.map((q) => q.id)]),
+  ]), [threads, taskBoard.board, reportNames, asksData]); // eslint-disable-line react-hooks/exhaustive-deps
+  // 실제 대상·칩의 표시가 바뀔 때만 대화 Markdown을 다시 그린다.
   const refKey = [
+    ...knownIds,
     ...shownThreads.filter((t) => t.questions).map((t) => `${t.id}:${t.questions!.answer ? `done ${t.questions!.answer.summary}` : `ask ${t.questions!.items.length}`}`),
     ...asksDone.filter((r) => r.kind === "question").map((r) => `${r.subject}:record ${r.id} ${r.summary}`),
     ...[...reportNames.values()].map((r) => `${r.project}/${r.name}:${r.title ?? ""}`),
   ].join("\n");
-  const openRefRef = useRef<(ref: AppRef) => void>(() => {});
-  openRefRef.current = (ref: AppRef) => {
+  const openRefRef = useRef<(ref: AppRef | AppId) => void>(() => {});
+  openRefRef.current = (ref) => {
+    if (ref.kind === "thread") {
+      // 내부 project/id로 고른다. 짧은 주소의 hashchange와 정규화가 선택을 덮지 않게 한다.
+      const t = allThreads.find((t) => t.id === ref.target);
+      if (t) chooseThread(t);
+      return;
+    }
+    if (ref.kind === "task") return goSel(`task:${ref.target}`);
     if (ref.kind === "question") return goSel(`question:${ref.target}`);
     const r = reportNames.get(ref.target);
     goSel(r ? `reports:${r.project}/${r.name}` : "reports:");
@@ -1153,6 +1171,8 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
   const appRefs = useMemo<AppRefs>(() => {
     const byId = new Map(shownThreads.map((t) => [t.id, t]));
     return {
+      exists: (id) => knownIds.has(id.target),
+      openId: (id) => openRefRef.current(id),
       look: (ref): AppRefLook => {
         if (ref.kind === "report") {
           const r = reportNames.get(ref.target);
@@ -1377,6 +1397,8 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
             reader={role === "reader"}
             addRequest={taskAdds}
             focusRequest={taskFocus}
+            target={taskAt}
+            onTarget={(id) => goSel(id ? `task:${id}` : "tasks:")}
             onBoard={taskBoard.replace}
             onThread={(id) => {
               const t = allThreads.find((x) => x.id === id);

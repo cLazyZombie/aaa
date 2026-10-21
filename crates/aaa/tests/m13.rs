@@ -5109,6 +5109,12 @@ fn doctor_files_brings_the_coordinator_guide_to_existing_projects() {
     // 표지 있는 낡은 안내는 지금 안내로, 빠진 파일도 생긴다
     let now = std::fs::read_to_string(old.join("AGENTS.md")).unwrap();
     assert!(GUIDE_SECTIONS.iter().all(|s| now.contains(s)) && now.contains("`aaa project sweep`"), "{now}");
+    for guide in [&guide, &now] {
+        assert!(guide.contains("thread·할 일·보고서는 `t-NNNN`·`d-NNNN`·`r-NNNN`처럼 ID만"), "{guide}");
+        assert!(guide.contains("[q-NNNN 질문](<웹 주소>/#question=q-NNNN)"), "{guide}");
+        assert!(guide.contains("#task=<project>/d-NNNN"), "{guide}");
+        assert!(!guide.contains("채팅에서 thread 질문·보고서를 가리킬 때는"), "{guide}");
+    }
     assert!(old.join("uploads").is_dir() && old.join("routines/pr-followup.md").is_file());
     assert!(!old.join("AGENTS.md.before-aaa").exists(), "표지 있는 aaa 안내는 옮겨 두지 않는다");
     // 사람 글은 옆에 그대로
