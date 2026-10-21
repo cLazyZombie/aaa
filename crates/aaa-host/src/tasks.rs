@@ -198,7 +198,7 @@ pub(crate) struct Line {
 
 /// 줄 본문 → 제목·owner·저장소·thread·형식 어긋남
 pub(crate) fn split_line(text: &str) -> Line {
-    let mut rest = text.trim().to_string();
+    let mut rest = crate::task_queue::split_id(text).0.trim().to_string();
     let mut thread = None;
     let mut problems = Vec::new();
     if let Some((head, tail)) = rest.rsplit_once('·') {
@@ -323,6 +323,7 @@ pub(crate) fn parse_board(text: &str) -> (Vec<TaskListView>, Vec<TaskView>) {
         }
         at(&mut lists, &list);
         out.push(TaskView {
+            id: crate::task_queue::split_id(&t[5..]).1.map(str::to_string),
             list: list.clone(),
             title,
             owner,

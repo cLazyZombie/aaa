@@ -24,7 +24,6 @@ export function StartDialog({ task, owners, onStarted, onClose }: { task: TaskVi
   const [picked, setPicked] = useState<string | null>(null);
   // 저장소 칸(plan §8.330): 저장소 이름이나 `작업 폴더`. task 칸이 비면 빈 글로 시작해 고를 때까지 「시작」을 막는다
   const [choice, setChoice] = useState("");
-  const [overLimit, setOverLimit] = useState(false);
   useEffect(() => {
     let live = true;
     call({ op: "thread_start_preview", from_task: task.title, task_block: task.block_sha256 })
@@ -67,7 +66,7 @@ export function StartDialog({ task, owners, onStarted, onClose }: { task: TaskVi
   }, [machines, where, profile]); // eslint-disable-line react-hooks/exhaustive-deps
   const over = preview !== null && preview.open_threads >= preview.max_parallel_threads;
   const start = async () => {
-    if (!preview || busy || problem !== null || (over && !overLimit)) return;
+    if (!preview || busy || problem !== null || over) return;
     setBusy(true);
     setError(null);
     try {
@@ -175,14 +174,7 @@ export function StartDialog({ task, owners, onStarted, onClose }: { task: TaskVi
                   {w}
                 </p>
               ))}
-              {over && (
-                <label className="banner task-start-limit" data-testid="task-start-limit">
-                  <input type="checkbox" checked={overLimit} disabled={busy} onChange={(e) => setOverLimit(e.target.checked)} data-testid="task-start-over" />
-                  <span>
-                    열린 thread가 {preview.open_threads}개다(한도 {preview.max_parallel_threads}개). 시작하면 한도를 넘긴다
-                  </span>
-                </label>
-              )}
+              {over && <p className="banner task-start-limit" data-testid="task-start-limit">열린 thread {preview.open_threads}개가 한도 {preview.max_parallel_threads}개를 사용 중이다. 상세의 「자리 나면 시작 예약」으로 예약한다.</p>}
               <section className="task-start-preview" aria-label="thread에 줄 할 일">
                 <h3>thread에 줄 할 일</h3>
                 <div className="task-start-task" data-testid="task-start-task">
@@ -202,8 +194,8 @@ export function StartDialog({ task, owners, onStarted, onClose }: { task: TaskVi
           <button type="button" className="btn" disabled={busy} onClick={onClose}>
             취소
           </button>
-          <button className="btn btn-primary" disabled={!preview || busy || problem !== null || (over && !overLimit)} title={problem ?? undefined} data-testid="task-start-go">
-            {busy ? "시작하는 중" : over ? "한도를 넘겨 시작" : "시작"}
+          <button className="btn btn-primary" disabled={!preview || busy || problem !== null || over} title={problem ?? undefined} data-testid="task-start-go">
+            {busy ? "시작하는 중" : over ? "자리 대기" : "시작"}
           </button>
         </footer>
       </form>

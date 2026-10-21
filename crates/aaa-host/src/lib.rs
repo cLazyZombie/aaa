@@ -75,6 +75,7 @@ pub mod tailscale;
 mod task_attach;
 mod task_clean;
 mod task_edit;
+mod task_queue;
 mod task_repo;
 mod tasks;
 mod text;
@@ -489,6 +490,7 @@ pub struct Host {
     pub task_events: broadcast::Sender<(String, String)>,
     /// ticker가 마지막으로 본 프로젝트마다의 TASKS.md 상태
     tasks_seen: Mutex<HashMap<String, coord::TasksSeen>>,
+    queue_gate: tokio::sync::Mutex<()>,
     /// 파일마다의 쓰기 lock(TASKS.md 편집과 ticker의 외부 변경 감지, file_rev.rs)
     file_locks: file_rev::Locks,
     /// ticker 묶음 셈까지 미룬 thread pane의 끝남(pane → 알림, notice.rs `turn_finished`)
@@ -711,6 +713,7 @@ impl Host {
             notice_events: broadcast::channel(64).0,
             task_events: broadcast::channel(64).0,
             tasks_seen: Mutex::new(HashMap::new()),
+            queue_gate: tokio::sync::Mutex::new(()),
             file_locks: Default::default(),
             turn_ends: Mutex::new(HashMap::new()),
             question_lock: std::sync::Mutex::new(()),
@@ -1527,6 +1530,7 @@ impl Host {
                     aaa_proto::ThreadKind::Dir
                 });
                 let mut a = orch::StartArgs {
+                    reservation: None,
                     account: selected_account,
                     holds,
                     project,
@@ -1543,10 +1547,47 @@ impl Host {
                 let (mut warnings, picked) = match from_task {
                     Some(t) => {
                         let (w, t) = self.apply_from_task(&mut a, &t, task_block.as_deref()).await?;
+                        if let Some(id) = &t.id
+                            && let Some(q) = self.db.queue_list(&a.project).map_err(orch::internal)?.iter().find(|q| {
+                                &q.task_id == id
+                                    && matches!(
+                                        q.state,
+                                        aaa_proto::QueueState::Queued
+                                            | aaa_proto::QueueState::Check
+                                            | aaa_proto::QueueState::Starting
+                                            | aaa_proto::QueueState::Running
+                                    )
+                            })
+                        {
+                            if q.state == aaa_proto::QueueState::Check {
+                                return Err(err(
+                                    ErrorCode::Conflict,
+                                    "확인 필요한 예약이다. 원인을 고쳐 예약을 갱신하거나 취소한다",
+                                ));
+                            }
+                            if let Some(tid) = &q.thread {
+                                return self.thread_show(&a.project, tid).map(FrontResponse::Thread);
+                            }
+                            return Err(err(
+                                ErrorCode::Conflict,
+                                "예약한 task는 host가 시작한다. queue를 보거나 예약을 취소한다",
+                            ));
+                        }
                         let placed = self.apply_task_repo(&mut a, t.repo.as_deref(), kind_given)?;
                         (w.into_iter().chain(placed).collect::<Vec<_>>(), Some(t))
                     }
-                    None => (self.task_start_warning(&a.project, &a.title).into_iter().collect(), None),
+                    None => {
+                        if self.coordinator_project_of_actor(actor).as_deref() == Some(&a.project)
+                            && self
+                                .task_board(&a.project)?
+                                .tasks
+                                .iter()
+                                .any(|t| t.title == a.title && (t.profile.is_some() || t.machine.is_some()))
+                        {
+                            return Err(err(ErrorCode::Forbidden, "모델·머신을 정한 task는 --from-task로 시작한다"));
+                        }
+                        (self.task_start_warning(&a.project, &a.title).into_iter().collect(), None)
+                    }
                 };
                 // 머신을 주지 않았으면 project.toml repos에 적힌 그 repo의 머신(herdr-projects `start`의 `listed`)
                 if a.machine.is_none() {
@@ -1583,6 +1624,10 @@ impl Host {
                 FrontResponse::Context(c)
             }),
             FrontRequest::Tasks { project } => self.task_board(&project).map(FrontResponse::TaskBoard),
+            FrontRequest::TaskQueue { project, action } => self.task_queue(&project, action, actor).await,
+            FrontRequest::TaskArchive { project, restore } => {
+                self.task_archive(&project, restore.as_deref(), actor).await
+            }
             FrontRequest::TaskEdit { project, ops, base_sha256 } => {
                 self.task_edit(&project, ops, base_sha256, actor).await
             }

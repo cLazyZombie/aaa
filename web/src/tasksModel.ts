@@ -377,6 +377,7 @@ export const TASK_ACTION_LABEL: Record<TaskAction, string> = {
   restore: "되살림",
   raw: "원문 편집",
   auto_clean: "자동 정리",
+  completed: "완료 보관",
 };
 
 /** 되살릴 수 있는 기록(삭제·자동 정리, 아직 되살리지 않음) */

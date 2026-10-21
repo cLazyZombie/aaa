@@ -2959,9 +2959,9 @@ fn thread_scope_survives_env_and_detach_bypass() {
     assert!(w.h.ok(&["thread", "next", "demo", &id])["lines"].to_string().contains("\"control\""));
 }
 
-/// 동시 thread 한도는 프로젝트 설정이고 경고만 한다(herdr-projects threads.rs `start`, D10 A13)
+/// 동시 thread 한도는 host가 기동 전 집행한다. 거부된 요청은 thread와 pane을 만들지 않는다.
 #[test]
-fn parallel_threads_only_warn() {
+fn parallel_threads_enforce_capacity_before_launch() {
     let w = world();
     std::fs::write(w.projects.join("demo/project.toml"), "schema = 1\nmax_parallel_threads = 2\n").unwrap();
     let start = |n: &str| {
@@ -2982,7 +2982,8 @@ fn parallel_threads_only_warn() {
     start("m1").unwrap();
     let v2 = start("m2").unwrap();
     assert!(v2.get("warnings").is_none(), "{v2}");
-    // 한도에 닿으면 시작은 하고 경고한다(CLI는 `경고:` 줄)
+    let panes = w.h.ok(&["pane", "list"])["panes"].as_array().unwrap().len();
+    // 한도에 닿으면 실제 기동을 보내지 않는다.
     let o = w.h.run(&[
         "thread",
         "start",
@@ -2997,8 +2998,10 @@ fn parallel_threads_only_warn() {
         &w.task("m3.txt", "x"),
     ]);
     let out = String::from_utf8_lossy(&o.stdout);
-    assert!(o.status.success(), "{out}{}", String::from_utf8_lossy(&o.stderr));
-    assert!(out.starts_with("경고: 열린 thread가 이미 2개다(project.toml max_parallel_threads 2)"), "{out}");
+    assert!(!o.status.success(), "{out}");
+    assert!(format!("{out}{}", String::from_utf8_lossy(&o.stderr)).contains("aaa task reserve"));
+    assert_eq!(w.h.ok(&["thread", "list", "demo"])["threads"].as_array().unwrap().len(), 2);
+    assert_eq!(w.h.ok(&["pane", "list"])["panes"].as_array().unwrap().len(), panes);
 }
 
 /// 프로젝트 만들기 옵션과 설정 바꾸기(4장 G #589·#591, herdr-projects `new`·`set`): 준 값만 project.toml에 적고, 틀린 값이나
@@ -4702,12 +4705,14 @@ fn task_thread_link_and_auto_clean() {
     let cleaned = format!(
         "# Tasks\n\n## Backlog\n- [ ] noreport 일 · {quiet}\n- [ ] 결정 일 · {decide}\n- [ ] 상위 일 · {child}\n- [ ] 남는 일\n"
     );
-    assert_eq!(read(), cleaned);
+    let without_ids = |text: String| {
+        text.lines().map(|l| l.split(" <!-- aaa-task:").next().unwrap()).collect::<Vec<_>>().join("\n") + "\n"
+    };
+    assert_eq!(without_ids(read()), cleaned);
 
     // 기록: 지운 둘은 「host 자동 정리」
     let log = w.h.ok(&["task", "log"]);
-    let autos: Vec<&Value> =
-        log["entries"].as_array().unwrap().iter().filter(|e| e["action"] == "auto_clean").collect();
+    let autos: Vec<&Value> = log["entries"].as_array().unwrap().iter().filter(|e| e["action"] == "completed").collect();
     let mut titles: Vec<&str> = autos.iter().map(|e| e["title"].as_str().unwrap()).collect();
     titles.sort_unstable();
     assert_eq!(titles, ["끝낼 일", "하위 일"], "{log}");
@@ -4746,15 +4751,26 @@ fn task_thread_link_and_auto_clean() {
             .as_str()
             .unwrap()
             .to_string();
-    let id = autos.iter().find(|e| e["title"] == "끝낼 일").unwrap()["id"].as_i64().unwrap().to_string();
-    assert!(restore.contains(&format!("`aaa task restore {id}`")), "{restore}");
-
-    // 한 번만: 되살린 task를 다음 tick이 다시 지우지 않고, 되살렸다고 보인다
-    w.h.ok(&["task", "restore", &id]);
+    let archive = w.h.ok(&["task", "archive"]);
+    let stored = archive["entries"].as_array().unwrap();
+    assert_eq!(stored.len(), 2, "{archive}");
+    let completed = stored.iter().find(|a| a["task"]["title"] == "끝낼 일").unwrap();
+    let id = completed["task_id"].as_str().unwrap();
+    assert_eq!(completed["task"]["thread"], done);
+    assert_eq!(completed["reason"], "보고 [완료]");
+    assert_eq!(completed["report"], format!("threads/{done}.md"));
+    assert!(completed["body"].as_str().unwrap().contains("끝낼 일"));
+    assert!(restore.contains(&format!("`aaa task archive --restore {id}`")), "{restore}");
+    assert!(w.h.json(&["task", "restore", &autos[0]["id"].to_string()]).is_err(), "완료 보관과 삭제 복원은 다르다");
+    w.h.ok(&["task", "archive", "--restore", id]);
     w.h.ok(&["ticker", "tick"]);
-    assert_eq!(read(), format!("{cleaned}- [ ] 끝낼 일 · {done}\n"));
+    assert_eq!(without_ids(read()), format!("{cleaned}- [ ] 끝낼 일\n"));
     let board = w.h.ok(&["task", "list"]);
-    assert_eq!(attention(&board, "끝낼 일"), format!("{done} 완료(보고 [완료])로 자동 정리했다가 되살렸다"));
+    let revived = board["tasks"].as_array().unwrap().iter().find(|t| t["title"] == "끝낼 일").unwrap();
+    assert_eq!(revived["id"], id);
+    assert!(revived["thread"].is_null());
+    assert_eq!(attention(&board, "끝낼 일"), "");
+    assert!(w.h.ok(&["task", "queue"])["entries"].as_array().unwrap().is_empty());
     let n = w.h.ok(&["inbox", "list", "demo", "--all", "--peek"])["items"].as_array().unwrap().len();
     assert_eq!(n, items.len(), "다시 판정하지 않는다");
 }
@@ -4787,13 +4803,18 @@ const GUIDE_SECTIONS: &[&str] = &[
     "지시는 사용자만, 채팅으로 한다",
     "## 메시지마다 세 가지 중 하나",
     "새 thread를 시작하거나 열린 thread에 일을 넘기기 전에 TASKS.md에서 같은 일·겹치는 일을 찾는다",
-    "시작하거나 이미 이어진 열린 thread에 넘기고, 메모·모델·머신·저장소도 사용자 말에 맞게 함께 고친다",
+    "시작하거나 이미 이어진 열린 thread에 넘기고, 메모·저장소도 사용자 말에 맞게 함께 고친다",
+    "정해진 모델·머신 변경은 사용자가 직접 한다",
+    "`aaa task reserve <제목>`",
+    "가능한 예약 중 앞 것을 host가 시작한다",
+    "resolve 정리가 실제로 끝나야 반환한다",
+    "`aaa task archive --restore <task ID>`",
     "아래 「TASKS.md」의 `--from-task … --link-task`를 쓴다",
     "## 이어지는 말",
     "**thread 결과 요약은 언제나 이 모양이다**",
     "- 더하기: 사용자가 지금 시작하지 않는 일을 말하면 더한다",
     "- 목록(`##` 머리): 사용자가 요청하면",
-    "- 끝남·그만둠:",
+    "- 끝남:",
     "- 보이기: 사용자가 task를 보자고 하면",
     "`aaa task add|edit|move|rm|restore|log`",
     "## 무엇이 누구 것인가",
@@ -5289,7 +5310,16 @@ fn merged_thread_cleans_its_task() {
     f.kind("thread_resolved", &id, T);
     // 끝낸 그 tick이 판정까지 한다: 그 뒤에 시작한 tick이 끝나면 판정·기록·inbox가 다 끝났다
     w.h.ticks(1);
-    assert_eq!(std::fs::read_to_string(&file).unwrap(), "# Tasks\n\n## Backlog\n- [ ] 남는 일\n");
+    let active = std::fs::read_to_string(&file).unwrap();
+    let without_ids =
+        active.lines().map(|l| l.split(" <!-- aaa-task:").next().unwrap()).collect::<Vec<_>>().join("\n") + "\n";
+    assert_eq!(without_ids, "# Tasks\n\n## Backlog\n- [ ] 남는 일\n");
+    let archived = w.h.ok(&["task", "archive"]);
+    let kept = &archived["entries"][0];
+    assert_eq!(kept["task"]["thread"], id);
+    assert_eq!(kept["reason"], "PR 병합");
+    assert!(kept["task_id"].is_string() && kept["body"].as_str().unwrap().contains("commit 병합할 일"));
+    assert_eq!(kept["report"], format!("threads/{id}.md"));
     // 판정이 본 마지막 보고는 `[착지]`다(표지만 보면 확인 필요)
     let copied = std::fs::read_to_string(w.projects.join(format!("demo/threads/{id}.md"))).unwrap();
     assert!(copied.starts_with("[착지]"), "{copied}");
@@ -5297,7 +5327,7 @@ fn merged_thread_cleans_its_task() {
     let e = &log["entries"][0];
     assert_eq!(
         (e["action"].as_str(), e["by"].as_str(), e["title"].as_str()),
-        (Some("auto_clean"), Some("host 자동 정리"), Some("commit 병합할 일")),
+        (Some("completed"), Some("host 자동 정리"), Some("commit 병합할 일")),
         "{log}"
     );
     let items = w.h.ok(&["inbox", "list", "demo", "--all", "--peek"])["items"].as_array().unwrap().clone();
@@ -6189,4 +6219,100 @@ int main(int argc, char **argv) {
     wait_for("표준 FD 닫힘 영수증", T, || std::fs::read(&closed).ok().filter(|b| b == b"closed"));
     let output = terminal.read(&["stdio-close"], &[], T);
     assert_eq!(output, "pty-output-before-close\x1b[31msecret-prefix-tail\x1b[0m");
+}
+
+/// coordinator·브라우저 없이 실제 host가 자리를 집행한다. 막힌 앞 예약을 보존하고 가능한 뒤 예약을 먼저 기동한다.
+#[test]
+fn task_queue_runs_possible_fifo_after_resolve_without_coordinator() {
+    let mut w = world();
+    w.h.ok(&["project", "set", "demo", "max_parallel_threads", "6"]);
+    w.h.ok(&["project", "set", "demo", "thread_profile", "fake"]);
+    let mut active = Vec::new();
+    for n in 0..6 {
+        let task = w.task(&format!("slot-{n}.md"), if n == 0 { "완료 보고" } else { "noreport" });
+        let v = w.start(&["--title", &format!("자리 {n}"), "--profile", "fake", "--kind", "dir", "--task-file", &task]);
+        active.push(v["id"].as_str().unwrap().to_string());
+    }
+    let first = active[0].clone();
+    w.wait_show("완료 보고에도 자리 보유", &first, |v| {
+        v["report_hash"].is_string() && v["brief"] == "delivered"
+    });
+    std::fs::write(w.projects.join("demo/TASKS.md"),"## Backlog\n- [ ] 앞 예약 (fake@mac-offline) [작업 폴더]\n  독립 설명 · 완료 범위\n- [ ] 가능한 예약 (fake@labA) [작업 폴더]\n  독립 설명 · 완료 범위\n").unwrap();
+    w.h.ok(&["task", "reserve", "앞 예약"]);
+    w.h.ok(&["task", "reserve", "가능한 예약"]);
+    w.h.ok(&["ticker", "tick"]);
+    assert_eq!(w.h.ok(&["thread", "list", "demo"])["threads"].as_array().unwrap().len(), 6);
+    let queue = w.h.ok(&["task", "queue"]);
+    let rows = queue["entries"].as_array().unwrap();
+    assert!(rows.iter().all(|r| r["state"] == "queued"));
+    let first_id = rows[0]["task_id"].as_str().unwrap().to_string();
+    let second_id = rows[1]["task_id"].as_str().unwrap().to_string();
+    // host 재시작에도 6개의 기존 자리와 승인판·차례를 이어 읽는다.
+    w.lab.kill("host");
+    w.spawn_host("host-restored");
+    wait_for("재연결", T, || w.h.connected("labA").then_some(()));
+    let q = w.h.ok(&["task", "queue"]);
+    assert_eq!(q["entries"][0]["task_id"], first_id);
+    assert_eq!(q["entries"][1]["task_id"], second_id);
+    w.h.ok(&["ticker", "tick"]);
+    assert_eq!(w.h.ok(&["thread", "list", "demo"])["threads"].as_array().unwrap().len(), 6);
+    w.h.ok(&["thread", "resolve", "demo", &first]);
+    // ticker 명령이나 coordinator의 다음 턴 없이 resolve 사건이 dispatch를 깨워야 한다.
+    let started = wait_for("가능한 예약의 실제 기동", T, || {
+        let q = w.h.json(&["task", "queue"]).ok()?;
+        let row = q["entries"].as_array()?.iter().find(|r| r["task_id"] == second_id)?;
+        row["thread"].as_str().map(str::to_string)
+    });
+    let v = w.wait_show("예약 pane 기동", &started, |v| v["status"] == "open" && v["pane"].is_string());
+    assert_eq!(v["machine"], "labA");
+    assert_eq!(v["profile"], "fake");
+    let q = w.h.ok(&["task", "queue"]);
+    assert_eq!(q["entries"][0]["task_id"], first_id);
+    assert_eq!(q["entries"][0]["state"], "queued");
+    assert_eq!(w.h.ok(&["thread", "list", "demo"])["threads"].as_array().unwrap().len(), 7);
+    let board = w.h.ok(&["task", "list"]);
+    assert_eq!(board["tasks"].as_array().unwrap().iter().find(|t| t["id"] == second_id).unwrap()["thread"], started);
+    w.h.ok(&["task", "unreserve", &second_id]);
+    let unchanged = w.show(&started);
+    assert_eq!(unchanged["pane"], v["pane"]);
+    assert_eq!(unchanged["status"], "open", "기동 확정 뒤 예약 취소는 thread를 끝내지 않는다");
+    w.h.ok(&["task", "unreserve", &first_id]);
+    assert_eq!(w.h.ok(&["task", "queue"])["entries"][0]["state"], "cancelled");
+}
+
+#[test]
+fn task_selected_model_and_machine_are_changed_only_by_user() {
+    let w = world();
+    w.h.ok(&["task", "add", "선택 보호", "--profile", "fake", "--machine", "labA", "--repo", "작업 폴더"]);
+    let file = w.projects.join("demo/TASKS.md");
+    let original = std::fs::read_to_string(&file).unwrap();
+    let coordinator = w.h.ok(&["project", "open", "demo", "--profile", "fake"]);
+    let pane = coordinator["pane"]["id"].as_str().unwrap();
+    w.wait_screen(pane, "fake>");
+    for (n, command) in [
+        "task edit '선택 보호' --title '이름 바꿈' --profile mute",
+        "task edit '선택 보호' --machine ''",
+        "project set demo max_parallel_threads 1000",
+    ]
+    .iter()
+    .enumerate()
+    {
+        let prefix = w.lab.root.join(format!("selection-{n}"));
+        let script=w.task(&format!("selection-{n}.sh"),&format!("'{}' --json {command} > '{p}.out' 2> '{p}.err'\nprintf '%s' \"$?\" > '{p}.rc'\nprintf 'selection-{n}-finished\\n'\n",lab::BIN,p=prefix.display()));
+        w.h.ok(&["pane", "run", pane, &format!("post-probe {script}")]);
+        w.h.wait_output(pane, &format!("selection-{n}-finished"), T);
+        assert_ne!(std::fs::read_to_string(prefix.with_extension("rc")).unwrap(), "0");
+        let result = std::fs::read_to_string(prefix.with_extension("err")).unwrap();
+        assert!(
+            result.contains(if n < 2 {
+                "사용자가 웹이나 aaa 밖 CLI"
+            } else {
+                "coordinator는 실행 한도를 올려 우회하지 않는다"
+            }),
+            "{result}"
+        );
+        assert_eq!(std::fs::read_to_string(&file).unwrap(), original);
+    }
+    w.h.ok(&["task", "edit", "선택 보호", "--profile", "mute"]);
+    assert_eq!(w.h.ok(&["task", "list"])["tasks"][0]["profile"], "mute");
 }

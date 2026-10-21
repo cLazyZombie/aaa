@@ -576,6 +576,7 @@ impl Host {
             },
         };
         let args = crate::orch::StartArgs {
+            reservation: None,
             account: None,
             holds: vec![],
             project: p.into(),

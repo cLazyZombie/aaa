@@ -521,6 +521,25 @@ enum InboxCmd {
 
 #[derive(Subcommand)]
 enum TaskCmd {
+    /// 예약과 실행 연결을 읽는다
+    Queue,
+    /// 현재 내용으로 실행을 승인하고 자리 대기에 넣는다(같은 예약의 내용 갱신도 이 명령)
+    Reserve {
+        task: String,
+        #[arg(long)]
+        block: Option<String>,
+        #[arg(long)]
+        profile: Option<String>,
+    },
+    /// 아직 시작하지 않은 예약을 취소한다(실행 중 thread는 그대로)
+    Unreserve { task_id: String },
+    /// 예약 순번을 바꾼다(1부터, 0은 맨 앞)
+    QueueMove { task_id: String, position: u32 },
+    /// 완료 보관을 읽거나 같은 task ID로 복원한다(재예약하지 않음)
+    Archive {
+        #[arg(long)]
+        restore: Option<String>,
+    },
     /// 목록별 task와 형식 어긋남(읽기만 한다)
     List,
     /// task를 더한다(정규형 `- [ ] 제목 (모델@머신) [저장소]`, 같은 제목은 거부)
@@ -1720,6 +1739,47 @@ fn run(cli: Cli) -> Result<ExitCode> {
         Cmd::Context { project, peek } => {
             front(json, FrontRequest::Context { project: project_or_here(project)?, peek })
         }
+        Cmd::Task { cmd: TaskCmd::Queue } => {
+            front(json, FrontRequest::TaskQueue { project: project_or_here(None)?, action: aaa_proto::QueueOp::List })
+        }
+        Cmd::Task { cmd: TaskCmd::Reserve { task, block, profile } } => {
+            let project = project_or_here(None)?;
+            let response = front_call(FrontRequest::ThreadStartPreview {
+                project: project.clone(),
+                from_task: task.clone(),
+                task_block: block,
+            })?
+            .map_err(|e| anyhow::anyhow!(e.message))?;
+            let FrontResponse::ThreadStartPreview(p) = response else {
+                anyhow::bail!("예약 미리보기 응답이 아니다")
+            };
+            front(
+                json,
+                FrontRequest::TaskQueue {
+                    project,
+                    action: aaa_proto::QueueOp::Reserve {
+                        task,
+                        block: p.task_block,
+                        profile: profile.unwrap_or(p.profile),
+                        profile_revision: p.profile_revision,
+                    },
+                },
+            )
+        }
+        Cmd::Task { cmd: TaskCmd::Unreserve { task_id } } => front(
+            json,
+            FrontRequest::TaskQueue { project: project_or_here(None)?, action: aaa_proto::QueueOp::Cancel { task_id } },
+        ),
+        Cmd::Task { cmd: TaskCmd::QueueMove { task_id, position } } => front(
+            json,
+            FrontRequest::TaskQueue {
+                project: project_or_here(None)?,
+                action: aaa_proto::QueueOp::Move { task_id, position },
+            },
+        ),
+        Cmd::Task { cmd: TaskCmd::Archive { restore } } => {
+            front(json, FrontRequest::TaskArchive { project: project_or_here(None)?, restore })
+        }
         Cmd::Task { cmd: TaskCmd::List } => front(json, FrontRequest::Tasks { project: project_or_here(None)? }),
         Cmd::Task { cmd: TaskCmd::Log { limit, before, deleted } } => front(
             json,
@@ -1733,7 +1793,13 @@ fn run(cli: Cli) -> Result<ExitCode> {
         Cmd::Task { cmd } => {
             use aaa_proto::TaskOp;
             let op = match cmd {
-                TaskCmd::List | TaskCmd::Log { .. } => unreachable!(),
+                TaskCmd::List
+                | TaskCmd::Log { .. }
+                | TaskCmd::Queue
+                | TaskCmd::Reserve { .. }
+                | TaskCmd::Unreserve { .. }
+                | TaskCmd::QueueMove { .. }
+                | TaskCmd::Archive { .. } => unreachable!(),
                 TaskCmd::Add { title, list, profile, machine, owner, person, notes, parent, before, thread, repo } => {
                     TaskOp::Add {
                         list,
@@ -4366,6 +4432,26 @@ fn render_front(r: &FrontResponse) -> String {
             }
         },
         FrontResponse::Context(c) => render_context(&mut s, c),
+        FrontResponse::TaskQueue { entries } => {
+            for q in entries {
+                s.push_str(&format!(
+                    "{} · {} · {:?} · {} · 모델 {} · 머신 {} · {}{}\n",
+                    q.position,
+                    q.task.title,
+                    q.state,
+                    q.task_id,
+                    q.profile,
+                    q.machine.as_deref().unwrap_or("자동"),
+                    q.reason,
+                    q.thread.as_ref().map(|t| format!(" · {t}")).unwrap_or_default()
+                ));
+            }
+        }
+        FrontResponse::TaskArchive { entries } => {
+            for a in entries {
+                s.push_str(&format!("{} · {} · {}\n{}\n", a.task_id, a.task.title, a.reason, a.body));
+            }
+        }
         FrontResponse::TaskBoard(b) => render_task_board(&mut s, b),
         FrontResponse::Accounts { accounts } => {
             for a in accounts {
