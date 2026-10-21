@@ -128,6 +128,7 @@ DATABASE_URL = "postgres://u:pw@db/x"
     }
     assert_eq!(lines.len(), text.lines().count());
     assert_eq!(lines[4], "[profiles.work.env]");
+    assert_eq!(lines[9], "[profiles.other.env]# 메모", "`]`를 빠뜨린 배열은 뒤의 표 머리에서 끝난다");
     // 주석으로 꺼 둔 비밀 배열·여러 줄 문자열: 이어지는 주석 줄은 모두 가리고(주석 안의 `]`·`"""`는 닫는 표시로 셀 수 없다),
     // 주석이 끝나면 뒤의 표·값은 그대로 보인다
     let text = "[profiles.work]\n# api_keys = [\n#   \"sk-live-commented\",\n# ]\n# private_key = \"\"\"\n# MIIEvQIBADANBg\n# \"\"\"\n[web]\nlisten = \"127.0.0.1:7431\"\n";
@@ -138,6 +139,7 @@ DATABASE_URL = "postgres://u:pw@db/x"
         assert!(hidden.iter().any(|h| h.contains(secret)), "{secret}를 오류 글에서 뺄 목록에 없다: {hidden:?}");
     }
     assert_eq!(lines[1], format!("# api_keys = {HIDDEN}"));
+    assert!(lines[2..7].iter().all(|l| l == HIDDEN), "주석 안의 `]`에서 가림을 끝내지 않는다: {lines:?}");
     assert_eq!(&lines[7..], ["[web]", "listen = \"127.0.0.1:7431\""]);
 }
 
