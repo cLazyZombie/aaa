@@ -2,7 +2,7 @@
 // (crates/aaa-host/src/rollout/web_tests.rs, crates/aaa-agent/src/deploy/stage.rs). 여기는 화면이 보낼 요청을 정하는 규칙이다.
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { canDeploy, canStart, candidatePathOk, newDeployId, refused, rolloutSpec, rolloutTargets } from "../src/deployModel.ts";
+import { canDeploy, canRestartRollout, canStart, candidatePathOk, newDeployId, refused, rolloutSpec, rolloutTargets } from "../src/deployModel.ts";
 
 const view = (over = {}) => ({
   candidate: { machine: "mac-b", path: "~/aaa-candidate/aaa", sha256: "a".repeat(64), commit: "c".repeat(40), version: "0.1.2+cccccccccccc", total_bytes: 9, built_at: null },
@@ -19,6 +19,10 @@ describe("관리 W6a", () => {
   it("웹 배포는 1.82 이상 host만", () => {
     for (const v of [undefined, "1.81", "2.82"]) assert.equal(canDeploy(v), false, String(v));
     assert.equal(canDeploy("1.82"), true);
+  });
+  it("재시작 rollout은 1.87 이상 host만(옛 host는 restart 칸을 버려 교체 rollout으로 읽는다)", () => {
+    for (const v of [undefined, null, "1.86", "2.87"]) assert.equal(canRestartRollout(v), false, String(v));
+    assert.equal(canRestartRollout("1.87"), true);
   });
   it("ID는 host valid_id(영숫자 26자)를 지난다", () => {
     const ids = new Set(Array.from({ length: 50 }, newDeployId));

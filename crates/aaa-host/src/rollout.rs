@@ -243,7 +243,7 @@ impl Host {
         // 웹 조작 기기는 빌드 머신에 이미 있는 후보만 고른다(관리 GUI W6a, 답 2A). 응답은 표시용 요약이다
         let web = crate::deploy::web_controller(role, actor);
         if let Some(service) = spec.restart {
-            return self.restart_rollout_start(web, actor, id, &spec.machines, service);
+            return self.restart_rollout_start(web, actor, id, &spec.machines, service).await;
         }
         if web && spec.source_machine.is_none() {
             return Err(err(ErrorCode::BadRequest, "웹은 빌드 머신의 후보(머신:폴더/aaa)로만 배포한다"));
@@ -333,7 +333,7 @@ impl Host {
     }
     /// 재시작만 하는 rollout(관리 GUI W6c, 답 1A): 대상 한 머신의 서비스를 지금 판 그대로 다시 띄우고, 교체 rollout과 같은
     /// 독립 감시가 새 프로세스(host는 웹 응답까지)를 확인한다. 확인하지 못하면 감시가 다시 띄운다. 같은 ID로 다시 본다
-    fn restart_rollout_start(
+    async fn restart_rollout_start(
         self: &Arc<Self>,
         web: bool,
         actor: &str,
@@ -361,31 +361,30 @@ impl Host {
                 FrontResponse::Rollout { rollout: r }
             }
         };
-        let _gate = self.deployment_gate.lock().unwrap();
-        if let Ok(old) = self.load_rollout(&id) {
-            if old.project != project || old.spec.restart != Some(service) || old.spec.machines != [mid.clone()] {
-                return Err(err(ErrorCode::BadRequest, "같은 rollout ID를 다른 요청에 쓸 수 없다"));
+        let baseline = {
+            let _gate = self.deployment_gate.lock().unwrap();
+            if let Ok(old) = self.load_rollout(&id) {
+                return self.same_restart(old, &project, &mid, service).map(respond);
             }
-            return Ok(respond(old));
-        }
-        if self.rollout_busy()? {
-            return Err(err(ErrorCode::BadRequest, "진행 중인 rollout이 있다"));
-        }
-        if let Some(e) = self.target_problem(&mid, false) {
-            return Err(e);
-        }
-        // 재시작 전 실행 신원: 감시가 옛 프로세스와 새 프로세스를 가르고 같은 판이 돌아왔는지 대조한다
-        let baseline = if service == DeployService::Host {
-            RuntimeIdentity {
-                sha256: self.running_sha256.clone(),
-                software: aaa_common::util::software(),
-                instance: self.rollout_instance.clone(),
-                started_ms: self.rollout_started_ms,
-                web: None,
+            if self.rollout_busy()? {
+                return Err(err(ErrorCode::BadRequest, "진행 중인 rollout이 있다"));
             }
-        } else {
-            self.machine_identity(&mid)
-                .ok_or_else(|| err(ErrorCode::UnsupportedVersion, "먼저 실행 신원을 알리는 agent를 반영한다"))?
+            if let Some(e) = self.target_problem(&mid, false) {
+                return Err(e);
+            }
+            // 재시작 전 실행 신원: 감시가 옛 프로세스와 새 프로세스를 가르고 같은 판이 돌아왔는지 대조한다
+            if service == DeployService::Host {
+                RuntimeIdentity {
+                    sha256: self.running_sha256.clone(),
+                    software: aaa_common::util::software(),
+                    instance: self.rollout_instance.clone(),
+                    started_ms: self.rollout_started_ms,
+                    web: None,
+                }
+            } else {
+                self.machine_identity(&mid)
+                    .ok_or_else(|| err(ErrorCode::UnsupportedVersion, "먼저 실행 신원을 알리는 agent를 반영한다"))?
+            }
         };
         let version = baseline
             .software
@@ -408,7 +407,7 @@ impl Host {
                 source_machine: None,
                 sha256: baseline.sha256,
                 commit: None,
-                machines: vec![mid],
+                machines: vec![mid.clone()],
                 restart: Some(service),
             },
             state: RolloutState::Running,
@@ -423,10 +422,53 @@ impl Host {
             created_ms: now,
             updated_ms: now,
         };
+        // 기록하기 전에 감시를 세운다. 설치 파일이 지금 실행 판과 다르면(개별 update·rollback 뒤) 순수 재시작이 아니다:
+        // coordinator에게는 그 파일을 띄우는 개별 재시작(감시 밖, 답 1A)으로 보내고, 웹은 거부한다
+        self.set_guard_spec(&mut r, 0)?;
+        let spec = r.steps[0].guard.clone().ok_or_else(|| internal("재시작 감시 정본이 없다"))?;
+        let armed = match self.live_conn(&mid)?.request(AgentRequest::DeployGuardArm { spec: spec.clone() }).await {
+            Ok(response) => self.guard_receipt(&spec, response)?,
+            Err(e) if e.code == ErrorCode::Conflict && !web => {
+                let machine = Some(mid);
+                return self.individual_deployment(actor, machine, r.id, DeployAction::Restart { service }).await;
+            }
+            Err(e) if e.code == ErrorCode::Conflict => {
+                return Err(err(
+                    ErrorCode::Conflict,
+                    "설치 파일이 지금 실행 판과 다르다(개별 교체 뒤). 그 파일은 coordinator나 host 터미널에서 띄운다",
+                ));
+            }
+            Err(e) => return Err(e),
+        };
+        if armed.phase.terminal() {
+            return Err(err(ErrorCode::BadRequest, "독립 복구 감시가 준비되지 않았다"));
+        }
+        r.steps[0].guard_ready = true;
+        // 감시를 세우는 사이 다른 시작이 끼었으면 이 감시는 시한에 스스로 취소된다(설치하지 않았다)
+        let _gate = self.deployment_gate.lock().unwrap();
+        if let Ok(old) = self.load_rollout(&r.id) {
+            return self.same_restart(old, &r.project, &mid, service).map(respond);
+        }
+        if self.rollout_busy()? {
+            return Err(err(ErrorCode::BadRequest, "진행 중인 rollout이 있다"));
+        }
         self.db.start_rollout(&r.id, &serde_json::to_string(&r).map_err(internal)?).map_err(internal)?;
         self.save_rollout(&mut r)?;
         self.resume_rollout();
         Ok(respond(r))
+    }
+    /// 같은 ID의 재시작 rollout은 같은 요청일 때만 그 기록을 돌려준다
+    fn same_restart(
+        &self,
+        old: RolloutView,
+        project: &str,
+        mid: &str,
+        service: DeployService,
+    ) -> Result<RolloutView, ErrorBody> {
+        if old.project != project || old.spec.restart != Some(service) || old.spec.machines != [mid] {
+            return Err(err(ErrorCode::BadRequest, "같은 rollout ID를 다른 요청에 쓸 수 없다"));
+        }
+        Ok(old)
     }
     pub(crate) fn rollout_status(
         self: &Arc<Self>,

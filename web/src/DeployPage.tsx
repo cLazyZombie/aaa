@@ -11,27 +11,28 @@ import { ApiError, call, me, onRolloutChanged } from "./api";
 import { ConfirmDialog } from "./ConfirmDialog";
 import { SettingsGroup } from "./herdr/SettingsControls.tsx";
 import { RolloutCard } from "./RolloutCard";
-import { canDeploy, canStart, candidatePathOk, jobState, jobWhat, newDeployId, refused, restartSpec, rolloutSpec, rolloutTargets, sizeText, type PlanInput } from "./deployModel.ts";
+import { canDeploy, canRestartRollout, canStart, candidatePathOk, jobState, jobWhat, newDeployId, refused, restartSpec, rolloutSpec, rolloutTargets, sizeText, type PlanInput } from "./deployModel.ts";
 
 const say = (e: unknown) => (e instanceof ApiError ? e.message : e instanceof Error ? e.message : String(e));
 
-/** 1.82 이상 host인가(모르면 null) */
-function useDeployAdmin(): boolean | null {
-  const [ok, setOk] = useState<boolean | null>(null);
+/** host의 FRONT_API(아직 모르면 undefined, 읽지 못하면 null) */
+function useFrontApi(): string | null | undefined {
+  const [api, setApi] = useState<string | null | undefined>(undefined);
   useEffect(() => {
     let live = true;
     me()
-      .then((m) => live && setOk(canDeploy(m?.front_api)))
-      .catch(() => live && setOk(false));
+      .then((m) => live && setApi(m?.front_api ?? null))
+      .catch(() => live && setApi(null));
     return () => {
       live = false;
     };
   }, []);
-  return ok;
+  return api;
 }
 
 export function DeployPage({ role, machines }: { role: DeviceRole; machines: MachineView[] }) {
-  const admin = useDeployAdmin();
+  const api = useFrontApi();
+  const admin = api === undefined ? null : canDeploy(api);
   const [cards, setCards] = useState<Card[] | null>(null);
   const [jobs, setJobs] = useState<DeployJobCard[]>([]);
   const [error, setError] = useState<string | null>(null);
@@ -88,7 +89,8 @@ export function DeployPage({ role, machines }: { role: DeviceRole; machines: Mac
         note="그 머신 agent가 감독자(launchd)로 다시 띄우고, 배포와 같은 독립 감시가 새 프로세스(host는 웹 응답까지)를 확인한다. 진행은 「배포 기록」에 남는다. 세션은 이어진다. host를 다시 띄우면 이 화면은 잠시 끊겼다 다시 붙는다."
       >
         <div className="settings-item">
-          {canEdit && <Restarts machines={machines} onStarted={load} />}
+          {canEdit && canRestartRollout(api) && <Restarts machines={machines} onStarted={load} />}
+          {canEdit && !canRestartRollout(api) && <p className="op-muted">재시작 rollout은 FRONT_API 1.87 이상 host에서 한다.</p>}
           <ul className="admin-list" data-testid="deploy-jobs">
             {jobs.map((j) => (
               <li key={j.id} data-job={j.id} data-state={j.state ?? "unknown"}>

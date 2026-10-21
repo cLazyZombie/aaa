@@ -100,13 +100,24 @@ impl Host {
                 "웹은 개별 배포를 하지 않는다. 재시작은 재시작 rollout, 실행 파일 교체는 설정 「배포」의 rollout으로 한다",
             ));
         }
-        // 재시작은 독립 감시가 새 프로세스를 확인하는 재시작 rollout으로만 한다(관리 GUI W6c, 답 1A)
+        // 재시작은 독립 감시가 새 프로세스를 확인하는 재시작 rollout으로 한다(관리 GUI W6c, 답 1A). 개별 update·rollback이
+        // 바꾼 설치 파일을 띄우는 재시작만 그 rollout이 개별 작업으로 보낸다(`individual_deployment`)
         if matches!(action, DeployAction::Restart { .. }) {
             return Err(err(
                 ErrorCode::BadRequest,
                 "재시작은 재시작 rollout으로 한다: 새 판 CLI `aaa service restart` 또는 웹 설정 「배포」",
             ));
         }
+        self.individual_deployment(actor, machine, id, action).await
+    }
+    /// coordinator의 개별 작업(독립 감시 밖). 같은 ID는 처음 기록과 같은 요청일 때만 다시 보낸다
+    pub(crate) async fn individual_deployment(
+        &self,
+        actor: &str,
+        machine: Option<String>,
+        id: String,
+        action: DeployAction,
+    ) -> Result<FrontResponse, ErrorBody> {
         let project = self.deployment_authorize(actor)?;
         if id.len() != 26 || !id.bytes().all(|b| b.is_ascii_alphanumeric()) {
             return Err(err(ErrorCode::BadRequest, "배포 작업 ID 형식이 아니다"));

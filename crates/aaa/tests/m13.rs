@@ -6203,6 +6203,30 @@ esac
             "작업 한 번과 감시의 복구 한 번만"
         );
         std::fs::remove_file(&service_fail).unwrap();
+        // 개별 update가 설치 파일을 바꾼 뒤의 재시작은 같은 판 확인이 아니라 그 파일 띄우기다: 감시를 세우지 않고(rollout을
+        // 남기지 않고) 감시 밖 개별 재시작 작업으로 간다(답 1A의 「개별 update·rollback은 guard 밖」)
+        let (rc, out, err) = probe(&w, &pane, &mut probe_number, &update);
+        assert_eq!(rc, "0", "{out}\n{err}");
+        let id = serde_json::from_str::<Value>(&out).unwrap()["job"]["id"].as_str().unwrap().to_string();
+        let (rc, out, err) = probe(&w, &pane, &mut probe_number, &format!("update status {id} --machine labB --wait"));
+        assert_eq!(rc, "0", "{out}\n{err}");
+        assert_eq!(std::fs::read(&exe).unwrap(), changed);
+        let (rc, out, err) = probe(&w, &pane, &mut probe_number, "service restart --role agent --machine labB");
+        assert_eq!(rc, "0", "{out}\n{err}");
+        assert!(err.contains("감시 밖 개별 재시작"), "{err}");
+        let job: Value = serde_json::from_str(&out).unwrap();
+        assert_eq!(
+            (&job["job"]["action"]["action"], &job["job"]["action"]["service"]),
+            (&"restart".into(), &"agent".into()),
+            "{out}"
+        );
+        let id = job["job"]["id"].as_str().unwrap();
+        let (rc, out, err) = probe(&w, &pane, &mut probe_number, &format!("update status {id} --machine labB --wait"));
+        assert_eq!(rc, "0", "{out}\n{err}");
+        assert_eq!(serde_json::from_str::<Value>(&out).unwrap()["job"]["state"], "completed", "{out}");
+        assert_eq!(std::fs::read_to_string(&service_log).unwrap().lines().count(), 4, "개별 재시작 한 번");
+        let (rc, out, err) = probe(&w, &pane, &mut probe_number, &format!("deploy status {id}"));
+        assert_ne!(rc, "0", "rollout을 남기지 않는다: {out}\n{err}");
     }
 
     // 사람이 설정을 철회하면 다음 요청부터 즉시 막는다. 이전 작업 조회는 계속 된다.

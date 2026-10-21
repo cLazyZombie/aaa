@@ -17,6 +17,16 @@ use std::{
 };
 
 pub const WINDOW_MS: u64 = 120_000;
+/// 설치 파일이 감시의 배포 전 SHA(지금 실행 판)와 다르다: 개별 update·rollback이 바꾼 뒤다. host는 재시작 rollout에서
+/// 이 답(`conflict`)을 받으면 감시 없이 그 파일을 띄우는 개별 재시작으로 보낸다(W6c)
+#[derive(Debug)]
+struct InstalledChanged;
+impl std::fmt::Display for InstalledChanged {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("설치 파일이 지금 실행 판과 다르다(복구 사본을 만들 배포 전 SHA가 아니다)")
+    }
+}
+impl std::error::Error for InstalledChanged {}
 pub type RecoveryExecutor = fn(&Path, DeployAction, &Path) -> Result<String, String>;
 #[derive(Serialize, Deserialize)]
 struct Bootstrap {
@@ -112,6 +122,8 @@ impl Agent {
         result.map(|guard| AgentResponse::DeployGuard { guard: Box::new(guard) }).map_err(|e| {
             if e.downcast_ref::<tokio::time::error::Elapsed>().is_some() {
                 ErrorBody::new(ErrorCode::Timeout, e.to_string())
+            } else if e.downcast_ref::<InstalledChanged>().is_some() {
+                ErrorBody::new(ErrorCode::Conflict, e.to_string())
             } else {
                 error(e)
             }
@@ -170,7 +182,7 @@ impl Agent {
         } else {
             if !pin.exists() {
                 if sha(&self.exe).map_err(|e| anyhow::anyhow!(e.message))? != spec.baseline.sha256 {
-                    bail!("복구 사본을 만들 배포 전 SHA가 아니다");
+                    return Err(InstalledChanged.into());
                 }
                 std::fs::copy(&self.exe, &pin)?;
                 let file = std::fs::File::open(&pin)?;

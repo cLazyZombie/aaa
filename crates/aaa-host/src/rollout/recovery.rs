@@ -25,7 +25,11 @@ impl Host {
             self.live_conn(machine)?.request(AgentRequest::DeployGuardControl { id: spec.id.clone(), control }).await?;
         self.guard_receipt(spec, response)
     }
-    fn guard_receipt(&self, spec: &DeployGuardSpec, response: AgentResponse) -> Result<DeployGuardView, ErrorBody> {
+    pub(super) fn guard_receipt(
+        &self,
+        spec: &DeployGuardSpec,
+        response: AgentResponse,
+    ) -> Result<DeployGuardView, ErrorBody> {
         let AgentResponse::DeployGuard { guard } = response else {
             return Err(internal("감시 영수증이 아니다"));
         };
@@ -38,15 +42,37 @@ impl Host {
         if !r.recovery_enabled {
             return Ok(());
         }
+        let had = r.steps.iter().filter(|s| s.guard.is_some()).count();
+        let Some(restart) = self.set_guard_spec(r, cursor)? else {
+            return Ok(());
+        };
+        if r.steps.iter().filter(|s| s.guard.is_some()).count() != had {
+            self.save_rollout(r)?;
+        }
+        let machine = r.steps[restart].machine.clone();
+        let spec = r.steps[restart].guard.as_ref().unwrap();
+        let response = self.live_conn(&machine)?.request(AgentRequest::DeployGuardArm { spec: spec.clone() }).await?;
+        let view = self.guard_receipt(spec, response)?;
+        if matches!(view.phase, Phase::Failed | Phase::Cancelled) {
+            return Err(err(ErrorCode::BadRequest, "독립 복구 감시가 준비되지 않았다"));
+        }
+        if !r.steps[restart].guard_ready {
+            r.steps[restart].guard_ready = true;
+            self.save_rollout(r)?;
+        }
+        Ok(())
+    }
+    /// 이 단계가 세울 감시의 재시작 단계 번호. 아직 감시 정본이 없으면 만든다(저장은 부르는 쪽이 한다)
+    pub(super) fn set_guard_spec(&self, r: &mut RolloutView, cursor: usize) -> Result<Option<usize>, ErrorBody> {
         let step = &r.steps[cursor];
         let service = match (r.spec.restart, step.phase) {
             // 재시작만 하는 rollout: 그 단계 자체를 감시한다(교체가 없어 설치 작업·공유 실행 파일 복구가 없다)
             (Some(service), RolloutPhase::HostRestart | RolloutPhase::AgentRestart) => service,
-            (Some(_), _) => return Ok(()),
+            (Some(_), _) => return Ok(None),
             (None, RolloutPhase::HostUpdate) => DeployService::Host,
             (None, RolloutPhase::AgentUpdate) => DeployService::Agent,
             (None, RolloutPhase::AgentRestart) if step.machine == r.spec.machines[0] => DeployService::Agent,
-            _ => return Ok(()),
+            _ => return Ok(None),
         };
         let machine = step.machine.clone();
         let phase = if service == DeployService::Host { RolloutPhase::HostRestart } else { RolloutPhase::AgentRestart };
@@ -112,19 +138,8 @@ impl Host {
                 restart_job: aaa_common::util::new_id(),
                 host_restart_job: aaa_common::util::new_id(),
             });
-            self.save_rollout(r)?;
         }
-        let spec = r.steps[restart].guard.as_ref().unwrap();
-        let response = self.live_conn(&machine)?.request(AgentRequest::DeployGuardArm { spec: spec.clone() }).await?;
-        let view = self.guard_receipt(spec, response)?;
-        if matches!(view.phase, Phase::Failed | Phase::Cancelled) {
-            return Err(err(ErrorCode::BadRequest, "독립 복구 감시가 준비되지 않았다"));
-        }
-        if !r.steps[restart].guard_ready {
-            r.steps[restart].guard_ready = true;
-            self.save_rollout(r)?;
-        }
-        Ok(())
+        Ok(Some(restart))
     }
     fn begin_recovery(&self, r: &mut RolloutView, view: DeployGuardView, reason: String) -> Result<(), ErrorBody> {
         let state_changed = r.state != RolloutState::Recovering;

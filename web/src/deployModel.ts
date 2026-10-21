@@ -5,6 +5,8 @@ import type { DeployJobCard, DeployState, DeployWork, ErrorCode, RolloutPlanView
 
 /** 웹 배포·재시작은 1.82 이상 host만 안다 */
 export const canDeploy = (frontApi: string | null | undefined): boolean => apiAtLeast(frontApi, 1, 82);
+/** 재시작만 하는 rollout(`RolloutSpec.restart`)을 아는 host. 옛 host는 그 칸을 버려 교체 rollout으로 읽는다 */
+export const canRestartRollout = (frontApi: string | null | undefined): boolean => apiAtLeast(frontApi, 1, 87);
 
 const CROCKFORD = "0123456789ABCDEFGHJKMNPQRSTVWXYZ";
 /** rollout·배포 작업 ID: host `valid_id`(영숫자 26자, CLI의 ULID와 같은 꼴). 보내기 전에 만들어 응답이 끊겨도 같은 ID로 이어 본다 */
