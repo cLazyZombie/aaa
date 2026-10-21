@@ -1996,3 +1996,18 @@ E2E 74의 headless WebKit iframe 그림은 기존 E2E 59·plan §8.353과 같은
 - `node --test web/test/passkey.test.mjs`: base64url 왕복(채움 없음)과 등록 단추를 여는 규칙.
 - `node web/e2e/web.e2e.mjs --spec 79-passkey`: debug host를 `AAA_TEST_WEB_LOCALHOST`로 띄워 `http://localhost:<port>`를 공개 주소처럼 쓴다(브라우저 passkey는 IP에 묶이지 못한다, RP ID `localhost`). Chromium 가상 인증기(CDP `WebAuthn`)를 단 휴대폰 화면이 짝지은 뒤 안내 줄로 등록하고, 설정 → 폰 및 기기에 등록됨·기기 목록 「passkey」 표지, 「기기 페어링」 코드가 서명 한 번(인증기 signCount)으로 나온다. 누름이 지난 뒤(`navigator.userActivation.isActive`를 거짓으로 고정)는 「passkey로 승인」 창을 한 번 더 누른 처리기에서 서명하고, 그 창을 취소하면 서명도 요청도 없다. 휴대폰 390에서 다른 확인 창(공유 링크 키 교체) 위의 그 창을 취소해도 아래 창과 안내가 남는다(그 창은 「뒤로」 기록을 쓰지 않는다). 인증기 없는 공개 주소 기기는 거부·등록 안내, 실험실 첫 화면(127.0.0.1)은 같은 동작을 passkey 없이 한다. UV 표지 없는 서명 거부는 host 유닛이 본다(확인하지 못한 가상 인증기는 브라우저가 제 창에서 기다린다).
 - 결함 심기(library `w7-fault/README.md`): gate 열기·UV 검사 빼기·op 다시 쓰기·10분 시한 빼기·화면 주소 검사 빼기·서명 검사 빼기는 host 유닛이, 웹 `call`의 gate 빼기·웹의 UV 다시 보내기 빼기·「passkey로 승인」 창을 휴대폰 sheet(ConfirmDialog)로 되돌리기는 E2E 79가, serve를 거친 Host 판정 빼기는 guard 유닛이 잡았다.
+
+## 「CLI 0회」 인수(t-0538 관리 GUI W8, plan §8.411)
+
+- `node web/e2e/web.e2e.mjs --spec 80-cli-zero`: 설치(프로젝트 만들기, 첫 짝짓기) 뒤의 운영 한 바퀴를 웹 화면만으로 돈다. 새 머신 등록 → 설정 「안전」 `start_threads = auto` → 자동화 ①(사건마다 새 thread: 폼 → 시작 범위 승인 → 지금 실행) → 자동화 ②(열린 thread에 글: ①의 thread 번호 → 지금 실행 → 그 thread 터미널에 글) → 배포 점검·시작(대상 dry-run에서 멈춤)과 agent 재시작 rollout(가짜 launchctl) → agent·host를 죽이고 다시 띄우면 화면이 끊김을 말하고 저절로 돌아옴 → 깨진 host.toml의 안전 모드와 되돌리기 → thread 끝내기·자동화 지우기·머신 폐기. 설치 뒤 spec의 `cli()`는 보기 명령만 통과시키고 다른 aaa 명령은 「CLI 0회 위반」으로 멈춘다(첫 단계가 그 거부를 직접 본다). agent 연결 주소는 고정 port다: 다시 띄운 host에 새 머신이 다시 붙는다.
+- 실제 머신 점검표(사용자가 웹과 화면 공유만으로, 터미널 입력이 한 번이라도 있으면 미완료):
+  1. 휴대폰을 공개 주소로 다시 짝짓고 10분 안에 passkey를 등록한다. 이 뒤 승인 필요 동작은 passkey 확인 한 번이다.
+  2. 새 머신을 더한다: 설정 → 머신 → 등록 창의 안내 명령을 새 머신에서 치고(그 머신의 설치), 확인 코드로 승인한다. 「연결됨」을 본다.
+  3. 설정 → 안전에서 `start_threads`를 `auto`로 바꾼다.
+  4. 자동화 ①: 새 자동화 → 「새 thread 시작」(profile·머신) → 저장 → 「승인 검토」 → 승인 → 「지금 실행」. 작업 목록에 자동화 thread가 서고 보고가 온다.
+  5. 자동화 ②: 새 자동화 → 「thread에 글」(4의 thread 번호) → 저장 → 「지금 실행」. 그 thread 터미널에 글이 온다.
+  6. 설정 → 배포: 빌드 머신에 있는 후보(coordinator나 thread가 빌드해 둔 것)를 점검하고 배포를 시작해 기록에서 끝까지 본다. 「agent 재시작…」으로 한 머신 agent를 다시 띄운다.
+  7. 장애: 화면 공유로 agent 머신의 aaa agent 프로세스를 활동 모니터에서 끝내고, 웹의 끊김 표시와 감독자가 다시 띄운 뒤의 복귀를 본다. host Mac에서도 같게 한다.
+  8. 정리: 4의 thread를 「thread 관리 → 끝내기」, 두 자동화를 지우고, 2의 머신을 폐기한다.
+  9. 화면 공유 밖에서 터미널을 연 일이 있으면 그 단계와 까닭을 적는다(미완료).
+- 결함 심기: 「CLI 0회」 검문 끄기는 첫 단계가, `do.message`가 받는 thread를 잃으면 자동화 ② 단계(전달 기록 없음)가, thread 관리 메뉴의 「끝내기」 빼기는 정리 단계가 잡았다. `do.message` 본문에서 규칙 글만 빼는 결함은 잡지 못한다: 실행 자료(`memo`)에도 같은 글이 들어가 화면에 남는다.

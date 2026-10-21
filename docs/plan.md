@@ -7074,3 +7074,14 @@ FRONT_API 1.96는 기본 검수 표지와 답 기록의 r 참조를 더한다. E
 - **호환.** FRONT_API 1.101: `/api/v1/me`의 `passkey`, `DeviceView.passkey`, 오류 코드 `passkey_required`, `/api/v1/passkey/*`. 옛 웹은 오류 글을 보인다. Agent link 변경 없음.
 - **검증.** host 유닛 `passkey::tests`(소프트웨어 인증기 ES256·EdDSA로 등록·승인을 끝까지, UV 없음·다른 화면 주소·다른 RP·다른 challenge·남의 키·모르는 credential·다시 쓴 op·다른 기기 거부, 10분 시한·보기 기기·loopback 등록 거부, 폐기 때 삭제, CBOR 경계)와 `web::guard_tests::only_a_direct_loopback_screen_approves_without_a_passkey`(serve를 거친 loopback Host), 웹 유닛 `passkey.test.mjs`, E2E `79-passkey`(Chromium 가상 인증기, debug host의 `AAA_TEST_WEB_LOCALHOST`로 `http://localhost:<port>`를 공개 주소처럼 쓴다). 결함 심기는 library `w7-fault/README.md`.
 - **착지 통합.** origin/main `555a69ea`에서 마지막 §8.409·FRONT_API 1.100·AGENT_LINK 1.11·E2E78을 직접 확인했다. 이 변경은 §8.410·FRONT_API 1.101·E2E79로 옮기고 AGENT_LINK는 그대로 둔다.
+
+### 8.411 「CLI 0회」 인수(10-22, t-0538 관리 GUI W8)
+
+- **요청.** 확정 계획 t-0456 plan-revised §5 W8 「깨끗한 설치 → 자동화 두 방식 → 승인 → 배포 → host·agent 장애 → 복구 → 정리를 웹과 화면 공유만으로 끝낸다. 터미널 입력이 한 번이라도 있으면 미완료다. 인벤토리를 다시 모아 B 행마다 목적지 화면을 확인한다」. 시작 때의 답 1A(실험실 자동 시나리오와 실제 머신 점검표)·2A(인벤토리는 대조와 보고까지, 목적지 화면이 없는 B 행은 목록과 크기를 보고하고 고칠 범위를 다시 묻는다).
+- **경계.** 옛 기획(t-0455 L10)대로 「초기 설치 뒤」 0회다. 설치는 프로젝트 만들기(§6 Q7: 설치·인스턴스 흐름)와 첫 기기 짝짓기까지다. 새 머신에서 치는 `aaa agent enroll`은 그 머신의 설치(웹 「직접 설치」 안내)다. host·agent 프로세스가 죽고 감독자(launchd)가 다시 띄우는 것은 장애와 그 복구이지 사람의 터미널 입력이 아니다.
+- **자동화 두 방식.** W3(상주 agent 마법사)를 지운 뒤(t-0475 Q6)의 두 방식으로 읽는다: 사건마다 새 thread(`do.start`, Q1의 기본)와 열린 thread에 글(`do.message`). 둘 다 웹 폼으로 만들고 「지금 실행」으로 돌린다. 새 thread는 웹 설정 「안전」의 `start_threads = auto`(승인 필요 동작)와 시작 범위 승인 뒤에 뜬다.
+- **실험실 시나리오.** E2E `80-cli-zero` 한 실험실에서 차례로: 새 머신 등록(웹 등록 창 → 새 머신의 설치 명령 → 확인 코드 승인) → `start_threads` 승인 → 자동화 ①(폼 → 시작 범위 승인 → 지금 실행 → 목록의 자동화 thread) → 자동화 ②(①의 thread 번호 → 지금 실행 → 그 thread 터미널의 글) → 배포(후보 점검 → 확인 창 → rollout 기록)와 agent 재시작 rollout → agent 장애·복귀 → host 장애·복귀(화면과 두 머신이 저절로 다시 붙고 그 설정을 마지막 정상 설정으로 둔다) → 깨진 host.toml의 안전 모드 → 「마지막 정상 설정으로 되돌리기」 → 정리(thread 끝내기, 자동화 지우기, 머신 폐기). 설치 단계 뒤 spec의 `cli()`는 보기 명령(`status`·`machine list`·`thread list/show`·`routine list/runs`·`pane list`)만 통과시키고 나머지는 「CLI 0회 위반」으로 멈춘다. 각 화면의 세부는 55·60·61·63·68이 맡고, 이 spec은 사슬이 aaa 명령 없이 이어지는 것만 본다. 배포는 63처럼 후보 self-check가 대상 dry-run에서 멈춘다(실험실 실행 파일을 바꾸지 않는다). 실제 교체와 공개 주소의 passkey 승인은 실제 머신 점검표가 본다.
+- **실제 머신 점검표.** docs/testing.md 「「CLI 0회」 인수」의 점검표. W7 배포(휴대폰 다시 짝짓기) 뒤 사용자가 웹과 화면 공유만으로 돈다.
+- **인벤토리.** 지금 CLI를 다시 모아(240행, 새것 41·없어짐 19) B 124행 중 있음 84·부분 17·없음 18·웹 제외 5, D 19행 중 있음 8·부분 5·없음 6이다. 답 2A대로 이 단계는 고치지 않고 빈 행 목록과 크기를 보고한다(t-0538 보고).
+- **호환.** 제품 변경 없음. FRONT_API·AGENT_LINK 그대로.
+- **검증.** E2E `80-cli-zero`. 결함 심기: 「CLI 0회」 검문을 끄면 설치 단계가, `do.message`가 대상에 보내지 않으면 자동화 ② 단계가, thread 관리 메뉴에서 「끝내기」를 빼면 정리 단계가 실패한다.
