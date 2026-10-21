@@ -13,13 +13,11 @@ const ASK_LIMIT: Duration = Duration::from_secs(2);
 pub(super) const RETRY_EVERY: Duration = Duration::from_secs(1);
 const MAX_REPLY: u64 = 16 * 1024;
 
-/// 한 번 묻고, 답하지 않았으면 다음 물음까지 기다린 뒤 거짓을 돌려준다(감시 루프의 한 회전)
-pub(super) async fn ask_once(listen: String) -> bool {
-    let answered = answers(&listen, ASK_LIMIT).await;
-    if !answered {
+/// 답할 때까지 묻는다. 감시는 이것을 따로 띄워 제어 frame과 상관없이 이어 가게 하고, 시한은 감시가 센다
+pub(super) async fn until_answer(listen: String) {
+    while !answers(&listen, ASK_LIMIT).await {
         tokio::time::sleep(RETRY_EVERY).await;
     }
-    answered
 }
 
 pub(super) async fn answers(listen: &str, limit: Duration) -> bool {

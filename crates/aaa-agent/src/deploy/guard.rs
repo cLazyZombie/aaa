@@ -473,6 +473,8 @@ pub async fn worker(id: &str, execute: RecoveryExecutor) -> Result<()> {
     let exe_path = pin.parent().context("사본 상위")?;
     // 설치 대상은 agent가 bootstrap에 덧붙인 별도 로컬 기록이다. 원격 문자열은 실행 경로가 되지 않는다.
     let exe: PathBuf = util::read_json(&exe_path.join(format!("{id}.guard.target")))?;
+    // 새 host 웹 묻기(W6c). 루프 회전마다 새로 시작하면 잦은 상태 조회에 한 번의 물음도 끝나지 못하므로 따로 띄워 둔다
+    let mut probe: Option<(String, tokio::task::JoinHandle<()>)> = None;
     loop {
         view.installed_sha256 = sha(&exe).map(|s| s.to_string()).unwrap_or_default();
         expired(&mut view, util::now_ms());
@@ -563,11 +565,23 @@ pub async fn worker(id: &str, execute: RecoveryExecutor) -> Result<()> {
         let remaining = view.deadline_ms.saturating_sub(util::now_ms());
         // 실행 신원이 맞은 새 host의 웹 응답을 시한까지 묻는다(답하지 않으면 시한이 지나 복구)
         let web = view.pending_web.clone().filter(|_| view.phase == Phase::AwaitingNew);
+        if probe.as_ref().map(|(addr, _)| addr) != web.as_ref() {
+            if let Some((_, old)) = probe.take() {
+                old.abort();
+            }
+            probe = web.map(|addr| (addr.clone(), tokio::spawn(super::web_probe::until_answer(addr))));
+        }
+        let answer = async {
+            match probe.as_mut() {
+                Some((_, task)) => task.await.is_ok(),
+                None => std::future::pending().await,
+            }
+        };
+        // 묻기 task가 끝났는가(Some(답했다)). 끝난 handle은 다시 기다리지 않는다
+        let mut probed = None;
         tokio::select! {
             _=tokio::time::sleep(Duration::from_millis(remaining))=>{},
-            answered=super::web_probe::ask_once(web.clone().unwrap_or_default()), if web.is_some() => {
-                if answered { web_answered(&mut view); }
-            },
+            ok=answer => probed = Some(ok),
             peer=listener.accept_peer()=>{
                 let (stream,pid)=peer?;
                 if pid.is_none() || pid!=agent_pid(&state).ok() { continue; }
@@ -578,6 +592,12 @@ pub async fn worker(id: &str, execute: RecoveryExecutor) -> Result<()> {
                     _=>Err("감시 제어 frame을 읽지 못했다".into()),
                 };
                 publish(&state,&view).await?; let _=tx.json(&response).await;
+            }
+        }
+        if let Some(answered) = probed {
+            probe = None;
+            if answered {
+                web_answered(&mut view);
             }
         }
     }
