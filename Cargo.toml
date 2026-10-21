@@ -72,6 +72,14 @@ debug = "line-tables-only"
 [profile.dev.package.sha2]
 opt-level = 3
 
+# 배포 keeper는 실제 실행 파일을 base64 JSON 조각으로 왕복한다. 두 의존성의 처리 비용만 줄이고
+# dev/test의 debug assertions·실제 실행 파일 전송·검증 경계는 유지한다.
+[profile.dev.package.base64]
+opt-level = 3
+
+[profile.dev.package.serde_json]
+opt-level = 3
+
 [profile.release]
 debug = "line-tables-only"
 
