@@ -23,6 +23,7 @@ ASSETS = {
     "macos-aarch64": "aaa-macos-aarch64",
     "windows-x86_64": "aaa-windows-x86_64.exe",
 }
+BOOTSTRAP = "aaa-install-windows.ps1"
 LAUNCHERS = {"macos-aarch64": "aaa-launcher-macos-aarch64.json", "macos-x86_64": "aaa-launcher-macos-x86_64.json"}
 
 
@@ -63,9 +64,16 @@ def build_manifest(tag: str, artifacts: Path, output: Path) -> None:
         digest = hashlib.sha256(path.read_bytes()).hexdigest()
         launchers[platform] = {"url": f"{RELEASES}/{tag}/{name}", "sha256": digest}
         checksums.append(f"{digest}  {name}\n")
+    bootstrap = artifacts / BOOTSTRAP
+    if (bootstrap.is_symlink() or not bootstrap.is_file()
+            or bootstrap.read_bytes() != (ROOT / "scripts/bootstrap/install-windows.ps1").read_bytes()):
+        raise ValueError("Windows bootstrap은 같은 source의 검토한 파일이어야 한다")
+    digest = hashlib.sha256(bootstrap.read_bytes()).hexdigest()
+    checksums.append(f"{digest}  {BOOTSTRAP}\n")
+    bootstraps = {"windows-x86_64": {"url": f"{RELEASES}/{tag}/{BOOTSTRAP}", "sha256": digest}}
     output.mkdir(parents=True, exist_ok=True)
     (output / "manifest.json").write_text(
-        json.dumps({"version": version, "notes": f"aaa {tag}", "assets": assets, "launchers": launchers}, indent=2) + "\n",
+        json.dumps({"version": version, "notes": f"aaa {tag}", "assets": assets, "launchers": launchers, "bootstraps": bootstraps}, indent=2) + "\n",
         encoding="utf-8",
     )
     (output / "SHA256SUMS").write_text("".join(checksums), encoding="utf-8")

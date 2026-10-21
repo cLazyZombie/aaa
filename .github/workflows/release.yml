@@ -134,6 +134,7 @@ jobs:
         env:
           RELEASE_TAG: ${{ github.ref_name }}
         run: |
+          cp scripts/bootstrap/install-windows.ps1 release-artifacts/aaa-install-windows.ps1
           python3 scripts/release.py manifest --tag "$RELEASE_TAG" --artifacts release-artifacts --output release-artifacts
           (cd release-artifacts && sha256sum --check SHA256SUMS)
       - name: 공개 release 만들기
@@ -149,5 +150,6 @@ jobs:
             release-artifacts/aaa-linux-aarch64
             release-artifacts/aaa-launcher-macos-aarch64.json
             release-artifacts/aaa-launcher-macos-x86_64.json
+            release-artifacts/aaa-install-windows.ps1
             release-artifacts/SHA256SUMS
             release-artifacts/manifest.json

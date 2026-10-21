@@ -7165,3 +7165,10 @@ FRONT_API 1.96는 기본 검수 표지와 답 기록의 r 참조를 더한다. E
 - **승인 뒤 환경 보존.** hp argv 수리 후보의 첫 CI에서 승인은 통과했으나 apply가 installation_content_conflict로 닫혔다. 승인 PTY만 TERM=xterm-256color였고, 환경을 비운 apply는 TERM이 없었다. TERM을 포함한 service_environment의 승인 해시 대조는 유지하고 시험의 비대화형 apply/resume을 승인과 같은 환경으로 맞춘다. 실제 PTY 승인→읽기 dry-run의 해시 불일치 RED/일치 GREEN과 다른 TERM의 해시 변경·무쓰기 대조를 로컬에서 남긴다. 실제 등록 후속 단계는 바뀐 후보의 hp macos-15 CI에서 판정한다.
 
 - **실제 listener 경로.** TERM 보존 후보의 hp CI에서 등록과 host 시작 뒤 service_backend_not_ready가 반복됐다. 같은 canonical state의 실제 LocalListener bind는 105바이트에서 SUN_LEN 오류로 로컬 RED였다. launchd 실험실 root를 기존 backend lifecycle owner와 같은 `/tmp`로 맞추고 로컬 승인/계획 owner에 실제 agent/front listener bind/drop을 더한다. production IPC·ready 판정·600초 상한·기존 실제 등록/재개/공유 instance 단언은 유지한다. 실제 후속 성공은 변경 후보의 hp CI가 판정한다.
+
+
+### 8.420 Windows 최소 다운로드 bootstrap과 사용자 PC 절차(t-0485)
+
+- 저장해 검토한 PowerShell 입구가 정확 release 판·공식 URL·SHA·PE x86_64·실제 --version을 확인한 뒤 사용자 .local/bin/aaa.exe에 비덮어쓰기 배치하고 인자를 그대로 install에 전달한다. 같은 bytes는 mtime을 보존한다. 다른 기존 파일·reparse/파일 부모·미지원 CPU는 거부하며 PATH/registry/SCM/UAC/LSA/계정·권한을 bootstrap이 바꾸지 않는다. PS5.1/7 native argv와 exit/외부 stdio를 실제 Windows owner가 검증한다.
+- 기존 release producer에 같은 source의 PowerShell asset과 manifest/SHA256SUMS를 결속한다. tag/게시/배포는 별도 승인 절차다. 공개 검사 뒤 승인된 hp branch의 기존 windows-2025 CI로 실제 Windows 경계를 한 번 확인하고 branch를 삭제한다. main 착지는 별도 창을 기다린다. FRONT_API/AGENT_LINK/웹 E2E 번호는 바뀌지 않는다.
+- docs/windows-bootstrap.md에 준비물·받기/해시·dry-run/외부 승인/상태/재개·실제 SCM/Session0/부팅/LSA/UAC 점검·되돌리기·비밀 없는 로그를 둔다. 사용자 PC 인수는 새 검증 release를 받은 뒤 한다. 공개 aaa uninstall은 최종 I7의 승인/공유 참조 제거 연결이 남아 있으며, 최소 사용자 시험은 PATH/hook/Serve를 끄고 exact 새 SCM 서비스만 사람이 소유 대조 후 중지/제거하고 데이터/공유 exe/journal은 남기는 범위다. bootstrap을 전체 인수 완료로 부르지 않는다. 다음은 사용자 PC 시험→I4 Linux→I7 최종 인수다.

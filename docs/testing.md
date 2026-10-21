@@ -2157,3 +2157,11 @@ E2E 74의 headless WebKit iframe 그림은 기존 E2E 59·plan §8.353과 같은
   9. 화면 공유 밖에서 터미널을 연 일이 있으면 그 단계와 까닭을 적는다(미완료).
 - `node web/e2e/web.e2e.mjs --spec 83-cli-zero-gaps`: 인벤토리의 작은 빈칸 다섯(답 1A). t1 줄 메뉴 「세션 끝내기」 → 확인 창 → 세션만 끝나고 「다시 열기」로 다시 뜸, coordinator 메뉴 「하나 더 띄우기」(맨 위 profile 이름을 단다) → coordinator pane 둘, 보고가 오면 host가 낸 30일 링크를 thread 화면을 연 채 설정 「이 aaa」 「낸 링크」에서 보고(앱 안 보기가 마지막 열람으로 남는다) 폐기하면 열려 있던 링크 줄도 「폐기됨」이 되고, 7일을 골라 새 링크(만료 − 발급 = 7일), 「나중」 파일은 폴더 밖 경로를 host가 거부한 말을 보이고 `memory/later.md`를 더하면 host `project show`의 `task_notes`에 들어가며 빼면 비운다.
 - 결함 심기: 「CLI 0회」 검문 끄기는 첫 단계가, `do.message`가 받는 thread를 잃으면 자동화 ② 단계(전달 기록 없음)가, thread 관리 메뉴의 「끝내기」 빼기는 정리 단계가 잡았다. `do.message` 본문에서 규칙 글만 빼는 결함은 잡지 못한다: 실행 자료(`memo`)에도 같은 글이 들어가 화면에 남는다. 81은 「세션 끝내기」가 `pane_close`를 보내는 결함(「다시 열기」 없음), 「하나 더 띄우기」가 `new`를 뒤집는 결함(coordinator 하나), 링크 수명을 보내지 않는 결함(30일), 폐기 뒤 host가 reports 사건을 내지 않는 결함(열린 화면이 active로 남음)을 잡았다.
+
+
+## Windows 최소 다운로드 bootstrap(t-0485)
+
+- `cargo test -p aaa --test windows_bootstrap --locked`: Windows에서 PowerShell 5.1과 7을 모두 실제로 실행한다. 네트워크 요청만 외부 경계에서 대체하고 실제 PE/파일/hash/--version/native argv/종료 코드와 표준입력 상속을 검사한다. 빈 문자열·공백·따옴표·끝 역슬래시·한글·셸 메타문자를 보존하고, 같은 bytes의 mtime·다른 instance·충돌 파일을 보존한다. manifest 판/URL/hash·PE/CPU/실행 판·파일 부모·junction·NUL 거부 뒤 실행/배치가 없어야 한다. 실제 aaa dry-run은 state를 만들지 않고 --yes는 쓰기 권한이 아니다.
+- 이 owner만 `cfg(windows)`다. PE/CreateProcess·PowerShell 5.1·NTFS junction이 대상 OS 계약이기 때문이다. macOS/Linux에서 통과를 주장하지 않는다. 공통 Rust install owner는 각 OS의 기존 Cargo 시험에 남는다. 실제 Windows 판정은 승인된 hp branch의 기존 windows-2025 CI에서 한 번 확인하고 branch를 지운다.
+- `nice -n 15 python3 -m unittest scripts.test_release`: 같은 source의 bootstrap만 게시하며 manifest/체크섬이 실제 script bytes를 포함해야 한다. ci-local의 test 및 distribution workflow에도 묶었다. 검토하지 않은 script/누락 파일을 허용하는 변형이 이 owner를 실패시켜야 한다.
+- CI는 임시 사용자 폴더만 쓴다. bootstrap 자체는 SCM/registry/PATH를 변경하지 않는다. 실제 SCM logon·Session 0·부팅·LSA/UAC·harness 인수는 [Windows 사용자 절차](windows-bootstrap.md)로 분리한다.
