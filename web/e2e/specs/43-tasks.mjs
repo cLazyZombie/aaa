@@ -1,5 +1,5 @@
 // 할 일 보기(T1, 사용자 10-20 「하기로 했던 기능들을 다 볼수 있고 (왼쪽에 아이콘이 있어서 거기서 들어가게)」, plan §8.306). host가
-// TASKS.md를 읽어 목록·형식 어긋남·task 없는 열린 thread를 주고, 웹은 활동 막대 「할 일」에서 그것을 보인다. 파일을 직접 고치면 ticker가
+// TASKS.md를 읽어 한 목록·형식 어긋남·task 없는 열린 thread를 주고, 웹은 활동 막대 「할 일」에서 그것을 보인다. 파일을 직접 고치면 ticker가
 // 바뀐 hash를 `tasks` 사건으로 알리고 화면이 다시 읽는다. 시간은 기다리지 않는다: 화면 표지 `data-tasks-sha`·`data-task-state`를 기다린다.
 import fs from "node:fs";
 import crypto from "node:crypto";
@@ -11,7 +11,8 @@ const sha = (text) => crypto.createHash("sha256").update(text).digest("hex");
 /** TASKS.md를 쓰고 그 hash(화면 `data-tasks-sha`가 이것이 되기를 기다린다) */
 const write = (text) => {
   fs.writeFileSync(`${dir()}/TASKS.md`, text);
-  return sha(text);
+  // 화면 관측 전에 식별 주석 이주를 마친 fixture를 준비한다.
+  return aaa("task", "list").sha256;
 };
 // 운영에서 나온 오독 꼴 셋은 같은 꼴의 가짜 글이다(끝 괄호 상태 메모, `(미할당)`, 본문 속 `· t-NNNN(…)`)
 const tasksMd = (run) => `# Tasks
@@ -65,10 +66,10 @@ export default async function ({ page }) {
     const want = { [LINE.login]: "run", [LINE.sub]: "wait", [LINE.tidy]: "problem", [LINE.probe]: "problem", [LINE.web]: "problem", [LINE.deploy]: "wait", [LINE.remote]: "wait" };
     for (const [line, state] of Object.entries(want)) if ((await stateOf(page, line)) !== state) throw new Error(`${line}줄 상태 ${await stateOf(page, line)} ≠ ${state}`);
     if ((await page.getByTestId("activity-badge-tasks").textContent()) !== "3") throw new Error("배지는 형식 어긋남 3");
-    // 목록 머리·설명 줄·하위 들여쓰기, task 없는 목록도 머리가 있다
-    const heads = await page.locator(".task-list-name").allTextContents();
-    if (heads.join("|") !== "In progress|Backlog|빈 목록") throw new Error(`목록 머리 ${heads}`);
-    if (!(await page.getByTestId("task-list-Backlog").textContent()).includes("나중 일은 memory/later.md에 모은다")) throw new Error("목록 설명 줄");
+    // 한 목록(plan §8.393): 「## 목록」 머리 없이 파일 차례 그대로, 하위는 들여쓴다
+    if ((await page.getByTestId("tasks-list").locator(".task-list-name").count()) !== 0) throw new Error("목록 머리가 남았다");
+    const order = await page.getByTestId("tasks-rest").locator(".task-row").evaluateAll((els) => els.map((e) => e.dataset.testid));
+    if (order.join() !== Object.values(LINE).map((l) => `task-${l}`).join()) throw new Error(`한 목록 차례 ${order}`);
     const pad = (line) => page.getByTestId(`task-${line}`).evaluate((el) => parseFloat(getComputedStyle(el).paddingLeft));
     if (!((await pad(LINE.sub)) > (await pad(LINE.login)))) throw new Error("하위 task 들여쓰기");
     // owner를 오독하지 않는다: 형식 어긋남 칩이고 사람 칩(「t-0101 S4 뒤, …」)이 없다
@@ -81,7 +82,8 @@ export default async function ({ page }) {
     await tidy.locator(".task-pick").click();
     const detail = page.getByTestId("task-detail");
     await detail.waitFor();
-    if ((await detail.getByTestId("task-raw").textContent()) !== "- [ ] 정리(선택) (t-0101 S4 뒤, 사용자 지시 시)") throw new Error("원문 줄");
+    const tidyId = aaa("task", "list").tasks.find(t => t.line === LINE.tidy).id;
+    if ((await detail.getByTestId("task-raw").textContent()) !== `- [ ] 정리(선택) (t-0101 S4 뒤, 사용자 지시 시) <!-- aaa-task:${tidyId} -->`) throw new Error("원문 줄");
     const problems = await detail.getByTestId("task-problems").textContent();
     if (!problems.includes("owner 칸이 owner 꼴이 아님") || !problems.includes("제목 안에 thread 번호가 묻힘: t-0101")) throw new Error(problems);
     if (!(await detail.textContent()).includes("사용자 지시 뒤에 한다")) throw new Error("메모");
@@ -105,7 +107,7 @@ export default async function ({ page }) {
     md = write(tasksMd(run).replace("- [ ] 배포 (me)\n", "- [ ] 배포 (me)\n- [ ] 새로 더한 일\n"));
     aaa("ticker", "tick");
     await shaIs(page, md);
-    if (!(await page.getByTestId("task-list-Backlog").textContent()).includes("새로 더한 일")) throw new Error("새 줄이 없다");
+    if (!(await page.getByTestId("tasks-rest").textContent()).includes("새로 더한 일")) throw new Error("새 줄이 없다");
     // 고른 task(제목으로 따라간다)는 줄이 밀려도 그대로 열려 있다
     if ((await page.getByTestId("task-detail").getAttribute("aria-label")) !== "할 일 로그인 고치기") throw new Error("고른 task");
   });

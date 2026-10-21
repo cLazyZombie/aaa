@@ -25,8 +25,8 @@ export default async function ({ page }) {
     if (list.length !== 3 || !list.some((r) => r.project === "demo" && r.name === "design" && r.live)) throw new Error("전체 보고서 CLI 목록");
     if (aaa("library", "prune", "--older-than", "30").removed.length !== 0) throw new Error("최근 보고서를 정리했다");
     const doctor = aaa("doctor").library;
-    if (doctor?.reports !== 3 || doctor?.live !== 1 || doctor?.size !== Buffer.byteLength(fs.readFileSync(`${input}/index.html`)) + Buffer.byteLength("추가 보고서")) throw new Error("doctor의 host 사본 크기·실시간 수");
-    if (doctor.max_days !== 30 || doctor.max_size !== 20 * 1024 ** 3 || doctor.protected_size !== 0) throw new Error("doctor의 보관 한도·보호 용량");
+    if (doctor?.reports !== 3 || doctor?.live !== 1 || doctor?.size !== 3 * Buffer.byteLength(fs.readFileSync(`${input}/index.html`)) + 2 * Buffer.byteLength("추가 보고서")) throw new Error("doctor의 host 사본 크기·실시간 수");
+    if (doctor.max_days !== 30 || doctor.max_size !== 20 * 1024 ** 3 || doctor.protected_size !== Buffer.byteLength(fs.readFileSync(`${input}/index.html`))) throw new Error("doctor의 보관 한도·보호 용량");
     const preview = aaa("library", "prune", "--dry-run");
     if (preview.kind !== "library_prune_preview" || preview.candidates.length !== 0 || preview.max_days !== 30 || preview.max_size !== 20 * 1024 ** 3) throw new Error("자동 규칙의 CLI 미리 보기");
     fs.writeFileSync(`${input}/index.html`, "<!doctype html><html lang=ko><meta charset=utf-8><h1>최신 보고서</h1></html>");
@@ -117,7 +117,7 @@ export default async function ({ page }) {
     const weekly = `${root}/weekly`;
     fs.mkdirSync(weekly);
     fs.writeFileSync(`${weekly}/index.html`, "<!doctype html><html lang=ko><meta charset=utf-8><h1>주간 보고</h1></html>");
-    aaa("library", "publish", weekly, "--project", "demo", "--name", "weekly", "--to-user", "--title", "주간 보고");
+    const weeklySent = aaa("library", "publish", weekly, "--project", "demo", "--name", "weekly", "--to-user", "--title", "주간 보고");
     // 다시 읽기 단추를 누르지 않는다: host `reports` 사건이 막대·탭 배지와 목록을 고친다
     await badgesAre(before + 1);
     const card = page.getByTestId("report-demo-weekly");
@@ -126,7 +126,7 @@ export default async function ({ page }) {
     const label = await page.getByTestId("activity-reports").getAttribute("aria-label");
     if (label !== `보고서, 안 본 보고서 ${before + 1}`) throw new Error(`막대 단추 이름: ${label}`);
     const posts = aaa("post", "list", "demo").posts.filter((p) => p.topic === "report");
-    if (!posts.some((p) => p.title === "새 보고서: 주간 보고" && p.to === "user" && p.refs.includes("library/demo/weekly"))) throw new Error(`알림 post: ${JSON.stringify(posts)}`);
+    if (!posts.some((p) => p.title === `${weeklySent.report_id} 새 보고서: 주간 보고` && p.to === "user" && p.refs.includes(`library/demo/${weeklySent.report_id}`))) throw new Error(`알림 post: ${JSON.stringify(posts)}`);
     await shot(page, "reports-mine-unseen");
     await card.getByRole("button", { name: "열기", exact: true }).click();
     await page.frameLocator('[data-testid="report-frame"]').getByRole("heading", { name: "주간 보고" }).waitFor();

@@ -75,7 +75,6 @@ export default async function ({ ctl, page }) {
     await dlg.getByRole("searchbox", { name: "글꼴 검색" }).fill("hel");
     await dlg.getByRole("button", { name: "Helvetica" }).click();
     await dlg.getByText("Helvetica은(는) 고정폭 글꼴이 아닙니다.", { exact: false }).waitFor();
-    await shot(fp, "desktop-terminal-font");
     if ((await field().inputValue()) !== "" || (await stored()) !== null) throw new Error("비례폭 글꼴을 받아들였다");
     // 검색칸의 Esc는 목록만 닫는다
     await dlg.getByRole("searchbox", { name: "글꼴 검색" }).press("Escape");
@@ -92,6 +91,8 @@ export default async function ({ ctl, page }) {
     // 그 face를 받은 뒤 넣으므로 cell은 1.5배, grid는 줄고 host PTY도 그 열 수
     await settle("넓은 글꼴로 다시 맞춤", (c) => Math.abs(c.w / first.w - 1.5) < 0.05 && c.cols < first.cols);
     if (wideFetches !== 1) throw new Error(`E2E Wide를 ${wideFetches}번 받았다`);
+    // screenshot도 document.fonts.ready를 기다린다. 시험이 붙잡은 face를 놓고 그리드까지 맞춘 뒤 캡처한다.
+    await shot(fp, "desktop-terminal-font");
     // 적은 값은 거른다(세미콜론·중괄호를 빼고, 빈 이름을 버리고, 빈칸 있는 이름은 따옴표). Esc로 닫아도 저장한다
     await field().fill("'E2E Wide'; }, , Menlo");
     await fp.keyboard.press("Escape");

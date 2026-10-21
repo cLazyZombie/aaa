@@ -41,6 +41,8 @@ export type MarkdownBlock =
 
 export function safeMarkdownHref(href: string): string | null {
   const value = href.trim();
+  // 앱 안 보고·질문 참조도 Markdown 링크의 제목과 함께 보존한다. 그 밖의 custom scheme은 받지 않는다.
+  if (/^aaa:(?:report|question)\/[A-Za-z0-9_.-]+$/.test(value) || /^\/?#(?:report|question)=[A-Za-z0-9_.%/-]+$/.test(value)) return value;
   return /^(?:https?:\/\/|mailto:)/i.test(value) ? value : null;
 }
 

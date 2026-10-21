@@ -1,4 +1,4 @@
-//! 새 파일/폴더에 protected DACL을 함께 전달한다. OS 정책·기존 ACL은 바꾸지 않는다.
+//! 새 파일/폴더에 protected DACL을 함께 전달한다. 일반 실행의 state 이행만 자기 소유 ACL을 좁힌다.
 use super::*;
 use std::os::windows::{
     ffi::OsStrExt,
@@ -22,7 +22,7 @@ use windows_sys::Win32::{
     },
 };
 
-struct Descriptor(*mut core::ffi::c_void);
+pub(crate) struct Descriptor(*mut core::ffi::c_void);
 impl Drop for Descriptor {
     fn drop(&mut self) {
         // SAFETY: descriptor는 Windows가 LocalAlloc으로 할당했다.
@@ -35,12 +35,15 @@ fn wide(path: &Path) -> Vec<u16> {
     path.as_os_str().encode_wide().chain(Some(0)).collect()
 }
 fn security(directory: bool) -> io::Result<(Descriptor, SECURITY_ATTRIBUTES)> {
-    let sid = crate::install::platform::account().ok_or_else(denied)?;
+    security_for(directory, true)
+}
+/// Pipe는 현재 SID만, 파일은 설치기와 같은 현재 SID+SYSTEM을 허용한다.
+pub(crate) fn security_for(directory: bool, system: bool) -> io::Result<(Descriptor, SECURITY_ATTRIBUTES)> {
+    let sid = super::account().ok_or_else(denied)?;
     let inheritance = if directory { "OICI" } else { "" };
-    let text: Vec<_> = format!("O:{sid}D:P(A;{inheritance};FA;;;SY)(A;{inheritance};FA;;;{sid})")
-        .encode_utf16()
-        .chain(Some(0))
-        .collect();
+    let system = if system { format!("(A;{inheritance};FA;;;SY)") } else { String::new() };
+    let text: Vec<_> =
+        format!("O:{sid}D:P{system}(A;{inheritance};FA;;;{sid})").encode_utf16().chain(Some(0)).collect();
     let mut descriptor = std::ptr::null_mut();
     // SAFETY: 입출력은 NUL 종료 buffer와 유효한 descriptor pointer다.
     if unsafe {
@@ -56,7 +59,105 @@ fn security(directory: bool) -> io::Result<(Descriptor, SECURITY_ATTRIBUTES)> {
     };
     Ok((Descriptor(descriptor), attrs))
 }
-pub(in crate::install::engine) fn create_directory(path: &Path) -> io::Result<()> {
+
+/// 일반 실행의 옛 state/TLS 권한 이행. 자기 소유의 실제 파일/폴더 handle만 좁힌다.
+/// 설치기의 승인/status 경로는 이 함수를 쓰지 않고 기존 ACL을 검증만 한다.
+pub(crate) fn protect(path: &Path, directory: bool) -> io::Result<File> {
+    use std::os::windows::fs::OpenOptionsExt;
+    use windows_sys::Win32::{
+        Security::Authorization::SetSecurityInfo,
+        Security::{GetSecurityDescriptorDacl, GetSecurityDescriptorOwner, PROTECTED_DACL_SECURITY_INFORMATION},
+        Storage::FileSystem::{
+            FILE_FLAG_BACKUP_SEMANTICS, FILE_READ_ATTRIBUTES, READ_CONTROL, ReOpenFile, WRITE_DAC, WRITE_OWNER,
+        },
+    };
+    let access = READ_CONTROL | WRITE_DAC | FILE_READ_ATTRIBUTES | if directory { 0 } else { GENERIC_READ };
+    let flags = FILE_FLAG_OPEN_REPARSE_POINT | if directory { FILE_FLAG_BACKUP_SEMANTICS } else { 0 };
+    let file = OpenOptions::new().access_mode(access).custom_flags(flags).open(path)?;
+    verify_kind(&file, directory)?;
+    let mut owner = std::ptr::null_mut();
+    let mut old = std::ptr::null_mut();
+    // SAFETY: 실제 handle의 소유권을 읽어 타 사용자 파일의 ACL을 바꾸지 않는다.
+    let code = unsafe {
+        GetSecurityInfo(
+            file.as_raw_handle(),
+            SE_FILE_OBJECT,
+            OWNER_SECURITY_INFORMATION,
+            &mut owner,
+            std::ptr::null_mut(),
+            std::ptr::null_mut(),
+            std::ptr::null_mut(),
+            &mut old,
+        )
+    };
+    if code != 0 {
+        return Err(io::Error::from_raw_os_error(code as i32));
+    }
+    let _old = Descriptor(old);
+    if owner.is_null() {
+        return Err(denied());
+    }
+    let current = super::account().ok_or_else(denied)?;
+    let old_owner = sid_text(owner)?;
+    let normalize_owner = old_owner != current;
+    if normalize_owner && Some(old_owner) != super::default_owner() {
+        return Err(denied());
+    }
+    // 승격 token의 기본 owner는 Administrators일 수 있다. 그 token이 소유한 객체만 현재 SID로 좁힌다.
+    // 경로를 다시 열지 않고 검증한 실제 객체를 ReOpenFile로 연다. WRITE_OWNER가 없으면 그대로 실패한다.
+    let file = if normalize_owner {
+        let handle = unsafe {
+            ReOpenFile(
+                file.as_raw_handle(),
+                access | WRITE_OWNER,
+                FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+                flags,
+            )
+        };
+        if handle == INVALID_HANDLE_VALUE {
+            return Err(io::Error::last_os_error());
+        }
+        unsafe { File::from_raw_handle(handle) }
+    } else {
+        file
+    };
+    let (_descriptor, attrs) = security(directory)?;
+    let mut dacl = std::ptr::null_mut();
+    let mut present = 0;
+    let mut defaulted = 0;
+    // SAFETY: descriptor는 위에서 만든 protected DACL이며 호출 동안 살아 있다.
+    if unsafe { GetSecurityDescriptorDacl(attrs.lpSecurityDescriptor, &mut present, &mut dacl, &mut defaulted) } == 0 {
+        return Err(io::Error::last_os_error());
+    }
+    if present == 0 || dacl.is_null() {
+        return Err(denied());
+    }
+    let mut new_owner = std::ptr::null_mut();
+    if normalize_owner
+        && unsafe { GetSecurityDescriptorOwner(attrs.lpSecurityDescriptor, &mut new_owner, &mut defaulted) } == 0
+    {
+        return Err(io::Error::last_os_error());
+    }
+    let code = unsafe {
+        SetSecurityInfo(
+            file.as_raw_handle(),
+            SE_FILE_OBJECT,
+            DACL_SECURITY_INFORMATION
+                | PROTECTED_DACL_SECURITY_INFORMATION
+                | if normalize_owner { OWNER_SECURITY_INFORMATION } else { 0 },
+            new_owner,
+            std::ptr::null_mut(),
+            dacl,
+            std::ptr::null_mut(),
+        )
+    };
+    if code != 0 {
+        return Err(io::Error::from_raw_os_error(code as i32));
+    }
+    verify(&file, directory)?;
+    Ok(file)
+}
+pub(super) fn create_directory(path: &Path) -> io::Result<()> {
     let (_descriptor, attrs) = security(true)?;
     // SAFETY: path와 attrs는 호출이 끝날 때까지 살아 있다.
     if unsafe { CreateDirectoryW(wide(path).as_ptr(), &attrs) } == 0 {
@@ -64,7 +165,7 @@ pub(in crate::install::engine) fn create_directory(path: &Path) -> io::Result<()
     }
     Ok(())
 }
-pub(in crate::install::engine) fn new_file(path: &Path) -> io::Result<File> {
+pub fn new_file(path: &Path) -> io::Result<File> {
     let (_descriptor, attrs) = security(false)?;
     // SAFETY: CREATE_NEW만 사용하고 handle 소유권을 File에 한 번 넘긴다.
     let handle = unsafe {
@@ -131,7 +232,7 @@ fn sid_text(sid: *mut core::ffi::c_void) -> io::Result<String> {
     }
     Ok(result)
 }
-pub(in crate::install::engine) fn verify(file: &File, directory: bool) -> io::Result<()> {
+fn verify_kind(file: &File, directory: bool) -> io::Result<()> {
     let meta = file.metadata()?;
     if meta.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT != 0
         || if directory { !meta.is_dir() } else { !meta.is_file() }
@@ -147,7 +248,11 @@ pub(in crate::install::engine) fn verify(file: &File, directory: bool) -> io::Re
             return Err(denied());
         }
     }
-    let account = crate::install::platform::account().ok_or_else(denied)?;
+    Ok(())
+}
+pub fn verify(file: &File, directory: bool) -> io::Result<()> {
+    verify_kind(file, directory)?;
+    let account = super::account().ok_or_else(denied)?;
     let mut owner = std::ptr::null_mut();
     let mut dacl = std::ptr::null_mut();
     let mut descriptor = std::ptr::null_mut();

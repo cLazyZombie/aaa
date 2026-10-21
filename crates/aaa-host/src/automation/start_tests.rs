@@ -211,6 +211,7 @@ impl Lab {
                 software: "test".into(),
                 features,
                 dev_mode: true,
+                sha256: None,
                 selfcheck: None,
                 sessions: vec![],
                 identity: None,
@@ -291,6 +292,72 @@ fn seed(l: &Lab, machine: &str, holds: &[&str]) -> ThreadRec {
 }
 fn starts(f: &Fake) -> usize {
     f.requests.lock().unwrap().iter().filter(|q| matches!(q, AgentRequest::ThreadPrepare(_))).count()
+}
+
+#[tokio::test]
+async fn start_admission_owns_the_thread_before_recovery_can_observe_it() {
+    use std::sync::atomic::{AtomicBool, Ordering};
+    let l = auto_lab();
+    let a = l.fake(vec![]).await;
+    let b = l.fake_on("b", "mac-b", vec![]).await;
+    let r = rule(&l, "");
+    approve(&l, &r);
+    let observed = Arc::new(AtomicBool::new(false));
+    let captured = observed.clone();
+    let weak = Arc::downgrade(&l.h);
+    // DB commit 직후, 최초 기동이 ThreadPrepare를 보내기 전에 복구기를 끼워 넣는다.
+    // 실제 자동화 시작 경로를 쓰며 sleep·스케줄러의 우연에 기대지 않는다.
+    *l.h.start_admitted_hook.lock().unwrap() = Some(Arc::new(move |id| {
+        let h = weak.upgrade().unwrap();
+        h.recover_launches("demo");
+        let rec = h.load("demo", id).unwrap();
+        captured.store(
+            rec.status == ThreadStatus::Starting && rec.error.is_none() && h.claim_thread("demo", id).is_err(),
+            Ordering::SeqCst,
+        );
+    }));
+    let mut events = l.h.thread_events.subscribe();
+    l.h.automation_submit("demo", &r, "due:admission", "기동 선점 대조".into(), None).unwrap();
+    let result = l.h.automation_drain("demo", &r).await;
+    *l.h.start_admitted_hook.lock().unwrap() = None;
+    assert!(observed.load(Ordering::SeqCst), "DB에 보인 새 기동을 복구기가 실패로 바꾸거나 선점했다");
+    result.unwrap();
+    let records = l.h.db.threads(Some("demo")).unwrap();
+    assert_eq!(records.len(), 1);
+    let rec: ThreadRec = serde_json::from_str(&records[0]).unwrap();
+    launched(&l, &mut events, &rec.id).await;
+    assert_eq!(starts(&a) + starts(&b), 1, "복구와 경주해도 실제 기동은 한 번이다");
+}
+
+#[tokio::test]
+async fn failed_start_admission_rolls_back_the_row_and_releases_the_claim() {
+    let l = auto_lab();
+    let _a = l.fake(vec![]).await;
+    let _b = l.fake_on("b", "mac-b", vec![]).await;
+    let r = rule(&l, "");
+    approve(&l, &r);
+    let sql = rusqlite::Connection::open(l.root.join("host/host.db")).unwrap();
+    sql.execute_batch(
+        "CREATE TRIGGER reject_admission BEFORE INSERT ON threads BEGIN SELECT RAISE(ABORT,'admission rejected'); END;",
+    )
+    .unwrap();
+    // drainer는 시작 오류를 내구 대기로 돌린다. 여기서는 실제 시작 결과를 직접 검사한다.
+    let now = util::now_ms();
+    let crate::automation::Action::Start(start) = &r.action else { unreachable!() };
+    let event = crate::automation::runtime::Event {
+        id: "due:rejected".into(),
+        at_ms: now,
+        owner: None,
+        body: "입장 실패 대조".into(),
+        action: r.action.clone(),
+        source: "test".into(),
+        start_scope: Some(l.h.automation_start_scope("demo", &r, start).unwrap()),
+    };
+    let error = l.h.automation_start("demo", &r, &event, now, "rejected-input").await.err().expect("입장 SQL 오류");
+    assert!(error.message.contains("admission rejected"), "{error:?}");
+    assert!(l.h.db.threads(Some("demo")).unwrap().is_empty());
+    assert!(l.h.db.meta(&crate::auto_start::start_key("demo", "check", "due:rejected")).unwrap().is_none());
+    assert!(l.h.claim_thread("demo", "t-0001").is_ok(), "롤백된 행의 기동 잠금이 남았다");
 }
 
 async fn launched(l: &Lab, events: &mut tokio::sync::broadcast::Receiver<ThreadView>, id: &str) {
@@ -457,9 +524,17 @@ async fn start_waits_for_approval_and_holds_then_creates_each_occurrence_once() 
         "생성 뒤 receipt 복구도 실제 시작 완료로 기록한다"
     );
     assert_eq!(history.today, 1);
-    // 이전 자동 thread가 열린 채여도 다른 사건은 제한을 생략했으므로 실행된다.
+    // 새 기본은 규칙당 1개다. 다음 사건은 입력을 보존하며 자리가 날 때까지 기다린다.
     l.h.automation_submit("demo", &r, "due:2", "second push".into(), None).unwrap();
     l.h.automation_drain("demo", &r).await.unwrap();
+    assert_eq!(l.h.db.threads(Some("demo")).unwrap().len(), 3);
+    assert_eq!(l.h.automation_count("demo", "check").unwrap(), 1);
+    assert!(
+        l.h.routine_history("demo", "check").unwrap().runs.iter().any(|r| r.detail.contains("규칙 동시 실행 상한 1"))
+    );
+    let mut expanded = r.clone();
+    expanded.limits.max_running = Some(2);
+    l.h.automation_drain("demo", &expanded).await.unwrap();
     assert_eq!(l.h.db.threads(Some("demo")).unwrap().len(), 4);
     assert_eq!(l.h.automation_count("demo", "check").unwrap(), 2);
     assert_eq!(l.h.load("demo", &one.id).unwrap().holds, vec!["timing"]);
@@ -517,6 +592,10 @@ fn start_transaction_rechecks_late_hold_and_durable_receipt_before_insert() {
     assert!(!created);
     assert!(insert("start:2", &policy).is_err());
     policy.max_running = None;
+    assert!(insert("start:2", &policy).unwrap_err().to_string().contains("상한 1"));
+    policy.max_running = Some(0);
+    assert!(insert("start:2", &policy).is_err());
+    policy.max_running = Some(2);
     assert!(insert("start:2", &policy).unwrap().1);
     // 파일을 다시 여는 새 DB 연결에도 영수증이 남는다.
     let reopened = crate::db::Db::open(&l.root.join("host/host.db")).unwrap();

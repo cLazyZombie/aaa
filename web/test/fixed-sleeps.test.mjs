@@ -127,3 +127,25 @@ test("Rust: 시험의 thread::sleep과 시한 있는 반복을 가른다", () =>
   assert.equal(n("fn run() {\n    std::thread::sleep(Duration::from_secs(1));\n}\n", "crates/aaa-host/src/x.rs"), 0);
   assert.equal(n("fn run() {}\n#[cfg(test)]\nmod tests {\n    fn t() { std::thread::sleep(Duration::from_secs(1)); }\n}\n", "crates/aaa-host/src/x.rs"), 1);
 });
+
+test("Rust: cfg(test) 필드·초기화 뒤 운영 타이머는 시험이 아니며 test 항목은 계속 센다", () => {
+  const n = (code) => fixedSleeps("crates/aaa-host/src/example.rs", code).length;
+  const sleep = "tokio::time::sleep(Duration::from_millis(50)).await;";
+  assert.equal(n(`struct Host { #[cfg(test)] hook: Option<fn()>, } async fn run() { ${sleep} }`), 0);
+  assert.equal(n(`fn make() { Host { #[cfg(test)] hook: None, } } async fn run() { ${sleep} }`), 0);
+  assert.equal(n(`#[cfg(test)] use std::{thread, time::Duration}; async fn run() { ${sleep} }`), 0);
+  assert.equal(n(`#[cfg(test)] type Hook = Arc<dyn Fn(&str, &str)>; async fn run() { ${sleep} }`), 0);
+  assert.equal(n(`#[cfg(test)] mod first { async fn test() { ${sleep} } }
+    async fn product() { ${sleep} }
+    #[cfg(test)] #[tokio::test] async fn second<T, U>() where T: Fn(U) { ${sleep} }
+    async fn later() { ${sleep} }`), 2);
+  assert.equal(n(`#[cfg(test)] #[test] fn test() { let raw = r#"}"#; std::thread::sleep(Duration::from_secs(1)); }
+    async fn run() { ${sleep} }`), 1);
+  assert.equal(n(`#[cfg(test)] const INIT: fn() = || { std::thread::sleep(Duration::from_secs(1)); };
+    async fn run() { ${sleep} }`), 1);
+  assert.equal(n(`#[cfg(test)] const LESS: bool = 1 < 2; async fn run() { ${sleep} }`), 0);
+  assert.equal(n(`async fn run() { #[cfg(test)] { let hook = 1; } ${sleep} }`), 0);
+  assert.equal(n(`async fn run() { #[cfg(test)] { ${sleep} } ${sleep} }`), 1);
+  assert.equal(n(`#[cfg(test)] unsafe extern "C" fn test<T, U>() where T: Fn(U) -> bool, U: Copy {
+    std::thread::sleep(Duration::from_secs(1)); } async fn run() { ${sleep} }`), 1);
+});

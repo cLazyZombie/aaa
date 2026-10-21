@@ -435,17 +435,15 @@ impl Host {
             .map(|s| serde_json::from_str::<crate::orch::ThreadRec>(&s))
             .collect::<Result<Vec<_>, _>>()
             .map_err(internal)?;
-        let active: Vec<_> =
-            recs.iter().filter(|r| matches!(r.status, ThreadStatus::Open | ThreadStatus::Starting)).collect();
-        if r.limits.max_running.filter(|cap| *cap > 0).is_some_and(|cap| {
-            active.iter().filter(|t| t.automation.as_deref() == Some(&r.name)).count() >= cap as usize
-        }) {
-            return self.automation_wait(p, r, event, a, now, "명시한 규칙 동시 실행 상한".into());
+        let active: Vec<_> = recs.iter().filter(|r| r.holds_slot()).collect();
+        let cap = r.limits.max_running.filter(|cap| *cap > 0).unwrap_or(1);
+        if active.iter().filter(|t| t.automation.as_deref() == Some(&r.name)).count() >= cap as usize {
+            return self.automation_wait(p, r, event, a, now, format!("자동화 thread 규칙 동시 실행 상한 {cap}"));
         }
         if self.cfg.projects.max_auto_threads > 0
             && active.iter().filter(|t| t.automation.is_some()).count() >= self.cfg.projects.max_auto_threads as usize
         {
-            return self.automation_wait(p, r, event, a, now, "명시한 프로젝트 자동 thread 상한".into());
+            return self.automation_wait(p, r, event, a, now, "명시한 프로젝트 자동화 thread 상한".into());
         }
         let mut candidates = Vec::new();
         let mut blocked = Vec::new();
@@ -564,6 +562,13 @@ impl Host {
             key: start_key(p, &r.name, &event.id),
             rule: r.name.clone(),
             run: crate::automation_thread::Run {
+                trigger: Some(format!(
+                    "{} · {} · {}{}",
+                    event.source,
+                    r.schedule_text,
+                    event.id,
+                    event.owner.as_deref().map(|id| format!(" · 원인 thread {id}")).unwrap_or_default()
+                )),
                 first_input: (a.reuse == crate::automation::Reuse::Open).then(|| (input_id.into(), event.body.clone())),
                 ..crate::automation_thread::Run::new(a, aaa_common::util::now_ms())
             },
@@ -576,6 +581,7 @@ impl Host {
             },
         };
         let args = crate::orch::StartArgs {
+            over_limit: None,
             reservation: None,
             account: None,
             holds: vec![],

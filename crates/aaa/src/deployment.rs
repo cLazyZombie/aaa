@@ -27,9 +27,9 @@ pub(crate) fn route(json: bool, machine: Option<String>, action: DeployAction) -
     match context {
         FrontResponse::DeployContext { project: Some(_), .. } if c.role.can_control() => {
             let id = aaa_common::util::new_id();
-            // 재시작은 독립 감시가 새 프로세스를 확인하는 재시작 rollout으로 한다(FRONT_API 1.87, 관리 GUI W6c)
+            // 재시작은 독립 감시가 새 프로세스를 확인하는 재시작 rollout으로 한다(FRONT_API 1.100, 관리 GUI W6c)
             if let DeployAction::Restart { service } = action
-                && c.proto.minor >= 87
+                && c.proto.minor >= 100
             {
                 eprintln!(
                     "재시작 rollout ID: {id}. 응답이 끊기면 다시 실행하지 말고 `aaa deploy status {id} --wait`로 확인한다"
@@ -250,6 +250,12 @@ mod tests {
                         health: None,
                         clock_skew_ms: None,
                         problems: vec![],
+                        arch: None,
+                        software: None,
+                        sha256: None,
+                        software_differs: false,
+                        features: vec![],
+                        selfcheck: None,
                     };
                     tx.json(&FrontMsg::Event(FrontEvent::State { machines: vec![m], panes: vec![] })).await.unwrap();
                     let FrontMsg::Req { id, body } = rx.control::<FrontMsg>().await.unwrap() else {

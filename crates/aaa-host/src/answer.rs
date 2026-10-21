@@ -37,7 +37,14 @@ pub(crate) fn compose(
                     .get(*i as usize)
                     .ok_or_else(|| format!("{}번 질문에 {}번 선택지가 없다", n + 1, i + 1))?;
                 short.push(format!("{}{}", n + 1, letter(*i)));
-                lines.push(format!("{}{}. {} — {}", n + 1, letter(*i), q.text, c.label));
+                lines.push(format!(
+                    "{}{}. {}{} — {}",
+                    n + 1,
+                    letter(*i),
+                    q.id.as_ref().map(|id| format!("{id} ")).unwrap_or_default(),
+                    q.text,
+                    c.label
+                ));
             }
             None if text.is_some() => {}
             None => return Err(format!("{}번 질문에 답이 없다(고르거나 직접 쓴다)", n + 1)),
@@ -77,11 +84,20 @@ impl Host {
         actor: &str,
     ) -> Result<ThreadView, ErrorBody> {
         let rec = self.load(project, id)?;
+        if let Some(warning) = &rec.question_warning {
+            return Err(err(ErrorCode::BadRequest, warning.clone()));
+        }
         if rec.questions.is_empty() {
             return Err(err(ErrorCode::BadRequest, format!("{id}에는 답할 질문이 없다")));
         }
         if rec.report_hash.as_deref() != Some(report_hash) {
             return Err(err(ErrorCode::BadRequest, "질문이 바뀌었다(새 보고가 왔다). 다시 읽고 답한다"));
+        }
+        if self.default_review_for(&rec)
+            && picks.first() == Some(&Some(1))
+            && text.as_deref().is_none_or(|t| t.trim().is_empty())
+        {
+            return Err(err(ErrorCode::BadRequest, "고칠 점을 글로 적어 답한다"));
         }
         let (message, summary) =
             compose(&rec.questions, &picks, text.as_deref()).map_err(|e| err(ErrorCode::BadRequest, e))?;
@@ -131,7 +147,10 @@ impl Host {
                 "thread-state",
                 id,
                 "question answered",
-                &format!("{id} 질문에 답함({by}): {summary}"),
+                &format!(
+                    "{id} {} 질문에 답함({by}): {summary}",
+                    rec.questions.iter().filter_map(|q| q.id.as_deref()).collect::<Vec<_>>().join(" ")
+                ),
             );
         }
         Ok(self.thread_view(&rec))
@@ -147,6 +166,15 @@ mod tests {
         report_questions(
             "## Questions\n1. 로그인 단추 자리\n- A 오른쪽 아래 (추천)\n- B 가운데\n2. 눈 아이콘\n- A 넣는다 (추천)\n- B 넣지 않는다\n",
         )
+    }
+
+    #[test]
+    fn emphasized_m3_choices_keep_the_original_answer_letters() {
+        let items = report_questions(include_str!("../../aaa-proto/tests/fixtures/m3-questions.md"));
+        let (message, short) = compose(&items, &[Some(2), Some(1)], None).unwrap();
+        assert_eq!(short, "1C 2B");
+        assert!(message.contains("install 순서를 바꿔"));
+        assert!(message.contains("이 Mac의 「원격 로그인」을 사용자가 직접 켜고"));
     }
 
     /// 고른 것은 「1A 2B」와 질문·선택지 글로, 직접 쓴 답은 고르지 않은 질문을 대신한다. 빠진 답·없는 선택지·수가 다른 답은 거절한다

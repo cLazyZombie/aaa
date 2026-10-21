@@ -3,16 +3,22 @@
 // aria-selected·aria-expanded, 사이드바를 접으면 고른 단추가 없다. ↑↓·Home·End는 단추 사이 focus만 옮기고(roving tabindex) Enter·Space가
 // 고른다. 「답할 것」(plan §8.345)은 패널 단추 끝, 보고서 바로 위이고 배지는 빨강이다. 패널이 아닌 보고서(본문을 바꾼다)는 패널 단추 바로 밑의
 // 보통 단추다(tablist 밖, 사용자 요청 10-19 「보고서는 왼쪽 위로(지금 에이전트 밑으로)」). 보고서 배지는 안 본 보고서 수뿐이다. 그 바로 밑의 「할 일」(TASKS.md, plan §8.306)도 본문을 바꾸는 단추다. 설정(창)만 아래 묶음에 둔다(VS Code 아래 묶음
-// Accounts·Manage 자리).
+// Accounts·Manage 자리). 맨 위 「coordinator」(사용자 요청 10-21 「왼쪽 제일 위로 (버튼 중에 제일 위)」, t-0621)는 로고 밑, 패널 단추 위의 보통
+// 단추다(tablist 밖): 도는 coordinator pane을 연다. pane이 하나라 배지는 수 대신 점이다(새 답은 강조색, 질문·확인창은 빨강, 사용자 결정 10-21).
 import { useRef, type KeyboardEvent, type ReactNode } from "react";
-import { Workflow, Eye, FileText, FolderKanban, Inbox, ListTodo, MessageCircleQuestionMark, Monitor, type LucideIcon } from "lucide-react";
+import { Bot, LoaderCircle, Workflow, Eye, FileText, FolderKanban, ListTodo, MessageCircleQuestionMark, Monitor, type LucideIcon } from "lucide-react";
 import { PANEL_LABEL, PANELS, type SidebarPanel } from "./sidebarPanel";
 import "./ActivityBar.css";
 
 // 작업은 FolderKanban: 작업 공간 폴더 안에서 도는 thread(시안 6개 중 사용자 결정 10-19, plan §8.280·§8.287)
-const PANEL_ICON: Record<SidebarPanel, LucideIcon> = { asks: MessageCircleQuestionMark, work: FolderKanban, machines: Monitor, automations: Workflow, inbox: Inbox };
+const PANEL_ICON: Record<SidebarPanel, LucideIcon> = { asks: MessageCircleQuestionMark, work: FolderKanban, machines: Monitor, automations: Workflow };
+
+/** 맨 위 「coordinator」 단추. `badge`: reply는 안 본 끝난 턴, ask는 확인창·질문 */
+export type CoordinatorButton = { active: boolean; badge: "reply" | "ask" | null; busy: boolean; onOpen: () => void };
+const COORDINATOR_BADGE = { reply: "새 답", ask: "질문" } as const;
 
 export function ActivityBar({
+  coordinator,
   panel,
   shown,
   onPanel,
@@ -27,6 +33,8 @@ export function ActivityBar({
   reader,
   settings,
 }: {
+  /** 없으면(보기 권한 기기에 도는 coordinator가 없다) 단추가 없다 */
+  coordinator: CoordinatorButton | null;
   panel: SidebarPanel;
   /** 사이드바가 보이나(넓은 창에서 접었으면 false): 아니면 고른 단추가 없다 */
   shown: boolean;
@@ -72,6 +80,28 @@ export function ActivityBar({
           {reader && <Eye className="activity-reader" aria-hidden="true" />}
         </span>
       </span>
+      {coordinator && (
+        <button
+          type="button"
+          className={`activity-item${coordinator.active ? " is-active" : ""}`}
+          aria-pressed={coordinator.active}
+          aria-label={coordinator.badge ? `coordinator, ${COORDINATOR_BADGE[coordinator.badge]}` : "coordinator"}
+          aria-busy={coordinator.busy}
+          title="coordinator"
+          data-testid="activity-coordinator"
+          onClick={coordinator.onOpen}
+        >
+          {coordinator.busy ? <LoaderCircle className="is-spinning" aria-hidden="true" /> : <Bot aria-hidden="true" />}
+          {coordinator.badge && (
+            <span
+              className={`activity-badge is-dot${coordinator.badge === "ask" ? " is-ask" : ""}`}
+              aria-hidden="true"
+              data-testid="activity-badge-coordinator"
+              data-kind={coordinator.badge}
+            />
+          )}
+        </button>
+      )}
       <div className="activity-group" role="tablist" aria-orientation="vertical" aria-label="사이드바 패널" ref={tabs} onKeyDown={onTabKey}>
         {PANELS.map((p) => {
           const Icon = PANEL_ICON[p];

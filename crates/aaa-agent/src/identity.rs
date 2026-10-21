@@ -14,11 +14,13 @@ pub struct AgentIdentity {
 }
 
 pub fn load_or_create(state: &Path) -> Result<AgentIdentity> {
-    let p = state.join("identity.json");
-    if let Ok(id) = util::read_json::<AgentIdentity>(&p) {
-        return Ok(id);
-    }
     util::ensure_private_dir(state)?;
+    let p = state.join("identity.json");
+    match util::read_private(&p) {
+        Ok(bytes) => return Ok(serde_json::from_slice(&bytes)?),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+        Err(e) => return Err(e.into()),
+    }
     let id = AgentIdentity { machine_id: util::new_id(), created_at_ms: util::now_ms() };
     util::write_json(&p, &id)?;
     Ok(id)
@@ -33,10 +35,39 @@ pub struct HostPin {
 }
 
 pub fn load_pin(state: &Path) -> Option<HostPin> {
-    util::read_json(&state.join("host.json")).ok()
+    serde_json::from_slice(&util::read_private(&state.join("host.json")).ok()?).ok()
 }
 
 pub fn save_pin(state: &Path, pin: &HostPin) -> Result<()> {
     util::write_json(&state.join("host.json"), pin)?;
     Ok(())
+}
+
+/// 승인된 installer가 사용한다. 기존 identity 손상을 새 ID 발급으로 덮지 않는다.
+pub fn load_or_create_private(state: &Path) -> Result<AgentIdentity> {
+    use aaa_common::private_file as private;
+    private::verify_directory(state)?;
+    let path = state.join("identity.json");
+    match path.symlink_metadata() {
+        Ok(_) => {
+            let id: AgentIdentity = serde_json::from_slice(&private::read(&path, 65536)?)?;
+            anyhow::ensure!(
+                id.machine_id.len() == 26
+                    && id.machine_id.bytes().all(|b| b.is_ascii_uppercase() || b.is_ascii_digit()),
+                "설치 machine identity가 올바르지 않습니다"
+            );
+            Ok(id)
+        }
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+            let id = AgentIdentity { machine_id: util::new_id(), created_at_ms: util::now_ms() };
+            use std::io::Write;
+            let mut file = private::new_file(&path)?;
+            file.write_all(&serde_json::to_vec(&id)?)?;
+            file.sync_all()?;
+            drop(file);
+            private::sync_parent(&path)?;
+            Ok(id)
+        }
+        Err(e) => Err(e.into()),
+    }
 }

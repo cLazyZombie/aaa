@@ -2,6 +2,344 @@
 
 새 기능을 만드는 thread가 따르는 짧은 규칙이다. 근거는 참고 넷(herdr 0.9.5·herdr-projects 0.2.35·herdr-web-ui `aa624cb`·t3code `4b1024da`)과 이 저장소에서 실제로 난 간헐 실패다. 전략과 도구 목록은 [plan §13](plan.md#13-테스트-전략과-직접-만들-e2e-도구)에 있다.
 
+## 원격 보고의 해시와 첨부 실패 격리(t-0638, plan §8.401)
+
+- `cargo test -p aaa-host --lib report_ --locked`의 실제 Agent link keeper는 등록한 가짜 인증을 포함한
+  원본 전체의 SHA와 가림 뒤 SHA가 다름을 재현한다. 원본을 변경하지 않은 채 512KiB 경계와 마지막 조각을
+  전송해 먼저 검증하고, host의 현재 사본·불변 r 판에는 가린 바이트만 저장하는지 확인한다.
+  원본 판 hash와 저장 본문 hash를 나누어 host 재시작의 단계 복구도 유지한다. 일반 파일 보기 가림 검사는 그대로다.
+- `orch::report_tests`는 append prefix·rewrite 거부·이전 검증 파일 보존·저장 오류의 기존 검사를 유지하며,
+  첨부 hash가 달라도 최신 보고 본문과 ack가 유지되고 실패 파일을 불변 판에 넣지 않는지 확인한다.
+  같은 원본 판 재수집은 본문·저장 hash를 복구하면서 ack를 보존한다. 한 thread의 수집 lock을 잡은 상태에서
+  다른 thread의 실제 수집이 끝나야 한다.
+- `cargo test -p aaa --test report_copy --locked`는 실제 host·CLI·가짜 Agent link에서 manifest 실패와
+  파일 하나의 rewrite 실패를 구별한다. rewrite 실패 중에도 새 보고·정상 첨부가 도착하고, 새 보고 hash나
+  변경 사건 없이 ticker가 실패 첨부를 복구해야 한다. 경고 한 번·작업 상태 보존·기존 시한은 유지한다.
+- `cargo test -p aaa --test m13 remote_report_with_registered_auth_bytes_copies_without_false_hash_failure --locked`는
+  실제 TCP+TLS agent에 profile 인증 env를 등록하고, 바뀌지 않은 328KiB 로그와 보고를 회수한다.
+  원본 보존·원본 판 hash·가린 최신/불변 사본·host 재시작 뒤 병합 대기 단계를 확인한다.
+- 고정 sleep·시험 재시도·시한 증가 없이 수집 완료·보고 hash·연결 사건으로 끝낸다. 전체 검증은
+  `nice -n 15 bash scripts/ci-local.sh`이며, 착지 때 main의 절 번호를 다시 맞춘다.
+
+
+
+## 질문 카드의 강조·번호 목록·누락 경고(t-0618)
+
+- `cargo test -p aaa-proto --lib --locked`: `m3-questions.md`는 host가 보존한 t-0578 답변 당시 Questions 원문이다.
+  `1. **M3 순서**: …`, `- **A(추천)** …`, `2. **M3 끝까지 시험할 곳**`의 질문 2개·선택지 3/2개·추천과
+  강조/간격 변형을 확인한다. 초기 구문 재현 fixture는 수정 전 첫 선택지 누락에서 RED였고 원문으로 교체했다.
+- `t0621-questions.md`는 t-0621 Questions 원문이다. A~D와 각 들여쓴 그림 뒤에 E·F 설명·그림이 있어도
+  질문 2개·선택지 4/3개·D 그림과 뒤 설명을 분리해 보존한다. 수정 전 같은 원문에서 첫 질문이 빠져 1개/3개로 RED였다.
+  이때 누락 진단도 함께 발생한다. 원문에 없는 E/F 선택지를 만들지 않으며 줄을 깨뜨린 변형도 경고해야 한다.
+  수정 전 제품 파서의 제어 대조에서 표를 네 행으로 줄이거나 들여쓴 그림을 지워도 누락됐다. 뒤 E/F 문단·그림만 지우면
+  여섯 행 표와 들여쓴 그림을 둔 채 질문이 읽혔다. 실제 A~F 여섯 선택지도 읽혔다. 원인은 네 개 상한이 아니라
+  뒤의 열 0 문단·그림에서 역방향 목록 탐색이 멈춘 것이다. 실제 상한은 9개이며 2~4개는 안내의 권장 형식이다.
+- 파서 진단은 code fence 밖 A~Z 후보 줄 수·카드 수, 질문 수·선언 수와 번호/글자 순서를 비교한다.
+  빠진 A·중복 A·A/C·인식 못한 강조·질문/선택지 상한·선택지 하나뿐인 질문은 경고다.
+  code fence의 선택지 예시는 세지 않는다. `###` 본문의 일반 번호 목록을 보존하고 선택지 뒤의 `N.`만 다음 질문으로 읽는다.
+  선택지가 하나뿐이거나 전부 읽히지 않아도 질문 제목과 경고를 남긴다. 9개 상한 초과도 제목과 경고를 유지한다.
+- `cargo test -p aaa-host --lib question --locked`: 실제 보고 회수와 DB 경계에서 복사 성공·경고 유지,
+  thread 전체 답과 q-ID 일부 답 거부(초안도 없음), 같은 보고 중복 경고 방지를 확인한다.
+  이전 host가 다르게 읽은 미답 카드도 재기동 때 안전하게 잠그며 명시한 Questions를 기본 검수로 덮지 않는다.
+- `node web/e2e/web.e2e.mjs --spec 53-thread-questions --workers 1`: 실제 host·agent·Chromium·WebKit에서
+  M3 2개 질문·3/2개 선택지·추천, 누락 경고·전체 누락 카드·웹/CLI 거부, thread inbox JSON과
+  coordinator 경고, 수정 뒤 `1C 2B`와 원래 선택지 설명 전달을 검사한다. 같은 파일의 기존 그림·답 보존 검사도 유지한다.
+  같은 파일의 t-0621 원문은 글·표를 그대로 쓰고 그림 bytes만 실험실 PNG로 대체한다. A~D 그림, 뒤 E/F 설명·그림,
+  질문 2개·선택지 4/3개, E 직접 답과 답한 카드의 뒤 그림 보존을 확인한다.
+  스크린샷 폴더를 인자로 주면 정상 데스크톱/휴대폰 카드와 형식 경고·선택지 뒤 설명을 남긴다.
+  고정 sleep·재시도·시한 연장은 없다.
+
+- 첫 gate 도중 별도 Cargo 빌드를 겹치면 install 승인 검토 중 실행 파일이 교체될 수 있다.
+  실제 install owner가 승인 발급에서 exit 4로 실패했고, 격리 사본을 질문 표시 사건 뒤 교체하면
+  `installation_content_conflict`/4, 그대로 두면 0으로 제어 재현했다. 실행 시각과 실행 파일 교체 시각도 겹쳤다.
+  최종 검증은 빌드를 끝내고 시험을 시작하며, 시험 중 같은 Cargo 실행 파일을 다시 빌드하지 않는다.
+  승인·시한·기대값은 바꾸지 않는다.
+- 병렬 전체 gate의 E2E68은 부하(load average 87 관찰) 중 안전 모드의 고정 3초 Refresh와 정상 listen이 경합했다.
+  보관한 기록은 되돌리기 11:19:58Z·정상 listen 11:20:01.459Z·pane 20초 대기 실패다.
+  다른 gate가 끝난 뒤 같은 시한으로 단독 실행해 8.5초에 통과했다. 관련 제품·시험 코드는 바꾸지 않았으며,
+  최종 전체 검증은 ci-local의 `--tee` 순차 단계를 써 Rust 시험과 웹 E2E의 부하를 나눈다.
+
+## 입력 중 숨긴 게이지 자리 회수(t-0622, plan §8.398)
+
+- 사용자 1A에 따라 숨긴 게이지의 폭과 보내기 단추 사이 간격을 글 칸에 돌려준다. 첫 입력·전체 삭제 때만 폭이 바뀌며, 글이 늘어 여러 줄로 접힐 때는 유지한다. 기존 §8.321의 자리 유지 단언은 이 선택으로 대체한다.
+- E2E50의 실제 Claude 기록에서 보통(38%)·창 모름(84k) 게이지를 숨기면 폭이 0이고 글 칸이 게이지 폭과 간격만큼 넓어지는지 검사한다. 전체 삭제하면 원래 폭이 돌아오고 높은 사용량(86%)은 입력 중에도 폭을 유지한다. 기존 펼침·정리·iPad·휴대폰 및 700px 경계 검사를 유지한다.
+- E2E66은 실제 usage가 있는 기록을 읽어 38% 게이지가 생긴 뒤 시작한다. Chromium·WebKit × 데스크톱·휴대폰 네 조합에서 빈 입력칸과 첫 입력의 폭 차이를 실제 게이지 폭·간격과 대조하고, 이전 폭에서 접히던 한글이 한 줄에 들어가는지 확인한다. 조합 입력 중·확정·긴 영문·붙여넣기·창 축소/회전·지우기의 native textarea 줄 수, 단추 옆 배치, focus와 전송 없음 검사를 유지한다. 지운 뒤에는 빈 입력칸의 폭과 줄 경계가 돌아와야 한다.
+- `NODE_PATH=$(npm root -g) node web/e2e/web.e2e.mjs --spec 50-context-gauge,66-composer-wrap --workers 1`로 실행한다. 입력·DOM·ResizeObserver 사건으로 끝내며 고정 sleep·재시도·시한 연장은 없다. 기존 E2E22·35·51과 전체 `nice -n 15 bash scripts/ci-local.sh`를 함께 확인한다.
+- 수정 전 내장 웹에서 E2E66은 데스크톱 Chromium 약 73.89px·WebKit 약 74.67px의 미회수 공간과 이전 한글 첫 줄 경계의 줄바꿈으로 실패한다. 휴대폰에서는 이미 게이지가 없어 회수할 폭이 0이다. 수정 후에도 같은 폭·줄 경계 단언을 쓴다.
+
+## 한도 초과 직접 시작(t-0619, plan §8.397)
+
+착지 전체 검증은 E2E 정리 도구의 전체 `ps command` 출력이 Node의 1 MiB 버퍼를 넘는 ENOBUFS를 드러냈다.
+전체 목록은 PID·부모·상태만 읽고, 명령줄은 실제 정리 후보 PID별로 조회한다. 기존 신원 재대조·부모 정지·자손 종료는 유지한다.
+`node --test web/test/session-cleanup.test.mjs`는 관계없는 실제 프로세스 열 개의 argv 합계를 1 MiB보다 크게 만들며,
+원래 도구의 ENOBUFS RED와 수정 도구의 session/writer 종료·관계없는 프로세스 보존 GREEN을 확인한다.
+버퍼·대기 시한·시험 기대값은 늘리지 않는다.
+
+
+- `cargo test -p aaa-host --lib over_limit_start_requires_a_direct_user_or_verified_coordinator --locked`는
+  직접 CLI·웹과 다른 세션·작업자·자동화·빈/여러 줄/긴 근거를 구분한다.
+- `cargo test -p aaa --test m13 explicit_over_limit_start_keeps_queue_waiting_and_requires_coordinator_user_request --locked`는
+  실제 한도가 찬 상태에서 기본 시작 거부·CLI 강제 시작·coordinator pane의 근거 없는 거부와 명시 지시 시작을 검사한다.
+  host 재시작 뒤 같은 요청자·시각을 보존하고, 강제 시작이 모두 자리를 반환할 때까지 예약은 시작하지 않는다.
+- E2E47은 실제 host·agent와 Chromium 데스크톱·WebKit iPhone·iPad에서 추가 확인·돌아가기·실제 기동·출처와 표지·예약 대기를 확인하고
+  `thread-<기기>-start-limit`·`over-confirm`·`over-started` 화면을 남긴다. 관측은 DOM·task 연결·ticker 완료이며 고정 sleep은 없다.
+- 전체 필수 검증은 `nice -n 15 bash scripts/ci-local.sh`다. 기존 E2E 번호·시한·자동 예약 정책은 유지한다.
+- 이 작업의 전체 실행에서는 기존 rollout transfer keeper가 원격 agent 교체 중 30초 사건 시한을 넘겼다.
+  16코어에서 load average 139.27·126.31, 전송/사전 검사 99.382초였고 영속 작업은 오류 없이 Running이었다.
+  같은 시한·단언의 단독 실행은 전체 100.04초·전송/사전 검사 65.354초로 통과했다.
+  부하 근거와 단독 결과를 함께 기록하며 배포 로직·시험 시한은 바꾸지 않는다.
+
+## thread 목록 상태 점 정렬(t-0620, plan §8.396)
+
+- `node web/e2e/web.e2e.mjs <캡처 폴더> --spec 48 --workers 1`: 실제 coordinator·자동화·일반 thread를
+  각각 선택하고 1280·820·390px에서 상태 칸 중심의 x 좌표가 0.5px 안에서 같은지 검사한다.
+  실제 머신 연결은 유지한 채 표시 글만 짧고 긴 이름으로 바꾸어 내용이 상태 칸을 침범하지 않는지도 확인한다.
+- 기존 자동화 막대·agent 표지 간격·휴대폰의 자동화 표지·규칙 이동 검사를 유지한다.
+  선택 후 서랍과 DOM 사건을 기다리며 고정 sleep·재시도·시한 연장은 없다. `status-column-*.png`에 폭별 화면을 남긴다.
+- 원래 데스크톱 CSS의 위치 기준을 다시 적용한 별도 실험실은 coordinator·자동화 305px, 일반 thread 339px로
+  같은 정렬 단언에서 실패한다. 첫 수정의 휴대폰 선택 줄 10px 이동도 이 검사에서 잡아 메뉴의 flex 칸까지 고정했다.
+- 모든 select가 같은 위치 기준과 상태 칸 여백을 가지며, 터치·좁은 창의 메뉴 칸은 선택 여부와 무관하게 확보한다.
+  전체 검증은 `nice -n 15 bash scripts/ci-local.sh`다.
+
+
+## install 승인 PTY의 종료 수명(t-0485, plan §8.395)
+
+- `cargo test -p aaa --test install --locked`: 기존 승인·취소·worker 수명 단언을 유지한다. 실제 자식 종료 사건으로 master를 닫고 reader 완료까지 수집하며, 두 사건 모두 총 60초 안에 와야 한다. EOF만 온 뒤 살아 있는 자식도 무한 wait하지 않는다.
+- `authorization::terminal_lifecycle::child_exit_closes_terminal_owner_before_eof_and_preserves_final_output`은 Unix의 실제 PTY 뒤에 소유자가 writer를 보관하는 실제 UnixStream을 잇는다. 실제 자식이 종료한 뒤에도 EOF가 안 오는 ConPTY 수명을 재현하며 종료 코드 7과 마지막 출력 300줄을 모두 검사한다. 자식 종료 때 master를 닫는 수리를 제거하면 60초 RED, 복구하면 GREEN이어야 한다. 이 keeper의 Unix cfg는 재현 fixture의 POSIX shell/UnixStream 때문이며 Windows의 기존 install owner들은 실제 ConPTY에서 같은 driver를 검증한다.
+- Windows cross는 실행 증거가 아니다. macOS 로컬 통과와 macOS CI의 yes 뒤 정지·target 미상의 15분 종료를 구별하고, Windows/macOS 실제 CI 결과는 착지 뒤 감시 결과로 판정한다.
+
+## 할 일 한 목록·예약 맨 위(t-0611, plan §8.393)
+
+- `node web/e2e/web.e2e.mjs --spec 76-task-one-list --workers 1`: 자리 한도를 채운 실제 host에 CLI로 예약을 넣고, Chromium 1280px에서
+  맨 위 예약 차례·하위 함께·확인 필요의 노란 표지와 상세의 까닭을 본다. 끌기로 예약 차례 바꾸기·일반 → 예약(내용 확인 뒤 그 자리)·
+  예약 → 아래(풀기와 원래 자리 알림)를 하고 host `task queue` 차례와 대조한다. 「예약」 칩·저장소 거르기의 숨은 예약 줄, 거른 채
+  Alt+↓, 새로고침 뒤 기억을 확인한다. 휴대폰(Chromium·WebKit 390px)은 맨 위 차례와 「순서」 ▲▼·⋯ 시트 풀기를 확인한다.
+- `node --test web/test/tasksModel.test.mjs`의 「할 일 한 목록과 예약」은 행 배치(2A·crumb·숨은 예약 줄), 예약 순번(끌어 놓기·
+  보이는 이웃과 바꾸기), 예약 푼 자리, 옛 `##` 틈의 옮기기 규칙을 검사한다. 43·46·67은 목록 머리 대신 한 목록 차례를 본다.
+- DOM·host 기록으로 끝내며 고정 sleep·재시도·시한 연장은 없다.
+
+## owner 목록 갱신과 저장소 선택 경계(t-0616, plan §8.392)
+
+- main `35f6ce96`의 원래 E2E54 단독 실행은 3.7초에 통과했다(load average 약 6).
+  같은 제품 실행 파일에서 실제 assignable 응답을 보류하고, 머신 목록 DOM 반영 직후 저장소 change를 보내면
+  「owner 응답이 고른 저장소를 초기화했다」로 실패했다(load average 약 5). 부하만의 실패로 처리하지 않는다.
+- `TaskDetail`의 owner 목록 effect는 예약한 render의 dirty 대신 상태 updater가 받은 최신 draft를 검사한다.
+  저장소·제목 등 저장할 수정과 이름을 아직 안 쓴 사람 선택은 보존하고, 손대지 않은 폼만 다시 분류한다.
+- E2E54는 실제 owner 응답·MutationObserver·두 렌더 frame으로 이 경계를 제어한 뒤 선택·저장 가능·파일 반영을 본다.
+  고정 sleep·시한 증가·재시도를 쓰지 않는다. E2E46의 빈 사람 이름 보존과 E2E75의 연결 복귀도 함께 유지한다.
+
+## 기동 선점·복구와 배포 진행(t-0606, plan §8.391)
+
+- host `automation::start_tests::start_admission_owns_the_thread_before_recovery_can_observe_it`는
+  실제 자동화 시작의 DB commit 직후, 첫 ThreadPrepare 전 복구기를 호출한다. 기존 코드는 새 Starting을
+  중단된 기동으로 실패 처리했다. DB 행이 공개되기 전에 기동 task의 claim을 잡고, 실제 frame fixture의
+  준비·기동 완료와 1회 실행까지 확인한다. 제어 고리는 host 단위 시험 빌드에만 있으며 고정 sleep은 없다.
+- `task_queue::tests::recovery_reloads_under_the_claim_and_does_not_fail_a_completed_start`는
+  복구기가 읽은 Starting 사본 뒤에 실제 기동 완료/송신이 확정되는 반대 순서를 검사한다. claim 아래에서
+  최신 행을 다시 읽어 Open·pane·송신 기록을 보존한다. 기존 코드는 완료된 기동을 Failed로 바꿨다.
+  `failed_start_admission_rolls_back_the_row_and_releases_the_claim`은 실제 INSERT 실패를 주입해
+  새 행·자동화 영수증이 없고 claim도 반환됐는지 확인한다. 기존 중단·재기동 keeper도 유지한다.
+- m13 rollout의 서비스 기록은 정확한 job ID의 `started_ms` 뒤에서 기존 30초를 잰다. host 확인 뒤의
+  로컬 agent_restart는 host_restart와 같은 머신의 job을 고른다. 같은 phase의 마지막 항목은 원격
+  agent일 수 있으므로 로컬 job 선택에 쓰지 않는다. 전송 재개·원격 복구·공유 host/agent 복구의
+  네 로컬 기록 대기를 같은 경계로 맞추며, 순서·횟수·SHA·독립 PID·동일 job 재개 단언은 유지한다.
+- host_update의 30초 진행 실패는 별도 계측에서 재관측했다. 당시 agent stack은 실행 파일 SHA-256
+  검사 중이었다. 같은 약 194MB 파일의 debug 대조 3회에서 기존 경로 1.46~1.91초, ring 경로
+  0.14~0.25초였고 해시는 모두 같았다. 샘플은 그 순간의 작업을 보여 주며 전체 지연의 유일한 원인이나
+  OS 교착을 증명하지 않는다. `sample`을 붙인 실행의 시간과 일반 실행의 시간을 같은 표본으로 보지 않는다.
+- `aaa-common::util::sha256_file`은 이미 사용하는 ring의 SHA-256으로 파일을 매번 64KiB씩 읽는다.
+  agent 배포·독립 guard와 update/복구의 모든 기존 대조 지점을 유지하며 해시 cache·검사 생략은 없다.
+  `sha256_file_matches_vectors_chunks_and_fresh_bytes`는 알려진 abc 값·빈 파일·블록 경계·끝 조각을
+  독립 sha2 계산과 대조하고, 같은 경로의 같은 길이 변경·없는 파일 오류도 검사한다. 성능 합격 상한은 없다.
+
+`cargo test -p aaa-host --lib --locked`, `cargo test -p aaa-common --lib --locked`,
+`cargo test -p aaa --test m13 rollout:: --locked`, 기존 자동화 시작 m13 및 전체
+`scripts/ci-local.sh`로 확인한다. 이 수리에서 추가 시한 연장·실패 재시도·m13 task_edit 및
+resource_limits 변경은 하지 않는다.
+
+고정 sleep 검사도 `cfg(test)`가 붙은 필드·초기화 뒤의 운영 코드를 시험으로 오인하지 않게
+항목의 실제 범위를 읽는다. 필드·별칭·블록·여러 test 함수/모듈·generic/where 절 뒤의 경계를
+회귀 시험으로 검사하며, 실제 시험 sleep은 계속 검출한다. 기존 파일별 기준값은 바꾸지 않는다.
+
+## 할 일 로그·FD 회수의 CI 경쟁(t-0612, plan §8.390)
+
+- `cargo test -p aaa --test m13 task_edit_keeps_bytes_conflicts_and_logs --locked -- --exact`: 직접 편집 fixture는
+  같은 폴더의 임시 파일을 완성한 뒤 rename한다. 임시 파일 쓰기와 rename 사이에 실제 ticker tick을 끝내도
+  마지막 변경은 「새 일」의 `파일 직접/update` 한 건이어야 하며, 원래 before bytes·충돌·권한 검사는 유지한다.
+- 원래 `std::fs::write`의 truncate → ticker tick → write 순서를 제어하면 CI와 같은 「다른 일」의
+  `파일 직접/add`가 첫 로그로 나와 RED다. 제품은 로그 저장 뒤 사건을 보내고 있었으며, 로그를 더 기다려도
+  이미 생긴 삭제/추가 기록은 수정 기록이 되지 않는다. 제품의 기록 순서·감시 정책은 바꾸지 않는다.
+- `cargo test -p aaa --test resource_limits --locked`: 실제 384개 HTTP 연결·OS fd 회수·EMFILE 복구를 유지한다.
+  회수 대기의 여유 2개를 연결 수 단언에도 같은 상수로 적용한다. CI의 `400 → 18`은 원래 단언에서 RED,
+  수정 뒤에는 `400 → 16·17·18`을 허용하고 `400 → 19`와 예전 256개 상한은 계속 거부한다.
+- 고정 sleep·시험 재시도·시한 연장 없이 상태·사건으로 확인한다. 전체 검증은 `bash scripts/ci-local.sh`다.
+
+## 사용자 지시의 task 모델·머신 변경(t-0609, plan §8.389)
+
+- `cargo test -p aaa-host --lib task_queue::tests:: --locked`: 명시 지시의 빈 근거·제어 문자·RawSave·여러 동작 거부,
+  기본 모델/자동 머신 변경과 예약 ID·순서·생성 시각·감사 보존을 검사한다. 승인 후 다른 내용이 바뀌었거나
+  Starting/Running·기동 이력이 있는 Check 상태이면 거부하며 원문과 선택 출처를 보존한다.
+  예약 뒤 기본 모델이 달라져도 머신만 변경하면 예약 당시 profile·model·effort·설정 판을 유지한다.
+  새 기본 모델 회귀는 수정 전 claude → codex의 의도하지 않은 변경에서 RED, 수정 뒤 같은 단언에서 GREEN을 확인한다.
+- `cargo test -p aaa --test m13 coordinator_user_request_changes_choices_without_losing_reservations --locked -- --exact`:
+  격리 host·agent의 실제 coordinator pane에서 CLI를 실행한다. 근거 없는 모델 변경, 빈 근거, 다른 칸 혼합,
+  모르는 profile, 시작/재시작 우회를 거부한다. 명시 지시 뒤 미기동 예약의 새 선택·실행 승인판과
+  ID·생성 시각·순서·취소 상태·변경 전후 기록을 확인한다. host 재시작 뒤 기존 자리 resolve 사건만으로
+  바뀐 profile·자동 머신의 실제 pane이 시작되어야 한다. 고정 sleep·재시도는 없다.
+- 첫 전체 gate에서 E2E49는 host 기억을 본 직후 화면의 옛 본문을 읽었고, E2E74는 휴대폰 iframe에서 그림을
+  누른 뒤 Escape가 크게 보기에 전달되지 않았다. 49는 같은 본문·thread 단언을 DOM 갱신 사건까지 기다리고,
+  74의 휴대폰은 기존 E2E59와 같은 닫기 단추 tap을 쓴다. 데스크톱 Escape 회귀는 E2E59가 유지한다.
+  원본 실패 로그를 남기고 두 keeper를 좁게 검증한 뒤 최종 전체 gate를 실행한다. 시한·기대값은 바꾸지 않는다.
+- 착지 통합의 E2E46은 새 owner 응답이 아직 이름이 빈 사람 선택을 초기화해 입력칸이 사라졌다.
+  load average 62~64였으나, 한 worker에서 owner 요청을 사람 선택 뒤로 보류해 같은 결함을 재현했다.
+  이름을 쓰기 전의 사람 선택도 편집 중으로 보존한다. E2E46은 실제 응답과 두 렌더 frame 뒤 이름 입력·거부 검사를
+  유지해 RED/GREEN을 확인한다. 부하만의 실패로 넘기거나 시한·기대값을 바꾸지 않는다.
+- 기존 `task_selected_model_and_machine_are_changed_only_by_user`·직접 파일 수정·기본 모델 보호 keeper와
+  coordinator 안내의 새 생성/doctor 갱신 검사를 유지한다. 전체 정본은 `nice -n 15 bash scripts/ci-local.sh`다.
+
+## 할 일 머신 연결 목록(t-0600, plan §8.388)
+
+- `node web/e2e/web.e2e.mjs --spec 75-task-owners --workers 1`: 실제 실험실 agent를 끊은 동안 할 일을 처음 열고,
+  Chromium 1280px·WebKit 390px에서 `labA(끊김)`과 선택 불가를 확인한다. agent를 다시 붙이면 화면을 새로 열지 않아도
+  머신 선택이 살아나며, 고치던 제목은 남아야 한다. 두 번째 끊김·복귀도 같은 상세에서 확인한다.
+- 상세를 닫았다 열기·머신 칸 focus·바로 시작마다 실제 `assignable` HTTP 응답을 기다린다. 모델·머신 칸은 받은 목록만
+  바꾸고 폼은 다시 만들지 않는다. 통계·pane 변화는 재조회 원인이 아니며, 새 조회나 화면 닫기 뒤에 온 옛 응답은 버린다.
+- 연결과 DOM·HTTP 사건으로 끝내며 고정 sleep·재시도·시한 연장은 없다. 수정 전 코드는 첫 복귀의 머신 연결 단언에서 실패한다.
+
+## 웹 알림함 숨기기(t-0590, plan §8.382)
+
+- `node web/e2e/web.e2e.mjs --spec 26-activity-bar,53-thread-questions,56-operate,57-legacy-special-panes,62-asks-close`: 활동 막대에 알림함 단추·배지·패널이 없고, 예전 `inbox` 패널 기억으로 새로 열어도 「작업」이 보인다. 기존 26의 데스크톱·좁은 창·휴대폰 세로/가로·두 테마 배치 검사가 바닥 사용량 칸을 그대로 확인한다.
+- main 통합으로 더해진 E2E23의 종료 문서 API keeper는 숨긴 알림함 대신 「답할 것」 조회를 쓴다. 정상 상태·복귀 뒤 두 실제 응답과 종료 뒤 전송 없음 단언을 유지한다.
+- 53은 확인 필요 post의 「답할 것」 배지·본문·답함과 coordinator inbox 기록을 계속 확인한다. 56은 조작·보기 기기와 휴대폰의 알림함 숨김, 기존 CLI 조회·끝내기·끝낸 기록을 확인한다. 화면·host 응답을 기다리며 고정 sleep을 추가하지 않는다.
+
+## 배포 조각의 개발 빌드 비용(t-0592)
+
+- `cargo run --locked -p aaa-proto --example deploy_codec`: 실제 배포 응답의256KiB base64 JSON 조각을
+  256번씩 encode/decode하고 원문 bytes를 대조한다. 성공 표본3개의 시간을 출력하며 성능 통과 상한·sleep·재시도는 없다.
+- 기존 `sha2` 설정에 더해 dev/test의 `base64`·`serde_json`을 opt-level3으로 컴파일한다. debug assertions·release 설정·조각 크기·
+  실제 배포 실행 파일·SHA·영수증·복구·재시작 owner를 유지한다. 프로토콜 crate 전체를 최적화하지 않는다.
+- 전후 비교는 같은 머신에서 같은 `rollout::rollout_preflights_all_targets_and_resumes_same_jobs_after_host_restart`
+  keeper를 실행하고 빌드와 시험 시간을 나눈다. codec 측정과 전체 gate·다른 머신의 결과를 같은 개선률로 쓰지 않는다.
+
+## 웹 E2E 병렬 작업(t-0592)
+
+- 37-chat-pages의 Chromium·WebKit ×1280·390·820px ×Claude·Codex 조합12개는 각각 새 실험실에서
+  실행한다. source의 기존 단계 이름을 정확히 하나씩 선택하고 모든 조합의 위치·가상화·새 기록·복원 검사를 유지한다.
+  `--grep`은 그 조합만 고르고 `--workers 1`은 이전처럼 한 실험실에서 모든 단계를 차례로 실행한다.
+- 상태를 이어 쓰는23-composer-attachments 등의 spec은 분할하지 않는다. 공통 준비의 `always`도 유지한다.
+  `node --test web/test/e2e-jobs.test.mjs`는 원 source의12개 조합이 반복마다 정확히 한 번 선택되는지,
+  의존 단계 보존·grep·문장 부호·시간 합계를 확인한다. 실패 재시도는 없다.
+- 기본 작업 수는 CPU 둘마다 하나, 최대8개다. 명시한 `AAA_E2E_WORKERS`와 `--workers`는 그대로 적용한다.
+  요약의 전체 시간은 wall time이며 분할 spec의 행은 독립 작업 점유 시간의 합계라고 표시한다.
+  단계·전체 시한이나 실패 판정은 바꾸지 않는다. 같은 실행 파일을 고정한 전후 측정과 전체 정본으로 검증한다.
+
+## 종료 시작에 완료된 조회(t-0592)
+
+- E2E23의 「종료 시작의 완료 응답」은 실제 WebKit/App의 projects HTTP 응답을 받은 뒤 JSON 완료만
+  beforeunload까지 보류한다. 실제 reload에서 pagehide보다 먼저 routines를 시작하는 경계를 검사한다.
+  기존 코드는 `beforeunload → routines fetch → cancelled → pagehide`로 실패한다. 원래 간헐 실패의
+  access-control 문구와 이 제어 재현의 cancelled 기록은 구별하며, 종료 중 실제 fetch 발생 자체를 단언한다.
+- 공통 API는 beforeunload부터 새 일반 요청을 AbortError로 취소한다. 기존 pagehide·pageshow·명시 keepalive
+  경계도 유지한다. 새 문서의 실제 routines 응답을 확인해 조회를 영구 차단하는 변형은 통과하지 못한다.
+- `web/test/apiRequest.test.mjs`는 두 종료 사건부터 네트워크 시작0, 명시 keepalive, pageshow의 새 요청과
+  취소한 요청 비재생을 검사한다. 일반 API 오류를 성공으로 바꾸거나 pageerror를 무시하지 않는다.
+
+## Rust 전체 시험 병렬 실행(t-0591)
+
+Unix의 `bash scripts/ci-local.sh --only test`는 Cargo `--workspace --no-run`의 시험 실행 파일 전체를 준비한 뒤
+기본 여섯 프로세스로 실행한다. m13은 `--list`의 정확한 전체 이름을 rollout 단독과 나머지 세 묶음으로 나누고,
+분할 전후 이름 집합·중복과 각 자식의 실제 실행 수를 대조한다. 작업 디렉터리는 각 package의 manifest 폴더다.
+모든 binary와 workspace doctest를 유지하고 실패 뒤에도 나머지 작업을 끝낸다. Windows는 기존 Cargo 실행을 유지한다.
+`AAA_RUST_TEST_WORKERS`로 프로세스 수를 정하고 `RUST_TEST_THREADS`가 없으면 CPU 수를 `min(프로세스 수, 4)`로 나눈다.
+작업은 `min(libtest thread 수, exact 선택 시험 수)`만큼 CPU 자리를 사용하며 전체 합계를 CPU 수 이내로 제한한다.
+16코어의 기본 m13 여섯 작업은 rollout 세 개 각1자리·나머지 세 묶음 각4자리로 함께 시작한다.
+명시한 thread 수는 유지한다. `--logs` 아래 `rust/plan.json`·`summary.json`·작업별 로그에 실행 목록·시간·결과와
+작업의 시작·대기 시간·CPU 자리 수가 남는다.
+
+`python3 -m unittest scripts.test_rust_tests -v`는 목록 완전성, 실제 두 자식의 동시 진입,
+실패 뒤 후속 실행, 선택한 시험이 0건으로 빠지는 오류, Cargo 산출물부터 doctest까지의 실패 전파를 확인한다.
+실제 자식 여섯이 CPU15자리 안에서 함께 만나는지, 실패 뒤에도 예산을 반환하고 다음 작업을 실행하는지도 본다.
+가짜 자식은 socket 사건으로 만나며 고정 sleep을 쓰지 않는다.
+
+`cargo test -p aaa --test m13 rollout:: --locked`의 macOS owner 세 개는 독립 사본 host·TLS agent를 사용한다.
+전송·사전 검사·같은 job 재개, 거부된 갱신·원격 복구, 공유 host/agent 복구·진행 중 취소를 나눠 실행한다.
+앞 시나리오의 배포를 반복해 준비하는 대신 필요한 서명 이미지로 시작하며 기존 단언·시한은 유지한다.
+완료 rollout 뒤 새 기록의 진입·옛 이력·job ID 비재사용은 host 단위 시험
+`completed_rollout_allows_the_next_record_without_reusing_jobs_or_losing_history`가 소유한다.
+
+## 공개 검사 크기 조회 일괄화(t-0591)
+
+`python3 -m unittest scripts.test_check_public -v`는 실제 임시 Git 저장소에서 기존 금지 확장자·이력·정확한 크기 예외를
+유지하고, 공백·개행·탭·한글·선행 대시 파일명, index를 갱신하지 않은 작업 파일 크기, symlink 대상·삭제·끊긴 링크를
+확인한다. 비 UTF-8 파일명은 이를 허용하는 Linux에서 바이트 그대로 검사한다(macOS 파일시스템은 생성부터 거부한다).
+symlink 순환으로 실제 metadata 조회를 실패시켜 빈 크기 목록으로 통과하지 않는지도 본다.
+
+크기 조회는 파일마다 `wc`를 띄우는 대신 Python 한 번의 `stat`으로 읽는다. NUL 파일 목록·작업 파일 기준·기존 크기 상한과
+내용·커밋·세션 검사는 유지한다. 속도 비교는 같은 worktree·index·환경·기준 commit의 전체 스크립트를 전후 실행하고
+종료 코드·출력을 함께 비교한다. 성능 수치로 시험 기대값이나 시한을 정하지 않는다. 전체 정본은 `bash scripts/ci-local.sh`다.
+
+## 보고서 폴더 fetch·음원(t-0589, plan §8.381)
+
+- `cargo test -p aaa-host --lib --locked`: `report_connections_have_one_exact_origin_and_capability_prefix`는
+  loopback·HTTPS의 정확한 보고서 경로와 헤더 삽입 차단을 검사한다. `signed_report_http_boundary`는 기존
+  폴더 밖·숨은 파일·symlink·위조 링크 거부를 유지하고 새 폴더 읽기 범위를 검사한다. 기존 connect-src none 단언은
+  요구된 폴더 읽기 계약으로 바꾸며 범용 self·별표로 완화하지 않는다.
+- `report_sandbox_warning_does_not_fail_copy_or_repeat_for_the_same_snapshot`은 실제 보고 회수로 제한 API 경고가
+  inbox에 한 번 남고 복사 성공은 보존되는지 본다. 문자열 탐지는 별도 unit에서 상대 fetch·외부/동적 경로·제한 API를 검사한다.
+  `publishing_reports_warns_for_restricted_apis_in_copies_and_live_sources`는 publish의 사본·실시간 등록 경고와 정상 상대 fetch를 검사한다.
+- `cargo test -p aaa --test m13 library_view --locked -- --exact`: host 사본·agent 스트리밍·Range·내려받기·기존 경로 거부와
+  Origin null의 CORS·쿠키 동반 거부·다른 Origin에 CORS 없음.
+- `NODE_PATH=$(npm root -g) node web/e2e/web.e2e.mjs --spec 71 --workers 1`: 격리 host·agent에서 390×844 Chromium·WebKit의
+  앱 iframe과 인증 없는 공유 탭을 연다. 사용자 누름에서 WAV 둘을 fetch·decode·GainNode로 혼합하고 analyser 신호·running 상태·
+  두 source의 ended를 확인한다. 출력 끝에는 gain 0을 두어 실제 스피커로 소리를 내지 않는다. HEAD·Range·하위 HTML의 상대 읽기,
+  다른 보고서·정규화/인코딩 경로 탈출·앱 API·외부 서버·쓰기·credentials·쿠키·저장소·부모 접근 거부와 링크 폐기도 검사한다.
+  외부 요청은 실험실 서버의 받은 수 0으로 확인한다. 고정 sleep·timeout 연장·실제 로그인·실제 iPhone 청취는 없다.
+
+제품 변형 대조: connect-src를 host 전체로 넓히면 다른 보고서 읽기가 성공해 격리 단언에서 실패하고,
+Access-Control-Allow-Origin을 없애면 음원 읽기 전에 fetch 실패를 검출한다. 두 변형 뒤 제품 파일 bytes를 복구하고 정본에서 다시 검사한다.
+
+## 종료 문서의 앱 API(t-0485)
+
+`node web/e2e/web.e2e.mjs --spec 23 --grep '종료 문서 API:'`는 실제 host/App/WebKit에서 정상 tasks/asks
+조회 응답을 확인한 뒤 pagehide·WS 갱신 사건을 보내 일반 API 네트워크 시작이0인지 검사한다. pageshow 뒤 같은
+두 실제 조회도 확인한다. 원래 코드에서는 tasks/inbox 두 fetch를 잡아 RED, 공통 apiFetch 뒤 GREEN이었다. t-0590에서 알림함 조회를 없앤 뒤에는 같은 경계를 tasks/asks 실제 조회로 유지한다.
+개별 컴포넌트에 시험 export/guard를 붙이지 않는다. 새 web/aaa 빌드 뒤 E2E23 파일 전체와 전체 gate를 확인한다.
+
+공통 경계는 post·인증·업로드·사용량·진단 API에 적용하며, 종료 뒤 취소는 AbortError다. 취소한 쓰기를 복귀 때
+재생하지 않는다. 일반 숨긴 탭은 차단하지 않고 명시 keepalive는 유지한다. 떠날 때 설정 보존은 기존 E2E14가 맡는다.
+
+## install I6 CI 시험 터미널(t-0485)
+
+- `cargo test -p aaa --test install --locked`: 실제 승인·마법사·worker·TLS 등록 owner를 세 OS에서 실행한다.
+  직접 연 시험 PTY도 aaa-vt로 ConPTY의 DSR/DA/색 질의에 답하며 기존30초 시한·승인 단언을 유지한다.
+- `authorization::terminal_answers_cursor_query_before_application_prompt`: POSIX 실제 PTY의 자식이 DSR 응답 전에는
+  승인 물음을 내지 않는다. 응답기 없는 원래 driver는30초 RED, 응답기 연결 뒤0.03초 GREEN이다. 셸/stty/dd fixture만
+  Unix cfg이고 Windows 기존 owner는 실제 ConPTY 시작 질의로 같은 연결을 검증한다.
+- `grant::verified_host_grant_uses_tls_pin_and_keeps_consumption_bound_to_same_machine`: TLS/grant/pin/재조회·폐기 단언을
+  유지하고, host runtime을 내린 뒤 lab을 지운다. 종료를 제거하면 남은 host 소유자 단언이 실패해야 한다.
+- Windows `install::engine::input::password::tests::console_masks_and_restores_after_success_cancel_and_eof`:
+  같은 시험 터미널 응답기로 시작 질의를 통과하고 실제 console 암호 비노출·원래 mode·취소/EOF를 검사한다.
+
+Windows 실행은 main push 뒤 CI로 판정한다. cross clippy/build를 실제 실행으로 부르지 않는다. macOS worker의
+시한 초과는 출력 단계와 부하 근거를 함께 남기며 시한 연장·기대값 변경·시험 삭제로 통과시키지 않는다.
+
+## 할 일 표시 ID(t-0575)
+
+- `cargo test -p aaa-host --lib display_ids --locked`: 기존 ULID·CRLF를 가진 파일을 여덟 조회가 동시에
+  이주해도 같은 `d-NNNN`을 받는지 본다. 삭제·로그 정리·옛 원문 복원·DB 다시 열기에도 대응을 유지한다.
+- `cargo test -p aaa --test m13 task_display_ids_survive_rename_move_restart_delete_and_archive --locked -- --exact`:
+  실제 host·agent·CLI에서 괄호 제목과 명시 owner의 시작/연결, 제목 변경·목록/하위 이동·기록 조회,
+  삭제 복원·번호 비재사용·예약 순서/취소·host 재시작·완료 보관 복원을 검사한다. ID와 ULID를 모두 대조한다.
+- `node web/e2e/web.e2e.mjs --spec 70-task-ids`: 실제 host의 첫 이주가 주석 외의 bytes를 유지하는지,
+  웹 편집 뒤 CLI 선택자가 같은 할 일을 고치는지, host 재시작 뒤 320/390/768px에서 ID 검색·표시와
+  가로 넘침을 검사한다. CLI 응답·DOM 사건·연결 준비로 끝낸다.
+
+기존 원문 바이트 keeper는 이주가 끝난 고정 ULID fixture로 내용·충돌·이력을 검사한다. 기존 웹 내용 keeper는
+식별 주석을 제외한 내용을 비교하고, 직접 편집 fixture에서는 주석을 보존한다. 식별 주석 자체의 정확한 bytes와
+번호·내부 ULID 대응은 위 전용 keeper가 검사한다. `parent_attention_is_published_after_the_verdict_is_saved`는
+자동 정리의 파일 사건 뒤 판정 확정 사건도 보내는지 검사한다. 파일 쓰기 직후의 읽기가 판정 전 원문을 받더라도
+마지막 사건에서는 상위의 확인 필요 상태가 확정돼 있어야 한다. ID를 없애거나 재발급하는 변형은 전용 keeper에서 실패해야 한다.
+
 ## thread 재시작의 pane 교체(t-0567)
 
 - `cargo test -p aaa --test m13 restart_replaces_exited_panes_locally_and_remotely --locked -- --exact`:
@@ -136,6 +474,23 @@ Hello를 읽는 host에는 바뀐 사건만, 옛 host에는 최신 기억 전체
 
 ## 어디에 두나
 
+Windows M4p(t-0613, plan §8.394)는 `cargo test -p aaa-common --lib windows_acl_tests::`와
+`cargo test -p aaa-common --lib ipc::tests::`로 실행한다. 실제 state/TLS 폴더·키·원자 교체 파일과 첫 Pipe·accept 뒤
+두 인스턴스의 OS DACL을 읽고, Authz의 그룹 조회 없는 SID context로 현재 사용자 허용과 Everyone·Authenticated Users·
+Users·Administrators·별도 SID 거부를 판정한다. 파일의 SYSTEM 예외와 Pipe의 SYSTEM 거부도 구분한다.
+공개 ACL fixture는 실제로 Everyone 접근이 되는지 먼저 판정한 뒤 기존 키 재읽기·신원 보존·권한 이행을 본다.
+상위 폴더 ACL 보존·hard link·잘못된 종류 거부·같은 사용자 바이트 전송·peer PID·중복 bind 거부를 함께 검사한다.
+계정·시스템 정책·실제 사용자 설정을 바꾸지 않고, 고정 sleep 없이 연결·읽기 완료로 끝낸다.
+웹 `node --test web/test/machineDetail.test.mjs`는 연결/끊김 Windows에만 제한 안내가 나오는지 검사한다.
+이 시험들은 기존 workspace test에 포함되어 GitHub CI windows-2025에서 실행된다. macOS의
+`cargo xwin clippy --workspace --all-targets --target x86_64-pc-windows-msvc --locked --keep-going -- -D warnings`와
+같은 대상의 `cargo xwin build --workspace --all-targets --target x86_64-pc-windows-msvc --locked`는 실행 결과가 아니다.
+
+M4p의 전체 검증에서 발견한 E2E 49의 기억 본문 검사는 focus 이후 새 routines 응답의 DOM 반영을 기다린다.
+기준 판의 실제 새 응답을 gate로 보류하면 host에는 새 기억이 있어도 기존 상세는 비어 있고, 즉시 검사하던 시험이
+「기억 본문 없음」으로 실패한다. E2E 46은 다른 기기가 저장하기 전에 둘째 폼의 제목·저장 가능 상태로 편집 반영을 확인한다.
+원래 본문·갱신 thread·충돌·파일 보존 단언과 시한을 유지하며 sleep이나 재실행으로 통과시키지 않는다.
+
 Windows named pipe BUSY 회귀는 `cargo test -p aaa-common --lib ipc::tests::`로 실행한다. 실제 `LocalListener`를
 한 연결로 점유하고 두 번째 연결의 OS 오류 231, 계속 점유할 때의 제한된 실패, accept 뒤 다음 연결과 바이트·peer PID를
 검사한다. 없는 pipe 오류는 첫 poll에서 반환해야 한다. 고정 sleep 없이 accept 사건으로 연결을 푼다.
@@ -150,6 +505,48 @@ hook CLI 진단은 기존 `codex_integration`의 무음 시험이 기본 exit 0�
 | 웹 화면(실제 host·agent + Playwright) | `web/e2e/specs/NN-기능.mjs` + `web/e2e/lib/harness.mjs`(아래 「웹 E2E」) | `node web/e2e/web.e2e.mjs [--spec 07]` |
 
 ## 기다리기
+
+### 부하 때 프로세스 시작·전달 대기(t-0606)
+
+t-0578 첫 착지의 동시 검증에서 m13 다섯 시험과 웹 E2E 63의 아래 대기가 30초를 넘겼다.
+실패한 m13의 머신 건강에는 CPU 10개에서 1분 부하 28.96(뒤 표본 24.89·21.06)이 기록됐다.
+다음 전체 검증에서는 모두 통과했고 웹 후보 점검 단계는 1491ms였다. 현재 코드의 기존 상한 대조에서도
+해당 m13 다섯 시험·task_queue·task_edit와 웹 63 전체가 통과했다.
+추가로 Rust·웹 전체를 겹친 대조에서도 기존 30초의 m13 103개와 웹 63은 통과했다.
+1분 부하가 74.13까지 올랐지만 원래 실패는 다시 나오지 않았다. 따라서 이 조정으로 재현한 결함을
+고쳤다거나 60초면 어떤 부하에서도 충분하다고 주장하지 않는다. 원본 부하 실패 지점에만 여유를 둔다.
+
+아래 지점에만 60초의 실패 상한을 쓴다. 기존 30초의 두 배로 시작·전달의 스케줄 여유를 두며,
+정상 실행을 60초 기다리는 sleep이나 성능 합격선으로 쓰지 않는다. Rust는 `lab::LOAD_TIMEOUT`,
+웹은 harness의 `LOAD_TIMEOUT_MS`에 모은다. 사건·파일·DOM이 오면 즉시 끝나고,
+실패한 명령의 재실행·기대값 완화·전역 시한 변경은 하지 않는다.
+
+| 시험 | 30초 → 60초인 대기 | 유지하는 경계 |
+| --- | --- | --- |
+| m13 `rollout::rollout_*` 세 시나리오 | 처음 사본 agent 둘 연결 | 사전 검사·설치·서비스·복구의 각 30초 |
+| m13 `terminal_capture_keeps_output_after_stdio_close_before_reading` | 자식의 표준 FD 닫힘 영수증 | reader를 늦게 여는 순서·정확한 출력·수집 30초 |
+| m13 `thread_adopt_existing_pane` | 처음 SessionStart의 대화 ID | 데려오기 거부·보고·재기동·권한 |
+| m13 `thread_read_and_keys` | 처음 trust 질문 사건 | 뒤 권한 질문·응답·신뢰 창 거부 |
+| m13 `thread_adopt_claude_started_in_a_shell` | 데려온 뒤 첫 brief 전달 | Claude 감지·보고·pane 안 CLI 결과 30초 |
+| 웹 E2E `63-deploy` | 맞는 후보의 `deploy-sha` 표지 | SHA 거부·배포 중단·서비스 재시작·기본 locator 30초·단계 120초 |
+
+다음 실패는 같은 방식으로 늘리지 않는다.
+
+- E2E 47은 파일 사건 뒤 최종 DB 판정을 저장하고 갱신 사건을 빠뜨린 제품 결함이다. t-0573의
+  결정적 재현·수정을 유지한다. `resource_limits`의 단발 Front EMFILE 미관측은 원인 미확정이며
+  15초와 실패 진단을 유지한다.
+- Ubuntu CI [39529369100](https://github.com/cLazyZombie/aaa/actions/runs/39529369100)의
+  `task_queue_runs_possible_fifo_after_resolve_without_coordinator`는 `thread start`가
+  「준비·정리 작업 중」으로 거부된 오류다. [39531630027](https://github.com/cLazyZombie/aaa/actions/runs/39531630027)의
+  `task_edit_keeps_bytes_conflicts_and_logs`는 `파일 직접/update` 대신 `파일 직접/add`를 관측한
+  단언 실패다. 둘 다 대기 시한 초과가 아니므로 별도 경합으로 조사한다.
+- t-0575 rollout의 후보 SHA 거부 뒤 `recovering/restoring`·서비스 재시작 전 상태는
+  사본 agent 시작 대기와 다르다. t-0587의 원격 교체 단계 진입 뒤 대기하는 수리를 유지한다.
+
+검증은 기존 상한의 단독 실행과 `scripts/ci-local.sh --only test,e2e`의 동시 부하 대조를 남긴 뒤,
+변경 후보의 `scripts/ci-local.sh` 전체로 한다. 부하 대조는 같은 조건에서도 항상 실패한다는 뜻이
+아니다. 실패한 대기와 그때의 부하·관측 상태를 함께 기록하고, 부하 없는 실패나 상태 오류가 나오면
+시한을 더 늘려 덮지 않는다. 진행이 없는 사건에 상한을 되풀이해 새로 시작하지 않는다.
 
 | 기다릴 것 | 쓸 것 |
 |---|---|
@@ -428,7 +825,7 @@ Front 응답을 안전한 오류로 바꾼다. thread·journal 기록은 원문�
 
 ### update 후보 서명과 사람 터미널 출력(t-0488)
 
-- 기존 E2E `update_replaces_keeps_and_rolls_back`, m13 `coordinator_deployment_is_gated_and_survives_backend_restarts`, `rollout_preflights_all_targets_and_resumes_same_jobs_after_host_restart`가 실제 다음 실행·교체·보관·rollback과 재시작 수명을 계속 소유한다. macOS 후보는 바이트를 덧붙이지 않고 서로 다른 ad-hoc 서명 식별자를 써서 같은 version·다른 SHA·유효 strict 서명을 갖는다. 복사·서명은 자식 프로세스에서 끝내 병렬 fork에 쓰기 FD를 물려주지 않는다.
+- 기존 E2E `update_replaces_keeps_and_rolls_back`, m13 `coordinator_deployment_is_gated_and_survives_backend_restarts`, `rollout::`의 전송·원격 복구·공유 복구 owner 세 개가 실제 다음 실행·교체·보관·rollback과 재시작 수명을 계속 소유한다. macOS 후보는 바이트를 덧붙이지 않고 서로 다른 ad-hoc 서명 식별자를 써서 같은 version·다른 SHA·유효 strict 서명을 갖는다. 복사·서명은 자식 프로세스에서 끝내 병렬 fork에 쓰기 FD를 물려주지 않는다.
 - m13 `web_pair_requires_a_person_outside_aaa_panes`의 사람 문은 그대로 검사한다. 터미널 helper는 직접 PTY를 열고 남은 출력을 EOF까지 읽은 뒤 자식을 수거한다. macOS `script`가 자식 종료를 먼저 처리하면 종료 0인데도 PTY의 끝 출력을 잃는다. 전달 프로세스 정지→자식 출력·종료→kqueue 종료 확인→전달 프로세스 재개 순서로 고정 sleep 없이 재현했다.
 - helper의 cwd는 이전 `script`처럼 호출자의 작업 폴더로 명시한다. PTY의 HOME 기본 cwd를 쓰면 아직 없는 격리 HOME을 넘긴 service 시험이 실행 전에 실패한다. 기존 `service_stop_start_restart_wrap_launchctl`이 이 경계를 지킨다.
 - ca58f1b0 macOS CI의 pair 실패는 outside 출력 전에 `pane 안 pairing 끝`에서 났다. worker의 brief 글과 Enter 사이에 probe를 보내면 두 글이 붙어 probe가 실행되지 않는다. 시작 응답을 brief 완료로 보지 않고, 시작 전 구독한 Thread 사건에서 brief 수신과 fixture의 보고 처리를 기다린 뒤 probe를 보낸다. 같은 typing 경계·느린 제출에서 수정 전 실패/수정 후 통과를 보고, 준비 대기를 제거한 변형도 실패해야 한다. 사람 문 단언과 30초 상한은 그대로이며 실패에는 역할·파일·pane·화면 진단을 남긴다.
@@ -655,7 +1052,7 @@ E2E03 「크기 되찾기」의 보낸 순서(resize가 키보다 먼저)는 화
 ## 배포 자동화 L0·L1(§8.276)
 
 - host `rollout::tests::transition_receipts_require_success_hash_and_new_process`는 단계 전이 표, 실패·중단 중지, 영수증 ID/요청/소속, SHA·판과 새 프로세스 판정의 owner다.
-- macOS m13 `rollout_preflights_all_targets_and_resumes_same_jobs_after_host_restart`는 격리 사본 host·TLS agent 둘과 기록하는 launchctl로 승인 거부, 사전 SHA 불일치 무교체, 모든 대상 dry-run 뒤 host부터 순차 실행, 실제 host/agent 프로세스 재시작 뒤 같은 job ID 유지, 안내 갱신·coordinator pane PID 지속을 확인한다. 서비스 호출 기록·연결 사건·출력 표지로 끝내며 고정 sleep은 없다. 실제 운영 launchd에 닿지 않는다.
+- macOS m13 `rollout::`의 전송·원격 복구·공유 복구 owner 세 개는 격리 사본 host·TLS agent 둘과 기록하는 launchctl로 승인 거부, 사전 SHA 불일치 무교체, 모든 대상 dry-run 뒤 host부터 순차 실행, 실제 host/agent 프로세스 재시작 뒤 같은 job ID 유지, 안내 갱신·coordinator pane PID 지속을 확인한다. 서비스 호출 기록·연결 사건·출력 표지로 끝내며 고정 sleep은 없다. 실제 운영 launchd에 닿지 않는다.
 - `python3 -m unittest scripts.test_deploy_build`는 임시 origin/main과 기록하는 빌드 도구로 조상 거부·격리·빌드 1회·salt·provenance를 확인한다. Unix 공식 ci-local test 단계에 포함한다.
 - t-0547의 같은 시험은 기본 `target/deploy-build`가 `TMPDIR`·공용 Cargo target과 무관한지,
   명시 부모의 절대/호출 폴더 기준 상대 경로·공백·빌드마다 새 source/target을 확인한다.
@@ -775,6 +1172,15 @@ L2 결함 검증은 이전 root 가져오기 생략, 재시작 전 applied 변�
 - 실제 설치 config check는 시험 소유 Unix socket으로 멈춘다. safety 철회→Recovering→gate 해제→늦은 rename 뒤 baseline 복구→새 old host를 확인한다. self-check30초·primary120초와 기존30초 사건 대기 상한을 늘리지 않는다. 독립 guard는 기록 PID와 실제 실험실 명령 경로를 함께 확인해 Lab이 회수한다.
 - 새 복구 ID·실행 SHA 누락·실패 뒤 다음 단계 진행의 필수 변형과 설치 중 취소/새 프로세스 확인 변형을 RED로 확인하고 정확 bytes 복구 뒤 GREEN/전체 ci-local·check-public을 실행한다. 독립 최종 read-only 리뷰는 같은 후보에서 한다.
 
+SHA 거부 대기(t-0587)는 로컬 agent의 연결과 원격 `AgentUpdate` 단계 진입을 구분한다. 연결만 보고
+`deploy status --wait`의 30초를 시작하면 로컬 재시작의 신원 대조·감시 해제 시간까지 함께 잰다.
+원본 실패 기록에서는 원격 단계가 대기 시작 약 10.4초 뒤, Recovering이 약 27.1초 뒤에 시작했다.
+기존 단계 진행 사건으로 원격 교체 진입을 확인한 뒤 원래 30초 상한으로 종료 표지를 기다린다.
+SHA 오류·실패 cursor·앞 머신 SHA·서비스 호출 횟수 단언은 유지한다. 별도로 영속 guard의
+`install_started=true`·`activated=false`·baseline SHA·Cancelled·무재시작을 확인하므로
+BeginInstall 뒤 거부된 설치가 교체 lease 확인을 거쳐 Stopped로 끝나는 경로도 빠지지 않는다.
+실제 설치 중 safety 철회의 늦은 rename·복구 keeper와 제품 시한·전이는 바꾸지 않는다.
+
 
 ## 순수 TOML·공통 자동화(L4)
 
@@ -891,7 +1297,7 @@ CI/Git의 source outbox·중복 억제·재시작·outage는 기존 owner를 유
 - `cargo test -p aaa-host --lib db::flow_tests`: 흐름 사건 `tail`이 최근 N개를 오래된 것부터 준다.
 - `cargo test -p aaa --test m13 resolve_keeps_dirty_worktree_and_unmerged_branch`: 실제 agent·git으로 `thread resolve --dry-run`이 미커밋 1·base 대비 2·병합 안 됨·남기기 권함을 보이고, thread 상태와 흐름 사건 수를 바꾸지 않는다.
 - `node --test web/test/operateModel.test.mjs`: 동작 가능 판정(도는 세션·데려온 thread·준비 중·끝냄·정리 중·받은 brief), 끝내기 기본값과 요청, 저장소 인자·묶음, 숫자 범위, 알림함 배지와 「답할 것」으로 보낼 post.
-- `node web/e2e/web.e2e.mjs --spec 56-operate`: 저장소 더하기·제자리 고치기(파일 글과 차례)·빼기 확인 창·할 일 저장소 목록, 「이 aaa」 값 저장(파일 글)과 범위 밖 숫자, 멈춤·재개 확인 창, 위험한 thread(미커밋·branch 커밋·사본에 빠진 symlink) 끝내기 창의 위험 줄과 남기기 켬, 끝낸 뒤 worktree·branch 남음, 깨끗한 thread(새 파일·big.bin을 치우고 사본이 다 온 뒤)의 남기기 끔과 worktree 지움, 다시 열기·Next 더하기·보내기·요약 고치기·세션을 끈 뒤 다시 시작, 알림함 배지와 한 건 끝내기(화면이 읽어도 `seen`이 바뀌지 않음), 흐름 사건 맨 위가 최근 것, 정리 미리보기, 휴대폰 390 폭, 같은 「바로 시작」 두 번 → thread 하나, Reader에 쓰기 단추 없음. 사본 상태·세션 상태·파일 글로 기다리며 고정 sleep은 없다.
+- `node web/e2e/web.e2e.mjs --spec 56-operate`: 저장소 더하기·제자리 고치기(파일 글과 차례)·빼기 확인 창·할 일 저장소 목록, 「이 aaa」 값 저장(파일 글)과 범위 밖 숫자, 멈춤·재개 확인 창, 위험한 thread(미커밋·branch 커밋·사본에 빠진 symlink) 끝내기 창의 위험 줄과 남기기 켬, 끝낸 뒤 worktree·branch 남음, 깨끗한 thread(새 파일·big.bin을 치우고 사본이 다 온 뒤)의 남기기 끔과 worktree 지움, 다시 열기·Next 더하기·보내기·요약 고치기·세션을 끈 뒤 다시 시작, 알림함 단추·배지·패널 숨김과 CLI 조회·끝내기 보존(`seen` 무변경), 정리 미리보기, 휴대폰 390 폭, 같은 「바로 시작」 두 번 → thread 하나, Reader에 쓰기 단추 없음. 사본 상태·세션 상태·파일 글로 기다리며 고정 sleep은 없다.
 - 결함 심기: library/t-0538/w4-fault-replant.
 
 ## host 계정 화면(t-0538 관리 GUI W5a, plan §8.351)
@@ -1334,6 +1740,16 @@ macOS gate·Windows cross compile 결과와 별도로 보고한다. SCM 실제 l
   성공하거나 덮어쓰지 않는지 본다. 대화도 이 저장 함수를 쓰므로 두 화면의 보호 규칙이 같다.
 - 수정 전 E2E23은 첫 Chrome 붙여넣기의 무작위 이름에서 실패했다. 시간 상한·재시도·해시 검사를 완화하지 않는다.
 
+## 대화 첨부 미리보기 복원(t-0583)
+
+- E2E23의 「대화 이미지」는 Chromium·WebKit 데스크톱·WebKit iPhone·iPad에서 붙여넣기 뒤
+  대화 → 터미널 → 대화 → 보고서 → 대화로 이동하고, 드롭·파일 선택 뒤에는 새로고침한다.
+  초안의 글·경로 보존, 복원한 썸네일 하나의 실제 이미지 decode, 전송 뒤 원본 SHA-256·경로와 미리보기 제거를 본다.
+- 복원한 그림 뒤 새 그림을 붙여 하나씩 삭제하고, 새로고침 뒤 지운 경로·썸네일이 돌아오지 않는지도 확인한다.
+  blob URL을 저장하지 않고 초안의 경로를 기존 pane_file 권한 검사로 읽는다.
+- 원래 제품에서는 첫 Chrome 대화 → 터미널 → 대화 뒤 경로는 남고 썸네일이 없어 decode 대기에서 실패했다.
+  시한·재시도를 바꾸지 않고 DOM 표시·입력 준비·이미지 decode·실제 입력 수신 사건으로 끝낸다.
+
 ## 입력칸 줄바꿈 폭 고정(t-0563, plan §8.364)
 
 - 사용자 1A에 따라 글이 길어져도 그림·맥락·보내기 단추를 옆에 둔다. 한 줄/여러 줄 표지는 실제 글 칸의 줄 수이며 배치를 바꾸지 않는다. E2E 22의 단추 아래 줄 조건과 펼친 폭 표지만 이 선택에 맞춰 바꿨다. 짧은 글 높이·단추만 있는 밑 줄 금지·10줄 상한·focus·아래끝·잘림 검사는 유지하고 모든 길이의 글 칸 폭 불변 검사를 더했다.
@@ -1374,8 +1790,14 @@ macOS gate·Windows cross compile 결과와 별도로 보고한다. SCM 실제 l
   완료 보관은 실제 SQLite INSERT 실패 trigger에서 활성 파일·미판정 상태가 보존되는지, 정상 저장 뒤 같은 ID·본문·결과·첨부,
   이력 prune 뒤 보관 보존·같은 ID 복원·기동 연결 해제·재예약 없음도 확인한다. 완료 결과와 메모의 보고서 파일은 실제 기한 정리/삭제에서 보호되고, 관련 없는 사본은 정리되는지도 검사한다. 고정 sleep은 없다.
 - m13 `task_queue_runs_possible_fifo_after_resolve_without_coordinator`는 실제 host·agent·CLI·PTY로 6개의 자리를 채우고,
-  보고 [완료]·host 재시작에도 두 예약의 새 기동이 없는지 본다. resolve 완료 사건 뒤 coordinator/웹/수동 tick 없이
-  고정 머신이 끊긴 앞 예약을 남기고 가능한 뒤 예약이 실제 pane으로 기동하고 같은 task ID에 연결되는지 기다린다.
+  보고 [완료]·host 재시작에도 세 예약의 새 기동이 없는지 본다. 가장 늦게 등록한 예약을 CLI `queue-move`로 1번에 옮기고,
+  저장된 차례·생성 시각 보존과 재시작 뒤 차례를 확인한다. resolve 완료 사건 뒤 coordinator/웹/수동 tick 없이 옮긴 1번의
+  실제 pane 기동과 다른 예약의 대기를 확인하고, 그 thread도 resolve한 뒤 고정 머신이 끊긴 앞 예약을 남기고 가능한 뒤 예약의
+  실제 pane·같은 task ID 연결을 기다린다.
+- host `slot_released_during_queue_scan_does_not_bypass_the_moved_front`는 앞 예약의 `자리 대기` DB 기록 직후
+  다른 thread가 자리를 반환하는 경합을 임시 SQLite trigger로 고정한다. 같은 순회의 뒤 예약이 머신 선택·기동으로 넘어가면
+  실패하며, 다음 순회에는 앞에서부터 새 자리를 판정한다. 원래 코드는 뒤 예약만 머신 가용성 판정으로 넘어가 실패한다.
+  기동 중 예약의 상태 대조·내용 검사는 계속하며, 끊긴 머신 등 시작 조건이 막힌 앞 예약을 건너뛰는 계약은 유지한다.
 - 기존 m13 `parallel_threads_enforce_capacity_before_launch`는 한도 초과 직접 요청의 실패·thread 수·pane 수를 함께 본다.
   `task_thread_link_and_auto_clean`은 기존 확인 필요·부모 보호·옛 delete restore를 유지하며 완료 보관의 ID·본문·보고서·복원을 관측한다.
 - 웹은 실제 host의 예약 상태와 완료 보관만 읽는다. 실패의 상한·재시도·기대값을 바꿔 통과시키지 않는다.
@@ -1407,7 +1829,112 @@ xterm은 buffer resize에서 현재 링크를 지우고 다음 mousemove에서 �
 원래의 커서·클릭·문법 강조·매체·폴더·설정·가상화 단언과 20초 시한은 유지한다. 실패 재실행이나
 시한 연장으로 넘기지 않으며, 진단과 좁은 E2E 16 뒤 수정한 통합 후보의 전체 ci-local을 실행한다.
 
-## 배포 감시의 웹 응답·재시작 rollout(t-0538 관리 GUI W6c, plan §8.371)
+## coordinator 질문 카드·짧은 질문 ID(t-0576, 1단계)
+
+- `cargo test -p aaa-host --lib question_ids::`: 프로젝트별 q-1000 시작, 같은 대상의 동시 발급,
+  다음 보고 판의 새 번호, DB 재개, 답한 것 삭제 뒤 순번 보존을 검사한다. 구조화 post는 본문 hash·선택지 검증,
+  ID별 부분 답과 긴 자유 답의 원문·선택 보존·library 사본, 두 기기의 동시 제출 한 건, 평문 post의 ID 처리 표시를 본다.
+  완료한 부분 답 초안은 비우고 ID 원장만 남긴다. DB 종료의 `done=0` 조건을 제거한 변형은 중복 답 단언에서 실패해야 한다.
+  변형 원본 bytes를 복원한 뒤 정본 전체를 검증한다.
+- `cargo test -p aaa-host --lib short_question_ids_reach_push_titles`: push 제목의 q-ID,
+  기존 thread 링크와 새 q-ID 링크, 앱 참조가 알림 문구에 남지 않는 것을 검사한다.
+  기존 post privacy keeper는 새로 추가된 ID까지 정확히 비교하며 제목의 경로·token 가림과 평문 기본 링크를 유지한다.
+- `node web/e2e/web.e2e.mjs <캡처 폴더> --spec 69-coordinator-questions`: 실제 host·agent·CLI를 쓴다.
+  두 종류의 카드는 같은 QuestionCard에서 렌더링하며 질문 DOM 구조를 비교한다. 데스크톱·WebKit 휴대폰 각각
+  밝음·어두움 캡처, Markdown 표·그림, 추천·선택·직접 답, 다른 기기의 답 보존, Reader의 두 답 경로 거부,
+  `thread answer q-ID A`·`question answer q-ID B`·`post handled q-ID`, 평문 호환을 본다.
+  닫히거나 지워져 찾을 수 없는 q-ID를 열 때는 다른 질문을 대신 열지 않는다.
+  그림은 실험실의 SVG와 publish 사본뿐이다. 이미지 decode·DOM 표지·host 상태로 끝나며 고정 sleep을 쓰지 않는다.
+- 기존 E2E 53은 thread 질문 알림 여러 건을 한 카드로 묶기, thread로 답 전달, 늦은 알림·다음 보고,
+  평문 post와 보존·삭제를 계속 검사한다. `web/test/asksModel.test.mjs`는 q-ID 링크와 기존 thread 참조의 같은 카드 연결을 본다.
+
+전체 정본은 `bash scripts/ci-local.sh`이며 공개 검사는 새 파일을 추적한 상태에서 `bash scripts/check-public.sh`로 확인한다.
+운영 host·agent·설정·인증에는 닿지 않는다. 보고서 r-ID는 별도 2단계다.
+
+### 페이지 종료 뒤 예약 조회 재개(t-0584 착지, 사용자 1A)
+
+E2E23의 「재로딩 중 예약된 자동화 조회」는 WebKit의 첫 `projects` 요청을 route gate로 붙잡고 events 연결·첫 snapshot의
+갱신을 합친 뒤 reload한다. 종료로 첫 요청이 취소된 뒤 `finally`가 예약된 조회를 다시 보내던 원래 제품은
+`Fetch API cannot load … due to access control checks` 페이지 오류에서 실패한다. `pagehide`에서 후속 조회를 막는 제품은
+오류 없이 새 문서를 연다. WebKit의 요청 취소는 `pagehide` 전에 올 수 있어, 실패한 읽기의 `catch`도 예약을 비워야 한다.
+종료한 문서의 갱신 사건은 fetch를 보내지 않고, `pageshow`는 실제 새 `projects` 요청으로 끝난다.
+route gate는 service worker를 차단한 실험실에서만 쓴다. 고정 sleep·시한 연장·페이지 오류 무시는 없다.
+기존 E2E23의 그림 전송·복원·해제·권한·Chrome/Safari/iPhone/iPad 검사는 그대로 함께 돈다.
+
+## 머신 상세(t-0578 웹 머신 추가 M0, plan §8.372)
+
+- host 유닛 `cargo test -p aaa-host machine_view_tests`: 실제 host DB를 연 실험실에서 hello(CPU 종류·판·SHA·기능·시작 점검)가 `MachineView`에 실리는지, 다른 판으로 다시 붙으면 `software_differs`, 모르는 꼴의 점검은 버리는지 본다. runtime을 끝내 Host가 닫힌 것을 확인한 뒤 같은 상태 폴더로 다시 열어 판·SHA·CPU 종류는 DB에서 남고 기능·점검은 빈 것을 본다.
+- 웹 유닛 `node --test web/test/machineDetail.test.mjs`: 줄 요약(옛 host는 OS만), 판 주의·SHA 고정폭·「모름」, 연결·끊김의 마지막 본 때, 건강은 연결 중일 때만, 시작 점검.
+- 웹 E2E `60-admin`의 「머신 상세(M0)」: 등록해 붙인 둘째 agent의 `aaa machine list` SHA가 실행 파일(`AAA_BIN`)의 SHA-256과 같고, 줄 요약·「자세히」의 SHA·판·연결·기능 목록이 그 값을 보인다. 보기 기기도 「자세히」를 열고, 휴대폰 390은 상세를 펼친 채 가로 넘침이 없다. 기다림은 화면 표지와 host 답이다.
+
+## aaa install I6 승인·실제 executor owner(t-0485, plan §8.374)
+
+- `cargo test -p aaa --test install --locked`: 공통 실제 CLI/PTY owner는 세 OS에서 같은 마법사·plain/inquire·뒤로·초안·정확 yes·EOF130·자동/세션 거부·private 발급·실제 worker·같은 ID status/resume를 검사한다. 실제 TLS host 등록/SAS/응답 유실 조회·외부 pin 편집 보존, require unknown→새 defer 승인/파일 job 재사용, 첫 Controller 실제 redeem/폐기·코드 비공개를 포함한다. 운영 서비스/계정/암호/LSA는 사용하지 않는다.
+- `cargo test -p aaa --bin aaa install:: --locked`: 실제 private 파일·서명/pin/만료/nonce·파일 scope·execution/job 결속·I2/SCM 상태·보호 입력·PATH 정책을 검사한다. 독립 v1 status/exit validator가 needs_user3와 cancelled130을 소유한다. 논리 clock은 승인 만료에만 쓰고 실제 쓰기는 OS 파일 transaction이다.
+- `cargo test -p aaa-host --lib installation:: --locked`, `cargo test -p aaa-host --lib tailscale:: --locked`: 실제 host DB/서명/private 입력과 TLS peer·grant 일회 소비/폐기, 보호 publication의 PID/image/nonce/phase/실제 owned listener, exact 포트/외부 mapping 보존, bounded LocalAPI wire의 ETag/If-Match/412, 현재 host HTTPS proof와 일반 200 거부를 검사한다. publication 소비자의 입력 fixture는 파일 엔진 생산 완료 증거로 쓰지 않으며 실제 CLI owner가 생산 경계를 검사한다.
+- `cargo test -p aaa-host --lib install_agent_query_keeps_the_handshake_key_after_same_id_rekey --locked`: 첫 메시지 전 key 교체 때 실제 연결의 immutable peer를 유지하고 다른 key의 결과를 내주지 않는다.
+- Windows 전용 owner는 실제 ConPTY 암호 mode/echo/성공·취소·EOF, Job의 breakaway 허용/금지와 부모 소멸, Win32 ready 파일 변경 사건, 임시 HKCU Software lab key의 registry transaction rollback/동시 편집이다. Windows API 차이 때문에 cfg(windows)이며 공통 CLI/권한 owner는 제외하지 않는다. Unix 부모 감시는 macOS kqueue/Linux pidfd를 사용한다. SSH 신뢰 unit은 봉인된 경계만 실험실에서 대체하며 실제 OpenSSH 설치 실행 성공을 주장하지 않는다.
+- 서명·계획/소비·파일 scope/job 연결·worker 분리 수명·정확 Serve의 If-Match/선택 포트·HTTPS instance proof·TLS rekey/소비/PATH 보존 변형을 owner에서 RED로 대조하고 바이트 복구 뒤 검증한다. 실패 재실행·timeout 증가·기대값 완화는 하지 않는다.
+
+Windows/Linux 실제 실행 판정은 main push 뒤 GitHub CI windows-2025/ubuntu-24.04다. 실제 SCM logon/LSA/Session0/UAC/재부팅/실제 서비스 harness 인증·Tailscale HTTPS는 사용자 Windows PC 사용자 인수로 따로 확인한다. 교차 clippy/build와 file/PTY owner를 이 실제 설치 증거로 부르지 않는다.
+
+## 자동화 thread의 별도 실행 자리(t-0586)
+
+- host `task_queue::tests::automation_threads_have_atomic_separate_slots_and_restart_limits`는 Barrier 뒤 12개 DB 선점을 경주시켜 사용자 자리 1개·자동화 규칙 자리 1개만 허용한다. 같은 actor인 사용자도 세고 정리 중 자동화·실패 재시작·상한 초과 재시작·자리 반환을 확인한다.
+- host `automation::start_tests`는 다음 사건을 기본 동시 1개에서 내구 대기하고 명시 2개로 넓힌 뒤 처리하는지, 같은 사건 영수증·0의 기본 상한·DB 최종 선점·기존 holds를 검사한다. 기존 reuse keeper는 열린 thread로 이어 보내기·기억·완료 뒤 쉼을 그대로 검사한다.
+- m13 `automation_start::automation_threads_leave_user_capacity_and_queue_slots_available`은 실제 host·agent·CLI로 사용자 한도가 차도 자동화를 시작하고, 사용자 직접 시작은 막으며, 사용자 resolve 뒤 자동화가 열린 채 다음 예약이 실제 pane으로 시작하는지 확인한다. CLI list/show/context 표지·출처, host 재시작 뒤 보존·자동화 재시작도 본다. 기존 자기 사건 거르기 keeper는 명시 상한 2개로 두 원인을 비교한다.
+- 웹 E2E `48-automation-threads`는 기존 실제 규칙 기동·막대·규칙 이동을 유지하며 데스크톱·휴대폰에 같은 「자동화 thread」 표지, 모든 thread 목록, thread 상세의 규칙/일정/자리 제외 설명을 검사한다. 보고·DOM·기동·연결 사건으로 끝내며 고정 sleep·시한 연장은 없다.
+- 일반 자리에서 자동화 제외를 제거한 변형과 규칙 상한을 제거한 변형이 새 DB keeper를 실패시키는지 확인한 뒤 원본 bytes를 복구한다. 정본 전체 검증은 `bash scripts/ci-local.sh`다.
+
+착지 통합 후보는 t-0584의 `slot_released_during_queue_scan_does_not_bypass_the_moved_front`를 자동화 thread 없음/열림 두 경우에 실행한다. 사용자 자리가 순회 도중 반환돼도 뒤 예약은 추월하지 않고, 다음 순회에서는 자동화 thread를 자리에 넣지 않아 앞 차례부터 조건을 다시 확인해야 한다.
+
+## 「직접 설치」 안내(t-0578 웹 머신 추가 M1, plan §8.383)
+
+- host 유닛 `cargo test -p aaa-host enroll_guide`: 연 주소(모든 주소·tailnet 주소·LAN·loopback·이름)별 주소 후보와 순서.
+- 웹 유닛 `node --test web/test/enrollGuide.test.mjs`: 1.92 판정, 이름·주소 글자 규칙, 명령에 주소·이름·판·지문, 쓸 수 없는 값은 자리표시.
+- 웹 E2E `60-admin` 첫 단계: 안내를 펼쳐 실험실 host가 연 loopback 주소가 후보로 오고 「host 머신 안에서만」 경고, 이미 있는 이름(labA) 알림, 둘째 단계 명령이 `~/.local/bin/aaa agent enroll <주소> --name labB`인지 본 뒤 실행 파일 자리만 실험실 binary로 바꿔 그대로 실행해 등록한다. 안내가 보인 host fingerprint 앞 16자가 새 머신 `agent enroll` 화면의 것과 같아야 한다. Reader에는 안내가 없고, 휴대폰 390은 안내·상세를 펼친 채 가로 넘침이 없다.
+
+## SSH로 머신 추가(t-0578 웹 머신 추가 M2, plan §8.384)
+
+- 실험실 sshd: 시험이 임시 폴더에 host key·사용자 키·`authorized_keys`·`sshd_config`(loopback 빈 포트, 비밀번호·PAM 끔, `StrictModes no`)를 만들고 `sshd -f <config> -D -e`를 자식으로 띄운다. stderr의 `Server listening` 줄이 나오면 시작한 것이다. host는 `[host] ssh_config`의 실험실 설정(별칭 `lab`, 닫힌 포트 `lab-down`, `IdentitiesOnly`)만 쓴다. 같은 사용자 로그인뿐이지만 「자기 자신을 머신으로」 접속하기에 충분하다. 시험이 띄운 sshd 자식만 끝낸다. sshd가 없으면 건너뛰고 그렇게 적는다.
+- host 유닛 `cargo test -p aaa-host machine_setup`: 순수 규칙과 실험실 끝까지(처음 키 → 세션 안·Reader·다른 지문 거부 → 믿음 → aaa known_hosts 한 줄 → 감지 = 이 빌드의 OS·CPU → 다시 하면 아는 키 → 닫힌 포트 까닭 → known_hosts를 다른 키로 바꾸면 changed로 멈춤 → Reader 목록·지우기). 단계 대기는 host `enroll` 사건이다.
+- 웹 유닛 `node --test web/test/machineSetupModel.test.mjs`, 웹 E2E `72-machine-add`(데스크톱: 비밀번호 꼴 막음, 지문이 `ssh-keygen -lf`와 같음, 믿음 확인 창, 준비됨·감지 줄, aaa known_hosts 한 줄, 닫힌 포트 까닭 / 보기 기기: 조작 없음 / 휴대폰 390: 폭·지우기).
+- Windows: `windows_runner_reports_whether_an_openssh_server_exists`가 CI 로그에 sshd.exe 유무만 적는다(실패하지 않는다).
+
+## 병합 대기·병합 중 실행 자리(t-0594, plan §8.385)
+
+- `cargo test -p aaa-host --lib report_mark::tests --locked`: 첫 줄·공백·BOM/CRLF·중복/붙임 표지·본문·완료/다음 단계 경계.
+- `cargo test -p aaa-host --lib report_stages --locked`: 같은 SQLite의 여덟 동시 요청이 마지막 한 자리만 선점하는지, 병합 대기·착지 한 자리만 제외하며 자동화의 착지는 그 한 자리를 빼앗지 않는지, 착지 실패 수리·작업 복귀 초과·정리 중/완료를 검사한다. 옛 JSON과 실제 보고 사본으로 Host를 다시 열어 marked 보고는 이행하고 unmarked/완료·hash 불일치·유실은 보수적으로 세는지도 확인한다. 운영 폴더는 읽거나 쓰지 않는다.
+- `cargo test -p aaa --test m13 thread_stages:: --locked`: 격리 host·agent·CLI·가짜 harness에서 한도가 찬 상태의 예약 두 건을 순서대로 준비한다. 병합 대기 보고 회수 사건이 첫 예약을, 그 예약의 착지 보고가 둘째 예약을 시작해야 한다. 단계를 알기 위해 ticker를 반복 호출하지 않는다. CLI 세 출력·예약 DTO·ack 보존·다음 단계 복귀 시 새 기동 거부/기존 작업 보존·host 재시작 뒤 같은 단계를 검사한다.
+- `NODE_PATH=$(npm root -g) node web/e2e/web.e2e.mjs --spec 67 --workers 1`: 기존 예약 순서·취소·다른 기기·완료 보관을 유지하고, 실제 보고 파일→host 단계→예약 기동→데스크톱/390px 할 일의 연결·미연결 표지와 다른 색·사이드바·모든 thread·예약 상세를 확인한다. 스크린샷은 시험 산출물에 남긴다. DOM·보고·기동 사건으로 끝내며 고정 sleep·시한 연장은 없다.
+
+병합 대기 제외를 제거한 제품 변형은 DB 선점 keeper가 실패해야 한다. 변형 뒤 제품 bytes를 복원하고 정본 `bash scripts/ci-local.sh` 전체와 공개 검사를 실행한다. 실제 동시 착지 명령을 강제로 중단하는 기능은 아니며 coordinator가 착지를 하나씩 시작한다.
+
+
+## 보고 판 r-ID·실행 입력 이름(t-0576, 2단계)
+
+- `cargo test -p aaa-host --lib report_ids`: 프로젝트별 동시 예약·재개·삭제 후 순번·실패 예약의 비노출, 옛 r 이름과 충돌 방지, 첫 기동 등록, q/r의 프로젝트 이름 변경 보존을 본다. 같은 이름을 두 번 발행하고 옛 r의 본문·그림·CLI 열람·공유 링크·삭제·Reader 거부를 본다. thread 두 판의 옛 Markdown·그림·inbox r 번호와 미복사 파일의 최신 agent 대체 금지도 본다.
+- `cargo test -p aaa-host --lib library_links::`: 기존 서명·범위·권한·만료·기기 폐기·삭제·보존 규칙을 지킨다. host 용량은 불변 판까지 정확히 세며 live 원본의 나중 증가는 상한 밖, 등록 당시 사본은 보호 용량임을 구별한다.
+- `automation::runtime::input_names_tests`: 옛 inflight와 새 run 이름을 직렬화·재개해 같은 processed 영수증 이름을 유지한다. E2E 49는 실제 자동화 시작의 run 파일(64자 상한)과 processed.txt를 확인한다.
+- `node web/e2e/web.e2e.mjs <캡처 폴더> --spec 73-report-ids`: 실제 host·agent·CLI의 같은 이름 재발행·thread 보고 변경, 이전 판 원문·그림, 프로젝트 없는 r hash·기존 이름·t 번호·판 선택·inbox·Reader 거부와 390/1280px 밝음·어두움 머리를 본다. 특정 hash의 thread 사건·DOM·이미지 decode를 기다리며 고정 sleep을 쓰지 않는다.
+
+
+## 질문 안 자료 보기·기본 검수 카드(t-0576, 3단계)
+
+- `node --experimental-strip-types --test web/test/questionMaterials.test.mjs`: 본문·목록·표의 같은 보고 r 링크를 한 번만 세고 그림을 중복 자료로 만들지 않는다. 음원·HTML은 안전한 질문 파일 경로로만 풀며 code·API·로컬 절대 경로·실행 scheme·경로 이탈은 거부한다.
+- `cargo test -p aaa-host --lib report_mark::`: Questions 없는 검수 대기만 기본 카드로 만들며 명시한 질문을 보존하고 A를 추천하지 않는지 본다. report_ids keeper는 기존 검수 보고를 한 번만 q로 등록하고 B 글 누락 거부 뒤 답·부분 답을 선점하지 않음을 본다.
+- `node web/e2e/web.e2e.mjs <캡처 폴더> --spec 74-question-review`: 실제 publish·coordinator post·thread 보고를 쓴다. 카드 안 보고서·그림·음원과 자동 재생 없음·MIME·원래 질문 주소·390px WebKit/1280px 밝음·어두움, 선택/글 답과 inbox·새 보고 뒤 답한 r 판의 옛 그림을 확인한다. 소리 출력·운영 자료·고정 sleep을 쓰지 않는다.
+- 보고 판 등록의 격리는 독립 keeper로 지킨다. 일반 Host::open에 사본 등록을 되넣으면 등록 전 비어 있어야 할 ID 단언이 실패하고, DB 소유 필터를 빼면 다른 state의 원문을 채택하지 말라는 단언이 실패해야 한다. 기본 경로의 프로젝트를 시험 fixture로 사용하지 않는다. 실제 host 기동의 실험실은 설정에 임시 projects root를 명시한다.
+
+E2E 74의 headless WebKit iframe 그림은 기존 E2E 59·plan §8.353과 같은 이중 sandbox 제약을 적용한다. iframe의 그림 노드를 확인하고 같은 cap 주소의 실제 이미지를 앱 크게 보기에서 decode한다. Chromium iframe과 질문 본문의 그림은 직접 decode한다. 정책·시한을 바꾸거나 성공 여부를 추측하지 않는다. WebKit을 별도로 띄운 실험실은 실패 때도 finally에서 그 browser를 닫는다.
+
+`report_ids::tests::archived_r_attachment_protects_its_entire_report_family_from_delete_and_prune`는 완료 보관의 옛 r 첨부가 같은 이름의 모든 판을 명시 삭제·기한 정리에서 보호하는지 검사한다. 기존 m13 library_view의 최신 t 별칭 전체/Range 스트리밍을 유지하면서, 같은 파일의 r 보기만 미복사 파일의 기존 보기 경로 오류(502)와 명시한 까닭을 확인한다. 최신 별칭과 불변 판의 읽기 계약을 구분한다.
+
+전체 캡처를 켠 E2E 06은 설치 글꼴 검사에서 시작한 가짜 face를 아직 gate로 붙잡은 동안 screenshot이 document.fonts.ready를 기다려 막혔다. 보류 전의 크기·값·거부 단언은 그대로 두고, 캡처를 face gate 해제와 그리드 정합 확인 뒤로 옮긴다. 시한·기대값·제품 로딩 정책은 바꾸지 않는다.
+
+착지 main 통합 뒤 ThreadView의 단계·자동화 출처·r 번호가 합쳐져 FrontEvent의 enum 크기 차이가 Clippy 상한을 넘었다. Thread 사건·응답 본체를 Box에 두어 JSON/생성 TypeScript 형식을 유지하고, 전체 WS/E2E·Rust 사건 수신 시험과 Clippy를 다시 검증한다.
+
+## 배포 감시의 웹 응답·재시작 rollout(t-0538 관리 GUI W6c, plan §8.402)
 
 - `cargo test -p aaa-agent --lib deploy::`: `web_probe`는 가짜 웹(TcpListener)으로 짝 없는 기기 답(401 `unauthorized`)만 답으로 보고 요청 줄·Host `127.0.0.1:<port>`를 확인한다. 안전 모드 503·421·JSON 아닌 401·잡음, 닫힌 port, 받고 답하지 않는 웹(한도 200ms로 줄여 사건으로 끝냄), 주소 아님은 답이 아니다. `0.0.0.0:<port>`는 loopback으로 묻는다. `guard`의 웹 판정은 실행 신원이 맞아도 웹 주소가 있으면 AwaitingNew·`pending_web`, 웹이 답한 뒤 NewReady·확정, 같은 한도에 복구(늦은 답은 복구를 되돌리지 않음), 주소 없음·빈 주소·agent 감시는 실행 신원만, 한도를 늘리지 않음을 순수 전이로 본다.
 - `cargo test -p aaa-host --lib rollout::`: 웹은 개별 `deploy_start`(교체·재시작)를 모두 `forbidden`, coordinator 개별 재시작은 `bad_request`. 재시작 rollout은 끊긴 대상에서 아무것도 남기지 않고, 붙은 agent의 hello 실행 신원을 단계 baseline·rollout SHA·판으로 고정하며, 같은 ID(대상을 비우면 host 머신)는 같은 기록, 다른 서비스는 거부, 진행 중이면 새 재시작 거부, 두 머신 거부, 신원을 알리지 않는 agent는 `unsupported_version`, host 재시작은 host 자신의 신원. 가짜 agent(duplex link)가 감시 세우기에 답한다: 세운 영수증 뒤에 `guard_ready`, 설치 파일이 실행 판과 다르다는 `conflict`면 웹은 `conflict`이고 기록은 재시작 없이 중단, 같은 ID 동시 요청은 기록과 감시가 하나, 첫 세우기의 답이 끊기면 진행 루프가 같은 정본으로 다시 세우고 그때 `conflict`면 다른 요청(재시작) 없이 중단하며 그 감시를 취소(rollout 변경 알림으로 기다린다). agent `guard` 순수 전이: 재시작만 하는 감시(기대 판 = 배포 전 판)는 설치 파일이 바뀌어도 띄우기 전 취소·시한이 취소, 띄운 뒤 시한은 복구.

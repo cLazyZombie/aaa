@@ -5,12 +5,19 @@ import path from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 
 function processes() {
-  return execFileSync("ps", ["-axo", "pid=,ppid=,stat=,command="], { encoding: "utf8" })
+  return execFileSync("ps", ["-axo", "pid=,ppid=,stat="], { encoding: "utf8" })
     .split("\n")
     .flatMap((line) => {
-      const m = /^\s*(\d+)\s+(\d+)\s+(\S+)\s+(.*)$/.exec(line);
-      return m ? [{ pid: Number(m[1]), parent: Number(m[2]), state: m[3], command: m[4] }] : [];
+      const m = /^\s*(\d+)\s+(\d+)\s+(\S+)\s*$/.exec(line);
+      return m ? [{ pid: Number(m[1]), parent: Number(m[2]), state: m[3] }] : [];
     });
+}
+
+// 컴파일러 등 관계없는 긴 argv를 모으면 ps 출력이 Node 버퍼를 넘는다.
+// 종료 후보의 명령줄만 따로 읽고 기존 신원 대조는 그대로 유지한다.
+function commandOf(pid) {
+  try { return execFileSync("ps", ["-p", String(pid), "-o", "command="], { encoding: "utf8" }).trimEnd(); }
+  catch (e) { if (e.status === 1) return null; throw e; }
 }
 
 const live = (p) => p && !p.state.startsWith("Z");
@@ -31,7 +38,7 @@ async function terminateTree(root) {
   const frozen = [];
   async function freeze(p) {
     const current = processes().find((row) => row.pid === p.pid);
-    if (!live(current) || current.command !== p.command) return;
+    if (!live(current) || commandOf(p.pid) !== p.command) return;
     // 부모를 먼저 멈춰야 자손 목록을 읽는 동안 새 writer가 생기지 않는다.
     frozen.push(p);
     signal(p, "SIGSTOP");
@@ -39,7 +46,10 @@ async function terminateTree(root) {
       const row = processes().find((row) => row.pid === p.pid);
       return !live(row) || row.state.startsWith("T");
     });
-    for (const child of processes().filter((row) => row.parent === p.pid && live(row))) await freeze(child);
+    for (const child of processes().filter((row) => row.parent === p.pid && live(row))) {
+      const command = commandOf(child.pid);
+      if (command !== null) await freeze({ ...child, command });
+    }
   }
   try {
     await freeze(root);
@@ -48,7 +58,7 @@ async function terminateTree(root) {
     for (const p of frozen.reverse()) signal(p, "SIGKILL");
     await waitFor("session host와 자손 종료", () => {
       const table = processes();
-      return frozen.every((p) => !live(table.find((row) => row.pid === p.pid && row.command === p.command)));
+      return frozen.every((p) => !live(table.find((row) => row.pid === p.pid)) || commandOf(p.pid) !== p.command);
     });
   }
 }
@@ -61,7 +71,9 @@ export async function terminateSessionHosts(dir) {
     try { meta = JSON.parse(fs.readFileSync(file, "utf8")); }
     catch (e) { if (e.code === "ENOENT") continue; throw e; }
     const p = processes().find((p) => p.pid === meta.host_pid);
-    if (live(p) && p.command.includes(path.join(dir, id))) await terminateTree(p);
+    if (!live(p)) continue;
+    const command = commandOf(p.pid);
+    if (command !== null && command.includes(path.join(dir, id))) await terminateTree({ ...p, command });
   }
 }
 

@@ -6,6 +6,9 @@ use std::sync::Mutex;
 use anyhow::Result;
 use rusqlite::{Connection, OptionalExtension, params};
 
+mod question_ids;
+mod report_ids;
+mod task_ids;
 mod task_queue;
 
 pub const SCHEMA_VERSION: i64 = 1;
@@ -16,6 +19,37 @@ pub(crate) struct StartAdmission {
     pub rule: String,
     pub max_running: Option<u32>,
     pub max_auto_threads: u32,
+}
+
+impl StartAdmission {
+    /// 판정 뒤 다른 요청이 끼어도 같은 DB 트랜잭션 안에서 동시 상한을 지킨다.
+    fn check(&self, tx: &Connection, project: &str, except: Option<&str>) -> Result<()> {
+        let mut statement = tx.prepare("SELECT id,data FROM threads WHERE project=?1")?;
+        let active = statement.query_map([project], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)))?;
+        let mut rule_count = 0usize;
+        let mut auto_count = 0usize;
+        for row in active {
+            let (id, text) = row?;
+            let rec: crate::orch::ThreadRec = serde_json::from_str(&text)?;
+            if except == Some(id.as_str()) || !rec.holds_slot() {
+                continue;
+            }
+            if rec.machine_id == self.machine && rec.holds.iter().any(|h| self.holds.contains(h)) {
+                anyhow::bail!("start_wait: {}의 측정 표지({id})", self.machine);
+            }
+            if let Some(name) = rec.automation {
+                auto_count += 1;
+                rule_count += usize::from(name == self.rule);
+            }
+        }
+        let cap = self.max_running.filter(|n| *n > 0).unwrap_or(1);
+        anyhow::ensure!(rule_count < cap as usize, "start_wait: 자동화 thread 규칙 동시 실행 상한 {cap}");
+        anyhow::ensure!(
+            self.max_auto_threads == 0 || auto_count < self.max_auto_threads as usize,
+            "start_wait: 명시한 프로젝트 자동화 thread 상한"
+        );
+        Ok(())
+    }
 }
 
 pub struct Db {
@@ -77,6 +111,10 @@ pub struct MachineRow {
     pub os: Option<String>,
     pub boot_id: Option<String>,
     pub last_seen_ms: Option<u64>,
+    /// 마지막 hello의 CPU 종류·판·실행 파일 SHA-256(웹 머신 상세, plan §8.372)
+    pub arch: Option<String>,
+    pub software: Option<String>,
+    pub sha256: Option<String>,
 }
 
 /// Web Push 구독. endpoint는 비밀값처럼 다룬다(로그에 남기지 않는다).
@@ -174,6 +212,7 @@ impl Db {
             .optional()?)
     }
 
+    #[cfg(test)]
     pub(crate) fn library_report_put(&self, r: &LibraryReportRow) -> Result<()> {
         self.conn.lock().unwrap().execute(
             "INSERT INTO library_reports(project,name,live,updated,to_user,title,sent_at,seen_at,from_thread)
@@ -290,6 +329,10 @@ impl Db {
              CREATE TABLE IF NOT EXISTS library_links(
                id TEXT PRIMARY KEY, project TEXT NOT NULL, thread TEXT NOT NULL,
                created INTEGER NOT NULL, expires INTEGER NOT NULL, opened INTEGER, revoked INTEGER NOT NULL DEFAULT 0);
+             CREATE TABLE IF NOT EXISTS report_ids(
+               project TEXT NOT NULL, seq INTEGER NOT NULL, id TEXT NOT NULL, source TEXT NOT NULL, revision TEXT NOT NULL,
+               ready INTEGER NOT NULL DEFAULT 0, deleted INTEGER NOT NULL DEFAULT 0,
+               PRIMARY KEY(project,id), UNIQUE(project,seq));
              CREATE TABLE IF NOT EXISTS library_reports(
                project TEXT NOT NULL, name TEXT NOT NULL, live TEXT, updated INTEGER NOT NULL,
                PRIMARY KEY(project,name));
@@ -318,6 +361,7 @@ impl Db {
              CREATE TABLE IF NOT EXISTS evaluations(
                project TEXT NOT NULL, id TEXT NOT NULL, state TEXT NOT NULL, sha256 TEXT NOT NULL, data TEXT NOT NULL,
                created_at INTEGER NOT NULL, PRIMARY KEY(project, id));
+             CREATE TABLE IF NOT EXISTS task_ids(project TEXT NOT NULL, task_id TEXT NOT NULL, number INTEGER NOT NULL, PRIMARY KEY(project,task_id), UNIQUE(project,number));
              CREATE TABLE IF NOT EXISTS task_queue(project TEXT NOT NULL, task_id TEXT NOT NULL, data TEXT NOT NULL, PRIMARY KEY(project,task_id));
              CREATE TABLE IF NOT EXISTS task_queue_log(id INTEGER PRIMARY KEY, project TEXT NOT NULL, actor TEXT NOT NULL, at_ms INTEGER NOT NULL, before TEXT NOT NULL, after TEXT NOT NULL);
              CREATE TABLE IF NOT EXISTS task_archive(project TEXT NOT NULL, task_id TEXT NOT NULL, data TEXT NOT NULL, PRIMARY KEY(project,task_id));
@@ -326,9 +370,14 @@ impl Db {
                action TEXT NOT NULL, list TEXT NOT NULL, from_list TEXT, title TEXT NOT NULL, before TEXT, after TEXT,
                thread TEXT, restored_by INTEGER);
              CREATE INDEX IF NOT EXISTS task_log_project ON task_log(project, id);
+             CREATE TABLE IF NOT EXISTS question_ids(
+               project TEXT NOT NULL, seq INTEGER NOT NULL, id TEXT NOT NULL, kind TEXT NOT NULL,
+               subject TEXT NOT NULL, revision TEXT NOT NULL, position INTEGER NOT NULL, draft TEXT,
+               PRIMARY KEY(project,id), UNIQUE(project,kind,subject,revision,position), UNIQUE(project,seq));
              CREATE TABLE IF NOT EXISTS asks(
                project TEXT NOT NULL, id TEXT NOT NULL, kind TEXT NOT NULL, subject TEXT NOT NULL,
                done_ms INTEGER NOT NULL, data TEXT NOT NULL, PRIMARY KEY(project, id));
+             CREATE TABLE IF NOT EXISTS machine_setups(id TEXT PRIMARY KEY, data TEXT NOT NULL, updated INTEGER NOT NULL);
              CREATE TABLE IF NOT EXISTS push_subs(
                endpoint TEXT PRIMARY KEY, p256dh TEXT NOT NULL, auth TEXT NOT NULL, device TEXT NOT NULL,
                created_at INTEGER NOT NULL);",
@@ -369,6 +418,15 @@ impl Db {
                  ALTER TABLE library_reports ADD COLUMN seen_at INTEGER;",
             )?;
         }
+        // 머신의 CPU 종류·판·실행 파일 SHA-256(plan §8.372). 위와 같이 열만 더한다
+        let has_arch = conn.prepare("SELECT 1 FROM pragma_table_info('machines') WHERE name='arch'")?.exists([])?;
+        if !has_arch {
+            conn.execute_batch(
+                "ALTER TABLE machines ADD COLUMN arch TEXT;
+                 ALTER TABLE machines ADD COLUMN software TEXT;
+                 ALTER TABLE machines ADD COLUMN sha256 TEXT;",
+            )?;
+        }
         // 보고서를 낸 thread(사용자 요청 10-20). 위와 같이 열만 더한다
         let has_from_thread =
             conn.prepare("SELECT 1 FROM pragma_table_info('library_reports') WHERE name='from_thread'")?.exists([])?;
@@ -385,6 +443,11 @@ impl Db {
             Some(Ok(SCHEMA_VERSION)) => {}
             Some(other) => anyhow::bail!("host DB schema {other:?}을 이 aaa(schema {SCHEMA_VERSION})가 모른다"),
         }
+        conn.execute_batch(
+            "CREATE TABLE IF NOT EXISTS install_grants (
+            installation TEXT PRIMARY KEY, plan TEXT NOT NULL, nonce TEXT NOT NULL UNIQUE,
+            fingerprint TEXT NOT NULL, machine TEXT NOT NULL UNIQUE, name TEXT NOT NULL)",
+        )?;
         Ok(Db { conn: Mutex::new(conn) })
     }
 
@@ -513,10 +576,13 @@ impl Db {
             os: r.get(4)?,
             boot_id: r.get(5)?,
             last_seen_ms: r.get::<_, Option<i64>>(6)?.map(|v| v as u64),
+            arch: r.get(7)?,
+            software: r.get(8)?,
+            sha256: r.get(9)?,
         })
     }
 
-    const MACHINE_COLS: &str = "id,name,fingerprint,local,os,boot_id,last_seen";
+    const MACHINE_COLS: &str = "id,name,fingerprint,local,os,boot_id,last_seen,arch,software,sha256";
 
     pub fn machines(&self) -> Result<Vec<MachineRow>> {
         let c = self.conn.lock().unwrap();
@@ -548,6 +614,59 @@ impl Db {
         .optional()?)
     }
 
+    /// 서명 검증을 마친 grant만 호출한다. nonce 소비와 새 머신 등록은 같은 commit이다.
+    pub(crate) fn install_enroll(
+        &self,
+        installation: &str,
+        plan: &str,
+        nonce: &str,
+        fingerprint: &str,
+        id: &str,
+        name: &str,
+    ) -> Result<()> {
+        let mut c = self.conn.lock().unwrap();
+        let tx = c.transaction()?;
+        let previous: Option<(String, String, String, String)> = tx
+            .query_row(
+                "SELECT plan,fingerprint,machine,name FROM install_grants WHERE installation=?1",
+                [installation],
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
+            )
+            .optional()?;
+        if let Some(previous) = previous {
+            anyhow::ensure!(
+                previous == (plan.into(), fingerprint.into(), id.into(), name.into()),
+                "install grant target conflict"
+            );
+            let trusted: bool = tx.query_row("SELECT EXISTS(SELECT 1 FROM machines WHERE id=?1 AND name=?2 AND fingerprint=?3 AND revoked=0 AND local=0)",
+                params![id,name,fingerprint], |r|r.get(0))?;
+            anyhow::ensure!(trusted, "install grant revoked");
+        } else {
+            let conflict: bool = tx.query_row(
+                "SELECT EXISTS(SELECT 1 FROM machines WHERE id=?1 OR name=?2 OR fingerprint=?3)",
+                params![id, name, fingerprint],
+                |r| r.get(0),
+            )?;
+            // 기존/폐기된 신원을 되살리거나 다른 이름에 덮어쓰지 않는다.
+            anyhow::ensure!(!conflict, "install grant target conflict");
+            tx.execute("INSERT INTO install_grants(installation,plan,nonce,fingerprint,machine,name) VALUES(?1,?2,?3,?4,?5,?6)",
+                params![installation,plan,nonce,fingerprint,id,name])?;
+            tx.execute(
+                "INSERT INTO machines(id,name,fingerprint,local,enrolled_at) VALUES(?1,?2,?3,0,?4)",
+                params![id, name, fingerprint, aaa_common::util::now_ms() as i64],
+            )?;
+        }
+        tx.commit()?;
+        Ok(())
+    }
+    /// 응답 유실 뒤 조회에는 유효 기간을 연장하지 않고 실제 TLS peer와 아직 신뢰하는 머신을 대조한다.
+    pub(crate) fn install_enrolled(&self, installation: &str, plan: &str, fingerprint: &str) -> Result<Option<String>> {
+        let c = self.conn.lock().unwrap();
+        Ok(c.query_row("SELECT g.machine FROM install_grants g JOIN machines m ON m.id=g.machine
+            WHERE g.installation=?1 AND g.plan=?2 AND g.fingerprint=?3 AND m.fingerprint=g.fingerprint AND m.name=g.name AND m.revoked=0 AND m.local=0",
+            params![installation,plan,fingerprint], |r|r.get(0)).optional()?)
+    }
+
     /// 등록(원격) 또는 로컬 agent 자동 등록. 같은 id면 이름·fingerprint를 갱신한다.
     pub fn upsert_machine(&self, id: &str, name: &str, fingerprint: Option<&str>, local: bool) -> Result<()> {
         let c = self.conn.lock().unwrap();
@@ -561,11 +680,20 @@ impl Db {
         Ok(())
     }
 
-    pub fn touch_machine(&self, id: &str, os: &str, boot_id: &str) -> Result<()> {
+    /// hello를 받을 때마다 그 머신의 OS·부팅·판을 남긴다(끊긴 뒤·host 재시작 뒤에도 마지막 값을 보인다)
+    pub fn touch_machine(&self, hello: &aaa_proto::AgentHello) -> Result<()> {
         let c = self.conn.lock().unwrap();
         c.execute(
-            "UPDATE machines SET os=?2, boot_id=?3, last_seen=?4 WHERE id=?1",
-            params![id, os, boot_id, aaa_common::util::now_ms() as i64],
+            "UPDATE machines SET os=?2, boot_id=?3, last_seen=?4, arch=?5, software=?6, sha256=?7 WHERE id=?1",
+            params![
+                hello.machine_id,
+                hello.os,
+                hello.boot_id,
+                aaa_common::util::now_ms() as i64,
+                hello.arch,
+                hello.software,
+                hello.sha256
+            ],
         )?;
         Ok(())
     }
@@ -578,6 +706,38 @@ impl Db {
             c.execute("UPDATE machines SET revoked=1, fingerprint=NULL WHERE id=?1", [id])?;
         }
         Ok(id)
+    }
+
+    /// SSH 머신 추가 작업(plan §8.384): JSON 한 행. 최근 것부터
+    pub(crate) fn machine_setups(&self) -> Result<Vec<String>> {
+        let c = self.conn.lock().unwrap();
+        let mut st = c.prepare("SELECT data FROM machine_setups ORDER BY updated DESC, id DESC")?;
+        let rows = st.query_map([], |r| r.get(0))?.collect::<rusqlite::Result<Vec<String>>>()?;
+        Ok(rows)
+    }
+
+    pub(crate) fn machine_setup(&self, id: &str) -> Result<Option<String>> {
+        let c = self.conn.lock().unwrap();
+        Ok(c.query_row("SELECT data FROM machine_setups WHERE id=?1", [id], |r| r.get(0)).optional()?)
+    }
+
+    /// 쓰고, 최근 `keep`개 밖의 오래된 작업은 지운다
+    pub(crate) fn machine_setup_put(&self, id: &str, data: &str, updated_ms: u64, keep: usize) -> Result<()> {
+        let c = self.conn.lock().unwrap();
+        c.execute(
+            "INSERT INTO machine_setups(id,data,updated) VALUES(?1,?2,?3)
+             ON CONFLICT(id) DO UPDATE SET data=excluded.data, updated=excluded.updated",
+            params![id, data, updated_ms as i64],
+        )?;
+        c.execute(
+            "DELETE FROM machine_setups WHERE id NOT IN (SELECT id FROM machine_setups ORDER BY updated DESC, id DESC LIMIT ?1)",
+            [keep as i64],
+        )?;
+        Ok(())
+    }
+
+    pub(crate) fn machine_setup_delete(&self, id: &str) -> Result<bool> {
+        Ok(self.conn.lock().unwrap().execute("DELETE FROM machine_setups WHERE id=?1", [id])? != 0)
     }
 
     pub fn add_device(&self, id: &str, role: &str, token_hash: &str, label: &str) -> Result<()> {
@@ -719,6 +879,20 @@ impl Db {
         reservation: Option<(&str, &str)>,
         make: impl FnOnce(&str) -> String,
     ) -> Result<(String, bool)> {
+        self.try_thread_insert_admitted(project, key, admission, limit, reservation, |id| Ok(make(id)))
+    }
+
+    /// 새 행이 보이기 전에 호출자가 기동 소유권을 얻는다. 실패하면 행·예약·영수증을 모두 롤백한다.
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn try_thread_insert_admitted(
+        &self,
+        project: &str,
+        key: Option<&str>,
+        admission: Option<&StartAdmission>,
+        limit: Option<u32>,
+        reservation: Option<(&str, &str)>,
+        make: impl FnOnce(&str) -> Result<String>,
+    ) -> Result<(String, bool)> {
         let mut c = self.conn.lock().unwrap();
         let tx = c.transaction()?;
         if let Some(key) = key
@@ -728,50 +902,25 @@ impl Db {
             return Ok((id, false));
         }
         if let Some(policy) = admission {
-            let mut statement =
-                tx.prepare("SELECT id,data FROM threads WHERE project=?1 AND status IN ('open','starting')")?;
-            let active = statement
-                .query_map([project], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)))?
-                .collect::<rusqlite::Result<Vec<_>>>()?;
-            let mut rule_count = 0usize;
-            let mut auto_count = 0usize;
-            for (id, text) in active {
-                let value: serde_json::Value = serde_json::from_str(&text)?;
-                if value["machine_id"].as_str() == Some(policy.machine.as_str())
-                    && value["holds"].as_array().is_some_and(|holds| {
-                        holds.iter().filter_map(|h| h.as_str()).any(|h| policy.holds.iter().any(|want| want == h))
-                    })
-                {
-                    anyhow::bail!("start_wait: {}의 측정 표지({id})", policy.machine);
-                }
-                if let Some(name) = value["automation"].as_str() {
-                    auto_count += 1;
-                    rule_count += usize::from(name == policy.rule);
-                }
-            }
-            anyhow::ensure!(
-                !policy.max_running.filter(|cap| *cap > 0).is_some_and(|cap| rule_count >= cap as usize),
-                "start_wait: 명시한 규칙 동시 실행 상한"
-            );
-            anyhow::ensure!(
-                policy.max_auto_threads == 0 || auto_count < policy.max_auto_threads as usize,
-                "start_wait: 명시한 프로젝트 자동 thread 상한"
-            );
-        }
-        if let Some(limit) = limit {
-            anyhow::ensure!(
-                task_queue::slots(&tx, project, None)? < limit,
-                "start_wait: 프로젝트 실행 한도 {limit}. `aaa task reserve`로 예약한다"
-            );
+            policy.check(&tx, project, None)?;
         }
         let max: Option<i64> =
             tx.query_row("SELECT MAX(CAST(SUBSTR(id, 3) AS INTEGER)) FROM threads WHERE project=?1", [project], |r| {
                 r.get(0)
             })?;
         let id = format!("t-{:04}", max.unwrap_or(0) + 1);
+        let text = make(&id)?;
+        if let Some(limit) = limit
+            && serde_json::from_str::<crate::orch::ThreadRec>(&text)?.automation.is_none()
+        {
+            anyhow::ensure!(
+                task_queue::slots(&tx, project, None)? < limit,
+                "start_wait: 프로젝트 실행 한도 {limit}. `aaa task reserve`로 예약한다"
+            );
+        }
         tx.execute(
             "INSERT INTO threads(project,id,status,data,updated_at) VALUES(?1,?2,'starting',?3,?4)",
-            params![project, id, make(&id), aaa_common::util::now_ms() as i64],
+            params![project, id, text, aaa_common::util::now_ms() as i64],
         )?;
         if let Some((task, block)) = reservation {
             task_queue::queue_claim(&tx, project, task, block, &id)?;
@@ -1382,7 +1531,7 @@ fn scrub_audit_env(conn: &mut Connection) -> Result<()> {
 }
 
 /// project 열이 있는 표(옛 db에 남은 `merge_queue`는 읽지 않아 옮기지 않는다, 새 db에는 없다 — §8.135)
-const PROJECT_TABLES: [&str; 13] = [
+const PROJECT_TABLES: [&str; 16] = [
     "threads",
     "flow_events",
     "messages",
@@ -1390,8 +1539,11 @@ const PROJECT_TABLES: [&str; 13] = [
     "evaluations",
     "library_links",
     "library_reports",
+    "report_ids",
+    "question_ids",
     "posts",
     "task_log",
+    "task_ids",
     "task_queue",
     "task_queue_log",
     "task_archive",
@@ -1543,6 +1695,49 @@ impl Db {
             params![project, r.id, kind, r.subject, r.done_ms as i64, serde_json::to_string(r)?],
         )?;
         Ok(())
+    }
+
+    /// 요청 종료·답 보존·coordinator 전달을 한 번에 기록한다. 다른 기기에서 끝냈으면 false다.
+    pub(crate) fn request_answer(
+        &self,
+        item: &aaa_proto::InboxItem,
+        record: &aaa_proto::AskRecord,
+        notice: &aaa_proto::InboxItem,
+    ) -> Result<bool> {
+        let mut c = self.conn.lock().unwrap();
+        let tx = c.transaction()?;
+        let mut done = item.clone();
+        done.done = true;
+        done.done_at_ms = Some(record.done_ms);
+        let n = tx.execute(
+            "UPDATE inbox SET done=1, done_at=?3, data=?4 WHERE project=?1 AND id=?2 AND done=0",
+            params![item.project, item.id, record.done_ms as i64, serde_json::to_string(&done)?],
+        )?;
+        if n == 0 {
+            return Ok(false);
+        }
+        tx.execute(
+            "INSERT INTO asks(project,id,kind,subject,done_ms,data) VALUES(?1,?2,'request',?3,?4,?5)",
+            params![item.project, record.id, record.subject, record.done_ms as i64, serde_json::to_string(record)?],
+        )?;
+        tx.execute(
+            "INSERT INTO inbox(id,project,kind,subject,event,done,created_at,data) VALUES(?1,?2,?3,?4,?5,0,?6,?7)",
+            params![
+                notice.id,
+                notice.project,
+                notice.item_kind,
+                notice.subject,
+                notice.event,
+                notice.created_at_ms as i64,
+                serde_json::to_string(notice)?
+            ],
+        )?;
+        tx.execute(
+            "UPDATE question_ids SET draft=NULL WHERE project=?1 AND kind='post' AND subject=?2",
+            params![item.project, item.id],
+        )?;
+        tx.commit()?;
+        Ok(true)
     }
 
     /// 프로젝트의 기록, 최신부터

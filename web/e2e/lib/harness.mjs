@@ -39,6 +39,9 @@ for (const key of ["AAA_SESSION_ID", "AAA_PROJECT", "AAA_THREAD", "AAA_HOOK_SOCK
 const procs = new Map();
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+// t-0578 동시 검증(load 28.96)의 후보 점검 결과 대기만 30초→60초로 둔다(docs/testing.md).
+// 실패 상한이며 표지가 오면 바로 끝난다. 기본 locator·단계 전체 시한은 그대로다.
+const LOAD_TIMEOUT_MS = 60_000;
 
 function aaa(...args) {
   // --json은 맨 앞에: `pane run <pane> <글…>`처럼 뒤 인자를 모두 글로 받는 명령에 섞이지 않게
@@ -1082,14 +1085,14 @@ async function pushLab(page) {
 
 /** 실제 coordinator pane 자식 CLI로 사용자 post를 보낸다. 웹·밖 CLI가 coordinator를 자칭하지 않는다. 기본은 전체 완료,
  * `request`면 확인 필요(제목은 질문 요약·추천) */
-async function coordinatorPost({ request = false, title = "전체 완료" } = {}) {
+async function coordinatorPost({ request = false, title = "전체 완료", body } = {}) {
   const opened = aaa("project", "open", "demo", "--profile", "fake");
   const coord = opened.pane.id;
   await waitOutput(coord, "fake>");
   const id = crypto.randomBytes(16).toString("hex");
   const file = `${root}/post-${id}`;
   const quote = (s) => `'${s.replaceAll("'", "'\\''")}'`;
-  fs.writeFileSync(`${file}.body`, id);
+  fs.writeFileSync(`${file}.body`, body ?? id);
   const kind = request ? "--request --needs-user --topic user-action" : "--notice --topic task-complete";
   fs.writeFileSync(`${file}.sh`, `${quote(AA)} --json post user ${kind} --title ${quote(title)} --body-file ${quote(`${file}.body`)} --post-id ${id} > ${quote(`${file}.out`)} 2>&1\nprintf 'post-${id}-done\\n'\n`);
   aaa("pane", "run", coord, `post-probe ${file}.sh`);
@@ -1160,6 +1163,7 @@ async function runSpec(spec, labEnv = {}) {
 }
 
 export {
+  LOAD_TIMEOUT_MS,
   inList,
   showPanel,
   drawerSettled,

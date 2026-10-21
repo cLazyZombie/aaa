@@ -16,3 +16,12 @@ pub mod redact;
 pub mod resource;
 pub mod tls;
 pub mod util;
+
+/// 역할 사이의 사용자 전용 파일·ACL/잠금 경계. 기존 파일 권한은 고치지 않는다.
+pub mod private_file;
+
+/// 설치 서명 canonical bytes. 신뢰 root/권한 판정과 분리한다.
+pub mod install_crypto;
+
+#[cfg(all(test, windows))]
+mod windows_acl_tests;

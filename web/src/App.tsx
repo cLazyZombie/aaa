@@ -11,7 +11,7 @@ import type {
   QuestionView,
   ThreadView,
 } from "./gen/proto";
-import { ActivityBar } from "./ActivityBar";
+import { ActivityBar, type CoordinatorButton } from "./ActivityBar";
 import { SidebarResizer } from "./SidebarResizer";
 import { PANEL_LABEL, revealPanel, storedCollapsed, storedPanel, storeSidebar, type SidebarPanel } from "./sidebarPanel";
 import { ReportsView, type ReportRef } from "./ReportsView";
@@ -36,7 +36,6 @@ import { ListChecks, Menu, Settings } from "lucide-react";
 import { Icon } from "./icons";
 import { hasAgentMark } from "./herdr/AgentMark.tsx";
 import { Sidebar } from "./Sidebar";
-import { useInboxBadge } from "./InboxPanel";
 import type { RolloutSnapshot } from "./RolloutCard";
 import { needsYou, paneAgentStatus, rosterRows, shortPath, threadKey } from "./sidebarModel";
 import { useShortcuts } from "./herdr/shortcuts.ts";
@@ -414,21 +413,38 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
   const [threadsSync, setThreadsSync] = useState(0);
   const threadReload = useRef(new ThreadReload());
   const [automationBadge, setAutomationBadge] = useState(0);
-  const inboxBadge = useInboxBadge();
   const automationLoading = useRef(false);
   const automationReload = useRef(false);
+  const automationActive = useRef(true);
   const loadAutomations = () => {
+    if (!automationActive.current) return;
     if (automationLoading.current) { automationReload.current = true; return; }
     automationLoading.current = true;
     call({ op: "projects" }).then(async (r) => {
-      if (r.kind !== "projects") return;
+      if (!automationActive.current || r.kind !== "projects") return;
       const lists = await Promise.all(r.projects.map((p) => call({ op: "routines", project: p.name })));
-      setAutomationBadge(lists.reduce((n, r) => n + (r.kind === "routines" ? automationAttention(r.routines) : 0), 0));
-    }).catch(() => {}).finally(() => {
+      if (automationActive.current) setAutomationBadge(lists.reduce((n, r) => n + (r.kind === "routines" ? automationAttention(r.routines) : 0), 0));
+    }).catch(() => {
+      // WebKit은 reload 때 pagehide 전에 요청을 취소할 수 있다. 실패한 읽기의 예약을 재실행하지 않는다.
+      automationReload.current = false;
+    }).finally(() => {
       automationLoading.current = false;
       if (automationReload.current) { automationReload.current = false; loadAutomations(); }
     });
   };
+  useEffect(() => {
+    automationActive.current = true;
+    // reload가 진행 중 요청을 취소해도 finally의 예약 조회가 끝나는 문서에서 새 fetch를 시작하면 안 된다.
+    const hide = () => { automationActive.current = false; automationReload.current = false; };
+    const show = () => { automationActive.current = true; loadAutomations(); };
+    window.addEventListener("pagehide", hide);
+    window.addEventListener("pageshow", show);
+    return () => {
+      hide();
+      window.removeEventListener("pagehide", hide);
+      window.removeEventListener("pageshow", show);
+    };
+  }, []);
   const putThread = (t: ThreadView) => {
     threadReload.current.note(t);
     setThreads((old) => {
@@ -643,7 +659,7 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
             call({ op: "questions", all: false })
               .then((r) => {
                 if (r.kind !== "questions") return questionReload.current.failed(read);
-                const next = questionReload.current.finish(read, r.questions);
+                const next = questionReload.current.finish(read, r.questions.filter((q) => q.pane !== ""));
                 if (next === null) return; // 다시 붙은 뒤 더 늦게 돌아온 옛 연결의 응답
                 // 처음 붙을 때 읽은 것은 새 소식이 아니다. 다시 붙을 때는 끊긴 동안 열린 질문을 알린다(t3code(MIT)
                 // packages/client-runtime/src/state/threads.ts `afterSequence`처럼 놓친 사건을 잇는다, plan §8.84)
@@ -1070,7 +1086,7 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
   };
   // 할 일 화면의 thread 칩(묶음)과 「task 없는 열린 thread」: 열린 thread 모음이 바뀌면 board를 다시 읽는다
   const threadGroups = useMemo(() => new Map(allThreads.map((t) => [t.id, t.group])), [threads]); // eslint-disable-line react-hooks/exhaustive-deps
-  const openThreadIds = allThreads.filter((t) => t.group !== "resolved").map((t) => t.id).sort().join(" ");
+  const openThreadIds = allThreads.filter((t) => t.group !== "resolved").map((t) => `${t.id}:${t.stage ?? ""}`).sort().join(" ");
   const taskBoard = useTaskBoard(up, openThreadIds, tasksShown);
   const seenMine = useSeenMine(taskBoard.board);
   const shownThreads = allThreads.filter((t) => t.group !== "resolved");
@@ -1082,7 +1098,7 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
   const askKey = sel?.startsWith("ask:")
     ? sel.slice("ask:".length)
     : sel?.startsWith("question:")
-      ? (questionKey(sel.slice("question:".length), shownThreads, asksDone) ?? `q:${sel.slice("question:".length)}`)
+      ? (questionKey(sel.slice("question:".length), shownThreads, asksDone, asksData?.requests ?? []) ?? `q:${sel.slice("question:".length)}`)
       : null;
   const askSelection = useAskSelection(askKey, askList, asksDone);
   const askSelected = askSelection.kind === "open" ? askSelection.ask.key : askSelection.kind === "done" ? `d:${askSelection.record.id}` : null;
@@ -1108,7 +1124,7 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
     let live = true;
     call({ op: "library_reports", project: null })
       .then((r) => {
-        if (live && r.kind === "library_reports") setReportNames(new Map(r.reports.map((x) => [x.name, x])));
+        if (live && r.kind === "library_reports") setReportNames(new Map(r.reports.flatMap((x) => [[x.name, x] as const, ...(x.versions ?? []).map((id) => [id, { ...x, name: id, report_id: id }] as const)])));
       })
       .catch(() => {});
     return () => {
@@ -1210,8 +1226,36 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
     work: { count: needThreads.length + waitingAgents.length, label: "확인 필요·검토 대기·답을 기다림" },
     machines: { count: highMachines(machines), label: `CPU·MEM ${HIGH_STAT}% 넘음` },
     automations: { count: automationBadge, label: "막힌 큐·승인 필요" },
-    inbox: { count: inboxBadge, label: "끝내지 않은 알림" },
   };
+  // 막대 맨 위 「coordinator」(t-0621): 도는 coordinator pane(「작업」 트리의 coordinator 줄, sidebarModel `roster`와 같은 판정)을 연다.
+  // 없으면 기본 profile로 띄워 연다(할 일 「coordinator에게 맡기기」의 `project_open`). 보기 권한은 띄울 수 없어 그때 단추가 없다
+  const coordinatorPane = panes.find((p) => p.coordinator_project && p.state === "running" && !threadOfPane.has(p.id)) ?? null;
+  const [coordinatorBusy, setCoordinatorBusy] = useState(false);
+  const openCoordinator = async () => {
+    if (coordinatorPane) return choose(coordinatorPane.id);
+    if (coordinatorBusy) return;
+    setCoordinatorBusy(true);
+    setMsg(null);
+    try {
+      const r = await call({ op: "project_open" });
+      if (r.kind === "project_opened") choose(r.pane.id);
+    } catch (e) {
+      setMsg(e instanceof Error ? e.message : String(e));
+    } finally {
+      setCoordinatorBusy(false);
+    }
+  };
+  const coordinatorStatus = coordinatorPane?.connection === "connected" ? paneAgentStatus(coordinatorPane) : undefined;
+  const coordinatorButton: CoordinatorButton | null =
+    coordinatorPane || canControl
+      ? {
+          active: coordinatorPane !== null && current?.id === coordinatorPane.id,
+          // 새 답은 보는 동안 host가 본 것으로 적는다(seen): 그 사이 점이 깜빡이지 않게 보는 pane은 뺀다
+          badge: coordinatorStatus === "blocked" ? "ask" : coordinatorStatus === "done" && current?.id !== coordinatorPane?.id ? "reply" : null,
+          busy: coordinatorBusy,
+          onOpen: () => void openCoordinator(),
+        }
+      : null;
   // 탭 아이콘의 안 본 알림 수(faviconBadge.ts, plan §8.266): 창에 focus가 오면 지운다
   useEffect(() => watchBadgeFocus(), []);
   // 넓은 창에서 접었으면 사이드바 칸이 없다(좁은 창은 drawer라 늘 칸이 있다)
@@ -1239,6 +1283,7 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
     >
       <aside id="workspace-drawer" className={`list${drawerOpen ? " is-open" : ""}`}>
         <ActivityBar
+          coordinator={coordinatorButton}
           panel={panel}
           shown={sidebarShown}
           onPanel={showPanel}
@@ -1337,6 +1382,7 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
             selection={askSelection}
             canControl={canControl}
             onAnswer={answerThread}
+            onRequestAnswer={async (r, picks, text) => putAsks(await call({ op: "ask_answer", item: r.id, body_hash: r.questions!.report_hash, picks, text }))}
             onHandle={async (item) => putAsks(await call({ op: "ask_handle", item }))}
             onReply={(title) => handOff(`「${title}」에 대한 답: `)}
             onForget={async (id) => putAsks(await call({ op: "ask_forget", ids: [id], all: false }))}
@@ -1356,6 +1402,9 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
             board={taskBoard.board}
             error={taskBoard.error}
             groups={threadGroups}
+            machines={machines}
+            stages={new Map(allThreads.map(t => [t.id, t.stage]))}
+            overLimits={new Map(allThreads.map(t => [t.id, t.over_limit]))}
             reader={role === "reader"}
             addRequest={taskAdds}
             focusRequest={taskFocus}

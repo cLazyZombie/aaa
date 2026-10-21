@@ -31,6 +31,7 @@ impl Lab {
                 software: "test".into(),
                 features: vec!["host_profiles.v1".into(), "ci.v1".into()],
                 dev_mode: true,
+                sha256: None,
                 selfcheck: None,
                 sessions: vec![],
                 identity: None,

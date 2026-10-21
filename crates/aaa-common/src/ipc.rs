@@ -28,6 +28,19 @@ fn pipe_name(path: &Path) -> String {
     format!(r"\\.\pipe\aaa-{}", hex::encode(&h[..12]))
 }
 
+#[cfg(windows)]
+fn pipe_server(name: &str, first: bool) -> io::Result<tokio::net::windows::named_pipe::NamedPipeServer> {
+    use tokio::net::windows::named_pipe::ServerOptions;
+    let (_descriptor, mut attrs) = crate::private_file::security_for(false, false)?;
+    // SAFETY: attrs와 그 descriptor는 동기 생성 호출이 끝날 때까지 살아 있다.
+    unsafe {
+        ServerOptions::new().first_pipe_instance(first).reject_remote_clients(true).create_with_security_attributes_raw(
+            name,
+            (&mut attrs as *mut windows_sys::Win32::Security::SECURITY_ATTRIBUTES).cast(),
+        )
+    }
+}
+
 impl LocalListener {
     pub fn bind(path: &Path) -> io::Result<Self> {
         #[cfg(unix)]
@@ -49,9 +62,8 @@ impl LocalListener {
         }
         #[cfg(windows)]
         {
-            use tokio::net::windows::named_pipe::ServerOptions;
             let name = pipe_name(path);
-            let server = ServerOptions::new().first_pipe_instance(true).create(&name)?;
+            let server = pipe_server(&name, true)?;
             Ok(LocalListener { inner: tokio::sync::Mutex::new(server), name, path: path.to_path_buf() })
         }
     }
@@ -86,10 +98,9 @@ impl LocalListener {
         #[cfg(windows)]
         {
             use std::os::windows::io::AsRawHandle;
-            use tokio::net::windows::named_pipe::ServerOptions;
             let mut guard = self.inner.lock().await;
             guard.connect().await?;
-            let next = ServerOptions::new().create(&self.name)?;
+            let next = pipe_server(&self.name, false)?;
             let connected = std::mem::replace(&mut *guard, next);
             let mut pid = 0u32;
             // SAFETY: 연결된 named pipe handle이고 pid는 쓸 수 있는 u32다
@@ -108,10 +119,38 @@ impl Drop for LocalListener {
     }
 }
 
+#[cfg(unix)]
+type NativeClient = tokio::net::UnixStream;
+#[cfg(windows)]
+type NativeClient = tokio::net::windows::named_pipe::NamedPipeClient;
 pub async fn connect(path: &Path) -> io::Result<LocalStream> {
+    Ok(Box::new(native_connect(path).await?))
+}
+/// private installer callback은 server PID도 OS에서 받아 고정 부모 실행 파일과 대조한다.
+pub async fn connect_peer(path: &Path) -> io::Result<(LocalStream, Option<u32>)> {
+    let stream = native_connect(path).await?;
+    #[cfg(unix)]
+    let pid = {
+        let peer = stream.peer_cred()?;
+        if peer.uid() != unsafe { libc::getuid() } {
+            return Err(io::Error::new(io::ErrorKind::PermissionDenied, "private IPC peer owner"));
+        }
+        peer.pid().and_then(|pid| u32::try_from(pid).ok()).filter(|pid| *pid > 0)
+    };
+    #[cfg(windows)]
+    let pid = {
+        use std::os::windows::io::AsRawHandle;
+        let mut pid = 0;
+        let ok =
+            unsafe { windows_sys::Win32::System::Pipes::GetNamedPipeServerProcessId(stream.as_raw_handle(), &mut pid) };
+        (ok != 0 && pid > 0).then_some(pid)
+    };
+    Ok((Box::new(stream), pid))
+}
+async fn native_connect(path: &Path) -> io::Result<NativeClient> {
     #[cfg(unix)]
     {
-        Ok(Box::new(tokio::net::UnixStream::connect(path).await?))
+        tokio::net::UnixStream::connect(path).await
     }
     #[cfg(windows)]
     {
@@ -126,7 +165,7 @@ pub async fn connect(path: &Path) -> io::Result<LocalStream> {
         let deadline = Instant::now() + Duration::from_millis(250);
         loop {
             match ClientOptions::new().open(&name) {
-                Ok(stream) => return Ok(Box::new(stream)),
+                Ok(stream) => return Ok(stream),
                 Err(error) if error.raw_os_error() == Some(ERROR_PIPE_BUSY as i32) && Instant::now() < deadline => {
                     sleep_until((Instant::now() + Duration::from_millis(5)).min(deadline)).await;
                 }
@@ -144,6 +183,30 @@ mod tests {
     use std::time::Duration;
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
     use windows_sys::Win32::Foundation::ERROR_PIPE_BUSY;
+
+    #[tokio::test]
+    async fn every_pipe_instance_has_only_the_current_sid_and_transports_bytes() {
+        use std::os::windows::io::AsRawHandle;
+        let path = std::env::temp_dir().join(format!("aaa-pipe-acl-{}", ulid::Ulid::new()));
+        let listener = LocalListener::bind(&path).unwrap();
+        assert!(LocalListener::bind(&path).is_err(), "다른 listener가 첫 instance를 빼앗지 못한다");
+        for _ in 0..3 {
+            crate::windows_acl_tests::assert_private(listener.inner.lock().await.as_raw_handle(), false);
+            let (client, server) = tokio::time::timeout(Duration::from_secs(3), async {
+                tokio::try_join!(connect(&path), listener.accept_peer())
+            })
+            .await
+            .unwrap()
+            .unwrap();
+            let (mut server, pid) = server;
+            assert_eq!(pid, Some(std::process::id()));
+            let mut client = client;
+            client.write_all(b"private").await.unwrap();
+            let mut bytes = [0; 7];
+            server.read_exact(&mut bytes).await.unwrap();
+            assert_eq!(&bytes, b"private");
+        }
+    }
 
     /// 실제 pipe를 점유해 BUSY를 만든다. 고정 sleep 없이 accept 사건으로 다음 연결을 푼다.
     #[tokio::test]

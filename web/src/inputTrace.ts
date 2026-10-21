@@ -1,3 +1,4 @@
+import { apiFetch } from "./apiRequest";
 // 실기 입력 사건 기록. iPad 화면 키보드 같은 OS 입력기의 사건 순서는 headless 브라우저로 만들 수 없다.
 // herdr-web-ui scripts/terminal-ime-diagnostic.ts처럼 실기에서 실제 사건을 모으고, 그 순서를 웹 E2E 재생으로 옮긴다.
 //
@@ -130,7 +131,7 @@ export async function sendTrace(): Promise<string> {
     standalone: window.matchMedia("(display-mode: standalone)").matches,
     events,
   };
-  const res = await fetch("/api/v1/diag/input", {
+  const res = await apiFetch("/api/v1/diag/input", {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify(body),

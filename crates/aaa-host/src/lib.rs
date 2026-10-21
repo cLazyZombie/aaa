@@ -8,6 +8,7 @@ mod answer;
 mod app_badge;
 mod asks;
 mod attach;
+mod question_ids;
 /// 자동화 정본 타입의 편집기용 JSON Schema. host 상태를 읽지 않는다.
 pub fn automation_schema() -> String {
     serde_json::to_string_pretty(&automation::schema()).expect("schema serialize")
@@ -31,6 +32,7 @@ mod ctrl_enter;
 pub mod db;
 mod deploy;
 mod diff;
+mod enroll_guide;
 mod file_rev;
 mod files;
 pub mod front;
@@ -40,6 +42,7 @@ mod health;
 mod http;
 mod inbox;
 mod input_log;
+pub mod installation;
 mod legacy_mission;
 mod library;
 mod library_links;
@@ -48,6 +51,7 @@ mod library_retention;
 mod library_upload;
 mod lifecycle;
 pub mod link;
+mod machine_setup;
 pub mod migrate;
 mod notice;
 mod notify;
@@ -63,7 +67,9 @@ mod prompt_box;
 mod push;
 mod quota;
 mod quota_rpc;
+mod report_ids;
 mod report_mark;
+mod report_sandbox;
 mod resource;
 mod restore;
 mod rollout;
@@ -78,6 +84,7 @@ pub mod tailscale;
 mod task_attach;
 mod task_clean;
 mod task_edit;
+mod task_ids;
 mod task_queue;
 mod task_repo;
 mod tasks;
@@ -143,9 +150,10 @@ impl AgentConn {
                 Duration::from_secs(self.timeouts.thread_prepare_timeout_secs)
             }
             AgentRequest::ThreadCleanup { .. } => Duration::from_secs(self.timeouts.thread_cleanup_timeout_secs),
-            AgentRequest::FileRead { .. } | AgentRequest::ReportCollect { .. } => {
-                Duration::from_secs(self.timeouts.file_request_timeout_secs)
-            }
+            AgentRequest::FileRead { .. }
+            | AgentRequest::ReportCollect { .. }
+            | AgentRequest::ReportFileRead { .. }
+            | AgentRequest::ReportTransfer { .. } => Duration::from_secs(self.timeouts.file_request_timeout_secs),
             _ => REQUEST_TIMEOUT,
         };
         self.request_timeout(body, wait).await
@@ -243,6 +251,29 @@ struct MachineRt {
     agent_pid: Option<u32>,
     /// 이 연결에 화면 색을 차례로 보내는 곳(agent 기능 `term_colors.v1`, colors.rs). 놓으면 보내던 task가 끝난다
     colors: Option<tokio::sync::mpsc::UnboundedSender<colors::ColorPush>>,
+    /// 마지막 hello의 CPU 종류·판·SHA·자가 점검(웹 머신 상세, plan §8.372)
+    build: MachineBuild,
+}
+
+/// 머신 상세에 보이는 마지막 hello의 실행 파일 정보. 앞의 셋은 host DB에도 남는다(자가 점검은 이 host 실행 동안만)
+#[derive(Default)]
+struct MachineBuild {
+    arch: Option<String>,
+    software: Option<String>,
+    sha256: Option<String>,
+    selfcheck: Option<aaa_proto::MachineSelfcheck>,
+}
+
+impl MachineBuild {
+    fn of(hello: &aaa_proto::AgentHello) -> Self {
+        MachineBuild {
+            arch: Some(hello.arch.clone()),
+            software: Some(hello.software.clone()),
+            sha256: hello.sha256.clone(),
+            // agent가 정한 꼴(`pass`·`reasons`)만 읽는다. 모르는 꼴이면 보이지 않는다
+            selfcheck: hello.selfcheck.as_ref().and_then(|v| serde_json::from_value(v.clone()).ok()),
+        }
+    }
 }
 
 struct Mirror {
@@ -333,6 +364,7 @@ const REPLACED_KEEP: usize = 8;
 pub struct FrontRef {
     pub id: String,
     pub label: String,
+    pub(crate) peer_pid: Option<u32>,
 }
 
 impl FrontRef {
@@ -354,6 +386,7 @@ struct Inner {
 }
 
 struct PendingRt {
+    installation: Option<aaa_proto::install::InstallEnrollmentBinding>,
     machine_id: String,
     fingerprint: String,
     sas: String,
@@ -451,6 +484,8 @@ pub struct Host {
     pub accounts_changed: tokio_watch::Sender<u64>,
     /// 머신 등록 창·대기 목록이 바뀐 횟수(웹 「머신」 페이지가 다시 읽는다)
     pub enroll_changed: tokio_watch::Sender<u64>,
+    /// SSH 머신 추가 작업을 읽고 바꾸는 한 차례(machine_setup.rs)
+    setup_gate: Mutex<()>,
     /// 계정 기록(`account-meta:*`) 읽고-고쳐-쓰기를 하나씩(로그인 끝·갱신 결과·ticker 상태 pass가 겹친다)
     account_meta_gate: Mutex<()>,
     /// 웹 기기 폐기의 「마지막 조작 기기」 세기와 폐기를 묶는다
@@ -461,6 +496,7 @@ pub struct Host {
     health_wake: tokio::sync::Notify,
     enroll: Mutex<Enroll>,
     pairing: Mutex<Pairing>,
+    install_probes: Mutex<HashMap<String, (String, Instant)>>,
     pub agent_listen: Mutex<Option<String>>,
     pub web_listen: Mutex<Option<String>>,
     /// 거짓인 동안 같은 머신 agent에 Welcome을 보내지 않는다. `run_host`가 웹을 열 때까지만 닫는다(W6c): 그 Welcome의 host 실행
@@ -488,8 +524,8 @@ pub struct Host {
     flow_order: Mutex<()>,
     /// thread 기록이 바뀌었다
     pub thread_events: broadcast::Sender<aaa_proto::ThreadView>,
-    /// 보고 사본은 한 번에 하나씩 한다
-    collect_lock: tokio::sync::Mutex<()>,
+    /// 같은 thread의 보고·resolve만 직렬화한다. 다른 머신의 전송은 서로 기다리지 않는다.
+    collect_locks: Mutex<HashMap<String, Arc<tokio::sync::Mutex<()>>>>,
     /// 확인창 질문이 열리거나 바뀌었다
     pub question_events: broadcast::Sender<aaa_proto::QuestionView>,
     /// 앱 안 알림(턴 끝남·새 보고, notice.rs). 기록하지 않는다
@@ -575,6 +611,8 @@ pub struct Host {
     /// brief 배경 task가 도는 thread(`<project>/<thread>`, 하나만 돈다)
     brief_loops: Mutex<HashSet<String>>,
     thread_ops: Mutex<HashMap<String, Arc<tokio::sync::Mutex<()>>>>,
+    #[cfg(test)]
+    start_admitted_hook: Mutex<Option<orch::StartAdmittedHook>>,
     /// 지금 brief 한 걸음을 하는 thread(배경 task와 `thread brief`가 겹치지 않게, herdr-projects brief.rs `claim`)
     brief_claims: Mutex<HashSet<String>>,
     /// 보고를 다시 확인하는 중인 thread(`<project>/<thread>`)와 그동안 또 확인을 부탁받았는지. 묶음 셈(transitions.rs)은
@@ -664,6 +702,7 @@ impl Host {
                     identity: None,
                     agent_pid: None,
                     colors: None,
+                    build: MachineBuild { arch: m.arch, software: m.software, sha256: m.sha256, selfcheck: None },
                 },
             );
         }
@@ -696,10 +735,12 @@ impl Host {
             inbox_changed: tokio_watch::channel(0).0,
             accounts_changed: tokio_watch::channel(0).0,
             enroll_changed: tokio_watch::channel(0).0,
+            setup_gate: Mutex::new(()),
             account_meta_gate: Mutex::new(()),
             device_gate: Mutex::new(()),
             enroll: Mutex::new(Enroll::default()),
             pairing: Mutex::new(Pairing::default()),
+            install_probes: Mutex::new(HashMap::new()),
             agent_listen: Mutex::new(None),
             web_listen: Mutex::new(None),
             web_gate: tokio::sync::watch::channel(true).0,
@@ -711,7 +752,7 @@ impl Host {
             flow_events: broadcast::channel(256).0,
             flow_order: Mutex::new(()),
             thread_events: broadcast::channel(256).0,
-            collect_lock: tokio::sync::Mutex::new(()),
+            collect_locks: Mutex::new(HashMap::new()),
             question_events: broadcast::channel(256).0,
             post_gate: std::sync::Mutex::new(()),
             deployment_gate: std::sync::Mutex::new(()),
@@ -767,6 +808,8 @@ impl Host {
             rec_lock: Mutex::new(()),
             brief_loops: Mutex::new(HashSet::new()),
             thread_ops: Mutex::new(HashMap::new()),
+            #[cfg(test)]
+            start_admitted_hook: Mutex::new(None),
             brief_claims: Mutex::new(HashSet::new()),
             resource_exhausted: std::sync::atomic::AtomicBool::new(false),
             report_refresh: Mutex::new(HashMap::new()),
@@ -775,6 +818,9 @@ impl Host {
         });
         // 이 기록 전에 등록한 Codex 계정의 메일·plan(관리 GUI W5a, 사용자 답 3A)
         host.account_meta_backfill();
+        host.backfill_report_stages()?;
+        // 진행 중에 내려간 SSH 머신 추가 작업(plan §8.384)
+        host.setup_recover();
         Ok(host)
     }
 
@@ -809,7 +855,7 @@ impl Host {
 
     /// hello를 받아들였다: 머신·pane 목록을 갱신하고 모든 세션을 구독한다.
     pub fn agent_connected(self: &Arc<Self>, hello: &aaa_proto::AgentHello, local: bool, conn: AgentConn) {
-        let _ = self.db.touch_machine(&hello.machine_id, &hello.os, &hello.boot_id);
+        let _ = self.db.touch_machine(hello);
         let generation = conn.generation;
         // 연결을 공개하기 전에 상태 복원 울타리를 친다. host 재시작 뒤에는 실행 중인 pane도 아직 agent=None이다.
         // Hello의 모든 harness 상태를 재생하기 전 ticker가 보면 쉼(no agent)라는 거짓 전이가 생긴다.
@@ -844,8 +890,10 @@ impl Host {
                 identity: None,
                 agent_pid: None,
                 colors: None,
+                build: MachineBuild::default(),
             });
             m.colors = pushes;
+            m.build = MachineBuild::of(hello);
             m.os = Some(hello.os.clone());
             m.boot_id = Some(hello.boot_id.clone());
             m.dev_mode = hello.dev_mode;
@@ -1077,6 +1125,7 @@ impl Host {
 
     pub fn machine_views(&self) -> Vec<MachineView> {
         let availability = self.pr.lock().unwrap().availability.clone();
+        let host_software = aaa_common::util::software();
         let i = self.inner.lock().unwrap();
         let mut v: Vec<_> = i
             .machines
@@ -1094,6 +1143,12 @@ impl Host {
                 health: m.health.as_ref().map(|h| h.0.clone()),
                 clock_skew_ms: m.health.as_ref().map(|h| h.1),
                 problems: health::problems(m),
+                arch: m.build.arch.clone(),
+                software_differs: m.build.software.as_ref().is_some_and(|s| *s != host_software),
+                software: m.build.software.clone(),
+                sha256: m.build.sha256.clone(),
+                features: m.features.clone(),
+                selfcheck: m.build.selfcheck.clone(),
             })
             .collect();
         v.sort_by(|a, b| b.local.cmp(&a.local).then(a.name.cmp(&b.name)));
@@ -1342,6 +1397,10 @@ impl Host {
                 | FrontRequest::EnrollClose
                 | FrontRequest::EnrollApprove { .. }
                 | FrontRequest::MachineRevoke { .. }
+                | FrontRequest::MachineSetupStart { .. }
+                | FrontRequest::MachineSetupTrust { .. }
+                | FrontRequest::MachineSetupChoose { .. }
+                | FrontRequest::MachineSetupCancel { .. }
                 | FrontRequest::DeviceRevoke { .. }
                 | FrontRequest::WebPublish
                 | FrontRequest::WebPublishOff
@@ -1415,6 +1474,13 @@ impl Host {
             }
         }
         match req {
+            FrontRequest::InstallApprove { request } => self.install_approve(role, actor, *request),
+            FrontRequest::InstallPublish { installation_id } => {
+                self.install_publish(front.and_then(|f| f.peer_pid), &installation_id).await
+            }
+            FrontRequest::InstallPublishStatus { installation_id } => {
+                self.install_publish_status(&installation_id).await
+            }
             FrontRequest::AccountImport { name, harness, secret } => {
                 let secret = secret.0.trim();
                 self.accounts.import(&name, &harness, secret)?;
@@ -1474,6 +1540,12 @@ impl Host {
             FrontRequest::PostUnmute { project, thread } => self.post_unmute(&project, &thread, actor),
             FrontRequest::Asks { project } => self.asks_view(&project),
             FrontRequest::AskHandle { project, item } => self.ask_handle(&project, &item, actor),
+            FrontRequest::QuestionReply { project, id, choice, text } => {
+                self.reply_by_id(&project, &id, choice.as_deref(), text, actor).await
+            }
+            FrontRequest::AskAnswer { project, item, body_hash, picks, text } => {
+                self.ask_answer(&project, &item, &body_hash, picks, text, actor)
+            }
             FrontRequest::AskForget { project, ids, all } => self.ask_forget(&project, &ids, all, actor),
             FrontRequest::Status => Ok(FrontResponse::Status(HostStatus {
                 host_id: self.host_id.clone(),
@@ -1520,6 +1592,8 @@ impl Host {
             FrontRequest::Profiles { machine } => self.profiles(machine.as_deref()).await,
             FrontRequest::ProfileResolve { name } => self.profile_resolve(name.as_deref()),
             FrontRequest::ThreadStart {
+                over_limit,
+                user_request,
                 holds,
                 project,
                 title,
@@ -1536,6 +1610,13 @@ impl Host {
             } => {
                 // herdr-projects threads.rs `placement`: repo가 있으면 worktree, 없으면 repo 없는 작업 폴더. task에서 띄우면
                 // 저장소 칸이 정한다(`apply_task_repo`): 요청이 정한 kind를 그 판정에 넘긴다
+                let over_limit = self.thread_limit_override(
+                    &project,
+                    over_limit,
+                    user_request.as_deref(),
+                    from_task.as_deref(),
+                    actor,
+                )?;
                 let kind_given = kind;
                 let kind = kind.unwrap_or(if repo.is_some() {
                     aaa_proto::ThreadKind::Worktree
@@ -1543,6 +1624,7 @@ impl Host {
                     aaa_proto::ThreadKind::Dir
                 });
                 let mut a = orch::StartArgs {
+                    over_limit,
                     reservation: None,
                     account: selected_account,
                     holds,
@@ -1579,7 +1661,7 @@ impl Host {
                                 ));
                             }
                             if let Some(tid) = &q.thread {
-                                return self.thread_show(&a.project, tid).map(FrontResponse::Thread);
+                                return self.thread_show(&a.project, tid).map(Box::new).map(FrontResponse::Thread);
                             }
                             return Err(err(
                                 ErrorCode::Conflict,
@@ -1619,13 +1701,13 @@ impl Host {
                 if link_task && let Some(t) = &picked {
                     v.warnings.extend(self.link_started(&project, t, &v.id, actor).await);
                 }
-                Ok(FrontResponse::Thread(v))
+                Ok(FrontResponse::Thread(Box::new(v)))
             }
             FrontRequest::ThreadStartPreview { project, from_task, task_block } => {
                 self.thread_start_preview(&project, &from_task, task_block.as_deref()).await
             }
             FrontRequest::ThreadAdopt { project, pane, title, task } => {
-                self.thread_adopt(&project, &pane, &title, &task, actor).await.map(FrontResponse::Thread)
+                self.thread_adopt(&project, &pane, &title, &task, actor).await.map(Box::new).map(FrontResponse::Thread)
             }
             FrontRequest::ThreadNext { project, thread, line, add } => {
                 self.thread_next(&project, &thread, line, add, actor).await
@@ -1641,10 +1723,12 @@ impl Host {
             FrontRequest::TaskArchive { project, restore } => {
                 self.task_archive(&project, restore.as_deref(), actor).await
             }
-            FrontRequest::TaskEdit { project, ops, base_sha256 } => {
-                self.task_edit(&project, ops, base_sha256, actor).await
+            FrontRequest::TaskEdit { project, ops, base_sha256, user_request } => {
+                self.task_edit(&project, ops, base_sha256, user_request, actor).await
             }
-            FrontRequest::TaskLog { project, before, limit, filter } => self.task_log(&project, before, limit, filter),
+            FrontRequest::TaskLog { project, before, limit, filter, task } => {
+                self.task_log(&project, before, limit, filter, task.as_deref())
+            }
             FrontRequest::TaskLogPrune { project, before_ms } => self.task_log_prune(&project, before_ms, actor),
             FrontRequest::Assignable { project, check } => {
                 self.project_dir(&project)?;
@@ -1659,7 +1743,7 @@ impl Host {
                 self.threads_of(project.as_deref(), want).map(|threads| FrontResponse::Threads { threads })
             }
             FrontRequest::ThreadShow { project, thread } => {
-                self.thread_show(&project, &thread).map(FrontResponse::Thread)
+                self.thread_show(&project, &thread).map(Box::new).map(FrontResponse::Thread)
             }
             FrontRequest::ThreadSummary { project, thread } => {
                 self.thread_summary(&project, &thread).map(FrontResponse::ThreadSummary)
@@ -1712,10 +1796,10 @@ impl Host {
                 self.library_link_revoke(&id, actor).map(FrontResponse::LibraryLink)
             }
             FrontRequest::ThreadAck { project, thread } => {
-                self.thread_ack(&project, &thread, actor).map(FrontResponse::Thread)
+                self.thread_ack(&project, &thread, actor).map(Box::new).map(FrontResponse::Thread)
             }
             FrontRequest::ThreadResolve { project, thread, reopen: true, .. } => {
-                self.thread_reopen(&project, &thread, actor).map(FrontResponse::Thread)
+                self.thread_reopen(&project, &thread, actor).map(Box::new).map(FrontResponse::Thread)
             }
             FrontRequest::ThreadResolve {
                 project,
@@ -1733,32 +1817,53 @@ impl Host {
                     actor,
                 )
                 .await
+                .map(Box::new)
                 .map(FrontResponse::Thread),
             FrontRequest::ThreadStop { project, thread } => {
-                self.thread_stop(&project, &thread, actor).await.map(FrontResponse::Thread)
+                self.thread_stop(&project, &thread, actor).await.map(Box::new).map(FrontResponse::Thread)
             }
-            FrontRequest::ThreadRestart { project, thread, resume, profile } => {
-                self.thread_restart(&project, &thread, resume, profile, actor).await.map(FrontResponse::Thread)
-            }
+            FrontRequest::ThreadRestart { project, thread, resume, profile } => self
+                .thread_restart(&project, &thread, resume, profile, actor)
+                .await
+                .map(Box::new)
+                .map(FrontResponse::Thread),
             FrontRequest::ThreadBrief { project, thread } => {
-                self.thread_brief(&project, &thread, actor).await.map(FrontResponse::Thread)
+                self.thread_brief(&project, &thread, actor).await.map(Box::new).map(FrontResponse::Thread)
             }
             FrontRequest::ThreadRead { project, thread, lines } => self.thread_read(&project, &thread, lines).await,
             FrontRequest::ThreadKeys { project, thread, keys, text } => {
                 self.thread_keys(&project, &thread, &keys, text, actor).await
             }
-            FrontRequest::Questions { all } => Ok(FrontResponse::Questions { questions: self.questions(all) }),
-            FrontRequest::QuestionAnswer { id, choice, menu, pick } => match (menu, pick) {
-                (Some(menu), Some(pick)) => self.answer_menu(&id, &menu, pick, actor).await,
-                _ => self.answer(&id, &choice, actor).await,
+            FrontRequest::Questions { all } => Ok(FrontResponse::Questions { questions: self.question_catalog(all)? }),
+            FrontRequest::QuestionAnswer { id, choice, menu, pick } => {
+                if let Some(t) = self.db.question_target(None, &id).map_err(orch::internal)? {
+                    if t.kind != "harness" || menu.is_none() {
+                        return self.reply_by_id(&t.project, &id, Some(&choice), None, actor).await;
+                    }
+                    return self
+                        .answer_menu(
+                            &t.subject,
+                            &menu.unwrap(),
+                            pick.ok_or_else(|| err(ErrorCode::BadRequest, "선택이 없다"))?,
+                            actor,
+                        )
+                        .await
+                        .map(FrontResponse::Question);
+                }
+                match (menu, pick) {
+                    (Some(menu), Some(pick)) => self.answer_menu(&id, &menu, pick, actor).await,
+                    _ => self.answer(&id, &choice, actor).await,
+                }
+                .map(FrontResponse::Question)
             }
-            .map(FrontResponse::Question),
             FrontRequest::ThreadMessage { project, thread, text, mode } => {
                 self.thread_message(&project, &thread, text, mode, actor).await.map(FrontResponse::Message)
             }
-            FrontRequest::ThreadAnswer { project, thread, report_hash, picks, text } => {
-                self.thread_answer(&project, &thread, &report_hash, picks, text, actor).await.map(FrontResponse::Thread)
-            }
+            FrontRequest::ThreadAnswer { project, thread, report_hash, picks, text } => self
+                .thread_answer(&project, &thread, &report_hash, picks, text, actor)
+                .await
+                .map(Box::new)
+                .map(FrontResponse::Thread),
             FrontRequest::Preferences => Ok(FrontResponse::Preferences(self.preferences.get())),
             FrontRequest::PreferencesSet { settings, pins } => {
                 let change = prefs::change_body(settings, pins)?;
@@ -2158,6 +2263,18 @@ impl Host {
                 self.enroll_bump();
                 Ok(FrontResponse::Done)
             }
+            FrontRequest::EnrollGuide => Ok(FrontResponse::EnrollGuide { guide: self.enroll_guide().await }),
+            FrontRequest::MachineSetupStart { target } => {
+                self.setup_start(&target, actor).map(|setup| FrontResponse::MachineSetup { setup })
+            }
+            FrontRequest::MachineSetupTrust { job, host_key_sha256 } => {
+                self.setup_trust(&job, &host_key_sha256, actor).await.map(|setup| FrontResponse::MachineSetup { setup })
+            }
+            FrontRequest::MachineSetupChoose { job, os, arch } => {
+                self.setup_choose(&job, &os, &arch, actor).map(|setup| FrontResponse::MachineSetup { setup })
+            }
+            FrontRequest::MachineSetupCancel { job } => self.setup_cancel(&job, actor).map(|_| FrontResponse::Done),
+            FrontRequest::MachineSetupList => self.setup_list().map(|setups| FrontResponse::MachineSetups { setups }),
             FrontRequest::EnrollPending => {
                 let e = self.enroll.lock().unwrap();
                 let now = Instant::now();
@@ -2279,7 +2396,7 @@ impl Host {
     // ───────────── 조작 lease(§4.5) ─────────────
 
     pub fn new_front(&self, label: String) -> FrontRef {
-        FrontRef { id: format!("f{}", self.front_seq.fetch_add(1, Ordering::Relaxed) + 1), label }
+        FrontRef { id: format!("f{}", self.front_seq.fetch_add(1, Ordering::Relaxed) + 1), label, peer_pid: None }
     }
 
     fn lease_set(&self, id: &str, to: Option<FrontRef>) {
@@ -2934,6 +3051,24 @@ impl Host {
         fingerprint: &str,
         sas: &str,
     ) -> Result<oneshot::Receiver<()>, ErrorBody> {
+        self.enroll_request_bound(name, machine_id, fingerprint, sas, None)
+    }
+    pub(crate) fn enroll_request_bound(
+        &self,
+        name: &str,
+        machine_id: &str,
+        fingerprint: &str,
+        sas: &str,
+        installation: Option<aaa_proto::install::InstallEnrollmentBinding>,
+    ) -> Result<oneshot::Receiver<()>, ErrorBody> {
+        if installation.as_ref().is_some_and(|b| {
+            b.installation_id.len() != 26
+                || !b.installation_id.bytes().all(|c| c.is_ascii_uppercase() || c.is_ascii_digit())
+                || b.plan_sha256.len() != 64
+                || !b.plan_sha256.bytes().all(|c| c.is_ascii_hexdigit())
+        }) {
+            return Err(err(ErrorCode::BadRequest, "설치 등록 ID·계획 hash를 확인하세요"));
+        }
         if !self.enroll_open() {
             return Err(err(
                 ErrorCode::EnrollClosed,
@@ -2956,6 +3091,7 @@ impl Host {
         e.pending.insert(
             name.to_string(),
             PendingRt {
+                installation,
                 machine_id: machine_id.to_string(),
                 fingerprint: fingerprint.to_string(),
                 sas: sas.to_string(),
@@ -2978,6 +3114,28 @@ impl Host {
         }
     }
 
+    /// DB가 확정한 등록만 runtime 목록에 반영한다. 재전달이 살아 있는 연결을 지우지 않는다.
+    fn machine_registered(&self, id: &str, name: &str) {
+        let mut inner = self.inner.lock().unwrap();
+        let machine = inner.machines.entry(id.into()).or_insert_with(|| MachineRt {
+            name: name.into(),
+            local: false,
+            os: None,
+            boot_id: None,
+            dev_mode: false,
+            conn: None,
+            last_seen_ms: None,
+            health: None,
+            health_sent: None,
+            features: vec![],
+            identity: None,
+            agent_pid: None,
+            colors: None,
+            build: Default::default(),
+        });
+        machine.name = name.into();
+    }
+
     fn approve(&self, name: &str, code: &str, actor: &str) -> Result<FrontResponse, ErrorBody> {
         let mut e = self.enroll.lock().unwrap();
         let Some(p) = e.pending.get_mut(name) else {
@@ -2995,27 +3153,23 @@ impl Host {
             return Err(err(ErrorCode::EnrollCodeMismatch, "확인 코드가 다르다(agent 화면의 코드를 입력한다)"));
         }
         let p = e.pending.remove(name).unwrap();
-        self.db
-            .upsert_machine(&p.machine_id, name, Some(&p.fingerprint), false)
-            .map_err(|e| err(ErrorCode::Internal, e.to_string()))?;
-        self.inner.lock().unwrap().machines.insert(
-            p.machine_id.clone(),
-            MachineRt {
-                name: name.to_string(),
-                local: false,
-                os: None,
-                boot_id: None,
-                dev_mode: false,
-                conn: None,
-                last_seen_ms: None,
-                health: None,
-                health_sent: None,
-                features: vec![],
-                identity: None,
-                agent_pid: None,
-                colors: None,
-            },
-        );
+        if let Some(binding) = &p.installation {
+            self.db
+                .install_enroll(
+                    &binding.installation_id,
+                    &binding.plan_sha256,
+                    &util::new_id(),
+                    &p.fingerprint,
+                    &p.machine_id,
+                    name,
+                )
+                .map_err(|_| err(ErrorCode::Forbidden, "설치 등록의 기존 신원·폐기 상태가 다릅니다"))?;
+        } else {
+            self.db
+                .upsert_machine(&p.machine_id, name, Some(&p.fingerprint), false)
+                .map_err(|e| err(ErrorCode::Internal, e.to_string()))?;
+        }
+        self.machine_registered(&p.machine_id, name);
         if let Some(tx) = p.accept {
             let _ = tx.send(());
         }
@@ -3086,6 +3240,7 @@ impl Host {
             .add_device(&id, role_s, &token_hash(&token), &label)
             .map_err(|e| err(ErrorCode::Internal, e.to_string()))?;
         self.db.audit(&format!("device:{id}"), "web_paired", role_s);
+        self.bump();
         Ok((token, role))
     }
 
@@ -3107,6 +3262,7 @@ impl Host {
         if done {
             self.revoked_devices.lock().unwrap().insert(id.to_string());
             let _ = self.device_revoked.send(id.to_string());
+            self.bump();
         }
         Ok(done)
     }
@@ -3120,7 +3276,8 @@ impl Host {
 
     async fn publish_status(&self) -> PublishState {
         let out = tailscale::read().await;
-        let plan = tailscale::plan(out.as_ref(), self.web_port(), &self.cfg.web.publish_ports);
+        let selected = self.db.meta("publish_selected_port").ok().flatten().and_then(|s| s.parse::<u16>().ok());
+        let plan = tailscale::installation_plan(out.as_ref(), self.web_port(), &self.cfg.web.publish_ports, selected);
         let owned = self.db.meta("publish_port").ok().flatten().and_then(|p| p.parse().ok());
         if let Some(dns) = &plan.dns_name {
             let _ = self.db.set_meta("publish_dns", dns);
@@ -3154,6 +3311,8 @@ impl Host {
         if self.web_port() == 0 {
             return Err(err(ErrorCode::BadRequest, "host.toml의 web.listen이 꺼져 있다"));
         }
+        // 사람이 W0로 자동 공개를 새로 요청하면 설치의 명시 포트 선호를 해제한다.
+        self.db.del_meta("publish_selected_port").map_err(|_| err(ErrorCode::Unavailable, "공개 선택을 확인하세요"))?;
         let out = tailscale::read().await;
         let plan = tailscale::plan(out.as_ref(), self.web_port(), &self.cfg.web.publish_ports);
         if plan.state != "running" {
@@ -3240,7 +3399,7 @@ pub(crate) fn public_origin_in(db: &db::Db) -> Option<String> {
     Some(tailscale::https_url(&dns, port).to_ascii_lowercase())
 }
 
-/// `aaa host` 실행: 설정 폴더를 읽어 host를 띄운다. 읽지 못하면 끝내지 않고 안전 모드(plan §8.370)로 웹만 열며, 되돌리거나
+/// `aaa host` 실행: 설정 폴더를 읽어 host를 띄운다. 읽지 못하면 끝내지 않고 안전 모드(plan §8.372)로 웹만 열며, 되돌리거나
 /// 다시 읽어 설정이 맞으면 정상 host로 이어 간다. OS 감독자에는 실제 listener 준비 뒤에만(안전 모드 웹이든 정상 host든 한 번) 알린다.
 /// 서비스 등록 자체는 ready가 아니다.
 pub async fn run(
@@ -3287,6 +3446,8 @@ async fn run_host(
         Err(names) => anyhow::bail!(lifecycle::sole_project_refusal(&names)),
     }
     // 옛 판이 남긴 보내던 메시지는 입구를 열기 전에 잊는다(연 뒤면 막 기록한 새 메시지까지 「모른다」로 바뀐다)
+    host.backfill_report_ids().map_err(|e| anyhow::anyhow!(e.message))?;
+    host.backfill_review_questions().map_err(|e| anyhow::anyhow!(e.message))?;
     host.forget_queued_messages();
     host.start_supervisor();
     host.web_gate.send_replace(false);
@@ -3372,6 +3533,9 @@ pub async fn shutdown_signal() {
         let _ = tokio::signal::ctrl_c().await;
     }
 }
+
+#[cfg(test)]
+mod machine_view_tests;
 
 #[cfg(test)]
 mod pairing_tests {
@@ -3502,6 +3666,7 @@ mod pairing_tests {
                 identity: None,
                 agent_pid: None,
                 colors: None,
+                build: Default::default(),
             },
         );
         let e = h

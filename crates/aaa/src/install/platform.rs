@@ -17,47 +17,8 @@ pub fn platform() -> Result<InstallPlatform, Box<InstallResult>> {
     Ok(InstallPlatform { os, arch })
 }
 
-#[cfg(unix)]
 pub fn account() -> Option<String> {
-    // SAFETY: 인자가 없고 현재 프로세스의 실효 uid만 읽는다. 승격 helper는 이 값을 바꾸어 쓸 수 없다.
-    Some(format!("uid:{}", unsafe { libc::geteuid() }))
-}
-
-#[cfg(windows)]
-pub fn account() -> Option<String> {
-    use windows_sys::Win32::{
-        Foundation::{CloseHandle, LocalFree},
-        Security::Authorization::ConvertSidToStringSidW,
-        Security::{GetTokenInformation, TOKEN_QUERY, TOKEN_USER, TokenUser},
-        System::Threading::{GetCurrentProcess, OpenProcessToken},
-    };
-    // SAFETY: 현재 token을 읽기 권한으로 열고 정렬된 buffer를 제공한다. 모든 handle/OS 메모리를 해제한다.
-    unsafe {
-        let mut token = std::ptr::null_mut();
-        if OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &mut token) == 0 {
-            return None;
-        }
-        let mut len = 0;
-        GetTokenInformation(token, TokenUser, std::ptr::null_mut(), 0, &mut len);
-        let mut buffer = vec![0usize; (len as usize).div_ceil(std::mem::size_of::<usize>())];
-        let ok = len > 0 && GetTokenInformation(token, TokenUser, buffer.as_mut_ptr().cast(), len, &mut len) != 0;
-        CloseHandle(token);
-        if !ok {
-            return None;
-        }
-        let user = &*buffer.as_ptr().cast::<TOKEN_USER>();
-        let mut text = std::ptr::null_mut();
-        if ConvertSidToStringSidW(user.User.Sid, &mut text) == 0 {
-            return None;
-        }
-        let mut n = 0;
-        while *text.add(n) != 0 {
-            n += 1;
-        }
-        let sid = String::from_utf16(std::slice::from_raw_parts(text, n)).ok();
-        LocalFree(text.cast());
-        sid
-    }
+    aaa_common::private_file::account()
 }
 
 pub fn ancestor(path: &Path) -> Option<&Path> {

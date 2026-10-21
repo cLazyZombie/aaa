@@ -8,7 +8,9 @@
 // 사라진다. 보기 권한 기기는 답·처리·지우기를 할 수 없다. 알림 주소 `/#question=<thread>`(post push url)는 그 카드를 연다.
 // 혼자 돌리기: node web/e2e/web.e2e.mjs --spec 53-thread-questions(새 실험실).
 import fs from "node:fs";
-import { root, aaa, until, step, browser, webkit, pairPage, inList, waitOutput, shot, coordinatorPost, AA } from "../lib/harness.mjs";
+import { fileURLToPath } from "node:url";
+import { createHash } from "node:crypto";
+import { root, aaa, until, step, browser, webkit, pairPage, inList, showPanel, waitOutput, shot, coordinatorPost, AA } from "../lib/harness.mjs";
 
 import { pairDevice } from "../lib/devices.mjs";
 
@@ -284,23 +286,11 @@ export default async function ({ page }) {
     // 보기 권한 기기는 처리·지우기를 할 수 없다
     const body = `${root}/request-body.md`;
     fs.writeFileSync(body, "배포 전에 **승인**이 필요하다.\n\n- 바뀐 것: 로그인 화면\n");
-    const inboxBadge = () => page.evaluate(() => document.querySelector('[data-testid="activity-badge-inbox"]')?.textContent ?? "0");
     aaa("post", "demo", "user", "--request", "--needs-user", "--topic", "user-action", "--title", "배포 승인", "--body-file", body);
     await until("빨강 배지 둘", async () => (await badge(page)).startsWith("ask 2 "));
-    // 같은 항목을 두 배지가 세지 않는다: 알림함은 그 요청을 「답할 것」으로 보낸다(plan §8.343·§8.345)
-    await page.getByTestId("activity-inbox").click();
-    await until("알림함의 답할 요청 수", async () => (await page.getByTestId("inbox-answers").innerText().catch(() => "")).includes("1건"));
-    // 배지는 host가 아는 끝내지 않은 항목에서 이 요청 하나를 뺀 수다. 앞 단계 보고의 「확인 필요」 같은 항목이 늦게 와도
-    // 둘이 함께 바뀐다(앞뒤 배지만 대조하면 그 항목이 사이에 와서 틀렸다: ci 부하에서 5 → 6)
-    const hostOpen = () => {
-      const r = aaa("inbox", "list", "demo", "--peek");
-      return r.items.filter((i) => !i.done).length + (r.omitted_open ?? 0);
-    };
-    await until("알림함 배지가 답할 요청을 세지 않음", async () => Number(await inboxBadge()) === hostOpen() - 1).catch(async (e) => {
-      throw new Error(`알림함 배지가 답할 요청을 셌다: 배지 ${await inboxBadge()}, host 끝내지 않은 항목 ${hostOpen()}(요청 1 포함) — ${e.message}`);
-    });
-    if (await page.locator('[data-testid="inbox-item"]', { hasText: "배포 승인" }).count()) throw new Error("알림함 목록에 답할 요청이 있다");
-    await page.getByTestId("inbox-answers").getByRole("button", { name: "답할 것 열기" }).click();
+    // coordinator 알림함은 숨겨도 사용자 확인 필요 post는 「답할 것」에 그대로 보인다(t-0590).
+    if (await page.locator('[data-testid="activity-inbox"], [data-testid="activity-badge-inbox"]').count()) throw new Error("알림함 단추·배지가 남았다");
+    await showPanel(page, "asks");
     await until("답할 것으로", async () =>
       (await page.evaluate(() => document.querySelector(".app")?.dataset.sidebar === "asks" && document.querySelector('[data-testid="asks-view"]')?.dataset.shown === "true")));
     const reqKey = await until("확인 필요 줄", () => page.evaluate(() => [...document.querySelectorAll('[data-testid="ask-row"]')].map((r) => r.dataset.key).find((k) => k.startsWith("r:"))));
@@ -332,4 +322,103 @@ export default async function ({ page }) {
     }
     aaa("thread", "resolve", "demo", t.id);
   }).finally(async () => { if (wk) await wk.close(); });
+  await step("강조 선택지·번호 목록 질문: M3 2개·3/2개 선택지, 누락 경고와 답 거부·inbox·수정 뒤 같은 글자 전달", async () => {
+    if (!aaa("project", "list").projects.some((p) => p.name === "demo")) aaa("project", "create", "demo");
+    fs.writeFileSync(`${root}/task-question-format.md`, "질문 문법 회귀 시험\n");
+    const t = aaa("thread", "start", "demo", "--title", "M3 질문 문법", "--machine", "labA", "--profile", "fake", "--kind", "dir", "--task-file", `${root}/task-question-format.md`);
+    await until("첫 보고 회수", () => aaa("thread", "show", t.id).report_hash);
+    const source = "[결정 필요] 질문 2개: M3 원문\n\n" + fs.readFileSync(fileURLToPath(new URL("../../../crates/aaa-proto/tests/fixtures/m3-questions.md", import.meta.url)), "utf8");
+    const write = async (body) => {
+      fs.writeFileSync(`${t.work_dir}/report.md`, body);
+      const hash = createHash("sha256").update(body).digest("hex");
+      return await until("해당 보고의 질문", () => { const v = aaa("thread", "show", t.id); return v.report_hash === hash && v.questions && v; });
+    };
+    const v = await write(source);
+    if (v.questions.format_warning || JSON.stringify(v.questions.items.map((q) => q.choices.length)) !== "[3,2]" || !v.questions.items[0].choices[0].recommended)
+      throw new Error(`M3 원문 파싱: ${JSON.stringify(v.questions)}`);
+    await page.evaluate((id) => { location.hash = `question=${id}`; }, t.id);
+    const card = page.getByTestId(`thread-ask-${t.id}`);
+    await card.getByTestId("thread-ask-pick-1C").waitFor();
+    if ((await card.locator('[role="radiogroup"]').count()) !== 2 || (await card.locator('[role="radio"]').count()) !== 5 || (await card.locator(".prompt-card-tag").count()) !== 2)
+      throw new Error("질문·선택지·추천 표시가 빠졌다");
+    if (!(await card.getByTestId("thread-ask-pick-1C").textContent()).includes("install 순서를 바꿔")) throw new Error("C가 다른 선택지다");
+    await shot(page, "53-m3-numbered-emphasis-desktop");
+    wk = await webkit.launch();
+    const phone = await pairDevice(wk, aaa("web", "pair").code, "iphone", { hash: `#question=${t.id}` });
+    try {
+      await phone.page.getByTestId("thread-ask-pick-1C").waitFor();
+      await shot(phone.page, "53-m3-numbered-emphasis-phone");
+      // 파서가 놓친 첫 선택지를 재현한다. 일부 카드가 남아도 글자를 다시 붙여 보낼 수 없어야 한다.
+      const broken = await write(source.replace("**A(추천)**", "**A(추천)"));
+      await card.getByTestId("question-format-warning").waitFor();
+      if (!(await card.getByTestId("thread-ask-send").isDisabled()) || !(await card.getByTestId("thread-ask-pick-1A").isDisabled())) throw new Error("누락된 카드에서 답할 수 있다");
+      const call = (req) => page.evaluate(async (req) => (await fetch("/api/v1/call", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(req) })).json(), req);
+      const denied = await call({ op: "thread_answer", thread: t.id, report_hash: broken.report_hash, picks: [0, 0], text: null });
+      if (!denied.err?.message.includes("형식 확인 필요")) throw new Error(`직접 API가 누락 답을 받았다: ${JSON.stringify(denied)}`);
+      let cliError = ""; try { aaa("question", "answer", broken.questions.items[0].id, "A"); } catch (e) { cliError = String(e); }
+      if (!cliError.includes("형식 확인 필요")) throw new Error(`짧은 ID가 누락 답을 받았다: ${cliError}`);
+      const warning = await until("coordinator 경고", () => aaa("inbox", "list", "demo", "--all", "--peek").items.find((i) => i.item_kind === "question-format-warning" && i.subject === t.id));
+      if (warning.body.includes("thread inbox 전달 실패")) throw new Error(warning.body);
+      const inboxName = `question-format-${broken.report_hash.slice(0,40)}.json`;
+      const notice = JSON.parse(fs.readFileSync(`${t.work_dir}/inbox/${inboxName}`, "utf8"));
+      if (notice.report_hash !== broken.report_hash || notice.kind !== "question-format-warning") throw new Error("thread inbox 경고가 다른 보고다");
+      await shot(page, "53-question-format-warning");
+      // 선택지를 전부 못 읽어도 질문 제목과 경고 카드가 남는다.
+      const empty = await write("[결정 필요] 질문 1개: 누락\n## Questions\n### 1. 진행\n- **A 진행\n");
+      if (empty.questions.items.length !== 1 || empty.questions.items[0].text !== "진행" || !empty.questions.format_warning) throw new Error("못 읽은 질문 제목과 경고가 없다");
+      await until("비어도 경고 카드", async () => (await card.locator('[role="radio"]').count()) === 0 && (await card.getByTestId("thread-ask-send").isDisabled()));
+      await shot(page, "53-question-format-empty");
+      const repaired = await write(source + "\n");
+      if (repaired.questions.format_warning) throw new Error("수정 뒤 경고가 남았다");
+      await card.getByTestId("thread-ask-pick-1C").click();
+      await card.getByTestId("thread-ask-pick-2B").click();
+      await card.getByTestId("thread-ask-send").click();
+      await waitOutput(t.pane, "사용자 답(1C 2B)");
+      await waitOutput(t.pane, "install 순서를 바꿔");
+      const answer = aaa("thread", "show", t.id).questions.answer;
+      if (answer?.summary !== "1C 2B") throw new Error(`글자가 달라졌다: ${JSON.stringify(answer)}`);
+      const warnings = aaa("inbox", "list", "demo", "--all", "--peek").items.filter((i) => i.item_kind === "question-format-warning" && i.subject === t.id);
+      if (warnings.length !== 2) throw new Error(`보고별 경고 중복: ${JSON.stringify(warnings)}`);
+      if (phone.errors.length) throw new Error(phone.errors.join("; "));
+    } finally {
+      await phone.page.context().close();
+      await wk.close(); wk = null;
+      aaa("thread", "resolve", t.id);
+    }
+  });
+
+  await step("t-0621 원문: 선택지 뒤 E·F 설명·그림과 A~D 선택지 그림을 보존하고 두 질문·4/3개 선택지를 답한다", async () => {
+    if (!aaa("project", "list").projects.some((p) => p.name === "demo")) aaa("project", "create", "demo");
+    fs.writeFileSync(`${root}/task-icon-notes.md`, "선택지 뒤 설명 회귀 시험\n");
+    const t = aaa("thread", "start", "demo", "--title", "단추 아이콘 원문", "--machine", "labA", "--profile", "fake", "--kind", "dir", "--task-file", `${root}/task-icon-notes.md`);
+    await until("첫 아이콘 보고", () => aaa("thread", "show", t.id).report_hash);
+    const original = fs.readFileSync(fileURLToPath(new URL("../../../crates/aaa-proto/tests/fixtures/t0621-questions.md", import.meta.url)), "utf8");
+    for (const name of new Set([...original.matchAll(/library\/([a-z-]+\.png)/g)].map((m) => m[1]))) {
+      // 실제 보고의 글은 그대로, 그림 bytes는 독립 실험실의 fixture다.
+      fs.copyFileSync(`${root}/pic.png`, `${t.work_dir}/library/${name}`);
+    }
+    const body = "[결정 필요] 질문 2개: 단추 아이콘 원문\n\n" + original;
+    fs.writeFileSync(`${t.work_dir}/report.md`, body);
+    const hash = createHash("sha256").update(body).digest("hex");
+    const v = await until("아이콘 원문 두 질문", () => { const v = aaa("thread", "show", t.id); return v.report_hash === hash && v.questions && v; });
+    if (v.questions.format_warning || JSON.stringify(v.questions.items.map((q) => q.choices.length)) !== "[4,3]" || !v.questions.items[0].after?.includes("E·F안 그림:")) throw new Error(`아이콘 원문: ${JSON.stringify(v.questions)}`);
+    await page.evaluate((id) => { location.hash = `question=${id}`; }, t.id);
+    const card = page.getByTestId(`thread-ask-${t.id}`);
+    await card.getByTestId("thread-ask-pick-1D").waitFor();
+    await until("선택지와 E/F 그림", async () => (await pictures(page, `[data-testid="thread-ask-${t.id}"] .ask-choice-picture`)) === 7 && (await pictures(page, `[data-testid="thread-ask-${t.id}"] .ask-after`)) === 2);
+    if ((await card.locator('[role="radiogroup"]').count()) !== 2 || (await card.locator('[role="radio"]').count()) !== 7 || (await card.getByTestId("thread-ask-pick-1E").count()) !== 0) throw new Error("E/F를 선택지로 위조하거나 질문을 빠뜨렸다");
+    await shot(page, "53-t0621-icon-question");
+    await card.locator(".ask-after").scrollIntoViewIfNeeded();
+    await shot(page, "53-t0621-after-options");
+    await card.getByTestId("thread-ask-pick-2B").click();
+    await card.getByTestId("thread-ask-text").fill("1 E: TowerControl");
+    await card.getByTestId("thread-ask-send").click();
+    await waitOutput(t.pane, "직접 쓴 답: 1 E: TowerControl");
+    await until("답한 아이콘 카드", async () => (await page.getByTestId("ask-done-card").count()) === 1 && (await pictures(page, '[data-testid="ask-done-card"] .ask-after')) === 2);
+    const answered = aaa("thread", "show", t.id).questions.answer;
+    if (answered.picks[0] !== null || answered.picks[1] !== 1 || answered.text !== "1 E: TowerControl") throw new Error(`E 직접 답: ${JSON.stringify(answered)}`);
+    await shot(page, "53-t0621-answered-notes");
+    aaa("thread", "resolve", t.id);
+  });
+
 }

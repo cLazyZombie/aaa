@@ -192,6 +192,7 @@ mod tests {
                 identity: None,
                 agent_pid: None,
                 colors: None,
+                build: Default::default(),
             },
         );
         let binding = PaneAccount {

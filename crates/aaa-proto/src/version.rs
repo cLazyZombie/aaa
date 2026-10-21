@@ -37,7 +37,9 @@ impl std::fmt::Display for Version {
 // 같은 1.9에 `AgentRequest::Commands`(commands.v1을 알린 agent에만, plan §8.323)와 `Chat.commands`(옛 agent는 버리고 명령 줄을
 // 싣지 않는다)를 더한다.
 // 1.10: work_files.v1의 일반 작업 파일 전송. 1.9 agent에는 옛 파일 태그로 보낸다.
-pub const AGENT_LINK: Version = Version { major: 1, minor: 10 };
+// 같은 1.10에 hello 선택 칸 `sha256`(실행 파일 SHA-256, plan §8.372)을 더한다. 옛 agent는 보내지 않고 옛 host는 버린다.
+// 1.11: install_enroll.v1의 설치 grant 기능 협상·TLS peer 결속·같은 ID 소비 결과 조회.
+pub const AGENT_LINK: Version = Version { major: 1, minor: 11 };
 /// front ↔ host. 1.4: CLI pane·tab·workspace(plan §8.75), 1.5: 새 탭 이름(`NewTab.label`)·cwd 따라가기(`NewTab.from`)(plan §8.76),
 /// 1.6: `routine_toggle`·`ThreadView.pr`(plan §8.80), 1.7: `devices`·`device_rename`·`device_revoke`, 웹 기기의 `web_pair`(plan §8.81),
 /// 1.8: `thread read`·`thread keys`(plan §8.86), 1.9: `ticker_tick`(docs/testing.md),
@@ -189,11 +191,29 @@ pub const AGENT_LINK: Version = Version { major: 1, minor: 10 };
 // 1.84: 질문 연결 post 자동 처리·채팅 답의 처리 표시(`post_handled` → Done), `Post.handled` 선택 칸(plan §8.366).
 // 옛 host는 새 요청을 모르는 요청으로 거절하고 상태 칸을 생략한다. Agent link 변경 없음.
 // 1.85: task 예약·기동 연결·완료 보관, task ID(plan §8.367). 옛 host에는 새 조작을 보내지 않는다.
-// 1.86: 작업 요약에 순서를 유지하는 큰 작업 목록(progress)과 완료·진행·대기 상태를 더한다.
-/// 1.87: 배포 감시의 웹 응답(관리 GUI W6c, plan §8.371): 실행 신원 `RuntimeIdentity.web`(host가 연 웹 주소)과 감시 기록
+/// 1.86: 작업 요약에 순서를 유지하는 큰 작업 목록(progress)과 완료·진행·대기 상태를 더한다.
+/// 1.87: coordinator 구조화 질문·영속 q-ID와 부분 답, ask_answer·question_reply를 더한다. Agent link 변경 없음.
+// 1.88: 머신 상세(웹 머신 추가 M0, plan §8.372): `MachineView`의 `arch`·`software`·`sha256`·`software_differs`·`features`·
+// `selfcheck`. 옛 host는 생략해 웹이 OS만 보인다. Agent link: hello의 선택 칸 `sha256`(옛 agent는 보내지 않고 옛 host는 버린다).
+// 1.89: task 표시 ID(d-0001)·ID 선택자·TaskLog.task(plan §8.373). ULID와 기존 제목 입력은 유지한다.
+/// 1.90: install_approve의 계획/실제 범위 hash 결속. raw 승인서는 private executor가 전달한다.
+// 1.91: 자동화 thread 출처 상세 ThreadView.automation_trigger(선택), plan §8.377.
+// 1.92: 「직접 설치」 안내(웹 머신 추가 M1, plan §8.383): 조작 기기의 `enroll_guide` → `EnrollGuide`(host agent 연결 주소 후보·host
+// 지문·판). 옛 host는 모르는 요청으로 거절해 웹이 주소 자리에 `<host 주소>`를 둔다. Agent link 변경 없음.
+// 1.93: SSH 머신 추가 M2(plan §8.384): `machine_setup_start`·`machine_setup_trust`·`machine_setup_choose`·`machine_setup_cancel`
+// (조작 기기·세션 밖 사람)·`machine_setup_list`(Reader도) → `MachineSetup`·`MachineSetups`, 진행은 웹 `enroll` 사건. 옛 host는 모르는
+// 요청으로 거절해 웹이 「SSH로 추가」를 그리지 않는다. Agent link 변경 없음.
+// 1.94: 보고 기반 병합 대기·병합 중 표지(ThreadView·TaskThread·TaskReservation.stage, plan §8.385). Agent link 변화 없음.
+/// 1.95: 보고서 판마다 영속 r-ID·판 목록·보존 용량을 더한다. 기존 이름·thread 참조는 최신 판이다.
+/// 1.96: 질문 안 보고 판 보기와 기본 검수 카드·답한 기록의 r 참조를 더한다.
+// 1.97: task_edit.user_request(선택): 사용자 지시 근거를 남긴 모델·머신 변경과 미기동 예약 유지, plan §8.389.
+// 1.98: 명시한 한도 초과 시작(thread_start.over_limit·user_request, ThreadView.over_limit).
+// 1.99: 질문 문법 누락·글자 불일치 경고(ThreadQuestions.format_warning)·선택지 뒤 설명(ThreadQuestion.after). host는 해당 카드 답을 거부한다.
+/// 1.100: 배포 감시의 웹 응답(관리 GUI W6c, plan §8.402): 실행 신원 `RuntimeIdentity.web`(host가 연 웹 주소)과 감시 기록
 /// `DeployGuardView.pending_web` 선택 칸. 새 host 감시는 실행 신원이 맞아도 그 웹의 `/api/v1/me`가 답해야 새 판 준비다.
-/// Agent link는 1.10 그대로다: host가 같은 머신 agent의 Welcome 신원에만 싣고, 옛 agent·옛 감시는 모르는 칸을 버린다.
-pub const FRONT_API: Version = Version { major: 1, minor: 87 };
+/// 재시작만 하는 rollout `RolloutSpec.restart`·`RolloutCard.restart`(웹은 1.100 미만 host에 재시작을 그리지 않는다).
+/// Agent link는 1.11 그대로다: host가 같은 머신 agent의 Welcome 신원에만 싣고, 옛 agent·옛 감시는 모르는 칸을 버린다.
+pub const FRONT_API: Version = Version { major: 1, minor: 100 };
 /// agent ↔ session host(내부). 세션이 몇 주 이어질 수 있으므로 이전 session host와 호환해야 한다.
 /// 1.1: `SessionRequest::Detect`(harness 상태 감지 입력). agent는 1.0 session host에 보내지 않고 `Screen`을 쓴다.
 /// 1.2: `SessionRequest::Colors`(색 질의에 답할 화면 색, plan §8.187). agent는 1.1 이하 session host에 보내지 않는다.

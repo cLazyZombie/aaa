@@ -73,10 +73,20 @@ test("session host뿐 아니라 분리된 writer 자손의 종료 뒤 폴더를 
   fs.mkdirSync(foreign);
   fs.writeFileSync(path.join(foreign, "meta.json"), JSON.stringify({ host_pid: outsider.pid }));
 
+  // 실제 관계없는 프로세스 argv 합계를 Node의 기본 1 MiB보다 크게 만든다.
+  // 전체 명령줄 ps를 읽던 정리는 ENOBUFS로 실패하지만 후보 PID별 신원 검사는 이들과 무관하다.
+  for (let i = 0; i < 10; i++) {
+    const wide = spawn(process.execPath, ["-e", "setInterval(() => {}, 1000)", "x".repeat(120_000)], { stdio: "ignore" });
+    children.push(wide);
+    pids.push(wide.pid);
+    await once(wide, "spawn");
+  }
+
   await terminateSessionHosts(sessions);
   assert.equal(alive(parent.pid), false, "session host 종료를 기다린다");
   assert.equal(alive(writerPid), false, "writer 자손 종료를 기다린다");
   assert.equal(alive(outsider.pid), true, "명령줄이 다른 PID는 보존한다");
+  for (const child of children.slice(2)) assert.equal(alive(child.pid), true, "관계없는 긴 argv 프로세스를 보존한다");
   fs.rmSync(root, { recursive: true });
   assert.equal(fs.existsSync(root), false, "재시도 없이 한 번에 폴더를 지운다");
 });

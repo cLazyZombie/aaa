@@ -476,6 +476,7 @@ mod tests {
                         software: "test".into(),
                         features: vec!["rollout_recovery.v1".into()],
                         dev_mode: true,
+                        sha256: None,
                         selfcheck: None,
                         sessions: vec![],
                         identity: None,

@@ -89,6 +89,7 @@ pub fn hello(agent: &Agent) -> AgentHello {
         os: std::env::consts::OS.into(),
         arch: std::env::consts::ARCH.into(),
         software: aaa_common::util::software(),
+        sha256: Some(agent.deployments.running_sha256().into()),
         // cwd.v1: `AgentRequest::Cwd`(옛 agent는 모르는 요청에 연결을 끊으므로 host는 이 표시를 보고 보낸다), rename.v1: `AgentRequest::Rename`,
         // history.v1: `AgentRequest::History`(plan §8.118)
         // file.v1: 파일 보기 `FileLocate`·`FileView`(plan §8.125), profile.v1: `SpawnSpec.profile`(plan §8.126)
@@ -108,6 +109,7 @@ pub fn hello(agent: &Agent) -> AgentHello {
             "account_auth.v2".into(),
             "account_quota.v1".into(),
             "terminal.v1".into(),
+            "report_copy.v2".into(),
             "deployment.v1".into(),
             #[cfg(target_os = "macos")]
             "rollout.v1".into(),
@@ -302,6 +304,7 @@ pub async fn enroll(state: &std::path::Path, addr: &str, machine_id: &str, name:
         proto: AGENT_LINK,
         machine_id: machine_id.to_string(),
         machine_name: name.to_string(),
+        installation: None,
     }))
     .await?;
     loop {
@@ -329,6 +332,220 @@ pub async fn enroll(state: &std::path::Path, addr: &str, machine_id: &str, name:
             other => bail!("예상하지 못한 응답: {other:?}"),
         }
     }
+}
+
+/// installer의 보호 표시 callback에만 전달한다. Debug/Serialize/일반 로그에 넣지 않는다.
+pub struct InstallChallenge {
+    pub code: String,
+    pub host_fingerprint: String,
+}
+/// 검증된 설치 계획의 대상과 기존 TLS pin. 비밀 코드 표시 callback과 분리한다.
+pub struct PrivateEnrollment<'a> {
+    pub state: &'a std::path::Path,
+    pub addr: &'a str,
+    pub machine_id: &'a str,
+    pub name: &'a str,
+    pub binding: &'a aaa_proto::install::InstallEnrollmentBinding,
+    pub pending_host: Option<&'a str>,
+}
+/// 기존 수동 등록 wire를 UI 출력 없이 사용한다. code는 현재 TLS 연결 한 번에만 유효하다.
+pub async fn enroll_private<F, Fut, C>(target: PrivateEnrollment<'_>, display: F, closed: C) -> Result<HostPin>
+where
+    F: FnOnce(InstallChallenge) -> Fut,
+    Fut: std::future::Future<Output = Result<()>>,
+    C: std::future::Future<Output = ()>,
+{
+    let PrivateEnrollment { state, addr, machine_id, name, binding, pending_host } = target;
+    let id = tls::load_or_create_private(state, "aaa-agent")?;
+    let pin_path = state.join("host.json");
+    let existing = match pin_path.symlink_metadata() {
+        Ok(_) => {
+            Some(serde_json::from_slice::<HostPin>(&aaa_common::private_file::read(&pin_path, 65536)?)?.fingerprint)
+        }
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => None,
+        Err(e) => return Err(e.into()),
+    };
+    let tcp = tokio::time::timeout(Duration::from_secs(10), tokio::net::TcpStream::connect(addr)).await??;
+    let connector = tokio_rustls::TlsConnector::from(tls::client_config(
+        &id,
+        existing.or_else(|| pending_host.map(str::to_owned)),
+    )?);
+    let stream = connector.connect(tls::server_name(), tcp).await?;
+    let (host_fp, code) = {
+        let (_, connection) = stream.get_ref();
+        let host = tls::peer_fingerprint(connection).context("host 인증서 없음")?;
+        let code = tls::sas(connection, &host, &id.fingerprint)?;
+        (host, code)
+    };
+    let (r, w) = tokio::io::split(stream);
+    let tx = spawn_writer(w, MAX_FRAME_PREAUTH);
+    let mut rx = FrameRx::new(r, MAX_FRAME_PREAUTH);
+    tx.json(&LinkMsg::InstallEnrollProbe { proto: AGENT_LINK }).await?;
+    match rx.control::<LinkMsg>().await? {
+        LinkMsg::InstallEnrollCapabilities { proto, features } => {
+            aaa_proto::negotiate(AGENT_LINK, proto)?;
+            aaa_proto::require_features(&["install_enroll.v1"], &features)?;
+        }
+        _ => bail!("host가 install_enroll.v1을 지원하지 않습니다"),
+    }
+    tx.json(&LinkMsg::Enroll(EnrollRequest {
+        proto: AGENT_LINK,
+        machine_id: machine_id.into(),
+        machine_name: name.into(),
+        installation: Some(binding.clone()),
+    }))
+    .await?;
+    let mut display = Some(display);
+    let mut shown = false;
+    tokio::pin!(closed);
+    loop {
+        let message = tokio::select! {
+            _=&mut closed=>bail!("설치 보호 표시 연결이 닫혔습니다"),
+            message=rx.control::<LinkMsg>()=>message?,
+        };
+        match message {
+            LinkMsg::EnrollPending => {
+                let callback = display.take().context("중복된 설치 등록 challenge")?;
+                callback(InstallChallenge { code: code.clone(), host_fingerprint: host_fp.clone() }).await?;
+                shown = true;
+            }
+            LinkMsg::EnrollAccepted { machine_id: accepted } if shown && accepted == machine_id => {
+                let pin =
+                    HostPin { address: addr.into(), fingerprint: host_fp, enrolled_at_ms: aaa_common::util::now_ms() };
+                return Ok(pin);
+            }
+            _ => bail!("설치 수동 등록을 확인하지 못했습니다"),
+        }
+    }
+}
+
+/// 설치 전용 grant. caller가 신뢰한 발급자 서명을 검사한 grant만 전달한다.
+/// host pin은 grant의 서명된 fingerprint이며 최초 TLS 응답으로 바꾸지 않는다.
+pub async fn enroll_install(
+    state: &std::path::Path,
+    addr: &str,
+    machine_id: &str,
+    name: &str,
+    grant: &aaa_proto::install::InstallEnrollmentGrant,
+) -> Result<HostPin> {
+    let id = tls::load_or_create_private(state, "aaa-agent")?;
+    anyhow::ensure!(id.fingerprint == grant.agent_identity, "설치 grant의 agent 신원이 다릅니다");
+    let pin_path = state.join("host.json");
+    match pin_path.symlink_metadata() {
+        Ok(_) => {
+            let pin: HostPin = serde_json::from_slice(&aaa_common::private_file::read(&pin_path, 65536)?)?;
+            anyhow::ensure!(pin.fingerprint == grant.host_identity, "기존 host pin이 다릅니다");
+        }
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+        Err(e) => return Err(e.into()),
+    }
+    let lookup = LinkMsg::InstallEnrollLookup {
+        proto: AGENT_LINK,
+        installation_id: grant.installation_id.clone(),
+        plan_sha256: grant.plan_sha256.clone(),
+    };
+    let reply = install_exchange(&id, addr, &grant.host_identity, &lookup).await?;
+    let machine = match reply {
+        LinkMsg::InstallEnrolled { installation_id, machine_id } if installation_id == grant.installation_id => {
+            machine_id
+        }
+        LinkMsg::InstallEnrollUnknown => {
+            let request = LinkMsg::InstallEnroll(Box::new(aaa_proto::install::InstallEnrollRequest {
+                proto: AGENT_LINK,
+                machine_id: machine_id.into(),
+                machine_name: name.into(),
+                grant: grant.clone(),
+            }));
+            match install_exchange(&id, addr, &grant.host_identity, &request).await? {
+                LinkMsg::InstallEnrolled { installation_id, machine_id }
+                    if installation_id == grant.installation_id =>
+                {
+                    machine_id
+                }
+                _ => bail!("설치 grant 등록이 거부됐습니다"),
+            }
+        }
+        _ => bail!("설치 등록 결과를 확인하지 못했습니다"),
+    };
+    anyhow::ensure!(machine == machine_id, "설치 등록의 machine ID가 다릅니다");
+    let pin = HostPin {
+        address: addr.into(),
+        fingerprint: grant.host_identity.clone(),
+        enrolled_at_ms: aaa_common::util::now_ms(),
+    };
+    Ok(pin)
+}
+/// 응답 유실 조회는 저장된 이전 TLS fingerprint로만 한다. 서명 입력이나 첫 응답으로 새 pin을 만들지 않는다.
+pub async fn lookup_install(
+    state: &std::path::Path,
+    addr: &str,
+    machine_id: &str,
+    binding: &aaa_proto::install::InstallEnrollmentBinding,
+    host_fingerprint: &str,
+) -> Result<Option<HostPin>> {
+    let id = tls::load_or_create_private(state, "aaa-agent")?;
+    let request = LinkMsg::InstallEnrollLookup {
+        proto: AGENT_LINK,
+        installation_id: binding.installation_id.clone(),
+        plan_sha256: binding.plan_sha256.clone(),
+    };
+    match install_exchange(&id, addr, host_fingerprint, &request).await? {
+        LinkMsg::InstallEnrolled { installation_id, machine_id: actual }
+            if installation_id == binding.installation_id && actual == machine_id =>
+        {
+            Ok(Some(HostPin {
+                address: addr.into(),
+                fingerprint: host_fingerprint.into(),
+                enrolled_at_ms: aaa_common::util::now_ms(),
+            }))
+        }
+        LinkMsg::InstallEnrollUnknown => Ok(None),
+        _ => bail!("설치 등록 조회의 대상이 다릅니다"),
+    }
+}
+/// 등록된 같은 TLS key / machine ID / name만 읽는다. 신뢰를 추가·복구하지 않는다.
+pub async fn lookup_agent(
+    state: &std::path::Path,
+    addr: &str,
+    machine_id: &str,
+    name: &str,
+    host_fingerprint: &str,
+) -> Result<Option<HostPin>> {
+    let id = tls::load_or_create_private(state, "aaa-agent")?;
+    let request =
+        LinkMsg::InstallAgentQuery { proto: AGENT_LINK, machine_id: machine_id.into(), machine_name: name.into() };
+    match install_exchange(&id, addr, host_fingerprint, &request).await? {
+        LinkMsg::InstallAgentKnown { machine_id: actual } if actual == machine_id => Ok(Some(HostPin {
+            address: addr.into(),
+            fingerprint: host_fingerprint.into(),
+            enrolled_at_ms: aaa_common::util::now_ms(),
+        })),
+        LinkMsg::InstallEnrollUnknown => Ok(None),
+        _ => bail!("기존 agent 조회의 대상이 다릅니다"),
+    }
+}
+async fn install_exchange(id: &tls::Identity, addr: &str, pin: &str, request: &LinkMsg) -> Result<LinkMsg> {
+    // 요청을 재시도하지 않는다. lookup과 consume은 별개의 protocol 단계다.
+    tokio::time::timeout(Duration::from_secs(20), async {
+        let tcp = tokio::net::TcpStream::connect(addr).await?;
+        let connector = tokio_rustls::TlsConnector::from(tls::client_config(id, Some(pin.into()))?);
+        let stream = connector.connect(tls::server_name(), tcp).await?;
+        let (r, w) = tokio::io::split(stream);
+        let tx = spawn_writer(w, MAX_FRAME_PREAUTH);
+        let mut rx = FrameRx::new(r, MAX_FRAME_PREAUTH);
+        tx.json(&LinkMsg::InstallEnrollProbe { proto: AGENT_LINK }).await?;
+        match rx.control::<LinkMsg>().await? {
+            LinkMsg::InstallEnrollCapabilities { proto, features } => {
+                aaa_proto::negotiate(AGENT_LINK, proto)?;
+                aaa_proto::require_features(&["install_enroll.v1"], &features)?;
+            }
+            _ => bail!("host가 install_enroll.v1을 지원하지 않습니다"),
+        }
+        tx.json(request).await?;
+        rx.control().await
+    })
+    .await
+    .context("설치 등록 응답 시간 초과")?
 }
 
 #[cfg(test)]

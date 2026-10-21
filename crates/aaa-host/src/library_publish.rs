@@ -258,6 +258,7 @@ impl Host {
         self.reports_bump();
         if let Some(title) = to_user {
             let title = title.unwrap_or(name);
+            let report_id = link.report_id.as_deref().unwrap_or(name);
             let post = self.library_report_post(
                 project,
                 PostInput {
@@ -265,10 +266,12 @@ impl Host {
                     to: "user".into(),
                     post_type: PostType::Notice,
                     topic: "report".into(),
-                    title: format!("새 보고서: {title}"),
-                    body: format!("보고서 화면 「내 보고서」에서 연다({project}/{name})."),
+                    title: format!("{report_id} 새 보고서: {title}"),
+                    body: format!(
+                        "보고서 화면 「내 보고서」에서 연다({project}/{name}, {report_id}). aaa:report/{report_id}"
+                    ),
                     needs_user: false,
-                    refs: vec![format!("library/{project}/{name}")],
+                    refs: vec![format!("library/{project}/{report_id}")],
                 },
                 actor,
             )?;
@@ -288,8 +291,23 @@ impl Host {
             return Err(err(ErrorCode::BadRequest, "지울 보고서는 1~500개다"));
         }
         let _lock = self.library_ops.lock().unwrap();
+        // 지우기는 기존 명령과 같이 보고서 전체다. r 번호로 지정해도 그 이름의 보존 판까지 함께 지운다.
+        let reports = reports
+            .iter()
+            .map(|r| {
+                Ok(LibraryRef {
+                    project: r.project.clone(),
+                    name: self
+                        .db
+                        .report_target(&r.project, &r.name)
+                        .map_err(super::orch::internal)?
+                        .map(|v| v.source)
+                        .unwrap_or_else(|| r.name.clone()),
+                })
+            })
+            .collect::<Result<Vec<_>, ErrorBody>>()?;
         let mut views = Vec::new();
-        for r in reports {
+        for r in &reports {
             let dir = self.project_dir(&r.project)?;
             if !safe_rel(&r.name)
                 || r.name.contains('/')
@@ -374,6 +392,12 @@ impl Host {
             return Err(err(ErrorCode::BadRequest, "이름은 소문자·숫자·-·_ 1~100자이며 t-로 시작할 수 없다"));
         }
         let manifest = manifest_path(&dir, name);
+        if crate::report_ids::number(name).is_some()
+            && (self.db.report_reserved(project, name).map_err(super::orch::internal)? || !manifest.exists())
+        {
+            return Err(err(ErrorCode::BadRequest, "r-NNNN은 보고 판 번호로 예약돼 있다. 다른 이름을 쓴다"));
+        }
+
         if no_replace
             && (manifest.exists()
                 || dir.join("library").join(name).exists()
@@ -464,20 +488,28 @@ impl Host {
             let commit = (|| {
                 std::fs::rename(&staging, &dest).map_err(io_error)?;
                 crate::orch::write_atomic(&manifest, &serde_json::to_vec(&files).unwrap()).map_err(io_error)?;
-                self.db
-                    .library_report_put(&LibraryReportRow {
-                        project: project.into(),
-                        name: name.into(),
-                        live: live.then(|| source.to_string_lossy().into_owned()),
-                        updated: now,
-                        // 다시 보내면 다시 안 봄(사용자 결정 10-19). --to-user 없이 다시 올리면 작업 보고로 돌아간다
-                        to_user: to_user.is_some(),
-                        title: title.clone(),
-                        sent_at: to_user.is_some().then_some(now),
-                        seen_at: None,
-                        from_thread: from_thread.clone(),
-                    })
-                    .map_err(super::orch::internal)
+                let meta = LibraryReportRow {
+                    project: project.into(),
+                    name: name.into(),
+                    live: live.then(|| source.to_string_lossy().into_owned()),
+                    updated: now,
+                    // 다시 보내면 다시 안 봄(사용자 결정 10-19). --to-user 없이 다시 올리면 작업 보고로 돌아간다
+                    to_user: to_user.is_some(),
+                    title: title.clone(),
+                    sent_at: to_user.is_some().then_some(now),
+                    seen_at: None,
+                    from_thread: from_thread.clone(),
+                };
+                self.snapshot_report_version(
+                    project,
+                    name,
+                    &aaa_common::util::new_id(),
+                    if live { &source } else { &dest },
+                    &files,
+                    None,
+                    &meta,
+                )
+                .map(|_| ())
             })();
             if let Err(e) = commit {
                 let _ = std::fs::remove_dir_all(&dest);
@@ -503,6 +535,38 @@ impl Host {
         })();
         if staging.exists() {
             let _ = std::fs::remove_dir_all(&staging);
+        }
+        if result.is_ok() {
+            // 복사·웹 업로드·실시간 등록·import도 보고 회수와 같은 작성 경고를 준다.
+            // manifest 길이까지만 읽고, 기존 안전한 open으로 symlink·폴더 탈출을 거부한다.
+            let warning_root = if live {
+                source.clone()
+            } else {
+                // macOS의 temp 조상처럼 별칭이 섞인 host 상태 경로도 canonical root로 검사한다.
+                std::fs::canonicalize(&dest).unwrap_or_else(|_| dest.clone())
+            };
+            let mut notes = Vec::new();
+            for entry in files.iter().filter(|f| crate::report_sandbox::is_script(&f.path)) {
+                use std::io::Read;
+                let note = live_file(&warning_root, &entry.path).ok().and_then(|(file, _)| {
+                    let mut bytes = Vec::new();
+                    file.take(entry.size).read_to_end(&mut bytes).ok()?;
+                    crate::report_sandbox::warning(&entry.path, &bytes)
+                });
+                if let Some(note) = note {
+                    notes.push(note);
+                }
+            }
+            if !notes.is_empty() {
+                self.inbox_add_body(
+                    project,
+                    "report-sandbox-warning",
+                    name,
+                    "보고서 sandbox 확인",
+                    &format!("{name}: 보고서에서 제한되거나 확인이 필요한 API를 찾았다"),
+                    &notes.join("\n"),
+                );
+            }
         }
         result
     }
@@ -571,6 +635,9 @@ impl Host {
         let mut view = LibraryReport {
             project: project.into(),
             name: name.into(),
+            report_id: self.report_id(project, name),
+            versions: self.report_version_names(project, name),
+            history_size: self.report_history_size(project, name),
             size,
             updated_at_ms: updated,
             live: row.as_ref().is_some_and(|r| r.live.is_some()),
@@ -600,6 +667,7 @@ impl Host {
                 let e = e.map_err(io_error)?;
                 if let Some(name) = e.file_name().to_str().and_then(|s| s.strip_suffix(".files.json"))
                     && safe_rel(name)
+                    && !self.db.report_reserved(&p, name).map_err(super::orch::internal)?
                 {
                     reports.push(self.report_view(&p, name, reveal)?);
                 }

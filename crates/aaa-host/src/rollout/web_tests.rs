@@ -1,4 +1,4 @@
-//! 웹 「배포」의 권한·기록·요약(관리 GUI W6a, plan §8.361)과 재시작만 하는 rollout의 시작(W6c, plan §8.371). rollout 진행
+//! 웹 「배포」의 권한·기록·요약(관리 GUI W6a, plan §8.361)과 재시작만 하는 rollout의 시작(W6c, plan §8.402). rollout 진행
 //! 자체는 m13 `rollout`이 실제 host·agent로 본다.
 use super::*;
 use aaa_proto::{AgentHello, DeviceRole, FrontRequest};
@@ -59,6 +59,7 @@ fn lab(root: &std::path::Path, agent: Option<LiveAgent>) -> Arc<Host> {
             software: "test".into(),
             features: features.iter().map(|f| f.to_string()).collect(),
             dev_mode: true,
+            sha256: None,
             selfcheck: None,
             sessions: vec![],
             identity: agent.as_ref().and_then(|a| a.identity.clone()),
@@ -133,6 +134,25 @@ async fn answer_guards(conn: crate::AgentConn, reader: tokio::io::DuplexStream, 
 }
 fn restart() -> DeployAction {
     DeployAction::Restart { service: DeployService::Agent }
+}
+
+#[test]
+fn completed_rollout_allows_the_next_record_without_reusing_jobs_or_losing_history() {
+    for state in [RolloutState::Done, RolloutState::Stopped, RolloutState::StoppedRolledBack] {
+        in_lab(|h| async move {
+            let mut done = super::tests::record();
+            done.state = state;
+            done.cursor = done.steps.len() as u32;
+            h.db.start_rollout(&done.id, &serde_json::to_string(&done).unwrap()).unwrap();
+            assert!(!h.rollout_busy().unwrap());
+            let next = super::tests::record();
+            h.db.start_rollout(&next.id, &serde_json::to_string(&next).unwrap()).unwrap();
+            assert!(h.rollout_busy().unwrap());
+            assert_eq!(h.load_rollout(&done.id).unwrap(), done);
+            assert_eq!(h.load_rollout(&next.id).unwrap(), next);
+            assert!(next.steps.iter().all(|step| done.steps.iter().all(|old| old.job_id != step.job_id)));
+        });
+    }
 }
 
 #[test]

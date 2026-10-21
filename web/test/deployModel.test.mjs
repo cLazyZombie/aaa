@@ -20,9 +20,9 @@ describe("관리 W6a", () => {
     for (const v of [undefined, "1.81", "2.82"]) assert.equal(canDeploy(v), false, String(v));
     assert.equal(canDeploy("1.82"), true);
   });
-  it("재시작 rollout은 1.87 이상 host만(옛 host는 restart 칸을 버려 교체 rollout으로 읽는다)", () => {
-    for (const v of [undefined, null, "1.86", "2.87"]) assert.equal(canRestartRollout(v), false, String(v));
-    assert.equal(canRestartRollout("1.87"), true);
+  it("재시작 rollout은 1.100 이상 host만(옛 host는 restart 칸을 버려 교체 rollout으로 읽는다)", () => {
+    for (const v of [undefined, null, "1.99", "2.100"]) assert.equal(canRestartRollout(v), false, String(v));
+    assert.equal(canRestartRollout("1.100"), true);
   });
   it("ID는 host valid_id(영숫자 26자)를 지난다", () => {
     const ids = new Set(Array.from({ length: 50 }, newDeployId));

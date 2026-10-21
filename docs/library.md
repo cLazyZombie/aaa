@@ -3,6 +3,65 @@
 보고서는 host가 `/v/`에서 같은 sandbox·서명 링크 규칙으로 보여 준다. 공유 링크는 기본 30일이며 폐기할 수 있다.
 만료·폐기돼도 pairing한 앱에서는 「앱에서 열기」로 본다.
 
+## 웹 보고서 작성과 sandbox
+
+정책과 착지 기록은 [plan §8.381](plan.md#8381-보고서-자기-폴더-fetch음원-혼합10-21-t-0589)에 둔다.
+
+보고서 HTML은 **origin 없는 sandbox**에서 script를 실행한다. 앱과 같은 주소라도 cookie·localStorage·sessionStorage·
+부모 화면·앱 API에 접근할 수 없다. `allow-same-origin`을 주지 않는다. 외부 CDN·외부 fetch·WebSocket·EventSource·
+service worker·폼 전송도 사용할 수 없다. script·CSS·글꼴·그림·음원·JSON·CSV는 보고서 폴더에 함께 두고 상대 URL로 쓴다.
+thread는 library 파일을 먼저 쓰고 report.md를 마지막에 쓴다. symlink·숨은 파일·폴더 밖 파일은 가져오지 않는다.
+
+`<img src="images/chart.png">`, `<audio controls src="audio/tone.wav">`, `<script src="play.js">`와
+`fetch('./data.json')`를 쓸 수 있다. fetch/XHR은 **현재 `/v/<권한>/` 아래 보고서 폴더 전체**의 GET/HEAD만 된다.
+하위 HTML에서도 `../data.json`처럼 같은 보고서 안으로 올라갈 수 있다. 다른 보고서·앱 API·외부 주소는 CSP가 막는다.
+원하는 파일이 없거나 권한이 만료되면 HTTP 실패를 사용자에게 보여 준다. URL에 있는 권한 문자열을 별도로 저장하지 않는다.
+
+fetch 기본 credentials(`same-origin`)는 opaque origin에서 쿠키를 보내지 않는다. 명시하려면 `credentials: 'omit'`을 쓴다.
+`credentials: 'include'`·XHR `withCredentials`는 쓰지 않는다. 서버는 `Origin: null`의 유효한 파일 읽기에만 CORS를 주고
+credential 허용 헤더·preflight·redirect를 주지 않는다. 쿠키를 동반한 opaque 요청과 opaque 앱 API 요청은 서버에서도 거부한다.
+기기 쿠키의 SameSite=Strict·HttpOnly(HTTPS는 Secure)도 유지한다. `/f/` 페이지 보기와 질문 첨부 HTML은 별도 정책으로 fetch가 막혀 있다.
+`Origin: null` 자체를 신뢰하는 것은 아니다. 파일을 읽을 권한은 매번 검증하는 `/v/<권한>/` 링크에 있고, 그 링크를 아는
+다른 opaque 문서도 같은 파일을 읽을 수 있다. 링크는 원래부터 쿠키 없이 공유할 수 있는 읽기 권한이므로 비밀로 다룬다.
+
+음원을 섞거나 음량을 따로 조절하려면 다음처럼 Web Audio를 쓴다. iOS의 `audio.volume`과 opaque origin에서 무음이 될 수 있는
+`createMediaElementSource` 대신 bytes를 읽어 decode한다. AudioContext는 사용자 누름에서 열어야 한다.
+
+```html
+<button id="play">재생</button><p id="state"></p>
+<script>
+document.querySelector('#play').onclick = async () => {
+  const state = document.querySelector('#state');
+  const ctx = new AudioContext(); // 사용자 누름 안에서 만든다
+  try {
+    await ctx.resume();
+    const response = await fetch('audio/tone.wav', { credentials: 'omit' });
+    if (!response.ok) throw new Error(`음원 읽기 실패: ${response.status}`);
+    const buffer = await ctx.decodeAudioData(await response.arrayBuffer());
+    const source = ctx.createBufferSource();
+    const gain = ctx.createGain();
+    source.buffer = buffer;
+    gain.gain.value = 0.5;
+    source.connect(gain).connect(ctx.destination);
+    source.onended = () => { state.textContent = '재생 끝'; void ctx.close(); };
+    source.start();
+    state.textContent = '재생 중';
+  } catch (error) {
+    state.textContent = String(error);
+    await ctx.close();
+  }
+};
+</script>
+```
+
+회수·publish(웹 업로드·실시간 등록·import 포함)한 HTML/JS/SVG에서 제한 API나 정적으로 확인하지 못한 fetch 경로·옵션이 보이면 coordinator inbox에
+`보고서 sandbox 확인` 경고를 남긴다. 복사는 성공으로 유지한다. 문자열 휴리스틱이라 주석의 오탐·별칭/난독화의 누락이 가능하며
+보안 경계나 재생 성공 판정은 아니다. Chromium·WebKit에서 실제 버튼을 눌러 읽기·decode·재생 끝과 오류 표시를 확인한다.
+WebKit의 휴대폰 크기 시험은 실제 iPhone의 출력 장치·소리 청취까지 보증하지 않는다.
+
+정책 근거: [CSP의 경로 제한과 redirect 규칙](https://www.w3.org/TR/CSP/),
+[Fetch의 opaque origin·CORS·credentials 규칙](https://fetch.spec.whatwg.org/).
+
 ## 올리기와 실시간 폴더
 
 host 머신의 사람·coordinator CLI에서 실행한다. 원격 머신 publish와 웹에서 host 경로를 등록하는 것은 지원하지 않는다.

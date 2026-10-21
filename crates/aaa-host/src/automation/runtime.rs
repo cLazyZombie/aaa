@@ -20,6 +20,9 @@ pub(crate) struct Event {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct Batch {
     id: String,
+    /// 새 묶음의 파일 이름. 누락된 옛 inflight는 원래 이름으로 재개해 processed.txt와 수신 영수증을 보존한다.
+    #[serde(default)]
+    input_name: Option<String>,
     events: Vec<Event>,
     #[serde(default)]
     day: i64,
@@ -33,6 +36,12 @@ struct Batch {
     #[serde(default)]
     target: Option<String>,
 }
+impl Batch {
+    fn input_file_name(&self) -> &str {
+        self.input_name.as_deref().unwrap_or_else(|| self.id.trim_start_matches("automation-"))
+    }
+}
+
 #[derive(Debug, Default, Serialize, Deserialize)]
 #[serde(default)]
 struct State {
@@ -670,6 +679,8 @@ impl Host {
                         )?));
                         let batch = Batch {
                             id: format!("automation-{digest}"),
+                            // N-1 agent의 inbox 이름 상한(64자)을 지킨다. 내구 묶음 ID는 전체 SHA-256이다.
+                            input_name: Some(format!("run-{}", &digest[..60])),
                             events,
                             day: s.day,
                             previous_last: s.last_started_ms,
@@ -722,7 +733,7 @@ impl Host {
                     crate::automation_thread::write_inputs(
                         &conn,
                         work,
-                        [(batch.id.trim_start_matches("automation-").into(), data.clone())],
+                        [(batch.input_file_name().into(), data.clone())],
                     )
                     .await?;
                     if rec
@@ -791,12 +802,10 @@ impl Host {
                 } else {
                     let mut packet = first.clone();
                     packet.body = data.clone();
-                    self.automation_start(p, r, &packet, now, batch.id.trim_start_matches("automation-")).await.map(
-                        |outcome| {
-                            thread = outcome.thread.clone();
-                            start_outcome = Some(outcome);
-                        },
-                    )
+                    self.automation_start(p, r, &packet, now, batch.input_file_name()).await.map(|outcome| {
+                        thread = outcome.thread.clone();
+                        start_outcome = Some(outcome);
+                    })
                 }
             }
             Action::Deploy => self.propose_rollout(p, r, &batch.id, &batch.events, now),
@@ -1047,6 +1056,7 @@ impl Host {
                     anyhow::ensure!(s.inflight.is_none(), "새 규칙에 이미 처리 중 입력이 있다");
                     s.inflight = Some(Batch {
                         id: format!("converted-{name}"),
+                        input_name: None,
                         events,
                         day: 0,
                         previous_last: None,
@@ -1086,5 +1096,23 @@ fn omitted_and_zero_rule_budget_are_unlimited() {
         let limits = Limits { max_per_day: limit, ..Default::default() };
         assert_eq!(wait_reason(&limits, 0, Some(1), u32::MAX, 2, false), None);
         assert_eq!(wait_reason(&limits, 0, Some(1), 99, 2, true), Some("사용량 문턱 또는 확인 불가"));
+    }
+}
+
+#[cfg(test)]
+mod input_names_tests {
+    use super::*;
+    #[test]
+    fn persisted_file_name_survives_restart_and_legacy_inflight_keeps_processed_receipt() {
+        for (json, expected) in [
+            (r#"{"id":"automation-deadbeef","events":[]}"#, "deadbeef"),
+            (r#"{"id":"converted-ci","events":[]}"#, "converted-ci"),
+            (r#"{"id":"automation-deadbeef","input_name":"run-deadbeef","events":[]}"#, "run-deadbeef"),
+        ] {
+            let b: Batch = serde_json::from_str(json).unwrap();
+            assert_eq!(b.input_file_name(), expected);
+            let restarted: Batch = serde_json::from_str(&serde_json::to_string(&b).unwrap()).unwrap();
+            assert_eq!(restarted.input_file_name(), expected);
+        }
     }
 }

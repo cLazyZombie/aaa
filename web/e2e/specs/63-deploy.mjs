@@ -1,11 +1,11 @@
 // 웹 배포·재시작 W6a(plan §8.361): 설정 「배포」에서 빌드 머신에 이미 있는 후보(옆에 provenance.json)를 점검(provenance·SHA 대조와
 // dry-run self-check, 대상 순서)한 뒤 확인 창 하나로 rollout을 시작하고, 화면을 다시 열어 같은 rollout ID를 기록에서 본다. 서비스 재시작은
-// 확인 창으로 여는 재시작만 하는 rollout이다(W6c, plan §8.371): 독립 감시가 새 agent를 확인해야 끝난다. 보기 전용 기기, 휴대폰 390.
+// 확인 창으로 여는 재시작만 하는 rollout이다(W6c, plan §8.402): 독립 감시가 새 agent를 확인해야 끝난다. 보기 전용 기기, 휴대폰 390.
 // 실험실 집(HOME)과 가짜 launchctl을 쓴다: 재시작이 이 Mac의 실제 aaa 서비스에 닿지 않는다. 후보는 허용 표지가 있을 때만 self-check를
 // 통과해, 점검은 통과하고 rollout은 대상 전송의 dry-run에서 멈춘다(실험실 실행 파일을 바꾸는 교체 단계에 닿지 않는다).
 import fs from "node:fs";
 import crypto from "node:crypto";
-import { root, aaa, AA, step, start, stop, until, browser, pairPage, shot, openSettings } from "../lib/harness.mjs";
+import { root, aaa, AA, step, start, stop, until, browser, pairPage, shot, openSettings, LOAD_TIMEOUT_MS } from "../lib/harness.mjs";
 
 const home = `${root}/svchome`;
 const bin = `${root}/svcbin`;
@@ -43,7 +43,7 @@ export default async function ({ page }) {
     if (await nr.getByTestId("deploy-start").isEnabled()) throw new Error("점검을 통과하지 않은 후보로 시작이 열렸다");
     provenance(sha);
     await nr.getByTestId("deploy-check").click();
-    await nr.getByTestId("deploy-sha").filter({ hasText: sha }).waitFor();
+    await nr.getByTestId("deploy-sha").filter({ hasText: sha }).waitFor({ timeout: LOAD_TIMEOUT_MS });
     await nr
       .getByTestId("deploy-plan")
       .getByText(`aaa 0.1.2+${commit.slice(0, 12)}`)

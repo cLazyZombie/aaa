@@ -320,6 +320,7 @@ mod tests {
                     software: "test".into(),
                     features: vec!["deployment.v1".into()],
                     dev_mode: true,
+                    sha256: None,
                     selfcheck: None,
                     sessions: vec![],
                     identity: None,

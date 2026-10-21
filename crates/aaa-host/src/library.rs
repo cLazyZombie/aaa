@@ -112,8 +112,13 @@ pub(crate) fn content_type(path: &str) -> &'static str {
         "jpg" | "jpeg" => "image/jpeg",
         "gif" => "image/gif",
         "webp" => "image/webp",
+        "flac" => "audio/flac",
         "mp4" => "video/mp4",
         "webm" => "video/webm",
+        "wav" => "audio/wav",
+        "mp3" => "audio/mpeg",
+        "m4a" => "audio/mp4",
+        "ogg" => "audio/ogg",
         "pdf" => "application/pdf",
         _ => "application/octet-stream",
     }
@@ -209,7 +214,9 @@ impl Host {
         device: Option<&str>,
         reveal_link: bool,
     ) -> Result<LibraryView, ErrorBody> {
-        self.load(project, id)?;
+        if self.db.report_target(project, id).map_err(super::orch::internal)?.is_none() {
+            self.load(project, id)?;
+        }
         self.report_library(project, id, device, reveal_link)
     }
 
@@ -231,11 +238,15 @@ impl Host {
                 None
             }
         };
-        let report = rec
-            .as_ref()
-            .and_then(|r| r.report_hash.as_ref())
-            .and_then(|_| std::fs::read(dir.join("threads").join(format!("{id}.md"))).ok())
-            .map(|b| String::from_utf8_lossy(&b).into_owned());
+        let selected = self.report_id(project, id);
+        // 기존 이름·t 별칭은 최신 보기다(agent에 남긴 큰 파일 읽기도 유지한다).
+        // r 번호로 열면 그 불변 사본만 쓰며 아래 view_source가 최신 agent 파일로 대체하지 않는다.
+        let storage = id.to_string();
+        let report = (rec.as_ref().is_some_and(|r| r.report_hash.is_some())
+            || self.db.report_target(project, &storage).map_err(super::orch::internal)?.is_some())
+        .then(|| std::fs::read(dir.join("threads").join(format!("{storage}.md"))).ok())
+        .flatten()
+        .map(|b| String::from_utf8_lossy(&b).into_owned());
         let cap = hex::encode(rand::random::<[u8; 24]>());
         let until = Instant::now() + VIEW_TTL;
         {
@@ -245,19 +256,21 @@ impl Host {
                 cap.clone(),
                 ViewCap {
                     project: project.to_string(),
-                    thread: id.to_string(),
+                    thread: storage.clone(),
                     until,
                     device: device.map(str::to_string),
                 },
             );
         }
-        let mut files = self.report_manifest(&dir, project, id)?;
+        let mut files = self.report_manifest(&dir, project, &storage)?;
         files.retain(|f| safe_rel(&f.path));
         for f in &mut files {
-            let local = (!f.on_agent && safe_rel(&f.path)).then(|| dir.join("library").join(id).join(&f.path));
+            let local = (!f.on_agent && safe_rel(&f.path)).then(|| dir.join("library").join(&storage).join(&f.path));
             (f.mime, f.kind) = file_type(&f.path, local.as_deref());
         }
         Ok(LibraryView {
+            report_id: selected,
+            versions: self.report_version_names(project, id),
             project: project.to_string(),
             thread: id.to_string(),
             report,
@@ -359,6 +372,12 @@ impl Host {
         }
         if signed {
             return Ok(view(ViewSource::Page("<!doctype html><meta charset=utf-8><title>앱에서 열기</title><p>이 결과물은 agent에 남아 있다. pairing한 앱의 보고서 화면에서 연다.</p>".as_bytes().to_vec())));
+        }
+        if self.db.report_target(&project, &id).map_err(super::orch::internal)?.is_some() {
+            return Err(err(
+                ErrorCode::Unavailable,
+                "이 보고 판에 복사되지 않은 파일이다. 최신 agent 파일로 대체하지 않는다",
+            ));
         }
         let rec = self.load(&project, &id)?;
         let work_dir = rec.work_dir.clone().ok_or_else(|| err(ErrorCode::NotFound, "thread 작업 폴더 기록이 없다"))?;

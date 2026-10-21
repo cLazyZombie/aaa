@@ -4,7 +4,6 @@ pub(crate) mod guard;
 mod stage;
 mod web_probe;
 use aaa_proto::{DeployAction, DeployJob, DeployService, DeployState, ErrorBody, ErrorCode};
-use sha2::{Digest, Sha256};
 use std::{
     path::{Path, PathBuf},
     sync::{Arc, Mutex},
@@ -52,10 +51,7 @@ fn valid(id: &str) -> bool {
     id.len() == 26 && id.bytes().all(|b| b.is_ascii_alphanumeric())
 }
 fn sha(path: &Path) -> Result<String, ErrorBody> {
-    let mut f = std::fs::File::open(path).map_err(error)?;
-    let mut h = Sha256::new();
-    std::io::copy(&mut f, &mut h).map_err(error)?;
-    Ok(hex::encode(h.finalize()))
+    aaa_common::util::sha256_file(path).map_err(error)
 }
 impl Manager {
     pub(crate) fn new(state: &Path, exe: &Path) -> anyhow::Result<Self> {
@@ -72,6 +68,10 @@ impl Manager {
             inspecting: Default::default(),
             executor: Mutex::new(None),
         })
+    }
+    /// 시작 때 읽은 실행 파일 SHA-256(hello에도 싣는다)
+    pub(crate) fn running_sha256(&self) -> &str {
+        &self.running_sha256
     }
     fn configure(&self, exe: &Path, executor: Executor) -> anyhow::Result<()> {
         // 배포를 실제 실행하는 프로세스만 잠근다. PID 재사용·재부팅은 OS 잠금 수명에 영향을 주지 않는다.

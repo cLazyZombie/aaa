@@ -4,7 +4,7 @@
 //
 // 실행(저장소 루트): cargo build -p aaa && (cd web && npm run build) && cargo build -p aaa
 //   NODE_PATH=$(npm root -g) node web/e2e/web.e2e.mjs [스크린샷 폴더]   모든 파일을
-//     --workers 1                    함께 도는 파일 수(기본: core 8개마다 셋, 많아야 MAX_WORKERS. AAA_E2E_WORKERS와 같다).
+//     --workers 1                    함께 도는 작업 수(기본: core 둘마다 하나, 많아야 MAX_WORKERS. AAA_E2E_WORKERS와 같다).
 //                                    1이면 차례로 돌며 출력을 바로 보이고, 2 이상이면 파일이 끝날 때 그 파일 출력을 한 덩어리로 찍는다
 //     --spec 07-scroll-history,09    고른 파일만(이름이나 앞 번호)
 //     --grep '앞 기록'               이름이 맞는 단계만(AAA_E2E_ONLY와 같다). 그 단계가 든 파일만 띄운다
@@ -19,14 +19,15 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { planJobs, specDurations } from "./lib/jobs.mjs";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const specDir = path.join(here, "specs");
 const STEP = /^ {2}await step\("((?:[^"\\]|\\.)*)"/;
 const durationsFile = path.join(here, "durations.json");
-// 기본 worker 상한: 16 core에서 4·5·6을 ci-local(test·clippy와 함께)과 웹 E2E만으로 재 6에서도 파일 합계가 늘지 않았다
-// (10-18 load 6~90). 그 사이 한 번 난 07 실패는 agent pump 결함(plan §8.162)이었고, 고친 뒤 네 판 모두 통과(docs/testing.md 「웹 E2E」)
-const MAX_WORKERS = 6;
+// 독립된 작업을 core 둘마다 하나, 최대8개까지 실행한다. 실험실·브라우저는 작업마다 격리한다.
+// 전후 시간은 docs/testing.md 「웹 E2E 병렬 작업」처럼 같은 실행 파일과 모든 기존 조합으로 비교한다.
+const MAX_WORKERS = 8;
 
 const args = process.argv.slice(2);
 const opt = { spec: null, grep: null, repeat: 1, list: false, shots: null, workers: null, writeDurations: false };
@@ -48,7 +49,7 @@ for (let i = 0; i < args.length; i++) {
 if (!Number.isInteger(opt.repeat) || opt.repeat < 1) throw new Error("--repeat은 1 이상의 정수다");
 const workers =
   opt.workers ??
-  (process.env.AAA_E2E_WORKERS ? Number(process.env.AAA_E2E_WORKERS) : Math.min(MAX_WORKERS, Math.max(1, Math.floor((os.availableParallelism() * 3) / 8))));
+  (process.env.AAA_E2E_WORKERS ? Number(process.env.AAA_E2E_WORKERS) : Math.min(MAX_WORKERS, Math.max(1, Math.floor(os.availableParallelism() / 2))));
 if (!Number.isInteger(workers) || workers < 1) throw new Error("--workers(AAA_E2E_WORKERS)는 1 이상의 정수다");
 const grep = opt.grep ?? process.env.AAA_E2E_ONLY ?? null;
 if (grep && opt.writeDurations) throw new Error("--write-durations는 파일 전체 시간을 적는다: --grep과 함께 쓰지 않는다");
@@ -86,28 +87,25 @@ if (grep) env.AAA_E2E_ONLY = grep;
 
 // 차례로 돌 때는 이름 차례, 함께 돌 때는 긴 파일부터(기록이 없는 새 파일은 가장 긴 것으로 보고 맨 앞)
 const durations = JSON.parse(fs.readFileSync(durationsFile, "utf8"));
-const weight = (s) => durations[s.name] ?? Infinity;
-const jobs = [];
-for (let r = 1; r <= opt.repeat; r++) for (const s of picked) jobs.push({ s, r });
-if (workers > 1) jobs.sort((a, b) => weight(b.s) - weight(a.s) || a.r - b.r);
+const jobs = planJobs(picked, { repeat: opt.repeat, workers, durations, only });
 
 const t0 = Date.now();
 const runs = [];
-const runOne = ({ s, r }) =>
+const runOne = ({ s, r, filter, part }) =>
   new Promise((resolve) => {
-    const head = `## specs/${s.file}${opt.repeat > 1 ? ` (${r}/${opt.repeat})` : ""}`;
+    const head = `## specs/${s.file}${part ? ` [독립 단계 ${part}]` : ""}${opt.repeat > 1 ? ` (${r}/${opt.repeat})` : ""}`;
     if (workers === 1) console.log(head);
     const started = Date.now();
     const out = [];
     const p = spawn(process.execPath, [path.join(here, "lib/child.mjs"), path.join(specDir, s.file)], {
-      env,
+      env: filter ? { ...env, AAA_E2E_ONLY: filter } : env,
       stdio: workers === 1 ? "inherit" : ["ignore", "pipe", "pipe"],
     });
     p.stdout?.on("data", (c) => out.push(c));
     p.stderr?.on("data", (c) => out.push(c));
     p.on("close", (c, sig) => {
       if (workers > 1) process.stdout.write(`${head}\n${Buffer.concat(out).toString("utf8")}`);
-      runs.push({ name: s.name, ok: !sig && c === 0, ms: Date.now() - started });
+      runs.push({ name: s.name, r, ok: !sig && c === 0, ms: Date.now() - started });
       resolve();
     });
   });
@@ -120,17 +118,18 @@ await Promise.all(
 
 const sec = (ms) => `${(ms / 1000).toFixed(1)}초`;
 console.log(`## 요약: 파일 ${picked.length}개 × ${opt.repeat}번, worker ${workers}개, 모두 ${sec(Date.now() - t0)}`);
+console.log(`## 작업: ${runs.length}개(독립 단계 분할 포함, 실패한 작업은 다시 실행하지 않음)`);
 for (const s of picked) {
   const mine = runs.filter((x) => x.name === s.name);
   const ok = mine.filter((x) => x.ok).length;
-  const ms = mine.map((x) => x.ms).sort((a, b) => a - b);
+  const ms = specDurations(runs, s.name, opt.repeat);
   const time = ms.length > 1 ? `중간 ${sec(ms[ms.length >> 1])}, 가장 긴 ${sec(ms.at(-1))}` : sec(ms[0]);
-  console.log(`##   ${s.name.padEnd(22)} ${ok === mine.length ? "통과" : "실패"} ${ok}/${mine.length}  ${time}`);
+  console.log(`##   ${s.name.padEnd(22)} ${ok === mine.length ? "통과" : "실패"} ${ok}/${mine.length}  ${time}${mine.length > opt.repeat ? " (독립 작업 합계)" : ""}`);
 }
 if (runs.some((x) => !x.ok)) process.exitCode = 1;
 else if (opt.writeDurations) {
   for (const s of picked) {
-    const ms = runs.filter((x) => x.name === s.name).map((x) => x.ms).sort((a, b) => a - b);
+    const ms = specDurations(runs, s.name, opt.repeat);
     durations[s.name] = Math.round(ms[ms.length >> 1] / 1000);
   }
   const sorted = Object.fromEntries(Object.entries(durations).sort(([a], [b]) => a.localeCompare(b)));

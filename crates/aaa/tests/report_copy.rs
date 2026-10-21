@@ -12,6 +12,15 @@ use std::time::Duration;
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn failing_report_agent_keeps_working_and_recovers_without_a_new_hash() {
+    report_copy_recovers(false).await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn failing_library_keeps_the_new_report_and_healthy_files_and_recovers_without_a_new_hash() {
+    report_copy_recovers(true).await;
+}
+
+async fn report_copy_recovers(fail_library: bool) {
     let mut lab = Lab::new();
     let projects = lab.root.join("projects");
     let node = lab.node("host", Some(&format!(
@@ -34,8 +43,9 @@ async fn failing_report_agent_keeps_working_and_recovers_without_a_new_hash() {
         os: "test".into(),
         arch: "test".into(),
         software: "test".into(),
-        features: vec!["terminal.v1".into(), "adopt.v1".into()],
+        features: vec!["terminal.v1".into(), "adopt.v1".into(), "report_copy.v2".into()],
         dev_mode: true,
+        sha256: None,
         selfcheck: None,
         identity: None,
         harness: vec![HarnessEvent {
@@ -86,25 +96,54 @@ async fn failing_report_agent_keeps_working_and_recovers_without_a_new_hash() {
                             repo: None,
                             branch: None,
                         })),
-                        AgentRequest::ReportCollect { max_library_bytes, .. } => {
-                            if max_library_bytes != 0 && {
+                        request @ (AgentRequest::ReportCollect { .. } | AgentRequest::ReportTransfer { .. }) => {
+                            let (transfer, max_library_bytes) = match request {
+                                AgentRequest::ReportTransfer { max_library_bytes, .. } => (true, max_library_bytes),
+                                AgentRequest::ReportCollect { max_library_bytes, .. } => (false, max_library_bytes),
+                                _ => unreachable!(),
+                            };
+                            let failed = max_library_bytes != 0 && {
                                 count.fetch_add(1, Ordering::SeqCst);
                                 fail.load(Ordering::SeqCst)
-                            } {
-                                Outcome::Err(ErrorBody::new(
-                                    ErrorCode::Internal,
-                                    "test.log: 받는 동안 바뀌었다(hash 다름)",
-                                ))
+                            };
+                            if failed && !fail_library {
+                                Outcome::Err(ErrorBody::new(ErrorCode::Internal, "시험 manifest 수집 실패"))
                             } else {
                                 let report = "[진행 중] 계속 일한다\n".as_bytes().to_vec();
                                 use sha2::Digest;
-                                Outcome::Ok(AgentResponse::Report(ReportSnapshot {
+                                let snapshot = ReportSnapshot {
                                     hash: hex::encode(sha2::Sha256::digest(&report)),
                                     report: B64(report),
-                                    files: vec![],
+                                    files: if fail_library && max_library_bytes != 0 {
+                                        [("bad.log", b"expected".as_slice()), ("good.txt", b"healthy".as_slice())]
+                                            .into_iter()
+                                            .map(|(path, bytes)| LibFile {
+                                                path: path.into(),
+                                                size: bytes.len() as u64,
+                                                sha256: hex::encode(sha2::Sha256::digest(bytes)),
+                                            })
+                                            .collect()
+                                    } else {
+                                        vec![]
+                                    },
                                     skipped: vec![],
-                                }))
+                                };
+                                Outcome::Ok(if transfer {
+                                    AgentResponse::ReportTransfer(snapshot)
+                                } else {
+                                    AgentResponse::Report(snapshot)
+                                })
                             }
+                        }
+                        AgentRequest::ReportFileRead { path, .. } => {
+                            let bytes = if path == "good.txt" {
+                                b"healthy".as_slice()
+                            } else if fail.load(Ordering::SeqCst) {
+                                b"rewritten".as_slice()
+                            } else {
+                                b"expected".as_slice()
+                            };
+                            Outcome::Ok(AgentResponse::ReportFileChunk { data: B64(bytes.to_vec()), eof: true })
                         }
                         AgentRequest::Screen { .. } => Outcome::Ok(AgentResponse::Screen(ScreenText {
                             session: "s".into(),
@@ -150,6 +189,15 @@ async fn failing_report_agent_keeps_working_and_recovers_without_a_new_hash() {
     let items = items["items"].as_array().unwrap();
     assert_eq!(items.iter().filter(|i| i["item_kind"] == "report-copy-failed").count(), 1);
     assert!(!items.iter().any(|i| i["event"] == "waiting on you"), "{items:?}");
+    if fail_library {
+        assert_eq!(
+            std::fs::read_to_string(projects.join("demo/threads/t-0001.md")).unwrap(),
+            "[진행 중] 계속 일한다\n"
+        );
+        assert_eq!(std::fs::read(projects.join("demo/library/t-0001/good.txt")).unwrap(), b"healthy");
+        assert!(!projects.join("demo/library/t-0001/bad.log").exists());
+        assert!(v["report_hash"].is_string(), "실패 중에도 새 보고를 반영한다: {v}");
+    }
     failing.store(false, Ordering::SeqCst);
     let copied = wait_for("같은 hash 재수집 성공", limit, || {
         let v = node.json(&["thread", "show", "demo", "t-0001"]).unwrap();
@@ -157,5 +205,9 @@ async fn failing_report_agent_keeps_working_and_recovers_without_a_new_hash() {
     });
     assert_eq!(copied["group"], "working", "{copied}");
     assert!(projects.join("demo/threads/t-0001.md").is_file());
+    if fail_library {
+        assert_eq!(std::fs::read(projects.join("demo/library/t-0001/bad.log")).unwrap(), b"expected");
+        assert_eq!(copied["report_hash"], v["report_hash"]);
+    }
     fake.abort();
 }

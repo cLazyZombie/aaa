@@ -299,6 +299,7 @@ fn inspect(exe: &Path, execute: Executor, path: &str) -> Result<AgentResponse, E
 #[cfg(test)]
 mod tests {
     use super::*;
+    use sha2::{Digest, Sha256};
     fn checked(exe: &Path, action: DeployAction) -> Result<String, String> {
         let DeployAction::CheckedUpdate { from, sha256, .. } = action else {
             panic!("typed checked update여야 한다")

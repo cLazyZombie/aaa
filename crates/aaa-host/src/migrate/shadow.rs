@@ -141,6 +141,7 @@ pub fn token(g: ThreadGroup) -> &'static str {
 pub fn aaa_group(f: &Facts, now_s: i64) -> ThreadGroup {
     let now_ms = (now_s.max(0) as u64) * 1000;
     let rec = ThreadRec {
+        over_limit: None,
         launch_sent: true,
         launch_existing_slot: false,
         legacy: Default::default(),
@@ -176,11 +177,15 @@ pub fn aaa_group(f: &Facts, now_s: i64) -> ThreadGroup {
         delivered_at_ms: None,
         delivered_report: None,
         launch: None,
+        report_stage: None,
         report_hash: (!f.report_hash.is_empty()).then(|| f.report_hash.clone()),
+        report_copy_hash: None,
         acked_hash: (!f.acked_hash.is_empty()).then(|| f.acked_hash.clone()),
         next: Vec::new(),
         questions: Vec::new(),
         question_answer: None,
+        question_warning: None,
+        question_warning_sent: None,
         copy_failures: 0,
         copy_retry_at_ms: 0,
         copy: None,

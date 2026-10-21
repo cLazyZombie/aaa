@@ -122,9 +122,9 @@ CI/Git 사건 자체의 이력·inbox와 규칙 동작은 다른 경계다. 이�
 `Role::Evaluator` 직렬화 값과 평가 기록 표는 호환을 위해 남기며 새 실행에 쓰지 않는다. DB의 열린 옛 행은 일반 작업 목록에 표시하고 시작 때 inbox에 알린다.
 Agent link 1.10은 `work_files.v1`을 사용한다. 1.9 agent에는 기존 파일 전송 태그로 이어 보내기·기억 회수를 계속한다.
 
-## 자동 thread 시작(L5)
+## 자동화 thread 시작(L5)
 
-자동 시작은 일반 Worker thread를 만든다. 보고·착지·정리는 coordinator가 맡으며 운영 자동화의 전환은 배포 뒤 coordinator가 한다.
+자동 시작은 「자동화 thread」로 구분하는 Worker thread를 만든다. 보고·착지·정리는 coordinator가 맡으며 운영 자동화의 전환은 배포 뒤 coordinator가 한다.
 
 ```toml
 title = "새벽 점검"
@@ -152,11 +152,15 @@ wait = ["timing"]
 
 측정 작업은 `aaa thread start --holds timing ...`으로 표지를 단다. 그 thread가 Starting/Open인 동안 같은 머신을 후보에서 제외한다. 모든 후보가 표지/연결/profile 때문에 막히면 입력과 까닭을 보존하고 기다린다. 표지 thread를 끝내면 다시 고른다. 동적으로 표지를 바꾸는 명령은 이 단계에 포함하지 않는다.
 
-횟수·간격·동시성·기다림 시간은 기본 제한이 없다. `[limits] max_running`·`max_per_day`·`min_gap`, host `[projects] max_auto_threads`, `do.start.wait_max`는 적었을 때만 사용하며 생략·0은 없음이다. 앞 자동 thread가 열려 있어도 다른 사건은 실행한다. 명시 wait_max를 넘으면 그 차례만 건너뛰고 inbox 한 번을 남긴다. usage 문턱·batch·dedupe는 유지한다.
+자동화 thread는 프로젝트 `max_parallel_threads`와 사용자 예약 자리 계산에서 뺀다. 사용자·coordinator가 띄운 thread는 그대로 센다.
+규칙당 기본 동시 실행은 1개다. `[limits] max_running`에 양수를 적으면 그 수를 허용하며 생략·0은 기본 1개다. Starting/Open과 resolve 정리 중도 센다.
+`reuse = "open"`은 열린 thread에 이어 보내므로 새 자리를 만들지 않는다. 새 시작·실패 뒤 재시작·끝난 thread 다시 열기의 DB 선점에서 같은 규칙 상한을 검사한다.
+횟수·간격·기다림 시간과 host `[projects] max_auto_threads`는 기존대로 생략·0이면 제한이 없다. 명시 wait_max를 넘으면 그 차례만 건너뛰고 inbox 한 번을 남긴다. usage 문턱·batch·dedupe는 유지한다.
 
-자동으로 띄운 thread는 기록에 규칙 이름을 남긴다(`aaa thread show`의 `automation`·`automation_title`). 웹 「작업」 목록은 그 줄을 사람이 띄운 thread와 같은 폴더·차례에 두고 왼쪽 호박색 막대와 둘째 줄 「자동 · <규칙 제목>」 표지로 구별한다(누르면 그 규칙 상세). 자동화 패널의 규칙 줄은 그 규칙의 열린 thread를 「열림 t-NNNN」 칩으로 보이고, 「모든 thread」는 「자동화만」으로 거른다. 할 일 화면의 「task 없는 열린 thread」에는 넣지 않는다(출처가 규칙이다).
+자동으로 띄운 thread는 기록에 규칙 이름을 남긴다(`aaa thread show`의 `automation`·`automation_title`). 웹 「작업」 목록은 그 줄을 사람이 띄운 thread와 같은 폴더·차례에 두고 왼쪽 호박색 막대와 「자동화 thread」 표지로 구별한다(좁은 화면도 같은 이름, 누르면 규칙 상세).
+`aaa context`·`aaa thread list`·`show`와 웹의 모든 thread에도 「자동화 thread」로 보인다. 어떤 자동화가 띄웠는지와 최초 사건·일정은 thread 상세와 CLI의 「무엇이 띄웠는지」에서 읽는다(`automation_trigger`). 이 출처는 규칙을 편집·삭제하거나 host를 다시 켜도 보존한다. 이전 판에서 시작한 thread는 사건 기록 없음으로 보인다. 자동화 패널의 규칙 줄은 그 규칙의 열린 thread를 「열림 t-NNNN」 칩으로 보이고, 「모든 thread」는 「자동화만」으로 거른다. 할 일 화면의 「task 없는 열린 thread」에는 넣지 않는다(출처가 규칙이다).
 
-일정형은 coordinator pane 없이 실행하고, 같은 예정 차례는 한 번만 시작한다. 기다리는 동안 다음 일정은 catch_up once로 묶는다. thread 기록과 시작 key를 같은 DB transaction에 저장하고, 그 직전에도 holds/명시 동시 상한을 확인한다. 최종 전달 영수증 저장이 실패해도 내구 시작 key로 재생성을 막는다. 시작 후 실패한 thread는 일반 thread의 restart/정리 절차를 따른다. flow thread_started.actor는 routine:<이름>, 실행 기록에는 thread id가 남는다.
+일정형은 coordinator pane 없이 실행하고, 같은 예정 차례는 한 번만 시작한다. 기다리는 동안 다음 일정은 catch_up once로 묶는다. thread 기록과 시작 key를 같은 DB transaction에 저장하고, 그 직전에도 holds/규칙별 동시 상한을 확인한다. 최종 전달 영수증 저장이 실패해도 내구 시작 key로 재생성을 막는다. 시작 후 실패한 thread는 일반 thread의 restart/정리 절차를 따른다. flow thread_started.actor는 routine:<이름>, 실행 기록에는 thread id가 남는다.
 
 확인: `aaa routine runs check`의 승인/holds/연결/profile/명시 상한 대기 까닭과 thread id를 본다. 기다림 중 파일 범위를 고쳤으면 이전 차례 취소 기록을 확인한다. DB/시작 key를 지워 재실행시키지 않는다.
 

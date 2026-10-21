@@ -779,6 +779,12 @@
       },
       "additionalProperties": false
     },
+    "InstallCredentialRetainer": {
+      "type": "string",
+      "enum": [
+        "windows_scm"
+      ]
+    },
     "InstallEnroll": {
       "type": "string",
       "enum": [
@@ -1167,11 +1173,46 @@
         "windows"
       ]
     },
+    "InstallOutcomeState": {
+      "description": "사실을 확인하지 못한 단계는 unknown이며 설정 기록만으로 completed를 만들지 않는다.",
+      "type": "string",
+      "enum": [
+        "pending",
+        "running",
+        "completed",
+        "unchanged",
+        "not_requested",
+        "needs_user",
+        "failed",
+        "unknown"
+      ]
+    },
+    "InstallOwnership": {
+      "type": "string",
+      "enum": [
+        "this_instance",
+        "external",
+        "unknown",
+        "not_requested"
+      ]
+    },
     "InstallPairing": {
       "type": "string",
       "enum": [
         "controller",
         "skip"
+      ]
+    },
+    "InstallPairingSummary": {
+      "type": "object",
+      "properties": {
+        "state": {
+          "$ref": "#/$defs/InstallOutcomeState"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "state"
       ]
     },
     "InstallPasswordSource": {
@@ -1465,6 +1506,16 @@
         "schema": {
           "$ref": "#/$defs/InstallSchema"
         },
+        "service": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/InstallServiceSummary"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
         "status": {
           "$ref": "#/$defs/InstallStatus"
         },
@@ -1472,6 +1523,16 @@
           "type": [
             "string",
             "null"
+          ]
+        },
+        "web": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/InstallWebSummary"
+            },
+            {
+              "type": "null"
+            }
           ]
         }
       },
@@ -1546,6 +1607,50 @@
         "off"
       ]
     },
+    "InstallServeSummary": {
+      "type": "object",
+      "properties": {
+        "ownership": {
+          "$ref": "#/$defs/InstallOwnership"
+        },
+        "requested": {
+          "type": "boolean"
+        },
+        "reused": {
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "serve_port": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint16",
+          "maximum": 65535,
+          "minimum": 0
+        },
+        "state": {
+          "$ref": "#/$defs/InstallOutcomeState"
+        },
+        "target_port": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint16",
+          "maximum": 65535,
+          "minimum": 0
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "requested",
+        "state",
+        "ownership"
+      ]
+    },
     "InstallService": {
       "type": "string",
       "enum": [
@@ -1555,6 +1660,64 @@
         "systemd-user",
         "windows-scm",
         "none"
+      ]
+    },
+    "InstallServiceSummary": {
+      "type": "object",
+      "properties": {
+        "account_mode": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/InstallAccount"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "application_ready": {
+          "$ref": "#/$defs/InstallCheckState"
+        },
+        "credential_retained_by": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/InstallCredentialRetainer"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "manager": {
+          "$ref": "#/$defs/InstallService"
+        },
+        "registered": {
+          "$ref": "#/$defs/InstallCheckState"
+        },
+        "requested_user_matched": {
+          "$ref": "#/$defs/InstallCheckState"
+        },
+        "running": {
+          "$ref": "#/$defs/InstallCheckState"
+        },
+        "startup": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/InstallStartup"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "manager",
+        "requested_user_matched",
+        "registered",
+        "running",
+        "application_ready"
       ]
     },
     "InstallStart": {
@@ -1703,6 +1866,28 @@
       "enum": [
         "local",
         "off"
+      ]
+    },
+    "InstallWebSummary": {
+      "type": "object",
+      "properties": {
+        "local_listen": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "pairing": {
+          "$ref": "#/$defs/InstallPairingSummary"
+        },
+        "tailscale_serve": {
+          "$ref": "#/$defs/InstallServeSummary"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "tailscale_serve",
+        "pairing"
       ]
     }
   }

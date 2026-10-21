@@ -512,7 +512,10 @@ impl Host {
         if let Err(e) = self.db.rec_put("questions", &q.id, state, &serde_json::to_string(q).unwrap(), (&q.pane, "")) {
             tracing::error!("질문 저장 실패: {e:#}");
         }
-        let _ = self.question_events.send(q.clone());
+        let mut view = q.clone();
+        let project = view.project.clone().or_else(|| self.sole_project().ok().flatten()).unwrap_or_default();
+        view.short_id = self.db.question_id(&project, "harness", &q.id, "", 0).ok();
+        let _ = self.question_events.send(view);
     }
 
     /// 질문을 연다. 같은 pane에 이미 열린 질문이 있으면 본문만 더 자세한 쪽으로 바꾼다.
@@ -532,6 +535,7 @@ impl Host {
         let _ = mid;
         let rec = self.thread_of_pane(pane);
         let q = QuestionView {
+            short_id: None,
             id: short_id("q"),
             pane: pane.to_string(),
             machine,
@@ -1379,6 +1383,7 @@ mod tests {
                     identity: None,
                     agent_pid: None,
                     colors: None,
+                    build: Default::default(),
                 },
             );
             let seen = Arc::new(std::sync::Mutex::new(Vec::new()));
@@ -1472,6 +1477,7 @@ mod tests {
                         identity: None,
                         agent_pid: None,
                         colors: None,
+                        build: Default::default(),
                     },
                 );
                 let fake_host = h.clone();
@@ -1681,6 +1687,7 @@ mod tests {
                 identity: None,
                 agent_pid: None,
                 colors: None,
+                build: Default::default(),
             },
         );
         h.on_harness("m", codex_event("idle", 1));

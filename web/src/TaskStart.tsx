@@ -1,7 +1,7 @@
 // 할 일 thread 연결의 창(할 일 T3, plan §8.316, t-0469 §3.4): 「바로 시작」 확인창과 「task에 잇기」 고르기. 창 틀은 TaskDialogs의
 // TaskModal(herdr-web-ui PaneRename)이다. 「바로 시작」은 host `thread_start_preview`가 `thread start --from-task`와 같은 규칙으로 채운
 // 값(owner → profile·머신, 메모를 붙인 할 일 글)을 보이고, profile 고르기는 herdr-projects popup `profile_picker`(owner의 profile을 맨
-// 위에)와 같다. 열린 thread가 `max_parallel_threads` 이상이면 한 번 더 확인받는다(host는 경고만 한다). 시작하면 host가 같은 요청 안에서
+// 위에)와 같다. 자동화·병합 대기·착지 한 자리를 뺀 열린 Worker가 `max_parallel_threads` 이상이면 예약과 사용자가 확인한 한도 무시 시작을 안내한다. 시작하면 host가 같은 요청 안에서
 // 그 task 줄 끝에 thread를 잇는다(`link_task`, 화면이 본 블록 hash로).
 import { useEffect, useMemo, useState } from "react";
 import { Search } from "lucide-react";
@@ -15,10 +15,11 @@ import { defaultMachine, docLinkCandidates, linkCandidates, ownerFixes, REPO_DIR
 const errText = (e: unknown) => (e instanceof ApiError || e instanceof Error ? e.message : String(e));
 
 /** 「바로 시작」 확인창 */
-export function StartDialog({ task, owners, onStarted, onClose }: { task: TaskView; owners: OwnerChoice[] | null; onStarted: (v: ThreadView) => void; onClose: () => void }) {
+export function StartDialog({ task, owners, allowOverLimit, onStarted, onClose }: { task: TaskView; allowOverLimit: boolean; owners: OwnerChoice[] | null; onStarted: (v: ThreadView) => void; onClose: () => void }) {
   const [preview, setPreview] = useState<ThreadStartPreview | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [confirmOver, setConfirmOver] = useState(false);
   const [profile, setProfile] = useState("");
   // 사용자가 고른 머신(없으면 기본값: owner의 머신 → 덜 붐비는 머신)
   const [picked, setPicked] = useState<string | null>(null);
@@ -26,7 +27,7 @@ export function StartDialog({ task, owners, onStarted, onClose }: { task: TaskVi
   const [choice, setChoice] = useState("");
   useEffect(() => {
     let live = true;
-    call({ op: "thread_start_preview", from_task: task.title, task_block: task.block_sha256 })
+    call({ op: "thread_start_preview", from_task: task.short_id ?? task.title, task_block: task.block_sha256 })
       .then((r) => {
         if (!live || r.kind !== "thread_start_preview") return;
         const { kind: _kind, ...p } = r;
@@ -65,13 +66,14 @@ export function StartDialog({ task, owners, onStarted, onClose }: { task: TaskVi
     return names;
   }, [machines, where, profile]); // eslint-disable-line react-hooks/exhaustive-deps
   const over = preview !== null && preview.open_threads >= preview.max_parallel_threads;
-  const start = async () => {
-    if (!preview || busy || problem !== null || over) return;
+  const start = async (overLimit = false) => {
+    if (!preview || busy || problem !== null || (over && !overLimit) || (overLimit && (!allowOverLimit || !confirmOver))) return;
     setBusy(true);
     setError(null);
     try {
       const r = await call({
         op: "thread_start",
+        over_limit: overLimit,
         holds: [],
         background: true,
         title: "",
@@ -81,7 +83,7 @@ export function StartDialog({ task, owners, onStarted, onClose }: { task: TaskVi
         repo: choice === REPO_DIR ? null : repoPath,
         base: null,
         task: "",
-        from_task: preview.title,
+        from_task: task.short_id ?? task.title,
         link_task: true,
         task_block: preview.task_block,
       });
@@ -108,7 +110,7 @@ export function StartDialog({ task, owners, onStarted, onClose }: { task: TaskVi
         </header>
         <div className="modal-body task-start-body">
           <p className="task-start-title">
-            <strong>{task.title}</strong>
+            <strong>{task.short_id && <span className="task-short-id">{task.short_id}</span>}{task.title}</strong>
             <WhoChips t={task} labeled />
           </p>
           {!preview && !error && <p className="muted">시작할 값을 읽는 중</p>}
@@ -120,7 +122,7 @@ export function StartDialog({ task, owners, onStarted, onClose }: { task: TaskVi
                   <select
                     className="input"
                     value={choice}
-                    disabled={busy || !!preview.repo}
+                    disabled={busy || confirmOver || !!preview.repo}
                     onChange={(e) => {
                       setChoice(e.target.value);
                       setPicked(null);
@@ -139,7 +141,7 @@ export function StartDialog({ task, owners, onStarted, onClose }: { task: TaskVi
                 </label>
                 <label className="task-field">
                   <span>머신</span>
-                  <select className="input" value={where} disabled={busy || ownerMachine !== null || cands.length <= 1} onChange={(e) => setPicked(e.target.value)} data-testid="task-start-machine">
+                  <select className="input" value={where} disabled={busy || confirmOver || ownerMachine !== null || cands.length <= 1} onChange={(e) => setPicked(e.target.value)} data-testid="task-start-machine">
                     <option value="">host 머신</option>
                     {machines
                       .filter((o) => choice === "" || cands.includes(o.machine))
@@ -154,7 +156,7 @@ export function StartDialog({ task, owners, onStarted, onClose }: { task: TaskVi
                 </label>
                 <label className="task-field">
                   <span>모델</span>
-                  <select className="input" value={profile} disabled={busy || fixed.profile} onChange={(e) => setProfile(e.target.value)} data-testid="task-start-profile">
+                  <select className="input" value={profile} disabled={busy || confirmOver || fixed.profile} onChange={(e) => setProfile(e.target.value)} data-testid="task-start-profile">
                     {profiles.length === 0 && <option value="">기본 profile</option>}
                     {profiles.map((p) => (
                       <option key={p} value={p}>
@@ -175,6 +177,14 @@ export function StartDialog({ task, owners, onStarted, onClose }: { task: TaskVi
                 </p>
               ))}
               {over && <p className="banner task-start-limit" data-testid="task-start-limit">열린 thread {preview.open_threads}개가 한도 {preview.max_parallel_threads}개를 사용 중이다. 상세의 「자리 나면 시작 예약」으로 예약한다.</p>}
+              {confirmOver && <section className="banner task-start-warning task-start-over-confirm" role="alert" data-testid="task-start-over-confirm">
+                <h3>한도를 무시하고 시작할까요?</h3>
+                <p>「{task.title}」을 바로 시작합니다. 현재 확인한 열린 thread는 {preview.open_threads}개, 한도는 {preview.max_parallel_threads}개입니다. 이 thread도 열린 수에 포함하며, 한도 아래로 자리가 날 때까지 예약은 기다립니다. 누가 언제 시작했는지 기록합니다.</p>
+                <div className="task-start-over-actions">
+                  <button type="button" className="btn" disabled={busy} onClick={() => setConfirmOver(false)}>돌아가기</button>
+                  <button type="button" className="btn btn-primary" disabled={busy || problem !== null} data-testid="task-start-over-go" onClick={() => void start(true)}>확인하고 시작</button>
+                </div>
+              </section>}
               <section className="task-start-preview" aria-label="thread에 줄 할 일">
                 <h3>thread에 줄 할 일</h3>
                 <div className="task-start-task" data-testid="task-start-task">
@@ -194,6 +204,7 @@ export function StartDialog({ task, owners, onStarted, onClose }: { task: TaskVi
           <button type="button" className="btn" disabled={busy} onClick={onClose}>
             취소
           </button>
+          {over && allowOverLimit && <button type="button" className="btn" disabled={busy || problem !== null || confirmOver} data-testid="task-start-over" onClick={() => setConfirmOver(true)}>한도 무시하고 시작</button>}
           <button className="btn btn-primary" disabled={!preview || busy || problem !== null || over} title={problem ?? undefined} data-testid="task-start-go">
             {busy ? "시작하는 중" : over ? "자리 대기" : "시작"}
           </button>

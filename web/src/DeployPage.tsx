@@ -90,7 +90,7 @@ export function DeployPage({ role, machines }: { role: DeviceRole; machines: Mac
       >
         <div className="settings-item">
           {canEdit && canRestartRollout(api) && <Restarts machines={machines} onStarted={load} />}
-          {canEdit && !canRestartRollout(api) && <p className="op-muted">재시작 rollout은 FRONT_API 1.87 이상 host에서 한다.</p>}
+          {canEdit && !canRestartRollout(api) && <p className="op-muted">재시작 rollout은 FRONT_API 1.100 이상 host에서 한다.</p>}
           <ul className="admin-list" data-testid="deploy-jobs">
             {jobs.map((j) => (
               <li key={j.id} data-job={j.id} data-state={j.state ?? "unknown"}>

@@ -1,13 +1,20 @@
 // 할 일 화면의 행 상태·거르기·검색·배지 셈(src/tasksModel.ts, 할 일 보기 T1, plan §8.306).
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { agentOwner, agentParts, anchorOf, canonicalLine, defaultMachine, descendants, draftOf, draftOps, REPO_DIR, repoMachines, repoName, dropOp, emptyDraft, findTask, itemToTask, lineDiff, moveOp, noteItems, ownerKindOf, ownerLabel, parentAnchor, restorable, taskBadge, handOffText, ownerFixes, startable, linkCandidates, newAutoCleans, lastLogId, mineKeys, taskDepth, taskMatches, taskSections, taskState, toListOp, unassigned } from "../src/tasksModel.ts";
+import { agentOwner, agentParts, anchorOf, canonicalLine, defaultMachine, descendants, draftOf, draftOps, REPO_DIR, repoMachines, repoName, dropOp, emptyDraft, findTask, itemToTask, lineDiff, moveOp, noteItems, ownerKindOf, ownerLabel, parentAnchor, restorable, taskBadge, handOffText, ownerFixes, startable, linkCandidates, newAutoCleans, lastLogId, mineKeys, taskDepth, taskMatches, taskList, taskState, unassigned, pendingQueue, queueDropPosition, queueStep, queueWhy, repoChoices, unreserveHome } from "../src/tasksModel.ts";
 
 const task = (over) => ({ list: "Backlog", title: "일", owner: null, thread: null, notes: [], done: false, line: 1, raw: "- [ ] 일", block_sha256: "", parent: null, problems: [], ...over });
 const MISREAD = "owner 칸이 owner 꼴이 아님: t-0001 S4 뒤";
 const groups = new Map([["t-0001", "working"], ["t-0002", "resolved"], ["t-0003", "waiting_on_you"]]);
 
 describe("할 일 화면", () => {
+  it("고정 ID로 검색하고 coordinator에게 전달한다", () => {
+    const t = task({ short_id: "d-0007", title: "바뀐 제목" });
+    assert.equal(taskMatches(t, "all", "d-0007", groups), true);
+    assert.equal(handOffText(t), "d-0007 task를 thread로 맡겨 줘");
+    assert.equal(handOffText({ ...t, title: "다시 바뀐 제목" }), handOffText(t));
+  });
+
   it("행 상태: 형식 어긋남 > 열린 thread와 이어짐 > 대기. 끝난·모르는 thread는 대기다", () => {
     assert.equal(taskState(task({ thread: "t-0001", problems: [MISREAD] }), groups), "problem");
     assert.equal(taskState(task({ thread: "t-0001" }), groups), "run");
@@ -52,14 +59,17 @@ describe("할 일 화면", () => {
     assert.equal(taskBadge(board), 2);
   });
 
-  it("하위 task 깊이와 목록별 묶음: task 없는 목록도 머리를 갖고, 거른 수와 전체 수를 따로 센다", () => {
+  it("하위 task 깊이와 한 목록: `##` 목록을 가리지 않고 파일 차례대로, 거르기 칩마다 수를 센다", () => {
     const ts = [task({ line: 3, title: "상위" }), task({ line: 4, title: "하위", parent: 3 }), task({ line: 5, title: "손자", parent: 4 }), task({ line: 9, title: "끊긴 상위", parent: 7 }), task({ line: 12, list: "Later", title: "나중", owner: "me" })];
     const byLine = new Map(ts.map((t) => [t.line, t]));
     assert.deepEqual(ts.map((t) => taskDepth(t, byLine)), [0, 1, 2, 0, 0]);
     const board = { project: "p", sha256: "", lists: [{ name: "Backlog", notes: ["설명"] }, { name: "빈 목록", notes: [] }, { name: "Later", notes: [] }], tasks: ts, unlinked_threads: [], notes_files: [] };
-    const s = taskSections(board, "mine", "", groups);
-    assert.deepEqual(s.map((x) => [x.name, x.total, x.tasks.length]), [["Backlog", 4, 0], ["빈 목록", 0, 0], ["Later", 1, 1]]);
-    assert.deepEqual(s[0].notes, ["설명"]);
+    const all = taskList(board, "all", "", null, groups);
+    assert.deepEqual(all.top, []);
+    assert.deepEqual(all.rest.map((r) => [r.t.title, r.depth]), [["상위", 0], ["하위", 1], ["손자", 2], ["끊긴 상위", 0], ["나중", 0]]);
+    const mine = taskList(board, "mine", "", null, groups);
+    assert.deepEqual(mine.rest.map((r) => r.t.title), ["나중"]);
+    assert.deepEqual(mine.counts, { all: 5, mine: 1, unassigned: 4, running: 0, reserved: 0, check: 0 });
   });
 
   it("상세가 가리키는 task: 제목으로 찾고, 같은 제목이면 줄이 같은 것", () => {
@@ -91,8 +101,15 @@ describe("할 일 편집", () => {
     assert.deepEqual(place(moveOp(board, by(4), "down")), { before: null, parent: null, to_list: "A" });
     assert.deepEqual(place(moveOp(board, by(2), "down")), { before: null, parent: "하나", to_list: "" });
     assert.equal(moveOp(board, by(1), "up"), null);
-    assert.equal(moveOp(board, by(5), "down"), null);
-    assert.equal(moveOp(board, by(7), "top"), null);
+    assert.equal(moveOp(board, by(7), "down"), null);
+    assert.equal(moveOp(board, by(1), "top"), null);
+    // 한 목록(§8.393): 맨 위 단계는 `##` 목록을 넘어 움직이고, 목록이 갈리는 틈에서는 앞 이웃의 목록 끝에 붙는다
+    assert.deepEqual(place(moveOp(board, by(5), "down")), { before: null, parent: null, to_list: "B" });
+    assert.deepEqual(place(moveOp(board, by(7), "up")), { before: "셋", parent: null, to_list: "" });
+    assert.deepEqual(place(moveOp(board, by(7), "top")), { before: "하나", parent: null, to_list: "" });
+    // 거른 채면 보이는 이웃과 자리를 바꾸고 숨은 task(둘)의 차례는 그대로다
+    assert.deepEqual(place(moveOp(board, by(1), "down", (x) => x.line !== 4)), { before: null, parent: null, to_list: "A" });
+    assert.deepEqual(place(moveOp(board, by(5), "up", (x) => x.line !== 4)), { before: "하나", parent: null, to_list: "" });
     assert.equal(moveOp(board, by(4), "up").at.block_sha256, "sha-4", "대상은 블록 hash로 찾는다");
   });
 
@@ -106,8 +123,8 @@ describe("할 일 편집", () => {
     assert.equal(dropOp(board, by(4), by(1), "after"), null, "이미 하나 뒤");
     assert.equal(dropOp(board, by(4), by(5), "before"), null, "이미 셋 앞");
     assert.deepEqual([...descendants(board, by(1))].sort(), [2, 3]);
-    assert.deepEqual(place(toListOp(by(2), "A")), { before: null, parent: null, to_list: "A" }, "하위를 목록 맨 위 단계로");
-    assert.equal(toListOp(by(4), "A"), null);
+    assert.deepEqual(place(dropOp(board, by(1), by(7), "before")), { before: null, parent: null, to_list: "A" }, "목록 사이 틈은 앞 목록 끝");
+    assert.deepEqual(place(dropOp(board, by(7), by(4), "before")), { before: "둘", parent: null, to_list: "" }, "다른 목록 task 앞");
   });
 
   it("폼 → 동작: 바뀐 칸만 고치고, 목록·상위가 바뀌면 옮긴다. 안 바뀌면 없음", () => {
@@ -270,5 +287,81 @@ describe("할 일 thread 연결(T3, plan §8.316)", () => {
     assert.deepEqual(newAutoCleans(log, 0).map((x) => x.id), [9, 5]);
     assert.equal(lastLogId(log), 9);
     assert.equal(lastLogId([]), 0);
+  });
+});
+
+// 한 목록의 예약(plan §8.393, t-0611): 맨 위 host 예약 차례, 하위 함께(2A), 저장소 거르기, 차례 순번
+describe("할 일 한 목록과 예약", () => {
+  const t = (line, title, over = {}) => task({ line, title, id: `ID${line}`, short_id: `d-${String(line).padStart(4, "0")}`, block_sha256: `sha-${line}`, repo: "aaa", ...over });
+  const q = (line, position, over = {}) => ({ task_id: `ID${line}`, task: t(line, `옛 ${line}`), position, state: "queued", reason: "자리 대기", ...over });
+  // 1 상위[2 하위, 3 하위], 4 rc 일, 5 진행 중(thread), 6 둘째 목록 일, 7 저장소 없음
+  const tasks = [t(1, "상위"), t(2, "하위 하나", { parent: 1 }), t(3, "하위 둘", { parent: 1 }), t(4, "rc 일", { repo: "rc" }), t(5, "진행 일", { thread: "t-0001" }), t(6, "둘째 목록", { list: "Later" }), t(7, "정하지 않음", { repo: null })];
+  const board = (queue) => ({ project: "p", sha256: "", lists: [{ name: "Backlog", notes: [] }, { name: "Later", notes: [] }], tasks, unlinked_threads: [], notes_files: [], repos: ["aaa", "rc"], queue });
+  const rows = (rs) => rs.map((r) => (r.kind === "gap" ? `gap:${r.n}:${r.repos.join("·")}` : `${r.kind}:${r.t.title}${r.kind === "under" ? `@${r.depth}` : ""}${r.kind === "task" && r.reservedKids ? `+${r.reservedKids}` : ""}${r.kind === "reserved" && r.crumb ? `<${r.crumb.title}` : ""}`));
+
+  it("예약은 host 차례대로 맨 위, 시작했거나 끝·취소한 예약은 원래 자리. 상위 예약은 하위를 데리고 올라간다(2A)", () => {
+    const b = board([q(4, 2), q(1, 1), q(5, 3, { state: "running" }), q(6, 4, { state: "cancelled" }), q(7, 5, { state: "check", reason: "알려지지 않은 모델" })]);
+    assert.deepEqual(pendingQueue(b).map((x) => x.task_id), ["ID1", "ID4", "ID7"]);
+    const m = taskList(b, "all", "", null, groups);
+    assert.deepEqual(rows(m.top), ["reserved:상위", "under:하위 하나@1", "under:하위 둘@1", "reserved:rc 일", "reserved:정하지 않음"]);
+    assert.deepEqual(rows(m.rest), ["task:진행 일", "task:둘째 목록"]);
+    assert.equal(m.counts.reserved, 3);
+    assert.equal(queueWhy(pendingQueue(b)[0]), null, "그냥 자리 대기는 행에도 상세에도 까닭이 없다");
+    assert.equal(queueWhy(pendingQueue(b)[2]), "알려지지 않은 모델");
+    assert.equal(queueWhy({ ...pendingQueue(b)[0], reason: "지정 조건의 머신 연결·모델 가용성 대기" }), "지정 조건의 머신 연결·모델 가용성 대기");
+  });
+
+  it("하위만 예약하면 상위 경로가 붙고 상위 행에 「하위 N 예약됨」. 「예약」 거르기는 예약 행만", () => {
+    const b = board([q(3, 1)]);
+    const m = taskList(b, "all", "", null, groups);
+    assert.deepEqual(rows(m.top), ["reserved:하위 둘<상위"]);
+    assert.deepEqual(rows(m.rest).slice(0, 2), ["task:상위+1", "task:하위 하나"]);
+    const r = taskList(board([q(1, 1)]), "reserved", "", null, groups);
+    assert.deepEqual(rows(r.top), ["reserved:상위"]);
+    assert.deepEqual(r.rest, []);
+    assert.deepEqual(taskList(board([]), "reserved", "", null, groups).top, []);
+  });
+
+  it("저장소 거르기는 상태 거르기와 함께 걸리고, 숨은 예약은 그 자리에 흐린 한 줄로 남는다", () => {
+    const b = board([q(1, 1), q(4, 2), q(7, 3), q(6, 4)]);
+    const m = taskList(b, "reserved", "", "rc", groups);
+    assert.deepEqual(rows(m.top), ["gap:1:aaa", "reserved:rc 일", "gap:2:정하지 않음·aaa"]);
+    assert.equal(m.counts.reserved, 1);
+    assert.equal(m.counts.all, 1);
+    const none = taskList(b, "all", "", "", groups);
+    assert.deepEqual(rows(none.top), ["gap:2:aaa·rc", "reserved:정하지 않음", "gap:1:aaa"]);
+    assert.deepEqual(taskList(board([q(1, 1)]), "all", "", "rc", groups).top, [], "보이는 예약이 없으면 숨은 줄도 없다");
+    assert.deepEqual(repoChoices(b).map((c) => [c.key, c.n]), [["aaa", 5], ["rc", 1], ["", 1]]);
+  });
+
+  it("예약 차례 순번: 놓은 자리 앞·뒤, 같은 자리는 없음, 일반 → 예약은 그 자리에", () => {
+    const order = ["A", "B", "C", "D"];
+    assert.equal(queueDropPosition(order, "D", "A", "before"), 1);
+    assert.equal(queueDropPosition(order, "A", "C", "after"), 3);
+    assert.equal(queueDropPosition(order, "A", "B", "before"), null);
+    assert.equal(queueDropPosition(order, "B", "A", "after"), null);
+    assert.equal(queueDropPosition(order, "A", "A", "after"), null);
+    assert.equal(queueDropPosition(order, "N", "B", "before"), 2, "새 예약은 B 앞");
+    assert.equal(queueDropPosition(order, "N", "D", "after"), 5);
+  });
+
+  it("예약 위로·아래로는 보이는 예약과 자리를 바꾸고, 사이 숨은 예약은 그대로. 맨 앞으로는 전체 맨 앞", () => {
+    const order = ["A", "H", "B", "C"];
+    const vis = (x) => x !== "H";
+    assert.equal(queueStep(order, "B", "up", vis), 1, "A 앞으로(H는 그대로 B 뒤로 밀린다)");
+    assert.equal(queueStep(order, "B", "up"), 2);
+    assert.equal(queueStep(order, "A", "down", vis), 3, "B 바로 뒤");
+    assert.equal(queueStep(order, "A", "up", vis), null);
+    assert.equal(queueStep(order, "C", "down", vis), null);
+    assert.equal(queueStep(order, "C", "top", vis), 1);
+    assert.equal(queueStep(order, "A", "top", vis), null);
+    assert.equal(queueStep(order, "Z", "up", vis), null);
+  });
+
+  it("예약을 풀면 돌아갈 자리: 같은 상위의 다음 일반 할 일 위, 없으면 상위 하위 끝·목록 맨 끝", () => {
+    const b = board([q(4, 1), q(5, 2)]);
+    assert.equal(unreserveHome(b, tasks[3]), "d-0006 둘째 목록 바로 위", "다음 예약(진행 일)은 건너뛴다");
+    assert.equal(unreserveHome(b, tasks[2]), "d-0001 상위 하위 끝");
+    assert.equal(unreserveHome(b, tasks[6]), "목록 맨 끝");
   });
 });
