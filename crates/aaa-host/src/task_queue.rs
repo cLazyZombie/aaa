@@ -20,7 +20,7 @@ pub(crate) fn split_id(text: &str) -> (&str, Option<&str>) {
 pub(crate) fn id_suffix(id: Option<&str>) -> String {
     id.map(|id| format!(" <!-- aaa-task:{id} -->")).unwrap_or_default()
 }
-fn identify(text: &str) -> Result<String, ErrorBody> {
+pub(crate) fn identify(text: &str) -> Result<String, ErrorBody> {
     let mut ids = std::collections::HashSet::new();
     let mut out = String::new();
     for line in text.split_inclusive('\n') {
@@ -142,25 +142,27 @@ impl Host {
             .map_err(internal)
     }
 
-    /// 명시 쓰기에서만 최소 ID 이행. 파일 밖 바이트·메모·줄 끝을 보존하며 이력도 남긴다.
+    /// 내용은 그대로 두고 식별 주석만 이행한다. 파일 잠금 안의 최신 판에 적용해 동시 첫 조회도 안전하다.
     pub(crate) fn task_identify(&self, project: &str) -> Result<(), ErrorBody> {
         let dir = self.project_dir(project)?;
-        let rev = file_rev::read(&dir.join("TASKS.md")).map_err(internal)?;
-        let text = identify(&rev.text)?;
-        if text == rev.text {
-            return Ok(());
-        }
-        let (conflict, _) = self.task_write(
-            project,
-            &dir,
-            &[TaskOp::RawSave { expected_sha256: rev.sha256, text }],
-            None,
-            "host",
-            &empty_ctx(),
-            false,
-        )?;
-        if conflict.is_some() {
-            return Err(err(ErrorCode::Conflict, "ID 부여 중 task가 바뀌었다. 다시 읽는다"));
+        let path = dir.join("TASKS.md");
+        let lock = self.file_locks.of(&path);
+        let _guard = lock.lock().unwrap();
+        let saved = file_rev::save(&path, |rev| {
+            let text = identify(&rev.text)?;
+            if text == rev.text { Ok(file_rev::Edit::Keep(())) } else { Ok(file_rev::Edit::Write(text, ())) }
+        })
+        .map_err(|e| match e {
+            file_rev::SaveError::Edit(e) => e,
+            file_rev::SaveError::Io(e) => internal(e),
+        })?;
+        let mut tasks = tasks::parse(saved.after.as_ref().unwrap_or(&saved.before).text.as_str());
+        self.fill_task_ids(project, &mut tasks)?;
+        if let Some(after) = saved.after {
+            self.task_identity_seen(project, &saved.before.sha256, &after);
+            self.db.audit("host", "task_identity_migrate", project);
+            let _ = self.task_events.send((project.to_string(), after.sha256));
+            self.tick_wake.notify_one();
         }
         Ok(())
     }
@@ -176,6 +178,14 @@ impl Host {
             return Ok(FrontResponse::TaskQueue { entries: self.db.queue_list(project).map_err(internal)? });
         }
         let by = self.task_writer(project, actor)?;
+        self.task_identify(project)?;
+        let action = match action {
+            QueueOp::Cancel { task_id } => QueueOp::Cancel { task_id: self.task_selector(project, &task_id)? },
+            QueueOp::Move { task_id, position } => {
+                QueueOp::Move { task_id: self.task_selector(project, &task_id)?, position }
+            }
+            other => other,
+        };
         self.check_active(project)?;
         let _gate = self.queue_gate.lock().await;
         match action {
@@ -617,15 +627,17 @@ impl Host {
     ) -> Result<FrontResponse, ErrorBody> {
         self.project_dir(project)?;
         self.archive_recover(project)?;
-        if let Some(id) = restore {
+        let restore = restore.map(|v| self.task_selector(project, v)).transpose()?;
+        if let Some(id) = restore.as_deref() {
             let _by = self.task_writer(project, actor)?;
             let mut row = self
                 .db
                 .archive_list(project)
                 .map_err(internal)?
                 .into_iter()
-                .find(|r| r.task_id == id)
+                .find(|r| r.task_id == id || r.task.title.eq_ignore_ascii_case(id))
                 .ok_or_else(|| err(ErrorCode::NotFound, "완료 보관에 없는 ID"))?;
+            let id = row.task_id.as_str();
             let dir = self.project_dir(project)?;
             let path = dir.join("TASKS.md");
             let lock = self.file_locks.of(&path);

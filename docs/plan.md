@@ -6693,3 +6693,31 @@ FRONT_API 1.87은 질문 ID·부분 답과 `ask_answer`·`question_reply`를 더
 - **웹.** 설정 「머신」 → 「등록된 머신」 줄마다 OS · CPU 종류 · 판(host와 다르면 주의 색)과 문제 수, 「자세히」(aria-expanded)로 펼치는 읽기 전용 상세: 연결(host 머신·연결됨·끊김과 마지막 본 때), OS, 판, SHA-256(고정폭, 줄바꿈), 개발 모드, 연결 중이면 작업 디스크·부하·전원·toolchain·시계 차이·주의, 문제, 시작 점검(통과·실패 이유), 접어 둔 agent 기능 목록. 보기 기기도 상세를 본다. 휴대폰은 이름 아래 값이 온다.
 - **검증.** host 유닛 `machine_view_tests`(hello 값이 실리고 판이 다르면 표시, 모르는 꼴의 점검은 버림, host를 다시 열어도 판·SHA·CPU 종류는 남고 기능·점검은 빈다), 웹 유닛 `machineDetail.test.mjs`, 웹 E2E `60-admin` 확장(둘째 agent의 SHA가 실행 파일의 SHA와 같고 화면에 그대로, 보기 기기 상세, 휴대폰 390 폭). 절차는 [시험](testing.md).
 - **번호·호환.** main의 §8.369(t-0574)·§8.370(t-0538 W6b)·§8.371(t-0576)과 FRONT_API 1.86·1.87을 유지하고 이 기능은 1.88·§8.372를 쓴다. AGENT_LINK는 1.10 그대로다(hello 선택 칸만 더함).
+
+### 8.373 할 일 표시 ID d-NNNN(10-21, t-0575)
+
+- **표시·선택.** 웹 할 일·상세·예약·완료 보관과 CLI list·context에 `d-0001` 같은 ID를 보인다. edit·move·rm·restore·log·thread start --from-task·예약·완료 보관 복원은 ID와 기존 제목을 모두 받는다. 번호가 발급된 문자열은 ID를 우선하며 내부 ULID 입력도 유지한다. coordinator 생성 안내에 ID 사용을 권한다.
+- **영속·이주.** 프로젝트마다 1부터 발급하고 제목·목록·순서 변경과 host 재시작 뒤에도 유지한다. 삭제·기록 정리·완료 보관 뒤 재사용하지 않고 복원 시 원래 번호를 쓴다. host DB `task_ids`가 기존 ULID와 번호를 연결하며 프로젝트 이름 변경·휴지통 내보내기·복원에 포함된다. 첫 읽기와 새 항목 쓰기는 없는 ULID 주석만 추가하고 기존 ULID·메모·들여쓰기·줄 끝 문자를 유지한다. 중복 ULID는 거부한다.
+- **호환.** FRONT_API 1.89에서 선택 칸 `TaskView.short_id`와 `TaskLog.task` 필터를 더한다. 새 CLI의 기록 필터는 1.89 이상 host에만 보낸다. ULID 기반 연결과 제목 입력은 유지하고 AGENT_LINK 1.10은 그대로다. TASKS.md만 다른 host로 옮기면 번호는 새로 발급되므로 번호까지 보존하려면 host DB를 함께 보존한다.
+- **검증.** DB·host 동시 이주와 비재사용·복원 owner, 실제 host·agent·CLI의 변경·이동·삭제·예약·재시작·완료 보관 통합 시험, 웹 E2E `70-task-ids`의 CLI 교차 편집과 320/390/768px 표시·검색·가로 넘침을 검사한다. main의 E2E 68·69와 §8.372까지 유지한다. 절차는 [시험](testing.md), 사용법은 [할 일 ID](task-ids.md)에 둔다.
+
+### 8.374 aaa install I6 대화형 검토·계획 결속 승인(10-21, t-0485)
+
+I5 위에 외부 TTY의 inquire/plain 마법사와 명시 인자·private 초안을 연결한다. 두 UI는 동일 choices/계획을 제출한다. dry-run은 저장·발급·nonce·실제 적용을 하지 않으며 Ctrl+C/EOF는 cancelled/130이다. `--yes`·임의 JSON·세션/SSH 환경 변수는 권한이 아니다. 검토한 계획/실행 SHA/계정/instance/변경 전후의 정확 scope를 Ed25519 서명과 사용자 전용 issuer pin·짧은 만료·한 번의 nonce로 결속한다. 발급/비밀 입력은 공개 결과·NDJSON에 넣지 않는다.
+
+고정 worker는 실제 IPC peer PID/image와 EOF가 끝난 보호 입력을 확인하고 승인 lease를 소비한 뒤 I2 파일 transaction, I5 Windows SCM, 등록/공개 작업을 실행한다. CLI가 사라져도 worker는 독립 수명으로 같은 설치 ID에 재개 상태를 기록한다. status는 발급만 된 planned와 실제 journal/SCM/등록 상태를 읽고 보정 쓰기를 하지 않는다. 보호 암호는 Windows console에서 한 번 받아 UTF-16 buffer를 지우며 암호 보관은 SCM에 맡긴다. 기존 같은 소유 서비스는 자격 증명을 바꾸지 않는다. 미구현 broker/OS 권한은 needs_user다.
+
+host 등록은 TLS peer와 결속한 일회 grant 또는 기존 W0 SAS를 쓰고, 응답 유실은 같은 ID 조회로 회복한다. 현재 peer key를 대기 중 DB의 새 key로 바꾸거나 폐기한 grant로 기기를 되살리지 않는다. 첫 Controller는 실제 W0 pairing의 redeem 뒤에만 확인한다. 코드 표시 ACK는 등록/기기 완료가 아니다. identity/key/cert/pin의 승인 전 내용과 자신의 준비 기록을 대조해 외부 편집을 보존한다.
+
+Windows 사용자 PATH는 기본 preserve이고 명시 user만 현재 HKCU 값의 type/순서/빈 항목/UTF-16 원문을 유지하며 transaction 안에서 before를 다시 확인한다. Serve는 정확 선택 포트와 예상 mapping hash를 서명하고 Windows 보호 LocalAPI의 ETag/If-Match로만 적용한다. 다른 앱/포트/Funnel을 덮거나 조건 없는 CLI 쓰기로 대체하지 않는다. mapping과 현재 host instance의 공개 HTTPS 응답, 첫 Controller를 각각 확인한다. Front의 좁은 InstallPublish 요청은 실제 파일 적용 중인 동일 worker 증명만 수락하며 기존 W0 변경 권한은 그대로다.
+
+공개 결과의 optional service/web 요약은 등록·running·application_ready와 외부/내부 포트·재사용/소유·pairing을 나눠 표시한다. SID/home/인증 파일 존재로 실제 서비스 harness 인증을 추정하지 않는다. require가 미확인이면 unknown/needs_user, 사용자가 새 계획에서 명시한 login=defer는 configured 범위다. URL·암호·키·코드는 결과에 없다. FRONT_API 1.90, AGENT_LINK 1.11/install_enroll.v1과 TS/schema를 함께 갱신하며 기능 없는 구판을 성공으로 처리하지 않는다.
+
+검증은 macOS 전체 gate와 Windows strict cross다. Windows·Linux 실제 실행은 main push 뒤 CI이며 실제 SCM logon/Session0/로그인 전 부팅/LSA/UAC/인증·사용자 Windows PC 인수와 혼동하지 않는다. 이 단계 뒤 Windows 최소 bootstrap/사용자 Windows PC 사용자 시험→macOS→Linux→최종 I7 순서로 간다. 별도 runner/VM·branch/PR CI push는 두지 않는다. 절/API 번호는 착지 창에서 최신 main과 다시 대조한다.
+
+
+### 8.375 화면 이동 뒤 대화 첨부 미리보기 복원(10-21, t-0583)
+
+- **원인·수정.** 초안에는 이미지 `@경로`가 남지만 입력창 컴포넌트의 첨부 목록·blob URL은 화면 전환 때 사라졌다. 입력창을 다시 열 때 초안의 이미지 경로에서 목록을 복원하고 기존 `pane_file` API의 권한 검사·이미지 크기 제한을 거친 URL로 썸네일을 읽는다. 원본 이미지 바이트나 blob URL을 브라우저 저장소에 추가하지 않는다. 새로 올린 그림은 기존 로컬 미리보기를 쓰고 해제 때 blob URL을 놓는다.
+- **동작·검증.** 복원한 첨부도 전송·개별 삭제 대상이며, 뒤에 새 그림을 붙여도 ID가 겹치지 않는다. 기존 E2E23을 확장해 Chromium·WebKit 데스크톱·WebKit iPhone·iPad에서 대화·터미널·보고서 이동, 새로고침, 실제 이미지 decode, 원본 SHA-256 전송, 추가 첨부·개별 삭제·재진입을 검사한다. 원래 코드의 미리보기 누락 재현과 시험 절차는 [testing](testing.md)의 t-0583 절에 둔다.
+- **번호·호환.** 착지 기준 main `c877d394`의 §8.374·FRONT_API 1.90·AGENT_LINK 1.11·E2E70을 확인했다. 이 수리는 §8.375이며 프로토콜 변경이나 새 E2E 파일은 없다. 기존 API 판과 E2E 번호를 유지한다.

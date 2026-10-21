@@ -171,6 +171,7 @@ fn offline_backend_initializes_and_stops() {
         state: lab.0.join("state"),
         environment: BTreeMap::new(),
         automatic: true,
+        wait_timeout_s: 600,
     };
     let mut agent = Role::start(&spec, &lab.0.join("agent-context.json"));
     agent.running();

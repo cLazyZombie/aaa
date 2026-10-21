@@ -22,7 +22,7 @@ impl Lab {
         std::fs::create_dir(&p).unwrap();
         Self(p)
     }
-    fn cmd(&self, args: &[&str]) -> Output {
+    fn command(&self, args: &[&str]) -> Command {
         let mut c = Command::new(BIN);
         c.env_clear().args(args).stdin(Stdio::null());
         for key in ["PATH", "SystemRoot", "WINDIR", "COMSPEC", "PATHEXT"] {
@@ -37,7 +37,10 @@ impl Lab {
             .env("AAA_STATE_DIR", self.0.join("state"))
             .env("AAA_INSTANCE", self.instance())
             .env("SHELL", if cfg!(windows) { "cmd.exe" } else { "/bin/sh" });
-        let out = c.output().unwrap();
+        c
+    }
+    fn cmd(&self, args: &[&str]) -> Output {
+        let out = self.command(args).output().unwrap();
         for bytes in [&out.stdout, &out.stderr] {
             assert!(!String::from_utf8_lossy(bytes).contains(CANARY), "비밀 원문 출력");
         }
@@ -81,13 +84,28 @@ impl Drop for Lab {
         std::fs::remove_dir_all(&self.0).unwrap();
     }
 }
-#[derive(Debug, PartialEq, Eq)]
+#[derive(PartialEq, Eq)]
 struct FileView {
     readonly: bool,
     modified: Option<std::time::SystemTime>,
     #[cfg(unix)]
     mode: u32,
     bytes: Option<Vec<u8>>,
+}
+// Equality retains every byte; a failing assertion must not dump lab signing keys/passwords/binaries.
+impl std::fmt::Debug for FileView {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        use sha2::Digest;
+        let mut view = f.debug_struct("FileView");
+        view.field("readonly", &self.readonly).field("modified", &self.modified);
+        #[cfg(unix)]
+        view.field("mode", &self.mode);
+        view.field(
+            "length_sha256",
+            &self.bytes.as_ref().map(|bytes| (bytes.len(), hex::encode(sha2::Sha256::digest(bytes)))),
+        )
+        .finish()
+    }
 }
 fn snapshot(root: &Path) -> BTreeMap<PathBuf, FileView> {
     fn visit(root: &Path, at: &Path, out: &mut BTreeMap<PathBuf, FileView>) {
@@ -121,6 +139,8 @@ fn json(out: &Output) -> Value {
     let v: Value = serde_json::from_slice(&out.stdout).unwrap();
     assert_eq!(v["schema"], "aaa.install.v1");
     assert_eq!(v["exit_code"].as_i64(), out.status.code().map(i64::from));
+    let typed: aaa_proto::install::InstallResult = serde_json::from_value(v.clone()).unwrap();
+    assert!(typed.valid_exit(), "v1 status/exit 계약: {v}");
     v
 }
 
@@ -517,3 +537,21 @@ fn internal_service_entry_requires_scm_and_never_falls_back_to_console_backend()
     }));
     assert_eq!(snapshot(&lab.0), before);
 }
+
+#[path = "install/authorization.rs"]
+mod authorization;
+
+#[path = "install/grant.rs"]
+mod grant;
+
+#[path = "install/wizard.rs"]
+mod wizard;
+
+#[path = "install/network.rs"]
+mod network;
+
+#[path = "install/worker_lifetime.rs"]
+mod worker_lifetime;
+
+#[path = "install/pairing.rs"]
+mod pairing;

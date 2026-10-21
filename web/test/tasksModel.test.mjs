@@ -8,6 +8,13 @@ const MISREAD = "owner 칸이 owner 꼴이 아님: t-0001 S4 뒤";
 const groups = new Map([["t-0001", "working"], ["t-0002", "resolved"], ["t-0003", "waiting_on_you"]]);
 
 describe("할 일 화면", () => {
+  it("고정 ID로 검색하고 coordinator에게 전달한다", () => {
+    const t = task({ short_id: "d-0007", title: "바뀐 제목" });
+    assert.equal(taskMatches(t, "all", "d-0007", groups), true);
+    assert.equal(handOffText(t), "d-0007 task를 thread로 맡겨 줘");
+    assert.equal(handOffText({ ...t, title: "다시 바뀐 제목" }), handOffText(t));
+  });
+
   it("행 상태: 형식 어긋남 > 열린 thread와 이어짐 > 대기. 끝난·모르는 thread는 대기다", () => {
     assert.equal(taskState(task({ thread: "t-0001", problems: [MISREAD] }), groups), "problem");
     assert.equal(taskState(task({ thread: "t-0001" }), groups), "run");

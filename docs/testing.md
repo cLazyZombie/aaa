@@ -2,6 +2,23 @@
 
 새 기능을 만드는 thread가 따르는 짧은 규칙이다. 근거는 참고 넷(herdr 0.9.5·herdr-projects 0.2.35·herdr-web-ui `aa624cb`·t3code `4b1024da`)과 이 저장소에서 실제로 난 간헐 실패다. 전략과 도구 목록은 [plan §13](plan.md#13-테스트-전략과-직접-만들-e2e-도구)에 있다.
 
+## 할 일 표시 ID(t-0575)
+
+- `cargo test -p aaa-host --lib display_ids --locked`: 기존 ULID·CRLF를 가진 파일을 여덟 조회가 동시에
+  이주해도 같은 `d-NNNN`을 받는지 본다. 삭제·로그 정리·옛 원문 복원·DB 다시 열기에도 대응을 유지한다.
+- `cargo test -p aaa --test m13 task_display_ids_survive_rename_move_restart_delete_and_archive --locked -- --exact`:
+  실제 host·agent·CLI에서 괄호 제목과 명시 owner의 시작/연결, 제목 변경·목록/하위 이동·기록 조회,
+  삭제 복원·번호 비재사용·예약 순서/취소·host 재시작·완료 보관 복원을 검사한다. ID와 ULID를 모두 대조한다.
+- `node web/e2e/web.e2e.mjs --spec 70-task-ids`: 실제 host의 첫 이주가 주석 외의 bytes를 유지하는지,
+  웹 편집 뒤 CLI 선택자가 같은 할 일을 고치는지, host 재시작 뒤 320/390/768px에서 ID 검색·표시와
+  가로 넘침을 검사한다. CLI 응답·DOM 사건·연결 준비로 끝낸다.
+
+기존 원문 바이트 keeper는 이주가 끝난 고정 ULID fixture로 내용·충돌·이력을 검사한다. 기존 웹 내용 keeper는
+식별 주석을 제외한 내용을 비교하고, 직접 편집 fixture에서는 주석을 보존한다. 식별 주석 자체의 정확한 bytes와
+번호·내부 ULID 대응은 위 전용 keeper가 검사한다. `parent_attention_is_published_after_the_verdict_is_saved`는
+자동 정리의 파일 사건 뒤 판정 확정 사건도 보내는지 검사한다. 파일 쓰기 직후의 읽기가 판정 전 원문을 받더라도
+마지막 사건에서는 상위의 확인 필요 상태가 확정돼 있어야 한다. ID를 없애거나 재발급하는 변형은 전용 keeper에서 실패해야 한다.
+
 ## thread 재시작의 pane 교체(t-0567)
 
 - `cargo test -p aaa --test m13 restart_replaces_exited_panes_locally_and_remotely --locked -- --exact`:
@@ -1334,6 +1351,16 @@ macOS gate·Windows cross compile 결과와 별도로 보고한다. SCM 실제 l
   성공하거나 덮어쓰지 않는지 본다. 대화도 이 저장 함수를 쓰므로 두 화면의 보호 규칙이 같다.
 - 수정 전 E2E23은 첫 Chrome 붙여넣기의 무작위 이름에서 실패했다. 시간 상한·재시도·해시 검사를 완화하지 않는다.
 
+## 대화 첨부 미리보기 복원(t-0583)
+
+- E2E23의 「대화 이미지」는 Chromium·WebKit 데스크톱·WebKit iPhone·iPad에서 붙여넣기 뒤
+  대화 → 터미널 → 대화 → 보고서 → 대화로 이동하고, 드롭·파일 선택 뒤에는 새로고침한다.
+  초안의 글·경로 보존, 복원한 썸네일 하나의 실제 이미지 decode, 전송 뒤 원본 SHA-256·경로와 미리보기 제거를 본다.
+- 복원한 그림 뒤 새 그림을 붙여 하나씩 삭제하고, 새로고침 뒤 지운 경로·썸네일이 돌아오지 않는지도 확인한다.
+  blob URL을 저장하지 않고 초안의 경로를 기존 pane_file 권한 검사로 읽는다.
+- 원래 제품에서는 첫 Chrome 대화 → 터미널 → 대화 뒤 경로는 남고 썸네일이 없어 decode 대기에서 실패했다.
+  시한·재시도를 바꾸지 않고 DOM 표시·입력 준비·이미지 decode·실제 입력 수신 사건으로 끝낸다.
+
 ## 입력칸 줄바꿈 폭 고정(t-0563, plan §8.364)
 
 - 사용자 1A에 따라 글이 길어져도 그림·맥락·보내기 단추를 옆에 둔다. 한 줄/여러 줄 표지는 실제 글 칸의 줄 수이며 배치를 바꾸지 않는다. E2E 22의 단추 아래 줄 조건과 펼친 폭 표지만 이 선택에 맞춰 바꿨다. 짧은 글 높이·단추만 있는 밑 줄 금지·10줄 상한·focus·아래끝·잘림 검사는 유지하고 모든 길이의 글 칸 폭 불변 검사를 더했다.
@@ -1440,3 +1467,14 @@ xterm은 buffer resize에서 현재 링크를 지우고 다음 mousemove에서 �
 - host 유닛 `cargo test -p aaa-host machine_view_tests`: 실제 host DB를 연 실험실에서 hello(CPU 종류·판·SHA·기능·시작 점검)가 `MachineView`에 실리는지, 다른 판으로 다시 붙으면 `software_differs`, 모르는 꼴의 점검은 버리는지 본다. runtime을 끝내 Host가 닫힌 것을 확인한 뒤 같은 상태 폴더로 다시 열어 판·SHA·CPU 종류는 DB에서 남고 기능·점검은 빈 것을 본다.
 - 웹 유닛 `node --test web/test/machineDetail.test.mjs`: 줄 요약(옛 host는 OS만), 판 주의·SHA 고정폭·「모름」, 연결·끊김의 마지막 본 때, 건강은 연결 중일 때만, 시작 점검.
 - 웹 E2E `60-admin`의 「머신 상세(M0)」: 등록해 붙인 둘째 agent의 `aaa machine list` SHA가 실행 파일(`AAA_BIN`)의 SHA-256과 같고, 줄 요약·「자세히」의 SHA·판·연결·기능 목록이 그 값을 보인다. 보기 기기도 「자세히」를 열고, 휴대폰 390은 상세를 펼친 채 가로 넘침이 없다. 기다림은 화면 표지와 host 답이다.
+
+## aaa install I6 승인·실제 executor owner(t-0485, plan §8.374)
+
+- `cargo test -p aaa --test install --locked`: 공통 실제 CLI/PTY owner는 세 OS에서 같은 마법사·plain/inquire·뒤로·초안·정확 yes·EOF130·자동/세션 거부·private 발급·실제 worker·같은 ID status/resume를 검사한다. 실제 TLS host 등록/SAS/응답 유실 조회·외부 pin 편집 보존, require unknown→새 defer 승인/파일 job 재사용, 첫 Controller 실제 redeem/폐기·코드 비공개를 포함한다. 운영 서비스/계정/암호/LSA는 사용하지 않는다.
+- `cargo test -p aaa --bin aaa install:: --locked`: 실제 private 파일·서명/pin/만료/nonce·파일 scope·execution/job 결속·I2/SCM 상태·보호 입력·PATH 정책을 검사한다. 독립 v1 status/exit validator가 needs_user3와 cancelled130을 소유한다. 논리 clock은 승인 만료에만 쓰고 실제 쓰기는 OS 파일 transaction이다.
+- `cargo test -p aaa-host --lib installation:: --locked`, `cargo test -p aaa-host --lib tailscale:: --locked`: 실제 host DB/서명/private 입력과 TLS peer·grant 일회 소비/폐기, 보호 publication의 PID/image/nonce/phase/실제 owned listener, exact 포트/외부 mapping 보존, bounded LocalAPI wire의 ETag/If-Match/412, 현재 host HTTPS proof와 일반 200 거부를 검사한다. publication 소비자의 입력 fixture는 파일 엔진 생산 완료 증거로 쓰지 않으며 실제 CLI owner가 생산 경계를 검사한다.
+- `cargo test -p aaa-host --lib install_agent_query_keeps_the_handshake_key_after_same_id_rekey --locked`: 첫 메시지 전 key 교체 때 실제 연결의 immutable peer를 유지하고 다른 key의 결과를 내주지 않는다.
+- Windows 전용 owner는 실제 ConPTY 암호 mode/echo/성공·취소·EOF, Job의 breakaway 허용/금지와 부모 소멸, Win32 ready 파일 변경 사건, 임시 HKCU Software lab key의 registry transaction rollback/동시 편집이다. Windows API 차이 때문에 cfg(windows)이며 공통 CLI/권한 owner는 제외하지 않는다. Unix 부모 감시는 macOS kqueue/Linux pidfd를 사용한다. SSH 신뢰 unit은 봉인된 경계만 실험실에서 대체하며 실제 OpenSSH 설치 실행 성공을 주장하지 않는다.
+- 서명·계획/소비·파일 scope/job 연결·worker 분리 수명·정확 Serve의 If-Match/선택 포트·HTTPS instance proof·TLS rekey/소비/PATH 보존 변형을 owner에서 RED로 대조하고 바이트 복구 뒤 검증한다. 실패 재실행·timeout 증가·기대값 완화는 하지 않는다.
+
+Windows/Linux 실제 실행 판정은 main push 뒤 GitHub CI windows-2025/ubuntu-24.04다. 실제 SCM logon/LSA/Session0/UAC/재부팅/실제 서비스 harness 인증·Tailscale HTTPS는 사용자 Windows PC 사용자 인수로 따로 확인한다. 교차 clippy/build와 file/PTY owner를 이 실제 설치 증거로 부르지 않는다.

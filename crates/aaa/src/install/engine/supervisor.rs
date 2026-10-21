@@ -4,6 +4,8 @@ use std::collections::BTreeMap;
 
 #[cfg(windows)]
 mod native;
+#[cfg(windows)]
+mod native_ready;
 #[cfg(any(windows, test))]
 mod runner;
 #[cfg(windows)]
@@ -13,16 +15,232 @@ fn failure(code: &'static str, exit: u8) -> Fault {
     Fault { code, exit }
 }
 
+#[cfg(windows)]
+pub(super) fn system_sshd(pid: u32) -> bool {
+    let Ok(identity) = native::identity(pid) else { return false };
+    let mut buffer = vec![0u16; 32768];
+    let length = unsafe {
+        windows_sys::Win32::System::SystemInformation::GetSystemDirectoryW(buffer.as_mut_ptr(), buffer.len() as u32)
+    };
+    if length == 0 || length as usize >= buffer.len() {
+        return false;
+    }
+    let Ok(directory) = String::from_utf16(&buffer[..length as usize]) else { return false };
+    identity.sid == "S-1-5-18"
+        && identity.image.canonicalize().ok().is_some_and(|image| {
+            Path::new(&directory).join("OpenSSH/sshd.exe").canonicalize().ok().as_ref() == Some(&image)
+        })
+}
+
+#[cfg(windows)]
+pub(super) fn same_account(pid: u32) -> bool {
+    native::identity(pid).ok().is_some_and(|identity| Some(identity.sid) == crate::install::platform::account())
+}
+
+fn roles(plan: &InstallPlan) -> Vec<InstallRole> {
+    let mut roles = vec![plan.choices.role.expect("검증된 설치 role")];
+    if roles[0] == InstallRole::Host && plan.choices.local_agent == Some(InstallToggle::Enabled) {
+        roles.push(InstallRole::Agent);
+    }
+    roles
+}
+fn service_name(role: InstallRole, instance: Option<&str>) -> String {
+    let role = match role {
+        InstallRole::Host => "host",
+        InstallRole::Agent => "agent",
+    };
+    instance.map_or_else(|| format!("aaa-{role}"), |name| format!("aaa-{name}-{role}"))
+}
+pub(super) fn permissions(plan: &InstallPlan) -> Result<Vec<InstallPermission>> {
+    if plan.choices.service == Some(InstallService::None) {
+        return Ok(Vec::new());
+    }
+    let mut result = Vec::new();
+    for role in roles(plan) {
+        let target = format!("service:{}", service_name(role, plan.choices.instance.as_deref()));
+        let desired = hash(
+            &serde_json::to_vec(&(
+                role,
+                &plan.choices,
+                &plan.context.platform,
+                &plan.context.target_account,
+                &plan.context.binary_sha256,
+                &plan.context.bin_path,
+                &plan.context.config_dir,
+                &plan.context.state_dir,
+            ))
+            .map_err(|_| Fault::conflict())?,
+        );
+        result.push(InstallPermission {
+            operation: InstallOperation::RegisterService,
+            target: target.clone(),
+            before_sha256: None,
+            after_sha256: Some(desired.clone()),
+        });
+        if plan.choices.start == Some(InstallStart::Now) {
+            result.push(InstallPermission {
+                operation: InstallOperation::StartService,
+                target,
+                before_sha256: None,
+                after_sha256: Some(desired),
+            });
+        }
+    }
+    Ok(result)
+}
+/// 새 서비스만 보호 암호를 요청한다. 소유/같은 설정의 실제 SCM 서비스는 OS 보관 암호를 그대로 둔다.
+#[cfg(windows)]
+pub(super) fn requires_password(plan: &InstallPlan) -> Result<bool> {
+    let state = Path::new(&plan.context.state_dir);
+    let bytes = match private::read(&state.join("install/receipt.json"), 1024) {
+        Ok(bytes) => bytes,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(true),
+        Err(e) => return Err(Fault::io(e)),
+    };
+    let id: String = serde_json::from_slice(&bytes).map_err(|_| Fault::conflict())?;
+    let journal = read_journal(state, &id, plan.choices.instance.as_deref())?;
+    if journal.phase != Phase::Configured {
+        return Ok(true);
+    }
+    let installed = transaction::installed_plan(state, &journal)?;
+    let mut original = installed.choices.clone();
+    let mut desired = plan.choices.clone();
+    original = transaction::file_goal_choices(original);
+    desired = transaction::file_goal_choices(desired);
+    if original != desired
+        || installed.context.binary_sha256 != plan.context.binary_sha256
+        || installed.context.target_account != plan.context.target_account
+    {
+        return Ok(true);
+    }
+    for role in roles(plan) {
+        let role = if role == InstallRole::Host { "host" } else { "agent" };
+        let directory = journal_dir(state, &id).join("services").join(role);
+        if !directory.join("journal.json").try_exists().map_err(Fault::io)? {
+            return Ok(true);
+        }
+        let record: Record =
+            serde_json::from_slice(&private::read(&directory.join("journal.json"), 128 * 1024).map_err(Fault::io)?)
+                .map_err(|_| Fault::conflict())?;
+        let spec: Spec =
+            serde_json::from_slice(&private::read(&directory.join("context.json"), 128 * 1024).map_err(Fault::io)?)
+                .map_err(|_| Fault::conflict())?;
+        spec.validate()?;
+        spec.guard_paths()?;
+        spec.verify_plan(&installed)?;
+        if record.schema != 1
+            || record.context_sha256 != spec.sha()
+            || record.account_sha256 != account_hash()?
+            || spec.id != id
+            || spec.state != transaction::real_directory(state)?
+        {
+            return Err(Fault::conflict());
+        }
+        if record.credentials_pending
+            || !record.owned
+            || !matches!(record.phase, ServicePhase::Registered | ServicePhase::Starting | ServicePhase::Ready)
+        {
+            return Ok(true);
+        }
+        let Some(observed) = native::Scm.query(&spec)? else { return Ok(true) };
+        if observed.configuration != Configuration::desired(&spec) {
+            return Err(Fault::conflict());
+        }
+    }
+    Ok(false)
+}
+
+pub(super) fn apply(
+    plan: &InstallPlan,
+    file_id: &str,
+    lease: &authorization::Lease,
+    password: Option<&Password>,
+) -> Result<bool> {
+    if plan.choices.service == Some(InstallService::None) {
+        return Ok(false);
+    }
+    lease.permits(plan, &permissions(plan)?)?;
+    lease.valid_at(aaa_common::util::now_ms())?;
+    #[cfg(windows)]
+    {
+        if plan.context.platform.os != InstallOs::Windows || plan.choices.service != Some(InstallService::WindowsScm) {
+            return Err(failure("unsupported_service_platform", 5));
+        }
+        let state = Path::new(&plan.context.state_dir);
+        let journal = read_journal(state, file_id, plan.choices.instance.as_deref())?;
+        let installed = transaction::installed_plan(state, &journal)?;
+        let current = native::identity(std::process::id())?;
+        if current.sid != plan.context.target_account {
+            return Err(Fault::conflict());
+        }
+        let mut environment = native::user_environment()?;
+        environment.retain(|key, _| {
+            matches!(
+                key.as_str(),
+                "PATH" | "LANG" | "LC_ALL" | "LC_CTYPE" | "TZ" | "TERM" | "CODEX_HOME" | "CLAUDE_CONFIG_DIR"
+            )
+        });
+        if let Some(home) = &plan.choices.codex_home {
+            environment.insert("CODEX_HOME".into(), home.clone());
+        }
+        if let Some(home) = &plan.choices.claude_home {
+            environment.insert("CLAUDE_CONFIG_DIR".into(), home.clone());
+        }
+        let mut changed = false;
+        for role in roles(plan) {
+            let mut job = Job::prepare(&installed, file_id, role, current.profile.clone(), environment.clone())?;
+            let observed = native::Scm.query(&job.spec)?;
+            let matches = observed.as_ref().is_some_and(|o| o.configuration == Configuration::desired(&job.spec));
+            let ready = if plan.choices.start == Some(InstallStart::Now) {
+                matches
+                    && job.record.phase == ServicePhase::Ready
+                    && observed.as_ref().is_some_and(|o| verify_ready(&job.spec, &mut native::Scm, o).is_ok())
+            } else {
+                matches && matches!(job.record.phase, ServicePhase::Registered | ServicePhase::Ready)
+            };
+            if ready && !job.record.credentials_pending && !job.record.credentials_restart_unverified {
+                continue;
+            }
+            lease.valid_at(aaa_common::util::now_ms())?;
+            job.register(&mut native::Scm, password)?;
+            if plan.choices.start == Some(InstallStart::Now) {
+                lease.valid_at(aaa_common::util::now_ms())?;
+                job.start(&mut native::Scm)?;
+            }
+            changed = true;
+        }
+        Ok(changed)
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = (file_id, password);
+        Err(failure("unsupported_service_platform", 5))
+    }
+}
+
 /// 암호는 직렬화/Debug/Clone하지 않고 소유 UTF-16 buffer를 소비 뒤 지운다.
-struct Password(Vec<u16>);
+pub(super) struct Password(Vec<u16>);
 impl Password {
-    fn new(mut input: Vec<u16>) -> Result<Self> {
+    pub(super) fn new(mut input: Vec<u16>) -> Result<Self> {
         if input.is_empty() || input.len() > 1024 || input.contains(&0) {
             wipe(&mut input);
             return Err(failure("service_account_auth_unavailable", 3));
         }
         input.push(0);
         Ok(Self(input))
+    }
+    pub(super) fn send<W: std::io::Write>(
+        &self,
+        writer: &mut W,
+        send: impl FnOnce(&mut W, &[u8]) -> Result<()>,
+    ) -> Result<()> {
+        let mut text = String::from_utf16(&self.0[..self.0.len() - 1])
+            .map_err(|_| failure("service_account_auth_unavailable", 3))?;
+        let result = send(writer, text.as_bytes());
+        // UTF-8 전송 buffer도 사용 직후 지운다. 0으로 바꾸는 동안에는 문자열을 읽지 않는다.
+        unsafe { text.as_bytes_mut() }.iter_mut().for_each(|byte| unsafe { std::ptr::write_volatile(byte, 0) });
+        std::sync::atomic::compiler_fence(std::sync::atomic::Ordering::SeqCst);
+        result
     }
 }
 fn wipe(input: &mut [u16]) {
@@ -70,6 +288,7 @@ struct Spec {
     state: PathBuf,
     environment: BTreeMap<String, String>,
     automatic: bool,
+    wait_timeout_s: u32,
 }
 impl Spec {
     fn role(&self) -> &'static str {
@@ -80,9 +299,7 @@ impl Spec {
     }
     #[cfg(windows)]
     fn name(&self) -> String {
-        self.instance
-            .as_ref()
-            .map_or_else(|| format!("aaa-{}", self.role()), |name| format!("aaa-{name}-{}", self.role()))
+        service_name(self.role, self.instance.as_deref())
     }
     fn directory(&self) -> PathBuf {
         journal_dir(&self.state, &self.id).join("services").join(self.role())
@@ -109,6 +326,7 @@ impl Spec {
     }
     fn validate(&self) -> Result<()> {
         if self.schema != 1
+            || self.wait_timeout_s == 0
             || !id_ok(&self.id)
             || self.account.is_empty()
             || !digest_ok(&self.binary_sha256)
@@ -139,6 +357,7 @@ impl Spec {
             || Path::new(&plan.context.config_dir).canonicalize().map_err(Fault::io)? != self.config
             || Path::new(&plan.context.state_dir).canonicalize().map_err(Fault::io)? != self.state
             || plan.choices.instance != self.instance
+            || plan.choices.wait_timeout.unwrap_or(600) != self.wait_timeout_s
             || (plan.choices.role != Some(self.role)
                 && !(plan.choices.role == Some(InstallRole::Host)
                     && self.role == InstallRole::Agent
@@ -355,6 +574,7 @@ impl Job {
             state: state.canonicalize().map_err(Fault::io)?,
             environment,
             automatic: plan.choices.startup == Some(InstallStartup::Auto),
+            wait_timeout_s: plan.choices.wait_timeout.unwrap_or(600),
         };
         let mut job = Self::open(spec)?;
         job._files = Some(files);
@@ -666,7 +886,34 @@ pub(super) fn observe(
         }
         seen.push(role);
         #[cfg(windows)]
-        observe_service(&spec, &record, &mut native::Scm, &mut result)?;
+        if plan.choices.start == Some(InstallStart::Deferred) && record.phase == ServicePhase::Registered {
+            match native::Scm.query(&spec) {
+                Ok(Some(observed)) if observed.configuration == Configuration::desired(&spec) => {
+                    result.checks.push(InstallCheck {
+                        name: format!("service_{}_registered", spec.role()),
+                        state: InstallCheckState::Passed,
+                    });
+                    result.checks.push(InstallCheck {
+                        name: format!("service_{}_ready", spec.role()),
+                        state: InstallCheckState::NotRequested,
+                    });
+                    result.changes.push(InstallChange {
+                        kind: "service".into(),
+                        action: "register".into(),
+                        state: if record.owned { InstallChangeState::Applied } else { InstallChangeState::Unchanged },
+                    });
+                    if record.credentials_pending {
+                        incomplete(&mut result, id, "service_credentials_pending");
+                    }
+                }
+                Ok(Some(_)) => return Err(Fault::conflict()),
+                Ok(None) => incomplete(&mut result, id, "service_registration_missing"),
+                Err(e) if e.exit == 3 => incomplete(&mut result, id, e.code),
+                Err(e) => return Err(e),
+            }
+        } else {
+            observe_service(&spec, &record, &mut native::Scm, &mut result)?;
+        }
         #[cfg(not(windows))]
         {
             if record.phase == ServicePhase::Ready {

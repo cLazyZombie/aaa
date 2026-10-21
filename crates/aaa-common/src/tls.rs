@@ -39,16 +39,51 @@ pub fn load_or_create(dir: &Path, common_name: &str) -> Result<Identity> {
         return Ok(Identity { cert_der, key_der, fingerprint });
     }
     util::ensure_private_dir(&tls)?;
+    let identity = generate(common_name)?;
+    util::write_private(&key_p, &identity.key_der)?;
+    util::write_private(&cert_p, &identity.cert_der)?;
+    Ok(identity)
+}
+fn generate(common_name: &str) -> Result<Identity> {
     let key = rcgen::KeyPair::generate().context("장치 키 생성")?;
     let mut params = rcgen::CertificateParams::new(vec![common_name.to_string()])?;
     params.distinguished_name.push(rcgen::DnType::CommonName, common_name);
     let cert = params.self_signed(&key)?;
     let cert_der = cert.der().to_vec();
     let key_der = key.serialize_der();
-    util::write_private(&key_p, &key_der)?;
-    util::write_private(&cert_p, &cert_der)?;
     let fingerprint = fingerprint(&cert_der);
     Ok(Identity { cert_der, key_der, fingerprint })
+}
+/// 설치기의 승인된 신원 준비. 기존 권한/부분 키를 고치거나 교체하지 않는다.
+pub fn load_or_create_private(dir: &Path, common_name: &str) -> Result<Identity> {
+    use crate::private_file as private;
+    private::verify_directory(dir)?;
+    let tls = dir.join("tls");
+    let (cert, key) = (tls.join("cert.der"), tls.join("key.der"));
+    match (cert.symlink_metadata(), key.symlink_metadata()) {
+        (Ok(_), Ok(_)) => {
+            private::verify_directory(&tls)?;
+            let cert_der = private::read(&cert, 1024 * 1024)?;
+            let key_der = private::read(&key, 1024 * 1024)?;
+            let identity = Identity { fingerprint: fingerprint(&cert_der), cert_der, key_der };
+            client_config(&identity, None)?; // 인증서와 실제 서명 키가 맞는지 검증한다.
+            Ok(identity)
+        }
+        (Err(a), Err(b)) if a.kind() == std::io::ErrorKind::NotFound && b.kind() == std::io::ErrorKind::NotFound => {
+            private::directory(&tls)?;
+            let identity = generate(common_name)?;
+            use std::io::Write;
+            for (path, bytes) in [(&key, &identity.key_der), (&cert, &identity.cert_der)] {
+                let mut file = private::new_file(path)?;
+                file.write_all(bytes)?;
+                file.sync_all()?;
+                drop(file);
+                private::sync_parent(path)?;
+            }
+            Ok(identity)
+        }
+        _ => anyhow::bail!("설치 신원 파일이 손상됐거나 일부만 있습니다"),
+    }
 }
 
 fn provider() -> Arc<CryptoProvider> {

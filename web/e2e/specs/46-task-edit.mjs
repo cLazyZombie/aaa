@@ -1,3 +1,4 @@
+import { taskContent, editTaskContent } from "../lib/task-content.mjs";
 // 할 일 편집(T2, 사용자 10-20 「필요하면 수정, 삭제 할수 있고」, plan §8.311). 웹이 host `task_edit`로 TASKS.md를 고친다: 바뀐 블록만
 // 쓰고(나머지 바이트 그대로), 대상 블록 hash가 그사이 바뀌었으면 쓰지 않고 충돌 창을 띄운다. 지운 task는 기록에서 되살린다. 저장만으로는
 // thread가 시작되지 않는다. 시간은 기다리지 않는다: 화면 표지 `data-tasks-sha`·`data-task-saving`과 파일 글을 본다.
@@ -12,7 +13,8 @@ const sha = (text) => crypto.createHash("sha256").update(text).digest("hex");
 const read = () => fs.readFileSync(file(), "utf8");
 const write = (text) => {
   fs.writeFileSync(file(), text);
-  return sha(text);
+  // 화면 관측 전에 식별 주석 이주를 마친 fixture를 준비한다.
+  return aaa("task", "list").sha256;
 };
 const START = `# Tasks
 
@@ -52,7 +54,7 @@ const detailBox = (p) =>
     return d && l && { d: { left: d.left, right: d.right, top: d.top, bottom: d.bottom, width: d.width }, l: { left: l.left, width: l.width }, w: innerWidth, h: innerHeight, wide: document.documentElement.scrollWidth > innerWidth + 1 };
   });
 const expectFile = (got, want, what) => {
-  if (got !== want) throw new Error(`${what}: 파일이 다르다\n--- 기대\n${want}\n--- 실제\n${got}`);
+  if (taskContent(got) !== taskContent(want)) throw new Error(`${what}: 파일이 다르다\n--- 기대\n${want}\n--- 실제\n${got}`);
 };
 
 export default async function ({ page }) {
@@ -115,14 +117,14 @@ export default async function ({ page }) {
     const before = await shaOf(page);
     await s.getByTestId("task-suggestion-apply").click();
     const text = await saved(page, before);
-    if (!text.includes("- [ ] 정리\n  선택\n  t-0101 S4 뒤, 사용자 지시 시\n  사용자 지시 뒤에 한다\n")) throw new Error(text);
+    if (!taskContent(text).includes("- [ ] 정리\n  선택\n  t-0101 S4 뒤, 사용자 지시 시\n  사용자 지시 뒤에 한다\n")) throw new Error(text);
     await page.getByTestId("activity-badge-tasks").waitFor({ state: "detached" });
     md = sha(text);
   });
 
   await step("행 메뉴·끌기·Alt+↓: 같은 상위 안 순서와 목록 옮기기, 목록 머리 메뉴: 이름 바꾸기·빈 목록 지우기·새 목록", async () => {
     const order = (text, list) => {
-      const block = text.split("## ").find((b) => b.startsWith(`${list}\n`)) ?? "";
+      const block = taskContent(text).split("## ").find((b) => b.startsWith(`${list}\n`)) ?? "";
       return block.split("\n").filter((l) => l.startsWith("- [")).map((l) => l.replace(/^- \[.\] /, "").replace(/ \(.*$/, ""));
     };
     // 「문서 정리」 ⋯ → 위로
@@ -152,7 +154,7 @@ export default async function ({ page }) {
     await page.getByTestId("task-name-input").fill("보관");
     await page.getByTestId("task-name-save").click();
     text = await saved(page, before);
-    if (!text.endsWith("## 보관\n") || text.includes("## 빈 목록")) throw new Error(text);
+    if (!taskContent(text).endsWith("## 보관\n") || text.includes("## 빈 목록")) throw new Error(text);
     // 빈 목록 지우기, 새 목록
     before = await shaOf(page);
     await page.getByTestId("task-list-menu-보관").click();
@@ -164,13 +166,13 @@ export default async function ({ page }) {
     await page.getByTestId("task-name-input").fill("다음 주");
     await page.getByTestId("task-name-save").click();
     text = await saved(page, before);
-    if (!text.endsWith("\n## 다음 주\n")) throw new Error(text);
+    if (!taskContent(text).endsWith("\n## 다음 주\n")) throw new Error(text);
     // 다른 목록으로(메뉴)
     before = await shaOf(page);
     await row(page, "문서 정리").locator("[data-testid^='task-menu-']").click();
     await page.getByRole("menuitem", { name: "다음 주(으)로 옮기기", exact: true }).click();
     text = await saved(page, before);
-    if (!text.endsWith("## 다음 주\n- [ ] 문서 정리\n")) throw new Error(text);
+    if (!taskContent(text).endsWith("## 다음 주\n- [ ] 문서 정리\n")) throw new Error(text);
     md = sha(text);
   });
 
@@ -190,7 +192,7 @@ export default async function ({ page }) {
       await page.getByTestId("task-field-notes").fill("첫째가 고친 메모");
       await page.getByTestId("task-save").click();
       const text = await saved(page, before);
-      if (!text.includes("- [ ] 로그인 고치기 (me)\n  첫째가 고친 메모\n")) throw new Error(text);
+      if (!taskContent(text).includes("- [ ] 로그인 고치기 (me)\n  첫째가 고친 메모\n")) throw new Error(text);
       // 둘째 화면은 새 판을 받고, 손댄 폼은 그대로 「파일에서 바뀌었다」를 보인다
       await shaIs(p2, sha(text));
       await p2.getByTestId("task-form-stale").waitFor();
@@ -216,7 +218,7 @@ export default async function ({ page }) {
     await pickRow(page, "배포 준비");
     await page.getByTestId("task-field-notes").fill("폼에서 더한 메모");
     // 그사이 다른 task(정리)의 메모를 파일에서 직접 고친다
-    const direct = read().replace("- [ ] 정리\n  선택\n", "- [ ] 정리\n  선택(직접 고침)\n");
+    const direct = editTaskContent(read(), "- [ ] 정리\n  선택\n", "- [ ] 정리\n  선택(직접 고침)\n");
     if (direct === read()) throw new Error("직접 고칠 줄이 없다");
     write(direct);
     aaa("ticker", "tick");
@@ -225,7 +227,7 @@ export default async function ({ page }) {
     const before = await shaOf(page);
     await page.getByTestId("task-save").click();
     const text = await saved(page, before);
-    expectFile(text, direct.replace("- [ ] 배포 준비 (Priya Rao)\n", "- [ ] 배포 준비 (Priya Rao)\n  폼에서 더한 메모\n"), "대상만 충돌");
+    expectFile(text, editTaskContent(direct, "- [ ] 배포 준비 (Priya Rao)\n", "- [ ] 배포 준비 (Priya Rao)\n  폼에서 더한 메모\n"), "대상만 충돌");
     md = sha(text);
   });
 
@@ -240,7 +242,7 @@ export default async function ({ page }) {
     before = await shaOf(page);
     await page.getByTestId("task-undo-restore").click();
     text = await saved(page, before);
-    if (!text.includes("- [ ] 새 일 (me)\n  첫 줄\n  둘째 줄\n- [ ] 원격 일\n")) throw new Error(`원래 목록 끝으로: ${text}`);
+    if (!taskContent(text).includes("- [ ] 새 일 (me)\n  첫 줄\n  둘째 줄\n- [ ] 원격 일\n")) throw new Error(`원래 목록 끝으로: ${text}`);
     await page.getByTestId("task-undo").waitFor({ state: "detached" });
     // 다시 지우고 기록 화면에서 되살린다
     before = await shaOf(page);
@@ -261,7 +263,7 @@ export default async function ({ page }) {
     before = await shaOf(page);
     await log.locator("[data-testid^='task-log-restore-']").first().click();
     text = await saved(page, before);
-    if (!text.includes("- [ ] 원격 일\n")) throw new Error(text);
+    if (!taskContent(text).includes("- [ ] 원격 일\n")) throw new Error(text);
     await page.getByTestId("tasks-tab-tasks").click();
     md = sha(text);
   });
@@ -327,7 +329,7 @@ export default async function ({ page }) {
       let before = await shaOf(p);
       await p.getByTestId("task-save").click();
       let text = await saved(p, before);
-      if (!text.includes("- [ ] 원격 일\n- [ ] 휴대폰 일\n")) throw new Error(text);
+      if (!taskContent(text).includes("- [ ] 원격 일\n- [ ] 휴대폰 일\n")) throw new Error(text);
       await p.evaluate(() => new Promise((r) => { addEventListener("popstate", () => r(), { once: true }); history.back(); }));
       await p.getByTestId("task-detail").waitFor({ state: "detached" });
       await row(p, "휴대폰 일").locator("[data-testid^='task-menu-']").click();
@@ -337,7 +339,7 @@ export default async function ({ page }) {
       before = await shaOf(p);
       await sheet.getByRole("button", { name: "맨 위로" }).click();
       text = await saved(p, before);
-      if (!text.includes("나중 일은 memory/later.md에 모은다\n- [ ] 휴대폰 일\n- [ ] 정리\n")) throw new Error(text);
+      if (!taskContent(text).includes("나중 일은 memory/later.md에 모은다\n- [ ] 휴대폰 일\n- [ ] 정리\n")) throw new Error(text);
       md = sha(text);
     } finally {
       await p.context().close();
@@ -417,7 +419,7 @@ export default async function ({ page }) {
     const before = await shaOf(page);
     await page.getByTestId("task-save").click();
     const text = await saved(page, before);
-    if (!text.includes("- [ ] 건설 안내 문구를 UI로\n  취소 버튼(터치)은 필요\n  (나중 memory/later.md · UI에서 옮김)\n")) throw new Error(text);
+    if (!taskContent(text).includes("- [ ] 건설 안내 문구를 UI로\n  취소 버튼(터치)은 필요\n  (나중 memory/later.md · UI에서 옮김)\n")) throw new Error(text);
     // 「나중」 파일은 고치지 않는다(출처는 메모 끝 줄에만 남는다)
     if (fs.readFileSync(`${dir()}/memory/later.md`, "utf8") !== later) throw new Error("「나중」 파일이 바뀌었다");
     md = sha(text);
@@ -429,7 +431,7 @@ export default async function ({ page }) {
     const area = editor.getByTestId("task-raw-text");
     await area.fill(`${await area.inputValue()}- [ ] 원문으로 더함\n`);
     // 그사이 파일을 직접 고친다
-    const direct = read().replace("- [ ] 원격 일\n", "- [ ] 원격 일 (me)\n");
+    const direct = editTaskContent(read(), "- [ ] 원격 일\n", "- [ ] 원격 일 (me)\n");
     write(direct);
     await editor.getByTestId("task-raw-save").click();
     await editor.getByTestId("task-raw-stale").waitFor();

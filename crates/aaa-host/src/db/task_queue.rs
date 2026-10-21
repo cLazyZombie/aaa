@@ -24,8 +24,14 @@ pub(crate) fn slots(tx: &Connection, project: &str, except: Option<&str>) -> Res
 
 impl Db {
     pub(crate) fn queue_list(&self, project: &str) -> Result<Vec<TaskReservation>> {
-        let c = self.conn.lock().unwrap();
-        queue_rows(&c, project)
+        let mut rows = {
+            let c = self.conn.lock().unwrap();
+            queue_rows(&c, project)?
+        };
+        for r in &mut rows {
+            r.task.short_id = Some(self.task_short_id(project, &r.task_id)?);
+        }
+        Ok(rows)
     }
 
     pub(crate) fn queue_change<T>(
@@ -57,7 +63,15 @@ impl Db {
         let c = self.conn.lock().unwrap();
         let mut st = c.prepare("SELECT data FROM task_archive WHERE project=?1 ORDER BY task_id")?;
         let rows = st.query_map([project], |r| r.get::<_, String>(0))?.collect::<rusqlite::Result<Vec<_>>>()?;
-        rows.into_iter().map(|j| Ok(serde_json::from_str(&j)?)).collect()
+        drop(st);
+        drop(c);
+        rows.into_iter()
+            .map(|j| {
+                let mut row: ArchivedTask = serde_json::from_str(&j)?;
+                row.task.short_id = Some(self.task_short_id(project, &row.task_id)?);
+                Ok(row)
+            })
+            .collect()
     }
     pub(crate) fn archive_save(&self, project: &str, row: &ArchivedTask) -> Result<()> {
         let c = self.conn.lock().unwrap();
