@@ -180,6 +180,7 @@ export function DevicesPanel({ pairUrl, role, device }: { pairUrl: string | null
                     <span className="settings-label">
                       {d.label}
                       {d.id === device && <span className="devices-current">이 기기</span>}
+                      {d.passkey && <span className="devices-current" data-testid="device-passkey">passkey</span>}
                     </span>
                     <span className="settings-description">
                       {d.role === "reader" ? "보기만 · " : ""}마지막 접속 {lastSeen(d.last_seen_ms)}
