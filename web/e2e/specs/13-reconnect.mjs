@@ -93,7 +93,7 @@ export default async function ({ ctl, page }) {
     // 재부팅 흉내: agent와 session host를 끝내고 다른 boot ID로 agent를 띄운다. 저장한 폴더가 없는 셸은 다시 띄우지 못하고,
     // 프로그램 pane은 일부러 다시 실행하지 않는다
     await stop("agent2");
-    killSessionHosts();
+    await killSessionHosts();
     start("agent3", { AAA_TEST_BOOT_ID: "boot-after" }, "agent", "--host", "local", "--name", "labA");
     // 보던 셸(t1)은 새 ID로 되살아난다: 빈 화면이 아니라 그 pane을 따라가고 주소도 바뀐다
     await until("보던 셸이 새 pane으로", async () => {
