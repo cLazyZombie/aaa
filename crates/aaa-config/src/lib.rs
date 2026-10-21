@@ -107,7 +107,7 @@ pub struct PostSection {
 }
 impl Default for PostSection {
     fn default() -> Self {
-        Self { burst: 3, burst_secs: 60, hourly: 6, daily: 30, pair_hourly: 10, mute_after: 3 }
+        Self { burst: 30, burst_secs: 60, hourly: 200, daily: 2000, pair_hourly: 100, mute_after: 20 }
     }
 }
 

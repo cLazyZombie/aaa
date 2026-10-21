@@ -4408,10 +4408,13 @@ primary 근거:
   저장한 뒤 outbox를 지운다. host는 post ID·출처·내용을 다시 확인하여 같은 결과를 돌려주고 inbox를 두 번 만들지 않는다.
   접수 원장·inbox·감사는 SQLite transaction 하나다. 투영 파일은 DB 다음에 쓴다. SCHEMA_VERSION은 올리지 않는다.
   inbox done 보존 기간이 지나 정리할 때 posts 본문도 지우고 ID·결과·내용 hash는 남긴다.
-- **한도.** host.toml `[post]`: burst=3, burst_secs=60, hourly=6, daily=30, pair_hourly=10, mute_after=3.
+- **한도.** host.toml `[post]`: burst=30, burst_secs=60, hourly=200, daily=2000, pair_hourly=100, mute_after=20.
+  짧은 측정 핑퐁을 위해 분당 한도는 10배, 장시간 작업을 위해 시간·하루 한도는 각각 약 33배·67배로 높인다(t-0688).
+  일시 초과가 세 번만 나도 음소거되던 기준을 20회로 늘리되 지속 남용은 제한한다.
+  생략한 설정에 적용하며 명시한 값·기존 음소거는 유지한다. pair_hourly는 현재 thread→coordinator에서 쓰지 않는 예약값이다.
   시간 창은 최근 60초·1시간·24시간이다. now를 인자로 받는 owner가 판정한다. 같은 출처의
   (목적지·종류·topic·정리한 제목·본문 sha)가 24시간 안 같으면 기존 ID와 함께 거부한다.
-  일반 한도에서 한 시간에 rate 거부 3번이면 muted로 저장한다. `aaa post unmute <p> <출처>`는 조작 권한이다.
+  일반 한도에서 한 시간에 rate 거부 20번이면 muted로 저장한다. `aaa post unmute <p> <출처>`는 조작 권한이다.
   `library publish --to-user`가 내부에서 만드는 보고서 알림은 이 한도를 쓰지 않는다(topic 자기 신고로 면제되지 않는다).
   해당 프로젝트 coordinator pane으로 검증된 `user-action` request·needs_user와 `task-complete` notice는 둘을 합쳐
   최근 60초 30·1시간 60·24시간 300건의 별도 한도를 쓰며, 초과해도 자동 mute하지 않고 기존 mute에도 막히지 않는다.

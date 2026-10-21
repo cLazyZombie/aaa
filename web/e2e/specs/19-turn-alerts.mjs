@@ -9,12 +9,12 @@ import { aaa, until, shot, step, claudeSh, claudeWorking, claudeIdle, root } fro
 const LONG_MS = 3000;
 export const labEnv = { AAA_TEST_DETECT_GRACE_MS: "0", AAA_TEST_LONG_TURN_MS: String(LONG_MS), AAA_SESSION_ID: "" };
 
-// 공용 실험실의 넉넉한 post 한도를 이 파일에서는 제품 기본값으로 둔다. host 시작 전에 자기 fixture만 고친다.
+// 음소거 표시를 보는 이 실험실은 작은 한도를 명시한다. 제품 기본값 경계는 Rust post owner 시험이 맡는다.
 const hostConfig = `${root}/c/host.toml`;
 const originalConfig = fs.readFileSync(hostConfig, "utf8");
 const postFixture = "[post]\nburst = 100\nhourly = 100\ndaily = 100\n";
 if (!originalConfig.includes(postFixture)) throw new Error("웹 post 한도 fixture가 달라졌다");
-fs.writeFileSync(hostConfig, originalConfig.replace(postFixture, "[post]\nburst = 3\nhourly = 6\ndaily = 30\n"));
+fs.writeFileSync(hostConfig, originalConfig.replace(postFixture, "[post]\nburst = 3\nhourly = 6\ndaily = 30\nmute_after = 3\n"));
 
 export default async function ({ page }) {
   await step("다른 agent의 턴 끝남(herdr-web-ui Droplet `done`·dropletAllows, 차이 목록 N3): 보는 화면 없이 끝난 긴 턴만 「작업 완료」로 내려오고 누르면 그 pane, 짧은 턴·보고 있는 pane은 띄우지 않는다(휴대폰 push가 없음은 m13 turn_end_notices_follow_reports)", async () => {

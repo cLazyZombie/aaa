@@ -533,8 +533,21 @@ mod tests {
         }
     }
     fn host() -> (Arc<Host>, Lab) {
+        host_with_post(aaa_config::PostSection::default())
+    }
+    fn small_limit_host() -> (Arc<Host>, Lab) {
+        host_with_post(aaa_config::PostSection {
+            burst: 3,
+            burst_secs: 60,
+            hourly: 6,
+            daily: 30,
+            pair_hourly: 10,
+            mute_after: 3,
+        })
+    }
+    fn host_with_post(post: aaa_config::PostSection) -> (Arc<Host>, Lab) {
         let path = std::env::temp_dir().join(format!("aaa-post-{}", util::new_id()));
-        let mut cfg = aaa_config::HostConfig::default();
+        let mut cfg = aaa_config::HostConfig { post, ..Default::default() };
         cfg.projects.root = path.join("projects").to_string_lossy().into();
         cfg.notify.web_push = false;
         (Host::open(cfg, path.clone()).unwrap(), Lab(path))
@@ -565,10 +578,72 @@ mod tests {
         h.store_post("demo", sender(), input(n), "post:t-0001@mac-a", None, now)
     }
 
+    /// 기본 한도로 짧은 핑퐁·모든 창 경계·20번째 rate 거부의 음소거를 실제 원장에서 본다.
+    #[test]
+    fn default_post_quota_allows_ping_pong_and_keeps_rate_and_duplicate_boundaries() {
+        let (h, _lab) = host();
+        let now = 864_000_000;
+        for n in 1..=30 {
+            assert!(matches!(put(&h, n, now), PostResult::Accepted { .. }), "짧은 핑퐁 {n}");
+        }
+        for n in 31..=49 {
+            assert!(matches!(put(&h, n, now), PostResult::Refused { reason, .. } if reason.starts_with("rate:")));
+            assert!(h.post_warnings("demo").unwrap().is_empty(), "19회까지 자동 음소거하지 않는다");
+        }
+        assert!(matches!(put(&h, 50, now), PostResult::Refused { reason, .. } if reason.starts_with("rate:")));
+        assert_eq!(h.post_warnings("demo").unwrap().len(), 1);
+        assert!(
+            matches!(put(&h, 51, now + 60_000), PostResult::Refused { reason, .. } if reason.starts_with("muted:"))
+        );
+
+        let mut hourly_sender = sender();
+        hourly_sender.thread = Some("t-0002".into());
+        let hourly = |n, at| h.store_post("demo", hourly_sender.clone(), input(n), "hourly", None, at);
+        for n in 0..200 {
+            if n == 30 {
+                assert!(
+                    matches!(hourly(9000, now + 59_999), PostResult::Refused { reason, .. } if reason.starts_with("rate:")),
+                    "60초 직전 31번째는 거부한다"
+                );
+            }
+            assert!(matches!(hourly(1000 + n, now + u64::from(n / 30) * 60_000), PostResult::Accepted { .. }));
+        }
+        assert!(
+            matches!(hourly(1200, now + 3_599_999), PostResult::Refused { reason, .. } if reason.starts_with("rate:"))
+        );
+        assert!(
+            matches!(hourly(1201, now + 3_600_000), PostResult::Accepted { .. }),
+            "한 시간 경계에서 첫 30건이 빠진다"
+        );
+
+        let mut daily_sender = sender();
+        daily_sender.thread = Some("t-0003".into());
+        let daily = |i, at| h.store_post("demo", daily_sender.clone(), i, "daily", None, at);
+        // 40초 간격이면 burst·hourly에 걸리지 않고 24시간 안에 2,000건을 채운다.
+        for n in 0..2000 {
+            assert!(matches!(daily(input(2000 + n), now + u64::from(n) * 40_000), PostResult::Accepted { .. }));
+        }
+        let mut dupe = input(2000);
+        dupe.post_id = format!("{:032x}", 4000);
+        assert!(
+            matches!(daily(dupe.clone(), now + 86_399_999), PostResult::Refused { existing: Some(_), .. }),
+            "24시간 직전 같은 글은 rate보다 먼저 중복 거부한다"
+        );
+        assert!(
+            matches!(daily(input(4001), now + 86_399_999), PostResult::Refused { reason, .. } if reason.starts_with("rate:")),
+            "하루 2,000건"
+        );
+        dupe.post_id = format!("{:032x}", 4002);
+        assert!(
+            matches!(daily(dupe, now + 86_400_001), PostResult::Accepted { .. }),
+            "24시간 뒤 같은 글과 하루 한도가 함께 풀린다"
+        );
+    }
+
     /// 한도는 now로 창 경계를 본다. inbox를 만드는 실제 owner와 durable 원장을 함께 검사한다.
     #[test]
     fn post_rate_duplicate_mute_and_restart() {
-        let (h, lab) = host();
+        let (h, lab) = small_limit_host();
         let hour = 3600000;
         let now = 864000000;
         for n in 1..=3 {
@@ -590,12 +665,14 @@ mod tests {
         );
         assert!(matches!(put(&h,7,now+hour),PostResult::Refused { reason, .. } if reason.starts_with("muted:")));
         // 새 host 인스턴스도 muted·ID의 결과를 그대로 읽는다.
+        let h_post = h.cfg.post.clone();
         drop(h);
         let h = Host::open(
             {
                 let mut cfg = aaa_config::HostConfig::default();
                 cfg.projects.root = lab.0.join("projects").to_string_lossy().into();
                 cfg.notify.web_push = false;
+                cfg.post = h_post;
                 cfg
             },
             lab.0.clone(),
@@ -864,7 +941,7 @@ mod tests {
     // 실제 publish를 통해 면제 출처를 만들며, 일반 post에서 topic만 report로 바꿔도 면제되지 않는다.
     #[tokio::test]
     async fn library_notifications_do_not_consume_post_rate() {
-        let (h, lab) = host();
+        let (h, lab) = small_limit_host();
         h.project_create("demo", Default::default(), "test").unwrap();
         let source = lab.0.join("web-report");
         std::fs::create_dir(&source).unwrap();
@@ -963,13 +1040,13 @@ mod tests {
             h.db.post_list("demo").unwrap().into_iter().find(|p| p.from.verified == "coordinator-pane").unwrap().from;
         let now = util::now_ms() + 60_000;
         // 사용자 한도는 일반 coordinator post와도 별개다. 일반 한도 초과는 그대로 mute된다.
-        for n in 400..406 {
+        for n in 400..450 {
             let mut i = make(n);
             i.topic = "other-action".into();
             i.post_type = PostType::Request;
             i.needs_user = true;
             let result = h.store_post("demo", from.clone(), i, actor, None, now);
-            if n < 403 {
+            if n < 430 {
                 assert!(matches!(result, PostResult::Accepted { .. }));
             } else {
                 assert!(matches!(result, PostResult::Refused { reason, .. } if reason.starts_with("rate:")));
@@ -998,7 +1075,7 @@ mod tests {
 
     #[tokio::test]
     async fn active_mute_warns_after_inbox_done_until_unmute() {
-        let (h, _lab) = host();
+        let (h, _lab) = small_limit_host();
         h.project_create("demo", Default::default(), "test").unwrap();
         let mut notices = h.notice_events.subscribe();
         let now = util::now_ms();

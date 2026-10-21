@@ -30,6 +30,26 @@ fn missing_files_mean_defaults() {
 }
 
 #[test]
+fn post_defaults_and_explicit_overrides() {
+    let d = Dir::new("post");
+    let expected =
+        PostSection { burst: 30, burst_secs: 60, hourly: 200, daily: 2000, pair_hourly: 100, mute_after: 20 };
+    assert_eq!(load_host(&d.0).unwrap().config.post, expected);
+    d.write("host.toml", "schema = 1\n[post]\n");
+    assert_eq!(load_host(&d.0).unwrap().config.post, expected);
+    d.write("host.toml", "schema = 1\n[post]\nburst = 3\n");
+    assert_eq!(load_host(&d.0).unwrap().config.post, PostSection { burst: 3, ..expected });
+    d.write(
+        "host.toml",
+        "schema = 1\n[post]\nburst = 3\nburst_secs = 120\nhourly = 6\ndaily = 30\npair_hourly = 10\nmute_after = 3\n",
+    );
+    let explicit = PostSection { burst: 3, burst_secs: 120, hourly: 6, daily: 30, pair_hourly: 10, mute_after: 3 };
+    assert_eq!(load_host(&d.0).unwrap().config.post, explicit);
+    d.write("host.local.toml", "schema = 1\n[post]\nhourly = 50\n");
+    assert_eq!(load_host(&d.0).unwrap().config.post, PostSection { hourly: 50, ..explicit });
+}
+
+#[test]
 fn examples_are_valid_and_warning_free() {
     let d = Dir::new("examples");
     d.write("host.toml", example("host")).write("agent.toml", example("agent"));
