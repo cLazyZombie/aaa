@@ -1,6 +1,6 @@
 //! 「직접 설치」 안내(웹 머신 추가 M1, plan §8.373): 새 머신에서 칠 `aaa agent enroll <주소>`의 주소 후보와 host 지문·판.
 //! host는 자기가 연 agent 연결 주소(`agent_listen`)만 안다. 모든 주소(0.0.0.0·[::])로 열었으면 tailnet 이름과 이 머신 이름을,
-//! tailnet 주소(100.64.0.0/10·fd7a:115c:a1e0::/48)로 열었으면 tailnet 이름을 앞에 둔다. loopback은 같은 머신 안에서만 닿는다.
+//! tailnet 주소(IPv4 100.64/10·IPv6 fd7a:115c:a1e0::/48)로 열었으면 tailnet 이름을 앞에 둔다. loopback은 같은 머신 안에서만 닿는다.
 use std::net::{IpAddr, SocketAddr};
 
 use aaa_proto::{EnrollAddress, EnrollGuide};
@@ -84,10 +84,8 @@ mod tests {
         );
         assert_eq!(got("[::]:7430", None), pairs(&[("mac-a:7430", "hostname")]));
         // tailnet 주소로 열면 tailnet 이름이 그 주소에 닿는다
-        assert_eq!(
-            got("100.101.102.103:7430", ts),
-            pairs(&[("mac-a.example.ts.net:7430", "tailnet"), ("100.101.102.103:7430", "listen")])
-        );
+        let tailnet = format!("{}:7430", std::net::Ipv4Addr::new(100, 101, 102, 103));
+        assert_eq!(got(&tailnet, ts), pairs(&[("mac-a.example.ts.net:7430", "tailnet"), (&tailnet, "listen")]));
         // 다른 주소(LAN)로 열면 tailnet 이름은 그 주소가 아니므로 쓰지 않는다
         assert_eq!(got("192.0.2.10:7430", ts), pairs(&[("192.0.2.10:7430", "listen")]));
         // loopback은 같은 머신 안에서만
