@@ -471,6 +471,10 @@ pub struct AgentStatus {
     #[serde(default)]
     #[ts(type = "number | null")]
     pub progress_at_ms: Option<u64>,
+    /// 지금 활동 글이 처음 보고된 때(FRONT_API 1.103). 같은 활동의 진행률·정기 보고는 시작을 바꾸지 않는다.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional, type = "number")]
+    pub progress_since_ms: Option<u64>,
     pub harness_session: Option<String>,
     /// 마지막으로 쉼(`Idle`)이 된 뒤 사람이 이 pane을 봤다. false면 「끝남(안 봄)」이다(herdr `PaneState::seen`:
     /// 작업·질문에서 쉼으로 끝날 때 보는 화면이 없으면 false, 그 pane을 보면 true).
@@ -1383,10 +1387,10 @@ pub fn report_questions(report: &str) -> Vec<ThreadQuestion> {
 /// thread 작업 요약 표지(plan §8.259). 줄·머리 단추가 요약을 읽지 않고 「낡았다」를 안다
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 pub struct SummaryMark {
-    /// 요약을 마지막으로 쓴 때. 요약 파일이 없으면 None
+    /// 요약을 썼거나 정상 진행 보고를 받은 마지막 때. 둘 다 없으면 None
     #[ts(type = "number | null")]
     pub at_ms: Option<u64>,
-    /// 요약을 쓴 뒤 task.md Follow-ups에 쌓인 지시 수(요약이 없으면 Follow-ups 전부)
+    /// 요약·정상 진행 보고에 아직 반영 안 된 task.md Follow-ups 지시 수
     pub pending: u32,
 }
 
@@ -1448,7 +1452,7 @@ pub struct ThreadSummaryView {
     pub decisions: Vec<String>,
     #[ts(type = "number | null")]
     pub at_ms: Option<u64>,
-    /// 요약을 쓴 쪽(coordinator·사람)
+    /// 마지막 갱신 쪽(coordinator·사람·agent). 진행은 정상 thread 보고를 우선한다.
     pub by: Option<String>,
     /// Follow-ups 전체 수
     pub follow_ups: u32,

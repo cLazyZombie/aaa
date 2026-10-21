@@ -12,7 +12,7 @@ export function WorkingDuration({ startedMs }: { startedMs: number | null }) {
 function Ticking({ startedMs }: { startedMs: number }) {
   const now = useNowSecond();
   return (
-    <span className="working-duration" aria-hidden="true" data-testid="working-duration">
+    <span className="working-duration" aria-hidden="true" title="현재 작업 상태에 들어온 뒤 경과 시간" data-testid="working-duration">
       {formatWorkingDuration(now - startedMs)}
     </span>
   );

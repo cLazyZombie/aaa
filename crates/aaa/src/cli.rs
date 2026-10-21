@@ -4017,15 +4017,9 @@ fn render_context(s: &mut String, c: &aaa_proto::ProjectContext) {
             t.machine
         );
         render_automation_origin(s, t);
-        // 요약이 낡았으면(요약 뒤 지시가 있거나 지시가 있는데 요약이 없다) 이 턴에 고친다
+        // 새 지시는 다음 thread 진행 보고로 자동 반영된다. 목표·사용자 결정이 바뀔 때만 coordinator가 쓴다.
         if let Some(m) = t.summary.as_ref().filter(|m| m.pending > 0) {
-            let _ = writeln!(
-                s,
-                "    요약 고칠 것: {} (aaa thread summary {} {} --file …)",
-                summary_note(m),
-                c.project,
-                t.id
-            );
+            let _ = writeln!(s, "    요약 반영 대기: {} (다음 thread 진행 보고로 자동 갱신)", summary_note(m));
         }
         for l in &t.next {
             let _ = writeln!(s, "    next: {l}");

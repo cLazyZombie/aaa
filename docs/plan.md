@@ -7165,3 +7165,11 @@ FRONT_API 1.96는 기본 검수 표지와 답 기록의 r 참조를 더한다. E
 - **승인 뒤 환경 보존.** hp argv 수리 후보의 첫 CI에서 승인은 통과했으나 apply가 installation_content_conflict로 닫혔다. 승인 PTY만 TERM=xterm-256color였고, 환경을 비운 apply는 TERM이 없었다. TERM을 포함한 service_environment의 승인 해시 대조는 유지하고 시험의 비대화형 apply/resume을 승인과 같은 환경으로 맞춘다. 실제 PTY 승인→읽기 dry-run의 해시 불일치 RED/일치 GREEN과 다른 TERM의 해시 변경·무쓰기 대조를 로컬에서 남긴다. 실제 등록 후속 단계는 바뀐 후보의 hp macos-15 CI에서 판정한다.
 
 - **실제 listener 경로.** TERM 보존 후보의 hp CI에서 등록과 host 시작 뒤 service_backend_not_ready가 반복됐다. 같은 canonical state의 실제 LocalListener bind는 105바이트에서 SUN_LEN 오류로 로컬 RED였다. launchd 실험실 root를 기존 backend lifecycle owner와 같은 `/tmp`로 맞추고 로컬 승인/계획 owner에 실제 agent/front listener bind/drop을 더한다. production IPC·ready 판정·600초 상한·기존 실제 등록/재개/공유 instance 단언은 유지한다. 실제 후속 성공은 변경 후보의 hp CI가 판정한다.
+
+
+### 8.420 thread 보고의 작업 요약 자동 갱신(10-22, t-0682, 사용자 A안)
+
+- **작성 책임.** coordinator는 처음 목표·작업 뼈대와 사용자 결정(정함·바뀜)을 쓴다. thread brief는 매 보고에 `## 진행`을 요구한다. 완료하면 맡긴 일이 끝났다고 볼 작업 3~5개(최대 5개), 항목 30자 이하와 `[x]`·`[~]`·`[ ]`를 쓴다. 새 지시는 다음 보고에서 목록에 반영한다.
+- **host.** 정상 보고의 독립된 진행 절만 읽어 기존 `ThreadSummaryView.progress`에 우선 반영한다. 목표·처음·정함·바뀜은 coordinator 원문을 보존하고, 목표·결정 편집이 보고한 진행을 덮지 않는다. 목록이 없는 옛 보고·잘못된 목록·코드 예제는 마지막 정상 목록을 보존한다. 보고 hash·수신 시각·반영 지시 수·목록을 thread별 진행 영수증에 원자적으로 보존한다. 같은 hash 재수집과 host 재시작은 나중 지시를 지우지 않는다. 수집 시작의 지시 수를 고정해 전송 도중 새 지시는 경고에 남긴다. 목록·상세는 같은 표지/경고를 쓰며 CLI context도 자동 반영 대기를 안내한다.
+- **활동과 시간.** hover·팝오버·휴대폰 시트에 실제 `aaa report` 활동 글·진행률(없으면 미정), thread 생성부터 시작 후 시간, 현재 활동 시작부터 활동 시간을 보인다. 공유 초 시계로 열린 카드만 갱신하며 요약을 다시 요청하지 않는다. 목록 줄 시간의 tooltip은 현재 작업 상태 진입부터의 경과 시간임을 밝힌다. 같은 활동의 재보고는 활동 시작을 유지하고 활동 변경·새 세션·대기 답변에서 고친다. 옛 host가 시작을 주지 않으면 활동 시간을 추측하지 않는다.
+- **계약·검증.** FRONT_API 1.103은 선택 `AgentStatus.progress_since_ms`만 추가한다. Agent link 1.11·기존 진행 상태 타입과 E2E 28을 유지한다. 실제 host 수집·수신 중 새 지시·재시작·harness 사건·웹 규칙 유닛과 Chromium/WebKit Reader E2E로 확인한다. 절차는 testing.md에 둔다. 병합·push는 착지 창을 받은 뒤에 한다.
