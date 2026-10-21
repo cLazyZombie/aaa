@@ -683,6 +683,11 @@ pub enum AgentRequest {
     DeployStageStatus {
         rollout: String,
     },
+    /// deploy_candidate.v1: 빌드 폴더의 `aaa`와 옆 `provenance.json`을 대조하고 dry-run으로 self-check한다(관리 GUI W6a).
+    /// 작업 기록·교체는 없다
+    DeployCandidate {
+        path: String,
+    },
     DeployStageClean {
         rollout: String,
         keep: bool,
@@ -1044,6 +1049,13 @@ pub enum AgentResponse {
     },
     DeployStage {
         stage: crate::DeployStageView,
+    },
+    DeployCandidate {
+        sha256: String,
+        commit: Option<String>,
+        version: String,
+        total_bytes: u64,
+        built_at: Option<String>,
     },
     Deployment {
         job: crate::DeployJob,
@@ -1644,6 +1656,18 @@ pub enum FrontRequest {
         machine: Option<String>,
         id: String,
     },
+    /// FRONT_API 1.82. 웹 「배포」의 시작 전 점검: 빌드 머신 후보의 provenance·SHA·dry-run self-check와 대상(host 먼저)
+    RolloutPlan {
+        source_machine: String,
+        path: String,
+        /// 비었으면 등록된 모든 머신
+        #[serde(default)]
+        machines: Vec<String>,
+    },
+    /// FRONT_API 1.82. 이 프로젝트의 최근 rollout 요약(새것부터)
+    Rollouts,
+    /// FRONT_API 1.82. 이 프로젝트의 최근 개별 배포 작업(재시작) 요약(새것부터)
+    DeployJobs,
     Post {
         #[serde(default)]
         #[ts(optional, as = "Option<String>")]
@@ -2847,6 +2871,8 @@ impl FrontRequest {
                 | FrontRequest::Status
                 | FrontRequest::DeployContext
                 | FrontRequest::DeployStatus { .. }
+                | FrontRequest::Rollouts
+                | FrontRequest::DeployJobs
                 | FrontRequest::PostStatus { .. }
                 | FrontRequest::Asks { .. }
                 | FrontRequest::Machines
@@ -2936,6 +2962,17 @@ pub enum FrontResponse {
     },
     Rollout {
         rollout: crate::RolloutView,
+    },
+    /// 웹 조작 기기의 rollout 시작·조회와 `rollouts`. 표시용 요약만 싣는다
+    RolloutCards {
+        cards: Vec<crate::RolloutCard>,
+    },
+    RolloutPlan {
+        plan: crate::RolloutPlanView,
+    },
+    /// 웹 조작 기기의 재시작 시작·조회와 `deploy_jobs`
+    DeployJobs {
+        jobs: Vec<crate::DeployJobCard>,
     },
     Deployment {
         machine: String,

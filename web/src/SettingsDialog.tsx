@@ -7,7 +7,7 @@
 // 「키 바」 줄의 「키 바 편집」은 같은 창 안에서 편집 화면(herdr/KeyBarSettings)으로 바꾸고 ← 로 돌아온다(참고 984~1116줄).
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type RefObject } from "react";
 import { createPortal } from "react-dom";
-import { ArrowLeft, Bell, ChevronDown, ChevronRight, ChevronUp, Eye, EyeOff, FolderCog, FolderGit2, Gauge, Keyboard, KeyRound, MessageSquare, Palette, Plus, Search, Server, ShieldCheck, SlidersHorizontal, Smartphone, SquareTerminal, X, type LucideIcon } from "lucide-react";
+import { ArrowLeft, Bell, ChevronDown, ChevronRight, ChevronUp, Eye, EyeOff, FolderCog, FolderGit2, Gauge, Keyboard, KeyRound, MessageSquare, Palette, Plus, Rocket, Search, Server, ShieldCheck, SlidersHorizontal, Smartphone, SquareTerminal, X, type LucideIcon } from "lucide-react";
 import "./herdr/SettingsDialog.css";
 import type { DeviceRole, MachineView, ProviderUsage, PublishState } from "./gen/proto";
 import { call } from "./api";
@@ -17,6 +17,7 @@ import { ReposPage, ThisAaaPage } from "./ProjectSettingsPages";
 import { AccountsPage } from "./AccountsPage";
 import { MachinesPage, PublishControls } from "./AdminPages";
 import { ProfilesPage, SafetyPage } from "./SettingsAdminPages";
+import { DeployPage } from "./DeployPage";
 import { PhonePanel, phonePlan } from "./PhonePanel";
 import { isLoopbackHost } from "./herdr/phone";
 import { AgentMark } from "./herdr/AgentMark.tsx";
@@ -887,7 +888,7 @@ function ShortcutsPage() {
   );
 }
 
-type SettingsPage = "appearance" | "chat" | "terminal" | "alerts" | "usage" | "accounts" | "safety" | "profiles" | "shortcuts" | "devices" | "machines" | "project" | "repos";
+type SettingsPage = "appearance" | "chat" | "terminal" | "alerts" | "usage" | "accounts" | "safety" | "profiles" | "shortcuts" | "devices" | "machines" | "deploy" | "project" | "repos";
 
 /** 목록에 보이는 차례(참고 PAGES 198~210줄 가운데 aaa에 있는 쪽) */
 export const PAGES: readonly { id: SettingsPage; icon: LucideIcon; label: string }[] = [
@@ -902,6 +903,7 @@ export const PAGES: readonly { id: SettingsPage; icon: LucideIcon; label: string
   { id: "shortcuts", icon: Keyboard, label: "단축키" },
   { id: "devices", icon: Smartphone, label: "폰 및 기기" },
   { id: "machines", icon: Server, label: "머신" },
+  { id: "deploy", icon: Rocket, label: "배포" },
   { id: "project", icon: FolderCog, label: "이 aaa" },
   { id: "repos", icon: FolderGit2, label: "저장소" },
 ];
@@ -1057,6 +1059,8 @@ export function SettingsDialog({
         return <DevicesPage role={role} device={device} onSignOut={onSignOut} />;
       case "machines":
         return <MachinesPage role={role} machines={machines} />;
+      case "deploy":
+        return <DeployPage role={role} machines={machines} />;
       case "project":
         return <ThisAaaPage role={role} />;
       case "repos":

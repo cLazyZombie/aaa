@@ -701,7 +701,11 @@ truncated: boolean,
  */
 untracked_omitted: boolean, };
 
-export type FrontRequest = { "op": "account_import", name: string, harness: string, secret: SecretText, } | { "op": "account_list" } | { "op": "account_defaults" } | { "op": "account_default", harness: string, account: string | null, } | { "op": "account_login", name: string, harness: string, } | { "op": "account_login_status", id: string, } | { "op": "account_login_cancel", id: string, } | { "op": "account_login_confirm", id: string, switch: boolean, } | { "op": "account_remove", name: string, } | { "op": "thread_start_account", account: string, start: FrontRequest, } | { "op": "debug_input", pane: string | null, thread: string | null, since_ms: bigint, } | { "op": "rollout_start", id: string, spec: RolloutSpec, } | { "op": "rollout_status", id: string, } | { "op": "deploy_context" } | { "op": "deploy_start", machine: string | null, id: string, action: DeployAction, } | { "op": "deploy_status", machine: string | null, id: string, } | { "op": "post", project?: string, input: PostInput, } | { "op": "post_status", project?: string, post_id: string, } | { "op": "post_list", project?: string, } | { "op": "asks", project?: string, } | { "op": "ask_handle", project?: string, item: string, } | { "op": "ask_forget", project?: string, ids: Array<string>, all: boolean, } | { "op": "post_unmute", project?: string, thread: string, } | { "op": "status" } | { "op": "machines" } | { "op": "panes", role: Role | null, } | { "op": "pane_run", machine: string | null, name: string | null, argv: Array<string>, cwd: string | null, cols: number | null, rows: number | null,
+export type FrontRequest = { "op": "account_import", name: string, harness: string, secret: SecretText, } | { "op": "account_list" } | { "op": "account_defaults" } | { "op": "account_default", harness: string, account: string | null, } | { "op": "account_login", name: string, harness: string, } | { "op": "account_login_status", id: string, } | { "op": "account_login_cancel", id: string, } | { "op": "account_login_confirm", id: string, switch: boolean, } | { "op": "account_remove", name: string, } | { "op": "thread_start_account", account: string, start: FrontRequest, } | { "op": "debug_input", pane: string | null, thread: string | null, since_ms: bigint, } | { "op": "rollout_start", id: string, spec: RolloutSpec, } | { "op": "rollout_status", id: string, } | { "op": "deploy_context" } | { "op": "deploy_start", machine: string | null, id: string, action: DeployAction, } | { "op": "deploy_status", machine: string | null, id: string, } | { "op": "rollout_plan", source_machine: string, path: string,
+/**
+ * 비었으면 등록된 모든 머신
+ */
+machines: Array<string>, } | { "op": "rollouts" } | { "op": "deploy_jobs" } | { "op": "post", project?: string, input: PostInput, } | { "op": "post_status", project?: string, post_id: string, } | { "op": "post_list", project?: string, } | { "op": "asks", project?: string, } | { "op": "ask_handle", project?: string, item: string, } | { "op": "ask_forget", project?: string, ids: Array<string>, all: boolean, } | { "op": "post_unmute", project?: string, thread: string, } | { "op": "status" } | { "op": "machines" } | { "op": "panes", role: Role | null, } | { "op": "pane_run", machine: string | null, name: string | null, argv: Array<string>, cwd: string | null, cols: number | null, rows: number | null,
 /**
  * host 정본 profile로 harness를 띄운다(`argv`는 비운다, herdr-web-ui 새 세션의 agent 고르기)
  */
@@ -877,7 +881,57 @@ export type RolloutCard = { id: string, state: RolloutState, version: string | n
 
 export type RolloutCardStep = { machine: string, phase: RolloutPhase, completed: boolean, started_ms: number, transferred_bytes: number, total_bytes: number, };
 
-export type FrontResponse = { "kind": "accounts", accounts: Array<AccountView>, } | { "kind": "account_defaults", defaults: Array<AccountDefault>, } | { "kind": "account_login", login: AccountLoginView, } | { "kind": "input_events", events: Array<InputEvent>, } | { "kind": "deploy_context", project: string | null, session: boolean, allowed: boolean, } | { "kind": "rollout", rollout: RolloutView, } | { "kind": "deployment", machine: string, job: DeployJob, running_software: string, running_sha256: string, } | { "kind": "missions", missions: Array<MissionView>, } | { "kind": "mission", mission: MissionView, } | { "kind": "post", result: PostResult, } | { "kind": "posts", posts: Array<PostEnvelope>,
+export type DeployCandidateView = {
+/**
+ * 빌드 머신 이름
+ */
+machine: string,
+/**
+ * 받은 그대로의 후보 경로(`<절대 경로>/aaa` 또는 `~/<폴더>/aaa`)
+ */
+path: string, sha256: string,
+/**
+ * provenance의 40자리 커밋(없으면 None)
+ */
+commit: string | null,
+/**
+ * self-check가 답한 판(`0.1.2+<커밋 12자리>`)
+ */
+version: string, total_bytes: number,
+/**
+ * provenance의 빌드 시각(RFC 3339, 없으면 None)
+ */
+built_at: string | null, };
+
+export type RolloutTargetView = { machine: string,
+/**
+ * host 머신(늘 맨 앞)
+ */
+host: boolean, problem: string | null, };
+
+export type RolloutPlanView = { candidate: DeployCandidateView, targets: Array<RolloutTargetView>,
+/**
+ * 진행 중인 rollout이 있어 지금은 시작하지 못한다
+ */
+busy: boolean, };
+
+export type DeployWork = { "kind": "restart", service: DeployService, } | { "kind": "update" } | { "kind": "rollback" };
+
+export type DeployJobCard = { id: string, machine: string, work: DeployWork,
+/**
+ * 그 머신 agent에게 물은 상태. 연결이 끊겼거나 기록을 읽지 못하면 None
+ */
+state: DeployState | null,
+/**
+ * 실패·중단일 때 화면에 보일 까닭(원문은 coordinator의 배포 기록에만 있다)
+ */
+error: string | null,
+/**
+ * 웹 조작 기기가 시작했다(아니면 coordinator)
+ */
+web: boolean, created_ms: number, updated_ms: number, };
+
+export type FrontResponse = { "kind": "accounts", accounts: Array<AccountView>, } | { "kind": "account_defaults", defaults: Array<AccountDefault>, } | { "kind": "account_login", login: AccountLoginView, } | { "kind": "input_events", events: Array<InputEvent>, } | { "kind": "deploy_context", project: string | null, session: boolean, allowed: boolean, } | { "kind": "rollout", rollout: RolloutView, } | { "kind": "rollout_cards", cards: Array<RolloutCard>, } | { "kind": "rollout_plan", plan: RolloutPlanView, } | { "kind": "deploy_jobs", jobs: Array<DeployJobCard>, } | { "kind": "deployment", machine: string, job: DeployJob, running_software: string, running_sha256: string, } | { "kind": "missions", missions: Array<MissionView>, } | { "kind": "mission", mission: MissionView, } | { "kind": "post", result: PostResult, } | { "kind": "posts", posts: Array<PostEnvelope>,
 /**
  * 음소거된 보낸 쪽(`post unmute`에 줄 이름, FRONT_API 1.77). 옛 host는 생략한다
  */

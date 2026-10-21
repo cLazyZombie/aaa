@@ -173,7 +173,7 @@ host는 약 1분마다 갱신하고 수동 「사용량 다시 읽기」는 30�
 등록·다시 로그인마다 토큰과 무관한 새 세대를 만든다. 삭제·같은 별칭 재등록도 새 세대다.
 Codex 중앙 갱신은 세대를 유지한다. 이전 인증으로 실행 중인 pane과 늦게 끝난 조회는 새 세대의
 숫자가 될 수 없다. 옛 금고 파일은 계속 읽으며 옛 pane의 귀속을 추정하지 않는다.
-웹은 `GET /api/v1/account-usage[?refresh=1]`(FRONT_API 1.82)을 사용한다.
+웹은 `GET /api/v1/account-usage[?refresh=1]`(FRONT_API 1.83)을 사용한다.
 원격 snapshot은 `account_quota.v1`을 알린 agent에만 요청한다. 자동 배정·계정 전환(A3)은
 하지 않는다. 실계정 로그인·운영 quota 조회는 가짜 시험의 보증 범위 밖이다.
 

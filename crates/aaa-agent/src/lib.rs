@@ -1365,6 +1365,7 @@ impl Agent {
                 self.guard_request(req).await
             }
             req @ (AgentRequest::DeployFetch { .. }
+            | AgentRequest::DeployCandidate { .. }
             | AgentRequest::DeployStage { .. }
             | AgentRequest::DeployStageStatus { .. }
             | AgentRequest::DeployStageClean { .. }) => {

@@ -104,7 +104,7 @@ export default async function ({ page }) {
       const over = await p.getByTestId("account-quota").evaluateAll((cards) => cards.some((c) => c.scrollWidth > c.clientWidth || c.getBoundingClientRect().right > innerWidth));
       assert.equal(over, false, `${width} 카드 폭`);
       assert.ok(!(await p.innerText()).includes("canary") && !(await p.innerText()).includes("@example.com"));
-      await shot(mobile, `62-account-quota-${width}`); await mobile.context().close();
+      await shot(mobile, `65-account-quota-${width}`); await mobile.context().close();
     }
   });
   await step("가짜 금고 잠김과 agent 연결 끊김은 마지막 숫자·관측 시각을 새 값으로 바꾸지 않는다", async () => {

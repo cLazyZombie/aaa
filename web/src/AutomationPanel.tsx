@@ -9,7 +9,7 @@ import { RuleDetail, ThreadLink } from "./AutomationDetail";
 import { ConvertSheet } from "./AutomationConvert";
 import { AutomationEditor } from "./AutomationEditor";
 import { canEditAutomations } from "./automationForm";
-import { canPreviewConvert, legacyFiles, legacyRule, ruleTone, runWord, stuckBatch } from "./automationModel";
+import { canPreviewConvert, legacyFiles, legacyRule, ruleTone, ruleWord, runWord, stuckBatch } from "./automationModel";
 import "./AutomationPanel.css";
 
 const time = (at: number) => new Date(at).toLocaleString();
@@ -121,8 +121,8 @@ export function AutomationPanel({ canControl, threads = [], onThread = () => {},
           const detail = () => setOpen({ kind: "rule", project, name: r.name });
           // 이 규칙이 띄워 아직 열린 thread(목록 줄에 호박색 막대)
           const running = threads.filter((t) => t.project === project && t.automation === r.name && t.group !== "resolved" && t.status !== "failed");
-          return <article className="automation-row" key={r.name} data-testid={`automation-${project}-${r.name}`} data-status={tone === "stuck" ? "stuck" : !r.enabled ? "off" : r.error ? "failed" : r.last_result?.status ?? "ready"}>
-            <div className="automation-heading"><span className="automation-indicator" role="img" aria-label={!r.enabled ? "꺼짐" : r.error ? "실패" : stuck ? "막힘" : r.last_result ? runWord[r.last_result.status] ?? r.last_result.status : "기록 없음"} />
+          return <article className="automation-row" key={r.name} data-testid={`automation-${project}-${r.name}`} data-status={tone}>
+            <div className="automation-heading"><span className="automation-indicator" role="img" aria-label={ruleWord[tone]} />
               <button type="button" className="automation-name" onClick={detail}>{title}</button>
               {legacyRule(r) && <span className="automation-badge is-legacy">이전 형식</span>}
 

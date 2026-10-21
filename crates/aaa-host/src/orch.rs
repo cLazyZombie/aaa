@@ -1379,12 +1379,22 @@ impl Host {
         mid: &str,
         name: &str,
     ) -> Result<aaa_proto::ResolvedProfile, ErrorBody> {
+        self.require_host_profiles(mid)?;
+        self.configured_thread_profile(project, name)
+    }
+
+    /// 승인 범위는 host 설정만 본다. 연결·agent 판은 실제 시작 후보를 고를 때 확인한다.
+    pub(crate) fn configured_thread_profile(
+        &self,
+        project: Option<&str>,
+        name: &str,
+    ) -> Result<aaa_proto::ResolvedProfile, ErrorBody> {
         // 새 pane은 thread safety를 덧붙이지 않던 기존 계약을 유지한다.
         let safety = project.map(|project| {
             let s = self.safety(project);
             (self.default_thread_profile(project), s.thread_agent_args, s.yolo)
         });
-        self.resolve_launch(mid, name, safety)
+        self.profile_definition(name, safety)
     }
 
     /// coordinator(`project open`, plan §8.180): safety의 coordinator 몫(참고 `Safety::launch_args`의 Role::Coordinator) —
@@ -1410,11 +1420,24 @@ impl Host {
         name: &str,
         safety: Option<(String, Vec<String>, bool)>,
     ) -> Result<aaa_proto::ResolvedProfile, ErrorBody> {
+        self.require_host_profiles(mid)?;
+        self.profile_definition(name, safety)
+    }
+
+    fn require_host_profiles(&self, mid: &str) -> Result<(), ErrorBody> {
         if !self.machine_feature(mid, "host_profiles.v1") {
             return Err(bad(
                 "그 머신 agent는 host profile을 받지 못한다(host_profiles.v1 없음). 연결은 유지된다. 그 머신 aaa agent를 갱신한 뒤 시작한다",
             ));
         }
+        Ok(())
+    }
+
+    fn profile_definition(
+        &self,
+        name: &str,
+        safety: Option<(String, Vec<String>, bool)>,
+    ) -> Result<aaa_proto::ResolvedProfile, ErrorBody> {
         let cfg = self.profile_config()?;
         let builtin = !cfg.profiles.contains_key(name);
         let mut p =

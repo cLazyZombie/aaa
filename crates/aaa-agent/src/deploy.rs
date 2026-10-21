@@ -40,6 +40,8 @@ pub(crate) struct Manager {
     running_sha256: String,
     gate: Mutex<()>,
     stage_gate: Mutex<()>,
+    /// 후보 점검(웹 「배포」)이 실행기를 쓰는 중이다. `gate` 아래에서 세우고 보며, 점검은 lock 밖에서 실행기를 돌린다
+    inspecting: std::sync::atomic::AtomicBool,
     executor: Mutex<Option<Executor>>,
 }
 fn error(e: impl std::fmt::Display) -> ErrorBody {
@@ -66,6 +68,7 @@ impl Manager {
             lease: Mutex::new(None),
             gate: Mutex::new(()),
             stage_gate: Mutex::new(()),
+            inspecting: Default::default(),
             executor: Mutex::new(None),
         })
     }
@@ -151,6 +154,25 @@ impl Manager {
         )
         .map_err(error)
     }
+    /// 대기·진행 중인 작업 ID. `gate`를 쥐고 부른다
+    fn unfinished(&self) -> Result<Option<String>, ErrorBody> {
+        for entry in std::fs::read_dir(&self.root).map_err(error)? {
+            let entry = entry.map_err(error)?;
+            if entry.path().extension().is_none_or(|s| s != "json") {
+                continue;
+            }
+            let Some(id) = entry.path().file_stem().and_then(|s| s.to_str()).map(str::to_string) else {
+                continue;
+            };
+            if valid(&id) {
+                let job = self.status(&id)?;
+                if matches!(job.state, DeployState::Queued | DeployState::Running) {
+                    return Ok(Some(job.id));
+                }
+            }
+        }
+        Ok(None)
+    }
     fn prepare(
         &self,
         exe: &Path,
@@ -170,20 +192,12 @@ impl Manager {
         if self.executor.lock().unwrap().is_none() {
             return Err(error("이 agent에는 배포 실행기가 없다"));
         }
-        for entry in std::fs::read_dir(&self.root).map_err(error)? {
-            let entry = entry.map_err(error)?;
-            if entry.path().extension().is_none_or(|s| s != "json") {
-                continue;
-            }
-            let Some(id) = entry.path().file_stem().and_then(|s| s.to_str()).map(str::to_string) else {
-                continue;
-            };
-            if valid(&id) {
-                let job = self.status(&id)?;
-                if matches!(job.state, DeployState::Queued | DeployState::Running) {
-                    return Err(error(format!("배포 작업 {}가 진행 중이다", job.id)));
-                }
-            }
+        // 실행기 staging 이름이 agent에 하나라 점검과 겹치면 한쪽이 실패한다
+        if self.inspecting.load(std::sync::atomic::Ordering::SeqCst) {
+            return Err(error("빌드 후보 점검이 실행 중이다. 끝난 뒤 다시 요청한다"));
+        }
+        if let Some(id) = self.unfinished()? {
+            return Err(error(format!("배포 작업 {id}가 진행 중이다")));
         }
         let now = aaa_common::util::now_ms();
         let job = DeployJob {
