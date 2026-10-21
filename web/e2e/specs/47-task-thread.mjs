@@ -200,12 +200,22 @@ export default async function ({ page }) {
     await shot(page, "thread-desktop-coordinator");
   });
 
-  await step("휴대폰·패드: 상세 시트의 맡기기와 확인 필요, 바로 시작 확인창과 실제 한도 거부", async () => {
+  await step("데스크톱·휴대폰·패드: 한도 무시 시작 재확인·출처 표지와 예약 대기 유지", async () => {
     aaa("project", "set", "demo", "max_parallel_threads", "1");
     fs.writeFileSync(`${root}/task-47b.md`, "사람을 기다림");
     const busy = aaa("thread", "start", "demo", "--title", "한도 채우는 일", "--machine", "labA", "--profile", "fake", "--kind", "dir", "--task-file", `${root}/task-47b.md`).id;
-    for (const kind of ["iphone", "ipad"]) {
-      const { page: p } = await pairDevice(browser, aaa("web", "pair").code, kind, { hash: "#tasks" });
+    aaa("task", "add", "강제 동안 예약", "--profile", "fake", "--machine", "labA", "--repo", "작업 폴더", "--note", "사람을 기다림");
+    aaa("task", "reserve", "강제 동안 예약");
+    const waitingId = aaa("task", "queue").entries.find(q => q.task.title === "강제 동안 예약").task_id;
+    for (const kind of ["desktop", "iphone", "ipad"]) {
+      const title = `강제 시작 ${kind}`;
+      aaa("task", "add", title, "--profile", "fake", "--machine", "labA", "--repo", "작업 폴더", "--note", "사람을 기다림");
+      aaa("ticker", "tick");
+      const p = kind === "desktop" ? page : (await pairDevice(browser, aaa("web", "pair").code, kind, { hash: "#tasks" })).page;
+      if (kind === "desktop") {
+        await p.getByTestId("activity-tasks").click();
+        if (await p.getByTestId("task-detail").isVisible()) await p.getByTestId("task-detail-close").click();
+      }
       await shaIs(p, sha(read()));
       await pick(p, "큰 일 W1~W3");
       await p.getByTestId("task-attention").waitFor();
@@ -215,20 +225,43 @@ export default async function ({ page }) {
       await p.getByTestId("task-form").waitFor();
       await p.getByTestId("task-detail-close").click();
       // 미할당 task: 맡기기 단추
-      await pick(p, "문서 정리");
+      await pick(p, title);
       await p.getByTestId("task-handoff").waitFor();
       await shot(p, `thread-${kind}-handoff`);
       await p.getByTestId("task-handoff-start").click();
       await domIs(p, "바로 시작 값", () => document.querySelector('[data-testid="task-start"] form')?.dataset.startState === "ready");
       await p.getByTestId("task-start-limit").waitFor();
-      await p.getByTestId("task-start-repo").selectOption("작업 폴더");
+
       if (!(await p.getByTestId("task-start-go").isDisabled())) throw new Error("한도를 넘기는데 확인 없이 시작할 수 있다");
       await shot(p, `thread-${kind}-start-limit`);
-      if(await p.getByTestId("task-start-over").count())throw new Error("한도 우회 조작이 남았다");
-      await p.keyboard.press("Escape");
+      const count = aaa("thread", "list", "demo").threads.length;
+      await p.getByTestId("task-start-over").click();
+      await p.getByTestId("task-start-over-confirm").waitFor();
+      await shot(p, `thread-${kind}-over-confirm`);
+      if (aaa("thread", "list", "demo").threads.length !== count) throw new Error("재확인 전에 기동했다");
+      await p.getByRole("button", { name: "돌아가기", exact: true }).click();
+      await p.getByTestId("task-start-over-confirm").waitFor({ state: "detached" });
+      if (aaa("thread", "list", "demo").threads.length !== count) throw new Error("돌아가기에서 기동했다");
+      await p.getByTestId("task-start-over").click();
+      await p.getByTestId("task-start-over-go").click();
+      await p.getByTestId("task-started").waitFor();
+      const id = await until("강제 시작 task 연결", () => linked(title));
+      const record = aaa("thread", "show", "demo", id);
+      if (!record.over_limit?.actor.startsWith("device:") || !record.over_limit.at_ms) throw new Error(`강제 시작 출처 없음: ${JSON.stringify(record)}`);
       await p.getByTestId("task-start").waitFor({ state: "detached" });
-      await p.close();
+      await p.keyboard.press("Escape");
+      await p.getByTestId("task-detail").waitFor({ state: "detached" });
+      await row(p, title).getByTestId("thread-over-limit").waitFor();
+      await row(p, title).scrollIntoViewIfNeeded();
+      await row(p, title).locator(".task-pick").click({ trial: true });
+      await shot(row(p, title), `thread-${kind}-over-started`);
+      aaa("ticker", "tick");
+      const q = aaa("task", "queue").entries.find(q => q.task.title === "강제 동안 예약");
+      if (q.state !== "queued" || q.thread) throw new Error("한도 초과 동안 예약을 기동했다");
+      aaa("thread", "resolve", "demo", id);
+      if (kind !== "desktop") await p.close();
     }
+    aaa("task", "unreserve", waitingId);
     aaa("thread", "resolve", "demo", busy);
   });
 }

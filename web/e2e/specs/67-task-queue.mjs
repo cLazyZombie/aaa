@@ -5,6 +5,8 @@ import { pairDevice } from "../lib/devices.mjs";
 const row=(p,title)=>p.locator(`.task-row[data-title="${title}"]`);
 const pick=(p,title)=>row(p,title).locator(".task-pick").click();
 const queued=()=>aaa("task","queue").entries;
+// 한 목록(§8.393): 예약은 숫자 없이 맨 위에 host 차례대로 놓인다
+const reservedOrder=(want)=>[...document.querySelectorAll('.task-row[data-kind="reserved"]')].map(e=>e.dataset.title).join("|")===want;
 export default async function ({ page }) {
   let busy,one,two,phone;
   await step("예약 내용 확인과 등록: 실제 한도가 찬 동안 기동하지 않고 다른 기기에도 같은 승인판을 보인다",async()=>{
@@ -25,22 +27,23 @@ export default async function ({ page }) {
     two=queued().find(q=>q.task.title==="다음 예약").task_id;
     aaa("ticker","tick");if(aaa("thread","list","demo").threads.length!==1)throw new Error("한도가 찬 동안 새 기동을 보냈다");
     const device=await pairDevice(browser,aaa("web","pair").code,"iphone",{hash:"#tasks"});phone=device.page;
+    await domIs(phone,"다른 기기의 예약 차례",reservedOrder,"웹 예약|다음 예약");
     await pick(phone,"다음 예약");await phone.getByTestId("task-queue-status").waitFor();
-    if(!(await phone.getByTestId("task-queue-status").textContent()).includes("예약 2"))throw new Error("다른 기기의 순번이 다르다");
+    if(!(await phone.getByTestId("task-queue-status").textContent()).includes("예약됨"))throw new Error("다른 기기의 예약 상태가 다르다");
     await shot(phone,"queue-phone-confirmed");
   });
   await step("휴대폰 예약 순서와 취소: 맨 앞으로 이동한 차례가 새로고침·다른 기기에도 유지된다",async()=>{
     await phone.getByRole("button",{name:"예약 맨 앞으로"}).click();
-    await domIs(phone,"순번 저장",()=>document.querySelector('[data-testid="task-queue-status"]')?.textContent.includes("예약 1"));
+    await domIs(phone,"순번 저장",reservedOrder,"다음 예약|웹 예약");
     if(queued().filter(q=>q.state==="queued")[0].task_id!==two)throw new Error("host 예약 순서가 바뀌지 않았다");
-    await phone.reload();await pick(phone,"다음 예약");await phone.getByTestId("task-queue-status").waitFor();
-    await phone.getByRole("button",{name:"예약 취소",exact:true}).click();
+    await phone.reload();await domIs(phone,"새로고침 뒤 차례",reservedOrder,"다음 예약|웹 예약");await pick(phone,"다음 예약");await phone.getByTestId("task-queue-status").waitFor();
+    await phone.getByRole("button",{name:"예약 풀기",exact:true}).click();
     await domIs(phone,"취소 저장",()=>document.querySelector('[data-testid="task-queue-controls"]')?.dataset.state==="cancelled");
     if(queued().find(q=>q.task_id===two).state!=="cancelled")throw new Error("취소가 host에 남지 않았다");
     await page.getByTestId("task-detail-close").click();await pick(page,"웹 예약");
     await shot(page,"queue-desktop-wait");
   });
-  await step("병합 대기·착지 중: 보고 사건으로 예약을 시작하고 할 일·thread 앞에 같은 표지를 보인다", async () => {
+  await step("병합 대기·병합 중: 보고 사건으로 예약을 시작하고 할 일·thread 앞에 같은 표지를 보인다", async () => {
     const report = async (id, tag, stage) => {
       const t = aaa("thread", "show", "demo", id);
       fs.writeFileSync(`${t.work_dir}/report.md.tmp`, `${tag} 전체 확인과 착지\n\n## Next\n- 착지 창 대기\n`);
@@ -57,7 +60,7 @@ export default async function ({ page }) {
     for (const [p, name] of [[page, "desktop"], [phone, "phone"]]) {
       const badge = row(p, "웹 예약").locator('[data-stage="landing"]');
       await badge.waitFor();
-      if ((await badge.textContent()) !== "착지 중") throw new Error("착지 표지 이름");
+      if ((await badge.textContent()) !== "병합 중") throw new Error("착지 표지 이름");
       const waiting = p.getByTestId(`tasks-unlinked-${busy}`).locator('[data-stage="merge_ready"]');
       await waiting.waitFor();
       if ((await waiting.textContent()) !== "병합 대기") throw new Error("병합 표지 이름");
