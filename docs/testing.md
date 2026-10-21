@@ -2,6 +2,23 @@
 
 새 기능을 만드는 thread가 따르는 짧은 규칙이다. 근거는 참고 넷(herdr 0.9.5·herdr-projects 0.2.35·herdr-web-ui `aa624cb`·t3code `4b1024da`)과 이 저장소에서 실제로 난 간헐 실패다. 전략과 도구 목록은 [plan §13](plan.md#13-테스트-전략과-직접-만들-e2e-도구)에 있다.
 
+## install macOS launchd owner(t-0485, plan §8.419)
+
+- `nice -n 15 cargo test -p aaa --bin aaa install::engine --locked`: 실제 임시 파일 receipt와 서명 승인,
+  launcher package 적용 뒤 codesign, 보존 launcher의 승인 뒤 편집 무쓰기 거부,
+  같은 ID 재개·공유 instance·외부 편집/가짜 ready 거부를 검사한다.
+  OS manager만 대체하며 파일 transaction·ready 판정·journal은 실제 owner를 사용한다.
+- `nice -n 15 cargo test -p aaa --test install --locked`: 읽기 launchd 계획과 package 누락의 무쓰기 경계를 포함한다.
+  실제 등록 시험 하나는 로컬에서 ignored이며 운영 LaunchAgent를 변경하지 않는다.
+- 승인된 기존 macos-15 CI 단계는 `cargo test -p aaa --test install --locked launchd::launchd_real_registration_ready_resume_and_second_instance_preserve_the_shared_launcher -- --ignored --exact --nocapture`를 필수 실행한다.
+  고유 두 label의 실제 등록·ready·bootout 뒤 같은 ID resume·두 번째 instance와 launcher 보존·정상 해제, 실패 시 자기 label만 정리한다.
+  GUI 도메인이 없으면 실패이며 skip/fake-ready로 바꾸지 않는다. 다른 OS에서는 Mac native owner만 cfg 제외한다.
+- release producer/manifest는 `nice -n 15 python3 -m unittest scripts.test_release`, 실제 app producer→consumer는 위 파일 owner가 맡는다.
+  package 판/CPU/binary 결속 제거·외부 plist 덮어쓰기 변형은 owner 실패를 남겨야 한다.
+- 서명 RED는 번들 안에 영구 자원 lock/reference가 생겨 codesign이 거부한 것이다. 메타데이터를 번들 바깥에 두어
+  파일별 journal·공유 소유권을 보존하며 서명 GREEN을 확인한다. 전체 ci-local·deps·공개 검사·Windows cross 뒤 후보를 보고하고 착지 창을 기다린다.
+
+
 ## host 공통 계정 풀 자동 배정(t-0653, plan §8.416)
 
 - `nice -n 15 cargo test -p aaa-host --lib account_pool --locked`: 창별 최소 여유·모델 창·동점·공유 한도,

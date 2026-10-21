@@ -99,11 +99,20 @@ jobs:
           test "$("$binary" --version)" = "aaa ${RELEASE_TAG#v}"
           mkdir -p release-artifact
           cp "$binary" "release-artifact/$RELEASE_ASSET"
+      - name: macOS 고정 launcher asset
+        if: runner.os == 'macOS'
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+          RELEASE_ASSET: ${{ matrix.asset }}
+        run: |
+          bash p0/launcher/install.sh --dest "$RUNNER_TEMP/aaa-release-launcher"
+          platform="${RELEASE_ASSET#aaa-}"
+          python3 scripts/launcher_asset.py --app "$RUNNER_TEMP/aaa-release-launcher/aaa-launcher.app" --binary "release-artifact/$RELEASE_ASSET" --platform "$platform" --version "${RELEASE_TAG#v}" --output "release-artifact/aaa-launcher-$platform.json"
       - name: 실행 파일 올리기
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: ${{ matrix.asset }}
-          path: release-artifact/${{ matrix.asset }}
+          path: release-artifact/*
           if-no-files-found: error
 
   publish:
@@ -138,5 +147,7 @@ jobs:
             release-artifacts/aaa-windows-x86_64.exe
             release-artifacts/aaa-linux-x86_64
             release-artifacts/aaa-linux-aarch64
+            release-artifacts/aaa-launcher-macos-aarch64.json
+            release-artifacts/aaa-launcher-macos-x86_64.json
             release-artifacts/SHA256SUMS
             release-artifacts/manifest.json

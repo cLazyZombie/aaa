@@ -1,12 +1,14 @@
-//! I5: 고정 사용자 SCM 작업과 내구 영수증. I6 전에는 쓰기 CLI가 이 모듈에 진입하지 않는다.
+//! 승인된 파일 receipt에서 이어지는 고정 사용자 감독자와 내구 영수증.
 use super::*;
 use std::collections::BTreeMap;
+
+mod launchd;
 
 #[cfg(windows)]
 mod native;
 #[cfg(windows)]
 mod native_ready;
-#[cfg(any(windows, test))]
+#[cfg(any(windows, target_os = "macos", test))]
 mod runner;
 #[cfg(windows)]
 mod runtime;
@@ -57,7 +59,15 @@ pub(super) fn permissions(plan: &InstallPlan) -> Result<Vec<InstallPermission>> 
     }
     let mut result = Vec::new();
     for role in roles(plan) {
-        let target = format!("service:{}", service_name(role, plan.choices.instance.as_deref()));
+        let name = if plan.choices.service == Some(InstallService::Launchd) {
+            crate::launchd::label_in(
+                plan.choices.instance.as_deref(),
+                if role == InstallRole::Host { "host" } else { "agent" },
+            )
+        } else {
+            service_name(role, plan.choices.instance.as_deref())
+        };
+        let target = format!("service:{name}");
         let desired = hash(
             &serde_json::to_vec(&(
                 role,
@@ -211,7 +221,12 @@ pub(super) fn apply(
         }
         Ok(changed)
     }
-    #[cfg(not(windows))]
+    #[cfg(target_os = "macos")]
+    {
+        let _ = password;
+        launchd::apply(plan, file_id, lease)
+    }
+    #[cfg(not(any(windows, target_os = "macos")))]
     {
         let _ = (file_id, password);
         Err(failure("unsupported_service_platform", 5))
@@ -289,6 +304,8 @@ struct Spec {
     environment: BTreeMap<String, String>,
     automatic: bool,
     wait_timeout_s: u32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    launchd: Option<launchd::Context>,
 }
 impl Spec {
     fn role(&self) -> &'static str {
@@ -311,6 +328,9 @@ impl Spec {
         hash(&serde_json::to_vec(self).expect("고정 service DTO"))
     }
     fn command(&self) -> String {
+        if self.launchd.is_some() {
+            return launchd::plist(self);
+        }
         [
             self.executable.to_string_lossy().into_owned(),
             "service-run".into(),
@@ -346,6 +366,9 @@ impl Spec {
         {
             return Err(Fault::conflict());
         }
+        if let Some(context) = &self.launchd {
+            context.validate()?;
+        }
         Ok(())
     }
     fn verify_plan(&self, plan: &InstallPlan) -> Result<()> {
@@ -367,7 +390,7 @@ impl Spec {
         }
         Ok(())
     }
-    #[cfg(windows)]
+    #[cfg(any(windows, target_os = "macos"))]
     fn verify_files(&self) -> Result<()> {
         let journal = read_journal(&self.state, &self.id, self.instance.as_deref())?;
         if journal.phase != Phase::Configured {
@@ -378,13 +401,17 @@ impl Spec {
             return Err(Fault::conflict());
         }
         let plan = transaction::installed_plan(&self.state, &journal)?;
-        if plan.context.platform.os != InstallOs::Windows
-            || plan.choices.service != Some(InstallService::WindowsScm)
-            || plan.choices.service_account != Some(InstallAccount::CurrentUser)
+        if !matches!(
+            (plan.context.platform.os, plan.choices.service),
+            (InstallOs::Windows, Some(InstallService::WindowsScm)) | (InstallOs::Macos, Some(InstallService::Launchd))
+        ) || plan.choices.service_account != Some(InstallAccount::CurrentUser)
         {
             return Err(Fault::conflict());
         }
         self.verify_plan(&plan)?;
+        if self.launchd != launchd::Context::from_plan(&plan)? {
+            return Err(Fault::conflict());
+        }
         transaction::observe(&self.state, journal)?;
         Ok(())
     }
@@ -398,6 +425,9 @@ impl Spec {
     }
     fn guard_paths(&self) -> Result<()> {
         self.guard_directories()?;
+        if let Some(context) = &self.launchd {
+            context.guard()?;
+        }
         if self.executable.canonicalize().map_err(Fault::io)? != self.executable {
             return Err(Fault::conflict());
         }
@@ -459,7 +489,7 @@ struct Observation {
 /// 외부 OS 관리자 경계만 대체할 수 있다. ready 판정/파일 기록은 여기서 구현하지 않는다.
 trait Manager {
     fn query(&mut self, spec: &Spec) -> Result<Option<Observation>>;
-    fn create(&mut self, spec: &Spec, password: &Password) -> Result<()>;
+    fn create(&mut self, spec: &Spec, password: Option<&Password>) -> Result<()>;
     fn start(&mut self, spec: &Spec) -> Result<Observation>;
     fn stop(&mut self, spec: &Spec) -> Result<()>;
     fn remove(&mut self, spec: &Spec) -> Result<()>;
@@ -530,9 +560,10 @@ impl Job {
         profile: PathBuf,
         environment: BTreeMap<String, String>,
     ) -> Result<Self> {
-        if plan.context.platform.os != InstallOs::Windows
-            || plan.choices.service != Some(InstallService::WindowsScm)
-            || plan.choices.service_account != Some(InstallAccount::CurrentUser)
+        if !matches!(
+            (plan.context.platform.os, plan.choices.service),
+            (InstallOs::Windows, Some(InstallService::WindowsScm)) | (InstallOs::Macos, Some(InstallService::Launchd))
+        ) || plan.choices.service_account != Some(InstallAccount::CurrentUser)
             || plan.choices.role != Some(role)
                 && !(plan.choices.role == Some(InstallRole::Host)
                     && role == InstallRole::Agent
@@ -575,6 +606,7 @@ impl Job {
             environment,
             automatic: plan.choices.startup == Some(InstallStartup::Auto),
             wait_timeout_s: plan.choices.wait_timeout.unwrap_or(600),
+            launchd: launchd::Context::from_plan(plan)?,
         };
         let mut job = Self::open(spec)?;
         job._files = Some(files);
@@ -656,9 +688,13 @@ impl Job {
             if self.record.before.is_some() || self.record.phase != ServicePhase::Registering {
                 return Err(Fault::conflict());
             }
-            let password = password.ok_or_else(|| failure("service_account_auth_unavailable", 3))?;
+            let password = if self.spec.launchd.is_some() {
+                None
+            } else {
+                Some(password.ok_or_else(|| failure("service_account_auth_unavailable", 3))?)
+            };
             // LSA 직후 중단돼도 권한을 제거했다고 추정하지 않는다. 다른 서비스의 권한은 보존한다.
-            self.record.logon_right_may_remain = true;
+            self.record.logon_right_may_remain = self.spec.launchd.is_none();
             self.save()?;
             manager.create(&self.spec, password)?;
             self.verify_configuration(&manager.query(&self.spec)?.ok_or_else(Fault::conflict)?)?;
@@ -752,7 +788,7 @@ fn verify_ready(spec: &Spec, manager: &mut impl Manager, observed: &Observation)
         || ready.account_sha256 != hash(spec.account.as_bytes())
         || ready.profile_sha256 != hash(spec.profile.to_string_lossy().as_bytes())
         || ready.binary_sha256 != spec.binary_sha256
-        || ready.session != 0
+        || (spec.launchd.is_none() && ready.session != 0)
         || ready.boot != aaa_common::util::boot_id()
         || manager.process(spec, ready.pid)?
             != Some(Process { pid: ready.pid, created: ready.process_created, elevated: ready.elevated })
@@ -914,7 +950,13 @@ pub(super) fn observe(
         } else {
             observe_service(&spec, &record, &mut native::Scm, &mut result)?;
         }
-        #[cfg(not(windows))]
+        #[cfg(target_os = "macos")]
+        if plan.choices.service == Some(InstallService::Launchd) {
+            launchd::observe(&spec, &record, &plan, &mut result)?;
+        } else {
+            record_status(&spec, &record, InstallCheckState::NotRun, &mut result);
+        }
+        #[cfg(not(any(windows, target_os = "macos")))]
         {
             if record.phase == ServicePhase::Ready {
                 return Err(failure("unsupported_service_platform", 5));
@@ -922,7 +964,9 @@ pub(super) fn observe(
             record_status(&spec, &record, InstallCheckState::NotRun, &mut result);
         }
     }
-    if journal.phase == Phase::Configured && plan.choices.service == Some(InstallService::WindowsScm) {
+    if journal.phase == Phase::Configured
+        && matches!(plan.choices.service, Some(InstallService::WindowsScm | InstallService::Launchd))
+    {
         for (role, wanted) in [
             ("host", plan.choices.role == Some(InstallRole::Host)),
             (
@@ -944,7 +988,11 @@ pub(super) fn dispatch(context: &Path, sha: &str) -> std::process::ExitCode {
     {
         runtime::dispatch(context, sha)
     }
-    #[cfg(not(windows))]
+    #[cfg(target_os = "macos")]
+    {
+        launchd::dispatch(context, sha)
+    }
+    #[cfg(not(any(windows, target_os = "macos")))]
     {
         let _ = (context, sha);
         eprintln!("unsupported_service_platform");

@@ -28,11 +28,11 @@ pub(super) fn key(state: &Path, manifest: &Manifest) -> String {
             .expect("고정 타입 JSON"),
     )
 }
-pub(super) fn path(file: &FileSpec) -> PathBuf {
-    file.path.parent().unwrap().join(format!(".aaa-install-refs-{}.json", resource_key(&file.path)))
+pub(super) fn path(file: &FileSpec) -> Result<PathBuf> {
+    Ok(metadata_parent(file)?.join(format!(".aaa-install-refs-{}.json", resource_key(&file.path))))
 }
 pub(super) fn read(file: &FileSpec) -> Result<Option<Record>> {
-    let bytes = match private::read(&path(file), 1024 * 1024) {
+    let bytes = match private::read(&path(file)?, 1024 * 1024) {
         Ok(bytes) => bytes,
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
         Err(e) => return Err(Fault::io(e)),
@@ -116,7 +116,7 @@ pub(super) fn register(tx: &Transaction) -> Result<()> {
             record.origin = Some(Origin { job: tx.dir.clone(), index, before: f.before.clone(), mode: f.before_mode });
         }
         record.owners.insert(key(&tx.state, &tx.manifest));
-        private::write(&path(f), &json_bytes(&record)?).map_err(Fault::io)?;
+        private::write(&path(f)?, &json_bytes(&record)?).map_err(Fault::io)?;
     }
     Ok(())
 }

@@ -19,7 +19,7 @@ pub fn label(role: &str) -> String {
     label_in(aaa_config::paths::instance().as_deref(), role)
 }
 
-fn label_in(instance: Option<&str>, role: &str) -> String {
+pub(crate) fn label_in(instance: Option<&str>, role: &str) -> String {
     match instance {
         Some(name) => format!("dev.aaa.{name}.{role}"),
         None => format!("dev.aaa.{role}"),
@@ -60,20 +60,25 @@ pub struct Spec {
 }
 
 pub fn plist(s: &Spec) -> String {
-    let log = log_path(&s.role);
     let args = [s.launcher.to_string_lossy().to_string(), s.aaa.to_string_lossy().to_string(), s.role.clone()];
+    render(&label(&s.role), &args, &s.env, &log_path(&s.role), true)
+}
+
+/// 기존 service와 승인 installer가 같은 launchd 속성을 쓴다.
+pub(crate) fn render(label: &str, args: &[String], env: &[(String, String)], log: &Path, automatic: bool) -> String {
     let mut out = String::from(
         "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n\
          <!DOCTYPE plist PUBLIC \"-//Apple//DTD PLIST 1.0//EN\" \"http://www.apple.com/DTDs/PropertyList-1.0.dtd\">\n\
          <plist version=\"1.0\">\n<dict>\n",
     );
-    out.push_str(&format!("\t<key>Label</key>\n\t<string>{}</string>\n", label(&s.role)));
+    out.push_str(&format!("\t<key>Label</key>\n\t<string>{}</string>\n", xml(label)));
     out.push_str("\t<key>ProgramArguments</key>\n\t<array>\n");
-    for a in &args {
+    for a in args {
         out.push_str(&format!("\t\t<string>{}</string>\n", xml(a)));
     }
     out.push_str("\t</array>\n");
-    out.push_str("\t<key>RunAtLoad</key>\n\t<true/>\n\t<key>KeepAlive</key>\n\t<true/>\n");
+    let value = if automatic { "true" } else { "false" };
+    out.push_str(&format!("\t<key>RunAtLoad</key>\n\t<{value}/>\n\t<key>KeepAlive</key>\n\t<{value}/>\n"));
     out.push_str("\t<key>ThrottleInterval</key>\n\t<integer>10</integer>\n");
     // GUI 로그인 세션(키체인이 풀린 곳)에서만, 사용자 작업과 같은 우선순위로 돈다
     out.push_str("\t<key>LimitLoadToSessionType</key>\n\t<string>Aqua</string>\n");
@@ -81,9 +86,9 @@ pub fn plist(s: &Spec) -> String {
     let log = xml(&log.to_string_lossy());
     out.push_str(&format!("\t<key>StandardOutPath</key>\n\t<string>{log}</string>\n"));
     out.push_str(&format!("\t<key>StandardErrorPath</key>\n\t<string>{log}</string>\n"));
-    if !s.env.is_empty() {
+    if !env.is_empty() {
         out.push_str("\t<key>EnvironmentVariables</key>\n\t<dict>\n");
-        for (k, v) in &s.env {
+        for (k, v) in env {
             out.push_str(&format!("\t\t<key>{}</key>\n\t\t<string>{}</string>\n", xml(k), xml(v)));
         }
         out.push_str("\t</dict>\n");

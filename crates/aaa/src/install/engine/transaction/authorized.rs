@@ -6,6 +6,7 @@ fn file_permission(kind: Kind, path: &Path, before: Option<String>, after: Strin
     Ok(InstallPermission {
         operation: match kind {
             Kind::Binary => InstallOperation::StageBinary,
+            Kind::Launcher => InstallOperation::StageLauncher,
             Kind::Config => InstallOperation::WriteFile,
             Kind::Project => InstallOperation::CreateProject,
             Kind::Hook => InstallOperation::ConfigureHook,

@@ -213,7 +213,7 @@ git tag v0.1.1
 git push origin refs/tags/v0.1.1
 ```
 
-`.github/workflows/release.yml`은 웹을 먼저 빌드해 실행 파일 안에 넣고, macOS arm64·Intel, Windows x86_64, Linux x86_64·arm64(musl)를 각각 빌드한다. 자기 runner에서 `aaa --version`까지 확인한 뒤 실행 파일 다섯 개·`SHA256SUMS`·`manifest.json`을 같은 공개 release에 올린다. 최초에는 Actions 다섯 빌드 및 게시 완료, asset 이름·checksum·웹 포함을 확인하고 시험 머신의 dry-run·실제 update·rollback 뒤 운영에 순차 배포한다. release workflow를 만드는 thread는 tag나 branch를 push하지 않는다.
+`.github/workflows/release.yml`은 웹을 먼저 빌드해 실행 파일 안에 넣고, macOS arm64·Intel, Windows x86_64, Linux x86_64·arm64(musl)를 각각 빌드한다. 자기 runner에서 `aaa --version`까지 확인한 뒤 실행 파일 다섯 개·macOS launcher JSON 두 개·`SHA256SUMS`·`manifest.json`을 같은 공개 release에 올린다. 최초에는 Actions 다섯 빌드 및 게시 완료, asset 이름·checksum·웹 포함을 확인하고 시험 머신의 dry-run·실제 update·rollback 뒤 운영에 순차 배포한다. release workflow를 만드는 thread는 tag나 branch를 push하지 않는다.
 
 | 항목 | herdr 참고본 | aaa와 다른 이유 |
 | --- | --- | --- |
@@ -383,3 +383,38 @@ aaa --instance work web publish                                             # �
 - Codex hook은 binary를 같이 쓰면 그대로 둔다. hooks.json의 한 줄이 pane env로 자기 aaa를 찾는다.
 - 업그레이드: binary를 바꾼 뒤 restart는 인스턴스마다 한다(`aaa --instance work service restart --role host`, `--role agent`).
 - 사용량 표시는 같은 HOME의 Claude·Codex 로그인을 같이 본다.
+
+
+## 12. install의 macOS launchd 경로
+
+I3는 I6의 외부 터미널 승인을 통해 현재 사용자 LaunchAgent를 준비한다. 운영 Mac 적용은 사용자가 자기 터미널에서 한다.
+이 구현의 로컬 검증은 서비스 등록·시스템 설정을 변경하지 않는다. 실제 등록 검증은 기존 macos-15 CI의 일회성 계정에서 한다.
+아직 release/bootstrap이 게시하지 않은 launcher asset을 다운로드할 수 있다고 가정하지 않는다.
+
+준비물은 같은 release의 자기 CPU용 aaa와 `aaa-launcher-macos-<CPU>.json`, `manifest.json`·`SHA256SUMS`다.
+실행 파일과 JSON을 같은 폴더에 두고 각각 SHA-256을 대조한다. 현재 설치기를 실행하면서 그 실행 파일의 사본을 `--from`으로
+지정할 수 있다. 다른 판의 원본을 새 launcher와 조합하려면 그 판의 검증된 설치기를 먼저 써야 한다.
+기존 launcher의 권한 등록을 유지하려면 `--launcher-policy preserve --launcher <절대경로>`를 쓴다.
+새 launcher는 기본 `~/Applications/aaa-launcher.app`에 `--launcher-policy install`로 설치한다. 기존 app을 자동 교체하지 않는다.
+
+새 instance의 host만 준비하는 예시다. 먼저 dry-run으로 대상/범위를 보고, 외부 TTY에서 같은 명령의 `--dry-run`을 빼서
+승인 물음에 답한다. 필요한 로컬 agent·harness·프로젝트·공개 설정은 설치 질문에서 선택한다.
+
+```sh
+aaa install --role host --name mac-a --instance review \
+  --local-agent disabled --project-mode skip --web off --tailscale-serve off --pairing skip \
+  --agent-listen 127.0.0.1:17430 --service launchd --launcher-policy install --start now --dry-run --json
+```
+
+GUI 로그인한 계정에서 실행한다. `service_gui_session_required`이면 그 계정의 GUI 로그인 세션을 준비하고 같은 ID로 재개한다.
+키체인이 잠겨 있으면 사용자가 GUI에서 풀고, harness 로그인은 해당 계정의 공식 로그인으로 끝낸다.
+시스템 설정의 개발자 도구·전체 디스크 접근은 필요한 launcher에 사용자가 직접 허용한다. 설치기가 권한을 켜거나 키체인을 바꾸지 않는다.
+agent가 host에 등록/연결되지 않았거나 로그인 검증이 안 되면 ready/완료로 추정하지 않고 결과의 needs_user를 따른다.
+
+확인할 것은 `install --status <ID>`의 등록·ready·연결, `dev.aaa.review.host`의 실제 PID와 서비스 로그다.
+private 로그는 선택한 state의 `install/jobs/<ID>/services/<role>/service.log`다. 결과 JSON에는 이 경로·계정 원문을 싣지 않는다.
+문제 때 ID·계획 hash·고정 오류 코드, 자기 label의 `launchctl print gui/$(id -u)/dev.aaa.review.host`와 위 로그를
+private 자료로 남긴다. 공개 issue에는 경로/주소/비밀을 가린다.
+되돌릴 때는 외부 터미널의 `aaa --instance review service stop --role host`로 멈추고
+`service uninstall --role host`로 자기 plist를 제거한다. 이는 installer journal 삭제나 데이터 purge가 아니며 launcher·다른 instance·설정·DB는 보존한다.
+로그인 전 부팅·로그아웃/재로그인·잠긴 키체인·FDA/개발자 도구의 실제 허용/거부는 CI의 ready 결과와 별개인 사용자 Mac 점검 항목이다.
