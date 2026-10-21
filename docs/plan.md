@@ -6661,3 +6661,26 @@ worker 자리 수에 포함하지 않는다. 평가자는 새 기동 대상이 �
 - **API.** `/api/*`는 모두 503 `unavailable`(「안전 모드」, 새로 고치면 화면이 열린다는 안내). 열린 웹 앱은 끊긴 뒤 다시 붙기 전의 기기 확인(`me`)이 이 답을 받으면 다시 붙지 않고 첫 화면을 다시 물어 연결 실패 화면에 그 글을 보인다. W6c의 새 판 확인은 이 답을 준비되지 않음으로 본다. `POST /api/v1/safe/restore`·`/api/v1/safe/retry`는 조작 기기·이 origin만이며 감사 기록 `safe_restore`(남긴 파일 이름)·`safe_retry`를 남긴다. 다시 읽어 되면 안내 화면(Refresh 3초 → `/`)을 보내고 웹을 graceful하게 닫은 뒤 정상 host로 이어 간다.
 - **남은 것.** 안전 모드 로그에는 예전처럼 설정 오류 전체(`render`)를 남긴다(원문 조각 포함, 운영 로그는 같은 사용자만 읽는다). agent 설정 오류는 대상이 아니다.
 - **검증.** host 유닛 `safe_mode::tests`(가림·오류 글·보관·되돌리기·주소 순서·기기별 화면·POST 권한·감사), 웹 E2E `68-safe-mode`(실제 binary를 깨진 설정으로 다시 띄워 안전 모드 → 되돌리기 → 같은 프로세스가 정상 host). 절차는 [시험](testing.md).
+
+### 8.371 coordinator 선택 질문·짧은 q-ID(t-0576, 1단계)
+
+coordinator의 `post user --request --needs-user` 본문에 thread 보고와 같은 `## Questions`·`### N.`·
+`- A … (추천) — 까닭`을 쓴다. host는 같은 파서를 쓰고 웹은 같은 QuestionCard를 렌더링한다. 본문·표·그림·
+선택지 그림·추천·직접 답도 같다. 기존 평문 post는 기존 표시와 처리 단추를 유지한다. 그림은 먼저 publish한
+`library/<이름>/<파일>`만 인증된 경로에서 읽으며, 답한 뒤 본문과 참조 파일을 사본으로 남긴다.
+
+질문 하나마다 프로젝트별 `q-1000`부터 영속 순번을 발급한다. 새 보고 판의 질문은 새 번호다.
+원장은 답한 것·post 보존 기간과 독립되어 지워도 재사용하지 않는다. 부분 답 초안은 완료·새 보고에서 비워
+삭제한 답 원문이 번호 원장에 남지 않게 한다. 기존 무작위 확인창 ID·post의 p-번호·thread ID는
+호환 참조로 남긴다. 확인창 목록에는 짧은 별칭도 주며 내부 ID·menu 검증은 바꾸지 않는다.
+`aaa question list`는 확인창·thread·coordinator 질문을 보이고 `question answer q-1000 A`·
+`thread answer q-1000 A`·`question answer q-1000 --text '답'`을 받는다. 여러 질문이 든 카드는 질문마다 답을
+보관하고 모두 답했을 때 기존 전달 경로를 따른다. 카드 전체에 답하는 기존 `1A 2B`도 유지한다.
+
+post의 답 기록·inbox 전달 원문·요청 종료는 한 DB 트랜잭션으로 묶어 두 기기가 동시에 제출해도 한 번만 남긴다.
+coordinator inbox에는 `question answered`와 ID·선택·자유 답 원문이 남는다. 채팅 답을 이미 전달했다면
+`post handled q-1000`으로 처리만 표시한다. 선택·승인·실행을 만들지 않는다. thread에 연결된 알림은 기존처럼
+같은 카드로 묶고 카드 답이 연결 post를 닫는다. push 제목과 inbox에는 q-ID를 싣고 기존 참조 링크를 유지한다.
+
+FRONT_API 1.87은 질문 ID·부분 답과 `ask_answer`·`question_reply`를 더한다. Agent link 변경은 없다.
+접두사는 t=thread, q=질문, d=할 일, r=보고서다. r-ID·보고 판별 사본·CI 내부 run 이름 분리는 2단계로 나눈다.

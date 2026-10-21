@@ -1705,6 +1705,25 @@ pub enum FrontRequest {
         project: String,
         item: String,
     },
+    /// coordinator post의 구조화 질문에 답하고 요청을 닫는다(FRONT_API 1.87).
+    AskAnswer {
+        #[serde(default)]
+        #[ts(optional, as = "Option<String>")]
+        project: String,
+        item: String,
+        body_hash: String,
+        picks: Vec<Option<u32>>,
+        text: Option<String>,
+    },
+    /// 사람이 읽는 질문 ID로 선택·직접 답을 기록한다. 일부만 답하면 나머지는 열린 채로 남는다.
+    QuestionReply {
+        #[serde(default)]
+        #[ts(optional, as = "Option<String>")]
+        project: String,
+        id: String,
+        choice: Option<String>,
+        text: Option<String>,
+    },
     /// 답한 것 기록을 지운다(모든 기기). `all`이면 모두
     AskForget {
         #[serde(default)]
@@ -2808,6 +2827,8 @@ impl FrontRequest {
             | FrontRequest::PostList { project, .. }
             | FrontRequest::Asks { project, .. }
             | FrontRequest::AskHandle { project, .. }
+            | FrontRequest::AskAnswer { project, .. }
+            | FrontRequest::QuestionReply { project, .. }
             | FrontRequest::AskForget { project, .. }
             | FrontRequest::PostUnmute { project, .. }
             | FrontRequest::ThreadFile { project, .. }

@@ -132,6 +132,7 @@ pub fn router(host: Arc<Host>) -> Router {
         .route("/api/v1/projects/{project}/library-uploads/{upload}", post(library_upload))
         .route("/api/v1/projects/{project}/uploads/{name}", get(task_file_get))
         .route("/api/v1/projects/{project}/questions/{thread}/{hash}/{*path}", get(question_file_get))
+        .route("/api/v1/projects/{project}/requests/{item}/{hash}/{*path}", get(request_file_get))
         .route("/api/v1/projects/{project}/asks/{id}/{*path}", get(ask_file_get))
         .route("/v/{cap}/{*path}", get(view_file))
         .route("/v/{cap}/", get(view_root))
@@ -610,6 +611,15 @@ async fn ask_file_get(
     headers: HeaderMap,
 ) -> Response {
     let file = host.ask_file(&project, &id, &path);
+    ask_file_response(&host, &headers, file, &path)
+}
+
+async fn request_file_get(
+    State(host): State<Arc<Host>>,
+    Path((project, item, hash, path)): Path<(String, String, String, String)>,
+    headers: HeaderMap,
+) -> Response {
+    let file = host.request_file(&project, &item, &hash, &path);
     ask_file_response(&host, &headers, file, &path)
 }
 

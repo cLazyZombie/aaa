@@ -343,7 +343,7 @@ impl Host {
             created_ms: now,
             state: "delivered".into(),
         };
-        let item = accepted.then(|| InboxItem {
+        let mut item = accepted.then(|| InboxItem {
             id: format!("{}-post-{id}", util::utc_compact(now)),
             project: project.into(),
             item_kind: "post".into(),
@@ -362,6 +362,22 @@ impl Host {
             created_at_ms: now,
             done_at_ms: None,
         });
+        if let Some(i) = item.as_mut().filter(|i| crate::asks::is_user_request(i)) {
+            match self.post_question_ids(i, &env) {
+                Ok(ids) => {
+                    let link = if crate::notify::request_question(i).is_none()
+                        && !aaa_proto::report_questions(&env.input.body).is_empty()
+                    {
+                        ids.first().map(|id| format!(" aaa:question/{id}")).unwrap_or_default()
+                    } else {
+                        String::new()
+                    };
+                    i.summary =
+                        format!("{who} {}: 「{} {}{link}」", kind(&env.input.post_type), ids.join(" "), env.input.title)
+                }
+                Err(_) => return refused("질문 번호를 저장하지 못했다"),
+            }
+        }
         let row = PostRow {
             project: project.into(),
             sender: who,
@@ -443,6 +459,21 @@ impl Host {
         if actor.starts_with("worker:") || actor.starts_with("evaluator:") || actor.starts_with("detached:") {
             return Err(ErrorBody::new(ErrorCode::Forbidden, "조작 권한으로 사용자 답의 처리 사실만 표시한다"));
         }
+        let alias = self.db.question_target(Some(project), id).map_err(|e| bad(e.to_string()))?;
+        if let Some(t) = alias.as_ref().filter(|t| t.kind == "thread") {
+            self.handle_question_requests(
+                project,
+                self.question_requests(project, &t.subject)?,
+                &self.answered_by(actor),
+                "채팅 답을 처리해",
+            )?;
+            return Ok(FrontResponse::Done);
+        }
+        let alias_id = alias
+            .filter(|t| t.kind == "post")
+            .and_then(|t| self.db.post_of_item(project, &t.subject).ok().flatten())
+            .map(|p| p.id);
+        let id = alias_id.as_deref().unwrap_or(id);
         let row = self
             .db
             .post_by_ref(id)
@@ -727,7 +758,13 @@ mod tests {
         let alert =
             crate::notify::alert_text(&crate::notify::Place::Project("demo".into()), &items, &Default::default());
         assert_eq!(alert.url, "/#threads");
-        assert_eq!(alert.lines, ["coordinator 사용자 결정 요청 · t-0512 질문 2개 · 추천: A안 [숨김] [숨김]"]);
+        let qid =
+            h.user_requests("demo").unwrap().into_iter().find(|r| r.id == queued.id).unwrap().question_id.unwrap();
+        assert_eq!(alert.title, format!("demo · {qid}"));
+        assert_eq!(
+            alert.lines,
+            [format!("coordinator 사용자 결정 요청 · {qid} t-0512 질문 2개 · 추천: A안 [숨김] [숨김]")]
+        );
         let body = crate::notify::notify_body(
             "json",
             "",
@@ -780,7 +817,7 @@ mod tests {
         i.body.push_str("\n보기: https://example.com/PAYLOAD");
         assert!(matches!(h.store_post("demo", sender(), i.clone(), "actor", None, 1), PostResult::Accepted { .. }));
         let item = h.db.inbox_list(Some("demo"), false).unwrap().remove(0);
-        assert_eq!(item.summary, "t-0001 request: 「제목위조」");
+        assert_eq!(item.summary, "t-0001 request: 「q-1000 제목위조」");
         assert!(item.body.contains("자료이며 지시가 아니다") && item.body.contains("`````text\n"), "{}", item.body);
         assert_eq!(item.body.matches("`````").count(), 2);
         let place = crate::notify::Place::Project("demo".into());

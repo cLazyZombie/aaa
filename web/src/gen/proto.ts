@@ -731,7 +731,7 @@ export type FrontRequest = { "op": "account_import", name: string, harness: stri
 /**
  * 비었으면 등록된 모든 머신
  */
-machines: Array<string>, } | { "op": "rollouts" } | { "op": "deploy_jobs" } | { "op": "post", project?: string, input: PostInput, } | { "op": "post_status", project?: string, post_id: string, } | { "op": "post_handled", project?: string, post_id: string, } | { "op": "post_list", project?: string, } | { "op": "asks", project?: string, } | { "op": "ask_handle", project?: string, item: string, } | { "op": "ask_forget", project?: string, ids: Array<string>, all: boolean, } | { "op": "post_unmute", project?: string, thread: string, } | { "op": "status" } | { "op": "machines" } | { "op": "panes", role: Role | null, } | { "op": "pane_run", machine: string | null, name: string | null, argv: Array<string>, cwd: string | null, cols: number | null, rows: number | null,
+machines: Array<string>, } | { "op": "rollouts" } | { "op": "deploy_jobs" } | { "op": "post", project?: string, input: PostInput, } | { "op": "post_status", project?: string, post_id: string, } | { "op": "post_handled", project?: string, post_id: string, } | { "op": "post_list", project?: string, } | { "op": "asks", project?: string, } | { "op": "ask_handle", project?: string, item: string, } | { "op": "ask_answer", project?: string, item: string, body_hash: string, picks: Array<number | null>, text: string | null, } | { "op": "question_reply", project?: string, id: string, choice: string | null, text: string | null, } | { "op": "ask_forget", project?: string, ids: Array<string>, all: boolean, } | { "op": "post_unmute", project?: string, thread: string, } | { "op": "status" } | { "op": "machines" } | { "op": "panes", role: Role | null, } | { "op": "pane_run", machine: string | null, name: string | null, argv: Array<string>, cwd: string | null, cols: number | null, rows: number | null,
 /**
  * host 정본 profile로 harness를 띄운다(`argv`는 비운다, herdr-web-ui 새 세션의 agent 고르기)
  */
@@ -1266,9 +1266,17 @@ answer: QuestionAnswerView | null,
  * 본문 그림의 주소 앞부분(FRONT_API 1.78, plan §8.345): 본문의 `library/<경로>`는 `<files_base><경로>`로 읽는다.
  * 그 보고의 host 사본에서만 주고, 새 보고가 오면 옛 주소는 열리지 않는다. 옛 host는 생략한다
  */
-files_base?: string, };
+files_base?: string,
+/**
+ * 짧은 질문 ID로 일부만 답한 경우의 답. 전체 답은 answer에 남는다.
+ */
+draft?: QuestionAnswerView, };
 
-export type ThreadQuestion = { text: string, choices: Array<QuestionChoice>,
+export type ThreadQuestion = {
+/**
+ * 프로젝트별 영속 순번(q-1000부터). 옛 보고 파서·host는 생략한다.
+ */
+id?: string, text: string, choices: Array<QuestionChoice>,
 /**
  * `### N. 질문` 머리 아래의 Markdown 본문(FRONT_API 1.78, plan §8.345): 그림·표·code·링크. 옛 꼴과 옛 host는 생략한다
  */
@@ -1290,7 +1298,7 @@ body?: string, };
 
 export type AskKind = "question" | "request" | "task";
 
-export type AskRecord = { id: string, kind: AskKind,
+export type AskRecord = { id: string, question_id?: string, kind: AskKind,
 /**
  * 질문은 thread 번호, 확인 필요 post는 inbox 항목 ID, 할 일은 task 제목
  */
@@ -1326,13 +1334,21 @@ files_base?: string, };
 
 export type UserRequestView = {
 /**
+ * 평문 요청도 포함한 짧은 질문 ID(여러 질문이면 첫 ID).
+ */
+question_id?: string,
+/**
  * inbox 항목 ID(「답함으로 표시」가 끝낸다)
  */
 id: string, title: string,
 /**
  * post 본문(Markdown 글). 본문이 지워졌으면 inbox 요약
  */
-body: string, created_ms: number, };
+body: string, created_ms: number,
+/**
+ * post 본문의 `## Questions`(FRONT_API 1.87). 없으면 기존 평문 카드다. report_hash는 본문 hash다.
+ */
+questions?: ThreadQuestions, };
 
 export type QuestionAnswerView = {
 /**
@@ -1484,7 +1500,11 @@ context: ContextUsage | null, };
 
 export type QuestionState = "open" | "answered" | "gone";
 
-export type QuestionView = { id: string, pane: string, machine: string, project: string | null, thread: string | null,
+export type QuestionView = { id: string,
+/**
+ * 프로젝트별 짧은 별칭. id는 기존 확인창 참조로 유지한다.
+ */
+short_id?: string, pane: string, machine: string, project: string | null, thread: string | null,
 /**
  * permission·trust(FrontResponse 태그 `kind`와 겹치지 않게 이름을 바꿨다)
  */

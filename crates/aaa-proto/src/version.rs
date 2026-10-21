@@ -190,7 +190,8 @@ pub const AGENT_LINK: Version = Version { major: 1, minor: 10 };
 // 옛 host는 새 요청을 모르는 요청으로 거절하고 상태 칸을 생략한다. Agent link 변경 없음.
 // 1.85: task 예약·기동 연결·완료 보관, task ID(plan §8.367). 옛 host에는 새 조작을 보내지 않는다.
 /// 1.86: 작업 요약에 순서를 유지하는 큰 작업 목록(progress)과 완료·진행·대기 상태를 더한다.
-pub const FRONT_API: Version = Version { major: 1, minor: 86 };
+/// 1.87: coordinator 구조화 질문·영속 q-ID와 부분 답, ask_answer·question_reply를 더한다. Agent link 변경 없음.
+pub const FRONT_API: Version = Version { major: 1, minor: 87 };
 /// agent ↔ session host(내부). 세션이 몇 주 이어질 수 있으므로 이전 session host와 호환해야 한다.
 /// 1.1: `SessionRequest::Detect`(harness 상태 감지 입력). agent는 1.0 session host에 보내지 않고 `Screen`을 쓴다.
 /// 1.2: `SessionRequest::Colors`(색 질의에 답할 화면 색, plan §8.187). agent는 1.1 이하 session host에 보내지 않는다.

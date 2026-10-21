@@ -8,6 +8,7 @@ mod answer;
 mod app_badge;
 mod asks;
 mod attach;
+mod question_ids;
 /// 자동화 정본 타입의 편집기용 JSON Schema. host 상태를 읽지 않는다.
 pub fn automation_schema() -> String {
     serde_json::to_string_pretty(&automation::schema()).expect("schema serialize")
@@ -1465,6 +1466,12 @@ impl Host {
             FrontRequest::PostUnmute { project, thread } => self.post_unmute(&project, &thread, actor),
             FrontRequest::Asks { project } => self.asks_view(&project),
             FrontRequest::AskHandle { project, item } => self.ask_handle(&project, &item, actor),
+            FrontRequest::QuestionReply { project, id, choice, text } => {
+                self.reply_by_id(&project, &id, choice.as_deref(), text, actor).await
+            }
+            FrontRequest::AskAnswer { project, item, body_hash, picks, text } => {
+                self.ask_answer(&project, &item, &body_hash, picks, text, actor)
+            }
             FrontRequest::AskForget { project, ids, all } => self.ask_forget(&project, &ids, all, actor),
             FrontRequest::Status => Ok(FrontResponse::Status(HostStatus {
                 host_id: self.host_id.clone(),
@@ -1738,12 +1745,28 @@ impl Host {
             FrontRequest::ThreadKeys { project, thread, keys, text } => {
                 self.thread_keys(&project, &thread, &keys, text, actor).await
             }
-            FrontRequest::Questions { all } => Ok(FrontResponse::Questions { questions: self.questions(all) }),
-            FrontRequest::QuestionAnswer { id, choice, menu, pick } => match (menu, pick) {
-                (Some(menu), Some(pick)) => self.answer_menu(&id, &menu, pick, actor).await,
-                _ => self.answer(&id, &choice, actor).await,
+            FrontRequest::Questions { all } => Ok(FrontResponse::Questions { questions: self.question_catalog(all)? }),
+            FrontRequest::QuestionAnswer { id, choice, menu, pick } => {
+                if let Some(t) = self.db.question_target(None, &id).map_err(orch::internal)? {
+                    if t.kind != "harness" || menu.is_none() {
+                        return self.reply_by_id(&t.project, &id, Some(&choice), None, actor).await;
+                    }
+                    return self
+                        .answer_menu(
+                            &t.subject,
+                            &menu.unwrap(),
+                            pick.ok_or_else(|| err(ErrorCode::BadRequest, "선택이 없다"))?,
+                            actor,
+                        )
+                        .await
+                        .map(FrontResponse::Question);
+                }
+                match (menu, pick) {
+                    (Some(menu), Some(pick)) => self.answer_menu(&id, &menu, pick, actor).await,
+                    _ => self.answer(&id, &choice, actor).await,
+                }
+                .map(FrontResponse::Question)
             }
-            .map(FrontResponse::Question),
             FrontRequest::ThreadMessage { project, thread, text, mode } => {
                 self.thread_message(&project, &thread, text, mode, actor).await.map(FrontResponse::Message)
             }

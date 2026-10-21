@@ -344,6 +344,28 @@ thread 표지는 앱 안 알림과 coordinator 판단의 근거이며 외부 푸
 coordinator는 thread가 아니므로 보고 파일로 알림을 만들지 않는다. 사용자에게 질문하거나 사람 전용 단계를 남기고 멈추기 전에
 `aaa report --unknown --activity 'Waiting for you'`로 상태를 알리고, 필요한 행동과 까닭을 파일에 쓴 뒤
 `aaa post user --request --needs-user --topic user-action --title '<정할 것·추천 한 줄>' --body-file scratch/user-action.md`를 보낸다.
+coordinator가 직접 묻는 선택 질문도 본문에 thread 보고와 같은 문법으로 쓴다. 웹 「답할 것」에서 같은 카드로 고른다:
+
+```markdown
+## Questions
+### 1. 진행할 안
+지금 상태와 선택에 필요한 근거를 Markdown·표·그림으로 이 질문 안에 쓴다.
+
+- A 진행한다 (추천) — 검증한 안을 적용한다
+- B 보류한다 — 지금 상태를 유지한다
+```
+
+그림·파일은 먼저 `aaa library publish <폴더> --name <이름>`으로 올리고 본문에서 `library/<이름>/<파일>`로 가리킨다.
+예: `![시안](library/preview/a.png)`. post 본문에는 로컬 절대 경로나 외부 그림 주소를 쓰지 않는다.
+카드 답은 coordinator inbox의 `question answered`에 선택 요약과 답 원문으로 오며 post도 자동으로 답함이 된다.
+다시 전달하거나 같은 질문을 또 묻지 않는다. 선택지가 없는 기존 평문 post도 그대로 쓸 수 있다.
+질문마다 프로젝트별 `q-1000`부터 짧은 ID를 받는다(t=thread, q=질문, d=할 일, r=보고서).
+`aaa question list`로 ID와 선택지를 읽는다. 채팅의 `q-1000 A`는 `aaa question answer q-1000 A`로,
+직접 쓴 답은 `aaa question answer q-1000 --text '사용자 원문'`으로 기록한다(`aaa thread answer q-1000 A`도 같다).
+여러 질문이 든 카드는 각각 답하고 모두 답했을 때 닫힌다. 이미 전달한 채팅 답의 처리만 표시하려면
+`aaa post handled q-1000`을 쓴다. 기존 thread ID·post ID도 계속 받으며 선택·실행을 대신 만들지 않는다.
+새 질문 ID는 기존 무작위 확인창 ID·p-번호를 지우지 않는 별칭이다. thread의 질문은 새 보고 판에서 새 번호다.
+
 이 제목은 가려진 채 외부 알림 본문에 실린다(본문은 싣지 않는다): 사용자가 열지 않고 판단할 수 있게 쓰고 비밀값·경로·주소를 넣지 않는다.
 thread 질문이면 제목 끝에 `aaa:question/<thread>`를 붙인다: 알림을 누르면 그 질문 카드가 열린다(글에서는 빠진다).
 열린 질문을 가리키는 post는 「답할 것」에서 카드 한 줄로 묶인다. 카드에서 답하면 연결 post도 자동으로 끝난다.
@@ -378,7 +400,7 @@ thread 사본은 thread ID). 터미널에서 누르면 브라우저가 그 질�
 그린다. 웹 주소가 없으면(공개 안 함) `aaa:question/<thread>`·`aaa:report/<이름>`을 쓴다(웹 대화창은 칩, 터미널에서는 글).
 공유 주소(`https://…/v/…`)는 사용자가 밖으로 보내 달라고 할 때만 쓴다.
 확인 필요 post와 thread 질문은 웹 「답할 것」에 모인다. 질문의 답은 카드가 정본이다: 카드로 답하면 host가 thread에 전하고
-연결 post도 함께 끝내 `request handled`를 남긴다. 질문에 연결되지 않은 post는 「답함으로 표시」로 끝내며 같은 항목이 온다.
+연결 post도 함께 끝내 `request handled`를 남긴다. coordinator의 구조화 post는 카드에서 답하면 `question answered`가 온다. 평문 post는 「답함으로 표시」로 끝내며 `request handled`가 온다.
 연결 post를 CLI `inbox done`으로 먼저 끝내도 질문에 답한 것으로 보지 않는다. 같은 것을 다시 묻지 않는다.
 
 ## 첫 턴
@@ -1223,10 +1245,17 @@ impl Host {
             repo: r.repo.clone(),
             limited_until_ms: self.usage_limit(&r.project, &r.id),
             questions: r.report_hash.clone().filter(|_| !r.questions.is_empty()).map(|report_hash| {
+                let items = self
+                    .identify_questions(&r.project, "thread", &r.id, &report_hash, &r.questions)
+                    .unwrap_or_else(|e| {
+                        tracing::error!("질문 ID 발급 실패: {}", e.message);
+                        r.questions.clone()
+                    });
                 Box::new(aaa_proto::ThreadQuestions {
+                    draft: self.question_draft(&r.project, &items),
                     files_base: Some(crate::asks::question_files_base(&r.project, &r.id, &report_hash)),
-                    report_hash,
-                    items: r.questions.clone(),
+                    report_hash: report_hash.clone(),
+                    items,
                     answer: r.question_answer.clone(),
                 })
             }),
@@ -2375,6 +2404,7 @@ impl Host {
                 let next = next_lines(&text);
                 let questions =
                     if crate::report_mark::needs_user(&text) { aaa_proto::report_questions(&text) } else { Vec::new() };
+                let questions = self.identify_questions(project, "thread", id, &hash, &questions)?;
                 let closed_question =
                     questions.is_empty() && !rec.questions.is_empty() && rec.question_answer.is_none();
                 let previous = rec;
@@ -2389,6 +2419,9 @@ impl Host {
                     r.copy_retry_at_ms = 0;
                     r.copy_notes = skipped.clone();
                 })?;
+                self.db
+                    .question_clear_drafts(project, "thread", id, previous.report_hash.as_deref().unwrap_or_default())
+                    .map_err(internal)?;
                 if closed_question {
                     self.record_question_closed(&previous);
                 }
