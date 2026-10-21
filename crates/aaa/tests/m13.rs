@@ -550,9 +550,13 @@ impl World {
     }
 
     fn wait_show(&self, what: &str, id: &str, f: impl Fn(&Value) -> bool) -> Value {
+        self.wait_show_with_timeout(what, id, T, f)
+    }
+
+    fn wait_show_with_timeout(&self, what: &str, id: &str, timeout: Duration, f: impl Fn(&Value) -> bool) -> Value {
         wait_for_diag(
             what,
-            T,
+            timeout,
             || Some(self.show(id)).filter(|v| f(v)),
             || format!("thread: {}\nevents: {}", self.show(id), self.h.ok(&["events", "demo"])),
         )
@@ -1385,7 +1389,11 @@ fn reboot_resumes_threads() {
 
 /// 이 thread에 열린 질문(종류 `kind`, `not`에 없는 ID)이 생긴 사건
 fn open_question(ev: &mut Events, id: &str, kind: &str, not: &[&str]) -> QuestionView {
-    ev.wait(&format!("{kind} 질문"), T, |e| match e {
+    open_question_with_timeout(ev, id, kind, not, T)
+}
+
+fn open_question_with_timeout(ev: &mut Events, id: &str, kind: &str, not: &[&str], timeout: Duration) -> QuestionView {
+    ev.wait(&format!("{kind} 질문"), timeout, |e| match e {
         FrontEvent::Question(q)
             if q.thread.as_deref() == Some(id)
                 && q.state == QuestionState::Open
@@ -1760,7 +1768,8 @@ fn thread_read_and_keys() {
     let v = w.start(&["--title", "keys", "--profile", "claude", "--kind", "dir", "--task-file", &w.task("k.txt", "x")]);
     let id = v["id"].as_str().unwrap().to_string();
     let pane = v["pane"].as_str().unwrap().to_string();
-    let q = open_question(&mut ev, &id, "trust", &[]);
+    // t-0578의 부하 실패는 첫 화면의 trust 사건 전달에서만 났다. 뒤 질문·응답 상한은 유지한다.
+    let q = open_question_with_timeout(&mut ev, &id, "trust", &[], lab::LOAD_TIMEOUT);
     agent_became(&mut ev, &id, AgentActivity::Question, 0);
     let out = w.h.run(&["thread", "read", "demo", &id]);
     let text = String::from_utf8_lossy(&out.stdout).to_string();
@@ -3626,7 +3635,7 @@ fn thread_adopt_existing_pane() {
     let sid = "5d1c2b3a-4e5f-4a6b-8c7d-9e0f1a2b3c4d";
     wait_for_diag(
         "대화 ID(SessionStart hook)",
-        T,
+        lab::LOAD_TIMEOUT,
         || (w.h.pane(&pane)["agent"]["harness_session"] == sid).then_some(()),
         || format!("{}", w.h.pane(&pane)),
     );
@@ -3722,7 +3731,8 @@ fn thread_adopt_claude_started_in_a_shell() {
     assert_eq!((v["thread_kind"].as_str(), v["profile"].as_str()), (Some("adopted"), Some("claude")), "{v}");
     let repo = std::fs::canonicalize(&w.repo).unwrap();
     assert_eq!(std::fs::canonicalize(v["cwd"].as_str().unwrap()).unwrap(), repo, "{v}");
-    w.wait_show("brief", &id, |v| v["brief"] == "delivered");
+    // 감지 뒤 첫 brief 전달이 t-0578 동시 검증의 30초를 넘겼다. 보고·CLI 결과는 기존 상한이다.
+    w.wait_show_with_timeout("brief", &id, lab::LOAD_TIMEOUT, |v| v["brief"] == "delivered");
     w.wait_show("보고", &id, |v| v["report_hash"].is_string());
     let probe = repo.join(".aaa").join(format!("demo-{id}")).join("probe.txt");
     let got = wait_for("pane 안 CLI 결과", T, || std::fs::read_to_string(&probe).ok());
@@ -6400,7 +6410,9 @@ int main(int argc, char **argv) {
     command.arg(&closed);
     let terminal = lab::Terminal::spawn(command);
     // 자식이 표준 FD를 모두 닫았다는 사건이 reader보다 먼저다. 시간·스케줄러에 기대지 않는다.
-    wait_for("표준 FD 닫힘 영수증", T, || std::fs::read(&closed).ok().filter(|b| b == b"closed"));
+    wait_for("표준 FD 닫힘 영수증", lab::LOAD_TIMEOUT, || {
+        std::fs::read(&closed).ok().filter(|b| b == b"closed")
+    });
     let output = terminal.read(&["stdio-close"], &[], T);
     assert_eq!(output, "pty-output-before-close\x1b[31msecret-prefix-tail\x1b[0m");
 }

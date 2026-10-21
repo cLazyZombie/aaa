@@ -5,7 +5,7 @@
 // 통과해, 점검은 통과하고 rollout은 대상 전송의 dry-run에서 멈춘다(실험실 실행 파일을 바꾸는 교체 단계에 닿지 않는다).
 import fs from "node:fs";
 import crypto from "node:crypto";
-import { root, aaa, AA, step, browser, pairPage, shot, openSettings } from "../lib/harness.mjs";
+import { root, aaa, AA, step, browser, pairPage, shot, openSettings, LOAD_TIMEOUT_MS } from "../lib/harness.mjs";
 
 const home = `${root}/svchome`;
 const bin = `${root}/svcbin`;
@@ -43,7 +43,7 @@ export default async function ({ page }) {
     if (await nr.getByTestId("deploy-start").isEnabled()) throw new Error("점검을 통과하지 않은 후보로 시작이 열렸다");
     provenance(sha);
     await nr.getByTestId("deploy-check").click();
-    await nr.getByTestId("deploy-sha").filter({ hasText: sha }).waitFor();
+    await nr.getByTestId("deploy-sha").filter({ hasText: sha }).waitFor({ timeout: LOAD_TIMEOUT_MS });
     await nr
       .getByTestId("deploy-plan")
       .getByText(`aaa 0.1.2+${commit.slice(0, 12)}`)

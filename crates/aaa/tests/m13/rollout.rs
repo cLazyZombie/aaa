@@ -180,7 +180,8 @@ esac
     wait_for("사본 host 준비", T, || w.h.json(&["status"]).ok());
     w.lab.spawn_command(a_tag, agent_cmd(&w.h, &a_exe, "a", "local", "labA"));
     w.lab.spawn_command(b_tag, agent_cmd(&b, &b_exe, "b", &proxy.addr, "labB"));
-    wait_for("사본 agent 둘 연결", T, || {
+    // t-0578 부하 실패의 사본 프로세스 시작만 여유를 둔다. 이후 배포 단계별 30초는 유지한다.
+    wait_for("사본 agent 둘 연결", lab::LOAD_TIMEOUT, || {
         (w.lab.log(a_tag).contains("host에 연결했다")
             && w.lab.log(b_tag).contains("host에 연결했다")
             && w.h.connected("labA")
