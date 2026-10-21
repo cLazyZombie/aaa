@@ -943,6 +943,7 @@ export function SettingsDialog({
   device,
   machines,
   onSignOut,
+  onOpenPane,
 }: {
   onClose: () => void;
   role: DeviceRole;
@@ -950,6 +951,8 @@ export function SettingsDialog({
   /** host `state` 사건의 머신(연결·폐기가 바로 보인다) */
   machines: MachineView[];
   onSignOut: () => Promise<void>;
+  /** 설정에서 연 pane으로 간다(머신 쪽의 끝 확인·로그인) */
+  onOpenPane?: (id: string) => void;
 }) {
   const narrow = useNarrow();
   // 앞으로 가기로 열렸으면 그 칸이 보이던 것을 보인다
@@ -1063,7 +1066,7 @@ export function SettingsDialog({
       case "devices":
         return <DevicesPage role={role} device={device} onSignOut={onSignOut} />;
       case "machines":
-        return <MachinesPage role={role} machines={machines} />;
+        return <MachinesPage role={role} machines={machines} onOpenPane={onOpenPane} />;
       case "deploy":
         return <DeployPage role={role} machines={machines} />;
       case "project":

@@ -1345,7 +1345,9 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
           taskBadge={taskBadge(taskBoard.board, tasksShown ? null : seenMine.seen)}
           up={up}
           reader={role === "reader"}
-          settings={<SettingsGear role={role} device={device} machines={machines} onSignedOut={signedOut} open={settingsOpen} onOpen={setSettingsOpen} />}
+          settings={
+            <SettingsGear role={role} device={device} machines={machines} onSignedOut={signedOut} open={settingsOpen} onOpen={setSettingsOpen} onOpenPane={(id) => goSel(`pane:${id}`)} />
+          }
         />
         <div id="sidebar-column" className="sidebar-shell">
         <header className="list-head">
@@ -1814,6 +1816,7 @@ function SettingsGear({
   onSignedOut: signedOut,
   open: settingsOpen,
   onOpen: setSettingsOpen,
+  onOpenPane,
 }: {
   role: DeviceRole;
   device: string;
@@ -1821,6 +1824,8 @@ function SettingsGear({
   onSignedOut: () => void;
   open: boolean;
   onOpen: (open: boolean) => void;
+  /** 설정에서 연 pane(새 머신의 끝 확인·로그인)으로 간다: 설정을 닫고 그 pane을 고른다 */
+  onOpenPane?: (id: string) => void;
 }) {
   const closeSettings = useCallback(() => setSettingsOpen(false), [setSettingsOpen]);
   // 설정은 history 안에 있다(herdr/settingsHistory.ts, 참고 App.tsx 398~405줄): 마지막 칸에서 「뒤로」면 닫히고,
@@ -1864,7 +1869,20 @@ function SettingsGear({
       </button>
       {settingsOpen && (
         <ErrorBoundary area="설정" onDismiss={closeSettings}>
-          <SettingsDialog onClose={closeSettings} role={role} device={device} machines={machines} onSignOut={signOutHere} />
+          <SettingsDialog
+            onClose={closeSettings}
+            role={role}
+            device={device}
+            machines={machines}
+            onSignOut={signOutHere}
+            onOpenPane={
+              onOpenPane &&
+              ((id) => {
+                closeSettings();
+                onOpenPane(id);
+              })
+            }
+          />
         </ErrorBoundary>
       )}
     </>
