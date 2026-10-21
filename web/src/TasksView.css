@@ -430,8 +430,12 @@ button.task-chip:disabled { cursor: default; color: var(--text-dim); }
 .task-start-body { display: flex; flex-direction: column; gap: var(--space-3); }
 .task-start-title { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); margin: 0; }
 .task-start-warning, .task-start-limit { margin: 0; font-size: var(--fs-sm); }
-.task-start-limit { display: flex; align-items: flex-start; gap: var(--space-2); border-color: var(--notice); cursor: pointer; }
-.task-start-limit input { margin-top: 3px; }
+.task-start-limit { display: flex; align-items: flex-start; gap: var(--space-2); border-color: var(--notice); }
+.task-start-over-confirm { display: block; border: 1px solid var(--border); border-radius: var(--radius-md); }
+.task-start-over-confirm h3 { margin: 0 0 var(--space-2); font-size: var(--fs-sm); }
+.task-start-over-confirm p { margin: 0 0 var(--space-3); }
+.task-start-over-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: var(--space-2); }
+.task-start-over-actions button { margin-left: 0; height: var(--control-h); }
 .task-start-preview h3 { margin: 0 0 var(--space-1); color: var(--text-dim); font-size: var(--fs-xs); font-weight: var(--fw-semibold); }
 .task-start-task { max-height: 30vh; padding: var(--space-2) var(--space-3); overflow: auto; border-radius: var(--radius-md); background: var(--bg-input); }
 .task-start-task .task-notes > :first-child { margin-top: 0; }

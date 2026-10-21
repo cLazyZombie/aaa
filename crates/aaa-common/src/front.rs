@@ -98,6 +98,14 @@ impl FrontClient {
     }
 
     pub async fn call(&mut self, body: FrontRequest) -> Result<Result<FrontResponse, ErrorBody>> {
+        let start = match &body {
+            FrontRequest::ThreadStartAccount { start, .. } => &**start,
+            other => other,
+        };
+        if matches!(start, FrontRequest::ThreadStart { over_limit: true, .. }) && self.proto.minor < 98 {
+            bail!("한도 무시 시작에는 Front API 1.98 이상 host가 필요하다");
+        }
+
         let id = self.send(body).await?;
         loop {
             match self.rx.control().await? {

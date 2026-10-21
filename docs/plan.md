@@ -6909,3 +6909,15 @@ FRONT_API 1.96는 기본 검수 표지와 답 기록의 r 참조를 더한다. E
 - 기존 E2E48에서 실제 Claude 작업 화면을 내는 가짜 harness로 세 줄의 파란 점을 확인하고 1280·820·390px에서 각 줄을 선택해 중심 x 좌표와 내용 침범을 검사한다. 머신 표시 글의 짧음·길음도 대조하고 폭별 화면을 남긴다. FRONT_API 1.97·AGENT_LINK 1.11·E2E76은 유지한다. 새 E2E 파일은 추가하지 않는다.
 
 - 착지 기준 origin/main `dd6e5b82`의 마지막 §8.395·FRONT_API 1.97·AGENT_LINK 1.11·E2E76을 직접 확인했다. 이번 수리는 §8.396으로 옮기고 기존 번호·main의 수리를 보존한다.
+
+### 8.397 사용자가 확인한 한도 초과 시작(t-0619)
+
+- 웹 「thread로 바로 시작」은 한도가 찼을 때 「자리 대기」 옆에 「한도 무시하고 시작」을 보인다. 누르면 task·열린 수·한도·예약 대기 영향을 다시 확인하고 「확인하고 시작」으로 기동한다. 돌아가기는 아무것도 시작하지 않는다.
+- CLI는 `aaa thread start --from-task <ID> --link-task --over-limit`다. 웹 조작 기기·세션 밖 CLI만 직접 쓰며, 해당 프로젝트 coordinator는 사용자가 채팅에서 그 task의 강제 시작을 명시한 경우에만 `--from-task`와 `--user-request '<사용자 지시 근거>'`를 함께 쓴다. 근거 없는 요청·다른 pane·작업자·자동 시작·예약 우회는 거부한다. 기존 예약 task는 예약을 취소한 뒤 직접 시작한다.
+- FRONT_API 1.98: `thread_start.over_limit`·`user_request`와 `ThreadView.over_limit`을 더한다. 시작 기록은 요청자·시각·지시 근거를 보존하고 감사 `thread_start_over_limit`·시작 사건에도 남긴다. 웹 할 일·사이드바·thread 목록·상세와 CLI 상세에 「한도 초과로 시작」을 보인다. 이전 host에는 웹 조작을 숨기고 CLI는 새 옵션을 보내지 않는다. AGENT_LINK 변경·새 E2E 번호는 없다.
+- 우회는 명시한 직접 시작의 DB 선점 한 번에만 적용한다. 그 thread는 기존 사용자·coordinator Worker와 같은 자리 계산을 따르고, 예약 dispatch·자동 시작은 계속 한도를 지킨다. 한도를 넘긴 수와 출처는 host 재시작 뒤에도 유지한다.
+- 검증은 host 요청자·근거 경계 유닛, m13 실제 CLI·coordinator·예약·재시작 keeper, 기존 E2E47의 데스크톱·iPhone·iPad 확인·취소·실제 기동·표지·예약 대기와 화면 캡처다. 착지 창에서 plan 절·API·E2E 번호를 main과 다시 대조한다.
+
+- 착지 기준 origin/main `f6a7585d`의 마지막 §8.396·FRONT_API 1.97·AGENT_LINK 1.11·E2E76을 직접 확인했다. 이번 기능은 §8.397·FRONT_API 1.98로 맞추고 E2E47 확장과 기존 E2E76을 유지한다. main의 Starting 선점 잠금·병합 중 표지·할 일 한 목록·상태 점 정렬을 보존하며 전체 ci-local·공개 검사 뒤 착지한다.
+
+- 착지 통합 검증에서 E2E session 정리의 전체 프로세스 명령줄 수집이 Node 기본 버퍼를 넘는 ENOBUFS를 확인했다. 목록은 PID·부모·상태만, 명령줄은 정리 후보 PID만 조회하도록 좁혔다. 실제 관계없는 긴 argv 1 MiB 초과 fixture로 원래 코드의 실패와 수정 뒤 대상 자손 종료·외부 프로세스 보존을 확인하며 버퍼·시한을 늘리지 않는다.
