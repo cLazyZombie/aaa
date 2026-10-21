@@ -348,6 +348,22 @@ pub fn plan(mut c: InstallChoices, mut context: InstallPlanContext) -> Result<In
     Ok(InstallPlan { schema: InstallPlanSchema::V1, context, choices: c })
 }
 
+/// 원격 등록과 installer가 같은 계획의 한 agent/host 작업만 승인한다.
+pub fn enrollment_permission(plan: &InstallPlan) -> Option<InstallPermission> {
+    (plan.choices.role == Some(InstallRole::Agent) && plan.choices.enroll != Some(InstallEnroll::Skip)).then(|| {
+        InstallPermission {
+            operation: InstallOperation::EnrollAgent,
+            target: format!(
+                "host:{}/agent:{}",
+                plan.choices.host.as_deref().unwrap_or_default(),
+                plan.choices.name.as_deref().unwrap_or_default()
+            ),
+            before_sha256: None,
+            after_sha256: Some(plan_sha256(plan)),
+        }
+    })
+}
+
 /// v1 canonical bytes = UTF-8 compact JSON, 객체 key 재귀 사전순, 배열은 의미 순서 보존.
 /// OS path의 case/symlink/..는 실물 확인 없이 합치지 않는다. I1이 검증한 실효 경로를 제출한다.
 pub fn plan_sha256(plan: &InstallPlan) -> String {

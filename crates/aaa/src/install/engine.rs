@@ -7,9 +7,35 @@ use aaa_proto::install::*;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
+mod apply;
+mod authorization;
+mod bootstrap;
+mod enrollment;
+mod execution;
+mod input;
 mod private;
+mod readiness;
+mod review;
+mod scope;
 #[cfg_attr(not(test), expect(dead_code, reason = "I5 감독자 adapter는 I6 승인 executor에서 연결한다"))]
 mod supervisor;
+mod user_path;
+mod web;
+mod worker;
+
+pub(super) use apply::{inline as apply_inline, run as apply};
+pub(super) use review::{issue as issue_authorization, normalize_state, original_plan, preview, read_plan};
+
+pub(super) fn probe_dispatch(state: &Path, executor_sha256: &str) -> std::process::ExitCode {
+    bootstrap::probe(state, executor_sha256)
+}
+pub(super) fn bootstrap_dispatch(state: &Path, executor_sha256: &str, issuer_sha256: &str) -> std::process::ExitCode {
+    bootstrap::dispatch(state, executor_sha256, issuer_sha256)
+}
+
+pub(super) fn worker_dispatch(state: &Path, id: &str, executor_sha256: &str, resume: bool) -> std::process::ExitCode {
+    worker::dispatch(state, id, executor_sha256, resume)
+}
 
 pub(super) fn service_dispatch(context: &Path, sha: &str) -> std::process::ExitCode {
     supervisor::dispatch(context, sha)
@@ -171,6 +197,11 @@ pub(super) fn status(
     id: &str,
 ) -> std::result::Result<InstallResult, Box<InstallResult>> {
     validate_id(id)?;
+    let state = transaction::real_directory(state).map_err(|e| super::error(e.code, e.exit))?;
+    let state = state.as_path();
+    if let Some(result) = execution::observe(state, instance, id).map_err(|e| super::error(e.code, e.exit))? {
+        return Ok(result);
+    }
     let j = read_journal(state, id, instance).map_err(|e| super::error(e.code, e.exit))?;
     let result = transaction::observe(state, j).map_err(|e| super::error(e.code, e.exit))?;
     supervisor::observe(state, instance, id, result).map_err(|e| super::error(e.code, e.exit))

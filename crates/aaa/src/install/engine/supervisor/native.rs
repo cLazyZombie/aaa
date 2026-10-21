@@ -606,6 +606,7 @@ impl Manager for Scm {
         Ok(())
     }
     fn start(&mut self, spec: &Spec) -> Result<Observation> {
+        let mut ready = native_ready::Waiting::new(spec)?;
         let handle =
             open(spec, SERVICE_START | SERVICE_QUERY_STATUS | SERVICE_QUERY_CONFIG)?.ok_or_else(Fault::conflict)?;
         if configuration(&handle)? != Configuration::desired(spec) {
@@ -620,7 +621,9 @@ impl Manager for Scm {
             }
         }
         let value = wait_state(&handle, SERVICE_RUNNING)?;
-        Ok(Observation { configuration: configuration(&handle)?, running: true, pid: value.dwProcessId })
+        let observed = Observation { configuration: configuration(&handle)?, running: true, pid: value.dwProcessId };
+        ready.ready(spec, self, &observed)?;
+        Ok(observed)
     }
     fn stop(&mut self, spec: &Spec) -> Result<()> {
         let Some(handle) = open(spec, SERVICE_STOP | SERVICE_QUERY_STATUS | SERVICE_QUERY_CONFIG)? else {

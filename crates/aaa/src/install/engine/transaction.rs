@@ -2,6 +2,8 @@
 use super::*;
 use std::io::{Read, Write};
 
+mod authorized;
+pub(super) use authorized::{AuthorizedTransaction, permissions, resume_scope};
 mod prepare;
 mod recovery;
 mod references;
@@ -37,6 +39,13 @@ struct Manifest {
     files: Vec<FileSpec>,
     root: Option<RootSpec>,
     directories: Vec<PathBuf>,
+}
+
+/// 로그인 검사의 지연은 파일/서비스의 실제 목표 bytes를 바꾸지 않는다. 계획/승인 hash는 별개다.
+pub(super) fn file_goal_choices(mut choices: InstallChoices) -> InstallChoices {
+    choices.mode = None;
+    choices.login = None;
+    choices
 }
 
 struct Proposed {
@@ -372,6 +381,12 @@ fn observe_root(state: &Path, manifest: &Manifest) -> Result<()> {
 
 impl Transaction {
     fn create(request: Request) -> Result<Self> {
+        Self::create_with_id(request, None)
+    }
+    fn create_with_id(request: Request, reserved: Option<&str>) -> Result<Self> {
+        if reserved.is_some_and(|id| !id_ok(id)) {
+            return Err(Fault::conflict());
+        }
         let Request { plan, files, root, directories } = request;
         if plan.context.target_account != super::super::platform::account().ok_or_else(Fault::conflict)?
             || files.len() > 128
@@ -409,8 +424,7 @@ impl Transaction {
             return Err(Fault::conflict());
         }
         let mut manifest = Manifest { schema: 1, plan, files: specs, root, directories };
-        let mut goal = manifest.plan.choices.clone();
-        goal.mode = None;
+        let goal = file_goal_choices(manifest.plan.choices.clone());
         let goal_sha256 = hash(&json_bytes(&(
             goal,
             &manifest.plan.context.platform,
@@ -464,14 +478,28 @@ impl Transaction {
         private::parents(&state).map_err(Fault::io)?;
         private::directory(&state.join("install")).map_err(Fault::io)?;
         private::directory(&state.join("install/jobs")).map_err(Fault::io)?;
-        let id = aaa_common::util::new_id();
+        let id = reserved.map(str::to_owned).unwrap_or_else(aaa_common::util::new_id);
         let dir = journal_dir(&state, &id);
         private::directory(&dir).map_err(Fault::io)?;
-        for (i, bytes) in payloads.iter().enumerate() {
-            private::write(&dir.join(format!("payload-{i}")), bytes).map_err(Fault::io)?;
+        if reserved.is_some() {
+            match dir.join("journal.json").symlink_metadata() {
+                Ok(_) => return Err(Fault::conflict()),
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+                Err(e) => return Err(Fault::io(e)),
+            }
         }
         let bytes = json_bytes(&manifest)?;
-        private::write(&dir.join("plan.json"), &bytes).map_err(Fault::io)?;
+        if reserved.is_some() {
+            // 준비 중 끊긴 job의 모든 기존 내용을 먼저 대조한다. 일부를 복구한 뒤 불신 plan을 발견하지 않는다.
+            for (i, payload) in payloads.iter().enumerate() {
+                prepared_matches(&dir.join(format!("payload-{i}")), payload)?;
+            }
+            prepared_matches(&dir.join("plan.json"), &bytes)?;
+        }
+        for (i, bytes) in payloads.iter().enumerate() {
+            write_prepared(&dir.join(format!("payload-{i}")), bytes, reserved.is_some())?;
+        }
+        write_prepared(&dir.join("plan.json"), &bytes, reserved.is_some())?;
         let journal = Journal {
             schema: 1,
             id,
@@ -698,6 +726,23 @@ impl Transaction {
         }
         while self.advance()? {}
         Ok(self.journal.result())
+    }
+}
+
+/// 중단된 승인 job의 준비 파일만 재사용한다. 다른 bytes/권한을 고치거나 덮지 않는다.
+fn write_prepared(path: &Path, bytes: &[u8], reuse: bool) -> Result<()> {
+    if reuse && prepared_matches(path, bytes)? {
+        return Ok(());
+    }
+    private::write(path, bytes).map_err(Fault::io)
+}
+
+fn prepared_matches(path: &Path, bytes: &[u8]) -> Result<bool> {
+    match private::read(path, bytes.len() as u64) {
+        Ok(old) if old == bytes => Ok(true),
+        Ok(_) => Err(Fault::conflict()),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(false),
+        Err(_) => Err(Fault::conflict()),
     }
 }
 
