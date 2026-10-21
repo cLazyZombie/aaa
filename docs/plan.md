@@ -6180,11 +6180,11 @@ L4 후속(10-20 00시 사용자 관찰): 멈춤 상태의 후보 예약과 재�
   - 주소 `#question=<thread>`(알림 url, 칩)는 보고서 목록에서 그 카드만 펼친다(2A). 다른 카드는 한 줄이고 누르면 펼친다. 같은 칩을 다시 누르면 접은 카드를 다시 펼친다.
   - 활동 막대 보고서 단추: 답할 질문이 있으면 빨강 수(답할 thread 수), 없으면 안 본 보고서 수(3A).
   - 대화 글(Markdown)의 `aaa:question/<thread>`·`aaa:report/<이름>`(글 속·backtick·링크 주소)은 칩이다: 질문은 「t-0001 질문 2개 · 답할 것」(빨강)·「답함 · 1B 2A」(초록), 보고서는 보고서 제목. 누르면 넓은 창도 새 탭이 아니라 앱 안(질문 카드·보고서 화면)이다. 모르는 보고서는 보고서 목록으로 가고 머리에 말한다. 칩 상태가 바뀔 때만 대화가 다시 그린다. 같은 host의 http 주소(`/v/…`·`/#report=…`)는 §8.300 그대로 둔다.
-  - thread pane(터미널·대화 보기) 입력칸 위에 그 thread 질문의 칩 한 줄(4A).
+  - thread pane(터미널·대화 보기) 입력칸 위에 그 thread 질문의 칩 한 줄(4A). t-0687: 입력칸과 같은 대화 열 너비·왼쪽 끝을 따르며, 답한 뒤 dock 칩은 숨긴다. 답한 기록은 대화 칩·질문 카드에 남는다.
 - **coordinator 안내.** 질문 post 제목 끝에 `aaa:question/<thread>`(알림을 누르면 그 카드, 글에서는 빠진다: host `notify::app_ref`·`request_question`, push url `/#question=<thread>`). 채팅에도 같은 참조를 적고, 카드로 답하면 host가 전하니 다시 묻거나 전하지 않는다. 채팅 답은 `aaa thread answer`. 「앱 안 참조」 절: 보고서·질문은 공유 주소 대신 이 꼴로 가리키고 공유 주소는 사용자가 밖으로 보내 달라고 할 때만.
 - **검증.**
   - proto 유닛 `report_questions_read_numbered_questions_and_lettered_choices`, host 유닛 `answer::tests::compose_checks_every_question_and_writes_the_short_form`·`post::tests`(제목의 참조는 글에서 빠지고 url `/#question=t-0512`)·`brief_text::tests::brief_order_and_memory_cap`(안내 fence를 `report_questions`가 읽음), CLI `answer_picks_read_question_numbers_and_letters`, m13 안내 문구, 웹 유닛 `appRef.test.mjs`·`reportLinks.test.mjs`(`/#question=`).
-  - 웹 E2E `53-thread-questions`: fake agent가 「질문 카드 시험」에 `## Questions` 두 질문 보고를 쓴다. 빨강 배지 1, coordinator 대화(Claude 기록)의 질문·보고서·모르는 보고서 칩, 질문 칩 → `#question=` 그 카드 펼침, 보고서 칩 → 앱 안 보고서, 입력칸 위 칩, 휴대폰은 알림 주소로 연 펼친 카드, 보기 권한은 단추 꺼짐·host forbidden, 휴대폰 1B + 「추천대로 보내기」 → pane에 「사용자 답(1B 2A)」, 기록 `[1,0]`, 휴대폰·보기 권한 카드와 입력칸 위 칩이 답함, 배지는 안 본 수로, CLI 두 번째 답은 「이미 답함」, inbox `question answered`, 새 보고가 오면 다시 답할 것·빨강 배지·옛 hash 답은 「질문이 바뀌었다」.
+  - 웹 E2E `53-thread-questions`: fake agent가 「질문 카드 시험」에 `## Questions` 두 질문 보고를 쓴다. 빨강 배지 1, coordinator 대화(Claude 기록)의 질문·보고서·모르는 보고서 칩, 질문 칩 → `#question=` 그 카드 펼침, 보고서 칩 → 앱 안 보고서, 입력칸 위 칩, 휴대폰은 알림 주소로 연 펼친 카드, 보기 권한은 단추 꺼짐·host forbidden, 휴대폰 1B + 「추천대로 보내기」 → pane에 「사용자 답(1B 2A)」, 기록 `[1,0]`, 휴대폰·보기 권한 카드는 답함, 입력칸 위 칩은 숨김, 배지는 안 본 수로, CLI 두 번째 답은 「이미 답함」, inbox `question answered`, 새 보고가 오면 다시 답할 것·빨강 배지·옛 hash 답은 「질문이 바뀌었다」.
   - 결함 심기: 자리 잡기를 끄면(두 번째 답이 덮음) 「두 번째 답」에서, 칩으로 연 카드 펼침을 끄면 「질문 카드 펼침」에서 실패했고 되돌린 뒤 통과했다.
 
 
