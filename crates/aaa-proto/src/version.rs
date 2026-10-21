@@ -195,6 +195,7 @@ pub const AGENT_LINK: Version = Version { major: 1, minor: 10 };
 // 1.88: 머신 상세(웹 머신 추가 M0, plan §8.372): `MachineView`의 `arch`·`software`·`sha256`·`software_differs`·`features`·
 // `selfcheck`. 옛 host는 생략해 웹이 OS만 보인다. Agent link: hello의 선택 칸 `sha256`(옛 agent는 보내지 않고 옛 host는 버린다).
 // 1.89: task 표시 ID(d-0001)·ID 선택자·TaskLog.task(plan §8.373). ULID와 기존 제목 입력은 유지한다.
+// 같은 1.89에 ThreadView.automation_trigger(최초 사건·일정, 선택)를 더한다. 자동화 thread 표지는 같은 이름으로 보인다.
 pub const FRONT_API: Version = Version { major: 1, minor: 89 };
 /// agent ↔ session host(내부). 세션이 몇 주 이어질 수 있으므로 이전 session host와 호환해야 한다.
 /// 1.1: `SessionRequest::Detect`(harness 상태 감지 입력). agent는 1.0 session host에 보내지 않고 `Screen`을 쓴다.

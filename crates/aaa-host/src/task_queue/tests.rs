@@ -818,7 +818,7 @@ async fn open_restart_claim_keeps_its_original_slot_across_pre_send_interruption
         .unwrap();
     lab.h.update_rec("demo", &id, |r| r.status = ThreadStatus::Open).unwrap();
     assert_eq!(lab.h.open_worker_threads("demo"), 1);
-    lab.h.db.thread_restart_claim("demo", &id, 1).unwrap();
+    lab.h.db.thread_restart_claim("demo", &id, 1, None).unwrap();
     let claimed = lab.h.load("demo", &id).unwrap();
     assert!(claimed.launch_existing_slot);
     assert!(!claimed.launch_sent);
@@ -827,4 +827,77 @@ async fn open_restart_claim_keeps_its_original_slot_across_pre_send_interruption
     lab.h.recover_launches("demo");
     assert_eq!(lab.h.load("demo", &id).unwrap().status, ThreadStatus::Open);
     assert_eq!(lab.h.open_worker_threads("demo"), 1);
+}
+
+/// 자동화 thread와 사용자 thread가 동시에 선점해도 사용자 자리와 규칙별 자리를 따로 지킨다.
+#[test]
+fn automation_threads_have_atomic_separate_slots_and_restart_limits() {
+    let lab = Lab::new();
+    let policy = crate::db::StartAdmission {
+        machine: "m".into(),
+        holds: vec![],
+        rule: "check".into(),
+        max_running: None,
+        max_auto_threads: 0,
+    };
+    let insert = |automatic: bool| {
+        lab.h.db.thread_insert_admitted("demo", None, automatic.then_some(&policy), Some(1), None, |id| {
+            let mut r = Lab::rec();
+            r.id = id.into();
+            r.automation = automatic.then(|| "check".into());
+            // started_by만 닮은 사용자 thread를 자동화로 오판하지 않는다.
+            r.started_by = Some("routine:check".into());
+            serde_json::to_string(&r).unwrap()
+        })
+    };
+    let gate = std::sync::Barrier::new(12);
+    let admitted = std::thread::scope(|scope| {
+        let handles: Vec<_> = (0..12)
+            .map(|n| {
+                let gate = &gate;
+                let insert = &insert;
+                scope.spawn(move || {
+                    gate.wait();
+                    (n % 2 == 0, insert(n % 2 == 0))
+                })
+            })
+            .collect();
+        handles.into_iter().map(|h| h.join().unwrap()).collect::<Vec<_>>()
+    });
+    let users: Vec<_> = admitted.iter().filter(|(auto, result)| !auto && result.is_ok()).collect();
+    let autos: Vec<_> = admitted.iter().filter(|(auto, result)| *auto && result.is_ok()).collect();
+    assert_eq!(users.len(), 1);
+    assert_eq!(autos.len(), 1);
+    assert_eq!(lab.h.open_worker_threads("demo"), 1);
+    let user = users[0].1.as_ref().unwrap().0.clone();
+    let auto = autos[0].1.as_ref().unwrap().0.clone();
+    // 보고/대기 상태나 resolve 정리 중도 각자의 자리를 지킨다.
+    lab.h
+        .update_rec("demo", &auto, |r| {
+            r.status = ThreadStatus::Resolved;
+            r.resolve_pending = Some(Default::default());
+        })
+        .unwrap();
+    assert!(insert(true).is_err());
+    assert_eq!(lab.h.open_worker_threads("demo"), 1);
+    lab.h
+        .update_rec("demo", &auto, |r| {
+            r.resolve_pending = None;
+            r.status = ThreadStatus::Failed;
+        })
+        .unwrap();
+    lab.h.db.thread_restart_claim("demo", &auto, 1, Some(&policy)).unwrap();
+    assert_eq!(lab.h.open_worker_threads("demo"), 1);
+    lab.h.update_rec("demo", &auto, |r| r.status = ThreadStatus::Failed).unwrap();
+    let next = insert(true).unwrap().0;
+    assert!(lab.h.db.thread_restart_claim("demo", &auto, 1, Some(&policy)).unwrap_err().to_string().contains("상한 1"));
+    lab.h.update_rec("demo", &next, |r| r.status = ThreadStatus::Resolved).unwrap();
+    lab.h.db.thread_restart_claim("demo", &auto, 1, Some(&policy)).unwrap();
+    lab.h.update_rec("demo", &user, |r| r.status = ThreadStatus::Resolved).unwrap();
+    assert_eq!(lab.h.open_worker_threads("demo"), 0);
+    let next_user = insert(false).unwrap().0;
+    lab.h.update_rec("demo", &user, |r| r.status = ThreadStatus::Failed).unwrap();
+    assert!(lab.h.db.thread_restart_claim("demo", &user, 1, None).is_err());
+    assert_eq!(lab.h.open_worker_threads("demo"), 1);
+    assert_ne!(next_user, user);
 }

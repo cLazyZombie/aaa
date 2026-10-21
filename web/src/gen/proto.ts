@@ -507,7 +507,7 @@ machine: string | null,
  */
 repos: Array<RepoChoice>,
 /**
- * 열린(시작 중 포함) thread 수와 project.toml `max_parallel_threads`. 한도는 coordinator 규칙이라 host는 막지 않는다
+ * 사용자·coordinator가 띄운 열린 Worker 수(시작·정리 중 포함)와 host가 집행하는 한도. 자동화 thread는 뺀다.
  */
 open_threads: number, max_parallel_threads: number,
 /**
@@ -1219,13 +1219,17 @@ thread_kind: ThreadKind,
 holds: Array<string>,
 /**
  * 이 thread를 띄운 자동화 규칙 이름(`do.start`, FRONT_API 1.64, plan t-0475 A1). 사람이 띄운 thread와 옛 host는 생략한다.
- * 웹 「작업」 목록이 줄 왼쪽 호박색 막대와 `자동 · <규칙 제목>` 표지로 보인다
+ * 웹 「작업」 목록이 줄 왼쪽 호박색 막대와 `자동화 thread` 표지로 보인다
  */
 automation?: string,
 /**
  * 그 규칙의 제목(FRONT_API 1.64). 규칙 파일이 없어졌거나 제목이 비면 이름이다. `automation`이 없으면 없다
  */
-automation_title?: string, status: ThreadStatus,
+automation_title?: string,
+/**
+ * 최초 기동 당시 사건·일정의 설명. 옛 thread·옛 host는 생략한다.
+ */
+automation_trigger?: string, status: ThreadStatus,
 /**
  * 끝남 기록 뒤 아직 정리 응답을 확정하지 못했다. 같은 resolve로 이어간다.
  */

@@ -3520,6 +3520,22 @@ fn task_text(file: Option<&str>) -> Result<String> {
     })
 }
 
+fn render_automation_origin(s: &mut String, t: &aaa_proto::ThreadView) {
+    use std::fmt::Write as _;
+    if let Some(rule) = &t.automation {
+        let _ = writeln!(
+            s,
+            "  자동화 thread · {} ({rule}) · 실행 한도에서 제외",
+            t.automation_title.as_deref().unwrap_or(rule)
+        );
+        let _ = writeln!(
+            s,
+            "    무엇이 띄웠는지: {}",
+            t.automation_trigger.as_deref().unwrap_or("기동 사건 기록 없음(이전 판에서 시작)")
+        );
+    }
+}
+
 fn render_thread(s: &mut String, t: &aaa_proto::ThreadView) {
     if t.status == aaa_proto::ThreadStatus::Starting {
         let _ = writeln!(s, "준비 중: {} (thread show·events에서 결과를 확인한다)", t.id);
@@ -3542,6 +3558,7 @@ fn render_thread(s: &mut String, t: &aaa_proto::ThreadView) {
         t.machine,
         t.brief.as_str()
     );
+    render_automation_origin(s, t);
     let _ = writeln!(s, "인증: {}", t.account.as_deref().unwrap_or("로컬 로그인"));
     if let Some(e) = &t.error {
         let _ = writeln!(s, "  오류: {e}");
@@ -3802,6 +3819,7 @@ fn render_context(s: &mut String, c: &aaa_proto::ProjectContext) {
     for t in &c.threads {
         let state = t.agent.as_ref().map(|a| format!(" · {:?}", a.activity)).unwrap_or_default();
         let _ = writeln!(s, "  {} {:?} {} {}@{}{state}", t.id, t.group, t.title, t.profile, t.machine);
+        render_automation_origin(s, t);
         // 요약이 낡았으면(요약 뒤 지시가 있거나 지시가 있는데 요약이 없다) 이 턴에 고친다
         if let Some(m) = t.summary.as_ref().filter(|m| m.pending > 0) {
             let _ = writeln!(

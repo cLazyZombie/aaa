@@ -302,6 +302,7 @@
           ]
         },
         "max_running": {
+          "description": "do.start 규칙별 동시 한도. 생략·0은 1개(자동화 thread는 일반 실행 한도에서 빠진다).",
           "format": "uint32",
           "minimum": 0,
           "type": [
