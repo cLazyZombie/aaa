@@ -7,6 +7,7 @@ import {
   canInstall,
   canSsh,
   defaultSettings,
+  loginHarnesses,
   detectedLine,
   needsPerson,
   operationLabel,
@@ -77,6 +78,11 @@ describe("SSH 설치 M3", () => {
     assert.match(settingsProblem({ ...ok, work_root: "aaa-work" }), /절대 경로/);
     assert.match(settingsProblem({ ...ok, work_root: "/a/../b" }), /절대 경로/);
     assert.match(settingsProblem({ ...ok, work_mount: "Work" }), /mount/);
+  });
+  it("로그인 pane은 고른 harness, 없으면 둘 다", () => {
+    assert.deepEqual(loginHarnesses({ settings: { harness: ["codex"] } }), ["codex"]);
+    assert.deepEqual(loginHarnesses({ settings: { harness: ["none"] } }), ["claude", "codex"]);
+    assert.deepEqual(loginHarnesses({}), ["claude", "codex"]);
   });
   it("승인 범위 이름과 hash 앞부분", () => {
     assert.equal(operationLabel("enroll_agent"), "이 host에 등록");

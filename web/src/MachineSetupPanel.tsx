@@ -2,7 +2,7 @@
 // 보이고, 사람이 믿으면 OS·CPU를 감지한다. 1.94 host면 이어서 설치 설정 → 원격 install 계획 확인 → 「설치하고 등록」까지 한다.
 // 작업은 host DB에 남고 진행은 host `enroll` 사건으로 다시 읽는다. 보기 기기는 목록만 본다.
 import { useCallback, useEffect, useRef, useState } from "react";
-import type { DeviceRole, EnrollAddress, MachineSetupSettings, MachineSetupView } from "./gen/proto";
+import type { DeviceRole, EnrollAddress, InstallHarness, MachineSetupSettings, MachineSetupView } from "./gen/proto";
 import { ApiError, call, me, onEnrollChanged } from "./api";
 import { ConfirmDialog } from "./ConfirmDialog";
 import { SettingsGroup } from "./herdr/SettingsControls.tsx";
@@ -16,6 +16,7 @@ import {
   detectedLine,
   HARNESSES,
   LOGIN,
+  loginHarnesses,
   needsPerson,
   operationLabel,
   PHASE,
@@ -29,7 +30,16 @@ import {
 
 const say = (e: unknown) => (e instanceof ApiError ? e.message : e instanceof Error ? e.message : String(e));
 
-export function MachineSetupPanel({ role, machines = [] }: { role: DeviceRole; machines?: string[] }) {
+export function MachineSetupPanel({
+  role,
+  machines = [],
+  onOpenPane,
+}: {
+  role: DeviceRole;
+  machines?: string[];
+  /** 설정에서 연 pane(끝 확인·로그인)으로 간다 */
+  onOpenPane?: (id: string) => void;
+}) {
   const [api, setApi] = useState<string | null | undefined>(undefined);
   const [setups, setSetups] = useState<MachineSetupView[]>([]);
   const [target, setTarget] = useState("");
@@ -163,6 +173,14 @@ export function MachineSetupPanel({ role, machines = [] }: { role: DeviceRole; m
                   onChoose={(os, arch) => void run(() => call({ op: "machine_setup_choose", job: s.job, os, arch }))}
                   onPlan={(settings) => void run(() => call({ op: "machine_setup_plan", job: s.job, settings }))}
                   onApply={() => setApplying(s)}
+                  onCheck={() => void run(() => call({ op: "machine_setup_check", job: s.job }))}
+                  onLogin={(harness) =>
+                    void run(async () => {
+                      const r = await call({ op: "machine_setup_login", job: s.job, harness });
+                      if (r.kind === "pane") onOpenPane?.(r.id);
+                    })
+                  }
+                  onOpenPane={onOpenPane}
                 />
               </li>
             ))}
@@ -210,6 +228,9 @@ function SetupBody({
   onChoose,
   onPlan,
   onApply,
+  onCheck,
+  onLogin,
+  onOpenPane,
 }: {
   s: MachineSetupView;
   canEdit: boolean;
@@ -221,6 +242,9 @@ function SetupBody({
   onChoose: (os: string, arch: string) => void;
   onPlan: (settings: MachineSetupSettings) => void;
   onApply: () => void;
+  onCheck: () => void;
+  onLogin: (harness: InstallHarness) => void;
+  onOpenPane?: (id: string) => void;
 }) {
   const [pick, setPick] = useState(0);
   const via = sshLine(s);
@@ -323,6 +347,34 @@ function SetupBody({
             </span>
           ))}
         </p>
+      )}
+      {s.phase === "installed" && i && (
+        <div className="setup-review" data-testid="machine-setup-after">
+          {i.checks && i.checks.length > 0 && (
+            <ul className="setup-changes mono" data-testid="machine-setup-checks">
+              {i.checks.map((l, k) => (
+                <li key={k}>{l}</li>
+              ))}
+            </ul>
+          )}
+          {canEdit && (
+            <div className="admin-line">
+              <button type="button" className="btn" disabled={sending} onClick={onCheck} data-testid="machine-setup-check">
+                끝 확인(shell pane)
+              </button>
+              {loginHarnesses(s).map((h) => (
+                <button key={h} type="button" className="btn" disabled={sending} onClick={() => onLogin(h)}>
+                  {h} 로그인 pane
+                </button>
+              ))}
+              {i.check_pane && onOpenPane && (
+                <button type="button" className="btn small" onClick={() => onOpenPane(i.check_pane!)}>
+                  끝 확인 pane 열기
+                </button>
+              )}
+            </div>
+          )}
+        </div>
       )}
     </div>
   );

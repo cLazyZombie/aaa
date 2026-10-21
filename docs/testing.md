@@ -1644,6 +1644,8 @@ Windows/Linux 실제 실행 판정은 main push 뒤 GitHub CI windows-2025/ubunt
   - aaa 전송: 실험실 sshd로 보낸 파일이 원격 `mktemp -d` 폴더(0700)에 같은 SHA로 놓이고 `--version`이 돈다. SHA·판이 어긋나면 그 폴더를 지운다(보낸 파일과 같은 내용의 폴더만 세어 나란히 도는 시험과 섞이지 않는다).
   - 원격 install 대본: 실제 ssh로 보낸 shell 대본이 `install-probe`·`install-bootstrap`·`install --resume`에 미리 만든 답을 내고 받은 인자·stdin을 남긴다. 계획은 host가 보낼 choices로 실제 install planner를 돌린 것이다. 적용은 FIFO가 열릴 때까지 기다리고, 그사이 시험이 둘째 package의 grant로 host `install_enroll`을 부른다(실제 원격 worker 대신). 고정 sleep은 없다.
   - 원격 install이 이 SSH를 거부(exit 3)하면 까닭을 보이고 원격 임시 폴더·계획 파일을 남기지 않는다.
+  - release 받기: 임시 HTTP 서버(받은 경로를 남김)로 정상·같은 SHA 캐시(asset 다시 안 받음)·SHA 다름(남기지 않음)·manifest 판 다름·그 판 release가 아닌 주소(manifest만 읽음)·없는 종류. 감지 CPU를 다른 종류로 바꾼 작업은 release 파일을 받아 원격에 보내고 그 SHA를 원격 install executor로 준다.
+  - 끝 확인·로그인: 끝 확인 스크립트를 이 머신에서 실제로 돌려 표지 사이 줄을 읽는다. 가짜 agent(duplex 연결)가 Spawn argv·cwd를 남기고, 그 스크립트 실제 출력을 pane 화면으로 넣으면 host가 작업에 줄을 남긴다. `codex login` pane, 끝나지 않은 작업·보기 기기·머신 없음·연결 안 됨 거부.
 - 웹 유닛 `node --test web/test/machineSetupModel.test.mjs`(1.94 판정, 기본 설정, 설정 앞 검사, 단계).
 - 웹 E2E `72-machine-add` 마지막 단계: 설치 설정 폼(기본 이름·작업 root, 잘못된 이름 알림) → 「계획 보기」가 실제 host 실행 파일을 보내고 실제 install이 비특권 실험실 sshd를 거부하는 까닭(시스템 SSH 서버)을 보인다. 원격 임시 폴더가 남지 않는다. 보기 기기에는 설정 폼이 없다.
 - 실제 install SSH 입구(root 소유 시스템 sshd 계보)는 이 Mac 실험실에서 열 수 없다(시스템 설정을 바꾸지 않는다). 끝까지의 실제 경로는 install I3 착지 뒤 GitHub CI의 root sshd 시험으로 본다.

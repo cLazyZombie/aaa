@@ -1697,6 +1697,14 @@ pub struct MachineSetupInstall {
     pub result: Option<crate::install::InstallResult>,
     /// 등록된 머신 이름(grant 등록 뒤)
     pub machine: Option<String>,
+    /// 끝 확인 shell pane이 적은 줄(작업 폴더·git·harness·PATH)
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    #[ts(optional, as = "Option<Vec<String>>")]
+    pub checks: Vec<String>,
+    /// 끝 확인 pane(사람이 열어 본다)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub check_pane: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
@@ -2270,6 +2278,15 @@ pub enum FrontRequest {
     MachineSetupApply {
         job: String,
         plan_sha256: String,
+    },
+    /// FRONT_API 1.94. 설치·등록된 머신에 끝 확인 shell pane을 연다(작업 폴더·git·harness·PATH를 적는다, 모델 비용 없음). 사람만
+    MachineSetupCheck {
+        job: String,
+    },
+    /// FRONT_API 1.94. 설치·등록된 머신에 harness 로그인 pane(`claude`·`codex login`)을 연다. 사람만
+    MachineSetupLogin {
+        job: String,
+        harness: crate::install::InstallHarness,
     },
     /// FRONT_API 1.93. 최근 SSH 추가 작업(Reader도 본다)
     MachineSetupList,

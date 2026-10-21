@@ -482,6 +482,8 @@ impl Host {
                 last_event: None,
                 result: None,
                 machine: None,
+                checks: vec![],
+                check_pane: None,
             }));
             self.setup_save(&mut job);
             (job, proposal)
@@ -576,6 +578,8 @@ impl Host {
                         last_event: None,
                         result: None,
                         machine: None,
+                        checks: vec![],
+                        check_pane: None,
                     })
                 });
                 i.installation_id = Some(installation);
@@ -622,6 +626,8 @@ impl Host {
                     last_event: None,
                     result: None,
                     machine: None,
+                    checks: vec![],
+                    check_pane: None,
                 })
             });
             match outcome {

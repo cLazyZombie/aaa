@@ -1093,3 +1093,213 @@ fn another_cpu_gets_the_same_release_version_from_the_release_and_verifies_it_re
     install::tests_binary::set_base(None);
     assert!(weak.upgrade().is_none());
 }
+
+// ───────────── 끝 확인·harness 로그인 pane(M3) ─────────────
+
+#[test]
+fn the_check_script_reports_the_work_folder_git_harnesses_and_path() {
+    let dir = std::env::temp_dir().join(format!("aaa-check-{}", aaa_common::util::new_id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let argv = check::check_argv();
+    let out = std::process::Command::new(&argv[0]).args(&argv[1..]).current_dir(&dir).output().unwrap();
+    let lines = check::check_lines(&String::from_utf8_lossy(&out.stdout)).unwrap();
+    let real = dir.canonicalize().unwrap();
+    assert!(
+        lines[0] == format!("작업 폴더 {}", real.display()) || lines[0] == format!("작업 폴더 {}", dir.display()),
+        "{lines:?}"
+    );
+    assert!(lines[1].starts_with("git version") || lines[1] == "git 없음", "{lines:?}");
+    assert!(lines[2].starts_with("claude ") && lines[3].starts_with("codex "), "{lines:?}");
+    assert!(lines[4].starts_with("PATH "), "{lines:?}");
+    // 화면 앞뒤 잡음과 표지 없는 출력
+    assert_eq!(check::check_lines("$ x\nAAA-CHECK-1\na\nb\nAAA-CHECK-END\n$ "), Some(vec!["a".into(), "b".into()]));
+    assert_eq!(check::check_lines("AAA-CHECK-END"), None);
+    assert_eq!(
+        check::login_argv(aaa_proto::install::InstallHarness::Codex),
+        Some(vec!["codex".into(), "login".into()])
+    );
+    assert_eq!(check::login_argv(aaa_proto::install::InstallHarness::None), None);
+    std::fs::remove_dir_all(dir).unwrap();
+}
+
+/// 가짜 agent(duplex 연결)에 등록된 머신: 끝 확인은 작업 root에서 고정 스크립트 pane을 띄우고 그 화면의 표지 사이를 작업에 남긴다.
+/// 로그인은 `codex login` pane. 끝나지 않은 작업·보기 기기·연결 안 된 머신은 거부한다
+#[test]
+fn an_installed_machine_gets_a_check_pane_and_a_login_pane() {
+    use aaa_common::conn::{FrameRx, spawn_writer};
+    use aaa_proto::{AgentRequest, AgentResponse, LinkMsg, MachineSetupInstall, SessionInfo, SessionState};
+    let root = std::env::temp_dir().join(format!("aaa-ssh-check-{}", aaa_common::util::new_id()));
+    let work = root.join("work");
+    std::fs::create_dir_all(&work).unwrap();
+    let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
+    let weak = rt.block_on(async {
+        let mut cfg = aaa_config::HostConfig::default();
+        cfg.projects.root = root.join("projects").to_string_lossy().into();
+        cfg.notify.web_push = false;
+        let h = Host::open(cfg, root.join("host")).unwrap();
+        let installed = |id: &str, phase: MachineSetupPhase| Job {
+            view: MachineSetupView {
+                job: id.into(),
+                target: "mac-b".into(),
+                phase,
+                ssh: None,
+                host_keys: vec![],
+                host_key_state: Some("known".into()),
+                detected: None,
+                error: None,
+                created_ms: 1,
+                updated_ms: 1,
+                settings: Some(MachineSetupSettings {
+                    name: "lab-b".into(),
+                    host: "127.0.0.1:7430".into(),
+                    work_root: work.to_string_lossy().into(),
+                    work_mount: None,
+                    harness: vec![],
+                    login: aaa_proto::install::InstallLogin::Defer,
+                }),
+                review: None,
+                install: Some(Box::new(MachineSetupInstall {
+                    installation_id: None,
+                    last_event: None,
+                    result: None,
+                    machine: Some("lab-b".into()),
+                    checks: vec![],
+                    check_pane: None,
+                })),
+            },
+            key_lines: vec![],
+            remote_dir: None,
+        };
+        h.setup_save(&mut installed("done", MachineSetupPhase::Installed));
+        h.setup_save(&mut installed("review", MachineSetupPhase::Review));
+        let check = |job: &str| FrontRequest::MachineSetupCheck { job: job.into() };
+        // 머신이 아직 없다(등록 전·폐기)
+        assert_eq!(h.call(DeviceRole::Controller, WEB, check("done")).await.unwrap_err().code, ErrorCode::NotFound);
+        // 등록됐지만 agent가 연결 안 됨(I3 전 service none)
+        let offline = || crate::MachineRt {
+            name: "lab-b".into(),
+            local: false,
+            os: None,
+            boot_id: None,
+            dev_mode: true,
+            conn: None,
+            last_seen_ms: None,
+            health: None,
+            health_sent: None,
+            features: vec![],
+            agent_pid: None,
+            colors: None,
+            build: Default::default(),
+        };
+        h.inner.lock().unwrap().machines.insert("m1".into(), offline());
+        let e = h.call(DeviceRole::Controller, WEB, check("done")).await.unwrap_err();
+        assert_eq!(e.code, ErrorCode::AgentDisconnected, "{}", e.message);
+        // 연결된 가짜 agent: Spawn을 받아 남기고 세션으로 답한다
+        let (writer, reader) = tokio::io::duplex(65536);
+        let conn = crate::AgentConn::new(spawn_writer(writer, aaa_proto::MAX_FRAME), 1);
+        h.inner
+            .lock()
+            .unwrap()
+            .machines
+            .insert("m1".into(), crate::MachineRt { conn: Some(conn.clone()), ..offline() });
+        let spawned = Arc::new(std::sync::Mutex::new(Vec::<aaa_proto::SpawnSpec>::new()));
+        let seen = spawned.clone();
+        tokio::spawn(async move {
+            let mut rx = FrameRx::new(reader, aaa_proto::MAX_FRAME);
+            let mut n = 0;
+            while let Ok(LinkMsg::Req { id, body, .. }) = rx.control::<LinkMsg>().await {
+                let reply = match body {
+                    AgentRequest::Spawn(spec) => {
+                        n += 1;
+                        let info = SessionInfo {
+                            id: format!("s{n}"),
+                            name: spec.name.clone(),
+                            argv: spec.argv.clone(),
+                            cwd: spec.cwd.clone(),
+                            pid: None,
+                            started_at_ms: 1,
+                            boot_id: "b".into(),
+                            cols: spec.cols,
+                            rows: spec.rows,
+                            state: SessionState::Running,
+                            role: None,
+                            label: None,
+                            harness: None,
+                        };
+                        seen.lock().unwrap().push(spec);
+                        AgentResponse::Session(info)
+                    }
+                    _ => AgentResponse::Done,
+                };
+                if let Some(tx) = conn.pending.lock().unwrap().remove(&id) {
+                    tx.send(aaa_proto::Outcome::Ok(reply)).unwrap();
+                }
+            }
+        });
+        assert_eq!(h.call(DeviceRole::Controller, WEB, check("review")).await.unwrap_err().code, ErrorCode::Conflict);
+        assert!(h.call(DeviceRole::Reader, "device:tv", check("done")).await.is_err());
+        let FrontResponse::MachineSetup { setup } = h.call(DeviceRole::Controller, WEB, check("done")).await.unwrap()
+        else {
+            panic!()
+        };
+        let pane = setup.install.as_ref().unwrap().check_pane.clone().unwrap();
+        {
+            let specs = spawned.lock().unwrap();
+            assert_eq!(
+                (specs[0].argv.clone(), specs[0].cwd.clone()),
+                (check::check_argv(), Some(work.to_string_lossy().into()))
+            );
+        }
+        // agent가 보낼 화면: 이 머신에서 그 스크립트를 실제로 돌린 출력
+        let argv = check::check_argv();
+        let out = std::process::Command::new(&argv[0]).args(&argv[1..]).current_dir(&work).output().unwrap();
+        let screen = String::from_utf8_lossy(&out.stdout).replace('\n', "\r\n");
+        h.on_subscribed(
+            &pane,
+            Some(aaa_proto::Snapshot {
+                session: pane.clone(),
+                offset: 0,
+                cols: 160,
+                rows: 40,
+                replay: aaa_proto::B64(screen.into_bytes()),
+                history_more: false,
+            }),
+            0,
+        );
+        let mut rx = h.enroll_changed.subscribe();
+        let checks = tokio::time::timeout(Duration::from_secs(30), async {
+            loop {
+                let v = h.setup_load("done").unwrap().view;
+                let c = v.install.unwrap().checks;
+                if !c.is_empty() {
+                    return c;
+                }
+                rx.changed().await.unwrap();
+            }
+        })
+        .await
+        .expect("끝 확인 줄");
+        assert!(checks[0].starts_with("작업 폴더 ") && checks.iter().any(|l| l.starts_with("PATH ")), "{checks:?}");
+        // harness 로그인 pane
+        let login =
+            |h: aaa_proto::install::InstallHarness| FrontRequest::MachineSetupLogin { job: "done".into(), harness: h };
+        let FrontResponse::Pane(p) =
+            h.call(DeviceRole::Controller, WEB, login(aaa_proto::install::InstallHarness::Codex)).await.unwrap()
+        else {
+            panic!()
+        };
+        assert_eq!(p.name, "codex 로그인");
+        assert_eq!(spawned.lock().unwrap()[1].argv, vec!["codex".to_string(), "login".into()]);
+        assert_eq!(
+            h.call(DeviceRole::Controller, WEB, login(aaa_proto::install::InstallHarness::None))
+                .await
+                .unwrap_err()
+                .code,
+            ErrorCode::BadRequest
+        );
+        Arc::downgrade(&h)
+    });
+    drop(rt);
+    assert!(weak.upgrade().is_none());
+    std::fs::remove_dir_all(root).unwrap();
+}

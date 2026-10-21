@@ -121,3 +121,9 @@ export const operationLabel = (op: string): string => OPERATION[op] ?? op;
 
 /** 계획 hash를 사람이 맞춰 볼 만큼(앞 12자) */
 export const shortHash = (h: string): string => h.slice(0, 12);
+
+/** 로그인 pane을 열 harness: 설정에서 고른 것, 없으면 둘 다 */
+export const loginHarnesses = (v: Pick<MachineSetupView, "settings">): InstallHarness[] => {
+  const picked = (v.settings?.harness ?? []).filter((h) => h !== "none");
+  return picked.length > 0 ? picked : HARNESSES;
+};

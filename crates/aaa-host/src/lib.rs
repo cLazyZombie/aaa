@@ -1387,6 +1387,8 @@ impl Host {
                 | FrontRequest::MachineSetupCancel { .. }
                 | FrontRequest::MachineSetupPlan { .. }
                 | FrontRequest::MachineSetupApply { .. }
+                | FrontRequest::MachineSetupCheck { .. }
+                | FrontRequest::MachineSetupLogin { .. }
                 | FrontRequest::DeviceRevoke { .. }
                 | FrontRequest::WebPublish
                 | FrontRequest::WebPublishOff
@@ -2251,6 +2253,10 @@ impl Host {
             FrontRequest::MachineSetupApply { job, plan_sha256 } => {
                 self.setup_apply(role, &job, &plan_sha256, actor).map(|setup| FrontResponse::MachineSetup { setup })
             }
+            FrontRequest::MachineSetupCheck { job } => {
+                self.setup_check(&job, actor).await.map(|setup| FrontResponse::MachineSetup { setup })
+            }
+            FrontRequest::MachineSetupLogin { job, harness } => self.setup_login(role, &job, harness, actor).await,
             FrontRequest::MachineSetupList => self.setup_list().map(|setups| FrontResponse::MachineSetups { setups }),
             FrontRequest::EnrollPending => {
                 let e = self.enroll.lock().unwrap();

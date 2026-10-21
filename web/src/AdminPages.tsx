@@ -72,7 +72,15 @@ export function useAdmin(): boolean | null {
   return ok;
 }
 
-export function MachinesPage({ role, machines }: { role: DeviceRole; machines: MachineView[] }) {
+export function MachinesPage({
+  role,
+  machines,
+  onOpenPane,
+}: {
+  role: DeviceRole;
+  machines: MachineView[];
+  onOpenPane?: (id: string) => void;
+}) {
   const admin = useAdmin();
   const [pending, setPending] = useState<PendingEnroll[]>([]);
   const [openUntil, setOpenUntil] = useState<number | undefined>(undefined);
@@ -187,7 +195,7 @@ export function MachinesPage({ role, machines }: { role: DeviceRole; machines: M
           </div>
         </SettingsGroup>
       )}
-      {admin === true && <MachineSetupPanel role={role} machines={machines.map((m) => m.name)} />}
+      {admin === true && <MachineSetupPanel role={role} machines={machines.map((m) => m.name)} onOpenPane={onOpenPane} />}
       <SettingsGroup title="등록된 머신">
         <div className="settings-item">
           <ul className="admin-list" data-testid="machine-list">
