@@ -958,6 +958,18 @@ CI/Git의 source outbox·중복 억제·재시작·outage는 기존 owner를 유
 - `cargo test -p aaa --test m13 merged_thread_cleans_its_task`: 가짜 gh로 병합한 thread는 보고가 `[착지]`여도 그 task를 지운다(병합 판정을 끄면 실패). 병합 끝내기와 판정은 같은 tick에서 돌아 `thread_resolved` 사건 뒤 `ticker tick` 하나가 울타리다.
 - `node web/e2e/web.e2e.mjs --spec 47-task-thread`: 바로 시작 확인창(`data-start-state`)과 줄 끝 연결, 확인창을 연 뒤 블록이 바뀌면 시작 거부, 자동 정리 줄·되살리기, 확인 필요 단추, 상위 올림, task 없는 thread 잇기·만들기, coordinator 맡기기(입력칸 초안을 localStorage로 확인), 휴대폰·패드 한도 확인.
 
+`task_clean::tests::parent_attention_is_published_after_the_verdict_is_saved`는 실제 thread 기록 잠금으로 마지막
+판정 저장만 보류한다. 하위 삭제·상위 연결의 파일 사건을 받고 같은 hash의 board를 읽으면 아직 확인 필요가 없다.
+잠금을 풀어 판정을 저장한 뒤에는 같은 파일 hash의 `tasks` 사건이 다시 와야 하고, 그 board의 상위는 확인 필요다.
+판정 저장 뒤 사건을 빼면 사건 누락 단언에서 실패한다. 시간 지연 주입·sleep·화면 재시도는 쓰지 않는다.
+
+## 파일 한도 시험 실패 진단(t-0573)
+
+`cargo test -p aaa --test resource_limits --locked`는 자식 host의 한도만 낮춘다. hard64 시험의 Front EMFILE
+관측이 실패하면 그 실행의 host 로그, 단발 Front 요청의 stdout·stderr, 실제 host fd 목록과 두 PID의 상태를 남긴다.
+Front 요청이 이미 성공했는지, 연결 전에 실패했는지, 여전히 기다리는지 구분할 근거이며 원인을 미리 단정하지 않는다.
+원래 15초 상한과 EMFILE·복구·경고 한 건 단언을 유지한다. 실패한 실험실 폴더는 기존 Lab 정책대로 보존한다.
+
 ## 키 관리자 K0 카나리 찾기(§8.307)
 
 - `cargo test -p aaa --test m13 secret_k0`: 실험실 host·agent를 `AAA_LOG=trace`로 띄운다. 무작위 가짜 값(카나리)을 셋 둔다.
@@ -1088,8 +1100,9 @@ journal·로그·화면에 원문·8바이트 조각·base64/URL/JSON 변형이 
 - `node web/e2e/web.e2e.mjs --spec 50-context-gauge`:
   - 가짜 Claude가 SessionStart hook으로 기록 자리를 알린다. F7(작업 중)·F5(쉼)·F6(정리 끝: `compact_boundary` pre 163,600/post 28,400과 요약)과 「/compact」 Enter(정리 화면)를 받는다.
   - spec이 기록에 assistant usage 줄을 더하면 게이지 글이 바뀔 때까지 `domIs`로 기다린다(agent는 2초마다 읽는다).
-  - 숨김은 `data-hidden`과 게이지·글 칸 폭이 같은지로 본다. 정리 단추는 pane이 받은 bytes와 입력칸 잠금 풀림으로 본다. 휴대폰은 WebKit `pairDevice`. 고정 sleep은 없다.
-  - `AAA_E2E_SHOTS`를 주면 데스크톱·iPhone 빈/치는 중·펼침·정리 중·정리 뒤 그림을 남긴다.
+  - 패드·데스크톱의 치는 중 숨김은 `data-hidden`과 게이지·글 칸 폭이 같은지로 본다. 정리 단추는 pane이 받은 bytes와 입력칸 잠금 풀림으로 본다. 고정 sleep은 없다.
+  - t-0570(사용자 10-21): WebKit iPhone에서 빈 입력칸·focus만 있음·치는 중·80% 이상·창 넘음·창 모름 모두 게이지가 보이지 않고 폭도 0이며 접근성 트리에서도 빠지는지 본다. 320·390·700px는 숨고 701·768px는 보인다. 실제 iPad 꼴(820px)에서는 기존 표시·치는 중 숨김·펼침을 유지한다.
+  - 첫 인자로 캡처 폴더를 주면 데스크톱·iPhone 밝음/어두움과 기존 데스크톱 펼침·정리 중·정리 뒤, iPad 펼침 그림을 남긴다. 테마는 실험실 명령 팔레트로 바꾸고 DOM 반영을 기다린다.
 
 ## aaa install I2 파일·상태 owner(t-0485, plan §8.322)
 
