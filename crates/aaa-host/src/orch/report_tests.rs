@@ -61,6 +61,7 @@ impl Lab {
                 health: None,
                 health_sent: None,
                 features: vec![],
+                identity: None,
                 agent_pid: None,
                 colors: None,
                 build: Default::default(),

@@ -27,6 +27,31 @@ pub(crate) fn route(json: bool, machine: Option<String>, action: DeployAction) -
     match context {
         FrontResponse::DeployContext { project: Some(_), .. } if c.role.can_control() => {
             let id = aaa_common::util::new_id();
+            // 재시작은 독립 감시가 새 프로세스를 확인하는 재시작 rollout으로 한다(FRONT_API 1.100, 관리 GUI W6c)
+            if let DeployAction::Restart { service } = action
+                && c.proto.minor >= 100
+            {
+                eprintln!(
+                    "재시작 rollout ID: {id}. 응답이 끊기면 다시 실행하지 말고 `aaa deploy status {id} --wait`로 확인한다"
+                );
+                let target = machine.as_deref().map(|m| format!(" --machine {m}")).unwrap_or_default();
+                let spec = aaa_proto::RolloutSpec {
+                    from: String::new(),
+                    source_machine: None,
+                    sha256: String::new(),
+                    commit: None,
+                    machines: machine.into_iter().collect(),
+                    restart: Some(service),
+                };
+                let result = rt.block_on(c.call(FrontRequest::RolloutStart { id: id.clone(), spec }))?;
+                // 개별 update·rollback이 설치 파일을 바꾼 뒤면 host는 그 파일을 띄우는 개별 재시작(감시 밖)으로 보낸다
+                if matches!(result, Ok(FrontResponse::Deployment { .. })) {
+                    eprintln!(
+                        "설치 파일이 실행 판과 달라 감시 밖 개별 재시작으로 보냈다. `aaa update status {id}{target} --wait`로 확인한다"
+                    );
+                }
+                return crate::cli::front_print(json, result).map(Some);
+            }
             let target = machine.as_deref().map(|m| format!(" --machine {m}")).unwrap_or_default();
             eprintln!(
                 "배포 작업 ID: {id}. 응답이 끊기면 다시 실행하지 말고 `aaa update status {id}{target}`로 확인한다"

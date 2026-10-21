@@ -66,6 +66,7 @@ async fn codex_trust_detection_question_and_answer_share_the_front_path() {
             dev_mode: true,
             sha256: None,
             selfcheck: None,
+            identity: None,
             harness: vec![event],
             sessions: vec![SessionInfo {
                 id: "s".into(),

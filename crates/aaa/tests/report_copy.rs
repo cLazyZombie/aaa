@@ -47,6 +47,7 @@ async fn report_copy_recovers(fail_library: bool) {
         dev_mode: true,
         sha256: None,
         selfcheck: None,
+        identity: None,
         harness: vec![HarnessEvent {
             session: "s".into(),
             harness: "codex".into(),

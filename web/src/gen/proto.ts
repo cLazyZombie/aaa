@@ -1021,7 +1021,12 @@ export type RolloutSpec = { from: string,
 /**
  * Some이면 이 머신의 빌드 후보를 Agent link로 가져온다. None은 L1 미리 복사 경로다.
  */
-source_machine?: string | null, sha256: string, commit: string | null, machines: Array<string>, };
+source_machine?: string | null, sha256: string, commit: string | null, machines: Array<string>,
+/**
+ * 재시작만 하는 rollout(관리 GUI W6c, 답 1A): 대상 한 머신의 이 서비스를 지금 판 그대로 다시 띄우고 guard로 확인한다.
+ * 후보·전송·교체가 없고 `from`·`sha256`은 host가 재시작 전 실행 신원으로 채운다
+ */
+restart?: DeployService | null, };
 
 export type RolloutPhase = "transfer" | "preflight" | "host_update" | "host_restart" | "agent_update" | "agent_restart";
 
@@ -1039,7 +1044,11 @@ export type RolloutView = { id: string, project: string, actor: string, spec: Ro
  */
 recovery_enabled: boolean, recovery: DeployGuardView | null, recovery_started_ms: number, created_ms: number, updated_ms: number, };
 
-export type RolloutCard = { id: string, state: RolloutState, version: string | null, sha256: string, commit: string | null, cursor: number, steps: Array<RolloutCardStep>, error: string | null, recovery_phase: DeployGuardPhase | null, recovery_sha256: string | null, created_ms: number, updated_ms: number, };
+export type RolloutCard = { id: string, state: RolloutState, version: string | null, sha256: string, commit: string | null,
+/**
+ * 재시작만 하는 rollout의 서비스(W6c). 교체 rollout은 없다
+ */
+restart?: DeployService | null, cursor: number, steps: Array<RolloutCardStep>, error: string | null, recovery_phase: DeployGuardPhase | null, recovery_sha256: string | null, created_ms: number, updated_ms: number, };
 
 export type RolloutCardStep = { machine: string, phase: RolloutPhase, completed: boolean, started_ms: number, transferred_bytes: number, total_bytes: number, };
 
@@ -1286,13 +1295,22 @@ export type DeployAction = { "action": "update", from: string | null, version: s
 
 export type DeployStageView = { rollout: string, project: string, sha256: string, total: number, offset: number, complete: boolean, version: string | null, };
 
-export type RuntimeIdentity = { sha256: string, software: string, instance: string, started_ms: number, };
+export type RuntimeIdentity = { sha256: string, software: string, instance: string, started_ms: number,
+/**
+ * host가 실제로 연 웹 주소(loopback, 관리 GUI W6c, FRONT_API 1.100). 같은 머신 agent에만 싣는다. host 감시는 이 주소의
+ * `/api/v1/me`가 답해야 새 판 준비로 본다. 없으면(웹을 끈 설정·옛 host·agent 신원) 실행 신원만 본다
+ */
+web?: string | null, };
 
 export type DeployGuardSpec = { id: string, rollout: string, project: string, service: DeployService, host_machine: boolean, baseline: RuntimeIdentity, expected_sha256: string, expected_software: string, old_host_instance: string, install_job: string | null, rollback_job: string, restart_job: string, host_restart_job: string, };
 
 export type DeployGuardPhase = "armed" | "awaiting_new" | "new_ready" | "restoring" | "restarting" | "awaiting_old" | "verified_new" | "restored" | "failed" | "cancelled";
 
-export type DeployGuardView = { spec: DeployGuardSpec, phase: DeployGuardPhase, worker_pid: number, deadline_ms: number, install_started: boolean, activated: boolean, restore_started: boolean, restart_index: number, restart_started: boolean, host_restart_ms: number, agent_restart_ms: number, observed: Array<DeployService>, installed_sha256: string, error: string | null, };
+export type DeployGuardView = { spec: DeployGuardSpec, phase: DeployGuardPhase, worker_pid: number, deadline_ms: number, install_started: boolean, activated: boolean, restore_started: boolean, restart_index: number, restart_started: boolean, host_restart_ms: number, agent_restart_ms: number, observed: Array<DeployService>, installed_sha256: string, error: string | null,
+/**
+ * 실행 신원은 맞고 웹 응답을 기다리는 host 웹 주소(W6c). 답하면 NewReady, 시한이 지나면 복구
+ */
+pending_web?: string | null, };
 
 export type DeployGuardControl = { "op": "status" } | { "op": "begin_install", job_id: string, } | { "op": "activate" } | { "op": "observe", service: DeployService, identity: RuntimeIdentity, } | { "op": "commit" } | { "op": "recover", reason: string, } | { "op": "cancel" };
 

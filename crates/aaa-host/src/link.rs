@@ -288,12 +288,18 @@ async fn serve_connection(
     if local {
         register_local(&host, &hello, &tx).await?;
     }
+    if local {
+        // 시작 중이면 웹을 연 뒤에 보낸다(`Host::web_gate`)
+        let _ = host.web_gate.subscribe().wait_for(|open| *open).await;
+    }
     tx.json(&LinkMsg::Welcome(HostWelcome {
         identity: hello.features.iter().any(|f| f == "rollout_recovery.v1").then(|| aaa_proto::RuntimeIdentity {
             sha256: host.running_sha256.clone(),
             software: aaa_common::util::software(),
             instance: host.rollout_instance.clone(),
             started_ms: host.rollout_started_ms,
+            // 같은 머신 agent의 host 감시가 웹 응답까지 본다(W6c)
+            web: if local { host.web_listen.lock().unwrap().clone() } else { None },
         }),
         proto: agreed,
         host_id: host.host_id.clone(),
@@ -516,6 +522,7 @@ mod post_tests {
             sha256: None,
             selfcheck: None,
             sessions: vec![],
+            identity: None,
             harness: vec![],
         }))
         .await
@@ -635,6 +642,7 @@ mod post_tests {
             sha256: None,
             selfcheck: None,
             sessions: vec![],
+            identity: None,
             harness: vec![],
         }))
         .await
@@ -760,6 +768,7 @@ mod post_tests {
             sha256: None,
             selfcheck: None,
             sessions: vec![],
+            identity: None,
             harness: vec![],
         }))
         .await
