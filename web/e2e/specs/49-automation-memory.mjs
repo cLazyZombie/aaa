@@ -49,6 +49,10 @@ done
     thread = await until("첫 작업 화면", () => threads().find((t) => t.automation === "check" && t.agent?.activity === "working"));
     fs.writeFileSync(`${thread.work_dir}/turn`, "go\n");
     await until("첫 진행 보고", () => threads().find((t) => t.id === thread.id && t.report_hash && t.agent?.activity === "idle"));
+    const inputs = fs.readdirSync(`${thread.work_dir}/inbox`).filter((n) => n.endsWith(".json"));
+    if (!inputs.length || !inputs.every((n) => /^run-[a-f0-9]{60}\.json$/.test(n))) throw new Error(`실행 입력 이름: ${inputs}`);
+    const processed = fs.readFileSync(`${thread.work_dir}/processed.txt`, "utf8").trim().split("\n");
+    for (const name of inputs) if (!processed.includes(name)) throw new Error(`처리 영수증에 실행 이름이 없다: ${name}`);
     await page.getByTestId("activity-automations").click();
     await refresh(page);
     await page.getByTestId(`automation-open-${project}-${thread.id}`).waitFor();

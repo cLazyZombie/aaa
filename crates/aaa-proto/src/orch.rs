@@ -249,6 +249,14 @@ pub struct LibraryFile {
 /// 웹에서 보는 보고서·결과물. `base`는 짧은 수명의 읽기 전용 경로(`/v/<cap>/`)이고 그 아래에 `path`를 붙인다.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 pub struct LibraryView {
+    /// FRONT_API 1.88. 같은 이름·thread의 보고 판(최신 번호부터).
+    #[serde(default)]
+    pub versions: Vec<String>,
+    /// FRONT_API 1.88. 보고의 특정 판을 여는 프로젝트별 영속 번호(r-0001부터).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub report_id: Option<String>,
+
     pub project: String,
     pub thread: String,
     /// 회수한 report.md(없으면 None)
@@ -269,6 +277,11 @@ pub struct LibraryView {
 /// FRONT_API 1.36. 보고서 하나의 host 사본만 읽는 서명 링크(§8.197).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 pub struct LinkView {
+    /// FRONT_API 1.88. 보고의 특정 판을 여는 프로젝트별 영속 번호(r-0001부터).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub report_id: Option<String>,
+
     pub id: String,
     pub project: String,
     pub thread: String,
@@ -290,6 +303,18 @@ pub struct LinkView {
 /// FRONT_API 1.38. thread 결과물과 별도로 올린 보고서의 전체 목록 한 줄.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 pub struct LibraryReport {
+    /// FRONT_API 1.88. 특정 판 사본의 보존 용량. size는 기존 최신 사본 크기다.
+    #[serde(default)]
+    #[ts(type = "number")]
+    pub history_size: u64,
+    /// FRONT_API 1.88. 같은 이름·thread의 보고 판(최신 번호부터).
+    #[serde(default)]
+    pub versions: Vec<String>,
+    /// FRONT_API 1.88. 보고의 특정 판을 여는 프로젝트별 영속 번호(r-0001부터).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub report_id: Option<String>,
+
     pub project: String,
     pub name: String,
     #[ts(type = "number")]
@@ -816,6 +841,11 @@ pub enum ReportAttention {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 pub struct ThreadView {
+    /// FRONT_API 1.88. 보고의 특정 판을 여는 프로젝트별 영속 번호(r-0001부터).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub report_id: Option<String>,
+
     pub project: String,
     pub id: String,
     pub title: String,

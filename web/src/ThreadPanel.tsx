@@ -164,7 +164,7 @@ export function ThreadPanel({
             </div>
           </div>
           <section className="card report" data-testid="report">
-            <h2>보고</h2>
+            <h2>보고 {t.report_id && <a href={`#report=${encodeURIComponent(`${t.project}/${t.report_id}`)}`}><code>{t.report_id}</code></a>}</h2>
             {lib?.report ? (
               <OpenFileContext.Provider value={onOpenReportFile ?? null}>
                 <ReportMarkdown base={lib.base} text={lib.report} onImages={lightbox.open} />

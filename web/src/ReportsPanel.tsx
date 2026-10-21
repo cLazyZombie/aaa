@@ -84,13 +84,13 @@ export function ReportsPanel({ role, rev, onView }: { role: DeviceRole; rev: num
     catch (e) { setProblem(e instanceof Error ? e.message : String(e)); }
     finally { setOpening(null); }
   };
-  const titleLink = (r: LibraryReport, className?: string) => <a className={className} href={`#report=${encodeURIComponent(keyOf(r))}`} onClick={(e) => {
+  const titleLink = (r: LibraryReport, className?: string) => <>{r.report_id && <><code>{r.report_id}</code>{" "}</>}<a className={className} href={`#report=${encodeURIComponent(keyOf(r))}`} onClick={(e) => {
     // 보조 키·가운데 단추는 브라우저의 새 탭 동작을 지킨다. 보통 클릭은 목록의 굴린 자리도 보존한다.
     if (e.button === 0 && !e.metaKey && !e.ctrlKey && !e.shiftKey && !e.altKey) {
       e.preventDefault();
       onView(r);
     }
-  }}>{r.title ?? keyOf(r)}</a>;
+  }}>{r.title ?? keyOf(r)}</a></>;
   const remove = async (rows: LibraryReport[]) => {
     const r = await call({ op: "library_delete", reports: rows.map((x) => ({ project: x.project, name: x.name })) });
     if (r.kind !== "library_pruned") throw new Error("host가 지우기에 다른 답을 했다");
@@ -196,7 +196,7 @@ export function ReportsPanel({ role, rev, onView }: { role: DeviceRole; rev: num
     </div>
     {doomed && <ConfirmDialog
       title={doomed.length === 1 ? "보고서를 지울까?" : `보고서 ${doomed.length}개를 지울까?`}
-      body={`${doomed.length === 1 ? keyOf(doomed[0]) : `${doomed.slice(0, 3).map(keyOf).join(", ")}${doomed.length > 3 ? ` 외 ${doomed.length - 3}개` : ""}`}를 host 사본·공유 링크·목록에서 영구히 지운다.${doomed.some((r) => r.name.startsWith("t-")) ? " thread 사본은 회수한 보고 글도 함께 지운다." : ""} 되돌릴 수 없다.`}
+      body={`${doomed.length === 1 ? keyOf(doomed[0]) : `${doomed.slice(0, 3).map(keyOf).join(", ")}${doomed.length > 3 ? ` 외 ${doomed.length - 3}개` : ""}`}를 모든 보고 판의 host 사본·공유 링크·목록에서 영구히 지운다.${doomed.some((r) => r.name.startsWith("t-")) ? " thread 사본은 회수한 보고 글도 함께 지운다." : ""} 되돌릴 수 없다.`}
       confirmLabel="영구히 지우기"
       onConfirm={() => remove(doomed)}
       onClose={() => setDoomed(null)}

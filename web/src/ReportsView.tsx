@@ -102,13 +102,13 @@ export function ReportsView({
           </div>
         </div>
       </div>
-      {open !== null && <ReportDetail key={`${open.project}/${open.name}`} report={open} onBack={() => onOpen(null)} onAddDoc={onAddDoc && ((path) => onAddDoc(open.name, path))} />}
+      {open !== null && <ReportDetail onVersion={(name) => onOpen({ project: open.project, name })} key={`${open.project}/${open.name}`} report={open} onBack={() => onOpen(null)} onAddDoc={onAddDoc && ((path) => onAddDoc(open.name, path))} />}
     </div>
   );
 }
 
 /** 보고서 하나: 머리(뒤로·이름·새 창)와 index.html(없으면 보고 글·파일 목록). 공유 링크 조작은 목록 카드에 있다 */
-function ReportDetail({ report, onBack, onAddDoc }: { report: ReportRef; onBack: () => void; onAddDoc?: (path: string) => void }) {
+function ReportDetail({ report, onBack, onAddDoc, onVersion }: { report: ReportRef; onBack: () => void; onAddDoc?: (path: string) => void; onVersion: (id: string) => void }) {
   const [lib, setLib] = useState<LibraryView | null>(null);
   const [problem, setProblem] = useState("");
   useEffect(() => {
@@ -139,12 +139,16 @@ function ReportDetail({ report, onBack, onAddDoc }: { report: ReportRef; onBack:
         <div className="term-title">
           <span className="term-title-line">
             <ReportThread id={lib?.from_thread} />
+            {lib?.report_id && <a data-testid="report-id" href={`#report=${encodeURIComponent(`${report.project}/${lib.report_id}`)}`}><code>{lib.report_id}</code></a>}
             <strong>
               {report.project}/{report.name}
             </strong>
           </span>
           {size !== null && <span className="muted">{formatBytes(size)} · 파일 {lib!.files.length}</span>}
         </div>
+        {(lib?.versions?.length ?? 0) > 1 && <select aria-label="보고 판" value={lib?.report_id ?? ""} onChange={(e) => onVersion(e.target.value)}>
+          {lib!.versions.map((id) => <option key={id} value={id}>{id}</option>)}
+        </select>}
         {onAddDoc && index && (
           <button className="ghost small report-task-add" data-testid="report-task-add" title="이 보고서를 링크한 task를 만들거나 있는 task에 링크한다" aria-label="할 일에 추가" onClick={() => onAddDoc("index.html")}>
             <ListPlus className="i" aria-hidden="true" />

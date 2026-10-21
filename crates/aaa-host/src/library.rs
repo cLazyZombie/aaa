@@ -209,7 +209,9 @@ impl Host {
         device: Option<&str>,
         reveal_link: bool,
     ) -> Result<LibraryView, ErrorBody> {
-        self.load(project, id)?;
+        if self.db.report_target(project, id).map_err(super::orch::internal)?.is_none() {
+            self.load(project, id)?;
+        }
         self.report_library(project, id, device, reveal_link)
     }
 
@@ -231,11 +233,16 @@ impl Host {
                 None
             }
         };
-        let report = rec
-            .as_ref()
-            .and_then(|r| r.report_hash.as_ref())
-            .and_then(|_| std::fs::read(dir.join("threads").join(format!("{id}.md"))).ok())
-            .map(|b| String::from_utf8_lossy(&b).into_owned());
+        let selected = self.report_id(project, id);
+        let live =
+            self.db.library_report(project, id).map_err(super::orch::internal)?.is_some_and(|r| r.live.is_some());
+        // 최신 별칭도 한 번 고른 불변 판에서 본문·파일을 함께 읽는다. 새 회수와 경주해 두 판이 섞이지 않는다.
+        let storage = if live { id.to_string() } else { selected.clone().unwrap_or_else(|| id.into()) };
+        let report = (rec.as_ref().is_some_and(|r| r.report_hash.is_some())
+            || self.db.report_target(project, &storage).map_err(super::orch::internal)?.is_some())
+        .then(|| std::fs::read(dir.join("threads").join(format!("{storage}.md"))).ok())
+        .flatten()
+        .map(|b| String::from_utf8_lossy(&b).into_owned());
         let cap = hex::encode(rand::random::<[u8; 24]>());
         let until = Instant::now() + VIEW_TTL;
         {
@@ -245,19 +252,21 @@ impl Host {
                 cap.clone(),
                 ViewCap {
                     project: project.to_string(),
-                    thread: id.to_string(),
+                    thread: storage.clone(),
                     until,
                     device: device.map(str::to_string),
                 },
             );
         }
-        let mut files = self.report_manifest(&dir, project, id)?;
+        let mut files = self.report_manifest(&dir, project, &storage)?;
         files.retain(|f| safe_rel(&f.path));
         for f in &mut files {
-            let local = (!f.on_agent && safe_rel(&f.path)).then(|| dir.join("library").join(id).join(&f.path));
+            let local = (!f.on_agent && safe_rel(&f.path)).then(|| dir.join("library").join(&storage).join(&f.path));
             (f.mime, f.kind) = file_type(&f.path, local.as_deref());
         }
         Ok(LibraryView {
+            report_id: selected,
+            versions: self.report_version_names(project, id),
             project: project.to_string(),
             thread: id.to_string(),
             report,
@@ -359,6 +368,12 @@ impl Host {
         }
         if signed {
             return Ok(view(ViewSource::Page("<!doctype html><meta charset=utf-8><title>앱에서 열기</title><p>이 결과물은 agent에 남아 있다. pairing한 앱의 보고서 화면에서 연다.</p>".as_bytes().to_vec())));
+        }
+        if self.db.report_target(&project, &id).map_err(super::orch::internal)?.is_some() {
+            return Err(err(
+                ErrorCode::Unavailable,
+                "이 보고 판에 복사되지 않은 파일이다. 최신 agent 파일로 대체하지 않는다",
+            ));
         }
         let rec = self.load(&project, &id)?;
         let work_dir = rec.work_dir.clone().ok_or_else(|| err(ErrorCode::NotFound, "thread 작업 폴더 기록이 없다"))?;

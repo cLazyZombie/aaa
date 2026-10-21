@@ -392,6 +392,9 @@ CI routine이 지정 branch를 감시한다. inbox 종류 `ci`는 실패 job·�
 index.html이 없으면 거절한다. thread가 낸 보고(t-NNNN 사본)는 「작업 보고」에 따로 있으니 그대로 다시 보내지 않는다:
 사용자에게 보일 것만 골라 `--to-user`로 보낸다. 이 알림은 앱 안에만 뜨고 밖 푸시는 위 두 post만 보낸다.
 채팅에서는 그 보고서를 링크로 가리킨다(아래 「앱 안 참조」).
+발행 결과의 r-NNNN은 그 판의 영속 번호다. 새로 발행하거나 새 thread 보고를 쓰면 새 번호가 나온다.
+이름·thread 번호는 최신 판, r 번호는 그때의 본문과 복사한 파일을 연다. 특정 판은 `aaa library show r-NNNN`·`aaa library link r-NNNN`과
+`/#report=r-NNNN`·`aaa:report/r-NNNN`으로 가리킨다. 보고서 지우기는 같은 이름의 보존 판까지 모두 지우며 번호는 재사용하지 않는다.
 
 ## 앱 안 참조
 채팅에서 thread 질문·보고서를 가리킬 때는 `aaa context`의 「웹 주소」로 Markdown 링크를 쓴다:
@@ -1231,6 +1234,7 @@ impl Host {
                 Box::new(aaa_proto::ThreadPr { url, state: r.pr_state.clone(), review: r.pr_review.clone() })
             }),
             report_hash: r.report_hash.clone(),
+            report_id: self.thread_report_id(&r.project, &r.id, r.report_hash.as_deref()),
             report_attention: self.report_attention(r),
             acked_hash: r.acked_hash.clone(),
             next: r.next.clone(),
@@ -1289,6 +1293,23 @@ impl Host {
     }
 
     pub(crate) fn thread_show(&self, project: &str, id: &str) -> Result<ThreadView, ErrorBody> {
+        if let Some(v) = self.db.report_target(project, id).map_err(internal)? {
+            let mut view = self.thread_view(&self.load(project, &v.source)?);
+            let dir = self.project_dir(project)?;
+            let report = std::fs::read_to_string(dir.join("threads").join(format!("{id}.md"))).map_err(internal)?;
+            view.report_id = Some(v.id);
+            view.report_hash = Some(v.revision);
+            view.next = next_lines(&report);
+            view.questions = None;
+            view.report_attention = if crate::report_mark::needs_user(&report) {
+                Some(aaa_proto::ReportAttention::NeedsUser)
+            } else if crate::report_mark::marker(&report) == Some("[완료]") {
+                Some(aaa_proto::ReportAttention::Completed)
+            } else {
+                None
+            };
+            return Ok(view);
+        }
         self.load(project, id).map(|r| self.thread_view(&r))
     }
 
@@ -2365,6 +2386,21 @@ impl Host {
             std::fs::rename(&tmp, &dest).map_err(internal)?;
             crate::library::write_manifest(&dir, id, &snap).map_err(internal)?;
             let changed = !same_files || std::fs::read(crate::library::manifest_path(&dir, id)).ok() != old_manifest;
+            if rec.report_hash.as_ref() != Some(&snap.hash)
+                || changed
+                || self.thread_report_id(project, id, Some(&snap.hash)).is_none()
+            {
+                let files = self.manifest(&dir, id);
+                let meta = crate::db::LibraryReportRow {
+                    project: project.into(),
+                    name: id.into(),
+                    updated: aaa_common::util::now_ms(),
+                    from_thread: Some(id.into()),
+                    ..Default::default()
+                };
+                self.snapshot_report_version(project, id, &snap.hash, &dest, &files, Some(&snap.report.0), &meta)?;
+            }
+
             if changed || old_manifest.is_none() {
                 // 보고서 화면 「작업 보고」(plan §8.256)
                 self.reports_bump();

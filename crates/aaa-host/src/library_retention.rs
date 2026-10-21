@@ -53,10 +53,13 @@ impl Host {
         }
         // --project로 후보를 제한해도 상한은 host 전체 합계다.
         let mut reports = self.library_reports(None, false)?;
-        reports.retain(|r| !r.live);
+        reports.retain(|r| !r.live || r.history_size > 0);
+        for r in &mut reports {
+            r.size = if r.live { r.history_size } else { r.size.saturating_add(r.history_size) };
+        }
         reports.sort_by(|a, b| (a.updated_at_ms, &a.project, &a.name).cmp(&(b.updated_at_ms, &b.project, &b.name)));
         let size = reports.iter().map(|r| r.size).sum();
-        let protected_size = reports.iter().filter(|r| self.protected_copy(r)).map(|r| r.size).sum();
+        let protected_size = reports.iter().filter(|r| r.live || self.protected_copy(r)).map(|r| r.size).sum();
         let mut plan = LibraryPrunePlan {
             size,
             remaining_size: size,
@@ -71,7 +74,7 @@ impl Host {
         let cutoff = now.saturating_sub(days.saturating_mul(DAY_MS));
         let mut capacity = Vec::new();
         for r in reports {
-            if self.protected_copy(&r) || project.is_some_and(|p| p != r.project) {
+            if r.live || self.protected_copy(&r) || project.is_some_and(|p| p != r.project) {
                 continue;
             }
             if days > 0 && r.updated_at_ms < cutoff {
@@ -150,13 +153,20 @@ impl Host {
         let _lock = self.library_ops.lock().unwrap();
         let reports = self.library_reports(None, false)?;
         Ok(FrontResponse::LibraryUsage {
-            size: reports.iter().filter(|r| !r.live).map(|r| r.size).sum(),
+            size: reports
+                .iter()
+                .map(|r| if r.live { r.history_size } else { r.size.saturating_add(r.history_size) })
+                .sum(),
             reports: reports.len() as u32,
             live: reports.iter().filter(|r| r.live).count() as u32,
             problems: reports.iter().filter(|r| r.problem.is_some()).count() as u32,
             max_size: self.cfg.projects.library_max_mb.saturating_mul(1024 * 1024),
             max_days: self.cfg.projects.library_max_days,
-            protected_size: reports.iter().filter(|r| !r.live && self.protected_copy(r)).map(|r| r.size).sum(),
+            protected_size: reports
+                .iter()
+                .filter(|r| r.live || self.protected_copy(r))
+                .map(|r| if r.live { r.history_size } else { r.size.saturating_add(r.history_size) })
+                .sum(),
         })
     }
 
@@ -190,6 +200,17 @@ impl Host {
         actor: &str,
         action: &str,
     ) -> Result<(), ErrorBody> {
+        let versions = self.report_version_names(project, name);
+        for id in versions {
+            self.remove_report_copy(project, &id, true)?;
+            self.db.report_deleted(project, &id).map_err(crate::orch::internal)?;
+        }
+        self.remove_report_copy(project, name, with_report)?;
+        self.db.audit(actor, action, &format!("{project}/{name}"));
+        Ok(())
+    }
+
+    fn remove_report_copy(&self, project: &str, name: &str, with_report: bool) -> Result<(), ErrorBody> {
         let dir = self.project_dir(project)?;
         let dest = dir.join("library").join(name);
         // 먼저 링크를 끝낸다. 파일 삭제 실패로 반쯤 남아도 공유 링크로 읽지 못한다.
@@ -203,10 +224,9 @@ impl Host {
             std::fs::remove_file(manifest).map_err(|_| err(ErrorCode::Unavailable, "보고서 목록 삭제 실패"))?;
         }
         let report = dir.join("threads").join(format!("{name}.md"));
-        if with_report && name.starts_with("t-") && report.exists() {
+        if with_report && (name.starts_with("t-") || crate::report_ids::number(name).is_some()) && report.exists() {
             std::fs::remove_file(report).map_err(|_| err(ErrorCode::Unavailable, "보고 사본 삭제 실패"))?;
         }
-        self.db.audit(actor, action, &format!("{project}/{name}"));
         Ok(())
     }
 

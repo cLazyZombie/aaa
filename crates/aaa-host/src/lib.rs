@@ -64,6 +64,7 @@ mod prompt_box;
 mod push;
 mod quota;
 mod quota_rpc;
+mod report_ids;
 mod report_mark;
 mod resource;
 mod restore;
@@ -769,6 +770,7 @@ impl Host {
         });
         // 이 기록 전에 등록한 Codex 계정의 메일·plan(관리 GUI W5a, 사용자 답 3A)
         host.account_meta_backfill();
+        host.backfill_report_ids().map_err(|e| anyhow::anyhow!(e.message))?;
         Ok(host)
     }
 

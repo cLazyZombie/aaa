@@ -913,9 +913,16 @@ mod tests {
         publish(8);
         assert_eq!(
             h.db.post_list("demo").unwrap().iter().filter(|p| p.input.topic == "report").count(),
-            9,
-            "24시간 중복 거부 유지"
+            10,
+            "재발행은 새 r 판의 알림이다"
         );
+        let mut same = h.db.post_list("demo").unwrap().into_iter().find(|p| p.input.topic == "report").unwrap().input;
+        same.post_id = "f".repeat(32);
+        assert!(
+            matches!(h.library_report_post("demo",same,"local:cli").unwrap(),PostResult::Refused{reason,..} if reason.contains("24시간")),
+            "같은 r 판 post의 새 전송 ID는 중복 거부한다"
+        );
+        assert_eq!(h.db.post_list("demo").unwrap().iter().filter(|p| p.input.topic == "report").count(), 10);
     }
 
     #[tokio::test]
