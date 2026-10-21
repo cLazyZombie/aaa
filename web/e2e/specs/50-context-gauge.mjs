@@ -2,7 +2,8 @@
 // 「타이핑시에는 보이지 않게」). 가짜 Claude가 대화 기록에 실제 Claude 2.1.304 꼴의 usage 줄·정리 줄을 적고, agent가 그 기록을
 // 읽어 host 상태로 보낸 값을 웹이 보인다: 38% → 230k(창 넘음) → 84k(창 모름) → 86%(위험). 글을 치는 동안은 자리를 둔 채 숨고
 // (입력칸 폭이 그대로), 80% 이상은 치는 중에도 보인다. 펼침의 「/compact 정리」는 쉴 때만 켜지고 pane에 /compact를 보내며,
-// 입력칸은 전달로 풀리고(명령은 사람 글로 기록되지 않는다), 정리 중 표지 → 정리 뒤 값 14%와 「대화 정리됨 · 164k → 28k」로 이어진다. 휴대폰(iPhone Safari)도 같다.
+// 입력칸은 전달로 풀리고(명령은 사람 글로 기록되지 않는다), 정리 중 표지 → 정리 뒤 값 14%와 「대화 정리됨 · 164k → 28k」로 이어진다.
+// 사용자 10-21(t-0570): 휴대폰(700px 이하)은 입력칸이 비거나 높은 값이어도 게이지를 숨긴다. 패드·데스크톱은 기존 동작을 유지한다.
 // 혼자 돌리기: node web/e2e/web.e2e.mjs --spec 50-context-gauge(새 실험실).
 import assert from "node:assert/strict";
 import fs from "node:fs";
@@ -104,6 +105,24 @@ async function typingHides(p, label) {
   return typing;
 }
 
+async function phoneHidden(p, label) {
+  assert.equal(await p.getByTestId("context-gauge").isVisible(), false, `${label}: 휴대폰 게이지 숨김`);
+  assert.equal((await gauge(p)).gaugeWidth, 0, `${label}: 입력칸 옆 자리를 차지하지 않음`);
+  assert.equal(await p.getByRole("button", { name: /^컨텍스트 .*사용/ }).count(), 0, `${label}: 접근성 트리에서도 숨김`);
+}
+
+/** 실험실 공유 테마를 실제 명령 팔레트로 전환한다. */
+async function theme(p, value) {
+  if (await p.evaluate(() => document.documentElement.dataset.theme) !== value) {
+    await p.keyboard.press("ControlOrMeta+Shift+K");
+    const palette = p.getByTestId("command-palette");
+    await palette.locator('input[type="search"]').fill(">테마");
+    await palette.getByRole("option", { name: "테마 전환" }).click();
+    await palette.waitFor({ state: "detached" });
+  }
+  await domIs(p, `${value} 테마`, (t) => document.documentElement.dataset.theme === t, value);
+}
+
 export default async function ({ page }) {
   await step("준비: 가짜 Claude pane과 첫 응답(76k / 200k)", async () => {
     fs.mkdirSync(directory, { recursive: true });
@@ -189,21 +208,58 @@ export default async function ({ page }) {
     await shot(page, "50-after-desktop");
   });
 
-  await step("휴대폰(iPhone Safari): 같은 값, 치는 동안 숨고 비면 다시 보인다, 펼침", async () => {
+  await step("휴대폰: 빈 입력칸·focus·치는 중·높은 값 모두 숨김, 밝음·어두움 캡처와 700px 경계", async () => {
     const wk = await webkit.launch();
     try {
       const { page: p } = await pairDevice(wk, aaa("web", "pair").code, "iphone");
       await openChat(p);
       await shows(p, "14%");
-      await shot(p, "50-empty-iphone");
-      await typingHides(p, "iPhone");
-      await shot(p, "50-typing-iphone");
+      await box(p).blur();
+      await phoneHidden(p, "빈 입력칸");
+      await box(p).focus();
+      await phoneHidden(p, "focus만 있음");
+      await box(p).fill("오류 처리를 이어서");
+      await phoneHidden(p, "치는 중");
       await box(p).fill("");
-      await domIs(p, "iPhone 다시 보임", () => document.querySelector('[data-testid="context-gauge"]')?.dataset.hidden === undefined);
+      for (const [used, model, text] of [[172_000, "claude-haiku-4-5", "86%"], [230_000, "claude-haiku-4-5", "230k"], [84_000, null, "84k"], [100_000, "claude-haiku-4-5", "50%"]]) {
+        answer(used, model);
+        await shows(p, text);
+        await phoneHidden(p, text);
+      }
+      await shows(page, "50%");
+      for (const value of ["dark", "light"]) {
+        await theme(page, value);
+        await domIs(p, `iPhone ${value} 테마`, (t) => document.documentElement.dataset.theme === t, value);
+        await phoneHidden(p, value);
+        assert.equal(await page.getByTestId("context-gauge").isVisible(), true, "데스크톱은 보임");
+        await shot(page, `50-desktop-${value}`);
+        await shot(p, `50-iphone-${value}`);
+      }
+      for (const width of [320, 700, 701, 768]) {
+        await p.setViewportSize({ width, height: 844 });
+        if (width <= 700) await phoneHidden(p, `${width}px`);
+        else assert.equal(await p.getByTestId("context-gauge").isVisible(), true, `${width}px는 기존 표시 유지`);
+      }
+      await p.context().close();
+      await theme(page, "dark");
+    } finally {
+      await wk.close();
+    }
+  });
+
+  await step("패드(iPad Safari): 빈 입력칸 표시·치는 중 숨김·펼침 유지", async () => {
+    const wk = await webkit.launch();
+    try {
+      const { page: p } = await pairDevice(wk, aaa("web", "pair").code, "ipad");
+      await openChat(p);
+      await shows(p, "50%");
+      assert.equal(await p.getByTestId("context-gauge").isVisible(), true);
+      await typingHides(p, "iPad");
+      await box(p).fill("");
       await p.getByTestId("context-gauge").getByRole("button").click();
       await p.getByTestId("context-pop").waitFor();
-      assert.match(await p.getByTestId("context-pop").textContent(), /28k \/ 200k 사용/);
-      await shot(p, "50-pop-iphone");
+      assert.match(await p.getByTestId("context-pop").textContent(), /100k \/ 200k 사용/);
+      await shot(p, "50-pop-ipad");
       await p.context().close();
     } finally {
       await wk.close();

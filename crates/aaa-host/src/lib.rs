@@ -3230,7 +3230,7 @@ pub(crate) fn public_origin_in(db: &db::Db) -> Option<String> {
     Some(tailscale::https_url(&dns, port).to_ascii_lowercase())
 }
 
-/// `aaa host` 실행: 설정 폴더를 읽어 host를 띄운다. 읽지 못하면 끝내지 않고 안전 모드(plan §8.368)로 웹만 열며, 되돌리거나
+/// `aaa host` 실행: 설정 폴더를 읽어 host를 띄운다. 읽지 못하면 끝내지 않고 안전 모드(plan §8.369)로 웹만 열며, 되돌리거나
 /// 다시 읽어 설정이 맞으면 정상 host로 이어 간다. OS 감독자에는 실제 listener 준비 뒤에만(안전 모드 웹이든 정상 host든 한 번) 알린다.
 /// 서비스 등록 자체는 ready가 아니다.
 pub async fn run(
