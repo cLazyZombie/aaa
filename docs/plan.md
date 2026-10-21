@@ -7200,3 +7200,4 @@ FRONT_API 1.96는 기본 검수 표지와 답 기록의 r 참조를 더한다. E
 - **계약·검증.** FRONT_API 1.104은 선택 `AgentStatus.progress_since_ms`만 추가한다. Agent link 1.11·기존 진행 상태 타입과 E2E 28을 유지한다. 실제 host 수집·수신 중 새 지시·재시작·harness 사건·웹 규칙 유닛과 Chromium/WebKit Reader E2E로 확인한다. 절차는 testing.md에 둔다. 병합·push는 착지 창을 받은 뒤에 한다.
 
 - **착지 통합.** 기준 origin/main `8ddca9dc`의 마지막 plan §8.421·FRONT_API 1.103·AGENT_LINK 1.11·E2E 83을 직접 확인했다. 이 변경은 빈 §8.422·FRONT_API 1.104를 쓰고 Agent link와 기존 E2E 28·82 번호는 유지한다.
+- **착지 검증.** 통합본 전체 ci-local이 217초에 모든 단계를 통과했다(웹 유닛 471개·Rust 전체·deps·웹 E2E 85개 파일·공개 검사). E2E 82 저장 단추 비활성 실패는 재발하지 않았고 전체 20.5초에 통과했다. 예전 실패 원문·추가 진단은 보존하며 원인이 밝혀졌다고 해석하지 않는다. 배포는 coordinator가 맡는다.
