@@ -210,6 +210,76 @@ async fn appended_library_log_copies_only_the_hashed_prefix() {
 }
 
 #[tokio::test]
+async fn forbidden_library_paths_do_not_freeze_the_report_or_create_files() {
+    for path in ["lab/project/.claude/commands/deploy.md", "capture/.reports/view.json", "../outside.txt"] {
+        let lab = Lab::with_file(0, b"old", path, b"old");
+        lab.h.collect("p", "t-0001", false).await.unwrap();
+        let rec = lab.h.load("p", "t-0001").unwrap();
+        assert_eq!(rec.copy.as_deref(), Some("partial"));
+        assert_eq!(lab.h.verified_report(&rec).as_deref(), Some("[진행 중] 시험 중\n"));
+        let dir = lab.h.project_dir("p").unwrap();
+        let revision = lab.h.thread_report_id("p", "t-0001", rec.report_hash.as_deref()).unwrap();
+        assert!(lab.h.manifest(&dir, "t-0001").is_empty());
+        assert!(lab.h.manifest(&dir, &revision).is_empty());
+        assert_eq!(std::fs::read_dir(dir.join("library/t-0001")).unwrap().count(), 0);
+        assert!(!dir.join("library/outside.txt").exists());
+        assert!(rec.copy_notes.iter().any(|n| n.contains("허용하지 않는 library 상대 경로")));
+    }
+}
+
+#[tokio::test]
+async fn report_version_failure_keeps_the_new_body_stage_and_ack_until_history_recovers() {
+    let lab = Lab::with_report(0, b"old", "good.txt", b"old", "[병합 준비됨] 최신 보고\n");
+    let dir = lab.h.project_dir("p").unwrap();
+    let blocked = dir.join("library/r-0001");
+    std::fs::write(&blocked, "판 저장 실패를 만드는 일반 파일").unwrap();
+    let error = lab.h.collect("p", "t-0001", false).await.unwrap_err();
+    assert!(error.message.contains("보고 판 보존 실패"));
+    let rec = lab.h.load("p", "t-0001").unwrap();
+    assert_eq!(lab.h.verified_report(&rec).as_deref(), Some("[병합 준비됨] 최신 보고\n"));
+    assert_eq!(rec.report_stage, crate::report_mark::stage("[병합 준비됨] 최신 보고\n"));
+    assert_eq!(rec.copy.as_deref(), Some("failed"));
+    assert_eq!(std::fs::read(dir.join("library/t-0001/good.txt")).unwrap(), b"old");
+    assert!(lab.h.thread_report_id("p", "t-0001", rec.report_hash.as_deref()).is_none());
+    lab.h.thread_ack("p", "t-0001", "test").unwrap();
+    let ack = lab.h.load("p", "t-0001").unwrap().acked_hash;
+    std::fs::remove_file(blocked).unwrap();
+    lab.h.retry_report_copies("p", u64::MAX);
+    tokio::time::timeout(std::time::Duration::from_secs(10), async {
+        while lab.h.report_refresh.lock().unwrap().contains_key("p/t-0001") {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .unwrap();
+    let recovered = lab.h.load("p", "t-0001").unwrap();
+    assert_eq!(recovered.report_hash, rec.report_hash);
+    assert_eq!(recovered.acked_hash, ack);
+    assert_eq!(recovered.copy.as_deref(), Some("complete"));
+    let revision = lab.h.thread_report_id("p", "t-0001", rec.report_hash.as_deref()).unwrap();
+    assert_eq!(std::fs::read(dir.join("library").join(revision).join("good.txt")).unwrap(), b"old");
+}
+
+#[tokio::test]
+async fn report_version_recovery_notifies_history_without_repeating_sandbox_warnings() {
+    let html = b"<script>fetch('/api/v1/me')</script>";
+    let lab = Lab::with_file(0, html, "index.html", html);
+    let dir = lab.h.project_dir("p").unwrap();
+    let blocked = dir.join("library/r-0001");
+    std::fs::write(&blocked, b"blocked").unwrap();
+    lab.h.collect("p", "t-0001", false).await.unwrap_err();
+    let warnings = || {
+        lab.h.inbox("p", true, true).unwrap().items.iter().filter(|i| i.item_kind == "report-sandbox-warning").count()
+    };
+    assert_eq!(warnings(), 1);
+    let updates = lab.h.reports_changed.subscribe();
+    std::fs::remove_file(blocked).unwrap();
+    lab.h.collect("p", "t-0001", false).await.unwrap();
+    assert!(updates.has_changed().unwrap(), "본문·첨부가 같아도 복구된 판을 목록에 알린다");
+    assert_eq!(warnings(), 1, "같은 본문·첨부의 sandbox 경고는 반복하지 않는다");
+}
+
+#[tokio::test]
 async fn rewritten_library_log_keeps_the_previous_verified_copy() {
     let lab = Lab::new(0, b"bad appended");
     let dir = lab.h.project_dir("p").unwrap().join("library/t-0001");

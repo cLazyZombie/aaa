@@ -222,6 +222,56 @@ fn legacy_names_and_latest_thread_copy_get_ids_once_at_startup() {
 }
 
 #[test]
+fn snapshot_keeps_path_and_size_checks_and_does_not_limit_directory_depth() {
+    let lab = Lab::new();
+    let root = lab.root.join("files");
+    let path = "one/two/three/four/five/six/seven/eight/test.txt";
+    std::fs::create_dir_all(root.join(path).parent().unwrap()).unwrap();
+    std::fs::write(root.join(path), "current").unwrap();
+    let file =
+        LibraryFile { path: path.into(), size: 7, on_agent: false, mime: String::new(), kind: Default::default() };
+    let meta = LibraryReportRow { project: "demo".into(), name: "thread".into(), ..Default::default() };
+    for (path, size, reason) in [
+        ("lab/.claude/commands/deploy.md", 7, "보존할 보고 파일 경로가 안전하지 않다"),
+        ("capture/.reports/view.json", 7, "보존할 보고 파일 경로가 안전하지 않다"),
+        (path, 3, "보고 판 보존 중 파일 크기가 바뀌었다"),
+    ] {
+        let files = [LibraryFile { path: path.into(), size, ..file.clone() }];
+        let error =
+            lab.h.snapshot_report_version("demo", "thread", "old", &root, &files, Some(b"body"), &meta).unwrap_err();
+        assert_eq!(error.message, reason);
+        assert!(lab.h.report_id("demo", "thread").is_none());
+    }
+    let id = lab.h.snapshot_report_version("demo", "thread", "new", &root, &[file], Some(b"body"), &meta).unwrap();
+    assert_eq!(
+        std::fs::read(lab.h.project_dir("demo").unwrap().join("library").join(id).join(path)).unwrap(),
+        b"current"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn snapshot_rejects_symlink_components_separately_from_hidden_paths() {
+    let lab = Lab::new();
+    let root = lab.root.join("files");
+    std::fs::create_dir_all(root.join("plain")).unwrap();
+    std::fs::write(root.join("plain/test.txt"), b"data").unwrap();
+    std::os::unix::fs::symlink(root.join("plain"), root.join("linked")).unwrap();
+    let file = LibraryFile {
+        path: "linked/test.txt".into(),
+        size: 4,
+        on_agent: false,
+        mime: String::new(),
+        kind: Default::default(),
+    };
+    let meta = LibraryReportRow { project: "demo".into(), name: "thread".into(), ..Default::default() };
+    let error =
+        lab.h.snapshot_report_version("demo", "thread", "one", &root, &[file], Some(b"body"), &meta).unwrap_err();
+    assert!(error.message.contains("symlink"));
+    assert!(lab.h.report_id("demo", "thread").is_none());
+}
+
+#[test]
 fn failed_snapshot_reservation_is_hidden_and_never_reissued() {
     let lab = Lab::new();
     let root = lab.root.join("broken");
