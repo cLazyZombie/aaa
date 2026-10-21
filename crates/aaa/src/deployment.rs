@@ -225,6 +225,12 @@ mod tests {
                         health: None,
                         clock_skew_ms: None,
                         problems: vec![],
+                        arch: None,
+                        software: None,
+                        sha256: None,
+                        software_differs: false,
+                        features: vec![],
+                        selfcheck: None,
                     };
                     tx.json(&FrontMsg::Event(FrontEvent::State { machines: vec![m], panes: vec![] })).await.unwrap();
                     let FrontMsg::Req { id, body } = rx.control::<FrontMsg>().await.unwrap() else {

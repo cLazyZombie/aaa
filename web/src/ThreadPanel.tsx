@@ -1,3 +1,4 @@
+import { ThreadStageBadge } from "./ThreadStageBadge";
 import { lazy, Suspense, useEffect, useRef, useState } from "react";
 import type { DeviceRole, DiffView, LibraryView, ThreadView } from "./gen/proto";
 import { ApiError, call } from "./api";
@@ -150,7 +151,7 @@ export function ThreadPanel({
       <div className="thread-body">
         <div className="thread-col">
           <div className="t-hero">
-            <h1>{t.title}</h1>
+            <h1><ThreadStageBadge stage={t.stage} />{t.title}</h1>
             <div className="t-meta">
               <span className={`chip meta-chip ${t.group}`}>{statusLabel}</span>
               <span className="mono">
@@ -163,6 +164,12 @@ export function ThreadPanel({
               {t.agent?.percent != null && <span>{t.agent.percent}%</span>}
             </div>
           </div>
+          {t.automation && <section className="card" data-testid="thread-automation-origin">
+            <h2>자동화 thread</h2>
+            <p>자동화: {t.automation_title ?? t.automation} ({t.automation})</p>
+            <p>무엇이 띄웠는지: {t.automation_trigger ?? "기동 사건 기록 없음(이전 판에서 시작)"}</p>
+            <p className="muted">프로젝트 실행 한도와 예약 자리에서 제외</p>
+          </section>}
           <section className="card report" data-testid="report">
             <h2>보고 {t.report_id && <a href={`#report=${encodeURIComponent(`${t.project}/${t.report_id}`)}`}><code>{t.report_id}</code></a>}</h2>
             {lib?.report ? (

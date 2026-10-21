@@ -1,0 +1,16 @@
+/* 단계는 출처 막대와 따로, 줄 앞의 글 표지로 보인다. 예약 보라·작업 파랑과 구별한다. */
+.thread-stage {
+  display: inline-block;
+  flex: 0 0 auto;
+  white-space: nowrap;
+  padding: 1px 5px;
+  margin-inline-end: var(--space-1);
+  border-radius: var(--radius-sm);
+  font-size: var(--fs-xs);
+  font-weight: 600;
+  line-height: 1.5;
+  vertical-align: middle;
+}
+.thread-stage.is-merge_ready { color: var(--status-done); background: var(--status-done-tint); }
+.thread-stage.is-landing { color: #f0a15a; background: color-mix(in srgb, #f0a15a 14%, transparent); }
+[data-theme="light"] .thread-stage.is-landing { color: #974600; background: color-mix(in srgb, #974600 12%, transparent); }

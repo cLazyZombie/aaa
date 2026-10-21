@@ -33,6 +33,92 @@ impl Drop for Lab {
 }
 
 #[test]
+fn display_ids_migrate_once_and_concurrent_reads_keep_the_same_numbers() {
+    let lab = Lab::new();
+    let old_id = "01AAAAAAAAAAAAAAAAAAAAAAAA";
+    let source = format!("## Backlog\r\n- [ ] 기존 <!-- aaa-task:{old_id} -->\r\n  메모\r\n- [ ] 새 번호\r\n");
+    lab.write(&source);
+    let gate = std::sync::Barrier::new(8);
+    let boards = std::thread::scope(|scope| {
+        let handles: Vec<_> = (0..8)
+            .map(|_| {
+                scope.spawn(|| {
+                    gate.wait();
+                    lab.h.task_board("demo").unwrap()
+                })
+            })
+            .collect();
+        handles.into_iter().map(|h| h.join().unwrap()).collect::<Vec<_>>()
+    });
+    let first = &boards[0].tasks;
+    assert_eq!(first[0].id.as_deref(), Some(old_id));
+    assert_eq!(first[0].short_id.as_deref(), Some("d-0001"));
+    assert_eq!(first[1].short_id.as_deref(), Some("d-0002"));
+    for b in &boards {
+        assert_eq!(&b.tasks, first);
+    }
+    let migrated = lab.text();
+    assert_eq!(migrated.matches("\r\n").count(), source.matches("\r\n").count());
+    assert!(migrated.starts_with(&source[..source.find("- [ ] 새 번호").unwrap()]));
+    assert_eq!(lab.h.task_board("demo").unwrap().text, migrated);
+
+    // 순번은 정리된 로그나 활성 task 개수에서 다시 계산하지 않는다.
+    lab.write("## Backlog\n- [ ] 다음 번호\n");
+    assert_eq!(lab.h.task_board("demo").unwrap().tasks[0].short_id.as_deref(), Some("d-0003"));
+    lab.h.db.task_log_prune("demo", u64::MAX / 2).unwrap();
+    lab.write(&migrated);
+    assert_eq!(lab.h.task_board("demo").unwrap().tasks, *first);
+    let reopened = Host::open(lab.h.cfg.clone(), lab.root.join("host")).unwrap();
+    assert_eq!(reopened.task_board("demo").unwrap().tasks, *first);
+    assert_eq!(reopened.task_selector("demo", "d-0001").unwrap(), old_id);
+    assert_eq!(reopened.task_selector("demo", "d-9999").unwrap(), "d-9999");
+}
+
+#[tokio::test]
+async fn display_ids_keep_duplicate_title_raw_history_bound_to_each_ulid() {
+    let lab = Lab::new();
+    let before = lab.h.task_board("demo").unwrap();
+    let FrontResponse::TaskEdited { board, conflict: None, .. } = lab
+        .h
+        .task_edit(
+            "demo",
+            vec![TaskOp::RawSave {
+                expected_sha256: before.sha256,
+                text: "## Backlog\n- [ ] 같은 제목\n  첫 메모\n- [ ] 같은 제목\n  다른 메모\n".into(),
+            }],
+            None,
+            "device:user",
+        )
+        .await
+        .unwrap()
+    else {
+        panic!("원문 저장 실패")
+    };
+    assert_ne!(board.tasks[0].id, board.tasks[1].id);
+    assert_ne!(board.tasks[0].short_id, board.tasks[1].short_id);
+    let second = &board.tasks[1];
+    let FrontResponse::TaskLog { entries, .. } =
+        lab.h.task_log("demo", None, None, None, second.short_id.as_deref()).unwrap()
+    else {
+        panic!("기록 응답")
+    };
+    let raw = entries.iter().find(|e| e.action == TaskAction::Raw).unwrap();
+    assert_eq!(raw.after.as_deref(), Some(board.text.as_str()));
+    lab.h
+        .task_edit(
+            "demo",
+            vec![TaskOp::Delete { at: TaskAnchor { title: second.short_id.clone().unwrap(), ..Default::default() } }],
+            None,
+            "device:user",
+        )
+        .await
+        .unwrap();
+    let left = lab.h.task_board("demo").unwrap();
+    assert_eq!(left.tasks.len(), 1);
+    assert_eq!(left.tasks[0].id, board.tasks[0].id);
+}
+
+#[test]
 fn identity_preserves_other_bytes_and_survives_edits() {
     let source = "# 메모\r\n\r\n## Backlog\r\n- [ ] 일 (claude@mac-a) [작업 폴더]\r\n  설명 ![그림](uploads/example.png)\r\n\r\n끝";
     let got = identify(source).unwrap();
@@ -287,6 +373,78 @@ async fn one_reservation(lab: &Lab) -> TaskReservation {
 }
 
 #[tokio::test]
+async fn slot_released_during_queue_scan_does_not_bypass_the_moved_front() {
+    // t-0584의 순회 울타리는 자동화 thread가 열린 상태에서도 사용자 자리만 세며 유지한다.
+    for automatic in [false, true] {
+        let lab = Lab::new();
+        if automatic {
+            lab.h
+                .db
+                .thread_insert_next("demo", |id| {
+                    let mut r = Lab::rec();
+                    r.id = id.into();
+                    r.status = ThreadStatus::Open;
+                    r.automation = Some("check".into());
+                    serde_json::to_string(&r).unwrap()
+                })
+                .unwrap();
+        }
+        lab.write("## Backlog\n- [ ] 먼저 만든 예약 (claude@mac-offline) [작업 폴더]\n  독립 설명과 완료 범위\n- [ ] 맨 앞으로 옮길 예약 (claude@mac-offline) [작업 폴더]\n  독립 설명과 완료 범위\n");
+        for title in ["먼저 만든 예약", "맨 앞으로 옮길 예약"] {
+            let t = lab.h.task_board("demo").unwrap().tasks.into_iter().find(|t| t.title == title).unwrap();
+            lab.h
+                .task_queue(
+                    "demo",
+                    QueueOp::Reserve {
+                        task: t.title,
+                        block: t.block_sha256,
+                        profile: "claude".into(),
+                        profile_revision: model_selection(&lab.h, "claude").unwrap().2,
+                    },
+                    "device:user",
+                )
+                .await
+                .unwrap();
+        }
+        let moved = lab.h.db.queue_list("demo").unwrap()[1].task_id.clone();
+        lab.h.task_queue("demo", QueueOp::Move { task_id: moved.clone(), position: 1 }, "device:user").await.unwrap();
+        let mut releasing = String::new();
+        for _ in 0..lab.h.settings("demo").max_parallel_threads {
+            releasing = lab
+                .h
+                .db
+                .thread_insert_next("demo", |id| {
+                    let mut r = Lab::rec();
+                    r.id = id.into();
+                    r.status = ThreadStatus::Open;
+                    serde_json::to_string(&r).unwrap()
+                })
+                .unwrap();
+        }
+        lab.h
+            .db
+            .queue_change("demo", "host", |rows| {
+                for r in rows {
+                    r.reason = "자리 판정 전".into();
+                }
+                Ok(())
+            })
+            .unwrap();
+        lab.h.db.test_queue_release_on_wait("demo", &moved, &releasing);
+        // 앞 예약은 자리가 없다고 판단했다. 바로 그 기록 경계에서 resolve가 자리를 돌려준다.
+        // 같은 순회의 뒤 예약만 머신 선택/기동으로 넘어가면 앞 차례를 추월한 것이다.
+        lab.h.queue_pass("demo").await.unwrap();
+        assert_eq!(lab.h.load("demo", &releasing).unwrap().status, ThreadStatus::Resolved);
+        let rows = lab.h.db.queue_list("demo").unwrap();
+        assert_eq!(rows[0].task_id, moved);
+        assert!(rows.iter().all(|r| r.state == S::Queued && r.reason == "자리 대기"), "{rows:#?}");
+        // 다음 순회는 새 자리를 앞에서부터 다시 판정한다. 끊긴 머신의 예약은 계속 건너뛸 수 있다.
+        lab.h.queue_pass("demo").await.unwrap();
+        assert!(lab.h.db.queue_list("demo").unwrap().iter().all(|r| r.reason.contains("머신 연결")));
+    }
+}
+
+#[tokio::test]
 async fn claim_and_cancel_race_has_one_persistent_result() {
     let lab = Lab::new();
     let row = one_reservation(&lab).await;
@@ -382,6 +540,7 @@ async fn lost_launch_reply_reconciles_only_exact_machine_name_and_cwd() {
             software: "test".into(),
             features: vec![],
             dev_mode: false,
+            sha256: None,
             selfcheck: None,
             sessions: vec![info.clone()],
             harness: vec![],
@@ -731,7 +890,7 @@ async fn open_restart_claim_keeps_its_original_slot_across_pre_send_interruption
         .unwrap();
     lab.h.update_rec("demo", &id, |r| r.status = ThreadStatus::Open).unwrap();
     assert_eq!(lab.h.open_worker_threads("demo"), 1);
-    lab.h.db.thread_restart_claim("demo", &id, 1).unwrap();
+    lab.h.db.thread_restart_claim("demo", &id, 1, None).unwrap();
     let claimed = lab.h.load("demo", &id).unwrap();
     assert!(claimed.launch_existing_slot);
     assert!(!claimed.launch_sent);
@@ -740,4 +899,211 @@ async fn open_restart_claim_keeps_its_original_slot_across_pre_send_interruption
     lab.h.recover_launches("demo");
     assert_eq!(lab.h.load("demo", &id).unwrap().status, ThreadStatus::Open);
     assert_eq!(lab.h.open_worker_threads("demo"), 1);
+}
+
+/// 자동화 thread와 사용자 thread가 동시에 선점해도 사용자 자리와 규칙별 자리를 따로 지킨다.
+#[test]
+fn automation_threads_have_atomic_separate_slots_and_restart_limits() {
+    let lab = Lab::new();
+    let policy = crate::db::StartAdmission {
+        machine: "m".into(),
+        holds: vec![],
+        rule: "check".into(),
+        max_running: None,
+        max_auto_threads: 0,
+    };
+    let insert = |automatic: bool| {
+        lab.h.db.thread_insert_admitted("demo", None, automatic.then_some(&policy), Some(1), None, |id| {
+            let mut r = Lab::rec();
+            r.id = id.into();
+            r.automation = automatic.then(|| "check".into());
+            // started_by만 닮은 사용자 thread를 자동화로 오판하지 않는다.
+            r.started_by = Some("routine:check".into());
+            serde_json::to_string(&r).unwrap()
+        })
+    };
+    let gate = std::sync::Barrier::new(12);
+    let admitted = std::thread::scope(|scope| {
+        let handles: Vec<_> = (0..12)
+            .map(|n| {
+                let gate = &gate;
+                let insert = &insert;
+                scope.spawn(move || {
+                    gate.wait();
+                    (n % 2 == 0, insert(n % 2 == 0))
+                })
+            })
+            .collect();
+        handles.into_iter().map(|h| h.join().unwrap()).collect::<Vec<_>>()
+    });
+    let users: Vec<_> = admitted.iter().filter(|(auto, result)| !auto && result.is_ok()).collect();
+    let autos: Vec<_> = admitted.iter().filter(|(auto, result)| *auto && result.is_ok()).collect();
+    assert_eq!(users.len(), 1);
+    assert_eq!(autos.len(), 1);
+    assert_eq!(lab.h.open_worker_threads("demo"), 1);
+    let user = users[0].1.as_ref().unwrap().0.clone();
+    let auto = autos[0].1.as_ref().unwrap().0.clone();
+    // 보고/대기 상태나 resolve 정리 중도 각자의 자리를 지킨다.
+    lab.h
+        .update_rec("demo", &auto, |r| {
+            r.status = ThreadStatus::Resolved;
+            r.resolve_pending = Some(Default::default());
+        })
+        .unwrap();
+    assert!(insert(true).is_err());
+    assert_eq!(lab.h.open_worker_threads("demo"), 1);
+    lab.h
+        .update_rec("demo", &auto, |r| {
+            r.resolve_pending = None;
+            r.status = ThreadStatus::Failed;
+        })
+        .unwrap();
+    lab.h.db.thread_restart_claim("demo", &auto, 1, Some(&policy)).unwrap();
+    assert_eq!(lab.h.open_worker_threads("demo"), 1);
+    lab.h.update_rec("demo", &auto, |r| r.status = ThreadStatus::Failed).unwrap();
+    let next = insert(true).unwrap().0;
+    assert!(lab.h.db.thread_restart_claim("demo", &auto, 1, Some(&policy)).unwrap_err().to_string().contains("상한 1"));
+    lab.h.update_rec("demo", &next, |r| r.status = ThreadStatus::Resolved).unwrap();
+    lab.h.db.thread_restart_claim("demo", &auto, 1, Some(&policy)).unwrap();
+    lab.h.update_rec("demo", &user, |r| r.status = ThreadStatus::Resolved).unwrap();
+    assert_eq!(lab.h.open_worker_threads("demo"), 0);
+    let next_user = insert(false).unwrap().0;
+    lab.h.update_rec("demo", &user, |r| r.status = ThreadStatus::Failed).unwrap();
+    assert!(lab.h.db.thread_restart_claim("demo", &user, 1, None).is_err());
+    assert_eq!(lab.h.open_worker_threads("demo"), 1);
+    assert_ne!(next_user, user);
+}
+
+#[test]
+fn report_stages_release_only_work_capacity_and_one_landing_slot() {
+    use aaa_proto::ThreadStage::{Landing, MergeReady};
+    let lab = Lab::new();
+    let insert = |stage, automatic: bool| {
+        lab.h
+            .db
+            .thread_insert_next("demo", |id| {
+                let mut r = Lab::rec();
+                r.id = id.into();
+                r.status = ThreadStatus::Open;
+                r.report_hash = Some("verified-copy".into());
+                r.report_stage = stage;
+                r.automation = automatic.then(|| "check".into());
+                serde_json::to_string(&r).unwrap()
+            })
+            .unwrap()
+    };
+    let ready = insert(Some(MergeReady), false);
+    let landing = insert(Some(Landing), false);
+    insert(Some(Landing), true); // 자동화는 착지 한 자리를 빼앗지 않는다.
+    assert_eq!(lab.h.open_worker_threads("demo"), 0);
+    let duplicate = insert(Some(Landing), false);
+    assert_eq!(lab.h.open_worker_threads("demo"), 1, "중복 착지로 제외 자리를 늘리지 않는다");
+    lab.h.update_rec("demo", &duplicate, |r| r.status = ThreadStatus::Resolved).unwrap();
+    assert_eq!(lab.h.open_worker_threads("demo"), 0);
+    // 같은 마지막 작업 자리를 여러 요청이 선점해도 하나만 들어간다.
+    let gate = std::sync::Barrier::new(8);
+    let admitted = std::thread::scope(|scope| {
+        let jobs: Vec<_> = (0..8)
+            .map(|_| {
+                let gate = &gate;
+                let h = &lab.h;
+                scope.spawn(move || {
+                    gate.wait();
+                    h.db.thread_insert_admitted("demo", None, None, Some(1), None, |id| {
+                        let mut r = Lab::rec();
+                        r.id = id.into();
+                        serde_json::to_string(&r).unwrap()
+                    })
+                })
+            })
+            .collect();
+        jobs.into_iter().filter_map(|j| j.join().unwrap().ok()).collect::<Vec<_>>()
+    });
+    assert_eq!(admitted.len(), 1);
+    assert_eq!(lab.h.open_worker_threads("demo"), 1);
+    // 착지 실패 수리 중은 표지를 유지한다. 중간 단계 완료 뒤 작업 복귀만 다시 센다.
+    lab.h.update_rec("demo", &landing, |r| r.error = Some("착지 검증 실패 수리".into())).unwrap();
+    assert_eq!(lab.h.open_worker_threads("demo"), 1);
+    lab.h.update_rec("demo", &ready, |r| r.report_stage = None).unwrap();
+    assert_eq!(lab.h.open_worker_threads("demo"), 2);
+    let denied = lab
+        .h
+        .db
+        .thread_insert_admitted("demo", None, None, Some(1), None, |id| {
+            let mut r = Lab::rec();
+            r.id = id.into();
+            serde_json::to_string(&r).unwrap()
+        })
+        .unwrap_err();
+    assert!(denied.to_string().contains("실행 한도"));
+    assert_eq!(lab.h.load("demo", &ready).unwrap().status, ThreadStatus::Open);
+    assert_eq!(lab.h.load("demo", &landing).unwrap().status, ThreadStatus::Open);
+    // 정리 중은 직전 단계를 보존하고, 정리를 마친 기록에는 표지를 내지 않는다.
+    lab.h
+        .update_rec("demo", &landing, |r| {
+            r.status = ThreadStatus::Resolved;
+            r.resolve_pending = Some(Default::default());
+        })
+        .unwrap();
+    assert_eq!(lab.h.open_worker_threads("demo"), 2);
+    lab.h.update_rec("demo", &landing, |r| r.resolve_pending = None).unwrap();
+    assert_eq!(lab.h.thread_show("demo", &landing).unwrap().stage, None);
+    lab.h
+        .update_rec("demo", &ready, |r| {
+            r.report_stage = Some(MergeReady);
+            r.status = ThreadStatus::Starting;
+        })
+        .unwrap();
+    assert_eq!(lab.h.open_worker_threads("demo"), 2, "Starting의 옛 보고로 자리를 비우지 않는다");
+    lab.h.update_rec("demo", &ready, |r| r.status = ThreadStatus::Failed).unwrap();
+    assert!(lab.h.db.thread_restart_claim("demo", &ready, 1, None).is_err(), "실패 재시작은 새 작업 자리다");
+    lab.h
+        .update_rec("demo", &ready, |r| {
+            r.status = ThreadStatus::Resolved;
+            r.resolve_pending = Some(Default::default());
+        })
+        .unwrap();
+    assert_eq!(lab.h.open_worker_threads("demo"), 1, "병합 대기의 정리 중도 원래 제외를 보존한다");
+    lab.h.update_rec("demo", &ready, |r| r.resolve_pending = None).unwrap();
+    assert_eq!(lab.h.thread_show("demo", &ready).unwrap().stage, None);
+}
+
+#[test]
+fn old_report_stages_are_backfilled_from_verified_copies_on_open() {
+    use sha2::{Digest, Sha256};
+    let lab = Lab::new();
+    let dir = lab.h.project_dir("demo").unwrap();
+    std::fs::create_dir_all(dir.join("threads")).unwrap();
+    let mut ids = Vec::new();
+    for report in ["[병합 준비됨] 기다림", "[착지] 실패 수리", "[완료] 옛 보고", "표지 없음"] {
+        let id = lab
+            .h
+            .db
+            .thread_insert_next("demo", |id| {
+                let mut r = Lab::rec();
+                r.id = id.into();
+                r.status = ThreadStatus::Open;
+                r.report_hash = Some(hex::encode(Sha256::digest(report.as_bytes())));
+                // 새 필드가 전혀 없는 과거 JSON도 이행한다.
+                let mut value = serde_json::to_value(&r).unwrap();
+                value.as_object_mut().unwrap().remove("report_stage");
+                value.to_string()
+            })
+            .unwrap();
+        std::fs::write(dir.join("threads").join(format!("{id}.md")), report).unwrap();
+        ids.push(id);
+    }
+    assert_eq!(lab.h.open_worker_threads("demo"), 4);
+    let reopened = Host::open(lab.h.cfg.clone(), lab.h.state.clone()).unwrap();
+    assert_eq!(reopened.open_worker_threads("demo"), 2);
+    assert_eq!(reopened.thread_show("demo", &ids[0]).unwrap().stage, Some(aaa_proto::ThreadStage::MergeReady));
+    assert_eq!(reopened.thread_show("demo", &ids[1]).unwrap().stage, Some(aaa_proto::ThreadStage::Landing));
+    // 사본 유실·hash 불일치 때는 보수적으로 센다. 다른 프로젝트 폴더나 운영 원본을 읽지 않는다.
+    std::fs::write(dir.join("threads").join(format!("{}.md", ids[0])), "[착지] 바뀐 원본").unwrap();
+    std::fs::remove_file(dir.join("threads").join(format!("{}.md", ids[1]))).unwrap();
+    drop(reopened);
+    let recovered = Host::open(lab.h.cfg.clone(), lab.h.state.clone()).unwrap();
+    assert_eq!(recovered.open_worker_threads("demo"), 4);
+    assert_eq!(recovered.thread_show("demo", &ids[0]).unwrap().stage, None);
+    drop(recovered);
 }

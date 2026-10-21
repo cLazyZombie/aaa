@@ -1,7 +1,7 @@
 // 할 일 thread 연결의 창(할 일 T3, plan §8.316, t-0469 §3.4): 「바로 시작」 확인창과 「task에 잇기」 고르기. 창 틀은 TaskDialogs의
 // TaskModal(herdr-web-ui PaneRename)이다. 「바로 시작」은 host `thread_start_preview`가 `thread start --from-task`와 같은 규칙으로 채운
 // 값(owner → profile·머신, 메모를 붙인 할 일 글)을 보이고, profile 고르기는 herdr-projects popup `profile_picker`(owner의 profile을 맨
-// 위에)와 같다. 열린 thread가 `max_parallel_threads` 이상이면 한 번 더 확인받는다(host는 경고만 한다). 시작하면 host가 같은 요청 안에서
+// 위에)와 같다. 자동화·병합 대기·착지 한 자리를 뺀 열린 Worker가 `max_parallel_threads` 이상이면 시작을 막고 예약을 안내한다. 시작하면 host가 같은 요청 안에서
 // 그 task 줄 끝에 thread를 잇는다(`link_task`, 화면이 본 블록 hash로).
 import { useEffect, useMemo, useState } from "react";
 import { Search } from "lucide-react";
@@ -26,7 +26,7 @@ export function StartDialog({ task, owners, onStarted, onClose }: { task: TaskVi
   const [choice, setChoice] = useState("");
   useEffect(() => {
     let live = true;
-    call({ op: "thread_start_preview", from_task: task.title, task_block: task.block_sha256 })
+    call({ op: "thread_start_preview", from_task: task.short_id ?? task.title, task_block: task.block_sha256 })
       .then((r) => {
         if (!live || r.kind !== "thread_start_preview") return;
         const { kind: _kind, ...p } = r;
@@ -81,7 +81,7 @@ export function StartDialog({ task, owners, onStarted, onClose }: { task: TaskVi
         repo: choice === REPO_DIR ? null : repoPath,
         base: null,
         task: "",
-        from_task: preview.title,
+        from_task: task.short_id ?? task.title,
         link_task: true,
         task_block: preview.task_block,
       });
@@ -108,7 +108,7 @@ export function StartDialog({ task, owners, onStarted, onClose }: { task: TaskVi
         </header>
         <div className="modal-body task-start-body">
           <p className="task-start-title">
-            <strong>{task.title}</strong>
+            <strong>{task.short_id && <span className="task-short-id">{task.short_id}</span>}{task.title}</strong>
             <WhoChips t={task} labeled />
           </p>
           {!preview && !error && <p className="muted">시작할 값을 읽는 중</p>}

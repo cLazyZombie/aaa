@@ -20,7 +20,7 @@ pub(crate) fn split_id(text: &str) -> (&str, Option<&str>) {
 pub(crate) fn id_suffix(id: Option<&str>) -> String {
     id.map(|id| format!(" <!-- aaa-task:{id} -->")).unwrap_or_default()
 }
-fn identify(text: &str) -> Result<String, ErrorBody> {
+pub(crate) fn identify(text: &str) -> Result<String, ErrorBody> {
     let mut ids = std::collections::HashSet::new();
     let mut out = String::new();
     for line in text.split_inclusive('\n') {
@@ -142,25 +142,27 @@ impl Host {
             .map_err(internal)
     }
 
-    /// 명시 쓰기에서만 최소 ID 이행. 파일 밖 바이트·메모·줄 끝을 보존하며 이력도 남긴다.
+    /// 내용은 그대로 두고 식별 주석만 이행한다. 파일 잠금 안의 최신 판에 적용해 동시 첫 조회도 안전하다.
     pub(crate) fn task_identify(&self, project: &str) -> Result<(), ErrorBody> {
         let dir = self.project_dir(project)?;
-        let rev = file_rev::read(&dir.join("TASKS.md")).map_err(internal)?;
-        let text = identify(&rev.text)?;
-        if text == rev.text {
-            return Ok(());
-        }
-        let (conflict, _) = self.task_write(
-            project,
-            &dir,
-            &[TaskOp::RawSave { expected_sha256: rev.sha256, text }],
-            None,
-            "host",
-            &empty_ctx(),
-            false,
-        )?;
-        if conflict.is_some() {
-            return Err(err(ErrorCode::Conflict, "ID 부여 중 task가 바뀌었다. 다시 읽는다"));
+        let path = dir.join("TASKS.md");
+        let lock = self.file_locks.of(&path);
+        let _guard = lock.lock().unwrap();
+        let saved = file_rev::save(&path, |rev| {
+            let text = identify(&rev.text)?;
+            if text == rev.text { Ok(file_rev::Edit::Keep(())) } else { Ok(file_rev::Edit::Write(text, ())) }
+        })
+        .map_err(|e| match e {
+            file_rev::SaveError::Edit(e) => e,
+            file_rev::SaveError::Io(e) => internal(e),
+        })?;
+        let mut tasks = tasks::parse(saved.after.as_ref().unwrap_or(&saved.before).text.as_str());
+        self.fill_task_ids(project, &mut tasks)?;
+        if let Some(after) = saved.after {
+            self.task_identity_seen(project, &saved.before.sha256, &after);
+            self.db.audit("host", "task_identity_migrate", project);
+            let _ = self.task_events.send((project.to_string(), after.sha256));
+            self.tick_wake.notify_one();
         }
         Ok(())
     }
@@ -176,6 +178,14 @@ impl Host {
             return Ok(FrontResponse::TaskQueue { entries: self.db.queue_list(project).map_err(internal)? });
         }
         let by = self.task_writer(project, actor)?;
+        self.task_identify(project)?;
+        let action = match action {
+            QueueOp::Cancel { task_id } => QueueOp::Cancel { task_id: self.task_selector(project, &task_id)? },
+            QueueOp::Move { task_id, position } => {
+                QueueOp::Move { task_id: self.task_selector(project, &task_id)?, position }
+            }
+            other => other,
+        };
         self.check_active(project)?;
         let _gate = self.queue_gate.lock().await;
         match action {
@@ -324,6 +334,7 @@ impl Host {
                             reason: "자리 대기".into(),
                             launch_id: None,
                             thread: None,
+                            stage: None,
                             actor: by.clone(),
                             created_ms: updating.map_or(now, |i| rows[i].created_ms),
                             updated_ms: now,
@@ -465,6 +476,7 @@ impl Host {
         }
         let owners =
             if rows.iter().any(|r| r.state == S::Queued) { self.assignable(project).await } else { Vec::new() };
+        let mut capacity_exhausted = false;
         for row in rows {
             if row.state == S::Cancelled {
                 continue;
@@ -532,7 +544,11 @@ impl Host {
                 self.queue_status(project, &row.task_id, S::Check, reason)?;
                 continue;
             }
-            if self.open_worker_threads(project) >= self.settings(project).max_parallel_threads {
+            // 앞 예약이 자리 부족으로 멈춘 순회에서는 뒤 예약도 기다린다. resolve가 그사이
+            // 자리를 돌려줘도 뒤쪽만 추월하지 않고, 다음 순회에서 차례대로 다시 판정한다.
+            // 이미 기동한 예약의 상태 대조와 내용 검사는 뒤쪽도 계속한다.
+            if capacity_exhausted || self.open_worker_threads(project) >= self.settings(project).max_parallel_threads {
+                capacity_exhausted = true;
                 self.queue_status(project, &row.task_id, S::Queued, "자리 대기")?;
                 continue;
             }
@@ -582,6 +598,8 @@ impl Host {
                     self.queue_changed(project);
                 }
                 Err(e) => {
+                    // 사전 확인 뒤 직접 기동이 마지막 자리를 선점한 경우에도 같은 차례를 지킨다.
+                    capacity_exhausted |= e.message.starts_with("start_wait:");
                     let transient = matches!(e.code, ErrorCode::AgentDisconnected | ErrorCode::Unavailable)
                         || e.message.starts_with("start_wait:");
                     self.queue_status(project, &row.task_id, if transient { S::Queued } else { S::Check }, &e.message)?;
@@ -610,15 +628,17 @@ impl Host {
     ) -> Result<FrontResponse, ErrorBody> {
         self.project_dir(project)?;
         self.archive_recover(project)?;
-        if let Some(id) = restore {
+        let restore = restore.map(|v| self.task_selector(project, v)).transpose()?;
+        if let Some(id) = restore.as_deref() {
             let _by = self.task_writer(project, actor)?;
             let mut row = self
                 .db
                 .archive_list(project)
                 .map_err(internal)?
                 .into_iter()
-                .find(|r| r.task_id == id)
+                .find(|r| r.task_id == id || r.task.title.eq_ignore_ascii_case(id))
                 .ok_or_else(|| err(ErrorCode::NotFound, "완료 보관에 없는 ID"))?;
+            let id = row.task_id.as_str();
             let dir = self.project_dir(project)?;
             let path = dir.join("TASKS.md");
             let lock = self.file_locks.of(&path);

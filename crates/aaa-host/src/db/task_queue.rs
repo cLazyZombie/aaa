@@ -6,26 +6,45 @@ pub(crate) fn slots(tx: &Connection, project: &str, except: Option<&str>) -> Res
     let mut st = tx.prepare("SELECT id,data FROM threads WHERE project=?1")?;
     let rows = st.query_map([project], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)))?;
     let mut count = 0;
+    let mut landing = false;
     for row in rows {
         let (id, text) = row?;
         if except == Some(id.as_str()) {
             continue;
         }
         let r: crate::orch::ThreadRec = serde_json::from_str(&text)?;
-        if r.role == aaa_proto::Role::Worker
-            && (matches!(r.status, aaa_proto::ThreadStatus::Open | aaa_proto::ThreadStatus::Starting)
-                || r.resolve_pending.is_some())
-        {
+        if r.holds_worker_slot() {
             count += 1;
+            landing |= r.execution_stage() == Some(aaa_proto::ThreadStage::Landing);
         }
     }
-    Ok(count)
+    // 착지는 한 번에 하나다. 중복 표지가 생겨도 추가 착지로 한도를 넓히지 않는다.
+    Ok(count - u32::from(landing))
 }
 
 impl Db {
+    pub(crate) fn worker_slots(&self, project: &str) -> Result<u32> {
+        slots(&self.conn.lock().unwrap(), project, None)
+    }
+
     pub(crate) fn queue_list(&self, project: &str) -> Result<Vec<TaskReservation>> {
-        let c = self.conn.lock().unwrap();
-        queue_rows(&c, project)
+        let mut rows = {
+            let c = self.conn.lock().unwrap();
+            queue_rows(&c, project)?
+        };
+        for r in &mut rows {
+            r.task.short_id = Some(self.task_short_id(project, &r.task_id)?);
+            r.stage = r
+                .thread
+                .as_deref()
+                .map(|id| self.thread_get(project, id))
+                .transpose()?
+                .flatten()
+                .map(|text| serde_json::from_str::<crate::orch::ThreadRec>(&text))
+                .transpose()?
+                .and_then(|thread| thread.execution_stage());
+        }
+        Ok(rows)
     }
 
     pub(crate) fn queue_change<T>(
@@ -57,7 +76,15 @@ impl Db {
         let c = self.conn.lock().unwrap();
         let mut st = c.prepare("SELECT data FROM task_archive WHERE project=?1 ORDER BY task_id")?;
         let rows = st.query_map([project], |r| r.get::<_, String>(0))?.collect::<rusqlite::Result<Vec<_>>>()?;
-        rows.into_iter().map(|j| Ok(serde_json::from_str(&j)?)).collect()
+        drop(st);
+        drop(c);
+        rows.into_iter()
+            .map(|j| {
+                let mut row: ArchivedTask = serde_json::from_str(&j)?;
+                row.task.short_id = Some(self.task_short_id(project, &row.task_id)?);
+                Ok(row)
+            })
+            .collect()
     }
     pub(crate) fn archive_save(&self, project: &str, row: &ArchivedTask) -> Result<()> {
         let c = self.conn.lock().unwrap();
@@ -66,14 +93,25 @@ impl Db {
     }
 
     /// 이미 자리를 가진 Open의 재개는 같은 자리다. Failed 재시작의 새 자리만 원자적으로 잡는다.
-    pub(crate) fn thread_restart_claim(&self, project: &str, id: &str, limit: u32) -> Result<()> {
+    pub(crate) fn thread_restart_claim(
+        &self,
+        project: &str,
+        id: &str,
+        limit: u32,
+        admission: Option<&StartAdmission>,
+    ) -> Result<()> {
         let mut c = self.conn.lock().unwrap();
         let tx = c.transaction()?;
         let text: String =
             tx.query_row("SELECT data FROM threads WHERE project=?1 AND id=?2", params![project, id], |r| r.get(0))?;
         let mut rec: crate::orch::ThreadRec = serde_json::from_str(&text)?;
         let already_held = rec.status == aaa_proto::ThreadStatus::Open;
-        if !already_held && rec.resolve_pending.is_none() {
+        if !rec.holds_slot()
+            && let Some(policy) = admission
+        {
+            policy.check(&tx, project, Some(id))?;
+        }
+        if rec.automation.is_none() && !rec.holds_slot() {
             anyhow::ensure!(
                 slots(&tx, project, Some(id))? < limit,
                 "start_wait: 프로젝트 실행 한도 {limit}. `aaa task reserve`로 예약한다"
@@ -133,6 +171,25 @@ impl Db {
 
 #[cfg(test)]
 impl Db {
+    /// 앞 예약의 자리 대기 기록 직후 resolve가 완료되는 경합을 같은 DB 쓰기 경계에 고정한다.
+    pub(crate) fn test_queue_release_on_wait(&self, project: &str, task: &str, thread: &str) {
+        let quote = |s: &str| format!("'{}'", s.replace('\'', "''"));
+        let (project, task, thread) = (quote(project), quote(task), quote(thread));
+        self.conn
+            .lock()
+            .unwrap()
+            .execute_batch(&format!(
+                "CREATE TEMP TRIGGER release_queue_slot AFTER UPDATE ON task_queue
+                 WHEN NEW.project={project} AND NEW.task_id={task}
+                   AND json_extract(NEW.data,'$.reason')='자리 대기'
+                 BEGIN
+                   UPDATE threads SET status='resolved',data=json_set(data,'$.status','resolved')
+                   WHERE project={project} AND id={thread};
+                 END;",
+            ))
+            .unwrap();
+    }
+
     pub(crate) fn test_archive_finalize_fault(&self, fail: bool) {
         self.conn.lock().unwrap().execute_batch(if fail {"CREATE TRIGGER deny_archive_update BEFORE UPDATE ON task_archive BEGIN SELECT RAISE(FAIL,'archive finalize fault'); END;"} else {"DROP TRIGGER deny_archive_update;"}).unwrap();
     }

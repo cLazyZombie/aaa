@@ -68,7 +68,7 @@ export default async function ({ page }) {
         await page.reload(); await open(page, first);
         await page.frameLocator('[data-testid="report-frame"]').getByRole("heading", { name: "첫 시안" }).waitFor();
         await domIs(page, "보고 머리 가로 넘침 없음", () => document.documentElement.scrollWidth <= innerWidth);
-        await shot(page, `70-report-${width}-${theme}`);
+        await shot(page, `73-report-${width}-${theme}`);
       }
     }
     const reader = await pairPage(browser, aaa("web", "pair", "--reader").code, { width: 390, height: 844 }, { hash: `#report=${first}` });

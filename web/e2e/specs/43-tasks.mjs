@@ -11,7 +11,8 @@ const sha = (text) => crypto.createHash("sha256").update(text).digest("hex");
 /** TASKS.md를 쓰고 그 hash(화면 `data-tasks-sha`가 이것이 되기를 기다린다) */
 const write = (text) => {
   fs.writeFileSync(`${dir()}/TASKS.md`, text);
-  return sha(text);
+  // 화면 관측 전에 식별 주석 이주를 마친 fixture를 준비한다.
+  return aaa("task", "list").sha256;
 };
 // 운영에서 나온 오독 꼴 셋은 같은 꼴의 가짜 글이다(끝 괄호 상태 메모, `(미할당)`, 본문 속 `· t-NNNN(…)`)
 const tasksMd = (run) => `# Tasks
@@ -81,7 +82,8 @@ export default async function ({ page }) {
     await tidy.locator(".task-pick").click();
     const detail = page.getByTestId("task-detail");
     await detail.waitFor();
-    if ((await detail.getByTestId("task-raw").textContent()) !== "- [ ] 정리(선택) (t-0101 S4 뒤, 사용자 지시 시)") throw new Error("원문 줄");
+    const tidyId = aaa("task", "list").tasks.find(t => t.line === LINE.tidy).id;
+    if ((await detail.getByTestId("task-raw").textContent()) !== `- [ ] 정리(선택) (t-0101 S4 뒤, 사용자 지시 시) <!-- aaa-task:${tidyId} -->`) throw new Error("원문 줄");
     const problems = await detail.getByTestId("task-problems").textContent();
     if (!problems.includes("owner 칸이 owner 꼴이 아님") || !problems.includes("제목 안에 thread 번호가 묻힘: t-0101")) throw new Error(problems);
     if (!(await detail.textContent()).includes("사용자 지시 뒤에 한다")) throw new Error("메모");

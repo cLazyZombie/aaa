@@ -34,7 +34,7 @@ export default async function ({ page }) {
     const audio = page.getByTestId("question-audio"); await audio.waitFor();
     const state = await audio.evaluate(async (a) => { const res = await fetch(a.src); return { paused: a.paused, preload: a.preload, type: res.headers.get("content-type"), bytes: (await res.arrayBuffer()).byteLength }; });
     if (!state.paused || state.preload !== "none" || state.type !== "audio/wav" || state.bytes !== wav.length) throw new Error(JSON.stringify(state));
-    await shot(page, "71-review-audio");
+    await shot(page, "74-review-audio");
     wk = await webkit.launch(); phone = await pairDevice(wk, aaa("web", "pair").code, "iphone", { hash: `#question=${request.question_id}` });
     for (const [name, p] of [["desktop", page], ["phone", phone.page]]) for (const theme of ["light", "dark"]) {
       await p.evaluate((theme) => { localStorage.setItem("aaa:appearance", JSON.stringify({ theme, palette: "amber" })); }, theme); await p.reload();
@@ -48,12 +48,12 @@ export default async function ({ page }) {
         // E2E 59와 같은 headless WebKit 이중 sandbox 제약. 보안 정책을 바꾸지 않고 실제 그림은 앱 크게 보기에서 검증한다.
         await frameImage.tap();
         await p.getByTestId("lightbox-img").evaluate((i) => i.decode());
-        await shot(p, `71-review-picture-phone-${theme}`);
+        await shot(p, `74-review-picture-phone-${theme}`);
         await p.keyboard.press("Escape");
         await p.getByTestId("lightbox").waitFor({ state: "detached" });
       }
       await domIs(p, "카드 가로 넘침 없음", () => document.documentElement.scrollWidth <= innerWidth);
-      await shot(p, `71-review-${name}-${theme}`);
+      await shot(p, `74-review-${name}-${theme}`);
     }
     const guide = fs.readFileSync(`${root}/projects/demo/AGENTS.md`, "utf8");
     if (!guide.includes("볼 보고서·시안·음원 링크는 질문 안에 둔다")) throw new Error("coordinator Questions 안내 누락");
@@ -79,7 +79,7 @@ export default async function ({ page }) {
     await page.getByTestId("question-report-preview").locator('img[alt="검수 시안"]').evaluate((img) => img.decode());
     await page.getByTestId("thread-ask-pick-1B").click();
     if (!(await page.getByTestId("thread-ask-send").isDisabled())) throw new Error("고칠 점 없는 B를 보낼 수 있다");
-    await shot(page, "71-review-thread-open");
+    await shot(page, "74-review-thread-open");
     await page.getByTestId("thread-ask-text").fill("버튼 글씨를 더 크게");
     await page.getByTestId("thread-ask-send").click();
     await page.getByTestId("ask-done-card").waitFor();
@@ -94,7 +94,7 @@ export default async function ({ page }) {
     const img = doneCard.getByTestId("question-report-preview").locator('img[alt="검수 시안"]'); await img.evaluate((i) => i.decode());
     const original = await img.getAttribute("src");
     if (!(await page.evaluate(async (src) => (await fetch(src)).text(), original)).includes("검수 당시 시안")) throw new Error("답한 판이 새 시안으로 바뀌었다");
-    await shot(page, "71-review-answered");
+    await shot(page, "74-review-answered");
     if (phone.errors.length) throw new Error(phone.errors.join("; "));
     aaa("thread", "resolve", thread.id);
   });

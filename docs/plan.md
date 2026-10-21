@@ -6685,8 +6685,131 @@ coordinator inbox에는 `question answered`와 ID·선택·자유 답 원문이 
 FRONT_API 1.87은 질문 ID·부분 답과 `ask_answer`·`question_reply`를 더한다. Agent link 변경은 없다.
 접두사는 t=thread, q=질문, d=할 일, r=보고서다. r-ID·보고 판별 사본·CI 내부 run 이름 분리는 2단계로 나눈다.
 
+### 8.372 머신 상세: CPU 종류·판·실행 파일 SHA·기능·시작 점검(10-21, t-0578 웹 머신 추가 M0)
 
-### 8.372 보고서 판별 r-ID와 자동화 실행 이름(t-0576, 2단계)
+- **요청.** t-0471 확정 기획(웹 「머신 추가」, SSH)의 첫 단계 M0. 새 머신을 웹으로 붙이기 전에, 이미 붙은 머신이 무엇을 돌리는지(OS·CPU 종류·aaa 판·실행 파일)를 설정 「머신」에서 읽기만으로 보인다. 사용자 10-21 「A부터」: M0 → M1 → M2를 단계마다 착지한다.
+- **proto(FRONT_API 1.88, 더하기만).** `MachineView`에 `arch`·`software`·`sha256`·`software_differs`(판이 host와 다르면 true, 모르면 생략)·`features`·`selfcheck{pass, reasons}`. 옛 host는 생략하고 웹은 OS만 보인다. Agent link: hello의 선택 칸 `sha256`(agent가 시작 때 읽은 자기 실행 파일 SHA-256, 배포 관리자가 이미 쓰는 값). AGENT_LINK 1.10을 올리지 않는다: 옛 agent는 보내지 않아 「모름」이고, 옛 host는 버린다.
+- **저장.** host는 hello마다 `machines` 행에 OS·부팅과 함께 `arch`·`software`·`sha256`을 쓴다(열만 더함, 옛 aaa도 같은 DB를 연다). 그래서 끊긴 머신과 host 재시작 뒤에도 마지막 판을 보인다. 기능·시작 점검은 이 host 실행 중 마지막 연결의 것만 메모리에 둔다(다시 붙기 전에는 비었다). 시작 점검은 agent가 hello 뒤에 끝내는 일이 많아 그때는 다음 연결에 실린다(link 변경 없이 둔 한계).
+- **웹.** 설정 「머신」 → 「등록된 머신」 줄마다 OS · CPU 종류 · 판(host와 다르면 주의 색)과 문제 수, 「자세히」(aria-expanded)로 펼치는 읽기 전용 상세: 연결(host 머신·연결됨·끊김과 마지막 본 때), OS, 판, SHA-256(고정폭, 줄바꿈), 개발 모드, 연결 중이면 작업 디스크·부하·전원·toolchain·시계 차이·주의, 문제, 시작 점검(통과·실패 이유), 접어 둔 agent 기능 목록. 보기 기기도 상세를 본다. 휴대폰은 이름 아래 값이 온다.
+- **검증.** host 유닛 `machine_view_tests`(hello 값이 실리고 판이 다르면 표시, 모르는 꼴의 점검은 버림, host를 다시 열어도 판·SHA·CPU 종류는 남고 기능·점검은 빈다), 웹 유닛 `machineDetail.test.mjs`, 웹 E2E `60-admin` 확장(둘째 agent의 SHA가 실행 파일의 SHA와 같고 화면에 그대로, 보기 기기 상세, 휴대폰 390 폭). 절차는 [시험](testing.md).
+- **번호·호환.** main의 §8.369(t-0574)·§8.370(t-0538 W6b)·§8.371(t-0576)과 FRONT_API 1.86·1.87을 유지하고 이 기능은 1.88·§8.372를 쓴다. AGENT_LINK는 1.10 그대로다(hello 선택 칸만 더함).
+
+### 8.373 할 일 표시 ID d-NNNN(10-21, t-0575)
+
+- **표시·선택.** 웹 할 일·상세·예약·완료 보관과 CLI list·context에 `d-0001` 같은 ID를 보인다. edit·move·rm·restore·log·thread start --from-task·예약·완료 보관 복원은 ID와 기존 제목을 모두 받는다. 번호가 발급된 문자열은 ID를 우선하며 내부 ULID 입력도 유지한다. coordinator 생성 안내에 ID 사용을 권한다.
+- **영속·이주.** 프로젝트마다 1부터 발급하고 제목·목록·순서 변경과 host 재시작 뒤에도 유지한다. 삭제·기록 정리·완료 보관 뒤 재사용하지 않고 복원 시 원래 번호를 쓴다. host DB `task_ids`가 기존 ULID와 번호를 연결하며 프로젝트 이름 변경·휴지통 내보내기·복원에 포함된다. 첫 읽기와 새 항목 쓰기는 없는 ULID 주석만 추가하고 기존 ULID·메모·들여쓰기·줄 끝 문자를 유지한다. 중복 ULID는 거부한다.
+- **호환.** FRONT_API 1.89에서 선택 칸 `TaskView.short_id`와 `TaskLog.task` 필터를 더한다. 새 CLI의 기록 필터는 1.89 이상 host에만 보낸다. ULID 기반 연결과 제목 입력은 유지하고 AGENT_LINK 1.10은 그대로다. TASKS.md만 다른 host로 옮기면 번호는 새로 발급되므로 번호까지 보존하려면 host DB를 함께 보존한다.
+- **검증.** DB·host 동시 이주와 비재사용·복원 owner, 실제 host·agent·CLI의 변경·이동·삭제·예약·재시작·완료 보관 통합 시험, 웹 E2E `70-task-ids`의 CLI 교차 편집과 320/390/768px 표시·검색·가로 넘침을 검사한다. main의 E2E 68·69와 §8.372까지 유지한다. 절차는 [시험](testing.md), 사용법은 [할 일 ID](task-ids.md)에 둔다.
+
+### 8.374 aaa install I6 대화형 검토·계획 결속 승인(10-21, t-0485)
+
+I5 위에 외부 TTY의 inquire/plain 마법사와 명시 인자·private 초안을 연결한다. 두 UI는 동일 choices/계획을 제출한다. dry-run은 저장·발급·nonce·실제 적용을 하지 않으며 Ctrl+C/EOF는 cancelled/130이다. `--yes`·임의 JSON·세션/SSH 환경 변수는 권한이 아니다. 검토한 계획/실행 SHA/계정/instance/변경 전후의 정확 scope를 Ed25519 서명과 사용자 전용 issuer pin·짧은 만료·한 번의 nonce로 결속한다. 발급/비밀 입력은 공개 결과·NDJSON에 넣지 않는다.
+
+고정 worker는 실제 IPC peer PID/image와 EOF가 끝난 보호 입력을 확인하고 승인 lease를 소비한 뒤 I2 파일 transaction, I5 Windows SCM, 등록/공개 작업을 실행한다. CLI가 사라져도 worker는 독립 수명으로 같은 설치 ID에 재개 상태를 기록한다. status는 발급만 된 planned와 실제 journal/SCM/등록 상태를 읽고 보정 쓰기를 하지 않는다. 보호 암호는 Windows console에서 한 번 받아 UTF-16 buffer를 지우며 암호 보관은 SCM에 맡긴다. 기존 같은 소유 서비스는 자격 증명을 바꾸지 않는다. 미구현 broker/OS 권한은 needs_user다.
+
+host 등록은 TLS peer와 결속한 일회 grant 또는 기존 W0 SAS를 쓰고, 응답 유실은 같은 ID 조회로 회복한다. 현재 peer key를 대기 중 DB의 새 key로 바꾸거나 폐기한 grant로 기기를 되살리지 않는다. 첫 Controller는 실제 W0 pairing의 redeem 뒤에만 확인한다. 코드 표시 ACK는 등록/기기 완료가 아니다. identity/key/cert/pin의 승인 전 내용과 자신의 준비 기록을 대조해 외부 편집을 보존한다.
+
+Windows 사용자 PATH는 기본 preserve이고 명시 user만 현재 HKCU 값의 type/순서/빈 항목/UTF-16 원문을 유지하며 transaction 안에서 before를 다시 확인한다. Serve는 정확 선택 포트와 예상 mapping hash를 서명하고 Windows 보호 LocalAPI의 ETag/If-Match로만 적용한다. 다른 앱/포트/Funnel을 덮거나 조건 없는 CLI 쓰기로 대체하지 않는다. mapping과 현재 host instance의 공개 HTTPS 응답, 첫 Controller를 각각 확인한다. Front의 좁은 InstallPublish 요청은 실제 파일 적용 중인 동일 worker 증명만 수락하며 기존 W0 변경 권한은 그대로다.
+
+공개 결과의 optional service/web 요약은 등록·running·application_ready와 외부/내부 포트·재사용/소유·pairing을 나눠 표시한다. SID/home/인증 파일 존재로 실제 서비스 harness 인증을 추정하지 않는다. require가 미확인이면 unknown/needs_user, 사용자가 새 계획에서 명시한 login=defer는 configured 범위다. URL·암호·키·코드는 결과에 없다. FRONT_API 1.90, AGENT_LINK 1.11/install_enroll.v1과 TS/schema를 함께 갱신하며 기능 없는 구판을 성공으로 처리하지 않는다.
+
+검증은 macOS 전체 gate와 Windows strict cross다. Windows·Linux 실제 실행은 main push 뒤 CI이며 실제 SCM logon/Session0/로그인 전 부팅/LSA/UAC/인증·사용자 Windows PC 인수와 혼동하지 않는다. 이 단계 뒤 Windows 최소 bootstrap/사용자 Windows PC 사용자 시험→macOS→Linux→최종 I7 순서로 간다. 별도 runner/VM·branch/PR CI push는 두지 않는다. 절/API 번호는 착지 창에서 최신 main과 다시 대조한다.
+
+
+### 8.375 화면 이동 뒤 대화 첨부 미리보기 복원(10-21, t-0583)
+
+- **원인·수정.** 초안에는 이미지 `@경로`가 남지만 입력창 컴포넌트의 첨부 목록·blob URL은 화면 전환 때 사라졌다. 입력창을 다시 열 때 초안의 이미지 경로에서 목록을 복원하고 기존 `pane_file` API의 권한 검사·이미지 크기 제한을 거친 URL로 썸네일을 읽는다. 원본 이미지 바이트나 blob URL을 브라우저 저장소에 추가하지 않는다. 새로 올린 그림은 기존 로컬 미리보기를 쓰고 해제 때 blob URL을 놓는다.
+- **동작·검증.** 복원한 첨부도 전송·개별 삭제 대상이며, 뒤에 새 그림을 붙여도 ID가 겹치지 않는다. 기존 E2E23을 확장해 Chromium·WebKit 데스크톱·WebKit iPhone·iPad에서 대화·터미널·보고서 이동, 새로고침, 실제 이미지 decode, 원본 SHA-256 전송, 추가 첨부·개별 삭제·재진입을 검사한다. 원래 코드의 미리보기 누락 재현과 시험 절차는 [testing](testing.md)의 t-0583 절에 둔다.
+- **번호·호환.** 착지 기준 main `c877d394`의 §8.374·FRONT_API 1.90·AGENT_LINK 1.11·E2E70을 확인했다. 이 수리는 §8.375이며 프로토콜 변경이나 새 E2E 파일은 없다. 기존 API 판과 E2E 번호를 유지한다.
+
+### 8.376 예약 순회 중 자리 반환의 차례 추월 방지(10-21, t-0584)
+
+- **원인.** 예약 조회와 기동 순회는 저장된 `(position, created_ms, task_id)` 차례를 지킨다. 다만 앞 예약의 자리 부족 판정 뒤 순회를 계속하므로, 다른 thread의 resolve가 그사이 자리를 반환하면 뒤 예약만 빈자리를 발견해 먼저 기동할 수 있었다.
+- **수정.** 같은 순회에서 한 번 자리 부족을 확인하면 이후 예약의 기동도 대기시킨다. 다음 순회에서 앞 차례부터 다시 판정하며, 사전 확인 뒤 직접 기동과 마지막 자리를 경쟁해 `start_wait:`를 받는 경우도 같다. 기동 중 예약의 상태 대조와 내용 검사는 계속하고, 끊긴 머신 등 시작 조건이 막힌 앞 예약을 건너뛰는 계약도 유지한다.
+- **검증.** 앞 예약의 자리 대기 DB 기록 직후 다른 thread를 resolved로 바꾸는 임시 SQLite trigger로 경합을 고정한다. 원래 제품은 뒤 예약만 머신 선택으로 넘어가 실패한다. 기존 m13을 확장해 늦게 만든 예약을 CLI `queue-move`로 1번에 옮기고 재시작 뒤 차례 보존, 자리 반환 뒤 그 예약의 실제 pane 기동, 이후 끊긴 앞 예약을 건너뛰는 기동을 검사한다. 고정 sleep·시험 시한 변경은 없으며 세부 절차는 [testing](testing.md)의 task 예약 절에 둔다.
+- **번호·호환.** 착지 기준 main `e895c07b`에서 §8.375·FRONT_API 1.90·AGENT_LINK 1.11·E2E70을 직접 확인했다. 이번 수리는 §8.376을 이어 쓰며 새 요청·DTO·E2E 파일이 없어 프로토콜 판과 기존 E2E 번호를 유지한다.
+- **착지 중 추가 수리(사용자 1A).** 통합 후보 E2E23에서 WebKit 페이지 오류가 나 원인을 고쳤다. 페이지 종료로 자동화 목록 조회가 취소된 뒤 `finally`가 밀린 갱신을 다시 실행해 끝나는 문서에서 `fetch`를 시작했다. 취소가 `pagehide`보다 먼저 올 수 있으므로 실패한 읽기의 `catch`에서도 예약을 비운다. `pagehide`와 컴포넌트 해제는 새 조회를 막으며, `pageshow`에서 갱신을 재개한다. E2E23의 응답 gate로 첫 `projects` 조회를 붙잡은 채 reload하여 원래 제품의 같은 오류를 재현하고, 수정 뒤 오류 부재·종료한 문서의 갱신 차단·복귀 뒤 실제 조회를 확인한다. 시한 연장이나 오류 무시는 없다.
+
+### 8.377 자동화 thread 표지와 별도 실행 자리(10-21, t-0586)
+
+- `automations/*.toml`의 `do.start`가 만든 Worker는 저장한 `automation` 출처로 「자동화 thread」로 구분한다. 사람이 같은 제목·actor로 시작해도 출처가 없으면 일반 Worker다.
+- 사용자·coordinator Worker의 `max_parallel_threads`와 사용자 예약 자리에서 자동화 thread를 뺀다. DB 선점·시작 미리보기·예약 dispatch·재시작·다시 열기가 같은 계산을 따른다. 기존 자동화 thread도 저장한 출처로 곧바로 빠진다.
+- 이번 요구의 무제한 증가 방지에 맞춰 §8.313 이전 기본 무제한 중 **do.start 규칙의 동시성만** 기본 1개로 바꾼다. `limits.max_running`의 양수는 그 수, 생략·0은 1개다. Starting/Open·resolve 정리 중은 계속 점유한다. `reuse=open`은 열린 thread에 이어 보낸다. 판정과 INSERT·실패 재시작·다시 열기의 같은 DB 트랜잭션에서 상한을 검사한다. 횟수·간격·프로젝트 전체 자동화 상한의 생략·0 의미는 그대로다.
+- 웹 작업 줄·모든 thread·CLI `thread list/show`·`context` 표지를 「자동화 thread」로 통일한다. 사건·일정은 표지에서 구분하지 않고 상세에서 규칙 제목/이름·최초 source/조건/사건 ID/원인 thread를 보인다. 선택 `ThreadView.automation_trigger`는 최초 기동 당시 설명이며 규칙 변경·삭제·host 재시작 뒤에도 남는다. 옛 thread는 원래 없던 사건을 만들지 않고 기록 없음으로 표시한다.
+- coordinator 안내·설정 설명·사용 문서도 같은 수와 이름을 쓴다. 운영 자동화 파일·시스템 설정은 바꾸지 않는다.
+
+- **착지 번호·통합.** 기준 main `1a26f03f`의 §8.376·FRONT_API 1.90·AGENT_LINK 1.11·E2E70을 직접 확인했다. 이 기능은 §8.377·FRONT_API 1.91로 이어 쓰며 AGENT_LINK는 1.11을 유지한다. 기존 E2E48을 확장하고 새 번호는 만들지 않는다. t-0584의 같은 순회 자리 부족 latch와 저장 차례를 유지한 채 자동화 자리만 제외한다.
+
+### 8.378 install I6 CI의 시험 터미널·실험실 수명 수리(10-21, t-0485)
+
+Windows install 승인 PTY는 ConPTY(INHERIT_CURSOR)의 시작 커서 질의에 응답하지 않아 실제 승인 물음 전에 멈췄다. 시험 터미널은 session host와 같은 aaa-vt QueryScanner/Vt/DefaultColors로 질의 시점 화면에 답한다. 보호 암호 console 시험도 같은 응답기를 공유하며 비노출·mode 복원·취소/EOF 단언을 유지한다. TLS grant owner는 비동기 host 작업과 DB handle을 runtime 종료로 해제한 뒤 실험실 파일을 지우고, 남은 host 소유자가 없는지도 확인한다. 삭제 실패를 무시하거나 재시도하지 않는다.
+
+기존 macOS worker 수명 시험의 총30초 시한과 worker 동일 ID/부모 소멸/내구 기록 단언은 유지한다. 부하 시한 초과와 Windows 질의 미응답을 구분하며 실패 진단에는 경과 시간·답한 물음 수만 더한다. POSIX 실제 PTY fixture가 커서 응답 전 승인 물음을 내지 않도록 해 수정 전 RED·수정 후 GREEN을 확인한다(이 fixture만 Unix 전용; 기존 승인/worker owner는 세 OS 그대로). 제품 권한/서비스/timeout/API 변경이나 새 웹 E2E 번호는 없다. Windows 실제 판정은 착지 뒤 main CI다.
+
+
+### 8.379 종료 문서의 새 앱 API 전송 차단(10-21, t-0485)
+
+§8.376의 자동화 배지 수리 뒤에도 WebKit reload에서 tasks/inbox 등 다른 갱신이 끝나는 문서에 새 fetch를 시작했다. 공통 `apiFetch`가 capture pagehide 뒤 일반 API 요청을 네트워크 시작 전 AbortError로 취소한다. api.ts의 post/인증/업로드/push와 사용량·계정 사용량·입력 진단 API가 같은 경계를 쓴다. 일반 숨긴 탭은 막지 않고 pageshow 뒤 새 요청을 허용하며, 취소된 쓰기를 복귀 때 자동 재생하지 않는다. 떠날 때 명시한 keepalive 설정 저장은 유지한다. 파일/보고서/clipboard asset 읽기와 권한 검사는 그대로다. 경로별 guard를 추가하지 않고 기존 배지의 갱신 합치기·복귀 갱신을 보존한다.
+
+최소 WebKit에서 production API 함수9개가 pagehide 뒤 네트워크를 시작해 RED, 수리 뒤0건·AbortError9건·keepalive1건·복귀 새 요청1건으로 GREEN이다. 기존 E2E23에 실제 App의 WS tasks/inbox 사건을 보내는 keeper를 더했다. 먼저 정상 상태의 두 응답을 확인하고 종료 뒤 전송0·복귀 뒤 재조회를 검사한다. 원래 코드는 tasks/inbox 두 요청에서 실패하며, 새 빌드의 keeper와 E2E23 파일 전체는 통과했다. API 판과 E2E 번호는 바꾸지 않는다. I6 CI 수리와 별도 commit으로 두며 전체 gate·Windows cross·공개 검사를 거쳐 같은 착지 창에서 병합한다.
+
+### 8.380 SHA 거부 시험의 원격 단계 대기 분리(10-21, t-0587)
+
+- **원인·범위.** 기존 rollout keeper는 로컬 agent가 연결되면 원격 SHA 거부의 종료 대기를 시작했다. 연결 뒤에도 로컬 재시작의 실행 신원 대조·감시 해제가 남아 있어 서로 다른 단계가 같은 30초를 썼다. 원본 실패에서 대기 시작 뒤 원격 교체 진입까지 약 10.4초, Recovering 진입까지 약 27.1초가 걸린 뒤 30초 시험 상한에 걸렸다. baseline SHA와 설치 SHA는 같았다. 별도 실행은 같은 설치 시작 플래그를 거쳐 재시작 없이 Cancelled/Stopped로 끝났으며 제품 순서 경쟁은 재현되지 않았다. 당시 CPU·I/O별 지연 원인까지 확정하지 않는다.
+- **수정·검증.** 기존 단계 진행 사건으로 원격 AgentUpdate 진입을 먼저 확인하고 원래 30초 상한으로 종료 표지를 기다린다. stopped·SHA 오류·실패 cursor·서비스 호출 횟수·앞 머신 SHA 단언을 유지하며, 영속 guard의 install_started=true·activated=false·baseline SHA·Cancelled·무재시작을 추가로 확인한다. 실제 설치 중 취소·늦은 rename 복구 keeper와 제품 전이·시한은 유지한다. 절차와 근거는 [시험](testing.md)의 t-0587 절에 둔다.
+- **착지 번호·호환.** 기준 main `f496ecd7`의 §8.379·FRONT_API 1.91·AGENT_LINK 1.11·E2E70을 직접 확인했다. 이번 수리는 §8.380을 이어 쓰며 제품 API나 새 웹 E2E 파일이 없어 기존 판과 번호를 유지한다.
+
+
+### 8.381 보고서 자기 폴더 fetch·음원 혼합(10-21, t-0589)
+
+- **동작·격리.** 보고서는 opaque origin sandbox를 유지한다. 현재 `/v/<권한>/` 폴더만 connect-src에 지정하고 유효한 GET/HEAD 성공 응답에만 Origin null CORS를 준다. 쿠키 동반 opaque 읽기와 opaque 앱 API 요청을 서버에서도 거부하며 credentials 허용·preflight·redirect는 열지 않는다. 다른 보고서·앱 API·외부 연결·쓰기·저장소·부모 접근은 차단한다. 권한 링크는 매 요청 검증하고 Origin null 자체를 인증으로 쓰지 않는다. CSP는 redirect 뒤 경로를 비교하지 않으므로 파일 경로의 무redirect 계약을 유지한다.
+- **작성·경고.** 그림·음원·JSON·script는 library 안에 두고 상대 URL을 쓴다. iOS 음원 혼합은 사용자 누름에서 AudioContext를 연 뒤 fetch·decodeAudioData·GainNode로 처리한다. AGENTS·thread brief·[보고서 작성 안내](library.md)에 제약과 예시를 적고 회수·publish·웹 업로드·실시간 등록·import에서 제한 API나 확인할 fetch를 찾으면 coordinator inbox에 경고한다. 정적 문자열 휴리스틱의 오탐·누락은 복사 성공이나 보안 경계를 대신하지 않는다.
+- **검증.** E2E71은 실제 host·agent와 Chromium/WebKit 390×844에서 사본·실시간 원본·인증 없는 공유 탭의 WAV 두 개 읽기·decode·혼합·ended와 격리를 확인한다. 출력 끝은 gain 0으로 두고 그 앞 analyser로 신호를 확인한다. HEAD·Range·XHR·하위 HTML 상대 읽기·경로 탈출·credentials·링크 폐기도 검사한다. connect-src를 host 전체로 넓히거나 CORS를 없앤 제품 변형에서 각각 격리·fetch 실패를 잡고 bytes 복구 뒤 정본에서 통과했다. 실제 iPhone 청취는 별도다. 기존 E2E21·59와 Rust library·보고 회수 keeper도 유지한다.
+- **착지 번호·호환.** 기준 origin/main `34bc1a04`의 마지막 §8.380·FRONT_API 1.91·AGENT_LINK 1.11·E2E70을 직접 확인했다. 이번 기능은 §8.381·E2E71을 이어 쓴다. Front/Agent wire 요청·타입 변경이 없어 FRONT_API 1.91·AGENT_LINK 1.11은 유지한다.
+
+
+### 8.382 사용자 화면의 알림함 숨기기(10-21, t-0590)
+
+- **사용자 화면.** coordinator 내부 알림을 그대로 보이던 활동 막대 알림함 아이콘·배지와 알림함/흐름 사건/post 패널 진입점을 숨긴다. 배지용 inbox 조회도 실행하지 않는다. 예전에 `inbox` 패널을 기억한 기기는 새로 열 때 「작업」을 고른다. 「답할 것」·작업 보고·내 보고서·확인 필요 알림은 유지한다.
+- **유지 범위.** ListFoot·UsageMeters의 바닥 사용량 칸과 coordinator CLI·host inbox 동작은 그대로다. 설정에 별도 진입점을 만들지 않고 내부 진단은 기존 CLI로 한다.
+- **검증.** 기존 E2E26·53·56·57·62를 새 패널 순서와 알림함 숨김에 맞춘다. 옛 선택 기억, 데스크톱·휴대폰·보기 기기, 사용량 배치, 확인 필요 post의 답함·inbox 기록과 CLI 조회·끝내기를 확인한다. main에서 추가된 E2E23의 종료 문서 API keeper는 더 이상 쓰지 않는 inbox 대신 asks 조회로 같은 경계를 확인한다. 정상/복귀 실제 응답과 종료 뒤 전송 없음 단언을 유지한다.
+- **착지 번호·호환.** 재개 착지 기준 origin/main `35ecad05`에서 마지막 §8.381·FRONT_API 1.91·AGENT_LINK 1.11·E2E71을 직접 확인했다. 이번 변경은 §8.382를 이어 쓰며 wire 변경·새 E2E 파일이 없어 기존 API 판과 E2E 번호를 유지한다.
+
+### 8.383 「직접 설치」 안내: host 주소 후보·지문을 넣은 새 머신 명령(10-21, t-0578 웹 머신 추가 M1)
+
+- **요청.** t-0471 확정 기획의 M1(웹 등록 승인·폐기). 등록 창·대기·6자리 코드 승인·폐기·host 머신과 마지막 조작 기기 폐기 거부는 W5b(§8.355)가 이미 같은 요청으로 했다. M1에 남은 것은 SSH가 없는 머신을 위한 「직접 설치」 안내다: 새 머신에서 칠 명령을 웹이 실제 host 주소·이름으로 채운다(기획 §1.11. install 비대화 모드가 착지하면 그 한 줄로 바꾼다).
+- **proto(FRONT_API 1.92, 더하기만).** 조작 기기의 `enroll_guide` → `EnrollGuide{listen?, addresses[{address, source}], host_fingerprint, software}`. Reader는 거부한다(host 주소·지문). 읽기만이라 사람 판정 목록에는 넣지 않는다. 옛 host는 모르는 요청으로 거절하고 웹은 1.92 미만이면 묻지 않고 주소 칸을 직접 받는다. Agent link 변경 없음.
+- **주소 후보.** host가 실제로 연 `agent_listen`에서만 만든다: 모든 주소(0.0.0.0·[::])면 tailnet 이름(`tailscale status`)과 이 머신 이름, tailnet 주소(IPv4 100.64/10·IPv6 fd7a:115c:a1e0::/48)면 tailnet 이름과 그 주소, 다른 IP면 그 주소만(tailnet 이름은 그 IP가 아니다), loopback은 「이 host 머신 안에서만」으로 표시, 이름으로 연 설정은 그대로. 닫혀 있으면 빈 목록과 「agent_listen을 정한다」 안내.
+- **웹.** 설정 「머신」 → 「새 머신 등록」 아래 「직접 설치 안내」(펼칠 때 읽음): host 주소 고르기(옛 host는 입력), 새 머신 이름(host 규칙, 이미 있는 이름은 알림), 차례 ① 같은 판 설치 ② `aaa agent enroll <주소> --name <이름>` ③ 새 머신 화면의 host fingerprint 앞 16자 맞추기와 「승인…」 ④ `agent.toml`의 host ⑤ macOS 서비스 설치(다른 OS는 `aaa agent` 직접). 명령마다 「복사」. 쓸 수 없는 이름·주소 글자는 `<이름>`·`<host 주소>` 자리표시로 둬 틀린 명령이 복사되지 않는다.
+- **검증.** host 유닛 `enroll_guide::tests`(연 주소별 후보), proto `control_classification`(조작 기기만), 웹 유닛 `enrollGuide.test.mjs`, 웹 E2E `60-admin`(안내 명령을 화면에서 읽어 그대로 실행해 등록, 안내의 host 지문 = 새 머신 화면의 지문, 이미 있는 이름 알림, Reader에 안내 없음, 휴대폰 390 폭).
+- **번호·호환.** 착지 기준 origin/main `5211dd13`에서 마지막 §8.382·FRONT_API 1.91·AGENT_LINK 1.11·E2E71을 직접 확인해 §8.383·FRONT_API 1.92를 이어 쓴다. 새 E2E 파일은 없다(`60-admin`에 더함). AGENT_LINK 그대로.
+
+### 8.384 SSH로 머신 추가: 접속·host key 신뢰·OS 감지(10-21, t-0578 웹 머신 추가 M2)
+
+- **요청.** t-0471 확정 기획의 M2: host SSH 실행기, 대상 검증, host key 신뢰, OS·arch 감지(uname과 PowerShell), 설치 작업 기록과 사건. 원격에는 쓰지 않는다(설치·등록은 M3, install 비대화 모드 뒤). 사용자 결정 Q1(host에 이미 있는 SSH 키·설정만, 비밀번호 안 받음)·Q2(대상과 믿은 지문만 저장)·Q10(아무 대상, 처음 지문 확인).
+- **proto(FRONT_API 1.93, 더하기만).** `machine_setup_start{target}`·`machine_setup_trust{job, host_key_sha256}`·`machine_setup_choose{job, os, arch}`·`machine_setup_cancel{job}`은 조작 기기·aaa 세션 밖 사람만(§8.333 사람 판정 목록), `machine_setup_list`는 Reader도. 답 `MachineSetup{setup}`·`MachineSetups{setups}`, `MachineSetupView{job, target, phase, ssh{user,host,port,proxy_jump}, host_keys[{kind, sha256}], host_key_state(known|new|changed), detected{os, arch, raw, chosen, home, shell, aaa}, error, created_ms, updated_ms}`. 진행은 웹 `enroll` 사건(같은 「머신」 쪽이 듣는다). 옛 host는 모르는 요청으로 거절하고 웹은 1.91 미만이면 「SSH로 추가」를 그리지 않는다. Agent link 변경 없음.
+- **SSH.** host가 PATH의 `ssh`를 부른다(`[host] ssh_config`가 있으면 `-F`, 비우면 그 사용자의 ~/.ssh/config). 공통 `BatchMode=yes`·`ConnectTimeout=10`·`ClearAllForwardings`·`ForwardAgent=no`·`RequestTTY=no`. 대상은 별칭·`user@host:port`·`[v6]:port`만 받고 비밀번호(`user:pw@`)·`-`로 시작·공백·따옴표는 거부한다. 원격에서는 고정 감지 스크립트만 돈다. ControlMaster는 M2에서 쓰지 않는다(접속이 셋뿐이고 소켓 경로 길이 한도가 있다. M3에서 다시 본다).
+- **host key.** ① 빈 임시 known_hosts에 `StrictHostKeyChecking=accept-new`·`PreferredAuthentications=none`으로 접속해 상대가 내민 키만 받는다(인증하지 않아 원격에서 아무것도 돌지 않는다. ProxyJump도 같다). ② aaa 전용 `<state>/ssh/known_hosts`와 사용자 `~/.ssh/known_hosts`로 `StrictHostKeyChecking=yes` 접속: 아는 키면 바로 감지, 모르는 키면 「지문 확인」, 바뀐 키(`IDENTIFICATION HAS CHANGED`)면 멈춤(fail-closed). ③ 사람이 지문을 믿으면 받은 줄이 그 지문과 같을 때만 aaa 전용 known_hosts(0600)에 그 줄을 더한다. 사용자 known_hosts는 읽기만 한다. 지문은 `SHA256:<base64>`(ssh-keygen -l과 같다).
+- **감지.** `sh -c '…'`로 `uname -s`·`uname -m`·HOME·SHELL·aaa 판(PATH 또는 ~/.local/bin)을 표지 사이에 읽는다(원격 기본 셸이 csh·fish여도 된다). 표지가 없거나 MINGW·MSYS·CYGWIN·Windows면 `powershell -NoProfile -NonInteractive -EncodedCommand`(UTF-16LE)로 PROCESSOR_ARCHITECTURE·USERPROFILE·%LOCALAPPDATA%\aaa\bin\aaa.exe 판을 읽는다. 그래도 모르면 「OS 고르기」(release 대상 다섯). 대상에 없는 조합은 「지원 안 함」.
+- **작업.** host DB `machine_setups`(JSON, 최근 20개)와 감사 `machine_setup_start|trust|choose|cancel`. 단계: 접속 중 → 지문 확인 → OS 감지 중 → 준비됨(또는 OS 고르기·지원 안 함·실패). 단계를 바꿀 때는 그 단계일 때만 쓴다(그사이 지운 작업은 되살리지 않는다). host가 진행 중에 다시 시작하면 그 작업은 「멈췄다」로 끝나고 새로 시작한다.
+- **웹.** 설정 「머신」 → 「SSH로 추가」: 대상 칸(비밀번호 꼴·공백은 보내기 전에 막음)과 「접속 시험」, 작업마다 대상·단계·`user@host:port`(ProxyJump)·까닭, 지문 확인 단계는 키 종류·지문과 「이 지문을 믿음…」(확인 창에 지문과 「그 머신에서 ssh-keygen -lf로 맞춘다」), OS 고르기, 준비됨이면 OS·CPU·HOME·셸·aaa 판과 「설치는 다음 단계」, 「지우기」. 보기 기기는 목록·단계만.
+- **Windows runner.** 실험실 시험은 Unix만 돈다. `windows_runner_reports_whether_an_openssh_server_exists`가 windows-2025 CI 로그에 sshd.exe 유무를 적는다(계획 M2 확인 항목, M4 시험 방식을 정한다). 착지 뒤 CI 로그로 판정한다.
+- **검증.** host 유닛 `machine_setup::tests`(대상·`ssh -G`·지문·감지 출력·스크립트·까닭, 고름·멈춤 복구, 그리고 실험실 sshd로 처음 키 → 세션 안·Reader·다른 지문 거부 → 믿음 → 감지 → 아는 키 바로 감지 → 닫힌 포트 → 바뀐 키 멈춤 → 목록·지우기), 웹 유닛 `machineSetupModel.test.mjs`, 웹 E2E `72-machine-add`.
+- **번호·호환.** 착지 기준 origin/main `6f7b4bd2`(M1 병합)에서 마지막 §8.383·FRONT_API 1.92·AGENT_LINK 1.11·E2E71을 직접 확인해 §8.384·FRONT_API 1.93·E2E72를 이어 쓴다. AGENT_LINK 그대로. `[host] ssh_config`는 비우면 예전과 같다.
+
+### 8.385 병합 대기·착지 중 thread의 실행 자리(t-0594, d-0028)
+
+- **목적·판정.** 일을 마치고 착지 창만 기다리는 Worker는 새 구현 자리를 막지 않는다. host가 해시 검증해 회수한 보고 **첫 줄**의 `[병합 준비됨]`은 `merge_ready`/「병합 대기」, `[착지]`는 `landing`/「착지 중」이다. 보고 해시와 같은 DB 갱신에서 단계를 저장한다. harness 묶음·진행률·알림 의도·질문 판정과 분리하며 ack는 단계를 바꾸지 않는다. 보고 사본 회수 실패는 마지막으로 확인한 단계를 유지한다.
+- **경계.** 첫 줄 맨 앞의 표지와 공백 경계를 요구한다(BOM·CRLF 허용). 표지 없는 옛 보고·본문의 표지·`[완료]`·`[진행 중]`·붙여 쓴 제목은 일반 작업이다. `[완료][병합 준비됨]`, `[완료] [병합 준비됨]`, 반대 순서 등 중복은 제외 근거로 쓰지 않는다. 단계 표지 직후 첫 제목이 `[`로 시작해도 모호하므로 일반 작업으로 센다. 표지는 하나만 쓴다. 배포 전 회수한 보고는 host 시작 때 해당 프로젝트의 해시가 맞는 사본으로 단계를 보충한다. 사본이 없거나 해시가 다르면 보수적으로 센다.
+- **한도·원자성.** 기존 자동화 제외를 유지하고 병합 대기 전부와 착지 **최대 한 자리**를 사용자 Worker 한도·예약 자리에서 뺀다. 중복 착지 표지가 있어도 두 번째부터는 작업으로 세므로 한도를 더 넓히지 않는다. 실제 착지 시작 직렬화는 coordinator의 착지 창 운영이 맡으며 보고 표지로 명령 실행을 제어하지 않는다. Starting은 센다. resolve 정리 중에는 직전 단계를 유지하고 정리 확정 뒤 표지를 지운다. DB 선점·예약 dispatch·미리보기·재시작·다시 열기·context가 같은 DB 계산을 쓴다.
+- **작업 복귀.** 착지 검증 실패를 고칠 때는 `[착지]`를 유지한다. 착지를 그만두거나 다단계 작업의 다음 구현을 시작하면 `[진행 중]`으로 바꿔 다시 센다. 한도 초과가 되어도 기존 프로세스는 멈추지 않으며 다음 기동만 막는다. 자동화의 규칙별 동시 상한·측정 표지는 이 단계와 무관하게 원래 자리를 유지한다.
+- **표시·호환.** 웹 할 일(연결·미연결)·예약·사이드바의 두 줄/한 줄 모드·모든 thread·상세 제목 앞에 「병합 대기」 초록, 「착지 중」 주황 글 표지를 붙인다. 작업 파랑·예약 보라·자동화 출처 막대와 구별한다. 단계 사건은 열린 할 일 board도 다시 읽게 하여 예약과 미연결 줄을 갱신한다. CLI `thread list/show`·`task queue`·`context`도 같은 말을 쓴다. FRONT_API 1.94의 선택 `ThreadView.stage`·`TaskThread.stage`·`TaskReservation.stage`를 더하며 옛 host의 생략은 기존 표시다. AGENT_LINK 1.11 유지, 새 요청·E2E 파일 번호는 없다.
+- **기준·검증.** 사용자 재개 지시의 origin/main `35ecad05`에서 시작했다. 기존 §8.381·FRONT_API 1.91·E2E71을 확인하고 이 절/API만 이어 쓴다. host 유닛은 표지 경계·옛 JSON/사본 이행·중복 착지 상한·동시 DB 선점·작업 복귀를 검사한다. m13은 실제 보고 회수 사건에 따른 연속 예약 기동과 CLI·ack·host 재시작을 검사한다. 기존 E2E67은 데스크톱/휴대폰 할 일·사이드바·모든 thread·예약 표지를 검사한다. 절차는 [시험](testing.md)의 t-0594 절을 따른다.
+
+- **착지 번호 대조.** 착지 창 기준 origin/main `0b5d4800`에서 마지막 §8.384·FRONT_API 1.93·AGENT_LINK 1.11·E2E72를 직접 확인했다. 기존 절과 머신 추가 API를 보존하며 이 기능은 §8.385·FRONT_API 1.94로 맞춘다. 기존 E2E67 확장을 유지하고 E2E72는 머신 추가에 그대로 둔다.
+
+
+### 8.386 보고서 판별 r-ID와 자동화 실행 이름(t-0576, 2단계)
 
 - 보고마다 프로젝트별 r-0001부터 영속 순번을 발급한다. 예약부터 내구 원장에 쓰고 준비된 판만 노출한다. 실패한 예약·삭제한 판의 번호도 다시 쓰지 않는다. 예전에 r-NNNN을 이름으로 쓴 보고서는 번호를 건너뛰어 호환한다. q 원장과 r 원장은 프로젝트 export·이름 변경에도 함께 보존한다.
 - coordinator `library publish`는 같은 이름 재발행도 새 판이다. thread는 보고 변경과 마지막 결과물 사본 변경 때 본문·파일 목록·복사 파일을 불변 r 사본으로 남긴다. 기존 host의 보존 가능한 최신 판은 첫 기동 때 한 번 등록한다. 과거 판을 추측해 복원하지 않는다.
@@ -6695,10 +6818,10 @@ FRONT_API 1.87은 질문 ID·부분 답과 `ask_answer`·`question_reply`를 더
 - 보존 용량은 최신 사본과 r 사본을 모두 센다. 일반 정리는 기존 이름 단위로 모든 판·링크를 정리하며 진행 중 thread·완료 보관 보호를 유지한다. live 원본은 용량 밖이고 host에 남긴 live 판은 보호 용량이다. 명시 지우기는 이름·r 모두 같은 보고서 전체의 모든 판을 지운다. 웹 확인창·CLI 설명에 이를 적는다.
 - 옛 CI `mission_next_input("r")` 생성은 A4에서 이미 없어졌다. 현재 자동화 새 입력은 `run-<hash>`(N-1 agent의 64자 이름 상한 안), 내부 묶음 영수증은 전체 hash를 유지한다. 저장된 옛 inflight의 파일 이름·processed.txt는 재개 때 유지한다. 생성 안내는 새 실행 참조에 run을 쓰고 보고 r 번호와 구별한다. 운영 기억·설정·과거 원문은 고치지 않는다.
 
-FRONT_API 1.88은 report_id·versions·history_size 선택 호환을 더한다. Agent link 변경은 없다. E2E 70은 새 판·원문·그림·기존 이름·r 링크·Reader·휴대폰 머리를, E2E 49는 실제 새 run 파일과 처리 영수증을 검사한다. 추가된 질문 안 자료 보기·기본 검수 질문은 이어지는 3단계다.
+FRONT_API 1.95은 report_id·versions·history_size 선택 호환을 더한다. Agent link 변경은 없다. E2E 73은 새 판·원문·그림·기존 이름·r 링크·Reader·휴대폰 머리를, E2E 49는 실제 새 run 파일과 처리 영수증을 검사한다. 추가된 질문 안 자료 보기·기본 검수 질문은 이어지는 3단계다.
 
 
-### 8.373 볼 자료와 답을 한 질문 카드에(t-0576, 3단계)
+### 8.387 볼 자료와 답을 한 질문 카드에(t-0576, 3단계)
 
 - 질문 카드 머리의 ‘보고서 열기’는 해당 r 판과 Questions 본문·선택지 안의 보고서 링크를 찾는다. 같은 Markdown 파서로 표·목록 안 링크도 읽고 코드 예시·그림·API·로컬 절대 경로·실행 scheme은 자료 링크로 만들지 않는다. 그림은 기존 질문 본문에 바로 보인다.
 - 자료를 열어도 질문 화면·고른 선택·쓴 답은 유지한다. HTML은 기존 보고서와 같은 sandbox로 카드 안에, Markdown과 그 그림도 카드 안에 그린다. 음원·영상은 자동 재생 없이 controls로 연다. 외부 페이지가 frame을 거부하면 ‘새 창’ 링크를 쓸 수 있다. 보고서 HTML의 그림 크게 보기는 기존 제한된 메시지 bridge를 재사용한다.
@@ -6706,4 +6829,6 @@ FRONT_API 1.88은 report_id·versions·history_size 선택 호환을 더한다. 
 - 검수도 기존 q-ID·답 기록·thread 전달을 쓴다. 답한 기록은 그때의 r-ID를 보존하므로 새 보고 뒤에도 카드에서 옛 판을 연다. coordinator 안내는 사용자에게 묻거나 검수를 맡길 때 Questions를 쓰고 볼 보고서·시안·음원 링크를 질문 안에 놓게 한다.
 - 보고 판의 첫 등록은 실제 host 기동 경계에만 두며, 같은 state DB에 있는 thread·보고서만 대상으로 한다. 다른 state의 파일은 채택하지 않는다. 일반 Host::open은 보고 파일을 등록하지 않는 회귀를 둔다.
 
-FRONT_API 1.89는 기본 검수 표지와 답 기록의 r 참조를 더한다. E2E 71은 coordinator의 보고서·그림·음원, 1280px/390px 밝음·어두움, Questions 없는 실제 thread 검수 카드와 B 글 검증·다음 보고 뒤 옛 시안 보존을 검사한다.
+FRONT_API 1.96는 기본 검수 표지와 답 기록의 r 참조를 더한다. E2E 74은 coordinator의 보고서·그림·음원, 1280px/390px 밝음·어두움, Questions 없는 실제 thread 검수 카드와 B 글 검증·다음 보고 뒤 옛 시안 보존을 검사한다.
+
+착지 기준 origin/main `183ebbd6`의 마지막 §8.385·FRONT_API 1.94·AGENT_LINK 1.11·E2E72를 확인했다. 기존 번호를 보존하고 이번 2·3단계는 §8.386·8.387·FRONT_API 1.95·1.96·E2E73·74로 맞춘다.

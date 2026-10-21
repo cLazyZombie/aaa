@@ -1,3 +1,4 @@
+import { ThreadStageBadge } from "./ThreadStageBadge";
 // 왼쪽 목록(herdr-web-ui MachineSidebar·Sidebar·AgentSidebar, aa624cb). 모양(class)과 CSS는 참고 것을 그대로 쓴다(herdr/*.css).
 // 패널 넷(활동 막대가 하나를 고른다, plan §8.240·§8.258·§8.280): 「작업」은 coordinator → 작업 공간(저장소) 폴더 → thread 줄(둘째 줄 왼쪽
 // 상태 말, 오른쪽 머신 이름, plan §8.195) → thread가 아닌 pane의 「기타」 묶음(줄에 머신 이름). 프로젝트가 둘 이상일 때만 프로젝트 머리가
@@ -46,7 +47,6 @@ import "./herdr/Sidebar.css";
 import "./herdr/Machines.css";
 import "./Sidebar.css";
 import { AutomationPanel } from "./AutomationPanel";
-import { InboxPanel } from "./InboxPanel";
 import { RolloutCard, type RolloutSnapshot } from "./RolloutCard";
 import { MachineMeters } from "./MachineMeters";
 import { machineStats } from "./machineStats";
@@ -261,7 +261,7 @@ export interface SidebarProps {
   onNewShell: (m: MachineView) => void;
   /** 모든 thread(끝난 것까지) 화면 */
   onThreads: () => void;
-  /** 자동화 패널을 보이고 그 규칙 상세를 연다(thread 줄 「자동 · 규칙」 표지, plan t-0475 A1) */
+  /** 자동화 패널을 보이고 그 규칙 상세를 연다(thread 줄 「자동화 thread」 표지, plan t-0475 A1) */
   onAutomation: (project: string, name: string) => void;
   /** thread 번호로 연다(자동화 패널의 「열림」 칩·기록 번호): 끝난 thread는 보고 */
   onThreadId: (project: string, id: string) => void;
@@ -330,9 +330,6 @@ export function Sidebar(props: SidebarProps) {
       </div>
       <div {...panelProps("automations", props.panel)} className="sidebar-panel automations-panel">
         {props.panel === "automations" && <AutomationPanel canControl={props.canControl} threads={props.threads} onThread={props.onThreadId} ask={props.ruleAsk} onAsked={props.onRuleAsked} />}
-      </div>
-      <div {...panelProps("inbox", props.panel)} className="sidebar-panel inbox-sidebar">
-        {props.panel === "inbox" && <InboxPanel canControl={props.canControl} onThread={props.onThreadId} onAnswers={props.onAsks} />}
       </div>
       {menu && <RowMenu anchor={menu.anchor} point={menu.point} restoreFocusTo={menu.previousFocus} title={menu.title} subtitle={menu.place} header={menu.header} items={menu.items()} onClose={closeMenu} />}
       {confirm && (
@@ -1021,21 +1018,21 @@ function ThreadRow({ t, online, machine, twoLine, ...props }: SidebarProps & { t
       ],
     });
   };
-  // 자동화가 띄운 thread(plan t-0475 A1): 둘째 줄 앞 「자동 · 규칙 제목」. 누르면 줄(pane 열기) 대신 그 규칙 상세. 키보드는 ⋯ 메뉴
+  // 자동화가 띄운 thread(plan t-0475 A1): 둘째 줄 앞 「자동화 thread」. 누르면 줄(pane 열기) 대신 그 규칙 상세. 키보드는 ⋯ 메뉴
   // 「자동화 규칙」으로 간다(줄 안에 단추를 겹쳐 두지 않는다)
   const rule = t.automation_title ?? t.automation;
   const origin = t.automation ? (
     <span
       className="thread-origin"
       data-testid={`thread-origin-${t.project}-${t.id}`}
-      title={`자동화 「${rule}」가 띄운 thread · 눌러 규칙 보기`}
+      title={`자동화 thread · ${rule} (${t.automation}) · ${t.automation_trigger ?? "기동 사건 기록 없음"} · 눌러 규칙 보기`}
       onClick={(e) => {
         e.stopPropagation();
         props.onAutomation(t.project, t.automation!);
       }}
     >
       {/* 줄 앞 공백은 flex 항목에서 사라지므로 떨어지지 않는 공백으로 띄운다 */}
-      자동<span className="thread-origin-rule">{"\u00a0· "}{rule}</span>
+      자동화 thread
     </span>
   ) : null;
   return (
@@ -1056,7 +1053,7 @@ function ThreadRow({ t, online, machine, twoLine, ...props }: SidebarProps & { t
           {twoLine ? (
             <span className="workspace-copy is-two-line">
               <span className="workspace-line">
-                <ThreadName id={t.id} title={t.title} />
+                <ThreadStageBadge stage={t.stage} /><ThreadName id={t.id} title={t.title} />
                 {pinned && <Pin className="sidebar-pin-mark" aria-hidden="true" />}
                 {online && paneOpen && <AgentCounts pane={pane} />}
               </span>
@@ -1074,7 +1071,7 @@ function ThreadRow({ t, online, machine, twoLine, ...props }: SidebarProps & { t
             </span>
           ) : (
             <span className="workspace-copy">
-              <ThreadName id={t.id} title={t.title} />
+              <ThreadStageBadge stage={t.stage} /><ThreadName id={t.id} title={t.title} />
               {pinned && <Pin className="sidebar-pin-mark" aria-hidden="true" />}
               {online && paneOpen && <AgentCounts pane={pane} />}
               <span className={`worktree-workspace-label thread-state is-${t.group}`} data-tone={tone} data-testid={`thread-state-${t.project}-${t.id}`}>

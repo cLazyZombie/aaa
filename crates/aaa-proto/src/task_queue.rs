@@ -62,6 +62,10 @@ pub struct TaskReservation {
     /// 선점과 함께 발급한 기동 ID. 외부 기동의 exactly-once 보증은 아니다.
     pub launch_id: Option<String>,
     pub thread: Option<String>,
+    /// 연결된 thread의 현재 작업 단계. 예약 저장값 대신 host가 조회 때 채운다.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub stage: Option<crate::ThreadStage>,
     pub actor: String,
     #[ts(type = "number")]
     pub created_ms: u64,

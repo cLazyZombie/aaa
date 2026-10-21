@@ -1,5 +1,9 @@
 // herdr-web-ui aa624cb src/lib/compose.ts의 첨부 경로 삽입. MIT 고지: README.md.
 const MAX_COMPOSER_CHARS = 100_000;
+/** 초안과 대화 기록에서 같은 그림 경로를 한 번씩, 적힌 차례로 읽는다. */
+export function imagePaths(text: string): string[] {
+  return [...new Set([...text.matchAll(/(?:^|\s)@(\S+\.(?:png|jpe?g|gif|webp))(?=\s|$)/gi)].map((m) => m[1]!))];
+}
 export function imageMention(path: string): string {
   return `@${path} `;
 }

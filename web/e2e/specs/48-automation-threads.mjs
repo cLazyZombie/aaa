@@ -1,5 +1,5 @@
 // 자동화가 띄운 thread 표시(plan t-0475 A1): 실제 host가 자동화 규칙(`do.start`)으로 thread를 띄우고, 웹 「작업」 목록은 그 줄을 사람이 띄운
-// thread와 같은 자리에 섞어 왼쪽 호박색 막대와 「자동 · 규칙 제목」 표지로 보인다. 표지는 자동화 패널의 그 규칙 상세를, 자동화 패널의
+// thread와 같은 자리에 섞어 왼쪽 호박색 막대와 「자동화 thread」 표지로 보인다. 표지는 자동화 패널의 그 규칙 상세를, 자동화 패널의
 // 「열림」 칩과 기록의 thread 번호는 그 thread를 연다. 「모든 thread」는 「자동화만」으로 거른다. 시간은 기다리지 않는다: thread 기록을 기다린다.
 import fs from "node:fs";
 import { root, aaa, step, until, domIs, drawerSettled, inList, openSettings, shot } from "../lib/harness.mjs";
@@ -108,6 +108,7 @@ export default async function ({ page }) {
       return threads().find((t) => t.automation === "ci-main" && t.report_hash);
     });
     await until("사람 thread 보고", () => threads().find((t) => t.id === human && t.report_hash));
+    if (!auto.automation_trigger?.includes("every 1s")) throw new Error(`일정 출처 ${JSON.stringify(auto)}`);
     if (auto.automation_title !== "CI 실패 분류") throw new Error(`규칙 제목 ${JSON.stringify(auto)}`);
     if (threads().find((t) => t.id === human).automation !== undefined) throw new Error("사람 thread에 자동화 표지");
     // 할 일 화면의 「task 없는 열린 thread」에는 자동화 thread가 없다(출처가 있어 task가 필요 없다, plan t-0475 §5.3)
@@ -148,16 +149,16 @@ export default async function ({ page }) {
     await dialog.waitFor({ state: "detached" });
     const tag = page.getByTestId(`thread-origin-${project}-${auto.id}`);
     const words = async () => (await tag.textContent()).replace(/\s+/g, " ");
-    if ((await words()) !== "자동 · CI 실패 분류") throw new Error(`표지 글 ${await words()}`);
+    if ((await words()) !== "자동화 thread") throw new Error(`표지 글 ${await words()}`);
     if (await page.getByTestId(`thread-origin-${project}-${human}`).count()) throw new Error("사람 thread에 표지");
     for (const [device, viewport] of [["데스크톱", SIZES.desktop], ["휴대폰", SIZES.phone]]) {
       await page.setViewportSize(viewport);
       await openList(page);
       const m = await barClear(page, autoRow);
       if (m.inRow < 0 || m.gap < 3) throw new Error(`${device} 자동화 막대와 표지: ${JSON.stringify(m)}`);
-      // 휴대폰 폭은 규칙 제목을 빼고 「자동」만
+      // 휴대폰 폭에서도 「자동화 thread」 이름을 유지한다
       const shown = await tag.evaluate((el) => el.innerText.replace(/\s+/g, " ").trim());
-      if (shown !== (device === "휴대폰" ? "자동" : "자동 · CI 실패 분류")) throw new Error(`${device} 표지 ${shown}`);
+      if (shown !== "자동화 thread") throw new Error(`${device} 표지 ${shown}`);
       await closeList(page);
     }
     await page.setViewportSize(SIZES.desktop);
@@ -214,7 +215,7 @@ export default async function ({ page }) {
     await page.setViewportSize(SIZES.desktop);
   });
 
-  await step("「모든 thread」의 「자동화만」: 자동화가 띄운 thread만 남고 줄 사실에 「자동 · 규칙」이 붙는다", async () => {
+  await step("「모든 thread」의 「자동화만」: 자동화가 띄운 thread만 남고 줄 사실에 「자동화 thread」가 붙는다", async () => {
     await page.evaluate(() => (location.hash = "#threads"));
     const all = page.getByTestId("all-threads");
     await all.waitFor();
@@ -223,9 +224,17 @@ export default async function ({ page }) {
     await toggle.click();
     await domIs(page, "자동화만", (h) => !document.querySelector(`[data-testid="project-thread-${h}"]`), human);
     if ((await toggle.getAttribute("aria-pressed")) !== "true") throw new Error("토글 상태");
-    if (!(await all.getByTestId(`project-thread-${auto.id}`).textContent()).includes("자동 · CI 실패 분류")) throw new Error("줄 사실에 자동화 표지가 없다");
+    if (!(await all.getByTestId(`project-thread-${auto.id}`).textContent()).includes("자동화 thread")) throw new Error("줄 사실에 자동화 표지가 없다");
     await shot(page, "a1-all-threads-automation-only");
-    await toggle.click();
+    await all.getByTestId(`project-thread-${auto.id}`).click();
+    const origin = page.getByTestId("thread-automation-origin");
+    await origin.waitFor();
+    const detail = await origin.textContent();
+    if (!detail.includes("CI 실패 분류 (ci-main)") || !detail.includes(auto.automation_trigger) || !detail.includes("프로젝트 실행 한도와 예약 자리에서 제외")) throw new Error(`thread 출처 상세 ${detail}`);
+    await shot(page, "a1-thread-origin-detail");
+    await page.evaluate(() => (location.hash = "#threads"));
+    await all.waitFor();
+    if ((await toggle.getAttribute("aria-pressed")) === "true") await toggle.click();
     await all.getByTestId(`project-thread-${human}`).waitFor();
   });
 }

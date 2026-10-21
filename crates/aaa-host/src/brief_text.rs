@@ -85,9 +85,16 @@ CI 확인은 host의 별도 감시가 맡는다. 실패 입력은 coordinator가
 
 끝냈을 때, 그리고 사용자를 기다리며 멈출 때마다 위에 준 보고 경로에 보고를 쓴다. 사용자에게 줄 파일(문서·내보낸 파일·스크린샷)은 거기 준 library 폴더에 둔다.
 
+웹 보고서는 origin 없는 sandbox에서 열린다. 그림·음원·JSON 등 자료는 library 안에 넣고 상대 URL로 읽는다.
+fetch/XHR은 자기 보고서 폴더의 쿠키 없는 GET/HEAD만 된다. 앱 API·다른 보고서·외부 연결·쿠키·저장소는 막힌다.
+소리 혼합은 fetch → decodeAudioData → GainNode를 쓰고, 사용자 누름에서 AudioContext를 만들거나 resume한다.
+audio.volume·createMediaElementSource에 기대지 않는다(iOS·opaque origin). 외부 CDN 없이 script·글꼴도 함께 둔다.
+자세한 예시는 docs/library.md를 따른다. 회수·publish할 때 제한된 API·확인할 fetch 경로가 보이면 coordinator inbox에 경고한다.
+
 보고 형식:
 
-- 첫 줄에 `[완료]`(맡긴 일 전체와 확인이 끝남), `[결정 필요]`·`[검수 대기]`·`[확인 필요]`(사람이 직접 해야 하는 단계), `[착지]`·`[진행 중]`(후속 작업 중) 중 하나와 요약을 쓴다.
+- 첫 줄에 `[완료]`(맡긴 일 전체와 확인이 끝남), `[결정 필요]`·`[검수 대기]`·`[확인 필요]`(사람이 직접 해야 하는 단계), `[병합 준비됨]`(전체 구현·확인 완료, 착지 창만 기다림), `[착지]`(통합·검증·병합과 그 실패 수리 중), `[진행 중]`(후속 작업 중) 중 하나와 요약을 쓴다.
+- 표지는 첫 줄에 하나만 쓴다. 병합 대기는 실행 한도에서 빠지고 착지는 한 번에 하나만 빠진다. 착지를 그만두거나 다음 단계 작업을 시작하면 `[진행 중]`으로 돌린다.
 - pull request를 열었으면 표지 다음 줄에 `PR: <url>`(선택). 주소는 `https://github.com/<owner>/<repo>/pull/<number>` 전체를 쓴다.
 - `## Report` 절: 무엇을 했고, 무엇을 알아냈고, 무엇이 남았고, 사용자가 정해야 할 것은 무엇인가.
 - `## Next` 절(필수): 한 줄에 권하는 행동 하나, 명령형, 100자 이하(`PR을 병합한다`, `실패한 lint 검사를 고친다`, `X를 원하는지 확인한다`, `worktree와 branch를 지운다`). 사용자가 키를 눌러 그 줄을 너에게 돌려보내면 네가 네 도구로 직접 한다. 일이 착지한 뒤 하자고 할 정리도 넣는다. 목록이 비면 할 일이 없다는 뜻이다.
@@ -259,7 +266,7 @@ mod tests {
         let body = qs[0].body.as_deref().unwrap_or_default();
         assert!(body.contains("![지금](library/now.png)") && body.contains("| A |"), "{fence}");
         assert_eq!(qs[0].choices[1].body.as_deref(), Some("![B안](library/b.png)"));
-        // 표지는 알림 의도에만 쓴다. thread 상태는 계속 harness·진행률로 정한다.
+        // 표지는 알림 의도와 실행 자리 단계에 쓴다. thread 상태는 계속 harness·진행률로 정한다.
         assert!(brief.contains("[진행 중]") && brief.contains("[완료]") && brief.contains("사람이 직접"));
         // 운영 설정은 thread에 가지 않는다
         for word in ["max_parallel_threads", "auto_resolve_days", "start_threads", "trust_screens", "thread_profile"] {

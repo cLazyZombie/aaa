@@ -52,17 +52,9 @@ pub(crate) async fn request(
     max: usize,
 ) -> Result<Response, HttpError> {
     let t = parse_url(url).map_err(HttpError::Io)?;
-    let mut head = format!("{method} {} HTTP/1.1\r\nHost: {}\r\n", t.path, t.host);
-    for (k, v) in headers {
-        if v.contains(['\r', '\n']) {
-            return Err(HttpError::Io(format!("{k} 헤더에 줄바꿈이 있다")));
-        }
-        head.push_str(&format!("{k}: {v}\r\n"));
-    }
-    if !body.is_empty() || method != "GET" {
-        head.push_str(&format!("Content-Length: {}\r\n", body.len()));
-    }
-    head.push_str("Accept-Encoding: identity\r\nConnection: close\r\n\r\n");
+    let host = if t.host.contains(':') { format!("[{}]", t.host) } else { t.host.clone() };
+    let authority = if t.port == if t.tls { 443 } else { 80 } { host } else { format!("{host}:{}", t.port) };
+    let head = request_head(method, &authority, &t.path, headers, body)?;
     let tcp = tokio::net::TcpStream::connect((t.host.as_str(), t.port))
         .await
         .map_err(|e| HttpError::Io(format!("연결 실패: {e}")))?;
@@ -87,6 +79,41 @@ pub(crate) async fn request(
     s.write_all(head.as_bytes()).await.map_err(|e| HttpError::Io(e.to_string()))?;
     s.write_all(body).await.map_err(|e| HttpError::Io(e.to_string()))?;
     read_response(&mut s, max).await
+}
+
+fn request_head(
+    method: &str,
+    authority: &str,
+    path: &str,
+    headers: &[(&str, String)],
+    body: &[u8],
+) -> Result<String, HttpError> {
+    let mut head = format!("{method} {path} HTTP/1.1\r\nHost: {authority}\r\n");
+    for (k, v) in headers {
+        if v.contains(['\r', '\n']) {
+            return Err(HttpError::Io(format!("{k} 헤더에 줄바꿈이 있다")));
+        }
+        head.push_str(&format!("{k}: {v}\r\n"));
+    }
+    if !body.is_empty() || method != "GET" {
+        head.push_str(&format!("Content-Length: {}\r\n", body.len()));
+    }
+    head.push_str("Accept-Encoding: identity\r\nConnection: close\r\n\r\n");
+    Ok(head)
+}
+/// OS가 보호한 LocalAPI stream도 같은 bounded HTTP framing을 사용한다.
+pub(crate) async fn request_stream<S: AsyncRead + AsyncWrite + Unpin>(
+    mut stream: S,
+    method: &str,
+    path: &str,
+    headers: &[(&str, String)],
+    body: &[u8],
+    max: usize,
+) -> Result<Response, HttpError> {
+    let head = request_head(method, "local-tailscaled.sock", path, headers, body)?;
+    stream.write_all(head.as_bytes()).await.map_err(|e| HttpError::Io(e.to_string()))?;
+    stream.write_all(body).await.map_err(|e| HttpError::Io(e.to_string()))?;
+    read_response(&mut stream, max).await
 }
 
 async fn read_response<S: AsyncRead + Unpin + ?Sized>(s: &mut S, max: usize) -> Result<Response, HttpError> {
@@ -194,6 +221,33 @@ async fn read_response<S: AsyncRead + Unpin + ?Sized>(s: &mut S, max: usize) -> 
 
 #[cfg(test)]
 mod tests {
+    #[tokio::test]
+    async fn explicit_http_port_reaches_the_servers_host_authority() {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move {
+            let (mut peer, _) = listener.accept().await.unwrap();
+            let mut request = Vec::new();
+            while !request.ends_with(b"\r\n\r\n") {
+                let mut byte = [0];
+                peer.read_exact(&mut byte).await.unwrap();
+                request.extend(byte);
+                assert!(request.len() < 8192);
+            }
+            let head = String::from_utf8(request).unwrap();
+            let status = if head.lines().any(|line| line == format!("Host: {address}")) {
+                "200 OK"
+            } else {
+                "421 Misdirected Request"
+            };
+            peer.write_all(format!("HTTP/1.1 {status}\r\nContent-Length: 2\r\n\r\nok").as_bytes()).await.unwrap();
+        });
+        let reply = request("GET", &format!("http://{address}/instance-check"), &[], &[], 1024).await.unwrap();
+        assert_eq!(reply.status, 200, "사용자가 고른 포트가 Host authority에서도 유지돼야 한다");
+        server.await.unwrap();
+    }
+
     use super::*;
 
     async fn read(raw: &'static [u8], max: usize) -> Result<Response, HttpError> {

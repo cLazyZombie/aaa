@@ -211,6 +211,7 @@ impl Lab {
                 software: "test".into(),
                 features,
                 dev_mode: true,
+                sha256: None,
                 selfcheck: None,
                 sessions: vec![],
                 harness: vec![],
@@ -456,9 +457,17 @@ async fn start_waits_for_approval_and_holds_then_creates_each_occurrence_once() 
         "생성 뒤 receipt 복구도 실제 시작 완료로 기록한다"
     );
     assert_eq!(history.today, 1);
-    // 이전 자동 thread가 열린 채여도 다른 사건은 제한을 생략했으므로 실행된다.
+    // 새 기본은 규칙당 1개다. 다음 사건은 입력을 보존하며 자리가 날 때까지 기다린다.
     l.h.automation_submit("demo", &r, "due:2", "second push".into(), None).unwrap();
     l.h.automation_drain("demo", &r).await.unwrap();
+    assert_eq!(l.h.db.threads(Some("demo")).unwrap().len(), 3);
+    assert_eq!(l.h.automation_count("demo", "check").unwrap(), 1);
+    assert!(
+        l.h.routine_history("demo", "check").unwrap().runs.iter().any(|r| r.detail.contains("규칙 동시 실행 상한 1"))
+    );
+    let mut expanded = r.clone();
+    expanded.limits.max_running = Some(2);
+    l.h.automation_drain("demo", &expanded).await.unwrap();
     assert_eq!(l.h.db.threads(Some("demo")).unwrap().len(), 4);
     assert_eq!(l.h.automation_count("demo", "check").unwrap(), 2);
     assert_eq!(l.h.load("demo", &one.id).unwrap().holds, vec!["timing"]);
@@ -516,6 +525,10 @@ fn start_transaction_rechecks_late_hold_and_durable_receipt_before_insert() {
     assert!(!created);
     assert!(insert("start:2", &policy).is_err());
     policy.max_running = None;
+    assert!(insert("start:2", &policy).unwrap_err().to_string().contains("상한 1"));
+    policy.max_running = Some(0);
+    assert!(insert("start:2", &policy).is_err());
+    policy.max_running = Some(2);
     assert!(insert("start:2", &policy).unwrap().1);
     // 파일을 다시 여는 새 DB 연결에도 영수증이 남는다.
     let reopened = crate::db::Db::open(&l.root.join("host/host.db")).unwrap();

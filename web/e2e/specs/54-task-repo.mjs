@@ -1,3 +1,4 @@
+import { taskContent } from "../lib/task-content.mjs";
 // task 저장소 칸(plan §8.330, 사용자 10-20 「506에 workspace 추가」): 할 일 폼에서 project.toml repos 이름이나 「작업 폴더」를 고르면
 // task 줄 owner 뒤에 `[이름]`으로 적는다. 「바로 시작」은 그 저장소로 고정하고 그 저장소가 있는 머신을 기본으로 고른다(덜 붐비는
 // 머신 고르기는 m13 `task_repo_field_picks_machine_and_path`가 두 머신으로 본다). 칸이 빈 task는 저장소나 작업 폴더를 고르기 전에는
@@ -15,7 +16,8 @@ const sha = (text) => crypto.createHash("sha256").update(text).digest("hex");
 const read = () => fs.readFileSync(file(), "utf8");
 const write = (text) => {
   fs.writeFileSync(file(), text);
-  return sha(text);
+  // 화면 관측 전에 식별 주석 이주를 마친 fixture를 준비한다.
+  return aaa("task", "list").sha256;
 };
 const START = `# Tasks
 
@@ -52,7 +54,7 @@ export default async function ({ page }) {
     await form.getByTestId("task-field-repo").selectOption("app");
     await shot(page, "repo-desktop-form");
     await form.getByTestId("task-save").click();
-    await until("저장소 칸", () => read().includes("- [ ] 저장소 일 (fake@labA) [app]\n"));
+    await until("저장소 칸", () => taskContent(read()).includes("- [ ] 저장소 일 (fake@labA) [app]\n"));
     await shaIs(page, sha(read()));
     const chip = await row(page, "저장소 일").locator(".task-repo").textContent();
     if (chip?.trim() !== "app") throw new Error(`저장소 칩: ${chip}`);
@@ -68,7 +70,7 @@ export default async function ({ page }) {
     const save = async (want) => {
       const before = sha(read());
       await form.getByTestId("task-save").click();
-      await until(want, () => read().includes(`- [ ] ${want}\n`));
+      await until(want, () => taskContent(read()).includes(`- [ ] ${want}\n`));
       await domIs(page, "새 판", (b) => document.querySelector('[data-testid="tasks-view"]')?.dataset.tasksSha !== b, before);
     };
     await form.getByTestId("task-field-machine").selectOption("labA");
@@ -105,7 +107,7 @@ export default async function ({ page }) {
     await shot(page, "repo-desktop-start");
     await page.getByTestId("task-start-go").click();
     await page.getByTestId("task-started").waitFor();
-    const id = await until("이은 thread", () => /저장소 일 .* · (t-\d{4})$/m.exec(read())?.[1]);
+    const id = await until("이은 thread", () => /저장소 일 .* · (t-\d{4})$/m.exec(taskContent(read()))?.[1]);
     const t = aaa("thread", "show", "demo", id);
     // project.toml에는 실제 경로로 적힌다(/tmp → /private/tmp)
     if (t.thread_kind !== "worktree" || t.repo !== fs.realpathSync(repo) || t.machine !== "labA") throw new Error(`저장소로 띄우지 않았다: ${t.thread_kind} ${t.repo} ${t.machine}`);
@@ -127,10 +129,10 @@ export default async function ({ page }) {
     await p.getByTestId("task-start-repo").selectOption("app");
     await p.getByTestId("task-start-go").click();
     await p.getByTestId("task-started").waitFor();
-    const id = await until("이은 thread", () => /빈 칸 일 \(fake@labA\) · (t-\d{4})$/m.exec(read())?.[1]);
+    const id = await until("이은 thread", () => /빈 칸 일 \(fake@labA\) · (t-\d{4})$/m.exec(taskContent(read()))?.[1]);
     const t = aaa("thread", "show", "demo", id);
     if (t.thread_kind !== "worktree" || t.repo !== fs.realpathSync(repo)) throw new Error(`고른 저장소로 띄우지 않았다: ${t.thread_kind} ${t.repo}`);
-    if (read().includes("빈 칸 일 (fake@labA) [")) throw new Error("고른 값을 task 줄에 적었다");
+    if (taskContent(read()).includes("빈 칸 일 (fake@labA) [")) throw new Error("고른 값을 task 줄에 적었다");
     await p.close();
   });
 }

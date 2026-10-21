@@ -1,3 +1,4 @@
+import { ThreadStageBadge } from "./ThreadStageBadge";
 // 모든 thread(끝난 것까지, `#threads`). herdr-projects `popup.rs` `build`(Section::Threads)·`thread_line`·`group_color`(1f05c00)를 웹으로
 // 옮겼다: 사이드바는 열린 thread만 보이고(sidebar.rs `recorded_groups`), 이 화면은 묶음마다 머리 「묶음 (n)」 아래 줄을 보이며 끝난 thread는
 // 맨 아래 「끝남」 묶음에 흐리게 둔다. 「/」 거르기는 popup처럼 이름(id·제목)에 든 글로 고른다. 줄을 고르면 보고(popup detail).
@@ -15,10 +16,10 @@ import { CoordinatorOpen } from "./CoordinatorOpen";
 /** popup `Group::DISPLAY_ORDER` */
 const DISPLAY_ORDER = ["waiting_on_you", "ready_for_review", "landing", "working", "idle", "resolved"];
 
-/** popup `thread_line`: 상태 줄, 머신, agent(profile), 남은 Next 수. 자동화가 띄운 thread는 앞에 「자동 · 규칙」(plan t-0475 A1) */
+/** popup `thread_line`: 상태 줄, 머신, agent(profile), 남은 Next 수. 자동화가 띄운 thread는 앞에 「자동화 thread」(plan t-0475 A1) */
 function threadFacts(t: ThreadView, now: number): string {
   const parts = [t.group === "resolved" ? GROUP_WORD.resolved : stateLine(t, true, now)];
-  if (t.automation) parts.unshift(`자동 · ${t.automation_title ?? t.automation}`);
+  if (t.automation) parts.unshift("자동화 thread");
   if (t.machine) parts.push(t.machine);
   if (t.profile) parts.push(t.profile);
   if (t.group !== "resolved" && t.next.length > 0) parts.push(`next ${t.next.length}`);
@@ -158,7 +159,7 @@ function ProjectBody({
                 <button type="button" className={`project-threads-row is-${t.group}`} data-testid={`project-thread-${t.id}`} onClick={() => onThread(t)}>
                   <span className="project-threads-copy">
                     <span className="project-threads-name">
-                      {t.id} · {t.title}
+                      <ThreadStageBadge stage={t.stage} />{t.id} · {t.title}
                     </span>
                     <span className="project-threads-facts">{threadFacts(t, now)}</span>
                   </span>

@@ -176,6 +176,7 @@ pub fn aaa_group(f: &Facts, now_s: i64) -> ThreadGroup {
         delivered_at_ms: None,
         delivered_report: None,
         launch: None,
+        report_stage: None,
         report_hash: (!f.report_hash.is_empty()).then(|| f.report_hash.clone()),
         acked_hash: (!f.acked_hash.is_empty()).then(|| f.acked_hash.clone()),
         next: Vec::new(),

@@ -584,6 +584,9 @@ pub struct AgentHello {
     pub os: String,
     pub arch: String,
     pub software: String,
+    /// 실행 파일 SHA-256(소문자 hex, 웹 머신 상세, plan §8.372). AGENT_LINK를 올리지 않는 선택 칸이다: 옛 agent는 보내지 않고 옛 host는 버린다
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sha256: Option<String>,
     #[serde(default)]
     pub features: Vec<String>,
     #[serde(default)]
@@ -614,6 +617,9 @@ pub struct EnrollRequest {
     pub proto: Version,
     pub machine_id: String,
     pub machine_name: String,
+    /// install_enroll.v1 협상 뒤만 사용한다. host의 사람이 SAS를 승인할 때 결과를 이 ID에 결속한다.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub installation: Option<crate::install::InstallEnrollmentBinding>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -622,6 +628,34 @@ pub enum LinkMsg {
     Hello(AgentHello),
     Welcome(HostWelcome),
     Enroll(EnrollRequest),
+    /// 등록 전 기능 협상. 구판에는 grant를 보내지 않는다.
+    InstallEnrollCapabilities {
+        proto: Version,
+        features: Vec<String>,
+    },
+    InstallEnrollProbe {
+        proto: Version,
+    },
+    InstallEnroll(Box<crate::install::InstallEnrollRequest>),
+    InstallEnrollLookup {
+        proto: Version,
+        installation_id: String,
+        plan_sha256: String,
+    },
+    /// 기존 agent 자기 신원만 읽는다. 설치 grant/등록창 권한을 쓰지 않는다.
+    InstallAgentQuery {
+        proto: Version,
+        machine_id: String,
+        machine_name: String,
+    },
+    InstallAgentKnown {
+        machine_id: String,
+    },
+    InstallEnrollUnknown,
+    InstallEnrolled {
+        installation_id: String,
+        machine_id: String,
+    },
     /// host가 등록 요청을 받아 사용자의 확인을 기다린다.
     EnrollPending,
     EnrollAccepted {
@@ -1338,6 +1372,38 @@ pub struct MachineView {
     pub clock_skew_ms: Option<i64>,
     /// 새 세션을 거부하는 이유(연결 중일 때만). 비었으면 정상이다.
     pub problems: Vec<HealthProblem>,
+    /// 마지막 hello의 CPU 종류(`aarch64`·`x86_64`). 아래 넷과 같이 1.88부터 싣고, 옛 host·아직 붙지 않은 머신은 생략한다(plan §8.372)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub arch: Option<String>,
+    /// 마지막 hello의 aaa 판(`aaa --version`의 판 글)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub software: Option<String>,
+    /// 마지막 hello의 실행 파일 SHA-256(소문자 hex). 옛 agent는 보내지 않는다
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub sha256: Option<String>,
+    /// 판이 host와 다르다(판을 모르면 false)
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    #[ts(optional, as = "Option<bool>")]
+    pub software_differs: bool,
+    /// 이 host 실행 중 마지막 연결이 알린 agent 기능(host 재시작 뒤 다시 붙기 전에는 비었다)
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    #[ts(optional, as = "Option<Vec<String>>")]
+    pub features: Vec<String>,
+    /// 마지막 연결의 시작 자가 점검(§10.4 6) 요약. 점검이 hello보다 늦게 끝났으면 다음 연결 때 온다
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub selfcheck: Option<MachineSelfcheck>,
+}
+
+/// agent 시작 자가 점검 요약(hello `selfcheck`에서 host가 읽은 것). 실패 이유는 agent가 쓴 글 그대로다
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+pub struct MachineSelfcheck {
+    pub pass: bool,
+    #[serde(default)]
+    pub reasons: Vec<String>,
 }
 
 /// agent가 주기적으로 보내는 머신 건강(§8.10)
@@ -1556,6 +1622,98 @@ pub struct PendingEnroll {
     pub since_ms: u64,
 }
 
+/// SSH 머신 추가 작업 하나(웹 머신 추가 M2, plan §8.384). host DB에 남아 웹 창을 닫았다 열어도 같은 작업을 본다
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+pub struct MachineSetupView {
+    pub job: String,
+    /// 사람이 넣은 SSH 대상(별칭 또는 `user@host:port`)
+    pub target: String,
+    pub phase: MachineSetupPhase,
+    /// `ssh -G`로 푼 접속(사용자·주소·포트, ProxyJump를 거치는가)
+    pub ssh: Option<SshResolved>,
+    /// 접속 때 받은 host key(인증 전). 사람이 지문을 보고 믿는다
+    pub host_keys: Vec<HostKeyView>,
+    /// 받은 키가 이미 믿는 키인가: `known` | `new` | `changed`(fail-closed)
+    pub host_key_state: Option<String>,
+    pub detected: Option<MachineDetected>,
+    /// 실패·멈춤의 까닭(사람이 읽는 글)
+    pub error: Option<String>,
+    #[ts(type = "number")]
+    pub created_ms: u64,
+    #[ts(type = "number")]
+    pub updated_ms: u64,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+pub enum MachineSetupPhase {
+    /// 접속해 host key를 받는 중
+    Connecting,
+    /// 처음 보는 host key: 사람이 지문을 확인한다
+    Trust,
+    /// 믿는 키로 로그인해 OS·CPU를 읽는 중
+    Detecting,
+    /// 감지가 안 됐다: 사람이 OS·CPU를 고른다
+    Choose,
+    /// 감지(또는 고름) 끝, 지원하는 대상이다. 설치(M3)는 이 다음이다
+    Ready,
+    /// 감지했지만 release 대상이 없다(예: Windows ARM64)
+    Unsupported,
+    Failed,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+pub struct SshResolved {
+    pub user: String,
+    pub host: String,
+    pub port: u16,
+    pub proxy_jump: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+pub struct HostKeyView {
+    /// `ssh-ed25519` 등
+    pub kind: String,
+    /// `SHA256:<base64>`(ssh-keygen -l와 같은 꼴)
+    pub sha256: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+pub struct MachineDetected {
+    /// `macos` | `linux` | `windows`(MachineView.os와 같은 말)
+    pub os: String,
+    /// `aarch64` | `x86_64`
+    pub arch: String,
+    /// 원격이 말한 그대로(`Darwin arm64`, `Windows AMD64`). 사람이 고른 것이면 빈 글
+    pub raw: String,
+    /// 사람이 골랐다(감지 실패)
+    pub chosen: bool,
+    pub home: Option<String>,
+    pub shell: Option<String>,
+    /// 원격에 이미 있는 aaa 판(`aaa --version` 첫 줄)
+    pub aaa: Option<String>,
+}
+
+/// 「직접 설치」 안내(plan §8.383): 새 머신이 host agent 연결에 닿을 주소 후보와, 새 머신 화면에 나올 host 지문
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+pub struct EnrollGuide {
+    /// host가 실제로 연 agent 연결 주소(`agent_listen`). 닫혀 있으면 None이고 새 머신은 붙지 못한다
+    pub listen: Option<String>,
+    /// 새 머신에서 칠 `<주소>:<포트>` 후보. 앞이 추천이다. 빈 목록이면 host 밖에서 닿을 주소가 없다(닫힘·loopback)
+    pub addresses: Vec<EnrollAddress>,
+    /// host 인증서 SHA-256 전체(소문자 hex). 새 머신 `aaa agent enroll` 화면은 앞 16자를 보인다
+    pub host_fingerprint: String,
+    /// host 판(`aaa --version`). 새 머신에 같은 판을 넣는다
+    pub software: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+pub struct EnrollAddress {
+    pub address: String,
+    /// 어디서 온 후보인가: `tailnet`(tailscale 이름)·`listen`(연 주소 그대로)·`hostname`(이 머신 이름)
+    pub source: String,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 pub struct PublishState {
     /// missing | stopped | running | error
@@ -1597,6 +1755,10 @@ pub struct HostStatus {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(tag = "op", rename_all = "snake_case")]
 pub enum FrontRequest {
+    /// 설치 전용 서명 승인. Controller 또는 세션 밖 Local만, raw 승인서는 응답하지 않는다.
+    InstallApprove {
+        request: Box<crate::install::InstallApprovalRequest>,
+    },
     /// 등록은 host의 세션 밖 Local만. 비밀값은 반환하거나 감사 기록에 넣지 않는다.
     AccountImport {
         name: String,
@@ -2013,6 +2175,30 @@ pub enum FrontRequest {
         install: bool,
     },
     EnrollPending,
+    /// FRONT_API 1.93. SSH로 머신 추가 작업을 시작한다(웹 머신 추가 M2, plan §8.384): host의 OpenSSH로 접속해 host key만 받고, 아는 키면
+    /// OS·CPU를 감지한다. 원격에 쓰지 않는다. 사람만(조작 기기·세션 밖)
+    MachineSetupStart {
+        target: String,
+    },
+    /// FRONT_API 1.93. 화면에서 본 host key 지문을 믿는다: host가 받은 키와 같으면 aaa 전용 known_hosts에 넣고 감지로 간다. 사람만
+    MachineSetupTrust {
+        job: String,
+        host_key_sha256: String,
+    },
+    /// FRONT_API 1.93. 감지가 안 된 머신의 OS·CPU를 사람이 고른다(release 대상 다섯만). 사람만
+    MachineSetupChoose {
+        job: String,
+        os: String,
+        arch: String,
+    },
+    /// FRONT_API 1.93. 작업을 멈추고 목록에서 뺀다(원격에 남긴 것은 없다). 사람만
+    MachineSetupCancel {
+        job: String,
+    },
+    /// FRONT_API 1.93. 최근 SSH 추가 작업(Reader도 본다)
+    MachineSetupList,
+    /// FRONT_API 1.92. 새 머신에서 칠 「직접 설치」 명령에 넣을 host 주소 후보·host 지문·판(웹 머신 추가 M1, plan §8.383)
+    EnrollGuide,
     EnrollApprove {
         name: String,
         code: String,
@@ -2034,6 +2220,13 @@ pub enum FrontRequest {
     /// 기기를 취소한다. 그 기기의 열린 연결은 바로 닫히고 push 구독도 지워진다
     DeviceRevoke {
         id: String,
+    },
+    /// W0와 별개로, 실제 승인된 같은 머신 worker의 한 포트 범위만 검증한다.
+    InstallPublish {
+        installation_id: String,
+    },
+    InstallPublishStatus {
+        installation_id: String,
     },
     WebPublish,
     WebPublishOff,
@@ -2143,7 +2336,7 @@ pub enum FrontRequest {
         base: Option<String>,
         /// 할 일(threads/<id>.task.md로 저장하고 brief에 넣는다)
         task: String,
-        /// TASKS.md의 task 제목(대소문자 무시). owner가 profile·machine의 기본값이 되고, 메모가 할 일에 붙는다.
+        /// TASKS.md의 task ID(d-0001·ULID) 또는 제목(대소문자 무시). owner가 profile·machine의 기본값이 되고, 메모가 할 일에 붙는다.
         #[serde(default)]
         from_task: Option<String>,
         /// 시작하면 그 task 줄 끝에 ` · t-NNNN`을 붙인다(FRONT_API 1.63, 할 일 T3). 연결은 시작할 때 읽은 블록 hash로 하고,
@@ -2245,6 +2438,10 @@ pub enum FrontRequest {
         limit: Option<u32>,
         #[serde(default)]
         filter: Option<TaskLogFilter>,
+        /// 표시 ID·ULID 또는 제목으로 기록을 거른다.
+        #[serde(default)]
+        #[ts(optional)]
+        task: Option<String>,
     },
     /// 이 시각(ms)보다 오래된 할 일 기록을 지운다(FRONT_API 1.62, 조작 권한)
     TaskLogPrune {
@@ -2921,6 +3118,7 @@ impl FrontRequest {
                 | FrontRequest::PostStatus { .. }
                 | FrontRequest::Asks { .. }
                 | FrontRequest::Machines
+                | FrontRequest::MachineSetupList
                 | FrontRequest::Panes { .. }
                 | FrontRequest::Projects { .. }
                 | FrontRequest::Instance
@@ -2963,6 +3161,8 @@ impl FrontRequest {
                 | FrontRequest::PaneGet { .. }
                 | FrontRequest::PaneChat { .. }
                 | FrontRequest::Workspace { .. }
+                | FrontRequest::InstallPublish { .. }
+                | FrontRequest::InstallPublishStatus { .. }
                 | FrontRequest::WebStatus
                 | FrontRequest::Devices
                 | FrontRequest::EvaluatorStatus { .. }
@@ -2990,6 +3190,12 @@ impl FrontRequest {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum FrontResponse {
+    InstallPublished {
+        publication: crate::install::InstallPublication,
+    },
+    InstallApproval {
+        approval: crate::install::InstallApprovalView,
+    },
     Accounts {
         accounts: Vec<crate::AccountView>,
     },
@@ -3119,6 +3325,15 @@ pub enum FrontResponse {
     },
     PaneCommands {
         list: CommandList,
+    },
+    EnrollGuide {
+        guide: crate::EnrollGuide,
+    },
+    MachineSetup {
+        setup: crate::MachineSetupView,
+    },
+    MachineSetups {
+        setups: Vec<crate::MachineSetupView>,
     },
     Pending {
         pending: Vec<PendingEnroll>,
@@ -3759,6 +3974,15 @@ mod tests {
         assert!(FrontRequest::DeviceRename { id: "d".into(), label: "x".into() }.needs_control());
         assert!(FrontRequest::DeviceRevoke { id: "d".into() }.needs_control());
         assert!(!FrontRequest::Panes { role: None }.local_only());
+        // 「직접 설치」 안내는 host 주소·지문을 보이므로 조작 기기만(웹 허용, plan §8.383)
+        assert!(FrontRequest::EnrollGuide.needs_control() && !FrontRequest::EnrollGuide.local_only());
+        // SSH 머신 추가(plan §8.384): 목록은 Reader도, 시작·신뢰·고름·멈춤은 조작 기기
+        assert!(!FrontRequest::MachineSetupList.needs_control());
+        assert!(FrontRequest::MachineSetupStart { target: "mac-b".into() }.needs_control());
+        assert!(
+            FrontRequest::MachineSetupTrust { job: "j".into(), host_key_sha256: "SHA256:x".into() }.needs_control()
+        );
+        assert!(!FrontRequest::MachineSetupStart { target: "mac-b".into() }.local_only());
         assert!(!FrontRequest::Threads { project: None, role: None }.needs_control());
         // 사후 평가자 세션은 Reader로 다룬다: 평가 보기는 되고, 지정·채택·메시지는 안 된다(§8.13)
         assert!(!FrontRequest::EvaluatorStatus { project: None }.needs_control());

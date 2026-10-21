@@ -82,7 +82,7 @@ export function taskMatches(t: TaskView, filter: TaskFilter, query: string, grou
   if (filter === "check" && taskState(t, groups) !== "check") return false;
   const needle = query.trim().toLowerCase();
   if (needle === "") return true;
-  return has(needle, t.title) || has(needle, t.owner) || t.notes.some((n) => has(needle, n));
+  return has(needle, t.short_id) || has(needle, t.title) || has(needle, t.owner) || t.notes.some((n) => has(needle, n));
 }
 
 /**
@@ -420,9 +420,10 @@ export function ago(atMs: number, now: number): string {
 
 /** 「coordinator에게 맡기기」가 coordinator 입력칸에 채우는 글(t-0469 §3.4, 사람이 보내기를 누른다). 「다시 맡기기」는 앞 thread와 까닭을 붙인다 */
 export function handOffText(t: TaskView, again = false): string {
-  if (!again) return `「${t.title}」 task를 thread로 맡겨 줘`;
+  const ref = t.short_id ?? `「${t.title}」`;
+  if (!again) return `${ref} task를 thread로 맡겨 줘`;
   const why = t.attention ? `(앞 ${t.thread ?? "thread"}: ${t.attention})` : "";
-  return `「${t.title}」 task를 thread로 다시 맡겨 줘${why}`;
+  return `${ref} task를 thread로 다시 맡겨 줘${why}`;
 }
 
 /**
@@ -470,7 +471,7 @@ export function linkOp(t: TaskView, thread: string): TaskOp {
 /** 「task에 잇기」 고르기 목록: 형식 어긋남이 없고 열린 thread와 이어지지 않은 task(줄을 다시 쓰면 제목 검사를 거친다) */
 export function linkCandidates(board: TaskBoard, groups: ThreadGroups, query: string): TaskView[] {
   const needle = query.trim().toLowerCase();
-  return board.tasks.filter((t) => t.problems.length === 0 && taskState(t, groups) !== "run" && (needle === "" || has(needle, t.title) || t.notes.some((n) => has(needle, n))));
+  return board.tasks.filter((t) => t.problems.length === 0 && taskState(t, groups) !== "run" && (needle === "" || has(needle, t.short_id) || has(needle, t.title) || t.notes.some((n) => has(needle, n))));
 }
 
 /** 아직 알리지 않은 자동 정리(되살리지 않은 것, `seen`보다 새 기록). 최신이 앞이다 */
@@ -620,7 +621,7 @@ export function docLinkCandidates(board: TaskBoard, link: TaskAttachment, query:
     (t) =>
       t.problems.length === 0 &&
       !attachmentsOf(t.notes.join("\n")).some((a) => a.target === link.target) &&
-      (needle === "" || has(needle, t.title) || t.notes.some((n) => has(needle, n))),
+      (needle === "" || has(needle, t.short_id) || has(needle, t.title) || t.notes.some((n) => has(needle, n))),
   );
 }
 

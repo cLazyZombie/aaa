@@ -38,6 +38,7 @@ fn lab(root: &std::path::Path) -> Arc<Host> {
             software: "test".into(),
             features: features.iter().map(|f| f.to_string()).collect(),
             dev_mode: true,
+            sha256: None,
             selfcheck: None,
             sessions: vec![],
             harness: vec![],
@@ -50,6 +51,25 @@ fn lab(root: &std::path::Path) -> Arc<Host> {
 }
 fn restart() -> DeployAction {
     DeployAction::Restart { service: DeployService::Agent }
+}
+
+#[test]
+fn completed_rollout_allows_the_next_record_without_reusing_jobs_or_losing_history() {
+    for state in [RolloutState::Done, RolloutState::Stopped, RolloutState::StoppedRolledBack] {
+        in_lab(|h| async move {
+            let mut done = super::tests::record();
+            done.state = state;
+            done.cursor = done.steps.len() as u32;
+            h.db.start_rollout(&done.id, &serde_json::to_string(&done).unwrap()).unwrap();
+            assert!(!h.rollout_busy().unwrap());
+            let next = super::tests::record();
+            h.db.start_rollout(&next.id, &serde_json::to_string(&next).unwrap()).unwrap();
+            assert!(h.rollout_busy().unwrap());
+            assert_eq!(h.load_rollout(&done.id).unwrap(), done);
+            assert_eq!(h.load_rollout(&next.id).unwrap(), next);
+            assert!(next.steps.iter().all(|step| done.steps.iter().all(|old| old.job_id != step.job_id)));
+        });
+    }
 }
 
 #[test]
