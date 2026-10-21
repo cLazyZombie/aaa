@@ -40,7 +40,7 @@ export default async function ({ page }) {
     await page.getByTestId("task-detail-close").click();await pick(page,"웹 예약");
     await shot(page,"queue-desktop-wait");
   });
-  await step("병합 대기·착지 중: 보고 사건으로 예약을 시작하고 할 일·thread 앞에 같은 표지를 보인다", async () => {
+  await step("병합 대기·병합 중: 보고 사건으로 예약을 시작하고 할 일·thread 앞에 같은 표지를 보인다", async () => {
     const report = async (id, tag, stage) => {
       const t = aaa("thread", "show", "demo", id);
       fs.writeFileSync(`${t.work_dir}/report.md.tmp`, `${tag} 전체 확인과 착지\n\n## Next\n- 착지 창 대기\n`);
@@ -57,7 +57,7 @@ export default async function ({ page }) {
     for (const [p, name] of [[page, "desktop"], [phone, "phone"]]) {
       const badge = row(p, "웹 예약").locator('[data-stage="landing"]');
       await badge.waitFor();
-      if ((await badge.textContent()) !== "착지 중") throw new Error("착지 표지 이름");
+      if ((await badge.textContent()) !== "병합 중") throw new Error("착지 표지 이름");
       const waiting = p.getByTestId(`tasks-unlinked-${busy}`).locator('[data-stage="merge_ready"]');
       await waiting.waitFor();
       if ((await waiting.textContent()) !== "병합 대기") throw new Error("병합 표지 이름");
