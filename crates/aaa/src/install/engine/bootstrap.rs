@@ -39,20 +39,10 @@ fn system_sshd(pid: u32) -> bool {
     if !meta.is_file() || meta.uid() != 0 || meta.mode() & 0o022 != 0 {
         return false;
     }
+    // 일반 사용자 세션에서 root sshd를 읽는다: `PROC_PIDTBSDINFO`는 다른 사용자 프로세스에 EPERM이라 짧은 정보를 쓴다
     #[cfg(target_os = "macos")]
     {
-        let mut info: libc::proc_bsdinfo = unsafe { std::mem::zeroed() };
-        let size = std::mem::size_of_val(&info);
-        let read = unsafe {
-            libc::proc_pidinfo(
-                pid as i32,
-                libc::PROC_PIDTBSDINFO,
-                0,
-                (&mut info as *mut libc::proc_bsdinfo).cast(),
-                size as i32,
-            )
-        };
-        read as usize == size && info.pbi_uid == 0
+        aaa_common::process::uid(pid) == Some(0)
     }
     #[cfg(not(target_os = "macos"))]
     {
