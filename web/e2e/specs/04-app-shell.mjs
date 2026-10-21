@@ -394,7 +394,7 @@ export default async function ({ ctl, page }) {
     if (bad.length) throw new Error(bad.join("; "));
   });
 
-  await step("목록 drawer(herdr-web-ui App.tsx drawerOpen·edgeSwipe.ts·styles.css 768px, 차이 목록 M1·D2): 768px 이하는 목록이 pane 위 drawer, 머리 단추·안쪽에서 오른쪽 쓸기로 열고(왼쪽 끝은 브라우저 뒤로 몫, plan §8.397) 바깥 누름·왼쪽 쓸기·Esc로 닫으며, 줄을 고르면 닫히고, 넓어지면 옆 칸", async () => {
+  await step("목록 drawer(herdr-web-ui App.tsx drawerOpen·edgeSwipe.ts·styles.css 768px, 차이 목록 M1·D2): 768px 이하는 목록이 pane 위 drawer, 머리 단추·안쪽에서 오른쪽 쓸기로 열고(왼쪽 끝은 브라우저 뒤로 몫, plan §8.408) 바깥 누름·왼쪽 쓸기·Esc로 닫으며, 줄을 고르면 닫히고, 넓어지면 옆 칸", async () => {
     const bad = [];
     const P = await pairPage(browser, aaa("web", "pair").code, { width: 390, height: 844 });
     const pp = P.page;
@@ -437,7 +437,7 @@ export default async function ({ ctl, page }) {
     await settled(false, " #5");
     if (!(await pp.evaluate(() => document.activeElement?.dataset?.testid === "drawer-toggle"))) bad.push("Esc로 닫은 뒤 focus가 단추가 아니다");
     // 화면 안쪽에서 쓸어 열고, 왼쪽으로 쓸어 닫는다(EDGE_PX 24·SWIPE_PX 56). 왼쪽 끝 24px에서 시작한 쓸기는 Safari·Android 뒤로
-    // 쓸기 자리라 drawer가 건드리지 않는다(plan §8.397, 참고는 그 자리에서 열었다)
+    // 쓸기 자리라 drawer가 건드리지 않는다(plan §8.408, 참고는 그 자리에서 열었다)
     const cdp = await pp.context().newCDPSession(pp);
     const swipe = async (x0, x1) => {
       await cdp.send("Input.dispatchTouchEvent", { type: "touchStart", touchPoints: [{ x: x0, y: 500, id: 1 }] });

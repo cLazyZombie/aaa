@@ -119,6 +119,7 @@ pub(crate) fn thread_rec(
     let next = report.map(|b| next_lines(&String::from_utf8_lossy(b))).unwrap_or_default();
     let created = aaa_common::util::parse_iso(&t.created).unwrap_or(now_ms);
     ThreadRec {
+        over_limit: None,
         launch_sent: true,
         launch_existing_slot: false,
         legacy: Default::default(),
@@ -156,9 +157,12 @@ pub(crate) fn thread_rec(
         },
         report_stage: None,
         report_hash: copy_hash,
+        report_copy_hash: None,
         next,
         questions: Vec::new(),
         question_answer: None,
+        question_warning: None,
+        question_warning_sent: None,
         copy_failures: 0,
         copy_retry_at_ms: 0,
         copy: report.map(|_| "complete".to_string()),

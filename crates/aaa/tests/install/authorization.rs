@@ -115,7 +115,7 @@ fn drive_terminal_on(
     let mut reader = master.as_ref().unwrap().try_clone_reader().unwrap();
     let mut writer = master.as_ref().unwrap().take_writer().unwrap();
     let (tx, rx) = mpsc::channel();
-    let exited = terminal_exit::watch(child.child.as_ref(), tx.clone());
+    let exited = terminal_exit::watch(child.child.as_mut(), tx.clone());
     let reader = std::thread::spawn(move || {
         let mut buf = [0; 4096];
         loop {
@@ -371,7 +371,13 @@ fn issued_approval_runs_the_real_file_worker_and_status_keeps_the_public_id() {
     let output = lab.run(&stream_args);
     let lines: Vec<Value> =
         String::from_utf8(output.stdout).unwrap().lines().map(|line| serde_json::from_str(line).unwrap()).collect();
-    assert_eq!(output.status.code(), Some(0), "worker 진입 결과: {}", lines.last().unwrap());
+    assert_eq!(
+        output.status.code(),
+        Some(0),
+        "worker 진입 결과: {}, stderr={}",
+        lines.last().unwrap(),
+        redact_private(&String::from_utf8_lossy(&output.stderr))
+    );
     let trace: Vec<Value> = String::from_utf8(aaa_common::private_file::read(&event_file, 1024 * 1024).unwrap())
         .unwrap()
         .lines()
@@ -498,7 +504,10 @@ fn private_enrollment(edit_pin: bool) {
     let result = &public_attempt.last().unwrap()["result"];
     assert_eq!(result["installation_id"], id);
     assert!(
-        result["needs_user"].as_array().unwrap().iter().any(|n| n["code"] == "installation_private_display_required")
+        result["needs_user"].as_array().unwrap().iter().any(|n| n["code"] == "installation_private_display_required"),
+        "private enrollment result: {}, stderr={}",
+        redact_private(&result.to_string()),
+        redact_private(&String::from_utf8_lossy(&output.stderr))
     );
     let aaa_proto::FrontResponse::Pending { pending, .. } =
         rt.block_on(host.call(DeviceRole::Local, "local:cli", FrontRequest::EnrollPending)).unwrap()
@@ -645,9 +654,15 @@ fn unknown_required_harness_auth_cannot_be_completed_and_explicit_defer_reuses_t
         "--yes".into(),
         "--json".into(),
     ]);
-    let result = json(&lab.run(&apply));
+    let output = lab.run(&apply);
+    let result = json(&output);
     assert_eq!(result["exit_code"], 3, "{result}");
-    assert!(result["needs_user"].as_array().unwrap().iter().any(|n| n["code"] == "harness_auth_runtime_unverified"));
+    assert!(
+        result["needs_user"].as_array().unwrap().iter().any(|n| n["code"] == "harness_auth_runtime_unverified"),
+        "required harness result: {}, stderr={}",
+        redact_private(&result.to_string()),
+        redact_private(&String::from_utf8_lossy(&output.stderr))
+    );
     let before = snapshot(&lab.0);
     let observed = json(&lab.cmd(&["install", "--status", first_id, "--json"]));
     assert_eq!(observed["exit_code"], 3, "{observed}");

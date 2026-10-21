@@ -166,7 +166,7 @@ export default async function () {
           await openPane(p, "ak2");
           await openAsk(p);
           if (phone) {
-            // Safari가 손가락을 가져가 touchcancel 뒤 popstate를 내는 길. 왼쪽 끝 쓸기는 브라우저 뒤로 몫이라 목록이 열리지 않는다(plan §8.397).
+            // Safari가 손가락을 가져가 touchcancel 뒤 popstate를 내는 길. 왼쪽 끝 쓸기는 브라우저 뒤로 몫이라 목록이 열리지 않는다(plan §8.408).
             await inTime(p.evaluate(async () => {
               const target = document.elementFromPoint(4, 500) ?? document.body;
               const fire = (type, x) => {
@@ -225,7 +225,7 @@ export default async function () {
     } finally { await wk.close(); }
   });
 
-  await step("막대 자리: 「답할 것」은 패널 단추 끝, 보고서 단추 바로 위(데스크톱 1280·휴대폰 390 drawer)", async () => {
+  await step("막대 자리: 맨 위 「coordinator」, 「답할 것」은 패널 단추 끝, 보고서 단추 바로 위(데스크톱 1280·휴대폰 390 drawer)", async () => {
     const order = (p) =>
       p.evaluate(() => {
         const items = [...document.querySelectorAll(".activity-bar .activity-item")].filter((e) => e.closest(".activity-bottom") === null);
@@ -240,7 +240,8 @@ export default async function () {
           gapBelow: Math.round(reports.top - asks.bottom),
         };
       });
-    const want = "activity-work,activity-machines,activity-automations,activity-asks,activity-reports,activity-tasks";
+    // 맨 위는 「coordinator」(t-0621)
+    const want = "activity-coordinator,activity-work,activity-machines,activity-automations,activity-asks,activity-reports,activity-tasks";
     const dev = await pairPage(browser, aaa("web", "pair").code, { width: 1280, height: 800 });
     try {
       await dev.page.getByTestId("activity-bar").waitFor();

@@ -108,7 +108,34 @@ fn spawn(state: &Path, id: &str, sha: &str, resume: bool) -> Result<Child> {
         command.arg("--resume");
     }
     detach(&mut command);
-    command.spawn().map_err(|_| failed("installation_worker_unavailable", 3))
+    command.spawn().map_err(|error| {
+        #[cfg(windows)]
+        {
+            use windows_sys::Win32::System::{JobObjects::*, Threading::*};
+            let mut in_job = 0;
+            let membership = unsafe { IsProcessInJob(GetCurrentProcess(), std::ptr::null_mut(), &mut in_job) };
+            let mut limits: JOBOBJECT_EXTENDED_LIMIT_INFORMATION = unsafe { std::mem::zeroed() };
+            let queried = unsafe {
+                QueryInformationJobObject(
+                    std::ptr::null_mut(),
+                    JobObjectExtendedLimitInformation,
+                    (&mut limits as *mut JOBOBJECT_EXTENDED_LIMIT_INFORMATION).cast(),
+                    std::mem::size_of_val(&limits) as u32,
+                    std::ptr::null_mut(),
+                )
+            };
+            // OS 오류·Job 제한 비트만 남긴다. 실행 경로·인자·환경·비밀 입력은 기록하지 않는다.
+            eprintln!(
+                "install worker spawn failed: os_error={:?}, in_job={:?}, job_limits={:?}",
+                error.raw_os_error(),
+                (membership != 0).then_some(in_job != 0),
+                (queried != 0).then_some(limits.BasicLimitInformation.LimitFlags)
+            );
+        }
+        #[cfg(not(windows))]
+        let _ = error;
+        failed("installation_worker_unavailable", 3)
+    })
 }
 
 pub(super) async fn launch(

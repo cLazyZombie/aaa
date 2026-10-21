@@ -1,6 +1,6 @@
 // herdr-web-ui(aa624cb) src/lib/edgeSwipe.ts를 옮겼다. 고지는 README.md. 여는 쓸기의 자리만 바꿨다: 참고는 왼쪽 끝 24px에서
 // 시작한 쓸기로 열지만, 그 자리는 iPhone Safari의 뒤로 쓸기 자리라 두 몸짓이 함께 돌았다. aaa는 왼쪽 끝을 브라우저에 두고
-// 화면 안쪽에서 오른쪽으로 쓸면 연다(plan §8.397, 사용자 1A).
+// 화면 안쪽에서 오른쪽으로 쓸면 연다(plan §8.408, 사용자 1A).
 /*
  * The workspace drawer follows a phone's finger: a swipe to the right from inside the screen
  * opens it, as the menu button does, and a swipe to the left closes it again. The left edge

@@ -39,6 +39,31 @@ fn hash(text: &str) -> String {
     hex::encode(Sha256::digest(text.as_bytes()))
 }
 impl Host {
+    /// 병합 첫 줄과 저장된 출처가 모두 확인될 때만 자기 착지로 본다.
+    /// 병합 안의 일반 커밋은 무시하되, 잘린 목록·출처 없는 병합은 보수적으로 받는다.
+    fn git_own_landing(&self, p: &str, rule: &Routine, change: &aaa_proto::GitChange) -> bool {
+        if !matches!(rule.action, crate::automation::Action::Start(_)) || change.kind != "pushed" || change.truncated {
+            return false;
+        }
+        let mut found = false;
+        for commit in &change.commits {
+            if !commit.subject.trim_start().starts_with("병합:") {
+                continue;
+            }
+            // agent가 원문 첫 줄에서 뽑은 번호를 쓴다. 표시용 subject는 80자로 잘려 끝 번호가 없을 수 있다.
+            let owners = &commit.owners;
+            if owners.is_empty()
+                || owners
+                    .iter()
+                    .any(|id| !self.load(p, id).is_ok_and(|t| t.automation.as_deref() == Some(rule.name.as_str())))
+            {
+                return false;
+            }
+            found = true;
+        }
+        found
+    }
+
     fn git_every(&self) -> Duration {
         let min = if std::env::var(crate::routine::TEST_SECONDS).as_deref() == Ok("1") { 1 } else { 30 };
         Duration::from_secs(self.cfg.projects.git_poll_secs.max(min))
@@ -243,6 +268,7 @@ impl Host {
                         &hash(&format!("{p}:{mid}:{cwd}:{}:{branch}:{}", rule.name, s.source.revision))[..32]
                     );
                     let deploy = matches!(rule.action, crate::automation::Action::Deploy);
+                    let skip_reason = self.git_own_landing(p, rule, &change).then(|| "자기 착지".to_string());
                     if deploy {
                         for commit in &mut change.commits {
                             commit.subject.clear();
@@ -270,7 +296,7 @@ impl Host {
                         legacy: Default::default(),
                         id,
                         routine: rule.name.clone(),
-                        skip_reason: None,
+                        skip_reason,
                         kind: change.kind,
                         sha: change.after.or(change.before).unwrap_or_default(),
                         owners: owners.into_iter().collect(),
@@ -312,6 +338,10 @@ impl Host {
         )
     }
 }
+
+#[cfg(test)]
+#[path = "git_watch_tests.rs"]
+mod own_landing_tests;
 
 #[cfg(test)]
 mod tests {

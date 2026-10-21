@@ -2,7 +2,7 @@
 // iPhone(WebKit 390·430, Safari 탭·홈 화면 앱 흉내)에서 pane을 열고 다른 pane으로 가고 보고서를 연 뒤 브라우저 뒤로(iOS 가장자리
 // 쓸기와 같은 history.back)를 끝까지 하면, 열어 본 화면을 거꾸로 지나 첫 pane에서 멈추고 빈 「하나를 고른다」로 떨어지지 않는다.
 // 왼쪽 가장자리에서 오른쪽 끝까지 쓸기는 Safari의 가장자리 뒤로 몫이다. 앱의 목록 drawer 쓸기(herdr/edgeSwipe.ts)는 화면 안쪽에서
-// 시작한 쓸기만 받는다(plan §8.397, 전에는 두 몸짓이 함께 돌아 뒤로 간 화면에 목록이 열려 남았다). 가장자리 쓸기를 따로, 그리고
+// 시작한 쓸기만 받는다(plan §8.408, 전에는 두 몸짓이 함께 돌아 뒤로 간 화면에 목록이 열려 남았다). 가장자리 쓸기를 따로, 그리고
 // 뒤로와 겹쳐(시스템이 손가락을 가져가 touchcancel, 그 뒤 뒤로) 흉내 낸다. 손가락은 WebKit의 document.createTouch로 만든다.
 // 실제 iOS가 가장자리 뒤로 몸짓에서 페이지에 어떤 터치 사건을 주는지는 헤드리스가 보이지 않는다(실기 확인).
 // 혼자 돌리기: node web/e2e/web.e2e.mjs --spec 39-phone-back(새 실험실).
@@ -205,7 +205,7 @@ export default async function () {
     }
   });
 
-  await step("왼쪽 가장자리에서 오른쪽 끝까지 쓸기는 Safari 뒤로 몫: 목록을 열지 않고, 뒤로와 겹치면 앞 화면에 목록 없이 간다. 안쪽 쓸기는 목록을 연다(plan §8.397)", async () => {
+  await step("왼쪽 가장자리에서 오른쪽 끝까지 쓸기는 Safari 뒤로 몫: 목록을 열지 않고, 뒤로와 겹치면 앞 화면에 목록 없이 간다. 안쪽 쓸기는 목록을 연다(plan §8.408)", async () => {
     const wk = await webkit.launch();
     try {
       for (const width of [390, 430]) for (const standalone of [false, true]) {

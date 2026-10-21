@@ -47,6 +47,6 @@ export function questionMaterials({ items, body, reportId, project, base, origin
       else if (b.type === "table") { b.header.forEach(inline); b.rows.forEach((row) => row.forEach(inline)); }
     }
   };
-  for (const markdown of [body ?? "", ...items.flatMap((q) => [q.body ?? "", ...q.choices.map((c) => c.body ?? "")])]) blocks(parseMarkdown(markdown));
+  for (const markdown of [body ?? "", ...items.flatMap((q) => [q.body ?? "", ...q.choices.map((c) => c.body ?? ""), q.after ?? ""])]) blocks(parseMarkdown(markdown));
   return [...found.values()];
 }

@@ -10,7 +10,7 @@ use std::sync::{
 };
 
 const HARNESS: &str = r#"#!/usr/bin/env python3
-import os,sys,json,pathlib,socket,urllib.request,urllib.error,hashlib,base64,stat,subprocess
+import os,sys,json,pathlib,socket,urllib.request,urllib.error,hashlib,base64,stat,subprocess,datetime
 if sys.argv[1:]==['--version']:
     print('codex-cli 0.163.0');sys.exit(0)
 root=pathlib.Path(os.environ['ACCOUNT_PROOF'])
@@ -48,6 +48,7 @@ assert 'cli_auth_credentials_store = "file"' in (home/'config.toml').read_text()
 assert os.environ.get('CLAUDE_CODE_OAUTH_TOKEN') is None
 url=os.environ['CODEX_REFRESH_TOKEN_URL_OVERRIDE']
 sid='019a4c5e-1f2b-7c3d-8e4f-a5b6c7d8'+tid[-4:]
+hook_sid=sid.replace('019a4c5e','019a4c5f')
 roll=home/'sessions'/'2026'/'01'/'01'/('rollout-test-'+sid+'.jsonl')
 if 'resume' in sys.argv:
     assert roll.exists(), 'resume history missing'
@@ -56,12 +57,15 @@ if 'resume' in sys.argv:
         urllib.request.urlopen(urllib.request.Request(url,data=json.dumps(dict(grant_type='refresh_token')).encode()),timeout=25)
         raise AssertionError('expired refresh accepted')
     except urllib.error.HTTPError as e: assert e.code==503
+    subprocess.run([os.environ['ACCOUNT_AAA'],'hook','--agent','codex',json.dumps({'type':'agent-turn-complete','thread-id':hook_sid})],check=True,stdout=subprocess.PIPE)
     s=gate(3,dict(token=digest(auth['tokens']['access_token']),refresh=digest(auth['tokens']['refresh_token']),home=str(home)))
     assert s.recv(1)==b'X'
     sys.exit(0)
 roll.parent.mkdir(parents=True,exist_ok=True)
-roll.write_text(json.dumps(dict(type='response_item',payload=dict(type='message',role='assistant',content=[dict(type='output_text',text='account-history')])) )+'\n')
-subprocess.run([os.environ['ACCOUNT_AAA'],'hook','--agent','codex',json.dumps({'type':'agent-turn-complete','thread-id':sid})],check=True,stdout=subprocess.PIPE)
+meta=dict(type='session_meta',payload=dict(id=sid,session_id=sid,cwd=os.getcwd(),source='cli',timestamp=datetime.datetime.now(datetime.timezone.utc).isoformat(timespec='milliseconds').replace('+00:00','Z')))
+roll.write_text(json.dumps(meta)+'\n'+json.dumps(dict(type='response_item',payload=dict(type='message',role='assistant',content=[dict(type='output_text',text='account-history')])) )+'\n')
+# 실제 0.163.0에서 관측한 SessionStart ID와 rollout ID의 불일치. 로컬·TLS 원격 모두 같은 조회를 쓴다.
+subprocess.run([os.environ['ACCOUNT_AAA'],'hook','--agent','codex',json.dumps({'type':'agent-turn-complete','thread-id':hook_sid})],check=True,stdout=subprocess.PIPE)
 
 s=gate(0,dict(token=digest(auth['tokens']['access_token']),home=str(home)))
 assert s.recv(1)==b'1'
@@ -286,6 +290,9 @@ fn account_credentials_parallel_refresh_and_all_records_are_redacted() {
     let resumed = gate.take(1, 3);
     assert_eq!(resumed[0].1["token"], sha(&token_pairs[2].0));
     assert!(homes.contains(&resumed[0].1["home"].as_str().unwrap().to_string()), "재개는 같은 기록 홈");
+    let resumed_thread = w.wait_show("재개 기록 연결", id, |v| v["agent"]["harness_session"].is_string());
+    let chat = w.h.ok(&["pane", "chat", resumed_thread["pane"].as_str().unwrap()]);
+    assert!(chat["messages"].as_array().unwrap().iter().any(|m| m["text"] == "account-history"));
     assert_eq!(upstream.calls.load(Ordering::SeqCst), 3, "거부된 갱신은 한 번, 우회/자동 재시도 없음");
     // 제공자가 거부한 갱신은 그 계정을 끊김으로 보이고 확인 필요 알림을 한 번 낸다(관리 GUI W5a, plan §8.351)
     let listed = w.h.ok(&["account", "list"]);

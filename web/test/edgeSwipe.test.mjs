@@ -1,6 +1,6 @@
 // 휴대폰 목록 drawer 쓸기(web/src/herdr/edgeSwipe.ts). herdr-web-ui(aa624cb) src/lib/edgeSwipe.test.ts를 node:test로
 // 옮겼다(bun:test의 describe·test·expect를 아래 작은 expect로, 고지는 web/src/herdr/README.md). 여는 쓸기는 왼쪽 끝이 아니라 화면 안쪽에서
-// 시작한다(plan §8.397): 닫힌 drawer를 여는 사례는 x 40부터, 왼쪽 끝 쓸기는 브라우저 뒤로 몫이다.
+// 시작한다(plan §8.408): 닫힌 drawer를 여는 사례는 x 40부터, 왼쪽 끝 쓸기는 브라우저 뒤로 몫이다.
 import { afterEach, beforeEach, describe, test } from "node:test";
 import assert from "node:assert/strict";
 import { drawerSettles, EDGE_PX, FLING_SPEED, SWIPE_PX, swipeVerdict, watchDrawerSwipe } from "../src/herdr/edgeSwipe.ts";
