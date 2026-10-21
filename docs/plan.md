@@ -6752,3 +6752,17 @@ Windows install 승인 PTY는 ConPTY(INHERIT_CURSOR)의 시작 커서 질의에 
 §8.376의 자동화 배지 수리 뒤에도 WebKit reload에서 tasks/inbox 등 다른 갱신이 끝나는 문서에 새 fetch를 시작했다. 공통 `apiFetch`가 capture pagehide 뒤 일반 API 요청을 네트워크 시작 전 AbortError로 취소한다. api.ts의 post/인증/업로드/push와 사용량·계정 사용량·입력 진단 API가 같은 경계를 쓴다. 일반 숨긴 탭은 막지 않고 pageshow 뒤 새 요청을 허용하며, 취소된 쓰기를 복귀 때 자동 재생하지 않는다. 떠날 때 명시한 keepalive 설정 저장은 유지한다. 파일/보고서/clipboard asset 읽기와 권한 검사는 그대로다. 경로별 guard를 추가하지 않고 기존 배지의 갱신 합치기·복귀 갱신을 보존한다.
 
 최소 WebKit에서 production API 함수9개가 pagehide 뒤 네트워크를 시작해 RED, 수리 뒤0건·AbortError9건·keepalive1건·복귀 새 요청1건으로 GREEN이다. 기존 E2E23에 실제 App의 WS tasks/inbox 사건을 보내는 keeper를 더했다. 먼저 정상 상태의 두 응답을 확인하고 종료 뒤 전송0·복귀 뒤 재조회를 검사한다. 원래 코드는 tasks/inbox 두 요청에서 실패하며, 새 빌드의 keeper와 E2E23 파일 전체는 통과했다. API 판과 E2E 번호는 바꾸지 않는다. I6 CI 수리와 별도 commit으로 두며 전체 gate·Windows cross·공개 검사를 거쳐 같은 착지 창에서 병합한다.
+
+### 8.380 SHA 거부 시험의 원격 단계 대기 분리(10-21, t-0587)
+
+- **원인·범위.** 기존 rollout keeper는 로컬 agent가 연결되면 원격 SHA 거부의 종료 대기를 시작했다. 연결 뒤에도 로컬 재시작의 실행 신원 대조·감시 해제가 남아 있어 서로 다른 단계가 같은 30초를 썼다. 원본 실패에서 대기 시작 뒤 원격 교체 진입까지 약 10.4초, Recovering 진입까지 약 27.1초가 걸린 뒤 30초 시험 상한에 걸렸다. baseline SHA와 설치 SHA는 같았다. 별도 실행은 같은 설치 시작 플래그를 거쳐 재시작 없이 Cancelled/Stopped로 끝났으며 제품 순서 경쟁은 재현되지 않았다. 당시 CPU·I/O별 지연 원인까지 확정하지 않는다.
+- **수정·검증.** 기존 단계 진행 사건으로 원격 AgentUpdate 진입을 먼저 확인하고 원래 30초 상한으로 종료 표지를 기다린다. stopped·SHA 오류·실패 cursor·서비스 호출 횟수·앞 머신 SHA 단언을 유지하며, 영속 guard의 install_started=true·activated=false·baseline SHA·Cancelled·무재시작을 추가로 확인한다. 실제 설치 중 취소·늦은 rename 복구 keeper와 제품 전이·시한은 유지한다. 절차와 근거는 [시험](testing.md)의 t-0587 절에 둔다.
+- **착지 번호·호환.** 기준 main `f496ecd7`의 §8.379·FRONT_API 1.91·AGENT_LINK 1.11·E2E70을 직접 확인했다. 이번 수리는 §8.380을 이어 쓰며 제품 API나 새 웹 E2E 파일이 없어 기존 판과 번호를 유지한다.
+
+
+### 8.381 보고서 자기 폴더 fetch·음원 혼합(10-21, t-0589)
+
+- **동작·격리.** 보고서는 opaque origin sandbox를 유지한다. 현재 `/v/<권한>/` 폴더만 connect-src에 지정하고 유효한 GET/HEAD 성공 응답에만 Origin null CORS를 준다. 쿠키 동반 opaque 읽기와 opaque 앱 API 요청을 서버에서도 거부하며 credentials 허용·preflight·redirect는 열지 않는다. 다른 보고서·앱 API·외부 연결·쓰기·저장소·부모 접근은 차단한다. 권한 링크는 매 요청 검증하고 Origin null 자체를 인증으로 쓰지 않는다. CSP는 redirect 뒤 경로를 비교하지 않으므로 파일 경로의 무redirect 계약을 유지한다.
+- **작성·경고.** 그림·음원·JSON·script는 library 안에 두고 상대 URL을 쓴다. iOS 음원 혼합은 사용자 누름에서 AudioContext를 연 뒤 fetch·decodeAudioData·GainNode로 처리한다. AGENTS·thread brief·[보고서 작성 안내](library.md)에 제약과 예시를 적고 회수·publish·웹 업로드·실시간 등록·import에서 제한 API나 확인할 fetch를 찾으면 coordinator inbox에 경고한다. 정적 문자열 휴리스틱의 오탐·누락은 복사 성공이나 보안 경계를 대신하지 않는다.
+- **검증.** E2E71은 실제 host·agent와 Chromium/WebKit 390×844에서 사본·실시간 원본·인증 없는 공유 탭의 WAV 두 개 읽기·decode·혼합·ended와 격리를 확인한다. 출력 끝은 gain 0으로 두고 그 앞 analyser로 신호를 확인한다. HEAD·Range·XHR·하위 HTML 상대 읽기·경로 탈출·credentials·링크 폐기도 검사한다. connect-src를 host 전체로 넓히거나 CORS를 없앤 제품 변형에서 각각 격리·fetch 실패를 잡고 bytes 복구 뒤 정본에서 통과했다. 실제 iPhone 청취는 별도다. 기존 E2E21·59와 Rust library·보고 회수 keeper도 유지한다.
+- **착지 번호·호환.** 기준 origin/main `34bc1a04`의 마지막 §8.380·FRONT_API 1.91·AGENT_LINK 1.11·E2E70을 직접 확인했다. 이번 기능은 §8.381·E2E71을 이어 쓴다. Front/Agent wire 요청·타입 변경이 없어 FRONT_API 1.91·AGENT_LINK 1.11은 유지한다.
