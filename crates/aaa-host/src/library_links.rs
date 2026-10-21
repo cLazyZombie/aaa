@@ -65,7 +65,6 @@ impl SigningKey {
 
 impl Host {
     pub(crate) fn link_view(&self, r: LibraryLinkRow) -> LinkView {
-        let base = format!("/v/{}/", self.library_signing.read().unwrap().cap(&r.id));
         let size = self
             .project_dir(&r.project)
             .ok()
@@ -78,8 +77,14 @@ impl Host {
                     .sum()
             })
             .unwrap_or(0);
+        let report_id = self.report_id(&r.project, &r.thread);
+        self.link_view_summary(r, size, report_id)
+    }
+
+    pub(crate) fn link_view_summary(&self, r: LibraryLinkRow, size: u64, report_id: Option<String>) -> LinkView {
+        let base = format!("/v/{}/", self.library_signing.read().unwrap().cap(&r.id));
         LinkView {
-            report_id: self.report_id(&r.project, &r.thread),
+            report_id,
             id: r.id,
             project: r.project,
             thread: r.thread,
@@ -279,6 +284,65 @@ mod tests {
         fn issue(&self, id: &str) -> LinkView {
             self.h.library_link("demo", id, None, "test").unwrap()
         }
+    }
+
+    #[test]
+    fn catalog_matches_single_report_after_versions_archives_and_live_changes() {
+        let lab = Lab::new();
+        let source = lab.state.join("source");
+        std::fs::create_dir(&source).unwrap();
+        std::fs::write(source.join("index.html"), "첫 판").unwrap();
+        lab.h
+            .library_publish("demo", "page", source.to_str().unwrap(), false, Some(Some("시안")), None, "test")
+            .unwrap();
+        std::fs::write(source.join("index.html"), "둘째 판").unwrap();
+        lab.h
+            .library_publish("demo", "page", source.to_str().unwrap(), false, Some(Some("시안")), None, "test")
+            .unwrap();
+        lab.h.library_publish("demo", "live", source.to_str().unwrap(), true, None, None, "test").unwrap();
+        lab.report("t-0001", &[("result.txt", b"done", false), ("remote.txt", b"remote", true)]);
+        lab.report("t-0002", &[("result.txt", b"active", false)]);
+        let mut active = lab.h.load("demo", "t-0002").unwrap();
+        active.status = aaa_proto::ThreadStatus::Open;
+        lab.h.db.thread_save("demo", &active.id, "open", &serde_json::to_string(&active).unwrap()).unwrap();
+        // 잘못된 옛 thread 이름도 load가 거부하므로 목록에서는 계속 보호한다.
+        lab.report("t-invalid", &[("result.txt", b"legacy", false)]);
+        lab.issue("t-0001");
+        let old = lab.h.report_version_names("demo", "page").pop().unwrap();
+        let archive: aaa_proto::ArchivedTask = serde_json::from_value(serde_json::json!({
+            "task_id":"fixture-task","task":{"id":"fixture-task","list":"Backlog","title":"완료","notes":[],"done":true},
+            "body":format!("[결과](library/{old}/index.html)"),"reason":"완료","completed_ms":1,"restored":true,"committed":true,"removed_sha256":"","history":[]
+        })).unwrap();
+        lab.h.db.archive_save("demo", &archive).unwrap();
+        let check = || {
+            for reveal in [false, true] {
+                let all = lab.h.library_reports(None, reveal).unwrap();
+                assert_eq!(all.len(), 5, "보존 판은 목록 줄에서 뺀다");
+                for row in all {
+                    let single = lab.h.report_view(&row.project, &row.name, reveal).unwrap();
+                    assert_eq!(
+                        serde_json::to_value(&row).unwrap(),
+                        serde_json::to_value(single).unwrap(),
+                        "{}",
+                        row.name
+                    );
+                }
+            }
+        };
+        check();
+        // source 변경은 manifest/stat 캐시 없이 즉시 보인다. 최신 링크 폐기와 seen도 다음 목록에 반영된다.
+        std::fs::write(source.join("added.txt"), "늘어난 파일").unwrap();
+        lab.h.library_opened("demo", "page");
+        let link = lab.h.latest_library_link("demo", "page").unwrap();
+        lab.h.library_link_revoke(&link.id, "test").unwrap();
+        check();
+        std::fs::remove_dir_all(&source).unwrap();
+        check();
+        let all = lab.h.library_reports(None, false).unwrap();
+        assert!(all.iter().find(|r| r.name == "page").unwrap().busy, "옛 r 첨부도 원본을 보호한다");
+        assert!(!all.iter().find(|r| r.name == "t-0001").unwrap().busy);
+        assert!(all.iter().find(|r| r.name == "t-0002").unwrap().busy);
+        assert!(all.iter().find(|r| r.name == "live").unwrap().problem.is_some());
     }
 
     async fn get(h: &Arc<Host>, path: &str, range: Option<&str>) -> (StatusCode, axum::http::HeaderMap, Vec<u8>) {

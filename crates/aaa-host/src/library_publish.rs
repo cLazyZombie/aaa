@@ -24,7 +24,7 @@ fn name_ok(name: &str) -> bool {
 
 /// 글에 든 thread 번호(`t-0448`·`t0448`, 숫자 4자리 이상)를 `t-0448` 꼴로. 앞뒤가 영숫자면 낱말 안이라 세지 않는다
 /// (`projects-t-0448`·`old-t-0001`·`t0441-report`는 센다, `art-0448`·`t-0448a`는 세지 않는다).
-fn thread_numbers(s: &str) -> Vec<String> {
+pub(crate) fn thread_numbers(s: &str) -> Vec<String> {
     let b = s.as_bytes();
     let mut out = Vec::new();
     let mut i = 0;
@@ -43,7 +43,7 @@ fn thread_numbers(s: &str) -> Vec<String> {
     out
 }
 
-fn io_error(_: std::io::Error) -> ErrorBody {
+pub(crate) fn io_error(_: std::io::Error) -> ErrorBody {
     // 개인 경로를 API 오류·로그로 내보내지 않는다.
     err(ErrorCode::Unavailable, "보고서 파일을 읽거나 쓸 수 없다")
 }
@@ -617,7 +617,7 @@ impl Host {
         Ok(FrontResponse::LibraryImported { reports, skipped })
     }
 
-    fn report_view(&self, project: &str, name: &str, reveal: bool) -> Result<LibraryReport, ErrorBody> {
+    pub(crate) fn report_view(&self, project: &str, name: &str, reveal: bool) -> Result<LibraryReport, ErrorBody> {
         let dir = self.project_dir(project)?;
         let row = self.db.library_report(project, name).map_err(super::orch::internal)?;
         let updated = row.as_ref().map(|r| r.updated).unwrap_or_else(|| {
@@ -651,32 +651,6 @@ impl Host {
         };
         view.busy = self.protected_copy(&view);
         Ok(view)
-    }
-
-    pub(crate) fn library_reports(&self, project: Option<&str>, reveal: bool) -> Result<Vec<LibraryReport>, ErrorBody> {
-        let projects = if let Some(p) = project {
-            self.project_dir(p)?;
-            vec![p.to_string()]
-        } else {
-            self.projects_all().into_iter().map(|p| p.name).collect()
-        };
-        let mut reports = Vec::new();
-        for p in projects {
-            let dir = self.project_dir(&p)?;
-            for e in std::fs::read_dir(dir.join("threads")).map_err(io_error)? {
-                let e = e.map_err(io_error)?;
-                if let Some(name) = e.file_name().to_str().and_then(|s| s.strip_suffix(".files.json"))
-                    && safe_rel(name)
-                    && !self.db.report_reserved(&p, name).map_err(super::orch::internal)?
-                {
-                    reports.push(self.report_view(&p, name, reveal)?);
-                }
-            }
-        }
-        reports.sort_by(|a, b| {
-            b.updated_at_ms.cmp(&a.updated_at_ms).then_with(|| (&a.project, &a.name).cmp(&(&b.project, &b.name)))
-        });
-        Ok(reports)
     }
 }
 

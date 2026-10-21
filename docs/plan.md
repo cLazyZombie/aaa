@@ -7094,10 +7094,28 @@ FRONT_API 1.96는 기본 검수 표지와 답 기록의 r 참조를 더한다. E
 
 - **착지 통합.** origin/main `c249e316`에서 마지막 §8.411·FRONT_API 1.101·AGENT_LINK 1.11·E2E79를 직접 확인했다. 이 기능은 §8.412로 옮기고 API 판과 기존 E2E 번호를 유지한다. main의 passkey·Windows 보고 전송 종료·install Job/부모 종료/IPC 수리를 보존하며 통합본 전체 ci-local과 공개 검사를 수행한다.
 
+### 8.413 원격 보고의 숨은 첨부와 판 보존 실패 격리(t-0654)
 
-### 8.413 install Windows pairing 구분자와 IPC 해제 사건(t-0485)
+- **원인.** 기존 보고 판 등록의 안전 경로 오류는 첨부 경로의 `.claude`·`.reports` 성분이었다. 폴더 깊이 제한이 아니며 조사한 파일에 symlink는 없었다. agent의 수집기는 숨은 성분도 열거하지만 host는 거부해 최신 수집 자체도 중단했다. 다른 보고의 크기 오류는 manifest 작성 뒤 바뀐 host 첨부 세 개에서 확인했다. 기동 때의 기존 판 등록은 경고 후 계속하지만, 최신 수집의 판 보존 오류는 본문 저장 앞에서 반환해 새 보고·단계 갱신을 막았다.
+- **고침.** host의 기존 안전 경로 검사는 유지한다. 금지 첨부는 읽기 요청·host 경로 결합 전에 건너뛰고 목록의 부분 사본 사유에 남긴다. 정상 첨부·새 본문은 계속 받는다. 불변 판 저장 실패는 실패 사본으로 기록하되 최신 본문·단계·ack 처리를 계속한다. 기존 ticker로 같은 hash를 다시 받을 때 판을 복구하고 목록 변경도 알린다. 실패한 r 판은 공개하지 않는다. 기존 판 등록과 publish의 경로·symlink·정확한 크기 검사는 유지한다.
+- **검증.** 실제 운영 파일은 읽기만 했다. 수정 전 수집 keeper 두 개의 RED와 수정 후 GREEN, 깊은 경로·숨은 성분·symlink·크기 불일치의 보존 경계, 실제 host·CLI·Agent link에서 판 공개 오류와 같은 hash의 ticker 복구를 검사한다. 고정 sleep·실패 재시도·시한 연장 없이 사건·수집 완료로 끝낸다. 전체 검증은 ci-local·check-public이며 API 판·E2E 번호는 유지한다.
+- **추가 시간 초과 조사.** `ReportFileRead`는 보고 첨부 수집 전용이고 `FileRead`는 구형 수집과 웹 파일 보기에서 함께 쓴다. 숨은 경로 검사는 전송 요청 전에 즉시 거부하므로 120초 응답 대기 자체의 원인은 아니다. 첨부 응답 시간 초과는 기존 파일별 실패 경로로 처리하지만, 뒤의 숨은 첨부가 수집 전체를 취소하던 경계를 이번에 고친다. 120초 한도는 유지한다. 기존 시간 초과 로그에는 대상 머신·파일·offset이 없어 실제 파일 I/O 지연과 응답 전달 지연을 구분할 수 없다.
+
+- **착지 통합.** origin/main `81216f02`에서 마지막 §8.412·FRONT_API 1.101·AGENT_LINK 1.11·E2E79를 직접 확인했다. 이 변경은 §8.413으로 옮기고 API 판과 기존 E2E 번호는 유지한다. main의 passkey·install Windows Job/부모 종료/state IPC·직접 병합한 할 일 완료 보관을 보존하며 통합본 전체 ci-local과 공개 검사를 수행한다.
+
+### 8.414 보고서 목록의 반복 조회와 첫 화면(10-22, t-0656)
+
+- 보고 목록은 프로젝트마다 보고 메타·예약/완료 판 원장·thread·완료 보관 참조·공유 링크를 한 번씩 모아 읽는다. 첨부 원문이나 해시를 읽지 않고 manifest의 크기를 합산한다. 판의 manifest는 사본마다 한 번만 읽고 공유 링크의 크기도 재사용한다. 실시간 등록 폴더는 기존 안전한 순회를 유지하며 다음 조회에 변경·실패를 반영한다.
+- 보관이 참조하는 기존 이름/r 판, 진행 중·누락·깨진 thread의 보호를 유지한다. 용량·정리 계획은 같은 목록의 보호 판정을 재사용한다. 웹 목록·용량은 각각 도착할 때 표시하고 새 조회가 시작되면 이전 조회의 늦은 답을 버린다.
+- 두 탭은 처음 50개를 그리고 「보고서 더 보기」로 50개씩 늘린다. 수·안 봄·「끝난 것 모두 고르기」는 전체 목록을 기준으로 한다. API 형식은 바꾸지 않는다.
+- E2E80은 격리된 1,118개 사본 폴더·559개 원본·최대 954개 첨부 manifest·보관 120건에서 HTTP 응답과 첫 화면을 기록한다. Chromium·WebKit의 용량 응답을 사건으로 보류해도 목록이 먼저 나타나며, 용량 실패·Reader·전체 선택·더 보기를 검사한다. 운영 library 실측과 실험실 수치는 구분한다.
+
+- **착지 통합.** origin/main `3479748e`에서 마지막 §8.413·FRONT_API 1.101·AGENT_LINK 1.11·E2E79를 직접 확인했다. 이 변경은 §8.414·E2E80으로 맞추며 API 판은 유지한다. main의 원격 보고 금지 첨부 건너뛰기·본문/판 보존 실패 격리와 같은 hash의 ticker 복구를 보존하고 통합본 전체 ci-local·공개 검사 후 병합한다.
+
+
+### 8.415 install Windows pairing 구분자와 IPC 해제 사건(t-0485)
 
 - **원문.** main c249e316의 Windows 전체 job 로그에서 install은 21/22 통과했다. 남은 pairing은 승인 전에 installation_external_tty_required/exit3으로 끝났고, IPC의 일반/canonical 주소 owner는 첫 instance bind에서 OS5였다. 옛 로그에는 bind 조합 번호가 없어 어느 조합인지까지 확정하지 않는다. 승인 조기종료 단언 끝에 answered=N/M·기다릴 needle·실제 child_exit를 남기고, IPC 실패에는 조합·연결 반복·경로·OS 오류·해제 단계를 남긴다. 비밀 출력 가림과 기존 단언은 유지한다.
 - **pairing 주소.** 실험실 host의 state/host와 install canonical state의 역슬래시는 Windows에서 같은 디렉터리지만 기존 해시는 원문 구분자를 구별했다. pipe 이름은 두 구분자를 역슬래시로 맞춘 뒤 계산한다. 기존 역슬래시 주소는 그대로다. 새 client는 NotFound일 때 같은 입력의 옛 원문 주소도 읽어 기존 host와의 호환을 보존하고, canonical 별칭·ACL·peer PID·AccessDenied 거부·BUSY250ms는 유지한다. 실제 mixed/canonical 양방향 연결을 기존 owner에 더하며 fixture를 정상 주소로 바꿔 결함을 피하지 않는다.
 - **해제 owner.** 고정 Mio1.2.4는 read 뒤 다음 overlapped read를 걸고 drop은 취소만 요청한다. 완료 전 OS handle이 남으면 [첫 instance 재생성](https://learn.microsoft.com/en-us/windows/win32/api/winbase/nf-winbase-createnamedpipea)이 AccessDenied5일 수 있다. 시험은 client close→서버 EOF 관측→server/listener drop 뒤 같은 주소 첫 instance를 한 번만 다시 잡아 실제 해제를 확인한다. 연결3초·각 조합3반복·원래3조합·ACL·peer·byte 단언을 유지하며 EOF도 사건으로 기다린다. bind 재시도·sleep·상한 증가·예외 무시는 없다.
-- **검증 경계.** 실제 Windows RED는 위 CI 원문이고 수정 뒤 Windows 실행 GREEN은 승인 착지 뒤 main CI가 판정한다. cross clippy/build와 macOS 검증으로 Windows 성공을 추정하지 않는다. rollout 시한 수리는 별도 t-0654 소관이며 이 후보에서 고치지 않는다. 기준 main81216f02의 마지막§8.412·FRONT_API1.101·AGENT_LINK1.11·E2E79를 유지하고 이 절만 더한다.
+- **검증 경계.** 실제 Windows RED는 위 CI 원문이고 수정 뒤 Windows 실행 GREEN은 승인 착지 뒤 main CI가 판정한다. cross clippy/build와 macOS 검증으로 Windows 성공을 추정하지 않는다. rollout 시한 수리는 별도 t-0654 소관이며 이 후보에서 고치지 않는다. 착지 기준 main220133f5의 마지막§8.414·FRONT_API1.101·AGENT_LINK1.11·E2E80을 직접 확인해 이 절을§8.415로 옮긴다. API 판과 기존 E2E 번호는 유지하며 main의 보고 수집·목록 성능과 t-0654의 rollout fixture 수리를 보존한다.
