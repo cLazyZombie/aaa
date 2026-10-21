@@ -61,6 +61,8 @@ mod project;
 mod prompt;
 mod prompt_box;
 mod push;
+mod quota;
+mod quota_rpc;
 mod report_mark;
 mod resource;
 mod restore;
@@ -551,6 +553,7 @@ pub struct Host {
     vapid: Option<push::Vapid>,
     /// 구독 사용량(웹이 물을 때만 읽는다)
     usage: usage::UsageService,
+    account_quota: tokio::sync::Mutex<quota::Cache>,
     /// 알림 webhook 대기열(설정이 켜져 있을 때)
     notify_tx: Mutex<Option<tokio::sync::mpsc::UnboundedSender<aaa_proto::InboxItem>>>,
     /// 지금 쓰는(보이고 focus가 있는) 웹 화면 수(events WS `presence`). 하나라도 있으면 Web Push를 보내지 않는다
@@ -745,6 +748,7 @@ impl Host {
             file_caps: Mutex::new(HashMap::new()),
             vapid,
             usage: usage::UsageService::new(usage::UsageContext::system()),
+            account_quota: Default::default(),
             notify_tx: Mutex::new(None),
             in_use: std::sync::atomic::AtomicUsize::new(0),
             viewing: Mutex::new(seen::Viewing::default()),

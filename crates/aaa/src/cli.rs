@@ -321,7 +321,7 @@ enum Cmd {
     /// (harness hook) 세션 안에서 harness 사건을 이 머신 agent에 보낸다. 사건 JSON은 인자 또는 표준 입력
     #[command(hide = true)]
     Hook {
-        #[arg(long, value_parser = ["claude", "codex"])]
+        #[arg(long, value_parser = ["claude", "codex", "quota"])]
         agent: String,
         payload: Option<String>,
     },

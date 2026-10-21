@@ -74,6 +74,9 @@ pub struct AccountCredential {
     /// host가 허용한 thread 자기 폴더만 미리 신뢰한다. 생략하면 사용자 신뢰 창을 유지한다.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub trust_cwd: Option<String>,
+    /// 로그인 세대(A2). 옛 pane은 귀속 미확인으로 남긴다.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub auth_generation: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

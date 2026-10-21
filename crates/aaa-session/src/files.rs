@@ -72,6 +72,8 @@ pub struct SpecFile {
     /// 비밀 없는 계정 작업 참조. 재개와 대화 조회에서 같은 Codex 홈을 쓴다.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub account_run: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub account_generation: Option<String>,
 }
 
 impl SpecFile {

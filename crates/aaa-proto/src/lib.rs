@@ -1,6 +1,8 @@
 //! aaa의 경계 계약. Rust 타입이 정본이고 웹 TypeScript 타입은 여기서 생성한다(`web/src/gen/proto.ts`).
 
 pub mod account;
+pub mod quota;
+pub use quota::*;
 pub mod ci;
 pub use account::*;
 mod git_watch;
@@ -54,6 +56,14 @@ pub fn typescript_bindings() -> String {
     let decls = [
         SecretText::decl(&cfg),
         AccountView::decl(&cfg),
+        QuotaSource::decl(&cfg),
+        QuotaProblem::decl(&cfg),
+        QuotaFreshness::decl(&cfg),
+        QuotaWindow::decl(&cfg),
+        QuotaSnapshot::decl(&cfg),
+        AccountQuotaWindow::decl(&cfg),
+        AccountQuota::decl(&cfg),
+        AccountQuotaReport::decl(&cfg),
         AccountHealth::decl(&cfg),
         AccountDefault::decl(&cfg),
         AccountLoginView::decl(&cfg),
