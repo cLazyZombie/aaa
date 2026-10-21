@@ -6774,3 +6774,10 @@ Windows install 승인 PTY는 ConPTY(INHERIT_CURSOR)의 시작 커서 질의에 
 - **유지 범위.** ListFoot·UsageMeters의 바닥 사용량 칸과 coordinator CLI·host inbox 동작은 그대로다. 설정에 별도 진입점을 만들지 않고 내부 진단은 기존 CLI로 한다.
 - **검증.** 기존 E2E26·53·56·57·62를 새 패널 순서와 알림함 숨김에 맞춘다. 옛 선택 기억, 데스크톱·휴대폰·보기 기기, 사용량 배치, 확인 필요 post의 답함·inbox 기록과 CLI 조회·끝내기를 확인한다. main에서 추가된 E2E23의 종료 문서 API keeper는 더 이상 쓰지 않는 inbox 대신 asks 조회로 같은 경계를 확인한다. 정상/복귀 실제 응답과 종료 뒤 전송 없음 단언을 유지한다.
 - **착지 번호·호환.** 재개 착지 기준 origin/main `35ecad05`에서 마지막 §8.381·FRONT_API 1.91·AGENT_LINK 1.11·E2E71을 직접 확인했다. 이번 변경은 §8.382를 이어 쓰며 wire 변경·새 E2E 파일이 없어 기존 API 판과 E2E 번호를 유지한다.
+
+### 8.383 install 승인 시험의 자식 종료와 PTY 출력 종료(10-21, t-0485)
+
+- **원인·범위.** Windows CI는 승인서 발급·설치 ID 출력 뒤에도 시험 소유 ConPTY의 EOF를 기다렸다. `portable-pty` master가 출력 pipe의 소유자를 유지하므로 자식 종료만으로 EOF가 오지 않는다. 제품 worker의 stdio는 이미 pipe/null이며 이 수리는 시험 터미널에 한정한다.
+- **종료 계약.** Unix `waitid(WEXITED | WNOWAIT)`와 Windows 복제 process handle의 종료 사건을 reader와 같은 채널로 받는다. 실제 자식을 wait한 뒤 master를 닫고 reader의 마지막 출력까지 모은다. 출력이 먼저 닫혀도 자식 종료를 기다리며 총 상한 60초·기존 승인/취소/비밀 비노출/worker 수명 단언은 유지한다. 상한 진단 끝에는 자식 종료 코드 유무와 reader 완료도 남긴다.
+- **회귀 owner.** 실제 PTY와 실제 UnixStream writer의 보관 수명으로 ConPTY의 EOF 지연을 Unix에서 재현한다. 기존 helper는 자식이 끝나고 마지막 출력까지 나와도 60초 RED다. 수리 뒤 같은 종료 코드와 300줄 전부를 수집해 GREEN이다. Windows의 기존 install owner들은 실제 ConPTY를 계속 사용한다.
+- **판정 한계·번호.** macOS CI의 yes 직후 무출력은 Windows의 완료 출력 뒤 EOF 대기와 구별한다. 로컬의 실제 CLI는 yes 뒤 계획 SHA 재검증 스택을 거쳐 승인서 발급·정상 종료했으며 macOS CI 원인은 아직 확정하지 않는다. target이 기록되지 않은 15분 job 종료도 install로 단정하지 않는다. 실제 Windows/macOS CI 판정은 착지 뒤 결과로 확인한다. 기준 main `5211dd13`의 §8.382 뒤를 쓰며 FRONT_API 1.91·AGENT_LINK 1.11·웹 E2E71은 유지한다.
