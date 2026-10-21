@@ -231,17 +231,25 @@ mod tests {
         let path = std::env::temp_dir().join(format!("aaa-pipe-acl-{}", ulid::Ulid::new()));
         let canonical = path.parent().unwrap().canonicalize().unwrap().join(path.file_name().unwrap());
         assert_ne!(path, canonical, "일반 state와 canonical state를 실제로 대조한다");
-        for (server_path, client_path) in [(&path, &path), (&path, &canonical), (&canonical, &path)] {
-            let listener = LocalListener::bind(server_path).unwrap();
+        for (case, (server_path, client_path)) in
+            [(&path, &path), (&path, &canonical), (&canonical, &path)].into_iter().enumerate()
+        {
+            let listener = LocalListener::bind(server_path).unwrap_or_else(|error| {
+                panic!(
+                    "pipe bind: case={}, server={server_path:?}, client={client_path:?}, os_error={:?}, error={error}",
+                    case + 1,
+                    error.raw_os_error()
+                )
+            });
             assert!(LocalListener::bind(server_path).is_err(), "다른 listener가 첫 instance를 빼앗지 못한다");
-            for _ in 0..3 {
+            for repeat in 1..=3 {
                 crate::windows_acl_tests::assert_private(listener.inner.lock().await.as_raw_handle(), false);
                 let (client, server) = tokio::time::timeout(Duration::from_secs(3), async {
                     tokio::try_join!(connect(client_path), listener.accept_peer())
                 })
                 .await
-                .unwrap()
-                .unwrap();
+                .unwrap_or_else(|error| panic!("pipe event: case={}, repeat={repeat}, server={server_path:?}, client={client_path:?}, error={error}", case + 1))
+                .unwrap_or_else(|error| panic!("pipe connect/accept: case={}, repeat={repeat}, server={server_path:?}, client={client_path:?}, os_error={:?}, error={error}", case + 1, error.raw_os_error()));
                 let (mut server, pid) = server;
                 assert_eq!(pid, Some(std::process::id()));
                 let mut client = client;
@@ -249,7 +257,9 @@ mod tests {
                 let mut bytes = [0; 7];
                 server.read_exact(&mut bytes).await.unwrap();
                 assert_eq!(&bytes, b"private");
+                drop((client, server));
             }
+            drop(listener);
         }
     }
 
