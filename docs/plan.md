@@ -6721,3 +6721,10 @@ Windows 사용자 PATH는 기본 preserve이고 명시 user만 현재 HKCU 값�
 - **원인·수정.** 초안에는 이미지 `@경로`가 남지만 입력창 컴포넌트의 첨부 목록·blob URL은 화면 전환 때 사라졌다. 입력창을 다시 열 때 초안의 이미지 경로에서 목록을 복원하고 기존 `pane_file` API의 권한 검사·이미지 크기 제한을 거친 URL로 썸네일을 읽는다. 원본 이미지 바이트나 blob URL을 브라우저 저장소에 추가하지 않는다. 새로 올린 그림은 기존 로컬 미리보기를 쓰고 해제 때 blob URL을 놓는다.
 - **동작·검증.** 복원한 첨부도 전송·개별 삭제 대상이며, 뒤에 새 그림을 붙여도 ID가 겹치지 않는다. 기존 E2E23을 확장해 Chromium·WebKit 데스크톱·WebKit iPhone·iPad에서 대화·터미널·보고서 이동, 새로고침, 실제 이미지 decode, 원본 SHA-256 전송, 추가 첨부·개별 삭제·재진입을 검사한다. 원래 코드의 미리보기 누락 재현과 시험 절차는 [testing](testing.md)의 t-0583 절에 둔다.
 - **번호·호환.** 착지 기준 main `c877d394`의 §8.374·FRONT_API 1.90·AGENT_LINK 1.11·E2E70을 확인했다. 이 수리는 §8.375이며 프로토콜 변경이나 새 E2E 파일은 없다. 기존 API 판과 E2E 번호를 유지한다.
+
+
+### 8.376 install I6 CI의 시험 터미널·실험실 수명 수리(10-21, t-0485)
+
+Windows install 승인 PTY는 ConPTY(INHERIT_CURSOR)의 시작 커서 질의에 응답하지 않아 실제 승인 물음 전에 멈췄다. 시험 터미널은 session host와 같은 aaa-vt QueryScanner/Vt/DefaultColors로 질의 시점 화면에 답한다. 보호 암호 console 시험도 같은 응답기를 공유하며 비노출·mode 복원·취소/EOF 단언을 유지한다. TLS grant owner는 비동기 host 작업과 DB handle을 runtime 종료로 해제한 뒤 실험실 파일을 지우고, 남은 host 소유자가 없는지도 확인한다. 삭제 실패를 무시하거나 재시도하지 않는다.
+
+기존 macOS worker 수명 시험의 총30초 시한과 worker 동일 ID/부모 소멸/내구 기록 단언은 유지한다. 부하 시한 초과와 Windows 질의 미응답을 구분하며 실패 진단에는 경과 시간·답한 물음 수만 더한다. POSIX 실제 PTY fixture가 커서 응답 전 승인 물음을 내지 않도록 해 수정 전 RED·수정 후 GREEN을 확인한다(이 fixture만 Unix 전용; 기존 승인/worker owner는 세 OS 그대로). 제품 권한/서비스/timeout/API 변경이나 새 웹 E2E 번호는 없다. Windows 실제 판정은 착지 뒤 main CI다.
