@@ -25,7 +25,7 @@ import {
   type MouseEvent,
   type ReactNode,
 } from "react";
-import { ChevronDown, ChevronRight, Ellipsis, Eraser, FileText, Folder, FolderOpen, Layers, ListChecks, Monitor, Pencil, Pin, PinOff, Plus, RotateCcw, Terminal, Trash2, TriangleAlert, Workflow, X } from "lucide-react";
+import { ChevronDown, ChevronRight, Ellipsis, Eraser, FileText, Folder, FolderOpen, Layers, ListChecks, Monitor, Pencil, Pin, PinOff, Plus, RotateCcw, Square, Terminal, Trash2, TriangleAlert, Workflow, X } from "lucide-react";
 import type { FrontRequest, MachineView, PaneView, PlanSummary, ThreadView } from "./gen/proto";
 import { ApiError, call } from "./api";
 import { ConfirmDialog } from "./ConfirmDialog";
@@ -723,12 +723,26 @@ function PaneRow({ pane: p, online, machine, twoLine, move, ...props }: SidebarP
       ? []
       : p.state === "running"
         ? [
+            // 세션만 끝내고 자리는 남긴다(`aaa pane kill`): 뒤에 「다시 열기」로 같은 자리에 다시 띄운다(관리 GUI W8)
+            {
+              id: "kill",
+              label: "세션 끝내기",
+              icon: Square,
+              danger: true,
+              divider: true,
+              run: () =>
+                rows.ask({
+                  title: `${title} 세션을 끝낼까요?`,
+                  body: "pane에서 실행 중인 프로세스가 종료됩니다. pane 자리는 목록에 남아 「다시 열기」로 다시 띄울 수 있습니다.",
+                  action: "세션 끝내기",
+                  run: async () => void (await call({ op: "pane_kill", pane: p.id })),
+                }),
+            },
             {
               id: "close",
               label: "pane 닫기",
               icon: X,
               danger: true,
-              divider: true,
               run: () =>
                 rows.ask({
                   title: `${title} pane을 닫을까요?`,

@@ -632,6 +632,69 @@ export function UploadReportDialog({ project, onClose, onDone }: { project: stri
   );
 }
 
+/** 「이 aaa」의 공유 링크 목록(`aaa library list`, 관리 GUI W8): 낸 링크마다 만료·마지막 열람·상태, 살아 있는 링크는 폐기 */
+export function LinkList() {
+  const admin = useAdmin();
+  const [links, setLinks] = useState<LinkView[] | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [busy, setBusy] = useState<string | null>(null);
+  if (!admin) return null;
+  const load = () => {
+    setError(null);
+    call({ op: "library_links", project: null })
+      .then((r) => setLinks(r.kind === "library_links" ? [...r.links].sort((a, b) => b.created_at_ms - a.created_at_ms) : []))
+      .catch((e: unknown) => setError(say(e)));
+  };
+  const revoke = async (id: string) => {
+    setBusy(id);
+    setError(null);
+    try {
+      await call({ op: "library_link_revoke", id });
+      load();
+    } catch (e) {
+      setError(say(e));
+    } finally {
+      setBusy(null);
+    }
+  };
+  const now = Date.now();
+  const when = (ms: number) => new Date(ms).toLocaleString("ko-KR");
+  return (
+    <div className="op-section" data-testid="link-list">
+      <h3>낸 링크</h3>
+      <button type="button" className="btn" onClick={load} data-testid="link-list-load">
+        {links ? "다시 읽기" : "목록 보기"}
+      </button>
+      {error && (
+        <p className="op-warn" role="alert">
+          {error}
+        </p>
+      )}
+      {links && links.length === 0 && <p className="op-muted">낸 링크가 없다</p>}
+      {links && links.length > 0 && (
+        <ul className="op-prune" data-testid="link-list-rows">
+          {links.map((l) => {
+            const live = !l.revoked && l.expires_at_ms > now;
+            return (
+              <li key={l.id} data-link={l.id} data-state={live ? "active" : l.revoked ? "revoked" : "expired"}>
+                <span className="mono">{l.report_id ?? `${l.project}/${l.thread}`}</span>
+                <span>
+                  {live ? `만료 ${when(l.expires_at_ms)}` : l.revoked ? "폐기됨" : "만료됨"} · 마지막 열람 {l.last_opened_at_ms === null ? "없음" : when(l.last_opened_at_ms)}
+                </span>
+                {live && (
+                  <button type="button" className="btn small" disabled={busy !== null} onClick={() => void revoke(l.id)} aria-label={`${l.report_id ?? l.thread} 링크 폐기`}>
+                    폐기
+                  </button>
+                )}
+              </li>
+            );
+          })}
+        </ul>
+      )}
+    </div>
+  );
+}
+
 /** 「이 aaa」의 공유 링크 키 교체(사용자 답 5A): 지금 살아 있는 링크 수를 보이고 모두 끊긴다고 알린다 */
 export function KeyRotate() {
   const admin = useAdmin();
