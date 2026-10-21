@@ -70,6 +70,8 @@ done
     await page.getByTestId(`automation-${project}-check`).getByRole("button", { name: "실패 분류 자세히" }).click();
     const memory = page.getByTestId("automation-memory");
     await memory.waitFor();
+    // focus는 조회를 시작할 뿐이다. 앞 판에도 있는 상세 상자가 아니라 새 본문이 그려진 사건을 기다린다.
+    await domIs(page, "새 기억 본문", () => document.querySelector('[data-testid="automation-memory"]')?.textContent.includes("입력 뒤에 보고"));
     if (!(await memory.textContent()).includes("입력 뒤에 보고")) throw new Error("기억 본문 없음");
     if (!(await memory.textContent()).includes(thread.id)) throw new Error("마지막 갱신 thread 없음");
     await page.keyboard.press("Escape");

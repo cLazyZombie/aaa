@@ -185,6 +185,8 @@ export default async function ({ page }) {
       await pickRow(p2, "로그인 고치기");
       // 둘째가 먼저 폼을 고친다(아직 저장 안 함)
       await p2.getByTestId("task-field-title").fill("로그인 다시 고치기");
+      // 다른 기기의 저장 전에 React가 둘째 폼을 실제로 dirty로 반영했는지 확인한다.
+      await domIs(p2, "둘째 폼 편집 반영", () => document.querySelector('[data-testid="task-field-title"]')?.value === "로그인 다시 고치기" && document.querySelector('[data-testid="task-save"]')?.disabled === false);
       // 첫째가 메모를 고쳐 저장한다(메모가 있는 task는 그린 메모부터 보이고 「고치기」가 입력 칸으로 바꾼다)
       const before = await shaOf(page);
       await page.getByTestId("task-notes-preview").locator("li", { hasText: "메모: 테스트 먼저" }).waitFor();
