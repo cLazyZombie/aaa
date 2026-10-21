@@ -62,6 +62,32 @@ export default async function ({ page }) {
       await until("다시 누른 창의 passkey 서명", async () => (await signs()) === first + 2);
       await until("새 코드", async () => (await dialog.locator(".devices-code").textContent()).replace(/\s/g, "") !== before);
     });
+
+    await step("다른 확인 창 위의 「passkey로 승인」(휴대폰 390): 취소해도 아래 확인 창과 그 안내가 남고, 다시 누르면 승인된다", async () => {
+      const signs = async () => (await auth.credentials())[0].signCount;
+      const first = await signs();
+      // 「이 aaa」 쪽은 프로젝트가 있어야 그린다(60-admin과 같다)
+      aaa("project", "create", "demo");
+      await dialog.getByRole("button", { name: "설정 닫기" }).click();
+      await dialog.waitFor({ state: "detached" });
+      const settings = await openSettings(phone, "이 aaa");
+      await settings.getByTestId("key-rotate-open").click();
+      const ask = phone.getByRole("alertdialog", { name: "공유 링크 키를 바꿀까요?" });
+      const again = phone.getByRole("alertdialog", { name: "passkey로 승인할까요?" });
+      await ask.getByRole("button", { name: "키 교체" }).click();
+      await again.getByRole("button", { name: "취소" }).click();
+      await again.waitFor({ state: "detached" });
+      await ask.getByRole("alert").filter({ hasText: "passkey 확인을 취소했다" }).waitFor();
+      // 「뒤로」 기록이 한 번 더 돌아도(아래 sheet가 닫히던 길) 아래 창은 남는다
+      await phone.evaluate(() => new Promise((ok) => setTimeout(ok, 0)));
+      await phone.evaluate(() => new Promise((ok) => requestAnimationFrame(() => requestAnimationFrame(ok))));
+      if (!(await ask.isVisible())) throw new Error("passkey 창을 취소하자 아래 확인 창이 닫혔다");
+      await ask.getByRole("button", { name: "키 교체" }).click();
+      await again.getByRole("button", { name: "passkey로 승인" }).click();
+      await ask.waitFor({ state: "detached" });
+      await settings.getByTestId("key-rotate").getByRole("status").waitFor();
+      if ((await signs()) !== first + 1) throw new Error("키 교체에 passkey 서명이 한 번이 아니다");
+    });
   });
 
   await step("passkey가 없는 공개 주소 조작 기기는 거부되고 등록을 안내받는다(답 1A), 같은 동작을 실험실 첫 화면(loopback)은 passkey 없이 한다", async () => {

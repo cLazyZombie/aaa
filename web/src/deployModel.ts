@@ -58,9 +58,10 @@ export function rolloutTargets(host: string | undefined, picked: string[]): stri
   return host ? [host, ...picked.filter((m) => m !== host)] : picked;
 }
 
-/** host가 확정으로 거절한 답(시작하지 않았다). 연결·내부 오류는 닿았는지 모르므로 보인 ID를 그대로 둔다 */
+/** host가 확정으로 거절한 답(시작하지 않았다). 연결·내부 오류는 닿았는지 모르므로 보인 ID를 그대로 둔다.
+ * `passkey_required`는 passkey가 없어 host가 시작하지 않은 것이다(관리 GUI W7) */
 export function refused(code: ErrorCode): boolean {
-  return ["bad_request", "forbidden", "not_found", "unsupported_version", "agent_disconnected", "conflict"].includes(code);
+  return ["bad_request", "forbidden", "not_found", "unsupported_version", "agent_disconnected", "conflict", "passkey_required"].includes(code);
 }
 
 const JOB_STATES: Record<DeployState, string> = { queued: "대기", running: "진행 중", completed: "완료", failed: "실패", interrupted: "중단" };

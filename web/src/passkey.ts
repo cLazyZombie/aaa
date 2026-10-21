@@ -17,9 +17,12 @@ export function fromB64url(text: string): Uint8Array<ArrayBuffer> {
   return out;
 }
 
+/** passkey 확인을 하지 않았다(인증기 창을 닫았거나 시간이 지났거나 「passkey로 승인」 창을 취소함): host에 요청을 보내지 않았다 */
+export class PasskeyCancelled extends Error {}
+
 /** 인증기 창을 닫았거나 시간이 지났다(NotAllowedError)를 사람 말로 */
 function why(e: unknown): Error {
-  if (e instanceof DOMException && e.name === "NotAllowedError") return new Error("passkey 확인을 취소했거나 시간이 지났다.");
+  if (e instanceof DOMException && e.name === "NotAllowedError") return new PasskeyCancelled("passkey 확인을 취소했거나 시간이 지났다.");
   if (e instanceof DOMException && e.name === "InvalidStateError") return new Error("이 인증기에는 이미 이 기기의 passkey가 있다.");
   return e instanceof Error ? e : new Error(String(e));
 }
@@ -93,11 +96,17 @@ export function setPasskeyGesture(g: PasskeyGesture | null): void {
 }
 
 /** WebAuthn은 사람이 누른 처리기 안에서 불러야 한다(WebKit은 누름이 지난 뒤의 호출을 NotAllowedError로 거부한다). host와 한두 번
- * 오간 뒤에도 누름이 살아 있으면(`navigator.userActivation.isActive`) 바로 부르고, 아니면 「passkey로 승인」 창을 한 번 더 띄운다 */
-export function withGesture<T>(what: string, run: () => Promise<T>): Promise<T> {
-  const active = (navigator as Navigator & { userActivation?: { isActive: boolean } }).userActivation?.isActive === true;
-  if (active || !gesture) return run();
-  return gesture(what, run) as Promise<T>;
+ * 오간 뒤에도 누름이 살아 있으면(`navigator.userActivation.isActive`) 바로 부르고, 아니면 「passkey로 승인」 창을 한 번 더 띄운다.
+ * 바로 부른 것이 거부되면(누름 판정이 브라우저마다 다를 수 있다) 그 창으로 한 번 더 묻는다: 사람이 취소하면 거기서 끝난다 */
+export async function withGesture<T>(what: string, run: () => Promise<T>): Promise<T> {
+  if (!gesture) return run();
+  if ((navigator as Navigator & { userActivation?: { isActive: boolean } }).userActivation?.isActive === true)
+    try {
+      return await run();
+    } catch (e) {
+      if (!(e instanceof PasskeyCancelled) || !gesture) throw e;
+    }
+  return (await gesture(what, run)) as T;
 }
 
 /** 지금 등록할 수 있나: 공개 주소의 조작 기기가 아직 passkey가 없고 짝지은 지 10분이 안 됐다 */
