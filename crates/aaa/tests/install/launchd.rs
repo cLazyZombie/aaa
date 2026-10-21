@@ -5,6 +5,11 @@ use super::*;
 #[path = "launchd_args.rs"]
 mod launchd_args;
 
+fn launchd_lab() -> Lab {
+    // 기존 backend lifecycle owner와 같이 macOS UDS 길이 한도 안의 실험실 root를 쓴다.
+    Lab::in_dir(Path::new("/tmp"))
+}
+
 fn ctl(args: &[&str]) -> Output {
     Command::new("/bin/launchctl").args(args).output().unwrap()
 }
@@ -147,7 +152,7 @@ fn package(lab: &Lab) -> (PathBuf, PathBuf) {
 
 #[test]
 fn launchd_plan_requires_the_matching_launcher_without_registering_or_creating_install_files() {
-    let lab = Lab::new();
+    let lab = launchd_lab();
     let (source, launcher) = package(&lab);
     let mut args = arguments(&lab, "plan", &source, &launcher);
     args.extend(["--dry-run".into(), "--json".into()]);
@@ -177,7 +182,7 @@ fn launchd_plan_requires_the_matching_launcher_without_registering_or_creating_i
 
 #[test]
 fn launchd_authorization_and_apply_preserve_the_reviewed_service_environment_without_registering() {
-    let lab = Lab::new();
+    let lab = launchd_lab();
     let (source, launcher) = package(&lab);
     let mut args = arguments(&lab, "review", &source, &launcher);
     let approval = lab.0.join("approval.json");
@@ -198,6 +203,15 @@ fn launchd_authorization_and_apply_preserve_the_reviewed_service_environment_wit
     assert_eq!(changed["exit_code"], 0, "{changed}");
     assert_ne!(changed["plan_sha256"], authorization["claims"]["plan_sha256"]);
     assert_eq!(snapshot(&lab.0), before, "등록 없이 읽기 계획만 비교한다");
+    // dry-run만으로 놓치는 실제 backend의 로컬 IPC 경로도 같은 canonical state에서 연다.
+    let state = lab.0.join("review/state").canonicalize().unwrap();
+    let runtime = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
+    let _entered = runtime.enter();
+    for path in [state.join("host/agent.sock"), aaa_common::front::socket(&state)] {
+        let listener = aaa_common::ipc::LocalListener::bind(&path)
+            .unwrap_or_else(|error| panic!("검토한 host listener: bytes={}, error={error:?}", path.as_os_str().len()));
+        drop(listener);
+    }
 }
 
 #[test]
@@ -208,7 +222,7 @@ fn launchd_real_registration_ready_resume_and_second_instance_preserve_the_share
         Ok("true"),
         "이 실제 등록 owner는 기존 GitHub macos-15 일회성 계정 전용이다"
     );
-    let lab = Lab::new();
+    let lab = launchd_lab();
     let uid = unsafe { libc::geteuid() };
     let domain = format!("gui/{uid}");
     let probe = ctl(&["print", &domain]);
