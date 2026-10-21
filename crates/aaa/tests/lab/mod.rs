@@ -537,6 +537,11 @@ impl Events {
         Events { rt, client, log: Vec::new() }
     }
 
+    /// 지금까지 읽은 사건 다음 위치. 새 동작의 결과를 기다릴 때 앞 턴의 기록을 다시 고르지 않는다.
+    pub fn cursor(&self) -> usize {
+        self.log.len()
+    }
+
     /// `f`가 Some을 내는 첫 사건(지금까지 받은 것부터)
     pub fn wait<T>(&mut self, what: &str, timeout: Duration, f: impl FnMut(&aaa_proto::FrontEvent) -> Option<T>) -> T {
         self.wait_from(0, what, timeout, f).1

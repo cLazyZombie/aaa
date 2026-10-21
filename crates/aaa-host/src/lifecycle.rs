@@ -296,6 +296,7 @@ impl Host {
         crate::orch::write_atomic(&target.join("aaa-records.json"), &json).map_err(internal)?;
         self.hide_threads(&recs);
         self.db.project_forget(project).map_err(internal)?;
+        self.accounts_bump();
         // 같은 이름을 다시 만들어도 옛 앱 보기 경로가 새 thread 번호를 읽지 못한다.
         self.view_caps.lock().unwrap().retain(|_, cap| cap.project != project);
         // 작업 요약 표지도: 같은 이름의 새 프로젝트 t-0001이 옛 기억을 쓰지 않게(plan §8.259)
@@ -412,6 +413,7 @@ impl Host {
             let _ = std::fs::rename(&new_dir, &dir);
             return Err(internal(format!("host 기록을 옮기지 못해 되돌렸다: {e:#}")));
         }
+        self.accounts_bump();
         for cap in self.view_caps.lock().unwrap().values_mut().filter(|cap| cap.project == project) {
             cap.project = to.to_string();
         }

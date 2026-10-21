@@ -213,8 +213,11 @@ fn drive_terminal_on(
     assert!(!text.contains(CANARY), "승인 비밀 원문 출력");
     assert!(
         answered == steps.len(),
-        "승인 물음 없이 끝나면 검토 성공이 아니다: status={status:?}, output={}",
-        redact_private(&text)
+        "승인 물음 없이 끝나면 검토 성공이 아니다: status={status:?}, output={}\nPTY early exit: answered={answered}/{}, needle={:?}, child_exit={}",
+        redact_private(&text),
+        steps.len(),
+        steps.get(answered).map_or("<PTY EOF>", |(needle, _)| *needle),
+        status.exit_code()
     );
     (status.exit_code(), text)
 }

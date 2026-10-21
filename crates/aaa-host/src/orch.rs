@@ -28,6 +28,8 @@ fn old_launch_unknown() -> bool {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub(crate) struct ThreadRec {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub account_allocation: Option<crate::account_pool::Allocation>,
     /// Spawn 전 영속화. 응답 유실 때 새 기동을 막는다.
     #[serde(default = "old_launch_unknown")]
     pub launch_sent: bool,
@@ -198,6 +200,7 @@ impl ThreadRec {
         now: u64,
     ) -> ThreadRec {
         ThreadRec {
+            account_allocation: None,
             legacy: Default::default(),
             project: project.to_string(),
             id: String::new(),
@@ -291,6 +294,9 @@ pub(crate) struct TaskClean {
     pub discard: bool,
     #[serde(default)]
     pub judged_ms: Option<u64>,
+    /// repo 머신 agent가 실제 origin/main의 조상으로 확인한 커밋.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub merged_main: Option<String>,
     /// 완료로 판정해 지운 task 제목(되살린 task의 「확인 필요」 까닭을 가른다)
     #[serde(default)]
     pub cleaned: Vec<String>,
@@ -317,7 +323,9 @@ pub(crate) struct StartOrigin {
     pub admission: crate::db::StartAdmission,
 }
 
+#[derive(Clone, Serialize, Deserialize)]
 pub struct StartArgs {
+    pub(crate) pool: Option<crate::account_pool::PoolRequest>,
     pub over_limit: Option<aaa_proto::ThreadLimitOverride>,
     pub(crate) reservation: Option<(String, String)>,
     pub account: Option<String>,
@@ -647,7 +655,7 @@ thread가 키를 기다리는 화면(시작 때 신뢰 창, 질문 메뉴, 명�
   이름을 든 목록에, 없으면 `## Backlog`에 넣는다. 모델·머신은 사용자가 준 것(맞을 때)을 쓰고, 안 주면 agent 일은 비우고
   사용자 자신의 할 일은 `me`로 둔다.
 - 목록(`##` 머리): 사용자가 요청하면 만들고, 이름을 바꾸고, 합치고, 지우고, task를 목록 사이로 옮긴다.
-- 끝남: PR 병합·보고 [완료]로 resolve한 task는 host가 완료 보관한다. `aaa task archive`에서 결과를 찾고
+- 끝남: PR 병합·origin/main 조상 확인·보고 [완료]로 resolve한 task는 host가 완료 보관한다. `aaa task archive`에서 결과를 찾고
   `aaa task archive --restore <task ID>`로 같은 ID를 복원한다. 복원은 재예약·재기동 승인이 아니다. 그만둠·명시 삭제는
   별도 `aaa task rm`이며 옛 삭제 기록의 `aaa task restore`와 구별한다. 하위가 남은 부모는 자동 보관하지 않는다.
 - 보이기: 사용자가 task를 보자고 하면 채팅으로 목록별로 답한다. task마다 맡은 쪽(모델·머신, `me`·사람, 없으면 「미할당」), 메모가 있으면 짧은 한 줄,
@@ -1266,6 +1274,7 @@ impl Host {
             group
         };
         ThreadView {
+            account_selection: r.account_allocation.as_ref().map(|a| a.selection.clone()),
             over_limit: r.over_limit.clone(),
             project: r.project.clone(),
             id: r.id.clone(),
@@ -1794,6 +1803,12 @@ impl Host {
         background: bool,
         origin: Option<&StartOrigin>,
     ) -> Result<ThreadView, ErrorBody> {
+        let pool_key = a.pool.as_ref().map(|p| crate::account_pool::receipt(&a.project, &p.id));
+        if let Some(key) = &pool_key
+            && let Some(id) = self.db.meta(key).map_err(internal)?
+        {
+            return self.thread_show(&a.project, &id);
+        }
         if a.over_limit.is_some() && (origin.is_some() || a.reservation.is_some() || a.role != Role::Worker) {
             return Err(bad("예약·자동 시작은 실행 한도를 무시할 수 없다"));
         }
@@ -1847,8 +1862,12 @@ impl Host {
             ));
         }
         let profile = self.resolved_profile(Some(&a.project), &mid, &a.profile)?;
-        if a.account.is_none() {
+        let auto_account = a.account.is_none() && (a.pool.is_some() || self.pool_project_enabled(&a.project)?);
+        if a.account.is_none() && !auto_account {
             a.account = self.default_account(&profile.harness)?;
+        }
+        if auto_account && !self.machine_feature(&mid, "account_auth.v1") {
+            return Err(bad("이 머신 agent는 계정 인증 전달을 지원하지 않는다"));
         }
         if let Some(account) = &a.account {
             let c = self.accounts.credential(account)?;
@@ -1859,6 +1878,17 @@ impl Host {
                 return Err(bad("이 머신 agent는 계정 인증 전달을 지원하지 않는다"));
             }
         }
+        let selection = if auto_account || a.account.is_some() {
+            self.account_selection_input(
+                &a.project,
+                &profile,
+                a.account.as_deref(),
+                a.pool.as_ref().map_or(aaa_proto::AccountTaskSize::Medium, |p| p.size),
+            )
+            .await?
+        } else {
+            None
+        };
         let resolved_profile = Some(profile);
         let warnings = Vec::new();
         let now = aaa_common::util::now_ms();
@@ -1889,13 +1919,22 @@ impl Host {
         let mut claim_error = None;
         let inserted = self
             .db
-            .try_thread_insert_admitted(
+            .thread_insert_transaction(
                 &a.project,
-                origin.map(|o| o.key.as_str()),
+                pool_key.as_deref().or_else(|| origin.map(|o| o.key.as_str())),
                 origin.map(|o| &o.admission),
                 a.over_limit.is_none().then(|| self.settings(&a.project).max_parallel_threads),
                 a.reservation.as_ref().map(|(id, b)| (id.as_str(), b.as_str())),
-                |id| {
+                |tx, id| {
+                    if let Some(input) = &selection {
+                        let (account, allocation) = input.select(tx, aaa_common::util::now_ms())?;
+                        anyhow::ensure!(
+                            self.accounts.generation(&account).ok().as_deref() == Some(&allocation.generation),
+                            "start_wait: 계정 인증 세대 변경 · 새 관측 대기"
+                        );
+                        rec.account = Some(account);
+                        rec.account_allocation = Some(allocation);
+                    }
                     guard = Some(self.claim_thread(&a.project, id).map_err(|error| {
                         let message = error.message.clone();
                         claim_error = Some(error);
@@ -2075,6 +2114,13 @@ impl Host {
         };
         let pane = if let Some(name) = &rec.account {
             let mut credential = self.accounts.credential(name)?;
+            if rec
+                .account_allocation
+                .as_ref()
+                .is_some_and(|a| credential.auth_generation.as_deref() != Some(&a.generation))
+            {
+                return Err(bad("기동 전 계정 인증 세대가 바뀌었다. 새 인증으로 명시 재시작한다"));
+            }
             if credential.harness != launch.harness {
                 return Err(bad("계정과 profile의 harness가 다르다"));
             }
@@ -2204,6 +2250,19 @@ impl Host {
             )
             .map_err(|e| err(ErrorCode::Unavailable, e.to_string()))?;
         let result: Result<ThreadView, ErrorBody> = async {
+            if let Some(account) = &rec.account
+                && let Some(generation) = self.accounts.credential(account)?.auth_generation
+            {
+                rec = self.update_rec(project, id, |r| {
+                    if let Some(a) = &mut r.account_allocation {
+                        a.generation = generation;
+                        a.ended_at_ms = None;
+                        a.released = false;
+                        a.selection.selected_at_ms = aaa_common::util::now_ms();
+                        a.selection.reason = "처음 선택한 계정으로 명시 재시작".into();
+                    }
+                })?;
+            }
             let profile_note = profile.as_ref().map(|p| format!(", profile {p}")).unwrap_or_default();
             if plan == RestartPlan::Create {
                 let dir = self.project_dir(project)?;
@@ -2502,6 +2561,19 @@ impl Host {
                 return Ok(None);
             }
             // library: 임시 폴더에 받고 hash를 확인한 뒤 바꿔 넣는다
+            // 옛 agent는 숨은 폴더까지 manifest에 넣는다. 정책상 열지 않는 경로는
+            // 받거나 host 경로에 붙이지 않고 건너뛰며, 정상 첨부·본문은 계속 갱신한다.
+            snap.files.retain(|f| {
+                if crate::library::safe_rel(&f.path) {
+                    return true;
+                }
+                snap.skipped.push(aaa_proto::Skipped {
+                    path: f.path.clone(),
+                    reason: "host에서 허용하지 않는 library 상대 경로".into(),
+                    lazy_size: None,
+                });
+                false
+            });
             let lib_root = dir.join("library");
             let tmp = lib_root.join(format!(".{id}.tmp-{}", aaa_common::util::new_id()));
             let mut sandbox_notes = Vec::new();
@@ -2509,9 +2581,6 @@ impl Host {
             let fetch = async {
                 std::fs::create_dir_all(&tmp).map_err(internal)?;
                 for f in &snap.files {
-                    if !crate::library::safe_rel(&f.path) {
-                        return Err(bad(format!("이상한 library 경로: {}", f.path)));
-                    }
                     let target = tmp.join(&f.path);
                     let received = async {
                         std::fs::create_dir_all(target.parent().unwrap()).map_err(internal)?;
@@ -2575,7 +2644,7 @@ impl Host {
                 let _ = std::fs::remove_dir_all(&tmp);
                 return Err(e);
             }
-            let failures: Vec<String> = failed_files.iter().map(|(_, reason)| reason.clone()).collect();
+            let mut failures: Vec<String> = failed_files.iter().map(|(_, reason)| reason.clone()).collect();
             snap.files.retain(|f| !failed_files.iter().any(|(failed, _)| failed.path == f.path));
             snap.skipped.extend(failed_files.into_iter().map(|(f, reason)| aaa_proto::Skipped {
                 path: f.path,
@@ -2591,6 +2660,7 @@ impl Host {
             std::fs::rename(&tmp, &dest).map_err(internal)?;
             crate::library::write_manifest(&dir, id, &snap).map_err(internal)?;
             let changed = !same_files || std::fs::read(crate::library::manifest_path(&dir, id)).ok() != old_manifest;
+            let mut version_created = false;
             if rec.report_hash.as_ref() != Some(&snap.hash)
                 || changed
                 || self.thread_report_id(project, id, Some(&snap.hash)).is_none()
@@ -2603,10 +2673,18 @@ impl Host {
                     from_thread: Some(id.into()),
                     ..Default::default()
                 };
-                self.snapshot_report_version(project, id, &snap.hash, &dest, &files, Some(&snap.report.0), &meta)?;
+                match self.snapshot_report_version(project, id, &snap.hash, &dest, &files, Some(&snap.report.0), &meta)
+                {
+                    Ok(_) => version_created = true,
+                    Err(e) => {
+                        // 판 보존의 실패도 첨부 전송 실패처럼 기록한다. 최신 본문·단계·ack 처리는
+                        // 계속하고, 불완전한 r 판은 snapshot_report_version이 공개하지 않는다.
+                        failures.push(format!("보고 판 보존 실패: {}", e.message));
+                    }
+                }
             }
 
-            if changed || old_manifest.is_none() {
+            if changed || old_manifest.is_none() || version_created {
                 // 보고서 화면 「작업 보고」(plan §8.256)
                 self.reports_bump();
             }
@@ -2909,8 +2987,14 @@ impl Host {
             let _ = self.update_rec(project, id, |r| r.error = Some(message.clone()));
             return Err(ErrorBody { message, ..e });
         }
-        // 이어진 task 판정(할 일 T3)은 ticker가 한다(끝낸 까닭과 버림은 위에서 적었다): 정리가 끝났으니 tick을 깨운다
+        // resolve_pending 중에는 확인 카드를 만들지 않는다. pane 정리가 끝난 뒤 병합을 확인하고
+        // 그 근거와 종료 확정을 함께 저장해야 ticker 전에도 불필요한 확인 카드가 보이지 않는다.
+        let merged_main = self.task_main_merge(&rec).await;
+        // 이어진 task 완료 보관은 ticker가 한다.
         self.update_rec(project, id, |r| {
+            if merged_main.is_some() {
+                r.task_clean.merged_main = merged_main.clone();
+            }
             r.resolve_pending = None;
             r.error = None;
         })?;
@@ -3092,6 +3176,7 @@ mod tests {
 
     fn open_thread() -> ThreadRec {
         ThreadRec {
+            account_allocation: None,
             legacy: Default::default(),
             account: None,
             holds: vec![],

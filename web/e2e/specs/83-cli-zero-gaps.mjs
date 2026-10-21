@@ -1,4 +1,4 @@
-// 「CLI 0회」 인수의 작은 빈칸(관리 GUI W8, plan §8.411, 답 1A): 인벤토리에서 웹 화면이 모자랐던 CLI 다섯을 웹으로 한다.
+// 「CLI 0회」 인수의 작은 빈칸(관리 GUI W8, plan §8.417, 답 1A): 인벤토리에서 웹 화면이 모자랐던 CLI 다섯을 웹으로 한다.
 // pane 「세션 끝내기」(`pane kill`: 자리는 남고 「다시 열기」), coordinator 「하나 더 띄우기」(`project open --new`), 「이 aaa」의
 // 「낸 링크」 목록과 폐기(`library list`·`revoke`), 새 링크 수명(`library link --days`), 할 일 「나중」 파일(`project set task_notes.add|remove`).
 // 결과는 host 기록(CLI 보기)으로 확인한다.

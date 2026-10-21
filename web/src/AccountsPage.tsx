@@ -5,6 +5,7 @@
 import "./ThreadActions.css";
 import "./AccountsPage.css";
 import { AccountQuotaCard, useAccountQuota } from "./AccountQuota";
+import { AccountPoolPanel } from "./AccountPoolPanel";
 import { apiAtLeast } from "./automationModel";
 
 import { useCallback, useEffect, useRef, useState } from "react";
@@ -15,7 +16,7 @@ import { canAccounts, day, groupAccounts, HARNESS_LABEL, HARNESSES, healthWord, 
 
 const say = (e: unknown) => (e instanceof ApiError ? e.message : e instanceof Error ? e.message : String(e));
 
-type Loaded = { accounts: AccountView[]; defaults: AccountDefault[]; full: boolean; quota: boolean };
+type Loaded = { accounts: AccountView[]; defaults: AccountDefault[]; full: boolean; quota: boolean; pool: boolean };
 
 /** 목록·기본과 보던 로그인을 함께 읽는다. 겹친 읽기는 마지막 것만 반영한다 */
 function useAccounts(loginId: string | null) {
@@ -44,6 +45,7 @@ function useAccounts(loginId: string | null) {
         defaults: defaults.kind === "account_defaults" ? defaults.defaults : [],
         full,
         quota: apiAtLeast(m?.front_api, 1, 83),
+        pool: apiAtLeast(m?.front_api, 1, 102),
       });
       if (status === "lost") setLogin((prev) => (prev ? { ...prev, state: "lost" } : prev));
       else if (status?.kind === "account_login") setLogin(status.login);
@@ -107,6 +109,7 @@ export function AccountsPage({ role }: { role: DeviceRole }) {
         </p>
       )}
       {data.quota && <div className="op-buttons"><button className="btn small" type="button" onClick={usage.refresh} disabled={usage.busy}>사용량 다시 읽기</button><span className="op-muted">관측이 없으면 사용량 모름</span></div>}
+      {data.pool && <AccountPoolPanel accounts={data.accounts} canEdit={canEdit} />}
       {groups.map((g) => (
         <SettingsGroup key={g.harness} title={HARNESS_LABEL[g.harness]} section={`accounts-${g.harness}`}>
           <div className="settings-item">

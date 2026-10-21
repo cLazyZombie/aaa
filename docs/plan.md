@@ -7075,15 +7075,70 @@ FRONT_API 1.96는 기본 검수 표지와 답 기록의 r 참조를 더한다. E
 - **검증.** host 유닛 `passkey::tests`(소프트웨어 인증기 ES256·EdDSA로 등록·승인을 끝까지, UV 없음·다른 화면 주소·다른 RP·다른 challenge·남의 키·모르는 credential·다시 쓴 op·다른 기기 거부, 10분 시한·보기 기기·loopback 등록 거부, 폐기 때 삭제, CBOR 경계)와 `web::guard_tests::only_a_direct_loopback_screen_approves_without_a_passkey`(serve를 거친 loopback Host), 웹 유닛 `passkey.test.mjs`, E2E `79-passkey`(Chromium 가상 인증기, debug host의 `AAA_TEST_WEB_LOCALHOST`로 `http://localhost:<port>`를 공개 주소처럼 쓴다). 결함 심기는 library `w7-fault/README.md`.
 - **착지 통합.** origin/main `555a69ea`에서 마지막 §8.409·FRONT_API 1.100·AGENT_LINK 1.11·E2E78을 직접 확인했다. 이 변경은 §8.410·FRONT_API 1.101·E2E79로 옮기고 AGENT_LINK는 그대로 둔다.
 
-### 8.411 「CLI 0회」 인수(10-22, t-0538 관리 GUI W8)
+### 8.411 install Windows 시험 Job·부모 종료·state 경로 별칭(t-0485)
+
+- **CI 확정 근거.** §8.403 진단 뒤 전체 Windows 로그에서 worker 시작 실패 네 건의 OS 오류5(AccessDenied)·Job 소속true·제한8192(0x2000, KILL_ON_JOB_CLOSE)를 확인했다. 일반 실행의 직접 부모 Job은 breakaway를 허용하지 않았다. 생산 worker의 CREATE_BREAKAWAY_FROM_JOB·거부 시 needs_user 정책을 유지하고 양성 시험의 install 실행기만 시험 소유 nested Job(BREAKAWAY_OK)으로 구성한다. runner 바깥 Job은 변경하거나 탈출하지 않는다. 같은 worker 수명 owner의 금지 Job 사례는 그대로 거부를 검증한다. Windows nested Job의 [breakaway 규칙](https://learn.microsoft.com/en-us/windows/win32/procthread/nested-jobs)을 따른다.
+- **부모 소멸 owner.** 기존 CI에서는 worker가 부모 소멸 뒤 자기 실행 기록에 exit3을 쓴 것까지 통과하고 부모 code!=0만 실제0으로 실패했다. Job close는 종료 코드의 비정상 여부 계약이 없으므로 소유 Job을 [TerminateJobObject](https://learn.microsoft.com/en-us/windows/win32/api/jobapi2/nf-jobapi2-terminatejobobject)로 명시적1 종료 후 닫는다. 직전 부모 생존을 확인하고 기존 worker 생존·exit3 내구 기록·같은 ID status·부모 code!=0 단언과 시한을 모두 유지한다.
+- **state IPC.** pairing의 승인 전 installation_external_tty_required를 추적하면 Windows 일반 state와 canonical state의 verbatim 경로가 서로 다른 Named Pipe 해시였다. 기존 서버 이름·hash와 우선 연결을 바꾸지 않고, NotFound 때만 실제 parent 디렉터리를 canonicalize해 같은 위치인 경로 별칭 하나로 연결한다. 기존 host 주소와 canonical 주소 양방향을 지원한다. AccessDenied를 우회하지 않으며 ACL·OS peer PID·BUSY250ms 시한은 유지한다. Windows IPC owner의 원래 동일 경로 사례에 일반/canonical 양방향의 실제 ACL·peer·byte 전송을 더한다.
+- **판정 경계.** macOS 이번 main CI의 reap 회귀·worker 수명·install26개는 모두 통과했다. Windows 실제 RED는 main23328f7e의 install6/22다. 이 후보의 Windows 실행 GREEN은 다음 승인 착지 뒤 main CI로 확인한다. 로컬 macOS와 Windows 교차 lint/build는 그 대체가 아니다. 승인 우회용 seam·시험 제외·기대값 완화·시한 증가는 없다. I3는 나머지 Windows 판정 뒤다. 기존 report transfer sharing violation은 main §8.409의 별도 수리를 보존한다.
+
+- **착지 통합.** origin/main `8bcc9ce9`에서 마지막 §8.410·FRONT_API 1.101·AGENT_LINK 1.11·E2E79를 직접 확인했다. 이 절은 §8.411로 옮기고 API 판·기존 E2E 번호는 유지한다. main의 passkey·보고 전송 종료·계정 기록·목록 쓸기 수리를 보존하며 통합본 전체 ci-local·Windows 교차 clippy/build·공개 검사를 다시 수행한다.
+
+### 8.412 직접 병합한 thread의 할 일 완료 보관(t-0651)
+
+- **문제와 동작.** 끝난 thread의 마지막 보고가 `[착지]`이면 직접 병합·push를 마쳤어도 host가 `task needs check`를 남겼다. 이제 repo 머신 agent가 thread branch 또는 보고에 명시한 병합 커밋이 실제 origin/main의 조상인지 확인하면 PR 병합처럼 완료 보관한다. 사용자 확인 카드는 만들지 않고 coordinator inbox의 `task auto-cleaned`만 남긴다.
+- **경계.** 보고 없음·사본 버림·하위 task가 남은 상위는 기존 확인 필요를 유지한다. 미병합·조회 불가·옛 agent도 완료를 추측하지 않는다. 보고의 `병합 커밋:`·`착지 커밋:`·`병합:`·`착지:`·`Merge commit:` 줄의 7~64자리 16진 SHA만 후보로 읽고 코드 예제와 일반 검증 SHA는 제외한다. 실제 객체의 조상을 검사하며 축약 SHA가 없거나 모호하면 근거로 쓰지 않는다.
+- **구조와 호환.** host는 Git을 실행하지 않는다. `git_merged.v1`을 알린 agent에만 `GitQuery::MergedIntoMain`을 보내고 선택 응답 `merged_commit`을 받는다. agent는 실제 origin main head와 필요한 객체를 읽고 로컬 ref·FETCH_HEAD·작업 파일을 바꾸지 않는다. pane 정리 뒤 종료 확정 전에 확인 커밋을 `TaskClean.merged_main`에 함께 저장해 확인 카드의 순간 노출도 막고 archive 이유와 되살린 할 일의 attention을 일치시킨다. 기존 FRONT_API·AGENT_LINK 버전은 유지하며 새 웹 E2E 파일 번호는 만들지 않는다.
+- **검증.** host 판정·보고 파서, 실제 host/agent/Git의 직접 병합·보고 커밋·미병합·로컬만 병합·보고 없음·중단·중복 없음, E2E47의 완료 보관·답할 것 경계를 검사한다. 상세는 [시험](testing.md)의 t-0651 절을 따른다.
+
+- **착지 통합.** origin/main `c249e316`에서 마지막 §8.411·FRONT_API 1.101·AGENT_LINK 1.11·E2E79를 직접 확인했다. 이 기능은 §8.412로 옮기고 API 판과 기존 E2E 번호를 유지한다. main의 passkey·Windows 보고 전송 종료·install Job/부모 종료/IPC 수리를 보존하며 통합본 전체 ci-local과 공개 검사를 수행한다.
+
+### 8.413 원격 보고의 숨은 첨부와 판 보존 실패 격리(t-0654)
+
+- **원인.** 기존 보고 판 등록의 안전 경로 오류는 첨부 경로의 `.claude`·`.reports` 성분이었다. 폴더 깊이 제한이 아니며 조사한 파일에 symlink는 없었다. agent의 수집기는 숨은 성분도 열거하지만 host는 거부해 최신 수집 자체도 중단했다. 다른 보고의 크기 오류는 manifest 작성 뒤 바뀐 host 첨부 세 개에서 확인했다. 기동 때의 기존 판 등록은 경고 후 계속하지만, 최신 수집의 판 보존 오류는 본문 저장 앞에서 반환해 새 보고·단계 갱신을 막았다.
+- **고침.** host의 기존 안전 경로 검사는 유지한다. 금지 첨부는 읽기 요청·host 경로 결합 전에 건너뛰고 목록의 부분 사본 사유에 남긴다. 정상 첨부·새 본문은 계속 받는다. 불변 판 저장 실패는 실패 사본으로 기록하되 최신 본문·단계·ack 처리를 계속한다. 기존 ticker로 같은 hash를 다시 받을 때 판을 복구하고 목록 변경도 알린다. 실패한 r 판은 공개하지 않는다. 기존 판 등록과 publish의 경로·symlink·정확한 크기 검사는 유지한다.
+- **검증.** 실제 운영 파일은 읽기만 했다. 수정 전 수집 keeper 두 개의 RED와 수정 후 GREEN, 깊은 경로·숨은 성분·symlink·크기 불일치의 보존 경계, 실제 host·CLI·Agent link에서 판 공개 오류와 같은 hash의 ticker 복구를 검사한다. 고정 sleep·실패 재시도·시한 연장 없이 사건·수집 완료로 끝낸다. 전체 검증은 ci-local·check-public이며 API 판·E2E 번호는 유지한다.
+- **추가 시간 초과 조사.** `ReportFileRead`는 보고 첨부 수집 전용이고 `FileRead`는 구형 수집과 웹 파일 보기에서 함께 쓴다. 숨은 경로 검사는 전송 요청 전에 즉시 거부하므로 120초 응답 대기 자체의 원인은 아니다. 첨부 응답 시간 초과는 기존 파일별 실패 경로로 처리하지만, 뒤의 숨은 첨부가 수집 전체를 취소하던 경계를 이번에 고친다. 120초 한도는 유지한다. 기존 시간 초과 로그에는 대상 머신·파일·offset이 없어 실제 파일 I/O 지연과 응답 전달 지연을 구분할 수 없다.
+
+- **착지 통합.** origin/main `81216f02`에서 마지막 §8.412·FRONT_API 1.101·AGENT_LINK 1.11·E2E79를 직접 확인했다. 이 변경은 §8.413으로 옮기고 API 판과 기존 E2E 번호는 유지한다. main의 passkey·install Windows Job/부모 종료/state IPC·직접 병합한 할 일 완료 보관을 보존하며 통합본 전체 ci-local과 공개 검사를 수행한다.
+
+### 8.414 보고서 목록의 반복 조회와 첫 화면(10-22, t-0656)
+
+- 보고 목록은 프로젝트마다 보고 메타·예약/완료 판 원장·thread·완료 보관 참조·공유 링크를 한 번씩 모아 읽는다. 첨부 원문이나 해시를 읽지 않고 manifest의 크기를 합산한다. 판의 manifest는 사본마다 한 번만 읽고 공유 링크의 크기도 재사용한다. 실시간 등록 폴더는 기존 안전한 순회를 유지하며 다음 조회에 변경·실패를 반영한다.
+- 보관이 참조하는 기존 이름/r 판, 진행 중·누락·깨진 thread의 보호를 유지한다. 용량·정리 계획은 같은 목록의 보호 판정을 재사용한다. 웹 목록·용량은 각각 도착할 때 표시하고 새 조회가 시작되면 이전 조회의 늦은 답을 버린다.
+- 두 탭은 처음 50개를 그리고 「보고서 더 보기」로 50개씩 늘린다. 수·안 봄·「끝난 것 모두 고르기」는 전체 목록을 기준으로 한다. API 형식은 바꾸지 않는다.
+- E2E80은 격리된 1,118개 사본 폴더·559개 원본·최대 954개 첨부 manifest·보관 120건에서 HTTP 응답과 첫 화면을 기록한다. Chromium·WebKit의 용량 응답을 사건으로 보류해도 목록이 먼저 나타나며, 용량 실패·Reader·전체 선택·더 보기를 검사한다. 운영 library 실측과 실험실 수치는 구분한다.
+
+- **착지 통합.** origin/main `3479748e`에서 마지막 §8.413·FRONT_API 1.101·AGENT_LINK 1.11·E2E79를 직접 확인했다. 이 변경은 §8.414·E2E80으로 맞추며 API 판은 유지한다. main의 원격 보고 금지 첨부 건너뛰기·본문/판 보존 실패 격리와 같은 hash의 ticker 복구를 보존하고 통합본 전체 ci-local·공개 검사 후 병합한다.
+
+
+### 8.415 install Windows pairing 구분자와 IPC 해제 사건(t-0485)
+
+- **원문.** main c249e316의 Windows 전체 job 로그에서 install은 21/22 통과했다. 남은 pairing은 승인 전에 installation_external_tty_required/exit3으로 끝났고, IPC의 일반/canonical 주소 owner는 첫 instance bind에서 OS5였다. 옛 로그에는 bind 조합 번호가 없어 어느 조합인지까지 확정하지 않는다. 승인 조기종료 단언 끝에 answered=N/M·기다릴 needle·실제 child_exit를 남기고, IPC 실패에는 조합·연결 반복·경로·OS 오류·해제 단계를 남긴다. 비밀 출력 가림과 기존 단언은 유지한다.
+- **pairing 주소.** 실험실 host의 state/host와 install canonical state의 역슬래시는 Windows에서 같은 디렉터리지만 기존 해시는 원문 구분자를 구별했다. pipe 이름은 두 구분자를 역슬래시로 맞춘 뒤 계산한다. 기존 역슬래시 주소는 그대로다. 새 client는 NotFound일 때 같은 입력의 옛 원문 주소도 읽어 기존 host와의 호환을 보존하고, canonical 별칭·ACL·peer PID·AccessDenied 거부·BUSY250ms는 유지한다. 실제 mixed/canonical 양방향 연결을 기존 owner에 더하며 fixture를 정상 주소로 바꿔 결함을 피하지 않는다.
+- **해제 owner.** 고정 Mio1.2.4는 read 뒤 다음 overlapped read를 걸고 drop은 취소만 요청한다. 완료 전 OS handle이 남으면 [첫 instance 재생성](https://learn.microsoft.com/en-us/windows/win32/api/winbase/nf-winbase-createnamedpipea)이 AccessDenied5일 수 있다. 시험은 client close→서버 EOF 관측→server/listener drop 뒤 같은 주소 첫 instance를 한 번만 다시 잡아 실제 해제를 확인한다. 연결3초·각 조합3반복·원래3조합·ACL·peer·byte 단언을 유지하며 EOF도 사건으로 기다린다. bind 재시도·sleep·상한 증가·예외 무시는 없다.
+- **검증 경계.** 실제 Windows RED는 위 CI 원문이고 수정 뒤 Windows 실행 GREEN은 승인 착지 뒤 main CI가 판정한다. cross clippy/build와 macOS 검증으로 Windows 성공을 추정하지 않는다. rollout 시한 수리는 별도 t-0654 소관이며 이 후보에서 고치지 않는다. 착지 기준 main220133f5의 마지막§8.414·FRONT_API1.101·AGENT_LINK1.11·E2E80을 직접 확인해 이 절을§8.415로 옮긴다. API 판과 기존 E2E 번호는 유지하며 main의 보고 수집·목록 성능과 t-0654의 rollout fixture 수리를 보존한다.
+
+### 8.416 host 공통 허용 풀과 미관측 자동 첫 실행(t-0653, A3)
+
+- **결정.** t-0500 계획 §5의 A2는 t-0561에서 구현됐다. 다음 A3에 대해 사용자 답 1B·2B: host 공통 허용 풀과 프로젝트별 참여, 최신 잔량 후보가 없을 때 미관측 계정의 자동 첫 실행을 허용한다. 새 로그인 자동 편입·API 과금 전환·계정 간 인계·인증 복구 보강은 하지 않는다. 같은 계정의 여러 작업은 계속 허용한다.
+- **설정·경계.** 사람의 세션 밖 CLI·웹 조작 기기만 풀 별칭·공유 한도 그룹·허용 모델과 프로젝트 참여를 고친다. 설정판 충돌은 conflict다. 웹은 aaa-proto만 사용한다. 참여한 프로젝트의 공통 thread 시작 경로에서 선택하므로 CLI·웹 할 일·예약·자동화가 같은 규칙이다. 명시 별칭·미참여 기본 계정·coordinator 기본·동일 계정 resume은 유지한다.
+- **선택·수명.** 최신 필수 5시간·주간/모델 창마다 잔량에서 미소진 예약·안전 여유10·이번 예상량(small/medium/large 5/15/30%p)을 뺀다. 최소 여유·5%p 동점 범위의 빠른 리셋·예약 수·마지막 배정·별칭 차례다. 공유 그룹의 관측 제약·예약을 함께 적용한다. 미관측은 한 세대의 첫 실행만 허용하고 오래됨·실패·잘못된 값·리셋 경계는 우회하지 않는다. 알려진 모델·머신·인증 세대가 맞지 않으면 자동 변경하지 않는다.
+- **내구성.** 선택·예약·thread와 영수증을 한 DB transaction으로 저장한다. 직접 요청은 후보가 없으면 내구 대기 하나이며 같은 ID는 같은 시작이다. task·자동화의 대기는 기존 큐다. 확정 준비 실패만 즉시 해제하고, 결과 불명은 보존하며, 종료 뒤 신선한 관측으로 미소진 예약을 교체한다. 사용량의 관측·실패/backoff도 재시작 뒤 유지한다. 실제 기동 실패는 자동 반복하지 않는다.
+- **호환·검증.** FRONT_API 1.102의 별도 풀 요청·대기 응답과 선택 사유를 더한다. 별칭 `auto`를 예약하지 않고 `--account-pool`을 쓴다. AGENT_LINK 1.11·SESSION_IPC 1.3은 유지한다. E2E81과 host 유닛이 가짜 인증·상태줄·RPC, 동시 예약·영수증·재시작·웹 대기/취소·Reader·모바일·비노출을 소유한다. 계약은 [계정](accounts.md), 절차는 [시험](testing.md)에 둔다.
+- **통합 수리.** CLI 시작 인자는 `Box<Args>`로 나누어 enum 크기 lint를 해결한다. 반복 host 재시작 때 원격 agent의 이전 backoff가 짧은 정상 연결 뒤에도 남던 기존 결함은 인증·초기 replay 완료 사건에서 초기화한다. 거부된 연결의 backoff·기존 m13의 30초 준비 상한은 유지하며 실제 protocol keeper와 초기화 제거 변형으로 구분한다.
+- **착지 통합.** 기준 origin/main `3933e4cb`의 마지막 §8.415·FRONT_API 1.101·AGENT_LINK 1.11·E2E80을 확인했다. 이 기능은 §8.416·FRONT_API 1.102·E2E81로 맞추고 agent/session 판은 유지한다. main의 원격 보고·보고서 목록·Windows pairing/IPC 수리와 rollout fixture의 재연결 상한 1초를 보존한다. fixture의 반복 재시작 결정성과 제품의 정상 연결 뒤 backoff 초기화는 별개이며 둘 다 유지하고 전체 ci-local·공개 검사 뒤 병합한다.
+
+### 8.417 「CLI 0회」 인수(10-22, t-0538 관리 GUI W8)
 
 - **요청.** 확정 계획 t-0456 plan-revised §5 W8 「깨끗한 설치 → 자동화 두 방식 → 승인 → 배포 → host·agent 장애 → 복구 → 정리를 웹과 화면 공유만으로 끝낸다. 터미널 입력이 한 번이라도 있으면 미완료다. 인벤토리를 다시 모아 B 행마다 목적지 화면을 확인한다」. 시작 때의 답 1A(실험실 자동 시나리오와 실제 머신 점검표)·2A(인벤토리는 대조와 보고까지, 목적지 화면이 없는 B 행은 목록과 크기를 보고하고 고칠 범위를 다시 묻는다).
 - **경계.** 옛 기획(t-0455 L10)대로 「초기 설치 뒤」 0회다. 설치는 프로젝트 만들기(§6 Q7: 설치·인스턴스 흐름)와 첫 기기 짝짓기까지다. 새 머신에서 치는 `aaa agent enroll`은 그 머신의 설치(웹 「직접 설치」 안내)다. host·agent 프로세스가 죽고 감독자(launchd)가 다시 띄우는 것은 장애와 그 복구이지 사람의 터미널 입력이 아니다.
 - **자동화 두 방식.** W3(상주 agent 마법사)를 지운 뒤(t-0475 Q6)의 두 방식으로 읽는다: 사건마다 새 thread(`do.start`, Q1의 기본)와 열린 thread에 글(`do.message`). 둘 다 웹 폼으로 만들고 「지금 실행」으로 돌린다. 새 thread는 웹 설정 「안전」의 `start_threads = auto`(승인 필요 동작)와 시작 범위 승인 뒤에 뜬다.
-- **실험실 시나리오.** E2E `80-cli-zero` 한 실험실에서 차례로: 새 머신 등록(웹 등록 창 → 새 머신의 설치 명령 → 확인 코드 승인) → `start_threads` 승인 → 자동화 ①(폼 → 시작 범위 승인 → 지금 실행 → 목록의 자동화 thread) → 자동화 ②(①의 thread 번호 → 지금 실행 → 그 thread 터미널의 글) → 배포(후보 점검 → 확인 창 → rollout 기록)와 agent 재시작 rollout → agent 장애·복귀 → host 장애·복귀(화면과 두 머신이 저절로 다시 붙고 그 설정을 마지막 정상 설정으로 둔다) → 깨진 host.toml의 안전 모드 → 「마지막 정상 설정으로 되돌리기」 → 정리(thread 끝내기, 자동화 지우기, 머신 폐기). 설치 단계 뒤 spec의 `cli()`는 보기 명령(`status`·`machine list`·`thread list/show`·`routine list/runs`·`pane list`)만 통과시키고 나머지는 「CLI 0회 위반」으로 멈춘다. 각 화면의 세부는 55·60·61·63·68이 맡고, 이 spec은 사슬이 aaa 명령 없이 이어지는 것만 본다. 배포는 63처럼 후보 self-check가 대상 dry-run에서 멈춘다(실험실 실행 파일을 바꾸지 않는다). 실제 교체와 공개 주소의 passkey 승인은 실제 머신 점검표가 본다.
+- **실험실 시나리오.** E2E `82-cli-zero` 한 실험실에서 차례로: 새 머신 등록(웹 등록 창 → 새 머신의 설치 명령 → 확인 코드 승인) → `start_threads` 승인 → 자동화 ①(폼 → 시작 범위 승인 → 지금 실행 → 목록의 자동화 thread) → 자동화 ②(①의 thread 번호 → 지금 실행 → 그 thread 터미널의 글) → 배포(후보 점검 → 확인 창 → rollout 기록)와 agent 재시작 rollout → agent 장애·복귀 → host 장애·복귀(화면과 두 머신이 저절로 다시 붙고 그 설정을 마지막 정상 설정으로 둔다) → 깨진 host.toml의 안전 모드 → 「마지막 정상 설정으로 되돌리기」 → 정리(thread 끝내기, 자동화 지우기, 머신 폐기). 설치 단계 뒤 spec의 `cli()`는 보기 명령(`status`·`machine list`·`thread list/show`·`routine list/runs`·`pane list`)만 통과시키고 나머지는 「CLI 0회 위반」으로 멈춘다. 각 화면의 세부는 55·60·61·63·68이 맡고, 이 spec은 사슬이 aaa 명령 없이 이어지는 것만 본다. 배포는 63처럼 후보 self-check가 대상 dry-run에서 멈춘다(실험실 실행 파일을 바꾸지 않는다). 실제 교체와 공개 주소의 passkey 승인은 실제 머신 점검표가 본다.
 - **실제 머신 점검표.** docs/testing.md 「「CLI 0회」 인수」의 점검표. W7 배포(휴대폰 다시 짝짓기) 뒤 사용자가 웹과 화면 공유만으로 돈다.
 - **인벤토리.** 지금 CLI를 다시 모아(240행, 새것 41·없어짐 19) B 124행 중 있음 84·부분 17·없음 18·웹 제외 5, D 19행 중 있음 8·부분 5·없음 6이다. 부분·없음 46행을 보고하고 고칠 범위를 물었다(답 2A). 답 1A(아직 정한 적 없는 것 중 작은 것 여섯)·2A(앞 단계에서 일부러 남긴 것은 예외로 적음).
 - **고친 빈칸(답 1A).** 있는 요청에 단추·칸만 더했다. pane 줄 메뉴 「세션 끝내기」(`pane_kill`, 확인 창, 자리는 남고 「다시 열기」), coordinator 메뉴 끝 「하나 더 띄우기」(`project_open new`, 맨 위 profile), 설정 「이 aaa」 → 공유 링크의 「낸 링크」(`library_links`: 만료·마지막 열람·상태, 살아 있는 링크 폐기. host는 링크 발급·폐기·키 교체 뒤 reports 사건을 내고, 열려 있던 보고서 목록·thread 화면의 링크 줄이 다시 읽는다: 폐기한 링크를 뒤 화면에서 복사하지 않게), 보고 링크 줄의 새 링크 수명(1·7·30·90·365일, `library_link days`), 「이 aaa」의 할 일 「나중」 파일 더하기·빼기(`project_set task_notes.add|remove`, 경로 검사는 host). 여섯째로 꼽은 보기 전용 기기 짝짓기 코드(`aaa web pair --reader`)는 D6(10-18, §8.81)이 「웹 코드는 controller만」으로 정한 것이라 고치지 않고 아래 예외로 옮겼다.
 - **「CLI 0회」 예외(답 2A).** 앞 단계가 일부러 host 터미널·CLI에 남긴 것이다. 임의 명령·경로: safety `routine_commands`·`thread_agent_args`·`coordinator_agent_args`, custom harness profile(실행 명령·env)과 host.local.toml profile(§8.357, W5c 인수 조건 「임의 경로·명령 거부」). 그래서 명령 조건 자동화를 켜려면 host 터미널이 한 번 필요하다. 보기 전용 짝짓기 코드(D6). coordinator 내부 알림: `inbox list/done`·`events`·`post list/unmute`(§8.382). 할 일 목록 머리 편집 `task list-*`(§8.393, 원문 편집으로 된다). `library import`(§8.355)와 기한 지정 `library prune --older-than`(§8.343). release 받기·한 머신 교체·`update rollback`(§8.361·§8.402, guard의 자동 되돌림은 웹 배포에 있다). 크기가 커 다음 계획으로 미룬 것(설정 검증, 다른 머신 감독자 올리기·내리기, 보관 실행 파일 목록, 계정 지우기, 「점검 실행」, task 없이 thread 시작, pane 데려오기 등)은 t-0538 library `w8-inventory`에 있다.
 - **호환.** proto 변경 없음(웹이 있던 요청을 더 쓴다). FRONT_API·AGENT_LINK 그대로. 옛 host는 모르는 key(`task_notes.*`)를 거부하고 웹은 그 글을 보인다.
-- **검증.** E2E `80-cli-zero`(사슬)와 `81-cli-zero-gaps`(빈칸 다섯), 줄 메뉴 차례가 바뀐 `12-threads-push`. 결함 심기: 「CLI 0회」 검문을 끄면 설치 단계가, `do.message`가 대상에 보내지 않으면 자동화 ② 단계가, thread 관리 메뉴에서 「끝내기」를 빼면 정리 단계가 실패한다. 「세션 끝내기」가 `pane_close`를 보내면, 「하나 더 띄우기」가 `new`를 뒤집으면, 링크 수명을 보내지 않으면, 폐기 뒤 reports 사건을 내지 않으면 81의 그 단계가 실패한다.
+- **검증.** E2E `82-cli-zero`(사슬)와 `83-cli-zero-gaps`(빈칸 다섯), 줄 메뉴 차례가 바뀐 `12-threads-push`. 결함 심기: 「CLI 0회」 검문을 끄면 설치 단계가, `do.message`가 대상에 보내지 않으면 자동화 ② 단계가, thread 관리 메뉴에서 「끝내기」를 빼면 정리 단계가 실패한다. 「세션 끝내기」가 `pane_close`를 보내면, 「하나 더 띄우기」가 `new`를 뒤집으면, 링크 수명을 보내지 않으면, 폐기 뒤 reports 사건을 내지 않으면 83의 그 단계가 실패한다.
+- **착지 통합.** 기준 origin/main `676ae46d`의 마지막 §8.416·FRONT_API 1.102·AGENT_LINK 1.11·E2E81(`80-report-list`·`81-account-pool`)을 확인했다. 이 변경은 §8.417·E2E82·83으로 옮기고 proto 변경이 없어 FRONT_API·AGENT_LINK는 main 그대로 둔다.

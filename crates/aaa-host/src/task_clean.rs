@@ -2,7 +2,7 @@
 //!
 //! - thread가 끝나면(resolve) host가 끝난 까닭과 버림을 thread 기록(`TaskClean`)에 적고, ticker가 한 번 판정한다. 이 칸 전에 끝난
 //!   thread는 까닭이 없어 판정하지 않는다(올린 직후 옛 thread에 이어진 task를 지우지 않는다). 다시 열면 지워 다음 끝남을 판정한다.
-//! - 완료는 좁게 본다: PR 병합으로 끝났거나 마지막 보고 첫 줄이 `[완료]`다. 그러면 줄을 지우고 기록에 「자동 정리」로 남겨 되살릴 수
+//! - 완료는 좁게 본다: PR 병합으로 끝났거나 origin/main 조상을 확인했거나 마지막 보고 첫 줄이 `[완료]`다. 그러면 줄을 지우고 기록에 「자동 정리」로 남겨 되살릴 수
 //!   있게 하고 coordinator inbox에 알린다. 하위 task가 남은 task는 지우지 않는다(지우기는 하위 묶음과 함께 간다).
 //! - 그 밖(보고 표지 `[결정 필요]`·`[착지]` 등, 보고 없음, 사본 없이 버림)은 줄을 남기고 「확인 필요」다. 표지는 따로 적지 않고 할 일
 //!   화면을 읽을 때 이어진 thread가 끝났는지로 정한다(`attention`). 사람이 「끝남으로 지우기」·「다시 맡기기」·「연결만 풀기」로 정한다.
@@ -27,7 +27,7 @@ pub(crate) enum Verdict {
 }
 
 /// P2 판정표(t-0469 §4): 끝난 까닭 × 보고 표지 × 버림 × 하위 task. 하위가 남은 task는 지우지 않는다(지우기가 하위 묶음과 함께 간다).
-/// 병합은 보고 표지보다 앞선다(PR 없는 직접 병합은 `[완료]`로 본다).
+/// 병합은 보고 표지보다 앞선다. 직접 병합은 agent가 origin/main 조상을 확인한다.
 pub(crate) fn judge(why: Option<&str>, discard: bool, marker: Option<&str>, children: bool) -> Verdict {
     if children {
         return Verdict::Check("하위 task가 남아 있다".into());
@@ -37,6 +37,9 @@ pub(crate) fn judge(why: Option<&str>, discard: bool, marker: Option<&str>, chil
     }
     if discard {
         return Verdict::Check("마지막 사본 없이 끝냈다".into());
+    }
+    if why == Some("main_merged") {
+        return Verdict::Clean("origin/main 병합".into());
     }
     match marker {
         Some("[완료]") => Verdict::Clean("보고 [완료]".into()),
@@ -57,6 +60,7 @@ pub(crate) fn attention(t: &TaskView, rec: &ThreadRec, marker: Option<&str>, chi
         return Some(format!("{id}가 끝났다. 끝났는지 정한다"));
     };
     let same = |titles: &[String]| titles.iter().any(|x| x.to_lowercase() == t.title.to_lowercase());
+    let why = if c.merged_main.is_some() { "main_merged" } else { why };
     match judge(Some(why), c.discard, marker, children) {
         Verdict::Check(r) => Some(format!("{id} 끝남: {r}")),
         Verdict::Clean(_) if c.judged_ms.is_none() => None,
@@ -92,6 +96,38 @@ impl Host {
         }
     }
 
+    pub(crate) async fn task_main_merge(&self, rec: &ThreadRec) -> Option<String> {
+        if rec.task_clean.discard
+            || rec.task_clean.why.as_deref() == Some("merged")
+            || self.report_marker(rec) == Some("[완료]")
+            || !self.machine_feature(&rec.machine_id, "git_merged.v1")
+        {
+            return None;
+        }
+        // 보고 없음·중단은 branch가 우연히 main에 포함돼 있어도 완료로 바꾸지 않는다.
+        let report = self.verified_report(rec)?;
+        let repo = rec.repo.as_deref()?;
+        let dir = self.project_dir(&rec.project).ok()?;
+        let tasks = std::fs::read_to_string(dir.join("TASKS.md")).ok()?;
+        if !tasks::parse(&tasks).iter().any(|t| t.thread.as_deref() == Some(rec.id.as_str())) {
+            return None;
+        }
+        let conn = self.live_conn(&rec.machine_id).ok()?;
+        let query = aaa_proto::GitQuery::MergedIntoMain { branch: rec.branch.clone(), commits: merge_commits(&report) };
+        let response = conn
+            .request_timeout(
+                aaa_proto::AgentRequest::GitQuery { cwd: repo.into(), query },
+                aaa_common::git_watch::QUERY_TIMEOUT + std::time::Duration::from_secs(5),
+            )
+            .await;
+        match response {
+            Ok(aaa_proto::AgentResponse::Git(answer)) => {
+                answer.merged_commit.filter(|sha| aaa_common::git_watch::valid_sha(sha))
+            }
+            _ => None, // 조회 불가·옛 agent는 완료를 추측하지 않는다.
+        }
+    }
+
     fn task_clean_one(&self, project: &str, dir: &Path, rec: &ThreadRec) -> Result<(), ErrorBody> {
         self.task_identify(project)?;
         let text = std::fs::read_to_string(dir.join("TASKS.md")).unwrap_or_default();
@@ -102,7 +138,12 @@ impl Host {
         let mut check: Vec<(String, String)> = Vec::new();
         for t in all.iter().filter(|t| t.thread.as_deref() == Some(rec.id.as_str())) {
             let children = all.iter().any(|x| x.parent == Some(t.line));
-            match judge(c.why.as_deref(), c.discard, marker, children) {
+            match judge(
+                if c.merged_main.is_some() { Some("main_merged") } else { c.why.as_deref() },
+                c.discard,
+                marker,
+                children,
+            ) {
                 Verdict::Clean(r) => clean.push((t.clone(), r)),
                 Verdict::Check(r) => check.push((t.title.clone(), r)),
             }
@@ -223,6 +264,42 @@ impl Host {
     }
 }
 
+/// 명시한 병합/착지 줄의 SHA만 후보로 쓴다. 본문 속 빌드·검증 SHA와 예제 코드는 근거가 아니다.
+fn merge_commits(report: &str) -> Vec<String> {
+    let mut result = Vec::new();
+    let mut fence = None;
+    for line in report.lines() {
+        let line = line.trim();
+        if line.starts_with("```") || line.starts_with("~~~") {
+            let mark = &line[..3];
+            if fence == Some(mark) {
+                fence = None;
+            } else if fence.is_none() {
+                fence = Some(mark);
+            }
+            continue;
+        }
+        if fence.is_some() {
+            continue;
+        }
+        let line = line.trim_start_matches("- ").trim_start_matches("* ").replace("**", "");
+        let Some((label, value)) = line.split_once(':') else { continue };
+        if !matches!(label.trim(), "병합 커밋" | "착지 커밋" | "병합" | "착지" | "Merge commit" | "merge commit")
+        {
+            continue;
+        }
+        for token in value.split(|c: char| !c.is_ascii_hexdigit()) {
+            if (7..=64).contains(&token.len()) && !result.iter().any(|s| s == token) {
+                result.push(token.to_string());
+                if result.len() == 8 {
+                    return result;
+                }
+            }
+        }
+    }
+    result
+}
+
 /// 자동 정리는 owner·저장소를 바꾸거나 되살리지 않는다
 fn no_input() -> task_edit::Ctx<'static> {
     fn owner_ok(_: &str, _: bool) -> Result<(), String> {
@@ -251,6 +328,9 @@ mod tests {
             (Some("merged"), false, None, false, clean("PR 병합")),
             (Some("merged"), false, Some("[착지]"), false, clean("PR 병합")),
             (Some("merged"), true, None, false, clean("PR 병합")),
+            (Some("main_merged"), false, Some("[착지]"), false, clean("origin/main 병합")),
+            (Some("main_merged"), true, Some("[착지]"), false, check("마지막 사본 없이 끝냈다")),
+            (Some("main_merged"), false, Some("[착지]"), true, check("하위 task가 남아 있다")),
             // 직접 병합 착지: 보고 [완료]
             (Some("manual"), false, Some("[완료]"), false, clean("보고 [완료]")),
             (Some("auto"), false, Some("[완료]"), false, clean("보고 [완료]")),
@@ -268,6 +348,13 @@ mod tests {
         ] {
             assert_eq!(judge(why, discard, marker, children), want, "{why:?} {discard} {marker:?} {children}");
         }
+    }
+
+    #[test]
+    fn only_explicit_merge_commit_lines_are_candidates() {
+        let report = "[착지] 병합했다\n## Report\n- **병합 커밋**: `abcdef123`\n착지: 1234567\n검증: 7654321\n```text\n병합: 9876543\n```\n~~~\n착지: 1111111\n~~~\n병합 커밋: `abcdef123`\n";
+        assert_eq!(merge_commits(report), ["abcdef123", "1234567"]);
+        assert!(merge_commits("병합 커밋: --help main^ ").is_empty());
     }
 
     fn rec(why: Option<&str>, judged: bool) -> ThreadRec {

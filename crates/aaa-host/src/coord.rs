@@ -280,6 +280,7 @@ impl Host {
         block: Option<&str>,
     ) -> Result<FrontResponse, ErrorBody> {
         let mut a = StartArgs {
+            pool: None,
             over_limit: None,
             reservation: None,
             account: None,
@@ -599,6 +600,8 @@ impl Host {
                                 .map(|rec| {
                                     if rec.task_clean.why.as_deref() == Some("merged") {
                                         "PR 병합"
+                                    } else if rec.task_clean.merged_main.is_some() {
+                                        "origin/main 병합"
                                     } else {
                                         "보고 [완료]"
                                     }

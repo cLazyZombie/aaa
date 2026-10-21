@@ -25,6 +25,8 @@ mod preparation;
 mod rollout;
 #[path = "m13/secret_k0.rs"]
 mod secret_k0;
+#[path = "m13/task_main_merge.rs"]
+mod task_main_merge;
 #[path = "m13/thread_stages.rs"]
 mod thread_stages;
 #[path = "m13/work_root.rs"]
@@ -2746,9 +2748,11 @@ fn turn_end_notices_follow_reports() {
     w.h.ok(&["question", "answer", &p1.id, "yes"]);
     agent_became(&mut ev, &id, AgentActivity::Working, t);
     // 1) brief 턴(작업 → 질문 → 작업 → 쉼): 진행 40%의 보고는 검토 대기가 아니라 끝남이다. 턴은 처음 일한 때부터 잰다
+    // trust 확인 뒤 잠깐 쉰 앞 턴의 Finished가 기록에 남을 수 있다. 지금 Working을 읽은 뒤의 사건부터 본다.
+    let brief_from = ev.cursor();
     let t1 = lab::now_ms();
     finish_turn(&w, &pane);
-    let (i1, n1): (usize, NoticeView) = notice(&mut ev, 0, "brief 턴의 끝남");
+    let (i1, n1): (usize, NoticeView) = notice(&mut ev, brief_from, "brief 턴의 끝남");
     assert_eq!(n1.kind, NoticeKind::Finished, "{n1:?}");
     assert_eq!(
         (n1.project.as_deref(), n1.thread.as_deref(), n1.title.as_str()),

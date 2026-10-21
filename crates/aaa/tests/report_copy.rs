@@ -12,15 +12,20 @@ use std::time::Duration;
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn failing_report_agent_keeps_working_and_recovers_without_a_new_hash() {
-    report_copy_recovers(false).await;
+    report_copy_recovers(false, false).await;
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn failing_library_keeps_the_new_report_and_healthy_files_and_recovers_without_a_new_hash() {
-    report_copy_recovers(true).await;
+    report_copy_recovers(true, false).await;
 }
 
-async fn report_copy_recovers(fail_library: bool) {
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn failing_report_history_keeps_the_new_report_and_recovers_without_a_new_hash() {
+    report_copy_recovers(false, true).await;
+}
+
+async fn report_copy_recovers(fail_library: bool, fail_history: bool) {
     let mut lab = Lab::new();
     let projects = lab.root.join("projects");
     let node = lab.node("host", Some(&format!(
@@ -31,6 +36,16 @@ async fn report_copy_recovers(fail_library: bool) {
     let limit = Duration::from_secs(15);
     wait_for("개발 host", limit, || node.json(&["status"]).ok());
     node.ok(&["project", "create", "demo"]);
+    let history_db = rusqlite::Connection::open(node.state.join("host/host.db")).unwrap();
+    if fail_history {
+        // 격리 DB의 판 공개만 실제 SQLite 오류로 막는다. 본문·thread 저장은 정상이다.
+        history_db
+            .execute_batch(
+                "CREATE TRIGGER fail_history BEFORE UPDATE OF ready ON report_ids WHEN NEW.ready=1
+                 BEGIN SELECT RAISE(FAIL, '시험 보고 판 저장 실패'); END;",
+            )
+            .unwrap();
+    }
     let stream = aaa_common::ipc::connect(&node.state.join("host/agent.sock")).await.unwrap();
     let (reader, writer) = tokio::io::split(stream);
     let tx = spawn_writer(writer, MAX_FRAME);
@@ -106,7 +121,7 @@ async fn report_copy_recovers(fail_library: bool) {
                                 count.fetch_add(1, Ordering::SeqCst);
                                 fail.load(Ordering::SeqCst)
                             };
-                            if failed && !fail_library {
+                            if failed && !fail_library && !fail_history {
                                 Outcome::Err(ErrorBody::new(ErrorCode::Internal, "시험 manifest 수집 실패"))
                             } else {
                                 let report = "[진행 중] 계속 일한다\n".as_bytes().to_vec();
@@ -189,14 +204,23 @@ async fn report_copy_recovers(fail_library: bool) {
     let items = items["items"].as_array().unwrap();
     assert_eq!(items.iter().filter(|i| i["item_kind"] == "report-copy-failed").count(), 1);
     assert!(!items.iter().any(|i| i["event"] == "waiting on you"), "{items:?}");
-    if fail_library {
+    if fail_library || fail_history {
         assert_eq!(
             std::fs::read_to_string(projects.join("demo/threads/t-0001.md")).unwrap(),
             "[진행 중] 계속 일한다\n"
         );
-        assert_eq!(std::fs::read(projects.join("demo/library/t-0001/good.txt")).unwrap(), b"healthy");
-        assert!(!projects.join("demo/library/t-0001/bad.log").exists());
+        if fail_library {
+            assert_eq!(std::fs::read(projects.join("demo/library/t-0001/good.txt")).unwrap(), b"healthy");
+            assert!(!projects.join("demo/library/t-0001/bad.log").exists());
+        }
         assert!(v["report_hash"].is_string(), "실패 중에도 새 보고를 반영한다: {v}");
+    }
+    if fail_history {
+        assert!(v["report_id"].is_null(), "실패한 판은 공개하지 않는다: {v}");
+        let ready: u64 =
+            history_db.query_row("SELECT COUNT(*) FROM report_ids WHERE ready=1", [], |r| r.get(0)).unwrap();
+        assert_eq!(ready, 0);
+        history_db.execute_batch("DROP TRIGGER fail_history").unwrap();
     }
     failing.store(false, Ordering::SeqCst);
     let copied = wait_for("같은 hash 재수집 성공", limit, || {
@@ -204,6 +228,14 @@ async fn report_copy_recovers(fail_library: bool) {
         (v["copy"] == "complete").then_some(v)
     });
     assert_eq!(copied["group"], "working", "{copied}");
+    if fail_history {
+        assert_eq!(copied["report_hash"], v["report_hash"]);
+        let revision = copied["report_id"].as_str().unwrap();
+        assert_eq!(
+            std::fs::read_to_string(projects.join("demo/threads").join(format!("{revision}.md"))).unwrap(),
+            "[진행 중] 계속 일한다\n"
+        );
+    }
     assert!(projects.join("demo/threads/t-0001.md").is_file());
     if fail_library {
         assert_eq!(std::fs::read(projects.join("demo/library/t-0001/bad.log")).unwrap(), b"expected");
