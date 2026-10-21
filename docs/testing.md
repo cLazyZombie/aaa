@@ -2,6 +2,26 @@
 
 새 기능을 만드는 thread가 따르는 짧은 규칙이다. 근거는 참고 넷(herdr 0.9.5·herdr-projects 0.2.35·herdr-web-ui `aa624cb`·t3code `4b1024da`)과 이 저장소에서 실제로 난 간헐 실패다. 전략과 도구 목록은 [plan §13](plan.md#13-테스트-전략과-직접-만들-e2e-도구)에 있다.
 
+## 보고서 폴더 fetch·음원(t-0589, plan §8.381)
+
+- `cargo test -p aaa-host --lib --locked`: `report_connections_have_one_exact_origin_and_capability_prefix`는
+  loopback·HTTPS의 정확한 보고서 경로와 헤더 삽입 차단을 검사한다. `signed_report_http_boundary`는 기존
+  폴더 밖·숨은 파일·symlink·위조 링크 거부를 유지하고 새 폴더 읽기 범위를 검사한다. 기존 connect-src none 단언은
+  요구된 폴더 읽기 계약으로 바꾸며 범용 self·별표로 완화하지 않는다.
+- `report_sandbox_warning_does_not_fail_copy_or_repeat_for_the_same_snapshot`은 실제 보고 회수로 제한 API 경고가
+  inbox에 한 번 남고 복사 성공은 보존되는지 본다. 문자열 탐지는 별도 unit에서 상대 fetch·외부/동적 경로·제한 API를 검사한다.
+  `publishing_reports_warns_for_restricted_apis_in_copies_and_live_sources`는 publish의 사본·실시간 등록 경고와 정상 상대 fetch를 검사한다.
+- `cargo test -p aaa --test m13 library_view --locked -- --exact`: host 사본·agent 스트리밍·Range·내려받기·기존 경로 거부와
+  Origin null의 CORS·쿠키 동반 거부·다른 Origin에 CORS 없음.
+- `NODE_PATH=$(npm root -g) node web/e2e/web.e2e.mjs --spec 71 --workers 1`: 격리 host·agent에서 390×844 Chromium·WebKit의
+  앱 iframe과 인증 없는 공유 탭을 연다. 사용자 누름에서 WAV 둘을 fetch·decode·GainNode로 혼합하고 analyser 신호·running 상태·
+  두 source의 ended를 확인한다. 출력 끝에는 gain 0을 두어 실제 스피커로 소리를 내지 않는다. HEAD·Range·하위 HTML의 상대 읽기,
+  다른 보고서·정규화/인코딩 경로 탈출·앱 API·외부 서버·쓰기·credentials·쿠키·저장소·부모 접근 거부와 링크 폐기도 검사한다.
+  외부 요청은 실험실 서버의 받은 수 0으로 확인한다. 고정 sleep·timeout 연장·실제 로그인·실제 iPhone 청취는 없다.
+
+제품 변형 대조: connect-src를 host 전체로 넓히면 다른 보고서 읽기가 성공해 격리 단언에서 실패하고,
+Access-Control-Allow-Origin을 없애면 음원 읽기 전에 fetch 실패를 검출한다. 두 변형 뒤 제품 파일 bytes를 복구하고 정본에서 다시 검사한다.
+
 ## 종료 문서의 앱 API(t-0485)
 
 `node web/e2e/web.e2e.mjs --spec 23 --grep '종료 문서 API:'`는 실제 host/App/WebKit에서 정상 tasks/inbox

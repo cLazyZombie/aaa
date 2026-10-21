@@ -114,6 +114,10 @@ pub(crate) fn content_type(path: &str) -> &'static str {
         "webp" => "image/webp",
         "mp4" => "video/mp4",
         "webm" => "video/webm",
+        "wav" => "audio/wav",
+        "mp3" => "audio/mpeg",
+        "m4a" => "audio/mp4",
+        "ogg" => "audio/ogg",
         "pdf" => "application/pdf",
         _ => "application/octet-stream",
     }

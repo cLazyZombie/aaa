@@ -66,6 +66,7 @@ mod push;
 mod quota;
 mod quota_rpc;
 mod report_mark;
+mod report_sandbox;
 mod resource;
 mod restore;
 mod rollout;
