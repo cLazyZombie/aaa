@@ -74,6 +74,66 @@ raise SystemExit(int(sys.argv[2]))
             job = Job("empty", [sys.executable, "-c", "print('running 0 tests')"], root, ["owner"])
             self.assertEqual(execute([job], root, 1, 1)[0]["exit"], 1)
 
+    def test_six_m13_jobs_share_cpu_budget_and_release_it_after_failure(self):
+        with tempfile.TemporaryDirectory(prefix="aaa-rust-cpu-") as tmp, socket.socket() as listener:
+            root = Path(tmp)
+            listener.bind(("127.0.0.1", 0))
+            listener.listen()
+            listener.settimeout(10)
+            port = listener.getsockname()[1]
+            fixture = root / "child.py"
+            fixture.write_text("""import os, socket, sys
+assert os.environ['RUST_TEST_THREADS'] == '4'
+with socket.create_connection(('127.0.0.1', int(sys.argv[1])), timeout=10) as link:
+    link.sendall(b'ready')
+    assert link.recv(1) == b'!'
+print(f'running {sys.argv[2]} tests')
+raise SystemExit(int(sys.argv[3]))
+""")
+            errors = []
+
+            def release():
+                links = []
+                try:
+                    # 여섯 실제 자식이 함께 와야 연다. singleton에 4자리를 예약하면 도달할 수 없다.
+                    for _ in range(6):
+                        child, _ = listener.accept()
+                        child.settimeout(10)
+                        links.append(child)
+                    for child in links:
+                        self.assertEqual(child.recv(5), b"ready")
+                        child.sendall(b"!")
+                    following, _ = listener.accept()
+                    with following:
+                        following.settimeout(10)
+                        self.assertEqual(following.recv(5), b"ready")
+                        following.sendall(b"!")
+                except Exception as error:
+                    errors.append(error)
+                finally:
+                    for child in links:
+                        child.close()
+
+            gate = threading.Thread(target=release)
+            gate.start()
+            sizes = [1, 1, 1, 4, 4, 4, 4]
+            jobs = [Job(f"m13-{n}", [sys.executable, str(fixture), str(port), str(size), "7" if n == 0 else "0"],
+                        root, [f"case-{i}" for i in range(size)]) for n, size in enumerate(sizes)]
+            results = execute(jobs, root, 6, 4, cpu_budget=15)
+            gate.join()
+            self.assertEqual(errors, [])
+            self.assertEqual(sorted(result["exit"] for result in results), [0] * 6 + [7])
+            first = [result for result in results if result["name"] != "m13-6"]
+            self.assertLess(max(result["start_seconds"] for result in first),
+                            min(result["start_seconds"] + result["seconds"] for result in first))
+            events = [(result["start_seconds"], result["cpu_slots"]) for result in results]
+            events += [(result["start_seconds"] + result["seconds"], -result["cpu_slots"]) for result in results]
+            active = 0
+            for _, slots in sorted(events):
+                active += slots
+                self.assertLessEqual(active, 15)
+            self.assertEqual(active, 0)
+
     def test_real_runner_keeps_all_artifacts_and_doctests_after_a_binary_failure(self):
         with tempfile.TemporaryDirectory(prefix="aaa-rust-pipeline-") as tmp:
             root = Path(tmp)
