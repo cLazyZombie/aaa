@@ -1,4 +1,4 @@
-// 웹 머신 추가 M2(plan §8.375): 설정 「머신」 → 「SSH로 추가」. 실험실 sshd(비특권·loopback·비밀번호 끔)를 이 시험이 띄우고, host는
+// 웹 머신 추가 M2(plan §8.384): 설정 「머신」 → 「SSH로 추가」. 실험실 sshd(비특권·loopback·비밀번호 끔)를 이 시험이 띄우고, host는
 // host.toml `[host] ssh_config`의 실험실 ssh 설정(별칭 lab·lab-down, 실험실 키만)으로 접속한다. 접속 → host key 지문(ssh-keygen -lf와
 // 같음) → 「믿음」 확인 창 → OS 감지 → 준비됨, 비밀번호 꼴 대상은 보내기 전에 막음, 닫힌 포트는 까닭, 보기 기기는 목록만, 휴대폰 390 폭,
 // 지우기. 원격에는 쓰지 않는다. sshd가 없는 머신에서는 이 파일을 건너뛴다.
@@ -39,7 +39,7 @@ if (sshd) {
 
 export default async function ({ page }) {
   if (!sshd) {
-    console.log("sshd가 없어 71-machine-add를 건너뛴다");
+    console.log("sshd가 없어 72-machine-add를 건너뛴다");
     return;
   }
   // ssh-keygen -lf가 보이는 host key 지문(사람이 그 머신에서 맞춰 보는 값)
@@ -73,7 +73,7 @@ export default async function ({ page }) {
     const shown = (await job.getByTestId("machine-setup-keys").locator("code").innerText()).trim();
     if (shown !== fingerprint) throw new Error(`지문: 화면 ${shown} · ssh-keygen ${fingerprint}`);
     await job.getByText(`@127.0.0.1:${port}`).waitFor();
-    await shot(page, "71-trust-desktop");
+    await shot(page, "72-trust-desktop");
     await job.getByRole("button", { name: "이 지문을 믿음…" }).click();
     const ask = page.getByRole("alertdialog", { name: "lab의 host key를 믿을까요?" });
     await ask.getByText(fingerprint).waitFor();
@@ -82,7 +82,7 @@ export default async function ({ page }) {
     await job.and(page.locator('[data-phase="ready"]')).waitFor();
     const os = { darwin: "macOS", linux: "Linux" }[process.platform];
     await job.getByTestId("machine-setup-detected").filter({ hasText: `${os} · ` }).waitFor();
-    await shot(page, "71-ready-desktop");
+    await shot(page, "72-ready-desktop");
     const known = fs.readFileSync(`${root}/s/host/ssh/known_hosts`, "utf8").trim().split("\n");
     if (known.length !== 1 || !known[0].startsWith(`[127.0.0.1]:${port} `)) throw new Error(`aaa known_hosts: ${known}`);
   });
@@ -118,7 +118,7 @@ export default async function ({ page }) {
       return box.left >= 0 && box.right <= innerWidth + 0.5 && el.scrollWidth <= el.clientWidth + 1 ? true : JSON.stringify({ l: box.left, r: box.right, sw: el.scrollWidth, cw: el.clientWidth });
     });
     if (fits !== true) throw new Error(`휴대폰 폭: ${fits}`);
-    await shot(ph, "71-machine-add-phone");
+    await shot(ph, "72-machine-add-phone");
     await p.getByRole("button", { name: "lab-down 작업 지우기" }).click();
     await p.locator('li[data-target="lab-down"]').waitFor({ state: "detached" });
     await ph.context().close();

@@ -504,6 +504,38 @@ impl Host {
         if staging.exists() {
             let _ = std::fs::remove_dir_all(&staging);
         }
+        if result.is_ok() {
+            // 복사·웹 업로드·실시간 등록·import도 보고 회수와 같은 작성 경고를 준다.
+            // manifest 길이까지만 읽고, 기존 안전한 open으로 symlink·폴더 탈출을 거부한다.
+            let warning_root = if live {
+                source.clone()
+            } else {
+                // macOS의 temp 조상처럼 별칭이 섞인 host 상태 경로도 canonical root로 검사한다.
+                std::fs::canonicalize(&dest).unwrap_or_else(|_| dest.clone())
+            };
+            let mut notes = Vec::new();
+            for entry in files.iter().filter(|f| crate::report_sandbox::is_script(&f.path)) {
+                use std::io::Read;
+                let note = live_file(&warning_root, &entry.path).ok().and_then(|(file, _)| {
+                    let mut bytes = Vec::new();
+                    file.take(entry.size).read_to_end(&mut bytes).ok()?;
+                    crate::report_sandbox::warning(&entry.path, &bytes)
+                });
+                if let Some(note) = note {
+                    notes.push(note);
+                }
+            }
+            if !notes.is_empty() {
+                self.inbox_add_body(
+                    project,
+                    "report-sandbox-warning",
+                    name,
+                    "보고서 sandbox 확인",
+                    &format!("{name}: 보고서에서 제한되거나 확인이 필요한 API를 찾았다"),
+                    &notes.join("\n"),
+                );
+            }
+        }
         result
     }
 

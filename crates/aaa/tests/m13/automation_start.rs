@@ -42,7 +42,7 @@ fn automation_start_holds_approval_two_agents_and_restart_receipt() {
     }
     let dir = w.projects.join("demo/automations");
     std::fs::create_dir_all(&dir).unwrap();
-    std::fs::write(dir.join("check.toml"),"[on.thread]\nevents=['report_ready']\nrepos=['repo']\n[do.start]\ntitle='자동 점검'\nrepo='repo'\ntext='noreport'\nprofiles=['fake','mute']\nprofile_pick='week-left'\nmachines=['labA','labB']\nwait=['timing']\n").unwrap();
+    std::fs::write(dir.join("check.toml"),"[on.thread]\nevents=['report_ready']\nrepos=['repo']\n[do.start]\ntitle='자동 점검'\nrepo='repo'\ntext='noreport'\nprofiles=['fake','mute']\nprofile_pick='week-left'\nmachines=['labA','labB']\nwait=['timing']\n[limits]\nmax_running=2\n").unwrap();
     // 기존 thread 사건은 등록 시 cursor의 기준일 뿐이다.
     w.h.ticks(2);
     let listed = w.h.ok(&["routine", "list", "demo"]);
@@ -96,7 +96,7 @@ fn automation_start_holds_approval_two_agents_and_restart_receipt() {
     wait_for("두 agent 재연결", T, || (w.h.connected("labA") && w.h.connected("labB")).then_some(()));
     w.h.ticks(2);
     assert_eq!(automatic(&w).len(), 1, "같은 사건은 재시작 뒤 다시 시작하지 않는다");
-    // 다른 사건은 앞의 자동 thread가 열려 있어도 실행한다(기본 동시성 상한 없음).
+    // 다른 사건은 앞의 자동 thread가 열려 있어도 명시 동시 상한 2개까지 실행한다.
     let second_task = w.task("second.md", "다른 원인 사건의 실제 보고");
     let second = w.start(&[
         "--title",
@@ -125,7 +125,7 @@ fn automation_thread_reports_do_not_wake_their_own_rule() {
     std::fs::create_dir_all(&dir).unwrap();
     std::fs::write(
         dir.join("check.toml"),
-        "title='보고 점검'\n[on.thread]\nevents=['report_ready']\nrepos=['repo']\n[do.start]\ntitle='자동 점검'\nrepo='repo'\ntext='자동 점검 보고'\nprofiles=['fake']\nmachines=['labA']\n",
+        "title='보고 점검'\n[on.thread]\nevents=['report_ready']\nrepos=['repo']\n[do.start]\ntitle='자동 점검'\nrepo='repo'\ntext='자동 점검 보고'\nprofiles=['fake']\nmachines=['labA']\n[limits]\nmax_running=2\n",
     )
     .unwrap();
     w.h.ticks(2);
@@ -298,4 +298,78 @@ fn legacy_mission_files_are_inert_and_convert_with_memory_and_pending_input() {
     w.h.ticks(2);
     let queue: Value = serde_json::from_str(&db.meta("automation:demo:watch").unwrap().unwrap()).unwrap();
     assert_eq!(queue["pending"].as_array().unwrap().len(), 1, "변환 복구가 입력을 복제했다");
+}
+
+/// 실제 자동화가 일반 자리가 꽉 차도 시작하며, 사용자 예약·출력·재시작에서도 같은 분류를 쓴다.
+#[test]
+fn automation_threads_leave_user_capacity_and_queue_slots_available() {
+    let mut w = world();
+    w.h.in_terminal(&["safety", "set", "start_threads", "auto"], &[("[y/N]", "y")], T);
+    w.h.ok(&["project", "set", "demo", "max_parallel_threads", "1"]);
+    w.h.ok(&["project", "set", "demo", "thread_profile", "fake"]);
+    let dir = w.projects.join("demo/automations");
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("check.toml"), "title='완료 점검'\n[on.thread]\nevents=['report_ready']\n[do.start]\ntitle='자동 점검'\ntext='noreport'\nprofiles=['fake']\nmachines=['labA']\n").unwrap();
+    w.h.ticks(2);
+    let r = w.h.ok(&["routine", "list"])["routines"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|r| r["name"] == "check")
+        .unwrap()
+        .clone();
+    w.h.in_terminal(&["automation", "approve", "check", r["start_approval_sha256"].as_str().unwrap()], &[], T);
+    let task = w.task("cause.md", "원인 보고");
+    let first = w.start(&["--title", "사용자 원인", "--profile", "fake", "--kind", "dir", "--task-file", &task]);
+    let first_id = first["id"].as_str().unwrap();
+    w.wait_show("원인 보고", first_id, |v| v["report_hash"].is_string());
+    let auto = wait_for("사용자 한도가 찬 상태의 자동화 기동", T, || {
+        w.h.ticks(1);
+        automatic(&w).first().and_then(|e| e["thread"].as_str()).map(str::to_string)
+    });
+    let shown = w.wait_show("자동화 thread 준비", &auto, |v| v["brief"] == "delivered");
+    assert_eq!(shown["automation"], "check");
+    let trigger = shown["automation_trigger"].as_str().unwrap().to_string();
+    assert!(trigger.contains("events") && trigger.contains("report_ready") && trigger.contains(first_id), "{trigger}");
+    for args in [vec!["thread", "list"], vec!["thread", "show", &auto], vec!["context", "--peek"]] {
+        let out = w.h.run(&args);
+        assert!(out.status.success());
+        let text = String::from_utf8_lossy(&out.stdout);
+        assert!(
+            text.contains("자동화 thread") && text.contains("완료 점검 (check)") && text.contains(&trigger),
+            "{text}"
+        );
+    }
+    std::fs::write(
+        w.projects.join("demo/TASKS.md"),
+        "## Backlog\n- [ ] 사용자 예약 (fake@labA) [작업 폴더]\n  noreport\n",
+    )
+    .unwrap();
+    w.h.ok(&["task", "reserve", "사용자 예약"]);
+    w.h.ticks(1);
+    assert!(w.h.ok(&["task", "queue"])["entries"][0]["thread"].is_null());
+    let denied = w
+        .h
+        .json(&["thread", "start", "--title", "한도 검사", "--profile", "fake", "--kind", "dir", "--task-file", &task])
+        .unwrap_err();
+    assert!(denied.contains("프로젝트 실행 한도"), "{denied}");
+    // 사용자 자리를 돌려주면 자동화가 열려 있어도 다음 예약이 기동한다.
+    w.h.ok(&["thread", "resolve", first_id]);
+    let next = wait_for("자동화와 독립된 사용자 예약 기동", T, || {
+        w.h.json(&["task", "queue"]).ok()?["entries"][0]["thread"].as_str().map(str::to_string)
+    });
+    w.wait_show("예약 pane 준비", &next, |v| v["status"] == "open" && v["brief"] == "delivered");
+    assert_eq!(w.show(&auto)["status"], "open");
+    // 재시작 시에도 출처를 그대로 읽고 자동화 재기동은 사용자 자리와 별개다.
+    w.lab.kill("host");
+    w.spawn_host("host-restored");
+    wait_for("agent 재연결", T, || w.h.connected("labA").then_some(()));
+    assert_eq!(w.show(&auto)["automation_trigger"], trigger);
+    let pane = w.show(&auto)["pane"].as_str().unwrap().to_string();
+    w.h.ok(&["pane", "kill", &pane]);
+    wait_for("자동화 pane 종료 사건", T, || (w.h.pane(&pane)["state"] == "exited").then_some(()));
+    w.h.ok(&["thread", "restart", &auto]);
+    let restarted = w.wait_show("자동화 재시작", &auto, |v| v["status"] == "open" && v["pane"] != pane);
+    assert_eq!(restarted["automation_trigger"], trigger);
+    assert_eq!(w.show(&next)["status"], "open");
 }

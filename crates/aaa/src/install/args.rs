@@ -4,6 +4,13 @@ use serde::Serialize;
 
 #[derive(clap::Args, Serialize)]
 pub struct Args {
+    #[command(subcommand)]
+    #[serde(skip)]
+    action: Option<Action>,
+    /// 외부 TTY에서 명시적으로 저장한 비밀 없는 선택 초안.
+    #[arg(long)]
+    #[serde(skip)]
+    draft: Option<std::path::PathBuf>,
     #[command(flatten)]
     choices: Choices,
     #[arg(long)]
@@ -30,6 +37,20 @@ pub struct Args {
     resume: Option<String>,
     #[arg(long)]
     status: Option<String>,
+}
+
+#[derive(clap::Subcommand)]
+pub(super) enum Action {
+    /// aaa 밖 TTY에서 실제 계획을 검토하고 짧은 private 설치 승인을 발급한다.
+    Authorize {
+        #[arg(long, conflicts_with = "resume")]
+        plan: Option<std::path::PathBuf>,
+        #[arg(long)]
+        out: std::path::PathBuf,
+        /// 만료/중단된 같은 설치 ID를 원래 범위로 재검토한다.
+        #[arg(long)]
+        resume: Option<String>,
+    },
 }
 
 #[derive(clap::Args, Serialize)]
@@ -147,6 +168,18 @@ struct Choices {
 }
 
 impl Args {
+    pub(super) fn draft(&self) -> Option<&std::path::Path> {
+        self.draft.as_deref()
+    }
+    pub(super) fn action(&self) -> Option<&Action> {
+        self.action.as_ref()
+    }
+    pub(super) fn automated(&self, json: bool) -> bool {
+        json || self.json_stream || self.non_interactive
+    }
+    pub(super) fn plain(&self) -> bool {
+        self.prompt.as_deref() == Some("plain")
+    }
     pub fn invocation(
         &self,
         json: bool,

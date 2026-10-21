@@ -1,4 +1,4 @@
-//! SSH로 머신 추가(웹 머신 추가 M2, plan §8.375): host가 시스템 OpenSSH로 새 머신에 접속해 host key를 받고, 사람이 지문을 믿으면
+//! SSH로 머신 추가(웹 머신 추가 M2, plan §8.384): host가 시스템 OpenSSH로 새 머신에 접속해 host key를 받고, 사람이 지문을 믿으면
 //! OS·CPU를 감지한다. 원격에 쓰지 않는다(설치는 M3).
 //!
 //! - **SSH는 host의 것만.** `ssh`(PATH)를 부르고 `~/.ssh/config`·ssh-agent·키를 그대로 쓴다(`[host] ssh_config`가 있으면 `-F`).

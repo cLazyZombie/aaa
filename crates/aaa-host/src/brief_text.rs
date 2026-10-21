@@ -85,6 +85,12 @@ CI 확인은 host의 별도 감시가 맡는다. 실패 입력은 coordinator가
 
 끝냈을 때, 그리고 사용자를 기다리며 멈출 때마다 위에 준 보고 경로에 보고를 쓴다. 사용자에게 줄 파일(문서·내보낸 파일·스크린샷)은 거기 준 library 폴더에 둔다.
 
+웹 보고서는 origin 없는 sandbox에서 열린다. 그림·음원·JSON 등 자료는 library 안에 넣고 상대 URL로 읽는다.
+fetch/XHR은 자기 보고서 폴더의 쿠키 없는 GET/HEAD만 된다. 앱 API·다른 보고서·외부 연결·쿠키·저장소는 막힌다.
+소리 혼합은 fetch → decodeAudioData → GainNode를 쓰고, 사용자 누름에서 AudioContext를 만들거나 resume한다.
+audio.volume·createMediaElementSource에 기대지 않는다(iOS·opaque origin). 외부 CDN 없이 script·글꼴도 함께 둔다.
+자세한 예시는 docs/library.md를 따른다. 회수·publish할 때 제한된 API·확인할 fetch 경로가 보이면 coordinator inbox에 경고한다.
+
 보고 형식:
 
 - 첫 줄에 `[완료]`(맡긴 일 전체와 확인이 끝남), `[결정 필요]`·`[검수 대기]`·`[확인 필요]`(사람이 직접 해야 하는 단계), `[착지]`·`[진행 중]`(후속 작업 중) 중 하나와 요약을 쓴다.

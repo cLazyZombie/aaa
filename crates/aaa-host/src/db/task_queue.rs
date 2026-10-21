@@ -12,10 +12,7 @@ pub(crate) fn slots(tx: &Connection, project: &str, except: Option<&str>) -> Res
             continue;
         }
         let r: crate::orch::ThreadRec = serde_json::from_str(&text)?;
-        if r.role == aaa_proto::Role::Worker
-            && (matches!(r.status, aaa_proto::ThreadStatus::Open | aaa_proto::ThreadStatus::Starting)
-                || r.resolve_pending.is_some())
-        {
+        if r.holds_worker_slot() {
             count += 1;
         }
     }
@@ -80,14 +77,25 @@ impl Db {
     }
 
     /// 이미 자리를 가진 Open의 재개는 같은 자리다. Failed 재시작의 새 자리만 원자적으로 잡는다.
-    pub(crate) fn thread_restart_claim(&self, project: &str, id: &str, limit: u32) -> Result<()> {
+    pub(crate) fn thread_restart_claim(
+        &self,
+        project: &str,
+        id: &str,
+        limit: u32,
+        admission: Option<&StartAdmission>,
+    ) -> Result<()> {
         let mut c = self.conn.lock().unwrap();
         let tx = c.transaction()?;
         let text: String =
             tx.query_row("SELECT data FROM threads WHERE project=?1 AND id=?2", params![project, id], |r| r.get(0))?;
         let mut rec: crate::orch::ThreadRec = serde_json::from_str(&text)?;
         let already_held = rec.status == aaa_proto::ThreadStatus::Open;
-        if !already_held && rec.resolve_pending.is_none() {
+        if !rec.holds_slot()
+            && let Some(policy) = admission
+        {
+            policy.check(&tx, project, Some(id))?;
+        }
+        if rec.automation.is_none() && !rec.holds_slot() {
             anyhow::ensure!(
                 slots(&tx, project, Some(id))? < limit,
                 "start_wait: 프로젝트 실행 한도 {limit}. `aaa task reserve`로 예약한다"
@@ -147,6 +155,25 @@ impl Db {
 
 #[cfg(test)]
 impl Db {
+    /// 앞 예약의 자리 대기 기록 직후 resolve가 완료되는 경합을 같은 DB 쓰기 경계에 고정한다.
+    pub(crate) fn test_queue_release_on_wait(&self, project: &str, task: &str, thread: &str) {
+        let quote = |s: &str| format!("'{}'", s.replace('\'', "''"));
+        let (project, task, thread) = (quote(project), quote(task), quote(thread));
+        self.conn
+            .lock()
+            .unwrap()
+            .execute_batch(&format!(
+                "CREATE TEMP TRIGGER release_queue_slot AFTER UPDATE ON task_queue
+                 WHEN NEW.project={project} AND NEW.task_id={task}
+                   AND json_extract(NEW.data,'$.reason')='자리 대기'
+                 BEGIN
+                   UPDATE threads SET status='resolved',data=json_set(data,'$.status','resolved')
+                   WHERE project={project} AND id={thread};
+                 END;",
+            ))
+            .unwrap();
+    }
+
     pub(crate) fn test_archive_finalize_fault(&self, fail: bool) {
         self.conn.lock().unwrap().execute_batch(if fail {"CREATE TRIGGER deny_archive_update BEFORE UPDATE ON task_archive BEGIN SELECT RAISE(FAIL,'archive finalize fault'); END;"} else {"DROP TRIGGER deny_archive_update;"}).unwrap();
     }

@@ -617,6 +617,9 @@ pub struct EnrollRequest {
     pub proto: Version,
     pub machine_id: String,
     pub machine_name: String,
+    /// install_enroll.v1 협상 뒤만 사용한다. host의 사람이 SAS를 승인할 때 결과를 이 ID에 결속한다.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub installation: Option<crate::install::InstallEnrollmentBinding>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -625,6 +628,34 @@ pub enum LinkMsg {
     Hello(AgentHello),
     Welcome(HostWelcome),
     Enroll(EnrollRequest),
+    /// 등록 전 기능 협상. 구판에는 grant를 보내지 않는다.
+    InstallEnrollCapabilities {
+        proto: Version,
+        features: Vec<String>,
+    },
+    InstallEnrollProbe {
+        proto: Version,
+    },
+    InstallEnroll(Box<crate::install::InstallEnrollRequest>),
+    InstallEnrollLookup {
+        proto: Version,
+        installation_id: String,
+        plan_sha256: String,
+    },
+    /// 기존 agent 자기 신원만 읽는다. 설치 grant/등록창 권한을 쓰지 않는다.
+    InstallAgentQuery {
+        proto: Version,
+        machine_id: String,
+        machine_name: String,
+    },
+    InstallAgentKnown {
+        machine_id: String,
+    },
+    InstallEnrollUnknown,
+    InstallEnrolled {
+        installation_id: String,
+        machine_id: String,
+    },
     /// host가 등록 요청을 받아 사용자의 확인을 기다린다.
     EnrollPending,
     EnrollAccepted {
@@ -1591,7 +1622,7 @@ pub struct PendingEnroll {
     pub since_ms: u64,
 }
 
-/// SSH 머신 추가 작업 하나(웹 머신 추가 M2, plan §8.375). host DB에 남아 웹 창을 닫았다 열어도 같은 작업을 본다
+/// SSH 머신 추가 작업 하나(웹 머신 추가 M2, plan §8.384). host DB에 남아 웹 창을 닫았다 열어도 같은 작업을 본다
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 pub struct MachineSetupView {
     pub job: String,
@@ -1663,7 +1694,7 @@ pub struct MachineDetected {
     pub aaa: Option<String>,
 }
 
-/// 「직접 설치」 안내(plan §8.374): 새 머신이 host agent 연결에 닿을 주소 후보와, 새 머신 화면에 나올 host 지문
+/// 「직접 설치」 안내(plan §8.383): 새 머신이 host agent 연결에 닿을 주소 후보와, 새 머신 화면에 나올 host 지문
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 pub struct EnrollGuide {
     /// host가 실제로 연 agent 연결 주소(`agent_listen`). 닫혀 있으면 None이고 새 머신은 붙지 못한다
@@ -1724,6 +1755,10 @@ pub struct HostStatus {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(tag = "op", rename_all = "snake_case")]
 pub enum FrontRequest {
+    /// 설치 전용 서명 승인. Controller 또는 세션 밖 Local만, raw 승인서는 응답하지 않는다.
+    InstallApprove {
+        request: Box<crate::install::InstallApprovalRequest>,
+    },
     /// 등록은 host의 세션 밖 Local만. 비밀값은 반환하거나 감사 기록에 넣지 않는다.
     AccountImport {
         name: String,
@@ -2140,29 +2175,29 @@ pub enum FrontRequest {
         install: bool,
     },
     EnrollPending,
-    /// FRONT_API 1.91. SSH로 머신 추가 작업을 시작한다(웹 머신 추가 M2, plan §8.375): host의 OpenSSH로 접속해 host key만 받고, 아는 키면
+    /// FRONT_API 1.93. SSH로 머신 추가 작업을 시작한다(웹 머신 추가 M2, plan §8.384): host의 OpenSSH로 접속해 host key만 받고, 아는 키면
     /// OS·CPU를 감지한다. 원격에 쓰지 않는다. 사람만(조작 기기·세션 밖)
     MachineSetupStart {
         target: String,
     },
-    /// FRONT_API 1.91. 화면에서 본 host key 지문을 믿는다: host가 받은 키와 같으면 aaa 전용 known_hosts에 넣고 감지로 간다. 사람만
+    /// FRONT_API 1.93. 화면에서 본 host key 지문을 믿는다: host가 받은 키와 같으면 aaa 전용 known_hosts에 넣고 감지로 간다. 사람만
     MachineSetupTrust {
         job: String,
         host_key_sha256: String,
     },
-    /// FRONT_API 1.91. 감지가 안 된 머신의 OS·CPU를 사람이 고른다(release 대상 다섯만). 사람만
+    /// FRONT_API 1.93. 감지가 안 된 머신의 OS·CPU를 사람이 고른다(release 대상 다섯만). 사람만
     MachineSetupChoose {
         job: String,
         os: String,
         arch: String,
     },
-    /// FRONT_API 1.91. 작업을 멈추고 목록에서 뺀다(원격에 남긴 것은 없다). 사람만
+    /// FRONT_API 1.93. 작업을 멈추고 목록에서 뺀다(원격에 남긴 것은 없다). 사람만
     MachineSetupCancel {
         job: String,
     },
-    /// FRONT_API 1.91. 최근 SSH 추가 작업(Reader도 본다)
+    /// FRONT_API 1.93. 최근 SSH 추가 작업(Reader도 본다)
     MachineSetupList,
-    /// FRONT_API 1.90. 새 머신에서 칠 「직접 설치」 명령에 넣을 host 주소 후보·host 지문·판(웹 머신 추가 M1, plan §8.374)
+    /// FRONT_API 1.92. 새 머신에서 칠 「직접 설치」 명령에 넣을 host 주소 후보·host 지문·판(웹 머신 추가 M1, plan §8.383)
     EnrollGuide,
     EnrollApprove {
         name: String,
@@ -2185,6 +2220,13 @@ pub enum FrontRequest {
     /// 기기를 취소한다. 그 기기의 열린 연결은 바로 닫히고 push 구독도 지워진다
     DeviceRevoke {
         id: String,
+    },
+    /// W0와 별개로, 실제 승인된 같은 머신 worker의 한 포트 범위만 검증한다.
+    InstallPublish {
+        installation_id: String,
+    },
+    InstallPublishStatus {
+        installation_id: String,
     },
     WebPublish,
     WebPublishOff,
@@ -3119,6 +3161,8 @@ impl FrontRequest {
                 | FrontRequest::PaneGet { .. }
                 | FrontRequest::PaneChat { .. }
                 | FrontRequest::Workspace { .. }
+                | FrontRequest::InstallPublish { .. }
+                | FrontRequest::InstallPublishStatus { .. }
                 | FrontRequest::WebStatus
                 | FrontRequest::Devices
                 | FrontRequest::EvaluatorStatus { .. }
@@ -3146,6 +3190,12 @@ impl FrontRequest {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum FrontResponse {
+    InstallPublished {
+        publication: crate::install::InstallPublication,
+    },
+    InstallApproval {
+        approval: crate::install::InstallApprovalView,
+    },
     Accounts {
         accounts: Vec<crate::AccountView>,
     },
@@ -3924,9 +3974,9 @@ mod tests {
         assert!(FrontRequest::DeviceRename { id: "d".into(), label: "x".into() }.needs_control());
         assert!(FrontRequest::DeviceRevoke { id: "d".into() }.needs_control());
         assert!(!FrontRequest::Panes { role: None }.local_only());
-        // 「직접 설치」 안내는 host 주소·지문을 보이므로 조작 기기만(웹 허용, plan §8.374)
+        // 「직접 설치」 안내는 host 주소·지문을 보이므로 조작 기기만(웹 허용, plan §8.383)
         assert!(FrontRequest::EnrollGuide.needs_control() && !FrontRequest::EnrollGuide.local_only());
-        // SSH 머신 추가(plan §8.375): 목록은 Reader도, 시작·신뢰·고름·멈춤은 조작 기기
+        // SSH 머신 추가(plan §8.384): 목록은 Reader도, 시작·신뢰·고름·멈춤은 조작 기기
         assert!(!FrontRequest::MachineSetupList.needs_control());
         assert!(FrontRequest::MachineSetupStart { target: "mac-b".into() }.needs_control());
         assert!(

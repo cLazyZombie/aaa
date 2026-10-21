@@ -1,11 +1,11 @@
-// 설정 「머신」의 「SSH로 추가」 규칙(웹 머신 추가 M2, plan §8.375). 접속·host key·감지의 정본은 host다(machine_setup.rs): 화면은
+// 설정 「머신」의 「SSH로 추가」 규칙(웹 머신 추가 M2, plan §8.384). 접속·host key·감지의 정본은 host다(machine_setup.rs): 화면은
 // 작업 단계를 사람 말로 옮기고 고를 수 있는 것만 보인다. 원격에 쓰는 설치(M3)는 아직 없다.
 import { apiAtLeast } from "./automationModel.ts";
 import type { MachineDetected, MachineSetupPhase, MachineSetupView } from "./gen/proto";
 import { archLabel, osLabel } from "./machineDetail.ts";
 
-/** 1.91 이상 host만 SSH 추가 요청을 안다 */
-export const canSsh = (frontApi: string | null | undefined): boolean => apiAtLeast(frontApi, 1, 91);
+/** 1.93 이상 host만 SSH 추가 요청을 안다 */
+export const canSsh = (frontApi: string | null | undefined): boolean => apiAtLeast(frontApi, 1, 93);
 
 export const PHASE: Record<MachineSetupPhase, string> = {
   connecting: "접속 중",

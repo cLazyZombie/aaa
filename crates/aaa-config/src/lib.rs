@@ -397,7 +397,7 @@ pub struct HostSection {
     pub thread_cleanup_timeout_secs: u64,
     /// 보고 목록·파일 조각 읽기 요청의 상한(초).
     pub file_request_timeout_secs: u64,
-    /// SSH 머신 추가(plan §8.375)가 `ssh -F`로 줄 설정 파일. 비우면 ssh 기본(그 사용자의 ~/.ssh/config)이다.
+    /// SSH 머신 추가(plan §8.384)가 `ssh -F`로 줄 설정 파일. 비우면 ssh 기본(그 사용자의 ~/.ssh/config)이다.
     pub ssh_config: String,
 }
 

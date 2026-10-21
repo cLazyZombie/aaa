@@ -34,6 +34,51 @@ pub fn ancestors(pid: u32) -> Vec<u32> {
     }
 }
 
+/// OS가 관찰한 실제 실행 image. argv·env의 경로나 프로세스 표시 이름은 쓰지 않는다.
+pub fn image(pid: u32) -> Option<std::path::PathBuf> {
+    if pid == 0 {
+        return None;
+    }
+    #[cfg(target_os = "macos")]
+    {
+        use std::os::unix::ffi::OsStringExt;
+        let mut bytes = vec![0u8; libc::PROC_PIDPATHINFO_MAXSIZE as usize];
+        let count = unsafe { libc::proc_pidpath(pid as i32, bytes.as_mut_ptr().cast(), bytes.len() as u32) };
+        if count <= 0 {
+            return None;
+        }
+        bytes.truncate(bytes.iter().position(|b| *b == 0)?);
+        Some(std::path::PathBuf::from(std::ffi::OsString::from_vec(bytes)))
+    }
+    #[cfg(all(unix, not(target_os = "macos")))]
+    {
+        std::fs::read_link(format!("/proc/{pid}/exe")).ok()
+    }
+    #[cfg(windows)]
+    {
+        use windows_sys::Win32::{
+            Foundation::CloseHandle,
+            System::Threading::{OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION, QueryFullProcessImageNameW},
+        };
+        let handle = unsafe { OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, pid) };
+        if handle.is_null() {
+            return None;
+        }
+        let mut path = vec![0u16; 32768];
+        let mut size = path.len() as u32;
+        let ok = unsafe { QueryFullProcessImageNameW(handle, 0, path.as_mut_ptr(), &mut size) };
+        unsafe { CloseHandle(handle) };
+        if ok == 0 {
+            return None;
+        }
+        String::from_utf16(&path[..size as usize]).ok().map(std::path::PathBuf::from)
+    }
+    #[cfg(not(any(unix, windows)))]
+    {
+        None
+    }
+}
+
 /// 부모 pid
 pub fn parent(pid: u32) -> Option<u32> {
     #[cfg(target_os = "macos")]

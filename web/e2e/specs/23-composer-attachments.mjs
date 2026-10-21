@@ -97,6 +97,173 @@ while True:
     return JSON.parse(fs.readFileSync(receipts, "utf8"));
   };
 
+  await step("재로딩 중 예약된 자동화 조회: 끝나는 문서에서 후속 fetch를 시작하지 않는다(WebKit)", async () => {
+    const wk = await webkit.launch();
+    let release;
+    const gate = new Promise(resolve => { release = resolve; });
+    let reached;
+    const held = new Promise(resolve => { reached = resolve; });
+    let first = true;
+    try {
+      const client = await pairPage(wk, aaa("web", "pair").code, { width: 1280, height: 800 }, {
+        serviceWorkers: "block",
+        route: ["**/api/v1/call", async route => {
+          if (first && route.request().postDataJSON()?.op === "projects") {
+            first = false;
+            reached();
+            await gate;
+          }
+          await route.continue().catch(() => {}); // 이전 문서의 요청은 reload가 이미 취소했다.
+        }],
+      });
+      await held;
+      // events 연결과 첫 snapshot이 각각 요청한 조회를 하나로 합친 채 첫 HTTP 응답을 보류한다.
+      await inList(client.page, "pane-composer");
+      await client.page.reload();
+      release();
+      await openChat(client.page);
+      assert.deepEqual(client.errors, [], "문서 종료 뒤 예약된 조회의 페이지 오류");
+      const hiddenCalls = await client.page.evaluate(() => {
+        const fetch = window.fetch;
+        let calls = 0;
+        window.fetch = (...args) => { calls++; return fetch(...args); };
+        window.dispatchEvent(new PageTransitionEvent("pagehide", { persisted: true }));
+        window.dispatchEvent(new Event("aaa:automations-changed"));
+        window.fetch = fetch;
+        return calls;
+      });
+      assert.equal(hiddenCalls, 0, "끝난 문서에 온 갱신 사건은 조회를 시작하지 않는다");
+      const resumed = client.page.waitForRequest(r => r.url().endsWith("/api/v1/call") && r.postDataJSON()?.op === "projects");
+      await client.page.evaluate(() => window.dispatchEvent(new PageTransitionEvent("pageshow", { persisted: true })));
+      await resumed;
+      assert.deepEqual(client.errors, [], "pageshow 뒤 조회 재개");
+      await client.page.context().close();
+    } finally {
+      release();
+      await wk.close();
+    }
+  });
+
+
+  await step("종료 시작의 완료 응답: WebKit 실제 reload에서 projects 뒤 routines를 시작하지 않는다", async () => {
+    const wk = await webkit.launch();
+    const trace = [];
+    let client;
+    try {
+      client = await pairPage(wk, aaa("web", "pair").code, { width: 1280, height: 800 }, {
+        serviceWorkers: "block",
+        onPage: (p) => {
+          p.on("console", (message) => {
+            if (message.text().startsWith("API-EXIT ")) trace.push(message.text());
+          });
+          p.on("pageerror", (error) => trace.push(`pageerror ${error.stack}`));
+          p.on("requestfailed", (request) => {
+            if (new URL(request.url()).pathname === "/api/v1/call") trace.push(`failed ${request.failure()?.errorText}`);
+          });
+        },
+        init: () => {
+          const returning = sessionStorage.getItem("api-exit-returning") === "yes";
+          let leaving = false;
+          let first = true;
+          const original = window.fetch;
+          window.fetch = async (input, options) => {
+            let op;
+            try { op = JSON.parse(options?.body ?? "null")?.op; } catch {}
+            if (leaving && !options?.keepalive) console.log(`API-EXIT fetch ${op ?? String(input)}`);
+            const response = await original(input, options);
+            if (!returning && first && op === "projects") {
+              first = false;
+              // 실제 HTTP 응답은 받되 JSON 완료를 종료 시작 사건까지 보류한다.
+              const body = await response.clone().json();
+              response.json = () => new Promise(resolve => {
+                window.__projectsHeld = true;
+                window.__releaseProjects = () => resolve(body);
+              });
+            }
+            return response;
+          };
+          window.addEventListener("beforeunload", () => {
+            leaving = true;
+            sessionStorage.setItem("api-exit-returning", "yes");
+            console.log("API-EXIT beforeunload");
+            window.__releaseProjects?.();
+          });
+          window.addEventListener("pagehide", () => console.log("API-EXIT pagehide"));
+        },
+      });
+      const p = client.page;
+      await p.waitForFunction(() => window.__projectsHeld === true);
+      const resumed = p.waitForResponse(response => response.url().endsWith("/api/v1/call")
+        && response.request().postDataJSON()?.op === "routines").then(response => response.json());
+      await p.reload();
+      await openChat(p);
+      assert.equal((await resumed).ok?.kind, "routines", "새 문서는 실제 후속 조회를 다시 실행한다");
+      console.log("API-EXIT trace", JSON.stringify(trace));
+      assert.ok(trace.includes("API-EXIT beforeunload"), "실제 종료 시작 사건");
+      assert.deepEqual(trace.filter(line => line.startsWith("API-EXIT fetch ")), [], "종료 시작 뒤 실제 fetch를 시작했다");
+      assert.deepEqual(client.errors, [], "실제 reload의 처리되지 않은 오류");
+    } finally {
+      fs.writeFileSync(`${root}/api-exit-trace.json`, JSON.stringify(trace, null, 2));
+      await client?.page.context().close();
+      await wk.close();
+    }
+  });
+
+  await step("종료 문서 API: WebKit pagehide 뒤 tasks·asks 조회를 시작하지 않고 pageshow 뒤 다시 읽는다", async () => {
+    const wk = await webkit.launch();
+    try {
+      const client = await pairPage(wk, aaa("web", "pair").code, { width: 1280, height: 800 }, {
+        serviceWorkers: "block",
+        init: () => {
+          window.__apiEventSockets = [];
+          const WS = window.WebSocket;
+          window.WebSocket = class extends WS {
+            constructor(...args) {
+              super(...args);
+              if (String(args[0]).endsWith("/api/v1/events")) window.__apiEventSockets.push(this);
+            }
+          };
+        },
+      });
+      const p = client.page;
+      const receive = op => p.waitForResponse(r => r.url().endsWith("/api/v1/call") && r.request().postDataJSON()?.op === op).then(r => r.finished());
+      const notify = () => p.evaluate(() => {
+        const socket = window.__apiEventSockets.find(s => s.readyState === WebSocket.OPEN);
+        if (!socket) throw new Error("실제 앱 events 연결이 없다");
+        for (const event of [{ ev: "tasks", sha256: "0".repeat(64) }, { ev: "asks", requests: 0 }]) {
+          socket.dispatchEvent(new MessageEvent("message", { data: JSON.stringify(event) }));
+        }
+      });
+      await p.waitForFunction(() => window.__apiEventSockets.some(s => s.readyState === WebSocket.OPEN));
+      // t-0590: 숨긴 알림함 대신 계속 쓰는 「답할 것」 조회로 종료 경계를 검사한다.
+      // 먼저 실제 두 조회가 가능한 연결·구독인지 확인한다. listener 부재로 숨김 검사가 통과하면 안 된다.
+      await Promise.all([receive("tasks"), receive("asks"), notify()]);
+      const hiddenCalls = await p.evaluate(() => {
+        const original = window.fetch;
+        const calls = [];
+        window.fetch = (input, options) => {
+          if (!options?.keepalive && new URL(String(input), location.href).pathname.startsWith("/api/")) {
+            calls.push(options?.body ?? String(input));
+          }
+          return original(input, options);
+        };
+        try {
+          window.dispatchEvent(new PageTransitionEvent("pagehide", { persisted: true }));
+          const socket = window.__apiEventSockets.find(s => s.readyState === WebSocket.OPEN);
+          for (const event of [{ ev: "tasks", sha256: "0".repeat(64) }, { ev: "asks", requests: 0 }, { ev: "asks", requests: 0 }]) {
+            socket.dispatchEvent(new MessageEvent("message", { data: JSON.stringify(event) }));
+          }
+          return calls;
+        } finally { window.fetch = original; }
+      });
+      assert.deepEqual(hiddenCalls, [], "끝나는 문서에서 일반 앱 API를 시작했다");
+      await p.evaluate(() => window.dispatchEvent(new PageTransitionEvent("pageshow", { persisted: true })));
+      await Promise.all([receive("tasks"), receive("asks"), notify()]);
+      assert.deepEqual(client.errors, [], "문서 복귀 뒤 처리되지 않은 오류");
+      await p.context().close();
+    } finally { await wk.close(); }
+  });
+
   await step("WebCrypto 없는 연결도 짧은 글은 기존 수신 비교로 보낸다", async () => {
     const client = await pairPage(browser, aaa("web", "pair").code, { width: 1280, height: 800 });
     const p = client.page;
@@ -625,6 +792,22 @@ draw();
           const sent = await sentFrames(p, before);
           if (sent.some((f) => ["input", "submit", "attach"].includes(f.t))) throw new Error(`보내기 전에 pane에 입력했다 ${JSON.stringify(sent)}`);
           await composer.locator(".composer-attachment img").evaluate((img) => img.decode());
+          if (method === "paste") {
+            // 대화 → 터미널은 입력창을 실제로 내린다. 초안 경로와 썸네일을 함께 복원해야 한다.
+            await p.getByTestId("chat-toggle").click();
+            await composer.waitFor({ state: "detached" });
+            await p.getByTestId("chat-toggle").click();
+            await composer.waitFor();
+            await inList(p, "activity-reports");
+            await domIs(p, "보고서 화면", () => document.querySelector('[data-testid="reports-view"]')?.dataset.shown === "true");
+            await openChat(p);
+          } else {
+            await p.reload();
+            await openChat(p);
+          }
+          assert.equal(await box.inputValue(), text, `${name} ${method}: 화면 이동 뒤 첨부 초안`);
+          await composer.locator(".composer-attachment img").evaluate((img) => img.decode());
+          assert.equal(await composer.locator(".composer-attachment").count(), 1, `${name} ${method}: 복원한 미리보기 하나`);
           if (method === "paste") await shot(p, `composer-image-${name}`);
           const got = await submit(p);
           if (got.images.length !== 1 || got.images[0].path !== path || got.images[0].sha256 !== digest || !got.text.includes(`그림 확인 ${name} ${method}`)) throw new Error(`coordinator가 읽은 그림/글 ${JSON.stringify(got)}`);
@@ -671,8 +854,20 @@ draw();
         // 삭제와 거부도 같은 입력 경계에서: 저장된 그림의 mention은 삭제되고 형식 오류 때 초안은 남는다.
         await fileEvent(box, "paste", png);
         await domIs(p, "삭제할 첨부 완료", () => document.querySelector(".composer-attachment")?.classList.contains("is-ready"));
+        await p.reload();
+        await openChat(p);
+        await composer.locator(".composer-attachment img").evaluate((img) => img.decode());
+        // 복원한 그림 뒤에 새 그림을 붙여도 ID가 겹치지 않고 하나씩 지워진다.
+        await fileEvent(box, "paste", Buffer.concat([png, Buffer.from([0])]));
+        await domIs(p, "복원 뒤 새 첨부 완료", () => document.querySelectorAll(".composer-attachment.is-ready").length === 2);
+        await composer.getByRole("button", { name: `${digest.slice(0, 16)}.png 첨부 삭제`, exact: true }).click();
+        assert.equal(await composer.locator(".composer-attachment").count(), 1, `${name}: 복원한 그림만 삭제`);
+        assert.ok(!(await box.inputValue()).includes(`${digest.slice(0, 16)}.png`), `${name}: 삭제한 경로 제거`);
         await composer.getByRole("button", { name: "clipboard.png 첨부 삭제" }).click();
         if ((await box.inputValue()) !== "") throw new Error("삭제한 그림의 경로가 남았다");
+        await p.reload();
+        await openChat(p);
+        assert.equal(await composer.locator(".composer-attachment").count(), 0, `${name}: 지운 미리보기가 돌아오지 않음`);
         await box.fill("실패해도 남을 글");
         await fileEvent(box, "paste", Buffer.from("invalid-image"));
         await composer.getByRole("alert").waitFor();

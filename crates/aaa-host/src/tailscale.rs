@@ -14,6 +14,11 @@ use std::time::Duration;
 use anyhow::{Result, bail};
 use serde::Deserialize;
 
+mod exact;
+mod localapi;
+pub use exact::{Exact, ExactError, exact};
+pub use localapi::{Conditional, conditional_snapshot};
+
 pub const MAC_APP_CLI: &str = "/Applications/Tailscale.app/Contents/MacOS/Tailscale";
 const READ_TIMEOUT: Duration = Duration::from_millis(2500);
 const SERVE_TIMEOUT: Duration = Duration::from_secs(180);
@@ -118,6 +123,16 @@ pub fn plan(out: Option<&TsOutput>, web_port: u16, candidates: &[u16]) -> Plan {
     }
     let free_port = if serving.is_none() { candidates.iter().copied().find(|c| !taken.contains(c)) } else { None };
     Plan { state: "running", dns_name: dns, serving, free_port, taken }
+}
+
+/// 설치에서 명시한 공개 포트를 읽기 UI에서도 유지한다. 수동 W0 공개는 기존 자동 정책을 쓴다.
+pub fn installation_plan(out: Option<&TsOutput>, web_port: u16, candidates: &[u16], selected: Option<u16>) -> Plan {
+    let mut result = plan(out, web_port, candidates);
+    if let Some(selected) = selected {
+        result.serving =
+            exact(out, web_port, selected).ok().filter(|exact| exact.reused).map(|exact| (exact.url(), exact.port));
+    }
+    result
 }
 
 pub fn binary() -> Option<String> {

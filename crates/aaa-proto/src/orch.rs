@@ -831,7 +831,7 @@ pub struct ThreadView {
     #[serde(default)]
     pub holds: Vec<String>,
     /// 이 thread를 띄운 자동화 규칙 이름(`do.start`, FRONT_API 1.64, plan t-0475 A1). 사람이 띄운 thread와 옛 host는 생략한다.
-    /// 웹 「작업」 목록이 줄 왼쪽 호박색 막대와 `자동 · <규칙 제목>` 표지로 보인다
+    /// 웹 「작업」 목록이 줄 왼쪽 호박색 막대와 `자동화 thread` 표지로 보인다
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub automation: Option<String>,
@@ -839,6 +839,10 @@ pub struct ThreadView {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub automation_title: Option<String>,
+    /// 최초 기동 당시 사건·일정의 설명(FRONT_API 1.91). 옛 thread·옛 host는 생략한다.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub automation_trigger: Option<String>,
     pub status: ThreadStatus,
     /// 끝남 기록 뒤 아직 정리 응답을 확정하지 못했다. 같은 resolve로 이어간다.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -2319,7 +2323,7 @@ pub struct ThreadStartPreview {
     pub machine: Option<String>,
     /// project.toml `repos`(worktree로 시작할 저장소). 비면 작업 폴더로 시작한다
     pub repos: Vec<RepoChoice>,
-    /// 열린(시작 중 포함) thread 수와 project.toml `max_parallel_threads`. 한도는 coordinator 규칙이라 host는 막지 않는다
+    /// 사용자·coordinator가 띄운 열린 Worker 수(시작·정리 중 포함)와 host가 집행하는 한도. 자동화 thread는 뺀다.
     pub open_threads: u32,
     pub max_parallel_threads: u32,
     /// 이미 열린 thread가 이 task를 맡았다 등

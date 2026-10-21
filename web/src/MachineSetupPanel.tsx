@@ -1,4 +1,4 @@
-// 설정 「머신」의 「SSH로 추가」(웹 머신 추가 M2, plan §8.375): host가 이미 ssh로 로그인되는 머신에 접속해 host key 지문을 보이고, 사람이
+// 설정 「머신」의 「SSH로 추가」(웹 머신 추가 M2, plan §8.384): host가 이미 ssh로 로그인되는 머신에 접속해 host key 지문을 보이고, 사람이
 // 믿으면 OS·CPU를 감지한다. 원격에 쓰지 않는다(설치는 M3). 작업은 host DB에 남고 진행은 host `enroll` 사건으로 다시 읽는다.
 // 보기 기기는 목록만 본다.
 import { useCallback, useEffect, useRef, useState } from "react";

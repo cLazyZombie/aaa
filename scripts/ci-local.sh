@@ -14,7 +14,7 @@
 #   fmt        cargo fmt --all --check
 #   build      cargo build --workspace --all-targets --locked
 #   clippy     cargo clippy --workspace --all-targets --locked --keep-going -- -D warnings
-#   test       cargo test --workspace --locked --no-fail-fast
+#   test       전체 Cargo 시험을 준비한 뒤 binary·m13 분할을 병렬 실행하고 doctest도 모두 실행한다
 #   e2e        웹 E2E(web/e2e/web.e2e.mjs, Playwright Chromium·WebKit, 한글 IME 기록 재생 포함). Unix만.
 #              playwright는 전역 npm 모듈로 찾는다(NODE_PATH=$(npm root -g)).
 #              spec 파일은 worker 여러 개가 함께 돈다(core 8개마다 셋, 많아야 6). AAA_E2E_WORKERS=1이면 차례로.
@@ -80,8 +80,9 @@ step_build() { cargo build --workspace --all-targets --locked; }
 step_clippy() { cargo clippy --workspace --all-targets --locked --keep-going -- -D warnings; }
 # 한 binary가 실패해도 나머지를 모두 돈다: fail-fast면 앞 binary 실패가 뒤 crate 유닛 시험을 돌지 않게 해, main이 빨간 동안 그 결과가 어느 run에도 없다
 step_test() {
-  if [ "$OS" != windows ]; then python3 -m unittest scripts.test_deploy_build scripts.test_check_public || return 1; fi
-  cargo test --workspace --locked --no-fail-fast || return 1
+  if [ "$OS" = windows ]; then cargo test --workspace --locked --no-fail-fast; return $?; fi
+  python3 -m unittest scripts.test_deploy_build scripts.test_check_public scripts.test_rust_tests || return 1
+  python3 scripts/rust_tests.py --logs "$LOGS/rust" || return 1
 }
 E2E_BIN_DIR=""
 E2E_BIN=""

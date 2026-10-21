@@ -1,12 +1,12 @@
-// 「SSH로 추가」 화면 규칙(src/machineSetupModel.ts, 웹 머신 추가 M2, plan §8.375). 대상 검증·감지의 정본은 host(machine_setup.rs)다.
+// 「SSH로 추가」 화면 규칙(src/machineSetupModel.ts, 웹 머신 추가 M2, plan §8.384). 대상 검증·감지의 정본은 host(machine_setup.rs)다.
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import { busy, canSsh, detectedLine, needsPerson, PHASE, sshLine, TARGETS, targetLabel, targetProblem } from "../src/machineSetupModel.ts";
 
 describe("SSH로 추가 M2", () => {
-  it("1.91 이상 host만", () => {
-    for (const v of [undefined, null, "1.90"]) assert.equal(canSsh(v), false, String(v));
-    assert.equal(canSsh("1.91"), true);
+  it("1.93 이상 host만", () => {
+    for (const v of [undefined, null, "1.90", "1.92"]) assert.equal(canSsh(v), false, String(v));
+    assert.equal(canSsh("1.93"), true);
   });
   it("대상 앞 검사: 별칭·user@host:port는 되고 공백·옵션·비밀번호는 막는다", () => {
     for (const ok of ["mac-b", "me@mac-b.example.com:22", "[fe80::1%en0]:22"]) assert.equal(targetProblem(ok), null, ok);

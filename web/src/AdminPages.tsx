@@ -1,7 +1,7 @@
 // 관리 GUI W5b(plan §8.355): 설정 「머신」(등록 창·대기·승인·폐기), 「폰 및 기기」의 웹 공개 켜기·끄기, 보고서 「올리기」 창,
 // 「이 aaa」의 공유 링크 키 교체. host가 판정한다(웹 조작 기기만, 마지막 조작 기기·host 머신 폐기 거부, 등록 코드 3번 틀리면 버림).
 // 머신 등록은 새 머신 화면의 6자리 코드를 넣어야 승인한다(사용자 답 1A: CLI와 같은 보증). 등록 창·대기 목록은 host `enroll` 사건으로
-// 다시 읽는다. M1(웹 머신 추가)은 같은 요청(`enroll_*`·`machine_revoke`)을 쓰고 「직접 설치」 안내(`enroll_guide`, plan §8.374)를 더한다.
+// 다시 읽는다. M1(웹 머신 추가)은 같은 요청(`enroll_*`·`machine_revoke`)을 쓰고 「직접 설치」 안내(`enroll_guide`, plan §8.383)를 더한다.
 import "./ThreadActions.css";
 import "./AdminPages.css";
 
@@ -244,7 +244,7 @@ export function MachinesPage({ role, machines }: { role: DeviceRole; machines: M
 }
 
 /**
- * 「직접 설치」 안내(SSH 없이, plan §8.374): 새 머신에서 칠 명령을 차례로 보이고 복사한다. 처음 펼칠 때 host 주소 후보·지문·판을 읽는다
+ * 「직접 설치」 안내(SSH 없이, plan §8.383): 새 머신에서 칠 명령을 차례로 보이고 복사한다. 처음 펼칠 때 host 주소 후보·지문·판을 읽는다
  * (옛 host는 주소 칸을 직접 넣는다). 등록 승인은 위 「승인…」이 한다
  */
 function InstallGuide({ machines }: { machines: MachineView[] }) {

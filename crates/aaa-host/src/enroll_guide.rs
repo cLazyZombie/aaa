@@ -1,4 +1,4 @@
-//! 「직접 설치」 안내(웹 머신 추가 M1, plan §8.374): 새 머신에서 칠 `aaa agent enroll <주소>`의 주소 후보와 host 지문·판.
+//! 「직접 설치」 안내(웹 머신 추가 M1, plan §8.383): 새 머신에서 칠 `aaa agent enroll <주소>`의 주소 후보와 host 지문·판.
 //! host는 자기가 연 agent 연결 주소(`agent_listen`)만 안다. 모든 주소(0.0.0.0·[::])로 열었으면 tailnet 이름과 이 머신 이름을,
 //! tailnet 주소(IPv4 100.64/10·IPv6 fd7a:115c:a1e0::/48)로 열었으면 tailnet 이름을 앞에 둔다. loopback은 같은 머신 안에서만 닿는다.
 use std::net::{IpAddr, SocketAddr};

@@ -39,10 +39,14 @@ export default async function () {
       await p.reload();
       await sidebarIs(p,{panel:"work",collapsed:false},"옛 special 기억은 작업 패널");
       if (await p.getByTestId("activity-special").count()) throw new Error("특수 단추가 남았다");
+      await p.evaluate(() => localStorage.setItem("aaa:sidebar-panel", "inbox"));
+      await p.reload();
+      await sidebarIs(p, { panel: "work", collapsed: false }, "옛 알림함 기억은 작업 패널");
+      if (await p.locator('[data-testid="activity-inbox"], [data-testid="activity-badge-inbox"], #sidebar-panel-inbox').count()) throw new Error("알림함 진입점이 남았다");
       same(await sidebar(p), { panel: "work", collapsed: false, column: "flex", selected: "activity-work", title: "작업" }, "처음");
       // 예전 프로젝트·에이전트 두 패널은 「작업」 하나다(plan §8.280). 「답할 것」은 패널 끝, 보고서 바로 위다(§8.359).
       const tabs = await p.evaluate(() => [...document.querySelectorAll('.activity-bar [role="tab"]')].map((e) => e.dataset.testid).join(","));
-      if (tabs !== "activity-work,activity-machines,activity-automations,activity-inbox,activity-asks") throw new Error(`패널 단추: ${tabs}`);
+      if (tabs !== "activity-work,activity-machines,activity-automations,activity-asks") throw new Error(`패널 단추: ${tabs}`);
       await p.getByTestId("pane-t1").waitFor();
       const viewWidth = () => p.evaluate(() => Math.round(document.querySelector(".view").getBoundingClientRect().width));
       const wide = await viewWidth();

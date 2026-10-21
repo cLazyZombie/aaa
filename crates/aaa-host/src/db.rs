@@ -20,6 +20,37 @@ pub(crate) struct StartAdmission {
     pub max_auto_threads: u32,
 }
 
+impl StartAdmission {
+    /// 판정 뒤 다른 요청이 끼어도 같은 DB 트랜잭션 안에서 동시 상한을 지킨다.
+    fn check(&self, tx: &Connection, project: &str, except: Option<&str>) -> Result<()> {
+        let mut statement = tx.prepare("SELECT id,data FROM threads WHERE project=?1")?;
+        let active = statement.query_map([project], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)))?;
+        let mut rule_count = 0usize;
+        let mut auto_count = 0usize;
+        for row in active {
+            let (id, text) = row?;
+            let rec: crate::orch::ThreadRec = serde_json::from_str(&text)?;
+            if except == Some(id.as_str()) || !rec.holds_slot() {
+                continue;
+            }
+            if rec.machine_id == self.machine && rec.holds.iter().any(|h| self.holds.contains(h)) {
+                anyhow::bail!("start_wait: {}의 측정 표지({id})", self.machine);
+            }
+            if let Some(name) = rec.automation {
+                auto_count += 1;
+                rule_count += usize::from(name == self.rule);
+            }
+        }
+        let cap = self.max_running.filter(|n| *n > 0).unwrap_or(1);
+        anyhow::ensure!(rule_count < cap as usize, "start_wait: 자동화 thread 규칙 동시 실행 상한 {cap}");
+        anyhow::ensure!(
+            self.max_auto_threads == 0 || auto_count < self.max_auto_threads as usize,
+            "start_wait: 명시한 프로젝트 자동화 thread 상한"
+        );
+        Ok(())
+    }
+}
+
 pub struct Db {
     conn: Mutex<Connection>,
 }
@@ -406,6 +437,11 @@ impl Db {
             Some(Ok(SCHEMA_VERSION)) => {}
             Some(other) => anyhow::bail!("host DB schema {other:?}을 이 aaa(schema {SCHEMA_VERSION})가 모른다"),
         }
+        conn.execute_batch(
+            "CREATE TABLE IF NOT EXISTS install_grants (
+            installation TEXT PRIMARY KEY, plan TEXT NOT NULL, nonce TEXT NOT NULL UNIQUE,
+            fingerprint TEXT NOT NULL, machine TEXT NOT NULL UNIQUE, name TEXT NOT NULL)",
+        )?;
         Ok(Db { conn: Mutex::new(conn) })
     }
 
@@ -572,6 +608,59 @@ impl Db {
         .optional()?)
     }
 
+    /// 서명 검증을 마친 grant만 호출한다. nonce 소비와 새 머신 등록은 같은 commit이다.
+    pub(crate) fn install_enroll(
+        &self,
+        installation: &str,
+        plan: &str,
+        nonce: &str,
+        fingerprint: &str,
+        id: &str,
+        name: &str,
+    ) -> Result<()> {
+        let mut c = self.conn.lock().unwrap();
+        let tx = c.transaction()?;
+        let previous: Option<(String, String, String, String)> = tx
+            .query_row(
+                "SELECT plan,fingerprint,machine,name FROM install_grants WHERE installation=?1",
+                [installation],
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
+            )
+            .optional()?;
+        if let Some(previous) = previous {
+            anyhow::ensure!(
+                previous == (plan.into(), fingerprint.into(), id.into(), name.into()),
+                "install grant target conflict"
+            );
+            let trusted: bool = tx.query_row("SELECT EXISTS(SELECT 1 FROM machines WHERE id=?1 AND name=?2 AND fingerprint=?3 AND revoked=0 AND local=0)",
+                params![id,name,fingerprint], |r|r.get(0))?;
+            anyhow::ensure!(trusted, "install grant revoked");
+        } else {
+            let conflict: bool = tx.query_row(
+                "SELECT EXISTS(SELECT 1 FROM machines WHERE id=?1 OR name=?2 OR fingerprint=?3)",
+                params![id, name, fingerprint],
+                |r| r.get(0),
+            )?;
+            // 기존/폐기된 신원을 되살리거나 다른 이름에 덮어쓰지 않는다.
+            anyhow::ensure!(!conflict, "install grant target conflict");
+            tx.execute("INSERT INTO install_grants(installation,plan,nonce,fingerprint,machine,name) VALUES(?1,?2,?3,?4,?5,?6)",
+                params![installation,plan,nonce,fingerprint,id,name])?;
+            tx.execute(
+                "INSERT INTO machines(id,name,fingerprint,local,enrolled_at) VALUES(?1,?2,?3,0,?4)",
+                params![id, name, fingerprint, aaa_common::util::now_ms() as i64],
+            )?;
+        }
+        tx.commit()?;
+        Ok(())
+    }
+    /// 응답 유실 뒤 조회에는 유효 기간을 연장하지 않고 실제 TLS peer와 아직 신뢰하는 머신을 대조한다.
+    pub(crate) fn install_enrolled(&self, installation: &str, plan: &str, fingerprint: &str) -> Result<Option<String>> {
+        let c = self.conn.lock().unwrap();
+        Ok(c.query_row("SELECT g.machine FROM install_grants g JOIN machines m ON m.id=g.machine
+            WHERE g.installation=?1 AND g.plan=?2 AND g.fingerprint=?3 AND m.fingerprint=g.fingerprint AND m.name=g.name AND m.revoked=0 AND m.local=0",
+            params![installation,plan,fingerprint], |r|r.get(0)).optional()?)
+    }
+
     /// 등록(원격) 또는 로컬 agent 자동 등록. 같은 id면 이름·fingerprint를 갱신한다.
     pub fn upsert_machine(&self, id: &str, name: &str, fingerprint: Option<&str>, local: bool) -> Result<()> {
         let c = self.conn.lock().unwrap();
@@ -613,7 +702,7 @@ impl Db {
         Ok(id)
     }
 
-    /// SSH 머신 추가 작업(plan §8.375): JSON 한 행. 최근 것부터
+    /// SSH 머신 추가 작업(plan §8.384): JSON 한 행. 최근 것부터
     pub(crate) fn machine_setups(&self) -> Result<Vec<String>> {
         let c = self.conn.lock().unwrap();
         let mut st = c.prepare("SELECT data FROM machine_setups ORDER BY updated DESC, id DESC")?;
@@ -793,50 +882,25 @@ impl Db {
             return Ok((id, false));
         }
         if let Some(policy) = admission {
-            let mut statement =
-                tx.prepare("SELECT id,data FROM threads WHERE project=?1 AND status IN ('open','starting')")?;
-            let active = statement
-                .query_map([project], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)))?
-                .collect::<rusqlite::Result<Vec<_>>>()?;
-            let mut rule_count = 0usize;
-            let mut auto_count = 0usize;
-            for (id, text) in active {
-                let value: serde_json::Value = serde_json::from_str(&text)?;
-                if value["machine_id"].as_str() == Some(policy.machine.as_str())
-                    && value["holds"].as_array().is_some_and(|holds| {
-                        holds.iter().filter_map(|h| h.as_str()).any(|h| policy.holds.iter().any(|want| want == h))
-                    })
-                {
-                    anyhow::bail!("start_wait: {}의 측정 표지({id})", policy.machine);
-                }
-                if let Some(name) = value["automation"].as_str() {
-                    auto_count += 1;
-                    rule_count += usize::from(name == policy.rule);
-                }
-            }
-            anyhow::ensure!(
-                !policy.max_running.filter(|cap| *cap > 0).is_some_and(|cap| rule_count >= cap as usize),
-                "start_wait: 명시한 규칙 동시 실행 상한"
-            );
-            anyhow::ensure!(
-                policy.max_auto_threads == 0 || auto_count < policy.max_auto_threads as usize,
-                "start_wait: 명시한 프로젝트 자동 thread 상한"
-            );
-        }
-        if let Some(limit) = limit {
-            anyhow::ensure!(
-                task_queue::slots(&tx, project, None)? < limit,
-                "start_wait: 프로젝트 실행 한도 {limit}. `aaa task reserve`로 예약한다"
-            );
+            policy.check(&tx, project, None)?;
         }
         let max: Option<i64> =
             tx.query_row("SELECT MAX(CAST(SUBSTR(id, 3) AS INTEGER)) FROM threads WHERE project=?1", [project], |r| {
                 r.get(0)
             })?;
         let id = format!("t-{:04}", max.unwrap_or(0) + 1);
+        let text = make(&id);
+        if let Some(limit) = limit
+            && serde_json::from_str::<crate::orch::ThreadRec>(&text)?.automation.is_none()
+        {
+            anyhow::ensure!(
+                task_queue::slots(&tx, project, None)? < limit,
+                "start_wait: 프로젝트 실행 한도 {limit}. `aaa task reserve`로 예약한다"
+            );
+        }
         tx.execute(
             "INSERT INTO threads(project,id,status,data,updated_at) VALUES(?1,?2,'starting',?3,?4)",
-            params![project, id, make(&id), aaa_common::util::now_ms() as i64],
+            params![project, id, text, aaa_common::util::now_ms() as i64],
         )?;
         if let Some((task, block)) = reservation {
             task_queue::queue_claim(&tx, project, task, block, &id)?;
