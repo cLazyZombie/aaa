@@ -681,6 +681,8 @@ fn append_known(path: &Path, line: &str) -> std::io::Result<()> {
 mod binary;
 #[path = "machine_setup/install.rs"]
 mod install;
+#[path = "machine_setup/release.rs"]
+mod release;
 
 #[cfg(test)]
 #[path = "machine_setup/tests.rs"]

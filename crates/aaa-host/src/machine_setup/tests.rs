@@ -617,6 +617,11 @@ fn remote_install_commands_are_fixed_text_with_checked_values() {
 /// 적용(`install --resume`)은 FIFO `go`가 열릴 때까지 기다린다(시험이 그사이 등록을 한다)
 #[cfg(unix)]
 fn fake_remote(root: &Path) -> PathBuf {
+    fake_remote_as(root, "aaa 9.9.9")
+}
+
+#[cfg(unix)]
+fn fake_remote_as(root: &Path, version: &str) -> PathBuf {
     let remote = root.join("remote");
     std::fs::create_dir_all(&remote).unwrap();
     let r = remote.display();
@@ -624,7 +629,7 @@ fn fake_remote(root: &Path) -> PathBuf {
         r#"#!/bin/sh
 L="{r}"
 case "$*" in
-  --version) echo 'aaa 9.9.9'; exit 0;;
+  --version) echo '{version}'; exit 0;;
   *install-probe*)
     printf '%s\n' "$@" > "$L/probe.args"; cat > "$L/probe.in"
     if [ -f "$L/probe.exit" ]; then exit "$(cat "$L/probe.exit")"; fi
@@ -871,5 +876,220 @@ fn a_remote_install_that_refuses_this_ssh_fails_with_the_reason_and_leaves_nothi
     });
     drop(rt);
     install::tests_binary::set(None);
+    assert!(weak.upgrade().is_none());
+}
+
+// ───────────── 다른 종류 머신용 release(M3) ─────────────
+
+#[test]
+fn a_release_binary_is_fetched_only_from_its_release_with_the_manifest_sha_and_cached() {
+    assert!(release::version_ok("0.1.2") && release::version_ok("10.0.0"));
+    for bad in ["0.1", "0.01.2", "v0.1.2", "0.1.2+abc", "a.b.c"] {
+        assert!(!release::version_ok(bad), "{bad}");
+    }
+    let binary = b"#!/bin/sh\necho 'aaa 1.2.3'\n".to_vec();
+    let sha = hex::encode(Sha256::digest(&binary));
+    let manifest = |version: &str, url: &str, sha: &str| {
+        serde_json::to_vec(&serde_json::json!({
+            "version": version,
+            "assets": { "macos-x86_64": { "url": url, "sha256": sha } }
+        }))
+        .unwrap()
+    };
+    let root = std::env::temp_dir().join(format!("aaa-release-{}", aaa_common::util::new_id()));
+    let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
+    rt.block_on(async {
+        // 정상: 그 판 release 파일, SHA 같음 → 캐시에 둔다. 다시 받으면 asset은 받지 않는다
+        let srv = http_with(|base| {
+            vec![
+                (
+                    "/releases/download/v1.2.3/manifest.json".into(),
+                    manifest("1.2.3", &format!("{base}/download/v1.2.3/aaa-macos-x86_64"), &sha),
+                ),
+                ("/releases/download/v1.2.3/aaa-macos-x86_64".into(), binary.clone()),
+            ]
+        });
+        let cache = root.join("ok");
+        let got = release::fetch(&cache, &srv.base, "1.2.3", "macos-x86_64").await.unwrap();
+        assert_eq!((std::fs::read(&got.path).unwrap(), got.sha256.as_str()), (binary.clone(), sha.as_str()));
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            assert_eq!(std::fs::metadata(got.path.parent().unwrap()).unwrap().permissions().mode() & 0o777, 0o700);
+        }
+        let again = release::fetch(&cache, &srv.base, "1.2.3", "macos-x86_64").await.unwrap();
+        assert_eq!(again, got);
+        let assets = srv.hits.lock().unwrap().iter().filter(|p| p.ends_with("aaa-macos-x86_64")).count();
+        assert_eq!(assets, 1, "같은 SHA 캐시는 다시 받지 않는다");
+        // 없는 종류
+        assert!(
+            release::fetch(&cache, &srv.base, "1.2.3", "linux-aarch64").await.unwrap_err().contains("linux-aarch64")
+        );
+
+        // SHA가 manifest와 다르면 쓰지 않고 남기지 않는다
+        let bad = http_with(|base| {
+            vec![
+                (
+                    "/releases/download/v1.2.3/manifest.json".into(),
+                    manifest("1.2.3", &format!("{base}/download/v1.2.3/aaa-macos-x86_64"), &"0".repeat(64)),
+                ),
+                ("/releases/download/v1.2.3/aaa-macos-x86_64".into(), binary.clone()),
+            ]
+        });
+        let cache = root.join("bad");
+        assert!(release::fetch(&cache, &bad.base, "1.2.3", "macos-x86_64").await.unwrap_err().contains("SHA-256"));
+        assert!(
+            !cache.join("v1.2.3/macos-x86_64/aaa").exists() && !cache.join("v1.2.3/macos-x86_64/aaa.part").exists()
+        );
+
+        // manifest 판이 다르거나, asset 주소가 그 판의 release 파일이 아니면 받지 않는다
+        let other = http_with(|base| {
+            vec![(
+                "/releases/download/v1.2.3/manifest.json".into(),
+                manifest("1.2.4", &format!("{base}/download/v1.2.4/aaa-macos-x86_64"), &sha),
+            )]
+        });
+        assert!(
+            release::fetch(&root.join("v"), &other.base, "1.2.3", "macos-x86_64").await.unwrap_err().contains("1.2.4")
+        );
+        let away = http_with(|_| {
+            vec![("/releases/download/v1.2.3/manifest.json".into(), manifest("1.2.3", "https://example.com/aaa", &sha))]
+        });
+        assert!(
+            release::fetch(&root.join("a"), &away.base, "1.2.3", "macos-x86_64")
+                .await
+                .unwrap_err()
+                .contains("공개 release 파일")
+        );
+        assert_eq!(away.hits.lock().unwrap().len(), 1, "manifest만 읽고 다른 주소는 받지 않는다");
+    });
+    std::fs::remove_dir_all(root).unwrap();
+}
+
+/// 임시 HTTP 서버(경로 → 본문, `Connection: close`). 주소를 먼저 정하고 그 주소로 만든 파일 목록을 준다. 받은 경로를 차례로 남긴다
+struct Http {
+    base: String,
+    hits: Arc<std::sync::Mutex<Vec<String>>>,
+}
+
+fn http_with(files: impl FnOnce(&str) -> Vec<(String, Vec<u8>)>) -> Http {
+    let (base, hits, tx) = http_lazy();
+    tx.send(files(&base).into_iter().collect()).unwrap();
+    Http { base, hits }
+}
+
+type Lazy =
+    (String, Arc<std::sync::Mutex<Vec<String>>>, std::sync::mpsc::Sender<std::collections::HashMap<String, Vec<u8>>>);
+
+/// 주소를 먼저 내고 파일 목록은 나중에 받는 서버
+fn http_lazy() -> Lazy {
+    use std::io::{BufRead, Write};
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let base = format!("http://{}/releases", listener.local_addr().unwrap());
+    let hits = Arc::new(std::sync::Mutex::new(vec![]));
+    let seen = hits.clone();
+    let (tx, rx) = std::sync::mpsc::channel::<std::collections::HashMap<String, Vec<u8>>>();
+    std::thread::spawn(move || {
+        let files = rx.recv().unwrap();
+        for mut s in listener.incoming().flatten() {
+            let mut r = std::io::BufReader::new(s.try_clone().unwrap());
+            let mut line = String::new();
+            if r.read_line(&mut line).is_err() {
+                continue;
+            }
+            let mut h = String::new();
+            while r.read_line(&mut h).is_ok_and(|n| n > 2) {
+                h.clear();
+            }
+            let path = line.split_whitespace().nth(1).unwrap_or("").to_string();
+            seen.lock().unwrap().push(path.clone());
+            let _ = match files.get(&path) {
+                Some(body) => s
+                    .write_all(
+                        format!("HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n", body.len())
+                            .as_bytes(),
+                    )
+                    .and_then(|_| s.write_all(body)),
+                None => s.write_all(b"HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"),
+            };
+        }
+    });
+    (base, hits, tx)
+}
+
+/// 감지한 CPU가 host와 다르면 같은 판 release 파일을 받아(임시 HTTP 서버) 원격에 보내고 SHA·판을 확인한다. 원격 install 대본은
+/// 계획에서 이 SSH를 거부하게 둬(exit 3) 전송·확인까지만 본다
+#[cfg(unix)]
+#[test]
+fn another_cpu_gets_the_same_release_version_from_the_release_and_verifies_it_remotely() {
+    use aaa_proto::install::InstallLogin;
+    let Some(lab) = lab() else { return };
+    let fake = fake_remote_as(&lab.root, "aaa 1.2.3");
+    std::fs::write(lab.root.join("remote/probe.exit"), "3").unwrap();
+    let asset = std::fs::read(&fake).unwrap();
+    let sha = hex::encode(Sha256::digest(&asset));
+    let other = if std::env::consts::ARCH == "aarch64" { "x86_64" } else { "aarch64" };
+    let key = format!("{}-{other}", std::env::consts::OS);
+    let srv = http_with(|base| {
+        vec![
+            (
+                "/releases/download/v1.2.3/manifest.json".into(),
+                serde_json::to_vec(&serde_json::json!({
+                    "version": "1.2.3",
+                    "assets": { key.clone(): { "url": format!("{base}/download/v1.2.3/aaa-{key}"), "sha256": sha } }
+                }))
+                .unwrap(),
+            ),
+            (format!("/releases/download/v1.2.3/aaa-{key}"), asset.clone()),
+        ]
+    });
+    // host 자기 파일은 쓰지 않는다(다른 CPU): 판만 release 판으로
+    install::tests_binary::set(Some((lab.root.join("not-sent"), "aaa 1.2.3".into())));
+    install::tests_binary::set_base(Some(srv.base.clone()));
+    let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
+    let weak = rt.block_on(async {
+        let h = host_for(&lab);
+        let job = start(&h, "lab").await;
+        let job = leave(&h, &job.job, MachineSetupPhase::Connecting).await;
+        let key_sha = job.host_keys[0].sha256.clone();
+        h.call(
+            DeviceRole::Controller,
+            WEB,
+            FrontRequest::MachineSetupTrust { job: job.job.clone(), host_key_sha256: key_sha },
+        )
+        .await
+        .unwrap();
+        assert_eq!(leave(&h, &job.job, MachineSetupPhase::Detecting).await.phase, MachineSetupPhase::Ready);
+        // 실험실은 같은 머신이라 감지 CPU만 다른 종류로 바꾼다
+        h.setup_update(&job.job, MachineSetupPhase::Ready, |j| j.view.detected.as_mut().unwrap().arch = other.into())
+            .unwrap();
+        let settings = MachineSetupSettings {
+            name: "lab-x".into(),
+            host: "127.0.0.1:7430".into(),
+            work_root: lab.root.join("work").to_string_lossy().into(),
+            work_mount: None,
+            harness: vec![],
+            login: InstallLogin::Defer,
+        };
+        h.call(DeviceRole::Controller, WEB, FrontRequest::MachineSetupPlan { job: job.job.clone(), settings })
+            .await
+            .unwrap();
+        let after = leave(&h, &job.job, MachineSetupPhase::Planning).await;
+        assert!(
+            after.error.as_deref().unwrap_or("").contains("시스템 SSH 서버"),
+            "전송·확인을 지나 원격 계획까지 갔다: {:?}",
+            after.error
+        );
+        let cached = h.state.join(format!("ssh/release/v1.2.3/{key}/aaa"));
+        assert_eq!(std::fs::read(&cached).unwrap(), asset);
+        let probed: Vec<String> =
+            std::fs::read_to_string(lab.root.join("remote/probe.args")).unwrap().lines().map(str::to_string).collect();
+        assert!(probed.contains(&sha), "원격 install에 release 파일의 SHA를 executor로 준다: {probed:?}");
+        assert_eq!(srv.hits.lock().unwrap().iter().filter(|p| p.ends_with(&format!("aaa-{key}"))).count(), 1);
+        Arc::downgrade(&h)
+    });
+    drop(rt);
+    install::tests_binary::set(None);
+    install::tests_binary::set_base(None);
     assert!(weak.upgrade().is_none());
 }

@@ -381,9 +381,11 @@ impl Host {
         let file = match binary::pick(here, &software, (d.os.as_str(), d.arch.as_str()), &exe) {
             Source::Running { path } => path,
             Source::Release { version, key } => {
-                return fail(format!(
-                    "{key}용 aaa {version} release 파일 받기는 아직 없다: 같은 종류(OS·CPU) 머신만 SSH로 넣는다"
-                ));
+                let cache = self.state.join("ssh").join("release");
+                match super::release::fetch(&cache, &release_base(), &version, &key).await {
+                    Ok(f) => f.path,
+                    Err(e) => return fail(e),
+                }
             }
             Source::Refuse(why) => return fail(why),
         };
@@ -661,6 +663,15 @@ pub(crate) fn plan_file(state: &std::path::Path, job: &str) -> PathBuf {
     state.join("ssh").join("jobs").join(job).join("proposal.json")
 }
 
+/// release 주소(시험은 임시 HTTP 서버로 바꿔 끼운다)
+fn release_base() -> String {
+    #[cfg(test)]
+    if let Some(b) = tests_binary::base() {
+        return b;
+    }
+    super::release::RELEASES.to_string()
+}
+
 #[cfg(test)]
 pub(crate) mod tests_binary {
     use std::cell::RefCell;
@@ -674,5 +685,15 @@ pub(crate) mod tests_binary {
     }
     pub(super) fn get() -> Option<(PathBuf, String)> {
         BINARY.with(|b| b.borrow().clone())
+    }
+    thread_local! {
+        static BASE: RefCell<Option<String>> = const { RefCell::new(None) };
+    }
+    /// 이 스레드의 host가 release를 받을 주소
+    pub(crate) fn set_base(v: Option<String>) {
+        BASE.with(|b| *b.borrow_mut() = v);
+    }
+    pub(super) fn base() -> Option<String> {
+        BASE.with(|b| b.borrow().clone())
     }
 }
