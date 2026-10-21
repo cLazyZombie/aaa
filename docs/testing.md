@@ -2,6 +2,31 @@
 
 새 기능을 만드는 thread가 따르는 짧은 규칙이다. 근거는 참고 넷(herdr 0.9.5·herdr-projects 0.2.35·herdr-web-ui `aa624cb`·t3code `4b1024da`)과 이 저장소에서 실제로 난 간헐 실패다. 전략과 도구 목록은 [plan §13](plan.md#13-테스트-전략과-직접-만들-e2e-도구)에 있다.
 
+## 종료 문서의 앱 API(t-0485)
+
+`node web/e2e/web.e2e.mjs --spec 23 --grep '종료 문서 API:'`는 실제 host/App/WebKit에서 정상 tasks/inbox
+조회 응답을 확인한 뒤 pagehide·WS 갱신 사건을 보내 일반 API 네트워크 시작이0인지 검사한다. pageshow 뒤 같은
+두 실제 조회도 확인한다. 원래 코드에서는 tasks/inbox 두 fetch를 잡아 RED, 공통 apiFetch 뒤 GREEN이다.
+개별 컴포넌트에 시험 export/guard를 붙이지 않는다. 새 web/aaa 빌드 뒤 E2E23 파일 전체와 전체 gate를 확인한다.
+
+공통 경계는 post·인증·업로드·사용량·진단 API에 적용하며, 종료 뒤 취소는 AbortError다. 취소한 쓰기를 복귀 때
+재생하지 않는다. 일반 숨긴 탭은 차단하지 않고 명시 keepalive는 유지한다. 떠날 때 설정 보존은 기존 E2E14가 맡는다.
+
+## install I6 CI 시험 터미널(t-0485)
+
+- `cargo test -p aaa --test install --locked`: 실제 승인·마법사·worker·TLS 등록 owner를 세 OS에서 실행한다.
+  직접 연 시험 PTY도 aaa-vt로 ConPTY의 DSR/DA/색 질의에 답하며 기존30초 시한·승인 단언을 유지한다.
+- `authorization::terminal_answers_cursor_query_before_application_prompt`: POSIX 실제 PTY의 자식이 DSR 응답 전에는
+  승인 물음을 내지 않는다. 응답기 없는 원래 driver는30초 RED, 응답기 연결 뒤0.03초 GREEN이다. 셸/stty/dd fixture만
+  Unix cfg이고 Windows 기존 owner는 실제 ConPTY 시작 질의로 같은 연결을 검증한다.
+- `grant::verified_host_grant_uses_tls_pin_and_keeps_consumption_bound_to_same_machine`: TLS/grant/pin/재조회·폐기 단언을
+  유지하고, host runtime을 내린 뒤 lab을 지운다. 종료를 제거하면 남은 host 소유자 단언이 실패해야 한다.
+- Windows `install::engine::input::password::tests::console_masks_and_restores_after_success_cancel_and_eof`:
+  같은 시험 터미널 응답기로 시작 질의를 통과하고 실제 console 암호 비노출·원래 mode·취소/EOF를 검사한다.
+
+Windows 실행은 main push 뒤 CI로 판정한다. cross clippy/build를 실제 실행으로 부르지 않는다. macOS worker의
+시한 초과는 출력 단계와 부하 근거를 함께 남기며 시한 연장·기대값 변경·시험 삭제로 통과시키지 않는다.
+
 ## 할 일 표시 ID(t-0575)
 
 - `cargo test -p aaa-host --lib display_ids --locked`: 기존 ULID·CRLF를 가진 파일을 여덟 조회가 동시에

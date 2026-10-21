@@ -87,6 +87,10 @@ pub(in crate::install::engine) fn prompt() -> Result<supervisor::Password> {
 }
 
 #[cfg(test)]
+#[path = "../../../../tests/support/terminal_queries.rs"]
+mod terminal_queries;
+
+#[cfg(test)]
 mod tests {
     use super::*;
     use portable_pty::{CommandBuilder, PtySize, native_pty_system};
@@ -147,12 +151,13 @@ mod tests {
                 }
             });
             let deadline = Instant::now() + Duration::from_secs(20);
+            let mut terminal = terminal_queries::TerminalQueries::new(24, 100);
             let mut output = Vec::new();
             let mut sent = false;
             loop {
                 match receive.recv_timeout(deadline.saturating_duration_since(Instant::now())) {
                     Ok(bytes) => {
-                        output.extend(bytes);
+                        output.extend(terminal.feed(&bytes, &mut writer).unwrap());
                         if !sent && String::from_utf8_lossy(&output).contains("입력은 표시되지 않습니다") {
                             writer.write_all(CANARY.as_bytes()).unwrap();
                             writer.write_all(suffix.as_bytes()).unwrap();

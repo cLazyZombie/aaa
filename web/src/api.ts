@@ -1,3 +1,4 @@
+import { apiFetch } from "./apiRequest";
 // host 웹 API(crates/aaa-host/src/web.rs). 상태는 host가 갖고, 여기서는 받은 것을 보여 주기만 한다.
 import type {
   DeviceRole,
@@ -23,7 +24,7 @@ export class ApiError extends Error {
 }
 
 async function post<T>(path: string, body: unknown, keepalive = false): Promise<T> {
-  const res = await fetch(path, {
+  const res = await apiFetch(path, {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify(body),
@@ -106,7 +107,7 @@ async function unwrap<T>(res: Response): Promise<T> {
 export type Me = { role: DeviceRole; device: string; front_api?: string };
 
 export async function me(): Promise<Me | null> {
-  const res = await fetch("/api/v1/me", { credentials: "same-origin" });
+  const res = await apiFetch("/api/v1/me", { credentials: "same-origin" });
   if (res.status === 401) return null;
   return unwrap<Me>(res);
 }
@@ -116,7 +117,7 @@ export const pair = (code: string, label: string) => post<{ role: DeviceRole }>(
 
 /** 이 브라우저의 로그인을 잊는다(herdr-web-ui `signOut`, DELETE /api/auth). 기기 기록은 host에 남는다 */
 export async function signOut(): Promise<void> {
-  const res = await fetch("/api/v1/me", { method: "DELETE", credentials: "same-origin" });
+  const res = await apiFetch("/api/v1/me", { method: "DELETE", credentials: "same-origin" });
   if (!res.ok) throw new ApiError({ code: "internal", message: `HTTP ${res.status}` });
 }
 export const call = (req: FrontRequest, keepalive = false) => post<FrontResponse>("/api/v1/call", req, keepalive);
@@ -124,7 +125,7 @@ export const call = (req: FrontRequest, keepalive = false) => post<FrontResponse
 /** herdr-web-ui uploadPaneImage: 저장된 경로는 초안에 넣고, 보내기 전에는 pane에 입력하지 않는다. */
 export async function uploadChatImage(pane: string, image: File): Promise<string> {
   if (image.size === 0 || image.size > 16 * 1024 * 1024) throw new Error("그림은 1바이트부터 16MiB까지 붙여 넣습니다.");
-  const response = await fetch(`/api/v1/panes/${encodeURIComponent(pane)}/image`, {
+  const response = await apiFetch(`/api/v1/panes/${encodeURIComponent(pane)}/image`, {
     method: "POST", body: image, credentials: "same-origin",
   });
   return (await unwrap<{ path: string }>(response)).path;
@@ -133,7 +134,7 @@ export async function uploadChatImage(pane: string, image: File): Promise<string
 /** task 첨부(plan §8.327): 프로젝트 uploads/에 쓰고 메모에 적을 `uploads/<이름>`을 받는다. `kind`는 문서(md·html), 없으면 그림.
  * 메모 줄은 `task_edit`로 쓴다 */
 export async function uploadTaskFile(project: string, file: File, kind?: "md" | "html"): Promise<string> {
-  const response = await fetch(`/api/v1/projects/${encodeURIComponent(project)}/uploads${kind ? `?kind=${kind}` : ""}`, {
+  const response = await apiFetch(`/api/v1/projects/${encodeURIComponent(project)}/uploads${kind ? `?kind=${kind}` : ""}`, {
     method: "POST", body: file, credentials: "same-origin",
   });
   return (await unwrap<{ path: string }>(response)).path;
@@ -141,7 +142,7 @@ export async function uploadTaskFile(project: string, file: File, kind?: "md" | 
 
 /** 웹 「보고서 올리기」(FRONT_API 1.80, plan §8.355): 파일 하나를 올리기 폴더의 `path`에 쓴다. 다 올리면 `library_upload_publish`로 등록한다 */
 export async function uploadReportFile(project: string, upload: string, path: string, file: Blob): Promise<{ files: number; total: number }> {
-  const response = await fetch(`/api/v1/projects/${encodeURIComponent(project)}/library-uploads/${upload}?path=${encodeURIComponent(path)}`, {
+  const response = await apiFetch(`/api/v1/projects/${encodeURIComponent(project)}/library-uploads/${upload}?path=${encodeURIComponent(path)}`, {
     method: "POST", body: file, credentials: "same-origin",
   });
   return unwrap<{ files: number; total: number }>(response);
@@ -180,7 +181,7 @@ export type PushInfo = {
 };
 export type PushedItem = { project: string; subject: string; at_ms: number };
 export async function pushInfo(): Promise<PushInfo> {
-  return unwrap<PushInfo>(await fetch("/api/v1/push", { credentials: "same-origin" }));
+  return unwrap<PushInfo>(await apiFetch("/api/v1/push", { credentials: "same-origin" }));
 }
 /** host와 이 기기의 시계 차이를 덮는다 */
 const PUSHED_SKEW_MS = 5_000;
