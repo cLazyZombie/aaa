@@ -7,9 +7,16 @@ fn digest(bytes: &[u8]) -> String {
     hex::encode(Sha256::digest(bytes))
 }
 
-#[tokio::test]
-async fn verified_host_grant_uses_tls_pin_and_keeps_consumption_bound_to_same_machine() {
+#[test]
+fn verified_host_grant_uses_tls_pin_and_keeps_consumption_bound_to_same_machine() {
     let lab = Lab::new();
+    // listener/connection task와 DB handle을 모두 닫은 뒤 실험실을 지운다.
+    let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
+    let host = rt.block_on(verify_host_grant(&lab));
+    drop(rt);
+    assert!(host.upgrade().is_none(), "실험실 삭제 전에 host를 소유한 모든 작업이 종료돼야 한다");
+}
+async fn verify_host_grant(lab: &Lab) -> std::sync::Weak<aaa_host::Host> {
     let state = lab.0.join("agent");
     private_file::directory(&state).unwrap();
     let agent = tls::load_or_create_private(&state, "aaa-agent").unwrap();
@@ -107,4 +114,5 @@ async fn verified_host_grant_uses_tls_pin_and_keeps_consumption_bound_to_same_ma
     host.call(DeviceRole::Local, "local:cli", FrontRequest::MachineRevoke { name: "agent-a".into() }).await.unwrap();
     assert!(aaa_agent::link::enroll_install(&state, &address, &machine, "agent-a", &grant).await.is_err());
     assert!(host.db.machines().unwrap().is_empty());
+    std::sync::Arc::downgrade(&host)
 }

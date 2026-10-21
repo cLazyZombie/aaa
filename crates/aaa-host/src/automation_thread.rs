@@ -30,6 +30,8 @@ impl Drop for Scratch {
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(default)]
 pub(crate) struct Run {
+    /// 최초 기동 당시의 사건·일정. 규칙 편집·삭제 뒤에도 출처를 보존한다.
+    pub trigger: Option<String>,
     pub memory: bool,
     pub close_idle_ms: Option<u64>,
     pub last_input_ms: u64,
@@ -168,6 +170,22 @@ pub(crate) fn close_at(
 }
 
 impl Host {
+    pub(crate) fn automation_restart_admission(
+        &self,
+        rec: &ThreadRec,
+    ) -> Result<Option<crate::db::StartAdmission>, ErrorBody> {
+        let Some(name) = &rec.automation else { return Ok(None) };
+        let dir = self.project_dir(&rec.project)?;
+        let (rules, _) = crate::routine::load_all(&dir);
+        let cap = rules.iter().find(|r| &r.name == name).and_then(|r| r.limits.max_running);
+        Ok(Some(crate::db::StartAdmission {
+            machine: rec.machine_id.clone(),
+            holds: vec![],
+            rule: name.clone(),
+            max_running: cap,
+            max_auto_threads: self.cfg.projects.max_auto_threads,
+        }))
+    }
     pub(crate) fn automation_open(&self, p: &str, name: &str) -> Result<Option<ThreadRec>, ErrorBody> {
         let mut records = self
             .db

@@ -6390,7 +6390,7 @@ int main(int argc, char **argv) {
     assert_eq!(output, "pty-output-before-close\x1b[31msecret-prefix-tail\x1b[0m");
 }
 
-/// coordinator·브라우저 없이 실제 host가 자리를 집행한다. 막힌 앞 예약을 보존하고 가능한 뒤 예약을 먼저 기동한다.
+/// coordinator·브라우저 없이 이동한 차례로 기동하고, 막힌 앞 예약은 보존하며 가능한 뒤 예약을 기동한다.
 #[test]
 fn task_queue_runs_possible_fifo_after_resolve_without_coordinator() {
     let mut w = world();
@@ -6406,9 +6406,10 @@ fn task_queue_runs_possible_fifo_after_resolve_without_coordinator() {
     w.wait_show("완료 보고에도 자리 보유", &first, |v| {
         v["report_hash"].is_string() && v["brief"] == "delivered"
     });
-    std::fs::write(w.projects.join("demo/TASKS.md"),"## Backlog\n- [ ] 앞 예약 (fake@mac-offline) [작업 폴더]\n  독립 설명 · 완료 범위\n- [ ] 가능한 예약 (fake@labA) [작업 폴더]\n  독립 설명 · 완료 범위\n").unwrap();
+    std::fs::write(w.projects.join("demo/TASKS.md"),"## Backlog\n- [ ] 앞 예약 (fake@mac-offline) [작업 폴더]\n  독립 설명 · 완료 범위\n- [ ] 가능한 예약 (fake@labA) [작업 폴더]\n  독립 설명 · 완료 범위\n- [ ] 맨 앞으로 옮길 예약 (fake@labA) [작업 폴더]\n  독립 설명 · 완료 범위\n").unwrap();
     w.h.ok(&["task", "reserve", "앞 예약"]);
     w.h.ok(&["task", "reserve", "가능한 예약"]);
+    w.h.ok(&["task", "reserve", "맨 앞으로 옮길 예약"]);
     w.h.ok(&["ticker", "tick"]);
     assert_eq!(w.h.ok(&["thread", "list", "demo"])["threads"].as_array().unwrap().len(), 6);
     let queue = w.h.ok(&["task", "queue"]);
@@ -6416,16 +6417,39 @@ fn task_queue_runs_possible_fifo_after_resolve_without_coordinator() {
     assert!(rows.iter().all(|r| r["state"] == "queued"));
     let first_id = rows[0]["task_id"].as_str().unwrap().to_string();
     let second_id = rows[1]["task_id"].as_str().unwrap().to_string();
+    let moved_id = rows[2]["task_id"].as_str().unwrap().to_string();
+    let moved = w.h.ok(&["task", "queue-move", &moved_id, "1"]);
+    assert_eq!(moved["entries"][0]["task_id"], moved_id);
+    assert_eq!(moved["entries"][0]["position"], 1);
+    assert_eq!(moved["entries"][0]["created_ms"], rows[2]["created_ms"]);
     // host 재시작에도 6개의 기존 자리와 승인판·차례를 이어 읽는다.
     w.lab.kill("host");
     w.spawn_host("host-restored");
     wait_for("재연결", T, || w.h.connected("labA").then_some(()));
     let q = w.h.ok(&["task", "queue"]);
-    assert_eq!(q["entries"][0]["task_id"], first_id);
-    assert_eq!(q["entries"][1]["task_id"], second_id);
+    assert_eq!(q["entries"][0]["task_id"], moved_id);
+    assert_eq!(q["entries"][1]["task_id"], first_id);
+    assert_eq!(q["entries"][2]["task_id"], second_id);
     w.h.ok(&["ticker", "tick"]);
     assert_eq!(w.h.ok(&["thread", "list", "demo"])["threads"].as_array().unwrap().len(), 6);
     w.h.ok(&["thread", "resolve", "demo", &first]);
+    let promoted = wait_for("맨 앞으로 옮긴 예약의 실제 기동", T, || {
+        let q = w.h.json(&["task", "queue"]).ok()?;
+        let row = q["entries"].as_array()?.iter().find(|r| r["task_id"] == moved_id)?;
+        row["thread"].as_str().map(str::to_string)
+    });
+    w.wait_show("맨 앞 예약 pane 기동", &promoted, |v| v["status"] == "open" && v["pane"].is_string());
+    let q = w.h.ok(&["task", "queue"]);
+    assert!(
+        q["entries"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|r| r["task_id"] != moved_id)
+            .all(|r| r["state"] == "queued" && r["thread"].is_null())
+    );
+    assert_eq!(w.h.ok(&["thread", "list", "demo"])["threads"].as_array().unwrap().len(), 7);
+    w.h.ok(&["thread", "resolve", "demo", &promoted]);
     // ticker 명령이나 coordinator의 다음 턴 없이 resolve 사건이 dispatch를 깨워야 한다.
     let started = wait_for("가능한 예약의 실제 기동", T, || {
         let q = w.h.json(&["task", "queue"]).ok()?;
@@ -6436,9 +6460,9 @@ fn task_queue_runs_possible_fifo_after_resolve_without_coordinator() {
     assert_eq!(v["machine"], "labA");
     assert_eq!(v["profile"], "fake");
     let q = w.h.ok(&["task", "queue"]);
-    assert_eq!(q["entries"][0]["task_id"], first_id);
-    assert_eq!(q["entries"][0]["state"], "queued");
-    assert_eq!(w.h.ok(&["thread", "list", "demo"])["threads"].as_array().unwrap().len(), 7);
+    let waiting = q["entries"].as_array().unwrap().iter().find(|r| r["task_id"] == first_id).unwrap();
+    assert_eq!(waiting["state"], "queued");
+    assert_eq!(w.h.ok(&["thread", "list", "demo"])["threads"].as_array().unwrap().len(), 8);
     let board = w.h.ok(&["task", "list"]);
     assert_eq!(board["tasks"].as_array().unwrap().iter().find(|t| t["id"] == second_id).unwrap()["thread"], started);
     w.h.ok(&["task", "unreserve", &second_id]);
@@ -6446,7 +6470,11 @@ fn task_queue_runs_possible_fifo_after_resolve_without_coordinator() {
     assert_eq!(unchanged["pane"], v["pane"]);
     assert_eq!(unchanged["status"], "open", "기동 확정 뒤 예약 취소는 thread를 끝내지 않는다");
     w.h.ok(&["task", "unreserve", &first_id]);
-    assert_eq!(w.h.ok(&["task", "queue"])["entries"][0]["state"], "cancelled");
+    let q = w.h.ok(&["task", "queue"]);
+    assert_eq!(
+        q["entries"].as_array().unwrap().iter().find(|r| r["task_id"] == first_id).unwrap()["state"],
+        "cancelled"
+    );
 }
 
 #[test]

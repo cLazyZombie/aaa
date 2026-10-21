@@ -97,6 +97,108 @@ while True:
     return JSON.parse(fs.readFileSync(receipts, "utf8"));
   };
 
+  await step("재로딩 중 예약된 자동화 조회: 끝나는 문서에서 후속 fetch를 시작하지 않는다(WebKit)", async () => {
+    const wk = await webkit.launch();
+    let release;
+    const gate = new Promise(resolve => { release = resolve; });
+    let reached;
+    const held = new Promise(resolve => { reached = resolve; });
+    let first = true;
+    try {
+      const client = await pairPage(wk, aaa("web", "pair").code, { width: 1280, height: 800 }, {
+        serviceWorkers: "block",
+        route: ["**/api/v1/call", async route => {
+          if (first && route.request().postDataJSON()?.op === "projects") {
+            first = false;
+            reached();
+            await gate;
+          }
+          await route.continue().catch(() => {}); // 이전 문서의 요청은 reload가 이미 취소했다.
+        }],
+      });
+      await held;
+      // events 연결과 첫 snapshot이 각각 요청한 조회를 하나로 합친 채 첫 HTTP 응답을 보류한다.
+      await inList(client.page, "pane-composer");
+      await client.page.reload();
+      release();
+      await openChat(client.page);
+      assert.deepEqual(client.errors, [], "문서 종료 뒤 예약된 조회의 페이지 오류");
+      const hiddenCalls = await client.page.evaluate(() => {
+        const fetch = window.fetch;
+        let calls = 0;
+        window.fetch = (...args) => { calls++; return fetch(...args); };
+        window.dispatchEvent(new PageTransitionEvent("pagehide", { persisted: true }));
+        window.dispatchEvent(new Event("aaa:automations-changed"));
+        window.fetch = fetch;
+        return calls;
+      });
+      assert.equal(hiddenCalls, 0, "끝난 문서에 온 갱신 사건은 조회를 시작하지 않는다");
+      const resumed = client.page.waitForRequest(r => r.url().endsWith("/api/v1/call") && r.postDataJSON()?.op === "projects");
+      await client.page.evaluate(() => window.dispatchEvent(new PageTransitionEvent("pageshow", { persisted: true })));
+      await resumed;
+      assert.deepEqual(client.errors, [], "pageshow 뒤 조회 재개");
+      await client.page.context().close();
+    } finally {
+      release();
+      await wk.close();
+    }
+  });
+
+
+  await step("종료 문서 API: WebKit pagehide 뒤 tasks·inbox 조회를 시작하지 않고 pageshow 뒤 다시 읽는다", async () => {
+    const wk = await webkit.launch();
+    try {
+      const client = await pairPage(wk, aaa("web", "pair").code, { width: 1280, height: 800 }, {
+        serviceWorkers: "block",
+        init: () => {
+          window.__apiEventSockets = [];
+          const WS = window.WebSocket;
+          window.WebSocket = class extends WS {
+            constructor(...args) {
+              super(...args);
+              if (String(args[0]).endsWith("/api/v1/events")) window.__apiEventSockets.push(this);
+            }
+          };
+        },
+      });
+      const p = client.page;
+      const receive = op => p.waitForResponse(r => r.url().endsWith("/api/v1/call") && r.request().postDataJSON()?.op === op).then(r => r.finished());
+      const notify = () => p.evaluate(() => {
+        const socket = window.__apiEventSockets.find(s => s.readyState === WebSocket.OPEN);
+        if (!socket) throw new Error("실제 앱 events 연결이 없다");
+        for (const event of [{ ev: "tasks", sha256: "0".repeat(64) }, { ev: "inbox" }]) {
+          socket.dispatchEvent(new MessageEvent("message", { data: JSON.stringify(event) }));
+        }
+      });
+      await p.waitForFunction(() => window.__apiEventSockets.some(s => s.readyState === WebSocket.OPEN));
+      // 먼저 실제 두 조회가 가능한 연결·구독인지 확인한다. listener 부재로 숨김 검사가 통과하면 안 된다.
+      await Promise.all([receive("tasks"), receive("inbox"), notify()]);
+      const hiddenCalls = await p.evaluate(() => {
+        const original = window.fetch;
+        const calls = [];
+        window.fetch = (input, options) => {
+          if (!options?.keepalive && new URL(String(input), location.href).pathname.startsWith("/api/")) {
+            calls.push(options?.body ?? String(input));
+          }
+          return original(input, options);
+        };
+        try {
+          window.dispatchEvent(new PageTransitionEvent("pagehide", { persisted: true }));
+          const socket = window.__apiEventSockets.find(s => s.readyState === WebSocket.OPEN);
+          for (const event of [{ ev: "tasks", sha256: "0".repeat(64) }, { ev: "inbox" }, { ev: "inbox" }]) {
+            socket.dispatchEvent(new MessageEvent("message", { data: JSON.stringify(event) }));
+          }
+          return calls;
+        } finally { window.fetch = original; }
+      });
+      assert.deepEqual(hiddenCalls, [], "끝나는 문서에서 일반 앱 API를 시작했다");
+      await p.evaluate(() => window.dispatchEvent(new PageTransitionEvent("pageshow", { persisted: true })));
+      await Promise.all([receive("tasks"), receive("inbox"), notify()]);
+      assert.deepEqual(client.errors, [], "문서 복귀 뒤 처리되지 않은 오류");
+      await p.context().close();
+    } finally { await wk.close(); }
+  });
+
   await step("WebCrypto 없는 연결도 짧은 글은 기존 수신 비교로 보낸다", async () => {
     const client = await pairPage(browser, aaa("web", "pair").code, { width: 1280, height: 800 });
     const p = client.page;
