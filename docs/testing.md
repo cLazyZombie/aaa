@@ -37,14 +37,18 @@
 ## Rust 전체 시험 병렬 실행(t-0591)
 
 Unix의 `bash scripts/ci-local.sh --only test`는 Cargo `--workspace --no-run`의 시험 실행 파일 전체를 준비한 뒤
-기본 네 프로세스로 실행한다. m13은 `--list`의 정확한 전체 이름을 rollout 단독과 나머지 세 묶음으로 나누고,
+기본 여섯 프로세스로 실행한다. m13은 `--list`의 정확한 전체 이름을 rollout 단독과 나머지 세 묶음으로 나누고,
 분할 전후 이름 집합·중복과 각 자식의 실제 실행 수를 대조한다. 작업 디렉터리는 각 package의 manifest 폴더다.
 모든 binary와 workspace doctest를 유지하고 실패 뒤에도 나머지 작업을 끝낸다. Windows는 기존 Cargo 실행을 유지한다.
-`AAA_RUST_TEST_WORKERS`로 프로세스 수를 정하고 `RUST_TEST_THREADS`가 없으면 CPU 수를 프로세스 수로 나눈다.
-`--logs` 아래 `rust/plan.json`·`summary.json`·작업별 로그에 실행 목록·시간·결과가 남는다.
+`AAA_RUST_TEST_WORKERS`로 프로세스 수를 정하고 `RUST_TEST_THREADS`가 없으면 CPU 수를 `min(프로세스 수, 4)`로 나눈다.
+작업은 `min(libtest thread 수, exact 선택 시험 수)`만큼 CPU 자리를 사용하며 전체 합계를 CPU 수 이내로 제한한다.
+16코어의 기본 m13 여섯 작업은 rollout 세 개 각1자리·나머지 세 묶음 각4자리로 함께 시작한다.
+명시한 thread 수는 유지한다. `--logs` 아래 `rust/plan.json`·`summary.json`·작업별 로그에 실행 목록·시간·결과와
+작업의 시작·대기 시간·CPU 자리 수가 남는다.
 
 `python3 -m unittest scripts.test_rust_tests -v`는 목록 완전성, 실제 두 자식의 동시 진입,
 실패 뒤 후속 실행, 선택한 시험이 0건으로 빠지는 오류, Cargo 산출물부터 doctest까지의 실패 전파를 확인한다.
+실제 자식 여섯이 CPU15자리 안에서 함께 만나는지, 실패 뒤에도 예산을 반환하고 다음 작업을 실행하는지도 본다.
 가짜 자식은 socket 사건으로 만나며 고정 sleep을 쓰지 않는다.
 
 `cargo test -p aaa --test m13 rollout:: --locked`의 macOS owner 세 개는 독립 사본 host·TLS agent를 사용한다.
