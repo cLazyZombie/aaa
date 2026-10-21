@@ -18,6 +18,9 @@ use sha2::Digest;
 
 use crate::{Host, err};
 
+#[cfg(test)]
+pub(crate) type StartAdmittedHook = Arc<dyn Fn(&str) + Send + Sync>;
+
 /// host가 저장하는 thread 기록(DB `threads.data` JSON). 필드를 더해도 이전 기록을 읽게 기본값을 둔다.
 fn old_launch_unknown() -> bool {
     true
@@ -1787,22 +1790,33 @@ impl Host {
                 return Err(err(ErrorCode::Conflict, "예약 내용이 선점 전에 바뀌었다"));
             }
         }
+        // Starting이 복구기에 보이기 전에 기동 task의 잠금을 확보한다.
+        // commit→claim 사이에 ticker가 새 행을 중단된 기동으로 처리할 수 없다.
+        let mut guard = None;
+        let mut claim_error = None;
         let inserted = self
             .db
-            .thread_insert_admitted(
+            .try_thread_insert_admitted(
                 &a.project,
                 origin.map(|o| o.key.as_str()),
                 origin.map(|o| &o.admission),
                 Some(self.settings(&a.project).max_parallel_threads),
                 a.reservation.as_ref().map(|(id, b)| (id.as_str(), b.as_str())),
                 |id| {
+                    guard = Some(self.claim_thread(&a.project, id).map_err(|error| {
+                        let message = error.message.clone();
+                        claim_error = Some(error);
+                        anyhow::anyhow!(message)
+                    })?);
                     let mut r = rec.clone();
                     r.id = id.to_string();
-                    serde_json::to_string(&r).unwrap()
+                    Ok(serde_json::to_string(&r).unwrap())
                 },
             )
             .map_err(|e| {
-                if e.to_string().starts_with("start_wait:") {
+                if let Some(error) = claim_error {
+                    error
+                } else if e.to_string().starts_with("start_wait:") {
                     err(ErrorCode::Unavailable, e.to_string())
                 } else {
                     internal(e)
@@ -1814,7 +1828,14 @@ impl Host {
             return self.thread_show(&a.project, &id);
         }
         rec.id = id.clone();
-        let guard = self.claim_thread(&a.project, &id)?;
+        #[cfg(test)]
+        {
+            let hook = self.start_admitted_hook.lock().unwrap().clone();
+            if let Some(hook) = hook {
+                hook(&id);
+            }
+        }
+        let guard = guard.ok_or_else(|| internal("새 기동의 작업 잠금이 없다"))?;
         self.db.audit(actor, "thread_start", &format!("{}/{id} {} @{}", a.project, a.profile, self.machine_name(&mid)));
         if let Err(e) = write_atomic(&dir.join("threads").join(format!("{id}.task.md")), a.task.as_bytes()) {
             self.update_rec(&a.project, &id, |r| {

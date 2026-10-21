@@ -4,6 +4,47 @@ use std::io::Write as _;
 use std::path::Path;
 use std::time::{SystemTime, UNIX_EPOCH};
 
+/// 실행 파일을 매번 다시 읽어 SHA-256을 계산한다. 큰 debug 이미지도 메모리에 통째로 올리지 않는다.
+/// ring의 기존 SHA-256 구현을 써서 debug generic digest의 반복 비용을 피한다(검사 생략·cache 없음).
+pub fn sha256_file(path: &Path) -> std::io::Result<String> {
+    use std::io::Read;
+    let mut file = std::fs::File::open(path)?;
+    let mut digest = ring::digest::Context::new(&ring::digest::SHA256);
+    let mut buffer = [0; 64 * 1024];
+    loop {
+        let size = match file.read(&mut buffer) {
+            Ok(size) => size,
+            Err(error) if error.kind() == std::io::ErrorKind::Interrupted => continue,
+            Err(error) => return Err(error),
+        };
+        if size == 0 {
+            break;
+        }
+        digest.update(&buffer[..size]);
+    }
+    Ok(hex::encode(digest.finish()))
+}
+
+#[cfg(test)]
+#[test]
+fn sha256_file_matches_vectors_chunks_and_fresh_bytes() {
+    use sha2::{Digest, Sha256};
+    let root = std::env::temp_dir().join(format!("aaa-file-digest-{}", new_id()));
+    std::fs::create_dir(&root).unwrap();
+    let path = root.join("candidate");
+    assert_eq!(sha256_file(&path).unwrap_err().kind(), std::io::ErrorKind::NotFound);
+    for size in [0, 3, 65535, 65536, 65537, 131079] {
+        let bytes: Vec<_> = (0..size).map(|i| (i % 251) as u8).collect();
+        std::fs::write(&path, &bytes).unwrap();
+        assert_eq!(sha256_file(&path).unwrap(), hex::encode(Sha256::digest(&bytes)), "{size} bytes");
+    }
+    std::fs::write(&path, b"abc").unwrap();
+    assert_eq!(sha256_file(&path).unwrap(), "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad");
+    std::fs::write(&path, b"abd").unwrap();
+    assert_eq!(sha256_file(&path).unwrap(), hex::encode(Sha256::digest(b"abd")));
+    std::fs::remove_dir_all(root).unwrap();
+}
+
 /// harness 세션 ID(Claude hook `session_id`·Codex notify `thread-id`)는 UUID 꼴(8-4-4-4-12 16진수)만 받는다. 값은 pane
 /// 프로그램이 hook으로 알리므로 믿지 않는다: `--resume` 인자, 재부팅 뒤 셸에 치는 줄, 기록 파일 이름이 된다(보안 감사
 /// t-0340: `--dangerously-skip-permissions` 같은 인자나 `; 명령`이 들어갈 수 있었다). Claude·Codex 모두 UUID를 쓴다.

@@ -417,6 +417,12 @@ impl Host {
         &self,
         rec: &crate::orch::ThreadRec,
     ) -> Result<crate::orch::ThreadRec, ErrorBody> {
+        // 목록을 읽은 뒤 실제 기동이 완료하고 잠금을 반환했을 수 있다.
+        // 호출자가 얻은 claim 아래의 최신 상태로만 중단 여부를 판정한다.
+        let rec = self.load(&rec.project, &rec.id)?;
+        if rec.status != ThreadStatus::Starting {
+            return Ok(rec);
+        }
         if self.restoring.lock().unwrap().contains(&rec.machine_id) {
             return Ok(rec.clone());
         }
