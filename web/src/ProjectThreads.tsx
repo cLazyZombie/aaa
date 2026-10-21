@@ -1,3 +1,5 @@
+import { ThreadLimitBadge } from "./ThreadLimitBadge";
+import { ThreadStageBadge } from "./ThreadStageBadge";
 // 모든 thread(끝난 것까지, `#threads`). herdr-projects `popup.rs` `build`(Section::Threads)·`thread_line`·`group_color`(1f05c00)를 웹으로
 // 옮겼다: 사이드바는 열린 thread만 보이고(sidebar.rs `recorded_groups`), 이 화면은 묶음마다 머리 「묶음 (n)」 아래 줄을 보이며 끝난 thread는
 // 맨 아래 「끝남」 묶음에 흐리게 둔다. 「/」 거르기는 popup처럼 이름(id·제목)에 든 글로 고른다. 줄을 고르면 보고(popup detail).
@@ -158,7 +160,7 @@ function ProjectBody({
                 <button type="button" className={`project-threads-row is-${t.group}`} data-testid={`project-thread-${t.id}`} onClick={() => onThread(t)}>
                   <span className="project-threads-copy">
                     <span className="project-threads-name">
-                      {t.id} · {t.title}
+                      <ThreadStageBadge stage={t.stage} /><ThreadLimitBadge start={t.over_limit} />{t.id} · {t.title}
                     </span>
                     <span className="project-threads-facts">{threadFacts(t, now)}</span>
                   </span>

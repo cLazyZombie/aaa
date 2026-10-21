@@ -17,7 +17,7 @@
 #   test       전체 Cargo 시험을 준비한 뒤 binary·m13 분할을 병렬 실행하고 doctest도 모두 실행한다
 #   e2e        웹 E2E(web/e2e/web.e2e.mjs, Playwright Chromium·WebKit, 한글 IME 기록 재생 포함). Unix만.
 #              playwright는 전역 npm 모듈로 찾는다(NODE_PATH=$(npm root -g)).
-#              spec 파일은 worker 여러 개가 함께 돈다(core 8개마다 셋, 많아야 6). AAA_E2E_WORKERS=1이면 차례로.
+#              spec 파일은 worker 여러 개가 함께 돈다(16 CPU 이상은 10개, 그 밖은 core 둘마다 하나). AAA_E2E_WORKERS=1이면 차례로.
 #              병렬 단계 전에 이번 build의 실행 파일을 별도 사본으로 고정한다(test의 Cargo 링크 갱신과 겹치지 않는다).
 #              아니면 스스로 빌드하고(바뀐 것이 없으면 그대로), web 없이 돌면 web/dist가 웹 소스보다 새것인지 본다.
 #   public     scripts/check-public.sh(공개 저장소 검사). AAA_PUBLIC_BASE가 있으면 그 ref 이후 커밋의 메시지·author를 본다

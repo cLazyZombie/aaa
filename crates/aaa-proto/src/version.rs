@@ -25,6 +25,7 @@ impl std::fmt::Display for Version {
 /// `AgentRequest::WorkAttachWrite`(agent 기능 `work_attach.v1`이 있을 때만 보낸다, §8.327).
 /// `Post`·`PostRejected`·`PostAck`는 post.v1을 양쪽이 알렸을 때만 쓴다(§8.199).
 /// 1.8 host의 N-1은 1.7이다. 1.6 이하 agent는 먼저 1.7 이상으로 갱신해야 한다.
+// git_merged.v1: origin/main 조상 판정은 이 기능을 알린 agent에만 보낸다.
 // git.v1: repo 머신 agent의 head/변화 조회를 이 기능을 알린 상대에만 보낸다.
 // ci.v1: 조건부 GitHub CI 조회는 이 기능을 알린 agent에만 보낸다(1.5부터).
 // 1.5: 특수 임무. mission.v1을 알린 상대에만 임무 세션을 만든다.
@@ -203,10 +204,24 @@ pub const AGENT_LINK: Version = Version { major: 1, minor: 11 };
 // 1.93: SSH 머신 추가 M2(plan §8.384): `machine_setup_start`·`machine_setup_trust`·`machine_setup_choose`·`machine_setup_cancel`
 // (조작 기기·세션 밖 사람)·`machine_setup_list`(Reader도) → `MachineSetup`·`MachineSetups`, 진행은 웹 `enroll` 사건. 옛 host는 모르는
 // 요청으로 거절해 웹이 「SSH로 추가」를 그리지 않는다. Agent link 변경 없음.
-// 1.94: SSH 머신 추가 M3(plan §8.385): `machine_setup_plan{job, settings}`(aaa 전송·확인과 원격 install 계획)·`machine_setup_apply{job,
+// 1.94: 보고 기반 병합 대기·병합 중 표지(ThreadView·TaskThread·TaskReservation.stage, plan §8.385). Agent link 변화 없음.
+/// 1.95: 보고서 판마다 영속 r-ID·판 목록·보존 용량을 더한다. 기존 이름·thread 참조는 최신 판이다.
+/// 1.96: 질문 안 보고 판 보기와 기본 검수 카드·답한 기록의 r 참조를 더한다.
+// 1.97: task_edit.user_request(선택): 사용자 지시 근거를 남긴 모델·머신 변경과 미기동 예약 유지, plan §8.389.
+// 1.98: 명시한 한도 초과 시작(thread_start.over_limit·user_request, ThreadView.over_limit).
+// 1.99: 질문 문법 누락·글자 불일치 경고(ThreadQuestions.format_warning)·선택지 뒤 설명(ThreadQuestion.after). host는 해당 카드 답을 거부한다.
+/// 1.100: 배포 감시의 웹 응답(관리 GUI W6c, plan §8.402): 실행 신원 `RuntimeIdentity.web`(host가 연 웹 주소)과 감시 기록
+/// `DeployGuardView.pending_web` 선택 칸. 새 host 감시는 실행 신원이 맞아도 그 웹의 `/api/v1/me`가 답해야 새 판 준비다.
+/// 재시작만 하는 rollout `RolloutSpec.restart`·`RolloutCard.restart`(웹은 1.100 미만 host에 재시작을 그리지 않는다).
+/// Agent link는 1.11 그대로다: host가 같은 머신 agent의 Welcome 신원에만 싣고, 옛 agent·옛 감시는 모르는 칸을 버린다.
+/// 1.101: 조작 기기 passkey(관리 GUI W7): 공개 주소로 연 조작 기기의 승인 필요 동작은 `passkey_required`로 거부하고
+/// `/api/v1/passkey/approve`(사용자 확인 UV)로만 한다. `/api/v1/me`의 `passkey`, `DeviceView.passkey`, 등록 `/api/v1/passkey/register`
+/// (짝지은 뒤 10분 안). loopback 화면과 CLI는 그대로다. 옛 웹은 오류 글을 보인다. Agent link 변경 없음.
+/// 1.102: host 공통 계정 풀·프로젝트 참여·자동 배정과 내구 대기. Agent link는 그대로다.
+// 1.103: SSH 머신 추가 M3(plan §8.420): `machine_setup_plan{job, settings}`(aaa 전송·확인과 원격 install 계획)·`machine_setup_apply{job,
 // plan_sha256}`(host 서명 승인 → 원격 적용·grant 등록), `MachineSetupView`의 `settings`·`review`·`install`과 새 단계. 옛 host는 모르는
 // 요청으로 거절해 웹이 설치 설정을 그리지 않는다. Agent link 변경 없음.
-pub const FRONT_API: Version = Version { major: 1, minor: 94 };
+pub const FRONT_API: Version = Version { major: 1, minor: 103 };
 /// agent ↔ session host(내부). 세션이 몇 주 이어질 수 있으므로 이전 session host와 호환해야 한다.
 /// 1.1: `SessionRequest::Detect`(harness 상태 감지 입력). agent는 1.0 session host에 보내지 않고 `Screen`을 쓴다.
 /// 1.2: `SessionRequest::Colors`(색 질의에 답할 화면 색, plan §8.187). agent는 1.1 이하 session host에 보내지 않는다.

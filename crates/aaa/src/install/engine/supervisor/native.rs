@@ -577,7 +577,8 @@ impl Manager for Scm {
             pid: value.dwProcessId,
         }))
     }
-    fn create(&mut self, spec: &Spec, password: &Password) -> Result<()> {
+    fn create(&mut self, spec: &Spec, password: Option<&Password>) -> Result<()> {
+        let password = password.ok_or_else(|| failure("service_account_auth_unavailable", 3))?;
         spec.validate()?;
         let name = account_name(&spec.account)?;
         let manager = manager(SC_MANAGER_CREATE_SERVICE)?;

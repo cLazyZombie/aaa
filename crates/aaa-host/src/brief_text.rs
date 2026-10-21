@@ -47,12 +47,20 @@ pub(crate) const THREAD_GUIDE: &str = "\
 - 아래 지침과 memory는 네가 하는 모든 일에 적용된다.
 - memory를 고치지 않는다. 남길 만한 교훈은 보고의 `## Remember`에 적는다. 무엇을 남길지는 coordinator가 정한다.
 
+## 앱 안 참조
+
+채팅·보고에서 thread·할 일·보고서는 `t-NNNN`·`d-NNNN`·`r-NNNN`처럼 ID만 쓴다.
+웹은 실제로 있는 ID를 앱 안 링크로 그리며, 터미널에는 짧은 ID만 남는다. 코드 블록·주소 안은 자동 링크하지 않는다.
+사용자가 답해야 하는 질문만 `[q-NNNN 질문](<웹 주소>/#question=q-NNNN)` 링크를 건다.
+웹 주소는 `aaa context`, 질문 번호는 `aaa question list`로 확인한다. 웹 주소를 공개하지 않았으면 q-NNNN만 쓴다.
+
 ## 시작할 때 묻기
 
 할 일을 읽고 코드·기획을 짧게 훑은 뒤, 결과를 바꿀 만큼 모호한 것이 있으면 구현 전에 한 번 모아 묻는다. 보고 첫 줄을 `[결정 필요] 질문 N개: <한 줄 요약>`으로 쓰고, `## Questions` 절에 아래 꼴로 적은 뒤 멈춘다. 사용자는 웹 「답할 것」 카드로 고르고, 답은 「보고의 질문에 대한 사용자 답(1A 2B)」 메시지로 온다.
 
 - 질문마다 `### N. 질문` 머리를 쓰고, 그 아래에 판단에 필요한 것을 Markdown으로 다 싣는다: 지금 모양·시안 그림, 표, 짧은 code, 근거 링크. 카드 본문이 웹페이지처럼 보이므로 시안·근거를 따로 보고서에 모아 두고 가리키지 않는다(보고서는 남겨도 되지만 질문에 필요한 것은 질문에 다 있어야 한다).
 - 그림·파일은 library 폴더에 두고 `library/…` 상대 경로로 쓴다(그 밖의 경로·인터넷 주소의 그림은 카드에 뜨지 않는다). library 파일을 먼저 두고 보고를 마지막에 쓴다.
+- 선택지 글자에는 굵게·기울임을 쓰지 않는다. `- **A(추천)** 진행` 대신 `- A 진행 (추천)`으로 쓴다. 질문은 `### 1. 질문` 꼴로 쓴다.
 - 선택지는 질문 끝에 줄 머리에서 `- A 선택지 (추천) — 까닭` 꼴로 2~4개 쓴다. 추천은 맨 앞에 `(추천)`을 붙이고 ` — ` 뒤에 까닭 한 줄을 쓴다. 선택지마다 시안 그림을 붙이려면 그 줄 아래 두 칸 들여 `![A안](library/a.png)`을 쓴다(카드가 선택지마다 큰 그림으로 보인다).
 
 ```
@@ -93,7 +101,8 @@ audio.volume·createMediaElementSource에 기대지 않는다(iOS·opaque origin
 
 보고 형식:
 
-- 첫 줄에 `[완료]`(맡긴 일 전체와 확인이 끝남), `[결정 필요]`·`[검수 대기]`·`[확인 필요]`(사람이 직접 해야 하는 단계), `[착지]`·`[진행 중]`(후속 작업 중) 중 하나와 요약을 쓴다.
+- 첫 줄에 `[완료]`(맡긴 일 전체와 확인이 끝남), `[결정 필요]`·`[검수 대기]`·`[확인 필요]`(사람이 직접 해야 하는 단계), `[병합 준비됨]`(전체 구현·확인 완료, 착지 창만 기다림), `[착지]`(통합·검증·병합과 그 실패 수리 중), `[진행 중]`(후속 작업 중) 중 하나와 요약을 쓴다.
+- 표지는 첫 줄에 하나만 쓴다. 병합 대기는 실행 한도에서 빠지고 착지는 한 번에 하나만 빠진다. 착지를 그만두거나 다음 단계 작업을 시작하면 `[진행 중]`으로 돌린다.
 - pull request를 열었으면 표지 다음 줄에 `PR: <url>`(선택). 주소는 `https://github.com/<owner>/<repo>/pull/<number>` 전체를 쓴다.
 - `## Report` 절: 무엇을 했고, 무엇을 알아냈고, 무엇이 남았고, 사용자가 정해야 할 것은 무엇인가.
 - `## Next` 절(필수): 한 줄에 권하는 행동 하나, 명령형, 100자 이하(`PR을 병합한다`, `실패한 lint 검사를 고친다`, `X를 원하는지 확인한다`, `worktree와 branch를 지운다`). 사용자가 키를 눌러 그 줄을 너에게 돌려보내면 네가 네 도구로 직접 한다. 일이 착지한 뒤 하자고 할 정리도 넣는다. 목록이 비면 할 일이 없다는 뜻이다.
@@ -257,6 +266,9 @@ mod tests {
         assert!(
             brief.contains("`[결정 필요] 질문 N개: <한 줄 요약>`") && brief.contains("어느 harness든 보고로 묻는다")
         );
+        assert!(brief.contains("thread·할 일·보고서는 `t-NNNN`·`d-NNNN`·`r-NNNN`처럼 ID만"));
+        assert!(brief.contains("[q-NNNN 질문](<웹 주소>/#question=q-NNNN)"));
+        assert!(brief.contains("`- **A(추천)** 진행` 대신 `- A 진행 (추천)`"));
         // 안내의 꼴 그대로 쓴 보고를 host가 카드로 읽는다(plan §8.329)
         let fence = brief.split("```\n").nth(1).unwrap();
         let qs = aaa_proto::report_questions(fence);
@@ -265,7 +277,7 @@ mod tests {
         let body = qs[0].body.as_deref().unwrap_or_default();
         assert!(body.contains("![지금](library/now.png)") && body.contains("| A |"), "{fence}");
         assert_eq!(qs[0].choices[1].body.as_deref(), Some("![B안](library/b.png)"));
-        // 표지는 알림 의도에만 쓴다. thread 상태는 계속 harness·진행률로 정한다.
+        // 표지는 알림 의도와 실행 자리 단계에 쓴다. thread 상태는 계속 harness·진행률로 정한다.
         assert!(brief.contains("[진행 중]") && brief.contains("[완료]") && brief.contains("사람이 직접"));
         // 운영 설정은 thread에 가지 않는다
         for word in ["max_parallel_threads", "auto_resolve_days", "start_threads", "trust_screens", "thread_profile"] {

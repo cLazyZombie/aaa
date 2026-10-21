@@ -18,6 +18,9 @@ use sha2::Digest;
 
 use crate::{Host, err};
 
+#[cfg(test)]
+pub(crate) type StartAdmittedHook = Arc<dyn Fn(&str) + Send + Sync>;
+
 /// host가 저장하는 thread 기록(DB `threads.data` JSON). 필드를 더해도 이전 기록을 읽게 기본값을 둔다.
 fn old_launch_unknown() -> bool {
     true
@@ -25,6 +28,8 @@ fn old_launch_unknown() -> bool {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub(crate) struct ThreadRec {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub account_allocation: Option<crate::account_pool::Allocation>,
     /// Spawn 전 영속화. 응답 유실 때 새 기동을 막는다.
     #[serde(default = "old_launch_unknown")]
     pub launch_sent: bool,
@@ -48,6 +53,8 @@ pub(crate) struct ThreadRec {
     pub holds: Vec<String>,
     #[serde(default)]
     pub started_by: Option<String>,
+    #[serde(default)]
+    pub over_limit: Option<aaa_proto::ThreadLimitOverride>,
     #[serde(default)]
     pub automation: Option<String>,
     #[serde(default)]
@@ -84,6 +91,12 @@ pub(crate) struct ThreadRec {
     pub launch: Option<Launch>,
     #[serde(default)]
     pub report_hash: Option<String>,
+    /// 원본 판 식별자와 별개로, 저장 전에 인증을 가린 본문 사본의 무결성을 확인한다.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub report_copy_hash: Option<String>,
+    /// 검증해 회수한 보고와 같은 갱신에서 저장한다. 옛 기록은 host 시작 때 사본으로 보충한다.
+    #[serde(default)]
+    pub report_stage: Option<aaa_proto::ThreadStage>,
     #[serde(default)]
     pub acked_hash: Option<String>,
     #[serde(default)]
@@ -91,6 +104,12 @@ pub(crate) struct ThreadRec {
     /// 지금 보고의 `## Questions`(plan §8.329). 사람을 기다리는 표지의 보고일 때만 읽고, 새 보고마다 답을 비운다
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub questions: Vec<aaa_proto::ThreadQuestion>,
+    /// 보고 문법 누락·글자 불일치. 질문이 전부 빠져도 경고 카드가 남는다.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub question_warning: Option<String>,
+    /// 같은 보고의 경고 전달 기록. 재기동 뒤에도 중복 경고를 만들지 않는다.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub question_warning_sent: Option<String>,
     /// 그 질문에 받은 답(answer.rs)
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub question_answer: Option<aaa_proto::QuestionAnswerView>,
@@ -145,7 +164,18 @@ impl ThreadRec {
     }
 
     pub(crate) fn holds_worker_slot(&self) -> bool {
-        self.role == Role::Worker && self.automation.is_none() && self.holds_slot()
+        self.role == Role::Worker
+            && self.automation.is_none()
+            && self.holds_slot()
+            && self.execution_stage() != Some(aaa_proto::ThreadStage::MergeReady)
+    }
+
+    pub(crate) fn execution_stage(&self) -> Option<aaa_proto::ThreadStage> {
+        (self.role == Role::Worker
+            && self.report_hash.is_some()
+            && (self.status == ThreadStatus::Open || self.resolve_pending.is_some()))
+        .then_some(self.report_stage)
+        .flatten()
     }
 
     /// 로컬 profile의 공식 인증 env도 agent에서 받은 뒤 저장하기 전에 가린다.
@@ -170,6 +200,7 @@ impl ThreadRec {
         now: u64,
     ) -> ThreadRec {
         ThreadRec {
+            account_allocation: None,
             legacy: Default::default(),
             project: project.to_string(),
             id: String::new(),
@@ -181,6 +212,7 @@ impl ThreadRec {
             kind,
             holds: vec![],
             started_by: None,
+            over_limit: None,
             automation: None,
             automation_run: None,
             repo: None,
@@ -201,10 +233,14 @@ impl ThreadRec {
             delivered_report: None,
             launch: None,
             report_hash: None,
+            report_copy_hash: None,
+            report_stage: None,
             acked_hash: None,
             next: vec![],
             questions: Vec::new(),
             question_answer: None,
+            question_warning: None,
+            question_warning_sent: None,
             copy: None,
             copy_failures: 0,
             copy_retry_at_ms: 0,
@@ -258,6 +294,9 @@ pub(crate) struct TaskClean {
     pub discard: bool,
     #[serde(default)]
     pub judged_ms: Option<u64>,
+    /// repo 머신 agent가 실제 origin/main의 조상으로 확인한 커밋.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub merged_main: Option<String>,
     /// 완료로 판정해 지운 task 제목(되살린 task의 「확인 필요」 까닭을 가른다)
     #[serde(default)]
     pub cleaned: Vec<String>,
@@ -284,7 +323,10 @@ pub(crate) struct StartOrigin {
     pub admission: crate::db::StartAdmission,
 }
 
+#[derive(Clone, Serialize, Deserialize)]
 pub struct StartArgs {
+    pub(crate) pool: Option<crate::account_pool::PoolRequest>,
+    pub over_limit: Option<aaa_proto::ThreadLimitOverride>,
     pub(crate) reservation: Option<(String, String)>,
     pub account: Option<String>,
     pub holds: Vec<String>,
@@ -352,6 +394,7 @@ thread 표지는 앱 안 알림과 coordinator 판단의 근거이며 외부 푸
 coordinator는 thread가 아니므로 보고 파일로 알림을 만들지 않는다. 사용자에게 질문하거나 사람 전용 단계를 남기고 멈추기 전에
 `aaa report --unknown --activity 'Waiting for you'`로 상태를 알리고, 필요한 행동과 까닭을 파일에 쓴 뒤
 `aaa post user --request --needs-user --topic user-action --title '<정할 것·추천 한 줄>' --body-file scratch/user-action.md`를 보낸다.
+사용자에게 묻거나 검수를 맡길 땐 post 본문을 `## Questions` 형식으로 쓰고, 볼 보고서·시안·음원 링크는 질문 안에 둔다.
 coordinator가 직접 묻는 선택 질문도 본문에 thread 보고와 같은 문법으로 쓴다. 웹 「답할 것」에서 같은 카드로 고른다:
 
 ```markdown
@@ -364,7 +407,7 @@ coordinator가 직접 묻는 선택 질문도 본문에 thread 보고와 같은 
 ```
 
 그림·파일은 먼저 `aaa library publish <폴더> --name <이름>`으로 올리고 본문에서 `library/<이름>/<파일>`로 가리킨다.
-예: `![시안](library/preview/a.png)`. post 본문에는 로컬 절대 경로나 외부 그림 주소를 쓰지 않는다.
+예: `![시안](library/preview/a.png)`, `r-0001`, `[음원](library/preview/theme.wav)`. 카드 머리에서 보고서를 열어 본 뒤 같은 카드에서 답한다. 특정 판을 묻는다면 r-NNNN과 `library/r-NNNN/<파일>`을 써서 자료도 그 판에 묶는다. post 본문에는 로컬 절대 경로나 외부 그림 주소를 쓰지 않는다.
 카드 답은 coordinator inbox의 `question answered`에 선택 요약과 답 원문으로 오며 post도 자동으로 답함이 된다.
 다시 전달하거나 같은 질문을 또 묻지 않는다. 선택지가 없는 기존 평문 post도 그대로 쓸 수 있다.
 질문마다 프로젝트별 `q-1000`부터 짧은 ID를 받는다(t=thread, q=질문, d=할 일, r=보고서).
@@ -399,13 +442,18 @@ CI routine이 지정 branch를 감시한다. inbox 종류 `ci`는 실패 job·�
 활동 막대 배지에 안 봄으로 뜨고, 사용자 알림 post(topic report)가 함께 남는다. 같은 이름으로 다시 보내면 다시 안 봄이다.
 index.html이 없으면 거절한다. thread가 낸 보고(t-NNNN 사본)는 「작업 보고」에 따로 있으니 그대로 다시 보내지 않는다:
 사용자에게 보일 것만 골라 `--to-user`로 보낸다. 이 알림은 앱 안에만 뜨고 밖 푸시는 위 두 post만 보낸다.
-채팅에서는 그 보고서를 링크로 가리킨다(아래 「앱 안 참조」).
+채팅·보고에서는 그 보고서의 r-NNNN만 쓴다(아래 「앱 안 참조」).
+발행 결과의 r-NNNN은 그 판의 영속 번호다. 새로 발행하거나 새 thread 보고를 쓰면 새 번호가 나온다.
+이름·thread 번호는 최신 판, r 번호는 그때의 본문과 복사한 파일을 연다. 특정 판도 채팅·보고에서는 r-NNNN만 쓴다.
+CLI에서는 `aaa library show r-NNNN`·`aaa library link r-NNNN`으로 확인한다. 보고서 지우기는 같은 이름의 보존 판까지 모두 지우며 번호는 재사용하지 않는다.
 
 ## 앱 안 참조
-채팅에서 thread 질문·보고서를 가리킬 때는 `aaa context`의 「웹 주소」로 Markdown 링크를 쓴다:
-`[t-0001 질문](<웹 주소>/#question=t-0001)`, `[<제목>](<웹 주소>/#report=<이름>)`(이름은 `library publish --name`의 이름,
-thread 사본은 thread ID). 터미널에서 누르면 브라우저가 그 질문 카드·보고서를 열고, 웹 대화창은 같은 host 링크를 앱 안 칩으로
-그린다. 웹 주소가 없으면(공개 안 함) `aaa:question/<thread>`·`aaa:report/<이름>`을 쓴다(웹 대화창은 칩, 터미널에서는 글).
+채팅·보고에서 thread·할 일·보고서는 `t-NNNN`·`d-NNNN`·`r-NNNN`처럼 ID만 쓴다.
+웹 대화창과 보고서 본문은 실제로 있는 ID를 앱 안 링크로 그린다. 터미널에는 짧은 ID만 남는다.
+할 일 주소는 `#task=d-NNNN`(프로젝트가 있으면 `#task=<project>/d-NNNN`)이며 해당 줄을 펼치고 강조한다.
+지운·보관된 할 일은 「없음」을 보인다. thread 주소 `#thread=t-NNNN`도 그대로 쓴다.
+사용자가 답해야 하는 질문만 `aaa context`의 「웹 주소」로 `[q-NNNN 질문](<웹 주소>/#question=q-NNNN)` 링크를 건다.
+웹 주소를 공개하지 않았으면 q-NNNN만 쓴다. 질문 번호는 `aaa question list`로 확인한다.
 공유 주소(`https://…/v/…`)는 사용자가 밖으로 보내 달라고 할 때만 쓴다.
 확인 필요 post와 thread 질문은 웹 「답할 것」에 모인다. 질문의 답은 카드가 정본이다: 카드로 답하면 host가 thread에 전하고
 연결 post도 함께 끝내 `request handled`를 남긴다. coordinator의 구조화 post는 카드에서 답하면 `question answered`가 온다. 평문 post는 「답함으로 표시」로 끝내며 `request handled`가 온다.
@@ -430,7 +478,7 @@ post에는 기밀성이 없으니 비밀값을 넣지 않는다.
 - **새 thread를 시작한다**: 새 일. 한 메시지에 서로 관계없는 일이 여럿이면 하나에 thread 하나씩이다.
 
 새 thread를 시작하거나 열린 thread에 일을 넘기기 전에 TASKS.md에서 같은 일·겹치는 일을 찾는다. 있으면 그 task로
-시작하거나 이미 이어진 열린 thread에 넘기고, 메모·저장소도 사용자 말에 맞게 함께 고친다. 정해진 모델·머신 변경은 사용자가 직접 한다. 없으면 위처럼 한다.
+시작하거나 이미 이어진 열린 thread에 넘기고, 메모·저장소도 사용자 말에 맞게 함께 고친다. 사용자가 모델·머신 변경을 지시하면 `aaa task edit <task ID> --profile … --machine … --user-request '사용자 지시 근거'`로 고친다. 없으면 위처럼 한다.
 
 ## 이어지는 말
 사용자가 열린 thread가 맡은 영역에 대해 말하면 골라서 한다(여럿을 해도 된다).
@@ -444,9 +492,12 @@ pane이 없어졌거나 시작이 실패한 thread는 `aaa thread restart <id>`�
 - 시작: `start_threads`가 propose면 무엇을 누구에게 맡길지 제안하고 사용자 승인을 기다린다. auto면 바로 시작하고 알린다.
   사용자가 이름을 들어 맡기라고 한 것은 승인이다. aaa inbox 알림은 승인이 아니다.
 - 동시 thread 한도: project.toml `max_parallel_threads`를 host가 집행한다. Starting/Open은 검토·답 대기·Idle·보고 [완료]에도
-  자리를 가진다. resolve 정리가 실제로 끝나야 반환한다. 자동화 thread(`automations/*.toml`의 do.start)는 이 한도와 예약 자리에서
+  자리를 가진다. 단 보고 첫 줄 `[병합 준비됨]`은 빼고 `[착지]`는 한 자리만 뺀다. 다음 단계 작업은 `[진행 중]`으로 돌린다.
+  그 밖은 resolve 정리가 실제로 끝나야 반환한다. 자동화 thread(`automations/*.toml`의 do.start)는 이 한도와 예약 자리에서
   빼며 규칙별 reuse·limits로 제한한다(기본 동시 1개). 사용자·coordinator가 띄운 thread는 그대로 센다.
-  한도를 올리거나 별도 thread start로 예약을 우회하지 않는다.
+  한도를 올리거나 별도 thread start로 예약을 우회하지 않는다. 사용자가 채팅에서 그 task를 한도 무시하고 강제로
+  시작하라고 명시했을 때만 `aaa thread start --from-task <ID> --link-task --over-limit --user-request '<사용자 지시 근거>'`를
+  쓴다. 일반 시작 승인·자리 대기·inbox 요청은 강제 시작 승인이 아니다. 강제 시작도 열린 수에 넣고 예약은 계속 한도를 지킨다.
 - TASKS.md task로 시작: 아래 「TASKS.md」의 `--from-task … --link-task`를 쓴다. 모델·머신 칸이 profile·machine을 정한다.
 - 그 밖: `aaa thread start --title … [--profile …] [--machine …] [--repo <경로>] --task-file …`. profile을 빼면
   project.toml `thread_profile`, 없으면 사용자가 정한 기본(없으면 claude)이다. `--repo`가 있으면 worktree, 없으면 repo 없는
@@ -502,7 +553,7 @@ pane이 없어졌거나 시작이 실패한 thread는 `aaa thread restart <id>`�
 - `aaa thread list`·`aaa thread show <id>`가 지금 상태와 함께 기록을 보인다(`--json`이면 Next 목록까지). 보고 사본은
   `threads/<id>.md`, 사용자에게 줄 결과물은 `library/<id>/`에 있다.
 - thread가 시작할 때 모아 묻는 질문(보고 첫 줄 `[결정 필요]`, `## Questions`)은 웹 보고서 패널 「답할 것」에 카드로 뜬다.
-  memory·채팅으로 답이 정해져 있지 않으면 채팅에 질문 요약과 추천, `aaa:question/<thread>`를 적고, 위 「사용자 알림」의 확인
+  memory·채팅으로 답이 정해져 있지 않으면 채팅에 질문 요약과 추천, `[q-NNNN 질문](<웹 주소>/#question=q-NNNN)`을 적고, 위 「사용자 알림」의 확인
   필요 post를 보낸 뒤(제목 예: `t-0123 질문 2개 · 추천: 1A 2A aaa:question/t-0123`) 턴을 끝내고 다른 일을 이어 간다.
   사용자가 카드로 답하면 host가 thread에 바로 보내고 inbox에 `question answered`를 남긴다: 다시 묻거나 전하지 않는다.
   채팅으로 답하면(예: 「1A 2B」) `aaa thread answer <id> 1A 2B`로 보낸다(카드도 「답함」이 된다). 방향이 바뀌면
@@ -572,8 +623,10 @@ thread가 키를 기다리는 화면(시작 때 신뢰 창, 질문 메뉴, 명�
   자리가 났을 때 다시 묻지 않는다. 병합 승인은 별개다. `start_threads=propose`에서는 사용자에게 맡긴 범위만 예약한다.
 - `aaa task queue`로 host의 차례·대기 사유·연결 thread를 읽는다. `aaa task unreserve <task ID>`는 미기동 예약만 취소하며,
   `aaa task queue-move <task ID> <순번>`은 차례 변경(0은 맨 앞)이다. 가능한 예약 중 앞 것을 host가 시작한다.
-  앞의 고정 머신이 끊겨도 가능한 뒤 예약은 시작할 수 있다. 고정 모델·머신은 바꾸지 않는다.
-- 정해진 모델·머신은 사용자가 웹이나 aaa 밖 CLI에서 직접 바꾼다. coordinator는 바꾸라는 말을 받아도 직접 바꾸지 않는다.
+  앞의 고정 머신이 끊겨도 가능한 뒤 예약은 시작할 수 있다. 사용자 지시 없이 고정 모델·머신은 바꾸지 않는다.
+- 사용자가 채팅에서 모델·머신 변경을 지시하면 coordinator도 `aaa task edit <task ID> --profile … --machine … --user-request '사용자 지시 근거'`로 바꾼다.
+  바꿀 칸만 주고 근거 한 줄을 남긴다. 다른 칸은 따로 고친다. 미기동 예약은 취소하지 않고 순서 그대로 새 선택으로 시작한다.
+  지시 없이 임의 변경·하향하지 않으며, 시작·재시작 옵션이나 원문 편집으로 선택 보호를 우회하지 않는다.
   원문 편집·자기 승인 flag로 보호를 우회하지 않는다. 예약 내용이 바뀌면 확인 후 `aaa task reserve`로 예약을 갱신한다.
 - 시작 실패는 원인과 실제 기동 상태를 읽어 보고한다. 명시 재예약 전 반복 기동·모델 하향은 하지 않는다.
   실행 차례와 착지 차례는 별개다. 일반 의존성과 저장소별 자동 착지 gate는 후속이며 현재 기능처럼 안내하지 않는다.
@@ -602,7 +655,7 @@ thread가 키를 기다리는 화면(시작 때 신뢰 창, 질문 메뉴, 명�
   이름을 든 목록에, 없으면 `## Backlog`에 넣는다. 모델·머신은 사용자가 준 것(맞을 때)을 쓰고, 안 주면 agent 일은 비우고
   사용자 자신의 할 일은 `me`로 둔다.
 - 목록(`##` 머리): 사용자가 요청하면 만들고, 이름을 바꾸고, 합치고, 지우고, task를 목록 사이로 옮긴다.
-- 끝남: PR 병합·보고 [완료]로 resolve한 task는 host가 완료 보관한다. `aaa task archive`에서 결과를 찾고
+- 끝남: PR 병합·origin/main 조상 확인·보고 [완료]로 resolve한 task는 host가 완료 보관한다. `aaa task archive`에서 결과를 찾고
   `aaa task archive --restore <task ID>`로 같은 ID를 복원한다. 복원은 재예약·재기동 승인이 아니다. 그만둠·명시 삭제는
   별도 `aaa task rm`이며 옛 삭제 기록의 `aaa task restore`와 구별한다. 하위가 남은 부모는 자동 보관하지 않는다.
 - 보이기: 사용자가 task를 보자고 하면 채팅으로 목록별로 답한다. task마다 맡은 쪽(모델·머신, `me`·사람, 없으면 「미할당」), 메모가 있으면 짧은 한 줄,
@@ -1221,6 +1274,8 @@ impl Host {
             group
         };
         ThreadView {
+            account_selection: r.account_allocation.as_ref().map(|a| a.selection.clone()),
+            over_limit: r.over_limit.clone(),
             project: r.project.clone(),
             id: r.id.clone(),
             title: r.title.clone(),
@@ -1245,7 +1300,9 @@ impl Host {
                 Box::new(aaa_proto::ThreadPr { url, state: r.pr_state.clone(), review: r.pr_review.clone() })
             }),
             report_hash: r.report_hash.clone(),
+            report_id: self.thread_report_id(&r.project, &r.id, r.report_hash.as_deref()),
             report_attention: self.report_attention(r),
+            stage: r.execution_stage(),
             acked_hash: r.acked_hash.clone(),
             next: r.next.clone(),
             agent: agent.map(Box::new),
@@ -1258,21 +1315,25 @@ impl Host {
             summary: if r.id.is_empty() { None } else { self.summary_mark(&r.project, &r.id) },
             repo: r.repo.clone(),
             limited_until_ms: self.usage_limit(&r.project, &r.id),
-            questions: r.report_hash.clone().filter(|_| !r.questions.is_empty()).map(|report_hash| {
-                let items = self
-                    .identify_questions(&r.project, "thread", &r.id, &report_hash, &r.questions)
-                    .unwrap_or_else(|e| {
-                        tracing::error!("질문 ID 발급 실패: {}", e.message);
-                        r.questions.clone()
-                    });
-                Box::new(aaa_proto::ThreadQuestions {
-                    draft: self.question_draft(&r.project, &items),
-                    files_base: Some(crate::asks::question_files_base(&r.project, &r.id, &report_hash)),
-                    report_hash: report_hash.clone(),
-                    items,
-                    answer: r.question_answer.clone(),
-                })
-            }),
+            questions: r.report_hash.clone().filter(|_| !r.questions.is_empty() || r.question_warning.is_some()).map(
+                |report_hash| {
+                    let items = self
+                        .identify_questions(&r.project, "thread", &r.id, &report_hash, &r.questions)
+                        .unwrap_or_else(|e| {
+                            tracing::error!("질문 ID 발급 실패: {}", e.message);
+                            r.questions.clone()
+                        });
+                    Box::new(aaa_proto::ThreadQuestions {
+                        format_warning: r.question_warning.clone(),
+                        review: self.default_review_for(r),
+                        draft: self.question_draft(&r.project, &items),
+                        files_base: Some(crate::asks::question_files_base(&r.project, &r.id, &report_hash)),
+                        report_hash: report_hash.clone(),
+                        items,
+                        answer: r.question_answer.clone(),
+                    })
+                },
+            ),
         }
     }
 
@@ -1303,6 +1364,23 @@ impl Host {
     }
 
     pub(crate) fn thread_show(&self, project: &str, id: &str) -> Result<ThreadView, ErrorBody> {
+        if let Some(v) = self.db.report_target(project, id).map_err(internal)? {
+            let mut view = self.thread_view(&self.load(project, &v.source)?);
+            let dir = self.project_dir(project)?;
+            let report = std::fs::read_to_string(dir.join("threads").join(format!("{id}.md"))).map_err(internal)?;
+            view.report_id = Some(v.id);
+            view.report_hash = Some(v.revision);
+            view.next = next_lines(&report);
+            view.questions = None;
+            view.report_attention = if crate::report_mark::needs_user(&report) {
+                Some(aaa_proto::ReportAttention::NeedsUser)
+            } else if crate::report_mark::marker(&report) == Some("[완료]") {
+                Some(aaa_proto::ReportAttention::Completed)
+            } else {
+                None
+            };
+            return Ok(view);
+        }
         self.load(project, id).map(|r| self.thread_view(&r))
     }
 
@@ -1657,6 +1735,46 @@ impl Host {
         lock.try_lock_owned().map_err(|_| bad(format!("{id}는 준비·정리 작업 중이다. thread show로 상태를 본다")))
     }
 
+    /// front가 판정한 요청자만 쓴다. env·요청 본문의 역할 자기 신고는 믿지 않는다.
+    pub(crate) fn thread_limit_override(
+        &self,
+        project: &str,
+        over_limit: bool,
+        user_request: Option<&str>,
+        from_task: Option<&str>,
+        actor: &str,
+    ) -> Result<Option<aaa_proto::ThreadLimitOverride>, ErrorBody> {
+        if !over_limit {
+            return if user_request.is_some() {
+                Err(bad("--user-request는 --over-limit와 함께 쓴다"))
+            } else {
+                Ok(None)
+            };
+        }
+        let reason = user_request.map(str::trim);
+        if reason.is_some_and(|r| r.is_empty() || r.len() > 2000 || r.chars().any(char::is_control)) {
+            return Err(bad("사용자 지시 근거는 비지 않은 한 줄(2000바이트 이하)로 쓴다"));
+        }
+        if self.coordinator_project_of_actor(actor).as_deref() == Some(project) {
+            if reason.is_none() || from_task.is_none_or(|t| t.trim().is_empty()) {
+                return Err(err(
+                    ErrorCode::Forbidden,
+                    "coordinator는 사용자가 그 task의 강제 시작을 명시했을 때만 --from-task·--over-limit·--user-request로 시작한다",
+                ));
+            }
+        } else if !(actor.starts_with("device:") || (actor.starts_with("local:") && !crate::front::in_session(actor))) {
+            return Err(err(
+                ErrorCode::Forbidden,
+                "한도 무시 시작은 사용자 직접 조작이나 해당 프로젝트 coordinator의 명시한 사용자 지시만 허용한다",
+            ));
+        }
+        Ok(Some(aaa_proto::ThreadLimitOverride {
+            actor: actor.into(),
+            at_ms: aaa_common::util::now_ms(),
+            user_request: reason.map(str::to_string),
+        }))
+    }
+
     /// thread 시작: 기록 → agent가 자리 만들기·profile 해석 → 세션 시작 → 보고 감시 → (배경) brief 안내
     pub(crate) async fn thread_start(self: &Arc<Self>, a: StartArgs, actor: &str) -> Result<ThreadView, ErrorBody> {
         self.thread_start_mode(a, actor, false).await
@@ -1685,6 +1803,15 @@ impl Host {
         background: bool,
         origin: Option<&StartOrigin>,
     ) -> Result<ThreadView, ErrorBody> {
+        let pool_key = a.pool.as_ref().map(|p| crate::account_pool::receipt(&a.project, &p.id));
+        if let Some(key) = &pool_key
+            && let Some(id) = self.db.meta(key).map_err(internal)?
+        {
+            return self.thread_show(&a.project, &id);
+        }
+        if a.over_limit.is_some() && (origin.is_some() || a.reservation.is_some() || a.role != Role::Worker) {
+            return Err(bad("예약·자동 시작은 실행 한도를 무시할 수 없다"));
+        }
         if a.role == Role::Evaluator {
             return Err(crate::legacy_mission::removed());
         }
@@ -1735,8 +1862,12 @@ impl Host {
             ));
         }
         let profile = self.resolved_profile(Some(&a.project), &mid, &a.profile)?;
-        if a.account.is_none() {
+        let auto_account = a.account.is_none() && (a.pool.is_some() || self.pool_project_enabled(&a.project)?);
+        if a.account.is_none() && !auto_account {
             a.account = self.default_account(&profile.harness)?;
+        }
+        if auto_account && !self.machine_feature(&mid, "account_auth.v1") {
+            return Err(bad("이 머신 agent는 계정 인증 전달을 지원하지 않는다"));
         }
         if let Some(account) = &a.account {
             let c = self.accounts.credential(account)?;
@@ -1747,6 +1878,17 @@ impl Host {
                 return Err(bad("이 머신 agent는 계정 인증 전달을 지원하지 않는다"));
             }
         }
+        let selection = if auto_account || a.account.is_some() {
+            self.account_selection_input(
+                &a.project,
+                &profile,
+                a.account.as_deref(),
+                a.pool.as_ref().map_or(aaa_proto::AccountTaskSize::Medium, |p| p.size),
+            )
+            .await?
+        } else {
+            None
+        };
         let resolved_profile = Some(profile);
         let warnings = Vec::new();
         let now = aaa_common::util::now_ms();
@@ -1754,6 +1896,7 @@ impl Host {
             account: a.account.clone(),
             holds: a.holds.clone(),
             started_by: Some(actor.into()),
+            over_limit: a.over_limit.clone(),
             automation: origin.map(|o| o.rule.clone()),
             automation_run: origin.map(|o| o.run.clone()),
             repo: a.repo.clone(),
@@ -1770,22 +1913,42 @@ impl Host {
                 return Err(err(ErrorCode::Conflict, "예약 내용이 선점 전에 바뀌었다"));
             }
         }
+        // Starting이 복구기에 보이기 전에 기동 task의 잠금을 확보한다.
+        // commit→claim 사이에 ticker가 새 행을 중단된 기동으로 처리할 수 없다.
+        let mut guard = None;
+        let mut claim_error = None;
         let inserted = self
             .db
-            .thread_insert_admitted(
+            .thread_insert_transaction(
                 &a.project,
-                origin.map(|o| o.key.as_str()),
+                pool_key.as_deref().or_else(|| origin.map(|o| o.key.as_str())),
                 origin.map(|o| &o.admission),
-                Some(self.settings(&a.project).max_parallel_threads),
+                a.over_limit.is_none().then(|| self.settings(&a.project).max_parallel_threads),
                 a.reservation.as_ref().map(|(id, b)| (id.as_str(), b.as_str())),
-                |id| {
+                |tx, id| {
+                    if let Some(input) = &selection {
+                        let (account, allocation) = input.select(tx, aaa_common::util::now_ms())?;
+                        anyhow::ensure!(
+                            self.accounts.generation(&account).ok().as_deref() == Some(&allocation.generation),
+                            "start_wait: 계정 인증 세대 변경 · 새 관측 대기"
+                        );
+                        rec.account = Some(account);
+                        rec.account_allocation = Some(allocation);
+                    }
+                    guard = Some(self.claim_thread(&a.project, id).map_err(|error| {
+                        let message = error.message.clone();
+                        claim_error = Some(error);
+                        anyhow::anyhow!(message)
+                    })?);
                     let mut r = rec.clone();
                     r.id = id.to_string();
-                    serde_json::to_string(&r).unwrap()
+                    Ok(serde_json::to_string(&r).unwrap())
                 },
             )
             .map_err(|e| {
-                if e.to_string().starts_with("start_wait:") {
+                if let Some(error) = claim_error {
+                    error
+                } else if e.to_string().starts_with("start_wait:") {
                     err(ErrorCode::Unavailable, e.to_string())
                 } else {
                     internal(e)
@@ -1797,7 +1960,26 @@ impl Host {
             return self.thread_show(&a.project, &id);
         }
         rec.id = id.clone();
-        let guard = self.claim_thread(&a.project, &id)?;
+        #[cfg(test)]
+        {
+            let hook = self.start_admitted_hook.lock().unwrap().clone();
+            if let Some(hook) = hook {
+                hook(&id);
+            }
+        }
+        let guard = guard.ok_or_else(|| internal("새 기동의 작업 잠금이 없다"))?;
+        if let Some(override_) = &rec.over_limit {
+            self.db.audit(
+                actor,
+                "thread_start_over_limit",
+                &format!(
+                    "{}/{id} at={} 사용자 지시: {}",
+                    a.project,
+                    override_.at_ms,
+                    override_.user_request.as_deref().unwrap_or("직접 시작")
+                ),
+            );
+        }
         self.db.audit(actor, "thread_start", &format!("{}/{id} {} @{}", a.project, a.profile, self.machine_name(&mid)));
         if let Err(e) = write_atomic(&dir.join("threads").join(format!("{id}.task.md")), a.task.as_bytes()) {
             self.update_rec(&a.project, &id, |r| {
@@ -1809,7 +1991,16 @@ impl Host {
         let brief = self.brief(&dir, &rec, &a.task, false);
         // 세션이 생기기 전에도 웹·coordinator가 준비 중인 thread를 볼 수 있어야 한다.
         let _ = self.thread_events.send(self.thread_view(&rec));
-        self.flow(&rec, "thread_started", Some(format!("threads/{id}.task.md")), rec.title.clone());
+        let detail = if let Some(o) = &rec.over_limit {
+            format!(
+                "{} · 한도 초과로 시작 · 사용자 지시: {}",
+                rec.title,
+                o.user_request.as_deref().unwrap_or("직접 시작")
+            )
+        } else {
+            rec.title.clone()
+        };
+        self.flow(&rec, "thread_started", Some(format!("threads/{id}.task.md")), detail);
 
         let view = self.thread_view(&rec);
         let host = self.clone();
@@ -1838,15 +2029,9 @@ impl Host {
         Ok(view)
     }
 
-    /// 사용자·coordinator가 띄운 열린 Worker 수. 자동화 thread·사후 평가자는 세지 않는다.
+    /// 자동화·병합 대기와 착지 한 자리를 뺀다. DB 기동 선점·예약도 같은 계산을 쓴다.
     pub(crate) fn open_worker_threads(&self, project: &str) -> u32 {
-        self.db
-            .threads(Some(project))
-            .unwrap_or_default()
-            .iter()
-            .filter_map(|j| serde_json::from_str::<ThreadRec>(j).ok())
-            .filter(|r| r.holds_worker_slot())
-            .count() as u32
+        self.db.worker_slots(project).unwrap_or(u32::MAX)
     }
 
     pub(crate) async fn screen_lines(&self, mid: &str, pane: &str) -> Option<Vec<String>> {
@@ -1929,6 +2114,13 @@ impl Host {
         };
         let pane = if let Some(name) = &rec.account {
             let mut credential = self.accounts.credential(name)?;
+            if rec
+                .account_allocation
+                .as_ref()
+                .is_some_and(|a| credential.auth_generation.as_deref() != Some(&a.generation))
+            {
+                return Err(bad("기동 전 계정 인증 세대가 바뀌었다. 새 인증으로 명시 재시작한다"));
+            }
             if credential.harness != launch.harness {
                 return Err(bad("계정과 profile의 harness가 다르다"));
             }
@@ -2058,6 +2250,19 @@ impl Host {
             )
             .map_err(|e| err(ErrorCode::Unavailable, e.to_string()))?;
         let result: Result<ThreadView, ErrorBody> = async {
+            if let Some(account) = &rec.account
+                && let Some(generation) = self.accounts.credential(account)?.auth_generation
+            {
+                rec = self.update_rec(project, id, |r| {
+                    if let Some(a) = &mut r.account_allocation {
+                        a.generation = generation;
+                        a.ended_at_ms = None;
+                        a.released = false;
+                        a.selection.selected_at_ms = aaa_common::util::now_ms();
+                        a.selection.reason = "처음 선택한 계정으로 명시 재시작".into();
+                    }
+                })?;
+            }
             let profile_note = profile.as_ref().map(|p| format!(", profile {p}")).unwrap_or_default();
             if plan == RestartPlan::Create {
                 let dir = self.project_dir(project)?;
@@ -2186,6 +2391,19 @@ impl Host {
         Ok(rec)
     }
 
+    fn report_collect_lock(&self, project: &str, id: &str) -> Arc<tokio::sync::Mutex<()>> {
+        self.collect_locks.lock().unwrap().entry(format!("{project}/{id}")).or_default().clone()
+    }
+
+    fn report_transfer_supported(&self, machine: &str) -> bool {
+        self.inner
+            .lock()
+            .unwrap()
+            .machines
+            .get(machine)
+            .is_some_and(|m| m.features.iter().any(|f| f == "report_copy.v2"))
+    }
+
     /// agent가 report.md hash 변화를 알렸다
     pub(crate) fn on_report_changed(self: &Arc<Self>, mid: &str, key: &str, hash: Option<String>) {
         let Some((project, id)) = key.split_once('/') else { return };
@@ -2242,6 +2460,9 @@ impl Host {
     async fn collect_if_changed(self: &Arc<Self>, project: &str, id: &str) {
         let Ok(rec) = self.load(project, id) else { return };
         let (Some(work_dir), Ok(conn)) = (rec.work_dir.clone(), self.live_conn(&rec.machine_id)) else { return };
+        if let Some(warning) = &rec.question_warning {
+            self.warn_question_format(&rec, warning).await;
+        }
         if rec.status != ThreadStatus::Open {
             return;
         }
@@ -2251,7 +2472,8 @@ impl Host {
         {
             return;
         }
-        let _guard = self.collect_lock.lock().await;
+        let lock = self.report_collect_lock(project, id);
+        let _guard = lock.lock().await;
         // 한 번의 일시 오류는 바로 새 manifest로 다시 받는다. 계속 실패하면 ticker 간격으로 재수집한다.
         for _ in 0..2 {
             match self.collect(project, id, false).await {
@@ -2311,62 +2533,108 @@ impl Host {
         let conn = self.live_conn(&rec.machine_id)?;
         // Ok(None): 이미 받은 보고와 같다
         // (보고 hash, 건너뛴 것, 사본 상태, 보고, library가 앞 사본과 달라졌나)
-        type Got = Option<(String, Vec<String>, String, Vec<u8>, bool, Vec<String>)>;
+        type Got = Option<(String, Vec<String>, String, Vec<u8>, bool, Vec<String>, Vec<String>)>;
         let result: Result<Got, ErrorBody> = async {
-            let snap = match conn
-                .request(AgentRequest::ReportCollect {
+            let transfer = self.report_transfer_supported(&rec.machine_id);
+            let request = if transfer {
+                AgentRequest::ReportTransfer {
                     work_dir: work_dir.clone(),
                     max_library_bytes: self.cfg.projects.library_copy_mb << 20,
-                })
-                .await?
-            {
-                AgentResponse::Report(s) => s,
-                other => return Err(internal(format!("예상하지 못한 응답: {other:?}"))),
+                }
+            } else {
+                AgentRequest::ReportCollect {
+                    work_dir: work_dir.clone(),
+                    max_library_bytes: self.cfg.projects.library_copy_mb << 20,
+                }
             };
+            let mut snap = match conn.request(request).await? {
+                AgentResponse::ReportTransfer(s) if transfer => s,
+                AgentResponse::Report(s) if !transfer => s,
+                _ => return Err(internal("보고 사본 응답이 아니다")),
+            };
+            if transfer && hex::encode(sha2::Sha256::digest(&snap.report.0)) != snap.hash {
+                return Err(internal("보고 본문 hash가 다르다"));
+            }
+            // 원본 해시 대조 뒤, 파일·DB·보고 판에 쓰기 전에 가린다. 조각 경계도 함께 검사한다.
+            snap.report.0 = aaa_common::redact::bytes(&snap.report.0);
             if !last && Some(&snap.hash) == rec.report_hash.as_ref() && rec.copy.as_deref() != Some("failed") {
                 return Ok(None);
             }
             // library: 임시 폴더에 받고 hash를 확인한 뒤 바꿔 넣는다
+            // 옛 agent는 숨은 폴더까지 manifest에 넣는다. 정책상 열지 않는 경로는
+            // 받거나 host 경로에 붙이지 않고 건너뛰며, 정상 첨부·본문은 계속 갱신한다.
+            snap.files.retain(|f| {
+                if crate::library::safe_rel(&f.path) {
+                    return true;
+                }
+                snap.skipped.push(aaa_proto::Skipped {
+                    path: f.path.clone(),
+                    reason: "host에서 허용하지 않는 library 상대 경로".into(),
+                    lazy_size: None,
+                });
+                false
+            });
             let lib_root = dir.join("library");
             let tmp = lib_root.join(format!(".{id}.tmp-{}", aaa_common::util::new_id()));
             let mut sandbox_notes = Vec::new();
+            let mut failed_files = Vec::new();
             let fetch = async {
                 std::fs::create_dir_all(&tmp).map_err(internal)?;
                 for f in &snap.files {
                     let target = tmp.join(&f.path);
-                    if !Path::new(&f.path).components().all(|c| matches!(c, std::path::Component::Normal(_))) {
-                        return Err(bad(format!("이상한 library 경로: {}", f.path)));
-                    }
-                    std::fs::create_dir_all(target.parent().unwrap()).map_err(internal)?;
-                    let mut out = Vec::with_capacity(f.size as usize);
-                    // manifest가 해시한 길이만 받는다. 실행 중인 로그의 뒤쪽 append를 섞지 않는다.
-                    while (out.len() as u64) < f.size {
-                        let ask = (f.size - out.len() as u64).min(512 * 1024) as u32;
-                        let r = conn
-                            .request(AgentRequest::FileRead {
-                                work_dir: work_dir.clone(),
-                                path: f.path.clone(),
-                                offset: out.len() as u64,
-                                len: ask,
-                            })
-                            .await?;
-                        let AgentResponse::FileChunk { data, eof } = r else {
-                            return Err(internal("예상하지 못한 응답"));
-                        };
-                        if data.0.len() > ask as usize {
-                            return Err(internal("요청 범위를 넘는 library 응답"));
+                    let received = async {
+                        std::fs::create_dir_all(target.parent().unwrap()).map_err(internal)?;
+                        let mut out = Vec::with_capacity(f.size as usize);
+                        // manifest가 해시한 길이만 받는다. 실행 중인 로그의 뒤쪽 append를 섞지 않는다.
+                        while (out.len() as u64) < f.size {
+                            let ask = (f.size - out.len() as u64).min(512 * 1024) as u32;
+                            let request = if transfer {
+                                AgentRequest::ReportFileRead {
+                                    work_dir: work_dir.clone(),
+                                    path: f.path.clone(),
+                                    offset: out.len() as u64,
+                                    len: ask,
+                                }
+                            } else {
+                                AgentRequest::FileRead {
+                                    work_dir: work_dir.clone(),
+                                    path: f.path.clone(),
+                                    offset: out.len() as u64,
+                                    len: ask,
+                                }
+                            };
+                            let (data, eof) = match conn.request(request).await? {
+                                AgentResponse::ReportFileChunk { data, eof } if transfer => (data, eof),
+                                AgentResponse::FileChunk { data, eof } if !transfer => (data, eof),
+                                _ => return Err(internal("library 전송 응답이 아니다")),
+                            };
+                            if data.0.len() > ask as usize {
+                                return Err(internal("요청 범위를 넘는 library 응답"));
+                            }
+                            out.extend_from_slice(&data.0);
+                            if eof || data.0.is_empty() {
+                                break;
+                            }
                         }
-                        out.extend_from_slice(&data.0);
-                        if eof || data.0.is_empty() {
-                            break;
+                        if out.len() as u64 != f.size || hex::encode(sha2::Sha256::digest(&out)) != f.sha256 {
+                            return Err(internal(format!("{}: 받는 동안 바뀌었다(hash 다름)", f.path)));
                         }
+                        let out = aaa_common::redact::bytes(&out);
+                        std::fs::write(&target, &out).map_err(internal)?;
+                        if let Some(note) = crate::report_sandbox::warning(&f.path, &out) {
+                            sandbox_notes.push(note);
+                        }
+                        Ok::<(), ErrorBody>(())
                     }
-                    if out.len() as u64 != f.size || hex::encode(sha2::Sha256::digest(&out)) != f.sha256 {
-                        return Err(internal(format!("{}: 받는 동안 바뀌었다(hash 다름)", f.path)));
-                    }
-                    std::fs::write(&target, &out).map_err(internal)?;
-                    if let Some(note) = crate::report_sandbox::warning(&f.path, &out) {
-                        sandbox_notes.push(note);
+                    .await;
+                    if let Err(e) = received {
+                        failed_files.push((f.clone(), e.message));
+                        // 이전 검증 사본은 보존하되 새 manifest·불변 판에는 넣지 않는다.
+                        let _ = std::fs::remove_file(&target);
+                        if let Ok((previous, _)) = crate::library::local_file(&dir, id, &f.path) {
+                            std::fs::create_dir_all(target.parent().unwrap()).map_err(internal)?;
+                            std::fs::copy(previous, &target).map_err(internal)?;
+                        }
                     }
                 }
                 Ok(())
@@ -2376,6 +2644,13 @@ impl Host {
                 let _ = std::fs::remove_dir_all(&tmp);
                 return Err(e);
             }
+            let mut failures: Vec<String> = failed_files.iter().map(|(_, reason)| reason.clone()).collect();
+            snap.files.retain(|f| !failed_files.iter().any(|(failed, _)| failed.path == f.path));
+            snap.skipped.extend(failed_files.into_iter().map(|(f, reason)| aaa_proto::Skipped {
+                path: f.path,
+                reason,
+                lazy_size: Some(f.size),
+            }));
             let dest = lib_root.join(id);
             let old_manifest = std::fs::read(crate::library::manifest_path(&dir, id)).ok();
             let same_files = same_tree(&tmp, &dest);
@@ -2385,19 +2660,49 @@ impl Host {
             std::fs::rename(&tmp, &dest).map_err(internal)?;
             crate::library::write_manifest(&dir, id, &snap).map_err(internal)?;
             let changed = !same_files || std::fs::read(crate::library::manifest_path(&dir, id)).ok() != old_manifest;
-            if changed || old_manifest.is_none() {
+            let mut version_created = false;
+            if rec.report_hash.as_ref() != Some(&snap.hash)
+                || changed
+                || self.thread_report_id(project, id, Some(&snap.hash)).is_none()
+            {
+                let files = self.manifest(&dir, id);
+                let meta = crate::db::LibraryReportRow {
+                    project: project.into(),
+                    name: id.into(),
+                    updated: aaa_common::util::now_ms(),
+                    from_thread: Some(id.into()),
+                    ..Default::default()
+                };
+                match self.snapshot_report_version(project, id, &snap.hash, &dest, &files, Some(&snap.report.0), &meta)
+                {
+                    Ok(_) => version_created = true,
+                    Err(e) => {
+                        // 판 보존의 실패도 첨부 전송 실패처럼 기록한다. 최신 본문·단계·ack 처리는
+                        // 계속하고, 불완전한 r 판은 snapshot_report_version이 공개하지 않는다.
+                        failures.push(format!("보고 판 보존 실패: {}", e.message));
+                    }
+                }
+            }
+
+            if changed || old_manifest.is_none() || version_created {
                 // 보고서 화면 「작업 보고」(plan §8.256)
                 self.reports_bump();
             }
             let skipped: Vec<String> = snap.skipped.iter().map(|s| format!("{}: {}", s.path, s.reason)).collect();
             self.automation_copy_memory(&rec, last).await?;
-            let copy = if skipped.is_empty() { "complete" } else { "partial" };
-            Ok(Some((snap.hash, skipped, copy.to_string(), snap.report.0, changed, sandbox_notes)))
+            let copy = if !failures.is_empty() {
+                "failed"
+            } else if skipped.is_empty() {
+                "complete"
+            } else {
+                "partial"
+            };
+            Ok(Some((snap.hash, skipped, copy.to_string(), snap.report.0, changed, sandbox_notes, failures)))
         }
         .await;
         match result {
             Ok(None) => Ok(()),
-            Ok(Some((hash, skipped, copy, report, changed, sandbox_notes))) => {
+            Ok(Some((hash, skipped, copy, report, changed, sandbox_notes, failures))) => {
                 if !sandbox_notes.is_empty() && (rec.report_hash.as_ref() != Some(&hash) || changed) {
                     self.inbox_add_body(
                         project,
@@ -2410,45 +2715,61 @@ impl Host {
                 }
                 // 새 보고 알림보다 먼저 만든다. 같은 보고서의 유효한 링크는 재사용한다.
                 self.library_link(project, id, None, "host")?;
+                // 같은 원본 판의 재수집도 저장 사본을 복구한다. 옛 host의 가린 본문에는 별도 hash가 없을 수 있다.
+                write_atomic(&dir.join("threads").join(format!("{id}.md")), &report).map_err(internal)?;
                 // 마지막 사본인데 보고가 그대로면 library만 새로 받은 것이다: 보고 사건·평가 수집은 다시 하지 않고,
                 // library가 앞 사본과 달라졌을 때만 알린다
-                if rec.report_hash.as_ref() == Some(&hash) && rec.copy.as_deref() != Some("failed") {
+                if rec.report_hash.as_ref() == Some(&hash) {
                     let rec = self.update_rec(project, id, |r| {
+                        r.report_copy_hash = Some(hex::encode(sha2::Sha256::digest(&report)));
+                        r.report_stage = crate::report_mark::stage(&String::from_utf8_lossy(&report));
                         r.copy = Some(copy.clone());
-                        r.copy_failures = 0;
-                        r.copy_retry_at_ms = 0;
+                        if failures.is_empty() {
+                            r.copy_failures = 0;
+                            r.copy_retry_at_ms = 0;
+                        }
                         r.copy_notes = skipped.clone();
                     })?;
                     if !changed {
-                        return Ok(());
+                        return failures.first().map_or(Ok(()), |e| Err(internal(e.clone())));
                     }
                     let mut detail = format!("마지막 사본 {copy}");
                     if !skipped.is_empty() {
                         detail.push_str(&format!(", 건너뜀: {}", skipped.join("; ")));
                     }
                     self.flow(&rec, "library_copied", Some(format!("library/{id}")), detail);
-                    return Ok(());
+                    return failures.first().map_or(Ok(()), |e| Err(internal(e.clone())));
                 }
-                write_atomic(&dir.join("threads").join(format!("{id}.md")), &report).map_err(internal)?;
                 let text = String::from_utf8_lossy(&report);
                 let next = next_lines(&text);
-                let questions =
-                    if crate::report_mark::needs_user(&text) { aaa_proto::report_questions(&text) } else { Vec::new() };
+                let question_warning = crate::report_mark::question_warning(&text);
+                let questions = crate::report_mark::questions(&text);
                 let questions = self.identify_questions(project, "thread", id, &hash, &questions)?;
-                let closed_question =
-                    questions.is_empty() && !rec.questions.is_empty() && rec.question_answer.is_none();
+                let closed_question = questions.is_empty()
+                    && question_warning.is_none()
+                    && !rec.questions.is_empty()
+                    && rec.question_answer.is_none();
                 let previous = rec;
                 let rec = self.update_rec(project, id, |r| {
+                    r.report_stage = crate::report_mark::stage(&text);
                     r.report_hash = Some(hash);
+                    r.report_copy_hash = Some(hex::encode(sha2::Sha256::digest(&report)));
                     r.report_changed_ms = Some(aaa_common::util::now_ms());
                     r.next = next;
                     r.questions = questions;
+                    r.question_warning = question_warning;
+                    r.question_warning_sent = None;
                     r.question_answer = None;
                     r.copy = Some(copy.clone());
-                    r.copy_failures = 0;
-                    r.copy_retry_at_ms = 0;
+                    if failures.is_empty() {
+                        r.copy_failures = 0;
+                        r.copy_retry_at_ms = 0;
+                    }
                     r.copy_notes = skipped.clone();
                 })?;
+                if let Some(warning) = &rec.question_warning {
+                    self.warn_question_format(&rec, warning).await;
+                }
                 self.db
                     .question_clear_drafts(project, "thread", id, previous.report_hash.as_deref().unwrap_or_default())
                     .map_err(internal)?;
@@ -2469,7 +2790,7 @@ impl Host {
                 self.pr_soon(project);
                 // 새 보고는 이번 묶음 셈에 바로 든다(herdr-projects ticker `fresh_hash`)
                 self.tick_wake.notify_one();
-                Ok(())
+                failures.first().map_or(Ok(()), |e| Err(internal(e.clone())))
             }
             Err(e) => Err(e),
         }
@@ -2550,7 +2871,8 @@ impl Host {
                 Ok(AgentResponse::Report(_))
             );
             if has_report {
-                let _guard = self.collect_lock.lock().await;
+                let lock = self.report_collect_lock(project, id);
+                let _guard = lock.lock().await;
                 self.collect(project, id, true)
                     .await
                     .map_err(|e| {
@@ -2665,8 +2987,14 @@ impl Host {
             let _ = self.update_rec(project, id, |r| r.error = Some(message.clone()));
             return Err(ErrorBody { message, ..e });
         }
-        // 이어진 task 판정(할 일 T3)은 ticker가 한다(끝낸 까닭과 버림은 위에서 적었다): 정리가 끝났으니 tick을 깨운다
+        // resolve_pending 중에는 확인 카드를 만들지 않는다. pane 정리가 끝난 뒤 병합을 확인하고
+        // 그 근거와 종료 확정을 함께 저장해야 ticker 전에도 불필요한 확인 카드가 보이지 않는다.
+        let merged_main = self.task_main_merge(&rec).await;
+        // 이어진 task 완료 보관은 ticker가 한다.
         self.update_rec(project, id, |r| {
+            if merged_main.is_some() {
+                r.task_clean.merged_main = merged_main.clone();
+            }
             r.resolve_pending = None;
             r.error = None;
         })?;
@@ -2848,10 +3176,12 @@ mod tests {
 
     fn open_thread() -> ThreadRec {
         ThreadRec {
+            account_allocation: None,
             legacy: Default::default(),
             account: None,
             holds: vec![],
             started_by: None,
+            over_limit: None,
             automation: None,
             automation_run: None,
             project: "p".into(),
@@ -2879,10 +3209,14 @@ mod tests {
             delivered_report: None,
             launch: None,
             report_hash: None,
+            report_copy_hash: None,
+            report_stage: None,
             acked_hash: None,
             next: Vec::new(),
             questions: Vec::new(),
             question_answer: None,
+            question_warning: None,
+            question_warning_sent: None,
             copy: None,
             copy_failures: 0,
             copy_retry_at_ms: 0,

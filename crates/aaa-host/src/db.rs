@@ -6,7 +6,9 @@ use std::sync::Mutex;
 use anyhow::Result;
 use rusqlite::{Connection, OptionalExtension, params};
 
+mod library_catalog;
 mod question_ids;
+mod report_ids;
 mod task_ids;
 mod task_queue;
 
@@ -158,6 +160,10 @@ pub struct DeviceRow {
 pub const DEVICE_LABEL_FALLBACK: &str = "기기";
 
 impl Db {
+    #[cfg(test)]
+    pub(crate) fn conn_for_pool_test(&self) -> std::sync::MutexGuard<'_, Connection> {
+        self.conn.lock().unwrap()
+    }
     /// 발신자의 32자리 ID와 화면의 p-번호를 모두 받는다. 중복 전송 판정은 원래 post_row만 쓴다.
     pub(crate) fn post_by_ref(&self, id: &str) -> Result<Option<PostRow>> {
         if !id.starts_with("p-") {
@@ -211,6 +217,7 @@ impl Db {
             .optional()?)
     }
 
+    #[cfg(test)]
     pub(crate) fn library_report_put(&self, r: &LibraryReportRow) -> Result<()> {
         self.conn.lock().unwrap().execute(
             "INSERT INTO library_reports(project,name,live,updated,to_user,title,sent_at,seen_at,from_thread)
@@ -327,6 +334,10 @@ impl Db {
              CREATE TABLE IF NOT EXISTS library_links(
                id TEXT PRIMARY KEY, project TEXT NOT NULL, thread TEXT NOT NULL,
                created INTEGER NOT NULL, expires INTEGER NOT NULL, opened INTEGER, revoked INTEGER NOT NULL DEFAULT 0);
+             CREATE TABLE IF NOT EXISTS report_ids(
+               project TEXT NOT NULL, seq INTEGER NOT NULL, id TEXT NOT NULL, source TEXT NOT NULL, revision TEXT NOT NULL,
+               ready INTEGER NOT NULL DEFAULT 0, deleted INTEGER NOT NULL DEFAULT 0,
+               PRIMARY KEY(project,id), UNIQUE(project,seq));
              CREATE TABLE IF NOT EXISTS library_reports(
                project TEXT NOT NULL, name TEXT NOT NULL, live TEXT, updated INTEGER NOT NULL,
                PRIMARY KEY(project,name));
@@ -437,6 +448,12 @@ impl Db {
             Some(Ok(SCHEMA_VERSION)) => {}
             Some(other) => anyhow::bail!("host DB schema {other:?}을 이 aaa(schema {SCHEMA_VERSION})가 모른다"),
         }
+        // 조작 기기 passkey(관리 GUI W7): 옛 aaa는 이 표를 모르고 지나간다(공개 주소 승인은 그때 passkey 없이 한다)
+        conn.execute_batch(
+            "CREATE TABLE IF NOT EXISTS passkeys (
+            credential TEXT PRIMARY KEY, device TEXT NOT NULL, rp_id TEXT NOT NULL, cose BLOB NOT NULL,
+            sign_count INTEGER NOT NULL DEFAULT 0, created_at INTEGER NOT NULL, last_used INTEGER)",
+        )?;
         conn.execute_batch(
             "CREATE TABLE IF NOT EXISTS install_grants (
             installation TEXT PRIMARY KEY, plan TEXT NOT NULL, nonce TEXT NOT NULL UNIQUE,
@@ -792,8 +809,84 @@ impl Db {
         let n = c.execute("UPDATE devices SET revoked=1 WHERE id=?1 AND revoked=0", [id])?;
         if n > 0 {
             c.execute("DELETE FROM push_subs WHERE device=?1", [id])?;
+            c.execute("DELETE FROM passkeys WHERE device=?1", [id])?;
         }
         Ok(n > 0)
+    }
+
+    /// 시험: 짝지은 때를 옮긴다(passkey 등록 시한)
+    #[cfg(test)]
+    pub fn set_device_created(&self, id: &str, ms: u64) {
+        self.conn
+            .lock()
+            .unwrap()
+            .execute("UPDATE devices SET created_at=?2 WHERE id=?1", params![id, ms as i64])
+            .unwrap();
+    }
+
+    /// 취소하지 않은 기기 하나
+    pub fn device(&self, id: &str) -> Result<Option<DeviceRow>> {
+        let c = self.conn.lock().unwrap();
+        Ok(c.query_row(
+            "SELECT id,role,label,created_at,last_seen FROM devices WHERE id=?1 AND revoked=0",
+            [id],
+            Self::device_from,
+        )
+        .optional()?)
+    }
+
+    // ───────────── 조작 기기 passkey(관리 GUI W7) ─────────────
+
+    /// 이 기기의 이 RP passkey를 새 credential로 바꾼다(기기마다 하나). 다른 기기가 쓰는 credential이면 false
+    pub fn passkey_put(
+        &self,
+        credential: &str,
+        device: &str,
+        rp_id: &str,
+        cose: &[u8],
+        sign_count: u32,
+    ) -> Result<bool> {
+        let mut c = self.conn.lock().unwrap();
+        let tx = c.transaction()?;
+        let owner: Option<String> =
+            tx.query_row("SELECT device FROM passkeys WHERE credential=?1", [credential], |r| r.get(0)).optional()?;
+        if owner.is_some_and(|o| o != device) {
+            return Ok(false);
+        }
+        tx.execute("DELETE FROM passkeys WHERE device=?1 AND rp_id=?2", params![device, rp_id])?;
+        tx.execute(
+            "INSERT OR REPLACE INTO passkeys(credential,device,rp_id,cose,sign_count,created_at) VALUES(?1,?2,?3,?4,?5,?6)",
+            params![credential, device, rp_id, cose, sign_count as i64, aaa_common::util::now_ms() as i64],
+        )?;
+        tx.commit()?;
+        Ok(true)
+    }
+
+    /// 이 기기의 이 RP passkey: (credential, COSE 공개키, 서명 횟수)
+    pub fn passkeys(&self, device: &str, rp_id: &str) -> Result<Vec<(String, Vec<u8>, u32)>> {
+        let c = self.conn.lock().unwrap();
+        let mut st = c.prepare("SELECT credential,cose,sign_count FROM passkeys WHERE device=?1 AND rp_id=?2")?;
+        let rows = st
+            .query_map(params![device, rp_id], |r| Ok((r.get(0)?, r.get(1)?, r.get::<_, i64>(2)? as u32)))?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        Ok(rows)
+    }
+
+    /// 이 RP passkey가 있는 기기
+    pub fn passkey_devices(&self, rp_id: &str) -> Result<std::collections::HashSet<String>> {
+        let c = self.conn.lock().unwrap();
+        let mut st = c.prepare("SELECT DISTINCT device FROM passkeys WHERE rp_id=?1")?;
+        let rows = st.query_map([rp_id], |r| r.get(0))?.collect::<rusqlite::Result<_>>()?;
+        Ok(rows)
+    }
+
+    pub fn passkey_used(&self, credential: &str, sign_count: u32, now_ms: u64) -> Result<()> {
+        let c = self.conn.lock().unwrap();
+        c.execute(
+            "UPDATE passkeys SET sign_count=?2, last_used=?3 WHERE credential=?1",
+            params![credential, sign_count as i64, now_ms as i64],
+        )?;
+        Ok(())
     }
 
     // ───────────── Web Push 구독(§8.26) ─────────────
@@ -873,6 +966,34 @@ impl Db {
         reservation: Option<(&str, &str)>,
         make: impl FnOnce(&str) -> String,
     ) -> Result<(String, bool)> {
+        self.try_thread_insert_admitted(project, key, admission, limit, reservation, |id| Ok(make(id)))
+    }
+
+    /// 새 행이 보이기 전에 호출자가 기동 소유권을 얻는다. 실패하면 행·예약·영수증을 모두 롤백한다.
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn try_thread_insert_admitted(
+        &self,
+        project: &str,
+        key: Option<&str>,
+        admission: Option<&StartAdmission>,
+        limit: Option<u32>,
+        reservation: Option<(&str, &str)>,
+        make: impl FnOnce(&str) -> Result<String>,
+    ) -> Result<(String, bool)> {
+        self.thread_insert_transaction(project, key, admission, limit, reservation, |_, id| make(id))
+    }
+
+    /// 계정 선택·공유 잔량 예약도 thread 선점과 같은 transaction에서 확정한다.
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn thread_insert_transaction(
+        &self,
+        project: &str,
+        key: Option<&str>,
+        admission: Option<&StartAdmission>,
+        limit: Option<u32>,
+        reservation: Option<(&str, &str)>,
+        make: impl FnOnce(&Connection, &str) -> Result<String>,
+    ) -> Result<(String, bool)> {
         let mut c = self.conn.lock().unwrap();
         let tx = c.transaction()?;
         if let Some(key) = key
@@ -889,7 +1010,7 @@ impl Db {
                 r.get(0)
             })?;
         let id = format!("t-{:04}", max.unwrap_or(0) + 1);
-        let text = make(&id);
+        let text = make(&tx, &id)?;
         if let Some(limit) = limit
             && serde_json::from_str::<crate::orch::ThreadRec>(&text)?.automation.is_none()
         {
@@ -1406,6 +1527,7 @@ impl Db {
         for (k, _) in project_meta(&tx, project)? {
             tx.execute("DELETE FROM meta WHERE key=?1", [&k])?;
         }
+        crate::account_pool::project_transition(&tx, project, None)?;
         tx.commit()?;
         Ok(())
     }
@@ -1428,12 +1550,14 @@ impl Db {
         for (k, v) in project_meta(&tx, from)? {
             let (kind, rest) = k.split_once(':').unwrap_or((&k, ""));
             let tail = rest.strip_prefix(from).unwrap_or_default();
+            let v = if kind == "account-job" { crate::account_pool::rename_job(&v, to)? } else { v };
             tx.execute("DELETE FROM meta WHERE key=?1", [&k])?;
             tx.execute(
                 "INSERT INTO meta(key,value) VALUES(?1,?2) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
                 [format!("{kind}:{to}{tail}"), v],
             )?;
         }
+        crate::account_pool::project_transition(&tx, from, Some(to))?;
         tx.commit()?;
         Ok(())
     }
@@ -1511,7 +1635,7 @@ fn scrub_audit_env(conn: &mut Connection) -> Result<()> {
 }
 
 /// project 열이 있는 표(옛 db에 남은 `merge_queue`는 읽지 않아 옮기지 않는다, 새 db에는 없다 — §8.135)
-const PROJECT_TABLES: [&str; 14] = [
+const PROJECT_TABLES: [&str; 16] = [
     "threads",
     "flow_events",
     "messages",
@@ -1519,6 +1643,8 @@ const PROJECT_TABLES: [&str; 14] = [
     "evaluations",
     "library_links",
     "library_reports",
+    "report_ids",
+    "question_ids",
     "posts",
     "task_log",
     "task_ids",

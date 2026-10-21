@@ -52,9 +52,9 @@ describe("SSH로 추가 M2", () => {
 });
 
 describe("SSH 설치 M3", () => {
-  it("1.94 이상 host만", () => {
-    for (const v of [undefined, null, "1.93"]) assert.equal(canInstall(v), false, String(v));
-    assert.equal(canInstall("1.94"), true);
+  it("1.103 이상 host만", () => {
+    for (const v of [undefined, null, "1.93", "1.102"]) assert.equal(canInstall(v), false, String(v));
+    assert.equal(canInstall("1.103"), true);
   });
   const d = { os: "macos", arch: "aarch64", raw: "Darwin arm64", chosen: false, home: "/Users/<me>/", shell: "/bin/zsh", aaa: null };
   it("기본값: 이름은 대상 별칭, 작업 root는 HOME/aaa-work", () => {

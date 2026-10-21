@@ -199,6 +199,7 @@ impl Host {
         self.ask_save(
             &rec.project,
             &AskRecord {
+                report_id: self.thread_report_id(&rec.project, &rec.id, rec.report_hash.as_deref()),
                 question_id: None,
                 id: aaa_common::util::new_id(),
                 kind: AskKind::Question,
@@ -240,14 +241,11 @@ impl Host {
                 .transpose()?
                 .and_then(|ids| ids.into_iter().next());
             let questions = if let Some(p) = post.as_ref().filter(|_| !self.request_has_open_question(&i)) {
-                let items = self.identify_questions(
-                    project,
-                    "post",
-                    &i.id,
-                    &p.body_sha256,
-                    &aaa_proto::report_questions(&p.input.body),
-                )?;
-                (!items.is_empty()).then(|| aaa_proto::ThreadQuestions {
+                let parsed = aaa_proto::parse_report_questions(&p.input.body);
+                let items = self.identify_questions(project, "post", &i.id, &p.body_sha256, &parsed.items)?;
+                (!items.is_empty() || parsed.warning.is_some()).then(|| aaa_proto::ThreadQuestions {
+                    format_warning: parsed.warning,
+                    review: false,
                     report_hash: p.body_sha256.clone(),
                     draft: self.question_draft(project, &items),
                     items,
@@ -333,9 +331,14 @@ impl Host {
         if post.body_sha256 != body_hash {
             return Err(err(ErrorCode::BadRequest, "질문 본문이 다르다. 다시 읽고 답한다"));
         }
-        let mut parsed = aaa_proto::report_questions(&post.input.body);
+        let parsed = aaa_proto::parse_report_questions(&post.input.body);
+        if let Some(warning) = parsed.warning {
+            return Err(err(ErrorCode::BadRequest, warning));
+        }
+        let mut parsed = parsed.items;
         if parsed.is_empty() {
             parsed.push(aaa_proto::ThreadQuestion {
+                after: None,
                 id: None,
                 text: post.input.title.clone(),
                 body: Some(post.input.body.clone()),
@@ -355,6 +358,7 @@ impl Host {
             return Err(internal(e));
         }
         let record = AskRecord {
+            report_id: None,
             question_id: items.first().and_then(|q| q.id.clone()),
             id: id.clone(),
             kind: AskKind::Request,
@@ -484,6 +488,7 @@ impl Host {
         self.ask_save(
             project,
             &AskRecord {
+                report_id: self.thread_report_id(project, &rec.id, rec.report_hash.as_deref()),
                 question_id: None,
                 id: id.clone(),
                 kind: AskKind::Question,
@@ -522,7 +527,7 @@ impl Host {
         }
         let mut refs = Vec::new();
         for q in &rec.questions {
-            for text in q.body.iter().chain(q.choices.iter().filter_map(|c| c.body.as_ref())) {
+            for text in q.body.iter().chain(q.choices.iter().filter_map(|c| c.body.as_ref())).chain(q.after.iter()) {
                 for r in library_refs(text) {
                     if !refs.contains(&r) {
                         refs.push(r);
@@ -578,6 +583,7 @@ impl Host {
         self.ask_save(
             &item.project,
             &AskRecord {
+                report_id: None,
                 question_id: post
                     .as_ref()
                     .and_then(|p| self.post_question_ids(item, p).ok())
@@ -609,6 +615,7 @@ impl Host {
         self.ask_save(
             project,
             &AskRecord {
+                report_id: None,
                 question_id: None,
                 id: aaa_common::util::new_id(),
                 kind: AskKind::Task,
@@ -996,6 +1003,7 @@ mod tests {
         std::fs::write(dir.join("library/t-0001/now.png"), b"png").unwrap();
         std::fs::write(dir.join("library/t-0001/mock/a.png"), b"a").unwrap();
         std::fs::write(dir.join("library/t-0001/other.png"), b"x").unwrap();
+        std::fs::write(dir.join("library/t-0001/after.png"), b"after").unwrap();
         let choice = |label: &str, body: Option<&str>| QuestionChoice {
             label: label.into(),
             description: None,
@@ -1003,6 +1011,7 @@ mod tests {
             body: body.map(str::to_string),
         };
         rec.questions = vec![ThreadQuestion {
+            after: Some("![뒤 설명](library/after.png)".into()),
             id: None,
             text: "시안".into(),
             body: Some("![지금](library/now.png)".into()),
@@ -1032,6 +1041,7 @@ mod tests {
         );
         assert_eq!(std::fs::read(h.ask_file("demo", &id, "library/mock/a.png").unwrap()).unwrap(), b"a");
         assert!(h.ask_file("demo", &id, "library/now.png").is_ok());
+        assert_eq!(std::fs::read(h.ask_file("demo", &id, "library/after.png").unwrap()).unwrap(), b"after");
         assert!(h.ask_file("demo", &id, "library/other.png").is_err());
         for bad in ["../threads/t-0001.md", "library/../report.md", "other.txt", "library/.hidden"] {
             assert!(h.ask_file("demo", &id, bad).is_err(), "{bad}");

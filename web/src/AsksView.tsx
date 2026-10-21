@@ -3,6 +3,7 @@
 // (Markdown html=false), 그림·링크는 host가 준 그 질문의 파일 주소(`files_base`) 아래 `library/…`만 연다. 그림을 누르면 크게 본다.
 // 선택지에 그림이 있으면 선택지마다 큰 그림 카드(데스크톱 2열, 2B)다. 답한 것은 답할 때의 원문(질문·본문·선택지 전체와 까닭·
 // 고른 답·때·기기)과 「그때 보고」를 보인다. 질문 카드 꼴은 화면 선택 창 카드(PromptCard, herdr-web-ui)를 따른다.
+import { QuestionReports } from "./QuestionReports";
 import { useCallback, useEffect, useId, useMemo, useRef, useState, type MouseEvent } from "react";
 import { Check, ChevronRight, CircleQuestionMark, ListChecks, Maximize2, MessageSquareReply, Send, Trash2, Bot, X } from "lucide-react";
 import type { AskRecord, FrontResponse, ThreadQuestion, ThreadQuestions, ThreadView, UserRequestView } from "./gen/proto";
@@ -321,10 +322,11 @@ function QuestionCard({
     };
   }, []);
   const customId = useId();
-  const off = pending || !canControl;
+  const off = pending || !canControl || !!q.format_warning;
   const text = custom.trim();
   const got = picks.filter((p) => p !== null).length;
   const all = got === q.items.length;
+  const needsReviewText = q.review && picks[0] === 1 && !text;
   const filled = all ? null : withRecommended(q, picks);
   const send = async (p: (number | null)[]) => {
     setPending(true);
@@ -337,7 +339,7 @@ function QuestionCard({
     if (shown.current) setPending(false);
   };
   // 다 골랐거나 직접 쓴 답이 있으면 그대로, 아니면 남은 질문을 추천으로 채워 보낸다
-  const submit = () => void (all || text ? send(picks) : filled && send(filled));
+  const submit = () => { if (!off) void (all || text ? send(picks) : filled && send(filled)); };
   const label = all ? `답 보내기 (${q.items.length})` : text ? "답 보내기" : filled ? "추천대로 보내기" : "답 보내기";
   const base = q.files_base;
   return (
@@ -347,6 +349,8 @@ function QuestionCard({
         {t ? <button type="button" className="linkish prompt-card-where" onClick={() => onThread(t.id)} title="thread 열기">{t.id} · {t.title || t.id}</button>
           : <span className="prompt-card-where">coordinator · {when(request!.created_ms)}</span>}
       </header>
+      {q.format_warning && <p className="prompt-card-error" role="alert" data-testid="question-format-warning">{q.format_warning} 보고를 고친 뒤 답할 수 있다.</p>}
+      <QuestionReports items={q.items} body={request?.body} reportId={t?.report_id} project={t?.project} base={base} />
       {request && <h2 className="ask-card-title">{request.title}</h2>}
       {q.items.map((item, n) => {
         const pictures = item.choices.some((c) => choicePicture(c.body) !== null);
@@ -377,6 +381,7 @@ function QuestionCard({
                 );
               })}
             </div>
+            {item.after && <AskMarkdown className="ask-after" base={base}>{item.after}</AskMarkdown>}
           </div>
         );
       })}
@@ -392,11 +397,12 @@ function QuestionCard({
       </div>
       <div className="thread-ask-foot">
         <span className="muted">{got}/{q.items.length} 고름{!all && filled ? " · 고르지 않은 것은 추천대로" : ""}</span>
-        <button type="button" className={`btn${all || text ? " btn-primary" : ""}`} data-testid="thread-ask-send" disabled={off || !(all || text || filled)} onClick={submit}>
+        <button type="button" className={`btn${all || text ? " btn-primary" : ""}`} data-testid="thread-ask-send" disabled={off || needsReviewText || !(all || text || filled)} onClick={submit}>
           <Send aria-hidden="true" /> {label}
         </button>
       </div>
       {!canControl && <p className="prompt-card-hint">보기 권한이라 답할 수 없다</p>}
+      {needsReviewText && <p className="muted" data-testid="review-needs-text">고칠 점을 글로 적어 답한다.</p>}
       {error !== null && <p className="prompt-card-error" role="alert">{error}</p>}
     </section>
   );
@@ -468,6 +474,7 @@ function DoneCard({ r, canControl, onForget, onZoom, onThread }: {
           <span className="prompt-card-where">{KIND_LABEL[r.kind]}</span>
         )}
       </header>
+      <QuestionReports items={r.items} body={r.body} reportId={r.report_id} base={base} />
       {r.kind !== "question" && <h2 className="ask-card-title">{r.items.length === 0 && r.question_id && <code>{r.question_id} </code>}{r.title}</h2>}
       <p className="ask-done-when" data-testid="ask-done-when">물은 때 {when(r.asked_ms)} · {r.kind === "question" && !r.answer ? "닫힌 때" : "답한 때"} {when(r.done_ms)} · {r.by}</p>
       {r.items.map((item, n) => {
@@ -499,6 +506,7 @@ function DoneCard({ r, canControl, onForget, onZoom, onThread }: {
                 );
               })}
             </div>
+            {item.after && <AskMarkdown className="ask-after" base={base}>{item.after}</AskMarkdown>}
             {pick === null && <p className="ask-done-text">직접 쓴 답으로 대신함</p>}
           </div>
         );

@@ -86,6 +86,9 @@ impl Lab {
             plan.choices.service_password_source = Some(InstallPasswordSource::Prompt);
         }
         let plan = aaa_config::install::plan(plan.choices, plan.context).unwrap();
+        self.configure(plan)
+    }
+    pub(in crate::install::engine) fn configure(&self, plan: InstallPlan) -> (InstallPlan, String) {
         let mut tx = Transaction::create(prepare::install(plan.clone()).unwrap()).unwrap();
         tx.run().unwrap();
         (plan, tx.journal.id.clone())

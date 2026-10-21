@@ -104,9 +104,20 @@ fn rollout_shared_host_agent_recovery_and_inflight_cancel_preserve_baselines() {
 
 fn rollout_scenario(scenario: Scenario) {
     use sha2::{Digest, Sha256};
-    let mut w = world();
+    // 웹을 연 host: 새 host 감시가 실행 신원과 함께 웹 응답(`/api/v1/me`)까지 본다(W6c)
+    let mut w = world_opts("", true);
     w.add_remote();
     let b = w.lab.node("b", None);
+    // host를 연달아 재시작하는 이 실험실은 로컬과 원격의 재연결 상한을 맞춘다.
+    // 기본 60초 backoff(+jitter)는 짧은 연결이 반복되면 준비 단언의 30초보다 길어진다.
+    // node()가 agent.toml을 다시 쓰므로 그 뒤에 명시한다. 제품의 기본 상한은 유지한다.
+    use std::io::Write;
+    std::fs::OpenOptions::new()
+        .append(true)
+        .open(b.cfg.join("agent.toml"))
+        .unwrap()
+        .write_all(b"\n[reconnect]\nmax_backoff_s = 1\n")
+        .unwrap();
     let proxy = TransferProxy::new(w.addr.clone());
     if scenario != Scenario::Transfer {
         proxy.release();
@@ -167,7 +178,11 @@ esac
         c
     };
     let config = w.h.cfg.join("host.toml");
-    std::fs::write(&config, std::fs::read_to_string(&config).unwrap().replace("127.0.0.1:0", &w.addr)).unwrap();
+    // agent port만 고정한다(웹은 시작마다 OS가 고른다)
+    let pinned = std::fs::read_to_string(&config)
+        .unwrap()
+        .replace("agent_listen = \"127.0.0.1:0\"", &format!("agent_listen = {:?}", w.addr));
+    std::fs::write(&config, pinned).unwrap();
     w.lab.kill("host");
     w.lab.kill("agentA");
     w.lab.kill("agentB");
@@ -180,7 +195,8 @@ esac
     wait_for("사본 host 준비", T, || w.h.json(&["status"]).ok());
     w.lab.spawn_command(a_tag, agent_cmd(&w.h, &a_exe, "a", "local", "labA"));
     w.lab.spawn_command(b_tag, agent_cmd(&b, &b_exe, "b", &proxy.addr, "labB"));
-    wait_for("사본 agent 둘 연결", T, || {
+    // t-0578 부하 실패의 사본 프로세스 시작만 여유를 둔다. 이후 배포 단계별 30초는 유지한다.
+    wait_for("사본 agent 둘 연결", lab::LOAD_TIMEOUT, || {
         (w.lab.log(a_tag).contains("host에 연결했다")
             && w.lab.log(b_tag).contains("host에 연결했다")
             && w.h.connected("labA")
@@ -250,16 +266,20 @@ esac
     };
     // 서비스 대기 상한에 앞선 사전 검사·설치 시간을 섞지 않는다. 실제 단계 진행만 다음 대기로 넘어간다.
     // 같은 rollout의 같은 cursor/시작 표지를 되풀이하는 사건은 한도를 새로 시작하지 않는다.
-    let phase_started = |id: &str, phase: aaa_proto::RolloutPhase| {
+    let job_started = |id: &str, job: &str| {
+        // 재기동한 host가 아직 listen하기 전에도 이 helper를 부른다.
+        // Front 준비와 그 뒤의 job 진행은 각각 기존 상한으로 기다린다.
+        wait_for("rollout host의 Front 준비", T, || w.h.json(&["status"]).ok());
         let mut events = Events::connect(&w.h);
         let load = || -> aaa_proto::RolloutView {
             serde_json::from_str(&db.meta(&format!("rollout:{id}")).unwrap().unwrap()).unwrap()
         };
         let mut view = load();
-        let target = view.steps.iter().rposition(|s| s.phase == phase).expect("기다릴 rollout 단계");
+        let target = view.steps.iter().position(|s| s.job_id == job).expect("기다릴 rollout job");
+        let phase = view.steps[target].phase;
         loop {
             eprintln!(
-                "rollout {id}: cursor={} started={} state={:?}, 기다릴 단계={phase:?}",
+                "rollout {id}: cursor={} started={} state={:?}, 기다릴 단계={phase:?} job={job}",
                 view.cursor,
                 view.steps.get(view.cursor as usize).is_some_and(|s| s.started_ms != 0),
                 view.state
@@ -280,6 +300,23 @@ esac
                 (advanced || next.state != aaa_proto::RolloutState::Running).then_some(next)
             });
         }
+    };
+    let load_rollout = |id: &str| -> aaa_proto::RolloutView {
+        serde_json::from_str(&db.meta(&format!("rollout:{id}")).unwrap().unwrap()).unwrap()
+    };
+    let phase_started = |id: &str, phase: aaa_proto::RolloutPhase| {
+        let view = load_rollout(id);
+        let job = &view.steps.iter().rfind(|s| s.phase == phase).expect("기다릴 rollout 단계").job_id;
+        job_started(id, job);
+    };
+    let local_restart_started = |id: &str| {
+        let view = load_rollout(id);
+        let host = &view.steps.iter().find(|s| s.phase == aaa_proto::RolloutPhase::HostRestart).unwrap().machine;
+        let mut steps =
+            view.steps.iter().filter(|s| s.phase == aaa_proto::RolloutPhase::AgentRestart && &s.machine == host);
+        let job = &steps.next().expect("로컬 agent 재시작 단계").job_id;
+        assert!(steps.next().is_none(), "로컬 agent 재시작 단계는 하나다");
+        job_started(id, job);
     };
     let digest = |p: &Path| hex::encode(Sha256::digest(std::fs::read(p).unwrap()));
     let copy = |from: &Path, to: &Path| {
@@ -455,15 +492,30 @@ esac
         });
         w.lab.kill("rollout-host-transfer-resume");
         w.lab.kill("rollout-a");
-        w.lab.spawn_command("rollout-host-new", w.h.cmd_bin(&a_exe, &["host"]));
+        // 실행 신원은 맞지만 웹이 답하지 않는 새 host(W6c): 감시는 그 웹 주소를 기다리고 rollout은 다음 단계로 가지 않는다
+        let mut silent = w.h.cmd_bin(&a_exe, &["host"]);
+        silent.env("AAA_TEST_WEB_HOLD_ME", "1");
+        w.lab.spawn_command("rollout-host-web-silent", silent);
         // CLI가 새 host에 먼저 붙어도, peer PID 신원을 local hello 이전에 고정하면 안 된다.
         wait_for("wait handshake가 local 자료를 기다림", T, || {
-            w.lab.log("rollout-host-new").contains("배포 상태 조회: 로컬 agent 자료 기다림").then_some(())
+            w.lab.log("rollout-host-web-silent").contains("배포 상태 조회: 로컬 agent 자료 기다림").then_some(())
         });
         w.lab.spawn_command("rollout-a-hello", agent_cmd(&w.h, &a_exe, "a", "local", "labA"));
+        let host_guard_file =
+            w.h.state.join(format!("agent/deployments/{}.guard.json", before_ids[5].as_str().unwrap()));
+        let silent_web = w.h.ok(&["status"])["web_listen"].as_str().unwrap().to_string();
+        let waiting = wait_for("감시가 새 host의 웹 응답을 기다림", T, || {
+            let v: Value = serde_json::from_slice(&std::fs::read(&host_guard_file).ok()?).ok()?;
+            (v["pending_web"] == silent_web.as_str()).then_some(v)
+        });
+        assert_eq!(waiting["phase"], "awaiting_new", "웹이 답하지 않는데 새 판 준비로 넘겼다");
+        // 웹이 답하는 같은 판으로 다시 띄우면 그 주소를 확인하고 이어 간다(되돌림은 시한 뒤: 유닛 `a_new_host_is_ready_only_after_its_web_answers…`)
+        w.lab.kill("rollout-host-web-silent");
+        w.lab.spawn_command("rollout-host-new", w.h.cmd_bin(&a_exe, &["host"]));
         wait_for("새 host와 agent 둘 재연결", T, || {
             (w.h.connected("labA") && w.h.connected("labB")).then_some(())
         });
+        local_restart_started(&id);
         let restart = next_call(1);
         assert!(
             restart.starts_with("a ") && restart.ends_with("/dev.aaa.agent"),
@@ -526,6 +578,7 @@ esac
         assert!(next_call(3).ends_with("/dev.aaa.host"));
         w.lab.kill("rollout-host-new");
         w.lab.spawn_command("rollout-host-second", w.h.cmd_bin(&a_exe, &["host"]));
+        local_restart_started(second_id);
         let restart = next_call(4);
         assert!(restart.starts_with("a ") && restart.ends_with("/dev.aaa.agent"), "{restart}");
         assert!(
@@ -584,6 +637,7 @@ esac
         assert!(next_call(5).ends_with("/dev.aaa.host"));
         w.lab.kill("rollout-host-second");
         w.lab.spawn_command("rollout-host-third", w.h.cmd_bin(&a_exe, &["host"]));
+        local_restart_started(third_id);
         assert!(next_call(6).starts_with("a "));
         w.lab.kill("rollout-a-second");
         w.lab.spawn_command("rollout-a-third", agent_cmd(&w.h, &a_exe, "a", "local", "labA"));
@@ -719,6 +773,7 @@ esac
     assert!(next_call(11).ends_with("/dev.aaa.host"));
     w.lab.kill("rollout-host-restored");
     w.lab.spawn_command("rollout-host-fifth", w.h.cmd_bin(&a_exe, &["host"]));
+    local_restart_started(fifth_id);
     assert!(next_call(12).ends_with("/dev.aaa.agent"));
     w.lab.kill("rollout-a-third");
     w.lab.spawn_command("rollout-a-wrong", agent_cmd(&w.h, &old_a, "a", "local", "labA"));
@@ -817,4 +872,33 @@ else:
     assert_eq!(digest(&b_exe), sha);
     assert_eq!(service_count(), 16);
     eprintln!("L3 in-flight install cancellation restored after the final candidate rename");
+
+    // W6c(답 1A): coordinator의 `aaa service restart host`는 재시작만 하는 rollout이다. 독립 감시가 새 host의 실행 신원과
+    // 웹 응답(`/api/v1/me`)을 확인해야 끝나고, 실행 파일은 그대로다
+    let enabled = w.h.in_terminal(&["safety", "set", "demo", "coordinator_deploy", "on"], &[("바꿀까?", "y")], T);
+    assert!(enabled.contains("coordinator_deploy = on"), "{enabled}");
+    let (rc, out, err) = probe(&w, "service restart --role host");
+    assert_eq!(rc, "0", "{out} {err}");
+    let restart: Value = serde_json::from_str(&out).unwrap();
+    let restart_id = restart["rollout"]["id"].as_str().unwrap().to_string();
+    assert_eq!(restart["rollout"]["spec"]["restart"], "host", "{out}");
+    let restart_guard = w
+        .h
+        .state
+        .join(format!("agent/deployments/{}.guard.json", restart["rollout"]["steps"][0]["job_id"].as_str().unwrap()));
+    assert!(next_call(16).ends_with("/dev.aaa.host"));
+    w.lab.kill("rollout-host-cancel-restored");
+    w.lab.spawn_command("rollout-host-restart", w.h.cmd_bin(&a_exe, &["host"]));
+    wait_for("재시작한 host의 front와 두 agent 준비", T, || {
+        (w.h.connected("labA") && w.h.connected("labB")).then_some(())
+    });
+    let (rc, out, err) = probe(&w, &format!("deploy status {restart_id} --wait"));
+    assert_eq!(rc, "0", "{out} {err}");
+    let restarted: Value = serde_json::from_str(&out).unwrap();
+    assert_eq!(restarted["rollout"]["state"], "done", "{out}");
+    let guard: Value = serde_json::from_slice(&std::fs::read(&restart_guard).unwrap()).unwrap();
+    assert_eq!(guard["phase"], "verified_new", "{guard}");
+    assert_eq!(digest(&a_exe), third_sha, "재시작은 실행 파일을 바꾸지 않는다");
+    assert_eq!(service_count(), 17, "재시작을 한 번만 했다");
+    eprintln!("W6c host restart rollout confirmed the new host and its web");
 }

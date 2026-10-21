@@ -1,4 +1,4 @@
-//! SSH로 설치·등록(웹 머신 추가 M3, plan §8.385). 원격 설치 단계는 install(t-0485)의 검증 SSH 입구가 한다. 이 파일은 그 앞뒤만 맡는다:
+//! SSH로 설치·등록(웹 머신 추가 M3, plan §8.420). 원격 설치 단계는 install(t-0485)의 검증 SSH 입구가 한다. 이 파일은 그 앞뒤만 맡는다:
 //!
 //! 1. **계획.** 같은 판 aaa를 원격 임시 폴더에 보내 확인하고(`binary`), 사람이 넣은 설정을 install choices(role agent·등록 grant)로 옮겨
 //!    원격 `aaa install-probe`에 stdin으로 준다. 돌아온 계획(경로·계정이 든 private 원문)은 host 작업 폴더의 0600 파일에만 두고, 화면에는

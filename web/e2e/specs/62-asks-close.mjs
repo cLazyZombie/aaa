@@ -146,7 +146,7 @@ export default async function () {
     }
   });
 
-  await step("닫기 단추는 앞 화면으로, Safari 쓸기·뒤로는 drawer 상태 유지(WebKit 390·데스크톱 1280)", async () => {
+  await step("닫기 단추는 앞 화면으로, Safari 가장자리 쓸기 뒤로는 목록을 열지 않음(WebKit 390·데스크톱 1280)", async () => {
     const wk = await webkit.launch();
     try {
       for (const phone of [true, false]) {
@@ -166,7 +166,7 @@ export default async function () {
           await openPane(p, "ak2");
           await openAsk(p);
           if (phone) {
-            // Safari가 손가락을 가져가 touchcancel 뒤 popstate를 내는 길. 앱 drawer의 열린 상태는 유지한다(t-0541).
+            // Safari가 손가락을 가져가 touchcancel 뒤 popstate를 내는 길. 왼쪽 끝 쓸기는 브라우저 뒤로 몫이라 목록이 열리지 않는다(plan §8.408).
             await inTime(p.evaluate(async () => {
               const target = document.elementFromPoint(4, 500) ?? document.body;
               const fire = (type, x) => {
@@ -184,9 +184,7 @@ export default async function () {
             }), 20_000, "쓸기 뒤 popstate");
             await selected(p);
             await drawerSettled(p, true);
-            if (!(await p.locator("#workspace-drawer.is-open").count())) throw new Error("쓸기 뒤 drawer가 닫혔다");
-            await p.getByRole("button", { name: "목록 닫기", exact: true }).click();
-            await drawerSettled(p, true);
+            if (await p.locator("#workspace-drawer.is-open").count()) throw new Error("가장자리 쓸기 뒤로에 drawer가 열렸다");
           } else await back(p);
           if ((await viewIs(p)).hash !== previous || !whole(await viewIs(p), "pane")) throw new Error("뒤로가 앞 대화를 채우지 않는다");
           await shot(p, phone ? "62-phone-swipe-back-chat" : "62-desktop-close-chat");
@@ -227,7 +225,7 @@ export default async function () {
     } finally { await wk.close(); }
   });
 
-  await step("막대 자리: 「답할 것」은 패널 단추 끝, 보고서 단추 바로 위(데스크톱 1280·휴대폰 390 drawer)", async () => {
+  await step("막대 자리: 맨 위 「coordinator」, 「답할 것」은 패널 단추 끝, 보고서 단추 바로 위(데스크톱 1280·휴대폰 390 drawer)", async () => {
     const order = (p) =>
       p.evaluate(() => {
         const items = [...document.querySelectorAll(".activity-bar .activity-item")].filter((e) => e.closest(".activity-bottom") === null);
@@ -242,7 +240,8 @@ export default async function () {
           gapBelow: Math.round(reports.top - asks.bottom),
         };
       });
-    const want = "activity-work,activity-machines,activity-automations,activity-asks,activity-reports,activity-tasks";
+    // 맨 위는 「coordinator」(t-0621)
+    const want = "activity-coordinator,activity-work,activity-machines,activity-automations,activity-asks,activity-reports,activity-tasks";
     const dev = await pairPage(browser, aaa("web", "pair").code, { width: 1280, height: 800 });
     try {
       await dev.page.getByTestId("activity-bar").waitFor();

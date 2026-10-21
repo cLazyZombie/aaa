@@ -61,6 +61,26 @@ export type AccountHealth = "ok" | "expiring" | "expired" | "rejected";
 
 export type AccountDefault = { harness: string, account: string, };
 
+export type AccountPoolMember = { account: string,
+/**
+ * 같은 실제 한도를 쓰는 별칭에는 같은 그룹을 지정한다.
+ */
+group: string,
+/**
+ * 빈 목록은 해당 harness의 모든 모델이다.
+ */
+models: Array<string>, };
+
+export type AccountPoolView = { revision: string, members: Array<AccountPoolMember>, projects: Array<string>, };
+
+export type AccountTaskSize = "small" | "medium" | "large";
+
+export type AccountSelection = { size: AccountTaskSize, group: string, unobserved: boolean, reason: string, selected_at_ms: number, };
+
+export type AccountStartState = "queued" | "started" | "failed" | "cancelled";
+
+export type AccountStartView = { id: string, project: string, title: string, size: AccountTaskSize, state: AccountStartState, thread: string | null, reason: string, created_at_ms: number, };
+
 export type AccountLoginView = { id: string, account: string, harness: string,
 /**
  * waiting·succeeded·failed·cancelled, 그리고 `mismatch`(다시 로그인에 다른 메일이 들어왔다: `account_login_confirm`을 기다린다)·
@@ -80,9 +100,47 @@ export type Version = { major: number, minor: number, };
 
 export type B64 = string;
 
-export type ErrorCode = "bad_request" | "unauthorized" | "forbidden" | "not_found" | "agent_disconnected" | "session_exited" | "unsupported_version" | "not_enrolled" | "enroll_closed" | "enroll_code_mismatch" | "name_taken" | "timeout" | "unavailable" | "internal" | "lease_held" | "subscription_not_found" | "subscription_gone" | "too_large" | "conflict";
+export type ErrorCode = "bad_request" | "unauthorized" | "forbidden" | "not_found" | "agent_disconnected" | "session_exited" | "unsupported_version" | "not_enrolled" | "enroll_closed" | "enroll_code_mismatch" | "name_taken" | "timeout" | "unavailable" | "internal" | "lease_held" | "subscription_not_found" | "subscription_gone" | "too_large" | "conflict" | "passkey_required";
 
 export type ErrorBody = { code: ErrorCode, message: string, };
+
+export type PasskeyState = {
+/**
+ * passkey가 묶이는 이름(공개 주소의 도메인)
+ */
+rp_id: string,
+/**
+ * 이 기기에 이 이름의 passkey가 있다
+ */
+registered: boolean,
+/**
+ * 아직 등록할 수 있으면 그 끝(짝지은 때 + 10분). 지났거나 보기 기기면 없다
+ */
+register_until_ms: number | null, };
+
+export type PasskeyCreation = { op_id: string, challenge: string, rp_id: string,
+/**
+ * passkey 목록에 보일 이름(aaa, 둘째 aaa면 인스턴스 이름을 붙인다)
+ */
+rp_name: string,
+/**
+ * 기기 ID(base64url): 같은 기기의 passkey를 덮는다
+ */
+user_id: string, user_name: string,
+/**
+ * 이 기기에 이미 있는 credential(같은 인증기에 두 번 만들지 않는다)
+ */
+exclude: Array<string>, };
+
+export type PasskeyRegistration = { op_id: string, credential_id: string, client_data_json: string, attestation_object: string, };
+
+export type PasskeyChallenge = { op_id: string, challenge: string, rp_id: string,
+/**
+ * 이 기기의 credential
+ */
+allow: Array<string>, };
+
+export type PasskeyAssertion = { op_id: string, credential_id: string, client_data_json: string, authenticator_data: string, signature: string, };
 
 export type Outcome<T> = { "ok": T } | { "err": ErrorBody };
 
@@ -260,7 +318,11 @@ export type TaskReservation = { selection: TaskChoicePin, task_id: string, task:
 /**
  * 선점과 함께 발급한 기동 ID. 외부 기동의 exactly-once 보증은 아니다.
  */
-launch_id: string | null, thread: string | null, actor: string, created_ms: number, updated_ms: number, };
+launch_id: string | null, thread: string | null,
+/**
+ * 연결된 thread의 현재 작업 단계. 예약 저장값 대신 host가 조회 때 채운다.
+ */
+stage?: ThreadStage, actor: string, created_ms: number, updated_ms: number, };
 
 export type ArchivedTask = { task_id: string, task: TaskView,
 /**
@@ -351,7 +413,7 @@ name: string,
  */
 notes: Array<string>, };
 
-export type TaskThread = { id: string, title: string, group: ThreadGroup, };
+export type TaskThread = { id: string, title: string, group: ThreadGroup, stage?: ThreadStage, };
 
 export type TaskNotesSection = {
 /**
@@ -507,7 +569,7 @@ machine: string | null,
  */
 repos: Array<RepoChoice>,
 /**
- * 사용자·coordinator가 띄운 열린 Worker 수(시작·정리 중 포함)와 host가 집행하는 한도. 자동화 thread는 뺀다.
+ * 사용자·coordinator가 띄운 열린 Worker 수(시작·정리 중 포함)와 host가 집행하는 한도. 자동화·병합 대기·착지 한 자리는 뺀다.
  */
 open_threads: number, max_parallel_threads: number,
 /**
@@ -687,7 +749,7 @@ host_key_state: string | null, detected: MachineDetected | null,
  */
 error: string | null, created_ms: number, updated_ms: number,
 /**
- * 사람이 넣은 설치 설정(M3, plan §8.385). 옛 host는 생략한다
+ * 사람이 넣은 설치 설정(M3, plan §8.420). 옛 host는 생략한다
  */
 settings?: MachineSetupSettings,
 /**
@@ -819,7 +881,11 @@ role: DeviceRole, created_at_ms: number,
 /**
  * 마지막으로 들어온 때(1분 단위로 적는다). 아직 한 번도 안 들어왔으면 없다
  */
-last_seen_ms: number | null, };
+last_seen_ms: number | null,
+/**
+ * 지금 공개 주소의 passkey가 있다(관리 GUI W7). 옛 host는 보내지 않는다
+ */
+passkey: boolean, };
 
 export type HostStatus = { host_id: string, software: string, proto: Version, dev_mode: boolean, agent_listen: string | null, web_listen: string | null, machines: Array<MachineView>, };
 
@@ -913,7 +979,7 @@ truncated: boolean,
  */
 untracked_omitted: boolean, };
 
-export type FrontRequest = { "op": "install_approve", request: InstallApprovalRequest, } | { "op": "account_import", name: string, harness: string, secret: SecretText, } | { "op": "account_list" } | { "op": "account_defaults" } | { "op": "account_default", harness: string, account: string | null, } | { "op": "account_login", name: string, harness: string, } | { "op": "account_login_status", id: string, } | { "op": "account_login_cancel", id: string, } | { "op": "account_login_confirm", id: string, switch: boolean, } | { "op": "account_remove", name: string, } | { "op": "thread_start_account", account: string, start: FrontRequest, } | { "op": "debug_input", pane: string | null, thread: string | null, since_ms: bigint, } | { "op": "rollout_start", id: string, spec: RolloutSpec, } | { "op": "rollout_status", id: string, } | { "op": "deploy_context" } | { "op": "deploy_start", machine: string | null, id: string, action: DeployAction, } | { "op": "deploy_status", machine: string | null, id: string, } | { "op": "rollout_plan", source_machine: string, path: string,
+export type FrontRequest = { "op": "install_approve", request: InstallApprovalRequest, } | { "op": "account_import", name: string, harness: string, secret: SecretText, } | { "op": "account_list" } | { "op": "account_defaults" } | { "op": "account_pool" } | { "op": "account_pool_member", revision: string, account: string, member: AccountPoolMember | null, } | { "op": "account_pool_project", revision: string, project: string, enabled: boolean, } | { "op": "account_starts", project?: string, } | { "op": "account_start_cancel", project?: string, id: string, } | { "op": "thread_start_pool", id: string, size: AccountTaskSize, start: FrontRequest, } | { "op": "account_default", harness: string, account: string | null, } | { "op": "account_login", name: string, harness: string, } | { "op": "account_login_status", id: string, } | { "op": "account_login_cancel", id: string, } | { "op": "account_login_confirm", id: string, switch: boolean, } | { "op": "account_remove", name: string, } | { "op": "thread_start_account", account: string, start: FrontRequest, } | { "op": "debug_input", pane: string | null, thread: string | null, since_ms: bigint, } | { "op": "rollout_start", id: string, spec: RolloutSpec, } | { "op": "rollout_status", id: string, } | { "op": "deploy_context" } | { "op": "deploy_start", machine: string | null, id: string, action: DeployAction, } | { "op": "deploy_status", machine: string | null, id: string, } | { "op": "rollout_plan", source_machine: string, path: string,
 /**
  * 비었으면 등록된 모든 머신
  */
@@ -962,7 +1028,15 @@ profile?: string,
 /**
  * coordinator가 돌아도 하나 더 띄운다
  */
-new?: boolean, } | { "op": "profiles", machine: string | null, } | { "op": "profile_resolve", name: string | null, } | { "op": "thread_start", holds: Array<string>,
+new?: boolean, } | { "op": "profiles", machine: string | null, } | { "op": "profile_resolve", name: string | null, } | { "op": "thread_start",
+/**
+ * FRONT_API 1.98. 사용자가 명시한 시작만 프로젝트 실행 한도를 넘길 수 있다.
+ */
+over_limit?: boolean,
+/**
+ * coordinator는 해당 task를 강제로 시작하라는 사용자 지시 근거를 한 줄로 남긴다.
+ */
+user_request?: string, holds: Array<string>,
 /**
  * 준비 완료를 기다리지 않고 Starting 기록을 돌려준다.
  */
@@ -999,7 +1073,11 @@ task: string, } | { "op": "thread_next", project?: string, thread: string, line:
 /**
  * 비면 보기, 있으면 같은 ID로 활성 목록에 복원(예약은 복원하지 않는다).
  */
-restore: string | null, } | { "op": "task_edit", project?: string, ops: Array<TaskOp>, base_sha256: string | null, } | { "op": "task_log", project?: string, before: number | null, limit: number | null, filter: TaskLogFilter | null,
+restore: string | null, } | { "op": "task_edit", project?: string, ops: Array<TaskOp>, base_sha256: string | null,
+/**
+ * 사용자 지시로 모델·머신만 변경하는 근거 한 줄(FRONT_API 1.97). 예약 순서와 시작 승인을 유지한다.
+ */
+user_request?: string, } | { "op": "task_log", project?: string, before: number | null, limit: number | null, filter: TaskLogFilter | null,
 /**
  * 표시 ID·ULID 또는 제목으로 기록을 거른다.
  */
@@ -1079,7 +1157,12 @@ export type RolloutSpec = { from: string,
 /**
  * Some이면 이 머신의 빌드 후보를 Agent link로 가져온다. None은 L1 미리 복사 경로다.
  */
-source_machine?: string | null, sha256: string, commit: string | null, machines: Array<string>, };
+source_machine?: string | null, sha256: string, commit: string | null, machines: Array<string>,
+/**
+ * 재시작만 하는 rollout(관리 GUI W6c, 답 1A): 대상 한 머신의 이 서비스를 지금 판 그대로 다시 띄우고 guard로 확인한다.
+ * 후보·전송·교체가 없고 `from`·`sha256`은 host가 재시작 전 실행 신원으로 채운다
+ */
+restart?: DeployService | null, };
 
 export type RolloutPhase = "transfer" | "preflight" | "host_update" | "host_restart" | "agent_update" | "agent_restart";
 
@@ -1097,7 +1180,11 @@ export type RolloutView = { id: string, project: string, actor: string, spec: Ro
  */
 recovery_enabled: boolean, recovery: DeployGuardView | null, recovery_started_ms: number, created_ms: number, updated_ms: number, };
 
-export type RolloutCard = { id: string, state: RolloutState, version: string | null, sha256: string, commit: string | null, cursor: number, steps: Array<RolloutCardStep>, error: string | null, recovery_phase: DeployGuardPhase | null, recovery_sha256: string | null, created_ms: number, updated_ms: number, };
+export type RolloutCard = { id: string, state: RolloutState, version: string | null, sha256: string, commit: string | null,
+/**
+ * 재시작만 하는 rollout의 서비스(W6c). 교체 rollout은 없다
+ */
+restart?: DeployService | null, cursor: number, steps: Array<RolloutCardStep>, error: string | null, recovery_phase: DeployGuardPhase | null, recovery_sha256: string | null, created_ms: number, updated_ms: number, };
 
 export type RolloutCardStep = { machine: string, phase: RolloutPhase, completed: boolean, started_ms: number, transferred_bytes: number, total_bytes: number, };
 
@@ -1151,7 +1238,7 @@ error: string | null,
  */
 web: boolean, created_ms: number, updated_ms: number, };
 
-export type FrontResponse = { "kind": "install_published", publication: InstallPublication, } | { "kind": "install_approval", approval: InstallApprovalView, } | { "kind": "accounts", accounts: Array<AccountView>, } | { "kind": "account_defaults", defaults: Array<AccountDefault>, } | { "kind": "account_login", login: AccountLoginView, } | { "kind": "input_events", events: Array<InputEvent>, } | { "kind": "deploy_context", project: string | null, session: boolean, allowed: boolean, } | { "kind": "rollout", rollout: RolloutView, } | { "kind": "rollout_cards", cards: Array<RolloutCard>, } | { "kind": "rollout_plan", plan: RolloutPlanView, } | { "kind": "deploy_jobs", jobs: Array<DeployJobCard>, } | { "kind": "deployment", machine: string, job: DeployJob, running_software: string, running_sha256: string, } | { "kind": "missions", missions: Array<MissionView>, } | { "kind": "mission", mission: MissionView, } | { "kind": "post", result: PostResult,
+export type FrontResponse = { "kind": "install_published", publication: InstallPublication, } | { "kind": "install_approval", approval: InstallApprovalView, } | { "kind": "accounts", accounts: Array<AccountView>, } | { "kind": "account_defaults", defaults: Array<AccountDefault>, } | { "kind": "account_pool", pool: AccountPoolView, } | { "kind": "account_starts", starts: Array<AccountStartView>, } | { "kind": "account_start", start: AccountStartView, } | { "kind": "account_login", login: AccountLoginView, } | { "kind": "input_events", events: Array<InputEvent>, } | { "kind": "deploy_context", project: string | null, session: boolean, allowed: boolean, } | { "kind": "rollout", rollout: RolloutView, } | { "kind": "rollout_cards", cards: Array<RolloutCard>, } | { "kind": "rollout_plan", plan: RolloutPlanView, } | { "kind": "deploy_jobs", jobs: Array<DeployJobCard>, } | { "kind": "deployment", machine: string, job: DeployJob, running_software: string, running_sha256: string, } | { "kind": "missions", missions: Array<MissionView>, } | { "kind": "mission", mission: MissionView, } | { "kind": "post", result: PostResult,
 /**
  * status 조회에서 확인한 inbox 처리 상태(FRONT_API 1.84). 옛 host는 생략한다.
  */
@@ -1344,13 +1431,22 @@ export type DeployAction = { "action": "update", from: string | null, version: s
 
 export type DeployStageView = { rollout: string, project: string, sha256: string, total: number, offset: number, complete: boolean, version: string | null, };
 
-export type RuntimeIdentity = { sha256: string, software: string, instance: string, started_ms: number, };
+export type RuntimeIdentity = { sha256: string, software: string, instance: string, started_ms: number,
+/**
+ * host가 실제로 연 웹 주소(loopback, 관리 GUI W6c, FRONT_API 1.100). 같은 머신 agent에만 싣는다. host 감시는 이 주소의
+ * `/api/v1/me`가 답해야 새 판 준비로 본다. 없으면(웹을 끈 설정·옛 host·agent 신원) 실행 신원만 본다
+ */
+web?: string | null, };
 
 export type DeployGuardSpec = { id: string, rollout: string, project: string, service: DeployService, host_machine: boolean, baseline: RuntimeIdentity, expected_sha256: string, expected_software: string, old_host_instance: string, install_job: string | null, rollback_job: string, restart_job: string, host_restart_job: string, };
 
 export type DeployGuardPhase = "armed" | "awaiting_new" | "new_ready" | "restoring" | "restarting" | "awaiting_old" | "verified_new" | "restored" | "failed" | "cancelled";
 
-export type DeployGuardView = { spec: DeployGuardSpec, phase: DeployGuardPhase, worker_pid: number, deadline_ms: number, install_started: boolean, activated: boolean, restore_started: boolean, restart_index: number, restart_started: boolean, host_restart_ms: number, agent_restart_ms: number, observed: Array<DeployService>, installed_sha256: string, error: string | null, };
+export type DeployGuardView = { spec: DeployGuardSpec, phase: DeployGuardPhase, worker_pid: number, deadline_ms: number, install_started: boolean, activated: boolean, restore_started: boolean, restart_index: number, restart_started: boolean, host_restart_ms: number, agent_restart_ms: number, observed: Array<DeployService>, installed_sha256: string, error: string | null,
+/**
+ * 실행 신원은 맞고 웹 응답을 기다리는 host 웹 주소(W6c). 답하면 NewReady, 시한이 지나면 복구
+ */
+pending_web?: string | null, };
 
 export type DeployGuardControl = { "op": "status" } | { "op": "begin_install", job_id: string, } | { "op": "activate" } | { "op": "observe", service: DeployService, identity: RuntimeIdentity, } | { "op": "commit" } | { "op": "recover", reason: string, } | { "op": "cancel" };
 
@@ -1364,7 +1460,17 @@ export type ThreadGroup = "waiting_on_you" | "ready_for_review" | "landing" | "w
 
 export type ReportAttention = "completed" | "needs_user";
 
-export type ThreadView = { project: string, id: string, title: string, machine: string, profile: string, account?: string, role: Role,
+export type ThreadStage = "merge_ready" | "landing";
+
+export type ThreadView = { account_selection?: AccountSelection,
+/**
+ * 명시적으로 실행 한도를 무시한 시작의 출처. 옛 기록은 생략한다(FRONT_API 1.98).
+ */
+over_limit?: ThreadLimitOverride,
+/**
+ * FRONT_API 1.95. 보고의 특정 판을 여는 프로젝트별 영속 번호(r-0001부터).
+ */
+report_id?: string, project: string, id: string, title: string, machine: string, profile: string, account?: string, role: Role,
 /**
  * (FrontResponse 태그 `kind`와 겹치지 않게 이름을 달리한다)
  */
@@ -1393,7 +1499,11 @@ cleanup_pending?: boolean, group: ThreadGroup, brief: BriefState, pane: string |
 /**
  * 추적하는 PR(§8.80)
  */
-pr: ThreadPr | null, report_hash: string | null, report_attention?: ReportAttention, acked_hash: string | null,
+pr: ThreadPr | null, report_hash: string | null, report_attention?: ReportAttention,
+/**
+ * 회수한 보고의 작업 단계. 옛 host·표지 없는 보고·끝난 thread는 생략한다.
+ */
+stage?: ThreadStage, acked_hash: string | null,
 /**
  * report.md `## Next` 줄
  */
@@ -1435,6 +1545,8 @@ limited_until_ms?: number,
  */
 questions?: ThreadQuestions, };
 
+export type ThreadLimitOverride = { actor: string, at_ms: number, user_request: string | null, };
+
 export type ThreadPr = { url: string, state: string | null, review: string | null, };
 
 export type SummaryMark = {
@@ -1448,6 +1560,14 @@ at_ms: number | null,
 pending: number, };
 
 export type ThreadQuestions = {
+/**
+ * 형식 확인 필요: 질문·선택지 누락이나 글자 순서 불일치가 있어 답 전송을 막는다. 옛 host는 생략한다.
+ */
+format_warning?: string,
+/**
+ * FRONT_API 1.96. Questions 없는 검수 대기에 host가 만든 기본 검수 카드. B는 고칠 점을 글로 적는다.
+ */
+review: boolean,
 /**
  * 이 질문이 든 보고 사본의 hash. 답은 이 hash가 지금 보고일 때만 받는다
  */
@@ -1467,6 +1587,10 @@ files_base?: string,
 draft?: QuestionAnswerView, };
 
 export type ThreadQuestion = {
+/**
+ * 선택지 뒤의 Markdown 설명·그림(FRONT_API 1.99). 선택지 그림과 섞거나 버리지 않는다.
+ */
+after?: string,
 /**
  * 프로젝트별 영속 순번(q-1000부터). 옛 보고 파서·host는 생략한다.
  */
@@ -1492,7 +1616,11 @@ body?: string, };
 
 export type AskKind = "question" | "request" | "task";
 
-export type AskRecord = { id: string, question_id?: string, kind: AskKind,
+export type AskRecord = {
+/**
+ * FRONT_API 1.96. 답할 때의 보고 판. 새 보고 뒤에도 같은 원문을 연다.
+ */
+report_id?: string, id: string, question_id?: string, kind: AskKind,
 /**
  * 질문은 thread 번호, 확인 필요 post는 inbox 항목 ID, 할 일은 task 제목
  */
@@ -2114,7 +2242,15 @@ on_agent: boolean,
  */
 mime: string, kind: FileKind, };
 
-export type LibraryView = { project: string, thread: string,
+export type LibraryView = {
+/**
+ * FRONT_API 1.95. 같은 이름·thread의 보고 판(최신 번호부터).
+ */
+versions: Array<string>,
+/**
+ * FRONT_API 1.95. 보고의 특정 판을 여는 프로젝트별 영속 번호(r-0001부터).
+ */
+report_id?: string, project: string, thread: string,
 /**
  * 회수한 report.md(없으면 None)
  */
@@ -2128,7 +2264,11 @@ link: LinkView | null,
  */
 from_thread?: string, };
 
-export type LinkView = { id: string, project: string, thread: string, base: string,
+export type LinkView = {
+/**
+ * FRONT_API 1.95. 보고의 특정 판을 여는 프로젝트별 영속 번호(r-0001부터).
+ */
+report_id?: string, id: string, project: string, thread: string, base: string,
 /**
  * 공개했을 때만 있는 절대 HTTPS 주소. loopback은 밖 알림에 싣지 않는다.
  */
@@ -2138,7 +2278,19 @@ url: string | null, created_at_ms: number, expires_at_ms: number, last_opened_at
  */
 size: number, };
 
-export type LibraryReport = { project: string, name: string, size: number, updated_at_ms: number, live: boolean,
+export type LibraryReport = {
+/**
+ * FRONT_API 1.95. 특정 판 사본의 보존 용량. size는 기존 최신 사본 크기다.
+ */
+history_size: number,
+/**
+ * FRONT_API 1.95. 같은 이름·thread의 보고 판(최신 번호부터).
+ */
+versions: Array<string>,
+/**
+ * FRONT_API 1.95. 보고의 특정 판을 여는 프로젝트별 영속 번호(r-0001부터).
+ */
+report_id?: string, project: string, name: string, size: number, updated_at_ms: number, live: boolean,
 /**
  * 읽기 실패·상한 초과도 목록에서 감추지 않는다.
  */

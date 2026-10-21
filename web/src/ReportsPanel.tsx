@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { Trash2 } from "lucide-react";
 import type { DeviceRole, FrontResponse, LibraryReport } from "./gen/proto";
 import { call } from "./api";
@@ -62,35 +62,39 @@ export function ReportsPanel({ role, rev, onView }: { role: DeviceRole; rev: num
   // 「올리기」 창의 프로젝트(host는 프로젝트 하나다, 관리 GUI W5b)
   const [uploading, setUploading] = useState<string | null>(null);
   const admin = useAdmin();
+  const loadId = useRef(0);
+  const [visible, setVisible] = useState({ mine: 50, work: 50 });
   const load = useCallback(async () => {
+    const id = ++loadId.current;
     setProblem("");
-    try {
-      const [r, u] = await Promise.all([
-        call({ op: "library_reports", project: null }), call({ op: "library_usage" }),
-      ]);
-      if (u.kind === "library_usage") setUsage(u);
-      if (r.kind === "library_reports") {
+    // 용량·보호 판정이 늦거나 실패해도 받은 목록부터 그린다. 새 조회 뒤에 온 옛 답은 버린다.
+    const fail = (e: unknown) => { if (id === loadId.current) setProblem(String(e)); };
+    await Promise.all([
+      call({ op: "library_reports", project: null }).then((r) => {
+        if (id !== loadId.current || r.kind !== "library_reports") return;
         setReports(r.reports);
-        // 사라졌거나 진행 중이 된 것은 고른 데서 뺀다
         const can = new Set(r.reports.filter((x) => !x.busy).map(keyOf));
         setPicked((p) => (([...p].every((k) => can.has(k))) ? p : new Set([...p].filter((k) => can.has(k)))));
-      }
-    } catch (e) { setProblem(String(e)); }
+      }).catch(fail),
+      call({ op: "library_usage" }).then((u) => {
+        if (id === loadId.current && u.kind === "library_usage") setUsage(u);
+      }).catch(fail),
+    ]);
   }, []);
-  useEffect(() => { void load(); }, [load, rev]);
+  useEffect(() => { void load(); return () => { ++loadId.current; }; }, [load, rev]);
   const open = async (r: LibraryReport) => {
     setOpening(keyOf(r));
     try { await openReportWindow(r); }
     catch (e) { setProblem(e instanceof Error ? e.message : String(e)); }
     finally { setOpening(null); }
   };
-  const titleLink = (r: LibraryReport, className?: string) => <a className={className} href={`#report=${encodeURIComponent(keyOf(r))}`} onClick={(e) => {
+  const titleLink = (r: LibraryReport, className?: string) => <>{r.report_id && <><code>{r.report_id}</code>{" "}</>}<a className={className} href={`#report=${encodeURIComponent(keyOf(r))}`} onClick={(e) => {
     // 보조 키·가운데 단추는 브라우저의 새 탭 동작을 지킨다. 보통 클릭은 목록의 굴린 자리도 보존한다.
     if (e.button === 0 && !e.metaKey && !e.ctrlKey && !e.shiftKey && !e.altKey) {
       e.preventDefault();
       onView(r);
     }
-  }}>{r.title ?? keyOf(r)}</a>;
+  }}>{r.title ?? keyOf(r)}</a></>;
   const remove = async (rows: LibraryReport[]) => {
     const r = await call({ op: "library_delete", reports: rows.map((x) => ({ project: x.project, name: x.name })) });
     if (r.kind !== "library_pruned") throw new Error("host가 지우기에 다른 답을 했다");
@@ -137,7 +141,7 @@ export function ReportsPanel({ role, rev, onView }: { role: DeviceRole; rev: num
     {problem && <p role="alert">{problem}</p>}
     <div id="reports-tabpanel" role="tabpanel" aria-labelledby={`reports-tab-${tab}`}>
     {reports === null ? <p>보고서를 읽고 있다…</p> : tab === "mine" ? (
-      mine.length === 0 ? <p className="muted">coordinator가 보낸 보고서가 없다. thread 사본과 그 밖에 올린 보고서는 「작업 보고」에 있다</p> : mine.map((r) => {
+      mine.length === 0 ? <p className="muted">coordinator가 보낸 보고서가 없다. thread 사본과 그 밖에 올린 보고서는 「작업 보고」에 있다</p> : mine.slice(0, visible.mine).map((r) => {
         const key = keyOf(r);
         return <article className={`report-card report-mine${r.unseen ? " is-unseen" : ""}`} key={key} data-testid={`report-${r.project}-${r.name}`} data-unseen={r.unseen ? "true" : "false"}>
           <div className="report-heading">
@@ -165,7 +169,7 @@ export function ReportsPanel({ role, rev, onView }: { role: DeviceRole; rev: num
             <Trash2 className="i" aria-hidden="true" />지우기
           </button>
         </div>}
-        {work.length === 0 ? <p className="muted">작업 보고가 없다</p> : work.map((r) => {
+        {work.length === 0 ? <p className="muted">작업 보고가 없다</p> : work.slice(0, visible.work).map((r) => {
           const key = keyOf(r);
           const on = picked.has(key);
           return <div className={`report-row${on ? " is-picked" : ""}`} key={key} data-testid={`report-${r.project}-${r.name}`} data-busy={r.busy ? "true" : "false"}>
@@ -193,10 +197,13 @@ export function ReportsPanel({ role, rev, onView }: { role: DeviceRole; rev: num
         })}
       </>
     )}
+    {reports !== null && (tab === "mine" ? mine.length : work.length) > visible[tab] && <button
+      type="button" className="ghost small" data-testid="reports-more"
+      onClick={() => setVisible((v) => ({ ...v, [tab]: v[tab] + 50 }))}>보고서 더 보기</button>}
     </div>
     {doomed && <ConfirmDialog
       title={doomed.length === 1 ? "보고서를 지울까?" : `보고서 ${doomed.length}개를 지울까?`}
-      body={`${doomed.length === 1 ? keyOf(doomed[0]) : `${doomed.slice(0, 3).map(keyOf).join(", ")}${doomed.length > 3 ? ` 외 ${doomed.length - 3}개` : ""}`}를 host 사본·공유 링크·목록에서 영구히 지운다.${doomed.some((r) => r.name.startsWith("t-")) ? " thread 사본은 회수한 보고 글도 함께 지운다." : ""} 되돌릴 수 없다.`}
+      body={`${doomed.length === 1 ? keyOf(doomed[0]) : `${doomed.slice(0, 3).map(keyOf).join(", ")}${doomed.length > 3 ? ` 외 ${doomed.length - 3}개` : ""}`}를 모든 보고 판의 host 사본·공유 링크·목록에서 영구히 지운다.${doomed.some((r) => r.name.startsWith("t-")) ? " thread 사본은 회수한 보고 글도 함께 지운다." : ""} 되돌릴 수 없다.`}
       confirmLabel="영구히 지우기"
       onConfirm={() => remove(doomed)}
       onClose={() => setDoomed(null)}

@@ -16,6 +16,7 @@ pub fn automation_schema() -> String {
 mod account_login;
 mod account_meta;
 mod account_policy;
+mod account_pool;
 mod accounts;
 mod auto_start;
 mod automation;
@@ -45,6 +46,7 @@ mod input_log;
 pub mod installation;
 mod legacy_mission;
 mod library;
+mod library_catalog;
 mod library_links;
 mod library_publish;
 mod library_retention;
@@ -58,6 +60,7 @@ mod notify;
 mod open;
 mod orch;
 mod output;
+mod passkey;
 mod post;
 mod pr;
 mod prefs;
@@ -67,6 +70,7 @@ mod prompt_box;
 mod push;
 mod quota;
 mod quota_rpc;
+mod report_ids;
 mod report_mark;
 mod report_sandbox;
 mod resource;
@@ -149,9 +153,10 @@ impl AgentConn {
                 Duration::from_secs(self.timeouts.thread_prepare_timeout_secs)
             }
             AgentRequest::ThreadCleanup { .. } => Duration::from_secs(self.timeouts.thread_cleanup_timeout_secs),
-            AgentRequest::FileRead { .. } | AgentRequest::ReportCollect { .. } => {
-                Duration::from_secs(self.timeouts.file_request_timeout_secs)
-            }
+            AgentRequest::FileRead { .. }
+            | AgentRequest::ReportCollect { .. }
+            | AgentRequest::ReportFileRead { .. }
+            | AgentRequest::ReportTransfer { .. } => Duration::from_secs(self.timeouts.file_request_timeout_secs),
             _ => REQUEST_TIMEOUT,
         };
         self.request_timeout(body, wait).await
@@ -243,6 +248,8 @@ struct MachineRt {
     health_sent: Option<health::HealthSent>,
     /// agent가 hello에서 알린 기능(`cwd.v1` 등). 모르는 요청을 받은 옛 agent는 연결을 끊으므로 보내기 전에 본다.
     features: Vec<String>,
+    /// agent가 hello에서 알린 실행 신원(관리 GUI W6c 재시작 rollout의 재시작 전 신원). 옛 agent는 없다
+    identity: Option<aaa_proto::RuntimeIdentity>,
     /// 로컬 agent 프로세스(로컬 socket peer credential). 그 세션에서 띄운 명령(routine 명령)은 떼어 낸 프로세스가 아니다(plan §8.164).
     agent_pid: Option<u32>,
     /// 이 연결에 화면 색을 차례로 보내는 곳(agent 기능 `term_colors.v1`, colors.rs). 놓으면 보내던 task가 끝난다
@@ -495,6 +502,9 @@ pub struct Host {
     install_probes: Mutex<HashMap<String, (String, Instant)>>,
     pub agent_listen: Mutex<Option<String>>,
     pub web_listen: Mutex<Option<String>>,
+    /// 거짓인 동안 같은 머신 agent에 Welcome을 보내지 않는다. `run_host`가 웹을 열 때까지만 닫는다(W6c): 그 Welcome의 host 실행
+    /// 신원에 실제로 연 웹 주소가 실려야 host 감시가 웹 응답까지 본다. 웹은 link 뒤에 연다(먼저 열면 `:0` 웹이 고정한 agent port를 쥘 수 있다)
+    pub(crate) web_gate: tokio::sync::watch::Sender<bool>,
     workspaces: Mutex<HashMap<String, Workspace>>,
     /// workspace가 바뀔 때(front가 구독한다)
     pub layout_events: broadcast::Sender<Workspace>,
@@ -517,8 +527,8 @@ pub struct Host {
     flow_order: Mutex<()>,
     /// thread 기록이 바뀌었다
     pub thread_events: broadcast::Sender<aaa_proto::ThreadView>,
-    /// 보고 사본은 한 번에 하나씩 한다
-    collect_lock: tokio::sync::Mutex<()>,
+    /// 같은 thread의 보고·resolve만 직렬화한다. 다른 머신의 전송은 서로 기다리지 않는다.
+    collect_locks: Mutex<HashMap<String, Arc<tokio::sync::Mutex<()>>>>,
     /// 확인창 질문이 열리거나 바뀌었다
     pub question_events: broadcast::Sender<aaa_proto::QuestionView>,
     /// 앱 안 알림(턴 끝남·새 보고, notice.rs). 기록하지 않는다
@@ -540,6 +550,8 @@ pub struct Host {
     pub device_revoked: broadcast::Sender<String>,
     /// 이 host가 돌면서 취소한 기기. 열린 연결이 사건을 받기 전에 온 입력도 거른다
     revoked_devices: Mutex<std::collections::HashSet<String>>,
+    /// passkey 등록·승인의 begin과 finish 사이(관리 GUI W7). host를 다시 띄우면 처음부터 한다
+    passkey_ops: passkey::Ops,
     /// pane별 harness 사건 대기자
     waiters: Mutex<harness::Waiters>,
     /// 메시지 전달은 한 번에 하나씩 한다
@@ -604,6 +616,8 @@ pub struct Host {
     /// brief 배경 task가 도는 thread(`<project>/<thread>`, 하나만 돈다)
     brief_loops: Mutex<HashSet<String>>,
     thread_ops: Mutex<HashMap<String, Arc<tokio::sync::Mutex<()>>>>,
+    #[cfg(test)]
+    start_admitted_hook: Mutex<Option<orch::StartAdmittedHook>>,
     /// 지금 brief 한 걸음을 하는 thread(배경 task와 `thread brief`가 겹치지 않게, herdr-projects brief.rs `claim`)
     brief_claims: Mutex<HashSet<String>>,
     /// 보고를 다시 확인하는 중인 thread(`<project>/<thread>`)와 그동안 또 확인을 부탁받았는지. 묶음 셈(transitions.rs)은
@@ -615,9 +629,10 @@ pub struct Host {
     restore_tried: Mutex<HashSet<String>>,
 }
 
-fn device_view(d: db::DeviceRow) -> aaa_proto::DeviceView {
+fn device_view(d: db::DeviceRow, passkey: bool) -> aaa_proto::DeviceView {
     aaa_proto::DeviceView {
         role: if d.role == "reader" { DeviceRole::Reader } else { DeviceRole::Controller },
+        passkey,
         id: d.id,
         label: d.label,
         created_at_ms: d.created_ms,
@@ -690,6 +705,7 @@ impl Host {
                     health: None,
                     health_sent: None,
                     features: vec![],
+                    identity: None,
                     agent_pid: None,
                     colors: None,
                     build: MachineBuild { arch: m.arch, software: m.software, sha256: m.sha256, selfcheck: None },
@@ -733,6 +749,7 @@ impl Host {
             install_probes: Mutex::new(HashMap::new()),
             agent_listen: Mutex::new(None),
             web_listen: Mutex::new(None),
+            web_gate: tokio::sync::watch::channel(true).0,
             workspaces: Mutex::new(workspaces),
             layout_events: broadcast::channel(64).0,
             front_seq: AtomicU64::new(0),
@@ -741,7 +758,7 @@ impl Host {
             flow_events: broadcast::channel(256).0,
             flow_order: Mutex::new(()),
             thread_events: broadcast::channel(256).0,
-            collect_lock: tokio::sync::Mutex::new(()),
+            collect_locks: Mutex::new(HashMap::new()),
             question_events: broadcast::channel(256).0,
             post_gate: std::sync::Mutex::new(()),
             deployment_gate: std::sync::Mutex::new(()),
@@ -761,6 +778,7 @@ impl Host {
             preferences,
             device_revoked: broadcast::channel(64).0,
             revoked_devices: Mutex::new(Default::default()),
+            passkey_ops: Default::default(),
             waiters: Mutex::new(HashMap::new()),
             deliver_lock: tokio::sync::Mutex::new(()),
             held: Mutex::new(HashMap::new()),
@@ -797,6 +815,8 @@ impl Host {
             rec_lock: Mutex::new(()),
             brief_loops: Mutex::new(HashSet::new()),
             thread_ops: Mutex::new(HashMap::new()),
+            #[cfg(test)]
+            start_admitted_hook: Mutex::new(None),
             brief_claims: Mutex::new(HashSet::new()),
             resource_exhausted: std::sync::atomic::AtomicBool::new(false),
             report_refresh: Mutex::new(HashMap::new()),
@@ -805,6 +825,7 @@ impl Host {
         });
         // 이 기록 전에 등록한 Codex 계정의 메일·plan(관리 GUI W5a, 사용자 답 3A)
         host.account_meta_backfill();
+        host.backfill_report_stages()?;
         // 진행 중에 내려간 SSH 머신 추가 작업(plan §8.384)
         host.setup_recover();
         Ok(host)
@@ -873,6 +894,7 @@ impl Host {
                 health: None,
                 health_sent: None,
                 features: vec![],
+                identity: None,
                 agent_pid: None,
                 colors: None,
                 build: MachineBuild::default(),
@@ -883,6 +905,7 @@ impl Host {
             m.boot_id = Some(hello.boot_id.clone());
             m.dev_mode = hello.dev_mode;
             m.features = hello.features.clone();
+            m.identity = hello.identity.clone();
             m.conn = Some(conn);
             // 다시 붙은 agent는 설정이 바뀌었을 수 있다. 새 보고를 기다린다.
             m.health = None;
@@ -1356,6 +1379,8 @@ impl Host {
         if matches!(
             &req,
             FrontRequest::AccountDefault { .. }
+                | FrontRequest::AccountPoolMember { .. }
+                | FrontRequest::AccountPoolProject { .. }
                 | FrontRequest::AccountLogin { .. }
                 | FrontRequest::AccountLoginStatus { .. }
                 | FrontRequest::AccountLoginCancel { .. }
@@ -1432,14 +1457,20 @@ impl Host {
                 format!("보기 권한으로는 조작할 수 없다{}", front::reader_reason(actor)),
             ));
         }
-        let (mut req, selected_account) = match req {
+        let (mut req, selected_account, pool_request) = match req {
             FrontRequest::ThreadStartAccount { account, start } => {
                 if !matches!(&*start, FrontRequest::ThreadStart { .. }) {
                     return Err(err(ErrorCode::BadRequest, "계정 지정은 thread 시작 요청에만 쓴다"));
                 }
-                (*start, Some(account))
+                (*start, Some(account), None)
             }
-            other => (other, None),
+            FrontRequest::ThreadStartPool { id, size, start } => {
+                if !matches!(&*start, FrontRequest::ThreadStart { .. }) {
+                    return Err(err(ErrorCode::BadRequest, "풀 지정은 thread 시작 요청에만 쓴다"));
+                }
+                (*start, None, Some(account_pool::PoolRequest { id, size }))
+            }
+            other => (other, None, None),
         };
         // 프로젝트를 생략한 요청(FRONT_API 1.50, plan §8.288): host가 맡은 프로젝트 하나로 채운다
         // 모든 프로젝트 기본·profile 자체를 고치는 설정 관리(W5c)는 프로젝트가 아직 없는 host에서도 된다(그때는 빈 채로 둔다)
@@ -1484,6 +1515,17 @@ impl Host {
             }
             FrontRequest::AccountList => Ok(FrontResponse::Accounts { accounts: self.account_views(shows_email)? }),
             FrontRequest::AccountDefaults => Ok(FrontResponse::AccountDefaults { defaults: self.account_defaults()? }),
+            FrontRequest::AccountPool => Ok(FrontResponse::AccountPool { pool: self.account_pool()? }),
+            FrontRequest::AccountPoolMember { revision, account, member } => {
+                self.pool_member_set(&revision, &account, member, actor)
+            }
+            FrontRequest::AccountPoolProject { revision, project, enabled } => {
+                self.pool_project_set(&revision, &project, enabled, actor)
+            }
+            FrontRequest::AccountStarts { project } => {
+                Ok(FrontResponse::AccountStarts { starts: self.pool_starts(&project)? })
+            }
+            FrontRequest::AccountStartCancel { project, id } => self.pool_cancel(&project, &id, actor),
             FrontRequest::AccountDefault { harness, account } => {
                 self.set_default_account(&harness, account.as_deref())?;
                 self.db.audit(actor, "account_default", &format!("{harness} {}", account.as_deref().unwrap_or("off")));
@@ -1498,12 +1540,13 @@ impl Host {
                 if self.account_defaults()?.iter().any(|d| d.account == name) {
                     return Err(err(ErrorCode::BadRequest, "기본 계정은 먼저 account default --off로 해제한다"));
                 }
+                self.pool_forget(&name)?;
                 self.accounts.remove(&name)?;
                 self.account_meta_remove(&name);
                 self.db.audit(actor, "account_remove", &name);
                 Ok(FrontResponse::Done)
             }
-            FrontRequest::ThreadStartAccount { .. } => unreachable!(),
+            FrontRequest::ThreadStartAccount { .. } | FrontRequest::ThreadStartPool { .. } => unreachable!(),
             FrontRequest::Instance => Ok(FrontResponse::Instance { project: self.instance_view() }),
             FrontRequest::DebugInput { pane, thread, since_ms } => self.debug_input(pane, thread, since_ms),
             FrontRequest::RolloutStart { id, spec } => self.rollout_start(role, actor, id, spec).await,
@@ -1580,6 +1623,8 @@ impl Host {
             FrontRequest::Profiles { machine } => self.profiles(machine.as_deref()).await,
             FrontRequest::ProfileResolve { name } => self.profile_resolve(name.as_deref()),
             FrontRequest::ThreadStart {
+                over_limit,
+                user_request,
                 holds,
                 project,
                 title,
@@ -1596,6 +1641,13 @@ impl Host {
             } => {
                 // herdr-projects threads.rs `placement`: repo가 있으면 worktree, 없으면 repo 없는 작업 폴더. task에서 띄우면
                 // 저장소 칸이 정한다(`apply_task_repo`): 요청이 정한 kind를 그 판정에 넘긴다
+                let over_limit = self.thread_limit_override(
+                    &project,
+                    over_limit,
+                    user_request.as_deref(),
+                    from_task.as_deref(),
+                    actor,
+                )?;
                 let kind_given = kind;
                 let kind = kind.unwrap_or(if repo.is_some() {
                     aaa_proto::ThreadKind::Worktree
@@ -1603,6 +1655,8 @@ impl Host {
                     aaa_proto::ThreadKind::Dir
                 });
                 let mut a = orch::StartArgs {
+                    pool: pool_request,
+                    over_limit,
                     reservation: None,
                     account: selected_account,
                     holds,
@@ -1639,7 +1693,7 @@ impl Host {
                                 ));
                             }
                             if let Some(tid) = &q.thread {
-                                return self.thread_show(&a.project, tid).map(FrontResponse::Thread);
+                                return self.thread_show(&a.project, tid).map(Box::new).map(FrontResponse::Thread);
                             }
                             return Err(err(
                                 ErrorCode::Conflict,
@@ -1669,6 +1723,13 @@ impl Host {
                         a.repo.as_ref().and_then(|r| repos.into_iter().find(|x| &x.path == r)).and_then(|x| x.machine);
                 }
                 let project = a.project.clone();
+                if a.account.is_none() && (a.pool.is_some() || self.pool_project_enabled(&project)?) {
+                    a.pool.get_or_insert_with(|| account_pool::PoolRequest {
+                        id: aaa_common::util::new_id(),
+                        size: aaa_proto::AccountTaskSize::Medium,
+                    });
+                    return self.pool_submit(a, actor, picked.filter(|_| link_task), background).await;
+                }
                 let mut v = if background {
                     self.thread_start_mode(a, actor, true).await?
                 } else {
@@ -1679,13 +1740,13 @@ impl Host {
                 if link_task && let Some(t) = &picked {
                     v.warnings.extend(self.link_started(&project, t, &v.id, actor).await);
                 }
-                Ok(FrontResponse::Thread(v))
+                Ok(FrontResponse::Thread(Box::new(v)))
             }
             FrontRequest::ThreadStartPreview { project, from_task, task_block } => {
                 self.thread_start_preview(&project, &from_task, task_block.as_deref()).await
             }
             FrontRequest::ThreadAdopt { project, pane, title, task } => {
-                self.thread_adopt(&project, &pane, &title, &task, actor).await.map(FrontResponse::Thread)
+                self.thread_adopt(&project, &pane, &title, &task, actor).await.map(Box::new).map(FrontResponse::Thread)
             }
             FrontRequest::ThreadNext { project, thread, line, add } => {
                 self.thread_next(&project, &thread, line, add, actor).await
@@ -1701,8 +1762,8 @@ impl Host {
             FrontRequest::TaskArchive { project, restore } => {
                 self.task_archive(&project, restore.as_deref(), actor).await
             }
-            FrontRequest::TaskEdit { project, ops, base_sha256 } => {
-                self.task_edit(&project, ops, base_sha256, actor).await
+            FrontRequest::TaskEdit { project, ops, base_sha256, user_request } => {
+                self.task_edit(&project, ops, base_sha256, user_request, actor).await
             }
             FrontRequest::TaskLog { project, before, limit, filter, task } => {
                 self.task_log(&project, before, limit, filter, task.as_deref())
@@ -1721,7 +1782,7 @@ impl Host {
                 self.threads_of(project.as_deref(), want).map(|threads| FrontResponse::Threads { threads })
             }
             FrontRequest::ThreadShow { project, thread } => {
-                self.thread_show(&project, &thread).map(FrontResponse::Thread)
+                self.thread_show(&project, &thread).map(Box::new).map(FrontResponse::Thread)
             }
             FrontRequest::ThreadSummary { project, thread } => {
                 self.thread_summary(&project, &thread).map(FrontResponse::ThreadSummary)
@@ -1774,10 +1835,10 @@ impl Host {
                 self.library_link_revoke(&id, actor).map(FrontResponse::LibraryLink)
             }
             FrontRequest::ThreadAck { project, thread } => {
-                self.thread_ack(&project, &thread, actor).map(FrontResponse::Thread)
+                self.thread_ack(&project, &thread, actor).map(Box::new).map(FrontResponse::Thread)
             }
             FrontRequest::ThreadResolve { project, thread, reopen: true, .. } => {
-                self.thread_reopen(&project, &thread, actor).map(FrontResponse::Thread)
+                self.thread_reopen(&project, &thread, actor).map(Box::new).map(FrontResponse::Thread)
             }
             FrontRequest::ThreadResolve {
                 project,
@@ -1795,15 +1856,18 @@ impl Host {
                     actor,
                 )
                 .await
+                .map(Box::new)
                 .map(FrontResponse::Thread),
             FrontRequest::ThreadStop { project, thread } => {
-                self.thread_stop(&project, &thread, actor).await.map(FrontResponse::Thread)
+                self.thread_stop(&project, &thread, actor).await.map(Box::new).map(FrontResponse::Thread)
             }
-            FrontRequest::ThreadRestart { project, thread, resume, profile } => {
-                self.thread_restart(&project, &thread, resume, profile, actor).await.map(FrontResponse::Thread)
-            }
+            FrontRequest::ThreadRestart { project, thread, resume, profile } => self
+                .thread_restart(&project, &thread, resume, profile, actor)
+                .await
+                .map(Box::new)
+                .map(FrontResponse::Thread),
             FrontRequest::ThreadBrief { project, thread } => {
-                self.thread_brief(&project, &thread, actor).await.map(FrontResponse::Thread)
+                self.thread_brief(&project, &thread, actor).await.map(Box::new).map(FrontResponse::Thread)
             }
             FrontRequest::ThreadRead { project, thread, lines } => self.thread_read(&project, &thread, lines).await,
             FrontRequest::ThreadKeys { project, thread, keys, text } => {
@@ -1834,9 +1898,11 @@ impl Host {
             FrontRequest::ThreadMessage { project, thread, text, mode } => {
                 self.thread_message(&project, &thread, text, mode, actor).await.map(FrontResponse::Message)
             }
-            FrontRequest::ThreadAnswer { project, thread, report_hash, picks, text } => {
-                self.thread_answer(&project, &thread, &report_hash, picks, text, actor).await.map(FrontResponse::Thread)
-            }
+            FrontRequest::ThreadAnswer { project, thread, report_hash, picks, text } => self
+                .thread_answer(&project, &thread, &report_hash, picks, text, actor)
+                .await
+                .map(Box::new)
+                .map(FrontResponse::Thread),
             FrontRequest::Preferences => Ok(FrontResponse::Preferences(self.preferences.get())),
             FrontRequest::PreferencesSet { settings, pins } => {
                 let change = prefs::change_body(settings, pins)?;
@@ -2318,7 +2384,16 @@ impl Host {
             }
             FrontRequest::Devices => {
                 let rows = self.db.devices().map_err(|e| err(ErrorCode::Internal, e.to_string()))?;
-                Ok(FrontResponse::Devices { devices: rows.into_iter().map(device_view).collect() })
+                let passkeys = self.passkey_devices();
+                Ok(FrontResponse::Devices {
+                    devices: rows
+                        .into_iter()
+                        .map(|d| {
+                            let has = passkeys.contains(&d.id);
+                            device_view(d, has)
+                        })
+                        .collect(),
+                })
             }
             FrontRequest::DeviceRename { id, label } => {
                 let label = normalize_device_label(&label, db::DEVICE_LABEL_FALLBACK);
@@ -3111,6 +3186,7 @@ impl Host {
             health: None,
             health_sent: None,
             features: vec![],
+            identity: None,
             agent_pid: None,
             colors: None,
             build: Default::default(),
@@ -3364,10 +3440,19 @@ pub(crate) fn web_origin_in(web_port: u16, db: &db::Db, host_header: &str) -> Op
     if host_header == loopback {
         return Some(format!("http://{loopback}"));
     }
+    if test_localhost_public() && host_header == format!("localhost:{web_port}") {
+        return Some(format!("http://{host_header}"));
+    }
     let public = public_origin_in(db)?;
     let asked = host_header.to_ascii_lowercase();
     let asked = asked.strip_suffix(":443").unwrap_or(&asked);
     (format!("https://{asked}") == public).then_some(public)
+}
+
+/// 시험에서만(debug 빌드 `AAA_TEST_WEB_LOCALHOST`): `http://localhost:<port>`를 공개 주소처럼 받는다. 브라우저 passkey는
+/// IP 주소에 묶이지 못해 실험실(127.0.0.1)에서는 RP ID `localhost`로 시험한다(관리 GUI W7 E2E)
+pub(crate) fn test_localhost_public() -> bool {
+    cfg!(debug_assertions) && std::env::var_os("AAA_TEST_WEB_LOCALHOST").is_some()
 }
 
 /// 공개 origin. 아직 serve 상태를 읽지 못했으면(새 binary로 바꾼 뒤 tailscale을 못 읽음) aaa가 만든 공개
@@ -3428,11 +3513,15 @@ async fn run_host(
         Err(names) => anyhow::bail!(lifecycle::sole_project_refusal(&names)),
     }
     // 옛 판이 남긴 보내던 메시지는 입구를 열기 전에 잊는다(연 뒤면 막 기록한 새 메시지까지 「모른다」로 바뀐다)
+    host.backfill_report_ids().map_err(|e| anyhow::anyhow!(e.message))?;
+    host.backfill_review_questions().map_err(|e| anyhow::anyhow!(e.message))?;
     host.forget_queued_messages();
     host.start_supervisor();
+    host.web_gate.send_replace(false);
     link::start(&host).await?;
     front::start(&host).await?;
     web::start(&host).await?;
+    host.web_gate.send_replace(true);
     // 입구가 다 열렸다: 이 설정을 안전 모드의 「마지막 정상 설정」으로 보관한다
     if let Err(e) = safe_mode::keep_last_good(&config_dir, files) {
         tracing::warn!("마지막 정상 설정을 보관하지 못했다: {e:#}");
@@ -3641,6 +3730,7 @@ mod pairing_tests {
                 health: None,
                 health_sent: None,
                 features: vec![],
+                identity: None,
                 agent_pid: None,
                 colors: None,
                 build: Default::default(),

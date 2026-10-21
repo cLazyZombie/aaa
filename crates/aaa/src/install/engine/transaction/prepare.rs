@@ -145,6 +145,10 @@ pub(super) fn install(plan: InstallPlan) -> Result<Request> {
     let bin = PathBuf::from(&plan.context.bin_path);
     let before = if bin.exists() { Some(std::fs::read(&bin).map_err(Fault::io)?) } else { None };
     files.push(proposal(bin, Kind::Binary, before, binary, Some(0o755), false, true)?);
+    for asset in super::super::launcher_asset::proposals(&plan)? {
+        let before = std::fs::read(&asset.path).ok();
+        files.push(proposal(asset.path, Kind::Launcher, before, asset.bytes, asset.mode, true, true)?);
+    }
     let local = c.role == Some(InstallRole::Agent) || c.local_agent != Some(InstallToggle::Disabled);
     if c.role == Some(InstallRole::Host) {
         let mut host = Docs::load(cfg, "host")?;
@@ -425,3 +429,7 @@ mod tests {
         assert_eq!(super::super::tests::tree(&unsafe_lab.0), before);
     }
 }
+
+#[cfg(all(test, target_os = "macos"))]
+#[path = "launcher_tests.rs"]
+mod launcher_tests;

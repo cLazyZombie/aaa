@@ -129,6 +129,7 @@ function InboxList({ canControl, onThread, onAnswers }: { canControl: boolean; o
                   <span className="inbox-subject">{i.subject}</span>
                 )}
                 <span className="inbox-event">{i.event}</span>
+                {(["new report", "report needs user"].includes(i.event)) && /\br-\d{4,}\b/.exec(i.summary)?.[0] && <a href={`#report=${encodeURIComponent(`${i.project}/${/\br-\d{4,}\b/.exec(i.summary)![0]}`)}`}>{/\br-\d{4,}\b/.exec(i.summary)![0]}</a>}
                 <time className="inbox-time">{when(i.created_at_ms)}</time>
               </div>
               <p className="inbox-summary">{i.summary}</p>

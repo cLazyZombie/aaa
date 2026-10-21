@@ -78,6 +78,46 @@ async fn query_inner(dir: &Path, q: &GitQuery) -> Result<GitAnswer> {
                 ensure(dir, origin, sha).await?;
             }
         }
+        GitQuery::MergedIntoMain { branch, commits } => {
+            if branch.as_ref().is_some_and(|b| !git::valid_branch(b))
+                || commits.len() > 8
+                || commits.iter().any(|c| !(7..=64).contains(&c.len()) || !c.bytes().all(|b| b.is_ascii_hexdigit()))
+            {
+                bail!("병합 조회 branch 또는 커밋 형식이 아니다");
+            }
+            // 로컬 main·오래된 remote ref를 신뢰하지 않는다. ref와 FETCH_HEAD는 바꾸지 않는다.
+            let branches = vec!["main".to_string()];
+            let heads = git::heads(
+                &checked(dir, &args(&["ls-remote", "--heads", "--refs", "--", origin, "refs/heads/main"])).await?,
+                &branches,
+            )?;
+            let Some(main) = heads["main"].as_deref() else { return Ok(answer) };
+            ensure(dir, origin, main).await?;
+            let mut candidates = Vec::new();
+            if let Some(branch) = branch {
+                candidates.push(format!("refs/heads/{branch}"));
+            }
+            candidates.extend(commits.iter().cloned());
+            for candidate in candidates {
+                let out = run(dir, &args(&["rev-parse", "--verify", &format!("{candidate}^{{commit}}")])).await?;
+                if !out.status.success() {
+                    continue; // 사라진 branch·없거나 모호한 축약 SHA는 완료 근거가 아니다.
+                }
+                let sha = String::from_utf8_lossy(&out.stdout).trim().to_string();
+                if !git::valid_sha(&sha) {
+                    bail!("병합 조회 커밋 형식이 아니다");
+                }
+                let out = run(dir, &args(&["merge-base", "--is-ancestor", &sha, main])).await?;
+                match out.status.code() {
+                    Some(0) => {
+                        answer.merged_commit = Some(sha);
+                        break;
+                    }
+                    Some(1) => {}
+                    _ => bail!("Git 병합 조상 판정 실패"),
+                }
+            }
+        }
         GitQuery::Change { branch, before, after } => {
             git::validate_branches(std::slice::from_ref(branch))?;
             if before == after {

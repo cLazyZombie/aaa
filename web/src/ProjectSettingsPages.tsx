@@ -8,7 +8,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import type { DeviceRole, LibraryPrunePlan, MachineView, ProfileView, ProjectSettingsView } from "./gen/proto";
 import { ApiError, call, me } from "./api";
 import { ConfirmDialog } from "./ConfirmDialog";
-import { KeyRotate } from "./AdminPages";
+import { KeyRotate, LinkList } from "./AdminPages";
 import { SettingsGroup, SettingsRow, Toggle } from "./herdr/SettingsControls.tsx";
 import { canOperate, checkSetting, parseRepoArg, repoArg, repoGroups, REPO_DIR } from "./operateModel.ts";
 
@@ -129,6 +129,8 @@ export function ThisAaaPage({ role }: { role: DeviceRole }) {
   const [prune, setPrune] = useState<LibraryPrunePlan | null>(null);
   const [cleanBusy, setCleanBusy] = useState<string | null>(null);
   const [cleanNote, setCleanNote] = useState<string | null>(null);
+  const [note, setNote] = useState("");
+  const [noteError, setNoteError] = useState<string | null>(null);
   useEffect(() => {
     let live = true;
     call({ op: "profiles", machine: null })
@@ -149,6 +151,16 @@ export function ThisAaaPage({ role }: { role: DeviceRole }) {
       await set(key, on ? "true" : "false");
     } catch (e) {
       setRowError(say(e));
+    }
+  };
+  // 할 일 「나중」 탭이 읽는 파일(`task_notes.add|remove`, 관리 GUI W8): 경로 검사는 host가 한다
+  const editNote = async (key: "task_notes.add" | "task_notes.remove", path: string) => {
+    setNoteError(null);
+    try {
+      await set(key, path);
+      if (key === "task_notes.add") setNote("");
+    } catch (e) {
+      setNoteError(say(e));
     }
   };
   const previewSweep = async () => {
@@ -187,7 +199,7 @@ export function ThisAaaPage({ role }: { role: DeviceRole }) {
         <SettingText id="set-goal" label="목표" description="thread brief 머리에 들어간다" value={view.goal} canEdit={canEdit} onSave={(v) => set("goal", v)} />
         <SettingText id="set-thread-profile" label="thread 기본 profile" description="시작할 때 profile을 고르지 않으면 쓴다(허용 목록 안에서)" kind="select" options={profiles} value={view.thread_profile} canEdit={canEdit} onSave={(v) => set("thread_profile", v)} />
         <SettingText id="set-coordinator-profile" label="coordinator profile" description="coordinator를 띄울 때 쓴다" kind="select" options={profiles} value={view.coordinator_profile} canEdit={canEdit} onSave={(v) => set("coordinator_profile", v)} />
-        <SettingText id="set-max-parallel" label="동시 thread 한도" description="사용자·coordinator가 띄운 thread를 센다. 자동화 thread는 제외하며 resolve 정리 뒤 자리를 돌려준다" kind="number" check={(v) => checkSetting("max_parallel_threads", v)} value={String(view.max_parallel_threads)} canEdit={canEdit} onSave={(v) => set("max_parallel_threads", v)} />
+        <SettingText id="set-max-parallel" label="동시 thread 한도" description="사용자·coordinator가 띄운 thread를 센다. 자동화·병합 대기와 착지 한 자리는 제외한다. 다음 단계 작업은 다시 센다" kind="number" check={(v) => checkSetting("max_parallel_threads", v)} value={String(view.max_parallel_threads)} canEdit={canEdit} onSave={(v) => set("max_parallel_threads", v)} />
         <SettingText id="set-auto-resolve" label="쉼 뒤 자동 끝내기(일)" description="쉼으로 이만큼 지난 thread를 마지막 사본 뒤 끝낸다. 0이면 하지 않는다" kind="number" check={(v) => checkSetting("auto_resolve_days", v)} value={String(view.auto_resolve_days)} canEdit={canEdit} onSave={(v) => set("auto_resolve_days", v)} />
         <SettingsRow label="coordinator에 묶음 알림(nudge)" description="처음 보는 알림함 항목 묶음을 coordinator에 한 줄로 알린다">
           <Toggle label="coordinator에 묶음 알림" checked={view.nudge} disabled={!canEdit} onChange={(on) => void toggle("nudge", on)} />
@@ -196,6 +208,41 @@ export function ThisAaaPage({ role }: { role: DeviceRole }) {
           <Toggle label="밖으로 가는 알림 끄기" checked={view.mute} disabled={!canEdit} onChange={(on) => void toggle("mute", on)} />
         </SettingsRow>
         {rowError && <p className="op-warn settings-item">{rowError}</p>}
+      </SettingsGroup>
+      <SettingsGroup title="할 일 「나중」 파일" note="할 일의 「나중」 탭이 읽기만 하는 Markdown 파일. 프로젝트 폴더 안 상대 경로다.">
+        <div className="settings-item op-section" data-testid="task-notes">
+          {view.task_notes.length === 0 ? (
+            <p className="op-muted">정한 파일이 없다</p>
+          ) : (
+            <ul className="op-prune">
+              {view.task_notes.map((n) => (
+                <li key={n} data-note={n}>
+                  <span className="mono">{n}</span>
+                  {canEdit && (
+                    <button type="button" className="btn small" onClick={() => void editNote("task_notes.remove", n)} aria-label={`${n} 빼기`}>
+                      빼기
+                    </button>
+                  )}
+                </li>
+              ))}
+            </ul>
+          )}
+          {canEdit && (
+            <div className="op-row">
+              <div className="op-field">
+                <input value={note} placeholder="memory/later.md" aria-label="더할 「나중」 파일" onChange={(e) => setNote(e.target.value)} data-testid="task-notes-path" />
+              </div>
+              <button type="button" className="btn" disabled={note.trim() === ""} onClick={() => void editNote("task_notes.add", note.trim())} data-testid="task-notes-add">
+                더하기
+              </button>
+            </div>
+          )}
+          {noteError && (
+            <p className="op-warn" role="alert">
+              {noteError}
+            </p>
+          )}
+        </div>
       </SettingsGroup>
       <SettingsGroup title="멈춤" note="멈추면 ticker가 이 프로젝트를 건너뛰고 thread 시작을 거부한다. 도는 agent는 멈추지 않는다.">
         <SettingsRow label={paused ? "멈춰 있다" : "돌고 있다"}>
@@ -326,6 +373,7 @@ export function ThisAaaPage({ role }: { role: DeviceRole }) {
       {canEdit && (
         <SettingsGroup title="공유 링크">
           <div className="settings-item">
+            <LinkList />
             <KeyRotate />
           </div>
         </SettingsGroup>

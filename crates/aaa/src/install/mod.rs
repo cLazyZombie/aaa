@@ -218,6 +218,10 @@ fn emit_at_seq(result: InstallResult, json: bool, stream: bool, seq: u64) -> Exi
         writeln!(out, "{text}").is_ok()
             && result.installation_id.as_ref().is_none_or(|id| writeln!(out, "installation_id: {id}").is_ok())
             && result.error.as_ref().is_none_or(|e| writeln!(out, "code: {}", e.code).is_ok())
+            && result
+                .needs_user
+                .iter()
+                .all(|need| writeln!(out, "{} ({}; {})", need.message, need.code, need.target).is_ok())
             && result.plan_sha256.as_ref().is_none_or(|hash| writeln!(out, "plan_sha256: {hash}").is_ok())
     };
     if !written || out.flush().is_err() { ExitCode::FAILURE } else { ExitCode::from(code) }

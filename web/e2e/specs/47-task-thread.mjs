@@ -6,6 +6,7 @@ import { editTaskContent } from "../lib/task-content.mjs";
 // 시간은 기다리지 않는다: 화면 표지(`data-tasks-sha`·`data-task-state`·`data-start-state`)와 파일 글, `ticker tick`을 본다.
 import fs from "node:fs";
 import crypto from "node:crypto";
+import { execFileSync } from "node:child_process";
 import { root, aaa, until, step, browser, domIs, shot, openSettings } from "../lib/harness.mjs";
 import { pairDevice } from "../lib/devices.mjs";
 
@@ -200,12 +201,22 @@ export default async function ({ page }) {
     await shot(page, "thread-desktop-coordinator");
   });
 
-  await step("휴대폰·패드: 상세 시트의 맡기기와 확인 필요, 바로 시작 확인창과 실제 한도 거부", async () => {
+  await step("데스크톱·휴대폰·패드: 한도 무시 시작 재확인·출처 표지와 예약 대기 유지", async () => {
     aaa("project", "set", "demo", "max_parallel_threads", "1");
     fs.writeFileSync(`${root}/task-47b.md`, "사람을 기다림");
     const busy = aaa("thread", "start", "demo", "--title", "한도 채우는 일", "--machine", "labA", "--profile", "fake", "--kind", "dir", "--task-file", `${root}/task-47b.md`).id;
-    for (const kind of ["iphone", "ipad"]) {
-      const { page: p } = await pairDevice(browser, aaa("web", "pair").code, kind, { hash: "#tasks" });
+    aaa("task", "add", "강제 동안 예약", "--profile", "fake", "--machine", "labA", "--repo", "작업 폴더", "--note", "사람을 기다림");
+    aaa("task", "reserve", "강제 동안 예약");
+    const waitingId = aaa("task", "queue").entries.find(q => q.task.title === "강제 동안 예약").task_id;
+    for (const kind of ["desktop", "iphone", "ipad"]) {
+      const title = `강제 시작 ${kind}`;
+      aaa("task", "add", title, "--profile", "fake", "--machine", "labA", "--repo", "작업 폴더", "--note", "사람을 기다림");
+      aaa("ticker", "tick");
+      const p = kind === "desktop" ? page : (await pairDevice(browser, aaa("web", "pair").code, kind, { hash: "#tasks" })).page;
+      if (kind === "desktop") {
+        await p.getByTestId("activity-tasks").click();
+        if (await p.getByTestId("task-detail").isVisible()) await p.getByTestId("task-detail-close").click();
+      }
       await shaIs(p, sha(read()));
       await pick(p, "큰 일 W1~W3");
       await p.getByTestId("task-attention").waitFor();
@@ -215,20 +226,85 @@ export default async function ({ page }) {
       await p.getByTestId("task-form").waitFor();
       await p.getByTestId("task-detail-close").click();
       // 미할당 task: 맡기기 단추
-      await pick(p, "문서 정리");
+      await pick(p, title);
       await p.getByTestId("task-handoff").waitFor();
       await shot(p, `thread-${kind}-handoff`);
       await p.getByTestId("task-handoff-start").click();
       await domIs(p, "바로 시작 값", () => document.querySelector('[data-testid="task-start"] form')?.dataset.startState === "ready");
       await p.getByTestId("task-start-limit").waitFor();
-      await p.getByTestId("task-start-repo").selectOption("작업 폴더");
+
       if (!(await p.getByTestId("task-start-go").isDisabled())) throw new Error("한도를 넘기는데 확인 없이 시작할 수 있다");
       await shot(p, `thread-${kind}-start-limit`);
-      if(await p.getByTestId("task-start-over").count())throw new Error("한도 우회 조작이 남았다");
-      await p.keyboard.press("Escape");
+      const count = aaa("thread", "list", "demo").threads.length;
+      await p.getByTestId("task-start-over").click();
+      await p.getByTestId("task-start-over-confirm").waitFor();
+      await shot(p, `thread-${kind}-over-confirm`);
+      if (aaa("thread", "list", "demo").threads.length !== count) throw new Error("재확인 전에 기동했다");
+      await p.getByRole("button", { name: "돌아가기", exact: true }).click();
+      await p.getByTestId("task-start-over-confirm").waitFor({ state: "detached" });
+      if (aaa("thread", "list", "demo").threads.length !== count) throw new Error("돌아가기에서 기동했다");
+      await p.getByTestId("task-start-over").click();
+      await p.getByTestId("task-start-over-go").click();
+      await p.getByTestId("task-started").waitFor();
+      const id = await until("강제 시작 task 연결", () => linked(title));
+      const record = aaa("thread", "show", "demo", id);
+      if (!record.over_limit?.actor.startsWith("device:") || !record.over_limit.at_ms) throw new Error(`강제 시작 출처 없음: ${JSON.stringify(record)}`);
       await p.getByTestId("task-start").waitFor({ state: "detached" });
-      await p.close();
+      await p.keyboard.press("Escape");
+      await p.getByTestId("task-detail").waitFor({ state: "detached" });
+      await row(p, title).getByTestId("thread-over-limit").waitFor();
+      await row(p, title).scrollIntoViewIfNeeded();
+      await row(p, title).locator(".task-pick").click({ trial: true });
+      await shot(row(p, title), `thread-${kind}-over-started`);
+      aaa("ticker", "tick");
+      const q = aaa("task", "queue").entries.find(q => q.task.title === "강제 동안 예약");
+      if (q.state !== "queued" || q.thread) throw new Error("한도 초과 동안 예약을 기동했다");
+      // 웹 시작 응답·task 연결은 비동기 기동의 접수다. 준비 작업이 끝나 brief를 전달한 뒤 한 번 정리한다.
+      await until(`${id} 브리프`, () => aaa("thread", "show", "demo", id).brief === "delivered");
+      aaa("thread", "resolve", "demo", id);
+      if (kind !== "desktop") await p.close();
     }
+    aaa("task", "unreserve", waitingId);
     aaa("thread", "resolve", "demo", busy);
+  });
+
+  await step("직접 병합: [착지]여도 origin/main 조상이면 완료 보관하고 답할 것에 넣지 않는다", async () => {
+    const repo = `${root}/merged-app`;
+    const origin = `${root}/merged-origin.git`;
+    const git = (cwd, ...args) => execFileSync("git", ["-C", cwd, "-c", "user.name=Test", "-c", "user.email=test@example.com", ...args], { encoding: "utf8", stdio: "pipe" }).trim();
+    fs.mkdirSync(repo);
+    git(root, "init", "-q", "--bare", "-b", "main", origin);
+    git(repo, "init", "-q", "-b", "main");
+    git(repo, "commit", "--allow-empty", "-qm", "fixture");
+    git(repo, "remote", "add", "origin", origin);
+    git(repo, "push", "-qu", "origin", "main");
+    fs.writeFileSync(`${root}/landing-task.md`, "사람을 기다림\n");
+    const threads = [];
+    for (const title of ["직접 병합 완료", "직접 미병합"]) {
+      const t = aaa("thread", "start", "demo", "--title", title, "--profile", "fake", "--machine", "labA", "--repo", repo, "--task-file", `${root}/landing-task.md`);
+      await until(`${title} brief`, () => aaa("thread", "show", "demo", t.id).brief === "delivered");
+      const rec = aaa("thread", "show", "demo", t.id);
+      git(rec.cwd, "commit", "--allow-empty", "-qm", title);
+      if (title === "직접 병합 완료") {
+        git(repo, "merge", "--no-ff", "-m", "병합: 시험", rec.branch);
+        git(repo, "push", "-q", "origin", "main");
+      }
+      fs.writeFileSync(`${rec.work_dir}/report.md`, "[착지] 직접 병합 확인\n\n## Report\n결과\n\n## Next\n");
+      aaa("task", "add", title, "--thread", t.id);
+      aaa("thread", "resolve", "demo", t.id, "--keep-worktree");
+      threads.push(t.id);
+    }
+    aaa("ticker", "tick");
+    await gone(page, "직접 병합 완료");
+    await stateIs(page, "직접 미병합", "check");
+    const archived = aaa("task", "archive").entries.find((a) => a.task.title === "직접 병합 완료");
+    if (archived?.reason !== "origin/main 병합") throw new Error(`직접 병합 보관 근거: ${JSON.stringify(archived)}`);
+    const notices = aaa("inbox", "list", "demo", "--all", "--peek").items.filter((i) => i.item_kind === "task" && i.subject === threads[0]);
+    if (notices.length !== 1 || notices[0].event !== "task auto-cleaned") throw new Error(`병합 확인 알림: ${JSON.stringify(notices)}`);
+    await page.getByTestId("activity-asks").click();
+    await page.locator('[data-testid="ask-row"][data-key="t:직접 미병합"]').waitFor();
+    if (await page.locator('[data-testid="ask-row"][data-key="t:직접 병합 완료"]').count()) throw new Error("병합된 할 일에 확인 카드가 있다");
+    await shot(page, "thread-direct-merge-asks");
+    await page.getByTestId("activity-tasks").click();
   });
 }

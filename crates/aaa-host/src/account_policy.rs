@@ -189,6 +189,7 @@ mod tests {
                 health: None,
                 health_sent: None,
                 features: vec!["account_auth.v2".into()],
+                identity: None,
                 agent_pid: None,
                 colors: None,
                 build: Default::default(),

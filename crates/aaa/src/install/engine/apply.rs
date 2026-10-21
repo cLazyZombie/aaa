@@ -134,8 +134,10 @@ fn execute(
         }
     }
     if issued.plan.choices.service != Some(InstallService::None)
-        && !(issued.plan.context.platform.os == InstallOs::Windows
-            && issued.plan.choices.service == Some(InstallService::WindowsScm))
+        && !matches!(
+            (issued.plan.context.platform.os, issued.plan.choices.service),
+            (InstallOs::Windows, Some(InstallService::WindowsScm)) | (InstallOs::Macos, Some(InstallService::Launchd))
+        )
     {
         return Err(crate::install::error("unsupported_service_platform", 5));
     }

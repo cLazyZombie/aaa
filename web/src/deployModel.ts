@@ -1,10 +1,12 @@
-// 웹 「배포」의 순수 규칙(관리 GUI W6a, plan §8.361). 판정의 정본은 host다(조작 기기만, 빌드 머신에 이미 있는 후보만, 웹은 서비스 재시작만
-// 개별로 연다, 진행 중 rollout이 있으면 거부). 화면은 점검을 통과한 그 후보·대상일 때만 시작을 연다.
+// 웹 「배포」의 순수 규칙(관리 GUI W6a, plan §8.361). 판정의 정본은 host다(조작 기기만, 빌드 머신에 이미 있는 후보만, 진행 중
+// rollout이 있으면 거부). 화면은 점검을 통과한 그 후보·대상일 때만 시작을 연다. 서비스 재시작은 재시작만 하는 rollout이다(W6c, plan §8.402).
 import { apiAtLeast } from "./automationModel.ts";
-import type { DeployAction, DeployJobCard, DeployState, DeployWork, ErrorCode, RolloutPlanView, RolloutSpec } from "./gen/proto";
+import type { DeployJobCard, DeployState, DeployWork, ErrorCode, RolloutPlanView, RolloutSpec } from "./gen/proto";
 
 /** 웹 배포·재시작은 1.82 이상 host만 안다 */
 export const canDeploy = (frontApi: string | null | undefined): boolean => apiAtLeast(frontApi, 1, 82);
+/** 재시작만 하는 rollout(`RolloutSpec.restart`)을 아는 host. 옛 host는 그 칸을 버려 교체 rollout으로 읽는다 */
+export const canRestartRollout = (frontApi: string | null | undefined): boolean => apiAtLeast(frontApi, 1, 100);
 
 const CROCKFORD = "0123456789ABCDEFGHJKMNPQRSTVWXYZ";
 /** rollout·배포 작업 ID: host `valid_id`(영숫자 26자, CLI의 ULID와 같은 꼴). 보내기 전에 만들어 응답이 끊겨도 같은 ID로 이어 본다 */
@@ -34,7 +36,15 @@ export function rolloutSpec(plan: RolloutPlanView, machines: string[]): RolloutS
   return { from: c.path, source_machine: c.machine, sha256: c.sha256, commit: c.commit, machines };
 }
 
-export const restartAction = (service: "host" | "agent"): DeployAction => ({ action: "restart", service });
+/** 재시작만 하는 rollout(W6c): 그 머신의 서비스를 지금 판 그대로 다시 띄운다. 재시작 전 실행 신원·SHA는 host가 채운다 */
+export const restartSpec = (machine: string, service: "host" | "agent"): RolloutSpec => ({
+  from: "",
+  source_machine: null,
+  sha256: "",
+  commit: null,
+  machines: [machine],
+  restart: service,
+});
 
 export function jobWhat(work: DeployWork): string {
   return work.kind === "restart" ? `${work.service} 재시작` : work.kind === "rollback" ? "되돌리기" : "실행 파일 교체";
@@ -48,9 +58,10 @@ export function rolloutTargets(host: string | undefined, picked: string[]): stri
   return host ? [host, ...picked.filter((m) => m !== host)] : picked;
 }
 
-/** host가 확정으로 거절한 답(시작하지 않았다). 연결·내부 오류는 닿았는지 모르므로 보인 ID를 그대로 둔다 */
+/** host가 확정으로 거절한 답(시작하지 않았다). 연결·내부 오류는 닿았는지 모르므로 보인 ID를 그대로 둔다.
+ * `passkey_required`는 passkey가 없어 host가 시작하지 않은 것이다(관리 GUI W7) */
 export function refused(code: ErrorCode): boolean {
-  return ["bad_request", "forbidden", "not_found", "unsupported_version", "agent_disconnected", "conflict"].includes(code);
+  return ["bad_request", "forbidden", "not_found", "unsupported_version", "agent_disconnected", "conflict", "passkey_required"].includes(code);
 }
 
 const JOB_STATES: Record<DeployState, string> = { queued: "대기", running: "진행 중", completed: "완료", failed: "실패", interrupted: "중단" };

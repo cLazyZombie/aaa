@@ -1,0 +1,9 @@
+.question-reports { margin: 8px 0 14px; min-width: 0; }
+.question-report-links, .question-report-tools { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 12px; }
+.question-report-links button { max-width: 100%; white-space: normal; overflow-wrap: anywhere; }
+.question-report-links button span { color: var(--text-dim); }
+.question-report-preview { margin-top: 8px; padding: 10px; border: 1px solid var(--border); border-radius: 8px; min-width: 0; }
+.question-report-tools { margin-bottom: 8px; }
+.question-report-tools > span { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.question-report-preview iframe { display: block; width: 100%; height: min(55vh, 520px); border: 0; background: white; }
+.question-report-preview img, .question-report-preview video, .question-report-preview audio { max-width: 100%; }

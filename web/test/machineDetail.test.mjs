@@ -86,6 +86,15 @@ describe("머신 상세 M0", () => {
     assert.equal(row(machineRows({ ...base, selfcheck: { pass: false, reasons: ["키체인 잠김", "FDA 없음"] } }, NOW), "시작 점검").value, "실패: 키체인 잠김; FDA 없음");
     assert.equal(row(machineRows(base, NOW), "시작 점검"), undefined);
   });
+  it("Windows 제한은 연결 여부와 관계없이 보이고 다른 OS에는 나오지 않는다", () => {
+    for (const connection of ["connected", "disconnected"])
+      assert.deepEqual(row(machineRows({ ...base, os: "windows", connection }, NOW), "Windows 제한"), {
+        label: "Windows 제한",
+        value: "셸 안에서 실행한 harness는 자동 감지하지 않습니다. Job Object를 통한 세션 자손 수명 관리는 아직 지원하지 않습니다.",
+        warn: true,
+      });
+    for (const os of ["macos", "linux", null]) assert.equal(row(machineRows({ ...base, os }, NOW), "Windows 제한"), undefined);
+  });
   it("「몇 전」", () => {
     assert.equal(ago(NOW - 30_000, NOW), "방금");
     assert.equal(ago(NOW - 5 * 60_000, NOW), "5분 전");

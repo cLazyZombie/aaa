@@ -66,7 +66,7 @@ pub(crate) fn model_selection(host: &Host, profile: &str) -> Result<(String, Str
 }
 
 impl Host {
-    /// 1A: coordinator 자기 신고는 사용자 변경 승인이 아니다. API 원문 쓰기도 같은 정책이다.
+    /// 명시한 사용자 지시 없는 coordinator 편집은 선택 보호를 따른다. API 원문 쓰기도 같은 정책이다.
     pub(crate) fn protect_task_choices(&self, before: &str, after: &str, actor: &str) -> Result<(), ErrorBody> {
         if !actor.starts_with("coordinator:") {
             return Ok(());
@@ -94,19 +94,114 @@ impl Host {
             {
                 return Err(err(
                     ErrorCode::Forbidden,
-                    "예약에서 승인한 모델·머신은 사용자가 웹이나 aaa 밖 CLI에서 직접 바꾼다",
+                    "예약에서 승인한 모델·머신은 사용자가 웹이나 aaa 밖 CLI에서 직접 바꾸거나, coordinator가 --user-request로 사용자 지시 근거를 남겨 바꾼다",
                 ));
             }
             let (op, om) = tasks::agent_parts(old.owner.as_deref(), &profiles).unwrap_or_default();
             let (np, nm) = tasks::agent_parts(new.owner.as_deref(), &profiles).unwrap_or_default();
             if (op.is_some() && op != np) || (om.is_some() && om != nm) {
-                return Err(err(ErrorCode::Forbidden, "정해진 모델·머신은 사용자가 웹이나 aaa 밖 CLI에서 직접 바꾼다"));
+                return Err(err(
+                    ErrorCode::Forbidden,
+                    "정해진 모델·머신은 사용자가 웹이나 aaa 밖 CLI에서 직접 바꾸거나, coordinator가 --user-request로 사용자 지시 근거를 남겨 바꾼다",
+                ));
             }
         }
         Ok(())
     }
 
-    /// 사용자 API의 선택 변경만 새 출처로 인정한다. 파일 직접 수정·coordinator 자기 승인은 근거가 아니다.
+    /// 사용자 지시는 선택 칸만 바꾼다. 다른 내용이 이미 바뀐 예약을 함께 승인하지 않는다.
+    pub(crate) fn check_requested_task_choices(
+        &self,
+        project: &str,
+        before: &str,
+        after: &str,
+    ) -> Result<(), ErrorBody> {
+        let new = tasks::parse(after);
+        let rows = self.db.queue_list(project).map_err(internal)?;
+        for old in tasks::parse(before) {
+            let Some(t) = new.iter().find(|t| t.id == old.id) else { continue };
+            if old.owner == t.owner {
+                continue;
+            }
+            let Some(q) = rows.iter().find(|q| old.id.as_ref() == Some(&q.task_id)) else { continue };
+            if matches!(q.state, S::Starting | S::Running) || (q.state == S::Check && q.thread.is_some()) {
+                return Err(err(
+                    ErrorCode::Conflict,
+                    "이미 기동한 예약의 선택은 바꾸지 않는다. thread 상태를 먼저 확인한다",
+                ));
+            }
+            if matches!(q.state, S::Queued | S::Check) && old.block_sha256 != q.approved_block {
+                return Err(err(
+                    ErrorCode::Conflict,
+                    "예약의 다른 내용이 바뀌었다. 내용을 확인해 먼저 예약을 갱신한다",
+                ));
+            }
+        }
+        Ok(())
+    }
+
+    /// 명시한 사용자 지시를 선택 출처로 남기고, 미기동 예약의 순서·생성 시각을 유지해 실행값을 갱신한다.
+    pub(crate) fn record_requested_task_choices(
+        &self,
+        project: &str,
+        before: &str,
+        after: &str,
+        actor: &str,
+    ) -> Result<(), ErrorBody> {
+        let mut old = tasks::parse(before);
+        tasks::fill_agent(&mut old, &self.known_profiles(project));
+        let mut new = tasks::parse(after);
+        tasks::fill_agent(&mut new, &self.known_profiles(project));
+        self.db
+            .queue_change(project, actor, |rows| {
+                for q in rows {
+                    let a = old.iter().find(|t| t.id.as_ref() == Some(&q.task_id));
+                    let b = new.iter().find(|t| t.id.as_ref() == Some(&q.task_id));
+                    if let (Some(a), Some(b)) = (a, b)
+                        && a.owner != b.owner
+                    {
+                        let profile_changed = a.profile != b.profile;
+                        // 머신만 바꿀 때는 예약 당시 해석한 기본 모델과 설정 판을 유지한다.
+                        let pending = matches!(q.state, S::Queued | S::Check);
+                        let profile = if profile_changed {
+                            b.profile.clone().unwrap_or_else(|| self.default_thread_profile(project))
+                        } else if pending {
+                            q.profile.clone()
+                        } else {
+                            q.selection.profile.clone()
+                        };
+                        let now = aaa_common::util::now_ms();
+                        q.selection = aaa_proto::TaskChoicePin {
+                            owner: b.owner.clone(),
+                            profile: profile.clone(),
+                            machine: b.machine.clone(),
+                            actor: actor.into(),
+                            at_ms: now,
+                        };
+                        if pending {
+                            if profile_changed {
+                                let (model, effort, revision) =
+                                    model_selection(self, &profile).map_err(|e| std::io::Error::other(e.message))?;
+                                q.model = model;
+                                q.effort = effort;
+                                q.profile_revision = revision;
+                            }
+                            q.profile = profile;
+                            q.machine = b.machine.clone();
+                            q.task = b.clone();
+                            q.approved_block = b.block_sha256.clone();
+                            q.state = S::Queued;
+                            q.reason = "사용자 지시로 모델·머신 변경 · 자리 대기".into();
+                        }
+                        q.updated_ms = now;
+                    }
+                }
+                Ok(())
+            })
+            .map_err(internal)
+    }
+
+    /// 일반 사용자 API의 선택 변경을 새 출처로 인정한다. 파일 직접 수정·coordinator 일반 편집은 근거가 아니다.
     pub(crate) fn record_task_choices(
         &self,
         project: &str,
@@ -334,6 +429,7 @@ impl Host {
                             reason: "자리 대기".into(),
                             launch_id: None,
                             thread: None,
+                            stage: None,
                             actor: by.clone(),
                             created_ms: updating.map_or(now, |i| rows[i].created_ms),
                             updated_ms: now,
@@ -416,6 +512,12 @@ impl Host {
         &self,
         rec: &crate::orch::ThreadRec,
     ) -> Result<crate::orch::ThreadRec, ErrorBody> {
+        // 목록을 읽은 뒤 실제 기동이 완료하고 잠금을 반환했을 수 있다.
+        // 호출자가 얻은 claim 아래의 최신 상태로만 중단 여부를 판정한다.
+        let rec = self.load(&rec.project, &rec.id)?;
+        if rec.status != ThreadStatus::Starting {
+            return Ok(rec);
+        }
         if self.restoring.lock().unwrap().contains(&rec.machine_id) {
             return Ok(rec.clone());
         }
@@ -552,6 +654,8 @@ impl Host {
                 continue;
             }
             let mut a = StartArgs {
+                pool: None,
+                over_limit: None,
                 reservation: Some((row.task_id.clone(), row.approved_block.clone())),
                 account: None,
                 holds: vec![],

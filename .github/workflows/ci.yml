@@ -151,6 +151,11 @@ jobs:
         env:
           RUST_TEST_THREADS: "8"
         run: bash scripts/ci-local.sh --only test --logs . --tee
+      # 운영 Mac에는 등록하지 않는다. 기존 일회성 CI 계정에서만 필수 실제 등록 owner를 돈다.
+      - name: macOS LaunchAgent 실제 등록·ready·instance 보존
+        if: ${{ !cancelled() && matrix.os == 'macos-15' && steps.build.outcome == 'success' }}
+        timeout-minutes: 15
+        run: cargo test -p aaa --test install --locked launchd::launchd_real_registration_ready_resume_and_second_instance_preserve_the_shared_launcher -- --ignored --exact --nocapture 2>&1 | tee launchd-registration.log
       # 공개 저장소 검사(push 전 로컬 검사의 안전망): 추적 파일과 이번 push(before..after)·PR(base..)의 커밋 메시지·author.
       # 새 branch의 첫 push(created, before는 0뿐)는 origin/main 이후를 본다. 기준을 찾지 못하면 실패한다(CI에서는 건너뛰지 않는다).
       # private-words·세션 기록이 없어 실제 이름·실제 세션 id는 보지 않는다(push 전 로컬 검사의 몫).
@@ -170,6 +175,7 @@ jobs:
           annotate() {
             { printf '%s\n' "$1"; cat; } | node -e 'const a=require("fs").readFileSync(0,"utf8").replace(/\r/g,""); const i=a.indexOf("\n"); const e=(s)=>s.replace(/%/g,"%25").replace(/\n/g,"%0A"); let t=a.slice(i+1); if(t.length>15000) t=t.slice(0,3000)+"\n…\n"+t.slice(-12000); if(t.trim()) console.log("::error title="+e(a.slice(0,i)).replace(/:/g,"%3A").replace(/,/g,"%2C")+"::"+e(t))'
           }
+          if [ -f launchd-registration.log ]; then tail -c 12000 launchd-registration.log | annotate 'macOS LaunchAgent'; fi
           for f in build.log clippy.log; do
             [ -f "$f" ] || continue
             grep -nE -A8 "^error|^warning" "$f" | head -80 | annotate "$f"

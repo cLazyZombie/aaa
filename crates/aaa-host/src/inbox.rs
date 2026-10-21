@@ -414,6 +414,9 @@ impl Host {
             if let Err(e) = self.queue_pass(&p.name).await {
                 tracing::warn!(project=%p.name,"예약 판정 실패: {}",e.message);
             }
+            if let Err(e) = self.pool_pass(&p.name).await {
+                tracing::warn!(project=%p.name,"계정 배정 대기 판정 실패: {}",e.message);
+            }
 
             self.nudge(&p.name, dir).await;
         }

@@ -1,15 +1,16 @@
 //! A2 등록 목록 기반 수집. 자동 배정·새 모델 작업은 만들지 않는다.
 use aaa_common::{quota, util};
 use aaa_proto::*;
+use serde::{Deserialize, Serialize};
 use std::{collections::HashMap, sync::Arc, time::Duration};
 
-#[derive(Clone)]
+#[derive(Clone, Serialize, Deserialize)]
 struct Reading {
     snapshot: QuotaSnapshot,
     machine: String,
     received_at_ms: u64,
 }
-#[derive(Clone, Default)]
+#[derive(Clone, Default, Serialize, Deserialize)]
 struct Entry {
     generation: String,
     attempted_ms: u64,
@@ -130,9 +131,21 @@ fn accept(entry: &mut Entry, key: String, machine: String, mut s: QuotaSnapshot,
 }
 
 impl crate::Host {
+    pub(crate) async fn quota_generation(&self, name: &str) -> Option<String> {
+        self.account_quota.lock().await.entries.get(name).map(|e| e.generation.clone())
+    }
     pub(crate) async fn quota_report(self: &Arc<Self>, refresh: bool) -> Result<AccountQuotaReport, ErrorBody> {
         let mut cache = self.account_quota.lock().await;
         let accounts = self.accounts.list()?;
+        for a in &accounts {
+            if !cache.entries.contains_key(&a.name)
+                && let Some(text) =
+                    self.db.meta(&format!("account-quota-v1/{}", a.name)).map_err(crate::orch::internal)?
+            {
+                let entry = serde_json::from_str(&text).map_err(crate::orch::internal)?;
+                cache.entries.insert(a.name.clone(), entry);
+            }
+        }
         cache.entries.retain(|k, _| accounts.iter().any(|a| a.name == *k));
         let now = util::now_ms();
         // 호스트에 등록되고 pane과 결속된 참조만 쓴다. 로컬 홈·형제 폴더 탐색은 하지 않는다.
@@ -248,6 +261,14 @@ impl crate::Host {
         }
         let now = util::now_ms();
         let accounts = self.accounts.list()?;
+        for (name, entry) in &cache.entries {
+            self.db
+                .set_meta(
+                    &format!("account-quota-v1/{name}"),
+                    &serde_json::to_string(entry).map_err(crate::orch::internal)?,
+                )
+                .map_err(crate::orch::internal)?;
+        }
         Ok(AccountQuotaReport {
             accounts: accounts
                 .iter()

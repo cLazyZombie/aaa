@@ -10,7 +10,7 @@ import http from "node:http";
 import net from "node:net";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { terminateSessionHosts } from "./session-cleanup.mjs";
+import { terminateDeployGuards, terminateSessionHosts } from "./session-cleanup.mjs";
 
 const require = createRequire(path.join(process.env.NODE_PATH ?? process.cwd(), "noop.js"));
 const { chromium, webkit } = require("playwright");
@@ -39,6 +39,9 @@ for (const key of ["AAA_SESSION_ID", "AAA_PROJECT", "AAA_THREAD", "AAA_HOOK_SOCK
 const procs = new Map();
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+// t-0578 동시 검증(load 28.96)의 후보 점검 결과 대기만 30초→60초로 둔다(docs/testing.md).
+// 실패 상한이며 표지가 오면 바로 끝난다. 기본 locator·단계 전체 시한은 그대로다.
+const LOAD_TIMEOUT_MS = 60_000;
 
 function aaa(...args) {
   // --json은 맨 앞에: `pane run <pane> <글…>`처럼 뒤 인자를 모두 글로 받는 명령에 섞이지 않게
@@ -490,7 +493,8 @@ async function openSettings(p, pageName) {
 // setup(ctx): 화면을 열기 전에 context에 건다(lib/devices.mjs가 기기 기록 binding과 그 기기의 규칙을 건다)
 // hash: 처음 여는 주소(`#pane=<id>`: 첫 화면이 그 pane이다, `paneHash`). 없으면 첫 화면은 기억한 것·첫 pane(App.tsx firstPick).
 // onPage(page): 주소를 열기 전에(첫 화면이 여는 WebSocket까지 듣게)
-async function pairPage(browser, code, viewport, { userAgent, platform, colorScheme, deviceScaleFactor, touch, init, line, wsRoute, route, serviceWorkers, setup, hash, onPage } = {}) {
+// at: 실험실 주소 대신 열 주소(끝 `/`까지, 79-passkey의 `http://localhost:<port>/`). 없으면 base
+async function pairPage(browser, code, viewport, { userAgent, platform, colorScheme, deviceScaleFactor, touch, init, line, wsRoute, route, serviceWorkers, setup, hash, onPage, at } = {}) {
   const ctx = await browser.newContext({
     viewport,
     isMobile: viewport.width < 700,
@@ -608,7 +612,7 @@ async function pairPage(browser, code, viewport, { userAgent, platform, colorSch
   // 글과 stack 맨 위 두 자리(번들 안 file:줄:칸): 한 번만 난 화면 오류도 어디서 났는지 남긴다
   page.on("pageerror", (e) => errors.push([String(e), ...String(e.stack ?? "").split("\n").slice(1, 3).map((l) => l.trim())].join(" ")));
   if (onPage) onPage(page);
-  await page.goto(`${base}${hash ?? ""}`);
+  await page.goto(`${at ?? base}${hash ?? ""}`);
   // 넣은 글꼴을 터미널을 열기 전에 받아 둔다(늘 쓰는 기기처럼 cache에 있는 상태). 늦게 받아지면 칸 높이·줄 수가 바뀌어
   // 그 단계가 재는 것(끌기 줄 수·크기)과 겹친다: CI 러너에는 깔린 글꼴이 없어 매번 늦게 받았다(41e81eb 휴대폰 끌기).
   // 늦게 받는 경우는 「글꼴이 늦게 와도 맨 아래」 단계가 따로 본다(route로 글꼴을 붙잡으므로 그때는 기다리지 않는다).
@@ -1142,6 +1146,7 @@ async function runSpec(spec, labEnv = {}) {
     usageServer.close();
     for (const tag of [...procs.keys()]) await stop(tag);
     await killSessionHosts();
+    await terminateDeployGuards(`${root}/s`);
     console.log(steps.join("\n"));
     if (failed) {
       console.log(`실험실 기록을 남겼다: ${root}`);
@@ -1159,6 +1164,7 @@ async function runSpec(spec, labEnv = {}) {
 }
 
 export {
+  LOAD_TIMEOUT_MS,
   inList,
   showPanel,
   drawerSettled,

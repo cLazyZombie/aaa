@@ -24,7 +24,7 @@ fn name_ok(name: &str) -> bool {
 
 /// 글에 든 thread 번호(`t-0448`·`t0448`, 숫자 4자리 이상)를 `t-0448` 꼴로. 앞뒤가 영숫자면 낱말 안이라 세지 않는다
 /// (`projects-t-0448`·`old-t-0001`·`t0441-report`는 센다, `art-0448`·`t-0448a`는 세지 않는다).
-fn thread_numbers(s: &str) -> Vec<String> {
+pub(crate) fn thread_numbers(s: &str) -> Vec<String> {
     let b = s.as_bytes();
     let mut out = Vec::new();
     let mut i = 0;
@@ -43,7 +43,7 @@ fn thread_numbers(s: &str) -> Vec<String> {
     out
 }
 
-fn io_error(_: std::io::Error) -> ErrorBody {
+pub(crate) fn io_error(_: std::io::Error) -> ErrorBody {
     // 개인 경로를 API 오류·로그로 내보내지 않는다.
     err(ErrorCode::Unavailable, "보고서 파일을 읽거나 쓸 수 없다")
 }
@@ -258,6 +258,7 @@ impl Host {
         self.reports_bump();
         if let Some(title) = to_user {
             let title = title.unwrap_or(name);
+            let report_id = link.report_id.as_deref().unwrap_or(name);
             let post = self.library_report_post(
                 project,
                 PostInput {
@@ -265,10 +266,12 @@ impl Host {
                     to: "user".into(),
                     post_type: PostType::Notice,
                     topic: "report".into(),
-                    title: format!("새 보고서: {title}"),
-                    body: format!("보고서 화면 「내 보고서」에서 연다({project}/{name})."),
+                    title: format!("{report_id} 새 보고서: {title}"),
+                    body: format!(
+                        "보고서 화면 「내 보고서」에서 연다({project}/{name}, {report_id}). aaa:report/{report_id}"
+                    ),
                     needs_user: false,
-                    refs: vec![format!("library/{project}/{name}")],
+                    refs: vec![format!("library/{project}/{report_id}")],
                 },
                 actor,
             )?;
@@ -288,8 +291,23 @@ impl Host {
             return Err(err(ErrorCode::BadRequest, "지울 보고서는 1~500개다"));
         }
         let _lock = self.library_ops.lock().unwrap();
+        // 지우기는 기존 명령과 같이 보고서 전체다. r 번호로 지정해도 그 이름의 보존 판까지 함께 지운다.
+        let reports = reports
+            .iter()
+            .map(|r| {
+                Ok(LibraryRef {
+                    project: r.project.clone(),
+                    name: self
+                        .db
+                        .report_target(&r.project, &r.name)
+                        .map_err(super::orch::internal)?
+                        .map(|v| v.source)
+                        .unwrap_or_else(|| r.name.clone()),
+                })
+            })
+            .collect::<Result<Vec<_>, ErrorBody>>()?;
         let mut views = Vec::new();
-        for r in reports {
+        for r in &reports {
             let dir = self.project_dir(&r.project)?;
             if !safe_rel(&r.name)
                 || r.name.contains('/')
@@ -374,6 +392,12 @@ impl Host {
             return Err(err(ErrorCode::BadRequest, "이름은 소문자·숫자·-·_ 1~100자이며 t-로 시작할 수 없다"));
         }
         let manifest = manifest_path(&dir, name);
+        if crate::report_ids::number(name).is_some()
+            && (self.db.report_reserved(project, name).map_err(super::orch::internal)? || !manifest.exists())
+        {
+            return Err(err(ErrorCode::BadRequest, "r-NNNN은 보고 판 번호로 예약돼 있다. 다른 이름을 쓴다"));
+        }
+
         if no_replace
             && (manifest.exists()
                 || dir.join("library").join(name).exists()
@@ -464,20 +488,28 @@ impl Host {
             let commit = (|| {
                 std::fs::rename(&staging, &dest).map_err(io_error)?;
                 crate::orch::write_atomic(&manifest, &serde_json::to_vec(&files).unwrap()).map_err(io_error)?;
-                self.db
-                    .library_report_put(&LibraryReportRow {
-                        project: project.into(),
-                        name: name.into(),
-                        live: live.then(|| source.to_string_lossy().into_owned()),
-                        updated: now,
-                        // 다시 보내면 다시 안 봄(사용자 결정 10-19). --to-user 없이 다시 올리면 작업 보고로 돌아간다
-                        to_user: to_user.is_some(),
-                        title: title.clone(),
-                        sent_at: to_user.is_some().then_some(now),
-                        seen_at: None,
-                        from_thread: from_thread.clone(),
-                    })
-                    .map_err(super::orch::internal)
+                let meta = LibraryReportRow {
+                    project: project.into(),
+                    name: name.into(),
+                    live: live.then(|| source.to_string_lossy().into_owned()),
+                    updated: now,
+                    // 다시 보내면 다시 안 봄(사용자 결정 10-19). --to-user 없이 다시 올리면 작업 보고로 돌아간다
+                    to_user: to_user.is_some(),
+                    title: title.clone(),
+                    sent_at: to_user.is_some().then_some(now),
+                    seen_at: None,
+                    from_thread: from_thread.clone(),
+                };
+                self.snapshot_report_version(
+                    project,
+                    name,
+                    &aaa_common::util::new_id(),
+                    if live { &source } else { &dest },
+                    &files,
+                    None,
+                    &meta,
+                )
+                .map(|_| ())
             })();
             if let Err(e) = commit {
                 let _ = std::fs::remove_dir_all(&dest);
@@ -585,7 +617,7 @@ impl Host {
         Ok(FrontResponse::LibraryImported { reports, skipped })
     }
 
-    fn report_view(&self, project: &str, name: &str, reveal: bool) -> Result<LibraryReport, ErrorBody> {
+    pub(crate) fn report_view(&self, project: &str, name: &str, reveal: bool) -> Result<LibraryReport, ErrorBody> {
         let dir = self.project_dir(project)?;
         let row = self.db.library_report(project, name).map_err(super::orch::internal)?;
         let updated = row.as_ref().map(|r| r.updated).unwrap_or_else(|| {
@@ -603,6 +635,9 @@ impl Host {
         let mut view = LibraryReport {
             project: project.into(),
             name: name.into(),
+            report_id: self.report_id(project, name),
+            versions: self.report_version_names(project, name),
+            history_size: self.report_history_size(project, name),
             size,
             updated_at_ms: updated,
             live: row.as_ref().is_some_and(|r| r.live.is_some()),
@@ -616,31 +651,6 @@ impl Host {
         };
         view.busy = self.protected_copy(&view);
         Ok(view)
-    }
-
-    pub(crate) fn library_reports(&self, project: Option<&str>, reveal: bool) -> Result<Vec<LibraryReport>, ErrorBody> {
-        let projects = if let Some(p) = project {
-            self.project_dir(p)?;
-            vec![p.to_string()]
-        } else {
-            self.projects_all().into_iter().map(|p| p.name).collect()
-        };
-        let mut reports = Vec::new();
-        for p in projects {
-            let dir = self.project_dir(&p)?;
-            for e in std::fs::read_dir(dir.join("threads")).map_err(io_error)? {
-                let e = e.map_err(io_error)?;
-                if let Some(name) = e.file_name().to_str().and_then(|s| s.strip_suffix(".files.json"))
-                    && safe_rel(name)
-                {
-                    reports.push(self.report_view(&p, name, reveal)?);
-                }
-            }
-        }
-        reports.sort_by(|a, b| {
-            b.updated_at_ms.cmp(&a.updated_at_ms).then_with(|| (&a.project, &a.name).cmp(&(&b.project, &b.name)))
-        });
-        Ok(reports)
     }
 }
 

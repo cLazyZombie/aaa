@@ -1175,7 +1175,7 @@ fn an_installed_machine_gets_a_check_pane_and_a_login_pane() {
         let check = |job: &str| FrontRequest::MachineSetupCheck { job: job.into() };
         // 머신이 아직 없다(등록 전·폐기)
         assert_eq!(h.call(DeviceRole::Controller, WEB, check("done")).await.unwrap_err().code, ErrorCode::NotFound);
-        // 등록됐지만 agent가 연결 안 됨(I3 전 service none)
+        // 등록됐지만 agent가 연결 안 됨(감독자가 아직 agent를 띄우지 않음)
         let offline = || crate::MachineRt {
             name: "lab-b".into(),
             local: false,
@@ -1190,6 +1190,7 @@ fn an_installed_machine_gets_a_check_pane_and_a_login_pane() {
             agent_pid: None,
             colors: None,
             build: Default::default(),
+            identity: None,
         };
         h.inner.lock().unwrap().machines.insert("m1".into(), offline());
         let e = h.call(DeviceRole::Controller, WEB, check("done")).await.unwrap_err();

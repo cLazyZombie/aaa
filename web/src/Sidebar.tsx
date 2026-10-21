@@ -1,3 +1,5 @@
+import { ThreadLimitBadge } from "./ThreadLimitBadge";
+import { ThreadStageBadge } from "./ThreadStageBadge";
 // 왼쪽 목록(herdr-web-ui MachineSidebar·Sidebar·AgentSidebar, aa624cb). 모양(class)과 CSS는 참고 것을 그대로 쓴다(herdr/*.css).
 // 패널 넷(활동 막대가 하나를 고른다, plan §8.240·§8.258·§8.280): 「작업」은 coordinator → 작업 공간(저장소) 폴더 → thread 줄(둘째 줄 왼쪽
 // 상태 말, 오른쪽 머신 이름, plan §8.195) → thread가 아닌 pane의 「기타」 묶음(줄에 머신 이름). 프로젝트가 둘 이상일 때만 프로젝트 머리가
@@ -23,7 +25,7 @@ import {
   type MouseEvent,
   type ReactNode,
 } from "react";
-import { ChevronDown, ChevronRight, Ellipsis, Eraser, FileText, Folder, FolderOpen, Layers, ListChecks, Monitor, Pencil, Pin, PinOff, Plus, RotateCcw, Terminal, Trash2, TriangleAlert, Workflow, X } from "lucide-react";
+import { ChevronDown, ChevronRight, Ellipsis, Eraser, FileText, Folder, FolderOpen, Layers, ListChecks, Monitor, Pencil, Pin, PinOff, Plus, RotateCcw, Square, Terminal, Trash2, TriangleAlert, Workflow, X } from "lucide-react";
 import type { FrontRequest, MachineView, PaneView, PlanSummary, ThreadView } from "./gen/proto";
 import { ApiError, call } from "./api";
 import { ConfirmDialog } from "./ConfirmDialog";
@@ -46,6 +48,7 @@ import "./herdr/Sidebar.css";
 import "./herdr/Machines.css";
 import "./Sidebar.css";
 import { AutomationPanel } from "./AutomationPanel";
+import type { Automations } from "./automationData";
 import { RolloutCard, type RolloutSnapshot } from "./RolloutCard";
 import { MachineMeters } from "./MachineMeters";
 import { machineStats } from "./machineStats";
@@ -260,13 +263,12 @@ export interface SidebarProps {
   onNewShell: (m: MachineView) => void;
   /** 모든 thread(끝난 것까지) 화면 */
   onThreads: () => void;
-  /** 자동화 패널을 보이고 그 규칙 상세를 연다(thread 줄 「자동화 thread」 표지, plan t-0475 A1) */
-  onAutomation: (project: string, name: string) => void;
-  /** thread 번호로 연다(자동화 패널의 「열림」 칩·기록 번호): 끝난 thread는 보고 */
-  onThreadId: (project: string, id: string) => void;
-  /** 자동화 패널이 열 규칙 상세. 패널이 받으면 `onRuleAsked`로 지운다 */
-  ruleAsk: { project: string; name: string } | null;
-  onRuleAsked: () => void;
+  /** 자동화 패널을 보이고 본문에 그 규칙 설정을 연다(thread 줄 「자동화 thread」 표지, plan t-0475 A1). 이름이 없으면 새 자동화(t-0628) */
+  onAutomation: (project: string, name: string | null) => void;
+  /** 자동화 목록 자료(App이 읽어 본문 설정 화면과 함께 쓴다) */
+  automations: Automations;
+  /** 본문에 연 자동화(`<project>/<name>`) */
+  automationSelected: string | null;
   /** 목록 위에 띄울 알림 띠(연결 끊김·오류) */
   banners?: ReactNode;
   /** 보이는 패널(활동 막대) */
@@ -328,7 +330,7 @@ export function Sidebar(props: SidebarProps) {
         <MachineStrip {...props} />
       </div>
       <div {...panelProps("automations", props.panel)} className="sidebar-panel automations-panel">
-        {props.panel === "automations" && <AutomationPanel canControl={props.canControl} threads={props.threads} onThread={props.onThreadId} ask={props.ruleAsk} onAsked={props.onRuleAsked} />}
+        {props.panel === "automations" && <AutomationPanel data={props.automations} canControl={props.canControl} threads={props.threads} selected={props.automationSelected} onOpen={props.onAutomation} />}
       </div>
       {menu && <RowMenu anchor={menu.anchor} point={menu.point} restoreFocusTo={menu.previousFocus} title={menu.title} subtitle={menu.place} header={menu.header} items={menu.items()} onClose={closeMenu} />}
       {confirm && (
@@ -721,12 +723,26 @@ function PaneRow({ pane: p, online, machine, twoLine, move, ...props }: SidebarP
       ? []
       : p.state === "running"
         ? [
+            // 세션만 끝내고 자리는 남긴다(`aaa pane kill`): 뒤에 「다시 열기」로 같은 자리에 다시 띄운다(관리 GUI W8)
+            {
+              id: "kill",
+              label: "세션 끝내기",
+              icon: Square,
+              danger: true,
+              divider: true,
+              run: () =>
+                rows.ask({
+                  title: `${title} 세션을 끝낼까요?`,
+                  body: "pane에서 실행 중인 프로세스가 종료됩니다. pane 자리는 목록에 남아 「다시 열기」로 다시 띄울 수 있습니다.",
+                  action: "세션 끝내기",
+                  run: async () => void (await call({ op: "pane_kill", pane: p.id })),
+                }),
+            },
             {
               id: "close",
               label: "pane 닫기",
               icon: X,
               danger: true,
-              divider: true,
               run: () =>
                 rows.ask({
                   title: `${title} pane을 닫을까요?`,
@@ -1052,7 +1068,7 @@ function ThreadRow({ t, online, machine, twoLine, ...props }: SidebarProps & { t
           {twoLine ? (
             <span className="workspace-copy is-two-line">
               <span className="workspace-line">
-                <ThreadName id={t.id} title={t.title} />
+                <ThreadStageBadge stage={t.stage} /><ThreadLimitBadge start={t.over_limit} /><ThreadName id={t.id} title={t.title} />
                 {pinned && <Pin className="sidebar-pin-mark" aria-hidden="true" />}
                 {online && paneOpen && <AgentCounts pane={pane} />}
               </span>
@@ -1070,7 +1086,7 @@ function ThreadRow({ t, online, machine, twoLine, ...props }: SidebarProps & { t
             </span>
           ) : (
             <span className="workspace-copy">
-              <ThreadName id={t.id} title={t.title} />
+              <ThreadStageBadge stage={t.stage} /><ThreadLimitBadge start={t.over_limit} /><ThreadName id={t.id} title={t.title} />
               {pinned && <Pin className="sidebar-pin-mark" aria-hidden="true" />}
               {online && paneOpen && <AgentCounts pane={pane} />}
               <span className={`worktree-workspace-label thread-state is-${t.group}`} data-tone={tone} data-testid={`thread-state-${t.project}-${t.id}`}>

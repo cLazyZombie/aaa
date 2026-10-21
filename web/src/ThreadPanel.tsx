@@ -1,3 +1,5 @@
+import { ThreadLimitBadge } from "./ThreadLimitBadge";
+import { ThreadStageBadge } from "./ThreadStageBadge";
 import { lazy, Suspense, useEffect, useRef, useState } from "react";
 import type { DeviceRole, DiffView, LibraryView, ThreadView } from "./gen/proto";
 import { ApiError, call } from "./api";
@@ -43,8 +45,11 @@ export function ThreadPanel({
   onOpenFile,
   onOpenReportFile,
   onAddDoc,
+  reportsRev = 0,
 }: {
   t: ThreadView;
+  /** host reports 사건 수: 링크 발급·폐기(다른 화면의 「낸 링크」 포함)·열람 뒤 결과물 칸을 다시 읽는다 */
+  reportsRev?: number;
   role: DeviceRole;
   onBack: () => void;
   /** 돌아갈 화면 이름(모든 thread 화면에서 열었으면): 그때 「뒤로」는 넓은 화면에도 보인다 */
@@ -72,7 +77,7 @@ export function ThreadPanel({
     return () => {
       live = false;
     };
-  }, [t.project, t.id, t.report_hash, t.copy]);
+  }, [t.project, t.id, t.report_hash, t.copy, reportsRev]);
 
   // 변경 파일 카드(plan §8.305): 소스를 보이므로 조작 기기만, git 저장소 thread만. 못 읽으면 카드를 그리지 않는다(t3code와 같다)
   const [diff, setDiff] = useState<DiffView | null>(null);
@@ -150,8 +155,10 @@ export function ThreadPanel({
       <div className="thread-body">
         <div className="thread-col">
           <div className="t-hero">
-            <h1>{t.title}</h1>
+            <h1><ThreadStageBadge stage={t.stage} /><ThreadLimitBadge start={t.over_limit} />{t.title}</h1>
+            {t.over_limit && <p className="muted" data-testid="thread-over-limit-origin">{t.over_limit.actor} · {new Date(t.over_limit.at_ms).toLocaleString()}{t.over_limit.user_request && ` · 사용자 지시: ${t.over_limit.user_request}`}</p>}
             <div className="t-meta">
+              {t.account && <span data-testid="thread-account">계정 {t.account}</span>}
               <span className={`chip meta-chip ${t.group}`}>{statusLabel}</span>
               <span className="mono">
                 {t.project}/{t.id}
@@ -162,6 +169,7 @@ export function ThreadPanel({
               {t.branch && <span className="mono">{t.branch}</span>}
               {t.agent?.percent != null && <span>{t.agent.percent}%</span>}
             </div>
+            {t.account_selection && <p className="muted" data-testid="thread-account-selection">{t.account_selection.reason} · 한도 그룹 {t.account_selection.group} · 예상 예약 {({ small: 5, medium: 15, large: 30 })[t.account_selection.size]}%p</p>}
           </div>
           {t.automation && <section className="card" data-testid="thread-automation-origin">
             <h2>자동화 thread</h2>
@@ -170,7 +178,7 @@ export function ThreadPanel({
             <p className="muted">프로젝트 실행 한도와 예약 자리에서 제외</p>
           </section>}
           <section className="card report" data-testid="report">
-            <h2>보고</h2>
+            <h2>보고 {t.report_id && <a href={`#report=${encodeURIComponent(`${t.project}/${t.report_id}`)}`}><code>{t.report_id}</code></a>}</h2>
             {lib?.report ? (
               <OpenFileContext.Provider value={onOpenReportFile ?? null}>
                 <ReportMarkdown base={lib.base} text={lib.report} onImages={lightbox.open} />

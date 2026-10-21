@@ -65,7 +65,6 @@ impl SigningKey {
 
 impl Host {
     pub(crate) fn link_view(&self, r: LibraryLinkRow) -> LinkView {
-        let base = format!("/v/{}/", self.library_signing.read().unwrap().cap(&r.id));
         let size = self
             .project_dir(&r.project)
             .ok()
@@ -78,7 +77,14 @@ impl Host {
                     .sum()
             })
             .unwrap_or(0);
+        let report_id = self.report_id(&r.project, &r.thread);
+        self.link_view_summary(r, size, report_id)
+    }
+
+    pub(crate) fn link_view_summary(&self, r: LibraryLinkRow, size: u64, report_id: Option<String>) -> LinkView {
+        let base = format!("/v/{}/", self.library_signing.read().unwrap().cap(&r.id));
         LinkView {
+            report_id,
             id: r.id,
             project: r.project,
             thread: r.thread,
@@ -125,6 +131,8 @@ impl Host {
             .map_err(super::orch::internal)?;
         if created {
             self.db.audit(actor, "library_link", &format!("{project}/{thread} id={}", row.id));
+            // 열린 보고서 목록·thread 화면의 링크 줄이 다시 읽는다(reports 사건)
+            self.reports_bump();
         }
         Ok(self.link_view(row))
     }
@@ -151,6 +159,7 @@ impl Host {
             return Err(err(ErrorCode::NotFound, "보고서 링크가 없다"));
         }
         self.db.audit(actor, "library_link_revoke", &format!("id={id}"));
+        self.reports_bump();
         Ok(self.link_view(self.db.library_link_get(id).map_err(super::orch::internal)?.unwrap()))
     }
 
@@ -167,6 +176,11 @@ impl Host {
 
     /// 열람 기록 실패가 보고서 열기를 막지 않는다. API 열기와 실제 문서 응답이 같은 기록을 쓴다.
     pub(crate) fn library_opened(&self, project: &str, name: &str) {
+        if let Some(v) = self.db.report_target(project, name).ok().flatten()
+            && self.report_id(project, &v.source).as_deref() == Some(name)
+        {
+            self.library_opened(project, &v.source);
+        }
         match self.db.library_opened_at(project, name, aaa_common::util::now_ms()) {
             Ok(true) => self.reports_bump(),
             Ok(false) => {}
@@ -183,6 +197,7 @@ impl Host {
         *key = SigningKey(hmac::Key::new(hmac::HMAC_SHA256, &bytes));
         self.db.library_links_revoke_all().map_err(super::orch::internal)?;
         self.db.audit(actor, "library_rotate", "");
+        self.reports_bump();
         Ok(aaa_proto::FrontResponse::LibraryRotated)
     }
 
@@ -273,6 +288,65 @@ mod tests {
         fn issue(&self, id: &str) -> LinkView {
             self.h.library_link("demo", id, None, "test").unwrap()
         }
+    }
+
+    #[test]
+    fn catalog_matches_single_report_after_versions_archives_and_live_changes() {
+        let lab = Lab::new();
+        let source = lab.state.join("source");
+        std::fs::create_dir(&source).unwrap();
+        std::fs::write(source.join("index.html"), "첫 판").unwrap();
+        lab.h
+            .library_publish("demo", "page", source.to_str().unwrap(), false, Some(Some("시안")), None, "test")
+            .unwrap();
+        std::fs::write(source.join("index.html"), "둘째 판").unwrap();
+        lab.h
+            .library_publish("demo", "page", source.to_str().unwrap(), false, Some(Some("시안")), None, "test")
+            .unwrap();
+        lab.h.library_publish("demo", "live", source.to_str().unwrap(), true, None, None, "test").unwrap();
+        lab.report("t-0001", &[("result.txt", b"done", false), ("remote.txt", b"remote", true)]);
+        lab.report("t-0002", &[("result.txt", b"active", false)]);
+        let mut active = lab.h.load("demo", "t-0002").unwrap();
+        active.status = aaa_proto::ThreadStatus::Open;
+        lab.h.db.thread_save("demo", &active.id, "open", &serde_json::to_string(&active).unwrap()).unwrap();
+        // 잘못된 옛 thread 이름도 load가 거부하므로 목록에서는 계속 보호한다.
+        lab.report("t-invalid", &[("result.txt", b"legacy", false)]);
+        lab.issue("t-0001");
+        let old = lab.h.report_version_names("demo", "page").pop().unwrap();
+        let archive: aaa_proto::ArchivedTask = serde_json::from_value(serde_json::json!({
+            "task_id":"fixture-task","task":{"id":"fixture-task","list":"Backlog","title":"완료","notes":[],"done":true},
+            "body":format!("[결과](library/{old}/index.html)"),"reason":"완료","completed_ms":1,"restored":true,"committed":true,"removed_sha256":"","history":[]
+        })).unwrap();
+        lab.h.db.archive_save("demo", &archive).unwrap();
+        let check = || {
+            for reveal in [false, true] {
+                let all = lab.h.library_reports(None, reveal).unwrap();
+                assert_eq!(all.len(), 5, "보존 판은 목록 줄에서 뺀다");
+                for row in all {
+                    let single = lab.h.report_view(&row.project, &row.name, reveal).unwrap();
+                    assert_eq!(
+                        serde_json::to_value(&row).unwrap(),
+                        serde_json::to_value(single).unwrap(),
+                        "{}",
+                        row.name
+                    );
+                }
+            }
+        };
+        check();
+        // source 변경은 manifest/stat 캐시 없이 즉시 보인다. 최신 링크 폐기와 seen도 다음 목록에 반영된다.
+        std::fs::write(source.join("added.txt"), "늘어난 파일").unwrap();
+        lab.h.library_opened("demo", "page");
+        let link = lab.h.latest_library_link("demo", "page").unwrap();
+        lab.h.library_link_revoke(&link.id, "test").unwrap();
+        check();
+        std::fs::remove_dir_all(&source).unwrap();
+        check();
+        let all = lab.h.library_reports(None, false).unwrap();
+        assert!(all.iter().find(|r| r.name == "page").unwrap().busy, "옛 r 첨부도 원본을 보호한다");
+        assert!(!all.iter().find(|r| r.name == "t-0001").unwrap().busy);
+        assert!(all.iter().find(|r| r.name == "t-0002").unwrap().busy);
+        assert!(all.iter().find(|r| r.name == "live").unwrap().problem.is_some());
     }
 
     async fn get(h: &Arc<Host>, path: &str, range: Option<&str>) -> (StatusCode, axum::http::HeaderMap, Vec<u8>) {
@@ -495,7 +569,7 @@ mod tests {
         let posts = lab.h.db.post_list("demo").unwrap();
         let post = posts.iter().find(|e| e.input.topic == "report").expect("사용자 알림 post");
         assert!(post.input.to == "user" && post.input.title.contains("주간 보고"), "{post:?}");
-        assert_eq!(post.input.refs, vec!["library/demo/week".to_string()]);
+        assert_eq!(post.input.refs, vec![format!("library/demo/{}", w.report_id.as_deref().unwrap())]);
 
         // 보기 권한 기기에서 열어도 봤다(사람 하나의 보고서다)
         changed.borrow_and_update();
@@ -828,8 +902,10 @@ mod tests {
         let newest = retention_report(&lab, "t-0003", 200_000, 3, false);
         let live = lab.state.join("live-source");
         std::fs::create_dir(&live).unwrap();
-        std::fs::write(live.join("index.html"), vec![b'x'; 900_000]).unwrap();
+        std::fs::write(live.join("index.html"), b"live").unwrap();
         lab.h.library_publish("demo", "live", live.to_str().unwrap(), true, None, None, "test").unwrap();
+        // 외부 live 원본은 상한 밖이다. 등록 당시 불변 r 사본 4바이트는 host 보존 용량에 센다.
+        std::fs::write(live.join("index.html"), vec![b'x'; 900_000]).unwrap();
         lab.h.library_retention_pass_at(RETENTION_NOW).unwrap();
         assert!(!gone.exists());
         assert!(active.exists() && newest.exists() && live.join("index.html").exists());
@@ -992,7 +1068,7 @@ mod tests {
             ErrorCode::BadRequest
         );
         let usage = lab.h.library_usage().unwrap();
-        assert!(matches!(usage, FrontResponse::LibraryUsage { size: 7, reports: 1, live: 0, problems: 0, .. }));
+        assert!(matches!(usage, FrontResponse::LibraryUsage { size: 14, reports: 1, live: 0, problems: 0, .. }));
         let live = lab.state.join("usage-live");
         std::fs::create_dir(&live).unwrap();
         std::fs::write(live.join("index.html"), b"live").unwrap();
@@ -1000,7 +1076,7 @@ mod tests {
         assert!(
             matches!(
                 lab.h.library_usage().unwrap(),
-                FrontResponse::LibraryUsage { size: 7, reports: 2, live: 1, problems: 0, .. }
+                FrontResponse::LibraryUsage { size: 18, reports: 2, live: 1, problems: 0, .. }
             ),
             "실시간 원본은 host 사본 용량에 더하지 않는다"
         );

@@ -1,7 +1,11 @@
-// herdr-web-ui(aa624cb) src/lib/edgeSwipe.ts를 바꾸지 않고 옮겼다. 고지는 README.md
+// herdr-web-ui(aa624cb) src/lib/edgeSwipe.ts를 옮겼다. 고지는 README.md. 여는 쓸기의 자리만 바꿨다: 참고는 왼쪽 끝 24px에서
+// 시작한 쓸기로 열지만, 그 자리는 iPhone Safari의 뒤로 쓸기 자리라 두 몸짓이 함께 돌았다. aaa는 왼쪽 끝을 브라우저에 두고
+// 화면 안쪽에서 오른쪽으로 쓸면 연다(plan §8.408, 사용자 1A).
 /*
- * The workspace drawer follows a phone's finger: a swipe in from the left edge opens it,
- * as the menu button does, and a swipe to the left closes it again. Only at the drawer's
+ * The workspace drawer follows a phone's finger: a swipe to the right from inside the screen
+ * opens it, as the menu button does, and a swipe to the left closes it again. The left edge
+ * is the browser's: Safari's (and Android's) back swipe begins there, and a page is told
+ * nothing when it does, so the drawer leaves strokes from the edge alone. Only at the drawer's
  * width (<=768px, styles.css) and only for a mostly horizontal stroke, so the terminal's
  * one-finger scrolling and the transcript's vertical scrolling keep working.
  *
@@ -11,7 +15,7 @@
  * of the way from there.
  */
 
-/** A stroke has to start this close to the left edge to open the drawer. */
+/** A stroke that starts this close to the left edge is the browser's back swipe, not the drawer's. */
 export const EDGE_PX = 24;
 /** How far a finger travels sideways before the drawer opens or closes. */
 export const SWIPE_PX = 56;
@@ -29,7 +33,7 @@ export type SwipeVerdict = "open" | "close" | "claim" | "pending" | "ignore";
  * swipe still short of SWIPE_PX: the caller keeps it from scrolling what lies under it.
  */
 export function swipeVerdict(drawerOpen: boolean, startX: number, dx: number, dy: number): SwipeVerdict {
-  if (!drawerOpen && startX > EDGE_PX) return "ignore";
+  if (!drawerOpen && startX <= EDGE_PX) return "ignore";
   if (Math.abs(dx) < SLOP_PX && Math.abs(dy) < SLOP_PX) return "pending";
   if (Math.abs(dy) >= Math.abs(dx)) return "ignore";
   if (!drawerOpen && dx > 0) return dx >= SWIPE_PX ? "open" : "claim";

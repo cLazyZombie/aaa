@@ -1,5 +1,5 @@
-// 설정 「머신」의 「SSH로 추가」(웹 머신 추가 M2 plan §8.384, M3 §8.385): host가 이미 ssh로 로그인되는 머신에 접속해 host key 지문을
-// 보이고, 사람이 믿으면 OS·CPU를 감지한다. 1.94 host면 이어서 설치 설정 → 원격 install 계획 확인 → 「설치하고 등록」까지 한다.
+// 설정 「머신」의 「SSH로 추가」(웹 머신 추가 M2 plan §8.384, M3 §8.420): host가 이미 ssh로 로그인되는 머신에 접속해 host key 지문을
+// 보이고, 사람이 믿으면 OS·CPU를 감지한다. 1.103 host면 이어서 설치 설정 → 원격 install 계획 확인 → 「설치하고 등록」까지 한다.
 // 작업은 host DB에 남고 진행은 host `enroll` 사건으로 다시 읽는다. 보기 기기는 목록만 본다.
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { DeviceRole, EnrollAddress, InstallHarness, MachineSetupSettings, MachineSetupView } from "./gen/proto";

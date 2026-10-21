@@ -17,6 +17,9 @@ use serde_json::Value;
 pub mod watch;
 
 pub const BIN: &str = env!("CARGO_BIN_EXE_aaa");
+/// t-0578의 동시 검증(load 28.96)에서 30초를 넘긴 시작·전달 대기만 두 배 여유를 둔다.
+/// 사건이 오면 즉시 끝난다. 일반 대기·제품의 복구/성능 시한에는 쓰지 않는다(docs/testing.md).
+pub const LOAD_TIMEOUT: Duration = Duration::from_secs(60);
 static SEQ: AtomicU32 = AtomicU32::new(0);
 
 /// 같은 프로그램·version이면서 SHA가 다른 시험 실행 파일. macOS는 서명 식별자로 구분한다.
@@ -532,6 +535,11 @@ impl Events {
         let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
         let client = rt.block_on(aaa_common::front::FrontClient::connect(&node.state)).expect("front 연결");
         Events { rt, client, log: Vec::new() }
+    }
+
+    /// 지금까지 읽은 사건 다음 위치. 새 동작의 결과를 기다릴 때 앞 턴의 기록을 다시 고르지 않는다.
+    pub fn cursor(&self) -> usize {
+        self.log.len()
     }
 
     /// `f`가 Some을 내는 첫 사건(지금까지 받은 것부터)

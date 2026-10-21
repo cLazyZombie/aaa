@@ -2,7 +2,7 @@
 // thread와 같은 자리에 섞어 왼쪽 호박색 막대와 「자동화 thread」 표지로 보인다. 표지는 자동화 패널의 그 규칙 상세를, 자동화 패널의
 // 「열림」 칩과 기록의 thread 번호는 그 thread를 연다. 「모든 thread」는 「자동화만」으로 거른다. 시간은 기다리지 않는다: thread 기록을 기다린다.
 import fs from "node:fs";
-import { root, aaa, step, until, domIs, drawerSettled, inList, openSettings, shot } from "../lib/harness.mjs";
+import { root, claudeIdle, claudeWorking, aaa, step, until, domIs, drawerSettled, inList, openSettings, shot } from "../lib/harness.mjs";
 export const labEnv = { AAA_TEST_ROUTINE_SECONDS: "1" };
 
 const project = "auto-bar";
@@ -14,7 +14,7 @@ const SIZES = { desktop: { width: 1280, height: 800 }, pad: { width: 820, height
 /** 좁은 화면은 목록이 서랍 안이다: 닫혀 있으면 열고 움직임이 끝나기를 기다린다 */
 async function openList(p) {
   await drawerSettled(p);
-  const toggle = p.locator(".view [data-testid='drawer-toggle']");
+  const toggle = p.locator(".view [data-testid='drawer-toggle']:visible");
   if ((await toggle.isVisible()) && (await toggle.getAttribute("aria-expanded")) !== "true") {
     await toggle.click();
     await p.locator("#workspace-drawer.is-open").waitFor();
@@ -78,7 +78,7 @@ async function dropletsGone(p) {
 }
 
 async function closeList(p) {
-  const toggle = p.locator(".view [data-testid='drawer-toggle']");
+  const toggle = p.locator(".view [data-testid='drawer-toggle']:visible");
   if ((await toggle.isVisible()) && (await toggle.getAttribute("aria-expanded")) === "true") {
     await toggle.click();
     await drawerSettled(p);
@@ -89,6 +89,11 @@ export default async function ({ page }) {
   let auto;
   let human;
   await step("자동화 thread 만들기와 화면(데스크톱·패드·휴대폰, 밝음·어두움): 실제 host가 규칙으로 띄운 thread가 사람이 띄운 thread와 같은 목록에 선다", async () => {
+    // 가짜 harness도 실제 Claude 작업 화면을 내보내 상태 칸에 파란 점이 그려지게 한다.
+    const config = `${root}/c/host.toml`;
+    fs.writeFileSync(config, fs.readFileSync(config, "utf8").replace('agent = "custom"', 'agent = "claude"'));
+    const fake = `${root}/fake.sh`;
+    fs.writeFileSync(fake, fs.readFileSync(fake, "utf8").replace("printf 'fake> '", claudeIdle).replaceAll("printf 'fake> '", claudeWorking));
     aaa("project", "create", project);
     // 이 실험실의 host.toml에는 [safety]가 없어 프로젝트의 옛 자리 값을 쓴다(사람만 고치는 safety는 건드리지 않는다)
     fs.appendFileSync(`${dir()}/project.toml`, '\nstart_threads = "auto"\n');
@@ -164,29 +169,66 @@ export default async function ({ page }) {
     await page.setViewportSize(SIZES.desktop);
   });
 
-  await step("표지를 누르면 줄(pane)을 열지 않고 자동화 패널의 그 규칙 상세가 열린다. 상세 기록의 thread 번호와 규칙 줄 「열림」 칩은 그 thread를 연다. ⋯ 메뉴에도 「자동화 규칙」", async () => {
+  await step("상태 점 열: coordinator·자동화·일반 thread가 선택·머신 이름 길이와 관계없이 데스크톱·휴대폰에서 정렬된다", async () => {
+    const ids = ["pane-auto-bar coordinator", `thread-${project}-${auto.id}`, `thread-${project}-${human}`];
+    aaa("pane", "run", `${project} coordinator`, "상태 점 검사");
+    await domIs(page, "세 줄의 실제 작업 점", (ids) => ids.every((id) => document.querySelector(`[data-panel="work"] [data-testid="${id}"] .sidebar-status-dot`)), ids);
+    for (const [device, viewport] of Object.entries(SIZES)) {
+      await page.setViewportSize(viewport);
+      await openList(page);
+      for (const selected of ids) {
+        // 실제 줄 선택 뒤 휴대폰에서는 다시 서랍을 연다.
+        await page.locator(`[data-panel="work"] [data-testid="${selected}"]`).click();
+        await openList(page);
+        const positions = await page.evaluate((ids) => ids.map((id, index) => {
+          const row = document.querySelector(`[data-panel="work"] [data-testid="${id}"]`);
+          // 실제 머신 연결은 유지하고, 표시 글의 짧음·길음만 늘려 줄 축소를 검사한다.
+          const machine = row.querySelector(".thread-machine");
+          const original = machine?.textContent;
+          if (machine) machine.textContent = index === 1 ? "mac-a" : "mac-with-a-long-machine-name";
+          const header = row.closest(".workspace-header").getBoundingClientRect();
+          const status = row.querySelector(".sidebar-pane-meta").getBoundingClientRect();
+          const copy = row.querySelector(".workspace-copy").getBoundingClientRect();
+          if (machine) machine.textContent = original;
+          return { id, x: status.x + status.width / 2, right: header.right, overlap: copy.right - status.left };
+        }), ids);
+        if (positions.some((p) => Math.abs(p.x - positions[0].x) > 0.5 || p.overlap > 0.5)) {
+          throw new Error(`${device}/${selected} 상태 점 정렬 ${JSON.stringify(positions)}`);
+        }
+      }
+      await dropletsGone(page);
+      await shot(page, `status-column-${device}`);
+      await closeList(page);
+    }
+    await page.setViewportSize(SIZES.desktop);
+  });
+
+  await step("표지를 누르면 줄(pane)이 아니라 본문에 그 규칙 설정이 열리고 사이드바는 자동화 카드다. 설정의 기록 thread 번호와 「열린 thread」 칩은 그 thread를 연다. ⋯ 메뉴에도 「자동화 규칙」", async () => {
     const autoRow = `thread-${project}-${auto.id}`;
+    const ruleHash = `#automation=${encodeURIComponent(`${project}/ci-main`)}`;
     await inList(page, autoRow);
-    const before = await page.evaluate(() => location.hash);
     await page.getByTestId(`thread-origin-${project}-${auto.id}`).click();
     const sheet = page.getByTestId("automation-detail");
     await sheet.waitFor();
     if (!(await sheet.textContent()).includes("CI 실패 분류")) throw new Error("다른 규칙 상세");
-    if ((await page.evaluate(() => location.hash)) !== before) throw new Error("표지가 줄(pane)도 열었다");
+    if ((await page.evaluate(() => location.hash)) !== ruleHash) throw new Error(`표지 주소 ${await page.evaluate(() => location.hash)}`);
     if ((await page.getByTestId("activity-automations").getAttribute("aria-selected")) !== "true") throw new Error("자동화 패널이 보이지 않는다");
-    // 기록의 thread 번호 → 창을 닫고 그 thread(도는 pane)를 연다
+    if ((await page.getByTestId(`automation-${project}-ci-main`).getAttribute("aria-current")) !== "true") throw new Error("고른 카드 표시");
+    // 기록의 thread 번호 → 설정 화면을 떠나 그 thread(도는 pane)를 연다
     await sheet.getByTestId(`automation-thread-${auto.id}`).first().click();
-    await sheet.waitFor({ state: "detached" });
+    await sheet.waitFor({ state: "hidden" });
     await domIs(page, "규칙 thread pane", (pane) => location.hash === `#pane=${pane}`, auto.pane);
-    // 규칙 줄의 「열림」 칩
+    // 카드의 「실행 중」과 설정의 「열린 thread」 칩
     const t1 = aaa("pane", "list").panes.find((x) => x.name === "t1" && !x.role).id;
     await page.getByTestId("activity-work").click();
     await page.getByTestId("pane-t1").click();
     await domIs(page, "t1", (pane) => location.hash === `#pane=${pane}`, t1);
     await page.getByTestId("activity-automations").click();
+    await page.getByTestId(`automation-running-${project}-ci-main`).waitFor();
+    await page.getByTestId(`automation-${project}-ci-main`).click();
     const chip = page.getByTestId(`automation-open-${project}-${auto.id}`);
     await chip.waitFor();
-    if ((await chip.textContent()) !== `열림 ${auto.id}`) throw new Error(`칩 글 ${await chip.textContent()}`);
+    if ((await chip.textContent()) !== auto.id) throw new Error(`칩 글 ${await chip.textContent()}`);
     await chip.click();
     await domIs(page, "칩이 연 thread pane", (pane) => location.hash === `#pane=${pane}`, auto.pane);
     await shot(page, "a1-automation-panel");
@@ -197,19 +239,21 @@ export default async function ({ page }) {
     await menu.waitFor();
     await menu.getByRole("menuitem", { name: "자동화 규칙" }).click();
     await page.getByTestId("automation-detail").waitFor();
-    await page.keyboard.press("Escape");
-    await page.getByTestId("automation-detail").waitFor({ state: "detached" });
+    await page.getByTestId("automation-detail").getByTestId("automation-close").click();
+    await page.getByTestId("automation-detail").waitFor({ state: "hidden" });
     await page.getByTestId("activity-work").click();
-    // 휴대폰 폭: 목록 서랍 안의 표지를 손가락으로 누르면 서랍 안에서 자동화 패널과 규칙 상세가 열린다(줄 pane은 열지 않는다)
+    // 휴대폰 폭: 목록 서랍 안의 표지를 손가락으로 누르면 서랍이 닫히고 본문이 그 규칙 설정이다(줄 pane은 열지 않는다)
     await page.setViewportSize(SIZES.phone);
     await openList(page);
-    const at = await page.evaluate(() => location.hash);
     await page.getByTestId(`thread-origin-${project}-${auto.id}`).click();
     await page.getByTestId("automation-detail").waitFor();
-    if ((await page.evaluate(() => location.hash)) !== at) throw new Error("휴대폰 표지가 줄(pane)도 열었다");
+    if ((await page.evaluate(() => location.hash)) !== ruleHash) throw new Error("휴대폰 표지가 규칙 설정을 열지 않았다");
+    await drawerSettled(page);
+    if (await page.locator("#workspace-drawer.is-open").count()) throw new Error("설정을 연 뒤에도 서랍이 열려 있다");
     await shot(page, "a1-phone-rule-detail");
-    await page.keyboard.press("Escape");
-    await page.getByTestId("automation-detail").waitFor({ state: "detached" });
+    await page.getByTestId("automation-detail").getByTestId("automation-close").click();
+    await page.getByTestId("automation-detail").waitFor({ state: "hidden" });
+    await openList(page);
     await page.getByTestId("activity-work").click();
     await closeList(page);
     await page.setViewportSize(SIZES.desktop);

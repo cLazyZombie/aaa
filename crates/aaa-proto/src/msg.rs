@@ -76,6 +76,9 @@ pub enum ErrorCode {
     TooLarge,
     /// 본 판과 지금 파일이 다르다(자동화 저장 등). 다시 읽고 차이를 본 뒤 고친다
     Conflict,
+    /// 공개 주소로 연 조작 기기의 승인 필요 동작: 이 기기 passkey의 사용자 확인(UV)과 함께 다시 보낸다(관리 GUI W7).
+    /// passkey가 없으면 message가 다시 짝짓기를 안내한다
+    PasskeyRequired,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
@@ -600,6 +603,9 @@ pub struct AgentHello {
     /// 대화를 이어 띄운다. host가 `harness_hello.v1`을 알리면 agent는 연결 뒤 이 스냅샷 이후 변경분만 보낸다.
     #[serde(default)]
     pub harness: Vec<HarnessEvent>,
+    /// agent 실행 신원(관리 GUI W6c). 재시작만 하는 rollout이 재시작 전 신원으로 감시를 세운다. 옛 agent는 없다
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub identity: Option<crate::RuntimeIdentity>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -889,6 +895,17 @@ pub enum AgentRequest {
         work_dir: String,
         max_library_bytes: u64,
     },
+    /// report_copy.v2: 인증한 link에서 원본 무결성을 확인한 뒤 host 저장 경계에서 가린다.
+    ReportTransfer {
+        work_dir: String,
+        max_library_bytes: u64,
+    },
+    ReportFileRead {
+        work_dir: String,
+        path: String,
+        offset: u64,
+        len: u32,
+    },
     /// work_dir 아래 파일 한 조각(library 사본용)
     FileRead {
         work_dir: String,
@@ -1145,6 +1162,12 @@ pub enum AgentResponse {
     },
     ThreadAdopted(ThreadAdopted),
     Report(ReportSnapshot),
+    /// report_copy.v2 전용 전송 응답. 표시용 FileChunk와 구별한다.
+    ReportTransfer(ReportSnapshot),
+    ReportFileChunk {
+        data: B64,
+        eof: bool,
+    },
     FileChunk {
         data: B64,
         eof: bool,
@@ -1642,7 +1665,7 @@ pub struct MachineSetupView {
     pub created_ms: u64,
     #[ts(type = "number")]
     pub updated_ms: u64,
-    /// 사람이 넣은 설치 설정(M3, plan §8.385). 옛 host는 생략한다
+    /// 사람이 넣은 설치 설정(M3, plan §8.420). 옛 host는 생략한다
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub settings: Option<MachineSetupSettings>,
@@ -1812,6 +1835,9 @@ pub struct DeviceView {
     /// 마지막으로 들어온 때(1분 단위로 적는다). 아직 한 번도 안 들어왔으면 없다
     #[ts(type = "number | null")]
     pub last_seen_ms: Option<u64>,
+    /// 지금 공개 주소의 passkey가 있다(관리 GUI W7). 옛 host는 보내지 않는다
+    #[serde(default)]
+    pub passkey: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
@@ -1840,6 +1866,34 @@ pub enum FrontRequest {
     },
     AccountList,
     AccountDefaults,
+    AccountPool,
+    AccountPoolMember {
+        revision: String,
+        account: String,
+        member: Option<crate::AccountPoolMember>,
+    },
+    AccountPoolProject {
+        revision: String,
+        project: String,
+        enabled: bool,
+    },
+    AccountStarts {
+        #[serde(default)]
+        #[ts(optional, as = "Option<String>")]
+        project: String,
+    },
+    AccountStartCancel {
+        #[serde(default)]
+        #[ts(optional, as = "Option<String>")]
+        project: String,
+        id: String,
+    },
+    /// 별칭 `auto`와 충돌하지 않는 명시적 풀 시작. 같은 ID의 재요청은 같은 시작이다.
+    ThreadStartPool {
+        id: String,
+        size: crate::AccountTaskSize,
+        start: Box<FrontRequest>,
+    },
     AccountDefault {
         harness: String,
         account: Option<String>,
@@ -2268,22 +2322,22 @@ pub enum FrontRequest {
     MachineSetupCancel {
         job: String,
     },
-    /// FRONT_API 1.94. 준비된 작업에 설치 설정을 넣는다(M3, plan §8.385): host가 같은 판 aaa를 원격 임시 폴더에 보내 SHA·판을 확인하고
+    /// FRONT_API 1.103. 준비된 작업에 설치 설정을 넣는다(M3, plan §8.420): host가 같은 판 aaa를 원격 임시 폴더에 보내 SHA·판을 확인하고
     /// 원격 `install-probe`로 계획을 받는다. 원격 설치 자리에는 아직 쓰지 않는다. 사람만
     MachineSetupPlan {
         job: String,
         settings: crate::MachineSetupSettings,
     },
-    /// FRONT_API 1.94. 화면에서 본 계획 hash로 설치하고 등록한다: host가 그 계획에 서명하고, 원격 install이 적용하며 grant로 등록한다. 사람만
+    /// FRONT_API 1.103. 화면에서 본 계획 hash로 설치하고 등록한다: host가 그 계획에 서명하고, 원격 install이 적용하며 grant로 등록한다. 사람만
     MachineSetupApply {
         job: String,
         plan_sha256: String,
     },
-    /// FRONT_API 1.94. 설치·등록된 머신에 끝 확인 shell pane을 연다(작업 폴더·git·harness·PATH를 적는다, 모델 비용 없음). 사람만
+    /// FRONT_API 1.103. 설치·등록된 머신에 끝 확인 shell pane을 연다(작업 폴더·git·harness·PATH를 적는다, 모델 비용 없음). 사람만
     MachineSetupCheck {
         job: String,
     },
-    /// FRONT_API 1.94. 설치·등록된 머신에 harness 로그인 pane(`claude`·`codex login`)을 연다. 사람만
+    /// FRONT_API 1.103. 설치·등록된 머신에 harness 로그인 pane(`claude`·`codex login`)을 연다. 사람만
     MachineSetupLogin {
         job: String,
         harness: crate::install::InstallHarness,
@@ -2410,6 +2464,14 @@ pub enum FrontRequest {
         name: Option<String>,
     },
     ThreadStart {
+        /// FRONT_API 1.98. 사용자가 명시한 시작만 프로젝트 실행 한도를 넘길 수 있다.
+        #[serde(default)]
+        #[ts(optional, as = "Option<bool>")]
+        over_limit: bool,
+        /// coordinator는 해당 task를 강제로 시작하라는 사용자 지시 근거를 한 줄로 남긴다.
+        #[serde(default)]
+        #[ts(optional, as = "Option<String>")]
+        user_request: Option<String>,
         #[serde(default)]
         holds: Vec<String>,
         /// 준비 완료를 기다리지 않고 Starting 기록을 돌려준다.
@@ -2518,6 +2580,10 @@ pub enum FrontRequest {
         ops: Vec<TaskOp>,
         #[serde(default)]
         base_sha256: Option<String>,
+        /// 사용자 지시로 모델·머신만 변경하는 근거 한 줄(FRONT_API 1.97). 예약 순서와 시작 승인을 유지한다.
+        #[serde(default)]
+        #[ts(optional)]
+        user_request: Option<String>,
     },
     /// 할 일 기록(FRONT_API 1.62, 보기 권한). 최신부터, `before`(id)보다 앞의 것
     TaskLog {
@@ -3110,7 +3176,10 @@ impl FrontRequest {
     /// 프로젝트 자체를 바꾸는 요청(lifecycle·delete·rename·sweep)은 이름을 늘 받으므로 여기 없다.
     pub fn project_mut(&mut self) -> Option<&mut String> {
         match self {
-            FrontRequest::ThreadStartAccount { start, .. } => start.project_mut(),
+            FrontRequest::ThreadStartAccount { start, .. } | FrontRequest::ThreadStartPool { start, .. } => {
+                start.project_mut()
+            }
+            FrontRequest::AccountStarts { project } | FrontRequest::AccountStartCancel { project, .. } => Some(project),
             FrontRequest::Post { project, .. }
             | FrontRequest::PostStatus { project, .. }
             | FrontRequest::PostHandled { project, .. }
@@ -3203,6 +3272,8 @@ impl FrontRequest {
             self,
             FrontRequest::AccountList
                 | FrontRequest::AccountDefaults
+                | FrontRequest::AccountPool
+                | FrontRequest::AccountStarts { .. }
                 | FrontRequest::Status
                 | FrontRequest::DeployContext
                 | FrontRequest::DeployStatus { .. }
@@ -3294,6 +3365,15 @@ pub enum FrontResponse {
     },
     AccountDefaults {
         defaults: Vec<crate::AccountDefault>,
+    },
+    AccountPool {
+        pool: crate::AccountPoolView,
+    },
+    AccountStarts {
+        starts: Vec<crate::AccountStartView>,
+    },
+    AccountStart {
+        start: crate::AccountStartView,
     },
     AccountLogin {
         login: crate::AccountLoginView,
@@ -3475,7 +3555,7 @@ pub enum FrontResponse {
     Threads {
         threads: Vec<ThreadView>,
     },
-    Thread(ThreadView),
+    Thread(Box<ThreadView>),
     /// FRONT_API 1.44. thread 작업 요약
     ThreadSummary(ThreadSummaryView),
     Events {
@@ -3635,8 +3715,8 @@ pub enum FrontEvent {
     Workspace(Workspace),
     /// 흐름 사건(새로 기록될 때). 놓쳤으면 `Events`로 cursor부터 다시 읽는다.
     Flow(FlowEvent),
-    /// thread 기록이 바뀌었다
-    Thread(ThreadView),
+    /// thread 기록이 바뀌었다. JSON은 그대로 두고 큰 본체를 별도로 보관한다.
+    Thread(Box<ThreadView>),
     /// 확인창 질문이 생기거나 답해졌다(알림 대상)
     Question(QuestionView),
     /// 공유 설정 문서 전체. 웹 events 연결이 열릴 때와 바뀔 때마다 온다(herdr-web-ui `preferences` 사건)

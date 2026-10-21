@@ -22,6 +22,7 @@ pub mod layout;
 pub mod legacy_special;
 pub mod msg;
 pub mod orch;
+pub mod passkey;
 pub mod post;
 pub use legacy_special::*;
 pub use post::*;
@@ -35,6 +36,7 @@ pub use frame::{
 };
 pub use msg::*;
 pub use orch::*;
+pub use passkey::*;
 pub use usage::*;
 pub use version::{
     AGENT_LINK, FRONT_API, NegotiateError, SESSION_IPC, SESSION_IPC_COLORS, SESSION_IPC_DETECT, Version, negotiate,
@@ -68,11 +70,22 @@ pub fn typescript_bindings() -> String {
         AccountQuotaReport::decl(&cfg),
         AccountHealth::decl(&cfg),
         AccountDefault::decl(&cfg),
+        AccountPoolMember::decl(&cfg),
+        AccountPoolView::decl(&cfg),
+        AccountTaskSize::decl(&cfg),
+        AccountSelection::decl(&cfg),
+        AccountStartState::decl(&cfg),
+        AccountStartView::decl(&cfg),
         AccountLoginView::decl(&cfg),
         Version::decl(&cfg),
         B64::decl(&cfg),
         ErrorCode::decl(&cfg),
         ErrorBody::decl(&cfg),
+        PasskeyState::decl(&cfg),
+        PasskeyCreation::decl(&cfg),
+        PasskeyRegistration::decl(&cfg),
+        PasskeyChallenge::decl(&cfg),
+        PasskeyAssertion::decl(&cfg),
         <Outcome<()>>::decl(&cfg),
         SessionState::decl(&cfg),
         ScreenText::decl(&cfg),
@@ -201,7 +214,9 @@ pub fn typescript_bindings() -> String {
         DeployJob::decl(&cfg),
         ThreadGroup::decl(&cfg),
         ReportAttention::decl(&cfg),
+        ThreadStage::decl(&cfg),
         ThreadView::decl(&cfg),
+        ThreadLimitOverride::decl(&cfg),
         ThreadPr::decl(&cfg),
         SummaryMark::decl(&cfg),
         ThreadQuestions::decl(&cfg),
