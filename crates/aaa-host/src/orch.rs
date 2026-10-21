@@ -2298,7 +2298,7 @@ impl Host {
         let conn = self.live_conn(&rec.machine_id)?;
         // Ok(None): 이미 받은 보고와 같다
         // (보고 hash, 건너뛴 것, 사본 상태, 보고, library가 앞 사본과 달라졌나)
-        type Got = Option<(String, Vec<String>, String, Vec<u8>, bool)>;
+        type Got = Option<(String, Vec<String>, String, Vec<u8>, bool, Vec<String>)>;
         let result: Result<Got, ErrorBody> = async {
             let snap = match conn
                 .request(AgentRequest::ReportCollect {
@@ -2316,6 +2316,7 @@ impl Host {
             // library: 임시 폴더에 받고 hash를 확인한 뒤 바꿔 넣는다
             let lib_root = dir.join("library");
             let tmp = lib_root.join(format!(".{id}.tmp-{}", aaa_common::util::new_id()));
+            let mut sandbox_notes = Vec::new();
             let fetch = async {
                 std::fs::create_dir_all(&tmp).map_err(internal)?;
                 for f in &snap.files {
@@ -2351,6 +2352,9 @@ impl Host {
                         return Err(internal(format!("{}: 받는 동안 바뀌었다(hash 다름)", f.path)));
                     }
                     std::fs::write(&target, &out).map_err(internal)?;
+                    if let Some(note) = crate::report_sandbox::warning(&f.path, &out) {
+                        sandbox_notes.push(note);
+                    }
                 }
                 Ok(())
             }
@@ -2375,12 +2379,22 @@ impl Host {
             let skipped: Vec<String> = snap.skipped.iter().map(|s| format!("{}: {}", s.path, s.reason)).collect();
             self.automation_copy_memory(&rec, last).await?;
             let copy = if skipped.is_empty() { "complete" } else { "partial" };
-            Ok(Some((snap.hash, skipped, copy.to_string(), snap.report.0, changed)))
+            Ok(Some((snap.hash, skipped, copy.to_string(), snap.report.0, changed, sandbox_notes)))
         }
         .await;
         match result {
             Ok(None) => Ok(()),
-            Ok(Some((hash, skipped, copy, report, changed))) => {
+            Ok(Some((hash, skipped, copy, report, changed, sandbox_notes))) => {
+                if !sandbox_notes.is_empty() && (rec.report_hash.as_ref() != Some(&hash) || changed) {
+                    self.inbox_add_body(
+                        project,
+                        "report-sandbox-warning",
+                        id,
+                        "보고서 sandbox 확인",
+                        &format!("{id}: 보고서에서 제한되거나 확인이 필요한 API를 찾았다"),
+                        &sandbox_notes.join("\n"),
+                    );
+                }
                 // 새 보고 알림보다 먼저 만든다. 같은 보고서의 유효한 링크는 재사용한다.
                 self.library_link(project, id, None, "host")?;
                 // 마지막 사본인데 보고가 그대로면 library만 새로 받은 것이다: 보고 사건·평가 수집은 다시 하지 않고,

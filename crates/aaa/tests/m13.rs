@@ -4093,13 +4093,26 @@ fn library_view() {
     let (st, head, body) = http_get(&web, &format!("{base}index.html"));
     assert_eq!(st, 200, "{head}");
     assert!(head.contains("content-security-policy: sandbox allow-scripts"), "{head}");
+    assert!(head.contains(&format!("connect-src http://{web}{base}")), "{head}");
+    assert!(!head.contains("allow-same-origin"), "{head}");
     assert!(head.contains("x-frame-options: sameorigin") && head.contains("text/html"), "{head}");
     assert!(String::from_utf8_lossy(&body).contains("<p>보고</p>"));
     let (st, _, body) = http_get(&web, &format!("{base}sub/d.txt"));
     assert_eq!((st, body.as_slice()), (200, b"deep\n".as_slice()));
-    // agent에 남긴 파일: 조각으로 스트리밍한 바이트가 원본과 같다
-    let (st, head, body) = http_get(&web, &format!("{base}big.bin"));
+    let (st, head, body) = http_get_with(&web, &format!("{base}sub/d.txt"), "Origin: null\r\n");
+    assert_eq!((st, body.as_slice()), (200, b"deep\n".as_slice()));
+    assert!(head.contains("access-control-allow-origin: null"), "{head}");
+    assert!(!head.contains("access-control-allow-credentials"), "{head}");
+    let (st, head, _) = http_get_with(&web, &format!("{base}sub/d.txt"), "Origin: null\r\nCookie: test=1\r\n");
+    assert_eq!(st, 403, "{head}");
+    assert!(!head.contains("access-control-allow-origin"), "{head}");
+    let (st, head, _) = http_get_with(&web, &format!("{base}sub/d.txt"), "Origin: https://example.com\r\n");
     assert_eq!(st, 200, "{head}");
+    assert!(!head.contains("access-control-allow-origin"), "{head}");
+    // agent에 남긴 파일: 조각으로 스트리밍한 바이트가 원본과 같다
+    let (st, head, body) = http_get_with(&web, &format!("{base}big.bin"), "Origin: null\r\n");
+    assert_eq!(st, 200, "{head}");
+    assert!(head.contains("access-control-allow-origin: null"), "{head}");
     assert!(head.contains("content-length: 2097152"), "{head}");
     let original = std::fs::read(agent_lib.join("big.bin")).unwrap();
     assert!(body == original, "본문 {}바이트가 원본과 다르다", body.len());
