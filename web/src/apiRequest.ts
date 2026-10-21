@@ -1,8 +1,10 @@
 /** 페이지 종료 뒤 예약된 조회가 새 HTTP를 시작하지 않게 하는 앱 API 전송 경계.
- * 숨긴 탭은 그대로 동작한다. pagehide만 닫고, BFCache의 pageshow는 새 요청을 다시 허용한다.
+ * 숨긴 탭은 그대로 동작한다. beforeunload부터 닫고, BFCache의 pageshow는 새 요청을 다시 허용한다.
  * 떠날 때 명시한 keepalive 저장은 유지하며 취소한 쓰기를 복귀 때 자동 재생하지 않는다. */
 let pageClosed = false;
 if (typeof window !== "undefined") {
+  // 완료된 읽기의 Promise는 beforeunload와 pagehide 사이에도 후속 조회를 시작할 수 있다.
+  window.addEventListener("beforeunload", () => { pageClosed = true; }, { capture: true });
   window.addEventListener("pagehide", () => { pageClosed = true; }, { capture: true });
   window.addEventListener("pageshow", () => { pageClosed = false; }, { capture: true });
 }

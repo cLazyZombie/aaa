@@ -2,6 +2,38 @@
 
 새 기능을 만드는 thread가 따르는 짧은 규칙이다. 근거는 참고 넷(herdr 0.9.5·herdr-projects 0.2.35·herdr-web-ui `aa624cb`·t3code `4b1024da`)과 이 저장소에서 실제로 난 간헐 실패다. 전략과 도구 목록은 [plan §13](plan.md#13-테스트-전략과-직접-만들-e2e-도구)에 있다.
 
+## 배포 조각의 개발 빌드 비용(t-0592)
+
+- `cargo run --locked -p aaa-proto --example deploy_codec`: 실제 배포 응답의256KiB base64 JSON 조각을
+  256번씩 encode/decode하고 원문 bytes를 대조한다. 성공 표본3개의 시간을 출력하며 성능 통과 상한·sleep·재시도는 없다.
+- 기존 `sha2` 설정에 더해 dev/test의 `base64`·`serde_json`을 opt-level3으로 컴파일한다. debug assertions·release 설정·조각 크기·
+  실제 배포 실행 파일·SHA·영수증·복구·재시작 owner를 유지한다. 프로토콜 crate 전체를 최적화하지 않는다.
+- 전후 비교는 같은 머신에서 같은 `rollout::rollout_preflights_all_targets_and_resumes_same_jobs_after_host_restart`
+  keeper를 실행하고 빌드와 시험 시간을 나눈다. codec 측정과 전체 gate·다른 머신의 결과를 같은 개선률로 쓰지 않는다.
+
+## 웹 E2E 병렬 작업(t-0592)
+
+- 37-chat-pages의 Chromium·WebKit ×1280·390·820px ×Claude·Codex 조합12개는 각각 새 실험실에서
+  실행한다. source의 기존 단계 이름을 정확히 하나씩 선택하고 모든 조합의 위치·가상화·새 기록·복원 검사를 유지한다.
+  `--grep`은 그 조합만 고르고 `--workers 1`은 이전처럼 한 실험실에서 모든 단계를 차례로 실행한다.
+- 상태를 이어 쓰는23-composer-attachments 등의 spec은 분할하지 않는다. 공통 준비의 `always`도 유지한다.
+  `node --test web/test/e2e-jobs.test.mjs`는 원 source의12개 조합이 반복마다 정확히 한 번 선택되는지,
+  의존 단계 보존·grep·문장 부호·시간 합계를 확인한다. 실패 재시도는 없다.
+- 기본 작업 수는 CPU 둘마다 하나, 최대8개다. 명시한 `AAA_E2E_WORKERS`와 `--workers`는 그대로 적용한다.
+  요약의 전체 시간은 wall time이며 분할 spec의 행은 독립 작업 점유 시간의 합계라고 표시한다.
+  단계·전체 시한이나 실패 판정은 바꾸지 않는다. 같은 실행 파일을 고정한 전후 측정과 전체 정본으로 검증한다.
+
+## 종료 시작에 완료된 조회(t-0592)
+
+- E2E23의 「종료 시작의 완료 응답」은 실제 WebKit/App의 projects HTTP 응답을 받은 뒤 JSON 완료만
+  beforeunload까지 보류한다. 실제 reload에서 pagehide보다 먼저 routines를 시작하는 경계를 검사한다.
+  기존 코드는 `beforeunload → routines fetch → cancelled → pagehide`로 실패한다. 원래 간헐 실패의
+  access-control 문구와 이 제어 재현의 cancelled 기록은 구별하며, 종료 중 실제 fetch 발생 자체를 단언한다.
+- 공통 API는 beforeunload부터 새 일반 요청을 AbortError로 취소한다. 기존 pagehide·pageshow·명시 keepalive
+  경계도 유지한다. 새 문서의 실제 routines 응답을 확인해 조회를 영구 차단하는 변형은 통과하지 못한다.
+- `web/test/apiRequest.test.mjs`는 두 종료 사건부터 네트워크 시작0, 명시 keepalive, pageshow의 새 요청과
+  취소한 요청 비재생을 검사한다. 일반 API 오류를 성공으로 바꾸거나 pageerror를 무시하지 않는다.
+
 ## Rust 전체 시험 병렬 실행(t-0591)
 
 Unix의 `bash scripts/ci-local.sh --only test`는 Cargo `--workspace --no-run`의 시험 실행 파일 전체를 준비한 뒤
