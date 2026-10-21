@@ -18,6 +18,9 @@ use sha2::Digest;
 
 use crate::{Host, err};
 
+#[cfg(test)]
+pub(crate) type StartAdmittedHook = Arc<dyn Fn(&str) + Send + Sync>;
+
 /// host가 저장하는 thread 기록(DB `threads.data` JSON). 필드를 더해도 이전 기록을 읽게 기본값을 둔다.
 fn old_launch_unknown() -> bool {
     true
@@ -449,7 +452,7 @@ post에는 기밀성이 없으니 비밀값을 넣지 않는다.
 - **새 thread를 시작한다**: 새 일. 한 메시지에 서로 관계없는 일이 여럿이면 하나에 thread 하나씩이다.
 
 새 thread를 시작하거나 열린 thread에 일을 넘기기 전에 TASKS.md에서 같은 일·겹치는 일을 찾는다. 있으면 그 task로
-시작하거나 이미 이어진 열린 thread에 넘기고, 메모·저장소도 사용자 말에 맞게 함께 고친다. 정해진 모델·머신 변경은 사용자가 직접 한다. 없으면 위처럼 한다.
+시작하거나 이미 이어진 열린 thread에 넘기고, 메모·저장소도 사용자 말에 맞게 함께 고친다. 사용자가 모델·머신 변경을 지시하면 `aaa task edit <task ID> --profile … --machine … --user-request '사용자 지시 근거'`로 고친다. 없으면 위처럼 한다.
 
 ## 이어지는 말
 사용자가 열린 thread가 맡은 영역에 대해 말하면 골라서 한다(여럿을 해도 된다).
@@ -592,8 +595,10 @@ thread가 키를 기다리는 화면(시작 때 신뢰 창, 질문 메뉴, 명�
   자리가 났을 때 다시 묻지 않는다. 병합 승인은 별개다. `start_threads=propose`에서는 사용자에게 맡긴 범위만 예약한다.
 - `aaa task queue`로 host의 차례·대기 사유·연결 thread를 읽는다. `aaa task unreserve <task ID>`는 미기동 예약만 취소하며,
   `aaa task queue-move <task ID> <순번>`은 차례 변경(0은 맨 앞)이다. 가능한 예약 중 앞 것을 host가 시작한다.
-  앞의 고정 머신이 끊겨도 가능한 뒤 예약은 시작할 수 있다. 고정 모델·머신은 바꾸지 않는다.
-- 정해진 모델·머신은 사용자가 웹이나 aaa 밖 CLI에서 직접 바꾼다. coordinator는 바꾸라는 말을 받아도 직접 바꾸지 않는다.
+  앞의 고정 머신이 끊겨도 가능한 뒤 예약은 시작할 수 있다. 사용자 지시 없이 고정 모델·머신은 바꾸지 않는다.
+- 사용자가 채팅에서 모델·머신 변경을 지시하면 coordinator도 `aaa task edit <task ID> --profile … --machine … --user-request '사용자 지시 근거'`로 바꾼다.
+  바꿀 칸만 주고 근거 한 줄을 남긴다. 다른 칸은 따로 고친다. 미기동 예약은 취소하지 않고 순서 그대로 새 선택으로 시작한다.
+  지시 없이 임의 변경·하향하지 않으며, 시작·재시작 옵션이나 원문 편집으로 선택 보호를 우회하지 않는다.
   원문 편집·자기 승인 flag로 보호를 우회하지 않는다. 예약 내용이 바뀌면 확인 후 `aaa task reserve`로 예약을 갱신한다.
 - 시작 실패는 원인과 실제 기동 상태를 읽어 보고한다. 명시 재예약 전 반복 기동·모델 하향은 하지 않는다.
   실행 차례와 착지 차례는 별개다. 일반 의존성과 저장소별 자동 착지 gate는 후속이며 현재 기능처럼 안내하지 않는다.
@@ -1810,22 +1815,33 @@ impl Host {
                 return Err(err(ErrorCode::Conflict, "예약 내용이 선점 전에 바뀌었다"));
             }
         }
+        // Starting이 복구기에 보이기 전에 기동 task의 잠금을 확보한다.
+        // commit→claim 사이에 ticker가 새 행을 중단된 기동으로 처리할 수 없다.
+        let mut guard = None;
+        let mut claim_error = None;
         let inserted = self
             .db
-            .thread_insert_admitted(
+            .try_thread_insert_admitted(
                 &a.project,
                 origin.map(|o| o.key.as_str()),
                 origin.map(|o| &o.admission),
                 Some(self.settings(&a.project).max_parallel_threads),
                 a.reservation.as_ref().map(|(id, b)| (id.as_str(), b.as_str())),
                 |id| {
+                    guard = Some(self.claim_thread(&a.project, id).map_err(|error| {
+                        let message = error.message.clone();
+                        claim_error = Some(error);
+                        anyhow::anyhow!(message)
+                    })?);
                     let mut r = rec.clone();
                     r.id = id.to_string();
-                    serde_json::to_string(&r).unwrap()
+                    Ok(serde_json::to_string(&r).unwrap())
                 },
             )
             .map_err(|e| {
-                if e.to_string().starts_with("start_wait:") {
+                if let Some(error) = claim_error {
+                    error
+                } else if e.to_string().starts_with("start_wait:") {
                     err(ErrorCode::Unavailable, e.to_string())
                 } else {
                     internal(e)
@@ -1837,7 +1853,14 @@ impl Host {
             return self.thread_show(&a.project, &id);
         }
         rec.id = id.clone();
-        let guard = self.claim_thread(&a.project, &id)?;
+        #[cfg(test)]
+        {
+            let hook = self.start_admitted_hook.lock().unwrap().clone();
+            if let Some(hook) = hook {
+                hook(&id);
+            }
+        }
+        let guard = guard.ok_or_else(|| internal("새 기동의 작업 잠금이 없다"))?;
         self.db.audit(actor, "thread_start", &format!("{}/{id} {} @{}", a.project, a.profile, self.machine_name(&mid)));
         if let Err(e) = write_atomic(&dir.join("threads").join(format!("{id}.task.md")), a.task.as_bytes()) {
             self.update_rec(&a.project, &id, |r| {

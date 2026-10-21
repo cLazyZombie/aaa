@@ -2425,6 +2425,10 @@ pub enum FrontRequest {
         ops: Vec<TaskOp>,
         #[serde(default)]
         base_sha256: Option<String>,
+        /// 사용자 지시로 모델·머신만 변경하는 근거 한 줄(FRONT_API 1.97). 예약 순서와 시작 승인을 유지한다.
+        #[serde(default)]
+        #[ts(optional)]
+        user_request: Option<String>,
     },
     /// 할 일 기록(FRONT_API 1.62, 보기 권한). 최신부터, `before`(id)보다 앞의 것
     TaskLog {

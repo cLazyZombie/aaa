@@ -605,6 +605,8 @@ pub struct Host {
     /// brief 배경 task가 도는 thread(`<project>/<thread>`, 하나만 돈다)
     brief_loops: Mutex<HashSet<String>>,
     thread_ops: Mutex<HashMap<String, Arc<tokio::sync::Mutex<()>>>>,
+    #[cfg(test)]
+    start_admitted_hook: Mutex<Option<orch::StartAdmittedHook>>,
     /// 지금 brief 한 걸음을 하는 thread(배경 task와 `thread brief`가 겹치지 않게, herdr-projects brief.rs `claim`)
     brief_claims: Mutex<HashSet<String>>,
     /// 보고를 다시 확인하는 중인 thread(`<project>/<thread>`)와 그동안 또 확인을 부탁받았는지. 묶음 셈(transitions.rs)은
@@ -798,6 +800,8 @@ impl Host {
             rec_lock: Mutex::new(()),
             brief_loops: Mutex::new(HashSet::new()),
             thread_ops: Mutex::new(HashMap::new()),
+            #[cfg(test)]
+            start_admitted_hook: Mutex::new(None),
             brief_claims: Mutex::new(HashSet::new()),
             resource_exhausted: std::sync::atomic::AtomicBool::new(false),
             report_refresh: Mutex::new(HashMap::new()),
@@ -1699,8 +1703,8 @@ impl Host {
             FrontRequest::TaskArchive { project, restore } => {
                 self.task_archive(&project, restore.as_deref(), actor).await
             }
-            FrontRequest::TaskEdit { project, ops, base_sha256 } => {
-                self.task_edit(&project, ops, base_sha256, actor).await
+            FrontRequest::TaskEdit { project, ops, base_sha256, user_request } => {
+                self.task_edit(&project, ops, base_sha256, user_request, actor).await
             }
             FrontRequest::TaskLog { project, before, limit, filter, task } => {
                 self.task_log(&project, before, limit, filter, task.as_deref())

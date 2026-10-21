@@ -7,6 +7,22 @@ use std::os::unix::process::CommandExt;
 use std::process::{Child, Command, Stdio};
 use std::time::Duration;
 const T: Duration = Duration::from_secs(15);
+const BURST_CONNECTIONS: usize = 384;
+// ticker·Front 조회가 잠깐 여는 fd의 여유를 회수 대기와 연결 수 단언에 똑같이 적용한다.
+const FD_SLACK: usize = 2;
+
+fn burst_fd_drop_matches(open: usize, after: usize) -> bool {
+    open + FD_SLACK >= after + BURST_CONNECTIONS
+}
+
+#[test]
+fn burst_fd_assertion_accepts_the_same_two_fd_slack_as_the_wait() {
+    for after in 16..=18 {
+        assert!(burst_fd_drop_matches(400, after), "닫은 뒤 {after}");
+    }
+    assert!(!burst_fd_drop_matches(400, 19), "여유 3개는 허용하지 않는다");
+    assert!(!burst_fd_drop_matches(16 + 256, 16), "예전 256개 상한은 검출한다");
+}
 
 #[test]
 fn cli_parses_and_dispatches_with_a_small_main_stack() {
@@ -183,17 +199,20 @@ fn low_soft_limit_is_raised_for_host_and_agent_and_web_bursts_release_fds() {
     });
     let baseline = fd_count(pid);
     for _ in 0..2 {
-        let mut burst = Burst::new(&addr, 384, true);
+        let mut burst = Burst::new(&addr, BURST_CONNECTIONS, true);
         burst.ready();
         // 연결 수는 닫은 뒤 가라앉은 수와 견준다: 시작 직후 첫 ticker 같은 일이 잠깐 연 파일이 기준에 섞이면
-        // 기준과 견주는 셈이 모자라 보인다(여유 없는 단언이라 몇 개로도 실패한다)
+        // 기준과 견주는 셈이 모자라 보인다. 회수 대기에서 허용한 여유는 연결 수 단언에도 적용한다.
         let open = fd_count(pid);
         burst.close();
         let after = wait_for("연결 종료 뒤 OS fd 회수", T, || {
             let n = fd_count(pid);
-            (n <= baseline + 2).then_some(n)
+            (n <= baseline + FD_SLACK).then_some(n)
         });
-        assert!(open >= after + 384, "실제로 열린 연결로 256개 상한을 넘겨야 한다: 열었을 때 {open}, 닫은 뒤 {after}");
+        assert!(
+            burst_fd_drop_matches(open, after),
+            "실제로 열린 연결로 256개 상한을 넘겨야 한다: 열었을 때 {open}, 닫은 뒤 {after} (여유 {FD_SLACK})"
+        );
     }
     node.ticks(1);
     assert!(!lab.log("host").contains("host 파일 한도 소진"));
