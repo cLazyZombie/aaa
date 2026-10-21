@@ -343,7 +343,7 @@ fn apply(view: &mut DeployGuardView, control: Control, now: u64) -> Result<()> {
             begin_restore(view, reason, now)
         }
         Control::Cancel if view.phase == Phase::Armed => {
-            if !view.install_started && view.installed_sha256 == view.spec.baseline.sha256 {
+            if untouched(view) {
                 view.phase = Phase::Cancelled;
             } else {
                 begin_restore(view, "취소 때 설치 파일이 바뀌어 배포 전 SHA를 복구한다".into(), now);
@@ -405,14 +405,20 @@ fn web_answered(view: &mut DeployGuardView) {
         view.phase = Phase::NewReady;
     }
 }
+/// 띄우기 전 감시가 되돌릴 것이 없다: 설치를 시작하지 않았고, 설치 파일이 배포 전 그대로이거나 기대 판이 배포 전 판이다.
+/// 기대 판이 배포 전 판인 감시(재시작만 하는 rollout)는 아무것도 설치하지 않으니, 그 사이 바뀐 설치 파일은 이 rollout이 한
+/// 일이 아니다(개별 update·rollback을 되돌리지 않는다)
+fn untouched(view: &DeployGuardView) -> bool {
+    !view.install_started
+        && (view.installed_sha256 == view.spec.baseline.sha256
+            || view.spec.expected_sha256 == view.spec.baseline.sha256)
+}
 fn expired(view: &mut DeployGuardView, now: u64) {
     if now < view.deadline_ms || view.phase.terminal() {
         return;
     }
     match view.phase {
-        Phase::Armed if !view.install_started && view.installed_sha256 == view.spec.baseline.sha256 => {
-            view.phase = Phase::Cancelled
-        }
+        Phase::Armed if untouched(view) => view.phase = Phase::Cancelled,
         Phase::Armed | Phase::AwaitingNew | Phase::NewReady => {
             begin_restore(view, "새 실행 판을 한도 안에 확인하지 못했다".into(), now)
         }
@@ -784,6 +790,23 @@ mod tests {
         assert_eq!(pending.phase, Phase::Restoring, "설치 중에는 현재 SHA가 옛것이어도 감시를 종료하지 않는다");
         expired(&mut pending_expiry, WINDOW_MS);
         assert_eq!(pending_expiry.phase, Phase::Restoring);
+        // 재시작만 하는 감시(기대 판 = 배포 전 판, 설치 없음): 띄우기 전이면 그 사이 개별 update가 바꾼 설치 파일을 되돌리지 않는다
+        let restart_only = || {
+            let mut v = view(DeployService::Agent, false);
+            v.spec.expected_sha256 = v.spec.baseline.sha256.clone();
+            v.spec.install_job = None;
+            v.installed_sha256 = "c".repeat(64);
+            v
+        };
+        let mut cancel = restart_only();
+        apply(&mut cancel, Control::Cancel, 1).unwrap();
+        let mut expiry = restart_only();
+        expired(&mut expiry, WINDOW_MS);
+        assert_eq!((cancel.phase, expiry.phase), (Phase::Cancelled, Phase::Cancelled));
+        let mut activated = restart_only();
+        apply(&mut activated, Control::Activate, 1).unwrap();
+        expired(&mut activated, 1 + WINDOW_MS);
+        assert_eq!(activated.phase, Phase::Restoring, "띄운 뒤 새 프로세스를 확인하지 못하면 복구다");
         let cancelled_job = unchanged.spec.install_job.clone().unwrap();
         assert!(apply(&mut unchanged, Control::BeginInstall { job_id: cancelled_job }, 2).is_err());
         let mut changed = view(DeployService::Agent, true);

@@ -173,6 +173,10 @@ impl Host {
             || r.spec.restart.is_some())
             && !r.steps.iter().any(|s| s.job_id == spec.id && s.guard_ready)
         {
+            // 세우기의 답만 잃었으면 agent에 감시가 서 있다: 그 머신의 다음 감시 세우기를 시한까지 막지 않게 취소해 둔다
+            if r.spec.restart.is_some() {
+                let _ = self.guard_control(&machine, &spec, Control::Cancel).await;
+            }
             r.state = RolloutState::Stopped;
             r.error = Some(reason);
             return self.save_rollout(r);

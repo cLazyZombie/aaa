@@ -361,7 +361,8 @@ impl Host {
                 FrontResponse::Rollout { rollout: r }
             }
         };
-        let baseline = {
+        {
+            // 진행 중이면 기다리지 않고 바로 답한다
             let _gate = self.deployment_gate.lock().unwrap();
             if let Ok(old) = self.load_rollout(&id) {
                 return self.same_restart(old, &project, &mid, service).map(respond);
@@ -369,22 +370,55 @@ impl Host {
             if self.rollout_busy()? {
                 return Err(err(ErrorCode::BadRequest, "진행 중인 rollout이 있다"));
             }
-            if let Some(e) = self.target_problem(&mid, false) {
-                return Err(e);
+        }
+        // 감시를 세우는 동안 진행 루프가 이 기록을 집지 않게 한다. 진행 중 rollout이 없으면 루프는 곧 끝난다
+        let driving = self.rollout_gate.lock().await;
+        let mut r = match self.record_restart(id, project, actor, &mid, service)? {
+            Ok(r) => r,
+            Err(old) => return Ok(respond(old)),
+        };
+        let fallback = self.arm_restart(&mut r, &mid, web).await;
+        drop(driving);
+        if let Ok(true) = fallback {
+            return self.individual_deployment(actor, Some(mid), r.id, DeployAction::Restart { service }).await;
+        }
+        // 기록 뒤에는 어떤 결과든 진행 루프가 이어 받는다(감시 세우기를 다시 하거나, 끝난 기록이면 곧 끝난다)
+        self.resume_rollout();
+        fallback.map(|_| respond(r))
+    }
+    /// 진행 루프를 잠근 채 부른다. 같은 ID의 기록이 있으면 `Err(그 기록)`. 없으면 재시작 전 실행 신원으로 기록을 새로 남긴다:
+    /// 진행 중 rollout이 개별 update·rollback을 막고, 같은 ID는 이 기록으로 답한다
+    fn record_restart(
+        &self,
+        id: String,
+        project: String,
+        actor: &str,
+        mid: &str,
+        service: DeployService,
+    ) -> Result<Result<RolloutView, RolloutView>, ErrorBody> {
+        let _gate = self.deployment_gate.lock().unwrap();
+        if let Ok(old) = self.load_rollout(&id) {
+            return self.same_restart(old, &project, mid, service).map(Err);
+        }
+        if self.rollout_busy()? {
+            return Err(err(ErrorCode::BadRequest, "진행 중인 rollout이 있다"));
+        }
+        if let Some(e) = self.target_problem(mid, false) {
+            return Err(e);
+        }
+        // 재시작 전 실행 신원: 감시가 옛 프로세스와 새 프로세스를 가르고 같은 판이 돌아왔는지 대조한다. 잠근 뒤에 읽어 기다린
+        // 사이 바뀐 판·프로세스를 기준으로 삼지 않는다
+        let baseline = if service == DeployService::Host {
+            RuntimeIdentity {
+                sha256: self.running_sha256.clone(),
+                software: aaa_common::util::software(),
+                instance: self.rollout_instance.clone(),
+                started_ms: self.rollout_started_ms,
+                web: None,
             }
-            // 재시작 전 실행 신원: 감시가 옛 프로세스와 새 프로세스를 가르고 같은 판이 돌아왔는지 대조한다
-            if service == DeployService::Host {
-                RuntimeIdentity {
-                    sha256: self.running_sha256.clone(),
-                    software: aaa_common::util::software(),
-                    instance: self.rollout_instance.clone(),
-                    started_ms: self.rollout_started_ms,
-                    web: None,
-                }
-            } else {
-                self.machine_identity(&mid)
-                    .ok_or_else(|| err(ErrorCode::UnsupportedVersion, "먼저 실행 신원을 알리는 agent를 반영한다"))?
-            }
+        } else {
+            self.machine_identity(mid)
+                .ok_or_else(|| err(ErrorCode::UnsupportedVersion, "먼저 실행 신원을 알리는 agent를 반영한다"))?
         };
         let version = baseline
             .software
@@ -393,7 +427,7 @@ impl Host {
             .ok_or_else(|| internal("재시작 전 실행 신원이 없다"))?
             .to_string();
         let mut only = step(
-            &mid,
+            mid,
             if service == DeployService::Host { RolloutPhase::HostRestart } else { RolloutPhase::AgentRestart },
         );
         only.baseline = Some(baseline.clone());
@@ -407,7 +441,7 @@ impl Host {
                 source_machine: None,
                 sha256: baseline.sha256,
                 commit: None,
-                machines: vec![mid.clone()],
+                machines: vec![mid.to_string()],
                 restart: Some(service),
             },
             state: RolloutState::Running,
@@ -423,67 +457,51 @@ impl Host {
             updated_ms: now,
         };
         self.set_guard_spec(&mut r, 0)?;
+        self.db.start_rollout(&r.id, &serde_json::to_string(&r).map_err(internal)?).map_err(internal)?;
+        self.save_rollout(&mut r)?;
+        Ok(Ok(r))
+    }
+    /// 기록한 재시작 rollout에 감시를 세운다. 영수증을 받아야 `guard_ready`다. `Ok(true)`면 coordinator에게 감시 밖 개별 재시작을
+    /// 보낸다. 답을 못 받으면(끊김·시한) 진행 루프가 같은 감시 정본으로 다시 세우고, 세우지 못하면 재시작 전 중단이다
+    async fn arm_restart(&self, r: &mut RolloutView, mid: &str, web: bool) -> Result<bool, ErrorBody> {
         let spec = r.steps[0].guard.clone().ok_or_else(|| internal("재시작 감시 정본이 없다"))?;
-        // 감시를 세우는 동안 진행 루프가 이 기록을 집지 않게 한다. 진행 중 rollout이 없으면 루프는 곧 끝난다
-        let driving = self.rollout_gate.lock().await;
-        {
-            // 기록을 먼저 남긴다: 진행 중 rollout이 개별 update·rollback을 막고, 같은 ID는 이 기록으로 답한다
-            let _gate = self.deployment_gate.lock().unwrap();
-            if let Ok(old) = self.load_rollout(&r.id) {
-                return self.same_restart(old, &r.project, &mid, service).map(respond);
-            }
-            if self.rollout_busy()? {
-                return Err(err(ErrorCode::BadRequest, "진행 중인 rollout이 있다"));
-            }
-            self.db.start_rollout(&r.id, &serde_json::to_string(&r).map_err(internal)?).map_err(internal)?;
-            self.save_rollout(&mut r)?;
-        }
-        match self.live_conn(&mid)?.request(AgentRequest::DeployGuardArm { spec: spec.clone() }).await {
+        let answer = match self.live_conn(mid) {
+            Ok(conn) => conn.request(AgentRequest::DeployGuardArm { spec: spec.clone() }).await,
+            Err(e) => Err(e),
+        };
+        match answer {
             Ok(response) => {
-                // 영수증이 어긋나면 진행 루프가 같은 정본으로 다시 세워 본다(기록은 이미 있다)
-                let armed = match self.guard_receipt(&spec, response) {
-                    Ok(armed) => armed,
-                    Err(e) => {
-                        drop(driving);
-                        self.resume_rollout();
-                        return Err(e);
-                    }
-                };
-                if armed.phase.terminal() {
+                if self.guard_receipt(&spec, response)?.phase.terminal() {
                     r.state = RolloutState::Stopped;
                     r.error = Some("독립 복구 감시가 준비되지 않아 재시작하지 않았다".into());
                 } else {
                     r.steps[0].guard_ready = true;
                 }
-                self.save_rollout(&mut r)?;
+                self.save_rollout(r)?;
+                Ok(false)
             }
             // 설치 파일이 지금 실행 판과 다르다(개별 update·rollback 뒤): 같은 판 확인이 아니라 바뀐 파일 띄우기라 감시가 대조할
             // 기대값이 없다. 재시작하지 않고 중단으로 남긴다. coordinator에게는 같은 ID의 감시 밖 개별 재시작을 보낸다(답 1A의
             // 「개별 update·rollback은 guard 밖」)
             Err(e) if e.code == ErrorCode::Conflict => {
-                let machine = self.machine_name(&mid);
                 r.state = RolloutState::Stopped;
                 r.error = Some(if web {
                     "설치 파일이 지금 실행 판과 다르다(개별 교체 뒤). 재시작하지 않았다: 그 파일은 coordinator나 그 머신 터미널에서 띄운다".into()
                 } else {
                     format!(
-                        "설치 파일이 지금 실행 판과 다르다(개별 교체 뒤). 감시 밖 개별 재시작으로 보냈다: `aaa update status {} --machine {machine} --wait`",
-                        r.id
+                        "설치 파일이 지금 실행 판과 다르다(개별 교체 뒤). 감시 밖 개별 재시작으로 보낸다: `aaa update status {} --machine {} --wait`",
+                        r.id,
+                        self.machine_name(mid)
                     )
                 });
-                self.save_rollout(&mut r)?;
-                drop(driving);
+                self.save_rollout(r)?;
                 if web {
-                    return Err(err(ErrorCode::Conflict, r.error.unwrap_or_default()));
+                    return Err(err(ErrorCode::Conflict, r.error.clone().unwrap_or_default()));
                 }
-                return self.individual_deployment(actor, Some(mid), r.id, DeployAction::Restart { service }).await;
+                Ok(true)
             }
-            // 답을 못 받았다(끊김·시한): 진행 루프가 같은 감시 정본으로 다시 세운다. 세우지 못하면 재시작 전 중단이다
-            Err(_) => {}
+            Err(_) => Ok(false),
         }
-        drop(driving);
-        self.resume_rollout();
-        Ok(respond(r))
     }
     /// 같은 ID의 재시작 rollout은 같은 요청일 때만 그 기록을 돌려준다
     fn same_restart(

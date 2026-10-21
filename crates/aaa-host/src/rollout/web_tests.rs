@@ -11,12 +11,13 @@ fn in_lab<F: std::future::Future<Output = ()>>(body: impl FnOnce(Arc<Host>) -> F
     in_lab_with(None, body)
 }
 /// 붙어 있는 가짜 agent: hello에 알린 실행 신원, 감시를 세우라는 요청에 「설치 파일이 지금 실행 판과 다르다」로 답하는가,
-/// 첫 세우기의 답이 끊기는가(host에는 시한), 세우라고 받은 감시 ID, 감시 세우기 밖에 받은 요청
+/// 첫 세우기의 답이 끊기는가(host에는 시한), 세우라고 받은 감시 ID, 취소한 감시 ID, 감시 세우기·취소 밖에 받은 요청
 #[derive(Clone, Default)]
 struct LiveAgent {
     identity: Option<aaa_proto::RuntimeIdentity>,
     installed_changed: bool,
     first_lost: bool,
+    cancelled: Arc<std::sync::Mutex<Vec<String>>>,
     others: Arc<std::sync::Mutex<Vec<String>>>,
     armed: Arc<std::sync::Mutex<Vec<String>>>,
 }
@@ -74,9 +75,9 @@ fn lab(root: &std::path::Path, agent: Option<LiveAgent>) -> Arc<Host> {
     }
     h
 }
-/// 감시 세우기에만 답한다(세운 감시 또는 `conflict`). 나머지 요청은 답하지 않는다
+/// 감시 세우기(세운 감시 또는 `conflict`)와 취소에만 답한다. 나머지 요청은 답하지 않는다
 async fn answer_guards(conn: crate::AgentConn, reader: tokio::io::DuplexStream, agent: LiveAgent) {
-    use aaa_proto::{DeployGuardPhase, DeployGuardView, LinkMsg, Outcome};
+    use aaa_proto::{DeployGuardControl, DeployGuardPhase, DeployGuardView, LinkMsg, Outcome};
     let view = |spec, phase| DeployGuardView {
         spec,
         phase,
@@ -94,13 +95,28 @@ async fn answer_guards(conn: crate::AgentConn, reader: tokio::io::DuplexStream, 
         error: None,
         pending_web: None,
     };
+    let mut specs = std::collections::HashMap::new();
     let mut rx = aaa_common::conn::FrameRx::new(reader, aaa_proto::MAX_FRAME);
     while let Ok(msg) = rx.control::<LinkMsg>().await {
         let LinkMsg::Req { id, body, .. } = msg else { continue };
-        let AgentRequest::DeployGuardArm { spec } = body else {
-            agent.others.lock().unwrap().push(format!("{body:?}"));
-            continue;
+        let spec = match body {
+            AgentRequest::DeployGuardArm { spec } => spec,
+            AgentRequest::DeployGuardControl { id: guard, control: DeployGuardControl::Cancel } => {
+                let Some(spec) = specs.get(&guard).cloned() else { continue };
+                agent.cancelled.lock().unwrap().push(guard);
+                let cancelled = view(spec, DeployGuardPhase::Cancelled);
+                if let Some(waiting) = conn.pending.lock().unwrap().remove(&id) {
+                    let _ = waiting.send(Outcome::Ok(AgentResponse::DeployGuard { guard: Box::new(cancelled) }));
+                }
+                continue;
+            }
+            other => {
+                agent.others.lock().unwrap().push(format!("{other:?}"));
+                continue;
+            }
         };
+        // 답이 끊긴 세우기도 agent에는 감시가 선다
+        specs.insert(spec.id.clone(), spec.clone());
         let first = agent.armed.lock().unwrap().is_empty();
         agent.armed.lock().unwrap().push(spec.id.clone());
         let answer = if first && agent.first_lost {
@@ -271,7 +287,7 @@ fn restart_rollouts_pin_the_identity_before_restart_on_one_machine() {
     // 감시 세우기의 답을 못 받으면 기록을 둔 채 진행 루프가 같은 정본으로 다시 세운다. 그때 설치 파일이 바뀌었다는 답이면
     // 재시작하지 않고 중단이다(감시 없이 재시작하거나 없는 감시의 복구로 가지 않는다)
     let agent = LiveAgent { first_lost: true, ..live(Some(changed.clone()), true) };
-    let (armed, others) = (agent.armed.clone(), agent.others.clone());
+    let (armed, cancelled, others) = (agent.armed.clone(), agent.cancelled.clone(), agent.others.clone());
     in_lab_with(Some(agent), |h| async move {
         let id = new_id();
         let mut changes = h.rollout_changed.subscribe();
@@ -289,7 +305,8 @@ fn restart_rollouts_pin_the_identity_before_restart_on_one_machine() {
         };
         assert_eq!((r.state, r.steps[0].guard_ready), (RolloutState::Stopped, false), "{:?}", r.error);
         let guard = r.steps[0].guard.clone().unwrap().id;
-        assert_eq!(*armed.lock().unwrap(), [guard.clone(), guard]);
+        assert_eq!(*armed.lock().unwrap(), [guard.clone(), guard.clone()]);
+        assert_eq!(*cancelled.lock().unwrap(), [guard], "답을 잃은 세우기로 선 감시를 취소한다");
         assert!(others.lock().unwrap().is_empty(), "재시작을 보냈다: {:?}", others.lock().unwrap());
     });
     // 같은 ID가 동시에 와도 기록과 감시는 하나다: 뒤 요청은 감시를 세우지 않고 먼저 남긴 기록을 돌려준다(기록 없이 남는 감시가
