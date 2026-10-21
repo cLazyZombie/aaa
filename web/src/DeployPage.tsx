@@ -11,27 +11,28 @@ import { ApiError, call, me, onRolloutChanged } from "./api";
 import { ConfirmDialog } from "./ConfirmDialog";
 import { SettingsGroup } from "./herdr/SettingsControls.tsx";
 import { RolloutCard } from "./RolloutCard";
-import { canDeploy, canStart, candidatePathOk, jobState, jobWhat, newDeployId, refused, restartAction, rolloutSpec, rolloutTargets, sizeText, type PlanInput } from "./deployModel.ts";
+import { canDeploy, canRestartRollout, canStart, candidatePathOk, jobState, jobWhat, newDeployId, refused, restartSpec, rolloutSpec, rolloutTargets, sizeText, type PlanInput } from "./deployModel.ts";
 
 const say = (e: unknown) => (e instanceof ApiError ? e.message : e instanceof Error ? e.message : String(e));
 
-/** 1.82 이상 host인가(모르면 null) */
-function useDeployAdmin(): boolean | null {
-  const [ok, setOk] = useState<boolean | null>(null);
+/** host의 FRONT_API(아직 모르면 undefined, 읽지 못하면 null) */
+function useFrontApi(): string | null | undefined {
+  const [api, setApi] = useState<string | null | undefined>(undefined);
   useEffect(() => {
     let live = true;
     me()
-      .then((m) => live && setOk(canDeploy(m?.front_api)))
-      .catch(() => live && setOk(false));
+      .then((m) => live && setApi(m?.front_api ?? null))
+      .catch(() => live && setApi(null));
     return () => {
       live = false;
     };
   }, []);
-  return ok;
+  return api;
 }
 
 export function DeployPage({ role, machines }: { role: DeviceRole; machines: MachineView[] }) {
-  const admin = useDeployAdmin();
+  const api = useFrontApi();
+  const admin = api === undefined ? null : canDeploy(api);
   const [cards, setCards] = useState<Card[] | null>(null);
   const [jobs, setJobs] = useState<DeployJobCard[]>([]);
   const [error, setError] = useState<string | null>(null);
@@ -74,7 +75,8 @@ export function DeployPage({ role, machines }: { role: DeviceRole; machines: Mac
             cards.map((c) => (
               <details key={c.id} className="admin-block" data-rollout={c.id} data-state={c.state}>
                 <summary className="mono">
-                  {new Date(c.created_ms).toLocaleString()} · {c.version ? `aaa ${c.version}` : "후보 검사 중"} · {c.id}
+                  {new Date(c.created_ms).toLocaleString()} · {c.restart ? `${c.restart} 재시작 · ` : ""}
+                  {c.version ? `aaa ${c.version}` : "후보 검사 중"} · {c.id}
                 </summary>
                 <RolloutCard snapshot={{ ok: c }} connected help={false} />
               </details>
@@ -82,9 +84,13 @@ export function DeployPage({ role, machines }: { role: DeviceRole; machines: Mac
           )}
         </div>
       </SettingsGroup>
-      <SettingsGroup title="서비스 재시작" note="그 머신 agent가 감독자(launchd)로 다시 띄운다. 세션은 이어진다. host를 다시 띄우면 이 화면은 잠시 끊겼다 다시 붙는다.">
+      <SettingsGroup
+        title="서비스 재시작"
+        note="그 머신 agent가 감독자(launchd)로 다시 띄우고, 배포와 같은 독립 감시가 새 프로세스(host는 웹 응답까지)를 확인한다. 진행은 「배포 기록」에 남는다. 세션은 이어진다. host를 다시 띄우면 이 화면은 잠시 끊겼다 다시 붙는다."
+      >
         <div className="settings-item">
-          {canEdit && <Restarts machines={machines} onStarted={load} />}
+          {canEdit && canRestartRollout(api) && <Restarts machines={machines} onStarted={load} />}
+          {canEdit && !canRestartRollout(api) && <p className="op-muted">재시작 rollout은 FRONT_API 1.100 이상 host에서 한다.</p>}
           <ul className="admin-list" data-testid="deploy-jobs">
             {jobs.map((j) => (
               <li key={j.id} data-job={j.id} data-state={j.state ?? "unknown"}>
@@ -100,7 +106,7 @@ export function DeployPage({ role, machines }: { role: DeviceRole; machines: Mac
               </li>
             ))}
           </ul>
-          {jobs.length === 0 && <p className="op-muted">재시작 기록이 없습니다.</p>}
+          {jobs.length === 0 && <p className="op-muted">개별 작업 기록이 없습니다.</p>}
         </div>
       </SettingsGroup>
     </div>
@@ -293,12 +299,12 @@ function Restarts({ machines, onStarted }: { machines: MachineView[]; onStarted:
           title={`${asking.machine}의 ${asking.service}를 다시 띄울까요?`}
           body={
             asking.service === "host"
-              ? "host를 감독자(launchd)로 다시 띄운다. 세션은 이어지고, 이 화면은 잠시 끊겼다가 다시 붙는다. 실행 파일은 바꾸지 않는다."
-              : `${asking.machine}의 agent를 감독자(launchd)로 다시 띄운다. 세션은 이어지고, 그 머신은 잠시 끊김으로 보인다. 실행 파일은 바꾸지 않는다.`
+              ? "host를 감독자(launchd)로 다시 띄운다. 세션은 이어지고, 이 화면은 잠시 끊겼다가 다시 붙는다. 실행 파일은 바꾸지 않는다. 새 host가 2분 안에 연결과 웹 응답을 보이지 않으면 감시가 다시 띄운다."
+              : `${asking.machine}의 agent를 감독자(launchd)로 다시 띄운다. 세션은 이어지고, 그 머신은 잠시 끊김으로 보인다. 실행 파일은 바꾸지 않는다. 새 agent가 2분 안에 붙지 않으면 감시가 다시 띄운다.`
           }
           confirmLabel="다시 띄우기"
           onConfirm={async () => {
-            await call({ op: "deploy_start", machine: asking.machine, id: asking.id, action: restartAction(asking.service) });
+            await call({ op: "rollout_start", id: asking.id, spec: restartSpec(asking.machine, asking.service) });
             setAsking(null);
             onStarted();
           }}

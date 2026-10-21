@@ -1,3 +1,6 @@
+import { taskTarget } from "./appIds";
+import { ThreadLimitBadge } from "./ThreadLimitBadge";
+import type { ThreadLimitOverride } from "./gen/proto";
 import { ThreadStageBadge } from "./ThreadStageBadge";
 // 본문(오른쪽) 할 일 화면(할 일 보기 T1 §8.306, 편집 T2 §8.311, 사용자 10-20 「하기로 했던 기능들을 다 볼수 있고 (왼쪽에 아이콘이
 // 있어서 거기서 들어가게), 필요하면 수정, 삭제 할수 있고」). 활동 막대 「할 일」·`#tasks`가 연다. host `tasks`(TaskBoard)를 읽고
@@ -237,9 +240,12 @@ export function TasksView({
   groups,
   machines,
   stages,
+  overLimits,
   reader,
   addRequest,
   focusRequest,
+  target = null,
+  onTarget,
   onBoard,
   onThread,
   onHandOff,
@@ -256,11 +262,14 @@ export function TasksView({
   /** host 상태 사건의 머신 목록(통계·pane 변경은 owner 재조회를 일으키지 않는다) */
   machines: readonly MachineView[];
   stages: ReadonlyMap<string, ThreadStage | undefined>;
+  overLimits: ReadonlyMap<string, ThreadLimitOverride | undefined>;
   /** 보기 권한 기기: 편집 단추·끌기·「+」를 숨긴다 */
   reader: boolean;
   /** 바뀌면 새 task 폼(문서가 있으면 「할 일에 추가」 창)을 연다 */
   addRequest: TaskAddRequest;
   focusRequest?: TaskFocusRequest;
+  target?: string | null;
+  onTarget?: (id: string | null) => void;
   /** 편집 응답의 새 board */
   onBoard: (b: TaskBoard) => void;
   onThread: (id: string) => void;
@@ -389,6 +398,21 @@ export function TasksView({
     setCreating(null);
     setPicked({ title: t.title, line: t.line });
   }, [focusRequest, board]);
+  const linkedTarget = target === null ? null : taskTarget(target);
+  const linkedTask = board && linkedTarget && (linkedTarget.project === null || linkedTarget.project === board.project)
+    ? board.tasks.find((t) => t.short_id === linkedTarget.id) ?? null : null;
+  useEffect(() => {
+    if (target === null || !board) return;
+    setTab("tasks");
+    setCreating(null);
+    setFilter("all");
+    setQuery("");
+    setRepo(null);
+    setPicked(linkedTask ? { title: linkedTask.title, line: linkedTask.line } : null);
+  }, [target, board?.project, linkedTask?.title, linkedTask?.line]);
+  useEffect(() => {
+    if (shown && linkedTask) document.querySelector('.task-row.is-selected')?.scrollIntoView({ block: "nearest" });
+  }, [shown, linkedTask, picked, filter, query, repo]);
   const byLine = useMemo(() => new Map((board?.tasks ?? []).map((t) => [t.line, t])), [board]);
   const choices = useMemo(() => repoChoices(board), [board]);
   // 기억한 저장소가 목록에서 빠졌으면 전체로 본다
@@ -411,13 +435,15 @@ export function TasksView({
   const total = board?.tasks.length ?? 0;
   const queueApi = apiAtLeast(frontApi, [1, 85]);
   const pick = (t: TaskView) => {
+    if (target !== null) onTarget?.(t.short_id);
     setCreating(null);
     setPicked({ title: t.title, line: t.line });
   };
   const closeDetail = useCallback(() => {
+    if (target !== null) onTarget?.(null);
     setPicked(null);
     setCreating(null);
-  }, []);
+  }, [target, onTarget]);
 
   /** host에 동작을 보내고 새 board를 넣는다. 충돌이면 창을 띄우고 null */
   const edit = async (ops: TaskOp[], mine: MyEdit | null) => {
@@ -647,6 +673,7 @@ export function TasksView({
       t,
       row: r,
       stage: t.thread ? stages.get(t.thread) : undefined,
+      overLimit: t.thread ? overLimits.get(t.thread) : undefined,
       depth: r.kind === "reserved" ? 0 : r.depth,
       state: taskState(t, groups),
       selected: !(reserved && r.missing) && current?.line === t.line,
@@ -822,6 +849,7 @@ export function TasksView({
       ) : (
         <div className={`tasks-main${detailOpen ? " has-detail" : ""}`}>
           <div className="tasks-scroll" data-testid="tasks-list">
+            {target !== null && board !== null && !linkedTask && <p className="tasks-empty" role="status" data-testid="task-missing">할 일 {target}: 없음</p>}
             {board === null && !error && <p className="tasks-empty">불러오는 중</p>}
             {board && total === 0 && <p className="tasks-empty">{canEdit ? "할 일이 없다. 「+ 할 일」로 더한다" : "할 일이 없다"}</p>}
             {board && total > 0 && shownCount === 0 && filter !== "reserved" && <p className="tasks-empty">맞는 할 일이 없다</p>}
@@ -873,6 +901,7 @@ export function TasksView({
             )}
             {board && board.unlinked_threads.length > 0 && (
               <Unlinked
+                overLimits={overLimits}
                 threads={board.unlinked_threads}
                 canLink={linkApi}
                 onThread={onThread}
@@ -1001,6 +1030,7 @@ export function TasksView({
       )}
       {dialog?.kind === "start" && (
         <StartDialog
+          allowOverLimit={apiAtLeast(frontApi, [1, 98])}
           task={dialog.task}
           owners={owners}
           onClose={() => setDialog(null)}
@@ -1087,6 +1117,7 @@ type RowProps = {
   t: TaskView;
   row: Exclude<TaskListRow, { kind: "gap" }>;
   stage?: ThreadStage;
+  overLimit?: ThreadLimitOverride;
   depth: number;
   state: TaskState;
   selected: boolean;
@@ -1112,7 +1143,7 @@ type RowProps = {
 };
 
 /** 한 목록의 행: 예약은 숫자·까닭 글 없이 보라 표지(확인 필요는 노랑)만, 하위만 예약했으면 상위 경로를 붙인다. 일반 행은 상태 아이콘 */
-function TaskRow({ t, row, stage, depth, state, selected, groups, canEdit, ordering, steps, onStep, draggable, dragging, drop, flash, menuOpen, onPick, onThread, onMenu, onDragStart, onDragEnd, onDragOver, onDrop }: RowProps) {
+function TaskRow({ t, row, stage, overLimit, depth, state, selected, groups, canEdit, ordering, steps, onStep, draggable, dragging, drop, flash, menuOpen, onPick, onThread, onMenu, onDragStart, onDragEnd, onDragOver, onDrop }: RowProps) {
   const attachments = attachmentsOf(t.notes.join("\n")).length;
   const reserved = row.kind === "reserved";
   const check = reserved && row.q.state === "check";
@@ -1145,7 +1176,7 @@ function TaskRow({ t, row, stage, depth, state, selected, groups, canEdit, order
           onStep(e.key === "ArrowUp" ? "up" : "down");
         }}
       >
-        <ThreadStageBadge stage={stage} />
+        <ThreadStageBadge stage={stage} /><ThreadLimitBadge start={overLimit} />
         {reserved ? <span className={`task-reserved-dot${check ? " is-check" : ""}`} role="img" aria-label={check ? "예약 · 확인 필요" : "예약됨"} title={check ? "예약 · 확인 필요(상세에 까닭)" : "예약됨 · 자리 나면 시작"} /> : <StateIcon state={state} />}
         {reserved && row.crumb && (
           <span className="task-crumb" data-testid="task-crumb">
@@ -1197,7 +1228,7 @@ function TaskRow({ t, row, stage, depth, state, selected, groups, canEdit, order
   );
 }
 
-function Unlinked({ threads, canLink, onThread, onLink, onMake }: { threads: TaskThread[]; canLink: boolean; onThread: (id: string) => void; onLink: (t: TaskThread) => void; onMake: (t: TaskThread) => void }) {
+function Unlinked({ overLimits, threads, canLink, onThread, onLink, onMake }: { overLimits: ReadonlyMap<string, ThreadLimitOverride | undefined>; threads: TaskThread[]; canLink: boolean; onThread: (id: string) => void; onLink: (t: TaskThread) => void; onMake: (t: TaskThread) => void }) {
   return (
     <section className="task-list task-unlinked" aria-label="task 없는 열린 thread" data-testid="tasks-unlinked">
       <h3 className="task-list-head">
@@ -1209,7 +1240,7 @@ function Unlinked({ threads, canLink, onThread, onLink, onMake }: { threads: Tas
         {threads.map((t) => (
           <li key={t.id} className="task-row" data-testid={`task-unlinked-row-${t.id}`}>
             <button type="button" className="task-pick" data-testid={`tasks-unlinked-${t.id}`} onClick={() => onThread(t.id)}>
-              <ThreadStageBadge stage={t.stage} />
+              <ThreadStageBadge stage={t.stage} /><ThreadLimitBadge start={overLimits.get(t.id)} />
               <CircleDot className="task-state is-run" aria-hidden="true" />
               <span className="task-title">
                 {t.id} · {t.title}

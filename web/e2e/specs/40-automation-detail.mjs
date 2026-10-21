@@ -8,17 +8,23 @@ const dir = () => `${root}/projects/auto-detail`;
 const CHECK = '+++\n# 보존할 주석\nschedule = "every 1s"\nenabled = true\n+++\n자료를 확인한다.\n';
 const WATCH = '+++\nprofile="fake"\nevents=["git_pushed"]\nrepos=["app"]\nwithdrawal="none"\n+++\n자료를 분류한다.\n';
 const call = (p, req) => p.evaluate(async (body) => (await fetch("/api/v1/call", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) })).json(), req);
-/** 상세 sheet가 휴대폰 폭 안에 있고 옆으로 넘치지 않는다 */
+/** 본문 설정 화면이 화면 폭 안에 있고 옆으로 넘치지 않는다(떠 있는 창이 아니다, t-0628) */
 const fits = (p, selector) => p.evaluate((sel) => {
-  const sheet = document.querySelector(sel);
-  const body = sheet?.querySelector(".modal-body");
-  const box = sheet?.getBoundingClientRect();
-  const close = sheet?.querySelector('[aria-label="닫기"]')?.getBoundingClientRect();
-  return sheet && body && box.left >= 0 && box.right <= innerWidth + 0.5 && body.scrollWidth <= body.clientWidth + 1 && close && close.height >= 32 ? true : JSON.stringify({ box, close, sw: body?.scrollWidth, cw: body?.clientWidth, w: innerWidth });
+  const view = document.querySelector(sel);
+  const body = view?.querySelector(".automation-view-body");
+  const box = view?.getBoundingClientRect();
+  const close = view?.querySelector('[aria-label="닫기"]')?.getBoundingClientRect();
+  return view && body && !document.querySelector(".modal-scrim") && box.left >= 0 && box.right <= innerWidth + 0.5 && body.scrollWidth <= body.clientWidth + 1 && close && close.height >= 32 ? true : JSON.stringify({ box, close, sw: body?.scrollWidth, cw: body?.clientWidth, w: innerWidth });
 }, selector);
+/** 본문 설정 화면을 닫는다(앞 화면으로) */
+const closeDetail = async (p) => {
+  const view = p.getByTestId("automation-detail");
+  await view.getByTestId("automation-close").click();
+  await view.waitFor({ state: "hidden" });
+};
 
 export default async function ({ page }) {
-  await step("자동화 상세: 줄의 「자세히」가 요약·설정·대상·승인 범위·적용 판·마지막 건너뜀·기록·파일 원문을 연다", async () => {
+  await step("자동화 설정: 카드를 누르면 본문에 요약·설정(조건·동작·대상·큐)·승인 범위·마지막 건너뜀·기록·파일 원문이 열린다", async () => {
     aaa("project", "create", "auto-detail");
     fs.writeFileSync(`${dir()}/routines/check.md`, CHECK);
     fs.mkdirSync(`${dir()}/missions`, { recursive: true });
@@ -31,12 +37,15 @@ export default async function ({ page }) {
     const row = page.getByTestId("automation-auto-detail-check");
     await row.waitFor();
     if (!(await row.textContent()).includes("이전 형식")) throw new Error("옛 routine 줄에 이전 형식 배지가 없다");
-    await row.getByRole("button", { name: "check 자세히", exact: true }).click();
+    await row.click();
     const sheet = page.getByTestId("automation-detail");
     await sheet.waitFor();
     const sections = await sheet.locator("section > h3").allTextContents();
-    for (const want of ["요약", "설정", "대상", "승인 범위", "적용 판", "마지막 건너뜀", "파일 원문"]) if (!sections.includes(want)) throw new Error(`상세 절 ${want}: ${sections}`);
+    for (const want of ["설정", "승인 범위"]) if (!sections.includes(want)) throw new Error(`설정 절 ${want}: ${sections}`);
     if (!sections.some((s) => s.startsWith("기록 · 최근"))) throw new Error(`기록 절 ${sections}`);
+    const facts = await sheet.getByLabel("설정").locator("dt").allTextContents();
+    for (const want of ["조건", "동작", "대상", "대기 입력", "파일"]) if (!facts.includes(want)) throw new Error(`설정 칸 ${want}: ${facts}`);
+    for (const want of ["지난", "다음", "오늘", "열린 thread"]) if (!(await sheet.getByLabel("요약").locator("dt").allTextContents()).includes(want)) throw new Error(`요약 칸 ${want}`);
     // 기록은 host의 50건 기록(routine_runs)이다: 목록의 20건 요약이 아니다
     const host = aaa("routine", "runs", "auto-detail", "check").runs;
     await until("기록 줄 수", async () => (await sheet.locator(".automation-runs li").count()) === host.length);
@@ -44,14 +53,13 @@ export default async function ({ page }) {
     await until("파일 원문", async () => (await sheet.getByTestId("automation-source").locator("pre").first().textContent()) === CHECK);
     if (!(await sheet.textContent()).includes("마지막 건너뜀") || !(await sheet.getByLabel("마지막 건너뜀").textContent()).includes("coordinator 없음")) throw new Error("마지막 건너뜀");
     await shot(page, "automation-detail-desktop");
-    await page.keyboard.press("Escape");
-    await sheet.waitFor({ state: "detached" });
+    await closeDetail(page);
 
     // 패드 폭(820): 640px 밖이라 가운데 창이며 화면 안에 있다
     const pad = await pairPage(browser, aaa("web", "pair").code, { width: 820, height: 1180 }, { touch: true });
     try {
       await pad.page.getByTestId("activity-automations").click();
-      await pad.page.getByTestId("automation-auto-detail-check").getByRole("button", { name: "check 자세히", exact: true }).click();
+      await pad.page.getByTestId("automation-auto-detail-check").click();
       await pad.page.getByTestId("automation-detail").locator(".automation-runs li").first().waitFor();
       const fit = await fits(pad.page, '[data-testid="automation-detail"]');
       if (fit !== true) throw new Error(`패드 상세 폭 ${fit}`);
@@ -94,7 +102,7 @@ export default async function ({ page }) {
     if (!fs.existsSync(`${dir()}/automations/check.toml`) || fs.existsSync(`${dir()}/routines/check.md`)) throw new Error("변환 결과 파일");
     await sheet.getByRole("button", { name: "닫기", exact: true }).first().click();
     await sheet.waitFor({ state: "detached" });
-    await domIs(page, "이전 형식 줄이 사라진다", () => !document.querySelector('[data-testid="automation-legacy-auto-detail"]') && document.querySelector('[data-testid="automation-auto-detail-check"]')?.textContent.includes("automations/check.toml"));
+    await domIs(page, "이전 형식 줄이 사라진다", () => !document.querySelector('[data-testid="automation-legacy-auto-detail"]') && !document.querySelector('[data-testid="automation-auto-detail-check"]')?.textContent.includes("이전 형식"));
   });
 
   // 변환한 watch의 시작 범위는 아직 승인 전이다.
@@ -136,7 +144,7 @@ export default async function ({ page }) {
       await p.locator("#workspace-drawer.is-open").waitFor();
       await drawerSettled(p);
       await p.getByTestId("activity-automations").click();
-      await p.getByTestId("automation-auto-detail-ping").getByRole("button", { name: "ping 자세히", exact: true }).click();
+      await p.getByTestId("automation-auto-detail-ping").click();
       const sheet = p.getByTestId("automation-detail");
       await sheet.getByTestId("automation-stuck").waitFor();
       if (await sheet.getByRole("button", { name: /남은 입력/ }).count()) throw new Error("Reader 풀기 단추");
@@ -148,7 +156,7 @@ export default async function ({ page }) {
       if (dev.errors.length) throw new Error(dev.errors.join("\n"));
     } finally { await dev.page.context().close(); }
 
-    await row.getByRole("button", { name: "ping 자세히", exact: true }).click();
+    await row.click();
     const sheet = page.getByTestId("automation-detail");
     await sheet.getByTestId("automation-stuck").waitFor();
     if (!(await sheet.getByTestId("automation-stuck").textContent()).includes(thread)) throw new Error("막힌 묶음 대상 thread");
@@ -168,14 +176,13 @@ export default async function ({ page }) {
       const next = aaa("routine", "list").routines.find((r) => r.name === "ping").queue.inflight;
       return next?.unknown && next.id !== stuck.id && runs().filter((r) => r.status === "failed" && r.at_ms >= answered).length === 1;
     });
-    await page.keyboard.press("Escape");
-    await sheet.waitFor({ state: "detached" });
+    await closeDetail(page);
 
     // 버리기: 다시 막힌 묶음과 뒤 입력을 닫는다. 그 뒤 판정은 아무것도 보내지 않는다(규칙을 끈 뒤 tick 울타리)
     const second = aaa("routine", "list").routines.find((r) => r.name === "ping").queue.inflight;
     await page.getByRole("button", { name: "다시 읽기", exact: true }).click();
     await domIs(page, "다시 막힘 줄", () => document.querySelector('[data-testid="automation-auto-detail-ping"]')?.dataset.status === "stuck");
-    await row.getByRole("button", { name: "ping 자세히", exact: true }).click();
+    await row.click();
     await sheet.getByTestId("automation-stuck").waitFor();
     aaa("routine", "toggle", "auto-detail", "ping", "--off");
     await sheet.getByRole("button", { name: "확인함 · 남은 입력 버리기", exact: true }).click();
@@ -189,7 +196,6 @@ export default async function ({ page }) {
     // 기록은 입력 id마다 하나: 두 묶음의 입력 모두 「다시 보내지 않음」으로 닫혔다
     const closed = runs().filter((r) => r.status === "skipped" && r.detail === "확인함 · 다시 보내지 않음").length;
     if (closed !== stuck.events + second.events) throw new Error(`닫힌 입력 기록 ${closed}: ${JSON.stringify(runs().slice(0, 5))}`);
-    await page.keyboard.press("Escape");
-    await sheet.waitFor({ state: "detached" });
+    await closeDetail(page);
   });
 }

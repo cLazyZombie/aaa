@@ -49,7 +49,7 @@ host는 프로젝트 하나만 맡으므로 명령의 프로젝트 인자는 생
 | 웹 → 머신 → 배포 카드 | 최신 배포의 전송·단계·실패·복구를 Reader도 봅니다. 단절이면 마지막 수신 상태이며 재연결 뒤 최신 기록을 받습니다. 검증 정보에서 전체 ID/SHA를 봅니다. 카드에서는 배포를 시작하지 않습니다. |
 | `aaa service restart\|stop\|start --role host\|agent` | 감독자(launchd)로 다시 띄우기(업그레이드 뒤) · 멈추기 · 띄우기. 사람이 터미널에서(`yes`). restart는 아래 coordinator 배포 허용도 가능 |
 | `aaa deploy start --file <머신>:<후보폴더>/aaa --sha256 <SHA> [--commit <40자리>] [--machines all 또는 쉼표 목록]` · `aaa deploy status <ID> --wait` | coordinator safety 아래 빌드 후보를 Agent link로 전송하고 여러 Mac을 host부터 배포합니다. source/모든 대상에 deploy_stage.v1, 모든 대상에 rollout_recovery.v1이 필요합니다. 전체 전송·SHA/self-check 뒤 첫 교체를 하며 같은 ID로 재개합니다. 기존 미리 복사 경로는 --from입니다. 실패 머신만 배포 전 SHA로 자동 복구하며 recovering 뒤 stopped_rolled_back 또는 recovery_failed를 남깁니다. 앞 머신은 유지합니다. |
-| `aaa update --from <파일> [--dry-run]` · `aaa update rollback [이름]` · `aaa update list` | 지금 실행 파일을 주어진 빌드로 바꾸기(self-check·`[update] version` 고정 검사 뒤 rename, 옛것은 옆 `.aaa-old/`에 `[update] keep`개) · 보관한 것으로 되돌리기 · 보관 목록. 바꾸기·되돌리기는 사람이 터미널에서(`yes`), 도는 host·agent는 `aaa service restart`로 다시 띄웁니다. 사람이 `aaa safety set coordinator_deploy on`을 켠 뒤 사용자 채팅 지시를 받은 coordinator는 `--machine`으로 update·rollback·restart를 직접 실행하고 `aaa update status <ID> --wait`로 확인합니다([절차](install-runbook.md#coordinator가-요청받은-배포를-실행하기10-19)) |
+| `aaa update --from <파일> [--dry-run]` · `aaa update rollback [이름]` · `aaa update list` | 지금 실행 파일을 주어진 빌드로 바꾸기(self-check·`[update] version` 고정 검사 뒤 rename, 옛것은 옆 `.aaa-old/`에 `[update] keep`개) · 보관한 것으로 되돌리기 · 보관 목록. 바꾸기·되돌리기는 사람이 터미널에서(`yes`), 도는 host·agent는 `aaa service restart`로 다시 띄웁니다. 사람이 `aaa safety set coordinator_deploy on`을 켠 뒤 사용자 채팅 지시를 받은 coordinator는 `--machine`으로 update·rollback·restart를 직접 실행하고 `aaa update status <ID> --wait`로 확인합니다(restart는 재시작만 하는 rollout이라 `aaa deploy status <ID> --wait`, 독립 감시가 새 프로세스를 확인합니다)([절차](install-runbook.md#coordinator가-요청받은-배포를-실행하기10-19)) |
 | `aaa pane list` · `aaa pane read <pane>` | pane 목록 · 최근 출력 글(`--source visible`이면 지금 화면) |
 | `aaa tab create --machine mac-b -- <명령>` | 새 탭에 새 pane |
 | `aaa pane run <pane> "…"` | 명령 실행(글 + Enter, 사람의 attach에 막히지 않음) |
@@ -144,6 +144,18 @@ host는 사용자·coordinator가 띄운 Worker의 `max_parallel_threads`를 실
 웹·`aaa context`·`aaa thread list`의 표지는 「자동화 thread」이며 사건·일정 출처는 상세에 보인다. 검토·답 대기·Idle·보고 [완료]에도 자리를 보유하며
 resolve 정리를 마쳐야 반환한다. 한도가 차면 새 기동을 보내지 않는다. 앞 예약의 고정 머신이 끊겼으면 가능한 뒤 예약을 먼저 시작한다.
 coordinator와 웹이 닫혀도 host가 시작하며, 알려지지 않은 모델·없어진 저장소·첨부 문제·시작 실패는 확인 필요로 남긴다.
+한도가 찬 상태에서 사용자가 직접 시작하려면 웹 「thread로 바로 시작」의 「한도 무시하고 시작」을 누르고 다시 확인한다.
+CLI는 `aaa thread start --from-task d-0001 --link-task --over-limit`로 시작한다. 이미 예약한 task는 예약을 먼저 취소한다.
+강제 시작도 열린 thread 수에 포함하므로 한도 아래로 자리가 날 때까지 예약은 기다린다.
+「한도 초과로 시작」 표지와 요청자·시각이 기록에 남으며 host 재시작 뒤에도 보존한다.
+coordinator는 사용자가 채팅에서 해당 task를 강제 시작하라고 명시한 경우에만 다음처럼 근거를 남긴다.
+
+```sh
+aaa thread start --from-task d-0001 --link-task --over-limit --user-request '사용자가 d-0001을 한도 무시하고 시작하라고 지시'
+```
+
+근거는 비지 않은 한 줄·2000바이트 이하이다. 일반 시작 승인이나 예약·자동 시작에는 이 옵션을 쓰지 않는다.
+
 사용자가 채팅으로 모델·머신 변경을 지시하면 coordinator도 다음처럼 바꾼다.
 
 ```sh

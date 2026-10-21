@@ -34,7 +34,45 @@ export function ruleTone(r: Pick<RoutineView, "enabled" | "error" | "queue" | "l
   return s === "done" || s === "skipped" || s === "waiting" || s === "failed" ? s : "ready";
 }
 
-export const runWord: Record<string, string> = { done: "처리됨", skipped: "건너뜀", waiting: "대기", failed: "실패" };
+/**
+ * 목록 카드의 점·표지(t-0628 시안 1A): 지난 결과(처리됨·건너뜀·대기)는 오른쪽 기록에서 보고, 카드는 사람이 볼 상태만 단다.
+ * 파일 오류 → 막힌 큐 → 승인 필요 → 꺼짐 → 마지막 실행 실패 → 켜짐(표지 없음) 순서로 먼저 맞는 하나다. 막힘·승인 필요는 꺼져 있어도
+ * 단다: 활동 막대 배지(`automationAttention`)가 센 규칙을 카드에서 찾을 수 있어야 한다.
+ */
+export type CardTone = "error" | "off" | "stuck" | "approve" | "on";
+export const cardWord: Record<CardTone, string> = { error: "오류", off: "꺼짐", stuck: "막힘", approve: "승인 필요", on: "켜짐" };
+export function cardTone(r: Pick<RoutineView, "enabled" | "error" | "queue" | "last_result" | "start_approved" | "command" | "approved">): CardTone {
+  if (r.error) return "error";
+  if (stuckBatch(r)) return "stuck";
+  if (r.start_approved === false || (!!r.command && !r.approved)) return "approve";
+  if (!r.enabled) return "off";
+  if (r.last_result?.status === "failed") return "error";
+  return "on";
+}
+
+const UNIT: Record<string, string> = { s: "초", m: "분", h: "시간", d: "일" };
+/** 일정 글(`every 30m`·`daily 04:00`)을 사람 말로. 모르는 꼴은 그대로 */
+function schedulePhrase(text: string): string {
+  const every = /^every (\d+)([smhd])$/.exec(text);
+  if (every) return `${every[1]}${UNIT[every[2]]}마다`;
+  const daily = /^daily (\d{1,2}:\d{2})$/.exec(text);
+  return daily ? `매일 ${daily[1]}` : text;
+}
+/**
+ * 카드의 조건 한 줄: host 조건 글(routine.rs `trigger_label`)을 짧게. 일정은 사람 말로, 저장소 경로는 이름만 남긴다.
+ * 그 밖의 글(사건 이름·브랜치)은 host 낱말 그대로다.
+ */
+export function shortTrigger(r: Pick<RoutineView, "trigger" | "schedule">): string {
+  const text = (r.trigger || r.schedule).trim();
+  if (!text) return "조건 정보 없음";
+  const command = /^(.+) 명령 출력 변화$/.exec(text);
+  if (command) return `${schedulePhrase(command[1])} 명령 출력 변화`;
+  const repo = /^(\S*\/)([^\s/]+)( .+ (?:CI|Git) \(.*\))$/.exec(text);
+  if (repo) return `${repo[2]}${repo[3]}`;
+  return schedulePhrase(text);
+}
+
+export const runWord: Record<string, string> ={ done: "처리됨", skipped: "건너뜀", waiting: "대기", failed: "실패" };
 export const runTone = (run: Pick<RoutineRun, "status">): "done" | "failed" | "notice" | "quiet" =>
   run.status === "done" ? "done" : run.status === "failed" ? "failed" : run.status === "waiting" || run.status === "skipped" ? "notice" : "quiet";
 

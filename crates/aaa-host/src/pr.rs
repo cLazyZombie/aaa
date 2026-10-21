@@ -342,6 +342,11 @@ impl Host {
         self.tick_wake.notify_one();
     }
 
+    /// 연결된 agent가 hello에서 알린 실행 신원(관리 GUI W6c)
+    pub(crate) fn machine_identity(&self, mid: &str) -> Option<aaa_proto::RuntimeIdentity> {
+        let i = self.inner.lock().unwrap();
+        i.machines.get(mid).filter(|m| m.conn.is_some()).and_then(|m| m.identity.clone())
+    }
     pub(crate) fn machine_feature(&self, mid: &str, feature: &str) -> bool {
         self.inner.lock().unwrap().machines.get(mid).is_some_and(|m| m.features.iter().any(|f| f == feature))
     }

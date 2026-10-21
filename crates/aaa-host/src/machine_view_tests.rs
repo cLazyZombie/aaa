@@ -17,6 +17,7 @@ fn hello(software: &str, selfcheck: Option<serde_json::Value>) -> AgentHello {
         dev_mode: false,
         selfcheck,
         sessions: vec![],
+        identity: None,
         harness: vec![],
     }
 }

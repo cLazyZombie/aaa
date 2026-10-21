@@ -600,6 +600,9 @@ pub struct AgentHello {
     /// 대화를 이어 띄운다. host가 `harness_hello.v1`을 알리면 agent는 연결 뒤 이 스냅샷 이후 변경분만 보낸다.
     #[serde(default)]
     pub harness: Vec<HarnessEvent>,
+    /// agent 실행 신원(관리 GUI W6c). 재시작만 하는 rollout이 재시작 전 신원으로 감시를 세운다. 옛 agent는 없다
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub identity: Option<crate::RuntimeIdentity>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -889,6 +892,17 @@ pub enum AgentRequest {
         work_dir: String,
         max_library_bytes: u64,
     },
+    /// report_copy.v2: 인증한 link에서 원본 무결성을 확인한 뒤 host 저장 경계에서 가린다.
+    ReportTransfer {
+        work_dir: String,
+        max_library_bytes: u64,
+    },
+    ReportFileRead {
+        work_dir: String,
+        path: String,
+        offset: u64,
+        len: u32,
+    },
     /// work_dir 아래 파일 한 조각(library 사본용)
     FileRead {
         work_dir: String,
@@ -1145,6 +1159,12 @@ pub enum AgentResponse {
     },
     ThreadAdopted(ThreadAdopted),
     Report(ReportSnapshot),
+    /// report_copy.v2 전용 전송 응답. 표시용 FileChunk와 구별한다.
+    ReportTransfer(ReportSnapshot),
+    ReportFileChunk {
+        data: B64,
+        eof: bool,
+    },
     FileChunk {
         data: B64,
         eof: bool,
@@ -2317,6 +2337,14 @@ pub enum FrontRequest {
         name: Option<String>,
     },
     ThreadStart {
+        /// FRONT_API 1.98. 사용자가 명시한 시작만 프로젝트 실행 한도를 넘길 수 있다.
+        #[serde(default)]
+        #[ts(optional, as = "Option<bool>")]
+        over_limit: bool,
+        /// coordinator는 해당 task를 강제로 시작하라는 사용자 지시 근거를 한 줄로 남긴다.
+        #[serde(default)]
+        #[ts(optional, as = "Option<String>")]
+        user_request: Option<String>,
         #[serde(default)]
         holds: Vec<String>,
         /// 준비 완료를 기다리지 않고 Starting 기록을 돌려준다.

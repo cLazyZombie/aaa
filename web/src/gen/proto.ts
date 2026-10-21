@@ -892,7 +892,15 @@ profile?: string,
 /**
  * coordinator가 돌아도 하나 더 띄운다
  */
-new?: boolean, } | { "op": "profiles", machine: string | null, } | { "op": "profile_resolve", name: string | null, } | { "op": "thread_start", holds: Array<string>,
+new?: boolean, } | { "op": "profiles", machine: string | null, } | { "op": "profile_resolve", name: string | null, } | { "op": "thread_start",
+/**
+ * FRONT_API 1.98. 사용자가 명시한 시작만 프로젝트 실행 한도를 넘길 수 있다.
+ */
+over_limit?: boolean,
+/**
+ * coordinator는 해당 task를 강제로 시작하라는 사용자 지시 근거를 한 줄로 남긴다.
+ */
+user_request?: string, holds: Array<string>,
 /**
  * 준비 완료를 기다리지 않고 Starting 기록을 돌려준다.
  */
@@ -1013,7 +1021,12 @@ export type RolloutSpec = { from: string,
 /**
  * Some이면 이 머신의 빌드 후보를 Agent link로 가져온다. None은 L1 미리 복사 경로다.
  */
-source_machine?: string | null, sha256: string, commit: string | null, machines: Array<string>, };
+source_machine?: string | null, sha256: string, commit: string | null, machines: Array<string>,
+/**
+ * 재시작만 하는 rollout(관리 GUI W6c, 답 1A): 대상 한 머신의 이 서비스를 지금 판 그대로 다시 띄우고 guard로 확인한다.
+ * 후보·전송·교체가 없고 `from`·`sha256`은 host가 재시작 전 실행 신원으로 채운다
+ */
+restart?: DeployService | null, };
 
 export type RolloutPhase = "transfer" | "preflight" | "host_update" | "host_restart" | "agent_update" | "agent_restart";
 
@@ -1031,7 +1044,11 @@ export type RolloutView = { id: string, project: string, actor: string, spec: Ro
  */
 recovery_enabled: boolean, recovery: DeployGuardView | null, recovery_started_ms: number, created_ms: number, updated_ms: number, };
 
-export type RolloutCard = { id: string, state: RolloutState, version: string | null, sha256: string, commit: string | null, cursor: number, steps: Array<RolloutCardStep>, error: string | null, recovery_phase: DeployGuardPhase | null, recovery_sha256: string | null, created_ms: number, updated_ms: number, };
+export type RolloutCard = { id: string, state: RolloutState, version: string | null, sha256: string, commit: string | null,
+/**
+ * 재시작만 하는 rollout의 서비스(W6c). 교체 rollout은 없다
+ */
+restart?: DeployService | null, cursor: number, steps: Array<RolloutCardStep>, error: string | null, recovery_phase: DeployGuardPhase | null, recovery_sha256: string | null, created_ms: number, updated_ms: number, };
 
 export type RolloutCardStep = { machine: string, phase: RolloutPhase, completed: boolean, started_ms: number, transferred_bytes: number, total_bytes: number, };
 
@@ -1278,13 +1295,22 @@ export type DeployAction = { "action": "update", from: string | null, version: s
 
 export type DeployStageView = { rollout: string, project: string, sha256: string, total: number, offset: number, complete: boolean, version: string | null, };
 
-export type RuntimeIdentity = { sha256: string, software: string, instance: string, started_ms: number, };
+export type RuntimeIdentity = { sha256: string, software: string, instance: string, started_ms: number,
+/**
+ * host가 실제로 연 웹 주소(loopback, 관리 GUI W6c, FRONT_API 1.100). 같은 머신 agent에만 싣는다. host 감시는 이 주소의
+ * `/api/v1/me`가 답해야 새 판 준비로 본다. 없으면(웹을 끈 설정·옛 host·agent 신원) 실행 신원만 본다
+ */
+web?: string | null, };
 
 export type DeployGuardSpec = { id: string, rollout: string, project: string, service: DeployService, host_machine: boolean, baseline: RuntimeIdentity, expected_sha256: string, expected_software: string, old_host_instance: string, install_job: string | null, rollback_job: string, restart_job: string, host_restart_job: string, };
 
 export type DeployGuardPhase = "armed" | "awaiting_new" | "new_ready" | "restoring" | "restarting" | "awaiting_old" | "verified_new" | "restored" | "failed" | "cancelled";
 
-export type DeployGuardView = { spec: DeployGuardSpec, phase: DeployGuardPhase, worker_pid: number, deadline_ms: number, install_started: boolean, activated: boolean, restore_started: boolean, restart_index: number, restart_started: boolean, host_restart_ms: number, agent_restart_ms: number, observed: Array<DeployService>, installed_sha256: string, error: string | null, };
+export type DeployGuardView = { spec: DeployGuardSpec, phase: DeployGuardPhase, worker_pid: number, deadline_ms: number, install_started: boolean, activated: boolean, restore_started: boolean, restart_index: number, restart_started: boolean, host_restart_ms: number, agent_restart_ms: number, observed: Array<DeployService>, installed_sha256: string, error: string | null,
+/**
+ * 실행 신원은 맞고 웹 응답을 기다리는 host 웹 주소(W6c). 답하면 NewReady, 시한이 지나면 복구
+ */
+pending_web?: string | null, };
 
 export type DeployGuardControl = { "op": "status" } | { "op": "begin_install", job_id: string, } | { "op": "activate" } | { "op": "observe", service: DeployService, identity: RuntimeIdentity, } | { "op": "commit" } | { "op": "recover", reason: string, } | { "op": "cancel" };
 
@@ -1301,6 +1327,10 @@ export type ReportAttention = "completed" | "needs_user";
 export type ThreadStage = "merge_ready" | "landing";
 
 export type ThreadView = {
+/**
+ * 명시적으로 실행 한도를 무시한 시작의 출처. 옛 기록은 생략한다(FRONT_API 1.98).
+ */
+over_limit?: ThreadLimitOverride,
 /**
  * FRONT_API 1.95. 보고의 특정 판을 여는 프로젝트별 영속 번호(r-0001부터).
  */
@@ -1379,6 +1409,8 @@ limited_until_ms?: number,
  */
 questions?: ThreadQuestions, };
 
+export type ThreadLimitOverride = { actor: string, at_ms: number, user_request: string | null, };
+
 export type ThreadPr = { url: string, state: string | null, review: string | null, };
 
 export type SummaryMark = {
@@ -1392,6 +1424,10 @@ at_ms: number | null,
 pending: number, };
 
 export type ThreadQuestions = {
+/**
+ * 형식 확인 필요: 질문·선택지 누락이나 글자 순서 불일치가 있어 답 전송을 막는다. 옛 host는 생략한다.
+ */
+format_warning?: string,
 /**
  * FRONT_API 1.96. Questions 없는 검수 대기에 host가 만든 기본 검수 카드. B는 고칠 점을 글로 적는다.
  */
@@ -1415,6 +1451,10 @@ files_base?: string,
 draft?: QuestionAnswerView, };
 
 export type ThreadQuestion = {
+/**
+ * 선택지 뒤의 Markdown 설명·그림(FRONT_API 1.99). 선택지 그림과 섞거나 버리지 않는다.
+ */
+after?: string,
 /**
  * 프로젝트별 영속 순번(q-1000부터). 옛 보고 파서·host는 생략한다.
  */
