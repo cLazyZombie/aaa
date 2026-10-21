@@ -6,6 +6,7 @@ use std::sync::Mutex;
 use anyhow::Result;
 use rusqlite::{Connection, OptionalExtension, params};
 
+mod question_ids;
 mod task_queue;
 
 pub const SCHEMA_VERSION: i64 = 1;
@@ -326,6 +327,10 @@ impl Db {
                action TEXT NOT NULL, list TEXT NOT NULL, from_list TEXT, title TEXT NOT NULL, before TEXT, after TEXT,
                thread TEXT, restored_by INTEGER);
              CREATE INDEX IF NOT EXISTS task_log_project ON task_log(project, id);
+             CREATE TABLE IF NOT EXISTS question_ids(
+               project TEXT NOT NULL, seq INTEGER NOT NULL, id TEXT NOT NULL, kind TEXT NOT NULL,
+               subject TEXT NOT NULL, revision TEXT NOT NULL, position INTEGER NOT NULL, draft TEXT,
+               PRIMARY KEY(project,id), UNIQUE(project,kind,subject,revision,position), UNIQUE(project,seq));
              CREATE TABLE IF NOT EXISTS asks(
                project TEXT NOT NULL, id TEXT NOT NULL, kind TEXT NOT NULL, subject TEXT NOT NULL,
                done_ms INTEGER NOT NULL, data TEXT NOT NULL, PRIMARY KEY(project, id));
@@ -1535,6 +1540,49 @@ impl Db {
             params![project, r.id, kind, r.subject, r.done_ms as i64, serde_json::to_string(r)?],
         )?;
         Ok(())
+    }
+
+    /// 요청 종료·답 보존·coordinator 전달을 한 번에 기록한다. 다른 기기에서 끝냈으면 false다.
+    pub(crate) fn request_answer(
+        &self,
+        item: &aaa_proto::InboxItem,
+        record: &aaa_proto::AskRecord,
+        notice: &aaa_proto::InboxItem,
+    ) -> Result<bool> {
+        let mut c = self.conn.lock().unwrap();
+        let tx = c.transaction()?;
+        let mut done = item.clone();
+        done.done = true;
+        done.done_at_ms = Some(record.done_ms);
+        let n = tx.execute(
+            "UPDATE inbox SET done=1, done_at=?3, data=?4 WHERE project=?1 AND id=?2 AND done=0",
+            params![item.project, item.id, record.done_ms as i64, serde_json::to_string(&done)?],
+        )?;
+        if n == 0 {
+            return Ok(false);
+        }
+        tx.execute(
+            "INSERT INTO asks(project,id,kind,subject,done_ms,data) VALUES(?1,?2,'request',?3,?4,?5)",
+            params![item.project, record.id, record.subject, record.done_ms as i64, serde_json::to_string(record)?],
+        )?;
+        tx.execute(
+            "INSERT INTO inbox(id,project,kind,subject,event,done,created_at,data) VALUES(?1,?2,?3,?4,?5,0,?6,?7)",
+            params![
+                notice.id,
+                notice.project,
+                notice.item_kind,
+                notice.subject,
+                notice.event,
+                notice.created_at_ms as i64,
+                serde_json::to_string(notice)?
+            ],
+        )?;
+        tx.execute(
+            "UPDATE question_ids SET draft=NULL WHERE project=?1 AND kind='post' AND subject=?2",
+            params![item.project, item.id],
+        )?;
+        tx.commit()?;
+        Ok(true)
     }
 
     /// 프로젝트의 기록, 최신부터

@@ -64,6 +64,7 @@ mod tests {
         t.brief = BriefState::Delivered;
         h.db.thread_import("demo", &t.id, "open", &serde_json::to_string(&t).unwrap()).unwrap(); // pane이 없어 확인 필요
         let mut q = QuestionView {
+            short_id: None,
             id: "q1".into(),
             pane: "p1".into(),
             machine: "mac-a".into(),

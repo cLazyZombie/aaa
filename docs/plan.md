@@ -6641,3 +6641,26 @@ worker 자리 수에 포함하지 않는다. 평가자는 새 기동 대상이 �
 - **정리 순서.** 웹 E2E는 meta·명령줄로 확인한 실험실 session host와 자손을 부모부터 멈춰 새 fork를 막고, 그 PID들이 종료된 것을 관측한 뒤 root를 한 번 지운다. E2E 13의 재부팅 흉내도 같은 완료를 기다린다. 별도 그룹의 writer 자손을 남긴 채 session host에만 종료 신호를 보내던 정리를 고쳤다.
 - **회귀.** quota TCP owner는 `Expect: 100-continue` → 본문 → 401과 EOF를 확인한다. 원래 서버는 첫 401 응답 단언에서 RED여야 한다. 웹 유닛은 실제 writer 자손 종료·무관한 PID 보존·재시도 없는 삭제를 확인하며 원래 정리는 writer 생존 단언에서 RED여야 한다. 원본 bytes 복원 뒤 정상 owner와 정본 ci-local 전체·공개 검사를 수행한다. 실제 로그인·실제 인증·시한 연장·재시도·직렬화는 쓰지 않는다. Ubuntu native 판정은 착지 뒤 main CI에 맡긴다.
 - **번호·호환.** main의 §8.367과 E2E `67-task-queue`를 유지한다. 새 E2E 파일이나 프로토콜 칸은 없으며 기존 E2E 13·54·65와 새 순수 Node 회귀를 쓴다. FRONT_API 1.85·AGENT_LINK 1.10은 그대로다. 시험 절차는 [testing](testing.md)에 둔다.
+
+### 8.369 coordinator 선택 질문·짧은 q-ID(t-0576, 1단계)
+
+coordinator의 `post user --request --needs-user` 본문에 thread 보고와 같은 `## Questions`·`### N.`·
+`- A … (추천) — 까닭`을 쓴다. host는 같은 파서를 쓰고 웹은 같은 QuestionCard를 렌더링한다. 본문·표·그림·
+선택지 그림·추천·직접 답도 같다. 기존 평문 post는 기존 표시와 처리 단추를 유지한다. 그림은 먼저 publish한
+`library/<이름>/<파일>`만 인증된 경로에서 읽으며, 답한 뒤 본문과 참조 파일을 사본으로 남긴다.
+
+질문 하나마다 프로젝트별 `q-1000`부터 영속 순번을 발급한다. 새 보고 판의 질문은 새 번호다.
+원장은 답한 것·post 보존 기간과 독립되어 지워도 재사용하지 않는다. 부분 답 초안은 완료·새 보고에서 비워
+삭제한 답 원문이 번호 원장에 남지 않게 한다. 기존 무작위 확인창 ID·post의 p-번호·thread ID는
+호환 참조로 남긴다. 확인창 목록에는 짧은 별칭도 주며 내부 ID·menu 검증은 바꾸지 않는다.
+`aaa question list`는 확인창·thread·coordinator 질문을 보이고 `question answer q-1000 A`·
+`thread answer q-1000 A`·`question answer q-1000 --text '답'`을 받는다. 여러 질문이 든 카드는 질문마다 답을
+보관하고 모두 답했을 때 기존 전달 경로를 따른다. 카드 전체에 답하는 기존 `1A 2B`도 유지한다.
+
+post의 답 기록·inbox 전달 원문·요청 종료는 한 DB 트랜잭션으로 묶어 두 기기가 동시에 제출해도 한 번만 남긴다.
+coordinator inbox에는 `question answered`와 ID·선택·자유 답 원문이 남는다. 채팅 답을 이미 전달했다면
+`post handled q-1000`으로 처리만 표시한다. 선택·승인·실행을 만들지 않는다. thread에 연결된 알림은 기존처럼
+같은 카드로 묶고 카드 답이 연결 post를 닫는다. push 제목과 inbox에는 q-ID를 싣고 기존 참조 링크를 유지한다.
+
+FRONT_API 1.86은 질문 ID·부분 답과 `ask_answer`·`question_reply`를 더한다. Agent link 변경은 없다.
+접두사는 t=thread, q=질문, d=할 일, r=보고서다. r-ID·보고 판별 사본·CI 내부 run 이름 분리는 2단계로 나눈다.

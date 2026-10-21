@@ -5,7 +5,7 @@
 // 고른 답·때·기기)과 「그때 보고」를 보인다. 질문 카드 꼴은 화면 선택 창 카드(PromptCard, herdr-web-ui)를 따른다.
 import { useCallback, useEffect, useId, useMemo, useRef, useState, type MouseEvent } from "react";
 import { Check, ChevronRight, CircleQuestionMark, ListChecks, Maximize2, MessageSquareReply, Send, Trash2, Bot, X } from "lucide-react";
-import type { AskRecord, FrontResponse, ThreadQuestion, ThreadQuestions, ThreadView } from "./gen/proto";
+import type { AskRecord, FrontResponse, ThreadQuestion, ThreadQuestions, ThreadView, UserRequestView } from "./gen/proto";
 import { ApiError, call, onAsksChanged } from "./api";
 import { Markdown, MarkdownImageContext } from "./Markdown";
 import { OpenFileContext } from "./herdr/filePaths";
@@ -109,7 +109,7 @@ export function AsksPanel({
 
 // ───────────── 본문 ─────────────
 
-export type AskSelection = { kind: "open"; ask: OpenAsk } | { kind: "done"; record: AskRecord } | { kind: "none" };
+export type AskSelection = { kind: "open"; ask: OpenAsk } | { kind: "done"; record: AskRecord } | { kind: "missing"; id: string } | { kind: "none" };
 
 export function AsksView({
   shown,
@@ -118,6 +118,7 @@ export function AsksView({
   canControl,
   onAnswer,
   onHandle,
+  onRequestAnswer,
   onReply,
   onForget,
   onOpenTask,
@@ -128,6 +129,7 @@ export function AsksView({
   selection: AskSelection;
   canControl: boolean;
   onAnswer: (t: ThreadView, picks: (number | null)[], text: string | null) => Promise<void>;
+  onRequestAnswer: (r: UserRequestView, picks: (number | null)[], text: string | null) => Promise<void>;
   /** 확인 필요 post 「답함으로 표시」 */
   onHandle: (item: string) => Promise<void>;
   /** 「대화에서 답하기」: coordinator 입력칸에 머리글을 채우고 그 pane을 연다 */
@@ -177,13 +179,17 @@ export function AsksView({
       </header>
       <div className="thread-body" ref={body} onClick={onBodyClick} data-testid="asks-scroll">
         <div className="thread-col asks-col">
+          {selection.kind === "missing" && <p className="asks-empty" data-testid="asks-missing"><code>{selection.id}</code> 질문을 찾을 수 없다. 왼쪽 「답할 것」 목록에서 다른 질문을 열 수 있다.</p>}
           {selection.kind === "none" && <p className="asks-empty" data-testid="asks-empty">답할 것이 없다. 왼쪽 「답할 것」 목록에서 답한 것을 다시 볼 수 있다.</p>}
           {selection.kind === "open" && selection.ask.kind === "question" && (
-            <QuestionCard key={`${selection.ask.thread.id} ${selection.ask.thread.questions.report_hash}`} t={selection.ask.thread} q={selection.ask.thread.questions}
+            <QuestionCard key={`${selection.ask.thread.id} ${selection.ask.thread.questions.report_hash} ${selection.ask.thread.questions.draft?.at_ms ?? ""}`} t={selection.ask.thread} q={selection.ask.thread.questions}
               canControl={canControl} onAnswer={(p, text) => onAnswer((selection.ask as { thread: ThreadView }).thread, p, text)} onZoom={setZoom} onThread={onThread} />
           )}
           {selection.kind === "open" && selection.ask.kind === "request" && (
-            <RequestCard key={selection.ask.key} title={selection.ask.request.title} body={selection.ask.request.body} at={selection.ask.request.created_ms}
+            selection.ask.request.questions ? (
+              <QuestionCard key={`${selection.ask.key} ${selection.ask.request.questions.draft?.at_ms ?? ""}`} request={selection.ask.request} q={selection.ask.request.questions}
+                canControl={canControl} onAnswer={(p, text) => onRequestAnswer((selection.ask as { request: UserRequestView }).request, p, text)} onZoom={setZoom} onThread={onThread} />
+            ) : <RequestCard key={selection.ask.key} questionId={selection.ask.request.question_id} title={selection.ask.request.title} body={selection.ask.request.body} at={selection.ask.request.created_ms}
               canControl={canControl} onHandle={() => onHandle((selection.ask as { request: { id: string } }).request.id)} onReply={() => onReply(head.title)} />
           )}
           {selection.kind === "open" && selection.ask.kind === "task" && (
@@ -280,7 +286,7 @@ function choiceRest(body: string | null | undefined): string | null {
 function QuestionText({ n, item, base }: { n: number; item: ThreadQuestion; base: string | null | undefined }) {
   return (
     <>
-      <h3 className="prompt-card-question ask-question"><span className="thread-ask-qno">{n + 1}</span>{item.text}</h3>
+      <h3 className="prompt-card-question ask-question"><span className="thread-ask-qno">{n + 1}</span>{item.id && <code>{item.id}</code>} {item.text}</h3>
       {item.body && <AskMarkdown base={base}>{item.body}</AskMarkdown>}
     </>
   );
@@ -288,21 +294,23 @@ function QuestionText({ n, item, base }: { n: number; item: ThreadQuestion; base
 
 function QuestionCard({
   t,
+  request,
   q,
   canControl,
   onAnswer,
   onZoom,
   onThread,
 }: {
-  t: ThreadView;
+  t?: ThreadView;
+  request?: UserRequestView;
   q: ThreadQuestions;
   canControl: boolean;
   onAnswer: (picks: (number | null)[], text: string | null) => Promise<void>;
   onZoom: (z: { src: string; alt: string }) => void;
   onThread: (id: string) => void;
 }) {
-  const [picks, setPicks] = useState<(number | null)[]>(() => q.items.map(() => null));
-  const [custom, setCustom] = useState("");
+  const [picks, setPicks] = useState<(number | null)[]>(() => q.draft?.picks ?? q.items.map(() => null));
+  const [custom, setCustom] = useState(q.draft?.text ?? "");
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const shown = useRef(false);
@@ -333,11 +341,13 @@ function QuestionCard({
   const label = all ? `답 보내기 (${q.items.length})` : text ? "답 보내기" : filled ? "추천대로 보내기" : "답 보내기";
   const base = q.files_base;
   return (
-    <section className="prompt-card thread-ask-card ask-card" role="region" aria-label={`${t.id} 질문`} aria-busy={pending} data-testid={`thread-ask-${t.id}`} data-state="open" data-kind="question">
+    <section className="prompt-card thread-ask-card ask-card" role="region" aria-label={`${t?.id ?? request?.title} 질문`} aria-busy={pending} data-testid={t ? `thread-ask-${t.id}` : `request-ask-${request?.id}`} data-state="open" data-kind={t ? "question" : "request"}>
       <header className="prompt-card-header">
-        <KindChip kind="question" />
-        <button type="button" className="linkish prompt-card-where" onClick={() => onThread(t.id)} title="thread 열기">{t.id} · {t.title || t.id}</button>
+        <KindChip kind={t ? "question" : "request"} />
+        {t ? <button type="button" className="linkish prompt-card-where" onClick={() => onThread(t.id)} title="thread 열기">{t.id} · {t.title || t.id}</button>
+          : <span className="prompt-card-where">coordinator · {when(request!.created_ms)}</span>}
       </header>
+      {request && <h2 className="ask-card-title">{request.title}</h2>}
       {q.items.map((item, n) => {
         const pictures = item.choices.some((c) => choicePicture(c.body) !== null);
         return (
@@ -392,8 +402,8 @@ function QuestionCard({
   );
 }
 
-function RequestCard({ title, body, at, canControl, onHandle, onReply }: {
-  title: string; body: string; at: number; canControl: boolean; onHandle: () => Promise<void>; onReply: () => Promise<void>;
+function RequestCard({ questionId, title, body, at, canControl, onHandle, onReply }: {
+  questionId?: string | null; title: string; body: string; at: number; canControl: boolean; onHandle: () => Promise<void>; onReply: () => Promise<void>;
 }) {
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -413,7 +423,7 @@ function RequestCard({ title, body, at, canControl, onHandle, onReply }: {
         <KindChip kind="request" />
         <span className="prompt-card-where">coordinator · {when(at)}</span>
       </header>
-      <h2 className="ask-card-title">{title}</h2>
+      <h2 className="ask-card-title">{questionId && <code>{questionId} </code>}{title}</h2>
       <AskMarkdown base={null}>{body}</AskMarkdown>
       <div className="thread-ask-foot">
         <span className="muted">답은 coordinator 대화로 한다</span>
@@ -451,14 +461,14 @@ function DoneCard({ r, canControl, onForget, onZoom, onThread }: {
   return (
     <section className="prompt-card thread-ask-card ask-card is-answered" data-testid="ask-done-card" data-kind={r.kind}>
       <header className="prompt-card-header">
-        <KindChip kind={r.kind} done={r.kind === "question" && r.answer ? `답함 ${r.summary}` : r.summary} />
+        <KindChip kind={r.kind} done={r.answer ? `답함 ${r.summary}` : r.summary} />
         {r.kind === "question" ? (
           <button type="button" className="linkish prompt-card-where" onClick={() => onThread(r.subject)} title="thread 열기">{r.subject} · {r.title || r.subject}</button>
         ) : (
           <span className="prompt-card-where">{KIND_LABEL[r.kind]}</span>
         )}
       </header>
-      {r.kind !== "question" && <h2 className="ask-card-title">{r.title}</h2>}
+      {r.kind !== "question" && <h2 className="ask-card-title">{r.items.length === 0 && r.question_id && <code>{r.question_id} </code>}{r.title}</h2>}
       <p className="ask-done-when" data-testid="ask-done-when">물은 때 {when(r.asked_ms)} · {r.kind === "question" && !r.answer ? "닫힌 때" : "답한 때"} {when(r.done_ms)} · {r.by}</p>
       {r.items.map((item, n) => {
         const pick = r.answer?.picks[n];
@@ -494,7 +504,7 @@ function DoneCard({ r, canControl, onForget, onZoom, onThread }: {
         );
       })}
       {r.answer?.text && <p className="ask-done-text" data-testid="ask-done-text"><span className="muted">직접 쓴 답</span> <strong>{r.answer.text}</strong></p>}
-      {r.kind !== "question" && r.body && <AskMarkdown base={null}>{r.body}</AskMarkdown>}
+      {r.kind !== "question" && r.items.length === 0 && r.body && <AskMarkdown base={base}>{r.body}</AskMarkdown>}
       {report !== null && (
         <div className="ask-report" data-testid="ask-report">
           {report === "loading" ? <p className="muted">불러오는 중</p> : report === "missing" ? <p className="muted">그때 보고 사본이 없다</p> : <AskMarkdown base={base}>{report}</AskMarkdown>}
@@ -503,7 +513,7 @@ function DoneCard({ r, canControl, onForget, onZoom, onThread }: {
       <div className="thread-ask-foot">
         <span className="muted">{r.kind === "question" ? r.answer ? "답할 때의 사본이다. 그 뒤 새 보고가 와도 남는다" : "새 보고로 질문이 닫혔다. 선택한 답은 없다" : "처리한 때의 사본이다"}</span>
         <span className="ask-buttons">
-          {r.kind === "question" && base && (
+          {r.items.length > 0 && base && (
             <button type="button" className="ghost small" aria-expanded={report !== null} data-testid="ask-report-toggle" onClick={toggleReport}>
               {report !== null ? "그때 보고 접기" : "그때 보고 보기"}
             </button>
@@ -557,6 +567,8 @@ export function useAskSelection(key: string | null, open: OpenAsk[], done: AskRe
     // 방금 답한 것(그 카드가 답할 것에서 빠졌다): 그때 남긴 기록을 연다
     const answered = key ? doneOf(key, done) : null;
     if (answered) return { kind: "done", record: answered };
+    // 영속 ID 링크가 닫혔거나 지워졌어도 다른 질문을 그 ID의 카드처럼 열지 않는다.
+    if (/^q:q-\d{4,}$/.test(key ?? "")) return { kind: "missing", id: key!.slice(2) };
     return open[0] ? { kind: "open", ask: open[0] } : { kind: "none" };
   }, [key, open, done]);
 }
