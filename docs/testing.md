@@ -2162,4 +2162,5 @@ E2E 74의 headless WebKit iframe 그림은 기존 E2E 59·plan §8.353과 같은
   - `scripts/ci-root-sshd.sh`(GitHub Actions가 아니면 멈춘다)가 실험실 host key·사용자 키·`sshd_config`(loopback 빈 포트, 비밀번호·PAM 끔, `AllowUsers` 자기 계정, `SetEnv HOME=<실험실>/home`)를 만들고 `sudo -n /usr/sbin/sshd`로 띄운다. 끝에 그 PID만 끝낸다.
   - ignored 시험 `cargo test -p aaa --test m13 ssh_install::ssh_install_through_the_system_sshd_starts_a_launch_agent_that_connects_and_checks -- --ignored --exact`(`AAA_ROOT_SSHD_LAB`): 시험 aaa 사본 옆에 I3 시험과 같은 방법으로 만든 launcher package를 두고 그 사본으로 host를 띄운다 → 「ci」 접속 → 지문(`ssh-keygen -lf`와 같음) 믿음 → 감지(원격 HOME = 실험실) → 계획(Review) → 적용 → 설치·등록됨 → agent 연결 → 끝 확인 줄(작업 폴더·PATH).
   - HOME 분리: 원격 셸·install·LaunchAgent(plist의 HOME)가 모두 실험실 HOME을 쓴다. 시험이 실험실 HOME 아래 plist·`.local/bin/aaa`를 보고, runner 실제 HOME의 같은 자리(plist·실행 파일·launcher·상태 폴더)가 전후 같은지 본다. gui domain label `dev.aaa.agent`는 계정 전역이라 적용 전 없어야 하고 시험이 끝에 bootout한다.
+  - 스크립트는 시험 전에 그 sshd로 연 원격 명령의 조상(pid·ppid·사용자·image)을 적는다. install 검증 SSH 입구가 root `/usr/sbin/sshd`를 찾지 못하면 그 사슬로 원인을 본다.
   - 이 Mac에서는 같은 시험을 비특권 실험실 sshd(`SetEnv HOME` 포함)로 `env -u AAA_SESSION_ID`로 돌려 계획 단계의 검증 SSH 입구 거절까지(launcher 만들기·host·지문·감지 HOME·전송) 확인한다.
