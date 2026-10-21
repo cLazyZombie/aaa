@@ -17,3 +17,8 @@ test("코드 예시·API·로컬 경로·실행 scheme은 머리 링크로 만�
  assert.equal(got[0].url,"https://reports.example.com/preview.html");
  assert.equal(material("[전체 보고서](aaa:report/r-0001)")[0].label,"전체 보고서");
 });
+
+test("선택지 뒤 설명의 자료 링크도 카드 안에서 연다",()=>{
+ const got=questionMaterials({origin,base:"/api/question/hash/",items:[{text:"아이콘",choices:[],after:"[E안 자료](library/icon-e.html)"}]});
+ assert.deepEqual(got.map((r)=>r.url),["/api/question/hash/library/icon-e.html"]);
+});

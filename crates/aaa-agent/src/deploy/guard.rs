@@ -17,6 +17,16 @@ use std::{
 };
 
 pub const WINDOW_MS: u64 = 120_000;
+/// 설치 파일이 감시의 배포 전 SHA(지금 실행 판)와 다르다: 개별 update·rollback이 바꾼 뒤다. host는 재시작 rollout에서
+/// 이 답(`conflict`)을 받으면 감시 없이 그 파일을 띄우는 개별 재시작으로 보낸다(W6c)
+#[derive(Debug)]
+struct InstalledChanged;
+impl std::fmt::Display for InstalledChanged {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("설치 파일이 지금 실행 판과 다르다(복구 사본을 만들 배포 전 SHA가 아니다)")
+    }
+}
+impl std::error::Error for InstalledChanged {}
 pub type RecoveryExecutor = fn(&Path, DeployAction, &Path) -> Result<String, String>;
 #[derive(Serialize, Deserialize)]
 struct Bootstrap {
@@ -112,6 +122,8 @@ impl Agent {
         result.map(|guard| AgentResponse::DeployGuard { guard: Box::new(guard) }).map_err(|e| {
             if e.downcast_ref::<tokio::time::error::Elapsed>().is_some() {
                 ErrorBody::new(ErrorCode::Timeout, e.to_string())
+            } else if e.downcast_ref::<InstalledChanged>().is_some() {
+                ErrorBody::new(ErrorCode::Conflict, e.to_string())
             } else {
                 error(e)
             }
@@ -170,7 +182,7 @@ impl Agent {
         } else {
             if !pin.exists() {
                 if sha(&self.exe).map_err(|e| anyhow::anyhow!(e.message))? != spec.baseline.sha256 {
-                    bail!("복구 사본을 만들 배포 전 SHA가 아니다");
+                    return Err(InstalledChanged.into());
                 }
                 std::fs::copy(&self.exe, &pin)?;
                 let file = std::fs::File::open(&pin)?;
@@ -196,6 +208,7 @@ impl Agent {
                 observed: vec![],
                 installed_sha256: String::new(),
                 error: None,
+                pending_web: None,
             };
             save(&self.state, &view)?;
             view
@@ -303,6 +316,7 @@ impl Agent {
 }
 
 fn begin_restore(view: &mut DeployGuardView, reason: String, now: u64) {
+    view.pending_web = None;
     view.phase = Phase::Restoring;
     view.error = Some(reason);
     view.deadline_ms = now + WINDOW_MS;
@@ -329,7 +343,7 @@ fn apply(view: &mut DeployGuardView, control: Control, now: u64) -> Result<()> {
             begin_restore(view, reason, now)
         }
         Control::Cancel if view.phase == Phase::Armed => {
-            if !view.install_started && view.installed_sha256 == view.spec.baseline.sha256 {
+            if untouched(view) {
                 view.phase = Phase::Cancelled;
             } else {
                 begin_restore(view, "취소 때 설치 파일이 바뀌어 배포 전 SHA를 복구한다".into(), now);
@@ -355,7 +369,12 @@ fn apply(view: &mut DeployGuardView, control: Control, now: u64) -> Result<()> {
                 && identity.started_ms >= view.deadline_ms.saturating_sub(WINDOW_MS)
             {
                 if identity.sha256 == view.spec.expected_sha256 && identity.software == view.spec.expected_software {
-                    view.phase = Phase::NewReady;
+                    // host는 웹도 답해야 준비다(W6c). 웹 주소가 없으면(웹을 끈 설정·옛 host) 실행 신원만 본다
+                    match identity.web.filter(|w| service == DeployService::Host && !w.is_empty()) {
+                        Some(web) if view.phase == Phase::AwaitingNew => view.pending_web = Some(web),
+                        Some(_) => {}
+                        None => view.phase = Phase::NewReady,
+                    }
                 } else {
                     begin_restore(view, "재시작 뒤 옛 판/다른 SHA가 돌아왔다".into(), now);
                 }
@@ -380,14 +399,26 @@ fn apply(view: &mut DeployGuardView, control: Control, now: u64) -> Result<()> {
     }
     Ok(())
 }
+/// 기다리던 새 host의 웹이 답했다. 시한은 늘리지 않는다
+fn web_answered(view: &mut DeployGuardView) {
+    if view.phase == Phase::AwaitingNew && view.pending_web.take().is_some() {
+        view.phase = Phase::NewReady;
+    }
+}
+/// 띄우기 전 감시가 되돌릴 것이 없다: 설치를 시작하지 않았고, 설치 파일이 배포 전 그대로이거나 기대 판이 배포 전 판이다.
+/// 기대 판이 배포 전 판인 감시(재시작만 하는 rollout)는 아무것도 설치하지 않으니, 그 사이 바뀐 설치 파일은 이 rollout이 한
+/// 일이 아니다(개별 update·rollback을 되돌리지 않는다)
+fn untouched(view: &DeployGuardView) -> bool {
+    !view.install_started
+        && (view.installed_sha256 == view.spec.baseline.sha256
+            || view.spec.expected_sha256 == view.spec.baseline.sha256)
+}
 fn expired(view: &mut DeployGuardView, now: u64) {
     if now < view.deadline_ms || view.phase.terminal() {
         return;
     }
     match view.phase {
-        Phase::Armed if !view.install_started && view.installed_sha256 == view.spec.baseline.sha256 => {
-            view.phase = Phase::Cancelled
-        }
+        Phase::Armed if untouched(view) => view.phase = Phase::Cancelled,
         Phase::Armed | Phase::AwaitingNew | Phase::NewReady => {
             begin_restore(view, "새 실행 판을 한도 안에 확인하지 못했다".into(), now)
         }
@@ -460,6 +491,8 @@ pub async fn worker(id: &str, execute: RecoveryExecutor) -> Result<()> {
     let exe_path = pin.parent().context("사본 상위")?;
     // 설치 대상은 agent가 bootstrap에 덧붙인 별도 로컬 기록이다. 원격 문자열은 실행 경로가 되지 않는다.
     let exe: PathBuf = util::read_json(&exe_path.join(format!("{id}.guard.target")))?;
+    // 새 host 웹 묻기(W6c). 루프 회전마다 새로 시작하면 잦은 상태 조회에 한 번의 물음도 끝나지 못하므로 따로 띄워 둔다
+    let mut probe: Option<(String, tokio::task::JoinHandle<()>)> = None;
     loop {
         view.installed_sha256 = sha(&exe).map(|s| s.to_string()).unwrap_or_default();
         expired(&mut view, util::now_ms());
@@ -548,8 +581,25 @@ pub async fn worker(id: &str, execute: RecoveryExecutor) -> Result<()> {
             continue;
         }
         let remaining = view.deadline_ms.saturating_sub(util::now_ms());
+        // 실행 신원이 맞은 새 host의 웹 응답을 시한까지 묻는다(답하지 않으면 시한이 지나 복구)
+        let web = view.pending_web.clone().filter(|_| view.phase == Phase::AwaitingNew);
+        if probe.as_ref().map(|(addr, _)| addr) != web.as_ref() {
+            if let Some((_, old)) = probe.take() {
+                old.abort();
+            }
+            probe = web.map(|addr| (addr.clone(), tokio::spawn(super::web_probe::until_answer(addr))));
+        }
+        let answer = async {
+            match probe.as_mut() {
+                Some((_, task)) => task.await.is_ok(),
+                None => std::future::pending().await,
+            }
+        };
+        // 묻기 task가 끝났는가(Some(답했다)). 끝난 handle은 다시 기다리지 않는다
+        let mut probed = None;
         tokio::select! {
             _=tokio::time::sleep(Duration::from_millis(remaining))=>{},
+            ok=answer => probed = Some(ok),
             peer=listener.accept_peer()=>{
                 let (stream,pid)=peer?;
                 if pid.is_none() || pid!=agent_pid(&state).ok() { continue; }
@@ -560,6 +610,12 @@ pub async fn worker(id: &str, execute: RecoveryExecutor) -> Result<()> {
                     _=>Err("감시 제어 frame을 읽지 못했다".into()),
                 };
                 publish(&state,&view).await?; let _=tx.json(&response).await;
+            }
+        }
+        if let Some(answered) = probed {
+            probe = None;
+            if answered {
+                web_answered(&mut view);
             }
         }
     }
@@ -581,6 +637,7 @@ mod tests {
                     software: "aaa 0.1.2+old".into(),
                     instance: "old-agent".into(),
                     started_ms: 0,
+                    web: None,
                 },
                 expected_sha256: "b".repeat(64),
                 expected_software: "aaa 0.1.2+new".into(),
@@ -603,10 +660,17 @@ mod tests {
             observed: vec![],
             installed_sha256: "a".repeat(64),
             error: None,
+            pending_web: None,
         }
     }
     fn identity(sha: &str, software: &str, instance: &str) -> RuntimeIdentity {
-        RuntimeIdentity { sha256: sha.into(), software: software.into(), instance: instance.into(), started_ms: 100 }
+        RuntimeIdentity {
+            sha256: sha.into(),
+            software: software.into(),
+            instance: instance.into(),
+            started_ms: 100,
+            web: None,
+        }
     }
     #[test]
     fn guard_requires_a_new_matching_process_and_does_not_renew_failure_deadlines() {
@@ -657,6 +721,59 @@ mod tests {
         }
     }
     #[test]
+    fn a_new_host_is_ready_only_after_its_web_answers_within_the_same_deadline() {
+        let with_web = |sha: &str, software: &str, web: &str| RuntimeIdentity {
+            web: Some(web.into()),
+            ..identity(sha, software, "new")
+        };
+        let mut v = view(DeployService::Host, true);
+        let spec = v.spec.clone();
+        apply(&mut v, Control::Activate, 10).unwrap();
+        let deadline = v.deadline_ms;
+        v.installed_sha256 = spec.expected_sha256.clone();
+        let new = with_web(&spec.expected_sha256, &spec.expected_software, "127.0.0.1:7431");
+        apply(&mut v, Control::Observe { service: DeployService::Host, identity: new.clone() }, 20).unwrap();
+        assert_eq!(v.phase, Phase::AwaitingNew, "실행 신원만으로 새 판 준비로 넘겼다");
+        assert_eq!(v.pending_web.as_deref(), Some("127.0.0.1:7431"));
+        assert!(apply(&mut v, Control::Commit, 30).is_err(), "웹 응답 전에 확정했다");
+        // 다시 붙어 같은 신원을 알려도 기다림은 그대로다
+        apply(&mut v, Control::Observe { service: DeployService::Host, identity: new.clone() }, 40).unwrap();
+        assert_eq!(v.phase, Phase::AwaitingNew);
+        web_answered(&mut v);
+        assert_eq!((v.phase, v.pending_web.as_deref()), (Phase::NewReady, None));
+        assert_eq!(v.deadline_ms, deadline, "웹 응답이 시한을 늘렸다");
+        apply(&mut v, Control::Commit, 50).unwrap();
+        assert_eq!(v.phase, Phase::VerifiedNew);
+
+        // 웹이 답하지 않으면 같은 시한에 옛 판으로 되돌린다
+        let mut silent = view(DeployService::Host, true);
+        apply(&mut silent, Control::Activate, 10).unwrap();
+        apply(&mut silent, Control::Observe { service: DeployService::Host, identity: new }, 20).unwrap();
+        let limit = silent.deadline_ms;
+        expired(&mut silent, limit - 1);
+        assert_eq!(silent.phase, Phase::AwaitingNew);
+        expired(&mut silent, limit);
+        assert_eq!((silent.phase, silent.pending_web.as_deref()), (Phase::Restoring, None));
+        web_answered(&mut silent);
+        assert_eq!(silent.phase, Phase::Restoring, "복구 중에 늦은 웹 응답으로 준비가 됐다");
+
+        // 웹을 끈 설정·옛 host(주소 없음)는 실행 신원만 본다. agent 감시는 웹을 보지 않는다
+        for (service, web) in [
+            (DeployService::Host, None),
+            (DeployService::Host, Some("")),
+            (DeployService::Agent, Some("127.0.0.1:7431")),
+        ] {
+            let mut v = view(service, service == DeployService::Host);
+            apply(&mut v, Control::Activate, 10).unwrap();
+            let identity = RuntimeIdentity {
+                web: web.map(str::to_owned),
+                ..identity(&spec.expected_sha256, &spec.expected_software, "new")
+            };
+            apply(&mut v, Control::Observe { service, identity }, 20).unwrap();
+            assert_eq!((v.phase, v.pending_web.as_deref()), (Phase::NewReady, None), "{service:?} {web:?}");
+        }
+    }
+    #[test]
     fn unchanged_installs_stop_but_changed_installs_restore_and_verify_all_local_roles() {
         let mut unchanged = view(DeployService::Agent, false);
         apply(&mut unchanged, Control::Cancel, 1).unwrap();
@@ -673,6 +790,23 @@ mod tests {
         assert_eq!(pending.phase, Phase::Restoring, "설치 중에는 현재 SHA가 옛것이어도 감시를 종료하지 않는다");
         expired(&mut pending_expiry, WINDOW_MS);
         assert_eq!(pending_expiry.phase, Phase::Restoring);
+        // 재시작만 하는 감시(기대 판 = 배포 전 판, 설치 없음): 띄우기 전이면 그 사이 개별 update가 바꾼 설치 파일을 되돌리지 않는다
+        let restart_only = || {
+            let mut v = view(DeployService::Agent, false);
+            v.spec.expected_sha256 = v.spec.baseline.sha256.clone();
+            v.spec.install_job = None;
+            v.installed_sha256 = "c".repeat(64);
+            v
+        };
+        let mut cancel = restart_only();
+        apply(&mut cancel, Control::Cancel, 1).unwrap();
+        let mut expiry = restart_only();
+        expired(&mut expiry, WINDOW_MS);
+        assert_eq!((cancel.phase, expiry.phase), (Phase::Cancelled, Phase::Cancelled));
+        let mut activated = restart_only();
+        apply(&mut activated, Control::Activate, 1).unwrap();
+        expired(&mut activated, 1 + WINDOW_MS);
+        assert_eq!(activated.phase, Phase::Restoring, "띄운 뒤 새 프로세스를 확인하지 못하면 복구다");
         let cancelled_job = unchanged.spec.install_job.clone().unwrap();
         assert!(apply(&mut unchanged, Control::BeginInstall { job_id: cancelled_job }, 2).is_err());
         let mut changed = view(DeployService::Agent, true);

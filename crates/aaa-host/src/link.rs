@@ -288,12 +288,18 @@ async fn serve_connection(
     if local {
         register_local(&host, &hello, &tx).await?;
     }
+    if local {
+        // 시작 중이면 웹을 연 뒤에 보낸다(`Host::web_gate`)
+        let _ = host.web_gate.subscribe().wait_for(|open| *open).await;
+    }
     tx.json(&LinkMsg::Welcome(HostWelcome {
         identity: hello.features.iter().any(|f| f == "rollout_recovery.v1").then(|| aaa_proto::RuntimeIdentity {
             sha256: host.running_sha256.clone(),
             software: aaa_common::util::software(),
             instance: host.rollout_instance.clone(),
             started_ms: host.rollout_started_ms,
+            // 같은 머신 agent의 host 감시가 웹 응답까지 본다(W6c)
+            web: if local { host.web_listen.lock().unwrap().clone() } else { None },
         }),
         proto: agreed,
         host_id: host.host_id.clone(),
@@ -349,7 +355,7 @@ async fn serve_connection(
                 Ok(Ok(Some(Incoming::Control(b)))) => match match serde_json::from_slice::<LinkMsg>(&b)? {
                     // 실행 입력과 배포 후보는 표시용 글이 아니다. B64 안의 인증 조각을 가리면
                     // 길이는 같아도 바이너리 SHA가 달라져 마지막 EOF 검증에서 멈춘다.
-                    msg @ LinkMsg::Res { result: Outcome::Ok(AgentResponse::ThreadReady(_) | AgentResponse::Relaunch(_) | AgentResponse::DeployChunk { .. }), .. } => msg,
+                    msg @ LinkMsg::Res { result: Outcome::Ok(AgentResponse::ThreadReady(_) | AgentResponse::Relaunch(_) | AgentResponse::DeployChunk { .. } | AgentResponse::ReportTransfer(_) | AgentResponse::ReportFileChunk { .. }), .. } => msg,
                     msg => aaa_common::redact::json(msg).map_err(|_| anyhow::anyhow!("agent 메시지 가림 거부"))?,
                 } {
                     LinkMsg::Event(AgentEvent::AccountRefresh(request)) => {
@@ -477,6 +483,127 @@ mod post_tests {
         std::fs::remove_dir_all(path).unwrap();
     }
     #[tokio::test]
+    async fn stable_report_transfer_verifies_before_masking_and_keeps_a_verified_copy() {
+        use aaa_proto::{AgentRequest, B64, BriefState, LibFile, ReportSnapshot, Role, ThreadKind, ThreadStatus};
+        use sha2::{Digest, Sha256};
+        let path = std::env::temp_dir().join(format!("aaa-report-transfer-{}", util::new_id()));
+        let mut cfg = aaa_config::HostConfig::default();
+        cfg.projects.root = path.join("projects").to_string_lossy().into();
+        cfg.notify.web_push = false;
+        let host = Host::open(cfg, path.clone()).unwrap();
+        host.project_create("p", Default::default(), "test").unwrap();
+        let secret = "fixture-report-auth-value-0638";
+        aaa_common::redact::remember(secret);
+        let mut bytes = vec![b'x'; 1024 * 1024 + 3176];
+        // 조각 경계의 인증 조각까지 포함해 원본 전체 hash를 먼저 대조한다.
+        for at in [23, 512 * 1024 - 4, 1024 * 1024 + 17] {
+            bytes[at..at + secret.len()].copy_from_slice(secret.as_bytes());
+        }
+        let clean = aaa_common::redact::bytes(&bytes);
+        assert_ne!(Sha256::digest(&bytes), Sha256::digest(&clean), "안 바뀐 원본도 전송 가림 뒤 해시가 달라지는 재현");
+        let body = format!("[병합 준비됨] 사본 시험\n{secret}\n\n## Next\n");
+        let revision = hex::encode(Sha256::digest(body.as_bytes()));
+        let expected = bytes.clone();
+        let (stream, peer) = tokio::io::duplex(65536);
+        let running = tokio::spawn(serve(host.clone(), Box::new(stream), None, None));
+        let (r, w) = tokio::io::split(peer);
+        let tx = spawn_writer(w, MAX_FRAME);
+        let mut rx = FrameRx::new(r, MAX_FRAME);
+        tx.json(&LinkMsg::Hello(AgentHello {
+            proto: AGENT_LINK,
+            machine_id: "report-agent".into(),
+            machine_name: "mac-a".into(),
+            boot_id: "boot".into(),
+            os: "test".into(),
+            arch: "test".into(),
+            software: "test".into(),
+            features: vec!["terminal.v1".into(), "report_copy.v2".into()],
+            dev_mode: true,
+            sha256: None,
+            selfcheck: None,
+            sessions: vec![],
+            identity: None,
+            harness: vec![],
+        }))
+        .await
+        .unwrap();
+        assert!(matches!(rx.control::<LinkMsg>().await.unwrap(), LinkMsg::Welcome(_)));
+        tx.json(&LinkMsg::Ping { seq: 638 }).await.unwrap();
+        assert_eq!(rx.control::<LinkMsg>().await.unwrap(), LinkMsg::Pong { seq: 638 });
+        let mut rec =
+            crate::orch::ThreadRec::starting("p", "보고", "report-agent", "codex", Role::Worker, ThreadKind::Dir, 0);
+        rec.id = "t-0001".into();
+        rec.status = ThreadStatus::Open;
+        rec.brief = BriefState::Delivered;
+        rec.work_dir = Some("/work/.aaa/p-t-0001".into());
+        host.db.thread_import("p", &rec.id, "open", &serde_json::to_string(&rec).unwrap()).unwrap();
+        let fake = tokio::spawn(async move {
+            while let Ok(msg) = rx.control::<LinkMsg>().await {
+                match msg {
+                    LinkMsg::Req { id, body: request, .. } => {
+                        let response = match request {
+                            AgentRequest::ReportCollect { .. } => AgentResponse::Report(ReportSnapshot {
+                                hash: revision.clone(),
+                                report: B64(body.as_bytes().to_vec()),
+                                files: vec![],
+                                skipped: vec![],
+                            }),
+                            AgentRequest::ReportTransfer { .. } => AgentResponse::ReportTransfer(ReportSnapshot {
+                                hash: revision.clone(),
+                                report: B64(body.as_bytes().to_vec()),
+                                files: vec![LibFile {
+                                    path: "stable.bin".into(),
+                                    size: bytes.len() as u64,
+                                    sha256: hex::encode(Sha256::digest(&bytes)),
+                                }],
+                                skipped: vec![],
+                            }),
+                            AgentRequest::ReportFileRead { offset, len, .. } => {
+                                let end = (offset as usize + len as usize).min(bytes.len());
+                                AgentResponse::ReportFileChunk {
+                                    data: B64(bytes[offset as usize..end].to_vec()),
+                                    eof: end == bytes.len(),
+                                }
+                            }
+                            _ => AgentResponse::Done,
+                        };
+                        tx.json(&LinkMsg::Res { id, result: Outcome::Ok(response) }).await.unwrap();
+                    }
+                    LinkMsg::Ping { seq } => {
+                        tx.json(&LinkMsg::Pong { seq }).await.unwrap();
+                    }
+                    _ => {}
+                }
+            }
+        });
+        host.refresh_report("p", "t-0001");
+        tokio::time::timeout(Duration::from_secs(15), async {
+            while host.report_refresh.lock().unwrap().contains_key("p/t-0001") {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .unwrap();
+        let rec = host.load("p", "t-0001").unwrap();
+        assert_eq!(rec.copy.as_deref(), Some("complete"));
+        let dir = host.project_dir("p").unwrap();
+        assert_eq!(std::fs::read(dir.join("library/t-0001/stable.bin")).unwrap(), clean);
+        assert_ne!(expected, clean);
+        let stored = host.verified_report(&rec).unwrap();
+        assert!(!stored.contains(secret));
+        assert_eq!(rec.report_stage, Some(aaa_proto::ThreadStage::MergeReady));
+        host.backfill_report_stages().unwrap();
+        assert_eq!(host.load("p", "t-0001").unwrap().report_stage, rec.report_stage);
+        let rid = host.thread_report_id("p", "t-0001", rec.report_hash.as_deref()).unwrap();
+        assert_eq!(std::fs::read(dir.join("library").join(&rid).join("stable.bin")).unwrap(), clean);
+        assert_eq!(std::fs::read_to_string(dir.join("threads").join(format!("{rid}.md"))).unwrap(), stored);
+        fake.abort();
+        running.abort();
+        drop(host);
+        std::fs::remove_dir_all(path).unwrap();
+    }
+
+    #[tokio::test]
     async fn deployment_bytes_survive_auth_redaction_and_a_partial_tail() {
         use aaa_proto::{AgentRequest, B64, DEPLOY_CHUNK};
         use base64::Engine;
@@ -515,6 +642,7 @@ mod post_tests {
             sha256: None,
             selfcheck: None,
             sessions: vec![],
+            identity: None,
             harness: vec![],
         }))
         .await
@@ -640,6 +768,7 @@ mod post_tests {
             sha256: None,
             selfcheck: None,
             sessions: vec![],
+            identity: None,
             harness: vec![],
         }))
         .await

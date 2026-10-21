@@ -227,7 +227,7 @@ export default async function () {
     } finally { await wk.close(); }
   });
 
-  await step("막대 자리: 「답할 것」은 패널 단추 끝, 보고서 단추 바로 위(데스크톱 1280·휴대폰 390 drawer)", async () => {
+  await step("막대 자리: 맨 위 「coordinator」, 「답할 것」은 패널 단추 끝, 보고서 단추 바로 위(데스크톱 1280·휴대폰 390 drawer)", async () => {
     const order = (p) =>
       p.evaluate(() => {
         const items = [...document.querySelectorAll(".activity-bar .activity-item")].filter((e) => e.closest(".activity-bottom") === null);
@@ -242,7 +242,8 @@ export default async function () {
           gapBelow: Math.round(reports.top - asks.bottom),
         };
       });
-    const want = "activity-work,activity-machines,activity-automations,activity-asks,activity-reports,activity-tasks";
+    // 맨 위는 「coordinator」(t-0621)
+    const want = "activity-coordinator,activity-work,activity-machines,activity-automations,activity-asks,activity-reports,activity-tasks";
     const dev = await pairPage(browser, aaa("web", "pair").code, { width: 1280, height: 800 });
     try {
       await dev.page.getByTestId("activity-bar").waitFor();
