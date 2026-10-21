@@ -62,7 +62,7 @@ try {
 
 # Rejections retain target bytes/mtime and unrelated files, never execute payload.
 foreach ($case in @('version', 'url', 'hash', 'pe', 'machine', 'binary-version', 'existing', 'parent-file', 'arch', 'nul')) {
-    $target = New-Profile $case
+    $target = New-Profile ('reject-' + $case)
     $other = Join-Path $env:USERPROFILE 'other-instance.txt'
     [IO.File]::WriteAllText($other, 'keep this instance')
     $script:manifestVersion = '1.2.3'
