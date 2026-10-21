@@ -147,6 +147,11 @@ impl Host {
             r.task_clean.cleaned = cleaned.clone();
             r.task_clean.parents = parents.clone();
         })?;
+        // 파일 쓰기 사건만 받으면 judged_ms 저장 전의 board를 읽을 수 있다.
+        // 판정까지 확정한 뒤 다시 알려 상위의 확인 필요 상태도 화면에 닿게 한다.
+        if !cleaned.is_empty() || !parents.is_empty() || !check.is_empty() {
+            let _ = self.task_events.send((project.to_string(), "attention".into()));
+        }
         Ok(())
     }
 

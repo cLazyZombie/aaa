@@ -33,6 +33,122 @@ impl Drop for Lab {
 }
 
 #[test]
+fn completion_notifies_the_board_after_parent_attention_is_committed() {
+    let lab = Lab::new();
+    let (id, _) = lab
+        .h
+        .db
+        .thread_insert_admitted("demo", None, None, None, None, |id| {
+            let mut r = Lab::rec();
+            r.id = id.into();
+            r.status = ThreadStatus::Resolved;
+            r.task_clean.why = Some("merged".into());
+            serde_json::to_string(&r).unwrap()
+        })
+        .unwrap();
+    lab.write(&format!("## Backlog\n- [ ] 상위\n  - [ ] 하위 · {id}\n"));
+    lab.h.task_board("demo").unwrap();
+    let mut events = lab.h.task_events.subscribe();
+    lab.h.task_clean_pass("demo", &lab.h.project_dir("demo").unwrap());
+    let mut notifications = Vec::new();
+    while let Ok(event) = events.try_recv() {
+        notifications.push(event);
+    }
+    assert_eq!(notifications.last(), Some(&("demo".into(), "attention".into())));
+    let r = lab.h.load("demo", &id).unwrap();
+    assert!(r.task_clean.judged_ms.is_some());
+    let board = lab.h.task_board("demo").unwrap();
+    assert_eq!(board.tasks.len(), 1);
+    assert!(board.tasks[0].attention.as_deref().unwrap().contains("하위 task가 모두 끝났다"));
+}
+
+#[test]
+fn display_ids_migrate_once_and_concurrent_reads_keep_the_same_numbers() {
+    let lab = Lab::new();
+    let old_id = "01AAAAAAAAAAAAAAAAAAAAAAAA";
+    let source = format!("## Backlog\r\n- [ ] 기존 <!-- aaa-task:{old_id} -->\r\n  메모\r\n- [ ] 새 번호\r\n");
+    lab.write(&source);
+    let gate = std::sync::Barrier::new(8);
+    let boards = std::thread::scope(|scope| {
+        let handles: Vec<_> = (0..8)
+            .map(|_| {
+                scope.spawn(|| {
+                    gate.wait();
+                    lab.h.task_board("demo").unwrap()
+                })
+            })
+            .collect();
+        handles.into_iter().map(|h| h.join().unwrap()).collect::<Vec<_>>()
+    });
+    let first = &boards[0].tasks;
+    assert_eq!(first[0].id.as_deref(), Some(old_id));
+    assert_eq!(first[0].short_id.as_deref(), Some("d-0001"));
+    assert_eq!(first[1].short_id.as_deref(), Some("d-0002"));
+    for b in &boards {
+        assert_eq!(&b.tasks, first);
+    }
+    let migrated = lab.text();
+    assert_eq!(migrated.matches("\r\n").count(), source.matches("\r\n").count());
+    assert!(migrated.starts_with(&source[..source.find("- [ ] 새 번호").unwrap()]));
+    assert_eq!(lab.h.task_board("demo").unwrap().text, migrated);
+
+    // 순번은 정리된 로그나 활성 task 개수에서 다시 계산하지 않는다.
+    lab.write("## Backlog\n- [ ] 다음 번호\n");
+    assert_eq!(lab.h.task_board("demo").unwrap().tasks[0].short_id.as_deref(), Some("d-0003"));
+    lab.h.db.task_log_prune("demo", u64::MAX / 2).unwrap();
+    lab.write(&migrated);
+    assert_eq!(lab.h.task_board("demo").unwrap().tasks, *first);
+    let reopened = Host::open(lab.h.cfg.clone(), lab.root.join("host")).unwrap();
+    assert_eq!(reopened.task_board("demo").unwrap().tasks, *first);
+    assert_eq!(reopened.task_selector("demo", "d-0001").unwrap(), old_id);
+    assert_eq!(reopened.task_selector("demo", "d-9999").unwrap(), "d-9999");
+}
+
+#[tokio::test]
+async fn display_ids_keep_duplicate_title_raw_history_bound_to_each_ulid() {
+    let lab = Lab::new();
+    let before = lab.h.task_board("demo").unwrap();
+    let FrontResponse::TaskEdited { board, conflict: None, .. } = lab
+        .h
+        .task_edit(
+            "demo",
+            vec![TaskOp::RawSave {
+                expected_sha256: before.sha256,
+                text: "## Backlog\n- [ ] 같은 제목\n  첫 메모\n- [ ] 같은 제목\n  다른 메모\n".into(),
+            }],
+            None,
+            "device:user",
+        )
+        .await
+        .unwrap()
+    else {
+        panic!("원문 저장 실패")
+    };
+    assert_ne!(board.tasks[0].id, board.tasks[1].id);
+    assert_ne!(board.tasks[0].short_id, board.tasks[1].short_id);
+    let second = &board.tasks[1];
+    let FrontResponse::TaskLog { entries, .. } =
+        lab.h.task_log("demo", None, None, None, second.short_id.as_deref()).unwrap()
+    else {
+        panic!("기록 응답")
+    };
+    let raw = entries.iter().find(|e| e.action == TaskAction::Raw).unwrap();
+    assert_eq!(raw.after.as_deref(), Some(board.text.as_str()));
+    lab.h
+        .task_edit(
+            "demo",
+            vec![TaskOp::Delete { at: TaskAnchor { title: second.short_id.clone().unwrap(), ..Default::default() } }],
+            None,
+            "device:user",
+        )
+        .await
+        .unwrap();
+    let left = lab.h.task_board("demo").unwrap();
+    assert_eq!(left.tasks.len(), 1);
+    assert_eq!(left.tasks[0].id, board.tasks[0].id);
+}
+
+#[test]
 fn identity_preserves_other_bytes_and_survives_edits() {
     let source = "# 메모\r\n\r\n## Backlog\r\n- [ ] 일 (claude@mac-a) [작업 폴더]\r\n  설명 ![그림](uploads/example.png)\r\n\r\n끝";
     let got = identify(source).unwrap();

@@ -528,3 +528,13 @@ button.task-chip:disabled { cursor: default; color: var(--text-dim); }
 .task-queue-panel { flex: 0 0 auto; max-height: 30vh; overflow: auto; padding: var(--space-2) var(--space-4); border-bottom: var(--hairline) solid var(--border); }
 .task-queue-controls { flex: 0 0 auto; max-height: 40vh; overflow: auto; padding: var(--space-3); border-bottom: var(--hairline) solid var(--border); }
 .task-queue-actions { display: flex; flex-wrap: wrap; gap: var(--space-1); }
+
+/* 할 일의 고정 번호는 제목 옆에 작게 표시한다. 좁은 화면에서도 번호 안에서는 줄을 나누지 않는다. */
+.task-short-id {
+  color: var(--text-dim);
+  font-family: ui-monospace, monospace;
+  font-size: 0.8em;
+  font-weight: 400;
+  margin-inline-end: 0.6em;
+  white-space: nowrap;
+}

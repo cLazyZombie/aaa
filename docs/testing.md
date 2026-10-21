@@ -2,6 +2,23 @@
 
 새 기능을 만드는 thread가 따르는 짧은 규칙이다. 근거는 참고 넷(herdr 0.9.5·herdr-projects 0.2.35·herdr-web-ui `aa624cb`·t3code `4b1024da`)과 이 저장소에서 실제로 난 간헐 실패다. 전략과 도구 목록은 [plan §13](plan.md#13-테스트-전략과-직접-만들-e2e-도구)에 있다.
 
+## 할 일 표시 ID(t-0575)
+
+- `cargo test -p aaa-host --lib display_ids --locked`: 기존 ULID·CRLF를 가진 파일을 여덟 조회가 동시에
+  이주해도 같은 `d-NNNN`을 받는지 본다. 삭제·로그 정리·옛 원문 복원·DB 다시 열기에도 대응을 유지한다.
+- `cargo test -p aaa --test m13 task_display_ids_survive_rename_move_restart_delete_and_archive --locked -- --exact`:
+  실제 host·agent·CLI에서 괄호 제목과 명시 owner의 시작/연결, 제목 변경·목록/하위 이동·기록 조회,
+  삭제 복원·번호 비재사용·예약 순서/취소·host 재시작·완료 보관 복원을 검사한다. ID와 ULID를 모두 대조한다.
+- `node web/e2e/web.e2e.mjs --spec 68-task-ids`: 실제 host의 첫 이주가 주석 외의 bytes를 유지하는지,
+  웹 편집 뒤 CLI 선택자가 같은 할 일을 고치는지, host 재시작 뒤 320/390/768px에서 ID 검색·표시와
+  가로 넘침을 검사한다. CLI 응답·DOM 사건·연결 준비로 끝낸다.
+
+기존 원문 바이트 keeper는 이주가 끝난 고정 ULID fixture로 내용·충돌·이력을 검사한다. 기존 웹 내용 keeper는
+식별 주석을 제외한 내용을 비교하고, 직접 편집 fixture에서는 주석을 보존한다. 식별 주석 자체의 정확한 bytes와
+번호·내부 ULID 대응은 위 전용 keeper가 검사한다. `completion_notifies_the_board_after_parent_attention_is_committed`는
+자동 정리의 파일 사건 뒤 판정 확정 사건도 보내는지 검사한다. 파일 쓰기 직후의 읽기가 판정 전 원문을 받더라도
+마지막 사건에서는 상위의 확인 필요 상태가 확정돼 있어야 한다. ID를 없애거나 재발급하는 변형은 전용 keeper에서 실패해야 한다.
+
 ## thread 재시작의 pane 교체(t-0567)
 
 - `cargo test -p aaa --test m13 restart_replaces_exited_panes_locally_and_remotely --locked -- --exact`:

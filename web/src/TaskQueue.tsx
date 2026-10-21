@@ -21,7 +21,7 @@ export function QueueControls({ task, board, canEdit }: { task: TaskView; board:
   async function inspect() {
     setBusy(true); setError("");
     try {
-      const r = await call({ op: "thread_start_preview", project: board.project, from_task: task.title, task_block: task.block_sha256 });
+      const r = await call({ op: "thread_start_preview", project: board.project, from_task: task.short_id ?? task.title, task_block: task.block_sha256 });
       if (r.kind === "thread_start_preview") setPreview(r);
     } catch (e) { setError(String(e)); } finally { setBusy(false); }
   }
@@ -38,7 +38,7 @@ export function QueueControls({ task, board, canEdit }: { task: TaskView; board:
       <p>모델 {preview.profile} {preview.model} · effort {preview.effort || "기본"} · 머신 {preview.machine ?? "자동 배정"} · 저장소 {task.repo ?? "정하지 않음"}</p>
       <Markdown>{preview.task}</Markdown>
       {(!task.repo || task.notes.length===0) && <p role="alert">먼저 설명·완료 범위 메모와 저장소 또는 작업 폴더를 저장한다.</p>}
-      <button className="btn btn-primary" type="button" disabled={busy || !task.repo || task.notes.length===0} onClick={() => void action({op:"reserve",task:task.title,block:preview.task_block,profile:preview.profile,profile_revision:preview.profile_revision})} data-testid="task-reserve-go">이 내용으로 예약</button>
+      <button className="btn btn-primary" type="button" disabled={busy || !task.repo || task.notes.length===0} onClick={() => void action({op:"reserve",task:task.short_id ?? task.title,block:preview.task_block,profile:preview.profile,profile_revision:preview.profile_revision})} data-testid="task-reserve-go">이 내용으로 예약</button>
       <button className="btn" type="button" disabled={busy} onClick={() => setPreview(null)}>닫기</button>
     </div>}
     {error && <p role="alert">{error}</p>}
@@ -63,12 +63,12 @@ export function TaskQueuePanel({ board, canEdit, onThread }: { board: TaskBoard;
   }
   return <div className="task-queue-panel" data-testid="task-queue-panel">
     <details><summary>예약 {board.queue?.filter(q=>["queued","check"].includes(q.state)).length ?? 0}</summary>
-      {board.queue?.filter(q=>q.state!=="cancelled"&&q.state!=="finished").map(q=><p key={q.task_id} data-testid={`queue-${q.task_id}`} data-state={q.state}>{q.position} · {q.task.title} · {words[q.state]} · {q.reason} · {q.profile} · {q.machine ?? "자동"} {q.thread&&<button className="btn" type="button" onClick={()=>onThread(q.thread!)}>{q.thread}</button>}</p>)}
+      {board.queue?.filter(q=>q.state!=="cancelled"&&q.state!=="finished").map(q=><p key={q.task_id} data-testid={`queue-${q.task_id}`} data-state={q.state}>{q.position} · {q.task.short_id} · {q.task.title} · {words[q.state]} · {q.reason} · {q.profile} · {q.machine ?? "자동"} {q.thread&&<button className="btn" type="button" onClick={()=>onThread(q.thread!)}>{q.thread}</button>}</p>)}
     </details>
     <button className="btn" type="button" aria-expanded={show} onClick={()=>setShow(!show)} data-testid="task-archive-open">완료 보관</button>
     {show&&<section aria-label="완료 보관" data-testid="task-archive-list">
       {entries.length===0&&<p>완료 보관이 비어 있다</p>}
-      {entries.map(a=><article key={a.task_id} data-testid={`archive-${a.task_id}`}><h3>{a.task.title}</h3><p>{a.committed ? a.reason : `보관 확정 확인 필요 · ${a.reason}`} · {new Date(a.completed_ms).toLocaleString()}</p><Markdown>{a.body}</Markdown>{a.task.thread&&<button className="btn" type="button" onClick={()=>onThread(a.task.thread!)}>{a.task.thread} 결과</button>}{canEdit&&<button className="btn" type="button" disabled={busy} onClick={()=>void restore(a.task_id)}>활성 목록으로 복원</button>}</article>)}
+      {entries.map(a=><article key={a.task_id} data-testid={`archive-${a.task_id}`}><h3><span className="task-short-id">{a.task.short_id}</span>{a.task.title}</h3><p>{a.committed ? a.reason : `보관 확정 확인 필요 · ${a.reason}`} · {new Date(a.completed_ms).toLocaleString()}</p><Markdown>{a.body}</Markdown>{a.task.thread&&<button className="btn" type="button" onClick={()=>onThread(a.task.thread!)}>{a.task.thread} 결과</button>}{canEdit&&<button className="btn" type="button" disabled={busy} onClick={()=>void restore(a.task_id)}>활성 목록으로 복원</button>}</article>)}
     </section>}
     {error&&<p role="alert">{error}</p>}
   </div>;

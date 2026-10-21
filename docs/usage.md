@@ -58,8 +58,8 @@ host는 프로젝트 하나만 맡으므로 명령의 프로젝트 인자는 생
 | `aaa question list` · `aaa question answer <id> yes` | 확인창 질문 보기·답하기 |
 | `aaa project create <p> --goal "…" --repo <경로>[@머신] --thread-profile codex` · `aaa context` | 프로젝트 만들기 · coordinator 요약(할 일·열린 thread·inbox). host는 보관하지 않은 프로젝트 하나만 맡는다: 둘째 만들기는 거부하고(§8.285), 둘 이상이면 다시 띄울 때 시작하지 않고 줄일 목록을 말한다(§8.283). 인스턴스에서는 이름을 생략하면 인스턴스 이름이다(§8.294) |
 | `aaa set <key> <값>` | 설정 값 하나 바꾸기(aaa.toml, 없으면 project.toml: goal·thread_profile·coordinator_profile·max_parallel_threads·auto_resolve_days·repos.add·repos.remove, workspaces.add·remove도 같다, task_notes.add·remove: 할 일 화면 「나중」 탭이 읽는 프로젝트 폴더 안 Markdown) |
-| `aaa task list` | 할 일 목록(TASKS.md) 읽기: 목록별 task, 형식 어긋남, task 없는 열린 thread, 「나중」 파일. 웹은 활동 막대 「할 일」(§8.306) |
-| `aaa task add "<제목>" [--list 목록] [--profile 모델] [--machine 머신] [--owner me\|이름] [--repo 저장소]` · `aaa task edit "<제목>" [--title …] [--profile …] [--machine …] [--owner …] [--repo …] [--thread t-NNNN]` · `aaa task move\|rm "<제목>"` · `aaa task restore <기록 id>` · `aaa task log` | 할 일 고치기: 바뀐 task 줄만 다시 쓰고 나머지 줄은 그대로 둔다. `--block <sha256>`이면 그 판의 블록으로 고정하고, 그사이 바뀌었으면 쓰지 않는다(충돌). 지운 task는 기록에서 되살린다. `--repo`는 저장소 칸(project.toml repos 경로나 그 마지막 이름, 또는 `작업 폴더`, §8.330)이고 `--from-task`가 그 저장소로 띄운다. `--profile`·`--machine`은 agent에게 맡길 모델·머신 칸이고(§8.335, 줄에는 `(모델@머신)`으로 적는다) 칸마다 따로 고친다(빈 글이면 그 칸만 비운다). 사람의 할 일은 `--owner me`(사람 이름은 `--person`)이다. 목록은 `aaa task list-add\|list-rename\|list-merge\|list-rm\|list-move`. aaa 세션 안에서는 그 프로젝트 coordinator만 고친다. 웹은 할 일 화면의 폼·⋯ 메뉴·「기록」 탭(§8.311) |
+| `aaa task list` | 할 일 목록(TASKS.md) 읽기: 목록별 task ID(`d-0001`)·제목, 형식 어긋남, task 없는 열린 thread, 「나중」 파일. 웹은 활동 막대 「할 일」(§8.306) |
+| `aaa task add "<제목>" [--list 목록] [--profile 모델] [--machine 머신] [--owner me\|이름] [--repo 저장소]` · `aaa task edit <task ID\|제목> [--title …] [--profile …] [--machine …] [--owner …] [--repo …] [--thread t-NNNN]` · `aaa task move\|rm <task ID\|제목>` · `aaa task restore <task ID\|기록 id>` · `aaa task log [task ID\|제목]` | 할 일 고치기: 바뀐 task 줄만 다시 쓰고 나머지 줄은 그대로 둔다. `--block <sha256>`이면 그 판의 블록으로 고정하고, 그사이 바뀌었으면 쓰지 않는다(충돌). 지운 task는 기록에서 되살린다. `--repo`는 저장소 칸(project.toml repos 경로나 그 마지막 이름, 또는 `작업 폴더`, §8.330)이고 `--from-task`가 그 저장소로 띄운다. `--profile`·`--machine`은 agent에게 맡길 모델·머신 칸이고(§8.335, 줄에는 `(모델@머신)`으로 적는다) 칸마다 따로 고친다(빈 글이면 그 칸만 비운다). 사람의 할 일은 `--owner me`(사람 이름은 `--person`)이다. 목록은 `aaa task list-add\|list-rename\|list-merge\|list-rm\|list-move`. aaa 세션 안에서는 그 프로젝트 coordinator만 고친다. 웹은 할 일 화면의 폼·⋯ 메뉴·「기록」 탭(§8.311) |
 | `aaa coordinator open [--profile 이름] [--new]` | coordinator 열기: 돌고 있으면 그 pane을 알리고, 없으면 host 머신에서 프로젝트 폴더로 띄워 workspace `<p>`의 탭 coordinator에 둠(profile 기본: project.toml → `aaa profile default coordinator` → claude) |
 | `aaa project pause\|resume\|archive` · `aaa project unarchive <p>` | 멈추기(ticker·thread start 멈춤) · 보관(목록에서 숨기고 pane을 닫음). 보관 해제는 다른 활성·멈춤 프로젝트가 없을 때만 가능 |
 | `aaa project rename <새 이름>` · `aaa project delete` · `aaa project sweep` | 이름 바꾸기 · 휴지통으로(worktree·branch는 그대로) · 끝난 thread가 남긴 worktree·병합된 branch 치우기 |
@@ -123,8 +123,12 @@ aaa work-root set '/Volumes/<disk>/aaa-work' --mount '/Volumes/<disk>'
 
 사람은 aaa 밖 host 터미널에서 `aaa deploy start --file mac-b:~/aaa-candidate/aaa --sha256 <SHA> --commit <40자리커밋>`의 후보/대상을 읽고 정확히 `yes`를 입력한다(FRONT1.55 이상). coordinator_deploy 설정은 바꾸지 않는다. 같은 `aaa deploy status <ID> --wait`로 재시작을 넘는다. TOML `do="deploy"`는 배포 제안과 빌드 안내만 만든다([자동화](automations.md#배포는-제안까지만l5)). 웹 조작 기기는 설정 「배포」에서 빌드 머신의 후보를 「점검」(provenance·SHA 대조와 dry-run)한 뒤 확인 창 하나로 시작하고, 같은 rollout ID를 「배포 기록」에서 다시 보며, 머신마다 agent·host를 다시 띄운다(FRONT_API 1.82, [설치 안내](install-runbook.md#웹에서-배포재시작관리-gui-w6a-front_api-182)).
 
+할 일은 웹 목록·`aaa task list`·`aaa context`에 보이는 `d-0001` 같은 ID로 가리킨다.
+제목 변경·이동·삭제·복원에도 같은 번호이며, 지운 번호는 재사용하지 않는다. 제목 입력도 계속 받는다.
+이주·보관·복원의 자세한 규칙은 [할 일 ID](task-ids.md)에 있다.
+
 할 일을 자리 나면 시작하려면 설명·완료 범위 메모와 저장소(또는 `작업 폴더`)를 저장한 뒤
-`aaa task reserve "제목"`으로 그 내용의 실행을 승인한다. 기본 모델도 예약 시점에 고정한다.
+`aaa task reserve d-0001`로 그 내용의 실행을 승인한다. 기본 모델도 예약 시점에 고정한다.
 `aaa task queue`는 차례·모델/effort·머신·대기 사유·실제 thread를 읽는다.
 `aaa task unreserve <task ID>`는 예약을 취소하며 실행 중인 thread는 그대로 둔다.
 `aaa task queue-move <task ID> <순번>`으로 차례를 바꾼다(1부터, 0은 맨 앞).

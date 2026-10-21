@@ -248,7 +248,11 @@ committed: boolean, removed_sha256: string, history: Array<TaskLogEntry>, };
 
 export type TaskView = {
 /**
- * 제목과 독립된 task ID. 기존 task는 명시 쓰기 때 부여한다.
+ * 프로젝트별 영구 표시 ID(`d-0001`). 내부 연결은 기존 ULID를 유지한다.
+ */
+short_id: string | null,
+/**
+ * 제목과 독립된 내부 ULID. 기존 task는 host의 식별 이주 때 주석으로 부여한다.
  */
 id: string | null,
 /**
@@ -794,7 +798,7 @@ kind: ThreadKind | null, repo: string | null, base: string | null,
  */
 task: string,
 /**
- * TASKS.md의 task 제목(대소문자 무시). owner가 profile·machine의 기본값이 되고, 메모가 할 일에 붙는다.
+ * TASKS.md의 task ID(d-0001·ULID) 또는 제목(대소문자 무시). owner가 profile·machine의 기본값이 되고, 메모가 할 일에 붙는다.
  */
 from_task: string | null,
 /**
@@ -813,7 +817,11 @@ task: string, } | { "op": "thread_next", project?: string, thread: string, line:
 /**
  * 비면 보기, 있으면 같은 ID로 활성 목록에 복원(예약은 복원하지 않는다).
  */
-restore: string | null, } | { "op": "task_edit", project?: string, ops: Array<TaskOp>, base_sha256: string | null, } | { "op": "task_log", project?: string, before: number | null, limit: number | null, filter: TaskLogFilter | null, } | { "op": "task_log_prune", project?: string, before_ms: number, } | { "op": "threads", project: string | null, role: Role | null, } | { "op": "thread_show", project?: string, thread: string, } | { "op": "thread_summary", project?: string, thread: string, } | { "op": "thread_summary_set", project?: string, thread: string, text: string, } | { "op": "thread_library", project?: string, thread: string, } | { "op": "library_link", project?: string, thread: string, days: number | null, } | { "op": "library_links", project: string | null, } | { "op": "library_link_revoke", id: string, } | { "op": "library_publish", project?: string, name: string, source: string, live: boolean,
+restore: string | null, } | { "op": "task_edit", project?: string, ops: Array<TaskOp>, base_sha256: string | null, } | { "op": "task_log", project?: string, before: number | null, limit: number | null, filter: TaskLogFilter | null,
+/**
+ * 표시 ID·ULID 또는 제목으로 기록을 거른다.
+ */
+task?: string, } | { "op": "task_log_prune", project?: string, before_ms: number, } | { "op": "threads", project: string | null, role: Role | null, } | { "op": "thread_show", project?: string, thread: string, } | { "op": "thread_summary", project?: string, thread: string, } | { "op": "thread_summary_set", project?: string, thread: string, text: string, } | { "op": "thread_library", project?: string, thread: string, } | { "op": "library_link", project?: string, thread: string, days: number | null, } | { "op": "library_links", project: string | null, } | { "op": "library_link_revoke", id: string, } | { "op": "library_publish", project?: string, name: string, source: string, live: boolean,
 /**
  * FRONT_API 1.43. 사용자에게 보내는 웹 보고서(index.html 필수, 「내 보고서」·안 봄·사용자 알림 post)
  */

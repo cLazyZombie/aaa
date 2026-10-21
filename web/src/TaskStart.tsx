@@ -26,7 +26,7 @@ export function StartDialog({ task, owners, onStarted, onClose }: { task: TaskVi
   const [choice, setChoice] = useState("");
   useEffect(() => {
     let live = true;
-    call({ op: "thread_start_preview", from_task: task.title, task_block: task.block_sha256 })
+    call({ op: "thread_start_preview", from_task: task.short_id ?? task.title, task_block: task.block_sha256 })
       .then((r) => {
         if (!live || r.kind !== "thread_start_preview") return;
         const { kind: _kind, ...p } = r;
@@ -81,7 +81,7 @@ export function StartDialog({ task, owners, onStarted, onClose }: { task: TaskVi
         repo: choice === REPO_DIR ? null : repoPath,
         base: null,
         task: "",
-        from_task: preview.title,
+        from_task: task.short_id ?? task.title,
         link_task: true,
         task_block: preview.task_block,
       });
@@ -108,7 +108,7 @@ export function StartDialog({ task, owners, onStarted, onClose }: { task: TaskVi
         </header>
         <div className="modal-body task-start-body">
           <p className="task-start-title">
-            <strong>{task.title}</strong>
+            <strong>{task.short_id && <span className="task-short-id">{task.short_id}</span>}{task.title}</strong>
             <WhoChips t={task} labeled />
           </p>
           {!preview && !error && <p className="muted">시작할 값을 읽는 중</p>}

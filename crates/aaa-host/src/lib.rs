@@ -77,6 +77,7 @@ pub mod tailscale;
 mod task_attach;
 mod task_clean;
 mod task_edit;
+mod task_ids;
 mod task_queue;
 mod task_repo;
 mod tasks;
@@ -1634,7 +1635,9 @@ impl Host {
             FrontRequest::TaskEdit { project, ops, base_sha256 } => {
                 self.task_edit(&project, ops, base_sha256, actor).await
             }
-            FrontRequest::TaskLog { project, before, limit, filter } => self.task_log(&project, before, limit, filter),
+            FrontRequest::TaskLog { project, before, limit, filter, task } => {
+                self.task_log(&project, before, limit, filter, task.as_deref())
+            }
             FrontRequest::TaskLogPrune { project, before_ms } => self.task_log_prune(&project, before_ms, actor),
             FrontRequest::Assignable { project, check } => {
                 self.project_dir(&project)?;
