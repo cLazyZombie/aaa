@@ -130,7 +130,7 @@ fn real_home_marks(real: &Path) -> Vec<(PathBuf, bool)> {
 fn ssh_install_through_the_system_sshd_starts_a_launch_agent_that_connects_and_checks() {
     let ci = PathBuf::from(std::env::var_os("AAA_ROOT_SSHD_LAB").expect("AAA_ROOT_SSHD_LAB(scripts/ci-root-sshd.sh)"));
     assert!(std::env::var_os("AAA_SESSION_ID").is_none(), "aaa pane 밖에서 돌린다: 사람 요청이 세션 안으로 거부된다");
-    let home = ci.join("home").canonicalize().unwrap();
+    let home = ci.join("h").canonicalize().unwrap();
     let real = PathBuf::from(std::env::var_os("HOME").unwrap());
     assert_ne!(real, home);
     let before = real_home_marks(&real);

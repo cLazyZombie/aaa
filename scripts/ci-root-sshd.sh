@@ -3,7 +3,7 @@
 # install의 검증 SSH 입구는 root 소유 /usr/sbin/sshd 계보만 믿으므로 비특권 실험실 sshd로는 볼 수 없다.
 #
 # - sshd는 sudo로 loopback 빈 포트에만 띄우고 실험실 키만 받는다. 끝나면 이 스크립트가 띄운 PID만 끝낸다.
-# - 원격 HOME은 `SetEnv HOME=<실험실>/home`이다: 설치 자리·LaunchAgent plist·launcher가 그 아래에 놓인다. 시험이 runner 실제 HOME이
+# - 원격 HOME은 `SetEnv HOME=<실험실>/h`이다: 설치 자리·LaunchAgent plist·launcher가 그 아래에 놓인다. 시험이 runner 실제 HOME이
 #   그대로인지 본다. gui domain 등록(dev.aaa.agent)은 계정 전역이라 시험이 없을 때만 등록하고 끝에 bootout한다.
 # - 운영 Mac에서는 돌리지 않는다(GITHUB_ACTIONS가 아니면 멈춘다).
 #
@@ -13,9 +13,10 @@ set -euo pipefail
 [ "${GITHUB_ACTIONS:-}" = true ] || { echo "CI(GitHub Actions) 전용이다" >&2; exit 64; }
 [ "$(uname)" = Darwin ] || { echo "macOS 전용이다" >&2; exit 64; }
 
-LAB="${RUNNER_TEMP:?}/aaa-root-sshd"
-rm -rf "${LAB:?}"
-mkdir -p "$LAB/home"
+# 실험실 HOME은 짧게 둔다: agent의 가장 긴 unix socket(`<HOME>/Library/Application Support/aaa/agent/run/b<ID>.sock`)이 104자 안이어야
+# 한다(HOME 28자까지). /tmp는 /private/tmp의 링크라 처음부터 실제 경로로 만든다(시험이 감지 HOME과 대조한다)
+LAB=$(mktemp -d /private/tmp/ar.XXXXX)
+mkdir -p "$LAB/h"
 ssh-keygen -q -t ed25519 -N '' -f "$LAB/hostkey"
 ssh-keygen -q -t ed25519 -N '' -f "$LAB/userkey"
 cp "$LAB/userkey.pub" "$LAB/authorized_keys"
@@ -32,7 +33,7 @@ PasswordAuthentication no
 KbdInteractiveAuthentication no
 UsePAM no
 StrictModes no
-SetEnv HOME=$LAB/home
+SetEnv HOME=$LAB/h
 EOF
 cat > "$LAB/ssh_config" <<EOF
 Host ci

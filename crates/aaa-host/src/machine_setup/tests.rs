@@ -573,6 +573,10 @@ fn settings_become_agent_choices_under_the_detected_home() {
     assert!(
         install::choices(&settings, &MachineDetected { home: None, ..mac.clone() }).err().unwrap().contains("HOME")
     );
+    // agent socket이 한도를 넘는 긴 HOME은 계획 전에 멈춘다(29자부터)
+    let long = |n: usize| MachineDetected { home: Some(format!("/{}", "u".repeat(n - 1))), ..mac.clone() };
+    assert!(install::choices(&settings, &long(28)).is_ok());
+    assert!(install::choices(&settings, &long(29)).err().unwrap().contains("socket"));
     for bad in [
         MachineSetupSettings { name: "mac b".into(), ..settings.clone() },
         MachineSetupSettings { host: "a b:1".into(), ..settings.clone() },

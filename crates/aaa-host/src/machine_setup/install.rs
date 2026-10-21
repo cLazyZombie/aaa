@@ -35,6 +35,8 @@ use crate::Host;
 const STEP_TIMEOUT: Duration = Duration::from_secs(120);
 /// 원격 적용 전체 시한(install의 등록 대기 상한 기본 600초보다 길게)
 const APPLY_TIMEOUT: Duration = Duration::from_secs(900);
+/// macOS `sockaddr_un.sun_path` 크기(끝 NUL 포함)
+const SUN_LEN: usize = 104;
 /// 원격 install 출력 상한(계획·결과 JSON)
 const OUTPUT_LIMIT: usize = 4 * 1024 * 1024;
 
@@ -113,6 +115,14 @@ pub(crate) fn choices(s: &MachineSetupSettings, d: &MachineDetected) -> Result<I
     let suffix = state_suffix(&d.os).ok_or_else(|| format!("{}는 아직 SSH로 설치하지 않는다(macOS부터)", d.os))?;
     let home = d.home.as_deref().map(|h| h.trim_end_matches('/')).filter(|h| remote_path_ok(h) && !h.is_empty());
     let home = home.ok_or("그 머신의 HOME을 읽지 못했다(감지를 다시 한다)")?;
+    // agent의 가장 긴 unix socket(`<상태>/agent/run/b<ID>.sock`, `aaa init`과 같은 잣대)이 macOS 한도 안이어야 pane을 연다
+    let longest = format!("{home}/{suffix}/agent/run/b{}.sock", "0".repeat(26)).len();
+    if longest >= SUN_LEN {
+        return Err(format!(
+            "그 머신의 HOME 경로가 길어 agent socket({longest}자, 한도 {})을 열 수 없다: {home}",
+            SUN_LEN - 1
+        ));
+    }
     let mut harness = s.harness.clone();
     harness.sort();
     harness.dedup();
