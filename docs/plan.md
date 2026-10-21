@@ -7165,3 +7165,9 @@ FRONT_API 1.96는 기본 검수 표지와 답 기록의 r 참조를 더한다. E
 - **승인 뒤 환경 보존.** hp argv 수리 후보의 첫 CI에서 승인은 통과했으나 apply가 installation_content_conflict로 닫혔다. 승인 PTY만 TERM=xterm-256color였고, 환경을 비운 apply는 TERM이 없었다. TERM을 포함한 service_environment의 승인 해시 대조는 유지하고 시험의 비대화형 apply/resume을 승인과 같은 환경으로 맞춘다. 실제 PTY 승인→읽기 dry-run의 해시 불일치 RED/일치 GREEN과 다른 TERM의 해시 변경·무쓰기 대조를 로컬에서 남긴다. 실제 등록 후속 단계는 바뀐 후보의 hp macos-15 CI에서 판정한다.
 
 - **실제 listener 경로.** TERM 보존 후보의 hp CI에서 등록과 host 시작 뒤 service_backend_not_ready가 반복됐다. 같은 canonical state의 실제 LocalListener bind는 105바이트에서 SUN_LEN 오류로 로컬 RED였다. launchd 실험실 root를 기존 backend lifecycle owner와 같은 `/tmp`로 맞추고 로컬 승인/계획 owner에 실제 agent/front listener bind/drop을 더한다. production IPC·ready 판정·600초 상한·기존 실제 등록/재개/공유 instance 단언은 유지한다. 실제 후속 성공은 변경 후보의 hp CI가 판정한다.
+
+### 8.420 연결 안내의 0.5초 지연(t-0686)
+
+- 대화·터미널 공통 연결 안내는 연결 대기가 500ms 이어졌을 때만 보인다. 연결 성공·중단·pane 전환은 표시 타이머를 정리한다. 끊김 뒤 재시도의 closed → connecting 전환은 같은 대기로 세어 표시를 다시 숨기지 않는다.
+- WebSocket 상태 판정·재시도·입력 허용·읽기 전용 사유와 오류 표시는 기존 동작을 유지한다. proto·FRONT_API·AGENT_LINK 변경은 없다.
+- E2E84는 실제 2,400행 Claude 기록과 pane 연결을 Chromium 1280px·WebKit 390px에서 연다. open/message 사건을 보류하고 브라우저 시계를 제어해 499ms 미표시·500ms 표시, 빠른 연결의 순간 표시 없음, 끊김·재시도·복구를 확인한다.

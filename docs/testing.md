@@ -2157,3 +2157,9 @@ E2E 74의 headless WebKit iframe 그림은 기존 E2E 59·plan §8.353과 같은
   9. 화면 공유 밖에서 터미널을 연 일이 있으면 그 단계와 까닭을 적는다(미완료).
 - `node web/e2e/web.e2e.mjs --spec 83-cli-zero-gaps`: 인벤토리의 작은 빈칸 다섯(답 1A). t1 줄 메뉴 「세션 끝내기」 → 확인 창 → 세션만 끝나고 「다시 열기」로 다시 뜸, coordinator 메뉴 「하나 더 띄우기」(맨 위 profile 이름을 단다) → coordinator pane 둘, 보고가 오면 host가 낸 30일 링크를 thread 화면을 연 채 설정 「이 aaa」 「낸 링크」에서 보고(앱 안 보기가 마지막 열람으로 남는다) 폐기하면 열려 있던 링크 줄도 「폐기됨」이 되고, 7일을 골라 새 링크(만료 − 발급 = 7일), 「나중」 파일은 폴더 밖 경로를 host가 거부한 말을 보이고 `memory/later.md`를 더하면 host `project show`의 `task_notes`에 들어가며 빼면 비운다.
 - 결함 심기: 「CLI 0회」 검문 끄기는 첫 단계가, `do.message`가 받는 thread를 잃으면 자동화 ② 단계(전달 기록 없음)가, thread 관리 메뉴의 「끝내기」 빼기는 정리 단계가 잡았다. `do.message` 본문에서 규칙 글만 빼는 결함은 잡지 못한다: 실행 자료(`memo`)에도 같은 글이 들어가 화면에 남는다. 81은 「세션 끝내기」가 `pane_close`를 보내는 결함(「다시 열기」 없음), 「하나 더 띄우기」가 `new`를 뒤집는 결함(coordinator 하나), 링크 수명을 보내지 않는 결함(30일), 폐기 뒤 host가 reports 사건을 내지 않는 결함(열린 화면이 active로 남음)을 잡았다.
+
+## 연결 안내의 0.5초 지연(t-0686, plan §8.420)
+
+- `NODE_PATH=$(npm root -g) node web/e2e/web.e2e.mjs <캡처 폴더> --spec 84-connection-banner --workers 1`: 실제 host·agent와 2,400행 Claude JSONL을 Chromium 1280px·WebKit 390px에서 연다.
+- 시험 안 WebSocket의 open/message 전달을 gate로 보류한다. 실제 연결·기록 조회는 유지하고 Playwright 시계를 499/500ms로 전진시켜 지연 경계와 빠른 연결에서 순간 표시도 없음을 MutationObserver로 확인한다.
+- pane 왕복의 지연 초기화, 실제 socket 닫힘 뒤 499ms 미표시·500ms 표시, 재시도 시 표시 유지, 회복 즉시 제거·옛 타이머 취소를 확인한다. 고정 sleep·재시도·시한 연장은 없다. 정본 전체 검증은 `nice -n 15 bash scripts/ci-local.sh`와 공개 검사다.
