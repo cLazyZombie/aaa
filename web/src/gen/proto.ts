@@ -1434,7 +1434,7 @@ draft?: QuestionAnswerView, };
 
 export type ThreadQuestion = {
 /**
- * 선택지 뒤의 Markdown 설명·그림(FRONT_API 1.98). 선택지 그림과 섞거나 버리지 않는다.
+ * 선택지 뒤의 Markdown 설명·그림(FRONT_API 1.99). 선택지 그림과 섞거나 버리지 않는다.
  */
 after?: string,
 /**

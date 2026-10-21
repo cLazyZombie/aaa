@@ -996,7 +996,7 @@ pub struct ThreadQuestions {
 /// 질문 하나: 글과 선택지(앞에서부터 A·B·C…)
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 pub struct ThreadQuestion {
-    /// 선택지 뒤의 Markdown 설명·그림(FRONT_API 1.98). 선택지 그림과 섞거나 버리지 않는다.
+    /// 선택지 뒤의 Markdown 설명·그림(FRONT_API 1.99). 선택지 그림과 섞거나 버리지 않는다.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub after: Option<String>,
