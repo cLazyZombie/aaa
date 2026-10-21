@@ -26,7 +26,7 @@ use std::time::Duration;
 
 use aaa_config::parse_version;
 use anyhow::{Context, Result, bail};
-#[cfg(test)]
+#[cfg(all(test, unix))]
 use sha2::Digest as _;
 
 /// self-check 한 번의 한도(실패 한도다: 정상 실행 파일은 바로 끝난다)

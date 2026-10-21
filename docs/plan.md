@@ -6891,3 +6891,4 @@ FRONT_API 1.96는 기본 검수 표지와 답 기록의 r 참조를 더한다. E
 - 실제 파일·Pipe DACL을 읽어 Authz로 현재 SID의 허용, 다른 SID·그룹의 거부, SYSTEM 예외를 검사하는 Windows 전용 시험을 둔다. macOS에서는 Windows 교차 build/clippy로 컴파일·링크를 확인한다. 실제 실행 판정은 착지 뒤 기존 CI windows-2025, 실제 PC 인수는 후속 Windows 머신 시험이다.
 
 - 착지 기준 origin/main `57bc997e`에서 마지막 §8.393·FRONT_API 1.97·AGENT_LINK 1.11·E2E76을 직접 확인했다. 이 작업은 §8.394로 맞추고 기존 API 버전·E2E 번호를 유지한다. E2E49는 main의 새 기억 본문·갱신 thread 동시 대기를 유지한다.
+- 통합 후보의 Windows 교차 clippy가 main의 `update.rs` 시험용 `sha2::Digest` import를 미사용으로 검출했다. 실제 사용처가 Unix 전용 rollback 시험이므로 import도 `cfg(all(test, unix))`로 맞춘다. 시험 내용·업데이트 동작은 유지한다.
