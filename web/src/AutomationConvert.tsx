@@ -17,8 +17,10 @@ function Plan({ files }: { files: string[] }) {
 
 export function ConvertSheet({ project, canControl, onClose, onDone }: { project: string; canControl: boolean; onClose: () => void; onDone: () => Promise<void> }) {
   const [phase, setPhase] = useState<Phase>({ kind: "loading" });
+  const [preview, setPreview] = useState(0);
   useEffect(() => {
     let live = true;
+    setPhase({ kind: "loading" });
     call({ op: "automation_convert", project, dry_run: true })
       .then((r) => {
         if (!live) return;
@@ -27,7 +29,7 @@ export function ConvertSheet({ project, canControl, onClose, onDone }: { project
       })
       .catch((e: unknown) => live && setPhase({ kind: "error", message: e instanceof Error ? e.message : String(e) }));
     return () => { live = false; };
-  }, [project]);
+  }, [project, preview]);
   const run = async (files: string[], sha: string) => {
     setPhase({ kind: "running", files, sha });
     try {
@@ -43,14 +45,15 @@ export function ConvertSheet({ project, canControl, onClose, onDone }: { project
   const footer = phase.kind === "plan" && phase.files.length > 0 && canControl
     ? <><button type="button" className="btn" onClick={onClose}>취소</button><button type="button" className="btn btn-primary" onClick={() => void run(phase.files, phase.sha)}>변환</button></>
     : phase.kind === "running" ? <button type="button" className="btn btn-primary" disabled>변환 중…</button>
+    : phase.kind === "error" ? <><button type="button" className="btn" onClick={onClose}>닫기</button><button type="button" className="btn btn-primary" onClick={() => setPreview((value) => value + 1)}>미리보기 다시 읽기</button></>
     : <button type="button" className="btn" onClick={onClose}>닫기</button>;
-  return <AutomationSheet title={phase.kind === "done" ? "새 형식으로 바꿨습니다" : "새 형식으로 바꾸기"} subtitle={<span className="automation-dim">{project}</span>} onClose={onClose} busy={busy} footer={footer} testid="automation-convert">
+  return <AutomationSheet title={phase.kind === "done" ? "새 형식으로 바꿨습니다" : phase.kind === "error" ? "새 형식으로 바꾸지 못했습니다" : "새 형식으로 바꾸기"} subtitle={<span className="automation-dim">{project}</span>} onClose={onClose} busy={busy} footer={footer} testid="automation-convert">
     {phase.kind === "loading" && <p role="status">변환 계획을 짜는 중…</p>}
-    {phase.kind === "error" && <p role="alert">{phase.message}</p>}
+    {phase.kind === "error" && <div role="alert"><p>{phase.message}</p><p>원인을 확인한 뒤 미리보기를 다시 읽어 변환할 파일을 확인하세요.</p></div>}
     {(phase.kind === "plan" || phase.kind === "running") && (phase.files.length === 0
       ? <p data-testid="convert-empty">바꿀 옛 파일이 없습니다.</p>
       : <>
-        <p>아래 파일을 새로 만들고 옛 파일은 <code>.converted/</code>로 옮겨 보존합니다. 값(조건·동작·승인 hash)이 같은지 host가 검증하고, 하나라도 실패하면 이번 파일만 되돌립니다. 이미 있는 파일은 덮어쓰지 않습니다.</p>
+        <p>아래 파일을 새로 만들고 옛 파일은 <code>.converted/</code>에 보존합니다. 같은 내용의 사본은 재사용하고 다른 내용은 번호를 붙여 보존합니다. 값(조건·동작·승인 hash)이 같은지 host가 검증하고, 하나라도 실패하면 이번 파일만 되돌립니다. 이미 있는 파일은 덮어쓰지 않습니다.</p>
         {!canControl && <p className="automation-dim">보기 권한은 미리보기만 볼 수 있습니다.</p>}
         <Plan files={phase.files} />
       </>)}

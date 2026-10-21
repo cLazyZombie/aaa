@@ -1665,6 +1665,69 @@ pub struct MachineSetupView {
     pub created_ms: u64,
     #[ts(type = "number")]
     pub updated_ms: u64,
+    /// 사람이 넣은 설치 설정(M3, plan §8.420). 옛 host는 생략한다
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub settings: Option<MachineSetupSettings>,
+    /// 원격 install이 낸 계획 요약(사람이 확인한다). 경로·계정이 든 계획 원문은 host 작업 폴더에만 둔다
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional, as = "Option<MachineSetupReview>")]
+    pub review: Option<Box<MachineSetupReview>>,
+    /// 원격 install 적용의 진행과 결과
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional, as = "Option<MachineSetupInstall>")]
+    pub install: Option<Box<MachineSetupInstall>>,
+}
+
+/// 새 머신의 install 설정(웹 폼). host가 install choices(role agent·등록 grant)로 옮긴다
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+pub struct MachineSetupSettings {
+    /// 새 머신 이름(host 규칙, 이미 있는 이름은 거부)
+    pub name: String,
+    /// 새 머신이 닿을 host agent 연결 주소(`enroll_guide` 후보 중 하나)
+    pub host: String,
+    /// 작업 root(worktree 위치, 원격 절대 경로)
+    pub work_root: String,
+    /// 작업 root가 있는 외장 디스크 mount(비우면 내장 디스크)
+    pub work_mount: Option<String>,
+    /// 그 머신에서 쓸 harness(비우면 none)
+    pub harness: Vec<crate::install::InstallHarness>,
+    pub login: crate::install::InstallLogin,
+}
+
+/// 원격 `install-probe`가 낸 계획의 공개 요약
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+pub struct MachineSetupReview {
+    /// 사람이 확인하는 계획 hash(적용 요청에 그대로 실어 보낸다)
+    pub plan_sha256: String,
+    /// 보낸 aaa 실행 파일(원격에서 같은 SHA·판을 확인했다)
+    pub binary_sha256: String,
+    pub binary_version: String,
+    /// 바꿀 것·검사·사람이 할 일(install 공개 결과 그대로)
+    pub changes: Vec<crate::install::InstallChange>,
+    pub checks: Vec<crate::install::InstallCheck>,
+    pub needs_user: Vec<crate::install::InstallNeedsUser>,
+    /// 승인 범위(operation 이름만, 원격 경로는 싣지 않는다)
+    pub operations: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+pub struct MachineSetupInstall {
+    pub installation_id: Option<String>,
+    /// 마지막 진행 사건(사람이 읽는 글)
+    pub last_event: Option<String>,
+    /// 끝난 install 결과(공개 envelope)
+    pub result: Option<crate::install::InstallResult>,
+    /// 등록된 머신 이름(grant 등록 뒤)
+    pub machine: Option<String>,
+    /// 끝 확인 shell pane이 적은 줄(작업 폴더·git·harness·PATH)
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    #[ts(optional, as = "Option<Vec<String>>")]
+    pub checks: Vec<String>,
+    /// 끝 확인 pane(사람이 열어 본다)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub check_pane: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
@@ -1678,11 +1741,21 @@ pub enum MachineSetupPhase {
     Detecting,
     /// 감지가 안 됐다: 사람이 OS·CPU를 고른다
     Choose,
-    /// 감지(또는 고름) 끝, 지원하는 대상이다. 설치(M3)는 이 다음이다
+    /// 감지(또는 고름) 끝, 지원하는 대상이다. 사람이 설치 설정을 넣는다
     Ready,
     /// 감지했지만 release 대상이 없다(예: Windows ARM64)
     Unsupported,
     Failed,
+    /// aaa를 보내 확인하고 원격 install이 계획을 낸다(M3)
+    Planning,
+    /// 계획이 나왔다: 사람이 바꿀 것을 보고 「설치하고 등록」을 누른다
+    Review,
+    /// 서명 승인 → 원격 install 적용·등록 중
+    Installing,
+    /// install이 사람 일을 남겼다(그 머신에서 하고 새로 시작한다)
+    NeedsUser,
+    /// 설치·등록 끝
+    Installed,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
@@ -2245,9 +2318,29 @@ pub enum FrontRequest {
         os: String,
         arch: String,
     },
-    /// FRONT_API 1.93. 작업을 멈추고 목록에서 뺀다(원격에 남긴 것은 없다). 사람만
+    /// FRONT_API 1.93. 작업을 멈추고 목록에서 뺀다(원격 임시 폴더가 있으면 지운다). 사람만
     MachineSetupCancel {
         job: String,
+    },
+    /// FRONT_API 1.103. 준비된 작업에 설치 설정을 넣는다(M3, plan §8.420): host가 같은 판 aaa를 원격 임시 폴더에 보내 SHA·판을 확인하고
+    /// 원격 `install-probe`로 계획을 받는다. 원격 설치 자리에는 아직 쓰지 않는다. 사람만
+    MachineSetupPlan {
+        job: String,
+        settings: crate::MachineSetupSettings,
+    },
+    /// FRONT_API 1.103. 화면에서 본 계획 hash로 설치하고 등록한다: host가 그 계획에 서명하고, 원격 install이 적용하며 grant로 등록한다. 사람만
+    MachineSetupApply {
+        job: String,
+        plan_sha256: String,
+    },
+    /// FRONT_API 1.103. 설치·등록된 머신에 끝 확인 shell pane을 연다(작업 폴더·git·harness·PATH를 적는다, 모델 비용 없음). 사람만
+    MachineSetupCheck {
+        job: String,
+    },
+    /// FRONT_API 1.103. 설치·등록된 머신에 harness 로그인 pane(`claude`·`codex login`)을 연다. 사람만
+    MachineSetupLogin {
+        job: String,
+        harness: crate::install::InstallHarness,
     },
     /// FRONT_API 1.93. 최근 SSH 추가 작업(Reader도 본다)
     MachineSetupList,
@@ -4063,6 +4156,8 @@ mod tests {
             FrontRequest::MachineSetupTrust { job: "j".into(), host_key_sha256: "SHA256:x".into() }.needs_control()
         );
         assert!(!FrontRequest::MachineSetupStart { target: "mac-b".into() }.local_only());
+        let apply = FrontRequest::MachineSetupApply { job: "j".into(), plan_sha256: "0".repeat(64) };
+        assert!(apply.needs_control() && !apply.local_only());
         assert!(!FrontRequest::Threads { project: None, role: None }.needs_control());
         // 사후 평가자 세션은 Reader로 다룬다: 평가 보기는 되고, 지정·채택·메시지는 안 된다(§8.13)
         assert!(!FrontRequest::EvaluatorStatus { project: None }.needs_control());

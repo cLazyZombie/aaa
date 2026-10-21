@@ -2,7 +2,7 @@
 
 새 기능을 만드는 thread가 따르는 짧은 규칙이다. 근거는 참고 넷(herdr 0.9.5·herdr-projects 0.2.35·herdr-web-ui `aa624cb`·t3code `4b1024da`)과 이 저장소에서 실제로 난 간헐 실패다. 전략과 도구 목록은 [plan §13](plan.md#13-테스트-전략과-직접-만들-e2e-도구)에 있다.
 
-## 화면·고정폭·터미널 글꼴(t-0683)
+## 화면·고정폭·터미널 글꼴(t-0683, plan §8.423)
 
 - `NODE_PATH=$(npm root -g) node web/e2e/web.e2e.mjs <캡처 폴더> --spec 06-settings --workers 1`:
   실제 host의 Chromium 1280px·WebKit 390px에서 세 글꼴을 바꾸고 새로고침 뒤 입력값·실제 CSS 목록을 대조한다.
@@ -12,6 +12,26 @@
   설정의 모양·터미널 화면을 두 기기에서 캡처한다. 기존 face gate·설치 글꼴 거부·PTY 크기 검사는 유지한다.
   DOM·글꼴·storage 사건으로 끝내며 고정 sleep·재시도·시한 연장은 없다.
 
+
+
+## 보고로 자동 갱신하는 작업 요약(t-0682, plan §8.422)
+
+- `nice -n 15 cargo test -p aaa-host --lib progress --locked`: 실제 보고 수집 owner가 진행 목록·완료 수를 고치면서 목표·사용자 결정을 보존하는지 검사한다. 같은 보고 재수집·host 재시작 뒤에도 나중 지시 경고가 남아야 한다. 수집 시작과 수신 사이에 지시를 넣어 그 지시를 반영했다고 세지 않는 차례를 고정한다. 잘못된 목록·코드 예제·중복 절·항목/길이 상한은 마지막 정상 목록을 보존한다.
+- 같은 host 시험은 실제 harness 사건으로 같은 활동의 진행률 갱신·정기 보고에서 활동 시작을 유지하고, 활동 변경·새 세션·대기 답변에서 초기화하는지 검사한다. 오래된 진행 사건도 새 활동 시계를 덮지 못한다.
+- `node --test web/test/summaryCard.test.mjs`: 시작 후/활동 시간의 분리·진행률 미정·옛 host의 활동 시작 누락·끝난 thread 시간과 음수 경계를 확인한다.
+- `NODE_PATH=$(npm root -g) node web/e2e/web.e2e.mjs <캡처 폴더> --spec 28-thread-summary --workers 1`: 실제 agent의 보고 감시→host 수집→열린 hover/상세 카드의 목록·완료 수·경고 갱신을 확인한다. pane 안 실제 CLI의 활동·진행률 갱신, 가상 시계의 경과 시간, coordinator 목표만 편집할 때 진행 보존, Chromium 320px·WebKit 390px Reader 표시·쓰기 거부를 함께 검사한다. 고정 sleep·실패 재시도·시한 연장은 쓰지 않는다.
+- 결함 심기: 보고 수집 owner의 진행 전달 호출을 제거하면 실제 수집 시험이 진행 항목 `1 != 2`로 실패한다. 제품 원본 바이트를 복원한 뒤 전체 gate를 수행한다.
+- 첫 전체 gate는 319초로 web·fmt·build·clippy·Rust 전체·public을 통과했고 E2E는 84/85 파일 통과다. 82 자동화 만들기의 저장 단추가 비활성 상태로 30초를 넘겼다(같은 실행 중 1분 부하 77.89). 저장 실패 때 주소·이름·입력값·비활성 상태를 남기는 진단만 더한 동일 제품의 단독 82 전체는 29초에 통과했다. 재시도·시한/기대값 변경으로 첫 실패를 지우지 않으며 원인은 미확정이다. 착지 통합 검증에서 원본과 진단을 함께 확인한다.
+- 전체 필수 검증은 `nice -n 15 bash scripts/ci-local.sh`와 공개 저장소 검사다. FRONT_API는 1.104, Agent link는 1.11을 유지한다.
+- 착지 기준 `8ddca9dc` 통합본은 전체 ci-local 217초에 일곱 단계 모두 통과했다. 웹 유닛 471개·Rust 전체·의존성 경계·웹 E2E 85개 파일(96개 작업)·공개 검사를 확인했다. E2E 28 전체와 82 전체(20.5초)가 통과했고 저장 단추 실패는 재발하지 않았다. 이 실행의 기록한 1분 부하는 10.69~86.22이며 시한 초과나 단독 재실행은 없었다. 최초 82 실패의 원인은 여전히 미확정으로 보존한다.
+
+
+## PR routine 재변환과 보존 사본(t-0684, plan §8.421)
+
+- `nice -n 15 cargo test -p aaa-host --lib automation::tests:: --locked`: 영문 보존 사본+한글 routine+TOML 없음의 격리 파일로 기존 사본 충돌을 재현한다. 같은 사본 재사용·다른 판의 첫 빈 번호·실행 실패 복구에서 기존 사본 보존·symlink 거부·보존 위치 변경의 hash 및 무쓰기 거부·기존 TOML 충돌을 검사한다. 변환된 PR의 events·enabled·owner 메시지·본문도 원본과 비교한다.
+- `archived_followup_without_toml_is_not_revived_by_doctor_or_create`는 변환 뒤 TOML이 없는 경우 `files_problems`가 옛 규칙을 만들 대상으로 판정하던 RED를 보존한다. 실제 host의 doctor와 create가 보존 사본과 원래 프로젝트 파일을 지키는지 검사한다. 기존 TOML이 있는 keeper도 유지한다.
+- `NODE_PATH=$(npm root -g) node web/e2e/web.e2e.mjs --spec 40-automation-detail --workers 1`: 실제 host의 미리보기 문법 오류·계획 변경 실행 오류를 화면 제목과 alert에서 확인하고, 원인을 고친 뒤 새 미리보기를 읽어 변환한다. 동일 사본 재사용·PR 두 판 보존·doctor 후 옛 규칙 부재와 Reader 미리보기 전용을 함께 확인한다. 고정 sleep·실패 재시도·시한 연장 없이 응답과 DOM 사건으로 끝낸다.
+- 운영 프로젝트는 수정하지 않는다. 전체 검증은 `nice -n 15 bash scripts/ci-local.sh`와 공개 검사다.
 
 ## install macOS launchd owner(t-0485, plan §8.419)
 
@@ -2168,3 +2188,26 @@ E2E 74의 headless WebKit iframe 그림은 기존 E2E 59·plan §8.353과 같은
   9. 화면 공유 밖에서 터미널을 연 일이 있으면 그 단계와 까닭을 적는다(미완료).
 - `node web/e2e/web.e2e.mjs --spec 83-cli-zero-gaps`: 인벤토리의 작은 빈칸 다섯(답 1A). t1 줄 메뉴 「세션 끝내기」 → 확인 창 → 세션만 끝나고 「다시 열기」로 다시 뜸, coordinator 메뉴 「하나 더 띄우기」(맨 위 profile 이름을 단다) → coordinator pane 둘, 보고가 오면 host가 낸 30일 링크를 thread 화면을 연 채 설정 「이 aaa」 「낸 링크」에서 보고(앱 안 보기가 마지막 열람으로 남는다) 폐기하면 열려 있던 링크 줄도 「폐기됨」이 되고, 7일을 골라 새 링크(만료 − 발급 = 7일), 「나중」 파일은 폴더 밖 경로를 host가 거부한 말을 보이고 `memory/later.md`를 더하면 host `project show`의 `task_notes`에 들어가며 빼면 비운다.
 - 결함 심기: 「CLI 0회」 검문 끄기는 첫 단계가, `do.message`가 받는 thread를 잃으면 자동화 ② 단계(전달 기록 없음)가, thread 관리 메뉴의 「끝내기」 빼기는 정리 단계가 잡았다. `do.message` 본문에서 규칙 글만 빼는 결함은 잡지 못한다: 실행 자료(`memo`)에도 같은 글이 들어가 화면에 남는다. 81은 「세션 끝내기」가 `pane_close`를 보내는 결함(「다시 열기」 없음), 「하나 더 띄우기」가 `new`를 뒤집는 결함(coordinator 하나), 링크 수명을 보내지 않는 결함(30일), 폐기 뒤 host가 reports 사건을 내지 않는 결함(열린 화면이 active로 남음)을 잡았다.
+
+## 질문 dock 칩 정렬·답한 뒤 숨김(t-0687, plan §8.329)
+
+- `NODE_PATH=$(npm root -g) node web/e2e/web.e2e.mjs <캡처 폴더> --spec 53-thread-questions --workers 1`: 실제 host의 질문 보고와 휴대폰 답변을 사용한다. Chromium 2800px·1280px와 WebKit 휴대폰에서 미응답 칩의 왼쪽 끝·열 오른쪽 끝이 입력칸과 1px 이내이고 입력칸 위에 있는지, 가로 넘침이 없는지 단언한다.
+- 같은 세 크기의 답변 뒤 dock 칩·빈 dock 부재를 검사하고 두 상태의 스크린샷을 남긴다. 기존 대화 칩의 답함·보관된 질문 원문·다른 기기 카드·새 질문 회귀 검사는 유지한다. DOM·host 답 사건으로 끝내며 고정 sleep이나 시한 연장을 쓰지 않는다.
+
+## SSH로 설치·등록(t-0578 웹 머신 추가 M3, plan §8.420)
+
+- host 유닛 `cargo test -p aaa-host machine_setup`:
+  - aaa 전송: 실험실 sshd로 보낸 파일이 원격 `mktemp -d` 폴더(0700)에 같은 SHA로 놓이고 `--version`이 돈다. SHA·판이 어긋나면 그 폴더를 지운다(보낸 파일과 같은 내용의 폴더만 세어 나란히 도는 시험과 섞이지 않는다).
+  - 원격 install 대본: 실제 ssh로 보낸 shell 대본이 `install-probe`·`install-bootstrap`·`install --resume`에 미리 만든 답을 내고 받은 인자·stdin을 남긴다. 계획은 host가 보낼 choices로 실제 install planner를 돌린 것이다. 적용은 FIFO가 열릴 때까지 기다리고, 그사이 시험이 둘째 package의 grant로 host `install_enroll`을 부른다(실제 원격 worker 대신). 고정 sleep은 없다.
+  - 원격 install이 이 SSH를 거부(exit 3)하면 까닭을 보이고 원격 임시 폴더·계획 파일을 남기지 않는다.
+  - launcher(install I3): 보낸 choices가 `--service launchd`·`--start now`이고 원격 실행 파일 옆에 host 실행 파일 옆의 launcher package가 같은 내용으로 있다(대본이 계획 때 그 옆 파일을 남긴다). 다른 실행 파일 SHA에 묶인 package는 원격 계획 전에 멈추고 원격 임시 폴더를 지운다. 개발 판 host 옆에 없으면 보내지 않고, 원격이 `installation_launcher_asset_required`를 사람 일로 알리면 host가 준비할 것(package 이름·release 판 host)을 덧붙인다. release 번호 판인데 그 release에 launcher가 없으면(옛 release) manifest만 읽고 보내지 않으며 그 까닭을 덧붙인다. 대본 원격은 OS를 보지 않으므로 Linux CI에서도 감지 OS를 macOS로 둔다.
+  - release 받기: 임시 HTTP 서버(받은 경로를 남김)로 정상·같은 SHA 캐시(asset 다시 안 받음)·SHA 다름(남기지 않음)·manifest 판 다름·그 판 release가 아닌 주소(manifest만 읽음)·없는 종류·옛 manifest의 launcher 없음. 감지 CPU를 다른 종류로 바꾼 작업은 release 실행 파일과 launcher(manifest `launchers`, 캐시는 실행 파일 옆 0600)를 받아 원격에 나란히 보내고 그 SHA를 원격 install executor로 준다.
+  - 끝 확인·로그인: 끝 확인 스크립트를 이 머신에서 실제로 돌려 표지 사이 줄을 읽는다. 가짜 agent(duplex 연결)가 Spawn argv·cwd를 남기고, 그 스크립트 실제 출력을 pane 화면으로 넣으면 host가 작업에 줄을 남긴다. `codex login` pane, 끝나지 않은 작업·보기 기기·머신 없음·연결 안 됨 거부.
+- 웹 유닛 `node --test web/test/machineSetupModel.test.mjs`(1.103 판정, macOS만 설치, 기본 설정, 설정 앞 검사, 단계).
+- 웹 E2E `72-machine-add` 마지막 단계(harness가 `AAA_TEST_RELEASE_BASE`를 닫힌 loopback 포트로 줘 개발 빌드 host가 같은 판 launcher를 찾으러 실제 GitHub에 가지 않는다): 설치 설정 폼(기본 이름·작업 root, 잘못된 이름 알림) → 「계획 보기」가 실제 host 실행 파일을 보내고 실제 install이 비특권 실험실 sshd를 거부하는 까닭(시스템 SSH 서버)을 보인다. 원격 임시 폴더가 남지 않는다. 보기 기기에는 설정 폼이 없다.
+- 실제 install SSH 입구(root 소유 시스템 sshd 계보)는 이 Mac 실험실에서 열 수 없다(시스템 설정을 바꾸지 않는다). 끝까지의 실제 경로는 CI 필수 단계 「SSH로 설치·등록 실제 root sshd·LaunchAgent」(macos-15)가 본다:
+  - `scripts/ci-root-sshd.sh`(GitHub Actions가 아니면 멈춘다)가 실험실 host key·사용자 키·`sshd_config`(loopback 빈 포트, 비밀번호·PAM 끔, `AllowUsers` 자기 계정, `SetEnv HOME=<실험실>/h`. 실험실은 agent socket 길이 때문에 짧은 `/private/tmp/ar.XXXXX`)를 만들고 `sudo -n /usr/sbin/sshd`로 띄운다. 끝에 그 PID만 끝낸다.
+  - ignored 시험 `cargo test -p aaa --test m13 ssh_install::ssh_install_through_the_system_sshd_starts_a_launch_agent_that_connects_and_checks -- --ignored --exact`(`AAA_ROOT_SSHD_LAB`): 시험 aaa 사본 옆에 I3 시험과 같은 방법으로 만든 launcher package를 두고 그 사본으로 host를 띄운다 → 「ci」 접속 → 지문(`ssh-keygen -lf`와 같음) 믿음 → 감지(원격 HOME = 실험실) → 계획(Review) → 적용 → 설치·등록됨 → agent 연결 → 끝 확인 줄(작업 폴더·PATH).
+  - HOME 분리: 원격 셸·install·LaunchAgent(plist의 HOME)가 모두 실험실 HOME을 쓴다. 시험이 실험실 HOME 아래 plist·`.local/bin/aaa`를 보고, runner 실제 HOME의 같은 자리(plist·실행 파일·launcher·상태 폴더)가 전후 같은지 본다. gui domain label `dev.aaa.agent`는 계정 전역이라 적용 전 없어야 하고 시험이 끝에 bootout한다.
+  - 스크립트는 시험 전에 그 sshd로 연 원격 명령의 조상(pid·ppid·사용자·image)을 적는다. install 검증 SSH 입구가 root `/usr/sbin/sshd`를 찾지 못하면 그 사슬로 원인을 본다.
+  - 이 Mac에서는 같은 시험을 비특권 실험실 sshd(`SetEnv HOME` 포함)로 `env -u AAA_SESSION_ID`로 돌려 계획 단계의 검증 SSH 입구 거절까지(launcher 만들기·host·지문·감지 HOME·전송) 확인한다.

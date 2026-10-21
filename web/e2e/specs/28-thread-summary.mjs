@@ -2,7 +2,7 @@
 // thread 줄의 hover 카드(마우스 기기만, 6줄 안팎)와 thread 화면 머리 「요약」 단추(데스크톱 팝오버·휴대폰 아래 시트, 접힌 절).
 // 요약 뒤 지시는 단추 점과 접힌 절로 보인다. 휴대폰에는 hover 대안이 없다(사용자 결정).
 import fs from "node:fs";
-import { root, aaa, step, browser, webkit, pairPage, inList, domIs, until, shot, claudeSh, claudeIdle, waitOutput } from "../lib/harness.mjs";
+import { root, AA, aaa, step, browser, webkit, pairPage, inList, domIs, until, shot, claudeSh, claudeIdle, waitOutput } from "../lib/harness.mjs";
 
 const SUMMARY = `# 목표
 웹 왼쪽 패널 다듬기
@@ -26,7 +26,7 @@ const cardOf = (p) =>
     const card = document.querySelector('[data-testid="summary-hover"]');
     if (!card) return null;
     const box = card.getBoundingClientRect();
-    const lines = [...card.querySelectorAll(".summary-goal, .summary-now li, .summary-latest, .summary-status")];
+    const lines = [...card.querySelectorAll(".summary-goal, .summary-now li, .summary-latest, .summary-activity p, .summary-status")];
     // 줄마다 한 줄: 글이 넘치면 …로 자르고 줄을 늘리지 않는다
     const wrapped = lines.filter((l) => l.getBoundingClientRect().height > 30).map((l) => l.textContent);
     return { text: card.innerText, lines: lines.length, height: box.height, wrapped, visible: card.style.visibility !== "hidden" };
@@ -81,15 +81,16 @@ export default async function ({ page }) {
     await pop.waitFor({ state: "detached" });
   });
 
-  await step("thread 줄 hover 카드(데스크톱): 150ms 뒤 줄 오른쪽에 6줄 안팎(목표·지금 3줄·최근 바뀐 것·상태)만, 줄을 늘리지 않고, 떠나면·⋯ 메뉴면 닫힌다", async () => {
+  await step("thread 줄 hover 카드(데스크톱): 150ms 뒤 목표·지금·최근 변경·활동·시간·상태, 한 줄씩 보이고 떠나면·⋯ 메뉴면 닫힌다", async () => {
     const row = page.getByTestId(`thread-demo-${id}`);
     if ((await row.getAttribute("title")) !== null) throw new Error("hover 카드가 title tooltip을 대신한다");
     await row.hover();
     await page.getByTestId("summary-hover").waitFor();
     await domIs(page, "카드 자리", () => document.querySelector('[data-testid="summary-hover"]')?.style.visibility !== "hidden");
     const card = await cardOf(page);
-    // 목표 1 + 지금 3 + 최근 바뀐 것 1 + 상태 1. 정한 것·끝남·처음은 카드에 없다
-    if (card.lines !== 6 || card.wrapped.length > 0 || card.height > 220) throw new Error(`카드 ${JSON.stringify(card)}`);
+    // 기존 여섯 줄에 현재 활동·경과 시간 두 줄을 더한다. 정한 것·끝남·처음은 상세에서 읽는다.
+    if (card.lines !== 8 || card.wrapped.length > 0 || card.height > 280) throw new Error(`카드 ${JSON.stringify(card)}`);
+    if (!card.text.includes("지금 활동:") || !card.text.includes("시작 후") || !card.text.includes("활동")) throw new Error(`활동·시간 ${card.text}`);
     for (const word of ["웹 왼쪽 패널 다듬기", "특수 단추 자리 옮기기", "쉬는 중엔 안 보냄"]) {
       if (!card.text.includes(word)) throw new Error(`카드에 ${word}가 없다: ${card.text}`);
     }
@@ -183,6 +184,23 @@ export default async function ({ page }) {
     };
     const initial = set(["x", "~", " ", "x", " "]);
     if (initial.progress.length !== 5) throw new Error("실제 host가 전체 목록을 전달하지 않았다");
+    const report = (marks) => {
+      const t = aaa("thread", "show", "demo", id);
+      fs.writeFileSync(`${t.work_dir}/report.md`, `[진행 중] 웹 확인\n## Report\n실제 보고 감시 시험\n## 진행\n${names.map((n, i) => `- [${marks[i]}] ${n}`).join("\n")}\n## Next\n- 검증을 마친다\n`);
+    };
+    // 실제 pane 안의 CLI 보고다. 같은 활동의 재보고는 host의 활동 시작 시각을 유지해야 한다.
+    const activityFile = `${root}/summary-activity.sh`;
+    const quote = (s) => `'${s.replaceAll("'", "'\\''")}'`;
+    const activity = (percent) => {
+      fs.writeFileSync(activityFile, `${quote(AA)} report --percent ${percent} --activity '웹 회귀 검증'\n`);
+      aaa("thread", "message", "demo", id, "--text", `post-probe ${activityFile}`);
+    };
+    activity(65);
+    const agent = await until("활동 보고 수신", () => {
+      const a = aaa("thread", "show", "demo", id).agent;
+      return a?.percent === 65 && a.progress === "웹 회귀 검증" ? a : null;
+    });
+    report(["x", "~", " ", "x", " "]);
     await page.getByTestId(`thread-demo-${id}`).hover();
     const hover = page.getByTestId("summary-hover");
     await hover.waitFor();
@@ -198,11 +216,25 @@ export default async function ({ page }) {
     if (layout.some((l) => l.height > 30) || !layout.at(-1).clipped) throw new Error(`hover의 긴 이름은 한 줄 ${JSON.stringify(layout)}`);
     await shot(page, "summary-progress-hover");
 
-    // 카드를 열어 둔 채 실제 CLI가 요약을 갱신한다. 목록 순서·캐시와 완료 개수를 함께 본다.
-    set(["x", "x", "~", "x", " "]);
+    await domIs(page, "열린 카드의 실시간 활동", () => document.querySelector('[data-testid="summary-hover"] [data-testid="summary-activity"]')?.textContent.includes("웹 회귀 검증 · ~65%"));
+    await page.clock.install({ time: agent.progress_since_ms + 10_000 });
+    try {
+      const time = hover.getByTestId("summary-time");
+      await page.clock.runFor(1000);
+      const before = await time.innerText();
+      await page.clock.runFor(2000);
+      if ((await time.innerText()) === before) throw new Error("열린 카드의 경과 시간이 멈췄다");
+    } finally { await page.clock.resume(); }
+    activity(70);
+    await domIs(page, "같은 활동의 진행률 실시간 갱신", () => document.querySelector('[data-testid="summary-hover"] [data-testid="summary-activity"]')?.textContent.includes("웹 회귀 검증 · ~70%"));
+    if (aaa("thread", "show", "demo", id).agent.progress_since_ms !== agent.progress_since_ms) throw new Error("정기 보고가 활동 시간을 초기화했다");
+
+    // 카드를 열어 둔 채 report.md만 바꾼다. agent 감시→host 사본→카드 캐시·경고 갱신을 함께 본다.
+    report(["x", "x", "~", "x", " "]);
     await domIs(page, "열린 카드 진행 갱신", () => document.querySelector('[data-testid="summary-hover"] [data-testid="summary-progress"]')?.textContent.includes("3/5 완료"));
     const updated = await progress.getByRole("listitem").evaluateAll((ls) => ls.map((l) => l.dataset.state));
     if (JSON.stringify(updated) !== JSON.stringify(["done", "done", "working", "done", "pending"])) throw new Error(`갱신 순서 ${JSON.stringify(updated)}`);
+    await domIs(page, "새 진행 보고가 이전 지시 반영", () => !document.querySelector('[data-testid="summary-hover"] .summary-warn'));
     aaa("thread", "message", "demo", id, "--text", "태블릿 조건도 확인해 줘");
     await domIs(page, "진행 목록 옆 새 지시 경고", () => document.querySelector('[data-testid="summary-hover"] .summary-warn')?.textContent.includes("요약 뒤 지시 1개"));
     if (!(await progress.innerText()).includes("3/5 완료")) throw new Error("새 지시로 완료 개수가 바뀌었다");
@@ -225,6 +257,8 @@ export default async function ({ page }) {
           const lines = await sheet.locator(".summary-step-text").allTextContents();
           if (JSON.stringify(lines) !== JSON.stringify(names)) throw new Error(`Reader 전체 목록 ${JSON.stringify(lines)}`);
           if (!(await sheet.innerText()).includes("3/5 완료") || !(await sheet.innerText()).includes("요약 뒤 지시")) throw new Error("Reader 완료 개수·새 지시");
+          const activity = await sheet.getByTestId("summary-activity").innerText();
+          if (!activity.includes("웹 회귀 검증 · ~70%") || !activity.includes("시작 후") || !activity.includes("활동")) throw new Error(`Reader 활동·시간 ${activity}`);
           const box = await sheet.evaluate((el) => ({ width: innerWidth, left: el.getBoundingClientRect().left, right: el.getBoundingClientRect().right, overflow: el.scrollWidth > el.clientWidth + 1, lastHeight: el.querySelector("li:last-child .summary-step-text").getBoundingClientRect().height }));
           if (box.left < 0 || box.right > width + 1 || box.overflow || box.lastHeight <= 20) throw new Error(`휴대폰 줄바꿈·넘침 ${JSON.stringify(box)}`);
           const refusal = await p.evaluate(async ([thread]) => (await fetch("/api/v1/call", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ op: "thread_summary_set", project: "demo", thread, text: "# 목표\n보기 기기 쓰기 금지" }) })).json(), [id]);
@@ -235,18 +269,18 @@ export default async function ({ page }) {
       }
     } finally { await wk.close(); }
 
-    // 모두 완료해도 목록을 없애거나 재정렬하지 않는다. 요약을 다시 쓰면 이전 지시는 반영된다.
-    set(["x", "x", "x", "x", "x"]);
+    // 모두 완료해도 목록을 없애거나 재정렬하지 않는다. 다음 진행 보고가 이전 지시를 반영한다.
+    report(["x", "x", "x", "x", "x"]);
     await page.getByTestId("summary-open").click();
     const pop = page.getByTestId("summary-pop");
     await domIs(page, "모든 단계 완료", () => document.querySelector('[data-testid="summary-pop"] [data-testid="summary-progress"]')?.textContent.includes("5/5 완료"));
     if ((await pop.locator('.summary-step[data-state="done"]').count()) !== 5 || await pop.locator(".summary-warn").count()) throw new Error("완료 목록 보존·반영한 지시");
     await shot(page, "summary-progress-done");
-    // 새 형식을 쓴 뒤에도 옛 형식으로 돌아갈 수 있다. 열린 상세의 캐시도 갱신된다.
-    fs.writeFileSync(file, "# 목표\n목록 준비 중\n");
+    // coordinator는 목표·결정을 고친다. 진행 목록을 생략해도 thread가 보고한 완료 상태를 보존한다.
+    fs.writeFileSync(file, "# 목표\n바뀐 목표\n");
     aaa("thread", "summary", "demo", id, "--file", file);
-    await domIs(page, "목록 없는 요약", () => document.querySelector('[data-testid="summary-pop"]')?.textContent.includes("아직 작업 목록 없음"));
-    if (await pop.getByTestId("summary-progress").count()) throw new Error("옛 상태로 만든 완료 개수");
+    await domIs(page, "목표만 편집한 요약", () => document.querySelector('[data-testid="summary-pop"] .summary-goal')?.textContent.includes("바뀐 목표"));
+    if ((await pop.locator('.summary-step[data-state="done"]').count()) !== 5) throw new Error("목표 편집이 보고한 완료 목록을 덮었다");
     await page.keyboard.press("Escape");
     await pop.waitFor({ state: "detached" });
   });

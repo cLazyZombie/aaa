@@ -5,8 +5,13 @@ use std::{collections::BTreeMap, io::Write, path::Path};
 pub(super) struct Plan {
     writes: BTreeMap<String, String>,
     originals: BTreeMap<String, String>,
+    archives: BTreeMap<String, Archive>,
     pub(super) targets: Vec<(String, String)>,
     state_hash: String,
+}
+struct Archive {
+    path: String,
+    reuse: bool,
 }
 fn add(plan: &mut Plan, root: &Path, file: String, text: String) -> Result<(), String> {
     if plan.writes.contains_key(&file) {
@@ -73,7 +78,10 @@ pub(super) fn prepare(root: &Path, machine: &str) -> Result<Plan, String> {
         if file.ends_with(".md") && !project_text(root, &file)?.starts_with("+++\n") {
             continue;
         }
-        definitions.insert(name.clone(), crate::legacy_mission::definition(root, &name)?);
+        definitions.insert(
+            name.clone(),
+            crate::legacy_mission::definition(root, &name).map_err(|e| format!("{file}:1:1 변환: {e}"))?,
+        );
     }
     for (name, def) in &definitions {
         add(&mut plan, root, format!("automations/{name}.brief.md"), format!("{}\n", def.body.trim()))?;
@@ -215,6 +223,9 @@ pub(super) fn prepare(root: &Path, machine: &str) -> Result<Plan, String> {
             add(&mut plan, root, file.into(), data)?;
         }
     }
+    for (file, text) in &plan.originals {
+        plan.archives.insert(file.clone(), archive(root, file, text)?);
+    }
     Ok(plan)
 }
 fn parent(root: &Path, file: &str) -> Result<(), String> {
@@ -230,9 +241,36 @@ fn parent(root: &Path, file: &str) -> Result<(), String> {
     }
     Ok(())
 }
-fn archive(file: &str) -> String {
+fn archive(root: &Path, file: &str, text: &str) -> Result<Archive, String> {
     let p = Path::new(file);
-    format!("{}/.converted/{}", p.parent().unwrap().to_string_lossy(), p.file_name().unwrap().to_string_lossy())
+    let dir = p.parent().unwrap();
+    // 같은 사본은 그대로 쓰고, 다른 판은 첫 빈 번호로 보존한다. 미리보기 때 경로도 확정한다.
+    for number in 0u64.. {
+        let name = if number == 0 {
+            p.file_name().unwrap().to_string_lossy().into_owned()
+        } else if let Some(extension) = p.extension() {
+            format!("{}.{number}.{}", p.file_stem().unwrap().to_string_lossy(), extension.to_string_lossy())
+        } else {
+            format!("{}.{number}", p.file_name().unwrap().to_string_lossy())
+        };
+        let path = if dir.as_os_str().is_empty() {
+            format!(".converted/{name}")
+        } else {
+            format!("{}/.converted/{name}", dir.to_string_lossy())
+        };
+        parent(root, &path)?;
+        match root.join(&path).symlink_metadata() {
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(Archive { path, reuse: false }),
+            Err(e) => return Err(format!("{path}:1:1 보존: {e}")),
+            Ok(_) => {
+                let saved = project_text(root, &path).map_err(|e| format!("{path}:1:1 보존: {e}"))?;
+                if saved == text {
+                    return Ok(Archive { path, reuse: true });
+                }
+            }
+        }
+    }
+    Err(format!("{file}:1:1 보존: 빈 사본 번호가 없다"))
 }
 
 impl Plan {
@@ -241,7 +279,7 @@ impl Plan {
         if self.originals.is_empty() {
             return vec![];
         }
-        self.writes.keys().cloned().chain(self.originals.keys().map(|f| archive(f))).collect()
+        self.writes.keys().cloned().chain(self.archives.values().map(|a| a.path.clone())).collect()
     }
     /// 사람이 본 미리보기와 실행할 계획이 같은지 본다: 쓸 글과 원본 글 모두.
     pub(super) fn sha256(&self) -> String {
@@ -254,6 +292,11 @@ impl Plan {
                     h.update(part.as_bytes());
                 }
             }
+        }
+        for archive in self.archives.values() {
+            h.update((archive.path.len() as u64).to_le_bytes());
+            h.update(archive.path.as_bytes());
+            h.update([u8::from(archive.reuse)]);
         }
         h.update(self.state_hash.as_bytes());
         hex::encode(h.finalize())
@@ -270,10 +313,19 @@ pub(super) fn apply(root: &Path, plan: Plan) -> Result<Vec<String>, String> {
         if project_text(root, file)? != *text {
             return Err(format!("{file}:1:1 변환: 계획 뒤 원본이 바뀌었다"));
         }
-        let target = archive(file);
-        parent(root, &target)?;
-        if root.join(&target).symlink_metadata().is_ok() {
-            return Err(format!("{target}:1:1 보존: 이미 있는 사본은 덮어쓰지 않는다"));
+        let archive = &plan.archives[file];
+        let target = &archive.path;
+        parent(root, target)?;
+        if archive.reuse {
+            if project_text(root, target)? != *text {
+                return Err(format!("{target}:1:1 보존: 계획 뒤 사본이 바뀌었다"));
+            }
+        } else {
+            match root.join(target).symlink_metadata() {
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+                Err(e) => return Err(format!("{target}:1:1 보존: {e}")),
+                Ok(_) => return Err(format!("{target}:1:1 보존: 계획 뒤 사본 자리가 쓰였다")),
+            }
         }
     }
     let mut archived = Vec::new();
@@ -290,12 +342,14 @@ pub(super) fn apply(root: &Path, plan: Plan) -> Result<Vec<String>, String> {
             staged.push((file.clone(), temp));
             f.write_all(text.as_bytes()).and_then(|_| f.sync_all()).map_err(|e| e.to_string())?;
         }
-        for file in plan.originals.keys() {
-            let target = archive(file);
-            std::fs::create_dir_all(root.join(&target).parent().unwrap()).map_err(|e| e.to_string())?;
-            // hard_link의 create-new 성질로 기존 사본을 덮지 않는다.
-            std::fs::hard_link(root.join(file), root.join(&target)).map_err(|e| e.to_string())?;
-            archived.push((file.clone(), target));
+        for (file, archive) in &plan.archives {
+            let target = &archive.path;
+            if !archive.reuse {
+                std::fs::create_dir_all(root.join(target).parent().unwrap()).map_err(|e| e.to_string())?;
+                // hard_link의 create-new 성질로 기존 사본을 덮지 않는다.
+                std::fs::hard_link(root.join(file), root.join(target)).map_err(|e| e.to_string())?;
+            }
+            archived.push((file.clone(), target.clone(), archive.reuse));
             std::fs::remove_file(root.join(file)).map_err(|e| e.to_string())?;
         }
         for (file, temp) in &staged {
@@ -319,7 +373,7 @@ pub(super) fn apply(root: &Path, plan: Plan) -> Result<Vec<String>, String> {
                 failures.push(e.to_string());
             }
         }
-        for (file, backup) in archived.iter().rev() {
+        for (file, backup, reused) in archived.iter().rev() {
             if root.join(file).exists() && project_text(root, file).ok().as_ref() != plan.originals.get(file) {
                 failures.push(format!("{file}: 원본 자리에 다른 파일이 있어 {backup} 보존"));
                 continue;
@@ -330,7 +384,7 @@ pub(super) fn apply(root: &Path, plan: Plan) -> Result<Vec<String>, String> {
                 failures.push(e.to_string());
                 continue;
             }
-            if let Err(e) = std::fs::remove_file(root.join(backup)) {
+            if !reused && let Err(e) = std::fs::remove_file(root.join(backup)) {
                 failures.push(e.to_string());
             }
         }
@@ -343,7 +397,7 @@ pub(super) fn apply(root: &Path, plan: Plan) -> Result<Vec<String>, String> {
             }
         ));
     }
-    Ok(plan.writes.keys().cloned().chain(archived.into_iter().map(|(_, path)| path)).collect())
+    Ok(plan.writes.keys().cloned().chain(archived.into_iter().map(|(_, path, _)| path)).collect())
 }
 
 impl Plan {
