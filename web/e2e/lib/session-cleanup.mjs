@@ -5,7 +5,8 @@ import path from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 
 function processes() {
-  return execFileSync("ps", ["-axo", "pid=,ppid=,stat=,command="], { encoding: "utf8" })
+  // 다른 작업의 긴 argv까지 모으면 Node의 출력 한도를 넘는다. 전체 표에는 실행 파일만 싣는다.
+  return execFileSync("ps", ["-axo", "pid=,ppid=,stat=,comm="], { encoding: "utf8" })
     .split("\n")
     .flatMap((line) => {
       const m = /^\s*(\d+)\s+(\d+)\s+(\S+)\s+(.*)$/.exec(line);
@@ -61,6 +62,12 @@ export async function terminateSessionHosts(dir) {
     try { meta = JSON.parse(fs.readFileSync(file, "utf8")); }
     catch (e) { if (e.code === "ENOENT") continue; throw e; }
     const p = processes().find((p) => p.pid === meta.host_pid);
-    if (live(p) && p.command.includes(path.join(dir, id))) await terminateTree(p);
+    if (live(p)) {
+      // 소유 확인에 필요한 argv는 meta가 가리킨 PID 하나에서만 읽는다.
+      let command;
+      try { command = execFileSync("ps", ["-p", String(p.pid), "-o", "command="], { encoding: "utf8" }); }
+      catch (e) { if (e.status === 1) continue; throw e; }
+      if (command.includes(path.join(dir, id))) await terminateTree(p);
+    }
   }
 }

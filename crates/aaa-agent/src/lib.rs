@@ -49,6 +49,9 @@ use aaa_common::conn::{FrameRx, FrameTx, Incoming, spawn_writer};
 use aaa_common::util;
 use aaa_session::files::{ExitFile, MetaFile, SessionPaths, SpecFile};
 
+#[cfg(test)]
+mod chat_paths_tests;
+
 /// 대화 기록 감시 간격(참고 conversation-monitor.ts `STAT_INTERVAL_MS`·`RESOLVE_INTERVAL_MS`·`MISSING_RESOLVE_INTERVAL_MS`)
 const CHAT_STAT_EVERY: Duration = Duration::from_millis(250);
 const CHAT_RESOLVE_EVERY: Duration = Duration::from_secs(5);
@@ -609,12 +612,25 @@ impl Agent {
         }
     }
 
-    pub(crate) fn codex_root_for(&self, session: Option<&str>) -> PathBuf {
-        let run = session
+    fn chat_spec(&self, session: Option<&str>) -> Option<SpecFile> {
+        session
             .filter(|s| !s.is_empty() && s.bytes().all(|b| b.is_ascii_alphanumeric()))
             .and_then(|s| util::read_json::<SpecFile>(&SessionPaths::new(&self.state, s).spec()).ok())
-            .and_then(|s| s.account_run);
-        run.and_then(|r| aaa_session::files::account_home(&self.state, &r).ok())
+    }
+
+    pub(crate) fn codex_root_for(&self, session: Option<&str>) -> PathBuf {
+        let spec = self.chat_spec(session);
+        spec.as_ref()
+            .and_then(|s| s.account_run.as_deref())
+            .and_then(|r| aaa_session::files::account_home(&self.state, r).ok())
+            .or_else(|| {
+                spec.as_ref()?
+                    .spec
+                    .env
+                    .iter()
+                    .rev()
+                    .find_map(|(k, v)| (k == "CODEX_HOME" && Path::new(v).is_absolute()).then(|| PathBuf::from(v)))
+            })
             .map(|h| h.join("sessions"))
             .unwrap_or_else(chat::codex_root)
     }
@@ -638,7 +654,23 @@ impl Agent {
         harness_session: Option<&str>,
     ) -> Result<PathBuf, String> {
         if harness == "codex" {
-            chat::codex_file(&self.codex_root_for(session), harness_session.ok_or("Codex thread-id가 없다")?)
+            let id = harness_session.ok_or("Codex thread-id가 없다")?;
+            let root = self.codex_root_for(session);
+            if let Some(spec) = self.chat_spec(session)
+                && spec.spec.harness.as_deref() == Some("codex")
+                && spec
+                    .account_run
+                    .as_deref()
+                    .and_then(aaa_proto::account_run_parts)
+                    .is_some_and(|(_, task)| aaa_proto::valid_thread(task))
+                && let Some(cwd) = spec.spec.cwd.as_deref()
+            {
+                let resume = spec.spec.argv.windows(2).any(|a| a[0] == "resume" && util::harness_session_ok(&a[1]));
+                let started = if resume { 0 } else { spec.created_at_ms };
+                chat::codex_account_file(&root, id, Path::new(cwd), started)
+            } else {
+                chat::codex_file(&root, id)
+            }
         } else if harness == "claude" {
             let transcript = transcript.ok_or("Claude가 아직 기록 위치를 알리지 않았다(첫 hook 사건 전)")?;
             chat::inside(&self.claude_root_for(session), Path::new(transcript))
@@ -2184,7 +2216,7 @@ mod tests {
         std::fs::remove_dir_all(state).unwrap();
     }
 
-    fn session(harness: Option<&str>, argv: &[&str], state: SessionState) -> (SpecFile, SessionInfo) {
+    pub(super) fn session(harness: Option<&str>, argv: &[&str], state: SessionState) -> (SpecFile, SessionInfo) {
         let spec = SpawnSpec {
             name: "s".into(),
             argv: argv.iter().map(|a| a.to_string()).collect(),
