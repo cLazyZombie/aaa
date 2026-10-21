@@ -1,97 +1,154 @@
+/* 자동화 사이드바 카드 목록과 본문 설정 화면(t-0628 시안 1A). 카드는 「답할 것」 줄(AsksView.css .ask-row)과 같은 밀도의 두 줄이다 */
 .automations-panel { display: flex; flex: 1 1 0; flex-direction: column; min-height: 0; }
-.automations { overflow-y: auto; overscroll-behavior: contain; min-height: 0; padding: 12px; flex: 1; overflow-wrap: anywhere; }
-.automation-tools, .automation-heading { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
-.automation-tools > button, .automation-heading > button[role="switch"] { margin-left: auto; }
-.automations h3 { font-size: 13px; margin: 18px 0 8px; }
-.automation-row { border-top: 1px solid var(--border); padding: 12px 0; font-size: 12px; }
-.automation-row p { margin: 6px 0; }
-.automation-heading > span, .automation-file { color: var(--text-dim); }
-.automation-summary { line-height: 1.6; }
-.automation-row[data-status="off"] .automation-heading { opacity: .65; }
-.automation-row[data-status="failed"] .automation-heading, .automation-row[data-status="file-error"] .automation-heading { color: var(--danger-text); }
-.automation-row details { margin-top: 10px; }
-.automation-row summary { cursor: pointer; }
-.automation-row ol { padding-left: 20px; }
-.automation-row li { margin: 8px 0; }
-.automation-heading button { min-height: 32px; }
+.automations { overflow-y: auto; overscroll-behavior: contain; min-height: 0; padding: var(--space-2); flex: 1; overflow-wrap: anywhere; font-size: var(--fs-sm); }
+.automation-tools { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.automation-tools > button { margin-left: auto; }
+.automations > .automation-tools { margin: 0 var(--space-2); color: var(--text-dim); font-size: var(--fs-xs); }
+.automations > p { margin: var(--space-2); font-size: var(--fs-xs); }
+.automation-group { display: flex; flex-direction: column; gap: 2px; }
+.automation-group-head {
+  display: flex; align-items: center; gap: var(--space-2);
+  margin: var(--space-3) var(--space-2) var(--space-1);
+  font-size: var(--fs-xs); font-weight: var(--fw-semibold); color: var(--text-dim);
+}
+.automation-group-head > span { font-variant-numeric: tabular-nums; }
+.automation-new { margin-inline-start: auto; color: var(--accent); gap: 4px; }
+.automation-new svg { width: 14px; height: 14px; }
 
-.automation-indicator { width: 7px; height: 7px; flex: 0 0 7px; border-radius: 50%; background: var(--text-dim); }
-.automation-row[data-status="done"] .automation-indicator { background: var(--status-done); }
-.automation-row[data-status="failed"] .automation-indicator, .automation-row[data-status="file-error"] .automation-indicator { background: var(--status-blocked); }
-.automation-row[data-status="waiting"] .automation-indicator, .automation-row[data-status="skipped"] .automation-indicator { background: var(--notice); }
-.automation-approval { color: var(--notice); }
-.automation-row[data-status="stuck"] .automation-indicator { background: var(--status-blocked); }
-.automation-name { all: unset; cursor: pointer; font-weight: 600; text-align: left; overflow-wrap: anywhere; min-width: 0; }
-.automation-name:hover { text-decoration: underline; }
-.automation-name:focus-visible { outline: var(--ring); outline-offset: 2px; border-radius: 2px; }
-.automation-foot { display: flex; align-items: center; gap: 8px; margin-top: 6px; }
-.automation-foot > button { margin-left: auto; min-height: 32px; }
-.automation-stuck-line { color: var(--status-blocked); }
-.automation-legacy { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; font-size: 12px; margin: 0 0 8px; }
-.automation-legacy > button { margin-left: auto; min-height: 32px; }
-.automation-subhead { font-size: 12px; color: var(--text-dim); margin: 16px 0 4px; }
+.automation-card {
+  display: flex; align-items: flex-start; gap: var(--space-2); width: 100%;
+  min-height: var(--touch-target); padding: 8px var(--space-2);
+  border: 0; border-radius: var(--radius-md); background: transparent; color: inherit;
+  font: inherit; font-size: var(--fs-sm); text-align: start; cursor: pointer;
+}
+.automation-card:hover { background: var(--bg-hover); }
+.automation-card.is-selected { background: var(--bg-hover); box-shadow: inset 2px 0 0 var(--accent); }
+.automation-card:focus-visible { outline: var(--ring); outline-offset: -2px; }
+.automation-card .automation-indicator { margin-top: 6px; }
+.automation-card-text { display: flex; flex-direction: column; gap: 2px; min-width: 0; flex: 1; }
+.automation-card-line { display: flex; align-items: center; gap: 6px; min-width: 0; }
+.automation-card-title { color: var(--text-strong); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+.automation-card[data-status="off"] .automation-card-title { color: var(--text-dim); }
+.automation-card-meta { color: var(--text-dim); font-size: var(--fs-xs); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+/* 규칙이 띄운 열린 thread: 작업 목록 줄 막대와 같은 호박색 */
+.automation-running { margin-inline-start: auto; flex: none; padding: 0 5px; border: 1px solid var(--automation, var(--border)); border-radius: var(--radius-sm); font-size: 11px; line-height: 16px; color: var(--automation, var(--text-dim)); white-space: nowrap; }
+
+.automation-indicator { width: 8px; height: 8px; flex: 0 0 8px; border-radius: 50%; background: var(--status-done); }
+[data-status="off"] > .automation-indicator { background: var(--text-dim); opacity: .6; }
+[data-status="approve"] > .automation-indicator { background: var(--notice); }
+[data-status="stuck"] > .automation-indicator, [data-status="error"] > .automation-indicator { background: var(--status-blocked); }
+
+.automation-legacy { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin: var(--space-1) var(--space-2) 0; padding: 6px 10px; border-radius: var(--radius-md); background: var(--accent-tint); font-size: var(--fs-xs); }
+.automation-legacy > button { margin-left: auto; color: var(--accent); }
 .automation-dim { color: var(--text-dim); }
+.automation-trash { margin: var(--space-1) var(--space-2) 0; font-size: var(--fs-xs); color: var(--text-dim); }
+.automation-trash summary { cursor: pointer; min-height: 32px; display: flex; align-items: center; }
+.automation-trash li { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; color: var(--text); }
+.automation-trash li > button { margin-left: auto; min-height: 32px; }
 
 /* 배지(t3code badge: 옅은 바탕 + 같은 색 글) */
 .automation-badge { display: inline-flex; align-items: center; padding: 1px 6px; border-radius: var(--radius-sm); font-size: var(--fs-xs); line-height: 1.5; white-space: nowrap; background: var(--bg-hover); color: var(--text-dim); }
 .automation-badge.is-done { background: var(--status-done-tint); color: var(--status-done); }
-.automation-badge.is-failed, .automation-badge.is-file-error, .automation-badge.is-stuck { background: var(--status-blocked-tint); color: var(--status-blocked); }
-.automation-badge.is-notice, .automation-badge.is-waiting, .automation-badge.is-skipped { background: var(--accent-tint); color: var(--notice); }
+.automation-badge.is-failed, .automation-badge.is-file-error, .automation-badge.is-stuck, .automation-badge.is-error { background: var(--status-blocked-tint); color: var(--status-blocked); }
+.automation-badge.is-notice, .automation-badge.is-waiting, .automation-badge.is-skipped, .automation-badge.is-approve { background: var(--accent-tint); color: var(--notice); }
 .automation-badge.is-legacy { background: var(--accent-tint); color: var(--accent); }
 
-/* 상세·변환 창: 데스크톱은 넓은 가운데 창, 휴대폰은 modal.css의 아래 sheet */
+/* 본문 설정·편집 화면(thread 화면과 같은 머리 + 가운데 칸). 숨은 동안에도 그려 둔다(「답할 것」 .asks-view와 같음) */
+.automation-screen { display: flex; flex-direction: column; flex: 1 1 auto; min-height: 0; min-width: 0; height: 100%; }
+.automation-screen.is-hidden { position: absolute; inset: 0; visibility: hidden; pointer-events: none; }
+.automation-screen > .thread-view { flex: 1 1 auto; height: auto; min-height: 0; }
+.automation-view-title { align-items: center; }
+.automation-view-name { display: inline-flex; align-items: center; gap: 6px; min-width: 0; }
+.automation-view-name > .automation-badge { flex: none; }
+.automation-switch { display: inline-flex; align-items: center; gap: var(--space-1); color: var(--text-dim); font-size: var(--fs-xs); white-space: nowrap; }
+.automation-view-body { padding-top: var(--space-4); }
+.automation-col { gap: 0; font-size: var(--fs-sm); overflow-wrap: anywhere; }
+.automation-col > p { margin: 6px 0; }
+.automation-view-foot { display: flex; justify-content: flex-end; gap: var(--space-2); padding: var(--space-2) calc(var(--space-4) + var(--inset-r)) calc(var(--space-2) + env(safe-area-inset-bottom, 0px)) calc(var(--space-4) + var(--inset-l)); border-top: 1px solid var(--border); background: var(--bg); }
+.automation-view-foot .btn { min-height: 36px; }
+.automation-actions { display: flex; flex-wrap: wrap; gap: 8px; margin: 8px 0; }
+.automation-actions .btn { min-height: 34px; }
+.automation-actions-end { margin-inline-start: auto; }
+
+/* 사람이 할 것: 색 상자 하나에 까닭과 단추 */
+.automation-callout { margin: var(--space-3) 0 var(--space-1); padding: 12px 14px; border-radius: var(--radius-lg); border: 1px solid color-mix(in srgb, var(--notice) 35%, transparent); background: color-mix(in srgb, var(--notice) 12%, transparent); }
+.automation-callout.is-red { border-color: color-mix(in srgb, var(--status-blocked) 35%, transparent); background: var(--status-blocked-tint); }
+.automation-callout h4 { margin: 0 0 4px; font-size: var(--fs-sm); color: var(--notice); }
+.automation-callout.is-red h4 { color: var(--status-blocked); }
+.automation-callout p { margin: 0 0 8px; }
+.automation-callout .automation-actions { margin-bottom: 0; }
+.automation-callout code { font-family: var(--font-mono); font-size: var(--fs-xs); }
+
+/* 숫자 칸: 지난 · 다음 · 오늘 · 열린 thread */
+.automation-stats { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: var(--space-2); margin: var(--space-3) 0 var(--space-2); }
+.automation-stat { min-width: 0; padding: 10px 12px; border: 1px solid var(--border); border-radius: var(--radius-lg); background: var(--bg-panel); }
+.automation-stat dt { color: var(--text-dim); font-size: var(--fs-xs); margin-bottom: 2px; }
+.automation-stat dd { margin: 0; color: var(--text-strong); }
+.automation-stat dd.automation-stat-sub { color: var(--text-dim); font-size: var(--fs-xs); overflow-wrap: anywhere; }
+
+.automation-section { padding: var(--space-3) 0; border-top: 1px solid var(--border); }
+.automation-section h3 { display: flex; align-items: center; gap: 8px; margin: 0 0 8px; font-size: var(--fs-sm); color: var(--text-strong); }
+.automation-section h3 > button { margin-left: auto; }
+.automation-section p { margin: 6px 0; }
+.automation-facts { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: 6px 16px; margin: 0; }
+.automation-facts > div { display: contents; }
+.automation-facts dt { color: var(--text-dim); }
+.automation-facts dd { margin: 0; min-width: 0; }
+.automation-facts code, .automation-files code { font-family: var(--font-mono); font-size: var(--fs-xs); overflow-wrap: anywhere; color: var(--text-dim); }
+.automation-facts .automation-list { padding-left: 16px; }
+.automation-list { margin: 0; padding-left: 18px; }
+.automation-list li { margin: 3px 0; }
+.automation-files { list-style: none; padding-left: 0; }
+.automation-runs { list-style: none; margin: 0; padding: 0; }
+.automation-runs li, .automation-run { display: grid; grid-template-columns: max-content max-content minmax(0, 1fr); align-items: baseline; gap: 4px 8px; padding: 6px 0; border-top: 1px solid var(--border); }
+.automation-runs li:first-child { border-top: 0; }
+.automation-run { border-top: 0; padding: 0; }
+.automation-skip { grid-template-columns: max-content max-content max-content minmax(0, 1fr); margin: 0 0 8px; font-size: var(--fs-xs); }
+.automation-runs time, .automation-run time { color: var(--text-dim); font-size: var(--fs-xs); white-space: nowrap; }
+.automation-run-detail { min-width: 0; overflow-wrap: anywhere; }
+.automation-fold { padding: var(--space-3) 0; border-top: 1px solid var(--border); }
+.automation-fold > summary { display: flex; align-items: baseline; gap: 8px; cursor: pointer; min-height: 24px; font-weight: var(--fw-semibold); color: var(--text-strong); }
+.automation-fold > summary > span { min-width: 0; font-weight: 400; font-size: var(--fs-xs); color: var(--text-dim); overflow-wrap: anywhere; }
+.automation-source { margin: 8px 0 0; }
+.automation-source figcaption { color: var(--text-dim); font-size: var(--fs-xs); margin-bottom: 4px; overflow-wrap: anywhere; }
+.automation-source pre, .automation-scope { margin: 0; max-height: 16rem; overflow: auto; padding: 8px 10px; border-radius: var(--radius-md); background: var(--bg-elevated); font-family: var(--font-mono); font-size: var(--fs-xs); white-space: pre-wrap; overflow-wrap: anywhere; }
+.automation-callout .automation-scope { margin-bottom: 8px; background: var(--bg); }
+
+/* 열린 thread 칩·기록의 thread 번호(plan t-0475 A1): 누르면 그 thread. 칩은 목록 줄 막대와 같은 호박색 테두리 */
+.automation-open { display: inline-flex; flex-wrap: wrap; gap: 6px; }
+.automation-open-chip { all: unset; cursor: pointer; display: inline-flex; align-items: center; min-height: 24px; padding: 0 8px; border: 1px solid var(--automation, var(--border)); border-radius: var(--radius-sm); font-size: var(--fs-xs); color: var(--text); }
+.automation-open-chip:hover { background: var(--bg-hover); }
+.automation-open-chip:focus-visible, .automation-thread-link:focus-visible { outline: var(--ring); outline-offset: 2px; }
+.automation-thread-link { all: unset; cursor: pointer; text-decoration: underline; text-underline-offset: 2px; }
+
+/* 좁은 폭(휴대폰): 숫자 칸 2열, 사실 줄은 이름 위·값 아래, 기록은 배지·시각 한 줄과 글, 단추는 손가락 크기 */
+@media (max-width: 640px) {
+  .automation-view-title { flex-direction: column; align-items: stretch; justify-content: center; gap: 0; }
+  .automation-view-name { max-width: 100%; }
+  .automation-switch > span { display: none; }
+  .automation-view-body { padding: var(--space-3) var(--space-4) var(--space-8); }
+  .automation-stats { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .automation-runs li, .automation-run { grid-template-columns: max-content minmax(0, 1fr); }
+  .automation-run-detail { grid-column: 1 / -1; }
+  .automation-skip { grid-template-columns: max-content max-content minmax(0, 1fr); }
+  .automation-facts { grid-template-columns: minmax(0, 1fr); gap: 0; }
+  .automation-facts dd { margin-bottom: 8px; }
+  .automation-actions .btn { flex: 1 1 0; min-height: 44px; }
+  .automation-callout .automation-actions .btn { flex-basis: 100%; }
+  .automation-actions-end { margin-inline-start: 0; }
+  .automation-card { min-height: 48px; }
+}
+
+/* 변환·thread 동작 창(AutomationSheet): 데스크톱은 넓은 가운데 창, 휴대폰은 modal.css의 아래 sheet */
 .automation-sheet { width: min(100%, 760px); }
 .automation-sheet:focus { outline: none; }
 .automation-sheet-heading { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; gap: 4px; }
 .automation-sheet-heading .modal-title { overflow-wrap: anywhere; }
 .automation-sheet-subtitle { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; font-size: var(--fs-xs); overflow-wrap: anywhere; }
 .automation-sheet-body { font-size: var(--fs-sm); overflow-wrap: anywhere; }
-.automation-section { padding: 12px 0; border-top: 1px solid var(--border); }
-.automation-section:first-child { border-top: 0; padding-top: 0; }
-.automation-section h3 { margin: 0 0 8px; font-size: var(--fs-sm); color: var(--text-strong); }
-.automation-section p { margin: 6px 0; }
-.automation-facts { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: 4px 12px; margin: 0; }
-.automation-facts > div { display: contents; }
-.automation-facts dt { color: var(--text-dim); }
-.automation-facts dd { margin: 0; min-width: 0; }
-.automation-facts code, .automation-files code { font-family: var(--font-mono); font-size: var(--fs-xs); overflow-wrap: anywhere; }
-.automation-list { margin: 0; padding-left: 18px; }
-.automation-list li { margin: 3px 0; }
-.automation-files { list-style: none; padding-left: 0; }
-.automation-runs { list-style: none; margin: 0; padding: 0; }
-.automation-runs li, .automation-run { display: grid; grid-template-columns: max-content max-content minmax(0, 1fr); align-items: baseline; gap: 4px 8px; padding: 6px 0; border-top: 1px solid var(--border); }
-.automation-run { border-top: 0; padding: 0; }
-.automation-runs time, .automation-run time { color: var(--text-dim); font-size: var(--fs-xs); white-space: nowrap; }
-.automation-run-detail { min-width: 0; overflow-wrap: anywhere; }
-.automation-source { margin: 8px 0 0; }
-.automation-source figcaption { color: var(--text-dim); font-size: var(--fs-xs); margin-bottom: 4px; overflow-wrap: anywhere; }
-.automation-source pre, .automation-scope { margin: 0; max-height: 16rem; overflow: auto; padding: 8px 10px; border-radius: var(--radius-md); background: var(--bg-elevated); font-family: var(--font-mono); font-size: var(--fs-xs); white-space: pre-wrap; overflow-wrap: anywhere; }
-.automation-stuck { padding: 10px 12px; border-radius: var(--radius-md); background: var(--status-blocked-tint); }
-.automation-stuck strong { color: var(--status-blocked); }
-.automation-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 8px; }
-.automation-actions .btn { min-height: 36px; }
+.automation-sheet .automation-section:first-child { border-top: 0; padding-top: 0; }
 .automation-sheet .automation-tools { margin-bottom: 4px; }
-
-/* 좁은 폭(휴대폰 sheet): 기록 줄은 배지·시각 한 줄, 글은 그 아래 */
-@media (max-width: 640px) {
-  .automation-runs li, .automation-run { grid-template-columns: max-content minmax(0, 1fr); }
-  .automation-run-detail { grid-column: 1 / -1; }
-  .automation-facts { grid-template-columns: minmax(0, 1fr); gap: 0; }
-  .automation-facts dd { margin-bottom: 6px; }
-  .automation-actions .btn { flex: 1 1 100%; min-height: 44px; }
-}
-
-/* 규칙이 띄운 열린 thread 칩·기록의 thread 번호(plan t-0475 A1): 누르면 그 thread. 칩은 목록 줄 막대와 같은 호박색 테두리 */
-.automation-open { display: flex; flex-wrap: wrap; gap: 6px; }
-.automation-open-chip { all: unset; cursor: pointer; display: inline-flex; align-items: center; min-height: 24px; padding: 0 8px; border: 1px solid var(--automation, var(--border)); border-radius: var(--radius-sm); font-size: var(--fs-xs); color: var(--text); }
-.automation-open-chip:hover { background: var(--bg-hover); }
-.automation-open-chip:focus-visible, .automation-thread-link:focus-visible { outline: var(--ring); outline-offset: 2px; }
-.automation-thread-link { all: unset; cursor: pointer; text-decoration: underline; text-underline-offset: 2px; }
-
-.automation-open > span { display: inline-flex; align-items: center; gap: .5rem; flex-wrap: wrap; }
-
-/* 편집 창(관리 GUI W2, plan §8.342): 폼·TOML·검토 탭이 한 초안을 쓴다. 휴대폰에서는 칸이 한 줄씩 */
-.automations .automation-tools > h3 { margin: 18px 0 8px; }
+/* 편집 화면(관리 GUI W2, plan §8.342. t-0628부터 본문): 폼·TOML·검토 탭이 한 초안을 쓴다. 휴대폰에서는 칸이 한 줄씩 */
 .automation-tabs { display: flex; gap: 4px; margin: 4px 0 8px; border-bottom: 1px solid var(--border); }
 .automation-tabs > button { all: unset; cursor: pointer; padding: 8px 12px; min-height: 20px; border-bottom: 2px solid transparent; color: var(--text-dim); }
 .automation-tabs > button[aria-selected="true"] { border-bottom-color: var(--accent); color: var(--text-strong); }
@@ -114,10 +171,6 @@
 .automation-diff .is-add { color: var(--status-done); }
 .automation-diff .is-del { color: var(--status-blocked); }
 .automation-diff .is-same { color: var(--text-dim); }
-.automation-trash { margin: 8px 0; font-size: 12px; }
-.automation-trash summary { cursor: pointer; min-height: 32px; display: flex; align-items: center; }
-.automation-trash li { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
-.automation-trash li > button { margin-left: auto; min-height: 32px; }
 @media (max-width: 640px) {
   .automation-grid { grid-template-columns: minmax(0, 1fr); }
   .automation-field .input { font-size: 16px; }

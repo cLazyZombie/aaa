@@ -47,6 +47,7 @@ import "./herdr/Sidebar.css";
 import "./herdr/Machines.css";
 import "./Sidebar.css";
 import { AutomationPanel } from "./AutomationPanel";
+import type { Automations } from "./automationData";
 import { RolloutCard, type RolloutSnapshot } from "./RolloutCard";
 import { MachineMeters } from "./MachineMeters";
 import { machineStats } from "./machineStats";
@@ -261,13 +262,12 @@ export interface SidebarProps {
   onNewShell: (m: MachineView) => void;
   /** 모든 thread(끝난 것까지) 화면 */
   onThreads: () => void;
-  /** 자동화 패널을 보이고 그 규칙 상세를 연다(thread 줄 「자동화 thread」 표지, plan t-0475 A1) */
-  onAutomation: (project: string, name: string) => void;
-  /** thread 번호로 연다(자동화 패널의 「열림」 칩·기록 번호): 끝난 thread는 보고 */
-  onThreadId: (project: string, id: string) => void;
-  /** 자동화 패널이 열 규칙 상세. 패널이 받으면 `onRuleAsked`로 지운다 */
-  ruleAsk: { project: string; name: string } | null;
-  onRuleAsked: () => void;
+  /** 자동화 패널을 보이고 본문에 그 규칙 설정을 연다(thread 줄 「자동화 thread」 표지, plan t-0475 A1). 이름이 없으면 새 자동화(t-0628) */
+  onAutomation: (project: string, name: string | null) => void;
+  /** 자동화 목록 자료(App이 읽어 본문 설정 화면과 함께 쓴다) */
+  automations: Automations;
+  /** 본문에 연 자동화(`<project>/<name>`) */
+  automationSelected: string | null;
   /** 목록 위에 띄울 알림 띠(연결 끊김·오류) */
   banners?: ReactNode;
   /** 보이는 패널(활동 막대) */
@@ -329,7 +329,7 @@ export function Sidebar(props: SidebarProps) {
         <MachineStrip {...props} />
       </div>
       <div {...panelProps("automations", props.panel)} className="sidebar-panel automations-panel">
-        {props.panel === "automations" && <AutomationPanel canControl={props.canControl} threads={props.threads} onThread={props.onThreadId} ask={props.ruleAsk} onAsked={props.onRuleAsked} />}
+        {props.panel === "automations" && <AutomationPanel data={props.automations} canControl={props.canControl} threads={props.threads} selected={props.automationSelected} onOpen={props.onAutomation} />}
       </div>
       {menu && <RowMenu anchor={menu.anchor} point={menu.point} restoreFocusTo={menu.previousFocus} title={menu.title} subtitle={menu.place} header={menu.header} items={menu.items()} onClose={closeMenu} />}
       {confirm && (

@@ -1,10 +1,10 @@
 // 자동화 만들기·고치기(관리 GUI W2, plan §8.342). 폼과 TOML 고급 편집이 한 초안을 함께 쓴다: 폼을 고치면 host가 바뀐 칸만
 // 원문에 합쳐 돌려주고(`automation_validate`), TOML을 고치면 host가 읽은 값으로 폼을 다시 그린다. 저장은 본 판(sha256)일 때만
 // 쓰고, 다르면 host가 `conflict`로 거부한다: 그때 지금 파일과 내 초안의 차이를 보이고 사람이 고른다(자동 병합 없음).
-// 틀은 상세 창과 같은 AutomationSheet(t3code ScheduledTasksSettings의 Dialog → 휴대폰 sheet), 검토 절은 계획 §2.2 「사건마다 새 thread」.
+// 틀은 설정 화면과 같은 본문 AutomationPage(t-0628 3A: 떠 있는 창이 아니라 본문에서 고친다), 검토 절은 계획 §2.2 「사건마다 새 thread」.
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { ApiError, call } from "./api";
-import { AutomationSheet } from "./AutomationSheet";
+import { AutomationPage } from "./AutomationDetail";
 import { Markdown } from "./Markdown";
 import type { AutomationCheck, AutomationDoc } from "./gen/proto";
 import {
@@ -276,8 +276,8 @@ export function AutomationEditor({ project, name: openName, onClose, onSaved }: 
         ...(sendBody ? { body: body!, ...((over ? over.bodySha : file === base.bodyFile ? base.bodySha : null) ? { body_expected_sha256: (over ? over.bodySha : base.bodySha)! } : {}) } : {}),
       });
       if (r.kind !== "automation_doc") throw new Error("저장 응답이 아니다");
+      // 저장한 뒤 갈 곳(그 규칙 설정)은 부르는 쪽이 정한다
       await onSaved(r.doc.name);
-      onClose();
     } catch (e) {
       if (e instanceof ApiError && (e.body.code === "conflict" || e.body.code === "not_found") && !creating) {
         const latest = await call({ op: "automation_read", project, name: openName! }).then((r) => (r.kind === "automation_doc" ? r.doc : null)).catch(() => null);
@@ -292,7 +292,7 @@ export function AutomationEditor({ project, name: openName, onClose, onSaved }: 
   const bodyText = body_.file ? body ?? "" : body_.inline ?? "";
   const ready = !loading && !legacy && (!creating || validName(name));
   const title = creating ? "새 자동화" : `${(form.title as string) || openName} 고치기`;
-  return <AutomationSheet title={title} subtitle={<span className="automation-dim">{project} · {creating ? (name || "이름 정하기") : openName} · automations/{creating ? name || "…" : openName}.toml</span>} onClose={onClose} busy={busy} testid="automation-editor"
+  return <AutomationPage title={title} subtitle={`${project} · automations/${creating ? name || "…" : openName}.toml`} onClose={onClose} busy={busy} testid="automation-editor"
     footer={<>
       <button type="button" className="btn" onClick={onClose} disabled={busy}>닫기</button>
       <button type="button" className="btn btn-primary" data-testid="automation-save" disabled={!ready || busy || !!conflict} onClick={() => void save()}>{busy ? "저장 중…" : "저장"}</button>
@@ -345,5 +345,5 @@ export function AutomationEditor({ project, name: openName, onClose, onSaved }: 
       {mode === "review" && <section className="automation-section" aria-label="검토"><Review check={check} form={form} /></section>}
       </fieldset>
     </>}
-  </AutomationSheet>;
+  </AutomationPage>;
 }
