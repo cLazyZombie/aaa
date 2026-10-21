@@ -641,6 +641,45 @@ async fn direct_pre_send_interruption_releases_only_after_the_job_is_gone() {
     assert_eq!(lab.h.open_worker_threads("demo"), 1);
 }
 
+#[test]
+fn recovery_reloads_under_the_claim_and_does_not_fail_a_completed_start() {
+    let lab = Lab::new();
+    let id = lab
+        .h
+        .db
+        .thread_insert_next("demo", |id| {
+            let mut r = Lab::rec();
+            r.id = id.into();
+            serde_json::to_string(&r).unwrap()
+        })
+        .unwrap();
+    let stale = lab.h.load("demo", &id).unwrap();
+    // 복구기가 Starting 목록을 읽은 뒤 실제 기동은 완료하고 잠금을 반환했다.
+    lab.h
+        .update_rec("demo", &id, |r| {
+            r.status = ThreadStatus::Open;
+            r.launch_sent = true;
+            r.pane = Some("started-pane".into());
+        })
+        .unwrap();
+    let _claim = lab.h.claim_thread("demo", &id).unwrap();
+    let recovered = lab.h.recover_thread_start(&stale).unwrap();
+    assert_eq!(recovered.status, ThreadStatus::Open, "오래된 Starting 사본으로 완료된 기동을 실패 처리했다");
+    assert_eq!(recovered.pane.as_deref(), Some("started-pane"));
+    assert!(recovered.error.is_none());
+    assert_eq!(lab.h.load("demo", &id).unwrap().status, ThreadStatus::Open);
+    // 상태가 여전히 Starting이어도 늦게 읽은 launch_sent를 되돌리면 안 된다.
+    lab.h
+        .update_rec("demo", &id, |r| {
+            r.status = ThreadStatus::Starting;
+            r.pane = None;
+        })
+        .unwrap();
+    let pending = lab.h.recover_thread_start(&stale).unwrap();
+    assert_eq!(pending.status, ThreadStatus::Starting);
+    assert!(pending.launch_sent && pending.error.is_none());
+}
+
 #[tokio::test]
 async fn stale_model_approval_cannot_migrate_or_unlink_task() {
     let lab = Lab::new();
@@ -1236,4 +1275,35 @@ async fn requested_machine_only_change_keeps_the_approved_default_model() {
         (original.model, original.effort, original.profile_revision)
     );
     assert_eq!(updated.approved_block, tasks::parse(&after)[0].block_sha256);
+}
+
+#[test]
+fn over_limit_start_requires_a_direct_user_or_verified_coordinator() {
+    let lab = Lab::new();
+    for actor in ["local:cli", "device:user"] {
+        let o = lab.h.thread_limit_override("demo", true, None, None, actor).unwrap().unwrap();
+        assert_eq!(o.actor, actor);
+        assert!(o.at_ms > 0);
+        assert!(o.user_request.is_none());
+    }
+    for actor in ["worker:p", "evaluator:p", "detached:cli", "local:cli@p", "automation:test", "coordinator:p"] {
+        assert_eq!(
+            lab.h
+                .thread_limit_override("demo", true, Some("사용자가 강제 시작 지시"), Some("d-0001"), actor)
+                .unwrap_err()
+                .code,
+            ErrorCode::Forbidden
+        );
+    }
+    for reason in [" ".to_string(), "첫 줄\n둘째 줄".into(), "x".repeat(2001)] {
+        assert!(
+            lab.h
+                .thread_limit_override("demo", true, Some(&reason), Some("d-0001"), "local:cli")
+                .unwrap_err()
+                .message
+                .contains("근거")
+        );
+    }
+    assert!(lab.h.thread_limit_override("demo", false, Some("사용자 지시"), None, "local:cli").is_err());
+    assert!(lab.h.thread_limit_override("demo", false, None, None, "local:cli").unwrap().is_none());
 }

@@ -605,6 +605,8 @@ pub struct Host {
     /// brief 배경 task가 도는 thread(`<project>/<thread>`, 하나만 돈다)
     brief_loops: Mutex<HashSet<String>>,
     thread_ops: Mutex<HashMap<String, Arc<tokio::sync::Mutex<()>>>>,
+    #[cfg(test)]
+    start_admitted_hook: Mutex<Option<orch::StartAdmittedHook>>,
     /// 지금 brief 한 걸음을 하는 thread(배경 task와 `thread brief`가 겹치지 않게, herdr-projects brief.rs `claim`)
     brief_claims: Mutex<HashSet<String>>,
     /// 보고를 다시 확인하는 중인 thread(`<project>/<thread>`)와 그동안 또 확인을 부탁받았는지. 묶음 셈(transitions.rs)은
@@ -798,6 +800,8 @@ impl Host {
             rec_lock: Mutex::new(()),
             brief_loops: Mutex::new(HashSet::new()),
             thread_ops: Mutex::new(HashMap::new()),
+            #[cfg(test)]
+            start_admitted_hook: Mutex::new(None),
             brief_claims: Mutex::new(HashSet::new()),
             resource_exhausted: std::sync::atomic::AtomicBool::new(false),
             report_refresh: Mutex::new(HashMap::new()),
@@ -1578,6 +1582,8 @@ impl Host {
             FrontRequest::Profiles { machine } => self.profiles(machine.as_deref()).await,
             FrontRequest::ProfileResolve { name } => self.profile_resolve(name.as_deref()),
             FrontRequest::ThreadStart {
+                over_limit,
+                user_request,
                 holds,
                 project,
                 title,
@@ -1594,6 +1600,13 @@ impl Host {
             } => {
                 // herdr-projects threads.rs `placement`: repo가 있으면 worktree, 없으면 repo 없는 작업 폴더. task에서 띄우면
                 // 저장소 칸이 정한다(`apply_task_repo`): 요청이 정한 kind를 그 판정에 넘긴다
+                let over_limit = self.thread_limit_override(
+                    &project,
+                    over_limit,
+                    user_request.as_deref(),
+                    from_task.as_deref(),
+                    actor,
+                )?;
                 let kind_given = kind;
                 let kind = kind.unwrap_or(if repo.is_some() {
                     aaa_proto::ThreadKind::Worktree
@@ -1601,6 +1614,7 @@ impl Host {
                     aaa_proto::ThreadKind::Dir
                 });
                 let mut a = orch::StartArgs {
+                    over_limit,
                     reservation: None,
                     account: selected_account,
                     holds,

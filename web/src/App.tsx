@@ -11,7 +11,7 @@ import type {
   QuestionView,
   ThreadView,
 } from "./gen/proto";
-import { ActivityBar } from "./ActivityBar";
+import { ActivityBar, type CoordinatorButton } from "./ActivityBar";
 import { SidebarResizer } from "./SidebarResizer";
 import { PANEL_LABEL, revealPanel, storedCollapsed, storedPanel, storeSidebar, type SidebarPanel } from "./sidebarPanel";
 import { ReportsView, type ReportRef } from "./ReportsView";
@@ -1227,6 +1227,35 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
     machines: { count: highMachines(machines), label: `CPU·MEM ${HIGH_STAT}% 넘음` },
     automations: { count: automationBadge, label: "막힌 큐·승인 필요" },
   };
+  // 막대 맨 위 「coordinator」(t-0621): 도는 coordinator pane(「작업」 트리의 coordinator 줄, sidebarModel `roster`와 같은 판정)을 연다.
+  // 없으면 기본 profile로 띄워 연다(할 일 「coordinator에게 맡기기」의 `project_open`). 보기 권한은 띄울 수 없어 그때 단추가 없다
+  const coordinatorPane = panes.find((p) => p.coordinator_project && p.state === "running" && !threadOfPane.has(p.id)) ?? null;
+  const [coordinatorBusy, setCoordinatorBusy] = useState(false);
+  const openCoordinator = async () => {
+    if (coordinatorPane) return choose(coordinatorPane.id);
+    if (coordinatorBusy) return;
+    setCoordinatorBusy(true);
+    setMsg(null);
+    try {
+      const r = await call({ op: "project_open" });
+      if (r.kind === "project_opened") choose(r.pane.id);
+    } catch (e) {
+      setMsg(e instanceof Error ? e.message : String(e));
+    } finally {
+      setCoordinatorBusy(false);
+    }
+  };
+  const coordinatorStatus = coordinatorPane?.connection === "connected" ? paneAgentStatus(coordinatorPane) : undefined;
+  const coordinatorButton: CoordinatorButton | null =
+    coordinatorPane || canControl
+      ? {
+          active: coordinatorPane !== null && current?.id === coordinatorPane.id,
+          // 새 답은 보는 동안 host가 본 것으로 적는다(seen): 그 사이 점이 깜빡이지 않게 보는 pane은 뺀다
+          badge: coordinatorStatus === "blocked" ? "ask" : coordinatorStatus === "done" && current?.id !== coordinatorPane?.id ? "reply" : null,
+          busy: coordinatorBusy,
+          onOpen: () => void openCoordinator(),
+        }
+      : null;
   // 탭 아이콘의 안 본 알림 수(faviconBadge.ts, plan §8.266): 창에 focus가 오면 지운다
   useEffect(() => watchBadgeFocus(), []);
   // 넓은 창에서 접었으면 사이드바 칸이 없다(좁은 창은 drawer라 늘 칸이 있다)
@@ -1254,6 +1283,7 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
     >
       <aside id="workspace-drawer" className={`list${drawerOpen ? " is-open" : ""}`}>
         <ActivityBar
+          coordinator={coordinatorButton}
           panel={panel}
           shown={sidebarShown}
           onPanel={showPanel}
@@ -1374,6 +1404,7 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
             groups={threadGroups}
             machines={machines}
             stages={new Map(allThreads.map(t => [t.id, t.stage]))}
+            overLimits={new Map(allThreads.map(t => [t.id, t.over_limit]))}
             reader={role === "reader"}
             addRequest={taskAdds}
             focusRequest={taskFocus}

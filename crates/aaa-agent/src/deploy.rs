@@ -3,7 +3,6 @@ use crate::Agent;
 pub(crate) mod guard;
 mod stage;
 use aaa_proto::{DeployAction, DeployJob, DeployService, DeployState, ErrorBody, ErrorCode};
-use sha2::{Digest, Sha256};
 use std::{
     path::{Path, PathBuf},
     sync::{Arc, Mutex},
@@ -51,10 +50,7 @@ fn valid(id: &str) -> bool {
     id.len() == 26 && id.bytes().all(|b| b.is_ascii_alphanumeric())
 }
 fn sha(path: &Path) -> Result<String, ErrorBody> {
-    let mut f = std::fs::File::open(path).map_err(error)?;
-    let mut h = Sha256::new();
-    std::io::copy(&mut f, &mut h).map_err(error)?;
-    Ok(hex::encode(h.finalize()))
+    aaa_common::util::sha256_file(path).map_err(error)
 }
 impl Manager {
     pub(crate) fn new(state: &Path, exe: &Path) -> anyhow::Result<Self> {

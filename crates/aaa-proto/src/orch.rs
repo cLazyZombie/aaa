@@ -843,9 +843,18 @@ impl ThreadStage {
     pub fn label(self) -> &'static str {
         match self {
             Self::MergeReady => "병합 대기",
-            Self::Landing => "착지 중",
+            Self::Landing => "병합 중",
         }
     }
+}
+
+/// 사용자가 직접 허용한 한도 초과 시작. 시작 시각·요청자·coordinator가 인용한 지시를 보존한다.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+pub struct ThreadLimitOverride {
+    pub actor: String,
+    #[ts(type = "number")]
+    pub at_ms: u64,
+    pub user_request: Option<String>,
 }
 
 /// 검증한 보고 사본 첫 줄의 알림 의도. 묶음·진행률과 별개다.
@@ -858,6 +867,10 @@ pub enum ReportAttention {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 pub struct ThreadView {
+    /// 명시적으로 실행 한도를 무시한 시작의 출처. 옛 기록은 생략한다(FRONT_API 1.98).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub over_limit: Option<ThreadLimitOverride>,
     /// FRONT_API 1.95. 보고의 특정 판을 여는 프로젝트별 영속 번호(r-0001부터).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]

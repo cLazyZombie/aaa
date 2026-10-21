@@ -18,6 +18,9 @@ use sha2::Digest;
 
 use crate::{Host, err};
 
+#[cfg(test)]
+pub(crate) type StartAdmittedHook = Arc<dyn Fn(&str) + Send + Sync>;
+
 /// host가 저장하는 thread 기록(DB `threads.data` JSON). 필드를 더해도 이전 기록을 읽게 기본값을 둔다.
 fn old_launch_unknown() -> bool {
     true
@@ -48,6 +51,8 @@ pub(crate) struct ThreadRec {
     pub holds: Vec<String>,
     #[serde(default)]
     pub started_by: Option<String>,
+    #[serde(default)]
+    pub over_limit: Option<aaa_proto::ThreadLimitOverride>,
     #[serde(default)]
     pub automation: Option<String>,
     #[serde(default)]
@@ -201,6 +206,7 @@ impl ThreadRec {
             kind,
             holds: vec![],
             started_by: None,
+            over_limit: None,
             automation: None,
             automation_run: None,
             repo: None,
@@ -308,6 +314,7 @@ pub(crate) struct StartOrigin {
 }
 
 pub struct StartArgs {
+    pub over_limit: Option<aaa_proto::ThreadLimitOverride>,
     pub(crate) reservation: Option<(String, String)>,
     pub account: Option<String>,
     pub holds: Vec<String>,
@@ -474,7 +481,9 @@ pane이 없어졌거나 시작이 실패한 thread는 `aaa thread restart <id>`�
   자리를 가진다. 단 보고 첫 줄 `[병합 준비됨]`은 빼고 `[착지]`는 한 자리만 뺀다. 다음 단계 작업은 `[진행 중]`으로 돌린다.
   그 밖은 resolve 정리가 실제로 끝나야 반환한다. 자동화 thread(`automations/*.toml`의 do.start)는 이 한도와 예약 자리에서
   빼며 규칙별 reuse·limits로 제한한다(기본 동시 1개). 사용자·coordinator가 띄운 thread는 그대로 센다.
-  한도를 올리거나 별도 thread start로 예약을 우회하지 않는다.
+  한도를 올리거나 별도 thread start로 예약을 우회하지 않는다. 사용자가 채팅에서 그 task를 한도 무시하고 강제로
+  시작하라고 명시했을 때만 `aaa thread start --from-task <ID> --link-task --over-limit --user-request '<사용자 지시 근거>'`를
+  쓴다. 일반 시작 승인·자리 대기·inbox 요청은 강제 시작 승인이 아니다. 강제 시작도 열린 수에 넣고 예약은 계속 한도를 지킨다.
 - TASKS.md task로 시작: 아래 「TASKS.md」의 `--from-task … --link-task`를 쓴다. 모델·머신 칸이 profile·machine을 정한다.
 - 그 밖: `aaa thread start --title … [--profile …] [--machine …] [--repo <경로>] --task-file …`. profile을 빼면
   project.toml `thread_profile`, 없으면 사용자가 정한 기본(없으면 claude)이다. `--repo`가 있으면 worktree, 없으면 repo 없는
@@ -1251,6 +1260,7 @@ impl Host {
             group
         };
         ThreadView {
+            over_limit: r.over_limit.clone(),
             project: r.project.clone(),
             id: r.id.clone(),
             title: r.title.clone(),
@@ -1710,6 +1720,46 @@ impl Host {
         lock.try_lock_owned().map_err(|_| bad(format!("{id}는 준비·정리 작업 중이다. thread show로 상태를 본다")))
     }
 
+    /// front가 판정한 요청자만 쓴다. env·요청 본문의 역할 자기 신고는 믿지 않는다.
+    pub(crate) fn thread_limit_override(
+        &self,
+        project: &str,
+        over_limit: bool,
+        user_request: Option<&str>,
+        from_task: Option<&str>,
+        actor: &str,
+    ) -> Result<Option<aaa_proto::ThreadLimitOverride>, ErrorBody> {
+        if !over_limit {
+            return if user_request.is_some() {
+                Err(bad("--user-request는 --over-limit와 함께 쓴다"))
+            } else {
+                Ok(None)
+            };
+        }
+        let reason = user_request.map(str::trim);
+        if reason.is_some_and(|r| r.is_empty() || r.len() > 2000 || r.chars().any(char::is_control)) {
+            return Err(bad("사용자 지시 근거는 비지 않은 한 줄(2000바이트 이하)로 쓴다"));
+        }
+        if self.coordinator_project_of_actor(actor).as_deref() == Some(project) {
+            if reason.is_none() || from_task.is_none_or(|t| t.trim().is_empty()) {
+                return Err(err(
+                    ErrorCode::Forbidden,
+                    "coordinator는 사용자가 그 task의 강제 시작을 명시했을 때만 --from-task·--over-limit·--user-request로 시작한다",
+                ));
+            }
+        } else if !(actor.starts_with("device:") || (actor.starts_with("local:") && !crate::front::in_session(actor))) {
+            return Err(err(
+                ErrorCode::Forbidden,
+                "한도 무시 시작은 사용자 직접 조작이나 해당 프로젝트 coordinator의 명시한 사용자 지시만 허용한다",
+            ));
+        }
+        Ok(Some(aaa_proto::ThreadLimitOverride {
+            actor: actor.into(),
+            at_ms: aaa_common::util::now_ms(),
+            user_request: reason.map(str::to_string),
+        }))
+    }
+
     /// thread 시작: 기록 → agent가 자리 만들기·profile 해석 → 세션 시작 → 보고 감시 → (배경) brief 안내
     pub(crate) async fn thread_start(self: &Arc<Self>, a: StartArgs, actor: &str) -> Result<ThreadView, ErrorBody> {
         self.thread_start_mode(a, actor, false).await
@@ -1738,6 +1788,9 @@ impl Host {
         background: bool,
         origin: Option<&StartOrigin>,
     ) -> Result<ThreadView, ErrorBody> {
+        if a.over_limit.is_some() && (origin.is_some() || a.reservation.is_some() || a.role != Role::Worker) {
+            return Err(bad("예약·자동 시작은 실행 한도를 무시할 수 없다"));
+        }
         if a.role == Role::Evaluator {
             return Err(crate::legacy_mission::removed());
         }
@@ -1807,6 +1860,7 @@ impl Host {
             account: a.account.clone(),
             holds: a.holds.clone(),
             started_by: Some(actor.into()),
+            over_limit: a.over_limit.clone(),
             automation: origin.map(|o| o.rule.clone()),
             automation_run: origin.map(|o| o.run.clone()),
             repo: a.repo.clone(),
@@ -1823,22 +1877,33 @@ impl Host {
                 return Err(err(ErrorCode::Conflict, "예약 내용이 선점 전에 바뀌었다"));
             }
         }
+        // Starting이 복구기에 보이기 전에 기동 task의 잠금을 확보한다.
+        // commit→claim 사이에 ticker가 새 행을 중단된 기동으로 처리할 수 없다.
+        let mut guard = None;
+        let mut claim_error = None;
         let inserted = self
             .db
-            .thread_insert_admitted(
+            .try_thread_insert_admitted(
                 &a.project,
                 origin.map(|o| o.key.as_str()),
                 origin.map(|o| &o.admission),
-                Some(self.settings(&a.project).max_parallel_threads),
+                a.over_limit.is_none().then(|| self.settings(&a.project).max_parallel_threads),
                 a.reservation.as_ref().map(|(id, b)| (id.as_str(), b.as_str())),
                 |id| {
+                    guard = Some(self.claim_thread(&a.project, id).map_err(|error| {
+                        let message = error.message.clone();
+                        claim_error = Some(error);
+                        anyhow::anyhow!(message)
+                    })?);
                     let mut r = rec.clone();
                     r.id = id.to_string();
-                    serde_json::to_string(&r).unwrap()
+                    Ok(serde_json::to_string(&r).unwrap())
                 },
             )
             .map_err(|e| {
-                if e.to_string().starts_with("start_wait:") {
+                if let Some(error) = claim_error {
+                    error
+                } else if e.to_string().starts_with("start_wait:") {
                     err(ErrorCode::Unavailable, e.to_string())
                 } else {
                     internal(e)
@@ -1850,7 +1915,26 @@ impl Host {
             return self.thread_show(&a.project, &id);
         }
         rec.id = id.clone();
-        let guard = self.claim_thread(&a.project, &id)?;
+        #[cfg(test)]
+        {
+            let hook = self.start_admitted_hook.lock().unwrap().clone();
+            if let Some(hook) = hook {
+                hook(&id);
+            }
+        }
+        let guard = guard.ok_or_else(|| internal("새 기동의 작업 잠금이 없다"))?;
+        if let Some(override_) = &rec.over_limit {
+            self.db.audit(
+                actor,
+                "thread_start_over_limit",
+                &format!(
+                    "{}/{id} at={} 사용자 지시: {}",
+                    a.project,
+                    override_.at_ms,
+                    override_.user_request.as_deref().unwrap_or("직접 시작")
+                ),
+            );
+        }
         self.db.audit(actor, "thread_start", &format!("{}/{id} {} @{}", a.project, a.profile, self.machine_name(&mid)));
         if let Err(e) = write_atomic(&dir.join("threads").join(format!("{id}.task.md")), a.task.as_bytes()) {
             self.update_rec(&a.project, &id, |r| {
@@ -1862,7 +1946,16 @@ impl Host {
         let brief = self.brief(&dir, &rec, &a.task, false);
         // 세션이 생기기 전에도 웹·coordinator가 준비 중인 thread를 볼 수 있어야 한다.
         let _ = self.thread_events.send(self.thread_view(&rec));
-        self.flow(&rec, "thread_started", Some(format!("threads/{id}.task.md")), rec.title.clone());
+        let detail = if let Some(o) = &rec.over_limit {
+            format!(
+                "{} · 한도 초과로 시작 · 사용자 지시: {}",
+                rec.title,
+                o.user_request.as_deref().unwrap_or("직접 시작")
+            )
+        } else {
+            rec.title.clone()
+        };
+        self.flow(&rec, "thread_started", Some(format!("threads/{id}.task.md")), detail);
 
         let view = self.thread_view(&rec);
         let host = self.clone();
@@ -2925,6 +3018,7 @@ mod tests {
             account: None,
             holds: vec![],
             started_by: None,
+            over_limit: None,
             automation: None,
             automation_run: None,
             project: "p".into(),

@@ -879,6 +879,20 @@ impl Db {
         reservation: Option<(&str, &str)>,
         make: impl FnOnce(&str) -> String,
     ) -> Result<(String, bool)> {
+        self.try_thread_insert_admitted(project, key, admission, limit, reservation, |id| Ok(make(id)))
+    }
+
+    /// 새 행이 보이기 전에 호출자가 기동 소유권을 얻는다. 실패하면 행·예약·영수증을 모두 롤백한다.
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn try_thread_insert_admitted(
+        &self,
+        project: &str,
+        key: Option<&str>,
+        admission: Option<&StartAdmission>,
+        limit: Option<u32>,
+        reservation: Option<(&str, &str)>,
+        make: impl FnOnce(&str) -> Result<String>,
+    ) -> Result<(String, bool)> {
         let mut c = self.conn.lock().unwrap();
         let tx = c.transaction()?;
         if let Some(key) = key
@@ -895,7 +909,7 @@ impl Db {
                 r.get(0)
             })?;
         let id = format!("t-{:04}", max.unwrap_or(0) + 1);
-        let text = make(&id);
+        let text = make(&id)?;
         if let Some(limit) = limit
             && serde_json::from_str::<crate::orch::ThreadRec>(&text)?.automation.is_none()
         {
