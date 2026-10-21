@@ -9,11 +9,15 @@ export function LibraryLink({ library, onChange }: { library: LibraryView; onCha
   return <ReportLink project={library.project} name={library.thread} link={library.link ?? null} onChange={(link) => onChange({ ...library, link })} />;
 }
 
+/** 새 링크 수명(일, host는 1~3650). 기본은 host와 같은 30일 */
+const LINK_DAYS = [1, 7, 30, 90, 365];
+
 /** 전체 보고서와 thread 화면이 같은 링크 줄·조작을 쓴다. */
 export function ReportLink({ project, name, link, onChange }: { project: string; name: string; link: LinkView | null; onChange: (link: LinkView) => void }) {
   const [busy, setBusy] = useState(false);
   const [qr, setQr] = useState(false);
   const [message, setMessage] = useState("");
+  const [days, setDays] = useState(30);
   const anchor = useRef<HTMLAnchorElement>(null);
   const active = link !== null && !link.revoked && link.expires_at_ms > Date.now();
   const url = link ? link.url ?? new URL(link.base, window.location.origin).href : "";
@@ -23,7 +27,7 @@ export function ReportLink({ project, name, link, onChange }: { project: string;
     try {
       const r = await call(revoke && link
         ? { op: "library_link_revoke", id: link.id }
-        : { op: "library_link", project, thread: name, days: null });
+        : { op: "library_link", project, thread: name, days });
       if (r.kind === "library_link") {
         onChange(r);
         setQr(false);
@@ -44,7 +48,12 @@ export function ReportLink({ project, name, link, onChange }: { project: string;
         <button className="ghost small" disabled={busy} onClick={async () => setMessage(await copyText(url, anchor.current) ? "링크를 복사했다" : "링크를 선택했다. 길게 눌러 복사한다")}>링크 복사</button>
         <button className="ghost small" disabled={busy} aria-expanded={qr} onClick={() => setQr(!qr)}>QR 코드</button>
         <button className="ghost small" disabled={busy} onClick={() => void change(true)}>링크 폐기</button>
-      </> : <button className="ghost small" disabled={busy} onClick={() => void change(false)}>새 링크 만들기</button>}
+      </> : <>
+        <select className="small" aria-label="새 링크 수명" value={days} disabled={busy} onChange={(e) => setDays(Number(e.target.value))} data-testid="library-link-days">
+          {LINK_DAYS.map((d) => <option key={d} value={d}>{d}일</option>)}
+        </select>
+        <button className="ghost small" disabled={busy} onClick={() => void change(false)}>새 링크 만들기</button>
+      </>}
     </div>
     {active && qr && <QrCode value={url} label="보고서 공유 링크 QR 코드" />}
     {message && <span role="status">{message}</span>}

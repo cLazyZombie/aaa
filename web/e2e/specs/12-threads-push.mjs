@@ -742,7 +742,7 @@ export default async function ({ page }) {
     const key = await rowOf(page, "t1").getAttribute("data-pin-key");
     await page.getByTestId("pane-t1").click({ button: "right" });
     await focusIs(page, "메뉴 첫 항목", '[role="menu"] [role="menuitem"]');
-    if (JSON.stringify(await menuItems(page)) !== JSON.stringify(["pane 고정", "pane 이름 바꾸기", "pane 닫기"])) throw new Error(`메뉴 ${await menuItems(page)}`);
+    if (JSON.stringify(await menuItems(page)) !== JSON.stringify(["pane 고정", "pane 이름 바꾸기", "세션 끝내기", "pane 닫기"])) throw new Error(`메뉴 ${await menuItems(page)}`);
     if ((await page.locator(".machine-list .row-menu-toggle").first().isVisible())) throw new Error("마우스 데스크톱에 ⋯ 단추가 보인다(참고는 오른쪽 클릭)");
     await page.keyboard.press("Escape");
     await domIs(page, "Esc로 메뉴 닫힘", () => !document.querySelector('[role="menu"]'));
@@ -790,7 +790,7 @@ export default async function ({ page }) {
     await domIs(page, "새 이름 줄", () => document.querySelector('[data-testid="pane-빌드 창"]') !== null && !document.querySelector('[role="dialog"]'));
     if (!aaa("pane", "list").panes.some((x) => x.name === "빌드 창" && x.label === "빌드 창")) throw new Error("붙인 이름이 host에 없다");
     await page.getByTestId("pane-빌드 창").click({ button: "right" });
-    if (JSON.stringify(await menuItems(page)) !== JSON.stringify(["pane 고정", "pane 이름 바꾸기", "pane 이름 지우기", "pane 닫기"]))
+    if (JSON.stringify(await menuItems(page)) !== JSON.stringify(["pane 고정", "pane 이름 바꾸기", "pane 이름 지우기", "세션 끝내기", "pane 닫기"]))
       throw new Error(`이름 붙은 pane 메뉴 ${await menuItems(page)}`);
     const cleared = opDone(page, "pane_rename");
     await page.getByRole("menuitem", { name: "pane 이름 지우기" }).click();

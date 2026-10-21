@@ -4,7 +4,7 @@
 // 목록과 허용·기본값은 단추를 누를 때 받는다: agent.toml·로그인한 harness·safety는 화면을 연 뒤에도 바뀐다.
 // 거부(허용 목록·보관·없는 profile)는 host가 하고 그 글을 머리 아래 줄(onError)에 보인다.
 import { useRef, useState } from "react";
-import { Bot, LoaderCircle } from "lucide-react";
+import { Bot, CopyPlus, LoaderCircle } from "lucide-react";
 import { ApiError, call } from "./api";
 import { RowMenu, type RowMenuItem } from "./RowMenu";
 import { AgentMark } from "./herdr/AgentMark.tsx";
@@ -21,11 +21,11 @@ export function CoordinatorOpen({
   const [busy, setBusy] = useState(false);
   const fail = (e: unknown) => onError(e instanceof ApiError ? e.message : String(e));
 
-  const open = async (profile: string) => {
+  const open = async (profile: string, more = false) => {
     setBusy(true);
     onError(null);
     try {
-      const r = await call({ op: "project_open", profile });
+      const r = await call({ op: "project_open", profile, new: more });
       if (r.kind === "project_opened") onPane(r.pane.id);
     } catch (e) {
       fail(e);
@@ -59,8 +59,9 @@ export function CoordinatorOpen({
         );
         return;
       }
-      setItems(
-        usable.map((p) => ({
+      // 끝의 「하나 더 띄우기」는 돌고 있어도 맨 위 profile로 새 coordinator를 띄운다(`aaa project open --new`, 관리 GUI W8)
+      setItems([
+        ...usable.map((p) => ({
           id: p.name,
           label: p.name,
           hint: p.name === first ? "기본" : undefined,
@@ -69,7 +70,8 @@ export function CoordinatorOpen({
           glyph: p.harness === "custom" ? undefined : <AgentMark agent={p.harness} size={16} />,
           run: () => void open(p.name),
         })),
-      );
+        { id: "new", label: "하나 더 띄우기", hint: usable[0].name, title: "돌고 있는 coordinator가 있어도 새로 띄운다", icon: CopyPlus, divider: true, run: () => void open(usable[0].name, true) },
+      ]);
     } catch (e) {
       fail(e);
     } finally {
