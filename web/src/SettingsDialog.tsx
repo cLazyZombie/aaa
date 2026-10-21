@@ -31,6 +31,7 @@ import { useFocusTrap } from "./herdr/useFocusTrap.ts";
 import { useSheetSwipe } from "./herdr/sheets.ts";
 import { onSettingsHistory, recordSettings, settingsEntry, settingsLevels, type SettingsLevel } from "./herdr/settingsHistory.ts";
 import { Segmented, SettingsGroup, SettingsRow, Stepper, Toggle } from "./herdr/SettingsControls.tsx";
+import { PasskeyStatus, usePasskeyState } from "./PasskeyPanel";
 import { enableAlerts } from "./alerts";
 import { PushTestControls } from "./PushTestControls";
 import { beforeAlertSound, canPlayInSilentMode } from "./silentMode";
@@ -330,6 +331,7 @@ function DevicesPage({ role, device, onSignOut }: { role: DeviceRole; device: st
   // 폰이 지금 열 수 있는 곳(pairing QR): 공개 주소, 아니면 loopback이 아닌 이 주소
   const pairUrl = plan.kind === "here" || plan.kind === "served" ? plan.url : isLoopbackHost(location.hostname) ? null : location.origin;
   const [confirmSignOut, setConfirmSignOut] = useState(false);
+  const [passkey, reloadPasskey] = usePasskeyState();
   return (
     <>
       <SettingsGroup title="폰">
@@ -352,6 +354,9 @@ function DevicesPage({ role, device, onSignOut }: { role: DeviceRole; device: st
         <div className="settings-item">
           <DevicesPanel pairUrl={pairUrl} role={role} device={device} />
         </div>
+        <SettingsRow label="이 기기 passkey" description="공개 주소(HTTPS)로 연 조작 기기는 승인할 때마다 passkey로 사용자 확인을 합니다. 짝지은 뒤 10분 안에만 등록합니다.">
+          <PasskeyStatus state={passkey} role={role} onChanged={reloadPasskey} />
+        </SettingsRow>
         <SettingsRow label="로그아웃" description="이 브라우저의 로그인을 지웁니다. 다시 들어오려면 페어링 코드가 필요합니다.">
           <button type="button" className="btn" onClick={() => setConfirmSignOut(true)}>
             로그아웃

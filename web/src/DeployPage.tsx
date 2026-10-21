@@ -11,6 +11,7 @@ import { ApiError, call, me, onRolloutChanged } from "./api";
 import { ConfirmDialog } from "./ConfirmDialog";
 import { SettingsGroup } from "./herdr/SettingsControls.tsx";
 import { RolloutCard } from "./RolloutCard";
+import { PasskeyCancelled } from "./passkey";
 import { canDeploy, canRestartRollout, canStart, candidatePathOk, jobState, jobWhat, newDeployId, refused, restartSpec, rolloutSpec, rolloutTargets, sizeText, type PlanInput } from "./deployModel.ts";
 
 const say = (e: unknown) => (e instanceof ApiError ? e.message : e instanceof Error ? e.message : String(e));
@@ -259,7 +260,7 @@ function NewRollout({ machines, onStarted }: { machines: MachineView[]; onStarte
               try {
                 await call({ op: "rollout_start", id, spec: rolloutSpec(plan.view, plan.input.machines) });
               } catch (e) {
-                if (e instanceof ApiError && refused(e.body.code)) setStarted(null);
+                if ((e instanceof ApiError && refused(e.body.code)) || e instanceof PasskeyCancelled) setStarted(null);
                 throw e;
               }
               setAsking(null);

@@ -17,7 +17,8 @@ import { formatBytes } from "./formatBytes.ts";
 import { HighlightedCode } from "./HighlightedCode.tsx";
 import { browserClick } from "./reportLinks.ts";
 import { appLinkOf, appRefOf, splitAppRefs } from "./appRef.ts";
-import { AppRefChip, AppRefContext } from "./AppRefChip.tsx";
+import { AppIdLink, AppRefChip, AppRefContext } from "./AppRefChip.tsx";
+import { splitAppIds } from "./appIds";
 import "./herdr/Markdown.css";
 
 /** Stats an image before it can load; null context keeps chat images as links. */
@@ -113,13 +114,17 @@ function Inline({ nodes, interactive = true, standalone = false }: { nodes: Inli
             const paths = (text: string) =>
               open === null ? text : splitFilePaths(text).map((part, n) => (typeof part === "string" ? <Fragment key={n}>{part}</Fragment> : <FilePathLink key={n} path={part.path} code={false} open={open} />));
             if (refs === null) return <span key={key}>{paths(node.value)}</span>;
+            const ids = (text: string) => splitAppIds(text, refs.exists).map((part, n) => typeof part === "string"
+              ? <Fragment key={n}>{paths(part)}</Fragment> : <AppIdLink key={n} at={part} refs={refs} />);
             return (
               <span key={key}>
-                {splitAppRefs(node.value).map((part, n) => (typeof part === "string" ? <Fragment key={n}>{paths(part)}</Fragment> : <AppRefChip key={n} at={part} refs={refs} />))}
+                {splitAppRefs(node.value).map((part, n) => (typeof part === "string" ? <Fragment key={n}>{ids(part)}</Fragment> : <AppRefChip key={n} at={part} refs={refs} />))}
               </span>
             );
           }
           case "code": {
+            const ids = refs === null ? [] : splitAppIds(node.value, refs.exists);
+            if (ids.length === 1 && typeof ids[0] !== "string") return <code key={key}><AppIdLink at={ids[0]!} refs={refs!} /></code>;
             const ref = refs === null ? null : appRefOf(node.value);
             if (ref !== null) return <AppRefChip key={key} at={ref} refs={refs!} />;
             const file = fileUriPath(node.value);
