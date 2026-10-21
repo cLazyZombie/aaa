@@ -529,7 +529,7 @@ export function TasksView({
           <>
             <label className="tasks-search">
               <Search aria-hidden="true" />
-              <input className="input" type="search" value={query} placeholder="제목·메모·담당 검색" aria-label="할 일 검색" data-testid="tasks-search" onChange={(e) => setQuery(e.target.value)} />
+              <input className="input" type="search" value={query} placeholder="ID·제목·메모·담당 검색" aria-label="할 일 검색" data-testid="tasks-search" onChange={(e) => setQuery(e.target.value)} />
             </label>
             <div className="tasks-filters" role="group" aria-label="거르기">
               {TASK_FILTERS.map((f) => (
@@ -972,6 +972,7 @@ function TaskRow({
         <StateIcon state={state} />
         <span className="task-title">
           <span className="sr-only">{TASK_STATE_LABEL[state]}: </span>
+          {t.short_id && <span className="task-short-id" data-testid="task-short-id">{t.short_id}</span>}
           {t.title}
         </span>
         {state === "problem" && <span className="task-chip task-problem">형식 어긋남</span>}

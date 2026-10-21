@@ -584,6 +584,9 @@ pub struct AgentHello {
     pub os: String,
     pub arch: String,
     pub software: String,
+    /// 실행 파일 SHA-256(소문자 hex, 웹 머신 상세, plan §8.372). AGENT_LINK를 올리지 않는 선택 칸이다: 옛 agent는 보내지 않고 옛 host는 버린다
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sha256: Option<String>,
     #[serde(default)]
     pub features: Vec<String>,
     #[serde(default)]
@@ -614,6 +617,9 @@ pub struct EnrollRequest {
     pub proto: Version,
     pub machine_id: String,
     pub machine_name: String,
+    /// install_enroll.v1 협상 뒤만 사용한다. host의 사람이 SAS를 승인할 때 결과를 이 ID에 결속한다.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub installation: Option<crate::install::InstallEnrollmentBinding>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -622,6 +628,34 @@ pub enum LinkMsg {
     Hello(AgentHello),
     Welcome(HostWelcome),
     Enroll(EnrollRequest),
+    /// 등록 전 기능 협상. 구판에는 grant를 보내지 않는다.
+    InstallEnrollCapabilities {
+        proto: Version,
+        features: Vec<String>,
+    },
+    InstallEnrollProbe {
+        proto: Version,
+    },
+    InstallEnroll(Box<crate::install::InstallEnrollRequest>),
+    InstallEnrollLookup {
+        proto: Version,
+        installation_id: String,
+        plan_sha256: String,
+    },
+    /// 기존 agent 자기 신원만 읽는다. 설치 grant/등록창 권한을 쓰지 않는다.
+    InstallAgentQuery {
+        proto: Version,
+        machine_id: String,
+        machine_name: String,
+    },
+    InstallAgentKnown {
+        machine_id: String,
+    },
+    InstallEnrollUnknown,
+    InstallEnrolled {
+        installation_id: String,
+        machine_id: String,
+    },
     /// host가 등록 요청을 받아 사용자의 확인을 기다린다.
     EnrollPending,
     EnrollAccepted {
@@ -1338,6 +1372,38 @@ pub struct MachineView {
     pub clock_skew_ms: Option<i64>,
     /// 새 세션을 거부하는 이유(연결 중일 때만). 비었으면 정상이다.
     pub problems: Vec<HealthProblem>,
+    /// 마지막 hello의 CPU 종류(`aarch64`·`x86_64`). 아래 넷과 같이 1.88부터 싣고, 옛 host·아직 붙지 않은 머신은 생략한다(plan §8.372)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub arch: Option<String>,
+    /// 마지막 hello의 aaa 판(`aaa --version`의 판 글)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub software: Option<String>,
+    /// 마지막 hello의 실행 파일 SHA-256(소문자 hex). 옛 agent는 보내지 않는다
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub sha256: Option<String>,
+    /// 판이 host와 다르다(판을 모르면 false)
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    #[ts(optional, as = "Option<bool>")]
+    pub software_differs: bool,
+    /// 이 host 실행 중 마지막 연결이 알린 agent 기능(host 재시작 뒤 다시 붙기 전에는 비었다)
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    #[ts(optional, as = "Option<Vec<String>>")]
+    pub features: Vec<String>,
+    /// 마지막 연결의 시작 자가 점검(§10.4 6) 요약. 점검이 hello보다 늦게 끝났으면 다음 연결 때 온다
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub selfcheck: Option<MachineSelfcheck>,
+}
+
+/// agent 시작 자가 점검 요약(hello `selfcheck`에서 host가 읽은 것). 실패 이유는 agent가 쓴 글 그대로다
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+pub struct MachineSelfcheck {
+    pub pass: bool,
+    #[serde(default)]
+    pub reasons: Vec<String>,
 }
 
 /// agent가 주기적으로 보내는 머신 건강(§8.10)
@@ -1597,6 +1663,10 @@ pub struct HostStatus {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(tag = "op", rename_all = "snake_case")]
 pub enum FrontRequest {
+    /// 설치 전용 서명 승인. Controller 또는 세션 밖 Local만, raw 승인서는 응답하지 않는다.
+    InstallApprove {
+        request: Box<crate::install::InstallApprovalRequest>,
+    },
     /// 등록은 host의 세션 밖 Local만. 비밀값은 반환하거나 감사 기록에 넣지 않는다.
     AccountImport {
         name: String,
@@ -2035,6 +2105,13 @@ pub enum FrontRequest {
     DeviceRevoke {
         id: String,
     },
+    /// W0와 별개로, 실제 승인된 같은 머신 worker의 한 포트 범위만 검증한다.
+    InstallPublish {
+        installation_id: String,
+    },
+    InstallPublishStatus {
+        installation_id: String,
+    },
     WebPublish,
     WebPublishOff,
     WebStatus,
@@ -2143,7 +2220,7 @@ pub enum FrontRequest {
         base: Option<String>,
         /// 할 일(threads/<id>.task.md로 저장하고 brief에 넣는다)
         task: String,
-        /// TASKS.md의 task 제목(대소문자 무시). owner가 profile·machine의 기본값이 되고, 메모가 할 일에 붙는다.
+        /// TASKS.md의 task ID(d-0001·ULID) 또는 제목(대소문자 무시). owner가 profile·machine의 기본값이 되고, 메모가 할 일에 붙는다.
         #[serde(default)]
         from_task: Option<String>,
         /// 시작하면 그 task 줄 끝에 ` · t-NNNN`을 붙인다(FRONT_API 1.63, 할 일 T3). 연결은 시작할 때 읽은 블록 hash로 하고,
@@ -2245,6 +2322,10 @@ pub enum FrontRequest {
         limit: Option<u32>,
         #[serde(default)]
         filter: Option<TaskLogFilter>,
+        /// 표시 ID·ULID 또는 제목으로 기록을 거른다.
+        #[serde(default)]
+        #[ts(optional)]
+        task: Option<String>,
     },
     /// 이 시각(ms)보다 오래된 할 일 기록을 지운다(FRONT_API 1.62, 조작 권한)
     TaskLogPrune {
@@ -2963,6 +3044,8 @@ impl FrontRequest {
                 | FrontRequest::PaneGet { .. }
                 | FrontRequest::PaneChat { .. }
                 | FrontRequest::Workspace { .. }
+                | FrontRequest::InstallPublish { .. }
+                | FrontRequest::InstallPublishStatus { .. }
                 | FrontRequest::WebStatus
                 | FrontRequest::Devices
                 | FrontRequest::EvaluatorStatus { .. }
@@ -2990,6 +3073,12 @@ impl FrontRequest {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum FrontResponse {
+    InstallPublished {
+        publication: crate::install::InstallPublication,
+    },
+    InstallApproval {
+        approval: crate::install::InstallApprovalView,
+    },
     Accounts {
         accounts: Vec<crate::AccountView>,
     },

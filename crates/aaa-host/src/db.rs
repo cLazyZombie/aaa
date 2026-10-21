@@ -7,6 +7,7 @@ use anyhow::Result;
 use rusqlite::{Connection, OptionalExtension, params};
 
 mod question_ids;
+mod task_ids;
 mod task_queue;
 
 pub const SCHEMA_VERSION: i64 = 1;
@@ -78,6 +79,10 @@ pub struct MachineRow {
     pub os: Option<String>,
     pub boot_id: Option<String>,
     pub last_seen_ms: Option<u64>,
+    /// 마지막 hello의 CPU 종류·판·실행 파일 SHA-256(웹 머신 상세, plan §8.372)
+    pub arch: Option<String>,
+    pub software: Option<String>,
+    pub sha256: Option<String>,
 }
 
 /// Web Push 구독. endpoint는 비밀값처럼 다룬다(로그에 남기지 않는다).
@@ -319,6 +324,7 @@ impl Db {
              CREATE TABLE IF NOT EXISTS evaluations(
                project TEXT NOT NULL, id TEXT NOT NULL, state TEXT NOT NULL, sha256 TEXT NOT NULL, data TEXT NOT NULL,
                created_at INTEGER NOT NULL, PRIMARY KEY(project, id));
+             CREATE TABLE IF NOT EXISTS task_ids(project TEXT NOT NULL, task_id TEXT NOT NULL, number INTEGER NOT NULL, PRIMARY KEY(project,task_id), UNIQUE(project,number));
              CREATE TABLE IF NOT EXISTS task_queue(project TEXT NOT NULL, task_id TEXT NOT NULL, data TEXT NOT NULL, PRIMARY KEY(project,task_id));
              CREATE TABLE IF NOT EXISTS task_queue_log(id INTEGER PRIMARY KEY, project TEXT NOT NULL, actor TEXT NOT NULL, at_ms INTEGER NOT NULL, before TEXT NOT NULL, after TEXT NOT NULL);
              CREATE TABLE IF NOT EXISTS task_archive(project TEXT NOT NULL, task_id TEXT NOT NULL, data TEXT NOT NULL, PRIMARY KEY(project,task_id));
@@ -374,6 +380,15 @@ impl Db {
                  ALTER TABLE library_reports ADD COLUMN seen_at INTEGER;",
             )?;
         }
+        // 머신의 CPU 종류·판·실행 파일 SHA-256(plan §8.372). 위와 같이 열만 더한다
+        let has_arch = conn.prepare("SELECT 1 FROM pragma_table_info('machines') WHERE name='arch'")?.exists([])?;
+        if !has_arch {
+            conn.execute_batch(
+                "ALTER TABLE machines ADD COLUMN arch TEXT;
+                 ALTER TABLE machines ADD COLUMN software TEXT;
+                 ALTER TABLE machines ADD COLUMN sha256 TEXT;",
+            )?;
+        }
         // 보고서를 낸 thread(사용자 요청 10-20). 위와 같이 열만 더한다
         let has_from_thread =
             conn.prepare("SELECT 1 FROM pragma_table_info('library_reports') WHERE name='from_thread'")?.exists([])?;
@@ -390,6 +405,11 @@ impl Db {
             Some(Ok(SCHEMA_VERSION)) => {}
             Some(other) => anyhow::bail!("host DB schema {other:?}을 이 aaa(schema {SCHEMA_VERSION})가 모른다"),
         }
+        conn.execute_batch(
+            "CREATE TABLE IF NOT EXISTS install_grants (
+            installation TEXT PRIMARY KEY, plan TEXT NOT NULL, nonce TEXT NOT NULL UNIQUE,
+            fingerprint TEXT NOT NULL, machine TEXT NOT NULL UNIQUE, name TEXT NOT NULL)",
+        )?;
         Ok(Db { conn: Mutex::new(conn) })
     }
 
@@ -518,10 +538,13 @@ impl Db {
             os: r.get(4)?,
             boot_id: r.get(5)?,
             last_seen_ms: r.get::<_, Option<i64>>(6)?.map(|v| v as u64),
+            arch: r.get(7)?,
+            software: r.get(8)?,
+            sha256: r.get(9)?,
         })
     }
 
-    const MACHINE_COLS: &str = "id,name,fingerprint,local,os,boot_id,last_seen";
+    const MACHINE_COLS: &str = "id,name,fingerprint,local,os,boot_id,last_seen,arch,software,sha256";
 
     pub fn machines(&self) -> Result<Vec<MachineRow>> {
         let c = self.conn.lock().unwrap();
@@ -553,6 +576,59 @@ impl Db {
         .optional()?)
     }
 
+    /// 서명 검증을 마친 grant만 호출한다. nonce 소비와 새 머신 등록은 같은 commit이다.
+    pub(crate) fn install_enroll(
+        &self,
+        installation: &str,
+        plan: &str,
+        nonce: &str,
+        fingerprint: &str,
+        id: &str,
+        name: &str,
+    ) -> Result<()> {
+        let mut c = self.conn.lock().unwrap();
+        let tx = c.transaction()?;
+        let previous: Option<(String, String, String, String)> = tx
+            .query_row(
+                "SELECT plan,fingerprint,machine,name FROM install_grants WHERE installation=?1",
+                [installation],
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
+            )
+            .optional()?;
+        if let Some(previous) = previous {
+            anyhow::ensure!(
+                previous == (plan.into(), fingerprint.into(), id.into(), name.into()),
+                "install grant target conflict"
+            );
+            let trusted: bool = tx.query_row("SELECT EXISTS(SELECT 1 FROM machines WHERE id=?1 AND name=?2 AND fingerprint=?3 AND revoked=0 AND local=0)",
+                params![id,name,fingerprint], |r|r.get(0))?;
+            anyhow::ensure!(trusted, "install grant revoked");
+        } else {
+            let conflict: bool = tx.query_row(
+                "SELECT EXISTS(SELECT 1 FROM machines WHERE id=?1 OR name=?2 OR fingerprint=?3)",
+                params![id, name, fingerprint],
+                |r| r.get(0),
+            )?;
+            // 기존/폐기된 신원을 되살리거나 다른 이름에 덮어쓰지 않는다.
+            anyhow::ensure!(!conflict, "install grant target conflict");
+            tx.execute("INSERT INTO install_grants(installation,plan,nonce,fingerprint,machine,name) VALUES(?1,?2,?3,?4,?5,?6)",
+                params![installation,plan,nonce,fingerprint,id,name])?;
+            tx.execute(
+                "INSERT INTO machines(id,name,fingerprint,local,enrolled_at) VALUES(?1,?2,?3,0,?4)",
+                params![id, name, fingerprint, aaa_common::util::now_ms() as i64],
+            )?;
+        }
+        tx.commit()?;
+        Ok(())
+    }
+    /// 응답 유실 뒤 조회에는 유효 기간을 연장하지 않고 실제 TLS peer와 아직 신뢰하는 머신을 대조한다.
+    pub(crate) fn install_enrolled(&self, installation: &str, plan: &str, fingerprint: &str) -> Result<Option<String>> {
+        let c = self.conn.lock().unwrap();
+        Ok(c.query_row("SELECT g.machine FROM install_grants g JOIN machines m ON m.id=g.machine
+            WHERE g.installation=?1 AND g.plan=?2 AND g.fingerprint=?3 AND m.fingerprint=g.fingerprint AND m.name=g.name AND m.revoked=0 AND m.local=0",
+            params![installation,plan,fingerprint], |r|r.get(0)).optional()?)
+    }
+
     /// 등록(원격) 또는 로컬 agent 자동 등록. 같은 id면 이름·fingerprint를 갱신한다.
     pub fn upsert_machine(&self, id: &str, name: &str, fingerprint: Option<&str>, local: bool) -> Result<()> {
         let c = self.conn.lock().unwrap();
@@ -566,11 +642,20 @@ impl Db {
         Ok(())
     }
 
-    pub fn touch_machine(&self, id: &str, os: &str, boot_id: &str) -> Result<()> {
+    /// hello를 받을 때마다 그 머신의 OS·부팅·판을 남긴다(끊긴 뒤·host 재시작 뒤에도 마지막 값을 보인다)
+    pub fn touch_machine(&self, hello: &aaa_proto::AgentHello) -> Result<()> {
         let c = self.conn.lock().unwrap();
         c.execute(
-            "UPDATE machines SET os=?2, boot_id=?3, last_seen=?4 WHERE id=?1",
-            params![id, os, boot_id, aaa_common::util::now_ms() as i64],
+            "UPDATE machines SET os=?2, boot_id=?3, last_seen=?4, arch=?5, software=?6, sha256=?7 WHERE id=?1",
+            params![
+                hello.machine_id,
+                hello.os,
+                hello.boot_id,
+                aaa_common::util::now_ms() as i64,
+                hello.arch,
+                hello.software,
+                hello.sha256
+            ],
         )?;
         Ok(())
     }
@@ -1387,7 +1472,7 @@ fn scrub_audit_env(conn: &mut Connection) -> Result<()> {
 }
 
 /// project 열이 있는 표(옛 db에 남은 `merge_queue`는 읽지 않아 옮기지 않는다, 새 db에는 없다 — §8.135)
-const PROJECT_TABLES: [&str; 13] = [
+const PROJECT_TABLES: [&str; 14] = [
     "threads",
     "flow_events",
     "messages",
@@ -1397,6 +1482,7 @@ const PROJECT_TABLES: [&str; 13] = [
     "library_reports",
     "posts",
     "task_log",
+    "task_ids",
     "task_queue",
     "task_queue_log",
     "task_archive",

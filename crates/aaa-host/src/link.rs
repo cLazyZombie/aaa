@@ -108,7 +108,7 @@ pub async fn start(host: &Arc<Host>) -> Result<()> {
                         let res = match known {
                             Some(m) => {
                                 drop(permit);
-                                serve(host, Box::new(tls), Some(m.id), None).await
+                                serve(host, Box::new(tls), Some((m.id, fp)), None).await
                             }
                             None => enroll(host, tls, &fp, &sas_base).await,
                         };
@@ -141,6 +141,9 @@ async fn enroll<S: AsyncRead + AsyncWrite + Unpin + Send + 'static>(
     let mut rx = FrameRx::new(r, MAX_FRAME_PREAUTH);
     let first: LinkMsg =
         tokio::time::timeout(Duration::from_secs(10), rx.control()).await.context("첫 메시지 대기")??;
+    let Some(first) = crate::installation::link_control(&host, fp, &mut rx, &tx, first).await? else {
+        return Ok(());
+    };
     let req = match first {
         LinkMsg::Enroll(req) => req,
         LinkMsg::Hello(_) => {
@@ -151,7 +154,7 @@ async fn enroll<S: AsyncRead + AsyncWrite + Unpin + Send + 'static>(
     if let Err(e) = negotiate(AGENT_LINK, req.proto) {
         return reject(&tx, ErrorCode::UnsupportedVersion, &e.to_string()).await;
     }
-    let accepted = match host.enroll_request(&req.machine_name, &req.machine_id, fp, sas) {
+    let accepted = match host.enroll_request_bound(&req.machine_name, &req.machine_id, fp, sas, req.installation) {
         Ok(rx) => rx,
         Err(e) => {
             let msg = e.message.clone();
@@ -199,7 +202,7 @@ type Cleanup = (String, u64, super::Pending, tokio::task::JoinHandle<()>);
 async fn serve(
     host: Arc<Host>,
     stream: aaa_common::ipc::LocalStream,
-    known: Option<String>,
+    known: Option<(String, String)>,
     pid: Option<u32>,
 ) -> Result<()> {
     if !host.task_allowed(Task::AgentLink) {
@@ -236,7 +239,7 @@ async fn serve(
 async fn serve_connection(
     host: Arc<Host>,
     stream: aaa_common::ipc::LocalStream,
-    known: Option<String>,
+    known: Option<(String, String)>,
     pid: Option<u32>,
     cleanup: &mut Option<Cleanup>,
 ) -> Result<()> {
@@ -245,12 +248,26 @@ async fn serve_connection(
     let tx = spawn_writer(w, MAX_FRAME);
     let mut rx = FrameRx::new(r, MAX_FRAME);
     let first: LinkMsg = tokio::time::timeout(Duration::from_secs(10), rx.control()).await.context("hello 대기")??;
+    let first = if let Some((id, peer)) = &known {
+        // handshake에서 받은 실제 peer를 유지한다. 같은 ID가 대기 중 재등록돼도 키를 빌리지 않는다.
+        anyhow::ensure!(
+            host.db.machine_by_fingerprint(peer)?.is_some_and(|m| &m.id == id && !m.local),
+            "등록된 TLS 신원이 폐기됐다"
+        );
+        let Some(first) = crate::installation::link_control(&host, peer, &mut rx, &tx, first).await? else {
+            return Ok(());
+        };
+        first
+    } else {
+        first
+    };
     let hello = match first {
         LinkMsg::Hello(hello) => hello,
         // 이미 등록된 장치 키로 `aaa agent enroll`을 다시 했다(QA t-0337 Q17): 무엇이 문제이고 어떻게 하는지 알린다
         LinkMsg::Enroll(req) if known.is_some() => {
             let name = known
-                .as_deref()
+                .as_ref()
+                .map(|(id, _)| id.as_str())
                 .and_then(|id| host.db.machines().ok()?.into_iter().find(|m| m.id == id))
                 .map_or(req.machine_name, |m| m.name);
             return reject(&tx, ErrorCode::BadRequest, &already_enrolled(&name)).await;
@@ -263,7 +280,7 @@ async fn serve_connection(
         Ok(v) => v,
         Err(e) => return reject(&tx, ErrorCode::UnsupportedVersion, &e.to_string()).await,
     };
-    if let Some(id) = &known
+    if let Some((id, _)) = &known
         && *id != hello.machine_id
     {
         return reject(&tx, ErrorCode::Unauthorized, "등록된 machine ID와 다르다").await;
@@ -411,6 +428,54 @@ async fn register_local(host: &Host, hello: &AgentHello, tx: &FrameTx) -> Result
 mod post_tests {
     use super::*;
     use aaa_proto::{PostInput, PostType};
+    /// 첫 메시지를 기다리는 연결의 TLS key를 현재 DB의 다른 key로 바꾸지 않는다.
+    #[tokio::test]
+    async fn install_agent_query_keeps_the_handshake_key_after_same_id_rekey() {
+        let path = std::env::temp_dir().join(format!("aaa-install-peer-{}", util::new_id()));
+        let mut cfg = aaa_config::HostConfig::default();
+        cfg.notify.web_push = false;
+        let host = Host::open(cfg, path.clone()).unwrap();
+        let old = "a".repeat(64);
+        let replacement = "b".repeat(64);
+        let machine_id = util::new_id();
+        host.db.upsert_machine(&machine_id, "agent-a", Some(&old), false).unwrap();
+        for rekey in [false, true] {
+            // 이 immutable pair는 acceptor가 실제 TLS 인증서에서 만든 연결 신원이다.
+            let known = Some((machine_id.clone(), old.clone()));
+            if rekey {
+                host.db.upsert_machine(&machine_id, "agent-a", Some(&replacement), false).unwrap();
+            }
+            let (stream, peer) = tokio::io::duplex(4096);
+            let host = host.clone();
+            let running =
+                tokio::spawn(async move { serve_connection(host, Box::new(stream), known, None, &mut None).await });
+            let (r, w) = tokio::io::split(peer);
+            let tx = spawn_writer(w, MAX_FRAME);
+            let mut rx = FrameRx::new(r, MAX_FRAME);
+            tx.json(&LinkMsg::InstallEnrollProbe { proto: AGENT_LINK }).await.unwrap();
+            if rekey {
+                // stale 연결에는 다른 key의 기존 등록 결과도 주지 않는다.
+                assert!(tokio::time::timeout(Duration::from_secs(10), rx.control::<LinkMsg>()).await.unwrap().is_err());
+                assert!(running.await.unwrap().is_err());
+            } else {
+                assert!(matches!(rx.control::<LinkMsg>().await.unwrap(), LinkMsg::InstallEnrollCapabilities { .. }));
+                tx.json(&LinkMsg::InstallAgentQuery {
+                    proto: AGENT_LINK,
+                    machine_id: machine_id.clone(),
+                    machine_name: "agent-a".into(),
+                })
+                .await
+                .unwrap();
+                assert_eq!(
+                    rx.control::<LinkMsg>().await.unwrap(),
+                    LinkMsg::InstallAgentKnown { machine_id: machine_id.clone() }
+                );
+                running.await.unwrap().unwrap();
+            }
+        }
+        drop(host);
+        std::fs::remove_dir_all(path).unwrap();
+    }
     #[tokio::test]
     async fn deployment_bytes_survive_auth_redaction_and_a_partial_tail() {
         use aaa_proto::{AgentRequest, B64, DEPLOY_CHUNK};
@@ -447,6 +512,7 @@ mod post_tests {
             software: "fixture".into(),
             features: vec!["terminal.v1".into(), "deploy_stage.v1".into()],
             dev_mode: true,
+            sha256: None,
             selfcheck: None,
             sessions: vec![],
             harness: vec![],
@@ -571,6 +637,7 @@ mod post_tests {
             software: "old".into(),
             features: vec!["terminal.v1".into()],
             dev_mode: true,
+            sha256: None,
             selfcheck: None,
             sessions: vec![],
             harness: vec![],

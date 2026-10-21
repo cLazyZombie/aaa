@@ -25,3 +25,12 @@
 .admin-block { margin-top: 12px; }
 .settings-notes { margin: 8px 0 0; padding-left: 18px; font-size: var(--fs-sm); }
 @media (max-width: 640px) { .admin-plan { grid-template-columns: 1fr; } .admin-plan dd { margin-bottom: 6px; } }
+/* 머신 줄 요약·상세(웹 머신 추가 M0, plan §8.372). dl은 줄마다 div로 묶어 휴대폰에서 이름 아래 값이 온다 */
+.machine-line { font-size: var(--fs-sm); overflow-wrap: anywhere; }
+.machine-detail { flex-basis: 100%; padding: 4px 0 2px; }
+.machine-detail .admin-plan { margin: 0; }
+.machine-row { display: contents; }
+.machine-warn { color: var(--status-blocked); }
+.machine-detail .mono { font-family: var(--font-mono); font-size: var(--fs-xs); overflow-wrap: anywhere; }
+.machine-features { margin-top: 8px; font-size: var(--fs-sm); }
+.machine-features p { margin: 6px 0 0; font-size: var(--fs-xs); overflow-wrap: anywhere; color: var(--text-muted); }

@@ -1,3 +1,4 @@
+import { taskContent } from "../lib/task-content.mjs";
 // task 첨부(plan §8.327, 사용자 10-20 「할일에 이미지 첨부할수있게 해」·「붙여넣기도 지원하게」·「폰에서 캡쳐 후 복사해서 바로 붙이게」·
 // 「md·html 문서도 task에 첨부(링크)」). 그림·문서는 프로젝트 uploads/에 쓰고(이름은 내용 hash) 메모에 첨부 줄을 더한다:
 // `![그림](uploads/<이름>)`·`[제목](uploads/<이름>.md)`·`[제목](library/<보고서>/<경로>)`·`[제목](https://…)`. 손대지 않은 폼에 붙이면
@@ -14,7 +15,8 @@ const sha = (b) => crypto.createHash("sha256").update(b).digest("hex");
 const read = () => fs.readFileSync(file(), "utf8");
 const write = (text) => {
   fs.writeFileSync(file(), text);
-  return sha(text);
+  // 화면 관측 전에 식별 주석 이주를 마친 fixture를 준비한다.
+  return aaa("task", "list").sha256;
 };
 const START = `# Tasks
 
@@ -230,7 +232,7 @@ export default async function ({ page }) {
     await shot(page, "attach-desktop-start");
     await page.getByTestId("task-start-go").click();
     await page.getByTestId("task-started").waitFor();
-    const id = await until("이은 thread", () => / · (t-\d{4})$/m.exec(read())?.[1]);
+    const id = await until("이은 thread", () => / · (t-\d{4})$/m.exec(taskContent(read()))?.[1]);
     started = id;
     const t = aaa("thread", "show", "demo", id);
     const task = fs.readFileSync(`${dir()}/threads/${id}.task.md`, "utf8");

@@ -49,6 +49,7 @@ impl Lab {
                 features: vec![],
                 agent_pid: None,
                 colors: None,
+                build: Default::default(),
             },
         );
         let requests = Arc::new(AtomicUsize::new(0));

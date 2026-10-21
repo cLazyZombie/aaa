@@ -38,6 +38,7 @@ fn lab(root: &std::path::Path) -> Arc<Host> {
             software: "test".into(),
             features: features.iter().map(|f| f.to_string()).collect(),
             dev_mode: true,
+            sha256: None,
             selfcheck: None,
             sessions: vec![],
             harness: vec![],

@@ -211,6 +211,7 @@ impl Lab {
                 software: "test".into(),
                 features,
                 dev_mode: true,
+                sha256: None,
                 selfcheck: None,
                 sessions: vec![],
                 harness: vec![],

@@ -21,7 +21,7 @@ fn check_directory(p: &Path, code: &str) -> Result<()> {
         Err(_) => Err(error("invalid_path", 2)),
     }
 }
-fn real_dir(p: &Path) -> Result<PathBuf> {
+pub(super) fn real_dir(p: &Path) -> Result<PathBuf> {
     let resolved = aaa_agent::work_root::check(p, None).map_err(|_| error("invalid_path", 2))?;
     check_directory(&resolved, "invalid_path")?;
     Ok(resolved)
@@ -187,7 +187,8 @@ fn binary_matches(path: &Path, platform: &InstallPlatform) -> bool {
     }
 }
 
-pub fn plan(i: &InstallInvocation) -> Result<InstallResult> {
+/// 발급/실행기는 공개 결과의 hash를 역조립하지 않고 같은 현지 planner의 private 계획을 받는다.
+pub(super) fn inspect(i: &InstallInvocation) -> Result<(InstallResult, InstallPlan)> {
     let mut c = i.choices.clone();
     let home = aaa_config::paths::home();
     let platform = platform::platform()?;
@@ -217,6 +218,9 @@ pub fn plan(i: &InstallInvocation) -> Result<InstallResult> {
         target_account: "unobserved".into(),
     };
     let shape = aaa_config::install::plan(c.clone(), context.clone()).map_err(unsupported)?;
+    if !aaa_common::util::machine_name_ok(c.name.as_deref().unwrap_or_default()) {
+        return Err(error("invalid_machine_name", 2));
+    }
     let config = real_dir(&config)?;
     let state = real_dir(&state)?;
     isolated(&c, &config, &state)?;
@@ -473,14 +477,14 @@ pub fn plan(i: &InstallInvocation) -> Result<InstallResult> {
     );
     let plan = aaa_config::install::plan(c, context).map_err(unsupported)?;
     result.plan_sha256 = Some(aaa_config::install::plan_sha256(&plan));
-    result.version = (plan.context.version != "unverified").then_some(plan.context.version);
-    result.binary_sha256 = Some(plan.context.binary_sha256);
+    result.version = (plan.context.version != "unverified").then_some(plan.context.version.clone());
+    result.binary_sha256 = Some(plan.context.binary_sha256.clone());
     check(&mut result, "effective_config", InstallCheckState::Passed);
     if !result.needs_user.is_empty() {
         result.status = InstallStatus::NeedsUser;
         result.exit_code = 3;
     }
-    Ok(result)
+    Ok((result, plan))
 }
 
 fn repo_check(path: &Path) -> Result<()> {
@@ -510,7 +514,6 @@ fn serve_check(result: &mut InstallResult, c: &InstallChoices, observations: &mu
         .enable_all()
         .build()
         .map_err(|_| error("network_detection_unavailable", 5))?;
-    let out = rt.block_on(aaa_host::tailscale::read());
     let port = c
         .web_listen
         .as_deref()
@@ -518,17 +521,27 @@ fn serve_check(result: &mut InstallResult, c: &InstallChoices, observations: &mu
         .parse::<std::net::SocketAddr>()
         .map_err(|_| error("invalid_web_listen", 2))?
         .port();
-    let ts = aaa_host::tailscale::plan(out.as_ref(), port, &[c.serve_port.unwrap()]);
-    if ts.taken.contains(&c.serve_port.unwrap()) && ts.serving.as_ref().is_none_or(|(_, p)| *p != c.serve_port.unwrap())
-    {
-        return Err(error("serve_port_conflict", 4));
+    #[cfg(windows)]
+    let exact = rt
+        .block_on(aaa_host::tailscale::conditional_snapshot(port, c.serve_port.unwrap()))
+        .map(|native| native.snapshot);
+    #[cfg(not(windows))]
+    let exact = {
+        let out = rt.block_on(aaa_host::tailscale::read());
+        aaa_host::tailscale::exact(out.as_ref(), port, c.serve_port.unwrap())
+    };
+    match exact {
+        Ok(exact) => {
+            check(result, "tailscale", InstallCheckState::Passed);
+            observations["tailscale"] = json!({"before_sha256":exact.before_sha256().map_err(|_| error("tailscale_status_unknown", 3))?,"serve_port":exact.port,"target_port":exact.target_port,"reused":exact.reused});
+        }
+        Err(fault) if fault.conflict => return Err(error(fault.code, 4)),
+        Err(fault) => {
+            check(result, "tailscale", InstallCheckState::Unknown);
+            needs(result, fault.code, "tailscale");
+            observations["tailscale"] = json!({"state":fault.code});
+        }
     }
-    let running = ts.state == "running";
-    check(result, "tailscale", if running { InstallCheckState::Passed } else { InstallCheckState::Unknown });
-    if !running {
-        needs(result, "tailscale_setup_required", "tailscale");
-    }
-    observations["tailscale"] = json!({"state":ts.state,"taken":ts.taken,"serving":ts.serving.map(|(_, p)| p)});
     change(result, "tailscale_serve", "publish_after_authorization");
     Ok(())
 }

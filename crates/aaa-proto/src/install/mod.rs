@@ -280,6 +280,63 @@ pub struct InstallResume {
     pub installation_id: String,
 }
 
+/// 사실을 확인하지 못한 단계는 unknown이며 설정 기록만으로 completed를 만들지 않는다.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
+#[serde(rename_all = "snake_case")]
+pub enum InstallOutcomeState {
+    Pending,
+    Running,
+    Completed,
+    Unchanged,
+    NotRequested,
+    NeedsUser,
+    Failed,
+    Unknown,
+}
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
+#[serde(rename_all = "snake_case")]
+pub enum InstallOwnership {
+    ThisInstance,
+    External,
+    Unknown,
+    NotRequested,
+}
+state!(InstallCredentialRetainer { WindowsScm });
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
+#[serde(deny_unknown_fields)]
+pub struct InstallServiceSummary {
+    pub manager: InstallService,
+    pub account_mode: Option<InstallAccount>,
+    pub requested_user_matched: InstallCheckState,
+    pub registered: InstallCheckState,
+    pub running: InstallCheckState,
+    pub application_ready: InstallCheckState,
+    pub startup: Option<InstallStartup>,
+    pub credential_retained_by: Option<InstallCredentialRetainer>,
+}
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
+#[serde(deny_unknown_fields)]
+pub struct InstallServeSummary {
+    pub requested: bool,
+    pub state: InstallOutcomeState,
+    pub serve_port: Option<u16>,
+    pub target_port: Option<u16>,
+    pub reused: Option<bool>,
+    pub ownership: InstallOwnership,
+}
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
+#[serde(deny_unknown_fields)]
+pub struct InstallPairingSummary {
+    pub state: InstallOutcomeState,
+}
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
+#[serde(deny_unknown_fields)]
+pub struct InstallWebSummary {
+    pub local_listen: Option<String>,
+    pub tailscale_serve: InstallServeSummary,
+    pub pairing: InstallPairingSummary,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
 #[serde(deny_unknown_fields)]
 pub struct InstallResult {
@@ -299,6 +356,10 @@ pub struct InstallResult {
     pub error: Option<InstallError>,
     pub rollback: InstallRollback,
     pub resume: Option<InstallResume>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub service: Option<InstallServiceSummary>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub web: Option<InstallWebSummary>,
 }
 
 impl InstallResult {
@@ -325,6 +386,8 @@ impl InstallResult {
             }),
             rollback: InstallRollback { state: InstallRollbackState::NotRequested, remaining: vec![] },
             resume: None,
+            service: None,
+            web: None,
         }
     }
     pub fn valid_exit(&self) -> bool {
@@ -436,6 +499,80 @@ pub struct InstallEnrollmentGrant {
     pub signature: String,
 }
 
+/// Controller가 검토한 원격 제안. Debug/일반 로그에는 private 계획을 싣지 않는다.
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
+#[serde(deny_unknown_fields)]
+pub struct InstallApprovalRequest {
+    pub installation_id: Option<String>,
+    pub plan: InstallPlan,
+    pub expected_plan_sha256: String,
+    pub permissions: Vec<InstallPermission>,
+    pub expected_scope_sha256: String,
+    pub agent_identity: Option<String>,
+}
+impl std::fmt::Debug for InstallApprovalRequest {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("InstallApprovalRequest([private])")
+    }
+}
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
+#[serde(deny_unknown_fields)]
+pub struct InstallApprovalView {
+    pub installation_id: String,
+    pub plan_sha256: String,
+    #[ts(type = "number")]
+    pub expires_at_ms: u64,
+}
+/// URL·코드·계정 없이 공개 가능한 설치 공개 결과.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
+#[serde(deny_unknown_fields)]
+pub struct InstallPublication {
+    pub serve_port: u16,
+    pub target_port: u16,
+    pub reused: bool,
+    pub owned: bool,
+    pub mapping: InstallCheckState,
+    pub public_https: InstallCheckState,
+}
+/// 검증 SSH helper의 읽기 제안. 일반 stdout/Front 상태에는 원래 경로·계정을 싣지 않는다.
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct InstallProposal {
+    pub plan: InstallPlan,
+    pub permissions: Vec<InstallPermission>,
+    pub result: InstallResult,
+}
+
+/// 검증된 SSH bootstrap 전용 private 입력. 일반 apply에서 이 키를 읽어 root를 만들지 않는다.
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct InstallBootstrapPackage {
+    pub issuer_public_key: String,
+    pub plan: InstallPlan,
+    pub authorization: InstallAuthorization,
+}
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct InstallEnrollmentBinding {
+    pub installation_id: String,
+    pub plan_sha256: String,
+}
+
+/// TLS peer 신원과 결속한 설치 grant 요청. grant 자체는 Debug/TS 출력 대상이 아니다.
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct InstallEnrollRequest {
+    pub proto: crate::Version,
+    pub machine_id: String,
+    pub machine_name: String,
+    pub grant: InstallEnrollmentGrant,
+}
+impl std::fmt::Debug for InstallEnrollRequest {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("InstallEnrollRequest([private])")
+    }
+}
+
 /// schema/fixture 판정용 묶음. 실제 CLI stdout envelope에는 이 wrapper를 쓰지 않는다.
 #[derive(Serialize, Deserialize, JsonSchema)]
 #[serde(tag = "kind", content = "value", rename_all = "snake_case")]
@@ -504,12 +641,22 @@ pub fn typescript() -> String {
         InstallNeedsUser::decl(&cfg),
         InstallRollback::decl(&cfg),
         InstallResume::decl(&cfg),
+        InstallOutcomeState::decl(&cfg),
+        InstallOwnership::decl(&cfg),
+        InstallCredentialRetainer::decl(&cfg),
+        InstallServiceSummary::decl(&cfg),
+        InstallServeSummary::decl(&cfg),
+        InstallPairingSummary::decl(&cfg),
+        InstallWebSummary::decl(&cfg),
         InstallResult::decl(&cfg),
         InstallProgress::decl(&cfg),
         InstallStreamItem::decl(&cfg),
         InstallEventNeedsUser::decl(&cfg),
         InstallPermission::decl(&cfg),
         InstallAuthorizationClaims::decl(&cfg),
+        InstallApprovalRequest::decl(&cfg),
+        InstallApprovalView::decl(&cfg),
+        InstallPublication::decl(&cfg),
     ];
     declarations.into_iter().map(|s| format!("export {s}\n\n")).collect()
 }
