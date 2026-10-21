@@ -50,6 +50,7 @@ mod library_retention;
 mod library_upload;
 mod lifecycle;
 pub mod link;
+mod machine_setup;
 pub mod migrate;
 mod notice;
 mod notify;
@@ -475,6 +476,8 @@ pub struct Host {
     pub accounts_changed: tokio_watch::Sender<u64>,
     /// 머신 등록 창·대기 목록이 바뀐 횟수(웹 「머신」 페이지가 다시 읽는다)
     pub enroll_changed: tokio_watch::Sender<u64>,
+    /// SSH 머신 추가 작업을 읽고 바꾸는 한 차례(machine_setup.rs)
+    setup_gate: Mutex<()>,
     /// 계정 기록(`account-meta:*`) 읽고-고쳐-쓰기를 하나씩(로그인 끝·갱신 결과·ticker 상태 pass가 겹친다)
     account_meta_gate: Mutex<()>,
     /// 웹 기기 폐기의 「마지막 조작 기기」 세기와 폐기를 묶는다
@@ -717,6 +720,7 @@ impl Host {
             inbox_changed: tokio_watch::channel(0).0,
             accounts_changed: tokio_watch::channel(0).0,
             enroll_changed: tokio_watch::channel(0).0,
+            setup_gate: Mutex::new(()),
             account_meta_gate: Mutex::new(()),
             device_gate: Mutex::new(()),
             enroll: Mutex::new(Enroll::default()),
@@ -795,6 +799,8 @@ impl Host {
         });
         // 이 기록 전에 등록한 Codex 계정의 메일·plan(관리 GUI W5a, 사용자 답 3A)
         host.account_meta_backfill();
+        // 진행 중에 내려간 SSH 머신 추가 작업(plan §8.375)
+        host.setup_recover();
         Ok(host)
     }
 
@@ -1369,6 +1375,10 @@ impl Host {
                 | FrontRequest::EnrollClose
                 | FrontRequest::EnrollApprove { .. }
                 | FrontRequest::MachineRevoke { .. }
+                | FrontRequest::MachineSetupStart { .. }
+                | FrontRequest::MachineSetupTrust { .. }
+                | FrontRequest::MachineSetupChoose { .. }
+                | FrontRequest::MachineSetupCancel { .. }
                 | FrontRequest::DeviceRevoke { .. }
                 | FrontRequest::WebPublish
                 | FrontRequest::WebPublishOff
@@ -2210,6 +2220,17 @@ impl Host {
                 Ok(FrontResponse::Done)
             }
             FrontRequest::EnrollGuide => Ok(FrontResponse::EnrollGuide { guide: self.enroll_guide().await }),
+            FrontRequest::MachineSetupStart { target } => {
+                self.setup_start(&target, actor).map(|setup| FrontResponse::MachineSetup { setup })
+            }
+            FrontRequest::MachineSetupTrust { job, host_key_sha256 } => {
+                self.setup_trust(&job, &host_key_sha256, actor).await.map(|setup| FrontResponse::MachineSetup { setup })
+            }
+            FrontRequest::MachineSetupChoose { job, os, arch } => {
+                self.setup_choose(&job, &os, &arch, actor).map(|setup| FrontResponse::MachineSetup { setup })
+            }
+            FrontRequest::MachineSetupCancel { job } => self.setup_cancel(&job, actor).map(|_| FrontResponse::Done),
+            FrontRequest::MachineSetupList => self.setup_list().map(|setups| FrontResponse::MachineSetups { setups }),
             FrontRequest::EnrollPending => {
                 let e = self.enroll.lock().unwrap();
                 let now = Instant::now();

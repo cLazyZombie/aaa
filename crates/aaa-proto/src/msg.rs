@@ -1591,6 +1591,78 @@ pub struct PendingEnroll {
     pub since_ms: u64,
 }
 
+/// SSH 머신 추가 작업 하나(웹 머신 추가 M2, plan §8.375). host DB에 남아 웹 창을 닫았다 열어도 같은 작업을 본다
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+pub struct MachineSetupView {
+    pub job: String,
+    /// 사람이 넣은 SSH 대상(별칭 또는 `user@host:port`)
+    pub target: String,
+    pub phase: MachineSetupPhase,
+    /// `ssh -G`로 푼 접속(사용자·주소·포트, ProxyJump를 거치는가)
+    pub ssh: Option<SshResolved>,
+    /// 접속 때 받은 host key(인증 전). 사람이 지문을 보고 믿는다
+    pub host_keys: Vec<HostKeyView>,
+    /// 받은 키가 이미 믿는 키인가: `known` | `new` | `changed`(fail-closed)
+    pub host_key_state: Option<String>,
+    pub detected: Option<MachineDetected>,
+    /// 실패·멈춤의 까닭(사람이 읽는 글)
+    pub error: Option<String>,
+    #[ts(type = "number")]
+    pub created_ms: u64,
+    #[ts(type = "number")]
+    pub updated_ms: u64,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+pub enum MachineSetupPhase {
+    /// 접속해 host key를 받는 중
+    Connecting,
+    /// 처음 보는 host key: 사람이 지문을 확인한다
+    Trust,
+    /// 믿는 키로 로그인해 OS·CPU를 읽는 중
+    Detecting,
+    /// 감지가 안 됐다: 사람이 OS·CPU를 고른다
+    Choose,
+    /// 감지(또는 고름) 끝, 지원하는 대상이다. 설치(M3)는 이 다음이다
+    Ready,
+    /// 감지했지만 release 대상이 없다(예: Windows ARM64)
+    Unsupported,
+    Failed,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+pub struct SshResolved {
+    pub user: String,
+    pub host: String,
+    pub port: u16,
+    pub proxy_jump: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+pub struct HostKeyView {
+    /// `ssh-ed25519` 등
+    pub kind: String,
+    /// `SHA256:<base64>`(ssh-keygen -l와 같은 꼴)
+    pub sha256: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+pub struct MachineDetected {
+    /// `macos` | `linux` | `windows`(MachineView.os와 같은 말)
+    pub os: String,
+    /// `aarch64` | `x86_64`
+    pub arch: String,
+    /// 원격이 말한 그대로(`Darwin arm64`, `Windows AMD64`). 사람이 고른 것이면 빈 글
+    pub raw: String,
+    /// 사람이 골랐다(감지 실패)
+    pub chosen: bool,
+    pub home: Option<String>,
+    pub shell: Option<String>,
+    /// 원격에 이미 있는 aaa 판(`aaa --version` 첫 줄)
+    pub aaa: Option<String>,
+}
+
 /// 「직접 설치」 안내(plan §8.374): 새 머신이 host agent 연결에 닿을 주소 후보와, 새 머신 화면에 나올 host 지문
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 pub struct EnrollGuide {
@@ -2068,6 +2140,28 @@ pub enum FrontRequest {
         install: bool,
     },
     EnrollPending,
+    /// FRONT_API 1.91. SSH로 머신 추가 작업을 시작한다(웹 머신 추가 M2, plan §8.375): host의 OpenSSH로 접속해 host key만 받고, 아는 키면
+    /// OS·CPU를 감지한다. 원격에 쓰지 않는다. 사람만(조작 기기·세션 밖)
+    MachineSetupStart {
+        target: String,
+    },
+    /// FRONT_API 1.91. 화면에서 본 host key 지문을 믿는다: host가 받은 키와 같으면 aaa 전용 known_hosts에 넣고 감지로 간다. 사람만
+    MachineSetupTrust {
+        job: String,
+        host_key_sha256: String,
+    },
+    /// FRONT_API 1.91. 감지가 안 된 머신의 OS·CPU를 사람이 고른다(release 대상 다섯만). 사람만
+    MachineSetupChoose {
+        job: String,
+        os: String,
+        arch: String,
+    },
+    /// FRONT_API 1.91. 작업을 멈추고 목록에서 뺀다(원격에 남긴 것은 없다). 사람만
+    MachineSetupCancel {
+        job: String,
+    },
+    /// FRONT_API 1.91. 최근 SSH 추가 작업(Reader도 본다)
+    MachineSetupList,
     /// FRONT_API 1.90. 새 머신에서 칠 「직접 설치」 명령에 넣을 host 주소 후보·host 지문·판(웹 머신 추가 M1, plan §8.374)
     EnrollGuide,
     EnrollApprove {
@@ -2982,6 +3076,7 @@ impl FrontRequest {
                 | FrontRequest::PostStatus { .. }
                 | FrontRequest::Asks { .. }
                 | FrontRequest::Machines
+                | FrontRequest::MachineSetupList
                 | FrontRequest::Panes { .. }
                 | FrontRequest::Projects { .. }
                 | FrontRequest::Instance
@@ -3183,6 +3278,12 @@ pub enum FrontResponse {
     },
     EnrollGuide {
         guide: crate::EnrollGuide,
+    },
+    MachineSetup {
+        setup: crate::MachineSetupView,
+    },
+    MachineSetups {
+        setups: Vec<crate::MachineSetupView>,
     },
     Pending {
         pending: Vec<PendingEnroll>,
@@ -3825,6 +3926,13 @@ mod tests {
         assert!(!FrontRequest::Panes { role: None }.local_only());
         // 「직접 설치」 안내는 host 주소·지문을 보이므로 조작 기기만(웹 허용, plan §8.374)
         assert!(FrontRequest::EnrollGuide.needs_control() && !FrontRequest::EnrollGuide.local_only());
+        // SSH 머신 추가(plan §8.375): 목록은 Reader도, 시작·신뢰·고름·멈춤은 조작 기기
+        assert!(!FrontRequest::MachineSetupList.needs_control());
+        assert!(FrontRequest::MachineSetupStart { target: "mac-b".into() }.needs_control());
+        assert!(
+            FrontRequest::MachineSetupTrust { job: "j".into(), host_key_sha256: "SHA256:x".into() }.needs_control()
+        );
+        assert!(!FrontRequest::MachineSetupStart { target: "mac-b".into() }.local_only());
         assert!(!FrontRequest::Threads { project: None, role: None }.needs_control());
         // 사후 평가자 세션은 Reader로 다룬다: 평가 보기는 되고, 지정·채택·메시지는 안 된다(§8.13)
         assert!(!FrontRequest::EvaluatorStatus { project: None }.needs_control());
