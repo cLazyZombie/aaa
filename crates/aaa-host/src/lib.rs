@@ -805,6 +805,7 @@ impl Host {
         });
         // 이 기록 전에 등록한 Codex 계정의 메일·plan(관리 GUI W5a, 사용자 답 3A)
         host.account_meta_backfill();
+        host.backfill_report_stages()?;
         // 진행 중에 내려간 SSH 머신 추가 작업(plan §8.384)
         host.setup_recover();
         Ok(host)

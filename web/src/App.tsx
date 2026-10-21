@@ -1086,7 +1086,7 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
   };
   // 할 일 화면의 thread 칩(묶음)과 「task 없는 열린 thread」: 열린 thread 모음이 바뀌면 board를 다시 읽는다
   const threadGroups = useMemo(() => new Map(allThreads.map((t) => [t.id, t.group])), [threads]); // eslint-disable-line react-hooks/exhaustive-deps
-  const openThreadIds = allThreads.filter((t) => t.group !== "resolved").map((t) => t.id).sort().join(" ");
+  const openThreadIds = allThreads.filter((t) => t.group !== "resolved").map((t) => `${t.id}:${t.stage ?? ""}`).sort().join(" ");
   const taskBoard = useTaskBoard(up, openThreadIds, tasksShown);
   const seenMine = useSeenMine(taskBoard.board);
   const shownThreads = allThreads.filter((t) => t.group !== "resolved");
@@ -1372,6 +1372,7 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
             board={taskBoard.board}
             error={taskBoard.error}
             groups={threadGroups}
+            stages={new Map(allThreads.map(t => [t.id, t.stage]))}
             reader={role === "reader"}
             addRequest={taskAdds}
             focusRequest={taskFocus}

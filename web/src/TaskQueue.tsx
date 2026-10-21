@@ -1,3 +1,4 @@
+import { ThreadStageBadge } from "./ThreadStageBadge";
 // 예약의 정본은 host다. 이 컴포넌트에는 scheduler나 별도 저장을 두지 않는다.
 import { useEffect, useState } from "react";
 import { call, onTasksChanged } from "./api";
@@ -26,7 +27,7 @@ export function QueueControls({ task, board, canEdit }: { task: TaskView; board:
     } catch (e) { setError(String(e)); } finally { setBusy(false); }
   }
   return <section className="task-queue-controls" data-testid="task-queue-controls" data-state={q?.state ?? "none"}>
-    {q && <p data-testid="task-queue-status">{words[q.state]} {pending ? q.position : ""} · {q.reason} · 모델 {q.profile} {q.model} · effort {q.effort || "기본"} · 머신 {q.machine ?? "자동"}{q.thread && ` · ${q.thread}`}</p>}
+    {q && <p data-testid="task-queue-status"><ThreadStageBadge stage={q.stage} />{words[q.state]} {pending ? q.position : ""} · {q.reason} · 모델 {q.profile} {q.model} · effort {q.effort || "기본"} · 머신 {q.machine ?? "자동"}{q.thread && ` · ${q.thread}`}</p>}
     {canEdit && (!q || ["queued", "check", "cancelled", "finished"].includes(q.state)) && <button className="btn" type="button" disabled={busy} onClick={() => void inspect()} data-testid="task-reserve-preview">{pending ? "예약 내용 갱신" : "자리 나면 시작 예약"}</button>}
     {canEdit && pending && <div className="task-queue-actions">
       <button className="btn" type="button" disabled={busy} onClick={() => void action({op:"cancel",task_id:q.task_id})}>예약 취소</button>
@@ -63,7 +64,7 @@ export function TaskQueuePanel({ board, canEdit, onThread }: { board: TaskBoard;
   }
   return <div className="task-queue-panel" data-testid="task-queue-panel">
     <details><summary>예약 {board.queue?.filter(q=>["queued","check"].includes(q.state)).length ?? 0}</summary>
-      {board.queue?.filter(q=>q.state!=="cancelled"&&q.state!=="finished").map(q=><p key={q.task_id} data-testid={`queue-${q.task_id}`} data-state={q.state}>{q.position} · {q.task.short_id} · {q.task.title} · {words[q.state]} · {q.reason} · {q.profile} · {q.machine ?? "자동"} {q.thread&&<button className="btn" type="button" onClick={()=>onThread(q.thread!)}>{q.thread}</button>}</p>)}
+      {board.queue?.filter(q=>q.state!=="cancelled"&&q.state!=="finished").map(q=><p key={q.task_id} data-testid={`queue-${q.task_id}`} data-state={q.state}><ThreadStageBadge stage={q.stage} />{q.position} · {q.task.short_id} · {q.task.title} · {words[q.state]} · {q.reason} · {q.profile} · {q.machine ?? "자동"} {q.thread&&<button className="btn" type="button" onClick={()=>onThread(q.thread!)}>{q.thread}</button>}</p>)}
     </details>
     <button className="btn" type="button" aria-expanded={show} onClick={()=>setShow(!show)} data-testid="task-archive-open">완료 보관</button>
     {show&&<section aria-label="완료 보관" data-testid="task-archive-list">

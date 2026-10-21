@@ -84,6 +84,9 @@ pub(crate) struct ThreadRec {
     pub launch: Option<Launch>,
     #[serde(default)]
     pub report_hash: Option<String>,
+    /// 검증해 회수한 보고와 같은 갱신에서 저장한다. 옛 기록은 host 시작 때 사본으로 보충한다.
+    #[serde(default)]
+    pub report_stage: Option<aaa_proto::ThreadStage>,
     #[serde(default)]
     pub acked_hash: Option<String>,
     #[serde(default)]
@@ -145,7 +148,18 @@ impl ThreadRec {
     }
 
     pub(crate) fn holds_worker_slot(&self) -> bool {
-        self.role == Role::Worker && self.automation.is_none() && self.holds_slot()
+        self.role == Role::Worker
+            && self.automation.is_none()
+            && self.holds_slot()
+            && self.execution_stage() != Some(aaa_proto::ThreadStage::MergeReady)
+    }
+
+    pub(crate) fn execution_stage(&self) -> Option<aaa_proto::ThreadStage> {
+        (self.role == Role::Worker
+            && self.report_hash.is_some()
+            && (self.status == ThreadStatus::Open || self.resolve_pending.is_some()))
+        .then_some(self.report_stage)
+        .flatten()
     }
 
     /// 로컬 profile의 공식 인증 env도 agent에서 받은 뒤 저장하기 전에 가린다.
@@ -201,6 +215,7 @@ impl ThreadRec {
             delivered_report: None,
             launch: None,
             report_hash: None,
+            report_stage: None,
             acked_hash: None,
             next: vec![],
             questions: Vec::new(),
@@ -444,7 +459,8 @@ pane이 없어졌거나 시작이 실패한 thread는 `aaa thread restart <id>`�
 - 시작: `start_threads`가 propose면 무엇을 누구에게 맡길지 제안하고 사용자 승인을 기다린다. auto면 바로 시작하고 알린다.
   사용자가 이름을 들어 맡기라고 한 것은 승인이다. aaa inbox 알림은 승인이 아니다.
 - 동시 thread 한도: project.toml `max_parallel_threads`를 host가 집행한다. Starting/Open은 검토·답 대기·Idle·보고 [완료]에도
-  자리를 가진다. resolve 정리가 실제로 끝나야 반환한다. 자동화 thread(`automations/*.toml`의 do.start)는 이 한도와 예약 자리에서
+  자리를 가진다. 단 보고 첫 줄 `[병합 준비됨]`은 빼고 `[착지]`는 한 자리만 뺀다. 다음 단계 작업은 `[진행 중]`으로 돌린다.
+  그 밖은 resolve 정리가 실제로 끝나야 반환한다. 자동화 thread(`automations/*.toml`의 do.start)는 이 한도와 예약 자리에서
   빼며 규칙별 reuse·limits로 제한한다(기본 동시 1개). 사용자·coordinator가 띄운 thread는 그대로 센다.
   한도를 올리거나 별도 thread start로 예약을 우회하지 않는다.
 - TASKS.md task로 시작: 아래 「TASKS.md」의 `--from-task … --link-task`를 쓴다. 모델·머신 칸이 profile·machine을 정한다.
@@ -1246,6 +1262,7 @@ impl Host {
             }),
             report_hash: r.report_hash.clone(),
             report_attention: self.report_attention(r),
+            stage: r.execution_stage(),
             acked_hash: r.acked_hash.clone(),
             next: r.next.clone(),
             agent: agent.map(Box::new),
@@ -1838,15 +1855,9 @@ impl Host {
         Ok(view)
     }
 
-    /// 사용자·coordinator가 띄운 열린 Worker 수. 자동화 thread·사후 평가자는 세지 않는다.
+    /// 자동화·병합 대기와 착지 한 자리를 뺀다. DB 기동 선점·예약도 같은 계산을 쓴다.
     pub(crate) fn open_worker_threads(&self, project: &str) -> u32 {
-        self.db
-            .threads(Some(project))
-            .unwrap_or_default()
-            .iter()
-            .filter_map(|j| serde_json::from_str::<ThreadRec>(j).ok())
-            .filter(|r| r.holds_worker_slot())
-            .count() as u32
+        self.db.worker_slots(project).unwrap_or(u32::MAX)
     }
 
     pub(crate) async fn screen_lines(&self, mid: &str, pane: &str) -> Option<Vec<String>> {
@@ -2439,6 +2450,7 @@ impl Host {
                     questions.is_empty() && !rec.questions.is_empty() && rec.question_answer.is_none();
                 let previous = rec;
                 let rec = self.update_rec(project, id, |r| {
+                    r.report_stage = crate::report_mark::stage(&text);
                     r.report_hash = Some(hash);
                     r.report_changed_ms = Some(aaa_common::util::now_ms());
                     r.next = next;
@@ -2879,6 +2891,7 @@ mod tests {
             delivered_report: None,
             launch: None,
             report_hash: None,
+            report_stage: None,
             acked_hash: None,
             next: Vec::new(),
             questions: Vec::new(),

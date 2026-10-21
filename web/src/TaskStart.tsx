@@ -1,7 +1,7 @@
 // 할 일 thread 연결의 창(할 일 T3, plan §8.316, t-0469 §3.4): 「바로 시작」 확인창과 「task에 잇기」 고르기. 창 틀은 TaskDialogs의
 // TaskModal(herdr-web-ui PaneRename)이다. 「바로 시작」은 host `thread_start_preview`가 `thread start --from-task`와 같은 규칙으로 채운
 // 값(owner → profile·머신, 메모를 붙인 할 일 글)을 보이고, profile 고르기는 herdr-projects popup `profile_picker`(owner의 profile을 맨
-// 위에)와 같다. 자동화 thread를 뺀 열린 Worker가 `max_parallel_threads` 이상이면 시작을 막고 예약을 안내한다. 시작하면 host가 같은 요청 안에서
+// 위에)와 같다. 자동화·병합 대기·착지 한 자리를 뺀 열린 Worker가 `max_parallel_threads` 이상이면 시작을 막고 예약을 안내한다. 시작하면 host가 같은 요청 안에서
 // 그 task 줄 끝에 thread를 잇는다(`link_task`, 화면이 본 블록 hash로).
 import { useEffect, useMemo, useState } from "react";
 import { Search } from "lucide-react";

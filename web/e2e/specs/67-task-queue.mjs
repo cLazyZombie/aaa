@@ -1,6 +1,6 @@
 // 실제 host의 승인판·차례·실제 기동·완료 보관을 데스크톱/휴대폰과 다른 기기에서 관측한다.
 import fs from "node:fs";
-import { root, aaa, until, step, browser, domIs, shot } from "../lib/harness.mjs";
+import { root, aaa, until, step, browser, domIs, shot, inList } from "../lib/harness.mjs";
 import { pairDevice } from "../lib/devices.mjs";
 const row=(p,title)=>p.locator(`.task-row[data-title="${title}"]`);
 const pick=(p,title)=>row(p,title).locator(".task-pick").click();
@@ -39,6 +39,52 @@ export default async function ({ page }) {
     if(queued().find(q=>q.task_id===two).state!=="cancelled")throw new Error("취소가 host에 남지 않았다");
     await page.getByTestId("task-detail-close").click();await pick(page,"웹 예약");
     await shot(page,"queue-desktop-wait");
+  });
+  await step("병합 대기·착지 중: 보고 사건으로 예약을 시작하고 할 일·thread 앞에 같은 표지를 보인다", async () => {
+    const report = async (id, tag, stage) => {
+      const t = aaa("thread", "show", "demo", id);
+      fs.writeFileSync(`${t.work_dir}/report.md.tmp`, `${tag} 전체 확인과 착지\n\n## Next\n- 착지 창 대기\n`);
+      fs.renameSync(`${t.work_dir}/report.md.tmp`, `${t.work_dir}/report.md`);
+      await until("host의 보고 단계 회수", () => aaa("thread", "show", "demo", id).stage === stage);
+    };
+    await report(busy, "[병합 준비됨]", "merge_ready");
+    const tid = await until("병합 대기 제외 뒤 예약 기동", () => queued().find(q => q.task_id === one)?.thread);
+    await until("기동 thread의 첫 보고", () => aaa("thread", "show", "demo", tid).report_hash);
+    await report(tid, "[착지]", "landing");
+    if (queued().find(q => q.task_id === one).stage !== "landing") throw new Error("예약과 thread의 단계가 다르다");
+    await page.getByTestId("task-detail-close").click();
+    await phone.getByTestId("task-detail-close").click();
+    for (const [p, name] of [[page, "desktop"], [phone, "phone"]]) {
+      const badge = row(p, "웹 예약").locator('[data-stage="landing"]');
+      await badge.waitFor();
+      if ((await badge.textContent()) !== "착지 중") throw new Error("착지 표지 이름");
+      const waiting = p.getByTestId(`tasks-unlinked-${busy}`).locator('[data-stage="merge_ready"]');
+      await waiting.waitFor();
+      if ((await waiting.textContent()) !== "병합 대기") throw new Error("병합 표지 이름");
+      const colors = await p.evaluate(() => {
+        const a = document.querySelector('[data-stage="merge_ready"]');
+        const b = document.querySelector('[data-stage="landing"]');
+        return [getComputedStyle(a).color, getComputedStyle(b).color];
+      });
+      if (colors[0] === colors[1]) throw new Error("두 단계의 색이 같다");
+      await shot(p, `stages-${name}-tasks`);
+    }
+    await inList(page, `thread-demo-${busy}`);
+    await page.getByTestId(`thread-demo-${busy}`).locator('[data-stage="merge_ready"]').waitFor();
+    await page.getByTestId(`thread-demo-${tid}`).locator('[data-stage="landing"]').waitFor();
+    await page.evaluate(() => location.hash = "#threads");
+    await page.getByTestId("all-threads").waitFor();
+    await page.getByTestId(`project-thread-${busy}`).locator('[data-stage="merge_ready"]').waitFor();
+    await page.getByTestId(`project-thread-${tid}`).locator('[data-stage="landing"]').waitFor();
+    await shot(page, "stages-desktop-threads");
+    await page.getByTestId("activity-tasks").click();
+    await pick(page, "웹 예약");
+    await page.getByTestId("task-queue-status").locator('[data-stage="landing"]').waitFor();
+    // 마지막 보관 단계는 원래 열린 상세에서 시작한다. phone도 취소한 둘째 task의 상세로 돌린다.
+    await pick(phone, "다음 예약");
+    // 착지는 완료 보관의 근거가 아니다. 실제 완료 보고를 회수한 뒤 원래 resolve/보관 keeper를 잇는다.
+    await report(tid, "[완료]", undefined);
+    await row(page, "웹 예약").locator('[data-stage="landing"]').waitFor({ state: "detached" });
   });
   await step("resolve 사건 뒤 실제 기동과 완료 보관: 새로고침 뒤 같은 ID로 복원하며 다시 시작하지 않는다",async()=>{
     aaa("thread","resolve","demo",busy);
