@@ -6752,3 +6752,9 @@ Windows install 승인 PTY는 ConPTY(INHERIT_CURSOR)의 시작 커서 질의에 
 §8.376의 자동화 배지 수리 뒤에도 WebKit reload에서 tasks/inbox 등 다른 갱신이 끝나는 문서에 새 fetch를 시작했다. 공통 `apiFetch`가 capture pagehide 뒤 일반 API 요청을 네트워크 시작 전 AbortError로 취소한다. api.ts의 post/인증/업로드/push와 사용량·계정 사용량·입력 진단 API가 같은 경계를 쓴다. 일반 숨긴 탭은 막지 않고 pageshow 뒤 새 요청을 허용하며, 취소된 쓰기를 복귀 때 자동 재생하지 않는다. 떠날 때 명시한 keepalive 설정 저장은 유지한다. 파일/보고서/clipboard asset 읽기와 권한 검사는 그대로다. 경로별 guard를 추가하지 않고 기존 배지의 갱신 합치기·복귀 갱신을 보존한다.
 
 최소 WebKit에서 production API 함수9개가 pagehide 뒤 네트워크를 시작해 RED, 수리 뒤0건·AbortError9건·keepalive1건·복귀 새 요청1건으로 GREEN이다. 기존 E2E23에 실제 App의 WS tasks/inbox 사건을 보내는 keeper를 더했다. 먼저 정상 상태의 두 응답을 확인하고 종료 뒤 전송0·복귀 뒤 재조회를 검사한다. 원래 코드는 tasks/inbox 두 요청에서 실패하며, 새 빌드의 keeper와 E2E23 파일 전체는 통과했다. API 판과 E2E 번호는 바꾸지 않는다. I6 CI 수리와 별도 commit으로 두며 전체 gate·Windows cross·공개 검사를 거쳐 같은 착지 창에서 병합한다.
+
+### 8.380 SHA 거부 시험의 원격 단계 대기 분리(10-21, t-0587)
+
+- **원인·범위.** 기존 rollout keeper는 로컬 agent가 연결되면 원격 SHA 거부의 종료 대기를 시작했다. 연결 뒤에도 로컬 재시작의 실행 신원 대조·감시 해제가 남아 있어 서로 다른 단계가 같은 30초를 썼다. 원본 실패에서 대기 시작 뒤 원격 교체 진입까지 약 10.4초, Recovering 진입까지 약 27.1초가 걸린 뒤 30초 시험 상한에 걸렸다. baseline SHA와 설치 SHA는 같았다. 별도 실행은 같은 설치 시작 플래그를 거쳐 재시작 없이 Cancelled/Stopped로 끝났으며 제품 순서 경쟁은 재현되지 않았다. 당시 CPU·I/O별 지연 원인까지 확정하지 않는다.
+- **수정·검증.** 기존 단계 진행 사건으로 원격 AgentUpdate 진입을 먼저 확인하고 원래 30초 상한으로 종료 표지를 기다린다. stopped·SHA 오류·실패 cursor·서비스 호출 횟수·앞 머신 SHA 단언을 유지하며, 영속 guard의 install_started=true·activated=false·baseline SHA·Cancelled·무재시작을 추가로 확인한다. 실제 설치 중 취소·늦은 rename 복구 keeper와 제품 전이·시한은 유지한다. 절차와 근거는 [시험](testing.md)의 t-0587 절에 둔다.
+- **착지 번호·호환.** 기준 main `f496ecd7`의 §8.379·FRONT_API 1.91·AGENT_LINK 1.11·E2E70을 직접 확인했다. 이번 수리는 §8.380을 이어 쓰며 제품 API나 새 웹 E2E 파일이 없어 기존 판과 번호를 유지한다.

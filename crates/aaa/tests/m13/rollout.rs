@@ -478,12 +478,27 @@ esac
     wait_for("새 로컬 agent 연결", T, || {
         (w.lab.log("rollout-a-second").contains("host에 연결했다") && w.h.connected("labA")).then_some(())
     });
+    // 연결 뒤에도 로컬 재시작의 실행 신원 대조가 남는다. 원격 SHA 거부 대기에 그 시간을 섞지 않는다.
+    phase_started(second_id, aaa_proto::RolloutPhase::AgentUpdate);
     let (rc, out, err) = probe(&w, &format!("deploy status {second_id} --wait"));
     assert_eq!(rc, "1", "{out} {err}");
     let stopped: Value = serde_json::from_str(&out).unwrap();
     assert_eq!(stopped["rollout"]["state"], "stopped");
     assert_eq!(stopped["rollout"]["cursor"], 5, "둘째 머신 교체 실패에서 멈춘다");
     assert!(stopped["rollout"]["error"].as_str().unwrap().contains("SHA-256"));
+    let rejected_guard: Value = serde_json::from_slice(
+        &std::fs::read(b.state.join(format!(
+            "agent/deployments/{}.guard.json",
+            second["rollout"]["steps"][6]["job_id"].as_str().unwrap()
+        )))
+        .unwrap(),
+    )
+    .unwrap();
+    assert_eq!(rejected_guard["install_started"], true, "실행 전 BeginInstall도 통과해야 한다");
+    assert_eq!(rejected_guard["activated"], false);
+    assert_eq!(rejected_guard["phase"], "cancelled", "교체 lease 뒤 unchanged면 감시를 끝낸다");
+    assert_eq!(rejected_guard["installed_sha256"], rejected_guard["spec"]["baseline"]["sha256"]);
+    assert_eq!(rejected_guard["restart_started"], false);
     assert_eq!(
         std::fs::read_to_string(&service_log).unwrap().lines().count(),
         5,
