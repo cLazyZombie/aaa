@@ -99,6 +99,12 @@ pub(crate) struct ThreadRec {
     /// 지금 보고의 `## Questions`(plan §8.329). 사람을 기다리는 표지의 보고일 때만 읽고, 새 보고마다 답을 비운다
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub questions: Vec<aaa_proto::ThreadQuestion>,
+    /// 보고 문법 누락·글자 불일치. 질문이 전부 빠져도 경고 카드가 남는다.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub question_warning: Option<String>,
+    /// 같은 보고의 경고 전달 기록. 재기동 뒤에도 중복 경고를 만들지 않는다.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub question_warning_sent: Option<String>,
     /// 그 질문에 받은 답(answer.rs)
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub question_answer: Option<aaa_proto::QuestionAnswerView>,
@@ -226,6 +232,8 @@ impl ThreadRec {
             next: vec![],
             questions: Vec::new(),
             question_answer: None,
+            question_warning: None,
+            question_warning_sent: None,
             copy: None,
             copy_failures: 0,
             copy_retry_at_ms: 0,
@@ -1292,22 +1300,25 @@ impl Host {
             summary: if r.id.is_empty() { None } else { self.summary_mark(&r.project, &r.id) },
             repo: r.repo.clone(),
             limited_until_ms: self.usage_limit(&r.project, &r.id),
-            questions: r.report_hash.clone().filter(|_| !r.questions.is_empty()).map(|report_hash| {
-                let items = self
-                    .identify_questions(&r.project, "thread", &r.id, &report_hash, &r.questions)
-                    .unwrap_or_else(|e| {
-                        tracing::error!("질문 ID 발급 실패: {}", e.message);
-                        r.questions.clone()
-                    });
-                Box::new(aaa_proto::ThreadQuestions {
-                    review: self.default_review_for(r),
-                    draft: self.question_draft(&r.project, &items),
-                    files_base: Some(crate::asks::question_files_base(&r.project, &r.id, &report_hash)),
-                    report_hash: report_hash.clone(),
-                    items,
-                    answer: r.question_answer.clone(),
-                })
-            }),
+            questions: r.report_hash.clone().filter(|_| !r.questions.is_empty() || r.question_warning.is_some()).map(
+                |report_hash| {
+                    let items = self
+                        .identify_questions(&r.project, "thread", &r.id, &report_hash, &r.questions)
+                        .unwrap_or_else(|e| {
+                            tracing::error!("질문 ID 발급 실패: {}", e.message);
+                            r.questions.clone()
+                        });
+                    Box::new(aaa_proto::ThreadQuestions {
+                        format_warning: r.question_warning.clone(),
+                        review: self.default_review_for(r),
+                        draft: self.question_draft(&r.project, &items),
+                        files_base: Some(crate::asks::question_files_base(&r.project, &r.id, &report_hash)),
+                        report_hash: report_hash.clone(),
+                        items,
+                        answer: r.question_answer.clone(),
+                    })
+                },
+            ),
         }
     }
 
@@ -2371,6 +2382,9 @@ impl Host {
     async fn collect_if_changed(self: &Arc<Self>, project: &str, id: &str) {
         let Ok(rec) = self.load(project, id) else { return };
         let (Some(work_dir), Ok(conn)) = (rec.work_dir.clone(), self.live_conn(&rec.machine_id)) else { return };
+        if let Some(warning) = &rec.question_warning {
+            self.warn_question_format(&rec, warning).await;
+        }
         if rec.status != ThreadStatus::Open {
             return;
         }
@@ -2576,10 +2590,13 @@ impl Host {
                 write_atomic(&dir.join("threads").join(format!("{id}.md")), &report).map_err(internal)?;
                 let text = String::from_utf8_lossy(&report);
                 let next = next_lines(&text);
+                let question_warning = crate::report_mark::question_warning(&text);
                 let questions = crate::report_mark::questions(&text);
                 let questions = self.identify_questions(project, "thread", id, &hash, &questions)?;
-                let closed_question =
-                    questions.is_empty() && !rec.questions.is_empty() && rec.question_answer.is_none();
+                let closed_question = questions.is_empty()
+                    && question_warning.is_none()
+                    && !rec.questions.is_empty()
+                    && rec.question_answer.is_none();
                 let previous = rec;
                 let rec = self.update_rec(project, id, |r| {
                     r.report_stage = crate::report_mark::stage(&text);
@@ -2587,12 +2604,17 @@ impl Host {
                     r.report_changed_ms = Some(aaa_common::util::now_ms());
                     r.next = next;
                     r.questions = questions;
+                    r.question_warning = question_warning;
+                    r.question_warning_sent = None;
                     r.question_answer = None;
                     r.copy = Some(copy.clone());
                     r.copy_failures = 0;
                     r.copy_retry_at_ms = 0;
                     r.copy_notes = skipped.clone();
                 })?;
+                if let Some(warning) = &rec.question_warning {
+                    self.warn_question_format(&rec, warning).await;
+                }
                 self.db
                     .question_clear_drafts(project, "thread", id, previous.report_hash.as_deref().unwrap_or_default())
                     .map_err(internal)?;
@@ -3029,6 +3051,8 @@ mod tests {
             next: Vec::new(),
             questions: Vec::new(),
             question_answer: None,
+            question_warning: None,
+            question_warning_sent: None,
             copy: None,
             copy_failures: 0,
             copy_retry_at_ms: 0,
