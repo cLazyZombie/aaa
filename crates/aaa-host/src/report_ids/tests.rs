@@ -213,8 +213,11 @@ fn legacy_names_and_latest_thread_copy_get_ids_once_at_startup() {
     h.db.library_report_put(&LibraryReportRow { project: "demo".into(), name: legacy.into(), ..Default::default() })
         .unwrap();
     let reopened = Host::open(h.cfg.clone(), lab.root.join("state")).unwrap();
+    assert!(reopened.report_id("demo", legacy).is_none(), "일반 Host::open은 프로젝트 파일을 등록하지 않는다");
+    reopened.backfill_report_ids().unwrap();
     assert_eq!(reopened.report_id("demo", legacy).as_deref(), Some("r-0043"));
     let again = Host::open(h.cfg.clone(), lab.root.join("state")).unwrap();
+    again.backfill_report_ids().unwrap();
     assert_eq!(again.report_version_names("demo", legacy), vec!["r-0043"]);
 }
 
@@ -236,4 +239,64 @@ fn failed_snapshot_reservation_is_hidden_and_never_reissued() {
     assert!(lab.h.db.library_report("demo", "r-0001").unwrap().is_none());
     assert!(lab.h.library_reports(None, false).unwrap().is_empty());
     assert_eq!(lab.publish("fixed", "good", false), "r-0002");
+}
+
+#[test]
+fn backfill_does_not_adopt_files_owned_by_a_different_state_database() {
+    let lab = Lab::new();
+    let dir = lab.h.project_dir("demo").unwrap();
+    std::fs::create_dir_all(dir.join("library/foreign")).unwrap();
+    std::fs::write(dir.join("library/foreign/index.html"), "다른 state의 원문").unwrap();
+    std::fs::write(manifest_path(&dir, "foreign"), b"[]").unwrap();
+    let before = lab.h.db.project_export("demo").unwrap();
+    lab.h.backfill_report_ids().unwrap();
+    assert_eq!(lab.h.db.project_export("demo").unwrap(), before);
+    assert!(lab.h.report_id("demo", "foreign").is_none());
+    assert!(!dir.join("library/r-0001").exists());
+}
+
+#[tokio::test]
+async fn existing_review_gets_one_question_and_feedback_without_text_is_rejected_without_claiming_it() {
+    use sha2::{Digest, Sha256};
+    let lab = Lab::new();
+    let h = &lab.h;
+    let dir = h.project_dir("demo").unwrap();
+    let body = "[검수 대기] 시안\n\n## Report\n검토할 결과\n";
+    let mut rec = crate::orch::ThreadRec::starting("demo", "시안", "mac-a", "fake", Role::Worker, ThreadKind::Dir, 1);
+    rec.id = "t-0001".into();
+    rec.status = aaa_proto::ThreadStatus::Open;
+    rec.report_hash = Some(hex::encode(Sha256::digest(body)));
+    h.db.thread_import("demo", &rec.id, "open", &serde_json::to_string(&rec).unwrap()).unwrap();
+    std::fs::write(dir.join("threads/t-0001.md"), body).unwrap();
+    let frozen = lab.root.join("frozen-review");
+    std::fs::create_dir(&frozen).unwrap();
+    h.snapshot_report_version(
+        "demo",
+        &rec.id,
+        rec.report_hash.as_deref().unwrap(),
+        &frozen,
+        &[],
+        Some(body.as_bytes()),
+        &LibraryReportRow {
+            project: "demo".into(),
+            name: rec.id.clone(),
+            from_thread: Some(rec.id.clone()),
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    h.backfill_review_questions().unwrap();
+    h.backfill_review_questions().unwrap();
+    let q = h.thread_show("demo", &rec.id).unwrap().questions.unwrap();
+    assert!(q.review);
+    assert_eq!(q.items.len(), 1);
+    assert_eq!(q.items[0].id.as_deref(), Some("q-1000"));
+    // 새 파일 사본과 rec 갱신 사이에도 지금 답하는 불변 판의 검수 조건을 적용한다.
+    std::fs::write(dir.join("threads/t-0001.md"), "[완료] 다음 판을 받는 중").unwrap();
+    assert_eq!(
+        h.reply_by_id("demo", "q-1000", Some("B"), None, "test").await.unwrap_err().message,
+        "고칠 점을 글로 적어 답한다"
+    );
+    assert!(h.question_draft("demo", &q.items).is_none(), "거절한 선택은 질문을 선점하지 않는다");
+    assert!(h.load("demo", &rec.id).unwrap().question_answer.is_none());
 }

@@ -192,7 +192,8 @@ pub const AGENT_LINK: Version = Version { major: 1, minor: 10 };
 /// 1.86: 작업 요약에 순서를 유지하는 큰 작업 목록(progress)과 완료·진행·대기 상태를 더한다.
 /// 1.87: coordinator 구조화 질문·영속 q-ID와 부분 답, ask_answer·question_reply를 더한다. Agent link 변경 없음.
 /// 1.88: 보고서 판마다 영속 r-ID·판 목록·보존 용량을 더한다. 기존 이름·thread 참조는 최신 판이다.
-pub const FRONT_API: Version = Version { major: 1, minor: 88 };
+/// 1.89: 질문 안 보고 판 보기와 기본 검수 카드·답한 기록의 r 참조를 더한다.
+pub const FRONT_API: Version = Version { major: 1, minor: 89 };
 /// agent ↔ session host(내부). 세션이 몇 주 이어질 수 있으므로 이전 session host와 호환해야 한다.
 /// 1.1: `SessionRequest::Detect`(harness 상태 감지 입력). agent는 1.0 session host에 보내지 않고 `Screen`을 쓴다.
 /// 1.2: `SessionRequest::Colors`(색 질의에 답할 화면 색, plan §8.187). agent는 1.1 이하 session host에 보내지 않는다.

@@ -344,6 +344,7 @@ thread 표지는 앱 안 알림과 coordinator 판단의 근거이며 외부 푸
 coordinator는 thread가 아니므로 보고 파일로 알림을 만들지 않는다. 사용자에게 질문하거나 사람 전용 단계를 남기고 멈추기 전에
 `aaa report --unknown --activity 'Waiting for you'`로 상태를 알리고, 필요한 행동과 까닭을 파일에 쓴 뒤
 `aaa post user --request --needs-user --topic user-action --title '<정할 것·추천 한 줄>' --body-file scratch/user-action.md`를 보낸다.
+사용자에게 묻거나 검수를 맡길 땐 post 본문을 `## Questions` 형식으로 쓰고, 볼 보고서·시안·음원 링크는 질문 안에 둔다.
 coordinator가 직접 묻는 선택 질문도 본문에 thread 보고와 같은 문법으로 쓴다. 웹 「답할 것」에서 같은 카드로 고른다:
 
 ```markdown
@@ -356,7 +357,7 @@ coordinator가 직접 묻는 선택 질문도 본문에 thread 보고와 같은 
 ```
 
 그림·파일은 먼저 `aaa library publish <폴더> --name <이름>`으로 올리고 본문에서 `library/<이름>/<파일>`로 가리킨다.
-예: `![시안](library/preview/a.png)`. post 본문에는 로컬 절대 경로나 외부 그림 주소를 쓰지 않는다.
+예: `![시안](library/preview/a.png)`, `[보고서](aaa:report/r-0001)`, `[음원](library/preview/theme.wav)`. 카드 머리에서 보고서를 열어 본 뒤 같은 카드에서 답한다. 특정 판을 묻는다면 보고서 r 링크와 `library/r-NNNN/<파일>`을 써서 자료도 그 판에 묶는다. post 본문에는 로컬 절대 경로나 외부 그림 주소를 쓰지 않는다.
 카드 답은 coordinator inbox의 `question answered`에 선택 요약과 답 원문으로 오며 post도 자동으로 답함이 된다.
 다시 전달하거나 같은 질문을 또 묻지 않는다. 선택지가 없는 기존 평문 post도 그대로 쓸 수 있다.
 질문마다 프로젝트별 `q-1000`부터 짧은 ID를 받는다(t=thread, q=질문, d=할 일, r=보고서).
@@ -1256,6 +1257,7 @@ impl Host {
                         r.questions.clone()
                     });
                 Box::new(aaa_proto::ThreadQuestions {
+                    review: self.default_review_for(r),
                     draft: self.question_draft(&r.project, &items),
                     files_base: Some(crate::asks::question_files_base(&r.project, &r.id, &report_hash)),
                     report_hash: report_hash.clone(),
@@ -2438,8 +2440,7 @@ impl Host {
                 write_atomic(&dir.join("threads").join(format!("{id}.md")), &report).map_err(internal)?;
                 let text = String::from_utf8_lossy(&report);
                 let next = next_lines(&text);
-                let questions =
-                    if crate::report_mark::needs_user(&text) { aaa_proto::report_questions(&text) } else { Vec::new() };
+                let questions = crate::report_mark::questions(&text);
                 let questions = self.identify_questions(project, "thread", id, &hash, &questions)?;
                 let closed_question =
                     questions.is_empty() && !rec.questions.is_empty() && rec.question_answer.is_none();

@@ -932,6 +932,9 @@ pub struct ThreadView {
 /// thread가 구현 전에 모아 묻는 질문 묶음(plan §8.329). 그 보고에 묶인다: 새 보고가 오면 새 질문이고 답도 비운다
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 pub struct ThreadQuestions {
+    /// FRONT_API 1.89. Questions 없는 검수 대기에 host가 만든 기본 검수 카드. B는 고칠 점을 글로 적는다.
+    #[serde(default)]
+    pub review: bool,
     /// 이 질문이 든 보고 사본의 hash. 답은 이 hash가 지금 보고일 때만 받는다
     pub report_hash: String,
     pub items: Vec<ThreadQuestion>,
@@ -1002,6 +1005,10 @@ pub enum AskKind {
 /// 답한 것 하나(plan §8.345, FRONT_API 1.78). 답할 때의 원문을 보존한다: 새 보고가 질문을 비워도 남고, host가 14일 뒤 지운다
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 pub struct AskRecord {
+    /// FRONT_API 1.89. 답할 때의 보고 판. 새 보고 뒤에도 같은 원문을 연다.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub report_id: Option<String>,
     pub id: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]

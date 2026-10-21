@@ -635,10 +635,9 @@ impl Host {
                 let e = e.map_err(io_error)?;
                 if let Some(name) = e.file_name().to_str().and_then(|s| s.strip_suffix(".files.json"))
                     && safe_rel(name)
+                    && !self.db.report_reserved(&p, name).map_err(super::orch::internal)?
                 {
-                    if !self.db.report_reserved(&p, name).map_err(super::orch::internal)? {
-                        reports.push(self.report_view(&p, name, reveal)?);
-                    }
+                    reports.push(self.report_view(&p, name, reveal)?);
                 }
             }
         }

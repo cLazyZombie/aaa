@@ -1259,6 +1259,10 @@ pending: number, };
 
 export type ThreadQuestions = {
 /**
+ * FRONT_API 1.89. Questions 없는 검수 대기에 host가 만든 기본 검수 카드. B는 고칠 점을 글로 적는다.
+ */
+review: boolean,
+/**
  * 이 질문이 든 보고 사본의 hash. 답은 이 hash가 지금 보고일 때만 받는다
  */
 report_hash: string, items: Array<ThreadQuestion>,
@@ -1302,7 +1306,11 @@ body?: string, };
 
 export type AskKind = "question" | "request" | "task";
 
-export type AskRecord = { id: string, question_id?: string, kind: AskKind,
+export type AskRecord = {
+/**
+ * FRONT_API 1.89. 답할 때의 보고 판. 새 보고 뒤에도 같은 원문을 연다.
+ */
+report_id?: string, id: string, question_id?: string, kind: AskKind,
 /**
  * 질문은 thread 번호, 확인 필요 post는 inbox 항목 ID, 할 일은 task 제목
  */

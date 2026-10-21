@@ -770,7 +770,6 @@ impl Host {
         });
         // 이 기록 전에 등록한 Codex 계정의 메일·plan(관리 GUI W5a, 사용자 답 3A)
         host.account_meta_backfill();
-        host.backfill_report_ids().map_err(|e| anyhow::anyhow!(e.message))?;
         Ok(host)
     }
 
@@ -3302,6 +3301,8 @@ async fn run_host(
         Err(names) => anyhow::bail!(lifecycle::sole_project_refusal(&names)),
     }
     // 옛 판이 남긴 보내던 메시지는 입구를 열기 전에 잊는다(연 뒤면 막 기록한 새 메시지까지 「모른다」로 바뀐다)
+    host.backfill_report_ids().map_err(|e| anyhow::anyhow!(e.message))?;
+    host.backfill_review_questions().map_err(|e| anyhow::anyhow!(e.message))?;
     host.forget_queued_messages();
     host.start_supervisor();
     link::start(&host).await?;

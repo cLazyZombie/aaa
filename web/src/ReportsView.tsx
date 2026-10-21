@@ -139,10 +139,8 @@ function ReportDetail({ report, onBack, onAddDoc, onVersion }: { report: ReportR
         <div className="term-title">
           <span className="term-title-line">
             <ReportThread id={lib?.from_thread} />
-            {lib?.report_id && <a data-testid="report-id" href={`#report=${encodeURIComponent(`${report.project}/${lib.report_id}`)}`}><code>{lib.report_id}</code></a>}
-            <strong>
-              {report.project}/{report.name}
-            </strong>
+            {lib?.report_id && <a className="report-short-id" data-testid="report-id" href={`#report=${encodeURIComponent(`${report.project}/${lib.report_id}`)}`}><code>{lib.report_id}</code></a>}
+            {report.name !== lib?.report_id && <strong>{report.project}/{report.name}</strong>}
           </span>
           {size !== null && <span className="muted">{formatBytes(size)} · 파일 {lib!.files.length}</span>}
         </div>

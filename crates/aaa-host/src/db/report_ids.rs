@@ -9,6 +9,13 @@ pub(crate) struct ReportId {
 }
 
 impl Db {
+    /// 이 DB가 소유한 보고 원본만 등록한다. 별도 state의 빈 DB가 기본 프로젝트 폴더를 스캔해 쓰지 않는다.
+    pub(crate) fn report_sources(&self) -> Result<Vec<(String, String)>> {
+        let c = self.conn.lock().unwrap();
+        let mut st =
+            c.prepare("SELECT project,name FROM library_reports UNION SELECT project,id FROM threads ORDER BY 1,2")?;
+        Ok(st.query_map([], |r| Ok((r.get(0)?, r.get(1)?)))?.collect::<Result<Vec<_>, _>>()?)
+    }
     pub(crate) fn report_reserve(&self, project: &str, source: &str, revision: &str, floor: u64) -> Result<String> {
         let mut c = self.conn.lock().unwrap();
         let tx = c.transaction()?;

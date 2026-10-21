@@ -46,6 +46,7 @@ impl Host {
 
     /// 호출자는 publish의 library_ops 또는 thread collect_lock으로 원본 판 교체를 직렬화한다.
     /// 예약은 먼저 영속화한다. 도중 오류·재시작의 빈 번호는 다시 쓰지 않고, ready 뒤에만 노출한다.
+    #[allow(clippy::too_many_arguments)]
     pub(crate) fn snapshot_report_version(
         &self,
         project: &str,
@@ -116,54 +117,45 @@ impl Host {
 
     /// 기존 host의 최신 사본만 처음 한 번 등록한다. 과거 판을 추측해 복원하지 않는다.
     pub(crate) fn backfill_report_ids(&self) -> Result<(), ErrorBody> {
-        for project in self.projects_all() {
-            let dir = self.project_dir(&project.name)?;
-            let entries = match std::fs::read_dir(dir.join("threads")) {
-                Ok(entries) => entries,
-                Err(e) if e.kind() == std::io::ErrorKind::NotFound => continue,
-                Err(e) => return Err(internal(e)),
+        for (project, name) in self.db.report_sources().map_err(internal)? {
+            if !safe_rel(&name)
+                || name.contains('/')
+                || self.db.report_reserved(&project, &name).map_err(internal)?
+                || self.report_id(&project, &name).is_some()
+            {
+                continue;
+            }
+            let Ok(dir) = self.project_dir(&project) else {
+                continue;
             };
-            let mut names = entries
-                .filter_map(Result::ok)
-                .filter_map(|e| e.file_name().to_str().and_then(|s| s.strip_suffix(".files.json")).map(str::to_string))
-                .collect::<Vec<_>>();
-            names.sort();
-            for name in names {
-                if self.db.report_reserved(&project.name, &name).map_err(internal)?
-                    || self.report_id(&project.name, &name).is_some()
-                {
-                    continue;
-                }
-                let result = (|| {
-                    let rec = self.load(&project.name, &name).ok();
-                    let meta =
-                        self.db.library_report(&project.name, &name).map_err(internal)?.unwrap_or(LibraryReportRow {
-                            project: project.name.clone(),
-                            name: name.clone(),
-                            updated: rec.as_ref().and_then(|r| r.report_changed_ms).unwrap_or(0),
-                            from_thread: rec.as_ref().map(|r| r.id.clone()),
-                            ..Default::default()
-                        });
-                    let root = meta
-                        .live
-                        .as_ref()
-                        .map(std::path::PathBuf::from)
-                        .unwrap_or_else(|| dir.join("library").join(&name));
-                    let report = std::fs::read(dir.join("threads").join(format!("{name}.md"))).ok();
-                    let files = self.report_manifest(&dir, &project.name, &name)?;
-                    self.snapshot_report_version(
-                        &project.name,
-                        &name,
-                        rec.as_ref().and_then(|r| r.report_hash.as_deref()).unwrap_or("legacy"),
-                        &root,
-                        &files,
-                        report.as_deref(),
-                        &meta,
-                    )
-                })();
-                if let Err(e) = result {
-                    tracing::warn!(project=%project.name,report=%name,"기존 보고 판 보존 실패: {}",e.message);
-                }
+            if !manifest_path(&dir, &name).is_file() {
+                continue;
+            }
+            let result = (|| {
+                let rec = self.load(&project, &name).ok();
+                let meta = self.db.library_report(&project, &name).map_err(internal)?.unwrap_or(LibraryReportRow {
+                    project: project.clone(),
+                    name: name.clone(),
+                    updated: rec.as_ref().and_then(|r| r.report_changed_ms).unwrap_or(0),
+                    from_thread: rec.as_ref().map(|r| r.id.clone()),
+                    ..Default::default()
+                });
+                let root =
+                    meta.live.as_ref().map(std::path::PathBuf::from).unwrap_or_else(|| dir.join("library").join(&name));
+                let report = std::fs::read(dir.join("threads").join(format!("{name}.md"))).ok();
+                let files = self.report_manifest(&dir, &project, &name)?;
+                self.snapshot_report_version(
+                    &project,
+                    &name,
+                    rec.as_ref().and_then(|r| r.report_hash.as_deref()).unwrap_or("legacy"),
+                    &root,
+                    &files,
+                    report.as_deref(),
+                    &meta,
+                )
+            })();
+            if let Err(e) = result {
+                tracing::warn!(project=%project,report=%name,"기존 보고 판 보존 실패: {}",e.message);
             }
         }
         Ok(())
