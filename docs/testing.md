@@ -23,6 +23,17 @@
   요약의 전체 시간은 wall time이며 분할 spec의 행은 독립 작업 점유 시간의 합계라고 표시한다.
   단계·전체 시한이나 실패 판정은 바꾸지 않는다. 같은 실행 파일을 고정한 전후 측정과 전체 정본으로 검증한다.
 
+## 종료 시작에 완료된 조회(t-0592)
+
+- E2E23의 「종료 시작의 완료 응답」은 실제 WebKit/App의 projects HTTP 응답을 받은 뒤 JSON 완료만
+  beforeunload까지 보류한다. 실제 reload에서 pagehide보다 먼저 routines를 시작하는 경계를 검사한다.
+  기존 코드는 `beforeunload → routines fetch → cancelled → pagehide`로 실패한다. 원래 간헐 실패의
+  access-control 문구와 이 제어 재현의 cancelled 기록은 구별하며, 종료 중 실제 fetch 발생 자체를 단언한다.
+- 공통 API는 beforeunload부터 새 일반 요청을 AbortError로 취소한다. 기존 pagehide·pageshow·명시 keepalive
+  경계도 유지한다. 새 문서의 실제 routines 응답을 확인해 조회를 영구 차단하는 변형은 통과하지 못한다.
+- `web/test/apiRequest.test.mjs`는 두 종료 사건부터 네트워크 시작0, 명시 keepalive, pageshow의 새 요청과
+  취소한 요청 비재생을 검사한다. 일반 API 오류를 성공으로 바꾸거나 pageerror를 무시하지 않는다.
+
 ## Rust 전체 시험 병렬 실행(t-0591)
 
 Unix의 `bash scripts/ci-local.sh --only test`는 Cargo `--workspace --no-run`의 시험 실행 파일 전체를 준비한 뒤
