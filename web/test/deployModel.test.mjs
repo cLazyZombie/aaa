@@ -51,7 +51,7 @@ describe("관리 W6a", () => {
     assert.deepEqual(rolloutTargets("mac-a", ["mac-b", "mac-a"]), ["mac-a", "mac-b"]);
   });
   it("확정 거절일 때만 보인 rollout ID를 지운다(연결·내부 오류는 닿았는지 모른다)", () => {
-    for (const code of ["bad_request", "forbidden", "unsupported_version"]) assert.equal(refused(code), true, code);
+    for (const code of ["bad_request", "forbidden", "unsupported_version", "passkey_required"]) assert.equal(refused(code), true, code);
     for (const code of ["internal", "timeout", "unavailable"]) assert.equal(refused(code), false, code);
   });
   it("보낼 rollout의 SHA·커밋은 점검 결과 그대로(사람이 치지 않는다)", () => {

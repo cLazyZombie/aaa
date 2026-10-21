@@ -7059,9 +7059,46 @@ FRONT_API 1.96는 기본 검수 표지와 답 기록의 r 참조를 더한다. E
 - **고침.** 가짜 agent의 취소 완료를 await하고 취소 결과를 확인한다. peer EOF로 host 연결이 정상 종료될 때까지 await한 뒤 host를 놓고 폴더를 지운다. 같은 파일의 다른 연결 시험과 종료 순서를 맞추며 기존 해시·가림·사본·삭제 단언을 유지한다. 재시도·sleep·시한 증가·정리 실패 무시는 없다.
 - **검증·호환.** link의 기존 시험과 전체 ci-local·check-public을 실행한다. 수정 전 Windows 실패 로그와 로컬 macOS 통과는 구분하며 수정 후 Windows 실행 판정은 착지 뒤 main CI가 맡는다. 착지 기준 origin/main `b255e844`의 마지막 §8.408·FRONT_API 1.100·AGENT_LINK 1.11·E2E78을 확인했다. 이번 기록은 §8.409이며 API 판·E2E 번호는 유지한다.
 
-### 8.410 원격 보고의 숨은 첨부와 판 보존 실패 격리(t-0654)
+
+### 8.410 조작 기기 passkey(10-21, t-0538 관리 GUI W7)
+
+- **요청.** 확정 계획 t-0456 plan-revised §5 W7 「조작 기기마다 passkey를 등록하고, §4의 승인 필요 동작에 사용자 확인(UV)을 한 번 요구한다. challenge는 operation ID와 승인 hash만 묶는다. RP ID는 공개 HTTPS 주소의 도메인 하나다. 주소가 바뀌면 다시 등록한다. 마지막 수단은 host Mac 화면에서 다시 짝짓기다」. 시작 때의 답 1A(공개 주소로 연 조작 기기에 passkey가 없으면 승인 필요 동작을 거부하고 그 자리에서 등록 안내)·2A(짝지은 직후 10분 안에서만 등록, 그 뒤 추가·교체는 다시 짝짓기).
+- **어디에 거나.** 공개 주소(tailscale serve의 `https://<이름>[:포트]`)로 연 조작 기기의 `/api/v1/call`만. host Mac에서 연 loopback 화면(`http://127.0.0.1:<port>`)은 IP라 브라우저가 passkey를 묶지 못해 지금처럼 확인 창만으로 승인한다(host Mac 앞의 사람, 기획의 마지막 수단). CLI(세션 밖 Local)도 그대로다. serve는 받은 Host를 그대로 넘기므로 serve를 거친 요청(serve가 붙이는 `X-Forwarded-For`·`X-Forwarded-Proto`)은 Host를 loopback으로 적어도 공개 주소로 본다: 훔친 cookie로 Host만 바꿔 UV를 건너뛰는 길을 막는다.
+- **UV 동작.** 기기 짝짓기 코드(`web_pair`), 머신 등록 창·승인·폐기, SSH 머신 추가 시작·host key 믿기, 다른 기기 폐기, 웹 공개 켜기·끄기, 보고서 키 교체·올린 보고서 등록, 자동 시작 범위 승인, routine 명령 승인, safety·profile 변경, 작업 root 전환, hook 설치·제거, 설치 승인, 배포·재시작 rollout. 범위를 줄이는 동작(등록 창 닫기·SSH 추가 취소·제 기기 폐기)과 읽기·점검은 묻지 않는다. 계정 로그인·기본 계정, 보내지 못한 입력 풀기, 한도 무시 시작, 신뢰 창 답, 할 일 편집은 §4 목록 밖이라 넣지 않았다.
+- **승인 흐름.** 웹 `call`이 `passkey_required`를 받으면 같은 요청을 `/api/v1/passkey/approve/begin`에 보낸다. host는 그 요청을 op로 두고 challenge = SHA-256(op ID ‖ SHA-256(요청 JSON))을 낸다. 브라우저가 이 기기 credential(`allowCredentials`)로 `userVerification: required` 서명을 만들면 `/api/v1/passkey/approve`가 clientDataJSON(종류·challenge·화면 주소·crossOrigin), authenticatorData(RP ID hash·UP·UV), ES256·EdDSA 서명(`ring`)을 확인하고 begin 때 받아 둔 요청을 그 기기로 한 번 실행한다. 화면은 승인 뒤 다른 요청을 보내지 못하고, hash 칸이 없는 동작(기기 폐기·공개 끄기 등)도 같은 방식으로 묶인다. op는 2분, 기기·화면 주소가 같아야 하고 실패해도 다시 쓰지 못한다. 서명 횟수는 적기만 한다(동기화되는 passkey는 늘 0).
+- **등록(답 2A).** `/api/v1/passkey/register/begin`은 공개 주소의 조작 기기가 짝지은 지 10분(`PASSKEY_REGISTER_WINDOW_MS`, pairing 코드 TTL과 같다) 안일 때만 연다. attestation은 「none」만 청하고 형식은 보지 않는다(인증기 출처를 믿지 않는다). host는 attestation object의 authData에서 credential ID·COSE 공개키(ES256·EdDSA)를 읽는다(필요한 만큼의 CBOR 읽기, 새 의존성 없음). 기기마다 그 RP passkey 하나이고 다시 등록하면 바뀐다. 웹에서 짝짓기 코드를 만드는 것도 UV 동작이라 passkey 없는 cookie는 새 기기를 들이지 못한다. W7 전에 짝지은 기기는 host Mac 화면·passkey 기기·aaa 밖 터미널(`aaa web pair`)의 코드로 한 번 다시 짝짓는다. 주소(RP ID)가 바뀌어도 다시 짝짓는다.
+- **누름(WebKit).** 브라우저는 WebAuthn을 사람이 누른 처리기 안에서만 부르게 한다. host와 한두 번 오간 뒤에도 누름이 살아 있으면(`navigator.userActivation.isActive`) 바로 부르고, 아니면(또는 바로 부른 것이 거부되면) 「passkey로 승인」 창을 한 번 더 띄워 그 단추 처리기에서 부른다. 이 창은 다른 확인 창(휴대폰 sheet) 위에 뜨므로 「뒤로」 기록·밀어 닫기를 쓰지 않는다. 취소하면 host에 요청을 보내지 않는다(배포 화면은 시작 표시를 지운다).
+- **화면.** 짝지은 직후 본문 위 안내 줄(「passkey 등록」, 남은 분)과 설정 → 폰 및 기기의 「이 기기 passkey」 한 줄(등록됨·남은 분·다시 짝짓기 안내·loopback·보기 기기), 기기 목록의 「passkey」 표지. passkey가 없는 기기의 승인은 host 안내 글을 그 자리에 보인다.
+- **기록.** host DB `passkeys`(credential·기기·RP ID·COSE 키·서명 횟수). 기기를 폐기하면 지운다. 감사 기록은 `passkey_registered`(RP ID)·`passkey_approved`(요청 이름)만 남기고 credential ID·서명은 쓰지 않는다. 옛 aaa는 이 표를 모르고 지나간다.
+- **한계.** §4의 한계 그대로다: 같은 OS 사용자 권한의 agent는 host.toml을 고치거나 세션 밖 터미널을 흉내 낼 수 있고, host Mac에서 cookie token을 loopback으로 보내면 passkey를 묻지 않는다. 안전 모드 웹(설정을 읽지 못한 host의 최소 웹, §8.372)의 「마지막 정상 설정으로 되돌리기」는 passkey를 묻지 않는다: 되돌릴 곳이 시작에 성공했던 설정 하나뿐이다. 옛 판으로 되돌리면 공개 주소 승인도 passkey 없이 된다.
+- **호환.** FRONT_API 1.101: `/api/v1/me`의 `passkey`, `DeviceView.passkey`, 오류 코드 `passkey_required`, `/api/v1/passkey/*`. 옛 웹은 오류 글을 보인다. Agent link 변경 없음.
+- **검증.** host 유닛 `passkey::tests`(소프트웨어 인증기 ES256·EdDSA로 등록·승인을 끝까지, UV 없음·다른 화면 주소·다른 RP·다른 challenge·남의 키·모르는 credential·다시 쓴 op·다른 기기 거부, 10분 시한·보기 기기·loopback 등록 거부, 폐기 때 삭제, CBOR 경계)와 `web::guard_tests::only_a_direct_loopback_screen_approves_without_a_passkey`(serve를 거친 loopback Host), 웹 유닛 `passkey.test.mjs`, E2E `79-passkey`(Chromium 가상 인증기, debug host의 `AAA_TEST_WEB_LOCALHOST`로 `http://localhost:<port>`를 공개 주소처럼 쓴다). 결함 심기는 library `w7-fault/README.md`.
+- **착지 통합.** origin/main `555a69ea`에서 마지막 §8.409·FRONT_API 1.100·AGENT_LINK 1.11·E2E78을 직접 확인했다. 이 변경은 §8.410·FRONT_API 1.101·E2E79로 옮기고 AGENT_LINK는 그대로 둔다.
+
+
+### 8.411 install Windows 시험 Job·부모 종료·state 경로 별칭(t-0485)
+
+- **CI 확정 근거.** §8.403 진단 뒤 전체 Windows 로그에서 worker 시작 실패 네 건의 OS 오류5(AccessDenied)·Job 소속true·제한8192(0x2000, KILL_ON_JOB_CLOSE)를 확인했다. 일반 실행의 직접 부모 Job은 breakaway를 허용하지 않았다. 생산 worker의 CREATE_BREAKAWAY_FROM_JOB·거부 시 needs_user 정책을 유지하고 양성 시험의 install 실행기만 시험 소유 nested Job(BREAKAWAY_OK)으로 구성한다. runner 바깥 Job은 변경하거나 탈출하지 않는다. 같은 worker 수명 owner의 금지 Job 사례는 그대로 거부를 검증한다. Windows nested Job의 [breakaway 규칙](https://learn.microsoft.com/en-us/windows/win32/procthread/nested-jobs)을 따른다.
+- **부모 소멸 owner.** 기존 CI에서는 worker가 부모 소멸 뒤 자기 실행 기록에 exit3을 쓴 것까지 통과하고 부모 code!=0만 실제0으로 실패했다. Job close는 종료 코드의 비정상 여부 계약이 없으므로 소유 Job을 [TerminateJobObject](https://learn.microsoft.com/en-us/windows/win32/api/jobapi2/nf-jobapi2-terminatejobobject)로 명시적1 종료 후 닫는다. 직전 부모 생존을 확인하고 기존 worker 생존·exit3 내구 기록·같은 ID status·부모 code!=0 단언과 시한을 모두 유지한다.
+- **state IPC.** pairing의 승인 전 installation_external_tty_required를 추적하면 Windows 일반 state와 canonical state의 verbatim 경로가 서로 다른 Named Pipe 해시였다. 기존 서버 이름·hash와 우선 연결을 바꾸지 않고, NotFound 때만 실제 parent 디렉터리를 canonicalize해 같은 위치인 경로 별칭 하나로 연결한다. 기존 host 주소와 canonical 주소 양방향을 지원한다. AccessDenied를 우회하지 않으며 ACL·OS peer PID·BUSY250ms 시한은 유지한다. Windows IPC owner의 원래 동일 경로 사례에 일반/canonical 양방향의 실제 ACL·peer·byte 전송을 더한다.
+- **판정 경계.** macOS 이번 main CI의 reap 회귀·worker 수명·install26개는 모두 통과했다. Windows 실제 RED는 main23328f7e의 install6/22다. 이 후보의 Windows 실행 GREEN은 다음 승인 착지 뒤 main CI로 확인한다. 로컬 macOS와 Windows 교차 lint/build는 그 대체가 아니다. 승인 우회용 seam·시험 제외·기대값 완화·시한 증가는 없다. I3는 나머지 Windows 판정 뒤다. 기존 report transfer sharing violation은 main §8.409의 별도 수리를 보존한다.
+
+- **착지 통합.** origin/main `8bcc9ce9`에서 마지막 §8.410·FRONT_API 1.101·AGENT_LINK 1.11·E2E79를 직접 확인했다. 이 절은 §8.411로 옮기고 API 판·기존 E2E 번호는 유지한다. main의 passkey·보고 전송 종료·계정 기록·목록 쓸기 수리를 보존하며 통합본 전체 ci-local·Windows 교차 clippy/build·공개 검사를 다시 수행한다.
+
+### 8.412 직접 병합한 thread의 할 일 완료 보관(t-0651)
+
+- **문제와 동작.** 끝난 thread의 마지막 보고가 `[착지]`이면 직접 병합·push를 마쳤어도 host가 `task needs check`를 남겼다. 이제 repo 머신 agent가 thread branch 또는 보고에 명시한 병합 커밋이 실제 origin/main의 조상인지 확인하면 PR 병합처럼 완료 보관한다. 사용자 확인 카드는 만들지 않고 coordinator inbox의 `task auto-cleaned`만 남긴다.
+- **경계.** 보고 없음·사본 버림·하위 task가 남은 상위는 기존 확인 필요를 유지한다. 미병합·조회 불가·옛 agent도 완료를 추측하지 않는다. 보고의 `병합 커밋:`·`착지 커밋:`·`병합:`·`착지:`·`Merge commit:` 줄의 7~64자리 16진 SHA만 후보로 읽고 코드 예제와 일반 검증 SHA는 제외한다. 실제 객체의 조상을 검사하며 축약 SHA가 없거나 모호하면 근거로 쓰지 않는다.
+- **구조와 호환.** host는 Git을 실행하지 않는다. `git_merged.v1`을 알린 agent에만 `GitQuery::MergedIntoMain`을 보내고 선택 응답 `merged_commit`을 받는다. agent는 실제 origin main head와 필요한 객체를 읽고 로컬 ref·FETCH_HEAD·작업 파일을 바꾸지 않는다. pane 정리 뒤 종료 확정 전에 확인 커밋을 `TaskClean.merged_main`에 함께 저장해 확인 카드의 순간 노출도 막고 archive 이유와 되살린 할 일의 attention을 일치시킨다. 기존 FRONT_API·AGENT_LINK 버전은 유지하며 새 웹 E2E 파일 번호는 만들지 않는다.
+- **검증.** host 판정·보고 파서, 실제 host/agent/Git의 직접 병합·보고 커밋·미병합·로컬만 병합·보고 없음·중단·중복 없음, E2E47의 완료 보관·답할 것 경계를 검사한다. 상세는 [시험](testing.md)의 t-0651 절을 따른다.
+
+- **착지 통합.** origin/main `c249e316`에서 마지막 §8.411·FRONT_API 1.101·AGENT_LINK 1.11·E2E79를 직접 확인했다. 이 기능은 §8.412로 옮기고 API 판과 기존 E2E 번호를 유지한다. main의 passkey·Windows 보고 전송 종료·install Job/부모 종료/IPC 수리를 보존하며 통합본 전체 ci-local과 공개 검사를 수행한다.
+
+### 8.413 원격 보고의 숨은 첨부와 판 보존 실패 격리(t-0654)
 
 - **원인.** 기존 보고 판 등록의 안전 경로 오류는 첨부 경로의 `.claude`·`.reports` 성분이었다. 폴더 깊이 제한이 아니며 조사한 파일에 symlink는 없었다. agent의 수집기는 숨은 성분도 열거하지만 host는 거부해 최신 수집 자체도 중단했다. 다른 보고의 크기 오류는 manifest 작성 뒤 바뀐 host 첨부 세 개에서 확인했다. 기동 때의 기존 판 등록은 경고 후 계속하지만, 최신 수집의 판 보존 오류는 본문 저장 앞에서 반환해 새 보고·단계 갱신을 막았다.
 - **고침.** host의 기존 안전 경로 검사는 유지한다. 금지 첨부는 읽기 요청·host 경로 결합 전에 건너뛰고 목록의 부분 사본 사유에 남긴다. 정상 첨부·새 본문은 계속 받는다. 불변 판 저장 실패는 실패 사본으로 기록하되 최신 본문·단계·ack 처리를 계속한다. 기존 ticker로 같은 hash를 다시 받을 때 판을 복구하고 목록 변경도 알린다. 실패한 r 판은 공개하지 않는다. 기존 판 등록과 publish의 경로·symlink·정확한 크기 검사는 유지한다.
 - **검증.** 실제 운영 파일은 읽기만 했다. 수정 전 수집 keeper 두 개의 RED와 수정 후 GREEN, 깊은 경로·숨은 성분·symlink·크기 불일치의 보존 경계, 실제 host·CLI·Agent link에서 판 공개 오류와 같은 hash의 ticker 복구를 검사한다. 고정 sleep·실패 재시도·시한 연장 없이 사건·수집 완료로 끝낸다. 전체 검증은 ci-local·check-public이며 API 판·E2E 번호는 유지한다.
 - **추가 시간 초과 조사.** `ReportFileRead`는 보고 첨부 수집 전용이고 `FileRead`는 구형 수집과 웹 파일 보기에서 함께 쓴다. 숨은 경로 검사는 전송 요청 전에 즉시 거부하므로 120초 응답 대기 자체의 원인은 아니다. 첨부 응답 시간 초과는 기존 파일별 실패 경로로 처리하지만, 뒤의 숨은 첨부가 수집 전체를 취소하던 경계를 이번에 고친다. 120초 한도는 유지한다. 기존 시간 초과 로그에는 대상 머신·파일·offset이 없어 실제 파일 I/O 지연과 응답 전달 지연을 구분할 수 없다.
+
+- **착지 통합.** origin/main `81216f02`에서 마지막 §8.412·FRONT_API 1.101·AGENT_LINK 1.11·E2E79를 직접 확인했다. 이 변경은 §8.413으로 옮기고 API 판과 기존 E2E 번호는 유지한다. main의 passkey·install Windows Job/부모 종료/state IPC·직접 병합한 할 일 완료 보관을 보존하며 통합본 전체 ci-local과 공개 검사를 수행한다.

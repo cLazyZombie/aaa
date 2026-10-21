@@ -155,6 +155,7 @@ tailscale serve status                # 기존 항목 기록(바꾸지 않는다
 
 - 홈 화면 앱(PWA): Android Chrome은 목록 아래 「홈 화면에 설치」, iPhone은 Safari 공유 → 「홈 화면에 추가」. iPhone 홈 화면 앱은 Safari와 cookie가 따로라 처음 열 때 다시 pairing한다.
 - 알림(Web Push): 목록 아래 「알림 켜기」를 누르면 시험 알림이 온다. iPhone은 홈 화면 앱에서만 켤 수 있다(iOS 16.4 이상).
+- passkey(관리 GUI W7): 공개 주소로 짝지은 조작 기기는 짝지은 뒤 10분 안에 본문 위 「passkey 등록」을 누른다. 그 뒤 승인 필요 동작(기기 페어링·머신 등록·공개 변경·설정·배포 등)마다 Face ID·지문을 한 번 한다. 10분을 넘겼거나 W7 전에 짝지은 휴대폰은 host Mac 화면(`http://127.0.0.1:<port>`)이나 이 터미널의 `aaa web pair`로 코드를 받아 다시 짝짓고 바로 등록한다. iPhone 홈 화면 앱은 Safari와 따로 짝지으므로 각각 등록한다.
 
 ## 6. shadow(§15 2)
 
