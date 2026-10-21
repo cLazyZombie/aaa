@@ -260,7 +260,11 @@ export type TaskReservation = { selection: TaskChoicePin, task_id: string, task:
 /**
  * 선점과 함께 발급한 기동 ID. 외부 기동의 exactly-once 보증은 아니다.
  */
-launch_id: string | null, thread: string | null, actor: string, created_ms: number, updated_ms: number, };
+launch_id: string | null, thread: string | null,
+/**
+ * 연결된 thread의 현재 작업 단계. 예약 저장값 대신 host가 조회 때 채운다.
+ */
+stage?: ThreadStage, actor: string, created_ms: number, updated_ms: number, };
 
 export type ArchivedTask = { task_id: string, task: TaskView,
 /**
@@ -351,7 +355,7 @@ name: string,
  */
 notes: Array<string>, };
 
-export type TaskThread = { id: string, title: string, group: ThreadGroup, };
+export type TaskThread = { id: string, title: string, group: ThreadGroup, stage?: ThreadStage, };
 
 export type TaskNotesSection = {
 /**
@@ -507,7 +511,7 @@ machine: string | null,
  */
 repos: Array<RepoChoice>,
 /**
- * 사용자·coordinator가 띄운 열린 Worker 수(시작·정리 중 포함)와 host가 집행하는 한도. 자동화 thread는 뺀다.
+ * 사용자·coordinator가 띄운 열린 Worker 수(시작·정리 중 포함)와 host가 집행하는 한도. 자동화·병합 대기·착지 한 자리는 뺀다.
  */
 open_threads: number, max_parallel_threads: number,
 /**
@@ -1208,6 +1212,8 @@ export type ThreadGroup = "waiting_on_you" | "ready_for_review" | "landing" | "w
 
 export type ReportAttention = "completed" | "needs_user";
 
+export type ThreadStage = "merge_ready" | "landing";
+
 export type ThreadView = { project: string, id: string, title: string, machine: string, profile: string, account?: string, role: Role,
 /**
  * (FrontResponse 태그 `kind`와 겹치지 않게 이름을 달리한다)
@@ -1237,7 +1243,11 @@ cleanup_pending?: boolean, group: ThreadGroup, brief: BriefState, pane: string |
 /**
  * 추적하는 PR(§8.80)
  */
-pr: ThreadPr | null, report_hash: string | null, report_attention?: ReportAttention, acked_hash: string | null,
+pr: ThreadPr | null, report_hash: string | null, report_attention?: ReportAttention,
+/**
+ * 회수한 보고의 작업 단계. 옛 host·표지 없는 보고·끝난 thread는 생략한다.
+ */
+stage?: ThreadStage, acked_hash: string | null,
 /**
  * report.md `## Next` 줄
  */

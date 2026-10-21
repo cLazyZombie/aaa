@@ -1618,3 +1618,12 @@ Windows/Linux 실제 실행 판정은 main push 뒤 GitHub CI windows-2025/ubunt
 - 일반 자리에서 자동화 제외를 제거한 변형과 규칙 상한을 제거한 변형이 새 DB keeper를 실패시키는지 확인한 뒤 원본 bytes를 복구한다. 정본 전체 검증은 `bash scripts/ci-local.sh`다.
 
 착지 통합 후보는 t-0584의 `slot_released_during_queue_scan_does_not_bypass_the_moved_front`를 자동화 thread 없음/열림 두 경우에 실행한다. 사용자 자리가 순회 도중 반환돼도 뒤 예약은 추월하지 않고, 다음 순회에서는 자동화 thread를 자리에 넣지 않아 앞 차례부터 조건을 다시 확인해야 한다.
+
+## 병합 대기·착지 중 실행 자리(t-0594, plan §8.382)
+
+- `cargo test -p aaa-host --lib report_mark::tests --locked`: 첫 줄·공백·BOM/CRLF·중복/붙임 표지·본문·완료/다음 단계 경계.
+- `cargo test -p aaa-host --lib report_stages --locked`: 같은 SQLite의 여덟 동시 요청이 마지막 한 자리만 선점하는지, 병합 대기·착지 한 자리만 제외하며 자동화의 착지는 그 한 자리를 빼앗지 않는지, 착지 실패 수리·작업 복귀 초과·정리 중/완료를 검사한다. 옛 JSON과 실제 보고 사본으로 Host를 다시 열어 marked 보고는 이행하고 unmarked/완료·hash 불일치·유실은 보수적으로 세는지도 확인한다. 운영 폴더는 읽거나 쓰지 않는다.
+- `cargo test -p aaa --test m13 thread_stages:: --locked`: 격리 host·agent·CLI·가짜 harness에서 한도가 찬 상태의 예약 두 건을 순서대로 준비한다. 병합 대기 보고 회수 사건이 첫 예약을, 그 예약의 착지 보고가 둘째 예약을 시작해야 한다. 단계를 알기 위해 ticker를 반복 호출하지 않는다. CLI 세 출력·예약 DTO·ack 보존·다음 단계 복귀 시 새 기동 거부/기존 작업 보존·host 재시작 뒤 같은 단계를 검사한다.
+- `NODE_PATH=$(npm root -g) node web/e2e/web.e2e.mjs --spec 67 --workers 1`: 기존 예약 순서·취소·다른 기기·완료 보관을 유지하고, 실제 보고 파일→host 단계→예약 기동→데스크톱/390px 할 일의 연결·미연결 표지와 다른 색·사이드바·모든 thread·예약 상세를 확인한다. 스크린샷은 시험 산출물에 남긴다. DOM·보고·기동 사건으로 끝내며 고정 sleep·시한 연장은 없다.
+
+병합 대기 제외를 제거한 제품 변형은 DB 선점 keeper가 실패해야 한다. 변형 뒤 제품 bytes를 복원하고 정본 `bash scripts/ci-local.sh` 전체와 공개 검사를 실행한다. 실제 동시 착지 명령을 강제로 중단하는 기능은 아니며 coordinator가 착지를 하나씩 시작한다.

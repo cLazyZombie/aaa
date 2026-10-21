@@ -334,6 +334,7 @@ impl Host {
                             reason: "자리 대기".into(),
                             launch_id: None,
                             thread: None,
+                            stage: None,
                             actor: by.clone(),
                             created_ms: updating.map_or(now, |i| rows[i].created_ms),
                             updated_ms: now,

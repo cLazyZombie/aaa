@@ -3590,7 +3590,7 @@ fn render_thread(s: &mut String, t: &aaa_proto::ThreadView) {
     for w in &t.warnings {
         let _ = writeln!(s, "경고: {w}");
     }
-    let group = t.group.label();
+    let group = t.stage.map_or_else(|| t.group.label(), |stage| stage.label());
     let adopted = if t.thread_kind == ThreadKind::Adopted { "(데려옴)" } else { "" };
     let _ = writeln!(
         s,
@@ -3863,7 +3863,15 @@ fn render_context(s: &mut String, c: &aaa_proto::ProjectContext) {
     }
     for t in &c.threads {
         let state = t.agent.as_ref().map(|a| format!(" · {:?}", a.activity)).unwrap_or_default();
-        let _ = writeln!(s, "  {} {:?} {} {}@{}{state}", t.id, t.group, t.title, t.profile, t.machine);
+        let _ = writeln!(
+            s,
+            "  {} {} {} {}@{}{state}",
+            t.id,
+            t.stage.map_or_else(|| t.group.label(), |s| s.label()),
+            t.title,
+            t.profile,
+            t.machine
+        );
         render_automation_origin(s, t);
         // 요약이 낡았으면(요약 뒤 지시가 있거나 지시가 있는데 요약이 없다) 이 턴에 고친다
         if let Some(m) = t.summary.as_ref().filter(|m| m.pending > 0) {
@@ -4603,7 +4611,10 @@ fn render_front(r: &FrontResponse) -> String {
                     q.profile,
                     q.machine.as_deref().unwrap_or("자동"),
                     q.reason,
-                    q.thread.as_ref().map(|t| format!(" · {t}")).unwrap_or_default()
+                    q.thread
+                        .as_ref()
+                        .map(|t| format!(" · {t}{}", q.stage.map(|s| format!(" · {}", s.label())).unwrap_or_default()))
+                        .unwrap_or_default()
                 ));
             }
         }

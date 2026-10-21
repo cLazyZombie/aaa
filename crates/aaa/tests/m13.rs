@@ -25,6 +25,8 @@ mod preparation;
 mod rollout;
 #[path = "m13/secret_k0.rs"]
 mod secret_k0;
+#[path = "m13/thread_stages.rs"]
+mod thread_stages;
 #[path = "m13/work_root.rs"]
 mod work_root;
 

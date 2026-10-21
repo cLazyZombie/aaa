@@ -806,6 +806,23 @@ impl ThreadGroup {
     }
 }
 
+/// 회수한 보고 첫 줄의 작업 단계. thread 묶음·알림 의도와 별개다(FRONT_API 1.92).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+pub enum ThreadStage {
+    MergeReady,
+    Landing,
+}
+
+impl ThreadStage {
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::MergeReady => "병합 대기",
+            Self::Landing => "착지 중",
+        }
+    }
+}
+
 /// 검증한 보고 사본 첫 줄의 알림 의도. 묶음·진행률과 별개다.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "snake_case")]
@@ -860,6 +877,10 @@ pub struct ThreadView {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub report_attention: Option<ReportAttention>,
+    /// 회수한 보고의 작업 단계. 옛 host·표지 없는 보고·끝난 thread는 생략한다.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub stage: Option<ThreadStage>,
     pub acked_hash: Option<String>,
     /// report.md `## Next` 줄
     pub next: Vec<String>,
@@ -2260,6 +2281,9 @@ pub struct TaskThread {
     pub id: String,
     pub title: String,
     pub group: ThreadGroup,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub stage: Option<ThreadStage>,
 }
 
 /// `task_notes` 파일(예: `memory/later.md`)의 `##` 절 하나. 줄은 Markdown 원문 그대로다
@@ -2323,7 +2347,7 @@ pub struct ThreadStartPreview {
     pub machine: Option<String>,
     /// project.toml `repos`(worktree로 시작할 저장소). 비면 작업 폴더로 시작한다
     pub repos: Vec<RepoChoice>,
-    /// 사용자·coordinator가 띄운 열린 Worker 수(시작·정리 중 포함)와 host가 집행하는 한도. 자동화 thread는 뺀다.
+    /// 사용자·coordinator가 띄운 열린 Worker 수(시작·정리 중 포함)와 host가 집행하는 한도. 자동화·병합 대기·착지 한 자리는 뺀다.
     pub open_threads: u32,
     pub max_parallel_threads: u32,
     /// 이미 열린 thread가 이 task를 맡았다 등

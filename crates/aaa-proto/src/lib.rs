@@ -191,6 +191,7 @@ pub fn typescript_bindings() -> String {
         DeployJob::decl(&cfg),
         ThreadGroup::decl(&cfg),
         ReportAttention::decl(&cfg),
+        ThreadStage::decl(&cfg),
         ThreadView::decl(&cfg),
         ThreadPr::decl(&cfg),
         SummaryMark::decl(&cfg),
