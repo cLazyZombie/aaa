@@ -11,7 +11,7 @@ import type {
   QuestionView,
   ThreadView,
 } from "./gen/proto";
-import { ActivityBar } from "./ActivityBar";
+import { ActivityBar, type CoordinatorButton } from "./ActivityBar";
 import { SidebarResizer } from "./SidebarResizer";
 import { PANEL_LABEL, revealPanel, storedCollapsed, storedPanel, storeSidebar, type SidebarPanel } from "./sidebarPanel";
 import { ReportsView, type ReportRef } from "./ReportsView";
@@ -57,6 +57,7 @@ import { passingFolder, recentDirectories } from "./herdr/recent-directories.ts"
 import { useMediaQuery } from "./herdr/useMediaQuery.ts";
 import { inAppLink } from "./reportLinks.ts";
 import type { AppRef } from "./appRef";
+import type { AppId } from "./appIds";
 import { AppRefChip, AppRefContext, type AppRefLook, type AppRefs } from "./AppRefChip";
 import { AsksPanel, AsksView, useAskSelection, useAsksData } from "./AsksView";
 import { AutomationView, automationTarget } from "./AutomationView";
@@ -291,7 +292,7 @@ function selectedFromHash(): string | null {
   if (location.hash === "#asks") return "asks:";
   const r = /^#report=(.+)$/.exec(location.hash);
   if (r) return `reports:${decodeURIComponent(r[1])}`;
-  const m = /^#(pane|thread|question|ask|automation)=(.+)$/.exec(location.hash);
+  const m = /^#(pane|thread|task|question|ask|automation)=(.+)$/.exec(location.hash);
   return m ? `${m[1]}:${decodeURIComponent(m[2])}` : null;
 }
 
@@ -882,13 +883,14 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
     else goSel(reportsAt ?? "reports:");
   };
   // 할 일 화면(plan §8.306): 보고서와 같은 꼴. 다시 누르면 그 앞 화면으로, 한 번 연 화면은 숨긴 채 그려 둔다(거르기·접은 목록이 그대로)
-  const tasksShown = sel === "tasks:";
+  const tasksShown = sel === "tasks:" || sel?.startsWith("task:") === true;
+  const taskAt = sel?.startsWith("task:") ? sel.slice(5) : null;
   const [tasksOpened, setTasksOpened] = useState(tasksShown);
   const beforeTasks = useRef<string | null>(null);
   useEffect(() => {
-    if (sel === "tasks:") setTasksOpened(true);
+    if (tasksShown) setTasksOpened(true);
     else beforeTasks.current = sel;
-  }, [sel]);
+  }, [sel, tasksShown]);
   const toggleTasks = () => goSel(tasksShown ? beforeTasks.current : "tasks:");
   // 자동화 설정 화면(t-0628): 사이드바 「자동화」 카드가 목록이고 본문은 고른 규칙 하나다. 「답할 것」처럼 앞 화면을 기억하고 한 번 연 뒤
   // 숨긴 채 그려 둔다(쓰던 편집 초안이 그대로)
@@ -1162,14 +1164,30 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
     const r = reportNames.get(sel.slice("reports:".length));
     if (r) setSel(`reports:${r.project}/${r.name}`);
   }, [sel, reportNames]); // eslint-disable-line react-hooks/exhaustive-deps
-  // 칩이 그리는 상태가 바뀔 때만 새 값이다(대화 Markdown이 thread 사건마다 다시 그리지 않게)
+  const knownIds = useMemo(() => new Set([
+    ...allThreads.map((t) => t.id),
+    ...(taskBoard.board?.tasks ?? []).flatMap((t) => t.short_id ? [t.short_id] : []),
+    ...[...reportNames.values()].flatMap((r) => r.report_id ? [r.report_id] : []),
+    ...askList.flatMap((a) => a.kind === "question" ? a.thread.questions.items.map((q) => q.id) : []),
+    ...(asksData?.requests ?? []).flatMap((r) => [r.question_id, ...r.questions?.items.map((q) => q.id) ?? []]),
+    ...asksDone.flatMap((r) => [r.question_id, ...r.items.map((q) => q.id)]),
+  ]), [threads, taskBoard.board, reportNames, asksData]); // eslint-disable-line react-hooks/exhaustive-deps
+  // 실제 대상·칩의 표시가 바뀔 때만 대화 Markdown을 다시 그린다.
   const refKey = [
+    ...knownIds,
     ...shownThreads.filter((t) => t.questions).map((t) => `${t.id}:${t.questions!.answer ? `done ${t.questions!.answer.summary}` : `ask ${t.questions!.items.length}`}`),
     ...asksDone.filter((r) => r.kind === "question").map((r) => `${r.subject}:record ${r.id} ${r.summary}`),
     ...[...reportNames.values()].map((r) => `${r.project}/${r.name}:${r.title ?? ""}`),
   ].join("\n");
-  const openRefRef = useRef<(ref: AppRef) => void>(() => {});
-  openRefRef.current = (ref: AppRef) => {
+  const openRefRef = useRef<(ref: AppRef | AppId) => void>(() => {});
+  openRefRef.current = (ref) => {
+    if (ref.kind === "thread") {
+      // 내부 project/id로 고른다. 짧은 주소의 hashchange와 정규화가 선택을 덮지 않게 한다.
+      const t = allThreads.find((t) => t.id === ref.target);
+      if (t) chooseThread(t);
+      return;
+    }
+    if (ref.kind === "task") return goSel(`task:${ref.target}`);
     if (ref.kind === "question") return goSel(`question:${ref.target}`);
     const r = reportNames.get(ref.target);
     goSel(r ? `reports:${r.project}/${r.name}` : "reports:");
@@ -1178,6 +1196,8 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
   const appRefs = useMemo<AppRefs>(() => {
     const byId = new Map(shownThreads.map((t) => [t.id, t]));
     return {
+      exists: (id) => knownIds.has(id.target),
+      openId: (id) => openRefRef.current(id),
       look: (ref): AppRefLook => {
         if (ref.kind === "report") {
           const r = reportNames.get(ref.target);
@@ -1252,6 +1272,35 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
     machines: { count: highMachines(machines), label: `CPU·MEM ${HIGH_STAT}% 넘음` },
     automations: { count: automationBadge, label: "막힌 큐·승인 필요" },
   };
+  // 막대 맨 위 「coordinator」(t-0621): 도는 coordinator pane(「작업」 트리의 coordinator 줄, sidebarModel `roster`와 같은 판정)을 연다.
+  // 없으면 기본 profile로 띄워 연다(할 일 「coordinator에게 맡기기」의 `project_open`). 보기 권한은 띄울 수 없어 그때 단추가 없다
+  const coordinatorPane = panes.find((p) => p.coordinator_project && p.state === "running" && !threadOfPane.has(p.id)) ?? null;
+  const [coordinatorBusy, setCoordinatorBusy] = useState(false);
+  const openCoordinator = async () => {
+    if (coordinatorPane) return choose(coordinatorPane.id);
+    if (coordinatorBusy) return;
+    setCoordinatorBusy(true);
+    setMsg(null);
+    try {
+      const r = await call({ op: "project_open" });
+      if (r.kind === "project_opened") choose(r.pane.id);
+    } catch (e) {
+      setMsg(e instanceof Error ? e.message : String(e));
+    } finally {
+      setCoordinatorBusy(false);
+    }
+  };
+  const coordinatorStatus = coordinatorPane?.connection === "connected" ? paneAgentStatus(coordinatorPane) : undefined;
+  const coordinatorButton: CoordinatorButton | null =
+    coordinatorPane || canControl
+      ? {
+          active: coordinatorPane !== null && current?.id === coordinatorPane.id,
+          // 새 답은 보는 동안 host가 본 것으로 적는다(seen): 그 사이 점이 깜빡이지 않게 보는 pane은 뺀다
+          badge: coordinatorStatus === "blocked" ? "ask" : coordinatorStatus === "done" && current?.id !== coordinatorPane?.id ? "reply" : null,
+          busy: coordinatorBusy,
+          onOpen: () => void openCoordinator(),
+        }
+      : null;
   // 탭 아이콘의 안 본 알림 수(faviconBadge.ts, plan §8.266): 창에 focus가 오면 지운다
   useEffect(() => watchBadgeFocus(), []);
   // 넓은 창에서 접었으면 사이드바 칸이 없다(좁은 창은 drawer라 늘 칸이 있다)
@@ -1279,6 +1328,7 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
     >
       <aside id="workspace-drawer" className={`list${drawerOpen ? " is-open" : ""}`}>
         <ActivityBar
+          coordinator={coordinatorButton}
           panel={panel}
           shown={sidebarShown}
           onPanel={showPanel}
@@ -1398,9 +1448,12 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
             groups={threadGroups}
             machines={machines}
             stages={new Map(allThreads.map(t => [t.id, t.stage]))}
+            overLimits={new Map(allThreads.map(t => [t.id, t.over_limit]))}
             reader={role === "reader"}
             addRequest={taskAdds}
             focusRequest={taskFocus}
+            target={taskAt}
+            onTarget={(id) => goSel(id ? `task:${id}` : "tasks:")}
             onBoard={taskBoard.replace}
             onThread={(id) => {
               const t = allThreads.find((x) => x.id === id);

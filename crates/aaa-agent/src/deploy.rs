@@ -2,6 +2,7 @@
 use crate::Agent;
 pub(crate) mod guard;
 mod stage;
+mod web_probe;
 use aaa_proto::{DeployAction, DeployJob, DeployService, DeployState, ErrorBody, ErrorCode};
 use std::{
     path::{Path, PathBuf},
@@ -135,6 +136,7 @@ impl Manager {
             software: aaa_common::util::software(),
             instance: self.instance.clone(),
             started_ms: self.started_ms,
+            web: None,
         }
     }
     fn path(&self, id: &str) -> Result<PathBuf, ErrorBody> {

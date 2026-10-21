@@ -1,11 +1,11 @@
 // 웹 배포·재시작 W6a(plan §8.361): 설정 「배포」에서 빌드 머신에 이미 있는 후보(옆에 provenance.json)를 점검(provenance·SHA 대조와
 // dry-run self-check, 대상 순서)한 뒤 확인 창 하나로 rollout을 시작하고, 화면을 다시 열어 같은 rollout ID를 기록에서 본다. 서비스 재시작은
-// 확인 창으로 열고 작업 상태를 본다. 보기 전용 기기, 휴대폰 390.
+// 확인 창으로 여는 재시작만 하는 rollout이다(W6c, plan §8.402): 독립 감시가 새 agent를 확인해야 끝난다. 보기 전용 기기, 휴대폰 390.
 // 실험실 집(HOME)과 가짜 launchctl을 쓴다: 재시작이 이 Mac의 실제 aaa 서비스에 닿지 않는다. 후보는 허용 표지가 있을 때만 self-check를
 // 통과해, 점검은 통과하고 rollout은 대상 전송의 dry-run에서 멈춘다(실험실 실행 파일을 바꾸는 교체 단계에 닿지 않는다).
 import fs from "node:fs";
 import crypto from "node:crypto";
-import { root, aaa, AA, step, browser, pairPage, shot, openSettings, LOAD_TIMEOUT_MS } from "../lib/harness.mjs";
+import { root, aaa, AA, step, start, stop, until, browser, pairPage, shot, openSettings, LOAD_TIMEOUT_MS } from "../lib/harness.mjs";
 
 const home = `${root}/svchome`;
 const bin = `${root}/svcbin`;
@@ -91,14 +91,22 @@ export default async function ({ page }) {
     await shot(page, "63-history-desktop");
   });
 
-  await step("서비스 재시작: 확인 창 → 감독자 재시작(가짜 launchctl) → 작업 완료", async () => {
+  const restarts = () => dialog.getByTestId("rollout-history").locator("details").filter({ hasText: "agent 재시작 ·" });
+  await step("서비스 재시작: 확인 창 → 재시작 rollout(가짜 launchctl) → 감시가 새 agent를 확인하고 끝", async () => {
     await dialog.getByTestId("deploy-restarts").locator('[data-machine="labA"]').getByRole("button", { name: "agent 재시작…" }).click();
     const ask = page.getByRole("alertdialog", { name: "labA의 agent를 다시 띄울까요?" });
+    await ask.getByText("감시가 다시 띄운다").waitFor();
     await ask.getByRole("button", { name: "다시 띄우기" }).click();
     await ask.waitFor({ state: "detached" });
-    await dialog.getByTestId("deploy-jobs").locator('[data-state="completed"]').getByText("labA · agent 재시작").waitFor();
-    const log = fs.readFileSync(calls, "utf8");
-    if (!/kickstart -k gui\/\d+\/dev\.aaa\.agent/.test(log)) throw new Error(`감독자 재시작 기록: ${log}`);
+    await restarts().first().waitFor();
+    const log = await until("감독자 재시작 기록", () => fs.existsSync(calls) && /kickstart -k gui\/\d+\/dev\.aaa\.agent/.test(fs.readFileSync(calls, "utf8")));
+    if (!log) throw new Error("감독자 재시작 기록이 없다");
+    // 실행 신원이 그대로인 옛 agent는 새 프로세스가 아니다: 아직 끝나지 않는다
+    if ((await restarts().first().getAttribute("data-state")) === "done") throw new Error("새 agent 없이 재시작이 끝났다");
+    // 가짜 launchctl은 기록만 한다. 감독자 대신 같은 실행 파일로 agent를 다시 띄운다
+    await stop("agent");
+    start("agent-restarted", "agent", "--host", "local", "--name", "labA");
+    await dialog.getByTestId("rollout-history").locator('details[data-state="done"]').filter({ hasText: "agent 재시작 ·" }).waitFor();
     await shot(page, "63-restart-desktop");
   });
 
@@ -106,7 +114,7 @@ export default async function ({ page }) {
     const { page: rd } = await pairPage(browser, aaa("web", "pair", "--reader").code, { width: 1280, height: 800 });
     const d = await openSettings(rd, "배포");
     await d.getByTestId("rollout-history").locator(`[data-rollout="${id}"]`).waitFor();
-    await d.getByTestId("deploy-jobs").getByText("labA · agent 재시작").waitFor();
+    await d.getByTestId("rollout-history").locator('details[data-state="done"]').filter({ hasText: "agent 재시작 ·" }).waitFor();
     if (await d.getByTestId("new-rollout").count()) throw new Error("보기 전용 기기에 새 배포가 보인다");
     if (await d.getByTestId("deploy-restarts").count()) throw new Error("보기 전용 기기에 재시작 단추가 보인다");
     await rd.close();

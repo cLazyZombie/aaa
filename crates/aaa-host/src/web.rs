@@ -738,6 +738,10 @@ async fn sign_out() -> Response {
 }
 
 async fn me(State(host): State<Arc<Host>>, headers: HeaderMap) -> Response {
+    // 시험에서만(debug 빌드 `AAA_TEST_WEB_HOLD_ME`): 실행 신원은 맞는데 웹이 답하지 않는 새 판을 흉내 낸다(W6c 감시 m13)
+    if cfg!(debug_assertions) && std::env::var_os("AAA_TEST_WEB_HOLD_ME").is_some() {
+        std::future::pending::<()>().await;
+    }
     match device(&host, &headers) {
         Some((id, role)) => {
             Json(Outcome::Ok(Me { role, device: id, front_api: aaa_proto::FRONT_API.to_string() })).into_response()

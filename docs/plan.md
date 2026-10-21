@@ -6564,7 +6564,7 @@ L4 후속(10-20 00시 사용자 관찰): 멈춤 상태의 후보 예약과 재�
 - **권한.** 웹 조작 기기 = `Controller` 역할의 `device:<id>` actor(보기 전용 기기도 `device:`라 역할로 가른다). `rollout_start`: 사람 터미널(`person:`)·웹 조작 기기는 이 aaa의 프로젝트, 그 밖은 coordinator+safety 그대로. 웹은 빌드 머신 후보(`source_machine`)만 받는다(미리 복사한 경로 L1은 거부). `rollout_permitted`는 사람·웹 기기 actor면 coordinator_deploy가 꺼져 있어도 그 rollout 끝까지 승인을 유지한다(actor가 DB 정본에 남아 host 재시작 뒤에도 같다). `rollout_plan`은 빌드 머신에서 후보를 실행하므로 웹 조작 기기와 사람 터미널만 받고, 진행 중 rollout이 있으면 거부한다(세션 안 agent·coordinator가 다른 머신에서 실행 파일을 띄우는 길이 되지 않게, 그리고 빌드 머신의 dry-run이 그 rollout 단계와 겹치지 않게). agent도 대기·진행 중 작업이 있으면 점검을 거부하고(거절 글에 작업 ID는 싣지 않는다), 점검하는 동안 들어온 작업은 바로 거부한다: 실행기의 staging 파일 이름(`.aaa-update-<pid>.tmp`)이 agent 하나에 하나라 배포 작업과 겹치면 한쪽이 실패한다. 작업 gate는 「점검 중」 표지를 세우는 동안만 쥐고 self-check는 lock 밖에서 돌린다(async `deploy_start`를 붙잡지 않는다). 같은 rollout ID 재전송은 빌드 머신 연결 검사 전에 기존 기록을 돌려준다(rollout 중 그 agent가 잠시 끊겨도). `deploy_start`의 웹 경로는 `Restart`만 받고(교체는 rollout으로만), 진행 중 rollout이면 거부는 그대로다. `rollouts`·`deploy_jobs`는 보기 전용 기기도 본다(표시용 요약만).
 - **웹에 가는 것.** rollout은 기존 카드(`card_of`, L4와 같다)만: actor·후보 경로·단계 작업 ID·오류 원문은 싣지 않는다. 개별 작업 요약은 머신 이름·작업 종류(후보 경로·보관 이름은 빼고)·상태(그 머신 agent에 5초 안에 물음, 끊겼으면 없음)·고정 까닭·웹 출처·시각이고, 실행기 PID·결과 원문은 싣지 않는다. 개별 작업 기록 `deploy:<id>`에 `created_ms`·`web`을 더했다(같은 ID 재전송은 대상·작업만 대조한다, 옛 기록은 시각 없이 맨 뒤). 작업이 바뀌면 `rollout` 사건을 다시 보내 웹이 다시 읽는다.
 - **웹.** 설정 「배포」(머신 다음): 「새 배포」(빌드 머신·후보 경로·대상 고르기, 「점검」 → 후보·판·SHA 전체·커밋·크기·빌드 시각과 대상 순서·준비, 대상은 host 머신을 늘 맨 앞에 넣어 보낸다(빈 목록은 host가 「모든 머신」으로 읽는다), 「배포 시작…」 확인 창 → 보내기 전에 rollout ID 표시, 확인 창 하나에 ID 하나라 응답을 잃고 다시 눌러도 같은 rollout, host가 확정으로 거절했을 때만 표시를 지움), 「배포 기록」(새것부터, 펼치면 기존 배포 카드), 「서비스 재시작」(연결된 머신마다 agent, host 머신은 host도, 확인 창, 최근 작업 상태). 기존 배포 카드의 안내를 「설정 「배포」(조작 기기)나 coordinator」로 바꿨다.
-- **남은 것.** 웹 재시작은 아직 독립 복구 감시(guard) 밖이다(W6c에서 update·rollback·restart를 guard 아래로 옮긴다).
+- **남은 것.** 웹 재시작은 아직 독립 복구 감시(guard) 밖이다(W6c에서 update·rollback·restart를 guard 아래로 옮긴다). → §8.402: 재시작은 재시작만 하는 rollout으로 옮겼고, 개별 update·rollback은 guard 밖으로 남겼다(답 1A).
 - **검증.** host 유닛 `rollout::web_tests`(웹은 재시작만·기록의 시각·출처와 같은 ID 대조, Reader·세션 안 연결의 점검 거부와 조작 기기의 경로 검사, 웹 rollout은 빌드 머신 후보만, 사람·웹 승인 유지와 coordinator는 safety, 목록·같은 ID 조회는 이 프로젝트 요약만, 작업 목록 순서·끊긴 머신·원문 숨김), agent 유닛 `deploy::stage::tests::candidate_inspection_matches_provenance_and_dry_runs_before_answering`, 웹 유닛 `deployModel.test.mjs`, 웹 E2E `63-deploy`(실험실 HOME·가짜 launchctl, 데스크톱·Reader·휴대폰 390). 절차는 [시험](testing.md).
 
 ### 8.362 자동화 파일 오류와 실행 실패 구분·배포 중 입력 보존(10-21, t-0560)
@@ -6902,10 +6902,120 @@ FRONT_API 1.96는 기본 검수 표지와 답 기록의 r 참조를 더한다. E
 
 - **다음 단계.** 이 수리 착지 뒤에는 macOS I3의 승인된 `apply --service launchd` 감독자를 Windows bootstrap보다 먼저 구현한다. 웹 머신 추가 M3가 현재 `unsupported_service_platform` 경계를 기다린다. Windows bootstrap·사용자 Windows PC 인수·Linux I4·최종 I7은 그 뒤다.
 
-### 8.396 자동화 화면: 왼쪽 카드 목록·오른쪽 본문 설정(10-21, t-0628)
+### 8.396 thread 목록의 상태 점 열 고정(t-0620)
+
+- coordinator·자동화·일반 thread 줄의 상태 칸은 모두 같은 select 오른쪽을 기준으로 삼고, select 안에 상태 칸 여백을 확보한다. 출처 막대를 위한 위치 기준 때문에 일부 줄만 오른쪽 끝이 달라지던 문제를 고친다.
+- 터치·좁은 창에서는 ⋯ 메뉴의 flex 칸을 선택·hover 여부와 관계없이 확보한다. 기존 단추 표시 조건과 출처 막대·agent 표지 간격은 유지하며, 메뉴가 보이는 줄의 상태 점만 왼쪽으로 이동하지 않게 한다.
+- 기존 E2E48에서 실제 Claude 작업 화면을 내는 가짜 harness로 세 줄의 파란 점을 확인하고 1280·820·390px에서 각 줄을 선택해 중심 x 좌표와 내용 침범을 검사한다. 머신 표시 글의 짧음·길음도 대조하고 폭별 화면을 남긴다. FRONT_API 1.97·AGENT_LINK 1.11·E2E76은 유지한다. 새 E2E 파일은 추가하지 않는다.
+
+- 착지 기준 origin/main `dd6e5b82`의 마지막 §8.395·FRONT_API 1.97·AGENT_LINK 1.11·E2E76을 직접 확인했다. 이번 수리는 §8.396으로 옮기고 기존 번호·main의 수리를 보존한다.
+
+### 8.397 사용자가 확인한 한도 초과 시작(t-0619)
+
+- 웹 「thread로 바로 시작」은 한도가 찼을 때 「자리 대기」 옆에 「한도 무시하고 시작」을 보인다. 누르면 task·열린 수·한도·예약 대기 영향을 다시 확인하고 「확인하고 시작」으로 기동한다. 돌아가기는 아무것도 시작하지 않는다.
+- CLI는 `aaa thread start --from-task <ID> --link-task --over-limit`다. 웹 조작 기기·세션 밖 CLI만 직접 쓰며, 해당 프로젝트 coordinator는 사용자가 채팅에서 그 task의 강제 시작을 명시한 경우에만 `--from-task`와 `--user-request '<사용자 지시 근거>'`를 함께 쓴다. 근거 없는 요청·다른 pane·작업자·자동 시작·예약 우회는 거부한다. 기존 예약 task는 예약을 취소한 뒤 직접 시작한다.
+- FRONT_API 1.98: `thread_start.over_limit`·`user_request`와 `ThreadView.over_limit`을 더한다. 시작 기록은 요청자·시각·지시 근거를 보존하고 감사 `thread_start_over_limit`·시작 사건에도 남긴다. 웹 할 일·사이드바·thread 목록·상세와 CLI 상세에 「한도 초과로 시작」을 보인다. 이전 host에는 웹 조작을 숨기고 CLI는 새 옵션을 보내지 않는다. AGENT_LINK 변경·새 E2E 번호는 없다.
+- 우회는 명시한 직접 시작의 DB 선점 한 번에만 적용한다. 그 thread는 기존 사용자·coordinator Worker와 같은 자리 계산을 따르고, 예약 dispatch·자동 시작은 계속 한도를 지킨다. 한도를 넘긴 수와 출처는 host 재시작 뒤에도 유지한다.
+- 검증은 host 요청자·근거 경계 유닛, m13 실제 CLI·coordinator·예약·재시작 keeper, 기존 E2E47의 데스크톱·iPhone·iPad 확인·취소·실제 기동·표지·예약 대기와 화면 캡처다. 착지 창에서 plan 절·API·E2E 번호를 main과 다시 대조한다.
+
+- 착지 기준 origin/main `f6a7585d`의 마지막 §8.396·FRONT_API 1.97·AGENT_LINK 1.11·E2E76을 직접 확인했다. 이번 기능은 §8.397·FRONT_API 1.98로 맞추고 E2E47 확장과 기존 E2E76을 유지한다. main의 Starting 선점 잠금·병합 중 표지·할 일 한 목록·상태 점 정렬을 보존하며 전체 ci-local·공개 검사 뒤 착지한다.
+
+- 착지 통합 검증에서 E2E session 정리의 전체 프로세스 명령줄 수집이 Node 기본 버퍼를 넘는 ENOBUFS를 확인했다. 목록은 PID·부모·상태만, 명령줄은 정리 후보 PID만 조회하도록 좁혔다. 실제 관계없는 긴 argv 1 MiB 초과 fixture로 원래 코드의 실패와 수정 뒤 대상 자손 종료·외부 프로세스 보존을 확인하며 버퍼·시한을 늘리지 않는다.
+
+### 8.398 입력 중 숨긴 맥락 게이지 자리 회수(t-0622)
+
+- 사용자 1A(q-1102): 입력창 오른쪽이 너무 일찍 접히는 문제는 숨긴 맥락 게이지 자리만 회수한다. §8.321의 투명하게 숨기되 자리를 유지하던 배치를 바꾸고, §8.364의 첨부·보내기 단추를 글 옆에 두는 선택은 유지한다.
+- 게이지의 `data-hidden` 상태에서 바깥 요소를 배치에서 빼 게이지 폭과 단추 사이 간격을 글 칸으로 돌려준다. 첫 글자 입력·전체 삭제 때 폭이 바뀌며, 입력이 여러 줄로 늘어나는 동안은 같은 폭이다. 기존 ResizeObserver가 실제 폭에 맞춰 줄 수와 높이를 다시 잰다. 높은 사용량·창 넘음 경고는 계속 표시하고, 700px 이하 휴대폰에서는 기존처럼 항상 숨긴다.
+- 기존 E2E50은 보통·창 모름 값의 폭 회수, 전체 삭제의 복원, 경고의 폭 유지와 iPad·휴대폰 표시를 검사한다. E2E66에는 실제 usage를 넣어 Chromium·WebKit의 데스크톱·휴대폰 네 조합에서 회수한 폭과 한글 첫 줄 경계, 조합 입력·영문·붙여넣기·회전·focus·높이·전송 없음을 검사한다. 새 E2E 번호나 API 변경은 없다.
+
+- 착지 기준 origin/main `6d9e3e41`에서 마지막 §8.397·FRONT_API 1.98·AGENT_LINK 1.11·E2E76을 직접 확인했다. 이번 수리는 §8.398로 옮기고 API 버전과 기존 E2E50·66·76 번호를 유지한다. main의 할 일 한 목록·한도 초과 시작·상태 점 정렬과 시험 수리를 보존하며 통합 후보의 전체 ci-local·공개 검사 뒤 병합한다.
+
+### 8.399 활동 막대 맨 위 「coordinator」 단추(10-21, t-0621)
+
+- **목적.** 사용자 요청 10-21 「지금 coordinator 대화창 가는걸 왼쪽에 버튼으로도 추가해 … 왼쪽 제일 위로 (버튼 중에 제일 위)」. 작업 목록의 coordinator 줄·thread 화면 머리 「coordinator」(§8.180)는 그대로 두고, 막대에서 한 번에 간다.
+- **자리·모양.** aaa 로고 바로 밑, 패널 단추(`role="tablist"`) 위의 보통 단추(`aria-pressed`)다. 아이콘은 머리 단추와 같은 lucide `Bot`(시안 6개 중 사용자 결정 10-21), 24px·선 1.5·흐린 글자색이고 그 pane을 보는 동안 고른 단추(진한 글자색·왼쪽 선)다. 툴팁은 이름만(「coordinator」), 막대 단추라 단축키는 없다. 휴대폰은 막대가 drawer 안이라 같은 자리이고 누르면 drawer를 닫는다.
+- **동작.** 도는 coordinator pane(「작업」 트리 coordinator 줄과 같은 판정)이 있으면 host에 묻지 않고 연다. 없으면 기본 coordinator profile로 `project_open`해 띄우고 연다(할 일 「coordinator에게 맡기기」와 같다). 보기 권한 기기는 띄울 수 없어 도는 coordinator가 없으면 단추가 없다. 띄우기 거부는 사이드바 오류 줄에 보인다.
+- **배지.** pane이 하나라 수 대신 점이다(사용자 결정 10-21): 확인창·질문(`blocked`)은 빨강(「답할 것」 색), 끝나고 안 본 턴(`done`, host seen)은 강조색. 보는 pane이면 새 답 점을 달지 않는다.
+- **검증.** E2E26 「맨 위 「coordinator」」: 자리(로고·패널 단추 사이, tablist 밖), 없으면 띄워 열기·있으면 project_open 없이 열기, 고른 상태, 빨강·강조색 점과 이름, 열면 걷힘, 휴대폰 drawer 맨 위·닫힘. E2E62 막대 차례에 더했다. 프로토콜 변화가 없어 FRONT_API는 그대로다.
+- 착지 기준 origin/main `1c37b2fc`에서 마지막 §8.398·FRONT_API 1.98·E2E76을 직접 확인했다. 이 기능은 §8.399로 더하고 API 버전과 기존 E2E26·62 번호를 유지하며 새 E2E 파일은 없다. 통합 후보의 전체 ci-local·공개 검사 뒤 병합한다.
+
+### 8.400 질문 카드의 강조·번호 목록과 누락 방지(t-0618)
+
+- **문제·동작.** `- **A(추천)**`를 빠뜨려 B를 A로 전달하던 경계를 고친다. 선택지 글자의 굵게·기울임과
+  `A(추천)`·`A (추천)`을 읽고 `N. **제목**` 질문도 본문·선택지와 함께 읽는다.
+  t-0621의 선택지 뒤 E/F 설명·그림도 `after`에 남겨 질문이 빠지지 않고 원래 순서로 보인다.
+- **진단·전송.** code fence 밖의 A~Z 후보 수·질문 수와 카드 수, 선언 수, 번호/글자 순서를 별도로 대조한다.
+  누락·상한 초과·잘못된 순서에는 `형식 확인 필요`를 보이고 카드 답을 잠근다. 읽지 못한 질문의 제목도 보존하며, 머리조차 읽지 못하면 빈 경고 카드는 남는다.
+  host의 thread 전체 답·q-ID 일부 답과 post 카드 답도 경고를 거부한다. 보고를 고쳐 새 판이 오면 다시 답한다.
+  이전 host와 해석이 달라진 미답 보고는 오래된 선택 글자가 재사용되지 않게 새 보고를 요구하고 초안을 비운다.
+- **알림·안내.** 보고를 회수하면 해당 thread 작업 폴더의 inbox JSON과 coordinator inbox에 hash별 한 번 경고한다.
+  알림 전달 실패는 coordinator 경고에 기록하며 보고 복사 성공을 바꾸지 않는다. thread 안내는 강조 없는 선택지 예를 명시한다.
+- **계약·시험.** FRONT_API 1.99은 선택 필드 `ThreadQuestions.format_warning`·`ThreadQuestion.after`를 더한다. 옛 host 생략·옛 웹의
+  필드 무시와 무관하게 새 host는 잘못 읽은 답을 거부한다. AGENT_LINK 1.11은 유지한다. 기존 E2E53을 확장하며
+  새 E2E 번호는 없다. 두 사건의 원문 fixture와 원인 대조·RED/GREEN, 실제 카드 캡처·inbox·원문 글자 전달은 [시험](testing.md)에 적는다.
+  착지 기준 origin/main `19d023ad`의 마지막 §8.399·FRONT_API 1.98·AGENT_LINK 1.11·E2E76을 직접 확인했다.
+  이번 수리는 §8.400·FRONT_API 1.99로 맞추고 기존 E2E53 확장과 E2E76을 유지한다.
+
+### 8.401 원격 보고 해시 검증과 첨부 실패 격리(t-0638)
+
+- 원본 library의 SHA를 계산한 뒤 host Agent link의 일반 응답 가림이 `FileChunk`를 바꿨다.
+  등록된 인증의 8바이트 조각이 들어 있으면 파일이 바뀌지 않아도 원본 SHA와 수신 SHA가 달라졌다.
+  기존 수집은 첨부 하나의 오류에서 보고 전체 저장을 취소했고, 전역 lock이 다른 thread의 수집까지 줄 세웠다.
+- 기능 `report_copy.v2`를 알린 agent에만 `ReportTransfer`·`ReportFileRead`를 보낸다. 전용 응답은 인증한
+  전송 안에서 원본 바이트를 보존한다. host는 보고 본문·파일 전체의 길이와 SHA를 대조한 뒤 인증을 가리고
+  임시 파일·최신 사본·불변 r 판에 저장한다. 일반 파일 보기의 가림은 그대로이며 원본을 디스크에 쓰지 않는다.
+  원본 `report_hash`는 감시·ack·판 식별자로, 별도 `report_copy_hash`는 저장한 본문의 무결성 확인에 쓴다.
+  옛 기록은 원래 hash로 검사하고, 기능이 없는 agent는 기존 요청으로 회수한다. FRONT_API·AGENT_LINK 판은 유지한다.
+- 파일별 실패는 모아 기록하고 다른 파일과 새 보고는 저장한다. 실패 파일은 agent에 남은 것으로 표시하며
+  새 불변 판에 검증된 사본으로 넣지 않는다. 이전에 검증한 파일 바이트는 보존한다. 같은 판 재수집도 본문과
+  저장 hash를 복구하되 ack·질문 답을 유지한다. 실패 상태·경고 한 번·ticker
+  자동 수집·resolve 마지막 사본의 실패 거부를 유지하고, 같은 보고의 첨부 복구는 새 보고나 질문으로 만들지 않는다.
+- 수집 lock은 프로젝트/thread별이다. 같은 thread의 보고 교체와 resolve는 직렬화하고, 다른 thread는
+  한 첨부의 실패·느린 전송을 기다리지 않는다. 따라서 전역 수집 대기 때문에 생기는 보고 전달 지연을 없앤다.
+  특정 운영 지연의 전체 시간을 파일 기록만으로 단정하지 않는다.
+- 실제 link 유닛·실제 host/CLI 실패 복구·TCP+TLS 원격 agent의 328KiB 고정 원본 E2E로 확인한다.
+  원본 SHA 검증·가린 사본 보존·host 재시작 단계 복구·다른 thread의 진행을 사건으로 검사하며 시한을 늘리지 않는다.
+
+- 착지 기준 origin/main `bf3dba76`에서 마지막 §8.400·FRONT_API 1.99·AGENT_LINK 1.11·E2E76을 직접 확인했다.
+  이번 수리는 §8.401로 더하고 기존 API 판·E2E 번호를 유지한다. main의 질문 누락 경고·답 보존과 함께 통합해 전체 검증한다.
+
+### 8.402 배포 감시의 웹 응답과 재시작만 하는 rollout(10-21, t-0538 관리 GUI W6c)
+
+- **요청.** 확정 계획 t-0456 plan-revised §5 W6 「guard ready 판정에 웹 응답(빌드 이름, `/api/v1/me`)을 더한다. update·rollback·restart를 모두 guard 아래에서 한다」. 시작 때의 답 4A(새 판의 웹이 ready 한도 안에 `/api/v1/me`에 답하지 않으면 자동 되돌림)와 W6c 중 물은 답 1A(10-21: 재시작은 「재시작만 하는 rollout」으로, 개별 update·rollback은 guard 밖으로 두고 문서에 적는다).
+- **웹 응답 판정.** host 감시(`aaa-agent` `deploy::guard`)는 새 host의 실행 신원(판·SHA·새 instance)이 맞아도 바로 NewReady로 넘기지 않고 그 웹 주소를 `pending_web`에 두고 AwaitingNew에 머문다. 감시 프로세스가 1초 간격으로 같은 머신에서 `GET /api/v1/me`(Host `127.0.0.1:<port>`, 한 번 2초 한도)를 물어 짝 없는 기기 답(401 `unauthorized`)이 오면 NewReady다. 안전 모드(503 `unavailable`)·연결 거부·무응답·다른 답은 아직이다. 묻기는 한도를 늘리지 않는다: 기존 한도(2분)가 지나면 그대로 복구(옛 판으로 되돌림·다시 띄움)다. agent 감시는 웹을 보지 않는다.
+- **build 이름.** 인증 없는 응답에 판·build 이름을 싣지 않는다(공개 주소로도 열린 웹이다). 판·SHA·새 프로세스는 기존대로 link Welcome의 실행 신원으로 대조하고, 웹은 같은 머신의 그 port가 정상 host로 답하는지만 본다.
+- **웹 주소 전달.** host는 같은 머신 agent의 Welcome 실행 신원에만 실제로 연 웹 주소(`RuntimeIdentity.web`)를 싣는다. 시작 중에는 웹을 열 때까지 그 Welcome을 미룬다(`Host::web_gate`). 웹을 link보다 먼저 열면 `:0` 웹이 고정한 agent port를 쥘 수 있어(실험실에서 실제로 실패) 여는 순서는 그대로다. 웹을 끈 설정·옛 host는 주소가 없어 실행 신원만 본다.
+- **재시작만 하는 rollout(답 1A).** `RolloutSpec.restart`(서비스)와 대상 한 머신(비우면 host 머신, host는 host 머신만). host가 재시작 전 실행 신원을 단계 baseline으로 고정한다: host는 자기 신원, agent는 hello에 실은 실행 신원(`AgentHello.identity`, 없는 옛 agent는 `unsupported_version`). 단계는 HostRestart 또는 AgentRestart 하나이고, 그 단계 자체에 감시를 세운다(설치 작업 없음, 바꾼 파일이 없어 host 머신 agent도 복구 때 agent만 다시 띄운다). 기대 판·SHA는 재시작 전 그대로, 끝에 coordinator 안내 갱신을 하지 않고 done이다. 복구는 실행 파일이 그대로라 되돌릴 것 없이 다시 띄우기다. 자동화의 배포 기준 커밋이 아니다(커밋 없음). 알림함은 「재시작 완료/실패」다.
+- **기록한 뒤 감시를 세우고 재시작한다.** host는 재시작 rollout을 먼저 기록하고(진행 중 rollout이 개별 update·rollback을 막고, 같은 ID는 이 기록으로 답한다) 진행 루프를 잠근 채 대상 머신에 감시를 세운다(`deploy_guard_arm`). 영수증을 받아야 `guard_ready`이고 그 뒤에만 재시작한다. 재시작 전 실행 신원은 잠근 뒤에 읽는다(기다린 사이 끝난 다른 rollout의 판을 기준으로 삼지 않는다). 답을 못 받으면(끊김·시한) 진행 루프가 같은 감시 정본으로 다시 세우고, 세우지 못하면 재시작 전 중단이며 답을 잃은 세우기로 섰을 감시를 취소한다. 기록 없이 감시만 남는 길은 없다. 감시는 기대 판이 배포 전 판이면(재시작만 하는 감시) 띄우기 전 취소·시한에 언제나 취소로 끝나 그 사이 개별 update가 바꾼 설치 파일을 되돌리지 않는다. agent는 설치된 실행 파일이 재시작 전 실행 판과 다르면(개별 update·rollback 뒤) 감시를 세우지 않고 `conflict`로 답한다: 그 재시작은 같은 판 확인이 아니라 바뀐 파일 띄우기라서 감시가 대조할 기대값이 없다. 그때 rollout은 재시작하지 않고 중단으로 남고, coordinator 요청은 같은 ID의 감시 밖 개별 재시작 작업으로 보낸다(오류에 `aaa update status <ID>` 안내, 답 1A의 「개별 update·rollback은 guard 밖」, 사람 복구 절차의 rollback → restart도 이 길이다). 웹은 `conflict`다. 실행 신원을 알리지 않는 옛 agent는 재시작 rollout을 받지 않는다(`unsupported_version`): 그 머신은 사람 터미널에서 다시 띄우거나 먼저 rollout으로 새 판을 반영한다.
+- **입구.** 웹 「서비스 재시작」은 `rollout_start`(restart)로 보내고 「배포 기록」에 「agent 재시작 · …」 카드로 남는다(`RolloutCard.restart`). coordinator `aaa service restart --role … [--machine …]`은 1.100 이상 host에 재시작 rollout을 보낸다(`aaa deploy status <ID> --wait`). host의 개별 `deploy_start`는 웹을 모두 거부하고, 재시작은 누구에게나 거부한다(감시 없는 재시작을 남기지 않는다). 사람이 aaa 밖 터미널에서 하는 `aaa service restart`는 host를 거치지 않는 감독자 재시작 그대로다.
+- **guard 밖으로 남긴 것(답 1A).** coordinator의 개별 `aaa update`·`aaa update rollback`은 받을 SHA를 설치 전에 몰라 감시가 기대값을 대조할 수 없다. 작업 영수증(`aaa update status`)만 남고, 감시가 필요한 교체는 rollout(`aaa deploy start`·웹 「배포」)으로 한다.
+- **안전 모드와의 관계.** 새 판이 안전 모드로 떨어지면 link를 열지 않아 Welcome이 없고 한도 뒤 옛 판으로 되돌린다(기존). 같은 판을 다시 띄웠는데 설정이 깨져 안전 모드면 감시가 한 번 더 다시 띄운 뒤 실패로 끝나고, 조작 기기는 안전 모드 화면에서 되돌린다.
+- **한계.** 감시는 rollout 시작 때의 배포 전 실행 파일 사본으로 돈다. 복구(옛 판으로 되돌린 뒤 다시 띄움)의 확인은 실행 신원만 보고 웹 응답은 보지 않는다: 되돌린 판은 이미 돌던 판이고, 복구가 웹을 기다리다 실패하면 할 수 있는 다음 조치가 없다. 웹 응답 판정은 이 판을 가진 판에서 시작한 rollout부터, host와 같은 머신 agent가 모두 이 판일 때 동작한다.
+- **호환.** FRONT_API 1.100: `RuntimeIdentity.web`·`DeployGuardView.pending_web`·`RolloutSpec.restart`·`RolloutCard.restart` 선택 칸. 옛 host는 restart를 모르는 칸으로 버려 교체 rollout 검사에서 거부한다. Agent link는 1.11 그대로다: `AgentHello.identity`·Welcome 신원의 `web`은 선택 칸이고 옛 agent·옛 감시는 버린다. 웹 E2E 정리는 이 실험실의 감시 프로세스(`deployment-guard`, 명령줄의 상태 폴더 확인)도 끝낸다.
+- **검증.** agent 유닛 `deploy::web_probe`(답의 판정·Host 헤더·거부·무응답·모든 주소)와 `deploy::guard::a_new_host_is_ready_only_after_its_web_answers_within_the_same_deadline`, host 유닛 `rollout::web_tests`(웹·coordinator 개별 재시작 거부, 재시작 rollout의 재시작 전 신원·같은 ID·한 머신·진행 중 거부·옛 agent), m13 `rollout`(웹이 답하지 않는 새 host는 그 주소를 기다리고 다음 단계로 가지 않음 → 같은 판이 답하면 이어 감, 끝에 coordinator host 재시작 rollout이 새 host와 웹을 확인하고 done), m13 `coordinator_deployment…`(agent 재시작 rollout done, 감독자 실패는 감시의 복구 한 번 뒤 recovery_failed, 개별 update 뒤 재시작은 재시작 없이 중단된 rollout과 같은 ID의 감시 밖 개별 재시작), 웹 E2E `63-deploy`(재시작 rollout이 새 agent 확인 뒤 done). 절차는 [시험](testing.md).
+
+### 8.403 install 종료 구독 경합과 Windows 실패 원인 진단(t-0485)
+
+- **후속 CI 원인.** 승인 PTY 수리 뒤 macOS worker 수명 owner는 `waitid`의 ECHILD로 실패했다. portable-pty의 kill이 내부 try_wait로 먼저 reap할 수 있다. 실제 소유 자식의 구독 준비→kill/wait→종료 통지 수집 순서를 고정한 owner가 errno10 RED를 재현한다. callback 전에 macOS kqueue/Linux pidfd 구독을 고정해 reaping과 독립시키고, 이미 끝난 자식은 소유 Child의 try_wait/wait 상태만 사용한다. Windows는 복제 process handle을 유지한다.
+- **공통 시험 경계.** 종료 구독은 tests/support에서 공유한다. Windows 암호 console owner에도 종료 뒤 master를 닫고 마지막 출력·reader 완료까지 수집하는 경계를 연결한다. 실제 암호 일치·echo 없음·성공/취소/EOF 후 mode 복구·종료 코드와 기존20초 상한을 유지하며, install 승인 driver의60초 상한·출력300줄·worker 수명 단언도 유지한다. 새 Unix owner의 cfg는 waitid/reaping 회귀 경계 때문이며 기존 Windows 승인 owner는 제외하지 않는다.
+- **Windows 판정 한계.** 실제 CI의 빠른 실패 중 worker 시작은 `installation_worker_unavailable`로 끝났다. 정확한 OS 원인과 나머지 요구 코드는 아직 미확정이다. 실패 단언에는 redacted 결과·stderr를, human needs_user 출력에는 실제 요구 코드·대상을 남긴다. Windows spawn 실패는 OS 오류 번호와 현재 Job 소속/제한 비트만 기록하며 경로·인자·환경·비밀을 찍지 않는다. Job 정책이나 creation flag를 바꾸거나 실패 때 다른 flag로 재시도하지 않는다. 원인 확정과 실제 Windows 성공 판정은 main CI 결과가 필요하며 macOS 통과·Windows 교차 compile/lint를 실행 증거로 쓰지 않는다.
+- **검증·번호.** 착지 기준 main966f4bd5의 마지막§8.402·FRONT_API1.100·AGENT_LINK1.11·E2E76을 직접 확인해 이 절을§8.403으로 맞춘다. protocol/schema·웹 E2E 번호는 바꾸지 않는다. owner RED/GREEN·전체 ci-local·Windows 교차 clippy/build·공개 검사를 기록하고, 착지는 새 coordinator 창을 받은 뒤 한다. Windows 나머지 수리는 main CI 진단으로 이어 가며 I3는 그 뒤로 미룬다.
+
+### 8.404 할 일 깊은 주소와 짧은 ID 자동 링크(t-0624)
+
+- `#task=d-NNNN`과 `#task=<project>/d-NNNN`은 할 일 화면에서 검색·상태·저장소 거르기를 풀고 해당 행을 찾아 강조하며 상세를 연다. 새로고침·새 탭에서도 같은 곳을 연다. 지운·완료 보관한 번호와 다른 프로젝트 번호는 「없음」으로 표시한다. `#thread=<id>`는 기존 동작을 유지한다.
+- coordinator·thread 대화와 보고서 Markdown에서 실제 host 목록에 있는 `t-NNNN`·`d-NNNN`·`q-NNNN`·`r-NNNN`을 원문 그대로 앱 안 링크로 그린다. 코드 블록·주소·파일 경로·이미 있는 링크 내부·없는 ID는 바꾸지 않는다. 인라인 코드의 ID 하나는 코드 모양으로 링크한다. 보조 키·가운데 누름은 브라우저의 새 탭 동작을 유지한다. 터미널 출력은 그대로다.
+- 존재 여부는 기존 thread·할 일·질문/답한 기록·보고서 판 목록으로 판단하며 새 API·프로토콜 버전은 없다(FRONT_API 1.100 유지). 삭제·복원·질문 답·보고서 갱신 사건 뒤 링크도 따라 바뀐다. 기존 `aaa:question/…`·`aaa:report/…`·같은 host Markdown 링크와 칩은 호환한다.
+- coordinator 안내의 「앱 안 참조」·「사용자 알림」과 thread brief 생성 원본, CLI context 안내는 채팅·보고의 thread·할 일·보고서를 ID만 쓰도록 한다. 사용자가 답할 질문만 `[q-NNNN 질문](<웹 주소>/#question=q-NNNN)` 링크를 쓴다. `doctor files --fix`는 기존 프로젝트도 같은 안내로 갱신한다.
+- 웹 유닛은 경계·원문 보존·존재 여부·프로젝트 주소를 검사한다. E2E77은 실제 host 데이터로 직접 주소·새로고침·새 탭·뒤로·네 종류 이동·답한 질문·삭제/복원·완료 보관·WebKit 휴대폰·Reader를 확인한다. m13 기존 프로젝트 안내 갱신과 brief 생성 시험도 새 규칙을 확인한다. 전체 ci-local·check-public 후 착지 창을 기다린다.
+
+- 착지 기준 origin/main `23328f7e`에서 마지막 §8.403·FRONT_API 1.100·AGENT_LINK 1.11·E2E76을 직접 확인했다. 이번 기능은 §8.404·E2E77로 맞추고 API 판은 유지한다. main의 질문 형식 경고·한도 초과 시작·coordinator 단추·원격 보고 검증·install 종료 구독 수리를 보존한다. 통합 후보의 전체 ci-local·공개 검사 후 병합·push하며 배포는 coordinator가 맡는다.
+
+### 8.405 자동화 화면: 왼쪽 카드 목록·오른쪽 본문 설정(10-21, t-0628)
 
 - 사용자 승인 시안(t-0628, 1A 2A 3A)대로 웹 자동화 화면을 「사이드바 카드 목록 + 본문 설정」으로 바꾼다. 카드는 「답할 것」·작업 목록 줄과 같은 밀도의 두 줄(점 · 이름 · 표지 · 「실행 중」 / 조건 한 줄)이고, 지난 결과·다음·횟수·파일·건너뜀·「자세히」·켬 단추·승인 단추는 카드에서 뺐다. 조건 한 줄은 host 조건 글을 웹에서 줄인다(`daily`·`every` → 매일·N분마다, 저장소 경로는 이름만).
 - 카드 표지는 파일 오류 → 막힘 → 승인 필요 → 꺼짐 → 마지막 실행 실패(「오류」) → 켜짐(표지 없음) 순서로 하나다. 시안 표는 꺼짐을 막힘·승인 필요보다 앞에 두었으나, 꺼진 규칙도 활동 막대 배지(`automationAttention`)에 세므로 배지가 가리키는 규칙을 카드에서 찾을 수 있게 막힘·승인 필요를 앞에 둔다.
 - 카드를 누르면 본문(thread 화면 자리)에 그 규칙 설정이 열린다. 주소는 `#automation=<project>/<name>`, 새 자동화는 `<project>/`다. 떠 있는 상세 창(AutomationSheet)은 설정·편집에서 없앴고 변환 미리보기와 thread 동작 창에만 남는다. 설정 머리는 이름 · 표지 · 켜기 스위치(2A, 카드에는 없음) · 닫기(앞 화면으로)이고, 사람이 할 것(파일 오류·실행 실패·막힌 입력·자동 시작 승인·명령 승인)은 맨 위 색 상자에 단추와 함께 둔다. 숫자 칸(지난·다음·오늘·열린 thread) 아래 설정(조건·동작·대상·상한·큐·파일) → 승인 범위 → 기록 → 기억(접힘) → 파일 원문이다.
 - 고치기·새 자동화는 같은 본문 자리의 편집 화면이다(3A). 저장하면 그 규칙 설정으로, 새 자동화는 그 규칙 주소로(지금 칸을 바꿔 뒤로가 빈 편집으로 가지 않는다) 간다. 설정 화면은 「답할 것」처럼 한 번 연 뒤 숨긴 채 그려 두고 마지막으로 연 자동화를 기억해, 다른 화면에 다녀와도 편집 초안이 남는다. 편집 중 다른 기기가 지운 규칙도 편집 화면은 남고 저장은 host의 「지워졌다」 충돌이다. 목록 자료(`useAutomations`)는 App이 읽어 카드 목록과 설정 화면이 같은 사본을 보고, 둘 중 하나가 보일 때만 읽는다.
 - host·프로토콜 변경이 없어 FRONT_API는 유지한다. 승인·지금 실행·막힌 묶음 풀기·편집·지우기·되살리기·새 형식 바꾸기의 확인 창과 host 호출, Reader 읽기 전용은 그대로다. 웹 E2E 34·40·48·49·55·64를 카드 → 본문 설정 흐름으로 맞췄고 새 E2E 번호는 없다. 휴대폰은 카드를 누르면 drawer가 닫히고 설정 화면이며, 머리의 목록 단추(≡)와 브라우저 뒤로가 목록·앞 화면으로 간다.
+- 착지 기준 origin/main `3a10ef5f`의 마지막 §8.404·FRONT_API 1.100·AGENT_LINK 1.11·E2E77을 직접 확인했다. 이번 화면은 §8.405로 옮기고 API 판과 기존 E2E 번호를 유지한다. main의 thread 목록 상태 점 열(E2E48)·coordinator 막대 단추·할 일 주소 링크를 보존한다.

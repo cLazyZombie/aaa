@@ -1,3 +1,4 @@
+import { ThreadLimitBadge } from "./ThreadLimitBadge";
 import { ThreadStageBadge } from "./ThreadStageBadge";
 // 왼쪽 목록(herdr-web-ui MachineSidebar·Sidebar·AgentSidebar, aa624cb). 모양(class)과 CSS는 참고 것을 그대로 쓴다(herdr/*.css).
 // 패널 넷(활동 막대가 하나를 고른다, plan §8.240·§8.258·§8.280): 「작업」은 coordinator → 작업 공간(저장소) 폴더 → thread 줄(둘째 줄 왼쪽
@@ -1053,7 +1054,7 @@ function ThreadRow({ t, online, machine, twoLine, ...props }: SidebarProps & { t
           {twoLine ? (
             <span className="workspace-copy is-two-line">
               <span className="workspace-line">
-                <ThreadStageBadge stage={t.stage} /><ThreadName id={t.id} title={t.title} />
+                <ThreadStageBadge stage={t.stage} /><ThreadLimitBadge start={t.over_limit} /><ThreadName id={t.id} title={t.title} />
                 {pinned && <Pin className="sidebar-pin-mark" aria-hidden="true" />}
                 {online && paneOpen && <AgentCounts pane={pane} />}
               </span>
@@ -1071,7 +1072,7 @@ function ThreadRow({ t, online, machine, twoLine, ...props }: SidebarProps & { t
             </span>
           ) : (
             <span className="workspace-copy">
-              <ThreadStageBadge stage={t.stage} /><ThreadName id={t.id} title={t.title} />
+              <ThreadStageBadge stage={t.stage} /><ThreadLimitBadge start={t.over_limit} /><ThreadName id={t.id} title={t.title} />
               {pinned && <Pin className="sidebar-pin-mark" aria-hidden="true" />}
               {online && paneOpen && <AgentCounts pane={pane} />}
               <span className={`worktree-workspace-label thread-state is-${t.group}`} data-tone={tone} data-testid={`thread-state-${t.project}-${t.id}`}>

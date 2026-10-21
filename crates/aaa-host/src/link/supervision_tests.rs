@@ -68,6 +68,7 @@ async fn connect(h: Arc<Host>) -> (tokio::task::JoinHandle<Result<()>>, FrameTx,
         sha256: None,
         selfcheck: None,
         sessions: vec![],
+        identity: None,
         harness: vec![],
     }))
     .await

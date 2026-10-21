@@ -150,9 +150,10 @@ impl AgentConn {
                 Duration::from_secs(self.timeouts.thread_prepare_timeout_secs)
             }
             AgentRequest::ThreadCleanup { .. } => Duration::from_secs(self.timeouts.thread_cleanup_timeout_secs),
-            AgentRequest::FileRead { .. } | AgentRequest::ReportCollect { .. } => {
-                Duration::from_secs(self.timeouts.file_request_timeout_secs)
-            }
+            AgentRequest::FileRead { .. }
+            | AgentRequest::ReportCollect { .. }
+            | AgentRequest::ReportFileRead { .. }
+            | AgentRequest::ReportTransfer { .. } => Duration::from_secs(self.timeouts.file_request_timeout_secs),
             _ => REQUEST_TIMEOUT,
         };
         self.request_timeout(body, wait).await
@@ -244,6 +245,8 @@ struct MachineRt {
     health_sent: Option<health::HealthSent>,
     /// agent가 hello에서 알린 기능(`cwd.v1` 등). 모르는 요청을 받은 옛 agent는 연결을 끊으므로 보내기 전에 본다.
     features: Vec<String>,
+    /// agent가 hello에서 알린 실행 신원(관리 GUI W6c 재시작 rollout의 재시작 전 신원). 옛 agent는 없다
+    identity: Option<aaa_proto::RuntimeIdentity>,
     /// 로컬 agent 프로세스(로컬 socket peer credential). 그 세션에서 띄운 명령(routine 명령)은 떼어 낸 프로세스가 아니다(plan §8.164).
     agent_pid: Option<u32>,
     /// 이 연결에 화면 색을 차례로 보내는 곳(agent 기능 `term_colors.v1`, colors.rs). 놓으면 보내던 task가 끝난다
@@ -496,6 +499,9 @@ pub struct Host {
     install_probes: Mutex<HashMap<String, (String, Instant)>>,
     pub agent_listen: Mutex<Option<String>>,
     pub web_listen: Mutex<Option<String>>,
+    /// 거짓인 동안 같은 머신 agent에 Welcome을 보내지 않는다. `run_host`가 웹을 열 때까지만 닫는다(W6c): 그 Welcome의 host 실행
+    /// 신원에 실제로 연 웹 주소가 실려야 host 감시가 웹 응답까지 본다. 웹은 link 뒤에 연다(먼저 열면 `:0` 웹이 고정한 agent port를 쥘 수 있다)
+    pub(crate) web_gate: tokio::sync::watch::Sender<bool>,
     workspaces: Mutex<HashMap<String, Workspace>>,
     /// workspace가 바뀔 때(front가 구독한다)
     pub layout_events: broadcast::Sender<Workspace>,
@@ -518,8 +524,8 @@ pub struct Host {
     flow_order: Mutex<()>,
     /// thread 기록이 바뀌었다
     pub thread_events: broadcast::Sender<aaa_proto::ThreadView>,
-    /// 보고 사본은 한 번에 하나씩 한다
-    collect_lock: tokio::sync::Mutex<()>,
+    /// 같은 thread의 보고·resolve만 직렬화한다. 다른 머신의 전송은 서로 기다리지 않는다.
+    collect_locks: Mutex<HashMap<String, Arc<tokio::sync::Mutex<()>>>>,
     /// 확인창 질문이 열리거나 바뀌었다
     pub question_events: broadcast::Sender<aaa_proto::QuestionView>,
     /// 앱 안 알림(턴 끝남·새 보고, notice.rs). 기록하지 않는다
@@ -693,6 +699,7 @@ impl Host {
                     health: None,
                     health_sent: None,
                     features: vec![],
+                    identity: None,
                     agent_pid: None,
                     colors: None,
                     build: MachineBuild { arch: m.arch, software: m.software, sha256: m.sha256, selfcheck: None },
@@ -736,6 +743,7 @@ impl Host {
             install_probes: Mutex::new(HashMap::new()),
             agent_listen: Mutex::new(None),
             web_listen: Mutex::new(None),
+            web_gate: tokio::sync::watch::channel(true).0,
             workspaces: Mutex::new(workspaces),
             layout_events: broadcast::channel(64).0,
             front_seq: AtomicU64::new(0),
@@ -744,7 +752,7 @@ impl Host {
             flow_events: broadcast::channel(256).0,
             flow_order: Mutex::new(()),
             thread_events: broadcast::channel(256).0,
-            collect_lock: tokio::sync::Mutex::new(()),
+            collect_locks: Mutex::new(HashMap::new()),
             question_events: broadcast::channel(256).0,
             post_gate: std::sync::Mutex::new(()),
             deployment_gate: std::sync::Mutex::new(()),
@@ -879,6 +887,7 @@ impl Host {
                 health: None,
                 health_sent: None,
                 features: vec![],
+                identity: None,
                 agent_pid: None,
                 colors: None,
                 build: MachineBuild::default(),
@@ -889,6 +898,7 @@ impl Host {
             m.boot_id = Some(hello.boot_id.clone());
             m.dev_mode = hello.dev_mode;
             m.features = hello.features.clone();
+            m.identity = hello.identity.clone();
             m.conn = Some(conn);
             // 다시 붙은 agent는 설정이 바뀌었을 수 있다. 새 보고를 기다린다.
             m.health = None;
@@ -1582,6 +1592,8 @@ impl Host {
             FrontRequest::Profiles { machine } => self.profiles(machine.as_deref()).await,
             FrontRequest::ProfileResolve { name } => self.profile_resolve(name.as_deref()),
             FrontRequest::ThreadStart {
+                over_limit,
+                user_request,
                 holds,
                 project,
                 title,
@@ -1598,6 +1610,13 @@ impl Host {
             } => {
                 // herdr-projects threads.rs `placement`: repo가 있으면 worktree, 없으면 repo 없는 작업 폴더. task에서 띄우면
                 // 저장소 칸이 정한다(`apply_task_repo`): 요청이 정한 kind를 그 판정에 넘긴다
+                let over_limit = self.thread_limit_override(
+                    &project,
+                    over_limit,
+                    user_request.as_deref(),
+                    from_task.as_deref(),
+                    actor,
+                )?;
                 let kind_given = kind;
                 let kind = kind.unwrap_or(if repo.is_some() {
                     aaa_proto::ThreadKind::Worktree
@@ -1605,6 +1624,7 @@ impl Host {
                     aaa_proto::ThreadKind::Dir
                 });
                 let mut a = orch::StartArgs {
+                    over_limit,
                     reservation: None,
                     account: selected_account,
                     holds,
@@ -3108,6 +3128,7 @@ impl Host {
             health: None,
             health_sent: None,
             features: vec![],
+            identity: None,
             agent_pid: None,
             colors: None,
             build: Default::default(),
@@ -3429,9 +3450,11 @@ async fn run_host(
     host.backfill_review_questions().map_err(|e| anyhow::anyhow!(e.message))?;
     host.forget_queued_messages();
     host.start_supervisor();
+    host.web_gate.send_replace(false);
     link::start(&host).await?;
     front::start(&host).await?;
     web::start(&host).await?;
+    host.web_gate.send_replace(true);
     // 입구가 다 열렸다: 이 설정을 안전 모드의 「마지막 정상 설정」으로 보관한다
     if let Err(e) = safe_mode::keep_last_good(&config_dir, files) {
         tracing::warn!("마지막 정상 설정을 보관하지 못했다: {e:#}");
@@ -3640,6 +3663,7 @@ mod pairing_tests {
                 health: None,
                 health_sent: None,
                 features: vec![],
+                identity: None,
                 agent_pid: None,
                 colors: None,
                 build: Default::default(),

@@ -1,6 +1,6 @@
 // t-0563: 실제 host·agent의 입력칸. OS 입력기 대신 조합 사건을 재생하고, native textarea로 줄 경계를 대조한다.
 import fs from "node:fs";
-import { aaa, AA, root, step, browser, webkit, pairPage, paneHash, shots, sentFrames } from "../lib/harness.mjs";
+import { aaa, AA, root, step, browser, webkit, pairPage, paneHash, shots, sentFrames, domIs } from "../lib/harness.mjs";
 import { pairDevice } from "../lib/devices.mjs";
 
 const selector = '[data-testid="chat-composer"] .composer-text';
@@ -39,6 +39,8 @@ async function geometry(box) {
     return {
       text: rect(el), surface: rect(surface), send: rect(surface.querySelector(".composer-send")),
       attach: rect(surface.querySelector('[aria-label="그림 첨부"]')),
+      gauge: rect(surface.querySelector('[data-testid="context-gauge"]')),
+      gap: parseFloat(getComputedStyle(surface.querySelector(".composer-controls-right")).columnGap),
       lines: surface.dataset.lines, firstBreak: low, expectedRows,
       rows: Math.round((el.scrollHeight - padding) / lh), lh, padding,
       clipped: el.scrollWidth > el.clientWidth + 1,
@@ -58,12 +60,19 @@ export default async function () {
     const dir = `${root}/claude/projects/-lab-wrap`;
     fs.mkdirSync(dir, { recursive: true });
     const transcript = `${dir}/s1.jsonl`;
-    fs.writeFileSync(transcript, JSON.stringify({ type: "user", message: { role: "user", content: "입력 시험" } }) + "\n");
+    // t-0622: 실제 usage가 있어야 입력 중 숨긴 게이지의 빈자리도 검사한다.
+    fs.writeFileSync(transcript, [
+      { type: "user", message: { role: "user", content: "입력 시험" } },
+      { type: "assistant", requestedModel: "claude-haiku-4-5", message: {
+        model: "claude-haiku-4-5", content: [{ type: "text", text: "입력 준비" }],
+        usage: { input_tokens: 76000, output_tokens: 10 },
+      } },
+    ].map((line) => JSON.stringify(line) + "\n").join(""));
     const hook = JSON.stringify({ hook_event_name: "SessionStart", session_id: "wrap-session", source: "startup", transcript_path: transcript });
     aaa("tab", "create", "--machine", "labA", "--label", "wrap", "--", "/bin/sh", "-c", '"$0" hook --agent claude "$1"; exec cat', AA, hook);
   }, { always: true });
 
-  await step("입력칸 줄바꿈 폭 고정: Chromium·WebKit 데스크톱·휴대폰, 한글 조합 중·확정·영문·붙여넣기·창 폭 변경", async () => {
+  await step("입력칸 숨긴 게이지 자리 회수와 줄바꿈 폭 고정: Chromium·WebKit 데스크톱·휴대폰, 한글 조합 중·확정·영문·붙여넣기·창 폭 변경", async () => {
     const wk = await webkit.launch();
     const failures = [];
     const log = [];
@@ -76,9 +85,17 @@ export default async function () {
         if (!(await p.getByTestId("chat-composer").count())) await p.getByTestId("chat-toggle").click();
         const box = p.locator(selector);
         await box.waitFor();
-        await box.fill("가");
+        await domIs(p, "실제 컨텍스트 게이지", () => document.querySelector('[data-testid="context-gauge-value"]')?.textContent === "38%");
+        await box.fill("");
         await box.focus();
+        const empty = await geometry(box);
+        await box.fill("가");
         const initial = await geometry(box);
+        const reclaimed = empty.gauge.width > 0 ? empty.gauge.width + empty.gap : 0;
+        if (Math.abs(initial.text.width - empty.text.width - reclaimed) > 0.5) failures.push(`${name}: 숨긴 게이지 폭·간격 ${reclaimed}px을 회수하지 않음`);
+        if (initial.gauge.width !== 0 || Math.abs(initial.send.left - initial.text.right) > 0.5) failures.push(`${name}: 보내기 앞에 숨긴 게이지 빈자리가 남음`);
+        if (reclaimed > 0 && initial.firstBreak <= empty.firstBreak) failures.push(`${name}: 넓어진 칸에서 첫 줄이 더 많은 한글을 담지 못함`);
+        log.push({ device: name, state: "빈 입력칸", ...empty }, { device: name, state: "첫 입력", ...initial });
         const from = (await sentFrames(p)).length;
         const check = async (state, width = initial.text.width) => {
           const g = await geometry(box);
@@ -94,6 +111,13 @@ export default async function () {
           return g;
         };
         const capture = async (state) => shots && p.getByTestId("chat-composer").screenshot({ path: `${shots}/wrap-${name}-${state}.png`, animations: "disabled" });
+        // 예전 폭이면 접힐 한글이 회수한 자리까지 한 줄로 들어간다.
+        if (reclaimed > 0) {
+          await box.fill("가나다라마바사아자차카타파하".repeat(30).slice(0, empty.firstBreak));
+          const boundary = await check("이전 첫 줄 경계");
+          if (boundary.rows !== 1) failures.push(`${name}: 이전 첫 줄 경계의 글이 회수한 폭에 들어가지 않음`);
+          await capture("reclaimed-boundary");
+        }
         // 한 음절의 자모가 변하고 확정되는 순서. 매 사건은 별도 브라우저 task이므로 React commit 뒤 크기도 검사한다.
         await box.fill("");
         const syllables = "가나다라마바사아자차카타파하".repeat(12);
@@ -143,7 +167,8 @@ export default async function () {
           await check(`창 폭 ${size.width} 다시 김`, width);
         }
         await box.fill("");
-        const cleared = await check("지움");
+        const cleared = await check("지움", empty.text.width);
+        if (cleared.firstBreak !== empty.firstBreak) failures.push(`${name}: 지운 뒤 빈 입력칸의 줄 경계 복원 실패`);
         if (Math.abs(cleared.surface.height - initial.surface.height) > 0.5) failures.push(`${name}: 지운 뒤 한 줄 높이 복원 실패`);
         if ((await sentFrames(p, from)).some((x) => ["input", "submit", "bin"].includes(x.t))) failures.push(`${name}: 편집 중 pane에 전송함`);
         await p.context().close();

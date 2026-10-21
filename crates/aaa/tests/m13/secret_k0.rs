@@ -240,3 +240,61 @@ fn env_values_stay_out_of_audit_db_logs_and_export() {
     let after: Vec<String> = hits(&host_db, &na, &|_| false);
     assert!(after.is_empty(), "printenv 뒤 host DB: {after:?}");
 }
+
+/// 실제 TCP+TLS agent의 바뀌지 않은 328KiB 로그를 원본 hash로 검증한 뒤 사본만 가린다.
+#[test]
+fn remote_report_with_registered_auth_bytes_copies_without_false_hash_failure() {
+    let (secret, _) = canary("report0638");
+    let extra = format!("[profiles.fake.env]\nOPENAI_API_KEY = {}\n", serde_json::to_string(&secret).unwrap());
+    let mut w = world_with(&extra);
+    w.add_remote();
+    let task = w.task("report-transfer.md", "noreport");
+    let started = w.start(&[
+        "--machine",
+        "labB",
+        "--profile",
+        "fake",
+        "--kind",
+        "dir",
+        "--title",
+        "보고 전송",
+        "--task-file",
+        &task,
+    ]);
+    let id = started["id"].as_str().unwrap();
+    let ready = w.wait_show("원격 brief 전달", id, |v| v["brief"] == "delivered");
+    let work = Path::new(ready["work_dir"].as_str().unwrap());
+    let source = work.join("library/stable.log");
+    let mut bytes = vec![b'x'; 328 * 1024 + 17];
+    bytes[29..29 + secret.len()].copy_from_slice(secret.as_bytes());
+    std::fs::write(&source, &bytes).unwrap();
+    let body = format!("[병합 준비됨] 원격 보고 전송\n{secret}\n\n## Next\n");
+    let revision = sha(&body);
+    std::fs::write(work.join("report.md.tmp"), &body).unwrap();
+    std::fs::rename(work.join("report.md.tmp"), work.join("report.md")).unwrap();
+    let copied = w.wait_show("원본 hash와 다른 가림 사본 회수", id, |v| {
+        v["report_hash"] == revision && v["copy"] == "complete"
+    });
+    assert_eq!(copied["stage"], "merge_ready");
+    assert_eq!(std::fs::read(&source).unwrap(), bytes, "원본 파일은 바꾸지 않는다");
+    aaa_common::redact::remember(&secret);
+    let expected = aaa_common::redact::bytes(&bytes);
+    assert_ne!(expected, bytes);
+    let dir = w.projects.join("demo");
+    assert_eq!(std::fs::read(dir.join("library").join(id).join("stable.log")).unwrap(), expected);
+    let stored = std::fs::read(dir.join("threads").join(format!("{id}.md"))).unwrap();
+    assert_eq!(stored, aaa_common::redact::bytes(body.as_bytes()));
+    let rid = copied["report_id"].as_str().unwrap();
+    assert_eq!(std::fs::read(dir.join("library").join(rid).join("stable.log")).unwrap(), expected);
+    assert_eq!(std::fs::read(dir.join("threads").join(format!("{rid}.md"))).unwrap(), stored);
+    assert!(!w.lab.log("host").contains("받는 동안 바뀌었다"));
+    // 재시작도 원격 agent가 pin한 같은 listen 주소를 쓴다(임의 포트를 새로 고르면 접속할 수 없다).
+    let config = w.h.cfg.join("host.toml");
+    std::fs::write(&config, std::fs::read_to_string(&config).unwrap().replace("127.0.0.1:0", &w.addr)).unwrap();
+    w.lab.kill("host");
+    w.spawn_host("host-report-restored");
+    wait_for("원격 사본 host 재연결", T, || w.h.connected("labB").then_some(()));
+    let restored = w.show(id);
+    assert_eq!(restored["report_hash"], revision);
+    assert_eq!(restored["stage"], "merge_ready");
+}

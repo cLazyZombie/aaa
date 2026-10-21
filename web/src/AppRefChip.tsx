@@ -4,6 +4,8 @@
 import { createContext, useContext } from "react";
 import { CircleCheck, CircleQuestionMark, FileText } from "lucide-react";
 import type { AppRef } from "./appRef";
+import { appIdHash, type AppId } from "./appIds";
+import { browserClick } from "./reportLinks";
 
 export type AppRefLook = {
   label: string;
@@ -13,7 +15,7 @@ export type AppRefLook = {
   state: string | null;
 };
 
-export type AppRefs = { look: (ref: AppRef) => AppRefLook; open: (ref: AppRef) => void };
+export type AppRefs = { exists: (id: AppId) => boolean; openId: (id: AppId) => void; look: (ref: AppRef) => AppRefLook; open: (ref: AppRef) => void };
 
 /** 대화 글이 참조를 칩으로 그리는 곳(App). 없으면 글 그대로다 */
 export const AppRefContext = createContext<AppRefs | null>(null);
@@ -43,4 +45,10 @@ export function AppRefChip({ at, refs }: { at: AppRef; refs?: AppRefs }) {
       {look.state && <span className="app-ref-state">{look.state}</span>}
     </button>
   );
+}
+
+/** ID 글자를 그대로 보존하는 실제 링크: 보조 키·가운데 누름은 브라우저가 처리한다. */
+export function AppIdLink({ at, refs }: { at: AppId; refs: AppRefs }) {
+  return <a className="app-id" data-testid="app-id" data-kind={at.kind} data-target={at.target} href={appIdHash(at)}
+    onClick={(e) => { if (!browserClick(e)) { e.preventDefault(); e.stopPropagation(); refs.openId(at); } }}>{at.target}</a>;
 }
