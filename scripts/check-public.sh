@@ -66,7 +66,8 @@ known() { [ -n "$KNOWN_HASHES" ] && grep -q -x -F -e "$(printf '%s\t%s' "$1" "$2
 # 검사 명령이 돌지 못한 것(정규식·rev 오류)을 「찾은 것 없음」으로 치지 않는다: grep·git grep은 0 찾음, 1 없음, 그 밖은 오류다.
 ERR=$(mktemp) || exit 2
 FILE_LIST=$(mktemp) || { rm -f "$ERR"; exit 2; }
-trap 'rm -f "$ERR" "$FILE_LIST"' EXIT
+SIZE_LIST=$(mktemp) || { rm -f "$ERR" "$FILE_LIST"; exit 2; }
+trap 'rm -f "$ERR" "$FILE_LIST" "$SIZE_LIST"' EXIT
 broke() { echo "[오류] $1: $(head -c 300 "$ERR")"; fail=1; }
 
 # 크기만 예외다. 금지 확장자·내용 검사에는 적용하지 않는다. 경로·상한 변경은 이유와 함께 검토한다.
@@ -95,17 +96,43 @@ while IFS= read -r -d '' f; do
     *.p12 | *.pfx | *.key | *.pem | *.cer | *.der | *.crt | *.keychain | *.keychain-db | *.mobileprovision | *.sqlite | *.db | *.local.toml | *.env | .env)
       report "금지 확장자: $f" ;;
   esac
-  if [ "$HISTORY" = 0 ] && [ -f "$f" ]; then
-    size=$(wc -c <"$f")
-    if [ "$size" -gt 1048576 ]; then
-      size_limit "$f"
-      if [ "$size" -gt "$limit" ]; then
-        if [ "$limit" = 1048576 ]; then report "1MiB 넘는 파일: $f"
-        else report "크기 예외 상한 초과: $f ($size > $limit 바이트)"; fi
-      fi
-    fi
-  fi
 done <"$FILE_LIST"
+
+if [ "$HISTORY" = 0 ]; then
+  # 파일마다 wc 자식을 띄우지 않고 실제 작업 트리 크기를 한 번에 읽는다. index의 blob 크기가 아니다.
+  # NUL 경로를 그대로 돌려주며 symlink는 기존 -f·wc처럼 대상을 본다. 삭제된 파일은 기존처럼 건너뛴다.
+  # 명령 실패·읽을 수 없는 metadata를 빈 결과로 통과시키지 않는다.
+  if python3 - "$FILE_LIST" >"$SIZE_LIST" 2>"$ERR" <<'PY'
+import os
+import stat
+import sys
+
+with open(sys.argv[1], 'rb') as source:
+    names = source.read().split(b'\0')
+for name in names:
+    if not name:
+        continue
+    try:
+        info = os.stat(name)
+    except (FileNotFoundError, NotADirectoryError):
+        continue
+    if stat.S_ISREG(info.st_mode):
+        sys.stdout.buffer.write(name + b'\0' + str(info.st_size).encode('ascii') + b'\0')
+PY
+  then
+    while IFS= read -r -d '' f && IFS= read -r -d '' size; do
+      if [ "$size" -gt 1048576 ]; then
+        size_limit "$f"
+        if [ "$size" -gt "$limit" ]; then
+          if [ "$limit" = 1048576 ]; then report "1MiB 넘는 파일: $f"
+          else report "크기 예외 상한 초과: $f ($size > $limit 바이트)"; fi
+        fi
+      fi
+    done <"$SIZE_LIST"
+  else
+    broke "추적 파일 크기를 읽지 못했다"
+  fi
+fi
 
 # 8) 현재 index의 Python 생성물. NUL 구분을 변수에 담으면 사라지므로 직접 읽는다.
 # 옛 이력의 생성물은 이력 재작성 없이 없앨 수 없어 --history에서는 검사하지 않는다.

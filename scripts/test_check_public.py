@@ -4,6 +4,7 @@ import os
 from pathlib import Path
 import shutil
 import subprocess
+import sys
 import tempfile
 import unittest
 
@@ -73,6 +74,63 @@ class PublicCheckTest(unittest.TestCase):
         history = self.check("--history", "HEAD")
         self.assertNotEqual(history.returncode, 0, history.stdout + history.stderr)
         self.assertIn("금지 확장자: " + name, history.stdout)
+
+    def test_size_uses_worktree_bytes_and_preserves_unusual_names(self):
+        names = ["line\nbreak.bin", "tab\tname.bin", "-leading.bin", "한글.bin"]
+        for name in names:
+            self.file(name, MIB)
+        passed = self.check()
+        self.assertEqual(passed.returncode, 0, passed.stdout + passed.stderr)
+        # index를 갱신하지 않은 실제 파일의 크기를 본다.
+        for name in names:
+            with (self.repo / name).open("ab") as output:
+                output.write(b"x")
+        blocked = self.check()
+        self.assertNotEqual(blocked.returncode, 0, blocked.stdout + blocked.stderr)
+        for name in names:
+            self.assertIn("1MiB 넘는 파일: " + name, blocked.stdout)
+
+    @unittest.skipUnless(os.name == "posix", "실제 symlink는 Unix에서 확인한다")
+    def test_size_follows_symlinks_and_skips_removed_paths(self):
+        target = self.repo / "untracked-target"
+        target.write_bytes(b"x" * MIB)
+        (self.repo / "linked.bin").symlink_to(target.name)
+        self.git("add", "linked.bin")
+        self.file("removed.bin", MIB + 1)
+        (self.repo / "removed.bin").unlink()
+        (self.repo / "dangling.bin").symlink_to("missing-target")
+        self.git("add", "dangling.bin")
+        passed = self.check()
+        self.assertEqual(passed.returncode, 0, passed.stdout + passed.stderr)
+        with target.open("ab") as output:
+            output.write(b"x")
+        blocked = self.check()
+        self.assertNotEqual(blocked.returncode, 0, blocked.stdout + blocked.stderr)
+        self.assertIn("1MiB 넘는 파일: linked.bin", blocked.stdout)
+
+    @unittest.skipUnless(sys.platform.startswith("linux"), "macOS 파일시스템은 잘못된 UTF-8 파일명을 거부한다")
+    def test_size_preserves_non_utf8_filename_bytes(self):
+        raw_name = b"non-utf8-\xff.bin"
+        raw_path = os.fsencode(self.repo) + b"/" + raw_name
+        with open(raw_path, "wb") as output:
+            output.truncate(MIB)
+        self.git("add", os.fsdecode(raw_name))
+        passed = self.check()
+        self.assertEqual(passed.returncode, 0, passed.stdout + passed.stderr)
+        with open(raw_path, "ab") as output:
+            output.write(b"x")
+        blocked = subprocess.run(["bash", "scripts/check-public.sh", "HEAD"], cwd=self.repo,
+                                 env=self.env, capture_output=True)
+        self.assertNotEqual(blocked.returncode, 0, blocked.stdout + blocked.stderr)
+        self.assertIn(b"1MiB " + "넘는 파일: ".encode() + raw_name, blocked.stdout)
+
+    @unittest.skipUnless(os.name == "posix", "실제 symlink 오류는 Unix에서 확인한다")
+    def test_metadata_error_cannot_pass_as_an_empty_size_list(self):
+        (self.repo / "loop.bin").symlink_to("loop.bin")
+        self.git("add", "loop.bin")
+        blocked = self.check()
+        self.assertNotEqual(blocked.returncode, 0, blocked.stdout + blocked.stderr)
+        self.assertIn("추적 파일 크기를 읽지 못했다", blocked.stdout)
 
     def test_size_exceptions_are_bounded_and_exact(self):
         # plan은 누적 문서에 2MiB, 버전 고정 글꼴은 현재 크기까지만 허용한다.

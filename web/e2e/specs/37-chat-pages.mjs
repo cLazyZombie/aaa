@@ -11,7 +11,9 @@ const frame = (page, diagnostics) => page.evaluate(() => new Promise((resolve) =
   requestAnimationFrame(() => requestAnimationFrame(() => resolve(window.takeChatStates())))))
   .then((states) => diagnostics.remember(states));
 export default async function () {
-  const safari = await webkit.launch({ headless: true });
+  // 독립 Chromium 작업은 사용하지 않는 WebKit 프로세스를 띄우지 않는다.
+  let safari;
+  const safariBrowser = async () => safari ??= await webkit.launch({ headless: true });
   const releases = new Set();
   let diagnostics;
   const failure = { diagnose: (error) => diagnostics?.save(error, inTime) };
@@ -268,11 +270,11 @@ export default async function () {
   await step("긴 대화 앞 쪽: Chromium 390 codex", async () => check(browser, 390, "codex"), failure);
   await step("긴 대화 앞 쪽: Chromium 820 claude", async () => check(browser, 820, "claude"), failure);
   await step("긴 대화 앞 쪽: Chromium 820 codex", async () => check(browser, 820, "codex"), failure);
-  await step("긴 대화 앞 쪽: WebKit 1280 claude", async () => check(safari, 1280, "claude"), failure);
-  await step("긴 대화 앞 쪽: WebKit 1280 codex", async () => check(safari, 1280, "codex"), failure);
-  await step("긴 대화 앞 쪽: WebKit 390 claude", async () => check(safari, 390, "claude"), failure);
-  await step("긴 대화 앞 쪽: WebKit 390 codex", async () => check(safari, 390, "codex"), failure);
-  await step("긴 대화 앞 쪽: WebKit 820 claude", async () => check(safari, 820, "claude"), failure);
-  await step("긴 대화 앞 쪽: WebKit 820 codex", async () => check(safari, 820, "codex"), failure);
-  } finally { for (const release of releases) release(); await safari.close(); }
+  await step("긴 대화 앞 쪽: WebKit 1280 claude", async () => check(await safariBrowser(), 1280, "claude"), failure);
+  await step("긴 대화 앞 쪽: WebKit 1280 codex", async () => check(await safariBrowser(), 1280, "codex"), failure);
+  await step("긴 대화 앞 쪽: WebKit 390 claude", async () => check(await safariBrowser(), 390, "claude"), failure);
+  await step("긴 대화 앞 쪽: WebKit 390 codex", async () => check(await safariBrowser(), 390, "codex"), failure);
+  await step("긴 대화 앞 쪽: WebKit 820 claude", async () => check(await safariBrowser(), 820, "claude"), failure);
+  await step("긴 대화 앞 쪽: WebKit 820 codex", async () => check(await safariBrowser(), 820, "codex"), failure);
+  } finally { for (const release of releases) release(); await safari?.close(); }
 }

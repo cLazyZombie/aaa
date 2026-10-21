@@ -145,6 +145,70 @@ while True:
   });
 
 
+  await step("종료 시작의 완료 응답: WebKit 실제 reload에서 projects 뒤 routines를 시작하지 않는다", async () => {
+    const wk = await webkit.launch();
+    const trace = [];
+    let client;
+    try {
+      client = await pairPage(wk, aaa("web", "pair").code, { width: 1280, height: 800 }, {
+        serviceWorkers: "block",
+        onPage: (p) => {
+          p.on("console", (message) => {
+            if (message.text().startsWith("API-EXIT ")) trace.push(message.text());
+          });
+          p.on("pageerror", (error) => trace.push(`pageerror ${error.stack}`));
+          p.on("requestfailed", (request) => {
+            if (new URL(request.url()).pathname === "/api/v1/call") trace.push(`failed ${request.failure()?.errorText}`);
+          });
+        },
+        init: () => {
+          const returning = sessionStorage.getItem("api-exit-returning") === "yes";
+          let leaving = false;
+          let first = true;
+          const original = window.fetch;
+          window.fetch = async (input, options) => {
+            let op;
+            try { op = JSON.parse(options?.body ?? "null")?.op; } catch {}
+            if (leaving && !options?.keepalive) console.log(`API-EXIT fetch ${op ?? String(input)}`);
+            const response = await original(input, options);
+            if (!returning && first && op === "projects") {
+              first = false;
+              // 실제 HTTP 응답은 받되 JSON 완료를 종료 시작 사건까지 보류한다.
+              const body = await response.clone().json();
+              response.json = () => new Promise(resolve => {
+                window.__projectsHeld = true;
+                window.__releaseProjects = () => resolve(body);
+              });
+            }
+            return response;
+          };
+          window.addEventListener("beforeunload", () => {
+            leaving = true;
+            sessionStorage.setItem("api-exit-returning", "yes");
+            console.log("API-EXIT beforeunload");
+            window.__releaseProjects?.();
+          });
+          window.addEventListener("pagehide", () => console.log("API-EXIT pagehide"));
+        },
+      });
+      const p = client.page;
+      await p.waitForFunction(() => window.__projectsHeld === true);
+      const resumed = p.waitForResponse(response => response.url().endsWith("/api/v1/call")
+        && response.request().postDataJSON()?.op === "routines").then(response => response.json());
+      await p.reload();
+      await openChat(p);
+      assert.equal((await resumed).ok?.kind, "routines", "새 문서는 실제 후속 조회를 다시 실행한다");
+      console.log("API-EXIT trace", JSON.stringify(trace));
+      assert.ok(trace.includes("API-EXIT beforeunload"), "실제 종료 시작 사건");
+      assert.deepEqual(trace.filter(line => line.startsWith("API-EXIT fetch ")), [], "종료 시작 뒤 실제 fetch를 시작했다");
+      assert.deepEqual(client.errors, [], "실제 reload의 처리되지 않은 오류");
+    } finally {
+      fs.writeFileSync(`${root}/api-exit-trace.json`, JSON.stringify(trace, null, 2));
+      await client?.page.context().close();
+      await wk.close();
+    }
+  });
+
   await step("종료 문서 API: WebKit pagehide 뒤 tasks·asks 조회를 시작하지 않고 pageshow 뒤 다시 읽는다", async () => {
     const wk = await webkit.launch();
     try {

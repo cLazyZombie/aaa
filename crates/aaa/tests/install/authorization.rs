@@ -114,7 +114,7 @@ fn drive_terminal(
         }
     });
     let started = Instant::now();
-    let deadline = started + Duration::from_secs(30);
+    let deadline = started + Duration::from_secs(60);
     let mut terminal = TerminalQueries::new(36, 120);
     let mut seen = Vec::new();
     let mut answered = 0;
@@ -139,11 +139,24 @@ fn drive_terminal(
                 // 직접 띄운 실제 child handle만 종료한다. 다른 PID/이름으로 찾지 않는다.
                 child.child.kill().unwrap();
                 child.child.wait().unwrap();
+                let output = redact_private(&String::from_utf8_lossy(&seen));
+                let needle = steps.get(answered).map_or("<PTY EOF>", |(needle, _)| *needle);
+                // 비밀값을 먼저 가린 뒤 마지막 네 줄을 줄마다 200자로 제한한다.
+                let mut tail: Vec<_> = output.lines().rev().take(4).collect();
+                tail.reverse();
+                let tail = tail
+                    .into_iter()
+                    .map(|line| {
+                        let mut chars: Vec<_> = line.chars().rev().take(200).collect();
+                        chars.reverse();
+                        chars.into_iter().collect::<String>()
+                    })
+                    .collect::<Vec<_>>()
+                    .join(" | ");
                 panic!(
-                    "install 승인 PTY({pid}) 사건 상한(elapsed={:?}, answered={answered}/{}): {}",
+                    "install 승인 PTY({pid}) 사건 상한(elapsed={:?}): {output}\nPTY stalled: answered={answered}/{}, needle={needle:?}, tail={tail:?}",
                     started.elapsed(),
-                    steps.len(),
-                    redact_private(&String::from_utf8_lossy(&seen))
+                    steps.len()
                 );
             }
         }
