@@ -1,5 +1,5 @@
 /* 할 일 화면(TasksView.tsx, plan §8.306). 색·크기는 herdr-web-ui token만 쓴다. 행은 t3code ComposerTasksBadge 행(아이콘·글·오른쪽
-   칩), 목록 머리는 herdr-projects popup 머리(이름·수). 상세는 본문 폭으로 정한다: 넓으면(패드 가로·데스크톱) 오른쪽 칸, 좁으면(패드 세로)
+   칩). 한 목록(plan §8.393): 예약은 맨 위 보라 표지 행, 점선 한 줄 밑에 일반 할 일(t-0580 시안 3판). 상세는 본문 폭으로 정한다: 넓으면(패드 가로·데스크톱) 오른쪽 칸, 좁으면(패드 세로)
    오른쪽에서 밀려 나온 시트, 휴대폰은 전체 화면 시트(herdr/sheets.ts SHEET_QUERY 640px). */
 .tasks-view {
   display: flex;
@@ -526,8 +526,64 @@ button.task-chip:disabled { cursor: default; color: var(--text-dim); }
 }
 
 .task-queue-panel { flex: 0 0 auto; max-height: 30vh; overflow: auto; padding: var(--space-2) var(--space-4); border-bottom: var(--hairline) solid var(--border); }
-.task-queue-controls { flex: 0 0 auto; max-height: 40vh; overflow: auto; padding: var(--space-3); border-bottom: var(--hairline) solid var(--border); }
+.task-queue-controls { display: flex; flex: 0 0 auto; flex-direction: column; align-items: flex-start; gap: var(--space-2); max-height: 40vh; overflow: auto; padding: var(--space-3); border-bottom: var(--hairline) solid var(--border); font-size: var(--fs-sm); }
+.task-queue-controls > p { margin: 0; }
+.task-queue-status { display: flex; align-items: center; gap: var(--space-2); }
+.task-queue-controls.is-reserved .task-queue-word { color: var(--reserved); }
+.task-queue-meta, .task-queue-home { color: var(--text-dim); font-size: var(--fs-xs); }
+.task-queue-why { display: flex; flex-direction: column; gap: var(--space-1); padding: var(--space-2) var(--space-3); border: var(--hairline) solid var(--notice); border-radius: var(--radius-md); background: color-mix(in srgb, var(--notice) 10%, transparent); font-size: var(--fs-xs); }
+.task-queue-why b { color: var(--notice); }
 .task-queue-actions { display: flex; flex-wrap: wrap; gap: var(--space-1); }
+.task-queue-move { border-color: var(--reserved-line); color: var(--reserved); }
+.task-queue-cancel { border-color: var(--status-blocked); color: var(--status-blocked); }
+
+/* 한 목록(§8.393): 예약 색은 Primer done(보라). 테마 token에 없는 색이라 여기서 정한다 */
+.tasks-view { --reserved: #a371f7; --reserved-tint: rgba(163, 113, 247, 0.14); --reserved-line: rgba(163, 113, 247, 0.55); }
+[data-theme="light"] .tasks-view { --reserved: #8250df; --reserved-tint: rgba(130, 80, 223, 0.10); --reserved-line: rgba(130, 80, 223, 0.45); }
+.task-reserved-dot { display: inline-block; flex: 0 0 auto; width: 12px; height: 12px; margin: 2px; border-radius: 50%; background: var(--reserved); box-shadow: 0 0 0 2px var(--reserved-tint); }
+.task-reserved-dot.is-check { background: var(--notice); box-shadow: none; }
+.task-reserved-dot.is-small { width: 8px; height: 8px; margin: 0 4px 0 0; }
+.task-row.is-reserved { background: linear-gradient(90deg, var(--reserved-tint), transparent 70%); }
+.task-row.is-reserved.is-selected { background: var(--accent-tint); }
+.task-row.is-reserved .task-title { color: var(--text-strong); }
+.task-crumb { flex: 0 1 auto; min-width: 0; max-width: 40%; overflow: hidden; color: var(--text-dim); font-size: var(--fs-xs); text-overflow: ellipsis; white-space: nowrap; }
+.task-kids-reserved { border-color: var(--reserved-line); color: var(--reserved); }
+.task-sep { position: relative; display: flex; align-items: center; min-height: 16px; margin: var(--space-1) var(--space-2) var(--space-1) var(--space-5); border-radius: var(--radius-sm); }
+.task-sep::before { content: ""; flex: 1 1 auto; border-top: 1px dashed var(--reserved-line); }
+.task-sep > span { flex: 0 0 auto; margin-left: var(--space-2); color: var(--text-dim); font-size: var(--fs-xs); }
+.task-sep.is-empty { margin-top: 0; }
+.task-sep.is-over { background: var(--reserved-tint); }
+.task-sep.is-over::before { border-top: 2px solid var(--reserved); }
+.task-gap { display: flex; align-items: center; gap: var(--space-2); min-height: 20px; margin: 1px var(--space-2) 1px var(--space-5); color: var(--text-dim); font-size: var(--fs-xs); list-style: none; }
+.task-gap::before { content: ""; width: 14px; border-top: 2px dotted var(--reserved-line); }
+.task-reserved-rows .task-row.is-drop-before { box-shadow: inset 0 2px 0 var(--reserved); }
+.task-reserved-rows .task-row.is-drop-after { box-shadow: inset 0 -2px 0 var(--reserved); }
+.task-zone { position: relative; border-radius: var(--radius-md); outline: 2px dashed transparent; outline-offset: 2px; }
+.task-zone.is-unreserve { outline-color: var(--reserved); background: var(--reserved-tint); }
+.task-zone-note { position: absolute; top: calc(-1 * var(--space-4)); right: var(--space-2); margin: 0; color: var(--reserved); font-size: var(--fs-xs); pointer-events: none; }
+.task-row.is-flash { box-shadow: inset 0 0 0 1px var(--status-done); background: var(--status-done-tint, transparent); }
+.task-flash-note { flex: 0 0 auto; color: var(--status-done); font-size: var(--fs-xs); white-space: nowrap; }
+.tasks-tip { margin: var(--space-3) var(--space-2) 0; color: var(--text-dim); font-size: var(--fs-xs); }
+.tasks-chips { display: flex; align-items: center; gap: var(--space-1); min-width: 0; max-width: 100%; }
+.tasks-repo { order: 2; gap: 2px; }
+.tasks-repo svg { width: 12px; height: 12px; margin: 0 0 0 2px; color: var(--text-dim); }
+.tasks-repo.is-on { border-color: var(--accent); background: var(--accent-tint); color: var(--text-strong); }
+.tasks-filter .tasks-count { margin-left: 4px; }
+.tasks-filter-reserved.is-on { border-color: var(--reserved); background: var(--reserved-tint); }
+.tasks-order { gap: var(--space-1); }
+.tasks-order.is-on { border-color: var(--accent); background: var(--accent-tint); color: var(--accent); }
+.task-steps { display: inline-flex; flex: 0 0 auto; gap: var(--space-1); margin-right: var(--space-1); }
+.task-step { display: inline-flex; align-items: center; justify-content: center; width: 40px; height: 32px; border: var(--hairline) solid var(--border); border-radius: var(--radius-md); background: var(--bg-hover); color: var(--text); }
+.task-step svg { width: 16px; height: 16px; }
+.task-step.is-reserved { border-color: var(--reserved-line); color: var(--reserved); }
+.task-step:disabled { opacity: 0.3; }
+@media (max-width: 640px) {
+  /* 휴대폰은 저장소 단추가 칩 줄 맨 앞(시트로 고른다) */
+  .tasks-chips { flex: 1 1 100%; }
+  .tasks-repo { order: 0; }
+  .tasks-chips .tasks-filters { flex: 1 1 auto; min-width: 0; }
+  .task-crumb { max-width: 30%; }
+}
 
 /* 할 일의 고정 번호는 제목 옆에 작게 표시한다. 좁은 화면에서도 번호 안에서는 줄을 나누지 않는다. */
 .task-short-id {
