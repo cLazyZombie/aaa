@@ -156,6 +156,12 @@ jobs:
         if: ${{ !cancelled() && matrix.os == 'macos-15' && steps.build.outcome == 'success' }}
         timeout-minutes: 15
         run: cargo test -p aaa --test install --locked launchd::launchd_real_registration_ready_resume_and_second_instance_preserve_the_shared_launcher -- --ignored --exact --nocapture 2>&1 | tee launchd-registration.log
+      # 「SSH로 추가」 실제 경로(plan §8.420): install 검증 SSH 입구가 믿는 root sshd를 이 일회성 계정에만 띄운다. 원격 HOME은 실험실이고
+      # 시험이 runner 실제 HOME이 그대로인지 본다. 운영 Mac에서는 돌리지 않는다(스크립트가 GITHUB_ACTIONS가 아니면 멈춘다).
+      - name: SSH로 설치·등록 실제 root sshd·LaunchAgent
+        if: ${{ !cancelled() && matrix.os == 'macos-15' && steps.build.outcome == 'success' }}
+        timeout-minutes: 20
+        run: bash scripts/ci-root-sshd.sh 2>&1 | tee ssh-install.log
       # 공개 저장소 검사(push 전 로컬 검사의 안전망): 추적 파일과 이번 push(before..after)·PR(base..)의 커밋 메시지·author.
       # 새 branch의 첫 push(created, before는 0뿐)는 origin/main 이후를 본다. 기준을 찾지 못하면 실패한다(CI에서는 건너뛰지 않는다).
       # private-words·세션 기록이 없어 실제 이름·실제 세션 id는 보지 않는다(push 전 로컬 검사의 몫).
@@ -176,6 +182,7 @@ jobs:
             { printf '%s\n' "$1"; cat; } | node -e 'const a=require("fs").readFileSync(0,"utf8").replace(/\r/g,""); const i=a.indexOf("\n"); const e=(s)=>s.replace(/%/g,"%25").replace(/\n/g,"%0A"); let t=a.slice(i+1); if(t.length>15000) t=t.slice(0,3000)+"\n…\n"+t.slice(-12000); if(t.trim()) console.log("::error title="+e(a.slice(0,i)).replace(/:/g,"%3A").replace(/,/g,"%2C")+"::"+e(t))'
           }
           if [ -f launchd-registration.log ]; then tail -c 12000 launchd-registration.log | annotate 'macOS LaunchAgent'; fi
+          if [ -f ssh-install.log ]; then tail -c 12000 ssh-install.log | annotate 'SSH로 설치·등록'; fi
           for f in build.log clippy.log; do
             [ -f "$f" ] || continue
             grep -nE -A8 "^error|^warning" "$f" | head -80 | annotate "$f"

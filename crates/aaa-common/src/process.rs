@@ -83,7 +83,7 @@ pub fn image(pid: u32) -> Option<std::path::PathBuf> {
 pub fn parent(pid: u32) -> Option<u32> {
     #[cfg(target_os = "macos")]
     {
-        bsdinfo(pid).map(|i| i.pbi_ppid)
+        shortinfo(pid).map(|i| i.pbsi_ppid)
     }
     #[cfg(all(unix, not(target_os = "macos")))]
     {
@@ -134,6 +134,42 @@ pub fn session(pid: u32) -> Option<u32> {
         let _ = pid;
         None
     }
+}
+
+/// 실행 사용자(effective uid). 다른 사용자(root 포함)의 프로세스도 읽는다. Windows는 없다
+#[cfg(unix)]
+pub fn uid(pid: u32) -> Option<u32> {
+    #[cfg(target_os = "macos")]
+    {
+        shortinfo(pid).map(|i| i.pbsi_uid)
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        let status = std::fs::read_to_string(format!("/proc/{pid}/status")).ok()?;
+        status.lines().find_map(|l| l.strip_prefix("Uid:"))?.split_whitespace().nth(1)?.parse().ok()
+    }
+}
+
+/// 부모·사용자만 담은 짧은 정보. `PROC_PIDTBSDINFO`는 다른 사용자의 프로세스(root sshd 등)에 EPERM이지만 이것은 읽힌다(`ps`와 같은 값).
+/// 조상을 root 프로세스 너머까지 따라가는 데 쓴다(install 검증 SSH 입구가 root sshd를 찾는다)
+#[cfg(target_os = "macos")]
+fn shortinfo(pid: u32) -> Option<libc::proc_bsdshortinfo> {
+    if pid == 0 {
+        return None;
+    }
+    let mut info: libc::proc_bsdshortinfo = unsafe { std::mem::zeroed() };
+    let size = std::mem::size_of::<libc::proc_bsdshortinfo>() as libc::c_int;
+    // SAFETY: info는 쓸 수 있는 proc_bsdshortinfo이고 size가 그 크기다
+    let ret = unsafe {
+        libc::proc_pidinfo(
+            pid as libc::c_int,
+            libc::PROC_PIDT_SHORTBSDINFO,
+            0,
+            &mut info as *mut _ as *mut libc::c_void,
+            size,
+        )
+    };
+    (ret == size).then_some(info)
 }
 
 #[cfg(target_os = "macos")]
@@ -233,5 +269,14 @@ mod tests {
         child.kill().unwrap();
         child.wait().unwrap();
         assert!(parent(0).is_none() && tty(0).is_none() && session(0).is_none());
+    }
+
+    /// 일반 사용자도 root 프로세스(init·launchd)의 부모·사용자를 읽는다: 조상이 root 프로세스에서 끊기지 않는다
+    #[test]
+    fn root_processes_are_readable_by_any_user() {
+        assert_eq!(parent(1), Some(0));
+        assert_eq!(uid(1), Some(0));
+        assert_eq!(uid(std::process::id()), Some(unsafe { libc::geteuid() }));
+        assert_eq!(ancestors(std::process::id()).last().copied(), Some(1), "조상은 1번까지 간다");
     }
 }
