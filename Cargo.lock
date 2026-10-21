@@ -13,6 +13,7 @@ dependencies = [
  "aaa-host",
  "aaa-proto",
  "aaa-session",
+ "aaa-vt",
  "anyhow",
  "base64 0.22.1",
  "clap",

@@ -189,6 +189,10 @@ async fn guard(State(host): State<Arc<Host>>, req: Request, next: Next) -> Respo
     }
     let api = req.uri().path().starts_with("/api/");
     let library = req.uri().path().starts_with("/v/");
+    // opaque 보고서는 앱 API를 읽지 못한다. 쿠키 정책에만 기대지 않는다.
+    if api && h.get(header::ORIGIN).is_some_and(|v| v == "null") {
+        return StatusCode::FORBIDDEN.into_response();
+    }
     let mut res = next.run(req).await;
     let hs = res.headers_mut();
     // 기기·pane 상태를 담은 API 답은 브라우저·proxy가 두지 않는다(herdr-web-ui `index.ts` API no-store)
@@ -198,7 +202,11 @@ async fn guard(State(host): State<Arc<Host>>, req: Request, next: Next) -> Respo
     // /v/의 성공·오류·Range 응답 모두에 강제한다. handler 머리가 빠져도 앱 origin으로 실행하지 않는다.
     if library {
         let pdf = hs.get(header::CONTENT_TYPE).is_some_and(|v| v == "application/pdf");
-        hs.insert(header::CONTENT_SECURITY_POLICY, HeaderValue::from_static(if pdf { PDF_CSP } else { VIEW_CSP }));
+        hs.entry(header::CONTENT_SECURITY_POLICY).or_insert(HeaderValue::from_static(if pdf {
+            PDF_CSP
+        } else {
+            VIEW_CSP
+        }));
         hs.insert(header::CACHE_CONTROL, HeaderValue::from_static("private, no-store"));
     } else {
         hs.entry(header::CONTENT_SECURITY_POLICY).or_insert(HeaderValue::from_static(CSP));
@@ -332,6 +340,15 @@ const VIEW_CSP: &str = "sandbox allow-scripts allow-popups allow-popups-to-escap
                         media-src 'self' data: blob:; font-src 'self' data:; \
                         connect-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'self'";
 
+/// capability가 가리키는 보고서 폴더만 읽는다. 끝의 /는 형제 cap·API와의 접두사 충돌을 막는다.
+/// /v/는 redirect하지 않는다(CSP는 redirect 뒤 경로를 비교하지 않으므로 그 계약이 필요하다).
+fn view_csp(origin: &str, cap: &str) -> HeaderValue {
+    HeaderValue::from_str(
+        &VIEW_CSP.replace("connect-src 'none'", &format!("connect-src {origin}/v/{}/", crate::files::pct(cap))),
+    )
+    .expect("검증한 웹 origin과 percent encoding은 안전한 헤더다")
+}
+
 /// 보고서 HTML 끝에 붙이는 그림 누름 알림(plan §8.353). 그 문서와 같은 sandbox 안에서 돌고, 부모(앱)에게 누른 그림과 그 문서의
 /// 그림 주소만 알린다. 앱은 그 iframe에서 온, 그 보고서 `/v/<cap>/` 아래 주소만 받는다(web `reportImages.ts`)
 const REPORT_IMAGES: &str = concat!("<script>", include_str!("report_images.js"), "</script>");
@@ -383,6 +400,11 @@ async fn serve_view(
     headers: HeaderMap,
     method: Method,
 ) -> Response {
+    // sandbox의 CORS 요청은 Origin: null이다. 쿠키를 동반한 읽기는 허용하지 않는다.
+    let opaque = headers.get(header::ORIGIN).is_some_and(|v| v == "null");
+    if opaque && headers.contains_key(header::COOKIE) {
+        return StatusCode::FORBIDDEN.into_response();
+    }
     let fail = |e: ErrorBody| {
         let code = match e.code {
             ErrorCode::Unauthorized => StatusCode::UNAUTHORIZED,
@@ -430,7 +452,10 @@ async fn serve_view(
         body.chain(futures_util::stream::once(async move { Ok(tail.to_vec()) })).boxed()
     };
     // PDF는 브라우저의 PDF 보기가 그리는데 그것은 sandbox 문서를 거부한다(`/f/`의 `PDF_CSP`와 같은 까닭)
-    let csp = if kind == "application/pdf" { PDF_CSP } else { VIEW_CSP };
+    let Some(origin) = host.web_origin(&host_header(&headers)) else {
+        return StatusCode::MISDIRECTED_REQUEST.into_response();
+    };
+    let csp = if kind == "application/pdf" { HeaderValue::from_static(PDF_CSP) } else { view_csp(&origin, &cap) };
     let mut res = Response::builder()
         .status(if range.is_some() { StatusCode::PARTIAL_CONTENT } else { StatusCode::OK })
         .header(header::CONTENT_TYPE, kind)
@@ -439,6 +464,10 @@ async fn serve_view(
         .header(header::CACHE_CONTROL, "private, no-store")
         .header(header::CONTENT_SECURITY_POLICY, csp)
         .header(header::X_FRAME_OPTIONS, "SAMEORIGIN");
+    if opaque {
+        // credential 허용·preflight 허용은 주지 않는다. 유효한 cap의 GET/HEAD 성공 응답만 공유한다.
+        res = res.header(header::ACCESS_CONTROL_ALLOW_ORIGIN, "null");
+    }
     if let Some((a, b)) = range {
         res = res.header(header::CONTENT_RANGE, format!("bytes {a}-{b}/{size}"));
     }
@@ -2122,6 +2151,19 @@ async fn static_file(req: Request) -> Response {
 
 #[cfg(test)]
 mod content_type_tests {
+    #[test]
+    fn report_connections_have_one_exact_origin_and_capability_prefix() {
+        for origin in ["http://127.0.0.1:7000", "https://example.ts.net"] {
+            let csp = super::view_csp(origin, "abc.def");
+            let csp = csp.to_str().unwrap();
+            let connect = csp.split(';').find(|d| d.trim().starts_with("connect-src ")).unwrap().trim();
+            assert_eq!(connect, format!("connect-src {origin}/v/abc.def/"));
+            assert!(!csp.contains("allow-same-origin"));
+        }
+        let csp = super::view_csp("https://example.ts.net", "x/; connect-src *");
+        assert!(!csp.to_str().unwrap().contains("connect-src *"));
+    }
+
     use super::content_type;
 
     /// host가 알리는 웹 빌드는 웹 `BUILD`(주 묶음 파일 이름에서 확장자를 뺀 것)와 같은 꼴이다

@@ -18,6 +18,10 @@ impl Drop for Lab {
 }
 impl Lab {
     fn new(failures: usize, file_bytes: &'static [u8]) -> Self {
+        Self::with_file(failures, file_bytes, "test.log", b"old")
+    }
+
+    fn with_file(failures: usize, file_bytes: &'static [u8], name: &'static str, manifest: &'static [u8]) -> Self {
         let root = std::env::temp_dir().join(format!("aaa-copy-{}", aaa_common::util::new_id()));
         let mut cfg = aaa_config::HostConfig::default();
         cfg.projects.root = root.join("projects").display().to_string();
@@ -68,9 +72,9 @@ impl Lab {
                                 report: B64(report),
                                 files: if !file_bytes.is_empty() && max_library_bytes != 0 {
                                     vec![LibFile {
-                                        path: "test.log".into(),
-                                        size: 3,
-                                        sha256: hex::encode(sha2::Sha256::digest(b"old")),
+                                        path: name.into(),
+                                        size: manifest.len() as u64,
+                                        sha256: hex::encode(sha2::Sha256::digest(manifest)),
                                     }]
                                 } else {
                                     vec![]
@@ -98,6 +102,28 @@ impl Lab {
         });
         Self { h, root, requests, fake }
     }
+}
+
+#[tokio::test]
+async fn report_sandbox_warning_does_not_fail_copy_or_repeat_for_the_same_snapshot() {
+    let html = b"<script>fetch('/api/v1/me'); localStorage.x</script>";
+    let lab = Lab::with_file(0, html, "index.html", html);
+    lab.h.collect_if_changed("p", "t-0001").await;
+    assert_eq!(lab.h.load("p", "t-0001").unwrap().copy.as_deref(), Some("complete"));
+    let warnings = || {
+        lab.h
+            .inbox("p", true, true)
+            .unwrap()
+            .items
+            .into_iter()
+            .filter(|item| item.item_kind == "report-sandbox-warning")
+            .collect::<Vec<_>>()
+    };
+    let items = warnings();
+    assert_eq!(items.len(), 1);
+    assert!(items[0].body.contains("index.html") && items[0].body.contains("fetch"), "{items:?}");
+    lab.h.collect("p", "t-0001", true).await.unwrap();
+    assert_eq!(warnings().len(), 1);
 }
 
 #[tokio::test]

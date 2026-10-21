@@ -1007,6 +1007,30 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn publishing_reports_warns_for_restricted_apis_in_copies_and_live_sources() {
+        let lab = Lab::new();
+        let source = lab.state.join("sandbox-report");
+        std::fs::create_dir(&source).unwrap();
+        std::fs::write(source.join("index.html"), "<script>fetch('/api/v1/me')</script>").unwrap();
+        for (name, live) in [("copy-warning", false), ("live-warning", true)] {
+            publish(&lab, name, &source, live).await;
+            let items = lab.h.inbox("demo", true, true).unwrap().items;
+            let item = items.iter().find(|i| i.item_kind == "report-sandbox-warning" && i.subject == name).unwrap();
+            assert!(item.body.contains("index.html") && item.body.contains("fetch"));
+        }
+        std::fs::write(source.join("index.html"), "<script>fetch('data.json')</script>").unwrap();
+        publish(&lab, "relative", &source, false).await;
+        assert!(
+            !lab.h
+                .inbox("demo", true, true)
+                .unwrap()
+                .items
+                .iter()
+                .any(|i| i.item_kind == "report-sandbox-warning" && i.subject == "relative")
+        );
+    }
+
+    #[tokio::test]
     async fn signed_report_http_boundary() {
         let lab = Lab::new();
         lab.report(
@@ -1026,7 +1050,10 @@ mod tests {
         let csp = headers["content-security-policy"].to_str().unwrap();
         assert!(csp.split(';').any(|d| d.trim().starts_with("sandbox ")));
         assert!(!csp.contains("allow-same-origin"));
-        assert!(csp.contains("connect-src 'none'") && csp.contains("form-action 'none'"));
+        // 보고서 폴더 읽기만 열고 opaque origin·나머지 격리는 유지한다.
+        let connect = csp.split(';').find(|d| d.trim().starts_with("connect-src ")).unwrap().trim();
+        assert_eq!(connect, format!("connect-src http://127.0.0.1:7000{}", link.base));
+        assert!(csp.contains("form-action 'none'"));
         assert_eq!(headers["cache-control"], "private, no-store");
         assert_eq!(headers["x-content-type-options"], "nosniff");
         assert_eq!(headers["referrer-policy"], "no-referrer");

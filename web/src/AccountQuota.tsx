@@ -1,3 +1,4 @@
+import { apiFetch } from "./apiRequest";
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { AccountQuota, AccountQuotaReport, Outcome } from "./gen/proto";
 import { onAccountsChanged } from "./api";
@@ -15,7 +16,7 @@ export function useAccountQuota(enabled: boolean) {
     const mine = ++seq.current;
     setBusy(true);
     try {
-      const res = await fetch(`/api/v1/account-usage${refresh ? "?refresh=1" : ""}`, { credentials: "same-origin", cache: "no-store" });
+      const res = await apiFetch(`/api/v1/account-usage${refresh ? "?refresh=1" : ""}`, { credentials: "same-origin", cache: "no-store" });
       const v = await res.json() as Outcome<AccountQuotaReport>;
       if (!res.ok || "err" in v) throw new Error("quota");
       if (mine === seq.current) { setReport(v.ok); setError(false); setNow(Date.now()); }
