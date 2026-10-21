@@ -2358,6 +2358,14 @@ impl Host {
         spec: SpawnSpec,
         actor: &str,
     ) -> Result<String, ErrorBody> {
+        // managed thread는 인증 유무와 관계없이 launch·identity·감시를 함께 잇는다.
+        // thread_restart가 자리 교체와 옛 기록 정리도 맡으므로 여기서 두 번 교체하지 않는다.
+        if let Some(rec) = self.thread_of_pane(id).filter(|r| r.kind != aaa_proto::ThreadKind::Adopted) {
+            let resumed = self.thread_restart(&rec.project, &rec.id, true, None, actor).await?;
+            let new_id = resumed.pane.ok_or_else(|| err(ErrorCode::Internal, "thread 세션이 없다"))?;
+            self.db.audit(actor, "pane_resume", &format!("{id} -> {new_id}"));
+            return Ok(new_id);
+        }
         let new_id = self.respawn_with_account(id, mid, spec, actor).await?;
         self.db.audit(actor, "pane_resume", &format!("{id} -> {new_id}"));
         self.replace_pane(id, &new_id, mid, actor).await;

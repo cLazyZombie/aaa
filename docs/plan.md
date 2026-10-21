@@ -6592,3 +6592,10 @@ L4 후속(10-20 00시 사용자 관찰): 멈춤 상태의 후보 예약과 재�
 - **번호·호환.** main의 §8.360~8.363·E2E 63~65를 보존하고 이번 수리는 §8.364·E2E 66으로 통합했다. 새 요청·DTO·프로토콜 칸이 없어 FRONT_API 1.83과 AGENT_LINK 1.10을 유지한다.
 - **실행 환경.** 초기 macOS 빌드는 서명 검사(SIGKILL)와 syspolicyd EMFILE로 막혔으나 시스템 서비스는 바꾸지 않았다. 사용자 지시로 다른 머신의 새 clone·target에서 구현 후보 a5100fbb의 정본 ci-local 7단계와 별도 공개 검사를 통과했다(웹 E2E 65개 파일 전체). 초기 진단용 웹 loader는 최종 검증에 쓰지 않는다. 착지 때는 main 통합 후보를 다시 새 실험 폴더에서 전체 검증한다. 상세는 testing.md와 비공개 작업 보고에 남긴다.
 - **통합 회귀.** 기존 E2E 25·51은 pane 연결 준비 사건을 기다린 뒤 키를 한 번만 보내도록 정리했다. E2E 61은 safety 충돌 후 새 판 재조회를 기다리지 않고 busy를 풀던 관리 화면 경합을 드러냈다. 재조회 Promise가 끝날 때까지 입력을 잠그고, 실제 재조회 답을 gate로 보류해 새 판 전 입력 금지와 해제 후 원래 저장을 검증한다. 옛 제품은 이 gate의 입력 금지 단언에서 실패한다. host 판 대조·권한·시험 기대값·시한은 유지한다.
+
+### 8.365 thread 재시작의 옛 pane 정리(10-21, t-0567)
+
+- **원인·선택.** `pane kill`은 세션만 끝내고 기록과 layout을 남긴다. `thread restart`는 새 pane에 thread를 연결하면서 옛 pane을 정리하지 않아 웹 「기타」에 남겼다. 실행 중인 세션을 자동 종료하는 새 동작 대신 기존 실행 중 거부·명시 kill을 유지하고, 기동 성공 뒤 공통 `replace_pane`으로 이름·layout·화면 추적 ID를 잇고 host·agent의 옛 기록을 지운다. spawn 실패 때는 옛 기록과 자리를 유지한다.
+- **계정.** 기본 계정은 새 작업에만 적용하는 §8.351 정책을 유지한다. 고정 계정과 새 profile의 harness가 다르면 profile·launch·brief를 바꾸기 전에 거부하고 새 thread 시작·새 harness의 기본 계정·명시 `--account`를 안내한다. 같은 harness의 profile 변경은 원래 계정을 쓴다. 계정이 고정되지 않은 thread의 기존 로컬 인증 정책은 그대로다.
+- **다른 경로.** 직접 `pane resume`는 계정 없는 일반 thread를 새 pane에 연결하지 않던 경로도 있었다. 모든 일반 thread를 저장한 대화·작업 identity·감시를 잇는 `thread_restart --resume`으로 보낸다. 계정 pane 재개와 재부팅 복원의 중복 교체는 없앤다. adopted pane은 기존 일반 pane 재개와 `replace_pane`의 thread 결속을 쓴다. resolve는 이미 종료된 pane도 정리한다. 사람이 열거나 kill로 남긴 일반 pane의 「기타」 표시는 유지한다.
+- **호환·검증.** 새 요청·프로토콜·옵션은 없다. 기존 §8.364·웹 E2E 66을 보존하고 이 수리는 §8.365를 쓴다. FRONT_API 1.83·AGENT_LINK 1.10은 유지한다. 기존 m13과 로컬 UDS·원격 TLS 회귀에서 profile 변경·새 대화·resume·직접 pane resume·host 재연결·spawn 실패·이름과 탭 보존·다른 pane 보존·계정 사전 거부를 검사한다. 원본 재현과 결함 되심기는 [시험](testing.md)의 t-0567 절을 따른다. 운영 pane·thread에는 접근하지 않는다.
