@@ -899,9 +899,11 @@ pub fn project_scaffold(name: &str, project_md: &str, include_default_pr: bool) 
 /// 표지 없는 AGENTS.md를 옮겨 두는 이름 끝(herdr-projects `.before-herdr-projects`)
 const KEPT: &str = ".before-aaa";
 
-/// 변환한 TOML도 기본 PR 규칙을 소유한다. doctor와 create가 옛 이름을 되살리지 않게 함께 본다.
+/// 변환본 또는 보존 사본이 있으면 doctor와 create가 옛 기본 규칙을 되살리지 않는다.
 fn needs_default_followup(dir: &Path) -> bool {
-    !dir.join(crate::routine::PR_FOLLOWUP).exists() && !dir.join("automations/pr-followup.toml").exists()
+    !dir.join(crate::routine::PR_FOLLOWUP).exists()
+        && !dir.join("automations/pr-followup.toml").exists()
+        && !dir.join("routines/.converted/pr-followup.md").exists()
 }
 
 /// 프로젝트 폴더의 aaa 파일에서 고칠 것(herdr-projects `priming_problems`). 빈 목록이면 맞다.

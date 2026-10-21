@@ -7165,3 +7165,10 @@ FRONT_API 1.96는 기본 검수 표지와 답 기록의 r 참조를 더한다. E
 - **승인 뒤 환경 보존.** hp argv 수리 후보의 첫 CI에서 승인은 통과했으나 apply가 installation_content_conflict로 닫혔다. 승인 PTY만 TERM=xterm-256color였고, 환경을 비운 apply는 TERM이 없었다. TERM을 포함한 service_environment의 승인 해시 대조는 유지하고 시험의 비대화형 apply/resume을 승인과 같은 환경으로 맞춘다. 실제 PTY 승인→읽기 dry-run의 해시 불일치 RED/일치 GREEN과 다른 TERM의 해시 변경·무쓰기 대조를 로컬에서 남긴다. 실제 등록 후속 단계는 바뀐 후보의 hp macos-15 CI에서 판정한다.
 
 - **실제 listener 경로.** TERM 보존 후보의 hp CI에서 등록과 host 시작 뒤 service_backend_not_ready가 반복됐다. 같은 canonical state의 실제 LocalListener bind는 105바이트에서 SUN_LEN 오류로 로컬 RED였다. launchd 실험실 root를 기존 backend lifecycle owner와 같은 `/tmp`로 맞추고 로컬 승인/계획 owner에 실제 agent/front listener bind/drop을 더한다. production IPC·ready 판정·600초 상한·기존 실제 등록/재개/공유 instance 단언은 유지한다. 실제 후속 성공은 변경 후보의 hp CI가 판정한다.
+
+### 8.420 기본 PR routine 재변환과 보존 사본(t-0684)
+
+- **문제.** 기본 PR routine을 변환한 뒤 보존 사본만 있고 TOML이 없는 프로젝트는 doctor가 옛 파일을 다시 만든다. 기존 `.converted/pr-followup.md`와 새 routine이 함께 있으면 변환 실행이 사본 충돌로 막혔다. 기존 TOML 보존 보호는 유지한다.
+- **정본과 보존.** `on = "pr"`은 새 `automations/pr-followup.toml`의 `on.pr`와 owner 대상 `do.message`로 옮기며 조건·켜짐·본문을 유지한다. doctor/create는 TOML 또는 기본 보존 사본이 있으면 옛 routine을 만들지 않는다. 변환은 동일 바이트 사본을 재사용하고 다른 판은 첫 빈 `.1.md`·`.2.md` 이름에 보존한다. 경로·재사용 여부도 계획 hash에 묶고, 사본 변경·symlink·기존 TOML 충돌은 무쓰기 거부한다. 실패 복구는 재사용한 사본을 지우지 않는다.
+- **웹.** 미리보기와 실행 실패는 창 제목·alert로 명확히 보이고 「미리보기 다시 읽기」로 현재 계획을 확인한다. Reader는 계속 미리보기만 본다. 기존 E2E40을 확장하며 FRONT_API·AGENT_LINK·schema는 변경하지 않는다.
+- **검증·운영.** 격리 파일/host keeper와 실제 host 웹 E2E40으로 원인·보존·복구·실패 표시를 확인한다. 전체 ci-local과 공개 검사를 통과한 뒤 착지 창을 기다린다. 운영 projects의 규칙은 수정하지 않으며 수리 배포 뒤 변환 방법은 automations.md에 남긴다.
