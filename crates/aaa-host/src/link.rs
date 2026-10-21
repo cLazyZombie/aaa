@@ -455,6 +455,7 @@ mod post_tests {
             dev_mode: true,
             selfcheck: None,
             sessions: vec![],
+            identity: None,
             harness: vec![],
         }))
         .await
@@ -579,6 +580,7 @@ mod post_tests {
             dev_mode: true,
             selfcheck: None,
             sessions: vec![],
+            identity: None,
             harness: vec![],
         }))
         .await

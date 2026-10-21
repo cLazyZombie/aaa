@@ -39,10 +39,13 @@ impl Host {
             return Ok(());
         }
         let step = &r.steps[cursor];
-        let service = match step.phase {
-            RolloutPhase::HostUpdate => DeployService::Host,
-            RolloutPhase::AgentUpdate => DeployService::Agent,
-            RolloutPhase::AgentRestart if step.machine == r.spec.machines[0] => DeployService::Agent,
+        let service = match (r.spec.restart, step.phase) {
+            // 재시작만 하는 rollout: 그 단계 자체를 감시한다(교체가 없어 설치 작업·공유 실행 파일 복구가 없다)
+            (Some(service), RolloutPhase::HostRestart | RolloutPhase::AgentRestart) => service,
+            (Some(_), _) => return Ok(()),
+            (None, RolloutPhase::HostUpdate) => DeployService::Host,
+            (None, RolloutPhase::AgentUpdate) => DeployService::Agent,
+            (None, RolloutPhase::AgentRestart) if step.machine == r.spec.machines[0] => DeployService::Agent,
             _ => return Ok(()),
         };
         let machine = step.machine.clone();
@@ -53,13 +56,15 @@ impl Host {
             .position(|s| s.machine == machine && s.phase == phase)
             .ok_or_else(|| internal("감시할 재시작 단계가 없다"))?;
         if r.steps[restart].guard.is_none() {
+            let before = if r.spec.restart.is_some() { phase } else { RolloutPhase::Preflight };
             let mut baseline = r
                 .steps
                 .iter()
-                .find(|s| s.machine == machine && s.phase == RolloutPhase::Preflight)
+                .find(|s| s.machine == machine && s.phase == before)
                 .and_then(|s| s.baseline.clone())
                 .ok_or_else(|| internal("배포 전 실행 신원이 없다"))?;
-            let host_machine = machine == r.spec.machines[0];
+            // 공유 실행 파일을 바꾼 host 머신만 복구 때 host·agent를 함께 다시 띄운다. 재시작만 하면 바꾼 파일이 없다
+            let host_machine = r.spec.restart.is_none() && machine == r.spec.machines[0];
             let old_host_instance = if service == DeployService::Host {
                 self.rollout_instance.clone()
             } else {
@@ -452,6 +457,7 @@ mod tests {
                         dev_mode: true,
                         selfcheck: None,
                         sessions: vec![],
+                        identity: None,
                         harness: vec![],
                     },
                     false,

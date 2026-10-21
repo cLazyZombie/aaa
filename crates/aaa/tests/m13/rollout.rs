@@ -762,4 +762,33 @@ else:
     assert_eq!(digest(&b_exe), sha);
     assert_eq!(std::fs::read_to_string(&service_log).unwrap().lines().count(), 16);
     eprintln!("L3 in-flight install cancellation restored after the final candidate rename");
+
+    // W6c(답 1A): coordinator의 `aaa service restart host`는 재시작만 하는 rollout이다. 독립 감시가 새 host의 실행 신원과
+    // 웹 응답(`/api/v1/me`)을 확인해야 끝나고, 실행 파일은 그대로다
+    let enabled = w.h.in_terminal(&["safety", "set", "demo", "coordinator_deploy", "on"], &[("바꿀까?", "y")], T);
+    assert!(enabled.contains("coordinator_deploy = on"), "{enabled}");
+    let (rc, out, err) = probe(&w, "service restart --role host");
+    assert_eq!(rc, "0", "{out} {err}");
+    let restart: Value = serde_json::from_str(&out).unwrap();
+    let restart_id = restart["rollout"]["id"].as_str().unwrap().to_string();
+    assert_eq!(restart["rollout"]["spec"]["restart"], "host", "{out}");
+    let restart_guard = w
+        .h
+        .state
+        .join(format!("agent/deployments/{}.guard.json", restart["rollout"]["steps"][0]["job_id"].as_str().unwrap()));
+    assert!(next_call(16).ends_with("/dev.aaa.host"));
+    w.lab.kill("rollout-host-cancel-restored");
+    w.lab.spawn_command("rollout-host-restart", w.h.cmd_bin(&a_exe, &["host"]));
+    wait_for("재시작한 host의 front와 두 agent 준비", T, || {
+        (w.h.connected("labA") && w.h.connected("labB")).then_some(())
+    });
+    let (rc, out, err) = probe(&w, &format!("deploy status {restart_id} --wait"));
+    assert_eq!(rc, "0", "{out} {err}");
+    let restarted: Value = serde_json::from_str(&out).unwrap();
+    assert_eq!(restarted["rollout"]["state"], "done", "{out}");
+    let guard: Value = serde_json::from_slice(&std::fs::read(&restart_guard).unwrap()).unwrap();
+    assert_eq!(guard["phase"], "verified_new", "{guard}");
+    assert_eq!(digest(&a_exe), third_sha, "재시작은 실행 파일을 바꾸지 않는다");
+    assert_eq!(std::fs::read_to_string(&service_log).unwrap().lines().count(), 17, "재시작을 한 번만 했다");
+    eprintln!("W6c host restart rollout confirmed the new host and its web");
 }

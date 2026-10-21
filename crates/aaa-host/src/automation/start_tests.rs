@@ -213,6 +213,7 @@ impl Lab {
                 dev_mode: true,
                 selfcheck: None,
                 sessions: vec![],
+                identity: None,
                 harness: vec![],
             },
             mid == "m",

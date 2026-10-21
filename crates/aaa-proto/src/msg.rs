@@ -597,6 +597,9 @@ pub struct AgentHello {
     /// 대화를 이어 띄운다. host가 `harness_hello.v1`을 알리면 agent는 연결 뒤 이 스냅샷 이후 변경분만 보낸다.
     #[serde(default)]
     pub harness: Vec<HarnessEvent>,
+    /// agent 실행 신원(관리 GUI W6c). 재시작만 하는 rollout이 재시작 전 신원으로 감시를 세운다. 옛 agent는 없다
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub identity: Option<crate::RuntimeIdentity>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

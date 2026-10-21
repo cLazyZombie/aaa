@@ -83,6 +83,10 @@ pub struct RolloutSpec {
     pub sha256: String,
     pub commit: Option<String>,
     pub machines: Vec<String>,
+    /// 재시작만 하는 rollout(관리 GUI W6c, 답 1A): 대상 한 머신의 이 서비스를 지금 판 그대로 다시 띄우고 guard로 확인한다.
+    /// 후보·전송·교체가 없고 `from`·`sha256`은 host가 재시작 전 실행 신원으로 채운다
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub restart: Option<DeployService>,
 }
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "snake_case")]
@@ -267,6 +271,9 @@ pub struct RolloutCard {
     pub version: Option<String>,
     pub sha256: String,
     pub commit: Option<String>,
+    /// 재시작만 하는 rollout의 서비스(W6c). 교체 rollout은 없다
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub restart: Option<DeployService>,
     pub cursor: u32,
     pub steps: Vec<RolloutCardStep>,
     pub error: Option<String>,

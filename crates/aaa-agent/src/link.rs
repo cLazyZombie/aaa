@@ -152,6 +152,7 @@ pub fn hello(agent: &Agent) -> AgentHello {
         dev_mode: agent.dev_mode,
         selfcheck: agent.selfcheck.lock().unwrap().clone(),
         sessions: agent.sessions(),
+        identity: Some(agent.deployments.runtime_identity()),
         harness: agent.harness_events(),
     }
 }

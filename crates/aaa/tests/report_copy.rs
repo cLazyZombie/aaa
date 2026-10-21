@@ -37,6 +37,7 @@ async fn failing_report_agent_keeps_working_and_recovers_without_a_new_hash() {
         features: vec!["terminal.v1".into(), "adopt.v1".into()],
         dev_mode: true,
         selfcheck: None,
+        identity: None,
         harness: vec![HarnessEvent {
             session: "s".into(),
             harness: "codex".into(),

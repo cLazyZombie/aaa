@@ -410,6 +410,7 @@ mod tests {
                 dev_mode: false,
                 selfcheck: None,
                 sessions: vec![],
+                identity: None,
                 harness: vec![],
             },
             false,

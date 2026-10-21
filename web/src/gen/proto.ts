@@ -889,7 +889,12 @@ export type RolloutSpec = { from: string,
 /**
  * Some이면 이 머신의 빌드 후보를 Agent link로 가져온다. None은 L1 미리 복사 경로다.
  */
-source_machine?: string | null, sha256: string, commit: string | null, machines: Array<string>, };
+source_machine?: string | null, sha256: string, commit: string | null, machines: Array<string>,
+/**
+ * 재시작만 하는 rollout(관리 GUI W6c, 답 1A): 대상 한 머신의 이 서비스를 지금 판 그대로 다시 띄우고 guard로 확인한다.
+ * 후보·전송·교체가 없고 `from`·`sha256`은 host가 재시작 전 실행 신원으로 채운다
+ */
+restart?: DeployService | null, };
 
 export type RolloutPhase = "transfer" | "preflight" | "host_update" | "host_restart" | "agent_update" | "agent_restart";
 
@@ -907,7 +912,11 @@ export type RolloutView = { id: string, project: string, actor: string, spec: Ro
  */
 recovery_enabled: boolean, recovery: DeployGuardView | null, recovery_started_ms: number, created_ms: number, updated_ms: number, };
 
-export type RolloutCard = { id: string, state: RolloutState, version: string | null, sha256: string, commit: string | null, cursor: number, steps: Array<RolloutCardStep>, error: string | null, recovery_phase: DeployGuardPhase | null, recovery_sha256: string | null, created_ms: number, updated_ms: number, };
+export type RolloutCard = { id: string, state: RolloutState, version: string | null, sha256: string, commit: string | null,
+/**
+ * 재시작만 하는 rollout의 서비스(W6c). 교체 rollout은 없다
+ */
+restart?: DeployService | null, cursor: number, steps: Array<RolloutCardStep>, error: string | null, recovery_phase: DeployGuardPhase | null, recovery_sha256: string | null, created_ms: number, updated_ms: number, };
 
 export type RolloutCardStep = { machine: string, phase: RolloutPhase, completed: boolean, started_ms: number, transferred_bytes: number, total_bytes: number, };
 

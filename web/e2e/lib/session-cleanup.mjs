@@ -64,3 +64,17 @@ export async function terminateSessionHosts(dir) {
     if (live(p) && p.command.includes(path.join(dir, id))) await terminateTree(p);
   }
 }
+
+// 독립 배포 감시(재시작 rollout, W6c)도 agent의 자식이 아니다(setsid). 기록 PID의 명령줄이 이 실험실 상태 폴더의
+// `deployment-guard`일 때만 끝낸다.
+export async function terminateDeployGuards(stateDir) {
+  const dir = path.join(stateDir, "agent", "deployments");
+  if (!fs.existsSync(dir)) return;
+  for (const name of fs.readdirSync(dir).filter((n) => n.endsWith(".guard.json"))) {
+    let view;
+    try { view = JSON.parse(fs.readFileSync(path.join(dir, name), "utf8")); }
+    catch (e) { if (e.code === "ENOENT") continue; throw e; }
+    const p = processes().find((p) => p.pid === view.worker_pid);
+    if (live(p) && p.command.includes("deployment-guard") && p.command.includes(stateDir)) await terminateTree(p);
+  }
+}

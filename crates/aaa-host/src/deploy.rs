@@ -94,18 +94,20 @@ impl Host {
         id: String,
         action: DeployAction,
     ) -> Result<FrontResponse, ErrorBody> {
-        let web = web_controller(role, actor);
-        let project = if web {
-            if !matches!(action, DeployAction::Restart { .. }) {
-                return Err(err(
-                    ErrorCode::Forbidden,
-                    "웹은 서비스 재시작만 한다. 실행 파일 교체는 설정 「배포」의 rollout으로 한다",
-                ));
-            }
-            self.instance_project()?
-        } else {
-            self.deployment_authorize(actor)?
-        };
+        if web_controller(role, actor) {
+            return Err(err(
+                ErrorCode::Forbidden,
+                "웹은 개별 배포를 하지 않는다. 재시작은 재시작 rollout, 실행 파일 교체는 설정 「배포」의 rollout으로 한다",
+            ));
+        }
+        // 재시작은 독립 감시가 새 프로세스를 확인하는 재시작 rollout으로만 한다(관리 GUI W6c, 답 1A)
+        if matches!(action, DeployAction::Restart { .. }) {
+            return Err(err(
+                ErrorCode::BadRequest,
+                "재시작은 재시작 rollout으로 한다: 새 판 CLI `aaa service restart` 또는 웹 설정 「배포」",
+            ));
+        }
+        let project = self.deployment_authorize(actor)?;
         if id.len() != 26 || !id.bytes().all(|b| b.is_ascii_alphanumeric()) {
             return Err(err(ErrorCode::BadRequest, "배포 작업 ID 형식이 아니다"));
         }
@@ -139,7 +141,6 @@ impl Host {
                 None => {
                     let mut record = request;
                     record["created_ms"] = aaa_common::util::now_ms().into();
-                    record["web"] = web.into();
                     self.db.set_meta(&key, &record.to_string()).map_err(|e| err(ErrorCode::Internal, e.to_string()))?
                 }
             }
@@ -148,9 +149,6 @@ impl Host {
         let response =
             self.live_conn(&mid)?.request(AgentRequest::DeployStart { id: id.clone(), project, action }).await?;
         match response {
-            AgentResponse::Deployment { job, .. } if web => Ok(FrontResponse::DeployJobs {
-                jobs: vec![job_card(id.clone(), self.machine_name(&mid), &self.deploy_record(&id)?, Some(&job))],
-            }),
             AgentResponse::Deployment { job, running_software, running_sha256, .. } => Ok(FrontResponse::Deployment {
                 machine: self.machine_name(&mid),
                 job,
@@ -313,6 +311,7 @@ mod tests {
                     dev_mode: true,
                     selfcheck: None,
                     sessions: vec![],
+                    identity: None,
                     harness: vec![],
                 },
                 true,

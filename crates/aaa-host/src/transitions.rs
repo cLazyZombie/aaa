@@ -448,6 +448,7 @@ mod tests {
                         dev_mode: true,
                         selfcheck: None,
                         sessions: sessions.to_vec(),
+                        identity: None,
                         harness: vec![event("first", "working", 1), event("s", "working", 1)],
                     },
                     local,

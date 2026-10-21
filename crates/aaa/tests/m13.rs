@@ -5655,6 +5655,7 @@ async fn legacy_agent_stays_connected_but_cannot_drop_host_profile() {
         dev_mode: false,
         selfcheck: None,
         sessions: vec![],
+        identity: None,
         harness: vec![],
     }))
     .await

@@ -237,6 +237,8 @@ struct MachineRt {
     health_sent: Option<health::HealthSent>,
     /// agent가 hello에서 알린 기능(`cwd.v1` 등). 모르는 요청을 받은 옛 agent는 연결을 끊으므로 보내기 전에 본다.
     features: Vec<String>,
+    /// agent가 hello에서 알린 실행 신원(관리 GUI W6c 재시작 rollout의 재시작 전 신원). 옛 agent는 없다
+    identity: Option<aaa_proto::RuntimeIdentity>,
     /// 로컬 agent 프로세스(로컬 socket peer credential). 그 세션에서 띄운 명령(routine 명령)은 떼어 낸 프로세스가 아니다(plan §8.164).
     agent_pid: Option<u32>,
     /// 이 연결에 화면 색을 차례로 보내는 곳(agent 기능 `term_colors.v1`, colors.rs). 놓으면 보내던 task가 끝난다
@@ -659,6 +661,7 @@ impl Host {
                     health: None,
                     health_sent: None,
                     features: vec![],
+                    identity: None,
                     agent_pid: None,
                     colors: None,
                 },
@@ -838,6 +841,7 @@ impl Host {
                 health: None,
                 health_sent: None,
                 features: vec![],
+                identity: None,
                 agent_pid: None,
                 colors: None,
             });
@@ -846,6 +850,7 @@ impl Host {
             m.boot_id = Some(hello.boot_id.clone());
             m.dev_mode = hello.dev_mode;
             m.features = hello.features.clone();
+            m.identity = hello.identity.clone();
             m.conn = Some(conn);
             // 다시 붙은 agent는 설정이 바뀌었을 수 있다. 새 보고를 기다린다.
             m.health = None;
@@ -3006,6 +3011,7 @@ impl Host {
                 health: None,
                 health_sent: None,
                 features: vec![],
+                identity: None,
                 agent_pid: None,
                 colors: None,
             },
@@ -3493,6 +3499,7 @@ mod pairing_tests {
                 health: None,
                 health_sent: None,
                 features: vec![],
+                identity: None,
                 agent_pid: None,
                 colors: None,
             },
