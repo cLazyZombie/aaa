@@ -1,10 +1,25 @@
-//! 웹 「배포」의 권한·기록·요약(관리 GUI W6a, plan §8.359). rollout 진행 자체는 m13 `rollout`이 실제 host·agent로 본다.
+//! 웹 「배포」의 권한·기록·요약(관리 GUI W6a, plan §8.361). rollout 진행 자체는 m13 `rollout`이 실제 host·agent로 본다.
 use super::*;
 use aaa_proto::{AgentHello, DeviceRole, FrontRequest};
 
 const WEB: &str = "device:phone";
-async fn lab() -> (Arc<Host>, std::path::PathBuf) {
+/// 시험 몸을 따로 만든 runtime에서 돌리고, runtime을 끝낸 뒤 상태 폴더를 지운다. `agent_connected`가 띄운 task(`rewatch` 등)는
+/// 이 시험에서 한 번도 돌지 않은 채 Host를 쥐고 있어, runtime을 끝내야 Host와 host DB가 닫힌다. Windows는 열린 DB가 든 폴더를
+/// 지우지 못한다(os error 32, `deploy` 시험과 같다). Host가 정말 닫혔는지는 모든 OS에서 본다
+fn in_lab<F: std::future::Future<Output = ()>>(body: impl FnOnce(Arc<Host>) -> F) {
     let root = std::env::temp_dir().join(format!("aaa-rollout-web-{}", aaa_common::util::new_id()));
+    let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
+    let host = rt.block_on(async {
+        let h = lab(&root);
+        let host = Arc::downgrade(&h);
+        body(h).await;
+        host
+    });
+    drop(rt);
+    assert!(host.upgrade().is_none(), "runtime을 끝냈는데 Host가 남아 있다(DB가 열린 채다)");
+    std::fs::remove_dir_all(root).unwrap();
+}
+fn lab(root: &std::path::Path) -> Arc<Host> {
     let mut cfg = aaa_config::HostConfig::default();
     cfg.projects.root = root.join("projects").to_string_lossy().into();
     cfg.notify.web_push = false;
@@ -31,15 +46,17 @@ async fn lab() -> (Arc<Host>, std::path::PathBuf) {
         crate::AgentConn::new(aaa_common::conn::spawn_writer(tokio::io::sink(), aaa_proto::MAX_FRAME), 1),
     );
     h.agent_disconnected("m", 1);
-    (h, root)
+    h
 }
 fn restart() -> DeployAction {
     DeployAction::Restart { service: DeployService::Agent }
 }
 
-#[tokio::test]
-async fn web_controllers_restart_only_and_session_agents_cannot_plan() {
-    let (h, root) = lab().await;
+#[test]
+fn web_controllers_restart_only_and_session_agents_cannot_plan() {
+    in_lab(web_controllers_restart_only_and_session_agents_cannot_plan_body);
+}
+async fn web_controllers_restart_only_and_session_agents_cannot_plan_body(h: Arc<Host>) {
     let start = |action| FrontRequest::DeployStart { machine: Some("mac-a".into()), id: new_id(), action };
     // 웹은 실행 파일을 직접 바꾸지 못한다(교체는 rollout으로만)
     let update = DeployAction::CheckedUpdate { from: "/tmp/aaa".into(), sha256: "a".repeat(64), dry_run: false };
@@ -103,17 +120,17 @@ async fn web_controllers_restart_only_and_session_agents_cannot_plan() {
     };
     let e = h.call(DeviceRole::Controller, WEB, FrontRequest::RolloutStart { id: new_id(), spec }).await.unwrap_err();
     assert_eq!(e.code, ErrorCode::BadRequest);
-    drop(h);
-    std::fs::remove_dir_all(root).unwrap();
 }
 
 fn new_id() -> String {
     aaa_common::util::new_id()
 }
 
-#[tokio::test]
-async fn web_approval_lasts_the_rollout_and_web_reads_only_display_cards() {
-    let (h, root) = lab().await;
+#[test]
+fn web_approval_lasts_the_rollout_and_web_reads_only_display_cards() {
+    in_lab(web_approval_lasts_the_rollout_and_web_reads_only_display_cards_body);
+}
+async fn web_approval_lasts_the_rollout_and_web_reads_only_display_cards_body(h: Arc<Host>) {
     // coordinator_deploy가 꺼져 있어도 사람·웹 기기의 승인은 그 rollout 끝까지 남는다. coordinator 시작은 매번 safety를 본다
     let mut r = super::tests::record();
     for (actor, permitted) in [(WEB, true), ("person:42", true), ("local:test@coordinator", false), ("device:", false)]
@@ -169,13 +186,13 @@ async fn web_approval_lasts_the_rollout_and_web_reads_only_display_cards() {
     let resent =
         h.call(DeviceRole::Controller, WEB, FrontRequest::RolloutStart { id: sent.id.clone(), spec: again }).await;
     assert!(matches!(&resent, Ok(FrontResponse::RolloutCards { cards }) if cards[0].id == sent.id), "{resent:?}");
-    drop(h);
-    std::fs::remove_dir_all(root).unwrap();
 }
 
-#[tokio::test]
-async fn web_job_list_is_newest_first_and_hides_executor_details() {
-    let (h, root) = lab().await;
+#[test]
+fn web_job_list_is_newest_first_and_hides_executor_details() {
+    in_lab(web_job_list_is_newest_first_and_hides_executor_details_body);
+}
+async fn web_job_list_is_newest_first_and_hides_executor_details_body(h: Arc<Host>) {
     let action = serde_json::to_value(restart()).unwrap();
     let put = |id: &str, v: serde_json::Value| h.db.set_meta(&format!("deploy:{id}"), &v.to_string()).unwrap();
     let (a, b, legacy, other) = (new_id(), new_id(), new_id(), new_id());
@@ -228,6 +245,4 @@ async fn web_job_list_is_newest_first_and_hides_executor_details() {
     assert!(!wire.contains("987654") && !wire.contains("plist-marker"), "{wire}");
     assert_eq!((card.state, card.updated_ms), (Some(DeployState::Failed), 12));
     assert!(card.error.unwrap().contains("coordinator의 배포 기록"));
-    drop(h);
-    std::fs::remove_dir_all(root).unwrap();
 }

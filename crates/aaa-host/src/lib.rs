@@ -61,6 +61,8 @@ mod project;
 mod prompt;
 mod prompt_box;
 mod push;
+mod quota;
+mod quota_rpc;
 mod report_mark;
 mod resource;
 mod restore;
@@ -76,6 +78,7 @@ pub mod tailscale;
 mod task_attach;
 mod task_clean;
 mod task_edit;
+mod task_queue;
 mod task_repo;
 mod tasks;
 mod text;
@@ -490,6 +493,7 @@ pub struct Host {
     pub task_events: broadcast::Sender<(String, String)>,
     /// ticker가 마지막으로 본 프로젝트마다의 TASKS.md 상태
     tasks_seen: Mutex<HashMap<String, coord::TasksSeen>>,
+    queue_gate: tokio::sync::Mutex<()>,
     /// 파일마다의 쓰기 lock(TASKS.md 편집과 ticker의 외부 변경 감지, file_rev.rs)
     file_locks: file_rev::Locks,
     /// ticker 묶음 셈까지 미룬 thread pane의 끝남(pane → 알림, notice.rs `turn_finished`)
@@ -552,6 +556,7 @@ pub struct Host {
     vapid: Option<push::Vapid>,
     /// 구독 사용량(웹이 물을 때만 읽는다)
     usage: usage::UsageService,
+    account_quota: tokio::sync::Mutex<quota::Cache>,
     /// 알림 webhook 대기열(설정이 켜져 있을 때)
     notify_tx: Mutex<Option<tokio::sync::mpsc::UnboundedSender<aaa_proto::InboxItem>>>,
     /// 지금 쓰는(보이고 focus가 있는) 웹 화면 수(events WS `presence`). 하나라도 있으면 Web Push를 보내지 않는다
@@ -712,6 +717,7 @@ impl Host {
             notice_events: broadcast::channel(64).0,
             task_events: broadcast::channel(64).0,
             tasks_seen: Mutex::new(HashMap::new()),
+            queue_gate: tokio::sync::Mutex::new(()),
             file_locks: Default::default(),
             turn_ends: Mutex::new(HashMap::new()),
             question_lock: std::sync::Mutex::new(()),
@@ -746,6 +752,7 @@ impl Host {
             file_caps: Mutex::new(HashMap::new()),
             vapid,
             usage: usage::UsageService::new(usage::UsageContext::system()),
+            account_quota: Default::default(),
             notify_tx: Mutex::new(None),
             in_use: std::sync::atomic::AtomicUsize::new(0),
             viewing: Mutex::new(seen::Viewing::default()),
@@ -1450,11 +1457,10 @@ impl Host {
             }
             FrontRequest::DeployStatus { machine, id } => self.deployment_status(role, actor, machine, id).await,
             FrontRequest::Post { project, input } => {
-                self.front_post(&project, input, actor).map(|result| FrontResponse::Post { result })
+                self.front_post(&project, input, actor).map(|result| FrontResponse::Post { result, handled: None })
             }
-            FrontRequest::PostStatus { project, post_id } => {
-                self.post_status(&project, &post_id, actor).map(|result| FrontResponse::Post { result })
-            }
+            FrontRequest::PostStatus { project, post_id } => self.post_status_view(&project, &post_id, actor),
+            FrontRequest::PostHandled { project, post_id } => self.post_handled(&project, &post_id, actor),
             FrontRequest::PostList { project } => self.post_list(&project),
             FrontRequest::PostUnmute { project, thread } => self.post_unmute(&project, &thread, actor),
             FrontRequest::Asks { project } => self.asks_view(&project),
@@ -1528,6 +1534,7 @@ impl Host {
                     aaa_proto::ThreadKind::Dir
                 });
                 let mut a = orch::StartArgs {
+                    reservation: None,
                     account: selected_account,
                     holds,
                     project,
@@ -1544,10 +1551,47 @@ impl Host {
                 let (mut warnings, picked) = match from_task {
                     Some(t) => {
                         let (w, t) = self.apply_from_task(&mut a, &t, task_block.as_deref()).await?;
+                        if let Some(id) = &t.id
+                            && let Some(q) = self.db.queue_list(&a.project).map_err(orch::internal)?.iter().find(|q| {
+                                &q.task_id == id
+                                    && matches!(
+                                        q.state,
+                                        aaa_proto::QueueState::Queued
+                                            | aaa_proto::QueueState::Check
+                                            | aaa_proto::QueueState::Starting
+                                            | aaa_proto::QueueState::Running
+                                    )
+                            })
+                        {
+                            if q.state == aaa_proto::QueueState::Check {
+                                return Err(err(
+                                    ErrorCode::Conflict,
+                                    "확인 필요한 예약이다. 원인을 고쳐 예약을 갱신하거나 취소한다",
+                                ));
+                            }
+                            if let Some(tid) = &q.thread {
+                                return self.thread_show(&a.project, tid).map(FrontResponse::Thread);
+                            }
+                            return Err(err(
+                                ErrorCode::Conflict,
+                                "예약한 task는 host가 시작한다. queue를 보거나 예약을 취소한다",
+                            ));
+                        }
                         let placed = self.apply_task_repo(&mut a, t.repo.as_deref(), kind_given)?;
                         (w.into_iter().chain(placed).collect::<Vec<_>>(), Some(t))
                     }
-                    None => (self.task_start_warning(&a.project, &a.title).into_iter().collect(), None),
+                    None => {
+                        if self.coordinator_project_of_actor(actor).as_deref() == Some(&a.project)
+                            && self
+                                .task_board(&a.project)?
+                                .tasks
+                                .iter()
+                                .any(|t| t.title == a.title && (t.profile.is_some() || t.machine.is_some()))
+                        {
+                            return Err(err(ErrorCode::Forbidden, "모델·머신을 정한 task는 --from-task로 시작한다"));
+                        }
+                        (self.task_start_warning(&a.project, &a.title).into_iter().collect(), None)
+                    }
                 };
                 // 머신을 주지 않았으면 project.toml repos에 적힌 그 repo의 머신(herdr-projects `start`의 `listed`)
                 if a.machine.is_none() {
@@ -1584,6 +1628,10 @@ impl Host {
                 FrontResponse::Context(c)
             }),
             FrontRequest::Tasks { project } => self.task_board(&project).map(FrontResponse::TaskBoard),
+            FrontRequest::TaskQueue { project, action } => self.task_queue(&project, action, actor).await,
+            FrontRequest::TaskArchive { project, restore } => {
+                self.task_archive(&project, restore.as_deref(), actor).await
+            }
             FrontRequest::TaskEdit { project, ops, base_sha256 } => {
                 self.task_edit(&project, ops, base_sha256, actor).await
             }
@@ -2355,6 +2403,14 @@ impl Host {
         spec: SpawnSpec,
         actor: &str,
     ) -> Result<String, ErrorBody> {
+        // managed thread는 인증 유무와 관계없이 launch·identity·감시를 함께 잇는다.
+        // thread_restart가 자리 교체와 옛 기록 정리도 맡으므로 여기서 두 번 교체하지 않는다.
+        if let Some(rec) = self.thread_of_pane(id).filter(|r| r.kind != aaa_proto::ThreadKind::Adopted) {
+            let resumed = self.thread_restart(&rec.project, &rec.id, true, None, actor).await?;
+            let new_id = resumed.pane.ok_or_else(|| err(ErrorCode::Internal, "thread 세션이 없다"))?;
+            self.db.audit(actor, "pane_resume", &format!("{id} -> {new_id}"));
+            return Ok(new_id);
+        }
         let new_id = self.respawn_with_account(id, mid, spec, actor).await?;
         self.db.audit(actor, "pane_resume", &format!("{id} -> {new_id}"));
         self.replace_pane(id, &new_id, mid, actor).await;
@@ -3174,7 +3230,7 @@ pub(crate) fn public_origin_in(db: &db::Db) -> Option<String> {
     Some(tailscale::https_url(&dns, port).to_ascii_lowercase())
 }
 
-/// `aaa host` 실행: 설정 폴더를 읽어 host를 띄운다. 읽지 못하면 끝내지 않고 안전 모드(plan §8.360)로 웹만 열며, 되돌리거나
+/// `aaa host` 실행: 설정 폴더를 읽어 host를 띄운다. 읽지 못하면 끝내지 않고 안전 모드(plan §8.368)로 웹만 열며, 되돌리거나
 /// 다시 읽어 설정이 맞으면 정상 host로 이어 간다. OS 감독자에는 실제 listener 준비 뒤에만(안전 모드 웹이든 정상 host든 한 번) 알린다.
 /// 서비스 등록 자체는 ready가 아니다.
 pub async fn run(

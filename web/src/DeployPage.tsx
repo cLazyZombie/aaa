@@ -1,4 +1,4 @@
-// 관리 GUI W6a(plan §8.359): 설정 「배포」. 빌드 머신에 이미 있는 후보(옆에 provenance.json이 있는 aaa)를 점검(provenance·SHA 대조와
+// 관리 GUI W6a(plan §8.361): 설정 「배포」. 빌드 머신에 이미 있는 후보(옆에 provenance.json이 있는 aaa)를 점검(provenance·SHA 대조와
 // dry-run self-check, 대상 순서와 준비)한 뒤 확인 창 하나로 rollout을 시작하고, 같은 rollout ID를 기록에서 다시 연다. 서비스 재시작은
 // 머신마다 확인 창으로 연다. host가 판정한다(조작 기기만, 웹은 실행 파일을 올리지 않는다, 진행 중 rollout이 있으면 거부). 웹은 상태를
 // 갖지 않는다: 기록·작업은 host에서 다시 읽는다.

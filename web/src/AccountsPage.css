@@ -25,3 +25,11 @@
 @media (max-width: 640px) {
   .acct-new { grid-template-columns: minmax(0, 1fr); }
 }
+
+.acct-quota { margin-top: 10px; padding: 10px; border-radius: var(--radius-md); background: var(--bg-elevated); min-width: 0; overflow-wrap: anywhere; }
+.acct-quota h4 { margin: 0 0 6px; font-size: var(--fs-sm); }
+.acct-quota p { margin: 3px 0; font-size: var(--fs-xs); color: var(--text-dim); }
+.acct-quota-window { padding: 6px 0; }
+.acct-quota-window.is-stale, .acct-quota-window.is-unknown { opacity: .65; }
+.acct-quota-title { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 4px 10px; font-size: var(--fs-sm); }
+.acct-quota meter { width: 100%; height: 10px; accent-color: var(--accent); }

@@ -265,6 +265,35 @@ esac
             || format!("서비스 기록: {:?}", std::fs::read_to_string(&service_log)),
         )
     };
+    // 복구도 설치와 서비스 재시작을 나눈다. 옛 프로세스 기동부터 파일 대조·복구·서비스를 한 상한으로 재면
+    // 큰 실행 파일을 복구 중인데 서비스가 멈췄다고 오판한다. 같은 표지의 반복은 상한을 다시 시작하지 않는다.
+    let restored_file = |file: &Path| {
+        let load = || -> Option<Value> { serde_json::from_slice(&std::fs::read(file).ok()?).ok() };
+        let check = |v: &Value| {
+            assert_ne!(v["phase"], "failed", "파일 복구 전에 감시 실패: {v}");
+            assert_ne!(v["phase"], "cancelled", "파일 복구 전에 감시 취소: {v}");
+        };
+        wait_for_diag(
+            "독립 감시의 파일 복구 시작",
+            T,
+            || {
+                let v = load()?;
+                check(&v);
+                (v["restore_started"] == true).then_some(())
+            },
+            || format!("감시 기록: {:?}", load()),
+        );
+        wait_for_diag(
+            "독립 감시의 파일 복구 완료 뒤 서비스 단계 진입",
+            T,
+            || {
+                let v = load()?;
+                check(&v);
+                matches!(v["phase"].as_str(), Some("restarting" | "awaiting_old" | "restored")).then_some(())
+            },
+            || format!("감시 기록: {:?}", load()),
+        );
+    };
     // 서비스 대기 상한에 앞선 사전 검사·설치 시간을 섞지 않는다. 실제 단계 진행만 다음 대기로 넘어간다.
     // 같은 rollout의 같은 cursor/시작 표지를 되풀이하는 사건은 한도를 새로 시작하지 않는다.
     let phase_started = |id: &str, phase: aaa_proto::RolloutPhase| {
@@ -524,6 +553,7 @@ esac
     w.lab.kill("rollout-b-new");
     // launchctl이 옛 실행 파일을 잘못 다시 띄운 사건. 감시는 원래 agent 밖에서 살아 있어야 한다.
     w.lab.spawn_command("rollout-b-wrong", agent_cmd(&b, &old_b, "b", &proxy.addr, "labB"));
+    restored_file(&guard_file);
     let restart = next_call(8);
     assert!(restart.starts_with("b ") && restart.ends_with("/dev.aaa.agent"), "{restart}");
     let restoring = wait_for("독립 감시가 remote 복구 재시작 뒤 옛 프로세스를 기다림", T, || {
@@ -575,10 +605,11 @@ esac
     assert!(next_call(9).ends_with("/dev.aaa.host"));
     w.lab.kill("rollout-host-recovery-resume");
     w.lab.spawn_command("rollout-host-wrong", w.h.cmd_bin(&old_a, &["host"]));
-    let restart = next_call(10);
-    assert!(restart.starts_with("a ") && restart.ends_with("/dev.aaa.host"), "{restart}");
     let host_guard_id = fourth["rollout"]["steps"][3]["job_id"].as_str().unwrap();
     let host_guard_file = w.h.state.join(format!("agent/deployments/{host_guard_id}.guard.json"));
+    restored_file(&host_guard_file);
+    let restart = next_call(10);
+    assert!(restart.starts_with("a ") && restart.ends_with("/dev.aaa.host"), "{restart}");
     wait_for("host 복구 후 새 옛판 프로세스 대기", T, || {
         let v: Value = serde_json::from_slice(&std::fs::read(&host_guard_file).ok()?).ok()?;
         (v["phase"] == "awaiting_old").then_some(())
@@ -618,10 +649,11 @@ esac
     assert!(next_call(12).ends_with("/dev.aaa.agent"));
     w.lab.kill("rollout-a-third");
     w.lab.spawn_command("rollout-a-wrong", agent_cmd(&w.h, &old_a, "a", "local", "labA"));
-    assert!(next_call(13).ends_with("/dev.aaa.host"));
-    assert!(next_call(14).ends_with("/dev.aaa.agent"));
     let local_guard_id = fifth["rollout"]["steps"][4]["job_id"].as_str().unwrap();
     let local_guard_file = w.h.state.join(format!("agent/deployments/{local_guard_id}.guard.json"));
+    restored_file(&local_guard_file);
+    assert!(next_call(13).ends_with("/dev.aaa.host"));
+    assert!(next_call(14).ends_with("/dev.aaa.agent"));
     wait_for("로컬 복구가 host/agent 둘의 새 프로세스를 기다림", T, || {
         let v: Value = serde_json::from_slice(&std::fs::read(&local_guard_file).ok()?).ok()?;
         (v["phase"] == "awaiting_old").then_some(())
@@ -695,6 +727,7 @@ else:
         use std::io::Write;
         gate.write_all(b"!").unwrap();
     }
+    restored_file(&race_guard_file);
     assert!(next_call(15).ends_with("/dev.aaa.host"));
     wait_for("늦은 설치 rename 뒤 baseline 복구 완료", T, || (digest(&a_exe) == third_sha).then_some(()));
     w.lab.kill("rollout-host-local-restored");

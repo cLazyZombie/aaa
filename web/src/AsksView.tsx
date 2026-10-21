@@ -4,7 +4,7 @@
 // 선택지에 그림이 있으면 선택지마다 큰 그림 카드(데스크톱 2열, 2B)다. 답한 것은 답할 때의 원문(질문·본문·선택지 전체와 까닭·
 // 고른 답·때·기기)과 「그때 보고」를 보인다. 질문 카드 꼴은 화면 선택 창 카드(PromptCard, herdr-web-ui)를 따른다.
 import { useCallback, useEffect, useId, useMemo, useRef, useState, type MouseEvent } from "react";
-import { Check, ChevronRight, CircleQuestionMark, ListChecks, Maximize2, MessageSquareReply, Send, Trash2, Bot } from "lucide-react";
+import { Check, ChevronRight, CircleQuestionMark, ListChecks, Maximize2, MessageSquareReply, Send, Trash2, Bot, X } from "lucide-react";
 import type { AskRecord, FrontResponse, ThreadQuestion, ThreadQuestions, ThreadView } from "./gen/proto";
 import { ApiError, call, onAsksChanged } from "./api";
 import { Markdown, MarkdownImageContext } from "./Markdown";
@@ -113,6 +113,7 @@ export type AskSelection = { kind: "open"; ask: OpenAsk } | { kind: "done"; reco
 
 export function AsksView({
   shown,
+  onClose,
   selection,
   canControl,
   onAnswer,
@@ -123,6 +124,7 @@ export function AsksView({
   onThread,
 }: {
   shown: boolean;
+  onClose: () => void;
   selection: AskSelection;
   canControl: boolean;
   onAnswer: (t: ThreadView, picks: (number | null)[], text: string | null) => Promise<void>;
@@ -168,6 +170,9 @@ export function AsksView({
           <strong>{head.title}</strong>
           <span className="muted">{head.sub}</span>
         </div>
+        <button type="button" className="icon-button" aria-label="답할 것 닫기" title="답할 것 닫기" data-testid="asks-close" onClick={onClose}>
+          <X aria-hidden="true" />
+        </button>
         <HeadMore />
       </header>
       <div className="thread-body" ref={body} onClick={onBodyClick} data-testid="asks-scroll">
@@ -446,7 +451,7 @@ function DoneCard({ r, canControl, onForget, onZoom, onThread }: {
   return (
     <section className="prompt-card thread-ask-card ask-card is-answered" data-testid="ask-done-card" data-kind={r.kind}>
       <header className="prompt-card-header">
-        <KindChip kind={r.kind} done={r.kind === "question" ? `답함 ${r.summary}` : r.summary} />
+        <KindChip kind={r.kind} done={r.kind === "question" && r.answer ? `답함 ${r.summary}` : r.summary} />
         {r.kind === "question" ? (
           <button type="button" className="linkish prompt-card-where" onClick={() => onThread(r.subject)} title="thread 열기">{r.subject} · {r.title || r.subject}</button>
         ) : (
@@ -454,7 +459,7 @@ function DoneCard({ r, canControl, onForget, onZoom, onThread }: {
         )}
       </header>
       {r.kind !== "question" && <h2 className="ask-card-title">{r.title}</h2>}
-      <p className="ask-done-when" data-testid="ask-done-when">물은 때 {when(r.asked_ms)} · 답한 때 {when(r.done_ms)} · {r.by}</p>
+      <p className="ask-done-when" data-testid="ask-done-when">물은 때 {when(r.asked_ms)} · {r.kind === "question" && !r.answer ? "닫힌 때" : "답한 때"} {when(r.done_ms)} · {r.by}</p>
       {r.items.map((item, n) => {
         const pick = r.answer?.picks[n];
         const pictures = item.choices.some((c) => choicePicture(c.body) !== null);
@@ -496,9 +501,9 @@ function DoneCard({ r, canControl, onForget, onZoom, onThread }: {
         </div>
       )}
       <div className="thread-ask-foot">
-        <span className="muted">{r.kind === "question" ? "답할 때의 사본이다. 그 뒤 새 보고가 와도 남는다" : "처리한 때의 사본이다"}</span>
+        <span className="muted">{r.kind === "question" ? r.answer ? "답할 때의 사본이다. 그 뒤 새 보고가 와도 남는다" : "새 보고로 질문이 닫혔다. 선택한 답은 없다" : "처리한 때의 사본이다"}</span>
         <span className="ask-buttons">
-          {r.kind === "question" && (
+          {r.kind === "question" && base && (
             <button type="button" className="ghost small" aria-expanded={report !== null} data-testid="ask-report-toggle" onClick={toggleReport}>
               {report !== null ? "그때 보고 접기" : "그때 보고 보기"}
             </button>

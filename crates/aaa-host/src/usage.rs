@@ -37,7 +37,7 @@ pub const FRESH_MS: u64 = 5 * 60_000;
 pub const MIN_REFRESH_MS: u64 = 30_000;
 
 /// `MIN_REFRESH_MS`. `AAA_TEST_USAGE_REFRESH_MS`는 시험에서만 줄인다(웹 E2E 32: 가짜 구독 숫자를 바꾼 뒤 바로 다시 읽는다)
-fn min_refresh_ms() -> u64 {
+pub(crate) fn min_refresh_ms() -> u64 {
     std::env::var("AAA_TEST_USAGE_REFRESH_MS").ok().and_then(|v| v.parse().ok()).unwrap_or(MIN_REFRESH_MS)
 }
 /// 실패나 끝난 로그인 뒤: CLI의 다음 refresh를 곧 알아챌 만큼
@@ -923,6 +923,7 @@ impl crate::Host {
         let host = self.clone();
         tokio::spawn(async move {
             let inner = host.clone();
+            let _ = host.quota_report(false).await;
             let before = host.usage.cached().await;
             let changed = match tokio::spawn(async move { inner.usage.report(false).await }).await {
                 Ok(report) => report != before,

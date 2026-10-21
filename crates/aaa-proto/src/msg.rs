@@ -650,6 +650,11 @@ pub enum LinkMsg {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "op", rename_all = "snake_case")]
 pub enum AgentRequest {
+    /// account_quota.v1: 해당 pane이 관측한 비밀 없는 창만 읽는다.
+    AccountQuota {
+        session: String,
+        generation: String,
+    },
     /// account_auth.v1. 비밀을 spec·journal에 넣지 않는 전용 spawn.
     SpawnAccount {
         spec: SpawnSpec,
@@ -1030,6 +1035,9 @@ pub struct PrAnswer {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum AgentResponse {
+    AccountQuota {
+        snapshot: Option<crate::QuotaSnapshot>,
+    },
     DeployGuard {
         guard: Box<crate::DeployGuardView>,
     },
@@ -1672,6 +1680,13 @@ pub enum FrontRequest {
         project: String,
         post_id: String,
     },
+    /// 사용자 답을 받은 확인 필요 post를 처리됨으로 표시한다. 질문 선택·승인·실행은 하지 않는다.
+    PostHandled {
+        #[serde(default)]
+        #[ts(optional, as = "Option<String>")]
+        project: String,
+        post_id: String,
+    },
     PostList {
         #[serde(default)]
         #[ts(optional, as = "Option<String>")]
@@ -2174,6 +2189,20 @@ pub enum FrontRequest {
         #[serde(default)]
         #[ts(optional, as = "Option<String>")]
         project: String,
+    },
+    /// 예약 읽기·등록/내용 갱신·취소·순서 변경. 등록은 해당 내용의 실행 승인이다.
+    TaskQueue {
+        #[serde(default)]
+        #[ts(optional, as = "Option<String>")]
+        project: String,
+        action: crate::QueueOp,
+    },
+    TaskArchive {
+        #[serde(default)]
+        #[ts(optional, as = "Option<String>")]
+        project: String,
+        /// 비면 보기, 있으면 같은 ID로 활성 목록에 복원(예약은 복원하지 않는다).
+        restore: Option<String>,
     },
     /// 할 일 편집(FRONT_API 1.62, 조작 권한). 동작을 차례로 적용해 한 번에 쓴다. 세션 안에서는 그 프로젝트 coordinator만 된다.
     /// `base_sha256`을 주면 파일 전체가 그 판일 때만 쓴다. 답은 `task_edited`(충돌이면 `conflict`, 쓰지 않음)
@@ -2775,6 +2804,7 @@ impl FrontRequest {
             FrontRequest::ThreadStartAccount { start, .. } => start.project_mut(),
             FrontRequest::Post { project, .. }
             | FrontRequest::PostStatus { project, .. }
+            | FrontRequest::PostHandled { project, .. }
             | FrontRequest::PostList { project, .. }
             | FrontRequest::Asks { project, .. }
             | FrontRequest::AskHandle { project, .. }
@@ -2790,6 +2820,8 @@ impl FrontRequest {
             | FrontRequest::Context { project, .. }
             | FrontRequest::Assignable { project, .. }
             | FrontRequest::Tasks { project }
+            | FrontRequest::TaskQueue { project, .. }
+            | FrontRequest::TaskArchive { project, .. }
             | FrontRequest::TaskEdit { project, .. }
             | FrontRequest::TaskLog { project, .. }
             | FrontRequest::TaskLogPrune { project, .. }
@@ -2888,6 +2920,8 @@ impl FrontRequest {
                 | FrontRequest::Context { peek: true, .. }
                 | FrontRequest::Assignable { .. }
                 | FrontRequest::Tasks { .. }
+                | FrontRequest::TaskQueue { action: crate::QueueOp::List, .. }
+                | FrontRequest::TaskArchive { restore: None, .. }
                 | FrontRequest::TaskLog { .. }
                 | FrontRequest::Events { .. }
                 | FrontRequest::Questions { .. }
@@ -2980,6 +3014,10 @@ pub enum FrontResponse {
     },
     Post {
         result: crate::PostResult,
+        /// status 조회에서 확인한 inbox 처리 상태(FRONT_API 1.84). 옛 host는 생략한다.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        #[ts(optional)]
+        handled: Option<bool>,
     },
     Posts {
         posts: Vec<crate::PostEnvelope>,
@@ -3015,6 +3053,12 @@ pub enum FrontResponse {
     },
     /// `tasks`의 답(FRONT_API 1.60)
     TaskBoard(TaskBoard),
+    TaskQueue {
+        entries: Vec<crate::TaskReservation>,
+    },
+    TaskArchive {
+        entries: Vec<crate::ArchivedTask>,
+    },
     /// `task_edit`의 답(FRONT_API 1.62): 쓴 뒤(또는 충돌이면 지금) board. `log_ids`는 이 편집이 남긴 기록
     TaskEdited {
         board: TaskBoard,

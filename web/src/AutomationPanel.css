@@ -8,7 +8,7 @@
 .automation-heading > span, .automation-file { color: var(--text-dim); }
 .automation-summary { line-height: 1.6; }
 .automation-row[data-status="off"] .automation-heading { opacity: .65; }
-.automation-row[data-status="failed"] .automation-heading { color: var(--danger-text); }
+.automation-row[data-status="failed"] .automation-heading, .automation-row[data-status="file-error"] .automation-heading { color: var(--danger-text); }
 .automation-row details { margin-top: 10px; }
 .automation-row summary { cursor: pointer; }
 .automation-row ol { padding-left: 20px; }
@@ -17,7 +17,7 @@
 
 .automation-indicator { width: 7px; height: 7px; flex: 0 0 7px; border-radius: 50%; background: var(--text-dim); }
 .automation-row[data-status="done"] .automation-indicator { background: var(--status-done); }
-.automation-row[data-status="failed"] .automation-indicator { background: var(--status-blocked); }
+.automation-row[data-status="failed"] .automation-indicator, .automation-row[data-status="file-error"] .automation-indicator { background: var(--status-blocked); }
 .automation-row[data-status="waiting"] .automation-indicator, .automation-row[data-status="skipped"] .automation-indicator { background: var(--notice); }
 .automation-approval { color: var(--notice); }
 .automation-row[data-status="stuck"] .automation-indicator { background: var(--status-blocked); }
@@ -35,7 +35,7 @@
 /* 배지(t3code badge: 옅은 바탕 + 같은 색 글) */
 .automation-badge { display: inline-flex; align-items: center; padding: 1px 6px; border-radius: var(--radius-sm); font-size: var(--fs-xs); line-height: 1.5; white-space: nowrap; background: var(--bg-hover); color: var(--text-dim); }
 .automation-badge.is-done { background: var(--status-done-tint); color: var(--status-done); }
-.automation-badge.is-failed, .automation-badge.is-stuck { background: var(--status-blocked-tint); color: var(--status-blocked); }
+.automation-badge.is-failed, .automation-badge.is-file-error, .automation-badge.is-stuck { background: var(--status-blocked-tint); color: var(--status-blocked); }
 .automation-badge.is-notice, .automation-badge.is-waiting, .automation-badge.is-skipped { background: var(--accent-tint); color: var(--notice); }
 .automation-badge.is-legacy { background: var(--accent-tint); color: var(--accent); }
 

@@ -1,4 +1,4 @@
-// 웹 「배포」의 순수 규칙(관리 GUI W6a, plan §8.359). 판정의 정본은 host다(조작 기기만, 빌드 머신에 이미 있는 후보만, 웹은 서비스 재시작만
+// 웹 「배포」의 순수 규칙(관리 GUI W6a, plan §8.361). 판정의 정본은 host다(조작 기기만, 빌드 머신에 이미 있는 후보만, 웹은 서비스 재시작만
 // 개별로 연다, 진행 중 rollout이 있으면 거부). 화면은 점검을 통과한 그 후보·대상일 때만 시작을 연다.
 import { apiAtLeast } from "./automationModel.ts";
 import type { DeployAction, DeployJobCard, DeployState, DeployWork, ErrorCode, RolloutPlanView, RolloutSpec } from "./gen/proto";

@@ -1,4 +1,4 @@
-// 웹 배포·재시작 W6a(plan §8.359): 설정 「배포」에서 빌드 머신에 이미 있는 후보(옆에 provenance.json)를 점검(provenance·SHA 대조와
+// 웹 배포·재시작 W6a(plan §8.361): 설정 「배포」에서 빌드 머신에 이미 있는 후보(옆에 provenance.json)를 점검(provenance·SHA 대조와
 // dry-run self-check, 대상 순서)한 뒤 확인 창 하나로 rollout을 시작하고, 화면을 다시 열어 같은 rollout ID를 기록에서 본다. 서비스 재시작은
 // 확인 창으로 열고 작업 상태를 본다. 보기 전용 기기, 휴대폰 390.
 // 실험실 집(HOME)과 가짜 launchctl을 쓴다: 재시작이 이 Mac의 실제 aaa 서비스에 닿지 않는다. 후보는 허용 표지가 있을 때만 self-check를
@@ -54,7 +54,7 @@ export default async function ({ page }) {
     await nr.getByTestId("deploy-path").fill("~/cand/other/aaa");
     if (await nr.getByTestId("deploy-start").isEnabled()) throw new Error("점검하지 않은 경로로 시작이 열렸다");
     await nr.getByTestId("deploy-path").fill("~/cand/aaa");
-    await shot(page, "62-plan-desktop");
+    await shot(page, "63-plan-desktop");
   });
 
   let id;
@@ -65,7 +65,7 @@ export default async function ({ page }) {
     await nr.getByTestId("deploy-start").click();
     const ask = page.getByRole("alertdialog", { name: `aaa 0.1.2+${commit.slice(0, 12)}을 배포할까요?` });
     await ask.getByText(sha).waitFor();
-    await shot(page, "62-confirm-desktop");
+    await shot(page, "63-confirm-desktop");
     await ask.getByRole("button", { name: "배포 시작" }).click();
     await ask.waitFor({ state: "detached" });
     const started = await nr.getByTestId("deploy-started").textContent();
@@ -88,7 +88,7 @@ export default async function ({ page }) {
     if (done.some((t) => !t.includes("전송·대조"))) throw new Error(`교체 쪽 단계가 끝났다: ${done}`);
     await item.locator('li[aria-current="step"]').getByText("labA · 전송·대조").waitFor();
     if ((await item.textContent()).includes(cand)) throw new Error("기록 요약에 후보 경로가 보인다");
-    await shot(page, "62-history-desktop");
+    await shot(page, "63-history-desktop");
   });
 
   await step("서비스 재시작: 확인 창 → 감독자 재시작(가짜 launchctl) → 작업 완료", async () => {
@@ -99,7 +99,7 @@ export default async function ({ page }) {
     await dialog.getByTestId("deploy-jobs").locator('[data-state="completed"]').getByText("labA · agent 재시작").waitFor();
     const log = fs.readFileSync(calls, "utf8");
     if (!/kickstart -k gui\/\d+\/dev\.aaa\.agent/.test(log)) throw new Error(`감독자 재시작 기록: ${log}`);
-    await shot(page, "62-restart-desktop");
+    await shot(page, "63-restart-desktop");
   });
 
   await step("보기 전용 기기: 기록은 보고 시작·재시작 단추는 없다", async () => {
@@ -118,7 +118,7 @@ export default async function ({ page }) {
     await d.getByTestId("rollout-history").locator(`[data-rollout="${id}"]`).waitFor();
     const wide = await ph.evaluate(() => document.documentElement.scrollWidth > window.innerWidth);
     if (wide) throw new Error("배포 쪽이 가로로 넘친다");
-    await shot(ph, "62-deploy-phone");
+    await shot(ph, "63-deploy-phone");
     await ph.close();
   });
 }

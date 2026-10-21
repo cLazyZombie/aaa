@@ -1,4 +1,4 @@
-// 웹 「배포」 규칙(src/deployModel.ts, 관리 GUI W6a, plan §8.359). 권한·후보 대조의 정본은 host·agent다
+// 웹 「배포」 규칙(src/deployModel.ts, 관리 GUI W6a, plan §8.361). 권한·후보 대조의 정본은 host·agent다
 // (crates/aaa-host/src/rollout/web_tests.rs, crates/aaa-agent/src/deploy/stage.rs). 여기는 화면이 보낼 요청을 정하는 규칙이다.
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";

@@ -844,8 +844,13 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
   const asksShown = sel === "asks:" || sel?.startsWith("ask:") === true || sel?.startsWith("question:") === true;
   const [asksOpened, setAsksOpened] = useState(asksShown);
   const asksAt = useRef<string>("asks:");
+  const beforeAsks = useRef<string | null>(null);
   useEffect(() => {
-    if (!asksShown) return;
+    // 보고서·할 일과 같이 앞 화면을 기억한다. 카드 사이 이동은 돌아갈 곳을 바꾸지 않는다.
+    if (!asksShown) {
+      beforeAsks.current = sel;
+      return;
+    }
     setAsksOpened(true);
     asksAt.current = sel!;
   }, [asksShown, sel]);
@@ -1142,7 +1147,7 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
         if (q?.answer) return { label: `${ref.target} 질문`, tone: "done", state: `답함 · ${q.answer.summary}` };
         // 새 보고로 질문·답이 비어도 host가 남긴 답한 기록이 「답함」이다(누르면 그때 원문)
         const rec = lastAnswer(asksDone, ref.target);
-        if (rec) return { label: `${ref.target} 질문`, tone: "done", state: `답함 · ${rec.answer?.summary ?? rec.summary}` };
+        if (rec) return { label: `${ref.target} 질문`, tone: "done", state: rec.answer ? `답함 · ${rec.answer.summary}` : rec.summary };
         return { label: `${ref.target} 질문`, tone: "plain", state: null };
       },
       open: (ref) => openRefRef.current(ref),
@@ -1328,6 +1333,7 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
         {asksOpened && (
           <AsksView
             shown={asksShown}
+            onClose={() => goSel(beforeAsks.current)}
             selection={askSelection}
             canControl={canControl}
             onAnswer={answerThread}

@@ -69,6 +69,10 @@ draw();
 
   const open = async (pg, name) => {
     await inList(pg, `pane-${name}`);
+    await domIs(pg, "현재 pane 입력 연결 준비", (name) => {
+      const term = document.querySelector('[data-testid="terminal"]');
+      return term?.dataset.paneName === name && term.dataset.readonly === "false";
+    }, name);
     const toggle = pg.getByTestId("chat-toggle");
     if (await toggle.getAttribute("aria-pressed") === "true") await toggle.click();
     await domIs(pg, "터미널에 현재 pane 출력", () => document.querySelector('.xterm-rows')?.textContent.includes('received'));
@@ -133,6 +137,11 @@ draw();
       if (await toggle.getAttribute("aria-pressed") !== "true") await toggle.click();
       const box = page.getByTestId("chat-composer").getByRole("textbox", { name: "메시지" });
       await box.waitFor();
+      // 입력칸은 새 pane의 readonly 해제보다 먼저 보일 수 있다. 23의 대화 입력 준비와 같은 제품 단추를 본다.
+      await domIs(page, "대화 입력 연결 준비", () => {
+        const attach = document.querySelector('[data-testid="chat-composer"] [aria-label="그림 첨부"]');
+        return attach !== null && !attach.disabled;
+      });
       return box;
     };
     // 가짜 harness는 기록을 알리지 않는다: host 전달이 보내짐이고(plan §8.247) 그때 입력창이 비고 풀린다
@@ -215,6 +224,10 @@ draw();
       if (await toggle.getAttribute("aria-pressed") !== "true") await toggle.click();
       const box = pg.getByTestId("chat-composer").getByRole("textbox", { name: "메시지" });
       await box.waitFor();
+      await domIs(pg, "대화 입력 연결 준비", () => {
+        const attach = document.querySelector('[data-testid="chat-composer"] [aria-label="그림 첨부"]');
+        return attach !== null && !attach.disabled;
+      });
       return box;
     };
     const frames = async (pg, from) => (await sentFrames(pg, from))

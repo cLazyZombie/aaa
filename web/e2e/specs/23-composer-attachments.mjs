@@ -3,7 +3,7 @@
 import fs from "node:fs";
 import assert from "node:assert/strict";
 import crypto from "node:crypto";
-import { aaa, step, browser, webkit, pairPage, inList, domIs, root, repo, AA, procs, sentFrames, waitOutput, shot } from "../lib/harness.mjs";
+import { aaa, step, browser, webkit, pairPage, inList, domIs, root, repo, AA, procs, sentFrames, waitOutput, shot, until } from "../lib/harness.mjs";
 import { pairDevice } from "../lib/devices.mjs";
 
 // CODEX_HOME: agent가 Codex 대화 기록을 읽는 폴더(실험실 안, 실제 ~/.codex는 건드리지 않는다)
@@ -598,7 +598,7 @@ draw();
     aaa("pane", "kill", "steer-codex");
   });
 
-  await step("대화 이미지: Chrome·Safari·iPhone·iPad의 붙여넣기·드롭·파일 선택은 uploads에 저장하고 보내기로 coordinator가 읽는다", async () => {
+  await step("대화 이미지: Chrome·Safari·iPhone·iPad에서 올린 그림을 coordinator가 읽고 task 첨부로 thread에 넘긴다", async () => {
     const png = fs.readFileSync(`${root}/pic.png`);
     const digest = crypto.createHash("sha256").update(png).digest("hex");
     const wk = await webkit.launch();
@@ -614,12 +614,14 @@ draw();
           if (method === "picker") {
             const choose = p.waitForEvent("filechooser");
             await composer.getByRole("button", { name: "그림 첨부", exact: true }).click();
-            await (await choose).setFiles(`${root}/pic.png`);
+            await (await choose).setFiles(name === "iphone"
+              ? { name: "IMG_0001.PNG", mimeType: "", buffer: png }
+              : `${root}/pic.png`);
           } else if (!await fileEvent(box, method, png, method === "paste" ? "그림의 대체 텍스트" : "")) throw new Error(`${name} ${method} 파일 사건을 처리하지 않았다`);
           await domIs(p, "첨부 완료", () => document.querySelector(".composer-attachment")?.classList.contains("is-ready"));
           const text = await box.inputValue();
           const path = /^@([^\s]+) /.exec(text)?.[1];
-          if (!path?.startsWith(`${project}/uploads/`) || !fs.readFileSync(path).equals(png)) throw new Error(`${name} ${method}: uploads 원본과 다르다 ${text}`);
+          if (path !== `${project}/uploads/${digest.slice(0, 16)}.png` || !fs.readFileSync(path).equals(png)) throw new Error(`${name} ${method}: uploads 이름·원본과 다르다 ${text}`);
           const sent = await sentFrames(p, before);
           if (sent.some((f) => ["input", "submit", "attach"].includes(f.t))) throw new Error(`보내기 전에 pane에 입력했다 ${JSON.stringify(sent)}`);
           await composer.locator(".composer-attachment img").evaluate((img) => img.decode());
@@ -635,6 +637,36 @@ draw();
             await shot(p, `chat-image-${name}`);
           }
           await composer.locator(".composer-attachment").waitFor({ state: "detached" });
+          if (method === "picker") {
+            // coordinator가 받은 경로를 task 메모에 넣고 실제 thread 시작까지 간다(휴대폰도 같은 경계).
+            const title = `대화 그림 ${name}`;
+            const image = `uploads/${digest.slice(0, 16)}.png`;
+            const before = fs.readdirSync(`${project}/uploads`).sort();
+            const taskUpload = await p.evaluate(async (b64) => {
+              const r = await fetch("/api/v1/projects/images/uploads", { method: "POST", body: Uint8Array.from(atob(b64), (c) => c.charCodeAt(0)) });
+              return r.json();
+            }, png.toString("base64"));
+            assert.equal(taskUpload.ok?.path, image, `${name}: 대화와 task 올리기의 이름`);
+            assert.deepEqual(fs.readdirSync(`${project}/uploads`).sort(), before, `${name}: 같은 내용은 파일 하나`);
+            const edited = await p.evaluate(async ({ title, image }) => {
+              const r = await fetch("/api/v1/call", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({
+                op: "task_edit", project: "images", base_sha256: null,
+                ops: [{ op: "add", list: "Backlog", title, notes: [`![그림](${image})`], person: false }],
+              }) });
+              return r.json();
+            }, { title, image });
+            assert.equal(edited.ok?.kind, "task_edited", `${name}: task 메모 첨부 ${JSON.stringify(edited)}`);
+            const started = aaa("thread", "start", "images", "--from-task", title, "--link-task", "--machine", "labA", "--profile", "fake", "--kind", "dir");
+            const thread = aaa("thread", "show", "images", started.id);
+            const copied = `${thread.work_dir}/attachments/${digest.slice(0, 16)}.png`;
+            assert.deepEqual(fs.readFileSync(copied), png, `${name}: thread 첨부 바이트`);
+            const task = fs.readFileSync(`${project}/threads/${started.id}.task.md`, "utf8");
+            assert.ok(task.includes(`![그림](attachments/${digest.slice(0, 16)}.png)`), `${name}: task 사본 경로`);
+            await until(`${name} 첨부 thread 보고`, () => aaa("thread", "show", "images", started.id).report_hash);
+            const brief = fs.readFileSync(`${thread.work_dir}/brief.md`, "utf8");
+            assert.ok(brief.includes(`![그림](attachments/${digest.slice(0, 16)}.png)`), `${name}: brief 사본 경로`);
+            aaa("thread", "resolve", "images", started.id);
+          }
         }
         // 삭제와 거부도 같은 입력 경계에서: 저장된 그림의 mention은 삭제되고 형식 오류 때 초안은 남는다.
         await fileEvent(box, "paste", png);
@@ -674,6 +706,37 @@ draw();
     const path = /^@([^\s]+) /.exec(await box.inputValue())?.[1];
     if (!path?.startsWith(`${root}/s/agent/sessions/`) || !fs.readFileSync(path).equals(large)) throw new Error("agent에 저장한 여러 조각 그림이 다르다");
     await generic.page.context().close();
+  });
+
+  await step("옛 대화 첨부: 원본을 보존하며 안내하고 다시 올린 새 링크로 시작하면 같은 바이트가 전달된다", async () => {
+    const png = fs.readFileSync(`${root}/pic.png`);
+    const legacy = `${project}/uploads/0123456789abcdef.png`;
+    fs.writeFileSync(legacy, png);
+    const client = await pairPage(browser, aaa("web", "pair").code, { width: 390, height: 844 });
+    const edit = async (op) => client.page.evaluate(async (op) => {
+      const r = await fetch("/api/v1/call", { method: "POST", headers: { "content-type": "application/json" },
+        body: JSON.stringify({ op: "task_edit", project: "images", ops: [op], base_sha256: null }) });
+      return r.json();
+    }, op);
+    const title = "옛 대화 그림 복구";
+    assert.equal((await edit({ op: "add", list: "Backlog", title, notes: ["![그림](uploads/0123456789abcdef.png)"] })).ok?.kind, "task_edited");
+    const start = () => aaa("thread", "start", "images", "--from-task", title, "--machine", "labA", "--profile", "fake", "--kind", "dir");
+    assert.throws(start, /이름과 내용 해시가 다르다.*예전 대화 첨부.*할 일에 다시 첨부/);
+    assert.deepEqual(fs.readFileSync(legacy), png, "거부한 원본 보존");
+    const saved = await client.page.evaluate(async (b64) => {
+      const r = await fetch("/api/v1/projects/images/uploads", { method: "POST", body: Uint8Array.from(atob(b64), (c) => c.charCodeAt(0)) });
+      return r.json();
+    }, png.toString("base64"));
+    const expected = `uploads/${crypto.createHash("sha256").update(png).digest("hex").slice(0, 16)}.png`;
+    assert.equal(saved.ok?.path, expected);
+    assert.equal((await edit({ op: "update", at: { title }, notes: [`![그림](${expected})`] })).ok?.kind, "task_edited");
+    const started = start();
+    const thread = aaa("thread", "show", "images", started.id);
+    assert.deepEqual(fs.readFileSync(`${thread.work_dir}/attachments/${expected.split("/")[1]}`), png);
+    assert.deepEqual(fs.readFileSync(legacy), png, "다시 올린 뒤에도 옛 이름·내용 보존");
+    await until("새 링크 thread 보고", () => aaa("thread", "show", "images", started.id).report_hash);
+    aaa("thread", "resolve", "images", started.id);
+    await client.page.context().close();
   });
 
   await step("대화 Enter: 터치 기기는 줄바꿈·버튼 보내기, 데스크톱 Enter/Shift+Enter, 한국어 IME 확정은 무전송", async () => {
