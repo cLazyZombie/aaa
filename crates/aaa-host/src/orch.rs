@@ -399,7 +399,7 @@ coordinator가 직접 묻는 선택 질문도 본문에 thread 보고와 같은 
 ```
 
 그림·파일은 먼저 `aaa library publish <폴더> --name <이름>`으로 올리고 본문에서 `library/<이름>/<파일>`로 가리킨다.
-예: `![시안](library/preview/a.png)`, `[보고서](aaa:report/r-0001)`, `[음원](library/preview/theme.wav)`. 카드 머리에서 보고서를 열어 본 뒤 같은 카드에서 답한다. 특정 판을 묻는다면 보고서 r 링크와 `library/r-NNNN/<파일>`을 써서 자료도 그 판에 묶는다. post 본문에는 로컬 절대 경로나 외부 그림 주소를 쓰지 않는다.
+예: `![시안](library/preview/a.png)`, `r-0001`, `[음원](library/preview/theme.wav)`. 카드 머리에서 보고서를 열어 본 뒤 같은 카드에서 답한다. 특정 판을 묻는다면 r-NNNN과 `library/r-NNNN/<파일>`을 써서 자료도 그 판에 묶는다. post 본문에는 로컬 절대 경로나 외부 그림 주소를 쓰지 않는다.
 카드 답은 coordinator inbox의 `question answered`에 선택 요약과 답 원문으로 오며 post도 자동으로 답함이 된다.
 다시 전달하거나 같은 질문을 또 묻지 않는다. 선택지가 없는 기존 평문 post도 그대로 쓸 수 있다.
 질문마다 프로젝트별 `q-1000`부터 짧은 ID를 받는다(t=thread, q=질문, d=할 일, r=보고서).
@@ -434,16 +434,18 @@ CI routine이 지정 branch를 감시한다. inbox 종류 `ci`는 실패 job·�
 활동 막대 배지에 안 봄으로 뜨고, 사용자 알림 post(topic report)가 함께 남는다. 같은 이름으로 다시 보내면 다시 안 봄이다.
 index.html이 없으면 거절한다. thread가 낸 보고(t-NNNN 사본)는 「작업 보고」에 따로 있으니 그대로 다시 보내지 않는다:
 사용자에게 보일 것만 골라 `--to-user`로 보낸다. 이 알림은 앱 안에만 뜨고 밖 푸시는 위 두 post만 보낸다.
-채팅에서는 그 보고서를 링크로 가리킨다(아래 「앱 안 참조」).
+채팅·보고에서는 그 보고서의 r-NNNN만 쓴다(아래 「앱 안 참조」).
 발행 결과의 r-NNNN은 그 판의 영속 번호다. 새로 발행하거나 새 thread 보고를 쓰면 새 번호가 나온다.
-이름·thread 번호는 최신 판, r 번호는 그때의 본문과 복사한 파일을 연다. 특정 판은 `aaa library show r-NNNN`·`aaa library link r-NNNN`과
-`/#report=r-NNNN`·`aaa:report/r-NNNN`으로 가리킨다. 보고서 지우기는 같은 이름의 보존 판까지 모두 지우며 번호는 재사용하지 않는다.
+이름·thread 번호는 최신 판, r 번호는 그때의 본문과 복사한 파일을 연다. 특정 판도 채팅·보고에서는 r-NNNN만 쓴다.
+CLI에서는 `aaa library show r-NNNN`·`aaa library link r-NNNN`으로 확인한다. 보고서 지우기는 같은 이름의 보존 판까지 모두 지우며 번호는 재사용하지 않는다.
 
 ## 앱 안 참조
-채팅에서 thread 질문·보고서를 가리킬 때는 `aaa context`의 「웹 주소」로 Markdown 링크를 쓴다:
-`[t-0001 질문](<웹 주소>/#question=t-0001)`, `[<제목>](<웹 주소>/#report=<이름>)`(이름은 `library publish --name`의 이름,
-thread 사본은 thread ID). 터미널에서 누르면 브라우저가 그 질문 카드·보고서를 열고, 웹 대화창은 같은 host 링크를 앱 안 칩으로
-그린다. 웹 주소가 없으면(공개 안 함) `aaa:question/<thread>`·`aaa:report/<이름>`을 쓴다(웹 대화창은 칩, 터미널에서는 글).
+채팅·보고에서 thread·할 일·보고서는 `t-NNNN`·`d-NNNN`·`r-NNNN`처럼 ID만 쓴다.
+웹 대화창과 보고서 본문은 실제로 있는 ID를 앱 안 링크로 그린다. 터미널에는 짧은 ID만 남는다.
+할 일 주소는 `#task=d-NNNN`(프로젝트가 있으면 `#task=<project>/d-NNNN`)이며 해당 줄을 펼치고 강조한다.
+지운·보관된 할 일은 「없음」을 보인다. thread 주소 `#thread=t-NNNN`도 그대로 쓴다.
+사용자가 답해야 하는 질문만 `aaa context`의 「웹 주소」로 `[q-NNNN 질문](<웹 주소>/#question=q-NNNN)` 링크를 건다.
+웹 주소를 공개하지 않았으면 q-NNNN만 쓴다. 질문 번호는 `aaa question list`로 확인한다.
 공유 주소(`https://…/v/…`)는 사용자가 밖으로 보내 달라고 할 때만 쓴다.
 확인 필요 post와 thread 질문은 웹 「답할 것」에 모인다. 질문의 답은 카드가 정본이다: 카드로 답하면 host가 thread에 전하고
 연결 post도 함께 끝내 `request handled`를 남긴다. coordinator의 구조화 post는 카드에서 답하면 `question answered`가 온다. 평문 post는 「답함으로 표시」로 끝내며 `request handled`가 온다.
@@ -543,7 +545,7 @@ pane이 없어졌거나 시작이 실패한 thread는 `aaa thread restart <id>`�
 - `aaa thread list`·`aaa thread show <id>`가 지금 상태와 함께 기록을 보인다(`--json`이면 Next 목록까지). 보고 사본은
   `threads/<id>.md`, 사용자에게 줄 결과물은 `library/<id>/`에 있다.
 - thread가 시작할 때 모아 묻는 질문(보고 첫 줄 `[결정 필요]`, `## Questions`)은 웹 보고서 패널 「답할 것」에 카드로 뜬다.
-  memory·채팅으로 답이 정해져 있지 않으면 채팅에 질문 요약과 추천, `aaa:question/<thread>`를 적고, 위 「사용자 알림」의 확인
+  memory·채팅으로 답이 정해져 있지 않으면 채팅에 질문 요약과 추천, `[q-NNNN 질문](<웹 주소>/#question=q-NNNN)`을 적고, 위 「사용자 알림」의 확인
   필요 post를 보낸 뒤(제목 예: `t-0123 질문 2개 · 추천: 1A 2A aaa:question/t-0123`) 턴을 끝내고 다른 일을 이어 간다.
   사용자가 카드로 답하면 host가 thread에 바로 보내고 inbox에 `question answered`를 남긴다: 다시 묻거나 전하지 않는다.
   채팅으로 답하면(예: 「1A 2B」) `aaa thread answer <id> 1A 2B`로 보낸다(카드도 「답함」이 된다). 방향이 바뀌면

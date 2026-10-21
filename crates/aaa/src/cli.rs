@@ -3865,10 +3865,10 @@ fn render_context(s: &mut String, c: &aaa_proto::ProjectContext) {
         Some(u) => {
             let _ = writeln!(
                 s,
-                "웹 주소: {u} (채팅의 질문·보고서 링크: [t-NNNN 질문]({u}/#question=t-NNNN) · [제목]({u}/#report=<이름>))"
+                "웹 주소: {u} (채팅·보고는 t-NNNN·d-NNNN·r-NNNN만, 답할 질문만 [q-NNNN 질문]({u}/#question=q-NNNN))"
             );
         }
-        None => s.push_str("웹 주소: 공개 안 함 (채팅에는 aaa:question/<thread>·aaa:report/<이름>을 쓴다)\n"),
+        None => s.push_str("웹 주소: 공개 안 함 (채팅·보고에는 t-NNNN·d-NNNN·q-NNNN·r-NNNN만 쓴다)\n"),
     }
     let _ = writeln!(s, "\nTasks(TASKS.md, coordinator와 사용자가 고친다: aaa task …, 웹 할 일 화면):");
     if c.tasks.is_empty() {

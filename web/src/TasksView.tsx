@@ -1,3 +1,4 @@
+import { taskTarget } from "./appIds";
 import { ThreadLimitBadge } from "./ThreadLimitBadge";
 import type { ThreadLimitOverride } from "./gen/proto";
 import { ThreadStageBadge } from "./ThreadStageBadge";
@@ -243,6 +244,8 @@ export function TasksView({
   reader,
   addRequest,
   focusRequest,
+  target = null,
+  onTarget,
   onBoard,
   onThread,
   onHandOff,
@@ -265,6 +268,8 @@ export function TasksView({
   /** 바뀌면 새 task 폼(문서가 있으면 「할 일에 추가」 창)을 연다 */
   addRequest: TaskAddRequest;
   focusRequest?: TaskFocusRequest;
+  target?: string | null;
+  onTarget?: (id: string | null) => void;
   /** 편집 응답의 새 board */
   onBoard: (b: TaskBoard) => void;
   onThread: (id: string) => void;
@@ -393,6 +398,21 @@ export function TasksView({
     setCreating(null);
     setPicked({ title: t.title, line: t.line });
   }, [focusRequest, board]);
+  const linkedTarget = target === null ? null : taskTarget(target);
+  const linkedTask = board && linkedTarget && (linkedTarget.project === null || linkedTarget.project === board.project)
+    ? board.tasks.find((t) => t.short_id === linkedTarget.id) ?? null : null;
+  useEffect(() => {
+    if (target === null || !board) return;
+    setTab("tasks");
+    setCreating(null);
+    setFilter("all");
+    setQuery("");
+    setRepo(null);
+    setPicked(linkedTask ? { title: linkedTask.title, line: linkedTask.line } : null);
+  }, [target, board?.project, linkedTask?.title, linkedTask?.line]);
+  useEffect(() => {
+    if (shown && linkedTask) document.querySelector('.task-row.is-selected')?.scrollIntoView({ block: "nearest" });
+  }, [shown, linkedTask, picked, filter, query, repo]);
   const byLine = useMemo(() => new Map((board?.tasks ?? []).map((t) => [t.line, t])), [board]);
   const choices = useMemo(() => repoChoices(board), [board]);
   // 기억한 저장소가 목록에서 빠졌으면 전체로 본다
@@ -415,13 +435,15 @@ export function TasksView({
   const total = board?.tasks.length ?? 0;
   const queueApi = apiAtLeast(frontApi, [1, 85]);
   const pick = (t: TaskView) => {
+    if (target !== null) onTarget?.(t.short_id);
     setCreating(null);
     setPicked({ title: t.title, line: t.line });
   };
   const closeDetail = useCallback(() => {
+    if (target !== null) onTarget?.(null);
     setPicked(null);
     setCreating(null);
-  }, []);
+  }, [target, onTarget]);
 
   /** host에 동작을 보내고 새 board를 넣는다. 충돌이면 창을 띄우고 null */
   const edit = async (ops: TaskOp[], mine: MyEdit | null) => {
@@ -827,6 +849,7 @@ export function TasksView({
       ) : (
         <div className={`tasks-main${detailOpen ? " has-detail" : ""}`}>
           <div className="tasks-scroll" data-testid="tasks-list">
+            {target !== null && board !== null && !linkedTask && <p className="tasks-empty" role="status" data-testid="task-missing">할 일 {target}: 없음</p>}
             {board === null && !error && <p className="tasks-empty">불러오는 중</p>}
             {board && total === 0 && <p className="tasks-empty">{canEdit ? "할 일이 없다. 「+ 할 일」로 더한다" : "할 일이 없다"}</p>}
             {board && total > 0 && shownCount === 0 && filter !== "reserved" && <p className="tasks-empty">맞는 할 일이 없다</p>}
