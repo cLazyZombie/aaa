@@ -672,9 +672,11 @@ fn fake_launcher(binary: &Path, version: &str) -> PathBuf {
     file
 }
 
-/// 실험실은 이 머신이라 Linux CI에서도 감지 OS를 macOS로 둔다(대본 원격은 OS를 보지 않는다)
+/// 실험실은 이 머신이라 Linux CI에서도 감지 OS와 host를 같은 종류 macOS로 둔다(대본 원격은 OS를 보지 않는다. host가 다른 종류로
+/// 보고 release를 받으러 가지 않게)
 #[cfg(unix)]
 fn as_mac(h: &Arc<Host>, job: &str) -> MachineDetected {
+    install::tests_binary::set_here(Some(("macos", std::env::consts::ARCH)));
     h.setup_update(job, MachineSetupPhase::Ready, |j| j.view.detected.as_mut().unwrap().os = "macos".into())
         .unwrap()
         .view
@@ -1304,6 +1306,7 @@ fn a_launcher_package_must_bind_the_sent_binary_and_a_dev_host_without_one_says_
 
 // ───────────── 끝 확인·harness 로그인 pane(M3) ─────────────
 
+#[cfg(unix)]
 #[test]
 fn the_check_script_reports_the_work_folder_git_harnesses_and_path() {
     let dir = std::env::temp_dir().join(format!("aaa-check-{}", aaa_common::util::new_id()));

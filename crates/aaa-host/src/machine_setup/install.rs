@@ -444,7 +444,7 @@ impl Host {
             Ok(v) => v,
             Err(e) => return fail(format!("host 실행 파일을 찾지 못했다: {e}")),
         };
-        let here = (std::env::consts::OS, std::env::consts::ARCH);
+        let here = host_platform();
         let cache = self.state.join("ssh").join("release");
         let file = match binary::pick(here, &software, (d.os.as_str(), d.arch.as_str()), &exe) {
             Source::Running { path } => path,
@@ -748,8 +748,17 @@ impl Host {
     }
 }
 
+/// host의 OS·CPU(시험은 실험실 원격과 같은 종류로 바꿔 끼운다)
+fn host_platform() -> (&'static str, &'static str) {
+    #[cfg(test)]
+    if let Some(v) = tests_binary::here() {
+        return v;
+    }
+    (std::env::consts::OS, std::env::consts::ARCH)
+}
+
 /// 작업 폴더 안 private 계획이 남았는가(시험)
-#[cfg(test)]
+#[cfg(all(test, unix))]
 pub(crate) fn plan_file(state: &std::path::Path, job: &str) -> PathBuf {
     state.join("ssh").join("jobs").join(job).join("proposal.json")
 }
@@ -775,7 +784,8 @@ pub(crate) mod tests_binary {
     thread_local! {
         static BINARY: RefCell<Option<(PathBuf, String)>> = const { RefCell::new(None) };
     }
-    /// 이 스레드(current_thread runtime)의 host가 보낼 파일과 판
+    /// 이 스레드(current_thread runtime)의 host가 보낼 파일과 판(실험실 시험은 unix만)
+    #[cfg_attr(not(unix), allow(dead_code))]
     pub(crate) fn set(v: Option<(PathBuf, String)>) {
         BINARY.with(|b| *b.borrow_mut() = v);
     }
@@ -786,10 +796,22 @@ pub(crate) mod tests_binary {
         static BASE: RefCell<Option<String>> = const { RefCell::new(None) };
     }
     /// 이 스레드의 host가 release를 받을 주소
+    #[cfg_attr(not(unix), allow(dead_code))]
     pub(crate) fn set_base(v: Option<String>) {
         BASE.with(|b| *b.borrow_mut() = v);
     }
     pub(super) fn base() -> Option<String> {
         BASE.with(|b| b.borrow().clone())
+    }
+    thread_local! {
+        static HERE: RefCell<Option<(&'static str, &'static str)>> = const { RefCell::new(None) };
+    }
+    /// 이 스레드의 host OS·CPU(Linux CI에서도 실험실 원격을 같은 종류 macOS로 다룬다)
+    #[cfg_attr(not(unix), allow(dead_code))]
+    pub(crate) fn set_here(v: Option<(&'static str, &'static str)>) {
+        HERE.with(|h| *h.borrow_mut() = v);
+    }
+    pub(super) fn here() -> Option<(&'static str, &'static str)> {
+        HERE.with(|h| *h.borrow())
     }
 }

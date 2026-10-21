@@ -56,6 +56,10 @@ done
 nc -z 127.0.0.1 "$PORT" || { echo "root sshd가 뜨지 않았다" >&2; cat "$LAB/sshd.log" >&2; exit 1; }
 echo "root sshd pid $(cat "$LAB/sshd.pid") port $PORT"
 
+# 진단: 이 sshd로 연 원격 명령의 조상(사용자·실행 image). install 검증 SSH 입구는 이 사슬에서 root 소유 /usr/sbin/sshd를 찾는다
+ssh -F "$LAB/ssh_config" -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR ci \
+  'p=$$; while [ "${p:-0}" -gt 0 ]; do ps -o pid=,ppid=,user=,comm= -p "$p"; [ "$p" -eq 1 ] && break; p=$(ps -o ppid= -p "$p" | tr -d " "); done' || true
+
 if ! AAA_ROOT_SSHD_LAB="$LAB" cargo test -p aaa --test m13 --locked \
   ssh_install::ssh_install_through_the_system_sshd_starts_a_launch_agent_that_connects_and_checks \
   -- --ignored --exact --nocapture; then
