@@ -5,7 +5,7 @@ import fs from "node:fs";
 import { root, aaa, step, start, stop, until, browser, pairPage, shot, base, procs } from "../lib/harness.mjs";
 
 const toml = `${root}/c/host.toml`;
-const kept = `${root}/s/host/last-good/host.toml`;
+const kept = `${root}/c/last-good/host.toml`;
 const secret = "e2e-safe-secret-value";
 
 export default async function ({ page }) {

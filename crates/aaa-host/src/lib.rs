@@ -3269,7 +3269,7 @@ async fn run_host(
     shutdown: impl std::future::Future<Output = ()>,
 ) -> Result<()> {
     let host = Host::open(cfg, state_root.join("host"))?;
-    let _ = host.config_dir.set(config_dir);
+    let _ = host.config_dir.set(config_dir.clone());
     tracing::info!(host = %host.host_id, fp = %&host.identity.fingerprint[..16], "host 시작");
     // 한 host는 프로젝트 하나(plan §8.283): 입구를 열기 전에 본다. 보관 상태가 DB에 있어 open 뒤에야 셀 수 있다
     match host.sole_project() {
@@ -3283,7 +3283,7 @@ async fn run_host(
     front::start(&host).await?;
     web::start(&host).await?;
     // 입구가 다 열렸다: 이 설정을 안전 모드의 「마지막 정상 설정」으로 보관한다
-    if let Err(e) = safe_mode::keep_last_good(&state_root, files) {
+    if let Err(e) = safe_mode::keep_last_good(&config_dir, files) {
         tracing::warn!("마지막 정상 설정을 보관하지 못했다: {e:#}");
     }
     host.resume_rollout();

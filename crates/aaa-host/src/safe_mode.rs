@@ -34,17 +34,18 @@ pub enum SafeExit {
     Shutdown,
 }
 
-/// 마지막 정상 설정의 폴더(상태 폴더 아래, 0700)
-pub fn last_good_dir(state_root: &Path) -> PathBuf {
-    state_root.join("host").join("last-good")
+/// 마지막 정상 설정의 폴더(설정 폴더 아래, 0700). 상태 폴더에 두지 않는다: 평문 env 값·인증 값은 원래 설정 폴더에만 있고,
+/// 상태 폴더·DB·로그·내보내기에는 남기지 않는다(plan §8.307 K0·계정 시험이 지키는 계약)
+pub fn last_good_dir(config_dir: &Path) -> PathBuf {
+    config_dir.join("last-good")
 }
 
 /// 정상 시작 뒤 그때 읽은 설정 파일을 보관한다. 없던 파일은 없는 채로 기록한다(되돌릴 때 지금 것을 치운다).
 /// 시작한 뒤 다시 읽으므로, 그사이 사람이 고치다 깨진 파일을 보관하지 않게 옆 폴더에 먼저 써서 읽히는지 본 뒤에만 바꾼다.
-/// 평문 env 값이 든 설정이면 비밀 사본이 하나 더 생긴다: 폴더는 0700, 파일은 0600이다
-pub fn keep_last_good(state_root: &Path, files: &[PathBuf]) -> Result<()> {
-    let dir = last_good_dir(state_root);
-    let next = state_root.join("host").join("last-good-next");
+/// 평문 env 값이 든 설정이면 같은 설정 폴더 안에 사본이 하나 더 생긴다: 폴더는 0700, 파일은 0600이다
+pub fn keep_last_good(config_dir: &Path, files: &[PathBuf]) -> Result<()> {
+    let dir = last_good_dir(config_dir);
+    let next = config_dir.join("last-good-next");
     match std::fs::remove_dir_all(&next) {
         Ok(()) => {}
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
@@ -87,15 +88,15 @@ pub fn keep_last_good(state_root: &Path, files: &[PathBuf]) -> Result<()> {
 }
 
 /// 보관한 정상 설정의 파일 이름들. 보관한 적이 없으면 None
-fn kept(state_root: &Path) -> Option<Vec<String>> {
-    serde_json::from_slice(&std::fs::read(last_good_dir(state_root).join("files.json")).ok()?).ok()
+fn kept(config_dir: &Path) -> Option<Vec<String>> {
+    serde_json::from_slice(&std::fs::read(last_good_dir(config_dir).join("files.json")).ok()?).ok()
 }
 
 /// 지금 설정 파일을 옆에 `<이름>.broken-<UTC>`로 남기고 마지막 정상 설정으로 바꾼다. 정상 설정에 없던 파일은 남긴 뒤 치운다.
 /// 남긴 파일 경로를 돌려준다
-pub(crate) fn restore(config_dir: &Path, state_root: &Path, now_ms: u64) -> Result<Vec<PathBuf>> {
-    let kept = kept(state_root).context("보관한 정상 설정이 없다")?;
-    let dir = last_good_dir(state_root);
+pub(crate) fn restore(config_dir: &Path, now_ms: u64) -> Result<Vec<PathBuf>> {
+    let kept = kept(config_dir).context("보관한 정상 설정이 없다")?;
+    let dir = last_good_dir(config_dir);
     // 읽을 수 있는지 먼저 다 본다: 반쯤 바꾸지 않는다
     let mut good = Vec::new();
     for name in FILES {
@@ -175,14 +176,14 @@ pub(crate) fn restore(config_dir: &Path, state_root: &Path, now_ms: u64) -> Resu
 }
 
 /// 안전 모드가 뜰 주소: 정상 host가 마지막으로 연 주소(웹을 끈 채 시작했으면 None) → 보관한 정상 설정의 listen. 둘 다 없거나 빈 주소면 None
-pub(crate) fn listen_addr(db: &Db, state_root: &Path) -> Option<String> {
+pub(crate) fn listen_addr(db: &Db, config_dir: &Path) -> Option<String> {
     // 빈 값은 지난 정상 시작이 웹을 끈 설정이었다는 기록이다
     if let Some(addr) = db.meta(LISTEN_KEY).ok().flatten() {
         return (!addr.is_empty()).then_some(addr);
     }
     // 이 판으로 정상 시작한 적이 없다(업그레이드 직후): 설정과 무관한 기본 주소에 뜨지 않는다(다른 aaa의 port일 수 있다)
-    kept(state_root)?;
-    let listen = aaa_config::load_host(&last_good_dir(state_root)).ok()?.config.web.listen;
+    kept(config_dir)?;
+    let listen = aaa_config::load_host(&last_good_dir(config_dir)).ok()?.config.web.listen;
     (!listen.is_empty()).then_some(listen)
 }
 
@@ -214,6 +215,25 @@ fn assignment(line: &str) -> Option<usize> {
         }
     }
     None
+}
+
+/// 표 머리처럼 보이는 줄: `[`로 시작해 (주석을 빼고) `]`로 끝나며 따옴표 밖에 `,`가 없다(배열 원소 줄은 보통 `,`로 끝난다)
+fn header_like(line: &str) -> bool {
+    let t = line.trim();
+    let body = t.split(" #").next().unwrap_or(t).trim_end();
+    if !body.starts_with('[') || !body.ends_with(']') {
+        return false;
+    }
+    let mut quote = None;
+    for c in body.chars() {
+        match (quote, c) {
+            (None, '"' | '\'') => quote = Some(c),
+            (Some(q), c) if c == q => quote = None,
+            (None, ',') => return false,
+            _ => {}
+        }
+    }
+    true
 }
 
 /// 따옴표 밖 괄호(`[`·`{`)의 깊이 변화
@@ -256,6 +276,10 @@ pub(crate) fn mask(text: &str) -> (Vec<String>, Vec<String>) {
             nested += depth(line);
             hide(line, &mut out, &mut hidden);
             continue;
+        }
+        // 닫히지 않은 배열(`]` 빠뜨림) 뒤의 표 머리는 배열을 끝내고 표를 바꾼다: 뒤의 env 표 값을 배열 원소로 보지 않는다
+        if plain.is_some() && header_like(line) {
+            plain = None;
         }
         if let Some((d, hiding)) = plain.as_mut() {
             *d += depth(line);
@@ -306,13 +330,16 @@ pub(crate) fn mask(text: &str) -> (Vec<String>, Vec<String>) {
             || table.iter().chain(segments.iter()).any(|s| secret_word(s))
             || secret_word(value)
             || (value.starts_with('{') && value.contains("env"));
+        // 주석으로 꺼 둔 줄은 그 줄만 본다: 이어지는 주석 줄의 `]`·`"""`는 닫는 표시로 셀 수 없다
+        let commented = trimmed.starts_with('#');
         if secret
+            && !commented
             && let Some(d) =
                 ["\"\"\"", "'''"].into_iter().find(|d| value.starts_with(d) && value[3..].find(d).is_none())
         {
             open = Some(d);
         }
-        if depth(value) > 0 {
+        if !commented && depth(value) > 0 {
             if secret {
                 nested = depth(value);
             } else {
@@ -395,7 +422,6 @@ struct Safe {
     db: Db,
     port: u16,
     config_dir: PathBuf,
-    state_root: PathBuf,
     errors: Mutex<ConfigErrors>,
     done: tokio::sync::watch::Sender<bool>,
 }
@@ -413,7 +439,7 @@ pub async fn run(
         anyhow::bail!("설정을 읽지 못해 시작하지 않는다(처음 시작이라 안전 모드도 없다):\n{}", errors.render());
     }
     let db = Db::open(&db_path)?;
-    let Some(addr) = listen_addr(&db, &state_root) else {
+    let Some(addr) = listen_addr(&db, &config_dir) else {
         anyhow::bail!(
             "설정을 읽지 못해 시작하지 않는다(웹을 껐거나 이 판으로 정상 시작한 적이 없어 안전 모드가 열 주소가 없다):\n{}",
             errors.render()
@@ -426,7 +452,7 @@ pub async fn run(
         let _ = ready.send(());
     }
     let (done, mut reload) = tokio::sync::watch::channel(false);
-    let safe = Arc::new(Safe { db, port, config_dir, state_root, errors: Mutex::new(errors), done });
+    let safe = Arc::new(Safe { db, port, config_dir, errors: Mutex::new(errors), done });
     let serve = axum::serve(listener, router(safe.clone())).with_graceful_shutdown(async move {
         let _ = reload.wait_for(|v| *v).await;
     });
@@ -579,7 +605,7 @@ fn body_for(safe: &Safe, who: &Who, notice: Option<&str>) -> String {
                 b.push_str(&format!("<li><code>{}</code> {}</li>", esc(&at), esc(&clean_message(d, &hidden))));
             }
             b.push_str("</ul>");
-            match kept(&safe.state_root) {
+            match kept(&safe.config_dir) {
                 Some(names) => b.push_str(&format!(
                     "<form method=post action=/api/v1/safe/restore><button class=primary type=submit>마지막 정상 설정으로 되돌리기</button></form>\
 <p class=muted>지금 파일은 옆에 <code>&lt;이름&gt;.broken-&lt;시각&gt;</code>으로 남기고, 마지막으로 정상 시작한 설정({})으로 바꾼 뒤 다시 시작합니다.</p>",
@@ -628,7 +654,7 @@ fn reload(safe: &Safe, who: &Who, done_note: &str) -> Response {
 async fn restore_post(State(safe): State<Arc<Safe>>, headers: axum::http::HeaderMap) -> Response {
     let who = who(&safe, &headers);
     let Who::Controller(id) = &who else { return forbidden(&safe, &who) };
-    match restore(&safe.config_dir, &safe.state_root, aaa_common::util::now_ms()) {
+    match restore(&safe.config_dir, aaa_common::util::now_ms()) {
         Ok(backups) => {
             let names: Vec<String> = backups.iter().map(|b| file_name(b)).collect();
             safe.db.audit(&format!("device:{id}"), "safe_restore", &names.join(","));

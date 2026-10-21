@@ -103,6 +103,32 @@ after = "kept-after-array"
 }
 
 #[test]
+fn an_unclosed_or_commented_array_does_not_hide_the_next_env_table() {
+    // 주석으로 꺼 둔 배열, `]`를 빠뜨린 배열 뒤에 env 표가 온다(다른 곳이 깨져 안전 모드에 들어온 경우)
+    let text = r#"[profiles.work]
+# args = [
+#   "--verbose",
+# ]
+[profiles.work.env]
+ANTHROPIC_BASE_URL = "https://proxy.internal/x"
+[profiles.other]
+args = [
+  "--verbose",
+[profiles.other.env]
+DATABASE_URL = "postgres://u:pw@db/x"
+[web
+"#;
+    let (lines, hidden) = mask(text);
+    let shown = lines.join("\n");
+    for secret in ["proxy.internal", "u:pw@db"] {
+        assert!(!shown.contains(secret), "{secret}가 보인다:\n{shown}");
+        assert!(hidden.iter().any(|h| h.contains(secret)), "{secret}를 오류 글에서 뺄 목록에 없다: {hidden:?}");
+    }
+    assert_eq!(lines.len(), text.lines().count());
+    assert!(shown.contains("#   \"--verbose\","), "주석 줄 원소는 비밀이 아니면 남는다:\n{shown}");
+}
+
+#[test]
 fn error_text_drops_source_snippets_and_quoted_or_masked_values() {
     let file = PathBuf::from("/c/host.toml");
     let toml = Diag {
@@ -132,21 +158,21 @@ fn error_text_drops_source_snippets_and_quoted_or_masked_values() {
 #[test]
 fn restore_backs_up_current_files_and_brings_back_exactly_the_kept_set() {
     let t = tmp();
-    let (config, state) = (t.0.join("config"), t.0.join("state"));
+    let config = t.0.join("config");
     // 정상 시작 때는 host.toml만 있었다
     std::fs::write(config.join("host.toml"), "schema = 1\n[web]\nlisten = \"127.0.0.1:7999\"\n").unwrap();
-    keep_last_good(&state, &[config.join("host.toml")]).unwrap();
+    keep_last_good(&config, &[config.join("host.toml")]).unwrap();
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
         let mode = |p: &Path| std::fs::metadata(p).unwrap().permissions().mode() & 0o777;
-        assert_eq!(mode(&last_good_dir(&state)), 0o700);
-        assert_eq!(mode(&last_good_dir(&state).join("host.toml")), 0o600);
+        assert_eq!(mode(&last_good_dir(&config)), 0o700);
+        assert_eq!(mode(&last_good_dir(&config).join("host.toml")), 0o600);
     }
     // 그 뒤 host.toml을 깨고 host.local.toml을 새로 만들었다
     std::fs::write(config.join("host.toml"), "[web\n").unwrap();
     std::fs::write(config.join("host.local.toml"), "x = 1\n").unwrap();
-    let backups = restore(&config, &state, 1_700_000_000_000).unwrap();
+    let backups = restore(&config, 1_700_000_000_000).unwrap();
     let stamp = aaa_common::util::utc_compact(1_700_000_000_000);
     assert_eq!(
         backups,
@@ -160,23 +186,23 @@ fn restore_backs_up_current_files_and_brings_back_exactly_the_kept_set() {
     );
     assert!(!config.join("host.local.toml").exists());
     // 같은 시각에 다시 되돌려도 남긴 파일을 덮지 않는다(바뀐 게 없으면 아무것도 남기지 않는다)
-    assert!(restore(&config, &state, 1_700_000_000_000).unwrap().is_empty());
+    assert!(restore(&config, 1_700_000_000_000).unwrap().is_empty());
     std::fs::write(config.join("host.toml"), "[web\n").unwrap();
-    assert!(restore(&config, &state, 1_700_000_000_000).is_err(), "같은 이름의 남긴 파일을 덮었다");
+    assert!(restore(&config, 1_700_000_000_000).is_err(), "같은 이름의 남긴 파일을 덮었다");
     // 정상 시작이 local을 읽었으면 local도 되돌린다, 정상 시작이 없었으면 되돌리지 못한다
     std::fs::write(config.join("host.toml"), "schema = 1\n[web]\nlisten = \"127.0.0.1:7999\"\n").unwrap();
     std::fs::write(config.join("host.local.toml"), "schema = 1\n").unwrap();
-    keep_last_good(&state, &[config.join("host.toml"), config.join("host.local.toml")]).unwrap();
+    keep_last_good(&config, &[config.join("host.toml"), config.join("host.local.toml")]).unwrap();
     std::fs::remove_file(config.join("host.local.toml")).unwrap();
-    assert!(restore(&config, &state, 1_700_000_001_000).unwrap().is_empty());
+    assert!(restore(&config, 1_700_000_001_000).unwrap().is_empty());
     assert_eq!(std::fs::read_to_string(config.join("host.local.toml")).unwrap(), "schema = 1\n");
-    assert!(restore(&config, &t.0.join("other"), 0).is_err());
+    assert!(restore(&t.0.join("other"), 0).is_err());
     // 둘째 파일을 남기지 못하면(같은 이름이 이미 있다) 첫째도 바꾸지 않는다
     std::fs::write(config.join("host.toml"), "[web\n").unwrap();
     std::fs::write(config.join("host.local.toml"), "[local\n").unwrap();
     let stamp = aaa_common::util::utc_compact(1_700_000_002_000);
     std::fs::write(config.join(format!("host.local.toml.broken-{stamp}")), "older").unwrap();
-    let err = restore(&config, &state, 1_700_000_002_000).unwrap_err();
+    let err = restore(&config, 1_700_000_002_000).unwrap_err();
     assert!(!format!("{err:#}").contains(&*t.0.to_string_lossy()), "오류 글에 경로가 있다: {err:#}");
     assert_eq!(std::fs::read_to_string(config.join("host.toml")).unwrap(), "[web\n");
     assert_eq!(std::fs::read_to_string(config.join("host.local.toml")).unwrap(), "[local\n");
@@ -188,17 +214,17 @@ fn restore_backs_up_current_files_and_brings_back_exactly_the_kept_set() {
 #[test]
 fn last_good_keeps_the_previous_copy_when_the_file_changed_into_a_broken_one() {
     let t = tmp();
-    let (config, state) = (t.0.join("config"), t.0.join("state"));
+    let config = t.0.join("config");
     std::fs::write(config.join("host.toml"), "schema = 1\n[web]\nlisten = \"127.0.0.1:7999\"\n").unwrap();
-    keep_last_good(&state, &[config.join("host.toml")]).unwrap();
+    keep_last_good(&config, &[config.join("host.toml")]).unwrap();
     // 시작한 뒤 보관하기 전에 사람이 고치다 깨진 채 저장했다
     std::fs::write(config.join("host.toml"), "schema = 1\n[web\n").unwrap();
-    assert!(keep_last_good(&state, &[config.join("host.toml")]).is_err());
+    assert!(keep_last_good(&config, &[config.join("host.toml")]).is_err());
     assert_eq!(
-        std::fs::read_to_string(last_good_dir(&state).join("host.toml")).unwrap(),
+        std::fs::read_to_string(last_good_dir(&config).join("host.toml")).unwrap(),
         "schema = 1\n[web]\nlisten = \"127.0.0.1:7999\"\n"
     );
-    assert!(!state.join("host").join("last-good-next").exists());
+    assert!(!config.join("last-good-next").exists());
 }
 
 #[tokio::test]
@@ -206,12 +232,12 @@ async fn listen_prefers_the_last_bound_address_then_last_good_and_never_guesses(
     let t = tmp();
     let state = t.0.join("state");
     let db = Db::open(&state.join("host").join("host.db")).unwrap();
-    // 이 판으로 정상 시작한 적이 없다(업그레이드 직후): 기본 주소에 뜨지 않는다
-    assert_eq!(listen_addr(&db, &state), None);
     let config = t.0.join("config");
+    // 이 판으로 정상 시작한 적이 없다(업그레이드 직후): 기본 주소에 뜨지 않는다
+    assert_eq!(listen_addr(&db, &config), None);
     std::fs::write(config.join("host.toml"), "schema = 1\n[web]\nlisten = \"127.0.0.1:7999\"\n").unwrap();
-    keep_last_good(&state, &[config.join("host.toml")]).unwrap();
-    assert_eq!(listen_addr(&db, &state).as_deref(), Some("127.0.0.1:7999"));
+    keep_last_good(&config, &[config.join("host.toml")]).unwrap();
+    assert_eq!(listen_addr(&db, &config).as_deref(), Some("127.0.0.1:7999"));
     // 정상 host가 실제로 연 주소(:0이면 받은 port)를 적고, 안전 모드는 그 주소를 먼저 쓴다
     let mut cfg = aaa_config::HostConfig::default();
     cfg.notify.web_push = false;
@@ -219,12 +245,12 @@ async fn listen_prefers_the_last_bound_address_then_last_good_and_never_guesses(
     let h = crate::Host::open(cfg.clone(), state.join("host")).unwrap();
     crate::web::start(&h).await.unwrap();
     let bound = h.web_listen.lock().unwrap().clone().unwrap();
-    assert_eq!(listen_addr(&db, &state), Some(bound));
+    assert_eq!(listen_addr(&db, &config), Some(bound));
     // 웹을 끈 설정으로 정상 시작하면 지난 주소를 지워, 다음 안전 모드도 웹을 열지 않는다(보관 설정에 listen이 있어도)
     cfg.web.listen = String::new();
     let h = crate::Host::open(cfg, state.join("host")).unwrap();
     crate::web::start(&h).await.unwrap();
-    assert_eq!(listen_addr(&db, &state), None);
+    assert_eq!(listen_addr(&db, &config), None);
 }
 
 struct Lab {
@@ -240,7 +266,7 @@ fn lab() -> Lab {
     let t = tmp();
     let (config, state) = (t.0.join("config"), t.0.join("state"));
     std::fs::write(config.join("host.toml"), "schema = 1\n[web]\nlisten = \"127.0.0.1:7000\"\n").unwrap();
-    keep_last_good(&state, &[config.join("host.toml")]).unwrap();
+    keep_last_good(&config, &[config.join("host.toml")]).unwrap();
     std::fs::write(
         config.join("host.toml"),
         "schema = 1\n[web]\nlisten = \"127.0.0.1:7000\"\nbogus = \n[profiles.p.env]\nX = \"env-secret-value\"\n",
@@ -251,14 +277,7 @@ fn lab() -> Lab {
     db.add_device("ctl", "controller", &crate::token_hash("ctl-token"), "책상").unwrap();
     db.add_device("rd", "reader", &crate::token_hash("rd-token"), "벽").unwrap();
     let (done, reload) = tokio::sync::watch::channel(false);
-    let safe = Arc::new(Safe {
-        db,
-        port: 7000,
-        config_dir: config.clone(),
-        state_root: state,
-        errors: Mutex::new(errors),
-        done,
-    });
+    let safe = Arc::new(Safe { db, port: 7000, config_dir: config.clone(), errors: Mutex::new(errors), done });
     Lab { _t: t, safe, config, reload }
 }
 
