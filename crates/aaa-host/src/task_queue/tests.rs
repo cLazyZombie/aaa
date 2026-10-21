@@ -87,6 +87,7 @@ async fn display_ids_keep_duplicate_title_raw_history_bound_to_each_ulid() {
                 text: "## Backlog\n- [ ] 같은 제목\n  첫 메모\n- [ ] 같은 제목\n  다른 메모\n".into(),
             }],
             None,
+            None,
             "device:user",
         )
         .await
@@ -108,6 +109,7 @@ async fn display_ids_keep_duplicate_title_raw_history_bound_to_each_ulid() {
         .task_edit(
             "demo",
             vec![TaskOp::Delete { at: TaskAnchor { title: second.short_id.clone().unwrap(), ..Default::default() } }],
+            None,
             None,
             "device:user",
         )
@@ -592,6 +594,7 @@ async fn coordinator_raw_save_cannot_rename_away_a_selection() {
         .task_edit(
             "demo",
             vec![TaskOp::RawSave { expected_sha256: board.sha256, text: changed }],
+            None,
             None,
             "coordinator:verified-pane",
         )
@@ -1145,4 +1148,131 @@ fn old_report_stages_are_backfilled_from_verified_copies_on_open() {
     assert_eq!(recovered.open_worker_threads("demo"), 4);
     assert_eq!(recovered.thread_show("demo", &ids[0]).unwrap().stage, None);
     drop(recovered);
+}
+
+#[tokio::test]
+async fn requested_choices_reject_changed_contents_and_started_reservations() {
+    let lab = Lab::new();
+    let row = one_reservation(&lab).await;
+    let original = lab.text();
+    let changed = original.replace("claude@mac-offline", "codex@mac-offline");
+    assert!(lab.h.check_requested_task_choices("demo", &original, &changed).is_ok());
+    let modified = original.replace("독립 설명과 완료 범위", "다른 범위");
+    let error =
+        lab.h.check_requested_task_choices("demo", &modified, &modified.replace("claude@", "codex@")).unwrap_err();
+    assert_eq!(error.code, ErrorCode::Conflict);
+    assert!(error.message.contains("다른 내용"));
+    for state in [S::Starting, S::Running, S::Check] {
+        lab.h
+            .db
+            .queue_change("demo", "host", |rows| {
+                rows[0].state = state;
+                rows[0].thread = Some("t-0001".into());
+                Ok(())
+            })
+            .unwrap();
+        let error = lab.h.check_requested_task_choices("demo", &original, &changed).unwrap_err();
+        assert_eq!(error.code, ErrorCode::Conflict);
+        assert!(error.message.contains("기동한 예약"));
+    }
+    assert_eq!(lab.text(), original);
+    assert_eq!(lab.h.db.queue_list("demo").unwrap()[0].selection, row.selection);
+}
+
+#[tokio::test]
+async fn requested_choices_validate_reason_and_operation_scope_before_writing() {
+    let lab = Lab::new();
+    let row = one_reservation(&lab).await;
+    let original = lab.text();
+    let make_op = || TaskOp::Update {
+        at: at(&row.task),
+        title: None,
+        owner: None,
+        person: false,
+        profile: Some(String::new()),
+        machine: Some(String::new()),
+        notes: None,
+        thread: None,
+        done: None,
+        repo: None,
+    };
+    for reason in ["", " ", "한 줄\n두 줄", "제어\t문자"] {
+        assert_eq!(
+            lab.h
+                .task_edit("demo", vec![make_op()], None, Some(reason.into()), "coordinator:p")
+                .await
+                .unwrap_err()
+                .code,
+            ErrorCode::BadRequest
+        );
+        assert_eq!(lab.text(), original);
+    }
+    for ops in [
+        vec![TaskOp::RawSave { expected_sha256: tasks::sha256(&original), text: String::new() }],
+        vec![make_op(), make_op()],
+        vec![TaskOp::Delete { at: at(&row.task) }],
+    ] {
+        assert!(lab.h.task_edit("demo", ops, None, Some("사용자 지시".into()), "coordinator:p").await.is_err());
+        assert_eq!(lab.text(), original);
+    }
+    let response = lab
+        .h
+        .task_edit("demo", vec![make_op()], None, Some("기본 모델과 자동 머신으로 변경".into()), "coordinator:p")
+        .await
+        .unwrap();
+    assert!(matches!(response, FrontResponse::TaskEdited { conflict: None, .. }));
+    let q = lab.h.db.queue_list("demo").unwrap().remove(0);
+    assert_eq!(q.state, S::Queued);
+    assert_eq!(q.task_id, row.task_id);
+    assert_eq!(q.position, row.position);
+    assert_eq!(q.created_ms, row.created_ms);
+    assert_eq!(q.profile, lab.h.default_thread_profile("demo"));
+    assert_eq!(q.machine, None);
+    assert_eq!(q.selection.owner, None);
+    assert!(
+        lab.h
+            .db
+            .audit_actions()
+            .iter()
+            .any(|(actor, action)| actor == "coordinator:p" && action == "task_choices_user_request")
+    );
+}
+
+#[tokio::test]
+async fn requested_machine_only_change_keeps_the_approved_default_model() {
+    let lab = Lab::new();
+    lab.write("## Backlog\n- [ ] 기본 예약 (@mac-offline) [작업 폴더]\n  독립 설명과 완료 범위\n");
+    let t = lab.h.task_board("demo").unwrap().tasks.remove(0);
+    let profile = lab.h.default_thread_profile("demo");
+    lab.h
+        .task_queue(
+            "demo",
+            QueueOp::Reserve {
+                task: t.title,
+                block: t.block_sha256,
+                profile: profile.clone(),
+                profile_revision: model_selection(&lab.h, &profile).unwrap().2,
+            },
+            "device:user",
+        )
+        .await
+        .unwrap();
+    let original = lab.h.db.queue_list("demo").unwrap().remove(0);
+    let mut cfg = lab.h.cfg.clone();
+    cfg.defaults.thread_profile = "codex".into();
+    let host = Host::open(cfg, lab.h.state.clone()).unwrap();
+    assert_eq!(host.default_thread_profile("demo"), "codex");
+    let before = lab.text();
+    let after = before.replace("@mac-offline", "@mac-other");
+    host.check_requested_task_choices("demo", &before, &after).unwrap();
+    host.record_requested_task_choices("demo", &before, &after, "coordinator:p (사용자 지시: 머신만 변경)").unwrap();
+    let updated = host.db.queue_list("demo").unwrap().remove(0);
+    assert_eq!(updated.machine.as_deref(), Some("mac-other"));
+    assert_eq!(updated.profile, original.profile, "머신 변경은 이미 승인한 기본 모델을 바꾸지 않는다");
+    assert_eq!(updated.selection.profile, original.selection.profile);
+    assert_eq!(
+        (updated.model, updated.effort, updated.profile_revision),
+        (original.model, original.effort, original.profile_revision)
+    );
+    assert_eq!(updated.approved_block, tasks::parse(&after)[0].block_sha256);
 }

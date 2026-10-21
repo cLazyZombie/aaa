@@ -1124,7 +1124,7 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
     let live = true;
     call({ op: "library_reports", project: null })
       .then((r) => {
-        if (live && r.kind === "library_reports") setReportNames(new Map(r.reports.map((x) => [x.name, x])));
+        if (live && r.kind === "library_reports") setReportNames(new Map(r.reports.flatMap((x) => [[x.name, x] as const, ...(x.versions ?? []).map((id) => [id, { ...x, name: id, report_id: id }] as const)])));
       })
       .catch(() => {});
     return () => {
@@ -1372,6 +1372,7 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
             board={taskBoard.board}
             error={taskBoard.error}
             groups={threadGroups}
+            machines={machines}
             stages={new Map(allThreads.map(t => [t.id, t.stage]))}
             reader={role === "reader"}
             addRequest={taskAdds}

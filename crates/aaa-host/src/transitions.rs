@@ -333,6 +333,9 @@ impl Host {
         if !ids.is_empty() {
             summary = format!("{ids} {summary}");
         }
+        if let Some(id) = self.thread_report_id(project, &r.id, r.report_hash.as_deref()) {
+            summary = format!("{id} {summary}");
+        }
         let hash = r.report_hash.clone();
         if self.update_rec(project, &r.id, |x| x.review_item_hash = hash).is_err() {
             return false;

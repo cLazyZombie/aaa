@@ -609,6 +609,9 @@ enum TaskCmd {
     Edit {
         /// 고칠 task ID(d-0001·ULID) 또는 제목(대소문자 무시)
         task: String,
+        /// 사용자 지시로 모델·머신을 바꾸는 근거 한 줄. --profile·--machine 변경에만 쓴다(예약 유지)
+        #[arg(long, value_name = "REASON")]
+        user_request: Option<String>,
         /// 읽은 판의 블록 hash(`task list --json`의 `block_sha256`). 주면 그 블록이 그대로일 때만 고친다(아니면 revision_conflict)
         #[arg(long, value_name = "SHA256")]
         block: Option<String>,
@@ -713,8 +716,9 @@ fn task_at_block(title: &str, block: Option<String>) -> aaa_proto::TaskAnchor {
 }
 
 /// `aaa task` 고치기: 충돌이면 그 까닭과 지금 원문을 보이고 종료 코드 1이다
-fn task_edit_cmd(json: bool, ops: Vec<aaa_proto::TaskOp>) -> Result<ExitCode> {
-    let res = front_call(FrontRequest::TaskEdit { project: project_or_here(None)?, ops, base_sha256: None })?;
+fn task_edit_cmd(json: bool, ops: Vec<aaa_proto::TaskOp>, user_request: Option<String>) -> Result<ExitCode> {
+    let res =
+        front_call(FrontRequest::TaskEdit { project: project_or_here(None)?, ops, base_sha256: None, user_request })?;
     if let Ok(FrontResponse::TaskEdited { conflict: Some(c), .. }) = &res {
         if json {
             eprintln!("{}", serde_json::to_string(&serde_json::json!({ "conflict": c }))?);
@@ -1310,6 +1314,9 @@ enum MachineCmd {
 
 #[derive(Subcommand)]
 enum LibraryCmd {
+    /// 이름·thread ID·r-NNNN으로 특정 보고 판과 파일 목록을 읽는다.
+    #[command(alias = "open")]
+    Show { name: String },
     /// host 머신의 폴더·파일을 복사한다. 같은 이름은 최신으로 바꾼다.
     Publish {
         source: std::path::PathBuf,
@@ -1333,7 +1340,7 @@ enum LibraryCmd {
         #[arg(long = "thread", value_name = "THREAD")]
         from_thread: Option<String>,
     },
-    /// 보고서를 모든 곳에서 지운다(host 사본·목록·공유 링크·thread 보고 사본). 되돌릴 수 없다.
+    /// 이름·r 번호의 보고서를 모든 보존 판과 함께 지운다(host 사본·목록·공유 링크·thread 보고 사본). 되돌릴 수 없다.
     /// 끝나지 않은(resolve 전) thread의 보고가 있으면 아무것도 지우지 않는다.
     Delete {
         /// (옛 꼴, 생략한다)
@@ -1851,6 +1858,7 @@ fn run(cli: Cli) -> Result<ExitCode> {
         ),
         Cmd::Task { cmd } => {
             use aaa_proto::TaskOp;
+            let mut user_request = None;
             let op = match cmd {
                 TaskCmd::List
                 | TaskCmd::Log { .. }
@@ -1875,6 +1883,7 @@ fn run(cli: Cli) -> Result<ExitCode> {
                     }
                 }
                 TaskCmd::Edit {
+                    user_request: reason,
                     task,
                     block,
                     title,
@@ -1888,24 +1897,27 @@ fn run(cli: Cli) -> Result<ExitCode> {
                     repo,
                     done,
                     undone,
-                } => TaskOp::Update {
-                    at: task_at_block(&task, block),
-                    title,
-                    owner,
-                    person,
-                    profile,
-                    machine,
-                    notes: if clear_notes { Some(Vec::new()) } else { (!notes.is_empty()).then_some(notes) },
-                    thread,
-                    done: if done {
-                        Some(true)
-                    } else if undone {
-                        Some(false)
-                    } else {
-                        None
-                    },
-                    repo,
-                },
+                } => {
+                    user_request = reason;
+                    TaskOp::Update {
+                        at: task_at_block(&task, block),
+                        title,
+                        owner,
+                        person,
+                        profile,
+                        machine,
+                        notes: if clear_notes { Some(Vec::new()) } else { (!notes.is_empty()).then_some(notes) },
+                        thread,
+                        done: if done {
+                            Some(true)
+                        } else if undone {
+                            Some(false)
+                        } else {
+                            None
+                        },
+                        repo,
+                    }
+                }
                 TaskCmd::Move { task, block, list, before, parent } => TaskOp::Move {
                     at: task_at_block(&task, block),
                     to_list: list,
@@ -1949,7 +1961,7 @@ fn run(cli: Cli) -> Result<ExitCode> {
                 TaskCmd::ListRm { name } => TaskOp::ListDelete { name },
                 TaskCmd::ListMove { name, before } => TaskOp::ListMove { name, before },
             };
-            task_edit_cmd(json, vec![op])
+            task_edit_cmd(json, vec![op], user_request)
         }
         Cmd::Assignable { project, check } => {
             front(json, FrontRequest::Assignable { project: project_or_here(project)?, check })
@@ -2275,6 +2287,7 @@ fn run(cli: Cli) -> Result<ExitCode> {
                     let (project, thread) = on_target(thread, legacy)?;
                     FrontRequest::LibraryLink { project, thread, days }
                 }
+                LibraryCmd::Show { name } => FrontRequest::LibraryOpen { project: project_or_here(None)?, name },
                 LibraryCmd::List { project } => FrontRequest::LibraryReports { project },
                 LibraryCmd::Publish { source, project, name, live, to_user, title, from_thread } => {
                     FrontRequest::LibraryPublish {
@@ -3603,6 +3616,9 @@ fn render_thread(s: &mut String, t: &aaa_proto::ThreadView) {
         t.machine,
         t.brief.as_str()
     );
+    if let Some(id) = &t.report_id {
+        let _ = writeln!(s, "보고: {id}");
+    }
     render_automation_origin(s, t);
     let _ = writeln!(s, "인증: {}", t.account.as_deref().unwrap_or("로컬 로그인"));
     if let Some(e) = &t.error {
@@ -4502,11 +4518,12 @@ fn render_front(r: &FrontResponse) -> String {
             for r in reports {
                 let _ = writeln!(
                     s,
-                    "{}/{}\t{}B\t갱신 {}{}{}{}{}",
+                    "{}/{}\t{}B\t갱신 {}{}{}{}{}{}",
                     r.project,
                     r.name,
                     r.size,
                     r.updated_at_ms,
+                    r.report_id.as_ref().map(|id| format!(" · {id}")).unwrap_or_default(),
                     if r.live { " · 실시간" } else { "" },
                     if r.to_user {
                         format!(
@@ -4566,6 +4583,9 @@ fn render_front(r: &FrontResponse) -> String {
             }
         }
         FrontResponse::LibraryLink(l) => {
+            if let Some(id) = &l.report_id {
+                let _ = writeln!(s, "보고: {id}");
+            }
             let _ = writeln!(
                 s,
                 "{}\t{}/{}\t{}\t만료 {}\t마지막 열람 {}\t{}B{}",
@@ -4588,6 +4608,12 @@ fn render_front(r: &FrontResponse) -> String {
             }
         }
         FrontResponse::Library(l) => {
+            if let Some(id) = &l.report_id {
+                let _ = writeln!(s, "보고: {id}");
+            }
+            if !l.versions.is_empty() {
+                let _ = writeln!(s, "보고 판: {}", l.versions.join(" "));
+            }
             let _ = writeln!(s, "{}/{} 결과물 {}개(보기 경로 2시간: {})", l.project, l.thread, l.files.len(), l.base);
             for f in &l.files {
                 let at = if f.on_agent { " · agent에 있음" } else { "" };

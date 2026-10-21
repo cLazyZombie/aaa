@@ -171,7 +171,7 @@ export function ThreadPanel({
             <p className="muted">프로젝트 실행 한도와 예약 자리에서 제외</p>
           </section>}
           <section className="card report" data-testid="report">
-            <h2>보고</h2>
+            <h2>보고 {t.report_id && <a href={`#report=${encodeURIComponent(`${t.project}/${t.report_id}`)}`}><code>{t.report_id}</code></a>}</h2>
             {lib?.report ? (
               <OpenFileContext.Provider value={onOpenReportFile ?? null}>
                 <ReportMarkdown base={lib.base} text={lib.report} onImages={lightbox.open} />

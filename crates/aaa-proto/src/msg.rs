@@ -2425,6 +2425,10 @@ pub enum FrontRequest {
         ops: Vec<TaskOp>,
         #[serde(default)]
         base_sha256: Option<String>,
+        /// 사용자 지시로 모델·머신만 변경하는 근거 한 줄(FRONT_API 1.97). 예약 순서와 시작 승인을 유지한다.
+        #[serde(default)]
+        #[ts(optional)]
+        user_request: Option<String>,
     },
     /// 할 일 기록(FRONT_API 1.62, 보기 권한). 최신부터, `before`(id)보다 앞의 것
     TaskLog {
@@ -3382,7 +3386,7 @@ pub enum FrontResponse {
     Threads {
         threads: Vec<ThreadView>,
     },
-    Thread(ThreadView),
+    Thread(Box<ThreadView>),
     /// FRONT_API 1.44. thread 작업 요약
     ThreadSummary(ThreadSummaryView),
     Events {
@@ -3542,8 +3546,8 @@ pub enum FrontEvent {
     Workspace(Workspace),
     /// 흐름 사건(새로 기록될 때). 놓쳤으면 `Events`로 cursor부터 다시 읽는다.
     Flow(FlowEvent),
-    /// thread 기록이 바뀌었다
-    Thread(ThreadView),
+    /// thread 기록이 바뀌었다. JSON은 그대로 두고 큰 본체를 별도로 보관한다.
+    Thread(Box<ThreadView>),
     /// 확인창 질문이 생기거나 답해졌다(알림 대상)
     Question(QuestionView),
     /// 공유 설정 문서 전체. 웹 events 연결이 열릴 때와 바뀔 때마다 온다(herdr-web-ui `preferences` 사건)

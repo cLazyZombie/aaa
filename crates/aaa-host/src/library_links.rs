@@ -79,6 +79,7 @@ impl Host {
             })
             .unwrap_or(0);
         LinkView {
+            report_id: self.report_id(&r.project, &r.thread),
             id: r.id,
             project: r.project,
             thread: r.thread,
@@ -167,6 +168,11 @@ impl Host {
 
     /// 열람 기록 실패가 보고서 열기를 막지 않는다. API 열기와 실제 문서 응답이 같은 기록을 쓴다.
     pub(crate) fn library_opened(&self, project: &str, name: &str) {
+        if let Some(v) = self.db.report_target(project, name).ok().flatten()
+            && self.report_id(project, &v.source).as_deref() == Some(name)
+        {
+            self.library_opened(project, &v.source);
+        }
         match self.db.library_opened_at(project, name, aaa_common::util::now_ms()) {
             Ok(true) => self.reports_bump(),
             Ok(false) => {}
@@ -495,7 +501,7 @@ mod tests {
         let posts = lab.h.db.post_list("demo").unwrap();
         let post = posts.iter().find(|e| e.input.topic == "report").expect("사용자 알림 post");
         assert!(post.input.to == "user" && post.input.title.contains("주간 보고"), "{post:?}");
-        assert_eq!(post.input.refs, vec!["library/demo/week".to_string()]);
+        assert_eq!(post.input.refs, vec![format!("library/demo/{}", w.report_id.as_deref().unwrap())]);
 
         // 보기 권한 기기에서 열어도 봤다(사람 하나의 보고서다)
         changed.borrow_and_update();
@@ -828,8 +834,10 @@ mod tests {
         let newest = retention_report(&lab, "t-0003", 200_000, 3, false);
         let live = lab.state.join("live-source");
         std::fs::create_dir(&live).unwrap();
-        std::fs::write(live.join("index.html"), vec![b'x'; 900_000]).unwrap();
+        std::fs::write(live.join("index.html"), b"live").unwrap();
         lab.h.library_publish("demo", "live", live.to_str().unwrap(), true, None, None, "test").unwrap();
+        // 외부 live 원본은 상한 밖이다. 등록 당시 불변 r 사본 4바이트는 host 보존 용량에 센다.
+        std::fs::write(live.join("index.html"), vec![b'x'; 900_000]).unwrap();
         lab.h.library_retention_pass_at(RETENTION_NOW).unwrap();
         assert!(!gone.exists());
         assert!(active.exists() && newest.exists() && live.join("index.html").exists());
@@ -992,7 +1000,7 @@ mod tests {
             ErrorCode::BadRequest
         );
         let usage = lab.h.library_usage().unwrap();
-        assert!(matches!(usage, FrontResponse::LibraryUsage { size: 7, reports: 1, live: 0, problems: 0, .. }));
+        assert!(matches!(usage, FrontResponse::LibraryUsage { size: 14, reports: 1, live: 0, problems: 0, .. }));
         let live = lab.state.join("usage-live");
         std::fs::create_dir(&live).unwrap();
         std::fs::write(live.join("index.html"), b"live").unwrap();
@@ -1000,7 +1008,7 @@ mod tests {
         assert!(
             matches!(
                 lab.h.library_usage().unwrap(),
-                FrontResponse::LibraryUsage { size: 7, reports: 2, live: 1, problems: 0, .. }
+                FrontResponse::LibraryUsage { size: 18, reports: 2, live: 1, problems: 0, .. }
             ),
             "실시간 원본은 host 사본 용량에 더하지 않는다"
         );

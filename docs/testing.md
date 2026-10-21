@@ -2,7 +2,7 @@
 
 새 기능을 만드는 thread가 따르는 짧은 규칙이다. 근거는 참고 넷(herdr 0.9.5·herdr-projects 0.2.35·herdr-web-ui `aa624cb`·t3code `4b1024da`)과 이 저장소에서 실제로 난 간헐 실패다. 전략과 도구 목록은 [plan §13](plan.md#13-테스트-전략과-직접-만들-e2e-도구)에 있다.
 
-## 기동 선점·복구와 배포 진행(t-0606)
+## 기동 선점·복구와 배포 진행(t-0606, plan §8.391)
 
 - host `automation::start_tests::start_admission_owns_the_thread_before_recovery_can_observe_it`는
   실제 자동화 시작의 DB commit 직후, 첫 ThreadPrepare 전 복구기를 호출한다. 기존 코드는 새 Starting을
@@ -34,6 +34,51 @@ resource_limits 변경은 하지 않는다.
 고정 sleep 검사도 `cfg(test)`가 붙은 필드·초기화 뒤의 운영 코드를 시험으로 오인하지 않게
 항목의 실제 범위를 읽는다. 필드·별칭·블록·여러 test 함수/모듈·generic/where 절 뒤의 경계를
 회귀 시험으로 검사하며, 실제 시험 sleep은 계속 검출한다. 기존 파일별 기준값은 바꾸지 않는다.
+
+## 할 일 로그·FD 회수의 CI 경쟁(t-0612, plan §8.390)
+
+- `cargo test -p aaa --test m13 task_edit_keeps_bytes_conflicts_and_logs --locked -- --exact`: 직접 편집 fixture는
+  같은 폴더의 임시 파일을 완성한 뒤 rename한다. 임시 파일 쓰기와 rename 사이에 실제 ticker tick을 끝내도
+  마지막 변경은 「새 일」의 `파일 직접/update` 한 건이어야 하며, 원래 before bytes·충돌·권한 검사는 유지한다.
+- 원래 `std::fs::write`의 truncate → ticker tick → write 순서를 제어하면 CI와 같은 「다른 일」의
+  `파일 직접/add`가 첫 로그로 나와 RED다. 제품은 로그 저장 뒤 사건을 보내고 있었으며, 로그를 더 기다려도
+  이미 생긴 삭제/추가 기록은 수정 기록이 되지 않는다. 제품의 기록 순서·감시 정책은 바꾸지 않는다.
+- `cargo test -p aaa --test resource_limits --locked`: 실제 384개 HTTP 연결·OS fd 회수·EMFILE 복구를 유지한다.
+  회수 대기의 여유 2개를 연결 수 단언에도 같은 상수로 적용한다. CI의 `400 → 18`은 원래 단언에서 RED,
+  수정 뒤에는 `400 → 16·17·18`을 허용하고 `400 → 19`와 예전 256개 상한은 계속 거부한다.
+- 고정 sleep·시험 재시도·시한 연장 없이 상태·사건으로 확인한다. 전체 검증은 `bash scripts/ci-local.sh`다.
+
+## 사용자 지시의 task 모델·머신 변경(t-0609, plan §8.389)
+
+- `cargo test -p aaa-host --lib task_queue::tests:: --locked`: 명시 지시의 빈 근거·제어 문자·RawSave·여러 동작 거부,
+  기본 모델/자동 머신 변경과 예약 ID·순서·생성 시각·감사 보존을 검사한다. 승인 후 다른 내용이 바뀌었거나
+  Starting/Running·기동 이력이 있는 Check 상태이면 거부하며 원문과 선택 출처를 보존한다.
+  예약 뒤 기본 모델이 달라져도 머신만 변경하면 예약 당시 profile·model·effort·설정 판을 유지한다.
+  새 기본 모델 회귀는 수정 전 claude → codex의 의도하지 않은 변경에서 RED, 수정 뒤 같은 단언에서 GREEN을 확인한다.
+- `cargo test -p aaa --test m13 coordinator_user_request_changes_choices_without_losing_reservations --locked -- --exact`:
+  격리 host·agent의 실제 coordinator pane에서 CLI를 실행한다. 근거 없는 모델 변경, 빈 근거, 다른 칸 혼합,
+  모르는 profile, 시작/재시작 우회를 거부한다. 명시 지시 뒤 미기동 예약의 새 선택·실행 승인판과
+  ID·생성 시각·순서·취소 상태·변경 전후 기록을 확인한다. host 재시작 뒤 기존 자리 resolve 사건만으로
+  바뀐 profile·자동 머신의 실제 pane이 시작되어야 한다. 고정 sleep·재시도는 없다.
+- 첫 전체 gate에서 E2E49는 host 기억을 본 직후 화면의 옛 본문을 읽었고, E2E74는 휴대폰 iframe에서 그림을
+  누른 뒤 Escape가 크게 보기에 전달되지 않았다. 49는 같은 본문·thread 단언을 DOM 갱신 사건까지 기다리고,
+  74의 휴대폰은 기존 E2E59와 같은 닫기 단추 tap을 쓴다. 데스크톱 Escape 회귀는 E2E59가 유지한다.
+  원본 실패 로그를 남기고 두 keeper를 좁게 검증한 뒤 최종 전체 gate를 실행한다. 시한·기대값은 바꾸지 않는다.
+- 착지 통합의 E2E46은 새 owner 응답이 아직 이름이 빈 사람 선택을 초기화해 입력칸이 사라졌다.
+  load average 62~64였으나, 한 worker에서 owner 요청을 사람 선택 뒤로 보류해 같은 결함을 재현했다.
+  이름을 쓰기 전의 사람 선택도 편집 중으로 보존한다. E2E46은 실제 응답과 두 렌더 frame 뒤 이름 입력·거부 검사를
+  유지해 RED/GREEN을 확인한다. 부하만의 실패로 넘기거나 시한·기대값을 바꾸지 않는다.
+- 기존 `task_selected_model_and_machine_are_changed_only_by_user`·직접 파일 수정·기본 모델 보호 keeper와
+  coordinator 안내의 새 생성/doctor 갱신 검사를 유지한다. 전체 정본은 `nice -n 15 bash scripts/ci-local.sh`다.
+
+## 할 일 머신 연결 목록(t-0600, plan §8.388)
+
+- `node web/e2e/web.e2e.mjs --spec 75-task-owners --workers 1`: 실제 실험실 agent를 끊은 동안 할 일을 처음 열고,
+  Chromium 1280px·WebKit 390px에서 `labA(끊김)`과 선택 불가를 확인한다. agent를 다시 붙이면 화면을 새로 열지 않아도
+  머신 선택이 살아나며, 고치던 제목은 남아야 한다. 두 번째 끊김·복귀도 같은 상세에서 확인한다.
+- 상세를 닫았다 열기·머신 칸 focus·바로 시작마다 실제 `assignable` HTTP 응답을 기다린다. 모델·머신 칸은 받은 목록만
+  바꾸고 폼은 다시 만들지 않는다. 통계·pane 변화는 재조회 원인이 아니며, 새 조회나 화면 닫기 뒤에 온 옛 응답은 버린다.
+- 연결과 DOM·HTTP 사건으로 끝내며 고정 sleep·재시도·시한 연장은 없다. 수정 전 코드는 첫 복귀의 머신 연결 단언에서 실패한다.
 
 ## 웹 알림함 숨기기(t-0590, plan §8.382)
 
@@ -1721,3 +1766,27 @@ Windows/Linux 실제 실행 판정은 main push 뒤 GitHub CI windows-2025/ubunt
 - `NODE_PATH=$(npm root -g) node web/e2e/web.e2e.mjs --spec 67 --workers 1`: 기존 예약 순서·취소·다른 기기·완료 보관을 유지하고, 실제 보고 파일→host 단계→예약 기동→데스크톱/390px 할 일의 연결·미연결 표지와 다른 색·사이드바·모든 thread·예약 상세를 확인한다. 스크린샷은 시험 산출물에 남긴다. DOM·보고·기동 사건으로 끝내며 고정 sleep·시한 연장은 없다.
 
 병합 대기 제외를 제거한 제품 변형은 DB 선점 keeper가 실패해야 한다. 변형 뒤 제품 bytes를 복원하고 정본 `bash scripts/ci-local.sh` 전체와 공개 검사를 실행한다. 실제 동시 착지 명령을 강제로 중단하는 기능은 아니며 coordinator가 착지를 하나씩 시작한다.
+
+
+## 보고 판 r-ID·실행 입력 이름(t-0576, 2단계)
+
+- `cargo test -p aaa-host --lib report_ids`: 프로젝트별 동시 예약·재개·삭제 후 순번·실패 예약의 비노출, 옛 r 이름과 충돌 방지, 첫 기동 등록, q/r의 프로젝트 이름 변경 보존을 본다. 같은 이름을 두 번 발행하고 옛 r의 본문·그림·CLI 열람·공유 링크·삭제·Reader 거부를 본다. thread 두 판의 옛 Markdown·그림·inbox r 번호와 미복사 파일의 최신 agent 대체 금지도 본다.
+- `cargo test -p aaa-host --lib library_links::`: 기존 서명·범위·권한·만료·기기 폐기·삭제·보존 규칙을 지킨다. host 용량은 불변 판까지 정확히 세며 live 원본의 나중 증가는 상한 밖, 등록 당시 사본은 보호 용량임을 구별한다.
+- `automation::runtime::input_names_tests`: 옛 inflight와 새 run 이름을 직렬화·재개해 같은 processed 영수증 이름을 유지한다. E2E 49는 실제 자동화 시작의 run 파일(64자 상한)과 processed.txt를 확인한다.
+- `node web/e2e/web.e2e.mjs <캡처 폴더> --spec 73-report-ids`: 실제 host·agent·CLI의 같은 이름 재발행·thread 보고 변경, 이전 판 원문·그림, 프로젝트 없는 r hash·기존 이름·t 번호·판 선택·inbox·Reader 거부와 390/1280px 밝음·어두움 머리를 본다. 특정 hash의 thread 사건·DOM·이미지 decode를 기다리며 고정 sleep을 쓰지 않는다.
+
+
+## 질문 안 자료 보기·기본 검수 카드(t-0576, 3단계)
+
+- `node --experimental-strip-types --test web/test/questionMaterials.test.mjs`: 본문·목록·표의 같은 보고 r 링크를 한 번만 세고 그림을 중복 자료로 만들지 않는다. 음원·HTML은 안전한 질문 파일 경로로만 풀며 code·API·로컬 절대 경로·실행 scheme·경로 이탈은 거부한다.
+- `cargo test -p aaa-host --lib report_mark::`: Questions 없는 검수 대기만 기본 카드로 만들며 명시한 질문을 보존하고 A를 추천하지 않는지 본다. report_ids keeper는 기존 검수 보고를 한 번만 q로 등록하고 B 글 누락 거부 뒤 답·부분 답을 선점하지 않음을 본다.
+- `node web/e2e/web.e2e.mjs <캡처 폴더> --spec 74-question-review`: 실제 publish·coordinator post·thread 보고를 쓴다. 카드 안 보고서·그림·음원과 자동 재생 없음·MIME·원래 질문 주소·390px WebKit/1280px 밝음·어두움, 선택/글 답과 inbox·새 보고 뒤 답한 r 판의 옛 그림을 확인한다. 소리 출력·운영 자료·고정 sleep을 쓰지 않는다.
+- 보고 판 등록의 격리는 독립 keeper로 지킨다. 일반 Host::open에 사본 등록을 되넣으면 등록 전 비어 있어야 할 ID 단언이 실패하고, DB 소유 필터를 빼면 다른 state의 원문을 채택하지 말라는 단언이 실패해야 한다. 기본 경로의 프로젝트를 시험 fixture로 사용하지 않는다. 실제 host 기동의 실험실은 설정에 임시 projects root를 명시한다.
+
+E2E 74의 headless WebKit iframe 그림은 기존 E2E 59·plan §8.353과 같은 이중 sandbox 제약을 적용한다. iframe의 그림 노드를 확인하고 같은 cap 주소의 실제 이미지를 앱 크게 보기에서 decode한다. Chromium iframe과 질문 본문의 그림은 직접 decode한다. 정책·시한을 바꾸거나 성공 여부를 추측하지 않는다. WebKit을 별도로 띄운 실험실은 실패 때도 finally에서 그 browser를 닫는다.
+
+`report_ids::tests::archived_r_attachment_protects_its_entire_report_family_from_delete_and_prune`는 완료 보관의 옛 r 첨부가 같은 이름의 모든 판을 명시 삭제·기한 정리에서 보호하는지 검사한다. 기존 m13 library_view의 최신 t 별칭 전체/Range 스트리밍을 유지하면서, 같은 파일의 r 보기만 미복사 파일의 기존 보기 경로 오류(502)와 명시한 까닭을 확인한다. 최신 별칭과 불변 판의 읽기 계약을 구분한다.
+
+전체 캡처를 켠 E2E 06은 설치 글꼴 검사에서 시작한 가짜 face를 아직 gate로 붙잡은 동안 screenshot이 document.fonts.ready를 기다려 막혔다. 보류 전의 크기·값·거부 단언은 그대로 두고, 캡처를 face gate 해제와 그리드 정합 확인 뒤로 옮긴다. 시한·기대값·제품 로딩 정책은 바꾸지 않는다.
+
+착지 main 통합 뒤 ThreadView의 단계·자동화 출처·r 번호가 합쳐져 FrontEvent의 enum 크기 차이가 Clippy 상한을 넘었다. Thread 사건·응답 본체를 Box에 두어 JSON/생성 TypeScript 형식을 유지하고, 전체 WS/E2E·Rust 사건 수신 시험과 Clippy를 다시 검증한다.

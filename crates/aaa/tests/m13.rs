@@ -1412,7 +1412,7 @@ fn agent_became(ev: &mut Events, id: &str, activity: AgentActivity, at: u64) -> 
         FrontEvent::Thread(t)
             if t.id == id && t.agent.as_ref().is_some_and(|a| a.activity == activity && a.since_ms >= at) =>
         {
-            Some(t.clone())
+            Some(t.as_ref().clone())
         }
         _ => None,
     })
@@ -4129,6 +4129,14 @@ fn library_view() {
     let original = std::fs::read(agent_lib.join("big.bin")).unwrap();
     assert!(body == original, "본문 {}바이트가 원본과 다르다", body.len());
 
+    // r 판은 큰 파일을 최신 agent에서 대신 읽지 않는다. 기존 t 보기와 서로 다른 계약이다.
+    let report_id = lib["report_id"].as_str().expect("보고 판 번호");
+    let frozen = w.h.ok(&["thread", "library", report_id]);
+    let frozen_base = frozen["base"].as_str().unwrap();
+    let (st, _, frozen_error) = http_get(&web, &format!("{frozen_base}big.bin"));
+    assert_eq!(st, 502, "불변 판의 미복사 큰 파일은 agent 최신 내용으로 대체하지 않는다");
+    assert!(String::from_utf8_lossy(&frozen_error).contains("이 보고 판에 복사되지 않은 파일"));
+
     // 파일 보기(차이 목록 R1)도 이 경로로 읽는다: 목록이 종류·MIME을 주고, Range·내려받기를 받는다
     let typed: Vec<(String, String, String)> = lib["files"]
         .as_array()
@@ -4672,9 +4680,18 @@ fn task_edit_keeps_bytes_conflicts_and_logs() {
     let w = world();
     let pdir = w.projects.join("demo");
     let file = pdir.join("TASKS.md");
+    // 직접 편집 fixture도 완성된 판을 rename으로 넘긴다. std::fs::write는 truncate와 write 사이에
+    // ticker가 빈 파일을 읽어 모든 task를 삭제/추가로 기록할 수 있다. 임시 파일을 쓰는 동안 tick을
+    // 끝내 그 순서를 매번 검사한다. host의 task 편집 API는 거치지 않는다.
+    let write = |text: &str| {
+        let pending = pdir.join("TASKS.md.pending");
+        std::fs::write(&pending, text).unwrap();
+        w.h.ticks(1);
+        std::fs::rename(pending, &file).unwrap();
+    };
     let md = "# Tasks\n\n## Backlog\n나중 일은 later.md에 모은다\n- [ ] 고칠 일 (me)\n  메모\n- [ ] 다른 일\n<!-- 모르는 줄 -->\n";
     let md = identified_tasks(md);
-    std::fs::write(&file, &md).unwrap();
+    write(&md);
     let sha = |t: &str| hex::encode(sha2::Sha256::digest(t.as_bytes()));
     let read = || std::fs::read_to_string(&file).unwrap();
     let mut ev = Events::connect(&w.h);
@@ -4714,7 +4731,7 @@ fn task_edit_keeps_bytes_conflicts_and_logs() {
     };
     let (fix, other) = (block("고칠 일"), block("다른 일"));
     let direct = added.replace("  메모\n", "  메모 고침(직접)\n");
-    std::fs::write(&file, &direct).unwrap();
+    write(&direct);
     // 충돌: 종료 코드 1, 까닭과 그 task의 지금 원문, 쓰지 않음
     let conflict = |args: &[&str]| -> Value {
         let o = w.h.run(&[&["--json", "task"], args].concat());
@@ -4776,8 +4793,9 @@ fn task_edit_keeps_bytes_conflicts_and_logs() {
     assert!(read().contains(&format!("- [ ] 새 일 (Priya) <!-- aaa-task:{new_id} -->\n  새 메모\n")), "{}", read());
 
     // 파일 직접 편집 → 다음 tick이 사건과 「파일 직접」 기록
+    let logged = count();
     let before_tick = read().replace("- [ ] 새 일 (Priya)", "- [ ] 새 일 (me)");
-    std::fs::write(&file, &before_tick).unwrap();
+    write(&before_tick);
     w.h.ok(&["ticker", "tick"]);
     ev.wait_from(at + 1, "직접 편집 뒤 tasks 사건", T, |e| match e {
         FrontEvent::Tasks { sha256, .. } if *sha256 == sha(&before_tick) => Some(()),
@@ -4785,6 +4803,8 @@ fn task_edit_keeps_bytes_conflicts_and_logs() {
     });
     let first = w.h.ok(&["task", "log"])["entries"][0].clone();
     assert_eq!((first["by"].as_str(), first["action"].as_str()), (Some("파일 직접"), Some("update")), "{first}");
+    assert_eq!(first["title"].as_str(), Some("새 일"), "{first}");
+    assert_eq!(count(), logged + 1, "직접 편집한 task 하나만 기록한다");
     assert_eq!(
         first["before"].as_str(),
         Some(format!("- [ ] 새 일 (Priya) <!-- aaa-task:{new_id} -->\n  새 메모").as_str())
@@ -4991,7 +5011,8 @@ const GUIDE_SECTIONS: &[&str] = &[
     "## 메시지마다 세 가지 중 하나",
     "새 thread를 시작하거나 열린 thread에 일을 넘기기 전에 TASKS.md에서 같은 일·겹치는 일을 찾는다",
     "시작하거나 이미 이어진 열린 thread에 넘기고, 메모·저장소도 사용자 말에 맞게 함께 고친다",
-    "정해진 모델·머신 변경은 사용자가 직접 한다",
+    "사용자가 모델·머신 변경을 지시하면 `aaa task edit",
+    "--user-request '사용자 지시 근거'",
     "`aaa task reserve <task ID>`",
     "가능한 예약 중 앞 것을 host가 시작한다",
     "resolve 정리가 실제로 끝나야 반환한다",
@@ -6539,6 +6560,132 @@ fn task_selected_model_and_machine_are_changed_only_by_user() {
     }
     w.h.ok(&["task", "edit", "선택 보호", "--profile", "mute"]);
     assert_eq!(w.h.ok(&["task", "list"])["tasks"][0]["profile"], "mute");
+}
+
+/// 실제 coordinator CLI의 명시 지시는 예약을 유지하고 새 값으로 시작한다.
+#[test]
+fn coordinator_user_request_changes_choices_without_losing_reservations() {
+    let mut w = world();
+    w.h.ok(&["project", "set", "demo", "max_parallel_threads", "1"]);
+    let task = w.task("busy.md", "noreport");
+    let busy = w.start(&["--title", "실행 자리", "--profile", "fake", "--kind", "dir", "--task-file", &task]);
+    let busy_id = busy["id"].as_str().unwrap();
+    w.wait_show("자리 확보", busy_id, |v| v["status"] == "open" && v["brief"] == "delivered");
+    for title in ["지시 변경", "취소 뒤 변경"] {
+        w.h.ok(&[
+            "task",
+            "add",
+            title,
+            "--profile",
+            "mute",
+            "--machine",
+            "labA",
+            "--repo",
+            "작업 폴더",
+            "--note",
+            "독립 설명과 완료 범위",
+        ]);
+        w.h.ok(&["task", "reserve", title]);
+    }
+    w.h.ok(&["task", "add", "미예약 변경", "--profile", "fake", "--machine", "labA"]);
+    let initial = w.h.ok(&["task", "queue"])["entries"].as_array().unwrap().clone();
+    let task_id = initial[0]["task_id"].as_str().unwrap();
+    let cancelled_id = initial[1]["task_id"].as_str().unwrap();
+    w.h.ok(&["task", "unreserve", cancelled_id]);
+    let coord = w.h.ok(&["project", "open", "demo", "--profile", "fake"]);
+    let pane = coord["pane"]["id"].as_str().unwrap();
+    w.wait_screen(pane, "fake>");
+    let mut number = 0;
+    let mut probe = |command: &str| {
+        number += 1;
+        let prefix = w.lab.root.join(format!("request-{number}"));
+        let script = w.task(&format!("request-{number}.sh"), &format!(
+            "'{}' --json {command} > '{p}.out' 2> '{p}.err'\nprintf '%s' \"$?\" > '{p}.rc'\nprintf 'request-{number}-finished\\n'\n",
+            lab::BIN, p=prefix.display()
+        ));
+        w.h.ok(&["pane", "run", pane, &format!("post-probe {script}")]);
+        w.h.wait_output(pane, &format!("request-{number}-finished"), T);
+        (
+            std::fs::read_to_string(prefix.with_extension("rc")).unwrap(),
+            std::fs::read_to_string(prefix.with_extension("err")).unwrap(),
+        )
+    };
+    let file = w.projects.join("demo/TASKS.md");
+    let original = std::fs::read_to_string(&file).unwrap();
+    for (command, error) in [
+        ("task edit '지시 변경' --profile fake", "사용자가 웹이나 aaa 밖 CLI".to_string()),
+        ("task edit '지시 변경' --profile fake --user-request ' '", "근거".to_string()),
+        (
+            "task edit '지시 변경' --profile fake --note '범위 교체' --user-request '사용자가 변경 지시'",
+            "변경에만".to_string(),
+        ),
+        ("task edit '지시 변경' --profile unknown --user-request '사용자가 변경 지시'", "profile".to_string()),
+        ("thread start demo --from-task '지시 변경' --profile fake", "task owner와 --profile이 다르다".to_string()),
+    ] {
+        let (rc, err) = probe(command);
+        assert_ne!(rc, "0", "{command}");
+        assert!(err.contains(&error), "{command}: {err}");
+        assert_eq!(std::fs::read_to_string(&file).unwrap(), original);
+    }
+    let (rc, err) = probe(&format!("thread restart demo {busy_id} --profile mute"));
+    assert_ne!(rc, "0");
+    assert!(err.contains("정해진 모델 변경"), "{err}");
+    let (rc, err) = probe("task edit '미예약 변경' --profile mute --user-request '사용자가 모델만 변경 지시'");
+    assert_eq!(rc, "0", "{err}");
+    let board = w.h.ok(&["task", "list"]);
+    let unreserved = board["tasks"].as_array().unwrap().iter().find(|t| t["title"] == "미예약 변경").unwrap();
+    assert_eq!(unreserved["profile"], "mute");
+    assert_eq!(unreserved["machine"], "labA");
+    let (rc, err) = probe("task edit '미예약 변경' --machine '' --user-request '사용자가 머신만 자동으로 변경 지시'");
+    assert_eq!(rc, "0", "{err}");
+    let board = w.h.ok(&["task", "list"]);
+    let unreserved = board["tasks"].as_array().unwrap().iter().find(|t| t["title"] == "미예약 변경").unwrap();
+    assert_eq!(unreserved["profile"], "mute");
+    assert!(unreserved["machine"].is_null());
+    let reason = "사용자가 채팅에서 fake와 자동 머신으로 변경 지시";
+    let (rc, err) = probe(&format!("task edit '{task_id}' --profile fake --machine '' --user-request '{reason}'"));
+    assert_eq!(rc, "0", "{err}");
+    let (rc, err) = probe("task edit '취소 뒤 변경' --profile fake --user-request '사용자가 취소한 할 일도 변경 지시'");
+    assert_eq!(rc, "0", "{err}");
+    let queue = w.h.ok(&["task", "queue"]);
+    let updated = &queue["entries"][0];
+    assert_eq!(updated["task_id"], task_id);
+    assert_eq!(updated["created_ms"], initial[0]["created_ms"]);
+    assert_eq!(updated["position"], initial[0]["position"]);
+    assert_eq!(updated["state"], "queued");
+    assert_eq!(updated["profile"], "fake");
+    assert!(updated["machine"].is_null());
+    assert_eq!(updated["selection"]["profile"], "fake");
+    assert!(updated["selection"]["actor"].as_str().unwrap().contains(reason));
+    assert_eq!(queue["entries"][1]["state"], "cancelled");
+    assert_eq!(queue["entries"][1]["selection"]["profile"], "fake");
+    let history = w.h.ok(&["task", "log", task_id]);
+    let entry = history["entries"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|e| e["by"].as_str().is_some_and(|s| s.contains(reason)))
+        .unwrap();
+    assert!(entry["by"].as_str().unwrap().contains("coordinator가 사용자 지시로 변경"));
+    assert!(entry["before"].as_str().unwrap().contains("mute@labA"));
+    assert!(entry["after"].as_str().unwrap().contains("(fake)"));
+    // 호스트 재시작 뒤에도 승인판·순서·변경 출처를 유지한다.
+    w.lab.kill("host");
+    w.spawn_host("host-request-restored");
+    wait_for("재연결", T, || w.h.connected("labA").then_some(()));
+    let restored = w.h.ok(&["task", "queue"]);
+    assert_eq!(restored["entries"][0]["approved_block"], updated["approved_block"]);
+    assert_eq!(restored["entries"][0]["selection"], updated["selection"]);
+    w.h.ok(&["thread", "resolve", "demo", busy_id]);
+    let started = wait_for("새 선택으로 예약 기동", T, || {
+        let q = w.h.json(&["task", "queue"]).ok()?;
+        q["entries"][0]["thread"].as_str().map(str::to_string)
+    });
+    let launched = w.wait_show("새 모델 pane", &started, |v| v["status"] == "open" && v["pane"].is_string());
+    assert_eq!(launched["profile"], "fake");
+    assert_eq!(launched["machine"], "labA");
+    assert_eq!(w.h.ok(&["task", "queue"])["entries"][1]["state"], "cancelled");
+    assert_eq!(w.h.ok(&["thread", "list", "demo"])["threads"].as_array().unwrap().len(), 2);
 }
 
 /// 표시 ID는 제목·목록·순서와 독립적이며 CLI 선택자와 내부 예약·보관을 같은 할 일에 연결한다.

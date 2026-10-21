@@ -7,6 +7,7 @@ use anyhow::Result;
 use rusqlite::{Connection, OptionalExtension, params};
 
 mod question_ids;
+mod report_ids;
 mod task_ids;
 mod task_queue;
 
@@ -211,6 +212,7 @@ impl Db {
             .optional()?)
     }
 
+    #[cfg(test)]
     pub(crate) fn library_report_put(&self, r: &LibraryReportRow) -> Result<()> {
         self.conn.lock().unwrap().execute(
             "INSERT INTO library_reports(project,name,live,updated,to_user,title,sent_at,seen_at,from_thread)
@@ -327,6 +329,10 @@ impl Db {
              CREATE TABLE IF NOT EXISTS library_links(
                id TEXT PRIMARY KEY, project TEXT NOT NULL, thread TEXT NOT NULL,
                created INTEGER NOT NULL, expires INTEGER NOT NULL, opened INTEGER, revoked INTEGER NOT NULL DEFAULT 0);
+             CREATE TABLE IF NOT EXISTS report_ids(
+               project TEXT NOT NULL, seq INTEGER NOT NULL, id TEXT NOT NULL, source TEXT NOT NULL, revision TEXT NOT NULL,
+               ready INTEGER NOT NULL DEFAULT 0, deleted INTEGER NOT NULL DEFAULT 0,
+               PRIMARY KEY(project,id), UNIQUE(project,seq));
              CREATE TABLE IF NOT EXISTS library_reports(
                project TEXT NOT NULL, name TEXT NOT NULL, live TEXT, updated INTEGER NOT NULL,
                PRIMARY KEY(project,name));
@@ -1525,7 +1531,7 @@ fn scrub_audit_env(conn: &mut Connection) -> Result<()> {
 }
 
 /// project 열이 있는 표(옛 db에 남은 `merge_queue`는 읽지 않아 옮기지 않는다, 새 db에는 없다 — §8.135)
-const PROJECT_TABLES: [&str; 14] = [
+const PROJECT_TABLES: [&str; 16] = [
     "threads",
     "flow_events",
     "messages",
@@ -1533,6 +1539,8 @@ const PROJECT_TABLES: [&str; 14] = [
     "evaluations",
     "library_links",
     "library_reports",
+    "report_ids",
+    "question_ids",
     "posts",
     "task_log",
     "task_ids",
