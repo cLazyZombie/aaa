@@ -6714,3 +6714,10 @@ Windows 사용자 PATH는 기본 preserve이고 명시 user만 현재 HKCU 값�
 공개 결과의 optional service/web 요약은 등록·running·application_ready와 외부/내부 포트·재사용/소유·pairing을 나눠 표시한다. SID/home/인증 파일 존재로 실제 서비스 harness 인증을 추정하지 않는다. require가 미확인이면 unknown/needs_user, 사용자가 새 계획에서 명시한 login=defer는 configured 범위다. URL·암호·키·코드는 결과에 없다. FRONT_API 1.90, AGENT_LINK 1.11/install_enroll.v1과 TS/schema를 함께 갱신하며 기능 없는 구판을 성공으로 처리하지 않는다.
 
 검증은 macOS 전체 gate와 Windows strict cross다. Windows·Linux 실제 실행은 main push 뒤 CI이며 실제 SCM logon/Session0/로그인 전 부팅/LSA/UAC/인증·사용자 Windows PC 인수와 혼동하지 않는다. 이 단계 뒤 Windows 최소 bootstrap/사용자 Windows PC 사용자 시험→macOS→Linux→최종 I7 순서로 간다. 별도 runner/VM·branch/PR CI push는 두지 않는다. 절/API 번호는 착지 창에서 최신 main과 다시 대조한다.
+
+
+### 8.375 화면 이동 뒤 대화 첨부 미리보기 복원(10-21, t-0583)
+
+- **원인·수정.** 초안에는 이미지 `@경로`가 남지만 입력창 컴포넌트의 첨부 목록·blob URL은 화면 전환 때 사라졌다. 입력창을 다시 열 때 초안의 이미지 경로에서 목록을 복원하고 기존 `pane_file` API의 권한 검사·이미지 크기 제한을 거친 URL로 썸네일을 읽는다. 원본 이미지 바이트나 blob URL을 브라우저 저장소에 추가하지 않는다. 새로 올린 그림은 기존 로컬 미리보기를 쓰고 해제 때 blob URL을 놓는다.
+- **동작·검증.** 복원한 첨부도 전송·개별 삭제 대상이며, 뒤에 새 그림을 붙여도 ID가 겹치지 않는다. 기존 E2E23을 확장해 Chromium·WebKit 데스크톱·WebKit iPhone·iPad에서 대화·터미널·보고서 이동, 새로고침, 실제 이미지 decode, 원본 SHA-256 전송, 추가 첨부·개별 삭제·재진입을 검사한다. 원래 코드의 미리보기 누락 재현과 시험 절차는 [testing](testing.md)의 t-0583 절에 둔다.
+- **번호·호환.** 착지 기준 main `c877d394`의 §8.374·FRONT_API 1.90·AGENT_LINK 1.11·E2E70을 확인했다. 이 수리는 §8.375이며 프로토콜 변경이나 새 E2E 파일은 없다. 기존 API 판과 E2E 번호를 유지한다.

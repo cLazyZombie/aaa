@@ -21,6 +21,7 @@ import { linkFilePaths } from "./FilePathLink";
 import { Markdown, OpenLinkContext } from "./Markdown";
 import { OpenFileContext } from "./herdr/filePaths.ts";
 import { copyText } from "./herdr/clipboard.ts";
+import { imagePaths } from "./herdr/composerImages";
 import { shouldFoldUserMessage } from "./herdr/userMessageFold.ts";
 import { ConversationRefresh } from "./herdr/conversationRefresh.ts";
 import type { PendingSend } from "./ChatComposer";
@@ -346,9 +347,8 @@ function UserTurn({ text, pane, onOpenFile, pending }: { text: string; pane: str
 
 // 참고 ChatView UserImages·ImageThumb. @는 첨부 표시이고 실제 파일 경로에 속하지 않는다.
 // URL은 같은 pane의 기존 파일 API가 준 capability만 쓴다(머신·file_roots·인증은 그대로).
-const IMAGE_MENTION = /(?:^|\s)@(\S+\.(?:png|jpe?g|gif|webp))(?=\s|$)/gi;
 function UserImages({ pane, text, onOpenFile }: { pane: string; text: string; onOpenFile: (path: string) => void }) {
-  const paths = useMemo(() => [...new Set([...text.matchAll(IMAGE_MENTION)].map((m) => m[1]!))], [text]);
+  const paths = useMemo(() => imagePaths(text), [text]);
   return paths.length === 0 ? null : <div className="chat-user-images">
     {paths.map((path) => <ImageThumb key={path} pane={pane} path={path} onOpenFile={onOpenFile} />)}
   </div>;
