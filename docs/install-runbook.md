@@ -296,7 +296,9 @@ L2의 `--file`은 `<머신>:<절대 경로>/aaa` 또는 `<머신>:~/후보폴더
 
 시작 전에 stderr에 출력된 rollout ID를 보존한다. 응답 단절은 성공이 아니며 start를 다시 보내지 않는다. 같은 ID의 status --wait는 host 재연결 뒤에도 조회만 한다. 단계별 작업 ID는 host DB에 먼저 저장되며 agent 기록이 없을 때만 같은 ID로 전송한다. 완료·실패 기록은 자동 재시도하지 않는다. 한 번에 rollout 하나만 실행하며 도중 개별 update/restart 요청은 거부한다.
 
-L3는 모든 대상의 `rollout_recovery.v1`과 host/로컬 agent의 배포 전 실행 SHA·판 일치를 확인한다. 먼저 L3를 아는 host·agent를 설치된 L2 CLI의 기존 rollout 또는 원시 절차로 반영한다. 그 rollout은 옛 정책이며 다음 배포부터 독립 복구가 켜진다. 감시는 배포 전 검증 바이너리의 private 사본에서 별도 프로세스로 시작하므로 host/agent 재시작과 일반 old 보관 개수에 의존하지 않는다.
+coordinator의 `aaa service restart --role <host|agent> [--machine <머신>]`은 FRONT_API 1.87 이상 host에서 재시작만 하는 rollout이다(관리 GUI W6c). stderr의 rollout ID로 `aaa deploy status <ID> --wait`를 본다. 독립 감시가 새 프로세스(host는 웹 응답까지)를 확인해야 done이고, 감독자 재시작이 실패하면 감시가 한 번 더 다시 띄운 뒤 결과를 남긴다. 개별 `aaa update`·`aaa update rollback`은 받을 SHA를 미리 몰라 독립 감시 밖이다(작업 영수증만, `aaa update status <ID> --wait`). 감시가 필요한 교체는 rollout(`aaa deploy start`)으로 한다. 사람이 aaa 밖 터미널에서 하는 `aaa service restart`는 host를 거치지 않는 감독자 재시작 그대로다.
+
+L3는 모든 대상의 `rollout_recovery.v1`과 host/로컬 agent의 배포 전 실행 SHA·판 일치를 확인한다. 먼저 L3를 아는 host·agent를 설치된 L2 CLI의 기존 rollout 또는 원시 절차로 반영한다. 그 rollout은 옛 정책이며 다음 배포부터 독립 복구가 켜진다. 감시는 배포 전 검증 바이너리의 private 사본에서 별도 프로세스로 시작하므로 host/agent 재시작과 일반 old 보관 개수에 의존하지 않는다. 새 host는 실행 판·SHA·새 프로세스에 더해 같은 머신에서 그 웹의 `/api/v1/me`가 답해야(짝 없는 기기 답 401) 확인된다(관리 GUI W6c). 안전 모드(503)·연결 거부·무응답은 확인되지 않음이라 같은 한도 뒤 복구한다. 웹을 끈 설정과 W6c 이전 host·감시 사본은 실행 신원만 본다.
 
 새 실행 SHA·판·새 프로세스가 확인되지 않으면 실패 머신만 baseline SHA로 복구하고 기존 감독자를 재시작한다. `recovering`은 복구와 옛 실행 판 확인을 기다리는 중이다. 복구 요청 뒤 뜬 새 old 프로세스까지 확인해야 `stopped_rolled_back`이며 배포 자체는 실패(exit1)다. `recovery_failed`는 사람이 확인한다. 설치 전 실패/끝까지 unchanged이면 `stopped`다. 진행 중 설치를 철회해도 실제 설치 종료 뒤 복구하도록 OS lease로 직렬화한다. 앞 머신은 유지하고 다음 머신으로 가지 않는다. host 머신 agent 실패는 공유 실행 파일 때문에 host와 agent 둘의 복구 판을 확인한다.
 
@@ -325,7 +327,7 @@ L3는 모든 대상의 `rollout_recovery.v1`과 host/로컬 agent의 배포 전 
 3. 「배포 시작…」 확인 창 하나로 시작한다. 점검한 뒤 후보·대상을 바꾸면 다시 점검해야 열린다. rollout ID는 보내기 전에 화면에 나온다. 이후는 위 L2·L3과 같다(모든 대상 전송·사전 검사 뒤 host부터 교체, 새 판이 확인되지 않으면 그 머신 복구). 웹 승인은 사람 터미널처럼 그 rollout 끝까지 남고 coordinator_deploy를 바꾸지 않는다.
 4. 화면이 끊기거나 host가 재시작해도 「배포 기록」에서 같은 rollout ID의 상태를 다시 읽는다. 웹에는 표시용 요약만 간다(실행기 오류 원문·경로·actor는 coordinator의 배포 기록에만).
 
-「서비스 재시작」은 연결된 머신마다 agent(host 머신은 host도)를 확인 창 뒤 감독자(launchd)로 다시 띄운다. 실행 파일은 바꾸지 않는다. 진행 중 rollout이 있으면 거부한다. 최근 재시작·coordinator 개별 작업은 상태(머신이 끊겼으면 「상태 모름」)와 함께 보인다. 아직 독립 복구 감시(guard) 밖이다(W6c에서 guard 아래로 옮긴다).
+「서비스 재시작」은 연결된 머신마다 agent(host 머신은 host도)를 확인 창 뒤 감독자(launchd)로 다시 띄운다. 실행 파일은 바꾸지 않는다. 재시작만 하는 rollout이라(관리 GUI W6c, FRONT_API 1.87) 「배포 기록」에 「agent 재시작」·「host 재시작」으로 남고, 배포와 같은 독립 복구 감시가 재시작 전 실행 신원과 다른 새 프로세스(같은 판·SHA, host는 웹 응답까지)를 확인해야 끝난다. 2분 안에 확인하지 못하면 감시가 한 번 더 다시 띄우고, 그래도 안 되면 「복구 확인 필요」로 끝난다. 진행 중 rollout이 있으면 거부한다. 실행 신원을 알리지 않는 옛 agent는 먼저 새 판으로 반영한다. 아래 목록은 coordinator의 개별 작업(update·rollback)과 W6c 이전 재시작 기록이다.
 
 ### 설정이 깨졌을 때: 안전 모드(관리 GUI W6b)
 
