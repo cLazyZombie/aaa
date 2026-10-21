@@ -45,6 +45,7 @@ mod input_log;
 pub mod installation;
 mod legacy_mission;
 mod library;
+mod library_catalog;
 mod library_links;
 mod library_publish;
 mod library_retention;

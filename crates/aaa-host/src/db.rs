@@ -6,6 +6,7 @@ use std::sync::Mutex;
 use anyhow::Result;
 use rusqlite::{Connection, OptionalExtension, params};
 
+mod library_catalog;
 mod question_ids;
 mod report_ids;
 mod task_ids;

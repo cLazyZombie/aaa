@@ -2,6 +2,15 @@
 
 새 기능을 만드는 thread가 따르는 짧은 규칙이다. 근거는 참고 넷(herdr 0.9.5·herdr-projects 0.2.35·herdr-web-ui `aa624cb`·t3code `4b1024da`)과 이 저장소에서 실제로 난 간헐 실패다. 전략과 도구 목록은 [plan §13](plan.md#13-테스트-전략과-직접-만들-e2e-도구)에 있다.
 
+## 보고서 목록 첫 화면(t-0656, plan §8.413)
+
+- `cargo test -p aaa-host --lib library_links --locked`: 모아 읽은 목록과 기존 단일 보고 조회를 비교한다. 같은 이름의 두 판·r 첨부 보관·끝난/진행 중 thread·원격에만 있는 파일·실시간 변경/원본 소실·안 봄 해제·링크 폐기 후에도 크기·보호·판·공유 표시가 같아야 한다. 기존 삭제·보존·링크 경계도 유지한다.
+- `cargo test -p aaa-host --lib report_ids --locked`: 예약/완료/삭제 판의 분리와 보관 첨부의 원본 보호를 확인한다.
+- `node web/e2e/web.e2e.mjs <캡처 폴더> --spec 80-report-list,21-library-reports,73-report-ids --workers 1`: 실제 host의 격리 DB·manifest에 1,118개 사본 폴더·559개 원본·최대 954개 첨부·보관 120건을 넣는다. 원문 바이트는 만들지 않으며 운영 library는 읽거나 수정하지 않는다. 요청 시작부터 JSON 수신까지와 두 animation frame 후 첫 화면 시간을 `report-list-timing.json`으로 남긴다. 시간은 관측값이며 부하에 민감한 통과 시한으로 쓰지 않는다.
+- 첫 50개·추가 50개·끝까지 보기·화면 밖을 포함한 전체 선택, 보존 판을 별도 줄로 세지 않음을 확인한다. Chromium 1280px·WebKit 390px Reader의 실제 용량 응답을 route gate로 보류하고 목록이 보이는 사건을 먼저 기다린다. 용량 실패 때도 목록을 유지하며 가로 넘침·Reader 조작 부재를 검사한다. 고정 sleep·재시도·기대값 완화는 없다.
+- 전체 검증과 착지는 착지 창 뒤 `nice -n 15 bash scripts/ci-local.sh`와 공개 검사로 수행한다. 운영 host 접근이 없는 실험실 결과를 운영 37GB 실측으로 부르지 않는다.
+
+
 ## 직접 병합한 thread의 할 일 완료 보관(t-0651, plan §8.412)
 
 - `cargo test -p aaa-host --lib task_clean --locked`: 기존 PR·표지·중단·하위 task 판정과 명시한 병합 커밋 줄 파서를 검사한다. 일반 검증 SHA·코드 예제는 병합 근거로 읽지 않는다.
