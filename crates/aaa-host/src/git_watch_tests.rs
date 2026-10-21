@@ -59,6 +59,7 @@ impl Lab {
                 os: "test".into(),
                 arch: "test".into(),
                 software: "test".into(),
+                identity: None,
                 features: vec!["git.v1".into(), "host_profiles.v1".into()],
                 dev_mode: true,
                 sha256: None,
