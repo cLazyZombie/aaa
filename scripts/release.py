@@ -8,6 +8,11 @@ import re
 import tomllib
 from pathlib import Path
 
+if __package__:
+    from .launcher_asset import FILES
+else:
+    from launcher_asset import FILES
+
 
 ROOT = Path(__file__).resolve().parents[1]
 RELEASES = "https://github.com/cLazyZombie/aaa/releases/download"
@@ -18,6 +23,7 @@ ASSETS = {
     "macos-aarch64": "aaa-macos-aarch64",
     "windows-x86_64": "aaa-windows-x86_64.exe",
 }
+LAUNCHERS = {"macos-aarch64": "aaa-launcher-macos-aarch64.json", "macos-x86_64": "aaa-launcher-macos-x86_64.json"}
 
 
 def version_for_tag(tag: str) -> str:
@@ -41,9 +47,25 @@ def build_manifest(tag: str, artifacts: Path, output: Path) -> None:
             digest = hashlib.file_digest(stream, "sha256").hexdigest()
         assets[platform] = {"url": f"{RELEASES}/{tag}/{name}", "sha256": digest}
         checksums.append(f"{digest}  {name}\n")
+    launchers = {}
+    for platform, name in LAUNCHERS.items():
+        path = artifacts / name
+        if path.is_symlink() or not path.is_file() or path.stat().st_size == 0:
+            raise ValueError(f"release launcher package가 없다: {name}")
+        package = json.loads(path.read_text())
+        if (package.get("schema") != 1
+                or not isinstance(package.get("files"), dict)
+                or set(package["files"]) != set(FILES)
+                or package.get("version") != version
+                or package.get("platform") != platform
+                or package.get("binary_sha256") != assets[platform]["sha256"]):
+            raise ValueError(f"launcher와 같은 release 실행 파일 결속이 다르다: {name}")
+        digest = hashlib.sha256(path.read_bytes()).hexdigest()
+        launchers[platform] = {"url": f"{RELEASES}/{tag}/{name}", "sha256": digest}
+        checksums.append(f"{digest}  {name}\n")
     output.mkdir(parents=True, exist_ok=True)
     (output / "manifest.json").write_text(
-        json.dumps({"version": version, "notes": f"aaa {tag}", "assets": assets}, indent=2) + "\n",
+        json.dumps({"version": version, "notes": f"aaa {tag}", "assets": assets, "launchers": launchers}, indent=2) + "\n",
         encoding="utf-8",
     )
     (output / "SHA256SUMS").write_text("".join(checksums), encoding="utf-8")

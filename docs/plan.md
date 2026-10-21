@@ -7148,3 +7148,14 @@ FRONT_API 1.96는 기본 검수 표지와 답 기록의 r 참조를 더한다. E
 - 3933e4cb CI의 pairing은 `answered=0/1`, `installation_external_tty_required`로 승인 전에 종료했다. 임시 state의 8.3 부모와 canonical 긴 부모가 서로 다른 pipe hash로 남는 경계를 수리한다. bind/connect는 기존 부모만 `GetLongPathNameW`로 조회하고 socket leaf는 그대로 합친다. 조회 실패는 기존 주소로 닫히며, raw/기존 구분자 주소와 검증한 canonical 별칭은 NotFound 때만 읽는다. ACL·peer PID·외부 TTY 승인 문은 바꾸지 않는다.
 - 같은 CI의 IPC 첫 조합 rebind OS5는 EOF 뒤에도 Mio의 합성 readiness 완료가 handle의 Arc를 잡는 경계다. owner는 연결·EOF·server/listener drop 뒤 전용 runtime의 IOCP drain을 끝내고 새 runtime에서 같은 주소를 단 한 번 rebind한다. 기존 5조합과 각 3연결·ACL·peer·byte·첫 instance 거부를 유지하고 OS의 짧은 부모/canonical 양방향도 더한다. bind 재시도·고정 sleep·시한 연장·기대값 완화는 없다.
 - Windows RED는 main CI 원문을 보존하며 실제 GREEN은 다음 승인 착지 뒤 main CI로만 판정한다. macOS 전체 gate와 Windows cross는 각자의 증거 범위만 보고한다. I3는 이 Windows 판정 뒤에 이어 간다.
+
+
+### 8.419 install I3 macOS launchd 감독자(t-0485)
+
+- **선행·순서.** main94d2081e GitHub CI의 Windows pairing/IPC GREEN을 사용자 판정으로 닫았다. I3는 웹 머신 추가 M3가 기다리는 `apply --service launchd` 경로다. 이후 Windows 최소 bootstrap→사용자 PC 시험→I4 Linux→I7 최종 인수다.
+- **구현.** I2 파일 receipt·I6 범위 승인/worker·기존 고정 launcher/LaunchAgent 속성을 재사용한다. 같은 release/CPU/binary SHA의 고정 네 파일 package를 실제 파일 transaction과 StageLauncher 승인으로 설치하며 기존 launcher를 교체하지 않으며 보존 bytes도 StageLauncher 승인에 묶어 검토 뒤 편집을 무쓰기 거부한다. bundle 바깥의 잠금/공유 참조로 서명과 다른 instance를 보존한다. release producer/workflow에 JSON 두 개와 manifest checksum을 더하며 이 후보에서 release를 게시하지 않는다.
+- **감독자.** 현재 사용자 GUI domain, explicit instance label, private context/내구 service journal, create-new plist와 launchctl bootstrap/kickstart/bootout이다. 등록 중단 뒤 같은 ID를 재대조하고 외부 등록/편집은 충돌로 보존한다. ready는 backend 실제 준비/agent 연결과 커널 PID/생성/session·계정/profile·SHA·boot·launchd/launcher 부모를 대조한다. status는 읽기만 한다. Serve exact-port·pairing·승인/비밀 경계는 기존 I6 owner를 유지한다.
+- **권한.** GUI 없으면 needs_user이며 다른 계정/root/daemon으로 바꾸지 않는다. 키체인·로그인·개발자 도구/FDA는 안내하고 자동 허용하지 않는다. 운영 Mac의 서비스/설정/계정은 변경하지 않는다. 실행 절차·로그·보존/해제는 install-runbook.md §12에 둔다.
+- **검증.** 파일 엔진/CLI owner·실제 임시 app 서명·공유/재개·외부 plist/가짜 proof 거부가 로컬 경계다. 실제 등록은 사용자가 고른 기존 macos-15 CI 일회성 계정의 필수 별도 단계에서 두 고유 label·ready·같은 ID resume·다른 instance 보존·해제를 검증한다. GUI 부재는 실패이고 로컬 통과/cross로 실제 등록 성공을 주장하지 않는다. Windows/Linux는 Mac native 시험만 cfg 제외, 공통 시험은 유지한다. FRONT_API/AGENT_LINK/schema와 웹 E2E 번호는 변경하지 않는다.
+
+- **I3 착지 통합.** origin/main071090d5(t-0670)의 마지막 plan§8.418·FRONT_API1.102·AGENT_LINK1.11·웹E2E83을 직접 확인했다. I3는 빈§8.419를 유지하고 API/웹 번호는 올리지 않는다. t-0670의 Rust CPU 예약·실측 우선 배치·웹 10 worker 및 diff 임시 index 충돌 수리를 그대로 보존한다. 통합본 전체 ci-local·Windows cross·공개 검사를 새 로그에 기록한다. 실제 LaunchAgent 등록은 승인된 기존 macos-15 main CI에서 판정한다.

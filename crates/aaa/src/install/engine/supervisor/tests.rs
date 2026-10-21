@@ -27,7 +27,8 @@ impl Manager for Os {
             pid: if self.pid == 0 { 17 } else { self.pid },
         }))
     }
-    fn create(&mut self, spec: &Spec, password: &Password) -> Result<()> {
+    fn create(&mut self, spec: &Spec, password: Option<&Password>) -> Result<()> {
+        let password = password.unwrap();
         assert!(!password.0.is_empty());
         self.creates += 1;
         self.config = Some(Configuration::desired(spec));

@@ -4,7 +4,7 @@ use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-use super::{error, platform};
+use super::{engine, error, platform};
 use aaa_proto::install::*;
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
@@ -434,8 +434,44 @@ pub(super) fn inspect(i: &InstallInvocation) -> Result<(InstallResult, InstallPl
     existing |= service.present == Some(true);
     check(&mut result, "service_manager", service.manager);
     observations["service_inventory"] = json!({"manager":service.manager,"present":service.present});
+    if context.platform.os == InstallOs::Macos && shape.choices.service == Some(InstallService::Launchd) {
+        c.launcher.get_or_insert_with(|| {
+            home.join("Applications/aaa-launcher.app/Contents/MacOS/aaa-launcher").to_string_lossy().into_owned()
+        });
+    }
     if let Some(launcher) = &c.launcher {
-        add_file(&mut files, Path::new(launcher))?;
+        let path = real_file(Path::new(launcher))?;
+        add_file(&mut files, &path)?;
+        c.launcher = Some(path_text(&path)?);
+    }
+    if shape.choices.service == Some(InstallService::Launchd) {
+        if c.launcher_policy == Some(InstallLauncherPolicy::Install) {
+            let provisional = aaa_config::install::plan(c.clone(), context.clone()).map_err(unsupported)?;
+            let asset = engine::launcher_asset_source(&provisional)
+                .map_err(|_| error("installation_launcher_asset_required", 3))?;
+            add_file(&mut files, &asset)?;
+            if !asset.is_file() && !c.launcher.as_ref().is_some_and(|p| Path::new(p).is_file()) {
+                result.needs_user.push(InstallNeedsUser {
+                    code: "installation_launcher_asset_required".into(),
+                    target: "launcher".into(),
+                    message: "같은 release의 launcher JSON asset을 설치 원본 실행 파일 옆에 준비하세요".into(),
+                });
+            }
+        }
+        observations["service_environment"] = json!(
+            std::env::vars()
+                .filter(|(key, _)| matches!(key.as_str(), "PATH" | "LANG" | "LC_ALL" | "LC_CTYPE" | "TZ" | "TERM"))
+                .collect::<std::collections::BTreeMap<_, _>>()
+        );
+        if !c.launcher.as_ref().is_some_and(|p| Path::new(p).is_file())
+            && c.launcher_policy != Some(InstallLauncherPolicy::Install)
+        {
+            result.needs_user.push(InstallNeedsUser {
+                code: "installation_launcher_required".into(),
+                target: "launcher".into(),
+                message: "같은 release의 검증된 launcher를 준비하거나 기존 launcher 경로를 지정하세요".into(),
+            });
+        }
     }
     if c.service != Some(InstallService::None) {
         change(&mut result, "service", "register_after_authorization");

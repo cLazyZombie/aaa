@@ -13,6 +13,7 @@ mod bootstrap;
 mod enrollment;
 mod execution;
 mod input;
+mod launcher_asset;
 mod private;
 mod readiness;
 mod review;
@@ -22,6 +23,10 @@ mod supervisor;
 mod user_path;
 mod web;
 mod worker;
+
+pub(super) fn launcher_asset_source(plan: &InstallPlan) -> std::result::Result<PathBuf, Box<InstallResult>> {
+    launcher_asset::source(plan).map_err(|e| super::error(e.code, e.exit))
+}
 
 pub(super) use apply::{inline as apply_inline, run as apply};
 pub(super) use review::{issue as issue_authorization, normalize_state, original_plan, preview, read_plan};
@@ -94,6 +99,7 @@ enum Step {
 #[serde(rename_all = "snake_case")]
 enum Kind {
     Binary,
+    Launcher,
     Config,
     Project,
     Hook,
@@ -102,6 +108,7 @@ impl Kind {
     fn text(self) -> &'static str {
         match self {
             Self::Binary => "binary",
+            Self::Launcher => "launcher",
             Self::Config => "config",
             Self::Project => "project",
             Self::Hook => "hooks",

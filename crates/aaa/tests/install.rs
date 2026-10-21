@@ -1,4 +1,4 @@
-//! install의 실제 argv·출력·현지 읽기 경계. 서비스/host/agent를 띄우지 않는다.
+//! install의 실제 argv·출력·현지 읽기 경계. 실제 launchd 등록 owner는 CI 전용 ignored 시험이다.
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output, Stdio};
@@ -528,14 +528,14 @@ fn install_windows_drive_mount_and_scm_queries_are_read_only() {
 }
 
 #[test]
-fn internal_service_entry_requires_scm_and_never_falls_back_to_console_backend() {
+fn internal_service_entry_requires_the_os_supervisor_and_never_falls_back_to_console_backend() {
     let lab = Lab::new();
     let before = snapshot(&lab.0);
     let context = lab.0.join("untrusted-context.json");
     let out = lab.cmd(&["service-run", "--context", context.to_str().unwrap(), "--context-sha256", &"0".repeat(64)]);
-    assert_eq!(out.status.code(), Some(if cfg!(windows) { 3 } else { 5 }));
+    assert_eq!(out.status.code(), Some(if cfg!(any(windows, target_os = "macos")) { 3 } else { 5 }));
     assert!(out.stdout.is_empty());
-    assert!(String::from_utf8_lossy(&out.stderr).contains(if cfg!(windows) {
+    assert!(String::from_utf8_lossy(&out.stderr).contains(if cfg!(any(windows, target_os = "macos")) {
         "service_controller_required"
     } else {
         "unsupported_service_platform"
@@ -560,3 +560,7 @@ mod worker_lifetime;
 
 #[path = "install/pairing.rs"]
 mod pairing;
+
+#[cfg(target_os = "macos")]
+#[path = "install/launchd.rs"]
+mod launchd;
