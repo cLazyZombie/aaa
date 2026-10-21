@@ -22,11 +22,13 @@ export const automationAttention = (rules: readonly Pick<RoutineView, "enabled" 
 /** 보낸 결과를 모르는 `do.message` 묶음: 사람이 대상 thread를 보고 푼다 */
 export const stuckBatch = (r: Pick<RoutineView, "queue">) => (r.queue?.inflight?.unknown ? r.queue.inflight : null);
 
-export type RuleTone = "off" | "failed" | "stuck" | "done" | "skipped" | "waiting" | "ready";
-/** 줄의 점·배지 색: 꺼짐 → 파일 오류 → 막힌 큐 → 마지막 결과 */
+export type RuleTone = "off" | "file-error" | "failed" | "stuck" | "done" | "skipped" | "waiting" | "ready";
+export const ruleWord: Record<RuleTone, string> = { off: "꺼짐", "file-error": "파일 오류", failed: "실행 실패", stuck: "막힘 · 입력 전달 모름", done: "처리됨", skipped: "건너뜀", waiting: "대기", ready: "기록 없음" };
+/** 줄의 점·배지 색: 파일 오류 → 꺼짐 → 막힌 큐 → 마지막 결과 */
 export function ruleTone(r: Pick<RoutineView, "enabled" | "error" | "queue" | "last_result">): RuleTone {
+  // 깨진 파일은 enabled=false로 오므로 꺼짐보다 먼저다.
+  if (r.error) return "file-error";
   if (!r.enabled) return "off";
-  if (r.error) return "failed";
   if (stuckBatch(r)) return "stuck";
   const s = r.last_result?.status;
   return s === "done" || s === "skipped" || s === "waiting" || s === "failed" ? s : "ready";

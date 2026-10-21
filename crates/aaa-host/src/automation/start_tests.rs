@@ -36,9 +36,14 @@ impl Lab {
     async fn fake(&self, features: Vec<String>) -> Fake {
         self.fake_on("m", "mac-a", features).await
     }
-    async fn fake_on(&self, mid: &str, name: &str, mut features: Vec<String>) -> Fake {
+    async fn fake_on(&self, mid: &str, name: &str, features: Vec<String>) -> Fake {
+        self.fake_capabilities(mid, name, features, true).await
+    }
+    async fn fake_capabilities(&self, mid: &str, name: &str, mut features: Vec<String>, profiles: bool) -> Fake {
         let machine = mid.to_string();
-        features.push("host_profiles.v1".into());
+        if profiles {
+            features.push("host_profiles.v1".into());
+        }
         let (a, b) = tokio::io::duplex(2 << 20);
         let (ar, aw) = tokio::io::split(a);
         drop(ar);
@@ -285,6 +290,95 @@ fn seed(l: &Lab, machine: &str, holds: &[&str]) -> ThreadRec {
 }
 fn starts(f: &Fake) -> usize {
     f.requests.lock().unwrap().iter().filter(|q| matches!(q, AgentRequest::ThreadPrepare(_))).count()
+}
+
+async fn launched(l: &Lab, events: &mut tokio::sync::broadcast::Receiver<ThreadView>, id: &str) {
+    tokio::time::timeout(std::time::Duration::from_secs(5), async {
+        while l.h.load("demo", id).unwrap().status == ThreadStatus::Starting {
+            events.recv().await.unwrap();
+        }
+        let rec = l.h.load("demo", id).unwrap();
+        assert_eq!(rec.status, ThreadStatus::Open, "{:?}", rec.error);
+    })
+    .await
+    .unwrap();
+}
+
+#[tokio::test]
+async fn rollout_preserves_flow_input_and_scope_until_agent_capability_returns() {
+    let mut l = auto_lab();
+    let a = l.fake(vec!["mission.v1".into()]).await;
+    let b = l.fake_on("b", "mac-b", vec!["mission.v1".into()]).await;
+    let mut r = rule(&l, "reuse='open'");
+    r.trigger = crate::routine::Trigger::Thread(automation::Threads {
+        events: vec!["report_ready".into()],
+        repos: vec![],
+        include_automation: false,
+    });
+    std::fs::write(
+        l.h.project_dir("demo").unwrap().join("automations/check.toml"),
+        toml::to_string(&automation::File::from_routine(&r)).unwrap(),
+    )
+    .unwrap();
+    approve(&l, &r);
+    let scope = l.h.automation_start_approval("demo", &r).unwrap();
+    l.h.automation_pass("demo").await; // 등록 cursor
+    l.h.agent_disconnected("m", 1);
+    l.h.agent_disconnected("b", 1);
+    assert_eq!(l.h.automation_start_approval("demo", &r).unwrap(), scope, "연결은 승인 범위가 아니다");
+    let old_a = l.fake_capabilities("m", "mac-a", vec!["mission.v1".into()], false).await;
+    let old_b = l.fake_capabilities("b", "mac-b", vec!["mission.v1".into()], false).await;
+    assert_eq!(l.h.automation_start_approval("demo", &r).unwrap(), scope, "agent 판은 승인 범위가 아니다");
+    let source = seed(&l, "m", &[]);
+    l.h.flow(&source, "report_ready", None, "입력 자료");
+    l.h.automation_pass("demo").await;
+    let waiting = l.h.routines("demo").unwrap().into_iter().find(|r| r.name == "check").unwrap();
+    assert!(waiting.error.is_none(), "{:?}", waiting.error);
+    assert_eq!(waiting.start_approved, Some(true));
+    assert_eq!(waiting.queue.unwrap().pending, 1);
+    let run = waiting.last_result.unwrap();
+    assert_eq!(run.status, "waiting");
+    assert!(run.id.starts_with("flow:"));
+    assert!(run.detail.contains("host_profiles.v1 없음") && run.detail.contains("다시 시도 가능"), "{}", run.detail);
+    assert_eq!(starts(&a) + starts(&b) + starts(&old_a) + starts(&old_b), 0);
+    assert_eq!(l.h.automation_count("demo", "check").unwrap(), 0);
+    // 새 host도 저장된 cursor·입력·승인을 이어 받는다. 새 agent 연결 뒤 같은 사건을 한 번만 시작한다.
+    l.h = Host::open(l.h.cfg.clone(), l.h.state.clone()).unwrap();
+    let new = l.fake(vec!["mission.v1".into()]).await;
+    let _still_old = l.fake_capabilities("b", "mac-b", vec!["mission.v1".into()], false).await;
+    let mut events = l.h.thread_events.subscribe();
+    l.h.automation_pass("demo").await;
+    let done = l.h.routines("demo").unwrap().into_iter().find(|r| r.name == "check").unwrap();
+    let queue = done.queue.unwrap();
+    assert_eq!(queue.pending, 0, "{:?}", done.last_result);
+    assert!(queue.inflight.is_none());
+    let done = done.last_result.unwrap();
+    assert_eq!(done.id, run.id);
+    assert_eq!(done.status, "done");
+    assert!(done.thread.is_some());
+    launched(&l, &mut events, done.thread.as_deref().unwrap()).await;
+    l.h.automation_submit("demo", &r, &run.id, "같은 입력 재생".into(), None).unwrap();
+    l.h.automation_pass("demo").await;
+    assert_eq!(starts(&new), 1, "{:?}", l.h.routine_runs("demo", "check").unwrap());
+    assert_eq!(l.h.automation_count("demo", "check").unwrap(), 1);
+    assert_eq!(l.h.db.threads(Some("demo")).unwrap().len(), 2, "원인 thread 하나와 자동 thread 하나");
+}
+
+#[tokio::test]
+async fn rollout_selects_capable_candidate_while_an_older_agent_is_connected() {
+    let l = auto_lab();
+    let old = l.fake_capabilities("m", "mac-a", vec![], false).await;
+    let new = l.fake_on("b", "mac-b", vec![]).await;
+    let r = rule(&l, "");
+    approve(&l, &r);
+    let mut events = l.h.thread_events.subscribe();
+    l.h.automation_submit("demo", &r, "rollout:1", "자료".into(), None).unwrap();
+    l.h.automation_drain("demo", &r).await.unwrap();
+    let id = l.h.db.meta(&crate::auto_start::start_key("demo", "check", "rollout:1")).unwrap().unwrap();
+    launched(&l, &mut events, &id).await;
+    assert_eq!(starts(&old), 0);
+    assert_eq!(starts(&new), 1);
+    assert_eq!(l.h.load("demo", &id).unwrap().machine_id, "b");
 }
 
 #[tokio::test]

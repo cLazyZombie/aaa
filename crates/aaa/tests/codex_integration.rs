@@ -409,6 +409,7 @@ async fn codex_hook_cli_reaches_host_and_returns_guidance() {
             label: None,
             colors: None,
             account_run: None,
+            account_generation: None,
             spec: SpawnSpec {
                 name: "codex".into(),
                 argv: vec!["codex".into()],

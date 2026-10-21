@@ -117,6 +117,7 @@ pub fn router(host: Arc<Host>) -> Router {
         .route("/api/v1/push/test", post(push_test))
         .route("/api/v1/diag/input", post(diag_input))
         .route("/api/v1/usage", get(usage_report))
+        .route("/api/v1/account-usage", get(account_quota_report))
         .route("/api/v1/panes/{id}/ws", get(pane_ws))
         .route("/api/v1/panes/{id}/image", post(chat_image))
         .route("/api/v1/projects/{project}/uploads", post(task_file))
@@ -872,6 +873,20 @@ async fn usage_report(
     }
     let report = host.usage.report(q.refresh.as_deref() == Some("1")).await;
     let mut res = Json(Outcome::Ok(report)).into_response();
+    res.headers_mut().insert(header::CACHE_CONTROL, HeaderValue::from_static("no-store"));
+    res
+}
+
+/// 등록 계정의 창별 사용량. 메일·원문 응답·인증 경로는 이 응답에 없다.
+async fn account_quota_report(
+    State(host): State<Arc<Host>>,
+    headers: HeaderMap,
+    axum::extract::Query(q): axum::extract::Query<UsageQuery>,
+) -> Response {
+    if device(&host, &headers).is_none() {
+        return unauthorized();
+    }
+    let mut res = Json(Outcome::from(host.quota_report(q.refresh.as_deref() == Some("1")).await)).into_response();
     res.headers_mut().insert(header::CACHE_CONTROL, HeaderValue::from_static("no-store"));
     res
 }

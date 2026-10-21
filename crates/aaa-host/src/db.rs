@@ -121,6 +121,34 @@ pub struct DeviceRow {
 pub const DEVICE_LABEL_FALLBACK: &str = "기기";
 
 impl Db {
+    /// 발신자의 32자리 ID와 화면의 p-번호를 모두 받는다. 중복 전송 판정은 원래 post_row만 쓴다.
+    pub(crate) fn post_by_ref(&self, id: &str) -> Result<Option<PostRow>> {
+        if !id.starts_with("p-") {
+            return self.post_row(id);
+        }
+        let key: Option<String> = self
+            .conn
+            .lock()
+            .unwrap()
+            .query_row("SELECT post_id FROM posts WHERE json_extract(result,'$.id')=?1", [id], |r| r.get(0))
+            .optional()?;
+        key.map(|key| self.post_row(&key)).transpose().map(Option::flatten)
+    }
+
+    pub(crate) fn post_inbox(&self, project: &str, id: &str) -> Result<Option<aaa_proto::InboxItem>> {
+        let data: Option<String> = self
+            .conn
+            .lock()
+            .unwrap()
+            .query_row(
+                "SELECT data FROM inbox WHERE project=?1 AND id LIKE ?2",
+                params![project, format!("%-post-{id}")],
+                |r| r.get(0),
+            )
+            .optional()?;
+        data.map(|data| serde_json::from_str(&data).map_err(Into::into)).transpose()
+    }
+
     pub(crate) fn library_report(&self, project: &str, name: &str) -> Result<Option<LibraryReportRow>> {
         Ok(self
             .conn
@@ -1546,17 +1574,22 @@ impl Db {
 
     pub(crate) fn post_list(&self, project: &str) -> Result<Vec<aaa_proto::PostEnvelope>> {
         let c = self.conn.lock().unwrap();
-        let mut st =
-            c.prepare("SELECT data FROM posts WHERE project=?1 AND data IS NOT NULL ORDER BY seq DESC LIMIT 100")?;
-        let rows = st.query_map([project], |r| r.get::<_, String>(0))?.collect::<rusqlite::Result<Vec<_>>>()?;
+        let mut st = c.prepare("SELECT data, EXISTS(SELECT 1 FROM inbox i WHERE i.project=posts.project AND i.done=1 AND i.id LIKE '%-post-' || json_extract(posts.data,'$.id')) FROM posts WHERE project=?1 AND data IS NOT NULL ORDER BY seq DESC LIMIT 100")?;
+        let rows = st
+            .query_map([project], |r| Ok((r.get::<_, String>(0)?, r.get::<_, bool>(1)?)))?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
         let mut bytes = 0;
         let mut posts = Vec::new();
-        for s in rows {
+        for (s, handled) in rows {
             if bytes + s.len() > 512 * 1024 {
                 break;
             }
             bytes += s.len();
-            posts.push(serde_json::from_str(&s)?);
+            let mut post: aaa_proto::PostEnvelope = serde_json::from_str(&s)?;
+            if handled {
+                post.state = "handled".into();
+            }
+            posts.push(post);
         }
         Ok(posts)
     }

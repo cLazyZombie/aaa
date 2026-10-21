@@ -2076,6 +2076,119 @@ fn restart_with_another_profile() {
     assert_eq!(w.kinds(0).iter().filter(|k| *k == "thread_restarted").count(), 1);
 }
 
+/// 끝난 thread pane은 새 pane이 자리를 이은 뒤 host·agent에서 지운다. 다른 pane은 건드리지 않는다.
+#[test]
+fn restart_replaces_exited_panes_locally_and_remotely() {
+    let mut w = world();
+    w.add_remote();
+    let other = w.h.new_pane(None, "labA", Some("다른 작업"), &["/bin/sh"], None);
+    for machine in ["labA", "labB"] {
+        let v = w.start(&[
+            "--title",
+            machine,
+            "--profile",
+            "fake",
+            "--machine",
+            machine,
+            "--kind",
+            "dir",
+            "--task-file",
+            &w.task(&format!("{machine}.txt"), "noreport"),
+        ]);
+        let id = v["id"].as_str().unwrap();
+        let mut old = v["pane"].as_str().unwrap().to_string();
+        w.wait_show("첫 brief 전달", id, |v| v["brief"] == "delivered");
+        w.h.ok(&["pane", "rename", &old, "이을 이름"]);
+        w.h.ok(&["pane", "move", &old, "--new-tab", "-w", machine]);
+        let tab = w.h.ok(&["workspace", "get", machine])["tabs"][0]["id"].clone();
+        for mode in ["profile", "fresh", "resume", "pane"] {
+            // profile 교체는 kill 뒤, 나머지는 자발적 exit 뒤에 시작한다.
+            if mode == "profile" {
+                w.h.ok(&["pane", "kill", &old]);
+            } else {
+                w.h.ok(&["pane", "run", &old, "exit-one"]);
+            }
+            wait_for("옛 pane 종료", T, || (w.h.pane(&old)["state"] == "exited").then_some(()));
+            let next = match mode {
+                "profile" => w.h.ok(&["thread", "restart", "demo", id, "--profile", "fake"])["pane"].clone(),
+                "fresh" => w.h.ok(&["thread", "restart", "demo", id])["pane"].clone(),
+                "resume" => w.h.ok(&["thread", "restart", "demo", id, "--resume"])["pane"].clone(),
+                _ => w.h.ok(&["pane", "resume", &old])["id"].clone(),
+            };
+            let new = next.as_str().unwrap();
+            assert_ne!(new, old);
+            assert_eq!(w.show(id)["pane"], new, "{machine}/{mode}: thread 결속");
+            let panes = w.h.ok(&["pane", "list"]);
+            assert!(
+                !panes["panes"].as_array().unwrap().iter().any(|p| p["id"] == old),
+                "{machine}/{mode}: 옛 pane이 기타로 남았다: {panes}"
+            );
+            let pane = w.h.pane(new);
+            assert_eq!(pane["label"], "이을 이름");
+            assert!(pane["replaced"].as_array().unwrap().iter().any(|p| p == &old));
+            let layout = w.h.ok(&["workspace", "get", machine]);
+            assert_eq!(layout["tabs"][0]["id"], tab);
+            assert!(layout.to_string().contains(new) && !layout.to_string().contains(&old), "{layout}");
+            assert_eq!(w.h.pane(&other)["state"], "running", "다른 pane은 유지");
+            if matches!(mode, "profile" | "fresh") {
+                w.wait_show("새 brief 전달", id, |v| v["brief"] == "delivered");
+            } else {
+                w.wait_screen(new, "fake>");
+            }
+            old = new.to_string();
+        }
+    }
+    // agent가 기억한 옛 pane도 지웠는지 Hello 재생으로 확인한다.
+    let before = w.h.ok(&["pane", "list"])["panes"].as_array().unwrap().len();
+    // 원격 agent가 접속한 주소를 유지한다. :0을 다시 쓰면 새 포트에 떠 재연결 시험이 되지 않는다.
+    let config = w.h.cfg.join("host.toml");
+    let original = std::fs::read_to_string(&config).unwrap();
+    let pinned = original.replace("agent_listen = \"127.0.0.1:0\"", &format!("agent_listen = {:?}", w.addr));
+    assert_ne!(pinned, original);
+    std::fs::write(config, pinned).unwrap();
+    w.lab.kill("host");
+    spawn_host(&mut w.lab, "host-again", &w.h, Some(BRIEF_SETTLE_MS));
+    wait_for("두 agent 재연결", T, || (w.h.connected("labA") && w.h.connected("labB")).then_some(()));
+    assert_eq!(w.h.ok(&["pane", "list"])["panes"].as_array().unwrap().len(), before);
+}
+
+#[test]
+fn restart_spawn_failure_keeps_the_old_pane_until_a_successful_replacement() {
+    let w = world();
+    let v = w.start(&[
+        "--title",
+        "실패 보존",
+        "--profile",
+        "fake",
+        "--kind",
+        "dir",
+        "--task-file",
+        &w.task("failure.txt", "noreport"),
+    ]);
+    let (id, old) = (v["id"].as_str().unwrap(), v["pane"].as_str().unwrap());
+    w.wait_show("첫 brief 전달", id, |v| v["brief"] == "delivered");
+    w.h.ok(&["pane", "move", old, "--new-tab", "-w", "kept"]);
+    w.h.ok(&["pane", "kill", old]);
+    wait_for("종료", T, || (w.h.pane(old)["state"] == "exited").then_some(()));
+    let config = w.h.cfg.join("host.toml");
+    let before = std::fs::read_to_string(&config).unwrap();
+    let broken = before.replace(
+        &format!("command = [\"/bin/sh\", \"{}\"]", path_str(&w.scripts.join("fake.sh"))),
+        "command = [\"/nonexistent-aaa-fixture\"]",
+    );
+    assert_ne!(broken, before);
+    std::fs::write(&config, broken).unwrap();
+    w.h.json(&["thread", "restart", "demo", id]).expect_err("없는 실행 파일");
+    assert_eq!(w.show(id)["pane"], old);
+    assert_eq!(w.h.pane(old)["state"], "exited");
+    assert!(w.h.ok(&["workspace", "get", "kept"]).to_string().contains(old));
+    // 고장난 설정을 고친 뒤 성공해야 비로소 옛 pane을 지운다.
+    std::fs::write(&config, before).unwrap();
+    let next = w.h.ok(&["thread", "restart", "demo", id]);
+    assert_ne!(next["pane"], old);
+    assert!(w.h.json(&["pane", "get", old]).is_err());
+}
+
 /// 시작이 실패한 thread도 `thread restart`로 다시 띄운다(herdr-projects threads.rs `restart_plan`, COORDINATOR_GUIDE,
 /// 차이 목록 E8). repo가 아직 git이 아니라 자리를 만들지 못했다(a): 시작 오류는 thread ID와 다시 하는 법을 말하고
 /// thread는 failed다. repo를 고친 뒤 restart는 자리부터 다시 만들고 앞선 시도 안내를 넣은 brief를 준다. 실패 글은 지운다.
@@ -2732,6 +2845,7 @@ fn worker_session_cli_is_read_only() {
         &["thread", "message", "demo", id, "--text", "x"],
         &["pane", "send-text", &shell, "echo hi"],
         &["thread", "ack", "demo", id],
+        &["post", "handled", "demo", "p-00000001"],
     ] {
         let o = as_session(pane, args);
         assert_eq!(o.status.code(), Some(1), "{args:?}: {}", String::from_utf8_lossy(&o.stdout));

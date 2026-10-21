@@ -507,7 +507,7 @@ export function TasksView({
         </div>
         <HeadMore />
       </header>
-      {board && apiAtLeast(frontApi,[1,83]) && <TaskQueuePanel board={board} canEdit={canEdit} onThread={onThread} />}
+      {board && apiAtLeast(frontApi,[1,85]) && <TaskQueuePanel board={board} canEdit={canEdit} onThread={onThread} />}
       <div className="tasks-toolbar">
         <div className="tasks-tabs" role="tablist" aria-label="할 일 탭">
           <button type="button" role="tab" aria-selected={tab === "tasks"} className={`tasks-tab${tab === "tasks" ? " is-on" : ""}`} data-testid="tasks-tab-tasks" onClick={() => setTab("tasks")}>
@@ -716,7 +716,7 @@ export function TasksView({
               linkApi={linkApi}
               attachApi={attachApi}
               repoApi={repoApi}
-              queueApi={apiAtLeast(frontApi,[1,83])}
+              queueApi={apiAtLeast(frontApi,[1,85])}
               onChangeNotes={changeTaskNotes}
               onOpenAttachment={
                 onOpenAttachment

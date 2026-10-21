@@ -8,7 +8,9 @@
 // 사라진다. 보기 권한 기기는 답·처리·지우기를 할 수 없다. 알림 주소 `/#question=<thread>`(post push url)는 그 카드를 연다.
 // 혼자 돌리기: node web/e2e/web.e2e.mjs --spec 53-thread-questions(새 실험실).
 import fs from "node:fs";
-import { root, aaa, until, step, browser, pairPage, inList, waitOutput, shot, AA } from "../lib/harness.mjs";
+import { root, aaa, until, step, browser, webkit, pairPage, inList, waitOutput, shot, coordinatorPost, AA } from "../lib/harness.mjs";
+
+import { pairDevice } from "../lib/devices.mjs";
 
 const LABEL = "cq1";
 
@@ -48,6 +50,7 @@ const asksOf = (p) =>
   });
 
 export default async function ({ page }) {
+  let wk;
   await step("「답할 것」과 앱 안 칩(plan §8.329·§8.345): ### 질문은 목록 줄·본문 카드(그림·표·선택지 그림)·빨강 배지, 대화의 aaa: 참조와 같은 host 링크는 앱 안 칩, 입력칸 위 칩 한 줄, 카드 답은 thread에 한 번 가고 원문을 보존(새 보고 뒤에도 칩 답함), 확인 필요 post 답함으로 표시, 답한 것 지우기, 보기 권한은 못 함", async () => {
     aaa("project", "create", "demo");
     fs.writeFileSync(`${root}/task-cards.md`, "로그인 화면 다듬기\n질문 카드 시험");
@@ -72,6 +75,16 @@ export default async function ({ page }) {
       "시안은 `aaa:report/login-v2`에 있다. 없는 것은 aaa:report/gone-1.",
       `터미널 링크: [${t.id} 질문](${origin}/#question=${t.id}) · [로그인 시안](${origin}/#report=login-v2) · [바깥](https://example.ts.net/#question=${t.id})`,
     ]);
+
+    // coordinator가 같은 질문에 두 번 알림을 보내도 카드 하나다. API 수신 전에 옛 배지를 보지 않도록 새로 연다.
+    const linkedBody = `${root}/question-request.md`;
+    fs.writeFileSync(linkedBody, "질문 카드에서 선택해 답한다.");
+    for (const title of ["질문 요약", "질문 알림 보충"]) {
+      aaa("post", "demo", "user", "--request", "--needs-user", "--topic", "user-action", "--title", `${title} aaa:question/${t.id}`, "--body-file", linkedBody);
+    }
+    const linked = (await asksOf(page)).ok.requests;
+    if (linked.length !== 2) throw new Error(`연결 post 준비: ${JSON.stringify(linked)}`);
+    await page.reload();
 
     // 답할 것은 활동 막대 「답할 것」의 빨강 수다(3A). 보고서 단추는 안 본 보고서 수만 단다
     await until("빨강 배지", async () => (await badge(page)) === "ask 1 · unseen 1");
@@ -121,7 +134,22 @@ export default async function ({ page }) {
     await shot(page, "53-dock-chip");
 
     // 휴대폰(조작)은 알림 주소로 연다: 그 카드가 펼쳐진다. 보기 권한 기기는 카드를 보지만 답할 수 없고 host도 거절한다
-    const phone = await pairPage(browser, aaa("web", "pair").code, { width: 390, height: 844 }, { hash: `#question=${t.id}` });
+    wk = await webkit.launch();
+    const phone = await pairDevice(wk, aaa("web", "pair").code, "iphone", { hash: `#question=${t.id}` });
+    const phoneApp = await pairDevice(wk, aaa("web", "pair").code, "iphone", { standalone: true, hash: `#question=${t.id}` });
+    await phoneApp.page.setViewportSize({ width: 430, height: 932 });
+    for (const p of [phone.page, phoneApp.page]) {
+      await until("알림 주소가 연 휴대폰 카드", async () => (await p.locator(`${card} [data-testid="thread-ask-send"]`).count()) === 1);
+      await p.locator('.view [data-testid="drawer-toggle"]:visible').click();
+      await until("휴대폰도 질문 한 줄", async () => (await p.getByTestId("asks-open-count").textContent()) === "1").catch(async (e) => {
+        const at = await p.evaluate(() => ({ hash: location.hash, sidebar: document.querySelector(".app")?.dataset.sidebar, count: document.querySelector('[data-testid="asks-open-count"]')?.textContent, cards: [...document.querySelectorAll('[data-kind="question"]')].map((x) => [x.dataset.testid, x.textContent.slice(0, 80)]), text: document.body.innerText.slice(-1000) }));
+        throw new Error(`${e.message}: ${JSON.stringify(at)}; pageerrors=${JSON.stringify([...phone.errors, ...phoneApp.errors])}`);
+      });
+      if (await p.locator('[data-testid="ask-row"].is-request').count()) throw new Error("휴대폰에 연결 post가 따로 보인다");
+      await shot(p, `53-one-row-phone-${p.viewportSize().width}`);
+      await inList(p, p.locator(`[data-testid="ask-row"][data-key="q:${t.id}"]`));
+    }
+    await shot(phoneApp.page, "53-card-phone-app-430");
     const pp = phone.page;
     await until("휴대폰의 카드", async () => (await pp.locator(`${card} [data-testid="thread-ask-send"]`).count()) === 1);
     await until("휴대폰 선택지 그림", async () => (await pictures(pp, `${card} .ask-choice-picture`)) === 2);
@@ -135,6 +163,14 @@ export default async function ({ page }) {
     }, { id: t.id, hash: v.questions.report_hash });
     if (denied !== "forbidden") throw new Error(`보기 권한 답: ${denied}`);
 
+    // 옛 화면·직접 API로 post를 처리하려 해도 질문 답을 대신 만들지 않는다.
+    const guarded = await pp.evaluate(async (item) => {
+      const r = await fetch("/api/v1/call", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ op: "ask_handle", item }) });
+      return (await r.json()).err;
+    }, linked[0].id);
+    if (guarded?.code !== "bad_request" || !guarded.message.includes("질문 카드")) throw new Error(`연결 post 처리: ${JSON.stringify(guarded)}`);
+    if ((await asksOf(pp)).ok.requests.length !== 2 || aaa("thread", "show", "demo", t.id).questions.answer !== null) throw new Error("post 처리 거부 뒤 질문·알림이 바뀌었다");
+
     // 휴대폰에서 1B만 고르고 「추천대로 보내기」: 2번은 추천(A)으로 채워 thread에 한 번 간다
     await pp.getByTestId("thread-ask-pick-1B").click();
     await shot(pp, "53-card-phone");
@@ -144,12 +180,20 @@ export default async function ({ page }) {
     const answered = aaa("thread", "show", "demo", t.id).questions.answer;
     if (answered?.summary !== "1B 2A" || JSON.stringify(answered.picks) !== "[1,0]") throw new Error(`기록한 답: ${JSON.stringify(answered)}`);
     // 모든 기기가 답함: 휴대폰·보기 권한은 답할 때의 원문(고른 답 표시, 그림 사본)을 보고, 데스크톱 입력칸 위 칩·배지도 답함이다
-    for (const [name, p] of [["휴대폰", pp], ["보기 권한", rp]]) {
+    for (const [name, p] of [["휴대폰", pp], ["홈 화면 앱 430", phoneApp.page], ["보기 권한", rp]]) {
       await until(`${name} 답한 카드`, async () =>
         (await p.evaluate(() => [...document.querySelectorAll('[data-testid="ask-done-card"][data-kind="question"] [data-testid="ask-done-picked"]')].map((x) => x.textContent.slice(0, 1)).join(""))) === "BA");
       await until(`${name} 답한 카드 그림`, async () => (await pictures(p, '[data-testid="ask-done-card"] .ask-choice-picture')) === 2);
     }
     const rec = await until("답한 것 기록", async () => (await asksOf(pp)).ok?.done?.find((r) => r.kind === "question" && r.subject === t.id));
+    const completed = (await asksOf(pp)).ok;
+    if (completed.requests.length !== 0 || completed.done.length !== 1 || completed.done[0].kind !== "question") throw new Error(`카드 답 뒤 중복 기록: ${JSON.stringify(completed)}`);
+    const linkedInbox = aaa("inbox", "list", "demo", "--all", "--peek").items;
+    for (const r of linked) if (!linkedInbox.some((i) => i.id === r.id && i.done)) throw new Error(`끝나지 않은 연결 post: ${r.id}`);
+    if (linkedInbox.filter((i) => i.event === "request handled").length !== 2) throw new Error("연결 post마다 request handled가 남지 않았다");
+    for (const p of [pp, phoneApp.page]) {
+      await until("답한 것 한 줄", async () => (await p.getByTestId("asks-done-count").textContent()) === "1" && (await p.getByTestId("asks-open-count").textContent()) === "0");
+    }
     if (rec.summary !== "1B 2A" || rec.items.length !== 2 || rec.items[0].body !== q1.body || !rec.files_base?.includes("/asks/")) throw new Error(`답한 것 기록: ${JSON.stringify(rec)}`);
     await until("입력칸 위 칩 답함", async () =>
       (await page.evaluate(() => document.querySelector('[data-testid="dock-question"] [data-testid="app-ref"]')?.textContent)) === `${t.id} 질문답함 · 1B 2A`);
@@ -199,6 +243,43 @@ export default async function ({ page }) {
     }, { id: t.id, hash: v.questions.report_hash });
     if (!stale.includes("질문이 바뀌었다")) throw new Error(`옛 보고의 답: ${stale}`);
 
+    // 채팅 답을 처리했다고 표시하는 것은 선택·승인이 아니다. p-번호 조회와 원래 post ID 조회가 같은 상태를 본다.
+    // post에만 있는 C안을 카드의 새 선택지로 위조하지 않고 직접 쓴 답으로 보존한다.
+    const chatRequest = await coordinatorPost({ request: true, title: `색 선택 · C 초록 aaa:question/${t.id}` });
+    if (aaa("post", "status", "demo", chatRequest.id).handled !== false) throw new Error("새 post의 처리 상태가 틀리다");
+    const markDenied = await rp.evaluate(async (id) => {
+      const r = await fetch("/api/v1/call", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ op: "post_handled", post_id: id }) });
+      return (await r.json()).err?.code;
+    }, chatRequest.id);
+    if (markDenied !== "forbidden") throw new Error(`보기 권한 post handled: ${markDenied}`);
+    aaa("post", "handled", "demo", chatRequest.id);
+    aaa("post", "handled", "demo", chatRequest.id);
+    if (aaa("post", "status", "demo", chatRequest.id).handled !== true || aaa("post", "list", "demo").posts.find((p) => p.id === chatRequest.id)?.state !== "handled") throw new Error("post handled가 조회 상태에 반영되지 않았다");
+    if (aaa("thread", "show", "demo", t.id).questions.answer !== null) throw new Error("post handled가 질문 답을 만들었다");
+    aaa("thread", "answer", "demo", t.id, "--text", "1 C: 초록");
+    await waitOutput(t.pane, "직접 쓴 답: 1 C: 초록");
+    const direct = await until("채팅 C의 답 기록", async () => (await asksOf(pp)).ok.done.find((r) => r.kind === "question" && r.answer?.text === "1 C: 초록"));
+    if (direct.items[0].choices.length !== 2 || direct.answer.picks[0] !== null) throw new Error(`카드에 없는 C를 선택지로 만들었다: ${JSON.stringify(direct)}`);
+    const late = await coordinatorPost({ request: true, title: `이미 답한 색 질문 aaa:question/${t.id}` });
+    if (aaa("post", "status", "demo", late.id).handled !== true) throw new Error("답한 뒤 도착한 post가 다시 답할 것이 됐다");
+    // 다음 보고가 질문을 닫는 길도 post를 끝낸다. 답 선택은 만들지 않고 닫힘으로 남긴다.
+    fs.writeFileSync(`${t.work_dir}/report.md`, "[결정 필요] 질문 1개: 간격\n\n## Questions\n1. 간격\n- A 넓게 (추천)\n- B 좁게\n");
+    await until("닫을 질문 보고", () => aaa("thread", "show", "demo", t.id).questions?.items[0].text === "간격");
+    const closing = await coordinatorPost({ request: true, title: `간격 질문 aaa:question/${t.id}` });
+    if (aaa("post", "status", "demo", closing.id).handled !== false) throw new Error("새 질문을 옛 답으로 처리했다");
+    fs.writeFileSync(`${t.work_dir}/report.md`, "[진행 중] 채팅 답을 반영하는 중\n\n## Report\n질문을 닫았다.\n");
+    await until("새 보고로 질문 닫힘", () => aaa("thread", "show", "demo", t.id).questions === undefined);
+    await until("새 보고로 post도 처리됨", () => aaa("post", "status", "demo", closing.id).handled === true);
+    const closed = await until("닫힌 질문 기록", async () => (await asksOf(pp)).ok.done.find((r) => r.summary === "새 보고로 질문 닫힘"));
+    if (closed.answer !== undefined || closed.items[0].text !== "간격") throw new Error(`닫힌 질문에 답이 생겼다: ${JSON.stringify(closed)}`);
+    const closedLate = await coordinatorPost({ request: true, title: `닫힌 간격 질문 aaa:question/${t.id}` });
+    if (aaa("post", "status", "demo", closedLate.id).handled !== true) throw new Error("닫힌 질문의 늦은 post가 남았다");
+    for (const p of [pp, phoneApp.page]) await until("새 보고 뒤 답할 것 없음", async () => (await p.getByTestId("asks-open-count").textContent()) === "0");
+    await shot(phoneApp.page, "53-closed-question-phone-app");
+    // 독립 post의 기존 회귀도 열린 카드와 나란히 검사한다.
+    fs.writeFileSync(`${t.work_dir}/report.md`, "[결정 필요] 질문 1개: 색\n\n## Questions\n1. 단추 색 다시\n- A 파랑 (추천)\n- B 회색\n");
+    await until("독립 post와 둘 질문", () => aaa("thread", "show", "demo", t.id).questions?.items[0].text === "단추 색 다시");
+
     // coordinator 확인 필요 post도 「답할 것」이다(3A). 「답함으로 표시」는 그 post를 끝내고 coordinator inbox에 남긴다(5A).
     // 보기 권한 기기는 처리·지우기를 할 수 없다
     const body = `${root}/request-body.md`;
@@ -234,9 +315,9 @@ export default async function ({ page }) {
     await page.getByTestId("ask-handle").click();
     await until("처리한 기록", async () => (await page.evaluate(() => document.querySelector('[data-testid="ask-done-card"]')?.dataset.kind)) === "request");
     await until("확인 필요 빠짐", async () => (await badge(page)).startsWith("ask 1 "));
-    const handled = await until("inbox에 처리함", () => aaa("inbox", "list", "demo", "--peek").items.find((i) => i.event === "request handled"));
+    const handled = await until("inbox에 처리함", () => aaa("inbox", "list", "demo", "--peek").items.find((i) => i.event === "request handled" && i.summary.includes("배포 승인")));
     if (!handled.summary.includes("배포 승인")) throw new Error(`inbox 처리함: ${JSON.stringify(handled)}`);
-    const reqRec = (await asksOf(page)).ok.done.find((r) => r.kind === "request");
+    const reqRec = (await asksOf(page)).ok.done.find((r) => r.kind === "request" && r.title === "배포 승인");
     if (reqRec?.title !== "배포 승인" || !reqRec.body?.includes("**승인**")) throw new Error(`처리한 기록: ${JSON.stringify(reqRec)}`);
     // 답한 것 지우기는 모든 기기에서: 휴대폰 목록에서도 빠진다. 보기 권한은 지울 수 없다
     if ((await rp.getByTestId("ask-forget").count()) !== 0) throw new Error("보기 권한에 지우기 단추");
@@ -245,10 +326,10 @@ export default async function ({ page }) {
     await until("휴대폰 목록에서 빠짐", async () =>
       (await pp.evaluate((k) => !!document.querySelector('[data-testid="asks-panel"]') && !document.querySelector(`[data-testid="ask-row"][data-key="${k}"]`), `d:${reqRec.id}`)));
     if ((await asksOf(pp)).ok.done.some((r) => r.id === reqRec.id)) throw new Error("지운 기록이 남았다");
-    for (const x of [phone, reader]) {
+    for (const x of [phone, phoneApp, reader]) {
       if (x.errors.length) throw new Error(`페이지 오류: ${x.errors.join("; ")}`);
       await x.page.context().close();
     }
     aaa("thread", "resolve", "demo", t.id);
-  });
+  }).finally(async () => { if (wk) await wk.close(); });
 }

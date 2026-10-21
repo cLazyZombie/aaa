@@ -535,10 +535,47 @@ fn host_login_defaults_pin_threads_and_coordinators_without_exposing_credentials
     let first = gate.take(3, 0);
     assert!(first.iter().all(|(_, v)| v["token"] == sha(&claude)));
     assert!(jobs.iter().all(|v| v["account"] == "central-claude"));
+    // 실행 중에도 불가능한 harness 변경은 kill 안내보다 먼저 이유를 설명한다.
+    let running_id = jobs[0]["id"].as_str().unwrap();
+    let rejected =
+        w.h.json(&["thread", "restart", "demo", running_id, "--profile", "file"])
+            .expect_err("실행 중인 고정 계정의 harness 변경");
+    assert!(rejected.contains("고정 계정") && !rejected.contains("pane kill"), "{rejected}");
+    assert_eq!(w.h.pane(jobs[0]["pane"].as_str().unwrap())["state"], "running");
     Gate::release(first, b'1');
     Gate::release(gate.take(3, 1), b'X');
     for job in &jobs {
         w.wait_show("기본 작업 종료", job["id"].as_str().unwrap(), |v| v["agent"]["activity"] == "exited");
+    }
+
+    // 다른 harness의 기본 계정이 있어도 기존 thread의 고정 계정을 몰래 바꾸지 않는다.
+    // 거부는 agent의 brief·launch와 host profile을 바꾸기 전에 끝나야 한다.
+    for job in &jobs[..2] {
+        let id = job["id"].as_str().unwrap();
+        let brief = PathBuf::from(job["work_dir"].as_str().unwrap()).join("brief.md");
+        let before = std::fs::read(&brief).unwrap();
+        let rejected =
+            w.h.json(&["thread", "restart", "demo", id, "--profile", "file"]).expect_err("harness가 다른 고정 계정");
+        assert!(
+            rejected.contains("고정 계정") && rejected.contains("새 thread") && rejected.contains("기본 계정"),
+            "{rejected}"
+        );
+        let after = w.show(id);
+        assert_eq!(after["account"], "central-claude");
+        assert_eq!(after["profile"], "plain");
+        assert_eq!(after["pane"], job["pane"]);
+        assert_eq!(std::fs::read(&brief).unwrap(), before);
+
+        // 같은 harness의 다른 profile은 고정 인증으로 새 pane을 띄우고 옛 pane을 지운다.
+        let restarted = w.h.ok(&["thread", "restart", "demo", id, "--profile", "token"]);
+        assert_eq!(restarted["account"], "central-claude");
+        assert_eq!(restarted["profile"], "token");
+        assert!(w.h.json(&["pane", "get", job["pane"].as_str().unwrap()]).is_err());
+        let first = gate.take(1, 0);
+        assert_eq!(first[0].1["token"], sha(&claude));
+        Gate::release(first, b'1');
+        Gate::release(gate.take(1, 1), b'X');
+        w.wait_show("같은 계정 재시작 종료", id, |v| v["agent"]["activity"] == "exited");
     }
 
     // 기본 참조가 깨져도 명시 --account는 우선한다. 지정이 없는 시작은 local로 우회하지 않는다.

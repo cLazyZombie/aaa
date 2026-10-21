@@ -215,7 +215,7 @@ export default async function () {
             judge("조합 확정 뒤 Enter", await recorded(p), rest, await heights(p));
           }
 
-          // 4) 여러 줄(단추가 밑 줄인 배치): 전달됨에서도 상자가 늘지 않고, 비워지면 한 줄로 돌아온다
+          // 4) 여러 줄: 전달됨에서도 상자가 늘지 않고, 비워지면 한 줄로 돌아온다
           fs.writeFileSync(pane.hold, "");
           await box.fill("");
           const single = await heights(p);
