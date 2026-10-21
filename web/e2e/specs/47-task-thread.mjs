@@ -1,3 +1,4 @@
+import { editTaskContent } from "../lib/task-content.mjs";
 // 할 일 thread 연결과 자동 정리(T3, 사용자 10-20 「작업이 시작되면 (끝나면? 지금 정책에 따라) 삭제도 되고」, plan §8.316). 상세의
 // 「바로 시작」은 host `thread_start_preview`로 채운 확인창에서 시작하고 그 task 줄 끝에 thread를 잇는다(`link_task`). 이어진 thread가
 // 끝나면 ticker가 한 번 판정한다: 보고 [완료]면 줄을 지우고(자동 정리, 되살리기 알림 줄), 보고가 없으면 줄을 남기고 「확인 필요」다.
@@ -13,7 +14,8 @@ const sha = (text) => crypto.createHash("sha256").update(text).digest("hex");
 const read = () => fs.readFileSync(file(), "utf8");
 const write = (text) => {
   fs.writeFileSync(file(), text);
-  return sha(text);
+  // 화면 관측 전에 식별 주석 이주를 마친 fixture를 준비한다.
+  return aaa("task", "list").sha256;
 };
 const START = `# Tasks
 
@@ -88,7 +90,7 @@ export default async function ({ page }) {
     await domIs(page, "바로 시작 값", () => document.querySelector('[data-testid="task-start"] form')?.dataset.startState === "ready");
     const kept = read();
     const threads = aaa("thread", "list", "demo").threads.length;
-    write(kept.replace("- [ ] 원격 일\n", "- [ ] 원격 일\n  그사이 더한 메모\n"));
+    write(editTaskContent(kept, "- [ ] 원격 일\n", "- [ ] 원격 일\n  그사이 더한 메모\n"));
     await page.getByTestId("task-start-repo").selectOption("작업 폴더");
     await page.getByTestId("task-start-go").click();
     const error = page.getByTestId("task-start-error");
@@ -193,7 +195,8 @@ export default async function ({ page }) {
       ([m, mid, id]) => [localStorage.getItem(`herdr-web-ui:terminal-line:${m}:${id}`), localStorage.getItem(`herdr-web-ui:composer-draft:${mid}:${id}`)],
       [opened.pane.machine, opened.pane.machine_id, opened.pane.id],
     );
-    for (const d of drafts) if (!d?.startsWith("「원격 일」 task를 thread로 다시 맡겨 줘")) throw new Error(`입력칸 초안: ${JSON.stringify(drafts)}`);
+    const taskId = aaa("task", "list").tasks.find(t => t.title === "원격 일").short_id;
+    for (const d of drafts) if (!d?.startsWith(`${taskId} task를 thread로 다시 맡겨 줘`)) throw new Error(`입력칸 초안: ${JSON.stringify(drafts)}`);
     await shot(page, "thread-desktop-coordinator");
   });
 

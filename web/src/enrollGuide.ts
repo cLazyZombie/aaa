@@ -1,10 +1,10 @@
-// 설정 「머신」의 「직접 설치」 안내(웹 머신 추가 M1, plan §8.373). SSH 없이 새 머신에서 사람이 칠 명령을 만든다. 주소 후보·host 지문·판은
+// 설정 「머신」의 「직접 설치」 안내(웹 머신 추가 M1, plan §8.374). SSH 없이 새 머신에서 사람이 칠 명령을 만든다. 주소 후보·host 지문·판은
 // host `enroll_guide`가 준다(옛 host는 없어 주소 자리에 `<host 주소>`). 승인은 같은 화면의 「승인…」(6자리 코드)이다.
 import { apiAtLeast } from "./automationModel.ts";
 import type { EnrollGuide } from "./gen/proto";
 
-/** 1.89 이상 host만 `enroll_guide`를 안다 */
-export const canGuide = (frontApi: string | null | undefined): boolean => apiAtLeast(frontApi, 1, 89);
+/** 1.90 이상 host만 `enroll_guide`를 안다 */
+export const canGuide = (frontApi: string | null | undefined): boolean => apiAtLeast(frontApi, 1, 90);
 
 /** host `machine_name_ok`와 같다: 영문·숫자·`.`·`-`·`_` 1~64자 */
 export const machineNameOk = (name: string): boolean => /^[A-Za-z0-9._-]{1,64}$/.test(name);

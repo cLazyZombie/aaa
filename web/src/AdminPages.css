@@ -34,7 +34,7 @@
 .machine-detail .mono { font-family: var(--font-mono); font-size: var(--fs-xs); overflow-wrap: anywhere; }
 .machine-features { margin-top: 8px; font-size: var(--fs-sm); }
 .machine-features p { margin: 6px 0 0; font-size: var(--fs-xs); overflow-wrap: anywhere; color: var(--text-muted); }
-/* 「직접 설치」 안내(웹 머신 추가 M1, plan §8.373). 명령은 고정폭으로 줄을 바꾸고 복사 단추는 옆(휴대폰은 아래)에 */
+/* 「직접 설치」 안내(웹 머신 추가 M1, plan §8.374). 명령은 고정폭으로 줄을 바꾸고 복사 단추는 옆(휴대폰은 아래)에 */
 .admin-guide { margin-top: 14px; }
 .admin-guide > summary { cursor: pointer; font-size: var(--fs-sm); color: var(--text-strong); }
 .admin-guide > .admin-line { margin-top: 10px; }

@@ -6694,11 +6694,18 @@ FRONT_API 1.87은 질문 ID·부분 답과 `ask_answer`·`question_reply`를 더
 - **검증.** host 유닛 `machine_view_tests`(hello 값이 실리고 판이 다르면 표시, 모르는 꼴의 점검은 버림, host를 다시 열어도 판·SHA·CPU 종류는 남고 기능·점검은 빈다), 웹 유닛 `machineDetail.test.mjs`, 웹 E2E `60-admin` 확장(둘째 agent의 SHA가 실행 파일의 SHA와 같고 화면에 그대로, 보기 기기 상세, 휴대폰 390 폭). 절차는 [시험](testing.md).
 - **번호·호환.** main의 §8.369(t-0574)·§8.370(t-0538 W6b)·§8.371(t-0576)과 FRONT_API 1.86·1.87을 유지하고 이 기능은 1.88·§8.372를 쓴다. AGENT_LINK는 1.10 그대로다(hello 선택 칸만 더함).
 
-### 8.373 「직접 설치」 안내: host 주소 후보·지문을 넣은 새 머신 명령(10-21, t-0578 웹 머신 추가 M1)
+### 8.373 할 일 표시 ID d-NNNN(10-21, t-0575)
+
+- **표시·선택.** 웹 할 일·상세·예약·완료 보관과 CLI list·context에 `d-0001` 같은 ID를 보인다. edit·move·rm·restore·log·thread start --from-task·예약·완료 보관 복원은 ID와 기존 제목을 모두 받는다. 번호가 발급된 문자열은 ID를 우선하며 내부 ULID 입력도 유지한다. coordinator 생성 안내에 ID 사용을 권한다.
+- **영속·이주.** 프로젝트마다 1부터 발급하고 제목·목록·순서 변경과 host 재시작 뒤에도 유지한다. 삭제·기록 정리·완료 보관 뒤 재사용하지 않고 복원 시 원래 번호를 쓴다. host DB `task_ids`가 기존 ULID와 번호를 연결하며 프로젝트 이름 변경·휴지통 내보내기·복원에 포함된다. 첫 읽기와 새 항목 쓰기는 없는 ULID 주석만 추가하고 기존 ULID·메모·들여쓰기·줄 끝 문자를 유지한다. 중복 ULID는 거부한다.
+- **호환.** FRONT_API 1.89에서 선택 칸 `TaskView.short_id`와 `TaskLog.task` 필터를 더한다. 새 CLI의 기록 필터는 1.89 이상 host에만 보낸다. ULID 기반 연결과 제목 입력은 유지하고 AGENT_LINK 1.10은 그대로다. TASKS.md만 다른 host로 옮기면 번호는 새로 발급되므로 번호까지 보존하려면 host DB를 함께 보존한다.
+- **검증.** DB·host 동시 이주와 비재사용·복원 owner, 실제 host·agent·CLI의 변경·이동·삭제·예약·재시작·완료 보관 통합 시험, 웹 E2E `70-task-ids`의 CLI 교차 편집과 320/390/768px 표시·검색·가로 넘침을 검사한다. main의 E2E 68·69와 §8.372까지 유지한다. 절차는 [시험](testing.md), 사용법은 [할 일 ID](task-ids.md)에 둔다.
+
+### 8.374 「직접 설치」 안내: host 주소 후보·지문을 넣은 새 머신 명령(10-21, t-0578 웹 머신 추가 M1)
 
 - **요청.** t-0471 확정 기획의 M1(웹 등록 승인·폐기). 등록 창·대기·6자리 코드 승인·폐기·host 머신과 마지막 조작 기기 폐기 거부는 W5b(§8.355)가 이미 같은 요청으로 했다. M1에 남은 것은 SSH가 없는 머신을 위한 「직접 설치」 안내다: 새 머신에서 칠 명령을 웹이 실제 host 주소·이름으로 채운다(기획 §1.11. install 비대화 모드가 착지하면 그 한 줄로 바꾼다).
-- **proto(FRONT_API 1.89, 더하기만).** 조작 기기의 `enroll_guide` → `EnrollGuide{listen?, addresses[{address, source}], host_fingerprint, software}`. Reader는 거부한다(host 주소·지문). 읽기만이라 사람 판정 목록에는 넣지 않는다. 옛 host는 모르는 요청으로 거절하고 웹은 1.89 미만이면 묻지 않고 주소 칸을 직접 받는다. Agent link 변경 없음.
+- **proto(FRONT_API 1.90, 더하기만).** 조작 기기의 `enroll_guide` → `EnrollGuide{listen?, addresses[{address, source}], host_fingerprint, software}`. Reader는 거부한다(host 주소·지문). 읽기만이라 사람 판정 목록에는 넣지 않는다. 옛 host는 모르는 요청으로 거절하고 웹은 1.90 미만이면 묻지 않고 주소 칸을 직접 받는다. Agent link 변경 없음.
 - **주소 후보.** host가 실제로 연 `agent_listen`에서만 만든다: 모든 주소(0.0.0.0·[::])면 tailnet 이름(`tailscale status`)과 이 머신 이름, tailnet 주소(IPv4 100.64/10·IPv6 fd7a:115c:a1e0::/48)면 tailnet 이름과 그 주소, 다른 IP면 그 주소만(tailnet 이름은 그 IP가 아니다), loopback은 「이 host 머신 안에서만」으로 표시, 이름으로 연 설정은 그대로. 닫혀 있으면 빈 목록과 「agent_listen을 정한다」 안내.
 - **웹.** 설정 「머신」 → 「새 머신 등록」 아래 「직접 설치 안내」(펼칠 때 읽음): host 주소 고르기(옛 host는 입력), 새 머신 이름(host 규칙, 이미 있는 이름은 알림), 차례 ① 같은 판 설치 ② `aaa agent enroll <주소> --name <이름>` ③ 새 머신 화면의 host fingerprint 앞 16자 맞추기와 「승인…」 ④ `agent.toml`의 host ⑤ macOS 서비스 설치(다른 OS는 `aaa agent` 직접). 명령마다 「복사」. 쓸 수 없는 이름·주소 글자는 `<이름>`·`<host 주소>` 자리표시로 둬 틀린 명령이 복사되지 않는다.
 - **검증.** host 유닛 `enroll_guide::tests`(연 주소별 후보), proto `control_classification`(조작 기기만), 웹 유닛 `enrollGuide.test.mjs`, 웹 E2E `60-admin`(안내 명령을 화면에서 읽어 그대로 실행해 등록, 안내의 host 지문 = 새 머신 화면의 지문, 이미 있는 이름 알림, Reader에 안내 없음, 휴대폰 390 폭).
-- **번호·호환.** main의 §8.372(M0)·FRONT_API 1.88 다음이다. AGENT_LINK 1.10 그대로.
+- **번호·호환.** main의 §8.372(M0)·§8.373(t-0575)과 FRONT_API 1.88·1.89 다음이다. AGENT_LINK 1.10 그대로.

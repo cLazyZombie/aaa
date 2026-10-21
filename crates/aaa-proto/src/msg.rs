@@ -1591,7 +1591,7 @@ pub struct PendingEnroll {
     pub since_ms: u64,
 }
 
-/// 「직접 설치」 안내(plan §8.373): 새 머신이 host agent 연결에 닿을 주소 후보와, 새 머신 화면에 나올 host 지문
+/// 「직접 설치」 안내(plan §8.374): 새 머신이 host agent 연결에 닿을 주소 후보와, 새 머신 화면에 나올 host 지문
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 pub struct EnrollGuide {
     /// host가 실제로 연 agent 연결 주소(`agent_listen`). 닫혀 있으면 None이고 새 머신은 붙지 못한다
@@ -2068,7 +2068,7 @@ pub enum FrontRequest {
         install: bool,
     },
     EnrollPending,
-    /// FRONT_API 1.89. 새 머신에서 칠 「직접 설치」 명령에 넣을 host 주소 후보·host 지문·판(웹 머신 추가 M1, plan §8.373)
+    /// FRONT_API 1.90. 새 머신에서 칠 「직접 설치」 명령에 넣을 host 주소 후보·host 지문·판(웹 머신 추가 M1, plan §8.374)
     EnrollGuide,
     EnrollApprove {
         name: String,
@@ -2200,7 +2200,7 @@ pub enum FrontRequest {
         base: Option<String>,
         /// 할 일(threads/<id>.task.md로 저장하고 brief에 넣는다)
         task: String,
-        /// TASKS.md의 task 제목(대소문자 무시). owner가 profile·machine의 기본값이 되고, 메모가 할 일에 붙는다.
+        /// TASKS.md의 task ID(d-0001·ULID) 또는 제목(대소문자 무시). owner가 profile·machine의 기본값이 되고, 메모가 할 일에 붙는다.
         #[serde(default)]
         from_task: Option<String>,
         /// 시작하면 그 task 줄 끝에 ` · t-NNNN`을 붙인다(FRONT_API 1.63, 할 일 T3). 연결은 시작할 때 읽은 블록 hash로 하고,
@@ -2302,6 +2302,10 @@ pub enum FrontRequest {
         limit: Option<u32>,
         #[serde(default)]
         filter: Option<TaskLogFilter>,
+        /// 표시 ID·ULID 또는 제목으로 기록을 거른다.
+        #[serde(default)]
+        #[ts(optional)]
+        task: Option<String>,
     },
     /// 이 시각(ms)보다 오래된 할 일 기록을 지운다(FRONT_API 1.62, 조작 권한)
     TaskLogPrune {
@@ -3819,7 +3823,7 @@ mod tests {
         assert!(FrontRequest::DeviceRename { id: "d".into(), label: "x".into() }.needs_control());
         assert!(FrontRequest::DeviceRevoke { id: "d".into() }.needs_control());
         assert!(!FrontRequest::Panes { role: None }.local_only());
-        // 「직접 설치」 안내는 host 주소·지문을 보이므로 조작 기기만(웹 허용, plan §8.373)
+        // 「직접 설치」 안내는 host 주소·지문을 보이므로 조작 기기만(웹 허용, plan §8.374)
         assert!(FrontRequest::EnrollGuide.needs_control() && !FrontRequest::EnrollGuide.local_only());
         assert!(!FrontRequest::Threads { project: None, role: None }.needs_control());
         // 사후 평가자 세션은 Reader로 다룬다: 평가 보기는 되고, 지정·채택·메시지는 안 된다(§8.13)

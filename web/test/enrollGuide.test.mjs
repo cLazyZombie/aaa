@@ -1,4 +1,4 @@
-// 「직접 설치」 안내의 명령(src/enrollGuide.ts, 웹 머신 추가 M1, plan §8.373). 주소 후보의 정본은 host `enroll_guide::addresses`다
+// 「직접 설치」 안내의 명령(src/enrollGuide.ts, 웹 머신 추가 M1, plan §8.374). 주소 후보의 정본은 host `enroll_guide::addresses`다
 // (`candidates_follow_the_listen_address`).
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
@@ -13,9 +13,9 @@ const guide = {
 const commands = (steps) => steps.filter((s) => s.command).map((s) => s.command);
 
 describe("직접 설치 안내 M1", () => {
-  it("1.89 이상 host만 주소를 준다", () => {
-    for (const v of [undefined, null, "1.88"]) assert.equal(canGuide(v), false, String(v));
-    assert.equal(canGuide("1.89"), true);
+  it("1.90 이상 host만 주소를 준다", () => {
+    for (const v of [undefined, null, "1.89"]) assert.equal(canGuide(v), false, String(v));
+    assert.equal(canGuide("1.90"), true);
   });
   it("이름은 host 규칙과 같다", () => {
     for (const ok of ["mac-b", "Mac_B.1", "a".repeat(64)]) assert.equal(machineNameOk(ok), true, ok);
