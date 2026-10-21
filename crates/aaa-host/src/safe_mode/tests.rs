@@ -70,11 +70,14 @@ after = "kept-value"
 #[test]
 fn every_continuation_line_of_a_multiline_value_is_hidden() {
     // 닫는 표시가 빠진 보통 여러 줄 문자열(파싱이 깨진 바로 그 경우): 뒤의 env 표까지 문자열로 보고 끝까지 가린다
-    let unclosed = "[profiles.work]\ndescription = \"\"\"\n메모\n[profiles.work.env]\nOPENAI_API_KEY = \"sk-live-after-unclosed\"\n";
+    let unclosed = "[profiles.work]\ndescription = \"\"\"\n메모\n[profiles.work.env]\nBASE = \"plain-env-zzz\"\nOPENAI_API_KEY = \"sk-live-after-unclosed\"\n";
     let (lines, hidden) = mask(unclosed);
     assert_eq!(&lines[..2], ["[profiles.work]", "description = \"\"\""]);
     assert!(lines[2..].iter().all(|l| l == HIDDEN), "{lines:?}");
-    assert!(hidden.iter().any(|h| h.contains("sk-live-after-unclosed")), "{hidden:?}");
+    // 표 머리가 나온 뒤는 실제 설정으로 보고 비밀 낱말이 없어도 오류 글에서 뺀다
+    for secret in ["plain-env-zzz", "sk-live-after-unclosed"] {
+        assert!(hidden.iter().any(|h| h.contains(secret)), "{secret}: {hidden:?}");
+    }
     // 비밀이 아닌 key의 여러 줄 배열: 원소를 줄마다 하나씩 쓰면 `"--api-key",` 다음 줄의 값에는 비밀 낱말이 없다.
     // 배열 안의 한 원소짜리 배열(`["…"]`)도 표 머리가 아니다. `=` 없는 주석의 비밀
     let text = r#"[profiles.other]
@@ -102,6 +105,10 @@ after = "kept-after-array"
     assert_eq!(lines[1], "args = [");
     assert!(lines[2..6].iter().all(|l| l == HIDDEN), "{lines:?}");
     assert_eq!(lines.last().unwrap(), r#"after = "kept-after-array""#, "배열이 닫힌 뒤는 다시 보인다");
+    // 비밀이 아닌 배열의 원소는 화면에서만 가린다. 오류 글에서 지울 목록에 넣으면 검증 오류의 보통 낱말이 지워진다
+    let (lines, hidden) = mask("[safety]\nthread_profiles = [\n  \"claude\",\n  \"codex\",\n]\n");
+    assert_eq!(&lines[2..5], [HIDDEN, HIDDEN, HIDDEN]);
+    assert!(hidden.is_empty(), "{hidden:?}");
 }
 
 #[test]
@@ -131,18 +138,20 @@ DATABASE_URL = "postgres://u:pw@db/x"
     assert_eq!(lines[9], "[profiles.other.env]# 메모", "`]`를 빠뜨린 배열은 뒤의 표 머리에서 끝난다");
     // 주석으로 꺼 둔 비밀 배열·여러 줄 문자열: 이어지는 주석 줄은 모두 가리고(주석 안의 `]`·`"""`는 닫는 표시로 셀 수 없다),
     // 주석이 끝나면 바로 뒤의 값·표는 그대로 보인다
-    let text = "[profiles.work]\n# api_keys = [\n#   \"sk-live-commented\",\n# ]\nmodel = \"kept-after-comment\"\n# private_key = \"\"\"\n# MIIEvQIBADANBg\n# \"\"\"\n[web]\nlisten = \"127.0.0.1:7431\"\n";
+    let text = "[profiles.work]\n# api_keys = [\n#   \"sk-live-commented\",\n\n#   \"plain-after-blank-zzz\",\n# ]\nmodel = \"kept-after-comment\"\n# private_key = \"\"\"\n# MIIEvQIBADANBg\n# \"\"\"\n[web]\nlisten = \"127.0.0.1:7431\"\n";
     let (lines, hidden) = mask(text);
     let shown = lines.join("\n");
-    for secret in ["sk-live-commented", "MIIEvQIBADANBg"] {
+    for secret in ["sk-live-commented", "plain-after-blank-zzz", "MIIEvQIBADANBg"] {
         assert!(!shown.contains(secret), "{secret}가 보인다:\n{shown}");
         assert!(hidden.iter().any(|h| h.contains(secret)), "{secret}를 오류 글에서 뺄 목록에 없다: {hidden:?}");
     }
     assert_eq!(lines[1], format!("# api_keys = {HIDDEN}"));
-    assert!(lines[2..4].iter().all(|l| l == HIDDEN), "주석 안의 `]`에서 가림을 끝내지 않는다: {lines:?}");
-    assert_eq!(lines[4], "model = \"kept-after-comment\"", "주석이 끝나면 바로 뒤의 값은 보인다");
-    assert!(lines[6..8].iter().all(|l| l == HIDDEN), "{lines:?}");
-    assert_eq!(&lines[8..], ["[web]", "listen = \"127.0.0.1:7431\""]);
+    // 사이의 빈 줄은 그대로 두고 가림을 이어 간다
+    assert_eq!(lines[3], "");
+    assert!([2, 4, 5].iter().all(|&i| lines[i] == HIDDEN), "주석 안의 `]`에서 가림을 끝내지 않는다: {lines:?}");
+    assert_eq!(lines[6], "model = \"kept-after-comment\"", "주석이 끝나면 바로 뒤의 값은 보인다");
+    assert!(lines[8..10].iter().all(|l| l == HIDDEN), "{lines:?}");
+    assert_eq!(&lines[10..], ["[web]", "listen = \"127.0.0.1:7431\""]);
 }
 
 #[test]

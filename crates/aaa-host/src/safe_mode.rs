@@ -250,7 +250,7 @@ enum Cont {
     Text(&'static str),
     /// 여러 줄 배열·인라인 표: 괄호가 닫히거나 표 머리가 나올 때까지(`]`를 빠뜨려도 뒤의 표는 표로 본다)
     Nested(i32),
-    /// 주석으로 연 여러 줄 값: 이어지는 주석 줄 전부(주석 안의 `]`·`"""`는 닫는 표시로 셀 수 없다)
+    /// 주석으로 연 여러 줄 값: 이어지는 주석 줄 전부(주석 안의 `]`·`"""`는 닫는 표시로 셀 수 없다, 사이의 빈 줄은 건넌다)
     Comment,
 }
 
@@ -260,15 +260,21 @@ enum Cont {
 ///   `"--api-key",` 다음 줄의 값에는 비밀 낱말이 없고, 닫는 표시가 빠진 바로 그때 뒤의 표를 값으로 읽게 되기 때문이다.
 /// - 대입이 아닌 줄(주석 등)은 env 표 아래거나 비밀 낱말이 있으면 가린다.
 ///
-/// 가린 값들도 돌려준다(오류 글에서 뺀다)
+/// 비밀로 본 값들을 함께 돌려준다(오류 글에서 뺀다). 여러 줄 값의 이어지는 줄은 여는 줄이 비밀이거나, 이어지는 줄에
+/// 비밀 낱말이 나온 뒤거나, 닫히지 않은 문자열 안에 표 머리가 나온 뒤에만 넣는다. 비밀이 아닌 배열의 `"claude"` 같은
+/// 원소까지 넣으면 오류 글의 보통 낱말·key 경로가 지워진다.
 pub(crate) fn mask(text: &str) -> (Vec<String>, Vec<String>) {
     let mut table: Vec<String> = Vec::new();
     let mut cont: Option<Cont> = None;
+    // 지금 가리는 여러 줄 값을 비밀로 보는가(오류 글에서 뺄 목록에 넣는가)
+    let mut cont_secret = false;
     let (mut out, mut hidden) = (Vec::new(), Vec::new());
-    let hide = |line: &str, out: &mut Vec<String>, hidden: &mut Vec<String>| {
-        hidden.extend(
-            line.split(',').map(|v| v.trim().trim_matches(['"', '\'', '[', ']', '{', '}', '#']).trim().to_string()),
-        );
+    let hide = |line: &str, secret: bool, out: &mut Vec<String>, hidden: &mut Vec<String>| {
+        if secret {
+            hidden.extend(
+                line.split(',').map(|v| v.trim().trim_matches(['"', '\'', '[', ']', '{', '}', '#']).trim().to_string()),
+            );
+        }
         out.push(HIDDEN.to_string());
     };
     for line in text.lines() {
@@ -278,7 +284,8 @@ pub(crate) fn mask(text: &str) -> (Vec<String>, Vec<String>) {
                 if line.contains(*delim) {
                     cont = None;
                 }
-                hide(trimmed, &mut out, &mut hidden);
+                cont_secret |= header_like(line) || secret_word(trimmed);
+                hide(trimmed, cont_secret, &mut out, &mut hidden);
                 continue;
             }
             Some(Cont::Nested(_)) if header_like(line) => cont = None,
@@ -287,11 +294,17 @@ pub(crate) fn mask(text: &str) -> (Vec<String>, Vec<String>) {
                 if *d <= 0 {
                     cont = None;
                 }
-                hide(trimmed, &mut out, &mut hidden);
+                cont_secret |= secret_word(trimmed);
+                hide(trimmed, cont_secret, &mut out, &mut hidden);
+                continue;
+            }
+            Some(Cont::Comment) if trimmed.is_empty() => {
+                out.push(line.to_string());
                 continue;
             }
             Some(Cont::Comment) if trimmed.starts_with('#') => {
-                hide(trimmed, &mut out, &mut hidden);
+                cont_secret |= secret_word(trimmed);
+                hide(trimmed, cont_secret, &mut out, &mut hidden);
                 continue;
             }
             Some(Cont::Comment) => cont = None,
@@ -309,7 +322,7 @@ pub(crate) fn mask(text: &str) -> (Vec<String>, Vec<String>) {
         let body = &line[body_at..];
         let Some(eq) = assignment(body) else {
             if !trimmed.is_empty() && (in_env_table || secret_word(trimmed)) {
-                hide(trimmed, &mut out, &mut hidden);
+                hide(trimmed, true, &mut out, &mut hidden);
             } else {
                 out.push(line.to_string());
             }
@@ -327,6 +340,7 @@ pub(crate) fn mask(text: &str) -> (Vec<String>, Vec<String>) {
         let text_open = ["\"\"\"", "'''"].into_iter().find(|d| value.starts_with(d) && value[3..].find(d).is_none());
         let nested = depth(value);
         if text_open.is_some() || nested > 0 {
+            cont_secret = secret;
             cont = Some(if commented {
                 Cont::Comment
             } else if let Some(d) = text_open {
