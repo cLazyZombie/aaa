@@ -176,7 +176,7 @@ pub fn response(out: &str, success: bool, q: &CiQuery) -> Result<CiAnswer> {
                         .collect();
                     steps.sort();
                     steps.dedup();
-                    answer.jobs.push(CiJob { id: num(j, "id"), name: text(j, "name"), steps });
+                    answer.jobs.push(CiJob { id: num(j, "id"), name: text(j, "name"), steps, failures: vec![] });
                 }
             }
         }
@@ -236,6 +236,71 @@ pub fn verdict(runs: &[CiRun], now: u64, stuck_ms: u64) -> Verdict {
 /// 이름·단계 집합만 비교한다. run/job id는 fingerprint에 넣지 않는다.
 pub fn failure_set(jobs: &[CiJob]) -> BTreeSet<(String, Vec<String>)> {
     jobs.iter().map(|j| (j.name.clone(), j.steps.clone())).collect()
+}
+/// 같은 job·단계 안에서 다른 시험이 실패했는지 가른다. 표지를 못 뽑은 job(옛 agent)은 넣지 않는다.
+pub fn failed_tests(jobs: &[CiJob]) -> BTreeSet<(String, Vec<String>)> {
+    jobs.iter().filter(|j| !j.failures.is_empty()).map(|j| (j.name.clone(), j.failures.clone())).collect()
+}
+
+pub const FAILURES_CAP: usize = 64;
+const FAILURE_LEN: usize = 300;
+const LINE_CAP: usize = 4096;
+/// 실패 로그를 흘려 읽으며 실패 시험 이름을 모은다. 로그 꼬리만 남겨도 앞쪽 실패를 놓치지 않는다.
+/// 시험 이름이 없으면 panic 위치(`path:line`)·끝나지 않은 시험으로 가른다.
+#[derive(Default)]
+pub struct FailureScan {
+    tests: BTreeSet<String>,
+    others: BTreeSet<String>,
+    line: Vec<u8>,
+}
+impl FailureScan {
+    pub fn feed(&mut self, bytes: &[u8]) {
+        for &b in bytes {
+            if b == b'\n' {
+                self.end_line();
+            } else if self.line.len() < LINE_CAP {
+                self.line.push(b);
+            }
+        }
+    }
+    fn end_line(&mut self) {
+        let line = String::from_utf8_lossy(&self.line).trim_end().to_string();
+        self.line.clear();
+        // gh --log-failed 줄은 `job\t단계\t시각 본문`이다. 앞머리 없이 온 줄도 같은 끝 모양으로 읽는다.
+        let named = |rest: &str| {
+            let (before, name) = rest.rsplit_once(' ')?;
+            (before == "test" || before.ends_with(" test")).then(|| clip(name)).filter(|n| !n.is_empty())
+        };
+        let (set, item) = if let Some(name) = line.strip_suffix(" ... FAILED").and_then(named) {
+            (&mut self.tests, name)
+        } else if let Some(name) = line.split_once(" has been running for over ").and_then(|(r, _)| named(r)) {
+            (&mut self.others, format!("끝나지 않음: {name}"))
+        } else if let Some((_, at)) = line.split_once("panicked at ") {
+            let at = at.split_whitespace().next().unwrap_or("").trim_end_matches([':', ',']).replace('\\', "/");
+            // 열 번호는 버린다: 같은 줄의 다른 식이 같은 실패다.
+            let at = match at.rsplit_once(':') {
+                Some((head, col)) if head.contains(':') && col.bytes().all(|b| b.is_ascii_digit()) => head.to_string(),
+                _ => at,
+            };
+            if at.is_empty() {
+                return;
+            }
+            (&mut self.others, format!("panic: {}", clip(&at)))
+        } else {
+            return;
+        };
+        if set.len() < FAILURES_CAP {
+            set.insert(item);
+        }
+    }
+    pub fn finish(mut self) -> Vec<String> {
+        self.end_line();
+        let set = if self.tests.is_empty() { self.others } else { self.tests };
+        set.into_iter().collect()
+    }
+}
+fn clip(s: &str) -> String {
+    s.chars().filter(|c| !c.is_control()).take(FAILURE_LEN).collect::<String>().trim().to_string()
 }
 
 #[cfg(test)]

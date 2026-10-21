@@ -43,7 +43,7 @@ ci_stuck_mins = 60
 - main 등 지정 branch의 push만 본다. SHA의 모든 알려진 workflow가 끝나야 판정하며 취소는 제외한다. 재실행 성공은 `rerun_passed`로 표시한다. CI를 다시 실행해서 통과시켜 주는 기능은 없다.
 - 초록은 흐름 사건 `ci_passed`로만 기록한다. 빨강은 inbox 종류 `ci`, 실패 job·단계, job당 32KiB·합계 128KiB 로그 꼬리와 커밋 범위의 주인 thread·보고 사본을 남기고 `ci_failed`로 기록한다. 본문·로그·보고는 전부 JSON 자료다.
 - 착지 병합 첫 줄은 반드시 `병합: <요약> (t-NNNN)`으로 끝낸다. 한 push 안 여러 착지는 compare 결과에서 모은다. 번호를 못 찾으면 주인 불명과 커밋 SHA 목록을 남긴다.
-- 같은 실패 job·단계 집합이면 앞 CI 항목에 SHA를 덧붙이고 깨우지 않는다. 집합이 바뀌면 새로운 진단 입력을 보낸다. 규칙의 batch·사용량 대기와 명시한 선택 상한을 따른다. 횟수·시간·최소 간격은 기본 무제한이다.
+- 같은 실패 job·단계 집합이고 job마다 실패한 시험도 같으면 앞 CI 항목에 SHA를 덧붙이고 깨우지 않는다. 실패 시험은 조회 agent가 잘라 내기 전 로그 전체에서 `test 이름 ... FAILED` 줄로 모으고, 없으면 panic 위치(`경로:줄`)·끝나지 않은 시험을 쓴다. job의 `failures`에 담겨 입력 자료로도 간다. 같은 job·단계의 다른 시험 실패, 집합이 바뀐 것은 새로운 진단 입력을 보낸다. 표지를 못 뽑은 job(옛 agent)은 job·단계만 비교한다. 규칙의 batch·사용량 대기와 명시한 선택 상한을 따른다. 횟수·시간·최소 간격은 기본 무제한이다.
 - 다음 착지가 고치면 앞 항목을 닫고 `ci_fixed`와 `ci_passed`를 남긴다. 아직 전달하지 않은 규칙 입력을 취소하며 회복 자체는 새 깨움을 만들지 않는다.
 - 끝난 thread의 flow 이력에도 CI 결과를 남긴다. coordinator는 실패 원인을 확인한 뒤 **새 수리 thread**를 만든다. 자동화 thread는 원 thread를 되살리거나 다른 thread에 말하지 않으며 rerun·수정·push·revert하지 않는다. revert·착지 중단은 사용자/coordinator 결정이다.
 - 오래 안 끝난 run은 `ci_stuck`. 기본 `events = ["failed"]`에는 stuck 깨움이 없고 기록만 한다. 필요하면 routine events에 `stuck`을 추가한다. `fixed`·`passed`를 적어도 초록은 깨우지 않는다.
