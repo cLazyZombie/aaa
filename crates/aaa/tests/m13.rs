@@ -1046,6 +1046,50 @@ fn task_attachments_reach_a_remote_agent() {
     assert_eq!(std::fs::read(work.join("attachments").join(&png)).unwrap(), img, "첫 사본은 그대로다");
 }
 
+/// 옛 대화 첨부의 무작위 이름과 실제로 바뀐 원본 모두 시작을 막고, 원본은 그대로 보존한다.
+#[test]
+fn task_attachments_reject_unverified_uploads_without_changing_them() {
+    use sha2::Digest as _;
+    let w = world();
+    let demo = w.projects.join("demo");
+    let uploads = demo.join("uploads");
+    std::fs::create_dir_all(&uploads).unwrap();
+    let original = b"\x89PNG\r\n\x1a\noriginal";
+    let changed = b"\x89PNG\r\n\x1a\nchanged";
+    let hash_name = format!("{}.png", &hex::encode(sha2::Sha256::digest(original))[..16]);
+    let legacy = "0123456789abcdef.png";
+    let cases = [("옛 대화 그림", legacy, original.as_slice()), ("바뀐 그림", hash_name.as_str(), changed.as_slice())];
+    for (title, name, bytes) in cases {
+        std::fs::write(uploads.join(name), bytes).unwrap();
+        std::fs::write(
+            demo.join("TASKS.md"),
+            format!("# Tasks\n\n## Backlog\n- [ ] {title}\n  ![그림](uploads/{name})\n"),
+        )
+        .unwrap();
+        let e =
+            w.h.json(&[
+                "thread",
+                "start",
+                "demo",
+                "--from-task",
+                title,
+                "--machine",
+                "labA",
+                "--profile",
+                "fake",
+                "--kind",
+                "dir",
+            ])
+            .expect_err("검증하지 못한 첨부로 시작했다");
+        assert!(
+            e.contains("이름과 내용 해시가 다르다") && e.contains("예전 대화 첨부") && e.contains("할 일에 다시 첨부"),
+            "{e}"
+        );
+        assert_eq!(std::fs::read(uploads.join(name)).unwrap(), bytes, "거부하며 원본을 고쳤다");
+    }
+    assert_eq!(std::fs::read_dir(&uploads).unwrap().count(), 2, "원본을 지우거나 이름을 바꿨다");
+}
+
 /// task 저장소 칸(plan §8.330): `[repo]` task는 그 이름의 project.toml repos 줄이 있는 머신에서 그 머신의 경로로 띄운다. owner
 /// 머신이 있으면 그 머신이고(거기에 없으면 거부), 없으면 덜 붐비는(열린 thread가 적은) 머신이다. `--repo`·`--kind`가 칸과 어긋나면
 /// 거부하고, project.toml에 없는 이름은 할 일 목록에 형식 어긋남으로 보인다. `task add|edit --repo`는 경로를 이름으로 적는다.

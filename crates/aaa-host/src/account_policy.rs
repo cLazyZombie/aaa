@@ -216,6 +216,7 @@ mod tests {
             version: 1,
             secret: SecretText("fixture-only".into()),
             trust_cwd: None,
+            auth_generation: None,
         };
         let spec = SpawnSpec {
             name: "coordinator".into(),

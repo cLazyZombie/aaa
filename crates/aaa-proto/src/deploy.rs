@@ -283,6 +283,77 @@ pub struct RolloutCardStep {
     pub total_bytes: u64,
 }
 
+/// 빌드 머신에 이미 있는 후보(옆에 `provenance.json`이 있는 `aaa`)를 그 머신 agent가 읽고 dry-run으로 self-check한 결과
+/// (agent 기능 deploy_candidate.v1, 관리 GUI W6a). 웹은 실행 파일을 올리지 않고 이것만 고른다.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+pub struct DeployCandidateView {
+    /// 빌드 머신 이름
+    pub machine: String,
+    /// 받은 그대로의 후보 경로(`<절대 경로>/aaa` 또는 `~/<폴더>/aaa`)
+    pub path: String,
+    pub sha256: String,
+    /// provenance의 40자리 커밋(없으면 None)
+    pub commit: Option<String>,
+    /// self-check가 답한 판(`0.1.2+<커밋 12자리>`)
+    pub version: String,
+    #[ts(type = "number")]
+    pub total_bytes: u64,
+    /// provenance의 빌드 시각(RFC 3339, 없으면 None)
+    pub built_at: Option<String>,
+}
+/// rollout 대상 한 머신의 시작 전 점검. `problem`이 있으면 시작하지 않는다
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+pub struct RolloutTargetView {
+    pub machine: String,
+    /// host 머신(늘 맨 앞)
+    pub host: bool,
+    pub problem: Option<String>,
+}
+/// 웹 「배포」의 시작 전 점검: 후보 dry-run과 대상 순서(host 먼저). 대상 머신의 사전 검사는 rollout이 교체 전에 다시 한다
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+pub struct RolloutPlanView {
+    pub candidate: DeployCandidateView,
+    pub targets: Vec<RolloutTargetView>,
+    /// 진행 중인 rollout이 있어 지금은 시작하지 못한다
+    pub busy: bool,
+}
+/// 개별 배포 작업의 종류. 후보 경로·보관 이름 같은 작업 원문은 웹에 싣지 않는다
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum DeployWork {
+    Restart { service: DeployService },
+    Update,
+    Rollback,
+}
+impl From<&DeployAction> for DeployWork {
+    fn from(a: &DeployAction) -> Self {
+        match a {
+            DeployAction::Restart { service } => Self::Restart { service: *service },
+            DeployAction::Rollback { .. } | DeployAction::CheckedRollback { .. } => Self::Rollback,
+            DeployAction::Update { .. } | DeployAction::CheckedUpdate { .. } | DeployAction::UpdateStaged { .. } => {
+                Self::Update
+            }
+        }
+    }
+}
+/// 웹 조회용 개별 배포 작업 요약(재시작). 실행기 PID·결과 원문·actor는 싣지 않는다
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+pub struct DeployJobCard {
+    pub id: String,
+    pub machine: String,
+    pub work: DeployWork,
+    /// 그 머신 agent에게 물은 상태. 연결이 끊겼거나 기록을 읽지 못하면 None
+    pub state: Option<DeployState>,
+    /// 실패·중단일 때 화면에 보일 까닭(원문은 coordinator의 배포 기록에만 있다)
+    pub error: Option<String>,
+    /// 웹 조작 기기가 시작했다(아니면 coordinator)
+    pub web: bool,
+    #[ts(type = "number")]
+    pub created_ms: u64,
+    #[ts(type = "number")]
+    pub updated_ms: u64,
+}
+
 #[cfg(test)]
 mod compatibility_tests {
     use super::*;

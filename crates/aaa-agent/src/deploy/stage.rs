@@ -77,6 +77,27 @@ impl Manager {
         let _guard = self.stage_gate.lock().unwrap();
         match req {
             AgentRequest::DeployFetch { path, offset, len, sha256 } => fetch(&path, offset, len, &sha256),
+            AgentRequest::DeployCandidate { path } => {
+                // 실행기의 staging 파일 이름은 agent PID 하나다: 도는 배포 작업이 있으면 거부하고, 점검하는 동안은 새 작업을 받지 않는다.
+                // 작업 gate는 표지만 세우는 동안 쥔다(self-check가 길어도 async `deploy_start`를 붙잡지 않는다). 전송 끝의 dry-run과는
+                // stage_gate로 이미 차례를 지킨다. 거절 글에는 작업 ID를 싣지 않는다(웹으로 간다)
+                {
+                    let _jobs = self.gate.lock().unwrap();
+                    if self.unfinished()?.is_some() {
+                        return Err(error("배포 작업이 진행 중이다. 끝난 뒤 다시 점검한다"));
+                    }
+                    self.inspecting.store(true, std::sync::atomic::Ordering::SeqCst);
+                }
+                struct Done<'a>(&'a std::sync::atomic::AtomicBool);
+                impl Drop for Done<'_> {
+                    fn drop(&mut self) {
+                        self.0.store(false, std::sync::atomic::Ordering::SeqCst);
+                    }
+                }
+                let _done = Done(&self.inspecting);
+                let execute = (*self.executor.lock().unwrap()).ok_or_else(|| error("배포 실행기가 없다"))?;
+                inspect(exe, execute, &path)
+            }
             AgentRequest::DeployStageStatus { rollout } => {
                 self.stage_status(&rollout).map(|stage| AgentResponse::DeployStage { stage })
             }
@@ -191,10 +212,8 @@ impl Manager {
         }
     }
 }
-fn fetch(path: &str, offset: u64, len: u32, expected: &str) -> Result<AgentResponse, ErrorBody> {
-    if !valid_sha(expected) || len == 0 || len as usize > DEPLOY_CHUNK {
-        return Err(error("후보 읽기 한도/SHA-256 오류"));
-    }
+/// 빌드 폴더의 `aaa`와 옆 `provenance.json`(16KiB 이하)만 받는다. symlink·다른 이름·일반 파일이 아닌 입력은 거부한다
+fn candidate_files(path: &str) -> Result<(PathBuf, serde_json::Value), ErrorBody> {
     let path = path.strip_prefix("~/").map(|p| aaa_config::paths::home().join(p)).unwrap_or_else(|| path.into());
     if !path.is_absolute() || path.file_name().is_none_or(|n| n != "aaa") {
         return Err(error("빌드 후보 폴더의 aaa만 읽는다"));
@@ -209,13 +228,19 @@ fn fetch(path: &str, offset: u64, len: u32, expected: &str) -> Result<AgentRespo
     if !provenance_meta.is_file() || provenance_meta.len() > 16 * 1024 {
         return Err(error("provenance 크기 초과"));
     }
-    let manifest: serde_json::Value =
-        serde_json::from_slice(&std::fs::read(provenance).map_err(error)?).map_err(error)?;
-    if manifest["sha256"] != expected {
-        return Err(error("빌드 provenance SHA-256 불일치"));
-    }
+    let manifest = serde_json::from_slice(&std::fs::read(provenance).map_err(error)?).map_err(error)?;
     if !std::fs::metadata(&file_path).map_err(error)?.is_file() {
         return Err(error("후보는 일반 파일이어야 한다"));
+    }
+    Ok((file_path, manifest))
+}
+fn fetch(path: &str, offset: u64, len: u32, expected: &str) -> Result<AgentResponse, ErrorBody> {
+    if !valid_sha(expected) || len == 0 || len as usize > DEPLOY_CHUNK {
+        return Err(error("후보 읽기 한도/SHA-256 오류"));
+    }
+    let (file_path, manifest) = candidate_files(path)?;
+    if manifest["sha256"] != expected {
+        return Err(error("빌드 provenance SHA-256 불일치"));
     }
     let mut file = std::fs::File::open(&file_path).map_err(error)?;
     let total = file.metadata().map_err(error)?.len();
@@ -229,6 +254,46 @@ fn fetch(path: &str, offset: u64, len: u32, expected: &str) -> Result<AgentRespo
     let mut data = vec![0; (total - offset).min(len as u64) as usize];
     file.read_exact(&mut data).map_err(error)?;
     Ok(AgentResponse::DeployChunk { offset, eof: offset + data.len() as u64 == total, data: B64(data), total })
+}
+/// 웹 「배포」가 고를 후보(관리 GUI W6a): provenance의 SHA·커밋을 파일과 대조하고, rollout 전송 끝과 같은 dry-run
+/// `CheckedUpdate`로 self-check·판 고정을 본다(설치 파일은 바꾸지 않는다). 실행기 오류에는 경로·후보 출력이 섞여 고정 글로 답한다
+fn inspect(exe: &Path, execute: Executor, path: &str) -> Result<AgentResponse, ErrorBody> {
+    let (file_path, manifest) = candidate_files(path)?;
+    let sha256 =
+        manifest["sha256"].as_str().filter(|s| valid_sha(s)).ok_or_else(|| error("provenance에 SHA-256이 없다"))?;
+    let commit = match &manifest["commit"] {
+        serde_json::Value::Null => None,
+        serde_json::Value::String(c) if c.len() == 40 && c.bytes().all(|b| b.is_ascii_hexdigit()) => {
+            Some(c.to_ascii_lowercase())
+        }
+        _ => return Err(error("provenance 커밋이 40자리 hex가 아니다")),
+    };
+    let total_bytes = std::fs::metadata(&file_path).map_err(error)?.len();
+    if total_bytes == 0 || total_bytes > DEPLOY_MAX_BYTES {
+        return Err(error("후보 크기 한도 초과"));
+    }
+    if sha(&file_path)? != sha256 {
+        return Err(error("빌드 후보 SHA-256 불일치: provenance와 파일이 다르다"));
+    }
+    let checked = execute(
+        exe,
+        DeployAction::CheckedUpdate {
+            from: file_path.to_string_lossy().into_owned(),
+            sha256: sha256.into(),
+            dry_run: true,
+        },
+    )
+    .map_err(|_| error("후보 dry-run(self-check·판 고정)이 실패했다. 빌드 머신에서 `aaa update --from <후보> --dry-run`으로 확인한다"))?;
+    let receipt: serde_json::Value = serde_json::from_str(&checked).map_err(error)?;
+    let version = receipt["version"].as_str().ok_or_else(|| error("self-check 판이 없다"))?;
+    if receipt["sha256"] != sha256 || sha(&file_path)? != sha256 {
+        return Err(error("self-check 뒤 후보 SHA-256 불일치"));
+    }
+    if commit.as_ref().is_some_and(|c| !version.ends_with(&format!("+{}", &c[..12]))) {
+        return Err(error("후보 판의 커밋 표시가 provenance와 다르다"));
+    }
+    let built_at = manifest["built_at"].as_str().filter(|t| t.len() <= 64).map(str::to_string);
+    Ok(AgentResponse::DeployCandidate { sha256: sha256.into(), commit, version: version.into(), total_bytes, built_at })
 }
 
 #[cfg(test)]
@@ -310,6 +375,80 @@ mod tests {
             assert!(manager.transport(&exe, AgentRequest::DeployStageClean { rollout: wrong, keep: true }).is_err());
             assert!(manager.stage_path(&next, "bin").unwrap().exists(), "잘못된 보존 ID로 정상 후보를 지웠다");
         }
+        drop(manager);
+        std::fs::remove_dir_all(root).unwrap();
+    }
+    fn dry_run_ok(_: &Path, action: DeployAction) -> Result<String, String> {
+        let DeployAction::CheckedUpdate { sha256, dry_run: true, .. } = action else {
+            panic!("후보 읽기는 dry-run 교체만 부른다")
+        };
+        Ok(serde_json::json!({"sha256":sha256,"version":"0.1.2+abcdefabcdef"}).to_string())
+    }
+    fn dry_run_fails(_: &Path, _: DeployAction) -> Result<String, String> {
+        Err("self-check 실패: /private/install-marker/.aaa-update-1.tmp 출력 secret-marker".into())
+    }
+    fn never(_: &Path, _: DeployAction) -> Result<String, String> {
+        panic!("SHA가 다른 후보를 실행했다")
+    }
+    #[test]
+    fn candidate_inspection_matches_provenance_and_dry_runs_before_answering() {
+        let root = std::env::temp_dir().join(format!("aaa-candidate-{}", aaa_common::util::new_id()));
+        std::fs::create_dir_all(&root).unwrap();
+        let exe = root.join("installed");
+        let candidate = root.join("aaa");
+        std::fs::write(&candidate, b"candidate").unwrap();
+        let hash = hex::encode(Sha256::digest(b"candidate"));
+        let commit = format!("abcdefabcdef{}", "0".repeat(28));
+        let provenance = |v: serde_json::Value| std::fs::write(root.join("provenance.json"), v.to_string()).unwrap();
+        let path = candidate.to_str().unwrap();
+        provenance(serde_json::json!({"sha256":hash,"commit":commit,"built_at":"2026-10-21T00:00:00Z"}));
+        let AgentResponse::DeployCandidate { sha256, commit: got, version, total_bytes, built_at } =
+            inspect(&exe, dry_run_ok, path).unwrap()
+        else {
+            panic!("후보 응답이 아니다")
+        };
+        assert_eq!(
+            (sha256, got.as_deref(), version.as_str(), total_bytes),
+            (hash.clone(), Some(commit.as_str()), "0.1.2+abcdefabcdef", 9)
+        );
+        assert_eq!(built_at.as_deref(), Some("2026-10-21T00:00:00Z"));
+        // 판의 커밋 표시가 provenance와 다르면 rollout 전송 끝처럼 거부한다
+        provenance(serde_json::json!({"sha256":hash,"commit":"1".repeat(40)}));
+        assert!(inspect(&exe, dry_run_ok, path).unwrap_err().message.contains("커밋"));
+        provenance(serde_json::json!({"sha256":hash,"commit":"short"}));
+        assert!(inspect(&exe, dry_run_ok, path).is_err());
+        // 실행기 원문(경로·후보 출력)은 싣지 않는다
+        provenance(serde_json::json!({"sha256":hash}));
+        let failed = inspect(&exe, dry_run_fails, path).unwrap_err().message;
+        assert!(failed.contains("dry-run") && !failed.contains("marker"), "{failed}");
+        // provenance와 다른 파일은 실행하지 않는다
+        std::fs::write(&candidate, b"tampered").unwrap();
+        assert!(inspect(&exe, never, path).unwrap_err().message.contains("SHA-256"));
+        assert!(inspect(&exe, never, root.join("other").to_str().unwrap()).is_err(), "aaa가 아닌 이름을 읽었다");
+        std::fs::remove_dir_all(root).unwrap();
+    }
+    #[test]
+    fn candidate_inspection_waits_for_no_running_job() {
+        // 실행기 staging 이름은 agent PID 하나다: 도는 배포 작업이 있으면 점검이 그 작업과 겹치지 않게 거부한다
+        let root = std::env::temp_dir().join(format!("aaa-candidate-busy-{}", aaa_common::util::new_id()));
+        std::fs::create_dir_all(&root).unwrap();
+        let exe = root.join("installed");
+        std::fs::write(&exe, b"old").unwrap();
+        std::fs::write(root.join("aaa"), b"candidate").unwrap();
+        let hash = hex::encode(Sha256::digest(b"candidate"));
+        std::fs::write(root.join("provenance.json"), serde_json::json!({"sha256":hash}).to_string()).unwrap();
+        let manager = Manager::new(&root, &exe).unwrap();
+        manager.configure(&exe, never).unwrap();
+        let restart = DeployAction::Restart { service: aaa_proto::DeployService::Agent };
+        let job = aaa_common::util::new_id();
+        manager.prepare(&exe, job.clone(), "demo".into(), restart.clone()).unwrap();
+        let ask = AgentRequest::DeployCandidate { path: root.join("aaa").to_string_lossy().into() };
+        let refused = manager.transport(&exe, ask).unwrap_err().message;
+        assert!(refused.contains("진행 중") && !refused.contains(&job), "{refused}");
+        // 점검하는 동안 들어온 작업은 바로 거부한다(실행기를 lock 밖에서 돌린다)
+        manager.inspecting.store(true, std::sync::atomic::Ordering::SeqCst);
+        let next = manager.prepare(&exe, aaa_common::util::new_id(), "demo".into(), restart.clone());
+        assert!(next.unwrap_err().message.contains("점검"));
         drop(manager);
         std::fs::remove_dir_all(root).unwrap();
     }

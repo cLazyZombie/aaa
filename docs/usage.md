@@ -17,6 +17,7 @@
   - 키 줄은 Esc·Tab·Ctrl·Alt·방향키 등입니다. 그림은 붙여 넣거나 끌어 놓습니다.
 - **크기와 입력(가져오기 없음)**: 보기 권한이 아니면 언제나 입력됩니다. PTY 크기는 「지금 쓰는 화면」이 정합니다. 입력하거나 터미널을 누르거나 창 focus를 얻은 화면이 자기 크기로 다시 겁니다. 탭이 1초 넘게 가려지면 놓습니다. 「화면에 맞추기」로 직접 맞출 수도 있습니다.
 - **대화**: Claude·Codex pane은 「대화」로 기록을 읽기 전용으로 봅니다. 휴대폰은 agent pane을 처음부터 대화로 엽니다(설정 → 채팅 「패널 기본 화면」). 「생각 표시」를 켜면 agent의 생각도 접힌 줄로 보입니다. 대화 아래 입력창에서 바로 보내고, 「대기 메시지 자동 전송」을 끄면 작업 중에 쓴 글은 「지금 보내기」까지 붙잡아 둡니다. 빠른 답장 칩도 켤 수 있습니다.
+- **대화 그림을 할 일로 넘기기**: 프로젝트 대화창과 할 일 첨부는 저장한 파일 내용으로 이름을 정합니다. 메모의 `![그림](uploads/…)`는 thread 시작 때 작업 폴더로 복사됩니다. 예전 대화창이 무작위 이름으로 저장한 그림은 「이름과 내용 해시가 다르다」로 거부될 수 있습니다. 원본을 확인한 뒤 할 일에 다시 첨부하고 메모의 옛 링크를 새 링크로 바꾸세요. 원본 파일은 지우거나 이름을 바꾸지 않습니다.
 - **머신 등록**: 설정 → 머신에서 「등록 창 열기」 뒤 새 머신에서 `aaa agent enroll <host 주소> --name <이름>`을 실행합니다. 대기 목록의 「승인…」에 새 머신 화면의 6자리 코드를 넣고 이름을 맞춰 봅니다(세 번 틀리면 그 요청을 버립니다). 등록된 머신은 같은 곳에서 폐기합니다. host 머신은 폐기하지 않습니다.
 - **웹 공개**: 설정 → 폰 및 기기의 「tailnet에 공개」·「공개 끄기」(tailscale serve). 공개 주소로 연 화면에서 끄면 그 화면이 끊길 수 있어, 끈 뒤 들어올 다른 경로를 보이고 「다른 경로를 확인했다」를 켜야 끕니다.
 - **안전·profile**: 설정 → 안전에서 safety 값과 출처를 보고 yolo·start_threads·trust_screens·coordinator_deploy를 바꿉니다(yolo 켜기는 한 번 더 확인). 설정 → profile에서 claude·codex·shell profile을 더하고 고치고 지우며, 허용 목록·기본 profile을 바꿉니다. 모두 「적용할까요?」 창에서 실제 실행 인자를 본 뒤 씁니다. custom profile(실행 명령)과 `thread_agent_args`·`coordinator_agent_args`·`routine_commands`는 host의 aaa 세션 밖 터미널에서만 바꿉니다. 그사이 host.toml이 바뀌었으면 쓰지 않고 다시 읽습니다.
@@ -120,4 +121,4 @@ aaa work-root set '/Volumes/<disk>/aaa-work' --mount '/Volumes/<disk>'
 
 웹 활동 막대 「자동화」의 조건·동작·실행 기록·토글은 [자동화 운영 확인](automations.md)을 본다.
 
-사람은 aaa 밖 host 터미널에서 `aaa deploy start --file mac-b:~/aaa-candidate/aaa --sha256 <SHA> --commit <40자리커밋>`의 후보/대상을 읽고 정확히 `yes`를 입력한다(FRONT1.55 이상). coordinator_deploy 설정은 바꾸지 않는다. 같은 `aaa deploy status <ID> --wait`로 재시작을 넘는다. TOML `do="deploy"`는 배포 제안과 빌드 안내만 만든다([자동화](automations.md#배포는-제안까지만l5)).
+사람은 aaa 밖 host 터미널에서 `aaa deploy start --file mac-b:~/aaa-candidate/aaa --sha256 <SHA> --commit <40자리커밋>`의 후보/대상을 읽고 정확히 `yes`를 입력한다(FRONT1.55 이상). coordinator_deploy 설정은 바꾸지 않는다. 같은 `aaa deploy status <ID> --wait`로 재시작을 넘는다. TOML `do="deploy"`는 배포 제안과 빌드 안내만 만든다([자동화](automations.md#배포는-제안까지만l5)). 웹 조작 기기는 설정 「배포」에서 빌드 머신의 후보를 「점검」(provenance·SHA 대조와 dry-run)한 뒤 확인 창 하나로 시작하고, 같은 rollout ID를 「배포 기록」에서 다시 보며, 머신마다 agent·host를 다시 띄운다(FRONT_API 1.82, [설치 안내](install-runbook.md#웹에서-배포재시작관리-gui-w6a-front_api-182)).

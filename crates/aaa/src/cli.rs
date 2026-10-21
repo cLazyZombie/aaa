@@ -321,7 +321,7 @@ enum Cmd {
     /// (harness hook) 세션 안에서 harness 사건을 이 머신 agent에 보낸다. 사건 JSON은 인자 또는 표준 입력
     #[command(hide = true)]
     Hook {
-        #[arg(long, value_parser = ["claude", "codex"])]
+        #[arg(long, value_parser = ["claude", "codex", "quota"])]
         agent: String,
         payload: Option<String>,
     },
@@ -3719,6 +3719,30 @@ fn render_front(r: &FrontResponse) -> String {
                 rollout.steps.len(),
                 rollout.error.as_deref().unwrap_or("")
             );
+        }
+        // 웹 「배포」의 응답(관리 GUI W6a). CLI 명령은 보내지 않지만 `--json` 없이 받으면 한 줄씩 보인다
+        FrontResponse::RolloutCards { cards } => {
+            for c in cards {
+                let _ = writeln!(s, "{} {:?}: {}/{} · SHA-256 {}", c.id, c.state, c.cursor, c.steps.len(), c.sha256);
+            }
+        }
+        FrontResponse::RolloutPlan { plan } => {
+            let c = &plan.candidate;
+            let _ = writeln!(s, "후보 {}:{} · aaa {} · SHA-256 {}", c.machine, c.path, c.version, c.sha256);
+            for t in &plan.targets {
+                let _ = writeln!(
+                    s,
+                    "  {}{} {}",
+                    t.machine,
+                    if t.host { "(host)" } else { "" },
+                    t.problem.as_deref().unwrap_or("준비됨")
+                );
+            }
+        }
+        FrontResponse::DeployJobs { jobs } => {
+            for j in jobs {
+                let _ = writeln!(s, "배포 {} · {} · {:?} · {:?}", j.id, j.machine, j.work, j.state);
+            }
         }
         FrontResponse::DeployContext { project, session, allowed } => {
             let _ = writeln!(s, "coordinator {:?} · 세션 {session} · 배포 허용 {allowed}", project);

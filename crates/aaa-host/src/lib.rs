@@ -61,6 +61,8 @@ mod project;
 mod prompt;
 mod prompt_box;
 mod push;
+mod quota;
+mod quota_rpc;
 mod report_mark;
 mod resource;
 mod restore;
@@ -551,6 +553,7 @@ pub struct Host {
     vapid: Option<push::Vapid>,
     /// 구독 사용량(웹이 물을 때만 읽는다)
     usage: usage::UsageService,
+    account_quota: tokio::sync::Mutex<quota::Cache>,
     /// 알림 webhook 대기열(설정이 켜져 있을 때)
     notify_tx: Mutex<Option<tokio::sync::mpsc::UnboundedSender<aaa_proto::InboxItem>>>,
     /// 지금 쓰는(보이고 focus가 있는) 웹 화면 수(events WS `presence`). 하나라도 있으면 Web Push를 보내지 않는다
@@ -745,6 +748,7 @@ impl Host {
             file_caps: Mutex::new(HashMap::new()),
             vapid,
             usage: usage::UsageService::new(usage::UsageContext::system()),
+            account_quota: Default::default(),
             notify_tx: Mutex::new(None),
             in_use: std::sync::atomic::AtomicUsize::new(0),
             viewing: Mutex::new(seen::Viewing::default()),
@@ -1435,13 +1439,19 @@ impl Host {
             FrontRequest::ThreadStartAccount { .. } => unreachable!(),
             FrontRequest::Instance => Ok(FrontResponse::Instance { project: self.instance_view() }),
             FrontRequest::DebugInput { pane, thread, since_ms } => self.debug_input(pane, thread, since_ms),
-            FrontRequest::RolloutStart { id, spec } => self.rollout_start(actor, id, spec).await,
-            FrontRequest::RolloutStatus { id } => self.rollout_status(actor, id),
+            FrontRequest::RolloutStart { id, spec } => self.rollout_start(role, actor, id, spec).await,
+            FrontRequest::RolloutStatus { id } => self.rollout_status(role, actor, id),
+            // 웹 「배포」(관리 GUI W6a): 점검은 조작 기기, 목록은 보기 전용 기기도 본다(표시용 요약만)
+            FrontRequest::RolloutPlan { source_machine, path, machines } => {
+                self.rollout_plan(role, actor, source_machine, path, machines).await
+            }
+            FrontRequest::Rollouts => self.rollouts(),
+            FrontRequest::DeployJobs => self.deployment_jobs().await,
             FrontRequest::DeployContext => Ok(self.deployment_context(actor)),
             FrontRequest::DeployStart { machine, id, action } => {
-                self.deployment_start(actor, machine, id, action).await
+                self.deployment_start(role, actor, machine, id, action).await
             }
-            FrontRequest::DeployStatus { machine, id } => self.deployment_status(actor, machine, id).await,
+            FrontRequest::DeployStatus { machine, id } => self.deployment_status(role, actor, machine, id).await,
             FrontRequest::Post { project, input } => {
                 self.front_post(&project, input, actor).map(|result| FrontResponse::Post { result })
             }
