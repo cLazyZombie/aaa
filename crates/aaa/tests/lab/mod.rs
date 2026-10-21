@@ -17,6 +17,9 @@ use serde_json::Value;
 pub mod watch;
 
 pub const BIN: &str = env!("CARGO_BIN_EXE_aaa");
+/// t-0578의 동시 검증(load 28.96)에서 30초를 넘긴 시작·전달 대기만 두 배 여유를 둔다.
+/// 사건이 오면 즉시 끝난다. 일반 대기·제품의 복구/성능 시한에는 쓰지 않는다(docs/testing.md).
+pub const LOAD_TIMEOUT: Duration = Duration::from_secs(60);
 static SEQ: AtomicU32 = AtomicU32::new(0);
 
 /// 같은 프로그램·version이면서 SHA가 다른 시험 실행 파일. macOS는 서명 식별자로 구분한다.
