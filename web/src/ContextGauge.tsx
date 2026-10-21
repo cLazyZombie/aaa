@@ -1,6 +1,7 @@
 // 입력칸 컨텍스트 게이지(plan §8.321): 보내기 앞의 작은 링과 숫자, 누르면 위로 펼침(사용·창·주의·정리 단추).
 // herdr-web-ui `ContextRing`(Composer.tsx 180~225줄)·t3code `ContextWindowMeter`를 따른다. 다른 곳(사용자 10-20): 남은 양이 아니라
-// 사용량 %이고 넘거나 창을 모르면 k, 숫자는 늘 보이고, 휴대폰도 펼친다. 글을 치는 동안은 자리를 둔 채 투명해진다(입력칸 폭이 그대로).
+// 사용량 %이고 넘거나 창을 모르면 k. 패드·데스크톱은 글을 치는 동안 자리를 둔 채 투명해진다(입력칸 폭이 그대로).
+// 사용자 10-21: 휴대폰(700px 이하)은 CSS로 게이지 전체를 숨긴다. 입력칸이 비어 있어도 보이지 않는다.
 import { useEffect, useRef, useState } from "react";
 import { Minimize2 } from "lucide-react";
 import type { ContextUsage } from "./gen/proto";
