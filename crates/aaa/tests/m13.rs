@@ -4670,9 +4670,18 @@ fn task_edit_keeps_bytes_conflicts_and_logs() {
     let w = world();
     let pdir = w.projects.join("demo");
     let file = pdir.join("TASKS.md");
+    // 직접 편집 fixture도 완성된 판을 rename으로 넘긴다. std::fs::write는 truncate와 write 사이에
+    // ticker가 빈 파일을 읽어 모든 task를 삭제/추가로 기록할 수 있다. 임시 파일을 쓰는 동안 tick을
+    // 끝내 그 순서를 매번 검사한다. host의 task 편집 API는 거치지 않는다.
+    let write = |text: &str| {
+        let pending = pdir.join("TASKS.md.pending");
+        std::fs::write(&pending, text).unwrap();
+        w.h.ticks(1);
+        std::fs::rename(pending, &file).unwrap();
+    };
     let md = "# Tasks\n\n## Backlog\n나중 일은 later.md에 모은다\n- [ ] 고칠 일 (me)\n  메모\n- [ ] 다른 일\n<!-- 모르는 줄 -->\n";
     let md = identified_tasks(md);
-    std::fs::write(&file, &md).unwrap();
+    write(&md);
     let sha = |t: &str| hex::encode(sha2::Sha256::digest(t.as_bytes()));
     let read = || std::fs::read_to_string(&file).unwrap();
     let mut ev = Events::connect(&w.h);
@@ -4712,7 +4721,7 @@ fn task_edit_keeps_bytes_conflicts_and_logs() {
     };
     let (fix, other) = (block("고칠 일"), block("다른 일"));
     let direct = added.replace("  메모\n", "  메모 고침(직접)\n");
-    std::fs::write(&file, &direct).unwrap();
+    write(&direct);
     // 충돌: 종료 코드 1, 까닭과 그 task의 지금 원문, 쓰지 않음
     let conflict = |args: &[&str]| -> Value {
         let o = w.h.run(&[&["--json", "task"], args].concat());
@@ -4774,8 +4783,9 @@ fn task_edit_keeps_bytes_conflicts_and_logs() {
     assert!(read().contains(&format!("- [ ] 새 일 (Priya) <!-- aaa-task:{new_id} -->\n  새 메모\n")), "{}", read());
 
     // 파일 직접 편집 → 다음 tick이 사건과 「파일 직접」 기록
+    let logged = count();
     let before_tick = read().replace("- [ ] 새 일 (Priya)", "- [ ] 새 일 (me)");
-    std::fs::write(&file, &before_tick).unwrap();
+    write(&before_tick);
     w.h.ok(&["ticker", "tick"]);
     ev.wait_from(at + 1, "직접 편집 뒤 tasks 사건", T, |e| match e {
         FrontEvent::Tasks { sha256, .. } if *sha256 == sha(&before_tick) => Some(()),
@@ -4783,6 +4793,8 @@ fn task_edit_keeps_bytes_conflicts_and_logs() {
     });
     let first = w.h.ok(&["task", "log"])["entries"][0].clone();
     assert_eq!((first["by"].as_str(), first["action"].as_str()), (Some("파일 직접"), Some("update")), "{first}");
+    assert_eq!(first["title"].as_str(), Some("새 일"), "{first}");
+    assert_eq!(count(), logged + 1, "직접 편집한 task 하나만 기록한다");
     assert_eq!(
         first["before"].as_str(),
         Some(format!("- [ ] 새 일 (Priya) <!-- aaa-task:{new_id} -->\n  새 메모").as_str())
