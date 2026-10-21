@@ -1,3 +1,4 @@
+import { ThreadLimitBadge } from "./ThreadLimitBadge";
 import { ThreadStageBadge } from "./ThreadStageBadge";
 import { lazy, Suspense, useEffect, useRef, useState } from "react";
 import type { DeviceRole, DiffView, LibraryView, ThreadView } from "./gen/proto";
@@ -151,7 +152,8 @@ export function ThreadPanel({
       <div className="thread-body">
         <div className="thread-col">
           <div className="t-hero">
-            <h1><ThreadStageBadge stage={t.stage} />{t.title}</h1>
+            <h1><ThreadStageBadge stage={t.stage} /><ThreadLimitBadge start={t.over_limit} />{t.title}</h1>
+            {t.over_limit && <p className="muted" data-testid="thread-over-limit-origin">{t.over_limit.actor} · {new Date(t.over_limit.at_ms).toLocaleString()}{t.over_limit.user_request && ` · 사용자 지시: ${t.over_limit.user_request}`}</p>}
             <div className="t-meta">
               <span className={`chip meta-chip ${t.group}`}>{statusLabel}</span>
               <span className="mono">

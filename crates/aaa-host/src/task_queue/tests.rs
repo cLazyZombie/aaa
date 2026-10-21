@@ -1237,3 +1237,34 @@ async fn requested_machine_only_change_keeps_the_approved_default_model() {
     );
     assert_eq!(updated.approved_block, tasks::parse(&after)[0].block_sha256);
 }
+
+#[test]
+fn over_limit_start_requires_a_direct_user_or_verified_coordinator() {
+    let lab = Lab::new();
+    for actor in ["local:cli", "device:user"] {
+        let o = lab.h.thread_limit_override("demo", true, None, None, actor).unwrap().unwrap();
+        assert_eq!(o.actor, actor);
+        assert!(o.at_ms > 0);
+        assert!(o.user_request.is_none());
+    }
+    for actor in ["worker:p", "evaluator:p", "detached:cli", "local:cli@p", "automation:test", "coordinator:p"] {
+        assert_eq!(
+            lab.h
+                .thread_limit_override("demo", true, Some("사용자가 강제 시작 지시"), Some("d-0001"), actor)
+                .unwrap_err()
+                .code,
+            ErrorCode::Forbidden
+        );
+    }
+    for reason in [" ".to_string(), "첫 줄\n둘째 줄".into(), "x".repeat(2001)] {
+        assert!(
+            lab.h
+                .thread_limit_override("demo", true, Some(&reason), Some("d-0001"), "local:cli")
+                .unwrap_err()
+                .message
+                .contains("근거")
+        );
+    }
+    assert!(lab.h.thread_limit_override("demo", false, Some("사용자 지시"), None, "local:cli").is_err());
+    assert!(lab.h.thread_limit_override("demo", false, None, None, "local:cli").unwrap().is_none());
+}

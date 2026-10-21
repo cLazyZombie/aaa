@@ -2317,6 +2317,14 @@ pub enum FrontRequest {
         name: Option<String>,
     },
     ThreadStart {
+        /// FRONT_API 1.98. 사용자가 명시한 시작만 프로젝트 실행 한도를 넘길 수 있다.
+        #[serde(default)]
+        #[ts(optional, as = "Option<bool>")]
+        over_limit: bool,
+        /// coordinator는 해당 task를 강제로 시작하라는 사용자 지시 근거를 한 줄로 남긴다.
+        #[serde(default)]
+        #[ts(optional, as = "Option<String>")]
+        user_request: Option<String>,
         #[serde(default)]
         holds: Vec<String>,
         /// 준비 완료를 기다리지 않고 Starting 기록을 돌려준다.

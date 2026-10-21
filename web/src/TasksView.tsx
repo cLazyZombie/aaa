@@ -1,3 +1,5 @@
+import { ThreadLimitBadge } from "./ThreadLimitBadge";
+import type { ThreadLimitOverride } from "./gen/proto";
 import { ThreadStageBadge } from "./ThreadStageBadge";
 // 본문(오른쪽) 할 일 화면(할 일 보기 T1 §8.306, 편집 T2 §8.311, 사용자 10-20 「하기로 했던 기능들을 다 볼수 있고 (왼쪽에 아이콘이
 // 있어서 거기서 들어가게), 필요하면 수정, 삭제 할수 있고」). 활동 막대 「할 일」·`#tasks`가 연다. host `tasks`(TaskBoard)를 읽고
@@ -209,6 +211,7 @@ export function TasksView({
   groups,
   machines,
   stages,
+  overLimits,
   reader,
   addRequest,
   focusRequest,
@@ -228,6 +231,7 @@ export function TasksView({
   /** host 상태 사건의 머신 목록(통계·pane 변경은 owner 재조회를 일으키지 않는다) */
   machines: readonly MachineView[];
   stages: ReadonlyMap<string, ThreadStage | undefined>;
+  overLimits: ReadonlyMap<string, ThreadLimitOverride | undefined>;
   /** 보기 권한 기기: 편집 단추·끌기·「+」를 숨긴다 */
   reader: boolean;
   /** 바뀌면 새 task 폼(문서가 있으면 「할 일에 추가」 창)을 연다 */
@@ -669,6 +673,7 @@ export function TasksView({
                             selected={current?.line === t.line}
                             groups={groups}
                             stage={t.thread ? stages.get(t.thread) : undefined}
+                            overLimit={t.thread ? overLimits.get(t.thread) : undefined}
                             canEdit={canEdit}
                             draggable={canEdit && !coarse}
                             dragging={drag?.line === t.line}
@@ -704,6 +709,7 @@ export function TasksView({
             )}
             {board && board.unlinked_threads.length > 0 && (
               <Unlinked
+                overLimits={overLimits}
                 threads={board.unlinked_threads}
                 canLink={linkApi}
                 onThread={onThread}
@@ -842,6 +848,7 @@ export function TasksView({
       )}
       {dialog?.kind === "start" && (
         <StartDialog
+          allowOverLimit={apiAtLeast(frontApi, [1, 98])}
           task={dialog.task}
           owners={owners}
           onClose={() => setDialog(null)}
@@ -927,6 +934,7 @@ function MenuButton({ title, open, testid, onToggle }: { title: string; open: bo
 function TaskRow({
   t,
   stage,
+  overLimit,
   depth,
   state,
   selected,
@@ -947,6 +955,7 @@ function TaskRow({
 }: {
   t: TaskView;
   stage?: ThreadStage;
+  overLimit?: ThreadLimitOverride;
   depth: number;
   state: TaskState;
   selected: boolean;
@@ -993,7 +1002,7 @@ function TaskRow({
           onKeyMove(e.key === "ArrowUp" ? "up" : "down");
         }}
       >
-        <ThreadStageBadge stage={stage} />
+        <ThreadStageBadge stage={stage} /><ThreadLimitBadge start={overLimit} />
         <StateIcon state={state} />
         <span className="task-title">
           <span className="sr-only">{TASK_STATE_LABEL[state]}: </span>
@@ -1026,7 +1035,7 @@ function TaskRow({
   );
 }
 
-function Unlinked({ threads, canLink, onThread, onLink, onMake }: { threads: TaskThread[]; canLink: boolean; onThread: (id: string) => void; onLink: (t: TaskThread) => void; onMake: (t: TaskThread) => void }) {
+function Unlinked({ overLimits, threads, canLink, onThread, onLink, onMake }: { overLimits: ReadonlyMap<string, ThreadLimitOverride | undefined>; threads: TaskThread[]; canLink: boolean; onThread: (id: string) => void; onLink: (t: TaskThread) => void; onMake: (t: TaskThread) => void }) {
   return (
     <section className="task-list task-unlinked" aria-label="task 없는 열린 thread" data-testid="tasks-unlinked">
       <h3 className="task-list-head">
@@ -1038,7 +1047,7 @@ function Unlinked({ threads, canLink, onThread, onLink, onMake }: { threads: Tas
         {threads.map((t) => (
           <li key={t.id} className="task-row" data-testid={`task-unlinked-row-${t.id}`}>
             <button type="button" className="task-pick" data-testid={`tasks-unlinked-${t.id}`} onClick={() => onThread(t.id)}>
-              <ThreadStageBadge stage={t.stage} />
+              <ThreadStageBadge stage={t.stage} /><ThreadLimitBadge start={overLimits.get(t.id)} />
               <CircleDot className="task-state is-run" aria-hidden="true" />
               <span className="task-title">
                 {t.id} · {t.title}

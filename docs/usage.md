@@ -144,6 +144,18 @@ host는 사용자·coordinator가 띄운 Worker의 `max_parallel_threads`를 실
 웹·`aaa context`·`aaa thread list`의 표지는 「자동화 thread」이며 사건·일정 출처는 상세에 보인다. 검토·답 대기·Idle·보고 [완료]에도 자리를 보유하며
 resolve 정리를 마쳐야 반환한다. 한도가 차면 새 기동을 보내지 않는다. 앞 예약의 고정 머신이 끊겼으면 가능한 뒤 예약을 먼저 시작한다.
 coordinator와 웹이 닫혀도 host가 시작하며, 알려지지 않은 모델·없어진 저장소·첨부 문제·시작 실패는 확인 필요로 남긴다.
+한도가 찬 상태에서 사용자가 직접 시작하려면 웹 「thread로 바로 시작」의 「한도 무시하고 시작」을 누르고 다시 확인한다.
+CLI는 `aaa thread start --from-task d-0001 --link-task --over-limit`로 시작한다. 이미 예약한 task는 예약을 먼저 취소한다.
+강제 시작도 열린 thread 수에 포함하므로 한도 아래로 자리가 날 때까지 예약은 기다린다.
+「한도 초과로 시작」 표지와 요청자·시각이 기록에 남으며 host 재시작 뒤에도 보존한다.
+coordinator는 사용자가 채팅에서 해당 task를 강제 시작하라고 명시한 경우에만 다음처럼 근거를 남긴다.
+
+```sh
+aaa thread start --from-task d-0001 --link-task --over-limit --user-request '사용자가 d-0001을 한도 무시하고 시작하라고 지시'
+```
+
+근거는 비지 않은 한 줄·2000바이트 이하이다. 일반 시작 승인이나 예약·자동 시작에는 이 옵션을 쓰지 않는다.
+
 사용자가 채팅으로 모델·머신 변경을 지시하면 coordinator도 다음처럼 바꾼다.
 
 ```sh

@@ -892,7 +892,15 @@ profile?: string,
 /**
  * coordinator가 돌아도 하나 더 띄운다
  */
-new?: boolean, } | { "op": "profiles", machine: string | null, } | { "op": "profile_resolve", name: string | null, } | { "op": "thread_start", holds: Array<string>,
+new?: boolean, } | { "op": "profiles", machine: string | null, } | { "op": "profile_resolve", name: string | null, } | { "op": "thread_start",
+/**
+ * FRONT_API 1.98. 사용자가 명시한 시작만 프로젝트 실행 한도를 넘길 수 있다.
+ */
+over_limit?: boolean,
+/**
+ * coordinator는 해당 task를 강제로 시작하라는 사용자 지시 근거를 한 줄로 남긴다.
+ */
+user_request?: string, holds: Array<string>,
 /**
  * 준비 완료를 기다리지 않고 Starting 기록을 돌려준다.
  */
@@ -1302,6 +1310,10 @@ export type ThreadStage = "merge_ready" | "landing";
 
 export type ThreadView = {
 /**
+ * 명시적으로 실행 한도를 무시한 시작의 출처. 옛 기록은 생략한다(FRONT_API 1.98).
+ */
+over_limit?: ThreadLimitOverride,
+/**
  * FRONT_API 1.95. 보고의 특정 판을 여는 프로젝트별 영속 번호(r-0001부터).
  */
 report_id?: string, project: string, id: string, title: string, machine: string, profile: string, account?: string, role: Role,
@@ -1378,6 +1390,8 @@ limited_until_ms?: number,
  * 질문이 없는 보고와 옛 host는 생략한다
  */
 questions?: ThreadQuestions, };
+
+export type ThreadLimitOverride = { actor: string, at_ms: number, user_request: string | null, };
 
 export type ThreadPr = { url: string, state: string | null, review: string | null, };
 

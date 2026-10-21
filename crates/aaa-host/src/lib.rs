@@ -1578,6 +1578,8 @@ impl Host {
             FrontRequest::Profiles { machine } => self.profiles(machine.as_deref()).await,
             FrontRequest::ProfileResolve { name } => self.profile_resolve(name.as_deref()),
             FrontRequest::ThreadStart {
+                over_limit,
+                user_request,
                 holds,
                 project,
                 title,
@@ -1594,6 +1596,13 @@ impl Host {
             } => {
                 // herdr-projects threads.rs `placement`: repo가 있으면 worktree, 없으면 repo 없는 작업 폴더. task에서 띄우면
                 // 저장소 칸이 정한다(`apply_task_repo`): 요청이 정한 kind를 그 판정에 넘긴다
+                let over_limit = self.thread_limit_override(
+                    &project,
+                    over_limit,
+                    user_request.as_deref(),
+                    from_task.as_deref(),
+                    actor,
+                )?;
                 let kind_given = kind;
                 let kind = kind.unwrap_or(if repo.is_some() {
                     aaa_proto::ThreadKind::Worktree
@@ -1601,6 +1610,7 @@ impl Host {
                     aaa_proto::ThreadKind::Dir
                 });
                 let mut a = orch::StartArgs {
+                    over_limit,
                     reservation: None,
                     account: selected_account,
                     holds,
