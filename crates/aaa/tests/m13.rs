@@ -5643,6 +5643,7 @@ async fn legacy_agent_stays_connected_but_cannot_drop_host_profile() {
         software: "legacy-test".into(),
         features: vec!["terminal.v1".into()],
         dev_mode: false,
+        sha256: None,
         selfcheck: None,
         sessions: vec![],
         harness: vec![],

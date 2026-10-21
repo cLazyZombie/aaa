@@ -650,6 +650,7 @@ mod tests {
                 software: "test".into(),
                 features: vec![],
                 dev_mode: true,
+                sha256: None,
                 selfcheck: None,
                 sessions: vec![],
                 harness: vec![],

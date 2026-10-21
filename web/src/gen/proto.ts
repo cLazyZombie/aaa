@@ -186,7 +186,31 @@ clock_skew_ms: number | null,
 /**
  * 새 세션을 거부하는 이유(연결 중일 때만). 비었으면 정상이다.
  */
-problems: Array<HealthProblem>, };
+problems: Array<HealthProblem>,
+/**
+ * 마지막 hello의 CPU 종류(`aarch64`·`x86_64`). 아래 넷과 같이 1.86부터 싣고, 옛 host·아직 붙지 않은 머신은 생략한다(plan §8.369)
+ */
+arch?: string,
+/**
+ * 마지막 hello의 aaa 판(`aaa --version`의 판 글)
+ */
+software?: string,
+/**
+ * 마지막 hello의 실행 파일 SHA-256(소문자 hex). 옛 agent는 보내지 않는다
+ */
+sha256?: string,
+/**
+ * 판이 host와 다르다(판을 모르면 false)
+ */
+software_differs?: boolean,
+/**
+ * 이 host 실행 중 마지막 연결이 알린 agent 기능(host 재시작 뒤 다시 붙기 전에는 비었다)
+ */
+features?: Array<string>,
+/**
+ * 마지막 연결의 시작 자가 점검(§10.4 6) 요약. 점검이 hello보다 늦게 끝났으면 다음 연결 때 온다
+ */
+selfcheck?: MachineSelfcheck, };
 
 export type MachineHealth = {
 /**
@@ -221,6 +245,8 @@ problems: Array<HealthProblem>,
  * 거부하지는 않는 주의(배터리 전원 등)
  */
 warnings: Array<string>, };
+
+export type MachineSelfcheck = { pass: boolean, reasons: Array<string>, };
 
 export type HealthProblem = { code: string, text: string, };
 

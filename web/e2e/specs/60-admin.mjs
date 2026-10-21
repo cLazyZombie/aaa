@@ -1,9 +1,11 @@
 // 웹 관리 W5b(plan §8.355): 설정 「머신」에서 등록 창 열기·닫기, 새 머신 승인(6자리 코드: 틀리면 말하고 맞으면 등록), host 머신은 폐기
-// 단추 없음, 다른 머신 폐기. 「폰 및 기기」의 마지막 조작 기기(폐기 꺼짐)·이 기기 폐기 확인(「이 화면이 끊깁니다」), tailnet 공개
+// 단추 없음, 머신 상세(M0, plan §8.369: OS·판·실행 파일 SHA-256·기능, 보기 기기도 봄), 다른 머신 폐기. 「폰 및 기기」의 마지막 조작
+// 기기(폐기 꺼짐)·이 기기 폐기 확인(「이 화면이 끊깁니다」), tailnet 공개
 // 켜기(확인 창)·끄기(공개 주소로 연 화면은 「다른 경로를 확인했다」를 켜야 열림). 보고서 올리기(폴더·여러 파일), 공유 링크 키 교체
 // (살아 있는 링크 수, 옛 링크 끊김), 보기 전용 기기, 휴대폰 390.
 // host는 PATH 앞의 가짜 `tailscale`을 부른다(실제 tailscale을 건드리지 않는다): serve 상태는 실험실 파일 하나다. 새 머신은 같은 Mac에서
 // 다른 설정·상태 폴더로 띄운 agent다(host agent_listen을 loopback에 연다).
+import crypto from "node:crypto";
 import fs from "node:fs";
 import { spawn } from "node:child_process";
 import readline from "node:readline";
@@ -103,6 +105,28 @@ export default async function ({ page }) {
     await mp.getByRole("button", { name: "창 닫기" }).click();
     await mp.getByTestId("enroll-open-button").waitFor();
     await shot(page, "60-machines-desktop");
+  });
+
+  await step("머신 상세(M0): 줄에 OS·CPU·판, 「자세히」에 연결·판·실행 파일 SHA-256·agent 기능", async () => {
+    const b = aaa("machine", "list").machines.find((m) => m.name === "labB");
+    // 둘째 agent도 같은 실행 파일이다: host가 받은 SHA는 그 파일의 SHA다
+    const sha = crypto.createHash("sha256").update(fs.readFileSync(AA)).digest("hex");
+    if (b.sha256 !== sha || !b.software || !b.arch || b.software_differs) throw new Error(`host가 받은 labB 판 ${JSON.stringify(b)}`);
+    const os = { darwin: "macOS", linux: "Linux", win32: "Windows" }[process.platform];
+    const line = mp.getByTestId("machine-list").locator('[data-name="labB"] .machine-line');
+    await line.filter({ hasText: `${os} · ` }).filter({ hasText: b.software }).waitFor();
+    const more = mp.getByRole("button", { name: "labB 자세히" });
+    await more.click();
+    const d = mp.getByTestId("machine-detail-labB");
+    await d.locator('[data-label="SHA-256"] dd').filter({ hasText: sha }).waitFor();
+    await d.locator('[data-label="판"] dd').filter({ hasText: b.software }).waitFor();
+    if ((await more.getAttribute("aria-expanded")) !== "true") throw new Error("자세히 단추가 펼침을 알리지 않는다");
+    await d.locator('[data-label="연결"] dd').filter({ hasText: "연결됨" }).waitFor();
+    await d.getByText(/^agent 기능 \d+개$/).click();
+    await d.getByText("work_root.manage.v1").waitFor();
+    await shot(page, "60-machine-detail-desktop");
+    await more.click();
+    await d.waitFor({ state: "detached" });
   });
 
   await step("머신 폐기: 확인 창 → 목록과 host에서 빠진다", async () => {
@@ -226,6 +250,9 @@ export default async function ({ page }) {
     const p = d.getByTestId("settings-machines");
     await p.getByTestId("machine-list").locator('[data-name="labA"]').waitFor();
     if ((await p.getByTestId("enroll-open-button").count()) || (await p.getByRole("button", { name: /폐기/ }).count())) throw new Error("보기 기기에 등록·폐기");
+    // 상세는 읽기만이라 보기 기기도 본다
+    await p.getByRole("button", { name: "labA 자세히" }).click();
+    await p.getByTestId("machine-detail-labA").locator('[data-label="연결"] dd').filter({ hasText: "host 머신" }).waitFor();
     await tab(d, "폰 및 기기");
     await d.locator(".devices-panel").waitFor();
     if (await d.getByTestId("publish-controls").count()) throw new Error("보기 기기에 공개 단추");
@@ -243,6 +270,9 @@ export default async function ({ page }) {
     const { page: ph } = await pairPage(browser, aaa("web", "pair").code, { width: 390, height: 844 });
     let d = await openSettings(ph, "머신");
     await d.getByTestId("machine-list").locator('[data-name="labA"]').waitFor();
+    // 상세를 펼친 채로 잰다: SHA-256 64자는 폭 안에서 줄을 바꾼다
+    await d.getByRole("button", { name: "labA 자세히" }).click();
+    await d.getByTestId("machine-detail-labA").locator('[data-label="SHA-256"] dd').waitFor();
     const fits = await ph.evaluate(() => {
       const el = document.querySelector('[data-testid="settings-machines"]');
       const box = el.getBoundingClientRect();

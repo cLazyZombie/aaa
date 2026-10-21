@@ -446,6 +446,7 @@ mod tests {
                         software: "test".into(),
                         features: vec![],
                         dev_mode: true,
+                        sha256: None,
                         selfcheck: None,
                         sessions: sessions.to_vec(),
                         harness: vec![event("first", "working", 1), event("s", "working", 1)],
