@@ -7165,3 +7165,14 @@ FRONT_API 1.96는 기본 검수 표지와 답 기록의 r 참조를 더한다. E
 - **승인 뒤 환경 보존.** hp argv 수리 후보의 첫 CI에서 승인은 통과했으나 apply가 installation_content_conflict로 닫혔다. 승인 PTY만 TERM=xterm-256color였고, 환경을 비운 apply는 TERM이 없었다. TERM을 포함한 service_environment의 승인 해시 대조는 유지하고 시험의 비대화형 apply/resume을 승인과 같은 환경으로 맞춘다. 실제 PTY 승인→읽기 dry-run의 해시 불일치 RED/일치 GREEN과 다른 TERM의 해시 변경·무쓰기 대조를 로컬에서 남긴다. 실제 등록 후속 단계는 바뀐 후보의 hp macos-15 CI에서 판정한다.
 
 - **실제 listener 경로.** TERM 보존 후보의 hp CI에서 등록과 host 시작 뒤 service_backend_not_ready가 반복됐다. 같은 canonical state의 실제 LocalListener bind는 105바이트에서 SUN_LEN 오류로 로컬 RED였다. launchd 실험실 root를 기존 backend lifecycle owner와 같은 `/tmp`로 맞추고 로컬 승인/계획 owner에 실제 agent/front listener bind/drop을 더한다. production IPC·ready 판정·600초 상한·기존 실제 등록/재개/공유 instance 단언은 유지한다. 실제 후속 성공은 변경 후보의 hp CI가 판정한다.
+
+
+### 8.420 화면·고정폭·터미널 글꼴 설정(t-0683)
+
+- 「모양 → 타이포그래피」에 화면·고정폭 글꼴을 터미널과 같은 입력으로 둔다. 세 칸마다 「기본값으로」를 둔다.
+- 세 값은 localStorage의 기기별 설정이며 host 공유 설정/API에는 넣지 않는다. 최초 렌더 전에 복원하고,
+  입력 확정·다른 탭의 storage 사건에 바로 적용한다. Enter·blur·닫기에서 확정하는 기존 동작을 유지한다.
+- 화면·고정폭 기본 목록은 tokens.css 정본을 참조하고, 고른 목록 뒤에 붙인다.
+  고정폭은 Symbols Nerd Font Mono를 맨 앞에 둔다. 화면의 설치 글꼴 선택에는 비례폭도 허용한다.
+- E2E 06에서 Chromium 1280px·WebKit 390px의 즉시 적용·없는 글꼴 대체·아이콘 우선·기기 분리·탭 동기화·
+  새로고침·기본값 복원과 설정 폭을 확인하고 두 기기의 모양·터미널 화면을 남긴다. 통신 계약은 그대로다.

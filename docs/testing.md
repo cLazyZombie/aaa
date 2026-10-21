@@ -2,6 +2,17 @@
 
 새 기능을 만드는 thread가 따르는 짧은 규칙이다. 근거는 참고 넷(herdr 0.9.5·herdr-projects 0.2.35·herdr-web-ui `aa624cb`·t3code `4b1024da`)과 이 저장소에서 실제로 난 간헐 실패다. 전략과 도구 목록은 [plan §13](plan.md#13-테스트-전략과-직접-만들-e2e-도구)에 있다.
 
+## 화면·고정폭·터미널 글꼴(t-0683)
+
+- `NODE_PATH=$(npm root -g) node web/e2e/web.e2e.mjs <캡처 폴더> --spec 06-settings --workers 1`:
+  실제 host의 Chromium 1280px·WebKit 390px에서 세 글꼴을 바꾸고 새로고침 뒤 입력값·실제 CSS 목록을 대조한다.
+  없는 글꼴만 고르면 기본 목록과 canvas 너비가 같아야 하며, 고정폭 목록은 아이콘 글꼴을 맨 앞에 둔다.
+  화면·코드·터미널의 즉시 적용, 같은 기기 다른 탭의 storage 사건, 다른 기기 분리,
+  세 「기본값으로」의 저장값 삭제·기본 목록 복원·새로고침 유지와 가로 넘침을 검사한다.
+  설정의 모양·터미널 화면을 두 기기에서 캡처한다. 기존 face gate·설치 글꼴 거부·PTY 크기 검사는 유지한다.
+  DOM·글꼴·storage 사건으로 끝내며 고정 sleep·재시도·시한 연장은 없다.
+
+
 ## install macOS launchd owner(t-0485, plan §8.419)
 
 - `nice -n 15 cargo test -p aaa --bin aaa --locked cli::tests::launchd_registration_authorization_arguments_parse_before_any_service_changes -- --exact`: 실제 등록 owner와 공유한 승인 argv를 실제 `Cli::try_parse_from`으로 검사한다. `--prompt plain`은 install 상위 옵션이므로 authorize 앞에 둔다. 서비스 등록 없이 잘못된 순서 RED→올바른 순서 GREEN을 남긴다.
