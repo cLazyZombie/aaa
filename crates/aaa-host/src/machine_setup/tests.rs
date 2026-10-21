@@ -1187,6 +1187,7 @@ fn a_launcher_package_must_bind_the_sent_binary_and_a_dev_host_without_one_says_
     let Some(lab) = lab() else { return };
     let fake = fake_remote(&lab.root);
     let remote = lab.root.join("remote");
+    let sha = hex::encode(Sha256::digest(std::fs::read(&fake).unwrap()));
     // 개발 판 대본(`--version`이 개발 판)은 따로 둔다
     let dev_root = lab.root.join("dev");
     std::fs::create_dir_all(&dev_root).unwrap();
@@ -1264,10 +1265,40 @@ fn a_launcher_package_must_bind_the_sent_binary_and_a_dev_host_without_one_says_
             "launcher 없이 계획했다"
         );
         assert_eq!(remote_setup_dirs(&dev), Vec::<PathBuf>::new());
+
+        // release 번호 판인데 옆에 없고 그 release에도 launcher가 없다(옛 release, 또는 같은 번호의 개발 빌드): 보내지 않고 까닭을 덧붙인다
+        std::fs::remove_file(&launcher).unwrap();
+        let old = http_with(|_| {
+            vec![(
+                "/releases/download/v9.9.9/manifest.json".into(),
+                serde_json::to_vec(&serde_json::json!({ "version": "9.9.9", "assets": {} })).unwrap(),
+            )]
+        });
+        install::tests_binary::set(Some((fake.clone(), "aaa 9.9.9".into())));
+        install::tests_binary::set_base(Some(old.base.clone()));
+        let (job, settings, detected) = ready("lab-f").await;
+        let mut proposal = fake_proposal(install::choices(&settings, &detected).unwrap(), &sha, "macos");
+        proposal.result.status = InstallStatus::NeedsUser;
+        proposal.result.needs_user = vec![InstallNeedsUser {
+            code: "installation_launcher_asset_required".into(),
+            target: "launcher".into(),
+            message: "같은 release의 launcher JSON asset을 설치 원본 실행 파일 옆에 준비하세요".into(),
+        }];
+        std::fs::write(remote.join("probe.out"), serde_json::to_vec(&proposal).unwrap()).unwrap();
+        h.call(DeviceRole::Controller, WEB, FrontRequest::MachineSetupPlan { job: job.clone(), settings })
+            .await
+            .unwrap();
+        let asked = leave(&h, &job, MachineSetupPhase::Planning).await;
+        assert_eq!(asked.phase, MachineSetupPhase::NeedsUser, "{:?}", asked.error);
+        let why = asked.error.unwrap();
+        assert!(why.contains("(release: aaa 9.9.9 release에") && why.contains("launcher가 없다"), "{why}");
+        assert!(!remote.join("probe.launcher").exists());
+        assert_eq!(old.hits.lock().unwrap().len(), 1, "manifest만 읽었다");
         Arc::downgrade(&h)
     });
     drop(rt);
     install::tests_binary::set(None);
+    install::tests_binary::set_base(None);
     assert!(weak.upgrade().is_none());
 }
 

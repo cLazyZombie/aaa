@@ -146,7 +146,8 @@ export default async function ({ page }) {
     await form.getByTestId("machine-setup-plan-start").click();
     await job.and(page.locator('[data-phase="failed"]')).waitFor();
     const why = job.getByText("시스템 SSH 서버로 확인하지 못했다", { exact: false });
-    await why.waitFor();
+    // 실패 단계에 이르렀으므로 까닭은 이미 그려져 있다: 다르면 작업 줄을 그대로 적는다
+    if (!(await why.isVisible())) throw new Error(`까닭이 다르다: ${await job.innerText()}`);
     await why.scrollIntoViewIfNeeded();
     await shot(page, "72-install-refused-desktop");
     // 실험실 원격은 같은 머신이다: 보낸 파일(host 실행 파일과 같은 크기)이 든 임시 폴더가 남지 않았다

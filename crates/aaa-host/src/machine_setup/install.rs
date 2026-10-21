@@ -251,27 +251,15 @@ struct LauncherBinding {
     binary_sha256: String,
 }
 
-/// 보낼 실행 파일(`file`, SHA `sha`)에 묶인 macOS launcher package: 그 파일 옆 `name`, 없으면 host가 release 판일 때 같은 판 release에서
-/// 받는다. 개발 판 host에서 옆에 없으면 None(원격에 이미 launcher가 있으면 install이 보존하고, 없으면 사람 일로 알린다)
-async fn launcher_package(
-    cache: &std::path::Path,
-    file: &std::path::Path,
-    software: &str,
-    sha: &str,
-    name: &str,
-    arch: &str,
-) -> Result<Option<(PathBuf, String)>, String> {
-    let version = software.strip_prefix("aaa ").unwrap_or(software);
-    let beside = file.parent().map(|p| p.join(name)).filter(|p| p.is_file());
-    let path = match beside {
-        Some(p) => p,
-        None if super::release::version_ok(version) => {
-            let key = format!("macos-{arch}");
-            super::release::fetch(cache, &release_base(), version, Kind::Launcher, &key).await?.path
-        }
-        None => return Ok(None),
-    };
-    let raw = std::fs::read(&path).map_err(|e| format!("launcher package를 읽지 못했다: {e}"))?;
+/// 원격 실행 파일 옆에 놓을 launcher package와, 놓지 않을 때 그 까닭(사람 일 안내에 덧붙인다)
+struct Launcher {
+    send: Option<(PathBuf, String)>,
+    note: Option<String>,
+}
+
+/// package가 보낼 실행 파일(판·CPU·SHA)에 묶였으면 package의 SHA
+fn bound(path: &std::path::Path, name: &str, version: &str, sha: &str, arch: &str) -> Result<String, String> {
+    let raw = std::fs::read(path).map_err(|e| format!("launcher package를 읽지 못했다: {e}"))?;
     let b: LauncherBinding =
         serde_json::from_slice(&raw).map_err(|_| format!("launcher package({name})를 읽지 못했다"))?;
     if b.binary_sha256 != sha || b.platform != format!("macos-{arch}") || b.version != version {
@@ -280,7 +268,36 @@ async fn launcher_package(
             b.version, b.binary_sha256
         ));
     }
-    Ok(Some((path, sha256_hex(&raw))))
+    Ok(sha256_hex(&raw))
+}
+
+/// 보낼 실행 파일(`file`, SHA `sha`)에 묶인 macOS launcher package. 그 파일 옆 `name`이 있으면 반드시 묶여야 한다(사람이 둔 것). 없으면
+/// 같은 판 release의 package를 받아 묶였을 때만 보낸다: 옛 release에 없거나, 받지 못했거나, host가 release 실행 파일이 아니면(같은 판 번호의
+/// 개발 빌드) 보내지 않는다. 그때는 원격에 이미 있는 launcher를 install이 보존하고, 없으면 install이 사람 일로 알린다
+async fn launcher_package(
+    cache: &std::path::Path,
+    file: &std::path::Path,
+    software: &str,
+    sha: &str,
+    name: &str,
+    arch: &str,
+) -> Result<Launcher, String> {
+    let version = software.strip_prefix("aaa ").unwrap_or(software);
+    if let Some(p) = file.parent().map(|p| p.join(name)).filter(|p| p.is_file()) {
+        let package_sha = bound(&p, name, version, sha, arch)?;
+        return Ok(Launcher { send: Some((p, package_sha)), note: None });
+    }
+    if !super::release::version_ok(version) {
+        return Ok(Launcher { send: None, note: None });
+    }
+    let key = format!("macos-{arch}");
+    let got = super::release::fetch(cache, &release_base(), version, Kind::Launcher, &key)
+        .await
+        .and_then(|f| bound(&f.path, name, version, sha, arch).map(|s| (f.path, s)));
+    Ok(match got {
+        Ok(v) => Launcher { send: Some(v), note: None },
+        Err(e) => Launcher { send: None, note: Some(e) },
+    })
 }
 
 impl Ssh {
@@ -455,11 +472,11 @@ impl Host {
         let name = binary::launcher_name(&d.os, &d.arch);
         let launcher = match &name {
             Some(name) => launcher_package(&cache, &file, &software, &sha, name, &d.arch).await,
-            None => Ok(None),
+            None => Ok(Launcher { send: None, note: None }),
         };
         let planned = async {
             let launcher = launcher?;
-            if let (Some(name), Some((path, launcher_sha))) = (&name, &launcher) {
+            if let (Some(name), Some((path, launcher_sha))) = (&name, &launcher.send) {
                 ssh.place_beside(&t, &placed.dir, name, path, launcher_sha).await?;
             }
             let (Ok(c), Some(script)) = (choices(&settings, &d), probe_script(&placed.dir, &d.os, &sha)) else {
@@ -482,7 +499,7 @@ impl Host {
                     aaa_common::private_file::write(&path, &b)
                 })
                 .map_err(|e| format!("계획을 host 작업 폴더에 두지 못했다: {e}"))?;
-            Ok((proposal.result, summary, launcher.is_some()))
+            Ok((proposal.result, summary, launcher))
         }
         .await;
         let phase = match &planned {
@@ -502,11 +519,14 @@ impl Host {
                 j.remote_dir = None;
             }
             match planned {
-                Ok((result, summary, sent)) => {
+                Ok((result, summary, launcher)) => {
                     j.view.error = result.error.as_ref().map(|e| format!("원격 install: {}", e.message));
-                    if !sent && summary.needs_user.iter().any(|n| n.code == "installation_launcher_asset_required") {
+                    if launcher.send.is_none()
+                        && summary.needs_user.iter().any(|n| n.code == "installation_launcher_asset_required")
+                    {
+                        let why = launcher.note.map(|n| format!(" (release: {n})")).unwrap_or_default();
                         j.view.error = Some(format!(
-                            "host에 그 머신용 launcher package({})가 없다: release 판 host에서 하거나 host 실행 파일 옆에 둔다",
+                            "host에 그 머신용 launcher package({})가 없다: host 실행 파일 옆에 두거나 release 판 host에서 한다{why}",
                             name.as_deref().unwrap_or("aaa-launcher-macos-<CPU>.json")
                         ));
                     }
@@ -734,10 +754,15 @@ pub(crate) fn plan_file(state: &std::path::Path, job: &str) -> PathBuf {
     state.join("ssh").join("jobs").join(job).join("proposal.json")
 }
 
-/// release 주소(시험은 임시 HTTP 서버로 바꿔 끼운다)
+/// release 주소(시험은 임시 HTTP 서버로 바꿔 끼운다. 웹 E2E는 개발 빌드 host에 `AAA_TEST_RELEASE_BASE`를 줘 실제 GitHub에 가지 않는다)
 fn release_base() -> String {
     #[cfg(test)]
     if let Some(b) = tests_binary::base() {
+        return b;
+    }
+    if cfg!(debug_assertions)
+        && let Some(b) = std::env::var("AAA_TEST_RELEASE_BASE").ok().filter(|b| !b.is_empty())
+    {
         return b;
     }
     super::release::RELEASES.to_string()
