@@ -218,8 +218,11 @@ pub const AGENT_LINK: Version = Version { major: 1, minor: 11 };
 /// `/api/v1/passkey/approve`(사용자 확인 UV)로만 한다. `/api/v1/me`의 `passkey`, `DeviceView.passkey`, 등록 `/api/v1/passkey/register`
 /// (짝지은 뒤 10분 안). loopback 화면과 CLI는 그대로다. 옛 웹은 오류 글을 보인다. Agent link 변경 없음.
 /// 1.102: host 공통 계정 풀·프로젝트 참여·자동 배정과 내구 대기. Agent link는 그대로다.
-/// 1.103: 보고의 진행 목록 자동 반영과 현재 활동의 시작 시각(progress_since_ms).
-pub const FRONT_API: Version = Version { major: 1, minor: 103 };
+// 1.103: SSH 머신 추가 M3(plan §8.420): `machine_setup_plan{job, settings}`(aaa 전송·확인과 원격 install 계획)·`machine_setup_apply{job,
+// plan_sha256}`(host 서명 승인 → 원격 적용·grant 등록), `MachineSetupView`의 `settings`·`review`·`install`과 새 단계. 옛 host는 모르는
+// 요청으로 거절해 웹이 설치 설정을 그리지 않는다. Agent link 변경 없음.
+// 1.104: 보고의 진행 목록 자동 반영과 현재 활동의 시작 시각(progress_since_ms).
+pub const FRONT_API: Version = Version { major: 1, minor: 104 };
 /// agent ↔ session host(내부). 세션이 몇 주 이어질 수 있으므로 이전 session host와 호환해야 한다.
 /// 1.1: `SessionRequest::Detect`(harness 상태 감지 입력). agent는 1.0 session host에 보내지 않고 `Screen`을 쓴다.
 /// 1.2: `SessionRequest::Colors`(색 질의에 답할 화면 색, plan §8.187). agent는 1.1 이하 session host에 보내지 않는다.

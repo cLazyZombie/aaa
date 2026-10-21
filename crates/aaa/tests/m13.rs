@@ -25,6 +25,8 @@ mod preparation;
 mod rollout;
 #[path = "m13/secret_k0.rs"]
 mod secret_k0;
+#[path = "m13/ssh_install.rs"]
+mod ssh_install;
 #[path = "m13/task_main_merge.rs"]
 mod task_main_merge;
 #[path = "m13/thread_stages.rs"]

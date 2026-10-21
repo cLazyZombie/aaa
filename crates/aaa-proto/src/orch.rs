@@ -471,7 +471,7 @@ pub struct AgentStatus {
     #[serde(default)]
     #[ts(type = "number | null")]
     pub progress_at_ms: Option<u64>,
-    /// 지금 활동 글이 처음 보고된 때(FRONT_API 1.103). 같은 활동의 진행률·정기 보고는 시작을 바꾸지 않는다.
+    /// 지금 활동 글이 처음 보고된 때(FRONT_API 1.104). 같은 활동의 진행률·정기 보고는 시작을 바꾸지 않는다.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional, type = "number")]
     pub progress_since_ms: Option<u64>,
