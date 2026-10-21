@@ -9,7 +9,7 @@ const call = (p, body) => p.evaluate(async (req) => (await fetch("/api/v1/call",
 async function refresh(p) { await p.evaluate(() => window.dispatchEvent(new Event("focus"))); }
 async function openList(p) {
   await drawerSettled(p);
-  const toggle = p.locator(".view [data-testid='drawer-toggle']");
+  const toggle = p.locator(".view [data-testid='drawer-toggle']:visible");
   if ((await toggle.isVisible()) && (await toggle.getAttribute("aria-expanded")) !== "true") { await toggle.click(); await drawerSettled(p); }
 }
 export default async function ({ page }) {
@@ -55,6 +55,9 @@ done
     for (const name of inputs) if (!processed.includes(name)) throw new Error(`처리 영수증에 실행 이름이 없다: ${name}`);
     await page.getByTestId("activity-automations").click();
     await refresh(page);
+    // 카드는 「실행 중」, 본문 설정의 「열린 thread」 칩이 그 thread다
+    await page.getByTestId(`automation-running-${project}-check`).waitFor();
+    await page.getByTestId(`automation-${project}-check`).click();
     await page.getByTestId(`automation-open-${project}-${thread.id}`).waitFor();
     if (await page.getByTestId("automation-closing").count()) throw new Error("진행 중 보고에 끝남 시각");
   });
@@ -67,7 +70,7 @@ done
     fs.writeFileSync(`${thread.work_dir}/turn`, "go\n");
     await until("기억 host 사본", () => rules().find((r) => r.name === "check" && r.memory?.text.includes("입력 뒤에 보고")));
     await refresh(page);
-    await page.getByTestId(`automation-${project}-check`).getByRole("button", { name: "실패 분류 자세히" }).click();
+    await page.getByTestId(`automation-${project}-check`).click();
     const memory = page.getByTestId("automation-memory");
     await memory.waitFor();
     // focus는 조회 시작 사건이다. host 사본을 본 뒤 실제 화면의 새 본문·thread 반영까지 기다린다.
@@ -75,8 +78,6 @@ done
       const text = document.querySelector('[data-testid="automation-memory"]')?.textContent ?? "";
       return text.includes("입력 뒤에 보고") && text.includes(id);
     }, thread.id);
-    await page.keyboard.press("Escape");
-    await page.getByTestId("automation-detail").waitFor({ state: "detached" });
     if (await page.getByTestId("automation-closing").count()) throw new Error("아직 작업 중인데 끝남 표시");
     fs.writeFileSync(`${thread.work_dir}/turn`, "idle\n");
     await until("Idle 뒤 끝남 예정", () => { aaa("ticker", "tick"); return rules().find((r) => r.closing?.some((c) => c.thread === thread.id)); });
@@ -90,12 +91,12 @@ done
       await page.setViewportSize(size);
       await openList(page);
       await shot(page, `a2-panel-${device}`);
-      await page.getByTestId(`automation-${project}-check`).getByRole("button", { name: "실패 분류 자세히" }).click();
+      await page.getByTestId(`automation-${project}-check`).click();
       await page.getByTestId("automation-memory").waitFor();
       await domIs(page, "가로 넘침 없음", () => document.documentElement.scrollWidth <= innerWidth);
       await shot(page, `a2-memory-${device}`);
-      await page.keyboard.press("Escape");
-      await page.getByTestId("automation-detail").waitFor({ state: "detached" });
+      await page.getByTestId("automation-detail").getByTestId("automation-close").click();
+      await page.getByTestId("automation-detail").waitFor({ state: "hidden" });
     }
   });
 };

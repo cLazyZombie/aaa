@@ -87,6 +87,8 @@ export async function terminateDeployGuards(stateDir) {
     try { view = JSON.parse(fs.readFileSync(path.join(dir, name), "utf8")); }
     catch (e) { if (e.code === "ENOENT") continue; throw e; }
     const p = processes().find((p) => p.pid === view.worker_pid);
-    if (live(p) && p.command.includes("deployment-guard") && p.command.includes(stateDir)) await terminateTree(p);
+    if (!live(p)) continue;
+    const command = commandOf(p.pid);
+    if (command !== null && command.includes("deployment-guard") && command.includes(stateDir)) await terminateTree({ ...p, command });
   }
 }

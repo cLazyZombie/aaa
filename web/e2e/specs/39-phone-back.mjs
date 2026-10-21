@@ -1,8 +1,9 @@
 // 웹 E2E 휴대폰 뒤로 기록(사용자 10-20 「아이폰에서 왼쪽 스와이프를 처음부터 끝까지 하면 저 화면이 나와」, plan §8.301).
 // iPhone(WebKit 390·430, Safari 탭·홈 화면 앱 흉내)에서 pane을 열고 다른 pane으로 가고 보고서를 연 뒤 브라우저 뒤로(iOS 가장자리
 // 쓸기와 같은 history.back)를 끝까지 하면, 열어 본 화면을 거꾸로 지나 첫 pane에서 멈추고 빈 「하나를 고른다」로 떨어지지 않는다.
-// 왼쪽 가장자리에서 오른쪽 끝까지 쓸기는 두 몸짓이다: 앱의 목록 drawer 쓸기(herdr/edgeSwipe.ts)와 Safari의 가장자리 뒤로. 둘을
-// 따로, 그리고 겹쳐(시스템이 손가락을 가져가 touchcancel, 그 뒤 뒤로) 흉내 낸다. 손가락은 WebKit의 document.createTouch로 만든다.
+// 왼쪽 가장자리에서 오른쪽 끝까지 쓸기는 Safari의 가장자리 뒤로 몫이다. 앱의 목록 drawer 쓸기(herdr/edgeSwipe.ts)는 화면 안쪽에서
+// 시작한 쓸기만 받는다(plan §8.408, 전에는 두 몸짓이 함께 돌아 뒤로 간 화면에 목록이 열려 남았다). 가장자리 쓸기를 따로, 그리고
+// 뒤로와 겹쳐(시스템이 손가락을 가져가 touchcancel, 그 뒤 뒤로) 흉내 낸다. 손가락은 WebKit의 document.createTouch로 만든다.
 // 실제 iOS가 가장자리 뒤로 몸짓에서 페이지에 어떤 터치 사건을 주는지는 헤드리스가 보이지 않는다(실기 확인).
 // 혼자 돌리기: node web/e2e/web.e2e.mjs --spec 39-phone-back(새 실험실).
 
@@ -42,16 +43,16 @@ async function back(p) {
 }
 
 /**
- * 왼쪽 가장자리(x 4)에서 오른쪽 끝까지 한 손가락. `end`가 touchend면 앱 몸짓 그대로, touchcancel이면 시스템(Safari 가장자리 뒤로)이
- * 손가락을 가져간 것이다. `back`이면 손가락을 뗀 뒤 그 몸짓의 뒤로가 온다(iOS는 페이지의 터치를 먼저 거두고 손을 떼면 이동한다).
+ * 왼쪽 가장자리(x 4, `from`을 주면 그 자리)에서 오른쪽 끝까지 한 손가락. `end`가 touchend면 손을 뗀 것, touchcancel이면
+ * 시스템(Safari 가장자리 뒤로)이 손가락을 가져간 것이다. `back`이면 손가락을 뗀 뒤 그 몸짓의 뒤로가 온다(iOS는 손을 떼면 이동한다).
  */
-async function edgeStroke(p, { end = "touchend", back: after = false } = {}) {
+async function edgeStroke(p, { from = 4, end = "touchend", back: after = false } = {}) {
   await inTime(
     p.evaluate(
-      ({ end, after }) =>
+      ({ from, end, after }) =>
         new Promise((resolve) => {
           const y = 500;
-          const target = document.elementFromPoint(4, y) ?? document.body;
+          const target = document.elementFromPoint(from, y) ?? document.body;
           const fire = (type, x) => {
             const t = document.createTouch(window, target, 1, x, y, x, y);
             const on = type === "touchend" || type === "touchcancel" ? document.createTouchList() : document.createTouchList(t);
@@ -59,10 +60,10 @@ async function edgeStroke(p, { end = "touchend", back: after = false } = {}) {
           };
           const goBack = () => new Promise((r) => { addEventListener("popstate", () => r(), { once: true }); history.back(); });
           (async () => {
-            fire("touchstart", 4);
+            fire("touchstart", from);
             const width = innerWidth;
             for (let i = 1; i <= 12; i++) {
-              fire("touchmove", 4 + ((width - 8) * i) / 12);
+              fire("touchmove", from + ((width - 4 - from) * i) / 12);
               await new Promise((r) => requestAnimationFrame(() => r()));
             }
             fire(end, width - 4);
@@ -70,7 +71,7 @@ async function edgeStroke(p, { end = "touchend", back: after = false } = {}) {
             resolve();
           })();
         }),
-      { end, after },
+      { from, end, after },
     ),
     20_000,
     "가장자리 쓸기",
@@ -204,7 +205,7 @@ export default async function () {
     }
   });
 
-  await step("왼쪽 가장자리에서 오른쪽 끝까지 쓸기: 앱 몸짓은 목록을 열고 주소·기록은 그대로, Safari 뒤로와 겹치면 뒤로 하나만(이동 직전 목록 유지)", async () => {
+  await step("왼쪽 가장자리에서 오른쪽 끝까지 쓸기는 Safari 뒤로 몫: 목록을 열지 않고, 뒤로와 겹치면 앞 화면에 목록 없이 간다. 안쪽 쓸기는 목록을 연다(plan §8.408)", async () => {
     const wk = await webkit.launch();
     try {
       for (const width of [390, 430]) for (const standalone of [false, true]) {
@@ -214,11 +215,15 @@ export default async function () {
           if (width !== 390) await p.setViewportSize({ width, height: 932 });
           await domIs(p, "첫 pane", () => /^#pane=/.test(location.hash) && document.querySelector('[data-testid="terminal"], [data-testid="chat"]') !== null);
           const bad = [];
-          // 1. 앱 몸짓만(홈 화면 앱에는 가장자리 뒤로가 없다, Safari도 뒤로 칸이 없으면 페이지 것이다): 목록이 열리고 주소·기록 그대로
+          // 1. 가장자리 쓸기만(뒤로 칸이 없거나 시스템이 가져가지 않은 손가락): 목록이 열리지 않고 주소·기록 그대로
           const before = await screen(p);
-          const swiped = await edgeStroke(p);
-          if (!swiped.drawer || swiped.hash !== before.hash || swiped.len !== before.len || swiped.empty)
-            bad.push(`앱 쓸기 ${fmt(before)} → ${fmt(swiped)} (기록 ${before.len} → ${swiped.len})`);
+          const edge = await edgeStroke(p);
+          if (edge.drawer || edge.hash !== before.hash || edge.len !== before.len || edge.empty)
+            bad.push(`가장자리 쓸기 ${fmt(before)} → ${fmt(edge)} (기록 ${before.len} → ${edge.len})`);
+          // 2. 안쪽(x 60)에서 쓸기: 목록이 열리고 주소·기록 그대로
+          const inner = await edgeStroke(p, { from: 60 });
+          if (!inner.drawer || inner.hash !== before.hash || inner.len !== before.len || inner.empty)
+            bad.push(`안쪽 쓸기 ${fmt(before)} → ${fmt(inner)} (기록 ${before.len} → ${inner.len})`);
           await shot(p, `phone-edge-${tag}-drawer`);
           await p.locator(".scrim.is-open").click({ position: { x: width - 10, y: 600 } });
           await drawerSettled(p, true);
@@ -228,13 +233,14 @@ export default async function () {
           const h3 = paneHashOf("bk3");
           const h2 = paneHashOf("bk2");
           await domIs(p, "bk2 주소", (h) => location.hash === h, h2);
-          // 2. 겹침(시스템이 손가락을 가져감 → touchcancel, 그 뒤 뒤로): 앞 pane으로, 쓸기로 연 목록은 유지(사용자 1A·2A)
+          // 3. 겹침(시스템이 손가락을 가져감 → touchcancel, 그 뒤 뒤로): 앞 pane으로, 목록은 닫힌 채(사용자가 본 결함)
           const a = await edgeStroke(p, { end: "touchcancel", back: true });
-          if (a.hash !== h3 || !a.drawer || a.empty) bad.push(`취소 뒤 뒤로: ${fmt(a)} (원함 ${h3}, 목록 열림)`);
+          if (a.hash !== h3 || a.drawer || a.empty) bad.push(`취소 뒤 뒤로: ${fmt(a)} (원함 ${h3}, 목록 닫힘)`);
+          await shot(p, `phone-edge-${tag}-back`);
           await inList(p, "pane-bk2");
-          // 3. 앱 몸짓이 끝난 뒤(목록 열림) 그 몸짓의 뒤로가 온다: 뒤로 하나만
+          // 4. 가장자리 쓸기가 끝난 뒤 그 몸짓의 뒤로가 온다: 뒤로 하나만, 목록 닫힘
           const c = await edgeStroke(p, { back: true });
-          if (c.hash !== h3 || !c.drawer || c.empty) bad.push(`쓸기 끝난 뒤 뒤로: ${fmt(c)} (원함 ${h3}, 목록 열림)`);
+          if (c.hash !== h3 || c.drawer || c.empty) bad.push(`쓸기 끝난 뒤 뒤로: ${fmt(c)} (원함 ${h3}, 목록 닫힘)`);
           if (bad.length) throw new Error(`${tag}: ${bad.join("; ")}`);
         } finally {
           await p.context().close();
