@@ -792,6 +792,15 @@ L2 결함 검증은 이전 root 가져오기 생략, 재시작 전 applied 변�
 - 실제 설치 config check는 시험 소유 Unix socket으로 멈춘다. safety 철회→Recovering→gate 해제→늦은 rename 뒤 baseline 복구→새 old host를 확인한다. self-check30초·primary120초와 기존30초 사건 대기 상한을 늘리지 않는다. 독립 guard는 기록 PID와 실제 실험실 명령 경로를 함께 확인해 Lab이 회수한다.
 - 새 복구 ID·실행 SHA 누락·실패 뒤 다음 단계 진행의 필수 변형과 설치 중 취소/새 프로세스 확인 변형을 RED로 확인하고 정확 bytes 복구 뒤 GREEN/전체 ci-local·check-public을 실행한다. 독립 최종 read-only 리뷰는 같은 후보에서 한다.
 
+SHA 거부 대기(t-0587)는 로컬 agent의 연결과 원격 `AgentUpdate` 단계 진입을 구분한다. 연결만 보고
+`deploy status --wait`의 30초를 시작하면 로컬 재시작의 신원 대조·감시 해제 시간까지 함께 잰다.
+원본 실패 기록에서는 원격 단계가 대기 시작 약 10.4초 뒤, Recovering이 약 27.1초 뒤에 시작했다.
+기존 단계 진행 사건으로 원격 교체 진입을 확인한 뒤 원래 30초 상한으로 종료 표지를 기다린다.
+SHA 오류·실패 cursor·앞 머신 SHA·서비스 호출 횟수 단언은 유지한다. 별도로 영속 guard의
+`install_started=true`·`activated=false`·baseline SHA·Cancelled·무재시작을 확인하므로
+BeginInstall 뒤 거부된 설치가 교체 lease 확인을 거쳐 Stopped로 끝나는 경로도 빠지지 않는다.
+실제 설치 중 safety 철회의 늦은 rename·복구 keeper와 제품 시한·전이는 바꾸지 않는다.
+
 
 ## 순수 TOML·공통 자동화(L4)
 
