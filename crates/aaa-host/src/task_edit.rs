@@ -471,7 +471,7 @@ pub(crate) fn apply(text: &str, ops: &[TaskOp], ctx: &Ctx) -> Result<Applied, Fa
                     let line = tasks::task_line(&ws, c, &new_title, fields);
                     tasks::reads_back(&line, &new_title, fields)
                         .map_err(|e| bad(format!("{e}. 제목을 고치거나 「정리 제안」을 쓴다")))?;
-                    block.push(format!("{line}{}", d.eol));
+                    block.push(format!("{line}{}{}", crate::task_queue::id_suffix(v.id.as_deref()), d.eol));
                 } else {
                     block.push(d.lines[s.idx].clone());
                 }

@@ -85,6 +85,7 @@ impl Host {
         }
         let (message, summary) =
             compose(&rec.questions, &picks, text.as_deref()).map_err(|e| err(ErrorCode::BadRequest, e))?;
+        let requests = self.question_requests(project, id)?;
         let by = self.answered_by(actor);
         let answer = QuestionAnswerView {
             picks: picks.clone(),
@@ -122,6 +123,7 @@ impl Host {
         if let Some(a) = rec.question_answer.as_ref().filter(|a| a.at_ms == answer.at_ms) {
             self.record_answer(&rec, a);
         }
+        self.handle_question_requests(project, requests, &by, "질문 카드로 답해")?;
         self.flow(&rec, "question_answered", Some(format!("threads/{id}.md")), format!("{summary} · {by}"));
         if actor.starts_with("device:") {
             self.inbox_add(

@@ -85,6 +85,99 @@ fn file_under(root: &Path, path: &str) -> Result<PathBuf, ErrorBody> {
 }
 
 impl Host {
+    /// 같은 프로젝트의 열린 질문 카드가 정본이다. post 처리만으로 질문의 답을 만들지 않는다.
+    pub(crate) fn request_has_open_question(&self, item: &InboxItem) -> bool {
+        crate::notify::request_question(item).and_then(|id| self.load(&item.project, &id).ok()).is_some_and(|r| {
+            r.status != aaa_proto::ThreadStatus::Resolved
+                && r.report_hash.is_some()
+                && !r.questions.is_empty()
+                && r.question_answer.is_none()
+        })
+    }
+
+    /// 답을 보내기 전에 연결된 post를 잡는다. 전송을 기다리는 사이 새 질문에 온 post까지 끝내지 않는다.
+    pub(crate) fn question_requests(&self, project: &str, thread: &str) -> Result<Vec<InboxItem>, ErrorBody> {
+        Ok(self
+            .db
+            .inbox_list(Some(project), false)
+            .map_err(internal)?
+            .into_iter()
+            .filter(|i| crate::notify::request_question(i).as_deref() == Some(thread))
+            .collect())
+    }
+
+    /// 카드 답을 보낸 뒤 연결 알림도 끝낸다. 「답한 것」에는 질문 원문과 답 하나만 남긴다.
+    pub(crate) fn handle_question_requests(
+        &self,
+        project: &str,
+        items: Vec<InboxItem>,
+        by: &str,
+        why: &str,
+    ) -> Result<(), ErrorBody> {
+        // 그 사이 coordinator가 inbox done한 항목은 다시 기록하거나 알리지 않는다.
+        let open = self.db.inbox_list(Some(project), false).map_err(internal)?;
+        let items: Vec<_> = items.into_iter().filter(|i| open.iter().any(|o| o.id == i.id)).collect();
+        if items.is_empty() {
+            return Ok(());
+        }
+        self.inbox_finish(project, items.clone(), by, false).map_err(internal)?;
+        for i in items {
+            self.inbox_add(
+                project,
+                "thread-state",
+                "coordinator",
+                "request handled",
+                &format!("{why} 확인 필요 post도 처리했다({by}): {}", i.summary),
+            );
+        }
+        Ok(())
+    }
+
+    /// 구판에서 남긴 알림도 복구한다. 전송 중의 임시 answer claim은 답 기록으로 보지 않는다.
+    pub(crate) fn reconcile_question_requests(&self, project: &str) -> Result<(), ErrorBody> {
+        let done = self.db.ask_list(project).map_err(internal)?;
+        let items = self.db.inbox_list(Some(project), false).map_err(internal)?;
+        let finished = items
+            .into_iter()
+            .filter(|i| {
+                let Some(thread) = crate::notify::request_question(i) else { return false };
+                let mut history = done.iter().filter(|r| r.kind == AskKind::Question && r.subject == thread);
+                let Ok(rec) = self.load(project, &thread) else { return history.next().is_some() };
+                if rec.questions.is_empty() {
+                    // 이미 닫힌 카드에 늦게 온 알림도 새 판단 요청으로 만들지 않는다.
+                    rec.report_changed_ms.is_some_and(|at| at >= i.created_at_ms) || history.next().is_some()
+                } else if let Some(answer) = rec.question_answer.as_ref() {
+                    history.any(|r| r.answer.as_ref().is_some_and(|a| a.at_ms == answer.at_ms && a.by == answer.by))
+                } else {
+                    // 같은 thread의 다음 질문이 열렸으면 옛 답으로 닫지 않는다.
+                    false
+                }
+            })
+            .collect();
+        self.handle_question_requests(project, finished, "host", "닫힌 질문을 확인해")
+    }
+
+    /// 선택한 답은 없고 새 보고가 질문을 닫았다. 이전 질문 글만 보존해 승인·선택을 만들어 내지 않는다.
+    pub(crate) fn record_question_closed(&self, rec: &ThreadRec) {
+        self.ask_save(
+            &rec.project,
+            &AskRecord {
+                id: aaa_common::util::new_id(),
+                kind: AskKind::Question,
+                subject: rec.id.clone(),
+                title: rec.title.clone(),
+                asked_ms: rec.report_changed_ms.unwrap_or(rec.updated_at_ms),
+                done_ms: aaa_common::util::now_ms(),
+                by: "host".into(),
+                summary: "새 보고로 질문 닫힘".into(),
+                items: rec.questions.clone(),
+                answer: None,
+                body: None,
+                files_base: None,
+            },
+        );
+    }
+
     pub(crate) fn asks_bump(&self) {
         self.asks_changed.send_modify(|v| *v += 1);
     }
@@ -129,6 +222,9 @@ impl Host {
         let Some(i) = open.iter().find(|i| i.id == item && is_user_request(i)) else {
             return Err(err(ErrorCode::NotFound, "열린 확인 필요 post가 아니다(이미 처리했을 수 있다)"));
         };
+        if self.request_has_open_question(i) {
+            return Err(err(ErrorCode::BadRequest, "연결된 질문 카드에서 답한다. 답하면 이 post도 함께 처리된다"));
+        }
         let title =
             self.db.post_of_item(project, item).ok().flatten().map(|p| p.input.title).unwrap_or(i.summary.clone());
         self.inbox_done(project, &[item.to_string()], false, actor)?;
@@ -247,6 +343,10 @@ impl Host {
 
     /// 확인 필요 post를 끝냈다(웹 「답함으로 표시」·coordinator `inbox done`)
     pub(crate) fn record_request(&self, item: &InboxItem, by: &str, now_ms: u64) {
+        // coordinator가 알림만 inbox done해도 열린 질문과 별도의 「답한 것」을 만들지 않는다.
+        if self.request_has_open_question(item) {
+            return;
+        }
         let post = self.db.post_of_item(&item.project, &item.id).ok().flatten();
         self.ask_save(
             &item.project,
@@ -348,6 +448,251 @@ mod tests {
         let h = Host::open(cfg, path.clone()).unwrap();
         h.project_create("demo", Default::default(), "test").unwrap();
         (h, Lab(path))
+    }
+
+    #[test]
+    fn post_handled_and_inbox_done_share_state_without_answering_the_question() {
+        let (h, _lab) = host();
+        let mut rec = ThreadRec::starting("demo", "시안", "m", "fake", Role::Worker, ThreadKind::Dir, 1);
+        rec.id = "t-0001".into();
+        rec.report_hash = Some("hash".into());
+        rec.questions = aaa_proto::report_questions("## Questions\n1. 자리\n- A 아래 (추천)\n- B 위\n");
+        h.db.thread_import("demo", &rec.id, rec.status.as_str(), &serde_json::to_string(&rec).unwrap()).unwrap();
+        for n in 1..=2 {
+            let nonce = format!("{n:032x}");
+            let result = h
+                .front_post(
+                    "demo",
+                    PostInput {
+                        post_id: nonce.clone(),
+                        to: "user".into(),
+                        post_type: PostType::Request,
+                        topic: "user-action".into(),
+                        title: format!("알림 {n} aaa:question/t-0001"),
+                        body: "카드에는 없는 C안".into(),
+                        needs_user: true,
+                        refs: vec![],
+                    },
+                    "local:cli",
+                )
+                .unwrap();
+            let PostResult::Accepted { id } = result else { panic!("{result:?}") };
+            assert!(matches!(
+                h.post_status_view("demo", &id, "local:cli").unwrap(),
+                FrontResponse::Post { handled: Some(false), .. }
+            ));
+            if n == 1 {
+                assert!(h.post_handled("demo", &id, "worker:s1").is_err());
+                h.post_handled("demo", &id, "local:cli@coord").unwrap();
+                h.post_handled("demo", &nonce, "local:cli@coord").unwrap(); // 같은 처리를 두 번 기록하지 않는다
+            } else {
+                let item = h.db.post_inbox("demo", &id).unwrap().unwrap();
+                h.inbox_done("demo", &[item.id], false, "local:cli").unwrap();
+            }
+            assert!(matches!(
+                h.post_status_view("demo", &id, "local:cli").unwrap(),
+                FrontResponse::Post { handled: Some(true), .. }
+            ));
+            assert_eq!(
+                h.post_status("demo", &nonce, "local:cli").unwrap(),
+                h.post_status("demo", &id, "local:cli").unwrap()
+            );
+            assert!(h.post_status("other", &id, "local:cli").is_err());
+            assert_eq!(h.db.post_list("demo").unwrap().iter().find(|p| p.id == id).unwrap().state, "handled");
+        }
+        assert!(h.load("demo", &rec.id).unwrap().question_answer.is_none());
+        assert!(h.db.ask_list("demo").unwrap().is_empty());
+
+        assert_eq!(
+            h.db.inbox_list(Some("demo"), true).unwrap().iter().filter(|i| i.event == "request handled").count(),
+            1
+        );
+        assert!(
+            aaa_proto::FrontRequest::PostHandled { project: "demo".into(), post_id: "p-00000001".into() }
+                .needs_control()
+        );
+    }
+
+    #[test]
+    fn old_question_requests_close_from_a_new_report_without_fabricating_an_answer() {
+        let (h, _lab) = host();
+        let mut rec = ThreadRec::starting("demo", "시안", "m", "fake", Role::Worker, ThreadKind::Dir, 1);
+        rec.id = "t-0001".into();
+        rec.report_hash = Some("new".into());
+        let result = h
+            .front_post(
+                "demo",
+                PostInput {
+                    post_id: format!("{:032x}", 1),
+                    to: "user".into(),
+                    post_type: PostType::Request,
+                    topic: "user-action".into(),
+                    title: "옛 질문 aaa:question/t-0001".into(),
+                    body: "질문 알림".into(),
+                    needs_user: true,
+                    refs: vec![],
+                },
+                "local:cli",
+            )
+            .unwrap();
+        let PostResult::Accepted { id } = result else { panic!() };
+        // 보고 뒤에 온, 카드가 없는 요청은 남긴다. 그 뒤 새 보고가 질문을 닫으면 정리한다.
+        let created = h.db.post_inbox("demo", &id).unwrap().unwrap().created_at_ms;
+        rec.report_changed_ms = Some(created - 1);
+        h.db.thread_import("demo", &rec.id, rec.status.as_str(), &serde_json::to_string(&rec).unwrap()).unwrap();
+        h.reconcile_question_requests("demo").unwrap();
+        assert!(!h.db.post_inbox("demo", &id).unwrap().unwrap().done);
+        rec.report_changed_ms = Some(created + 1);
+        h.save(&mut rec);
+        h.reconcile_question_requests("demo").unwrap();
+        assert!(h.db.post_inbox("demo", &id).unwrap().unwrap().done);
+        assert!(h.load("demo", &rec.id).unwrap().question_answer.is_none());
+        assert!(h.db.ask_list("demo").unwrap().is_empty());
+
+        // 구판의 카드 답 뒤 남은 알림: 임시 전송 자리는 성공으로 보지 않고, 성공 기록이 있을 때만 닫는다.
+        let result = h
+            .front_post(
+                "demo",
+                PostInput {
+                    post_id: format!("{:032x}", 2),
+                    to: "user".into(),
+                    post_type: PostType::Request,
+                    topic: "user-action".into(),
+                    title: "카드 답 뒤 남은 알림 aaa:question/t-0001".into(),
+                    body: "다음 질문".into(),
+                    needs_user: true,
+                    refs: vec![],
+                },
+                "local:cli",
+            )
+            .unwrap();
+        let PostResult::Accepted { id } = result else { panic!() };
+        let created = h.db.post_inbox("demo", &id).unwrap().unwrap().created_at_ms;
+        rec.questions = aaa_proto::report_questions("## Questions\n1. 색\n- A 파랑 (추천)\n- B 회색\n");
+        let answer = QuestionAnswerView {
+            picks: vec![Some(0)],
+            text: None,
+            summary: "1A".into(),
+            by: "웹".into(),
+            at_ms: created + 1,
+        };
+        rec.question_answer = Some(answer.clone());
+        h.save(&mut rec);
+        h.reconcile_question_requests("demo").unwrap();
+        assert!(!h.db.post_inbox("demo", &id).unwrap().unwrap().done, "전송 자리만 잡았다");
+        h.record_answer(&rec, &answer);
+        h.reconcile_question_requests("demo").unwrap();
+        assert!(h.db.post_inbox("demo", &id).unwrap().unwrap().done, "성공한 카드 답을 확인했다");
+    }
+
+    /// 늦은 알림은 끝난 카드에 합치고, 다음 질문이 열렸으면 옛 답으로 처리하지 않는다.
+    #[test]
+    fn late_question_notifications_follow_the_current_card() {
+        let (h, _lab) = host();
+        let mut rec = ThreadRec::starting("demo", "시안", "m", "fake", Role::Worker, ThreadKind::Dir, 1);
+        rec.id = "t-0001".into();
+        rec.report_hash = Some("old".into());
+        rec.questions = aaa_proto::report_questions("## Questions\n1. 색\n- A 파랑 (추천)\n- B 회색\n");
+        let answer =
+            QuestionAnswerView { picks: vec![Some(0)], text: None, summary: "1A".into(), by: "웹".into(), at_ms: 1 };
+        rec.question_answer = Some(answer.clone());
+        h.db.thread_import("demo", &rec.id, rec.status.as_str(), &serde_json::to_string(&rec).unwrap()).unwrap();
+        h.record_answer(&rec, &answer);
+        let post = |n| {
+            let result = h
+                .front_post(
+                    "demo",
+                    PostInput {
+                        post_id: format!("{n:032x}"),
+                        to: "user".into(),
+                        post_type: PostType::Request,
+                        topic: "user-action".into(),
+                        title: format!("질문 알림 {n} aaa:question/t-0001"),
+                        body: "카드에서 답한다".into(),
+                        needs_user: true,
+                        refs: vec![],
+                    },
+                    "local:cli",
+                )
+                .unwrap();
+            let PostResult::Accepted { id } = result else { panic!("{result:?}") };
+            h.db.post_inbox("demo", &id).unwrap().unwrap()
+        };
+        assert!(post(1).done, "이미 답한 카드에 뒤늦게 보낸 알림");
+        rec.report_hash = Some("next".into());
+        rec.question_answer = None;
+        h.save(&mut rec);
+        assert!(!post(2).done, "다음 질문의 알림은 옛 답으로 닫지 않는다");
+        assert_eq!(h.db.ask_list("demo").unwrap().len(), 1);
+    }
+
+    /// 카드가 정본: 전송 실패는 알림을 남기고, 성공 뒤에는 잡아 둔 연결 post만 처리한다.
+    #[tokio::test]
+    async fn question_requests_follow_the_card_without_a_second_done_record() {
+        let (h, _lab) = host();
+        let mut rec = ThreadRec::starting("demo", "시안", "m", "fake", Role::Worker, ThreadKind::Dir, 1);
+        rec.id = "t-0001".into();
+        rec.report_hash = Some("hash".into());
+        rec.questions = aaa_proto::report_questions("## Questions\n1. 자리\n- A 아래 (추천)\n- B 위\n");
+        h.db.thread_import("demo", &rec.id, rec.status.as_str(), &serde_json::to_string(&rec).unwrap()).unwrap();
+        let post = |host: &Host, n: u32, title: &str| {
+            let input = PostInput {
+                post_id: format!("{n:032x}"),
+                to: "user".into(),
+                post_type: PostType::Request,
+                topic: "user-action".into(),
+                title: title.into(),
+                body: "카드에서 답한다".into(),
+                needs_user: true,
+                refs: vec![],
+            };
+            // 독립 요청은 웹 controller가 보낸다. CLI 발신자의 분당 한도를 소진하는 fixture를 만들지 않는다.
+            let actor = if n == 4 { "device:phone" } else { "local:cli@coord" };
+            let result = host.front_post("demo", input, actor).unwrap();
+            assert!(matches!(result, PostResult::Accepted { .. }), "{n}: {result:?}");
+        };
+        let baseline_badge = h.app_badge_count().unwrap();
+        post(&h, 1, "시안 aaa:question/t-0001");
+        post(&h, 2, "시안 보충 aaa:question/t-0001");
+        assert_eq!(h.app_badge_count().unwrap(), baseline_badge, "같은 카드의 알림은 배지를 더하지 않는다");
+        let requests = h.question_requests("demo", &rec.id).unwrap();
+        assert_eq!(requests.len(), 2);
+        assert!(h.ask_handle("demo", &requests[0].id, "device:phone").unwrap_err().message.contains("질문 카드"));
+        // pane이 없으므로 실제 전달 경로가 실패한다. post와 질문은 다시 답할 수 있어야 한다.
+        assert!(h.thread_answer("demo", &rec.id, "hash", vec![Some(0)], None, "device:phone").await.is_err());
+        assert!(h.load("demo", &rec.id).unwrap().question_answer.is_none());
+        assert_eq!(h.question_requests("demo", &rec.id).unwrap().len(), 2);
+        assert!(h.db.ask_list("demo").unwrap().is_empty());
+        // 뒤늦은 다음 알림·다른 host·카드 없는 요청은 자동 처리 대상이 아니다.
+        post(&h, 3, "뒤늦은 알림 aaa:question/t-0001");
+        post(&h, 4, "아침 정리 aaa:question/t-9999");
+        let (other, _other_lab) = host();
+        post(&other, 5, "다른 host aaa:question/t-0001");
+        let answer =
+            QuestionAnswerView { picks: vec![Some(0)], text: None, summary: "1A".into(), by: "웹".into(), at_ms: 5 };
+        h.record_answer(&rec, &answer);
+        h.handle_question_requests("demo", requests.clone(), "웹", "질문 카드로 답해").unwrap();
+        let done = h.db.ask_list("demo").unwrap();
+        assert_eq!(done.len(), 1);
+        assert_eq!((done[0].kind, done[0].summary.as_str()), (AskKind::Question, "1A"));
+        assert_eq!(h.user_requests("demo").unwrap().len(), 2);
+        assert_eq!(other.user_requests("demo").unwrap().len(), 1);
+        let inbox = h.db.inbox_list(Some("demo"), true).unwrap();
+        assert!(requests.iter().all(|r| inbox.iter().any(|i| i.id == r.id && i.done)));
+        assert_eq!(inbox.iter().filter(|i| i.event == "request handled").count(), 2);
+        h.handle_question_requests("demo", requests, "웹", "질문 카드로 답해").unwrap();
+        assert_eq!(
+            h.db.inbox_list(Some("demo"), true).unwrap().iter().filter(|i| i.event == "request handled").count(),
+            2
+        );
+        let ordinary = h.user_requests("demo").unwrap().into_iter().find(|r| r.title.starts_with("아침")).unwrap();
+        h.ask_handle("demo", &ordinary.id, "device:phone").unwrap();
+        assert_eq!(h.db.ask_list("demo").unwrap().len(), 2, "카드 없는 post는 따로 기록한다");
+        // coordinator가 알림만 끝내도 카드 답을 위조하거나 별도 답한 기록을 만들지 않는다.
+        let reminder = h.question_requests("demo", &rec.id).unwrap().remove(0);
+        h.inbox_done("demo", &[reminder.id], false, "local:cli").unwrap();
+        assert!(h.load("demo", &rec.id).unwrap().question_answer.is_none());
+        assert_eq!(h.db.ask_list("demo").unwrap().len(), 2);
     }
 
     /// 확인 필요 post: 열린 동안 「답할 것」, 「답함으로 표시」면 끝나고 기록·coordinator inbox 한 줄이 남는다. 다시 표시하면 거절

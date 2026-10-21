@@ -386,6 +386,11 @@ impl Host {
         if let Some(i) = item {
             self.inbox_publish(&i);
             self.notify_post(&i, &env);
+            if crate::notify::request_question(&i).is_some()
+                && let Err(e) = self.reconcile_question_requests(project)
+            {
+                tracing::warn!("닫힌 질문에 온 알림을 정리하지 못했다: {}", e.message);
+            }
         }
         if let Some(rec) = rec {
             self.flow(rec, if accepted { "post_accepted" } else { "post_refused" }, None, audit);
@@ -409,7 +414,7 @@ impl Host {
     pub(crate) fn post_status(&self, project: &str, id: &str, actor: &str) -> Result<PostResult, ErrorBody> {
         let row = self
             .db
-            .post_row(id)
+            .post_by_ref(id)
             .map_err(|e| bad(e.to_string()))?
             .filter(|r| r.project == project)
             .ok_or_else(|| bad("post가 없다"))?;
@@ -421,6 +426,53 @@ impl Host {
             return Err(ErrorBody::new(ErrorCode::Forbidden, "이 경로로 post status를 볼 수 없다"));
         }
         Ok(row.result)
+    }
+    pub(crate) fn post_status_view(&self, project: &str, id: &str, actor: &str) -> Result<FrontResponse, ErrorBody> {
+        let result = self.post_status(project, id, actor)?;
+        let handled = match &result {
+            PostResult::Accepted { id } => {
+                self.db.post_inbox(project, id).map_err(|e| bad(e.to_string()))?.map(|i| i.done)
+            }
+            _ => None,
+        };
+        Ok(FrontResponse::Post { result, handled })
+    }
+
+    /// 처리 사실만 기록한다. 사용자 답을 선택하거나 작업의 승인을 대신 만들지 않는다.
+    pub(crate) fn post_handled(&self, project: &str, id: &str, actor: &str) -> Result<FrontResponse, ErrorBody> {
+        if actor.starts_with("worker:") || actor.starts_with("evaluator:") || actor.starts_with("detached:") {
+            return Err(ErrorBody::new(ErrorCode::Forbidden, "조작 권한으로 사용자 답의 처리 사실만 표시한다"));
+        }
+        let row = self
+            .db
+            .post_by_ref(id)
+            .map_err(|e| bad(e.to_string()))?
+            .filter(|r| r.project == project)
+            .ok_or_else(|| bad("post가 없다"))?;
+        let PostResult::Accepted { id } = row.result else {
+            return Err(bad("받아들인 확인 필요 post만 처리한다"));
+        };
+        let item = self
+            .db
+            .post_inbox(project, &id)
+            .map_err(|e| bad(e.to_string()))?
+            .filter(crate::asks::is_user_request)
+            .ok_or_else(|| bad("사용자 확인 필요 post가 아니다"))?;
+        if !item.done {
+            self.inbox_done(project, &[item.id], false, actor)?;
+            self.inbox_add(
+                project,
+                "thread-state",
+                "coordinator",
+                "request handled",
+                &format!(
+                    "{id}: 사용자 답을 받았다고 표시했다({}). 질문 선택·승인·실행은 하지 않았다",
+                    self.answered_by(actor)
+                ),
+            );
+            self.db.audit(actor, "post_handled", &format!("{project}/{id}"));
+        }
+        Ok(FrontResponse::Done)
     }
     /// 최근 post와 음소거된 보낸 쪽(웹 알림함 post 탭이 음소거 해제 단추를 그린다)
     pub(crate) fn post_list(&self, project: &str) -> Result<FrontResponse, ErrorBody> {
@@ -435,7 +487,7 @@ impl Host {
             .set_meta(&format!("post_unmuted:{project}:{thread}"), &util::now_ms().to_string())
             .map_err(|e| bad(e.to_string()))?;
         self.db.audit(actor, "post_unmute", &format!("{project} {thread}"));
-        Ok(FrontResponse::Post { result: PostResult::Accepted { id: thread.into() } })
+        Ok(FrontResponse::Post { result: PostResult::Accepted { id: thread.into() }, handled: None })
     }
 }
 

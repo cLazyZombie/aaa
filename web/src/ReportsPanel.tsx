@@ -171,7 +171,7 @@ export function ReportsPanel({ role, rev, onView }: { role: DeviceRole; rev: num
           return <div className={`report-row${on ? " is-picked" : ""}`} key={key} data-testid={`report-${r.project}-${r.name}`} data-busy={r.busy ? "true" : "false"}>
             <div className="report-row-main">
               {canEdit && <input type="checkbox" className="report-pick" aria-label={`${key} 고르기`} checked={on} disabled={r.busy}
-                title={r.busy ? "진행 중 thread의 보고는 지울 수 없다" : undefined}
+                title={r.busy ? "진행 중 thread 또는 완료 보관이 참조하는 보고는 지울 수 없다" : undefined}
                 onChange={(e) => setPicked((p) => {
                   const next = new Set(p);
                   if (e.target.checked) next.add(key); else next.delete(key);
@@ -179,7 +179,7 @@ export function ReportsPanel({ role, rev, onView }: { role: DeviceRole; rev: num
                 })} />}
               <ReportThread id={rowThread(r)} />
               {titleLink(r, "report-row-name")}
-              {r.busy && <span className="report-tag is-busy">진행 중</span>}
+              {r.busy && <span className="report-tag is-busy">진행 중·보관 보호</span>}
               <span className="muted report-row-meta">{formatBytes(r.size)}{r.live ? " · 실시간" : ""} · {when(r.updated_at_ms)}</span>
               <span className="report-row-actions">
                 <button className="ghost small" data-testid="report-open" onClick={() => onView(r)}>열기</button>

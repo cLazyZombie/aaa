@@ -1144,7 +1144,7 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
         if (q?.answer) return { label: `${ref.target} 질문`, tone: "done", state: `답함 · ${q.answer.summary}` };
         // 새 보고로 질문·답이 비어도 host가 남긴 답한 기록이 「답함」이다(누르면 그때 원문)
         const rec = lastAnswer(asksDone, ref.target);
-        if (rec) return { label: `${ref.target} 질문`, tone: "done", state: `답함 · ${rec.answer?.summary ?? rec.summary}` };
+        if (rec) return { label: `${ref.target} 질문`, tone: "done", state: rec.answer ? `답함 · ${rec.answer.summary}` : rec.summary };
         return { label: `${ref.target} 질문`, tone: "plain", state: null };
       },
       open: (ref) => openRefRef.current(ref),

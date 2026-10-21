@@ -377,43 +377,28 @@ export function ChatComposer({
     if (placement.focus) box.focus();
     box.setSelectionRange(placement.at, placement.at);
   });
-  // 한 줄(one)이면 단추가 글 칸 옆에, 여러 줄(more)이면 글 칸이 상자 폭을 다 쓰고 단추는 밑 줄로 간다(t3code `resting`)
+  // 줄 수와 무관하게 단추는 옆 칸에 둔다. 배치 전환으로 글 칸 폭이 바뀌면 이미 접힌 줄이 다시 움직인다.
   const [lines, setLines] = useState<"one" | "more">("one");
   const [boxWidth, setBoxWidth] = useState(0);
 
-  // 참고 `boxWidth`: 폭이 바뀌면(돌림·창 크기·옆 목록) 줄넘김이 바뀌므로 다시 잰다
+  // 실제 글 칸 폭을 본다. 창·옆 목록뿐 아니라 단추 칸 폭(맥락 게이지)이 바뀌어도 다시 잰다.
   useEffect(() => {
-    const surface = surfaceRef.current;
-    if (!surface) return;
-    const observer = new ResizeObserver(() => setBoxWidth(surface.clientWidth));
-    observer.observe(surface);
+    const element = textareaRef.current;
+    if (!element) return;
+    const observer = new ResizeObserver(([entry]) => setBoxWidth(entry.contentRect.width));
+    observer.observe(element);
     return () => observer.disconnect();
   }, []);
 
   // 참고 `sizeTextarea`(Composer.tsx): 높이를 auto로 두고 scrollHeight만큼 준다. 그리기 전에 돌아 깜박이지 않는다.
-  // 한 줄인지는 늘 펼친 폭(여러 줄 배치의 글 칸 폭 = 상자 안 폭)에서 잰다(t3code useComposerMultilinePrompt.ts): 배치를 바꿔도
-  // 판정이 같아 두 배치를 오가며 튀지 않는다. 펼친 한 줄에 드는 글이 단추 옆 칸보다 길면 t3code처럼 자르지 않고 단추 옆에서 접는다.
-  // 단추 옆 폭에서 재면 그 사이 글은 펼친 한 줄에 놓이고 밑 줄엔 단추만 남는다(사용자 10-20 「한 줄을 다 채우지 않았는데 두 줄 높이」).
+  // 줄 수와 높이를 모두 실제 글 칸에서 잰다. 폭·padding은 한 줄/여러 줄에 따라 바꾸지 않는다(t-0563 사용자 1A).
   // 글꼴은 시스템 글꼴이라 참고의 `facesLoaded`는 없고, 대화 글자 크기·밀도가 바뀌면 다시 잰다(참고 settings.chatFontSize 효과).
   useLayoutEffect(() => {
     const element = textareaRef.current;
-    const surface = surfaceRef.current;
-    if (!element || !surface) return;
+    if (!element) return;
     element.style.height = "auto";
-    let next: "one" | "more";
-    if (shown === "") next = "one";
-    else if (shown.includes("\n")) next = "more";
-    else {
-      // 한 줄 배치면 글 칸을 잠시 상자 안 폭으로 넓혀 잰다(같은 그리기 안이라 화면에는 나오지 않는다)
-      if (lines === "one") element.style.width = `${surface.clientWidth}px`;
-      next = wrappedRows(element) > 1 ? "more" : "one";
-      element.style.width = "";
-    }
-    if (next !== lines) {
-      // 배치를 바꾼 다음 그리기 전에 이 효과가 다시 돌아 그 배치에서 높이를 준다
-      setLines(next);
-      return;
-    }
+    const next = shown === "" || wrappedRows(element) <= 1 ? "one" : "more";
+    if (next !== lines) setLines(next);
     element.style.height = `${element.scrollHeight}px`;
   }, [shown, lines, boxWidth, appearance.chatFontSize, appearance.uiFontSize, appearance.density]);
 
