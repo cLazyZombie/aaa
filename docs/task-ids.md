@@ -31,5 +31,5 @@ aaa task archive --restore d-0001
 프로젝트 이름 변경·휴지통 내보내기·복원에는 이 표도 포함된다. TASKS.md만 다른 host에 복사하면
 ULID는 유지되지만 표시 번호는 그 host에서 새로 배정되므로, 번호까지 보존할 때는 host DB도 보존한다.
 
-Front API 1.86에서 `TaskView.short_id`와 `TaskLog.task` 필터를 추가했다. 새 CLI는 옛 host에
+Front API 1.89에서 `TaskView.short_id`와 `TaskLog.task` 필터를 추가했다. 새 CLI는 옛 host에
 기록 필터를 보내지 않고 갱신 안내를 낸다. 옛 CLI의 제목 입력과 ULID 기반 예약·보관 연결은 유지한다.

@@ -1580,7 +1580,10 @@ fn claude_thread_states_questions_and_messages() {
     let bad = w.task("bad-summary.md", "## 지금\n- 목표 없음\n");
     let e = w.h.json(&["thread", "summary", "demo", &id, "--file", &bad]).expect_err("목표 없는 요약");
     assert!(e.contains("목표"), "{e}");
-    let good = w.task("summary.md", "# 목표\n흐름 시험\n## 지금\n- 메시지 두 개 보내기\n");
+    let good = w.task(
+        "summary.md",
+        "# 목표\n흐름 시험\n## 진행\n- [x] 메시지 두 개 보내기\n- [~] 확인창 답 보내기\n- [ ] 다음 지시 확인\n",
+    );
     let v = w.h.ok(&["thread", "summary", "demo", &id, "--file", &good]);
     assert_eq!(
         (v["goal"].as_str(), v["pending"].as_u64(), v["by"].as_str()),
@@ -1589,6 +1592,12 @@ fn claude_thread_states_questions_and_messages() {
     );
     let mark = w.show(&id)["summary"].clone();
     assert!(mark["at_ms"].is_u64() && mark["pending"] == 0, "{mark}");
+    let progress = serde_json::json!([
+        {"text": "메시지 두 개 보내기", "state": "done"},
+        {"text": "확인창 답 보내기", "state": "working"},
+        {"text": "다음 지시 확인", "state": "pending"}
+    ]);
+    assert_eq!(v["progress"], progress);
 
     // 답보다 늦게 온 같은 확인창의 짝 hook(PermissionRequest → 답 → Notification, ci-local에서 난 차례, plan §8.99)도 새
     // 질문을 열지 않는다. 진행 보고가 같은 연결로 그 뒤에 오므로, 그것이 보이면 늦은 Notification을 처리한 뒤다
@@ -1597,6 +1606,7 @@ fn claude_thread_states_questions_and_messages() {
     let v = w.h.ok(&["thread", "summary", "demo", &id]);
     assert_eq!(v["pending"], 1, "{v}");
     assert_eq!(v["pending_lines"][0]["text"], "late ask", "{v}");
+    assert_eq!(v["progress"], progress, "새 지시가 완료 개수나 진행 순서를 바꾸지 않는다");
     assert_eq!(w.show(&id)["summary"]["pending"], 1);
     let pl = open_question(&mut ev, &id, "permission", &[&p1.id]);
     let t = lab::now_ms();
@@ -5687,6 +5697,7 @@ async fn legacy_agent_stays_connected_but_cannot_drop_host_profile() {
         software: "legacy-test".into(),
         features: vec!["terminal.v1".into()],
         dev_mode: false,
+        sha256: None,
         selfcheck: None,
         sessions: vec![],
         harness: vec![],

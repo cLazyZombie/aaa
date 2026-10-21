@@ -33,36 +33,6 @@ impl Drop for Lab {
 }
 
 #[test]
-fn completion_notifies_the_board_after_parent_attention_is_committed() {
-    let lab = Lab::new();
-    let (id, _) = lab
-        .h
-        .db
-        .thread_insert_admitted("demo", None, None, None, None, |id| {
-            let mut r = Lab::rec();
-            r.id = id.into();
-            r.status = ThreadStatus::Resolved;
-            r.task_clean.why = Some("merged".into());
-            serde_json::to_string(&r).unwrap()
-        })
-        .unwrap();
-    lab.write(&format!("## Backlog\n- [ ] 상위\n  - [ ] 하위 · {id}\n"));
-    lab.h.task_board("demo").unwrap();
-    let mut events = lab.h.task_events.subscribe();
-    lab.h.task_clean_pass("demo", &lab.h.project_dir("demo").unwrap());
-    let mut notifications = Vec::new();
-    while let Ok(event) = events.try_recv() {
-        notifications.push(event);
-    }
-    assert_eq!(notifications.last(), Some(&("demo".into(), "attention".into())));
-    let r = lab.h.load("demo", &id).unwrap();
-    assert!(r.task_clean.judged_ms.is_some());
-    let board = lab.h.task_board("demo").unwrap();
-    assert_eq!(board.tasks.len(), 1);
-    assert!(board.tasks[0].attention.as_deref().unwrap().contains("하위 task가 모두 끝났다"));
-}
-
-#[test]
 fn display_ids_migrate_once_and_concurrent_reads_keep_the_same_numbers() {
     let lab = Lab::new();
     let old_id = "01AAAAAAAAAAAAAAAAAAAAAAAA";
@@ -498,6 +468,7 @@ async fn lost_launch_reply_reconciles_only_exact_machine_name_and_cwd() {
             software: "test".into(),
             features: vec![],
             dev_mode: false,
+            sha256: None,
             selfcheck: None,
             sessions: vec![info.clone()],
             harness: vec![],

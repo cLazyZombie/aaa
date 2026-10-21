@@ -519,6 +519,10 @@ pub enum MenuPick {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 pub struct QuestionView {
     pub id: String,
+    /// 프로젝트별 짧은 별칭. id는 기존 확인창 참조로 유지한다.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub short_id: Option<String>,
     pub pane: String,
     pub machine: String,
     pub project: Option<String>,
@@ -908,11 +912,19 @@ pub struct ThreadQuestions {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub files_base: Option<String>,
+    /// 짧은 질문 ID로 일부만 답한 경우의 답. 전체 답은 answer에 남는다.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub draft: Option<QuestionAnswerView>,
 }
 
 /// 질문 하나: 글과 선택지(앞에서부터 A·B·C…)
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 pub struct ThreadQuestion {
+    /// 프로젝트별 영속 순번(q-1000부터). 옛 보고 파서·host는 생략한다.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub id: Option<String>,
     pub text: String,
     pub choices: Vec<QuestionChoice>,
     /// `### N. 질문` 머리 아래의 Markdown 본문(FRONT_API 1.78, plan §8.345): 그림·표·code·링크. 옛 꼴과 옛 host는 생략한다
@@ -961,6 +973,9 @@ pub enum AskKind {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 pub struct AskRecord {
     pub id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub question_id: Option<String>,
     pub kind: AskKind,
     /// 질문은 thread 번호, 확인 필요 post는 inbox 항목 ID, 할 일은 task 제목
     pub subject: String,
@@ -994,6 +1009,10 @@ pub struct AskRecord {
 /// 열린 coordinator 확인 필요 post(`post user --request --needs-user`, plan §8.345). inbox 항목이 끝나지 않은 동안 「답할 것」이다
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 pub struct UserRequestView {
+    /// 평문 요청도 포함한 짧은 질문 ID(여러 질문이면 첫 ID).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub question_id: Option<String>,
     /// inbox 항목 ID(「답함으로 표시」가 끝낸다)
     pub id: String,
     pub title: String,
@@ -1001,6 +1020,10 @@ pub struct UserRequestView {
     pub body: String,
     #[ts(type = "number")]
     pub created_ms: u64,
+    /// post 본문의 `## Questions`(FRONT_API 1.87). 없으면 기존 평문 카드다. report_hash는 본문 hash다.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub questions: Option<ThreadQuestions>,
 }
 
 /// 질문당 선택지·질문 수 상한(글자 A–I, 숫자 1–9)
@@ -1103,7 +1126,7 @@ fn rich_question(text: String, block: &[String]) -> ThreadQuestion {
         c.body = body_of(lines, CHOICE_BODY_MAX);
     }
     choices.truncate(QUESTION_MAX);
-    ThreadQuestion { text, choices, body: body_of(&block[..start], QUESTION_BODY_MAX) }
+    ThreadQuestion { id: None, text, choices, body: body_of(&block[..start], QUESTION_BODY_MAX) }
 }
 
 /// 보고 `## Questions` 절의 질문(plan §8.329·§8.345). 두 꼴을 읽는다.
@@ -1163,7 +1186,7 @@ pub fn report_questions(report: &str) -> Vec<ThreadQuestion> {
             && n.chars().all(|c| c.is_ascii_digit())
             && !rest.trim().is_empty()
         {
-            out.push(ThreadQuestion { text: rest.trim().to_string(), choices: Vec::new(), body: None });
+            out.push(ThreadQuestion { id: None, text: rest.trim().to_string(), choices: Vec::new(), body: None });
             continue;
         }
         let Some(q) = out.last_mut() else { continue };
@@ -1208,6 +1231,22 @@ pub struct FollowUpLine {
     pub text: String,
 }
 
+/// 큰 작업 하나의 진행 상태. 완료 개수는 소요 시간 비율이 아니다.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+pub enum SummaryStepState {
+    Pending,
+    Working,
+    Done,
+}
+
+/// 요약의 큰 작업. 작성한 순서를 유지하며 완료한 항목도 남긴다.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+pub struct SummaryStep {
+    pub text: String,
+    pub state: SummaryStepState,
+}
+
 /// thread 작업 요약(`threads/<id>.summary.md`, plan §8.259). coordinator가 쓴 요약과 aaa가 붙인 것(agent 보고의
 /// `## Decisions`, 요약 뒤 지시, 요약이 없을 때 할 일 첫 줄)
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
@@ -1219,6 +1258,10 @@ pub struct ThreadSummaryView {
     pub goal: Option<String>,
     /// 목표가 바뀌었을 때 처음 시킨 것
     pub origin: Option<String>,
+    /// 전체 큰 작업(최대 5개, FRONT_API 1.86). 옛 요약·옛 host는 목록이 없다.
+    #[serde(default)]
+    #[ts(as = "Option<Vec<SummaryStep>>", optional)]
+    pub progress: Vec<SummaryStep>,
     pub now: Vec<String>,
     pub decided: Vec<SummaryEntry>,
     pub changed: Vec<SummaryEntry>,
@@ -1762,6 +1805,7 @@ mod tests {
     fn tagged_views_round_trip() {
         use crate::{FrontEvent, FrontResponse};
         let q = QuestionView {
+            short_id: None,
             id: "q-1".into(),
             pane: "p".into(),
             machine: "mac-a".into(),

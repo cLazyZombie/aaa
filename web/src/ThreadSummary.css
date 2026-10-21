@@ -79,6 +79,28 @@
 .summary-goal.is-auto { font-weight: 600; color: var(--text); }
 .summary-origin { margin: -4px 0 0 22px; color: var(--text-dim); font-size: var(--fs-xs); }
 .summary-note { margin: -4px 0 0 22px; }
+.summary-progress-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin: 0 0 7px 22px;
+  color: var(--text-dim);
+  font-size: var(--fs-xs);
+}
+.summary-progress ul { display: flex; flex-direction: column; gap: 6px; margin: 0; padding: 0; list-style: none; }
+.summary-step { display: flex; align-items: center; gap: 7px; min-width: 0; color: var(--text-dim); }
+.summary-step svg { width: 15px; height: 15px; flex: none; }
+.summary-step.is-done svg { color: var(--status-done); }
+.summary-step.is-working { color: var(--text-strong); font-weight: 600; }
+.summary-step.is-working svg,
+.summary-step-working { color: var(--status-working); }
+.summary-step-text { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.summary-step-working { flex: none; font-weight: 500; font-size: var(--fs-2xs); }
+.summary-detail .summary-progress-head { margin-left: 0; }
+.summary-detail .summary-step { align-items: flex-start; }
+.summary-detail .summary-step svg { margin-top: 2px; }
+.summary-detail .summary-step-text { white-space: normal; overflow: visible; overflow-wrap: anywhere; }
 .summary-now {
   margin: 0;
   padding: 0 0 0 22px;

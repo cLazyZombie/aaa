@@ -1,12 +1,12 @@
 // thread 작업 요약(plan §8.259): 「작업」 트리 thread 줄의 hover 카드(마우스 기기만)와 thread 화면 머리의 「요약」 단추.
-// 카드는 순간 훑어보는 것이라 6줄 안팎이다: 목표, 지금(3줄), 최근 바뀐 것 한 줄, 상태(10-19 사용자 「길면 안 된다」).
+// 카드는 목표·큰 작업(최대 5개)·상태를 보인다(10-21 사용자 1A). 옛 요약은 지금(3줄)·최근 변경을 유지한다.
 // 정한 것·지난 변경·끝남·요약 뒤 지시는 단추 창에서만, 접어 둔다. 카드 모양·지연·자리는 t3code SidebarThreadTooltip
 // (150ms, 닫힘 0, 400ms 안 다음 줄은 바로, 오른쪽·위 끝·4px), 단추 창은 데스크톱 팝오버·휴대폰 아래 시트(RowMenu와 같은 틀).
 // 휴대폰에는 hover 대안(길게 누름)을 두지 않는다(10-19 사용자): 단추만 있다.
 import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
-import { CircleCheck, ClipboardList, History, ListTodo, Target, TriangleAlert, Undo2, X } from "lucide-react";
-import type { SummaryEntry, ThreadSummaryView, ThreadView } from "./gen/proto";
+import { Circle, CircleCheck, CircleDot, ClipboardList, History, ListTodo, Target, TriangleAlert, Undo2, X } from "lucide-react";
+import type { SummaryEntry, SummaryStep, ThreadSummaryView, ThreadView } from "./gen/proto";
 import { ApiError, call } from "./api";
 import { useMediaQuery } from "./herdr/useMediaQuery.ts";
 import { SHEET_QUERY, useSheetSwipe } from "./herdr/sheets.ts";
@@ -75,7 +75,33 @@ function Status({ t, v }: { t: ThreadView; v: ThreadSummaryView }) {
   );
 }
 
-/** hover 카드 본문: 6줄 안팎, 줄마다 한 줄(넘치면 …) */
+const STEP_WORD = { done: "완료", working: "진행 중", pending: "대기" } as const;
+
+/** 작성한 순서를 유지하는 읽기 전용 목록. 상태는 색뿐 아니라 모양·접근성 이름으로도 구분한다. */
+function Progress({ steps }: { steps: SummaryStep[] }) {
+  return (
+    <section className="summary-progress" aria-label="작업 진행상황" data-testid="summary-progress">
+      <div className="summary-progress-head">
+        <span>할 일</span>
+        <span>{steps.filter((s) => s.state === "done").length}/{steps.length} 완료</span>
+      </div>
+      <ul>
+        {steps.map((s, i) => {
+          const Icon = s.state === "done" ? CircleCheck : s.state === "working" ? CircleDot : Circle;
+          return (
+            <li key={i} className={`summary-step is-${s.state}`} data-state={s.state} aria-label={`${s.text}: ${STEP_WORD[s.state]}`}>
+              <Icon aria-hidden="true" />
+              <span className="summary-step-text">{s.text}</span>
+              {s.state === "working" && <span className="summary-step-working">진행 중</span>}
+            </li>
+          );
+        })}
+      </ul>
+    </section>
+  );
+}
+
+/** hover 카드 본문: 큰 작업은 모두, 각 항목은 한 줄(넘치면 …) */
 export function SummaryCard({ t, v }: { t: ThreadView; v: ThreadSummaryView }) {
   const c = cardLines(v, t.title);
   return (
@@ -84,20 +110,27 @@ export function SummaryCard({ t, v }: { t: ThreadView; v: ThreadSummaryView }) {
         <Target aria-hidden="true" />
         <span>{c.goal}</span>
       </p>
-      {c.now.length > 0 && (
-        <ul className="summary-now">
-          {c.now.map((x) => (
-            <li key={x}>{x}</li>
-          ))}
-          {c.moreNow > 0 && <li className="summary-more">+{c.moreNow}</li>}
-        </ul>
-      )}
-      {c.latest && (
-        <p className="summary-latest">
-          <History aria-hidden="true" />
-          <span>{c.latest.text}</span>
-          <Chip e={c.latest} />
-        </p>
+      {v.progress?.length ? (
+        <Progress steps={v.progress} />
+      ) : (
+        <>
+          {c.now.length === 0 && <p className="summary-dim summary-note">아직 작업 목록 없음</p>}
+          {c.now.length > 0 && (
+            <ul className="summary-now">
+              {c.now.map((x) => (
+                <li key={x}>{x}</li>
+              ))}
+              {c.moreNow > 0 && <li className="summary-more">+{c.moreNow}</li>}
+            </ul>
+          )}
+          {c.latest && (
+            <p className="summary-latest">
+              <History aria-hidden="true" />
+              <span>{c.latest.text}</span>
+              <Chip e={c.latest} />
+            </p>
+          )}
+        </>
       )}
       <Status t={t} v={v} />
     </div>
@@ -131,7 +164,7 @@ function Entries({ list }: { list: SummaryEntry[] }) {
   );
 }
 
-/** 단추 창 본문: 목표·지금은 펼치고, 나머지는 접어 둔다 */
+/** 단추 창 본문: 목표·큰 작업은 펼치고, 나머지는 접어 둔다. 옛 요약의 지금·끝남도 보존한다 */
 export function SummaryDetail({ t, v }: { t: ThreadView; v: ThreadSummaryView }) {
   const c = cardLines(v, t.title);
   const decided = decidedLines(v);
@@ -143,6 +176,9 @@ export function SummaryDetail({ t, v }: { t: ThreadView; v: ThreadSummaryView })
       </p>
       {v.origin && <p className="summary-origin">처음: {v.origin}</p>}
       {c.auto && <p className="summary-dim summary-note">아직 요약이 없어 할 일 첫 줄을 보인다</p>}
+      {v.progress?.length ? <Progress steps={v.progress} /> : v.now.length === 0 && (
+        <p className="summary-dim summary-note">아직 작업 목록 없음</p>
+      )}
       {v.now.length > 0 && (
         <section className="summary-block">
           <h4>

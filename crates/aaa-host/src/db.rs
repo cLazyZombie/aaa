@@ -6,6 +6,7 @@ use std::sync::Mutex;
 use anyhow::Result;
 use rusqlite::{Connection, OptionalExtension, params};
 
+mod question_ids;
 mod task_ids;
 mod task_queue;
 
@@ -78,6 +79,10 @@ pub struct MachineRow {
     pub os: Option<String>,
     pub boot_id: Option<String>,
     pub last_seen_ms: Option<u64>,
+    /// 마지막 hello의 CPU 종류·판·실행 파일 SHA-256(웹 머신 상세, plan §8.372)
+    pub arch: Option<String>,
+    pub software: Option<String>,
+    pub sha256: Option<String>,
 }
 
 /// Web Push 구독. endpoint는 비밀값처럼 다룬다(로그에 남기지 않는다).
@@ -328,6 +333,10 @@ impl Db {
                action TEXT NOT NULL, list TEXT NOT NULL, from_list TEXT, title TEXT NOT NULL, before TEXT, after TEXT,
                thread TEXT, restored_by INTEGER);
              CREATE INDEX IF NOT EXISTS task_log_project ON task_log(project, id);
+             CREATE TABLE IF NOT EXISTS question_ids(
+               project TEXT NOT NULL, seq INTEGER NOT NULL, id TEXT NOT NULL, kind TEXT NOT NULL,
+               subject TEXT NOT NULL, revision TEXT NOT NULL, position INTEGER NOT NULL, draft TEXT,
+               PRIMARY KEY(project,id), UNIQUE(project,kind,subject,revision,position), UNIQUE(project,seq));
              CREATE TABLE IF NOT EXISTS asks(
                project TEXT NOT NULL, id TEXT NOT NULL, kind TEXT NOT NULL, subject TEXT NOT NULL,
                done_ms INTEGER NOT NULL, data TEXT NOT NULL, PRIMARY KEY(project, id));
@@ -369,6 +378,15 @@ impl Db {
                  ALTER TABLE library_reports ADD COLUMN title TEXT;
                  ALTER TABLE library_reports ADD COLUMN sent_at INTEGER;
                  ALTER TABLE library_reports ADD COLUMN seen_at INTEGER;",
+            )?;
+        }
+        // 머신의 CPU 종류·판·실행 파일 SHA-256(plan §8.372). 위와 같이 열만 더한다
+        let has_arch = conn.prepare("SELECT 1 FROM pragma_table_info('machines') WHERE name='arch'")?.exists([])?;
+        if !has_arch {
+            conn.execute_batch(
+                "ALTER TABLE machines ADD COLUMN arch TEXT;
+                 ALTER TABLE machines ADD COLUMN software TEXT;
+                 ALTER TABLE machines ADD COLUMN sha256 TEXT;",
             )?;
         }
         // 보고서를 낸 thread(사용자 요청 10-20). 위와 같이 열만 더한다
@@ -515,10 +533,13 @@ impl Db {
             os: r.get(4)?,
             boot_id: r.get(5)?,
             last_seen_ms: r.get::<_, Option<i64>>(6)?.map(|v| v as u64),
+            arch: r.get(7)?,
+            software: r.get(8)?,
+            sha256: r.get(9)?,
         })
     }
 
-    const MACHINE_COLS: &str = "id,name,fingerprint,local,os,boot_id,last_seen";
+    const MACHINE_COLS: &str = "id,name,fingerprint,local,os,boot_id,last_seen,arch,software,sha256";
 
     pub fn machines(&self) -> Result<Vec<MachineRow>> {
         let c = self.conn.lock().unwrap();
@@ -563,11 +584,20 @@ impl Db {
         Ok(())
     }
 
-    pub fn touch_machine(&self, id: &str, os: &str, boot_id: &str) -> Result<()> {
+    /// hello를 받을 때마다 그 머신의 OS·부팅·판을 남긴다(끊긴 뒤·host 재시작 뒤에도 마지막 값을 보인다)
+    pub fn touch_machine(&self, hello: &aaa_proto::AgentHello) -> Result<()> {
         let c = self.conn.lock().unwrap();
         c.execute(
-            "UPDATE machines SET os=?2, boot_id=?3, last_seen=?4 WHERE id=?1",
-            params![id, os, boot_id, aaa_common::util::now_ms() as i64],
+            "UPDATE machines SET os=?2, boot_id=?3, last_seen=?4, arch=?5, software=?6, sha256=?7 WHERE id=?1",
+            params![
+                hello.machine_id,
+                hello.os,
+                hello.boot_id,
+                aaa_common::util::now_ms() as i64,
+                hello.arch,
+                hello.software,
+                hello.sha256
+            ],
         )?;
         Ok(())
     }
@@ -1226,6 +1256,14 @@ impl Db {
         );
     }
 
+    /// 감사 기록의 (actor, action)을 쓴 순서대로(시험용)
+    #[cfg(test)]
+    pub(crate) fn audit_actions(&self) -> Vec<(String, String)> {
+        let c = self.conn.lock().unwrap();
+        let mut st = c.prepare("SELECT actor, action FROM audit ORDER BY rowid").unwrap();
+        st.query_map([], |r| Ok((r.get(0)?, r.get(1)?))).unwrap().map(|r| r.unwrap()).collect()
+    }
+
     /// 프로젝트 하나의 기록(아래 [`PROJECT_TABLES`]의 행과 `<종류>:<프로젝트>…` meta)을 JSON으로. `project delete`가 휴지통 폴더에 둔다.
     /// thread 기록의 launch env는 이름만 남긴다(plan §8.307).
     pub fn project_export(&self, project: &str) -> Result<serde_json::Value> {
@@ -1538,6 +1576,49 @@ impl Db {
             params![project, r.id, kind, r.subject, r.done_ms as i64, serde_json::to_string(r)?],
         )?;
         Ok(())
+    }
+
+    /// 요청 종료·답 보존·coordinator 전달을 한 번에 기록한다. 다른 기기에서 끝냈으면 false다.
+    pub(crate) fn request_answer(
+        &self,
+        item: &aaa_proto::InboxItem,
+        record: &aaa_proto::AskRecord,
+        notice: &aaa_proto::InboxItem,
+    ) -> Result<bool> {
+        let mut c = self.conn.lock().unwrap();
+        let tx = c.transaction()?;
+        let mut done = item.clone();
+        done.done = true;
+        done.done_at_ms = Some(record.done_ms);
+        let n = tx.execute(
+            "UPDATE inbox SET done=1, done_at=?3, data=?4 WHERE project=?1 AND id=?2 AND done=0",
+            params![item.project, item.id, record.done_ms as i64, serde_json::to_string(&done)?],
+        )?;
+        if n == 0 {
+            return Ok(false);
+        }
+        tx.execute(
+            "INSERT INTO asks(project,id,kind,subject,done_ms,data) VALUES(?1,?2,'request',?3,?4,?5)",
+            params![item.project, record.id, record.subject, record.done_ms as i64, serde_json::to_string(record)?],
+        )?;
+        tx.execute(
+            "INSERT INTO inbox(id,project,kind,subject,event,done,created_at,data) VALUES(?1,?2,?3,?4,?5,0,?6,?7)",
+            params![
+                notice.id,
+                notice.project,
+                notice.item_kind,
+                notice.subject,
+                notice.event,
+                notice.created_at_ms as i64,
+                serde_json::to_string(notice)?
+            ],
+        )?;
+        tx.execute(
+            "UPDATE question_ids SET draft=NULL WHERE project=?1 AND kind='post' AND subject=?2",
+            params![item.project, item.id],
+        )?;
+        tx.commit()?;
+        Ok(true)
     }
 
     /// 프로젝트의 기록, 최신부터

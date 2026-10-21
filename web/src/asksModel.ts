@@ -20,8 +20,8 @@ export function openAsks(threads: ThreadView[], data: AsksData | null, tasks: Ta
   const qs: OpenAsk[] = questionThreads.map((t) => ({ kind: "question", key: `q:${t.id}`, at: t.updated_at_ms, thread: t }));
   // 제목의 질문 참조는 그 카드의 알림이다. 카드가 없으면 평소 확인 필요 post로 남긴다.
   const questionCards = new Set([
-    ...threads.filter((t) => t.questions).map((t) => t.id),
-    ...(data?.done ?? []).filter((r) => r.kind === "question").map((r) => r.subject),
+    ...threads.filter((t) => t.questions).flatMap((t) => [t.id, ...t.questions!.items.flatMap((q) => q.id ? [q.id] : [])]),
+    ...(data?.done ?? []).filter((r) => r.kind === "question").flatMap((r) => [r.subject, ...r.items.flatMap((q) => q.id ? [q.id] : [])]),
   ]);
   const rs: OpenAsk[] = (data?.requests ?? []).filter((r) => !r.title.split(/\s+/).some((word) => {
     const ref = appRefOf(word);
@@ -53,7 +53,13 @@ export function doneOf(key: string, done: AskRecord[]): AskRecord | null {
  * 주소의 질문(`#question=<thread>`, 알림·칩·터미널 링크)을 열쇠로: 답할 질문이 있으면 그 카드, 없으면 마지막으로 답한 그 질문,
  * 둘 다 없으면 null(목록만)
  */
-export function questionKey(thread: string, threads: ThreadView[], done: AskRecord[]): string | null {
+export function questionKey(thread: string, threads: ThreadView[], done: AskRecord[], requests: UserRequestView[] = []): string | null {
+  const t = threads.find((t) => asks(t) && t.questions.items.some((q) => q.id === thread));
+  if (t) return `q:${t.id}`;
+  const request = requests.find((r) => r.question_id === thread || r.questions?.items.some((q) => q.id === thread));
+  if (request) return `r:${request.id}`;
+  const record = done.find((r) => r.question_id === thread || r.items.some((q) => q.id === thread));
+  if (record) return `d:${record.id}`;
   if (threads.some((t) => t.id === thread && asks(t))) return `q:${thread}`;
   const r = lastAnswer(done, thread);
   return r ? `d:${r.id}` : null;

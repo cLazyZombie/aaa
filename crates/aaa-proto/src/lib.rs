@@ -95,6 +95,7 @@ pub fn typescript_bindings() -> String {
         Connection::decl(&cfg),
         MachineView::decl(&cfg),
         MachineHealth::decl(&cfg),
+        MachineSelfcheck::decl(&cfg),
         HealthProblem::decl(&cfg),
         QueueState::decl(&cfg),
         QueueOp::decl(&cfg),
@@ -202,6 +203,8 @@ pub fn typescript_bindings() -> String {
         QuestionAnswerView::decl(&cfg),
         SummaryEntry::decl(&cfg),
         FollowUpLine::decl(&cfg),
+        SummaryStepState::decl(&cfg),
+        SummaryStep::decl(&cfg),
         ThreadSummaryView::decl(&cfg),
         FlowEvent::decl(&cfg),
         AgentActivity::decl(&cfg),
@@ -288,6 +291,19 @@ pub fn typescript_bindings() -> String {
 
 #[cfg(test)]
 mod ts_tests {
+    #[test]
+    fn old_summary_response_has_no_invented_progress() {
+        let old = serde_json::json!({
+            "project": "demo", "thread": "t-0001", "text": "# 목표\n표시 확인", "goal": "표시 확인",
+            "origin": null, "now": ["화면 확인"], "done": ["준비"], "decided": [], "changed": [], "decisions": [],
+            "at_ms": 1, "by": "coordinator", "follow_ups": 0, "pending": 0, "pending_lines": [], "task": null
+        });
+        let v: super::ThreadSummaryView = serde_json::from_value(old).unwrap();
+        assert!(v.progress.is_empty());
+        assert_eq!(v.now, ["화면 확인"]);
+        assert_eq!(v.done, ["준비"]);
+    }
+
     /// 생성된 TS 타입이 Rust 정본과 같은지 본다. 다르면 AAA_UPDATE_TS=1로 다시 만든다.
     #[test]
     fn typescript_bindings_are_current() {

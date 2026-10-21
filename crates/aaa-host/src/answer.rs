@@ -37,7 +37,14 @@ pub(crate) fn compose(
                     .get(*i as usize)
                     .ok_or_else(|| format!("{}번 질문에 {}번 선택지가 없다", n + 1, i + 1))?;
                 short.push(format!("{}{}", n + 1, letter(*i)));
-                lines.push(format!("{}{}. {} — {}", n + 1, letter(*i), q.text, c.label));
+                lines.push(format!(
+                    "{}{}. {}{} — {}",
+                    n + 1,
+                    letter(*i),
+                    q.id.as_ref().map(|id| format!("{id} ")).unwrap_or_default(),
+                    q.text,
+                    c.label
+                ));
             }
             None if text.is_some() => {}
             None => return Err(format!("{}번 질문에 답이 없다(고르거나 직접 쓴다)", n + 1)),
@@ -131,7 +138,10 @@ impl Host {
                 "thread-state",
                 id,
                 "question answered",
-                &format!("{id} 질문에 답함({by}): {summary}"),
+                &format!(
+                    "{id} {} 질문에 답함({by}): {summary}",
+                    rec.questions.iter().filter_map(|q| q.id.as_deref()).collect::<Vec<_>>().join(" ")
+                ),
             );
         }
         Ok(self.thread_view(&rec))
