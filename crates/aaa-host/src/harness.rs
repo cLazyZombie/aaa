@@ -1382,6 +1382,7 @@ mod tests {
                     features: vec![],
                     agent_pid: None,
                     colors: None,
+                    build: Default::default(),
                 },
             );
             let seen = Arc::new(std::sync::Mutex::new(Vec::new()));
@@ -1474,6 +1475,7 @@ mod tests {
                         features: vec![],
                         agent_pid: None,
                         colors: None,
+                        build: Default::default(),
                     },
                 );
                 let fake_host = h.clone();
@@ -1682,6 +1684,7 @@ mod tests {
                 features: vec![],
                 agent_pid: None,
                 colors: None,
+                build: Default::default(),
             },
         );
         h.on_harness("m", codex_event("idle", 1));

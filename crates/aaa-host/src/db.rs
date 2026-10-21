@@ -78,6 +78,10 @@ pub struct MachineRow {
     pub os: Option<String>,
     pub boot_id: Option<String>,
     pub last_seen_ms: Option<u64>,
+    /// 마지막 hello의 CPU 종류·판·실행 파일 SHA-256(웹 머신 상세, plan §8.372)
+    pub arch: Option<String>,
+    pub software: Option<String>,
+    pub sha256: Option<String>,
 }
 
 /// Web Push 구독. endpoint는 비밀값처럼 다룬다(로그에 남기지 않는다).
@@ -374,6 +378,15 @@ impl Db {
                  ALTER TABLE library_reports ADD COLUMN seen_at INTEGER;",
             )?;
         }
+        // 머신의 CPU 종류·판·실행 파일 SHA-256(plan §8.372). 위와 같이 열만 더한다
+        let has_arch = conn.prepare("SELECT 1 FROM pragma_table_info('machines') WHERE name='arch'")?.exists([])?;
+        if !has_arch {
+            conn.execute_batch(
+                "ALTER TABLE machines ADD COLUMN arch TEXT;
+                 ALTER TABLE machines ADD COLUMN software TEXT;
+                 ALTER TABLE machines ADD COLUMN sha256 TEXT;",
+            )?;
+        }
         // 보고서를 낸 thread(사용자 요청 10-20). 위와 같이 열만 더한다
         let has_from_thread =
             conn.prepare("SELECT 1 FROM pragma_table_info('library_reports') WHERE name='from_thread'")?.exists([])?;
@@ -518,10 +531,13 @@ impl Db {
             os: r.get(4)?,
             boot_id: r.get(5)?,
             last_seen_ms: r.get::<_, Option<i64>>(6)?.map(|v| v as u64),
+            arch: r.get(7)?,
+            software: r.get(8)?,
+            sha256: r.get(9)?,
         })
     }
 
-    const MACHINE_COLS: &str = "id,name,fingerprint,local,os,boot_id,last_seen";
+    const MACHINE_COLS: &str = "id,name,fingerprint,local,os,boot_id,last_seen,arch,software,sha256";
 
     pub fn machines(&self) -> Result<Vec<MachineRow>> {
         let c = self.conn.lock().unwrap();
@@ -566,11 +582,20 @@ impl Db {
         Ok(())
     }
 
-    pub fn touch_machine(&self, id: &str, os: &str, boot_id: &str) -> Result<()> {
+    /// hello를 받을 때마다 그 머신의 OS·부팅·판을 남긴다(끊긴 뒤·host 재시작 뒤에도 마지막 값을 보인다)
+    pub fn touch_machine(&self, hello: &aaa_proto::AgentHello) -> Result<()> {
         let c = self.conn.lock().unwrap();
         c.execute(
-            "UPDATE machines SET os=?2, boot_id=?3, last_seen=?4 WHERE id=?1",
-            params![id, os, boot_id, aaa_common::util::now_ms() as i64],
+            "UPDATE machines SET os=?2, boot_id=?3, last_seen=?4, arch=?5, software=?6, sha256=?7 WHERE id=?1",
+            params![
+                hello.machine_id,
+                hello.os,
+                hello.boot_id,
+                aaa_common::util::now_ms() as i64,
+                hello.arch,
+                hello.software,
+                hello.sha256
+            ],
         )?;
         Ok(())
     }

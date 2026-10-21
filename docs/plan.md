@@ -6684,3 +6684,12 @@ coordinator inbox에는 `question answered`와 ID·선택·자유 답 원문이 
 
 FRONT_API 1.87은 질문 ID·부분 답과 `ask_answer`·`question_reply`를 더한다. Agent link 변경은 없다.
 접두사는 t=thread, q=질문, d=할 일, r=보고서다. r-ID·보고 판별 사본·CI 내부 run 이름 분리는 2단계로 나눈다.
+
+### 8.372 머신 상세: CPU 종류·판·실행 파일 SHA·기능·시작 점검(10-21, t-0578 웹 머신 추가 M0)
+
+- **요청.** t-0471 확정 기획(웹 「머신 추가」, SSH)의 첫 단계 M0. 새 머신을 웹으로 붙이기 전에, 이미 붙은 머신이 무엇을 돌리는지(OS·CPU 종류·aaa 판·실행 파일)를 설정 「머신」에서 읽기만으로 보인다. 사용자 10-21 「A부터」: M0 → M1 → M2를 단계마다 착지한다.
+- **proto(FRONT_API 1.88, 더하기만).** `MachineView`에 `arch`·`software`·`sha256`·`software_differs`(판이 host와 다르면 true, 모르면 생략)·`features`·`selfcheck{pass, reasons}`. 옛 host는 생략하고 웹은 OS만 보인다. Agent link: hello의 선택 칸 `sha256`(agent가 시작 때 읽은 자기 실행 파일 SHA-256, 배포 관리자가 이미 쓰는 값). AGENT_LINK 1.10을 올리지 않는다: 옛 agent는 보내지 않아 「모름」이고, 옛 host는 버린다.
+- **저장.** host는 hello마다 `machines` 행에 OS·부팅과 함께 `arch`·`software`·`sha256`을 쓴다(열만 더함, 옛 aaa도 같은 DB를 연다). 그래서 끊긴 머신과 host 재시작 뒤에도 마지막 판을 보인다. 기능·시작 점검은 이 host 실행 중 마지막 연결의 것만 메모리에 둔다(다시 붙기 전에는 비었다). 시작 점검은 agent가 hello 뒤에 끝내는 일이 많아 그때는 다음 연결에 실린다(link 변경 없이 둔 한계).
+- **웹.** 설정 「머신」 → 「등록된 머신」 줄마다 OS · CPU 종류 · 판(host와 다르면 주의 색)과 문제 수, 「자세히」(aria-expanded)로 펼치는 읽기 전용 상세: 연결(host 머신·연결됨·끊김과 마지막 본 때), OS, 판, SHA-256(고정폭, 줄바꿈), 개발 모드, 연결 중이면 작업 디스크·부하·전원·toolchain·시계 차이·주의, 문제, 시작 점검(통과·실패 이유), 접어 둔 agent 기능 목록. 보기 기기도 상세를 본다. 휴대폰은 이름 아래 값이 온다.
+- **검증.** host 유닛 `machine_view_tests`(hello 값이 실리고 판이 다르면 표시, 모르는 꼴의 점검은 버림, host를 다시 열어도 판·SHA·CPU 종류는 남고 기능·점검은 빈다), 웹 유닛 `machineDetail.test.mjs`, 웹 E2E `60-admin` 확장(둘째 agent의 SHA가 실행 파일의 SHA와 같고 화면에 그대로, 보기 기기 상세, 휴대폰 390 폭). 절차는 [시험](testing.md).
+- **번호·호환.** main의 §8.369(t-0574)·§8.370(t-0538 W6b)·§8.371(t-0576)과 FRONT_API 1.86·1.87을 유지하고 이 기능은 1.88·§8.372를 쓴다. AGENT_LINK는 1.10 그대로다(hello 선택 칸만 더함).

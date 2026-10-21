@@ -191,6 +191,7 @@ mod tests {
                 features: vec!["account_auth.v2".into()],
                 agent_pid: None,
                 colors: None,
+                build: Default::default(),
             },
         );
         let binding = PaneAccount {

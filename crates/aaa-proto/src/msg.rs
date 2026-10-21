@@ -584,6 +584,9 @@ pub struct AgentHello {
     pub os: String,
     pub arch: String,
     pub software: String,
+    /// 실행 파일 SHA-256(소문자 hex, 웹 머신 상세, plan §8.372). AGENT_LINK를 올리지 않는 선택 칸이다: 옛 agent는 보내지 않고 옛 host는 버린다
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sha256: Option<String>,
     #[serde(default)]
     pub features: Vec<String>,
     #[serde(default)]
@@ -1338,6 +1341,38 @@ pub struct MachineView {
     pub clock_skew_ms: Option<i64>,
     /// 새 세션을 거부하는 이유(연결 중일 때만). 비었으면 정상이다.
     pub problems: Vec<HealthProblem>,
+    /// 마지막 hello의 CPU 종류(`aarch64`·`x86_64`). 아래 넷과 같이 1.88부터 싣고, 옛 host·아직 붙지 않은 머신은 생략한다(plan §8.372)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub arch: Option<String>,
+    /// 마지막 hello의 aaa 판(`aaa --version`의 판 글)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub software: Option<String>,
+    /// 마지막 hello의 실행 파일 SHA-256(소문자 hex). 옛 agent는 보내지 않는다
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub sha256: Option<String>,
+    /// 판이 host와 다르다(판을 모르면 false)
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    #[ts(optional, as = "Option<bool>")]
+    pub software_differs: bool,
+    /// 이 host 실행 중 마지막 연결이 알린 agent 기능(host 재시작 뒤 다시 붙기 전에는 비었다)
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    #[ts(optional, as = "Option<Vec<String>>")]
+    pub features: Vec<String>,
+    /// 마지막 연결의 시작 자가 점검(§10.4 6) 요약. 점검이 hello보다 늦게 끝났으면 다음 연결 때 온다
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub selfcheck: Option<MachineSelfcheck>,
+}
+
+/// agent 시작 자가 점검 요약(hello `selfcheck`에서 host가 읽은 것). 실패 이유는 agent가 쓴 글 그대로다
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+pub struct MachineSelfcheck {
+    pub pass: bool,
+    #[serde(default)]
+    pub reasons: Vec<String>,
 }
 
 /// agent가 주기적으로 보내는 머신 건강(§8.10)

@@ -382,6 +382,7 @@ async fn lost_launch_reply_reconciles_only_exact_machine_name_and_cwd() {
             software: "test".into(),
             features: vec![],
             dev_mode: false,
+            sha256: None,
             selfcheck: None,
             sessions: vec![info.clone()],
             harness: vec![],

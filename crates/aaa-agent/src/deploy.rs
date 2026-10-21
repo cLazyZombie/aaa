@@ -72,6 +72,10 @@ impl Manager {
             executor: Mutex::new(None),
         })
     }
+    /// 시작 때 읽은 실행 파일 SHA-256(hello에도 싣는다)
+    pub(crate) fn running_sha256(&self) -> &str {
+        &self.running_sha256
+    }
     fn configure(&self, exe: &Path, executor: Executor) -> anyhow::Result<()> {
         // 배포를 실제 실행하는 프로세스만 잠근다. PID 재사용·재부팅은 OS 잠금 수명에 영향을 주지 않는다.
         let mut owner = self.lease.lock().unwrap();
