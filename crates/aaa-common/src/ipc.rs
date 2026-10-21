@@ -108,10 +108,38 @@ impl Drop for LocalListener {
     }
 }
 
+#[cfg(unix)]
+type NativeClient = tokio::net::UnixStream;
+#[cfg(windows)]
+type NativeClient = tokio::net::windows::named_pipe::NamedPipeClient;
 pub async fn connect(path: &Path) -> io::Result<LocalStream> {
+    Ok(Box::new(native_connect(path).await?))
+}
+/// private installer callback은 server PID도 OS에서 받아 고정 부모 실행 파일과 대조한다.
+pub async fn connect_peer(path: &Path) -> io::Result<(LocalStream, Option<u32>)> {
+    let stream = native_connect(path).await?;
+    #[cfg(unix)]
+    let pid = {
+        let peer = stream.peer_cred()?;
+        if peer.uid() != unsafe { libc::getuid() } {
+            return Err(io::Error::new(io::ErrorKind::PermissionDenied, "private IPC peer owner"));
+        }
+        peer.pid().and_then(|pid| u32::try_from(pid).ok()).filter(|pid| *pid > 0)
+    };
+    #[cfg(windows)]
+    let pid = {
+        use std::os::windows::io::AsRawHandle;
+        let mut pid = 0;
+        let ok =
+            unsafe { windows_sys::Win32::System::Pipes::GetNamedPipeServerProcessId(stream.as_raw_handle(), &mut pid) };
+        (ok != 0 && pid > 0).then_some(pid)
+    };
+    Ok((Box::new(stream), pid))
+}
+async fn native_connect(path: &Path) -> io::Result<NativeClient> {
     #[cfg(unix)]
     {
-        Ok(Box::new(tokio::net::UnixStream::connect(path).await?))
+        tokio::net::UnixStream::connect(path).await
     }
     #[cfg(windows)]
     {
@@ -126,7 +154,7 @@ pub async fn connect(path: &Path) -> io::Result<LocalStream> {
         let deadline = Instant::now() + Duration::from_millis(250);
         loop {
             match ClientOptions::new().open(&name) {
-                Ok(stream) => return Ok(Box::new(stream)),
+                Ok(stream) => return Ok(stream),
                 Err(error) if error.raw_os_error() == Some(ERROR_PIPE_BUSY as i32) && Instant::now() < deadline => {
                     sleep_until((Instant::now() + Duration::from_millis(5)).min(deadline)).await;
                 }

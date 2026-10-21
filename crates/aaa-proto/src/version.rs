@@ -37,7 +37,8 @@ impl std::fmt::Display for Version {
 // 같은 1.9에 `AgentRequest::Commands`(commands.v1을 알린 agent에만, plan §8.323)와 `Chat.commands`(옛 agent는 버리고 명령 줄을
 // 싣지 않는다)를 더한다.
 // 1.10: work_files.v1의 일반 작업 파일 전송. 1.9 agent에는 옛 파일 태그로 보낸다.
-pub const AGENT_LINK: Version = Version { major: 1, minor: 10 };
+// 1.11: install_enroll.v1의 설치 grant 기능 협상·TLS peer 결속·같은 ID 소비 결과 조회.
+pub const AGENT_LINK: Version = Version { major: 1, minor: 11 };
 /// front ↔ host. 1.4: CLI pane·tab·workspace(plan §8.75), 1.5: 새 탭 이름(`NewTab.label`)·cwd 따라가기(`NewTab.from`)(plan §8.76),
 /// 1.6: `routine_toggle`·`ThreadView.pr`(plan §8.80), 1.7: `devices`·`device_rename`·`device_revoke`, 웹 기기의 `web_pair`(plan §8.81),
 /// 1.8: `thread read`·`thread keys`(plan §8.86), 1.9: `ticker_tick`(docs/testing.md),
@@ -177,7 +178,8 @@ pub const AGENT_LINK: Version = Version { major: 1, minor: 10 };
 // `enroll_approve`·`machine_revoke`·`web_publish`·`web_publish_off`·`library_rotate`, 새 `enroll_close`·`library_upload_publish`(+ 웹
 // 올리기 주소), `Pending.open_until_ms`, 웹 events `enroll`, 마지막 조작 기기 폐기 거부. 옛 host는 웹 요청을 거부해 웹이 그리지 않는다.
 // Agent link 변경 없음.
-pub const FRONT_API: Version = Version { major: 1, minor: 80 };
+/// 1.81: install_approve의 계획/실제 범위 hash 결속. raw 승인서는 private executor가 전달한다.
+pub const FRONT_API: Version = Version { major: 1, minor: 81 };
 /// agent ↔ session host(내부). 세션이 몇 주 이어질 수 있으므로 이전 session host와 호환해야 한다.
 /// 1.1: `SessionRequest::Detect`(harness 상태 감지 입력). agent는 1.0 session host에 보내지 않고 `Screen`을 쓴다.
 /// 1.2: `SessionRequest::Colors`(색 질의에 답할 화면 색, plan §8.187). agent는 1.1 이하 session host에 보내지 않는다.

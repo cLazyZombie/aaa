@@ -1214,3 +1214,14 @@ macOS gate·Windows cross compile 결과와 별도로 보고한다. SCM 실제 l
 - 흉내 낸 알림: 보고서 제 script(API 주소·다른 origin의 같은 경로·data:)와 앱 창 자신(그 보고서 그림 주소)이 보낸 넷을 iframe 표지 `data-messages`로 본 뒤 `data-opened`·크게 보기가 그대로인지 단언한다. 진짜 누름 뒤에 보면 React가 한 번에 그려 흉내가 연 상태를 덮어 결함을 놓친다(처음 쓴 판이 출처 검사 결함에도 통과했다). 흉내 주소는 iframe의 실제 주소로 만든다(publish가 준 공유 링크 cap은 앱이 연 cap과 다르다).
 - 휴대폰(WebKit iPhone): `tap()`으로 열고, 손짓은 touch PointerEvent를 무대·그림에 직접 보낸다(옆으로 쓸어 넘김, 짧은 끌기는 그대로, 두 손가락 90→190px = 2.11배, 남은 손가락 끌기는 옮기기이고 넘기지 않음, 두 번 누름 맞춤). 뒤로(popstate)는 크게 보기만 닫고 주소·보고서 그대로, 아래로 쓸기는 닫고 기록 칸(`aaa:sheet`)을 거둔다. headless WebKit은 이 iframe 안 그림을 그리지 않아(plan §8.353 「남은 것」) iframe 그림 읽힘은 데스크톱에서만 기다린다.
 - 결함 심기(되돌렸다): iframe 출처 검사·origin 검사·`/v/<cap>/` 경로 검사를 빼면 데스크톱 흉내 단언, host가 fetch에도 붙이면 host 단계, 그림마다 빈 click listener를 빼면 휴대폰 첫 누름에서 실패한다.
+
+## aaa install I6 승인·실제 executor owner(t-0485)
+
+- `cargo test -p aaa --test install --locked`: 공통 실제 CLI/PTY owner는 세 OS에서 같은 마법사·plain/inquire·뒤로·초안·정확 yes·EOF130·자동/세션 거부·private 발급·실제 worker·같은 ID status/resume를 검사한다. 실제 TLS host 등록/SAS/응답 유실 조회·외부 pin 편집 보존, require unknown→새 defer 승인/파일 job 재사용, 첫 Controller 실제 redeem/폐기·코드 비공개를 포함한다. 운영 서비스/계정/암호/LSA는 사용하지 않는다.
+- `cargo test -p aaa --bin aaa install:: --locked`: 실제 private 파일·서명/pin/만료/nonce·파일 scope·execution/job 결속·I2/SCM 상태·보호 입력·PATH 정책을 검사한다. 독립 v1 status/exit validator가 needs_user3와 cancelled130을 소유한다. 논리 clock은 승인 만료에만 쓰고 실제 쓰기는 OS 파일 transaction이다.
+- `cargo test -p aaa-host --lib installation:: --locked`, `cargo test -p aaa-host --lib tailscale:: --locked`: 실제 host DB/서명/private 입력과 TLS peer·grant 일회 소비/폐기, 보호 publication의 PID/image/nonce/phase/실제 owned listener, exact 포트/외부 mapping 보존, bounded LocalAPI wire의 ETag/If-Match/412, 현재 host HTTPS proof와 일반 200 거부를 검사한다. publication 소비자의 입력 fixture는 파일 엔진 생산 완료 증거로 쓰지 않으며 실제 CLI owner가 생산 경계를 검사한다.
+- `cargo test -p aaa-host --lib install_agent_query_keeps_the_handshake_key_after_same_id_rekey --locked`: 첫 메시지 전 key 교체 때 실제 연결의 immutable peer를 유지하고 다른 key의 결과를 내주지 않는다.
+- Windows 전용 owner는 실제 ConPTY 암호 mode/echo/성공·취소·EOF, Job의 breakaway 허용/금지와 부모 소멸, Win32 ready 파일 변경 사건, 임시 HKCU Software lab key의 registry transaction rollback/동시 편집이다. Windows API 차이 때문에 cfg(windows)이며 공통 CLI/권한 owner는 제외하지 않는다. Unix 부모 감시는 macOS kqueue/Linux pidfd를 사용한다. SSH 신뢰 unit은 봉인된 경계만 실험실에서 대체하며 실제 OpenSSH 설치 실행 성공을 주장하지 않는다.
+- 서명·계획/소비·파일 scope/job 연결·worker 분리 수명·정확 Serve의 If-Match/선택 포트·HTTPS instance proof·TLS rekey/소비/PATH 보존 변형을 owner에서 RED로 대조하고 바이트 복구 뒤 검증한다. 실패 재실행·timeout 증가·기대값 완화는 하지 않는다.
+
+Windows/Linux 실제 실행 판정은 main push 뒤 GitHub CI windows-2025/ubuntu-24.04다. 실제 SCM logon/LSA/Session0/UAC/재부팅/실제 서비스 harness 인증·Tailscale HTTPS는 사용자 Windows PC 사용자 인수로 따로 확인한다. 교차 clippy/build와 file/PTY owner를 이 실제 설치 증거로 부르지 않는다.

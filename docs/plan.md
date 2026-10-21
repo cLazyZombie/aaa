@@ -6519,3 +6519,17 @@ L4 후속(10-20 00시 사용자 관찰): 멈춤 상태의 후보 예약과 재�
   그대로다. 같은 모듈의 실제 SCM 구독·현재 process 신원과 상위 supervisor의 handle 결속·argv owner도
   유지한다. 전체 macOS gate·Windows cross·공개 검사 뒤 착지 창을 기다리며 실제 Windows 통과는
   main push 뒤 windows-2025 CI로만 판정한다. I6 WIP는 별도 보존한다.
+
+### 8.357 aaa install I6 대화형 검토·계획 결속 승인(10-21, t-0485)
+
+I5 위에 외부 TTY의 inquire/plain 마법사와 명시 인자·private 초안을 연결한다. 두 UI는 동일 choices/계획을 제출한다. dry-run은 저장·발급·nonce·실제 적용을 하지 않으며 Ctrl+C/EOF는 cancelled/130이다. `--yes`·임의 JSON·세션/SSH 환경 변수는 권한이 아니다. 검토한 계획/실행 SHA/계정/instance/변경 전후의 정확 scope를 Ed25519 서명과 사용자 전용 issuer pin·짧은 만료·한 번의 nonce로 결속한다. 발급/비밀 입력은 공개 결과·NDJSON에 넣지 않는다.
+
+고정 worker는 실제 IPC peer PID/image와 EOF가 끝난 보호 입력을 확인하고 승인 lease를 소비한 뒤 I2 파일 transaction, I5 Windows SCM, 등록/공개 작업을 실행한다. CLI가 사라져도 worker는 독립 수명으로 같은 설치 ID에 재개 상태를 기록한다. status는 발급만 된 planned와 실제 journal/SCM/등록 상태를 읽고 보정 쓰기를 하지 않는다. 보호 암호는 Windows console에서 한 번 받아 UTF-16 buffer를 지우며 암호 보관은 SCM에 맡긴다. 기존 같은 소유 서비스는 자격 증명을 바꾸지 않는다. 미구현 broker/OS 권한은 needs_user다.
+
+host 등록은 TLS peer와 결속한 일회 grant 또는 기존 W0 SAS를 쓰고, 응답 유실은 같은 ID 조회로 회복한다. 현재 peer key를 대기 중 DB의 새 key로 바꾸거나 폐기한 grant로 기기를 되살리지 않는다. 첫 Controller는 실제 W0 pairing의 redeem 뒤에만 확인한다. 코드 표시 ACK는 등록/기기 완료가 아니다. identity/key/cert/pin의 승인 전 내용과 자신의 준비 기록을 대조해 외부 편집을 보존한다.
+
+Windows 사용자 PATH는 기본 preserve이고 명시 user만 현재 HKCU 값의 type/순서/빈 항목/UTF-16 원문을 유지하며 transaction 안에서 before를 다시 확인한다. Serve는 정확 선택 포트와 예상 mapping hash를 서명하고 Windows 보호 LocalAPI의 ETag/If-Match로만 적용한다. 다른 앱/포트/Funnel을 덮거나 조건 없는 CLI 쓰기로 대체하지 않는다. mapping과 현재 host instance의 공개 HTTPS 응답, 첫 Controller를 각각 확인한다. Front의 좁은 InstallPublish 요청은 실제 파일 적용 중인 동일 worker 증명만 수락하며 기존 W0 변경 권한은 그대로다.
+
+공개 결과의 optional service/web 요약은 등록·running·application_ready와 외부/내부 포트·재사용/소유·pairing을 나눠 표시한다. SID/home/인증 파일 존재로 실제 서비스 harness 인증을 추정하지 않는다. require가 미확인이면 unknown/needs_user, 사용자가 새 계획에서 명시한 login=defer는 configured 범위다. URL·암호·키·코드는 결과에 없다. FRONT_API 1.81, AGENT_LINK 1.11/install_enroll.v1과 TS/schema를 함께 갱신하며 기능 없는 구판을 성공으로 처리하지 않는다.
+
+검증은 macOS 전체 gate와 Windows strict cross다. Windows·Linux 실제 실행은 main push 뒤 CI이며 실제 SCM logon/Session0/로그인 전 부팅/LSA/UAC/인증·사용자 Windows PC 인수와 혼동하지 않는다. 이 단계 뒤 Windows 최소 bootstrap/사용자 Windows PC 사용자 시험→macOS→Linux→최종 I7 순서로 간다. 별도 runner/VM·branch/PR CI push는 두지 않는다. 절/API 번호는 착지 창에서 최신 main과 다시 대조한다.
