@@ -147,6 +147,12 @@ export default async function ({ page }) {
     await waitOutput(LABEL, "session 1 mode idle");
     await openChat(page);
     await box(page).fill("오류 처리를 정리해 줘");
+    // 입력칸은 pane WebSocket의 readonly 해제보다 먼저 그려질 수 있다. 꺼진 동안의 Enter는 초안을 두고 보내지 않는다.
+    // 첫 글을 한 번만 보내려면 연결 준비 사건을 먼저 기다린다(전체 검증에서 가짜 agent 입력 0바이트로 재현).
+    await domIs(page, "첫 글 보낼 연결 준비", () => {
+      const send = document.querySelector('[data-testid="chat-composer"] .composer-send');
+      return send !== null && !send.disabled;
+    });
     await box(page).press("Enter");
     await domIs(page, "답과 게이지", () => document.querySelector('[data-testid="context-gauge-value"]')?.textContent === "38%");
   }, { always: true });

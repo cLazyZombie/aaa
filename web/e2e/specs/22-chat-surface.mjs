@@ -290,7 +290,7 @@ export default async function () {
     if (bad.length) throw new Error(bad.join("; "));
   });
 
-  await step("대화 입력창 높이(사용자 10-19 「두 줄이 필요할 때만 두줄로 쓰고 작을 때는 한 줄로」): 휴대폰 가로·세로·데스크톱에서 비었거나 짧으면 글 칸과 보내기 단추가 한 줄(가운데가 맞고 겹치지 않음), 줄바꿈·자동 줄넘김이면 그만큼 늘어 단추가 밑으로 가고 10줄에서 멈춰 굴러가며, 지우면 처음 높이로 돌아온다. 그동안 focus·아래끝은 그대로다", async () => {
+  await step("대화 입력창 높이: 휴대폰 가로·세로·데스크톱에서 짧으면 한 줄, 줄바꿈·자동 줄넘김이면 높이만 늘고 단추는 옆에 유지(t-0563 사용자 1A), 10줄에서 멈춰 굴러가며 지우면 처음 높이로 돌아온다. focus·아래끝은 그대로다", async () => {
     chatPane("line1", "3c2b1a09-8f7e-4d6c-9b5a-4f3e2d1c0b9e");
     const bad = [];
     // 그 순간의 입력창: 판정 표지(data-lines), 상자·글 칸·단추 자리, 한 줄 높이, focus, 글 칸 안에서 잘린 것
@@ -345,7 +345,7 @@ export default async function () {
           await capture(state);
           const s = await look(p);
           if (s.lines !== "more") bad.push(`${name} ${state}: 여러 줄 표지가 아니다(${s.lines})`);
-          if (s.send.top < s.text.bottom - 0.5) bad.push(`${name} ${state}: 단추(${Math.round(s.send.top)})가 글 칸 밑(${Math.round(s.text.bottom)})으로 가지 않았다`);
+          if (s.send.left < s.text.right - 0.5 || s.send.top >= s.text.bottom - 0.5) bad.push(`${name} ${state}: 단추가 글 칸 옆에 있지 않다`);
           // 한도: 10줄, 보이는 높이의 절반(휴대폰 가로)
           const cap = Math.min(s.lh * 10, s.room / 2);
           if (lines > 10 ? Math.abs(s.text.height - cap) > 1 : s.text.height < s.lh * lines || s.text.height > s.lh * (lines + 2))
@@ -380,6 +380,7 @@ export default async function () {
         await p.keyboard.press("Backspace");
         const cleared = await one("cleared");
         for (const [state, s] of Object.entries({ empty, short, two, many, wrapped, cleared })) {
+          if (Math.abs((s.text.right - s.text.left) - (empty.text.right - empty.text.left)) > 0.5) bad.push(`${name} ${state}: 줄 수에 따라 글 칸 폭이 바뀌었다`);
           if (!s.focused) bad.push(`${name} ${state}: 글 칸이 focus를 잃었다`);
           if (s.pageWide) bad.push(`${name} ${state}: 화면이 가로로 넘친다`);
           if (Math.abs(s.surface.bottom - empty.surface.bottom) > 0.5) bad.push(`${name} ${state}: 상자 아래끝 ${Math.round(s.surface.bottom)} ≠ ${Math.round(empty.surface.bottom)}`);
@@ -388,8 +389,8 @@ export default async function () {
           bad.push(`${name}: 한 줄 상자 높이가 다르다 ${[empty, short, cleared].map((s) => Math.round(s.surface.height))}`);
         const flips = await p.evaluate(() => window.__lineFlips);
         if (flips.join() !== "more,one,more,one") bad.push(`${name}: 표지가 튄다 ${flips}`);
-        // 단추 옆 칸보다 길고 펼친 글 칸 한 줄보다 짧은 글(사용자 10-20 「한 줄을 다 채우지 않았는데 두 줄 높이」, t-0546):
-        // 단추만 있는 밑 줄이 없다(한 줄 배치에서 단추 옆에 접힌다). 펼친 한 줄을 넘으면 그때 여러 줄 배치고, 다시 줄이면 돌아온다
+        // t-0546의 두 폭 사이 글에도 단추만 있는 밑 줄이 없어야 한다. t-0563 사용자 1A에 따라
+        // 이제 모든 길이에서 단추 옆 폭을 유지하고, 표지는 그 실제 폭의 줄 수를 나타낸다.
         const between = await p.evaluate(() => {
           const surface = document.querySelector('[data-testid="chat-composer"] .composer-surface');
           const text = surface.querySelector(".composer-text");
@@ -404,14 +405,14 @@ export default async function () {
         });
         const settled = (value) => p.evaluate((v) => new Promise((done) => requestAnimationFrame(() => requestAnimationFrame(() =>
           done(document.querySelector('[data-testid="chat-composer"] .composer-text').value === v)))), value);
-        for (const [state, value, want] of [["between", between.mid, "one"], ["over", between.over, "more"], ["between-again", between.mid, "one"]]) {
+        for (const [state, value, want] of [["between", between.mid, "more"], ["over", between.over, "more"], ["between-again", between.mid, "more"]]) {
           await box.fill(value);
           if (!(await settled(value))) bad.push(`${name} ${state}: 글이 들어가지 않았다`);
           await capture(state);
           const s = await look(p);
           if (s.lines !== want) bad.push(`${name} ${state}: 표지 ${s.lines} ≠ ${want}(단추 옆 ${Math.round(between.beside)}px·펼친 ${Math.round(between.full)}px)`);
-          if (want === "one" && s.send.top >= s.text.bottom - 0.5) bad.push(`${name} ${state}: 단추(${Math.round(s.send.top)})만 글 칸 밑(${Math.round(s.text.bottom)}) 줄에 있다`);
-          if (want === "one" && s.text.height > s.lh * 3) bad.push(`${name} ${state}: 글 칸 ${Math.round(s.text.height)}px이 두 줄(${s.lh}px씩)을 넘는다`);
+          if (s.send.top >= s.text.bottom - 0.5 || s.send.left < s.text.right - 0.5) bad.push(`${name} ${state}: 단추가 글 칸 옆에 있지 않다`);
+          if (Math.abs((s.text.right - s.text.left) - (empty.text.right - empty.text.left)) > 0.5) bad.push(`${name} ${state}: 글 칸 폭이 바뀌었다`);
           if (s.scroll.h > s.scroll.ch + 1 || s.scroll.w > s.scroll.cw + 1) bad.push(`${name} ${state}: 글 칸 안에서 잘린다 ${JSON.stringify(s.scroll)}`);
           if (!s.focused) bad.push(`${name} ${state}: 글 칸이 focus를 잃었다`);
           if (Math.abs(s.surface.bottom - empty.surface.bottom) > 0.5) bad.push(`${name} ${state}: 상자 아래끝 ${Math.round(s.surface.bottom)} ≠ ${Math.round(empty.surface.bottom)}`);

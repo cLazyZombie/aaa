@@ -453,11 +453,8 @@
   height: var(--chip-h);
 }
 
-/* the message is the card's first row at its full width; under it one row: add, the mic and the
-   task chip | the status content | the one round Send/Stop button. The attachment strip is its own
-   row above both. The three cells of the last row stretch and centre what they hold, so the
-   controls and the model share one centre line. The card stands over the strip tucked under it (below), so
-   it is raised; its popovers go with it and still rise over the transcript, which comes first */
+/* 글이 늘어도 그림·보내기는 옆 칸에 둔다(t-0563 사용자 1A). 글 칸의 폭과 padding을 유지해
+   첫 줄이 접힌 뒤 배치 전환 때문에 다시 접히지 않는다. 첨부 그림은 그 위의 별도 줄이다. */
 .composer-surface {
   position: relative;
   z-index: 1;
@@ -465,8 +462,8 @@
   grid-template-columns: auto minmax(0, 1fr) auto;
   grid-template-areas:
     "attachments attachments attachments"
-    "text text text"
-    "left status right";
+    "left text right";
+  align-items: center;
   background: var(--bg-elevated);
   border: var(--hairline) solid var(--border);
   border-radius: var(--radius-2xl);
@@ -557,12 +554,12 @@
   grid-area: text;
   width: 100%;
   min-width: 0;
-  min-height: calc(1lh + var(--space-5));
+  min-height: calc(1lh + var(--space-2) * 2);
   /* ten lines, and never over half the visible height (the grip's own limit, .is-sized below): a
      landscape phone with its keyboard up keeps room for the conversation (ChatComposer sizes it) */
   max-height: 10lh;
   max-height: min(10lh, calc(var(--app-height, 100dvh) / 2));
-  padding: var(--space-4) var(--space-4) var(--space-1);
+  padding: var(--space-2) var(--space-4);
   resize: none;
   overflow-x: hidden;
   overflow-y: auto;
@@ -604,31 +601,11 @@
   color: var(--text-dim);
 }
 
-/* One line (ChatComposer data-lines="one", t3code's resting composer): an empty message, or one that
-   fits one line of the full-width text, shares its row with the controls, centred, so a short one
-   leaves the card one row high. One longer than the room beside the controls wraps there instead
-   of leaving a row of controls alone under it. The text keeps its side padding; only the block
-   padding shrinks. A placeholder longer than the row ends in an ellipsis rather than adding a line */
-.composer-surface[data-lines="one"] {
-  grid-template-areas:
-    "attachments attachments attachments"
-    "left text right";
-  align-items: center;
-}
-
-.composer-surface[data-lines="one"] > .composer-text {
-  min-height: calc(1lh + var(--space-2) * 2);
-  padding-block: var(--space-2);
-}
-
+/* 빈 칸의 긴 안내는 입력칸 높이를 늘리지 않는다. 줄 수 표지는 글의 실제 줄 수만 나타낸다. */
 .composer-surface[data-lines="one"] > .composer-text::placeholder {
   overflow: hidden;
   white-space: nowrap;
   text-overflow: ellipsis;
-}
-
-.composer-surface[data-lines="one"] > .composer-controls {
-  padding-block: var(--space-1);
 }
 
 .composer-text:disabled {
@@ -645,12 +622,12 @@
 
 .composer-controls-left {
   grid-area: left;
-  padding: var(--space-1) 0 var(--space-3) var(--space-3);
+  padding: var(--space-1) 0 var(--space-1) var(--space-3);
 }
 
 .composer-controls-right {
   grid-area: right;
-  padding: var(--space-1) var(--space-3) var(--space-3) 0;
+  padding: var(--space-1) var(--space-3) var(--space-1) 0;
 }
 
 .composer-controls .icon-button,
@@ -1001,15 +978,15 @@
   }
 
   .composer-text {
-    padding: var(--space-3) var(--space-3) 0;
+    padding: var(--space-2) var(--space-3);
   }
 
   .composer-controls-left {
-    padding: var(--space-1) 0 var(--space-2) var(--space-2);
+    padding: var(--space-1) 0 var(--space-1) var(--space-2);
   }
 
   .composer-controls-right {
-    padding: var(--space-1) var(--space-2) var(--space-2) 0;
+    padding: var(--space-1) var(--space-2) var(--space-1) 0;
   }
 
   /* the 4px a side the 12px gutter took come back inside the card, after the cells' own phone
