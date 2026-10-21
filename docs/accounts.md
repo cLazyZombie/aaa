@@ -51,6 +51,14 @@ host 감사 기록 `account_login`, `account_default`, `pane_run_account`에도 
 
 기본 설정을 끄면 이후 새 작업은 기존 로컬 로그인을 쓴다. 기존 host 인증 작업의 선택은 유지한다.
 
+`thread restart --profile`도 처음 고른 계정을 유지한다. 같은 harness 안에서는 다른 profile로 바꿀 수 있지만,
+고정 계정과 harness가 다른 profile은 brief·실행 기록을 바꾸기 전에 거부한다. 다른 harness를 쓰려면 새 thread를
+시작한다. 새 thread는 그 harness의 기본 계정을 고르며 `--account`로 직접 고를 수도 있다.
+
+실행 중인 thread를 다시 띄우려면 `aaa pane kill <pane>`으로 먼저 세션을 끝내고 종료 상태를 확인한다.
+restart가 새 pane을 띄우면 옛 pane의 이름·화면 자리를 잇고 옛 기록을 정리한다. 새 pane 기동이 실패하면
+옛 기록은 남는다. `pane close`로 먼저 기록까지 지웠어도 thread의 작업 폴더·저장된 대화로 재시작할 수 있다.
+
 ```sh
 aaa account default claude --off
 aaa account default codex --off
