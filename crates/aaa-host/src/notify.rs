@@ -82,7 +82,7 @@ pub(crate) fn app_ref(word: &str) -> Option<(&str, &str)> {
 }
 
 /// coordinator 사용자 post 제목이 가리키는 thread 질문(누르면 그 질문 카드를 연다)
-fn request_question(i: &InboxItem) -> Option<String> {
+pub(crate) fn request_question(i: &InboxItem) -> Option<String> {
     request_title(i)?;
     let title = i.summary.split_once(": 「")?.1;
     title

@@ -6599,3 +6599,15 @@ L4 후속(10-20 00시 사용자 관찰): 멈춤 상태의 후보 예약과 재�
 - **계정.** 기본 계정은 새 작업에만 적용하는 §8.351 정책을 유지한다. 고정 계정과 새 profile의 harness가 다르면 profile·launch·brief를 바꾸기 전에 거부하고 새 thread 시작·새 harness의 기본 계정·명시 `--account`를 안내한다. 같은 harness의 profile 변경은 원래 계정을 쓴다. 계정이 고정되지 않은 thread의 기존 로컬 인증 정책은 그대로다.
 - **다른 경로.** 직접 `pane resume`는 계정 없는 일반 thread를 새 pane에 연결하지 않던 경로도 있었다. 모든 일반 thread를 저장한 대화·작업 identity·감시를 잇는 `thread_restart --resume`으로 보낸다. 계정 pane 재개와 재부팅 복원의 중복 교체는 없앤다. adopted pane은 기존 일반 pane 재개와 `replace_pane`의 thread 결속을 쓴다. resolve는 이미 종료된 pane도 정리한다. 사람이 열거나 kill로 남긴 일반 pane의 「기타」 표시는 유지한다.
 - **호환·검증.** 새 요청·프로토콜·옵션은 없다. 기존 §8.364·웹 E2E 66을 보존하고 이 수리는 §8.365를 쓴다. FRONT_API 1.83·AGENT_LINK 1.10은 유지한다. 기존 m13과 로컬 UDS·원격 TLS 회귀에서 profile 변경·새 대화·resume·직접 pane resume·host 재연결·spawn 실패·이름과 탭 보존·다른 pane 보존·계정 사전 거부를 검사한다. 원본 재현과 결함 되심기는 [시험](testing.md)의 t-0567 절을 따른다. 운영 pane·thread에는 접근하지 않는다.
+
+### 8.366 질문 카드·사용자 post의 처리 상태 통합(10-21, t-0565)
+
+- 제목에 `aaa:question/<thread>`가 붙은 확인 필요 post는 열린 질문 카드 한 줄로 묶는다. 답의 정본은 카드다.
+  카드·`thread answer`가 실제로 답을 전하면 연결 post도 끝내고 `request handled`를 남긴다. 전송 실패는 그대로 둔다.
+- 질문 없는 새 보고는 이전 질문을 선택한 답 없이 닫고 연결 post도 끝낸다. ticker는 구판에서 남은 알림을 보고 시각과
+  성공한 답 기록으로 정리한다. 끝난 카드에 늦게 온 post도 즉시 정리한다. 다음 질문이 열렸으면 옛 답으로 닫지 않으며, 카드가 없는 post는 독립 요청으로 남긴다.
+- `aaa post handled <p-번호 또는 발신 ID>`는 사용자 답을 받았다는 처리 표시만 한다. 질문의 선택·승인·작업 실행을 만들지 않는다.
+  `inbox done`과 처리 상태를 공유하고 `post status`·목록도 그 상태를 본다. 전송 영수증 accepted/refused는 바꾸지 않는다.
+- 카드에 없는 C를 post에만 추천하지 않는다. 새 안은 보고부터 고치고, 이미 받은 C·채팅 자유 답은
+  `thread answer --text`로 원문을 보존한다. coordinator가 기존 A/B를 임의로 대신 고르지 않는다.
+- FRONT_API 1.84는 `post_handled`와 선택 칸 `Post.handled`를 더한다. main의 §8.363~8.365와 E2E 65·66은 유지하고 기존 E2E 53을 확장한다. Agent link는 그대로다. 실행·검증은 testing.md의 t-0565 절에 둔다.

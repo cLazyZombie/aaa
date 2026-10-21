@@ -743,7 +743,7 @@ enum RoutineCmd {
 
 #[derive(Args)]
 struct PostArgs {
-    /// 목적지(user·coordinator) 또는 status·list·unmute. 프로젝트는 생략한다(옛 꼴은 앞에 프로젝트)
+    /// 목적지(user·coordinator) 또는 status·handled·list·unmute. handled는 사용자 답의 처리 표시만 한다
     first: String,
     second: Option<String>,
     third: Option<String>,
@@ -755,7 +755,7 @@ struct PostArgs {
     notice: bool,
     #[arg(long)]
     needs_user: bool,
-    /// 전송할 때 필수인 주제(--request·--data·--notice). list·status·unmute에서는 생략한다
+    /// 전송할 때 필수인 주제(--request·--data·--notice). list·status·handled·unmute에서는 생략한다
     #[arg(long)]
     topic: Option<String>,
     #[arg(long)]
@@ -3186,6 +3186,10 @@ fn post_cmd(json: bool, a: PostArgs) -> Result<ExitCode> {
         let (project, thread) = on_target(a.second.context("thread가 필요하다")?, a.third)?;
         return front(json, FrontRequest::PostUnmute { project, thread });
     }
+    if a.first == "handled" {
+        let (project, post_id) = on_target(a.second.context("post ID가 필요하다")?, a.third)?;
+        return front(json, FrontRequest::PostHandled { project, post_id });
+    }
     let rt = runtime()?;
     // 세션 안: 조작 권한으로 붙으면(coordinator·사람의 셸 pane) Front로, 보기 권한(thread pane)이면 hook으로 보낸다.
     // 프로젝트는 생략한다(plan §8.288): Front 길이면 host가 맡은 하나를 채운다
@@ -3197,6 +3201,7 @@ fn post_cmd(json: bool, a: PostArgs) -> Result<ExitCode> {
         None
     };
     let use_hook = session && control.is_none();
+    let mut handled = None;
     let result = if a.first == "status" {
         if use_hook {
             let id = a.third.or(a.second).context("post ID가 필요하다")?;
@@ -3204,7 +3209,10 @@ fn post_cmd(json: bool, a: PostArgs) -> Result<ExitCode> {
         } else {
             let (project, post_id) = on_target(a.second.context("post ID가 필요하다")?, a.third)?;
             match post_front_call(&rt, &mut control, FrontRequest::PostStatus { project, post_id })? {
-                Ok(FrontResponse::Post { result }) => result,
+                Ok(FrontResponse::Post { result, handled: state }) => {
+                    handled = state;
+                    result
+                }
                 Ok(_) => anyhow::bail!("post 응답이 아니다"),
                 Err(e) => anyhow::bail!("{}", e.message),
             }
@@ -3241,7 +3249,7 @@ fn post_cmd(json: bool, a: PostArgs) -> Result<ExitCode> {
         } else {
             let project = project_or_here(project)?;
             match post_front_call(&rt, &mut control, FrontRequest::Post { project, input })? {
-                Ok(FrontResponse::Post { result }) => result,
+                Ok(FrontResponse::Post { result, .. }) => result,
                 Ok(_) => anyhow::bail!("post 응답이 아니다"),
                 Err(e) => anyhow::bail!("{}", e.message),
             }
@@ -3253,10 +3261,21 @@ fn post_cmd(json: bool, a: PostArgs) -> Result<ExitCode> {
         PostResult::Queued { .. } => 2,
     };
     if json {
-        println!("{}", serde_json::to_string(&result)?);
+        let mut value = serde_json::to_value(&result)?;
+        if let Some(handled) = handled {
+            value["handled"] = serde_json::json!(handled);
+        }
+        println!("{}", value);
     } else {
         match result {
-            PostResult::Accepted { id } => println!("ok {id}"),
+            PostResult::Accepted { id } => println!(
+                "ok {id}{}",
+                match handled {
+                    Some(true) => " · 처리됨",
+                    Some(false) => " · 미처리",
+                    None => "",
+                }
+            ),
             PostResult::Refused { reason, existing } => {
                 eprintln!("err {reason}{}", existing.map(|s| format!(" (기존 {s})")).unwrap_or_default())
             }
@@ -4450,12 +4469,12 @@ fn render_front(r: &FrontResponse) -> String {
         FrontResponse::Evaluators { .. } | FrontResponse::Evaluations { .. } | FrontResponse::Evaluation(_) => {
             s.push_str("없어짐: 자동화로 바꿨다(aaa automation convert)")
         }
-        FrontResponse::Post { result } => {
+        FrontResponse::Post { result, .. } => {
             let _ = writeln!(s, "{}", serde_json::to_string(result).unwrap());
         }
         FrontResponse::Posts { posts, .. } => {
             for p in posts {
-                let _ = writeln!(s, "{}\t{}\t{}", p.id, p.input.to, p.input.title);
+                let _ = writeln!(s, "{}\t{}\t{}\t{}", p.id, p.state, p.input.to, p.input.title);
             }
         }
         // 「답할 것」(웹 화면이 쓴다): CLI는 확인 필요 post와 답한 것을 한 줄씩 보인다
