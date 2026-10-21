@@ -1404,7 +1404,7 @@ fn agent_became(ev: &mut Events, id: &str, activity: AgentActivity, at: u64) -> 
         FrontEvent::Thread(t)
             if t.id == id && t.agent.as_ref().is_some_and(|a| a.activity == activity && a.since_ms >= at) =>
         {
-            Some(t.clone())
+            Some(t.as_ref().clone())
         }
         _ => None,
     })

@@ -1637,7 +1637,7 @@ impl Host {
                                 ));
                             }
                             if let Some(tid) = &q.thread {
-                                return self.thread_show(&a.project, tid).map(FrontResponse::Thread);
+                                return self.thread_show(&a.project, tid).map(Box::new).map(FrontResponse::Thread);
                             }
                             return Err(err(
                                 ErrorCode::Conflict,
@@ -1677,13 +1677,13 @@ impl Host {
                 if link_task && let Some(t) = &picked {
                     v.warnings.extend(self.link_started(&project, t, &v.id, actor).await);
                 }
-                Ok(FrontResponse::Thread(v))
+                Ok(FrontResponse::Thread(Box::new(v)))
             }
             FrontRequest::ThreadStartPreview { project, from_task, task_block } => {
                 self.thread_start_preview(&project, &from_task, task_block.as_deref()).await
             }
             FrontRequest::ThreadAdopt { project, pane, title, task } => {
-                self.thread_adopt(&project, &pane, &title, &task, actor).await.map(FrontResponse::Thread)
+                self.thread_adopt(&project, &pane, &title, &task, actor).await.map(Box::new).map(FrontResponse::Thread)
             }
             FrontRequest::ThreadNext { project, thread, line, add } => {
                 self.thread_next(&project, &thread, line, add, actor).await
@@ -1719,7 +1719,7 @@ impl Host {
                 self.threads_of(project.as_deref(), want).map(|threads| FrontResponse::Threads { threads })
             }
             FrontRequest::ThreadShow { project, thread } => {
-                self.thread_show(&project, &thread).map(FrontResponse::Thread)
+                self.thread_show(&project, &thread).map(Box::new).map(FrontResponse::Thread)
             }
             FrontRequest::ThreadSummary { project, thread } => {
                 self.thread_summary(&project, &thread).map(FrontResponse::ThreadSummary)
@@ -1772,10 +1772,10 @@ impl Host {
                 self.library_link_revoke(&id, actor).map(FrontResponse::LibraryLink)
             }
             FrontRequest::ThreadAck { project, thread } => {
-                self.thread_ack(&project, &thread, actor).map(FrontResponse::Thread)
+                self.thread_ack(&project, &thread, actor).map(Box::new).map(FrontResponse::Thread)
             }
             FrontRequest::ThreadResolve { project, thread, reopen: true, .. } => {
-                self.thread_reopen(&project, &thread, actor).map(FrontResponse::Thread)
+                self.thread_reopen(&project, &thread, actor).map(Box::new).map(FrontResponse::Thread)
             }
             FrontRequest::ThreadResolve {
                 project,
@@ -1793,15 +1793,18 @@ impl Host {
                     actor,
                 )
                 .await
+                .map(Box::new)
                 .map(FrontResponse::Thread),
             FrontRequest::ThreadStop { project, thread } => {
-                self.thread_stop(&project, &thread, actor).await.map(FrontResponse::Thread)
+                self.thread_stop(&project, &thread, actor).await.map(Box::new).map(FrontResponse::Thread)
             }
-            FrontRequest::ThreadRestart { project, thread, resume, profile } => {
-                self.thread_restart(&project, &thread, resume, profile, actor).await.map(FrontResponse::Thread)
-            }
+            FrontRequest::ThreadRestart { project, thread, resume, profile } => self
+                .thread_restart(&project, &thread, resume, profile, actor)
+                .await
+                .map(Box::new)
+                .map(FrontResponse::Thread),
             FrontRequest::ThreadBrief { project, thread } => {
-                self.thread_brief(&project, &thread, actor).await.map(FrontResponse::Thread)
+                self.thread_brief(&project, &thread, actor).await.map(Box::new).map(FrontResponse::Thread)
             }
             FrontRequest::ThreadRead { project, thread, lines } => self.thread_read(&project, &thread, lines).await,
             FrontRequest::ThreadKeys { project, thread, keys, text } => {
@@ -1832,9 +1835,11 @@ impl Host {
             FrontRequest::ThreadMessage { project, thread, text, mode } => {
                 self.thread_message(&project, &thread, text, mode, actor).await.map(FrontResponse::Message)
             }
-            FrontRequest::ThreadAnswer { project, thread, report_hash, picks, text } => {
-                self.thread_answer(&project, &thread, &report_hash, picks, text, actor).await.map(FrontResponse::Thread)
-            }
+            FrontRequest::ThreadAnswer { project, thread, report_hash, picks, text } => self
+                .thread_answer(&project, &thread, &report_hash, picks, text, actor)
+                .await
+                .map(Box::new)
+                .map(FrontResponse::Thread),
             FrontRequest::Preferences => Ok(FrontResponse::Preferences(self.preferences.get())),
             FrontRequest::PreferencesSet { settings, pins } => {
                 let change = prefs::change_body(settings, pins)?;

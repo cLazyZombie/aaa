@@ -267,6 +267,7 @@ impl Host {
         let result = if target.kind == "thread" {
             self.thread_answer(project, &target.subject, &hash, draft.picks, draft.text, actor)
                 .await
+                .map(Box::new)
                 .map(FrontResponse::Thread)
         } else {
             self.ask_answer(project, &target.subject, &hash, draft.picks, draft.text, actor)
