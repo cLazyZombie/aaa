@@ -1310,6 +1310,9 @@ enum MachineCmd {
 
 #[derive(Subcommand)]
 enum LibraryCmd {
+    /// 이름·thread ID·r-NNNN으로 특정 보고 판과 파일 목록을 읽는다.
+    #[command(alias = "open")]
+    Show { name: String },
     /// host 머신의 폴더·파일을 복사한다. 같은 이름은 최신으로 바꾼다.
     Publish {
         source: std::path::PathBuf,
@@ -1333,7 +1336,7 @@ enum LibraryCmd {
         #[arg(long = "thread", value_name = "THREAD")]
         from_thread: Option<String>,
     },
-    /// 보고서를 모든 곳에서 지운다(host 사본·목록·공유 링크·thread 보고 사본). 되돌릴 수 없다.
+    /// 이름·r 번호의 보고서를 모든 보존 판과 함께 지운다(host 사본·목록·공유 링크·thread 보고 사본). 되돌릴 수 없다.
     /// 끝나지 않은(resolve 전) thread의 보고가 있으면 아무것도 지우지 않는다.
     Delete {
         /// (옛 꼴, 생략한다)
@@ -2275,6 +2278,7 @@ fn run(cli: Cli) -> Result<ExitCode> {
                     let (project, thread) = on_target(thread, legacy)?;
                     FrontRequest::LibraryLink { project, thread, days }
                 }
+                LibraryCmd::Show { name } => FrontRequest::LibraryOpen { project: project_or_here(None)?, name },
                 LibraryCmd::List { project } => FrontRequest::LibraryReports { project },
                 LibraryCmd::Publish { source, project, name, live, to_user, title, from_thread } => {
                     FrontRequest::LibraryPublish {
@@ -3603,6 +3607,9 @@ fn render_thread(s: &mut String, t: &aaa_proto::ThreadView) {
         t.machine,
         t.brief.as_str()
     );
+    if let Some(id) = &t.report_id {
+        let _ = writeln!(s, "보고: {id}");
+    }
     render_automation_origin(s, t);
     let _ = writeln!(s, "인증: {}", t.account.as_deref().unwrap_or("로컬 로그인"));
     if let Some(e) = &t.error {
@@ -4502,11 +4509,12 @@ fn render_front(r: &FrontResponse) -> String {
             for r in reports {
                 let _ = writeln!(
                     s,
-                    "{}/{}\t{}B\t갱신 {}{}{}{}{}",
+                    "{}/{}\t{}B\t갱신 {}{}{}{}{}{}",
                     r.project,
                     r.name,
                     r.size,
                     r.updated_at_ms,
+                    r.report_id.as_ref().map(|id| format!(" · {id}")).unwrap_or_default(),
                     if r.live { " · 실시간" } else { "" },
                     if r.to_user {
                         format!(
@@ -4566,6 +4574,9 @@ fn render_front(r: &FrontResponse) -> String {
             }
         }
         FrontResponse::LibraryLink(l) => {
+            if let Some(id) = &l.report_id {
+                let _ = writeln!(s, "보고: {id}");
+            }
             let _ = writeln!(
                 s,
                 "{}\t{}/{}\t{}\t만료 {}\t마지막 열람 {}\t{}B{}",
@@ -4588,6 +4599,12 @@ fn render_front(r: &FrontResponse) -> String {
             }
         }
         FrontResponse::Library(l) => {
+            if let Some(id) = &l.report_id {
+                let _ = writeln!(s, "보고: {id}");
+            }
+            if !l.versions.is_empty() {
+                let _ = writeln!(s, "보고 판: {}", l.versions.join(" "));
+            }
             let _ = writeln!(s, "{}/{} 결과물 {}개(보기 경로 2시간: {})", l.project, l.thread, l.files.len(), l.base);
             for f in &l.files {
                 let at = if f.on_agent { " · agent에 있음" } else { "" };

@@ -1404,7 +1404,7 @@ fn agent_became(ev: &mut Events, id: &str, activity: AgentActivity, at: u64) -> 
         FrontEvent::Thread(t)
             if t.id == id && t.agent.as_ref().is_some_and(|a| a.activity == activity && a.since_ms >= at) =>
         {
-            Some(t.clone())
+            Some(t.as_ref().clone())
         }
         _ => None,
     })
@@ -4118,6 +4118,14 @@ fn library_view() {
     assert!(head.contains("content-length: 2097152"), "{head}");
     let original = std::fs::read(agent_lib.join("big.bin")).unwrap();
     assert!(body == original, "본문 {}바이트가 원본과 다르다", body.len());
+
+    // r 판은 큰 파일을 최신 agent에서 대신 읽지 않는다. 기존 t 보기와 서로 다른 계약이다.
+    let report_id = lib["report_id"].as_str().expect("보고 판 번호");
+    let frozen = w.h.ok(&["thread", "library", report_id]);
+    let frozen_base = frozen["base"].as_str().unwrap();
+    let (st, _, frozen_error) = http_get(&web, &format!("{frozen_base}big.bin"));
+    assert_eq!(st, 502, "불변 판의 미복사 큰 파일은 agent 최신 내용으로 대체하지 않는다");
+    assert!(String::from_utf8_lossy(&frozen_error).contains("이 보고 판에 복사되지 않은 파일"));
 
     // 파일 보기(차이 목록 R1)도 이 경로로 읽는다: 목록이 종류·MIME을 주고, Range·내려받기를 받는다
     let typed: Vec<(String, String, String)> = lib["files"]

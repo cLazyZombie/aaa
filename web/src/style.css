@@ -1545,3 +1545,5 @@ summary.chat-compact-head { cursor: pointer; }
 .thread-ask-foot .muted { font-size: var(--fs-xs); color: var(--text-dim); }
 .thread-ask-card .prompt-card-header h2 { flex: none; }
 .thread-ask-card .prompt-card-where { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+.term-title .report-short-id { white-space: nowrap; flex-shrink: 0; }

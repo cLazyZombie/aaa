@@ -90,6 +90,12 @@ impl Host {
         if rec.report_hash.as_deref() != Some(report_hash) {
             return Err(err(ErrorCode::BadRequest, "질문이 바뀌었다(새 보고가 왔다). 다시 읽고 답한다"));
         }
+        if self.default_review_for(&rec)
+            && picks.first() == Some(&Some(1))
+            && text.as_deref().is_none_or(|t| t.trim().is_empty())
+        {
+            return Err(err(ErrorCode::BadRequest, "고칠 점을 글로 적어 답한다"));
+        }
         let (message, summary) =
             compose(&rec.questions, &picks, text.as_deref()).map_err(|e| err(ErrorCode::BadRequest, e))?;
         let requests = self.question_requests(project, id)?;

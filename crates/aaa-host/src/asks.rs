@@ -199,6 +199,7 @@ impl Host {
         self.ask_save(
             &rec.project,
             &AskRecord {
+                report_id: self.thread_report_id(&rec.project, &rec.id, rec.report_hash.as_deref()),
                 question_id: None,
                 id: aaa_common::util::new_id(),
                 kind: AskKind::Question,
@@ -248,6 +249,7 @@ impl Host {
                     &aaa_proto::report_questions(&p.input.body),
                 )?;
                 (!items.is_empty()).then(|| aaa_proto::ThreadQuestions {
+                    review: false,
                     report_hash: p.body_sha256.clone(),
                     draft: self.question_draft(project, &items),
                     items,
@@ -355,6 +357,7 @@ impl Host {
             return Err(internal(e));
         }
         let record = AskRecord {
+            report_id: None,
             question_id: items.first().and_then(|q| q.id.clone()),
             id: id.clone(),
             kind: AskKind::Request,
@@ -484,6 +487,7 @@ impl Host {
         self.ask_save(
             project,
             &AskRecord {
+                report_id: self.thread_report_id(project, &rec.id, rec.report_hash.as_deref()),
                 question_id: None,
                 id: id.clone(),
                 kind: AskKind::Question,
@@ -578,6 +582,7 @@ impl Host {
         self.ask_save(
             &item.project,
             &AskRecord {
+                report_id: None,
                 question_id: post
                     .as_ref()
                     .and_then(|p| self.post_question_ids(item, p).ok())
@@ -609,6 +614,7 @@ impl Host {
         self.ask_save(
             project,
             &AskRecord {
+                report_id: None,
                 question_id: None,
                 id: aaa_common::util::new_id(),
                 kind: AskKind::Task,

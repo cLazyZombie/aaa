@@ -1296,7 +1296,11 @@ export type ReportAttention = "completed" | "needs_user";
 
 export type ThreadStage = "merge_ready" | "landing";
 
-export type ThreadView = { project: string, id: string, title: string, machine: string, profile: string, account?: string, role: Role,
+export type ThreadView = {
+/**
+ * FRONT_API 1.95. 보고의 특정 판을 여는 프로젝트별 영속 번호(r-0001부터).
+ */
+report_id?: string, project: string, id: string, title: string, machine: string, profile: string, account?: string, role: Role,
 /**
  * (FrontResponse 태그 `kind`와 겹치지 않게 이름을 달리한다)
  */
@@ -1385,6 +1389,10 @@ pending: number, };
 
 export type ThreadQuestions = {
 /**
+ * FRONT_API 1.96. Questions 없는 검수 대기에 host가 만든 기본 검수 카드. B는 고칠 점을 글로 적는다.
+ */
+review: boolean,
+/**
  * 이 질문이 든 보고 사본의 hash. 답은 이 hash가 지금 보고일 때만 받는다
  */
 report_hash: string, items: Array<ThreadQuestion>,
@@ -1428,7 +1436,11 @@ body?: string, };
 
 export type AskKind = "question" | "request" | "task";
 
-export type AskRecord = { id: string, question_id?: string, kind: AskKind,
+export type AskRecord = {
+/**
+ * FRONT_API 1.96. 답할 때의 보고 판. 새 보고 뒤에도 같은 원문을 연다.
+ */
+report_id?: string, id: string, question_id?: string, kind: AskKind,
 /**
  * 질문은 thread 번호, 확인 필요 post는 inbox 항목 ID, 할 일은 task 제목
  */
@@ -2050,7 +2062,15 @@ on_agent: boolean,
  */
 mime: string, kind: FileKind, };
 
-export type LibraryView = { project: string, thread: string,
+export type LibraryView = {
+/**
+ * FRONT_API 1.95. 같은 이름·thread의 보고 판(최신 번호부터).
+ */
+versions: Array<string>,
+/**
+ * FRONT_API 1.95. 보고의 특정 판을 여는 프로젝트별 영속 번호(r-0001부터).
+ */
+report_id?: string, project: string, thread: string,
 /**
  * 회수한 report.md(없으면 None)
  */
@@ -2064,7 +2084,11 @@ link: LinkView | null,
  */
 from_thread?: string, };
 
-export type LinkView = { id: string, project: string, thread: string, base: string,
+export type LinkView = {
+/**
+ * FRONT_API 1.95. 보고의 특정 판을 여는 프로젝트별 영속 번호(r-0001부터).
+ */
+report_id?: string, id: string, project: string, thread: string, base: string,
 /**
  * 공개했을 때만 있는 절대 HTTPS 주소. loopback은 밖 알림에 싣지 않는다.
  */
@@ -2074,7 +2098,19 @@ url: string | null, created_at_ms: number, expires_at_ms: number, last_opened_at
  */
 size: number, };
 
-export type LibraryReport = { project: string, name: string, size: number, updated_at_ms: number, live: boolean,
+export type LibraryReport = {
+/**
+ * FRONT_API 1.95. 특정 판 사본의 보존 용량. size는 기존 최신 사본 크기다.
+ */
+history_size: number,
+/**
+ * FRONT_API 1.95. 같은 이름·thread의 보고 판(최신 번호부터).
+ */
+versions: Array<string>,
+/**
+ * FRONT_API 1.95. 보고의 특정 판을 여는 프로젝트별 영속 번호(r-0001부터).
+ */
+report_id?: string, project: string, name: string, size: number, updated_at_ms: number, live: boolean,
 /**
  * 읽기 실패·상한 초과도 목록에서 감추지 않는다.
  */
