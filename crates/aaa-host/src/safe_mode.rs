@@ -217,23 +217,10 @@ fn assignment(line: &str) -> Option<usize> {
     None
 }
 
-/// 따옴표 밖 첫 `#` 앞(주석을 뗀 본문)
-fn uncommented(line: &str) -> &str {
-    let mut quote = None;
-    for (i, c) in line.char_indices() {
-        match (quote, c) {
-            (None, '"' | '\'') => quote = Some(c),
-            (Some(q), c) if c == q => quote = None,
-            (None, '#') => return &line[..i],
-            _ => {}
-        }
-    }
-    line
-}
-
-/// 따옴표 없는 key 이름만 든 표 머리(`[a.b]`·`[[a]]`). 배열 원소 줄(`["sk-…"]`)은 머리로 보지 않는다
+/// 따옴표 없는 key 이름만 든 표 머리(`[a.b]`·`[[a]]`, 뒤에 주석이 붙어도 된다). 배열 원소 줄(`["sk-…"]`)은 머리로 보지 않는다
 fn header_like(line: &str) -> bool {
-    let body = uncommented(line.trim()).trim_end();
+    // 따옴표를 받지 않으니 첫 `#`이 곧 주석이다
+    let body = line.split('#').next().unwrap_or("").trim();
     let inner = body
         .strip_prefix("[[")
         .and_then(|b| b.strip_suffix("]]"))
