@@ -155,6 +155,8 @@ mod windows;
 use windows::create_directory;
 #[cfg(windows)]
 pub use windows::{new_file, verify};
+#[cfg(windows)]
+pub(crate) use windows::{protect, security_for};
 
 #[cfg(unix)]
 pub fn account() -> Option<String> {
@@ -164,10 +166,20 @@ pub fn account() -> Option<String> {
 
 #[cfg(windows)]
 pub fn account() -> Option<String> {
+    token_account(false)
+}
+
+#[cfg(windows)]
+pub(crate) fn default_owner() -> Option<String> {
+    token_account(true)
+}
+
+#[cfg(windows)]
+fn token_account(owner: bool) -> Option<String> {
     use windows_sys::Win32::{
         Foundation::{CloseHandle, LocalFree},
         Security::Authorization::ConvertSidToStringSidW,
-        Security::{GetTokenInformation, TOKEN_QUERY, TOKEN_USER, TokenUser},
+        Security::{GetTokenInformation, TOKEN_OWNER, TOKEN_QUERY, TOKEN_USER, TokenOwner, TokenUser},
         System::Threading::{GetCurrentProcess, OpenProcessToken},
     };
     // SAFETY: 현재 token을 읽기 권한으로 열고 정렬된 buffer를 제공한다. 모든 handle/OS 메모리를 해제한다.
@@ -176,17 +188,22 @@ pub fn account() -> Option<String> {
         if OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &mut token) == 0 {
             return None;
         }
+        let class = if owner { TokenOwner } else { TokenUser };
         let mut len = 0;
-        GetTokenInformation(token, TokenUser, std::ptr::null_mut(), 0, &mut len);
+        GetTokenInformation(token, class, std::ptr::null_mut(), 0, &mut len);
         let mut buffer = vec![0usize; (len as usize).div_ceil(std::mem::size_of::<usize>())];
-        let ok = len > 0 && GetTokenInformation(token, TokenUser, buffer.as_mut_ptr().cast(), len, &mut len) != 0;
+        let ok = len > 0 && GetTokenInformation(token, class, buffer.as_mut_ptr().cast(), len, &mut len) != 0;
         CloseHandle(token);
         if !ok {
             return None;
         }
-        let user = &*buffer.as_ptr().cast::<TOKEN_USER>();
+        let sid = if owner {
+            (*buffer.as_ptr().cast::<TOKEN_OWNER>()).Owner
+        } else {
+            (*buffer.as_ptr().cast::<TOKEN_USER>()).User.Sid
+        };
         let mut text = std::ptr::null_mut();
-        if ConvertSidToStringSidW(user.User.Sid, &mut text) == 0 {
+        if ConvertSidToStringSidW(sid, &mut text) == 0 {
             return None;
         }
         let mut n = 0;

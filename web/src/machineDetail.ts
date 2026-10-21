@@ -39,6 +39,8 @@ export function machineRows(m: MachineView, now: number): DetailRow[] {
     { label: "판", value: m.software ? (m.software_differs ? `${m.software} (host와 다름)` : m.software) : "모름", warn: m.software_differs === true },
     { label: "SHA-256", value: m.sha256 ?? "모름", mono: true },
   ];
+  if (m.os === "windows")
+    rows.push({ label: "Windows 제한", value: "셸 안에서 실행한 harness는 자동 감지하지 않습니다. Job Object를 통한 세션 자손 수명 관리는 아직 지원하지 않습니다.", warn: true });
   if (m.dev_mode) rows.push({ label: "개발 모드", value: "켜짐" });
   const h = connected ? m.health : null;
   if (h) {

@@ -1,5 +1,6 @@
 //! 여러 역할이 함께 쓰는 작은 도구: ID, 시각, boot ID, 사용자 전용 파일.
 
+#[cfg(unix)]
 use std::io::Write as _;
 use std::path::Path;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -245,6 +246,12 @@ pub fn machine_name_from(raw: &str) -> String {
 
 /// 사용자만 읽고 쓰는 폴더(0700)를 만든다.
 pub fn ensure_private_dir(p: &Path) -> std::io::Result<()> {
+    #[cfg(windows)]
+    {
+        crate::private_file::parents(p)?;
+        crate::private_file::protect(p, true)?;
+    }
+    #[cfg(unix)]
     std::fs::create_dir_all(p)?;
     #[cfg(unix)]
     {
@@ -256,21 +263,44 @@ pub fn ensure_private_dir(p: &Path) -> std::io::Result<()> {
 
 /// 사용자 전용(0600) 파일을 원자적으로 쓴다(임시 파일 → rename).
 pub fn write_private(p: &Path, bytes: &[u8]) -> std::io::Result<()> {
-    let dir = p.parent().unwrap_or(Path::new("."));
-    let tmp = dir.join(format!(".{}.tmp-{}", p.file_name().unwrap().to_string_lossy(), std::process::id()));
+    #[cfg(windows)]
     {
-        let mut opts = std::fs::OpenOptions::new();
-        opts.write(true).create(true).truncate(true);
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::OpenOptionsExt;
-            opts.mode(0o600);
+        if p.try_exists()? {
+            crate::private_file::protect(p, false)?;
         }
-        let mut f = opts.open(&tmp)?;
-        f.write_all(bytes)?;
-        f.sync_all()?;
+        crate::private_file::write(p, bytes)
     }
-    std::fs::rename(&tmp, p)
+    #[cfg(unix)]
+    {
+        let dir = p.parent().unwrap_or(Path::new("."));
+        let tmp = dir.join(format!(".{}.tmp-{}", p.file_name().unwrap().to_string_lossy(), std::process::id()));
+        {
+            let mut opts = std::fs::OpenOptions::new();
+            opts.write(true).create(true).truncate(true);
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::OpenOptionsExt;
+                opts.mode(0o600);
+            }
+            let mut f = opts.open(&tmp)?;
+            f.write_all(bytes)?;
+            f.sync_all()?;
+        }
+        std::fs::rename(&tmp, p)
+    }
+}
+
+/// Windows의 기존 비밀 파일도 읽기 전에 소유권·종류를 확인하고 DACL을 좁힌다.
+pub fn read_private(p: &Path) -> std::io::Result<Vec<u8>> {
+    #[cfg(windows)]
+    {
+        use std::io::Read;
+        let mut bytes = Vec::new();
+        crate::private_file::protect(p, false)?.read_to_end(&mut bytes)?;
+        Ok(bytes)
+    }
+    #[cfg(unix)]
+    std::fs::read(p)
 }
 
 pub fn write_json<T: serde::Serialize>(p: &Path, v: &T) -> std::io::Result<()> {

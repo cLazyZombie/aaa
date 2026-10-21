@@ -292,8 +292,8 @@ Front API와 Agent link는 서로 다른 계약이다. 둘 다 다음 원칙을 
 | 셸 | 사용자 zsh/bash, argv 실행 우선 | 사용자 shell, argv 우선 | PowerShell/pwsh/cmd 명시, CreateProcessW 인용, UTF-16 경로 |
 | 경로·환경 | POSIX path·HOME, 외장 볼륨(전체 디스크 접근 필요) | POSIX bytes path·HOME·locale | drive/UNC·backslash·LOCALAPPDATA·대소문자·UTF-16 |
 | 줄바꿈·문자 | LF·raw bytes | 같음, locale 검증 | CRLF·codepage/UTF-8. 단순 LF 치환 금지 |
-| local IPC | user-only UDS·peer UID | 같음 | user SID 제한 Named Pipe·ACL(M1-1은 기본 DACL, 제한 ACL은 M2) |
-| 키 저장 | 상태 디렉터리의 0600 파일(키체인 잠금에 의존하지 않음) | 0600 파일 | 사용자 DPAPI |
+| local IPC | user-only UDS·peer UID | 같음 | 현재 user SID만 허용하는 protected DACL·원격 연결 거부(§8.394 M4p) |
+| 키 저장 | 상태 디렉터리의 0600 파일(키체인 잠금에 의존하지 않음) | 0600 파일 | 현재 user SID+SYSTEM만 허용하는 protected DACL(§8.394 M4p) |
 | 실행 검사·속도 | 필수 gate(§10) | 해당 없음 | Defender·SmartScreen 지연을 doctor에서 관측 |
 
 - **portable-pty만으로는 부족하다.** API가 있다는 것만으로 수명 관리가 해결되지 않는다. Windows의 handle·job·ConPTY 입출력 deadlock, 부모 종료 뒤 생존은 native E2E로 확인한다.
@@ -6880,3 +6880,15 @@ FRONT_API 1.96는 기본 검수 표지와 답 기록의 r 참조를 더한다. E
 - 이주·호환: TASKS.md는 이주하지 않는다. 옛 파일의 `##` 머리·설명 줄은 host가 지금처럼 읽고 쓰며, 웹만 나누어 보이지 않는다. 맨 위 단계 순서 바꾸기는 머리를 넘어 움직이고, 두 이웃의 목록이 다른 틈에 놓으면 앞 이웃의 목록 끝에 붙는다(머리를 새로 만들거나 지우지 않는다). 새 task는 지금처럼 `Backlog`(없으면 첫 목록) 끝에 든다. 웹의 목록 머리 메뉴·「새 목록」·폼의 목록 칸은 없앴고, CLI `--list`·`task list-*`는 그대로 받는다.
 - 예약을 그 자리에 넣는 것은 기존 `reserve`(맨 뒤) 뒤 `move`(순번)로 한다. 프로토콜 변경이 없어 FRONT_API는 유지한다. E2E76은 실제 host 예약 기록으로 데스크톱 끌기 세 가지·「예약」 칩·저장소 거르기와 기기 기억·휴대폰 순서 모드와 시트를 확인한다. 43·46·67은 한 목록에 맞췄다.
 - 착지 기준 origin/main `89e3f676`에서 마지막 §8.392·FRONT_API 1.97·E2E75를 직접 확인했다. 이 작업은 §8.393·E2E76으로 더하고 API 버전은 유지한다. t-0600·t-0609·t-0616의 할 일 화면 변경(머신 연결 재조회·owner 응답 뒤 편집 보존·「병합 중」 표지)과 함께 통합했다.
+
+### 8.394 Windows agent 비밀·Named Pipe 보호(t-0613, 웹 머신 추가 M4p)
+
+- Windows 머신을 웹으로 추가하는 M4의 선행 수리다. DPAPI 대신 설치기의 private 파일과 같은 현재 사용자 SID+SYSTEM DACL을 쓴다. 일반 사용자·그룹·Administrators ACE와 상위 폴더 상속은 허용하지 않는다.
+- `util::ensure_private_dir`는 빠진 부모를 생성 순간부터 보호한다. 기존 state·TLS 폴더와 비밀 파일은 실제 handle에서 종류·현재 사용자 소유권을 확인한 뒤 protected DACL로 좁힌다. 승격 token의 기본 소유자가 그룹이면 그 token의 기본 소유권과 일치할 때만 실제 객체를 다시 열어 사용자 소유로 좁힌다. 기존 상위 폴더·OS 정책은 바꾸지 않는다. reparse point·다중 hard link·그 밖의 소유자는 거부한다.
+- `write_private`는 매번 고유한 CREATE_NEW 임시 파일에 보호 DACL을 붙여 생성하고 sync→rename한다. TLS는 기존 키를 다시 읽을 때도 먼저 보호하며 바이트와 신원을 유지한다. agent identity·host pin도 비밀 읽기를 쓴다. 설치기의 승인/status 경로는 기존대로 권한을 검증만 한다.
+- Named Pipe는 처음과 accept 뒤의 모든 인스턴스에 현재 SID 하나만 허용하는 DACL을 생성 시 전달하고 원격 클라이언트를 거부한다. 첫 인스턴스 점유 거부·peer PID·BUSY 대기 규칙은 유지한다.
+- 머신 상세에 「Windows 제한」으로 셸 안 harness 자동 감지 없음과 세션 자손의 Job Object 수명 관리 미지원을 표시한다. 두 기능의 구현은 이 단계에서 바꾸지 않는다. FRONT_API·AGENT_LINK와 E2E 번호는 바꾸지 않는다.
+- 실제 파일·Pipe DACL을 읽어 Authz로 현재 SID의 허용, 다른 SID·그룹의 거부, SYSTEM 예외를 검사하는 Windows 전용 시험을 둔다. macOS에서는 Windows 교차 build/clippy로 컴파일·링크를 확인한다. 실제 실행 판정은 착지 뒤 기존 CI windows-2025, 실제 PC 인수는 후속 Windows 머신 시험이다.
+
+- 착지 기준 origin/main `57bc997e`에서 마지막 §8.393·FRONT_API 1.97·AGENT_LINK 1.11·E2E76을 직접 확인했다. 이 작업은 §8.394로 맞추고 기존 API 버전·E2E 번호를 유지한다. E2E49는 main의 새 기억 본문·갱신 thread 동시 대기를 유지한다.
+- 통합 후보의 Windows 교차 clippy가 main의 `update.rs` 시험용 `sha2::Digest` import를 미사용으로 검출했다. 실제 사용처가 Unix 전용 rollback 시험이므로 import도 `cfg(all(test, unix))`로 맞춘다. 시험 내용·업데이트 동작은 유지한다.
