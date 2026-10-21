@@ -373,9 +373,17 @@ impl Host {
         }
         // 감시를 세우는 동안 진행 루프가 이 기록을 집지 않게 한다. 진행 중 rollout이 없으면 루프는 곧 끝난다
         let driving = self.rollout_gate.lock().await;
-        let mut r = match self.record_restart(id, project, actor, &mid, service)? {
-            Ok(r) => r,
-            Err(old) => return Ok(respond(old)),
+        let mut r = match self.record_restart(id.clone(), project, actor, &mid, service) {
+            Ok(Ok(r)) => r,
+            Ok(Err(old)) => return Ok(respond(old)),
+            // 기록을 남긴 뒤의 실패(저장)면 진행 루프가 이어 받는다
+            Err(e) => {
+                drop(driving);
+                if self.load_rollout(&id).is_ok() {
+                    self.resume_rollout();
+                }
+                return Err(e);
+            }
         };
         let fallback = self.arm_restart(&mut r, &mid, web).await;
         drop(driving);
