@@ -2158,6 +2158,11 @@ E2E 74의 headless WebKit iframe 그림은 기존 E2E 59·plan §8.353과 같은
 - `node web/e2e/web.e2e.mjs --spec 83-cli-zero-gaps`: 인벤토리의 작은 빈칸 다섯(답 1A). t1 줄 메뉴 「세션 끝내기」 → 확인 창 → 세션만 끝나고 「다시 열기」로 다시 뜸, coordinator 메뉴 「하나 더 띄우기」(맨 위 profile 이름을 단다) → coordinator pane 둘, 보고가 오면 host가 낸 30일 링크를 thread 화면을 연 채 설정 「이 aaa」 「낸 링크」에서 보고(앱 안 보기가 마지막 열람으로 남는다) 폐기하면 열려 있던 링크 줄도 「폐기됨」이 되고, 7일을 골라 새 링크(만료 − 발급 = 7일), 「나중」 파일은 폴더 밖 경로를 host가 거부한 말을 보이고 `memory/later.md`를 더하면 host `project show`의 `task_notes`에 들어가며 빼면 비운다.
 - 결함 심기: 「CLI 0회」 검문 끄기는 첫 단계가, `do.message`가 받는 thread를 잃으면 자동화 ② 단계(전달 기록 없음)가, thread 관리 메뉴의 「끝내기」 빼기는 정리 단계가 잡았다. `do.message` 본문에서 규칙 글만 빼는 결함은 잡지 못한다: 실행 자료(`memo`)에도 같은 글이 들어가 화면에 남는다. 81은 「세션 끝내기」가 `pane_close`를 보내는 결함(「다시 열기」 없음), 「하나 더 띄우기」가 `new`를 뒤집는 결함(coordinator 하나), 링크 수명을 보내지 않는 결함(30일), 폐기 뒤 host가 reports 사건을 내지 않는 결함(열린 화면이 active로 남음)을 잡았다.
 
+## 질문 dock 칩 정렬·답한 뒤 숨김(t-0687, plan §8.329)
+
+- `NODE_PATH=$(npm root -g) node web/e2e/web.e2e.mjs <캡처 폴더> --spec 53-thread-questions --workers 1`: 실제 host의 질문 보고와 휴대폰 답변을 사용한다. Chromium 2800px·1280px와 WebKit 휴대폰에서 미응답 칩의 왼쪽 끝·열 오른쪽 끝이 입력칸과 1px 이내이고 입력칸 위에 있는지, 가로 넘침이 없는지 단언한다.
+- 같은 세 크기의 답변 뒤 dock 칩·빈 dock 부재를 검사하고 두 상태의 스크린샷을 남긴다. 기존 대화 칩의 답함·보관된 질문 원문·다른 기기 카드·새 질문 회귀 검사는 유지한다. DOM·host 답 사건으로 끝내며 고정 sleep이나 시한 연장을 쓰지 않는다.
+
 ## SSH로 설치·등록(t-0578 웹 머신 추가 M3, plan §8.420)
 
 - host 유닛 `cargo test -p aaa-host machine_setup`:
