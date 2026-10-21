@@ -7182,3 +7182,12 @@ FRONT_API 1.96는 기본 검수 표지와 답 기록의 r 참조를 더한다. E
 - **CI 실제 경로(hp/ 세 번, 10-22).** 착지 직전 coordinator 확인으로 `hp/t-0578-m3`를 올렸다. 첫째는 위 검증 SSH 입구 결함·Linux 실험실 host 종류·Windows 시험 cfg, 둘째는 HOME 길이로 실패해 고쳤다. 셋째(`a04949b3`)에서 macos-15 「SSH로 설치·등록 실제 root sshd·LaunchAgent」가 통과했다(조상: runner sshd-session → root sshd-session → root `/usr/sbin/sshd` listener, 끝 확인 줄·runner 실제 HOME 전후 같음). 같은 run의 web-e2e `52-task-attach` 「바로 시작」 20초 시한 초과는 SSH 설치와 닿지 않고 따로 두 번 통과해 CI 일시 실패로 기록했다. 각 hp/ branch는 확인 뒤 지웠다.
 - **남은 것.** GUI 로그인 세션 없음 등 적용 중 사람 일 뒤 같은 설치 ID로 재개하는 단추는 아직 없다(계획을 다시 만든다). Linux·Windows는 M5·M4.
 - **번호.** 착지 기준 origin/main `1b8fa9fb`(install I3 실제 등록 시험 수리)에서 마지막 §8.419·FRONT_API 1.102·AGENT_LINK 1.11·E2E 83을 직접 확인해 §8.420·FRONT_API 1.103을 이어 쓴다. E2E는 M2의 `72-machine-add`에 더한다. AGENT_LINK 그대로.
+
+### 8.421 기본 PR routine 재변환과 보존 사본(t-0684)
+
+- **문제.** 기본 PR routine을 변환한 뒤 보존 사본만 있고 TOML이 없는 프로젝트는 doctor가 옛 파일을 다시 만든다. 기존 `.converted/pr-followup.md`와 새 routine이 함께 있으면 변환 실행이 사본 충돌로 막혔다. 기존 TOML 보존 보호는 유지한다.
+- **정본과 보존.** `on = "pr"`은 새 `automations/pr-followup.toml`의 `on.pr`와 owner 대상 `do.message`로 옮기며 조건·켜짐·본문을 유지한다. doctor/create는 TOML 또는 기본 보존 사본이 있으면 옛 routine을 만들지 않는다. 변환은 동일 바이트 사본을 재사용하고 다른 판은 첫 빈 `.1.md`·`.2.md` 이름에 보존한다. 경로·재사용 여부도 계획 hash에 묶고, 사본 변경·symlink·기존 TOML 충돌은 무쓰기 거부한다. 실패 복구는 재사용한 사본을 지우지 않는다.
+- **웹.** 미리보기와 실행 실패는 창 제목·alert로 명확히 보이고 「미리보기 다시 읽기」로 현재 계획을 확인한다. Reader는 계속 미리보기만 본다. 기존 E2E40을 확장하며 FRONT_API·AGENT_LINK·schema는 변경하지 않는다.
+- **검증·운영.** 격리 파일/host keeper와 실제 host 웹 E2E40으로 원인·보존·복구·실패 표시를 확인한다. 전체 ci-local과 공개 검사를 통과한 뒤 착지 창을 기다린다. 운영 projects의 규칙은 수정하지 않으며 수리 배포 뒤 변환 방법은 automations.md에 남긴다.
+
+- **착지 통합.** 기준 origin/main `a30dbf65`의 마지막 plan §8.420·FRONT_API 1.103·AGENT_LINK 1.11·E2E 83을 확인했다. 이 변경은 빈 §8.421에 두며 기존 E2E40을 확장한다. API 판과 E2E 번호는 main 그대로 유지한다.

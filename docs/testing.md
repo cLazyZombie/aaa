@@ -2,6 +2,13 @@
 
 새 기능을 만드는 thread가 따르는 짧은 규칙이다. 근거는 참고 넷(herdr 0.9.5·herdr-projects 0.2.35·herdr-web-ui `aa624cb`·t3code `4b1024da`)과 이 저장소에서 실제로 난 간헐 실패다. 전략과 도구 목록은 [plan §13](plan.md#13-테스트-전략과-직접-만들-e2e-도구)에 있다.
 
+## PR routine 재변환과 보존 사본(t-0684, plan §8.421)
+
+- `nice -n 15 cargo test -p aaa-host --lib automation::tests:: --locked`: 영문 보존 사본+한글 routine+TOML 없음의 격리 파일로 기존 사본 충돌을 재현한다. 같은 사본 재사용·다른 판의 첫 빈 번호·실행 실패 복구에서 기존 사본 보존·symlink 거부·보존 위치 변경의 hash 및 무쓰기 거부·기존 TOML 충돌을 검사한다. 변환된 PR의 events·enabled·owner 메시지·본문도 원본과 비교한다.
+- `archived_followup_without_toml_is_not_revived_by_doctor_or_create`는 변환 뒤 TOML이 없는 경우 `files_problems`가 옛 규칙을 만들 대상으로 판정하던 RED를 보존한다. 실제 host의 doctor와 create가 보존 사본과 원래 프로젝트 파일을 지키는지 검사한다. 기존 TOML이 있는 keeper도 유지한다.
+- `NODE_PATH=$(npm root -g) node web/e2e/web.e2e.mjs --spec 40-automation-detail --workers 1`: 실제 host의 미리보기 문법 오류·계획 변경 실행 오류를 화면 제목과 alert에서 확인하고, 원인을 고친 뒤 새 미리보기를 읽어 변환한다. 동일 사본 재사용·PR 두 판 보존·doctor 후 옛 규칙 부재와 Reader 미리보기 전용을 함께 확인한다. 고정 sleep·실패 재시도·시한 연장 없이 응답과 DOM 사건으로 끝낸다.
+- 운영 프로젝트는 수정하지 않는다. 전체 검증은 `nice -n 15 bash scripts/ci-local.sh`와 공개 검사다.
+
 ## install macOS launchd owner(t-0485, plan §8.419)
 
 - `nice -n 15 cargo test -p aaa --bin aaa --locked cli::tests::launchd_registration_authorization_arguments_parse_before_any_service_changes -- --exact`: 실제 등록 owner와 공유한 승인 argv를 실제 `Cli::try_parse_from`으로 검사한다. `--prompt plain`은 install 상위 옵션이므로 authorize 앞에 둔다. 서비스 등록 없이 잘못된 순서 RED→올바른 순서 GREEN을 남긴다.
