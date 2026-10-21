@@ -92,7 +92,7 @@ export function SafetyPage({ role }: { role: DeviceRole }) {
     (keep = false) => {
       if (!shown) return;
       const mine = ++seq.current;
-      call({ op: "safety_show", scope })
+      return call({ op: "safety_show", scope })
         .then((r) => {
           if (mine !== seq.current || r.kind !== "safety") return;
           setView(r);
@@ -102,7 +102,7 @@ export function SafetyPage({ role }: { role: DeviceRole }) {
     },
     [shown, scope],
   );
-  useEffect(() => load(), [load]);
+  useEffect(() => { void load(); }, [load]);
   const set = async (key: string, value: string | null) => {
     if (!view) return;
     setBusy(true);
@@ -118,7 +118,8 @@ export function SafetyPage({ role }: { role: DeviceRole }) {
       if (r.kind === "safety") setView(r);
     } catch (e) {
       setError(e instanceof ApiError && e.body.code === "conflict" ? conflictNote : say(e));
-      load(true);
+      // 새 판을 읽기 전에 풀면 다음 저장도 옛 rev를 보내 다시 충돌한다.
+      await load(true);
     } finally {
       setBusy(false);
     }
