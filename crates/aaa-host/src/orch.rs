@@ -334,10 +334,16 @@ coordinator는 thread가 아니므로 보고 파일로 알림을 만들지 않�
 `aaa post user --request --needs-user --topic user-action --title '<정할 것·추천 한 줄>' --body-file scratch/user-action.md`를 보낸다.
 이 제목은 가려진 채 외부 알림 본문에 실린다(본문은 싣지 않는다): 사용자가 열지 않고 판단할 수 있게 쓰고 비밀값·경로·주소를 넣지 않는다.
 thread 질문이면 제목 끝에 `aaa:question/<thread>`를 붙인다: 알림을 누르면 그 질문 카드가 열린다(글에서는 빠진다).
+열린 질문을 가리키는 post는 「답할 것」에서 카드 한 줄로 묶인다. 카드에서 답하면 연결 post도 자동으로 끝난다.
+질문 선택지·추천은 thread 보고의 카드를 정본으로 삼는다. post에만 새 C안을 만들어 선택지가 갈라지게 하지 않는다.
+새 안을 제안하려면 thread 보고를 먼저 고친다. 사용자가 채팅으로 답하면 카드에 있는 선택은 `aaa thread answer <thread> 1A`처럼
+기록하고, 카드에 없는 C나 직접 쓴 답은 `aaa thread answer <thread> --text '1 C: 사용자 답 원문'`으로 그대로 전한다.
+채팅 답을 이미 전했거나 카드 없는 요청이면 `aaa post handled <p-번호>`로 처리 사실만 표시한다. 이 명령은 질문 선택·승인·실행을 하지 않는다.
 맡긴 일 전체를 끝냈으면 완료 내용을 파일에 쓰고
 `aaa post user --notice --topic task-complete --title '전체 완료' --body-file scratch/completed.md`를 한 번 보낸다.
 post 본문에는 비밀값을 쓰지 않는다. 이 두 post는 기기의 입력 필요·작업 완료 알림 설정을 따른다. 사용자가 답하거나 결과를 확인하면
-해당 post inbox 항목을 `aaa inbox done <id>`로 끝낸다. 확인창·세션 사라짐·머신 이상은 앱 안 알림과 coordinator inbox에만 남는다. 사람이 필요하면 coordinator가 위 「확인 필요」 post로 알린다.
+해당 post를 `aaa post handled <p-번호>`로 끝낸다(`inbox done <inbox ID>`도 처리 상태에 반영된다).
+`post status <p-번호>`는 전송 결과와 처리 상태를 함께 보인다. 확인창·세션 사라짐·머신 이상은 앱 안 알림과 coordinator inbox에만 남는다. 사람이 필요하면 coordinator가 위 「확인 필요」 post로 알린다.
 
 ## 착지 뒤 GitHub CI
 착지 병합 첫 줄은 `병합: <요약> (t-NNNN)`으로 끝낸다. 착지 thread는 필수 로컬 검증과 main push 뒤 GitHub CI를 기다리지 않고 바로 보고한다.
@@ -359,8 +365,9 @@ index.html이 없으면 거절한다. thread가 낸 보고(t-NNNN 사본)는 「
 thread 사본은 thread ID). 터미널에서 누르면 브라우저가 그 질문 카드·보고서를 열고, 웹 대화창은 같은 host 링크를 앱 안 칩으로
 그린다. 웹 주소가 없으면(공개 안 함) `aaa:question/<thread>`·`aaa:report/<이름>`을 쓴다(웹 대화창은 칩, 터미널에서는 글).
 공유 주소(`https://…/v/…`)는 사용자가 밖으로 보내 달라고 할 때만 쓴다.
-확인 필요 post와 thread 질문은 웹 「답할 것」에 모인다. 사용자가 카드로 답하면 host가 thread에 전하고, 확인 필요 post를
-「답함으로 표시」하면 그 inbox 항목이 끝나고 `request handled` 항목이 온다: 같은 것을 다시 묻지 않는다.
+확인 필요 post와 thread 질문은 웹 「답할 것」에 모인다. 질문의 답은 카드가 정본이다: 카드로 답하면 host가 thread에 전하고
+연결 post도 함께 끝내 `request handled`를 남긴다. 질문에 연결되지 않은 post는 「답함으로 표시」로 끝내며 같은 항목이 온다.
+연결 post를 CLI `inbox done`으로 먼저 끝내도 질문에 답한 것으로 보지 않는다. 같은 것을 다시 묻지 않는다.
 
 ## 첫 턴
 TASKS.md가 비어 있고 thread가 없으면 이것만 한다: goal을 한 줄로 다시 말하고, 범위에 든 repo와 머신을 늘어놓고(goal과
@@ -2244,6 +2251,9 @@ impl Host {
                 let next = next_lines(&text);
                 let questions =
                     if crate::report_mark::needs_user(&text) { aaa_proto::report_questions(&text) } else { Vec::new() };
+                let closed_question =
+                    questions.is_empty() && !rec.questions.is_empty() && rec.question_answer.is_none();
+                let previous = rec;
                 let rec = self.update_rec(project, id, |r| {
                     r.report_hash = Some(hash);
                     r.report_changed_ms = Some(aaa_common::util::now_ms());
@@ -2255,6 +2265,10 @@ impl Host {
                     r.copy_retry_at_ms = 0;
                     r.copy_notes = skipped.clone();
                 })?;
+                if closed_question {
+                    self.record_question_closed(&previous);
+                }
+                self.reconcile_question_requests(project)?;
                 let mut detail = format!("사본 {copy}");
                 if !skipped.is_empty() {
                     detail.push_str(&format!(", 건너뜀: {}", skipped.join("; ")));

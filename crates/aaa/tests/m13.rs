@@ -2732,6 +2732,7 @@ fn worker_session_cli_is_read_only() {
         &["thread", "message", "demo", id, "--text", "x"],
         &["pane", "send-text", &shell, "echo hi"],
         &["thread", "ack", "demo", id],
+        &["post", "handled", "demo", "p-00000001"],
     ] {
         let o = as_session(pane, args);
         assert_eq!(o.status.code(), Some(1), "{args:?}: {}", String::from_utf8_lossy(&o.stdout));

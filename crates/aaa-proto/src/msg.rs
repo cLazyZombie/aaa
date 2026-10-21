@@ -1672,6 +1672,13 @@ pub enum FrontRequest {
         project: String,
         post_id: String,
     },
+    /// 사용자 답을 받은 확인 필요 post를 처리됨으로 표시한다. 질문 선택·승인·실행은 하지 않는다.
+    PostHandled {
+        #[serde(default)]
+        #[ts(optional, as = "Option<String>")]
+        project: String,
+        post_id: String,
+    },
     PostList {
         #[serde(default)]
         #[ts(optional, as = "Option<String>")]
@@ -2775,6 +2782,7 @@ impl FrontRequest {
             FrontRequest::ThreadStartAccount { start, .. } => start.project_mut(),
             FrontRequest::Post { project, .. }
             | FrontRequest::PostStatus { project, .. }
+            | FrontRequest::PostHandled { project, .. }
             | FrontRequest::PostList { project, .. }
             | FrontRequest::Asks { project, .. }
             | FrontRequest::AskHandle { project, .. }
@@ -2980,6 +2988,10 @@ pub enum FrontResponse {
     },
     Post {
         result: crate::PostResult,
+        /// status 조회에서 확인한 inbox 처리 상태(FRONT_API 1.83). 옛 host는 생략한다.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        #[ts(optional)]
+        handled: Option<bool>,
     },
     Posts {
         posts: Vec<crate::PostEnvelope>,

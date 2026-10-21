@@ -1449,11 +1449,10 @@ impl Host {
             }
             FrontRequest::DeployStatus { machine, id } => self.deployment_status(role, actor, machine, id).await,
             FrontRequest::Post { project, input } => {
-                self.front_post(&project, input, actor).map(|result| FrontResponse::Post { result })
+                self.front_post(&project, input, actor).map(|result| FrontResponse::Post { result, handled: None })
             }
-            FrontRequest::PostStatus { project, post_id } => {
-                self.post_status(&project, &post_id, actor).map(|result| FrontResponse::Post { result })
-            }
+            FrontRequest::PostStatus { project, post_id } => self.post_status_view(&project, &post_id, actor),
+            FrontRequest::PostHandled { project, post_id } => self.post_handled(&project, &post_id, actor),
             FrontRequest::PostList { project } => self.post_list(&project),
             FrontRequest::PostUnmute { project, thread } => self.post_unmute(&project, &thread, actor),
             FrontRequest::Asks { project } => self.asks_view(&project),
