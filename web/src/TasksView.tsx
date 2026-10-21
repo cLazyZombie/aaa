@@ -33,7 +33,7 @@ import {
   X,
   type LucideIcon,
 } from "lucide-react";
-import type { OwnerChoice, TaskBoard, TaskConflict, TaskLogEntry, TaskNotesFile, TaskOp, TaskThread, TaskView, ThreadGroup, ThreadView } from "./gen/proto";
+import type { MachineView, OwnerChoice, TaskBoard, TaskConflict, TaskLogEntry, TaskNotesFile, TaskOp, TaskThread, TaskView, ThreadGroup, ThreadView } from "./gen/proto";
 import { ApiError, call, me, onTasksChanged } from "./api";
 import { DrawerToggle, HeadMore, HeadNote } from "./drawer";
 import { Markdown } from "./Markdown";
@@ -206,6 +206,7 @@ export function TasksView({
   board,
   error,
   groups,
+  machines,
   reader,
   addRequest,
   focusRequest,
@@ -222,6 +223,8 @@ export function TasksView({
   error: string | null;
   /** thread id → 묶음(App의 thread 목록, 바뀌면 바로 따라간다) */
   groups: ThreadGroups;
+  /** host 상태 사건의 머신 목록(통계·pane 변경은 owner 재조회를 일으키지 않는다) */
+  machines: readonly MachineView[];
   /** 보기 권한 기기: 편집 단추·끌기·「+」를 숨긴다 */
   reader: boolean;
   /** 바뀌면 새 task 폼(문서가 있으면 「할 일에 추가」 창)을 연다 */
@@ -274,13 +277,27 @@ export function TasksView({
       .then((m) => setFrontApi(m?.front_api ?? ""))
       .catch(() => setFrontApi(""));
   }, [shown, frontApi]);
-  // owner 고르기 목록(머신마다 묻는다): 편집할 수 있을 때 화면을 열면 한 번
-  useEffect(() => {
-    if (!shown || !canEdit || owners !== null) return;
+  const ownersSeq = useRef(0);
+  const loadOwners = useCallback(() => {
+    if (!shown || !canEdit) return;
+    const n = ++ownersSeq.current;
     call({ op: "assignable", check: null })
-      .then((r) => setOwners(r.kind === "assignable" ? r.owners : []))
-      .catch(() => setOwners([]));
-  }, [shown, canEdit, owners]);
+      .then((r) => {
+        if (n === ownersSeq.current && r.kind === "assignable") setOwners(r.owners);
+      })
+      .catch(() => {
+        if (n === ownersSeq.current) setOwners((old) => old ?? []);
+      });
+  }, [shown, canEdit]);
+  const machineConnections = JSON.stringify(machines.map((m) => [m.id, m.name, m.connection]).sort());
+  const newTask = creating !== null;
+  const starting = dialog?.kind === "start";
+  // 처음 읽은 끊김 값이 고정되지 않게 연결 변화와 화면·상세·시작 창을 열 때 host에 다시 묻는다.
+  // 숨김·다음 조회 뒤에 돌아온 옛 응답은 버리고, 고치던 폼은 그대로 둔다.
+  useEffect(() => {
+    loadOwners();
+    return () => { ++ownersSeq.current; };
+  }, [loadOwners, machineConnections, picked, newTask, starting]);
   // 상세의 기록 한 줄·지난 thread: 판이 바뀔 때마다 최근 기록
   const sha = board?.sha256 ?? "";
   useEffect(() => {
@@ -706,6 +723,7 @@ export function TasksView({
               groups={groups}
               canEdit={canEdit}
               owners={owners}
+              onRefreshOwners={loadOwners}
               start={creating}
               log={log}
               onThread={onThread}
