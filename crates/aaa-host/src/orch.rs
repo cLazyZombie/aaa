@@ -2505,6 +2505,19 @@ impl Host {
                 return Ok(None);
             }
             // library: 임시 폴더에 받고 hash를 확인한 뒤 바꿔 넣는다
+            // 옛 agent는 숨은 폴더까지 manifest에 넣는다. 정책상 열지 않는 경로는
+            // 받거나 host 경로에 붙이지 않고 건너뛰며, 정상 첨부·본문은 계속 갱신한다.
+            snap.files.retain(|f| {
+                if crate::library::safe_rel(&f.path) {
+                    return true;
+                }
+                snap.skipped.push(aaa_proto::Skipped {
+                    path: f.path.clone(),
+                    reason: "host에서 허용하지 않는 library 상대 경로".into(),
+                    lazy_size: None,
+                });
+                false
+            });
             let lib_root = dir.join("library");
             let tmp = lib_root.join(format!(".{id}.tmp-{}", aaa_common::util::new_id()));
             let mut sandbox_notes = Vec::new();
@@ -2512,9 +2525,6 @@ impl Host {
             let fetch = async {
                 std::fs::create_dir_all(&tmp).map_err(internal)?;
                 for f in &snap.files {
-                    if !crate::library::safe_rel(&f.path) {
-                        return Err(bad(format!("이상한 library 경로: {}", f.path)));
-                    }
                     let target = tmp.join(&f.path);
                     let received = async {
                         std::fs::create_dir_all(target.parent().unwrap()).map_err(internal)?;
@@ -2578,7 +2588,7 @@ impl Host {
                 let _ = std::fs::remove_dir_all(&tmp);
                 return Err(e);
             }
-            let failures: Vec<String> = failed_files.iter().map(|(_, reason)| reason.clone()).collect();
+            let mut failures: Vec<String> = failed_files.iter().map(|(_, reason)| reason.clone()).collect();
             snap.files.retain(|f| !failed_files.iter().any(|(failed, _)| failed.path == f.path));
             snap.skipped.extend(failed_files.into_iter().map(|(f, reason)| aaa_proto::Skipped {
                 path: f.path,
@@ -2594,6 +2604,7 @@ impl Host {
             std::fs::rename(&tmp, &dest).map_err(internal)?;
             crate::library::write_manifest(&dir, id, &snap).map_err(internal)?;
             let changed = !same_files || std::fs::read(crate::library::manifest_path(&dir, id)).ok() != old_manifest;
+            let mut version_created = false;
             if rec.report_hash.as_ref() != Some(&snap.hash)
                 || changed
                 || self.thread_report_id(project, id, Some(&snap.hash)).is_none()
@@ -2606,10 +2617,18 @@ impl Host {
                     from_thread: Some(id.into()),
                     ..Default::default()
                 };
-                self.snapshot_report_version(project, id, &snap.hash, &dest, &files, Some(&snap.report.0), &meta)?;
+                match self.snapshot_report_version(project, id, &snap.hash, &dest, &files, Some(&snap.report.0), &meta)
+                {
+                    Ok(_) => version_created = true,
+                    Err(e) => {
+                        // 판 보존의 실패도 첨부 전송 실패처럼 기록한다. 최신 본문·단계·ack 처리는
+                        // 계속하고, 불완전한 r 판은 snapshot_report_version이 공개하지 않는다.
+                        failures.push(format!("보고 판 보존 실패: {}", e.message));
+                    }
+                }
             }
 
-            if changed || old_manifest.is_none() {
+            if changed || old_manifest.is_none() || version_created {
                 // 보고서 화면 「작업 보고」(plan §8.256)
                 self.reports_bump();
             }

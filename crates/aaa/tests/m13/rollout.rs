@@ -108,6 +108,16 @@ fn rollout_scenario(scenario: Scenario) {
     let mut w = world_opts("", true);
     w.add_remote();
     let b = w.lab.node("b", None);
+    // host를 연달아 재시작하는 이 실험실은 로컬과 원격의 재연결 상한을 맞춘다.
+    // 기본 60초 backoff(+jitter)는 짧은 연결이 반복되면 준비 단언의 30초보다 길어진다.
+    // node()가 agent.toml을 다시 쓰므로 그 뒤에 명시한다. 제품의 기본 상한은 유지한다.
+    use std::io::Write;
+    std::fs::OpenOptions::new()
+        .append(true)
+        .open(b.cfg.join("agent.toml"))
+        .unwrap()
+        .write_all(b"\n[reconnect]\nmax_backoff_s = 1\n")
+        .unwrap();
     let proxy = TransferProxy::new(w.addr.clone());
     if scenario != Scenario::Transfer {
         proxy.release();
