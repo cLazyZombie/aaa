@@ -87,6 +87,9 @@ pub(in crate::install::engine) fn prompt() -> Result<supervisor::Password> {
 }
 
 #[cfg(test)]
+#[path = "../../../../tests/support/child_exit.rs"]
+mod child_exit;
+#[cfg(test)]
 #[path = "../../../../tests/support/terminal_queries.rs"]
 mod terminal_queries;
 
@@ -100,6 +103,11 @@ mod tests {
         time::{Duration, Instant},
     };
     const CANARY: &str = "password-console-canary-DO-NOT-LOG";
+    enum Event {
+        Output(Vec<u8>),
+        ReaderDone,
+        ChildExited(std::io::Result<()>),
+    }
     #[test]
     fn console_masks_and_restores_after_success_cancel_and_eof() {
         if let Ok(case) = std::env::var("AAA_INSTALL_PASSWORD_CHILD") {
@@ -138,45 +146,73 @@ mod tests {
             ]);
             command.env("AAA_INSTALL_PASSWORD_CHILD", case);
             let mut child = pair.slave.spawn_command(command).unwrap();
+            let exit = child_exit::ChildExit::new(child.as_mut()).unwrap();
             drop(pair.slave);
-            let mut reader = pair.master.try_clone_reader().unwrap();
-            let mut writer = pair.master.take_writer().unwrap();
+            let mut master = Some(pair.master);
+            let mut reader = master.as_ref().unwrap().try_clone_reader().unwrap();
+            let mut writer = master.as_ref().unwrap().take_writer().unwrap();
             let (send, receive) = mpsc::channel();
+            let exited = send.clone();
+            let waiting = std::thread::spawn(move || {
+                let _ = exited.send(Event::ChildExited(exit.wait()));
+            });
             let reading = std::thread::spawn(move || {
                 let mut bytes = [0u8; 2048];
                 while let Ok(n) = reader.read(&mut bytes) {
-                    if n == 0 || send.send(bytes[..n].to_vec()).is_err() {
+                    if n == 0 || send.send(Event::Output(bytes[..n].to_vec())).is_err() {
                         break;
                     }
                 }
+                let _ = send.send(Event::ReaderDone);
             });
             let deadline = Instant::now() + Duration::from_secs(20);
             let mut terminal = terminal_queries::TerminalQueries::new(24, 100);
             let mut output = Vec::new();
             let mut sent = false;
-            loop {
+            let mut status = None;
+            let mut reader_done = false;
+            while status.is_none() || !reader_done {
                 match receive.recv_timeout(deadline.saturating_duration_since(Instant::now())) {
-                    Ok(bytes) => {
-                        output.extend(terminal.feed(&bytes, &mut writer).unwrap());
-                        if !sent && String::from_utf8_lossy(&output).contains("입력은 표시되지 않습니다") {
+                    Ok(Event::Output(bytes)) => {
+                        let visible = if status.is_none() {
+                            terminal.feed(&bytes, &mut writer).unwrap()
+                        } else {
+                            terminal.feed(&bytes, &mut std::io::sink()).unwrap()
+                        };
+                        output.extend(visible);
+                        if status.is_none()
+                            && !sent
+                            && String::from_utf8_lossy(&output).contains("입력은 표시되지 않습니다")
+                        {
                             writer.write_all(CANARY.as_bytes()).unwrap();
                             writer.write_all(suffix.as_bytes()).unwrap();
                             writer.flush().unwrap();
                             sent = true;
                         }
                     }
-                    Err(mpsc::RecvTimeoutError::Disconnected) => break,
+                    Ok(Event::ReaderDone) => reader_done = true,
+                    Ok(Event::ChildExited(result)) => {
+                        result.expect("owned console child exit event");
+                        status = Some(child.wait().unwrap());
+                        drop(master.take());
+                    }
+                    Err(mpsc::RecvTimeoutError::Disconnected) => panic!("owned console event channel closed"),
                     Err(mpsc::RecvTimeoutError::Timeout) => {
-                        child.kill().unwrap();
-                        child.wait().unwrap();
-                        panic!("owned console password event deadline, case={case}");
+                        if status.is_none() {
+                            child.kill().unwrap();
+                            child.wait().unwrap();
+                        }
+                        let output = String::from_utf8_lossy(&output).replace(CANARY, "[private]");
+                        panic!(
+                            "owned console password event deadline, case={case}, sent={sent}, child_exit={status:?}, reader_done={reader_done}, output={output}"
+                        );
                     }
                 }
             }
-            let status = child.wait().unwrap();
+            let status = status.unwrap();
             drop(writer);
-            drop(pair.master);
             reading.join().unwrap();
+            waiting.join().unwrap();
             let output = String::from_utf8_lossy(&output);
             assert!(sent, "보호 prompt 전에 입력을 보내지 않는다");
             assert!(!output.contains(CANARY), "실제 입력한 credential이 TTY에 echo되면 안 된다");

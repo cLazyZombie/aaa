@@ -6929,3 +6929,10 @@ FRONT_API 1.96는 기본 검수 표지와 답 기록의 r 참조를 더한다. E
 - 기존 E2E50은 보통·창 모름 값의 폭 회수, 전체 삭제의 복원, 경고의 폭 유지와 iPad·휴대폰 표시를 검사한다. E2E66에는 실제 usage를 넣어 Chromium·WebKit의 데스크톱·휴대폰 네 조합에서 회수한 폭과 한글 첫 줄 경계, 조합 입력·영문·붙여넣기·회전·focus·높이·전송 없음을 검사한다. 새 E2E 번호나 API 변경은 없다.
 
 - 착지 기준 origin/main `6d9e3e41`에서 마지막 §8.397·FRONT_API 1.98·AGENT_LINK 1.11·E2E76을 직접 확인했다. 이번 수리는 §8.398로 옮기고 API 버전과 기존 E2E50·66·76 번호를 유지한다. main의 할 일 한 목록·한도 초과 시작·상태 점 정렬과 시험 수리를 보존하며 통합 후보의 전체 ci-local·공개 검사 뒤 병합한다.
+
+### 8.399 install 종료 구독 경합과 Windows 실패 원인 진단(t-0485)
+
+- **후속 CI 원인.** 승인 PTY 수리 뒤 macOS worker 수명 owner는 `waitid`의 ECHILD로 실패했다. portable-pty의 kill이 내부 try_wait로 먼저 reap할 수 있다. 실제 소유 자식의 구독 준비→kill/wait→종료 통지 수집 순서를 고정한 owner가 errno10 RED를 재현한다. callback 전에 macOS kqueue/Linux pidfd 구독을 고정해 reaping과 독립시키고, 이미 끝난 자식은 소유 Child의 try_wait/wait 상태만 사용한다. Windows는 복제 process handle을 유지한다.
+- **공통 시험 경계.** 종료 구독은 tests/support에서 공유한다. Windows 암호 console owner에도 종료 뒤 master를 닫고 마지막 출력·reader 완료까지 수집하는 경계를 연결한다. 실제 암호 일치·echo 없음·성공/취소/EOF 후 mode 복구·종료 코드와 기존20초 상한을 유지하며, install 승인 driver의60초 상한·출력300줄·worker 수명 단언도 유지한다. 새 Unix owner의 cfg는 waitid/reaping 회귀 경계 때문이며 기존 Windows 승인 owner는 제외하지 않는다.
+- **Windows 판정 한계.** 실제 CI의 빠른 실패 중 worker 시작은 `installation_worker_unavailable`로 끝났다. 정확한 OS 원인과 나머지 요구 코드는 아직 미확정이다. 실패 단언에는 redacted 결과·stderr를, human needs_user 출력에는 실제 요구 코드·대상을 남긴다. Windows spawn 실패는 OS 오류 번호와 현재 Job 소속/제한 비트만 기록하며 경로·인자·환경·비밀을 찍지 않는다. Job 정책이나 creation flag를 바꾸거나 실패 때 다른 flag로 재시도하지 않는다. 원인 확정과 실제 Windows 성공 판정은 main CI 결과가 필요하며 macOS 통과·Windows 교차 compile/lint를 실행 증거로 쓰지 않는다.
+- **검증·번호.** 기준 main1c37b2fc의 마지막§8.398·FRONT_API1.98·AGENT_LINK1.11을 직접 확인해 이 절을 더한다. protocol/schema·웹 E2E 번호는 바꾸지 않는다. owner RED/GREEN·전체 ci-local·Windows 교차 clippy/build·공개 검사를 기록하고, 착지는 새 coordinator 창을 받은 뒤 한다. I3는 이 후속 수리 뒤에 이어 간다.
