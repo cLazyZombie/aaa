@@ -300,3 +300,25 @@ async fn existing_review_gets_one_question_and_feedback_without_text_is_rejected
     assert!(h.question_draft("demo", &q.items).is_none(), "거절한 선택은 질문을 선점하지 않는다");
     assert!(h.load("demo", &rec.id).unwrap().question_answer.is_none());
 }
+
+#[tokio::test]
+async fn archived_r_attachment_protects_its_entire_report_family_from_delete_and_prune() {
+    let lab = Lab::new();
+    let first = lab.publish("week", "first", false);
+    let second = lab.publish("week", "next", false);
+    let row:aaa_proto::ArchivedTask=serde_json::from_value(serde_json::json!({
+        "task_id":"fixture-task","task":{"id":"fixture-task","list":"Backlog","title":"완료","owner":null,"thread":null,"notes":[],"done":true},
+        "body":format!("- [x] 완료\n  [결과](library/{first}/index.html)"),"reason":"완료","report":null,"completed_ms":1,"restored":false,"committed":true,"removed_sha256":"","history":[]
+    })).unwrap();
+    lab.h.db.archive_save("demo", &row).unwrap();
+    let report = lab.h.library_reports(None, false).unwrap().into_iter().find(|r| r.name == "week").unwrap();
+    assert!(report.busy, "완료 보관의 r 첨부가 가리키는 원래 이름과 모든 판을 보호한다");
+    assert!(lab.h.library_delete(&[LibraryRef { project: "demo".into(), name: first.clone() }], "test").is_err());
+    let FrontResponse::LibraryPruned { removed } = lab.h.library_prune_at(Some("demo"), 1, u64::MAX, "test").unwrap()
+    else {
+        panic!()
+    };
+    assert!(removed.is_empty());
+    assert_eq!(lab.file(&first, "index.html").await, b"first");
+    assert_eq!(lab.file(&second, "index.html").await, b"next");
+}

@@ -239,10 +239,9 @@ impl Host {
             }
         };
         let selected = self.report_id(project, id);
-        let live =
-            self.db.library_report(project, id).map_err(super::orch::internal)?.is_some_and(|r| r.live.is_some());
-        // 최신 별칭도 한 번 고른 불변 판에서 본문·파일을 함께 읽는다. 새 회수와 경주해 두 판이 섞이지 않는다.
-        let storage = if live { id.to_string() } else { selected.clone().unwrap_or_else(|| id.into()) };
+        // 기존 이름·t 별칭은 최신 보기다(agent에 남긴 큰 파일 읽기도 유지한다).
+        // r 번호로 열면 그 불변 사본만 쓰며 아래 view_source가 최신 agent 파일로 대체하지 않는다.
+        let storage = id.to_string();
         let report = (rec.as_ref().is_some_and(|r| r.report_hash.is_some())
             || self.db.report_target(project, &storage).map_err(super::orch::internal)?.is_some())
         .then(|| std::fs::read(dir.join("threads").join(format!("{storage}.md"))).ok())

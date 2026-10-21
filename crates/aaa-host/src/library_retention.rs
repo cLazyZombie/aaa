@@ -19,6 +19,10 @@ impl Host {
         {
             return true;
         }
+        let versions = match self.db.report_ids(&r.project, &r.name) {
+            Ok(versions) => versions,
+            Err(_) => return true,
+        };
         // 복원 뒤에도 완료 당시 결과와 메모는 보관에 남는다. 미확정 보관도 먼저 보호하며,
         // DB를 읽지 못하면 유일한 결과 사본을 정리하지 않는다.
         self.db.archive_list(&r.project).map_or(true, |rows| {
@@ -27,7 +31,7 @@ impl Host {
                     crate::task_attach::refs(body).iter().any(|path| {
                         path.strip_prefix("library/")
                             .and_then(|p| p.split_once('/'))
-                            .is_some_and(|(name, _)| name == r.name)
+                            .is_some_and(|(name, _)| name == r.name || versions.iter().any(|v| v.id == name))
                     })
                 };
                 a.task.thread.as_deref() == Some(r.name.as_str())

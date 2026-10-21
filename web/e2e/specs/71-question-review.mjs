@@ -34,6 +34,7 @@ export default async function ({ page }) {
     const audio = page.getByTestId("question-audio"); await audio.waitFor();
     const state = await audio.evaluate(async (a) => { const res = await fetch(a.src); return { paused: a.paused, preload: a.preload, type: res.headers.get("content-type"), bytes: (await res.arrayBuffer()).byteLength }; });
     if (!state.paused || state.preload !== "none" || state.type !== "audio/wav" || state.bytes !== wav.length) throw new Error(JSON.stringify(state));
+    await shot(page, "71-review-audio");
     wk = await webkit.launch(); phone = await pairDevice(wk, aaa("web", "pair").code, "iphone", { hash: `#question=${request.question_id}` });
     for (const [name, p] of [["desktop", page], ["phone", phone.page]]) for (const theme of ["light", "dark"]) {
       await p.evaluate((theme) => { localStorage.setItem("aaa:appearance", JSON.stringify({ theme, palette: "amber" })); }, theme); await p.reload();
