@@ -1,9 +1,10 @@
 // 조작 기기 passkey(관리 GUI W7): 짝지은 뒤 10분 안 등록 안내 줄(본문 위)과 설정 → 폰 및 기기의 이 기기 passkey 상태.
-// 상태는 `/api/v1/me`의 `passkey`(공개 주소로 연 화면만)다. host Mac에서 연 loopback 화면은 passkey 없이 승인한다.
+// 상태는 `/api/v1/me`의 `passkey`(공개 주소로 연 화면만)다. 누름이 지난 뒤의 WebAuthn을 위한 「passkey로 승인」 창도 여기 있다. host Mac에서 연 loopback 화면은 passkey 없이 승인한다.
 import { useCallback, useEffect, useState } from "react";
 import type { DeviceRole, PasskeyState } from "./gen/proto";
 import { ApiError, me, registerPasskey } from "./api";
-import { canRegister, minutesLeft } from "./passkey";
+import { ConfirmDialog } from "./ConfirmDialog";
+import { canRegister, minutesLeft, setPasskeyGesture } from "./passkey";
 
 const message = (e: unknown): string => (e instanceof ApiError || e instanceof Error ? e.message : String(e));
 
@@ -93,5 +94,33 @@ export function PasskeyStatus({ state, role, onChanged }: { state: PasskeyState 
       없음. 짝지은 뒤 10분이 지나 이 브라우저에서는 등록할 수 없다. host Mac 화면이나 passkey가 있는 기기에서 짝짓기 코드를 받아 다시
       짝지은 뒤 10분 안에 등록한다. 그때까지 이 기기는 승인할 수 없다.
     </span>
+  );
+}
+
+type Ask = { what: string; run: () => Promise<unknown>; resolve: (v: unknown) => void; reject: (e: Error) => void };
+
+/** 누름이 지난 뒤의 passkey 확인(WebKit): 이 창의 단추 처리기가 WebAuthn을 바로 부른다(ConfirmDialog는 누름 안에서 onConfirm을 시작한다) */
+export function PasskeyGesture() {
+  const [ask, setAsk] = useState<Ask | null>(null);
+  useEffect(() => {
+    setPasskeyGesture((what, run) => new Promise((resolve, reject) => setAsk({ what, run, resolve, reject })));
+    return () => setPasskeyGesture(null);
+  }, []);
+  if (!ask) return null;
+  return (
+    <ConfirmDialog
+      title={`passkey로 ${ask.what}할까요?`}
+      body="이 기기의 Face ID·지문·암호로 사용자 확인을 합니다."
+      confirmLabel={`passkey로 ${ask.what}`}
+      onConfirm={async () => {
+        const v = await ask.run();
+        setAsk(null);
+        ask.resolve(v);
+      }}
+      onClose={() => {
+        setAsk(null);
+        ask.reject(new Error("passkey 확인을 취소했다."));
+      }}
+    />
   );
 }

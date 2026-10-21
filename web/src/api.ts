@@ -19,7 +19,7 @@ import type {
 } from "./gen/proto";
 import type { PreferencesChange } from "./herdr/preferences.ts";
 import { pageInUse } from "./herdr/presence";
-import { createPasskey, signPasskey } from "./passkey";
+import { createPasskey, signPasskey, withGesture } from "./passkey";
 
 export class ApiError extends Error {
   constructor(public body: ErrorBody) {
@@ -133,14 +133,14 @@ export async function call(req: FrontRequest, keepalive = false): Promise<FrontR
   } catch (e) {
     if (!(e instanceof ApiError) || e.body.code !== "passkey_required") throw e;
     const challenge = await post<PasskeyChallenge>("/api/v1/passkey/approve/begin", req);
-    return post<FrontResponse>("/api/v1/passkey/approve", await signPasskey(challenge));
+    return post<FrontResponse>("/api/v1/passkey/approve", await withGesture("승인", () => signPasskey(challenge)));
   }
 }
 
 /** 이 기기에 passkey를 등록한다(짝지은 뒤 10분 안, 공개 주소의 조작 기기만) */
 export async function registerPasskey(): Promise<void> {
   const creation = await post<PasskeyCreation>("/api/v1/passkey/register/begin", {});
-  await post<null>("/api/v1/passkey/register", await createPasskey(creation));
+  await post<null>("/api/v1/passkey/register", await withGesture("등록", () => createPasskey(creation)));
 }
 
 /** herdr-web-ui uploadPaneImage: 저장된 경로는 초안에 넣고, 보내기 전에는 pane에 입력하지 않는다. */

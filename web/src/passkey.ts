@@ -85,6 +85,21 @@ export async function signPasskey(c: PasskeyChallenge): Promise<PasskeyAssertion
   };
 }
 
+/** 한 번 더 누를 창: 그 누름 처리기 안에서 `run`을 바로 부른다(PasskeyPanel `PasskeyGesture`) */
+export type PasskeyGesture = (what: string, run: () => Promise<unknown>) => Promise<unknown>;
+let gesture: PasskeyGesture | null = null;
+export function setPasskeyGesture(g: PasskeyGesture | null): void {
+  gesture = g;
+}
+
+/** WebAuthn은 사람이 누른 처리기 안에서 불러야 한다(WebKit은 누름이 지난 뒤의 호출을 NotAllowedError로 거부한다). host와 한두 번
+ * 오간 뒤에도 누름이 살아 있으면(`navigator.userActivation.isActive`) 바로 부르고, 아니면 「passkey로 승인」 창을 한 번 더 띄운다 */
+export function withGesture<T>(what: string, run: () => Promise<T>): Promise<T> {
+  const active = (navigator as Navigator & { userActivation?: { isActive: boolean } }).userActivation?.isActive === true;
+  if (active || !gesture) return run();
+  return gesture(what, run) as Promise<T>;
+}
+
 /** 지금 등록할 수 있나: 공개 주소의 조작 기기가 아직 passkey가 없고 짝지은 지 10분이 안 됐다 */
 export function canRegister(state: PasskeyState | null | undefined, now = Date.now()): boolean {
   return !!state && !state.registered && state.register_until_ms !== null && state.register_until_ms > now;

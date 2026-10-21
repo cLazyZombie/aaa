@@ -80,7 +80,7 @@ fn item(buf: &[u8], at: &mut usize, depth: usize) -> Result<Cbor, &'static str> 
         return Ok(Cbor::Simple);
     }
     let n = argument(buf, at, info)?;
-    // 남은 바이트보다 많은 항목은 있을 수 없다(큰 길이로 메모리를 잡지 않는다)
+    // 남은 바이트보다 많은 항목은 있을 수 없다. 겹친 머리마다 미리 잡지 않게 자리는 조금만 먼저 잡는다
     let count =
         |n: u64| usize::try_from(n).ok().filter(|&n| n <= buf.len() - *at).ok_or("CBOR 길이가 남은 크기보다 크다");
     Ok(match major {
@@ -90,7 +90,7 @@ fn item(buf: &[u8], at: &mut usize, depth: usize) -> Result<Cbor, &'static str> 
         3 => Cbor::Text(String::from_utf8(take(buf, at, count(n)?)?.to_vec()).map_err(|_| "CBOR 글이 UTF-8이 아니다")?),
         4 => {
             let n = count(n)?;
-            let mut items = Vec::with_capacity(n);
+            let mut items = Vec::with_capacity(n.min(16));
             for _ in 0..n {
                 items.push(item(buf, at, depth + 1)?);
             }
@@ -98,7 +98,7 @@ fn item(buf: &[u8], at: &mut usize, depth: usize) -> Result<Cbor, &'static str> 
         }
         5 => {
             let n = count(n)?;
-            let mut entries = Vec::with_capacity(n);
+            let mut entries = Vec::with_capacity(n.min(16));
             for _ in 0..n {
                 let k = item(buf, at, depth + 1)?;
                 let v = item(buf, at, depth + 1)?;

@@ -2369,7 +2369,7 @@ mod guard_tests {
         assert_eq!(direct["ok"]["kind"], "pair_code", "{direct}");
         let public = call(PUBLIC, vec![("cookie", format!("{}={t}", cookie_name(true)))]).await;
         assert_eq!(public["err"]["code"], "passkey_required", "{public}");
-        for (k, v, secure) in [("x-forwarded-proto", "https", true), ("x-forwarded-for", "100.64.0.9", false)] {
+        for (k, v, secure) in [("x-forwarded-proto", "https", true), ("x-forwarded-for", "203.0.113.9", false)] {
             let cookie = format!("{}={t}", cookie_name(secure));
             let bent = call(LOOP, vec![("cookie", cookie), (k, v.to_string())]).await;
             assert_eq!(bent["err"]["code"], "passkey_required", "{k}: {bent}");

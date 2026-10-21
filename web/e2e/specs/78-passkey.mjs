@@ -47,6 +47,20 @@ export default async function ({ page }) {
       await dialog.locator(".devices-code").waitFor();
       await until("passkey 서명 한 번", async () => (await signs()) === first + 1);
       await shot(phone, "passkey-approved-pair-code");
+      // 누름이 지난 뒤(WebKit은 host와 오간 뒤 누름이 사라질 수 있다): 「passkey로 승인」 창을 한 번 더 누른 처리기에서 확인한다.
+      // 취소하면 아무것도 하지 않는다
+      await phone.evaluate(() => Object.defineProperty(navigator, "userActivation", { get: () => ({ isActive: false, hasBeenActive: true }) }));
+      const before = (await dialog.locator(".devices-code").textContent()).replace(/\s/g, "");
+      await dialog.getByRole("button", { name: "새 코드" }).click();
+      const again = phone.getByRole("alertdialog", { name: "passkey로 승인할까요?" });
+      await again.getByRole("button", { name: "취소" }).click();
+      await dialog.locator(".devices-panel").getByRole("alert").filter({ hasText: "passkey 확인을 취소했다" }).waitFor();
+      if ((await signs()) !== first + 1) throw new Error("취소했는데 서명했다");
+      await dialog.getByRole("button", { name: "새 코드" }).click();
+      await shot(phone, "passkey-gesture-dialog");
+      await again.getByRole("button", { name: "passkey로 승인" }).click();
+      await until("다시 누른 창의 passkey 서명", async () => (await signs()) === first + 2);
+      await until("새 코드", async () => (await dialog.locator(".devices-code").textContent()).replace(/\s/g, "") !== before);
     });
   });
 
