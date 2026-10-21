@@ -8,7 +8,7 @@
 - `cargo test -p aaa-host --lib report_ids --locked`: 예약/완료/삭제 판의 분리와 보관 첨부의 원본 보호를 확인한다.
 - `node web/e2e/web.e2e.mjs <캡처 폴더> --spec 80-report-list,21-library-reports,73-report-ids --workers 1`: 실제 host의 격리 DB·manifest에 1,118개 사본 폴더·559개 원본·최대 954개 첨부·보관 120건을 넣는다. 원문 바이트는 만들지 않으며 운영 library는 읽거나 수정하지 않는다. 요청 시작부터 JSON 수신까지와 두 animation frame 후 첫 화면 시간을 `report-list-timing.json`으로 남긴다. 시간은 관측값이며 부하에 민감한 통과 시한으로 쓰지 않는다.
 - 첫 50개·추가 50개·끝까지 보기·화면 밖을 포함한 전체 선택, 보존 판을 별도 줄로 세지 않음을 확인한다. Chromium 1280px·WebKit 390px Reader의 실제 용량 응답을 route gate로 보류하고 목록이 보이는 사건을 먼저 기다린다. 용량 실패 때도 목록을 유지하며 가로 넘침·Reader 조작 부재를 검사한다. 고정 sleep·재시도·기대값 완화는 없다.
-- 전체 검증과 착지는 착지 창 뒤 `nice -n 15 bash scripts/ci-local.sh`와 공개 검사로 수행한다. 운영 host 접근이 없는 실험실 결과를 운영 37GB 실측으로 부르지 않는다.
+- 전체 검증은 `nice -n 15 bash scripts/ci-local.sh`와 공개 검사로 수행하고 착지 창을 기다린다. 운영 host 접근이 없는 실험실 결과를 운영 37GB 실측으로 부르지 않는다.
 
 
 ## 직접 병합한 thread의 할 일 완료 보관(t-0651, plan §8.412)
