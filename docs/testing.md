@@ -1662,6 +1662,14 @@ Front 요청이 이미 성공했는지, 연결 전에 실패했는지, 여전히
 
 - host의 `automation::start_tests` fixture로 최근 열린 thread, propose의 이어 보내기, 33건의 32+1 전달, receipt, Codex 거부와 보고 첨부의 64KiB와 단일 입력의 512KiB 초과 거부를 검사한다. 종료 owner 판정표는 표지 6종·보고/입력 시각·활동·내구/파일 입력·검토/쉼을 교차한다. 기존 report boundary keeper는 자동화 완료의 앱 안 알림 없음과 확인 필요 알림 유지를 함께 본다.
 - m13 `ci::automation_ci_reuses_open_thread_and_closes_only_after_new_report_with_memory`: 서로 다른 fake CI 두 건을 batch에 보존 → 한 thread → 셋째 Queue 전달 → 옛 완료로 끝내지 않음 → 새 완료 뒤 resolve/기억 사본 → 다음 thread 기억 → 전달 모름/무재전송. FIFO로 화면 진행을 허용하며 host가 Working/Idle를 관측한 뒤 다음 단계로 간다.
+- 자동 완료의 첫 확인은 보고 hash·Idle와 함께 `acked_hash == report_hash` 기록을 기다린다.
+  보고 hash 저장과 자동 ack 저장은 별도 DB 갱신이므로 앞 둘만으로 확인 완료를 추정하지 않는다.
+  t-0679는 자동 ack 직전에 임시 FIFO를 삽입하고 hash·Idle·ack 미기록을 실제 조회한 뒤 해제해,
+  기존 단언의 `Null != 보고 hash` 실패와 수정한 시험 전체의 통과를 확인했다.
+  주입 코드는 제품에 남기지 않으며 기존 30초 한도·hash 일치 단언을 유지한다.
+  같은 시험의 입력 파일/묶음 수는 기동·전달 기록, 옛 완료의 미종료는 ticker 완료,
+  기억·충돌 사본은 마지막 회수 뒤 resolved, 다음 기억은 brief 전달,
+  무재전송은 막힘 기록과 후속 ticker 완료를 각각 관측한 뒤 검사한다.
 - `AAA_TEST_AUTOMATION_CLOCK_FILE`에 Unix ms를 쓰면 자동화 batch·close_idle의 판정 시계만 움직인다. 실제 보고/입력 시각과 agent 활동 시각은 바꾸지 않는다. m13 Lab의 설정 폴더 안 파일만 사용한다. 고정 sleep·timeout 연장은 없다.
 - E2E49 `49-automation-memory`: 실제 report/Idle 사건으로 기억/크기/마지막 갱신 thread와 끝남 예정 표시를 본다. 데스크톱·390px에서 상세를 열고 캡처하며 가로 넘침과 자동화 완료 droplet 없음도 검사한다.
 - 결함 되심기: close_at의 마지막 입력보다 뒤인 보고 조건(시각과 입력 전 hash)을 제거하면 m13의 옛 완료 보호 단계에서 open 대신 resolved로 실패한다. 원본을 바이트 단위로 복구한다.
