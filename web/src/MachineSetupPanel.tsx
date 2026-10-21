@@ -18,6 +18,7 @@ import {
   LOGIN,
   loginHarnesses,
   needsPerson,
+  notInstallable,
   operationLabel,
   PHASE,
   settingsProblem,
@@ -299,7 +300,12 @@ function SetupBody({
           {s.phase === "ready" && !install && <span className="op-muted"> — 설치는 다음 단계에서 이어진다</span>}
         </p>
       )}
-      {s.phase === "ready" && install && canEdit && (
+      {s.phase === "ready" && install && canEdit && s.detected && notInstallable(s.detected) && (
+        <p className="op-muted" data-testid="machine-setup-not-installable">
+          {notInstallable(s.detected)}
+        </p>
+      )}
+      {s.phase === "ready" && install && canEdit && s.detected && !notInstallable(s.detected) && (
         <SettingsForm s={s} sending={sending} addresses={addresses} machines={machines} onPlan={onPlan} />
       )}
       {r && (s.phase === "review" || s.phase === "needs_user" || s.phase === "installing" || s.phase === "installed") && (

@@ -5,6 +5,8 @@
 //!   host가 `+커밋` 개발 판이면 다른 종류 머신에 넣을 파일이 없으므로 거절하고 까닭을 보인다.
 //! - **원격.** `mktemp -d`로 만든 그 사용자 전용 폴더(umask 077)에만 쓴다. 확인이 어긋나면 그 폴더만 지운다. 폴더 이름은 표지 사이에서
 //!   읽고 `aaa-setup.` 꼴과 안전한 글자만 받는다(지우기 명령에 그대로 들어가므로).
+//! - **launcher.** macOS `--service launchd`의 install은 실행 파일 옆 `aaa-launcher-macos-<CPU>.json`(같은 release·같은 SHA에 묶인
+//!   package, install I3)을 읽는다. host는 그 파일을 같은 폴더에 같은 방식으로 놓고 SHA를 확인한다. package 내용은 원격 install이 본다.
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
@@ -67,6 +69,32 @@ pub(crate) fn upload_script() -> String {
     ]
     .join("; ");
     format!("sh -c '{body}'")
+}
+
+/// 실행 파일 옆에 놓는 파일(stdin을 `<dir>/<name>`으로 쓰고 같은 표지로 폴더·SHA를 낸다). 폴더는 [`safe_dir`], 이름은 [`launcher_name`]만
+pub(crate) fn beside_script(dir: &str, name: &str) -> Option<String> {
+    if !safe_dir(dir)
+        || !name.strip_prefix("aaa-launcher-macos-").is_some_and(|a| a == "aarch64.json" || a == "x86_64.json")
+    {
+        return None;
+    }
+    let body = [
+        "umask 077".to_string(),
+        format!(r#"cat > "{dir}/{name}" || exit 71"#),
+        format!("echo {UP}"),
+        format!(r#"printf "%s\n" "{dir}""#),
+        format!(
+            r#"if command -v shasum >/dev/null 2>&1; then shasum -a 256 "{dir}/{name}"; else sha256sum "{dir}/{name}"; fi | cut -d" " -f1"#
+        ),
+        format!("echo {UP_END}"),
+    ]
+    .join("; ");
+    Some(format!("sh -c '{body}'"))
+}
+
+/// macOS 대상 CPU의 launcher package 이름(install이 실행 파일 옆에서 찾는 이름). 다른 OS는 없다
+pub(crate) fn launcher_name(os: &str, arch: &str) -> Option<String> {
+    (os == "macos" && matches!(arch, "aarch64" | "x86_64")).then(|| format!("aaa-launcher-macos-{arch}.json"))
 }
 
 /// 지우기 명령에 넣어도 되는 원격 폴더인가: 절대 경로, 마지막 이름이 `aaa-setup.<영숫자>`, 안전한 글자만
@@ -142,6 +170,28 @@ impl Ssh {
             return Err(why);
         }
         Ok(placed)
+    }
+
+    /// `file`을 이미 놓은 폴더 `dir`의 `name`으로 쓰고 SHA를 확인한다(실행 파일 옆 launcher package)
+    pub(crate) async fn place_beside(
+        &self,
+        target: &Target,
+        dir: &str,
+        name: &str,
+        file: &Path,
+        sha256: &str,
+    ) -> Result<(), String> {
+        let script = beside_script(dir, name).ok_or("원격 폴더·파일 이름이 안전한 꼴이 아니다")?;
+        let input = std::fs::File::open(file).map_err(|e| format!("보낼 launcher를 열지 못했다: {e}"))?;
+        let mut c = self.trusted(target, &script);
+        c.stdin(std::process::Stdio::from(input));
+        let r = Ssh::run(c, UPLOAD_TIMEOUT).await;
+        match parse_upload(&r.stdout) {
+            Some(p) if p.dir == dir && p.sha256.eq_ignore_ascii_case(sha256) => Ok(()),
+            Some(p) => Err(format!("원격에 쓴 launcher의 SHA-256이 다르다(보냄 {sha256}, 원격 {})", p.sha256)),
+            None if r.ok => Err("원격이 launcher 자리·SHA를 알리지 않았다".into()),
+            None => Err(super::why(&r.stderr)),
+        }
     }
 
     /// 놓았던 임시 폴더를 지운다(실패해도 작업 결과는 바꾸지 않는다)

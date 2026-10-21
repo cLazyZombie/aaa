@@ -10,6 +10,7 @@ import {
   loginHarnesses,
   detectedLine,
   needsPerson,
+  notInstallable,
   operationLabel,
   PHASE,
   settingsProblem,
@@ -52,6 +53,10 @@ describe("SSH로 추가 M2", () => {
 });
 
 describe("SSH 설치 M3", () => {
+  it("감독자까지 끝나는 macOS만 설치한다", () => {
+    assert.equal(notInstallable({ os: "macos" }), null);
+    for (const os of ["linux", "windows"]) assert.match(notInstallable({ os }) ?? "", /macOS부터/);
+  });
   it("1.103 이상 host만", () => {
     for (const v of [undefined, null, "1.93", "1.102"]) assert.equal(canInstall(v), false, String(v));
     assert.equal(canInstall("1.103"), true);

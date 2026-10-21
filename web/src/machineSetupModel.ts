@@ -103,6 +103,10 @@ export function defaultSettings(target: string, d: MachineDetected | null, host:
   return { name, host, work_root: home ? `${home}/aaa-work` : "", work_mount: null, harness: [], login: "defer" };
 }
 
+/** 이 OS를 SSH로 설치하지 않는 까닭(감독자까지 끝나는 macOS만, host의 같은 규칙). 설치하면 null */
+export const notInstallable = (d: Pick<MachineDetected, "os">): string | null =>
+  d.os === "macos" ? null : `${d.os}는 아직 SSH로 설치하지 않는다(macOS부터, 그 OS의 install 감독자가 오면 연다)`;
+
 /** 승인 범위 이름(install operation) */
 export const OPERATION: Record<string, string> = {
   write_file: "설정 파일 쓰기",

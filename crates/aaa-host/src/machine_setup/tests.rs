@@ -556,19 +556,20 @@ fn settings_become_agent_choices_under_the_detected_home() {
         (c.enroll, c.expected_os, c.expected_arch),
         (Some(InstallEnroll::Grant), Some(InstallOs::Macos), Some(InstallArch::Aarch64))
     );
+    // 현재 사용자 LaunchAgent로 바로 띄운다(install I3). launcher 경로는 원격 install이 그 HOME의 기본 자리로 채운다
+    assert_eq!(
+        (c.service, c.start, c.launcher_policy, c.launcher.as_deref()),
+        (Some(InstallService::Launchd), Some(InstallStart::Now), Some(InstallLauncherPolicy::Install), None)
+    );
     let inside =
         install::choices(&MachineSetupSettings { work_mount: None, harness: vec![], ..settings.clone() }, &mac)
             .unwrap();
     assert_eq!((inside.work_storage, inside.harness), (Some(InstallStorage::Internal), vec![InstallHarness::None]));
-    let linux = MachineDetected { os: "linux".into(), home: Some("/home/<me>".into()), ..mac.clone() };
-    assert_eq!(install::choices(&settings, &linux).unwrap().state_dir.as_deref(), Some("/home/<me>/.local/state/aaa"));
-    // Windows는 M4, HOME 없음은 다시 감지
-    assert!(
-        install::choices(&settings, &MachineDetected { os: "windows".into(), ..mac.clone() })
-            .err()
-            .unwrap()
-            .contains("macOS부터")
-    );
+    // 감독자가 아직 없는 OS(Linux I4·Windows)는 설치하지 않는다, HOME 없음은 다시 감지
+    for os in ["linux", "windows"] {
+        let other = MachineDetected { os: os.into(), home: Some("/home/<me>".into()), ..mac.clone() };
+        assert!(install::choices(&settings, &other).err().unwrap().contains("macOS부터"), "{os}");
+    }
     assert!(
         install::choices(&settings, &MachineDetected { home: None, ..mac.clone() }).err().unwrap().contains("HOME")
     );
@@ -632,6 +633,7 @@ case "$*" in
   --version) echo '{version}'; exit 0;;
   *install-probe*)
     printf '%s\n' "$@" > "$L/probe.args"; cat > "$L/probe.in"
+    for f in "$(dirname "$0")"/aaa-launcher-*.json; do if [ -f "$f" ]; then cp "$f" "$L/probe.launcher"; fi; done
     if [ -f "$L/probe.exit" ]; then exit "$(cat "$L/probe.exit")"; fi
     cat "$L/probe.out"; exit 0;;
   *install-bootstrap*)
@@ -654,6 +656,32 @@ exit 9
     file
 }
 
+/// host 실행 파일(시험은 대본) 옆에 그 파일에 묶인 launcher package(install은 내용·서명을 보지만 host는 묶음 칸만 본다)
+#[cfg(unix)]
+fn fake_launcher(binary: &Path, version: &str) -> PathBuf {
+    let arch = std::env::consts::ARCH;
+    let file = binary.with_file_name(format!("aaa-launcher-macos-{arch}.json"));
+    let package = serde_json::json!({
+        "schema": 1,
+        "version": version,
+        "platform": format!("macos-{arch}"),
+        "binary_sha256": hex::encode(Sha256::digest(std::fs::read(binary).unwrap())),
+        "files": {},
+    });
+    std::fs::write(&file, serde_json::to_vec(&package).unwrap()).unwrap();
+    file
+}
+
+/// 실험실은 이 머신이라 Linux CI에서도 감지 OS를 macOS로 둔다(대본 원격은 OS를 보지 않는다)
+#[cfg(unix)]
+fn as_mac(h: &Arc<Host>, job: &str) -> MachineDetected {
+    h.setup_update(job, MachineSetupPhase::Ready, |j| j.view.detected.as_mut().unwrap().os = "macos".into())
+        .unwrap()
+        .view
+        .detected
+        .unwrap()
+}
+
 /// 대본이 낼 install 계획: host가 보낼 choices로 실제 install planner를 돌린 것
 #[cfg(unix)]
 fn fake_proposal(c: aaa_proto::install::InstallChoices, sha: &str, os: &str) -> aaa_proto::install::InstallProposal {
@@ -673,6 +701,12 @@ fn fake_proposal(c: aaa_proto::install::InstallChoices, sha: &str, os: &str) -> 
         effective_config_sha256: "c".repeat(64),
         target_account: "501".into(),
     };
+    // 원격 install이 launcher 기본 자리를 채운다(detect)
+    let mut c = c;
+    if c.service == Some(InstallService::Launchd) {
+        c.launcher
+            .get_or_insert_with(|| "/Users/<me>/Applications/aaa-launcher.app/Contents/MacOS/aaa-launcher".into());
+    }
     let plan = aaa_config::install::plan(c, context).unwrap();
     let hash = aaa_config::install::plan_sha256(&plan);
     let mut result = InstallResult::invalid();
@@ -699,6 +733,7 @@ fn a_detected_machine_is_planned_signed_bootstrapped_installed_and_registered() 
     let fake = fake_remote(&lab.root);
     let remote = lab.root.join("remote");
     let sha = hex::encode(Sha256::digest(std::fs::read(&fake).unwrap()));
+    let launcher = fake_launcher(&fake, "9.9.9");
     install::tests_binary::set(Some((fake.clone(), "aaa 9.9.9".into())));
     let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
     let weak = rt.block_on(async {
@@ -711,7 +746,7 @@ fn a_detected_machine_is_planned_signed_bootstrapped_installed_and_registered() 
             .unwrap();
         let ready = leave(&h, &job.job, MachineSetupPhase::Detecting).await;
         assert_eq!(ready.phase, MachineSetupPhase::Ready);
-        let detected = ready.detected.clone().unwrap();
+        let detected = as_mac(&h, &job.job);
         let settings = MachineSetupSettings {
             name: "lab-b".into(),
             host: "127.0.0.1:7430".into(),
@@ -764,6 +799,12 @@ fn a_detected_machine_is_planned_signed_bootstrapped_installed_and_registered() 
         assert_eq!(summary.operations, vec!["enroll_agent".to_string()]);
         let sent: InstallChoices = serde_json::from_slice(&std::fs::read(remote.join("probe.in")).unwrap()).unwrap();
         assert!(sent == choices, "host가 보낸 choices");
+        assert_eq!((sent.service, sent.start), (Some(InstallService::Launchd), Some(InstallStart::Now)));
+        assert_eq!(
+            std::fs::read(remote.join("probe.launcher")).unwrap(),
+            std::fs::read(&launcher).unwrap(),
+            "원격 실행 파일 옆에 같은 launcher package가 있다"
+        );
         let args = std::fs::read_to_string(remote.join("probe.args")).unwrap();
         assert!(args.lines().any(|l| Some(l) == choices.state_dir.as_deref()), "원격 --state-dir = choices state_dir: {args}");
         let view = serde_json::to_string(&h.setup_list().unwrap()).unwrap();
@@ -839,6 +880,7 @@ fn a_remote_install_that_refuses_this_ssh_fails_with_the_reason_and_leaves_nothi
     use aaa_proto::install::InstallLogin;
     let Some(lab) = lab() else { return };
     let fake = fake_remote(&lab.root);
+    fake_launcher(&fake, "9.9.9");
     std::fs::write(lab.root.join("remote/probe.exit"), "3").unwrap();
     install::tests_binary::set(Some((fake.clone(), "aaa 9.9.9".into())));
     let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
@@ -855,6 +897,7 @@ fn a_remote_install_that_refuses_this_ssh_fails_with_the_reason_and_leaves_nothi
         .await
         .unwrap();
         assert_eq!(leave(&h, &job.job, MachineSetupPhase::Detecting).await.phase, MachineSetupPhase::Ready);
+        as_mac(&h, &job.job);
         let settings = MachineSetupSettings {
             name: "lab-c".into(),
             host: "127.0.0.1:7430".into(),
@@ -910,20 +953,30 @@ fn a_release_binary_is_fetched_only_from_its_release_with_the_manifest_sha_and_c
             ]
         });
         let cache = root.join("ok");
-        let got = release::fetch(&cache, &srv.base, "1.2.3", "macos-x86_64").await.unwrap();
+        let got = release::fetch(&cache, &srv.base, "1.2.3", release::Kind::Binary, "macos-x86_64").await.unwrap();
         assert_eq!((std::fs::read(&got.path).unwrap(), got.sha256.as_str()), (binary.clone(), sha.as_str()));
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
             assert_eq!(std::fs::metadata(got.path.parent().unwrap()).unwrap().permissions().mode() & 0o777, 0o700);
         }
-        let again = release::fetch(&cache, &srv.base, "1.2.3", "macos-x86_64").await.unwrap();
+        let again = release::fetch(&cache, &srv.base, "1.2.3", release::Kind::Binary, "macos-x86_64").await.unwrap();
         assert_eq!(again, got);
         let assets = srv.hits.lock().unwrap().iter().filter(|p| p.ends_with("aaa-macos-x86_64")).count();
         assert_eq!(assets, 1, "같은 SHA 캐시는 다시 받지 않는다");
+        // 옛 manifest에는 launcher가 없다
+        assert!(
+            release::fetch(&cache, &srv.base, "1.2.3", release::Kind::Launcher, "macos-x86_64")
+                .await
+                .unwrap_err()
+                .contains("launcher가 없다")
+        );
         // 없는 종류
         assert!(
-            release::fetch(&cache, &srv.base, "1.2.3", "linux-aarch64").await.unwrap_err().contains("linux-aarch64")
+            release::fetch(&cache, &srv.base, "1.2.3", release::Kind::Binary, "linux-aarch64")
+                .await
+                .unwrap_err()
+                .contains("linux-aarch64")
         );
 
         // SHA가 manifest와 다르면 쓰지 않고 남기지 않는다
@@ -937,7 +990,12 @@ fn a_release_binary_is_fetched_only_from_its_release_with_the_manifest_sha_and_c
             ]
         });
         let cache = root.join("bad");
-        assert!(release::fetch(&cache, &bad.base, "1.2.3", "macos-x86_64").await.unwrap_err().contains("SHA-256"));
+        assert!(
+            release::fetch(&cache, &bad.base, "1.2.3", release::Kind::Binary, "macos-x86_64")
+                .await
+                .unwrap_err()
+                .contains("SHA-256")
+        );
         assert!(
             !cache.join("v1.2.3/macos-x86_64/aaa").exists() && !cache.join("v1.2.3/macos-x86_64/aaa.part").exists()
         );
@@ -950,13 +1008,16 @@ fn a_release_binary_is_fetched_only_from_its_release_with_the_manifest_sha_and_c
             )]
         });
         assert!(
-            release::fetch(&root.join("v"), &other.base, "1.2.3", "macos-x86_64").await.unwrap_err().contains("1.2.4")
+            release::fetch(&root.join("v"), &other.base, "1.2.3", release::Kind::Binary, "macos-x86_64")
+                .await
+                .unwrap_err()
+                .contains("1.2.4")
         );
         let away = http_with(|_| {
             vec![("/releases/download/v1.2.3/manifest.json".into(), manifest("1.2.3", "https://example.com/aaa", &sha))]
         });
         assert!(
-            release::fetch(&root.join("a"), &away.base, "1.2.3", "macos-x86_64")
+            release::fetch(&root.join("a"), &away.base, "1.2.3", release::Kind::Binary, "macos-x86_64")
                 .await
                 .unwrap_err()
                 .contains("공개 release 파일")
@@ -1029,18 +1090,28 @@ fn another_cpu_gets_the_same_release_version_from_the_release_and_verifies_it_re
     let asset = std::fs::read(&fake).unwrap();
     let sha = hex::encode(Sha256::digest(&asset));
     let other = if std::env::consts::ARCH == "aarch64" { "x86_64" } else { "aarch64" };
-    let key = format!("{}-{other}", std::env::consts::OS);
+    let key = format!("macos-{other}");
+    // 같은 release의 launcher package(그 실행 파일 SHA에 묶임)
+    let package = serde_json::to_vec(&serde_json::json!({
+        "schema": 1, "version": "1.2.3", "platform": key, "binary_sha256": sha, "files": {}
+    }))
+    .unwrap();
+    let package_sha = hex::encode(Sha256::digest(&package));
     let srv = http_with(|base| {
         vec![
             (
                 "/releases/download/v1.2.3/manifest.json".into(),
                 serde_json::to_vec(&serde_json::json!({
                     "version": "1.2.3",
-                    "assets": { key.clone(): { "url": format!("{base}/download/v1.2.3/aaa-{key}"), "sha256": sha } }
+                    "assets": { key.clone(): { "url": format!("{base}/download/v1.2.3/aaa-{key}"), "sha256": sha } },
+                    "launchers": { key.clone(): {
+                        "url": format!("{base}/download/v1.2.3/aaa-launcher-{key}.json"), "sha256": package_sha
+                    } }
                 }))
                 .unwrap(),
             ),
             (format!("/releases/download/v1.2.3/aaa-{key}"), asset.clone()),
+            (format!("/releases/download/v1.2.3/aaa-launcher-{key}.json"), package.clone()),
         ]
     });
     // host 자기 파일은 쓰지 않는다(다른 CPU): 판만 release 판으로
@@ -1061,8 +1132,11 @@ fn another_cpu_gets_the_same_release_version_from_the_release_and_verifies_it_re
         .unwrap();
         assert_eq!(leave(&h, &job.job, MachineSetupPhase::Detecting).await.phase, MachineSetupPhase::Ready);
         // 실험실은 같은 머신이라 감지 CPU만 다른 종류로 바꾼다
-        h.setup_update(&job.job, MachineSetupPhase::Ready, |j| j.view.detected.as_mut().unwrap().arch = other.into())
-            .unwrap();
+        h.setup_update(&job.job, MachineSetupPhase::Ready, |j| {
+            let d = j.view.detected.as_mut().unwrap();
+            (d.os, d.arch) = ("macos".into(), other.into());
+        })
+        .unwrap();
         let settings = MachineSetupSettings {
             name: "lab-x".into(),
             host: "127.0.0.1:7430".into(),
@@ -1082,6 +1156,16 @@ fn another_cpu_gets_the_same_release_version_from_the_release_and_verifies_it_re
         );
         let cached = h.state.join(format!("ssh/release/v1.2.3/{key}/aaa"));
         assert_eq!(std::fs::read(&cached).unwrap(), asset);
+        assert_eq!(
+            std::fs::read(lab.root.join("remote/probe.launcher")).unwrap(),
+            package,
+            "같은 판 release의 launcher를 원격 실행 파일 옆에 놓았다"
+        );
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let kept = h.state.join(format!("ssh/release/v1.2.3/{key}/aaa-launcher-{key}.json"));
+            assert_eq!(std::fs::metadata(kept).unwrap().permissions().mode() & 0o777, 0o600, "캐시도 실행 파일 옆");
+        }
         let probed: Vec<String> =
             std::fs::read_to_string(lab.root.join("remote/probe.args")).unwrap().lines().map(str::to_string).collect();
         assert!(probed.contains(&sha), "원격 install에 release 파일의 SHA를 executor로 준다: {probed:?}");
@@ -1091,6 +1175,99 @@ fn another_cpu_gets_the_same_release_version_from_the_release_and_verifies_it_re
     drop(rt);
     install::tests_binary::set(None);
     install::tests_binary::set_base(None);
+    assert!(weak.upgrade().is_none());
+}
+
+/// launcher package는 보낼 실행 파일에 묶여야 보낸다(다르면 원격에 아무것도 남기지 않고 멈춤). 개발 판 host 옆에 없으면 보내지 않고,
+/// 원격 install이 launcher를 사람 일로 알리면 host가 무엇을 준비할지 덧붙인다
+#[cfg(unix)]
+#[test]
+fn a_launcher_package_must_bind_the_sent_binary_and_a_dev_host_without_one_says_what_to_prepare() {
+    use aaa_proto::install::*;
+    let Some(lab) = lab() else { return };
+    let fake = fake_remote(&lab.root);
+    let remote = lab.root.join("remote");
+    // 개발 판 대본(`--version`이 개발 판)은 따로 둔다
+    let dev_root = lab.root.join("dev");
+    std::fs::create_dir_all(&dev_root).unwrap();
+    let dev = fake_remote_as(&dev_root, "aaa 9.9.9+abc");
+    let dev_remote = dev_root.join("remote");
+    let dev_sha = hex::encode(Sha256::digest(std::fs::read(&dev).unwrap()));
+    let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
+    let weak = rt.block_on(async {
+        let h = host_for(&lab);
+        let ready = async |name: &str| {
+            let job = start(&h, "lab").await;
+            let job = leave(&h, &job.job, MachineSetupPhase::Connecting).await;
+            let key = job.host_keys.first().map(|k| k.sha256.clone());
+            if let Some(key) = key.filter(|_| job.phase == MachineSetupPhase::Trust) {
+                h.call(
+                    DeviceRole::Controller,
+                    WEB,
+                    FrontRequest::MachineSetupTrust { job: job.job.clone(), host_key_sha256: key },
+                )
+                .await
+                .unwrap();
+            }
+            assert_eq!(leave(&h, &job.job, MachineSetupPhase::Detecting).await.phase, MachineSetupPhase::Ready);
+            let detected = as_mac(&h, &job.job);
+            let settings = MachineSetupSettings {
+                name: name.into(),
+                host: "127.0.0.1:7430".into(),
+                work_root: lab.root.join("work").to_string_lossy().into(),
+                work_mount: None,
+                harness: vec![],
+                login: InstallLogin::Defer,
+            };
+            (job.job, settings, detected)
+        };
+
+        // 다른 실행 파일에 묶인 package: 원격 계획 전에 멈추고 원격 임시 폴더를 지운다
+        let launcher = fake_launcher(&fake, "9.9.9");
+        let mut wrong: serde_json::Value = serde_json::from_slice(&std::fs::read(&launcher).unwrap()).unwrap();
+        wrong["binary_sha256"] = "0".repeat(64).into();
+        std::fs::write(&launcher, serde_json::to_vec(&wrong).unwrap()).unwrap();
+        install::tests_binary::set(Some((fake.clone(), "aaa 9.9.9".into())));
+        let (job, settings, _) = ready("lab-d").await;
+        h.call(DeviceRole::Controller, WEB, FrontRequest::MachineSetupPlan { job: job.clone(), settings })
+            .await
+            .unwrap();
+        let failed = leave(&h, &job, MachineSetupPhase::Planning).await;
+        assert_eq!(failed.phase, MachineSetupPhase::Failed);
+        assert!(failed.error.as_deref().unwrap().contains("묶이지 않았다"), "{:?}", failed.error);
+        assert!(!remote.join("probe.in").exists(), "원격 install까지 가지 않았다");
+        assert_eq!(remote_setup_dirs(&fake), Vec::<PathBuf>::new(), "원격 임시 폴더를 지웠다");
+
+        // 개발 판 host 옆에 package가 없다: 보내지 않고 원격 install에 맡긴다. 원격이 launcher를 사람 일로 알리면 준비할 것을 보인다
+        install::tests_binary::set(Some((dev.clone(), "aaa 9.9.9+abc".into())));
+        let (job, settings, detected) = ready("lab-e").await;
+        let mut proposal = fake_proposal(install::choices(&settings, &detected).unwrap(), &dev_sha, "macos");
+        proposal.result.status = InstallStatus::NeedsUser;
+        proposal.result.needs_user = vec![InstallNeedsUser {
+            code: "installation_launcher_asset_required".into(),
+            target: "launcher".into(),
+            message: "같은 release의 launcher JSON asset을 설치 원본 실행 파일 옆에 준비하세요".into(),
+        }];
+        std::fs::write(dev_remote.join("probe.out"), serde_json::to_vec(&proposal).unwrap()).unwrap();
+        h.call(DeviceRole::Controller, WEB, FrontRequest::MachineSetupPlan { job: job.clone(), settings })
+            .await
+            .unwrap();
+        let asked = leave(&h, &job, MachineSetupPhase::Planning).await;
+        assert_eq!(asked.phase, MachineSetupPhase::NeedsUser, "{:?}", asked.error);
+        let why = asked.error.unwrap();
+        assert!(
+            why.contains(&format!("aaa-launcher-macos-{}.json", std::env::consts::ARCH)) && why.contains("release 판"),
+            "{why}"
+        );
+        assert!(
+            dev_remote.join("probe.in").exists() && !dev_remote.join("probe.launcher").exists(),
+            "launcher 없이 계획했다"
+        );
+        assert_eq!(remote_setup_dirs(&dev), Vec::<PathBuf>::new());
+        Arc::downgrade(&h)
+    });
+    drop(rt);
+    install::tests_binary::set(None);
     assert!(weak.upgrade().is_none());
 }
 

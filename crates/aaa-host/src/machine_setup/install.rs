@@ -8,6 +8,9 @@
 //!    grant를 더해 다시 서명해 한 번 더 전하고, 원격 `install --resume`이 적용한다. 원격 worker가 grant로 host에 등록한다(TLS 신원 대조).
 //! 3. **끝.** install 결과와 host 머신 목록을 함께 본다. 원격 임시 폴더는 끝나면 지운다.
 //!
+//! macOS는 현재 사용자 LaunchAgent(install I3, `--service launchd --start now`)로 띄우므로 끝나면 agent가 host에 연결돼 있다. 실행 파일
+//! 옆에 같은 판 launcher package를 함께 놓는다(`launcher_package`).
+//!
 //! 원격 명령은 고정 글이다: 원격 폴더는 `binary::safe_dir`를 통과한 것, SHA는 hex, 설치 ID는 ULID만 들어간다. 원격 상태 폴더는 원격 셸의
 //! `$HOME`으로 쓴다. choices에는 감지한 HOME으로 같은 경로를 적는다(install이 둘이 같은지 본다).
 use std::path::PathBuf;
@@ -24,6 +27,7 @@ use serde::Deserialize;
 use sha2::{Digest, Sha256};
 
 use super::binary::{self, Source};
+use super::release::Kind;
 use super::{Ran, Ssh, Target, bad, parse_target};
 use crate::Host;
 
@@ -102,6 +106,10 @@ pub(crate) fn check_settings(s: &MachineSetupSettings) -> Result<(), String> {
 
 /// 웹 설정 + 감지 → install choices(role agent, 등록 grant). 원격 상태·실행 파일 자리는 감지한 HOME 아래 install 기본 자리다
 pub(crate) fn choices(s: &MachineSetupSettings, d: &MachineDetected) -> Result<InstallChoices, String> {
+    // 감독자까지 끝나는 OS만 설치한다: macOS launchd(install I3). Linux(I4)·Windows는 그 단계가 오면 연다
+    if d.os != "macos" {
+        return Err(format!("{}는 아직 SSH로 설치하지 않는다(macOS부터, 그 OS의 install 감독자가 오면 연다)", d.os));
+    }
     let suffix = state_suffix(&d.os).ok_or_else(|| format!("{}는 아직 SSH로 설치하지 않는다(macOS부터)", d.os))?;
     let home = d.home.as_deref().map(|h| h.trim_end_matches('/')).filter(|h| remote_path_ok(h) && !h.is_empty());
     let home = home.ok_or("그 머신의 HOME을 읽지 못했다(감지를 다시 한다)")?;
@@ -131,9 +139,11 @@ pub(crate) fn choices(s: &MachineSetupSettings, d: &MachineDetected) -> Result<I
         host: Some(s.host.trim().to_string()),
         network: Some(InstallNetwork::Direct),
         enroll: Some(InstallEnroll::Grant),
-        // install 승인 executor는 아직 macOS launchd를 받지 않는다(t-0485 I3). 그 전에는 파일·등록까지만 한다
-        service: Some(InstallService::None),
-        start: Some(InstallStart::Deferred),
+        // 현재 사용자 LaunchAgent(install I3)로 바로 띄운다. launcher는 실행 파일 옆 package로 새로 놓거나(기본 자리
+        // `~/Applications/aaa-launcher.app`) 이미 있는 것을 보존한다(install이 정한다)
+        service: Some(InstallService::Launchd),
+        launcher_policy: Some(InstallLauncherPolicy::Install),
+        start: Some(InstallStart::Now),
         ..Default::default()
     })
 }
@@ -231,6 +241,46 @@ fn running_binary() -> std::io::Result<(PathBuf, String)> {
         return Ok(v);
     }
     Ok((std::env::current_exe()?, aaa_common::util::software()))
+}
+
+/// launcher package가 묶인 실행 파일·판(나머지 칸은 원격 install이 본다)
+#[derive(Deserialize)]
+struct LauncherBinding {
+    version: String,
+    platform: String,
+    binary_sha256: String,
+}
+
+/// 보낼 실행 파일(`file`, SHA `sha`)에 묶인 macOS launcher package: 그 파일 옆 `name`, 없으면 host가 release 판일 때 같은 판 release에서
+/// 받는다. 개발 판 host에서 옆에 없으면 None(원격에 이미 launcher가 있으면 install이 보존하고, 없으면 사람 일로 알린다)
+async fn launcher_package(
+    cache: &std::path::Path,
+    file: &std::path::Path,
+    software: &str,
+    sha: &str,
+    name: &str,
+    arch: &str,
+) -> Result<Option<(PathBuf, String)>, String> {
+    let version = software.strip_prefix("aaa ").unwrap_or(software);
+    let beside = file.parent().map(|p| p.join(name)).filter(|p| p.is_file());
+    let path = match beside {
+        Some(p) => p,
+        None if super::release::version_ok(version) => {
+            let key = format!("macos-{arch}");
+            super::release::fetch(cache, &release_base(), version, Kind::Launcher, &key).await?.path
+        }
+        None => return Ok(None),
+    };
+    let raw = std::fs::read(&path).map_err(|e| format!("launcher package를 읽지 못했다: {e}"))?;
+    let b: LauncherBinding =
+        serde_json::from_slice(&raw).map_err(|_| format!("launcher package({name})를 읽지 못했다"))?;
+    if b.binary_sha256 != sha || b.platform != format!("macos-{arch}") || b.version != version {
+        return Err(format!(
+            "launcher package({name})가 보낼 실행 파일과 묶이지 않았다(판 {}, 실행 파일 SHA {})",
+            b.version, b.binary_sha256
+        ));
+    }
+    Ok(Some((path, sha256_hex(&raw))))
 }
 
 impl Ssh {
@@ -378,11 +428,11 @@ impl Host {
             Err(e) => return fail(format!("host 실행 파일을 찾지 못했다: {e}")),
         };
         let here = (std::env::consts::OS, std::env::consts::ARCH);
+        let cache = self.state.join("ssh").join("release");
         let file = match binary::pick(here, &software, (d.os.as_str(), d.arch.as_str()), &exe) {
             Source::Running { path } => path,
             Source::Release { version, key } => {
-                let cache = self.state.join("ssh").join("release");
-                match super::release::fetch(&cache, &release_base(), &version, &key).await {
+                match super::release::fetch(&cache, &release_base(), &version, Kind::Binary, &key).await {
                     Ok(f) => f.path,
                     Err(e) => return fail(e),
                 }
@@ -402,7 +452,16 @@ impl Host {
             ssh.cleanup(&t, &keep).await;
             return;
         }
+        let name = binary::launcher_name(&d.os, &d.arch);
+        let launcher = match &name {
+            Some(name) => launcher_package(&cache, &file, &software, &sha, name, &d.arch).await,
+            None => Ok(None),
+        };
         let planned = async {
+            let launcher = launcher?;
+            if let (Some(name), Some((path, launcher_sha))) = (&name, &launcher) {
+                ssh.place_beside(&t, &placed.dir, name, path, launcher_sha).await?;
+            }
             let (Ok(c), Some(script)) = (choices(&settings, &d), probe_script(&placed.dir, &d.os, &sha)) else {
                 return Err("설치 설정을 install choices로 옮기지 못했다".to_string());
             };
@@ -423,12 +482,12 @@ impl Host {
                     aaa_common::private_file::write(&path, &b)
                 })
                 .map_err(|e| format!("계획을 host 작업 폴더에 두지 못했다: {e}"))?;
-            Ok((proposal.result, summary))
+            Ok((proposal.result, summary, launcher.is_some()))
         }
         .await;
         let phase = match &planned {
-            Ok((result, _)) if result.status == InstallStatus::Failed => MachineSetupPhase::Failed,
-            Ok((_, summary)) if summary.needs_user.is_empty() => MachineSetupPhase::Review,
+            Ok((result, ..)) if result.status == InstallStatus::Failed => MachineSetupPhase::Failed,
+            Ok((_, summary, _)) if summary.needs_user.is_empty() => MachineSetupPhase::Review,
             Ok(_) => MachineSetupPhase::NeedsUser,
             Err(_) => MachineSetupPhase::Failed,
         };
@@ -443,8 +502,14 @@ impl Host {
                 j.remote_dir = None;
             }
             match planned {
-                Ok((result, summary)) => {
+                Ok((result, summary, sent)) => {
                     j.view.error = result.error.as_ref().map(|e| format!("원격 install: {}", e.message));
+                    if !sent && summary.needs_user.iter().any(|n| n.code == "installation_launcher_asset_required") {
+                        j.view.error = Some(format!(
+                            "host에 그 머신용 launcher package({})가 없다: release 판 host에서 하거나 host 실행 파일 옆에 둔다",
+                            name.as_deref().unwrap_or("aaa-launcher-macos-<CPU>.json")
+                        ));
+                    }
                     j.view.review = Some(Box::new(summary));
                 }
                 Err(e) => j.view.error = Some(e),
