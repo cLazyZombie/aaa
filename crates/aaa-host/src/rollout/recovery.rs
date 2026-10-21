@@ -172,6 +172,7 @@ impl Host {
                 observed: vec![],
                 installed_sha256: String::new(),
                 error: None,
+                pending_web: None,
             },
             Err(e) => {
                 r.state = RolloutState::RecoveryFailed;
@@ -352,6 +353,7 @@ mod tests {
                 software: "aaa 0.1.2".into(),
                 instance: "old".into(),
                 started_ms: 1,
+                web: None,
             },
             expected_sha256: r.spec.sha256.clone(),
             expected_software: "aaa 0.1.2".into(),
@@ -377,6 +379,7 @@ mod tests {
             observed: vec![],
             installed_sha256: r.spec.sha256.clone(),
             error: Some("failed".into()),
+            pending_web: None,
         };
         (r, view)
     }

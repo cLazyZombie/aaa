@@ -189,8 +189,11 @@ pub const AGENT_LINK: Version = Version { major: 1, minor: 10 };
 // 1.84: 질문 연결 post 자동 처리·채팅 답의 처리 표시(`post_handled` → Done), `Post.handled` 선택 칸(plan §8.366).
 // 옛 host는 새 요청을 모르는 요청으로 거절하고 상태 칸을 생략한다. Agent link 변경 없음.
 // 1.85: task 예약·기동 연결·완료 보관, task ID(plan §8.367). 옛 host에는 새 조작을 보내지 않는다.
-/// 1.86: 작업 요약에 순서를 유지하는 큰 작업 목록(progress)과 완료·진행·대기 상태를 더한다.
-pub const FRONT_API: Version = Version { major: 1, minor: 86 };
+// 1.86: 작업 요약에 순서를 유지하는 큰 작업 목록(progress)과 완료·진행·대기 상태를 더한다.
+/// 1.87: 배포 감시의 웹 응답(관리 GUI W6c, plan §8.371): 실행 신원 `RuntimeIdentity.web`(host가 연 웹 주소)과 감시 기록
+/// `DeployGuardView.pending_web` 선택 칸. 새 host 감시는 실행 신원이 맞아도 그 웹의 `/api/v1/me`가 답해야 새 판 준비다.
+/// Agent link는 1.10 그대로다: host가 같은 머신 agent의 Welcome 신원에만 싣고, 옛 agent·옛 감시는 모르는 칸을 버린다.
+pub const FRONT_API: Version = Version { major: 1, minor: 87 };
 /// agent ↔ session host(내부). 세션이 몇 주 이어질 수 있으므로 이전 session host와 호환해야 한다.
 /// 1.1: `SessionRequest::Detect`(harness 상태 감지 입력). agent는 1.0 session host에 보내지 않고 `Screen`을 쓴다.
 /// 1.2: `SessionRequest::Colors`(색 질의에 답할 화면 색, plan §8.187). agent는 1.1 이하 session host에 보내지 않는다.

@@ -196,6 +196,7 @@ impl Agent {
                 observed: vec![],
                 installed_sha256: String::new(),
                 error: None,
+                pending_web: None,
             };
             save(&self.state, &view)?;
             view
@@ -303,6 +304,7 @@ impl Agent {
 }
 
 fn begin_restore(view: &mut DeployGuardView, reason: String, now: u64) {
+    view.pending_web = None;
     view.phase = Phase::Restoring;
     view.error = Some(reason);
     view.deadline_ms = now + WINDOW_MS;
@@ -355,7 +357,12 @@ fn apply(view: &mut DeployGuardView, control: Control, now: u64) -> Result<()> {
                 && identity.started_ms >= view.deadline_ms.saturating_sub(WINDOW_MS)
             {
                 if identity.sha256 == view.spec.expected_sha256 && identity.software == view.spec.expected_software {
-                    view.phase = Phase::NewReady;
+                    // host는 웹도 답해야 준비다(W6c). 웹 주소가 없으면(웹을 끈 설정·옛 host) 실행 신원만 본다
+                    match identity.web.filter(|w| service == DeployService::Host && !w.is_empty()) {
+                        Some(web) if view.phase == Phase::AwaitingNew => view.pending_web = Some(web),
+                        Some(_) => {}
+                        None => view.phase = Phase::NewReady,
+                    }
                 } else {
                     begin_restore(view, "재시작 뒤 옛 판/다른 SHA가 돌아왔다".into(), now);
                 }
@@ -379,6 +386,12 @@ fn apply(view: &mut DeployGuardView, control: Control, now: u64) -> Result<()> {
         _ => bail!("이 감시 단계에서는 허용하지 않는 전이"),
     }
     Ok(())
+}
+/// 기다리던 새 host의 웹이 답했다. 시한은 늘리지 않는다
+fn web_answered(view: &mut DeployGuardView) {
+    if view.phase == Phase::AwaitingNew && view.pending_web.take().is_some() {
+        view.phase = Phase::NewReady;
+    }
 }
 fn expired(view: &mut DeployGuardView, now: u64) {
     if now < view.deadline_ms || view.phase.terminal() {
@@ -548,8 +561,13 @@ pub async fn worker(id: &str, execute: RecoveryExecutor) -> Result<()> {
             continue;
         }
         let remaining = view.deadline_ms.saturating_sub(util::now_ms());
+        // 실행 신원이 맞은 새 host의 웹 응답을 시한까지 묻는다(답하지 않으면 시한이 지나 복구)
+        let web = view.pending_web.clone().filter(|_| view.phase == Phase::AwaitingNew);
         tokio::select! {
             _=tokio::time::sleep(Duration::from_millis(remaining))=>{},
+            answered=super::web_probe::ask_once(web.clone().unwrap_or_default()), if web.is_some() => {
+                if answered { web_answered(&mut view); }
+            },
             peer=listener.accept_peer()=>{
                 let (stream,pid)=peer?;
                 if pid.is_none() || pid!=agent_pid(&state).ok() { continue; }
@@ -581,6 +599,7 @@ mod tests {
                     software: "aaa 0.1.2+old".into(),
                     instance: "old-agent".into(),
                     started_ms: 0,
+                    web: None,
                 },
                 expected_sha256: "b".repeat(64),
                 expected_software: "aaa 0.1.2+new".into(),
@@ -603,10 +622,17 @@ mod tests {
             observed: vec![],
             installed_sha256: "a".repeat(64),
             error: None,
+            pending_web: None,
         }
     }
     fn identity(sha: &str, software: &str, instance: &str) -> RuntimeIdentity {
-        RuntimeIdentity { sha256: sha.into(), software: software.into(), instance: instance.into(), started_ms: 100 }
+        RuntimeIdentity {
+            sha256: sha.into(),
+            software: software.into(),
+            instance: instance.into(),
+            started_ms: 100,
+            web: None,
+        }
     }
     #[test]
     fn guard_requires_a_new_matching_process_and_does_not_renew_failure_deadlines() {
@@ -654,6 +680,59 @@ mod tests {
             apply(&mut timeout, Control::Recover { reason: "같은 실패".into() }, deadline + 10).unwrap();
             assert_eq!(timeout.deadline_ms, recovery_deadline);
             assert_eq!(timeout.spec, recovery_spec, "복구/재개에서 새 작업 ID를 만들면 안 된다");
+        }
+    }
+    #[test]
+    fn a_new_host_is_ready_only_after_its_web_answers_within_the_same_deadline() {
+        let with_web = |sha: &str, software: &str, web: &str| RuntimeIdentity {
+            web: Some(web.into()),
+            ..identity(sha, software, "new")
+        };
+        let mut v = view(DeployService::Host, true);
+        let spec = v.spec.clone();
+        apply(&mut v, Control::Activate, 10).unwrap();
+        let deadline = v.deadline_ms;
+        v.installed_sha256 = spec.expected_sha256.clone();
+        let new = with_web(&spec.expected_sha256, &spec.expected_software, "127.0.0.1:7431");
+        apply(&mut v, Control::Observe { service: DeployService::Host, identity: new.clone() }, 20).unwrap();
+        assert_eq!(v.phase, Phase::AwaitingNew, "실행 신원만으로 새 판 준비로 넘겼다");
+        assert_eq!(v.pending_web.as_deref(), Some("127.0.0.1:7431"));
+        assert!(apply(&mut v, Control::Commit, 30).is_err(), "웹 응답 전에 확정했다");
+        // 다시 붙어 같은 신원을 알려도 기다림은 그대로다
+        apply(&mut v, Control::Observe { service: DeployService::Host, identity: new.clone() }, 40).unwrap();
+        assert_eq!(v.phase, Phase::AwaitingNew);
+        web_answered(&mut v);
+        assert_eq!((v.phase, v.pending_web.as_deref()), (Phase::NewReady, None));
+        assert_eq!(v.deadline_ms, deadline, "웹 응답이 시한을 늘렸다");
+        apply(&mut v, Control::Commit, 50).unwrap();
+        assert_eq!(v.phase, Phase::VerifiedNew);
+
+        // 웹이 답하지 않으면 같은 시한에 옛 판으로 되돌린다
+        let mut silent = view(DeployService::Host, true);
+        apply(&mut silent, Control::Activate, 10).unwrap();
+        apply(&mut silent, Control::Observe { service: DeployService::Host, identity: new }, 20).unwrap();
+        let limit = silent.deadline_ms;
+        expired(&mut silent, limit - 1);
+        assert_eq!(silent.phase, Phase::AwaitingNew);
+        expired(&mut silent, limit);
+        assert_eq!((silent.phase, silent.pending_web.as_deref()), (Phase::Restoring, None));
+        web_answered(&mut silent);
+        assert_eq!(silent.phase, Phase::Restoring, "복구 중에 늦은 웹 응답으로 준비가 됐다");
+
+        // 웹을 끈 설정·옛 host(주소 없음)는 실행 신원만 본다. agent 감시는 웹을 보지 않는다
+        for (service, web) in [
+            (DeployService::Host, None),
+            (DeployService::Host, Some("")),
+            (DeployService::Agent, Some("127.0.0.1:7431")),
+        ] {
+            let mut v = view(service, service == DeployService::Host);
+            apply(&mut v, Control::Activate, 10).unwrap();
+            let identity = RuntimeIdentity {
+                web: web.map(str::to_owned),
+                ..identity(&spec.expected_sha256, &spec.expected_software, "new")
+            };
+            apply(&mut v, Control::Observe { service, identity }, 20).unwrap();
+            assert_eq!((v.phase, v.pending_web.as_deref()), (Phase::NewReady, None), "{service:?} {web:?}");
         }
     }
     #[test]

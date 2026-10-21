@@ -84,7 +84,8 @@ impl Drop for TransferProxy {
 #[cfg(target_os = "macos")]
 fn rollout_preflights_all_targets_and_resumes_same_jobs_after_host_restart() {
     use sha2::{Digest, Sha256};
-    let mut w = world();
+    // 웹을 연 host: 새 host 감시가 실행 신원과 함께 웹 응답(`/api/v1/me`)까지 본다(W6c)
+    let mut w = world_opts("", true);
     w.add_remote();
     let b = w.lab.node("b", None);
     let proxy = TransferProxy::new(w.addr.clone());
@@ -134,7 +135,11 @@ esac
         c
     };
     let config = w.h.cfg.join("host.toml");
-    std::fs::write(&config, std::fs::read_to_string(&config).unwrap().replace("127.0.0.1:0", &w.addr)).unwrap();
+    // agent port만 고정한다(웹은 시작마다 OS가 고른다)
+    let pinned = std::fs::read_to_string(&config)
+        .unwrap()
+        .replace("agent_listen = \"127.0.0.1:0\"", &format!("agent_listen = {:?}", w.addr));
+    std::fs::write(&config, pinned).unwrap();
     w.lab.kill("host");
     w.lab.kill("agentA");
     w.lab.kill("agentB");
@@ -401,12 +406,25 @@ esac
     });
     w.lab.kill("rollout-host-transfer-resume");
     w.lab.kill("rollout-a");
-    w.lab.spawn_command("rollout-host-new", w.h.cmd_bin(&a_exe, &["host"]));
+    // 실행 신원은 맞지만 웹이 답하지 않는 새 host(W6c): 감시는 그 웹 주소를 기다리고 rollout은 다음 단계로 가지 않는다
+    let mut silent = w.h.cmd_bin(&a_exe, &["host"]);
+    silent.env("AAA_TEST_WEB_HOLD_ME", "1");
+    w.lab.spawn_command("rollout-host-web-silent", silent);
     // CLI가 새 host에 먼저 붙어도, peer PID 신원을 local hello 이전에 고정하면 안 된다.
     wait_for("wait handshake가 local 자료를 기다림", T, || {
-        w.lab.log("rollout-host-new").contains("배포 상태 조회: 로컬 agent 자료 기다림").then_some(())
+        w.lab.log("rollout-host-web-silent").contains("배포 상태 조회: 로컬 agent 자료 기다림").then_some(())
     });
     w.lab.spawn_command("rollout-a-hello", agent_cmd(&w.h, &a_exe, "a", "local", "labA"));
+    let host_guard_file = w.h.state.join(format!("agent/deployments/{}.guard.json", before_ids[5].as_str().unwrap()));
+    let silent_web = w.h.ok(&["status"])["web_listen"].as_str().unwrap().to_string();
+    let waiting = wait_for("감시가 새 host의 웹 응답을 기다림", T, || {
+        let v: Value = serde_json::from_slice(&std::fs::read(&host_guard_file).ok()?).ok()?;
+        (v["pending_web"] == silent_web.as_str()).then_some(v)
+    });
+    assert_eq!(waiting["phase"], "awaiting_new", "웹이 답하지 않는데 새 판 준비로 넘겼다");
+    // 웹이 답하는 같은 판으로 다시 띄우면 그 주소를 확인하고 이어 간다(되돌림은 시한 뒤: 유닛 `a_new_host_is_ready_only_after_its_web_answers…`)
+    w.lab.kill("rollout-host-web-silent");
+    w.lab.spawn_command("rollout-host-new", w.h.cmd_bin(&a_exe, &["host"]));
     wait_for("새 host와 agent 둘 재연결", T, || (w.h.connected("labA") && w.h.connected("labB")).then_some(()));
     let restart = next_call(1);
     assert!(

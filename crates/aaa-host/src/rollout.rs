@@ -609,6 +609,7 @@ impl Host {
                 software: running_software.clone(),
                 instance: running_instance.clone(),
                 started_ms: *running_started_ms,
+                web: None,
             });
         }
         assess(r, step, response, &self.rollout_instance, &self.running_sha256)

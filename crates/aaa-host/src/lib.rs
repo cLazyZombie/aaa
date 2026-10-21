@@ -461,6 +461,9 @@ pub struct Host {
     pairing: Mutex<Pairing>,
     pub agent_listen: Mutex<Option<String>>,
     pub web_listen: Mutex<Option<String>>,
+    /// 거짓인 동안 같은 머신 agent에 Welcome을 보내지 않는다. `run_host`가 웹을 열 때까지만 닫는다(W6c): 그 Welcome의 host 실행
+    /// 신원에 실제로 연 웹 주소가 실려야 host 감시가 웹 응답까지 본다. 웹은 link 뒤에 연다(먼저 열면 `:0` 웹이 고정한 agent port를 쥘 수 있다)
+    pub(crate) web_gate: tokio::sync::watch::Sender<bool>,
     workspaces: Mutex<HashMap<String, Workspace>>,
     /// workspace가 바뀔 때(front가 구독한다)
     pub layout_events: broadcast::Sender<Workspace>,
@@ -696,6 +699,7 @@ impl Host {
             pairing: Mutex::new(Pairing::default()),
             agent_listen: Mutex::new(None),
             web_listen: Mutex::new(None),
+            web_gate: tokio::sync::watch::channel(true).0,
             workspaces: Mutex::new(workspaces),
             layout_events: broadcast::channel(64).0,
             front_seq: AtomicU64::new(0),
@@ -3279,9 +3283,11 @@ async fn run_host(
     // 옛 판이 남긴 보내던 메시지는 입구를 열기 전에 잊는다(연 뒤면 막 기록한 새 메시지까지 「모른다」로 바뀐다)
     host.forget_queued_messages();
     host.start_supervisor();
+    host.web_gate.send_replace(false);
     link::start(&host).await?;
     front::start(&host).await?;
     web::start(&host).await?;
+    host.web_gate.send_replace(true);
     // 입구가 다 열렸다: 이 설정을 안전 모드의 「마지막 정상 설정」으로 보관한다
     if let Err(e) = safe_mode::keep_last_good(&config_dir, files) {
         tracing::warn!("마지막 정상 설정을 보관하지 못했다: {e:#}");

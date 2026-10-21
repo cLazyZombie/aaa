@@ -1154,13 +1154,22 @@ export type DeployAction = { "action": "update", from: string | null, version: s
 
 export type DeployStageView = { rollout: string, project: string, sha256: string, total: number, offset: number, complete: boolean, version: string | null, };
 
-export type RuntimeIdentity = { sha256: string, software: string, instance: string, started_ms: number, };
+export type RuntimeIdentity = { sha256: string, software: string, instance: string, started_ms: number,
+/**
+ * host가 실제로 연 웹 주소(loopback, 관리 GUI W6c, FRONT_API 1.87). 같은 머신 agent에만 싣는다. host 감시는 이 주소의
+ * `/api/v1/me`가 답해야 새 판 준비로 본다. 없으면(웹을 끈 설정·옛 host·agent 신원) 실행 신원만 본다
+ */
+web?: string | null, };
 
 export type DeployGuardSpec = { id: string, rollout: string, project: string, service: DeployService, host_machine: boolean, baseline: RuntimeIdentity, expected_sha256: string, expected_software: string, old_host_instance: string, install_job: string | null, rollback_job: string, restart_job: string, host_restart_job: string, };
 
 export type DeployGuardPhase = "armed" | "awaiting_new" | "new_ready" | "restoring" | "restarting" | "awaiting_old" | "verified_new" | "restored" | "failed" | "cancelled";
 
-export type DeployGuardView = { spec: DeployGuardSpec, phase: DeployGuardPhase, worker_pid: number, deadline_ms: number, install_started: boolean, activated: boolean, restore_started: boolean, restart_index: number, restart_started: boolean, host_restart_ms: number, agent_restart_ms: number, observed: Array<DeployService>, installed_sha256: string, error: string | null, };
+export type DeployGuardView = { spec: DeployGuardSpec, phase: DeployGuardPhase, worker_pid: number, deadline_ms: number, install_started: boolean, activated: boolean, restore_started: boolean, restart_index: number, restart_started: boolean, host_restart_ms: number, agent_restart_ms: number, observed: Array<DeployService>, installed_sha256: string, error: string | null,
+/**
+ * 실행 신원은 맞고 웹 응답을 기다리는 host 웹 주소(W6c). 답하면 NewReady, 시한이 지나면 복구
+ */
+pending_web?: string | null, };
 
 export type DeployGuardControl = { "op": "status" } | { "op": "begin_install", job_id: string, } | { "op": "activate" } | { "op": "observe", service: DeployService, identity: RuntimeIdentity, } | { "op": "commit" } | { "op": "recover", reason: string, } | { "op": "cancel" };
 
