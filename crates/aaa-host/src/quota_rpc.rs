@@ -25,6 +25,17 @@ impl Drop for Refuse {
     }
 }
 
+fn refuse_refresh(listener: tokio::net::TcpListener) -> Refuse {
+    Refuse(tokio::spawn(async move {
+        // 본문을 읽기 전에 TCP를 닫으면 갱신 POST가 401 대신 reset/broken pipe를 받는다.
+        // 표준 HTTP 처리를 쓰고 본문은 크기를 제한해 읽은 뒤 저장·기록 없이 버린다.
+        let app = axum::Router::new()
+            .fallback(|_: axum::body::Bytes| async { (axum::http::StatusCode::UNAUTHORIZED, "{}") })
+            .layer(axum::extract::DefaultBodyLimit::max(MAX));
+        let _ = axum::serve(listener, app).await;
+    }))
+}
+
 struct ProbeChild(tokio::process::Child);
 impl std::ops::Deref for ProbeChild {
     type Target = tokio::process::Child;
@@ -200,11 +211,7 @@ async fn read_with(exe: &Path, state: &Path, generation: String, auth: &str, now
     }
     let Ok(listener) = tokio::net::TcpListener::bind("127.0.0.1:0").await else { return snapshot };
     let Ok(addr) = listener.local_addr() else { return snapshot };
-    let _refuse = Refuse(tokio::spawn(async move {
-        while let Ok((mut s, _)) = listener.accept().await {
-            let _ = s.write_all(b"HTTP/1.1 401 Unauthorized\r\nContent-Length: 2\r\nConnection: close\r\n\r\n{}").await;
-        }
-    }));
+    let _refuse = refuse_refresh(listener);
     let child = command(exe, &home.0)
         .arg("app-server")
         .env("CODEX_REFRESH_TOKEN_URL_OVERRIDE", format!("http://{addr}/refuse"))
@@ -252,6 +259,35 @@ async fn read_with(exe: &Path, state: &Path, generation: String, auth: &str, now
 mod tests {
     use super::*;
     use std::os::unix::fs::PermissionsExt;
+
+    #[tokio::test]
+    async fn refresh_refusal_reads_the_post_body_before_closing() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let _refuse = refuse_refresh(listener);
+        let exchange = async {
+            let mut client = BufReader::new(tokio::net::TcpStream::connect(addr).await.unwrap());
+            client
+                .get_mut()
+                .write_all(b"POST /refuse HTTP/1.1\r\nHost: localhost\r\nContent-Length: 4\r\nExpect: 100-continue\r\nConnection: close\r\n\r\n")
+                .await
+                .unwrap();
+            // 본문을 보낼 수 있다는 HTTP 사건을 기다린다. 원래 서버는 여기서 바로 401을 보낸다.
+            let mut status = String::new();
+            client.read_line(&mut status).await.unwrap();
+            assert_eq!(status, "HTTP/1.1 100 Continue\r\n");
+            let mut end = String::new();
+            client.read_line(&mut end).await.unwrap();
+            assert_eq!(end, "\r\n");
+            client.get_mut().write_all(b"fake").await.unwrap();
+            let mut response = String::new();
+            client.read_to_string(&mut response).await.unwrap();
+            assert!(response.starts_with("HTTP/1.1 401 Unauthorized\r\n"), "{response}");
+            assert!(response.ends_with("\r\n\r\n{}"), "{response}");
+        };
+        tokio::time::timeout(Duration::from_secs(5), exchange).await.expect("가짜 갱신 POST 완료");
+    }
+
     fn fake(root: &Path, mode: &str) -> PathBuf {
         let exe = root.join(format!("codex-{mode}"));
         let log = root.join(format!("{mode}.methods"));
@@ -267,6 +303,10 @@ auth=json.load(open(home+'/auth.json'))
 assert auth['tokens']['access_token'] == 'fake-access-canary-0123456789'
 mode={mode:?}
 log={log:?}
+def failure(kind,error,tb):
+    with open(log+'.failure','w') as f:
+        f.write(kind.__name__+' errno='+str(getattr(error,'errno',None)))
+sys.excepthook=failure
 def send(v): print(json.dumps(v),flush=True)
 for line in sys.stdin:
     v=json.loads(line)
@@ -306,21 +346,24 @@ for line in sys.stdin:
             async move { (mode, read_with(&exe, &state, format!("generation-{mode}"), auth, 1000).await) }
         });
         for (mode, snapshot) in futures_util::future::join_all(futures).await {
-            let methods = std::fs::read_to_string(root.0.join(format!("{mode}.methods"))).unwrap();
-            assert_eq!(methods, "initialize\ninitialized\naccount/rateLimits/read\n", "{mode}: 무작업 RPC 기록");
-            assert_eq!(snapshot.generation, format!("generation-{mode}"));
+            let failure = std::fs::read_to_string(root.0.join(format!("{mode}.methods.failure"))).unwrap_or_default();
+            let diagnostic = format!("mode={mode} snapshot={snapshot:?} fake_failure={failure}");
+            let methods = std::fs::read_to_string(root.0.join(format!("{mode}.methods")))
+                .unwrap_or_else(|e| panic!("{diagnostic}: RPC 기록 읽기: {e}"));
+            assert_eq!(methods, "initialize\ninitialized\naccount/rateLimits/read\n", "{diagnostic}: 무작업 RPC 기록");
+            assert_eq!(snapshot.generation, format!("generation-{mode}"), "{diagnostic}");
             match mode {
                 "ok" | "refresh" => {
-                    assert_eq!(snapshot.problem, None);
-                    assert_eq!(snapshot.windows.len(), 2);
+                    assert_eq!(snapshot.problem, None, "{diagnostic}");
+                    assert_eq!(snapshot.windows.len(), 2, "{diagnostic}");
                 }
-                "401" => assert_eq!(snapshot.problem, Some(QuotaProblem::Expired)),
+                "401" => assert_eq!(snapshot.problem, Some(QuotaProblem::Expired), "{diagnostic}"),
                 "429" => {
-                    assert_eq!(snapshot.problem, Some(QuotaProblem::RateLimited));
-                    assert_eq!(snapshot.retry_at_ms, Some(124000));
+                    assert_eq!(snapshot.problem, Some(QuotaProblem::RateLimited), "{diagnostic}");
+                    assert_eq!(snapshot.retry_at_ms, Some(124000), "{diagnostic}");
                 }
-                "missing" => assert_eq!(snapshot.problem, Some(QuotaProblem::Unknown)),
-                _ => assert_eq!(snapshot.problem, Some(QuotaProblem::Failed)),
+                "missing" => assert_eq!(snapshot.problem, Some(QuotaProblem::Unknown), "{diagnostic}"),
+                _ => assert_eq!(snapshot.problem, Some(QuotaProblem::Failed), "{diagnostic}"),
             }
             let out = serde_json::to_string(&snapshot).unwrap();
             assert!(!out.contains("canary"), "원문 응답·stderr가 정규화 결과에 없다");

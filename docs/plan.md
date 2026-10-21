@@ -6633,3 +6633,10 @@ worker 자리 수에 포함하지 않는다. 평가자는 새 기동 대상이 �
 내용 확인 뒤 명시 예약 갱신이 필요하다. 파일 직접 수정 뒤 coordinator가 재예약하는 것은 사용자 변경 출처로 인정하지 않는다.
 
 - **번호·호환.** main의 §8.362~8.366·E2E 64~66·질문 E2E 53 확장을 유지한다. 이 기능은 FRONT_API 1.85와 E2E `67-task-queue`를 쓴다. AGENT_LINK는 1.10 그대로다.
+
+### 8.368 quota RPC 갱신 거부와 웹 E2E writer 정리(10-21, t-0568)
+
+- **quota 원인·수리.** 갱신 거부 서버가 POST 본문을 읽기 전에 401을 쓰고 TCP를 닫아 가짜 RPC에 BrokenPipe/Reset이 생겼다. 기존 Axum HTTP 처리로 크기를 제한해 본문을 소비한 뒤 401을 보낸다. 본문·인증은 저장·기록하지 않는다. 여섯 모드의 단언에는 mode·snapshot과 가짜 Python 예외 종류/errno를 남긴다. macOS 독립 전송 실험과 main `4260b096`의 macos-15 재발(t-0571)도 이 경로에 부합하며, 당시 CI mode는 기록이 없어 소급 확정하지 않는다.
+- **정리 순서.** 웹 E2E는 meta·명령줄로 확인한 실험실 session host와 자손을 부모부터 멈춰 새 fork를 막고, 그 PID들이 종료된 것을 관측한 뒤 root를 한 번 지운다. E2E 13의 재부팅 흉내도 같은 완료를 기다린다. 별도 그룹의 writer 자손을 남긴 채 session host에만 종료 신호를 보내던 정리를 고쳤다.
+- **회귀.** quota TCP owner는 `Expect: 100-continue` → 본문 → 401과 EOF를 확인한다. 원래 서버는 첫 401 응답 단언에서 RED여야 한다. 웹 유닛은 실제 writer 자손 종료·무관한 PID 보존·재시도 없는 삭제를 확인하며 원래 정리는 writer 생존 단언에서 RED여야 한다. 원본 bytes 복원 뒤 정상 owner와 정본 ci-local 전체·공개 검사를 수행한다. 실제 로그인·실제 인증·시한 연장·재시도·직렬화는 쓰지 않는다. Ubuntu native 판정은 착지 뒤 main CI에 맡긴다.
+- **번호·호환.** main의 §8.367과 E2E `67-task-queue`를 유지한다. 새 E2E 파일이나 프로토콜 칸은 없으며 기존 E2E 13·54·65와 새 순수 Node 회귀를 쓴다. FRONT_API 1.85·AGENT_LINK 1.10은 그대로다. 시험 절차는 [testing](testing.md)에 둔다.
