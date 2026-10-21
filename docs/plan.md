@@ -7093,3 +7093,11 @@ FRONT_API 1.96는 기본 검수 표지와 답 기록의 r 참조를 더한다. E
 - **검증.** host 판정·보고 파서, 실제 host/agent/Git의 직접 병합·보고 커밋·미병합·로컬만 병합·보고 없음·중단·중복 없음, E2E47의 완료 보관·답할 것 경계를 검사한다. 상세는 [시험](testing.md)의 t-0651 절을 따른다.
 
 - **착지 통합.** origin/main `c249e316`에서 마지막 §8.411·FRONT_API 1.101·AGENT_LINK 1.11·E2E79를 직접 확인했다. 이 기능은 §8.412로 옮기고 API 판과 기존 E2E 번호를 유지한다. main의 passkey·Windows 보고 전송 종료·install Job/부모 종료/IPC 수리를 보존하며 통합본 전체 ci-local과 공개 검사를 수행한다.
+
+
+### 8.413 install Windows pairing 구분자와 IPC 해제 사건(t-0485)
+
+- **원문.** main c249e316의 Windows 전체 job 로그에서 install은 21/22 통과했다. 남은 pairing은 승인 전에 installation_external_tty_required/exit3으로 끝났고, IPC의 일반/canonical 주소 owner는 첫 instance bind에서 OS5였다. 옛 로그에는 bind 조합 번호가 없어 어느 조합인지까지 확정하지 않는다. 승인 조기종료 단언 끝에 answered=N/M·기다릴 needle·실제 child_exit를 남기고, IPC 실패에는 조합·연결 반복·경로·OS 오류·해제 단계를 남긴다. 비밀 출력 가림과 기존 단언은 유지한다.
+- **pairing 주소.** 실험실 host의 state/host와 install canonical state의 역슬래시는 Windows에서 같은 디렉터리지만 기존 해시는 원문 구분자를 구별했다. pipe 이름은 두 구분자를 역슬래시로 맞춘 뒤 계산한다. 기존 역슬래시 주소는 그대로다. 새 client는 NotFound일 때 같은 입력의 옛 원문 주소도 읽어 기존 host와의 호환을 보존하고, canonical 별칭·ACL·peer PID·AccessDenied 거부·BUSY250ms는 유지한다. 실제 mixed/canonical 양방향 연결을 기존 owner에 더하며 fixture를 정상 주소로 바꿔 결함을 피하지 않는다.
+- **해제 owner.** 고정 Mio1.2.4는 read 뒤 다음 overlapped read를 걸고 drop은 취소만 요청한다. 완료 전 OS handle이 남으면 [첫 instance 재생성](https://learn.microsoft.com/en-us/windows/win32/api/winbase/nf-winbase-createnamedpipea)이 AccessDenied5일 수 있다. 시험은 client close→서버 EOF 관측→server/listener drop 뒤 같은 주소 첫 instance를 한 번만 다시 잡아 실제 해제를 확인한다. 연결3초·각 조합3반복·원래3조합·ACL·peer·byte 단언을 유지하며 EOF도 사건으로 기다린다. bind 재시도·sleep·상한 증가·예외 무시는 없다.
+- **검증 경계.** 실제 Windows RED는 위 CI 원문이고 수정 뒤 Windows 실행 GREEN은 승인 착지 뒤 main CI가 판정한다. cross clippy/build와 macOS 검증으로 Windows 성공을 추정하지 않는다. rollout 시한 수리는 별도 t-0654 소관이며 이 후보에서 고치지 않는다. 기준 main81216f02의 마지막§8.412·FRONT_API1.101·AGENT_LINK1.11·E2E79를 유지하고 이 절만 더한다.
