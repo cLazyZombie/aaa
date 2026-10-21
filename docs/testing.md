@@ -2,6 +2,17 @@
 
 새 기능을 만드는 thread가 따르는 짧은 규칙이다. 근거는 참고 넷(herdr 0.9.5·herdr-projects 0.2.35·herdr-web-ui `aa624cb`·t3code `4b1024da`)과 이 저장소에서 실제로 난 간헐 실패다. 전략과 도구 목록은 [plan §13](plan.md#13-테스트-전략과-직접-만들-e2e-도구)에 있다.
 
+## 공개 검사 크기 조회 일괄화(t-0591)
+
+`python3 -m unittest scripts.test_check_public -v`는 실제 임시 Git 저장소에서 기존 금지 확장자·이력·정확한 크기 예외를
+유지하고, 공백·개행·탭·한글·선행 대시 파일명, index를 갱신하지 않은 작업 파일 크기, symlink 대상·삭제·끊긴 링크를
+확인한다. 비 UTF-8 파일명은 이를 허용하는 Linux에서 바이트 그대로 검사한다(macOS 파일시스템은 생성부터 거부한다).
+symlink 순환으로 실제 metadata 조회를 실패시켜 빈 크기 목록으로 통과하지 않는지도 본다.
+
+크기 조회는 파일마다 `wc`를 띄우는 대신 Python 한 번의 `stat`으로 읽는다. NUL 파일 목록·작업 파일 기준·기존 크기 상한과
+내용·커밋·세션 검사는 유지한다. 속도 비교는 같은 worktree·index·환경·기준 commit의 전체 스크립트를 전후 실행하고
+종료 코드·출력을 함께 비교한다. 성능 수치로 시험 기대값이나 시한을 정하지 않는다. 전체 정본은 `bash scripts/ci-local.sh`다.
+
 ## 보고서 폴더 fetch·음원(t-0589, plan §8.381)
 
 - `cargo test -p aaa-host --lib --locked`: `report_connections_have_one_exact_origin_and_capability_prefix`는
