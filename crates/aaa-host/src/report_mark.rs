@@ -170,7 +170,8 @@ impl Host {
     pub(crate) fn verified_report(&self, r: &ThreadRec) -> Option<String> {
         let dir = self.project_dir(&r.project).ok()?;
         let bytes = std::fs::read(dir.join("threads").join(format!("{}.md", r.id))).ok()?;
-        if Some(hex::encode(Sha256::digest(&bytes))) != r.report_hash {
+        if Some(hex::encode(Sha256::digest(&bytes))).as_ref() != r.report_copy_hash.as_ref().or(r.report_hash.as_ref())
+        {
             return None;
         }
         String::from_utf8(bytes).ok()

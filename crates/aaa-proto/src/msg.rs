@@ -889,6 +889,17 @@ pub enum AgentRequest {
         work_dir: String,
         max_library_bytes: u64,
     },
+    /// report_copy.v2: 인증한 link에서 원본 무결성을 확인한 뒤 host 저장 경계에서 가린다.
+    ReportTransfer {
+        work_dir: String,
+        max_library_bytes: u64,
+    },
+    ReportFileRead {
+        work_dir: String,
+        path: String,
+        offset: u64,
+        len: u32,
+    },
     /// work_dir 아래 파일 한 조각(library 사본용)
     FileRead {
         work_dir: String,
@@ -1145,6 +1156,12 @@ pub enum AgentResponse {
     },
     ThreadAdopted(ThreadAdopted),
     Report(ReportSnapshot),
+    /// report_copy.v2 전용 전송 응답. 표시용 FileChunk와 구별한다.
+    ReportTransfer(ReportSnapshot),
+    ReportFileChunk {
+        data: B64,
+        eof: bool,
+    },
     FileChunk {
         data: B64,
         eof: bool,
