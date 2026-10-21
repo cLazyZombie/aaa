@@ -214,7 +214,10 @@ pub const AGENT_LINK: Version = Version { major: 1, minor: 11 };
 /// `DeployGuardView.pending_web` 선택 칸. 새 host 감시는 실행 신원이 맞아도 그 웹의 `/api/v1/me`가 답해야 새 판 준비다.
 /// 재시작만 하는 rollout `RolloutSpec.restart`·`RolloutCard.restart`(웹은 1.100 미만 host에 재시작을 그리지 않는다).
 /// Agent link는 1.11 그대로다: host가 같은 머신 agent의 Welcome 신원에만 싣고, 옛 agent·옛 감시는 모르는 칸을 버린다.
-pub const FRONT_API: Version = Version { major: 1, minor: 100 };
+/// 1.101: 조작 기기 passkey(관리 GUI W7): 공개 주소로 연 조작 기기의 승인 필요 동작은 `passkey_required`로 거부하고
+/// `/api/v1/passkey/approve`(사용자 확인 UV)로만 한다. `/api/v1/me`의 `passkey`, `DeviceView.passkey`, 등록 `/api/v1/passkey/register`
+/// (짝지은 뒤 10분 안). loopback 화면과 CLI는 그대로다. 옛 웹은 오류 글을 보인다. Agent link 변경 없음.
+pub const FRONT_API: Version = Version { major: 1, minor: 101 };
 /// agent ↔ session host(내부). 세션이 몇 주 이어질 수 있으므로 이전 session host와 호환해야 한다.
 /// 1.1: `SessionRequest::Detect`(harness 상태 감지 입력). agent는 1.0 session host에 보내지 않고 `Screen`을 쓴다.
 /// 1.2: `SessionRequest::Colors`(색 질의에 답할 화면 색, plan §8.187). agent는 1.1 이하 session host에 보내지 않는다.

@@ -2,13 +2,20 @@
 
 새 기능을 만드는 thread가 따르는 짧은 규칙이다. 근거는 참고 넷(herdr 0.9.5·herdr-projects 0.2.35·herdr-web-ui `aa624cb`·t3code `4b1024da`)과 이 저장소에서 실제로 난 간헐 실패다. 전략과 도구 목록은 [plan §13](plan.md#13-테스트-전략과-직접-만들-e2e-도구)에 있다.
 
-## 직접 병합한 thread의 할 일 완료 보관(t-0651, plan §8.409)
+## 직접 병합한 thread의 할 일 완료 보관(t-0651, plan §8.412)
 
 - `cargo test -p aaa-host --lib task_clean --locked`: 기존 PR·표지·중단·하위 task 판정과 명시한 병합 커밋 줄 파서를 검사한다. 일반 검증 SHA·코드 예제는 병합 근거로 읽지 않는다.
 - `cargo test -p aaa --test m13 task_main_merge --locked`: 실제 host·agent·로컬 bare origin에서 `[착지]` branch 병합과 보고의 축약 병합 커밋으로 완료 보관한다. 오래된 origin/main·push 없는 로컬 main 병합·미병합 branch·보고 없음·사본 버림을 구분한다. 종료 응답 직후 attention 없음·active task 제거·archive 근거·coordinator inbox 한 건·중복 판정 없음과 로컬 ref/FETCH_HEAD 보존을 검사한다.
 - `node web/e2e/web.e2e.mjs --spec 47-task-thread --workers 1`: 실제 Git 저장소의 직접 병합·미병합 thread를 끝내고, 병합된 할 일의 완료 보관과 「답할 것」 카드 부재, 미병합 할 일의 확인 카드 유지를 DOM 사건으로 확인한다. 기존 완료 복원·보고 없음·하위 task·시작 권한 검사를 유지한다.
 - 고정 sleep·실패 재시도·시한 연장 없이 보고 회수·ticker·DOM 사건으로 끝낸다. 전체 검증은 `nice -n 15 bash scripts/ci-local.sh`와 공개 저장소 검사다.
 
+
+
+## install Windows Job·부모 종료·state IPC(t-0485, plan §8.411)
+
+- main23328f7e Windows install의 원문6실패를 보존한다. 네 worker 실패는 OS5·Job0x2000이며 생산의 제한 거부는 맞는 동작이다. install 시험 실행기는 자기 nested Job만 breakaway 허용으로 만들고, worker 수명 owner는 별도 허용/금지 Job을 모두 검증한다. 바깥 runner 제한은 변경하지 않는다.
+- 부모 종료는 소유 Job을 실제 TerminateJobObject(code1)로 끝내고 닫는다. 기존 부모 비정상 종료·worker 생존·worker 자신의 exit3 내구 기록·같은 ID 재개/읽기 status·금지 시 무쓰기 단언을 유지한다. timeout은 늘리지 않는다.
+- 기존 Windows IPC ACL/peer/byte owner는 동일 경로3회에 일반/canonical 양방향3회씩을 더한다. 기존 주소를 먼저 열고 NotFound만 같은 실제 디렉터리의 별칭을 확인한다. 기존 BUSY·없는 pipe·첫 instance 보호도 계속 검사한다. Windows 실제 GREEN은 main CI만 인정한다.
 
 ## 계정별 Codex 대화 기록(t-0634, plan §8.407)
 
@@ -53,6 +60,10 @@
 
 ## 원격 보고의 해시와 첨부 실패 격리(t-0638, plan §8.401)
 
+- link의 사본 시험은 가짜 agent의 취소 완료와 host 연결의 정상 종료를 기다린 뒤 host를 놓고
+  임시 폴더를 지운다(t-0647). 취소 요청만 하고 지우면 Windows에서 열린 DB 핸들 때문에
+  정리가 os error 32로 실패할 수 있다. 재시도·sleep·정리 오류 무시 없이 기존 삭제 단언을 유지한다.
+  Windows 실행 판정은 main CI의 해당 시험 결과로 하며 macOS 통과·교차 빌드와 구분한다.
 - `cargo test -p aaa-host --lib report_ --locked`의 실제 Agent link keeper는 등록한 가짜 인증을 포함한
   원본 전체의 SHA와 가림 뒤 SHA가 다름을 재현한다. 원본을 변경하지 않은 채 512KiB 경계와 마지막 조각을
   전송해 먼저 검증하고, host의 현재 사본·불변 r 판에는 가린 바이트만 저장하는지 확인한다.
@@ -1992,3 +2003,11 @@ E2E 74의 headless WebKit iframe 그림은 기존 E2E 59·plan §8.353과 같은
 - `cargo test -p aaa --test m13 rollout_preflights_all_targets_and_resumes_same_jobs_after_host_restart`(macOS): 웹을 연 실험실. 첫 rollout의 새 host를 `AAA_TEST_WEB_HOLD_ME`(debug 빌드에서 `/api/v1/me`가 답하지 않음)로 띄우면 host 감시가 그 host의 웹 주소(`status`의 web_listen)를 `pending_web`로 두고 awaiting_new에 머문다 → 같은 판을 그대로 띄우면 이어 간다. 뒤의 모든 host 교체·복구도 웹 응답을 거친다. 끝에 coordinator `aaa service restart --role host`가 재시작 rollout을 만들고, 가짜 launchctl 기록 뒤 같은 실행 파일로 host를 다시 띄우면 done·감시 verified_new·실행 파일 그대로·재시작 한 번. 실험실은 agent port만 고정한다(웹은 시작마다 OS가 고른다).
 - `cargo test -p aaa --test m13 coordinator_deployment_is_gated_and_survives_backend_restarts`(macOS): coordinator `aaa service restart --role agent --machine labB`는 재시작 rollout, 기록 뒤 같은 실행 파일로 agent를 다시 띄우면 done. 감독자 재시작 실패를 넣으면 작업을 다시 보내지 않고 감시의 복구 재시작 한 번 뒤 recovery_failed(오류에 주입한 실패). 이어 개별 update로 설치 파일을 바꾼 뒤 `service restart`는 stderr에 「감시 밖 개별 재시작」을 남기고 개별 재시작 작업(같은 ID, `update status --wait` completed, 재시작 기록 한 번)이며 그 ID의 rollout은 stopped(오류에 `aaa update status <ID>`).
 - `node web/e2e/web.e2e.mjs --spec 63-deploy`: 「서비스 재시작」 확인 창(감시 안내) → 「배포 기록」에 「agent 재시작 ·」 카드 → 가짜 launchctl 기록. 옛 agent 그대로면 끝나지 않고, spec이 감독자 대신 agent를 다시 띄우면 done. 보기 전용 기기도 그 카드를 본다. 실험실 정리는 감시 프로세스를 명령줄의 `deployment-guard`와 실험실 상태 폴더로 확인한 PID만 끝낸다.
+
+## 조작 기기 passkey(t-0538 관리 GUI W7, plan §8.410)
+
+- `cargo test -p aaa-host --lib passkey::`: ring으로 만든 소프트웨어 인증기(ES256·EdDSA 키, 손으로 만든 COSE·attestation object CBOR)로 짝짓기 → 10분 안 등록 → 공개 주소의 승인(`web_pair`·다른 기기 폐기)을 끝까지 돌린다. loopback 화면은 passkey 상태가 없고 바로 승인, 공개 주소는 passkey 없으면 `passkey_required`(등록 안내), 읽기·제 기기 폐기는 묻지 않는다. challenge가 op ID와 요청 hash만 묶는지, 같은 서명을 다시 보내면 실행하지 않는지, UV 없음·다른 화면 주소·다른 RP·다른 challenge·남의 키 서명·모르는 credential은 거부하고 그 op도 버리는지, 다른 기기가 op를 마치지 못하는지 본다. 등록은 loopback·보기 기기·UV 없음·다른 credential ID·10분 지남(시작 뒤 지남 포함)을 거부하고, 다른 기기의 credential을 가져가지 못하며, 기기 폐기 때 지운다. CBOR는 길이 없는 값·잘린 값·남은 크기보다 큰 길이·너무 깊은 중첩을 거부한다.
+- `cargo test -p aaa-host --lib web::guard_tests::only_a_direct_loopback_screen_approves_without_a_passkey`: 라우터 전체로 loopback(직접)은 코드가 나오고, 공개 Host와 serve를 거친 loopback Host(`X-Forwarded-Proto`·`X-Forwarded-For`)는 `passkey_required`.
+- `node --test web/test/passkey.test.mjs`: base64url 왕복(채움 없음)과 등록 단추를 여는 규칙.
+- `node web/e2e/web.e2e.mjs --spec 79-passkey`: debug host를 `AAA_TEST_WEB_LOCALHOST`로 띄워 `http://localhost:<port>`를 공개 주소처럼 쓴다(브라우저 passkey는 IP에 묶이지 못한다, RP ID `localhost`). Chromium 가상 인증기(CDP `WebAuthn`)를 단 휴대폰 화면이 짝지은 뒤 안내 줄로 등록하고, 설정 → 폰 및 기기에 등록됨·기기 목록 「passkey」 표지, 「기기 페어링」 코드가 서명 한 번(인증기 signCount)으로 나온다. 누름이 지난 뒤(`navigator.userActivation.isActive`를 거짓으로 고정)는 「passkey로 승인」 창을 한 번 더 누른 처리기에서 서명하고, 그 창을 취소하면 서명도 요청도 없다. 휴대폰 390에서 다른 확인 창(공유 링크 키 교체) 위의 그 창을 취소해도 아래 창과 안내가 남는다(그 창은 「뒤로」 기록을 쓰지 않는다). 인증기 없는 공개 주소 기기는 거부·등록 안내, 실험실 첫 화면(127.0.0.1)은 같은 동작을 passkey 없이 한다. UV 표지 없는 서명 거부는 host 유닛이 본다(확인하지 못한 가상 인증기는 브라우저가 제 창에서 기다린다).
+- 결함 심기(library `w7-fault/README.md`): gate 열기·UV 검사 빼기·op 다시 쓰기·10분 시한 빼기·화면 주소 검사 빼기·서명 검사 빼기는 host 유닛이, 웹 `call`의 gate 빼기·웹의 UV 다시 보내기 빼기·「passkey로 승인」 창을 휴대폰 sheet(ConfirmDialog)로 되돌리기는 E2E 79가, serve를 거친 Host 판정 빼기는 guard 유닛이 잡았다.

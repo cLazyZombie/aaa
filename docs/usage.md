@@ -36,6 +36,8 @@
 
 pairing 코드 발급, 머신 등록 창 열기·승인·폐기, 기기 폐기, 웹 공개 켜기·끄기는 aaa pane 안에서 실행할 수 없다. coordinator도 포함한다. host는 `local:…@…`·worker·evaluator·detached actor를 요청 실행 전에 거부하며, 사람이 aaa 밖 터미널이나 웹에서 하도록 안내한다. aaa 밖 Local은 기존처럼 사용할 수 있다. 웹 Controller는 pairing·기기 폐기와 함께 머신 등록 창·승인·폐기, 웹 공개 켜기·끄기, 보고서 올리기·공유 링크 키 교체를 한다(FRONT_API 1.80). 웹은 마지막 조작 기기와 host 머신을 폐기하지 않는다: 마지막 조작 기기는 다른 조작 기기를 먼저 페어링하거나 host 터미널의 `aaa web revoke`로, host 머신은 폐기 대상이 아니다. Reader는 목록만 본다.
 
+공개 주소(HTTPS)로 연 조작 기기는 위 승인 필요 동작마다 그 기기 passkey로 사용자 확인(Face ID·지문·암호)을 한 번 한다(관리 GUI W7, FRONT_API 1.101). passkey는 짝지은 뒤 10분 안에만 등록한다: 짝지은 직후 본문 위 「passkey 등록」이나 설정 → 폰 및 기기 「이 기기 passkey」. passkey가 없는 기기는 승인할 수 없고, 짝지은 뒤 10분이 지나면 등록도 할 수 없다(등록한 passkey는 그 뒤에도 쓴다). host Mac 화면·passkey가 있는 기기·aaa 밖 터미널(`aaa web pair`)에서 짝짓기 코드를 받아 그 브라우저를 다시 짝지은 뒤 10분 안에 등록한다. 공개 주소(이름)가 바뀌어도 다시 짝짓는다. host Mac에서 연 `http://127.0.0.1:<port>` 화면과 aaa 밖 터미널은 passkey 없이 지금처럼 승인한다.
+
 coordinator의 상태 조회·post·일반 thread 관리·허용된 배포 경로는 이 제한의 대상이 아니다. 같은 OS 사용자 권한의 agent가 pane 밖 터미널을 흉내 내거나 host.toml을 직접 고치는 한계는 남는다. 이 제한은 OS 사용자 격리를 제공하지 않는다.
 
 ## 자주 쓰는 CLI

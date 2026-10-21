@@ -4,47 +4,8 @@ use super::*;
 
 #[cfg(windows)]
 mod os {
-    use windows_sys::Win32::{
-        Foundation::*,
-        System::{JobObjects::*, Threading::*},
-    };
-    pub struct Job(HANDLE);
-    impl Drop for Job {
-        fn drop(&mut self) {
-            unsafe {
-                CloseHandle(self.0);
-            }
-        }
-    }
-    impl Job {
-        pub fn contain(child: &dyn portable_pty::Child, breakaway: bool) -> Self {
-            let job = Self(unsafe { CreateJobObjectW(std::ptr::null(), std::ptr::null()) });
-            assert!(!job.0.is_null(), "owned job create: {}", std::io::Error::last_os_error());
-            let mut limits: JOBOBJECT_EXTENDED_LIMIT_INFORMATION = unsafe { std::mem::zeroed() };
-            limits.BasicLimitInformation.LimitFlags =
-                JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE | if breakaway { JOB_OBJECT_LIMIT_BREAKAWAY_OK } else { 0 };
-            assert_ne!(
-                unsafe {
-                    SetInformationJobObject(
-                        job.0,
-                        JobObjectExtendedLimitInformation,
-                        (&limits as *const JOBOBJECT_EXTENDED_LIMIT_INFORMATION).cast(),
-                        std::mem::size_of_val(&limits) as u32,
-                    )
-                },
-                0,
-                "owned job limits: {}",
-                std::io::Error::last_os_error()
-            );
-            assert_ne!(
-                unsafe { AssignProcessToJobObject(job.0, child.as_raw_handle().unwrap()) },
-                0,
-                "owned parent assign: {}",
-                std::io::Error::last_os_error()
-            );
-            job
-        }
-    }
+    pub use super::super::job::Job;
+    use windows_sys::Win32::{Foundation::*, System::Threading::*};
     pub struct Worker(HANDLE);
     impl Drop for Worker {
         fn drop(&mut self) {
@@ -201,7 +162,8 @@ fn approved_worker_outlives_its_cli_and_records_the_same_id_after_private_displa
                 let worker = os::Worker::observe(record["worker_pid"].as_u64().unwrap() as u32);
                 #[cfg(windows)]
                 {
-                    drop(job.take());
+                    assert!(child.try_wait().unwrap().is_none(), "종료 전 부모 CLI가 살아 있어야 한다");
+                    job.take().unwrap().terminate();
                 }
                 #[cfg(unix)]
                 {

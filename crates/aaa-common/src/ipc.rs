@@ -29,6 +29,39 @@ fn pipe_name(path: &Path) -> String {
 }
 
 #[cfg(windows)]
+fn pipe_alias(path: &Path) -> Option<String> {
+    // 기존 pipe 이름을 바꾸지 않는다. install의 canonical state(\\?\...)와
+    // 이미 실행 중인 host의 DOS state가 같은 실제 디렉터리일 때만 별칭을 찾는다.
+    let parent = path.parent()?.canonicalize().ok()?;
+    let leaf = path.file_name()?;
+    let text = leaf.to_str()?;
+    if text.ends_with(['.', ' ']) || text.contains(':') {
+        return None;
+    }
+    let canonical = parent.join(leaf);
+    let alias = if canonical != path {
+        canonical
+    } else {
+        let text = canonical.to_str()?;
+        if let Some(rest) = text.strip_prefix(r"\\?\UNC\") {
+            PathBuf::from(format!(r"\\{rest}"))
+        } else {
+            let rest = text.strip_prefix(r"\\?\")?;
+            if !matches!(canonical.components().next(), Some(std::path::Component::Prefix(p)) if matches!(p.kind(), std::path::Prefix::VerbatimDisk(_)))
+            {
+                return None;
+            }
+            PathBuf::from(rest)
+        }
+    };
+    // verbatim 이름의 DOS 해석이 다른 경로를 가리키면 확장하지 않는다.
+    if alias.parent()?.canonicalize().ok()? != parent {
+        return None;
+    }
+    (alias != path).then(|| pipe_name(&alias))
+}
+
+#[cfg(windows)]
 fn pipe_server(name: &str, first: bool) -> io::Result<tokio::net::windows::named_pipe::NamedPipeServer> {
     use tokio::net::windows::named_pipe::ServerOptions;
     let (_descriptor, mut attrs) = crate::private_file::security_for(false, false)?;
@@ -160,12 +193,20 @@ async fn native_connect(path: &Path) -> io::Result<NativeClient> {
         use tokio::time::{Instant, sleep_until};
         use windows_sys::Win32::Foundation::ERROR_PIPE_BUSY;
 
-        let name = pipe_name(path);
+        let mut name = pipe_name(path);
+        let mut alias_checked = false;
         // accept가 다음 인스턴스를 만들기 전의 BUSY만 기다린다. hook 전체의 3초 한도는 유지한다.
         let deadline = Instant::now() + Duration::from_millis(250);
         loop {
             match ClientOptions::new().open(&name) {
                 Ok(stream) => return Ok(stream),
+                Err(error) if error.kind() == io::ErrorKind::NotFound && !alias_checked => {
+                    alias_checked = true;
+                    match pipe_alias(path) {
+                        Some(alias) => name = alias,
+                        None => return Err(error),
+                    }
+                }
                 Err(error) if error.raw_os_error() == Some(ERROR_PIPE_BUSY as i32) && Instant::now() < deadline => {
                     sleep_until((Instant::now() + Duration::from_millis(5)).min(deadline)).await;
                 }
@@ -188,23 +229,27 @@ mod tests {
     async fn every_pipe_instance_has_only_the_current_sid_and_transports_bytes() {
         use std::os::windows::io::AsRawHandle;
         let path = std::env::temp_dir().join(format!("aaa-pipe-acl-{}", ulid::Ulid::new()));
-        let listener = LocalListener::bind(&path).unwrap();
-        assert!(LocalListener::bind(&path).is_err(), "다른 listener가 첫 instance를 빼앗지 못한다");
-        for _ in 0..3 {
-            crate::windows_acl_tests::assert_private(listener.inner.lock().await.as_raw_handle(), false);
-            let (client, server) = tokio::time::timeout(Duration::from_secs(3), async {
-                tokio::try_join!(connect(&path), listener.accept_peer())
-            })
-            .await
-            .unwrap()
-            .unwrap();
-            let (mut server, pid) = server;
-            assert_eq!(pid, Some(std::process::id()));
-            let mut client = client;
-            client.write_all(b"private").await.unwrap();
-            let mut bytes = [0; 7];
-            server.read_exact(&mut bytes).await.unwrap();
-            assert_eq!(&bytes, b"private");
+        let canonical = path.parent().unwrap().canonicalize().unwrap().join(path.file_name().unwrap());
+        assert_ne!(path, canonical, "일반 state와 canonical state를 실제로 대조한다");
+        for (server_path, client_path) in [(&path, &path), (&path, &canonical), (&canonical, &path)] {
+            let listener = LocalListener::bind(server_path).unwrap();
+            assert!(LocalListener::bind(server_path).is_err(), "다른 listener가 첫 instance를 빼앗지 못한다");
+            for _ in 0..3 {
+                crate::windows_acl_tests::assert_private(listener.inner.lock().await.as_raw_handle(), false);
+                let (client, server) = tokio::time::timeout(Duration::from_secs(3), async {
+                    tokio::try_join!(connect(client_path), listener.accept_peer())
+                })
+                .await
+                .unwrap()
+                .unwrap();
+                let (mut server, pid) = server;
+                assert_eq!(pid, Some(std::process::id()));
+                let mut client = client;
+                client.write_all(b"private").await.unwrap();
+                let mut bytes = [0; 7];
+                server.read_exact(&mut bytes).await.unwrap();
+                assert_eq!(&bytes, b"private");
+            }
         }
     }
 

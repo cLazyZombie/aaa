@@ -70,6 +70,7 @@ import { automationAttention } from "./automationModel";
 import { ErrorBoundary } from "./ErrorBoundary";
 import { setAppBadge } from "./appBadge";
 import { watchBadgeFocus } from "./faviconBadge";
+import { PasskeyGesture, PasskeyNotice, usePasskeyState } from "./PasskeyPanel";
 
 type Auth = { state: "loading" } | { state: "pair" } | { state: "in"; role: DeviceRole; device: string } | { state: "error"; msg: string };
 
@@ -343,6 +344,8 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
   const [up, setUp] = useState(false);
   // host가 주는 웹 빌드(events 연결마다 온다): 이 페이지와 다르면 다시 열기 줄(plan §8.166)
   const [hostWeb, setHostWeb] = useState<string | null>(null);
+  // 짝지은 뒤 10분 안 passkey 등록 안내(관리 GUI W7)
+  const [passkey, reloadPasskey] = usePasskeyState();
   const [loaded, setLoaded] = useState(false);
   const [sel, setSel] = useState<string | null>(selectedFromHash());
   const [msg, setMsg] = useState<string | null>(null);
@@ -1406,6 +1409,8 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
       <div className={`scrim${drawerOpen ? " is-open" : ""}`} aria-hidden="true" onClick={() => setDrawerOpen(false)} />
       <main className="view">
         <UpdateNotice hostBuild={hostWeb} />
+        {role !== "reader" && <PasskeyNotice state={passkey} onChanged={reloadPasskey} />}
+        <PasskeyGesture />
         {/* 그리기 오류는 본문 자리에서 멈춘다(ErrorBoundary, plan §8.266): 다른 화면으로 가면 다시 그린다 */}
         <ErrorBoundary area="본문" resetKeys={[sel, reportsShown, tasksShown, asksShown, automationShown]}>
         {/* 보고서 화면은 한 번 연 뒤 늘 그려 두고 숨긴다(ReportsView) */}
