@@ -156,13 +156,19 @@ pub(crate) fn restore(config_dir: &Path, state_root: &Path, now_ms: u64) -> Resu
     };
     for (i, (name, current, _, text)) in changes.iter().enumerate() {
         if let Err(e) = put(current, text) {
-            for (_, done, now, _) in &changes[..i] {
-                let _ = put(done, now);
+            let restored = changes[..i].iter().all(|(_, done, now, _)| put(done, now).is_ok());
+            let e = anyhow::Error::from(e).context(format!("{name} 바꾸기"));
+            if !restored {
+                // 원래 내용으로도 돌리지 못했다: 남긴 사본이 고치던 원문의 유일한 사본이라 지우지 않는다
+                let names: Vec<String> = backups.iter().map(|b| file_name(b)).collect();
+                return Err(
+                    e.context(format!("원래 내용으로 돌리지 못했다. 지금 파일은 {}에 남아 있다", names.join(", ")))
+                );
             }
             for b in &backups {
                 let _ = std::fs::remove_file(b);
             }
-            return Err(anyhow::Error::from(e).context(format!("{name} 바꾸기")));
+            return Err(e);
         }
     }
     Ok(backups)
@@ -235,6 +241,9 @@ pub(crate) fn mask(text: &str) -> (Vec<String>, Vec<String>) {
     let mut open: Option<&str> = None;
     // 가린 값의 괄호가 닫히지 않았다: 닫힐 때까지 다음 줄도 가린다
     let mut nested = 0;
+    // 가리지 않은 값의 괄호가 닫히지 않았다(여러 줄 배열): 깊이와, 원소에 비밀 낱말이 나와 남은 줄을 가리는 중인지.
+    // 인자를 줄마다 하나씩 쓰면 `"--api-key",` 다음 줄의 값에는 비밀 낱말이 없다
+    let mut plain: Option<(i32, bool)> = None;
     let (mut out, mut hidden) = (Vec::new(), Vec::new());
     let hide = |line: &str, out: &mut Vec<String>, hidden: &mut Vec<String>| {
         hidden.extend(
@@ -246,6 +255,19 @@ pub(crate) fn mask(text: &str) -> (Vec<String>, Vec<String>) {
         if nested > 0 {
             nested += depth(line);
             hide(line, &mut out, &mut hidden);
+            continue;
+        }
+        if let Some((d, hiding)) = plain.as_mut() {
+            *d += depth(line);
+            *hiding = *hiding || secret_word(line) || table.iter().any(|s| s == "env");
+            if *hiding {
+                hide(line.trim(), &mut out, &mut hidden);
+            } else {
+                out.push(line.to_string());
+            }
+            if *d <= 0 {
+                plain = None;
+            }
             continue;
         }
         if let Some(delim) = open {
@@ -290,8 +312,12 @@ pub(crate) fn mask(text: &str) -> (Vec<String>, Vec<String>) {
         {
             open = Some(d);
         }
-        if secret && depth(value) > 0 {
-            nested = depth(value);
+        if depth(value) > 0 {
+            if secret {
+                nested = depth(value);
+            } else {
+                plain = Some((depth(value), false));
+            }
         }
         if secret && !value.is_empty() {
             let raw = value.trim_matches('"').trim_matches('\'').trim();

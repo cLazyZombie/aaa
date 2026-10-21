@@ -77,20 +77,29 @@ description = """
 OPENAI_API_KEY = "sk-live-after-unclosed"
 [profiles.other]
 args = [
+  "--verbose",
   "--header=Authorization: Bearer bearer-zzz-111",
   "--api-key", "sk-live-array-zzz",
-  "--verbose",
 ]
 # token: sk-comment-zzz
+[profiles.third]
+args = [
+  "--api-key",
+  "sk-one-per-line-zzz",
+]
+after = "kept-after-array"
 "#;
     let (lines, hidden) = mask(text);
     let shown = lines.join("\n");
-    for secret in ["sk-live-after-unclosed", "bearer-zzz-111", "sk-live-array-zzz", "sk-comment-zzz"] {
+    for secret in
+        ["sk-live-after-unclosed", "bearer-zzz-111", "sk-live-array-zzz", "sk-comment-zzz", "sk-one-per-line-zzz"]
+    {
         assert!(!shown.contains(secret), "{secret}가 보인다:\n{shown}");
         assert!(hidden.iter().any(|h| h.contains(secret)), "{secret}를 오류 글에서 뺄 목록에 없다: {hidden:?}");
     }
     assert_eq!(lines.len(), text.lines().count());
-    assert!(shown.contains("\"--verbose\","), "비밀 낱말이 없는 원소는 남는다:\n{shown}");
+    assert!(shown.contains("\"--verbose\","), "비밀 원소 앞의 원소는 남는다:\n{shown}");
+    assert_eq!(lines.last().unwrap(), r#"after = "kept-after-array""#, "배열이 닫힌 뒤는 다시 보인다");
 }
 
 #[test]
