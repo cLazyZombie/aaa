@@ -545,7 +545,7 @@ enum TaskCmd {
         #[arg(long)]
         restore: Option<String>,
     },
-    /// 목록별 task와 형식 어긋남(읽기만 한다)
+    /// 목록별 task ID와 형식 어긋남
     List,
     /// task를 더한다(정규형 `- [ ] 제목 (모델@머신) [저장소]`, 같은 제목은 거부)
     Add {
@@ -569,10 +569,10 @@ enum TaskCmd {
         #[arg(long = "note")]
         notes: Vec<String>,
         /// 이 task의 하위로
-        #[arg(long, value_name = "TITLE")]
+        #[arg(long, value_name = "ID_OR_TITLE")]
         parent: Option<String>,
         /// 이 task 앞에
-        #[arg(long, value_name = "TITLE")]
+        #[arg(long, value_name = "ID_OR_TITLE")]
         before: Option<String>,
         /// 이어 줄 thread(` · t-NNNN`, task 없는 열린 thread를 task로 만들 때)
         #[arg(long)]
@@ -583,7 +583,7 @@ enum TaskCmd {
     },
     /// task 칸을 바꾼다(준 칸만, 나머지 줄은 바이트 그대로)
     Edit {
-        /// 고칠 task 제목(대소문자 무시)
+        /// 고칠 task ID(d-0001·ULID) 또는 제목(대소문자 무시)
         task: String,
         /// 읽은 판의 블록 hash(`task list --json`의 `block_sha256`). 주면 그 블록이 그대로일 때만 고친다(아니면 revision_conflict)
         #[arg(long, value_name = "SHA256")]
@@ -626,9 +626,9 @@ enum TaskCmd {
         block: Option<String>,
         #[arg(long, default_value = "")]
         list: String,
-        #[arg(long, value_name = "TITLE")]
+        #[arg(long, value_name = "ID_OR_TITLE")]
         before: Option<String>,
-        #[arg(long, value_name = "TITLE")]
+        #[arg(long, value_name = "ID_OR_TITLE")]
         parent: Option<String>,
     },
     /// task를 하위 task와 함께 지운다(기록에 남아 `restore`로 되살린다)
@@ -640,12 +640,15 @@ enum TaskCmd {
     },
     /// 기록의 삭제 항목을 되살린다(원래 목록 끝, 또는 --list)
     Restore {
-        log_id: i64,
+        /// 삭제 기록 번호, d-0001, ULID 또는 제목
+        task: String,
         #[arg(long)]
         list: Option<String>,
     },
     /// 변경 기록(최신부터): 누가·언제·무엇
     Log {
+        /// d-0001·ULID 또는 제목(생략하면 모든 기록)
+        task: Option<String>,
         #[arg(long, default_value_t = 30)]
         limit: u32,
         /// 이 기록 id 앞의 것
@@ -1791,13 +1794,14 @@ fn run(cli: Cli) -> Result<ExitCode> {
             front(json, FrontRequest::TaskArchive { project: project_or_here(None)?, restore })
         }
         Cmd::Task { cmd: TaskCmd::List } => front(json, FrontRequest::Tasks { project: project_or_here(None)? }),
-        Cmd::Task { cmd: TaskCmd::Log { limit, before, deleted } } => front(
+        Cmd::Task { cmd: TaskCmd::Log { task, limit, before, deleted } } => front(
             json,
             FrontRequest::TaskLog {
                 project: project_or_here(None)?,
                 before,
                 limit: Some(limit),
                 filter: deleted.then_some(aaa_proto::TaskLogFilter::Deleted),
+                task,
             },
         ),
         Cmd::Task { cmd } => {
@@ -1864,7 +1868,36 @@ fn run(cli: Cli) -> Result<ExitCode> {
                     parent: parent.as_deref().map(task_at),
                 },
                 TaskCmd::Rm { task, block } => TaskOp::Delete { at: task_at_block(&task, block) },
-                TaskCmd::Restore { log_id, list } => TaskOp::Restore { log_id, list },
+                TaskCmd::Restore { task, list } => {
+                    let log_id = if let Ok(id) = task.parse::<i64>() {
+                        id
+                    } else {
+                        let project = project_or_here(None)?;
+                        let response = front_call(FrontRequest::TaskLog {
+                            project: project.clone(),
+                            before: None,
+                            limit: Some(500),
+                            filter: Some(aaa_proto::TaskLogFilter::Deleted),
+                            task: Some(task.clone()),
+                        })?
+                        .map_err(|e| anyhow::anyhow!(e.message))?;
+                        let FrontResponse::TaskLog { entries, .. } = response else {
+                            anyhow::bail!("기록 응답이 아니다")
+                        };
+                        if let Some(e) = entries.iter().find(|e| e.restored_by.is_none()) {
+                            e.id
+                        } else {
+                            // 완료 보관은 별도 복원 경로다. ID·제목을 모두 host가 해석한다.
+                            if list.is_some() {
+                                anyhow::bail!(
+                                    "완료 보관은 원래 목록에 복원한다. --list 없이 복원한 뒤 task move로 옮긴다"
+                                );
+                            }
+                            return front(json, FrontRequest::TaskArchive { project, restore: Some(task) });
+                        }
+                    };
+                    TaskOp::Restore { log_id, list }
+                }
                 TaskCmd::ListAdd { name, after } => TaskOp::ListAdd { name, after },
                 TaskCmd::ListRename { name, to } => TaskOp::ListRename { name, to },
                 TaskCmd::ListMerge { name, into } => TaskOp::ListMerge { name, into },
@@ -3090,6 +3123,9 @@ fn shift_project(first: String, rest: &mut Vec<String>) -> Result<(String, Strin
 pub(crate) fn front_call(req: FrontRequest) -> Result<Result<FrontResponse, aaa_proto::ErrorBody>> {
     runtime()?.block_on(async {
         let mut c = aaa_common::front::FrontClient::connect(&aaa_config::paths::state_dir()).await?;
+        if matches!(&req, FrontRequest::TaskLog { task: Some(_), .. }) && c.proto.minor < 89 {
+            anyhow::bail!("ID로 기록을 찾으려면 Front API 1.89 이상 host가 필요하다");
+        }
         c.call(req).await
     })
 }
@@ -3663,7 +3699,8 @@ fn render_task_board(s: &mut String, b: &aaa_proto::TaskBoard) {
             let repo = t.repo.as_ref().map(|r| format!(" [{r}]")).unwrap_or_default();
             let thread = t.thread.as_ref().map(|x| format!(" · {x}")).unwrap_or_default();
             let pad = "  ".repeat(depth(t) + 1);
-            let _ = writeln!(s, "{pad}{mark} {}{owner}{repo}{thread}  [{}줄]", t.title, t.line);
+            let id = t.short_id.as_deref().map(|s| format!("{s} ")).unwrap_or_default();
+            let _ = writeln!(s, "{pad}{mark} {id}{}{owner}{repo}{thread}  [{}줄]", t.title, t.line);
             for p in &t.problems {
                 let _ = writeln!(s, "{pad}    형식 어긋남: {p}");
             }
@@ -3745,7 +3782,8 @@ fn render_context(s: &mut String, c: &aaa_proto::ProjectContext) {
         let repo = t.repo.as_ref().map(|r| format!(" [{r}]")).unwrap_or_default();
         let thread = t.thread.as_ref().map(|x| format!(" · {x}")).unwrap_or_default();
         let done = if t.done { " [x]" } else { "" };
-        let _ = writeln!(s, "  [{}] {}{owner}{repo}{thread}{done}", t.list, t.title);
+        let id = t.short_id.as_deref().map(|id| format!("{id} ")).unwrap_or_default();
+        let _ = writeln!(s, "  [{}] {id}{}{owner}{repo}{thread}{done}", t.list, t.title);
         if !t.notes.is_empty() {
             let n: String = t.notes.join(" ").chars().take(60).collect();
             let _ = writeln!(s, "    notes: {n}");
@@ -4488,7 +4526,7 @@ fn render_front(r: &FrontResponse) -> String {
                     q.position,
                     q.task.title,
                     q.state,
-                    q.task_id,
+                    q.task.short_id.as_deref().unwrap_or(&q.task_id),
                     q.profile,
                     q.machine.as_deref().unwrap_or("자동"),
                     q.reason,
@@ -4498,7 +4536,13 @@ fn render_front(r: &FrontResponse) -> String {
         }
         FrontResponse::TaskArchive { entries } => {
             for a in entries {
-                s.push_str(&format!("{} · {} · {}\n{}\n", a.task_id, a.task.title, a.reason, a.body));
+                s.push_str(&format!(
+                    "{} · {} · {}\n{}\n",
+                    a.task.short_id.as_deref().unwrap_or(&a.task_id),
+                    a.task.title,
+                    a.reason,
+                    a.body
+                ));
             }
         }
         FrontResponse::TaskBoard(b) => render_task_board(&mut s, b),

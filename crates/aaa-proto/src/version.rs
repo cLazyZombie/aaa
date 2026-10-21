@@ -194,7 +194,8 @@ pub const AGENT_LINK: Version = Version { major: 1, minor: 10 };
 /// 1.87: coordinator 구조화 질문·영속 q-ID와 부분 답, ask_answer·question_reply를 더한다. Agent link 변경 없음.
 // 1.88: 머신 상세(웹 머신 추가 M0, plan §8.372): `MachineView`의 `arch`·`software`·`sha256`·`software_differs`·`features`·
 // `selfcheck`. 옛 host는 생략해 웹이 OS만 보인다. Agent link: hello의 선택 칸 `sha256`(옛 agent는 보내지 않고 옛 host는 버린다).
-pub const FRONT_API: Version = Version { major: 1, minor: 88 };
+// 1.89: task 표시 ID(d-0001)·ID 선택자·TaskLog.task(plan §8.373). ULID와 기존 제목 입력은 유지한다.
+pub const FRONT_API: Version = Version { major: 1, minor: 89 };
 /// agent ↔ session host(내부). 세션이 몇 주 이어질 수 있으므로 이전 session host와 호환해야 한다.
 /// 1.1: `SessionRequest::Detect`(harness 상태 감지 입력). agent는 1.0 session host에 보내지 않고 `Screen`을 쓴다.
 /// 1.2: `SessionRequest::Colors`(색 질의에 답할 화면 색, plan §8.187). agent는 1.1 이하 session host에 보내지 않는다.

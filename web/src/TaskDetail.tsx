@@ -227,7 +227,7 @@ function ReadOnly({ t, board, byLine, groups, onThread, onPick, onOpenAttachment
     <div className="task-detail-body">
       <h2 className="task-detail-title">
         <StateIcon state={state} />
-        <span>{t.title}</span>
+        <span>{t.short_id && <span className="task-short-id">{t.short_id}</span>}{t.title}</span>
       </h2>
       <div className="task-detail-chips">
         <span className="task-chip">{TASK_STATE_LABEL[state]}</span>
@@ -537,6 +537,7 @@ function TaskForm(props: DetailProps) {
       {t && (
         <div className="task-detail-chips">
           <StateIcon state={state} />
+          {t.short_id && <span className="task-short-id" data-testid="task-detail-id">{t.short_id}</span>}
           <span className="task-chip">{TASK_STATE_LABEL[state]}</span>
           {t.thread && <ThreadChip id={t.thread} groups={groups} onThread={onThread} />}
           {pastThreads.map((id) => (

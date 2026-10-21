@@ -2178,7 +2178,7 @@ pub enum FrontRequest {
         base: Option<String>,
         /// 할 일(threads/<id>.task.md로 저장하고 brief에 넣는다)
         task: String,
-        /// TASKS.md의 task 제목(대소문자 무시). owner가 profile·machine의 기본값이 되고, 메모가 할 일에 붙는다.
+        /// TASKS.md의 task ID(d-0001·ULID) 또는 제목(대소문자 무시). owner가 profile·machine의 기본값이 되고, 메모가 할 일에 붙는다.
         #[serde(default)]
         from_task: Option<String>,
         /// 시작하면 그 task 줄 끝에 ` · t-NNNN`을 붙인다(FRONT_API 1.63, 할 일 T3). 연결은 시작할 때 읽은 블록 hash로 하고,
@@ -2280,6 +2280,10 @@ pub enum FrontRequest {
         limit: Option<u32>,
         #[serde(default)]
         filter: Option<TaskLogFilter>,
+        /// 표시 ID·ULID 또는 제목으로 기록을 거른다.
+        #[serde(default)]
+        #[ts(optional)]
+        task: Option<String>,
     },
     /// 이 시각(ms)보다 오래된 할 일 기록을 지운다(FRONT_API 1.62, 조작 권한)
     TaskLogPrune {

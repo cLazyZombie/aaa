@@ -1938,10 +1938,13 @@ mod tests {
     }
 }
 
-/// TASKS.md의 task 한 줄(0.2.35 형식). aaa는 읽기만 한다.
+/// TASKS.md의 task 한 줄. 내용은 Markdown, 표시 번호는 host DB가 정본이다.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 pub struct TaskView {
-    /// 제목과 독립된 task ID. 기존 task는 명시 쓰기 때 부여한다.
+    /// 프로젝트별 영구 표시 ID(`d-0001`). 내부 연결은 기존 ULID를 유지한다.
+    #[serde(default)]
+    pub short_id: Option<String>,
+    /// 제목과 독립된 내부 ULID. 기존 task는 host의 식별 이주 때 주석으로 부여한다.
     #[serde(default)]
     pub id: Option<String>,
     /// 속한 `## ` 목록 이름
@@ -2133,7 +2136,8 @@ pub struct TaskConflict {
     pub op: u32,
     pub reason: String,
     /// 그 task의 지금 원문(같은 제목으로 찾은 것, 지워졌으면 없음)
-    pub latest: Option<TaskView>,
+    // Box로 응답 enum의 크기를 제한한다. JSON·TypeScript 모양은 같다.
+    pub latest: Option<Box<TaskView>>,
 }
 
 /// 할 일 기록의 동작

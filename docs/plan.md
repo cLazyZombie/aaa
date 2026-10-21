@@ -6693,3 +6693,10 @@ FRONT_API 1.87은 질문 ID·부분 답과 `ask_answer`·`question_reply`를 더
 - **웹.** 설정 「머신」 → 「등록된 머신」 줄마다 OS · CPU 종류 · 판(host와 다르면 주의 색)과 문제 수, 「자세히」(aria-expanded)로 펼치는 읽기 전용 상세: 연결(host 머신·연결됨·끊김과 마지막 본 때), OS, 판, SHA-256(고정폭, 줄바꿈), 개발 모드, 연결 중이면 작업 디스크·부하·전원·toolchain·시계 차이·주의, 문제, 시작 점검(통과·실패 이유), 접어 둔 agent 기능 목록. 보기 기기도 상세를 본다. 휴대폰은 이름 아래 값이 온다.
 - **검증.** host 유닛 `machine_view_tests`(hello 값이 실리고 판이 다르면 표시, 모르는 꼴의 점검은 버림, host를 다시 열어도 판·SHA·CPU 종류는 남고 기능·점검은 빈다), 웹 유닛 `machineDetail.test.mjs`, 웹 E2E `60-admin` 확장(둘째 agent의 SHA가 실행 파일의 SHA와 같고 화면에 그대로, 보기 기기 상세, 휴대폰 390 폭). 절차는 [시험](testing.md).
 - **번호·호환.** main의 §8.369(t-0574)·§8.370(t-0538 W6b)·§8.371(t-0576)과 FRONT_API 1.86·1.87을 유지하고 이 기능은 1.88·§8.372를 쓴다. AGENT_LINK는 1.10 그대로다(hello 선택 칸만 더함).
+
+### 8.373 할 일 표시 ID d-NNNN(10-21, t-0575)
+
+- **표시·선택.** 웹 할 일·상세·예약·완료 보관과 CLI list·context에 `d-0001` 같은 ID를 보인다. edit·move·rm·restore·log·thread start --from-task·예약·완료 보관 복원은 ID와 기존 제목을 모두 받는다. 번호가 발급된 문자열은 ID를 우선하며 내부 ULID 입력도 유지한다. coordinator 생성 안내에 ID 사용을 권한다.
+- **영속·이주.** 프로젝트마다 1부터 발급하고 제목·목록·순서 변경과 host 재시작 뒤에도 유지한다. 삭제·기록 정리·완료 보관 뒤 재사용하지 않고 복원 시 원래 번호를 쓴다. host DB `task_ids`가 기존 ULID와 번호를 연결하며 프로젝트 이름 변경·휴지통 내보내기·복원에 포함된다. 첫 읽기와 새 항목 쓰기는 없는 ULID 주석만 추가하고 기존 ULID·메모·들여쓰기·줄 끝 문자를 유지한다. 중복 ULID는 거부한다.
+- **호환.** FRONT_API 1.89에서 선택 칸 `TaskView.short_id`와 `TaskLog.task` 필터를 더한다. 새 CLI의 기록 필터는 1.89 이상 host에만 보낸다. ULID 기반 연결과 제목 입력은 유지하고 AGENT_LINK 1.10은 그대로다. TASKS.md만 다른 host로 옮기면 번호는 새로 발급되므로 번호까지 보존하려면 host DB를 함께 보존한다.
+- **검증.** DB·host 동시 이주와 비재사용·복원 owner, 실제 host·agent·CLI의 변경·이동·삭제·예약·재시작·완료 보관 통합 시험, 웹 E2E `70-task-ids`의 CLI 교차 편집과 320/390/768px 표시·검색·가로 넘침을 검사한다. main의 E2E 68·69와 §8.372까지 유지한다. 절차는 [시험](testing.md), 사용법은 [할 일 ID](task-ids.md)에 둔다.

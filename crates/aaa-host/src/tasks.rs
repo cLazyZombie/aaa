@@ -323,6 +323,7 @@ pub(crate) fn parse_board(text: &str) -> (Vec<TaskListView>, Vec<TaskView>) {
         }
         at(&mut lists, &list);
         out.push(TaskView {
+            short_id: None,
             id: crate::task_queue::split_id(&t[5..]).1.map(str::to_string),
             list: list.clone(),
             title,
@@ -522,7 +523,10 @@ pub(crate) fn owner_misread(t: &TaskView) -> bool {
 /// 제목이 같은(대소문자 무시) task
 pub(crate) fn find<'a>(tasks: &'a [TaskView], title: &str) -> Option<&'a TaskView> {
     let want = title.trim().to_lowercase();
-    tasks.iter().find(|t| t.title.to_lowercase() == want)
+    tasks
+        .iter()
+        .find(|t| t.short_id.as_deref() == Some(want.as_str()) || t.id.as_deref() == Some(title.trim()))
+        .or_else(|| tasks.iter().find(|t| t.title.to_lowercase() == want))
 }
 
 /// task 없이 시작할 때의 참고 경고. 대소문자·구두점을 뺀 낱말 집합이 같거나, 두 낱말 이상 겹치고
