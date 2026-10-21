@@ -1502,6 +1502,7 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
             onOpenFile={(path) => openFile({ path, pane: null, library: { project: currentThread.project, thread: currentThread.id } })}
             onOpenReportFile={role !== "reader" ? (path) => openFile({ path, pane: null, worktree: { project: currentThread.project, thread: currentThread.id } }) : undefined}
             onAddDoc={addReportDoc && ((path) => addReportDoc(currentThread.id, path))}
+            reportsRev={reportsRev}
           />
         ) : sel === "threads:" ? (
           <ProjectThreads

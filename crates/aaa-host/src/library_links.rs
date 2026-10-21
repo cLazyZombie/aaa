@@ -126,6 +126,8 @@ impl Host {
             .map_err(super::orch::internal)?;
         if created {
             self.db.audit(actor, "library_link", &format!("{project}/{thread} id={}", row.id));
+            // 열린 보고서 목록·thread 화면의 링크 줄이 다시 읽는다(reports 사건)
+            self.reports_bump();
         }
         Ok(self.link_view(row))
     }
@@ -152,6 +154,7 @@ impl Host {
             return Err(err(ErrorCode::NotFound, "보고서 링크가 없다"));
         }
         self.db.audit(actor, "library_link_revoke", &format!("id={id}"));
+        self.reports_bump();
         Ok(self.link_view(self.db.library_link_get(id).map_err(super::orch::internal)?.unwrap()))
     }
 
@@ -189,6 +192,7 @@ impl Host {
         *key = SigningKey(hmac::Key::new(hmac::HMAC_SHA256, &bytes));
         self.db.library_links_revoke_all().map_err(super::orch::internal)?;
         self.db.audit(actor, "library_rotate", "");
+        self.reports_bump();
         Ok(aaa_proto::FrontResponse::LibraryRotated)
     }
 

@@ -45,8 +45,11 @@ export function ThreadPanel({
   onOpenFile,
   onOpenReportFile,
   onAddDoc,
+  reportsRev = 0,
 }: {
   t: ThreadView;
+  /** host reports 사건 수: 링크 발급·폐기(다른 화면의 「낸 링크」 포함)·열람 뒤 결과물 칸을 다시 읽는다 */
+  reportsRev?: number;
   role: DeviceRole;
   onBack: () => void;
   /** 돌아갈 화면 이름(모든 thread 화면에서 열었으면): 그때 「뒤로」는 넓은 화면에도 보인다 */
@@ -74,7 +77,7 @@ export function ThreadPanel({
     return () => {
       live = false;
     };
-  }, [t.project, t.id, t.report_hash, t.copy]);
+  }, [t.project, t.id, t.report_hash, t.copy, reportsRev]);
 
   // 변경 파일 카드(plan §8.305): 소스를 보이므로 조작 기기만, git 저장소 thread만. 못 읽으면 카드를 그리지 않는다(t3code와 같다)
   const [diff, setDiff] = useState<DiffView | null>(null);

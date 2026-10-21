@@ -51,24 +51,26 @@ export default async function ({ page }) {
   });
 
   let id;
-  await step("「낸 링크」: 이 aaa에서 만료·마지막 열람을 보고 폐기한다. 새 링크는 thread 화면에서 고른 수명(7일)으로", async () => {
+  await step("「낸 링크」: 이 aaa에서 만료·마지막 열람을 보고 폐기하면 열려 있던 thread 화면도 폐기를 보인다. 새 링크는 thread 화면에서 고른 수명(7일)으로", async () => {
     fs.writeFileSync(`${root}/gap-task.md`, "링크 시험\n");
     id = aaa("thread", "start", "demo", "--title", "링크 시험", "--machine", "labA", "--profile", "fake", "--kind", "dir", "--task-file", `${root}/gap-task.md`).id;
     // 보고가 오면 host가 30일 링크를 낸다
     const [first] = await until("자동 발급 링크", async () => (await links(page, id)).length === 1 && (await links(page, id)));
+    // thread 화면을 연 채 설정에서 폐기한다: 뒤 화면의 링크 줄도 host 사건으로 다시 읽는다(죽은 링크를 복사하지 않게)
+    await page.evaluate((h) => (location.hash = h), `#thread=demo%2F${id}`);
+    const linkRow = page.getByTestId("library-link");
+    await domIs(page, "자동 발급 링크 줄", () => document.querySelector('[data-testid="library-link"]')?.dataset.state === "active");
     const dialog = await openSettings(page, "이 aaa");
     const list = dialog.getByTestId("link-list");
     await list.getByTestId("link-list-load").click();
     const row = list.locator(`[data-link="${first.id}"][data-state="active"]`);
-    await row.filter({ hasText: "마지막 열람 없음" }).waitFor();
+    // 앱 안에서 연 보고도 링크의 열람으로 남는다(host `library_opened_at`)
+    await row.filter({ hasText: /마지막 열람 \d/ }).waitFor();
     await row.getByRole("button", { name: /링크 폐기$/ }).click();
     await list.locator(`[data-link="${first.id}"][data-state="revoked"]`).waitFor();
     if (!(await links(page, id))[0].revoked) throw new Error("host 기록이 폐기되지 않았다");
     await dialog.getByRole("button", { name: "설정 닫기" }).click();
-
-    await page.evaluate((h) => (location.hash = h), `#thread=demo%2F${id}`);
-    const linkRow = page.getByTestId("library-link");
-    await domIs(page, "폐기된 링크", () => document.querySelector('[data-testid="library-link"]')?.dataset.state === "revoked");
+    await domIs(page, "열려 있던 화면의 폐기된 링크", () => document.querySelector('[data-testid="library-link"]')?.dataset.state === "revoked");
     await linkRow.getByTestId("library-link-days").selectOption("7");
     await linkRow.getByRole("button", { name: "새 링크 만들기" }).click();
     await domIs(page, "새 링크", () => document.querySelector('[data-testid="library-link"]')?.dataset.state === "active");
