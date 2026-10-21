@@ -25,6 +25,7 @@ impl std::fmt::Display for Version {
 /// `AgentRequest::WorkAttachWrite`(agent 기능 `work_attach.v1`이 있을 때만 보낸다, §8.327).
 /// `Post`·`PostRejected`·`PostAck`는 post.v1을 양쪽이 알렸을 때만 쓴다(§8.199).
 /// 1.8 host의 N-1은 1.7이다. 1.6 이하 agent는 먼저 1.7 이상으로 갱신해야 한다.
+// git_merged.v1: origin/main 조상 판정은 이 기능을 알린 agent에만 보낸다.
 // git.v1: repo 머신 agent의 head/변화 조회를 이 기능을 알린 상대에만 보낸다.
 // ci.v1: 조건부 GitHub CI 조회는 이 기능을 알린 agent에만 보낸다(1.5부터).
 // 1.5: 특수 임무. mission.v1을 알린 상대에만 임무 세션을 만든다.

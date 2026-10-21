@@ -7084,3 +7084,12 @@ FRONT_API 1.96는 기본 검수 표지와 답 기록의 r 참조를 더한다. E
 - **판정 경계.** macOS 이번 main CI의 reap 회귀·worker 수명·install26개는 모두 통과했다. Windows 실제 RED는 main23328f7e의 install6/22다. 이 후보의 Windows 실행 GREEN은 다음 승인 착지 뒤 main CI로 확인한다. 로컬 macOS와 Windows 교차 lint/build는 그 대체가 아니다. 승인 우회용 seam·시험 제외·기대값 완화·시한 증가는 없다. I3는 나머지 Windows 판정 뒤다. 기존 report transfer sharing violation은 main §8.409의 별도 수리를 보존한다.
 
 - **착지 통합.** origin/main `8bcc9ce9`에서 마지막 §8.410·FRONT_API 1.101·AGENT_LINK 1.11·E2E79를 직접 확인했다. 이 절은 §8.411로 옮기고 API 판·기존 E2E 번호는 유지한다. main의 passkey·보고 전송 종료·계정 기록·목록 쓸기 수리를 보존하며 통합본 전체 ci-local·Windows 교차 clippy/build·공개 검사를 다시 수행한다.
+
+### 8.412 직접 병합한 thread의 할 일 완료 보관(t-0651)
+
+- **문제와 동작.** 끝난 thread의 마지막 보고가 `[착지]`이면 직접 병합·push를 마쳤어도 host가 `task needs check`를 남겼다. 이제 repo 머신 agent가 thread branch 또는 보고에 명시한 병합 커밋이 실제 origin/main의 조상인지 확인하면 PR 병합처럼 완료 보관한다. 사용자 확인 카드는 만들지 않고 coordinator inbox의 `task auto-cleaned`만 남긴다.
+- **경계.** 보고 없음·사본 버림·하위 task가 남은 상위는 기존 확인 필요를 유지한다. 미병합·조회 불가·옛 agent도 완료를 추측하지 않는다. 보고의 `병합 커밋:`·`착지 커밋:`·`병합:`·`착지:`·`Merge commit:` 줄의 7~64자리 16진 SHA만 후보로 읽고 코드 예제와 일반 검증 SHA는 제외한다. 실제 객체의 조상을 검사하며 축약 SHA가 없거나 모호하면 근거로 쓰지 않는다.
+- **구조와 호환.** host는 Git을 실행하지 않는다. `git_merged.v1`을 알린 agent에만 `GitQuery::MergedIntoMain`을 보내고 선택 응답 `merged_commit`을 받는다. agent는 실제 origin main head와 필요한 객체를 읽고 로컬 ref·FETCH_HEAD·작업 파일을 바꾸지 않는다. pane 정리 뒤 종료 확정 전에 확인 커밋을 `TaskClean.merged_main`에 함께 저장해 확인 카드의 순간 노출도 막고 archive 이유와 되살린 할 일의 attention을 일치시킨다. 기존 FRONT_API·AGENT_LINK 버전은 유지하며 새 웹 E2E 파일 번호는 만들지 않는다.
+- **검증.** host 판정·보고 파서, 실제 host/agent/Git의 직접 병합·보고 커밋·미병합·로컬만 병합·보고 없음·중단·중복 없음, E2E47의 완료 보관·답할 것 경계를 검사한다. 상세는 [시험](testing.md)의 t-0651 절을 따른다.
+
+- **착지 통합.** origin/main `c249e316`에서 마지막 §8.411·FRONT_API 1.101·AGENT_LINK 1.11·E2E79를 직접 확인했다. 이 기능은 §8.412로 옮기고 API 판과 기존 E2E 번호를 유지한다. main의 passkey·Windows 보고 전송 종료·install Job/부모 종료/IPC 수리를 보존하며 통합본 전체 ci-local과 공개 검사를 수행한다.

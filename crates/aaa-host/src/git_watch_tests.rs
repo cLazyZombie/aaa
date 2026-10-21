@@ -30,6 +30,7 @@ impl Lab {
             origin_hash: "origin".into(),
             heads: BTreeMap::from([("main".into(), Some("a".repeat(40)))]),
             change: None,
+            merged_commit: None,
         }));
         let (a, b) = tokio::io::duplex(2 << 20);
         let (ar, aw) = tokio::io::split(a);
