@@ -16,6 +16,7 @@ pub fn automation_schema() -> String {
 mod account_login;
 mod account_meta;
 mod account_policy;
+mod account_pool;
 mod accounts;
 mod auto_start;
 mod automation;
@@ -1378,6 +1379,8 @@ impl Host {
         if matches!(
             &req,
             FrontRequest::AccountDefault { .. }
+                | FrontRequest::AccountPoolMember { .. }
+                | FrontRequest::AccountPoolProject { .. }
                 | FrontRequest::AccountLogin { .. }
                 | FrontRequest::AccountLoginStatus { .. }
                 | FrontRequest::AccountLoginCancel { .. }
@@ -1450,14 +1453,20 @@ impl Host {
                 format!("보기 권한으로는 조작할 수 없다{}", front::reader_reason(actor)),
             ));
         }
-        let (mut req, selected_account) = match req {
+        let (mut req, selected_account, pool_request) = match req {
             FrontRequest::ThreadStartAccount { account, start } => {
                 if !matches!(&*start, FrontRequest::ThreadStart { .. }) {
                     return Err(err(ErrorCode::BadRequest, "계정 지정은 thread 시작 요청에만 쓴다"));
                 }
-                (*start, Some(account))
+                (*start, Some(account), None)
             }
-            other => (other, None),
+            FrontRequest::ThreadStartPool { id, size, start } => {
+                if !matches!(&*start, FrontRequest::ThreadStart { .. }) {
+                    return Err(err(ErrorCode::BadRequest, "풀 지정은 thread 시작 요청에만 쓴다"));
+                }
+                (*start, None, Some(account_pool::PoolRequest { id, size }))
+            }
+            other => (other, None, None),
         };
         // 프로젝트를 생략한 요청(FRONT_API 1.50, plan §8.288): host가 맡은 프로젝트 하나로 채운다
         // 모든 프로젝트 기본·profile 자체를 고치는 설정 관리(W5c)는 프로젝트가 아직 없는 host에서도 된다(그때는 빈 채로 둔다)
@@ -1502,6 +1511,17 @@ impl Host {
             }
             FrontRequest::AccountList => Ok(FrontResponse::Accounts { accounts: self.account_views(shows_email)? }),
             FrontRequest::AccountDefaults => Ok(FrontResponse::AccountDefaults { defaults: self.account_defaults()? }),
+            FrontRequest::AccountPool => Ok(FrontResponse::AccountPool { pool: self.account_pool()? }),
+            FrontRequest::AccountPoolMember { revision, account, member } => {
+                self.pool_member_set(&revision, &account, member, actor)
+            }
+            FrontRequest::AccountPoolProject { revision, project, enabled } => {
+                self.pool_project_set(&revision, &project, enabled, actor)
+            }
+            FrontRequest::AccountStarts { project } => {
+                Ok(FrontResponse::AccountStarts { starts: self.pool_starts(&project)? })
+            }
+            FrontRequest::AccountStartCancel { project, id } => self.pool_cancel(&project, &id, actor),
             FrontRequest::AccountDefault { harness, account } => {
                 self.set_default_account(&harness, account.as_deref())?;
                 self.db.audit(actor, "account_default", &format!("{harness} {}", account.as_deref().unwrap_or("off")));
@@ -1516,12 +1536,13 @@ impl Host {
                 if self.account_defaults()?.iter().any(|d| d.account == name) {
                     return Err(err(ErrorCode::BadRequest, "기본 계정은 먼저 account default --off로 해제한다"));
                 }
+                self.pool_forget(&name)?;
                 self.accounts.remove(&name)?;
                 self.account_meta_remove(&name);
                 self.db.audit(actor, "account_remove", &name);
                 Ok(FrontResponse::Done)
             }
-            FrontRequest::ThreadStartAccount { .. } => unreachable!(),
+            FrontRequest::ThreadStartAccount { .. } | FrontRequest::ThreadStartPool { .. } => unreachable!(),
             FrontRequest::Instance => Ok(FrontResponse::Instance { project: self.instance_view() }),
             FrontRequest::DebugInput { pane, thread, since_ms } => self.debug_input(pane, thread, since_ms),
             FrontRequest::RolloutStart { id, spec } => self.rollout_start(role, actor, id, spec).await,
@@ -1630,6 +1651,7 @@ impl Host {
                     aaa_proto::ThreadKind::Dir
                 });
                 let mut a = orch::StartArgs {
+                    pool: pool_request,
                     over_limit,
                     reservation: None,
                     account: selected_account,
@@ -1697,6 +1719,13 @@ impl Host {
                         a.repo.as_ref().and_then(|r| repos.into_iter().find(|x| &x.path == r)).and_then(|x| x.machine);
                 }
                 let project = a.project.clone();
+                if a.account.is_none() && (a.pool.is_some() || self.pool_project_enabled(&project)?) {
+                    a.pool.get_or_insert_with(|| account_pool::PoolRequest {
+                        id: aaa_common::util::new_id(),
+                        size: aaa_proto::AccountTaskSize::Medium,
+                    });
+                    return self.pool_submit(a, actor, picked.filter(|_| link_task), background).await;
+                }
                 let mut v = if background {
                     self.thread_start_mode(a, actor, true).await?
                 } else {

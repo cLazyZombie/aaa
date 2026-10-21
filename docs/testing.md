@@ -2,6 +2,34 @@
 
 새 기능을 만드는 thread가 따르는 짧은 규칙이다. 근거는 참고 넷(herdr 0.9.5·herdr-projects 0.2.35·herdr-web-ui `aa624cb`·t3code `4b1024da`)과 이 저장소에서 실제로 난 간헐 실패다. 전략과 도구 목록은 [plan §13](plan.md#13-테스트-전략과-직접-만들-e2e-도구)에 있다.
 
+## host 공통 계정 풀 자동 배정(t-0653, plan §8.416)
+
+- `nice -n 15 cargo test -p aaa-host --lib account_pool --locked`: 창별 최소 여유·모델 창·동점·공유 한도,
+  네 동시 transaction의 예약 두 건·영수증 재생, 미관측 첫 실행·실패/오래됨/reset/NaN/누락 제외,
+  확정 준비 실패 해제와 spawn 결과 불명 보존, 사람 권한·설정판 충돌·삭제 시 풀 제외를 검사한다.
+  다른 프로젝트의 과거 DB 기록도 공유 한도 셈에 포함하며, 현재 host의 단일 프로젝트 제한은 유지한다.
+  그룹 변경 뒤 기존 예약, 종료 전/후 관측·다시 로그인 뒤 예약 교체와 프로젝트 이름 변경/삭제의
+  참여·대기 이동 및 전역 풀·관측 보존도 검사한다.
+- `nice -n 15 cargo test -p aaa-host --lib quota --locked`: 공식 RPC의 실제 가짜 자식에서 무작업 조회,
+  누락과 잘못된 숫자 구분·인증 세대·backoff·임시 인증 정리와 A2의 창별 관측 계약을 유지한다.
+- `NODE_PATH=$(npm root -g) node web/e2e/web.e2e.mjs --spec 81-account-pool --workers 1`:
+  실제 host·agent·session·PTY에 가짜 Claude 상태줄을 연결한다. 웹 풀 편집·프로젝트 참여·신규 계정
+  미편입, 기존 기본/명시 우선, 실제 관측의 자동 선택·같은 영수증, 미관측 첫 실행 뒤 대기 한 건,
+  host 재시작 뒤 관측·대기 보존과 새 관측 뒤 기동, 웹 할 일의 배정 대기·취소, WebKit 390px·Reader
+  쓰기 거부·인증 비노출을 검사한다. 입력·상태줄 파일·host 응답·DOM 사건으로 끝낸다.
+- 체크박스 E2E의 원본 실패는 비동기 저장 중 controlled checkbox가 즉시 옛 값으로 되돌아가는
+  제품 결함이었다. 저장 중 선택값을 유지하고 실패 때 원래 값으로 돌아가게 고치며 같은 check 단언을 유지한다.
+- 통합 gate의 CLI `large_enum_variant`는 시작 인자를 `Args` 구조체와 `Box`로 분리해 고친다.
+  rollout의 연속 host 재시작 실패는 정상 연결이 10초 미만이면 이전 지수 backoff가 남아 원격
+  agent가 30~45초 기다리는 것이 원인이었다. `aaa-agent`의
+  `authenticated_short_connections_reset_backoff_but_rejections_preserve_it`는 실제 Welcome/replay
+  사건과 Reject로 성공 뒤 250ms 초기화·인증 거부 뒤 기존 30초 보존을 확인한다. 초기화 제거
+  변형은 `30s != 250ms`로 실패해야 한다. 기존 m13 `rollout_shared_host_agent_recovery_and_inflight_cancel_preserve_baselines`의
+  30초 상한·두 agent 준비·복구/PID/파일 단언은 변경하지 않는다. main의 원격 fixture 재연결
+  상한 1초도 보존한다. 이 시험 설정과 제품의 성공 사건 초기화는 별개이며 keeper는 상한과
+  무관한 초기 30초를 사용한다.
+- 고정 sleep·실패 재시도·시한 증가 없이 검사한다. 전체 필수 검증은 정본 `nice -n 15 bash scripts/ci-local.sh`와 공개 검사다.
+
 ## Windows install pairing·IPC 해제 owner(t-0485, plan §8.415)
 
 - 원문 c249e316 Windows run의 pairing 조기 종료와 IPC bind OS5를 보존한다. PTY 실패 끝은 answered/전체·needle·child_exit, IPC 실패는 조합/반복·경로·OS 오류/해제 단계로 구분한다. 기존 승인/수명/비밀 가림 단언과60초를 유지한다.

@@ -102,6 +102,75 @@ pub struct AccountDefault {
     pub account: String,
 }
 
+/// 자동 배정은 사람이 넣은 host 공통 풀과 참여 프로젝트 안에서만 한다.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+pub struct AccountPoolMember {
+    pub account: String,
+    /// 같은 실제 한도를 쓰는 별칭에는 같은 그룹을 지정한다.
+    pub group: String,
+    /// 빈 목록은 해당 harness의 모든 모델이다.
+    pub models: Vec<String>,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, TS)]
+pub struct AccountPoolView {
+    pub revision: String,
+    pub members: Vec<AccountPoolMember>,
+    pub projects: Vec<String>,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+pub enum AccountTaskSize {
+    Small,
+    #[default]
+    Medium,
+    Large,
+}
+
+impl AccountTaskSize {
+    pub fn percent(self) -> u8 {
+        match self {
+            Self::Small => 5,
+            Self::Medium => 15,
+            Self::Large => 30,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+pub struct AccountSelection {
+    pub size: AccountTaskSize,
+    pub group: String,
+    pub unobserved: bool,
+    pub reason: String,
+    #[ts(type = "number")]
+    pub selected_at_ms: u64,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+pub enum AccountStartState {
+    Queued,
+    Started,
+    Failed,
+    Cancelled,
+}
+
+/// 대기 작업의 원문·인증·사용자 신원은 조회 응답에 넣지 않는다.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+pub struct AccountStartView {
+    pub id: String,
+    pub project: String,
+    pub title: String,
+    pub size: AccountTaskSize,
+    pub state: AccountStartState,
+    pub thread: Option<String>,
+    pub reason: String,
+    #[ts(type = "number")]
+    pub created_at_ms: u64,
+}
+
 /// 공식 로그인 자식의 원본 출력은 공개하지 않는다.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 pub struct AccountLoginView {

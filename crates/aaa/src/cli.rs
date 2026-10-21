@@ -35,6 +35,19 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum AccountCmd {
+    /// host 공통 자동 배정 풀. 변경은 세션 밖 사람·웹 조작 기기만 한다.
+    Pool {
+        #[command(subcommand)]
+        cmd: AccountPoolCmd,
+    },
+    /// 내구 계정 배정 대기와 시작 영수증을 본다.
+    Starts {
+        project: Option<String>,
+    },
+    CancelStart {
+        id: String,
+        project: Option<String>,
+    },
     /// host의 격리된 공식 CLI로 로그인한다. 인증값은 출력하지 않는다.
     Login {
         name: String,
@@ -75,6 +88,29 @@ enum AccountCmd {
     List,
     Remove {
         name: String,
+    },
+}
+
+#[derive(Subcommand)]
+enum AccountPoolCmd {
+    List,
+    Add {
+        account: String,
+        /// 실제 한도를 공유하는 별칭끼리는 같은 그룹을 쓴다. 기본은 별칭이다.
+        #[arg(long)]
+        group: Option<String>,
+        #[arg(long = "model")]
+        models: Vec<String>,
+    },
+    Remove {
+        account: String,
+    },
+    Project {
+        project: String,
+        #[arg(long, conflicts_with = "off", required_unless_present = "off")]
+        on: bool,
+        #[arg(long)]
+        off: bool,
     },
 }
 
@@ -825,59 +861,70 @@ struct PostArgs {
     post_id: Option<String>,
 }
 
+#[derive(Args)]
+struct ThreadStartArgs {
+    /// 사용자가 직접 실행 한도를 무시하고 시작한다(자동 시작·예약에는 쓰지 않는다)
+    #[arg(long)]
+    over_limit: bool,
+    /// coordinator가 해당 task를 강제 시작하라는 사용자 지시 근거를 남긴다
+    #[arg(long, requires = "over_limit")]
+    user_request: Option<String>,
+    /// (옛 꼴의 프로젝트, 생략한다)
+    #[arg(hide = true)]
+    project: Option<String>,
+    /// timing 같은 측정 표지(쉼표 구분). 그 머신의 자동화가 명시한 wait를 지킨다.
+    #[arg(long, value_delimiter = ',')]
+    holds: Vec<String>,
+    /// 제목(--from-task면 비워도 된다)
+    #[arg(long)]
+    title: Option<String>,
+    #[arg(long)]
+    machine: Option<String>,
+    /// profile(모델). 없으면 --from-task의 모델 칸, 그다음 project.toml thread_profile
+    #[arg(long)]
+    profile: Option<String>,
+    /// host에 등록한 계정 이름(profile과 별개)
+    #[arg(long, conflicts_with = "account_pool")]
+    account: Option<String>,
+    /// 프로젝트가 참여한 host 공통 허용 풀에서 계정을 고른다.
+    #[arg(long)]
+    account_pool: bool,
+    #[arg(long, requires="account_pool", value_parser=["small","medium","large"])]
+    account_size: Option<String>,
+    /// 재전송할 때 같은 시작 ID를 준다. 생략하면 새 ID다.
+    #[arg(long, requires = "account_pool")]
+    start_id: Option<String>,
+    /// worktree(--repo 필요) 또는 dir(repo 없는 작업 폴더). 없으면 --repo가 있으면 worktree, 없으면 dir
+    #[arg(long, value_parser = ["worktree", "dir"])]
+    kind: Option<String>,
+    /// 그 머신의 repo 경로. --from-task면 task 저장소 칸이 정하고(다르면 거부), 칸이 빈 task에는 경로나 이름을 준다
+    #[arg(long)]
+    repo: Option<String>,
+    /// 기준 ref(기본: origin/HEAD, 없으면 현재 branch)
+    #[arg(long)]
+    base: Option<String>,
+    /// 할 일 파일(`-`면 표준 입력). --from-task면 비워도 된다.
+    #[arg(long)]
+    task_file: Option<String>,
+    /// TASKS.md의 task 제목. 모델·머신 칸이 profile·machine 기본값이 되고 메모가 할 일에 붙는다. 저장소 칸이 저장소를 정하고,
+    /// 머신을 정하지 않았으면 그 저장소가 있는 머신 가운데 덜 붐비는 곳이다. 칸이 비면 작업 폴더로 띄우고 경고한다.
+    #[arg(long)]
+    from_task: Option<String>,
+    /// 시작하면 그 task 줄 끝에 ` · <thread id>`를 붙인다(--from-task와 함께)
+    #[arg(long)]
+    link_task: bool,
+    /// 준비는 host 배경 작업으로 계속하고 바로 thread ID·준비 중 상태를 돌려준다
+    #[arg(long)]
+    background: bool,
+    /// 시작한 뒤 작업 요약을 쓴다(`aaa thread summary --file`과 같다, `-`면 표준 입력)
+    #[arg(long)]
+    summary_file: Option<String>,
+}
+
 #[derive(Subcommand)]
 enum ThreadCmd {
     /// thread를 시작한다: 그 머신 agent가 worktree(또는 작업 폴더)를 만들고 profile로 agent를 띄운 뒤 brief를 안내한다
-    Start {
-        /// 사용자가 직접 실행 한도를 무시하고 시작한다(자동 시작·예약에는 쓰지 않는다)
-        #[arg(long)]
-        over_limit: bool,
-        /// coordinator가 해당 task를 강제 시작하라는 사용자 지시 근거를 남긴다
-        #[arg(long, requires = "over_limit")]
-        user_request: Option<String>,
-        /// (옛 꼴의 프로젝트, 생략한다)
-        #[arg(hide = true)]
-        project: Option<String>,
-        /// timing 같은 측정 표지(쉼표 구분). 그 머신의 자동화가 명시한 wait를 지킨다.
-        #[arg(long, value_delimiter = ',')]
-        holds: Vec<String>,
-        /// 제목(--from-task면 비워도 된다)
-        #[arg(long)]
-        title: Option<String>,
-        #[arg(long)]
-        machine: Option<String>,
-        /// profile(모델). 없으면 --from-task의 모델 칸, 그다음 project.toml thread_profile
-        #[arg(long)]
-        profile: Option<String>,
-        /// host에 등록한 계정 이름(profile과 별개)
-        #[arg(long)]
-        account: Option<String>,
-        /// worktree(--repo 필요) 또는 dir(repo 없는 작업 폴더). 없으면 --repo가 있으면 worktree, 없으면 dir
-        #[arg(long, value_parser = ["worktree", "dir"])]
-        kind: Option<String>,
-        /// 그 머신의 repo 경로. --from-task면 task 저장소 칸이 정하고(다르면 거부), 칸이 빈 task에는 경로나 이름을 준다
-        #[arg(long)]
-        repo: Option<String>,
-        /// 기준 ref(기본: origin/HEAD, 없으면 현재 branch)
-        #[arg(long)]
-        base: Option<String>,
-        /// 할 일 파일(`-`면 표준 입력). --from-task면 비워도 된다.
-        #[arg(long)]
-        task_file: Option<String>,
-        /// TASKS.md의 task 제목. 모델·머신 칸이 profile·machine 기본값이 되고 메모가 할 일에 붙는다. 저장소 칸이 저장소를 정하고,
-        /// 머신을 정하지 않았으면 그 저장소가 있는 머신 가운데 덜 붐비는 곳이다. 칸이 비면 작업 폴더로 띄우고 경고한다.
-        #[arg(long)]
-        from_task: Option<String>,
-        /// 시작하면 그 task 줄 끝에 ` · <thread id>`를 붙인다(--from-task와 함께)
-        #[arg(long)]
-        link_task: bool,
-        /// 준비는 host 배경 작업으로 계속하고 바로 thread ID·준비 중 상태를 돌려준다
-        #[arg(long)]
-        background: bool,
-        /// 시작한 뒤 작업 요약을 쓴다(`aaa thread summary --file`과 같다, `-`면 표준 입력)
-        #[arg(long)]
-        summary_file: Option<String>,
-    },
+    Start(Box<ThreadStartArgs>),
     /// 이미 띄운 Claude·Codex pane을 이 프로젝트의 thread로 기록하고 brief를 안내한다(herdr-projects `thread adopt`).
     /// pane은 그대로 두고 그 폴더에 작업 폴더를 만든다. 다시 시작(restart)은 하지 않고, resolve도 pane을 끝내지 않는다.
     Adopt {
@@ -1760,6 +1807,13 @@ fn run(cli: Cli) -> Result<ExitCode> {
             front(json, FrontRequest::DebugInput { pane, thread, since_ms })
         }
         Cmd::Account { cmd } => match cmd {
+            AccountCmd::Pool { cmd } => account_pool_command(json, cmd),
+            AccountCmd::Starts { project } => {
+                front(json, FrontRequest::AccountStarts { project: project_or_here(project)? })
+            }
+            AccountCmd::CancelStart { id, project } => {
+                front(json, FrontRequest::AccountStartCancel { project: project_or_here(project)?, id })
+            }
             AccountCmd::Login { name, harness } => front(json, FrontRequest::AccountLogin { name, harness }),
             AccountCmd::LoginStatus { id } => front(json, FrontRequest::AccountLoginStatus { id }),
             AccountCmd::LoginCancel { id } => front(json, FrontRequest::AccountLoginCancel { id }),
@@ -2060,24 +2114,28 @@ fn run(cli: Cli) -> Result<ExitCode> {
         Cmd::Thread { cmd } => front(
             json,
             match cmd {
-                ThreadCmd::Start {
-                    over_limit,
-                    user_request,
-                    holds,
-                    project,
-                    title,
-                    machine,
-                    profile,
-                    account,
-                    kind,
-                    repo,
-                    base,
-                    task_file,
-                    from_task,
-                    link_task,
-                    summary_file,
-                    background,
-                } => {
+                ThreadCmd::Start(args) => {
+                    let ThreadStartArgs {
+                        account_pool,
+                        account_size,
+                        start_id,
+                        over_limit,
+                        user_request,
+                        holds,
+                        project,
+                        title,
+                        machine,
+                        profile,
+                        account,
+                        kind,
+                        repo,
+                        base,
+                        task_file,
+                        from_task,
+                        link_task,
+                        summary_file,
+                        background,
+                    } = *args;
                     if link_task && from_task.is_none() {
                         anyhow::bail!("--link-task는 --from-task와 함께 쓴다");
                     }
@@ -2108,9 +2166,22 @@ fn run(cli: Cli) -> Result<ExitCode> {
                         link_task,
                         task_block: None,
                     };
-                    let req = match account {
-                        Some(account) => FrontRequest::ThreadStartAccount { account, start: Box::new(req) },
-                        None => req,
+                    let req = if account_pool {
+                        let size = match account_size.as_deref() {
+                            Some("small") => aaa_proto::AccountTaskSize::Small,
+                            Some("large") => aaa_proto::AccountTaskSize::Large,
+                            _ => aaa_proto::AccountTaskSize::Medium,
+                        };
+                        FrontRequest::ThreadStartPool {
+                            id: start_id.unwrap_or_else(aaa_common::util::new_id),
+                            size,
+                            start: Box::new(req),
+                        }
+                    } else {
+                        match account {
+                            Some(account) => FrontRequest::ThreadStartAccount { account, start: Box::new(req) },
+                            None => req,
+                        }
                     };
                     return with_summary(json, req, project, None, summary);
                 }
@@ -3542,6 +3613,35 @@ fn file_text(file: &str, what: &str) -> Result<String> {
 
 /// `thread start`·`thread message`의 `--summary-file`: 먼저 형식을 검사하고 앞 요청이 된 뒤 작업 요약을 쓴다(plan §8.259). 앞 요청이 실패하면
 /// 요약을 쓰지 않는다. 요약을 따로 보내므로 요약을 모르는 옛 host(FRONT_API 1.43)는 그 요청만 거절한다
+fn account_pool_command(json: bool, cmd: AccountPoolCmd) -> Result<ExitCode> {
+    if matches!(cmd, AccountPoolCmd::List) {
+        return front(json, FrontRequest::AccountPool);
+    }
+    let pool = match front_call(FrontRequest::AccountPool)? {
+        Ok(FrontResponse::AccountPool { pool }) => pool,
+        response => return front_print(json, response),
+    };
+    let request = match cmd {
+        AccountPoolCmd::List => unreachable!(),
+        AccountPoolCmd::Add { account, group, models } => FrontRequest::AccountPoolMember {
+            revision: pool.revision,
+            account: account.clone(),
+            member: Some(aaa_proto::AccountPoolMember {
+                group: group.unwrap_or_else(|| account.clone()),
+                account,
+                models,
+            }),
+        },
+        AccountPoolCmd::Remove { account } => {
+            FrontRequest::AccountPoolMember { revision: pool.revision, account, member: None }
+        }
+        AccountPoolCmd::Project { project, on, off: _ } => {
+            FrontRequest::AccountPoolProject { revision: pool.revision, project, enabled: on }
+        }
+    };
+    front(json, request)
+}
+
 fn with_summary(
     json: bool,
     req: FrontRequest,
@@ -3640,6 +3740,15 @@ fn render_thread(s: &mut String, t: &aaa_proto::ThreadView) {
     }
     render_automation_origin(s, t);
     let _ = writeln!(s, "인증: {}", t.account.as_deref().unwrap_or("로컬 로그인"));
+    if let Some(selection) = &t.account_selection {
+        let _ = writeln!(
+            s,
+            "계정 선택: {} · 그룹 {} · 예상 예약 {}%p",
+            selection.reason,
+            selection.group,
+            selection.size.percent()
+        );
+    }
     if let Some(e) = &t.error {
         let _ = writeln!(s, "  오류: {e}");
     }
@@ -4733,6 +4842,33 @@ fn render_front(r: &FrontResponse) -> String {
                 }
                 s.push('\n');
             }
+        }
+        FrontResponse::AccountPool { pool } => {
+            let _ = writeln!(s, "참여 프로젝트: {}", pool.projects.join(", "));
+            for m in &pool.members {
+                let _ = writeln!(
+                    s,
+                    "{}\t한도 그룹 {}\t모델 {}",
+                    m.account,
+                    m.group,
+                    if m.models.is_empty() { "전체".into() } else { m.models.join(", ") }
+                );
+            }
+        }
+        FrontResponse::AccountStarts { starts } => {
+            for start in starts {
+                let _ = writeln!(
+                    s,
+                    "{}\t{:?}\t{}\t{}",
+                    start.id,
+                    start.state,
+                    start.thread.as_deref().unwrap_or("대기"),
+                    start.reason
+                );
+            }
+        }
+        FrontResponse::AccountStart { start } => {
+            let _ = writeln!(s, "{}\t{:?}\t{}", start.id, start.state, start.reason);
         }
         FrontResponse::AccountDefaults { defaults } => {
             for harness in ["claude", "codex"] {

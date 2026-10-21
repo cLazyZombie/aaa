@@ -249,7 +249,20 @@ async fn read_with(exe: &Path, state: &Path, generation: String, auth: &str, now
                 aaa_common::redact::text(&w.limit_id) == w.limit_id
                     && w.scope.as_ref().is_none_or(|s| aaa_common::redact::text(s) == *s)
             });
-            snapshot.problem = if snapshot.windows.is_empty() { Some(QuotaProblem::Unknown) } else { None };
+            snapshot.problem = if snapshot.windows.is_empty() {
+                // 창을 응답했는데 정규화할 수 없으면 미관측 첫 실행의 근거로 쓰지 않는다.
+                let has_value = |bucket: &Value| {
+                    ["primary", "secondary"]
+                        .iter()
+                        .any(|key| bucket.get(*key).is_some_and(|w| w.get("usedPercent").is_some()))
+                };
+                let malformed =
+                    v.get("rateLimitsByLimitId").and_then(Value::as_object).is_some_and(|m| m.values().any(has_value))
+                        || v.get("rateLimits").is_some_and(has_value);
+                Some(if malformed { QuotaProblem::Failed } else { QuotaProblem::Unknown })
+            } else {
+                None
+            };
         }
     }
     snapshot
@@ -323,6 +336,7 @@ for line in sys.stdin:
             send({{'id':v['id'],'error':{{'code':-32603,'message':auth['tokens']['access_token'],'data':{{'status':int(mode),'retryAfterSeconds':123}}}}}})
         elif mode=='broken': print('bad-json',flush=True)
         elif mode=='missing': send({{'id':v['id'],'result':{{'rateLimits':{{'primary':None}}}}}})
+        elif mode=='invalid': send({{'id':v['id'],'result':{{'rateLimits':{{'primary':{{'usedPercent':None}}}}}}}})
         else:
             buckets={{'codex':{{'primary':{{'usedPercent':25,'windowDurationMins':300,'resetsAt':9999}},'secondary':{{'usedPercent':50,'windowDurationMins':10080,'resetsAt':19999}}}}}}
             buckets[auth['tokens']['access_token']]={{'primary':{{'usedPercent':99,'windowDurationMins':300,'resetsAt':9999}}}}
@@ -340,7 +354,7 @@ for line in sys.stdin:
         let root = Home(std::env::temp_dir().join(format!("aaa-quota-{}", util::new_id())));
         util::ensure_private_dir(&root.0).unwrap();
         let auth = r#"{"tokens":{"access_token":"fake-access-canary-0123456789","refresh_token":"fake-refresh-canary-9876543210"}}"#;
-        let futures = ["ok", "refresh", "401", "429", "broken", "missing"].map(|mode| {
+        let futures = ["ok", "refresh", "401", "429", "broken", "missing", "invalid"].map(|mode| {
             let exe = fake(&root.0, mode);
             let state = root.0.clone();
             async move { (mode, read_with(&exe, &state, format!("generation-{mode}"), auth, 1000).await) }

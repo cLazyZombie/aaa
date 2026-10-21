@@ -160,6 +160,10 @@ pub struct DeviceRow {
 pub const DEVICE_LABEL_FALLBACK: &str = "기기";
 
 impl Db {
+    #[cfg(test)]
+    pub(crate) fn conn_for_pool_test(&self) -> std::sync::MutexGuard<'_, Connection> {
+        self.conn.lock().unwrap()
+    }
     /// 발신자의 32자리 ID와 화면의 p-번호를 모두 받는다. 중복 전송 판정은 원래 post_row만 쓴다.
     pub(crate) fn post_by_ref(&self, id: &str) -> Result<Option<PostRow>> {
         if !id.starts_with("p-") {
@@ -976,6 +980,20 @@ impl Db {
         reservation: Option<(&str, &str)>,
         make: impl FnOnce(&str) -> Result<String>,
     ) -> Result<(String, bool)> {
+        self.thread_insert_transaction(project, key, admission, limit, reservation, |_, id| make(id))
+    }
+
+    /// 계정 선택·공유 잔량 예약도 thread 선점과 같은 transaction에서 확정한다.
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn thread_insert_transaction(
+        &self,
+        project: &str,
+        key: Option<&str>,
+        admission: Option<&StartAdmission>,
+        limit: Option<u32>,
+        reservation: Option<(&str, &str)>,
+        make: impl FnOnce(&Connection, &str) -> Result<String>,
+    ) -> Result<(String, bool)> {
         let mut c = self.conn.lock().unwrap();
         let tx = c.transaction()?;
         if let Some(key) = key
@@ -992,7 +1010,7 @@ impl Db {
                 r.get(0)
             })?;
         let id = format!("t-{:04}", max.unwrap_or(0) + 1);
-        let text = make(&id)?;
+        let text = make(&tx, &id)?;
         if let Some(limit) = limit
             && serde_json::from_str::<crate::orch::ThreadRec>(&text)?.automation.is_none()
         {
@@ -1509,6 +1527,7 @@ impl Db {
         for (k, _) in project_meta(&tx, project)? {
             tx.execute("DELETE FROM meta WHERE key=?1", [&k])?;
         }
+        crate::account_pool::project_transition(&tx, project, None)?;
         tx.commit()?;
         Ok(())
     }
@@ -1531,12 +1550,14 @@ impl Db {
         for (k, v) in project_meta(&tx, from)? {
             let (kind, rest) = k.split_once(':').unwrap_or((&k, ""));
             let tail = rest.strip_prefix(from).unwrap_or_default();
+            let v = if kind == "account-job" { crate::account_pool::rename_job(&v, to)? } else { v };
             tx.execute("DELETE FROM meta WHERE key=?1", [&k])?;
             tx.execute(
                 "INSERT INTO meta(key,value) VALUES(?1,?2) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
                 [format!("{kind}:{to}{tail}"), v],
             )?;
         }
+        crate::account_pool::project_transition(&tx, from, Some(to))?;
         tx.commit()?;
         Ok(())
     }

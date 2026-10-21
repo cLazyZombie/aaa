@@ -867,6 +867,9 @@ pub enum ReportAttention {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 pub struct ThreadView {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub account_selection: Option<crate::AccountSelection>,
     /// 명시적으로 실행 한도를 무시한 시작의 출처. 옛 기록은 생략한다(FRONT_API 1.98).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]

@@ -280,6 +280,7 @@ impl Host {
         block: Option<&str>,
     ) -> Result<FrontResponse, ErrorBody> {
         let mut a = StartArgs {
+            pool: None,
             over_limit: None,
             reservation: None,
             account: None,

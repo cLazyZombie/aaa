@@ -1793,6 +1793,34 @@ pub enum FrontRequest {
     },
     AccountList,
     AccountDefaults,
+    AccountPool,
+    AccountPoolMember {
+        revision: String,
+        account: String,
+        member: Option<crate::AccountPoolMember>,
+    },
+    AccountPoolProject {
+        revision: String,
+        project: String,
+        enabled: bool,
+    },
+    AccountStarts {
+        #[serde(default)]
+        #[ts(optional, as = "Option<String>")]
+        project: String,
+    },
+    AccountStartCancel {
+        #[serde(default)]
+        #[ts(optional, as = "Option<String>")]
+        project: String,
+        id: String,
+    },
+    /// 별칭 `auto`와 충돌하지 않는 명시적 풀 시작. 같은 ID의 재요청은 같은 시작이다.
+    ThreadStartPool {
+        id: String,
+        size: crate::AccountTaskSize,
+        start: Box<FrontRequest>,
+    },
     AccountDefault {
         harness: String,
         account: Option<String>,
@@ -3055,7 +3083,10 @@ impl FrontRequest {
     /// 프로젝트 자체를 바꾸는 요청(lifecycle·delete·rename·sweep)은 이름을 늘 받으므로 여기 없다.
     pub fn project_mut(&mut self) -> Option<&mut String> {
         match self {
-            FrontRequest::ThreadStartAccount { start, .. } => start.project_mut(),
+            FrontRequest::ThreadStartAccount { start, .. } | FrontRequest::ThreadStartPool { start, .. } => {
+                start.project_mut()
+            }
+            FrontRequest::AccountStarts { project } | FrontRequest::AccountStartCancel { project, .. } => Some(project),
             FrontRequest::Post { project, .. }
             | FrontRequest::PostStatus { project, .. }
             | FrontRequest::PostHandled { project, .. }
@@ -3148,6 +3179,8 @@ impl FrontRequest {
             self,
             FrontRequest::AccountList
                 | FrontRequest::AccountDefaults
+                | FrontRequest::AccountPool
+                | FrontRequest::AccountStarts { .. }
                 | FrontRequest::Status
                 | FrontRequest::DeployContext
                 | FrontRequest::DeployStatus { .. }
@@ -3239,6 +3272,15 @@ pub enum FrontResponse {
     },
     AccountDefaults {
         defaults: Vec<crate::AccountDefault>,
+    },
+    AccountPool {
+        pool: crate::AccountPoolView,
+    },
+    AccountStarts {
+        starts: Vec<crate::AccountStartView>,
+    },
+    AccountStart {
+        start: crate::AccountStartView,
     },
     AccountLogin {
         login: crate::AccountLoginView,

@@ -1030,6 +1030,7 @@ export function TasksView({
       )}
       {dialog?.kind === "start" && (
         <StartDialog
+          project={project}
           allowOverLimit={apiAtLeast(frontApi, [1, 98])}
           task={dialog.task}
           owners={owners}
