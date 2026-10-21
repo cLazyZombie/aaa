@@ -491,7 +491,8 @@ esac
             w.lab.log("rollout-host-web-silent").contains("배포 상태 조회: 로컬 agent 자료 기다림").then_some(())
         });
         w.lab.spawn_command("rollout-a-hello", agent_cmd(&w.h, &a_exe, "a", "local", "labA"));
-        let host_guard_file = w.h.state.join(format!("agent/deployments/{}.guard.json", before_ids[5].as_str().unwrap()));
+        let host_guard_file =
+            w.h.state.join(format!("agent/deployments/{}.guard.json", before_ids[5].as_str().unwrap()));
         let silent_web = w.h.ok(&["status"])["web_listen"].as_str().unwrap().to_string();
         let waiting = wait_for("감시가 새 host의 웹 응답을 기다림", T, || {
             let v: Value = serde_json::from_slice(&std::fs::read(&host_guard_file).ok()?).ok()?;

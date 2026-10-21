@@ -522,6 +522,7 @@ mod post_tests {
             sha256: None,
             selfcheck: None,
             sessions: vec![],
+            identity: None,
             harness: vec![],
         }))
         .await
