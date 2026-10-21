@@ -1197,6 +1197,9 @@ summary.chat-compact-head { cursor: pointer; }
 /* 입력칸 컨텍스트 게이지(plan §8.321, herdr-web-ui Composer.css `.composer-context` 링·t3code ContextWindowMeter 꼴).
    글을 치는 동안은 자리를 그대로 두고 투명해진다: 단추 줄 폭이 바뀌지 않아 글 칸 폭·한 줄 판정이 흔들리지 않는다 */
 .context-gauge { display: inline-flex; flex: none; }
+/* 휴대폰에서는 빈 입력칸·focus·사용량에 관계없이 숨긴다(사용자 10-21).
+   기존 휴대폰 배치와 같은 700px 기준이며 패드·데스크톱의 치는 중 숨김은 그대로 둔다. */
+@media (max-width: 700px) { .context-gauge { display: none; } }
 .context-gauge-button {
   display: inline-flex; align-items: center; gap: 5px; height: var(--space-8); padding: 0 8px 0 6px;
   border: 0; border-radius: var(--radius-pill); background: transparent; color: var(--text-dim); font-size: var(--fs-xs); cursor: pointer;
