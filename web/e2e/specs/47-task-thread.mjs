@@ -259,6 +259,8 @@ export default async function ({ page }) {
       aaa("ticker", "tick");
       const q = aaa("task", "queue").entries.find(q => q.task.title === "강제 동안 예약");
       if (q.state !== "queued" || q.thread) throw new Error("한도 초과 동안 예약을 기동했다");
+      // 웹 시작 응답·task 연결은 비동기 기동의 접수다. 준비 작업이 끝나 brief를 전달한 뒤 한 번 정리한다.
+      await until(`${id} 브리프`, () => aaa("thread", "show", "demo", id).brief === "delivered");
       aaa("thread", "resolve", "demo", id);
       if (kind !== "desktop") await p.close();
     }
