@@ -5,25 +5,29 @@ import { ThreadStageBadge } from "./ThreadStageBadge";
 // 있어서 거기서 들어가게), 필요하면 수정, 삭제 할수 있고」). 활동 막대 「할 일」·`#tasks`가 연다. host `tasks`(TaskBoard)를 읽고
 // `task_edit`로 고친다(바뀐 블록만 쓰고 블록 hash로 충돌을 감지한다). thread 연결(T3, §8.316): 상세의 「coordinator에게 맡기기」·
 // 「바로 시작」(TaskStart.tsx), 「task 없는 열린 thread」의 「task에 잇기」·「task로 만들기」, 끝난 thread의 자동 정리 알림 줄(되살리기).
-// 행 모양과 상태 아이콘은 t3code ComposerTasksBadge.tsx, 목록 머리(이름·수)와 메모 표지 `≡`은 herdr-projects popup.rs `build`.
+// 행 모양과 상태 아이콘은 t3code ComposerTasksBadge.tsx, 메모 표지 `≡`은 herdr-projects popup.rs `build`. 한 목록(plan §8.393, t-0611):
+// 「## 목록」 머리로 나누지 않고, 예약은 맨 위에 host 예약 차례대로(보라 표지만), 그 밑에 일반 할 일을 둔다(승인 시안 t-0580 3판).
+// 예약 끌기는 놓은 영역이 곧 값이다(Jira·GitHub Projects): 예약 영역에 놓으면 예약(내용 확인 뒤), 아래에 놓으면 예약 풀기.
 // 행·목록 머리의 ⋯ 메뉴는 herdr-web-ui RowMenu(휴대폰은 아래 시트), 끌기는 herdr-web-ui Sidebar.tsx 483–491의 HTML 끌어 놓기와
 // Alt+↑↓(580–584), 휴대폰은 끌기 대신 메뉴의 위로·아래로·맨 위로(t-0469 §3.3). 지운 뒤 「되살리기」 줄은 t3code
 // showThreadUndoNotice.ts(되살리기 한 번만)를 따르되 시간으로 사라지지 않는다(기록 화면에도 남는다).
 import { useCallback, useEffect, useMemo, useRef, useState, type DragEvent } from "react";
 import {
   ArrowDown,
-  ArrowDownToLine,
   ArrowUp,
+  ArrowUpDown,
   ArrowUpToLine,
   ChevronDown,
   ChevronRight,
+  CircleDashed,
   CircleDot,
+  Clock,
   Copy,
   CornerDownRight,
   Ellipsis,
   FileCode,
-  FolderInput,
-  GitMerge,
+  Folder,
+  FolderGit2,
   GripVertical,
   History,
   Link2,
@@ -31,12 +35,14 @@ import {
   Paperclip,
   Pencil,
   Plus,
+  Layers,
   Search,
   Trash2,
+  Undo2,
   X,
   type LucideIcon,
 } from "lucide-react";
-import type { MachineView, OwnerChoice, TaskBoard, TaskConflict, TaskLogEntry, TaskNotesFile, TaskOp, TaskThread, TaskView, ThreadGroup, ThreadStage, ThreadView } from "./gen/proto";
+import type { MachineView, OwnerChoice, QueueOp, TaskBoard, TaskConflict, TaskLogEntry, TaskNotesFile, TaskOp, TaskThread, TaskView, ThreadGroup, ThreadStage, ThreadView } from "./gen/proto";
 import { ApiError, call, me, onTasksChanged } from "./api";
 import { DrawerToggle, HeadMore, HeadNote } from "./drawer";
 import { Markdown } from "./Markdown";
@@ -45,9 +51,9 @@ import { RowMenu, type RowMenuItem } from "./RowMenu";
 import { copyText } from "./herdr/clipboard";
 import { useMediaQuery } from "./herdr/useMediaQuery";
 import { StateIcon, TaskDetail, ThreadChip, WhoChips, type SaveResult } from "./TaskDetail";
-import { ConflictDialog, NameDialog, RawEditor, type MyEdit } from "./TaskDialogs";
+import { ConflictDialog, RawEditor, type MyEdit } from "./TaskDialogs";
 import { DocAddDialog, LinkDialog, StartDialog } from "./TaskStart";
-import { TaskQueuePanel } from "./TaskQueue";
+import { TaskQueuePanel, type ReserveRequest } from "./TaskQueue";
 import { TaskLogView } from "./TaskLogView";
 import {
   TASK_FILTERS,
@@ -55,6 +61,11 @@ import {
   anchorOf,
   dropOp,
   emptyDraft,
+  pendingQueue,
+  queueDropPosition,
+  queueStep,
+  repoChoices,
+  taskList,
   findTask,
   handOffText,
   itemToTask,
@@ -64,10 +75,8 @@ import {
   moveOp,
   newAutoCleans,
   noteItems,
-  taskDepth,
-  taskSections,
+  REPO_DIR,
   taskState,
-  toListOp,
   addAttachment,
   attachmentLine,
   attachmentsOf,
@@ -75,8 +84,10 @@ import {
   noteLines,
   withoutAttachments,
   type TaskAttachment,
+  type MoveDir,
   type TaskDraft,
   type TaskFilter,
+  type TaskListRow,
   type TaskState,
   type ThreadGroups,
 } from "./tasksModel";
@@ -106,6 +117,25 @@ function readAutoSeen(): number | null {
 function writeAutoSeen(id: number): void {
   try {
     localStorage.setItem(AUTO_SEEN_KEY, String(id));
+  } catch {
+    // 저장이 막혀도 이 화면 동안은 기억한다
+  }
+}
+
+/** 저장소 거르기(§8.393): 이 기기에 프로젝트마다 기억한다. 없으면 전체(null), 빈 글은 「정하지 않음」 */
+const REPO_KEY = (project: string) => `aaa:tasks:repo:${project}`;
+function readRepo(project: string): string | null {
+  try {
+    return project ? localStorage.getItem(REPO_KEY(project)) : null;
+  } catch {
+    return null;
+  }
+}
+function writeRepo(project: string, repo: string | null): void {
+  try {
+    if (!project) return;
+    if (repo === null) localStorage.removeItem(REPO_KEY(project));
+    else localStorage.setItem(REPO_KEY(project), repo);
   } catch {
     // 저장이 막혀도 이 화면 동안은 기억한다
   }
@@ -192,8 +222,6 @@ type Menu = { key: string; anchor: HTMLElement; title: string; items: RowMenuIte
 /** 창 */
 type Dialog =
   | { kind: "conflict"; conflict: TaskConflict; mine: MyEdit | null }
-  | { kind: "list-add"; after: string | null }
-  | { kind: "list-rename"; name: string }
   | { kind: "raw" }
   | { kind: "start"; task: TaskView }
   | { kind: "link"; thread: TaskThread }
@@ -252,7 +280,6 @@ export function TasksView({
   const [tab, setTab] = useState<Tab>("tasks");
   const [filter, setFilter] = useState<TaskFilter>("all");
   const [query, setQuery] = useState("");
-  const [folded, setFolded] = useState<ReadonlySet<string>>(new Set());
   const [picked, setPicked] = useState<Key | null>(null);
   const [creating, setCreating] = useState<TaskDraft | null>(null);
   // 저장한 뒤 폼을 새 판으로 다시 연다
@@ -263,7 +290,22 @@ export function TasksView({
   const [frontApi, setFrontApi] = useState<string | null>(null);
   const [owners, setOwners] = useState<OwnerChoice[] | null>(null);
   const [log, setLog] = useState<TaskLogEntry[]>([]);
-  const [drag, setDrag] = useState<{ line: number; over: string | null; side: "before" | "after" } | null>(null);
+  // 끄는 행: 예약 행이면 `qid`(host 예약 task ID). `over`는 놓을 자리(`q:<id>` 예약 행·`t:<줄>` 일반 행·`res-end` 예약 맨 뒤·`rest` 예약 풀기)
+  const [drag, setDrag] = useState<{ line: number; qid: string | null; over: string | null; side: "before" | "after" } | null>(null);
+  // 휴대폰 「⇅ 순서」: ⋯ 대신 ▲▼
+  const [ordering, setOrdering] = useState(false);
+  // 예약을 푼 task: 원래 자리에서 잠깐 「↩ 원래 자리로 돌아옴」
+  const [flash, setFlash] = useState<string | null>(null);
+  // 목록이 연 예약(끌어 놓기·⋯ 「자리 나면 시작 예약」)
+  const [reserveReq, setReserveReq] = useState<ReserveRequest | null>(null);
+  const project = board?.project ?? "";
+  const [repo, setRepoState] = useState<string | null>(null);
+  // 저장소 거르기는 이 기기에 프로젝트마다 기억한다
+  useEffect(() => setRepoState(readRepo(project)), [project]);
+  const setRepo = (r: string | null) => {
+    setRepoState(r);
+    writeRepo(project, r);
+  };
   const coarse = useMediaQuery("(pointer: coarse)");
   const editApi = apiAtLeast(frontApi, EDIT_API);
   const canEdit = !reader && editApi;
@@ -352,7 +394,11 @@ export function TasksView({
     setPicked({ title: t.title, line: t.line });
   }, [focusRequest, board]);
   const byLine = useMemo(() => new Map((board?.tasks ?? []).map((t) => [t.line, t])), [board]);
-  const sections = useMemo(() => (board ? taskSections(board, filter, query, groups) : []), [board, filter, query, groups]);
+  const choices = useMemo(() => repoChoices(board), [board]);
+  // 기억한 저장소가 목록에서 빠졌으면 전체로 본다
+  const repoOn = repo !== null && choices.some((c) => c.key === repo) ? repo : null;
+  const model = useMemo(() => (board ? taskList(board, filter, query, repoOn, groups) : null), [board, filter, query, repoOn, groups]);
+  const order = useMemo(() => pendingQueue(board).map((q) => q.task_id), [board]);
   const found = findTask(board, picked);
   // 손댄 폼(상세가 알린다): 그 task가 파일에서 빠져도 닫지 않는다(다른 기기·coordinator가 지우거나 제목을 바꿈)
   const [formDirty, setFormDirty] = useState(false);
@@ -365,15 +411,9 @@ export function TasksView({
   useEffect(() => {
     if (picked && board && !found && !formDirty) setPicked(null);
   }, [picked, board, found, formDirty]);
-  const shownCount = sections.reduce((n, s) => n + s.tasks.length, 0);
+  const shownCount = (model?.top.length ?? 0) + (model?.rest.length ?? 0);
   const total = board?.tasks.length ?? 0;
-  const toggle = (name: string) =>
-    setFolded((f) => {
-      const next = new Set(f);
-      if (next.has(name)) next.delete(name);
-      else next.add(name);
-      return next;
-    });
+  const queueApi = apiAtLeast(frontApi, [1, 85]);
   const pick = (t: TaskView) => {
     setCreating(null);
     setPicked({ title: t.title, line: t.line });
@@ -449,17 +489,54 @@ export function TasksView({
   };
 
   const openMenu = (key: string, anchor: HTMLElement, title: string, items: RowMenuItem[]) => setMenu((m) => (m?.key === key ? null : { key, anchor, title, items }));
-  const lists = board?.lists ?? [];
-  const named = lists.filter((l) => l.name !== "");
+
+  // ───── 예약 차례(host 정본)와 한 목록 순서 ─────
+  const shownReserved = new Set((model?.top ?? []).flatMap((r) => (r.kind === "reserved" ? [r.q.task_id] : [])));
+  const shownLines = new Set((model?.rest ?? []).flatMap((r) => (r.kind === "task" ? [r.t.line] : [])));
+  const queueAct = (action: QueueOp, t?: TaskView) => {
+    if (!board) return;
+    setOpError(null);
+    void call({ op: "task_queue", project: board.project, action }).then(
+      () => {
+        if (action.op === "cancel" && t?.id) setFlash(t.id);
+      },
+      (e: unknown) => setOpError(e instanceof Error ? e.message : String(e)),
+    );
+  };
+  /** 예약 위로·아래로·맨 앞으로: 거른 채면 보이는 예약과 자리를 바꾸고 숨은 예약은 그대로 둔다 */
+  const reservedStep = (id: string, dir: MoveDir): number | null => queueStep(order, id, dir, (x) => shownReserved.has(x));
+  const stepReserved = (id: string, dir: MoveDir) => {
+    const position = reservedStep(id, dir);
+    if (position !== null) queueAct({ op: "move", task_id: id, position });
+  };
+  /** 일반 할 일 위로·아래로·맨 위로: 거른 채면 보이는 이웃과 자리를 바꾼다(예약한 task는 맨 위에 있어 이웃이 아니다) */
+  const taskStep = (t: TaskView, dir: MoveDir): TaskOp | null => (board ? moveOp(board, t, dir, (x) => shownLines.has(x.line) || x.parent !== null) : null);
+  /** 예약 내용 확인을 열고, 예약한 뒤 `position`(없으면 맨 뒤) 차례로 */
+  const startReserve = (t: TaskView, position: number | null) => {
+    setCreating(null);
+    setPicked({ title: t.title, line: t.line });
+    setReserveReq((r) => ({ seq: (r?.seq ?? 0) + 1, position }));
+  };
+  const reservedItems = (r: Extract<TaskListRow, { kind: "reserved" }>): RowMenuItem[] => {
+    const id = r.q.task_id;
+    const step = (sid: string, label: string, icon: LucideIcon, dir: MoveDir): RowMenuItem[] => (reservedStep(id, dir) !== null ? [{ id: sid, label, icon, run: () => stepReserved(id, dir) }] : []);
+    return [
+      ...step("up", "예약 위로", ArrowUp, "up"),
+      ...step("down", "예약 아래로", ArrowDown, "down"),
+      ...step("top", "예약 맨 앞으로", ArrowUpToLine, "top"),
+      { id: "unreserve", label: "예약 풀기", hint: r.missing ? undefined : "원래 자리로", icon: Undo2, divider: true, danger: true, run: () => queueAct({ op: "cancel", task_id: id }, r.t) },
+      ...(r.missing ? [] : [{ id: "open", label: "열어서 고치기", icon: Pencil, run: () => pick(r.t) }]),
+    ];
+  };
   const rowItems = (t: TaskView): RowMenuItem[] => {
     if (!board) return [];
     const item = (id: string, label: string, icon: LucideIcon, op: TaskOp | null): RowMenuItem[] => (op ? [{ id, label, icon, run: () => act([op]) }] : []);
-    const others = lists.filter((l) => l.name !== t.list || t.parent !== null);
+    const reservable = queueApi && !order.includes(t.id ?? "") && taskState(t, groups) !== "run";
     return [
-      ...item("up", "위로", ArrowUp, moveOp(board, t, "up")),
-      ...item("down", "아래로", ArrowDown, moveOp(board, t, "down")),
-      ...item("top", "맨 위로", ArrowUpToLine, moveOp(board, t, "top")),
-      ...others.map((l, i) => ({ id: `to-${l.name}`, label: `${l.name || "(목록 없음)"}(으)로 옮기기`, icon: FolderInput, divider: i === 0, run: () => act([toListOp(t, l.name)!]) })),
+      ...item("up", "위로", ArrowUp, taskStep(t, "up")),
+      ...item("down", "아래로", ArrowDown, taskStep(t, "down")),
+      ...item("top", "맨 위로", ArrowUpToLine, taskStep(t, "top")),
+      ...(reservable ? [{ id: "reserve", label: "자리 나면 시작 예약", hint: "예약 맨 뒤에", icon: Clock, divider: true, run: () => startReserve(t, null) }] : []),
       { id: "child", label: "하위 task 더하기", icon: CornerDownRight, divider: true, run: () => {
         setPicked(null);
         setCreating(emptyDraft(t.list, anchorOf(t)));
@@ -467,49 +544,139 @@ export function TasksView({
       { id: "delete", label: "끝남으로 지우기", icon: Trash2, danger: true, run: () => void remove(t).catch((e: unknown) => setOpError(e instanceof Error ? e.message : String(e))) },
     ];
   };
-  const listItems = (name: string): RowMenuItem[] => {
-    const at = named.findIndex((l) => l.name === name);
-    const items: RowMenuItem[] = [{ id: "add", label: "이 목록에 할 일 더하기", icon: Plus, run: () => {
-      setPicked(null);
-      setCreating(emptyDraft(name));
-    } }];
-    if (name === "") return items;
-    items.push({ id: "rename", label: "이름 바꾸기", icon: Pencil, run: () => setDialog({ kind: "list-rename", name }) });
-    if (at > 0) items.push({ id: "up", label: "목록 위로", icon: ArrowUp, run: () => act([{ op: "list_move", name, before: named[at - 1].name }]) });
-    if (at < named.length - 1) items.push({ id: "down", label: "목록 아래로", icon: ArrowDownToLine, run: () => act([{ op: "list_move", name, before: named[at + 2]?.name ?? null }]) });
-    named.filter((l) => l.name !== name).forEach((l, i) => items.push({ id: `merge-${l.name}`, label: `${l.name}에 합치기`, icon: GitMerge, divider: i === 0, run: () => act([{ op: "list_merge", name, into: l.name }]) }));
-    items.push({ id: "list-add", label: "이 뒤에 새 목록", icon: ListPlus, divider: true, run: () => setDialog({ kind: "list-add", after: name }) });
-    if (!board?.tasks.some((t) => t.list === name)) items.push({ id: "delete", label: "빈 목록 지우기", icon: Trash2, danger: true, run: () => act([{ op: "list_delete", name }]) });
-    return items;
-  };
 
-  // 끌어 놓기(넓은 화면·마우스): 행 위 절반이면 앞, 아래 절반이면 뒤. 목록 머리에 놓으면 그 목록 끝
+  // 끌어 놓기(넓은 화면·마우스): 행 위 절반이면 앞, 아래 절반이면 뒤. 놓은 영역이 값이다: 예약 영역은 예약(차례), 아래 영역은 일반 순서·예약 풀기
   const dragged = drag ? byLine.get(drag.line) : undefined;
-  const onRowDragOver = (t: TaskView) => (e: DragEvent<HTMLElement>) => {
-    if (!dragged || !board) return;
+  const sideOf = (e: DragEvent<HTMLElement>): "before" | "after" => {
     const r = e.currentTarget.getBoundingClientRect();
-    const side = e.clientY < r.top + r.height / 2 ? "before" : "after";
-    if (!dropOp(board, dragged, t, side)) return;
+    return e.clientY < r.top + r.height / 2 ? "before" : "after";
+  };
+  const over = (key: string, side: "before" | "after") => {
+    if (drag && (drag.over !== key || drag.side !== side)) setDrag({ ...drag, over: key, side });
+  };
+  /** 예약 행에 놓기: 예약끼리는 차례 바꾸기, 일반 행은 그 자리에 예약(내용 확인 뒤) */
+  const reservedDrop = (qid: string, side: "before" | "after"): (() => void) | null => {
+    if (!drag || !dragged) return null;
+    if (drag.qid) {
+      const position = queueDropPosition(order, drag.qid, qid, side);
+      return position === null ? null : () => queueAct({ op: "move", task_id: drag.qid!, position });
+    }
+    if (!queueApi || taskState(dragged, groups) === "run") return null;
+    const position = queueDropPosition(order, dragged.id ?? "", qid, side);
+    return position === null ? null : () => startReserve(dragged, position);
+  };
+  const onReservedDragOver = (qid: string) => (e: DragEvent<HTMLElement>) => {
+    const side = sideOf(e);
+    if (!reservedDrop(qid, side)) return;
     e.preventDefault();
     e.dataTransfer.dropEffect = "move";
-    if (drag?.over !== `task:${t.line}` || drag.side !== side) setDrag({ line: dragged.line, over: `task:${t.line}`, side });
+    over(`q:${qid}`, side);
+  };
+  const onReservedDrop = (qid: string) => (e: DragEvent<HTMLElement>) => {
+    e.preventDefault();
+    const run = drag ? reservedDrop(qid, drag.side) : null;
+    setDrag(null);
+    run?.();
+  };
+  // 예약 행을 끌 때 일반 행은 놓을 자리가 아니다: 아래 영역(예약 풀기)이 받는다
+  const onRowDragOver = (t: TaskView) => (e: DragEvent<HTMLElement>) => {
+    if (!dragged || !board || drag?.qid) return;
+    const side = sideOf(e);
+    if (!dropOp(board, dragged, t, side)) return;
+    e.preventDefault();
+    e.stopPropagation();
+    e.dataTransfer.dropEffect = "move";
+    over(`t:${t.line}`, side);
   };
   const onRowDrop = (t: TaskView) => (e: DragEvent<HTMLElement>) => {
+    if (drag?.qid) return;
     e.preventDefault();
+    e.stopPropagation();
     const op = dragged && board && drag ? dropOp(board, dragged, t, drag.side) : null;
     setDrag(null);
     if (op) act([op]);
   };
-  const onListDragOver = (name: string) => (e: DragEvent<HTMLElement>) => {
-    if (!dragged || !toListOp(dragged, name)) return;
+  const onRestDragOver = (e: DragEvent<HTMLElement>) => {
+    if (!drag?.qid) return;
     e.preventDefault();
-    if (drag?.over !== `list:${name}`) setDrag({ line: dragged.line, over: `list:${name}`, side: "after" });
+    e.dataTransfer.dropEffect = "move";
+    over("rest", "after");
   };
-  const onListDrop = (name: string) => (e: DragEvent<HTMLElement>) => {
+  const onRestDrop = (e: DragEvent<HTMLElement>) => {
+    if (!drag?.qid) return;
     e.preventDefault();
-    const op = dragged ? toListOp(dragged, name) : null;
+    const qid = drag.qid;
     setDrag(null);
-    if (op) act([op]);
+    queueAct({ op: "cancel", task_id: qid }, dragged);
+  };
+  const onResEndDragOver = (e: DragEvent<HTMLElement>) => {
+    if (!dragged || drag?.qid || taskState(dragged, groups) === "run") return;
+    e.preventDefault();
+    over("res-end", "after");
+  };
+  const onResEndDrop = (e: DragEvent<HTMLElement>) => {
+    e.preventDefault();
+    const t = dragged;
+    setDrag(null);
+    if (t && !drag?.qid) startReserve(t, null);
+  };
+  // 예약을 푼 task가 원래 자리에 나타나면 보이게 굴리고 잠깐 뒤 알림을 걷는다
+  const flashShown = flash !== null && (model?.rest ?? []).some((r) => r.kind === "task" && r.t.id === flash);
+  useEffect(() => {
+    if (!flashShown) return;
+    document.querySelector('.task-row.is-flash')?.scrollIntoView({ block: "nearest" });
+    const timer = window.setTimeout(() => setFlash(null), 4000);
+    return () => window.clearTimeout(timer);
+  }, [flashShown]);
+  const repoLabel = repoOn === null ? "전체" : (choices.find((c) => c.key === repoOn)?.label ?? repoOn);
+  const repoItems = (): RowMenuItem[] => [
+    { id: "repo-all", label: "전체", hint: String(total), icon: Layers, checked: repoOn === null, run: () => setRepo(null) },
+    ...choices.map((c, i) => ({ id: `repo-${c.key || "none"}`, label: c.label, hint: String(c.n), icon: c.key === "" ? CircleDashed : c.key === REPO_DIR ? Folder : FolderGit2, divider: i === 0, checked: repoOn === c.key, run: () => setRepo(c.key) })),
+  ];
+  const rowProps = (r: Exclude<TaskListRow, { kind: "gap" }>) => {
+    const t = r.t;
+    const reserved = r.kind === "reserved";
+    const qid = reserved ? r.q.task_id : null;
+    const key = qid ? `q:${qid}` : `t:${t.line}`;
+    const menuKey = qid ? `queue:${qid}` : `task:${t.line}`;
+    const steps = qid
+      ? { up: reservedStep(qid, "up") !== null, down: reservedStep(qid, "down") !== null }
+      : { up: taskStep(t, "up") !== null, down: taskStep(t, "down") !== null };
+    const step = (dir: "up" | "down") => {
+      if (qid) return stepReserved(qid, dir);
+      const op = taskStep(t, dir);
+      if (op) act([op]);
+    };
+    return {
+      t,
+      row: r,
+      stage: t.thread ? stages.get(t.thread) : undefined,
+      overLimit: t.thread ? overLimits.get(t.thread) : undefined,
+      depth: r.kind === "reserved" ? 0 : r.depth,
+      state: taskState(t, groups),
+      selected: !(reserved && r.missing) && current?.line === t.line,
+      groups,
+      canEdit,
+      ordering: canEdit && ordering,
+      steps,
+      onStep: step,
+      draggable: canEdit && !coarse && r.kind !== "under" && !(reserved && r.missing),
+      dragging: drag !== null && (qid ? drag.qid === qid : drag.qid === null && drag.line === t.line),
+      drop: drag?.over === key ? drag.side : undefined,
+      flash: r.kind === "task" && flash !== null && t.id === flash,
+      menuOpen: menu?.key === menuKey,
+      onPick: () => (reserved && r.missing ? undefined : pick(t)),
+      onThread,
+      onMenu: (a: HTMLElement) => openMenu(menuKey, a, t.title, reserved ? reservedItems(r) : rowItems(t)),
+      onDragStart: (e: DragEvent<HTMLElement>) => {
+        e.dataTransfer.effectAllowed = "move";
+        e.dataTransfer.setData("text/plain", t.title);
+        setDrag({ line: t.line, qid, over: null, side: "before" });
+      },
+      onDragEnd: () => setDrag(null),
+      onDragOver: qid ? onReservedDragOver(qid) : r.kind === "task" ? onRowDragOver(t) : undefined,
+      onDrop: qid ? onReservedDrop(qid) : r.kind === "task" ? onRowDrop(t) : undefined,
+    };
   };
 
   const later = notesFiles.length > 0;
@@ -531,7 +698,7 @@ export function TasksView({
         </div>
         <HeadMore />
       </header>
-      {board && apiAtLeast(frontApi,[1,85]) && <TaskQueuePanel board={board} canEdit={canEdit} onThread={onThread} />}
+      {board && queueApi && <TaskQueuePanel board={board} canEdit={canEdit} onThread={onThread} />}
       <div className="tasks-toolbar">
         <div className="tasks-tabs" role="tablist" aria-label="할 일 탭">
           <button type="button" role="tab" aria-selected={tab === "tasks"} className={`tasks-tab${tab === "tasks" ? " is-on" : ""}`} data-testid="tasks-tab-tasks" onClick={() => setTab("tasks")}>
@@ -555,17 +722,39 @@ export function TasksView({
               <Search aria-hidden="true" />
               <input className="input" type="search" value={query} placeholder="ID·제목·메모·담당 검색" aria-label="할 일 검색" data-testid="tasks-search" onChange={(e) => setQuery(e.target.value)} />
             </label>
-            <div className="tasks-filters" role="group" aria-label="거르기">
-              {TASK_FILTERS.map((f) => (
-                <button key={f.id} type="button" className={`task-chip tasks-filter${filter === f.id ? " is-on" : ""}`} aria-pressed={filter === f.id} data-testid={`tasks-filter-${f.id}`} onClick={() => setFilter(f.id)}>
-                  {f.label}
-                </button>
-              ))}
+            <div className="tasks-chips">
+              <button
+                type="button"
+                className={`task-chip tasks-repo${repoOn !== null ? " is-on" : ""}`}
+                aria-haspopup="menu"
+                aria-expanded={menu?.key === "repo"}
+                data-testid="tasks-repo"
+                data-repo={repoOn ?? ""}
+                onClick={(e) => openMenu("repo", e.currentTarget, "저장소로 거르기", repoItems())}
+              >
+                {coarse ? (repoOn === null ? "저장소" : repoLabel) : `저장소: ${repoLabel}`}
+                <ChevronDown aria-hidden="true" />
+              </button>
+              <div className="tasks-filters" role="group" aria-label="거르기">
+                {TASK_FILTERS.filter((f) => f.id !== "reserved" || queueApi).map((f) => (
+                  <button key={f.id} type="button" className={`task-chip tasks-filter tasks-filter-${f.id}${filter === f.id ? " is-on" : ""}`} aria-pressed={filter === f.id} data-testid={`tasks-filter-${f.id}`} onClick={() => setFilter(f.id)}>
+                    {f.id === "reserved" && <span className="task-reserved-dot is-small" aria-hidden="true" />}
+                    {f.label}
+                    {model && <span className="tasks-count">{model.counts[f.id]}</span>}
+                  </button>
+                ))}
+              </div>
             </div>
           </>
         )}
         {canEdit && tab === "tasks" && (
           <div className="tasks-actions">
+            {coarse && (
+              <button type="button" className={`btn btn-ghost tasks-order${ordering ? " is-on" : ""}`} aria-pressed={ordering} data-testid="tasks-order" onClick={() => setOrdering((o) => !o)}>
+                <ArrowUpDown aria-hidden="true" />
+                {ordering ? "순서 끝" : "순서"}
+              </button>
+            )}
             <button type="button" className="btn btn-ghost tasks-raw-button" title="TASKS.md 원문 편집(고급)" aria-label="TASKS.md 원문 편집" data-testid="tasks-raw" onClick={() => setDialog({ kind: "raw" })}>
               <FileCode aria-hidden="true" />
             </button>
@@ -640,72 +829,52 @@ export function TasksView({
           <div className="tasks-scroll" data-testid="tasks-list">
             {board === null && !error && <p className="tasks-empty">불러오는 중</p>}
             {board && total === 0 && <p className="tasks-empty">{canEdit ? "할 일이 없다. 「+ 할 일」로 더한다" : "할 일이 없다"}</p>}
-            {board && total > 0 && shownCount === 0 && <p className="tasks-empty">맞는 할 일이 없다</p>}
-            {sections.map((s) => {
-              const closed = folded.has(s.name);
-              // 거르는 동안 빈 목록은 숨긴다(전체·빈 검색이면 task 없는 목록도 머리를 보인다)
-              if (s.tasks.length === 0 && (filter !== "all" || query.trim() !== "")) return null;
-              const menuKey = `list:${s.name}`;
-              return (
-                <section key={s.name} className={`task-list${drag?.over === menuKey ? " is-drop" : ""}`} aria-label={s.name || "목록 없음"} data-testid={`task-list-${s.name}`}>
-                  <h3 className="task-list-head" onDragOver={onListDragOver(s.name)} onDrop={onListDrop(s.name)}>
-                    <button type="button" className="task-list-toggle" aria-expanded={!closed} onClick={() => toggle(s.name)}>
-                      {closed ? <ChevronRight aria-hidden="true" /> : <ChevronDown aria-hidden="true" />}
-                      <span className="task-list-name">{s.name || "(목록 없음)"}</span>
-                      <span className="tasks-count">{s.tasks.length === s.total ? s.total : `${s.tasks.length}/${s.total}`}</span>
-                    </button>
-                    {canEdit && <MenuButton title={`${s.name || "목록 없음"} 목록`} open={menu?.key === menuKey} testid={`task-list-menu-${s.name}`} onToggle={(a) => openMenu(menuKey, a, `${s.name || "(목록 없음)"} 목록`, listItems(s.name))} />}
-                  </h3>
-                  {!closed && (
-                    <>
-                      {s.notes.map((n, i) => (
-                        <p key={i} className="task-list-note">
-                          {n}
-                        </p>
-                      ))}
-                      <ul className="task-rows">
-                        {s.tasks.map((t) => (
-                          <TaskRow
-                            key={`${t.line}:${t.title}`}
-                            t={t}
-                            depth={taskDepth(t, byLine)}
-                            state={taskState(t, groups)}
-                            selected={current?.line === t.line}
-                            groups={groups}
-                            stage={t.thread ? stages.get(t.thread) : undefined}
-                            overLimit={t.thread ? overLimits.get(t.thread) : undefined}
-                            canEdit={canEdit}
-                            draggable={canEdit && !coarse}
-                            dragging={drag?.line === t.line}
-                            drop={drag?.over === `task:${t.line}` ? drag.side : undefined}
-                            menuOpen={menu?.key === `task:${t.line}`}
-                            onPick={() => pick(t)}
-                            onThread={onThread}
-                            onMenu={(a) => openMenu(`task:${t.line}`, a, t.title, rowItems(t))}
-                            onKeyMove={(dir) => {
-                              const op = board && moveOp(board, t, dir);
-                              if (op) act([op]);
-                            }}
-                            onDragStart={(e) => {
-                              e.dataTransfer.effectAllowed = "move";
-                              e.dataTransfer.setData("text/plain", t.title);
-                              setDrag({ line: t.line, over: null, side: "before" });
-                            }}
-                            onDragEnd={() => setDrag(null)}
-                            onDragOver={onRowDragOver(t)}
-                            onDrop={onRowDrop(t)}
-                          />
-                        ))}
-                      </ul>
-                    </>
-                  )}
-                </section>
-              );
-            })}
-            {canEdit && board && filter === "all" && query.trim() === "" && (
-              <button type="button" className="btn btn-ghost tasks-list-add" data-testid="tasks-list-add" onClick={() => setDialog({ kind: "list-add", after: null })}>
-                <ListPlus aria-hidden="true" />새 목록
-              </button>
+            {board && total > 0 && shownCount === 0 && filter !== "reserved" && <p className="tasks-empty">맞는 할 일이 없다</p>}
+            {board && model && filter === "reserved" && model.counts.reserved === 0 && (
+              <p className="tasks-empty">예약이 없다{canEdit ? ". 할 일을 맨 위로 끌거나 ⋯ 「자리 나면 시작 예약」으로 예약한다" : ""}</p>
+            )}
+            {model && model.top.length > 0 && (
+              <ul className="task-rows task-reserved-rows" aria-label="예약(위에서부터 차례로 시작)" data-testid="tasks-reserved">
+                {model.top.map((r) =>
+                  r.kind === "gap" ? (
+                    <li key={r.key} className="task-gap" data-testid="task-gap">
+                      다른 저장소 예약 {r.n}개 숨김 ({r.repos.join("·")}) · 차례는 그대로
+                    </li>
+                  ) : (
+                    <TaskRow key={r.key} {...rowProps(r)} />
+                  ),
+                )}
+              </ul>
+            )}
+            {/* 예약과 일반 할 일 사이 점선: 일반 행을 여기 놓으면 예약 맨 뒤(끄는 동안 자리를 늘리지 않는다: 놓을 곳이 밀리지 않게).
+                예약이 없으면 맨 위에 같은 줄을 두어 첫 예약을 끌어 넣는다 */}
+            {model && model.rest.length > 0 && (model.top.length > 0 || (canEdit && queueApi && !coarse && filter === "all")) && (
+              <div
+                className={`task-sep${model.top.length === 0 ? " is-empty" : ""}${drag?.over === "res-end" ? " is-over" : ""}`}
+                role="separator"
+                title="위는 예약 차례, 아래는 할 일 차례"
+                data-testid="task-res-end"
+                onDragOver={onResEndDragOver}
+                onDrop={onResEndDrop}
+              >
+                {model.top.length === 0 && <span>예약 없음 · 할 일을 여기로 끌면 자리 나면 시작 예약</span>}
+              </div>
+            )}
+            {model && model.rest.length > 0 && (
+              <div className={`task-zone${drag?.over === "rest" ? " is-unreserve" : ""}`} onDragOver={onRestDragOver} onDrop={onRestDrop}>
+                {drag?.over === "rest" && <p className="task-zone-note">여기 놓으면 예약 풀기 · 원래 자리로</p>}
+                <ul className="task-rows" data-testid="tasks-rest">
+                  {model.rest.map((r) => (r.kind === "gap" ? null : <TaskRow key={r.key} {...rowProps(r)} />))}
+                </ul>
+              </div>
+            )}
+            {model && filter === "reserved" && model.counts.reserved > 0 && (
+              <p className="tasks-tip">예약만 보는 중 · 위에서부터 차례로 시작한다. {coarse ? "⋯ 또는 「순서」로" : "끌어서"} 예약 차례를 바꾼다. 「전체」로 돌아가면 같은 차례 그대로 맨 위에 있다.</p>
+            )}
+            {repoOn !== null && (
+              <p className="tasks-tip" data-testid="tasks-repo-tip">
+                {repoLabel}만 보는 중 · 옮기면 보이는 행 바로 위·아래로 들어간다. 숨은 다른 저장소 할 일의 차례는 그대로다.
+              </p>
             )}
             {board && board.unlinked_threads.length > 0 && (
               <Unlinked
@@ -744,7 +913,10 @@ export function TasksView({
               linkApi={linkApi}
               attachApi={attachApi}
               repoApi={repoApi}
-              queueApi={apiAtLeast(frontApi,[1,85])}
+              queueApi={queueApi}
+              reserveRequest={reserveReq}
+              onQueueStep={(t, dir) => t.id && stepReserved(t.id, dir)}
+              onUnreserved={(t) => t.id && setFlash(t.id)}
               onChangeNotes={changeTaskNotes}
               onOpenAttachment={
                 onOpenAttachment
@@ -763,7 +935,7 @@ export function TasksView({
             </aside>
           )}
           {detailOpen && <div className="tasks-scrim" aria-hidden="true" onClick={closeDetail} />}
-          {canEdit && !detailOpen && (
+          {canEdit && !detailOpen && !ordering && (
             <button
               type="button"
               className="tasks-fab"
@@ -830,19 +1002,6 @@ export function TasksView({
             if (latest) setPicked({ title: latest.title, line: latest.line });
             else setPicked(null);
             setSaves((n) => n + 1);
-          }}
-        />
-      )}
-      {(dialog?.kind === "list-add" || dialog?.kind === "list-rename") && (
-        <NameDialog
-          title={dialog.kind === "list-add" ? "새 목록" : `「${dialog.name}」 이름 바꾸기`}
-          label="목록 이름"
-          initial={dialog.kind === "list-rename" ? dialog.name : ""}
-          action={dialog.kind === "list-add" ? "더하기" : "바꾸기"}
-          onClose={() => setDialog(null)}
-          onSave={async (name) => {
-            const op: TaskOp = dialog.kind === "list-add" ? { op: "list_add", name, after: dialog.after } : { op: "list_rename", name: dialog.name, to: name };
-            await edit([op], null);
           }}
         />
       )}
@@ -931,29 +1090,9 @@ function MenuButton({ title, open, testid, onToggle }: { title: string; open: bo
   );
 }
 
-function TaskRow({
-  t,
-  stage,
-  overLimit,
-  depth,
-  state,
-  selected,
-  groups,
-  canEdit,
-  draggable,
-  dragging,
-  drop,
-  menuOpen,
-  onPick,
-  onThread,
-  onMenu,
-  onKeyMove,
-  onDragStart,
-  onDragEnd,
-  onDragOver,
-  onDrop,
-}: {
+type RowProps = {
   t: TaskView;
+  row: Exclude<TaskListRow, { kind: "gap" }>;
   stage?: ThreadStage;
   overLimit?: ThreadLimitOverride;
   depth: number;
@@ -961,32 +1100,44 @@ function TaskRow({
   selected: boolean;
   groups: ThreadGroups;
   canEdit: boolean;
+  /** 휴대폰 「⇅ 순서」: ⋯ 대신 ▲▼ */
+  ordering: boolean;
+  steps: { up: boolean; down: boolean };
+  onStep: (dir: "up" | "down") => void;
   draggable: boolean;
   dragging: boolean;
   drop: "before" | "after" | undefined;
+  /** 예약을 풀어 원래 자리로 막 돌아왔다 */
+  flash: boolean;
   menuOpen: boolean;
   onPick: () => void;
   onThread: (id: string) => void;
   onMenu: (anchor: HTMLElement) => void;
-  onKeyMove: (dir: "up" | "down") => void;
   onDragStart: (e: DragEvent<HTMLElement>) => void;
   onDragEnd: () => void;
-  onDragOver: (e: DragEvent<HTMLElement>) => void;
-  onDrop: (e: DragEvent<HTMLElement>) => void;
-}) {
+  onDragOver?: (e: DragEvent<HTMLElement>) => void;
+  onDrop?: (e: DragEvent<HTMLElement>) => void;
+};
+
+/** 한 목록의 행: 예약은 숫자·까닭 글 없이 보라 표지(확인 필요는 노랑)만, 하위만 예약했으면 상위 경로를 붙인다. 일반 행은 상태 아이콘 */
+function TaskRow({ t, row, stage, overLimit, depth, state, selected, groups, canEdit, ordering, steps, onStep, draggable, dragging, drop, flash, menuOpen, onPick, onThread, onMenu, onDragStart, onDragEnd, onDragOver, onDrop }: RowProps) {
   const attachments = attachmentsOf(t.notes.join("\n")).length;
+  const reserved = row.kind === "reserved";
+  const check = reserved && row.q.state === "check";
   return (
     <li
-      className={`task-row is-${state}${selected ? " is-selected" : ""}${t.done ? " is-done" : ""}${dragging ? " is-dragging" : ""}${drop ? ` is-drop-${drop}` : ""}`}
+      className={`task-row is-${state}${reserved ? " is-reserved" : ""}${row.kind === "under" ? " is-under" : ""}${selected ? " is-selected" : ""}${t.done ? " is-done" : ""}${dragging ? " is-dragging" : ""}${drop ? ` is-drop-${drop}` : ""}${flash ? " is-flash" : ""}`}
       style={{ paddingLeft: `calc(${depth} * var(--space-5))` }}
       data-task-state={state}
-      data-testid={`task-${t.line}`}
+      data-kind={row.kind}
+      data-testid={reserved && row.missing ? `task-q-${row.q.task_id}` : `task-${t.line}`}
       data-title={t.title}
+      data-short-id={t.short_id ?? ""}
       onDragOver={onDragOver}
       onDrop={onDrop}
     >
       {draggable && (
-        <span className="task-grip" draggable onDragStart={onDragStart} onDragEnd={onDragEnd} aria-hidden="true" title="끌어서 옮기기" data-testid={`task-grip-${t.line}`}>
+        <span className="task-grip" draggable onDragStart={onDragStart} onDragEnd={onDragEnd} aria-hidden="true" title={reserved ? "끌어서 예약 차례 바꾸기 · 아래로 끌면 예약 풀기" : "끌어서 옮기기 · 맨 위로 끌면 예약"} data-testid={`task-grip-${t.line}`}>
           <GripVertical />
         </span>
       )}
@@ -996,19 +1147,27 @@ function TaskRow({
         aria-current={selected ? "true" : undefined}
         onClick={onPick}
         onKeyDown={(e) => {
-          // herdr-web-ui Sidebar: Alt+↑↓로 순서 바꾸기(끌기의 키보드 대안)
+          // herdr-web-ui Sidebar: Alt+↑↓로 순서 바꾸기(끌기의 키보드 대안). 예약 행은 예약 차례다
           if (!canEdit || !e.altKey || (e.key !== "ArrowUp" && e.key !== "ArrowDown")) return;
           e.preventDefault();
-          onKeyMove(e.key === "ArrowUp" ? "up" : "down");
+          onStep(e.key === "ArrowUp" ? "up" : "down");
         }}
       >
         <ThreadStageBadge stage={stage} /><ThreadLimitBadge start={overLimit} />
-        <StateIcon state={state} />
+        {reserved ? <span className={`task-reserved-dot${check ? " is-check" : ""}`} role="img" aria-label={check ? "예약 · 확인 필요" : "예약됨"} title={check ? "예약 · 확인 필요(상세에 까닭)" : "예약됨 · 자리 나면 시작"} /> : <StateIcon state={state} />}
+        {reserved && row.crumb && (
+          <span className="task-crumb" data-testid="task-crumb">
+            {row.crumb.short_id ?? ""} {row.crumb.title} ›
+          </span>
+        )}
         <span className="task-title">
-          <span className="sr-only">{TASK_STATE_LABEL[state]}: </span>
+          <span className="sr-only">{reserved ? (check ? "예약 · 확인 필요" : "예약") : TASK_STATE_LABEL[state]}: </span>
           {t.short_id && <span className="task-short-id" data-testid="task-short-id">{t.short_id}</span>}
           {t.title}
         </span>
+        {reserved && row.missing && <span className="task-chip task-problem">task 없음</span>}
+        {row.kind === "task" && row.reservedKids > 0 && <span className="task-chip task-kids-reserved">하위 {row.reservedKids} 예약됨</span>}
+        {flash && <span className="task-flash-note" data-testid="task-flash">↩ 원래 자리로 돌아옴</span>}
         {state === "problem" && <span className="task-chip task-problem">형식 어긋남</span>}
         {state === "check" && <span className="task-chip task-check">확인 필요</span>}
         <WhoChips t={t} />
@@ -1030,7 +1189,18 @@ function TaskRow({
         )}
       </button>
       {t.thread && <ThreadChip id={t.thread} groups={groups} onThread={onThread} />}
-      {canEdit && <MenuButton title={t.title} open={menuOpen} testid={`task-menu-${t.line}`} onToggle={onMenu} />}
+      {ordering ? (
+        <span className="task-steps">
+          <button type="button" className={`task-step${reserved ? " is-reserved" : ""}`} aria-label={reserved ? "예약 위로" : "위로"} disabled={!steps.up} data-testid={`task-step-up-${t.line}`} onClick={() => onStep("up")}>
+            <ArrowUp aria-hidden="true" />
+          </button>
+          <button type="button" className={`task-step${reserved ? " is-reserved" : ""}`} aria-label={reserved ? "예약 아래로" : "아래로"} disabled={!steps.down} data-testid={`task-step-down-${t.line}`} onClick={() => onStep("down")}>
+            <ArrowDown aria-hidden="true" />
+          </button>
+        </span>
+      ) : (
+        canEdit && <MenuButton title={t.title} open={menuOpen} testid={reserved ? `task-qmenu-${t.line}` : `task-menu-${t.line}`} onToggle={onMenu} />
+      )}
     </li>
   );
 }

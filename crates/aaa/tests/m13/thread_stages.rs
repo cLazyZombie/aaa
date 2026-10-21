@@ -34,14 +34,14 @@ fn report_stages_release_queue_capacity_and_block_new_work_after_return() {
     let next = queued_thread("첫 예약");
     w.wait_show("첫 예약 준비", &next, |v| v["brief"] == "delivered");
     report(&next, "[착지] 전체 검증 실패를 수리 중\n");
-    w.wait_show("착지 중 회수", &next, |v| v["stage"] == "landing");
+    w.wait_show("병합 중 회수", &next, |v| v["stage"] == "landing");
     let third = queued_thread("둘째 예약");
     w.wait_show("착지 자리 제외 뒤 둘째 예약", &third, |v| v["brief"] == "delivered");
     for args in [vec!["thread", "list"], vec!["task", "queue"], vec!["context", "--peek"]] {
         let out = w.h.run(&args);
         assert!(out.status.success());
         let text = String::from_utf8_lossy(&out.stdout);
-        assert!(text.contains("착지 중"), "{text}");
+        assert!(text.contains("병합 중"), "{text}");
         if args[0] != "task" {
             assert!(text.contains("병합 대기"), "{text}");
         }

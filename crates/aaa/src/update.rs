@@ -26,6 +26,7 @@ use std::time::Duration;
 
 use aaa_config::parse_version;
 use anyhow::{Context, Result, bail};
+#[cfg(all(test, unix))]
 use sha2::Digest as _;
 
 /// self-check 한 번의 한도(실패 한도다: 정상 실행 파일은 바로 끝난다)
@@ -111,8 +112,7 @@ fn kept_version(p: &Path) -> String {
 }
 
 pub(crate) fn sha256(p: &Path) -> Result<String> {
-    let bytes = std::fs::read(p).with_context(|| format!("{}를 읽지 못했다", p.display()))?;
-    Ok(hex::encode(sha2::Sha256::digest(bytes)))
+    aaa_common::util::sha256_file(p).with_context(|| format!("{}를 읽지 못했다", p.display()))
 }
 
 /// 실행해 보고 (성공했나, 표준 출력·오류)를 돌려준다. 한도를 넘기면 그 child를 끝내고 실패로 본다.

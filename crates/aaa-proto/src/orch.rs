@@ -843,7 +843,7 @@ impl ThreadStage {
     pub fn label(self) -> &'static str {
         match self {
             Self::MergeReady => "병합 대기",
-            Self::Landing => "착지 중",
+            Self::Landing => "병합 중",
         }
     }
 }

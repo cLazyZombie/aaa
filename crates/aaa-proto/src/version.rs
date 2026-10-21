@@ -203,7 +203,7 @@ pub const AGENT_LINK: Version = Version { major: 1, minor: 11 };
 // 1.93: SSH 머신 추가 M2(plan §8.384): `machine_setup_start`·`machine_setup_trust`·`machine_setup_choose`·`machine_setup_cancel`
 // (조작 기기·세션 밖 사람)·`machine_setup_list`(Reader도) → `MachineSetup`·`MachineSetups`, 진행은 웹 `enroll` 사건. 옛 host는 모르는
 // 요청으로 거절해 웹이 「SSH로 추가」를 그리지 않는다. Agent link 변경 없음.
-// 1.94: 보고 기반 병합 대기·착지 중 표지(ThreadView·TaskThread·TaskReservation.stage, plan §8.385). Agent link 변화 없음.
+// 1.94: 보고 기반 병합 대기·병합 중 표지(ThreadView·TaskThread·TaskReservation.stage, plan §8.385). Agent link 변화 없음.
 /// 1.95: 보고서 판마다 영속 r-ID·판 목록·보존 용량을 더한다. 기존 이름·thread 참조는 최신 판이다.
 /// 1.96: 질문 안 보고 판 보기와 기본 검수 카드·답한 기록의 r 참조를 더한다.
 // 1.97: task_edit.user_request(선택): 사용자 지시 근거를 남긴 모델·머신 변경과 미기동 예약 유지, plan §8.389.
