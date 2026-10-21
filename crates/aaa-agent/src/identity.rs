@@ -14,11 +14,13 @@ pub struct AgentIdentity {
 }
 
 pub fn load_or_create(state: &Path) -> Result<AgentIdentity> {
-    let p = state.join("identity.json");
-    if let Ok(id) = util::read_json::<AgentIdentity>(&p) {
-        return Ok(id);
-    }
     util::ensure_private_dir(state)?;
+    let p = state.join("identity.json");
+    match util::read_private(&p) {
+        Ok(bytes) => return Ok(serde_json::from_slice(&bytes)?),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+        Err(e) => return Err(e.into()),
+    }
     let id = AgentIdentity { machine_id: util::new_id(), created_at_ms: util::now_ms() };
     util::write_json(&p, &id)?;
     Ok(id)
@@ -33,7 +35,7 @@ pub struct HostPin {
 }
 
 pub fn load_pin(state: &Path) -> Option<HostPin> {
-    util::read_json(&state.join("host.json")).ok()
+    serde_json::from_slice(&util::read_private(&state.join("host.json")).ok()?).ok()
 }
 
 pub fn save_pin(state: &Path, pin: &HostPin) -> Result<()> {
