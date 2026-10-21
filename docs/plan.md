@@ -6919,3 +6919,5 @@ FRONT_API 1.96는 기본 검수 표지와 답 기록의 r 참조를 더한다. E
 - 검증은 host 요청자·근거 경계 유닛, m13 실제 CLI·coordinator·예약·재시작 keeper, 기존 E2E47의 데스크톱·iPhone·iPad 확인·취소·실제 기동·표지·예약 대기와 화면 캡처다. 착지 창에서 plan 절·API·E2E 번호를 main과 다시 대조한다.
 
 - 착지 기준 origin/main `f6a7585d`의 마지막 §8.396·FRONT_API 1.97·AGENT_LINK 1.11·E2E76을 직접 확인했다. 이번 기능은 §8.397·FRONT_API 1.98로 맞추고 E2E47 확장과 기존 E2E76을 유지한다. main의 Starting 선점 잠금·병합 중 표지·할 일 한 목록·상태 점 정렬을 보존하며 전체 ci-local·공개 검사 뒤 착지한다.
+
+- 착지 통합 검증에서 E2E session 정리의 전체 프로세스 명령줄 수집이 Node 기본 버퍼를 넘는 ENOBUFS를 확인했다. 목록은 PID·부모·상태만, 명령줄은 정리 후보 PID만 조회하도록 좁혔다. 실제 관계없는 긴 argv 1 MiB 초과 fixture로 원래 코드의 실패와 수정 뒤 대상 자손 종료·외부 프로세스 보존을 확인하며 버퍼·시한을 늘리지 않는다.
