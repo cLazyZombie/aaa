@@ -40,20 +40,38 @@ pub fn last_good_dir(state_root: &Path) -> PathBuf {
 }
 
 /// 정상 시작 뒤 그때 읽은 설정 파일을 보관한다. 없던 파일은 없는 채로 기록한다(되돌릴 때 지금 것을 치운다).
+/// 시작한 뒤 다시 읽으므로, 그사이 사람이 고치다 깨진 파일을 보관하지 않게 옆 폴더에 먼저 써서 읽히는지 본 뒤에만 바꾼다.
 /// 평문 env 값이 든 설정이면 비밀 사본이 하나 더 생긴다: 폴더는 0700, 파일은 0600이다
 pub fn keep_last_good(state_root: &Path, files: &[PathBuf]) -> Result<()> {
     let dir = last_good_dir(state_root);
+    let next = state_root.join("host").join("last-good-next");
+    match std::fs::remove_dir_all(&next) {
+        Ok(()) => {}
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+        Err(e) => return Err(e.into()),
+    }
+    aaa_common::util::ensure_private_dir(&next)?;
+    let mut texts = Vec::new();
+    for name in FILES {
+        if let Some(src) = files.iter().find(|f| f.file_name().is_some_and(|n| n == name)) {
+            let text = std::fs::read(src).with_context(|| format!("{name} 읽기"))?;
+            aaa_common::util::write_private(&next.join(name), &text)?;
+            texts.push((name, text));
+        }
+    }
+    let readable = aaa_config::load_host(&next).is_ok();
+    std::fs::remove_dir_all(&next)?;
+    if !readable {
+        anyhow::bail!("시작한 뒤 설정 파일이 바뀌어 읽히지 않는다: 지난 정상 설정을 그대로 둔다");
+    }
     aaa_common::util::ensure_private_dir(&dir)?;
-    let mut kept = Vec::new();
     for name in FILES {
         let target = dir.join(name);
-        match files.iter().find(|f| f.file_name().is_some_and(|n| n == name)) {
-            Some(src) => {
-                let text = std::fs::read(src).with_context(|| format!("{name} 읽기"))?;
+        match texts.iter().find(|(n, _)| *n == name) {
+            Some((_, text)) => {
                 if std::fs::read(&target).ok().as_deref() != Some(text.as_slice()) {
-                    aaa_common::util::write_private(&target, &text)?;
+                    aaa_common::util::write_private(&target, text)?;
                 }
-                kept.push(name);
             }
             None => match std::fs::remove_file(&target) {
                 Ok(()) => {}
@@ -63,6 +81,7 @@ pub fn keep_last_good(state_root: &Path, files: &[PathBuf]) -> Result<()> {
         }
     }
     // 목록이 마지막에 바뀐다: 파일을 쓰는 중에 끊기면 옛 목록이 남아 되돌리기는 옛 판(이미 쓴 같은 이름 파일)을 쓴다
+    let kept: Vec<&str> = texts.iter().map(|(n, _)| *n).collect();
     aaa_common::util::write_private(&dir.join("files.json"), &serde_json::to_vec(&kept)?)?;
     Ok(())
 }
@@ -114,28 +133,50 @@ pub(crate) fn restore(config_dir: &Path, state_root: &Path, now_ms: u64) -> Resu
             opts.mode(0o600);
         }
         // 화면에 가는 오류 글에는 파일 이름만 쓴다(홈 경로를 싣지 않는다)
-        std::io::Write::write_all(&mut opts.open(&backup).with_context(|| format!("{backup_name} 만들기"))?, bytes)
-            .with_context(|| format!("{backup_name} 쓰기"))?;
+        let made = opts.open(&backup).and_then(|mut f| std::io::Write::write_all(&mut f, bytes));
+        if let Err(e) = made {
+            // 이 파일을 남기지 못했다: 앞서 남긴 것도 치우고 아무 파일도 바꾸지 않는다(같은 초에 다시 눌러도 막히지 않게)
+            for b in &backups {
+                let _ = std::fs::remove_file(b);
+            }
+            if e.kind() != std::io::ErrorKind::AlreadyExists {
+                let _ = std::fs::remove_file(&backup);
+            }
+            return Err(anyhow::Error::from(e).context(format!("{backup_name} 만들기")));
+        }
         backups.push(backup);
     }
-    for (name, current, _, text) in changes {
-        match text {
-            Some(t) => aaa_common::util::write_private(&current, &t).with_context(|| format!("{name} 쓰기"))?,
-            None => std::fs::remove_file(&current).with_context(|| format!("{name} 치우기"))?,
+    // 바꾸다 실패하면 이미 바꾼 파일을 지금 것으로 되돌린다: 검증한 적 없는 조합(정상 host.toml + 깨진 local)을 남기지 않는다
+    let put = |path: &Path, text: &Option<Vec<u8>>| match text {
+        Some(t) => aaa_common::util::write_private(path, t),
+        None => match std::fs::remove_file(path) {
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
+            r => r,
+        },
+    };
+    for (i, (name, current, _, text)) in changes.iter().enumerate() {
+        if let Err(e) = put(current, text) {
+            for (_, done, now, _) in &changes[..i] {
+                let _ = put(done, now);
+            }
+            for b in &backups {
+                let _ = std::fs::remove_file(b);
+            }
+            return Err(anyhow::Error::from(e).context(format!("{name} 바꾸기")));
         }
     }
     Ok(backups)
 }
 
-/// 안전 모드가 뜰 주소: 정상 host가 마지막으로 연 주소(웹을 끈 채 시작했으면 None) → 보관한 정상 설정의 listen → 기본값. 빈 주소면 None
+/// 안전 모드가 뜰 주소: 정상 host가 마지막으로 연 주소(웹을 끈 채 시작했으면 None) → 보관한 정상 설정의 listen. 둘 다 없거나 빈 주소면 None
 pub(crate) fn listen_addr(db: &Db, state_root: &Path) -> Option<String> {
     // 빈 값은 지난 정상 시작이 웹을 끈 설정이었다는 기록이다
     if let Some(addr) = db.meta(LISTEN_KEY).ok().flatten() {
         return (!addr.is_empty()).then_some(addr);
     }
-    let listen = aaa_config::load_host(&last_good_dir(state_root))
-        .map(|l| l.config.web.listen)
-        .unwrap_or_else(|_| aaa_config::HostConfig::default().web.listen);
+    // 이 판으로 정상 시작한 적이 없다(업그레이드 직후): 설정과 무관한 기본 주소에 뜨지 않는다(다른 aaa의 port일 수 있다)
+    kept(state_root)?;
+    let listen = aaa_config::load_host(&last_good_dir(state_root)).ok()?.config.web.listen;
     (!listen.is_empty()).then_some(listen)
 }
 
@@ -189,56 +230,65 @@ fn depth(text: &str) -> i32 {
 /// 값을 가린다. 여러 줄 문자열·배열·인라인 표는 그 값이 가려지면 닫힐 때까지 가린다. 가린 값들도 돌려준다(오류 글에서 뺀다)
 pub(crate) fn mask(text: &str) -> (Vec<String>, Vec<String>) {
     let mut table: Vec<String> = Vec::new();
-    let mut open: Option<(&str, bool)> = None;
+    // 가린 여러 줄 문자열이 닫히지 않았다: 닫힐 때까지 다음 줄도 가린다. 가리지 않은 여러 줄 문자열은 따로 건너뛰지 않는다:
+    // 닫는 표시가 빠져 파싱이 깨진 바로 그때 뒤의 표·env 값까지 그대로 보이게 된다. 그 안의 줄도 아래 규칙으로 본다
+    let mut open: Option<&str> = None;
     // 가린 값의 괄호가 닫히지 않았다: 닫힐 때까지 다음 줄도 가린다
     let mut nested = 0;
     let (mut out, mut hidden) = (Vec::new(), Vec::new());
+    let hide = |line: &str, out: &mut Vec<String>, hidden: &mut Vec<String>| {
+        hidden.extend(
+            line.split(',').map(|v| v.trim().trim_matches(['"', '\'', '[', ']', '{', '}', '#']).trim().to_string()),
+        );
+        out.push(HIDDEN.to_string());
+    };
     for line in text.lines() {
         if nested > 0 {
             nested += depth(line);
-            hidden.extend(
-                line.split(',').map(|v| v.trim().trim_matches(['"', '\'', '[', ']', '{', '}']).trim().to_string()),
-            );
-            out.push(HIDDEN.to_string());
+            hide(line, &mut out, &mut hidden);
             continue;
         }
-        if let Some((delim, masked)) = open {
+        if let Some(delim) = open {
             if line.contains(delim) {
                 open = None;
             }
-            if masked {
-                hidden.push(line.trim().trim_end_matches(delim).to_string());
-                out.push(HIDDEN.to_string());
-            } else {
-                out.push(line.to_string());
-            }
+            hide(line.trim().trim_end_matches(delim), &mut out, &mut hidden);
             continue;
         }
         let trimmed = line.trim_start();
+        // 표 머리. 가리지 않은 배열의 원소 줄(`["a"],`)을 머리로 읽어도 가림이 줄지 않는다: 비밀 표·env 값의 배열은 위에서 가린다
         if trimmed.starts_with('[') {
             table = table_path(trimmed);
             out.push(line.to_string());
             continue;
         }
+        let in_env_table = table.iter().any(|s| s == "env");
         // 주석으로 꺼 둔 `KEY = 값`도 같은 규칙으로 본다
         let body_at = line.len() - trimmed.len() + usize::from(trimmed.starts_with('#'));
         let body = &line[body_at..];
         let Some(eq) = assignment(body) else {
-            out.push(line.to_string());
+            // 대입이 아닌 줄(여러 줄 배열의 원소·문자열 안·주석): env 표 아래거나 비밀 낱말이 있으면 줄째 가린다
+            if !trimmed.is_empty() && (in_env_table || secret_word(trimmed)) {
+                hide(trimmed, &mut out, &mut hidden);
+            } else {
+                out.push(line.to_string());
+            }
             continue;
         };
         let key = body[..eq].trim();
         let value = body[eq + 1..].trim();
         let segments: Vec<String> =
             key.split('.').map(|k| k.trim().trim_matches('"').trim_matches('\'').to_string()).collect();
-        let in_env = table.iter().chain(segments.iter()).any(|s| s == "env");
+        let in_env = in_env_table || segments.iter().any(|s| s == "env");
         let secret = in_env
             || table.iter().chain(segments.iter()).any(|s| secret_word(s))
             || secret_word(value)
             || (value.starts_with('{') && value.contains("env"));
-        let multi = ["\"\"\"", "'''"].into_iter().find(|d| value.starts_with(d) && value[3..].find(d).is_none());
-        if let Some(d) = multi {
-            open = Some((d, secret));
+        if secret
+            && let Some(d) =
+                ["\"\"\"", "'''"].into_iter().find(|d| value.starts_with(d) && value[3..].find(d).is_none())
+        {
+            open = Some(d);
         }
         if secret && depth(value) > 0 {
             nested = depth(value);
@@ -338,7 +388,10 @@ pub async fn run(
     }
     let db = Db::open(&db_path)?;
     let Some(addr) = listen_addr(&db, &state_root) else {
-        anyhow::bail!("설정을 읽지 못해 시작하지 않는다(웹이 꺼져 있어 안전 모드도 없다):\n{}", errors.render());
+        anyhow::bail!(
+            "설정을 읽지 못해 시작하지 않는다(웹을 껐거나 이 판으로 정상 시작한 적이 없어 안전 모드가 열 주소가 없다):\n{}",
+            errors.render()
+        );
     };
     let listener = tokio::net::TcpListener::bind(&addr).await.with_context(|| format!("안전 모드 웹 listen {addr}"))?;
     let port = listener.local_addr()?.port();

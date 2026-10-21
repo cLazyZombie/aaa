@@ -24,7 +24,7 @@ listen = "127.0.0.1:7431"
 [notify]
 webhook = "https://hooks.example.com/abc123"
 [mcp.auth]
-value = "header-secret"
+value = "hdr-zzz-111"
 [profiles.work.env]
 PLAIN = "visible-under-env"
 [profiles.home]
@@ -53,7 +53,7 @@ after = "kept-value"
         "first-line-secret",
         "array-secret-1",
         "array-secret-2",
-        "header-secret",
+        "hdr-zzz-111",
     ] {
         assert!(!shown.contains(secret), "{secret}가 보인다:\n{shown}");
         assert!(hidden.iter().any(|h| h.contains(secret)), "{secret}를 오류 글에서 뺄 목록에 없다: {hidden:?}");
@@ -65,6 +65,32 @@ after = "kept-value"
     assert_eq!(lines[12], format!("# old_token = {HIDDEN}"));
     assert_eq!(lines.last().unwrap(), r#"after = "kept-value""#);
     assert!(lines.contains(&"[profiles.work.env]".to_string()));
+}
+
+#[test]
+fn mask_keeps_checking_inside_plain_multiline_values_and_bare_lines() {
+    // 닫는 표시가 빠진 보통 여러 줄 문자열(파싱이 깨진 바로 그 경우), 비밀이 아닌 key의 여러 줄 배열 원소, `=` 없는 주석
+    let text = r#"[profiles.work]
+description = """
+메모
+[profiles.work.env]
+OPENAI_API_KEY = "sk-live-after-unclosed"
+[profiles.other]
+args = [
+  "--header=Authorization: Bearer bearer-zzz-111",
+  "--api-key", "sk-live-array-zzz",
+  "--verbose",
+]
+# token: sk-comment-zzz
+"#;
+    let (lines, hidden) = mask(text);
+    let shown = lines.join("\n");
+    for secret in ["sk-live-after-unclosed", "bearer-zzz-111", "sk-live-array-zzz", "sk-comment-zzz"] {
+        assert!(!shown.contains(secret), "{secret}가 보인다:\n{shown}");
+        assert!(hidden.iter().any(|h| h.contains(secret)), "{secret}를 오류 글에서 뺄 목록에 없다: {hidden:?}");
+    }
+    assert_eq!(lines.len(), text.lines().count());
+    assert!(shown.contains("\"--verbose\","), "비밀 낱말이 없는 원소는 남는다:\n{shown}");
 }
 
 #[test]
@@ -129,6 +155,7 @@ fn restore_backs_up_current_files_and_brings_back_exactly_the_kept_set() {
     std::fs::write(config.join("host.toml"), "[web\n").unwrap();
     assert!(restore(&config, &state, 1_700_000_000_000).is_err(), "같은 이름의 남긴 파일을 덮었다");
     // 정상 시작이 local을 읽었으면 local도 되돌린다, 정상 시작이 없었으면 되돌리지 못한다
+    std::fs::write(config.join("host.toml"), "schema = 1\n[web]\nlisten = \"127.0.0.1:7999\"\n").unwrap();
     std::fs::write(config.join("host.local.toml"), "schema = 1\n").unwrap();
     keep_last_good(&state, &[config.join("host.toml"), config.join("host.local.toml")]).unwrap();
     std::fs::remove_file(config.join("host.local.toml")).unwrap();
@@ -144,14 +171,34 @@ fn restore_backs_up_current_files_and_brings_back_exactly_the_kept_set() {
     assert!(!format!("{err:#}").contains(&*t.0.to_string_lossy()), "오류 글에 경로가 있다: {err:#}");
     assert_eq!(std::fs::read_to_string(config.join("host.toml")).unwrap(), "[web\n");
     assert_eq!(std::fs::read_to_string(config.join("host.local.toml")).unwrap(), "[local\n");
+    // 먼저 남긴 host.toml 사본도 치운다(다시 누르면 같은 이름에 막히지 않는다), 이미 있던 파일은 그대로다
+    assert!(!config.join(format!("host.toml.broken-{stamp}")).exists());
+    assert_eq!(std::fs::read_to_string(config.join(format!("host.local.toml.broken-{stamp}"))).unwrap(), "older");
+}
+
+#[test]
+fn last_good_keeps_the_previous_copy_when_the_file_changed_into_a_broken_one() {
+    let t = tmp();
+    let (config, state) = (t.0.join("config"), t.0.join("state"));
+    std::fs::write(config.join("host.toml"), "schema = 1\n[web]\nlisten = \"127.0.0.1:7999\"\n").unwrap();
+    keep_last_good(&state, &[config.join("host.toml")]).unwrap();
+    // 시작한 뒤 보관하기 전에 사람이 고치다 깨진 채 저장했다
+    std::fs::write(config.join("host.toml"), "schema = 1\n[web\n").unwrap();
+    assert!(keep_last_good(&state, &[config.join("host.toml")]).is_err());
+    assert_eq!(
+        std::fs::read_to_string(last_good_dir(&state).join("host.toml")).unwrap(),
+        "schema = 1\n[web]\nlisten = \"127.0.0.1:7999\"\n"
+    );
+    assert!(!state.join("host").join("last-good-next").exists());
 }
 
 #[tokio::test]
-async fn listen_prefers_the_last_bound_address_then_last_good_then_default() {
+async fn listen_prefers_the_last_bound_address_then_last_good_and_never_guesses() {
     let t = tmp();
     let state = t.0.join("state");
     let db = Db::open(&state.join("host").join("host.db")).unwrap();
-    assert_eq!(listen_addr(&db, &state).as_deref(), Some(aaa_config::HostConfig::default().web.listen.as_str()));
+    // 이 판으로 정상 시작한 적이 없다(업그레이드 직후): 기본 주소에 뜨지 않는다
+    assert_eq!(listen_addr(&db, &state), None);
     let config = t.0.join("config");
     std::fs::write(config.join("host.toml"), "schema = 1\n[web]\nlisten = \"127.0.0.1:7999\"\n").unwrap();
     keep_last_good(&state, &[config.join("host.toml")]).unwrap();
@@ -283,7 +330,11 @@ async fn restore_needs_a_controller_and_this_origin_then_ends_safe_mode() {
     let (status, body) = ask(&l, "POST", "/api/v1/safe/restore", LOOP, Some("ctl-token"), Some(ORIGIN)).await;
     assert_eq!(status, StatusCode::OK, "{body}");
     assert!(body.contains("safe-reloading"), "{body}");
-    l.reload.changed().await.unwrap();
+    // 실패 한도: 끝을 알리지 않으면 기다림이 끝나지 않는다
+    tokio::time::timeout(std::time::Duration::from_secs(5), l.reload.changed())
+        .await
+        .expect("안전 모드 끝을 알리지 않았다")
+        .unwrap();
     assert!(*l.reload.borrow());
     assert!(aaa_config::load_host(&l.config).is_ok());
     let backup: Vec<_> = std::fs::read_dir(&l.config)
