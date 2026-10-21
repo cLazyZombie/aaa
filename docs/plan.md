@@ -6901,3 +6901,11 @@ FRONT_API 1.96는 기본 검수 표지와 답 기록의 r 참조를 더한다. E
 - **판정 한계·번호.** macOS CI의 yes 직후 무출력은 Windows의 완료 출력 뒤 EOF 대기와 구별한다. 로컬의 실제 CLI는 yes 뒤 계획 SHA 재검증 스택을 거쳐 승인서 발급·정상 종료했으며 macOS CI 원인은 아직 확정하지 않는다. target이 기록되지 않은 15분 job 종료도 install로 단정하지 않는다. 실제 Windows/macOS CI 판정은 착지 뒤 결과로 확인한다. 착지 기준 origin/main `90799c7a`의 마지막 §8.394·FRONT_API 1.97·AGENT_LINK 1.11·E2E76을 직접 확인했다. 별도 worktree에서 통합·검증하며 이번 수리는 §8.395로 옮기고 API 판과 기존 웹 E2E 번호는 유지한다.
 
 - **다음 단계.** 이 수리 착지 뒤에는 macOS I3의 승인된 `apply --service launchd` 감독자를 Windows bootstrap보다 먼저 구현한다. 웹 머신 추가 M3가 현재 `unsupported_service_platform` 경계를 기다린다. Windows bootstrap·사용자 Windows PC 인수·Linux I4·최종 I7은 그 뒤다.
+
+### 8.396 thread 목록의 상태 점 열 고정(t-0620)
+
+- coordinator·자동화·일반 thread 줄의 상태 칸은 모두 같은 select 오른쪽을 기준으로 삼고, select 안에 상태 칸 여백을 확보한다. 출처 막대를 위한 위치 기준 때문에 일부 줄만 오른쪽 끝이 달라지던 문제를 고친다.
+- 터치·좁은 창에서는 ⋯ 메뉴의 flex 칸을 선택·hover 여부와 관계없이 확보한다. 기존 단추 표시 조건과 출처 막대·agent 표지 간격은 유지하며, 메뉴가 보이는 줄의 상태 점만 왼쪽으로 이동하지 않게 한다.
+- 기존 E2E48에서 실제 Claude 작업 화면을 내는 가짜 harness로 세 줄의 파란 점을 확인하고 1280·820·390px에서 각 줄을 선택해 중심 x 좌표와 내용 침범을 검사한다. 머신 표시 글의 짧음·길음도 대조하고 폭별 화면을 남긴다. FRONT_API 1.97·AGENT_LINK 1.11·E2E76은 유지한다. 새 E2E 파일은 추가하지 않는다.
+
+- 착지 기준 origin/main `dd6e5b82`의 마지막 §8.395·FRONT_API 1.97·AGENT_LINK 1.11·E2E76을 직접 확인했다. 이번 수리는 §8.396으로 옮기고 기존 번호·main의 수리를 보존한다.
