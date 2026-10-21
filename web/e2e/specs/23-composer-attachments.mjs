@@ -97,6 +97,53 @@ while True:
     return JSON.parse(fs.readFileSync(receipts, "utf8"));
   };
 
+  await step("재로딩 중 예약된 자동화 조회: 끝나는 문서에서 후속 fetch를 시작하지 않는다(WebKit)", async () => {
+    const wk = await webkit.launch();
+    let release;
+    const gate = new Promise(resolve => { release = resolve; });
+    let reached;
+    const held = new Promise(resolve => { reached = resolve; });
+    let first = true;
+    try {
+      const client = await pairPage(wk, aaa("web", "pair").code, { width: 1280, height: 800 }, {
+        serviceWorkers: "block",
+        route: ["**/api/v1/call", async route => {
+          if (first && route.request().postDataJSON()?.op === "projects") {
+            first = false;
+            reached();
+            await gate;
+          }
+          await route.continue().catch(() => {}); // 이전 문서의 요청은 reload가 이미 취소했다.
+        }],
+      });
+      await held;
+      // events 연결과 첫 snapshot이 각각 요청한 조회를 하나로 합친 채 첫 HTTP 응답을 보류한다.
+      await inList(client.page, "pane-composer");
+      await client.page.reload();
+      release();
+      await openChat(client.page);
+      assert.deepEqual(client.errors, [], "문서 종료 뒤 예약된 조회의 페이지 오류");
+      const hiddenCalls = await client.page.evaluate(() => {
+        const fetch = window.fetch;
+        let calls = 0;
+        window.fetch = (...args) => { calls++; return fetch(...args); };
+        window.dispatchEvent(new PageTransitionEvent("pagehide", { persisted: true }));
+        window.dispatchEvent(new Event("aaa:automations-changed"));
+        window.fetch = fetch;
+        return calls;
+      });
+      assert.equal(hiddenCalls, 0, "끝난 문서에 온 갱신 사건은 조회를 시작하지 않는다");
+      const resumed = client.page.waitForRequest(r => r.url().endsWith("/api/v1/call") && r.postDataJSON()?.op === "projects");
+      await client.page.evaluate(() => window.dispatchEvent(new PageTransitionEvent("pageshow", { persisted: true })));
+      await resumed;
+      assert.deepEqual(client.errors, [], "pageshow 뒤 조회 재개");
+      await client.page.context().close();
+    } finally {
+      release();
+      await wk.close();
+    }
+  });
+
   await step("WebCrypto 없는 연결도 짧은 글은 기존 수신 비교로 보낸다", async () => {
     const client = await pairPage(browser, aaa("web", "pair").code, { width: 1280, height: 800 });
     const p = client.page;
