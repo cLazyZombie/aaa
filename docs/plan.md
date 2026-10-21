@@ -6729,3 +6729,13 @@ Windows 사용자 PATH는 기본 preserve이고 명시 user만 현재 HKCU 값�
 - **검증.** 앞 예약의 자리 대기 DB 기록 직후 다른 thread를 resolved로 바꾸는 임시 SQLite trigger로 경합을 고정한다. 원래 제품은 뒤 예약만 머신 선택으로 넘어가 실패한다. 기존 m13을 확장해 늦게 만든 예약을 CLI `queue-move`로 1번에 옮기고 재시작 뒤 차례 보존, 자리 반환 뒤 그 예약의 실제 pane 기동, 이후 끊긴 앞 예약을 건너뛰는 기동을 검사한다. 고정 sleep·시험 시한 변경은 없으며 세부 절차는 [testing](testing.md)의 task 예약 절에 둔다.
 - **번호·호환.** 착지 기준 main `e895c07b`에서 §8.375·FRONT_API 1.90·AGENT_LINK 1.11·E2E70을 직접 확인했다. 이번 수리는 §8.376을 이어 쓰며 새 요청·DTO·E2E 파일이 없어 프로토콜 판과 기존 E2E 번호를 유지한다.
 - **착지 중 추가 수리(사용자 1A).** 통합 후보 E2E23에서 WebKit 페이지 오류가 나 원인을 고쳤다. 페이지 종료로 자동화 목록 조회가 취소된 뒤 `finally`가 밀린 갱신을 다시 실행해 끝나는 문서에서 `fetch`를 시작했다. 취소가 `pagehide`보다 먼저 올 수 있으므로 실패한 읽기의 `catch`에서도 예약을 비운다. `pagehide`와 컴포넌트 해제는 새 조회를 막으며, `pageshow`에서 갱신을 재개한다. E2E23의 응답 gate로 첫 `projects` 조회를 붙잡은 채 reload하여 원래 제품의 같은 오류를 재현하고, 수정 뒤 오류 부재·종료한 문서의 갱신 차단·복귀 뒤 실제 조회를 확인한다. 시한 연장이나 오류 무시는 없다.
+
+### 8.377 자동화 thread 표지와 별도 실행 자리(10-21, t-0586)
+
+- `automations/*.toml`의 `do.start`가 만든 Worker는 저장한 `automation` 출처로 「자동화 thread」로 구분한다. 사람이 같은 제목·actor로 시작해도 출처가 없으면 일반 Worker다.
+- 사용자·coordinator Worker의 `max_parallel_threads`와 사용자 예약 자리에서 자동화 thread를 뺀다. DB 선점·시작 미리보기·예약 dispatch·재시작·다시 열기가 같은 계산을 따른다. 기존 자동화 thread도 저장한 출처로 곧바로 빠진다.
+- 이번 요구의 무제한 증가 방지에 맞춰 §8.313 이전 기본 무제한 중 **do.start 규칙의 동시성만** 기본 1개로 바꾼다. `limits.max_running`의 양수는 그 수, 생략·0은 1개다. Starting/Open·resolve 정리 중은 계속 점유한다. `reuse=open`은 열린 thread에 이어 보낸다. 판정과 INSERT·실패 재시작·다시 열기의 같은 DB 트랜잭션에서 상한을 검사한다. 횟수·간격·프로젝트 전체 자동화 상한의 생략·0 의미는 그대로다.
+- 웹 작업 줄·모든 thread·CLI `thread list/show`·`context` 표지를 「자동화 thread」로 통일한다. 사건·일정은 표지에서 구분하지 않고 상세에서 규칙 제목/이름·최초 source/조건/사건 ID/원인 thread를 보인다. 선택 `ThreadView.automation_trigger`는 최초 기동 당시 설명이며 규칙 변경·삭제·host 재시작 뒤에도 남는다. 옛 thread는 원래 없던 사건을 만들지 않고 기록 없음으로 표시한다.
+- coordinator 안내·설정 설명·사용 문서도 같은 수와 이름을 쓴다. 운영 자동화 파일·시스템 설정은 바꾸지 않는다.
+
+- **착지 번호·통합.** 기준 main `1a26f03f`의 §8.376·FRONT_API 1.90·AGENT_LINK 1.11·E2E70을 직접 확인했다. 이 기능은 §8.377·FRONT_API 1.91로 이어 쓰며 AGENT_LINK는 1.11을 유지한다. 기존 E2E48을 확장하고 새 번호는 만들지 않는다. t-0584의 같은 순회 자리 부족 latch와 저장 차례를 유지한 채 자동화 자리만 제외한다.
