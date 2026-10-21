@@ -20,6 +20,37 @@ pub(crate) struct StartAdmission {
     pub max_auto_threads: u32,
 }
 
+impl StartAdmission {
+    /// 판정 뒤 다른 요청이 끼어도 같은 DB 트랜잭션 안에서 동시 상한을 지킨다.
+    fn check(&self, tx: &Connection, project: &str, except: Option<&str>) -> Result<()> {
+        let mut statement = tx.prepare("SELECT id,data FROM threads WHERE project=?1")?;
+        let active = statement.query_map([project], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)))?;
+        let mut rule_count = 0usize;
+        let mut auto_count = 0usize;
+        for row in active {
+            let (id, text) = row?;
+            let rec: crate::orch::ThreadRec = serde_json::from_str(&text)?;
+            if except == Some(id.as_str()) || !rec.holds_slot() {
+                continue;
+            }
+            if rec.machine_id == self.machine && rec.holds.iter().any(|h| self.holds.contains(h)) {
+                anyhow::bail!("start_wait: {}의 측정 표지({id})", self.machine);
+            }
+            if let Some(name) = rec.automation {
+                auto_count += 1;
+                rule_count += usize::from(name == self.rule);
+            }
+        }
+        let cap = self.max_running.filter(|n| *n > 0).unwrap_or(1);
+        anyhow::ensure!(rule_count < cap as usize, "start_wait: 자동화 thread 규칙 동시 실행 상한 {cap}");
+        anyhow::ensure!(
+            self.max_auto_threads == 0 || auto_count < self.max_auto_threads as usize,
+            "start_wait: 명시한 프로젝트 자동화 thread 상한"
+        );
+        Ok(())
+    }
+}
+
 pub struct Db {
     conn: Mutex<Connection>,
 }
@@ -818,50 +849,25 @@ impl Db {
             return Ok((id, false));
         }
         if let Some(policy) = admission {
-            let mut statement =
-                tx.prepare("SELECT id,data FROM threads WHERE project=?1 AND status IN ('open','starting')")?;
-            let active = statement
-                .query_map([project], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)))?
-                .collect::<rusqlite::Result<Vec<_>>>()?;
-            let mut rule_count = 0usize;
-            let mut auto_count = 0usize;
-            for (id, text) in active {
-                let value: serde_json::Value = serde_json::from_str(&text)?;
-                if value["machine_id"].as_str() == Some(policy.machine.as_str())
-                    && value["holds"].as_array().is_some_and(|holds| {
-                        holds.iter().filter_map(|h| h.as_str()).any(|h| policy.holds.iter().any(|want| want == h))
-                    })
-                {
-                    anyhow::bail!("start_wait: {}의 측정 표지({id})", policy.machine);
-                }
-                if let Some(name) = value["automation"].as_str() {
-                    auto_count += 1;
-                    rule_count += usize::from(name == policy.rule);
-                }
-            }
-            anyhow::ensure!(
-                !policy.max_running.filter(|cap| *cap > 0).is_some_and(|cap| rule_count >= cap as usize),
-                "start_wait: 명시한 규칙 동시 실행 상한"
-            );
-            anyhow::ensure!(
-                policy.max_auto_threads == 0 || auto_count < policy.max_auto_threads as usize,
-                "start_wait: 명시한 프로젝트 자동 thread 상한"
-            );
-        }
-        if let Some(limit) = limit {
-            anyhow::ensure!(
-                task_queue::slots(&tx, project, None)? < limit,
-                "start_wait: 프로젝트 실행 한도 {limit}. `aaa task reserve`로 예약한다"
-            );
+            policy.check(&tx, project, None)?;
         }
         let max: Option<i64> =
             tx.query_row("SELECT MAX(CAST(SUBSTR(id, 3) AS INTEGER)) FROM threads WHERE project=?1", [project], |r| {
                 r.get(0)
             })?;
         let id = format!("t-{:04}", max.unwrap_or(0) + 1);
+        let text = make(&id);
+        if let Some(limit) = limit
+            && serde_json::from_str::<crate::orch::ThreadRec>(&text)?.automation.is_none()
+        {
+            anyhow::ensure!(
+                task_queue::slots(&tx, project, None)? < limit,
+                "start_wait: 프로젝트 실행 한도 {limit}. `aaa task reserve`로 예약한다"
+            );
+        }
         tx.execute(
             "INSERT INTO threads(project,id,status,data,updated_at) VALUES(?1,?2,'starting',?3,?4)",
-            params![project, id, make(&id), aaa_common::util::now_ms() as i64],
+            params![project, id, text, aaa_common::util::now_ms() as i64],
         )?;
         if let Some((task, block)) = reservation {
             task_queue::queue_claim(&tx, project, task, block, &id)?;

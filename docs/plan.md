@@ -6729,3 +6729,40 @@ Windows 사용자 PATH는 기본 preserve이고 명시 user만 현재 HKCU 값�
 - **검증.** 앞 예약의 자리 대기 DB 기록 직후 다른 thread를 resolved로 바꾸는 임시 SQLite trigger로 경합을 고정한다. 원래 제품은 뒤 예약만 머신 선택으로 넘어가 실패한다. 기존 m13을 확장해 늦게 만든 예약을 CLI `queue-move`로 1번에 옮기고 재시작 뒤 차례 보존, 자리 반환 뒤 그 예약의 실제 pane 기동, 이후 끊긴 앞 예약을 건너뛰는 기동을 검사한다. 고정 sleep·시험 시한 변경은 없으며 세부 절차는 [testing](testing.md)의 task 예약 절에 둔다.
 - **번호·호환.** 착지 기준 main `e895c07b`에서 §8.375·FRONT_API 1.90·AGENT_LINK 1.11·E2E70을 직접 확인했다. 이번 수리는 §8.376을 이어 쓰며 새 요청·DTO·E2E 파일이 없어 프로토콜 판과 기존 E2E 번호를 유지한다.
 - **착지 중 추가 수리(사용자 1A).** 통합 후보 E2E23에서 WebKit 페이지 오류가 나 원인을 고쳤다. 페이지 종료로 자동화 목록 조회가 취소된 뒤 `finally`가 밀린 갱신을 다시 실행해 끝나는 문서에서 `fetch`를 시작했다. 취소가 `pagehide`보다 먼저 올 수 있으므로 실패한 읽기의 `catch`에서도 예약을 비운다. `pagehide`와 컴포넌트 해제는 새 조회를 막으며, `pageshow`에서 갱신을 재개한다. E2E23의 응답 gate로 첫 `projects` 조회를 붙잡은 채 reload하여 원래 제품의 같은 오류를 재현하고, 수정 뒤 오류 부재·종료한 문서의 갱신 차단·복귀 뒤 실제 조회를 확인한다. 시한 연장이나 오류 무시는 없다.
+
+### 8.377 자동화 thread 표지와 별도 실행 자리(10-21, t-0586)
+
+- `automations/*.toml`의 `do.start`가 만든 Worker는 저장한 `automation` 출처로 「자동화 thread」로 구분한다. 사람이 같은 제목·actor로 시작해도 출처가 없으면 일반 Worker다.
+- 사용자·coordinator Worker의 `max_parallel_threads`와 사용자 예약 자리에서 자동화 thread를 뺀다. DB 선점·시작 미리보기·예약 dispatch·재시작·다시 열기가 같은 계산을 따른다. 기존 자동화 thread도 저장한 출처로 곧바로 빠진다.
+- 이번 요구의 무제한 증가 방지에 맞춰 §8.313 이전 기본 무제한 중 **do.start 규칙의 동시성만** 기본 1개로 바꾼다. `limits.max_running`의 양수는 그 수, 생략·0은 1개다. Starting/Open·resolve 정리 중은 계속 점유한다. `reuse=open`은 열린 thread에 이어 보낸다. 판정과 INSERT·실패 재시작·다시 열기의 같은 DB 트랜잭션에서 상한을 검사한다. 횟수·간격·프로젝트 전체 자동화 상한의 생략·0 의미는 그대로다.
+- 웹 작업 줄·모든 thread·CLI `thread list/show`·`context` 표지를 「자동화 thread」로 통일한다. 사건·일정은 표지에서 구분하지 않고 상세에서 규칙 제목/이름·최초 source/조건/사건 ID/원인 thread를 보인다. 선택 `ThreadView.automation_trigger`는 최초 기동 당시 설명이며 규칙 변경·삭제·host 재시작 뒤에도 남는다. 옛 thread는 원래 없던 사건을 만들지 않고 기록 없음으로 표시한다.
+- coordinator 안내·설정 설명·사용 문서도 같은 수와 이름을 쓴다. 운영 자동화 파일·시스템 설정은 바꾸지 않는다.
+
+- **착지 번호·통합.** 기준 main `1a26f03f`의 §8.376·FRONT_API 1.90·AGENT_LINK 1.11·E2E70을 직접 확인했다. 이 기능은 §8.377·FRONT_API 1.91로 이어 쓰며 AGENT_LINK는 1.11을 유지한다. 기존 E2E48을 확장하고 새 번호는 만들지 않는다. t-0584의 같은 순회 자리 부족 latch와 저장 차례를 유지한 채 자동화 자리만 제외한다.
+
+### 8.378 install I6 CI의 시험 터미널·실험실 수명 수리(10-21, t-0485)
+
+Windows install 승인 PTY는 ConPTY(INHERIT_CURSOR)의 시작 커서 질의에 응답하지 않아 실제 승인 물음 전에 멈췄다. 시험 터미널은 session host와 같은 aaa-vt QueryScanner/Vt/DefaultColors로 질의 시점 화면에 답한다. 보호 암호 console 시험도 같은 응답기를 공유하며 비노출·mode 복원·취소/EOF 단언을 유지한다. TLS grant owner는 비동기 host 작업과 DB handle을 runtime 종료로 해제한 뒤 실험실 파일을 지우고, 남은 host 소유자가 없는지도 확인한다. 삭제 실패를 무시하거나 재시도하지 않는다.
+
+기존 macOS worker 수명 시험의 총30초 시한과 worker 동일 ID/부모 소멸/내구 기록 단언은 유지한다. 부하 시한 초과와 Windows 질의 미응답을 구분하며 실패 진단에는 경과 시간·답한 물음 수만 더한다. POSIX 실제 PTY fixture가 커서 응답 전 승인 물음을 내지 않도록 해 수정 전 RED·수정 후 GREEN을 확인한다(이 fixture만 Unix 전용; 기존 승인/worker owner는 세 OS 그대로). 제품 권한/서비스/timeout/API 변경이나 새 웹 E2E 번호는 없다. Windows 실제 판정은 착지 뒤 main CI다.
+
+
+### 8.379 종료 문서의 새 앱 API 전송 차단(10-21, t-0485)
+
+§8.376의 자동화 배지 수리 뒤에도 WebKit reload에서 tasks/inbox 등 다른 갱신이 끝나는 문서에 새 fetch를 시작했다. 공통 `apiFetch`가 capture pagehide 뒤 일반 API 요청을 네트워크 시작 전 AbortError로 취소한다. api.ts의 post/인증/업로드/push와 사용량·계정 사용량·입력 진단 API가 같은 경계를 쓴다. 일반 숨긴 탭은 막지 않고 pageshow 뒤 새 요청을 허용하며, 취소된 쓰기를 복귀 때 자동 재생하지 않는다. 떠날 때 명시한 keepalive 설정 저장은 유지한다. 파일/보고서/clipboard asset 읽기와 권한 검사는 그대로다. 경로별 guard를 추가하지 않고 기존 배지의 갱신 합치기·복귀 갱신을 보존한다.
+
+최소 WebKit에서 production API 함수9개가 pagehide 뒤 네트워크를 시작해 RED, 수리 뒤0건·AbortError9건·keepalive1건·복귀 새 요청1건으로 GREEN이다. 기존 E2E23에 실제 App의 WS tasks/inbox 사건을 보내는 keeper를 더했다. 먼저 정상 상태의 두 응답을 확인하고 종료 뒤 전송0·복귀 뒤 재조회를 검사한다. 원래 코드는 tasks/inbox 두 요청에서 실패하며, 새 빌드의 keeper와 E2E23 파일 전체는 통과했다. API 판과 E2E 번호는 바꾸지 않는다. I6 CI 수리와 별도 commit으로 두며 전체 gate·Windows cross·공개 검사를 거쳐 같은 착지 창에서 병합한다.
+
+### 8.380 SHA 거부 시험의 원격 단계 대기 분리(10-21, t-0587)
+
+- **원인·범위.** 기존 rollout keeper는 로컬 agent가 연결되면 원격 SHA 거부의 종료 대기를 시작했다. 연결 뒤에도 로컬 재시작의 실행 신원 대조·감시 해제가 남아 있어 서로 다른 단계가 같은 30초를 썼다. 원본 실패에서 대기 시작 뒤 원격 교체 진입까지 약 10.4초, Recovering 진입까지 약 27.1초가 걸린 뒤 30초 시험 상한에 걸렸다. baseline SHA와 설치 SHA는 같았다. 별도 실행은 같은 설치 시작 플래그를 거쳐 재시작 없이 Cancelled/Stopped로 끝났으며 제품 순서 경쟁은 재현되지 않았다. 당시 CPU·I/O별 지연 원인까지 확정하지 않는다.
+- **수정·검증.** 기존 단계 진행 사건으로 원격 AgentUpdate 진입을 먼저 확인하고 원래 30초 상한으로 종료 표지를 기다린다. stopped·SHA 오류·실패 cursor·서비스 호출 횟수·앞 머신 SHA 단언을 유지하며, 영속 guard의 install_started=true·activated=false·baseline SHA·Cancelled·무재시작을 추가로 확인한다. 실제 설치 중 취소·늦은 rename 복구 keeper와 제품 전이·시한은 유지한다. 절차와 근거는 [시험](testing.md)의 t-0587 절에 둔다.
+- **착지 번호·호환.** 기준 main `f496ecd7`의 §8.379·FRONT_API 1.91·AGENT_LINK 1.11·E2E70을 직접 확인했다. 이번 수리는 §8.380을 이어 쓰며 제품 API나 새 웹 E2E 파일이 없어 기존 판과 번호를 유지한다.
+
+
+### 8.381 보고서 자기 폴더 fetch·음원 혼합(10-21, t-0589)
+
+- **동작·격리.** 보고서는 opaque origin sandbox를 유지한다. 현재 `/v/<권한>/` 폴더만 connect-src에 지정하고 유효한 GET/HEAD 성공 응답에만 Origin null CORS를 준다. 쿠키 동반 opaque 읽기와 opaque 앱 API 요청을 서버에서도 거부하며 credentials 허용·preflight·redirect는 열지 않는다. 다른 보고서·앱 API·외부 연결·쓰기·저장소·부모 접근은 차단한다. 권한 링크는 매 요청 검증하고 Origin null 자체를 인증으로 쓰지 않는다. CSP는 redirect 뒤 경로를 비교하지 않으므로 파일 경로의 무redirect 계약을 유지한다.
+- **작성·경고.** 그림·음원·JSON·script는 library 안에 두고 상대 URL을 쓴다. iOS 음원 혼합은 사용자 누름에서 AudioContext를 연 뒤 fetch·decodeAudioData·GainNode로 처리한다. AGENTS·thread brief·[보고서 작성 안내](library.md)에 제약과 예시를 적고 회수·publish·웹 업로드·실시간 등록·import에서 제한 API나 확인할 fetch를 찾으면 coordinator inbox에 경고한다. 정적 문자열 휴리스틱의 오탐·누락은 복사 성공이나 보안 경계를 대신하지 않는다.
+- **검증.** E2E71은 실제 host·agent와 Chromium/WebKit 390×844에서 사본·실시간 원본·인증 없는 공유 탭의 WAV 두 개 읽기·decode·혼합·ended와 격리를 확인한다. 출력 끝은 gain 0으로 두고 그 앞 analyser로 신호를 확인한다. HEAD·Range·XHR·하위 HTML 상대 읽기·경로 탈출·credentials·링크 폐기도 검사한다. connect-src를 host 전체로 넓히거나 CORS를 없앤 제품 변형에서 각각 격리·fetch 실패를 잡고 bytes 복구 뒤 정본에서 통과했다. 실제 iPhone 청취는 별도다. 기존 E2E21·59와 Rust library·보고 회수 keeper도 유지한다.
+- **착지 번호·호환.** 기준 origin/main `34bc1a04`의 마지막 §8.380·FRONT_API 1.91·AGENT_LINK 1.11·E2E70을 직접 확인했다. 이번 기능은 §8.381·E2E71을 이어 쓴다. Front/Agent wire 요청·타입 변경이 없어 FRONT_API 1.91·AGENT_LINK 1.11은 유지한다.

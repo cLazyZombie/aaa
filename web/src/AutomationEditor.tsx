@@ -115,10 +115,11 @@ function Limits({ form, update }: { form: Form; update: (f: Form) => void }) {
       <Text label="주간 남은 % 아래면 쉼" value={l.usage_week_below} onChange={percent("usage_week_below")} testid="automation-form-usage-week" />
       <Text label="입력 묶는 시간" value={l.batch} onChange={(v) => set("batch", v)} placeholder="없음" />
       <Text label="실행 사이 최소 간격" value={l.min_gap} onChange={(v) => set("min_gap", v)} placeholder="없음" />
+      {actionKind(form) === "start" && <Text label="자동화 thread 동시 상한" value={l.max_running} onChange={number("max_running")} placeholder="1" />}
       <Text label="하루 상한" value={l.max_per_day} onChange={number("max_per_day")} placeholder="없음" />
       {actionKind(form) === "deploy" && <Text label="새 커밋 수" value={l.min_commits} onChange={number("min_commits")} placeholder="1" />}
     </div>
-    <p className="automation-dim">횟수·간격에는 기본 제한이 없다. 사용량 문턱만 기본으로 채운다(5시간 5%·주간 10%).</p>
+    <p className="automation-dim">자동화 thread는 규칙당 기본 1개이며 동시 상한의 빈칸·0도 1개다. 횟수·간격에는 기본 제한이 없다. 사용량 문턱만 기본으로 채운다(5시간 5%·주간 10%).</p>
   </>;
 }
 

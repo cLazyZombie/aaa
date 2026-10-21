@@ -5,6 +5,8 @@
 
 ## 웹 보고서 작성과 sandbox
 
+정책과 착지 기록은 [plan §8.381](plan.md#8381-보고서-자기-폴더-fetch음원-혼합10-21-t-0589)에 둔다.
+
 보고서 HTML은 **origin 없는 sandbox**에서 script를 실행한다. 앱과 같은 주소라도 cookie·localStorage·sessionStorage·
 부모 화면·앱 API에 접근할 수 없다. `allow-same-origin`을 주지 않는다. 외부 CDN·외부 fetch·WebSocket·EventSource·
 service worker·폼 전송도 사용할 수 없다. script·CSS·글꼴·그림·음원·JSON·CSV는 보고서 폴더에 함께 두고 상대 URL로 쓴다.

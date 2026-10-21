@@ -1,10 +1,13 @@
 //! 실제 CLI/PTY·private 발급 파일 owner. 시험용 발급 flag나 엔진 export를 쓰지 않는다.
 use super::*;
+#[path = "../support/terminal_queries.rs"]
+mod terminal_queries;
 use portable_pty::{CommandBuilder, PtySize, native_pty_system};
 use sha2::Digest;
 use std::io::{Read, Write};
 use std::sync::mpsc;
 use std::time::{Duration, Instant};
+use terminal_queries::TerminalQueries;
 
 pub(super) fn redact_private(text: &str) -> String {
     text.lines()
@@ -41,7 +44,7 @@ pub(super) fn terminal_controlled(
     args: &[String],
     steps: &[(&str, &str)],
     session: bool,
-    mut observe: impl FnMut(&mut dyn portable_pty::Child, &str),
+    observe: impl FnMut(&mut dyn portable_pty::Child, &str),
 ) -> (u32, String) {
     let mut command = {
         #[cfg(target_os = "macos")]
@@ -69,6 +72,13 @@ pub(super) fn terminal_controlled(
         command.env("AAA_SESSION_ID", "session-example");
     }
     command.args(args);
+    drive_terminal(command, steps, observe)
+}
+fn drive_terminal(
+    command: CommandBuilder,
+    steps: &[(&str, &str)],
+    mut observe: impl FnMut(&mut dyn portable_pty::Child, &str),
+) -> (u32, String) {
     let pair = native_pty_system().openpty(PtySize { rows: 36, cols: 120, pixel_width: 0, pixel_height: 0 }).unwrap();
     struct OwnedChild {
         child: Box<dyn portable_pty::Child + Send + Sync>,
@@ -103,14 +113,16 @@ pub(super) fn terminal_controlled(
             }
         }
     });
-    let deadline = Instant::now() + Duration::from_secs(30);
+    let started = Instant::now();
+    let deadline = started + Duration::from_secs(30);
+    let mut terminal = TerminalQueries::new(36, 120);
     let mut seen = Vec::new();
     let mut answered = 0;
     let mut cursor = 0;
     loop {
         match rx.recv_timeout(deadline.saturating_duration_since(Instant::now())) {
             Ok(bytes) => {
-                seen.extend(bytes);
+                seen.extend(terminal.feed(&bytes, &mut writer).unwrap());
                 observe(child.child.as_mut(), &String::from_utf8_lossy(&seen));
                 if let Some((needle, keys)) = steps.get(answered) {
                     let text = String::from_utf8_lossy(&seen[cursor..]);
@@ -127,7 +139,12 @@ pub(super) fn terminal_controlled(
                 // 직접 띄운 실제 child handle만 종료한다. 다른 PID/이름으로 찾지 않는다.
                 child.child.kill().unwrap();
                 child.child.wait().unwrap();
-                panic!("install 승인 PTY({pid}) 사건 상한: {}", redact_private(&String::from_utf8_lossy(&seen)));
+                panic!(
+                    "install 승인 PTY({pid}) 사건 상한(elapsed={:?}, answered={answered}/{}): {}",
+                    started.elapsed(),
+                    steps.len(),
+                    redact_private(&String::from_utf8_lossy(&seen))
+                );
             }
         }
     }
@@ -617,4 +634,20 @@ fn unknown_required_harness_auth_cannot_be_completed_and_explicit_defer_reuses_t
     )
     .unwrap();
     assert_eq!(record["files"], first_id, "인증 처리 선택만 바뀌면 같은 실제 파일 receipt를 재사용한다");
+}
+
+// POSIX fixture는 실제 PTY에서 DSR 응답 전에는 다음 승인 물음을 출력하지 않는다.
+// Windows는 기존 install owner들이 실제 ConPTY 시작 질의로 같은 경계를 검증한다.
+#[cfg(unix)]
+#[test]
+fn terminal_answers_cursor_query_before_application_prompt() {
+    let mut command = CommandBuilder::new("/bin/sh");
+    command.env_remove("ENV");
+    command.env_remove("BASH_ENV");
+    command.args([
+        "-c",
+        r#"stty -echo -icanon min 1; printf '\033[2J\033[Habc\033[6n'; reply=$(dd bs=1 count=6 2>/dev/null); [ "$reply" = "$(printf '\033[1;4R')" ] || exit 41; printf '정확히 yes: '; IFS= read -r answer; [ "$answer" = yes ]"#,
+    ]);
+    let (code, text) = drive_terminal(command, &[("정확히 yes", "yes\r")], |_, _| {});
+    assert_eq!(code, 0, "{}", redact_private(&text));
 }

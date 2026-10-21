@@ -15,10 +15,10 @@ import { CoordinatorOpen } from "./CoordinatorOpen";
 /** popup `Group::DISPLAY_ORDER` */
 const DISPLAY_ORDER = ["waiting_on_you", "ready_for_review", "landing", "working", "idle", "resolved"];
 
-/** popup `thread_line`: 상태 줄, 머신, agent(profile), 남은 Next 수. 자동화가 띄운 thread는 앞에 「자동 · 규칙」(plan t-0475 A1) */
+/** popup `thread_line`: 상태 줄, 머신, agent(profile), 남은 Next 수. 자동화가 띄운 thread는 앞에 「자동화 thread」(plan t-0475 A1) */
 function threadFacts(t: ThreadView, now: number): string {
   const parts = [t.group === "resolved" ? GROUP_WORD.resolved : stateLine(t, true, now)];
-  if (t.automation) parts.unshift(`자동 · ${t.automation_title ?? t.automation}`);
+  if (t.automation) parts.unshift("자동화 thread");
   if (t.machine) parts.push(t.machine);
   if (t.profile) parts.push(t.profile);
   if (t.group !== "resolved" && t.next.length > 0) parts.push(`next ${t.next.length}`);

@@ -140,6 +140,14 @@ pub(crate) struct ThreadRec {
 }
 
 impl ThreadRec {
+    pub(crate) fn holds_slot(&self) -> bool {
+        matches!(self.status, ThreadStatus::Open | ThreadStatus::Starting) || self.resolve_pending.is_some()
+    }
+
+    pub(crate) fn holds_worker_slot(&self) -> bool {
+        self.role == Role::Worker && self.automation.is_none() && self.holds_slot()
+    }
+
     /// 로컬 profile의 공식 인증 env도 agent에서 받은 뒤 저장하기 전에 가린다.
     fn remember_auth_env(&self) {
         if let Some(launch) = &self.launch {
@@ -436,7 +444,9 @@ pane이 없어졌거나 시작이 실패한 thread는 `aaa thread restart <id>`�
 - 시작: `start_threads`가 propose면 무엇을 누구에게 맡길지 제안하고 사용자 승인을 기다린다. auto면 바로 시작하고 알린다.
   사용자가 이름을 들어 맡기라고 한 것은 승인이다. aaa inbox 알림은 승인이 아니다.
 - 동시 thread 한도: project.toml `max_parallel_threads`를 host가 집행한다. Starting/Open은 검토·답 대기·Idle·보고 [완료]에도
-  자리를 가진다. resolve 정리가 실제로 끝나야 반환한다. 한도를 올리거나 별도 thread start로 예약을 우회하지 않는다.
+  자리를 가진다. resolve 정리가 실제로 끝나야 반환한다. 자동화 thread(`automations/*.toml`의 do.start)는 이 한도와 예약 자리에서
+  빼며 규칙별 reuse·limits로 제한한다(기본 동시 1개). 사용자·coordinator가 띄운 thread는 그대로 센다.
+  한도를 올리거나 별도 thread start로 예약을 우회하지 않는다.
 - TASKS.md task로 시작: 아래 「TASKS.md」의 `--from-task … --link-task`를 쓴다. 모델·머신 칸이 profile·machine을 정한다.
 - 그 밖: `aaa thread start --title … [--profile …] [--machine …] [--repo <경로>] --task-file …`. profile을 빼면
   project.toml `thread_profile`, 없으면 사용자가 정한 기본(없으면 claude)이다. `--repo`가 있으면 worktree, 없으면 repo 없는
@@ -1222,6 +1232,7 @@ impl Host {
             holds: r.holds.clone(),
             automation: r.automation.clone(),
             automation_title: r.automation.as_deref().map(|n| self.automation_title(&r.project, n)),
+            automation_trigger: r.automation_run.as_ref().and_then(|run| run.trigger.clone()),
             status: r.status,
             cleanup_pending: r.resolve_pending.is_some().then_some(true),
             group,
@@ -1827,17 +1838,14 @@ impl Host {
         Ok(view)
     }
 
-    /// 열린(시작 중 포함) thread 수. 사후 평가자는 세지 않는다(`max_parallel_threads`가 세는 것)
+    /// 사용자·coordinator가 띄운 열린 Worker 수. 자동화 thread·사후 평가자는 세지 않는다.
     pub(crate) fn open_worker_threads(&self, project: &str) -> u32 {
         self.db
             .threads(Some(project))
             .unwrap_or_default()
             .iter()
             .filter_map(|j| serde_json::from_str::<ThreadRec>(j).ok())
-            .filter(|r| {
-                r.role == Role::Worker
-                    && (matches!(r.status, ThreadStatus::Open | ThreadStatus::Starting) || r.resolve_pending.is_some())
-            })
+            .filter(|r| r.holds_worker_slot())
             .count() as u32
     }
 
@@ -2042,7 +2050,12 @@ impl Host {
         self.check_health(&rec.machine_id)?;
         let already_held = rec.status == ThreadStatus::Open;
         self.db
-            .thread_restart_claim(project, id, self.settings(project).max_parallel_threads)
+            .thread_restart_claim(
+                project,
+                id,
+                self.settings(project).max_parallel_threads,
+                self.automation_restart_admission(&rec)?.as_ref(),
+            )
             .map_err(|e| err(ErrorCode::Unavailable, e.to_string()))?;
         let result: Result<ThreadView, ErrorBody> = async {
             let profile_note = profile.as_ref().map(|p| format!(", profile {p}")).unwrap_or_default();
@@ -2706,7 +2719,12 @@ impl Host {
             return Err(bad(format!("{id}는 끝낸 thread가 아니다(지금 {})", rec.status.as_str())));
         }
         self.db
-            .thread_restart_claim(project, id, self.settings(project).max_parallel_threads)
+            .thread_restart_claim(
+                project,
+                id,
+                self.settings(project).max_parallel_threads,
+                self.automation_restart_admission(&rec)?.as_ref(),
+            )
             .map_err(|e| err(ErrorCode::Unavailable, e.to_string()))?;
         let rec = self.update_rec(project, id, |r| {
             r.status = ThreadStatus::Open;
