@@ -128,6 +128,8 @@ pub fn typescript_bindings() -> String {
         Workspace::decl(&cfg),
         LayoutChange::decl(&cfg),
         PendingEnroll::decl(&cfg),
+        EnrollGuide::decl(&cfg),
+        EnrollAddress::decl(&cfg),
         PublishState::decl(&cfg),
         DeviceView::decl(&cfg),
         HostStatus::decl(&cfg),

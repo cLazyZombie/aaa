@@ -198,7 +198,9 @@ pub const AGENT_LINK: Version = Version { major: 1, minor: 11 };
 // 1.89: task 표시 ID(d-0001)·ID 선택자·TaskLog.task(plan §8.373). ULID와 기존 제목 입력은 유지한다.
 /// 1.90: install_approve의 계획/실제 범위 hash 결속. raw 승인서는 private executor가 전달한다.
 // 1.91: 자동화 thread 출처 상세 ThreadView.automation_trigger(선택), plan §8.377.
-pub const FRONT_API: Version = Version { major: 1, minor: 91 };
+// 1.92: 「직접 설치」 안내(웹 머신 추가 M1, plan §8.383): 조작 기기의 `enroll_guide` → `EnrollGuide`(host agent 연결 주소 후보·host
+// 지문·판). 옛 host는 모르는 요청으로 거절해 웹이 주소 자리에 `<host 주소>`를 둔다. Agent link 변경 없음.
+pub const FRONT_API: Version = Version { major: 1, minor: 92 };
 /// agent ↔ session host(내부). 세션이 몇 주 이어질 수 있으므로 이전 session host와 호환해야 한다.
 /// 1.1: `SessionRequest::Detect`(harness 상태 감지 입력). agent는 1.0 session host에 보내지 않고 `Screen`을 쓴다.
 /// 1.2: `SessionRequest::Colors`(색 질의에 답할 화면 색, plan §8.187). agent는 1.1 이하 session host에 보내지 않는다.

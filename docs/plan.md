@@ -6774,3 +6774,12 @@ Windows install 승인 PTY는 ConPTY(INHERIT_CURSOR)의 시작 커서 질의에 
 - **유지 범위.** ListFoot·UsageMeters의 바닥 사용량 칸과 coordinator CLI·host inbox 동작은 그대로다. 설정에 별도 진입점을 만들지 않고 내부 진단은 기존 CLI로 한다.
 - **검증.** 기존 E2E26·53·56·57·62를 새 패널 순서와 알림함 숨김에 맞춘다. 옛 선택 기억, 데스크톱·휴대폰·보기 기기, 사용량 배치, 확인 필요 post의 답함·inbox 기록과 CLI 조회·끝내기를 확인한다. main에서 추가된 E2E23의 종료 문서 API keeper는 더 이상 쓰지 않는 inbox 대신 asks 조회로 같은 경계를 확인한다. 정상/복귀 실제 응답과 종료 뒤 전송 없음 단언을 유지한다.
 - **착지 번호·호환.** 재개 착지 기준 origin/main `35ecad05`에서 마지막 §8.381·FRONT_API 1.91·AGENT_LINK 1.11·E2E71을 직접 확인했다. 이번 변경은 §8.382를 이어 쓰며 wire 변경·새 E2E 파일이 없어 기존 API 판과 E2E 번호를 유지한다.
+
+### 8.383 「직접 설치」 안내: host 주소 후보·지문을 넣은 새 머신 명령(10-21, t-0578 웹 머신 추가 M1)
+
+- **요청.** t-0471 확정 기획의 M1(웹 등록 승인·폐기). 등록 창·대기·6자리 코드 승인·폐기·host 머신과 마지막 조작 기기 폐기 거부는 W5b(§8.355)가 이미 같은 요청으로 했다. M1에 남은 것은 SSH가 없는 머신을 위한 「직접 설치」 안내다: 새 머신에서 칠 명령을 웹이 실제 host 주소·이름으로 채운다(기획 §1.11. install 비대화 모드가 착지하면 그 한 줄로 바꾼다).
+- **proto(FRONT_API 1.92, 더하기만).** 조작 기기의 `enroll_guide` → `EnrollGuide{listen?, addresses[{address, source}], host_fingerprint, software}`. Reader는 거부한다(host 주소·지문). 읽기만이라 사람 판정 목록에는 넣지 않는다. 옛 host는 모르는 요청으로 거절하고 웹은 1.92 미만이면 묻지 않고 주소 칸을 직접 받는다. Agent link 변경 없음.
+- **주소 후보.** host가 실제로 연 `agent_listen`에서만 만든다: 모든 주소(0.0.0.0·[::])면 tailnet 이름(`tailscale status`)과 이 머신 이름, tailnet 주소(IPv4 100.64/10·IPv6 fd7a:115c:a1e0::/48)면 tailnet 이름과 그 주소, 다른 IP면 그 주소만(tailnet 이름은 그 IP가 아니다), loopback은 「이 host 머신 안에서만」으로 표시, 이름으로 연 설정은 그대로. 닫혀 있으면 빈 목록과 「agent_listen을 정한다」 안내.
+- **웹.** 설정 「머신」 → 「새 머신 등록」 아래 「직접 설치 안내」(펼칠 때 읽음): host 주소 고르기(옛 host는 입력), 새 머신 이름(host 규칙, 이미 있는 이름은 알림), 차례 ① 같은 판 설치 ② `aaa agent enroll <주소> --name <이름>` ③ 새 머신 화면의 host fingerprint 앞 16자 맞추기와 「승인…」 ④ `agent.toml`의 host ⑤ macOS 서비스 설치(다른 OS는 `aaa agent` 직접). 명령마다 「복사」. 쓸 수 없는 이름·주소 글자는 `<이름>`·`<host 주소>` 자리표시로 둬 틀린 명령이 복사되지 않는다.
+- **검증.** host 유닛 `enroll_guide::tests`(연 주소별 후보), proto `control_classification`(조작 기기만), 웹 유닛 `enrollGuide.test.mjs`, 웹 E2E `60-admin`(안내 명령을 화면에서 읽어 그대로 실행해 등록, 안내의 host 지문 = 새 머신 화면의 지문, 이미 있는 이름 알림, Reader에 안내 없음, 휴대폰 390 폭).
+- **번호·호환.** 착지 기준 origin/main `5211dd13`에서 마지막 §8.382·FRONT_API 1.91·AGENT_LINK 1.11·E2E71을 직접 확인해 §8.383·FRONT_API 1.92를 이어 쓴다. 새 E2E 파일은 없다(`60-admin`에 더함). AGENT_LINK 그대로.

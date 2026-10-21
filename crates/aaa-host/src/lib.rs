@@ -32,6 +32,7 @@ mod ctrl_enter;
 pub mod db;
 mod deploy;
 mod diff;
+mod enroll_guide;
 mod file_rev;
 mod files;
 pub mod front;
@@ -2221,6 +2222,7 @@ impl Host {
                 self.enroll_bump();
                 Ok(FrontResponse::Done)
             }
+            FrontRequest::EnrollGuide => Ok(FrontResponse::EnrollGuide { guide: self.enroll_guide().await }),
             FrontRequest::EnrollPending => {
                 let e = self.enroll.lock().unwrap();
                 let now = Instant::now();
