@@ -1086,7 +1086,7 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
   };
   // 할 일 화면의 thread 칩(묶음)과 「task 없는 열린 thread」: 열린 thread 모음이 바뀌면 board를 다시 읽는다
   const threadGroups = useMemo(() => new Map(allThreads.map((t) => [t.id, t.group])), [threads]); // eslint-disable-line react-hooks/exhaustive-deps
-  const openThreadIds = allThreads.filter((t) => t.group !== "resolved").map((t) => t.id).sort().join(" ");
+  const openThreadIds = allThreads.filter((t) => t.group !== "resolved").map((t) => `${t.id}:${t.stage ?? ""}`).sort().join(" ");
   const taskBoard = useTaskBoard(up, openThreadIds, tasksShown);
   const seenMine = useSeenMine(taskBoard.board);
   const shownThreads = allThreads.filter((t) => t.group !== "resolved");
@@ -1124,7 +1124,7 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
     let live = true;
     call({ op: "library_reports", project: null })
       .then((r) => {
-        if (live && r.kind === "library_reports") setReportNames(new Map(r.reports.map((x) => [x.name, x])));
+        if (live && r.kind === "library_reports") setReportNames(new Map(r.reports.flatMap((x) => [[x.name, x] as const, ...(x.versions ?? []).map((id) => [id, { ...x, name: id, report_id: id }] as const)])));
       })
       .catch(() => {});
     return () => {
@@ -1372,6 +1372,8 @@ function Main({ role, device, onSignedOut: signedOut }: { role: DeviceRole; devi
             board={taskBoard.board}
             error={taskBoard.error}
             groups={threadGroups}
+            machines={machines}
+            stages={new Map(allThreads.map(t => [t.id, t.stage]))}
             reader={role === "reader"}
             addRequest={taskAdds}
             focusRequest={taskFocus}

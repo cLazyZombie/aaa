@@ -84,6 +84,9 @@ pub(crate) struct ThreadRec {
     pub launch: Option<Launch>,
     #[serde(default)]
     pub report_hash: Option<String>,
+    /// 검증해 회수한 보고와 같은 갱신에서 저장한다. 옛 기록은 host 시작 때 사본으로 보충한다.
+    #[serde(default)]
+    pub report_stage: Option<aaa_proto::ThreadStage>,
     #[serde(default)]
     pub acked_hash: Option<String>,
     #[serde(default)]
@@ -145,7 +148,18 @@ impl ThreadRec {
     }
 
     pub(crate) fn holds_worker_slot(&self) -> bool {
-        self.role == Role::Worker && self.automation.is_none() && self.holds_slot()
+        self.role == Role::Worker
+            && self.automation.is_none()
+            && self.holds_slot()
+            && self.execution_stage() != Some(aaa_proto::ThreadStage::MergeReady)
+    }
+
+    pub(crate) fn execution_stage(&self) -> Option<aaa_proto::ThreadStage> {
+        (self.role == Role::Worker
+            && self.report_hash.is_some()
+            && (self.status == ThreadStatus::Open || self.resolve_pending.is_some()))
+        .then_some(self.report_stage)
+        .flatten()
     }
 
     /// 로컬 profile의 공식 인증 env도 agent에서 받은 뒤 저장하기 전에 가린다.
@@ -201,6 +215,7 @@ impl ThreadRec {
             delivered_report: None,
             launch: None,
             report_hash: None,
+            report_stage: None,
             acked_hash: None,
             next: vec![],
             questions: Vec::new(),
@@ -352,6 +367,7 @@ thread 표지는 앱 안 알림과 coordinator 판단의 근거이며 외부 푸
 coordinator는 thread가 아니므로 보고 파일로 알림을 만들지 않는다. 사용자에게 질문하거나 사람 전용 단계를 남기고 멈추기 전에
 `aaa report --unknown --activity 'Waiting for you'`로 상태를 알리고, 필요한 행동과 까닭을 파일에 쓴 뒤
 `aaa post user --request --needs-user --topic user-action --title '<정할 것·추천 한 줄>' --body-file scratch/user-action.md`를 보낸다.
+사용자에게 묻거나 검수를 맡길 땐 post 본문을 `## Questions` 형식으로 쓰고, 볼 보고서·시안·음원 링크는 질문 안에 둔다.
 coordinator가 직접 묻는 선택 질문도 본문에 thread 보고와 같은 문법으로 쓴다. 웹 「답할 것」에서 같은 카드로 고른다:
 
 ```markdown
@@ -364,7 +380,7 @@ coordinator가 직접 묻는 선택 질문도 본문에 thread 보고와 같은 
 ```
 
 그림·파일은 먼저 `aaa library publish <폴더> --name <이름>`으로 올리고 본문에서 `library/<이름>/<파일>`로 가리킨다.
-예: `![시안](library/preview/a.png)`. post 본문에는 로컬 절대 경로나 외부 그림 주소를 쓰지 않는다.
+예: `![시안](library/preview/a.png)`, `[보고서](aaa:report/r-0001)`, `[음원](library/preview/theme.wav)`. 카드 머리에서 보고서를 열어 본 뒤 같은 카드에서 답한다. 특정 판을 묻는다면 보고서 r 링크와 `library/r-NNNN/<파일>`을 써서 자료도 그 판에 묶는다. post 본문에는 로컬 절대 경로나 외부 그림 주소를 쓰지 않는다.
 카드 답은 coordinator inbox의 `question answered`에 선택 요약과 답 원문으로 오며 post도 자동으로 답함이 된다.
 다시 전달하거나 같은 질문을 또 묻지 않는다. 선택지가 없는 기존 평문 post도 그대로 쓸 수 있다.
 질문마다 프로젝트별 `q-1000`부터 짧은 ID를 받는다(t=thread, q=질문, d=할 일, r=보고서).
@@ -400,6 +416,9 @@ CI routine이 지정 branch를 감시한다. inbox 종류 `ci`는 실패 job·�
 index.html이 없으면 거절한다. thread가 낸 보고(t-NNNN 사본)는 「작업 보고」에 따로 있으니 그대로 다시 보내지 않는다:
 사용자에게 보일 것만 골라 `--to-user`로 보낸다. 이 알림은 앱 안에만 뜨고 밖 푸시는 위 두 post만 보낸다.
 채팅에서는 그 보고서를 링크로 가리킨다(아래 「앱 안 참조」).
+발행 결과의 r-NNNN은 그 판의 영속 번호다. 새로 발행하거나 새 thread 보고를 쓰면 새 번호가 나온다.
+이름·thread 번호는 최신 판, r 번호는 그때의 본문과 복사한 파일을 연다. 특정 판은 `aaa library show r-NNNN`·`aaa library link r-NNNN`과
+`/#report=r-NNNN`·`aaa:report/r-NNNN`으로 가리킨다. 보고서 지우기는 같은 이름의 보존 판까지 모두 지우며 번호는 재사용하지 않는다.
 
 ## 앱 안 참조
 채팅에서 thread 질문·보고서를 가리킬 때는 `aaa context`의 「웹 주소」로 Markdown 링크를 쓴다:
@@ -430,7 +449,7 @@ post에는 기밀성이 없으니 비밀값을 넣지 않는다.
 - **새 thread를 시작한다**: 새 일. 한 메시지에 서로 관계없는 일이 여럿이면 하나에 thread 하나씩이다.
 
 새 thread를 시작하거나 열린 thread에 일을 넘기기 전에 TASKS.md에서 같은 일·겹치는 일을 찾는다. 있으면 그 task로
-시작하거나 이미 이어진 열린 thread에 넘기고, 메모·저장소도 사용자 말에 맞게 함께 고친다. 정해진 모델·머신 변경은 사용자가 직접 한다. 없으면 위처럼 한다.
+시작하거나 이미 이어진 열린 thread에 넘기고, 메모·저장소도 사용자 말에 맞게 함께 고친다. 사용자가 모델·머신 변경을 지시하면 `aaa task edit <task ID> --profile … --machine … --user-request '사용자 지시 근거'`로 고친다. 없으면 위처럼 한다.
 
 ## 이어지는 말
 사용자가 열린 thread가 맡은 영역에 대해 말하면 골라서 한다(여럿을 해도 된다).
@@ -444,7 +463,8 @@ pane이 없어졌거나 시작이 실패한 thread는 `aaa thread restart <id>`�
 - 시작: `start_threads`가 propose면 무엇을 누구에게 맡길지 제안하고 사용자 승인을 기다린다. auto면 바로 시작하고 알린다.
   사용자가 이름을 들어 맡기라고 한 것은 승인이다. aaa inbox 알림은 승인이 아니다.
 - 동시 thread 한도: project.toml `max_parallel_threads`를 host가 집행한다. Starting/Open은 검토·답 대기·Idle·보고 [완료]에도
-  자리를 가진다. resolve 정리가 실제로 끝나야 반환한다. 자동화 thread(`automations/*.toml`의 do.start)는 이 한도와 예약 자리에서
+  자리를 가진다. 단 보고 첫 줄 `[병합 준비됨]`은 빼고 `[착지]`는 한 자리만 뺀다. 다음 단계 작업은 `[진행 중]`으로 돌린다.
+  그 밖은 resolve 정리가 실제로 끝나야 반환한다. 자동화 thread(`automations/*.toml`의 do.start)는 이 한도와 예약 자리에서
   빼며 규칙별 reuse·limits로 제한한다(기본 동시 1개). 사용자·coordinator가 띄운 thread는 그대로 센다.
   한도를 올리거나 별도 thread start로 예약을 우회하지 않는다.
 - TASKS.md task로 시작: 아래 「TASKS.md」의 `--from-task … --link-task`를 쓴다. 모델·머신 칸이 profile·machine을 정한다.
@@ -572,8 +592,10 @@ thread가 키를 기다리는 화면(시작 때 신뢰 창, 질문 메뉴, 명�
   자리가 났을 때 다시 묻지 않는다. 병합 승인은 별개다. `start_threads=propose`에서는 사용자에게 맡긴 범위만 예약한다.
 - `aaa task queue`로 host의 차례·대기 사유·연결 thread를 읽는다. `aaa task unreserve <task ID>`는 미기동 예약만 취소하며,
   `aaa task queue-move <task ID> <순번>`은 차례 변경(0은 맨 앞)이다. 가능한 예약 중 앞 것을 host가 시작한다.
-  앞의 고정 머신이 끊겨도 가능한 뒤 예약은 시작할 수 있다. 고정 모델·머신은 바꾸지 않는다.
-- 정해진 모델·머신은 사용자가 웹이나 aaa 밖 CLI에서 직접 바꾼다. coordinator는 바꾸라는 말을 받아도 직접 바꾸지 않는다.
+  앞의 고정 머신이 끊겨도 가능한 뒤 예약은 시작할 수 있다. 사용자 지시 없이 고정 모델·머신은 바꾸지 않는다.
+- 사용자가 채팅에서 모델·머신 변경을 지시하면 coordinator도 `aaa task edit <task ID> --profile … --machine … --user-request '사용자 지시 근거'`로 바꾼다.
+  바꿀 칸만 주고 근거 한 줄을 남긴다. 다른 칸은 따로 고친다. 미기동 예약은 취소하지 않고 순서 그대로 새 선택으로 시작한다.
+  지시 없이 임의 변경·하향하지 않으며, 시작·재시작 옵션이나 원문 편집으로 선택 보호를 우회하지 않는다.
   원문 편집·자기 승인 flag로 보호를 우회하지 않는다. 예약 내용이 바뀌면 확인 후 `aaa task reserve`로 예약을 갱신한다.
 - 시작 실패는 원인과 실제 기동 상태를 읽어 보고한다. 명시 재예약 전 반복 기동·모델 하향은 하지 않는다.
   실행 차례와 착지 차례는 별개다. 일반 의존성과 저장소별 자동 착지 gate는 후속이며 현재 기능처럼 안내하지 않는다.
@@ -1245,7 +1267,9 @@ impl Host {
                 Box::new(aaa_proto::ThreadPr { url, state: r.pr_state.clone(), review: r.pr_review.clone() })
             }),
             report_hash: r.report_hash.clone(),
+            report_id: self.thread_report_id(&r.project, &r.id, r.report_hash.as_deref()),
             report_attention: self.report_attention(r),
+            stage: r.execution_stage(),
             acked_hash: r.acked_hash.clone(),
             next: r.next.clone(),
             agent: agent.map(Box::new),
@@ -1266,6 +1290,7 @@ impl Host {
                         r.questions.clone()
                     });
                 Box::new(aaa_proto::ThreadQuestions {
+                    review: self.default_review_for(r),
                     draft: self.question_draft(&r.project, &items),
                     files_base: Some(crate::asks::question_files_base(&r.project, &r.id, &report_hash)),
                     report_hash: report_hash.clone(),
@@ -1303,6 +1328,23 @@ impl Host {
     }
 
     pub(crate) fn thread_show(&self, project: &str, id: &str) -> Result<ThreadView, ErrorBody> {
+        if let Some(v) = self.db.report_target(project, id).map_err(internal)? {
+            let mut view = self.thread_view(&self.load(project, &v.source)?);
+            let dir = self.project_dir(project)?;
+            let report = std::fs::read_to_string(dir.join("threads").join(format!("{id}.md"))).map_err(internal)?;
+            view.report_id = Some(v.id);
+            view.report_hash = Some(v.revision);
+            view.next = next_lines(&report);
+            view.questions = None;
+            view.report_attention = if crate::report_mark::needs_user(&report) {
+                Some(aaa_proto::ReportAttention::NeedsUser)
+            } else if crate::report_mark::marker(&report) == Some("[완료]") {
+                Some(aaa_proto::ReportAttention::Completed)
+            } else {
+                None
+            };
+            return Ok(view);
+        }
         self.load(project, id).map(|r| self.thread_view(&r))
     }
 
@@ -1838,15 +1880,9 @@ impl Host {
         Ok(view)
     }
 
-    /// 사용자·coordinator가 띄운 열린 Worker 수. 자동화 thread·사후 평가자는 세지 않는다.
+    /// 자동화·병합 대기와 착지 한 자리를 뺀다. DB 기동 선점·예약도 같은 계산을 쓴다.
     pub(crate) fn open_worker_threads(&self, project: &str) -> u32 {
-        self.db
-            .threads(Some(project))
-            .unwrap_or_default()
-            .iter()
-            .filter_map(|j| serde_json::from_str::<ThreadRec>(j).ok())
-            .filter(|r| r.holds_worker_slot())
-            .count() as u32
+        self.db.worker_slots(project).unwrap_or(u32::MAX)
     }
 
     pub(crate) async fn screen_lines(&self, mid: &str, pane: &str) -> Option<Vec<String>> {
@@ -2385,6 +2421,21 @@ impl Host {
             std::fs::rename(&tmp, &dest).map_err(internal)?;
             crate::library::write_manifest(&dir, id, &snap).map_err(internal)?;
             let changed = !same_files || std::fs::read(crate::library::manifest_path(&dir, id)).ok() != old_manifest;
+            if rec.report_hash.as_ref() != Some(&snap.hash)
+                || changed
+                || self.thread_report_id(project, id, Some(&snap.hash)).is_none()
+            {
+                let files = self.manifest(&dir, id);
+                let meta = crate::db::LibraryReportRow {
+                    project: project.into(),
+                    name: id.into(),
+                    updated: aaa_common::util::now_ms(),
+                    from_thread: Some(id.into()),
+                    ..Default::default()
+                };
+                self.snapshot_report_version(project, id, &snap.hash, &dest, &files, Some(&snap.report.0), &meta)?;
+            }
+
             if changed || old_manifest.is_none() {
                 // 보고서 화면 「작업 보고」(plan §8.256)
                 self.reports_bump();
@@ -2432,13 +2483,13 @@ impl Host {
                 write_atomic(&dir.join("threads").join(format!("{id}.md")), &report).map_err(internal)?;
                 let text = String::from_utf8_lossy(&report);
                 let next = next_lines(&text);
-                let questions =
-                    if crate::report_mark::needs_user(&text) { aaa_proto::report_questions(&text) } else { Vec::new() };
+                let questions = crate::report_mark::questions(&text);
                 let questions = self.identify_questions(project, "thread", id, &hash, &questions)?;
                 let closed_question =
                     questions.is_empty() && !rec.questions.is_empty() && rec.question_answer.is_none();
                 let previous = rec;
                 let rec = self.update_rec(project, id, |r| {
+                    r.report_stage = crate::report_mark::stage(&text);
                     r.report_hash = Some(hash);
                     r.report_changed_ms = Some(aaa_common::util::now_ms());
                     r.next = next;
@@ -2879,6 +2930,7 @@ mod tests {
             delivered_report: None,
             launch: None,
             report_hash: None,
+            report_stage: None,
             acked_hash: None,
             next: Vec::new(),
             questions: Vec::new(),

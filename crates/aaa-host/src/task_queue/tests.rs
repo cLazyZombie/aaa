@@ -87,6 +87,7 @@ async fn display_ids_keep_duplicate_title_raw_history_bound_to_each_ulid() {
                 text: "## Backlog\n- [ ] 같은 제목\n  첫 메모\n- [ ] 같은 제목\n  다른 메모\n".into(),
             }],
             None,
+            None,
             "device:user",
         )
         .await
@@ -108,6 +109,7 @@ async fn display_ids_keep_duplicate_title_raw_history_bound_to_each_ulid() {
         .task_edit(
             "demo",
             vec![TaskOp::Delete { at: TaskAnchor { title: second.short_id.clone().unwrap(), ..Default::default() } }],
+            None,
             None,
             "device:user",
         )
@@ -593,6 +595,7 @@ async fn coordinator_raw_save_cannot_rename_away_a_selection() {
             "demo",
             vec![TaskOp::RawSave { expected_sha256: board.sha256, text: changed }],
             None,
+            None,
             "coordinator:verified-pane",
         )
         .await
@@ -972,4 +975,265 @@ fn automation_threads_have_atomic_separate_slots_and_restart_limits() {
     assert!(lab.h.db.thread_restart_claim("demo", &user, 1, None).is_err());
     assert_eq!(lab.h.open_worker_threads("demo"), 1);
     assert_ne!(next_user, user);
+}
+
+#[test]
+fn report_stages_release_only_work_capacity_and_one_landing_slot() {
+    use aaa_proto::ThreadStage::{Landing, MergeReady};
+    let lab = Lab::new();
+    let insert = |stage, automatic: bool| {
+        lab.h
+            .db
+            .thread_insert_next("demo", |id| {
+                let mut r = Lab::rec();
+                r.id = id.into();
+                r.status = ThreadStatus::Open;
+                r.report_hash = Some("verified-copy".into());
+                r.report_stage = stage;
+                r.automation = automatic.then(|| "check".into());
+                serde_json::to_string(&r).unwrap()
+            })
+            .unwrap()
+    };
+    let ready = insert(Some(MergeReady), false);
+    let landing = insert(Some(Landing), false);
+    insert(Some(Landing), true); // 자동화는 착지 한 자리를 빼앗지 않는다.
+    assert_eq!(lab.h.open_worker_threads("demo"), 0);
+    let duplicate = insert(Some(Landing), false);
+    assert_eq!(lab.h.open_worker_threads("demo"), 1, "중복 착지로 제외 자리를 늘리지 않는다");
+    lab.h.update_rec("demo", &duplicate, |r| r.status = ThreadStatus::Resolved).unwrap();
+    assert_eq!(lab.h.open_worker_threads("demo"), 0);
+    // 같은 마지막 작업 자리를 여러 요청이 선점해도 하나만 들어간다.
+    let gate = std::sync::Barrier::new(8);
+    let admitted = std::thread::scope(|scope| {
+        let jobs: Vec<_> = (0..8)
+            .map(|_| {
+                let gate = &gate;
+                let h = &lab.h;
+                scope.spawn(move || {
+                    gate.wait();
+                    h.db.thread_insert_admitted("demo", None, None, Some(1), None, |id| {
+                        let mut r = Lab::rec();
+                        r.id = id.into();
+                        serde_json::to_string(&r).unwrap()
+                    })
+                })
+            })
+            .collect();
+        jobs.into_iter().filter_map(|j| j.join().unwrap().ok()).collect::<Vec<_>>()
+    });
+    assert_eq!(admitted.len(), 1);
+    assert_eq!(lab.h.open_worker_threads("demo"), 1);
+    // 착지 실패 수리 중은 표지를 유지한다. 중간 단계 완료 뒤 작업 복귀만 다시 센다.
+    lab.h.update_rec("demo", &landing, |r| r.error = Some("착지 검증 실패 수리".into())).unwrap();
+    assert_eq!(lab.h.open_worker_threads("demo"), 1);
+    lab.h.update_rec("demo", &ready, |r| r.report_stage = None).unwrap();
+    assert_eq!(lab.h.open_worker_threads("demo"), 2);
+    let denied = lab
+        .h
+        .db
+        .thread_insert_admitted("demo", None, None, Some(1), None, |id| {
+            let mut r = Lab::rec();
+            r.id = id.into();
+            serde_json::to_string(&r).unwrap()
+        })
+        .unwrap_err();
+    assert!(denied.to_string().contains("실행 한도"));
+    assert_eq!(lab.h.load("demo", &ready).unwrap().status, ThreadStatus::Open);
+    assert_eq!(lab.h.load("demo", &landing).unwrap().status, ThreadStatus::Open);
+    // 정리 중은 직전 단계를 보존하고, 정리를 마친 기록에는 표지를 내지 않는다.
+    lab.h
+        .update_rec("demo", &landing, |r| {
+            r.status = ThreadStatus::Resolved;
+            r.resolve_pending = Some(Default::default());
+        })
+        .unwrap();
+    assert_eq!(lab.h.open_worker_threads("demo"), 2);
+    lab.h.update_rec("demo", &landing, |r| r.resolve_pending = None).unwrap();
+    assert_eq!(lab.h.thread_show("demo", &landing).unwrap().stage, None);
+    lab.h
+        .update_rec("demo", &ready, |r| {
+            r.report_stage = Some(MergeReady);
+            r.status = ThreadStatus::Starting;
+        })
+        .unwrap();
+    assert_eq!(lab.h.open_worker_threads("demo"), 2, "Starting의 옛 보고로 자리를 비우지 않는다");
+    lab.h.update_rec("demo", &ready, |r| r.status = ThreadStatus::Failed).unwrap();
+    assert!(lab.h.db.thread_restart_claim("demo", &ready, 1, None).is_err(), "실패 재시작은 새 작업 자리다");
+    lab.h
+        .update_rec("demo", &ready, |r| {
+            r.status = ThreadStatus::Resolved;
+            r.resolve_pending = Some(Default::default());
+        })
+        .unwrap();
+    assert_eq!(lab.h.open_worker_threads("demo"), 1, "병합 대기의 정리 중도 원래 제외를 보존한다");
+    lab.h.update_rec("demo", &ready, |r| r.resolve_pending = None).unwrap();
+    assert_eq!(lab.h.thread_show("demo", &ready).unwrap().stage, None);
+}
+
+#[test]
+fn old_report_stages_are_backfilled_from_verified_copies_on_open() {
+    use sha2::{Digest, Sha256};
+    let lab = Lab::new();
+    let dir = lab.h.project_dir("demo").unwrap();
+    std::fs::create_dir_all(dir.join("threads")).unwrap();
+    let mut ids = Vec::new();
+    for report in ["[병합 준비됨] 기다림", "[착지] 실패 수리", "[완료] 옛 보고", "표지 없음"] {
+        let id = lab
+            .h
+            .db
+            .thread_insert_next("demo", |id| {
+                let mut r = Lab::rec();
+                r.id = id.into();
+                r.status = ThreadStatus::Open;
+                r.report_hash = Some(hex::encode(Sha256::digest(report.as_bytes())));
+                // 새 필드가 전혀 없는 과거 JSON도 이행한다.
+                let mut value = serde_json::to_value(&r).unwrap();
+                value.as_object_mut().unwrap().remove("report_stage");
+                value.to_string()
+            })
+            .unwrap();
+        std::fs::write(dir.join("threads").join(format!("{id}.md")), report).unwrap();
+        ids.push(id);
+    }
+    assert_eq!(lab.h.open_worker_threads("demo"), 4);
+    let reopened = Host::open(lab.h.cfg.clone(), lab.h.state.clone()).unwrap();
+    assert_eq!(reopened.open_worker_threads("demo"), 2);
+    assert_eq!(reopened.thread_show("demo", &ids[0]).unwrap().stage, Some(aaa_proto::ThreadStage::MergeReady));
+    assert_eq!(reopened.thread_show("demo", &ids[1]).unwrap().stage, Some(aaa_proto::ThreadStage::Landing));
+    // 사본 유실·hash 불일치 때는 보수적으로 센다. 다른 프로젝트 폴더나 운영 원본을 읽지 않는다.
+    std::fs::write(dir.join("threads").join(format!("{}.md", ids[0])), "[착지] 바뀐 원본").unwrap();
+    std::fs::remove_file(dir.join("threads").join(format!("{}.md", ids[1]))).unwrap();
+    drop(reopened);
+    let recovered = Host::open(lab.h.cfg.clone(), lab.h.state.clone()).unwrap();
+    assert_eq!(recovered.open_worker_threads("demo"), 4);
+    assert_eq!(recovered.thread_show("demo", &ids[0]).unwrap().stage, None);
+    drop(recovered);
+}
+
+#[tokio::test]
+async fn requested_choices_reject_changed_contents_and_started_reservations() {
+    let lab = Lab::new();
+    let row = one_reservation(&lab).await;
+    let original = lab.text();
+    let changed = original.replace("claude@mac-offline", "codex@mac-offline");
+    assert!(lab.h.check_requested_task_choices("demo", &original, &changed).is_ok());
+    let modified = original.replace("독립 설명과 완료 범위", "다른 범위");
+    let error =
+        lab.h.check_requested_task_choices("demo", &modified, &modified.replace("claude@", "codex@")).unwrap_err();
+    assert_eq!(error.code, ErrorCode::Conflict);
+    assert!(error.message.contains("다른 내용"));
+    for state in [S::Starting, S::Running, S::Check] {
+        lab.h
+            .db
+            .queue_change("demo", "host", |rows| {
+                rows[0].state = state;
+                rows[0].thread = Some("t-0001".into());
+                Ok(())
+            })
+            .unwrap();
+        let error = lab.h.check_requested_task_choices("demo", &original, &changed).unwrap_err();
+        assert_eq!(error.code, ErrorCode::Conflict);
+        assert!(error.message.contains("기동한 예약"));
+    }
+    assert_eq!(lab.text(), original);
+    assert_eq!(lab.h.db.queue_list("demo").unwrap()[0].selection, row.selection);
+}
+
+#[tokio::test]
+async fn requested_choices_validate_reason_and_operation_scope_before_writing() {
+    let lab = Lab::new();
+    let row = one_reservation(&lab).await;
+    let original = lab.text();
+    let make_op = || TaskOp::Update {
+        at: at(&row.task),
+        title: None,
+        owner: None,
+        person: false,
+        profile: Some(String::new()),
+        machine: Some(String::new()),
+        notes: None,
+        thread: None,
+        done: None,
+        repo: None,
+    };
+    for reason in ["", " ", "한 줄\n두 줄", "제어\t문자"] {
+        assert_eq!(
+            lab.h
+                .task_edit("demo", vec![make_op()], None, Some(reason.into()), "coordinator:p")
+                .await
+                .unwrap_err()
+                .code,
+            ErrorCode::BadRequest
+        );
+        assert_eq!(lab.text(), original);
+    }
+    for ops in [
+        vec![TaskOp::RawSave { expected_sha256: tasks::sha256(&original), text: String::new() }],
+        vec![make_op(), make_op()],
+        vec![TaskOp::Delete { at: at(&row.task) }],
+    ] {
+        assert!(lab.h.task_edit("demo", ops, None, Some("사용자 지시".into()), "coordinator:p").await.is_err());
+        assert_eq!(lab.text(), original);
+    }
+    let response = lab
+        .h
+        .task_edit("demo", vec![make_op()], None, Some("기본 모델과 자동 머신으로 변경".into()), "coordinator:p")
+        .await
+        .unwrap();
+    assert!(matches!(response, FrontResponse::TaskEdited { conflict: None, .. }));
+    let q = lab.h.db.queue_list("demo").unwrap().remove(0);
+    assert_eq!(q.state, S::Queued);
+    assert_eq!(q.task_id, row.task_id);
+    assert_eq!(q.position, row.position);
+    assert_eq!(q.created_ms, row.created_ms);
+    assert_eq!(q.profile, lab.h.default_thread_profile("demo"));
+    assert_eq!(q.machine, None);
+    assert_eq!(q.selection.owner, None);
+    assert!(
+        lab.h
+            .db
+            .audit_actions()
+            .iter()
+            .any(|(actor, action)| actor == "coordinator:p" && action == "task_choices_user_request")
+    );
+}
+
+#[tokio::test]
+async fn requested_machine_only_change_keeps_the_approved_default_model() {
+    let lab = Lab::new();
+    lab.write("## Backlog\n- [ ] 기본 예약 (@mac-offline) [작업 폴더]\n  독립 설명과 완료 범위\n");
+    let t = lab.h.task_board("demo").unwrap().tasks.remove(0);
+    let profile = lab.h.default_thread_profile("demo");
+    lab.h
+        .task_queue(
+            "demo",
+            QueueOp::Reserve {
+                task: t.title,
+                block: t.block_sha256,
+                profile: profile.clone(),
+                profile_revision: model_selection(&lab.h, &profile).unwrap().2,
+            },
+            "device:user",
+        )
+        .await
+        .unwrap();
+    let original = lab.h.db.queue_list("demo").unwrap().remove(0);
+    let mut cfg = lab.h.cfg.clone();
+    cfg.defaults.thread_profile = "codex".into();
+    let host = Host::open(cfg, lab.h.state.clone()).unwrap();
+    assert_eq!(host.default_thread_profile("demo"), "codex");
+    let before = lab.text();
+    let after = before.replace("@mac-offline", "@mac-other");
+    host.check_requested_task_choices("demo", &before, &after).unwrap();
+    host.record_requested_task_choices("demo", &before, &after, "coordinator:p (사용자 지시: 머신만 변경)").unwrap();
+    let updated = host.db.queue_list("demo").unwrap().remove(0);
+    assert_eq!(updated.machine.as_deref(), Some("mac-other"));
+    assert_eq!(updated.profile, original.profile, "머신 변경은 이미 승인한 기본 모델을 바꾸지 않는다");
+    assert_eq!(updated.selection.profile, original.selection.profile);
+    assert_eq!(
+        (updated.model, updated.effort, updated.profile_revision),
+        (original.model, original.effort, original.profile_revision)
+    );
+    assert_eq!(updated.approved_block, tasks::parse(&after)[0].block_sha256);
 }

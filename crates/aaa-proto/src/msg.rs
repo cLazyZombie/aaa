@@ -1622,6 +1622,98 @@ pub struct PendingEnroll {
     pub since_ms: u64,
 }
 
+/// SSH 머신 추가 작업 하나(웹 머신 추가 M2, plan §8.384). host DB에 남아 웹 창을 닫았다 열어도 같은 작업을 본다
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+pub struct MachineSetupView {
+    pub job: String,
+    /// 사람이 넣은 SSH 대상(별칭 또는 `user@host:port`)
+    pub target: String,
+    pub phase: MachineSetupPhase,
+    /// `ssh -G`로 푼 접속(사용자·주소·포트, ProxyJump를 거치는가)
+    pub ssh: Option<SshResolved>,
+    /// 접속 때 받은 host key(인증 전). 사람이 지문을 보고 믿는다
+    pub host_keys: Vec<HostKeyView>,
+    /// 받은 키가 이미 믿는 키인가: `known` | `new` | `changed`(fail-closed)
+    pub host_key_state: Option<String>,
+    pub detected: Option<MachineDetected>,
+    /// 실패·멈춤의 까닭(사람이 읽는 글)
+    pub error: Option<String>,
+    #[ts(type = "number")]
+    pub created_ms: u64,
+    #[ts(type = "number")]
+    pub updated_ms: u64,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+pub enum MachineSetupPhase {
+    /// 접속해 host key를 받는 중
+    Connecting,
+    /// 처음 보는 host key: 사람이 지문을 확인한다
+    Trust,
+    /// 믿는 키로 로그인해 OS·CPU를 읽는 중
+    Detecting,
+    /// 감지가 안 됐다: 사람이 OS·CPU를 고른다
+    Choose,
+    /// 감지(또는 고름) 끝, 지원하는 대상이다. 설치(M3)는 이 다음이다
+    Ready,
+    /// 감지했지만 release 대상이 없다(예: Windows ARM64)
+    Unsupported,
+    Failed,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+pub struct SshResolved {
+    pub user: String,
+    pub host: String,
+    pub port: u16,
+    pub proxy_jump: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+pub struct HostKeyView {
+    /// `ssh-ed25519` 등
+    pub kind: String,
+    /// `SHA256:<base64>`(ssh-keygen -l와 같은 꼴)
+    pub sha256: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+pub struct MachineDetected {
+    /// `macos` | `linux` | `windows`(MachineView.os와 같은 말)
+    pub os: String,
+    /// `aarch64` | `x86_64`
+    pub arch: String,
+    /// 원격이 말한 그대로(`Darwin arm64`, `Windows AMD64`). 사람이 고른 것이면 빈 글
+    pub raw: String,
+    /// 사람이 골랐다(감지 실패)
+    pub chosen: bool,
+    pub home: Option<String>,
+    pub shell: Option<String>,
+    /// 원격에 이미 있는 aaa 판(`aaa --version` 첫 줄)
+    pub aaa: Option<String>,
+}
+
+/// 「직접 설치」 안내(plan §8.383): 새 머신이 host agent 연결에 닿을 주소 후보와, 새 머신 화면에 나올 host 지문
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+pub struct EnrollGuide {
+    /// host가 실제로 연 agent 연결 주소(`agent_listen`). 닫혀 있으면 None이고 새 머신은 붙지 못한다
+    pub listen: Option<String>,
+    /// 새 머신에서 칠 `<주소>:<포트>` 후보. 앞이 추천이다. 빈 목록이면 host 밖에서 닿을 주소가 없다(닫힘·loopback)
+    pub addresses: Vec<EnrollAddress>,
+    /// host 인증서 SHA-256 전체(소문자 hex). 새 머신 `aaa agent enroll` 화면은 앞 16자를 보인다
+    pub host_fingerprint: String,
+    /// host 판(`aaa --version`). 새 머신에 같은 판을 넣는다
+    pub software: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+pub struct EnrollAddress {
+    pub address: String,
+    /// 어디서 온 후보인가: `tailnet`(tailscale 이름)·`listen`(연 주소 그대로)·`hostname`(이 머신 이름)
+    pub source: String,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 pub struct PublishState {
     /// missing | stopped | running | error
@@ -2083,6 +2175,30 @@ pub enum FrontRequest {
         install: bool,
     },
     EnrollPending,
+    /// FRONT_API 1.93. SSH로 머신 추가 작업을 시작한다(웹 머신 추가 M2, plan §8.384): host의 OpenSSH로 접속해 host key만 받고, 아는 키면
+    /// OS·CPU를 감지한다. 원격에 쓰지 않는다. 사람만(조작 기기·세션 밖)
+    MachineSetupStart {
+        target: String,
+    },
+    /// FRONT_API 1.93. 화면에서 본 host key 지문을 믿는다: host가 받은 키와 같으면 aaa 전용 known_hosts에 넣고 감지로 간다. 사람만
+    MachineSetupTrust {
+        job: String,
+        host_key_sha256: String,
+    },
+    /// FRONT_API 1.93. 감지가 안 된 머신의 OS·CPU를 사람이 고른다(release 대상 다섯만). 사람만
+    MachineSetupChoose {
+        job: String,
+        os: String,
+        arch: String,
+    },
+    /// FRONT_API 1.93. 작업을 멈추고 목록에서 뺀다(원격에 남긴 것은 없다). 사람만
+    MachineSetupCancel {
+        job: String,
+    },
+    /// FRONT_API 1.93. 최근 SSH 추가 작업(Reader도 본다)
+    MachineSetupList,
+    /// FRONT_API 1.92. 새 머신에서 칠 「직접 설치」 명령에 넣을 host 주소 후보·host 지문·판(웹 머신 추가 M1, plan §8.383)
+    EnrollGuide,
     EnrollApprove {
         name: String,
         code: String,
@@ -2309,6 +2425,10 @@ pub enum FrontRequest {
         ops: Vec<TaskOp>,
         #[serde(default)]
         base_sha256: Option<String>,
+        /// 사용자 지시로 모델·머신만 변경하는 근거 한 줄(FRONT_API 1.97). 예약 순서와 시작 승인을 유지한다.
+        #[serde(default)]
+        #[ts(optional)]
+        user_request: Option<String>,
     },
     /// 할 일 기록(FRONT_API 1.62, 보기 권한). 최신부터, `before`(id)보다 앞의 것
     TaskLog {
@@ -3002,6 +3122,7 @@ impl FrontRequest {
                 | FrontRequest::PostStatus { .. }
                 | FrontRequest::Asks { .. }
                 | FrontRequest::Machines
+                | FrontRequest::MachineSetupList
                 | FrontRequest::Panes { .. }
                 | FrontRequest::Projects { .. }
                 | FrontRequest::Instance
@@ -3209,6 +3330,15 @@ pub enum FrontResponse {
     PaneCommands {
         list: CommandList,
     },
+    EnrollGuide {
+        guide: crate::EnrollGuide,
+    },
+    MachineSetup {
+        setup: crate::MachineSetupView,
+    },
+    MachineSetups {
+        setups: Vec<crate::MachineSetupView>,
+    },
     Pending {
         pending: Vec<PendingEnroll>,
         /// 등록 창이 열려 있으면 닫히는 시각(ms, FRONT_API 1.80). 닫혔으면 생략
@@ -3256,7 +3386,7 @@ pub enum FrontResponse {
     Threads {
         threads: Vec<ThreadView>,
     },
-    Thread(ThreadView),
+    Thread(Box<ThreadView>),
     /// FRONT_API 1.44. thread 작업 요약
     ThreadSummary(ThreadSummaryView),
     Events {
@@ -3416,8 +3546,8 @@ pub enum FrontEvent {
     Workspace(Workspace),
     /// 흐름 사건(새로 기록될 때). 놓쳤으면 `Events`로 cursor부터 다시 읽는다.
     Flow(FlowEvent),
-    /// thread 기록이 바뀌었다
-    Thread(ThreadView),
+    /// thread 기록이 바뀌었다. JSON은 그대로 두고 큰 본체를 별도로 보관한다.
+    Thread(Box<ThreadView>),
     /// 확인창 질문이 생기거나 답해졌다(알림 대상)
     Question(QuestionView),
     /// 공유 설정 문서 전체. 웹 events 연결이 열릴 때와 바뀔 때마다 온다(herdr-web-ui `preferences` 사건)
@@ -3848,6 +3978,15 @@ mod tests {
         assert!(FrontRequest::DeviceRename { id: "d".into(), label: "x".into() }.needs_control());
         assert!(FrontRequest::DeviceRevoke { id: "d".into() }.needs_control());
         assert!(!FrontRequest::Panes { role: None }.local_only());
+        // 「직접 설치」 안내는 host 주소·지문을 보이므로 조작 기기만(웹 허용, plan §8.383)
+        assert!(FrontRequest::EnrollGuide.needs_control() && !FrontRequest::EnrollGuide.local_only());
+        // SSH 머신 추가(plan §8.384): 목록은 Reader도, 시작·신뢰·고름·멈춤은 조작 기기
+        assert!(!FrontRequest::MachineSetupList.needs_control());
+        assert!(FrontRequest::MachineSetupStart { target: "mac-b".into() }.needs_control());
+        assert!(
+            FrontRequest::MachineSetupTrust { job: "j".into(), host_key_sha256: "SHA256:x".into() }.needs_control()
+        );
+        assert!(!FrontRequest::MachineSetupStart { target: "mac-b".into() }.local_only());
         assert!(!FrontRequest::Threads { project: None, role: None }.needs_control());
         // 사후 평가자 세션은 Reader로 다룬다: 평가 보기는 되고, 지정·채택·메시지는 안 된다(§8.13)
         assert!(!FrontRequest::EvaluatorStatus { project: None }.needs_control());

@@ -1,3 +1,4 @@
+import { ThreadStageBadge } from "./ThreadStageBadge";
 // 본문(오른쪽) 할 일 화면(할 일 보기 T1 §8.306, 편집 T2 §8.311, 사용자 10-20 「하기로 했던 기능들을 다 볼수 있고 (왼쪽에 아이콘이
 // 있어서 거기서 들어가게), 필요하면 수정, 삭제 할수 있고」). 활동 막대 「할 일」·`#tasks`가 연다. host `tasks`(TaskBoard)를 읽고
 // `task_edit`로 고친다(바뀐 블록만 쓰고 블록 hash로 충돌을 감지한다). thread 연결(T3, §8.316): 상세의 「coordinator에게 맡기기」·
@@ -33,7 +34,7 @@ import {
   X,
   type LucideIcon,
 } from "lucide-react";
-import type { OwnerChoice, TaskBoard, TaskConflict, TaskLogEntry, TaskNotesFile, TaskOp, TaskThread, TaskView, ThreadGroup, ThreadView } from "./gen/proto";
+import type { MachineView, OwnerChoice, TaskBoard, TaskConflict, TaskLogEntry, TaskNotesFile, TaskOp, TaskThread, TaskView, ThreadGroup, ThreadStage, ThreadView } from "./gen/proto";
 import { ApiError, call, me, onTasksChanged } from "./api";
 import { DrawerToggle, HeadMore, HeadNote } from "./drawer";
 import { Markdown } from "./Markdown";
@@ -206,6 +207,8 @@ export function TasksView({
   board,
   error,
   groups,
+  machines,
+  stages,
   reader,
   addRequest,
   focusRequest,
@@ -222,6 +225,9 @@ export function TasksView({
   error: string | null;
   /** thread id → 묶음(App의 thread 목록, 바뀌면 바로 따라간다) */
   groups: ThreadGroups;
+  /** host 상태 사건의 머신 목록(통계·pane 변경은 owner 재조회를 일으키지 않는다) */
+  machines: readonly MachineView[];
+  stages: ReadonlyMap<string, ThreadStage | undefined>;
   /** 보기 권한 기기: 편집 단추·끌기·「+」를 숨긴다 */
   reader: boolean;
   /** 바뀌면 새 task 폼(문서가 있으면 「할 일에 추가」 창)을 연다 */
@@ -274,13 +280,27 @@ export function TasksView({
       .then((m) => setFrontApi(m?.front_api ?? ""))
       .catch(() => setFrontApi(""));
   }, [shown, frontApi]);
-  // owner 고르기 목록(머신마다 묻는다): 편집할 수 있을 때 화면을 열면 한 번
-  useEffect(() => {
-    if (!shown || !canEdit || owners !== null) return;
+  const ownersSeq = useRef(0);
+  const loadOwners = useCallback(() => {
+    if (!shown || !canEdit) return;
+    const n = ++ownersSeq.current;
     call({ op: "assignable", check: null })
-      .then((r) => setOwners(r.kind === "assignable" ? r.owners : []))
-      .catch(() => setOwners([]));
-  }, [shown, canEdit, owners]);
+      .then((r) => {
+        if (n === ownersSeq.current && r.kind === "assignable") setOwners(r.owners);
+      })
+      .catch(() => {
+        if (n === ownersSeq.current) setOwners((old) => old ?? []);
+      });
+  }, [shown, canEdit]);
+  const machineConnections = JSON.stringify(machines.map((m) => [m.id, m.name, m.connection]).sort());
+  const newTask = creating !== null;
+  const starting = dialog?.kind === "start";
+  // 처음 읽은 끊김 값이 고정되지 않게 연결 변화와 화면·상세·시작 창을 열 때 host에 다시 묻는다.
+  // 숨김·다음 조회 뒤에 돌아온 옛 응답은 버리고, 고치던 폼은 그대로 둔다.
+  useEffect(() => {
+    loadOwners();
+    return () => { ++ownersSeq.current; };
+  }, [loadOwners, machineConnections, picked, newTask, starting]);
   // 상세의 기록 한 줄·지난 thread: 판이 바뀔 때마다 최근 기록
   const sha = board?.sha256 ?? "";
   useEffect(() => {
@@ -648,6 +668,7 @@ export function TasksView({
                             state={taskState(t, groups)}
                             selected={current?.line === t.line}
                             groups={groups}
+                            stage={t.thread ? stages.get(t.thread) : undefined}
                             canEdit={canEdit}
                             draggable={canEdit && !coarse}
                             dragging={drag?.line === t.line}
@@ -706,6 +727,7 @@ export function TasksView({
               groups={groups}
               canEdit={canEdit}
               owners={owners}
+              onRefreshOwners={loadOwners}
               start={creating}
               log={log}
               onThread={onThread}
@@ -904,6 +926,7 @@ function MenuButton({ title, open, testid, onToggle }: { title: string; open: bo
 
 function TaskRow({
   t,
+  stage,
   depth,
   state,
   selected,
@@ -923,6 +946,7 @@ function TaskRow({
   onDrop,
 }: {
   t: TaskView;
+  stage?: ThreadStage;
   depth: number;
   state: TaskState;
   selected: boolean;
@@ -969,6 +993,7 @@ function TaskRow({
           onKeyMove(e.key === "ArrowUp" ? "up" : "down");
         }}
       >
+        <ThreadStageBadge stage={stage} />
         <StateIcon state={state} />
         <span className="task-title">
           <span className="sr-only">{TASK_STATE_LABEL[state]}: </span>
@@ -1013,6 +1038,7 @@ function Unlinked({ threads, canLink, onThread, onLink, onMake }: { threads: Tas
         {threads.map((t) => (
           <li key={t.id} className="task-row" data-testid={`task-unlinked-row-${t.id}`}>
             <button type="button" className="task-pick" data-testid={`tasks-unlinked-${t.id}`} onClick={() => onThread(t.id)}>
+              <ThreadStageBadge stage={t.stage} />
               <CircleDot className="task-state is-run" aria-hidden="true" />
               <span className="task-title">
                 {t.id} · {t.title}

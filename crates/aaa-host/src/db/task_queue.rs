@@ -6,6 +6,7 @@ pub(crate) fn slots(tx: &Connection, project: &str, except: Option<&str>) -> Res
     let mut st = tx.prepare("SELECT id,data FROM threads WHERE project=?1")?;
     let rows = st.query_map([project], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)))?;
     let mut count = 0;
+    let mut landing = false;
     for row in rows {
         let (id, text) = row?;
         if except == Some(id.as_str()) {
@@ -14,12 +15,18 @@ pub(crate) fn slots(tx: &Connection, project: &str, except: Option<&str>) -> Res
         let r: crate::orch::ThreadRec = serde_json::from_str(&text)?;
         if r.holds_worker_slot() {
             count += 1;
+            landing |= r.execution_stage() == Some(aaa_proto::ThreadStage::Landing);
         }
     }
-    Ok(count)
+    // 착지는 한 번에 하나다. 중복 표지가 생겨도 추가 착지로 한도를 넓히지 않는다.
+    Ok(count - u32::from(landing))
 }
 
 impl Db {
+    pub(crate) fn worker_slots(&self, project: &str) -> Result<u32> {
+        slots(&self.conn.lock().unwrap(), project, None)
+    }
+
     pub(crate) fn queue_list(&self, project: &str) -> Result<Vec<TaskReservation>> {
         let mut rows = {
             let c = self.conn.lock().unwrap();
@@ -27,6 +34,15 @@ impl Db {
         };
         for r in &mut rows {
             r.task.short_id = Some(self.task_short_id(project, &r.task_id)?);
+            r.stage = r
+                .thread
+                .as_deref()
+                .map(|id| self.thread_get(project, id))
+                .transpose()?
+                .flatten()
+                .map(|text| serde_json::from_str::<crate::orch::ThreadRec>(&text))
+                .transpose()?
+                .and_then(|thread| thread.execution_stage());
         }
         Ok(rows)
     }

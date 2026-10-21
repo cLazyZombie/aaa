@@ -6627,7 +6627,7 @@ worker 자리 수에 포함하지 않는다. 평가자는 새 기동 대상이 �
 완료 보관은 기존 좁은 완료/부모 보호 판정을 사용한다. task 블록·보고서 경로·이력을 먼저 저장하고 활성 블록을 제거한다.
 파일 제거 뒤 DB 확정 전 중단은 저장한 제거 후 파일 hash로 복구한다. 완료 보관과 삭제 기록은 별도이며 보관은 log prune 대상이 아니다.
 복원은 같은 ID·내용·첨부를 유지하고 thread 연결과 실행 승인은 되살리지 않는다. worktree/branch 생명주기는 기존 규칙을 따른다.
-사용자 결정 1A에 따라 정해진 모델·머신 변경은 사용자 웹/aaa 밖 CLI만 허용한다. coordinator 원문 쓰기는 거부한다.
+정해진 모델·머신은 사용자 지시 없이 바꾸지 않는다. coordinator의 사용자 지시 편집은 §8.389를 따른다. coordinator 원문 쓰기는 거부한다.
 
 예약의 실행 승인판과 선택 변경의 출처는 별도로 보존한다. 빈 모델 칸에서 해석한 기본 모델도 승인 후에는 고정 선택이다.
 사용자가 웹/aaa 밖 CLI로 모델·머신 칸을 바꾸면 새 선택의 요청자·시각을 기록하되 과거 실행 승인은 갱신하지 않는다.
@@ -6775,9 +6775,93 @@ Windows install 승인 PTY는 ConPTY(INHERIT_CURSOR)의 시작 커서 질의에 
 - **검증.** 기존 E2E26·53·56·57·62를 새 패널 순서와 알림함 숨김에 맞춘다. 옛 선택 기억, 데스크톱·휴대폰·보기 기기, 사용량 배치, 확인 필요 post의 답함·inbox 기록과 CLI 조회·끝내기를 확인한다. main에서 추가된 E2E23의 종료 문서 API keeper는 더 이상 쓰지 않는 inbox 대신 asks 조회로 같은 경계를 확인한다. 정상/복귀 실제 응답과 종료 뒤 전송 없음 단언을 유지한다.
 - **착지 번호·호환.** 재개 착지 기준 origin/main `35ecad05`에서 마지막 §8.381·FRONT_API 1.91·AGENT_LINK 1.11·E2E71을 직접 확인했다. 이번 변경은 §8.382를 이어 쓰며 wire 변경·새 E2E 파일이 없어 기존 API 판과 E2E 번호를 유지한다.
 
-### 8.383 install 승인 시험의 자식 종료와 PTY 출력 종료(10-21, t-0485)
+### 8.383 「직접 설치」 안내: host 주소 후보·지문을 넣은 새 머신 명령(10-21, t-0578 웹 머신 추가 M1)
+
+- **요청.** t-0471 확정 기획의 M1(웹 등록 승인·폐기). 등록 창·대기·6자리 코드 승인·폐기·host 머신과 마지막 조작 기기 폐기 거부는 W5b(§8.355)가 이미 같은 요청으로 했다. M1에 남은 것은 SSH가 없는 머신을 위한 「직접 설치」 안내다: 새 머신에서 칠 명령을 웹이 실제 host 주소·이름으로 채운다(기획 §1.11. install 비대화 모드가 착지하면 그 한 줄로 바꾼다).
+- **proto(FRONT_API 1.92, 더하기만).** 조작 기기의 `enroll_guide` → `EnrollGuide{listen?, addresses[{address, source}], host_fingerprint, software}`. Reader는 거부한다(host 주소·지문). 읽기만이라 사람 판정 목록에는 넣지 않는다. 옛 host는 모르는 요청으로 거절하고 웹은 1.92 미만이면 묻지 않고 주소 칸을 직접 받는다. Agent link 변경 없음.
+- **주소 후보.** host가 실제로 연 `agent_listen`에서만 만든다: 모든 주소(0.0.0.0·[::])면 tailnet 이름(`tailscale status`)과 이 머신 이름, tailnet 주소(IPv4 100.64/10·IPv6 fd7a:115c:a1e0::/48)면 tailnet 이름과 그 주소, 다른 IP면 그 주소만(tailnet 이름은 그 IP가 아니다), loopback은 「이 host 머신 안에서만」으로 표시, 이름으로 연 설정은 그대로. 닫혀 있으면 빈 목록과 「agent_listen을 정한다」 안내.
+- **웹.** 설정 「머신」 → 「새 머신 등록」 아래 「직접 설치 안내」(펼칠 때 읽음): host 주소 고르기(옛 host는 입력), 새 머신 이름(host 규칙, 이미 있는 이름은 알림), 차례 ① 같은 판 설치 ② `aaa agent enroll <주소> --name <이름>` ③ 새 머신 화면의 host fingerprint 앞 16자 맞추기와 「승인…」 ④ `agent.toml`의 host ⑤ macOS 서비스 설치(다른 OS는 `aaa agent` 직접). 명령마다 「복사」. 쓸 수 없는 이름·주소 글자는 `<이름>`·`<host 주소>` 자리표시로 둬 틀린 명령이 복사되지 않는다.
+- **검증.** host 유닛 `enroll_guide::tests`(연 주소별 후보), proto `control_classification`(조작 기기만), 웹 유닛 `enrollGuide.test.mjs`, 웹 E2E `60-admin`(안내 명령을 화면에서 읽어 그대로 실행해 등록, 안내의 host 지문 = 새 머신 화면의 지문, 이미 있는 이름 알림, Reader에 안내 없음, 휴대폰 390 폭).
+- **번호·호환.** 착지 기준 origin/main `5211dd13`에서 마지막 §8.382·FRONT_API 1.91·AGENT_LINK 1.11·E2E71을 직접 확인해 §8.383·FRONT_API 1.92를 이어 쓴다. 새 E2E 파일은 없다(`60-admin`에 더함). AGENT_LINK 그대로.
+
+### 8.384 SSH로 머신 추가: 접속·host key 신뢰·OS 감지(10-21, t-0578 웹 머신 추가 M2)
+
+- **요청.** t-0471 확정 기획의 M2: host SSH 실행기, 대상 검증, host key 신뢰, OS·arch 감지(uname과 PowerShell), 설치 작업 기록과 사건. 원격에는 쓰지 않는다(설치·등록은 M3, install 비대화 모드 뒤). 사용자 결정 Q1(host에 이미 있는 SSH 키·설정만, 비밀번호 안 받음)·Q2(대상과 믿은 지문만 저장)·Q10(아무 대상, 처음 지문 확인).
+- **proto(FRONT_API 1.93, 더하기만).** `machine_setup_start{target}`·`machine_setup_trust{job, host_key_sha256}`·`machine_setup_choose{job, os, arch}`·`machine_setup_cancel{job}`은 조작 기기·aaa 세션 밖 사람만(§8.333 사람 판정 목록), `machine_setup_list`는 Reader도. 답 `MachineSetup{setup}`·`MachineSetups{setups}`, `MachineSetupView{job, target, phase, ssh{user,host,port,proxy_jump}, host_keys[{kind, sha256}], host_key_state(known|new|changed), detected{os, arch, raw, chosen, home, shell, aaa}, error, created_ms, updated_ms}`. 진행은 웹 `enroll` 사건(같은 「머신」 쪽이 듣는다). 옛 host는 모르는 요청으로 거절하고 웹은 1.91 미만이면 「SSH로 추가」를 그리지 않는다. Agent link 변경 없음.
+- **SSH.** host가 PATH의 `ssh`를 부른다(`[host] ssh_config`가 있으면 `-F`, 비우면 그 사용자의 ~/.ssh/config). 공통 `BatchMode=yes`·`ConnectTimeout=10`·`ClearAllForwardings`·`ForwardAgent=no`·`RequestTTY=no`. 대상은 별칭·`user@host:port`·`[v6]:port`만 받고 비밀번호(`user:pw@`)·`-`로 시작·공백·따옴표는 거부한다. 원격에서는 고정 감지 스크립트만 돈다. ControlMaster는 M2에서 쓰지 않는다(접속이 셋뿐이고 소켓 경로 길이 한도가 있다. M3에서 다시 본다).
+- **host key.** ① 빈 임시 known_hosts에 `StrictHostKeyChecking=accept-new`·`PreferredAuthentications=none`으로 접속해 상대가 내민 키만 받는다(인증하지 않아 원격에서 아무것도 돌지 않는다. ProxyJump도 같다). ② aaa 전용 `<state>/ssh/known_hosts`와 사용자 `~/.ssh/known_hosts`로 `StrictHostKeyChecking=yes` 접속: 아는 키면 바로 감지, 모르는 키면 「지문 확인」, 바뀐 키(`IDENTIFICATION HAS CHANGED`)면 멈춤(fail-closed). ③ 사람이 지문을 믿으면 받은 줄이 그 지문과 같을 때만 aaa 전용 known_hosts(0600)에 그 줄을 더한다. 사용자 known_hosts는 읽기만 한다. 지문은 `SHA256:<base64>`(ssh-keygen -l과 같다).
+- **감지.** `sh -c '…'`로 `uname -s`·`uname -m`·HOME·SHELL·aaa 판(PATH 또는 ~/.local/bin)을 표지 사이에 읽는다(원격 기본 셸이 csh·fish여도 된다). 표지가 없거나 MINGW·MSYS·CYGWIN·Windows면 `powershell -NoProfile -NonInteractive -EncodedCommand`(UTF-16LE)로 PROCESSOR_ARCHITECTURE·USERPROFILE·%LOCALAPPDATA%\aaa\bin\aaa.exe 판을 읽는다. 그래도 모르면 「OS 고르기」(release 대상 다섯). 대상에 없는 조합은 「지원 안 함」.
+- **작업.** host DB `machine_setups`(JSON, 최근 20개)와 감사 `machine_setup_start|trust|choose|cancel`. 단계: 접속 중 → 지문 확인 → OS 감지 중 → 준비됨(또는 OS 고르기·지원 안 함·실패). 단계를 바꿀 때는 그 단계일 때만 쓴다(그사이 지운 작업은 되살리지 않는다). host가 진행 중에 다시 시작하면 그 작업은 「멈췄다」로 끝나고 새로 시작한다.
+- **웹.** 설정 「머신」 → 「SSH로 추가」: 대상 칸(비밀번호 꼴·공백은 보내기 전에 막음)과 「접속 시험」, 작업마다 대상·단계·`user@host:port`(ProxyJump)·까닭, 지문 확인 단계는 키 종류·지문과 「이 지문을 믿음…」(확인 창에 지문과 「그 머신에서 ssh-keygen -lf로 맞춘다」), OS 고르기, 준비됨이면 OS·CPU·HOME·셸·aaa 판과 「설치는 다음 단계」, 「지우기」. 보기 기기는 목록·단계만.
+- **Windows runner.** 실험실 시험은 Unix만 돈다. `windows_runner_reports_whether_an_openssh_server_exists`가 windows-2025 CI 로그에 sshd.exe 유무를 적는다(계획 M2 확인 항목, M4 시험 방식을 정한다). 착지 뒤 CI 로그로 판정한다.
+- **검증.** host 유닛 `machine_setup::tests`(대상·`ssh -G`·지문·감지 출력·스크립트·까닭, 고름·멈춤 복구, 그리고 실험실 sshd로 처음 키 → 세션 안·Reader·다른 지문 거부 → 믿음 → 감지 → 아는 키 바로 감지 → 닫힌 포트 → 바뀐 키 멈춤 → 목록·지우기), 웹 유닛 `machineSetupModel.test.mjs`, 웹 E2E `72-machine-add`.
+- **번호·호환.** 착지 기준 origin/main `6f7b4bd2`(M1 병합)에서 마지막 §8.383·FRONT_API 1.92·AGENT_LINK 1.11·E2E71을 직접 확인해 §8.384·FRONT_API 1.93·E2E72를 이어 쓴다. AGENT_LINK 그대로. `[host] ssh_config`는 비우면 예전과 같다.
+
+### 8.385 병합 대기·착지 중 thread의 실행 자리(t-0594, d-0028)
+
+- **목적·판정.** 일을 마치고 착지 창만 기다리는 Worker는 새 구현 자리를 막지 않는다. host가 해시 검증해 회수한 보고 **첫 줄**의 `[병합 준비됨]`은 `merge_ready`/「병합 대기」, `[착지]`는 `landing`/「착지 중」이다. 보고 해시와 같은 DB 갱신에서 단계를 저장한다. harness 묶음·진행률·알림 의도·질문 판정과 분리하며 ack는 단계를 바꾸지 않는다. 보고 사본 회수 실패는 마지막으로 확인한 단계를 유지한다.
+- **경계.** 첫 줄 맨 앞의 표지와 공백 경계를 요구한다(BOM·CRLF 허용). 표지 없는 옛 보고·본문의 표지·`[완료]`·`[진행 중]`·붙여 쓴 제목은 일반 작업이다. `[완료][병합 준비됨]`, `[완료] [병합 준비됨]`, 반대 순서 등 중복은 제외 근거로 쓰지 않는다. 단계 표지 직후 첫 제목이 `[`로 시작해도 모호하므로 일반 작업으로 센다. 표지는 하나만 쓴다. 배포 전 회수한 보고는 host 시작 때 해당 프로젝트의 해시가 맞는 사본으로 단계를 보충한다. 사본이 없거나 해시가 다르면 보수적으로 센다.
+- **한도·원자성.** 기존 자동화 제외를 유지하고 병합 대기 전부와 착지 **최대 한 자리**를 사용자 Worker 한도·예약 자리에서 뺀다. 중복 착지 표지가 있어도 두 번째부터는 작업으로 세므로 한도를 더 넓히지 않는다. 실제 착지 시작 직렬화는 coordinator의 착지 창 운영이 맡으며 보고 표지로 명령 실행을 제어하지 않는다. Starting은 센다. resolve 정리 중에는 직전 단계를 유지하고 정리 확정 뒤 표지를 지운다. DB 선점·예약 dispatch·미리보기·재시작·다시 열기·context가 같은 DB 계산을 쓴다.
+- **작업 복귀.** 착지 검증 실패를 고칠 때는 `[착지]`를 유지한다. 착지를 그만두거나 다단계 작업의 다음 구현을 시작하면 `[진행 중]`으로 바꿔 다시 센다. 한도 초과가 되어도 기존 프로세스는 멈추지 않으며 다음 기동만 막는다. 자동화의 규칙별 동시 상한·측정 표지는 이 단계와 무관하게 원래 자리를 유지한다.
+- **표시·호환.** 웹 할 일(연결·미연결)·예약·사이드바의 두 줄/한 줄 모드·모든 thread·상세 제목 앞에 「병합 대기」 초록, 「착지 중」 주황 글 표지를 붙인다. 작업 파랑·예약 보라·자동화 출처 막대와 구별한다. 단계 사건은 열린 할 일 board도 다시 읽게 하여 예약과 미연결 줄을 갱신한다. CLI `thread list/show`·`task queue`·`context`도 같은 말을 쓴다. FRONT_API 1.94의 선택 `ThreadView.stage`·`TaskThread.stage`·`TaskReservation.stage`를 더하며 옛 host의 생략은 기존 표시다. AGENT_LINK 1.11 유지, 새 요청·E2E 파일 번호는 없다.
+- **기준·검증.** 사용자 재개 지시의 origin/main `35ecad05`에서 시작했다. 기존 §8.381·FRONT_API 1.91·E2E71을 확인하고 이 절/API만 이어 쓴다. host 유닛은 표지 경계·옛 JSON/사본 이행·중복 착지 상한·동시 DB 선점·작업 복귀를 검사한다. m13은 실제 보고 회수 사건에 따른 연속 예약 기동과 CLI·ack·host 재시작을 검사한다. 기존 E2E67은 데스크톱/휴대폰 할 일·사이드바·모든 thread·예약 표지를 검사한다. 절차는 [시험](testing.md)의 t-0594 절을 따른다.
+
+- **착지 번호 대조.** 착지 창 기준 origin/main `0b5d4800`에서 마지막 §8.384·FRONT_API 1.93·AGENT_LINK 1.11·E2E72를 직접 확인했다. 기존 절과 머신 추가 API를 보존하며 이 기능은 §8.385·FRONT_API 1.94로 맞춘다. 기존 E2E67 확장을 유지하고 E2E72는 머신 추가에 그대로 둔다.
+
+
+### 8.386 보고서 판별 r-ID와 자동화 실행 이름(t-0576, 2단계)
+
+- 보고마다 프로젝트별 r-0001부터 영속 순번을 발급한다. 예약부터 내구 원장에 쓰고 준비된 판만 노출한다. 실패한 예약·삭제한 판의 번호도 다시 쓰지 않는다. 예전에 r-NNNN을 이름으로 쓴 보고서는 번호를 건너뛰어 호환한다. q 원장과 r 원장은 프로젝트 export·이름 변경에도 함께 보존한다.
+- coordinator `library publish`는 같은 이름 재발행도 새 판이다. thread는 보고 변경과 마지막 결과물 사본 변경 때 본문·파일 목록·복사 파일을 불변 r 사본으로 남긴다. 기존 host의 보존 가능한 최신 판은 첫 기동 때 한 번 등록한다. 과거 판을 추측해 복원하지 않는다.
+- 기존 이름·t 번호는 최신 판을 연다. r 번호는 특정 판이다. `aaa library show/open`·`library link`·`thread library`·thread 원문의 `thread show`가 r을 받는다. 목록·보고 머리·작업 보고·inbox 새 보고·CLI에 번호를 표시하고 웹 `#report=r-NNNN`·`aaa:report/r-NNNN`과 판 선택으로 지난 판을 연다. 사용자 보고 알림도 그 판의 r 참조를 담는다. 재발행은 새 판의 새 알림이고 같은 r post를 새 전송 ID로 재송신하면 기존 24시간 중복 거부가 유지된다.
+- 원래 library 복사 상한을 지킨다. agent에만 남긴 큰 파일은 옛 r 판에서 최신 agent 파일로 대체하지 않고 읽지 못한 까닭을 보인다. live 이름은 실시간이며 r은 등록 당시 사본이다. 기존 t·이름의 최신 보기에서는 agent 큰 파일 읽기를 유지하고, r 번호는 최신 agent 파일을 읽지 않는다.
+- 보존 용량은 최신 사본과 r 사본을 모두 센다. 일반 정리는 기존 이름 단위로 모든 판·링크를 정리하며 진행 중 thread·완료 보관 보호를 유지한다. live 원본은 용량 밖이고 host에 남긴 live 판은 보호 용량이다. 명시 지우기는 이름·r 모두 같은 보고서 전체의 모든 판을 지운다. 웹 확인창·CLI 설명에 이를 적는다.
+- 옛 CI `mission_next_input("r")` 생성은 A4에서 이미 없어졌다. 현재 자동화 새 입력은 `run-<hash>`(N-1 agent의 64자 이름 상한 안), 내부 묶음 영수증은 전체 hash를 유지한다. 저장된 옛 inflight의 파일 이름·processed.txt는 재개 때 유지한다. 생성 안내는 새 실행 참조에 run을 쓰고 보고 r 번호와 구별한다. 운영 기억·설정·과거 원문은 고치지 않는다.
+
+FRONT_API 1.95은 report_id·versions·history_size 선택 호환을 더한다. Agent link 변경은 없다. E2E 73은 새 판·원문·그림·기존 이름·r 링크·Reader·휴대폰 머리를, E2E 49는 실제 새 run 파일과 처리 영수증을 검사한다. 추가된 질문 안 자료 보기·기본 검수 질문은 이어지는 3단계다.
+
+
+### 8.387 볼 자료와 답을 한 질문 카드에(t-0576, 3단계)
+
+- 질문 카드 머리의 ‘보고서 열기’는 해당 r 판과 Questions 본문·선택지 안의 보고서 링크를 찾는다. 같은 Markdown 파서로 표·목록 안 링크도 읽고 코드 예시·그림·API·로컬 절대 경로·실행 scheme은 자료 링크로 만들지 않는다. 그림은 기존 질문 본문에 바로 보인다.
+- 자료를 열어도 질문 화면·고른 선택·쓴 답은 유지한다. HTML은 기존 보고서와 같은 sandbox로 카드 안에, Markdown과 그 그림도 카드 안에 그린다. 음원·영상은 자동 재생 없이 controls로 연다. 외부 페이지가 frame을 거부하면 ‘새 창’ 링크를 쓸 수 있다. 보고서 HTML의 그림 크게 보기는 기존 제한된 메시지 bridge를 재사용한다.
+- Questions가 없는 `[검수 대기]` 보고는 host가 ‘검수: A 좋음, 진행 / B 고칠 점 있음(글로)’ 질문을 만든다. A는 자동 선택·추천하지 않는다. B는 글이 있어야 보내고 웹·CLI 모두 같은 조건이다. 명시한 Questions를 바꾸지 않으며 보고 원문을 고치지 않는다. 기존 열린 검수 보고도 실제 host 기동 때 보완한다.
+- 검수도 기존 q-ID·답 기록·thread 전달을 쓴다. 답한 기록은 그때의 r-ID를 보존하므로 새 보고 뒤에도 카드에서 옛 판을 연다. coordinator 안내는 사용자에게 묻거나 검수를 맡길 때 Questions를 쓰고 볼 보고서·시안·음원 링크를 질문 안에 놓게 한다.
+- 보고 판의 첫 등록은 실제 host 기동 경계에만 두며, 같은 state DB에 있는 thread·보고서만 대상으로 한다. 다른 state의 파일은 채택하지 않는다. 일반 Host::open은 보고 파일을 등록하지 않는 회귀를 둔다.
+
+FRONT_API 1.96는 기본 검수 표지와 답 기록의 r 참조를 더한다. E2E 74은 coordinator의 보고서·그림·음원, 1280px/390px 밝음·어두움, Questions 없는 실제 thread 검수 카드와 B 글 검증·다음 보고 뒤 옛 시안 보존을 검사한다.
+
+착지 기준 origin/main `183ebbd6`의 마지막 §8.385·FRONT_API 1.94·AGENT_LINK 1.11·E2E72를 확인했다. 기존 번호를 보존하고 이번 2·3단계는 §8.386·8.387·FRONT_API 1.95·1.96·E2E73·74로 맞춘다.
+
+### 8.388 할 일 머신 연결 목록 갱신(t-0600)
+
+- 할 일 화면의 `assignable`을 처음 한 번만 읽어, agent가 잠깐 끊긴 동안 받은 상태가 복귀 뒤에도 남던 문제를 고친다.
+- host 상태 사건의 머신 ID·이름·연결 상태가 바뀌거나 할 일 화면·상세·바로 시작 창을 열면 목록을 다시 읽는다. 모델·머신 선택 칸에 focus가 와도 다시 읽는다. 통계·pane 변화만으로는 재조회하지 않는다.
+- 새 조회나 화면 숨김 뒤 돌아온 옛 응답은 버린다. 조회 실패는 마지막 목록을 유지하며 제목·메모 등 고치던 폼을 다시 만들지 않는다.
+- E2E75는 실제 agent가 끊긴 동안 Chromium 1280px·WebKit 390px에서 처음 상세를 연 뒤, 복귀·재단절·두 번째 복귀의 선택 가능 상태와 편집 제목 보존을 확인한다. 상세·선택·시작의 실제 재조회도 검사한다.
+- 착지 기준 origin/main `0385f434`의 마지막 §8.387·FRONT_API 1.96·E2E74를 직접 확인했다. 이 수정은 §8.388·E2E75로 맞춘다. backend·프로토콜 변경이 없어 FRONT_API 1.96은 유지한다.
+
+### 8.389 사용자 지시로 coordinator가 task 모델·머신 변경(t-0609)
+
+- **목적.** 모델·머신 보호는 실행할 때의 임의 변경·하향을 막는다. 사용자가 채팅에서 변경을 지시한 경우 coordinator가 적힌 값을 고칠 수 있다.
+- **계약.** FRONT_API 1.97의 `task_edit.user_request?: string | null`과 CLI `aaa task edit <ID> --profile … --machine … --user-request '<사용자 지시 근거>'`를 더한다. 근거는 공백 제거 뒤 비지 않은 한 줄·2000바이트 이하이며 제어 문자를 거부한다. 한 task의 Update에서 profile·machine만 편집할 수 있다. 일반 편집·웹 경로와 세션의 프로젝트별 coordinator 권한은 유지한다. AGENT_LINK 변화·새 E2E 번호는 없다.
+- **예약.** 명시한 지시 편집은 dispatch와 같은 queue gate, 최신 TASKS.md 파일 잠금 안에서 검사한다. 미기동 예약의 승인판이 지금 블록과 같을 때만 새 선택·profile/model/effort/revision·machine·task 사본·승인판을 함께 갱신하고 순서·생성 시각을 유지한다. 머신만 바꾸면 예약 때 고정한 기본 모델과 모델 설정 판도 유지한다. 다른 내용이 이미 바뀌었으면 거부한다. Starting/Running과 기동 이력이 있는 Check는 거부한다. Cancelled는 선택 출처만 바꾸고 재예약하지 않는다. 파일 저장 뒤 DB 갱신 실패 시 새 블록과 옛 승인판의 불일치가 자동 기동을 막는다.
+- **기록.** task log와 예약 선택·변경 이력의 actor에 원래 coordinator와 사용자 지시 근거를 함께 남긴다. 보이는 이름은 「coordinator가 사용자 지시로 변경: …」이다. 감사 `task_choices_user_request`는 원래 actor와 근거·변경 파일 hash를 남긴다. 이유 없는 편집·RawSave·직접 파일 수정의 재승인·시작 시 owner와 다른 옵션·재시작 시 profile 변경 보호를 유지한다.
+- **안내·검증.** 생성 coordinator AGENTS.md는 사용자 지시가 있으면 명시 옵션으로 고치고 예약을 취소하지 않도록 안내한다. host 유닛은 근거·작업 범위·낡은 승인판·기동 후 거부·기본값 변경을 검사한다. 실제 coordinator CLI m13 keeper는 이유 없는 변경·시작/재시작 우회 거부, 예약과 취소 상태 유지, 로그, host 재시작 뒤 새 값 기동을 검사한다. 착지 창 기준 origin/main `0920dfc2`에서 마지막 §8.388·FRONT_API 1.96·E2E75를 직접 확인했다. 이 기능은 §8.389·FRONT_API 1.97로 맞추며 E2E75는 보존하고 새 E2E 파일 번호는 추가하지 않는다. 통합 후보의 전체 ci-local·공개 검사 뒤 병합한다.
+
+- **착지 통합 수리.** E2E46에서 owner 재조회 응답이 이름을 아직 쓰지 않은 사람 선택을 초기화했다. 이 상태도 편집 중으로 보존해 사람 이름 칸이 사라지지 않게 한다. 실제 owner 요청을 사람 선택 뒤로 보류하는 keeper로 수정 전 실패·수정 후 통과를 확인하며 §8.388의 연결 갱신을 유지한다.
+
+### 8.390 할 일 로그·FD 회수의 CI 경쟁 수리(t-0612)
+
+- 할 일 편집 keeper의 직접 파일 쓰기가 truncate와 write 사이에 ticker에 읽히면 삭제·추가 로그가 생겼다. 같은 폴더 임시 파일을 완성한 뒤 rename하고, 교체 전 실제 tick을 끝내는 순서에서도 마지막 편집이 해당 task의 수정 한 건인지 검사한다. 충돌·원문 바이트·되살리기·권한 검사는 유지한다.
+- resource_limits의 실제 384개 연결·OS fd 회수는 유지하며, 회수 대기와 연결 수 단언에 같은 여유 2개를 적용한다. CI의 `400 → 18`은 허용하고 여유 3개와 예전 256개 상한은 거부하는 경계 시험을 둔다.
+- 착지 기준 origin/main `029793c3`의 마지막 §8.389·FRONT_API 1.97·AGENT_LINK 1.11·E2E75를 직접 확인했다. 시험·문서 수리이므로 이 절만 §8.390으로 더하고 API 버전과 기존 E2E 번호를 유지한다. 시한 연장·고정 sleep·실패 무시 없이 원인을 RED로 재현하고 전체 ci-local·공개 검사로 확인한다.
+
+### 8.391 install 승인 시험의 자식 종료와 PTY 출력 종료(10-21, t-0485)
 
 - **원인·범위.** Windows CI는 승인서 발급·설치 ID 출력 뒤에도 시험 소유 ConPTY의 EOF를 기다렸다. `portable-pty` master가 출력 pipe의 소유자를 유지하므로 자식 종료만으로 EOF가 오지 않는다. 제품 worker의 stdio는 이미 pipe/null이며 이 수리는 시험 터미널에 한정한다.
 - **종료 계약.** Unix `waitid(WEXITED | WNOWAIT)`와 Windows 복제 process handle의 종료 사건을 reader와 같은 채널로 받는다. 실제 자식을 wait한 뒤 master를 닫고 reader의 마지막 출력까지 모은다. 출력이 먼저 닫혀도 자식 종료를 기다리며 총 상한 60초·기존 승인/취소/비밀 비노출/worker 수명 단언은 유지한다. 상한 진단 끝에는 자식 종료 코드 유무와 reader 완료도 남긴다.
 - **회귀 owner.** 실제 PTY와 실제 UnixStream writer의 보관 수명으로 ConPTY의 EOF 지연을 Unix에서 재현한다. 기존 helper는 자식이 끝나고 마지막 출력까지 나와도 60초 RED다. 수리 뒤 같은 종료 코드와 300줄 전부를 수집해 GREEN이다. Windows의 기존 install owner들은 실제 ConPTY를 계속 사용한다.
-- **판정 한계·번호.** macOS CI의 yes 직후 무출력은 Windows의 완료 출력 뒤 EOF 대기와 구별한다. 로컬의 실제 CLI는 yes 뒤 계획 SHA 재검증 스택을 거쳐 승인서 발급·정상 종료했으며 macOS CI 원인은 아직 확정하지 않는다. target이 기록되지 않은 15분 job 종료도 install로 단정하지 않는다. 실제 Windows/macOS CI 판정은 착지 뒤 결과로 확인한다. 기준 main `5211dd13`의 §8.382 뒤를 쓰며 FRONT_API 1.91·AGENT_LINK 1.11·웹 E2E71은 유지한다.
+- **판정 한계·번호.** macOS CI의 yes 직후 무출력은 Windows의 완료 출력 뒤 EOF 대기와 구별한다. 로컬의 실제 CLI는 yes 뒤 계획 SHA 재검증 스택을 거쳐 승인서 발급·정상 종료했으며 macOS CI 원인은 아직 확정하지 않는다. target이 기록되지 않은 15분 job 종료도 install로 단정하지 않는다. 실제 Windows/macOS CI 판정은 착지 뒤 결과로 확인한다. 착지 기준 origin/main `35f6ce96`의 마지막 §8.390·FRONT_API 1.97·AGENT_LINK 1.11·E2E75를 직접 확인했다. 이번 수리는 §8.391로 옮기며 API 판과 기존 웹 E2E 번호는 유지한다.
+
+- **다음 단계.** 이 수리 착지 뒤에는 macOS I3의 승인된 `apply --service launchd` 감독자를 Windows bootstrap보다 먼저 구현한다. 웹 머신 추가 M3가 현재 `unsupported_service_platform` 경계를 기다린다. Windows bootstrap·사용자 Windows PC 인수·Linux I4·최종 I7은 그 뒤다.

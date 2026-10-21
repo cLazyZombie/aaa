@@ -263,7 +263,7 @@ impl Host {
             done: None,
             repo: None,
         };
-        let why = match self.task_edit(project, vec![op], None, actor).await {
+        let why = match self.task_edit(project, vec![op], None, None, actor).await {
             Ok(FrontResponse::TaskEdited { conflict: None, .. }) => return None,
             Ok(FrontResponse::TaskEdited { conflict: Some(c), .. }) => c.reason,
             Ok(_) => "모르는 응답".into(),
@@ -364,7 +364,7 @@ impl Host {
         let unlinked_threads = open
             .into_iter()
             .filter(|t| t.automation.is_none() && !linked.contains(&t.id))
-            .map(|t| TaskThread { id: t.id, title: t.title, group: t.group })
+            .map(|t| TaskThread { id: t.id, title: t.title, group: t.group, stage: t.stage })
             .collect();
         let notes_files = self.settings(project).task_notes.iter().map(|p| notes_file(&dir, p)).collect();
         Ok(TaskBoard {
@@ -404,6 +404,7 @@ impl Host {
         project: &str,
         mut ops: Vec<TaskOp>,
         base_sha256: Option<String>,
+        user_request: Option<String>,
         actor: &str,
     ) -> Result<FrontResponse, ErrorBody> {
         let dir = self.project_dir(project)?;
@@ -418,6 +419,19 @@ impl Host {
 
         if ops.is_empty() {
             return Err(bad("동작이 없다"));
+        }
+        let user_request = user_request.as_deref().map(str::trim);
+        if let Some(reason) = user_request {
+            if reason.is_empty() || reason.len() > 2000 || reason.chars().any(char::is_control) {
+                return Err(bad("사용자 지시 근거는 비지 않은 한 줄(2000바이트 이하)로 쓴다"));
+            }
+            if !matches!(ops.as_slice(), [TaskOp::Update {
+                profile, machine, owner: None, person: false, title: None, notes: None,
+                thread: None, done: None, repo: None, ..
+            }] if profile.is_some() || machine.is_some())
+            {
+                return Err(bad("--user-request는 한 task의 --profile·--machine 변경에만 쓴다. 다른 칸은 따로 고친다"));
+            }
         }
         // 「답할 것」의 할 일 확인 필요(plan §8.345): 이 편집으로 풀린 것을 기록에 남긴다
         let attention_before: Vec<(String, String, Option<String>)> = self
@@ -434,6 +448,8 @@ impl Host {
             _ => false,
         });
         let owners = if checks_owner { self.assignable(project).await } else { Vec::new() };
+        // 예약 dispatch와 같은 문으로 직렬화하여 옛 값으로 시작하는 틈을 막는다.
+        let _queue_guard = if user_request.is_some() { Some(self.queue_gate.lock().await) } else { None };
         let owner_ok = |o: &str, person: bool| -> Result<(), String> {
             if person {
                 return tasks::check_person(o);
@@ -459,7 +475,8 @@ impl Host {
         let repo_ok = |r: &str| self.task_repo_ok(project, r);
         let profiles = self.known_profiles(project);
         let ctx = task_edit::Ctx { owner_ok: &owner_ok, profiles: &profiles, repo_ok: &repo_ok, removed: &removed };
-        let (conflict, log_ids) = self.task_write(project, &dir, &ops, base_sha256.as_deref(), &actor, &ctx, false)?;
+        let (conflict, log_ids) =
+            self.task_write_requested(project, &dir, &ops, base_sha256.as_deref(), &actor, &ctx, false, user_request)?;
         let board = self.task_board(project)?;
         for (title, why, thread) in &attention_before {
             let now = tasks::find(&board.tasks, title);
@@ -495,6 +512,23 @@ impl Host {
         ctx: &task_edit::Ctx,
         auto: bool,
     ) -> Result<(Option<WriteConflict>, Vec<i64>), ErrorBody> {
+        self.task_write_requested(project, dir, ops, base_sha256, actor, ctx, auto, None)
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn task_write_requested(
+        &self,
+        project: &str,
+        dir: &Path,
+        ops: &[TaskOp],
+        base_sha256: Option<&str>,
+        actor: &str,
+        ctx: &task_edit::Ctx,
+        auto: bool,
+        user_request: Option<&str>,
+    ) -> Result<(Option<WriteConflict>, Vec<i64>), ErrorBody> {
+        let log_actor = user_request.map(|reason| format!("{actor} (사용자 지시: {reason})"));
+        let log_actor = log_actor.as_deref().unwrap_or(actor);
         let path = dir.join("TASKS.md");
         let lock = self.file_locks.of(&path);
         let guard = lock.lock().unwrap();
@@ -534,8 +568,12 @@ impl Host {
                                 .collect();
                         }
                     }
-                    self.protect_task_choices(&rev.text, &a.text, actor)?;
-                    for r in &a.records {
+                    if user_request.is_some() {
+                        self.check_requested_task_choices(project, &rev.text, &a.text)?;
+                    } else {
+                        self.protect_task_choices(&rev.text, &a.text, actor)?;
+                    }
+                    for r in a.records.iter().filter(|_| user_request.is_none()) {
                         if r.action == TaskAction::Update {
                             self.protect_task_choices(
                                 r.before.as_deref().unwrap_or_default(),
@@ -637,7 +675,11 @@ impl Host {
         })?;
         let mut log_ids = Vec::new();
         if let Some(after) = &saved.after {
-            self.record_task_choices(project, &saved.before.text, &after.text, actor)?;
+            if user_request.is_some() {
+                self.record_requested_task_choices(project, &saved.before.text, &after.text, log_actor)?;
+            } else {
+                self.record_task_choices(project, &saved.before.text, &after.text, actor)?;
+            }
             if auto {
                 self.archive_recover(project)?;
             }
@@ -657,7 +699,7 @@ impl Host {
                 }
             }
             for r in &saved.out {
-                match self.db.task_log_add(project, now, actor, r) {
+                match self.db.task_log_add(project, now, log_actor, r) {
                     Ok(id) => log_ids.push(id),
                     Err(e) => tracing::warn!(error = %e, "할 일 기록 실패"),
                 }
@@ -680,8 +722,20 @@ impl Host {
             self.tick_wake.notify_one();
             self.db.audit(
                 actor,
-                if auto { "task_auto_clean" } else { "task_edit" },
-                &format!("{project} ops={} sha={}→{}", ops.len(), saved.before.sha256, after.sha256),
+                if user_request.is_some() {
+                    "task_choices_user_request"
+                } else if auto {
+                    "task_auto_clean"
+                } else {
+                    "task_edit"
+                },
+                &format!(
+                    "{project} ops={} sha={}→{}{}",
+                    ops.len(),
+                    saved.before.sha256,
+                    after.sha256,
+                    user_request.map(|r| format!(" 사용자 지시: {r}")).unwrap_or_default()
+                ),
             );
         } else {
             drop(guard);
@@ -809,6 +863,13 @@ const FILE_ACTOR: &str = "file";
 
 /// 기록 actor → 보이는 이름: 기기 이름·coordinator·터미널·파일 직접·host 자동 정리
 fn task_actor_label(actor: &str, devices: &[crate::db::DeviceRow]) -> String {
+    if let Some((by, reason)) = actor.split_once(" (사용자 지시: ") {
+        return format!(
+            "{}가 사용자 지시로 변경: {}",
+            task_actor_label(by, devices),
+            reason.strip_suffix(')').unwrap_or(reason)
+        );
+    }
     if actor == FILE_ACTOR {
         return "파일 직접".into();
     }

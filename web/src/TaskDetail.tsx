@@ -152,6 +152,8 @@ export interface DetailProps {
   canEdit: boolean;
   /** 맡길 수 있는 owner(host `assignable`, 읽기 전이면 없음) */
   owners: OwnerChoice[] | null;
+  /** 모델·머신 칸을 고르려 할 때 host 목록을 다시 읽는다 */
+  onRefreshOwners?: () => void;
   /** 새 task 폼의 처음 값(「+ 할 일」·「하위 task 더하기」·「할 일로 옮기기」) */
   start: TaskDraft | null;
   /** 최근 기록(기록 한 줄·지난 thread) */
@@ -343,7 +345,9 @@ function TaskForm(props: DetailProps) {
   const [error, setError] = useState<string | null>(null);
   const submitting = useRef(false);
   // 고쳤는지는 보낼 동작이 있는지로 본다: owner 목록이 늦게 와 agent·사람 구분만 달라진 폼은 손대지 않은 폼이다
-  const dirty = base ? draftOps(base, draft, baseParent).length > 0 : draft.title.trim() !== "";
+  // 사람을 고른 직후에는 아직 저장할 owner가 없어도 편집 중이다. 늦은 목록이 이름 칸을 지우지 않게 한다.
+  const emptyPerson = draft.who === "person" && draft.person.trim() === "";
+  const dirty = base ? emptyPerson || draftOps(base, draft, baseParent).length > 0 : draft.title.trim() !== "";
   const rebase = (x: TaskView) => {
     const p = parentAnchor(board, x);
     setBase(x);
@@ -694,7 +698,7 @@ function TaskForm(props: DetailProps) {
           <>
             <label className="task-field">
               <span>모델</span>
-              <select className="input" value={draft.profile} disabled={busy} title="자동: 시작할 때 프로젝트 기본 profile" onChange={(e) => set({ profile: e.target.value })} data-testid="task-field-profile">
+              <select className="input" value={draft.profile} disabled={busy} title="자동: 시작할 때 프로젝트 기본 profile" onFocus={props.onRefreshOwners} onChange={(e) => set({ profile: e.target.value })} data-testid="task-field-profile">
                 <option value="">자동</option>
                 {models.map((p) => (
                   <option key={p} value={p}>
@@ -706,7 +710,7 @@ function TaskForm(props: DetailProps) {
             </label>
             <label className="task-field">
               <span>머신</span>
-              <select className="input" value={draft.machine} disabled={busy} title="자동: 시작할 때 그 저장소가 있는 머신 중 덜 붐비는 곳" onChange={(e) => set({ machine: e.target.value })} data-testid="task-field-machine">
+              <select className="input" value={draft.machine} disabled={busy} title="자동: 시작할 때 그 저장소가 있는 머신 중 덜 붐비는 곳" onFocus={props.onRefreshOwners} onChange={(e) => set({ machine: e.target.value })} data-testid="task-field-machine">
                 <option value="">자동</option>
                 {machines.map((m) => (
                   <option key={m.value} value={m.value} disabled={m.disabled}>

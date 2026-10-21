@@ -59,7 +59,7 @@ host는 프로젝트 하나만 맡으므로 명령의 프로젝트 인자는 생
 | `aaa project create <p> --goal "…" --repo <경로>[@머신] --thread-profile codex` · `aaa context` | 프로젝트 만들기 · coordinator 요약(할 일·열린 thread·inbox). host는 보관하지 않은 프로젝트 하나만 맡는다: 둘째 만들기는 거부하고(§8.285), 둘 이상이면 다시 띄울 때 시작하지 않고 줄일 목록을 말한다(§8.283). 인스턴스에서는 이름을 생략하면 인스턴스 이름이다(§8.294) |
 | `aaa set <key> <값>` | 설정 값 하나 바꾸기(aaa.toml, 없으면 project.toml: goal·thread_profile·coordinator_profile·max_parallel_threads·auto_resolve_days·repos.add·repos.remove, workspaces.add·remove도 같다, task_notes.add·remove: 할 일 화면 「나중」 탭이 읽는 프로젝트 폴더 안 Markdown) |
 | `aaa task list` | 할 일 목록(TASKS.md) 읽기: 목록별 task ID(`d-0001`)·제목, 형식 어긋남, task 없는 열린 thread, 「나중」 파일. 웹은 활동 막대 「할 일」(§8.306) |
-| `aaa task add "<제목>" [--list 목록] [--profile 모델] [--machine 머신] [--owner me\|이름] [--repo 저장소]` · `aaa task edit <task ID\|제목> [--title …] [--profile …] [--machine …] [--owner …] [--repo …] [--thread t-NNNN]` · `aaa task move\|rm <task ID\|제목>` · `aaa task restore <task ID\|기록 id>` · `aaa task log [task ID\|제목]` | 할 일 고치기: 바뀐 task 줄만 다시 쓰고 나머지 줄은 그대로 둔다. `--block <sha256>`이면 그 판의 블록으로 고정하고, 그사이 바뀌었으면 쓰지 않는다(충돌). 지운 task는 기록에서 되살린다. `--repo`는 저장소 칸(project.toml repos 경로나 그 마지막 이름, 또는 `작업 폴더`, §8.330)이고 `--from-task`가 그 저장소로 띄운다. `--profile`·`--machine`은 agent에게 맡길 모델·머신 칸이고(§8.335, 줄에는 `(모델@머신)`으로 적는다) 칸마다 따로 고친다(빈 글이면 그 칸만 비운다). 사람의 할 일은 `--owner me`(사람 이름은 `--person`)이다. 목록은 `aaa task list-add\|list-rename\|list-merge\|list-rm\|list-move`. aaa 세션 안에서는 그 프로젝트 coordinator만 고친다. 웹은 할 일 화면의 폼·⋯ 메뉴·「기록」 탭(§8.311) |
+| `aaa task add "<제목>" [--list 목록] [--profile 모델] [--machine 머신] [--owner me\|이름] [--repo 저장소]` · `aaa task edit <task ID\|제목> [--title …] [--profile …] [--machine …] [--user-request 근거] [--owner …] [--repo …] [--thread t-NNNN]` · `aaa task move\|rm <task ID\|제목>` · `aaa task restore <task ID\|기록 id>` · `aaa task log [task ID\|제목]` | 할 일 고치기: 바뀐 task 줄만 다시 쓰고 나머지 줄은 그대로 둔다. `--block <sha256>`이면 그 판의 블록으로 고정하고, 그사이 바뀌었으면 쓰지 않는다(충돌). 지운 task는 기록에서 되살린다. `--repo`는 저장소 칸(project.toml repos 경로나 그 마지막 이름, 또는 `작업 폴더`, §8.330)이고 `--from-task`가 그 저장소로 띄운다. `--profile`·`--machine`은 agent에게 맡길 모델·머신 칸이고(§8.335, 줄에는 `(모델@머신)`으로 적는다) 칸마다 따로 고친다(빈 글이면 그 칸만 비운다). 사람의 할 일은 `--owner me`(사람 이름은 `--person`)이다. 목록은 `aaa task list-add\|list-rename\|list-merge\|list-rm\|list-move`. aaa 세션 안에서는 그 프로젝트 coordinator만 고친다. 웹은 할 일 화면의 폼·⋯ 메뉴·「기록」 탭(§8.311) |
 | `aaa coordinator open [--profile 이름] [--new]` | coordinator 열기: 돌고 있으면 그 pane을 알리고, 없으면 host 머신에서 프로젝트 폴더로 띄워 workspace `<p>`의 탭 coordinator에 둠(profile 기본: project.toml → `aaa profile default coordinator` → claude) |
 | `aaa project pause\|resume\|archive` · `aaa project unarchive <p>` | 멈추기(ticker·thread start 멈춤) · 보관(목록에서 숨기고 pane을 닫음). 보관 해제는 다른 활성·멈춤 프로젝트가 없을 때만 가능 |
 | `aaa project rename <새 이름>` · `aaa project delete` · `aaa project sweep` | 이름 바꾸기 · 휴지통으로(worktree·branch는 그대로) · 끝난 thread가 남긴 worktree·병합된 branch 치우기 |
@@ -134,12 +134,28 @@ aaa work-root set '/Volumes/<disk>/aaa-work' --mount '/Volumes/<disk>'
 `aaa task queue-move <task ID> <순번>`으로 차례를 바꾼다(1부터, 0은 맨 앞).
 내용을 고쳤으면 확인 후 같은 `reserve` 명령으로 승인판을 갱신한다. 파일 직접 수정도 이전 승인으로 시작하지 않는다.
 
+보고 첫 줄 `[병합 준비됨]`은 「병합 대기」(초록), `[착지]`는 「착지 중」(주황)으로 웹 할 일·thread와 CLI에 보인다.
+병합 대기와 착지 한 자리는 실행 한도·예약 자리에서 뺀다. 착지 검증 실패를 수리하는 동안은 `[착지]`를 유지하고,
+착지를 그만두거나 다음 단계 구현을 시작하면 `[진행 중]`으로 돌린다. `[완료]`만으로는 자리 제외가 아니다.
+표지는 첫 줄에 하나만 쓰며, 옛 표지 없는 보고·겹친 표지는 작업으로 센다. 새로 셀 때 한도를 넘으면 새 시작만 막는다.
+
 host는 사용자·coordinator가 띄운 Worker의 `max_parallel_threads`를 실제 한도로 집행한다.
 자동화 thread(`automations/*.toml`의 `do.start`)는 이 수와 예약 자리에서 빼고 규칙별 동시 상한(기본 1개)으로 제한한다.
 웹·`aaa context`·`aaa thread list`의 표지는 「자동화 thread」이며 사건·일정 출처는 상세에 보인다. 검토·답 대기·Idle·보고 [완료]에도 자리를 보유하며
 resolve 정리를 마쳐야 반환한다. 한도가 차면 새 기동을 보내지 않는다. 앞 예약의 고정 머신이 끊겼으면 가능한 뒤 예약을 먼저 시작한다.
 coordinator와 웹이 닫혀도 host가 시작하며, 알려지지 않은 모델·없어진 저장소·첨부 문제·시작 실패는 확인 필요로 남긴다.
-정해진 모델·머신 변경은 사용자가 웹이나 aaa 밖 CLI에서 직접 한다. coordinator는 원문 편집으로 우회할 수 없다.
+사용자가 채팅으로 모델·머신 변경을 지시하면 coordinator도 다음처럼 바꾼다.
+
+```sh
+aaa task edit d-0001 --profile codex --machine mac-a --user-request '사용자가 채팅에서 codex와 mac-a로 변경 지시'
+```
+
+바꿀 칸만 준다. 빈 글은 해당 칸을 비운다. `--user-request`는 근거 한 줄을 요구하며 모델·머신 외의 칸이나 여러 task를 함께 고치지 않는다.
+할 일 기록에는 「coordinator가 사용자 지시로 변경」과 근거, 변경 전후 값이 남고 감사에도 같은 근거를 남긴다.
+미기동 예약은 취소 없이 순서·생성 시각을 유지하고 새 값으로 시작한다. 취소된 예약은 변경해도 취소 상태를 유지한다.
+이미 기동한 예약이나 다른 내용이 먼저 바뀐 예약은 거부한다. 상태·내용을 확인해 별도로 처리한다.
+사용자 지시 없는 변경·하향, 원문 편집 우회, 시작·재시작 옵션으로 다른 모델·머신을 쓰는 동작은 계속 거부한다.
+웹이나 aaa 밖 CLI의 일반 편집은 기존처럼 가능하며, 예약의 선택을 일반 편집으로 바꾸면 내용을 확인해 예약을 갱신한다.
 
 PR 병합·보고 [완료]의 좁은 완료 판정을 유지하면서 결과는 `aaa task archive`에 보관한다.
 `aaa task archive --restore <task ID>`는 같은 ID·내용·첨부를 활성 목록에 돌리고 실행 연결은 푼다. 자동 재예약·재기동은 하지 않는다.
