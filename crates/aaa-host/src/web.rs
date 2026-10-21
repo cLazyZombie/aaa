@@ -123,6 +123,10 @@ pub fn router(host: Arc<Host>) -> Router {
         .route("/api/v1/install-probe/{challenge}", get(install_probe))
         .route("/api/v1/me", get(me).delete(sign_out))
         .route("/api/v1/call", post(call))
+        .route("/api/v1/passkey/register/begin", post(passkey_register_begin))
+        .route("/api/v1/passkey/register", post(passkey_register))
+        .route("/api/v1/passkey/approve/begin", post(passkey_approve_begin))
+        .route("/api/v1/passkey/approve", post(passkey_approve))
         .route("/api/v1/events", get(events_ws))
         .route("/api/v1/front", get(front_ws))
         .route("/api/v1/app-badge", get(app_badge))
@@ -704,6 +708,21 @@ struct Me {
     device: String,
     /// 이 host의 FRONT_API(1.58부터). 웹은 옛 host가 버리는 요청 칸(변환 미리보기)을 이것으로 고른다.
     front_api: String,
+    /// 공개 주소로 연 화면의 passkey 상태(관리 GUI W7). loopback 화면은 없다: 승인에 passkey가 필요 없다
+    #[serde(skip_serializing_if = "Option::is_none")]
+    passkey: Option<aaa_proto::PasskeyState>,
+}
+
+/// passkey 판정에 쓰는 이 화면의 주소(`guard`가 이미 Host를 확인했다). tailscale serve는 받은 Host를 그대로 넘기므로, serve를
+/// 거친 요청(serve가 붙이는 X-Forwarded-For·X-Forwarded-Proto)은 Host가 loopback이어도 host Mac 화면이 아니다: 공개 주소로 본다.
+/// 공개 주소를 아직 모르면 어떤 passkey와도 맞지 않는 이름으로 둔다(승인 거부)
+fn origin(host: &Host, h: &HeaderMap) -> String {
+    let o = host.web_origin(&host_header(h)).unwrap_or_default();
+    let forwarded = h.contains_key("x-forwarded-for") || h.contains_key("x-forwarded-proto");
+    if forwarded && crate::passkey::rp_of(&o).is_none() {
+        return host.public_origin().unwrap_or_else(|| "https://serve.invalid".into());
+    }
+    o
 }
 
 async fn pair(State(host): State<Arc<Host>>, headers: HeaderMap, Json(b): Json<PairBody>) -> Response {
@@ -744,7 +763,9 @@ async fn me(State(host): State<Arc<Host>>, headers: HeaderMap) -> Response {
     }
     match device(&host, &headers) {
         Some((id, role)) => {
-            Json(Outcome::Ok(Me { role, device: id, front_api: aaa_proto::FRONT_API.to_string() })).into_response()
+            let passkey = host.passkey_state(&id, role, &origin(&host, &headers));
+            Json(Outcome::Ok(Me { role, device: id, front_api: aaa_proto::FRONT_API.to_string(), passkey }))
+                .into_response()
         }
         None => unauthorized(),
     }
@@ -759,8 +780,44 @@ async fn app_badge(State(host): State<Arc<Host>>, headers: HeaderMap) -> Respons
 
 async fn call(State(host): State<Arc<Host>>, headers: HeaderMap, Json(req): Json<FrontRequest>) -> Response {
     let Some((id, role)) = device(&host, &headers) else { return unauthorized() };
+    // 공개 주소의 조작 기기: 승인 필요 동작은 passkey 승인(`/api/v1/passkey/approve`)으로만 한다(관리 GUI W7)
+    if let Err(e) = host.passkey_gate(&id, role, &origin(&host, &headers), &req) {
+        return Json(Outcome::<()>::Err(e)).into_response();
+    }
     let result = host.call(role, &format!("device:{id}"), req).await;
     Json(Outcome::from(result)).into_response()
+}
+
+async fn passkey_register_begin(State(host): State<Arc<Host>>, headers: HeaderMap) -> Response {
+    let Some((id, role)) = device(&host, &headers) else { return unauthorized() };
+    Json(Outcome::from(host.passkey_register_begin(&id, role, &origin(&host, &headers)))).into_response()
+}
+
+async fn passkey_register(
+    State(host): State<Arc<Host>>,
+    headers: HeaderMap,
+    Json(b): Json<aaa_proto::PasskeyRegistration>,
+) -> Response {
+    let Some((id, role)) = device(&host, &headers) else { return unauthorized() };
+    Json(Outcome::from(host.passkey_register(&id, role, &origin(&host, &headers), b))).into_response()
+}
+
+async fn passkey_approve_begin(
+    State(host): State<Arc<Host>>,
+    headers: HeaderMap,
+    Json(req): Json<FrontRequest>,
+) -> Response {
+    let Some((id, role)) = device(&host, &headers) else { return unauthorized() };
+    Json(Outcome::from(host.passkey_approve_begin(&id, role, &origin(&host, &headers), req))).into_response()
+}
+
+async fn passkey_approve(
+    State(host): State<Arc<Host>>,
+    headers: HeaderMap,
+    Json(b): Json<aaa_proto::PasskeyAssertion>,
+) -> Response {
+    let Some((id, role)) = device(&host, &headers) else { return unauthorized() };
+    Json(Outcome::from(host.passkey_approve(&id, role, &origin(&host, &headers), b).await)).into_response()
 }
 
 fn bad_request(msg: impl Into<String>) -> Response {
@@ -2281,6 +2338,42 @@ mod guard_tests {
             req = req.header(*k, *v);
         }
         router(h.clone()).oneshot(req.body(Body::empty()).unwrap()).await.unwrap()
+    }
+
+    /// 조작 기기 passkey(관리 GUI W7): 공개 주소의 조작 기기는 passkey 없이 승인하지 못하고, serve를 거친 요청은 Host를
+    /// loopback으로 적어도 host Mac 화면으로 보지 않는다(serve는 받은 Host를 넘긴다: 훔친 cookie로 UV를 건너뛰는 길)
+    #[tokio::test]
+    async fn only_a_direct_loopback_screen_approves_without_a_passkey() {
+        let l = lab("https://mac-a.example.ts.net:8443");
+        let t = token(&l.0);
+        let call = |host: &'static str, more: Vec<(&'static str, String)>| {
+            let h = l.0.clone();
+            async move {
+                let origin = if host == LOOP { "http://127.0.0.1:7000" } else { "https://mac-a.example.ts.net:8443" };
+                let mut req = Request::builder()
+                    .method("POST")
+                    .uri("/api/v1/call")
+                    .header(header::HOST, host)
+                    .header(header::ORIGIN, origin)
+                    .header(header::CONTENT_TYPE, "application/json");
+                for (k, v) in more {
+                    req = req.header(k, v);
+                }
+                let body = Body::from(r#"{"op":"web_pair","role":"controller"}"#);
+                let res = router(h).oneshot(req.body(body).unwrap()).await.unwrap();
+                let bytes = axum::body::to_bytes(res.into_body(), 1 << 20).await.unwrap();
+                serde_json::from_slice::<serde_json::Value>(&bytes).unwrap()
+            }
+        };
+        let direct = call(LOOP, vec![("cookie", format!("{}={t}", cookie_name(false)))]).await;
+        assert_eq!(direct["ok"]["kind"], "pair_code", "{direct}");
+        let public = call(PUBLIC, vec![("cookie", format!("{}={t}", cookie_name(true)))]).await;
+        assert_eq!(public["err"]["code"], "passkey_required", "{public}");
+        for (k, v, secure) in [("x-forwarded-proto", "https", true), ("x-forwarded-for", "100.64.0.9", false)] {
+            let cookie = format!("{}={t}", cookie_name(secure));
+            let bent = call(LOOP, vec![("cookie", cookie), (k, v.to_string())]).await;
+            assert_eq!(bent["err"]["code"], "passkey_required", "{k}: {bent}");
+        }
     }
 
     async fn code(h: &Arc<Host>, method: &str, path: &str, host: &str, more: &[(&str, &str)]) -> StatusCode {

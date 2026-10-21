@@ -80,9 +80,47 @@ export type Version = { major: number, minor: number, };
 
 export type B64 = string;
 
-export type ErrorCode = "bad_request" | "unauthorized" | "forbidden" | "not_found" | "agent_disconnected" | "session_exited" | "unsupported_version" | "not_enrolled" | "enroll_closed" | "enroll_code_mismatch" | "name_taken" | "timeout" | "unavailable" | "internal" | "lease_held" | "subscription_not_found" | "subscription_gone" | "too_large" | "conflict";
+export type ErrorCode = "bad_request" | "unauthorized" | "forbidden" | "not_found" | "agent_disconnected" | "session_exited" | "unsupported_version" | "not_enrolled" | "enroll_closed" | "enroll_code_mismatch" | "name_taken" | "timeout" | "unavailable" | "internal" | "lease_held" | "subscription_not_found" | "subscription_gone" | "too_large" | "conflict" | "passkey_required";
 
 export type ErrorBody = { code: ErrorCode, message: string, };
+
+export type PasskeyState = {
+/**
+ * passkey가 묶이는 이름(공개 주소의 도메인)
+ */
+rp_id: string,
+/**
+ * 이 기기에 이 이름의 passkey가 있다
+ */
+registered: boolean,
+/**
+ * 아직 등록할 수 있으면 그 끝(짝지은 때 + 10분). 지났거나 보기 기기면 없다
+ */
+register_until_ms: number | null, };
+
+export type PasskeyCreation = { op_id: string, challenge: string, rp_id: string,
+/**
+ * passkey 목록에 보일 이름(aaa, 둘째 aaa면 인스턴스 이름을 붙인다)
+ */
+rp_name: string,
+/**
+ * 기기 ID(base64url): 같은 기기의 passkey를 덮는다
+ */
+user_id: string, user_name: string,
+/**
+ * 이 기기에 이미 있는 credential(같은 인증기에 두 번 만들지 않는다)
+ */
+exclude: Array<string>, };
+
+export type PasskeyRegistration = { op_id: string, credential_id: string, client_data_json: string, attestation_object: string, };
+
+export type PasskeyChallenge = { op_id: string, challenge: string, rp_id: string,
+/**
+ * 이 기기의 credential
+ */
+allow: Array<string>, };
+
+export type PasskeyAssertion = { op_id: string, credential_id: string, client_data_json: string, authenticator_data: string, signature: string, };
 
 export type Outcome<T> = { "ok": T } | { "err": ErrorBody };
 
@@ -749,7 +787,11 @@ role: DeviceRole, created_at_ms: number,
 /**
  * 마지막으로 들어온 때(1분 단위로 적는다). 아직 한 번도 안 들어왔으면 없다
  */
-last_seen_ms: number | null, };
+last_seen_ms: number | null,
+/**
+ * 지금 공개 주소의 passkey가 있다(관리 GUI W7). 옛 host는 보내지 않는다
+ */
+passkey: boolean, };
 
 export type HostStatus = { host_id: string, software: string, proto: Version, dev_mode: boolean, agent_listen: string | null, web_listen: string | null, machines: Array<MachineView>, };
 
