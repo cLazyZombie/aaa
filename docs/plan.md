@@ -7142,3 +7142,9 @@ FRONT_API 1.96는 기본 검수 표지와 답 기록의 r 참조를 더한다. E
 - **호환.** proto 변경 없음(웹이 있던 요청을 더 쓴다). FRONT_API·AGENT_LINK 그대로. 옛 host는 모르는 key(`task_notes.*`)를 거부하고 웹은 그 글을 보인다.
 - **검증.** E2E `82-cli-zero`(사슬)와 `83-cli-zero-gaps`(빈칸 다섯), 줄 메뉴 차례가 바뀐 `12-threads-push`. 결함 심기: 「CLI 0회」 검문을 끄면 설치 단계가, `do.message`가 대상에 보내지 않으면 자동화 ② 단계가, thread 관리 메뉴에서 「끝내기」를 빼면 정리 단계가 실패한다. 「세션 끝내기」가 `pane_close`를 보내면, 「하나 더 띄우기」가 `new`를 뒤집으면, 링크 수명을 보내지 않으면, 폐기 뒤 reports 사건을 내지 않으면 83의 그 단계가 실패한다.
 - **착지 통합.** 기준 origin/main `676ae46d`의 마지막 §8.416·FRONT_API 1.102·AGENT_LINK 1.11·E2E81(`80-report-list`·`81-account-pool`)을 확인했다. 이 변경은 §8.417·E2E82·83으로 옮기고 proto 변경이 없어 FRONT_API·AGENT_LINK는 main 그대로 둔다.
+
+### 8.418 Windows install 승인 state의 짧은 경로와 IPC 완료 수명(t-0485)
+
+- 3933e4cb CI의 pairing은 `answered=0/1`, `installation_external_tty_required`로 승인 전에 종료했다. 임시 state의 8.3 부모와 canonical 긴 부모가 서로 다른 pipe hash로 남는 경계를 수리한다. bind/connect는 기존 부모만 `GetLongPathNameW`로 조회하고 socket leaf는 그대로 합친다. 조회 실패는 기존 주소로 닫히며, raw/기존 구분자 주소와 검증한 canonical 별칭은 NotFound 때만 읽는다. ACL·peer PID·외부 TTY 승인 문은 바꾸지 않는다.
+- 같은 CI의 IPC 첫 조합 rebind OS5는 EOF 뒤에도 Mio의 합성 readiness 완료가 handle의 Arc를 잡는 경계다. owner는 연결·EOF·server/listener drop 뒤 전용 runtime의 IOCP drain을 끝내고 새 runtime에서 같은 주소를 단 한 번 rebind한다. 기존 5조합과 각 3연결·ACL·peer·byte·첫 instance 거부를 유지하고 OS의 짧은 부모/canonical 양방향도 더한다. bind 재시도·고정 sleep·시한 연장·기대값 완화는 없다.
+- Windows RED는 main CI 원문을 보존하며 실제 GREEN은 다음 승인 착지 뒤 main CI로만 판정한다. macOS 전체 gate와 Windows cross는 각자의 증거 범위만 보고한다. I3는 이 Windows 판정 뒤에 이어 간다.
