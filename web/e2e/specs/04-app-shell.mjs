@@ -394,7 +394,7 @@ export default async function ({ ctl, page }) {
     if (bad.length) throw new Error(bad.join("; "));
   });
 
-  await step("목록 drawer(herdr-web-ui App.tsx drawerOpen·edgeSwipe.ts·styles.css 768px, 차이 목록 M1·D2): 768px 이하는 목록이 pane 위 drawer, 머리 단추·왼쪽 가장자리 쓸기로 열고 바깥 누름·왼쪽 쓸기·Esc로 닫으며, 줄을 고르면 닫히고, 넓어지면 옆 칸", async () => {
+  await step("목록 drawer(herdr-web-ui App.tsx drawerOpen·edgeSwipe.ts·styles.css 768px, 차이 목록 M1·D2): 768px 이하는 목록이 pane 위 drawer, 머리 단추·안쪽에서 오른쪽 쓸기로 열고(왼쪽 끝은 브라우저 뒤로 몫, plan §8.397) 바깥 누름·왼쪽 쓸기·Esc로 닫으며, 줄을 고르면 닫히고, 넓어지면 옆 칸", async () => {
     const bad = [];
     const P = await pairPage(browser, aaa("web", "pair").code, { width: 390, height: 844 });
     const pp = P.page;
@@ -436,7 +436,8 @@ export default async function ({ ctl, page }) {
     await pp.keyboard.press("Escape");
     await settled(false, " #5");
     if (!(await pp.evaluate(() => document.activeElement?.dataset?.testid === "drawer-toggle"))) bad.push("Esc로 닫은 뒤 focus가 단추가 아니다");
-    // 왼쪽 가장자리에서 쓸어 열고, 왼쪽으로 쓸어 닫는다(참고 EDGE_PX 24·SWIPE_PX 56)
+    // 화면 안쪽에서 쓸어 열고, 왼쪽으로 쓸어 닫는다(EDGE_PX 24·SWIPE_PX 56). 왼쪽 끝 24px에서 시작한 쓸기는 Safari·Android 뒤로
+    // 쓸기 자리라 drawer가 건드리지 않는다(plan §8.397, 참고는 그 자리에서 열었다)
     const cdp = await pp.context().newCDPSession(pp);
     const swipe = async (x0, x1) => {
       await cdp.send("Input.dispatchTouchEvent", { type: "touchStart", touchPoints: [{ x: x0, y: 500, id: 1 }] });
@@ -444,12 +445,13 @@ export default async function ({ ctl, page }) {
       await cdp.send("Input.dispatchTouchEvent", { type: "touchEnd", touchPoints: [] });
     };
     await swipe(4, 300);
-    await settled(true, " #6").catch((e) => bad.push(`가장자리 쓸기로 열리지 않았다: ${e.message}`));
+    // 앱이 그 쓸기를 다 그린 뒤(두 frame) 본다
+    await pp.evaluate(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(() => r()))));
+    if ((await shown()).open) bad.push("왼쪽 끝 쓸기로 열렸다(브라우저 뒤로 자리)");
+    await swipe(120, 360);
+    await settled(true, " #6").catch((e) => bad.push(`안쪽 쓸기로 열리지 않았다: ${e.message}`));
     await swipe(300, 20);
     await settled(false, " #7").catch((e) => bad.push(`왼쪽 쓸기로 닫히지 않았다: ${e.message}`));
-    // 가장자리가 아닌 곳의 옆 쓸기는 drawer 것이 아니다
-    await swipe(120, 360);
-    if ((await shown()).open) bad.push("가장자리가 아닌 쓸기로 열렸다");
     // 줄을 고르면 그 pane을 열고 닫힌다
     await toggle.click();
     await settled(true, " #8");
