@@ -68,14 +68,16 @@ after = "kept-value"
 }
 
 #[test]
-fn mask_keeps_checking_inside_plain_multiline_values_and_bare_lines() {
-    // 닫는 표시가 빠진 보통 여러 줄 문자열(파싱이 깨진 바로 그 경우), 비밀이 아닌 key의 여러 줄 배열 원소, `=` 없는 주석
-    let text = r#"[profiles.work]
-description = """
-메모
-[profiles.work.env]
-OPENAI_API_KEY = "sk-live-after-unclosed"
-[profiles.other]
+fn every_continuation_line_of_a_multiline_value_is_hidden() {
+    // 닫는 표시가 빠진 보통 여러 줄 문자열(파싱이 깨진 바로 그 경우): 뒤의 env 표까지 문자열로 보고 끝까지 가린다
+    let unclosed = "[profiles.work]\ndescription = \"\"\"\n메모\n[profiles.work.env]\nOPENAI_API_KEY = \"sk-live-after-unclosed\"\n";
+    let (lines, hidden) = mask(unclosed);
+    assert_eq!(&lines[..2], ["[profiles.work]", "description = \"\"\""]);
+    assert!(lines[2..].iter().all(|l| l == HIDDEN), "{lines:?}");
+    assert!(hidden.iter().any(|h| h.contains("sk-live-after-unclosed")), "{hidden:?}");
+    // 비밀이 아닌 key의 여러 줄 배열: 원소를 줄마다 하나씩 쓰면 `"--api-key",` 다음 줄의 값에는 비밀 낱말이 없다.
+    // 배열 안의 한 원소짜리 배열(`["…"]`)도 표 머리가 아니다. `=` 없는 주석의 비밀
+    let text = r#"[profiles.other]
 args = [
   "--verbose",
   "--header=Authorization: Bearer bearer-zzz-111",
@@ -86,25 +88,25 @@ args = [
 args = [
   "--api-key",
   "sk-one-per-line-zzz",
+  ["sk-live-nested"]
 ]
 after = "kept-after-array"
 "#;
     let (lines, hidden) = mask(text);
     let shown = lines.join("\n");
-    for secret in
-        ["sk-live-after-unclosed", "bearer-zzz-111", "sk-live-array-zzz", "sk-comment-zzz", "sk-one-per-line-zzz"]
-    {
+    for secret in ["bearer-zzz-111", "sk-live-array-zzz", "sk-comment-zzz", "sk-one-per-line-zzz", "sk-live-nested"] {
         assert!(!shown.contains(secret), "{secret}가 보인다:\n{shown}");
         assert!(hidden.iter().any(|h| h.contains(secret)), "{secret}를 오류 글에서 뺄 목록에 없다: {hidden:?}");
     }
     assert_eq!(lines.len(), text.lines().count());
-    assert!(shown.contains("\"--verbose\","), "비밀 원소 앞의 원소는 남는다:\n{shown}");
+    assert_eq!(lines[1], "args = [");
+    assert!(lines[2..6].iter().all(|l| l == HIDDEN), "{lines:?}");
     assert_eq!(lines.last().unwrap(), r#"after = "kept-after-array""#, "배열이 닫힌 뒤는 다시 보인다");
 }
 
 #[test]
-fn an_unclosed_or_commented_array_does_not_hide_the_next_env_table() {
-    // 주석으로 꺼 둔 배열, `]`를 빠뜨린 배열 뒤에 env 표가 온다(다른 곳이 깨져 안전 모드에 들어온 경우)
+fn an_unclosed_or_commented_value_does_not_hide_or_leak_the_next_lines() {
+    // 주석으로 꺼 둔 배열, `]`를 빠뜨린 배열 뒤에 env 표가 온다(공백 없이 주석이 붙은 머리 포함)
     let text = r#"[profiles.work]
 # args = [
 #   "--verbose",
@@ -114,7 +116,7 @@ ANTHROPIC_BASE_URL = "https://proxy.internal/x"
 [profiles.other]
 args = [
   "--verbose",
-[profiles.other.env]
+[profiles.other.env]# 메모
 DATABASE_URL = "postgres://u:pw@db/x"
 [web
 "#;
@@ -125,11 +127,18 @@ DATABASE_URL = "postgres://u:pw@db/x"
         assert!(hidden.iter().any(|h| h.contains(secret)), "{secret}를 오류 글에서 뺄 목록에 없다: {hidden:?}");
     }
     assert_eq!(lines.len(), text.lines().count());
-    assert!(shown.contains("#   \"--verbose\","), "주석 줄 원소는 비밀이 아니면 남는다:\n{shown}");
-    // 주석으로 꺼 둔 비밀 배열은 그 줄만 가린다: 주석 안의 `]`로 닫히지 않아 뒤의 표·값까지 가리면 원문 표시가 망가진다
-    let (lines, _) = mask("# tokens = [\n#   \"t-1\",\n# ]\n[web]\nlisten = \"127.0.0.1:7431\"\n");
-    assert_eq!(lines[0], format!("# tokens = {HIDDEN}"));
-    assert_eq!(&lines[3..], ["[web]", "listen = \"127.0.0.1:7431\""]);
+    assert_eq!(lines[4], "[profiles.work.env]");
+    // 주석으로 꺼 둔 비밀 배열·여러 줄 문자열: 이어지는 주석 줄은 모두 가리고(주석 안의 `]`·`"""`는 닫는 표시로 셀 수 없다),
+    // 주석이 끝나면 뒤의 표·값은 그대로 보인다
+    let text = "[profiles.work]\n# api_keys = [\n#   \"sk-live-commented\",\n# ]\n# private_key = \"\"\"\n# MIIEvQIBADANBg\n# \"\"\"\n[web]\nlisten = \"127.0.0.1:7431\"\n";
+    let (lines, hidden) = mask(text);
+    let shown = lines.join("\n");
+    for secret in ["sk-live-commented", "MIIEvQIBADANBg"] {
+        assert!(!shown.contains(secret), "{secret}가 보인다:\n{shown}");
+        assert!(hidden.iter().any(|h| h.contains(secret)), "{secret}를 오류 글에서 뺄 목록에 없다: {hidden:?}");
+    }
+    assert_eq!(lines[1], format!("# api_keys = {HIDDEN}"));
+    assert_eq!(&lines[7..], ["[web]", "listen = \"127.0.0.1:7431\""]);
 }
 
 #[test]

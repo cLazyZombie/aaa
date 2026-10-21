@@ -217,23 +217,28 @@ fn assignment(line: &str) -> Option<usize> {
     None
 }
 
-/// 표 머리처럼 보이는 줄: `[`로 시작해 (주석을 빼고) `]`로 끝나며 따옴표 밖에 `,`가 없다(배열 원소 줄은 보통 `,`로 끝난다)
-fn header_like(line: &str) -> bool {
-    let t = line.trim();
-    let body = t.split(" #").next().unwrap_or(t).trim_end();
-    if !body.starts_with('[') || !body.ends_with(']') {
-        return false;
-    }
+/// 따옴표 밖 첫 `#` 앞(주석을 뗀 본문)
+fn uncommented(line: &str) -> &str {
     let mut quote = None;
-    for c in body.chars() {
+    for (i, c) in line.char_indices() {
         match (quote, c) {
             (None, '"' | '\'') => quote = Some(c),
             (Some(q), c) if c == q => quote = None,
-            (None, ',') => return false,
+            (None, '#') => return &line[..i],
             _ => {}
         }
     }
-    true
+    line
+}
+
+/// 따옴표 없는 key 이름만 든 표 머리(`[a.b]`·`[[a]]`). 배열 원소 줄(`["sk-…"]`)은 머리로 보지 않는다
+fn header_like(line: &str) -> bool {
+    let body = uncommented(line.trim()).trim_end();
+    let inner = body
+        .strip_prefix("[[")
+        .and_then(|b| b.strip_suffix("]]"))
+        .or_else(|| body.strip_prefix('[').and_then(|b| b.strip_suffix(']')));
+    inner.is_some_and(|i| !i.trim().is_empty() && i.chars().all(|c| c.is_alphanumeric() || "_-. ".contains(c)))
 }
 
 /// 따옴표 밖 괄호(`[`·`{`)의 깊이 변화
@@ -252,18 +257,26 @@ fn depth(text: &str) -> i32 {
     d
 }
 
-/// 원문을 줄마다 가린다(파싱이 안 되는 글에도 쓴다). env 표 아래 값, `env`가 든 key·인라인 표, 비밀처럼 보이는 key, 그런 낱말이 든
-/// 값을 가린다. 여러 줄 문자열·배열·인라인 표는 그 값이 가려지면 닫힐 때까지 가린다. 가린 값들도 돌려준다(오류 글에서 뺀다)
+/// 여러 줄 값의 이어지는 줄을 가리는 중
+enum Cont {
+    /// 여러 줄 문자열: 닫는 표시가 나올 때까지(닫히지 않으면 파일 끝까지)
+    Text(&'static str),
+    /// 여러 줄 배열·인라인 표: 괄호가 닫히거나 표 머리가 나올 때까지(`]`를 빠뜨려도 뒤의 표는 표로 본다)
+    Nested(i32),
+    /// 주석으로 연 여러 줄 값: 이어지는 주석 줄 전부(주석 안의 `]`·`"""`는 닫는 표시로 셀 수 없다)
+    Comment,
+}
+
+/// 원문을 줄마다 가린다(파싱이 안 되는 글에도 쓴다). 줄 수는 그대로다(오류 줄 표시).
+/// - 한 줄 값: env 표 아래 값, `env`가 든 key·인라인 표, 표 머리·key에 비밀 낱말이 있거나 값에 그런 낱말이 들면 가린다.
+/// - 여러 줄 값(배열·문자열·인라인 표)의 이어지는 줄은 비밀 여부와 상관없이 모두 가린다. 원소를 줄마다 하나씩 쓰면
+///   `"--api-key",` 다음 줄의 값에는 비밀 낱말이 없고, 닫는 표시가 빠진 바로 그때 뒤의 표를 값으로 읽게 되기 때문이다.
+/// - 대입이 아닌 줄(주석 등)은 env 표 아래거나 비밀 낱말이 있으면 가린다.
+///
+/// 가린 값들도 돌려준다(오류 글에서 뺀다)
 pub(crate) fn mask(text: &str) -> (Vec<String>, Vec<String>) {
     let mut table: Vec<String> = Vec::new();
-    // 가린 여러 줄 문자열이 닫히지 않았다: 닫힐 때까지 다음 줄도 가린다. 가리지 않은 여러 줄 문자열은 따로 건너뛰지 않는다:
-    // 닫는 표시가 빠져 파싱이 깨진 바로 그때 뒤의 표·env 값까지 그대로 보이게 된다. 그 안의 줄도 아래 규칙으로 본다
-    let mut open: Option<&str> = None;
-    // 가린 값의 괄호가 닫히지 않았다: 닫힐 때까지 다음 줄도 가린다
-    let mut nested = 0;
-    // 가리지 않은 값의 괄호가 닫히지 않았다(여러 줄 배열): 깊이와, 원소에 비밀 낱말이 나와 남은 줄을 가리는 중인지.
-    // 인자를 줄마다 하나씩 쓰면 `"--api-key",` 다음 줄의 값에는 비밀 낱말이 없다
-    let mut plain: Option<(i32, bool)> = None;
+    let mut cont: Option<Cont> = None;
     let (mut out, mut hidden) = (Vec::new(), Vec::new());
     let hide = |line: &str, out: &mut Vec<String>, hidden: &mut Vec<String>| {
         hidden.extend(
@@ -272,37 +285,31 @@ pub(crate) fn mask(text: &str) -> (Vec<String>, Vec<String>) {
         out.push(HIDDEN.to_string());
     };
     for line in text.lines() {
-        if nested > 0 {
-            nested += depth(line);
-            hide(line, &mut out, &mut hidden);
-            continue;
-        }
-        // 닫히지 않은 배열(`]` 빠뜨림) 뒤의 표 머리는 배열을 끝내고 표를 바꾼다: 뒤의 env 표 값을 배열 원소로 보지 않는다
-        if plain.is_some() && header_like(line) {
-            plain = None;
-        }
-        if let Some((d, hiding)) = plain.as_mut() {
-            *d += depth(line);
-            *hiding = *hiding || secret_word(line) || table.iter().any(|s| s == "env");
-            if *hiding {
-                hide(line.trim(), &mut out, &mut hidden);
-            } else {
-                out.push(line.to_string());
-            }
-            if *d <= 0 {
-                plain = None;
-            }
-            continue;
-        }
-        if let Some(delim) = open {
-            if line.contains(delim) {
-                open = None;
-            }
-            hide(line.trim().trim_end_matches(delim), &mut out, &mut hidden);
-            continue;
-        }
         let trimmed = line.trim_start();
-        // 표 머리. 가리지 않은 배열의 원소 줄(`["a"],`)을 머리로 읽어도 가림이 줄지 않는다: 비밀 표·env 값의 배열은 위에서 가린다
+        match &mut cont {
+            Some(Cont::Text(delim)) => {
+                if line.contains(*delim) {
+                    cont = None;
+                }
+                hide(trimmed, &mut out, &mut hidden);
+                continue;
+            }
+            Some(Cont::Nested(_)) if header_like(line) => cont = None,
+            Some(Cont::Nested(d)) => {
+                *d += depth(line);
+                if *d <= 0 {
+                    cont = None;
+                }
+                hide(trimmed, &mut out, &mut hidden);
+                continue;
+            }
+            Some(Cont::Comment) if trimmed.starts_with('#') => {
+                hide(trimmed, &mut out, &mut hidden);
+                continue;
+            }
+            Some(Cont::Comment) => cont = None,
+            None => {}
+        }
         if trimmed.starts_with('[') {
             table = table_path(trimmed);
             out.push(line.to_string());
@@ -310,10 +317,10 @@ pub(crate) fn mask(text: &str) -> (Vec<String>, Vec<String>) {
         }
         let in_env_table = table.iter().any(|s| s == "env");
         // 주석으로 꺼 둔 `KEY = 값`도 같은 규칙으로 본다
-        let body_at = line.len() - trimmed.len() + usize::from(trimmed.starts_with('#'));
+        let commented = trimmed.starts_with('#');
+        let body_at = line.len() - trimmed.len() + usize::from(commented);
         let body = &line[body_at..];
         let Some(eq) = assignment(body) else {
-            // 대입이 아닌 줄(여러 줄 배열의 원소·문자열 안·주석): env 표 아래거나 비밀 낱말이 있으면 줄째 가린다
             if !trimmed.is_empty() && (in_env_table || secret_word(trimmed)) {
                 hide(trimmed, &mut out, &mut hidden);
             } else {
@@ -330,21 +337,16 @@ pub(crate) fn mask(text: &str) -> (Vec<String>, Vec<String>) {
             || table.iter().chain(segments.iter()).any(|s| secret_word(s))
             || secret_word(value)
             || (value.starts_with('{') && value.contains("env"));
-        // 주석으로 꺼 둔 줄은 그 줄만 본다: 이어지는 주석 줄의 `]`·`"""`는 닫는 표시로 셀 수 없다
-        let commented = trimmed.starts_with('#');
-        if secret
-            && !commented
-            && let Some(d) =
-                ["\"\"\"", "'''"].into_iter().find(|d| value.starts_with(d) && value[3..].find(d).is_none())
-        {
-            open = Some(d);
-        }
-        if !commented && depth(value) > 0 {
-            if secret {
-                nested = depth(value);
+        let text_open = ["\"\"\"", "'''"].into_iter().find(|d| value.starts_with(d) && value[3..].find(d).is_none());
+        let nested = depth(value);
+        if text_open.is_some() || nested > 0 {
+            cont = Some(if commented {
+                Cont::Comment
+            } else if let Some(d) = text_open {
+                Cont::Text(d)
             } else {
-                plain = Some((depth(value), false));
-            }
+                Cont::Nested(nested)
+            });
         }
         if secret && !value.is_empty() {
             let raw = value.trim_matches('"').trim_matches('\'').trim();
@@ -614,7 +616,7 @@ fn body_for(safe: &Safe, who: &Who, notice: Option<&str>) -> String {
                 None => b.push_str("<p class=muted>보관한 정상 설정이 없어 되돌릴 수 없습니다. host Mac에서 파일을 고친 뒤 「다시 읽기」를 누릅니다.</p>"),
             }
             b.push_str("<form method=post action=/api/v1/safe/retry><button type=submit>다시 읽기</button></form>");
-            b.push_str("<p class=muted>원문의 env 값과 비밀처럼 보이는 값은 가렸습니다(«가림»). 고친 파일은 host Mac에서 다시 읽기로 확인합니다.</p>");
+            b.push_str("<p class=muted>원문의 env 값, 비밀처럼 보이는 값, 여러 줄 값의 이어지는 줄은 가렸습니다(«가림»). 고친 파일은 host Mac에서 다시 읽기로 확인합니다.</p>");
             b.push_str(&files);
         }
     }
